@@ -1,0 +1,247 @@
+{
+  "id": "梦_夜路",
+  "name": "梦·夜路",
+  "worldWidth": 3000.0,
+  "camera": {
+    "zoom": 0.9,
+    "pixelsPerUnit": 1.0
+  },
+  "backgrounds": [
+    {
+      "image": "background.png",
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "ambientSounds": [
+    "夜晚蛐蛐叫",
+    "阴风"
+  ],
+  "spawnPoint": {
+    "x": 869.6,
+    "y": 1580.9
+  },
+  "onEnter": [
+    {
+      "type": "fadeWorldFromBlack",
+      "params": {
+        "durationMs": 800
+      }
+    },
+    {
+      "type": "startDialogueGraph",
+      "params": {
+        "graphId": "梦_段A_夜路"
+      }
+    }
+  ],
+  "zones": [
+    {
+      "id": "z_梦_到农家院",
+      "polygon": [
+        {
+          "x": 2247.0,
+          "y": 338.4
+        },
+        {
+          "x": 2355.6,
+          "y": 376.9
+        },
+        {
+          "x": 2320.4,
+          "y": 416.4
+        },
+        {
+          "x": 2247.0,
+          "y": 363.5
+        }
+      ],
+      "onEnter": [
+        {
+          "type": "fadeWorldToBlack",
+          "params": {
+            "durationMs": 800
+          }
+        },
+        {
+          "type": "switchScene",
+          "params": {
+            "targetScene": "梦_农家院",
+            "targetSpawnPoint": ""
+          }
+        }
+      ]
+    }
+  ],
+  "lightEnvCurve": {
+    "points": [
+      {
+        "x": 936.24,
+        "y": 1588.38,
+        "env": {
+          "key": {
+            "azimuthDeg": 320.0,
+            "elevationDeg": 25.0,
+            "color": [
+              0.6,
+              0.659,
+              0.851
+            ],
+            "intensity": 0.7
+          },
+          "ambient": {
+            "color": [
+              0.322,
+              0.361,
+              0.502
+            ],
+            "intensity": 0.8
+          },
+          "shadow": {
+            "mode": "planar",
+            "enabled": true,
+            "darkness": 0.08,
+            "softness": 1.2,
+            "contact": 0.36,
+            "contactSize": 0.1,
+            "softSamples": 1,
+            "softRadius": 0.05,
+            "billboard": "light"
+          },
+          "toneStrength": 0.5,
+          "toneEnabled": true,
+          "ao": {
+            "contact": 0.5,
+            "form": 0.3
+          }
+        }
+      },
+      {
+        "x": 1588.28,
+        "y": 1005.35,
+        "env": {
+          "key": {
+            "azimuthDeg": 320.0,
+            "elevationDeg": 35.0,
+            "color": [
+              0.698,
+              0.698,
+              0.8
+            ],
+            "intensity": 0.6
+          },
+          "ambient": {
+            "color": [
+              0.298,
+              0.322,
+              0.42
+            ],
+            "intensity": 0.55
+          },
+          "shadow": {
+            "mode": "planar",
+            "enabled": true,
+            "darkness": 0.55,
+            "softness": 1.4,
+            "contact": 0.5,
+            "contactSize": 0.55,
+            "softSamples": 1,
+            "softRadius": 0.05,
+            "billboard": "light"
+          },
+          "toneStrength": 0.55,
+          "toneEnabled": true,
+          "ao": {
+            "contact": 0.55,
+            "form": 0.32
+          }
+        }
+      },
+      {
+        "x": 1981.23,
+        "y": 627.92,
+        "env": {
+          "key": {
+            "azimuthDeg": 320.0,
+            "elevationDeg": 17.0,
+            "color": [
+              0.549,
+              0.58,
+              0.749
+            ],
+            "intensity": 0.3
+          },
+          "ambient": {
+            "color": [
+              0.259,
+              0.278,
+              0.4
+            ],
+            "intensity": 0.6
+          },
+          "shadow": {
+            "mode": "planar",
+            "enabled": true,
+            "darkness": 0.88,
+            "softness": 1.6,
+            "contact": 0.55,
+            "contactSize": 0.4,
+            "softSamples": 1,
+            "softRadius": 0.05,
+            "billboard": "light"
+          },
+          "toneStrength": 0.86,
+          "toneEnabled": true,
+          "ao": {
+            "contact": 0.6,
+            "form": 0.35
+          }
+        }
+      },
+      {
+        "x": 2226.87,
+        "y": 409.58,
+        "env": {
+          "key": {
+            "azimuthDeg": 320.0,
+            "elevationDeg": 17.0,
+            "color": [
+              0.549,
+              0.58,
+              0.749
+            ],
+            "intensity": 0.3
+          },
+          "ambient": {
+            "color": [
+              0.259,
+              0.278,
+              0.4
+            ],
+            "intensity": 0.6
+          },
+          "shadow": {
+            "mode": "planar",
+            "enabled": true,
+            "darkness": 0.88,
+            "softness": 1.6,
+            "contact": 0.55,
+            "contactSize": 0.25,
+            "softSamples": 1,
+            "softRadius": 0.05,
+            "billboard": "light"
+          },
+          "toneStrength": 0.86,
+          "toneEnabled": true,
+          "ao": {
+            "contact": 0.6,
+            "form": 0.35
+          }
+        }
+      }
+    ]
+  },
+  "bgm": "bgm_placeholder_low_tension",
+  "worldHeight": 1674.42,
+  "npcs": []
+}

@@ -14,6 +14,7 @@ from PySide6.QtCore import Signal
 from PySide6.QtGui import QFontMetrics
 
 from .cutscene_dialogue_speaker_row import build_speaker_line_with_inserts
+from .portrait_ref_field import PortraitRefField
 from .rich_text_field import RichTextTextEdit
 
 
@@ -132,10 +133,14 @@ class ScriptedLinesEditor(QWidget):
             tx_wrap.setPlainText(str(data.get("text", "") or ""))
             tx_wrap.textChanged.connect(self.changed.emit)
             tx = tx_wrap
-        tx.setMinimumHeight(72)
+        tx.setMinimumHeight(48)
         tx.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.MinimumExpanding)
         bl.addWidget(tx_wrap)
-        rec = {"box": box, "speaker": sp, "text": tx, "btn_up": up, "btn_down": dn}
+        proot = getattr(m, "project_path", None) if m else None
+        portrait = PortraitRefField(proot, data.get("portrait") if isinstance(data, dict) else None)
+        portrait.changed.connect(self.changed.emit)
+        bl.addWidget(portrait)
+        rec = {"box": box, "speaker": sp, "text": tx, "portrait": portrait, "btn_up": up, "btn_down": dn}
         rm.clicked.connect(lambda: self._remove_row(rec))
         up.clicked.connect(lambda: self._move_row(rec, -1))
         dn.clicked.connect(lambda: self._move_row(rec, 1))
@@ -152,12 +157,18 @@ class ScriptedLinesEditor(QWidget):
         for r in self._rows:
             te = r["text"]
             t = te.toPlainText() if hasattr(te, "toPlainText") else ""
-            if not t:
-                continue
             spw = r["speaker"]
             sp_txt = spw.text().strip() if hasattr(spw, "text") else ""
-            out.append({
+            por = r["portrait"].to_ref()
+            # 空正文行：过去无条件静默丢弃，会连带丢掉已配好的 speaker / 立绘（审查 P3）。
+            # 只丢「三项全空」的纯空行；已配 speaker 或立绘的空文本行保留，避免默默吃掉编辑。
+            if not t and not sp_txt and not por:
+                continue
+            rec: dict = {
                 "speaker": sp_txt,
                 "text": t,
-            })
+            }
+            if por:
+                rec["portrait"] = por
+            out.append(rec)
         return out

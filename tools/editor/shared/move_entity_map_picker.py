@@ -7,6 +7,7 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QGraphicsView,
     QGraphicsScene,
+    QGraphicsTextItem,
     QVBoxLayout,
     QHBoxLayout,
     QLabel,
@@ -33,7 +34,11 @@ from PySide6.QtGui import (
 )
 from PySide6.QtCore import Qt, QRectF, QPoint, QPointF, Signal, QTimer, QLineF
 
+from .. import theme
+
 from ..project_model import ProjectModel
+from .dialog_geometry import remember_dialog_geometry
+from .fonts import MONO_FONT_FAMILY
 
 _MARKER_CAM_PICK = QColor(255, 70, 90, 210)
 _MARKER_CAM_EDGE = QPen(QColor(255, 210, 220), 0)
@@ -133,6 +138,7 @@ class WorldPointPickView(QGraphicsView):
         self._world_w = float(ww)
         self._world_h = float(wh)
         self._gfx.setSceneRect(QRectF(0, 0, ww, wh))
+        loaded = False
         if img_path is not None and img_path.is_file():
             pm = QPixmap(str(img_path))
             if not pm.isNull():
@@ -142,7 +148,22 @@ class WorldPointPickView(QGraphicsView):
                 sy = wh / pm.height()
                 self._bg_item.setTransform(QTransform.fromScale(sx, sy))
                 self._gfx.addItem(self._bg_item)
+                loaded = True
+        if not loaded:
+            # 背景缺失/加载失败：画占位提示，避免对着纯色空画布盲点坐标。
+            self._add_placeholder_text(
+                scene_id, ww, wh,
+                "（无背景图或加载失败：仍可按世界坐标点选，但看不到底图参照）")
         return ww, wh
+
+    def _add_placeholder_text(self, scene_id: str, ww: float, wh: float, msg: str) -> None:
+        txt = QGraphicsTextItem(f"{scene_id}\n{msg}")
+        txt.setDefaultTextColor(QColor(180, 180, 190))
+        theme.set_graphics_text_font(txt, theme.FONT_ROLE_CANVAS_SECONDARY)
+        txt.setZValue(-90)
+        br = txt.boundingRect()
+        txt.setPos(max(0.0, ww / 2 - br.width() / 2), max(0.0, wh / 2 - br.height() / 2))
+        self._gfx.addItem(txt)
 
     def marker_radius_world(self) -> float:
         return max(self._world_w, self._world_h) * 0.01
@@ -215,8 +236,21 @@ class WorldPointPickView(QGraphicsView):
         super().mouseReleaseEvent(event)
 
     def wheelEvent(self, event: QWheelEvent) -> None:
+        # 触控板：无修饰双指滚动 = 平移；Ctrl+滚轮 = 缩放（三处画布统一）。
+        if not (event.modifiers() & Qt.KeyboardModifier.ControlModifier):
+            d = event.angleDelta()
+            if d.x() != 0 or d.y() != 0:
+                self.horizontalScrollBar().setValue(
+                    self.horizontalScrollBar().value() - d.x())
+                self.verticalScrollBar().setValue(
+                    self.verticalScrollBar().value() - d.y())
+            event.accept()
+            return
         factor = 1.15 if event.angleDelta().y() > 0 else 1 / 1.15
-        self.scale(factor, factor)
+        # 钳制 0.1~10 倍，避免缩到天文倍数丢画面（照 map_editor._ZoomableView）。
+        new = self.transform().m11() * factor
+        if 0.1 <= new <= 10.0:
+            self.scale(factor, factor)
         event.accept()
 
 
@@ -260,18 +294,8 @@ class MoveEntityPathPickView(WorldPointPickView):
         if self._marker is not None and self._marker.scene() is self._gfx:
             self._gfx.removeItem(self._marker)
         self._marker = None
-        dx, dy = self._dest_xy
-        self._dest_xy = (
-            float(max(0.0, min(self._world_w, dx))),
-            float(max(0.0, min(self._world_h, dy))),
-        )
-        nv: list[tuple[float, float]] = []
-        for vx, vy in self._vertices:
-            nv.append((
-                float(max(0.0, min(self._world_w, vx))),
-                float(max(0.0, min(self._world_h, vy))),
-            ))
-        self._vertices = nv
+        # 不再在载入时把已授权的终点/途经点夹到世界边界：那会在用户仅查看后点 OK 时
+        # 静默改写既有坐标（数据篡改）。新拾取仍在 _handle_left_pick_world 处夹取。
         self._redraw_route()
         return ww, wh
 
@@ -354,13 +378,17 @@ class MoveEntityToMapPickerDialog(QDialog):
         sc0 = model.scenes.get(scene_id, {})
         title_nm = sc0.get("name", scene_id)
         self.setWindowTitle(f"移动目标路径 — {scene_id}（{title_nm}）")
-        self.resize(980, 620)
+        self.resize(940, 600)  # 略缩以在 13" 上留边距；可缩放且记忆几何
 
         root = QVBoxLayout(self)
-        root.addWidget(QLabel(
-            "左键在地图上点击：在「途经点」模式下逐个追加折线顶点；切换到「终点」模式后单击设定最终到达位置。\n"
-            "中键平移画布，滚轮缩放。终点为必填；未设置途经点时游戏中沿直线移动到终点。"
-        ))
+        _intro = QLabel("左键点击地图设置途经点 / 终点；中键平移，滚轮缩放。")
+        _intro.setStyleSheet("color:#888;")
+        theme.set_editor_font_role(_intro, theme.FONT_ROLE_HINT)
+        _intro.setToolTip(
+            "「途经点」模式下左键逐个追加折线顶点；切换到「终点」模式后单击设定最终到达位置。\n"
+            "终点为必填；未设置途经点时游戏中沿直线移动到终点。"
+        )
+        root.addWidget(_intro)
 
         toolbar = QHBoxLayout()
         self._rb_vertex = QRadioButton("途经点模式")
@@ -377,11 +405,16 @@ class MoveEntityToMapPickerDialog(QDialog):
         btn_clear.clicked.connect(self._on_clear_vertices)
         toolbar.addWidget(btn_undo)
         toolbar.addWidget(btn_clear)
+        btn_fit = QPushButton("适配")
+        btn_fit.setToolTip("将整张地图适配回视口（缩放到全览）")
+        btn_fit.clicked.connect(lambda: self._view.fit_scene())
+        toolbar.addWidget(btn_fit)
         toolbar.addStretch(1)
         root.addLayout(toolbar)
 
         self._lbl = QLabel("", self)
-        self._lbl.setStyleSheet("font-family: Consolas; font-size:12px;")
+        self._lbl.setStyleSheet(f"font-family: {MONO_FONT_FAMILY};")
+        theme.set_editor_font_role(self._lbl, theme.FONT_ROLE_SECONDARY)
         root.addWidget(self._lbl)
 
         self._view = MoveEntityPathPickView(self)
@@ -403,6 +436,7 @@ class MoveEntityToMapPickerDialog(QDialog):
         self._sync_mode_radio()
         QTimer.singleShot(0, self._view.fit_scene)
         self._sync_label()
+        remember_dialog_geometry(self, "move_entity_map_picker")
 
     def _sync_mode_radio(self) -> None:
         self._view.set_pick_mode(

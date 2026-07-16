@@ -19,8 +19,8 @@ description: Produces single-file interactive C4 container + function-chain arch
 
 | 子系统 | 建议输出路径 |
 |--------|----------------|
-| GameDraft 主游戏（Vite/运行时） | `GameDraft/docs/architecture-gamedraft-runtime.html`（仓库内已有初版；迭代时仍须保持与 v3 同壳） |
-| `GameDraft/tools/editor` 主编辑器 | `GameDraft/tools/editor/data/architecture-editor.html`（仓库内已有初版） |
+| GameDraft 主游戏（Vite/运行时） | `<repo>/docs/architecture-gamedraft-runtime.html`（默认创建；若已有同名文件则保持与 v3 同壳迭代） |
+| `GameDraft/tools/editor` 主编辑器 | `<repo>/tools/editor/data/architecture-editor.html`（默认创建；若已有同名文件则保持与 v3 同壳迭代） |
 
 若用户指定其他路径，以用户为准；**仍须单文件自包含**，不引入外部 JS/CSS 依赖。
 

@@ -1,4 +1,3 @@
-import type { AssetManager } from '../../core/AssetManager';
 import type { AssetRef } from '../../core/AssetManager';
 import type { ActionExecutor } from '../../core/ActionExecutor';
 import type { FlagStore } from '../../core/FlagStore';
@@ -6,39 +5,36 @@ import type { InputManager } from '../../core/InputManager';
 import type { GameStateController } from '../../core/GameStateController';
 import type { DayManager } from '../DayManager';
 import type { Renderer } from '../../rendering/Renderer';
-import type { GameContext, IGameSystem } from '../../data/types';
-import { GameState } from '../../data/types';
+import type { GameContext } from '../../data/types';
 import { FlagKeys } from '../../core/FlagKeys';
-import { dataSubdirJsonUrl, TEXT_URLS } from '../../core/projectPaths';
-import type { WaterMinigameIndexEntry, WaterMinigameInstance } from './types';
+import { TEXT_URLS } from '../../core/projectPaths';
+import { MinigameSessionManagerBase } from '../minigameSession';
+import type { WaterMinigameInstance } from './types';
 import { WaterMinigameScene } from './WaterMinigameScene';
 
 /** 同日同 spot 累计开局超过此次数则剔除非 premium 实体 */
 const DAILY_SOFT_CAP = 3;
 
-export class WaterMinigameManager implements IGameSystem {
-  private assetManager!: AssetManager;
+export class WaterMinigameManager extends MinigameSessionManagerBase<
+  WaterMinigameInstance,
+  WaterMinigameScene,
+  void
+> {
+  protected readonly indexUrl = TEXT_URLS.waterMinigamesIndex;
+  protected readonly dataSubdir = 'water_minigames';
+  protected readonly scopePrefix = 'minigame:water';
+  protected readonly systemLabel = 'WaterMinigameManager';
+
   private flagStore!: FlagStore;
-  private actionExecutor!: ActionExecutor;
-  private renderer: Renderer | null = null;
-  private inputManager: InputManager | null = null;
-  private stateController: GameStateController | null = null;
+  private actionExecutor: ActionExecutor | null = null;
   private dayManager: DayManager | null = null;
-
-  private index: WaterMinigameIndexEntry[] = [];
-  private instanceCache = new Map<string, WaterMinigameInstance>();
-
-  private scene: WaterMinigameScene | null = null;
-  private activeScopeId: string | null = null;
-  private active = false;
-  private unsubKey: (() => void) | null = null;
-  private prevState = GameState.Exploring;
   private resolveTextFn: ((s: string) => string) | null = null;
 
-  private sessionResolve: (() => void) | null = null;
-  private onSessionEnd: (() => void) | null = null;
-  /** 当前局计数键（结束时 +1） */
+  /** 当前局计数键（场景成功加载后写入，结束时 +1；加载失败不计配额） */
   private pendingUseKey: string | null = null;
+  /** prepareInstance 计算、loadSceneContent 消费的本局降级标记 */
+  private sessionDegraded = false;
+  private sessionUseKey: string | null = null;
 
   /** `${spotId}|${day}` -> 已完成局数 */
   private usesBySpotDay = new Map<string, number>();
@@ -55,7 +51,7 @@ export class WaterMinigameManager implements IGameSystem {
   private boundPullWindowBlur: (() => void) | null = null;
 
   init(ctx: GameContext): void {
-    this.assetManager = ctx.assetManager;
+    super.init(ctx);
     this.flagStore = ctx.flagStore;
   }
 
@@ -75,10 +71,8 @@ export class WaterMinigameManager implements IGameSystem {
     this.resolveTextFn = deps.resolveDisplayText;
   }
 
-  update(dt: number): void {
-    if (!this.scene || !this.active || !this.inputManager) return;
-    const m = this.inputManager.getMousePos();
-    this.scene.update(dt, m);
+  protected runtimeReady(): boolean {
+    return super.runtimeReady() && !!this.actionExecutor && !!this.resolveTextFn;
   }
 
   serialize(): object {
@@ -86,6 +80,10 @@ export class WaterMinigameManager implements IGameSystem {
       usesBySpotDay: Object.fromEntries(this.usesBySpotDay),
       consumedPullEntities: [...this.consumedPullEntities],
     };
+  }
+
+  getDebugVisualState(): Record<string, unknown> {
+    return { active: this.active, scene: this.scene?.getDebugVisualState() ?? null };
   }
 
   deserialize(data: object): void {
@@ -98,71 +96,14 @@ export class WaterMinigameManager implements IGameSystem {
   }
 
   destroy(): void {
-    this.unsubKey?.();
-    this.unsubKey = null;
-    this.detachSessionPullSpaceBridge();
-    this.inputManager?.setGameKeyboardBlocked(false);
-    this.releaseActiveScope();
-    if (this.scene) {
-      if (this.scene.root.parent) {
-        this.scene.root.parent.removeChild(this.scene.root);
-      }
-      this.scene.destroy();
-      this.scene = null;
-    }
-    this.active = false;
+    // 整机拆除（HMR 等）不算「完成一局」：清掉配额待记键再走通用拆除
     this.pendingUseKey = null;
-    const rs = this.sessionResolve;
-    this.sessionResolve = null;
-    rs?.();
-
-    this.instanceCache.clear();
-    this.index = [];
+    this.detachSessionPullSpaceBridge();
+    super.destroy();
   }
 
-  setOnSessionEnd(fn: (() => void) | null): void {
-    this.onSessionEnd = fn;
-  }
-
-  async loadIndex(): Promise<void> {
-    try {
-      const raw = await this.assetManager.loadJson<WaterMinigameIndexEntry[]>(TEXT_URLS.waterMinigamesIndex);
-      this.index = Array.isArray(raw) ? raw : [];
-    } catch (e) {
-      console.warn('WaterMinigameManager: failed to load index', e);
-      this.index = [];
-    }
-  }
-
-  getInstanceList(): { id: string; label: string }[] {
-    return this.index.map((e) => ({ id: e.id, label: e.label }));
-  }
-
-  /** 过场 await：Esc / WaterPull abort 退出后 resolve */
-  runUntilDone(id: string): Promise<void> {
-    return new Promise<void>((resolve) => {
-      this.sessionResolve = resolve;
-      void this.start(id);
-    });
-  }
-
-  async start(id: string): Promise<void> {
-    if (!this.renderer || !this.inputManager || !this.stateController || !this.resolveTextFn) {
-      console.warn('WaterMinigameManager: runtime not bound');
-      this.sessionResolve?.();
-      this.sessionResolve = null;
-      return;
-    }
-    if (this.active) return;
-
-    const inst0 = await this.loadInstance(id);
-    if (!inst0) {
-      console.warn(`WaterMinigameManager: unknown instance "${id}"`);
-      this.sessionResolve?.();
-      this.sessionResolve = null;
-      return;
-    }
-
+  /** 已消费实体在开局时剔除；顺带计算当日配额降级。 */
+  protected prepareInstance(inst0: WaterMinigameInstance): WaterMinigameInstance {
     const inst: WaterMinigameInstance = {
       ...inst0,
       entities: inst0.entities.filter((e) => {
@@ -175,77 +116,54 @@ export class WaterMinigameManager implements IGameSystem {
     const dayRaw = this.dayManager?.currentDay ?? this.flagStore.get(FlagKeys.currentDay);
     const day = typeof dayRaw === 'number' && Number.isFinite(dayRaw) ? dayRaw : 1;
     const key = `${spot}|${day}`;
-    const uses = this.usesBySpotDay.get(key) ?? 0;
-    const degraded = uses >= DAILY_SOFT_CAP;
+    this.sessionUseKey = key;
+    this.sessionDegraded = (this.usesBySpotDay.get(key) ?? 0) >= DAILY_SOFT_CAP;
+    return inst;
+  }
 
-    this.pendingUseKey = key;
-    const scopeId = `minigame:water:${inst.id}`;
-    await this.assetManager.preloadManifest(
-      { scopeId, refs: this.buildInstanceManifestRefs(inst) },
-      { mode: 'stage', tolerateErrors: true },
-    );
-    this.activeScopeId = scopeId;
-
-    this.prevState = this.stateController.currentState;
-    this.stateController.setState(GameState.Minigame);
-    this.inputManager.setGameKeyboardBlocked(true);
-
-    this.active = true;
+  protected onSessionActive(_inst: WaterMinigameInstance): void {
     this.attachSessionPullSpaceBridge();
+  }
 
-    this.unsubKey = this.inputManager.subscribeKeyDown((e) => {
-      if (!this.active) return;
-      if (e.repeat) return;
-      if (e.code === 'Escape') {
-        e.preventDefault();
-        this.scene?.abort();
-      }
-    });
-
-    this.scene = new WaterMinigameScene(
-      this.renderer,
+  protected createScene(inst: WaterMinigameInstance): WaterMinigameScene {
+    return new WaterMinigameScene(
+      this.renderer!,
       this.assetManager,
-      this.actionExecutor,
-      this.resolveTextFn,
+      this.actionExecutor!,
+      this.resolveTextFn!,
       () =>
         this.sessionPullSpaceHeld
         || !!(this.inputManager?.isMouseDown()),
       () => this.teardownSession(),
       (_iid, eid) => this.markConsumed(inst.id, eid),
+      () => this.restoreMinigameStateAfterAction(),
     );
-
-    try {
-      await this.scene.load(inst, { degraded });
-    } catch (e) {
-      console.warn('WaterMinigameManager: scene load failed', e);
-      this.teardownSession();
-      return;
-    }
-
-    this.renderer.cutsceneOverlay.addChild(this.scene.root);
   }
 
-  private async loadInstance(id: string): Promise<WaterMinigameInstance | null> {
-    const cached = this.instanceCache.get(id);
-    if (cached) return cached;
-    const entry = this.index.find((x) => x.id === id);
-    if (!entry) return null;
-    try {
-      const path = dataSubdirJsonUrl('water_minigames', entry.file);
-      const data = await this.assetManager.loadJson<WaterMinigameInstance>(path);
-      this.instanceCache.set(id, data);
-      return data;
-    } catch (e) {
-      console.warn('WaterMinigameManager: load instance failed', id, e);
-      return null;
+  protected loadSceneContent(scene: WaterMinigameScene, inst: WaterMinigameInstance): Promise<void> {
+    return scene.load(inst, { degraded: this.sessionDegraded });
+  }
+
+  /** 每日配额只在场景成功加载后登记，加载失败的一局不占次数。 */
+  protected onSceneLoaded(_inst: WaterMinigameInstance): void {
+    this.pendingUseKey = this.sessionUseKey;
+  }
+
+  protected tickScene(scene: WaterMinigameScene, dt: number): void {
+    if (!this.inputManager) return;
+    scene.update(dt, this.inputManager.getMousePos());
+  }
+
+  protected onTeardown(): void {
+    this.detachSessionPullSpaceBridge();
+    if (this.pendingUseKey) {
+      const k = this.pendingUseKey;
+      this.pendingUseKey = null;
+      this.usesBySpotDay.set(k, (this.usesBySpotDay.get(k) ?? 0) + 1);
     }
   }
 
-  private markConsumed(instanceId: string, entityId: string): void {
-    this.consumedPullEntities.add(`${instanceId}::${entityId}`);
-  }
-
-  private buildInstanceManifestRefs(inst: WaterMinigameInstance): AssetRef[] {
+  protected buildInstanceManifestRefs(inst: WaterMinigameInstance): AssetRef[] {
     const refs: AssetRef[] = [];
     const addTexture = (path: string | undefined, label: string): void => {
       if (path?.trim()) refs.push({ type: 'texture', path, label });
@@ -260,15 +178,14 @@ export class WaterMinigameManager implements IGameSystem {
     return refs;
   }
 
-  private releaseActiveScope(): void {
-    if (!this.activeScopeId) return;
-    this.assetManager.releaseScope(this.activeScopeId);
-    this.activeScopeId = null;
+  private markConsumed(instanceId: string, entityId: string): void {
+    this.consumedPullEntities.add(`${instanceId}::${entityId}`);
   }
 
   private attachSessionPullSpaceBridge(): void {
     this.detachSessionPullSpaceBridge();
-    this.releaseActiveScope();
+    // 注意：不要在此释放资源 scope。本方法只负责（重）绑定空格/鼠标的拉拽监听；
+    // scope 的钉住贯穿整局，统一在 teardownSession/destroy 释放。
     this.sessionPullSpaceHeld = false;
 
     this.boundPullSpaceKeyDown = (e: KeyboardEvent) => {
@@ -303,44 +220,5 @@ export class WaterMinigameManager implements IGameSystem {
       this.boundPullWindowBlur = null;
     }
     this.sessionPullSpaceHeld = false;
-  }
-
-  private teardownSession(): void {
-    if (!this.active) return;
-
-    this.detachSessionPullSpaceBridge();
-
-    const hadScene = !!this.scene;
-
-    this.unsubKey?.();
-    this.unsubKey = null;
-    this.inputManager?.setGameKeyboardBlocked(false);
-
-    if (hadScene && this.pendingUseKey) {
-      const k = this.pendingUseKey;
-      this.pendingUseKey = null;
-      this.usesBySpotDay.set(k, (this.usesBySpotDay.get(k) ?? 0) + 1);
-    } else {
-      this.pendingUseKey = null;
-    }
-
-    if (this.scene) {
-      if (this.scene.root.parent) {
-        this.scene.root.parent.removeChild(this.scene.root);
-      }
-      this.scene.destroy();
-      this.scene = null;
-    }
-
-    this.active = false;
-    if (this.stateController) {
-      this.stateController.setState(this.prevState);
-    }
-
-    const rs = this.sessionResolve;
-    this.sessionResolve = null;
-    rs?.();
-
-    this.onSessionEnd?.();
   }
 }

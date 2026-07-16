@@ -1,7 +1,12 @@
 import type { FlagValue } from './FlagStore';
+import type { ActionDef } from '../data/types';
 
 export type RuntimeCommand =
   | { id?: unknown; type: 'captureSnapshot'; reason?: unknown }
+  | { id?: unknown; type: 'debugClearEventTrace'; reason?: unknown }
+  | { id?: unknown; type: 'debugExecuteAction'; action?: unknown; reason?: unknown }
+  | { id?: unknown; type: 'debugSetFixedTickMode'; enabled?: unknown; reason?: unknown }
+  | { id?: unknown; type: 'debugStepTicks'; ticks?: unknown; dtMs?: unknown; reason?: unknown }
   | { id?: unknown; type: 'clearNarrativeTrace'; reason?: unknown }
   | {
       id?: unknown;
@@ -63,7 +68,15 @@ export type RuntimeCommand =
     }
   | { id?: unknown; type: 'debugSaveGame'; slot?: unknown; reason?: unknown }
   | { id?: unknown; type: 'debugLoadGame'; slot?: unknown; reason?: unknown }
-  | { id?: unknown; type: 'debugReloadScene'; sceneId?: unknown; reason?: unknown };
+  | { id?: unknown; type: 'debugReloadScene'; sceneId?: unknown; reason?: unknown }
+  | { id?: unknown; type: 'playerInteract'; reason?: unknown }
+  | { id?: unknown; type: 'playerAdvance'; reason?: unknown }
+  | { id?: unknown; type: 'playerChoose'; index?: unknown; reason?: unknown }
+  | { id?: unknown; type: 'playerMoveTo'; x?: unknown; y?: unknown; reason?: unknown }
+  | { id?: unknown; type: 'playerTap'; reason?: unknown }
+  | { id?: unknown; type: 'setPlayerCollisions'; enabled?: unknown; reason?: unknown }
+  | { id?: unknown; type: 'activatePlane'; planeId?: unknown; reason?: unknown }
+  | { id?: unknown; type: 'deactivatePlane'; reason?: unknown };
 
 export type RuntimeCommandResult = {
   id: string;
@@ -74,6 +87,10 @@ export type RuntimeCommandResult = {
 
 export type RuntimeCommandDeps = {
   captureSnapshot(reason: string): void | Promise<void>;
+  clearEventTrace(): void;
+  debugExecuteAction(action: ActionDef): Promise<void>;
+  debugSetFixedTickMode(enabled: boolean): void;
+  debugStepTicks(ticks: number, dtMs: number): void | Promise<void>;
   clearNarrativeTrace(): void;
   emitNarrativeSignal(signal: { sourceType: string; sourceId: string; signal: string }): Promise<void>;
   debugSetNarrativeState(graphId: string, stateId: string): Promise<void>;
@@ -102,13 +119,25 @@ export type RuntimeCommandDeps = {
   debugTriggerHotspot(hotspotId: string): Promise<boolean>;
   debugInteractNpc(npcId: string): Promise<boolean>;
   debugWait(durationMs: number): Promise<void>;
-  debugSetPlayerPosition(x: number, y: number, snapCamera: boolean): void;
+  debugSetPlayerPosition(x: number, y: number, snapCamera: boolean): void | Promise<void>;
   debugMovePlayerTo(x: number, y: number, speed: number, snapCamera: boolean): Promise<void>;
   debugClick(x: number, y: number): Promise<void>;
   debugDrag(fromX: number, fromY: number, toX: number, toY: number, durationMs: number): Promise<void>;
-  debugSaveGame(slot: number): void;
+  debugSaveGame(slot: number): boolean;
   debugLoadGame(slot: number): Promise<boolean>;
   debugReloadScene(sceneId?: string): Promise<void>;
+  // 玩家输入：同步注入到真实输入路径、即发即走（不 await 游戏逻辑，理论上不会卡死游戏）
+  playerInteract(): void;
+  playerAdvance(): void;
+  playerChoose(index: number): void;
+  playerMoveTo(x: number, y: number): void;
+  playerTap(): void;
+  // 测试用环境开关：关碰撞让玩家直线走到任意 NPC（不推任何叙事状态，非作弊）
+  setPlayerCollisions(enabled: boolean): void;
+  // 位面（PlaneReconciler）：手动覆盖激活位面 / 清覆盖回叙事点名（与同名 action 同语义）。
+  // activatePlane 返回是否生效（false = id 空/未注册被拒），命令结果据此如实回报。
+  activatePlane(planeId: string): boolean;
+  deactivatePlane(): void;
 };
 
 export async function applyDevRuntimeCommand(
@@ -123,6 +152,39 @@ export async function applyDevRuntimeCommand(
       case 'captureSnapshot': {
         await deps.captureSnapshot(optionalString(command.reason) || 'runtime-command:captureSnapshot');
         return ok(id, type, 'snapshot captured');
+      }
+      case 'debugClearEventTrace': {
+        deps.clearEventTrace();
+        await deps.captureSnapshot(optionalString(command.reason) || 'runtime-command:debugClearEventTrace');
+        return ok(id, type, 'event trace cleared');
+      }
+      case 'debugExecuteAction': {
+        if (!command.action || typeof command.action !== 'object' || Array.isArray(command.action)) {
+          throw new Error('runtime command action must be an object');
+        }
+        const action = command.action as Record<string, unknown>;
+        if (typeof action.type !== 'string' || !action.type.trim()) {
+          throw new Error('runtime command action missing type');
+        }
+        const params = action.params && typeof action.params === 'object' && !Array.isArray(action.params)
+          ? action.params as Record<string, unknown>
+          : {};
+        await deps.debugExecuteAction({ type: action.type.trim(), params } as ActionDef);
+        await deps.captureSnapshot(optionalString(command.reason) || 'runtime-command:debugExecuteAction');
+        return ok(id, type, `action executed: ${action.type.trim()}`);
+      }
+      case 'debugSetFixedTickMode': {
+        const enabled = coerceBool(command.enabled, true);
+        deps.debugSetFixedTickMode(enabled);
+        await deps.captureSnapshot(optionalString(command.reason) || 'runtime-command:debugSetFixedTickMode');
+        return ok(id, type, `fixed tick mode ${enabled ? 'enabled' : 'disabled'}`);
+      }
+      case 'debugStepTicks': {
+        const ticks = coercePositiveInt(command.ticks, 1);
+        const dtMs = Math.min(100, coercePositiveNumber(command.dtMs, 1000 / 60));
+        await deps.debugStepTicks(ticks, dtMs);
+        await deps.captureSnapshot(optionalString(command.reason) || 'runtime-command:debugStepTicks');
+        return ok(id, type, `stepped ${ticks} fixed tick(s) at ${dtMs}ms`);
       }
       case 'clearNarrativeTrace': {
         deps.clearNarrativeTrace();
@@ -253,7 +315,7 @@ export async function applyDevRuntimeCommand(
         return ok(id, type, 'waited for debug');
       }
       case 'debugSetPlayerPosition': {
-        deps.debugSetPlayerPosition(
+        await deps.debugSetPlayerPosition(
           coerceFiniteNumber(command.x, 'x'),
           coerceFiniteNumber(command.y, 'y'),
           coerceBool(command.snapCamera, true),
@@ -292,7 +354,9 @@ export async function applyDevRuntimeCommand(
       }
       case 'debugSaveGame': {
         const slot = coerceSaveSlot(command.slot, 2);
-        deps.debugSaveGame(slot);
+        if (!deps.debugSaveGame(slot)) {
+          throw new Error(`save slot failed to write: ${slot}`);
+        }
         await deps.captureSnapshot(optionalString(command.reason) || `runtime-command:debugSaveGame:${slot}`);
         return ok(id, type, `game saved to slot ${slot}`);
       }
@@ -309,6 +373,57 @@ export async function applyDevRuntimeCommand(
         await deps.debugReloadScene(optionalString(command.sceneId) || undefined);
         await deps.captureSnapshot(optionalString(command.reason) || 'runtime-command:debugReloadScene');
         return ok(id, type, 'scene reloaded for debug');
+      }
+      // ---- 玩家输入命令：同步注入真实输入路径、即发即走，不 await 游戏逻辑 ----
+      case 'playerInteract': {
+        deps.playerInteract();
+        await deps.captureSnapshot('runtime-command:playerInteract');
+        return ok(id, type, 'player interact (E) injected');
+      }
+      case 'playerAdvance': {
+        deps.playerAdvance();
+        await deps.captureSnapshot('runtime-command:playerAdvance');
+        return ok(id, type, 'player advance injected');
+      }
+      case 'playerChoose': {
+        const idx = Math.trunc(Number(command.index));
+        if (!Number.isFinite(idx) || idx < 0) throw new Error('index must be a non-negative number');
+        deps.playerChoose(idx);
+        await deps.captureSnapshot('runtime-command:playerChoose');
+        return ok(id, type, `player choose option ${idx} injected`);
+      }
+      case 'playerMoveTo': {
+        const x = Number(command.x);
+        const y = Number(command.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error('x and y must be numbers');
+        deps.playerMoveTo(x, y);
+        await deps.captureSnapshot('runtime-command:playerMoveTo');
+        return ok(id, type, 'player move target set');
+      }
+      case 'playerTap': {
+        deps.playerTap();
+        await deps.captureSnapshot('runtime-command:playerTap');
+        return ok(id, type, 'player tap (click/continue) injected');
+      }
+      case 'setPlayerCollisions': {
+        const enabled = command.enabled !== false; // 默认开；显式 false 关碰撞（noclip，测试用）
+        deps.setPlayerCollisions(enabled);
+        await deps.captureSnapshot('runtime-command:setPlayerCollisions');
+        return ok(id, type, `player collisions ${enabled ? 'enabled' : 'disabled (noclip)'}`);
+      }
+      case 'activatePlane': {
+        const planeId = requiredString(command.planeId, 'planeId');
+        const applied = deps.activatePlane(planeId);
+        await deps.captureSnapshot(optionalString(command.reason) || 'runtime-command:activatePlane');
+        if (!applied) {
+          return { id, type, ok: false, message: `plane rejected（未注册/无效 id）: ${planeId}` };
+        }
+        return ok(id, type, `plane manual override set: ${planeId}`);
+      }
+      case 'deactivatePlane': {
+        deps.deactivatePlane();
+        await deps.captureSnapshot(optionalString(command.reason) || 'runtime-command:deactivatePlane');
+        return ok(id, type, 'plane manual override cleared');
       }
       default:
         return {

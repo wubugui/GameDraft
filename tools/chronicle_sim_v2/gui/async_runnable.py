@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QProgressDialog
 
 
 def close_qprogress_safely(progress: QProgressDialog) -> None:
-    """程序化 reset/close 时暂时屏蔽信号，避免误触发 canceled（部分 Qt/Windows 组合会如此）。"""
+    """程序化 reset/close 时暂时屏蔽信号，避免误触发 canceled。"""
     progress.blockSignals(True)
     try:
         progress.reset()

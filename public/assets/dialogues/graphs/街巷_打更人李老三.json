@@ -13,7 +13,10 @@
         "kind": "npc"
       },
       "next": "",
-      "text": "莫闹，睡瞌睡。"
+      "text": "莫闹，睡瞌睡。",
+      "portrait": {
+        "emotion": "calm"
+      }
     }
   }
 }

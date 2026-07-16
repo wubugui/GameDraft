@@ -11,58 +11,351 @@
       "cases": [
         {
           "conditions": [
-            { "narrative": "scenario_义庄镇尸", "state": "all_done", "reached": true }
+            {
+              "narrative": "flow_背尸_零工活",
+              "state": "placed"
+            }
+          ],
+          "next": "lg_settle_1"
+        },
+        {
+          "conditions": [
+            {
+              "narrative": "flow_背尸_零工活",
+              "state": "carrying"
+            }
+          ],
+          "next": "lg_point"
+        },
+        {
+          "conditions": [
+            {
+              "narrative": "flow_背尸_淹尸活",
+              "state": "placed"
+            }
+          ],
+          "next": "js_check"
+        },
+        {
+          "conditions": [
+            {
+              "narrative": "flow_背尸_淹尸活",
+              "state": "carrying"
+            }
+          ],
+          "next": "jiaoshi_point"
+        },
+        {
+          "conditions": [
+            {
+              "narrative": "scenario_义庄镇尸",
+              "state": "all_done",
+              "reached": true
+            }
           ],
           "next": "after_1"
         },
         {
           "conditions": [
-            { "narrative": "scenario_义庄镇尸", "state": "in_progress", "reached": true }
+            {
+              "narrative": "scenario_义庄镇尸",
+              "state": "in_progress",
+              "reached": true
+            }
           ],
           "next": "mid_1"
+        },
+        {
+          "conditions": [
+            {
+              "narrative": "scenario_义庄镇尸",
+              "state": "not_entered"
+            }
+          ],
+          "next": "keeper_daily"
         }
       ],
       "defaultNext": "n1"
     },
     "after_1": {
       "type": "line",
-      "speaker": { "kind": "npc" },
-      "text": "躺、躺平了……真躺平了！先生！您这手段，比城里请的先生还硬！（往他手里塞钱，塞得很实）",
-      "next": "after_2"
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "躺、躺平了……真个躺平了！先生！你这手段，比城里头请的先生还要硬扎！（往他手里头塞钱，塞得嘿实在）",
+      "next": "after_2",
+      "portrait": {
+        "emotion": "laugh"
+      }
     },
     "after_2": {
       "type": "runActions",
       "actions": [
-        { "type": "giveCurrency", "params": { "amount": 50 } }
+        {
+          "type": "giveCurrency",
+          "params": {
+            "amount": 50
+          }
+        }
       ],
       "next": "after_3"
     },
     "after_3": {
       "type": "line",
-      "speaker": { "kind": "literal", "name": "旁白" },
-      "text": "管事只给一次钱，但谢能谢八遍。第三遍起，关二狗已经在想别的事了——刚才那一下，到底是哪样压住的？",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "管事只给一回钱，但谢能谢八遍。第三遍起，关二狗已经在想别的事了——刚才那一下，到底是哪样压住的？",
       "next": "end1"
     },
     "mid_1": {
       "type": "line",
-      "speaker": { "kind": "npc" },
-      "text": "（贴着门框，半个身子在门外）先、先生您接着来！小的在这儿……在这儿给您把门！",
-      "next": "end1"
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "（贴着门框，半个身子杵在门外头）先、先生你接到来！小的在这点……在这点给你守起门！",
+      "next": "end1",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "n1": {
       "type": "line",
-      "speaker": { "kind": "npc" },
-      "text": "就、就是它们俩……老爷子是寄停的，等吉日下葬；外乡那具是船运来的，等家里人认领。昨儿夜里还好好的躺着！",
-      "next": "n2"
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "就、就是它们两个……老爷子是寄停在这点的，等吉日下葬；外乡那具是船运来的，等屋头人来认领。昨晚上都还好生生躺起的！",
+      "next": "n2",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "n2": {
       "type": "line",
-      "speaker": { "kind": "npc" },
-      "text": "您要使什么物件，供桌上都有——米、墨斗、剪子，石子儿外头地上有的是。小的就不近前了！",
-      "next": "end1"
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "你要使啥子物件，供桌上头都有——米、墨斗、剪子，石头子外头地上多得很。小的就不上前了！",
+      "next": "end1",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "end1": {
       "type": "end"
+    },
+    "jiaoshi_1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "管事掀开苇席角，从头到脚扫了一遍，又扫了一遍。",
+      "next": "jiaoshi_2"
+    },
+    "jiaoshi_2": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "泡了两日往上，水腥都闷出来了。……手脚倒稳当，没蹭没磕，油布包也没人动过。要得。",
+      "next": "jiaoshi_put",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "jiaoshi_put": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_管事义庄内",
+            "signal": "beishi_yan_delivered"
+          }
+        },
+        {
+          "type": "giveCurrency",
+          "params": {
+            "amount": 8
+          }
+        },
+        {
+          "type": "grantRuleLayer",
+          "params": {
+            "ruleId": "rule_drowned_corpse",
+            "layer": "xiang"
+          }
+        }
+      ],
+      "next": "jiaoshi_3"
+    },
+    "jiaoshi_3": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "八枚铜钱拍在掌心，一枚不少。管事数钱的手比说话麻利得多。",
+      "next": "jiaoshi_4"
+    },
+    "jiaoshi_4": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "记到：淹死的水汽阴沉，上肩就往水那头坠。背起走道，一莫沿水边，二莫蹚积水——街心那摊子雨水塘塘，你蹚没蹚，你脚杆自家晓得。",
+      "next": "jiaoshi_end",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "jiaoshi_end": {
+      "type": "end"
+    },
+    "keeper_daily": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "义庄重地，生人莫乱走。有正事说正事，没得事就出切。",
+      "next": "jiaoshi_end",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "jiaoshi_point": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "淹的嗦？莫往我跟前杵！那边空凳上切——轻些放，脚朝门，头朝里，莫放反了。",
+      "next": "jiaoshi_end",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "js_check": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "flag": "淹尸_动了死人的东西",
+              "op": "==",
+              "value": true
+            }
+          ],
+          "next": "jz_1"
+        }
+      ],
+      "defaultNext": "jiaoshi_1"
+    },
+    "jz_1": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "（掀开苇席角，目光在腰上停了一停）……腰杆上咋个有圈新勒痕喃？油布缠的印子还在，包倒莫得了。",
+      "next": "jz_2",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "jz_2": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "钱，八文，少不得你的——我不是官面，不管这些。门道嘛，本想顺嘴点你两句……你这号手脚，自家悟切。",
+      "next": "jz_put",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "jz_put": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_管事义庄内",
+            "signal": "beishi_yan_delivered"
+          }
+        },
+        {
+          "type": "giveCurrency",
+          "params": {
+            "amount": 8
+          }
+        }
+      ],
+      "next": "jz_3"
+    },
+    "jz_3": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "八文到手。管事没再多说一个字，转身去拾掇苇席——那点没说出口的门道，比四文私钱值钱得多。",
+      "next": "jiaoshi_end"
+    },
+    "lg_point": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "拉来的嗦？莫杵到门口——那边空凳上切。轻些放，脚朝门，头朝里，莫放反了。",
+      "next": "jiaoshi_end",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "lg_settle_1": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "（掀开苇席角扫了一眼）路倒的？眉眼周正，没伤没破，走得干净。要得。",
+      "next": "lg_settle_2",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "lg_settle_2": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_管事义庄内",
+            "signal": "beishi_lg_delivered"
+          }
+        },
+        {
+          "type": "giveCurrency",
+          "params": {
+            "amount": 5
+          }
+        }
+      ],
+      "next": "lg_settle_3"
+    },
+    "lg_settle_3": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "五文，拿好。手脚利索，改日有活还寻你。——记到：背死人子，稳当比快当值钱。",
+      "next": "jiaoshi_end",
+      "portrait": {
+        "emotion": "calm"
+      }
     }
   }
 }

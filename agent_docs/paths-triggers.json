@@ -1,0 +1,706 @@
+{
+  "_comment": "生成文件,禁止手写。glob→必读文档id;查询:改动文件命中 glob 即应先读对应卡。",
+  "map": [
+    {
+      "glob": "public/assets/animations/**",
+      "docs": [
+        "asset-pipeline-norms"
+      ]
+    },
+    {
+      "glob": "public/assets/cutscenes/**",
+      "docs": [
+        "content-norms"
+      ]
+    },
+    {
+      "glob": "public/assets/data/**",
+      "docs": [
+        "content-expression-channels",
+        "content-norms",
+        "content-validation-gate",
+        "editor-roundtrip-contract",
+        "production-mode-workflow"
+      ]
+    },
+    {
+      "glob": "public/assets/data/audio_config.json",
+      "docs": [
+        "sfx-external-sourcing"
+      ]
+    },
+    {
+      "glob": "public/assets/data/books.json",
+      "docs": [
+        "archive-unlock-semantics"
+      ]
+    },
+    {
+      "glob": "public/assets/data/character_registry.json",
+      "docs": [
+        "character-registry"
+      ]
+    },
+    {
+      "glob": "public/assets/data/characters.json",
+      "docs": [
+        "archive-unlock-semantics"
+      ]
+    },
+    {
+      "glob": "public/assets/data/cutscenes*",
+      "docs": [
+        "cutscene-step-semantics"
+      ]
+    },
+    {
+      "glob": "public/assets/data/encounters.json",
+      "docs": [
+        "narrative-flow-authoring"
+      ]
+    },
+    {
+      "glob": "public/assets/data/narrative_graphs.json",
+      "docs": [
+        "narrative-flow-authoring",
+        "narrative-signal-spine",
+        "narrative-state-editor",
+        "wire-demo-beat"
+      ]
+    },
+    {
+      "glob": "public/assets/data/narrative_templates.json",
+      "docs": [
+        "narrative-template-system"
+      ]
+    },
+    {
+      "glob": "public/assets/data/overlay_images.json",
+      "docs": [
+        "overlay-image-handle-semantics"
+      ]
+    },
+    {
+      "glob": "public/assets/data/parallax_scenes.json",
+      "docs": [
+        "parallax-layer-assembly",
+        "parallax-scene-runtime"
+      ]
+    },
+    {
+      "glob": "public/assets/data/planes.json",
+      "docs": [
+        "plane-editor-slot-inheritance",
+        "plane-system"
+      ]
+    },
+    {
+      "glob": "public/assets/data/quests.json",
+      "docs": [
+        "narrative-flow-authoring",
+        "narrative-signal-spine",
+        "wire-demo-beat"
+      ]
+    },
+    {
+      "glob": "public/assets/data/scenarios.json",
+      "docs": [
+        "scenario-catalog-semantics",
+        "wire-demo-beat"
+      ]
+    },
+    {
+      "glob": "public/assets/data/smell_profiles.json",
+      "docs": [
+        "smell-system"
+      ]
+    },
+    {
+      "glob": "public/assets/data/strings.json",
+      "docs": [
+        "chongqing-dialect-voice"
+      ]
+    },
+    {
+      "glob": "public/assets/dialogues/**",
+      "docs": [
+        "content-norms"
+      ]
+    },
+    {
+      "glob": "public/assets/dialogues/graphs/*",
+      "docs": [
+        "dialogue-graph-editor"
+      ]
+    },
+    {
+      "glob": "public/assets/dialogues/graphs/**",
+      "docs": [
+        "narrative-signal-spine"
+      ]
+    },
+    {
+      "glob": "public/assets/dialogues/graphs/*.json",
+      "docs": [
+        "chongqing-dialect-voice",
+        "content-expression-channels",
+        "content-validation-gate",
+        "editor-roundtrip-contract",
+        "production-mode-workflow"
+      ]
+    },
+    {
+      "glob": "public/assets/scenes/**",
+      "docs": [
+        "content-norms",
+        "entity-refactor-engine"
+      ]
+    },
+    {
+      "glob": "public/assets/scenes/*.json",
+      "docs": [
+        "baked-figure-activation",
+        "content-expression-channels",
+        "content-validation-gate",
+        "editor-roundtrip-contract",
+        "narrative-flow-authoring",
+        "production-mode-workflow"
+      ]
+    },
+    {
+      "glob": "public/resources/**",
+      "docs": [
+        "asset-pipeline-norms"
+      ]
+    },
+    {
+      "glob": "public/resources/runtime/animation/**",
+      "docs": [
+        "character-animation-production",
+        "sprite-atlas-anim-contract"
+      ]
+    },
+    {
+      "glob": "public/resources/runtime/audio/**",
+      "docs": [
+        "sfx-external-sourcing"
+      ]
+    },
+    {
+      "glob": "public/resources/runtime/images/dialogue_portraits/**",
+      "docs": [
+        "dialogue-portrait-pipeline",
+        "dialogue-portrait-runtime"
+      ]
+    },
+    {
+      "glob": "public/resources/runtime/images/parallax/**",
+      "docs": [
+        "parallax-layer-assembly"
+      ]
+    },
+    {
+      "glob": "src/**",
+      "docs": [
+        "runtime-norms"
+      ]
+    },
+    {
+      "glob": "src/core/ActionExecutor.ts",
+      "docs": [
+        "zone-lifecycle-contracts"
+      ]
+    },
+    {
+      "glob": "src/core/ActionRegistry.ts",
+      "docs": [
+        "action-registration-quadruple",
+        "l2-action-primitive-registration"
+      ]
+    },
+    {
+      "glob": "src/core/GameStateController.ts",
+      "docs": [
+        "dialogue-end-payload"
+      ]
+    },
+    {
+      "glob": "src/core/NarrativeStateManager.ts",
+      "docs": [
+        "narrative-signal-spine",
+        "save-restore-contracts"
+      ]
+    },
+    {
+      "glob": "src/core/SaveManager.ts",
+      "docs": [
+        "save-restore-contracts"
+      ]
+    },
+    {
+      "glob": "src/core/ScenarioStateManager.ts",
+      "docs": [
+        "scenario-catalog-semantics"
+      ]
+    },
+    {
+      "glob": "src/core/actionParamManifest.ts",
+      "docs": [
+        "action-param-schemas-vs-required",
+        "action-registration-quadruple"
+      ]
+    },
+    {
+      "glob": "src/core/devRuntimeCommands.ts",
+      "docs": [
+        "runtime-command-channel"
+      ]
+    },
+    {
+      "glob": "src/core/resolveText.ts",
+      "docs": [
+        "text-ref-tag-system"
+      ]
+    },
+    {
+      "glob": "src/data/characterRegistry.ts",
+      "docs": [
+        "character-registry"
+      ]
+    },
+    {
+      "glob": "src/entities/Hotspot.ts",
+      "docs": [
+        "entity-visibility-channels"
+      ]
+    },
+    {
+      "glob": "src/entities/Npc.ts",
+      "docs": [
+        "entity-visibility-channels"
+      ]
+    },
+    {
+      "glob": "src/main.ts",
+      "docs": [
+        "start-gate-audio-unlock"
+      ]
+    },
+    {
+      "glob": "src/rendering/*Shadow*",
+      "docs": [
+        "entity-lighting"
+      ]
+    },
+    {
+      "glob": "src/rendering/CutsceneRenderer.ts",
+      "docs": [
+        "cutscene-step-semantics",
+        "parallax-scene-runtime"
+      ]
+    },
+    {
+      "glob": "src/rendering/EntityLightingFilter.ts",
+      "docs": [
+        "entity-lighting"
+      ]
+    },
+    {
+      "glob": "src/rendering/Renderer.ts",
+      "docs": [
+        "scene-onenter-reveal-timing"
+      ]
+    },
+    {
+      "glob": "src/rendering/lightEnv*",
+      "docs": [
+        "entity-lighting"
+      ]
+    },
+    {
+      "glob": "src/systems/*Minigame*",
+      "docs": [
+        "minigame-session-lifecycle"
+      ]
+    },
+    {
+      "glob": "src/systems/ArchiveManager.ts",
+      "docs": [
+        "archive-unlock-semantics"
+      ]
+    },
+    {
+      "glob": "src/systems/AudioManager.ts",
+      "docs": [
+        "cutscene-audio-reclamation",
+        "start-gate-audio-unlock"
+      ]
+    },
+    {
+      "glob": "src/systems/CutsceneManager.ts",
+      "docs": [
+        "cutscene-audio-reclamation",
+        "cutscene-step-semantics"
+      ]
+    },
+    {
+      "glob": "src/systems/DocumentRevealManager.ts",
+      "docs": [
+        "overlay-image-handle-semantics"
+      ]
+    },
+    {
+      "glob": "src/systems/GraphDialogueManager.ts",
+      "docs": [
+        "dialogue-end-payload",
+        "dialogue-portrait-runtime"
+      ]
+    },
+    {
+      "glob": "src/systems/InteractionSystem.ts",
+      "docs": [
+        "entity-visibility-channels"
+      ]
+    },
+    {
+      "glob": "src/systems/InventoryManager.ts",
+      "docs": [
+        "inventory-capacity-critical"
+      ]
+    },
+    {
+      "glob": "src/systems/PlaneReconciler*",
+      "docs": [
+        "plane-system"
+      ]
+    },
+    {
+      "glob": "src/systems/SceneManager.ts",
+      "docs": [
+        "scene-onenter-reveal-timing"
+      ]
+    },
+    {
+      "glob": "src/systems/SmellSystem.ts",
+      "docs": [
+        "smell-system"
+      ]
+    },
+    {
+      "glob": "src/systems/ZoneSystem.ts",
+      "docs": [
+        "save-restore-contracts",
+        "zone-lifecycle-contracts"
+      ]
+    },
+    {
+      "glob": "src/systems/minigameSession.ts",
+      "docs": [
+        "minigame-session-lifecycle"
+      ]
+    },
+    {
+      "glob": "src/systems/plane/**",
+      "docs": [
+        "plane-system"
+      ]
+    },
+    {
+      "glob": "src/ui/**",
+      "docs": [
+        "debug-ui-persistence"
+      ]
+    },
+    {
+      "glob": "src/ui/*UI.ts",
+      "docs": [
+        "ui-panel-skin"
+      ]
+    },
+    {
+      "glob": "src/ui/DialogueUI.ts",
+      "docs": [
+        "dialogue-portrait-runtime"
+      ]
+    },
+    {
+      "glob": "src/ui/InventoryUI.ts",
+      "docs": [
+        "inventory-capacity-critical"
+      ]
+    },
+    {
+      "glob": "src/ui/PanelSkin.ts",
+      "docs": [
+        "ui-panel-skin"
+      ]
+    },
+    {
+      "glob": "src/ui/UITheme.ts",
+      "docs": [
+        "ui-panel-skin"
+      ]
+    },
+    {
+      "glob": "src/ui/smell/**",
+      "docs": [
+        "smell-system"
+      ]
+    },
+    {
+      "glob": "tools/anim_preview/**",
+      "docs": [
+        "anim-preview-tool",
+        "asset-pipeline-norms"
+      ]
+    },
+    {
+      "glob": "tools/animation_pipeline/**",
+      "docs": [
+        "animation-pipeline",
+        "asset-pipeline-norms",
+        "character-animation-production",
+        "sprite-atlas-anim-contract"
+      ]
+    },
+    {
+      "glob": "tools/animation_pipeline/ambient_fx/**",
+      "docs": [
+        "ambient-fx-production",
+        "baked-figure-activation"
+      ]
+    },
+    {
+      "glob": "tools/animation_pipeline/matte_illustration.py",
+      "docs": [
+        "matting-toolbox"
+      ]
+    },
+    {
+      "glob": "tools/animation_pipeline/matting.py",
+      "docs": [
+        "matting-toolbox"
+      ]
+    },
+    {
+      "glob": "tools/dialogue_graph_editor/*",
+      "docs": [
+        "dialogue-graph-editor",
+        "editor-change-verification-gate"
+      ]
+    },
+    {
+      "glob": "tools/dialogue_graph_editor/**",
+      "docs": [
+        "editor-tools-norms"
+      ]
+    },
+    {
+      "glob": "tools/dialogue_portrait_pipeline.py",
+      "docs": [
+        "dialogue-portrait-pipeline",
+        "matting-toolbox"
+      ]
+    },
+    {
+      "glob": "tools/editor/*",
+      "docs": [
+        "editor-change-verification-gate"
+      ]
+    },
+    {
+      "glob": "tools/editor/**",
+      "docs": [
+        "editor-tools-norms"
+      ]
+    },
+    {
+      "glob": "tools/editor/editors/*",
+      "docs": [
+        "close-path-flush-discard",
+        "editor-data-sync-paradigm",
+        "mainwindow-editor-hooks"
+      ]
+    },
+    {
+      "glob": "tools/editor/editors/anim_editor.py",
+      "docs": [
+        "numeric-roundtrip-fidelity"
+      ]
+    },
+    {
+      "glob": "tools/editor/editors/atmosphere_script_editor.py",
+      "docs": [
+        "atmosphere-script-editor"
+      ]
+    },
+    {
+      "glob": "tools/editor/editors/character_registry_editor.py",
+      "docs": [
+        "character-registry"
+      ]
+    },
+    {
+      "glob": "tools/editor/editors/dialogue_graph_editor_tab.py",
+      "docs": [
+        "dialogue-graph-editor"
+      ]
+    },
+    {
+      "glob": "tools/editor/editors/narrative_state_editor.py",
+      "docs": [
+        "narrative-state-editor"
+      ]
+    },
+    {
+      "glob": "tools/editor/editors/plane_editor.py",
+      "docs": [
+        "plane-editor-slot-inheritance"
+      ]
+    },
+    {
+      "glob": "tools/editor/editors/sugar_wheel_editor.py",
+      "docs": [
+        "atmosphere-script-editor"
+      ]
+    },
+    {
+      "glob": "tools/editor/editors/timeline_editor.py",
+      "docs": [
+        "numeric-roundtrip-fidelity",
+        "timeline-editor-contracts"
+      ]
+    },
+    {
+      "glob": "tools/editor/file_io.py",
+      "docs": [
+        "save-all-dirty-buckets"
+      ]
+    },
+    {
+      "glob": "tools/editor/main_window.py",
+      "docs": [
+        "close-path-flush-discard",
+        "mainwindow-editor-hooks"
+      ]
+    },
+    {
+      "glob": "tools/editor/project_model.py",
+      "docs": [
+        "save-all-dirty-buckets"
+      ]
+    },
+    {
+      "glob": "tools/editor/shared/action_editor.py",
+      "docs": [
+        "action-param-schemas-vs-required",
+        "action-registration-quadruple",
+        "l2-action-primitive-registration",
+        "numeric-roundtrip-fidelity",
+        "shared-widget-value-fidelity"
+      ]
+    },
+    {
+      "glob": "tools/editor/shared/entity_refactor.py",
+      "docs": [
+        "action-registration-quadruple",
+        "entity-refactor-engine"
+      ]
+    },
+    {
+      "glob": "tools/editor/shared/id_ref_selector.py",
+      "docs": [
+        "shared-widget-value-fidelity"
+      ]
+    },
+    {
+      "glob": "tools/editor/shared/lsp_client.py",
+      "docs": [
+        "json-lang-schema-tooling"
+      ]
+    },
+    {
+      "glob": "tools/editor/shared/narrative_catalog.py",
+      "docs": [
+        "emitted-signal-catalog"
+      ]
+    },
+    {
+      "glob": "tools/editor/shared/narrative_templates.py",
+      "docs": [
+        "narrative-template-system"
+      ]
+    },
+    {
+      "glob": "tools/editor/shared/numeric_roundtrip.py",
+      "docs": [
+        "numeric-roundtrip-fidelity"
+      ]
+    },
+    {
+      "glob": "tools/editor/shared/qt_combo_wheel_guard.py",
+      "docs": [
+        "shared-widget-value-fidelity"
+      ]
+    },
+    {
+      "glob": "tools/editor/shared/rich_text_field.py",
+      "docs": [
+        "text-ref-tag-system"
+      ]
+    },
+    {
+      "glob": "tools/json_lang/**",
+      "docs": [
+        "json-lang-schema-tooling"
+      ]
+    },
+    {
+      "glob": "tools/narrative_editor/**",
+      "docs": [
+        "editor-tools-norms"
+      ]
+    },
+    {
+      "glob": "tools/narrative_editor_web/*",
+      "docs": [
+        "editor-change-verification-gate",
+        "narrative-state-editor",
+        "narrative-template-system"
+      ]
+    },
+    {
+      "glob": "tools/narrative_editor_web/**",
+      "docs": [
+        "emitted-signal-catalog"
+      ]
+    },
+    {
+      "glob": "tools/narrative_editor_web/src/bridge.ts",
+      "docs": [
+        "debug-ui-persistence"
+      ]
+    },
+    {
+      "glob": "tools/parallax_editor/**",
+      "docs": [
+        "editor-tools-norms",
+        "parallax-layer-assembly",
+        "parallax-scene-runtime"
+      ]
+    },
+    {
+      "glob": "tools/video_to_atlas/**",
+      "docs": [
+        "sprite-atlas-anim-contract"
+      ]
+    },
+    {
+      "glob": "vite.config.ts",
+      "docs": [
+        "debug-ui-persistence",
+        "runtime-command-channel"
+      ]
+    }
+  ]
+}

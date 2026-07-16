@@ -157,7 +157,7 @@ def materialize_temp_ws(
 
 
 def _is_transient_dir_unlink_err(exc: BaseException) -> bool:
-    """Windows 上 WinError 32（句柄仍占用）等可稍后重试。"""
+    """目录句柄短暂占用或权限延迟释放时可稍后重试。"""
     if isinstance(exc, PermissionError):
         return True
     if not isinstance(exc, OSError):
@@ -194,7 +194,7 @@ def archive_workspace_after_run(run_dir: Path, temp_ws: Path, agent_id: str) -> 
 def cleanup_temp_ws(temp_ws: Path) -> None:
     """删除一次 agent 调用的临时 cwd。
 
-    Windows 下 Cline 子进程刚退出时，cwd 目录句柄可能仍被占用片刻，``shutil.rmtree`` 会报 WinError 32。
+    Cline 子进程刚退出时，cwd 目录句柄可能仍被占用片刻。
     这里做短暂重试；仍失败则 ``ignore_errors`` 尽力删除。若目录仍存在，只记日志**不抛异常**，
     以免 ``run_agent_cline`` 的 ``finally`` 掩盖 Cline 返回码等真实错误。
     """

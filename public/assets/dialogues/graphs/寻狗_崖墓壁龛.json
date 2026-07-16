@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "寻狗_崖墓壁龛",
+  "entry": "root",
+  "meta": {
+    "title": "崖墓壁龛·察看"
+  },
+  "nodes": {
+    "root": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "岩壁凿出的墓室，壁上一排排凿痕。随葬的旧物散着，尸停在当中——头七还没过，就有人雇人连夜要把它背走。",
+      "next": "end"
+    },
+    "end": {
+      "type": "end"
+    }
+  }
+}

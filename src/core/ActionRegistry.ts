@@ -33,41 +33,104 @@ import type { SugarWheelMinigameManager } from '../systems/sugarWheel/SugarWheel
 import type { PaperCraftMinigameManager } from '../systems/paperCraft/PaperCraftMinigameManager';
 import type { PressureHoldManager } from '../systems/pressureHold/PressureHoldManager';
 import type { SignalCueManager } from '../systems/SignalCueManager';
-import type { ActionDef, DialogueLine, ICutsceneActor, IEmoteBubbleAnchor, ZoneRuleSlot, RuleLayerKey } from '../data/types';
+import type { HealthSystem } from '../systems/HealthSystem';
+import type { SmellSystem } from '../systems/SmellSystem';
+import type { PlaneReconciler } from '../systems/PlaneReconciler';
+import type { ActionDef, DialogueLine, DialoguePortraitRef, ICutsceneActor, IEmoteBubbleAnchor, ZoneRuleSlot, RuleLayerKey } from '../data/types';
 import { GameState } from '../data/types';
 import type { SceneEntityKind, RuntimeFieldValue } from '../data/EntityRuntimeFieldSchema';
 import { applyDialogueColonSpeakerFromResolvedText } from './resolveText';
+import { ACTION_PARAM_MANIFEST } from './actionParamManifest';
 
 /**
- * `removeCurrency.params.amount`：可为数字或字符串（含 `[tag:…]`）；
- * 经 `resolveDisplayText` 后应为有限数字，向下取整；空、非数、负数为无效（打日志并跳过）。
+ * playScriptedDialogue 行内 `portrait` 字段的宽松解析：需带非空 `emotion` 才生效，`slug` 可选（缺省=跟随说话人）。
+ * 形状不符（无 emotion）返回 undefined —— 与图对话 payload 的 portrait 同结构。
+ */
+function parseScriptedPortraitRef(raw: unknown): DialoguePortraitRef | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const o = raw as Record<string, unknown>;
+  const emotion = String(o.emotion ?? '').trim();
+  if (!emotion) return undefined;
+  const slug = String(o.slug ?? '').trim();
+  return slug ? { slug, emotion } : { emotion };
+}
+
+/**
+ * 货币金额参数（giveCurrency / removeCurrency / pickup(isCurrency) 共用）：
+ * 可为数字或字符串（含 `[tag:…]`）；经 `resolveDisplayText` 后应为有限数字，向下取整；
+ * 空、非数、负数为无效（打日志并跳过）。`label` 为告警前缀（动作名）。
  */
 function resolveCurrencyAmountParam(
   raw: unknown,
   resolveDisplayText: (s: string) => string,
+  label: string,
 ): number | null {
   const s0 = raw === undefined || raw === null ? '' : String(raw);
   const resolved = resolveDisplayText(s0).trim();
   if (!resolved) {
-    console.warn('removeCurrency: amount 为空，已跳过');
+    console.warn(`${label}: 金额为空，已跳过`);
     return null;
   }
   const n = Number(resolved);
   if (!Number.isFinite(n)) {
-    console.warn(`removeCurrency: 无法将解析结果当作数字: ${JSON.stringify(resolved)}`);
+    console.warn(`${label}: 无法将解析结果当作数字: ${JSON.stringify(resolved)}`);
     return null;
   }
   const k = Math.trunc(n);
   if (k < 0) {
-    console.warn(`removeCurrency: amount 为负 (${k})，已跳过`);
+    console.warn(`${label}: 金额为负 (${k})，已跳过`);
     return null;
   }
   return k;
 }
 
+/**
+ * enabled 类参数的宽松布尔解析（setEntityEnabled / persistNpcEntityEnabled /
+ * persistHotspotEnabled / setZoneEnabled / persistZoneEnabled 共用，行为与原三份复制逐点一致）：
+ * boolean 原样；number 非零为 true；字符串 'true'/'1' → true、'false'/'0' → false；
+ * 其余（含 undefined / null）返回 null，由调用方区分「缺失」与「非法」的告警文案。
+ */
+function parseLooseBooleanParam(raw: unknown): boolean | null {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw === 'boolean') return raw;
+  if (typeof raw === 'number') return raw !== 0;
+  const s = String(raw).trim().toLowerCase();
+  if (s === 'true' || s === '1') return true;
+  if (s === 'false' || s === '0') return false;
+  return null;
+}
+
+/**
+ * `durationMs`（主）/ `duration`（别名）→ 非负有限毫秒；无效回退 fallback。
+ * fadingZoom / fadingRestoreSceneCameraZoom / fadeWorldToBlack / fadeWorldFromBlack 共用。
+ */
+function parseDurationMsParam(params: Record<string, unknown>, fallback: number): number {
+  const raw = params.durationMs ?? params.duration ?? fallback;
+  const n = typeof raw === 'number' ? raw : Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
+/**
+ * 气泡 `duration`：正有限毫秒，无效回退 1500。
+ * showEmote / showSpeechBubble / showEmoteAndWait / showSpeechBubbleAndWait 共用。
+ */
+function parseBubbleDurationParam(params: Record<string, unknown>, fallback = 1500): number {
+  const raw = params.duration ?? fallback;
+  const n = typeof raw === 'number' ? raw : Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 export interface ActionRegistryDeps {
+  /** Shared saveable runtime PRNG used by randomBranch. */
+  randomValue: () => number;
   /** playScriptedDialogue speaker 中的 {{player}} / {{npc}} 等占位解析；scriptedNpcId 为 params.scriptedNpcId */
   resolveScriptedSpeaker: (raw: string, scriptedNpcId?: string) => string;
+  /** playScriptedDialogue 逐行头像 + 说话实体解析（头像跟随说话人 + 「…」气泡定位） */
+  resolveScriptedLineExtras: (
+    rawSpeaker: string,
+    portraitRef: DialoguePortraitRef | undefined,
+    scriptedNpcId?: string,
+  ) => { portrait?: DialoguePortraitRef; speakerEntity?: DialogueLine['speakerEntity'] };
   ruleOfferRegistry: RuleOfferRegistry;
   inventoryManager: InventoryManager;
   rulesManager: RulesManager;
@@ -91,8 +154,12 @@ export interface ActionRegistryDeps {
   pickupNotification: { show(name: string, count: number): void; forceCleanup(): void };
   inspectBox: { readonly isOpen: boolean; close(): void };
   shopUI: { openShop(shopId: string): void };
-  /** 运行时切换玩家动画包与 idle/walk/run clip映射（失败则保持当前化身） */
-  applyPlayerAvatar: (manifestPath: string, stateMap?: Record<string, string> | null) => Promise<void>;
+  /** 运行时切换玩家装扮配置：动画包 + idle/walk/run 映射 + 对话头像立绘集（失败则保持当前化身） */
+  applyPlayerAvatar: (
+    manifestPath: string,
+    stateMap?: Record<string, string> | null,
+    portraitSlug?: string | null,
+  ) => Promise<void>;
   /** 按 game_config.playerAvatar 恢复玩家化身 */
   resetPlayerAvatar: () => Promise<void>;
   /** 运行时覆盖场景深度遮挡的 floor_offset（脚底衬底偏移，与 depthConfig 同语义） */
@@ -141,6 +208,7 @@ export interface ActionRegistryDeps {
     npcId?: string,
     ownerType?: string,
     ownerId?: string,
+    dimBackground?: boolean,
   ) => Promise<void>;
   /** 按序播放预置台词（至 dialogue:end） */
   playScriptedDialogue: (lines: DialogueLine[]) => Promise<void>;
@@ -201,6 +269,9 @@ export interface ActionRegistryDeps {
   paperCraftMinigameManager: PaperCraftMinigameManager;
   pressureHoldManager: PressureHoldManager;
   signalCueManager: SignalCueManager;
+  healthSystem: HealthSystem;
+  smellSystem: SmellSystem;
+  planeReconciler: PlaneReconciler;
 }
 
 function parseEmoteOffsetParams(params: Record<string, unknown>): { anchorOffsetX: number; anchorOffsetY: number } {
@@ -261,9 +332,9 @@ function actionListFromParam(raw: unknown): ActionDef[] {
   return out;
 }
 
-/** 写入 F2 调试面板日志（ deps 可选时 no-op）。 */
-function dbg(deps: ActionRegistryDeps, line: string): void {
-  deps.debugPanelLog?.(`[showEmote] ${line}`);
+/** 写入 F2 调试面板日志（deps 可选时 no-op）；`tag` 为动作类型，作日志前缀。 */
+function dbg(deps: ActionRegistryDeps, tag: string, line: string): void {
+  deps.debugPanelLog?.(`[${tag}] ${line}`);
 }
 
 export function registerActionHandlers(executor: ActionExecutor, d: ActionRegistryDeps): void {
@@ -285,11 +356,13 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     d.ruleOfferRegistry.unregister(zctx.zoneId);
   }, []);
 
-  executor.register('runActions', async (p) => {
-    await executor.executeBatchAwait(actionListFromParam(p.actions));
+  // 嵌套容器动作转发 zctx：zone 批里包一层 runActions/chooseAction/randomBranch 时，
+  // 内层 enableRuleOffers 等仍能拿到本 zone 上下文（与旧共享栈的继承语义一致）。
+  executor.register('runActions', async (p, zctx) => {
+    await executor.executeBatchAwait(actionListFromParam(p.actions), zctx);
   }, ['actions']);
 
-  executor.register('chooseAction', async (p) => {
+  executor.register('chooseAction', async (p, zctx) => {
     const rawOptions = Array.isArray(p.options) ? p.options : [];
     const options = rawOptions
       .filter((x): x is Record<string, unknown> => isParamObject(x))
@@ -317,20 +390,20 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       }
     }
     if (picked === null || picked < 0 || picked >= options.length) return;
-    await executor.executeBatchAwait(options[picked].actions);
+    await executor.executeBatchAwait(options[picked].actions, zctx);
   }, ['prompt', 'options', 'allowCancel']);
 
   /** r ∈ [0,1) 均匀采样；r > probability → aboveActions，否则 belowActions。probability 夹到 [0,1]。 */
-  executor.register('randomBranch', async (p) => {
+  executor.register('randomBranch', async (p, zctx) => {
     const raw = p.probability;
     let threshold = typeof raw === 'number' ? raw : Number(raw);
     if (!Number.isFinite(threshold)) threshold = 0.5;
     threshold = Math.min(1, Math.max(0, threshold));
-    const r = Math.random();
+    const r = d.randomValue();
     const above = r > threshold;
     const key = above ? 'aboveActions' : 'belowActions';
     const actions = actionListFromParam(p[key]);
-    await executor.executeBatchAwait(actions);
+    await executor.executeBatchAwait(actions, zctx);
   }, ['probability', 'aboveActions', 'belowActions']);
 
   executor.register('setScenarioPhase', (p) => {
@@ -381,11 +454,26 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     });
   }, ['signal']);
 
-  executor.register('giveItem', (p) => { void d.inventoryManager.addItem(p.id as string, (p.count as number) ?? 1); }, ['id', 'count']);
+  // critical=true 为关键给予（剧情必得道具）：绕过背包槽上限——给予分支常按 flag 推进且不可再入，
+  // 满包时丢弃即永久丢失。非 critical 失败时 addItem 已弹"包袱满了"，此处仅 warn 留痕
+  // （动作批彼此独立，失败不中止批内后续动作；需要事务语义的购买路径见 shopPurchase 的退款处理）。
+  executor.register('giveItem', (p) => {
+    const ok = d.inventoryManager.addItem(
+      p.id as string,
+      (p.count as number) ?? 1,
+      p.critical === true ? { bypassSlotLimit: true } : undefined,
+    );
+    if (!ok) console.warn(`giveItem: 背包已满，物品 "${String(p.id)}" 未能给予（非 critical 给予不绕过槽上限）`);
+  }, ['id', 'count', 'critical']);
   executor.register('removeItem', (p) => { void d.inventoryManager.removeItem(p.id as string, (p.count as number) ?? 1); }, ['id', 'count']);
-  executor.register('giveCurrency', (p) => { void d.inventoryManager.addCoins(p.amount as number); }, ['amount']);
+  /** B7：金额走统一严格解析（非有限数 warn+跳过），杜绝 NaN/字符串污染 coins 入档。 */
+  executor.register('giveCurrency', (p) => {
+    const amt = resolveCurrencyAmountParam(p.amount, d.resolveDisplayText, 'giveCurrency');
+    if (amt === null) return;
+    d.inventoryManager.addCoins(amt);
+  }, ['amount']);
   executor.register('removeCurrency', (p) => {
-    const amt = resolveCurrencyAmountParam(p.amount, d.resolveDisplayText);
+    const amt = resolveCurrencyAmountParam(p.amount, d.resolveDisplayText, 'removeCurrency');
     if (amt === null) return;
     void d.inventoryManager.removeCoins(amt);
   }, ['amount']);
@@ -402,15 +490,34 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
   executor.register('giveFragment', (p) => { void d.rulesManager.giveFragment(p.id as string); }, ['id']);
   executor.register('updateQuest', (p) => { void d.questManager.acceptQuest(p.id as string); }, ['id']);
 
+  /** R13：先验证 def 存在再切状态（对齐 startCutscene 失败即恢复模式）——
+   *  未知 id 时不进 Encounter，避免 encounter:end 永不到来的软锁。 */
   executor.register('startEncounter', (p) => {
+    const id = String(p.id ?? '').trim();
+    if (!id || !d.encounterManager.hasEncounter(id)) {
+      console.warn(`startEncounter: 未知遭遇 id "${id}"，不切换状态`);
+      return;
+    }
     d.stateController.setState(GameState.Encounter);
-    d.encounterManager.startEncounter(p.id as string);
+    d.encounterManager.startEncounter(id);
   }, ['id']);
 
   executor.register('playBgm', (p) => { void d.audioManager.playBgm(p.id as string, (p.fadeMs as number) ?? 1000); }, ['id', 'fadeMs']);
   executor.register('stopBgm', (p) => { void d.audioManager.stopBgm((p.fadeMs as number) ?? 1000); }, ['fadeMs']);
-  executor.register('playSfx', (p) => { void d.audioManager.playSfx(p.id as string); }, ['id']);
-  executor.register('endDay', () => { d.dayManager.endDay(); }, []);
+  executor.register('playSfx', (p) => {
+    const rawVol = p.volume;
+    const vol = typeof rawVol === 'number' ? rawVol : Number(rawVol);
+    d.audioManager.playSfx(p.id as string, Number.isFinite(vol) ? vol : undefined);
+  }, ['id', 'volume']);
+  // 抽空场景环境音（如崖墓"阴风"骤停制造"太安静"的诡异一拍）：留空 id 清掉全部环境层，
+  // 传 id 只停指定一层。复用 AudioManager 既有 clear/removeAmbient，不扩 ActionRegistryDeps。
+  executor.register('stopSceneAmbient', (p) => {
+    const fadeMs = (p.fadeMs as number) ?? 500;
+    if (p.id) { d.audioManager.removeAmbient(p.id as string, fadeMs); }
+    else { d.audioManager.clearAmbient(fadeMs); }
+  }, ['id', 'fadeMs']);
+  // 必须 return：endDay 含到期延迟事件批 + day:start，批内后续动作要等整段落地（严格顺序）。
+  executor.register('endDay', () => d.dayManager.endDay(), []);
 
   executor.register('addDelayedEvent', (p) => {
     const raw = p.actions;
@@ -433,12 +540,20 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
   }, ['bookType', 'entryId']);
 
   executor.register('startCutscene', (p) => {
+    // 进入前的状态可能是 Exploring 加锁后的 ActionSequence、或对话 runActions 里的 Dialogue。
+    // 结束后恢复到该状态，而非硬切 Exploring（否则会顶掉仍在进行的对话）。
+    const prev = d.stateController.currentState;
+    const restore = () => {
+      if (d.stateController.currentState === GameState.Cutscene) {
+        d.stateController.setState(prev);
+      }
+    };
     d.stateController.setState(GameState.Cutscene);
     return d.cutsceneManager.startCutscene(p.id as string)
-      .then(() => { d.stateController.setState(GameState.Exploring); })
+      .then(restore)
       .catch((e) => {
         console.warn('ActionRegistry: startCutscene failed', e);
-        d.stateController.setState(GameState.Exploring);
+        restore();
       });
   }, ['id']);
 
@@ -468,6 +583,76 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     }
     await d.signalCueManager.play(id);
   }, ['id']);
+
+  // 【legacy】damagePlayer/healPlayer：旧扣血/回血。新内容统一用 decHealth/incHealth（编排控值）
+  //  + triggerDeathTether（系绳）；这两个仍注册以兼容历史，已从编辑器内容下拉移除（见 LEGACY_ACTION_TYPES）。
+  executor.register('damagePlayer', async (p) => {
+    const amount = Number(p.amount ?? 0);
+    if (!Number.isFinite(amount) || amount <= 0) return;
+    await d.healthSystem.damage(amount);
+  }, ['amount']);
+  executor.register('healPlayer', (p) => {
+    const amount = Number(p.amount ?? 0);
+    if (!Number.isFinite(amount) || amount <= 0) return;
+    d.healthSystem.heal(amount);
+  }, ['amount']);
+  // 离死之距（HealthSystem 数值）的编排层控制：reset/set/inc/dec
+  // ——原始置数（clamp [0,max]、即时反应到三把阳火），不触发系绳（系绳走 damagePlayer 路径）。
+  executor.register('resetHealth', () => {
+    d.healthSystem.setHealth(d.healthSystem.getMaxHealth());
+  }, []);
+  executor.register('setHealth', (p) => {
+    const amount = Number(p.amount);
+    if (!Number.isFinite(amount)) return;
+    d.healthSystem.setHealth(amount);
+  }, ['amount']);
+  executor.register('incHealth', (p) => {
+    const amount = Number(p.amount ?? 0);
+    if (!Number.isFinite(amount)) return;
+    d.healthSystem.setHealth(d.healthSystem.getHealth() + amount);
+  }, ['amount']);
+  executor.register('decHealth', (p) => {
+    const amount = Number(p.amount ?? 0);
+    if (!Number.isFinite(amount)) return;
+    d.healthSystem.setHealth(d.healthSystem.getHealth() - amount);
+  }, ['amount']);
+  // 显式触发死亡系绳（濒死被拽回）——替代旧的 damagePlayer{9999} 魔法数硬凑。
+  // 必须 return：系绳含约 2.6s 演出，批内后续动作（音效/信号）要等演出+回血完成（对齐 damagePlayer）。
+  executor.register('triggerDeathTether', () => {
+    return d.healthSystem.tether();
+  }, []);
+  // 气味系统（SmellSystem）：编排层设/清当前主导气味，HUD 的"气味烟"随之变。
+  // scent = 气味 id（corpse/yin/incense/blood/mold/powder…，见 smell_profiles.json），
+  // intensity = 强度 0–100；dir = 方位偏向 -1..1（0=居中，气缕拖向来源侧）；flicker = 波动（不稳的味明灭跳）。
+  executor.register('setSmell', (p) => {
+    d.smellSystem.setSmell(
+      String(p.scent ?? ''),
+      p.intensity === undefined ? undefined : Number(p.intensity),
+      p.dir === undefined ? undefined : Number(p.dir),
+      p.flicker === undefined ? undefined : Boolean(p.flicker),
+    );
+  }, ['scent', 'intensity', 'dir', 'flicker']);
+  executor.register('clearSmell', () => {
+    d.smellSystem.clearSmell();
+  }, []);
+  // 主动嗅一下：当前气缕短暂拔高变清（视觉脉冲，几秒自行回落）。
+  executor.register('sniff', () => {
+    d.smellSystem.sniff();
+  }, []);
+
+  // 位面（PlaneReconciler）：手动覆盖激活位面 / 清覆盖回叙事点名。
+  // 调试与特例演出用；任务逻辑的主路径 = 叙事状态节点 activePlane 点名。
+  executor.register('activatePlane', (p) => {
+    const id = String(p.id ?? '').trim();
+    if (!id) {
+      console.warn('activatePlane: missing id (plane id)', p);
+      return;
+    }
+    d.planeReconciler.activatePlaneManually(id);
+  }, ['id']);
+  executor.register('deactivatePlane', () => {
+    d.planeReconciler.deactivateManualPlane();
+  }, []);
 
   executor.register('startSugarWheelMinigame', async (p) => {
     const id = String(p.id ?? '').trim();
@@ -539,9 +724,9 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     const target = String(p.target ?? '').trim();
     const emote = String(p.emote ?? '').trim();
     const sceneId = d.sceneManager.currentSceneData?.id ?? '';
-    dbg(d, `开始 scene=${sceneId || '(?)'} target=${JSON.stringify(target)} emote=${JSON.stringify(emote)}`);
+    dbg(d, 'showEmote', `开始 scene=${sceneId || '(?)'} target=${JSON.stringify(target)} emote=${JSON.stringify(emote)}`);
     if (!target || !emote) {
-      dbg(d, '中止：缺少 target 或 emote');
+      dbg(d, 'showEmote', '中止：缺少 target 或 emote');
       console.warn('showEmote: 需要 target 与 emote');
       return;
     }
@@ -552,23 +737,17 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
         : subject
           ? (subject.constructor?.name ?? 'unknown anchor')
           : 'null';
-    dbg(d, `resolve 结果: ${kind}`);
+    dbg(d, 'showEmote', `resolve 结果: ${kind}`);
     if (!subject) {
-      dbg(d, '中止：resolveEmoteTarget 返回 null');
+      dbg(d, 'showEmote', '中止：resolveEmoteTarget 返回 null');
       console.warn(`showEmote: 找不到 NPC / player / 过场实体 / 当前场景热点 "${target}"`);
       return;
     }
-    const durRaw = p.duration ?? 1500;
-    const duration = typeof durRaw === 'number' ? durRaw : Number(durRaw);
+    const duration = parseBubbleDurationParam(p);
     const off = parseEmoteOffsetParams(p);
-    dbg(d, `调用 bubble.show durMs=${Number.isFinite(duration) && duration > 0 ? duration : 1500} off=(${off.anchorOffsetX},${off.anchorOffsetY})`);
-    d.emoteBubbleManager.show(
-      subject,
-      emote,
-      Number.isFinite(duration) && duration > 0 ? duration : 1500,
-      off,
-    );
-    dbg(d, `bubble.show 已返回`);
+    dbg(d, 'showEmote', `调用 bubble.show durMs=${duration} off=(${off.anchorOffsetX},${off.anchorOffsetY})`);
+    d.emoteBubbleManager.show(subject, emote, duration, off);
+    dbg(d, 'showEmote', `bubble.show 已返回`);
   }, ['target', 'emote', 'duration', 'anchorOffsetX', 'anchorOffsetY']);
 
   /** 与 showEmote 相同锚点与白底气泡；params.text 为对白（经 resolveDisplayText，支持 `[tag:…]`）。 */
@@ -576,7 +755,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     const target = String(p.target ?? '').trim();
     const raw = speechBubbleRawText(p);
     const sceneId = d.sceneManager.currentSceneData?.id ?? '';
-    dbg(d, `[showSpeechBubble] scene=${sceneId || '(?)'} target=${JSON.stringify(target)} rawLen=${raw.length}`);
+    dbg(d, 'showSpeechBubble', `scene=${sceneId || '(?)'} target=${JSON.stringify(target)} rawLen=${raw.length}`);
     if (!target || !raw) {
       console.warn('showSpeechBubble: 需要 target 与 text');
       return;
@@ -591,15 +770,8 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       console.warn(`showSpeechBubble: 找不到 NPC / player / 过场实体 / 当前场景热点 "${target}"`);
       return;
     }
-    const durRaw = p.duration ?? 1500;
-    const duration = typeof durRaw === 'number' ? durRaw : Number(durRaw);
     const off = parseEmoteOffsetParams(p);
-    d.emoteBubbleManager.show(
-      subject,
-      text,
-      Number.isFinite(duration) && duration > 0 ? duration : 1500,
-      off,
-    );
+    d.emoteBubbleManager.show(subject, text, parseBubbleDurationParam(p), off);
   }, ['target', 'text', 'duration', 'anchorOffsetX', 'anchorOffsetY']);
 
   /** `target` 为 NPC id 或 `player`；`state` 为 anim.json 中的状态名（与 `npcAnim` 旧标签语义一致，统一走 Action）。 */
@@ -630,19 +802,17 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       console.warn('setEntityEnabled: missing enabled');
       return;
     }
-    let enabled: boolean;
-    if (typeof raw === 'boolean') {
-      enabled = raw;
-    } else if (typeof raw === 'number') {
-      enabled = raw !== 0;
-    } else {
-      const s = String(raw).trim().toLowerCase();
-      if (s === 'true' || s === '1') enabled = true;
-      else if (s === 'false' || s === '0') enabled = false;
-      else {
-        console.warn(`setEntityEnabled: invalid enabled ${String(raw)}`);
-        return;
-      }
+    const enabled = parseLooseBooleanParam(raw);
+    if (enabled === null) {
+      console.warn(`setEntityEnabled: invalid enabled ${String(raw)}`);
+      return;
+    }
+    /** R2 接线：场景 NPC 走 SceneManager 会话覆盖通道（InteractionSystem 每帧显隐回写
+     *  尊重该覆盖，对话/演出结束后不再被派生基底打回）；player 与过场 `_cut_` 临时演员
+     *  不归 SceneManager 管，保持直接 setVisible。 */
+    if (d.sceneManager.getNpcById(target)) {
+      d.sceneManager.setEntitySessionEnabled('npc', target, enabled);
+      return;
     }
     const actor = d.resolveActor(target);
     if (!actor) {
@@ -659,10 +829,16 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
 
   executor.register('pickup', (p) => {
     if (p.isCurrency as boolean | undefined) {
-      d.inventoryManager.addCoins(p.count as number);
-    } else {
-      d.inventoryManager.addItem(p.itemId as string, p.count as number);
+      /** B7：铜钱路径走严格金额解析，非有限数 warn+跳过（物品路径 addItem 自校验） */
+      const amt = resolveCurrencyAmountParam(p.count, d.resolveDisplayText, 'pickup');
+      if (amt === null) return;
+      d.inventoryManager.addCoins(amt);
+      d.pickupNotification.show(p.itemName as string, amt);
+      return;
     }
+    // 满包失败时不弹拾取成功提示（addItem 已弹"包袱满了"）；热点是否消费由
+    // InteractionCoordinator.handlePickup 按 inventory:full 事件判定（对齐 B22 遭遇消费语义）。
+    if (!d.inventoryManager.addItem(p.itemId as string, p.count as number)) return;
     d.pickupNotification.show(p.itemName as string, p.count as number);
   }, ['itemId', 'itemName', 'count', 'isCurrency']);
 
@@ -672,26 +848,38 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
   };
 
   executor.register('switchScene', (p) => {
+    const prev = d.stateController.currentState;
+    const restore = () => {
+      if (d.stateController.currentState === GameState.Cutscene) {
+        d.stateController.setState(prev);
+      }
+    };
     d.stateController.setState(GameState.Cutscene);
     prepareSceneSwitch();
     return d.sceneManager.switchScene(p.targetScene as string, p.targetSpawnPoint as string | undefined)
-      .then(() => { d.stateController.setState(GameState.Exploring); })
+      .then(restore)
       .catch((e) => {
         console.warn('ActionRegistry: switchScene failed', e);
-        d.stateController.setState(GameState.Exploring);
+        restore();
       });
   }, ['targetScene', 'targetSpawnPoint']);
 
   executor.register('changeScene', (p) => {
+    const prev = d.stateController.currentState;
+    const restore = () => {
+      if (d.stateController.currentState === GameState.Cutscene) {
+        d.stateController.setState(prev);
+      }
+    };
     d.stateController.setState(GameState.Cutscene);
     prepareSceneSwitch();
     const cam = typeof p.cameraX === 'number' && typeof p.cameraY === 'number'
       ? { x: p.cameraX as number, y: p.cameraY as number } : undefined;
     return d.sceneManager.switchScene(p.targetScene as string, p.targetSpawnPoint as string | undefined, cam)
-      .then(() => { d.stateController.setState(GameState.Exploring); })
+      .then(restore)
       .catch((e) => {
         console.warn('ActionRegistry: changeScene failed', e);
-        d.stateController.setState(GameState.Exploring);
+        restore();
       });
   }, ['targetScene', 'targetSpawnPoint', 'cameraX', 'cameraY']);
 
@@ -737,8 +925,12 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       }
       stateMap = Object.keys(out).length > 0 ? out : undefined;
     }
-    return d.applyPlayerAvatar(path, stateMap).catch((e) => console.warn('setPlayerAvatar', e));
-  }, ['animManifest', 'bundleId', 'stateMap']);
+    // 装扮配置的对话头像立绘集；缺省由 Game 按动画包目录名同名推导
+    const portraitSlug = typeof p.portraitSlug === 'string' && p.portraitSlug.trim()
+      ? p.portraitSlug.trim()
+      : undefined;
+    return d.applyPlayerAvatar(path, stateMap, portraitSlug).catch((e) => console.warn('setPlayerAvatar', e));
+  }, ['animManifest', 'bundleId', 'stateMap', 'portraitSlug']);
 
   executor.register('resetPlayerAvatar', (_p) => {
     return d.resetPlayerAvatar().catch((e) => console.warn('resetPlayerAvatar', e));
@@ -773,21 +965,15 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
 
   executor.register('fadingZoom', async (p) => {
     const zoom = typeof p.zoom === 'number' ? p.zoom : Number(p.zoom);
-    const durRaw = p.durationMs ?? p.duration ?? 600;
-    const durationMs = typeof durRaw === 'number' ? durRaw : Number(durRaw);
     if (!Number.isFinite(zoom) || zoom <= 0) {
       console.warn('fadingZoom: params.zoom 需为有限正数');
       return;
     }
-    const ms = Number.isFinite(durationMs) && durationMs >= 0 ? durationMs : 600;
-    await d.cutsceneManager.fadingCameraZoom(zoom, ms);
+    await d.cutsceneManager.fadingCameraZoom(zoom, parseDurationMsParam(p, 600));
   }, ['zoom', 'durationMs']);
 
   executor.register('fadingRestoreSceneCameraZoom', async (p) => {
-    const durRaw = p.durationMs ?? p.duration ?? 600;
-    const durationMs = typeof durRaw === 'number' ? durRaw : Number(durRaw);
-    const ms = Number.isFinite(durationMs) && durationMs >= 0 ? durationMs : 600;
-    await d.fadingRestoreSceneCameraZoom(ms);
+    await d.fadingRestoreSceneCameraZoom(parseDurationMsParam(p, 600));
   }, ['durationMs']);
 
   executor.register('stopNpcPatrol', (p) => {
@@ -833,19 +1019,10 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       console.warn('persistNpcEntityEnabled: missing enabled');
       return;
     }
-    let enabled: boolean;
-    if (typeof raw === 'boolean') {
-      enabled = raw;
-    } else if (typeof raw === 'number') {
-      enabled = raw !== 0;
-    } else {
-      const s = String(raw).trim().toLowerCase();
-      if (s === 'true' || s === '1') enabled = true;
-      else if (s === 'false' || s === '0') enabled = false;
-      else {
-        console.warn(`persistNpcEntityEnabled: invalid enabled ${String(raw)}`);
-        return;
-      }
+    const enabled = parseLooseBooleanParam(raw);
+    if (enabled === null) {
+      console.warn(`persistNpcEntityEnabled: invalid enabled ${String(raw)}`);
+      return;
     }
     d.sceneManager.mergePersistentNpcState(target, { enabled });
     const actor = d.resolveActor(target);
@@ -869,19 +1046,10 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       console.warn('persistHotspotEnabled: missing enabled');
       return;
     }
-    let enabled: boolean;
-    if (typeof raw === 'boolean') {
-      enabled = raw;
-    } else if (typeof raw === 'number') {
-      enabled = raw !== 0;
-    } else {
-      const s = String(raw).trim().toLowerCase();
-      if (s === 'true' || s === '1') enabled = true;
-      else if (s === 'false' || s === '0') enabled = false;
-      else {
-        console.warn(`persistHotspotEnabled: invalid enabled ${String(raw)}`);
-        return;
-      }
+    const enabled = parseLooseBooleanParam(raw);
+    if (enabled === null) {
+      console.warn(`persistHotspotEnabled: invalid enabled ${String(raw)}`);
+      return;
     }
     return d
       .setSceneEntityField(sceneId, 'hotspot', hotspotId, 'enabled', enabled)
@@ -889,16 +1057,6 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
         console.warn('ActionRegistry: persistHotspotEnabled failed', e);
       });
   }, ['sceneId', 'hotspotId', 'enabled']);
-
-  const parseZoneEnabledParam = (raw: unknown): boolean | null => {
-    if (raw === undefined || raw === null) return null;
-    if (typeof raw === 'boolean') return raw;
-    if (typeof raw === 'number') return raw !== 0;
-    const s = String(raw).trim().toLowerCase();
-    if (s === 'true' || s === '1') return true;
-    if (s === 'false' || s === '0') return false;
-    return null;
-  };
 
   /** 当前会话内启用/禁用 standard zone（不写档）；false 时该 zone 不进入 ZoneSystem */
   executor.register('setZoneEnabled', (p) => {
@@ -908,7 +1066,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       console.warn('setZoneEnabled: 需要 sceneId、zoneId');
       return;
     }
-    const enabled = parseZoneEnabledParam(p.enabled);
+    const enabled = parseLooseBooleanParam(p.enabled);
     if (enabled === null) {
       console.warn('setZoneEnabled: missing or invalid enabled');
       return;
@@ -924,7 +1082,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       console.warn('persistZoneEnabled: 需要 sceneId、zoneId');
       return;
     }
-    const enabled = parseZoneEnabledParam(p.enabled);
+    const enabled = parseLooseBooleanParam(p.enabled);
     if (enabled === null) {
       console.warn('persistZoneEnabled: missing or invalid enabled');
       return;
@@ -993,19 +1151,13 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
   executor.register('persistPlayNpcAnimation', persistNpcAnimStateHandler, ['target', 'state']);
 
   executor.register('fadeWorldToBlack', (p) => {
-    const durRaw = p.durationMs ?? p.duration ?? 600;
-    const durationMs = typeof durRaw === 'number' ? durRaw : Number(durRaw);
-    const ms = Number.isFinite(durationMs) && durationMs >= 0 ? durationMs : 600;
-    return d.cutsceneManager.fadeWorldToBlack(ms).catch((e) => {
+    return d.cutsceneManager.fadeWorldToBlack(parseDurationMsParam(p, 600)).catch((e) => {
       console.warn('ActionRegistry: fadeWorldToBlack failed', e);
     });
   }, ['durationMs']);
 
   executor.register('fadeWorldFromBlack', (p) => {
-    const durRaw = p.durationMs ?? p.duration ?? 600;
-    const durationMs = typeof durRaw === 'number' ? durRaw : Number(durRaw);
-    const ms = Number.isFinite(durationMs) && durationMs >= 0 ? durationMs : 600;
-    return d.cutsceneManager.fadeWorldFromBlack(ms).catch((e) => {
+    return d.cutsceneManager.fadeWorldFromBlack(parseDurationMsParam(p, 600)).catch((e) => {
       console.warn('ActionRegistry: fadeWorldFromBlack failed', e);
     });
   }, ['durationMs']);
@@ -1149,14 +1301,17 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     const ownerType = ownerTypeRaw !== undefined && ownerTypeRaw !== null ? String(ownerTypeRaw).trim() : '';
     const ownerIdRaw = p.ownerId;
     const ownerId = ownerIdRaw !== undefined && ownerIdRaw !== null ? String(ownerIdRaw).trim() : '';
+    // 压暗场景背景（可选项，默认不压）；兼容布尔与 "true" 字符串
+    const dimBackground = p.dimBackground === true || String(p.dimBackground ?? '').trim() === 'true';
     return d.startDialogueGraph(
       graphId,
       entry || undefined,
       npcId || undefined,
       ownerType || undefined,
       ownerId || undefined,
+      dimBackground || undefined,
     );
-  }, ['graphId', 'entry', 'npcId', 'ownerType', 'ownerId']);
+  }, ['graphId', 'entry', 'npcId', 'ownerType', 'ownerId', 'dimBackground']);
 
   executor.register('waitClickContinue', (p) => {
     const raw = p.text;
@@ -1171,6 +1326,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       return;
     }
     const scriptedNpcId = String(p.scriptedNpcId ?? '').trim();
+    const dim = p.dimBackground === true;
     const narrKey = d.stringsProvider.get('dialogue', 'narratorLabel');
     const narratorFallback = narrKey && narrKey !== 'narratorLabel' ? narrKey : '旁白';
     const narratorBaselineResolved = d.resolveDisplayTextForPlayScripted(narratorFallback, scriptedNpcId);
@@ -1192,10 +1348,16 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
         textResolvedDisplay,
         narratorBaselineResolved,
       );
+      /** 立绘 + 说话实体：显式 slug 原样用、仅 emotion 则跟随 speaker 占位；实体供「…」气泡定位 */
+      const portraitRef = parseScriptedPortraitRef(o.portrait);
+      const { portrait, speakerEntity } = d.resolveScriptedLineExtras(speakerRaw, portraitRef, scriptedNpcId);
       lines.push({
         speaker: lineSpeaker,
         text: lineText,
         tags: [],
+        ...(portrait ? { portrait } : {}),
+        ...(speakerEntity ? { speakerEntity } : {}),
+        ...(dim ? { dim: true } : {}),
       });
     }
     if (lines.length === 0) {
@@ -1302,12 +1464,11 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
   executor.register('showEmoteAndWait', async (p) => {
     const target = String(p.target ?? '').trim();
     const emote = String(p.emote ?? '').trim();
-    const durRaw = p.duration ?? 1500;
-    const duration = typeof durRaw === 'number' ? durRaw : Number(durRaw);
+    const duration = parseBubbleDurationParam(p);
     const sceneId = d.sceneManager.currentSceneData?.id ?? '';
-    dbg(d, `AndWait 开始 scene=${sceneId || '(?)'} target=${JSON.stringify(target)} emote=${JSON.stringify(emote)}`);
+    dbg(d, 'showEmoteAndWait', `开始 scene=${sceneId || '(?)'} target=${JSON.stringify(target)} emote=${JSON.stringify(emote)}`);
     if (!target || !emote) {
-      dbg(d, 'AndWait 中止：缺少 target 或 emote');
+      dbg(d, 'showEmoteAndWait', '中止：缺少 target 或 emote');
       console.warn('showEmoteAndWait: 需要 target 与 emote');
       return;
     }
@@ -1318,30 +1479,24 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
         : subject
           ? (subject.constructor?.name ?? 'anchor')
           : 'null';
-    dbg(d, `AndWait resolve=${kindAw}`);
+    dbg(d, 'showEmoteAndWait', `resolve=${kindAw}`);
     if (!subject) {
-      dbg(d, 'AndWait 中止：resolveEmoteTarget 返回 null');
+      dbg(d, 'showEmoteAndWait', '中止：resolveEmoteTarget 返回 null');
       console.warn(`showEmoteAndWait: 找不到 NPC / player / 过场实体 / 当前场景热点 "${target}"`);
       return;
     }
     const off = parseEmoteOffsetParams(p);
-    dbg(d, `AndWait await showAndWait durMs=${Number.isFinite(duration) && duration > 0 ? duration : 1500} off=(${off.anchorOffsetX},${off.anchorOffsetY})`);
-    await d.emoteBubbleManager.showAndWait(
-      subject,
-      emote,
-      Number.isFinite(duration) && duration > 0 ? duration : 1500,
-      off,
-    );
-    dbg(d, 'AndWait showAndWait 结束');
+    dbg(d, 'showEmoteAndWait', `await showAndWait durMs=${duration} off=(${off.anchorOffsetX},${off.anchorOffsetY})`);
+    await d.emoteBubbleManager.showAndWait(subject, emote, duration, off);
+    dbg(d, 'showEmoteAndWait', 'showAndWait 结束');
   }, ['target', 'emote', 'duration', 'anchorOffsetX', 'anchorOffsetY']);
 
   executor.register('showSpeechBubbleAndWait', async (p) => {
     const target = String(p.target ?? '').trim();
     const raw = speechBubbleRawText(p);
-    const durRaw = p.duration ?? 1500;
-    const duration = typeof durRaw === 'number' ? durRaw : Number(durRaw);
+    const duration = parseBubbleDurationParam(p);
     const sceneId = d.sceneManager.currentSceneData?.id ?? '';
-    dbg(d, `[showSpeechBubbleAndWait] scene=${sceneId || '(?)'} target=${JSON.stringify(target)} rawLen=${raw.length}`);
+    dbg(d, 'showSpeechBubbleAndWait', `scene=${sceneId || '(?)'} target=${JSON.stringify(target)} rawLen=${raw.length}`);
     if (!target || !raw) {
       console.warn('showSpeechBubbleAndWait: 需要 target 与 text');
       return;
@@ -1357,20 +1512,49 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       return;
     }
     const off = parseEmoteOffsetParams(p);
-    dbg(
-      d,
-      `SpeechBubbleAndWait await durMs=${Number.isFinite(duration) && duration > 0 ? duration : 1500}`,
-    );
-    await d.emoteBubbleManager.showAndWait(
-      subject,
-      text,
-      Number.isFinite(duration) && duration > 0 ? duration : 1500,
-      off,
-    );
-    dbg(d, '[showSpeechBubbleAndWait] showAndWait 结束');
+    dbg(d, 'showSpeechBubbleAndWait', `await showAndWait durMs=${duration}`);
+    await d.emoteBubbleManager.showAndWait(subject, text, duration, off);
+    dbg(d, 'showSpeechBubbleAndWait', 'showAndWait 结束');
   }, ['target', 'text', 'duration', 'anchorOffsetX', 'anchorOffsetY']);
 
   executor.register('revealDocument', async (p) => {
     await d.documentRevealManager.checkAndReveal(String(p.documentId ?? ''));
   }, ['documentId']);
+}
+
+/**
+ * D1：manifest ↔ 运行时注册一致性互查（DEV 启动时由 Game 调用，只 warn 不拦）。
+ * 判据（与 actionParamManifest 头注释口径一致）：
+ * - 类型集合双向一致（manifest 收录 ⇔ executor 注册；`setNarrativeState` 双方都不收录）；
+ * - manifest.required ⊆ executor paramNames（必填参数不得从注册表漂掉）；
+ * - executor paramNames ⊆ manifest.required ∪ optional（注册表新增参数必须回填 manifest）。
+ * 别名（duration / emote / angle 等）只登记在 manifest.optional，不要求出现在 paramNames。
+ */
+export function auditActionRegistrationsAgainstManifest(executor: ActionExecutor): string[] {
+  const problems: string[] = [];
+  const registered = new Set(executor.getRegisteredActionTypes());
+  for (const [type, entry] of Object.entries(ACTION_PARAM_MANIFEST)) {
+    if (!registered.has(type)) {
+      problems.push(`manifest 收录但运行时未注册: ${type}`);
+      continue;
+    }
+    const paramNames = new Set(executor.getParamNames(type) ?? []);
+    const union = new Set<string>([...entry.required, ...(entry.optional ?? [])]);
+    for (const r of entry.required) {
+      if (!paramNames.has(r)) {
+        problems.push(`必填参数漂移: ${type}.${r} 在 manifest.required 但不在 executor paramNames`);
+      }
+    }
+    for (const pn of paramNames) {
+      if (!union.has(pn)) {
+        problems.push(`参数漂移: ${type}.${pn} 在 executor paramNames 但 manifest 未收录`);
+      }
+    }
+  }
+  for (const type of registered) {
+    if (!Object.prototype.hasOwnProperty.call(ACTION_PARAM_MANIFEST, type)) {
+      problems.push(`运行时注册但 manifest 未收录: ${type}`);
+    }
+  }
+  return problems;
 }

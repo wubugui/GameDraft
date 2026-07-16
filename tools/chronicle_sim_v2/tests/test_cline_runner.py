@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import json
-import shutil
-import sys
 from pathlib import Path
 
 import pytest
@@ -165,23 +163,10 @@ def test_parse_jsonl_empty_falls_back_to_raw() -> None:
 
 
 def test_resolve_cline_executable_explicit_file(tmp_path: Path) -> None:
-    exe = tmp_path / "my_cline.cmd"
-    exe.write_text("@echo off\n", encoding="utf-8")
+    exe = tmp_path / "my_cline"
+    exe.write_text("#!/usr/bin/env sh\n", encoding="utf-8")
     out = cr.resolve_cline_executable({"cline_executable": str(exe)})
     assert Path(out) == exe.resolve()
-
-
-@pytest.mark.skipif(sys.platform != "win32", reason="仅 Windows 探测 %APPDATA%\\npm\\cline.cmd")
-def test_resolve_cline_executable_fallback_apdata_npm(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("APPDATA", str(tmp_path))
-    monkeypatch.setattr(shutil, "which", lambda *_a, **_kw: None)
-    shim = tmp_path / "npm" / "cline.cmd"
-    shim.parent.mkdir(parents=True)
-    shim.write_text("@echo off\n", encoding="utf-8")
-    out = cr.resolve_cline_executable({})
-    assert Path(out) == shim.resolve()
 
 
 def test_build_cline_env_strips_proxy_and_sets_no_proxy_star(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,0 +1,538 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>动画资源工作台 · Animation Workbench</title>
+<style>
+  :root {
+    --bg:#080c12; --panel:#101721; --panel2:#17212e; --panel3:#202c3b; --line:#2a384a;
+    --fg:#f3f6fb; --mut:#91a0b3; --acc:#5b91ff; --acc2:#42d6a0; --warn:#f5b84b; --err:#ff7b84;
+    --violet:#a78bfa; --top:58px; --radius:10px;
+  }
+  * { box-sizing:border-box; }
+  html,body { margin:0; width:100%; height:100%; overflow:hidden; background:var(--bg); color:var(--fg);
+    font:14px/1.45 -apple-system,"PingFang SC","Microsoft YaHei",system-ui,sans-serif; }
+  button,input,select,textarea { font:inherit; }
+  button { cursor:pointer; }
+  .topbar { height:var(--top); display:flex; align-items:center; gap:18px; padding:0 18px; background:#0d131c;
+    border-bottom:1px solid var(--line); }
+  .brand { font-weight:800; letter-spacing:.01em; white-space:nowrap; font-size:14px; }
+  .brand small { display:block; color:var(--mut); font-weight:500; font-size:10px; margin-top:1px; }
+  .top-tabs { display:flex; align-self:stretch; }
+  .top-tab { border:0; border-bottom:2px solid transparent; padding:0 18px; color:var(--mut); background:transparent; font-weight:650; }
+  .top-tab:hover { color:var(--fg); background:rgba(255,255,255,.025); }
+  .top-tab.active { color:var(--fg); border-bottom-color:var(--acc); background:rgba(98,168,255,.08); }
+  #globalStatus { margin-left:auto; color:var(--mut); font-size:12px; }
+  .tool-page { display:none; height:calc(100vh - var(--top)); min-height:0; }
+  .tool-page.active { display:grid; }
+  h2 { font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--mut); margin:12px 10px 6px; }
+  .mono { font-family:ui-monospace,"SF Mono",Menlo,monospace; }
+  .muted { color:var(--mut); }
+  .t { background:var(--panel2); color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:6px 10px; }
+  button.t:hover:not(:disabled) { background:#2a384d; }
+  button.t:disabled { opacity:.42; cursor:not-allowed; }
+  button.t.primary { background:var(--acc); border-color:var(--acc); color:#06162e; font-weight:800; }
+  button.t.good { border-color:#287f61; color:var(--acc2); }
+  button.t.good.strong { background:#153d31; border-color:#2b8c68; }
+  button.t.danger { border-color:#87434a; color:var(--err); }
+  button.t.danger.strong { background:#3a171e; border-color:#87434a; }
+  button.t.on { background:var(--acc2); color:#04231a; border-color:var(--acc2); }
+  input.t,select.t,textarea.t { background:var(--panel2); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:5px 7px; }
+  textarea.t { width:100%; resize:vertical; }
+  input[type=range] { accent-color:var(--acc); }
+  .row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .ctl { color:var(--mut); font-size:12px; display:inline-flex; align-items:center; gap:5px; }
+  .card { background:var(--panel2); border:1px solid var(--line); border-radius:var(--radius); padding:10px 11px; margin-bottom:9px; }
+  .pill { display:inline-flex; align-items:center; padding:1px 7px; border-radius:12px; font-size:10px; border:1px solid var(--line); }
+  .pill.accepted,.pill.published { background:#103427; color:var(--acc2); border-color:#245d49; }
+  .pill.ok { background:#103427; color:var(--acc2); border-color:#245d49; }
+  .pill.no { background:#3a171e; color:var(--err); border-color:#6a3039; }
+  .pill.runnable { background:#102e4c; color:#86bcff; border-color:#275687; }
+  .pill.under_review,.pill.manual_required { background:#3a2d10; color:var(--warn); border-color:#725d25; }
+  .pill.stale,.pill.compatible_cached,.pill.blocked { background:#332a21; color:#d5aa77; border-color:#5a4936; }
+  .pill.rejected,.pill.invalidated { background:#3a171e; color:var(--err); border-color:#6a3039; }
+  .kv { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:3px 8px; }
+  .kv .k { color:var(--mut); } .kv .v { text-align:right; overflow-wrap:anywhere; }
+  .empty { color:var(--mut); padding:28px; text-align:center; }
+
+  /* workflow page: human review first, diagnostics on demand */
+  #workbenchPage { grid-template-columns:238px minmax(640px,1fr); }
+  .wb-side { min-height:0; overflow:auto; background:var(--panel); }
+  #wbLeft { border-right:1px solid var(--line); }
+  .catalog-head { display:flex; align-items:center; justify-content:space-between; padding:14px 12px 4px; }
+  .catalog-head h2 { margin:0; color:var(--fg); font-size:12px; letter-spacing:0; text-transform:none; }
+  .side-search { width:calc(100% - 20px); margin:10px; padding:9px 10px; }
+  .catalog-item { display:grid; grid-template-columns:46px minmax(0,1fr); gap:10px; align-items:center; margin:3px 8px; padding:7px;
+    border:1px solid transparent; border-radius:9px; cursor:pointer; }
+  .catalog-item:hover { background:var(--panel2); }
+  .catalog-item.selected { background:#1b2a42; border-color:#34547f; box-shadow:inset 3px 0 var(--acc); }
+  .catalog-thumb { position:relative; width:46px; height:46px; display:grid; place-items:center; overflow:hidden; border-radius:8px; color:var(--mut);
+    background:#0b1017; border:1px solid var(--line); font-weight:800; }
+  .catalog-thumb img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; object-position:center 25%; }
+  .catalog-copy { min-width:0; }
+  .catalog-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:700; }
+  .catalog-item .sub { color:var(--mut); font-size:10px; display:flex; justify-content:space-between; gap:4px; margin-top:2px; }
+  #wbCenter { min-width:0; min-height:0; display:grid; grid-template-rows:auto auto minmax(320px,1fr); }
+  .wb-head { padding:9px 14px; border-bottom:1px solid var(--line); background:#0e151f; display:flex; gap:10px; align-items:center; position:relative; }
+  .wb-head .identity { min-width:180px; }
+  .wb-head .identity b { display:block; font-size:15px; }
+  .wb-head .identity .muted { font-size:10px; }
+  #wbActionControls { margin-left:auto; position:relative; flex-wrap:nowrap; }
+  #wbQuickAddPanel { display:none; position:absolute; right:0; top:42px; z-index:120; width:360px; padding:10px; border:1px solid var(--line);
+    border-radius:10px; background:var(--panel2); box-shadow:0 16px 50px rgba(0,0,0,.5); }
+  #wbQuickAddPanel.open { display:grid; grid-template-columns:1fr 1fr auto; gap:7px; }
+  #wbQuickAddPanel input { width:100%; min-width:0; }
+  #wbGeneration { display:none; }
+  #wbGraphWrap { min-height:0; padding:12px 14px 10px; border-bottom:1px solid var(--line); background:#0b1119; }
+  #wbFocusBanner { min-height:58px; display:flex; align-items:center; gap:14px; padding:10px 12px; margin-bottom:10px;
+    border:1px solid #35577f; border-radius:10px; background:linear-gradient(110deg,#15233a,#111b28); }
+  .focus-icon { flex:0 0 auto; width:36px; height:36px; display:grid; place-items:center; border-radius:10px; color:#dce9ff;
+    background:#24446e; font-size:17px; font-weight:900; }
+  .focus-copy { min-width:0; display:flex; flex-direction:column; }
+  .focus-copy .eyebrow { color:#9dbce9; font-size:10px; font-weight:800; letter-spacing:.08em; }
+  .focus-copy b { font-size:14px; }
+  .focus-copy .muted { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .focus-actions { margin-left:auto; display:flex; align-items:center; gap:7px; flex:0 0 auto; }
+  #wbStageOverview { display:grid; grid-template-columns:minmax(170px,1.55fr) minmax(500px,5fr); gap:10px; min-width:0; }
+  .stage-overview-start { display:grid; grid-template-columns:repeat(2,minmax(78px,1fr)); gap:7px; position:relative; align-content:center; }
+  .stage-overview-start::after { content:""; position:absolute; right:-11px; top:50%; width:11px; height:1px; background:#3c5069; }
+  .stage-branch-stack { display:grid; grid-template-rows:1fr 1fr; gap:6px; min-width:0; }
+  .stage-lane { display:flex; align-items:center; gap:6px; min-width:0; }
+  .stage-lane-label { flex:0 0 52px; color:var(--mut); font-size:9px; font-weight:750; text-align:right; }
+  .stage-lane .stage-summary { flex:1 1 0; min-width:72px; }
+  .stage-lane.static .stage-summary { flex:0 1 150px; }
+  .stage-summary { position:relative; min-width:0; padding:8px 8px 7px; border:1px solid var(--line); border-radius:9px; background:var(--panel2);
+    color:var(--fg); text-align:left; }
+  .stage-summary::after { content:""; position:absolute; right:-8px; top:50%; width:8px; height:1px; background:#3c5069; }
+  .stage-summary:last-child::after { display:none; }
+  .stage-summary:hover { border-color:#4b6b93; background:#1c2a3b; }
+  .stage-summary.selected { outline:2px solid var(--acc); outline-offset:1px; }
+  .stage-summary.review { border-color:#856624; background:#2a2416; }
+  .stage-summary.done { border-color:#275c4a; }
+  .stage-summary.attention { border-color:#365f8e; }
+  .stage-code { display:inline-grid; place-items:center; width:21px; height:21px; margin-right:4px; border-radius:6px; background:#273548;
+    color:#b7c7db; font:800 10px ui-monospace,monospace; }
+  .stage-title { font-weight:750; font-size:11px; }
+  .stage-progress { display:block; margin-top:5px; color:var(--mut); font-size:9px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #wbStageActions { display:none; align-items:center; gap:6px; margin-top:8px; overflow-x:auto; }
+  #wbStageActions.show { display:flex; }
+  .stage-action-label { color:var(--mut); font-size:10px; flex:0 0 auto; }
+  .stage-action-chip { flex:0 0 auto; display:inline-flex; align-items:center; gap:6px; border-radius:16px; padding:5px 9px; }
+  .stage-action-chip.selected { border-color:var(--acc); background:#20324b; }
+  .stage-action-dot { width:7px; height:7px; border-radius:50%; background:#66758a; }
+  .stage-action-dot.review { background:var(--warn); box-shadow:0 0 0 3px rgba(245,184,75,.12); }
+  .stage-action-dot.done { background:var(--acc2); }
+  .stage-action-dot.attention { background:var(--acc); }
+  .pipeline-details { margin-top:8px; }
+  .pipeline-details > summary { cursor:pointer; color:var(--mut); font-size:10px; padding:3px 1px; user-select:none; }
+  .pipeline-details[open] > summary { margin-bottom:8px; color:var(--fg); }
+  #wbActionManager { display:none !important; position:fixed; z-index:300; left:max(24px,calc(50% - 560px)); right:max(24px,calc(50% - 560px));
+    top:calc(var(--top) + var(--remote-banner-height,0px) + 18px); max-height:calc(100vh - var(--top) - var(--remote-banner-height,0px) - 36px);
+    overflow:auto; padding:12px; border:1px solid #435873; border-radius:14px; background:#0e151f; box-shadow:0 24px 80px rgba(0,0,0,.72); }
+  #wbActionManager.open { display:block !important; }
+  #wbActionManager .card { margin:0; }
+  .action-manager-head { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+  .action-manager-head .muted { margin-left:auto; }
+  .action-manager-head .settings-close { margin-left:8px; }
+  .export-target-row { display:grid; grid-template-columns:auto minmax(140px,.7fr) minmax(280px,1.5fr) auto; align-items:center; gap:7px;
+    padding:7px; margin-bottom:8px; border:1px solid var(--line); border-radius:7px; background:#111925; }
+  .export-target-row input { width:100%; min-width:0; }
+  .action-manager-list { display:flex; flex-direction:column; gap:6px; }
+  .action-manager-row { display:grid; grid-template-columns:minmax(105px,.75fr) minmax(100px,.85fr) minmax(180px,1.8fr) 74px 72px auto auto;
+    align-items:center; gap:6px; padding:7px; border:1px solid var(--line); border-radius:7px; background:var(--panel2); }
+  .action-manager-row.is-disabled { border-color:#5a4936; background:#211d19; }
+  .action-manager-row input.t { min-width:0; width:100%; }
+  .action-manager-row .action-id { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .action-manager-row .ctl { justify-content:center; }
+  .action-manager-row .ctl input.t { width:46px; flex:none; }
+  .stage-invalidate-row { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-top:8px; padding-top:8px; border-top:1px solid var(--line); }
+  .stage-invalidate-row input { min-width:220px; flex:1; }
+  #wbGraph { display:flex; flex-direction:column; gap:8px; min-width:780px; max-height:260px; overflow:auto; padding:2px; }
+  .graph-lane { display:grid; grid-template-columns:repeat(8,minmax(88px,1fr)); gap:14px; align-items:stretch; }
+  .lane-label { color:var(--mut); font-size:10px; grid-column:1/-1; margin-bottom:-3px; }
+  .graph-node { min-height:61px; padding:7px 8px; border:1px solid var(--line); background:var(--panel2); border-radius:8px;
+    position:relative; cursor:pointer; min-width:0; }
+  .graph-node:not(:last-child)::after { content:""; position:absolute; width:15px; height:1px; background:#526176; top:50%; right:-15px; }
+  .graph-node:not(:last-child)::before { content:""; position:absolute; border:4px solid transparent; border-left-color:#526176; top:calc(50% - 4px); right:-19px; }
+  .graph-node.selected { outline:2px solid var(--acc); outline-offset:1px; }
+  .graph-node .node-id { font-weight:800; font-size:12px; }
+  .graph-node .node-label { color:var(--mut); font-size:10px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .graph-node .node-state { margin-top:5px; }
+  .graph-spacer { min-height:1px; }
+  #wbReview { min-height:0; display:grid; grid-template-columns:minmax(0,1fr) 286px; }
+  #artifactPane { min-width:0; min-height:0; display:grid; grid-template-rows:auto auto minmax(0,1fr); background:#070b10; }
+  #artifactReviewHead { min-height:54px; display:flex; align-items:center; gap:9px; padding:8px 12px; border-bottom:1px solid var(--line); background:#0d141d; }
+  #artifactReviewHead .review-title { min-width:0; }
+  #artifactReviewHead b { display:block; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #artifactReviewHead .muted { font-size:10px; }
+  #artifactReviewHead .review-head-actions { margin-left:auto; display:flex; gap:6px; }
+  #artifactBar { border-bottom:1px solid var(--line); padding:7px 9px; overflow-x:auto; white-space:nowrap; background:#101721; }
+  .artifact-tab { margin-right:5px; }
+  .artifact-tab.active { border-color:var(--acc); color:var(--acc); }
+  #artifactViewport { min-height:0; overflow:auto; display:grid; place-items:center; padding:14px; position:relative; }
+  #artifactViewport img,#artifactViewport video { max-width:100%; max-height:100%; object-fit:contain; background-image:linear-gradient(45deg,#26303e 25%,transparent 25%),linear-gradient(-45deg,#26303e 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#26303e 75%),linear-gradient(-45deg,transparent 75%,#26303e 75%); background-size:20px 20px; background-position:0 0,0 10px,10px -10px,-10px 0; }
+  #artifactViewport pre { align-self:start; justify-self:stretch; white-space:pre-wrap; word-break:break-word; color:#cbd5e1; }
+  .sequence-reviewer { width:100%; min-height:0; align-self:start; display:flex; flex-direction:column; gap:9px; }
+  .sequence-order { min-height:22px; }
+  .sequence-order-warning { color:var(--err); font-weight:700; }
+  .sequence-review-stage { height:clamp(220px,42vh,480px); min-height:220px; position:relative; overflow:hidden;
+    border:1px solid var(--line); border-radius:8px; display:grid; place-items:center;
+    background-color:#111821; background-image:linear-gradient(45deg,#26303e 25%,transparent 25%),linear-gradient(-45deg,#26303e 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#26303e 75%),linear-gradient(-45deg,transparent 75%,#26303e 75%); background-size:20px 20px; background-position:0 0,0 10px,10px -10px,-10px 0; }
+  #artifactViewport .sequence-review-stage img { position:absolute; inset:0; width:100%; height:100%; max-width:none; max-height:none;
+    object-fit:contain; background:none; }
+  .sequence-current { transition:opacity .12s; }
+  .sequence-first-last { display:none; position:absolute; inset:0; }
+  .first-last-on .sequence-current { opacity:.16; }
+  .first-last-on .sequence-first-last { display:block; }
+  .sequence-first-last .sequence-first { opacity:.62; filter:drop-shadow(0 0 2px #45b9ff); mix-blend-mode:screen; }
+  .sequence-first-last .sequence-last { opacity:.62; filter:drop-shadow(0 0 2px #ff9c4a); mix-blend-mode:screen; }
+  .sequence-edge-label { position:absolute; top:8px; z-index:2; padding:2px 7px; border-radius:10px; font:700 10px ui-monospace,monospace; }
+  .sequence-edge-label.first { left:8px; color:#89d4ff; background:#102e4c; border:1px solid #3273aa; }
+  .sequence-edge-label.last { right:8px; color:#ffc284; background:#3a2814; border:1px solid #815527; }
+  .sequence-load-status { display:none; position:absolute; left:8px; right:8px; bottom:8px; z-index:3; padding:5px 8px;
+    border-radius:5px; color:var(--err); background:rgba(45,12,16,.88); text-align:center; }
+  .sequence-load-status.show { display:block; }
+  .sequence-controls { display:flex; flex-direction:column; gap:7px; padding:8px; border:1px solid var(--line); border-radius:8px; background:var(--panel); }
+  .sequence-controls input[type=range] { flex:1; min-width:120px; }
+  .sequence-controls input[type=number] { width:58px; }
+  .sequence-thumbnails { width:100%; border:1px solid var(--line); border-radius:8px; background:var(--panel); }
+  .sequence-thumbnails summary { cursor:pointer; color:var(--mut); padding:7px 9px; }
+  .sequence-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(120px,1fr)); gap:8px; width:100%; align-self:start; }
+  .sequence-grid figure { margin:0; background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:5px; }
+  .sequence-grid img { width:100%; aspect-ratio:1; object-fit:contain; }
+  .sequence-grid figcaption { font-size:10px; color:var(--mut); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .sequence-thumbnails .sequence-grid { padding:0 8px 8px; }
+  .sequence-thumb { min-width:0; padding:5px; color:var(--mut); background:var(--panel2); border:1px solid var(--line); border-radius:6px; cursor:pointer; }
+  .sequence-thumb:hover { border-color:var(--acc); color:var(--fg); }
+  #artifactViewport .sequence-thumb img { display:block; width:100%; aspect-ratio:1; object-fit:contain; position:static; background-image:linear-gradient(45deg,#26303e 25%,transparent 25%),linear-gradient(-45deg,#26303e 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#26303e 75%),linear-gradient(-45deg,transparent 75%,#26303e 75%); background-size:16px 16px; background-position:0 0,0 8px,8px -8px,-8px 0; }
+  .sequence-thumb span { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10px; margin-top:3px; }
+  #reviewRail { border-left:1px solid var(--line); padding:12px; overflow:auto; background:var(--panel); }
+  .review-rail-title { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+  .review-rail-title b { font-size:13px; }
+  #reviewCandidate .card { background:#131d29; }
+  #reviewNote { min-height:70px; }
+  .review-decisions { display:grid; grid-template-columns:1fr 1fr; gap:7px; margin-top:8px; }
+  .review-decisions button { min-height:38px; }
+  .review-decisions #reviewAccept { grid-column:1/-1; }
+  .version-details { margin-top:12px; border-top:1px solid var(--line); padding-top:8px; }
+  .version-details > summary { cursor:pointer; font-weight:700; color:var(--mut); padding:4px 0 8px; }
+  .history-item { border:1px solid var(--line); border-radius:7px; padding:7px; margin-bottom:6px; cursor:pointer; }
+  .history-item:hover,.history-item.selected { background:var(--panel3); border-color:#4d6380; }
+  .history-item .hash { color:var(--mut); font-size:10px; }
+
+  #wbRight { position:fixed; z-index:320; top:calc(var(--top) + var(--remote-banner-height,0px)); right:0; bottom:0; width:min(390px,92vw);
+    padding:0; border-left:1px solid #435873; background:var(--panel); box-shadow:-18px 0 60px rgba(0,0,0,.55);
+    transform:translateX(105%); transition:transform .18s ease; overflow:hidden; }
+  #wbRight.open { transform:translateX(0); }
+  .drawer-head { height:52px; display:flex; align-items:center; justify-content:space-between; padding:0 12px; border-bottom:1px solid var(--line); background:#0d141d; }
+  #nodeInspector { height:calc(100% - 52px); overflow:auto; padding:10px; }
+  #wbOverlayBackdrop { display:none; position:fixed; z-index:290; inset:calc(var(--top) + var(--remote-banner-height,0px)) 0 0; background:rgba(3,6,10,.66); }
+  #wbOverlayBackdrop.open { display:block; }
+
+  /* manual assembly */
+  #assemblyPage { grid-template-columns:300px minmax(480px,1fr) 340px; }
+  #assemblyLeft,#assemblyRight { background:var(--panel); overflow:auto; padding:10px; }
+  #assemblyLeft { border-right:1px solid var(--line); } #assemblyRight { border-left:1px solid var(--line); }
+  #assemblyCenter { min-width:0; min-height:0; display:grid; grid-template-rows:auto minmax(0,1fr) auto; background:#080c12; }
+  #assemblyToolbar,#assemblyTransport { padding:8px 10px; background:#111925; border-bottom:1px solid var(--line); }
+  #assemblyToolbar { gap:9px; }
+  #assemblyTransport { border-top:1px solid var(--line); border-bottom:0; }
+  #assemblyCanvasWrap { min-height:0; position:relative; overflow:hidden; }
+  #assemblyCanvas { width:100%; height:100%; display:block; }
+  #assemblyHint { position:absolute; left:10px; top:10px; padding:5px 8px; background:rgba(0,0,0,.55); color:var(--mut); border-radius:5px; pointer-events:none; }
+  #assemblyEditStatus { position:absolute; left:10px; bottom:10px; padding:6px 9px; border:1px solid #3f5f87; border-radius:8px;
+    background:rgba(13,23,36,.88); color:#cfe1fb; pointer-events:none; }
+  .step-kicker { display:inline-flex; align-items:center; width:max-content; margin-bottom:5px; color:#9dbce9; font-size:10px; font-weight:800; letter-spacing:.06em; }
+  .assembly-intro b,.assembly-world-card b { display:block; font-size:14px; margin-bottom:4px; }
+  .action-cal { border:1px solid var(--line); border-radius:10px; padding:9px; margin-bottom:8px; cursor:pointer; }
+  .action-cal:hover { border-color:#455c77; }
+  .action-cal.selected { border-color:var(--acc); background:rgba(91,145,255,.09); box-shadow:inset 3px 0 var(--acc); }
+  .action-cal input[type=number] { width:68px; }
+  .action-cal .action-color { width:9px; height:9px; border-radius:50%; flex:0 0 auto; }
+  .action-cal .action-title { flex:1; min-width:0; }
+  .action-cal .action-title b { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .action-cal .action-title .muted { font-size:10px; }
+  .action-scale-control { display:grid; grid-template-columns:auto minmax(90px,1fr) 64px; align-items:center; gap:7px; margin-top:8px; }
+  .action-scale-control > span { color:var(--fg); font-size:11px; font-weight:700; }
+  .action-precision { margin-top:7px; }
+  .action-precision summary,.assembly-advanced summary { cursor:pointer; color:var(--mut); font-size:11px; }
+  .world-size-control { display:grid; grid-template-columns:auto minmax(90px,1fr) 68px; align-items:center; gap:7px; margin-top:12px; font-size:11px; font-weight:700; }
+  .world-size-control input[type=number] { width:68px; }
+  .derived-world-size { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:8px; color:var(--mut); font-size:10px; }
+  .derived-world-size input { width:82px; opacity:.72; }
+  .assembly-advanced[open] summary { margin-bottom:8px; color:var(--fg); }
+  #assemblyDraftStatus { margin-top:6px; min-height:18px; font-size:11px; }
+  #assemblyDraftStatus.saving { color:var(--warn); }
+  #assemblyDraftStatus.saved { color:var(--acc2); }
+  #assemblyDraftStatus.error { color:var(--err); }
+  .assembly-load-errors { border-color:#87434a; color:var(--err); }
+  .assembly-load-errors ul { color:var(--mut); padding-left:18px; max-height:160px; overflow:auto; }
+
+  /* existing game-consistent runtime preview */
+  #previewPage { grid-template-columns:1fr; }
+  #app { display:grid; grid-template-columns:240px minmax(0,1fr) 320px; height:100%; min-height:0; }
+  .col { overflow:auto; min-height:0; }
+  #left { background:var(--panel); border-right:1px solid var(--line); }
+  #center { display:grid; grid-template-rows:minmax(0,1fr) auto; background:#0b0f17; min-width:0; min-height:0; overflow:hidden; }
+  #right { background:var(--panel); border-left:1px solid var(--line); padding:10px; }
+  #search { width:calc(100% - 20px); margin:10px; }
+  .char { padding:7px 12px; cursor:pointer; border-left:3px solid transparent; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .char:hover { background:var(--panel2); } .char.sel { background:#223049; border-left-color:var(--acc); }
+  .char .sub { color:var(--mut); font-size:11px; } .char.bad { color:var(--err); }
+  #candidatePreview { border-bottom:1px solid var(--line); padding-bottom:7px; }
+  #candidatePreview:empty { display:none; }
+  .char.candidate { margin:7px 8px 0; border:1px solid #725d25; border-left:3px solid var(--warn); border-radius:7px; background:#2b2515; white-space:normal; }
+  .char.candidate.sel { background:#3a3015; border-color:var(--warn); }
+  #stageWrap { position:relative; min-height:0; min-width:0; overflow:hidden; }
+  #stage { position:absolute; inset:0; overflow:hidden; }
+  #stageInfo { position:absolute; left:8px; top:8px; font-size:11px; color:var(--mut); background:rgba(0,0,0,.4); padding:3px 7px; border-radius:5px; pointer-events:none; }
+  #transport { border-top:1px solid var(--line); background:var(--panel); padding:8px 10px; display:flex; flex-direction:column; gap:7px; min-height:0; }
+  .states { display:flex; flex-wrap:nowrap; gap:5px; overflow-x:auto; padding-bottom:3px; }
+  .state { flex:0 0 auto; padding:4px 10px; border-radius:14px; border:1px solid var(--line); cursor:pointer; background:var(--panel2); color:var(--fg); font-size:12px; }
+  .state.sel { background:var(--acc); border-color:var(--acc); color:#07203f; font-weight:700; }
+  .seg { display:flex; gap:4px; } .seg button { flex:1; }
+  #timeline,#assemblyTimeline { flex:1; }
+  table.frames { width:100%; border-collapse:collapse; font-size:11px; }
+  table.frames th,table.frames td { padding:2px 4px; border-bottom:1px solid var(--line); text-align:right; }
+  table.frames th:first-child,table.frames td:first-child { text-align:left; }
+  #toast { position:fixed; right:12px; bottom:12px; z-index:100; background:var(--panel2); border:1px solid var(--line); padding:8px 12px; border-radius:8px; opacity:0; transition:opacity .25s; pointer-events:none; }
+  #toast.show { opacity:1; }
+  @media (max-width:1100px) {
+    #workbenchPage { grid-template-columns:210px minmax(560px,1fr); }
+    #wbStageOverview { grid-template-columns:160px minmax(470px,1fr); gap:8px; overflow-x:auto; }
+    .stage-title { font-size:10px; }
+    #wbReview { grid-template-columns:minmax(0,1fr) 260px; }
+    #assemblyPage { grid-template-columns:260px minmax(420px,1fr); grid-template-rows:minmax(520px,1fr) auto; overflow:auto; }
+    #assemblyLeft { grid-column:1; grid-row:1 / span 2; }
+    #assemblyCenter { grid-column:2; grid-row:1; min-height:520px; }
+    #assemblyRight { display:block; grid-column:2; grid-row:2; border-top:1px solid var(--line); overflow:visible; }
+  }
+</style>
+  <script type="module" crossorigin src="/FindingDogDist/assets/index-DqnLnp8x.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">动画资源工作台 <small>看素材、做决定，其余交给版本图</small></div>
+  <nav class="top-tabs">
+    <button class="top-tab active" data-page="workbenchPage">① 流程与审查</button>
+    <button class="top-tab" data-page="assemblyPage">② 锚点与缩放</button>
+    <button class="top-tab" data-page="previewPage">③ 游戏中验收</button>
+  </nav>
+  <div id="globalStatus">正在连接工作区…</div>
+</header>
+
+<section id="workbenchPage" class="tool-page active">
+  <aside id="wbLeft" class="wb-side">
+    <div class="catalog-head"><h2>角色资源</h2><span id="wbCatalogCount" class="pill mono"></span></div>
+    <input id="wbSearch" class="t side-search" placeholder="搜索原始素材角色…" />
+    <div id="wbCatalog"></div>
+  </aside>
+  <main id="wbCenter">
+    <div class="wb-head">
+      <div class="identity"><b id="wbCharacterName">请选择角色</b><span id="wbCharacterMeta" class="muted mono">—</span></div>
+      <div id="wbInitControls" class="row" style="display:none">
+        <input id="wbInitId" class="t" placeholder="characterId" />
+        <input id="wbInitBundle" class="t" placeholder="动画 bundleId（H 前必填）" />
+        <input id="wbInitStatic" class="t" style="min-width:260px" placeholder="静态目标 PNG（H-static 前必填，可空）" />
+        <button id="wbInit" class="t primary">建立工作区</button>
+      </div>
+      <div id="wbActionControls" class="row" style="display:none">
+        <button id="wbAddActionToggle" class="t">＋ 新动作</button>
+        <button id="wbSettingsToggle" class="t">角色与动作设置</button>
+        <button id="wbCheckpoint" class="t">保存快照</button>
+        <button id="wbInspectorToggle" class="t">节点说明</button>
+        <div id="wbQuickAddPanel">
+          <input id="wbActionId" class="t" placeholder="动作 ID，例如 idle" />
+          <input id="wbActionLabel" class="t" placeholder="显示名，例如 待机" />
+          <button id="wbAddAction" class="t primary">添加</button>
+        </div>
+      </div>
+      <span id="wbGeneration" class="muted mono" style="margin-left:auto"></span>
+    </div>
+    <section id="wbGraphWrap">
+      <div id="wbFocusBanner"><div class="muted">选择角色后，这里会告诉你下一步该做什么。</div></div>
+      <div id="wbStageOverview"></div>
+      <div id="wbStageActions"></div>
+      <div id="wbActionManager" style="display:none"></div>
+      <details class="pipeline-details">
+        <summary>查看每个动作的详细分支</summary>
+        <div id="wbGraph"><div class="empty">选择一个角色查看流水线</div></div>
+      </details>
+    </section>
+    <section id="wbReview">
+      <div id="artifactPane">
+        <div id="artifactReviewHead">
+          <span id="artifactStageBadge" class="stage-code">—</span>
+          <div class="review-title"><b id="artifactReviewTitle">选择一个阶段开始审查</b><span id="artifactReviewMeta" class="muted">素材会显示在下方</span></div>
+          <div class="review-head-actions"><button id="artifactInspectorToggle" class="t">查看要求</button></div>
+        </div>
+        <div id="artifactBar"><span class="muted">选择节点或历史版本查看素材</span></div>
+        <div id="artifactViewport"><div class="empty">素材审查区</div></div>
+      </div>
+      <aside id="reviewRail">
+        <div class="review-rail-title"><b>人工决定</b><span class="pill under_review">只在这里做判断</span></div>
+        <div id="reviewCandidate" class="muted">无</div>
+        <textarea id="reviewNote" class="t" rows="3" placeholder="写清楚哪里需要改，Agent 会读取这段意见"></textarea>
+        <div class="review-decisions">
+          <button id="reviewAccept" class="t good strong" disabled>✓ 通过并设为当前版本</button>
+          <button id="reviewReject" class="t danger strong" disabled>退回修改</button>
+          <button id="reviewInvalidate" class="t danger" disabled>标记需要重做</button>
+        </div>
+        <details class="version-details">
+          <summary>版本记录与回退</summary>
+          <div id="revisionHistory"><div class="muted">无</div></div>
+        </details>
+      </aside>
+    </section>
+  </main>
+  <aside id="wbRight" class="wb-side">
+    <div class="drawer-head"><b>阶段要求与技术详情</b><button id="wbInspectorClose" class="t">关闭</button></div>
+    <div id="nodeInspector"><div class="empty">选择图节点查看状态、依赖和 Agent 语义</div></div>
+  </aside>
+  <div id="wbOverlayBackdrop"></div>
+</section>
+
+<section id="assemblyPage" class="tool-page">
+  <aside id="assemblyLeft">
+    <div class="card assembly-intro">
+      <span class="step-kicker">步骤 1 · 选动作</span>
+      <b id="assemblyCharacter">未选择角色</b>
+      <div class="muted">把动作叠在一起，先对齐脚下落点，再统一视觉大小。全程只由你手动调整。</div>
+    </div>
+    <h2 style="margin-left:0">统一落脚点与各动作</h2>
+    <div id="assemblyActions"><div class="muted">G 阶段全部通过后可装配</div></div>
+  </aside>
+  <main id="assemblyCenter">
+    <div id="assemblyToolbar" class="row">
+      <span class="step-kicker">步骤 2 · 对比动作</span>
+      <label class="ctl">查看方式 <select id="assemblyMode" class="t"><option value="overlay">叠加检查</option><option value="split">并排检查</option><option value="transition">硬切检查</option></select></label>
+      <span id="assemblyTransitionControls" class="row" style="display:none">
+        <select id="assemblyTransitionFrom" class="t"></select><span class="muted">→</span><select id="assemblyTransitionTo" class="t"></select>
+        <label class="ctl">暂停时查看 A / B <input id="assemblyTransitionMix" type="range" min="0" max="1" step="1" value="0" /></label>
+      </span>
+      <button id="assemblyPlay" class="t on">⏸ 暂停</button>
+      <label class="ctl">动画速度 <input id="assemblyZoom" type="range" min="0.1" max="4" step="0.05" value="1" /></label>
+      <label class="ctl"><input id="assemblyChecker" type="checkbox" checked /> 棋盘背景</label>
+      <button id="assemblyFit" class="t">重新适配画布</button>
+    </div>
+    <div id="assemblyCanvasWrap">
+      <canvas id="assemblyCanvas"></canvas>
+      <div id="assemblyHint">先点左侧“统一落脚点”或某个动作，再直接拖动画面中的十字；每个动作的全部帧始终共用同一组参数。</div>
+      <div id="assemblyEditStatus">当前：等待选择调整对象</div>
+    </div>
+    <div id="assemblyTransport" class="row">
+      <input id="assemblyTimeline" type="range" min="0" max="1" step="0.001" value="0" />
+      <span id="assemblyPhase" class="mono">0.000</span>
+    </div>
+  </main>
+  <aside id="assemblyRight">
+    <div class="card assembly-world-card">
+      <span class="step-kicker">步骤 3 · 角色全局大小</span>
+      <b>角色在游戏世界中的尺寸</b>
+      <div class="muted">拖动时画布中的世界网格和“1 单位”标尺会实时变化，用它统一不同角色的相对大小；不会重采样图集。</div>
+      <label class="world-size-control">角色高度
+        <input id="assemblyWorldHRange" type="range" min="0.1" max="5" step="0.01" value="1" />
+        <input id="assemblyWorldH" class="t" type="number" min="0.01" step="0.01" value="1" />
+      </label>
+      <div class="derived-world-size">按画布比例计算的宽度 <input id="assemblyWorldW" class="t" type="number" min="0.01" step="0.01" value="1" readonly /></div>
+    </div>
+    <details class="card assembly-advanced">
+      <summary>精确数值与画布设置</summary>
+      <div class="muted">通常直接拖动画面即可；只有需要精确复现时才改这些数值。</div>
+      <div class="row" style="margin-top:7px">
+        <label class="ctl">画布宽 <input id="assemblyCellW" class="t" type="number" min="1" value="512" /></label>
+        <label class="ctl">高 <input id="assemblyCellH" class="t" type="number" min="1" value="512" /></label>
+      </div>
+      <div class="row" style="margin-top:7px">
+        <label class="ctl">统一落脚点 X <input id="assemblyTargetX" class="t" type="number" value="256" /></label>
+        <label class="ctl">Y <input id="assemblyTargetY" class="t" type="number" value="460" /></label>
+      </div>
+    </details>
+    <span class="step-kicker">步骤 4 · 保存并提交</span>
+    <textarea id="assemblyNote" class="t" rows="3" placeholder="装配版本说明"></textarea>
+    <div id="assemblyDraftStatus" class="muted">草稿会在调整后自动保存</div>
+    <div class="row" style="margin-top:8px">
+      <button id="assemblySaveDraft" class="t">立即保存草稿</button>
+      <button id="assemblyCommit" class="t primary">提交对齐与缩放候选</button>
+    </div>
+    <details class="card" style="margin-top:10px">
+      <summary><b>验收要点</b></summary>
+      <ul class="muted" style="padding-left:18px;margin-bottom:0">
+        <li>切换动作时，角色不能整体平移或跳一下。</li>
+        <li>每个动作只能统一等比缩放，不能逐帧修正。</li>
+        <li>角色世界尺寸只决定角色间相对大小，不改变源帧。</li>
+      </ul>
+    </details>
+  </aside>
+</section>
+
+<section id="previewPage" class="tool-page">
+<div id="app">
+  <div id="left" class="col">
+    <input id="search" class="t" placeholder="搜索角色…" />
+    <div id="candidatePreview"></div>
+    <h2>已发布角色 <span id="charCount" class="mono"></span></h2><div id="charList"></div>
+  </div>
+  <div id="center">
+    <div id="stageWrap"><div id="stage"></div><div id="stageInfo"></div></div>
+    <div id="transport">
+      <div class="states" id="stateList"></div>
+      <div class="row">
+        <label class="ctl" style="font-weight:700;color:var(--fg)">状态 <select class="t" id="stateSel" style="min-width:120px"></select></label>
+        <button class="t" id="btnPlay">⏸ 暂停</button><button class="t" id="btnLoop">🔁 循环</button>
+        <div class="seg"><button class="t" id="btnPrev">◀ 帧</button><button class="t" id="btnNext">帧 ▶</button></div>
+        <input type="range" id="timeline" min="0" max="0" value="0" step="1" /><span class="mono" id="frameLabel">0/0</span>
+      </div>
+      <div class="row">
+        <label class="ctl">速度 <input type="range" id="speed" min="0.1" max="4" step="0.1" value="1" /><span class="mono" id="speedV">1.0×</span></label>
+        <label class="ctl">帧率 <input class="t" type="number" id="fps" min="1" max="60" step="1" style="width:52px" /></label>
+        <label class="ctl">视图缩放 <input type="range" id="zoom" min="0.05" max="6" step="0.01" value="1" /></label>
+        <button class="t" id="btnFit">适配</button><button class="t" id="btnFacing">↔ 朝向</button>
+      </div>
+      <div class="row">
+        <label class="ctl">背景 <select class="t" id="bg"><option value="checker">棋盘</option><option value="transparent">透明(黑)</option><option value="grey">中性灰</option><option value="sceneColor">场景色</option><option value="scene">场景(实际比例)</option></select></label>
+        <select class="t" id="sceneBg" style="display:none;max-width:200px"></select>
+        <label class="ctl"><input type="checkbox" id="pdm" /> 像素密度低通</label>
+        <label class="ctl">背景密度 <input class="t" type="number" id="dbg" value="1.0" step="0.1" min="0.1" style="width:56px" /></label>
+        <label class="ctl"><input type="checkbox" id="ovAnchor" checked /> 锚点</label><label class="ctl"><input type="checkbox" id="ovCell" /> 格框</label>
+      </div>
+      <div class="row">
+        <label class="ctl"><input type="checkbox" id="onion" /> 洋葱皮</label>
+        <label class="ctl">帧数 <input class="t" type="number" id="onionN" value="2" min="1" max="6" style="width:44px" /></label>
+        <button class="t" id="btnAtlas">🗺 图集检视</button><button class="t" id="btnGif">🎞 导出 GIF</button>
+        <label class="ctl"><input type="checkbox" id="cmp" /> 对比</label><select class="t" id="cmpChar" style="display:none"></select><select class="t" id="cmpState" style="display:none"></select>
+        <button class="t" id="btnLight" style="margin-left:auto">💡 光照/阴影</button>
+      </div>
+    </div>
+  </div>
+  <div id="right" class="col"><div id="info"></div></div>
+</div>
+</section>
+
+<div id="atlasModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:10;overflow:auto;padding:20px">
+  <div class="row" style="margin-bottom:8px"><b>图集检视</b><span id="atlasMeta" class="mono muted"></span><button class="t" id="atlasClose" style="margin-left:auto">✕ 关闭</button></div>
+  <canvas id="atlasCanvas" style="border:1px solid var(--line);image-rendering:pixelated"></canvas>
+</div>
+<div id="lightModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.3);z-index:20;align-items:center;justify-content:center">
+  <div style="width:300px;max-height:86vh;overflow:auto;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:14px;box-shadow:0 12px 40px rgba(0,0,0,.6)">
+    <div class="row" style="margin-bottom:8px"><b>💡 光照 / 阴影</b><button class="t" id="lightClose" style="margin-left:auto">✕ 关闭</button></div>
+    <label class="ctl" style="display:flex"><input type="checkbox" id="lightOn" /> 启用逐 entity 光照</label>
+    <label class="ctl" style="display:flex">阴影 <select class="t" id="shadowMode"><option value="off">off</option><option value="planar">planar</option></select></label>
+    <label class="ctl" style="display:flex">光方位 <input type="range" id="lAzi" min="0" max="360" value="125" /></label>
+    <label class="ctl" style="display:flex">光仰角 <input type="range" id="lElev" min="5" max="89" value="55" /></label>
+    <label class="ctl" style="display:flex">主光色 <input type="color" id="lKey" value="#fff7ea" /> 强 <input type="range" id="lKeyI" min="0" max="2" step="0.05" value="1" /></label>
+    <label class="ctl" style="display:flex">环境色 <input type="color" id="lAmb" value="#8c99b8" /> 强 <input type="range" id="lAmbI" min="0" max="2" step="0.05" value="1" /></label>
+    <label class="ctl" style="display:flex">色调融入 <input type="range" id="lTone" min="0" max="1" step="0.05" value="0.45" /></label>
+    <label class="ctl" style="display:flex">AO 接触 <input type="range" id="lAoC" min="0" max="1" step="0.05" value="0.45" /></label>
+    <label class="ctl" style="display:flex">AO 体积 <input type="range" id="lAoF" min="0" max="1" step="0.05" value="0.25" /></label>
+    <label class="ctl" style="display:flex">阴影暗 <input type="range" id="sDark" min="0" max="1" step="0.05" value="0.5" /></label>
+    <label class="ctl" style="display:flex">阴影长 <input type="range" id="sLen" min="0" max="3" step="0.1" value="1.2" /></label>
+  </div>
+</div>
+<div id="toast"></div>
+
+
+
+</body>
+</html>

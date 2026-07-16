@@ -12,17 +12,20 @@ from PySide6.QtWidgets import (
     QWidget, QSplitter, QListWidget, QListWidgetItem, QTreeWidget, QTreeWidgetItem,
     QVBoxLayout,
     QHBoxLayout, QPushButton, QMessageBox, QFileDialog, QLabel, QLineEdit,
-    QFormLayout, QScrollArea, QGroupBox, QInputDialog,
+    QFormLayout, QScrollArea, QGroupBox, QInputDialog, QColorDialog,
     QMenu, QCompleter, QDialog, QSizePolicy, QComboBox, QApplication,
 )
 from PySide6.QtCore import Qt, Signal, QTimer, QStringListModel, QSettings
 from PySide6.QtGui import QUndoStack, QUndoCommand, QAction, QCursor, QKeySequence, QShortcut, QColor
+
+from tools.editor import theme as app_theme
 
 from .graph_document import (
     graphs_dir,
     list_graph_files,
     load_json,
     save_json,
+    write_bytes_atomic,
     validate_graph_tiered,
     node_search_haystack,
     node_summary,
@@ -34,6 +37,7 @@ from .graph_document import (
 from .graph_mutations import (
     collect_incoming_refs,
 )
+from .dialogue_topology import iter_output_slots
 from .graph_document_model import GraphDocumentModel
 from .graph_analysis import analyze_node_tags
 from .flow_layout_store import (
@@ -50,6 +54,7 @@ from .editor_group_geometry import (
     sync_node_to_group_from_layout_positions,
     sync_node_to_group_from_frames,
     avoid_rects_list,
+    parse_group_super_node_gid,
 )
 from .flow_oden_controller import DialogueFlowOdenController
 from .node_inspector import NodeInspector
@@ -62,6 +67,17 @@ _TREE_GROUP_KEY_ROLE = Qt.ItemDataRole.UserRole + 31
 _TK_GROUP = 1
 _TK_FILE = 2
 _TK_UNSAVED = 3
+
+# 分组配色：新建分组按序取不同色，一眼区分（纯编辑器视觉，不进图 JSON / 不影响运行时）。
+_LEGACY_GROUP_COLOR = "#4a6fa8"  # 历史上所有分组的硬编码同色；视作「未配色」，加载时自动派生不同色
+_GROUP_COLOR_PALETTE = [
+    "#4a6fa8", "#a8564a", "#4a8a5c", "#8a6f4a", "#7a4a8a",
+    "#4a8a8a", "#a88a4a", "#a84a7a", "#5a6f8a", "#6f8a4a",
+]
+
+
+def _palette_group_color(index: int) -> str:
+    return _GROUP_COLOR_PALETTE[index % len(_GROUP_COLOR_PALETTE)]
 
 
 def _graph_form_label(text: str, tip: str | None = None, *, max_w: int = 100) -> QLabel:
@@ -102,6 +118,41 @@ class _NodeDataChangedCmd(QUndoCommand):
 
     def undo(self) -> None:
         self._model.set_node(self._nid, copy.deepcopy(self._old))
+
+
+class _GraphStructureSnapshotCmd(QUndoCommand):
+    """结构级操作（节点新增/删除/重命名/复制、清除幽灵连线）的全图快照撤销。
+
+    与检查器的 `_NodeDataChangedCmd`（单节点合并）及 Oden 画布自身的移动/连线命令
+    共存于同一 QUndoStack：本命令整图回灌数据+坐标，粒度大但语义清晰、互不越权。
+    push 时的首次 redo() 跳过（调用方已直接完成了这次变更），后续 redo/undo 才回灌。
+    """
+
+    def __init__(
+        self,
+        widget: "DialogueGraphEditorWidget",
+        label: str,
+        before_data: dict,
+        before_positions: dict,
+        after_data: dict,
+        after_positions: dict,
+    ):
+        super().__init__(label)
+        self._widget = widget
+        self._before_data = before_data
+        self._before_positions = before_positions
+        self._after_data = after_data
+        self._after_positions = after_positions
+        self._first_redo_skipped = False
+
+    def redo(self) -> None:
+        if not self._first_redo_skipped:
+            self._first_redo_skipped = True
+            return
+        self._widget._apply_structure_snapshot(self._after_data, self._after_positions)
+
+    def undo(self) -> None:
+        self._widget._apply_structure_snapshot(self._before_data, self._before_positions)
 
 
 def _graph_preconditions_for_editor(pre: object) -> list[dict[str, Any]]:
@@ -150,6 +201,13 @@ class DialogueGraphEditorWidget(QWidget):
         self._current_path: Path | None = None
         self._model = GraphDocumentModel(self)
         self._data: dict = self._model.mutable_data
+        # 磁盘原始字节/语义基线：保存时内容无实质变化则原样回写，保格式零变化
+        self._loaded_disk_bytes: bytes | None = None
+        self._loaded_disk_data: dict | None = None
+        # 「新建图」草稿的出厂快照：Save All 用它识别「从未编辑过的全新草稿」并跳过静默物化（审查 P3）
+        self._new_draft_pristine: dict | None = None
+        # 最近一次保存失败的中文原因（供内嵌 flush 降级提示；成功/开始保存时清空）
+        self._last_save_failure: str = ""
         self._editing_node_id: str | None = None
         self._positions: dict[str, tuple[float, float]] = {}
         self._layout_save_timer = QTimer(self)
@@ -158,6 +216,10 @@ class DialogueGraphEditorWidget(QWidget):
         self._inspector_scene_timer = QTimer(self)
         self._inspector_scene_timer.setSingleShot(True)
         self._inspector_scene_timer.timeout.connect(self._rebuild_flow_scene)
+        # 单一 toast 计时器：避免多次 QTimer.singleShot 堆叠互相提前清空消息
+        self._toast_timer = QTimer(self)
+        self._toast_timer.setSingleShot(True)
+        self._toast_timer.timeout.connect(self._on_toast_timeout)
         self._meta_rebuild_timer = QTimer(self)
         self._meta_rebuild_timer.setSingleShot(True)
         self._meta_rebuild_timer.timeout.connect(self._rebuild_flow_scene)
@@ -178,6 +240,9 @@ class DialogueGraphEditorWidget(QWidget):
         self._inspector_project_model_failed = False
         self._undo_stack = QUndoStack(self)
         self._undo_stack.indexChanged.connect(self._on_undo_index_changed)
+        # 跟踪栈长度以区分"全新入栈(编辑/移动)"与"undo/redo 回退"——前者画布已就地应用、
+        # 不需整图重建；后者才需重建反映回退状态。count 变=入栈，count 不变=undo/redo。
+        self._prev_undo_count = 0
         # push(_NodeDataChangedCmd) 会同步触发 indexChanged；若此时再 set_node 会整页重建，丢掉 Action 折叠等 UI 状态。
         self._suppress_inspector_resync_from_undo = False
         self._model.dirty_changed.connect(self.dirty_changed)
@@ -211,10 +276,17 @@ class DialogueGraphEditorWidget(QWidget):
         ):
             tb.addAction(text, slot)
         tb.addSeparator()
+        _undo_scope_tip = (
+            "覆盖范围：节点内容编辑、画布移动/连线、节点新增/删除/重命名/复制、"
+            "复制子树、清除幽灵连线。\n"
+            "图属性（id / entry / 标题 / preconditions / 叙事归属）的修改不入撤销栈。"
+        )
         self._btn_undo = QPushButton("撤销")
+        self._btn_undo.setToolTip("撤销上一步操作。\n" + _undo_scope_tip)
         self._btn_undo.clicked.connect(self._undo_stack.undo)
         tb.addWidget(self._btn_undo)
         self._btn_redo = QPushButton("重做")
+        self._btn_redo.setToolTip("重做刚撤销的操作。\n" + _undo_scope_tip)
         self._btn_redo.clicked.connect(self._undo_stack.redo)
         tb.addWidget(self._btn_redo)
         self._search_edit = QLineEdit()
@@ -260,6 +332,43 @@ class DialogueGraphEditorWidget(QWidget):
         b_del_file = QPushButton("删除图…")
         b_del_file.clicked.connect(self.delete_selected_graph_file)
         fv.addWidget(b_del_file)
+
+        # 「被引用」反查面板：当前图被哪些地图实体/Scenario/叙事图/其它对话引用；双击跳过去。
+        # 整段可折叠（折叠后只留标题行，最省空间），折叠态用 QSettings 跨会话记住——UI 本就拥挤。
+        refs_wrap = QVBoxLayout()
+        refs_wrap.setContentsMargins(0, 0, 0, 0)
+        refs_wrap.setSpacing(2)
+        refs_head = QHBoxLayout()
+        refs_head.addWidget(QLabel("<b>被引用</b>"))
+        self._refs_count = QLabel("")
+        self._refs_count.setStyleSheet("color: #888;")
+        refs_head.addWidget(self._refs_count, 1)
+        self._refs_toggle = QPushButton("收起")
+        self._refs_toggle.setFixedWidth(56)
+        self._refs_toggle.clicked.connect(self._toggle_refs_panel)
+        refs_head.addWidget(self._refs_toggle)
+        refs_wrap.addLayout(refs_head)
+
+        self._refs_body = QWidget()
+        refs_body_layout = QVBoxLayout(self._refs_body)
+        refs_body_layout.setContentsMargins(0, 0, 0, 0)
+        self._refs_tree = QTreeWidget()
+        self._refs_tree.setHeaderHidden(True)
+        self._refs_tree.setRootIsDecorated(True)
+        self._refs_tree.setMaximumHeight(240)
+        self._refs_tree.itemDoubleClicked.connect(self._on_referrer_double_clicked)
+        refs_body_layout.addWidget(self._refs_tree)
+        self._refs_hint = QLabel("打开一张图后显示引用它的实体")
+        self._refs_hint.setWordWrap(True)
+        refs_body_layout.addWidget(self._refs_hint)
+        self._refs_refresh_btn = QPushButton("刷新引用")
+        self._refs_refresh_btn.clicked.connect(self._refresh_referrers)
+        refs_body_layout.addWidget(self._refs_refresh_btn)
+        refs_wrap.addWidget(self._refs_body)
+        fv.addLayout(refs_wrap)
+        self._refs_collapsed = False
+        self._restore_refs_panel_state()
+
         splitter.addWidget(file_box)
 
         self._oden = DialogueFlowOdenController(self._undo_stack, self, toast=self._toast)
@@ -276,6 +385,7 @@ class DialogueGraphEditorWidget(QWidget):
         self._oden.auto_layout_requested.connect(self._flow_auto_layout)
         self._oden.canvas_context_menu.connect(self._on_flow_canvas_context_menu)
         self._oden.editor_frame_rename_requested.connect(self._on_editor_frame_rename)
+        self._oden.editor_group_expand_requested.connect(self._toggle_editor_group_collapsed)
         self._oden.set_editor_frame_drag_end_callback(self._on_editor_frame_drag_finished)
         self._oden.delete_key_requested.connect(self._on_flow_delete_key)
         self._flow_view = self._oden.viewer()
@@ -308,15 +418,22 @@ class DialogueGraphEditorWidget(QWidget):
         hb.addWidget(self._btn_dup)
         nv.addLayout(hb)
 
-        flow_hint = QLabel(
+        _flow_hint_detail = (
             "流程图（OdenGraphQt）：输出端口拖线到目标节点的「in」· 滚轮缩放 · 中键/右键平移 · "
             "F 适应整图 · A /「自动布局」按图 entry 做 BFS 分层（避开已有分组框占位）· "
             "空白处右键可「新建分组框」；节点中心在框内即归入该组 · "
             "布局写入 resources/editor_projects/editor_data/dialogue_flow_layout.json · "
-            "依赖由 install-deps.cmd 安装"
+            "依赖由 ./dev.sh install-deps 安装"
         )
+        flow_hint = QLabel("流程图：端口拖线连节点 · 滚轮缩放 · 中键平移 · F 适应 · A 自动布局（详见悬停提示）")
         flow_hint.setWordWrap(True)
-        flow_hint.setStyleSheet("color: #888; font-size: 11px;")
+        flow_hint.setStyleSheet("color: #888;")
+        app_theme.set_editor_font_role(flow_hint, app_theme.FONT_ROLE_HINT)
+        fallback_font = flow_hint.font()
+        fallback_font.setPixelSize(app_theme.font_px_for_role(app_theme.FONT_ROLE_HINT))
+        flow_hint.setFont(fallback_font)
+        flow_hint.setToolTip(_flow_hint_detail)
+        self._flow_view.setToolTip(_flow_hint_detail)
         flow_top = QWidget()
         ft_l = QVBoxLayout(flow_top)
         ft_l.setContentsMargins(0, 0, 0, 0)
@@ -395,10 +512,20 @@ class DialogueGraphEditorWidget(QWidget):
         self._edit_meta_scenario.setEditable(True)
         self._edit_meta_scenario.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self._edit_meta_scenario.setMinimumWidth(180)
-        self._edit_meta_scenario.setToolTip(
-            "须选自 scenarios.json 清单。保存后写入 meta.scenarioId，并同步更新该 scenario 的 dialogueGraphIds。\n"
-            "留空表示不归属任何 scenario（左侧列表归入「未归属」）。",
-        )
+        if self._injected_project_model is not None:
+            self._edit_meta_scenario.setToolTip(
+                "须选自 scenarios.json 清单。保存后写入 meta.scenarioId，并同步更新该 scenario 的 dialogueGraphIds。\n"
+                "留空表示不归属任何 scenario（左侧列表归入「未归属」）。",
+            )
+        else:
+            # 独立运行模式诚实化（审查 P2）：没有主编辑器 ProjectModel，保存只写图 JSON 的
+            # meta.scenarioId，不会自动同步 scenarios.json 的 dialogueGraphIds 索引。
+            self._edit_meta_scenario.setToolTip(
+                "须选自 scenarios.json 清单。保存后写入图 JSON 的 meta.scenarioId。\n"
+                "留空表示不归属任何 scenario（左侧列表归入「未归属」）。\n\n"
+                "注意：当前为独立运行模式，不会自动同步 scenarios.json 的 dialogueGraphIds 索引；\n"
+                "改叙事归属 / 重命名 / 删除图后，请在主编辑器内保存一次，或跑 ./dev.sh validate-data 核对索引。",
+            )
         _scen_le = self._edit_meta_scenario.lineEdit()
         if _scen_le is not None:
             _scen_le.setPlaceholderText("从下拉选择 scenario id")
@@ -412,11 +539,18 @@ class DialogueGraphEditorWidget(QWidget):
         )
         self._btn_open_scenario.clicked.connect(self._on_open_linked_scenario_clicked)
         _ms_lay.addWidget(self._btn_open_scenario)
+        if self._injected_project_model is not None:
+            _narr_tip = (
+                "对应 JSON：meta.scenarioId。与 scenarios.json 双向维护：本图会出现在该 scenario 的 dialogueGraphIds 中。"
+            )
+        else:
+            _narr_tip = (
+                "对应 JSON：meta.scenarioId。独立运行模式只写本图 JSON，"
+                "不自动同步 scenarios.json 的 dialogueGraphIds 索引——"
+                "请在主编辑器内保存一次，或跑 ./dev.sh validate-data 核对。"
+            )
         gform.addRow(
-            _graph_form_label(
-                "叙事归属",
-                tip="对应 JSON：meta.scenarioId。与 scenarios.json 双向维护：本图会出现在该 scenario 的 dialogueGraphIds 中。",
-            ),
+            _graph_form_label("叙事归属", tip=_narr_tip),
             self._meta_scenario_row,
         )
         gform.addRow(QLabel(), self._pre_cond_ed)
@@ -439,10 +573,8 @@ class DialogueGraphEditorWidget(QWidget):
             dialogue_graph_id_getter=lambda: str(self._data.get("id", "") or "").strip(),
         )
         self._inspector.set_change_callback(self._on_inspector_changed)
-        self._inspector.set_editor_group_callbacks(
-            self._assign_node_editor_group,
-            self._create_editor_group_dialog,
-        )
+        # 分组一律由画布分组框几何决定，检查器只读展示所属分组（不再提供会误导的
+        # 下拉「指派分组」入口——那两个回调过去只是弹 toast 让人去画布操作）。
         self._inspector.set_editor_group_geometry_mode(True)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -527,10 +659,6 @@ class DialogueGraphEditorWidget(QWidget):
             return self._graphs_dir / self._draft_layout_basename
         return None
 
-    def _assign_node_editor_group(self, nid: str, group_id: str) -> None:
-        _ = (nid, group_id)
-        self._toast("分组由画布上的分组框决定：把节点拖入框内即可，勿在此下拉修改。", 4000)
-
     def _new_editor_group_id_and_register(self, display_name: str) -> str:
         """登记新编辑器分组，返回内部分组 id（不写盘，由调用方 flush）。"""
         base = f"g_{len(self._editor_groups) + 1}"
@@ -539,12 +667,36 @@ class DialogueGraphEditorWidget(QWidget):
         while gid in self._editor_groups:
             n += 1
             gid = f"{base}_{n}"
-        self._editor_groups[gid] = {"name": display_name.strip(), "color": "#4a6fa8"}
+        # 新组按现有组数取调色板下一色，天然与已有组不同
+        self._editor_groups[gid] = {
+            "name": display_name.strip(),
+            "color": _palette_group_color(len(self._editor_groups)),
+        }
         return gid
 
-    def _create_editor_group_dialog(self) -> str | None:
-        self._toast("请用画布右键「新建分组框」创建分组。", 3500)
-        return None
+    def _maybe_autocolor_legacy_groups(self) -> bool:
+        """把没配色/仍是历史同色的分组按序派生成不同色（一次性修旧数据的「都同色」）。返回是否有改动。"""
+        changed = False
+        for idx, (gid, meta) in enumerate(self._editor_groups.items()):
+            if not isinstance(meta, dict):
+                continue
+            cur = str(meta.get("color") or "").strip().lower()
+            if not cur or cur == _LEGACY_GROUP_COLOR:
+                meta["color"] = _palette_group_color(idx)
+                changed = True
+        return changed
+
+    def _on_editor_frame_change_color(self, gid: str) -> None:
+        if gid not in self._editor_groups:
+            return
+        cur = str((self._editor_groups.get(gid) or {}).get("color") or _LEGACY_GROUP_COLOR)
+        picked = QColorDialog.getColor(QColor(cur), self, "分组颜色")
+        if not picked.isValid():
+            return
+        self._editor_groups.setdefault(gid, {})["color"] = picked.name()
+        self._rebuild_flow_scene()
+        if self._layout_path_for_io():
+            self._flush_flow_layout_to_disk()
 
     def _sync_node_groups_from_scene(self) -> None:
         nodes = self._data.get("nodes") or {}
@@ -615,6 +767,25 @@ class DialogueGraphEditorWidget(QWidget):
             out[nid] = self._hex_to_rgba(c)
         return out
 
+    def _hidden_node_ids(self) -> set[str]:
+        """折叠分组的成员节点：画布上不渲染（只留分组框）。"""
+        collapsed = {
+            gid for gid, m in self._editor_groups.items()
+            if isinstance(m, dict) and m.get("collapsed")
+        }
+        if not collapsed:
+            return set()
+        return {nid for nid, gid in self._node_to_group.items() if gid in collapsed}
+
+    def _toggle_editor_group_collapsed(self, gid: str) -> None:
+        if gid not in self._editor_groups:
+            return
+        meta = self._editor_groups.setdefault(gid, {})
+        meta["collapsed"] = not bool(meta.get("collapsed"))
+        self._rebuild_flow_scene()
+        if self._layout_path_for_io():
+            self._flush_flow_layout_to_disk()
+
     def _update_search_completions(self, _t: str) -> None:
         nodes = self._data.get("nodes") or {}
         if not isinstance(nodes, dict):
@@ -644,6 +815,7 @@ class DialogueGraphEditorWidget(QWidget):
             if isinstance(hit_ghost_missing, str) and hit_ghost_missing.strip()
             else None
         )
+        super_gid = parse_group_super_node_gid(nid) if nid else None
         menu = QMenu(self)
         if ghost_mid:
             act_g = QAction(f'清除指向缺失节点「{ghost_mid}」的连线…', self)
@@ -656,11 +828,24 @@ class DialogueGraphEditorWidget(QWidget):
             act_nm = QAction("编辑分组名称…", self)
             act_nm.triggered.connect(lambda checked=False, g=fgid: self._on_editor_frame_rename(g))
             menu.addAction(act_nm)
+            act_color = QAction("改颜色…", self)
+            act_color.triggered.connect(lambda checked=False, g=fgid: self._on_editor_frame_change_color(g))
+            menu.addAction(act_color)
+            _collapsed = bool((self._editor_groups.get(fgid) or {}).get("collapsed"))
+            act_col = QAction("展开此分组" if _collapsed else "折叠此分组（隐藏组内节点）", self)
+            act_col.triggered.connect(lambda checked=False, g=fgid: self._toggle_editor_group_collapsed(g))
+            menu.addAction(act_col)
             act_rm = QAction("删除此分组框…", self)
             act_rm.triggered.connect(lambda checked=False, g=fgid: self._delete_editor_group_frame(g))
             menu.addAction(act_rm)
             menu.addSeparator()
-        if nid and nid in self._data["nodes"]:
+        if super_gid and super_gid in self._editor_groups:
+            act_ex = QAction("展开此分组", self)
+            act_ex.triggered.connect(
+                lambda checked=False, g=super_gid: self._toggle_editor_group_collapsed(g)
+            )
+            menu.addAction(act_ex)
+        elif nid and nid in self._data["nodes"]:
             act_entry = QAction("设为入口节点", self)
             cur_ent = str(self._data.get("entry", "") or "").strip()
             act_entry.setEnabled(cur_ent != nid)
@@ -704,6 +889,31 @@ class DialogueGraphEditorWidget(QWidget):
             return
         self._ensure_node_visible_in_list(nid)
         self._oden.select_dialogue_node(nid)
+
+    def focus_node_by_id(self, nid: str) -> bool:
+        """外部跳转入口（主编辑器全局搜索）：选中节点、视图飞到节点(缩放+居中,
+        复用内部搜索同款 center_on_node)、检查器同步。
+
+        程序化选中不触发画布点击信号,检查器要显式跟一把;返回节点是否存在。
+        _load_path 尾部有 singleShot(0) 的「适配全图」,会把刚打开的图拉到最远
+        视距——这里在其后再排一个同类定时器补断言(FIFO 后到先赢),
+        保证"搜索跳转刚打开的图"也直接看见节点。"""
+        nid = (nid or "").strip()
+        if not nid or nid not in (self._data.get("nodes") or {}):
+            return False
+        self._focus_node_in_editor(nid)
+        self._oden.center_on_node(nid)
+        self._apply_selected_node_to_inspector()
+        QTimer.singleShot(0, lambda: self._refocus_view_if_present(nid))
+        return True
+
+    def _refocus_view_if_present(self, nid: str) -> None:
+        """补断言:节点仍在当前图上才重新飞过去(图可能已被切走)。"""
+        try:
+            if nid in (self._data.get("nodes") or {}):
+                self._oden.center_on_node(nid)
+        except Exception:
+            pass  # 视图补断言失败不影响选中/检查器
 
     def _canvas_context_delete_node(self, nid: str) -> None:
         if nid not in (self._data.get("nodes") or {}):
@@ -876,6 +1086,7 @@ class DialogueGraphEditorWidget(QWidget):
     def _spawn_node_at_canvas(self, node_type: str, scene_x: float, scene_y: float) -> None:
         if node_type == "ownerState" and not self._guard_owner_state_node_creation():
             return
+        snap = self._begin_structure_snapshot()
         nodes = self._model.nodes
         nid = suggest_next_id(nodes)
         self._model.add_node(nid, default_node(node_type, {k: v for k, v in nodes.items() if k != nid}))
@@ -885,6 +1096,7 @@ class DialogueGraphEditorWidget(QWidget):
         self._rebuild_flow_scene()
         self._oden.select_dialogue_node(nid)
         self._layout_save_timer.start(450)
+        self._push_structure_undo(f"新增节点 {nid}", snap)
 
     def _on_flow_delete_key(self) -> None:
         nids = self._oden.selected_flow_node_ids()
@@ -924,6 +1136,8 @@ class DialogueGraphEditorWidget(QWidget):
             },
         })
         self._data = self._model.mutable_data
+        self._loaded_disk_bytes = None  # 新草稿无磁盘基线
+        self._loaded_disk_data = None
         self._current_path = None
         self._draft_layout_basename = f"__draft_{uuid.uuid4().hex[:10]}.json"
         self._editor_groups.clear()
@@ -942,16 +1156,20 @@ class DialogueGraphEditorWidget(QWidget):
         self._rebuild_flow_scene()
         self._oden.fit_all()
         self._mark_dirty()
+        # 记录全新草稿的出厂快照：Save All 用它识别「从未编辑过的草稿」并跳过静默物化（审查 P3）。
+        self._new_draft_pristine = self._model.to_dict()
         self._refresh_file_list(select_unsaved=True)
         self._emit_title()
         self._collapse_graph_prop_panel()
         self._schedule_validation_refresh(0)
+        self._refresh_referrers()
 
     def _reset_to_no_file_loaded(self) -> None:
         self._model.load_empty()
         self._data = self._model.mutable_data
         self._current_path = None
         self._draft_layout_basename = None
+        self._new_draft_pristine = None
         self._editing_node_id = None
         self._editor_groups.clear()
         self._node_to_group.clear()
@@ -973,7 +1191,8 @@ class DialogueGraphEditorWidget(QWidget):
         if it is None:
             self._toast("请先在左侧列表选中要删除的 graphs/*.json", 3000)
             return
-        raw = it.data(Qt.ItemDataRole.UserRole)
+        # _file_tree 是 QTreeWidget:树节点取数必须带列号(分组化改造漏改点,2026-07-13 修)
+        raw = it.data(0, Qt.ItemDataRole.UserRole)
         if raw == self._unsaved_list_token:
             QMessageBox.information(
                 self,
@@ -1049,6 +1268,29 @@ class DialogueGraphEditorWidget(QWidget):
     def has_unsaved_changes(self) -> bool:
         return self._model.is_dirty
 
+    def is_untouched_new_draft(self) -> bool:
+        """当前是否为「新建后从未被编辑过」的全新草稿（无磁盘文件、内容仍等于新建模板）。
+
+        供内嵌 Save All 的 flush 判定：这种草稿跳过写盘、保留脏态，
+        不静默物化成 graphs/new_dialogue.json（审查 P3）。
+        """
+        if self._current_path is not None:
+            return False
+        if self._new_draft_pristine is None:
+            return False
+        return self._model.to_dict() == self._new_draft_pristine
+
+    def last_save_failure_reason(self) -> str:
+        """最近一次 save() 失败的中文原因（成功后为空串），供宿主降级提示。"""
+        return self._last_save_failure
+
+    def graph_display_name(self) -> str:
+        """给宿主提示用的当前图人类可读名。"""
+        if self._current_path is not None:
+            return self._current_path.stem
+        gid = str(self._data.get("id", "") or "").strip()
+        return f"{gid or '新图'}（未保存草稿）"
+
     def current_path(self) -> Path | None:
         return self._current_path
 
@@ -1069,11 +1311,30 @@ class DialogueGraphEditorWidget(QWidget):
             return False
         return True
 
+    def discard_unsaved_changes(self) -> None:
+        """真正放弃当前未保存修改：有文件则重载磁盘版本，纯草稿则回到未加载状态。
+
+        嵌入主编辑器时供关闭路径在用户选「放弃」后调用——只清 dirty 标志不够，
+        随后的统一 flush 仍会按未保存内容判脏并写盘（复核 P1-01）。
+        """
+        if not self._model.is_dirty:
+            return
+        if self._current_path is not None:
+            self._load_path(self._current_path)
+        else:
+            self._reset_to_no_file_loaded()
+            self._refresh_file_list()
+
     def load_path(self, path: Path) -> None:
-        """打开指定 graphs/*.json（若当前有未保存修改会按切换文件的逻辑提示）。"""
+        """打开指定 graphs/*.json（若当前有未保存修改会先提示保存/放弃/取消）。"""
+        if not self._prompt_save_if_dirty():
+            return
         self._load_path(path)
 
     def open_file_dialog(self) -> None:
+        # 打开前先处理未保存修改（旧实现直接覆盖，静默丢弃全部编辑，审查 P1-8）
+        if not self._prompt_save_if_dirty():
+            return
         path, _ = QFileDialog.getOpenFileName(
             self,
             "打开图对话",
@@ -1083,17 +1344,38 @@ class DialogueGraphEditorWidget(QWidget):
         if path:
             self._load_path(Path(path))
 
+    def _prompt_save_if_dirty(self) -> bool:
+        """有未保存修改时提示 保存/放弃/取消。返回 False = 用户取消，调用方应中止。"""
+        if not self._model.is_dirty:
+            return True
+        r = QMessageBox.question(
+            self,
+            "未保存",
+            "当前文件已修改，是否保存？",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+        )
+        if r == QMessageBox.StandardButton.Save:
+            return self.save()
+        if r == QMessageBox.StandardButton.Cancel:
+            return False
+        return True  # Discard
+
     def save(self) -> bool:
+        self._last_save_failure = ""
         if self._current_path:
             return self._write_to_path(self._current_path)
         try:
-            self._widgets_to_data_meta()
+            self._widgets_to_data_meta(relink_catalog=True)
         except json.JSONDecodeError as e:
+            self._last_save_failure = f"preconditions 条件解析失败：{e}"
             QMessageBox.critical(
                 self, "保存失败", f"preconditions 条件解析失败：{e}"
             )
             return False
         except ValueError as e:
+            self._last_save_failure = str(e)
             QMessageBox.critical(self, "保存失败", str(e))
             return False
         stem = self._sanitize_filename_stem(self._edit_graph_id.text())
@@ -1135,7 +1417,7 @@ class DialogueGraphEditorWidget(QWidget):
             )
             return
         try:
-            self._widgets_to_data_meta()
+            self._widgets_to_data_meta(relink_catalog=True)
             self._flush_current_inspector_to_data()
         except json.JSONDecodeError as e:
             QMessageBox.critical(
@@ -1297,10 +1579,16 @@ class DialogueGraphEditorWidget(QWidget):
         return self._inspector_project_model
 
     def _toast(self, msg: str, ms: int = 4000) -> None:
+        self._toast_timer.stop()
         self._status_label.setText(msg)
+        self._status_label.update()
         if ms > 0:
-            self._status_label.repaint()
-            QTimer.singleShot(ms, self._status_label.clear)
+            self._toast_timer.start(ms)
+
+    def _on_toast_timeout(self) -> None:
+        lbl = getattr(self, "_status_label", None)
+        if lbl is not None:
+            lbl.clear()
 
     def _set_dirty(self, dirty: bool) -> None:
         self._model.set_dirty(dirty)
@@ -1339,9 +1627,12 @@ class DialogueGraphEditorWidget(QWidget):
             )
 
     def _on_flow_layout_debounced(self, ms: int) -> None:
-        """节点拖动结束：防抖写盘，并重建流程图（含编辑器分组背景框）。"""
+        """节点拖动结束：只防抖写盘坐标。
+
+        不再整图重建：拖动只改坐标（Qt 已直接落位、边随节点自动重画、分组框为固定持久几何、
+        可达性着色只随拓扑），重建纯属多余，正是"拖动后节点闪一下/再拖时跳变/选中丢失"的根因。
+        """
         self._layout_save_timer.start(ms)
-        self._inspector_scene_timer.start(ms)
 
     def _flush_flow_layout_to_disk(self) -> None:
         lp = self._layout_path_for_io()
@@ -1370,11 +1661,23 @@ class DialogueGraphEditorWidget(QWidget):
         nodes = self._data.get("nodes") or {}
         if not nodes:
             return
+        # 自动布局会覆盖全部手工摆位且不可撤销：已有手工坐标时先确认（审查 P3-3）
+        if self._positions:
+            r = QMessageBox.question(
+                self,
+                "自动布局",
+                "将按算法重排所有节点位置，覆盖当前手工摆位且不可撤销。继续？",
+                QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if r != QMessageBox.StandardButton.Ok:
+                return
         entry = str(self._data.get("entry", "") or "")
         avoid = avoid_rects_list(self._editor_group_frames)
-        # 统一用 entry 拓扑 BFS 分层，避免 Oden 与回退两套规则导致「有时完全不像按图排」。
+        # 场景已建 → 采集节点真实渲染宽高，让分层布局按真值分配层距（宽对白节点不再重叠）。
+        node_sizes = self._oden.measure_node_render_sizes()
         self._positions = auto_layout_node_positions(
-            nodes, entry, avoid_rects=avoid
+            nodes, entry, avoid_rects=avoid, node_sizes=node_sizes or None
         )
         self._rebuild_flow_scene()
         self._flush_flow_layout_to_disk()
@@ -1403,13 +1706,19 @@ class DialogueGraphEditorWidget(QWidget):
         self._schedule_validation_refresh(0, notify_toast=True)
 
     def _on_model_topology_changed(self, src_nid: str) -> None:
-        """Canvas connection changed via Model -- update inspector if showing this node."""
-        insp_nid = getattr(self._inspector, "_node_id", None)
+        """拓扑经 Model 变化：仅把检查器表单里正在显示的该节点同步刷新。
+
+        校验刷新不在此处触发——否则一次画布连线会走两条路径各调一次 `_schedule_validation_refresh`
+        （本方法 + 画布手势的 `_on_oden_topology_changed`）。改由单一入口负责：画布连线/断线→
+        `_on_oden_topology_changed`（即时 + toast）；rename/删除/清除入边→各自调用点已显式调度。
+        model.topology_changed 的全部发射源（connect/clear_output、clear_incoming_to、rename_node）
+        都被上述路径覆盖，此处去掉调度不会漏校验。
+        """
+        insp_nid = self._inspector.current_node_id()
         if insp_nid and insp_nid == src_nid:
             node_data = self._model.nodes.get(src_nid)
             if node_data:
                 self._inspector.update_topology_from_data(node_data)
-        self._schedule_validation_refresh()
 
     def _sync_inspector_from_selection(self) -> None:
         nid = self._active_editing_nid()
@@ -1425,15 +1734,57 @@ class DialogueGraphEditorWidget(QWidget):
     def _on_undo_index_changed(self) -> None:
         self._btn_undo.setEnabled(self._undo_stack.canUndo())
         self._btn_redo.setEnabled(self._undo_stack.canRedo())
+        new_count = self._undo_stack.count()
+        is_fresh_push = new_count != self._prev_undo_count
+        self._prev_undo_count = new_count
         if self._layout_path_for_io():
-            # 移动节点会 push NodeMovedCmd 并触发本槽；若此处整图 rebuild，
-            # 会用尚未写入的 _positions 覆盖刚拖好的坐标，表现为松手弹回原位。
+            # 始终把画布坐标同步进 _positions 并防抖写盘（移动/撤销都需要持久化坐标）。
             self._flush_flow_layout_to_disk()
-            self._inspector_scene_timer.start(80)
+            # 仅 undo/redo（count 不变）才整图重建以反映回退后的数据/拓扑；
+            # 全新编辑已就地更新、拖动已由画布直接应用——此处再重建纯属浪费，正是
+            # "每次编辑闪一下整图""拖动节点乱跳/弹回"的根因。
+            if not is_fresh_push:
+                self._inspector_scene_timer.start(80)
         if self._suppress_inspector_resync_from_undo:
             return
         self._sync_inspector_from_selection()
         self._schedule_validation_refresh(500)
+
+    # ----- 结构级操作的快照撤销（节点增删/重命名/复制/清幽灵连线，审查 P2-④） --------
+    def _begin_structure_snapshot(self) -> tuple[dict, dict]:
+        """在结构级变更前调用：抓当前全图数据 + 画布坐标快照。"""
+        return (self._model.data, dict(self._positions))
+
+    def _push_structure_undo(self, label: str, before: tuple[dict, dict]) -> None:
+        """结构级变更完成后调用：数据真变了才把 before/after 快照压入撤销栈。"""
+        after_data = self._model.data
+        if before[0] == after_data:
+            return  # 被取消/无实质变化：不入栈
+        cmd = _GraphStructureSnapshotCmd(
+            self, label, before[0], before[1], after_data, dict(self._positions)
+        )
+        # push 会同步触发 indexChanged；调用方已自行完成 UI 刷新，
+        # 抑制 indexChanged 里的检查器 resync，避免重复重建表单丢焦点。
+        self._suppress_inspector_resync_from_undo = True
+        try:
+            self._undo_stack.push(cmd)
+        finally:
+            self._suppress_inspector_resync_from_undo = False
+
+    def _apply_structure_snapshot(self, data: dict, positions: dict) -> None:
+        """undo/redo 回灌全图快照并整体刷新 UI（保持脏态，不触碰磁盘字节基线）。"""
+        self._model.replace_data(data)
+        self._data = self._model.mutable_data
+        self._positions = dict(positions)
+        self._editing_node_id = None
+        self._apply_data_to_widgets()
+        self._populate_node_list(select_first=True, preserve_selection=False)
+        self._canonicalize_editor_layout_to_graph_nodes()
+        self._rebuild_flow_scene()
+        if self._layout_path_for_io():
+            self._flush_flow_layout_to_disk()
+        self._emit_title()
+        self._schedule_validation_refresh()
 
     def _reset_search_cycle(self) -> None:
         self._last_search_hits = []
@@ -1481,6 +1832,7 @@ class DialogueGraphEditorWidget(QWidget):
         if not ok or not (new_id or "").strip():
             return
         new_id = new_id.strip()
+        snap = self._begin_structure_snapshot()
         err = self._model.rename_node(old, new_id)
         if err:
             QMessageBox.warning(self, "重命名", err)
@@ -1500,6 +1852,7 @@ class DialogueGraphEditorWidget(QWidget):
         self._apply_selected_node_to_inspector()
         self._rebuild_flow_scene()
         self._schedule_validation_refresh()
+        self._push_structure_undo(f"重命名节点 {old} → {new_id}", snap)
 
     @staticmethod
     def _remap_local_next(raw: dict, old_to_new: dict, seen: set[str]) -> None:
@@ -1514,7 +1867,10 @@ class DialogueGraphEditorWidget(QWidget):
                     nxt = str(opt.get("next", "") or "")
                     if nxt in seen:
                         opt["next"] = old_to_new[nxt]
-        elif t == "switch":
+        elif t in ("switch", "ownerState", "contextState"):
+            # ownerState/contextState 与 switch 同构（cases[].next + defaultNext），
+            # ownerState 另有 missingWrapperNext——旧实现漏掉这两类节点，复制子树后
+            # 副本的出边仍指向原子树造成跨树窜线（审查 P1-39）。
             for c in raw.get("cases") or []:
                 if isinstance(c, dict):
                     nxt = str(c.get("next", "") or "")
@@ -1523,12 +1879,16 @@ class DialogueGraphEditorWidget(QWidget):
             dn = str(raw.get("defaultNext", "") or "")
             if dn in seen:
                 raw["defaultNext"] = old_to_new[dn]
+            mwn = str(raw.get("missingWrapperNext", "") or "")
+            if mwn in seen:
+                raw["missingWrapperNext"] = old_to_new[mwn]
 
     def _copy_subtree(self) -> None:
         root = self._current_node_id_from_list()
         nodes = self._data.get("nodes") or {}
         if not root or root not in nodes:
             return
+        snap = self._begin_structure_snapshot()
         seen: set[str] = set()
         stack = [root]
         while stack:
@@ -1555,6 +1915,7 @@ class DialogueGraphEditorWidget(QWidget):
         self._emit_title()
         self._populate_node_list()
         self._rebuild_flow_scene()
+        self._push_structure_undo(f"复制子树（{len(seen)} 个节点）", snap)
 
     def _flow_layout_is_collapsed(self) -> bool:
         """仅当坐标明显是「未初始化脏数据」（全挤在场景原点附近一点）时视为塌缩。
@@ -1822,28 +2183,35 @@ class DialogueGraphEditorWidget(QWidget):
         finally:
             self._file_tree.blockSignals(False)
 
-        if select_unsaved and self._current_path is None:
-            for it in self._walk_file_tree_items():
-                if it.data(0, _TREE_KIND_ROLE) == _TK_UNSAVED:
-                    self._file_tree.setCurrentItem(it)
-                    break
-        elif prev_path is not None:
-            for it in self._walk_file_tree_items():
-                if it.data(0, _TREE_KIND_ROLE) != _TK_FILE:
-                    continue
-                try:
-                    if Path(str(it.data(0, Qt.ItemDataRole.UserRole))).resolve() == prev_path:
+        # 恢复选中必须屏蔽信号：否则程序化 setCurrentItem 会重入
+        # _on_file_tree_item_changed——程序化"打开 B"时它把选中恢复到旧文件 A，
+        # 反手又加载回 A（内容=A、树高亮 B、B 点不开，审查 P1-38）。
+        self._file_tree.blockSignals(True)
+        try:
+            if select_unsaved and self._current_path is None:
+                for it in self._walk_file_tree_items():
+                    if it.data(0, _TREE_KIND_ROLE) == _TK_UNSAVED:
                         self._file_tree.setCurrentItem(it)
                         break
-                except OSError:
-                    pass
-        elif prev_unsaved:
-            for it in self._walk_file_tree_items():
-                if it.data(0, _TREE_KIND_ROLE) == _TK_UNSAVED:
-                    self._file_tree.setCurrentItem(it)
-                    break
-        elif self._current_path:
-            self._sync_file_list_selection(self._current_path)
+            elif prev_path is not None:
+                for it in self._walk_file_tree_items():
+                    if it.data(0, _TREE_KIND_ROLE) != _TK_FILE:
+                        continue
+                    try:
+                        if Path(str(it.data(0, Qt.ItemDataRole.UserRole))).resolve() == prev_path:
+                            self._file_tree.setCurrentItem(it)
+                            break
+                    except OSError:
+                        pass
+            elif prev_unsaved:
+                for it in self._walk_file_tree_items():
+                    if it.data(0, _TREE_KIND_ROLE) == _TK_UNSAVED:
+                        self._file_tree.setCurrentItem(it)
+                        break
+            elif self._current_path:
+                self._sync_file_list_selection(self._current_path)
+        finally:
+            self._file_tree.blockSignals(False)
 
     def _refresh_file_list(self, *, select_unsaved: bool = False) -> None:
         self._rebuild_file_tree(
@@ -1864,7 +2232,9 @@ class DialogueGraphEditorWidget(QWidget):
         self._refresh_file_list(select_unsaved=True)
 
     def _node_ids_sorted(self) -> list[str]:
-        nodes = self._data.get("nodes") or {}
+        nodes = self._data.get("nodes")
+        if not isinstance(nodes, dict):  # nodes 容器畸形（list/str）→ 无节点，不崩
+            return []
         return sorted(nodes.keys(), key=lambda x: (x.lower(), x))
 
     def _reset_node_list_filter(self) -> None:
@@ -1910,14 +2280,31 @@ class DialogueGraphEditorWidget(QWidget):
 
     def _load_path(self, path: Path):
         try:
-            raw = load_json(path)
-        except (OSError, json.JSONDecodeError) as e:
+            disk_bytes = path.read_bytes()
+            raw = json.loads(disk_bytes.decode("utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError) as e:
             QMessageBox.critical(self, "打开失败", str(e))
             return
+        if not isinstance(raw, dict):
+            # 顶层文档畸形（agent/手写成 list/str/数字等，而非 { id, entry, nodes }）：
+            # 降级为空图，避免整条 load 链上 self._data.get(...) 抛 AttributeError 崩溃。
+            # 原始字节仍保留在 _loaded_disk_bytes 供对照；不静默改盘，用户需在外部工具修复。
+            raw = {}
+        elif "nodes" in raw and not isinstance(raw.get("nodes"), dict):
+            # nodes 容器畸形（写成 list/str 等）：降级为空 nodes，避免画布重建 / 分组同步 /
+            # 布局等下游把 nodes 当 dict 遍历（.keys()/.items()）而崩。磁盘校验门
+            # （validate_graph_tiered）读盘原文仍会把它报为「nodes 必须是对象」error。
+            raw = dict(raw)
+            raw["nodes"] = {}
         self._model.load(raw)
         self._data = self._model.mutable_data
+        # 记录磁盘原始字节与语义快照：保存时若内容无实质变化，原样写回原字节，
+        # 保证"打开未改→导出格式零变化"（磁盘是外部工具按不一致风格预格式化的，无法用序列化器复现）。
+        self._loaded_disk_bytes = disk_bytes
+        self._loaded_disk_data = copy.deepcopy(raw)
         self._current_path = path
         self._draft_layout_basename = None
+        self._new_draft_pristine = None  # 打开了真实文件：不再是全新草稿
         self._editing_node_id = None
         self._apply_data_to_widgets()
         self._reset_node_list_filter()
@@ -1952,6 +2339,9 @@ class DialogueGraphEditorWidget(QWidget):
             )
             regen_layout = True
         layout_fixed = self._canonicalize_editor_layout_to_graph_nodes()
+        # 旧「都同色」分组：加载即在内存里派生成不同色（确定性，跨开一致）。故意不因此单独写盘——
+        # 打开不改磁盘；等用户下次真正动布局/改色时随统一 flush 一起持久化。
+        self._maybe_autocolor_legacy_groups()
         self._undo_stack.clear()
         self._populate_node_list(select_first=True)
         self._rebuild_flow_scene()
@@ -1963,6 +2353,107 @@ class DialogueGraphEditorWidget(QWidget):
         self._sync_file_list_selection(path)
         self._collapse_graph_prop_panel()
         self._schedule_validation_refresh(0)
+        # 切文件后清跨文件残留的「连线失败」横幅（审查 P3-5）
+        self._connect_feedback_messages = []
+        self._refresh_referrers()
+
+    # ----- 「被引用」反查（纯只读展示 + 双击导航；不改任何数据） -------------------
+    def _set_refs_collapsed(self, collapsed: bool) -> None:
+        self._refs_collapsed = collapsed
+        self._refs_body.setVisible(not collapsed)  # 折叠 = 整段隐藏，只留标题行
+        self._refs_toggle.setText("展开" if collapsed else "收起")
+
+    def _toggle_refs_panel(self) -> None:
+        self._set_refs_collapsed(not self._refs_collapsed)
+        self._save_refs_panel_state()
+
+    def _restore_refs_panel_state(self) -> None:
+        s = QSettings("GameDraft", "DialogueGraphEditor")
+        self._set_refs_collapsed(bool(s.value("referrers_panel_collapsed", False, type=bool)))
+
+    def _save_refs_panel_state(self) -> None:
+        s = QSettings("GameDraft", "DialogueGraphEditor")
+        s.setValue("referrers_panel_collapsed", self._refs_collapsed)
+
+    def _refresh_referrers(self) -> None:
+        """按当前图 id 反查引用它的实体，填充左栏「被引用」树。"""
+        from .dialogue_references import (
+            CATEGORY_ORDER,
+            find_dialogue_referrers,
+            group_by_category,
+        )
+
+        self._refs_tree.clear()
+        graph_id = self._current_path.stem if self._current_path is not None else ""
+        model = self._injected_project_model
+        if not graph_id or model is None:
+            self._refs_count.setText("")
+            self._refs_hint.setText("打开一张图后显示引用它的实体")
+            return
+
+        # 其它对话图：读盘扫一遍（不含当前图），找谁跳到本图。
+        other_dialogues: dict[str, Any] = {}
+        try:
+            for p in list_graph_files(self._project):
+                if p.stem == graph_id:
+                    continue
+                try:
+                    other_dialogues[p.stem] = load_json(p)
+                except (OSError, ValueError):
+                    continue
+        except OSError:
+            pass
+
+        referrers = find_dialogue_referrers(
+            graph_id,
+            scenes=getattr(model, "scenes", None) or {},
+            scenarios_catalog=getattr(model, "scenarios_catalog", None),
+            narrative_graphs=getattr(model, "narrative_graphs", None),
+            other_dialogues=other_dialogues,
+        )
+        if not referrers:
+            self._refs_count.setText("0")
+            self._refs_hint.setText(f"没有实体引用「{graph_id}」")
+            return
+        self._refs_count.setText(f"{len(referrers)} 处")
+        self._refs_hint.setText(f"{len(referrers)} 处引用（双击跳转）")
+
+        grouped = group_by_category(referrers)
+        for category in CATEGORY_ORDER:
+            items = grouped.get(category)
+            if not items:
+                continue
+            cat_item = QTreeWidgetItem([f"{category}（{len(items)}）"])
+            self._refs_tree.addTopLevelItem(cat_item)
+            # 地图实体再按场景分子组
+            if category == "地图实体":
+                by_scene: dict[str, list] = {}
+                for ref in items:
+                    by_scene.setdefault(ref.scene_id, []).append(ref)
+                for scene_id, scene_refs in by_scene.items():
+                    scene_item = QTreeWidgetItem([f"场景 {scene_id}" if scene_id else "（未归属场景）"])
+                    cat_item.addChild(scene_item)
+                    for ref in scene_refs:
+                        self._add_referrer_leaf(scene_item, ref)
+            else:
+                for ref in items:
+                    self._add_referrer_leaf(cat_item, ref)
+        self._refs_tree.expandAll()
+
+    def _add_referrer_leaf(self, parent: QTreeWidgetItem, ref) -> None:
+        leaf = QTreeWidgetItem([f"{ref.label}  ·  {ref.detail}"])
+        leaf.setToolTip(0, f"{ref.label} — {ref.detail}（双击导航）")
+        leaf.setData(0, Qt.ItemDataRole.UserRole, ref.nav)
+        parent.addChild(leaf)
+
+    def _on_referrer_double_clicked(self, item: QTreeWidgetItem, _col: int) -> None:
+        nav = item.data(0, Qt.ItemDataRole.UserRole)
+        if not (isinstance(nav, tuple) and len(nav) == 2):
+            return  # 分组行不跳转
+        method_name, args = nav
+        fn = getattr(self.window(), str(method_name), None)
+        if callable(fn):
+            fn(*args)
 
     def _sync_file_list_selection(self, path: Path) -> None:
         target = path.resolve()
@@ -2042,6 +2533,11 @@ class DialogueGraphEditorWidget(QWidget):
             pre = self._data.get("preconditions")
             editable_pre, unknown_pre = _split_graph_preconditions_for_editor(pre)
             self._pre_unknown_preconditions = copy.deepcopy(unknown_pre)
+            # 记录原始"空表示"，让 _widgets_to_data_meta 忠实回写（缺省保持缺省、[]保持[]），
+            # 避免「打开即把缺省 preconditions 归一成 [] → 假脏 + 导出漂移」。
+            self._orig_preconditions_present = "preconditions" in self._data
+            self._orig_meta_present = "meta" in self._data
+            self._orig_schema_version_present = "schemaVersion" in self._data
             self._pre_cond_ed.set_flag_pattern_context(
                 self._get_project_model_for_inspector(), None
             )
@@ -2074,32 +2570,36 @@ class DialogueGraphEditorWidget(QWidget):
         if link_id:
             pm.relink_dialogue_graph_to_scenarios(link_id, new_sc if new_sc else None)
 
-    def _widgets_to_data_meta(self):
+    def _widgets_to_data_meta(self, *, relink_catalog: bool = False):
+        """把图属性控件的值 + 载入时的「原键是否存在」基线交给 model 忠实回写顶层字段。
+
+        「忠实=未改动即与磁盘字节一致」的表示规则（schemaVersion 透传、meta 原地更新保键序、
+        preconditions/meta 缺省保持缺省）已下沉到 `GraphDocumentModel.apply_graph_meta_fields`，
+        本方法只负责采集控件值与 `_orig_*_present` 基线。
+
+        ``relink_catalog`` 仅在真正保存时为 True：把「叙事归属→scenarios 目录」的跨文件
+        改写限定在保存那一刻，不再随每次校验刷新（每键）改 scenarios 目录——否则放弃草稿
+        也会在目录留下悬空 dialogueGraphIds、被主编辑器整体保存落盘（审查 P2-18）。
+        """
         old_graph_id = str(self._data.get("id", "")).strip()
-        patch: dict[str, Any] = {}
-        sv = self._data.get("schemaVersion", 1)
-        try:
-            patch["schemaVersion"] = int(sv)
-        except (TypeError, ValueError):
-            patch["schemaVersion"] = 1
-        patch["id"] = self._edit_graph_id.text().strip()
-        patch["entry"] = self._edit_entry.text().strip()
-        title = self._edit_title.text().strip()
-        scenario_id = self._meta_scenario_value()
-        prev_meta = self._data.get("meta")
-        meta: dict = {}
-        if isinstance(prev_meta, dict):
-            meta = {k: v for k, v in prev_meta.items() if k not in ("title", "scenarioId")}
-        if title:
-            meta["title"] = title
-        if scenario_id:
-            meta["scenarioId"] = scenario_id
-        patch["meta"] = meta
         merged_preconditions = list(self._pre_cond_ed.to_list())
         merged_preconditions.extend(copy.deepcopy(self._pre_unknown_preconditions))
-        patch["preconditions"] = merged_preconditions
-        self._model.apply_meta_patch(patch)
-        self._sync_scenario_catalog_for_graph_meta(old_graph_id)
+        self._model.apply_graph_meta_fields(
+            graph_id=self._edit_graph_id.text().strip(),
+            entry=self._edit_entry.text().strip(),
+            title=self._edit_title.text().strip(),
+            scenario_id=self._meta_scenario_value(),
+            preconditions=merged_preconditions,
+            schema_version_present=getattr(
+                self, "_orig_schema_version_present", "schemaVersion" in self._data
+            ),
+            meta_present=getattr(self, "_orig_meta_present", "meta" in self._data),
+            preconditions_present=getattr(
+                self, "_orig_preconditions_present", "preconditions" in self._data
+            ),
+        )
+        if relink_catalog:
+            self._sync_scenario_catalog_for_graph_meta(old_graph_id)
 
     def _flush_current_inspector_to_data(self) -> None:
         """保存/校验前：把右侧节点面板内容写回 _data['nodes']。
@@ -2111,7 +2611,13 @@ class DialogueGraphEditorWidget(QWidget):
         nid = self._active_editing_nid()
         if not nid:
             return
-        self._model.set_node(nid, self._inspector.get_node())
+        try:
+            node = self._inspector.get_node()
+        except ValueError as e:
+            # 让保存/校验的「表单非法」报错能定位到具体节点（否则只有一句裸 ValueError，
+            # 用户不知道是哪个节点/字段）。该节点即右侧正在编辑的节点，已在检查器可见。
+            raise ValueError(f"节点 {nid!r}：{e}") from e
+        self._model.set_node(nid, node)
         self._editing_node_id = nid
 
     def _on_graph_meta_changed(self):
@@ -2121,6 +2627,7 @@ class DialogueGraphEditorWidget(QWidget):
         old_meta = self._data.get("meta") if isinstance(self._data.get("meta"), dict) else {}
         old_sc = str(old_meta.get("scenarioId", "")).strip()
         old_key = (old_id, old_sc)
+        old_entry = str(self._data.get("entry", "") or "").strip()
         try:
             self._widgets_to_data_meta()
         except (json.JSONDecodeError, ValueError):
@@ -2129,9 +2636,12 @@ class DialogueGraphEditorWidget(QWidget):
         new_meta = self._data.get("meta") if isinstance(self._data.get("meta"), dict) else {}
         new_sc = str(new_meta.get("scenarioId", "")).strip()
         new_key = (new_id, new_sc)
+        new_entry = str(self._data.get("entry", "") or "").strip()
         self._file_tree_group_key = new_key
         self._emit_title()
-        self._meta_rebuild_timer.start(300)
+        # 仅 entry 变化才影响画布（入口节点高亮）；title/scenarioId/id 改动不重建画布
+        if old_entry != new_entry:
+            self._meta_rebuild_timer.start(300)
         if old_key != new_key:
             self._rebuild_file_tree(preserve_selection=True)
         elif self._current_path is None and self._draft_layout_basename:
@@ -2153,6 +2663,16 @@ class DialogueGraphEditorWidget(QWidget):
             q = (self._node_list_filter.text() or "").strip().lower()
             for nid in self._node_ids_sorted():
                 n = (self._data.get("nodes") or {}).get(nid, {})
+                # 畸形节点值（agent 误写成字符串/列表等）：不当场崩，列出为畸形项，
+                # 由校验面板给出「节点 X 不是对象」错误（审查 P2-③，offscreen 实证 str.get 崩溃）。
+                if not isinstance(n, dict):
+                    label = f"{nid}  (畸形节点：非对象)"
+                    it = QListWidgetItem(label)
+                    it.setForeground(QColor("#e05050"))
+                    it.setData(Qt.ItemDataRole.UserRole, nid)
+                    if not (q and q not in nid.lower() and q not in label.lower()):
+                        self._node_list.addItem(it)
+                    continue
                 t = n.get("type", "?")
                 summ = node_summary(nid, n)
                 label = f"{nid}  ({t})  {summ}" if summ else f"{nid}  ({t})"
@@ -2192,7 +2712,7 @@ class DialogueGraphEditorWidget(QWidget):
 
     def _active_editing_nid(self) -> str | None:
         """Single source of truth for which node is being edited -- prefers inspector."""
-        insp = (getattr(self._inspector, "_node_id", None) or "").strip()
+        insp = self._inspector.current_node_id().strip()
         if insp and insp in self._model.nodes:
             return insp
         lst = self._current_node_id_from_list()
@@ -2288,7 +2808,7 @@ class DialogueGraphEditorWidget(QWidget):
             return
         if nid != self._editing_node_id and self._editing_node_id:
             try:
-                if self._editing_node_id in self._model.nodes and self._inspector._body_valid:
+                if self._editing_node_id in self._model.nodes and self._inspector.is_form_valid():
                     self._model.set_node(self._editing_node_id, self._inspector.get_node())
             except ValueError as e:
                 QMessageBox.warning(self, "无法切换节点", str(e))
@@ -2302,6 +2822,7 @@ class DialogueGraphEditorWidget(QWidget):
         self._editing_node_id = nid
         nodes = self._data.get("nodes") or {}
         raw = copy.deepcopy(nodes.get(nid, {"type": "end"}))
+        # 畸形节点值（非 dict）由检查器 set_node 内部守卫降级为只读透传（审查 P2-③），此处直接透传。
         self._inspector.set_node(
             nid,
             raw,
@@ -2330,8 +2851,38 @@ class DialogueGraphEditorWidget(QWidget):
             self._suppress_inspector_resync_from_undo = False
         self._emit_title()
         self._refresh_node_list_row(nid)
-        self._inspector_scene_timer.start(120)
+        # 高频编辑（改正文/选项文字/动作参数等"纯视觉"）→ 原地更新该节点视觉，不删-建整图、
+        # 不丢连线、无闪烁。一旦改动涉及【连线目标】(next/case.next/option.next/defaultNext…)
+        # 或【端口签名】(增删分支/改类型) → 立即整图重建：重建会正确重画边，并刷新跨节点的
+        # 可达性诊断着色（reachability 只随拓扑变化，纯视觉编辑不影响，故无残留色）。
+        topo_changed = self._node_output_targets(old_node) != self._node_output_targets(new_node)
+        if topo_changed or not self._update_canvas_node_in_place(nid):
+            self._inspector_scene_timer.start(0)
         self._schedule_validation_refresh()
+
+    @staticmethod
+    def _node_output_targets(node: dict[str, Any]) -> list[tuple[str, int, str]]:
+        """节点各输出槽的 (kind, index, target)，用于判断编辑是否改变了连线拓扑。"""
+        if not isinstance(node, dict):
+            return []
+        return [(s.kind, s.index, s.target) for s in iter_output_slots(node)]
+
+    def _update_canvas_node_in_place(self, nid: str) -> bool:
+        """把单个节点的纯视觉变化原地刷到画布。返回 False 表示需整图重建。"""
+        if not self._layout_path_for_io():
+            return True  # 未关联文件/无画布：无需更新
+        raw = (self._model.nodes or {}).get(nid)
+        if raw is None:
+            return False
+        entry = str(self._data.get("entry", "") or "")
+        tags = analyze_node_tags(self._data)
+        return self._oden.update_node_visual(
+            nid,
+            raw,
+            is_entry=(nid == entry),
+            diag_tag=tags.get(nid),
+            group_rgba=self._node_group_color_map().get(nid),
+        )
 
     def _refresh_node_list_row(self, nid: str):
         for i in range(self._node_list.count()):
@@ -2402,6 +2953,7 @@ class DialogueGraphEditorWidget(QWidget):
             t = type_cb.currentText()
         if t == "ownerState" and not self._guard_owner_state_node_creation():
             return
+        snap = self._begin_structure_snapshot()
         self._model.add_node(nid, default_node(t, {k: v for k, v in nodes.items() if k != nid}))
         self._emit_title()
         self._populate_node_list()
@@ -2413,6 +2965,7 @@ class DialogueGraphEditorWidget(QWidget):
         self._apply_selected_node_to_inspector()
         self._rebuild_flow_scene()
         self._schedule_validation_refresh()
+        self._push_structure_undo(f"新增节点 {nid}", snap)
 
     def _resolve_delete_targets(self, explicit_id: str | None) -> list[str]:
         """显式 id（右键菜单等）优先，否则用画布多选，再退回节点列表当前行。"""
@@ -2456,10 +3009,13 @@ class DialogueGraphEditorWidget(QWidget):
             box.exec()
             clicked = box.clickedButton()
             if clicked == btn_cut:
+                snap = self._begin_structure_snapshot()
                 for nid in to_del:
                     self._model.clear_incoming_to(nid)
             elif clicked != btn_force:
                 return
+            else:
+                snap = self._begin_structure_snapshot()
         else:
             confirm = QMessageBox.question(
                 self,
@@ -2470,6 +3026,7 @@ class DialogueGraphEditorWidget(QWidget):
             )
             if confirm != QMessageBox.StandardButton.Yes:
                 return
+            snap = self._begin_structure_snapshot()
         self._model.remove_nodes(to_del)
         for nid in to_del:
             self._node_to_group.pop(nid, None)
@@ -2485,6 +3042,8 @@ class DialogueGraphEditorWidget(QWidget):
         if self._layout_path_for_io():
             self._flush_flow_layout_to_disk()
         self._schedule_validation_refresh()
+        label = f"删除节点 {to_del[0]}" if len(to_del) == 1 else f"删除 {len(to_del)} 个节点"
+        self._push_structure_undo(label, snap)
 
     def _remove_ghost_missing_targets(self, mids: list[str]) -> None:
         """幽灵节点对应 JSON 外 id：清空所有指向这些 id 的连线并移除布局里 ghost 坐标。"""
@@ -2513,6 +3072,7 @@ class DialogueGraphEditorWidget(QWidget):
         )
         if r != QMessageBox.StandardButton.Yes:
             return
+        snap = self._begin_structure_snapshot()
         for mid in u:
             self._model.clear_incoming_to(mid)
             self._ghost_positions.pop(mid, None)
@@ -2521,6 +3081,7 @@ class DialogueGraphEditorWidget(QWidget):
         if self._layout_path_for_io():
             self._flush_flow_layout_to_disk()
         self._schedule_validation_refresh()
+        self._push_structure_undo("清除指向缺失节点的连线", snap)
 
     def _delete_node(self, nid: str | None = None):
         # 工具栏 clicked 可能传入 bool；仅非空 str 才视为显式节点 id。
@@ -2551,6 +3112,7 @@ class DialogueGraphEditorWidget(QWidget):
         if new_id in nodes:
             QMessageBox.warning(self, "重复", f"已存在 {new_id!r}")
             return
+        snap = self._begin_structure_snapshot()
         self._model.add_node(new_id, copy.deepcopy(nodes[nid]))
         ox, oy = self._positions.get(nid, (0.0, 0.0))
         self._positions[new_id] = (float(ox) + 40.0, float(oy) + 40.0)
@@ -2564,6 +3126,7 @@ class DialogueGraphEditorWidget(QWidget):
         self._apply_selected_node_to_inspector()
         self._rebuild_flow_scene()
         self._schedule_validation_refresh()
+        self._push_structure_undo(f"复制节点 {nid} → {new_id}", snap)
 
     def _restore_splitter_sizes(self) -> None:
         s = QSettings("GameDraft", "DialogueGraphEditor")
@@ -2585,18 +3148,62 @@ class DialogueGraphEditorWidget(QWidget):
         self._save_validation_dock_state()
         super().hideEvent(event)
 
+    def _can_write_loaded_bytes_verbatim(self, path: Path) -> bool:
+        """保存到原文件、且当前内容相对磁盘语义零变化时，可原样回写原始字节（格式零变化）。"""
+        disk_bytes = getattr(self, "_loaded_disk_bytes", None)
+        disk_data = getattr(self, "_loaded_disk_data", None)
+        if disk_bytes is None or disk_data is None or self._current_path is None:
+            return False
+        try:
+            if path.resolve() != self._current_path.resolve():
+                return False  # 另存为 / 改名：用序列化器正常写出
+        except OSError:
+            return False
+        return self._model.to_dict() == disk_data
+
+    def _confirm_overwrite_external_changes(self, path: Path) -> bool:
+        """保存前的外部并发写检查：磁盘字节 ≠ 载入基线 → 明确询问是否覆盖。
+
+        内嵌与独立图对话编辑器可同开同一文件，双方各自保存时后写者会静默覆盖
+        前者；用载入时记录的 `_loaded_disk_bytes` 基线比对拦下这种覆盖。
+        """
+        disk_bytes = getattr(self, "_loaded_disk_bytes", None)
+        if disk_bytes is None or self._current_path is None:
+            return True  # 新草稿 / 无基线：不做冲突判断
+        try:
+            if path.resolve() != self._current_path.resolve():
+                return True  # 另存为：写新文件，无覆盖风险
+            now = path.read_bytes()
+        except OSError:
+            return True  # 文件被外部删除等：照常写出（等价于重建）
+        if now == disk_bytes:
+            return True
+        r = QMessageBox.question(
+            self,
+            "磁盘文件已被外部修改",
+            f"{path.name} 自载入后被其它程序（另一个图对话编辑器 / 外部工具）修改过。\n\n"
+            "继续保存会用当前编辑器内容覆盖那些外部修改。仍要覆盖吗？\n"
+            "选「No」取消本次保存，可先到外部确认后再存。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return r == QMessageBox.StandardButton.Yes
+
     def _write_to_path(self, path: Path) -> bool:
+        self._last_save_failure = ""
         old_draft = self._draft_layout_basename
         draft_lp = (self._graphs_dir / old_draft) if old_draft else None
         try:
-            self._widgets_to_data_meta()
+            self._widgets_to_data_meta(relink_catalog=True)
             self._flush_current_inspector_to_data()
         except json.JSONDecodeError as e:
+            self._last_save_failure = f"preconditions 条件解析失败：{e}"
             QMessageBox.critical(
                 self, "保存失败", f"preconditions 条件解析失败：{e}"
             )
             return False
         except ValueError as e:
+            self._last_save_failure = str(e)
             QMessageBox.critical(self, "保存失败", str(e))
             return False
 
@@ -2613,6 +3220,7 @@ class DialogueGraphEditorWidget(QWidget):
                 QMessageBox.StandardButton.No,
             )
             if r != QMessageBox.StandardButton.Yes:
+                self._last_save_failure = f"图有 {len(errors)} 处校验错误，未确认强制保存"
                 return False
         if warnings:
             wtxt = "\n".join(warnings[:40])
@@ -2625,21 +3233,40 @@ class DialogueGraphEditorWidget(QWidget):
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
             if r != QMessageBox.StandardButton.Yes:
+                self._last_save_failure = f"图有 {len(warnings)} 处校验警告，未确认保存"
                 return False
+
+        # 外部并发写检查：磁盘自载入后被别处（内嵌/独立图编辑器、外部工具）改过时，
+        # 直接写盘就是 last-writer-wins 静默覆盖，必须让用户明确选择。
+        if not self._confirm_overwrite_external_changes(path):
+            self._last_save_failure = "磁盘文件已被外部修改，未确认覆盖"
+            return False
 
         id_before_disk = str(self._data.get("id", "")).strip()
         final_gid = path.stem
         self._model.apply_meta_patch({"id": final_gid})
         try:
-            save_json(path, self._model.to_dict())
+            if self._can_write_loaded_bytes_verbatim(path):
+                # 内容相对磁盘零实质变化：原样写回原始字节，保证导出格式与磁盘完全一致。
+                write_bytes_atomic(path, self._loaded_disk_bytes)
+            else:
+                save_json(path, self._model.to_dict())
+                # 刷新"磁盘基线"为刚写出的内容，使后续无改动再保存也走原样回写、字节稳定。
+                try:
+                    self._loaded_disk_bytes = path.read_bytes()
+                    self._loaded_disk_data = self._model.to_dict()
+                except OSError:
+                    pass
         except OSError as e:
             self._model.apply_meta_patch({"id": id_before_disk})
+            self._last_save_failure = f"写入磁盘失败：{e}"
             QMessageBox.critical(self, "保存失败", str(e))
             return False
         if draft_lp is not None and old_draft:
             migrate_layout_map_key(self._project, draft_lp, path)
         self._current_path = path
         self._draft_layout_basename = None
+        self._new_draft_pristine = None  # 已落盘：不再是全新草稿
         pm_sv = self._injected_project_model
         if pm_sv is not None:
             if id_before_disk and id_before_disk != final_gid:

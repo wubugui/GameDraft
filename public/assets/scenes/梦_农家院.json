@@ -1,0 +1,119 @@
+{
+  "id": "梦_农家院",
+  "name": "梦·农家院",
+  "worldWidth": 1376.0,
+  "camera": {
+    "zoom": 1.2,
+    "pixelsPerUnit": 1.0
+  },
+  "backgrounds": [
+    {
+      "image": "background.png",
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "ambientSounds": [
+    "夜晚蛐蛐叫",
+    "阴风"
+  ],
+  "spawnPoint": {
+    "x": 389,
+    "y": 623
+  },
+  "spawnPoints": {
+    "from_night_road": {
+      "x": 389,
+      "y": 623
+    }
+  },
+  "onEnter": [
+    {
+      "type": "fadeWorldFromBlack",
+      "params": {
+        "durationMs": 600
+      }
+    },
+    {
+      "type": "startDialogueGraph",
+      "params": {
+        "graphId": "梦_段B_农家院"
+      }
+    }
+  ],
+  "npcs": [
+    {
+      "id": "npc_dream_old_man",
+      "characterId": "dream_old_man",
+      "x": 863.7,
+      "y": 398.7,
+      "interactionRange": 70.0,
+      "initialAnimState": "idle",
+      "initialFacing": "left"
+    },
+    {
+      "id": "npc_dream_old_woman",
+      "characterId": "dream_old_woman",
+      "x": 703.2,
+      "y": 330.0,
+      "interactionRange": 70.0,
+      "initialAnimState": "idle",
+      "initialFacing": "left"
+    }
+  ],
+  "hotspots": [
+    {
+      "id": "hs_院门",
+      "type": "inspect",
+      "label": "敞开的院门",
+      "x": 855.2,
+      "y": 198.7,
+      "interactionRange": 70.0,
+      "data": {}
+    }
+  ],
+  "zones": [
+    {
+      "id": "z_进屋",
+      "polygon": [
+        {
+          "x": 753.1,
+          "y": 208.7
+        },
+        {
+          "x": 918.1,
+          "y": 208.7
+        },
+        {
+          "x": 918.1,
+          "y": 300.7
+        },
+        {
+          "x": 753.1,
+          "y": 300.7
+        },
+        {
+          "x": 753.1,
+          "y": 254.7
+        }
+      ],
+      "onEnter": [
+        {
+          "type": "fadeWorldToBlack",
+          "params": {
+            "durationMs": 500
+          }
+        },
+        {
+          "type": "switchScene",
+          "params": {
+            "targetScene": "梦_饭屋",
+            "targetSpawnPoint": ""
+          }
+        }
+      ]
+    }
+  ],
+  "notes": "坐标待微调：spawnPoint(300,680) 假定入院在背景左下；两NPC(760,440)/(700,455) 与 hs_院门(720,400) 及 z_进屋多边形(640-820,360-460) 均按背景中部估算，需对照 scenes/梦_农家院/background.png 微调使 NPC 站在屋门口、玩家踩进 z_进屋即触发进屋转场。NPC 源图朝右，initialFacing=left 使其朝向自左下入院的玩家。",
+  "bgm": "bgm_placeholder_low_tension"
+}

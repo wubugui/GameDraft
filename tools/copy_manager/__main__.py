@@ -1,4 +1,4 @@
-"""Entry point: .\\.tools\\Python311\\python.exe -m tools.copy_manager [--project <path>]."""
+"""Entry point: .tools/venv/bin/python -m tools.copy_manager [--project <path>]."""
 from __future__ import annotations
 
 import sys

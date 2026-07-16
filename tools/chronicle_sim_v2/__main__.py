@@ -1,4 +1,4 @@
-"""Entry point: run with .\\.tools\\Python311\\python.exe -m tools.chronicle_sim_v2."""
+"""Entry point: run with .tools/venv/bin/python -m tools.chronicle_sim_v2."""
 from __future__ import annotations
 
 import os
@@ -14,6 +14,8 @@ def main() -> None:
 
     app = QApplication(sys.argv)
     app.setApplicationName("ChronicleSim v2")
+    from tools.editor.shared.qt_combo_wheel_guard import install_global_combo_wheel_block
+    install_global_combo_wheel_block(app)
     win = MainWindow()
     win.show()
     sys.exit(app.exec())

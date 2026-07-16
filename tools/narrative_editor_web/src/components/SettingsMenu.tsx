@@ -30,7 +30,7 @@ export function SettingsMenu(props: {
     <ToolbarPopover label="设置" panelClassName="settings-popover-panel" align="end">
       <div className="settings-popover-head">
         <strong>编辑器偏好</strong>
-        <span className="settings-popover-sub">字体与界面表现，保存在本机</span>
+        <span className="settings-popover-sub">字体与界面表现，随工程保存、重启不丢</span>
       </div>
 
       <div className="settings-section">

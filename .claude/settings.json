@@ -21,5 +21,20 @@
     "additionalDirectories": [
       "F:\\GameDraft\\oss-video-skill\\src"
     ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/agent_docs/_meta/hooks/paths_reminder.py\"",
+            "timeout": 10,
+            "statusMessage": "agent_docs 必读卡检查"
+          }
+        ]
+      }
+    ]
   }
 }

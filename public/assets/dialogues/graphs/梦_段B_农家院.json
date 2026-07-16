@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "id": "梦_段B_农家院",
+  "entry": "n_house",
+  "meta": {
+    "title": "梦·段B·农家院"
+  },
+  "nodes": {
+    "n_house": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_梦待死之礼",
+            "signal": "meng_house"
+          }
+        },
+        {
+          "type": "waitMs",
+          "params": {
+            "durationMs": 1200
+          }
+        }
+      ],
+      "next": "n4"
+    },
+    "n4": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "门在他敲之前就开了。一对老两口站在门里，灯光从他们背后涌出来。",
+      "next": "n5"
+    },
+    "n5": {
+      "type": "line",
+      "speaker": {
+        "kind": "sceneNpc",
+        "npcId": "npc_dream_old_woman"
+      },
+      "text": "「总算转来咯。」",
+      "next": "b_end",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "b_end": {
+      "type": "runActions",
+      "actions": [],
+      "next": "b_end_end"
+    },
+    "b_end_end": {
+      "type": "end"
+    }
+  }
+}

@@ -1,0 +1,94 @@
+{
+  "schemaVersion": 1,
+  "id": "寻狗_街头闲话",
+  "entry": "root",
+  "meta": {
+    "title": "寻狗Demo·①.5雾津街头·散落世界观闲话（碎片·孤立flavor）"
+  },
+  "nodes": {
+    "root": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "在这儿站上一盏茶的工夫，半条街的闲账都往耳朵里钻——",
+      "next": "l1"
+    },
+    "l1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "洗衣婆娘"
+      },
+      "text": "张家媳妇昨夜又听见有人喊名字，没敢应。",
+      "next": "l2"
+    },
+    "l2": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "歇脚脚夫"
+      },
+      "text": "阎王岭那片，最近又没了两个人。",
+      "next": "l3",
+      "portrait": {
+        "slug": "npc_coolie_a_anim",
+        "emotion": "calm"
+      }
+    },
+    "l3": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "茶客"
+      },
+      "text": "义庄说捞上来的尸都换过衣，邪门得很。",
+      "next": "l4"
+    },
+    "l4": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "卖菜的"
+      },
+      "text": "南门外地税局，上个月闹了一整宿的鬼。",
+      "next": "l5"
+    },
+    "l5": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "过路人"
+      },
+      "text": "听说了吗？洋人要进山了。",
+      "next": "out"
+    },
+    "out": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "只言片语，拼不出个整。可这地方，最近是有点不对劲。",
+      "next": "mark"
+    },
+    "end1": {
+      "type": "end"
+    },
+    "mark": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_街头闲话",
+            "signal": "jietou_xianhua_heard"
+          }
+        }
+      ],
+      "next": "end1"
+    }
+  }
+}

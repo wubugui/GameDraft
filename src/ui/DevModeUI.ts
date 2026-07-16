@@ -1,6 +1,7 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import type { Renderer } from '../rendering/Renderer';
 import { UITheme } from './UITheme';
+import { drawPanelBase, SKINS } from './PanelSkin';
 
 export interface DevModeCallbacks {
   getCutsceneIds(): string[];
@@ -15,6 +16,9 @@ export interface DevModeCallbacks {
   /** Minigames 列表 */
   getMinigameEntries(): Array<{ id: string; label: string; kind: 'water' | 'sugarWheel' | 'paperCraft' }>;
   launchMinigame(entry: { id: string; label: string; kind: 'water' | 'sugarWheel' | 'paperCraft' }): void;
+  /** 叙事编排跳转：列出所有可直接进入的叙事，点击后自动满足前置状态并进入对应场景 */
+  getNarrativeWarps(): Array<{ id: string; label: string }>;
+  enterNarrativeWarp(id: string): void;
 }
 
 const CATEGORY_WIDTH = 178;
@@ -33,7 +37,7 @@ export class DevModeUI {
   private contentMask: Graphics | null = null;
   private contentContainer: Container | null = null;
   private boundWheel: ((e: WheelEvent) => void) | null = null;
-  private section: 'cutscene' | 'scene' | 'minigames' = 'cutscene';
+  private section: 'cutscene' | 'scene' | 'minigames' | 'narrative' = 'cutscene';
 
   constructor(renderer: Renderer, callbacks: DevModeCallbacks) {
     this.renderer = renderer;
@@ -104,9 +108,7 @@ export class DevModeUI {
     this.container.addChild(overlay);
 
     const panel = new Graphics();
-    panel.roundRect(panelX, panelY, panelW, panelH, UITheme.panel.borderRadius);
-    panel.fill({ color: UITheme.colors.panelBg, alpha: UITheme.alpha.panelBg });
-    panel.stroke({ color: UITheme.colors.panelBorder, width: UITheme.panel.borderWidth });
+    drawPanelBase(panel, panelX, panelY, panelW, panelH, SKINS.panel);
     this.container.addChild(panel);
 
     const title = new Text({
@@ -159,6 +161,12 @@ export class DevModeUI {
         this.rebuild();
       },
     ));
+    this.container.addChild(this.makeSectionTab(
+      '叙事', panelX, tabY0 + (TAB_H + 4) * 3, this.section === 'narrative', () => {
+        this.section = 'narrative';
+        this.rebuild();
+      },
+    ));
 
     const catDivider = new Graphics();
     catDivider.rect(panelX + CATEGORY_WIDTH, bodyY, 1, bodyH);
@@ -171,6 +179,8 @@ export class DevModeUI {
       this.buildCutsceneList(contentX, bodyY, contentW, bodyH);
     } else if (this.section === 'scene') {
       this.buildSceneList(contentX, bodyY, contentW, bodyH);
+    } else if (this.section === 'narrative') {
+      this.buildNarrativeList(contentX, bodyY, contentW, bodyH);
     } else {
       this.buildMinigameList(contentX, bodyY, contentW, bodyH);
     }
@@ -257,6 +267,46 @@ export class DevModeUI {
     this.applyScroll();
   }
 
+  private buildNarrativeList(x: number, y: number, w: number, h: number): void {
+    const entries = this.callbacks.getNarrativeWarps();
+
+    this.contentMask = new Graphics();
+    this.contentMask.rect(x, y, w, h);
+    this.contentMask.fill(0xffffff);
+    this.container.addChild(this.contentMask);
+
+    this.contentContainer = new Container();
+    this.contentContainer.mask = this.contentMask;
+    this.container.addChild(this.contentContainer);
+
+    const pad = 8;
+    let cy = 0;
+
+    if (entries.length === 0) {
+      const empty = new Text({
+        text: '无叙事编排（缺 data/dev_narrative_warps.json）。',
+        style: { fontSize: 14, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui },
+      });
+      empty.x = x + pad;
+      empty.y = y + pad;
+      this.contentContainer.addChild(empty);
+      this.maxScrollY = 0;
+      return;
+    }
+
+    for (const entry of entries) {
+      const row = this.makeListItem(entry.label, x + pad, y + cy, w - pad * 2, ITEM_HEIGHT, () => {
+        this.callbacks.enterNarrativeWarp(entry.id);
+      });
+      this.contentContainer.addChild(row);
+      cy += ITEM_HEIGHT + 2;
+    }
+
+    const totalH = cy;
+    this.maxScrollY = Math.max(0, totalH - h);
+    this.applyScroll();
+  }
+
   private buildSceneList(x: number, y: number, w: number, h: number): void {
     this.contentMask = new Graphics();
     this.contentMask.rect(x, y, w, h);
@@ -286,7 +336,8 @@ export class DevModeUI {
       }
       if (!this._isOpen || this.section !== 'scene' || !this.contentContainer) return;
 
-      this.contentContainer.removeChildren();
+      const removed = this.contentContainer.removeChildren();
+      for (const child of removed) child.destroy({ children: true });
       let cy = 0;
 
       if (entries.length === 0) {

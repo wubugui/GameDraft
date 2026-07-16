@@ -21,6 +21,7 @@ import {
   validationTargetSummary,
 } from './focusIssueResolution';
 import { buildCanvasEdges, buildCanvasNodes, stateEndpointFromNodeIdForView } from './canvas/buildCanvasModel';
+import { deriveGraphInterface } from './graphInterface';
 import { resolveActiveGraphView } from './canvas/activeGraphView';
 import { flowEdgeTypes } from './canvas/flowEdges';
 import { flowNodeTypes } from './canvas/flowNodes';
@@ -32,12 +33,28 @@ import {
   resizeSubgraphParents,
   SUBGRAPH_CHILD_ORIGIN,
 } from './canvas/subgraphGroupLayout';
-import { layoutComposition, layoutGraph } from './canvas/autoLayout';
+import {
+  applyCompositionLayout,
+  applyGraphLayout,
+  computeCompositionLayout,
+  computeGraphLayout,
+} from './canvas/autoLayout';
 import {
   shouldSnapTransitionAnchors,
   snapTransitionAnchorsToEdges,
 } from './canvas/transitionAnchorLayout';
 import { parseTransitionAnchorId, transitionAnchorId } from './anchorCodec';
+import {
+  applyEditorGroupDisplay,
+  buildGroupFrameNodes,
+  groupColorForIndex,
+  groupsForCanvas,
+  newGroupId,
+  parseGroupFrameNodeId,
+  reconcileGroupFrameNodes,
+  setGroupsForCanvas,
+  type CanvasGroupDef,
+} from './canvas/editorGroups';
 import {
   inlineSubgraphStateId,
   inlineSubgraphTransitionId,
@@ -52,6 +69,8 @@ import { ConditionBuilder } from './components/ConditionBuilder';
 import { SignalChipsField } from './components/SignalChipsField';
 import { SignalPickerModal } from './components/SignalPickerModal';
 import { DEFAULT_DRAFT_SIGNAL } from './signalConstants';
+import { applySignalDisplayToEdges, buildSignalLabelMap } from './signalDisplay';
+import { SignalRefactorModal, type NarrativeRefactorRequest } from './components/SignalRefactorModal';
 import {
   elementSubtitle,
   extractActiveStates,
@@ -67,6 +86,7 @@ import {
   updateElement,
 } from './editor/appHelpers';
 import { canvasModeLabel, kindLabel } from './editor/labels';
+import { useCanvasGroups } from './hooks/useCanvasGroups';
 import { useDeferredWorkspace } from './hooks/useDeferredWorkspace';
 import { useEditorHistory } from './hooks/useEditorHistory';
 import { useEditorPreferences } from './hooks/useEditorPreferences';
@@ -81,12 +101,32 @@ import {
   editActionsNative,
   getRuntimeSnapshot,
   loadAuthoringCatalog,
+  loadCategories,
   loadNarrativeDataWithSource,
+  loadTaskIndex,
+  loadTemplates,
   navigateTo,
+  refactorJournalSizeRemote,
+  saveCategoriesRemote,
   saveNarrativeData,
   setRuntimeNarrativeState,
+  undoSignalRefactorRemote,
   validateNarrativeDataRemote,
+  type SignalRefactorResultDef,
 } from './bridge';
+import {
+  distinctCompositionCategories,
+  distinctSubgraphCategories,
+  getCompositionCategory,
+  getSubgraphCategory,
+  groupCompositions,
+  groupSubgraphElements,
+  normalizeCategoriesFile,
+  pruneOrphans,
+  setCompositionCategory,
+  setSubgraphCategory,
+  type CategoryGroup,
+} from './editor/categories';
 import {
   collectKnownSignals,
   blockingValidationErrors,
@@ -109,6 +149,7 @@ import {
   mergeValidationIssues,
   normalizeFile,
   parseExternalSignalKey,
+  setKnownPlaneIdsForValidation,
   setStateEditorPosition,
   simulateSignalImpact,
   stateEditorPosition,
@@ -126,6 +167,7 @@ import type {
   CanvasNode,
   CompositionElementDef,
   ElementKind,
+  NarrativeCategoriesFileDef,
   NarrativeEndpointDef,
   NarrativeCompositionDef,
   NarrativeGraphsFileDef,
@@ -135,8 +177,14 @@ import type {
   ProjectionEdgeDef,
   ProjectionResult,
   RuntimeDebugSnapshotDef,
+  NarrativeTemplateDef,
+  StampSummaryDef,
+  TaskIndex,
+  TaskIssueDef,
   ValidationIssueDef,
 } from './types';
+import { TaskBusPanel } from './TaskBusPanel';
+import { TemplatesPanel } from './TemplatesPanel';
 
 const elementKinds: ElementKind[] = [
   'wrapperGraph',
@@ -193,13 +241,38 @@ function NarrativeEditorInner() {
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>('properties');
   const [entityPanelOpen, setEntityPanelOpen] = useState(false);
   const [selectedEntityOwnerKey, setSelectedEntityOwnerKey] = useState('');
+  const [taskBusOpen, setTaskBusOpen] = useState(false);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
+  const [templates, setTemplates] = useState<NarrativeTemplateDef[]>([]);
+  // 「整理分组」标签：编辑器专用，运行时永不加载，绝不进 narrative_graphs.json。
+  const [categories, setCategories] = useState<NarrativeCategoriesFileDef>(() => normalizeCategoriesFile(null));
+  const [taskIndex, setTaskIndex] = useState<TaskIndex>({ compositionId: '', graphIds: [], references: [], planes: [], sceneEntities: [], quests: [] });
   const [issueFilter, setIssueFilter] = useState<IssueFilter>('all');
   const [showTrigger, setShowTrigger] = useState(false);
   const [showRead, setShowRead] = useState(false);
   const [showCommand, setShowCommand] = useState(false);
   const { preferences, setPreferences, resetPreferences } = useEditorPreferences();
+  // 画布分组框：编辑器视觉整理层（旁挂文件即时落盘），绝不进 narrative_graphs.json。
+  const { file: canvasGroupsFile, updateFile: updateCanvasGroupsFile } = useCanvasGroups();
+  const currentGroups = useMemo(
+    () => groupsForCanvas(canvasGroupsFile, compositionId, graphRef),
+    [canvasGroupsFile, compositionId, graphRef],
+  );
+  // 结构重建 effect 经 ref 取分组（分组不进结构 key，避免每次拖框都整画布重建）。
+  const currentGroupsRef = useRef(currentGroups);
+  currentGroupsRef.current = currentGroups;
+  const updateCurrentGroups = useCallback(
+    (updater: (groups: Record<string, CanvasGroupDef>) => Record<string, CanvasGroupDef>) => {
+      updateCanvasGroupsFile((file) => setGroupsForCanvas(
+        file, compositionId, graphRef, updater(groupsForCanvas(file, compositionId, graphRef)),
+      ));
+    },
+    [compositionId, graphRef, updateCanvasGroupsFile],
+  );
   const [showMiniMap, setShowMiniMap] = useState(false);
   const [expandedElementIds, setExpandedElementIds] = useState<string[]>([]);
+  // 侧栏整理分组的折叠态（临时 UI 态，不落盘）。key 带前缀防串：comp:<catKey> / sub:<compId>:<catKey>。
+  const [collapsedCatGroups, setCollapsedCatGroups] = useState<Set<string>>(() => new Set());
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(false);
   const [validationCollapsed, setValidationCollapsed] = useState(false);
@@ -208,6 +281,8 @@ function NarrativeEditorInner() {
   const [fitViewRev, setFitViewRev] = useState(0);
   const [fitTargetNodeIds, setFitTargetNodeIds] = useState<string[]>([]);
   const pendingFitNodeIdsRef = useRef<string[] | null>(null);
+  /** focusIssue 的 ref 转接：供声明顺序在其之前的宿主 API effect 调用（focusState）。 */
+  const focusIssueRef = useRef<((issue: ValidationIssueDef) => void) | null>(null);
   const { startLeft, startRight, startValidation } = usePanelResize({ setLayout: setPanelLayout, leftCollapsed, rightCollapsed });
   const [signalKey, setSignalKey] = useState('');
   const [simulation, setSimulation] = useState<SimulationResult | null>(null);
@@ -226,11 +301,223 @@ function NarrativeEditorInner() {
     setDirty(true);
   }, [wrapUpdater]);
 
+  // 整理分组提交：即刻入模型（saveCategories → mark_dirty），由主编辑器 Save All / 关窗询问兜底
+  // ——不与 narrative_graphs 的 flush 草稿路径耦合。顺手 prune 掉悬垂 id（对当前内存数据），保持整洁。
+  const persistCategories = useCallback((next: NarrativeCategoriesFileDef) => {
+    const pruned = pruneOrphans(next, data);
+    setCategories(pruned);
+    void saveCategoriesRemote(pruned);
+  }, [data]);
+  const setCompositionCategoryFor = useCallback((compId: string, name: string) => {
+    persistCategories(setCompositionCategory(categories, compId, name));
+  }, [categories, persistCategories]);
+  const setSubgraphCategoryFor = useCallback((compId: string, elId: string, name: string) => {
+    persistCategories(setSubgraphCategory(categories, compId, elId, name));
+  }, [categories, persistCategories]);
+
+  // 模板盖章成功（全有全无）：宿主已把合并后的 narrative + 镜像 quest + 对话桩**一并暂存**进
+  // ProjectModel（零磁盘写入），Save All 一次性落盘。这里整体采纳回传的 narrative 并把编辑器
+  // 标为「已保存到模型」（与点「保存」同语义——模型里已是这份数据），选中新作曲、刷新目录。
+  const handleStamped = useCallback((narrative: NarrativeGraphsFileDef, summary: StampSummaryDef) => {
+    updateData((next) => {
+      next.schemaVersion = narrative.schemaVersion ?? next.schemaVersion;
+      next.compositions = narrative.compositions ?? [];
+      next.signals = narrative.signals ?? [];
+    });
+    // 与 adoptRefactoredNarrative 同款保护：盖章是跨文件三产物（narrative+镜像 quest+对话桩）
+    // 一体暂存，画布 Ctrl+Z 只回退 narrative 会击穿「全有全无」——Save All 落盘出劈叉三件套
+    // （有 quest/桩、没对应作曲）。整体放弃 = 主编辑器放弃暂存，不走画布撤销（审查 W-E2）。
+    resetHistory();
+    setSavedDataHash(stableHash(JSON.stringify(normalizeFile(narrative))));
+    setDirty(false);
+    setCompositionId(summary.compositionId);
+    void loadAuthoringCatalog().then((c) => {
+      setCatalog(c);
+      setKnownPlaneIdsForValidation(c.planeIds ?? null);
+    });
+    const bits = [`作曲 ${summary.compositionId}`];
+    if (summary.questStaged) bits.push(`任务 ${summary.questId}`);
+    if (summary.stubsStaged.length) bits.push(`对话桩 ${summary.stubsStaged.length} 个`);
+    setStatus(`已盖章暂存：${bits.join('，')}——主编辑器 Save All 一次性落盘全部（放弃则全都不写盘）。`);
+  }, [resetHistory, updateData]);
+
+  // ---- 叙事重构（信号/状态/图id）：宿主引擎全项目级联，采纳返回数据并清画布撤销栈 ----
+  const [signalRefactor, setSignalRefactor] = useState<NarrativeRefactorRequest | null>(null);
+  const [refactorJournalSize, setRefactorJournalSize] = useState(0);
+
+  const adoptRefactoredNarrative = useCallback((narrative: NarrativeGraphsFileDef, journalSize: number, message: string) => {
+    const normalized = normalizeFile(narrative);
+    // 不走 updateData/history：跨文件重构不允许被画布 Ctrl+Z「半撤销」（叙事回退而对话图/场景
+    // 不回退 = 数据劈叉）；整体回退一律走「撤销重构」（宿主反向操作，全项目一体）。
+    setDataInternal(normalized);
+    resetHistory();
+    scheduleRemoteSync(normalized);
+    setSavedDataHash(stableHash(JSON.stringify(normalized)));
+    setDirty(false);
+    setRefactorJournalSize(journalSize);
+    setStatus(message);
+    void loadAuthoringCatalog().then((c) => {
+      setCatalog(c);
+      setKnownPlaneIdsForValidation(c.planeIds ?? null);
+    });
+  }, [resetHistory, scheduleRemoteSync]);
+
+  const handleSignalRefactored = useCallback((result: SignalRefactorResultDef, description: string) => {
+    if (!result.narrative) return;
+    adoptRefactoredNarrative(
+      result.narrative,
+      result.journalSize ?? 0,
+      `${description}——改动已暂存进主编辑器（未落盘）：Save All 应用，或「撤销重构」整体回退。`,
+    );
+  }, [adoptRefactoredNarrative]);
+
   const compositions = data.compositions ?? [];
   const currentDataJson = useMemo(() => JSON.stringify(normalizeFile(data)), [data]);
   const currentDataHash = useMemo(() => stableHash(currentDataJson), [currentDataJson]);
   const editorDirty = dirty || (savedDataHash !== '' && currentDataHash !== savedDataHash);
+
+  // 撤销重构（P1-08）：画布有未暂存编辑时先确认——adoptRefactoredNarrative 会整体覆盖
+  // 画布并清空撤销栈，不问就等于把重构之后的手工编辑静默扔掉（正向重构路径会先把画布
+  // data 交宿主暂存，撤销路径没有对应机会，只能显式询问）。
+  const undoRefactor = useCallback(() => {
+    if (editorDirty) {
+      const ok = window.confirm(
+        '画布上有未暂存的修改（未按 Ctrl+S 暂存进工程模型）。\n'
+        + '撤销重构会用回退后的全项目数据整体覆盖当前画布，这些修改将丢失且无法找回。\n\n'
+        + '仍要撤销重构吗？（可先取消，Ctrl+S 暂存后再撤销）',
+      );
+      if (!ok) return;
+    }
+    void undoSignalRefactorRemote().then((result) => {
+      if (!result.ok || !result.narrative) {
+        setStatus(`撤销重构失败：${result.reason ?? '未知错误'}`);
+        return;
+      }
+      adoptRefactoredNarrative(
+        result.narrative,
+        result.journalSize ?? 0,
+        `${result.description ?? '已撤销重构'}（全项目一体回退，仍未落盘）。`,
+      );
+    });
+  }, [adoptRefactoredNarrative, editorDirty]);
+
+  // 重载页面统一入口（P0-2）：有未暂存草稿必须先确认（明说丢什么），确认后临时旁路
+  // beforeunload 兜底守卫避免二次弹窗。菜单「重载页面」与 F5 都走这里。
+  const bypassUnloadGuardRef = useRef(false);
+  const confirmDiscardAndReload = useCallback(() => {
+    if (editorDirty) {
+      const ok = window.confirm(
+        '画布上有未暂存的修改（未按 Ctrl+S 暂存进工程模型）。\n'
+        + '重载页面会永久丢弃这些修改，且无法恢复。\n\n'
+        + '仍要重载吗？（可先取消，Ctrl+S 暂存后再重载）',
+      );
+      if (!ok) return;
+    }
+    bypassUnloadGuardRef.current = true;
+    reloadNarrativeEditorPage();
+  }, [editorDirty]);
+
+  // beforeunload 兜底（P0-2）：任何未经确认的整页卸载（脚本 reload、宿主导航等）在
+  // 有脏草稿时都拦一道；经 confirmDiscardAndReload 确认过的重载不重复打扰。
+  useEffect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!editorDirty || bypassUnloadGuardRef.current) return;
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [editorDirty]);
   const composition = useMemo(() => getComposition(data, compositionId), [data, compositionId]);
+  const toggleCatGroup = useCallback((key: string) => {
+    setCollapsedCatGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+  const compositionGroups = useMemo(() => groupCompositions(compositions, categories), [compositions, categories]);
+  const subgraphGroups = useMemo(
+    () => (composition
+      ? groupSubgraphElements((composition.elements ?? []).filter((el) => isSubgraphElement(el)), categories, composition.id)
+      : []),
+    [composition, categories],
+  );
+  const renderCompositionItem = (comp: NarrativeCompositionDef): ReactNode => (
+    <div className="composition-row" key={comp.id}>
+      <button
+        type="button"
+        className={comp.id === composition?.id ? 'composition active' : 'composition'}
+        onClick={() => {
+          setCompositionId(comp.id);
+          setGraphRef('main');
+          setSelectedId(`graph:${comp.mainGraph.id}`);
+          setSelectedJson(JSON.stringify(comp.mainGraph, null, 2));
+        }}
+      >
+        <span>{graphDisplayName(comp.mainGraph)}</span>
+        <small>编排ID: {comp.id} · 主图ID: {comp.mainGraph.id}</small>
+      </button>
+      <button
+        type="button"
+        className="row-delete"
+        title="删除整个编排（连同主图与全部子图）"
+        onClick={(e) => { e.stopPropagation(); deleteComposition(comp.id); }}
+      >
+        ✕
+      </button>
+    </div>
+  );
+  const renderSubgraphItem = (el: CompositionElementDef): ReactNode => (
+    <div className="composition-row" key={el.id}>
+      <button
+        type="button"
+        className={graphRef === `element:${el.id}` ? 'composition active' : 'composition'}
+        onClick={() => {
+          setGraphRef(`element:${el.id}`);
+          setSelectedId(el.graph ? `graph:${el.graph.id}` : '');
+          setSelectedJson(JSON.stringify(el.graph ?? {}, null, 2));
+        }}
+      >
+        <span>{el.graph ? graphDisplayName(el.graph) : (el.label || el.id)}</span>
+        <small>图ID: {el.graph?.id || ''} · 独占</small>
+      </button>
+      <button
+        type="button"
+        className="row-delete"
+        title="删除该子图（连同其状态与迁移）"
+        onClick={(e) => { e.stopPropagation(); deleteSubgraphElement(el.id); }}
+      >
+        ✕
+      </button>
+    </div>
+  );
+  // 分组渲染：未使用任何分类（仅一个「未分类」组或空）时保持原扁平列表，零视觉变化；
+  // 一旦有分类则渲染可折叠分组头（命名分类在前、未分类殿后）。
+  function renderCatGroups<T>(groups: CategoryGroup<T>[], keyPrefix: string, renderItem: (item: T) => ReactNode): ReactNode {
+    const flat = groups.length === 0 || (groups.length === 1 && groups[0].isUncategorized);
+    if (flat) return <>{groups.flatMap((group) => group.items).map(renderItem)}</>;
+    return groups.map((group) => {
+      const groupKey = `${keyPrefix}${group.key}`;
+      const collapsed = collapsedCatGroups.has(groupKey);
+      return (
+        <div className="cat-group" key={groupKey}>
+          <button
+            type="button"
+            className={`cat-group-head${group.isUncategorized ? ' uncategorized' : ''}`}
+            onClick={() => toggleCatGroup(groupKey)}
+            title={collapsed ? '展开分组' : '折叠分组'}
+          >
+            <span className="cat-caret">{collapsed ? '▸' : '▾'}</span>
+            <span className="cat-name">{group.label}</span>
+            <span className="cat-count">{group.items.length}</span>
+          </button>
+          {!collapsed && group.items.map(renderItem)}
+        </div>
+      );
+    });
+  }
   const graph = useMemo(() => getEditableGraph(composition, graphRef), [composition, graphRef]);
   const activeStates = useMemo(() => extractActiveStates(runtimeSnapshot) ?? simulation?.activeStates ?? {}, [runtimeSnapshot, simulation]);
   const knownSignals = useMemo(() => collectKnownSignals(data), [data]);
@@ -271,15 +558,35 @@ function NarrativeEditorInner() {
       setDataInternal(next);
       setCompositionId(next.compositions?.[0]?.id ?? '');
       setSignalKey(collectKnownSignals(next)[0] ?? '');
-      setCatalog(await loadAuthoringCatalog());
+      const loadedCatalog = await loadAuthoringCatalog();
+      setCatalog(loadedCatalog);
+      // 给 TS 权威校验上膛 activePlane 存在性检查（不注入则该检查跳过、只剩 Python 兜底）。
+      setKnownPlaneIdsForValidation(loadedCatalog.planeIds ?? null);
+      const loadedTemplates = await loadTemplates();
+      setTemplates(loadedTemplates.templates ?? []);
+      setCategories(await loadCategories());
       await flushRemoteSync(next);
       setDataSource(loaded.source);
       setSavedDataHash(stableHash(JSON.stringify(next)));
       setDirty(false);
       resetHistory();
+      // 撤销日志挂在宿主 ProjectModel 上、跨页面加载存活：重载后恢复「撤销重构(n)」入口（P3）。
+      setRefactorJournalSize(await refactorJournalSizeRemote());
       setStatus(`已加载：${loaded.source}`);
     });
   }, []);
+
+  // 任务总线：面板打开或 compositionId 变化时，向宿主拉取该编排的关联清单。
+  useEffect(() => {
+    if (!taskBusOpen || !compositionId) return;
+    let cancelled = false;
+    void loadTaskIndex(compositionId).then((index) => {
+      if (!cancelled) setTaskIndex(index);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [taskBusOpen, compositionId]);
 
   useEffect(() => {
     const api = {
@@ -291,8 +598,32 @@ function NarrativeEditorInner() {
         setDirty(false);
       },
       refresh: () => { void refreshProjectionAndValidation(data); },
+      // 宿主跳转定位（PySide 位面面板 Tab2 双击）：切编排 + 聚焦状态。
+      // focusIssue 声明在本 effect 之后，经 ref 转接（依赖数组直接引用会踩 TDZ）。
+      focusState: (graphId: string, stateId: string): boolean => {
+        const gid = String(graphId ?? '').trim();
+        const sid = String(stateId ?? '').trim();
+        const focus = focusIssueRef.current;
+        if (!gid || !sid || !focus) return false;
+        for (const comp of data.compositions ?? []) {
+          const inMain = comp.mainGraph?.id === gid;
+          const el = inMain ? undefined : (comp.elements ?? []).find((e) => e.graph?.id === gid);
+          if (!inMain && !el) continue;
+          focus({
+            severity: 'warning',
+            code: 'host.focusState',
+            message: '',
+            target: { kind: 'state', compositionId: comp.id, graphId: gid, stateId: sid, ...(el ? { elementId: el.id } : {}) },
+          });
+          return true;
+        }
+        return false;
+      },
     };
     window.__narrativeEditor = api;
+    // 崩溃兜底快照（P1-07）：卸载/崩溃后 __narrativeEditor 会被清掉，此变量刻意**不清除**，
+    // 供顶层 ErrorBoundary 崩溃页导出草稿、宿主壳兜底读取。
+    window.__narrativeEditorLastDraft = currentDataJson;
     return () => {
       if (window.__narrativeEditor === api) {
         delete window.__narrativeEditor;
@@ -377,7 +708,8 @@ function NarrativeEditorInner() {
     const builtEdges = buildCanvasEdges(canvasStructureInput);
     let builtNodes = buildCanvasNodes(canvasStructureInput);
     builtNodes = resizeSubgraphParents(builtNodes);
-    setNodes(builtNodes);
+    // 分组框随结构重建一并注入（经 ref 取，分组变更本身由下方 reconcile effect 处理）
+    setNodes([...builtNodes, ...buildGroupFrameNodes(currentGroupsRef.current)]);
     setEdges(builtEdges);
 
     let raf2 = 0;
@@ -405,10 +737,21 @@ function NarrativeEditorInner() {
     };
   }, [canvasStructureKey]); // eslint-disable-line react-hooks/exhaustive-deps -- key encodes canvasStructureInput
 
-  const { nodes: displayNodes, edges: displayEdges } = useMemo(
-    () => applyCanvasSelection(nodes, edges, selectedId),
-    [nodes, edges, selectedId],
-  );
+  // 分组数据变更（建/删/改名/改色/折叠/框几何）→ 就地对齐画布上的分组框节点
+  useEffect(() => {
+    setNodes((current) => reconcileGroupFrameNodes(current, currentGroups));
+  }, [currentGroups]);
+
+  const signalLabelMap = useMemo(() => buildSignalLabelMap(data), [data]);
+
+  const { nodes: displayNodes, edges: displayEdges } = useMemo(() => {
+    const selected = applyCanvasSelection(nodes, edges, selectedId);
+    // 折叠呈现变换：成员隐藏、跨组连线改接分组框——只作用于 display 拷贝
+    const grouped = applyEditorGroupDisplay(selected.nodes, selected.edges, currentGroups);
+    // 信号显示模式（默认中文名，勾「信号id」回原始 id）：同样只作用于 display 拷贝
+    if (preferences.canvasSignalDisplay === 'id') return grouped;
+    return { nodes: grouped.nodes, edges: applySignalDisplayToEdges(grouped.edges, signalLabelMap) };
+  }, [nodes, edges, selectedId, currentGroups, preferences.canvasSignalDisplay, signalLabelMap]);
 
   const updateCurrentGraph = useCallback((updater: (g: NarrativeGraphDef, next: NarrativeGraphsFileDef) => void) => {
     updateData((next) => {
@@ -424,18 +767,98 @@ function NarrativeEditorInner() {
     ));
   }, []);
 
+  const groupActions = useMemo(() => ({
+    rename: (gid: string) => {
+      const g = currentGroupsRef.current[gid];
+      if (!g) return;
+      const name = window.prompt('分组名称：', g.name);
+      if (!name?.trim()) return;
+      updateCurrentGroups((groups) => (
+        groups[gid] ? { ...groups, [gid]: { ...groups[gid], name: name.trim() } } : groups
+      ));
+    },
+    setColor: (gid: string, color: string) => {
+      updateCurrentGroups((groups) => (
+        groups[gid] ? { ...groups, [gid]: { ...groups[gid], color } } : groups
+      ));
+    },
+    toggleCollapsed: (gid: string) => {
+      updateCurrentGroups((groups) => (
+        groups[gid] ? { ...groups, [gid]: { ...groups[gid], collapsed: groups[gid].collapsed !== true } } : groups
+      ));
+    },
+    remove: (gid: string) => {
+      // 纯视觉层删除：框内节点与编排数据不受影响，无需确认
+      updateCurrentGroups((groups) => {
+        if (!groups[gid]) return groups;
+        const next = { ...groups };
+        delete next[gid];
+        return next;
+      });
+    },
+    setFrameRect: (gid: string, rect: { x: number; y: number; width: number; height: number }) => {
+      updateCurrentGroups((groups) => (
+        groups[gid]
+          ? {
+            ...groups,
+            [gid]: {
+              ...groups[gid],
+              frame: {
+                x: Math.round(rect.x),
+                y: Math.round(rect.y),
+                width: Math.round(rect.width),
+                height: Math.round(rect.height),
+              },
+            },
+          }
+          : groups
+      ));
+    },
+  }), [updateCurrentGroups]);
+
   const canvasActions = useMemo(() => ({
     toggleSubgraphElement: (elementId: string) => {
       const el = composition?.elements?.find((item) => item.id === elementId);
       if (!el || !isSubgraphElement(el)) return;
       toggleExpandedElement(elementId);
     },
-  }), [composition, toggleExpandedElement]);
+    groupActions,
+  }), [composition, toggleExpandedElement, groupActions]);
+
+  const createGroupFrame = useCallback(() => {
+    if (!compositionId) return;
+    const name = window.prompt('新建分组框——显示名称：', '分组');
+    if (!name?.trim()) return;
+    // 放在当前实体节点云的质心附近；按已有组数错开避免完全重叠。无节点时用固定落点。
+    const anchorNodes = nodes.filter((n) => (
+      !n.parentId && n.data?.kind !== 'editorGroupFrame'
+      && n.data?.kind !== 'graphAnchor' && n.data?.kind !== 'projectionAnchor' && n.data?.kind !== 'transitionAnchor'
+    ));
+    const cx = anchorNodes.length
+      ? anchorNodes.reduce((sum, n) => sum + n.position.x, 0) / anchorNodes.length
+      : 160;
+    const cy = anchorNodes.length
+      ? anchorNodes.reduce((sum, n) => sum + n.position.y, 0) / anchorNodes.length
+      : 140;
+    updateCurrentGroups((groups) => {
+      const gid = newGroupId(groups);
+      const offset = Object.keys(groups).length * 32;
+      return {
+        ...groups,
+        [gid]: {
+          name: name.trim(),
+          color: groupColorForIndex(Object.keys(groups).length),
+          frame: { x: Math.round(cx - 210 + offset), y: Math.round(cy - 150 + offset), width: 420, height: 300 },
+        },
+      };
+    });
+    setStatus(`已新建分组框「${name.trim()}」——拖动节点使其中心落入框内即归组；拖标题移动框，选中后拖角调大小。`);
+  }, [compositionId, nodes, updateCurrentGroups]);
 
   const removeModelObjects = useCallback((ids: string[]) => {
     const targets = ids.filter((id) => isSelectionDeletable(id, graphRef));
     if (!targets.length) {
-      setStatus('Nothing deletable selected');
+      setStatus('没有可删除的选中项');
       return;
     }
     let expectedRemoved = 0;
@@ -488,6 +911,19 @@ function NarrativeEditorInner() {
         }
       }
     }
+    // 删除元素会连同其整个子图（全部状态与迁移）一并删除——这是最容易误操作、
+    // 破坏面最大的一步，删除前显式确认（其余状态/迁移删除较轻且可撤销，不打断）。
+    if (countedElements.size > 0) {
+      const names = [...countedElements].join('、');
+      const ok = window.confirm(
+        `将删除 ${countedElements.size} 个元素（${names}），并连同其整个子图（状态与迁移）一起删除。\n` +
+        `此操作可用 Ctrl+Z 撤销。是否继续？`,
+      );
+      if (!ok) {
+        setStatus('已取消删除');
+        return;
+      }
+    }
     updateData((next) => {
       const comp = getComposition(next, composition?.id ?? compositionId);
       const g = getEditableGraph(comp, graphRef);
@@ -536,11 +972,15 @@ function NarrativeEditorInner() {
       setSelectedId('');
       setSelectedJson('');
     }
-    setStatus(blockedLastState ? 'At least one state must remain' : expectedRemoved ? `Deleted ${expectedRemoved} object(s)` : 'Nothing deleted');
+    setStatus(blockedLastState ? '至少要保留一个状态' : expectedRemoved ? `已删除 ${expectedRemoved} 个对象` : '未删除任何对象');
   }, [composition, compositionId, graph, graphRef, selectedId, updateData]);
 
   const onNodesChange: OnNodesChange<CanvasNode> = useCallback((changes) => {
-    const removedNodeIds = changes.filter((c) => c.type === 'remove').map((c) => c.id);
+    // 分组框是编辑器视觉层（且已 deletable:false），防御性排除：绝不进模型删除
+    const removedNodeIds = changes
+      .filter((c) => c.type === 'remove')
+      .map((c) => c.id)
+      .filter((id) => !parseGroupFrameNodeId(id));
     if (removedNodeIds.length) removeModelObjects(removedNodeIds);
     const snapAnchors = shouldSnapTransitionAnchors(changes);
     setNodes((nds) => {
@@ -568,17 +1008,22 @@ function NarrativeEditorInner() {
 
   const onConnect: OnConnect = useCallback((conn: Connection) => {
     if (!composition || !graph) return;
+    // 连线只在「编辑」模式建迁移；连线/调试模式用于查看关系与运行时，误拖不应改模型。
+    if (canvasMode !== 'edit') {
+      setStatus('仅「编辑」模式可连线创建迁移；连线 / 调试模式用于查看关系与运行时。');
+      return;
+    }
     const view = resolveActiveGraphView(composition, graphRef);
     if (!view) return;
 
     const source = stateEndpointFromNodeIdForView(conn.source ?? '', view);
     const target = stateEndpointFromNodeIdForView(conn.target ?? '', view);
     if (!source || !target) {
-      setStatus('Only state nodes can create transitions');
+      setStatus('只有状态节点之间可以连线创建迁移');
       return;
     }
     if (source.graphId !== target.graphId) {
-      setStatus('Cross-graph relationships must use signals, state broadcasts, or projection metadata, not cross-graph transitions.');
+      setStatus('跨图关系请用信号、状态广播或投影元数据表达，不能直接跨图连线。');
       return;
     }
 
@@ -587,10 +1032,12 @@ function NarrativeEditorInner() {
       updateCurrentGraph((g) => {
         createdTransition = createTransition(g, source.stateId, target.stateId);
       });
-      if (createdTransition) {
-        setSelectedId(view.scope.transitionEdgeId(createdTransition.id));
-        setSelectedJson(JSON.stringify(createdTransition, null, 2));
-        setStatus(`Created transition ${createdTransition.id}`);
+      // 经中间量重读：赋值发生在回调闭包里，TS 控制流会把变量收窄成 null/never。
+      const createdInGraph = createdTransition as NarrativeTransitionDef | null;
+      if (createdInGraph) {
+        setSelectedId(view.scope.transitionEdgeId(createdInGraph.id));
+        setSelectedJson(JSON.stringify(createdInGraph, null, 2));
+        setStatus(`已创建迁移 ${createdInGraph.id}`);
       }
       return;
     }
@@ -602,15 +1049,28 @@ function NarrativeEditorInner() {
       if (!sourceGraph) return;
       createdTransition = createTransition(sourceGraph, source.stateId, target.stateId);
     });
-    if (createdTransition) {
-      const edgeId = source.elementId ? inlineSubgraphTransitionId(source.elementId, createdTransition.id) : `transition:${createdTransition.id}`;
+    const created = createdTransition as NarrativeTransitionDef | null;
+    if (created) {
+      const edgeId = source.elementId ? inlineSubgraphTransitionId(source.elementId, created.id) : `transition:${created.id}`;
       setSelectedId(edgeId);
-      setSelectedJson(JSON.stringify(createdTransition, null, 2));
-      setStatus(`Created transition ${createdTransition.id}`);
+      setSelectedJson(JSON.stringify(created, null, 2));
+      setStatus(`已创建迁移 ${created.id}`);
     }
-  }, [composition, graph, graphRef, updateCurrentGraph, updateData]);
+  }, [canvasMode, composition, graph, graphRef, updateCurrentGraph, updateData]);
 
   const onNodeDragStop = useCallback((_event: unknown, node: CanvasNode) => {
+    const draggedGid = parseGroupFrameNodeId(node.id);
+    if (draggedGid) {
+      updateCurrentGroups((groups) => {
+        const g = groups[draggedGid];
+        if (!g) return groups;
+        return {
+          ...groups,
+          [draggedGid]: { ...g, frame: { ...g.frame, x: Math.round(node.position.x), y: Math.round(node.position.y) } },
+        };
+      });
+      return;
+    }
     const inline = parseInlineSubgraphId(node.id);
     if (inline?.kind === 'state') {
       updateData((next) => {
@@ -642,9 +1102,16 @@ function NarrativeEditorInner() {
         element.y = Math.round(node.position.y);
       });
     }
-  }, [composition?.id, compositionId, graphRef, updateCurrentGraph, updateData]);
+  }, [composition?.id, compositionId, graphRef, updateCurrentGraph, updateCurrentGroups, updateData]);
 
   const selectNode = useCallback((_event: unknown, node: CanvasNode) => {
+    const selectedGid = parseGroupFrameNodeId(node.id);
+    if (selectedGid) {
+      // 分组框是编辑器视觉层，不是模型对象：检查器只展示分组定义本身
+      setSelectedId(node.id);
+      setSelectedJson(JSON.stringify(currentGroupsRef.current[selectedGid] ?? {}, null, 2));
+      return;
+    }
     if (node.id.startsWith('transition-anchor:') && composition) {
       const parsed = parseTransitionAnchorId(node.id);
       if (parsed) {
@@ -700,14 +1167,14 @@ function NarrativeEditorInner() {
       });
       if (newId) {
         setSelectedId(inlineSubgraphStateId(inlineElementId, newId));
-        setStatus(`Created subgraph state ${newId}`);
+        setStatus(`已创建子图状态 ${newId}`);
       }
       return;
     }
     updateCurrentGraph((g) => { newId = createState(g); });
     if (newId) {
       setSelectedId(`state:${newId}`);
-      setStatus(`Created state ${newId}`);
+      setStatus(`已创建状态 ${newId}`);
     }
   }, [composition, compositionId, expandedElementIds, graphRef, selectedId, updateCurrentGraph, updateData]);
 
@@ -749,24 +1216,92 @@ function NarrativeEditorInner() {
     removeModelObjects([selectedId]);
   }, [removeModelObjects, selectedId]);
 
-  const selectionDeletable = isSelectionDeletable(selectedId, graphRef);
+  // 从侧栏「编排列表」删除整个编排（主图 + 全部元素/子图）。破坏面大 → 显式确认、可撤销。
+  const deleteComposition = useCallback((compId: string) => {
+    const target = (data.compositions ?? []).find((c) => c.id === compId);
+    if (!target) return;
+    const label = graphDisplayName(target.mainGraph) || compId;
+    const elCount = (target.elements ?? []).length;
+    const ok = window.confirm(
+      `将删除整个编排「${label}」（编排ID: ${compId}），包含其主图与 ${elCount} 个元素/子图。\n` +
+      `此操作可用 Ctrl+Z 撤销。是否继续？`,
+    );
+    if (!ok) { setStatus('已取消删除'); return; }
+    updateData((next) => {
+      next.compositions = (next.compositions ?? []).filter((c) => c.id !== compId);
+    });
+    if (compId === compositionId) {
+      const remaining = (data.compositions ?? []).filter((c) => c.id !== compId);
+      const nextComp = remaining[0];
+      setCompositionId(nextComp?.id ?? '');
+      setGraphRef('main');
+      setSelectedId(nextComp ? `graph:${nextComp.mainGraph.id}` : '');
+      setSelectedJson('');
+    }
+    // 刻意不在此清理它的整理分组标签：分类存在撤销历史之外，若在删除时一并抹掉，Ctrl+Z 只能
+    // 复原叙事数据、复原不回分类，就不是「彻底回到删除前」。留成孤儿完全无害（分组按 id 反查、
+    // 查不到就不渲染，永不进 JSON），并在下次编辑任一分类时由 pruneOrphans 自动清掉。
+    setStatus(`已删除编排「${label}」`);
+  }, [data, compositionId, updateData]);
 
-  const applyAutoLayout = useCallback(() => {
-    if (!composition) return;
+  // 从侧栏「子图导航」删除一个子图元素（连同其内部状态与迁移）。显式确认、可撤销。
+  const deleteSubgraphElement = useCallback((elementId: string) => {
+    const el = composition?.elements?.find((e) => e.id === elementId);
+    if (!el || !composition) return;
+    const label = el.graph ? graphDisplayName(el.graph) : (el.label || elementId);
+    const ok = window.confirm(
+      `将删除子图「${label}」（元素ID: ${elementId}），连同其全部状态与迁移。\n` +
+      `此操作可用 Ctrl+Z 撤销。是否继续？`,
+    );
+    if (!ok) { setStatus('已取消删除'); return; }
     updateData((next) => {
       const comp = getComposition(next, compositionId);
-      if (!comp) return;
+      if (comp) comp.elements = (comp.elements ?? []).filter((e) => e.id !== elementId);
+    });
+    if (graphRef === `element:${elementId}`) {
+      setGraphRef('main');
+      setSelectedId(`graph:${composition.mainGraph.id}`);
+      setSelectedJson('');
+    }
+    // 同上：不在删除时抹掉它的整理分组标签，以保证 Ctrl+Z 能彻底复原（含分类）。
+    // 孤儿标签无害且会在下次编辑分类时自动清理。
+    setStatus(`已删除子图「${label}」`);
+  }, [composition, compositionId, graphRef, updateData]);
+
+  const selectionDeletable = isSelectionDeletable(selectedId, graphRef);
+
+  const applyAutoLayout = useCallback(async () => {
+    if (!composition) return;
+    // ELK 异步：先对当前数据算好一份纯坐标 plan，再在 updateData 里同步写回既有位置字段，
+    // 保持原有脏态/撤销流程不变；只写坐标，绝不碰任何其它数据/语义。
+    const comp = getComposition(data, compositionId);
+    if (!comp) return;
+    setStatus('正在计算布局…');
+    try {
       if (graphRef === 'main') {
-        layoutComposition(comp, expandedElementIds);
+        const plan = await computeCompositionLayout(comp, expandedElementIds);
+        updateData((next) => {
+          const target = getComposition(next, compositionId);
+          if (target) applyCompositionLayout(target, plan);
+        });
       } else {
         const target = getEditableGraph(comp, graphRef);
-        if (target) layoutGraph(target);
+        if (!target) return;
+        const positions = await computeGraphLayout(target);
+        updateData((next) => {
+          const nextComp = getComposition(next, compositionId);
+          const nextGraph = nextComp ? getEditableGraph(nextComp, graphRef) : null;
+          if (nextGraph) applyGraphLayout(nextGraph, positions);
+        });
       }
-    });
-    setFitTargetNodeIds([]);
-    setFitViewRev((v) => v + 1);
-    setStatus('已应用自动布局');
-  }, [composition, compositionId, expandedElementIds, graphRef, updateData]);
+      setFitTargetNodeIds([]);
+      setFitViewRev((v) => v + 1);
+      setStatus('已应用自动布局（ELK）');
+    } catch (err) {
+      console.error('[autoLayout] failed', err);
+      setStatus('自动布局失败（详见控制台）');
+    }
+  }, [composition, data, compositionId, expandedElementIds, graphRef, updateData]);
 
   const fitCanvas = useCallback(() => {
     setFitTargetNodeIds([]);
@@ -775,25 +1310,25 @@ function NarrativeEditorInner() {
 
   const applySelectedJson = useCallback(async () => {
     if (!selectedId || selectedId.startsWith('projection:')) {
-      setStatus('Projection edges are readonly');
+      setStatus('投影连线只读，不能编辑');
       return;
     }
     let parsed: unknown;
     try {
       parsed = JSON.parse(selectedJson);
     } catch (e) {
-      setStatus(`JSON parse failed: ${String(e)}`);
+      setStatus(`JSON 解析失败：${String(e)}`);
       return;
     }
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      setStatus('Selected object must be a JSON object');
+      setStatus('选中对象必须是 JSON 对象');
       return;
     }
     try {
       const candidate = normalizeFile(data);
       const nextSelectedId = applySelectedObjectJson(candidate, composition?.id ?? compositionId, graphRef, selectedId, parsed as Record<string, unknown>);
       if (!nextSelectedId) {
-        setStatus('Selected object no longer exists');
+        setStatus('选中对象已不存在');
         return;
       }
       const normalized = normalizeFile(candidate);
@@ -805,15 +1340,19 @@ function NarrativeEditorInner() {
         setStatus(`JSON 应用被拦截：${errors.length} 个错误`);
         return;
       }
-      setDataInternal(normalized);
-      setDirty(true);
+      // 走 history（可撤销/重做）而非 setDataInternal 绕过撤销栈——否则 Advanced 标签页里
+      // 「应用 JSON」的改动进不了撤销栈，一次 Ctrl+Z 会静默把它丢弃且无重做项。
+      updateData((next) => {
+        for (const key of Object.keys(next)) delete (next as Record<string, unknown>)[key];
+        Object.assign(next, normalized);
+      });
       setSelectedId(nextSelectedId);
       setSelectedJson(JSON.stringify(getObjectForSelection(normalized, composition?.id ?? compositionId, graphRef, nextSelectedId), null, 2));
-      setStatus('Applied JSON');
+      setStatus('已应用 JSON');
     } catch (e) {
       setStatus(String(e));
     }
-  }, [composition?.id, compositionId, data, graphRef, refreshProjectionAndValidation, selectedId, selectedJson]);
+  }, [composition?.id, compositionId, data, graphRef, refreshProjectionAndValidation, selectedId, selectedJson, updateData]);
 
   const save = useCallback(async () => {
     const normalized = normalizeFile(data);
@@ -828,26 +1367,34 @@ function NarrativeEditorInner() {
     if (!/^save blocked:/i.test(result) && !/^invalid /i.test(result)) {
       setSavedDataHash(stableHash(JSON.stringify(normalized)));
       setDirty(false);
+      setStatus('已暂存到工程模型（请在主编辑器执行「全部保存」写入磁盘）');
+    } else {
+      // 正常情况下 web 侧校验（TS∪Python）是桥端 Python 校验的超集，不会走到这里；
+      // 桥校验偶发不可用/结果不一致时，给出可读提示而非直接抛英文协议串。
+      // 注意：协议前缀已在上面的正则里判定过，这里只改「显示」不影响判定。
+      const friendly = /^save blocked:/i.test(result)
+        ? '保存被工程校验拦截：数据仍有校验错误（详见校验面板）'
+        : `保存失败：${result}`;
+      setStatus(friendly);
     }
-    setStatus(result);
   }, [data, flushRemoteSync]);
 
   const runLocalSimulation = useCallback(() => {
     const key = signalKey.trim();
     if (!key) {
-      setStatus('Signal is empty');
+      setStatus('信号为空');
       return;
     }
     const result = simulateSignalImpact(data, key, extractActiveStates(runtimeSnapshot) ?? undefined);
     setSimulation(result);
-    setRuntimeSnapshot({ ok: false, reason: 'Showing local simulation' });
-    setStatus(`Simulated ${result.recentTransitions.length} transition(s)`);
+    setRuntimeSnapshot({ ok: false, reason: '正在显示本地模拟' });
+    setStatus(`已模拟 ${result.recentTransitions.length} 条迁移`);
   }, [data, runtimeSnapshot, signalKey]);
 
   const pullRuntimeSnapshot = useCallback(async () => {
     const result = await getRuntimeSnapshot();
     setRuntimeSnapshot(result);
-    setStatus(result.ok ? 'Runtime snapshot loaded' : `Runtime unavailable: ${result.reason}`);
+    setStatus(result.ok ? '已拉取运行时快照' : `运行时不可用：${result.reason}`);
   }, []);
 
   const emitRuntime = useCallback(async () => {
@@ -856,9 +1403,9 @@ function NarrativeEditorInner() {
     setRuntimeSnapshot(result);
     if (!result.ok) {
       runLocalSimulation();
-      setStatus(`Runtime unavailable, simulated locally: ${result.reason}`);
+      setStatus(`运行时不可用，已本地模拟：${result.reason}`);
     } else {
-      setStatus('Runtime signal emitted');
+      setStatus('已发送运行时信号');
     }
   }, [runLocalSimulation, signalKey]);
 
@@ -928,6 +1475,116 @@ function NarrativeEditorInner() {
     setFitTargetNodeIds(fitIds);
     setFitViewRev((v) => v + 1);
   }, [compositionId, data]);
+  focusIssueRef.current = focusIssue;
+
+  // 任务问题：按当前 composition 实时计算（不走 Python get_task_index，那读的是上次存盘态）。
+  // 信号发出集/位面归属来自 catalog（B 侧算），此处按字段名消费并对缺省容错（旧 host 无该字段=跳过对应检查）。
+  const taskIssues = useMemo<TaskIssueDef[]>(() => {
+    const out: TaskIssueDef[] = [];
+    if (!composition) return out;
+    const compId = composition.id;
+
+    const graphs: Array<{ graph: NarrativeGraphDef; elementId?: string }> = [];
+    if (composition.mainGraph?.id) graphs.push({ graph: composition.mainGraph });
+    for (const el of composition.elements ?? []) {
+      if (el.graph?.id) graphs.push({ graph: el.graph, elementId: el.id });
+    }
+
+    // 本作曲 blackbox 声明的 emit 集（web 侧现算，用于豁免"有声明"的监听信号）。
+    const declaredEmits = new Set<string>();
+    for (const el of composition.elements ?? []) {
+      for (const raw of el.meta?.emits ?? []) {
+        const s = String(raw ?? '').trim();
+        if (s) declaredEmits.add(s);
+      }
+    }
+
+    const emittedSignals = catalog.emittedSignals;
+    const emittedSet = Array.isArray(emittedSignals) ? new Set(emittedSignals) : null;
+    const planeMembership = catalog.planeMembership;
+    const hasPlaneMembership = planeMembership != null && typeof planeMembership === 'object';
+    const exclusivePlanes = new Set(catalog.planeExclusive ?? []);
+
+    // emptyPlane：某 state.activePlane=P 但没有场景实体显式归属 P。
+    // shared（共享世界型）位面缺省实体照常存在，只是提醒；exclusive（独立世界型）
+    // 缺省实体不存在，零显式归属 = 激活后玩家面对空世界，强提示。
+    if (hasPlaneMembership) {
+      for (const { graph, elementId } of graphs) {
+        for (const [stateId, state] of Object.entries(graph.states ?? {})) {
+          const plane = String(state.activePlane ?? '').trim();
+          if (!plane) continue;
+          if ((planeMembership[plane] ?? 0) > 0) continue;
+          const isExclusive = exclusivePlanes.has(plane);
+          out.push({
+            kind: 'emptyPlane',
+            severity: 'warning',
+            message: isExclusive
+              ? `位面「${plane}」是独立世界型（exclusive）且没有显式归属它的实体：状态 ${graph.id}.${stateId} 激活后玩家将面对空世界`
+              : `位面「${plane}」被状态 ${graph.id}.${stateId} 激活，但无显式归属该位面的实体（缺省实体不计入，共享世界仍可见）`,
+            focus: {
+              severity: 'warning',
+              code: 'task.plane.empty',
+              message: '',
+              target: { kind: 'state', compositionId: compId, graphId: graph.id, stateId, ...(elementId ? { elementId } : {}) },
+            },
+          });
+        }
+      }
+    }
+
+    // danglingEmitDeclared：blackbox 声明发出 E，但全项目无对话/资产真发它。
+    if (emittedSet) {
+      for (const el of composition.elements ?? []) {
+        for (const raw of el.meta?.emits ?? []) {
+          const sig = String(raw ?? '').trim();
+          if (!sig || emittedSet.has(sig)) continue;
+          out.push({
+            kind: 'danglingEmitDeclared',
+            severity: 'warning',
+            message: `blackbox ${el.label || el.id} 声明发出信号「${sig}」，但没有任何对话/资产真正发出它`,
+            focus: {
+              severity: 'warning',
+              code: 'task.emit.declaredNoEmit',
+              message: '',
+              target: { kind: 'element', compositionId: compId, elementId: el.id },
+            },
+          });
+        }
+      }
+    }
+
+    // danglingSignalNoEmit：transition 监听信号 S，但无人发出、也无 blackbox 声明。
+    if (emittedSet) {
+      for (const { graph, elementId } of graphs) {
+        for (const t of graph.transitions ?? []) {
+          if ((t.trigger ?? 'signal') !== 'signal') continue;
+          const sig = String(t.signal ?? '').trim();
+          if (!sig || sig === DEFAULT_DRAFT_SIGNAL) continue;
+          if (emittedSet.has(sig) || declaredEmits.has(sig)) continue;
+          out.push({
+            kind: 'danglingSignalNoEmit',
+            severity: 'warning',
+            message: `转移 ${graph.id}.${t.id} 监听信号「${sig}」，但无人发出也无 blackbox 声明`,
+            focus: {
+              severity: 'warning',
+              code: 'task.signal.noEmit',
+              message: '',
+              target: { kind: 'transition', compositionId: compId, graphId: graph.id, transitionId: t.id, ...(elementId ? { elementId } : {}) },
+            },
+          });
+        }
+      }
+    }
+
+    // badRef：复用现有 validationIssues 里的引用/悬空类问题（限本作曲），focus 用原 issue。
+    for (const issue of validationIssues) {
+      if (!isBadRefCode(issue.code)) continue;
+      if (!issueInComposition(issue, compId, data)) continue;
+      out.push({ kind: 'badRef', severity: issue.severity, message: issue.message, focus: issue });
+    }
+
+    return out;
+  }, [composition, catalog, validationIssues, data]);
 
   const breadcrumbs = useMemo(() => {
     if (!composition) return [] as { label: string; onClick?: () => void }[];
@@ -972,14 +1629,14 @@ function NarrativeEditorInner() {
   ), [changeCanvasMode]);
 
   const fileMenuItems = useMemo((): ToolbarMenuItem[] => [
-    { id: 'save', label: '保存  Ctrl+S', onSelect: () => { void save(); } },
+    { id: 'save', label: '暂存到工程 Ctrl+S · 需在主编辑器「全部保存」写盘', onSelect: () => { void save(); } },
     {
       id: 'refresh',
       label: '刷新投影',
       onSelect: () => { void refreshProjectionAndValidation(data); },
     },
-    { id: 'reload', label: '重载页面  F5', onSelect: reloadNarrativeEditorPage },
-  ], [data, refreshProjectionAndValidation, save]);
+    { id: 'reload', label: '重载页面  F5', onSelect: confirmDiscardAndReload },
+  ], [confirmDiscardAndReload, data, refreshProjectionAndValidation, save]);
 
   const canvasMenuItems = useMemo((): ToolbarMenuItem[] => [
     {
@@ -1060,14 +1717,17 @@ function NarrativeEditorInner() {
         return;
       }
       if (key === 'f5') {
+        // P0-2：始终拦下默认行为（纯浏览器里 F5 默认=整页刷新，正是要堵的口子）；
+        // 焦点在文本框时不触发重载（主编辑器全局 F5=运行游戏的肌肉记忆误伤区），
+        // 其余情况走带脏确认的统一重载入口。
         e.preventDefault();
         e.stopPropagation();
-        reloadNarrativeEditorPage();
+        if (!inTextField) confirmDiscardAndReload();
       }
     };
     document.addEventListener('keydown', onKey, { capture: true });
     return () => document.removeEventListener('keydown', onKey, { capture: true });
-  }, [deleteSelected, redo, save, selectionDeletable, undo]);
+  }, [confirmDiscardAndReload, deleteSelected, redo, save, selectionDeletable, undo]);
 
   return (
     <NarrativeCanvasActionsProvider value={canvasActions}>
@@ -1083,21 +1743,7 @@ function NarrativeEditorInner() {
         <button className="primary" onClick={addCompositionAction}>新建编排</button>
         <div className="section-title">编排列表</div>
         <div className="composition-list">
-          {compositions.map((comp) => (
-            <button
-              key={comp.id}
-              className={comp.id === composition?.id ? 'composition active' : 'composition'}
-              onClick={() => {
-                setCompositionId(comp.id);
-                setGraphRef('main');
-                setSelectedId(`graph:${comp.mainGraph.id}`);
-                setSelectedJson(JSON.stringify(comp.mainGraph, null, 2));
-              }}
-            >
-              <span>{graphDisplayName(comp.mainGraph)}</span>
-              <small>编排ID: {comp.id} · 主图ID: {comp.mainGraph.id}</small>
-            </button>
-          ))}
+          {renderCatGroups(compositionGroups, 'comp:', renderCompositionItem)}
         </div>
 
         {composition && (
@@ -1111,21 +1757,7 @@ function NarrativeEditorInner() {
               <span>{graphDisplayName(composition.mainGraph) || '主图'}</span>
               <small>主图ID: {composition.mainGraph.id}</small>
             </button>
-            {(composition.elements ?? []).filter((el) => isSubgraphElement(el)).map((el) => (
-              <button
-                key={el.id}
-                type="button"
-                className={graphRef === `element:${el.id}` ? 'composition active' : 'composition'}
-                onClick={() => {
-                  setGraphRef(`element:${el.id}`);
-                  setSelectedId(el.graph ? `graph:${el.graph.id}` : '');
-                  setSelectedJson(JSON.stringify(el.graph ?? {}, null, 2));
-                }}
-              >
-                <span>{el.graph ? graphDisplayName(el.graph) : (el.label || el.id)}</span>
-                <small>图ID: {el.graph?.id || ''} · 独占</small>
-              </button>
-            ))}
+            {renderCatGroups(subgraphGroups, `sub:${composition.id}:`, renderSubgraphItem)}
           </>
         )}
 
@@ -1156,6 +1788,38 @@ function NarrativeEditorInner() {
             <button type="button" className="toolbar-btn" onClick={() => setEntityPanelOpen((v) => !v)} title={entityPanelOpen ? '关闭实体叙事状态面板' : '打开实体叙事状态面板'}>
               {entityPanelOpen ? '实体−' : '实体+'}
             </button>
+            <button type="button" className="toolbar-btn" onClick={() => setTaskBusOpen((v) => !v)} title={taskBusOpen ? '关闭任务总线面板' : '打开任务总线面板（本编排牵涉的引用/位面/场景实体/任务）'}>
+              {taskBusOpen ? '任务总线−' : '任务总线+'}
+            </button>
+            <button type="button" className="toolbar-btn" onClick={() => setTemplatesOpen((v) => !v)} title={templatesOpen ? '关闭模板面板' : '打开叙事状态机模板面板（填 taskId 一键派生新任务）'}>
+              {templatesOpen ? '模板−' : '模板+'}
+            </button>
+            <button
+              type="button"
+              className="toolbar-btn"
+              onClick={createGroupFrame}
+              title="新建画布分组框：命名/配色的矩形框，节点中心落入框内即归组；纯编辑器视觉整理，不影响编排数据。存 editor_data，随工程固化。"
+            >
+              +分组框
+            </button>
+            <label className="toggle compact-toggle" title="勾选后画布连线显示原始信号 id；不勾显示信号注册表里的中文名（无中文名的仍显示 id）。只影响显示，不改数据。">
+              <input
+                type="checkbox"
+                checked={preferences.canvasSignalDisplay === 'id'}
+                onChange={(e) => setPreferences({ canvasSignalDisplay: e.target.checked ? 'id' : 'label' })}
+              />
+              信号id
+            </label>
+            {refactorJournalSize > 0 && (
+              <button
+                type="button"
+                className="toolbar-btn"
+                onClick={undoRefactor}
+                title="撤销最近一次信号重构（改名=反向改名；删除=精确回放复原）。全项目一体回退，只动暂存不落盘。"
+              >
+                撤销重构({refactorJournalSize})
+              </button>
+            )}
             {(canvasMode === 'wiring' || canvasMode === 'debug') && (
               <ToolbarPopover label="图层" panelClassName="layers-popover-panel">
                 <label className="toggle compact-toggle">
@@ -1196,9 +1860,25 @@ function NarrativeEditorInner() {
               onEdgeClick={selectEdge}
               onNodeDragStop={onNodeDragStop}
               onNodeDoubleClick={(_event, node) => {
-                if (!node.id.startsWith('element:')) return;
-                const eid = node.id.slice('element:'.length);
-                canvasActions.toggleSubgraphElement(eid);
+                if (node.id.startsWith('element:')) {
+                  const eid = node.id.slice('element:'.length);
+                  canvasActions.toggleSubgraphElement(eid);
+                  return;
+                }
+                // 双击=就地改名（走全项目重构，先预览再执行）：状态节点 / 图节点 / 展开子图内的状态
+                const inline = parseInlineSubgraphId(node.id);
+                if (inline?.kind === 'state') {
+                  const el = composition?.elements?.find((item) => item.id === inline.elementId);
+                  if (el?.graph) setSignalRefactor({ kind: 'state-rename', graphId: el.graph.id, stateId: inline.objectId });
+                  return;
+                }
+                if (node.id.startsWith('state:') && graph) {
+                  setSignalRefactor({ kind: 'state-rename', graphId: graph.id, stateId: node.id.slice('state:'.length) });
+                  return;
+                }
+                if (node.id.startsWith('graph:') && graph) {
+                  setSignalRefactor({ kind: 'graph-rename', graphId: graph.id });
+                }
               }}
               showMiniMap={showMiniMap}
               canvasShowGrid={preferences.canvasShowGrid}
@@ -1231,6 +1911,50 @@ function NarrativeEditorInner() {
                 setFitViewRev={setFitViewRev}
               />
             </aside>
+          )}
+
+          {taskBusOpen && (
+            <aside className="entity-global-panel task-bus-panel">
+              <div className="entity-global-head">
+                <div>
+                  <div className="section-title">任务总线</div>
+                  <div className="muted">本编排牵涉的引用 / 位面 / 场景实体 / 任务</div>
+                </div>
+                <button type="button" onClick={() => setTaskBusOpen(false)}>关闭</button>
+              </div>
+              <TaskBusPanel index={taskIndex} issues={taskIssues} onFocusIssue={focusIssue} compositionLabel={composition?.label} onClose={() => setTaskBusOpen(false)} />
+            </aside>
+          )}
+
+          {templatesOpen && (
+            <aside className="entity-global-panel task-bus-panel">
+              <div className="entity-global-head">
+                <div>
+                  <div className="section-title">叙事状态机模板</div>
+                  <div className="muted">archetype 盖章：一键派生新任务</div>
+                </div>
+                <button type="button" onClick={() => setTemplatesOpen(false)}>关闭</button>
+              </div>
+              <TemplatesPanel
+                templates={templates}
+                catalog={catalog}
+                currentComposition={composition}
+                currentNarrative={data}
+                onTemplatesChange={setTemplates}
+                onStamped={handleStamped}
+                onClose={() => setTemplatesOpen(false)}
+              />
+            </aside>
+          )}
+
+          {signalRefactor && (
+            <SignalRefactorModal
+              open
+              request={signalRefactor}
+              data={data}
+              onClose={() => setSignalRefactor(null)}
+              onRefactored={handleSignalRefactored}
+            />
           )}
 
           <aside
@@ -1351,6 +2075,10 @@ function NarrativeEditorInner() {
               toggleExpandedElement={toggleExpandedElement}
               deleteSelected={deleteSelected}
               projection={projection}
+              categories={categories}
+              onSetCompositionCategory={setCompositionCategoryFor}
+              onSetSubgraphCategory={setSubgraphCategoryFor}
+              onRequestSignalRefactor={(req) => setSignalRefactor(req)}
             />
             <div className="inspector-actions">
               <button type="button" onClick={deleteSelected} disabled={!isSelectionDeletable(selectedId, graphRef)}>删除</button>
@@ -1362,11 +2090,14 @@ function NarrativeEditorInner() {
         )}
         {inspectorTab === 'transitions' && graph && (
           <div className="transition-table">
-            {transitionsForInspector.map((tr) => (
+            {transitionsForInspector.map((tr) => {
+              const trSignalNote = (data.signals ?? []).find((s) => s.id === tr.signal)?.notes?.trim();
+              return (
               <button
                 key={tr.id}
                 type="button"
                 className={`transition-row${selectedId === `transition:${tr.id}` ? ' active' : ''}`}
+                title={trSignalNote ? `信号「${tr.signal}」：${trSignalNote}` : undefined}
                 onClick={() => {
                   setSelectedId(`transition:${tr.id}`);
                   setSelectedJson(JSON.stringify(tr, null, 2));
@@ -1378,9 +2109,10 @@ function NarrativeEditorInner() {
                 }}
               >
                 <span>{String(tr.from)} → {String(tr.to)}</span>
-                <small>{tr.signal === DEFAULT_DRAFT_SIGNAL ? '(草稿)' : (tr.signal || '(草稿)')}</small>
+                <small>{tr.signal === DEFAULT_DRAFT_SIGNAL ? '(草稿)' : (tr.signal || '(草稿)')}{trSignalNote ? ' 📝' : ''}</small>
               </button>
-            ))}
+              );
+            })}
             {transitionsForInspector.length === 0 && (
               <div className="muted">当前选中对象没有关联迁移</div>
             )}
@@ -1452,12 +2184,19 @@ function NarrativeFlowCanvas(props: {
   graphRef: GraphRef;
 }) {
   const { fitView } = useReactFlow();
-  const lastFit = useRef('');
+  const lastFitKey = useRef('');
+  const fitDone = useRef(false);
 
   useEffect(() => {
     const key = `${props.compositionId}|${props.graphRef}|${props.fitViewRev}|${props.fitTargetNodeIds.join(',')}`;
-    if (lastFit.current === key && props.fitViewRev === 0) return;
-    lastFit.current = key;
+    // 仅在"真需要 fit"的信号变化时重置（切图/切编排/显式 fitViewRev++/聚焦目标变化）。
+    if (lastFitKey.current !== key) {
+      lastFitKey.current = key;
+      fitDone.current = false;
+    }
+    // 本 key 已成功 fit 过 → 之后节点数组仅因拖动/编辑触发重建而变化时不再重复 fit，
+    // 消除"拖一下就重新居中"的视口跳动；尚未成功时才（重）试，兼顾目标节点延迟渲染。
+    if (fitDone.current) return;
     const duration = props.reduceMotion ? 0 : 220;
     const t = window.setTimeout(() => {
       if (props.fitTargetNodeIds.length) {
@@ -1465,13 +2204,16 @@ function NarrativeFlowCanvas(props: {
         const targets = props.fitTargetNodeIds.filter((id) => existing.has(id));
         if (targets.length) {
           void fitView({ nodes: targets.map((id) => ({ id })), padding: 0.35, duration, maxZoom: 1.25 });
+          fitDone.current = true;
         }
+        // 目标节点尚未渲染 → 不标记完成，等下次节点变化再试
       } else {
         void fitView({ padding: 0.2, duration: props.reduceMotion ? 0 : 200 });
+        fitDone.current = true;
       }
     }, 80);
     return () => window.clearTimeout(t);
-  }, [props.compositionId, props.graphRef, props.fitViewRev, props.fitTargetNodeIds, props.nodes, props.reduceMotion, fitView, props.nodes.length]);
+  }, [props.compositionId, props.graphRef, props.fitViewRev, props.fitTargetNodeIds, props.nodes, props.reduceMotion, fitView]);
 
   return (
     <ReactFlow
@@ -1519,6 +2261,11 @@ function StructuredInspector(props: {
   toggleExpandedElement: (elementId: string) => void;
   deleteSelected: () => void;
   projection: ProjectionResult;
+  categories: NarrativeCategoriesFileDef;
+  onSetCompositionCategory: (compId: string, name: string) => void;
+  onSetSubgraphCategory: (compId: string, elId: string, name: string) => void;
+  /** 叙事重构入口（信号/状态/图 id 的全项目级联重构，仅 Qt 宿主内可用）。 */
+  onRequestSignalRefactor?: (req: NarrativeRefactorRequest) => void;
 }) {
   const { composition, graph, graphRef, selectedId } = props;
   const statesByGraph = useMemo(() => {
@@ -1537,6 +2284,14 @@ function StructuredInspector(props: {
   ), [props.data]);
   if (!composition || !graph) return <p className="muted">未选择编排。</p>;
   if (!selectedId) return <GraphInspector {...props} graph={graph} />;
+  if (parseGroupFrameNodeId(selectedId)) {
+    return (
+      <p className="muted">
+        画布分组框：纯编辑器视觉整理层，不进编排数据。
+        双击标题改名；拖标题移动；选中后拖角调大小；标题栏按钮改色 / 折叠 / 删除。
+      </p>
+    );
+  }
   if (selectedId.startsWith('graph:') || selectedId.startsWith('projection-anchor:')) {
     return <GraphInspector {...props} graph={graph} />;
   }
@@ -1593,7 +2348,7 @@ function StructuredInspector(props: {
   if (inline) {
     const element = composition.elements?.find((el) => el.id === inline.elementId);
     const subgraph = element?.graph;
-    if (!element || !subgraph) return <p className="muted">Missing expanded subgraph.</p>;
+    if (!element || !subgraph) return <p className="muted">找不到展开的子图。</p>;
     const updateInlineGraph = (updater: (g: NarrativeGraphDef, next: NarrativeGraphsFileDef) => void) => {
       props.updateData((next) => {
         const comp = getComposition(next, composition.id);
@@ -1612,7 +2367,7 @@ function StructuredInspector(props: {
           updateCurrentGraph={updateInlineGraph}
           setSelectedId={(id) => props.setSelectedId(prefixInlineSelection(inline.elementId, id))}
         />
-      ) : <p className="muted">Missing subgraph state.</p>;
+      ) : <p className="muted">找不到子图状态。</p>;
     }
     const transition = subgraph.transitions.find((t) => t.id === inline.objectId);
     return transition ? (
@@ -1628,12 +2383,12 @@ function StructuredInspector(props: {
         updateCurrentGraph={updateInlineGraph}
         setSelectedId={(id) => props.setSelectedId(prefixInlineSelection(inline.elementId, id))}
       />
-    ) : <p className="muted">Missing subgraph transition.</p>;
+    ) : <p className="muted">找不到子图迁移。</p>;
   }
   if (selectedId.startsWith('state:')) {
     const stateId = selectedId.slice('state:'.length);
     const state = graph.states[stateId];
-    return state ? <StateInspector {...props} state={state} stateId={stateId} graph={graph} /> : <p className="muted">Missing state.</p>;
+    return state ? <StateInspector {...props} state={state} stateId={stateId} graph={graph} /> : <p className="muted">找不到状态。</p>;
   }
   if (selectedId.startsWith('transition:')) {
     const transitionId = selectedId.slice('transition:'.length);
@@ -1649,15 +2404,15 @@ function StructuredInspector(props: {
           stateLabelsByGraph={stateLabelsByGraph}
           knownSignals={props.knownSignals}
         />
-      ) : <p className="muted">Missing transition.</p>;
+      ) : <p className="muted">找不到迁移。</p>;
   }
   if (selectedId.startsWith('element:') && graphRef === 'main') {
     const element = getElementByNodeId(composition, selectedId);
-    return element ? <ElementInspector {...props} element={element} knownSignals={props.knownSignals} /> : <p className="muted">Missing element.</p>;
+    return element ? <ElementInspector {...props} element={element} knownSignals={props.knownSignals} graphIds={Object.keys(statesByGraph)} /> : <p className="muted">找不到元素。</p>;
   }
   if (selectedId.startsWith('projection:')) {
     const edge = findProjectionEdge(props.projection, selectedId.replace('projection:', ''));
-    return edge ? <ExternalWiringInspector edge={edge} /> : <p className="muted">Missing external wiring edge.</p>;
+    return edge ? <ExternalWiringInspector edge={edge} /> : <p className="muted">找不到外部接线。</p>;
   }
   return <GraphInspector {...props} graph={graph} />;
 }
@@ -1705,6 +2460,10 @@ function GraphInspector(props: {
   catalog: AuthoringCatalogDef;
   updateCurrentGraph: (updater: (g: NarrativeGraphDef, next: NarrativeGraphsFileDef) => void) => void;
   setStatus?: (status: string) => void;
+  categories?: NarrativeCategoriesFileDef;
+  onSetCompositionCategory?: (compId: string, name: string) => void;
+  onSetSubgraphCategory?: (compId: string, elId: string, name: string) => void;
+  onRequestSignalRefactor?: (req: NarrativeRefactorRequest) => void;
 }) {
   const { graph, updateCurrentGraph, catalog, composition, graphRef } = props;
   const ownerChoices = ownerChoicesForGraph(graph, catalog);
@@ -1727,14 +2486,49 @@ function GraphInspector(props: {
         label="显示名"
         value={String(graph.label ?? '').trim() || graph.id}
         onChange={(value) => updateCurrentGraph((g, next) => {
-          g.label = value;
+          // 显示名为空或与 id 相同时删键（显示本就回退到 id），避免把 id 注入成显式 label。
+          const keep = !!value.trim() && value.trim() !== g.id;
+          if (keep) g.label = value.trim(); else delete g.label;
           if (parentElement && composition) {
             const comp = getComposition(next, composition.id);
             const el = comp?.elements?.find((item) => item.id === parentElement.id);
-            if (el) el.label = value;
+            if (el) { if (keep) el.label = value.trim(); else delete el.label; }
           }
         })}
       />
+      <div className="property-line">
+        <label>图 ID</label>
+        <div className="signal-field-row">
+          <input readOnly value={graph.id} />
+          {props.onRequestSignalRefactor && (
+            <button
+              type="button"
+              title="全项目级联改图 id（含派生信号、画布读取声明、场景/任务/对话图/地图/图鉴条件、存档迁移映射）；先预览使用点再执行，可撤销，不落盘。画布上双击图节点也可直接改名。"
+              onClick={() => props.onRequestSignalRefactor!({ kind: 'graph-rename', graphId: graph.id })}
+            >
+              改名…
+            </button>
+          )}
+        </div>
+      </div>
+      {composition && props.categories && graphRef === 'main' && props.onSetCompositionCategory && (
+        <TextField
+          label="编排整理分组（编辑器专用·不写入JSON）"
+          value={getCompositionCategory(props.categories, composition.id)}
+          commitOnBlur
+          datalistValues={distinctCompositionCategories(props.categories)}
+          onChange={(value) => props.onSetCompositionCategory!(composition.id, value)}
+        />
+      )}
+      {composition && props.categories && parentElement && isSubgraphElement(parentElement) && props.onSetSubgraphCategory && (
+        <TextField
+          label="子图整理分组（编辑器专用·不写入JSON）"
+          value={getSubgraphCategory(props.categories, composition.id, parentElement.id)}
+          commitOnBlur
+          datalistValues={distinctSubgraphCategories(props.categories, composition.id)}
+          onChange={(value) => props.onSetSubgraphCategory!(composition.id, parentElement.id, value)}
+        />
+      )}
       <SelectField label="初始状态" value={graph.initialState} values={Object.keys(graph.states)} onChange={(value) => updateCurrentGraph((g) => { g.initialState = value; })} />
       {(graph.ownerType === 'scenario' || graph.entryState || graph.exitStates?.length) && (
         <>
@@ -1746,17 +2540,32 @@ function GraphInspector(props: {
         <div className="property-line danger">projectFlags 已废弃；新图应使用明确的叙事状态读取。</div>
       )}
       {parentElement?.kind === 'wrapperGraph' && (
-        <TextField
-          label="分类备注"
-          value={graph.category ?? ''}
-          onChange={(value) => updateCurrentGraph((g) => { g.category = value; })}
-        />
+        <>
+          <TextField
+            label="分类备注（写入JSON·区分同一实体的多个包装）"
+            value={graph.category ?? ''}
+            onChange={(value) => updateCurrentGraph((g) => { g.category = value; })}
+          />
+          <div className="property-line note">
+            当同一个绑定对象（同 NPC/物件…）被多张实体包装图绑定时，给每张填一个不同的分类，用来区分它们
+            （如「白天线」「夜里线」）。会写入 narrative_graphs.json、显示在实体视图、并参与校验（多包装缺/撞分类会告警）。
+            这与上面的「整理分组」不同——那个只在编辑器里整理、不写进数据。
+          </div>
+        </>
       )}
       <PropertySummary rows={[['状态', String(Object.keys(graph.states).length)], ['迁移', String(graph.transitions.length)]]} />
       <AdvancedInspectorSection title="高级">
-        <ReadOnlyField label="Graph ID" value={graph.id} />
         <TextField label="Owner Type" value={graph.ownerType} onChange={(value) => updateCurrentGraph((g) => { g.ownerType = value; })} />
-        <TextField label="Owner ID" value={graph.ownerId ?? ''} datalistValues={ownerChoices} onChange={(value) => updateCurrentGraph((g) => { g.ownerId = value; })} />
+        <TextField
+          label="Owner ID"
+          value={graph.ownerId ?? ''}
+          datalistValues={ownerChoices}
+          flagUnknown
+          readOnlyNote={graph.ownerType?.trim() === 'flow'
+            ? 'flow 主图的 ownerId 无任何机制消费（运行时/目录/校验都不读它），历史值仅当注释保留——2026-07-13 拍板判死，不再邀请填写'
+            : undefined}
+          onChange={(value) => updateCurrentGraph((g) => { g.ownerId = value; })}
+        />
         {(graph.ownerType === 'scenario' || graph.entryState || graph.exitStates?.length) && (
           <div className="property-line note">Scenario 只有入口/出口状态可以和外部图直接连线；内部状态在展开后编辑。</div>
         )}
@@ -1777,12 +2586,33 @@ function StateInspector(props: {
   setSelectedJson: (json: string) => void;
   setRuntimeSnapshot: (snapshot: RuntimeDebugSnapshotDef) => void;
   setStatus: (status: string) => void;
+  onRequestSignalRefactor?: (req: NarrativeRefactorRequest) => void;
 }) {
   const { graph, state, stateId, updateCurrentGraph } = props;
+  const planeIds = props.catalog.planeIds ?? [];
+  const activePlane = typeof state.activePlane === 'string' ? state.activePlane : '';
+  // 保值孤儿契约：当前值不在已登记位面清单时，下拉保留该值并标注（未登记），绝不静默丢字段。
+  const activePlaneOrphan = activePlane !== '' && !planeIds.includes(activePlane);
+  const activePlaneHint = '进入此状态激活该位面；整图无点名时=normal';
   return (
     <div className="form-grid">
-      <TextField label="显示名" value={state.label ?? ''} onChange={(value) => updateCurrentGraph((g) => { g.states[stateId].label = value; })} />
-      <TextAreaField label="策划备注" value={state.description ?? ''} onChange={(value) => updateCurrentGraph((g) => { g.states[stateId].description = value; })} />
+      <TextField label="显示名" value={state.label ?? ''} onChange={(value) => updateCurrentGraph((g) => { if (value.trim()) g.states[stateId].label = value; else delete g.states[stateId].label; })} />
+      <div className="property-line">
+        <label>状态 ID</label>
+        <div className="signal-field-row">
+          <input readOnly value={state.id || stateId} />
+          {props.onRequestSignalRefactor && (
+            <button
+              type="button"
+              title="全项目级联改名（含派生信号监听、场景/任务/对话图条件、存档迁移映射）；先预览使用点再执行，可撤销，不落盘。画布上双击状态节点也可直接改名。"
+              onClick={() => props.onRequestSignalRefactor!({ kind: 'state-rename', graphId: graph.id, stateId })}
+            >
+              改名…
+            </button>
+          )}
+        </div>
+      </div>
+      <TextAreaField label="策划备注" value={state.description ?? ''} onChange={(value) => updateCurrentGraph((g) => { if (value.trim()) g.states[stateId].description = value; else delete g.states[stateId].description; })} />
       <label className="toggle single-line-toggle">
         <input type="checkbox" checked={graph.initialState === stateId} onChange={(e) => e.target.checked && updateCurrentGraph((g) => { g.initialState = stateId; })} />
         设为初始状态
@@ -1791,7 +2621,11 @@ function StateInspector(props: {
         <input
           type="checkbox"
           checked={state.broadcastOnEnter === true}
-          onChange={(e) => updateCurrentGraph((g) => { g.states[stateId].broadcastOnEnter = e.target.checked; })}
+          onChange={(e) => updateCurrentGraph((g) => {
+            // 取消勾选=删键而非写 false（默认键注入会成为 agent 维护 JSON 的字节噪音）
+            if (e.target.checked) g.states[stateId].broadcastOnEnter = true;
+            else delete g.states[stateId].broadcastOnEnter;
+          })}
         />
         进入时广播派生信号
       </label>
@@ -1800,6 +2634,48 @@ function StateInspector(props: {
           Derived Signal: {stateEnteredSignalKey(graph.id, stateId)}
         </div>
       )}
+      <div className="field" title={activePlaneHint}>
+        <label>
+          激活位面
+          {activePlaneOrphan && (
+            <span
+              title="该位面 id 不在已登记的 planes.json 候选中（保值显示，不会静默丢弃）"
+              style={{ color: '#d9a441', marginLeft: 4 }}
+            >
+              ⚠ 未登记
+            </span>
+          )}
+        </label>
+        <select
+          value={activePlane}
+          title={activePlaneHint}
+          onChange={(e) => {
+            const value = e.target.value;
+            updateCurrentGraph((g) => {
+              if (value) g.states[stateId].activePlane = value;
+              else delete g.states[stateId].activePlane;
+            });
+          }}
+        >
+          <option value="">(无)</option>
+          {planeIds.map((id) => (
+            <option key={id} value={id}>{id}</option>
+          ))}
+          {activePlaneOrphan && (
+            <option value={activePlane}>{activePlane}（未登记）</option>
+          )}
+        </select>
+        {activePlane && (
+          <button
+            type="button"
+            className="task-bus-jump-plane"
+            title="在位面编辑器中打开该位面"
+            onClick={() => navigateTo('plane', activePlane)}
+          >
+            跳转到位面
+          </button>
+        )}
+      </div>
       <ActionListField
         label="进入时动作"
         actions={state.onEnterActions ?? []}
@@ -1814,9 +2690,6 @@ function StateInspector(props: {
         knownSignals={props.knownSignals}
         onChange={(actions) => updateCurrentGraph((g) => { g.states[stateId].onExitActions = actions; })}
       />
-      <AdvancedInspectorSection title="高级">
-        <ReadOnlyField label="State ID" value={state.id || stateId} />
-      </AdvancedInspectorSection>
     </div>
   );
 }
@@ -1836,10 +2709,13 @@ function TransitionInspector(props: {
   setSelectedId: (id: string) => void;
   setStatus: (status: string) => void;
   deleteSelected: () => void;
+  onRequestSignalRefactor?: (req: NarrativeRefactorRequest) => void;
 }) {
   const { graph, transition, updateCurrentGraph } = props;
   const [pickerOpen, setPickerOpen] = useState(false);
   const stateChoices = Object.keys(graph.states);
+  // 被引用处显示信号注释：让人看着这条迁移就知道它监听的信号是干嘛的（注释在信号注册处编写）。
+  const signalNote = (props.data.signals ?? []).find((s) => s.id === transition.signal)?.notes?.trim();
   const legacyEndpoint = typeof transition.from !== 'string' || typeof transition.to !== 'string';
   const triggerMode = transition.trigger ?? 'signal';
   const isReactive = triggerMode === 'reactive' || triggerMode === 'reactiveAll' || triggerMode === 'reactiveAny';
@@ -1880,7 +2756,20 @@ function TransitionInspector(props: {
             <div className="signal-field-row">
               <input readOnly value={transition.signal || DEFAULT_DRAFT_SIGNAL} />
               <button type="button" onClick={() => setPickerOpen(true)}>选择</button>
+              {props.onRequestSignalRefactor
+                && transition.signal
+                && transition.signal !== DEFAULT_DRAFT_SIGNAL
+                && !transition.signal.startsWith('state:') && (
+                <button
+                  type="button"
+                  title="全项目级联改信号名（监听/发射/注册表/画布声明，含对话图与场景）；先预览使用点再执行，可撤销，不落盘。"
+                  onClick={() => props.onRequestSignalRefactor!({ kind: 'signal-rename', signalId: transition.signal })}
+                >
+                  改名…
+                </button>
+              )}
             </div>
+            {signalNote ? <div className="signal-note-display">📝 {signalNote}</div> : null}
           </div>
           <SignalPickerModal
             open={pickerOpen}
@@ -1889,6 +2778,11 @@ function TransitionInspector(props: {
             onClose={() => setPickerOpen(false)}
             onSelect={(signalId) => updateCurrentGraph((g) => { transitionIn(g, transition.id).signal = signalId; })}
             onDataChange={props.updateData}
+            onRequestRefactor={props.onRequestSignalRefactor
+              ? (mode, signalId) => props.onRequestSignalRefactor!(
+                mode === 'rename' ? { kind: 'signal-rename', signalId } : { kind: 'signal-delete', signalId },
+              )
+              : undefined}
           />
         </>
       )}
@@ -1903,7 +2797,7 @@ function TransitionInspector(props: {
         stateLabelsByGraph={props.stateLabelsByGraph}
         onApply={(value) => updateCurrentGraph((g) => { transitionIn(g, transition.id).conditions = Array.isArray(value) ? value : value ? [value] : []; })}
       />
-      <NumberField label="优先级" value={transition.priority ?? 0} onChange={(value) => updateCurrentGraph((g) => { transitionIn(g, transition.id).priority = value; })} />
+      <NumberField label="优先级" value={transition.priority ?? 0} onChange={(value) => updateCurrentGraph((g) => { const t = transitionIn(g, transition.id); if (value !== 0) t.priority = value; else delete t.priority; })} />
       <AdvancedInspectorSection title="高级">
         <ReadOnlyField label="Transition ID" value={transition.id} />
         <div className="property-line note">迁移只在当前图内移动状态；跨图影响应通过信号、状态广播或投影关系表达。</div>
@@ -1927,10 +2821,23 @@ function ElementInspector(props: {
   setStatus: (status: string) => void;
   expandedElementIds: string[];
   toggleExpandedElement: (elementId: string) => void;
+  graphIds: string[];
+  categories?: NarrativeCategoriesFileDef;
+  onSetSubgraphCategory?: (compId: string, elId: string, name: string) => void;
 }) {
   const { composition, element, catalog, updateData } = props;
   const ownerChoices = ownerChoicesFor(element, catalog);
   const isSubgraph = isSubgraphElement(element);
+  // 子图元素的信号接口从内容自动推导（只读展示）；黑盒元素才保留手工登记。
+  const derivedInterface = useMemo(() => deriveGraphInterface(element.graph), [element.graph]);
+  const legacyMetaCount = element.graph
+    ? (element.meta?.emits?.length ?? 0) + (element.meta?.reads?.length ?? 0)
+    : 0;
+  // 黑盒登记的是"将来实现会发的作者信号"，派生广播（state:…）由图自动产生，不作候选
+  const authorSignalOptions = useMemo(
+    () => props.knownSignals.filter((sig) => !sig.startsWith('state:')),
+    [props.knownSignals],
+  );
   const expanded = props.expandedElementIds.includes(element.id);
   const displayName = isSubgraph ? (String(element.graph?.label ?? element.label ?? '').trim() || element.graph?.id || element.id) : (element.label ?? '');
   return (
@@ -1940,24 +2847,42 @@ function ElementInspector(props: {
         label="显示名"
         value={displayName}
         onChange={(value) => updateElement(updateData, composition, element.id, (el) => {
-          el.label = value;
-          if (isSubgraph && el.graph) el.graph.label = value;
+          // 空或等于回退 id 时删键，不把 id 注入成显式 label；存原始 value（不 trim）
+          // 以免尾随/内部空格被吃、无法输入「Phase 2」（审查 P2），仅用 trim 判定保留。
+          const fallbackId = el.graph?.id || el.id;
+          const v = value.trim();
+          const keep = !!v && v !== fallbackId;
+          if (keep) el.label = value; else delete el.label;
+          if (isSubgraph && el.graph) { if (keep) el.graph.label = value; else delete el.graph.label; }
         })}
       />
+      {isSubgraph && composition && props.categories && props.onSetSubgraphCategory && (
+        <TextField
+          label="整理分组（编辑器专用·不写入JSON）"
+          value={getSubgraphCategory(props.categories, composition.id, element.id)}
+          commitOnBlur
+          datalistValues={distinctSubgraphCategories(props.categories, composition.id)}
+          onChange={(value) => props.onSetSubgraphCategory!(composition.id, element.id, value)}
+        />
+      )}
       {element.kind === 'wrapperGraph' ? (
         <>
           <SelectField label="绑定类型" value={element.ownerType ?? 'npc'} values={WRAPPER_OWNER_TYPES} onChange={(value) => updateElement(updateData, composition, element.id, (el) => { el.ownerType = value; if (el.graph) el.graph.ownerType = value; })} />
-          <TextField label="绑定对象" value={element.ownerId ?? ''} datalistValues={ownerChoices} onChange={(value) => updateElement(updateData, composition, element.id, (el) => {
+          <TextField label="绑定对象" value={element.ownerId ?? ''} datalistValues={ownerChoices} flagUnknown onChange={(value) => updateElement(updateData, composition, element.id, (el) => {
             el.ownerId = value;
             if (el.graph) el.graph.ownerId = value;
           })} />
-          <TextField label="分类备注" value={element.graph?.category ?? ''} onChange={(value) => updateElement(updateData, composition, element.id, (el) => {
+          <TextField label="分类备注（写入JSON·区分同一实体的多个包装）" value={element.graph?.category ?? ''} onChange={(value) => updateElement(updateData, composition, element.id, (el) => {
             if (el.graph) el.graph.category = value;
           })} />
+          <div className="property-line note">
+            同一个绑定对象被多张实体包装图绑定时，给每张填不同分类以区分（如「白天线」「夜里线」）。会写入
+            narrative_graphs.json、显示在实体视图、并参与校验。与上面「整理分组」（仅编辑器整理、不写数据）不同。
+          </div>
         </>
       ) : element.kind === 'scenarioSubgraph' ? (
         <>
-          <TextField label="Scenario" value={element.refId || element.ownerId || ''} datalistValues={ownerChoices} onChange={(value) => updateElement(updateData, composition, element.id, (el) => {
+          <TextField label="Scenario" value={element.refId || element.ownerId || ''} datalistValues={ownerChoices} flagUnknown onChange={(value) => updateElement(updateData, composition, element.id, (el) => {
             el.refId = value;
             el.ownerId = value;
             el.ownerType = 'scenario';
@@ -1976,7 +2901,7 @@ function ElementInspector(props: {
       ) : (
         <>
           <TextField label="来源类型" value={element.ownerType ?? ''} onChange={(value) => updateElement(updateData, composition, element.id, (el) => { el.ownerType = value; })} />
-          <TextField label="引用对象" value={element.refId ?? ''} datalistValues={ownerChoices} onChange={(value) => updateElement(updateData, composition, element.id, (el) => {
+          <TextField label="引用对象" value={element.refId ?? ''} datalistValues={ownerChoices} flagUnknown onChange={(value) => updateElement(updateData, composition, element.id, (el) => {
             el.refId = value;
           })} />
         </>
@@ -1993,18 +2918,57 @@ function ElementInspector(props: {
       )}
       <AdvancedInspectorSection title="高级">
         <ReadOnlyField label="Element ID" value={element.id} />
-        <SignalChipsField
-          label="发出信号"
-          value={element.meta?.emits ?? []}
-          options={props.knownSignals}
-          onChange={(value) => updateElement(updateData, composition, element.id, (el) => { el.meta ??= {}; el.meta.emits = value; })}
-        />
-        <SignalChipsField
-          label="读取状态"
-          value={element.meta?.reads ?? []}
-          options={props.knownSignals}
-          onChange={(value) => updateElement(updateData, composition, element.id, (el) => { el.meta ??= {}; el.meta.reads = value; })}
-        />
+        {element.graph ? (
+          <>
+            <SignalChipsField
+              label="发出信号（自动推导）"
+              value={derivedInterface.emits}
+              note="这张子图实际会发出的信号——从子图内容自动算出，改子图这里就跟着变，不用手填。"
+              emptyText="（不发出任何信号）"
+            />
+            <SignalChipsField
+              label="监听信号（自动推导）"
+              value={derivedInterface.listens}
+              note="子图的迁移在等待哪些信号。"
+              emptyText="（不监听信号）"
+            />
+            <SignalChipsField
+              label="读取状态（自动推导）"
+              value={derivedInterface.readsStates}
+              note="子图条件里读取的别的图状态（图.状态）。"
+              emptyText="（不读取其它图状态）"
+            />
+            {legacyMetaCount > 0 && (
+              <div className="property-line note">
+                这个元素还留着 {legacyMetaCount} 条旧的手填登记（子图内容就在本文件里，现已改为自动推导，手填登记不再需要）。
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => updateElement(updateData, composition, element.id, (el) => { el.meta ??= {}; el.meta.emits = []; el.meta.reads = []; })}
+                >清空旧登记</button>
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            <SignalChipsField
+              label="发出信号（登记）"
+              value={element.meta?.emits ?? []}
+              options={authorSignalOptions}
+              onChange={(value) => updateElement(updateData, composition, element.id, (el) => { el.meta ??= {}; el.meta.emits = value; })}
+              note="登记这个黑盒（对话等）将来会发出的信号：实现还没写时，先登记就能接线、校验也不误报。写好后校验会核对登记与实际是否一致。"
+              emptyText="（未登记）"
+            />
+            <SignalChipsField
+              label="读取状态（登记）"
+              value={element.meta?.reads ?? []}
+              options={props.graphIds}
+              onChange={(value) => updateElement(updateData, composition, element.id, (el) => { el.meta ??= {}; el.meta.reads = value; })}
+              note="登记这个黑盒会读取哪些叙事图的状态，供画布接线展示和改名时自动跟踪。"
+              emptyText="（未登记）"
+            />
+          </>
+        )}
         {element.kind === 'wrapperGraph' && (
           <div className="property-line note">绑定后 DialogueGraph 的 OwnerStateNode 才能读取该 wrapper 的 activeState；ContextStateNode 应读取 flow/scenario 图，不能选 npc wrapper。</div>
         )}
@@ -2430,6 +3394,32 @@ function uniqueRelationRows<T extends { summary: string }>(rows: T[]): T[] {
   return out;
 }
 
+/** 引用/悬空类校验 code：任务问题面板把这些映射成 badRef 行（复用现成 focusIssue 定位）。 */
+function isBadRefCode(code: string): boolean {
+  if (code === 'blackbox.ref.empty') return true;
+  if (code.startsWith('state.activePlane.')) return true;
+  if (code.startsWith('condition.narrative.')) return true;
+  if (code.startsWith('projection.') && code.endsWith('.dangling')) return true;
+  return false;
+}
+
+/**
+ * issue 是否属于该 composition（编排级，不限具体图——element 子图里的也算）。
+ * 优先看 target.compositionId；signal 类 target 无 compositionId 时回退到 path 前缀。
+ */
+function issueInComposition(issue: ValidationIssueDef, compositionId: string, data: NarrativeGraphsFileDef): boolean {
+  const target = issue.target;
+  if (target && 'compositionId' in target && target.compositionId) {
+    return target.compositionId === compositionId;
+  }
+  const match = /compositions\[(\d+)\]/.exec(issue.path ?? '');
+  if (match) {
+    const comp = (data.compositions ?? [])[Number(match[1])];
+    return comp?.id === compositionId;
+  }
+  return false;
+}
+
 function buildEntityNarrativeIndex(
   data: NarrativeGraphsFileDef,
   projection: ProjectionResult,
@@ -2723,49 +3713,68 @@ function applySelectedObjectJson(
 }
 
 function getSelectedSummary(comp: NarrativeCompositionDef | undefined, graph: NarrativeGraphDef | undefined, graphRef: GraphRef, selectedId: string) {
-  if (!selectedId || !comp || !graph) return { title: graph?.id ?? 'Nothing selected', subtitle: 'Graph inspector', navigate: null as null | { kind: string; id: string } };
+  if (!selectedId || !comp || !graph) return { title: graph?.id ?? '未选择', subtitle: '图检视器', navigate: null as null | { kind: string; id: string } };
   const inline = parseInlineSubgraphId(selectedId);
   if (inline) {
     const element = comp.elements?.find((el) => el.id === inline.elementId);
     return {
       title: inline.objectId,
-      subtitle: `${element?.label || inline.elementId} inline ${inline.kind}`,
+      subtitle: `${element?.label || inline.elementId} 内联${inline.kind === 'state' ? '状态' : '迁移'}`,
       navigate: null,
     };
   }
-  if (selectedId.startsWith('graph:')) return { title: selectedId.slice('graph:'.length), subtitle: 'Graph anchor', navigate: null };
-  if (selectedId.startsWith('transition-anchor:')) return { title: projectionEndpointLabel(selectedId), subtitle: 'Transition trigger anchor', navigate: null };
-  if (selectedId.startsWith('projection-anchor:')) return { title: projectionEndpointLabel(selectedId), subtitle: 'Projection endpoint', navigate: null };
-  if (selectedId.startsWith('state:')) return { title: selectedId.slice(6), subtitle: `State in ${graph.id}`, navigate: null };
-  if (selectedId.startsWith('transition:')) return { title: selectedId.slice(11), subtitle: `Transition in ${graph.id}`, navigate: null };
+  if (selectedId.startsWith('graph:')) return { title: selectedId.slice('graph:'.length), subtitle: '图锚点', navigate: null };
+  if (selectedId.startsWith('transition-anchor:')) return { title: projectionEndpointLabel(selectedId), subtitle: '迁移触发锚点', navigate: null };
+  if (selectedId.startsWith('projection-anchor:')) return { title: projectionEndpointLabel(selectedId), subtitle: '投影端点', navigate: null };
+  if (selectedId.startsWith('state:')) return { title: selectedId.slice(6), subtitle: `状态 · 所属 ${graph.id}`, navigate: null };
+  if (selectedId.startsWith('transition:')) return { title: selectedId.slice(11), subtitle: `迁移 · 所属 ${graph.id}`, navigate: null };
   if (selectedId.startsWith('element:') && graphRef === 'main') {
     const el = getElementByNodeId(comp, selectedId);
     return { title: el?.label || selectedId.slice(8), subtitle: elementSubtitle(el), navigate: navigationForElement(el) };
   }
-  return { title: selectedId, subtitle: 'Readonly projection edge', navigate: null };
+  return { title: selectedId, subtitle: '只读投影连线', navigate: null };
 }
 
 function actionArray(value: unknown): ActionDef[] {
   return Array.isArray(value) ? value as ActionDef[] : [];
 }
 
-function TextField({ label, value, onChange, commitOnBlur, datalistId, datalistValues }: {
+function TextField({ label, value, onChange, commitOnBlur, datalistId, datalistValues, flagUnknown, readOnlyNote }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   commitOnBlur?: boolean;
   datalistId?: string;
   datalistValues?: string[];
+  flagUnknown?: boolean;
+  /** 判死字段：只读展示 + 说明徽标（如 flow 主图 ownerId——无任何机制消费，不邀请填写）。 */
+  readOnlyNote?: string;
 }) {
   const [draft, setDraft] = useState(value);
   useEffect(() => setDraft(value), [value]);
   const listId = datalistId || (datalistValues?.length ? `${label.replace(/\W/g, '_')}_choices` : undefined);
+  const current = commitOnBlur ? draft : value;
+  // 引用字段：仍允许自由输入（网页内无法内嵌 PyQt 原生选择器，策划照常键入即可），
+  // 但当值不在「已知候选」里时给温和提示，便于当场发现拼错/失效的引用。仅在候选非空时判定，
+  // 候选为空（未加载 / 该 owner 类型无候选，如 system）不误标；纯提示不阻断保存（校验面板仍兜底）。
+  const unknownRef = !readOnlyNote && !!flagUnknown && !!datalistValues && datalistValues.length > 0
+    && current.trim().length > 0 && !datalistValues.includes(current.trim());
+  const hint = readOnlyNote || (unknownRef ? '该 id 不在已知候选中，请确认引用是否有效（仅提示，不阻断保存）' : undefined);
   return (
     <div className="field">
-      <label>{label}</label>
+      <label>
+        {label}
+        {unknownRef && <span title={hint} style={{ color: '#d9a441', marginLeft: 4 }}>⚠ 未知引用</span>}
+        {readOnlyNote && <span title={readOnlyNote} style={{ color: '#8a8f98', marginLeft: 4 }}>（仅注释·无机制效力）</span>}
+      </label>
       <input
         list={listId}
-        value={commitOnBlur ? draft : value}
+        value={current}
+        title={hint}
+        readOnly={!!readOnlyNote}
+        style={unknownRef
+          ? { borderColor: '#d9a441', background: 'rgba(217,164,65,0.08)' }
+          : readOnlyNote ? { opacity: 0.6 } : undefined}
         onChange={(e) => commitOnBlur ? setDraft(e.target.value) : onChange(e.target.value)}
         onBlur={() => commitOnBlur && onChange(draft)}
       />

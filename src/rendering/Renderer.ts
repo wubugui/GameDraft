@@ -12,6 +12,8 @@ export class Renderer {
   public app: Application;
   public worldContainer: Container;
   public backgroundLayer: Container;
+  /** 投影阴影层：世界单位，位于背景之上、实体之下 */
+  public shadowLayer: Container;
   public entityLayer: Container;
   /** 演出用覆盖层：图片、电影黑边等，位于世界之上、UI之下 */
   public cutsceneOverlay: Container;
@@ -35,6 +37,7 @@ export class Renderer {
     this.app = new Application();
     this.worldContainer = new Container();
     this.backgroundLayer = new Container();
+    this.shadowLayer = new Container();
     this.entityLayer = new Container();
     this.cutsceneOverlay = new Container();
     this.uiLayer = new Container();
@@ -45,14 +48,17 @@ export class Renderer {
     this.assetManager = assetManager;
   }
 
-  async init(): Promise<void> {
+  async init(options: { resolution?: number } = {}): Promise<void> {
     const mount = document.getElementById('game-mount');
+    const resolution = Number.isFinite(options.resolution) && (options.resolution ?? 0) > 0
+      ? Number(options.resolution)
+      : (window.devicePixelRatio || 1);
 
     await this.app.init({
       background: '#1a1a2e',
       resizeTo: mount ?? window,
       antialias: false,
-      resolution: window.devicePixelRatio || 1,
+      resolution,
       autoDensity: true,
     });
 
@@ -61,6 +67,7 @@ export class Renderer {
     else document.body.appendChild(canvas);
 
     this.worldContainer.addChild(this.backgroundLayer);
+    this.worldContainer.addChild(this.shadowLayer);
     this.entityLayer.sortableChildren = true;
     this.worldContainer.addChild(this.entityLayer);
 
@@ -297,5 +304,16 @@ export class Renderer {
    */
   clearWorldFilter(): void {
     this.worldFilterPipeline.clear();
+  }
+
+  getDebugRenderState(): Record<string, unknown> {
+    return {
+      worldX: this.worldContainer.x,
+      worldY: this.worldContainer.y,
+      worldScaleX: this.worldContainer.scale.x,
+      worldScaleY: this.worldContainer.scale.y,
+      worldFilterCount: this.worldFilterPipeline.getFilters().length,
+      worldFilterApplied: this.worldContainer.filters !== null && this.worldContainer.filters.length > 0,
+    };
   }
 }

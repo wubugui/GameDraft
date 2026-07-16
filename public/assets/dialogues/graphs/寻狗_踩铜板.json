@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "id": "寻狗_踩铜板",
+  "entry": "root",
+  "meta": {
+    "title": "寻狗Demo·①.5雾津街头·地上踩铜板（一次性）"
+  },
+  "nodes": {
+    "root": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "地上那点亮光——铜板。关二狗飞快一脚踩住，左右瞅瞅没人，才弯下腰捡起来揣怀里。",
+      "next": "act"
+    },
+    "act": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "giveCurrency",
+          "params": {
+            "amount": 2
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_踩铜板",
+            "signal": "tabanban_taken"
+          }
+        }
+      ],
+      "next": "end1"
+    },
+    "end1": {
+      "type": "end"
+    }
+  }
+}

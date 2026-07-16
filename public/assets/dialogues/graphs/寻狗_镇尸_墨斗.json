@@ -61,8 +61,11 @@
       "speaker": {
         "kind": "player"
       },
-      "text": "（木匠的线，裁的是木头。今儿裁的是什么，他不敢细想。）",
-      "next": "end1"
+      "text": "（木匠的线，裁的是木头。今天裁的是啥子，他不敢细想。）",
+      "next": "end1",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "end1": {
       "type": "end"

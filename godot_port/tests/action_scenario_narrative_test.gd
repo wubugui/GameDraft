@@ -1,0 +1,20 @@
+extends Node
+
+
+func _ready() -> void:
+	var repository := ProjectSettings.globalize_path("res://").trim_suffix("/").get_base_dir(); var assets := RuntimeAssetManager.new({}, RuntimeResourceLocator.new(RuntimeResourceLocator.DEVELOPMENT, repository)); var events := RuntimeEventBus.new(); var flags := RuntimeFlagStore.new(events); flags.configure_registry(assets.load_json("/assets/data/flag_registry.json")); var executor := RuntimeActionExecutor.new(events, flags)
+	var scenario := RuntimeScenarioStateManager.new(); scenario.init({"eventBus": events, "flagStore": flags, "strings": null, "assetManager": assets}); scenario.configure_runtime(flags, {"scenarios": [{"id": "码头水鬼", "manualLineLifecycle": true, "phases": {"看板初读": {}, "官差已套近乎": {}, "真相揭示": {}, "询问官差": {}}}]}, events)
+	var narrative := RuntimeNarrativeStateManager.new(events, flags, executor); narrative.init({"eventBus": events, "flagStore": flags, "strings": null, "assetManager": assets}); narrative.set_condition_eval_context_factory(func() -> Dictionary: return {"flagStore": flags}); narrative.register_graphs([{"id": "g", "ownerType": "flow", "initialState": "a", "states": {"a": {"id": "a"}, "b": {"id": "b"}}, "transitions": [{"id": "go", "from": "a", "to": "b", "signal": "advance"}]}, {"id": "ordered", "ownerType": "flow", "initialState": "o0", "states": {"o0": {"id": "o0"}, "o1": {"id": "o1"}, "o2": {"id": "o2"}, "bad": {"id": "bad"}}, "transitions": [{"id": "react", "from": "o0", "to": "o1", "trigger": "reactive", "conditions": [{"flag": "heard_teahouse_story"}]}, {"id": "too_early", "from": "o0", "to": "bad", "signal": "after_flag"}, {"id": "after_reactive", "from": "o1", "to": "o2", "signal": "after_flag"}]}])
+	preload("res://tests/support/action_registry_fixture.gd").register(executor, {"scenarioStateManager": scenario, "narrativeStateManager": narrative})
+	assert(await executor.execute_batch_await([{"type": "setFlag", "params": {"key": "heard_teahouse_story", "value": true}}, {"type": "emitNarrativeSignal", "params": {"signal": "after_flag"}}])); assert(narrative.get_active_state("ordered") == "o2")
+	await executor.execute_await({"type": "startScenario", "params": {"scenarioId": "码头水鬼"}}); assert(scenario.get_line_lifecycle_state("码头水鬼") == "inactive")
+	await executor.execute_await({"type": "activateScenario", "params": {"scenarioId": "码头水鬼"}}); assert(scenario.get_line_lifecycle_state("码头水鬼") == "active", "activate state=%s" % scenario.get_line_lifecycle_state("码头水鬼"))
+	await executor.execute_await({"type": "setScenarioPhase", "params": {"scenarioId": "码头水鬼", "phase": "看板初读", "status": " done ", "outcome": "read"}}); assert(scenario.get_scenario_phase("码头水鬼", "看板初读") == {"status": "done", "outcome": "read"})
+	await executor.execute_await({"type": "setScenarioPhase", "params": {"scenarioId": "码头水鬼", "phase": "官差已套近乎", "status": "active"}}); await executor.execute_await({"type": "setScenarioPhase", "params": {"scenarioId": "码头水鬼", "phase": "真相揭示", "status": "done"}})
+	await executor.execute_await({"type": "completeScenario", "params": {"scenarioId": "码头水鬼"}}); assert(scenario.get_line_lifecycle_state("码头水鬼") == "completed")
+	assert(not await executor.execute_batch_await([{"type": "setScenarioPhase", "params": {"scenarioId": "码头水鬼", "phase": "询问官差", "status": "done"}}, {"type": "setFlag", "params": {"key": "restore_zone_exit_pollution", "value": true}}])); assert(flags.get_value("restore_zone_exit_pollution") != true)
+	await executor.execute_await({"type": "emitNarrativeSignal", "params": {"signal": " advance ", "sourceType": "action", "sourceId": "test"}}); assert(narrative.get_active_state("g") == "b")
+	await executor.execute_await({"type": "emitNarrativeSignal", "params": {"signal": "  "}}); assert(narrative.get_active_state("g") == "b")
+	for type: String in ["setScenarioPhase", "startScenario", "activateScenario", "completeScenario", "emitNarrativeSignal"]: assert(executor.has_handler(type))
+	narrative.destroy(); narrative.free(); scenario.destroy(); scenario.free(); executor.destroy(); flags.destroy(); events.clear(); assets.dispose()
+	print("Scenario/narrative Action contract test: PASS"); get_tree().quit(0)

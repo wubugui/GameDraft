@@ -11,7 +11,7 @@ from .main_window import MainWindow
 
 
 def setup_dark_theme(app: QApplication):
-    # Windows 默认样式常忽略调色板，输入框仍为白底；Fusion + 样式表可统一深色控件。
+    # Fusion + 样式表可统一深色控件。
     app.setStyle(QStyleFactory.create("Fusion"))
 
     palette = QPalette()

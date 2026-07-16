@@ -12,6 +12,14 @@
         {
           "conditions": [
             {
+              "plane": "背尸"
+            }
+          ],
+          "next": "cl_beishi"
+        },
+        {
+          "conditions": [
+            {
               "narrative": "flow_xungou_main",
               "state": "s11_zhaomu",
               "reached": true
@@ -28,7 +36,10 @@
         "kind": "npc"
       },
       "text": "明早，城门口。Guan 先生，不要迟到。",
-      "next": "end1"
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "n1": {
       "type": "line",
@@ -36,7 +47,7 @@
         "kind": "literal",
         "name": "旁白"
       },
-      "text": "庄门口不知何时站着克拉拉。她不进门，也不躲，就那么看完了全程——从他撒第一把米，到两具尸躺平。",
+      "text": "他刚把阎王岭的寒气从骨头缝里抖出来，街角灯下不知何时站着克拉拉。她不知等了多久——从他进城那一刻起，就那么看着。",
       "next": "n2"
     },
     "n2": {
@@ -44,8 +55,11 @@
       "speaker": {
         "kind": "npc"
       },
-      "text": "Guan 先生。婆子家的院子，码头的水，这里的……（她在本子上翻了一页）「僵尸」。三次。你都让东西安静下来了。",
-      "next": "n3"
+      "text": "Guan 先生。婆子家的院子，码头的水，还有阎王岭那趟——（她在本子上翻了一页）听说你一个人走了个来回。三次。你都让东西安静下来了。",
+      "next": "n3",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "n3": {
       "type": "line",
@@ -53,7 +67,10 @@
         "kind": "npc"
       },
       "text": "我们要进神仙顶。三十块大洋——这次是 real 的三十块，先付十块。你做我们的向导。",
-      "next": "n4"
+      "next": "n4",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "n4": {
       "type": "line",
@@ -74,12 +91,12 @@
         },
         {
           "id": "zhuang",
-          "text": "（掐诀，拿腔拿调）「神仙顶凶煞极重——也罢，贫道走一遭。」",
+          "text": "（掐诀，拿腔拿调）「神仙顶凶煞重得很——也罢，本道爷走一遭。」",
           "next": "c_b"
         },
         {
           "id": "shi",
-          "text": "「丑话说前头：俺只认路，不保命。」",
+          "text": "「丑话说在前头：老子只认得路，命可保不到哈。」",
           "next": "c_c"
         }
       ]
@@ -90,15 +107,21 @@
         "kind": "npc"
       },
       "text": "（数出十块大洋，拍进他手心）很好。生意人，我喜欢。",
-      "next": "n_pay"
+      "next": "n_pay",
+      "portrait": {
+        "emotion": "smirk"
+      }
     },
     "c_b": {
       "type": "line",
       "speaker": {
         "kind": "npc"
       },
-      "text": "（面无表情地看完整套动作，在本子上记了什么）……「表演性仪式」。好，贫道先生，定钱十块。",
-      "next": "n_pay"
+      "text": "（面无表情地看完整套动作，在本子上记了什么）……「表演性仪式」。好的，道爷先生，定钱十块。",
+      "next": "n_pay",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "c_c": {
       "type": "line",
@@ -106,7 +129,10 @@
         "kind": "npc"
       },
       "text": "（难得地笑了一下）这是今天听到的，最 honest 的一句话。定钱十块。",
-      "next": "n_pay"
+      "next": "n_pay",
+      "portrait": {
+        "emotion": "smirk"
+      }
     },
     "n_pay": {
       "type": "runActions",
@@ -128,18 +154,35 @@
         "kind": "npc"
       },
       "text": "明早，城门口汇合。需要置办什么，今晚办好。（她合上本子）晚安，Guan 先生。",
-      "next": "n6"
+      "next": "n6",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "n6": {
       "type": "line",
       "speaker": {
         "kind": "player"
       },
-      "text": "（十块大洋在手心里发烫。神仙顶……李天狗的神仙顶。这回，俺真要去了。）",
-      "next": "end1"
+      "text": "（十块大洋在手心头烫得很。神仙顶……李天狗那个神仙顶。这回，老子是真要切了。）",
+      "next": "end1",
+      "portrait": {
+        "emotion": "smirk"
+      }
     },
     "end1": {
       "type": "end"
+    },
+    "cl_beishi": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "（她合上本子，退开半步，目光在他背上那具尸和他脸上来回走了一趟）Guan 先生，先做完手上的事。我等得起——它可等不起。",
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
     }
   }
 }

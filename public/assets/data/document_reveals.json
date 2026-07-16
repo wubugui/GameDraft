@@ -20,9 +20,9 @@
     "blurredImagePath": "/resources/runtime/images/illustrations/告示-抓水猴子X.png",
     "clearImagePath": "/resources/runtime/images/illustrations/告示-抓水猴子.png",
     "revealCondition": {
-      "scenario": "码头水鬼",
-      "phase": "真相揭示",
-      "status": "done"
+      "narrative": "scenario_码头真相",
+      "state": "revealed",
+      "reached": true
     },
     "animation": {
       "durationMs": 2000,

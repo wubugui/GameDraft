@@ -1,0 +1,2604 @@
+[
+  {
+    "id": "shenxianding_02_demo",
+    "widthRef": 1672,
+    "heightRef": 941,
+    "layers": [
+      {
+        "id": "bg",
+        "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/redraw_round2/layers/02_taoist_enters_bg.png",
+        "zIndex": 0,
+        "easing": "easeInOut",
+        "keyframes": [
+          {
+            "atMs": 0,
+            "x": 836,
+            "y": 470,
+            "scale": 1.06
+          },
+          {
+            "atMs": 14000,
+            "x": 810,
+            "y": 470
+          }
+        ]
+      },
+      {
+        "id": "fg",
+        "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/redraw_round2/layers/02_taoist_enters_fg.png",
+        "zIndex": 10,
+        "easing": "easeInOut",
+        "keyframes": [
+          {
+            "atMs": 0,
+            "x": 836,
+            "y": 470,
+            "scale": 1.14
+          },
+          {
+            "atMs": 14000,
+            "x": 884,
+            "y": 462
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "01_mountain_path_to_shenxianling",
+    "widthRef": 1672,
+    "heightRef": 941,
+    "layers": [
+      {
+        "id": "mountains",
+        "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/redraw_round2/01_mountain_path_to_shenxianling_round2.png",
+        "zIndex": 10,
+        "keyframes": [
+          {
+            "atMs": 0,
+            "x": 853.28,
+            "y": 539.35,
+            "scale": 1.021
+          },
+          {
+            "atMs": 657,
+            "x": 852.58,
+            "y": 540.76,
+            "scale": 1.023,
+            "rotation": 0.005
+          },
+          {
+            "atMs": 1314,
+            "x": 850.47,
+            "y": 545.02,
+            "scale": 1.03,
+            "rotation": 0.02
+          },
+          {
+            "atMs": 1971,
+            "x": 846.96,
+            "y": 552.11,
+            "scale": 1.041,
+            "rotation": 0.046
+          },
+          {
+            "atMs": 2629,
+            "x": 842.04,
+            "y": 562.06,
+            "scale": 1.057,
+            "rotation": 0.082
+          },
+          {
+            "atMs": 3286,
+            "x": 835.72,
+            "y": 574.82,
+            "scale": 1.077,
+            "rotation": 0.128
+          },
+          {
+            "atMs": 3943,
+            "x": 828,
+            "y": 590.43,
+            "scale": 1.101,
+            "rotation": 0.184
+          },
+          {
+            "atMs": 4600,
+            "x": 818.86,
+            "y": 608.87,
+            "scale": 1.13,
+            "rotation": 0.25
+          },
+          {
+            "atMs": 5257,
+            "x": 809.72,
+            "y": 627.31,
+            "scale": 1.16,
+            "rotation": 0.316
+          },
+          {
+            "atMs": 5914,
+            "x": 801.98,
+            "y": 642.91,
+            "scale": 1.184,
+            "rotation": 0.372
+          },
+          {
+            "atMs": 6571,
+            "x": 795.64,
+            "y": 655.68,
+            "scale": 1.204,
+            "rotation": 0.418
+          },
+          {
+            "atMs": 7229,
+            "x": 790.71,
+            "y": 665.63,
+            "scale": 1.22,
+            "rotation": 0.454
+          },
+          {
+            "atMs": 7886,
+            "x": 787.19,
+            "y": 672.72,
+            "scale": 1.231,
+            "rotation": 0.48
+          },
+          {
+            "atMs": 8543,
+            "x": 785.08,
+            "y": 676.97,
+            "scale": 1.238,
+            "rotation": 0.495
+          },
+          {
+            "atMs": 9200,
+            "x": 784.37,
+            "y": 678.39,
+            "scale": 1.24,
+            "rotation": 0.5
+          }
+        ],
+        "sourceKeyframes": [
+          {
+            "atMs": 0,
+            "x": 836.7,
+            "y": 537.95
+          }
+        ],
+        "sourceEasing": "easeInOut"
+      }
+    ],
+    "camera": {
+      "enabled": true,
+      "keyframes": [
+        {
+          "atMs": 0,
+          "panX": 40,
+          "panY": 0,
+          "zoom": 1.05,
+          "roll": 0
+        },
+        {
+          "atMs": 9200,
+          "panX": -125,
+          "panY": 300,
+          "zoom": 1.58,
+          "roll": 0.5
+        }
+      ]
+    }
+  },
+  {
+    "id": "02_taoist_enters_shenxianling",
+    "widthRef": 1672,
+    "heightRef": 941,
+    "layers": [
+      {
+        "id": "bg",
+        "image": "/resources/runtime/images/parallax/02_taoist_enters_shenxianling/bg.png",
+        "zIndex": 0,
+        "easing": "easeInOut",
+        "keyframes": [
+          {
+            "atMs": 0,
+            "x": 1108.78,
+            "y": 244.43,
+            "scale": 1.12
+          },
+          {
+            "atMs": 10400,
+            "x": 824.82,
+            "y": 546.6,
+            "scale": 1.1
+          }
+        ]
+      },
+      {
+        "id": "people",
+        "image": "/resources/runtime/images/parallax/02_taoist_enters_shenxianling/people.png",
+        "zIndex": 22,
+        "easing": "easeInOut",
+        "keyframes": [
+          {
+            "atMs": 0,
+            "x": 1032.1,
+            "y": 582.41,
+            "scale": 1.31
+          },
+          {
+            "atMs": 10400,
+            "x": 742.24,
+            "y": 734.6
+          }
+        ]
+      }
+    ],
+    "camera": {
+      "enabled": false,
+      "keyframes": [
+        {
+          "atMs": 0,
+          "panX": 0,
+          "panY": 0,
+          "zoom": 0.2,
+          "roll": 0
+        },
+        {
+          "atMs": 16000,
+          "panX": 0,
+          "panY": 0,
+          "zoom": 1.05,
+          "roll": 0
+        }
+      ]
+    }
+  },
+  {
+    "id": "03_taoist_reaches_grave_site",
+    "widthRef": 1672,
+    "heightRef": 941,
+    "layers": [
+      {
+        "id": "bg",
+        "image": "/resources/runtime/images/parallax/03_taoist_reaches_grave_site/bg.png",
+        "zIndex": 0,
+        "keyframes": [
+          {
+            "atMs": 0,
+            "x": 836,
+            "y": 470,
+            "scale": 1.1
+          },
+          {
+            "atMs": 696,
+            "x": 835.98,
+            "y": 469.99,
+            "scale": 1.1
+          },
+          {
+            "atMs": 1391,
+            "x": 835.92,
+            "y": 469.98,
+            "scale": 1.102
+          },
+          {
+            "atMs": 2087,
+            "x": 835.82,
+            "y": 469.95,
+            "scale": 1.104
+          },
+          {
+            "atMs": 2783,
+            "x": 835.67,
+            "y": 469.92,
+            "scale": 1.108
+          },
+          {
+            "atMs": 3478,
+            "x": 835.48,
+            "y": 469.87,
+            "scale": 1.112
+          },
+          {
+            "atMs": 4174,
+            "x": 835.25,
+            "y": 469.81,
+            "scale": 1.118
+          },
+          {
+            "atMs": 4870,
+            "x": 834.98,
+            "y": 469.74,
+            "scale": 1.124
+          },
+          {
+            "atMs": 5565,
+            "x": 834.66,
+            "y": 469.66,
+            "scale": 1.131
+          },
+          {
+            "atMs": 6261,
+            "x": 834.29,
+            "y": 469.57,
+            "scale": 1.14
+          },
+          {
+            "atMs": 6957,
+            "x": 833.87,
+            "y": 469.47,
+            "scale": 1.149
+          },
+          {
+            "atMs": 7652,
+            "x": 833.41,
+            "y": 469.35,
+            "scale": 1.16
+          },
+          {
+            "atMs": 8348,
+            "x": 832.9,
+            "y": 469.22,
+            "scale": 1.171
+          },
+          {
+            "atMs": 9043,
+            "x": 832.42,
+            "y": 469.1,
+            "scale": 1.181
+          },
+          {
+            "atMs": 9739,
+            "x": 831.97,
+            "y": 468.99,
+            "scale": 1.191
+          },
+          {
+            "atMs": 10435,
+            "x": 831.57,
+            "y": 468.89,
+            "scale": 1.199
+          },
+          {
+            "atMs": 11130,
+            "x": 831.21,
+            "y": 468.8,
+            "scale": 1.207
+          },
+          {
+            "atMs": 11826,
+            "x": 830.9,
+            "y": 468.73,
+            "scale": 1.213
+          },
+          {
+            "atMs": 12522,
+            "x": 830.63,
+            "y": 468.66,
+            "scale": 1.219
+          },
+          {
+            "atMs": 13217,
+            "x": 830.41,
+            "y": 468.6,
+            "scale": 1.223
+          },
+          {
+            "atMs": 13913,
+            "x": 830.24,
+            "y": 468.56,
+            "scale": 1.226
+          },
+          {
+            "atMs": 14609,
+            "x": 830.12,
+            "y": 468.53,
+            "scale": 1.229
+          },
+          {
+            "atMs": 15304,
+            "x": 830.04,
+            "y": 468.51,
+            "scale": 1.23
+          },
+          {
+            "atMs": 16000,
+            "x": 830.02,
+            "y": 468.51,
+            "scale": 1.231
+          }
+        ],
+        "sourceKeyframes": [
+          {
+            "atMs": 0,
+            "x": 836,
+            "y": 470,
+            "scale": 1.1
+          },
+          {
+            "atMs": 16000,
+            "x": 830.6,
+            "y": 468.7,
+            "scale": 1.111
+          }
+        ],
+        "sourceEasing": "easeInOut"
+      },
+      {
+        "id": "lion",
+        "image": "/resources/runtime/images/parallax/03_taoist_reaches_grave_site/lion.png",
+        "zIndex": 18,
+        "keyframes": [
+          {
+            "atMs": 0,
+            "x": 740.73,
+            "y": 501.68
+          },
+          {
+            "atMs": 696,
+            "x": 740.82,
+            "y": 501.62,
+            "scale": 1.002
+          },
+          {
+            "atMs": 1391,
+            "x": 741.1,
+            "y": 501.42,
+            "scale": 1.009
+          },
+          {
+            "atMs": 2087,
+            "x": 741.59,
+            "y": 501.07,
+            "scale": 1.021
+          },
+          {
+            "atMs": 2783,
+            "x": 742.33,
+            "y": 500.57,
+            "scale": 1.037
+          },
+          {
+            "atMs": 3478,
+            "x": 743.38,
+            "y": 499.88,
+            "scale": 1.058
+          },
+          {
+            "atMs": 4174,
+            "x": 744.81,
+            "y": 498.96,
+            "scale": 1.084
+          },
+          {
+            "atMs": 4870,
+            "x": 746.71,
+            "y": 497.79,
+            "scale": 1.115
+          },
+          {
+            "atMs": 5565,
+            "x": 749.18,
+            "y": 496.32,
+            "scale": 1.15
+          },
+          {
+            "atMs": 6261,
+            "x": 752.34,
+            "y": 494.49,
+            "scale": 1.191
+          },
+          {
+            "atMs": 6957,
+            "x": 756.32,
+            "y": 492.24,
+            "scale": 1.236
+          },
+          {
+            "atMs": 7652,
+            "x": 761.27,
+            "y": 489.51,
+            "scale": 1.286
+          },
+          {
+            "atMs": 8348,
+            "x": 767.24,
+            "y": 486.29,
+            "scale": 1.34
+          },
+          {
+            "atMs": 9043,
+            "x": 773.4,
+            "y": 483.01,
+            "scale": 1.391
+          },
+          {
+            "atMs": 9739,
+            "x": 779.49,
+            "y": 479.83,
+            "scale": 1.437
+          },
+          {
+            "atMs": 10435,
+            "x": 785.34,
+            "y": 476.79,
+            "scale": 1.478
+          },
+          {
+            "atMs": 11130,
+            "x": 790.82,
+            "y": 473.98,
+            "scale": 1.515
+          },
+          {
+            "atMs": 11826,
+            "x": 795.81,
+            "y": 471.43,
+            "scale": 1.547
+          },
+          {
+            "atMs": 12522,
+            "x": 800.21,
+            "y": 469.19,
+            "scale": 1.574
+          },
+          {
+            "atMs": 13217,
+            "x": 803.93,
+            "y": 467.31,
+            "scale": 1.596
+          },
+          {
+            "atMs": 13913,
+            "x": 806.9,
+            "y": 465.81,
+            "scale": 1.613
+          },
+          {
+            "atMs": 14609,
+            "x": 809.06,
+            "y": 464.73,
+            "scale": 1.625
+          },
+          {
+            "atMs": 15304,
+            "x": 810.37,
+            "y": 464.07,
+            "scale": 1.633
+          },
+          {
+            "atMs": 16000,
+            "x": 810.81,
+            "y": 463.85,
+            "scale": 1.635
+          }
+        ],
+        "sourceKeyframes": [
+          {
+            "atMs": 0,
+            "x": 740.73,
+            "y": 501.68
+          },
+          {
+            "atMs": 16000,
+            "x": 820.1,
+            "y": 466.3,
+            "scale": 1.032
+          }
+        ],
+        "sourceEasing": "easeInOut"
+      },
+      {
+        "id": "figure_left",
+        "image": "/resources/runtime/images/parallax/03_taoist_reaches_grave_site/figure_left.png",
+        "zIndex": 20,
+        "keyframes": [
+          {
+            "atMs": 0,
+            "x": 801.63,
+            "y": 470.72
+          },
+          {
+            "atMs": 696,
+            "x": 801.61,
+            "y": 470.7,
+            "scale": 1.003
+          },
+          {
+            "atMs": 1391,
+            "x": 801.55,
+            "y": 470.65,
+            "scale": 1.01
+          },
+          {
+            "atMs": 2087,
+            "x": 801.47,
+            "y": 470.56,
+            "scale": 1.023
+          },
+          {
+            "atMs": 2783,
+            "x": 801.36,
+            "y": 470.43,
+            "scale": 1.041
+          },
+          {
+            "atMs": 3478,
+            "x": 801.24,
+            "y": 470.25,
+            "scale": 1.064
+          },
+          {
+            "atMs": 4174,
+            "x": 801.13,
+            "y": 470.03,
+            "scale": 1.092
+          },
+          {
+            "atMs": 4870,
+            "x": 801.05,
+            "y": 469.75,
+            "scale": 1.125
+          },
+          {
+            "atMs": 5565,
+            "x": 801.01,
+            "y": 469.41,
+            "scale": 1.164
+          },
+          {
+            "atMs": 6261,
+            "x": 801.06,
+            "y": 469,
+            "scale": 1.208
+          },
+          {
+            "atMs": 6957,
+            "x": 801.22,
+            "y": 468.51,
+            "scale": 1.257
+          },
+          {
+            "atMs": 7652,
+            "x": 801.52,
+            "y": 467.94,
+            "scale": 1.312
+          },
+          {
+            "atMs": 8348,
+            "x": 801.99,
+            "y": 467.28,
+            "scale": 1.371
+          },
+          {
+            "atMs": 9043,
+            "x": 802.57,
+            "y": 466.62,
+            "scale": 1.427
+          },
+          {
+            "atMs": 9739,
+            "x": 803.21,
+            "y": 465.99,
+            "scale": 1.477
+          },
+          {
+            "atMs": 10435,
+            "x": 803.88,
+            "y": 465.41,
+            "scale": 1.523
+          },
+          {
+            "atMs": 11130,
+            "x": 804.54,
+            "y": 464.87,
+            "scale": 1.563
+          },
+          {
+            "atMs": 11826,
+            "x": 805.17,
+            "y": 464.38,
+            "scale": 1.598
+          },
+          {
+            "atMs": 12522,
+            "x": 805.74,
+            "y": 463.96,
+            "scale": 1.627
+          },
+          {
+            "atMs": 13217,
+            "x": 806.24,
+            "y": 463.61,
+            "scale": 1.651
+          },
+          {
+            "atMs": 13913,
+            "x": 806.64,
+            "y": 463.33,
+            "scale": 1.67
+          },
+          {
+            "atMs": 14609,
+            "x": 806.94,
+            "y": 463.13,
+            "scale": 1.684
+          },
+          {
+            "atMs": 15304,
+            "x": 807.12,
+            "y": 463.01,
+            "scale": 1.692
+          },
+          {
+            "atMs": 16000,
+            "x": 807.18,
+            "y": 462.97,
+            "scale": 1.695
+          }
+        ],
+        "sourceKeyframes": [
+          {
+            "atMs": 0,
+            "x": 801.63,
+            "y": 470.72
+          },
+          {
+            "atMs": 16000,
+            "x": 818.4,
+            "y": 465.9,
+            "scale": 1.035
+          }
+        ],
+        "sourceEasing": "easeInOut"
+      }
+    ],
+    "camera": {
+      "enabled": true,
+      "keyframes": [
+        {
+          "atMs": 0,
+          "panX": 0,
+          "panY": 0,
+          "zoom": 1,
+          "roll": 0
+        },
+        {
+          "atMs": 16000,
+          "panX": 0,
+          "panY": 0,
+          "zoom": 1.9,
+          "roll": 0
+        }
+      ]
+    }
+  },
+  {
+    "id": "04_taoist_discovers_tomb_omen",
+    "widthRef": 1672,
+    "heightRef": 941,
+    "layers": [
+      {
+        "id": "bg",
+        "image": "/resources/runtime/images/parallax/04_taoist_discovers_tomb_omen/bg.png",
+        "zIndex": 0,
+        "keyframes": [
+          {
+            "atMs": 0,
+            "x": 836,
+            "y": 470,
+            "scale": 1.1
+          },
+          {
+            "atMs": 684,
+            "x": 835.98,
+            "y": 469.99,
+            "scale": 1.101
+          },
+          {
+            "atMs": 1367,
+            "x": 835.92,
+            "y": 469.98,
+            "scale": 1.103
+          },
+          {
+            "atMs": 2051,
+            "x": 835.82,
+            "y": 469.95,
+            "scale": 1.106
+          },
+          {
+            "atMs": 2735,
+            "x": 835.68,
+            "y": 469.92,
+            "scale": 1.111
+          },
+          {
+            "atMs": 3418,
+            "x": 835.5,
+            "y": 469.87,
+            "scale": 1.117
+          },
+          {
+            "atMs": 4102,
+            "x": 835.28,
+            "y": 469.82,
+            "scale": 1.125
+          },
+          {
+            "atMs": 4786,
+            "x": 835.01,
+            "y": 469.75,
+            "scale": 1.132
+          },
+          {
+            "atMs": 5469,
+            "x": 834.7,
+            "y": 469.67,
+            "scale": 1.139
+          },
+          {
+            "atMs": 6153,
+            "x": 834.34,
+            "y": 469.58,
+            "scale": 1.144
+          },
+          {
+            "atMs": 6837,
+            "x": 833.95,
+            "y": 469.49,
+            "scale": 1.148
+          },
+          {
+            "atMs": 7520,
+            "x": 833.52,
+            "y": 469.38,
+            "scale": 1.151
+          },
+          {
+            "atMs": 8204,
+            "x": 833.04,
+            "y": 469.27,
+            "scale": 1.152
+          },
+          {
+            "atMs": 8854,
+            "x": 832.62,
+            "y": 469.16,
+            "scale": 1.153
+          },
+          {
+            "atMs": 9503,
+            "x": 832.23,
+            "y": 469.07,
+            "scale": 1.154
+          },
+          {
+            "atMs": 10153,
+            "x": 831.88,
+            "y": 468.99,
+            "scale": 1.154
+          },
+          {
+            "atMs": 10803,
+            "x": 831.56,
+            "y": 468.91,
+            "scale": 1.155
+          },
+          {
+            "atMs": 11452,
+            "x": 831.28,
+            "y": 468.84,
+            "scale": 1.155
+          },
+          {
+            "atMs": 12102,
+            "x": 831.04,
+            "y": 468.79,
+            "scale": 1.156
+          },
+          {
+            "atMs": 12752,
+            "x": 830.84,
+            "y": 468.74,
+            "scale": 1.156
+          },
+          {
+            "atMs": 13401,
+            "x": 830.67,
+            "y": 468.7,
+            "scale": 1.156
+          },
+          {
+            "atMs": 14051,
+            "x": 830.55,
+            "y": 468.67,
+            "scale": 1.156
+          },
+          {
+            "atMs": 14701,
+            "x": 830.45,
+            "y": 468.64,
+            "scale": 1.156
+          },
+          {
+            "atMs": 15350,
+            "x": 830.4,
+            "y": 468.63,
+            "scale": 1.156
+          },
+          {
+            "atMs": 16000,
+            "x": 830.38,
+            "y": 468.63,
+            "scale": 1.156
+          }
+        ],
+        "sourceKeyframes": [
+          {
+            "atMs": 0,
+            "x": 836,
+            "y": 470,
+            "scale": 1.1
+          },
+          {
+            "atMs": 16000,
+            "x": 830.6,
+            "y": 468.7,
+            "scale": 1.111
+          }
+        ],
+        "sourceEasing": "easeInOut"
+      },
+      {
+        "id": "figure_left",
+        "image": "/resources/runtime/images/parallax/04_taoist_discovers_tomb_omen/figure_left.png",
+        "zIndex": 20,
+        "keyframes": [
+          {
+            "atMs": 0,
+            "x": 1067.07,
+            "y": 537.02
+          },
+          {
+            "atMs": 684,
+            "x": 1068.33,
+            "y": 537.39,
+            "scale": 1.003
+          },
+          {
+            "atMs": 1367,
+            "x": 1072.12,
+            "y": 538.52,
+            "scale": 1.012
+          },
+          {
+            "atMs": 2051,
+            "x": 1078.51,
+            "y": 540.42,
+            "scale": 1.027
+          },
+          {
+            "atMs": 2735,
+            "x": 1087.6,
+            "y": 543.13,
+            "scale": 1.048
+          },
+          {
+            "atMs": 3418,
+            "x": 1099.48,
+            "y": 546.68,
+            "scale": 1.075
+          },
+          {
+            "atMs": 4102,
+            "x": 1114.39,
+            "y": 551.13,
+            "scale": 1.108
+          },
+          {
+            "atMs": 4786,
+            "x": 1130.75,
+            "y": 556.04,
+            "scale": 1.139
+          },
+          {
+            "atMs": 5469,
+            "x": 1146.85,
+            "y": 560.91,
+            "scale": 1.162
+          },
+          {
+            "atMs": 6153,
+            "x": 1162.69,
+            "y": 565.74,
+            "scale": 1.177
+          },
+          {
+            "atMs": 6837,
+            "x": 1178.14,
+            "y": 570.49,
+            "scale": 1.185
+          },
+          {
+            "atMs": 7520,
+            "x": 1193.05,
+            "y": 575.11,
+            "scale": 1.184
+          },
+          {
+            "atMs": 8204,
+            "x": 1207.19,
+            "y": 579.53,
+            "scale": 1.176
+          },
+          {
+            "atMs": 8854,
+            "x": 1219.13,
+            "y": 583.28,
+            "scale": 1.165
+          },
+          {
+            "atMs": 9503,
+            "x": 1229.95,
+            "y": 586.68,
+            "scale": 1.156
+          },
+          {
+            "atMs": 10153,
+            "x": 1239.67,
+            "y": 589.74,
+            "scale": 1.146
+          },
+          {
+            "atMs": 10803,
+            "x": 1248.29,
+            "y": 592.45,
+            "scale": 1.138
+          },
+          {
+            "atMs": 11452,
+            "x": 1255.77,
+            "y": 594.81,
+            "scale": 1.131
+          },
+          {
+            "atMs": 12102,
+            "x": 1262.15,
+            "y": 596.82,
+            "scale": 1.124
+          },
+          {
+            "atMs": 12752,
+            "x": 1267.49,
+            "y": 598.5,
+            "scale": 1.118
+          },
+          {
+            "atMs": 13401,
+            "x": 1271.84,
+            "y": 599.88,
+            "scale": 1.113
+          },
+          {
+            "atMs": 14051,
+            "x": 1275.22,
+            "y": 600.94,
+            "scale": 1.109
+          },
+          {
+            "atMs": 14701,
+            "x": 1277.63,
+            "y": 601.7,
+            "scale": 1.106
+          },
+          {
+            "atMs": 15350,
+            "x": 1279.08,
+            "y": 602.16,
+            "scale": 1.105
+          },
+          {
+            "atMs": 16000,
+            "x": 1279.56,
+            "y": 602.31,
+            "scale": 1.104
+          }
+        ],
+        "sourceKeyframes": [
+          {
+            "atMs": 0,
+            "x": 1067.07,
+            "y": 537.02
+          },
+          {
+            "atMs": 16000,
+            "x": 1193.48,
+            "y": 576.73,
+            "scale": 0.89
+          }
+        ],
+        "sourceEasing": "easeInOut"
+      },
+      {
+        "id": "figures_mid",
+        "image": "/resources/runtime/images/parallax/04_taoist_discovers_tomb_omen/figures_mid.png",
+        "zIndex": 2,
+        "keyframes": [
+          {
+            "atMs": 0,
+            "x": 856.55,
+            "y": 455.96
+          },
+          {
+            "atMs": 684,
+            "x": 856.6,
+            "y": 455.93,
+            "scale": 1.001
+          },
+          {
+            "atMs": 1367,
+            "x": 856.77,
+            "y": 455.85,
+            "scale": 1.003
+          },
+          {
+            "atMs": 2051,
+            "x": 857.04,
+            "y": 455.7,
+            "scale": 1.008
+          },
+          {
+            "atMs": 2735,
+            "x": 857.43,
+            "y": 455.5,
+            "scale": 1.014
+          },
+          {
+            "atMs": 3418,
+            "x": 857.93,
+            "y": 455.24,
+            "scale": 1.022
+          },
+          {
+            "atMs": 4102,
+            "x": 858.56,
+            "y": 454.92,
+            "scale": 1.031
+          },
+          {
+            "atMs": 4786,
+            "x": 859.27,
+            "y": 454.56,
+            "scale": 1.041
+          },
+          {
+            "atMs": 5469,
+            "x": 860.02,
+            "y": 454.19,
+            "scale": 1.049
+          },
+          {
+            "atMs": 6153,
+            "x": 860.82,
+            "y": 453.81,
+            "scale": 1.055
+          },
+          {
+            "atMs": 6837,
+            "x": 861.66,
+            "y": 453.42,
+            "scale": 1.059
+          },
+          {
+            "atMs": 7520,
+            "x": 862.55,
+            "y": 453.02,
+            "scale": 1.062
+          },
+          {
+            "atMs": 8204,
+            "x": 863.46,
+            "y": 452.62,
+            "scale": 1.063
+          },
+          {
+            "atMs": 8854,
+            "x": 864.28,
+            "y": 452.27,
+            "scale": 1.063
+          },
+          {
+            "atMs": 9503,
+            "x": 865.02,
+            "y": 451.95,
+            "scale": 1.062
+          },
+          {
+            "atMs": 10153,
+            "x": 865.69,
+            "y": 451.67,
+            "scale": 1.062
+          },
+          {
+            "atMs": 10803,
+            "x": 866.28,
+            "y": 451.41,
+            "scale": 1.062
+          },
+          {
+            "atMs": 11452,
+            "x": 866.81,
+            "y": 451.19,
+            "scale": 1.062
+          },
+          {
+            "atMs": 12102,
+            "x": 867.26,
+            "y": 450.99,
+            "scale": 1.062
+          },
+          {
+            "atMs": 12752,
+            "x": 867.64,
+            "y": 450.83,
+            "scale": 1.061
+          },
+          {
+            "atMs": 13401,
+            "x": 867.95,
+            "y": 450.7,
+            "scale": 1.061
+          },
+          {
+            "atMs": 14051,
+            "x": 868.19,
+            "y": 450.59,
+            "scale": 1.061
+          },
+          {
+            "atMs": 14701,
+            "x": 868.36,
+            "y": 450.52,
+            "scale": 1.061
+          },
+          {
+            "atMs": 15350,
+            "x": 868.47,
+            "y": 450.47,
+            "scale": 1.061
+          },
+          {
+            "atMs": 16000,
+            "x": 868.5,
+            "y": 450.46,
+            "scale": 1.061
+          }
+        ],
+        "sourceKeyframes": [
+          {
+            "atMs": 0,
+            "x": 856.55,
+            "y": 455.96
+          },
+          {
+            "atMs": 16000,
+            "x": 866.64,
+            "y": 451.61
+          }
+        ],
+        "sourceEasing": "easeInOut"
+      }
+    ],
+    "camera": {
+      "enabled": true,
+      "keyframes": [
+        {
+          "atMs": 0,
+          "panX": 0,
+          "panY": 0,
+          "zoom": 1,
+          "roll": 0
+        },
+        {
+          "atMs": 8204,
+          "panX": 0,
+          "panY": 0,
+          "zoom": 1.35,
+          "roll": 0
+        },
+        {
+          "atMs": 16000,
+          "panX": 0,
+          "panY": 0,
+          "zoom": 1.34,
+          "roll": 0
+        }
+      ]
+    }
+  },
+  {
+    "id": "05_graverobbers_unearth_hanba",
+    "widthRef": 1672,
+    "heightRef": 941,
+    "layers": [
+      {
+        "id": "bg",
+        "image": "/resources/runtime/images/parallax/05_graverobbers_unearth_hanba/bg.png",
+        "zIndex": 0,
+        "easing": "easeInOut",
+        "keyframes": [
+          {
+            "atMs": 0,
+            "x": 836,
+            "y": 470,
+            "scale": 1.1
+          },
+          {
+            "atMs": 16000,
+            "x": 830.6,
+            "y": 468.7,
+            "scale": 1.111
+          }
+        ]
+      },
+      {
+        "id": "people",
+        "image": "/resources/runtime/images/parallax/05_graverobbers_unearth_hanba/people.png",
+        "zIndex": 22,
+        "easing": "easeInOut",
+        "keyframes": [
+          {
+            "atMs": 0,
+            "x": 836,
+            "y": 470
+          },
+          {
+            "atMs": 16000,
+            "x": 816.6,
+            "y": 465.5,
+            "scale": 1.11
+          }
+        ]
+      },
+      {
+        "id": "zombie",
+        "image": "/resources/runtime/images/parallax/05_graverobbers_unearth_hanba/zombie.png",
+        "zIndex": 26,
+        "easing": "easeInOut",
+        "keyframes": [
+          {
+            "atMs": 0,
+            "x": 659.23,
+            "y": 378.79,
+            "scale": 0.59,
+            "rotation": 10,
+            "alpha": 0.7
+          },
+          {
+            "atMs": 11294,
+            "x": 790.55,
+            "y": 508.23,
+            "scale": 0.84,
+            "rotation": 21,
+            "alpha": 0.9480942906250001
+          }
+        ]
+      },
+      {
+        "id": "hero",
+        "image": "/resources/runtime/images/parallax/05_graverobbers_unearth_hanba/hero.png",
+        "zIndex": 30,
+        "easing": "easeInOut",
+        "keyframes": [
+          {
+            "atMs": 0,
+            "x": 845.52,
+            "y": 468.37
+          },
+          {
+            "atMs": 16000,
+            "x": 697.67,
+            "y": 483.6,
+            "scale": 1.053
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "06_taoist_rescues_graverobbers_wide",
+    "widthRef": 1672,
+    "heightRef": 941,
+    "layers": [
+      {
+        "id": "bg",
+        "image": "/resources/runtime/images/parallax/06_taoist_rescues_graverobbers_wide/bg.png",
+        "zIndex": 0,
+        "easing": "easeInOut",
+        "keyframes": [
+          {
+            "atMs": 0,
+            "x": 836,
+            "y": 470,
+            "scale": 1.1
+          },
+          {
+            "atMs": 16000,
+            "x": 830.6,
+            "y": 468.7,
+            "scale": 1.111
+          }
+        ]
+      },
+      {
+        "id": "figure_left",
+        "image": "/resources/runtime/images/parallax/06_taoist_rescues_graverobbers_wide/figure_left.png",
+        "zIndex": 31,
+        "easing": "easeInOut",
+        "keyframes": [
+          {
+            "atMs": 0,
+            "x": 836,
+            "y": 470
+          },
+          {
+            "atMs": 16000,
+            "x": 818.4,
+            "y": 465.9,
+            "scale": 1.035
+          }
+        ]
+      },
+      {
+        "id": "figures_right",
+        "image": "/resources/runtime/images/parallax/06_taoist_rescues_graverobbers_wide/figures_right.png",
+        "zIndex": 30,
+        "easing": "easeInOut",
+        "keyframes": [
+          {
+            "atMs": 0,
+            "x": 856.34,
+            "y": 482.1
+          },
+          {
+            "atMs": 16000,
+            "x": 815.7,
+            "y": 465.3,
+            "scale": 1.041
+          }
+        ]
+      },
+      {
+        "id": "zombie",
+        "image": "/resources/runtime/images/parallax/06_taoist_rescues_graverobbers_wide/zombie.png",
+        "zIndex": 24,
+        "easing": "easeInOut",
+        "keyframes": [
+          {
+            "atMs": 0,
+            "x": 618.34,
+            "y": 574.87,
+            "rotation": 13
+          },
+          {
+            "atMs": 16000,
+            "x": 813.1,
+            "y": 464.6,
+            "scale": 1.046
+          }
+        ]
+      },
+      {
+        "id": "fx",
+        "image": "/resources/runtime/images/parallax/06_taoist_rescues_graverobbers_wide/fx.png",
+        "zIndex": 1,
+        "easing": "easeInOut",
+        "keyframes": [
+          {
+            "atMs": 0,
+            "x": 887.94,
+            "y": 384.91,
+            "scale": 0.88,
+            "alpha": 0.55
+          },
+          {
+            "atMs": 16000,
+            "x": 816,
+            "y": 466,
+            "scale": 0.88,
+            "alpha": 0.55
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "07_taoist_duels_hanba_medium",
+    "widthRef": 1672,
+    "heightRef": 941,
+    "layers": [
+      {
+        "id": "bg",
+        "image": "/resources/runtime/images/parallax/07_taoist_duels_hanba_medium/bg.png",
+        "zIndex": 0,
+        "easing": "easeInOut",
+        "keyframes": [
+          {
+            "atMs": 0,
+            "x": 836,
+            "y": 470,
+            "scale": 1.1
+          },
+          {
+            "atMs": 16000,
+            "x": 830.6,
+            "y": 468.7,
+            "scale": 1.111
+          }
+        ]
+      },
+      {
+        "id": "zombie",
+        "image": "/resources/runtime/images/parallax/07_taoist_duels_hanba_medium/zombie.png",
+        "zIndex": 26,
+        "easing": "easeInOut",
+        "keyframes": [
+          {
+            "atMs": 0,
+            "x": 769.58,
+            "y": 566.5
+          },
+          {
+            "atMs": 16000,
+            "x": 1019.28,
+            "y": 524.01,
+            "scale": 1.046
+          }
+        ]
+      },
+      {
+        "id": "hero",
+        "image": "/resources/runtime/images/parallax/07_taoist_duels_hanba_medium/hero.png",
+        "zIndex": 19,
+        "easing": "easeInOut",
+        "keyframes": [
+          {
+            "atMs": 0,
+            "x": 722.68,
+            "y": 413.13
+          },
+          {
+            "atMs": 16000,
+            "x": 809.5,
+            "y": 463.8,
+            "scale": 1.053
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "08_taoist_duels_hanba_close",
+    "widthRef": 1672,
+    "heightRef": 941,
+    "layers": [
+      {
+        "id": "bg",
+        "image": "/resources/runtime/images/parallax/08_taoist_duels_hanba_close/bg.png",
+        "zIndex": 0,
+        "easing": "easeInOut",
+        "keyframes": [
+          {
+            "atMs": 0,
+            "x": 836,
+            "y": 470,
+            "scale": 1.1
+          },
+          {
+            "atMs": 16000,
+            "x": 830.6,
+            "y": 468.7,
+            "scale": 1.111
+          }
+        ]
+      },
+      {
+        "id": "zombie",
+        "image": "/resources/runtime/images/parallax/08_taoist_duels_hanba_close/zombie.png",
+        "zIndex": 26,
+        "easing": "easeInOut",
+        "keyframes": [
+          {
+            "atMs": 0,
+            "x": 711.92,
+            "y": 491.25
+          },
+          {
+            "atMs": 16000,
+            "x": 813.1,
+            "y": 464.6,
+            "scale": 1.046
+          }
+        ]
+      },
+      {
+        "id": "hero",
+        "image": "/resources/runtime/images/parallax/08_taoist_duels_hanba_close/hero.png",
+        "zIndex": 30,
+        "easing": "easeInOut",
+        "keyframes": [
+          {
+            "atMs": 0,
+            "x": 859.02,
+            "y": 461.94
+          },
+          {
+            "atMs": 16000,
+            "x": 809.5,
+            "y": 463.8,
+            "scale": 1.053
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "09_taoist_subdues_hanba",
+    "widthRef": 1672,
+    "heightRef": 941,
+    "layers": [
+      {
+        "id": "bg",
+        "image": "/resources/runtime/images/parallax/09_taoist_subdues_hanba/bg.png",
+        "zIndex": 0,
+        "easing": "easeInOut",
+        "keyframes": [
+          {
+            "atMs": 0,
+            "x": 836,
+            "y": 470,
+            "scale": 1.1
+          },
+          {
+            "atMs": 16000,
+            "x": 830.6,
+            "y": 468.7,
+            "scale": 1.111
+          }
+        ]
+      },
+      {
+        "id": "zombie",
+        "image": "/resources/runtime/images/parallax/09_taoist_subdues_hanba/zombie.png",
+        "zIndex": 26,
+        "easing": "easeInOut",
+        "keyframes": [
+          {
+            "atMs": 0,
+            "x": 643.53,
+            "y": 493.72,
+            "alpha": 0.85
+          },
+          {
+            "atMs": 10200,
+            "x": 644,
+            "y": 494,
+            "scale": 1.034,
+            "alpha": 0.8
+          }
+        ]
+      },
+      {
+        "id": "layer3",
+        "image": "/resources/runtime/images/parallax/09_taoist_subdues_hanba/hero.png",
+        "zIndex": 34,
+        "keyframes": [
+          {
+            "atMs": 0,
+            "x": 622.88,
+            "y": 467.15,
+            "alpha": 0.95
+          },
+          {
+            "atMs": 10200,
+            "x": 603.86,
+            "y": 464.99,
+            "alpha": 0.95
+          }
+        ]
+      }
+    ],
+    "camera": {
+      "enabled": false,
+      "keyframes": [
+        {
+          "atMs": 0,
+          "panX": 0,
+          "panY": 85,
+          "zoom": 1,
+          "roll": 0
+        },
+        {
+          "atMs": 16000,
+          "panX": -45,
+          "panY": 185,
+          "zoom": 1.12,
+          "roll": 0
+        }
+      ]
+    }
+  },
+  {
+    "id": "10_graverobbers_offer_reward",
+    "widthRef": 1672,
+    "heightRef": 941,
+    "layers": [
+      {
+        "id": "bg",
+        "image": "/resources/runtime/images/parallax/10_graverobbers_offer_reward/bg.png",
+        "zIndex": 0,
+        "keyframes": [
+          {
+            "atMs": 0,
+            "x": 834.6,
+            "y": 399.6,
+            "scale": 1.1
+          },
+          {
+            "atMs": 696,
+            "x": 834.58,
+            "y": 399.86,
+            "scale": 1.1
+          },
+          {
+            "atMs": 1391,
+            "x": 834.54,
+            "y": 400.62,
+            "scale": 1.101
+          },
+          {
+            "atMs": 2087,
+            "x": 834.46,
+            "y": 401.89,
+            "scale": 1.101
+          },
+          {
+            "atMs": 2783,
+            "x": 834.35,
+            "y": 403.68,
+            "scale": 1.102
+          },
+          {
+            "atMs": 3478,
+            "x": 834.22,
+            "y": 405.98,
+            "scale": 1.104
+          },
+          {
+            "atMs": 4174,
+            "x": 834.05,
+            "y": 408.8,
+            "scale": 1.105
+          },
+          {
+            "atMs": 4870,
+            "x": 833.85,
+            "y": 412.14,
+            "scale": 1.107
+          },
+          {
+            "atMs": 5565,
+            "x": 833.62,
+            "y": 416,
+            "scale": 1.109
+          },
+          {
+            "atMs": 6261,
+            "x": 833.35,
+            "y": 420.39,
+            "scale": 1.112
+          },
+          {
+            "atMs": 6957,
+            "x": 833.06,
+            "y": 425.32,
+            "scale": 1.115
+          },
+          {
+            "atMs": 7652,
+            "x": 832.73,
+            "y": 430.77,
+            "scale": 1.118
+          },
+          {
+            "atMs": 8348,
+            "x": 832.38,
+            "y": 436.65,
+            "scale": 1.121
+          },
+          {
+            "atMs": 9043,
+            "x": 832.05,
+            "y": 442.15,
+            "scale": 1.124
+          },
+          {
+            "atMs": 9739,
+            "x": 831.75,
+            "y": 447.15,
+            "scale": 1.127
+          },
+          {
+            "atMs": 10435,
+            "x": 831.48,
+            "y": 451.64,
+            "scale": 1.13
+          },
+          {
+            "atMs": 11130,
+            "x": 831.24,
+            "y": 455.61,
+            "scale": 1.132
+          },
+          {
+            "atMs": 11826,
+            "x": 831.04,
+            "y": 459.06,
+            "scale": 1.134
+          },
+          {
+            "atMs": 12522,
+            "x": 830.86,
+            "y": 461.98,
+            "scale": 1.135
+          },
+          {
+            "atMs": 13217,
+            "x": 830.72,
+            "y": 464.38,
+            "scale": 1.137
+          },
+          {
+            "atMs": 13913,
+            "x": 830.61,
+            "y": 466.25,
+            "scale": 1.138
+          },
+          {
+            "atMs": 14609,
+            "x": 830.53,
+            "y": 467.59,
+            "scale": 1.138
+          },
+          {
+            "atMs": 15304,
+            "x": 830.48,
+            "y": 468.39,
+            "scale": 1.139
+          },
+          {
+            "atMs": 16000,
+            "x": 830.46,
+            "y": 468.65,
+            "scale": 1.139
+          }
+        ],
+        "sourceKeyframes": [
+          {
+            "atMs": 0,
+            "x": 834,
+            "y": 402,
+            "scale": 1.1
+          },
+          {
+            "atMs": 16000,
+            "x": 830.6,
+            "y": 468.7,
+            "scale": 1.111
+          }
+        ],
+        "sourceEasing": "easeInOut"
+      },
+      {
+        "id": "people_kneel",
+        "image": "/resources/runtime/images/parallax/10_graverobbers_offer_reward/people_kneel.png",
+        "zIndex": 22,
+        "keyframes": [
+          {
+            "atMs": 0,
+            "x": 839.84,
+            "y": 454.66
+          },
+          {
+            "atMs": 696,
+            "x": 839.75,
+            "y": 454.7,
+            "scale": 1.001
+          },
+          {
+            "atMs": 1391,
+            "x": 839.48,
+            "y": 454.82,
+            "scale": 1.003
+          },
+          {
+            "atMs": 2087,
+            "x": 839.04,
+            "y": 455.02,
+            "scale": 1.007
+          },
+          {
+            "atMs": 2783,
+            "x": 838.42,
+            "y": 455.31,
+            "scale": 1.012
+          },
+          {
+            "atMs": 3478,
+            "x": 837.61,
+            "y": 455.67,
+            "scale": 1.019
+          },
+          {
+            "atMs": 4174,
+            "x": 836.61,
+            "y": 456.11,
+            "scale": 1.027
+          },
+          {
+            "atMs": 4870,
+            "x": 835.42,
+            "y": 456.63,
+            "scale": 1.037
+          },
+          {
+            "atMs": 5565,
+            "x": 834.03,
+            "y": 457.22,
+            "scale": 1.049
+          },
+          {
+            "atMs": 6261,
+            "x": 832.43,
+            "y": 457.89,
+            "scale": 1.062
+          },
+          {
+            "atMs": 6957,
+            "x": 830.6,
+            "y": 458.62,
+            "scale": 1.077
+          },
+          {
+            "atMs": 7652,
+            "x": 828.55,
+            "y": 459.43,
+            "scale": 1.093
+          },
+          {
+            "atMs": 8348,
+            "x": 826.31,
+            "y": 460.28,
+            "scale": 1.11
+          },
+          {
+            "atMs": 9043,
+            "x": 824.18,
+            "y": 461.07,
+            "scale": 1.127
+          },
+          {
+            "atMs": 9739,
+            "x": 822.21,
+            "y": 461.78,
+            "scale": 1.142
+          },
+          {
+            "atMs": 10435,
+            "x": 820.43,
+            "y": 462.4,
+            "scale": 1.155
+          },
+          {
+            "atMs": 11130,
+            "x": 818.83,
+            "y": 462.94,
+            "scale": 1.167
+          },
+          {
+            "atMs": 11826,
+            "x": 817.43,
+            "y": 463.41,
+            "scale": 1.178
+          },
+          {
+            "atMs": 12522,
+            "x": 816.23,
+            "y": 463.81,
+            "scale": 1.186
+          },
+          {
+            "atMs": 13217,
+            "x": 815.25,
+            "y": 464.13,
+            "scale": 1.194
+          },
+          {
+            "atMs": 13913,
+            "x": 814.47,
+            "y": 464.38,
+            "scale": 1.199
+          },
+          {
+            "atMs": 14609,
+            "x": 813.92,
+            "y": 464.55,
+            "scale": 1.203
+          },
+          {
+            "atMs": 15304,
+            "x": 813.59,
+            "y": 464.66,
+            "scale": 1.206
+          },
+          {
+            "atMs": 16000,
+            "x": 813.48,
+            "y": 464.69,
+            "scale": 1.206
+          }
+        ],
+        "sourceKeyframes": [
+          {
+            "atMs": 0,
+            "x": 836,
+            "y": 470
+          },
+          {
+            "atMs": 16000,
+            "x": 816.6,
+            "y": 465.5,
+            "scale": 1.039
+          }
+        ],
+        "sourceEasing": "easeInOut"
+      },
+      {
+        "id": "people_stand",
+        "image": "/resources/runtime/images/parallax/10_graverobbers_offer_reward/people_stand.png",
+        "zIndex": 24,
+        "keyframes": [
+          {
+            "atMs": 0,
+            "x": 840.13,
+            "y": 453.48
+          },
+          {
+            "atMs": 696,
+            "x": 840.03,
+            "y": 453.53,
+            "scale": 1.001
+          },
+          {
+            "atMs": 1391,
+            "x": 839.75,
+            "y": 453.66,
+            "scale": 1.003
+          },
+          {
+            "atMs": 2087,
+            "x": 839.26,
+            "y": 453.87,
+            "scale": 1.007
+          },
+          {
+            "atMs": 2783,
+            "x": 838.58,
+            "y": 454.18,
+            "scale": 1.013
+          },
+          {
+            "atMs": 3478,
+            "x": 837.7,
+            "y": 454.56,
+            "scale": 1.02
+          },
+          {
+            "atMs": 4174,
+            "x": 836.61,
+            "y": 455.04,
+            "scale": 1.029
+          },
+          {
+            "atMs": 4870,
+            "x": 835.31,
+            "y": 455.59,
+            "scale": 1.04
+          },
+          {
+            "atMs": 5565,
+            "x": 833.79,
+            "y": 456.22,
+            "scale": 1.053
+          },
+          {
+            "atMs": 6261,
+            "x": 832.03,
+            "y": 456.93,
+            "scale": 1.067
+          },
+          {
+            "atMs": 6957,
+            "x": 830.03,
+            "y": 457.72,
+            "scale": 1.083
+          },
+          {
+            "atMs": 7652,
+            "x": 827.77,
+            "y": 458.58,
+            "scale": 1.1
+          },
+          {
+            "atMs": 8348,
+            "x": 825.3,
+            "y": 459.49,
+            "scale": 1.119
+          },
+          {
+            "atMs": 9043,
+            "x": 822.96,
+            "y": 460.32,
+            "scale": 1.137
+          },
+          {
+            "atMs": 9739,
+            "x": 820.79,
+            "y": 461.07,
+            "scale": 1.153
+          },
+          {
+            "atMs": 10435,
+            "x": 818.82,
+            "y": 461.74,
+            "scale": 1.167
+          },
+          {
+            "atMs": 11130,
+            "x": 817.05,
+            "y": 462.31,
+            "scale": 1.18
+          },
+          {
+            "atMs": 11826,
+            "x": 815.5,
+            "y": 462.81,
+            "scale": 1.192
+          },
+          {
+            "atMs": 12522,
+            "x": 814.18,
+            "y": 463.23,
+            "scale": 1.201
+          },
+          {
+            "atMs": 13217,
+            "x": 813.09,
+            "y": 463.57,
+            "scale": 1.209
+          },
+          {
+            "atMs": 13913,
+            "x": 812.23,
+            "y": 463.83,
+            "scale": 1.215
+          },
+          {
+            "atMs": 14609,
+            "x": 811.62,
+            "y": 464.01,
+            "scale": 1.219
+          },
+          {
+            "atMs": 15304,
+            "x": 811.25,
+            "y": 464.13,
+            "scale": 1.222
+          },
+          {
+            "atMs": 16000,
+            "x": 811.12,
+            "y": 464.16,
+            "scale": 1.223
+          }
+        ],
+        "sourceKeyframes": [
+          {
+            "atMs": 0,
+            "x": 836,
+            "y": 470
+          },
+          {
+            "atMs": 16000,
+            "x": 814.8,
+            "y": 465.1,
+            "scale": 1.042
+          }
+        ],
+        "sourceEasing": "easeInOut"
+      }
+    ],
+    "camera": {
+      "enabled": true,
+      "keyframes": [
+        {
+          "atMs": 0,
+          "panX": 5,
+          "panY": -20,
+          "zoom": 1,
+          "roll": 0
+        },
+        {
+          "atMs": 16000,
+          "panX": 0,
+          "panY": 0,
+          "zoom": 1.21,
+          "roll": 0
+        }
+      ]
+    }
+  },
+  {
+    "id": "11_taoist_walks_deeper_into_shenxianling",
+    "widthRef": 1672,
+    "heightRef": 941,
+    "layers": [
+      {
+        "id": "bg",
+        "image": "/resources/runtime/images/parallax/11_taoist_walks_deeper_into_shenxianling/图片节点 6 (1).png",
+        "zIndex": 9,
+        "keyframes": [
+          {
+            "atMs": 0,
+            "x": 838,
+            "y": 231.79,
+            "scale": 1.33
+          },
+          {
+            "atMs": 696,
+            "x": 838.39,
+            "y": 232.72,
+            "scale": 1.33
+          },
+          {
+            "atMs": 1391,
+            "x": 839.57,
+            "y": 235.52,
+            "scale": 1.332
+          },
+          {
+            "atMs": 2087,
+            "x": 841.55,
+            "y": 240.18,
+            "scale": 1.333
+          },
+          {
+            "atMs": 2783,
+            "x": 844.32,
+            "y": 246.71,
+            "scale": 1.336
+          },
+          {
+            "atMs": 3478,
+            "x": 847.88,
+            "y": 255.09,
+            "scale": 1.34
+          },
+          {
+            "atMs": 4174,
+            "x": 852.26,
+            "y": 265.35,
+            "scale": 1.344
+          },
+          {
+            "atMs": 4870,
+            "x": 857.45,
+            "y": 277.47,
+            "scale": 1.349
+          },
+          {
+            "atMs": 5565,
+            "x": 863.47,
+            "y": 291.44,
+            "scale": 1.355
+          },
+          {
+            "atMs": 6261,
+            "x": 870.33,
+            "y": 307.3,
+            "scale": 1.361
+          },
+          {
+            "atMs": 6957,
+            "x": 878.05,
+            "y": 325.02,
+            "scale": 1.369
+          },
+          {
+            "atMs": 7652,
+            "x": 886.62,
+            "y": 344.58,
+            "scale": 1.377
+          },
+          {
+            "atMs": 8348,
+            "x": 895.89,
+            "y": 365.56,
+            "scale": 1.386
+          },
+          {
+            "atMs": 9043,
+            "x": 904.59,
+            "y": 385.12,
+            "scale": 1.394
+          },
+          {
+            "atMs": 9739,
+            "x": 912.52,
+            "y": 402.84,
+            "scale": 1.401
+          },
+          {
+            "atMs": 10435,
+            "x": 919.67,
+            "y": 418.69,
+            "scale": 1.408
+          },
+          {
+            "atMs": 11130,
+            "x": 925.99,
+            "y": 432.66,
+            "scale": 1.414
+          },
+          {
+            "atMs": 11826,
+            "x": 931.51,
+            "y": 444.79,
+            "scale": 1.419
+          },
+          {
+            "atMs": 12522,
+            "x": 936.19,
+            "y": 455.05,
+            "scale": 1.423
+          },
+          {
+            "atMs": 13217,
+            "x": 940.03,
+            "y": 463.43,
+            "scale": 1.427
+          },
+          {
+            "atMs": 13913,
+            "x": 943.03,
+            "y": 469.96,
+            "scale": 1.43
+          },
+          {
+            "atMs": 14609,
+            "x": 945.18,
+            "y": 474.62,
+            "scale": 1.432
+          },
+          {
+            "atMs": 15304,
+            "x": 946.46,
+            "y": 477.41,
+            "scale": 1.433
+          },
+          {
+            "atMs": 16000,
+            "x": 946.89,
+            "y": 478.35,
+            "scale": 1.433
+          }
+        ],
+        "sourceKeyframes": [
+          {
+            "atMs": 0,
+            "x": 838,
+            "y": 478,
+            "scale": 1.33
+          },
+          {
+            "atMs": 16000,
+            "x": 942,
+            "y": 478,
+            "scale": 1.37
+          }
+        ],
+        "sourceEasing": "easeInOut"
+      },
+      {
+        "id": "layer2",
+        "image": "/resources/runtime/images/parallax/11_taoist_walks_deeper_into_shenxianling/图片节点 5_cutout_w2000.png",
+        "zIndex": 10,
+        "keyframes": [
+          {
+            "atMs": 0,
+            "x": 858,
+            "y": 339.96,
+            "scale": 0.92
+          },
+          {
+            "atMs": 696,
+            "x": 858,
+            "y": 340.99,
+            "scale": 0.92
+          },
+          {
+            "atMs": 1391,
+            "x": 858.02,
+            "y": 344.07,
+            "scale": 0.921
+          },
+          {
+            "atMs": 2087,
+            "x": 858.04,
+            "y": 349.21,
+            "scale": 0.922
+          },
+          {
+            "atMs": 2783,
+            "x": 858.07,
+            "y": 356.41,
+            "scale": 0.923
+          },
+          {
+            "atMs": 3478,
+            "x": 858.1,
+            "y": 365.64,
+            "scale": 0.924
+          },
+          {
+            "atMs": 4174,
+            "x": 858.15,
+            "y": 376.95,
+            "scale": 0.926
+          },
+          {
+            "atMs": 4870,
+            "x": 858.2,
+            "y": 390.31,
+            "scale": 0.928
+          },
+          {
+            "atMs": 5565,
+            "x": 858.26,
+            "y": 405.71,
+            "scale": 0.931
+          },
+          {
+            "atMs": 6261,
+            "x": 858.33,
+            "y": 423.18,
+            "scale": 0.934
+          },
+          {
+            "atMs": 6957,
+            "x": 858.41,
+            "y": 442.71,
+            "scale": 0.937
+          },
+          {
+            "atMs": 7652,
+            "x": 858.5,
+            "y": 464.26,
+            "scale": 0.941
+          },
+          {
+            "atMs": 8348,
+            "x": 858.59,
+            "y": 487.39,
+            "scale": 0.945
+          },
+          {
+            "atMs": 9043,
+            "x": 858.68,
+            "y": 508.94,
+            "scale": 0.948
+          },
+          {
+            "atMs": 9739,
+            "x": 858.76,
+            "y": 528.47,
+            "scale": 0.952
+          },
+          {
+            "atMs": 10435,
+            "x": 858.83,
+            "y": 545.94,
+            "scale": 0.955
+          },
+          {
+            "atMs": 11130,
+            "x": 858.89,
+            "y": 561.34,
+            "scale": 0.957
+          },
+          {
+            "atMs": 11826,
+            "x": 858.94,
+            "y": 574.7,
+            "scale": 0.959
+          },
+          {
+            "atMs": 12522,
+            "x": 858.99,
+            "y": 586.01,
+            "scale": 0.961
+          },
+          {
+            "atMs": 13217,
+            "x": 859.03,
+            "y": 595.24,
+            "scale": 0.963
+          },
+          {
+            "atMs": 13913,
+            "x": 859.06,
+            "y": 602.44,
+            "scale": 0.964
+          },
+          {
+            "atMs": 14609,
+            "x": 859.08,
+            "y": 607.58,
+            "scale": 0.965
+          },
+          {
+            "atMs": 15304,
+            "x": 859.09,
+            "y": 610.66,
+            "scale": 0.966
+          },
+          {
+            "atMs": 16000,
+            "x": 859.09,
+            "y": 611.68,
+            "scale": 0.966
+          }
+        ],
+        "sourceKeyframes": [
+          {
+            "atMs": 0,
+            "x": 858,
+            "y": 605,
+            "scale": 0.92
+          }
+        ]
+      }
+    ],
+    "camera": {
+      "enabled": true,
+      "keyframes": [
+        {
+          "atMs": 0,
+          "panX": 0,
+          "panY": -640,
+          "zoom": 1,
+          "roll": 0
+        },
+        {
+          "atMs": 16000,
+          "panX": 0,
+          "panY": 0,
+          "zoom": 1.12,
+          "roll": 0
+        }
+      ]
+    }
+  }
+]

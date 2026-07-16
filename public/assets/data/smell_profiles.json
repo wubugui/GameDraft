@@ -1,0 +1,85 @@
+{
+  "baseline": {
+    "color": "#969aa2",
+    "breatheFreq": 0.9
+  },
+  "transition": {
+    "fadeMs": 800
+  },
+  "form": {
+    "riseH": 72,
+    "stemDia": 5,
+    "plumeGrow": 30,
+    "plumeExp": 1.6,
+    "topFade": 0.88,
+    "alphaBase": 0.95,
+    "curveAmp": 3.2,
+    "swayGain": 0.6,
+    "baseW": 50
+  },
+  "profiles": {
+    "incense": {
+      "name": "香火",
+      "color": "#d6a24e",
+      "rise": 0.85,
+      "sway": 2.0,
+      "swayFreq": 0.7,
+      "jitter": 0.05
+    },
+    "yin": {
+      "name": "阴腥",
+      "color": "#6f93a6",
+      "rise": 0.55,
+      "sway": 7.0,
+      "swayFreq": 2.6,
+      "jitter": 0.7
+    },
+    "corpse": {
+      "name": "尸臭",
+      "color": "#8a9a5a",
+      "rise": 0.3,
+      "sway": 4.0,
+      "swayFreq": 1.0,
+      "jitter": 0.15,
+      "heavy": true
+    },
+    "blood": {
+      "name": "血腥",
+      "color": "#c81f1f",
+      "rise": 0.4,
+      "sway": 3.0,
+      "swayFreq": 1.6,
+      "jitter": 0.25
+    },
+    "mold": {
+      "name": "霉·土腥",
+      "color": "#8f7d59",
+      "rise": 0.22,
+      "sway": 2.0,
+      "swayFreq": 0.8,
+      "jitter": 0.05,
+      "heavy": true
+    },
+    "powder": {
+      "name": "香粉味",
+      "color": "#e23d93",
+      "rise": 0.5,
+      "sway": 8.0,
+      "swayFreq": 3.0,
+      "jitter": 0.8,
+      "wrong": true,
+      "special": {
+        "glow": true,
+        "coil": true,
+        "reach": true,
+        "baselineShudder": true,
+        "envelope": {
+          "attackMs": 150,
+          "holdMs": 4000,
+          "decayMs": 4000,
+          "peak": 1.0
+        }
+      }
+    }
+  }
+}

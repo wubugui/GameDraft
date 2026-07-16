@@ -3,8 +3,7 @@
   "id": "码头看板官差",
   "entry": "n_4",
   "meta": {
-    "title": "码头看板官差",
-    "scenarioId": "码头水鬼"
+    "title": "码头看板官差"
   },
   "nodes": {
     "n_sleep": {
@@ -26,9 +25,9 @@
           "next": "n_1",
           "conditions": [
             {
-              "scenario": "码头水鬼",
-              "phase": "看板初读",
-              "status": "done"
+              "narrative": "flow_dock_water_monkey",
+              "state": "board_read",
+              "reached": true
             }
           ]
         }
@@ -50,7 +49,10 @@
         "kind": "player"
       },
       "next": "e2",
-      "text": "莫去惹他。"
+      "text": "莫去惹他。",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "e2": {
       "type": "end"
@@ -83,7 +85,10 @@
         "kind": "player"
       },
       "text": "懒得跟他歪缠。",
-      "next": "e3"
+      "next": "e3",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "e3": {
       "type": "end"
@@ -149,15 +154,21 @@
         "kind": "npc"
       },
       "text": "行吧，算你识相。",
-      "next": "n_pay6_l2"
+      "next": "n_pay6_l2",
+      "portrait": {
+        "emotion": "smirk"
+      }
     },
     "n_pay6_l2": {
       "type": "line",
       "speaker": {
         "kind": "npc"
       },
-      "text": "那水下东西，码头上都叫水猴子，专找落单的下手。结伙过岸，别落单，比啥都强。",
-      "next": "n_done_run"
+      "text": "那水头下的东西，码头上都喊水猴子，专挑落单的下手。结起伙过岸，莫落单，比啥子都强。",
+      "next": "n_done_run",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "n_pay12_1": {
       "type": "runActions",
@@ -177,15 +188,21 @@
         "kind": "npc"
       },
       "next": "n_pay12_l2",
-      "text": "哟，懂事。"
+      "text": "哟，懂事。",
+      "portrait": {
+        "emotion": "smirk"
+      }
     },
     "n_pay12_l2": {
       "type": "line",
       "speaker": {
         "kind": "npc"
       },
-      "text": "告示底下还有行小字：水猴子爱拣落单的。人多绑在一块走，它不好下手——这话我只多告诉你一遍。",
-      "next": "n_done_run"
+      "text": "告示底下还有行小字：水猴子爱挑落单的。人多绑在一砣走，它不好下手——这话老子只多说你一遍。",
+      "next": "n_done_run",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "n_pay_cancel": {
       "type": "line",
@@ -193,7 +210,10 @@
         "kind": "player"
       },
       "next": "e5",
-      "text": "老子才不当这冤大头。"
+      "text": "老子才不当这冤大头。",
+      "portrait": {
+        "emotion": "smirk"
+      }
     },
     "e5": {
       "type": "end"
@@ -204,7 +224,10 @@
         "kind": "player"
       },
       "next": "n_intel_2",
-      "text": "官爷，我可是听说过的——夜里有些地方去不得，冲撞了比下水还麻烦。您在这码头上当差，总该懂这里头的分寸吧？"
+      "text": "官爷，我可是听说过的——夜里头有些地方去不得，冲撞了比下水还遭得多。你在这码头上当差，这里头的分寸总晓得些迈？",
+      "portrait": {
+        "emotion": "smirk"
+      }
     },
     "n_intel_2": {
       "type": "line",
@@ -212,15 +235,21 @@
         "kind": "npc"
       },
       "next": "n_intel_3",
-      "text": "……哼。少跟老子扯这些有的没的。"
+      "text": "……哼。少跟老子扯这些有的没的。",
+      "portrait": {
+        "emotion": "angry"
+      }
     },
     "n_intel_3": {
       "type": "line",
       "speaker": {
         "kind": "npc"
       },
-      "text": "你要真想知道，告示底下还有一行小字：水猴子专拣落单的拖下去。结伴过岸，互相看紧点，一般没事。",
-      "next": "n_done_run"
+      "text": "你龟儿真要晓得，告示底下还有一行小字：水猴子专挑落单的拖下去。结起伴过岸，互相看紧点，一般没得事。",
+      "next": "n_done_run",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "n_done_run": {
       "type": "runActions",
@@ -244,19 +273,11 @@
           }
         },
         {
-          "type": "setScenarioPhase",
+          "type": "emitNarrativeSignal",
           "params": {
-            "scenarioId": "码头水鬼",
-            "phase": "真相揭示（官差）",
-            "status": "done"
-          }
-        },
-        {
-          "type": "setScenarioPhase",
-          "params": {
-            "scenarioId": "码头水鬼",
-            "phase": "真相揭示",
-            "status": "done"
+            "sourceType": "dialogue",
+            "sourceId": "码头看板官差",
+            "signal": "dock_truth_revealed"
           }
         }
       ],
@@ -268,32 +289,20 @@
         "kind": "player"
       },
       "next": "n_done_flag",
-      "text": "这片啥时候闹起了水猴子？头几天我还下水洗了澡......"
+      "text": "这片啥时候闹起了水猴子？头几天我还下水洗了澡......",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "n_done_flag": {
       "type": "runActions",
       "actions": [
         {
-          "type": "setScenarioPhase",
+          "type": "emitNarrativeSignal",
           "params": {
-            "scenarioId": "码头水鬼",
-            "phase": "询问官差",
-            "status": "done",
-            "outcome": "scolded"
-          }
-        },
-        {
-          "type": "setScenarioPhase",
-          "params": {
-            "scenarioId": "码头水鬼",
-            "phase": "官差已套近乎",
-            "status": "pending"
-          }
-        },
-        {
-          "type": "completeScenario",
-          "params": {
-            "scenarioId": "码头水鬼"
+            "sourceType": "dialogue",
+            "sourceId": "码头看板官差",
+            "signal": "dock_guanchai_rapport_reset"
           }
         },
         {
@@ -319,52 +328,79 @@
           "speaker": {
             "kind": "player"
           },
-          "text": "官爷......"
+          "text": "官爷......",
+          "portrait": {
+            "emotion": "calm"
+          }
         },
         {
           "speaker": {
             "kind": "npc"
           },
-          "text": "zzz..."
+          "text": "zzz...",
+          "portrait": {
+            "emotion": "calm"
+          }
         },
         {
           "speaker": {
             "kind": "player"
           },
-          "text": "官爷！！"
+          "text": "官爷！！",
+          "portrait": {
+            "emotion": "calm"
+          }
         },
         {
           "speaker": {
             "kind": "npc"
           },
-          "text": "干什么！死叫花！"
+          "text": "干什么！死叫花！",
+          "portrait": {
+            "emotion": "angry"
+          }
         },
         {
           "speaker": {
             "kind": "player"
           },
-          "text": "嘿嘿。这告示上都写的啥啊？"
+          "text": "嘿嘿。这告示上都写的啥啊？",
+          "portrait": {
+            "emotion": "smirk"
+          }
         },
         {
           "speaker": {
             "kind": "npc"
           },
-          "text": "不准下水！"
+          "text": "不准下水！",
+          "portrait": {
+            "emotion": "angry"
+          }
         },
         {
           "speaker": {
             "kind": "player"
           },
-          "text": "为啥？"
+          "text": "为啥？",
+          "portrait": {
+            "emotion": "calm"
+          }
         },
         {
           "speaker": {
             "kind": "npc"
           },
-          "text": "爬爬爬！个龟儿死叫花。下水找死，要死你死远点。"
+          "text": "爬爬爬！个龟儿死叫花。下水找死，要死你死远点。",
+          "portrait": {
+            "emotion": "angry"
+          }
         }
       ],
-      "text": "官爷......"
+      "text": "官爷......",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "n_2": {
       "type": "line",
@@ -377,26 +413,35 @@
           "speaker": {
             "kind": "npc"
           },
-          "text": "两文？你当老子是要饭的？滚滚滚！别碍老子的眼！"
+          "text": "两文？你当老子是要饭的？滚滚滚！别碍老子的眼！",
+          "portrait": {
+            "emotion": "angry"
+          }
         },
         {
           "speaker": {
             "kind": "player"
           },
-          "text": "……"
+          "text": "……",
+          "portrait": {
+            "emotion": "sad"
+          }
         }
       ],
-      "text": "两文？你当老子是要饭的？滚滚滚！别碍老子的眼！"
+      "text": "两文？你当老子是要饭的？滚滚滚！别碍老子的眼！",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "n_3": {
       "type": "runActions",
       "actions": [
         {
-          "type": "setScenarioPhase",
+          "type": "emitNarrativeSignal",
           "params": {
-            "scenarioId": "码头水鬼",
-            "phase": "官差已套近乎",
-            "status": "done"
+            "sourceType": "dialogue",
+            "sourceId": "码头看板官差",
+            "signal": "dock_guanchai_rapport_done"
           }
         }
       ],

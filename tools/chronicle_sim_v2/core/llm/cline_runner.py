@@ -10,7 +10,6 @@ import json
 import os
 import re
 import shutil
-import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from time import monotonic
@@ -341,19 +340,6 @@ async def _communicate_with_stderr_stream(
     stderr_emit: Any,
 ) -> tuple[bytes, bytes]:
     """与 communicate 等价，但在 stream_stderr 时对 stderr 按行回调（便于 GUI 实时日志）。"""
-    # Windows：**一律**用 communicate，禁止走下方 gather；否则在 stream_stderr=false 等分支仍可能并发读写管道，
-    # Cline(Node)/libuv 退出时出现 UV_HANDLE_CLOSING 断言（约 0xC0000409）。
-    if os.name == "nt":
-        out_b, err_b = await proc.communicate(stdin_bytes if use_stdin else None)
-        out_b, err_b = out_b or b"", err_b or b""
-        if stream_stderr and stderr_emit:
-            for line in err_b.splitlines():
-                s = line.decode("utf-8", errors="replace").rstrip("\r\n")
-                if s:
-                    clipped = s if len(s) <= 8000 else s[:8000] + "…"
-                    stderr_emit(f"[Cline·stderr] {clipped}")
-        return out_b, err_b
-
     if not stream_stderr or proc.stderr is None:
         out_b, err_b = await proc.communicate(stdin_bytes if use_stdin else None)
         return out_b or b"", err_b or b""
@@ -399,11 +385,7 @@ def _redact_auth_argv_for_log(argv: list[str]) -> str:
 
 
 def resolve_cline_executable(llm_config: dict[str, Any] | None) -> str:
-    """解析 Cline CLI 路径：显式配置 > PATH（cline / cline.cmd）> Windows npm 全局 shim。
-
-    从 IDE、Conda 等环境启动时 PATH 常不含 npm 全局目录，故在 Windows 上额外探测
-    ``%APPDATA%\\npm\\cline.cmd`` 等常见位置。
-    """
+    """解析 Cline CLI 路径：显式配置 > PATH。"""
     cfg = llm_config or {}
     raw = str(cfg.get("cline_executable", "") or cfg.get("cline_path", "") or "").strip()
     if raw:
@@ -415,21 +397,9 @@ def resolve_cline_executable(llm_config: dict[str, Any] | None) -> str:
             return w
         return raw
 
-    for name in ("cline", "cline.cmd"):
-        w = shutil.which(name)
-        if w:
-            return w
-
-    if os.name == "nt":
-        for env_key in ("APPDATA", "LOCALAPPDATA"):
-            base = os.environ.get(env_key, "")
-            if not base:
-                continue
-            npm = Path(base) / "npm"
-            for fname in ("cline.cmd", "cline"):
-                candidate = npm / fname
-                if candidate.is_file():
-                    return str(candidate.resolve())
+    w = shutil.which("cline")
+    if w:
+        return w
 
     return "cline"
 
@@ -439,16 +409,9 @@ def _cline_exe(llm_config: dict[str, Any] | None) -> str:
 
 
 def _cline_missing_runtime_error(exe: str) -> RuntimeError:
-    extra = ""
-    if os.name == "nt":
-        ad = (os.environ.get("APPDATA") or "").strip()
-        if ad:
-            p = Path(ad) / "npm" / "cline.cmd"
-            extra = f" 若已执行 npm i -g cline，可将 llm_config.cline_executable 设为: {p}"
     return RuntimeError(
         f"未找到 Cline 可执行文件: {exe}。请安装 Node 20+ 并 npm i -g cline，"
         "或在 llm_config 中设置 cline_executable 为完整路径。"
-        + (f" {extra}" if extra else "")
     )
 
 
@@ -504,42 +467,11 @@ def build_cline_env(*, run_dir: Path | None = None) -> dict[str, str]:
     return env
 
 
-def _cline_subprocess_kwargs() -> dict[str, Any]:
-    """Windows：无控制台窗口，减少 Node/libuv 与管道在退出时的异常交互。"""
-    if os.name != "nt":
-        return {}
-    if hasattr(subprocess, "CREATE_NO_WINDOW"):
-        return {"creationflags": subprocess.CREATE_NO_WINDOW}
-    return {}
-
-
 def _is_stub(pa: AgentLLMResources) -> bool:
     profile = getattr(pa, "profile", None)
     if isinstance(getattr(pa, "llm", None), ChronicleStubLLM):
         return True
     if isinstance(profile, ProviderProfile) and (profile.kind or "").lower() in ("", "stub"):
-        return True
-    return False
-
-
-def _win_exit_code_unsigned(rc: int) -> int:
-    """``subprocess`` 在 Windows 上可能返回负的 NTSTATUS，统一成 32 位无符号便于比对。"""
-    if rc >= 0:
-        return rc
-    return rc + (1 << 32)
-
-
-def _is_flaky_windows_cline_subprocess(rc: int, err_b: bytes) -> bool:
-    """Cline 基于 Node/libuv；Windows 上管道关闭竞态可能触发 ``UV_HANDLE_CLOSING`` 断言崩溃（常见 exit 0xC0000409）。"""
-    if os.name != "nt":
-        return False
-    u = _win_exit_code_unsigned(rc)
-    if u == 0xC0000409:
-        return True
-    es = (err_b or b"").decode("utf-8", errors="replace")
-    if "UV_HANDLE_CLOSING" in es:
-        return True
-    if "Assertion failed" in es and "async.c" in es:
         return True
     return False
 
@@ -587,53 +519,38 @@ async def refresh_cline_auth_for_profile(
     elif kind_l == "ollama":
         _ph("[Cline] ollama 槽位 auth 不使用 -k")
 
-    last_exc: RuntimeError | None = None
-    for attempt in range(3):
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *argv,
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=build_cline_env(run_dir=run_dir),
-                cwd=str(run_dir.resolve()),
-                **_cline_subprocess_kwargs(),
-            )
-        except FileNotFoundError as e:
-            raise _cline_missing_runtime_error(exe) from e
-
-        out_b, err_b = await asyncio.wait_for(
-            _communicate_with_stderr_stream(
-                proc,
-                stdin_bytes=None,
-                use_stdin=False,
-                stream_stderr=cl_stream,
-                stderr_emit=_stderr_emit if cl_stream else None,
-            ),
-            timeout=120.0,
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *argv,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=build_cline_env(run_dir=run_dir),
+            cwd=str(run_dir.resolve()),
         )
-        rc = proc.returncode if proc.returncode is not None else -1
-        if rc == 0:
-            emit_llm_trace(f"[cline·auth] agent_id={pa.agent_id!r} ok")
-            return
+    except FileNotFoundError as e:
+        raise _cline_missing_runtime_error(exe) from e
 
-        err_t = (err_b or b"").decode("utf-8", errors="replace")
-        out_t = (out_b or b"").decode("utf-8", errors="replace")
-        last_exc = RuntimeError(
-            f"cline auth 失败（exit {rc}）。stderr: {err_t[:2000]}\nstdout: {out_t[:800]}"
-        )
-        if attempt < 2 and _is_flaky_windows_cline_subprocess(rc, err_b):
-            delay_s = 0.12 * (2**attempt)
-            _ph(
-                f"[Cline] auth 子进程异常（疑似 Windows Node/libuv 管道竞态，exit 0x{_win_exit_code_unsigned(rc):08X}），"
-                f"{delay_s:.2f}s 后重试 ({attempt + 2}/3)…"
-            )
-            await asyncio.sleep(delay_s)
-            continue
-        raise last_exc
+    out_b, err_b = await asyncio.wait_for(
+        _communicate_with_stderr_stream(
+            proc,
+            stdin_bytes=None,
+            use_stdin=False,
+            stream_stderr=cl_stream,
+            stderr_emit=_stderr_emit if cl_stream else None,
+        ),
+        timeout=120.0,
+    )
+    rc = proc.returncode if proc.returncode is not None else -1
+    if rc == 0:
+        emit_llm_trace(f"[cline·auth] agent_id={pa.agent_id!r} ok")
+        return
 
-    if last_exc is not None:
-        raise last_exc
+    err_t = (err_b or b"").decode("utf-8", errors="replace")
+    out_t = (out_b or b"").decode("utf-8", errors="replace")
+    raise RuntimeError(
+        f"cline auth 失败（exit {rc}）。stderr: {err_t[:2000]}\nstdout: {out_t[:800]}"
+    )
 
 
 def cline_task_model_flag(profile: ProviderProfile | Any, resolved_model: str) -> str | None:
@@ -673,8 +590,7 @@ def _build_argv(
     """返回 (argv, use_stdin)。
 
     全文始终在 cwd 的 ``input.md``（由 ``run_agent_cline`` 写入）。argv 末参**恒**为
-    ``INPUT_MD_TASK_PROMPT``，避免 Windows ``CreateProcess`` 命令行总长限制及 UTF-16 计宽导致
-    内联大段 user 文本失败（stderr 常显示为乱码的「命令行太长」）。
+    ``INPUT_MD_TASK_PROMPT``，避免把大段 user 文本塞进命令行。
     """
     args: list[str] = [exe]
     if cline_verbose:
@@ -880,7 +796,6 @@ async def run_agent_cline(
                     stderr=asyncio.subprocess.PIPE,
                     env=build_cline_env(run_dir=run_dir),
                     cwd=str(temp_ws),
-                    **_cline_subprocess_kwargs(),
                 )
             except FileNotFoundError as e:
                 raise _cline_missing_runtime_error(exe) from e

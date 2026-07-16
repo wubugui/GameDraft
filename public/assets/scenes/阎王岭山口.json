@@ -1,10 +1,9 @@
 {
   "id": "阎王岭山口",
   "name": "阎王岭山口",
-  "worldWidth": 1376.0,
-  "worldHeight": 768.0,
+  "worldWidth": 2000,
   "camera": {
-    "zoom": 1.2,
+    "zoom": 0.8,
     "pixelsPerUnit": 1.0
   },
   "backgrounds": [
@@ -19,13 +18,13 @@
     "amb_night_forest_loop"
   ],
   "spawnPoint": {
-    "x": 240.0,
-    "y": 650.0
+    "x": 348.84,
+    "y": 944.77
   },
   "spawnPoints": {
     "entry": {
-      "x": 240.0,
-      "y": 650.0
+      "x": 348.84,
+      "y": 944.77
     }
   },
   "zones": [
@@ -33,20 +32,20 @@
       "id": "z_同行闲扯",
       "polygon": [
         {
-          "x": 320.0,
-          "y": 480.0
+          "x": 465.12,
+          "y": 697.67
         },
         {
-          "x": 760.0,
-          "y": 380.0
+          "x": 1104.65,
+          "y": 552.33
         },
         {
-          "x": 820.0,
-          "y": 520.0
+          "x": 1191.86,
+          "y": 755.81
         },
         {
-          "x": 380.0,
-          "y": 640.0
+          "x": 552.33,
+          "y": 930.23
         }
       ],
       "conditions": [
@@ -71,19 +70,19 @@
       "polygon": [
         {
           "x": 0.0,
-          "y": 380.0
+          "y": 552.33
         },
         {
-          "x": 1376.0,
-          "y": 380.0
+          "x": 2000.0,
+          "y": 552.33
         },
         {
-          "x": 1376.0,
-          "y": 460.0
+          "x": 2000.0,
+          "y": 668.6
         },
         {
           "x": 0.0,
-          "y": 460.0
+          "y": 668.6
         }
       ],
       "conditions": [
@@ -108,19 +107,19 @@
       "polygon": [
         {
           "x": 0.0,
-          "y": 285.0
+          "y": 414.24
         },
         {
-          "x": 1376.0,
-          "y": 285.0
+          "x": 2000.0,
+          "y": 414.24
         },
         {
-          "x": 1376.0,
-          "y": 335.0
+          "x": 2000.0,
+          "y": 486.92
         },
         {
           "x": 0.0,
-          "y": 335.0
+          "y": 486.92
         }
       ],
       "conditions": [
@@ -168,19 +167,19 @@
       "polygon": [
         {
           "x": 0.0,
-          "y": 195.0
+          "y": 283.43
         },
         {
-          "x": 1376.0,
-          "y": 195.0
+          "x": 2000.0,
+          "y": 283.43
         },
         {
-          "x": 1376.0,
-          "y": 240.0
+          "x": 2000.0,
+          "y": 348.84
         },
         {
           "x": 0.0,
-          "y": 240.0
+          "y": 348.84
         }
       ],
       "conditions": [
@@ -229,9 +228,9 @@
       "id": "hs_X点二_林边",
       "type": "inspect",
       "label": "林子边 · 画X的地方（二）",
-      "x": 1010.0,
-      "y": 355.0,
-      "interactionRange": 80.0,
+      "x": 1468.02,
+      "y": 515.99,
+      "interactionRange": 116.28,
       "conditions": [
         {
           "narrative": "scenario_送货",
@@ -246,9 +245,9 @@
       "id": "hs_X点三_林边",
       "type": "inspect",
       "label": "林子边 · 画X的地方（三）",
-      "x": 860.0,
-      "y": 252.0,
-      "interactionRange": 70.0,
+      "x": 1250.0,
+      "y": 366.28,
+      "interactionRange": 101.74,
       "conditions": [
         {
           "narrative": "scenario_送货",
@@ -263,9 +262,9 @@
       "id": "hs_歇脚棚",
       "type": "inspect",
       "label": "歇脚棚 · 把包袱放下",
-      "x": 610.0,
-      "y": 170.0,
-      "interactionRange": 80.0,
+      "x": 886.63,
+      "y": 247.09,
+      "interactionRange": 116.28,
       "conditions": [
         {
           "narrative": "scenario_送货",
@@ -288,9 +287,9 @@
       "id": "hs_进山的路",
       "type": "inspect",
       "label": "那条进山的路",
-      "x": 1130.0,
-      "y": 150.0,
-      "interactionRange": 90.0,
+      "x": 1642.44,
+      "y": 218.02,
+      "interactionRange": 130.81,
       "conditions": [
         {
           "narrative": "scenario_送货",
@@ -306,9 +305,9 @@
       "id": "T_下山回城",
       "type": "transition",
       "label": "掉头下山",
-      "x": 160.0,
-      "y": 700.0,
-      "interactionRange": 64.0,
+      "x": 232.56,
+      "y": 1017.44,
+      "interactionRange": 93.02,
       "data": {
         "targetScene": "雾津街头",
         "targetSpawnPoint": "from_event"
@@ -319,9 +318,9 @@
     {
       "id": "npc_脚帮甲",
       "name": "挑担的脚夫",
-      "x": 420.0,
-      "y": 540.0,
-      "interactionRange": 64.0,
+      "x": 610.47,
+      "y": 784.88,
+      "interactionRange": 93.02,
       "animFile": "/resources/runtime/animation/npc_coolie_a_anim/anim.json",
       "initialAnimState": "idle",
       "initialFacing": "right",
@@ -344,9 +343,9 @@
     {
       "id": "npc_脚帮乙",
       "name": "背货的脚夫",
-      "x": 500.0,
-      "y": 580.0,
-      "interactionRange": 64.0,
+      "x": 726.74,
+      "y": 843.02,
+      "interactionRange": 93.02,
       "animFile": "/resources/runtime/animation/npc_coolie_b_anim/anim.json",
       "initialAnimState": "idle",
       "initialFacing": "right",

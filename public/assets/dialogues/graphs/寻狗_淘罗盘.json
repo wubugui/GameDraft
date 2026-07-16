@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "id": "寻狗_淘罗盘",
+  "entry": "root",
+  "meta": {
+    "title": "寻狗Demo·淘行头：庙会摊上买锈罗盘"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "flag": "got_xingtou_luopan",
+              "value": true
+            }
+          ],
+          "next": "have"
+        }
+      ],
+      "defaultNext": "get"
+    },
+    "get": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "giveItem",
+          "params": {
+            "id": "luopan",
+            "count": 1
+          }
+        },
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "got_xingtou_luopan",
+            "value": true
+          }
+        }
+      ],
+      "next": "line"
+    },
+    "line": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "庙会摊上一个铜罗盘，指针锈得乱转，摊主当他不识货，贱卖了。关二狗倒乐——“乱转才像撞着煞嘛”。",
+      "next": "end1"
+    },
+    "have": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "罗盘有咯，不淘了。",
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "end1": {
+      "type": "end"
+    }
+  }
+}

@@ -45,8 +45,11 @@
       "speaker": {
         "kind": "player"
       },
-      "text": "（……纸。纸啊。出门忘带纸了。）",
-      "next": "n3"
+      "text": "（……纸。哦豁，出门忘了带纸。）",
+      "next": "n3",
+      "portrait": {
+        "emotion": "sad"
+      }
     },
     "n3": {
       "type": "runActions",
@@ -76,7 +79,7 @@
       "options": [
         {
           "id": "jie",
-          "text": "「哎，多谢哥。」（顺手接了）",
+          "text": "「哎哟，多谢哥子。」（顺手接了）",
           "next": "c1_a"
         },
         {
@@ -92,7 +95,7 @@
         "kind": "literal",
         "name": "旁白"
       },
-      "text": "他接得那叫一个自然，还客气地道了声谢，扯了几张用了。",
+      "text": "他接得顺顺当当，还客客气气道了声谢，扯了几张用了。",
       "next": "n5"
     },
     "c1_b": {
@@ -124,15 +127,21 @@
         "kind": "player"
       },
       "text": "（…………等等。）",
-      "next": "n7"
+      "next": "n7",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "n7": {
       "type": "line",
       "speaker": {
         "kind": "player"
       },
-      "text": "（前不着村，后不着店。这河滩上——哪来的人？？）",
-      "next": "n8"
+      "text": "（前不着村，后不着店。这河滩上——哪点冒出来个人？？）",
+      "next": "n8",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "n8": {
       "type": "runActions",
@@ -185,8 +194,11 @@
       "speaker": {
         "kind": "player"
       },
-      "text": "（有东西……在跟着俺。）",
-      "next": "n13"
+      "text": "（有东西……在跟着我。）",
+      "next": "n13",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "n13": {
       "type": "line",

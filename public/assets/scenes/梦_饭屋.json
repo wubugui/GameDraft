@@ -1,0 +1,122 @@
+{
+  "id": "梦_饭屋",
+  "name": "梦·一·吃饭",
+  "worldWidth": 800.0,
+  "camera": {
+    "zoom": 1.1,
+    "pixelsPerUnit": 1.0
+  },
+  "backgrounds": [
+    {
+      "image": "background.png",
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "ambientSounds": [
+    "阴风"
+  ],
+  "spawnPoint": {
+    "x": 518.1,
+    "y": 235.7
+  },
+  "spawnPoints": {
+    "from_courtyard": {
+      "x": 90.7,
+      "y": 379.8
+    }
+  },
+  "onEnter": [
+    {
+      "type": "fadeWorldFromBlack",
+      "params": {
+        "durationMs": 500
+      }
+    }
+  ],
+  "npcs": [
+    {
+      "id": "npc_dream_old_man",
+      "characterId": "dream_old_man",
+      "x": 282.0,
+      "y": 270.6,
+      "interactionRange": 55.0,
+      "initialAnimState": "idle",
+      "initialFacing": "left"
+    },
+    {
+      "id": "npc_dream_old_woman",
+      "characterId": "dream_old_woman",
+      "x": 408.5,
+      "y": 348.9,
+      "interactionRange": 55.0,
+      "initialAnimState": "idle",
+      "initialFacing": "left"
+    }
+  ],
+  "hotspots": [
+    {
+      "id": "hs_倒头饭",
+      "type": "inspect",
+      "x": 358.9,
+      "y": 249.1,
+      "interactionRange": 55.0,
+      "data": {},
+      "displayImage": {
+        "image": "/resources/runtime/images/props/dream/dream_meal_table_props.png",
+        "worldWidth": 51.4,
+        "worldHeight": 56.0,
+        "spriteSort": "front"
+      },
+      "label": ""
+    },
+    {
+      "id": "hs_油灯",
+      "type": "inspect",
+      "x": 345.1,
+      "y": 203.8,
+      "interactionRange": 40.0,
+      "data": {},
+      "displayImage": {
+        "image": "/resources/runtime/images/props/dream/dream_oil_lamp_table_prop.png",
+        "worldWidth": 21.8,
+        "worldHeight": 48.5,
+        "spriteSort": "front"
+      },
+      "label": ""
+    }
+  ],
+  "zones": [
+    {
+      "id": "z_饭桌",
+      "polygon": [
+        {
+          "x": 282.0,
+          "y": 212.6
+        },
+        {
+          "x": 398.4,
+          "y": 287.6
+        },
+        {
+          "x": 340.0,
+          "y": 353.1
+        },
+        {
+          "x": 234.2,
+          "y": 278.7
+        }
+      ],
+      "onEnter": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "梦_段C_饭屋"
+          }
+        }
+      ]
+    }
+  ],
+  "bgm": "bgm_placeholder_dark_shadows",
+  "worldHeight": 446.51
+}

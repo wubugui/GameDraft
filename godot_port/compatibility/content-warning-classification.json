@@ -1,0 +1,455 @@
+{
+  "contractVersion": 1,
+  "errorCount": 0,
+  "warningCount": 65,
+  "classifiedCount": 65,
+  "unknownCount": 0,
+  "alignmentStatus": "PASS",
+  "policy": "创作 warning 可保留，但每类必须有两端共同回退语义；任何新类别先审计再放行。",
+  "categories": [
+    {
+      "id": "empty_inspect",
+      "fallback": "交互定义保留但 inspect 分支无可执行内容；两端均不合成替代文案或动作。",
+      "evidence": [
+        "godot_port/tests/hotspot_test.tscn",
+        "godot_port/tests/interaction_coordinator_test.tscn"
+      ],
+      "authoringActionRequired": true,
+      "count": 20,
+      "issues": [
+        {
+          "dataType": "scene",
+          "itemId": "bridge_underpass",
+          "message": "Hotspot 'new_hotspot_2' inspect 未配置 graphId、非空 text 或非空 actions"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "teahouse",
+          "message": "Hotspot 'teahouse_door_too_early' inspect 未配置 graphId、非空 text 或非空 actions"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "test_room_a",
+          "message": "Hotspot 'new_hotspot_10' inspect 未配置 graphId、非空 text 或非空 actions"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "test_room_a",
+          "message": "Hotspot 'new_hotspot_15' inspect 未配置 graphId、非空 text 或非空 actions"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "义庄",
+          "message": "Hotspot 'hs_停尸凳' inspect 未配置 graphId、非空 text 或非空 actions"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "梦_农家院",
+          "message": "Hotspot 'hs_院门' inspect 未配置 graphId、非空 text 或非空 actions"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "梦_里屋",
+          "message": "Hotspot 'deco_脚尾灯' inspect 未配置 graphId、非空 text 或非空 actions"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "梦_里屋",
+          "message": "Hotspot 'deco_火盆' inspect 未配置 graphId、非空 text 或非空 actions"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "梦_饭屋",
+          "message": "Hotspot 'hs_倒头饭' inspect 未配置 graphId、非空 text 或非空 actions"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "梦_饭屋",
+          "message": "Hotspot 'hs_油灯' inspect 未配置 graphId、非空 text 或非空 actions"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "码头白天",
+          "message": "Hotspot 'new_hotspot_人群' inspect 未配置 graphId、非空 text 或非空 actions"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "码头白天",
+          "message": "Hotspot 'new_hotspot_3' inspect 未配置 graphId、非空 text 或非空 actions"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "码头白天",
+          "message": "Hotspot 'new_hotspot_4' inspect 未配置 graphId、非空 text 或非空 actions"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "码头白天",
+          "message": "Hotspot 'new_hotspot_箱子堆' inspect 未配置 graphId、非空 text 或非空 actions"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "码头白天",
+          "message": "Hotspot 'new_hotspot_6' inspect 未配置 graphId、非空 text 或非空 actions"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "码头白天",
+          "message": "Hotspot 'new_hotspot_9' inspect 未配置 graphId、非空 text 或非空 actions"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "码头白天",
+          "message": "Hotspot 'new_hotspot_10' inspect 未配置 graphId、非空 text 或非空 actions"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "码头白天",
+          "message": "Hotspot 'new_hotspot_11' inspect 未配置 graphId、非空 text 或非空 actions"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "码头白天",
+          "message": "Hotspot 'new_hotspot_12' inspect 未配置 graphId、非空 text 或非空 actions"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "码头白天",
+          "message": "Hotspot 'new_hotspot_13' inspect 未配置 graphId、非空 text 或非空 actions"
+        }
+      ]
+    },
+    {
+      "id": "missing_cutscene_binding",
+      "fallback": "未知绑定永远不会成为 active cutscene id；两端均按未绑定实体处理。",
+      "evidence": [
+        "godot_port/tests/scene_manager_test.tscn",
+        "godot_port/tests/all_cutscenes_smoke_test.tscn"
+      ],
+      "authoringActionRequired": true,
+      "count": 1,
+      "issues": [
+        {
+          "dataType": "scene",
+          "itemId": "码头白天",
+          "message": "Hotspot 'new_hotspot_8' cutsceneIds 包含 'cutscene_10'，不在过场 index 列表中"
+        }
+      ]
+    },
+    {
+      "id": "empty_archive_child",
+      "fallback": "空子条目不生成可见正文；两端保留容器顺序但不注入占位内容。",
+      "evidence": [
+        "godot_port/tests/archive_ui_test.tscn",
+        "godot_port/tests/archive_manager_test.tscn"
+      ],
+      "authoringActionRequired": true,
+      "count": 1,
+      "issues": [
+        {
+          "dataType": "archive",
+          "itemId": "book_erta_guide/entry/book_entry_2",
+          "message": "书页子条目无任何可显示内容（标题/正文/按语/插图全空），运行时不可见"
+        }
+      ]
+    },
+    {
+      "id": "unregistered_archive_flag",
+      "fallback": "未登记 flag 只读为缺省未满足；两端写入入口均受 registry 拒绝。",
+      "evidence": [
+        "godot_port/tests/flag_store_test.gd",
+        "godot_port/tests/archive_manager_test.tscn"
+      ],
+      "authoringActionRequired": true,
+      "count": 0,
+      "issues": []
+    },
+    {
+      "id": "empty_condition_flag_key",
+      "fallback": "空 flag key 的条件不命中，不读取或写入匿名状态。",
+      "evidence": [
+        "godot_port/tests/condition_evaluator_test.gd",
+        "src/systems/NarrativeConditionContext.test.ts"
+      ],
+      "authoringActionRequired": true,
+      "count": 0,
+      "issues": []
+    },
+    {
+      "id": "draft_narrative_signal",
+      "fallback": "__draft__ 没有合法生产发射方，因此迁移不会自行触发该 transition。",
+      "evidence": [
+        "godot_port/tests/narrative_signal_queue_test.tscn",
+        "godot_port/tests/narrative_reactive_test.tscn"
+      ],
+      "authoringActionRequired": true,
+      "count": 6,
+      "issues": [
+        {
+          "dataType": "narrative",
+          "itemId": "flow_1",
+          "message": "Transition 't_1' 仍是草稿信号 __draft__（不会被任何来源触发）"
+        },
+        {
+          "dataType": "narrative",
+          "itemId": "flow_1",
+          "message": "Transition 't_2' 仍是草稿信号 __draft__（不会被任何来源触发）"
+        },
+        {
+          "dataType": "narrative",
+          "itemId": "wrapper_graph_1",
+          "message": "Transition 't_1' 仍是草稿信号 __draft__（不会被任何来源触发）"
+        },
+        {
+          "dataType": "narrative",
+          "itemId": "wrapper_graph_1",
+          "message": "Transition 't_2' 仍是草稿信号 __draft__（不会被任何来源触发）"
+        },
+        {
+          "dataType": "narrative",
+          "itemId": "wrapper_graph_1",
+          "message": "Transition 't_3' 仍是草稿信号 __draft__（不会被任何来源触发）"
+        },
+        {
+          "dataType": "narrative",
+          "itemId": "wrapper_graph_1",
+          "message": "Transition 't_4' 仍是草稿信号 __draft__（不会被任何来源触发）"
+        }
+      ]
+    },
+    {
+      "id": "unlistened_narrative_signal_emit",
+      "fallback": "信号仍进入统一叙事队列并完成处理，但没有 transition 可选，因此两端都不改变活动状态，只记录 signal.unlistened 诊断。",
+      "evidence": [
+        "src/core/NarrativeStateManager.test.ts",
+        "godot_port/tests/narrative_owner_save_test.tscn"
+      ],
+      "authoringActionRequired": true,
+      "count": 1,
+      "issues": [
+        {
+          "dataType": "dialogueGraph",
+          "itemId": "寻狗_野道岔路:wrong",
+          "message": "emitNarrativeSignal 信号 'yedao_chalu_wrong' 没有任何 Transition 监听（发出后不会推动任何迁移）"
+        }
+      ]
+    },
+    {
+      "id": "unemitted_narrative_signal_listener",
+      "fallback": "transition 只由收到的同名信号驱动；没有任何生产发射方时，两端都不会合成信号或自行迁移状态。",
+      "evidence": [
+        "src/core/NarrativeStateManager.test.ts",
+        "godot_port/tests/narrative_state_manager_direct_test.tscn"
+      ],
+      "authoringActionRequired": true,
+      "count": 3,
+      "issues": [
+        {
+          "dataType": "narrative",
+          "itemId": "flow_背尸_零工活",
+          "message": "Transition 't_food1' 监听信号 'beishi_food1'，但全项目没有任何对话/资产/叙事图发出它，也无画布黑盒声明（悬垂监听，永远不会触发）"
+        },
+        {
+          "dataType": "narrative",
+          "itemId": "flow_背尸_零工活",
+          "message": "Transition 't_food2' 监听信号 'beishi_food2'，但全项目没有任何对话/资产/叙事图发出它，也无画布黑盒声明（悬垂监听，永远不会触发）"
+        },
+        {
+          "dataType": "narrative",
+          "itemId": "flow_背尸_零工活",
+          "message": "Transition 't_sneak' 监听信号 'beishi_city_sneak'，但全项目没有任何对话/资产/叙事图发出它，也无画布黑盒声明（悬垂监听，永远不会触发）"
+        }
+      ]
+    },
+    {
+      "id": "narrative_canvas_emit_drift",
+      "fallback": "运行时以真实对话图为权威；两端均不会依据编辑器画布声明虚构信号。",
+      "evidence": [
+        "godot_port/tests/graph_dialogue_manager_test.tscn",
+        "godot_port/tests/narrative_signal_queue_test.tscn"
+      ],
+      "authoringActionRequired": true,
+      "count": 2,
+      "issues": [
+        {
+          "dataType": "narrative",
+          "itemId": "xungou_demo_main",
+          "message": "画布黑盒 '寻狗_看进山路' 声明发出 'hanming_escaped'，但对话图里没有对应 emitNarrativeSignal（画布与真值漂移）"
+        },
+        {
+          "dataType": "narrative",
+          "itemId": "xungou_demo_main",
+          "message": "画布黑盒 '寻狗_梦待死之礼' 声明发出 'meng_ate'，但对话图里没有对应 emitNarrativeSignal（画布与真值漂移）"
+        }
+      ]
+    },
+    {
+      "id": "transition_without_plane_membership",
+      "fallback": "normal/overlay 位面按通用实体处理；exclusive 位面下两端均视为不存在。",
+      "evidence": [
+        "godot_port/tests/plane_runtime_integration_test.tscn",
+        "godot_port/tests/interaction_system_test.tscn"
+      ],
+      "authoringActionRequired": false,
+      "count": 31,
+      "issues": [
+        {
+          "dataType": "scene",
+          "itemId": "bridge_underpass",
+          "message": "transition 'exit_to_street' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "bridge_underpass",
+          "message": "transition 'new_hotspot_1' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "mountain_pass",
+          "message": "transition 'exit_to_street' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "mountain_pass",
+          "message": "transition 'exit_to_temple' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "mountain_pass",
+          "message": "transition 'T到河边' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "teahouse",
+          "message": "transition 'exit_to_street' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "temple",
+          "message": "transition 'T到室外' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "temple_exterior",
+          "message": "transition 'exit_to_mountain_pass' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "temple_exterior",
+          "message": "transition 'T到庙宇室内' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "test_room_a",
+          "message": "transition 'exit_to_teahouse' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "test_room_a",
+          "message": "transition 'exit_to_mountain_pass' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "test_room_a",
+          "message": "transition 'exit_to_bridge' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "test_room_a",
+          "message": "transition 'exit_to_b' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "test_room_a",
+          "message": "transition 'T到码头1' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "test_room_a",
+          "message": "transition 'T到码头2' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "test_room_b",
+          "message": "transition 'exit_to_a' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "义庄",
+          "message": "transition 'T_出义庄' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "城隍庙夜",
+          "message": "transition 'T_出庙' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "婆子家院",
+          "message": "transition 'T_出院子' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "婆子家院",
+          "message": "transition 'T_出院回街' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "崖墓",
+          "message": "transition 'T_出崖墓' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "枯井土地庙",
+          "message": "transition 'T_回城' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "河边",
+          "message": "transition 'T到山路' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "河边",
+          "message": "transition 'T回城' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "码头白天",
+          "message": "transition 'T码头到街巷' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "码头白天",
+          "message": "transition 'T到街巷2' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "破屋",
+          "message": "transition 'T_出破屋' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "野道",
+          "message": "transition 'T_到义庄' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "阎王岭山口",
+          "message": "transition 'T_下山回城' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "雾津街头",
+          "message": "transition 'T_去义庄' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+        },
+        {
+          "dataType": "scene",
+          "itemId": "雾津街头",
+          "message": "transition 'T_去破屋' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+        }
+      ]
+    }
+  ],
+  "unknown": []
+}

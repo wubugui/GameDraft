@@ -7,6 +7,21 @@ import type { InventoryManager } from '../systems/InventoryManager';
 import type { DebugPanelUI } from '../ui/DebugPanelUI';
 import { NARRATIVE_DEBUG_SECTION_ID } from '../ui/DebugPanelUI';
 import type { DepthDebugVisualizer, BgDebugMode } from '../debug/DepthDebugVisualizer';
+import type { SmellFormParams } from '../ui/smell/SmellIndicatorRenderer';
+
+/** F2 气味指示器调试：驱动味种 + 实时调烟形参数（只影响显示，不写盘/不动存档）。 */
+export interface SmellDebugController {
+  listProfiles: () => { id: string; name: string }[];
+  /** 驱动 action 层（优先级高）。 */
+  set: (scent: string, intensity: number, dir: number, flicker: boolean) => void;
+  clear: () => void;
+  /** 驱动 zone 层（优先级低；模拟"站在某 zone 里"，用来验证 action 压 zone）。 */
+  setZone: (scent: string, intensity: number, dir: number, flicker: boolean) => void;
+  clearZone: () => void;
+  sniff: () => void;
+  getForm: () => SmellFormParams | null;
+  setFormParam: (key: keyof SmellFormParams, value: number) => void;
+}
 
 /** 调试缩放下限。原先 0.25 过小幅度就顶死，表现为「只能放大不能缩小」 */
 const DEBUG_CAMERA_ZOOM_MIN = 0.05;
@@ -57,6 +72,20 @@ export interface DebugToolsDeps {
   getDepthOcclusionBlendFactor: () => number;
   setDepthOcclusionBlendFactor: (factor: number) => void;
   depthOcclusionActive: () => boolean;
+  /** F2：阴影/AO 模式与参数实时调试（仅影响渲染，不动存档/配置文件） */
+  entityShadowActive: () => boolean;
+  getEntityShadowDebug: () => { mode: string; toneEnabled: boolean; billboard: string; enabled: boolean; azimuthDeg: number; elevationDeg: number; lengthFactor: number; darkness: number; contact: number; contactSize: number; softSamples: number } | null;
+  cycleShadowMode: () => void;
+  toggleEntityTone: () => void;
+  toggleEntityShadowBillboard: () => void;
+  setEntityShadowAzimuth: (deg: number) => void;
+  nudgeEntityShadowElevation: (delta: number) => void;
+  nudgeEntityShadowLength: (delta: number) => void;
+  nudgeEntityShadowDarkness: (delta: number) => void;
+  nudgeEntityShadowContact: (delta: number) => void;
+  nudgeEntityShadowContactSize: (delta: number) => void;
+  nudgeEntityShadowSoftSamples: (delta: number) => void;
+  toggleEntityShadowEnabled: () => void;
   /** ScenarioStateManager + DocumentRevealManager 只读快照（F2 工具页） */
   getNarrativeDebugSnapshot: () => Record<string, unknown>;
   /** Scenario 列表（与 catalog 顺序一致，供 F2 逐项操作） */
@@ -65,6 +94,8 @@ export interface DebugToolsDeps {
   scenarioDebugComplete: (scenarioId: string) => void;
   /** 清掉该 scenario 的 phase 存档与 manual 线生命周期（调试用；不撤 exposes 写出的 flag） */
   scenarioDebugResetIncomplete: (scenarioId: string) => void;
+  /** F2 气味指示器调试：驱动味种 + 实时调烟形（只影响显示）。 */
+  smellDebug: SmellDebugController;
 }
 
 export class DebugTools {
@@ -72,6 +103,9 @@ export class DebugTools {
   private positionDebugMode = false;
   private positionDebugKeyHandler: (e: KeyboardEvent) => void = () => {};
   private positionDebugPointerHandler: (e: PointerEvent) => void = () => {};
+  /** F10 点选坐标的十字标记；跨场景/销毁时清除，防已 destroy 对象二次 destroy */
+  private debugMarker: Graphics | null = null;
+  private sceneUnloadCb: (() => void) | null = null;
 
   private debugMiddleButtonCameraZoomEnabled = false;
   private middleZoomDragActive = false;
@@ -81,6 +115,16 @@ export class DebugTools {
   private middleZoomPointerDownHandler: (e: PointerEvent) => void = () => {};
   private middleZoomPointerMoveHandler: (e: PointerEvent) => void = () => {};
   private middleZoomPointerUpHandler: (e: PointerEvent) => void = () => {};
+  private hudHealthDebugOverrideEnabled = false;
+  private hudHealthDebugOverrideRatio = 1;
+
+  // F2 气味指示器调试：当前驱动的味种/浓度/方位/波动（只为预览，不读 gameplay）
+  private smellDebugScent = '';
+  private smellDebugIntensity = 90;
+  private smellDebugDir = 0;
+  private smellDebugFlicker = false;
+  // 驱动哪一层：action（优先级高）/ zone（优先级低，模拟站在区内）。用来验证 action 压 zone。
+  private smellDebugLayer: 'action' | 'zone' = 'action';
 
   constructor(deps: DebugToolsDeps) {
     this.deps = deps;
@@ -90,6 +134,16 @@ export class DebugTools {
     this.setupPositionDebugTool();
     this.setupMiddleButtonCameraZoom();
     this.setupDebugPanelSections();
+    // F10 marker 挂在 entityLayer 上，场景卸载会连带销毁它——先行清引用，避免跨场景残留/双 destroy
+    this.sceneUnloadCb = () => this.clearDebugMarker();
+    this.deps.eventBus.on('scene:beforeUnload', this.sceneUnloadCb);
+  }
+
+  /** 清除 F10 坐标标记（幂等；场景卸载已销毁时只清引用）。 */
+  private clearDebugMarker(): void {
+    if (!this.debugMarker) return;
+    if (!this.debugMarker.destroyed) this.debugMarker.destroy();
+    this.debugMarker = null;
   }
 
   private clampDebugCameraZoom(z: number): number {
@@ -183,8 +237,6 @@ export class DebugTools {
     };
     window.addEventListener('keydown', this.positionDebugKeyHandler);
 
-    let debugMarker: Graphics | null = null;
-
     this.positionDebugPointerHandler = (e: PointerEvent) => {
       if (!this.positionDebugMode) return;
       e.preventDefault();
@@ -211,11 +263,8 @@ export class DebugTools {
         '| player:', this.deps.player.x.toFixed(1), this.deps.player.y.toFixed(1),
       );
 
-      if (debugMarker) {
-        debugMarker.destroy();
-        debugMarker = null;
-      }
-      debugMarker = new Graphics();
+      this.clearDebugMarker();
+      const debugMarker = new Graphics();
       const arm = 12;
       debugMarker.moveTo(-arm, 0).lineTo(arm, 0).stroke({ color: 0xff0000, width: 2 });
       debugMarker.moveTo(0, -arm).lineTo(0, arm).stroke({ color: 0xff0000, width: 2 });
@@ -223,6 +272,7 @@ export class DebugTools {
       debugMarker.x = worldX;
       debugMarker.y = worldY;
       renderer.entityLayer.addChild(debugMarker);
+      this.debugMarker = debugMarker;
 
       const x = worldX.toFixed(1);
       const y = worldY.toFixed(1);
@@ -337,6 +387,206 @@ export class DebugTools {
     return outer;
   }
 
+  private emitHudHealthDebugOverride(): void {
+    this.deps.eventBus.emit('debug:hudHealthOverrideChanged', {
+      enabled: this.hudHealthDebugOverrideEnabled,
+      value: this.hudHealthDebugOverrideRatio,
+    });
+  }
+
+  private clampUnitValue(v: number): number {
+    return Math.max(0, Math.min(1, v));
+  }
+
+  /** 把当前调试味种/浓度/方位/波动推给所选层（action/zone）。味种空=清该层。 */
+  private applySmellDebug(): void {
+    const sd = this.deps.smellDebug;
+    const zone = this.smellDebugLayer === 'zone';
+    if (this.smellDebugScent) {
+      (zone ? sd.setZone : sd.set)(this.smellDebugScent, this.smellDebugIntensity, this.smellDebugDir, this.smellDebugFlicker);
+    } else {
+      (zone ? sd.clearZone : sd.clear)();
+    }
+  }
+
+  /** F2「气味指示器（调试）」：左边驱动味种/浓度看效果，右边实时调所有味共用的烟形，底部读数可抄回 smell_profiles.json 的 form 块。 */
+  private buildSmellDebugSection(): { text: string; extra?: HTMLElement; actions?: { label: string; fn: () => void; noRefresh?: boolean }[] } {
+    const sd = this.deps.smellDebug;
+    const form = sd.getForm();
+    if (!form) {
+      return { text: '气味渲染器未就绪（等 smell_profiles.json 加载完、进入有 HUD 的场景后再开 F2）。' };
+    }
+
+    const wrap = document.createElement('div');
+    wrap.className = 'debug-dock__section-extra';
+
+    const readout = document.createElement('pre');
+    readout.className = 'debug-dock__smell-readout';
+    readout.style.cssText = 'white-space:pre-wrap;font-size:11px;line-height:1.35;margin:6px 0 0;opacity:.85;user-select:text;';
+    const updateReadout = (): void => {
+      const f = sd.getForm();
+      if (!f) return;
+      const body = (Object.keys(f) as (keyof SmellFormParams)[])
+        .map((k) => `    "${k}": ${Number(f[k].toFixed(3))}`)
+        .join(',\n');
+      readout.textContent = `"form": {\n${body}\n}`;
+    };
+
+    // —— 驱动层（action 压 zone）——
+    const layerHint = document.createElement('div');
+    layerHint.className = 'debug-dock__slider-hint';
+    layerHint.textContent = '驱动层（action 优先级高于 zone）：下面的味种/浓度写入所选层。两层都设可验证优先级 → 系统页看「生效来源」。';
+    wrap.appendChild(layerHint);
+    const layerRow = document.createElement('div');
+    layerRow.style.cssText = 'display:flex;gap:4px;margin-bottom:6px;';
+    const layerBtns: { layer: 'action' | 'zone'; btn: HTMLButtonElement }[] = [];
+    const highlightLayers = (): void => {
+      for (const { layer, btn } of layerBtns) btn.style.outline = layer === this.smellDebugLayer ? '2px solid #c9a24a' : '';
+    };
+    const mkLayerBtn = (layer: 'action' | 'zone', text: string): void => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'debug-dock__btn debug-dock__btn--sm';
+      b.textContent = text;
+      b.addEventListener('click', () => { this.smellDebugLayer = layer; highlightLayers(); });
+      layerBtns.push({ layer, btn: b });
+      layerRow.appendChild(b);
+    };
+    mkLayerBtn('action', 'action 层');
+    mkLayerBtn('zone', 'zone 层（模拟在区内）');
+    highlightLayers();
+    wrap.appendChild(layerRow);
+
+    // —— 味种选择（驱动所选层，看效果）——
+    const scentLabel = document.createElement('div');
+    scentLabel.className = 'debug-dock__slider-hint';
+    scentLabel.textContent = '驱动味种（写入上面所选层；只影响 HUD 显示，不写 flag、不动存档）：';
+    wrap.appendChild(scentLabel);
+
+    const scentRow = document.createElement('div');
+    scentRow.className = 'debug-dock__scenario-btns';
+    scentRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;';
+    const scentButtons: { id: string; btn: HTMLButtonElement }[] = [];
+    const highlightScents = (): void => {
+      for (const { id, btn } of scentButtons) btn.style.outline = id === this.smellDebugScent ? '2px solid #c9a24a' : '';
+    };
+    const mkScentBtn = (id: string, text: string): HTMLButtonElement => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'debug-dock__btn debug-dock__btn--sm';
+      b.textContent = text;
+      b.addEventListener('click', () => {
+        this.smellDebugScent = id;
+        this.applySmellDebug();
+        highlightScents();
+      });
+      scentButtons.push({ id, btn: b });
+      scentRow.appendChild(b);
+      return b;
+    };
+    mkScentBtn('', '无味');
+    for (const p of sd.listProfiles()) mkScentBtn(p.id, p.name);
+    wrap.appendChild(scentRow);
+
+    // 浓度 / 方位 / 波动 / 嗅
+    const stateHint = document.createElement('div');
+    stateHint.className = 'debug-dock__slider-hint';
+    const stateVal = document.createElement('span');
+    stateVal.className = 'debug-dock__slider-value';
+    const syncStateHint = (): void => {
+      stateVal.textContent =
+        `浓度 ${this.smellDebugIntensity} · 方位 ${this.smellDebugDir.toFixed(2)} · 波动 ${this.smellDebugFlicker ? '开' : '关'}`;
+    };
+
+    const mkSlider = (
+      label: string, min: number, max: number, step: number,
+      get: () => number, set: (v: number) => void,
+    ): HTMLElement => {
+      const row = document.createElement('div');
+      row.className = 'debug-dock__slider-row';
+      const lab = document.createElement('span');
+      lab.textContent = label;
+      lab.style.cssText = 'min-width:5em;font-size:11px;opacity:.8;';
+      const range = document.createElement('input');
+      range.type = 'range';
+      range.min = String(min); range.max = String(max); range.step = String(step);
+      range.value = String(get());
+      const val = document.createElement('span');
+      val.className = 'debug-dock__slider-value';
+      val.textContent = step < 1 ? get().toFixed(2) : String(get());
+      range.addEventListener('input', () => {
+        const v = Number(range.value);
+        set(v);
+        val.textContent = step < 1 ? v.toFixed(2) : String(v);
+      });
+      row.appendChild(lab); row.appendChild(range); row.appendChild(val);
+      return row;
+    };
+
+    wrap.appendChild(mkSlider('浓度', 0, 100, 1, () => this.smellDebugIntensity, (v) => {
+      this.smellDebugIntensity = v; this.applySmellDebug(); syncStateHint();
+    }));
+    wrap.appendChild(mkSlider('方位偏向', -1, 1, 0.05, () => this.smellDebugDir, (v) => {
+      this.smellDebugDir = v; this.applySmellDebug(); syncStateHint();
+    }));
+
+    const fRow = document.createElement('label');
+    fRow.className = 'debug-dock__check-row';
+    const fChk = document.createElement('input');
+    fChk.type = 'checkbox';
+    fChk.checked = this.smellDebugFlicker;
+    const fTxt = document.createElement('span');
+    fTxt.textContent = '波动（flicker，不对劲味的忽强忽弱）';
+    fChk.addEventListener('change', () => { this.smellDebugFlicker = fChk.checked; this.applySmellDebug(); syncStateHint(); });
+    fRow.appendChild(fChk); fRow.appendChild(fTxt);
+    wrap.appendChild(fRow);
+
+    stateHint.appendChild(stateVal);
+    syncStateHint();
+    wrap.appendChild(stateHint);
+
+    // —— 烟形（所有味共用，实时；只影响显示）——
+    const formHint = document.createElement('div');
+    formHint.className = 'debug-dock__slider-hint';
+    formHint.style.cssText = 'margin-top:8px;border-top:1px solid rgba(255,255,255,.12);padding-top:6px;';
+    formHint.textContent = '烟形（所有味共用骨架，实时；满意后把下方读数抄进 smell_profiles.json 的 form 块）：';
+    wrap.appendChild(formHint);
+
+    const FORM_SLIDERS: { key: keyof SmellFormParams; label: string; min: number; max: number; step: number }[] = [
+      { key: 'riseH', label: '高度', min: 40, max: 140, step: 1 },
+      { key: 'stemDia', label: '茎粗', min: 2, max: 14, step: 0.5 },
+      { key: 'plumeGrow', label: '顶宽', min: 8, max: 55, step: 1 },
+      { key: 'plumeExp', label: '顶散指数', min: 0.8, max: 3, step: 0.05 },
+      { key: 'topFade', label: '顶部消散', min: 0.4, max: 1, step: 0.01 },
+      { key: 'curveAmp', label: '弯度', min: 0, max: 12, step: 0.2 },
+      { key: 'swayGain', label: '飘法增益', min: 0, max: 1.5, step: 0.05 },
+      { key: 'baseW', label: '底盘宽', min: 20, max: 70, step: 1 },
+      { key: 'alphaBase', label: '不透明', min: 0.3, max: 1.4, step: 0.02 },
+    ];
+    for (const fs of FORM_SLIDERS) {
+      wrap.appendChild(mkSlider(fs.label, fs.min, fs.max, fs.step,
+        () => sd.getForm()?.[fs.key] ?? 0,
+        (v) => { sd.setFormParam(fs.key, v); updateReadout(); }));
+    }
+
+    const roHint = document.createElement('div');
+    roHint.className = 'debug-dock__slider-hint';
+    roHint.style.cssText = 'margin-top:6px;';
+    roHint.textContent = '读数（可选中复制 → 粘进 smell_profiles.json 顶层的 form 块）：';
+    wrap.appendChild(roHint);
+    updateReadout();
+    wrap.appendChild(readout);
+
+    return {
+      text: '',
+      extra: wrap,
+      actions: [
+        { label: '嗅一下（拔高）', noRefresh: true, fn: () => sd.sniff() },
+        { label: '清除（无味）', noRefresh: true, fn: () => { this.smellDebugScent = ''; this.applySmellDebug(); highlightScents(); } },
+      ],
+    };
+  }
+
   private setupDebugPanelSections(): void {
     const { debugPanelUI, player, inventoryManager, renderer } = this.deps;
 
@@ -429,6 +679,111 @@ export class DebugTools {
         actions,
       };
     });
+
+    debugPanelUI.addSection('三把火 HUD（调试）', () => {
+      const wrap = document.createElement('div');
+      wrap.className = 'debug-dock__section-extra';
+
+      const checkLabel = document.createElement('label');
+      checkLabel.className = 'debug-dock__check-row';
+
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = this.hudHealthDebugOverrideEnabled;
+
+      const checkText = document.createElement('span');
+      checkText.textContent = '接管系统值';
+
+      checkLabel.appendChild(checkbox);
+      checkLabel.appendChild(checkText);
+
+      const row = document.createElement('div');
+      row.className = 'debug-dock__slider-row';
+
+      const range = document.createElement('input');
+      range.type = 'range';
+      range.min = '0';
+      range.max = '1000';
+      range.step = '1';
+      range.value = String(Math.round(this.hudHealthDebugOverrideRatio * 1000));
+
+      const valueSpan = document.createElement('span');
+      valueSpan.className = 'debug-dock__slider-value';
+      valueSpan.textContent = this.hudHealthDebugOverrideRatio.toFixed(3);
+
+      const sync = (): void => {
+        valueSpan.textContent = this.hudHealthDebugOverrideRatio.toFixed(3);
+        range.value = String(Math.round(this.hudHealthDebugOverrideRatio * 1000));
+        checkbox.checked = this.hudHealthDebugOverrideEnabled;
+        this.emitHudHealthDebugOverride();
+      };
+
+      checkbox.addEventListener('change', () => {
+        this.hudHealthDebugOverrideEnabled = checkbox.checked;
+        sync();
+        debugPanelUI.log(`三把火 HUD override: ${this.hudHealthDebugOverrideEnabled ? 'on' : 'off'} (${this.hudHealthDebugOverrideRatio.toFixed(3)})`);
+      });
+
+      range.addEventListener('input', () => {
+        this.hudHealthDebugOverrideRatio = this.clampUnitValue(Number(range.value) / 1000);
+        valueSpan.textContent = this.hudHealthDebugOverrideRatio.toFixed(3);
+        if (this.hudHealthDebugOverrideEnabled) this.emitHudHealthDebugOverride();
+      });
+
+      row.appendChild(range);
+      row.appendChild(valueSpan);
+
+      const hint = document.createElement('div');
+      hint.className = 'debug-dock__slider-hint';
+      hint.textContent = '勾选后 HUD 三把火不再读 player_health/current，直接用滑块 0~1 作为 current/max 比值；只影响显示，不写 flag、不改 HealthSystem。';
+
+      wrap.appendChild(checkLabel);
+      wrap.appendChild(row);
+      wrap.appendChild(hint);
+
+      return {
+        text:
+          `Override: ${this.hudHealthDebugOverrideEnabled ? 'ON' : 'OFF'}\n` +
+          `Debug ratio: ${this.hudHealthDebugOverrideRatio.toFixed(3)}`,
+        actions: [
+          {
+            label: '0',
+            noRefresh: true,
+            fn: () => {
+              this.hudHealthDebugOverrideRatio = 0;
+              sync();
+            },
+          },
+          {
+            label: '1/3',
+            noRefresh: true,
+            fn: () => {
+              this.hudHealthDebugOverrideRatio = 1 / 3;
+              sync();
+            },
+          },
+          {
+            label: '2/3',
+            noRefresh: true,
+            fn: () => {
+              this.hudHealthDebugOverrideRatio = 2 / 3;
+              sync();
+            },
+          },
+          {
+            label: '1',
+            noRefresh: true,
+            fn: () => {
+              this.hudHealthDebugOverrideRatio = 1;
+              sync();
+            },
+          },
+        ],
+        extra: wrap,
+      };
+    });
+
+    debugPanelUI.addSection('气味指示器（调试）', () => this.buildSmellDebugSection());
 
     debugPanelUI.addSection('Collisions', () => {
       const enabled = player.collisionsEnabledState;
@@ -532,6 +887,91 @@ export class DebugTools {
             ]
           : [],
         extra,
+      };
+    });
+
+    debugPanelUI.addSection('投影阴影（调试）', () => {
+      const active = this.deps.entityShadowActive();
+      const s = this.deps.getEntityShadowDebug();
+      if (!active || !s) {
+        return { text: '当前场景未启用逐 entity 光照阴影（game_config.entityLighting.enabled 关或 lightEnv.shadow 关）。' };
+      }
+
+      // 数值/滑块放进持久 extra，按钮 noRefresh + 就地 sync()，按按钮不会重建/复位滑块。
+      const wrap = document.createElement('div');
+      wrap.className = 'debug-dock__section-extra';
+
+      const valLine = document.createElement('div');
+      valLine.className = 'debug-dock__slider-hint';
+
+      const valueSpan = document.createElement('span');
+      valueSpan.className = 'debug-dock__slider-value';
+
+      const sync = (): void => {
+        const cur = this.deps.getEntityShadowDebug();
+        if (!cur) return;
+        valLine.textContent =
+          `模式 ${cur.mode}　色调 ${cur.toneEnabled ? '开' : '关'}　billboard ${cur.billboard}\n` +
+          `方位 ${Math.round(cur.azimuthDeg)}°　仰角 ${Math.round(cur.elevationDeg)}°　长 ${cur.lengthFactor.toFixed(2)}　暗 ${cur.darkness.toFixed(2)}\n` +
+          `接触 ${cur.contact.toFixed(2)}(大小 ${cur.contactSize.toFixed(2)})　软采样 ${cur.softSamples}　${cur.enabled ? '阴影开' : '阴影关'}`;
+      };
+
+      const hint = document.createElement('div');
+      hint.className = 'debug-dock__slider-hint';
+      hint.textContent =
+        '模式: real=深度真实阴影 / planar=平面+碰撞裁切 / off。方位角=光来向(0°右/90°前/180°左/270°后),阴影朝反方向。' +
+        '滑块调方位角;按钮不复位滑块。满意后写进 lightEnv 或 game_config。';
+
+      const row = document.createElement('div');
+      row.className = 'debug-dock__slider-row';
+      const range = document.createElement('input');
+      range.type = 'range';
+      range.min = '0';
+      range.max = '359';
+      range.step = '1';
+      range.value = String(Math.round(s.azimuthDeg));
+      valueSpan.textContent = `${Math.round(s.azimuthDeg)}°`;
+      range.addEventListener('input', () => {
+        const deg = Number(range.value);
+        this.deps.setEntityShadowAzimuth(deg);
+        valueSpan.textContent = `${deg}°`;
+        sync();
+      });
+      row.appendChild(range);
+      row.appendChild(valueSpan);
+
+      wrap.appendChild(valLine);
+      wrap.appendChild(hint);
+      wrap.appendChild(row);
+      sync();
+
+      const btn = (label: string, fn: () => void): { label: string; fn: () => void; noRefresh: boolean } => ({
+        label,
+        noRefresh: true,
+        fn: () => { fn(); sync(); },
+      });
+
+      return {
+        text: '',
+        extra: wrap,
+        actions: [
+          btn('模式 real/planar/off ↻', () => this.deps.cycleShadowMode()),
+          btn('色调融入 开/关', () => this.deps.toggleEntityTone()),
+          btn('billboard 光/相机 ↻', () => this.deps.toggleEntityShadowBillboard()),
+          btn('阴影 开/关', () => this.deps.toggleEntityShadowEnabled()),
+          btn('仰角 −5', () => this.deps.nudgeEntityShadowElevation(-5)),
+          btn('仰角 +5', () => this.deps.nudgeEntityShadowElevation(5)),
+          btn('长度 −0.1', () => this.deps.nudgeEntityShadowLength(-0.1)),
+          btn('长度 +0.1', () => this.deps.nudgeEntityShadowLength(0.1)),
+          btn('暗度 −0.1', () => this.deps.nudgeEntityShadowDarkness(-0.1)),
+          btn('暗度 +0.1', () => this.deps.nudgeEntityShadowDarkness(0.1)),
+          btn('接触 −0.1', () => this.deps.nudgeEntityShadowContact(-0.1)),
+          btn('接触 +0.1', () => this.deps.nudgeEntityShadowContact(0.1)),
+          btn('接触大小 −0.1', () => this.deps.nudgeEntityShadowContactSize(-0.1)),
+          btn('接触大小 +0.1', () => this.deps.nudgeEntityShadowContactSize(0.1)),
+          btn('软采样 −1', () => this.deps.nudgeEntityShadowSoftSamples(-1)),
+          btn('软采样 +1', () => this.deps.nudgeEntityShadowSoftSamples(1)),
+        ],
       };
     });
 
@@ -654,6 +1094,11 @@ export class DebugTools {
 
   destroy(): void {
     window.removeEventListener('keydown', this.positionDebugKeyHandler);
+    if (this.sceneUnloadCb) {
+      this.deps.eventBus.off('scene:beforeUnload', this.sceneUnloadCb);
+      this.sceneUnloadCb = null;
+    }
+    this.clearDebugMarker();
     let canvas: HTMLCanvasElement | undefined;
     try {
       canvas = this.deps.renderer.app?.canvas as HTMLCanvasElement | undefined;

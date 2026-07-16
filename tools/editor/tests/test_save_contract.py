@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QApplication
 
 from tools.editor.project_model import ProjectModel
 from tools.editor.tests.save_test_utils import (
+    patch_staged_add,
     copy_assets_subset,
     file_sha256,
     repo_root_from_tests,
@@ -58,9 +59,7 @@ class TestSaveContract(unittest.TestCase):
             ), patch(
                 "tools.editor.scenarios_catalog_validate.validate_scenarios_catalog_for_save",
                 vs,
-            ), patch(
-                "tools.editor.project_model.write_json", side_effect=capture,
-            ):
+            ), patch_staged_add(capture):
                 m.save_all()
             self.assertEqual(calls, {})
             self.assertEqual(written, [])
@@ -70,13 +69,13 @@ class TestSaveContract(unittest.TestCase):
     def test_presave_validator_order_before_writes(self) -> None:
         log: list[str] = []
 
-        def vref(model):
+        def vref(model, dirty=None):
             log.append("ref_validator")
             return None
 
         def vscenario(*args, **kwargs):  # noqa: ANN001
             log.append("scenario_validator")
-            return None
+            return []
 
         with TemporaryDirectory() as td:
             root = Path(td) / "p"
@@ -86,6 +85,8 @@ class TestSaveContract(unittest.TestCase):
             self.assertFalse(m.is_dirty)
             m.game_config["_touch"] = 1
             m.mark_dirty("config")
+            # scenarios 校验现按脏桶收口，只在 scenarios 脏时运行——标脏以复现顺序。
+            m.mark_dirty("scenarios")
 
             def wj(path: Path, _data):  # noqa: ANN001
                 log.append(f"write:{path.name}")
@@ -95,7 +96,7 @@ class TestSaveContract(unittest.TestCase):
             ), patch(
                 "tools.editor.scenarios_catalog_validate.validate_scenarios_catalog_for_save",
                 vscenario,
-            ), patch("tools.editor.project_model.write_json", side_effect=wj):
+            ), patch_staged_add(wj):
                 m.save_all()
 
         self.assertIn("ref_validator", log)
@@ -114,7 +115,7 @@ class TestSaveContract(unittest.TestCase):
         def boom(*_a, **_k):
             called.append(1)
 
-        with patch("tools.editor.project_model.write_json", side_effect=boom):
+        with patch_staged_add(boom):
             m.save_all()
         self.assertEqual(called, [])
 
@@ -126,6 +127,8 @@ class TestSaveContract(unittest.TestCase):
             m.load_project(root)
             m.game_config["_probe"] = 1
             m.mark_dirty("config")
+            # scenarios 校验按脏桶收口，只在 scenarios 脏时运行。
+            m.mark_dirty("scenarios")
             writes: list[Path] = []
 
             def cap(p: Path, _d):
@@ -136,8 +139,8 @@ class TestSaveContract(unittest.TestCase):
                 return_value=None,
             ), patch(
                 "tools.editor.scenarios_catalog_validate.validate_scenarios_catalog_for_save",
-                return_value="stub scenario catalog error",
-            ), patch("tools.editor.project_model.write_json", side_effect=cap):
+                return_value=["stub scenario catalog error"],
+            ), patch_staged_add(cap):
                 with self.assertRaises(ValueError) as ar:
                     m.save_all()
             self.assertIn("stub scenario", ar.exception.args[0])
@@ -157,7 +160,7 @@ class TestSaveContract(unittest.TestCase):
             def cap(p: Path, _d):
                 writes.append(p)
 
-            with patch("tools.editor.project_model.write_json", side_effect=cap):
+            with patch_staged_add(cap):
                 with self.assertRaises(ValueError) as ar:
                     m.save_all()
             self.assertIn("嵌入引用", ar.exception.args[0])
@@ -179,7 +182,7 @@ class TestSaveContract(unittest.TestCase):
             m.items[0]["name"] = "[tag:item:__DOES_NOT_EXIST__]"
             m.mark_dirty("item")
 
-            def _fail_refs(_model):
+            def _fail_refs(_model, dirty=None):
                 return "stub invalid tag"
 
             with patch(
@@ -216,7 +219,7 @@ class TestSaveContract(unittest.TestCase):
             ), patch(
                 "tools.editor.scenarios_catalog_validate.validate_scenarios_catalog_for_save",
                 return_value=None,
-            ), patch("tools.editor.project_model.write_json", side_effect=boom):
+            ), patch_staged_add(boom):
                 with self.assertRaises(OSError):
                     m.save_all()
             self.assertTrue(m.is_dirty)
@@ -251,7 +254,7 @@ class TestSaveContract(unittest.TestCase):
             ), patch(
                 "tools.editor.scenarios_catalog_validate.validate_scenarios_catalog_for_save",
                 return_value=None,
-            ), patch("tools.editor.project_model.write_json", side_effect=cap):
+            ), patch_staged_add(cap):
                 m.save_all()
 
             sp = root / "public" / "assets" / "scenes"
@@ -284,7 +287,7 @@ class TestSaveContract(unittest.TestCase):
             ), patch(
                 "tools.editor.scenarios_catalog_validate.validate_scenarios_catalog_for_save",
                 return_value=None,
-            ), patch("tools.editor.project_model.write_json", side_effect=cap):
+            ), patch_staged_add(cap):
                 m.save_all()
 
             sp = root / "public" / "assets" / "scenes"
@@ -314,7 +317,7 @@ class TestSaveContract(unittest.TestCase):
             ), patch(
                 "tools.editor.scenarios_catalog_validate.validate_scenarios_catalog_for_save",
                 return_value=None,
-            ), patch("tools.editor.project_model.write_json", side_effect=cap):
+            ), patch_staged_add(cap):
                 m.save_all()
 
             dp = root / "public" / "assets" / "data"
@@ -342,7 +345,7 @@ class TestSaveContract(unittest.TestCase):
             ), patch(
                 "tools.editor.scenarios_catalog_validate.validate_scenarios_catalog_for_save",
                 return_value=None,
-            ), patch("tools.editor.project_model.write_json", side_effect=cap):
+            ), patch_staged_add(cap):
                 m.save_all()
 
             fp = root / "public" / "assets" / "data" / "flag_registry.json"
@@ -369,7 +372,7 @@ class TestSaveContract(unittest.TestCase):
             ), patch(
                 "tools.editor.scenarios_catalog_validate.validate_scenarios_catalog_for_save",
                 return_value=None,
-            ), patch("tools.editor.project_model.write_json", side_effect=cap):
+            ), patch_staged_add(cap):
                 m.save_all()
 
             dp = root / "public" / "assets" / "data"
@@ -396,7 +399,7 @@ class TestSaveContract(unittest.TestCase):
             ), patch(
                 "tools.editor.scenarios_catalog_validate.validate_scenarios_catalog_for_save",
                 return_value=None,
-            ), patch("tools.editor.project_model.write_json", side_effect=cap):
+            ), patch_staged_add(cap):
                 m.save_all()
 
             dp = root / "public" / "assets" / "data"
@@ -423,7 +426,7 @@ class TestSaveContract(unittest.TestCase):
             ), patch(
                 "tools.editor.scenarios_catalog_validate.validate_scenarios_catalog_for_save",
                 return_value=None,
-            ), patch("tools.editor.project_model.write_json", side_effect=cap):
+            ), patch_staged_add(cap):
                 m.save_all()
 
             dp = root / "public" / "assets" / "data"
@@ -450,7 +453,7 @@ class TestSaveContract(unittest.TestCase):
             ), patch(
                 "tools.editor.scenarios_catalog_validate.validate_scenarios_catalog_for_save",
                 return_value=None,
-            ), patch("tools.editor.project_model.write_json", side_effect=cap):
+            ), patch_staged_add(cap):
                 m.save_all()
 
             ap = root / "public" / "assets" / "data" / "archive"
@@ -507,7 +510,7 @@ class TestSaveContract(unittest.TestCase):
             ), patch(
                 "tools.editor.scenarios_catalog_validate.validate_scenarios_catalog_for_save",
                 return_value=None,
-            ), patch("tools.editor.project_model.write_json", side_effect=cap):
+            ), patch_staged_add(cap):
                 m.save_all()
 
             self.assertFalse(m.is_dirty)
@@ -557,7 +560,7 @@ class TestSaveContract(unittest.TestCase):
             ), patch(
                 "tools.editor.scenarios_catalog_validate.validate_scenarios_catalog_for_save",
                 return_value=None,
-            ), patch("tools.editor.project_model.write_json", side_effect=grab):
+            ), patch_staged_add(grab):
                 m.save_all()
 
             lst = payload["list"]

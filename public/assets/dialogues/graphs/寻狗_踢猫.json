@@ -1,0 +1,125 @@
+{
+  "schemaVersion": 1,
+  "id": "寻狗_踢猫",
+  "entry": "root",
+  "meta": {
+    "title": "寻狗Demo·①.5雾津街头·踢猫（概率·窜/反抓掉血）"
+  },
+  "nodes": {
+    "root": {
+      "type": "choice",
+      "promptLine": {
+        "speaker": {
+          "kind": "literal",
+          "name": "旁白"
+        },
+        "text": "屋檐下一只瘦猫，眯着眼晒太阳。"
+      },
+      "options": [
+        {
+          "id": "kick",
+          "text": "踹它一脚",
+          "next": "kick"
+        },
+        {
+          "id": "leave",
+          "text": "懒得理",
+          "next": "leave"
+        }
+      ]
+    },
+    "kick": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "关二狗一脚扫过去——",
+      "next": "roll"
+    },
+    "roll": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "randomBranch",
+          "params": {
+            "probability": 0.5,
+            "aboveActions": [
+              {
+                "type": "emitNarrativeSignal",
+                "params": {
+                  "sourceType": "dialogue",
+                  "sourceId": "寻狗_踢猫",
+                  "signal": "timao_run"
+                }
+              }
+            ],
+            "belowActions": [
+              {
+                "type": "decHealth",
+                "params": {
+                  "amount": 1
+                }
+              },
+              {
+                "type": "emitNarrativeSignal",
+                "params": {
+                  "sourceType": "dialogue",
+                  "sourceId": "寻狗_踢猫",
+                  "signal": "timao_scratch"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "next": "chk"
+    },
+    "chk": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "narrative": "wrap_踢猫",
+              "state": "scratch",
+              "reached": true
+            }
+          ],
+          "next": "scratch_line"
+        }
+      ],
+      "defaultNext": "run_line"
+    },
+    "run_line": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "猫「喵」一声窜上了墙头，回头瞪他。",
+      "next": "end1"
+    },
+    "scratch_line": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "猫反手就是一爪子挠在他手背上——「嘶——畜牲！」",
+      "next": "end1"
+    },
+    "leave": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "关二狗看它一眼，懒得理。",
+      "next": "end1"
+    },
+    "end1": {
+      "type": "end"
+    }
+  }
+}

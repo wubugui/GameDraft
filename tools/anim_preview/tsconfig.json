@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": "../..",
+    "paths": {
+      "@src/*": ["src/*"],
+      "@/*": ["src/*"]
+    },
+    "types": ["node", "vite/client"],
+    "allowJs": false,
+    "noEmit": true
+  },
+  "include": ["./*.ts", "./*.d.mts"],
+  "exclude": ["./*.test.ts"]
+}

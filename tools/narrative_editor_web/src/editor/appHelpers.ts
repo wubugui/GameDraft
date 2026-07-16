@@ -20,6 +20,7 @@ type CatalogListKey =
   | 'dialogueGraphIds'
   | 'scenarioIds'
   | 'questIds'
+  | 'sceneIds'
   | 'sceneNpcRefs'
   | 'sceneHotspotRefs'
   | 'zoneRefs'
@@ -31,17 +32,23 @@ type WrapperOwnerRule = {
   navigationKind?: string;
 };
 
-export const WRAPPER_OWNER_REGISTRY = {
+// 显式注解为 Record<string, WrapperOwnerRule>：`as const` 会把 system:{} 收窄成
+// 空对象字面量类型，联合上访问 catalogKey/navigationKind 全部报 TS2339。
+export const WRAPPER_OWNER_REGISTRY: Record<string, WrapperOwnerRule> = {
   npc: { catalogKey: 'sceneNpcRefs', navigationKind: 'npc' },
   hotspot: { catalogKey: 'sceneHotspotRefs', navigationKind: 'hotspot' },
   zone: { catalogKey: 'zoneRefs', navigationKind: 'zone' },
+  // 场景级 wrapper（给整张场景挂状态机）。运行时/校验/Python 目录均已支持 scene owner；
+  // 此前 web 注册表漏了 scene，导致"绑定类型"下拉选不到。navigationKind:'scene' 配合
+  // SceneEditor.select_scene_by_id + main_window SOURCE_NAVIGATION_TABS["scene"]，"跳转资源"可定位场景。
+  scene: { catalogKey: 'sceneIds', navigationKind: 'scene' },
   quest: { catalogKey: 'questIds', navigationKind: 'quest' },
   dialogue: { catalogKey: 'dialogueGraphIds', navigationKind: 'dialogue' },
   minigame: { catalogKey: 'minigameIds', navigationKind: 'minigame' },
   cutscene: { catalogKey: 'cutsceneIds', navigationKind: 'cutscene' },
   scenario: { catalogKey: 'scenarioIds', navigationKind: 'scenario' },
   system: {},
-} as const satisfies Record<string, WrapperOwnerRule>;
+};
 
 export const WRAPPER_OWNER_TYPES = Object.keys(WRAPPER_OWNER_REGISTRY);
 
@@ -103,7 +110,11 @@ export function updateElement(
 
 export function ownerChoicesForGraph(graph: NarrativeGraphDef, catalog: AuthoringCatalogDef): string[] {
   const ownerType = graph.ownerType?.trim();
-  if (ownerType === 'flow') return catalog.scenarioIds;
+  // flow 主图的 ownerId 是自由描述性标注(数据惯例:「寻狗Demo主线」「背尸淹尸活」…),
+  // 运行时把 owner 对当不透明索引键、validator 也不校验它——此前误绑 scenarioIds
+  // 导致除码头流以外的所有主线锚点都黄标「未知引用」(2026-07-13 修)。
+  // 与 system 同款:不给候选 → TextField 按"候选为空不误标"设计不再告警。
+  if (ownerType === 'flow') return [];
   return ownerChoicesForType(ownerType, catalog);
 }
 

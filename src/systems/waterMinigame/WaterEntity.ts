@@ -27,6 +27,23 @@ function parseHexColor(s: string): { r: number; g: number; b: number } {
 export type WaterEntityCreateOptions = {
   /** 写入参数 RT（深度 R、发光 G、标记 B）；漂浮物不进 RT，应为 false */
   paramsEncode?: boolean;
+  random?: () => number;
+};
+
+/** 品类默认显示尺寸（贴图最长边缩放目标，bounds 像素）；实体可用 displaySize 覆盖 */
+const DEFAULT_DISPLAY_SIZE: Record<WaterCategory, number> = {
+  grass: 70,
+  sunken: 62,
+  floating: 46,
+  swimming: 52,
+};
+
+/** 品类默认命中半径（bounds 像素）；实体可用 hitRadius 覆盖 */
+const DEFAULT_HIT_RADIUS: Record<WaterCategory, number> = {
+  grass: 42,
+  swimming: 34,
+  sunken: 38,
+  floating: 30,
 };
 
 export class WaterEntity {
@@ -38,7 +55,8 @@ export class WaterEntity {
   paramsSprite?: Sprite;
 
   private motionT = 0;
-  private depthPhase = Math.random() * Math.PI * 2;
+  private depthPhase = 0;
+  private random: () => number;
   private patrolDir = 1;
   private startX: number;
   private startY: number;
@@ -56,6 +74,8 @@ export class WaterEntity {
   ) {
     this.def = def;
     this.category = def.category;
+    this.random = options?.random ?? Math.random;
+    this.depthPhase = this.random() * Math.PI * 2;
     this.startX = def.pos.x;
     this.startY = def.pos.y;
 
@@ -66,16 +86,11 @@ export class WaterEntity {
     this.sprite = new Sprite(texture);
     this.sprite.anchor.set(0.5, 0.5);
     const base = Math.max(texture.width, texture.height);
-    const isShadow = /shadow|monkey/i.test(def.sprite);
-    const target = isShadow
-      ? 68
-      : def.category === 'grass'
-        ? 70
-        : def.category === 'sunken'
-          ? 62
-          : def.category === 'floating'
-            ? 46
-            : 52;
+    // 显示尺寸走数据字段（displaySize），未配置按品类默认；不再用贴图路径正则猜内容
+    const target =
+      typeof def.displaySize === 'number' && Number.isFinite(def.displaySize) && def.displaySize > 0
+        ? def.displaySize
+        : DEFAULT_DISPLAY_SIZE[def.category] ?? 52;
     const sc = base > 0 ? target / base : 1;
     this.sprite.scale.set(sc);
 
@@ -101,18 +116,11 @@ export class WaterEntity {
     this.applyTint();
   }
 
-  /** 水下命中半径（bounds 空间，与离屏渲染精灵对齐） */
+  /** 水下命中半径（bounds 空间，与离屏渲染精灵对齐）；数据字段优先，未配置按品类默认 */
   hitRadius(): number {
-    switch (this.def.category) {
-      case 'grass':
-        return 42;
-      case 'swimming':
-        return /shadow|monkey/i.test(this.def.sprite) ? 42 : 34;
-      case 'sunken':
-        return 38;
-      default:
-        return 30;
-    }
+    const r = this.def.hitRadius;
+    if (typeof r === 'number' && Number.isFinite(r) && r > 0) return r;
+    return DEFAULT_HIT_RADIUS[this.def.category] ?? 30;
   }
 
   private glowStrength(): number {
@@ -234,8 +242,8 @@ export class WaterEntity {
         this.container.y += (dy / len) * sp * dt * (18 + this.fleeBursts * 4);
       }
       if (jit > 0) {
-        this.container.x += (Math.random() - 0.5) * jit * dt * 30;
-        this.container.y += (Math.random() - 0.5) * jit * dt * 30;
+        this.container.x += (this.random() - 0.5) * jit * dt * 30;
+        this.container.y += (this.random() - 0.5) * jit * dt * 30;
       }
     } else if (this.category === 'floating') {
       this.container.x += Math.sin(this.motionT * 0.4) * dt * 6;
@@ -257,6 +265,21 @@ export class WaterEntity {
       if (this.escaped) return;
       cb(this, ev);
     });
+  }
+
+  /**
+   * 释放实体自建的 GPU 资源：Pixi 8 的 Container.destroy 不销毁 filters，
+   * 参数编码 Filter 若不显式 destroy 会逐局泄漏（律 8）。
+   * 容器/精灵本体仍由场景 root.destroy({ children: true }) 统一销毁。
+   */
+  destroy(): void {
+    this.sprite.removeAllListeners();
+    if (this.paramsSprite) this.paramsSprite.filters = [];
+    if (this.paramEncode) {
+      // Filter.destroy 默认不销毁共享 GlProgram，可安全释放
+      this.paramEncode.destroy();
+      this.paramEncode = undefined;
+    }
   }
 }
 

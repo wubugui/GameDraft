@@ -1,0 +1,212 @@
+{
+  "schemaVersion": 1,
+  "id": "街巷_市井闲谈",
+  "entry": "noodle_vendor",
+  "meta": {
+    "title": "街巷·市井闲谈"
+  },
+  "preconditions": [],
+  "nodes": {
+    "end": {
+      "type": "end"
+    },
+    "noodle_vendor": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "end",
+      "text": "面要趁烫吃，话要趁人多听。你在这点站一盏茶工夫，半条街的闲账都听得明白。",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "washerwoman": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "end",
+      "text": "莫踩水，刚洗好的衣裳沾不得脏气。城里这些天夜头的风怪得很，布上都有股庙灰味。",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "chess_grandpa": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "end",
+      "text": "看棋不开腔才是正经人，看热闹不伸手才活得长。娃儿，你给我记到起。",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "sugar_child": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "end",
+      "text": "我等老板儿给我转条龙出来。要是转到只鸡，我就说它是凤凰。",
+      "portrait": {
+        "emotion": "laugh"
+      }
+    },
+    "chasing_child": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "end",
+      "text": "闪开闪开！后头那个要抓我，我没偷他核桃，是核桃自己滚出来的嘛！",
+      "portrait": {
+        "emotion": "laugh"
+      }
+    },
+    "coolie_rice_sack": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "end",
+      "text": "一袋米压肩，三文钱压命。老板儿喊快点，路又不是他家修宽的。",
+      "portrait": {
+        "emotion": "sad"
+      }
+    },
+    "coolie_rope": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "end",
+      "text": "脚帮今天不接空话，只接现钱。要搬箱子，先把银角子给我摆出来。",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "lifu_runner": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "end",
+      "text": "让一下！码头那边催得凶，晚一步又要扣我脚钱。",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "paoge_teaman": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "end",
+      "text": "街面上讲的是人情，背巷里头讲的是规矩。你年纪轻，少问，少欠。",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "street_runner": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "end",
+      "text": "我在前街跑腿送口信，哪家门槛都不进。雾津城路窄，人情比路还绕。",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "fortune_teller": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "end",
+      "text": "算命不算死人账，问路不问夜半庙。你硬是要问，先把三文灯油钱添起。",
+      "portrait": {
+        "emotion": "smirk"
+      }
+    },
+    "ascetic_monk": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "end",
+      "text": "一钵饭，半瓢水，出家人够了。施主心头要是有阴影，绕到城隍庙远点走。",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "wandering_taoist": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "end",
+      "text": "符纸好画，因果难贴。街上越热闹，越有人把亏心事藏在人声里头。",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "constable_blade": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "end",
+      "text": "让一让，巡街。闹事的切衙门头说，不闹事的也莫给老子堵着路。",
+      "portrait": {
+        "emotion": "angry"
+      }
+    },
+    "constable_resting": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "end",
+      "text": "站岗也是活路，莫笑。你站一天试哈，鞋底板都能站出火星子。",
+      "portrait": {
+        "emotion": "smirk"
+      }
+    },
+    "foreign_lady": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "end",
+      "text": "这条街吵得厉害，却什么都买得到。只是每个人看我的眼神，都像在估价。",
+      "portrait": {
+        "emotion": "sad"
+      }
+    },
+    "foreign_cargo_hand": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "end",
+      "text": "货箱要在街口验封，进了巷子再出事，谁都说不清。雾津的路，比账本难懂。",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "incense_granny": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "end",
+      "text": "香烛纸钱都有，买不买随便你。只是夜头经过庙门，手头有点亮光，总比空起好。",
+      "portrait": {
+        "emotion": "calm"
+      }
+    }
+  }
+}

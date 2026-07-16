@@ -65,6 +65,10 @@ def static_key_set(registry: dict[str, Any]) -> set[str]:
 
 
 def load_flag_registry(path: Path) -> dict[str, Any]:
+    """文件不存在 → 空默认表（新工程合法）；文件存在但损坏 → **必须抛错**。
+    旧实现吞掉解析异常静默回落空表：用户在 Flags 页做任一编辑并 Save All，
+    就会用近空结构覆写原登记表（审查 P1-31）。现在损坏文件让 load_project
+    失败并整体回滚，用户先修文件再开工程。"""
     default: dict[str, Any] = {
         "static": [],
         "patterns": [],
@@ -73,18 +77,18 @@ def load_flag_registry(path: Path) -> dict[str, Any]:
     }
     if not path.exists():
         return default
+    from .file_io import read_json
     try:
-        from .file_io import read_json
         data = read_json(path)
-        if isinstance(data, dict):
-            for k, v in default.items():
-                if k not in data:
-                    data[k] = v
-            _migrate_flag_registry_in_place(data)
-            return data
-    except Exception:
-        pass
-    return default
+    except Exception as e:
+        raise ValueError(f"flag_registry.json 无法读取/解析（修复后再打开工程）：{e}") from e
+    if not isinstance(data, dict):
+        raise ValueError("flag_registry.json 根必须是对象（修复后再打开工程）")
+    for k, v in default.items():
+        if k not in data:
+            data[k] = v
+    _migrate_flag_registry_in_place(data)
+    return data
 
 
 def _extract_pattern_id(key: str, prefix: str, suffix: str | None) -> str | None:
@@ -218,40 +222,49 @@ def validate_flag_key(
 ) -> tuple[bool, str | None]:
     """Return (ok, message_if_bad)."""
     if not key or not isinstance(key, str):
-        return False, "empty flag key"
+        return False, "flag 键为空"
     static = static_key_set(registry)
     if key in static:
         return True, None
     ids = build_id_sets(model)
     all_hotspots = _all_hotspot_ids(model)
 
+    # 按前缀长度降序：最长（最具体）前缀优先，且任一匹配 pattern 通过即接受——
+    # 否则 `archive_book_` 会先匹配并吞掉合法的 `archive_book_entry_xxx`（rid 被切成
+    # `entry_xxx` 去比对书籍 id → 误报 unknown archive_book id，审查 P2-34）。
+    matched: list[tuple[int, dict, str]] = []
     for p in registry.get("patterns") or []:
         if not isinstance(p, dict):
             continue
         prefix = p.get("prefix") or ""
         suffix = p.get("suffix")
-        src = p.get("idSource")
-        rid = _extract_pattern_id(key, prefix, suffix if suffix else None)
-        if rid is None:
+        rid0 = _extract_pattern_id(key, prefix, suffix if suffix else None)
+        if rid0 is None:
             continue
+        matched.append((len(str(prefix)), p, rid0))
+    matched.sort(key=lambda t: t[0], reverse=True)
+    last_fail: str | None = None
+    for _plen, p, rid in matched:
+        src = p.get("idSource")
         if src == "hotspot_in_scene":
-            if scene_id:
-                if rid in _hotspot_ids_in_scene(model, scene_id):
-                    return True, None
-            elif rid in all_hotspots:
+            if scene_id and rid in _hotspot_ids_in_scene(model, scene_id):
                 return True, None
-            return False, f"flag '{key}' hotspot id not in scene"
-        if src == "hotspot_any_scene":
+            if not scene_id and rid in all_hotspots:
+                return True, None
+            last_fail = f"flag '{key}' 的热点 id 不在该场景中"
+        elif src == "hotspot_any_scene":
             if rid in all_hotspots:
                 return True, None
-            return False, f"flag '{key}' hotspot id not found in any scene"
-        if src in ids:
+            last_fail = f"flag '{key}' 的热点 id 不在任何场景中"
+        elif src in ids:
             if rid in ids[src]:
                 return True, None
-            return False, f"flag '{key}' unknown {src} id '{rid}'"
-        if src:
-            return False, f"flag '{key}' unknown idSource '{src}' in registry"
-    return False, f"flag '{key}' not in registry static/patterns ({severity})"
+            last_fail = f"flag '{key}' 引用的 {src} id '{rid}' 不存在"
+        elif src:
+            last_fail = f"flag '{key}' 的登记表 idSource '{src}' 未知"
+    if last_fail is not None:
+        return False, last_fail
+    return False, f"flag '{key}' 不在登记表 static/patterns 中（{severity}）"
 
 
 def _scenario_expose_value_type_error(vt: str | None, val: object) -> str | None:

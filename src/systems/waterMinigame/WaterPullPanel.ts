@@ -1,4 +1,5 @@
 import { Container, Graphics, Text } from 'pixi.js';
+import { drawPanelBase, SKINS } from '../../ui/PanelSkin';
 import type { FailurePolicy, PullRhythm } from './types';
 
 export type PullPanelResult = 'success' | 'fail_escape' | 'fail_snap' | 'fail_bite' | 'abort';
@@ -11,6 +12,7 @@ export interface WaterPullPanelParams {
   timeLimitSec: number;
   onResult: (r: PullPanelResult) => void;
   resolveText: (raw: string) => string;
+  random?: () => number;
 }
 
 /**
@@ -33,7 +35,8 @@ export class WaterPullPanel extends Container {
   private burstTelegraph = 0;
   private spasmNextAt = 0;
   private spasmKick = 0;
-  private wobbleSeed = Math.random() * Math.PI * 2;
+  private wobbleSeed = 0;
+  private readonly random: () => number;
 
   private readonly barW = 28;
   private readonly barH = 260;
@@ -46,6 +49,8 @@ export class WaterPullPanel extends Container {
 
   constructor(private params: WaterPullPanelParams) {
     super();
+    this.random = params.random ?? Math.random;
+    this.wobbleSeed = this.random() * Math.PI * 2;
     this.limit = Math.max(2, params.timeLimitSec);
     this.resetMarkerForRhythm();
 
@@ -92,16 +97,14 @@ export class WaterPullPanel extends Container {
       this.marker = 0.5;
     }
     this.markerVel = 0;
-    this.spasmNextAt = 0.65 + Math.random() * 0.85;
+    this.spasmNextAt = 0.65 + this.random() * 0.85;
   }
 
   private refreshGeometry(): void {
     const halfZ = Math.max(0.04, Math.min(0.45, this.params.zoneSize));
 
     this.barG.clear();
-    this.barG.roundRect(0, 0, this.barW, this.barH, 6);
-    this.barG.fill({ color: 0x1a2332, alpha: 0.95 });
-    this.barG.stroke({ color: 0x3d4f6a, width: 2 });
+    drawPanelBase(this.barG, 0, 0, this.barW, this.barH, SKINS.panel);
 
     this.warningG.clear();
     if (this.burstTelegraph > 0.001) {
@@ -178,10 +181,10 @@ export class WaterPullPanel extends Container {
       }
     } else if (rhythm === 'spasm') {
       if (t >= this.spasmNextAt) {
-        this.greenCenter = 0.18 + Math.random() * 0.64;
-        this.markerVel -= (0.16 + Math.random() * 0.22) * Math.max(0.2, this.params.sliderSpeed);
+        this.greenCenter = 0.18 + this.random() * 0.64;
+        this.markerVel -= (0.16 + this.random() * 0.22) * Math.max(0.2, this.params.sliderSpeed);
         this.spasmKick = 1;
-        this.spasmNextAt = t + 0.45 + Math.random() * 1.35;
+        this.spasmNextAt = t + 0.45 + this.random() * 1.35;
       }
       this.greenCenter += Math.sin(t * 11 + (this.marker * 7)) * dt * 0.28;
     } else {
@@ -245,20 +248,20 @@ export class WaterPullPanel extends Container {
     }
 
     const rem = Math.max(0, this.limit - this.elapsed);
-    const controlHint = this.marker < this.greenCenter
-      ? '按住鼠标或空格'
-      : '松开一下';
-    const rhythmHint =
+    const t = (key: string) => this.params.resolveText(`[tag:string:waterMinigame:${key}]`);
+    const stateHint =
       this.params.rhythm === 'burst' && this.burstTelegraph > 0.01
-        ? '（前摇）'
+        ? t('pullStateForeshadow')
         : this.params.rhythm === 'spasm' && this.spasmKick > 0.01
-          ? '（猛拽）'
+          ? t('pullStateYank')
           : overlap
-            ? '（在区内）'
-            : `（${controlHint}）`;
-    this.hint.text = this.params.resolveText(
-      `[水边拉扯] 剩余 ${rem.toFixed(1)}s  ${rhythmHint}`,
-    );
+            ? t('pullStateInZone')
+            : this.marker < this.greenCenter
+              ? t('pullStateHold')
+              : t('pullStateRelease');
+    this.hint.text = t('pullStatus')
+      .replace('{sec}', rem.toFixed(1))
+      .replace('{state}', stateHint);
     this.refreshGeometry();
 
     if (this.progress >= 0.995) {

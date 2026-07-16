@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "id": "寻狗_找活",
+  "entry": "root",
+  "meta": {
+    "title": "寻狗Demo·打哈欠起意找活（开场自由空挡）"
+  },
+  "nodes": {
+    "root": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "日头爬过屋脊，街上的热闹跟关二狗没得半点关系。他靠着墙根，打了个长长的哈欠。",
+      "next": "n2"
+    },
+    "n2": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "整天球事没得，肚皮倒是晓得叫唤。……去寻个活路糊口嘛，随便啥子腌臜活都将就。",
+      "next": "a_seek",
+      "portrait": {
+        "emotion": "smirk"
+      }
+    },
+    "a_seek": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_找活",
+            "signal": "beishi_lg_seek"
+          }
+        }
+      ],
+      "next": "end_n"
+    },
+    "end_n": {
+      "type": "end"
+    }
+  }
+}

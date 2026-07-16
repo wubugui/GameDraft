@@ -1,15 +1,20 @@
 """启动 GUI。"""
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
-# 先于 Qt / OpenCV / 解码库加载：减轻循环 seek 时 H.264/FFmpeg 刷 stderr
-if sys.platform == "win32":
-    # 优先走系统解码（WMF），通常不再走 libav，可避免反复 setPosition 时的提示
-    os.environ.setdefault("QT_MEDIA_BACKEND", "windows")
+import os
 
+# 直接以脚本方式运行本文件（如主编辑器「视频工具…」按钮以 QProcess 启动 main.py）时无包名，
+# 仓库根不在 sys.path → 必须在 import 任何 tools.* 之前补上，否则下方
+# `from tools.editor...` 会抛 ModuleNotFoundError: No module named 'tools'。
+if __package__ in (None, ""):
+    _repo_root = str(Path(__file__).resolve().parents[2])
+    if _repo_root not in sys.path:
+        sys.path.insert(0, _repo_root)
+
+# 先于 Qt / OpenCV / 解码库加载：减轻循环 seek 时 H.264/FFmpeg 刷 stderr
 os.environ.setdefault("OPENCV_LOG_LEVEL", "SILENT")
 os.environ.setdefault("AV_LOG_LEVEL", "quiet")
 

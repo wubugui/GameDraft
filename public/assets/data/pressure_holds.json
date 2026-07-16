@@ -1,8 +1,8 @@
 [
   {
     "id": "carry_bride_corpse",
-    "prompt": "按住——过肩、搭手，把她架起来",
-    "fillSeconds": 2.6,
+    "prompt": "按住——过肩、搭手，把尸架起来",
+    "fillSeconds": 3.2,
     "decayPerSecond": 0.9,
     "holdSfx": "sfx_hold_pressure_loop",
     "barColor": "#6e1f1f",
@@ -34,6 +34,128 @@
             }
           }
         ]
+      }
+    ]
+  },
+  {
+    "id": "carry_ordinary_corpse",
+    "prompt": "按住——过肩、搭手，扛起来",
+    "fillSeconds": 1.4,
+    "decayPerSecond": 0.4,
+    "holdSfx": "sfx_hold_pressure_loop",
+    "barColor": "#4a4438",
+    "onComplete": [
+      {
+        "type": "setPlayerAvatar",
+        "params": {
+          "bundleId": "player_carry_corpse_anim",
+          "stateMap": {
+            "idle": "carry_idle",
+            "walk": "carry_walk",
+            "run": "carry_heavy_walk"
+          }
+        }
+      },
+      {
+        "type": "emitNarrativeSignal",
+        "params": {
+          "sourceType": "minigame",
+          "sourceId": "carry_ordinary_corpse",
+          "signal": "beishi_lg_shouldered"
+        }
+      },
+      {
+        "type": "playScriptedDialogue",
+        "params": {
+          "lines": [
+            {
+              "speaker": "",
+              "text": "尸身往肩上一沉，稳稳的。凉是凉的，沉是沉的，该是什么样就什么样。"
+            },
+            {
+              "speaker": "{{player}}",
+              "text": "义庄。走。"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "carry_drowned_corpse",
+    "prompt": "按住——过肩、搭手，把泡胀的尸架起来",
+    "fillSeconds": 2.4,
+    "decayPerSecond": 0.8,
+    "holdSfx": "sfx_hold_pressure_loop",
+    "barColor": "#3d5a66",
+    "interrupts": [
+      {
+        "atRatio": 0.55,
+        "resetToRatio": 0.35,
+        "actions": [
+          {
+            "type": "playScriptedDialogue",
+            "params": {
+              "lines": [
+                {
+                  "speaker": "",
+                  "text": "手一搭上去，那身子猛地往水那头坠了一下——像有根湿绳子在底下拽。"
+                },
+                {
+                  "speaker": "{{player}}",
+                  "text": "邪门……泡都泡涨了，咋个还往那头坠葛。"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "onComplete": [
+      {
+        "type": "setPlayerAvatar",
+        "params": {
+          "bundleId": "player_carry_corpse_anim",
+          "stateMap": {
+            "idle": "carry_idle",
+            "walk": "carry_walk",
+            "run": "carry_heavy_walk"
+          }
+        }
+      },
+      {
+        "type": "emitNarrativeSignal",
+        "params": {
+          "sourceType": "minigame",
+          "sourceId": "carry_drowned_corpse",
+          "signal": "beishi_yan_shouldered"
+        }
+      },
+      {
+        "type": "setSmell",
+        "params": {
+          "scent": "corpse",
+          "intensity": 78
+        }
+      },
+      {
+        "type": "playScriptedDialogue",
+        "params": {
+          "lines": [
+            {
+              "speaker": "",
+              "text": "尸身上肩，凉是凉的，沉是沉的——就是这股水腥气，扑了个满鼻，贴着后颈散不开。"
+            },
+            {
+              "speaker": "{{player}}",
+              "text": "莫看，莫想。义庄，快点切。"
+            }
+          ]
+        }
+      },
+      {
+        "type": "clearSmell",
+        "params": {}
       }
     ]
   },
@@ -108,6 +230,10 @@
     ],
     "onAborted": [
       {
+        "type": "triggerDeathTether",
+        "params": {}
+      },
+      {
         "type": "emitNarrativeSignal",
         "params": {
           "sourceType": "minigame",
@@ -140,5 +266,410 @@
     "fillSeconds": 1.5,
     "decayPerSecond": 0.7,
     "barColor": "#3a3a52"
+  },
+  {
+    "id": "carry_putdown_drowned",
+    "prompt": "稳住——弯腰、松肩，把死人子放平",
+    "fillSeconds": 1.6,
+    "decayPerSecond": 0.6,
+    "holdSfx": "sfx_hold_pressure_loop",
+    "barColor": "#3d5a66",
+    "onComplete": [
+      {
+        "type": "emitNarrativeSignal",
+        "params": {
+          "sourceType": "minigame",
+          "sourceId": "carry_putdown_drowned",
+          "signal": "beishi_yan_placed"
+        }
+      },
+      {
+        "type": "playScriptedDialogue",
+        "params": {
+          "lines": [
+            {
+              "speaker": "",
+              "text": "尸身落凳，肩头陡然一轻。贴了一路后颈的水腥气，总算散了。"
+            },
+            {
+              "speaker": "{{player}}",
+              "text": "交割了。找管事结钱切。"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "carry_putdown_ordinary",
+    "prompt": "稳住——弯腰、松肩，把死人子放平",
+    "fillSeconds": 1.4,
+    "decayPerSecond": 0.5,
+    "holdSfx": "sfx_hold_pressure_loop",
+    "barColor": "#4a4438",
+    "onComplete": [
+      {
+        "type": "emitNarrativeSignal",
+        "params": {
+          "sourceType": "minigame",
+          "sourceId": "carry_putdown_ordinary",
+          "signal": "beishi_lg_placed"
+        }
+      },
+      {
+        "type": "playScriptedDialogue",
+        "params": {
+          "lines": [
+            {
+              "speaker": "",
+              "text": "尸身落凳，肩头一轻。寻常死人子，放平就放平了，没得那些幺蛾子。"
+            },
+            {
+              "speaker": "{{player}}",
+              "text": "找管事结钱切。"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "carry_hanging_corpse",
+    "prompt": "按住——割绳、过肩，把这具吊死的架起来",
+    "fillSeconds": 2.2,
+    "decayPerSecond": 0.6,
+    "holdSfx": "sfx_hold_pressure_loop",
+    "barColor": "#2e2622",
+    "interrupts": [
+      {
+        "atRatio": 0.55,
+        "resetToRatio": 0.4,
+        "actions": [
+          {
+            "type": "playScriptedDialogue",
+            "params": {
+              "lines": [
+                {
+                  "speaker": "",
+                  "text": "割到最后一股，尸猛地往下一沉——脖子一歪，那条青黑长舌吐出来搭在他手背上。"
+                },
+                {
+                  "speaker": "{{player}}",
+                  "text": "……妈哟。"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "onComplete": [
+      {
+        "type": "setFlag",
+        "params": {
+          "key": "beishi_carrying",
+          "value": true
+        }
+      },
+      {
+        "type": "setPlayerAvatar",
+        "params": {
+          "bundleId": "player_carry_corpse_anim",
+          "stateMap": {
+            "idle": "carry_idle",
+            "walk": "carry_walk",
+            "run": "carry_heavy_walk"
+          }
+        }
+      },
+      {
+        "type": "emitNarrativeSignal",
+        "params": {
+          "sourceType": "minigame",
+          "sourceId": "carry_hanging_corpse",
+          "signal": "beishi_lg_shouldered"
+        }
+      },
+      {
+        "type": "playScriptedDialogue",
+        "params": {
+          "lines": [
+            {
+              "speaker": "",
+              "text": "上了肩。比寻常的沉，凉气顺着后颈往里钻。勒痕那道印子，正贴着他的脸。"
+            },
+            {
+              "speaker": "{{player}}",
+              "text": "别对脸……义庄，走。"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "beishi_wild_heavy",
+    "prompt": "按住——腰挺直，别被压垮",
+    "releaseHint": "腰要塌了！",
+    "fillSeconds": 4.0,
+    "decayPerSecond": 0.9,
+    "holdSfx": "sfx_hold_pressure_loop",
+    "barColor": "#3a2f28",
+    "interrupts": [
+      {
+        "atRatio": 0.5,
+        "resetToRatio": 0.42,
+        "actions": [
+          {
+            "type": "playScriptedDialogue",
+            "params": {
+              "lines": [
+                {
+                  "speaker": "",
+                  "text": "尸像忽然记起了什么重量，一股脑往下坠，要把他按跪下去。"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "onComplete": [
+      {
+        "type": "emitNarrativeSignal",
+        "params": {
+          "sourceType": "minigame",
+          "sourceId": "beishi_wild_heavy",
+          "signal": "beishi_wild_heavy_done"
+        }
+      },
+      {
+        "type": "playScriptedDialogue",
+        "params": {
+          "lines": [
+            {
+              "speaker": "",
+              "text": "咬着牙顶住，它又轻回去了。背尸忌'重'——越怕越沉。"
+            }
+          ]
+        }
+      }
+    ],
+    "onAborted": [
+      {
+        "type": "decHealth",
+        "params": {
+          "amount": 2
+        }
+      },
+      {
+        "type": "emitNarrativeSignal",
+        "params": {
+          "sourceType": "minigame",
+          "sourceId": "beishi_wild_heavy",
+          "signal": "beishi_wild_heavy_fail"
+        }
+      },
+      {
+        "type": "playScriptedDialogue",
+        "params": {
+          "lines": [
+            {
+              "speaker": "",
+              "text": "腰一塌，尸压得他脸贴了地，凉气灌进嘴里。挣起来时，浑身的劲被抽走一截。"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "beishi_wild_biyingsheng",
+    "prompt": "咬住牙——它在耳边念名字，千万别应",
+    "releaseHint": "差点应了！",
+    "fillSeconds": 7.0,
+    "decayPerSecond": 1.0,
+    "holdSfx": "sfx_hold_pressure_loop",
+    "barColor": "#27333f",
+    "abortOnReleaseFromRatio": 0.7,
+    "interrupts": [
+      {
+        "atRatio": 0.45,
+        "resetToRatio": 0.38,
+        "actions": [
+          {
+            "type": "playScriptedDialogue",
+            "params": {
+              "lines": [
+                {
+                  "speaker": "背上",
+                  "text": "「……二狗。」"
+                },
+                {
+                  "speaker": "",
+                  "text": "贴着耳朵，气是凉的。念得慢，像在等他应一声。"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "atRatio": 0.8,
+        "resetToRatio": 0.72,
+        "actions": [
+          {
+            "type": "playSfx",
+            "params": {
+              "id": "sfx_abnormal_breath"
+            }
+          },
+          {
+            "type": "playScriptedDialogue",
+            "params": {
+              "lines": [
+                {
+                  "speaker": "背上",
+                  "text": "「二狗……你也来了嘛。」"
+                },
+                {
+                  "speaker": "",
+                  "text": "那条长舌顺着他脖子往上舔。应一声，它就找着替身了。"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "onComplete": [
+      {
+        "type": "emitNarrativeSignal",
+        "params": {
+          "sourceType": "minigame",
+          "sourceId": "beishi_wild_biyingsheng",
+          "signal": "beishi_wild_biyingsheng_done"
+        }
+      },
+      {
+        "type": "playScriptedDialogue",
+        "params": {
+          "lines": [
+            {
+              "speaker": "",
+              "text": "没应。它讪讪地缩回去，念叨声矮下去了。背尸老话：夜里听见喊你，千万莫应。"
+            }
+          ]
+        }
+      }
+    ],
+    "onAborted": [
+      {
+        "type": "decHealth",
+        "params": {
+          "amount": 3
+        }
+      },
+      {
+        "type": "emitNarrativeSignal",
+        "params": {
+          "sourceType": "minigame",
+          "sourceId": "beishi_wild_biyingsheng",
+          "signal": "beishi_wild_yingle"
+        }
+      },
+      {
+        "type": "playScriptedDialogue",
+        "params": {
+          "lines": [
+            {
+              "speaker": "{{player}}",
+              "text": "哎——"
+            },
+            {
+              "speaker": "",
+              "text": "一个字刚出口，尸猛地收紧，勒得他喘不上气，眼前发黑。……好悬，缓过来时半条命似的。记住了：莫应。"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "beishi_wild_biehuitou",
+    "prompt": "别回头，闷头往前走",
+    "releaseHint": "差点回头！",
+    "fillSeconds": 5.0,
+    "decayPerSecond": 1.0,
+    "holdSfx": "sfx_hold_pressure_loop",
+    "barColor": "#2b2735",
+    "abortOnReleaseFromRatio": 0.68,
+    "interrupts": [
+      {
+        "atRatio": 0.55,
+        "resetToRatio": 0.46,
+        "actions": [
+          {
+            "type": "playScriptedDialogue",
+            "params": {
+              "lines": [
+                {
+                  "speaker": "",
+                  "text": "身后传来拖沓的脚步，一下、一下，跟着他的步子。像是那尸自己也走着，在他背上。"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "onComplete": [
+      {
+        "type": "emitNarrativeSignal",
+        "params": {
+          "sourceType": "minigame",
+          "sourceId": "beishi_wild_biehuitou",
+          "signal": "beishi_wild_biehuitou_done"
+        }
+      },
+      {
+        "type": "playScriptedDialogue",
+        "params": {
+          "lines": [
+            {
+              "speaker": "",
+              "text": "硬着头皮没回头。脚步声散了。回头对上它的脸，就走不动了——老规矩。"
+            }
+          ]
+        }
+      }
+    ],
+    "onAborted": [
+      {
+        "type": "decHealth",
+        "params": {
+          "amount": 2
+        }
+      },
+      {
+        "type": "emitNarrativeSignal",
+        "params": {
+          "sourceType": "minigame",
+          "sourceId": "beishi_wild_biehuitou",
+          "signal": "beishi_wild_huitou"
+        }
+      },
+      {
+        "type": "playScriptedDialogue",
+        "params": {
+          "lines": [
+            {
+              "speaker": "",
+              "text": "没忍住扭头——那张脸就贴在肩后，长舌、翻白眼，正看着他。腿一软，好半天挪不动步。"
+            }
+          ]
+        }
+      }
+    ]
   }
 ]

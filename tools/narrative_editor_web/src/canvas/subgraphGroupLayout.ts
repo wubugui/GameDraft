@@ -103,6 +103,8 @@ export function expandParentsForPositionChanges(
   let next = nodes;
   for (const change of changes) {
     if (change.type !== 'position' || !change.position) continue;
+    // 闭包内属性收窄会失效（TS 不跨回调保持 change.position 非空），先取出。
+    const changedPosition = change.position;
     const child = next.find((node) => node.id === change.id);
     if (!child?.parentId) continue;
     const parent = next.find((node) => node.id === child.parentId);
@@ -110,7 +112,7 @@ export function expandParentsForPositionChanges(
 
     const children = next
       .filter((node) => node.parentId === parent.id)
-      .map((node) => (node.id === change.id ? { ...node, position: change.position } : node));
+      .map((node) => (node.id === change.id ? { ...node, position: changedPosition } : node));
 
     const needed = boundsFromChildNodes(children);
     const current = parentStyleSize(parent);

@@ -6,18 +6,17 @@
 
 ## 1. 打开
 
-1. 打开工程 `D:\GameDraft`。
-2. 双击 `start-production-workbench.cmd`。
-3. 或在命令行运行：
+1. 打开工程目录。
+2. 在命令行运行：
 
-```powershell
+```sh
 npm run planner:gui
 ```
 
-4. 也可以直接运行 Python 入口：
+3. 也可以直接运行 Python 入口：
 
-```powershell
-.\.tools\Python311\python.exe -m tools.production_workbench D:\GameDraft
+```sh
+.tools/venv/bin/python -m tools.production_workbench .
 ```
 
 ## 2. 每天开始
@@ -96,7 +95,7 @@ npm run planner:gui
 
 1. 先运行游戏：
 
-```powershell
+```sh
 npm run dev
 ```
 

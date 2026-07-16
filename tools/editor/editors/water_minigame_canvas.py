@@ -9,6 +9,7 @@ from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QGraphicsItem,
     QGraphicsPixmapItem,
+    QGraphicsRectItem,
     QGraphicsScene,
     QGraphicsView,
     QHBoxLayout,
@@ -61,12 +62,32 @@ def _parse_tint_hex(raw: str | None, fallback: int = 0x18324A) -> int:
     return n if 0 <= n <= 0xFFFFFF else fallback
 
 
+# 品类默认显示尺寸（贴图最长边缩放目标，bounds 像素）——必须与运行时
+# src/systems/waterMinigame/WaterEntity.ts 的 DEFAULT_DISPLAY_SIZE 逐值一致，
+# 否则预览尺寸撒谎（工具栏标称"与游戏中一致"）。改动配 parity 测试
+# test_water_sprite_size_parity.py 从 WaterEntity.ts 解析常量对账，防再漂移。
+_DEFAULT_DISPLAY_SIZE = {
+    "grass": 70,
+    "sunken": 62,
+    "floating": 46,
+    "swimming": 52,
+}
+_DISPLAY_SIZE_FALLBACK = 52  # 运行时 `?? 52`：未知品类的兜底
+
+
 def _target_edge_for_category(cat: str) -> int:
-    if cat == "grass":
-        return 56
-    if cat == "floating":
-        return 48
-    return 44
+    return _DEFAULT_DISPLAY_SIZE.get(cat, _DISPLAY_SIZE_FALLBACK)
+
+
+def _target_edge_for_entity(ent: dict[str, Any]) -> float:
+    """实体显示尺寸：displaySize（>0 有限）优先，否则按品类默认——
+    与 WaterEntity 构造里 `def.displaySize > 0 ? def.displaySize : DEFAULT[cat]` 同规。"""
+    ds = ent.get("displaySize")
+    if isinstance(ds, (int, float)) and not isinstance(ds, bool):
+        f = float(ds)
+        if f > 0 and f == f and f not in (float("inf"), float("-inf")):
+            return f
+    return float(_target_edge_for_category(str(ent.get("category") or "sunken")))
 
 
 def _depth_offset_y(ent: dict[str, Any]) -> float:
@@ -227,7 +248,7 @@ class EntitySpriteItem(QGraphicsPixmapItem):
         tw = max(1, pm.width())
         th = max(1, pm.height())
         base = max(tw, th)
-        target = _target_edge_for_category(cat)
+        target = _target_edge_for_entity(ent)  # displaySize 优先，否则品类默认
         sc = target / base if base > 0 else 1.0
         sw = max(1, int(round(tw * sc)))
         sh = max(1, int(round(th * sc)))
@@ -276,7 +297,7 @@ class EntitySpriteItem(QGraphicsPixmapItem):
         tw = max(1, pm.width())
         th = max(1, pm.height())
         base = max(tw, th)
-        target = _target_edge_for_category(cat)
+        target = _target_edge_for_entity(ent)  # displaySize 优先，否则品类默认
         sc = target / base if base > 0 else 1.0
         sw = max(1, int(round(tw * sc)))
         sh = max(1, int(round(th * sc)))
@@ -300,7 +321,10 @@ class EntitySpriteItem(QGraphicsPixmapItem):
     def itemChange(self, change, value):  # noqa: ANN001
         if change == QGraphicsItem.GraphicsItemChange.ItemPositionChange:
             sc = self.scene()
-            if sc is not None:
+            # 程序性 setPos（_suppress_moved 期间）不 clamp：越界坐标是模型真值，
+            # 夹紧只应约束用户拖拽——否则画布与模型漂移，随后拖 1px 就把夹紧值
+            # 写回模型毁掉原坐标（审查 P2-20；paper_craft 的 _syncing 守卫同范式）。
+            if sc is not None and not getattr(self._canvas, "_suppress_moved", False):
                 sr = sc.sceneRect()
                 new_center = QPointF(value)
                 clamped = QPointF(
@@ -337,7 +361,9 @@ class WaterCanvasView(QGraphicsView):
     def __init__(self, scene: QGraphicsScene, parent: QWidget | None = None) -> None:
         super().__init__(scene, parent)
         self._place_mode = False
-        self.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
+        # 默认 NoDrag：左键直接选中/拖移实体（与 scene_editor 画布一致）。
+        # 旧默认 RubberBandDrag 会把左键拖拽吞为框选，与「拖拽=移动实体」冲突易误触。
+        self.setDragMode(QGraphicsView.DragMode.NoDrag)
         self.setRenderHints(
             QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform,
         )
@@ -348,9 +374,8 @@ class WaterCanvasView(QGraphicsView):
 
     def set_place_mode(self, on: bool) -> None:
         self._place_mode = on
-        self.setDragMode(
-            QGraphicsView.DragMode.NoDrag if on else QGraphicsView.DragMode.RubberBandDrag,
-        )
+        # 放置模式与普通模式都用 NoDrag：放置时拦截空白点击新建，普通时左键拖移实体。
+        self.setDragMode(QGraphicsView.DragMode.NoDrag)
         self.setCursor(Qt.CursorShape.CrossCursor if on else Qt.CursorShape.ArrowCursor)
 
     def mousePressEvent(self, event):  # noqa: ANN001
@@ -381,6 +406,7 @@ class WaterMinigameSceneCanvas(QWidget):
         super().__init__(parent)
         self._model = model
         self._items: list[EntitySpriteItem] = []
+        self._shore_items: list[QGraphicsRectItem] = []
         self._silent_select = False
         self._suppress_moved = False
         self._ambient: tuple[str, str] = ("day", "clear")
@@ -397,7 +423,7 @@ class WaterMinigameSceneCanvas(QWidget):
 
         self._scene = _WaterBackdropScene(self)
         self._view = WaterCanvasView(self._scene, self)
-        self._view.setMinimumSize(420, 280)
+        self._view.setMinimumSize(380, 240)  # 画布有 fit/缩放，缩小下限以适配 13"
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -408,9 +434,6 @@ class WaterMinigameSceneCanvas(QWidget):
         self._btn_place.toggled.connect(self._view.set_place_mode)
         self._view.place_click.connect(self._on_place_click)
         self._scene.selectionChanged.connect(self._on_scene_selection_changed)
-
-    def set_ambient(self, timeofday: str, weather: str) -> None:
-        self._ambient = (timeofday.strip() or "day", weather.strip() or "clear")
 
     def _on_place_click(self, x: float, y: float) -> None:
         if self._btn_place.isChecked():
@@ -459,6 +482,7 @@ class WaterMinigameSceneCanvas(QWidget):
         entities: list[dict],
         selected_row: int,
         ambient: tuple[str, str] | None = None,
+        shore_banks: list[dict] | None = None,
     ) -> None:
         if ambient:
             self._ambient = ambient
@@ -471,25 +495,63 @@ class WaterMinigameSceneCanvas(QWidget):
         pm = _load_runtime_pixmap(self._model, texture_url)
         self._scene.set_backdrop(pm, tint_hex)
 
-        for it in self._items:
-            self._scene.removeItem(it)
-        self._items.clear()
-
-        for i, ent in enumerate(entities):
-            if not isinstance(ent, dict):
-                continue
-            raw_pm = _load_runtime_pixmap(self._model, str(ent.get("sprite") or ""))
-            base_pm = raw_pm if raw_pm is not None else _placeholder_pixmap()
-            item = EntitySpriteItem(i, ent, self, base_pm, ambient=self._ambient)
-            self._scene.addItem(item)
-            self._items.append(item)
-
+        # 全程抑制选择信号：移除旧选中图元会触发 selectionChanged，若不抑制会冒出一次
+        # 伪 entity_selected(-1)，把上层当前实体取消选中、重置实体表单（编辑实例级字段时尤甚）。
         self._silent_select = True
-        self._scene.clearSelection()
-        if 0 <= selected_row < len(self._items):
-            self._items[selected_row].setSelected(True)
-        self._silent_select = False
+        try:
+            for it in self._items:
+                self._scene.removeItem(it)
+            self._items.clear()
+
+            for i, ent in enumerate(entities):
+                if not isinstance(ent, dict):
+                    continue
+                raw_pm = _load_runtime_pixmap(self._model, str(ent.get("sprite") or ""))
+                base_pm = raw_pm if raw_pm is not None else _placeholder_pixmap()
+                item = EntitySpriteItem(i, ent, self, base_pm, ambient=self._ambient)
+                self._scene.addItem(item)
+                self._items.append(item)
+
+            self._scene.clearSelection()
+            if 0 <= selected_row < len(self._items):
+                self._items[selected_row].setSelected(True)
+        finally:
+            self._silent_select = False
+        self._rebuild_shore_overlay(shore_banks, bw, bh)
         self._fit_view()
+
+    def _rebuild_shore_overlay(self, banks: list[dict] | None, bw: int, bh: int) -> None:
+        """岸边前景的粗略预览：仅按 edge/thickness/inset/overhang 画半透明色块标位置，
+        不追求与运行时美术一致（精确折射/贴图见游戏内「预览…」）。"""
+        for it in self._shore_items:
+            self._scene.removeItem(it)
+        self._shore_items.clear()
+        if not banks:
+            return
+        for b in banks:
+            if not isinstance(b, dict):
+                continue
+            edge = str(b.get("edge") or "top")
+            thk = float(b.get("thickness") or 0) or 56.0
+            inset = float(b.get("inset") or 0)
+            over = float(b.get("overhang") or 0)
+            if edge == "bottom":
+                rect = QRectF(-over, bh - thk - inset, bw + 2 * over, thk)
+            elif edge == "left":
+                rect = QRectF(inset, -over, thk, bh + 2 * over)
+            elif edge == "right":
+                rect = QRectF(bw - thk - inset, -over, thk, bh + 2 * over)
+            else:  # top（默认）
+                rect = QRectF(-over, inset, bw + 2 * over, thk)
+            item = QGraphicsRectItem(rect)
+            item.setBrush(QColor(120, 96, 64, 90))
+            item.setPen(QPen(QColor(150, 130, 90, 200), 1, Qt.PenStyle.DashLine))
+            item.setZValue(500.0)  # 前景：盖在所有实体之上
+            item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
+            item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
+            item.setToolTip(f"岸边 [{edge}]（粗略预览）")
+            self._scene.addItem(item)
+            self._shore_items.append(item)
 
     def set_selected_row(self, row: int) -> None:
         self._silent_select = True

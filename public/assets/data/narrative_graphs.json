@@ -1,5 +1,6 @@
 {
   "schemaVersion": 3,
+  "migrations": {},
   "compositions": [
     {
       "id": "dock_water_monkey_ring_flow",
@@ -16,8 +17,8 @@
             "label": "未开始",
             "meta": {
               "editor": {
-                "x": 24,
-                "y": 24
+                "x": 23,
+                "y": 20
               }
             },
             "broadcastOnEnter": false
@@ -112,7 +113,7 @@
           "kind": "minigameBlackbox",
           "label": "捞箱小游戏",
           "refId": "dock_crate_tutorial",
-          "x": 724,
+          "x": 770,
           "y": -96,
           "meta": {
             "emits": [
@@ -307,158 +308,202 @@
             "reads": [],
             "commands": []
           }
-        }
-      ]
-    },
-    {
-      "id": "composition_1",
-      "label": "composition_1",
-      "mainGraph": {
-        "id": "flow_1",
-        "ownerType": "flow",
-        "initialState": "initial",
-        "states": {
-          "initial": {
-            "id": "initial",
-            "label": "initial",
-            "meta": {
-              "editor": {
-                "x": -322,
-                "y": 132
-              }
-            }
-          },
-          "state_1": {
-            "id": "state_1",
-            "label": "state_1",
-            "meta": {
-              "editor": {
-                "x": -86,
-                "y": 97
-              }
-            }
-          },
-          "state_2": {
-            "id": "state_2",
-            "label": "state_2",
-            "meta": {
-              "editor": {
-                "x": 126,
-                "y": 111
-              }
-            }
-          }
         },
-        "transitions": [
-          {
-            "id": "t_1",
-            "from": "initial",
-            "to": "state_1",
-            "signal": "__draft__",
-            "priority": 0
-          },
-          {
-            "id": "t_2",
-            "from": "state_1",
-            "to": "state_2",
-            "signal": "__draft__",
-            "priority": 0
-          }
-        ]
-      },
-      "elements": [
         {
-          "id": "wrapper_1",
+          "id": "el_scenario_码头官差套近乎",
           "kind": "wrapperGraph",
-          "label": "Wrapper Graph",
-          "refId": "",
-          "x": -89,
-          "y": 241,
+          "label": "码头·官差套近乎（可被骂重置）",
+          "ownerType": "scenario",
+          "ownerId": "码头_官差套近乎",
+          "x": 24,
+          "y": 310,
           "meta": {
             "emits": [],
             "reads": [],
             "commands": []
           },
-          "ownerType": "npc",
-          "ownerId": "T到室外",
           "graph": {
-            "id": "wrapper_graph_1",
-            "ownerType": "npc",
-            "category": "示例包装",
-            "initialState": "initial",
+            "id": "scenario_码头官差套近乎",
+            "ownerType": "scenario",
+            "ownerId": "码头_官差套近乎",
+            "label": "码头·官差套近乎（可被骂重置）",
+            "initialState": "pending",
+            "entryState": "pending",
+            "exitStates": [
+              "done"
+            ],
             "states": {
-              "initial": {
-                "id": "initial",
-                "label": "initial",
+              "pending": {
+                "id": "pending",
                 "meta": {
                   "editor": {
-                    "x": 123,
-                    "y": 265
+                    "x": 30,
+                    "y": 20
                   }
-                }
+                },
+                "label": "还没套上近乎"
               },
-              "state_1": {
-                "id": "state_1",
-                "label": "state_1",
+              "done": {
+                "id": "done",
                 "meta": {
                   "editor": {
-                    "x": 369,
-                    "y": 130
+                    "x": 240,
+                    "y": 20
                   }
-                }
-              },
-              "state_2": {
-                "id": "state_2",
-                "label": "state_2",
-                "meta": {
-                  "editor": {
-                    "x": 778,
-                    "y": 43
-                  }
-                }
-              },
-              "state_3": {
-                "id": "state_3",
-                "label": "state_3",
-                "meta": {
-                  "editor": {
-                    "x": 327,
-                    "y": 283
-                  }
-                }
+                },
+                "label": "已套上近乎"
               }
             },
             "transitions": [
               {
-                "id": "t_1",
-                "from": "initial",
-                "to": "state_1",
-                "signal": "__draft__",
-                "priority": 0
+                "id": "t_done",
+                "from": "pending",
+                "to": "done",
+                "signal": "dock_guanchai_rapport_done"
               },
               {
-                "id": "t_2",
-                "from": "state_1",
-                "to": "state_2",
-                "signal": "__draft__",
-                "priority": 0
-              },
-              {
-                "id": "t_3",
-                "from": "initial",
-                "to": "state_3",
-                "signal": "__draft__",
-                "priority": 0
-              },
-              {
-                "id": "t_4",
-                "from": "state_3",
-                "to": "state_2",
-                "signal": "__draft__",
-                "priority": 0
+                "id": "t_reset",
+                "from": "done",
+                "to": "pending",
+                "signal": "dock_guanchai_rapport_reset"
               }
+            ]
+          }
+        },
+        {
+          "id": "el_scenario_码头真相",
+          "kind": "wrapperGraph",
+          "label": "码头·水鬼真相揭示",
+          "ownerType": "scenario",
+          "ownerId": "码头_真相揭示",
+          "x": 24,
+          "y": 470,
+          "meta": {
+            "emits": [],
+            "reads": [],
+            "commands": []
+          },
+          "graph": {
+            "id": "scenario_码头真相",
+            "ownerType": "scenario",
+            "ownerId": "码头_真相揭示",
+            "label": "码头·水鬼真相揭示",
+            "initialState": "hidden",
+            "entryState": "hidden",
+            "exitStates": [
+              "revealed",
+              "revealed_jiaobang"
             ],
-            "ownerId": "T到室外"
+            "states": {
+              "hidden": {
+                "id": "hidden",
+                "meta": {
+                  "editor": {
+                    "x": 30,
+                    "y": 20
+                  }
+                },
+                "label": "真相未揭"
+              },
+              "revealed": {
+                "id": "revealed",
+                "meta": {
+                  "editor": {
+                    "x": 240,
+                    "y": 20
+                  }
+                },
+                "label": "真相已揭示（任一线）",
+                "onEnterActions": [
+                  {
+                    "type": "setFlag",
+                    "params": {
+                      "key": "码头水鬼真相已揭示",
+                      "value": true
+                    }
+                  }
+                ]
+              },
+              "revealed_jiaobang": {
+                "id": "revealed_jiaobang",
+                "meta": {
+                  "editor": {
+                    "x": 450,
+                    "y": 20
+                  }
+                },
+                "label": "脚帮线也揭示过"
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_reveal",
+                "from": "hidden",
+                "to": "revealed",
+                "signal": "dock_truth_revealed"
+              },
+              {
+                "id": "t_jiaobang",
+                "from": "revealed",
+                "to": "revealed_jiaobang",
+                "signal": "dock_truth_jiaobang"
+              }
+            ]
+          }
+        },
+        {
+          "id": "el_scenario_外国人捞箱子",
+          "kind": "wrapperGraph",
+          "label": "码头·外国人捞箱子（线激活）",
+          "ownerType": "scenario",
+          "ownerId": "码头_外国人捞箱子",
+          "x": 24,
+          "y": 630,
+          "meta": {
+            "emits": [],
+            "reads": [],
+            "commands": []
+          },
+          "graph": {
+            "id": "scenario_外国人捞箱子",
+            "ownerType": "scenario",
+            "ownerId": "码头_外国人捞箱子",
+            "label": "码头·外国人捞箱子（线激活）",
+            "initialState": "inactive",
+            "entryState": "inactive",
+            "exitStates": [
+              "active"
+            ],
+            "states": {
+              "inactive": {
+                "id": "inactive",
+                "meta": {
+                  "editor": {
+                    "x": 30,
+                    "y": 20
+                  }
+                },
+                "label": "未激活"
+              },
+              "active": {
+                "id": "active",
+                "meta": {
+                  "editor": {
+                    "x": 240,
+                    "y": 20
+                  }
+                },
+                "label": "围观线激活"
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_activate",
+                "from": "inactive",
+                "to": "active",
+                "signal": "dock_foreigner_line_active"
+              }
+            ]
           }
         }
       ]
@@ -478,15 +523,14 @@
             "label": "开局·茶馆门外的人",
             "meta": {
               "editor": {
-                "x": 24,
-                "y": 24
+                "x": 26,
+                "y": -13
               }
             }
           },
           "s01_tingshu": {
             "id": "s01_tingshu",
             "label": "听书完成",
-            "broadcastOnEnter": true,
             "meta": {
               "editor": {
                 "x": 284,
@@ -496,8 +540,7 @@
           },
           "s02_beishi": {
             "id": "s02_beishi",
-            "label": "背庄家尸完成",
-            "broadcastOnEnter": true,
+            "label": "背崖墓尸完成",
             "meta": {
               "editor": {
                 "x": 544,
@@ -508,18 +551,16 @@
           "s02b_meng": {
             "id": "s02b_meng",
             "label": "梦·待死之礼完成（①.5）",
-            "broadcastOnEnter": true,
             "meta": {
               "editor": {
-                "x": 544,
-                "y": 124
+                "x": 647,
+                "y": 169
               }
             }
           },
           "s03_chuiniu": {
             "id": "s03_chuiniu",
             "label": "茶馆吹牛完成",
-            "broadcastOnEnter": true,
             "meta": {
               "editor": {
                 "x": 804,
@@ -530,7 +571,6 @@
           "s04_pozi": {
             "id": "s04_pozi",
             "label": "婆子家第一单完成",
-            "broadcastOnEnter": true,
             "meta": {
               "editor": {
                 "x": 1064,
@@ -541,7 +581,6 @@
           "s05_hebian": {
             "id": "s05_hebian",
             "label": "河边递纸完成",
-            "broadcastOnEnter": true,
             "meta": {
               "editor": {
                 "x": 1324,
@@ -552,7 +591,6 @@
           "s06_laoxiang": {
             "id": "s06_laoxiang",
             "label": "码头捞箱完成",
-            "broadcastOnEnter": true,
             "meta": {
               "editor": {
                 "x": 1584,
@@ -560,21 +598,9 @@
               }
             }
           },
-          "s07_kujing": {
-            "id": "s07_kujing",
-            "label": "枯井狗脸完成",
-            "broadcastOnEnter": true,
-            "meta": {
-              "editor": {
-                "x": 1844,
-                "y": 24
-              }
-            }
-          },
           "s08_xiangdao": {
             "id": "s08_xiangdao",
             "label": "决定装道士",
-            "broadcastOnEnter": true,
             "meta": {
               "editor": {
                 "x": 2104,
@@ -585,7 +611,6 @@
           "s09_songhuo": {
             "id": "s09_songhuo",
             "label": "阎王岭送货完成",
-            "broadcastOnEnter": true,
             "meta": {
               "editor": {
                 "x": 2364,
@@ -593,21 +618,9 @@
               }
             }
           },
-          "s10_yizhuang": {
-            "id": "s10_yizhuang",
-            "label": "义庄镇尸完成",
-            "broadcastOnEnter": true,
-            "meta": {
-              "editor": {
-                "x": 2624,
-                "y": 24
-              }
-            }
-          },
           "s11_zhaomu": {
             "id": "s11_zhaomu",
             "label": "克拉拉招募完成",
-            "broadcastOnEnter": true,
             "meta": {
               "editor": {
                 "x": 2884,
@@ -618,7 +631,6 @@
           "s12_chufa": {
             "id": "s12_chufa",
             "label": "出发·Demo终",
-            "broadcastOnEnter": true,
             "meta": {
               "editor": {
                 "x": 3144,
@@ -671,14 +683,8 @@
             "signal": "state:scenario_码头:resolved"
           },
           {
-            "id": "t_s07_kujing",
-            "from": "s06_laoxiang",
-            "to": "s07_kujing",
-            "signal": "state:scenario_枯井:fled"
-          },
-          {
             "id": "t_s08_xiangdao",
-            "from": "s07_kujing",
+            "from": "s06_laoxiang",
             "to": "s08_xiangdao",
             "signal": "state:scenario_向导:outfitted"
           },
@@ -689,14 +695,8 @@
             "signal": "state:scenario_送货:returned"
           },
           {
-            "id": "t_s10_yizhuang",
-            "from": "s09_songhuo",
-            "to": "s10_yizhuang",
-            "signal": "state:scenario_义庄镇尸:all_done"
-          },
-          {
             "id": "t_s11_zhaomu",
-            "from": "s10_yizhuang",
+            "from": "s09_songhuo",
             "to": "s11_zhaomu",
             "signal": "state:scenario_招募:recruited"
           },
@@ -718,13 +718,7 @@
           "x": 24,
           "y": -140,
           "meta": {
-            "emits": [
-              "tingshu_words",
-              "tingshu_kicked",
-              "face_ceng",
-              "face_kua",
-              "face_gang"
-            ],
+            "emits": [],
             "reads": [
               "flow_xungou_main"
             ],
@@ -740,12 +734,26 @@
           "y": -140,
           "meta": {
             "emits": [
-              "beishi_scent",
-              "beishi_fled"
+              "beishi_scent"
             ],
             "reads": [
               "flow_xungou_main"
             ],
+            "commands": []
+          }
+        },
+        {
+          "id": "dlg_guidaoqiang",
+          "kind": "dialogueBlackbox",
+          "label": "寻狗_鬼打墙",
+          "refId": "寻狗_鬼打墙",
+          "x": 264,
+          "y": -40,
+          "meta": {
+            "emits": [
+              "beishi_fled"
+            ],
+            "reads": [],
             "commands": []
           }
         },
@@ -962,7 +970,6 @@
               "hanming_ret_p1",
               "hanming_awakening",
               "hanming_climax",
-              "hanming_escaped",
               "songhuo_returned"
             ],
             "reads": [
@@ -1115,13 +1122,13 @@
         {
           "id": "zone_01",
           "kind": "zoneBlackbox",
-          "label": "庄家灵堂:z_灵堂进场",
-          "refId": "庄家灵堂:z_灵堂进场",
+          "label": "崖墓:z_崖墓进场",
+          "refId": "崖墓:z_崖墓进场",
           "x": 24,
           "y": -360,
           "meta": {
             "emits": [
-              "lingtang_intro_entered"
+              "yamu_intro_entered"
             ],
             "reads": [],
             "commands": []
@@ -1305,89 +1312,6 @@
           }
         },
         {
-          "id": "el_wrap_脸皮基调",
-          "kind": "wrapperGraph",
-          "label": "听书三选一（脸皮基调）",
-          "ownerType": "flow",
-          "ownerId": "寻狗_脸皮基调",
-          "x": 744,
-          "y": 320,
-          "graph": {
-            "id": "wrap_脸皮基调",
-            "ownerType": "flow",
-            "ownerId": "寻狗_脸皮基调",
-            "initialState": "undecided",
-            "states": {
-              "undecided": {
-                "id": "undecided",
-                "label": "未选",
-                "meta": {
-                  "editor": {
-                    "x": 30,
-                    "y": 20
-                  }
-                }
-              },
-              "ceng": {
-                "id": "ceng",
-                "label": "装熟蹭茶",
-                "meta": {
-                  "editor": {
-                    "x": 250,
-                    "y": 20
-                  }
-                }
-              },
-              "kua": {
-                "id": "kua",
-                "label": "硬夸先生",
-                "meta": {
-                  "editor": {
-                    "x": 470,
-                    "y": 20
-                  }
-                }
-              },
-              "gang": {
-                "id": "gang",
-                "label": "跟人抬杠",
-                "meta": {
-                  "editor": {
-                    "x": 690,
-                    "y": 20
-                  }
-                }
-              }
-            },
-            "transitions": [
-              {
-                "id": "t_ceng",
-                "from": "undecided",
-                "to": "ceng",
-                "signal": "face_ceng"
-              },
-              {
-                "id": "t_kua",
-                "from": "undecided",
-                "to": "kua",
-                "signal": "face_kua"
-              },
-              {
-                "id": "t_gang",
-                "from": "undecided",
-                "to": "gang",
-                "signal": "face_gang"
-              }
-            ],
-            "label": "听书三选一（脸皮基调）"
-          },
-          "meta": {
-            "emits": [],
-            "reads": [],
-            "commands": []
-          }
-        },
-        {
           "id": "el_wrap_码头选择",
           "kind": "wrapperGraph",
           "label": "码头捞箱三选",
@@ -1510,7 +1434,7 @@
                       "lines": [
                         {
                           "speaker": "",
-                          "text": "活儿很简单：独自在庙里守半夜。庙里停着一具无名女尸，没人认领。"
+                          "text": "活路很简单：独自在庙里守半夜。庙里停着一具无名女尸，没人认领。"
                         },
                         {
                           "speaker": "",
@@ -1866,7 +1790,7 @@
                       "lines": [
                         {
                           "speaker": "",
-                          "text": "地上那两具，扭着的劲儿……好像滞了一滞。是错觉吗？"
+                          "text": "地上那两具，扭着的劲……好像滞了一滞。是不是看花眼了？"
                         }
                       ]
                     }
@@ -1905,6 +1829,10 @@
                     }
                   },
                   {
+                    "type": "triggerDeathTether",
+                    "params": {}
+                  },
+                  {
                     "type": "playSfx",
                     "params": {
                       "id": "sfx_bone_dull_knock"
@@ -1921,7 +1849,6 @@
               "all_done": {
                 "id": "all_done",
                 "label": "四样齐·两尸松手",
-                "broadcastOnEnter": true,
                 "onEnterActions": [
                   {
                     "type": "startCutscene",
@@ -2096,7 +2023,7 @@
         {
           "id": "el_scenario_背尸",
           "kind": "wrapperGraph",
-          "label": "背庄家尸（场景①·完整节拍）",
+          "label": "背崖墓尸（场景①·完整节拍）",
           "ownerType": "scenario",
           "ownerId": "寻狗_背尸",
           "x": 24,
@@ -2110,7 +2037,7 @@
             "id": "scenario_背尸",
             "ownerType": "scenario",
             "ownerId": "寻狗_背尸",
-            "label": "背庄家尸",
+            "label": "背崖墓尸",
             "initialState": "not_started",
             "entryState": "not_started",
             "exitStates": [
@@ -2145,9 +2072,9 @@
                   }
                 ]
               },
-              "at_lingtang": {
-                "id": "at_lingtang",
-                "label": "进了灵堂（红嫁衣压场）",
+              "at_yamu": {
+                "id": "at_yamu",
+                "label": "进了崖墓（近尸）",
                 "meta": {
                   "editor": {
                     "x": 724,
@@ -2158,7 +2085,7 @@
                   {
                     "type": "startCutscene",
                     "params": {
-                      "id": "寻狗_灵堂进场"
+                      "id": "寻狗_崖墓进场"
                     }
                   }
                 ]
@@ -2173,6 +2100,12 @@
                   }
                 },
                 "onEnterActions": [
+                  {
+                    "type": "stopSceneAmbient",
+                    "params": {
+                      "fadeMs": 250
+                    }
+                  },
                   {
                     "type": "playSfx",
                     "params": {
@@ -2206,6 +2139,12 @@
                   }
                 },
                 "onEnterActions": [
+                  {
+                    "type": "setCameraZoom",
+                    "params": {
+                      "zoom": 1.5
+                    }
+                  },
                   {
                     "type": "playSfx",
                     "params": {
@@ -2260,6 +2199,10 @@
                         }
                       ]
                     }
+                  },
+                  {
+                    "type": "restoreSceneCameraZoom",
+                    "params": {}
                   }
                 ]
               },
@@ -2303,12 +2246,12 @@
               {
                 "id": "t_at",
                 "from": "hired",
-                "to": "at_lingtang",
-                "signal": "lingtang_intro_entered"
+                "to": "at_yamu",
+                "signal": "yamu_intro_entered"
               },
               {
                 "id": "t_try1",
-                "from": "at_lingtang",
+                "from": "at_yamu",
                 "to": "try1_swallowed",
                 "signal": "beishi_try1"
               },
@@ -2385,25 +2328,6 @@
                 },
                 "label": "听书中（没点茶）"
               },
-              "words_collected": {
-                "id": "words_collected",
-                "meta": {
-                  "editor": {
-                    "x": 240,
-                    "y": 20
-                  }
-                },
-                "label": "收词：李天狗/神仙顶",
-                "onEnterActions": [
-                  {
-                    "type": "addArchiveEntry",
-                    "params": {
-                      "bookType": "character",
-                      "entryId": "storyteller_zhang"
-                    }
-                  }
-                ]
-              },
               "kicked_out": {
                 "id": "kicked_out",
                 "meta": {
@@ -2418,14 +2342,8 @@
             },
             "transitions": [
               {
-                "id": "t_words",
+                "id": "t_kicked",
                 "from": "listening",
-                "to": "words_collected",
-                "signal": "tingshu_words"
-              },
-              {
-                "id": "t_kick",
-                "from": "words_collected",
                 "to": "kicked_out",
                 "signal": "tingshu_kicked"
               }
@@ -2573,7 +2491,7 @@
                       "lines": [
                         {
                           "speaker": "",
-                          "text": "进门前，关二狗在院外站了一会儿——这是背尸行里学的：先看人，再看屋。"
+                          "text": "进门前，关二狗在院外站了一哈——这是背尸行里学来的：先看人，再看屋。"
                         },
                         {
                           "speaker": "",
@@ -2989,7 +2907,7 @@
                         },
                         {
                           "speaker": "",
-                          "text": "白天听是狗叫。这会儿天擦黑，听着——像个小孩在井底哭。"
+                          "text": "白天听是狗叫。这阵天擦黑，听着——像个小孩在井底哭。"
                         },
                         {
                           "speaker": "{{player}}",
@@ -3044,8 +2962,7 @@
                     "y": 20
                   }
                 },
-                "label": "扔绳就跑（beat完成）",
-                "broadcastOnEnter": true
+                "label": "扔绳就跑（beat完成）"
               }
             },
             "transitions": [
@@ -3085,7 +3002,7 @@
         {
           "id": "el_scenario_向导",
           "kind": "wrapperGraph",
-          "label": "向导传闻+置办行头（场景⑧）",
+          "label": "门庭若市·自由活动·置办行头（⑦）",
           "ownerType": "scenario",
           "ownerId": "寻狗_向导",
           "x": 24,
@@ -3099,7 +3016,7 @@
             "id": "scenario_向导",
             "ownerType": "scenario",
             "ownerId": "寻狗_向导",
-            "label": "向导传闻+置办行头（场景⑧）",
+            "label": "门庭若市·自由活动·置办行头（⑦）",
             "initialState": "not_started",
             "entryState": "not_started",
             "exitStates": [
@@ -3279,11 +3196,11 @@
                       "lines": [
                         {
                           "speaker": "",
-                          "text": "第一个画X的地方到了。他朝大队喊了声「俺去撒泡尿」，几十步外，林子黑沉沉地立着。"
+                          "text": "第一个画X的地方到了。他朝大队喊了声「老子去屙泡尿」，几十步外，林子黑沉沉地立着。"
                         },
                         {
                           "speaker": "{{player}}",
-                          "text": "（喊呗。几个铜板呢。）「李长生——」"
+                          "text": "（喊就喊嘛。几个铜板的事。）「李长生——」"
                         },
                         {
                           "speaker": "",
@@ -3326,7 +3243,7 @@
                         },
                         {
                           "speaker": "脚夫乙",
-                          "text": "马屠户追他婆娘进了岭，迷了三天。出来人就疯了，操刀砍自家儿子。铺子门板上的血道子，到今儿没人敢擦。"
+                          "text": "马屠户追他婆娘进了岭，迷了三天。出来人就疯了，操刀砍自家儿子。铺子门板上的血道子，到如今没得人敢擦。"
                         },
                         {
                           "speaker": "",
@@ -3504,6 +3421,81 @@
                 },
                 "label": "下山回城灌酒（beat完成）",
                 "broadcastOnEnter": true
+              },
+              "litiangou_peril": {
+                "id": "litiangou_peril",
+                "meta": {
+                  "editor": {
+                    "x": 2970,
+                    "y": 80
+                  }
+                },
+                "label": "出山口·命悬一线（系绳第一次失灵）",
+                "onEnterActions": [
+                  {
+                    "type": "playScriptedDialogue",
+                    "params": {
+                      "lines": [
+                        {
+                          "speaker": "",
+                          "text": "半个身子没进雾里——脱了力，腿肚子不听使唤，眼看完。"
+                        },
+                        {
+                          "speaker": "",
+                          "text": "香粉味照例陡然冒头，“该被拽回来了”——"
+                        },
+                        {
+                          "speaker": "",
+                          "text": "可这一回，一股更冲更“正”的气息当头压下，香粉味没起来就灭了。"
+                        },
+                        {
+                          "speaker": "",
+                          "text": "他是真往黑里去了。"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "type": "emitNarrativeSignal",
+                    "params": {
+                      "sourceType": "scenario",
+                      "sourceId": "寻狗_送货",
+                      "signal": "songhuo_litiangou_rescue"
+                    }
+                  }
+                ]
+              },
+              "litiangou_rescue": {
+                "id": "litiangou_rescue",
+                "meta": {
+                  "editor": {
+                    "x": 3180,
+                    "y": 80
+                  }
+                },
+                "label": "李天狗救场（寻狗_李天狗对话）",
+                "onEnterActions": [
+                  {
+                    "type": "incHealth",
+                    "params": {
+                      "amount": 100
+                    }
+                  },
+                  {
+                    "type": "startDialogueGraph",
+                    "params": {
+                      "graphId": "寻狗_李天狗"
+                    }
+                  },
+                  {
+                    "type": "emitNarrativeSignal",
+                    "params": {
+                      "sourceType": "scenario",
+                      "sourceId": "寻狗_送货",
+                      "signal": "songhuo_returned"
+                    }
+                  }
+                ]
               }
             },
             "transitions": [
@@ -3594,12 +3586,24 @@
               {
                 "id": "t_return_held",
                 "from": "survived",
-                "to": "returned",
+                "to": "litiangou_peril",
                 "signal": "songhuo_returned"
               },
               {
                 "id": "t_return_answered",
                 "from": "escaped",
+                "to": "litiangou_peril",
+                "signal": "songhuo_returned"
+              },
+              {
+                "id": "t_peril_rescue",
+                "from": "litiangou_peril",
+                "to": "litiangou_rescue",
+                "signal": "songhuo_litiangou_rescue"
+              },
+              {
+                "id": "t_rescue_return",
+                "from": "litiangou_rescue",
                 "to": "returned",
                 "signal": "songhuo_returned"
               }
@@ -3863,14 +3867,7 @@
                 "id": "t_road",
                 "from": "not_started",
                 "to": "road",
-                "trigger": "reactiveAll",
-                "conditions": [
-                  {
-                    "narrative": "scenario_背尸",
-                    "state": "fled"
-                  }
-                ],
-                "signal": "__draft__"
+                "signal": "state:scenario_背尸:fled"
               },
               {
                 "id": "t_house",
@@ -4230,6 +4227,1388 @@
             ],
             "commands": []
           }
+        },
+        {
+          "id": "dlg_听书开场",
+          "kind": "dialogueBlackbox",
+          "label": "寻狗_听书开场",
+          "refId": "寻狗_听书开场",
+          "x": 120,
+          "y": -320,
+          "meta": {
+            "emits": [
+              "tingshu_kicked"
+            ],
+            "reads": [
+              "scenario_听书"
+            ],
+            "commands": []
+          }
+        },
+        {
+          "id": "el_wrap_瞎子李算命",
+          "kind": "wrapperGraph",
+          "label": "①.5瞎子李算命（少走夜路伏笔）",
+          "ownerType": "flow",
+          "ownerId": "寻狗_瞎子李算命线",
+          "x": 120,
+          "y": -460,
+          "graph": {
+            "id": "wrap_瞎子李算命",
+            "ownerType": "flow",
+            "ownerId": "寻狗_瞎子李算命线",
+            "initialState": "undecided",
+            "states": {
+              "undecided": {
+                "id": "undecided",
+                "label": "未算",
+                "meta": {
+                  "editor": {
+                    "x": 30,
+                    "y": 20
+                  }
+                }
+              },
+              "done": {
+                "id": "done",
+                "label": "算过·少走夜路伏笔已埋",
+                "meta": {
+                  "editor": {
+                    "x": 260,
+                    "y": 20
+                  }
+                }
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_done",
+                "from": "undecided",
+                "to": "done",
+                "signal": "xiazi_suangua_done"
+              }
+            ],
+            "label": "①.5瞎子李算命"
+          },
+          "meta": {
+            "emits": [],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "el_wrap_踩铜板",
+          "kind": "wrapperGraph",
+          "label": "①.5地上踩铜板（一次性）",
+          "ownerType": "flow",
+          "ownerId": "寻狗_踩铜板线",
+          "x": 120,
+          "y": -560,
+          "graph": {
+            "id": "wrap_踩铜板",
+            "ownerType": "flow",
+            "ownerId": "寻狗_踩铜板线",
+            "initialState": "available",
+            "states": {
+              "available": {
+                "id": "available",
+                "label": "可捡",
+                "meta": {
+                  "editor": {
+                    "x": 30,
+                    "y": 20
+                  }
+                }
+              },
+              "taken": {
+                "id": "taken",
+                "label": "已捡",
+                "meta": {
+                  "editor": {
+                    "x": 260,
+                    "y": 20
+                  }
+                }
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_taken",
+                "from": "available",
+                "to": "taken",
+                "signal": "tabanban_taken"
+              }
+            ],
+            "label": "①.5踩铜板"
+          },
+          "meta": {
+            "emits": [],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "el_wrap_摸橘子",
+          "kind": "wrapperGraph",
+          "label": "①.5摸橘子（一次性·老板记仇）",
+          "ownerType": "flow",
+          "ownerId": "寻狗_摸橘子线",
+          "x": 120,
+          "y": -660,
+          "graph": {
+            "id": "wrap_摸橘子",
+            "ownerType": "flow",
+            "ownerId": "寻狗_摸橘子线",
+            "initialState": "available",
+            "states": {
+              "available": {
+                "id": "available",
+                "label": "未",
+                "meta": {
+                  "editor": {
+                    "x": 30,
+                    "y": 20
+                  }
+                }
+              },
+              "taken": {
+                "id": "taken",
+                "label": "已摸·老板记仇",
+                "meta": {
+                  "editor": {
+                    "x": 260,
+                    "y": 20
+                  }
+                }
+              }
+            },
+            "transitions": [
+              {
+                "id": "t",
+                "from": "available",
+                "to": "taken",
+                "signal": "juzi_taken"
+              }
+            ],
+            "label": "①.5摸橘子（一次性·老板记仇）"
+          },
+          "meta": {
+            "emits": [],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "el_wrap_叫花子结仇",
+          "kind": "wrapperGraph",
+          "label": "①.5抢饼（叫花子结仇）",
+          "ownerType": "flow",
+          "ownerId": "寻狗_叫花子线",
+          "x": 120,
+          "y": -760,
+          "graph": {
+            "id": "wrap_叫花子结仇",
+            "ownerType": "flow",
+            "ownerId": "寻狗_叫花子线",
+            "initialState": "undecided",
+            "states": {
+              "undecided": {
+                "id": "undecided",
+                "label": "未",
+                "meta": {
+                  "editor": {
+                    "x": 30,
+                    "y": 20
+                  }
+                }
+              },
+              "qiangbing": {
+                "id": "qiangbing",
+                "label": "抢过饼·叫花子记仇",
+                "meta": {
+                  "editor": {
+                    "x": 260,
+                    "y": 20
+                  }
+                }
+              }
+            },
+            "transitions": [
+              {
+                "id": "t",
+                "from": "undecided",
+                "to": "qiangbing",
+                "signal": "qiangbing_done"
+              }
+            ],
+            "label": "①.5抢饼（叫花子结仇）"
+          },
+          "meta": {
+            "emits": [],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "el_wrap_偷鸡",
+          "kind": "wrapperGraph",
+          "label": "①.5偷鸡（概率·失败记仇）",
+          "ownerType": "flow",
+          "ownerId": "寻狗_偷鸡线",
+          "x": 120,
+          "y": -860,
+          "graph": {
+            "id": "wrap_偷鸡",
+            "ownerType": "flow",
+            "ownerId": "寻狗_偷鸡线",
+            "initialState": "pending",
+            "states": {
+              "pending": {
+                "id": "pending",
+                "label": "未",
+                "meta": {
+                  "editor": {
+                    "x": 30,
+                    "y": 20
+                  }
+                }
+              },
+              "win": {
+                "id": "win",
+                "label": "偷到",
+                "meta": {
+                  "editor": {
+                    "x": 260,
+                    "y": 20
+                  }
+                }
+              },
+              "lose": {
+                "id": "lose",
+                "label": "被发现·记仇",
+                "meta": {
+                  "editor": {
+                    "x": 260,
+                    "y": 80
+                  }
+                }
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_win",
+                "from": "pending",
+                "to": "win",
+                "signal": "touji_win"
+              },
+              {
+                "id": "t_lose",
+                "from": "pending",
+                "to": "lose",
+                "signal": "touji_lose"
+              }
+            ],
+            "label": "①.5偷鸡（概率·失败记仇）"
+          },
+          "meta": {
+            "emits": [],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "el_wrap_踢狗",
+          "kind": "wrapperGraph",
+          "label": "①.5踢狗（概率）",
+          "ownerType": "flow",
+          "ownerId": "寻狗_踢狗线",
+          "x": 120,
+          "y": -960,
+          "graph": {
+            "id": "wrap_踢狗",
+            "ownerType": "flow",
+            "ownerId": "寻狗_踢狗线",
+            "initialState": "pending",
+            "states": {
+              "pending": {
+                "id": "pending",
+                "label": "未",
+                "meta": {
+                  "editor": {
+                    "x": 30,
+                    "y": 20
+                  }
+                }
+              },
+              "run": {
+                "id": "run",
+                "label": "跑了",
+                "meta": {
+                  "editor": {
+                    "x": 260,
+                    "y": 20
+                  }
+                }
+              },
+              "bite": {
+                "id": "bite",
+                "label": "反咬",
+                "meta": {
+                  "editor": {
+                    "x": 260,
+                    "y": 80
+                  }
+                }
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_run",
+                "from": "pending",
+                "to": "run",
+                "signal": "tigou_run"
+              },
+              {
+                "id": "t_bite",
+                "from": "pending",
+                "to": "bite",
+                "signal": "tigou_bite"
+              }
+            ],
+            "label": "①.5踢狗（概率）"
+          },
+          "meta": {
+            "emits": [],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "el_wrap_踢猫",
+          "kind": "wrapperGraph",
+          "label": "①.5踢猫（概率）",
+          "ownerType": "flow",
+          "ownerId": "寻狗_踢猫线",
+          "x": 120,
+          "y": -1060,
+          "graph": {
+            "id": "wrap_踢猫",
+            "ownerType": "flow",
+            "ownerId": "寻狗_踢猫线",
+            "initialState": "pending",
+            "states": {
+              "pending": {
+                "id": "pending",
+                "label": "未",
+                "meta": {
+                  "editor": {
+                    "x": 30,
+                    "y": 20
+                  }
+                }
+              },
+              "run": {
+                "id": "run",
+                "label": "窜了",
+                "meta": {
+                  "editor": {
+                    "x": 260,
+                    "y": 20
+                  }
+                }
+              },
+              "scratch": {
+                "id": "scratch",
+                "label": "反抓",
+                "meta": {
+                  "editor": {
+                    "x": 260,
+                    "y": 80
+                  }
+                }
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_run",
+                "from": "pending",
+                "to": "run",
+                "signal": "timao_run"
+              },
+              {
+                "id": "t_scratch",
+                "from": "pending",
+                "to": "scratch",
+                "signal": "timao_scratch"
+              }
+            ],
+            "label": "①.5踢猫（概率）"
+          },
+          "meta": {
+            "emits": [],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "el_wrap_袍哥",
+          "kind": "wrapperGraph",
+          "label": "①.5袍哥秒怂（一次性）",
+          "ownerType": "flow",
+          "ownerId": "寻狗_袍哥线",
+          "x": 120,
+          "y": -1160,
+          "graph": {
+            "id": "wrap_袍哥",
+            "ownerType": "flow",
+            "ownerId": "寻狗_袍哥线",
+            "initialState": "unseen",
+            "states": {
+              "unseen": {
+                "id": "unseen",
+                "label": "未",
+                "meta": {
+                  "editor": {
+                    "x": 30,
+                    "y": 20
+                  }
+                }
+              },
+              "seen": {
+                "id": "seen",
+                "label": "见过·立人物",
+                "meta": {
+                  "editor": {
+                    "x": 260,
+                    "y": 20
+                  }
+                }
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_seen",
+                "from": "unseen",
+                "to": "seen",
+                "signal": "paoge_seen"
+              }
+            ],
+            "label": "①.5袍哥秒怂（一次性）"
+          },
+          "meta": {
+            "emits": [],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "el_wrap_壮汉",
+          "kind": "wrapperGraph",
+          "label": "①.5壮汉（撞→挑衅两段）",
+          "ownerType": "flow",
+          "ownerId": "寻狗_壮汉线",
+          "x": 120,
+          "y": -1260,
+          "graph": {
+            "id": "wrap_壮汉",
+            "ownerType": "flow",
+            "ownerId": "寻狗_壮汉线",
+            "initialState": "pending",
+            "states": {
+              "pending": {
+                "id": "pending",
+                "label": "未",
+                "meta": {
+                  "editor": {
+                    "x": 30,
+                    "y": 20
+                  }
+                }
+              },
+              "chuang": {
+                "id": "chuang",
+                "label": "被撞·结仇",
+                "meta": {
+                  "editor": {
+                    "x": 260,
+                    "y": 20
+                  }
+                }
+              },
+              "tiaoxin": {
+                "id": "tiaoxin",
+                "label": "挑衅了",
+                "meta": {
+                  "editor": {
+                    "x": 490,
+                    "y": 20
+                  }
+                }
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_chuang",
+                "from": "pending",
+                "to": "chuang",
+                "signal": "zhuanghan_chuang"
+              },
+              {
+                "id": "t_tiaoxin",
+                "from": "chuang",
+                "to": "tiaoxin",
+                "signal": "tiaoxin_done"
+              }
+            ],
+            "label": "①.5壮汉（撞→挑衅两段）"
+          },
+          "meta": {
+            "emits": [],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "el_wrap_街头闲话",
+          "kind": "wrapperGraph",
+          "label": "①.5散落闲话（预埋⑧/义庄/⑥·听过可回响）",
+          "ownerType": "flow",
+          "ownerId": "寻狗_街头闲话线",
+          "x": 120,
+          "y": -1360,
+          "graph": {
+            "id": "wrap_街头闲话",
+            "ownerType": "flow",
+            "ownerId": "寻狗_街头闲话线",
+            "initialState": "unheard",
+            "states": {
+              "unheard": {
+                "id": "unheard",
+                "label": "没听过",
+                "meta": {
+                  "editor": {
+                    "x": 30,
+                    "y": 20
+                  }
+                }
+              },
+              "heard": {
+                "id": "heard",
+                "label": "听过传闻·可回响",
+                "meta": {
+                  "editor": {
+                    "x": 260,
+                    "y": 20
+                  }
+                }
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_heard",
+                "from": "unheard",
+                "to": "heard",
+                "signal": "jietou_xianhua_heard"
+              }
+            ],
+            "label": "①.5散落闲话"
+          },
+          "meta": {
+            "emits": [],
+            "reads": [],
+            "commands": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "beishi_daily_flow",
+      "label": "背尸零活 · 淹尸送义庄",
+      "description": "背尸日常首单(位面基建首个内容客户端):工头派活→码头巷口验尸上肩(进背尸位面:漂移/禁跑/禁捡/掉阳气/路线锁)→送义庄交尸(给钱+授规矩)。",
+      "mainGraph": {
+        "id": "flow_背尸_淹尸活",
+        "ownerType": "flow",
+        "ownerId": "背尸淹尸活",
+        "label": "背尸·淹尸活",
+        "initialState": "initial",
+        "states": {
+          "initial": {
+            "id": "initial",
+            "label": "未接",
+            "meta": {
+              "editor": {
+                "x": 252,
+                "y": 122
+              }
+            }
+          },
+          "accepted": {
+            "id": "accepted",
+            "label": "已接活",
+            "meta": {
+              "editor": {
+                "x": 753,
+                "y": 113
+              }
+            }
+          },
+          "carrying": {
+            "id": "carrying",
+            "label": "已上肩（背尸位面）",
+            "activePlane": "背尸",
+            "meta": {
+              "editor": {
+                "x": 1263,
+                "y": 103
+              }
+            }
+          },
+          "placed": {
+            "id": "placed",
+            "label": "已落凳（等结钱）",
+            "onEnterActions": [
+              {
+                "type": "resetPlayerAvatar",
+                "params": {}
+              }
+            ],
+            "meta": {
+              "editor": {
+                "x": 1746,
+                "y": 93
+              }
+            }
+          },
+          "delivered": {
+            "id": "delivered",
+            "label": "已交付",
+            "meta": {
+              "editor": {
+                "x": 2256,
+                "y": 93
+              }
+            }
+          }
+        },
+        "transitions": [
+          {
+            "id": "t_accept",
+            "from": "initial",
+            "to": "accepted",
+            "signal": "beishi_yan_accepted"
+          },
+          {
+            "id": "t_shoulder",
+            "from": "accepted",
+            "to": "carrying",
+            "signal": "beishi_yan_shouldered"
+          },
+          {
+            "id": "t_place",
+            "from": "carrying",
+            "to": "placed",
+            "signal": "beishi_yan_placed"
+          },
+          {
+            "id": "t_deliver",
+            "from": "placed",
+            "to": "delivered",
+            "signal": "beishi_yan_delivered"
+          }
+        ]
+      },
+      "elements": [
+        {
+          "id": "dlg_beishi_jiehuo",
+          "kind": "dialogueBlackbox",
+          "label": "工头派活",
+          "refId": "寻狗_零工接活",
+          "x": 12,
+          "y": 115,
+          "meta": {
+            "emits": [
+              "beishi_lg_accepted",
+              "beishi_yan_accepted"
+            ],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "mg_beishi_shoulder",
+          "kind": "minigameBlackbox",
+          "label": "上肩长按",
+          "refId": "carry_drowned_corpse",
+          "x": 513,
+          "y": 31,
+          "meta": {
+            "emits": [
+              "beishi_yan_shouldered"
+            ],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "mg_putdown",
+          "kind": "minigameBlackbox",
+          "label": "落凳长按",
+          "refId": "carry_putdown_drowned",
+          "x": 1023,
+          "y": 22,
+          "meta": {
+            "emits": [
+              "beishi_yan_placed"
+            ],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "dlg_beishi_jiaoshi",
+          "kind": "dialogueBlackbox",
+          "label": "义庄交尸",
+          "refId": "寻狗_管事义庄内",
+          "x": 1506,
+          "y": 12,
+          "meta": {
+            "emits": [
+              "beishi_lg_delivered",
+              "beishi_yan_delivered"
+            ],
+            "reads": [],
+            "commands": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "beishi_lingong_flow",
+      "label": "背尸零活 · 路倒送义庄（开场教学单）",
+      "description": "开场教学单(自由空挡起手):街上自由逛→打哈欠起意找活→到义庄被人拦下接活→自己去巷口墙根寻路倒验看上肩(进背尸位面)→背回义庄落凳→管事结五文。完成后解锁庄家来人(阿秀线)与淹尸单。",
+      "mainGraph": {
+        "id": "flow_背尸_零工活",
+        "ownerType": "flow",
+        "ownerId": "背尸零工活",
+        "label": "背尸·零工路倒",
+        "initialState": "initial",
+        "states": {
+          "initial": {
+            "id": "initial",
+            "label": "未找活（街上自由逛）",
+            "meta": {
+              "editor": {
+                "x": 252,
+                "y": 132
+              }
+            }
+          },
+          "looking": {
+            "id": "looking",
+            "label": "找活中（走访几处）",
+            "meta": {
+              "editor": {
+                "x": 732,
+                "y": 122
+              }
+            }
+          },
+          "accepted": {
+            "id": "accepted",
+            "label": "已接活",
+            "meta": {
+              "editor": {
+                "x": 1224,
+                "y": 113
+              }
+            }
+          },
+          "carrying": {
+            "id": "carrying",
+            "label": "已上肩（背尸位面）",
+            "activePlane": "背尸",
+            "meta": {
+              "editor": {
+                "x": 1734,
+                "y": 103
+              }
+            }
+          },
+          "placed": {
+            "id": "placed",
+            "label": "已落凳（等结钱）",
+            "onEnterActions": [
+              {
+                "type": "resetPlayerAvatar",
+                "params": {}
+              }
+            ],
+            "meta": {
+              "editor": {
+                "x": 2214,
+                "y": 93
+              }
+            }
+          },
+          "delivered": {
+            "id": "delivered",
+            "label": "已交付",
+            "meta": {
+              "editor": {
+                "x": 2715,
+                "y": 93
+              }
+            }
+          },
+          "corpse_inspected": {
+            "id": "corpse_inspected",
+            "label": "破屋取尸+验尸(缢死·勒痕)",
+            "meta": {
+              "editor": {
+                "x": 620,
+                "y": -120
+              }
+            }
+          },
+          "in_wild": {
+            "id": "in_wild",
+            "label": "城外野道·背尸位面(吊死鬼作祟)",
+            "activePlane": "背尸",
+            "meta": {
+              "editor": {
+                "x": 1040,
+                "y": -120
+              }
+            }
+          }
+        },
+        "transitions": [
+          {
+            "id": "t_seek",
+            "from": "initial",
+            "to": "looking",
+            "signal": "beishi_lg_seek"
+          },
+          {
+            "id": "t_accept",
+            "from": "looking",
+            "to": "accepted",
+            "signal": "beishi_lg_accepted"
+          },
+          {
+            "id": "t_inspect",
+            "from": "accepted",
+            "to": "corpse_inspected",
+            "signal": "beishi_corpse_inspected"
+          },
+          {
+            "id": "t_shoulder",
+            "from": "corpse_inspected",
+            "to": "carrying",
+            "signal": "beishi_lg_shouldered"
+          },
+          {
+            "id": "t_wild_direct",
+            "from": "carrying",
+            "to": "in_wild",
+            "signal": "beishi_enter_wild"
+          },
+          {
+            "id": "t_placed",
+            "from": "in_wild",
+            "to": "placed",
+            "signal": "beishi_lg_placed"
+          },
+          {
+            "id": "t_delivered",
+            "from": "placed",
+            "to": "delivered",
+            "signal": "beishi_lg_delivered"
+          }
+        ]
+      },
+      "elements": [
+        {
+          "id": "dlg_seek",
+          "kind": "dialogueBlackbox",
+          "label": "打哈欠找活",
+          "refId": "寻狗_找活",
+          "x": 49,
+          "y": 241,
+          "meta": {
+            "emits": [
+              "beishi_lg_seek"
+            ],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "dlg_accept",
+          "kind": "dialogueBlackbox",
+          "label": "义庄门口拦活",
+          "refId": "寻狗_义庄门口拦活",
+          "x": 492,
+          "y": 41,
+          "meta": {
+            "emits": [
+              "beishi_lg_accepted"
+            ],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "mg_shoulder",
+          "kind": "minigameBlackbox",
+          "label": "上肩长按",
+          "refId": "carry_hanging_corpse",
+          "x": 984,
+          "y": 31,
+          "meta": {
+            "emits": [
+              "beishi_lg_shouldered"
+            ],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "mg_putdown",
+          "kind": "minigameBlackbox",
+          "label": "落凳长按",
+          "refId": "carry_putdown_ordinary",
+          "x": 1494,
+          "y": 22,
+          "meta": {
+            "emits": [
+              "beishi_lg_placed"
+            ],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "dlg_deliver",
+          "kind": "dialogueBlackbox",
+          "label": "义庄结钱",
+          "refId": "寻狗_管事义庄内",
+          "x": 1974,
+          "y": 12,
+          "meta": {
+            "emits": [
+              "beishi_lg_delivered",
+              "beishi_yan_delivered"
+            ],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "el_wrap_验缢死尸",
+          "kind": "wrapperGraph",
+          "label": "验尸·看过脖子(解锁看脸/上尸)",
+          "ownerType": "flow",
+          "ownerId": "验缢死尸线",
+          "x": 120,
+          "y": -200,
+          "graph": {
+            "id": "wrap_验缢死尸",
+            "ownerType": "flow",
+            "ownerId": "验缢死尸线",
+            "initialState": "undecided",
+            "states": {
+              "undecided": {
+                "id": "undecided",
+                "label": "未",
+                "meta": {
+                  "editor": {
+                    "x": 30,
+                    "y": 20
+                  }
+                }
+              },
+              "neck_seen": {
+                "id": "neck_seen",
+                "label": "看过颈·知缢死",
+                "meta": {
+                  "editor": {
+                    "x": 260,
+                    "y": 20
+                  }
+                }
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_neck_seen",
+                "from": "undecided",
+                "to": "neck_seen",
+                "signal": "yan_neck_seen"
+              }
+            ],
+            "label": "验尸·看过脖子(解锁看脸/上尸)"
+          },
+          "meta": {
+            "emits": [],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "el_wrap_背尸守忌讳",
+          "kind": "wrapperGraph",
+          "label": "背尸·守规矩/贪快(决定位面难度+酬劳)",
+          "ownerType": "flow",
+          "ownerId": "背尸守忌讳线",
+          "x": 120,
+          "y": -320,
+          "graph": {
+            "id": "wrap_背尸守忌讳",
+            "ownerType": "flow",
+            "ownerId": "背尸守忌讳线",
+            "initialState": "undecided",
+            "states": {
+              "undecided": {
+                "id": "undecided",
+                "label": "未",
+                "meta": {
+                  "editor": {
+                    "x": 30,
+                    "y": 20
+                  }
+                }
+              },
+              "shou": {
+                "id": "shou",
+                "label": "守规矩",
+                "meta": {
+                  "editor": {
+                    "x": 260,
+                    "y": 20
+                  }
+                }
+              },
+              "tan": {
+                "id": "tan",
+                "label": "贪快",
+                "meta": {
+                  "editor": {
+                    "x": 260,
+                    "y": 90
+                  }
+                }
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_shou",
+                "from": "undecided",
+                "to": "shou",
+                "signal": "beishi_guiju_shou"
+              },
+              {
+                "id": "t_tan",
+                "from": "undecided",
+                "to": "tan",
+                "signal": "beishi_tanquai"
+              }
+            ],
+            "label": "背尸·守规矩/贪快(决定位面难度+酬劳)"
+          },
+          "meta": {
+            "emits": [],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "dlg_yanshi",
+          "kind": "dialogueBlackbox",
+          "label": "破屋验缢死尸",
+          "refId": "寻狗_验缢死尸",
+          "x": 620,
+          "y": -320,
+          "meta": {
+            "emits": [
+              "yan_neck_seen",
+              "beishi_guiju_shou",
+              "beishi_tanquai",
+              "beishi_corpse_inspected"
+            ],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "mg_wild_heavy",
+          "kind": "minigameBlackbox",
+          "label": "野道·尸变重(熬)",
+          "refId": "beishi_wild_heavy",
+          "x": 1040,
+          "y": -260,
+          "meta": {
+            "emits": [
+              "beishi_wild_heavy_done",
+              "beishi_wild_heavy_fail"
+            ],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "mg_wild_biyingsheng",
+          "kind": "minigameBlackbox",
+          "label": "野道·别应声",
+          "refId": "beishi_wild_biyingsheng",
+          "x": 1040,
+          "y": -330,
+          "meta": {
+            "emits": [
+              "beishi_wild_biyingsheng_done",
+              "beishi_wild_yingle"
+            ],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "mg_wild_biehuitou",
+          "kind": "minigameBlackbox",
+          "label": "野道·别回头",
+          "refId": "beishi_wild_biehuitou",
+          "x": 1040,
+          "y": -400,
+          "meta": {
+            "emits": [
+              "beishi_wild_biehuitou_done",
+              "beishi_wild_huitou"
+            ],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "el_wrap_野道变重",
+          "kind": "wrapperGraph",
+          "label": "野道·尸变重(熬过/垮)",
+          "ownerType": "flow",
+          "ownerId": "野道·尸变重(熬过/垮)",
+          "x": 1240,
+          "y": -260,
+          "graph": {
+            "id": "wrap_野道变重",
+            "ownerType": "flow",
+            "ownerId": "野道·尸变重(熬过/垮)",
+            "initialState": "undecided",
+            "states": {
+              "undecided": {
+                "id": "undecided",
+                "label": "未",
+                "meta": {
+                  "editor": {
+                    "x": 30,
+                    "y": 20
+                  }
+                }
+              },
+              "done": {
+                "id": "done",
+                "label": "过",
+                "meta": {
+                  "editor": {
+                    "x": 260,
+                    "y": 20
+                  }
+                }
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_wrap_野道变重_0",
+                "from": "undecided",
+                "to": "done",
+                "signal": "beishi_wild_heavy_done"
+              },
+              {
+                "id": "t_wrap_野道变重_1",
+                "from": "undecided",
+                "to": "done",
+                "signal": "beishi_wild_heavy_fail"
+              }
+            ],
+            "label": "野道·尸变重(熬过/垮)"
+          },
+          "meta": {
+            "emits": [],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "el_wrap_野道别应",
+          "kind": "wrapperGraph",
+          "label": "野道·别应声(忍住/应了)",
+          "ownerType": "flow",
+          "ownerId": "野道·别应声(忍住/应了)",
+          "x": 1240,
+          "y": -330,
+          "graph": {
+            "id": "wrap_野道别应",
+            "ownerType": "flow",
+            "ownerId": "野道·别应声(忍住/应了)",
+            "initialState": "undecided",
+            "states": {
+              "undecided": {
+                "id": "undecided",
+                "label": "未",
+                "meta": {
+                  "editor": {
+                    "x": 30,
+                    "y": 20
+                  }
+                }
+              },
+              "done": {
+                "id": "done",
+                "label": "过",
+                "meta": {
+                  "editor": {
+                    "x": 260,
+                    "y": 20
+                  }
+                }
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_wrap_野道别应_0",
+                "from": "undecided",
+                "to": "done",
+                "signal": "beishi_wild_biyingsheng_done"
+              },
+              {
+                "id": "t_wrap_野道别应_1",
+                "from": "undecided",
+                "to": "done",
+                "signal": "beishi_wild_yingle"
+              }
+            ],
+            "label": "野道·别应声(忍住/应了)"
+          },
+          "meta": {
+            "emits": [],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "el_wrap_野道别回头",
+          "kind": "wrapperGraph",
+          "label": "野道·别回头(忍住/回了)",
+          "ownerType": "flow",
+          "ownerId": "野道·别回头(忍住/回了)",
+          "x": 1240,
+          "y": -400,
+          "graph": {
+            "id": "wrap_野道别回头",
+            "ownerType": "flow",
+            "ownerId": "野道·别回头(忍住/回了)",
+            "initialState": "undecided",
+            "states": {
+              "undecided": {
+                "id": "undecided",
+                "label": "未",
+                "meta": {
+                  "editor": {
+                    "x": 30,
+                    "y": 20
+                  }
+                }
+              },
+              "done": {
+                "id": "done",
+                "label": "过",
+                "meta": {
+                  "editor": {
+                    "x": 260,
+                    "y": 20
+                  }
+                }
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_wrap_野道别回头_0",
+                "from": "undecided",
+                "to": "done",
+                "signal": "beishi_wild_biehuitou_done"
+              },
+              {
+                "id": "t_wrap_野道别回头_1",
+                "from": "undecided",
+                "to": "done",
+                "signal": "beishi_wild_huitou"
+              }
+            ],
+            "label": "野道·别回头(忍住/回了)"
+          },
+          "meta": {
+            "emits": [],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "el_wrap_野道岔路",
+          "kind": "wrapperGraph",
+          "label": "野道·认路岔口(顶住/被拽偏)",
+          "ownerType": "flow",
+          "ownerId": "野道·认路岔口(顶住/被拽偏)",
+          "x": 1240,
+          "y": -190,
+          "graph": {
+            "id": "wrap_野道岔路",
+            "ownerType": "flow",
+            "ownerId": "野道·认路岔口(顶住/被拽偏)",
+            "initialState": "undecided",
+            "states": {
+              "undecided": {
+                "id": "undecided",
+                "label": "未",
+                "meta": {
+                  "editor": {
+                    "x": 30,
+                    "y": 20
+                  }
+                }
+              },
+              "done": {
+                "id": "done",
+                "label": "过",
+                "meta": {
+                  "editor": {
+                    "x": 260,
+                    "y": 20
+                  }
+                }
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_wrap_野道岔路_0",
+                "from": "undecided",
+                "to": "done",
+                "signal": "yedao_chalu_done"
+              }
+            ],
+            "label": "野道·认路岔口(顶住/被拽偏)"
+          },
+          "meta": {
+            "emits": [],
+            "reads": [],
+            "commands": []
+          }
         }
       ]
     }
@@ -4256,8 +5635,8 @@
       "label": "ring_returned"
     },
     {
-      "id": "lingtang_intro_entered",
-      "label": "进灵堂（区域）"
+      "id": "yamu_intro_entered",
+      "label": "进崖墓（区域）"
     },
     {
       "id": "pozi_intro_entered",
@@ -4290,18 +5669,6 @@
     {
       "id": "xiangdao_notice_read",
       "label": "看过向导告示"
-    },
-    {
-      "id": "face_ceng",
-      "label": "听书·装熟蹭茶"
-    },
-    {
-      "id": "face_kua",
-      "label": "听书·硬夸先生"
-    },
-    {
-      "id": "face_gang",
-      "label": "听书·跟人抬杠"
     },
     {
       "id": "dock_chose_a",
@@ -4370,10 +5737,6 @@
     {
       "id": "beishi_fled",
       "label": "背尸·夺门而逃"
-    },
-    {
-      "id": "tingshu_words",
-      "label": "听书·收词李天狗/神仙顶"
     },
     {
       "id": "tingshu_kicked",
@@ -4554,6 +5917,171 @@
     {
       "id": "chufa_departed",
       "label": "终幕·出城进雾"
+    },
+    {
+      "id": "songhuo_litiangou_rescue",
+      "label": "送货·李天狗接管救场"
+    },
+    {
+      "id": "beishi_yan_accepted",
+      "label": "背尸零活·接下淹尸活"
+    },
+    {
+      "id": "beishi_yan_shouldered",
+      "label": "背尸零活·淹尸上肩"
+    },
+    {
+      "id": "beishi_yan_delivered",
+      "label": "背尸零活·淹尸送达义庄"
+    },
+    {
+      "id": "beishi_yan_placed",
+      "label": "背尸零活·淹尸落凳"
+    },
+    {
+      "id": "beishi_lg_seek",
+      "label": "背尸零活·路倒起意找活",
+      "notes": "？？"
+    },
+    {
+      "id": "beishi_lg_accepted",
+      "label": "背尸零活·路倒接活"
+    },
+    {
+      "id": "beishi_lg_shouldered",
+      "label": "背尸零活·路倒上肩"
+    },
+    {
+      "id": "beishi_lg_placed",
+      "label": "背尸零活·路倒落凳"
+    },
+    {
+      "id": "beishi_lg_delivered",
+      "label": "背尸零活·路倒送达"
+    },
+    {
+      "id": "dock_guanchai_rapport_done",
+      "label": "码头官差·套上近乎"
+    },
+    {
+      "id": "dock_guanchai_rapport_reset",
+      "label": "码头官差·被骂重置近乎"
+    },
+    {
+      "id": "dock_truth_revealed",
+      "label": "码头水鬼·真相揭示（任一线）"
+    },
+    {
+      "id": "dock_truth_jiaobang",
+      "label": "码头水鬼·脚帮线揭示"
+    },
+    {
+      "id": "dock_foreigner_line_active",
+      "label": "码头·外国人捞箱子线激活"
+    },
+    {
+      "id": "xiazi_suangua_done",
+      "label": "xiazi_suangua_done"
+    },
+    {
+      "id": "tabanban_taken",
+      "label": "tabanban_taken"
+    },
+    {
+      "id": "juzi_taken",
+      "label": "juzi_taken"
+    },
+    {
+      "id": "qiangbing_done",
+      "label": "qiangbing_done"
+    },
+    {
+      "id": "touji_win",
+      "label": "touji_win"
+    },
+    {
+      "id": "touji_lose",
+      "label": "touji_lose"
+    },
+    {
+      "id": "tigou_run",
+      "label": "tigou_run"
+    },
+    {
+      "id": "tigou_bite",
+      "label": "tigou_bite"
+    },
+    {
+      "id": "timao_run",
+      "label": "timao_run"
+    },
+    {
+      "id": "timao_scratch",
+      "label": "timao_scratch"
+    },
+    {
+      "id": "paoge_seen",
+      "label": "paoge_seen"
+    },
+    {
+      "id": "zhuanghan_chuang",
+      "label": "zhuanghan_chuang"
+    },
+    {
+      "id": "tiaoxin_done",
+      "label": "tiaoxin_done"
+    },
+    {
+      "id": "jietou_xianhua_heard",
+      "label": "jietou_xianhua_heard"
+    },
+    {
+      "id": "beishi_corpse_inspected",
+      "label": "beishi_corpse_inspected"
+    },
+    {
+      "id": "beishi_enter_wild",
+      "label": "beishi_enter_wild"
+    },
+    {
+      "id": "yan_neck_seen",
+      "label": "yan_neck_seen"
+    },
+    {
+      "id": "beishi_guiju_shou",
+      "label": "beishi_guiju_shou"
+    },
+    {
+      "id": "beishi_tanquai",
+      "label": "beishi_tanquai"
+    },
+    {
+      "id": "beishi_wild_heavy_done",
+      "label": "beishi_wild_heavy_done"
+    },
+    {
+      "id": "beishi_wild_heavy_fail",
+      "label": "beishi_wild_heavy_fail"
+    },
+    {
+      "id": "beishi_wild_biyingsheng_done",
+      "label": "beishi_wild_biyingsheng_done"
+    },
+    {
+      "id": "beishi_wild_yingle",
+      "label": "beishi_wild_yingle"
+    },
+    {
+      "id": "beishi_wild_biehuitou_done",
+      "label": "beishi_wild_biehuitou_done"
+    },
+    {
+      "id": "beishi_wild_huitou",
+      "label": "beishi_wild_huitou"
+    },
+    {
+      "id": "yedao_chalu_done",
+      "label": "yedao_chalu_done"
     }
   ]
 }

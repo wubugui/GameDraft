@@ -15,13 +15,13 @@
 
 - [ ] 当前仓库已经拉到最新 `master`。
 - [ ] 工作区没有未提交改动，或已经确认这些改动不影响验收。
-- [ ] 本机存在 `.tools\Python311\python.exe`。
+- [ ] 本机存在 `.tools/venv/bin/python`。
 - [ ] 已安装 npm 依赖；如果不确定，先运行一次 `npm install`。
 - [ ] 验收过程中记录所有失败项，优先复制工具内报告，不只截图。
 
 建议先运行：
 
-```powershell
+```sh
 git status --short --branch
 npm install
 ```
@@ -33,12 +33,17 @@ npm install
 
 ## 1. 启动入口验收
 
-### 1.1 通过脚本启动
+### 1.1 通过 npm 命令启动
 
 步骤：
 
-1. 在资源管理器打开项目根目录。
-2. 双击 `start-production-workbench.cmd`。
+1. 在项目根目录打开终端。
+2. 运行：
+
+```sh
+npm run planner:gui
+```
+
 3. 等待窗口出现。
 4. 检查窗口标题是否类似 `GameDraft 生产工作台 - GameDraft`。
 5. 检查顶部工程路径是否指向当前项目。
@@ -56,15 +61,15 @@ npm install
 - 复制或截图错误弹窗。
 - 记录是否缺 Python、PySide6、路径错误或窗口无响应。
 
-### 1.2 通过 npm 命令启动
+### 1.2 通过 Python 入口启动
 
 步骤：
 
-1. 在项目根目录打开 PowerShell。
+1. 在项目根目录打开终端。
 2. 运行：
 
-```powershell
-npm run planner:gui
+```sh
+.tools/venv/bin/python -m tools.production_workbench .
 ```
 
 3. 等待生产工作台窗口出现。
@@ -249,7 +254,7 @@ npm run planner:gui
 
 1. 启动游戏运行时：
 
-```powershell
+```sh
 npm run dev
 ```
 
@@ -525,13 +530,13 @@ npm run dev
 
 1. 在项目根目录运行：
 
-```powershell
-.\.tools\Python311\python.exe -m unittest discover tools/editor/tests -p "test_production_workbench*.py"
+```sh
+.tools/venv/bin/python -m unittest discover tools/editor/tests -p "test_production_workbench*.py"
 ```
 
 2. 再运行：
 
-```powershell
+```sh
 npm test
 ```
 
@@ -575,4 +580,3 @@ npm test
 最终结论：
 通过 / 不通过 / 有条件通过
 ```
-

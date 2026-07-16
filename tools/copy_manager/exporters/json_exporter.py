@@ -186,6 +186,18 @@ def _set_value_safe(data: Any, field_path: str, value: str) -> None:
     _navigate_and_set(data, steps, value)
 
 
+def _resolve_legacy_key_alias(current: Any, key: str) -> str:
+    """Map stable historical field paths to current wrapped JSON keys."""
+    if (
+        key == "map"
+        and isinstance(current, dict)
+        and key not in current
+        and isinstance(current.get("nodes"), list)
+    ):
+        return "nodes"
+    return key
+
+
 def _navigate_and_set(data: Any, steps: list[tuple[str, str | None]], value: str) -> None:
     """Navigate through the data structure following steps, then set the final value.
 
@@ -198,6 +210,7 @@ def _navigate_and_set(data: Any, steps: list[tuple[str, str | None]], value: str
         is_last = (i == len(steps) - 1)
 
         if isinstance(current, dict):
+            key = _resolve_legacy_key_alias(current, key)
             if key not in current:
                 return  # Path doesn't exist, skip silently
 

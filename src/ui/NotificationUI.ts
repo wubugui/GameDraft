@@ -1,5 +1,6 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import { UITheme } from './UITheme';
+import { drawPanelBase, SKINS } from './PanelSkin';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
 
@@ -54,8 +55,7 @@ export class NotificationUI {
     const entry = new Container();
 
     const bg = new Graphics();
-    bg.roundRect(0, 0, 240, SLOT_HEIGHT - 4, UITheme.panel.borderRadiusSmall);
-    bg.fill({ color: UITheme.colors.dialogueBg, alpha: UITheme.alpha.notifBg });
+    drawPanelBase(bg, 0, 0, 240, SLOT_HEIGHT - 4, SKINS.toast);
     entry.addChild(bg);
 
     const label = new Text({
@@ -76,6 +76,9 @@ export class NotificationUI {
     };
 
     this.entries.push(record);
+    // toast 须恒在最上层：把整个列表容器重挂到 uiLayer 末尾（对已有子节点 addChild 即移动），
+    // 否则通知会被之后打开的面板压住看不见。
+    this.renderer.uiLayer.addChild(this.listContainer);
     this.listContainer.addChild(entry);
 
     if (this.entries.length > MAX_VISIBLE) {

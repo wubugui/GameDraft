@@ -89,7 +89,7 @@
     {
       "id": "lore_dianzizhou",
       "title": "癫子周的螺旋酒楼",
-      "content": "脚帮压低嗓子讲的：癫子周年年梦见阎王岭里有座螺旋向下的酒楼，他在梦里挖了二十年，还在挖。讲的人说到这儿就不讲了，听的人也不问。",
+      "content": "脚帮压低嗓子讲的：癫子周年年梦见阎王岭里有座螺旋向下的酒楼，他在梦里挖了二十年，还在挖。讲的人说到这点就不讲了，听的人也不问。",
       "source": "脚帮闲话",
       "category": "legend",
       "unlockConditions": [
@@ -117,7 +117,7 @@
     {
       "id": "lore_xiagu_village",
       "title": "山里下蛊的寨子",
-      "content": "说是阎王岭再往里有个寨子，寨里人不种地、不赶集，靠「养东西」过活。脚帮说到这儿，连最贫嘴的也住了声。",
+      "content": "说是阎王岭再往里有个寨子，寨里人不种地、不赶集，靠「养东西」过活。脚帮说到这点，连最贫嘴的也住了声。",
       "source": "脚帮闲话",
       "category": "folklore",
       "unlockConditions": [
@@ -138,6 +138,20 @@
         {
           "narrative": "flow_xungou_main",
           "state": "s06_laoxiang",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "id": "lore_loafer_odd_jobs",
+      "title": "雾津的下九流零活",
+      "content": "在雾津，没个正经营生的闲汉，靠的就是这些腌臜零活糊口：拉路倒、扛麻包、替人偷听个消息；谁家有具没人认领的死人要往义庄送，街面上扯一嗓子就有人接。关二狗这种，嘴上吹自己是「李天狗徒弟的徒弟」，背尸镇尸的土办法抖得一套一套，其实多半是听来的、唬人的。给钱就干，干完拍屁股走人——凉是凉的，沉是沉的，于他不过是几个铜板的事。",
+      "source": "雾津街面见闻",
+      "category": "folklore",
+      "unlockConditions": [
+        {
+          "narrative": "flow_背尸_零工活",
+          "state": "delivered",
           "reached": true
         }
       ]

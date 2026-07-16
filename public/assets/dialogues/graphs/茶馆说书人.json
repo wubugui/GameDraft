@@ -24,11 +24,14 @@
     "fv_1": {
       "type": "line",
       "speaker": {
-        "kind": "literal",
-        "name": "说书人张叨叨"
+        "kind": "sceneNpc",
+        "npcId": "storyteller_zhang"
       },
-      "text": "话说这崂山道士捡了本天书，正要上神仙顶，不想半路撞见一伙倒斗摸金的，从古墓里放出个大旱魃来。",
-      "next": "fv_arc"
+      "text": "话说这崂山道士捡了本天书，正要上神仙顶，哪晓得半路上撞见一伙倒斗摸金的，从古墓头放出个大旱魃来。",
+      "next": "fv_arc",
+      "portrait": {
+        "emotion": "laugh"
+      }
     },
     "fv_arc": {
       "type": "runActions",
@@ -46,23 +49,26 @@
     "fv_2": {
       "type": "line",
       "speaker": {
-        "kind": "literal",
-        "name": "说书人张叨叨"
+        "kind": "sceneNpc",
+        "npcId": "storyteller_zhang"
       },
-      "text": "那道士掐诀念咒，和旱魃大战三百回合，直打得山摇地动，最后一把火把那东西烧成了黑炭。摸金的千恩万谢，非要拿重金酬谢，道士却只一拂袖，人就不见了。",
-      "next": "fv_ch"
+      "text": "那道士掐诀念咒，跟旱魃大战三百回合，直打得山摇地动，末了一把火把那东西烧成了黑炭。摸金的千恩万谢，非要拿重金酬他，道士却只一甩袖子，人就不见了。",
+      "next": "fv_ch",
+      "portrait": {
+        "emotion": "laugh"
+      }
     },
     "fv_ch": {
       "type": "choice",
       "options": [
         {
           "id": "sit",
-          "text": "坐下听他说完",
+          "text": "坐倒听他摆完",
           "next": "fv_sit_1"
         },
         {
           "id": "hot",
-          "text": "只听个热闹就算了",
+          "text": "听个闹热就算咯",
           "next": "fv_hot_1"
         }
       ]
@@ -72,17 +78,23 @@
       "speaker": {
         "kind": "player"
       },
-      "text": "这道士挣钱倒真容易。",
-      "next": "fv_sit_2"
+      "text": "这道士挣钱倒撇脱得很。",
+      "next": "fv_sit_2",
+      "portrait": {
+        "emotion": "smirk"
+      }
     },
     "fv_sit_2": {
       "type": "line",
       "speaker": {
-        "kind": "literal",
-        "name": "说书人张叨叨"
+        "kind": "sceneNpc",
+        "npcId": "storyteller_zhang"
       },
-      "text": "那可不？要是真有这门手艺，银钱还不自己往怀里钻。",
-      "next": "fv_sit_flags"
+      "text": "那是撒？要是真有这门手艺，银钱还不自家往怀头钻。",
+      "next": "fv_sit_flags",
+      "portrait": {
+        "emotion": "smirk"
+      }
     },
     "fv_sit_flags": {
       "type": "runActions",
@@ -107,19 +119,25 @@
     "fv_sit_3": {
       "type": "line",
       "speaker": {
-        "kind": "literal",
-        "name": "说书人张叨叨"
+        "kind": "sceneNpc",
+        "npcId": "storyteller_zhang"
       },
-      "text": "你小子要是听得心痒，不如去问问那边的瞎子李。那老东西满口神神鬼鬼，兴许真会点门道。",
-      "next": "end1"
+      "text": "你娃要是听得心头发痒，不如去问哈那边的瞎子李。那老东西满嘴神神鬼鬼，说不定真会点门道。",
+      "next": "end1",
+      "portrait": {
+        "emotion": "smirk"
+      }
     },
     "fv_hot_1": {
       "type": "line",
       "speaker": {
         "kind": "player"
       },
-      "text": "热闹是热闹，可也不能当饭吃。",
-      "next": "fv_hot_flags"
+      "text": "闹热是闹热，可也不能当饭吃嘛。",
+      "next": "fv_hot_flags",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "fv_hot_flags": {
       "type": "runActions",
@@ -137,42 +155,48 @@
     "fv_hot_2": {
       "type": "line",
       "speaker": {
-        "kind": "literal",
-        "name": "说书人张叨叨"
+        "kind": "sceneNpc",
+        "npcId": "storyteller_zhang"
       },
-      "text": "饭不好吃，故事总得听两耳朵。你要真惦记能糊口的本事，去问问那边刚坐下的瞎子李。",
-      "next": "end1"
+      "text": "饭不好吃，故事总该听两耳朵。你要真想求个糊口的本事，去问哈那边刚坐倒的瞎子李。",
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "ret_open": {
       "type": "line",
       "speaker": {
-        "kind": "literal",
-        "name": "说书人张叨叨"
+        "kind": "sceneNpc",
+        "npcId": "storyteller_zhang"
       },
-      "text": "今天这段先摆到这儿。怎么着，听够了？还是已经看上别的门道了？",
-      "next": "ret_ch"
+      "text": "今天这段先摆到这点。啷个嘛，听够了迈？还是已经看上别的门道了？",
+      "next": "ret_ch",
+      "portrait": {
+        "emotion": "smirk"
+      }
     },
     "ret_ch": {
       "type": "choice",
       "options": [
         {
           "id": "q1",
-          "text": "瞎子李真会算命？",
+          "text": "瞎子李真会算命迈？",
           "next": "ret_q1"
         },
         {
           "id": "q2",
-          "text": "城隍庙后山到底闹过什么？",
+          "text": "城隍庙后山到底闹过啥子？",
           "next": "ret_q2"
         },
         {
           "id": "q3",
-          "text": "阎王岭真有那么邪？",
+          "text": "阎王岭真有恁个邪？",
           "next": "ret_q3"
         },
         {
           "id": "q4",
-          "text": "没事，我就再听两句",
+          "text": "没得啥子，我就再听两句",
           "next": "ret_q4"
         }
       ]
@@ -180,29 +204,38 @@
     "ret_q1": {
       "type": "line",
       "speaker": {
-        "kind": "literal",
-        "name": "说书人张叨叨"
+        "kind": "sceneNpc",
+        "npcId": "storyteller_zhang"
       },
-      "text": "会不会我可不敢打包票。不过那老瞎子见的人多，嘴皮子也利索。你要是想求个出路，和他搭两句总不亏。",
-      "next": "end1"
+      "text": "会不会我可不敢打包票。不过那老瞎子见的人多，嘴皮子也溜得很。你要是想求个出路，跟他搭两句总不亏。",
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "ret_q2": {
       "type": "line",
       "speaker": {
-        "kind": "literal",
-        "name": "说书人张叨叨"
+        "kind": "sceneNpc",
+        "npcId": "storyteller_zhang"
       },
-      "text": "前阵子有个书生，三更半夜从庙后头抄近路，回来就说看见白影子站在月地里唱曲，嘴里唱的还是《红楼》里的词。",
-      "next": "ret_q2b"
+      "text": "前阵子有个书生，三更半夜从庙背后抄近路，回来就说看见个白影子站在月地头唱曲，嘴里唱的还是《红楼》里头的词。",
+      "next": "ret_q2b",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "ret_q2b": {
       "type": "line",
       "speaker": {
-        "kind": "literal",
-        "name": "说书人张叨叨"
+        "kind": "sceneNpc",
+        "npcId": "storyteller_zhang"
       },
-      "text": "第二天那书生就疯疯癫癫，只会反复念那一句“白茫茫大地真干净”。城里人都说，庙后头那东西不是在找活人，是在等谁。",
-      "next": "ret_q2f"
+      "text": "第二天那书生就疯疯癫癫，翻来覆去就念那一句“白茫茫大地真干净”。城里人都说，庙背后那东西不是在找活人，是在等哪个。",
+      "next": "ret_q2f",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "ret_q2f": {
       "type": "runActions",
@@ -227,20 +260,26 @@
     "ret_q3": {
       "type": "line",
       "speaker": {
-        "kind": "literal",
-        "name": "说书人张叨叨"
+        "kind": "sceneNpc",
+        "npcId": "storyteller_zhang"
       },
-      "text": "邪不邪我不敢拿命打包票，可那地方在城北压着，老人都说活人进得去，魂未必回得来。",
-      "next": "ret_q3b"
+      "text": "邪不邪我不敢拿命打包票，可那地方在城北头压起，老辈子都说活人进得去，魂未必回得来。",
+      "next": "ret_q3b",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "ret_q3b": {
       "type": "line",
       "speaker": {
-        "kind": "literal",
-        "name": "说书人张叨叨"
+        "kind": "sceneNpc",
+        "npcId": "storyteller_zhang"
       },
-      "text": "这些年偏还有人往那边钻，找金子的、找龙脉的、找短命财的，回来的人没几个还像原来那样。",
-      "next": "ret_q3f"
+      "text": "这些年偏还有人往那边钻，找金子的、找龙脉的、找短命财的，回来的人没得几个还像原来那样。",
+      "next": "ret_q3f",
+      "portrait": {
+        "emotion": "sad"
+      }
     },
     "ret_q3f": {
       "type": "runActions",
@@ -265,11 +304,14 @@
     "ret_q4": {
       "type": "line",
       "speaker": {
-        "kind": "literal",
-        "name": "说书人张叨叨"
+        "kind": "sceneNpc",
+        "npcId": "storyteller_zhang"
       },
-      "text": "那就搬张板凳，老张这肚子里还有的是怪事。",
-      "next": "end1"
+      "text": "那就搬根板凳坐倒，老张这肚子头还有的是怪事。",
+      "next": "end1",
+      "portrait": {
+        "emotion": "laugh"
+      }
     },
     "end1": {
       "type": "end"

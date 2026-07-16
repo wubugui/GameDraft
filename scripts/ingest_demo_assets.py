@@ -2,7 +2,7 @@
 """把《寻狗记》Demo 生成素材包（GeneratedDemoAssets_20260606）入库到 runtime 资源目录。
 
 用法（仓库根目录）：
-    .\\.tools\\Python311\\python.exe scripts\\ingest_demo_assets.py [--src D:\\sucai\\GeneratedDemoAssets_20260606] [--dry-run]
+    .tools/venv/bin/python scripts/ingest_demo_assets.py [--src /path/to/GeneratedDemoAssets_20260606] [--dry-run]
 
 职责：
 1. 场景背景 → public/resources/runtime/scenes/<sceneId>/background.png（直拷）。

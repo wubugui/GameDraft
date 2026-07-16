@@ -14,6 +14,7 @@ from ..flag_registry import ids_for_registry_pattern_source
 from ..flag_registry import normalize_registry_value_type
 from ..flag_registry import registry_value_type_for_key
 from ..editors.flag_registry_editor import FlagRegistryEditor
+from .dialog_geometry import remember_dialog_geometry
 
 
 def _flag_value_type_label(vt: str | None) -> str:
@@ -37,7 +38,8 @@ class FlagPickerDialog(QDialog):
     ):
         super().__init__(parent)
         self.setWindowTitle("选择或登记 flag")
-        self.resize(1000, 720)
+        # 默认更小以适配 13"，并记忆用户拉伸后的几何（小屏可缩、大屏可放大）
+        self.resize(920, 640)
         self.setModal(True)
         self._model = model
         self._scene_id = scene_id
@@ -76,11 +78,12 @@ class FlagPickerDialog(QDialog):
 
         quick = QGroupBox("快速拼装（与条件区模板相同）")
         qf = QFormLayout(quick)
+        qf.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
         self._pat_combo = QComboBox()
-        self._pat_combo.setMinimumWidth(200)
+        self._pat_combo.setMinimumWidth(160)
         self._id_combo = QComboBox()
         self._id_combo.setEditable(False)
-        self._id_combo.setMinimumWidth(160)
+        self._id_combo.setMinimumWidth(130)
         preview = QLabel("")
         preview.setWordWrap(True)
         self._preview_label = preview
@@ -113,6 +116,7 @@ class FlagPickerDialog(QDialog):
         root.addWidget(bb)
 
         self._rebuild_tree()
+        remember_dialog_geometry(self, "flag_picker")
 
     def selected_key(self) -> str:
         return self._selected_key
@@ -122,8 +126,22 @@ class FlagPickerDialog(QDialog):
         self._display.setText(self._selected_key)
 
     def _accept(self) -> None:
+        # 内嵌登记表的防抖 pattern 编辑先落模型，避免关窗丢尾窗编辑（P3）。
+        self._reg_editor.flush_to_model()
+        # 停在「编辑登记表」页点 Ok：若那里刚建/选中了某 flag，直接返回它，
+        # 免得用户以为选了却拿到旧的 display 值（P3）。
+        if self._tabs.currentIndex() == 1:
+            newly = self._reg_editor.current_static_key()
+            if newly:
+                self._set_selection(newly)
         self._selected_key = self._display.text().strip()
         self.accept()
+
+    def reject(self) -> None:  # type: ignore[override]
+        # 取消/Esc/关窗同样 flush 内嵌登记表的防抖编辑（登记表改动直改模型，
+        # 不随对话框取消回滚——尾窗 pattern 编辑必须落定，P3）。
+        self._reg_editor.flush_to_model()
+        super().reject()
 
     def _on_tab_changed(self, idx: int) -> None:
         if idx == 0:

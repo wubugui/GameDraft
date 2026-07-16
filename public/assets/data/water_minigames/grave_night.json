@@ -70,6 +70,8 @@
         "y": 300
       },
       "depth": 0.62,
+      "displaySize": 68,
+      "hitRadius": 42,
       "motion": {
         "path": "flee",
         "speed": 0.5

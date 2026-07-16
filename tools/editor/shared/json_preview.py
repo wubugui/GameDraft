@@ -3,14 +3,15 @@ from __future__ import annotations
 
 import json
 from PySide6.QtWidgets import QTextEdit, QWidget
-from PySide6.QtGui import QFont
+
+from tools.editor.shared.fonts import MONO_FONT_FAMILY
 
 
 class JsonPreview(QTextEdit):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setReadOnly(True)
-        self.setFont(QFont("Consolas", 10))
+        self.setStyleSheet(f"font-family: {MONO_FONT_FAMILY};")
         self.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
 
     def show_data(self, data: dict | list | None) -> None:

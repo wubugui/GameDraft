@@ -2,7 +2,8 @@ import { Assets, Texture, type Filter } from 'pixi.js';
 import { Howl } from 'howler';
 import type { SceneData, SceneDataRaw } from '../data/types';
 import { resolveAssetPath } from './assetPath';
-import { filterJsonUrl, sceneJsonUrl } from './projectPaths';
+import { reportDevError, describeError } from './devErrorOverlay';
+import { filterJsonUrl, sceneJsonUrl, sceneRuntimeAssetUrl } from './projectPaths';
 import { createFilterFromDef } from '../rendering/filter/FilterLoader';
 import type { FilterDef } from '../rendering/filter/types';
 
@@ -56,6 +57,7 @@ interface CacheBucket<T = unknown> {
 }
 
 const MB = 1024 * 1024;
+const SAFE_MAX_TEXTURE_SIZE = 2048;
 
 const DEFAULT_LIMITS: Record<AssetType, { bytes?: number; entries?: number }> = {
   json: { bytes: 32 * MB },
@@ -94,8 +96,24 @@ function textureBytes(texture: Texture): number {
   return Math.max(1, texture.width) * Math.max(1, texture.height) * 4;
 }
 
+function assertSafeTextureSize(texture: Texture, key: string): void {
+  if (texture.width <= SAFE_MAX_TEXTURE_SIZE && texture.height <= SAFE_MAX_TEXTURE_SIZE) return;
+  throw new Error(
+    `texture exceeds safe max ${SAFE_MAX_TEXTURE_SIZE}px: ${key} (${texture.width}x${texture.height})`,
+  );
+}
+
 function bitmapBytes(bitmap: ImageBitmap): number {
   return Math.max(1, bitmap.width) * Math.max(1, bitmap.height) * 4;
+}
+
+function audioBytes(howl: Howl): number {
+  // Web Audio 路径下 Howler 会把整段音频解码成 PCM 常驻内存。真实声道数/采样率/位深拿不到，
+  // 按 44.1kHz × 双声道 × 16bit 估算量级（好过一律按固定 1MB 计使 64MB 上限≙64 条）；
+  // duration 尚不可用（HTML5 流式或未就绪）时退回 1MB。
+  const dur = howl.duration();
+  if (!Number.isFinite(dur) || dur <= 0) return MB;
+  return Math.max(1, Math.round(dur * 44100 * 2 * 2));
 }
 
 export class AssetManager {
@@ -109,6 +127,8 @@ export class AssetManager {
   };
   private logicalClock = 0;
   private scopeRefs = new Map<string, AssetRef[]>();
+  /** dispose() 后置 true：在途加载完成的产物立即释放、不入缓存（见 loadIntoBucket） */
+  private disposed = false;
   private readonly verboseStageLog =
     typeof import.meta !== 'undefined'
     && import.meta.env?.DEV
@@ -146,16 +166,27 @@ export class AssetManager {
     loader: () => Promise<T>,
     sizeOf: (value: T) => number,
   ): Promise<T> {
-    const cached = this.getFromBucket<T>(type, key);
-    if (cached) return cached;
-
     const bucket = this.buckets[type] as CacheBucket<T>;
+    // 命中判断看条目存在性而非值真假：空字符串/0/false 等合法 falsy 缓存值不能被当成未命中重复加载
+    const cachedEntry = bucket.entries.get(key);
+    if (cachedEntry) {
+      bucket.stats.hits++;
+      return this.touch(bucket, cachedEntry);
+    }
+    bucket.stats.misses++;
+
     const inflight = bucket.inflight.get(key);
     if (inflight) return inflight;
 
     const p = loader()
       .then((value) => {
         bucket.inflight.delete(key);
+        // 整机已 dispose：在途加载的产物完成即释放、不入缓存——否则 new Howl 已注册进
+        // Howler 全局表/纹理已占显存，销毁后无人回收（跨 HMR/预览残留）。
+        if (this.disposed) {
+          this.disposeValue(type, value);
+          return value;
+        }
         bucket.errors.delete(key);
         bucket.stats.loads++;
         const existing = bucket.entries.get(key);
@@ -176,6 +207,7 @@ export class AssetManager {
         bucket.inflight.delete(key);
         bucket.errors.set(key, e);
         bucket.stats.errors++;
+        reportDevError(`[${type}] 加载失败: ${key}\n${describeError(e)}`);
         throw e;
       });
     bucket.inflight.set(key, p);
@@ -192,11 +224,23 @@ export class AssetManager {
 
     while (overLimits()) {
       let victim: CacheEntry | null = null;
+      let skippedPlaying = false;
       for (const entry of bucket.entries.values()) {
         if (entry.pins.size > 0) continue;
+        // 正在发声的 Howl 不可淘汰：unload() 会把可听声音硬切掉；跳过本轮候选
+        if (entry.type === 'audio' && (entry.value as Howl).playing()) {
+          skippedPlaying = true;
+          continue;
+        }
         if (!victim || entry.lastUsed < victim.lastUsed) victim = entry;
       }
-      if (!victim) break;
+      if (!victim) {
+        // 全部候选都在播/被 pin 时容忍暂时超限（等停播后下次 evict 再收），避免死循环
+        if (skippedPlaying) {
+          console.warn(`AssetManager: ${type} 缓存超限，但剩余条目均在播放或被 pin，本轮不淘汰`);
+        }
+        break;
+      }
       this.disposeEntry(victim);
       bucket.entries.delete(victim.key);
       bucket.stats.evictions++;
@@ -210,11 +254,18 @@ export class AssetManager {
   }
 
   private disposeEntry(entry: CacheEntry): void {
-    if (entry.type === 'audio') {
-      (entry.value as Howl).unload();
+    this.disposeValue(entry.type, entry.value);
+  }
+
+  private disposeValue(type: AssetType, value: unknown): void {
+    if (type === 'texture') {
+      (value as Texture).source?.unload();
     }
-    if (entry.type === 'bitmap') {
-      (entry.value as ImageBitmap).close();
+    if (type === 'audio') {
+      (value as Howl).unload();
+    }
+    if (type === 'bitmap') {
+      (value as ImageBitmap).close();
     }
   }
 
@@ -230,7 +281,11 @@ export class AssetManager {
     return this.loadIntoBucket<Texture>(
       'texture',
       resolved,
-      () => Assets.load<Texture>(resolved),
+      async () => {
+        const texture = await Assets.load<Texture>(resolved);
+        assertSafeTextureSize(texture, resolved);
+        return texture;
+      },
       textureBytes,
     );
   }
@@ -310,7 +365,7 @@ export class AssetManager {
           onloaderror: (_id, error) => reject(error),
         });
       }),
-      () => MB,
+      audioBytes,
     );
   }
 
@@ -453,9 +508,20 @@ export class AssetManager {
     if (!type) this.scopeRefs.clear();
   }
 
+  /**
+   * 整机销毁（Game.destroy 收尾专用）：清空全部缓存并进入 disposed 态——之后才完成的
+   * 在途加载产物会被立即释放而不入缓存。Howl 不 unload 会常驻 Howler 全局注册表、
+   * Pixi 纹理缓存跨实例存活，不做这步会跨 HMR/编辑器预览残留解码音频与贴图。
+   */
+  dispose(): void {
+    this.disposed = true;
+    this.clearCache();
+  }
+
+  /** 场景媒体路径统一委托 projectPaths（单一实现源）；空引用原样返回、由上层按缺资源处理。 */
   resolveSceneAssetPath(sceneId: string, imagePath: string): string {
-    if (!imagePath || imagePath.startsWith('/') || imagePath.startsWith('resources/')) return imagePath;
-    return `resources/runtime/scenes/${sceneId}/${imagePath}`;
+    if (!imagePath) return imagePath;
+    return sceneRuntimeAssetUrl(sceneId, imagePath);
   }
 
   /**
@@ -466,6 +532,18 @@ export class AssetManager {
   async loadSceneData(sceneId: string): Promise<SceneData> {
     const cached = await this.loadJson<SceneDataRaw>(sceneJsonUrl(sceneId));
     const raw = JSON.parse(JSON.stringify(cached)) as SceneDataRaw;
+
+    // 背景图文件名强约束：场景主背景只能叫 background.png。名字不对直接报错、不加载，
+    // 避免带着错误资源引用半死不活地跑（编辑器导入背景时统一迁入并命名为 background.png）。
+    if (raw.backgrounds && raw.backgrounds.length > 0) {
+      const primaryImage = raw.backgrounds[0]?.image;
+      if (primaryImage !== 'background.png') {
+        throw new Error(
+          `场景 "${sceneId}" 的背景图文件名必须是 background.png，实际为 "${primaryImage}"。` +
+          `请在编辑器中重新导入背景图。`,
+        );
+      }
+    }
 
     if (raw.backgrounds) {
       for (const layer of raw.backgrounds) {

@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "id": "梦_段A_夜路",
+  "entry": "root",
+  "meta": {
+    "title": "梦·段A·夜路"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "narrative": "scenario_梦待死之礼",
+              "state": "woken",
+              "reached": true
+            }
+          ],
+          "next": "done_1"
+        }
+      ],
+      "defaultNext": "n1"
+    },
+    "done_1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "那一觉的事，他谁也没说过。",
+      "next": "a_end_end"
+    },
+    "n1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "他没回城。腿肚子还在转筋，顺着墙根滑进一孔废砖窑，把自己塞进黑里。冷、饿、乏——眼皮一合，人就沉了底。",
+      "next": "n2"
+    },
+    "n2": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "一条夜路。雾薄。远处一户人家亮着灯，暖黄暖黄的，是这片黑里唯一的光。",
+      "next": "n3"
+    },
+    "n3": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "（脚杆自己在往那边走。路两边啥子都没得。静得只剩我自己的脚步声。）",
+      "next": "a_end",
+      "portrait": {
+        "emotion": "empty_eyes"
+      }
+    },
+    "a_end": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "playSignalCue",
+          "params": {
+            "id": "axiu_faint"
+          }
+        }
+      ],
+      "next": "a_end_end"
+    },
+    "a_end_end": {
+      "type": "end"
+    }
+  }
+}

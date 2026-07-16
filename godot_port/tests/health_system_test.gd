@@ -1,0 +1,115 @@
+extends Node
+
+var events: Array[Dictionary] = []
+var actions: Array[String] = []
+var block_cue := false
+var reject_cue := false
+var cue_latch := RuntimeAsyncLatch.new()
+
+
+func _ready() -> void:
+	await _run()
+
+
+func _run() -> void:
+	var bus := RuntimeEventBus.new()
+	bus.on("player:healthChanged", Callable(self, "_record_health"))
+	var flags := RuntimeFlagStore.new(bus)
+	var executor := RuntimeActionExecutor.new(bus, flags)
+	executor.register("playSignalCue", Callable(self, "_record_cue"), ["id"])
+	executor.register("emitNarrativeSignal", Callable(self, "_record_signal"), ["sourceType", "sourceId", "signal"])
+	var health := RuntimeHealthSystem.new(bus, flags, executor)
+	health.init({})
+	assert(health.get_health() == 100.0 and health.get_max_health() == 100.0)
+	assert(flags.get_value("player_health") == 100.0 and events[-1] == {"current": 100.0, "max": 100.0})
+	await health.damage(10.0)
+	assert(health.get_health() == 90.0)
+	health.heal(20.0)
+	assert(health.get_health() == 100.0)
+	health.set_health(-5.0)
+	assert(health.get_health() == 0.0 and actions.is_empty())
+	health.set_health(NAN)
+	assert(health.get_health() == 0.0)
+	health.set_health(50.0)
+	await health.damage(NAN)
+	assert(is_nan(health.get_health()))
+	health.set_health(50.0)
+	health.heal(NAN)
+	assert(is_nan(health.get_health()))
+	health.set_health(5.0)
+	await health.damage(10.0)
+	assert(actions == ["cue:signal_death_tether", "signal:death_tether"])
+	assert(health.get_health() == 60.0 and flags.get_value("player_health") == 60.0)
+
+	# Suppression hands recovery to content: hit zero, no cue/signal, no auto-heal.
+	actions.clear()
+	flags.set_value("forest.tether_suppressed", true)
+	health.set_health(2.0)
+	await health.tether()
+	assert(health.get_health() == 0.0 and actions.is_empty())
+	flags.set_value("forest.tether_suppressed", false)
+
+	# Re-init resets source health values but does not invent a reset of the
+	# in-flight guard. A concurrent tether call must be ignored until completion.
+	health.tethering = true
+	health.init({})
+	assert(health.tethering and health.get_health() == 100.0)
+	health.tethering = false
+	actions.clear()
+	block_cue = true
+	cue_latch = RuntimeAsyncLatch.new()
+	health.set_health(1.0)
+	health.damage(2.0)
+	await get_tree().process_frame
+	assert(health.tethering and health.get_health() == 0.0 and actions == ["cue:signal_death_tether"])
+	await health.tether()
+	assert(actions == ["cue:signal_death_tether"])
+	cue_latch.resolve()
+	while health.tethering:
+		await get_tree().process_frame
+	assert(actions == ["cue:signal_death_tether", "signal:death_tether"] and health.get_health() == 60.0)
+
+	# ActionExecutor false is the translated rejected-Promise path: warn, restore
+	# health, release the guard, and do not run the remaining narrative action.
+	actions.clear()
+	reject_cue = true
+	health.set_health(1.0)
+	await health.damage(2.0)
+	assert(actions == ["cue:signal_death_tether"] and health.get_health() == 60.0 and not health.tethering)
+
+	var snapshot := health.serialize()
+	var restored := RuntimeHealthSystem.new(bus, flags, executor)
+	restored.configure({"maxHealth": 120.0, "deathThreshold": 10.0, "restoreFloor": 150.0, "tetherCueId": "custom"})
+	restored.init({})
+	assert(restored.get_health() == 120.0)
+	restored.set_health(11.0)
+	actions.clear()
+	await restored.damage(1.0)
+	assert(restored.get_health() == 120.0 and actions[0] == "cue:custom")
+	restored.deserialize(snapshot)
+	assert(restored.serialize() == snapshot)
+	restored.destroy(); restored.free()
+	health.destroy(); health.free()
+	executor.destroy(); flags.destroy(); bus.clear()
+	print("HealthSystem field/order/tether/error direct-translation test: PASS")
+	get_tree().quit(0)
+
+
+func _record_health(payload: Dictionary) -> void:
+	events.push_back(payload.duplicate(true))
+
+
+func _record_cue(params: Dictionary, _zone: Variant) -> Variant:
+	actions.push_back("cue:%s" % params.get("id", ""))
+	if block_cue:
+		await cue_latch.wait()
+		block_cue = false
+	if reject_cue:
+		reject_cue = false
+		return false
+	await get_tree().process_frame
+	return null
+
+
+func _record_signal(params: Dictionary, _zone: Variant) -> void:
+	actions.push_back("signal:%s" % params.get("signal", ""))

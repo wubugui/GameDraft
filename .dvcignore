@@ -1,3 +1,12 @@
 # Add patterns of files dvc should ignore, which could improve
 # the performance. Learn more at
 # https://dvc.org/doc/user-guide/dvcignore
+
+# 本地资产备份目录：不作为 DVC 输入/输出扫描
+asset-backups/
+
+# macOS 本地元数据，不应进入资源包
+**/.DS_Store
+
+# 生产工作台运行日志：数量大、可再生成，不作为共享资源同步
+resources/editor_projects/editor_data/production_workbench/console_logs/

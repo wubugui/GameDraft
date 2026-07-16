@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QScrollArea, QGroupBox, QSpinBox, QMessageBox, QToolButton,
     QMenu, QSizePolicy, QFrame, QStyle, QLabel,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QEvent
 
 from ..project_model import ProjectModel
 from ..shared.condition_editor import ConditionEditor
@@ -16,6 +16,7 @@ from ..shared.action_editor import ActionEditor
 from ..shared.id_ref_selector import IdRefSelector
 from ..shared.rich_text_field import RichTextLineEdit, RichTextTextEdit
 from ..shared.qt_icon_buttons import outline_row_tool_button, delete_standard_pixmap
+from ..shared.form_layout import compact_form
 
 
 def _tool_std_icon_btn(
@@ -54,6 +55,7 @@ class _CollapsibleSection(QWidget):
         self._toggle.setChecked(False)
         self._toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self._toggle.setArrowType(Qt.ArrowType.RightArrow)
+        self._toggle.setToolTip(f"展开/折叠「{title}」子区块")
         self._toggle.toggled.connect(self._on_toggled)
         lay.addWidget(self._toggle)
         self._inner = inner
@@ -87,7 +89,7 @@ class _ConsumeItemRow(QWidget):
         self._item_sel.set_current(data.get("id", ""))
         self._item_sel.setSizePolicy(
             QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
-        self._item_sel.setMaximumWidth(320)
+        self._item_sel.setMaximumWidth(220)
         lay.addWidget(self._item_sel, stretch=0)
 
         self._count = QSpinBox()
@@ -211,7 +213,7 @@ class OptionWidget(QFrame):
         body_lay = QVBoxLayout(self._body)
         body_lay.setContentsMargins(0, 4, 0, 0)
 
-        f = QFormLayout()
+        f = compact_form(QFormLayout())
         self._text = RichTextLineEdit(model)
         self._text.setText(data.get("text", ""))
         self._text.setPlaceholderText("选项显示文案")
@@ -220,26 +222,29 @@ class OptionWidget(QFrame):
         self._type = QComboBox()
         self._type.addItems(list(_OPTION_TYPES))
         self._type.setEditable(False)
+        self._type.setToolTip("选项类别：general 普通 / rule 需规矩 / special 特殊")
         t = data.get("type", "general")
         if t in _OPTION_TYPES:
             self._type.setCurrentText(t)
         f.addRow("type", self._type)
         self._rule = IdRefSelector(allow_empty=True, editable=True)
+        self._rule.setToolTip("选择此选项所需的规矩 id（可空）")
         self._rule.set_items(model.all_rule_ids())
         self._rule.set_current(data.get("requiredRuleId", ""))
         self._rule.setSizePolicy(
             QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
-        self._rule.setMaximumWidth(360)
+        self._rule.setMaximumWidth(220)
         f.addRow("requiredRuleId", self._rule)
-        f.addRow(
-            QLabel(
-                "requiredRuleLayers（不勾=须完整掌握；勾选者须对应层已解锁）",
-            ),
-        )
+        _rl_label = QLabel("requiredRuleLayers")
+        _rl_label.setToolTip("不勾 = 须完整掌握；勾选者须对应层已解锁")
+        f.addRow(_rl_label)
         rl_row = QHBoxLayout()
         self._rl_xiang = QCheckBox("象")
+        self._rl_xiang.setToolTip("勾选 = 须已解锁该规矩的「象」层")
         self._rl_li = QCheckBox("理")
+        self._rl_li.setToolTip("勾选 = 须已解锁该规矩的「理」层")
         self._rl_shu = QCheckBox("术")
+        self._rl_shu.setToolTip("勾选 = 须已解锁该规矩的「术」层")
         rl_raw = data.get("requiredRuleLayers") or []
         rl_set = set(rl_raw) if isinstance(rl_raw, list) else set()
         self._rl_xiang.setChecked("xiang" in rl_set)
@@ -252,7 +257,8 @@ class OptionWidget(QFrame):
         f.addRow(rl_row)
         self._result_text = RichTextTextEdit(model)
         self._result_text.setPlainText(data.get("resultText", ""))
-        self._result_text.setMaximumHeight(80)
+        self._result_text.setMinimumHeight(56)
+        self._result_text.setMaximumHeight(140)
         self._result_text.setPlaceholderText("选择该选项后的叙事（可选）")
         f.addRow("resultText", self._result_text)
         body_lay.addLayout(f)
@@ -376,10 +382,24 @@ class EncounterEditor(QWidget):
         btn_row.addWidget(btn_add)
         btn_row.addWidget(btn_del)
         ll.addLayout(btn_row)
+        self._search = QLineEdit()
+        self._search.setPlaceholderText("搜索…")
+        self._search.setClearButtonEnabled(True)
+        self._search.setToolTip("按 id 过滤遭遇列表（仅隐藏不匹配行，不改数据）")
+        self._search.textChanged.connect(self._on_search_changed)
+        ll.addWidget(self._search)
         self._list = QListWidget()
+        self._list.setToolTip("遭遇列表（按 Delete 删除选中项）")
         self._list.selectionModel().currentChanged.connect(
             self._on_selection_current_changed)
+        self._list.installEventFilter(self)
         ll.addWidget(self._list, stretch=1)
+        self._empty_hint = QLabel("暂无遭遇，点击「+ Encounter」新增")
+        self._empty_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_hint.setWordWrap(True)
+        self._empty_hint.setStyleSheet("color: gray;")
+        self._empty_hint.setVisible(False)
+        ll.addWidget(self._empty_hint)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -390,14 +410,15 @@ class EncounterEditor(QWidget):
         self._detail = QWidget()
         self._detail_layout = QVBoxLayout(self._detail)
         self._detail_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        f = QFormLayout()
+        f = compact_form(QFormLayout())
         self._e_id_row = QWidget()
         _idl = QHBoxLayout(self._e_id_row)
         _idl.setContentsMargins(0, 0, 0, 0)
         self._e_id_sel = IdRefSelector(
-            self._e_id_row, allow_empty=False, editable=False, click_opens_popup=True)
+            self._e_id_row, allow_empty=False, editable=True, click_opens_popup=True)
         self._e_id_sel.setToolTip(
-            "从下拉选择遭遇 id；须与热区 encounterId、全表唯一一致。",
+            "遭遇自身 id：可手打语义化 id（如 old_box_encounter）或从下拉选备选；"
+            "Apply 时查空/查重，改名会自动联动场景热区的 encounterId。",
         )
         self._e_id_new = QPushButton("生成唯一 id")
         self._e_id_new.setToolTip("分配当前表中未占用的 id")
@@ -501,15 +522,9 @@ class EncounterEditor(QWidget):
     def _on_gen_encounter_id(self) -> None:
         if self._loading_ui or self._current_idx < 0:
             return
+        # 只更新选择器显示，经 Apply 门写回（旧实现直写模型+快照，绕过校验与联动）
         new_id = self._suggest_unique_encounter_id()
-        row = self._current_idx
-        self._model.encounters[row]["id"] = new_id
-        self._model.mark_dirty("encounter")
-        self._sync_id_selector_for_row(row)
-        lw = self._list.item(row)
-        if lw is not None:
-            lw.setText(new_id)
-        self._take_snapshot_from_model_row(row)
+        self._e_id_sel.set_current(new_id)
 
     def _enc_from_ui(self) -> dict:
         eid = self._e_id_sel.current_id().strip()
@@ -610,6 +625,15 @@ class EncounterEditor(QWidget):
         finally:
             self._loading_ui = False
 
+    def _on_search_changed(self, text: str) -> None:
+        q = text.strip().lower()
+        for i in range(self._list.count()):
+            it = self._list.item(i)
+            it.setHidden(bool(q) and q not in it.text().lower())
+
+    def _update_empty_hint(self) -> None:
+        self._empty_hint.setVisible(self._list.count() == 0)
+
     def _refresh(self, select_id: str | None) -> None:
         self._list.selectionModel().blockSignals(True)
         try:
@@ -632,6 +656,8 @@ class EncounterEditor(QWidget):
                 self._list.setCurrentRow(-1)
         finally:
             self._list.selectionModel().blockSignals(False)
+        self._on_search_changed(self._search.text())
+        self._update_empty_hint()
         self._load_row(row)
 
     def _rebuild_options(self, options: list[dict]) -> None:
@@ -754,7 +780,20 @@ class EncounterEditor(QWidget):
             return False
         enc = self._model.encounters[self._current_idx]
         row_saved = self._current_idx
-        enc["id"] = self._e_id_sel.current_id().strip()
+        _prev_eid = str(enc.get("id", "")).strip()
+        _new_eid = self._e_id_sel.current_id().strip()
+        enc["id"] = _new_eid
+        # 改名级联：场景热区 data.encounterId 跟随，否则遭遇引用悬垂（审查 P2-24）
+        if _prev_eid and _new_eid and _prev_eid != _new_eid:
+            for _sid, _sc in (self._model.scenes or {}).items():
+                _changed = False
+                for _hs in (_sc.get("hotspots") or []):
+                    _d = _hs.get("data") if isinstance(_hs, dict) else None
+                    if isinstance(_d, dict) and str(_d.get("encounterId", "")).strip() == _prev_eid:
+                        _d["encounterId"] = _new_eid
+                        _changed = True
+                if _changed:
+                    self._model.mark_dirty("scene", _sid)
         enc["narrative"] = self._e_narr.toPlainText()
         enc["options"] = [ow.to_dict() for ow in self._opt_widgets]
         self._model.mark_dirty("encounter")
@@ -789,7 +828,39 @@ class EncounterEditor(QWidget):
     def _apply(self) -> None:
         self._apply_impl(refresh_select_id=None)
 
+    def flush_to_model(self) -> bool:
+        """Save All 钩子：把当前未应用的遭遇编辑提交进模型。
+
+        本编辑器编辑只存在于 UI、仅 Apply 才写回模型；若不在保存前 flush，未点 Apply
+        的编辑会在 Save All 时被静默丢弃（与场景编辑器同类的丢数据缺陷）。校验失败时
+        _apply_impl 返回 False，由主窗口的 flush 流程上报、中止保存。
+        """
+        if self._current_idx < 0 or not self._is_dirty():
+            return True
+        return self._apply_impl()
+
+    def confirm_close(self, parent: QWidget | None = None) -> bool:
+        """关闭 / 切项目门控：有未应用编辑则提示保存/放弃/取消，避免静默丢弃。"""
+        if self._current_idx < 0 or not self._is_dirty():
+            return True
+        choice = self._prompt_save_discard()
+        if choice == "cancel":
+            return False
+        if choice == "save":
+            return self._apply_impl()
+        # discard：把表单回滚到模型当前值。否则关闭路径随后的统一 flush 会按
+        # UI≠模型判脏，把刚被放弃的编辑重新提交（复核 P1-01）。
+        self._load_row(self._current_idx)
+        return True
+
     def _add(self) -> None:
+        # 新增前处理当前未应用编辑：与切行路径同一套三选一，绕过即静默丢（审查 P1-3）
+        if self._current_idx >= 0 and self._is_dirty():
+            choice = self._prompt_save_discard()
+            if choice == "cancel":
+                return
+            if choice == "save" and not self._apply_impl():
+                return
         new_id = self._suggest_unique_encounter_id()
         self._model.encounters.append({
             "id": new_id,
@@ -821,8 +892,22 @@ class EncounterEditor(QWidget):
             next_id = str(nxt.get("id", "")).strip() or None
         self._refresh(select_id=next_id)
 
-    def select_by_id(self, item_id: str, _scene_id: str = "") -> None:
+    def eventFilter(self, obj, event):  # noqa: N802 (Qt override)
+        if obj is self._list and event.type() == QEvent.Type.KeyPress:
+            if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+                if self._current_idx >= 0:
+                    self._delete()
+                    return True
+        return super().eventFilter(obj, event)
+
+    def select_by_id(self, item_id: str, _scene_id: str = "") -> bool:
+        """全局搜索/跳转落点。返回 True=已选中条目，False=没找到
+        （全编辑器 bool 契约，主窗消费）。"""
         for i, enc in enumerate(self._model.encounters):
             if enc.get("id") == item_id:
+                # 清列表搜索过滤器：目标行可能被隐藏，选中却看不见（审查 P3）。
+                if getattr(self, "_search", None) is not None and self._search.text():
+                    self._search.clear()
                 self._list.setCurrentRow(i)
-                return
+                return True
+        return False

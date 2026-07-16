@@ -61,8 +61,11 @@
       "speaker": {
         "kind": "player"
       },
-      "text": "（这有用吗？……管它呢。下一样。）",
-      "next": "end1"
+      "text": "（勒个管用迈？……管球。下一样。）",
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "end1": {
       "type": "end"

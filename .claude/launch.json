@@ -5,7 +5,70 @@
       "name": "game-dev",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
-      "port": 5173
+      "port": 5173,
+      "autoPort": false
+    },
+    {
+      "name": "game-dev-5174",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--", "--port", "5174", "--strictPort"],
+      "port": 5174,
+      "autoPort": false
+    },
+    {
+      "name": "game-dev-5178",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--", "--port", "5178", "--strictPort"],
+      "port": 5178,
+      "autoPort": false
+    },
+    {
+      "name": "game-dev-5180",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--", "--port", "5180", "--strictPort"],
+      "port": 5180,
+      "autoPort": false
+    },
+    {
+      "name": "tool-test",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "8099"],
+      "port": 8099
+    },
+    {
+      "name": "anim-preview",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev:anim-preview", "--", "--port", "5199", "--strictPort"],
+      "port": 5199,
+      "autoPort": false
+    },
+    {
+      "name": "parallax-editor",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev:parallax-editor", "--", "--port", "5205", "--strictPort"],
+      "port": 5205,
+      "autoPort": false
+    },
+    {
+      "name": "narrative-editor",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev:narrative-editor", "--", "--port", "5210", "--strictPort"],
+      "port": 5210,
+      "autoPort": false
+    },
+    {
+      "name": "acos-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "/Users/dannyteng/AIWork/agent-canvas-os/web", "run", "dev"],
+      "port": 3100,
+      "autoPort": false
+    },
+    {
+      "name": "cloudcli",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-lc", "export PATH=/opt/homebrew/opt/node@22/bin:$PATH; cd /Users/dannyteng/AIWork/claudecodeui; exec npm run dev"],
+      "port": 5273,
+      "autoPort": false
     }
   ]
 }

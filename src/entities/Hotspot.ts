@@ -19,7 +19,22 @@ const TYPE_COLORS: Record<string, number> = {
 export class Hotspot {
   public def: HotspotDef;
   public container: Container;
-  public active: boolean = true;
+
+  /**
+   * 显隐四通道，最终 active = 派生基底 ∧ 条件 ∧ override≠false ∧ !pickedUp，
+   * 只在 applyEffectiveActive 一处合成。分通道的原因：InteractionSystem 每帧回写
+   * 「派生基底/条件」通道，若与运行态位（拾取、会话隐藏）共用一个布尔，瞬时运行态
+   * 会被下一帧的派生回写冲掉（已拾取热点复活、会话隐藏弹回）。
+   */
+  /** 派生基底（过场绑定 / sceneMemory enabled），InteractionSystem / SceneManager 每帧刷新 */
+  private baseEnabled = true;
+  /** conditionHidesEntity 的条件通道（无条件或不隐藏时恒 true） */
+  private conditionEnabled = true;
+  /** 会话级显隐覆盖（setEnabled / setEntitySessionEnabled 写入；不入档）；null=无覆盖，true 等价 null */
+  private sessionEnabledOverride: boolean | null = null;
+  /** 已被拾取/自消费（pickup 型另由 SceneManager 即时写入 sceneMemory） */
+  private _pickedUp = false;
+  private _active = true;
 
   private marker: Graphics;
   private displaySprite: Sprite | null = null;
@@ -45,6 +60,12 @@ export class Hotspot {
 
     this._syncContainerPosition();
     this._syncEntitySortBand();
+  }
+
+  /** EventBus 调试 trace 投影：只吐可序列化关键数据，绝不暴露 `container`（活 PIXI 对象图，
+   *  深拷贝会顺 parent/children 摊开整个场景）或 `def` 全量。见 EventBus.canonicalizeTraceValue。 */
+  toTraceJSON(): { id: string; type: HotspotDef['type']; active: boolean } {
+    return { id: this.def.id, type: this.def.type, active: this._active };
   }
 
   /** 与 Renderer.sortEntityLayer 配合：仅在有展示图且配置了 spriteSort 时标记容器 */
@@ -100,6 +121,8 @@ export class Hotspot {
     }
     this._displayWorldHeight = 0;
     if (worldWidth <= 0 || worldHeight <= 0) {
+      // 清除展示图后恢复占位圆点（否则热点在场上完全不可见也无标记）
+      this.marker.visible = true;
       this._syncEntitySortBand();
       return;
     }
@@ -140,6 +163,21 @@ export class Hotspot {
   /** 与 Player/NPC 一致：底中锚点下脚底即 container.y */
   depthOcclusionFootWorldY(): number {
     return this.container.y;
+  }
+
+  /** 投射阴影用：展示图世界尺寸；无展示图时为 0（阴影源该帧不画） */
+  getWorldSize(): { width: number; height: number } {
+    return { width: this.def.displayImage?.worldWidth ?? 0, height: this._displayWorldHeight };
+  }
+
+  /** 投射阴影用：当前展示帧纹理（剪影）；无展示图返回 null */
+  getDisplayTexture(): Texture | null {
+    return this.displaySprite?.texture ?? null;
+  }
+
+  /** 投射阴影用：左右朝向（与展示图镜像一致），left=-1 / right=+1 */
+  getFacing(): 1 | -1 {
+    return this._effectiveDisplayFacing() === 'left' ? -1 : 1;
   }
 
   /**
@@ -232,10 +270,58 @@ export class Hotspot {
     this._syncContainerPosition();
   }
 
+  /** 合成后的可交互/可见态（只读；写入走各通道 setter）。 */
+  get active(): boolean {
+    return this._active;
+  }
+
+  get pickedUp(): boolean {
+    return this._pickedUp;
+  }
+
+  /** 四通道合成的唯一出口。 */
+  private applyEffectiveActive(): void {
+    const next =
+      this.baseEnabled &&
+      this.conditionEnabled &&
+      this.sessionEnabledOverride !== false &&
+      !this._pickedUp;
+    if (this._active === next && this.container.visible === next) return;
+    this._active = next;
+    if (!next) this.hidePrompt();
+    this.container.visible = next;
+  }
+
+  /**
+   * 外部（Action / 持久化立即生效路径）显隐入口：写会话覆盖通道，
+   * 不会被 InteractionSystem 的每帧派生回写冲掉；true 即清除覆盖。
+   */
   setEnabled(enabled: boolean): void {
-    this.active = enabled;
-    if (!enabled) this.hidePrompt();
-    this.container.visible = enabled;
+    this.setSessionEnabledOverride(enabled ? null : false);
+  }
+
+  /** 会话级覆盖通道（SceneManager.setEntitySessionEnabled / setEnabled 落点）。 */
+  setSessionEnabledOverride(v: boolean | null): void {
+    this.sessionEnabledOverride = v;
+    this.applyEffectiveActive();
+  }
+
+  /** 派生基底通道：过场绑定 / sceneMemory enabled 推导值，由 InteractionSystem / SceneManager 每帧刷新。 */
+  setDerivedBaseEnabled(base: boolean): void {
+    this.baseEnabled = base;
+    this.applyEffectiveActive();
+  }
+
+  /** 条件通道：conditionHidesEntity 时的条件求值结果（其余情况传 true）。 */
+  setConditionEnabled(ok: boolean): void {
+    this.conditionEnabled = ok;
+    this.applyEffectiveActive();
+  }
+
+  /** 拾取/自消费：置运行态位（持久化由 SceneManager 决定——pickup 型即时入 sceneMemory）。 */
+  markPickedUp(): void {
+    this._pickedUp = true;
+    this.applyEffectiveActive();
   }
 
   /** showEmote 取包围盒：有展示 sprite 则只量sprite（世界四边形）；否则量整容器（含占位圆点）。 */
@@ -310,12 +396,6 @@ export class Hotspot {
       this.promptIcon.destroy({ children: true });
       this.promptIcon = null;
     }
-  }
-
-  setInactive(): void {
-    this.active = false;
-    this.hidePrompt();
-    this.container.visible = false;
   }
 
   destroy(): void {

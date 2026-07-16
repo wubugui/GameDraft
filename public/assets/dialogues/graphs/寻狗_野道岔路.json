@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 1,
+  "id": "寻狗_野道岔路",
+  "entry": "root",
+  "meta": {
+    "title": "寻狗Demo·背尸位面·野道岔路(尸拽你往水边找替身)"
+  },
+  "nodes": {
+    "root": {
+      "type": "choice",
+      "promptLine": {
+        "speaker": {
+          "kind": "literal",
+          "name": "旁白"
+        },
+        "text": "野道在这儿分了个岔。背上的尸忽然往左边那条一沉一沉地拽——那边黑黢黢的，隐约有股水腥气。"
+      },
+      "options": [
+        {
+          "id": "right",
+          "text": "认准正路，硬顶着往前",
+          "next": "right"
+        },
+        {
+          "id": "wrong",
+          "text": "顺着尸的劲，往岔路去",
+          "next": "wrong"
+        }
+      ]
+    },
+    "right": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_野道岔路",
+            "signal": "yedao_chalu_done"
+          }
+        }
+      ],
+      "next": "right_line"
+    },
+    "right_line": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "顶住了，没让它带偏。背尸老话：尸拽你往哪，你偏不去哪——它是要找个替身，替它去死。",
+      "next": "end1"
+    },
+    "wrong": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "decHealth",
+          "params": {
+            "amount": 2
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_野道岔路",
+            "signal": "yedao_chalu_done"
+          }
+        }
+      ],
+      "next": "wrong_line"
+    },
+    "wrong_line": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "脚下越走越低，咕唧冒水——一个烂水塘。尸猛地往前一坠，要把他一块按进去！连滚带爬扒住岸，半条命才捞回来。……差点替它死了。",
+      "next": "end1"
+    },
+    "end1": {
+      "type": "end"
+    }
+  }
+}

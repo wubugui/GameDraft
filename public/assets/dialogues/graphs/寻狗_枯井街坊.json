@@ -12,6 +12,14 @@
         {
           "conditions": [
             {
+              "plane": "背尸"
+            }
+          ],
+          "next": "beishi_busy"
+        },
+        {
+          "conditions": [
+            {
               "narrative": "scenario_枯井",
               "state": "fled",
               "reached": true
@@ -27,36 +35,45 @@
       "speaker": {
         "kind": "npc"
       },
-      "text": "井那边……真不叫了？哎，不叫了就好，不叫了就好……（他没敢问细节）",
-      "next": "end1"
+      "text": "井那边……真的不叫了？哎，不叫了就好，不叫了就好……（他没敢问细节）",
+      "next": "end1",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "n1": {
       "type": "line",
       "speaker": {
         "kind": "npc"
       },
-      "text": "小先生！可寻着您了。土地庙后头那口枯井，掉了条狗——叫了两天两夜了！",
-      "next": "n2"
+      "text": "小师傅！总算寻到你了。土地庙后头那口枯井，掉了条狗下去——叫了两天两夜咯！",
+      "next": "n2",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "n2": {
       "type": "line",
       "speaker": {
         "kind": "npc"
       },
-      "text": "（压低声）白天听，是狗叫。夜里听……像小孩哭。庙那边没人敢过去。您给捞上来，街坊们凑了钱。",
-      "next": "c1"
+      "text": "（压低声）白天听，是狗叫。夜黑头听……像娃儿哭。庙那边没得哪个敢过去。你帮忙捞上来，街坊些凑了钱的。",
+      "next": "c1",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "c1": {
       "type": "choice",
       "options": [
         {
           "id": "qu",
-          "text": "「一条狗而已。带路。」",
+          "text": "「不就一条狗嘛。带路。」",
           "next": "c_qu"
         },
         {
           "id": "qian",
-          "text": "「钱，先拿来。」",
+          "text": "「钱，先拿出来。」",
           "next": "c_qian"
         }
       ]
@@ -66,16 +83,22 @@
       "speaker": {
         "kind": "npc"
       },
-      "text": "哎！哎！钱在这儿，您先拿着——庙后头，您自个儿过去成不？俺、俺就不陪了……",
-      "next": "n_pay"
+      "text": "哎！哎！钱在这点，你先拿到——庙后头，你自己过去要得不？我、我就不陪你过去了哈……",
+      "next": "n_pay",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "c_qian": {
       "type": "line",
       "speaker": {
         "kind": "npc"
       },
-      "text": "在这儿在这儿！十五文，一文不少！……庙后头您自个儿过去成不？俺实在是、是腿脚不便……",
-      "next": "n_pay"
+      "text": "在这点在这点！十五文，一文都不少！……庙后头你自己过去要得不？我实在是、是脚杆不方便……",
+      "next": "n_pay",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "n_pay": {
       "type": "runActions",
@@ -96,8 +119,11 @@
       "speaker": {
         "kind": "player"
       },
-      "text": "（腿脚不便。刚才一路小跑过来的。）……行，俺去。",
-      "next": "n_go"
+      "text": "（脚杆不方便。刚才一路小跑过来的嘛。）……要得，老子去。",
+      "next": "n_go",
+      "portrait": {
+        "emotion": "smirk"
+      }
     },
     "n_go": {
       "type": "runActions",
@@ -114,6 +140,17 @@
     },
     "end1": {
       "type": "end"
+    },
+    "beishi_busy": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "莫挨到我莫挨到我——肩上那位先送到义庄，你再来听。",
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
     }
   }
 }

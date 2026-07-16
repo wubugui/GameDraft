@@ -1,0 +1,141 @@
+{
+  "schemaVersion": 1,
+  "id": "寻狗_李天狗",
+  "entry": "root",
+  "meta": {
+    "title": "寻狗Demo·出山口·李天狗救场对白"
+  },
+  "nodes": {
+    "root": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "哦豁……我的腰……我这是、我刚才咋子了……",
+      "next": "n_ltg_scold",
+      "portrait": {
+        "emotion": "empty_eyes"
+      }
+    },
+    "n_ltg_scold": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "李天狗"
+      },
+      "text": "大半夜在林子头鬼吼鬼叫——你嫌命长迈?",
+      "next": "n_gjg_grope",
+      "portrait": {
+        "slug": "npc_li_tiangou_anim",
+        "emotion": "calm"
+      }
+    },
+    "n_gjg_grope": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "啊？喊咋子了……我脚杆还在不嘛……",
+      "next": "n_ltg_rule",
+      "portrait": {
+        "emotion": "fear"
+      }
+    },
+    "n_ltg_rule": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "李天狗"
+      },
+      "text": "走夜路，听到人喊你、万不能应。你刚才那通折腾——又吃了人家供的、又开口骂人家——它问一声、你回半个字，魂就归它管。",
+      "next": "n_gjg_bluff",
+      "portrait": {
+        "slug": "npc_li_tiangou_anim",
+        "emotion": "calm"
+      }
+    },
+    "n_gjg_bluff": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "嗨呀——你看嘛我穿的啥子？这还要你教？小道我吃的就是这碗饭。",
+      "next": "n_gjg_pack",
+      "portrait": {
+        "emotion": "smirk"
+      }
+    },
+    "n_gjg_pack": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "……嘿，没落没落。麻烦你了哈。",
+      "next": "n_ltg_smell",
+      "portrait": {
+        "emotion": "smirk"
+      }
+    },
+    "n_ltg_smell": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "李天狗"
+      },
+      "text": "……你身上这股味。你，去过桃溪?",
+      "next": "n_gjg_taoxibrag",
+      "portrait": {
+        "slug": "npc_li_tiangou_anim",
+        "emotion": "calm"
+      }
+    },
+    "n_gjg_taoxibrag": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "桃溪？哪个没去过嘛——几年前我还过去教训了一个女妖嘞！那地方我熟，熟得很!",
+      "next": "n_flag_actions",
+      "portrait": {
+        "emotion": "laugh"
+      }
+    },
+    "n_flag_actions": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "grantRuleLayer",
+          "params": {
+            "ruleId": "rule_no_touch_offering",
+            "layer": "li"
+          }
+        },
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "met_litiangou",
+            "value": true
+          }
+        }
+      ],
+      "next": "n_ltg_farewell"
+    },
+    "n_ltg_farewell": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "李天狗"
+      },
+      "text": "……鬼神可敬。命在你自己手上，莫叫人替你拿了去。——好自为之吧。",
+      "next": "end1",
+      "portrait": {
+        "slug": "npc_li_tiangou_anim",
+        "emotion": "calm"
+      }
+    },
+    "end1": {
+      "type": "end"
+    }
+  },
+  "preconditions": []
+}

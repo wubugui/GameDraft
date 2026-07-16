@@ -32,17 +32,10 @@ from .dialogue_topology import iter_output_slots
 
 
 def _dialogue_type_label_zh(t: object) -> str:
-    if not isinstance(t, str):
-        return "未知"
-    return {
-        "line": "对白",
-        "runActions": "动作",
-        "choice": "选项",
-        "switch": "分支",
-        "ownerState": "所属实体状态",
-        "contextState": "上下文状态",
-        "end": "结束",
-    }.get(t, f"其它({t})")
+    # 画布标题与布局尺寸估算共用同一份标签映射（graph_document.node_type_label_zh），避免漂移。
+    from .graph_document import node_type_label_zh
+
+    return node_type_label_zh(t)
 
 
 # 画布节点填充 / 描边（与端口配色同系，便于一眼区分类型）
@@ -94,17 +87,22 @@ class DialogueFlowNode(BaseNode):
         except Exception:
             pass
 
-    def apply_dialogue_shape(
-        self,
-        raw: dict[str, Any],
-        *,
-        is_entry: bool,
-        diag_tag: str | None,
-        group_rgba: tuple[int, int, int, int] | None = None,
-    ) -> None:
+    def output_port_signature(self, raw: dict[str, Any]) -> tuple[str, ...]:
+        """期望的输出端口名序列；与画布现有端口比对以判断能否原地视觉更新。"""
+        out: list[str] = []
+        for slot in iter_output_slots(raw):
+            pn = port_name_for_spec(slot.kind, slot.index)
+            if pn is not None:
+                out.append(pn)
+        return tuple(out)
+
+    def current_output_port_names(self) -> tuple[str, ...]:
+        return tuple(p.name() for p in self.output_ports())
+
+    def _rebuild_output_ports(self, raw: dict[str, Any]) -> None:
+        """删除并重建输出端口（会断开既有连线）；仅在端口签名变化时调用。"""
         for p in list(self.output_ports()):
             self.delete_output(p)
-        t = raw.get("type")
         for slot in iter_output_slots(raw):
             port_name = port_name_for_spec(slot.kind, slot.index)
             if port_name is None:
@@ -116,6 +114,39 @@ class DialogueFlowNode(BaseNode):
                 color=_PORT_RGBA_BY_KIND.get(slot.kind, (120, 120, 140)),
             )
             self._set_output_port_caption(port_name, slot.label)
+
+    def apply_dialogue_shape(
+        self,
+        raw: dict[str, Any],
+        *,
+        is_entry: bool,
+        diag_tag: str | None,
+        group_rgba: tuple[int, int, int, int] | None = None,
+    ) -> None:
+        """整建：重建端口 + 视觉。用于整图 rebuild。"""
+        self._rebuild_output_ports(raw)
+        self.apply_dialogue_visual(
+            raw, is_entry=is_entry, diag_tag=diag_tag, group_rgba=group_rgba
+        )
+
+    def apply_dialogue_visual(
+        self,
+        raw: dict[str, Any],
+        *,
+        is_entry: bool,
+        diag_tag: str | None,
+        group_rgba: tuple[int, int, int, int] | None = None,
+    ) -> None:
+        """原地视觉更新：颜色/标签/端口标题/tooltip。不增删端口、不动连线，故安全无闪烁。
+
+        端口数量/种类不变时由调用方择此路径（编辑节点正文/选项文字等高频场景）。
+        """
+        t = raw.get("type")
+        # 端口标题可能随内容变化（如 choice 选项文字），原地更新已存在端口的 caption
+        for slot in iter_output_slots(raw):
+            port_name = port_name_for_spec(slot.kind, slot.index)
+            if port_name is not None:
+                self._set_output_port_caption(port_name, slot.label)
 
         type_key = t if isinstance(t, str) else None
         body_by_type = _TYPE_BODY_RGBA.get(type_key, _DEFAULT_BODY_RGBA)
@@ -190,4 +221,39 @@ class DialogueGhostNode(BaseNode):
         self.view.draw_node()
         self.view.setToolTip(
             f"缺失目标节点<br/>连线指向的 id「{gid}」不在本图 nodes 中。<br/>保存前请补节点或改连线。"
+        )
+
+
+class DialogueGroupNode(BaseNode):
+    """折叠分组的「超级节点」：一个 in（收所有入组连线）+ 一个 out（发所有出组连线）。
+
+    纯编辑器视觉——折叠时把整组画成一个节点，跨组边改接到它；展开即恢复。**不对应任何图节点、
+    绝不进 JSON**（其保留节点名不是图节点 id，所有坐标/幽灵/分组快照都按类型过滤掉它）。
+    """
+
+    __identifier__ = "gamedraft.dialogue"
+    NODE_NAME = "group"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.group_gid: str = ""
+        self.add_input("in", multi_input=True, display_name=False)
+        self.add_output("out", multi_output=True, display_name=False)
+        try:
+            self.view.text_item.set_locked(True)
+        except Exception:
+            pass
+
+    def setup_group(
+        self, gid: str, title: str, count: int, rgba: tuple[int, int, int, int]
+    ) -> None:
+        # 不改 name（保留保留名，供边路由/命中检测按名反查）；可见标签走 text_item（同 DialogueFlowNode）。
+        self.group_gid = gid
+        self.set_property("color", rgba, push_undo=False)
+        self.set_property("border_color", (235, 225, 180, 255), push_undo=False)
+        self.view.text_item.setPlainText(f"▸ 分组：{title}\n（已折叠 {count} 个节点·双击展开）")
+        self.view.draw_node()
+        self.view.setToolTip(
+            f"折叠的分组「{title}」<br/>含 {count} 个节点。<br/>"
+            "跨组连线已改接到本节点；双击或右键可展开。<br/>纯视觉，不影响数据。"
         )

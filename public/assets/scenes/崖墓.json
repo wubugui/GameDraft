@@ -1,0 +1,194 @@
+{
+  "id": "崖墓",
+  "name": "临江崖墓",
+  "worldWidth": 1376.0,
+  "worldHeight": 768.0,
+  "camera": {
+    "zoom": 1.25,
+    "pixelsPerUnit": 1.0
+  },
+  "backgrounds": [
+    {
+      "image": "background.png",
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "ambientSounds": [
+    "阴风"
+  ],
+  "spawnPoint": {
+    "x": 700.0,
+    "y": 640.0
+  },
+  "spawnPoints": {
+    "entry": {
+      "x": 700.0,
+      "y": 640.0
+    },
+    "崖墓口": {
+      "x": 700.0,
+      "y": 380.0
+    }
+  },
+  "zones": [
+    {
+      "id": "z_崖墓进场",
+      "polygon": [
+        {
+          "x": 380.0,
+          "y": 460.0
+        },
+        {
+          "x": 960.0,
+          "y": 460.0
+        },
+        {
+          "x": 960.0,
+          "y": 580.0
+        },
+        {
+          "x": 380.0,
+          "y": 580.0
+        }
+      ],
+      "conditions": [
+        {
+          "narrative": "scenario_背尸",
+          "state": "hired"
+        }
+      ],
+      "onEnter": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "zone",
+            "sourceId": "崖墓:z_崖墓进场",
+            "signal": "yamu_intro_entered"
+          }
+        }
+      ]
+    },
+    {
+      "id": "z_鬼打墙",
+      "polygon": [
+        {
+          "x": 300.0,
+          "y": 690.0
+        },
+        {
+          "x": 1080.0,
+          "y": 690.0
+        },
+        {
+          "x": 1080.0,
+          "y": 762.0
+        },
+        {
+          "x": 300.0,
+          "y": 762.0
+        }
+      ],
+      "conditions": [
+        {
+          "flag": "beishi_carrying",
+          "value": true
+        },
+        {
+          "not": {
+            "narrative": "scenario_背尸",
+            "state": "fled",
+            "reached": true
+          }
+        }
+      ],
+      "onEnter": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "寻狗_鬼打墙"
+          }
+        }
+      ]
+    }
+  ],
+  "hotspots": [
+    {
+      "id": "hs_女尸",
+      "type": "inspect",
+      "label": "崖墓里那具尸",
+      "x": 649.6,
+      "y": 337.7,
+      "interactionRange": 80.0,
+      "conditions": [
+        {
+          "not": {
+            "flag": "beishi_carrying"
+          }
+        }
+      ],
+      "conditionHidesEntity": true,
+      "displayImage": {
+        "image": "/resources/runtime/images/corpses/demo/cliff_tomb_preserved_corpse_v1.png",
+        "worldWidth": 125.7,
+        "worldHeight": 71.8,
+        "spriteSort": "back"
+      },
+      "collisionPolygon": [
+        {
+          "x": -150.0,
+          "y": -60.0
+        },
+        {
+          "x": 150.0,
+          "y": -60.0
+        },
+        {
+          "x": 150.0,
+          "y": 0.0
+        },
+        {
+          "x": -150.0,
+          "y": 0.0
+        }
+      ],
+      "collisionPolygonLocal": true,
+      "data": {
+        "graphId": "寻狗_背尸"
+      }
+    },
+    {
+      "id": "hs_供桌",
+      "type": "inspect",
+      "label": "崖墓壁龛",
+      "x": 620.0,
+      "y": 215.0,
+      "interactionRange": 64.0,
+      "data": {
+        "graphId": "寻狗_崖墓壁龛"
+      }
+    },
+    {
+      "id": "T_出崖墓",
+      "type": "transition",
+      "label": "出去",
+      "x": 700.0,
+      "y": 720.0,
+      "interactionRange": 56.0,
+      "conditions": [
+        {
+          "not": {
+            "flag": "beishi_carrying",
+            "value": true
+          }
+        }
+      ],
+      "conditionHidesEntity": true,
+      "data": {
+        "targetScene": "雾津街头",
+        "targetSpawnPoint": "from_event"
+      }
+    }
+  ],
+  "npcs": []
+}

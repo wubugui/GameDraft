@@ -1,6 +1,50 @@
 {
   "static": [
     {
+      "key": "player_health",
+      "valueType": "float"
+    },
+    {
+      "key": "player_max_health",
+      "valueType": "float"
+    },
+    {
+      "key": "current_smell",
+      "valueType": "string"
+    },
+    {
+      "key": "current_smell_source",
+      "valueType": "string"
+    },
+    {
+      "key": "smell_intensity",
+      "valueType": "float"
+    },
+    {
+      "key": "current_smell_dir",
+      "valueType": "float"
+    },
+    {
+      "key": "current_smell_flicker",
+      "valueType": "bool"
+    },
+    {
+      "key": "got_xingtou_daopao",
+      "valueType": "bool"
+    },
+    {
+      "key": "got_xingtou_luopan",
+      "valueType": "bool"
+    },
+    {
+      "key": "got_xingtou_taomu",
+      "valueType": "bool"
+    },
+    {
+      "key": "零工背尸_done",
+      "valueType": "bool"
+    },
+    {
       "key": "Q抓水猴子_禁止离开码头",
       "valueType": "bool"
     },
@@ -106,6 +150,14 @@
     },
     {
       "key": "met_blind_li",
+      "valueType": "bool"
+    },
+    {
+      "key": "met_paoge_leader",
+      "valueType": "bool"
+    },
+    {
+      "key": "met_jiaobang_leader",
       "valueType": "bool"
     },
     {
@@ -226,6 +278,34 @@
     },
     {
       "key": "xg_prologue_started",
+      "valueType": "bool"
+    },
+    {
+      "key": "met_litiangou",
+      "valueType": "bool"
+    },
+    {
+      "key": "beishi_carrying",
+      "valueType": "bool"
+    },
+    {
+      "key": "guidaoqiang_loops",
+      "valueType": "float"
+    },
+    {
+      "key": "forest.tether_suppressed",
+      "valueType": "bool"
+    },
+    {
+      "key": "淹尸_看过油布包",
+      "valueType": "bool"
+    },
+    {
+      "key": "淹尸_动了死人的东西",
+      "valueType": "bool"
+    },
+    {
+      "key": "淹尸_烤过火",
       "valueType": "bool"
     }
   ],

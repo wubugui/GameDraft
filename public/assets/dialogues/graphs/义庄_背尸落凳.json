@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "id": "义庄_背尸落凳",
+  "entry": "root",
+  "meta": {
+    "title": "义庄·空凳落尸分流（按当前背的是哪单走对应长按）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "narrative": "flow_背尸_零工活",
+              "state": "carrying"
+            }
+          ],
+          "next": "lg_put"
+        },
+        {
+          "conditions": [
+            {
+              "narrative": "flow_背尸_淹尸活",
+              "state": "carrying"
+            }
+          ],
+          "next": "yan_put"
+        }
+      ],
+      "defaultNext": "end_n"
+    },
+    "lg_put": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startPressureHold",
+          "params": {
+            "id": "carry_putdown_ordinary"
+          }
+        }
+      ],
+      "next": "end_n"
+    },
+    "yan_put": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startPressureHold",
+          "params": {
+            "id": "carry_putdown_drowned"
+          }
+        }
+      ],
+      "next": "end_n"
+    },
+    "end_n": {
+      "type": "end"
+    }
+  }
+}

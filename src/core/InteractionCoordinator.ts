@@ -7,6 +7,7 @@ import type { GraphDialogueManager } from '../systems/GraphDialogueManager';
 import type { Hotspot } from '../entities/Hotspot';
 import type { Npc } from '../entities/Npc';
 import type {
+  DialogueEndPayload,
   HotspotDef,
   InspectData,
   InspectDataGraphMode,
@@ -132,7 +133,11 @@ export class InteractionCoordinator {
       this.deps.fadingRestoreSceneCameraZoom(NPC_DIALOGUE_CAMERA_ZOOM_MS);
     };
 
-    const onDialogueEnd = () => {
+    const onDialogueEnd = (p?: DialogueEndPayload) => {
+      /** R5：只认本会话（图对话）自身的**最终**结束。嵌套 playScriptedDialogue 的 end
+       *  （source='scripted'）与 deferred 链式接续的中间 end（willContinue）期间对话仍在进行，
+       *  NPC 不得中途恢复巡逻走开、镜头不得提前复位。 */
+      if (p?.source !== 'graph' || p.willContinue === true) return;
       cleanupDialogueZoomAndNpc();
     };
     eventBus.on('dialogue:end', onDialogueEnd);
@@ -151,7 +156,9 @@ export class InteractionCoordinator {
         ownerType: 'npc',
         ownerId: npc.def.id,
       });
-      if (!graphDialogueManager.isActive) {
+      /** hasPendingChainContinuation：图同步完结但链式接续图正在启动（会话未终结），
+       *  不得按启动失败处理；收尾与状态恢复交给最终 dialogue:end / EventBridge */
+      if (!graphDialogueManager.isActive && !graphDialogueManager.hasPendingChainContinuation) {
         cleanupDialogueZoomAndNpc();
         stateController.setState(GameState.Exploring);
       }
@@ -222,7 +229,10 @@ export class InteractionCoordinator {
     if (graphDialogueManager.isActive) return;
 
     let cleanupDone = false;
-    const onDialogueEnd = () => {
+    const onDialogueEnd = (p?: DialogueEndPayload) => {
+      /** R5：同 NPC 路径——嵌套脚本台词 / 链式接续的中间 end 不触发 inspect 收尾
+       *  （提前跑 data.actions、强切 Exploring 会让剩余图对话在探索态播放） */
+      if (p?.source !== 'graph' || p.willContinue === true) return;
       if (cleanupDone) return;
       cleanupDone = true;
       eventBus.off('dialogue:end', onDialogueEnd);
@@ -252,7 +262,8 @@ export class InteractionCoordinator {
         ownerId: hotspot.def.id,
         preferGraphMetaTitle: true,
       });
-      if (!graphDialogueManager.isActive) {
+      /** 同 NPC 路径：链式接续中不得按启动失败提前收尾 */
+      if (!graphDialogueManager.isActive && !graphDialogueManager.hasPendingChainContinuation) {
         if (!cleanupDone) {
           cleanupDone = true;
           eventBus.off('dialogue:end', onDialogueEnd);
@@ -271,27 +282,53 @@ export class InteractionCoordinator {
 
   private async handlePickup(hotspot: Hotspot, data: PickupData): Promise<void> {
     const { actionExecutor, eventBus } = this.deps;
-    await actionExecutor.executeAwait({
-      type: 'pickup',
-      params: { itemId: data.itemId, itemName: data.itemName, count: data.count, isCurrency: data.isCurrency },
-    });
+    /** 对齐 B22 遭遇消费语义：只有真正入包才消费热点。失败判据用 inventory:full 事件
+     *  （addItem 满包时唯一发射点；铜钱路径 addCoins 不会失败也不发此事件）——满包时
+     *  不置 picked flag、不发 pickup:done，物品留在世界、热点保持可交互以便腾包后重拾。 */
+    let bagFull = false;
+    const onFull = () => { bagFull = true; };
+    eventBus.on('inventory:full', onFull);
+    try {
+      await actionExecutor.executeAwait({
+        type: 'pickup',
+        params: { itemId: data.itemId, itemName: data.itemName, count: data.count, isCurrency: data.isCurrency },
+      });
+    } finally {
+      eventBus.off('inventory:full', onFull);
+    }
+    if (bagFull) return;
     await actionExecutor.executeAwait({ type: 'setFlag', params: { key: FlagKeys.hotspotPickedUp(hotspot.def.id), value: true } });
     eventBus.emit('hotspot:pickup:done', { hotspotId: hotspot.def.id });
   }
 
   private async handleEncounterTrigger(
-    _hotspot: Hotspot,
+    hotspot: Hotspot,
     data: EncounterTriggerData,
   ): Promise<void> {
+    const { actionExecutor, eventBus } = this.deps;
+    /** B22：只有真正进入遭遇才消费热点（失活为会话级、不入档——世界系统批次已定的语义）。
+     *  成败判据用 encounter:start 事件而非 currentState——startEncounter 传未知 id 时
+     *  状态可能残留在 Encounter（R13），事件才是可靠信号。 */
+    let encounterStarted = false;
+    const onEncounterStart = () => { encounterStarted = true; };
+    eventBus.on('encounter:start', onEncounterStart);
     try {
-      await this.deps.actionExecutor.executeAwait({
+      await actionExecutor.executeAwait({
         type: 'startEncounter',
         params: { id: data.encounterId },
       });
     } catch (e) {
       console.warn('InteractionCoordinator: startEncounter failed', e);
+    } finally {
+      eventBus.off('encounter:start', onEncounterStart);
     }
-    this.deps.eventBus.emit('hotspot:pickup:done', { hotspotId: _hotspot.def.id });
+    if (encounterStarted) {
+      eventBus.emit('hotspot:pickup:done', { hotspotId: hotspot.def.id });
+    } else {
+      console.warn(
+        `InteractionCoordinator: 遭遇 ${data.encounterId} 未能启动，热点 ${hotspot.def.id} 保持可交互以便重试`,
+      );
+    }
   }
 
   private async handleTransition(data: TransitionData): Promise<void> {

@@ -10,7 +10,9 @@ from typing import Callable
 
 
 
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import QUrl, Qt, Signal
+
+from PySide6.QtGui import QKeyEvent
 
 from PySide6.QtWidgets import (
 
@@ -20,7 +22,7 @@ from PySide6.QtWidgets import (
 
     QTableWidgetItem, QHeaderView, QMessageBox,
 
-    QLineEdit,
+    QLineEdit, QMenu,
 
     QFileDialog,
 
@@ -42,7 +44,11 @@ except ImportError:  # 极少数环境未带 QtMultimedia
 
 from ..project_model import ProjectModel
 
+from ..shared.audio_preview_selector import AudioIdPreviewSelector
+
 from ..shared.id_ref_selector import IdRefSelector
+
+from ..shared.list_affordances import make_table_search_box
 
 from ..shared.project_paths import DIR_KIND_RUNTIME_AUDIO, URL_KIND_MEDIA
 
@@ -138,8 +144,6 @@ class _AudioSrcRow(QWidget):
         self._edit.setReadOnly(True)
 
         self._edit.setPlaceholderText("点此侧「选择文件…」，起始目录为 public/resources/runtime/audio")
-
-        self._edit.setMinimumWidth(180)
 
         browse = QPushButton("选择文件…")
 
@@ -279,6 +283,8 @@ def _audio_src_cell_picker(container: QWidget | None) -> _AudioSrcRow | None:
 
 class _AudioChannelTab(QWidget):
 
+    applied = Signal()  # Apply 后发出(System SFX 子页据此刷新 sfx id 下拉候选)
+
     def __init__(self, model: ProjectModel, channel: str, parent=None):
 
         super().__init__(parent)
@@ -315,6 +321,16 @@ class _AudioChannelTab(QWidget):
 
         self._table.verticalHeader().setDefaultSectionSize(36)
 
+        self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+
+        self._table.customContextMenuRequested.connect(self._show_table_menu)
+
+        self._table.installEventFilter(self)
+
+        self._search = make_table_search_box(
+            self._table,
+            tooltip="按音频 id 过滤下方行（仅隐藏不匹配项，不改动数据）。")
+        lay.addWidget(self._search)
         lay.addWidget(self._table)
 
 
@@ -323,9 +339,13 @@ class _AudioChannelTab(QWidget):
 
         add_btn = QPushButton("+ Entry")
 
+        add_btn.setToolTip("新增一行音频条目（先填 id，再「选择文件…」绑定 src）")
+
         add_btn.clicked.connect(self._add)
 
         del_btn = QPushButton("- Entry")
+
+        del_btn.setToolTip("删除当前选中行（Delete 键 / 右键菜单亦可）")
 
         del_btn.clicked.connect(self._delete)
 
@@ -435,6 +455,9 @@ class _AudioChannelTab(QWidget):
 
             self._table.setCellWidget(i, 1, self._make_src_row_widget(src))
 
+        # 重新套用搜索过滤，使 setRowHidden 与新内容一致
+        self._search.textChanged.emit(self._search.text())
+
 
 
     def _add(self) -> None:
@@ -459,28 +482,95 @@ class _AudioChannelTab(QWidget):
 
 
 
-    def _apply(self) -> None:
+    def _show_table_menu(self, pos) -> None:
 
+        if self._table.rowCount() == 0:
+
+            return
+
+        menu = QMenu(self._table)
+
+        menu.addAction("删除此行", self._delete)
+
+        menu.exec(self._table.viewport().mapToGlobal(pos))
+
+
+
+    def eventFilter(self, obj, event):  # type: ignore[override]
+
+        if (
+
+            obj is self._table
+
+            and isinstance(event, QKeyEvent)
+
+            and event.type() == QKeyEvent.Type.KeyPress
+
+            and event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace)
+
+        ):
+
+            self._delete()
+
+            return True
+
+        return super().eventFilter(obj, event)
+
+
+
+    def _build_channel(self) -> dict:
+        """从表格构建本频道的 {id: entry} 字典(不写模型),供 _apply 与 _is_dirty 共用。"""
+        old_ch = self._model.audio_config.get(self._channel)
+        old_ch = old_ch if isinstance(old_ch, dict) else {}
         ch: dict = {}
-
         for i in range(self._table.rowCount()):
-
             aid_item = self._table.item(i, 0)
-
             row = _audio_src_cell_picker(self._table.cellWidget(i, 1))
-
             if aid_item and aid_item.text().strip():
-
+                aid = aid_item.text().strip()
                 src_txt = row.current_src().strip() if row else ""
+                # 保留同 id 原条目的未知键（volume 等未来字段），只更新 src
+                prev = old_ch.get(aid)
+                entry = dict(prev) if isinstance(prev, dict) else {}
+                entry["src"] = src_txt
+                ch[aid] = entry
+        return ch
 
-                ch[aid_item.text().strip()] = {"src": src_txt}
+    def _is_dirty(self) -> bool:
+        ch = self._build_channel()
+        old = self._model.audio_config.get(self._channel)
+        if old is None:
+            return bool(ch)  # 频道键本就缺失:只有真加了条目才算脏(避免打开即脏)
+        return ch != (old if isinstance(old, dict) else {})
 
+    def _apply(self) -> None:
+        ch = self._build_channel()
+        # 无实质变化不写不标脏：堵住"每次 Save All 重写 audio_config.json"
+        if not self._is_dirty():
+            return
         self._model.audio_config[self._channel] = ch
 
         self._model.mark_dirty("audio")
+        self.applied.emit()
 
 
 
+
+
+# 运行时实际会触发的 system 事件键。权威来源:src/systems/AudioManager.ts 中
+# 所有 playSystemSfx('<key>') 调用。新增运行时事件时同步此表(下拉仍可编辑,
+# 未在表内的旧键不会被丢弃)。
+_SYSTEM_SFX_KEYS: list[str] = [
+    "archiveUpdated", "coinGain", "coinSpend", "cutsceneEnd", "cutsceneStart",
+    "dayEnd", "dayStart", "dialogueAdvance", "dialogueChoice", "dialogueEnd",
+    "dialogueStart", "documentReveal", "encounterChoice", "encounterResult",
+    "encounterStart", "hotspotInteract", "inventoryFull", "itemAcquired",
+    "itemConsumed", "mapTravel", "minigameResult", "questAccepted",
+    "questCompleted", "ruleAcquired", "ruleFragment", "ruleLayer",
+    "ruleUseApply", "sceneTransition", "shopClose", "shopOpen", "uiCancel",
+    "uiConfirm", "uiHover", "uiNotification", "uiPanelClose", "uiPanelOpen",
+    "uiWarning", "zoneRuleAvailable", "zoneRuleUnavailable",
+]
 
 
 class _SystemSfxTab(QWidget):
@@ -493,9 +583,10 @@ class _SystemSfxTab(QWidget):
 
         lay = QVBoxLayout(self)
 
-        lay.addWidget(QLabel("System event keys mapped to SFX ids. Leave the SFX id empty to disable that sound."))
-
         self._table = QTableWidget(0, 2)
+
+        self._table.setToolTip(
+            "System event keys mapped to SFX ids. Leave the SFX id empty to disable that sound.")
 
         self._table.setHorizontalHeaderLabels(["system key", "sfx id"])
 
@@ -505,15 +596,32 @@ class _SystemSfxTab(QWidget):
 
         self._table.verticalHeader().setDefaultSectionSize(36)
 
+        self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+
+        self._table.customContextMenuRequested.connect(self._show_table_menu)
+
+        self._table.installEventFilter(self)
+
+        self._search = QLineEdit()
+        self._search.setPlaceholderText("搜索…")
+        self._search.setClearButtonEnabled(True)
+        self._search.setToolTip(
+            "按 system key / sfx id 过滤下方行（仅隐藏不匹配项，不改动数据）。")
+        self._search.textChanged.connect(self._filter_rows)
+        lay.addWidget(self._search)
         lay.addWidget(self._table)
 
         btns = QHBoxLayout()
 
         add_btn = QPushButton("+ Mapping")
 
+        add_btn.setToolTip("新增一条系统事件 → SFX id 映射")
+
         add_btn.clicked.connect(self._add)
 
         del_btn = QPushButton("- Mapping")
+
+        del_btn.setToolTip("删除当前选中行（Delete 键 / 右键菜单亦可）")
 
         del_btn.clicked.connect(self._delete)
 
@@ -534,7 +642,26 @@ class _SystemSfxTab(QWidget):
         self._refresh()
 
 
-    def _make_sfx_selector(self, initial_id: str) -> IdRefSelector:
+    def _make_key_selector(self, initial_key: str) -> IdRefSelector:
+        """system 事件键改用可编辑下拉:候选取自运行时枚举,避免手打错;
+        可编辑 + 孤儿前置,既不限制旧键也不静默丢弃既有数据。"""
+        keys = list(_SYSTEM_SFX_KEYS)
+        ik = (initial_key or "").strip()
+        if ik and ik not in keys:
+            keys = [ik] + keys
+        sel = IdRefSelector(self, allow_empty=False, editable=True)
+        sel.set_items(keys)
+        sel.set_current(ik)
+        return sel
+
+    def _key_at(self, row: int) -> str:
+        w = self._table.cellWidget(row, 0)
+        if isinstance(w, IdRefSelector):
+            return w.current_id().strip()
+        it = self._table.item(row, 0)
+        return it.text().strip() if it else ""
+
+    def _make_sfx_selector(self, initial_id: str) -> AudioIdPreviewSelector:
 
         items = [(sid, sid) for sid in self._model.all_audio_ids("sfx")]
 
@@ -542,11 +669,13 @@ class _SystemSfxTab(QWidget):
 
             items = [(initial_id, initial_id)] + items
 
-        sel = IdRefSelector(self, allow_empty=True, editable=True)
+        sel = AudioIdPreviewSelector(self._model, "sfx", self, allow_empty=True, editable=True)
 
         sel.set_items(items)
 
         sel.set_current(initial_id)
+
+        sel.setToolTip("systemSfx 使用的 sfx id；右侧按钮可试听当前选择。")
 
         return sel
 
@@ -563,9 +692,29 @@ class _SystemSfxTab(QWidget):
 
         for i, (key, sfx_id) in enumerate(entries.items()):
 
-            self._table.setItem(i, 0, QTableWidgetItem(str(key)))
+            self._table.setCellWidget(i, 0, self._make_key_selector(str(key)))
 
             self._table.setCellWidget(i, 1, self._make_sfx_selector(str(sfx_id or "")))
+
+        # 重新套用搜索过滤，使 setRowHidden 与新内容一致
+        self._filter_rows(self._search.text())
+
+
+    def _filter_rows(self, text: str) -> None:
+        """纯视图过滤：仅 setRowHidden 隐藏不匹配行（读 cell-widget 当前文本），不改数据。"""
+        q = text.strip().lower()
+        for r in range(self._table.rowCount()):
+            if not q:
+                self._table.setRowHidden(r, False)
+                continue
+            hit = False
+            for c in (0, 1):
+                w = self._table.cellWidget(r, c)
+                cur = w.current_id() if w is not None else ""
+                if q in (cur or "").lower():
+                    hit = True
+                    break
+            self._table.setRowHidden(r, not hit)
 
 
     def _add(self) -> None:
@@ -574,7 +723,7 @@ class _SystemSfxTab(QWidget):
 
         self._table.insertRow(r)
 
-        self._table.setItem(r, 0, QTableWidgetItem(""))
+        self._table.setCellWidget(r, 0, self._make_key_selector(""))
 
         self._table.setCellWidget(r, 1, self._make_sfx_selector(""))
 
@@ -588,24 +737,77 @@ class _SystemSfxTab(QWidget):
             self._table.removeRow(r)
 
 
-    def _apply(self) -> None:
+    def _show_table_menu(self, pos) -> None:
 
+        if self._table.rowCount() == 0:
+
+            return
+
+        menu = QMenu(self._table)
+
+        menu.addAction("删除此行", self._delete)
+
+        menu.exec(self._table.viewport().mapToGlobal(pos))
+
+
+    def eventFilter(self, obj, event):  # type: ignore[override]
+
+        if (
+
+            obj is self._table
+
+            and isinstance(event, QKeyEvent)
+
+            and event.type() == QKeyEvent.Type.KeyPress
+
+            and event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace)
+
+        ):
+
+            self._delete()
+
+            return True
+
+        return super().eventFilter(obj, event)
+
+
+    def _build_mapping(self) -> dict[str, str]:
         out: dict[str, str] = {}
-
         for i in range(self._table.rowCount()):
-
-            key_item = self._table.item(i, 0)
-
-            key = key_item.text().strip() if key_item else ""
-
+            key = self._key_at(i)
             sel = self._table.cellWidget(i, 1)
-
-            sfx_id = sel.current_id().strip() if isinstance(sel, IdRefSelector) else ""
-
+            sfx_id = sel.current_id().strip() if isinstance(sel, (IdRefSelector, AudioIdPreviewSelector)) else ""
             if key:
-
                 out[key] = sfx_id
+        return out
 
+    def _is_dirty(self) -> bool:
+        out = self._build_mapping()
+        old = self._model.audio_config.get("systemSfx")
+        if old is None:
+            return bool(out)  # systemSfx 键本就缺失:只有真加了映射才算脏(避免打开即脏)
+        return out != old
+
+    def refresh_sfx_choices(self) -> None:
+        """SFX 子页新增 sfx id 后,刷新本页每行下拉候选(编辑器内自刷,不必重开工程)。
+        保留各行当前选择(悬垂/未登记值仍前置保值)。"""
+        items = [(sid, sid) for sid in self._model.all_audio_ids("sfx")]
+        for r in range(self._table.rowCount()):
+            sel = self._table.cellWidget(r, 1)
+            if not isinstance(sel, AudioIdPreviewSelector):
+                continue
+            cur = sel.current_id()
+            row_items = list(items)
+            if cur and all(x[0] != cur for x in row_items):
+                row_items = [(cur, cur)] + row_items
+            sel.set_items(row_items)
+            sel.set_current(cur)
+
+    def _apply(self) -> None:
+        out = self._build_mapping()
+        # 无实质变化不写不标脏
+        if not self._is_dirty():
+            return
         self._model.audio_config["systemSfx"] = out
 
         self._model.mark_dirty("audio")
@@ -621,12 +823,86 @@ class AudioEditor(QWidget):
 
         tabs = QTabWidget()
 
-        tabs.addTab(_AudioChannelTab(model, "bgm"), "BGM")
+        # 保留子页引用，供 Save All 时统一提交（否则未点 Apply 的音频表编辑会被静默丢弃）。
+        self._sub_tabs = [
+            _AudioChannelTab(model, "bgm"),
+            _AudioChannelTab(model, "ambient"),
+            _AudioChannelTab(model, "sfx"),
+            _SystemSfxTab(model),
+        ]
 
-        tabs.addTab(_AudioChannelTab(model, "ambient"), "Ambient")
+        tabs.addTab(self._sub_tabs[0], "BGM")
 
-        tabs.addTab(_AudioChannelTab(model, "sfx"), "SFX")
+        tabs.addTab(self._sub_tabs[1], "Ambient")
 
-        tabs.addTab(_SystemSfxTab(model), "System SFX")
+        tabs.addTab(self._sub_tabs[2], "SFX")
 
+        tabs.addTab(self._sub_tabs[3], "System SFX")
+
+        # SFX 子页 Apply 后,System SFX 子页的 sfx id 下拉候选立即刷新(编辑器内自刷)。
+        self._sub_tabs[2].applied.connect(self._sub_tabs[3].refresh_sfx_choices)
+
+        self._tabs = tabs
         lay.addWidget(tabs)
+
+    def select_by_id(self, audio_id: str, _scene_id: str = "") -> bool:
+        """全局搜索/跳转落点：在四个音频子页的表格里按 id/键定位并切页选中。
+
+        System SFX 子页第 0 列是 cellWidget(IdRefSelector),table.item(r,0) 恒 None——
+        必须走该页的 _key_at(r) 取键,否则匹配恒空、跳转静默失败还谎报已定位(审查 P2)。
+        返回是否命中(导航诚实化:未命中报错不聚光)。"""
+        target = (audio_id or "").strip()
+        if not target:
+            return False
+        for idx, tab in enumerate(self._sub_tabs):
+            table = getattr(tab, "_table", None)
+            if table is None:
+                continue
+            key_at = getattr(tab, "_key_at", None)  # System SFX 用 cellWidget,走 _key_at
+            for r in range(table.rowCount()):
+                if callable(key_at):
+                    cur = key_at(r)
+                else:
+                    it = table.item(r, 0)
+                    cur = it.text().strip() if it is not None else ""
+                if cur == target:
+                    search = getattr(tab, "_search", None)
+                    if search is not None and search.text():
+                        search.clear()  # 目标行可能被子页过滤隐藏
+                    self._tabs.setCurrentIndex(idx)
+                    table.setCurrentCell(r, 0)
+                    table.scrollToItem(table.item(r, 0) or table.currentItem())
+                    return True
+        return False
+
+    def _is_dirty(self) -> bool:
+        return any(tab._is_dirty() for tab in self._sub_tabs)
+
+    def flush_to_model(self, for_save_all: bool = False) -> bool:
+        """Save All 钩子：提交各音频子页表格的未应用编辑。表驱动 _apply 无条件提交安全——
+        只写当前表状态，未编辑写回等值数据，保存后清脏。"""
+        for tab in self._sub_tabs:
+            ap = getattr(tab, "_apply", None)
+            if callable(ap):
+                ap()
+        return True
+
+    def confirm_close(self, parent=None) -> bool:
+        """关闭/切工程门控：有未应用编辑则 Save/Discard/Cancel(对齐 item/shop 口径)。
+        Discard 按契约把各子页表格回滚到模型值(_refresh),避免关闭路径统一 flush 复活。"""
+        if not self._is_dirty():
+            return True
+        r = QMessageBox.question(
+            self, "未应用的修改", "音频配置有未应用的修改。保存到模型？",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+        )
+        if r == QMessageBox.StandardButton.Cancel:
+            return False
+        if r == QMessageBox.StandardButton.Save:
+            self.flush_to_model()
+        else:
+            for tab in self._sub_tabs:
+                tab._refresh()  # 回滚 UI 到模型值,中和后续统一 flush
+        return True

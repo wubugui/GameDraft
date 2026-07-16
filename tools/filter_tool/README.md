@@ -4,14 +4,14 @@ Python + PIL 实现，与游戏 ColorMatrix 格式一致。输出 JSON 供游戏
 
 ## 安装
 
-```powershell
-.\install-deps.cmd
+```sh
+./dev.sh install-deps
 ```
 
 ## 运行
 
-```powershell
-.\.tools\Python311\python.exe -m tools.filter_tool
+```sh
+.tools/venv/bin/python -m tools.filter_tool
 ```
 
 或从项目根目录：`npm run filter-tool`
@@ -20,7 +20,7 @@ Python + PIL 实现，与游戏 ColorMatrix 格式一致。输出 JSON 供游戏
 
 1. 加载图片：选择场景或背景图
 2. 预制：内置（还原、夜晚、黄昏、阴天、复古）+ 自定义
-3. 添加预制：调节参数后输入名称，点击「添加当前为预制」，保存到 `tools/filter_tool/custom_presets.json`
+3. 添加预制：调节参数后输入名称，点击「添加当前为预制」，保存到 `tools/filter_tool/custom_presets.json`（仓库提供空默认文件，首次保存会更新）
 4. 参数：亮度、对比度、饱和度、色相
 5. 保存：输入滤镜 ID，写入 `public/assets/data/filters/{id}.json`
 

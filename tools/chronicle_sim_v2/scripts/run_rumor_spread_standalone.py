@@ -7,7 +7,7 @@
 
 可选：``--seed 42`` 固定随机；``--runs 5`` 多跑几轮看统计。
 
-对真实 Run 目录（已含 ``world/agents``、``world/relationships/graph.json``、``config/llm_config.json``）::
+对真实 Run 目录（已含运行目录内的 world/agents、world/relationships/graph.json、config/llm_config.json）::
 
     .\\.tools\\Python311\\python.exe tools\\chronicle_sim_v2\\scripts\\run_rumor_spread_standalone.py --run-dir <run_dir绝对路径>
 """

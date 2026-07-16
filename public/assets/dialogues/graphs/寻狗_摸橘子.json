@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "id": "寻狗_摸橘子",
+  "entry": "root",
+  "meta": {
+    "title": "寻狗Demo·①.5雾津街头·水果摊摸橘子（一次性·老板记仇）"
+  },
+  "nodes": {
+    "root": {
+      "type": "choice",
+      "promptLine": {
+        "speaker": {
+          "kind": "literal",
+          "name": "旁白"
+        },
+        "text": "水果摊上堆着一小堆橘子，老板正忙着招呼别的客。"
+      },
+      "options": [
+        {
+          "id": "take",
+          "text": "顺手摸一个",
+          "next": "take"
+        },
+        {
+          "id": "leave",
+          "text": "老老实实走开",
+          "next": "leave"
+        }
+      ]
+    },
+    "take": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "giveItem",
+          "params": {
+            "id": "juzi",
+            "count": 1
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_摸橘子",
+            "signal": "juzi_taken"
+          }
+        }
+      ],
+      "next": "tk1"
+    },
+    "tk1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "水果摊老板"
+      },
+      "text": "龟儿子又偷东西！",
+      "next": "tk2"
+    },
+    "tk2": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "关二狗攥着橘子撒腿就跑，跑出两步还回头朝老板做了个鬼脸。",
+      "next": "end1"
+    },
+    "leave": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "关二狗咽了口唾沫，到底没敢下手，走开了。",
+      "next": "end1"
+    },
+    "end1": {
+      "type": "end"
+    }
+  }
+}

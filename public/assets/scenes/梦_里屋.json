@@ -1,0 +1,114 @@
+{
+  "id": "梦_里屋",
+  "name": "梦·三四·睡觉与收束",
+  "worldWidth": 1050.0,
+  "camera": {
+    "zoom": 1.1,
+    "pixelsPerUnit": 1.0
+  },
+  "backgrounds": [
+    {
+      "image": "background.png",
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "ambientSounds": [
+    "temple_rumble",
+    "阴风"
+  ],
+  "spawnPoint": {
+    "x": 320,
+    "y": 460
+  },
+  "spawnPoints": {
+    "from_meal": {
+      "x": 320,
+      "y": 460
+    }
+  },
+  "onEnter": [
+    {
+      "type": "fadeWorldFromBlack",
+      "params": {
+        "durationMs": 500
+      }
+    }
+  ],
+  "npcs": [
+    {
+      "id": "npc_dream_old_man",
+      "characterId": "dream_old_man",
+      "x": 700.9,
+      "y": 325.1,
+      "interactionRange": 55,
+      "initialAnimState": "idle",
+      "initialFacing": "left"
+    },
+    {
+      "id": "npc_dream_old_woman",
+      "characterId": "dream_old_woman",
+      "x": 362.1,
+      "y": 353.7,
+      "interactionRange": 55,
+      "initialAnimState": "idle",
+      "initialFacing": "left"
+    }
+  ],
+  "hotspots": [
+    {
+      "id": "deco_脚尾灯",
+      "type": "inspect",
+      "x": 483,
+      "y": 410,
+      "interactionRange": 45,
+      "data": {},
+      "displayImage": {
+        "image": "/resources/runtime/images/illustrations/dream_foot_lamp.png",
+        "worldWidth": 35,
+        "worldHeight": 36,
+        "spriteSort": "front"
+      }
+    },
+    {
+      "id": "deco_火盆",
+      "type": "inspect",
+      "x": 798,
+      "y": 176,
+      "interactionRange": 45,
+      "data": {}
+    }
+  ],
+  "zones": [
+    {
+      "id": "z_门板",
+      "polygon": [
+        {
+          "x": 399,
+          "y": 340
+        },
+        {
+          "x": 609,
+          "y": 340
+        },
+        {
+          "x": 609,
+          "y": 434
+        },
+        {
+          "x": 399,
+          "y": 434
+        }
+      ],
+      "onEnter": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "梦_段D_里屋"
+          }
+        }
+      ]
+    }
+  ],
+  "bgm": "bgm_placeholder_dread_piano"
+}

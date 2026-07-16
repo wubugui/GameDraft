@@ -1,6 +1,8 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import { UITheme, fadeIn } from './UITheme';
+import { drawPanelBase, SKINS } from './PanelSkin';
 import { buildRichContent } from './RichContent';
+import { canvasPointFromEvent } from './uiPointerCoords';
 import type { Renderer } from '../rendering/Renderer';
 import type { BookDef, BookReaderSlice, BookTocChapter, IArchiveDataProvider } from '../data/types';
 import type { StringsProvider } from '../core/StringsProvider';
@@ -65,7 +67,28 @@ export class BookReaderUI {
     this.navEntryId = null;
     this.onCloseCb = onClose;
     window.addEventListener('wheel', this.onWheelBound, { passive: false });
+    this.fireSliceFirstView();
     this.build(true);
+  }
+
+  /** 目录/返回章节导航统一入口：更新定位、触发首见、重渲染。 */
+  private navigate(pageNum: number, entryId: string | null): void {
+    this.navPageNum = pageNum;
+    this.navEntryId = entryId;
+    this.fireSliceFirstView();
+    this.build(false);
+  }
+
+  /**
+   * 切片真正对玩家可见的时机（打开书 / 目录跳转）触发一次首见动作。
+   * 不放在 build 里：build 是纯渲染，会被各种重绘路径调用，副作用放渲染里会重复触发。
+   */
+  private fireSliceFirstView(): void {
+    if (!this.currentBook) return;
+    const { slice } = this.resolveSlice(this.currentBook);
+    if (slice?.unlocked) {
+      this.archiveData.triggerBookSliceFirstView(this.currentBook.id, slice);
+    }
   }
 
   close(): void {
@@ -116,10 +139,7 @@ export class BookReaderUI {
     this.container.addChild(overlay);
 
     const bg = new Graphics();
-    bg.roundRect(px, py, PANEL_W, PANEL_H, UITheme.panel.borderRadius);
-    bg.fill({ color: UITheme.colors.bookBg, alpha: UITheme.alpha.panelBg });
-    bg.roundRect(px, py, PANEL_W, PANEL_H, UITheme.panel.borderRadius);
-    bg.stroke({ color: UITheme.colors.panelBorder, width: 1 });
+    drawPanelBase(bg, px, py, PANEL_W, PANEL_H, SKINS.book);
     this.container.addChild(bg);
 
     const title = new Text({
@@ -208,9 +228,7 @@ export class BookReaderUI {
       t.eventMode = 'static';
       t.cursor = 'pointer';
       t.on('pointerdown', () => {
-        this.navPageNum = pageNum;
-        this.navEntryId = entryId;
-        this.build(false);
+        this.navigate(pageNum, entryId);
       });
       tocInner.addChild(t);
       tocY += Math.max(20, t.height + 4);
@@ -243,8 +261,7 @@ export class BookReaderUI {
     tocInner.mask = tocMaskG;
 
     const tocColBg = new Graphics();
-    tocColBg.roundRect(px + PADDING - 4, this.tocAnchorY - 4, TOC_W + 8, this.tocViewportH + 8, 6);
-    tocColBg.fill({ color: UITheme.colors.rowBgInactive, alpha: 0.55 });
+    drawPanelBase(tocColBg, px + PADDING - 4, this.tocAnchorY - 4, TOC_W + 8, this.tocViewportH + 8, SKINS.row);
     this.container.addChild(tocColBg);
 
     const divider = new Graphics();
@@ -281,8 +298,6 @@ export class BookReaderUI {
       titleBlockEndY = this.tocAnchorY + locked.height + 16;
     } else if (slice) {
       if (slice.unlocked) {
-        this.archiveData.triggerBookSliceFirstView(this.currentBook.id, slice);
-
         if (slice.kind === 'page') {
           if (slice.title) {
             const pt = new Text({
@@ -356,8 +371,7 @@ export class BookReaderUI {
           backCh.eventMode = 'static';
           backCh.cursor = 'pointer';
           backCh.on('pointerdown', () => {
-            this.navEntryId = null;
-            this.build(false);
+            this.navigate(this.navPageNum, null);
           });
           this.container.addChild(backCh);
           titleBlockEndY = titleBlockEndY + backCh.height + 8;
@@ -482,12 +496,10 @@ export class BookReaderUI {
   private onWheel(e: WheelEvent): void {
     const layout = this.wheelLayout;
     if (!layout) return;
-    const canvas = this.renderer.app.canvas as HTMLCanvasElement;
-    const rect = canvas.getBoundingClientRect();
-    const sw = this.renderer.screenWidth;
-    const sh = this.renderer.screenHeight;
-    const mx = (e.clientX - rect.left) * (sw / Math.max(1, rect.width));
-    const my = (e.clientY - rect.top) * (sh / Math.max(1, rect.height));
+    const pt = canvasPointFromEvent(this.renderer, e);
+    if (!pt) return;
+    const mx = pt.x;
+    const my = pt.y;
     if (my < layout.scrollTop || my > layout.scrollBottom) return;
     if (mx >= layout.tocLeft && mx <= layout.tocRight && this.tocContainer) {
       const maxToc = Math.max(0, this.tocTotalH - this.tocViewportH);

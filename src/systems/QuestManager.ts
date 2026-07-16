@@ -23,13 +23,20 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
   private onFlagChanged: () => void;
   /** 任务奖励 / 接取动作串行，避免与 evaluate 或它处异步交错 */
   private questActionTail: Promise<void> = Promise.resolve();
+  /** 读档期间为 true：抑制 flag:changed 触发的 evaluate，避免在 scenario/narrative 等尚未恢复时按半态误判任务完成/激活 */
+  private restoring: boolean = false;
 
   constructor(eventBus: EventBus, flagStore: FlagStore, actionExecutor: ActionExecutor) {
     this.eventBus = eventBus;
     this.flagStore = flagStore;
     this.actionExecutor = actionExecutor;
 
-    this.onFlagChanged = () => this.evaluate();
+    this.onFlagChanged = () => { if (!this.restoring) this.evaluate(); };
+  }
+
+  /** 由 Game 在分发存档前后调用，包裹整个 deserialize 过程。 */
+  setRestoring(v: boolean): void {
+    this.restoring = v;
   }
 
   /** 与图对话共用 `evaluateConditionExpr`；未注入时退化为纯 flag AND。 */
@@ -173,7 +180,15 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
       }
 
       if (status === QuestStatus.Inactive) {
-        if (def.preconditions.length > 0 &&
+        const preconditionsOk = def.preconditions.length === 0 ||
+          this.evalConditions(def.preconditions);
+        if (preconditionsOk && def.completionConditions.length > 0 &&
+            this.evalConditions(def.completionConditions)) {
+          // 状态跳变（dev 跳转 / 读档不一致）时，从当前叙事/标记态把任务链「追平」：
+          // 可达且完成条件已满足的非活跃任务直接判完成，并经 nextQuests 链式激活后续。
+          // 正常顺序游玩不受影响——完成条件只会在任务激活后随流程满足，不会先于激活成立。
+          this.completeQuest(id);
+        } else if (def.preconditions.length > 0 &&
             this.evalConditions(def.preconditions)) {
           this.acceptQuest(id);
         }
@@ -260,6 +275,15 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
     for (const [id, s] of Object.entries(data)) {
       this.questStatus.set(id, s as QuestStatus);
       this.syncFlag(id);
+    }
+    // 读档后重建 HUD 任务追踪：对活跃任务补发 quest:accepted。接取顺序未随档存储
+    // （questStatus 在 loadDefs 时按 quests.json 数据序播种，序列化即该序），故按数据序补发，
+    // HUD 以最后一条为当前追踪。payload.restored=true 供副作用消费者（音效等）识别忽略；
+    // 不补发 notification:show，读档瞬间不弹假任务通知。
+    for (const [id, s] of this.questStatus) {
+      if (s !== QuestStatus.Active) continue;
+      const title = this.questDefs.get(id)?.title ?? id;
+      this.eventBus.emit('quest:accepted', { questId: id, title, restored: true });
     }
   }
 

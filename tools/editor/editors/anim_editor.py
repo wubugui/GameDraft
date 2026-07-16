@@ -1,6 +1,7 @@
-"""动画包只读浏览：数据来自 public/resources/runtime/animation/<id>/anim.json，编辑请用 video_to_atlas 导出。"""
+"""动画包面板：states（帧序/帧率/循环/增删）与世界尺寸可编辑并格式保真写回 anim.json；图集字段只读，重打图集用 video_to_atlas。"""
 from __future__ import annotations
 
+import copy
 import json
 import sys
 from pathlib import Path, PurePosixPath
@@ -15,6 +16,25 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QMessageBox,
 )
+
+
+def _make_list_search_box(list_widget: QListWidget) -> QLineEdit:
+    """动画包列表上方的纯视图搜索框：按文本逐项 setHidden，不增删/不重排数据。"""
+    box = QLineEdit()
+    box.setPlaceholderText("搜索…")
+    box.setClearButtonEnabled(True)
+    box.setToolTip("按包 ID 过滤下方动画包列表（仅隐藏不匹配项）。")
+
+    def _filter(text: str) -> None:
+        q = text.strip().lower()
+        for i in range(list_widget.count()):
+            it = list_widget.item(i)
+            if it is None:
+                continue
+            it.setHidden(bool(q) and q not in it.text().lower())
+
+    box.textChanged.connect(_filter)
+    return box
 from PySide6.QtGui import QPixmap
 from PySide6.QtCore import Qt, QRect, QElapsedTimer, QTimer
 
@@ -28,6 +48,7 @@ def _preview_poll_interval_ms(fps: float) -> int:
     return max(4, min(16, int(round(ideal))))
 
 from ..project_model import ProjectModel
+from ..shared.form_layout import compact_form
 
 _ATLAS_VIEW_MAX_W = 580
 _ATLAS_VIEW_MAX_H = 300
@@ -73,6 +94,16 @@ class AnimEditor(QWidget):
         super().__init__(parent)
         self._model = model
         self._current_key: str | None = None
+        # 编辑态：_loading 期间忽略控件变更信号；_dirty 表示有未保存改动；
+        # _original_anim 为当前包载入时的完整 anim.json 深拷贝（保存时在其上施加差异，
+        # 从而原样保留 spritesheet/cols/rows/单格像素/atlasFrames 及任何未知键如 notes）。
+        self._loading: bool = False
+        self._dirty: bool = False
+        self._original_anim: dict | None = None
+        # 世界尺寸往返保真（preserve_numeric_repr 惯例）：QSpinBox 会把磁盘上的
+        # 84.266667 截成 84，保存时若控件仍等于载入种子（未编辑），按原字面值写回。
+        self._world_orig: dict[str, int | float] = {}
+        self._world_seed: dict[str, int] = {}
 
         root = QHBoxLayout(self)
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -80,21 +111,23 @@ class AnimEditor(QWidget):
         left = QWidget()
         ll = QVBoxLayout(left)
         ll.setContentsMargins(0, 0, 0, 0)
-        hint = QLabel(
+        hint = QLabel("动画包：图集由 video_to_atlas 导出")
+        hint.setToolTip(
             "动画包目录：public/resources/runtime/animation/<id>/\n"
-            "（anim.json + 图集；由 video_to_atlas 导出）"
+            "（anim.json + 图集；图集由 video_to_atlas 导出）\n"
+            "本面板可直接改 states（帧序/帧率/循环/增删）与世界尺寸并写回 anim.json，\n"
+            "无需重新打图集；图集相关字段（spritesheet/cols/rows/单格像素/atlasFrames）只读。"
         )
-        hint.setWordWrap(True)
         hint.setStyleSheet("color: #888;")
         ll.addWidget(hint)
         row_tools = QHBoxLayout()
-        btn_vta = QPushButton("打开视频动画工具（新进程）…")
+        btn_vta = QPushButton("视频工具…")
         btn_vta.setToolTip(
             "启动 tools/video_to_atlas，独立窗口；若存在 resources/editor_projects/editor_data/animation/project.json 将自动打开该工作区。"
         )
         btn_vta.clicked.connect(self._open_video_atlas_detached)
         row_tools.addWidget(btn_vta)
-        btn_reload = QPushButton("从磁盘重载全部动画")
+        btn_reload = QPushButton("重载动画")
         btn_reload.setToolTip(
             "重新扫描 public/resources/runtime/animation/*/anim.json 并更新内存；在视频工具导出后点此同步主编辑器。"
         )
@@ -103,12 +136,17 @@ class AnimEditor(QWidget):
         row_tools.addStretch()
         ll.addLayout(row_tools)
         self._list = QListWidget()
-        self._list.currentTextChanged.connect(self._on_select)
+        self._search_box = _make_list_search_box(self._list)
+        ll.addWidget(self._search_box)
+        self._list.currentTextChanged.connect(self._on_list_selection_changed)
         ll.addWidget(self._list)
+        self._empty_hint = QLabel("暂无动画包：用「视频工具…」导出，再点「重载动画」")
+        self._empty_hint.setStyleSheet("color: #888;")
+        self._empty_hint.setWordWrap(True)
+        ll.addWidget(self._empty_hint)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setMinimumHeight(480)
         detail = QWidget()
         self._anim_detail_panel = detail
         dl = QVBoxLayout(detail)
@@ -116,7 +154,7 @@ class AnimEditor(QWidget):
         self._lbl_disk.setWordWrap(True)
         self._lbl_disk.setStyleSheet("color: #6af;")
         dl.addWidget(self._lbl_disk)
-        f = QFormLayout()
+        f = compact_form(QFormLayout())
         self._a_stem = QLineEdit()
         self._a_stem.setReadOnly(True)
         f.addRow("包 ID（目录名）", self._a_stem)
@@ -149,33 +187,81 @@ class AnimEditor(QWidget):
         self._a_world_mode.addItem("按宽度（只写 worldWidth）", 0)
         self._a_world_mode.addItem("按高度（只写 worldHeight）", 1)
         self._a_world_mode.addItem("同时写宽高（高级）", 2)
-        self._a_world_mode.setEnabled(False)
+        self._a_world_mode.setToolTip(
+            "运行时按单格像素长宽比由其一推出另一维；两者都写则直接采用（高级）。\n"
+            "只改世界尺寸不影响图集，保存即写回 anim.json。"
+        )
+        self._a_world_mode.currentIndexChanged.connect(self._on_world_mode_changed)
+        self._a_world_mode.setSizePolicy(
+            QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+        self._a_world_mode.setMaximumWidth(220)
         f.addRow("世界尺寸", self._a_world_mode)
         self._a_ww = QSpinBox()
         self._a_ww.setRange(1, 9999)
-        self._a_ww.setReadOnly(True)
-        self._a_ww.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+        self._a_ww.valueChanged.connect(self._on_field_edited)
         f.addRow("worldWidth", self._a_ww)
         self._a_wh = QSpinBox()
         self._a_wh.setRange(1, 9999)
-        self._a_wh.setReadOnly(True)
-        self._a_wh.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+        self._a_wh.valueChanged.connect(self._on_field_edited)
         f.addRow("worldHeight", self._a_wh)
         dl.addLayout(f)
 
-        dl.addWidget(QLabel("<b>States（只读）</b>"))
+        # 保存/放弃改动（仅写 anim.json 的 states 与世界尺寸；图集不动）
+        save_row = QHBoxLayout()
+        self._btn_save = QPushButton("保存改动到 anim.json")
+        self._btn_save.setToolTip(
+            "把 states（帧序/帧率/循环/增删）与世界尺寸写回 "
+            "public/resources/runtime/animation/<id>/anim.json；不改图集 PNG。"
+        )
+        self._btn_save.clicked.connect(self._do_save)
+        save_row.addWidget(self._btn_save)
+        self._btn_discard = QPushButton("放弃改动")
+        self._btn_discard.setToolTip("丢弃未保存的改动，从磁盘当前 anim.json 重新载入。")
+        self._btn_discard.clicked.connect(self._do_discard)
+        save_row.addWidget(self._btn_discard)
+        self._lbl_dirty = QLabel("")
+        self._lbl_dirty.setStyleSheet("color: #e0a030;")
+        save_row.addWidget(self._lbl_dirty, 1)
+        dl.addLayout(save_row)
+
+        states_hdr = QLabel("<b>States（可编辑）</b>")
+        states_hdr.setToolTip(
+            "name=状态名（运行时引用，需唯一非空）；frames=图集线性槽位逗号列表（0 基，<cols×rows）；\n"
+            "frameRate=每秒帧数（≥1）；loop=是否循环。改这些只写 anim.json，不重打图集。"
+        )
+        dl.addWidget(states_hdr)
         self._state_table = QTableWidget(0, 4)
         self._state_table.setHorizontalHeaderLabels(
             ["name", "frames", "frameRate", "loop"])
         self._state_table.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.Stretch)
         self._state_table.verticalHeader().setDefaultSectionSize(32)
-        self._state_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._state_table.setEditTriggers(
+            QAbstractItemView.EditTrigger.DoubleClicked
+            | QAbstractItemView.EditTrigger.SelectedClicked
+            | QAbstractItemView.EditTrigger.EditKeyPressed)
         self._state_table.setSelectionBehavior(
             QAbstractItemView.SelectionBehavior.SelectRows)
         dl.addWidget(self._state_table)
 
         self._state_table.itemSelectionChanged.connect(self._on_state_selection_changed)
+        self._state_table.itemChanged.connect(self._on_state_item_changed)
+
+        st_tools = QHBoxLayout()
+        btn_add_state = QPushButton("添加状态")
+        btn_add_state.clicked.connect(self._add_state)
+        st_tools.addWidget(btn_add_state)
+        btn_del_state = QPushButton("删除所选状态")
+        btn_del_state.clicked.connect(self._remove_selected_state)
+        st_tools.addWidget(btn_del_state)
+        btn_up_state = QPushButton("上移")
+        btn_up_state.clicked.connect(lambda: self._move_selected_state(-1))
+        st_tools.addWidget(btn_up_state)
+        btn_dn_state = QPushButton("下移")
+        btn_dn_state.clicked.connect(lambda: self._move_selected_state(1))
+        st_tools.addWidget(btn_dn_state)
+        st_tools.addStretch()
+        dl.addLayout(st_tools)
 
         dl.addWidget(
             QLabel("<b>状态动画预览</b>（选中表格行即播该 state）")
@@ -266,17 +352,34 @@ class AnimEditor(QWidget):
         for k in sorted(self._model.animations.keys()):
             self._list.addItem(k)
         self._list.blockSignals(False)
+        self._sync_list_chrome()
         if keep and keep in self._model.animations:
             self._select_stem(keep)
-            self._on_select(keep)
+            # 有未保存改动时不要用盘面数据覆盖正在编辑的详情（保护编辑中内容不丢失）；
+            # 本面板自身保存后会先清 dirty 再广播，故那条路径仍会刷新为已保存内容。
+            if not self._dirty:
+                self._on_select(keep)
         elif self._list.count() > 0:
-            self._list.setCurrentRow(0)
+            self._select_stem(self._list.item(0).text())
+            self._on_select(self._list.item(0).text())
         else:
             self._clear_detail()
 
     def showEvent(self, event) -> None:  # type: ignore[override]
         super().showEvent(event)
         self._flush_anim_list_from_model()
+        # 面板重新可见：恢复预览播放（离开时被 hideEvent 停掉，避免后台空转，P3）。
+        self._restart_preview_animation()
+
+    def hideEvent(self, event) -> None:  # type: ignore[override]
+        # 面板不可见时停预览定时器：4~16ms tick 在后台空转纯耗 CPU（P3）。
+        self._stop_preview_timer()
+        super().hideEvent(event)
+
+    def has_unsaved_changes(self) -> bool:
+        """供主窗 Save All 成功提示追加动画包未保存提醒（anim 直写 anim.json，不进
+        ProjectModel dirty 桶，Save All 不含它——见集成钩子说明，P3）。"""
+        return bool(self._dirty and self._current_key)
 
     def _open_video_atlas_detached(self) -> None:
         if self._model.project_path is None:
@@ -311,6 +414,11 @@ class AnimEditor(QWidget):
         if self._model.project_path is None:
             QMessageBox.warning(self, "提示", "请先打开工程。")
             return
+        if self._dirty and not self._confirm_discard_dirty(
+            "重载会用磁盘上的 anim.json 覆盖当前面板。"
+        ):
+            return
+        self._clear_dirty()
         self._model.reload_animations_from_disk()
 
     def _manifest_url(self, bundle_id: str) -> str:
@@ -338,27 +446,46 @@ class AnimEditor(QWidget):
     def _refresh(self) -> None:
         sel = self._list.currentItem()
         keep = sel.text() if sel else self._current_key
+        self._list.blockSignals(True)
         self._list.clear()
         for k in sorted(self._model.animations.keys()):
             self._list.addItem(k)
+        self._list.blockSignals(False)
+        self._sync_list_chrome()
         if keep and keep in self._model.animations:
             self._select_stem(keep)
+            self._on_select(keep)
+
+    def _sync_list_chrome(self) -> None:
+        """刷新列表后同步空态提示与当前搜索过滤（纯视图，不改数据）。"""
+        self._empty_hint.setVisible(self._list.count() == 0)
+        # 重新套用搜索框过滤，使 setHidden 与新内容一致
+        self._search_box.textChanged.emit(self._search_box.text())
 
     def _select_stem(self, stem: str) -> None:
-        for i in range(self._list.count()):
-            it = self._list.item(i)
-            if it and it.text() == stem:
-                self._list.setCurrentRow(i)
-                return
+        """仅程序化定位列表项，全程屏蔽信号；详情加载由调用方显式 _on_select 完成。"""
+        self._list.blockSignals(True)
+        try:
+            for i in range(self._list.count()):
+                it = self._list.item(i)
+                if it and it.text() == stem:
+                    self._list.setCurrentRow(i)
+                    return
+        finally:
+            self._list.blockSignals(False)
 
     def _clear_detail(self) -> None:
         self._stop_preview_timer()
+        self._loading = True
         self._sheet_pixmap = None
         self._sheet_cache_key = ""
         self._preview_frames = []
         self._preview_seq_i = 0
         self._lbl_preview_info.setText("")
         self._current_key = None
+        self._original_anim = None
+        self._world_orig = {}
+        self._world_seed = {}
         self._lbl_disk.clear()
         self._a_stem.clear()
         self._a_sheet.clear()
@@ -373,6 +500,8 @@ class AnimEditor(QWidget):
         self._set_atlas_full_placeholder("")
         self._lbl_atlas_meta.setText("")
         self._set_frame_preview_placeholder("(未选择动画)")
+        self._loading = False
+        self._clear_dirty()
 
     def _clear_state_rows(self) -> None:
         while self._state_table.rowCount() > 0:
@@ -382,54 +511,436 @@ class AnimEditor(QWidget):
         if not key or key not in self._model.animations:
             self._clear_detail()
             return
-        self._current_key = key
-        a = self._model.animations[key]
-        man = self._manifest_url(key)
-        if self._model.project_path:
-            rel = Path("public") / PurePosixPath(man.strip().lstrip("/"))
-            self._lbl_disk.setText(str(self._model.project_path / rel))
-        else:
-            self._lbl_disk.setText(man)
-        self._a_stem.setText(key)
-        self._a_sheet.setText(str(a.get("spritesheet", "")))
-        self._a_cols.setValue(int(a.get("cols", 1)))
-        self._a_rows.setValue(int(a.get("rows", 1)))
-        cw0 = int(a.get("cellWidth", 0) or 0)
-        ch0 = int(a.get("cellHeight", 0) or 0)
-        self._a_cell_w.setValue(cw0 if cw0 > 0 else 0)
-        self._a_cell_h.setValue(ch0 if ch0 > 0 else 0)
-        ww = int(a.get("worldWidth", 0) or 0)
-        wh = int(a.get("worldHeight", 0) or 0)
-        if ww > 0 and wh > 0:
-            self._a_world_mode.setCurrentIndex(2)
-        elif wh > 0:
-            self._a_world_mode.setCurrentIndex(1)
-        else:
-            self._a_world_mode.setCurrentIndex(0)
-        self._a_ww.setValue(ww if ww > 0 else 100)
-        self._a_wh.setValue(wh if wh > 0 else 160)
+        self._loading = True
+        try:
+            self._current_key = key
+            a = self._model.animations[key]
+            # 整包深拷贝作为保存基底：原样保留 spritesheet/cols/rows/单格像素/atlasFrames
+            # 及任何未知键（如 player_taoist_anim_v1 的 notes），保存时只在其上施加 states/世界尺寸差异。
+            self._original_anim = copy.deepcopy(a) if isinstance(a, dict) else {}
+            man = self._manifest_url(key)
+            if self._model.project_path:
+                rel = Path("public") / PurePosixPath(man.strip().lstrip("/"))
+                self._lbl_disk.setText(str(self._model.project_path / rel))
+            else:
+                self._lbl_disk.setText(man)
+            self._a_stem.setText(key)
+            self._a_sheet.setText(str(a.get("spritesheet", "")))
+            self._a_cols.setValue(int(a.get("cols", 1)))
+            self._a_rows.setValue(int(a.get("rows", 1)))
+            cw0 = int(a.get("cellWidth", 0) or 0)
+            ch0 = int(a.get("cellHeight", 0) or 0)
+            self._a_cell_w.setValue(cw0 if cw0 > 0 else 0)
+            self._a_cell_h.setValue(ch0 if ch0 > 0 else 0)
+            self._capture_world_snapshot(a)
+            ww = self._world_seed.get("worldWidth", 0)
+            wh = self._world_seed.get("worldHeight", 0)
+            if ww > 0 and wh > 0:
+                self._a_world_mode.setCurrentIndex(2)
+            elif wh > 0:
+                self._a_world_mode.setCurrentIndex(1)
+            else:
+                self._a_world_mode.setCurrentIndex(0)
+            self._a_ww.setValue(ww if ww > 0 else 100)
+            self._a_wh.setValue(wh if wh > 0 else 160)
+            self._apply_world_mode_enabled()
 
-        self._clear_state_rows()
-        states = a.get("states", {})
-        if not isinstance(states, dict):
-            states = {}
-        for sname, sdef in states.items():
-            if not isinstance(sdef, dict):
-                sdef = {}
+            self._clear_state_rows()
+            states = a.get("states", {})
+            if not isinstance(states, dict):
+                states = {}
+            for sname, sdef in states.items():
+                if not isinstance(sdef, dict):
+                    sdef = {}
+                r = self._state_table.rowCount()
+                self._state_table.insertRow(r)
+                self._set_state_row(
+                    r,
+                    str(sname),
+                    self._frames_to_cell_text(sdef.get("frames", [0])),
+                    int(sdef.get("frameRate", 8)),
+                    bool(sdef.get("loop", True)),
+                )
+            if self._state_table.rowCount() > 0:
+                self._state_table.selectRow(0)
+        finally:
+            self._loading = False
+        self._clear_dirty()
+        self._refresh_preview()
+
+    def _set_state_row(
+        self, r: int, name: str, frames_text: str, rate: int, loop: bool
+    ) -> None:
+        """填一行 state：name/frames/frameRate 为可编辑文本，loop 为复选框（无文本）。"""
+        name_it = QTableWidgetItem(name)
+        name_it.setData(Qt.ItemDataRole.UserRole, name)  # 旧名快照，重名/空名时回退
+        self._state_table.setItem(r, 0, name_it)
+        self._state_table.setItem(r, 1, QTableWidgetItem(frames_text))
+        self._state_table.setItem(r, 2, QTableWidgetItem(str(max(1, int(rate)))))
+        loop_it = QTableWidgetItem("")
+        loop_it.setFlags(
+            (loop_it.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            & ~Qt.ItemFlag.ItemIsEditable
+        )
+        loop_it.setCheckState(
+            Qt.CheckState.Checked if loop else Qt.CheckState.Unchecked)
+        self._state_table.setItem(r, 3, loop_it)
+
+    # ---- 编辑 / 脏标记 / 保存 ------------------------------------------------
+
+    def _on_list_selection_changed(self, key: str) -> None:
+        """用户点选其它动画包：若当前有未保存改动，先询问保存/放弃/取消，再加载新包。"""
+        if key == self._current_key:
+            return
+        if self._dirty and self._current_key:
+            box = QMessageBox(self)
+            box.setWindowTitle("未保存的改动")
+            box.setText(f"动画包「{self._current_key}」有未保存改动，如何处理？")
+            b_save = box.addButton("保存", QMessageBox.ButtonRole.AcceptRole)
+            box.addButton("放弃", QMessageBox.ButtonRole.DestructiveRole)
+            b_cancel = box.addButton("取消", QMessageBox.ButtonRole.RejectRole)
+            box.exec()
+            clicked = box.clickedButton()
+            if clicked is b_cancel:
+                self._select_stem(self._current_key)  # 还原选择，不切换
+                return
+            if clicked is b_save:
+                if not self._do_save():  # 校验未过则留在原包
+                    self._select_stem(self._current_key)
+                    return
+            else:  # 放弃
+                self._clear_dirty()
+        self._on_select(key)
+
+    def _confirm_discard_dirty(self, reason: str) -> bool:
+        ret = QMessageBox.question(
+            self, "未保存的改动",
+            f"动画包「{self._current_key}」有未保存改动。{reason}\n确定放弃这些改动？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return ret == QMessageBox.StandardButton.Yes
+
+    def confirm_close(self, parent=None) -> bool:
+        """主窗口关闭/换工程门控：anim 编辑不进 ProjectModel dirty（直写 anim.json），
+        必须自带此钩子，否则未保存的帧序/世界尺寸改动会被无提示丢弃（审查 P1-6）。"""
+        if not self._dirty or not self._current_key:
+            return True
+        box = QMessageBox(self)
+        box.setWindowTitle("未保存的动画改动")
+        box.setText(f"动画包「{self._current_key}」有未保存改动，如何处理？")
+        save_btn = box.addButton("保存", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("放弃", QMessageBox.ButtonRole.DestructiveRole)
+        cancel_btn = box.addButton("取消", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is cancel_btn:
+            return False
+        if clicked is save_btn:
+            if not self._do_save():
+                return False  # 保存失败（校验不过等）：留在编辑器里改
+        return True
+
+    def _mark_dirty(self) -> None:
+        if self._loading:
+            return
+        self._dirty = True
+        self._update_dirty_ui()
+
+    def _clear_dirty(self) -> None:
+        self._dirty = False
+        self._update_dirty_ui()
+
+    def _update_dirty_ui(self) -> None:
+        has_pkg = bool(self._current_key)
+        self._btn_save.setEnabled(self._dirty and has_pkg)
+        self._btn_discard.setEnabled(self._dirty and has_pkg)
+        self._lbl_dirty.setText("● 未保存" if self._dirty else "")
+
+    def _on_field_edited(self, *_args) -> None:
+        self._mark_dirty()
+
+    def _apply_world_mode_enabled(self) -> None:
+        mode = int(self._a_world_mode.currentData())
+        self._a_ww.setEnabled(mode in (0, 2))
+        self._a_wh.setEnabled(mode in (1, 2))
+
+    def _on_world_mode_changed(self, *_args) -> None:
+        self._apply_world_mode_enabled()
+        self._mark_dirty()
+
+    def _on_state_item_changed(self, item: QTableWidgetItem) -> None:
+        if self._loading or item is None:
+            return
+        col = item.column()
+        if col == 0:
+            new_name = item.text().strip()
+            old_name = item.data(Qt.ItemDataRole.UserRole)
+            dup = any(
+                r != item.row()
+                and self._state_table.item(r, 0) is not None
+                and self._state_table.item(r, 0).text().strip() == new_name
+                for r in range(self._state_table.rowCount())
+            )
+            if not new_name or dup:
+                self._loading = True
+                try:
+                    item.setText(str(old_name) if old_name is not None else "")
+                finally:
+                    self._loading = False
+                QMessageBox.warning(
+                    self, "状态名无效",
+                    "状态名不能为空，且不能与其它状态重名。",
+                )
+                return
+            item.setData(Qt.ItemDataRole.UserRole, new_name)
+        self._mark_dirty()
+        if col in (1, 2, 3) and item.row() == self._state_table.currentRow():
+            self._restart_preview_animation()
+
+    def _add_state(self) -> None:
+        existing = {
+            (self._state_table.item(r, 0).text().strip()
+             if self._state_table.item(r, 0) else "")
+            for r in range(self._state_table.rowCount())
+        }
+        name = "new_state"
+        i = 1
+        while name in existing:
+            i += 1
+            name = f"new_state_{i}"
+        self._loading = True
+        try:
             r = self._state_table.rowCount()
             self._state_table.insertRow(r)
-            frames = sdef.get("frames", [0])
-            ft = self._frames_to_cell_text(frames)
-            rate = int(sdef.get("frameRate", 8))
-            loop = bool(sdef.get("loop", True))
-            self._state_table.setItem(r, 0, QTableWidgetItem(str(sname)))
-            self._state_table.setItem(r, 1, QTableWidgetItem(ft))
-            self._state_table.setItem(r, 2, QTableWidgetItem(str(max(1, rate))))
-            self._state_table.setItem(
-                r, 3, QTableWidgetItem("是" if loop else "否"))
-        if self._state_table.rowCount() > 0:
-            self._state_table.selectRow(0)
+            self._set_state_row(r, name, "0", 8, True)
+        finally:
+            self._loading = False
+        self._state_table.selectRow(r)
+        self._mark_dirty()
+
+    def _remove_selected_state(self) -> None:
+        row = self._state_table.currentRow()
+        if row < 0:
+            return
+        name_it = self._state_table.item(row, 0)
+        nm = name_it.text() if name_it else f"#{row}"
+        if QMessageBox.question(
+            self, "删除状态", f"删除状态「{nm}」？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        self._state_table.removeRow(row)
+        self._mark_dirty()
+        self._restart_preview_animation()
+
+    def _move_selected_state(self, delta: int) -> None:
+        row = self._state_table.currentRow()
+        if row < 0:
+            return
+        j = row + delta
+        if j < 0 or j >= self._state_table.rowCount():
+            return
+        a = self._read_state_row(row)
+        b = self._read_state_row(j)
+        self._loading = True
+        try:
+            self._set_state_row(row, *b)
+            self._set_state_row(j, *a)
+        finally:
+            self._loading = False
+        self._state_table.selectRow(j)
+        self._mark_dirty()
+
+    def _read_state_row(self, r: int) -> tuple[str, str, int, bool]:
+        name_it = self._state_table.item(r, 0)
+        frames_it = self._state_table.item(r, 1)
+        rate_it = self._state_table.item(r, 2)
+        loop_it = self._state_table.item(r, 3)
+        name = name_it.text() if name_it else ""
+        frames_text = frames_it.text() if frames_it else "0"
+        try:
+            rate = int(round(float((rate_it.text() if rate_it else "8") or "8")))
+        except ValueError:
+            rate = 8
+        loop = bool(loop_it and loop_it.checkState() == Qt.CheckState.Checked)
+        return name, frames_text, max(1, rate), loop
+
+    def _parse_frames_strict(self, text: str) -> list[int] | None:
+        t = (text or "").strip()
+        if not t:
+            return None
+        if t.startswith("["):
+            try:
+                raw = json.loads(t)
+            except (json.JSONDecodeError, ValueError):
+                return None
+            if not isinstance(raw, list):
+                return None
+            try:
+                return [int(x) for x in raw]
+            except (ValueError, TypeError):
+                return None
+        parts = [p.strip() for p in t.split(",") if p.strip()]
+        if not parts:
+            return None
+        out: list[int] = []
+        for p in parts:
+            try:
+                out.append(int(p))
+            except ValueError:
+                return None
+        return out
+
+    def _collect_states_from_table(self) -> tuple[dict | None, str | None]:
+        cols = max(1, int(self._a_cols.value()))
+        rows = max(1, int(self._a_rows.value()))
+        slots = cols * rows
+        orig_states = (self._original_anim or {}).get("states", {})
+        if not isinstance(orig_states, dict):
+            orig_states = {}
+        n = self._state_table.rowCount()
+        if n == 0:
+            return None, "至少需要保留一个状态。"
+        out: dict = {}
+        for r in range(n):
+            name_it = self._state_table.item(r, 0)
+            name = name_it.text().strip() if name_it else ""
+            if not name:
+                return None, f"第 {r + 1} 行的状态名为空。"
+            if name in out:
+                return None, f"状态名重复：{name!r}。"
+            frames_it = self._state_table.item(r, 1)
+            frames = self._parse_frames_strict(
+                frames_it.text() if frames_it else "")
+            if not frames:
+                return None, f"状态 {name!r} 的帧列表无效（用逗号分隔的非负整数）。"
+            bad = [fi for fi in frames if fi < 0 or fi >= slots]
+            if bad:
+                return None, (
+                    f"状态 {name!r} 的帧索引 {bad} 超出图集槽位 0..{slots - 1}"
+                    f"（cols×rows={slots}）。")
+            rate_it = self._state_table.item(r, 2)
+            try:
+                rate = int(round(float(
+                    (rate_it.text().strip() if rate_it else "8") or "8")))
+            except ValueError:
+                return None, f"状态 {name!r} 的帧率必须是数字。"
+            if rate < 1:
+                return None, f"状态 {name!r} 的帧率须 ≥ 1。"
+            loop_it = self._state_table.item(r, 3)
+            loop = bool(loop_it and loop_it.checkState() == Qt.CheckState.Checked)
+            old_name = name_it.data(Qt.ItemDataRole.UserRole) if name_it else None
+            src = None
+            if isinstance(old_name, str):
+                src = orig_states.get(old_name)
+            if src is None:
+                src = orig_states.get(name)
+            sdef: dict = {"frames": frames, "frameRate": rate, "loop": loop}
+            if isinstance(src, dict):
+                for k, v in src.items():
+                    if k not in ("frames", "frameRate", "loop"):
+                        sdef[k] = v
+            out[name] = sdef
+        return out, None
+
+    def _capture_world_snapshot(self, a: dict) -> None:
+        """记录世界尺寸的原始字面值与 QSpinBox 载入种子（int 截断，与 setValue 一致），
+        供保存时"未编辑按原字面值写回"（preserve_numeric_repr 惯例）判定。"""
+        self._world_orig = {}
+        self._world_seed = {}
+        for key in ("worldWidth", "worldHeight"):
+            v = a.get(key)
+            if isinstance(v, bool) or not isinstance(v, (int, float)):
+                continue
+            iv = int(v)
+            if iv <= 0:
+                continue
+            self._world_orig[key] = v
+            self._world_seed[key] = iv
+
+    def _world_value_for_save(self, key: str, ctrl_val: int) -> int | float:
+        """控件仍等于载入种子 → 未编辑，写回原字面值（保留 84.266667 / 160.0 等
+        管线产出的小数表示）；被改过才用控件的整数值。"""
+        orig_v = self._world_orig.get(key)
+        if orig_v is not None and self._world_seed.get(key) == ctrl_val:
+            return orig_v
+        return ctrl_val
+
+    def _build_saved_anim_dict(self) -> tuple[dict | None, str | None]:
+        new_states, err = self._collect_states_from_table()
+        if err:
+            return None, err
+        mode = int(self._a_world_mode.currentData())
+        want_ww = mode in (0, 2)
+        want_wh = mode in (1, 2)
+        ww = int(self._a_ww.value())
+        wh = int(self._a_wh.value())
+        if want_ww and ww <= 0:
+            return None, "worldWidth 须为正整数。"
+        if want_wh and wh <= 0:
+            return None, "worldHeight 须为正整数。"
+        ww_out = self._world_value_for_save("worldWidth", ww)
+        wh_out = self._world_value_for_save("worldHeight", wh)
+        # 键序保真：原有键（含 states/worldWidth/worldHeight）一律回原位置，
+        # 只有原文件没有的世界尺寸键才新插在 states 之后。
+        orig = self._original_anim if isinstance(self._original_anim, dict) else {}
+        out: dict = {}
+        for k, v in orig.items():
+            if k == "states":
+                out["states"] = new_states
+            elif k == "worldWidth":
+                if want_ww:
+                    out["worldWidth"] = ww_out
+            elif k == "worldHeight":
+                if want_wh:
+                    out["worldHeight"] = wh_out
+            else:
+                out[k] = v
+        if "states" not in out:
+            out = {"states": new_states, **out}
+        missing_ww = want_ww and "worldWidth" not in out
+        missing_wh = want_wh and "worldHeight" not in out
+        if missing_ww or missing_wh:
+            rebuilt: dict = {}
+            for k, v in out.items():
+                rebuilt[k] = v
+                if k == "states":
+                    if missing_ww:
+                        rebuilt["worldWidth"] = ww_out
+                    if missing_wh:
+                        rebuilt["worldHeight"] = wh_out
+            out = rebuilt
+        return out, None
+
+    def _do_save(self) -> bool:
+        if not self._current_key:
+            return False
+        new_dict, err = self._build_saved_anim_dict()
+        if err or new_dict is None:
+            QMessageBox.warning(self, "无法保存", err or "未知错误")
+            return False
+        try:
+            self._model.save_animation_bundle(self._current_key, new_dict)
+        except Exception as e:  # noqa: BLE001 — 反馈给用户即可
+            QMessageBox.critical(self, "保存失败", str(e))
+            return False
+        self._original_anim = copy.deepcopy(
+            self._model.animations.get(self._current_key, new_dict))
+        # 保存后以盘面新值为基线重建种子，防止"改回种子值"误还原成保存前的旧字面值
+        self._capture_world_snapshot(self._original_anim)
+        self._clear_dirty()
         self._refresh_preview()
+        return True
+
+    def _do_discard(self) -> None:
+        if not self._dirty or not self._current_key:
+            return
+        if not self._confirm_discard_dirty("将从磁盘重新载入该包。"):
+            return
+        self._clear_dirty()
+        self._on_select(self._current_key)
 
     def _frames_to_cell_text(self, frames: object) -> str:
         if isinstance(frames, list):
@@ -548,9 +1059,8 @@ class AnimEditor(QWidget):
         rate = max(1e-6, float(rate))
         loop_item = self._state_table.item(row, 3)
         loop_b = True
-        if loop_item:
-            t = loop_item.text().strip()
-            loop_b = t in ("是", "true", "True", "1", "yes", "Yes")
+        if loop_item is not None:
+            loop_b = loop_item.checkState() == Qt.CheckState.Checked
         return (name or f"row{row}", frames, float(rate), loop_b)
 
     def _atlas_crop(self, atlas_index: int) -> QPixmap | None:

@@ -1,5 +1,7 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import { UITheme } from './UITheme';
+import { drawPanelBase, SKINS } from './PanelSkin';
+import { isEventOnGameCanvas, isPointerConsumed, markPointerConsumed } from './uiPointerCoords';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
 import type { StringsProvider } from '../core/StringsProvider';
@@ -25,9 +27,14 @@ export class EncounterUI {
 
   private narrativeText: Text | null = null;
   private narrativeBg: Graphics | null = null;
+  private narrativeMask: Graphics | null = null;
   private optionsContainer: Container | null = null;
   private resultText: Text | null = null;
+  private resultBg: Graphics | null = null;
+  private resultMask: Graphics | null = null;
   private currentOptions: ResolvedOption[] = [];
+  /** 选项一旦被点选即上锁，避免快速双击/点击+按键造成 encounter:choiceSelected 重复派发。 */
+  private choiceLocked = false;
 
   private fullText: string = '';
   private displayedChars: number = 0;
@@ -81,10 +88,7 @@ export class EncounterUI {
     const boxY = this.renderer.screenHeight - boxHeight - BOX_MARGIN;
 
     const bg = new Graphics();
-    bg.roundRect(BOX_MARGIN, boxY, boxWidth, boxHeight, UITheme.panel.borderRadiusMed);
-    bg.fill({ color: UITheme.colors.encounterBg, alpha: UITheme.alpha.encounterBg });
-    bg.roundRect(BOX_MARGIN, boxY, boxWidth, boxHeight, UITheme.panel.borderRadiusMed);
-    bg.stroke({ color: UITheme.colors.encounterBorder, width: 1 });
+    drawPanelBase(bg, BOX_MARGIN, boxY, boxWidth, boxHeight, SKINS.encounter);
     this.container!.addChild(bg);
     this.narrativeBg = bg;
 
@@ -109,6 +113,7 @@ export class EncounterUI {
     narrativeMask.fill({ color: 0xffffff });
     this.container!.addChild(narrativeMask);
     this.narrativeText.mask = narrativeMask;
+    this.narrativeMask = narrativeMask;
 
     this.fullText = text;
     this.displayedChars = 0;
@@ -121,6 +126,7 @@ export class EncounterUI {
     this.clearNarrative();
     this.phase = EncounterPhase.Options;
     this.currentOptions = options;
+    this.choiceLocked = false;
 
     const boxWidth = this.renderer.screenWidth - BOX_MARGIN * 2;
 
@@ -130,10 +136,7 @@ export class EncounterUI {
     this.optionsContainer.y = startY;
 
     const bg = new Graphics();
-    bg.roundRect(BOX_MARGIN, 0, boxWidth, totalHeight, UITheme.panel.borderRadiusMed);
-    bg.fill({ color: UITheme.colors.encounterBg, alpha: UITheme.alpha.encounterBg });
-    bg.roundRect(BOX_MARGIN, 0, boxWidth, totalHeight, UITheme.panel.borderRadiusMed);
-    bg.stroke({ color: UITheme.colors.encounterBorder, width: 1 });
+    drawPanelBase(bg, BOX_MARGIN, 0, boxWidth, totalHeight, SKINS.encounter);
     this.optionsContainer.addChild(bg);
 
     for (let i = 0; i < options.length; i++) {
@@ -156,8 +159,7 @@ export class EncounterUI {
       const color = opt.enabled ? (typeColors[opt.type] ?? UITheme.colors.body) : UITheme.colors.disabled;
 
       const rowBg = new Graphics();
-      rowBg.roundRect(0, 0, boxWidth - 20, 34, UITheme.panel.borderRadiusSmall);
-      rowBg.fill({ color: UITheme.colors.encounterRow, alpha: UITheme.alpha.rowBgLight });
+      drawPanelBase(rowBg, 0, 0, boxWidth - 20, 34, SKINS.row, { fill: UITheme.colors.encounterRow, fillAlpha: UITheme.alpha.rowBgLight });
       row.addChild(rowBg);
 
       const label = `${i + 1}. ${typeLabel[opt.type] ?? ''}${opt.text}`;
@@ -187,8 +189,17 @@ export class EncounterUI {
           this.eventBus.emit('ui:hover', {});
         });
         row.on('pointerout', () => { hoverBg.visible = false; rowBg.visible = true; });
-        row.on('pointerdown', () => {
-          this.eventBus.emit('encounter:choiceSelected', { index: opt.index });
+        row.on('pointerdown', (ev) => {
+          markPointerConsumed(ev.nativeEvent);
+          this.selectOption(opt);
+        });
+      } else if (opt.disableReason) {
+        // 置灰选项点击时给出原因反馈，与 DialogueUI 的禁用提示一致，避免“点了没反应”。
+        row.eventMode = 'static';
+        row.cursor = 'default';
+        row.on('pointerdown', (ev) => {
+          markPointerConsumed(ev.nativeEvent);
+          this.eventBus.emit('notification:show', { text: opt.disableReason, type: 'warning' });
         });
       }
 
@@ -201,6 +212,7 @@ export class EncounterUI {
   private showResult(text: string): void {
     this.ensureContainer();
     this.clearOptions();
+    this.clearResult();
     this.phase = EncounterPhase.Result;
 
     const boxWidth = this.renderer.screenWidth - BOX_MARGIN * 2;
@@ -208,9 +220,9 @@ export class EncounterUI {
     const boxY = this.renderer.screenHeight - boxHeight - BOX_MARGIN;
 
     const bg = new Graphics();
-    bg.roundRect(BOX_MARGIN, boxY, boxWidth, boxHeight, UITheme.panel.borderRadiusMed);
-    bg.fill({ color: UITheme.colors.encounterBg, alpha: UITheme.alpha.encounterBg });
+    drawPanelBase(bg, BOX_MARGIN, boxY, boxWidth, boxHeight, SKINS.encounter);
     this.container!.addChild(bg);
+    this.resultBg = bg;
 
     this.resultText = new Text({
       text: '',
@@ -232,6 +244,7 @@ export class EncounterUI {
     resultMask.fill({ color: 0xffffff });
     this.container!.addChild(resultMask);
     this.resultText.mask = resultMask;
+    this.resultMask = resultMask;
 
     this.fullText = text;
     this.displayedChars = 0;
@@ -257,11 +270,14 @@ export class EncounterUI {
     }
   }
 
-  private onClick(_e: PointerEvent): void {
+  private onClick(e: PointerEvent): void {
+    if (!isEventOnGameCanvas(this.renderer, e)) return;
+    if (isPointerConsumed(e)) return;
     this.handleAdvance();
   }
 
   private onKey(e: KeyboardEvent): void {
+    if (e.repeat) return;
     if (e.code === 'Space' || e.code === 'Enter') {
       this.handleAdvance();
     }
@@ -269,9 +285,16 @@ export class EncounterUI {
       const idx = parseInt(e.code.replace('Digit', ''), 10) - 1;
       const opt = this.currentOptions[idx];
       if (opt && opt.enabled) {
-        this.eventBus.emit('encounter:choiceSelected', { index: opt.index });
+        this.selectOption(opt);
       }
     }
+  }
+
+  /** 统一的选项派发入口：上锁后只派发一次，防止双击 / 点击+按键重复触发结算。 */
+  private selectOption(opt: ResolvedOption): void {
+    if (this.choiceLocked) return;
+    this.choiceLocked = true;
+    this.eventBus.emit('encounter:choiceSelected', { index: opt.index });
   }
 
   private handleAdvance(): void {
@@ -305,6 +328,29 @@ export class EncounterUI {
       this.narrativeText.destroy();
       this.narrativeText = null;
     }
+    if (this.narrativeMask) {
+      if (this.narrativeMask.parent) this.narrativeMask.parent.removeChild(this.narrativeMask);
+      this.narrativeMask.destroy();
+      this.narrativeMask = null;
+    }
+  }
+
+  private clearResult(): void {
+    if (this.resultBg) {
+      if (this.resultBg.parent) this.resultBg.parent.removeChild(this.resultBg);
+      this.resultBg.destroy();
+      this.resultBg = null;
+    }
+    if (this.resultText) {
+      if (this.resultText.parent) this.resultText.parent.removeChild(this.resultText);
+      this.resultText.destroy();
+      this.resultText = null;
+    }
+    if (this.resultMask) {
+      if (this.resultMask.parent) this.resultMask.parent.removeChild(this.resultMask);
+      this.resultMask.destroy();
+      this.resultMask = null;
+    }
   }
 
   private clearOptions(): void {
@@ -328,8 +374,11 @@ export class EncounterUI {
     }
     this.narrativeText = null;
     this.narrativeBg = null;
+    this.narrativeMask = null;
     this.optionsContainer = null;
     this.resultText = null;
+    this.resultBg = null;
+    this.resultMask = null;
     this.currentOptions = [];
   }
 

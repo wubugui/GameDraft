@@ -1,0 +1,110 @@
+{
+  "schemaVersion": 1,
+  "id": "寻狗_瞎子李算命",
+  "entry": "root",
+  "meta": {
+    "title": "寻狗Demo·①.5雾津街头·瞎子李算命（少走夜路伏笔）"
+  },
+  "nodes": {
+    "root": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "小兄弟，算一卦？两文钱。",
+      "next": "q",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "q": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "准不准哦？",
+      "next": "c",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "c": {
+      "type": "choice",
+      "promptLine": {
+        "speaker": {
+          "kind": "literal",
+          "name": "旁白"
+        },
+        "text": "两文钱，算是不算？"
+      },
+      "options": [
+        {
+          "id": "pay",
+          "text": "〔给钱算一卦〕",
+          "next": "pay"
+        },
+        {
+          "id": "skip",
+          "text": "〔算了不信〕",
+          "next": "skip"
+        }
+      ]
+    },
+    "pay": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "removeCurrency",
+          "params": {
+            "amount": "2"
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_瞎子李算命",
+            "signal": "xiazi_suangua_done"
+          }
+        }
+      ],
+      "next": "r1"
+    },
+    "r1": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "你身上……带着点阴气。最近少走夜路。",
+      "next": "r2",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "r2": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "扯犊子。老子天天走夜路。",
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "skip": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "算了算了，两文钱够老子买个烧饼。",
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "end1": {
+      "type": "end"
+    }
+  }
+}

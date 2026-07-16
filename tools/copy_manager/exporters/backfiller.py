@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from tools.copy_manager.exporters.json_exporter import _parse_field_path
+from tools.copy_manager.exporters.json_exporter import _parse_field_path, _resolve_legacy_key_alias
 from tools.copy_manager.utils import backup_file, read_json, write_json
 
 
@@ -150,6 +150,7 @@ def _navigate_and_set_with_result(
         is_last = (i == len(steps) - 1)
 
         if isinstance(current, dict):
+            key = _resolve_legacy_key_alias(current, key)
             if key not in current:
                 return False
             if is_last:

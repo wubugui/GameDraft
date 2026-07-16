@@ -51,6 +51,11 @@ _MEDIA_KEY_NAMES = {
     "collision_map",
     "raw_depth_rg",
     "background.png",
+    # overlay 混合叠图动作的图引用（叠图 from/to 是 overlay_images 短名，审查 P2-36）
+    "fromImage",
+    "toImage",
+    # 档案条目插画（ArchiveManager 会预载，审查 P2-36）
+    "illustration",
 }
 
 # 富文本里 [img:...] 也按媒体短名解析
@@ -58,6 +63,7 @@ _RICH_IMG_RE = re.compile(r"\[img:([^\]]+)\]")
 
 _TEXT_KEY_NAMES = {
     "animFile",  # /resources/runtime/animation/<id>/anim.json 实际是 JSON，但运行时与媒体共用 runtime 根
+    "animManifest",  # game_config.playerAvatar / setPlayerAvatar 动作的动画包 URL（现网在用，审查 P2-36）
     "manifest",
     "dialogueGraphId",
 }
@@ -77,7 +83,17 @@ class AuditReport:
     media_count: int = 0
     text_count: int = 0
     rich_img_count: int = 0
+    map_scene_count: int = 0
+    overlay_images: dict[str, str] = field(default_factory=dict)
     issues: list[AssetIssue] = field(default_factory=list)
+    _issue_keys: set[tuple[str, str, str, str]] = field(default_factory=set, repr=False)
+
+    def add_issue(self, issue: AssetIssue) -> None:
+        key = (issue.file, issue.field_path, issue.raw_value, issue.reason)
+        if key in self._issue_keys:
+            return
+        self._issue_keys.add(key)
+        self.issues.append(issue)
 
 
 def _walk_json(value: Any, path: str = "") -> Iterator[tuple[str, str, Any]]:
@@ -120,6 +136,11 @@ def _check_media_value(
         return
     if s.startswith("http://") or s.startswith("https://"):
         return  # 远端资源不验证
+    # showOverlayImage 等动作允许 image 填 overlay_images.json 的短 id。
+    if not s.startswith("/") and not s.startswith("resources/") and not s.startswith("assets/"):
+        overlay_path = report.overlay_images.get(s)
+        if isinstance(overlay_path, str) and overlay_path.strip():
+            s = overlay_path.strip()
     # 场景 JSON 内的相对短名按 scene_runtime_dir(scene_id) 解析；
     # 其它情形交给统一 url_to_disk（runtime 根 / 完整 URL / 绝对路径）。
     disk = None
@@ -132,7 +153,7 @@ def _check_media_value(
     if disk is None:
         disk = paths.url_to_disk(s, kind=URL_KIND_MEDIA)
     if disk is None:
-        report.issues.append(
+        report.add_issue(
             AssetIssue(
                 file=file_rel,
                 field_path=field_path,
@@ -143,7 +164,7 @@ def _check_media_value(
         )
         return
     if not disk.is_file():
-        report.issues.append(
+        report.add_issue(
             AssetIssue(
                 file=file_rel,
                 field_path=field_path,
@@ -169,7 +190,7 @@ def _check_text_value(
     # animFile 等可能落到 runtime 树（动画 anim.json）
     disk = paths.url_to_disk(s, kind="any")
     if disk is None or not disk.is_file():
-        report.issues.append(
+        report.add_issue(
             AssetIssue(
                 file=file_rel,
                 field_path=field_path,
@@ -191,7 +212,7 @@ def _audit_one_file(
     try:
         data = json.loads(json_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        report.issues.append(
+        report.add_issue(
             AssetIssue(
                 file=file_rel,
                 field_path="",
@@ -233,9 +254,169 @@ def _audit_one_file(
                 )
 
 
+def _load_json_for_audit(path: Path, report: AuditReport, paths: ProjectPaths) -> Any | None:
+    file_rel = str(path.relative_to(paths.project_root)).replace("\\", "/")
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        report.add_issue(
+            AssetIssue(
+                file=file_rel,
+                field_path="",
+                raw_value="",
+                reason="JSON 解析失败或不可读",
+            ),
+        )
+        return None
+
+
+def _audit_map_scene_nodes(paths: ProjectPaths, report: AuditReport) -> None:
+    """地图节点是运行时可跳转入口；sceneId 必须有场景 JSON 与场景媒体目录。"""
+    map_path = paths.data_dir / "map_config.json"
+    if not map_path.is_file():
+        return
+    data = _load_json_for_audit(map_path, report, paths)
+    file_rel = str(map_path.relative_to(paths.project_root)).replace("\\", "/")
+    if isinstance(data, list):
+        nodes = data
+        field_prefix = ""
+    elif isinstance(data, dict):
+        raw_nodes = data.get("nodes")
+        if not isinstance(raw_nodes, list):
+            report.add_issue(
+                AssetIssue(
+                    file=file_rel,
+                    field_path="nodes",
+                    raw_value="",
+                    reason="map_config.json 的 nodes 必须是数组",
+                ),
+            )
+            return
+        nodes = raw_nodes
+        field_prefix = "nodes"
+    else:
+        report.add_issue(
+            AssetIssue(
+                file=file_rel,
+                field_path="",
+                raw_value="",
+                reason="map_config.json 顶层必须是数组或包含 nodes 数组的对象",
+            ),
+        )
+        return
+
+    for idx, node in enumerate(nodes):
+        if not isinstance(node, dict):
+            continue
+        field_base = f"{field_prefix}[{idx}]" if field_prefix else f"[{idx}]"
+        scene_id = str(node.get("sceneId") or "").strip()
+        if not scene_id:
+            continue
+        report.map_scene_count += 1
+        try:
+            scene_json = paths.scene_json_path(scene_id)
+            scene_dir = paths.scene_runtime_dir(scene_id)
+        except ValueError as exc:
+            report.add_issue(
+                AssetIssue(
+                    file=file_rel,
+                    field_path=f"{field_base}.sceneId",
+                    raw_value=scene_id,
+                    reason=f"非法地图 sceneId：{exc}",
+                ),
+            )
+            continue
+        if not scene_json.is_file():
+            report.add_issue(
+                AssetIssue(
+                    file=file_rel,
+                    field_path=f"{field_base}.sceneId",
+                    raw_value=scene_id,
+                    reason=f"地图场景 JSON 不存在：{scene_json}",
+                ),
+            )
+        if not scene_dir.is_dir():
+            report.add_issue(
+                AssetIssue(
+                    file=file_rel,
+                    field_path=f"{field_base}.sceneId",
+                    raw_value=scene_id,
+                    reason=f"地图场景媒体目录不存在：{scene_dir}",
+                ),
+            )
+
+
+def _audit_scene_required_media(paths: ProjectPaths, scene_json: Path, report: AuditReport) -> None:
+    data = _load_json_for_audit(scene_json, report, paths)
+    if not isinstance(data, dict):
+        return
+
+    scene_id = str(data.get("id") or scene_json.stem).strip()
+    file_rel = str(scene_json.relative_to(paths.project_root)).replace("\\", "/")
+    backgrounds = data.get("backgrounds")
+    if isinstance(backgrounds, list) and backgrounds:
+        for idx, bg in enumerate(backgrounds):
+            if isinstance(bg, dict):
+                raw = str(bg.get("image") or "background.png")
+                report.media_count += 1
+                _check_media_value(
+                    paths,
+                    raw,
+                    file_rel=file_rel,
+                    field_path=f"backgrounds[{idx}].image",
+                    report=report,
+                    scene_id=scene_id,
+                )
+    elif scene_id != "dev_room":
+        report.add_issue(
+            AssetIssue(
+                file=file_rel,
+                field_path="backgrounds",
+                raw_value="",
+                reason="场景缺少 backgrounds；运行时将只能显示占位背景",
+            ),
+        )
+
+    depth = data.get("depthConfig")
+    if isinstance(depth, dict):
+        for key in ("depth_map", "collision_map"):
+            raw = str(depth.get(key) or "").strip()
+            if not raw:
+                report.add_issue(
+                    AssetIssue(
+                        file=file_rel,
+                        field_path=f"depthConfig.{key}",
+                        raw_value="",
+                        reason="深度配置缺少资源字段",
+                    ),
+                )
+                continue
+            report.media_count += 1
+            _check_media_value(
+                paths,
+                raw,
+                file_rel=file_rel,
+                field_path=f"depthConfig.{key}",
+                report=report,
+                scene_id=scene_id,
+            )
+
+
 def audit_project_assets(project_root: Path) -> AuditReport:
     paths = ProjectPaths(project_root)
     report = AuditReport(project_root=project_root)
+
+    overlay_path = paths.data_dir / "overlay_images.json"
+    if overlay_path.is_file():
+        overlay_data = _load_json_for_audit(overlay_path, report, paths)
+        if isinstance(overlay_data, dict):
+            report.overlay_images = {
+                str(k): str(v)
+                for k, v in overlay_data.items()
+                if isinstance(k, str) and isinstance(v, str)
+            }
+
+    _audit_map_scene_nodes(paths, report)
 
     # data/**/*.json
     if paths.data_dir.is_dir():
@@ -245,6 +426,7 @@ def audit_project_assets(project_root: Path) -> AuditReport:
     # scenes/*.json：传入 scene_id（文件名 stem），让短名按 scene_runtime_dir 解析
     if paths.scenes_dir.is_dir():
         for jp in sorted(paths.scenes_dir.glob("*.json")):
+            _audit_scene_required_media(paths, jp, report)
             _audit_one_file(
                 paths, jp,
                 is_text_only=False,
@@ -267,6 +449,7 @@ def format_report(report: AuditReport, *, max_issues: int = 200) -> str:
         f"  scanned media fields: {report.media_count}",
         f"  scanned text fields:  {report.text_count}",
         f"  scanned rich [img:]:  {report.rich_img_count}",
+        f"  scanned map scenes:   {report.map_scene_count}",
         f"  issues:               {len(report.issues)}",
     ]
     if not report.issues:

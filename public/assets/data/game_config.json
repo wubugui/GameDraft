@@ -2,8 +2,6 @@
   "initialScene": "teahouse",
   "initialQuest": "xg01_tingshu",
   "fallbackScene": "teahouse",
-  "initialCutscene": "寻狗_开场",
-  "initialCutsceneDoneFlag": "xg_prologue_started",
   "startupFlags": {
     "archive_book_book_erta_guide": true
   },
@@ -17,12 +15,48 @@
   },
   "entityPixelDensityMatch": true,
   "entityPixelDensityMatchBlurScale": 0.25,
+  "entityLighting": {
+    "enabled": true,
+    "shadowMode": "real",
+    "toneEnabled": true,
+    "defaultLightEnv": {
+      "key": {
+        "azimuthDeg": 125,
+        "elevationDeg": 55,
+        "color": [
+          1.0,
+          0.97,
+          0.92
+        ],
+        "intensity": 1.0
+      },
+      "ambient": {
+        "color": [
+          0.55,
+          0.6,
+          0.72
+        ],
+        "intensity": 1.0
+      },
+      "shadow": {
+        "enabled": true,
+        "darkness": 0.45,
+        "softness": 1.0
+      },
+      "toneStrength": 0.45,
+      "ao": {
+        "contact": 0.45,
+        "form": 0.25
+      }
+    }
+  },
   "playerAvatar": {
     "animManifest": "/resources/runtime/animation/player_anim/anim.json",
     "stateMap": {
-      "idle": "hero_stand",
-      "walk": "hero_walk",
-      "run": "hero_run_new"
-    }
+      "idle": "idle",
+      "walk": "walk",
+      "run": "run"
+    },
+    "portraitSlug": "player_carry_corpse_anim"
   }
 }

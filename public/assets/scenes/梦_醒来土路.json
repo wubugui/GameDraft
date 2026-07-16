@@ -1,0 +1,61 @@
+{
+  "id": "梦_醒来土路",
+  "name": "两天后·城外土路",
+  "worldWidth": 2400.0,
+  "camera": {
+    "zoom": 0.9,
+    "pixelsPerUnit": 1.0
+  },
+  "backgrounds": [
+    {
+      "image": "background.png",
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "ambientSounds": [
+    "野外鸟叫"
+  ],
+  "spawnPoint": {
+    "x": 1250,
+    "y": 700
+  },
+  "spawnPoints": {
+    "from_dream": {
+      "x": 1250,
+      "y": 700
+    }
+  },
+  "onEnter": [
+    {
+      "type": "stopBgm",
+      "params": {}
+    },
+    {
+      "type": "fadeWorldFromBlack",
+      "params": {
+        "durationMs": 1000
+      }
+    },
+    {
+      "type": "startDialogueGraph",
+      "params": {
+        "graphId": "梦_段E_醒来"
+      }
+    }
+  ],
+  "npcs": [],
+  "hotspots": [
+    {
+      "id": "hs_蚂蚁",
+      "type": "inspect",
+      "x": 1250,
+      "y": 800,
+      "interactionRange": 60,
+      "data": {
+        "text": "地上一只蚂蚁，搬着比自己大的渣子，走走停停。他看了很久。"
+      }
+    }
+  ],
+  "zones": []
+}

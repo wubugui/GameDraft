@@ -1,0 +1,3 @@
+- 现实：2026-07-16「normalize 不代写数据」裁决只删了 web 侧 auto-mark（editorModel.ts，且为未提交工作区改动），Python `_normalize_file` 的 `_apply_derived_broadcast_auto_mark`（narrative_state_editor.py:80-98）仍在所有桥路径代写 broadcastOnEnter，并使 Python 侧 `state.broadcast.missing` 校验成死代码。
+- 打架对象：记忆/口径称"auto-mark 整段删除已修"；narrative-state-editor 机制卡的"Python 兜底=TS 子集"红线同时被 plane 条件叶缺分支再犯（`_is_condition_shape` 无 plane → 合法条件被拦保存）。
+- 出处：artifact/Reviews/叙事状态机全面审查-2026-07-17.md（P-F1/P-F2/W-E1，均已复现）。**同日已修结案**：Python auto-mark 整段删除、plane 分支补齐（修复记录见同名-修复记录.md；narrative-state-editor 卡若治理可补"两侧 normalize 均不代写"一句）。

@@ -209,15 +209,6 @@
           }
         }
       ],
-      "onStay": [
-        {
-          "type": "setFlag",
-          "params": {
-            "key": "",
-            "value": true
-          }
-        }
-      ],
       "onExit": [
         {
           "type": "disableRuleOffers",

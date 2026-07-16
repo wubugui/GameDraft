@@ -9,12 +9,12 @@ import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QListWidget,
     QListWidgetItem,
@@ -157,11 +157,12 @@ class ExportPanel(QWidget):
 
         gb_global = QGroupBox("工作区级导出设置")
         fg = QFormLayout(gb_global)
-        self.cmb_base = QComboBox()
-        self.cmb_base.addItem("帧编号从 0 开始", 0)
-        self.cmb_base.addItem("帧编号从 1 开始", 1)
-        self.cmb_base.currentIndexChanged.connect(self._on_global_export_changed)
-        fg.addRow("帧索引基准", self.cmb_base)
+        # 帧编号固定从 0 开始：运行时 SpriteEntity 直接以 frames[i] 作为图集线性槽位
+        # （col=idx%cols, row=idx//cols）且按同一索引取 atlasFrames，从不减基准；
+        # 1 基会整体错位一格（丢首帧、尾部多空帧），故不再暴露该选项。
+        lbl_base = QLabel("帧编号从 0 开始（与运行时一致，固定）")
+        lbl_base.setStyleSheet("color:#888;")
+        fg.addRow("帧索引基准", lbl_base)
         self.cb_meta = QCheckBox("同时写出 .meta.json")
         self.cb_meta.setChecked(True)
         self.cb_meta.toggled.connect(self._on_global_export_changed)
@@ -192,13 +193,12 @@ class ExportPanel(QWidget):
 
     def _sync_settings_from_ws(self) -> None:
         s = self._ws.settings
-        self.cmb_base.setCurrentIndex(0 if s.frame_index_base == 0 else 1)
         self.cb_meta.setChecked(s.save_meta)
         self.cb_dedup.setChecked(s.dedup_merge)
 
     def _sync_settings_to_ws(self) -> None:
         s = self._ws.settings
-        s.frame_index_base = int(self.cmb_base.currentData())
+        # frame_index_base 不再由 UI 控制；保留 project.json 中既有值（导出固定用 0）
         s.save_meta = self.cb_meta.isChecked()
         s.dedup_merge = self.cb_dedup.isChecked()
 
@@ -325,6 +325,49 @@ class ExportPanel(QWidget):
         p.mkdir(parents=True, exist_ok=True)
         return str(p)
 
+    def _existing_bundle_ids(self) -> List[str]:
+        """已存在的动画包目录名（public/resources/runtime/animation/<id>/）。"""
+        root = _game_public_animation_dir()
+        if not root.is_dir():
+            return []
+        return sorted(p.name for p in root.iterdir() if p.is_dir())
+
+    def _ask_merge_bundle_id(self) -> Optional[str]:
+        """选/输入合并导出的动画包 ID。返回规整后的 id；取消/空则 None。
+
+        免去手动找目录：固定写到 public/resources/runtime/animation/<id>/，
+        既不会导到工程外成孤儿，也方便选已有包直接更新。
+        """
+        existing = self._existing_bundle_ids()
+        label = (
+            "动画包 ID（目录名）——固定写到 public/resources/runtime/animation/<id>/。\n"
+            "命名约定 <角色>_anim（如 npc_foo_anim）：\n"
+            "· 选已有 = 更新该角色（覆盖其图集与 anim.json）\n"
+            "· 直接输入新名 = 新建动画包"
+        )
+        if existing:
+            text, ok = QInputDialog.getItem(
+                self, "合并导出 — 动画包 ID", label, existing, 0, True)
+        else:
+            text, ok = QInputDialog.getText(
+                self, "合并导出 — 动画包 ID", label)
+        if not ok:
+            return None
+        raw = (text or "").strip()
+        if not raw:
+            QMessageBox.warning(self, "提示", "动画包 ID 不能为空。")
+            return None
+        safe = _safe_bundle_dir(raw)
+        if safe != raw:
+            if QMessageBox.question(
+                self, "名称已规整",
+                f"动画包 ID 含目录非法字符，已规整为「{safe}」。继续？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            ) != QMessageBox.StandardButton.Yes:
+                return None
+        return safe
+
     def _export_single(self) -> None:
         self._sync_settings_to_ws()
         if not self._ws.export_jobs:
@@ -334,7 +377,7 @@ class ExportPanel(QWidget):
             self, "选择导出根目录", self._default_out_dir())
         if not base_dir:
             return
-        base = int(self.cmb_base.currentData())
+        base = 0  # 运行时按 0 基线性槽位解释 frames；不再可配
         exported = 0
         errors: List[str] = []
         for job in self._ws.export_jobs:
@@ -387,12 +430,21 @@ class ExportPanel(QWidget):
             QMessageBox.warning(
                 self, "提示", "没有勾选任何导出行：请在列表左侧勾选要合并的动画。")
             return
-        base_dir = QFileDialog.getExistingDirectory(
-            self, "选择导出目录（将写入 atlas.png 与 anim.json）",
-            self._default_out_dir())
-        if not base_dir:
+        bundle_id = self._ask_merge_bundle_id()
+        if bundle_id is None:
             return
-        base = int(self.cmb_base.currentData())
+        out_dir = _game_public_animation_dir() / bundle_id
+        if out_dir.exists():
+            overwrite_meta = "（及 atlas.meta.json）" if self.cb_meta.isChecked() else ""
+            if QMessageBox.question(
+                self, "覆盖确认",
+                f"动画包「{bundle_id}」已存在，将覆盖其 atlas.png / anim.json"
+                f"{overwrite_meta}。继续？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            ) != QMessageBox.StandardButton.Yes:
+                return
+        base = 0  # 运行时按 0 基线性槽位解释 frames；不再可配
         dedup = self.cb_dedup.isChecked()
 
         all_cells: List[np.ndarray] = []
@@ -449,7 +501,7 @@ class ExportPanel(QWidget):
         ew, eh = _export_world_wh_for_job(first_job)
         anim = export_gamedraft_anim_multi(
             meta, _SPRITESHEET_REL, ew, eh, states_spec)
-        out_dir = Path(base_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
         out_png = out_dir / "atlas.png"
         out_meta = out_dir / "atlas.meta.json"
         out_anim = out_dir / "anim.json"
@@ -457,6 +509,6 @@ class ExportPanel(QWidget):
                      out_meta if self.cb_meta.isChecked() else None,
                      anim, out_anim)
         self.lbl_status.setText(
-            f"已合并导出（{len(merge_jobs)} 个动画）至：{out_dir}\n"
-            f"{out_png.name} + {out_anim.name}  ·  图集边距取首条勾选："
-            f"pad={merge_padding} fthr={merge_feather}")
+            f"已合并导出（{len(merge_jobs)} 个动画）→ 动画包「{bundle_id}」\n"
+            f"{out_dir}\n图集边距取首条勾选：pad={merge_padding} fthr={merge_feather}\n"
+            f"回主编辑器点「重载动画」同步。")

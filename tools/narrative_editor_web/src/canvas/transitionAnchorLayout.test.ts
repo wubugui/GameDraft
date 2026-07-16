@@ -18,7 +18,7 @@ describe('transitionAnchorLayout', () => {
         c: { id: 'c', label: 'c' },
       },
       transitions: [],
-    };
+    } as unknown as Parameters<typeof stateIndexInGraph>[0];
     expect(stateIndexInGraph(graph, 'a')).toBe(0);
     expect(stateIndexInGraph(graph, 'c')).toBe(2);
   });

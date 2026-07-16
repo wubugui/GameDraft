@@ -1,6 +1,8 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import { UITheme } from './UITheme';
+import { drawPanelBase, SKINS } from './PanelSkin';
 import type { Renderer } from '../rendering/Renderer';
+import type { StringsProvider } from '../core/StringsProvider';
 
 export interface ActionChoiceOption {
   text: string;
@@ -11,12 +13,14 @@ const ROW_HEIGHT = 42;
 
 export class ActionChoiceUI {
   private renderer: Renderer;
+  private strings: StringsProvider;
   private container: Container | null = null;
   private resolveChoice: ((index: number | null) => void) | null = null;
   private keyHandler: ((e: KeyboardEvent) => void) | null = null;
 
-  constructor(renderer: Renderer) {
+  constructor(renderer: Renderer, strings: StringsProvider) {
     this.renderer = renderer;
+    this.strings = strings;
   }
 
   choose(prompt: string, options: ActionChoiceOption[], allowCancel: boolean): Promise<number | null> {
@@ -40,10 +44,7 @@ export class ActionChoiceUI {
       const y = this.renderer.screenHeight - boxHeight - BOX_MARGIN;
 
       const bg = new Graphics();
-      bg.roundRect(x, y, boxWidth, boxHeight, UITheme.panel.borderRadiusMed);
-      bg.fill({ color: UITheme.colors.panelBgAlt, alpha: UITheme.alpha.dialogueBg });
-      bg.roundRect(x, y, boxWidth, boxHeight, UITheme.panel.borderRadiusMed);
-      bg.stroke({ color: UITheme.colors.borderActive, width: 1 });
+      drawPanelBase(bg, x, y, boxWidth, boxHeight, SKINS.panelAlt, { border: UITheme.colors.borderActive });
       this.container.addChild(bg);
 
       let cursorY = y + 14;
@@ -73,8 +74,7 @@ export class ActionChoiceUI {
         row.cursor = 'pointer';
 
         const rowBg = new Graphics();
-        rowBg.roundRect(0, 0, boxWidth - 24, ROW_HEIGHT - 8, UITheme.panel.borderRadiusSmall);
-        rowBg.fill({ color: UITheme.colors.rowBg, alpha: UITheme.alpha.rowBgLight });
+        drawPanelBase(rowBg, 0, 0, boxWidth - 24, ROW_HEIGHT - 8, SKINS.row);
         row.addChild(rowBg);
 
         const hoverBg = new Graphics();
@@ -112,7 +112,7 @@ export class ActionChoiceUI {
 
       if (allowCancel) {
         const hint = new Text({
-          text: 'Esc 取消',
+          text: this.strings.get('actionChoice', 'cancelHint'),
           style: { fontSize: 11, fill: UITheme.colors.hintMid, fontFamily: UITheme.fonts.ui },
         });
         hint.x = x + boxWidth - 72;

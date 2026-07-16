@@ -103,6 +103,11 @@ export class ScenarioStateManager implements IGameSystem {
   destroy(): void {
     this.byScenario.clear();
     this.lineLifecycleByScenario.clear();
+    // configureRuntime 注入的引用与派生缓存一并清空（flagStore/eventBus 自身由装配层销毁）。
+    this.catalog = [];
+    this.manualLifecycleScenarioIds = new Set();
+    this.flagStore = null;
+    this.eventBus = null;
   }
 
   /**
@@ -333,11 +338,13 @@ export class ScenarioStateManager implements IGameSystem {
       this.byScenario.set(sid, m);
     }
     const cur = m.get(ph) ?? { status: 'pending' };
+    // 落盘与 exposes 判定统一用 trim 后的 status（st0），与上方校验口径一致，
+    // 避免 " done" 这类值通过校验却使 phaseStatusEquals / exposes 永不命中。
     m.set(ph, {
-      status: payload.status,
+      status: st0,
       outcome: payload.outcome !== undefined ? payload.outcome : cur.outcome,
     });
-    this.tryApplyExposes(sid, ph, payload.status);
+    this.tryApplyExposes(sid, ph, st0);
   }
 
   /**

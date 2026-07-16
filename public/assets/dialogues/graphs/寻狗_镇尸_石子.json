@@ -61,8 +61,11 @@
       "speaker": {
         "kind": "player"
       },
-      "text": "（七颗。一颗都不能少。谁定的规矩？不知道。守就完了。）",
-      "next": "end1"
+      "text": "（七颗。一颗都不能少。哪个定的规矩？晓不得。守起就是。）",
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "end1": {
       "type": "end"

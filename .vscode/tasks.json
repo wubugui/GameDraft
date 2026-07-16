@@ -1,0 +1,21 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "json-lang: 启动刷新数据 schema",
+      "detail": "开窗一次性重算 tools/json_lang/out/;会话期间的持续刷新由扩展里的 LSP server 负责",
+      "type": "shell",
+      "command": "python3 tools/json_lang/build.py",
+      "runOptions": { "runOn": "folderOpen" },
+      "presentation": { "reveal": "silent", "panel": "dedicated", "close": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "json-lang: 手动刷新一次",
+      "type": "shell",
+      "command": "python3 tools/json_lang/build.py",
+      "presentation": { "reveal": "silent", "panel": "dedicated", "close": true },
+      "problemMatcher": []
+    }
+  ]
+}

@@ -45,8 +45,11 @@
       "speaker": {
         "kind": "player"
       },
-      "text": "（过了岭，就是神仙顶……李天狗当年，走的就是这条道？）",
-      "next": "n3"
+      "text": "（过了岭，就是神仙顶……李天狗当年，走的就是这条道嗦？）",
+      "next": "n3",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "n3": {
       "type": "line",
@@ -207,16 +210,22 @@
       "speaker": {
         "kind": "player"
       },
-      "text": "（这声音——从俺喊名的地方来的。）",
-      "next": "awk3_2"
+      "text": "（这声音——从我喊名的那点来的。）",
+      "next": "awk3_2",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "awk3_2": {
       "type": "line",
       "speaker": {
         "kind": "player"
       },
-      "text": "（那些名字……是喊魂。俺一路喊，把它们喊、醒、了。要是还喊岔了名——认错了主，就全乱了。）",
-      "next": "awk3_3"
+      "text": "（那些名字……是喊魂。我一路喊，把它们喊、醒、了。要是还喊岔了名——认错了主，就全乱了。）",
+      "next": "awk3_3",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "awk3_3": {
       "type": "line",
@@ -332,16 +341,22 @@
       "speaker": {
         "kind": "player"
       },
-      "text": "（这声音——从俺喊名的地方来的。）",
-      "next": "awk2_2"
+      "text": "（这声音——从我喊名的那点来的。）",
+      "next": "awk2_2",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "awk2_2": {
       "type": "line",
       "speaker": {
         "kind": "player"
       },
-      "text": "（那些名字……是喊魂。俺一路喊，把它们喊、醒、了。）",
-      "next": "awk2_3"
+      "text": "（那些名字……是喊魂。我一路喊，把它们喊、醒、了。）",
+      "next": "awk2_3",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "awk2_3": {
       "type": "line",
@@ -427,16 +442,22 @@
       "speaker": {
         "kind": "player"
       },
-      "text": "（那是……俺自己亲口喊过名字的地方。）",
-      "next": "awk1_2"
+      "text": "（那是……我自己亲口喊过名字的那点。）",
+      "next": "awk1_2",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "awk1_2": {
       "type": "line",
       "speaker": {
         "kind": "player"
       },
-      "text": "（那些名字……是喊魂。一路上就数俺嗓门亮——是俺自己，把它喊醒的。）",
-      "next": "awk1_3"
+      "text": "（那些名字……是喊魂。一路上就数我嗓门亮——是我自己，把它喊醒的。）",
+      "next": "awk1_3",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "awk1_3": {
       "type": "line",
@@ -499,7 +520,10 @@
         "kind": "player"
       },
       "text": "（别应。咬住。别应——）",
-      "next": "n_hold"
+      "next": "n_hold",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "n_hold": {
       "type": "runActions",
@@ -562,7 +586,10 @@
         "kind": "player"
       },
       "text": "（别应……千万别应……）",
-      "next": "n4"
+      "next": "n4",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "n4": {
       "type": "line",
@@ -578,8 +605,11 @@
       "speaker": {
         "kind": "player"
       },
-      "text": "（它凑近看了俺一眼……认不准俺是个什么。——为什么认不准？）",
-      "next": "n_sig"
+      "text": "（它凑近看了我一眼……认不准我是个啥子。——为啥子认不准？）",
+      "next": "n_sig",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "n_sig": {
       "type": "runActions",
@@ -646,7 +676,10 @@
         "kind": "player"
       },
       "text": "（跑——！）",
-      "next": "n_escape"
+      "next": "n_escape",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "n_escape": {
       "type": "runActions",
@@ -674,8 +707,11 @@
       "speaker": {
         "kind": "player"
       },
-      "text": "（俺应了……俺应了……为什么要应……）",
-      "next": "n_sig_ans"
+      "text": "（我应了……我应了……为啥子要应……）",
+      "next": "n_sig_ans",
+      "portrait": {
+        "emotion": "cry"
+      }
     },
     "n_sig_ans": {
       "type": "runActions",

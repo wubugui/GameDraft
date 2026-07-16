@@ -12,7 +12,7 @@
         "kind": "literal",
         "name": "旁白"
       },
-      "text": "关二狗进屋绕了一圈，水缸看了，房梁咳了，又从说书先生那儿听来的词里挑了几句，抑扬顿挫地念出来。",
+      "text": "关二狗进屋绕了一圈，水缸看了，房梁咳了，又从说书先生那点听来的词里挑了几句，抑扬顿挫地念出来。",
       "next": "n2"
     },
     "n2": {
@@ -20,8 +20,11 @@
       "speaker": {
         "kind": "player"
       },
-      "text": "（板着脸，声音压得又沉又慢）「行了。——压住了。」",
-      "next": "n_cue"
+      "text": "（板着脸，声音压得又沉又慢）「要得。——镇住咯。」",
+      "next": "n3",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "n3": {
       "type": "line",
@@ -58,11 +61,14 @@
     "n5": {
       "type": "line",
       "speaker": {
-        "kind": "literal",
-        "name": "婆子"
+        "kind": "sceneNpc",
+        "npcId": "npc_院中婆子"
       },
-      "text": "灵了！真灵了！！小先生——钱！钱您拿好！",
-      "next": "n_pay"
+      "text": "灵了！硬是灵了！！小先生——钱！钱你收好！",
+      "next": "n_pay",
+      "portrait": {
+        "emotion": "laugh"
+      }
     },
     "n_pay": {
       "type": "runActions",
@@ -83,8 +89,11 @@
       "speaker": {
         "kind": "player"
       },
-      "text": "（攥着铜钱，手心发烫）来钱……真他妈容易。",
-      "next": "n7"
+      "text": "（攥着铜钱，手心发烫）来钱……龟儿子，硬是撇脱。",
+      "next": "n7",
+      "portrait": {
+        "emotion": "laugh"
+      }
     },
     "n7": {
       "type": "line",

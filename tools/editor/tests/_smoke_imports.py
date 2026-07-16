@@ -29,6 +29,7 @@ def main() -> None:
     import tools.asset_browser.thumbnail_service  # noqa: F401
     import tools.asset_browser.metadata_store  # noqa: F401
     import tools.asset_ingest.ingest_window  # noqa: F401
+    import tools.image_resizer.app  # noqa: F401
     import tools.filter_tool.paths  # noqa: F401
     import tools.migrate_anim_bundles  # noqa: F401
     import tools.production_workbench.story_units  # noqa: F401

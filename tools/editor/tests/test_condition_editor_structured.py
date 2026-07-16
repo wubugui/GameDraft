@@ -41,18 +41,30 @@ class ConditionEditorStructuredTests(unittest.TestCase):
         editor.set_flag_pattern_context(FakeProjectModel(), None)
         editor.set_data(_graph_preconditions_for_editor(raw))
 
+        # 数据零丢失契约：内容未被实际编辑时，to_list 逐字返回原始数组
+        # （不做 flag 行前置、不把多叶包成 {"all":[…]} 的形状重排）。
+        self.assertEqual(editor.to_list(), raw)
+
+    def test_editing_a_row_switches_to_canonical_shape_without_losing_leaves(self) -> None:
+        raw = [
+            {"quest": "q_bridge", "questStatus": "Active"},
+            {"flag": "has_ring", "op": "!=", "value": False},
+            {"scenarioLine": "line_a", "lineStatus": "active"},
+        ]
+        editor = ConditionEditor("preconditions")
+        editor.set_flag_pattern_context(FakeProjectModel(), None)
+        editor.set_data(_graph_preconditions_for_editor(raw))
+        # 实际编辑（改 flag 行的 op）后走规范化输出：flag 行在前、其余叶子保留
+        editor._rows[0].op_combo.setCurrentText("==")
+        out = editor.to_list()
+        self.assertEqual(out[0], {"flag": "has_ring", "value": False})
+        rest = out[1]
         self.assertEqual(
-            editor.to_list(),
-            [
-                {"flag": "has_ring", "op": "!=", "value": False},
-                {
-                    "all": [
-                        {"quest": "q_bridge", "questStatus": "Active"},
-                        {"scenario": "scenario_a", "phase": "phase_a", "status": "done"},
-                        {"scenarioLine": "line_a", "lineStatus": "active"},
-                    ],
-                },
-            ],
+            rest,
+            {"all": [
+                {"quest": "q_bridge", "questStatus": "Active"},
+                {"scenarioLine": "line_a", "lineStatus": "active"},
+            ]},
         )
 
     def test_single_dict_precondition_is_preserved_as_structured_input(self) -> None:

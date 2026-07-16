@@ -28,6 +28,8 @@ export class DepthDebugVisualizer {
   private assetManager: AssetManager;
 
   private filter: BackgroundDebugFilter;
+  /** 滤镜是否已挂到 backgroundLayer：即使 uMode=0，挂着的滤镜也会强制背景层每帧 RTT+全屏 pass，故仅调试开启期间挂载 */
+  private filterAttached = false;
   private currentMode: BgDebugMode = 'off';
   private collisionTextureLoaded = false;
   private currentSceneId = '';
@@ -51,7 +53,6 @@ export class DepthDebugVisualizer {
     this.panelLog = panelLog;
 
     this.filter = new BackgroundDebugFilter();
-    this.renderer.backgroundLayer.filters = [this.filter];
   }
 
   get mode(): BgDebugMode { return this.currentMode; }
@@ -59,6 +60,8 @@ export class DepthDebugVisualizer {
   setMode(mode: BgDebugMode): void {
     this.currentMode = mode;
     this.filter.setMode(MODE_MAP[mode]);
+    if (mode === 'off') this.detachFilter();
+    else this.attachFilter();
 
     if (mode === 'collision' && !this.collisionTextureLoaded) {
       this.loadCollisionTexture();
@@ -145,11 +148,26 @@ export class DepthDebugVisualizer {
     this.filter.setSceneSize(this.sceneW * S, this.sceneH * S);
   }
 
+  private attachFilter(): void {
+    if (this.filterAttached) return;
+    const layer = this.renderer.backgroundLayer;
+    const existing = layer.filters ? Array.from(layer.filters) : [];
+    layer.filters = [...existing, this.filter];
+    this.filterAttached = true;
+  }
+
+  private detachFilter(): void {
+    if (!this.filterAttached) return;
+    const layer = this.renderer.backgroundLayer;
+    layer.filters = (layer.filters ? Array.from(layer.filters) : [])
+      .filter(f => f !== this.filter);
+    this.filterAttached = false;
+  }
+
   destroy(): void {
     this.filter.setMode(0);
-    if (this.renderer.backgroundLayer.filters) {
-      this.renderer.backgroundLayer.filters = this.renderer.backgroundLayer.filters
-        .filter(f => f !== this.filter);
-    }
+    this.detachFilter();
+    // Pixi 8 摘除 filters 不销毁滤镜本身，须显式释放 GPU 程序/uniform 组
+    this.filter.destroy();
   }
 }

@@ -72,8 +72,8 @@
       "id": "hs_无名女尸",
       "type": "inspect",
       "label": "停着的无名女尸",
-      "x": 640.0,
-      "y": 440.0,
+      "x": 718.4,
+      "y": 596.9,
       "interactionRange": 80.0,
       "displayImage": {
         "image": "/resources/runtime/images/corpses/demo/chenghuang_unknown_woman.png",
@@ -123,7 +123,7 @@
       "y": 240.0,
       "interactionRange": 70.0,
       "data": {
-        "text": "一只熟鸡压着纸，一碗倒头饭直挺挺插着筷子。香是新的，烟笔直往上走——今夜没风，可灯苗一直在晃。"
+        "graphId": "寻狗_城隍庙供桌"
       }
     },
     {

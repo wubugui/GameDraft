@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "id": "寻狗_壮汉撞人",
+  "entry": "root",
+  "meta": {
+    "title": "寻狗Demo·①.5雾津街头·正街被壮汉撞（挑衅前置·敢怒不敢言·对白待审）"
+  },
+  "nodes": {
+    "root": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "关二狗晃悠着走，一个膀大腰圆的壮汉迎面撞上来，把他撞了个趔趄。",
+      "next": "s1"
+    },
+    "s1": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "瞎了你的狗眼？走路不长眼睛！",
+      "next": "s2",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "s2": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "关二狗张了张嘴，看了看那壮汉的膀子，到底把话咽了回去——敢怒不敢言。",
+      "next": "act"
+    },
+    "act": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_壮汉撞人",
+            "signal": "zhuanghan_chuang"
+          }
+        }
+      ],
+      "next": "end1"
+    },
+    "end1": {
+      "type": "end"
+    }
+  }
+}

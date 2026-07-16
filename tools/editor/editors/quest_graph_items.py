@@ -4,7 +4,9 @@ from __future__ import annotations
 import math
 from PySide6.QtWidgets import QGraphicsRectItem, QGraphicsPathItem, QGraphicsTextItem, QGraphicsItem
 from PySide6.QtCore import Qt, QRectF, QPointF
-from PySide6.QtGui import QPen, QBrush, QColor, QFont, QPainterPath
+from PySide6.QtGui import QPen, QBrush, QColor, QFont, QFontMetricsF, QPainterPath
+
+from .. import theme
 
 
 def format_conditions(conditions: list[dict]) -> str:
@@ -28,7 +30,16 @@ _GROUP_COLORS = {"main": QColor(50, 80, 140), "side": QColor(40, 120, 80)}
 _NODE_COLOR = QColor(60, 80, 140)
 _IMPLICIT_EDGE_COLOR = QColor(120, 120, 140, 160)
 _EXPLICIT_EDGE_COLOR = QColor(100, 160, 255)
-_FONT = "Microsoft YaHei"
+_FONT = "PingFang SC"
+_MAX_NODE_WIDTH = 180.0
+
+
+def _elided_text(item: QGraphicsTextItem, text: str, max_width: float) -> str:
+    return QFontMetricsF(item.font()).elidedText(
+        text,
+        Qt.TextElideMode.ElideRight,
+        int(max_width),
+    )
 
 
 class QuestGroupItem(QGraphicsRectItem):
@@ -40,10 +51,8 @@ class QuestGroupItem(QGraphicsRectItem):
         name = group_data.get("name", group_data["id"])
         tag = "[M]" if gtype == "main" else "[S]"
         display = f"{tag} {name}"
-        width = max(140, len(display) * 10 + 30)
-        height = 50
 
-        super().__init__(0, 0, width, height)
+        super().__init__(0, 0, 140, 50)
         self.setPos(x, y)
         self.setBrush(QBrush(color))
         self.setPen(QPen(color.lighter(130), 2))
@@ -52,21 +61,52 @@ class QuestGroupItem(QGraphicsRectItem):
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setZValue(1)
+        self.setToolTip(
+            f"分组 {group_data['id']}\n{name}\n{quest_count} 个阶段（双击进入）",
+        )
 
+        # 编辑器侧档持久化用：稳定键 + 拖拽结束回调（由 scene 注入）。
+        self.layout_key: str | None = None
+        self.on_moved = None
+        # 落盘门控基线（scene._attach_layout 注入）：release 时与当前 pos 比较，
+        # 位置未真实变化（纯点击）不写侧档（审查 P0-1 ②）。
+        self.layout_baseline: tuple[float, float] | None = None
+
+        self._title_source = display
         self._title = QGraphicsTextItem(display, self)
         self._title.setDefaultTextColor(QColor("#FFFFFF"))
-        self._title.setFont(QFont(_FONT, 10, QFont.Weight.Bold))
-        tr = self._title.boundingRect()
-        self._title.setPos((width - tr.width()) / 2, 4)
+        theme.set_graphics_text_font(
+            self._title,
+            theme.FONT_ROLE_CANVAS_PRIMARY,
+            family=_FONT,
+            weight=QFont.Weight.Bold,
+        )
 
         sub = f"{quest_count} 个阶段"
+        self._sub_source = sub
         self._sub = QGraphicsTextItem(sub, self)
         self._sub.setDefaultTextColor(QColor(200, 200, 220))
-        self._sub.setFont(QFont(_FONT, 8))
-        sr = self._sub.boundingRect()
-        self._sub.setPos((width - sr.width()) / 2, 28)
+        theme.set_graphics_text_font(
+            self._sub,
+            theme.FONT_ROLE_CANVAS_SECONDARY,
+            family=_FONT,
+        )
 
         self._edges: list = []
+        self.refresh_editor_font()
+
+    def refresh_editor_font(self) -> None:
+        self._title.setPlainText(self._title_source)
+        self._sub.setPlainText(self._sub_source)
+        title_rect = self._title.boundingRect()
+        sub_rect = self._sub.boundingRect()
+        width = max(140.0, title_rect.width() + 30.0, sub_rect.width() + 30.0)
+        title_y = 4.0
+        sub_y = title_y + title_rect.height() + 2.0
+        height = max(50.0, sub_y + sub_rect.height() + 4.0)
+        self.setRect(0, 0, width, height)
+        self._title.setPos((width - title_rect.width()) / 2, title_y)
+        self._sub.setPos((width - sub_rect.width()) / 2, sub_y)
 
     def add_edge(self, edge: QuestEdgeItem) -> None:
         self._edges.append(edge)
@@ -91,6 +131,10 @@ class QuestGroupItem(QGraphicsRectItem):
                 edge.update_path()
         return super().itemChange(change, value)
 
+    def mouseReleaseEvent(self, event):
+        super().mouseReleaseEvent(event)
+        _notify_release(self)
+
 
 class QuestNodeItem(QGraphicsRectItem):
     def __init__(self, quest_data: dict, x: float = 0, y: float = 0):
@@ -98,13 +142,11 @@ class QuestNodeItem(QGraphicsRectItem):
 
         qid = quest_data.get("id", "?")
         title = quest_data.get("title", "")
-        display_id = qid if len(qid) <= 20 else qid[:17] + "..."
-        display_title = title if len(title) <= 16 else title[:13] + "..."
-        width = max(130, max(len(display_id), len(display_title)) * 9 + 20)
-        height = 44
+        display_id = qid
+        display_title = title
 
         color = _NODE_COLOR
-        super().__init__(0, 0, width, height)
+        super().__init__(0, 0, 130, 44)
         self.setPos(x, y)
         self.setBrush(QBrush(color))
         self.setPen(QPen(color.darker(120), 1.5))
@@ -113,20 +155,54 @@ class QuestNodeItem(QGraphicsRectItem):
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setZValue(1)
+        tip = f"任务 {qid}"
+        if title:
+            tip += f"\n{title}"
+        qtype = quest_data.get("type")
+        if qtype:
+            tip += f"\n类型：{qtype}"
+        self.setToolTip(tip)
 
-        self._id_text = QGraphicsTextItem(f"[Q] {display_id}", self)
+        # 编辑器侧档持久化用：稳定键 + 拖拽结束回调（由 scene 注入）。
+        self.layout_key: str | None = None
+        self.on_moved = None
+        # 落盘门控基线（scene._attach_layout 注入）：release 时与当前 pos 比较，
+        # 位置未真实变化（纯点击）不写侧档（审查 P0-1 ②）。
+        self.layout_baseline: tuple[float, float] | None = None
+
+        self._id_source = f"[Q] {display_id}"
+        self._id_text = QGraphicsTextItem(self._id_source, self)
         self._id_text.setDefaultTextColor(QColor("#FFFFFF"))
-        self._id_text.setFont(QFont(_FONT, 9))
-        ir = self._id_text.boundingRect()
-        self._id_text.setPos((width - ir.width()) / 2, 2)
+        theme.set_graphics_text_font(
+            self._id_text,
+            theme.FONT_ROLE_CANVAS_PRIMARY,
+            family=_FONT,
+        )
 
+        self._node_title_source = display_title
         self._title_text = QGraphicsTextItem(display_title, self)
         self._title_text.setDefaultTextColor(QColor(200, 210, 230))
-        self._title_text.setFont(QFont(_FONT, 8))
-        tr2 = self._title_text.boundingRect()
-        self._title_text.setPos((width - tr2.width()) / 2, 22)
+        theme.set_graphics_text_font(
+            self._title_text,
+            theme.FONT_ROLE_CANVAS_SECONDARY,
+            family=_FONT,
+        )
 
         self._edges: list = []
+        self.refresh_editor_font()
+
+    def refresh_editor_font(self) -> None:
+        self._id_text.setPlainText(_elided_text(self._id_text, self._id_source, 160.0))
+        self._title_text.setPlainText(_elided_text(self._title_text, self._node_title_source, 160.0))
+        id_rect = self._id_text.boundingRect()
+        title_rect = self._title_text.boundingRect()
+        width = min(_MAX_NODE_WIDTH, max(130.0, id_rect.width() + 20.0, title_rect.width() + 20.0))
+        id_y = 2.0
+        title_y = id_y + id_rect.height() + 1.0
+        height = max(44.0, title_y + title_rect.height() + 3.0)
+        self.setRect(0, 0, width, height)
+        self._id_text.setPos((width - id_rect.width()) / 2, id_y)
+        self._title_text.setPos((width - title_rect.width()) / 2, title_y)
 
     def add_edge(self, edge: QuestEdgeItem) -> None:
         self._edges.append(edge)
@@ -149,6 +225,46 @@ class QuestNodeItem(QGraphicsRectItem):
             for edge in self._edges:
                 edge.update_path()
         return super().itemChange(change, value)
+
+    def mouseReleaseEvent(self, event):
+        super().mouseReleaseEvent(event)
+        _notify_release(self)
+
+
+def _persist_layout_if_moved(item) -> None:
+    """仅当节点位置相对基线（populate/上次落盘时的坐标）真实变化才写侧档。
+
+    纯点击（press→release 零位移）绝不把自动布局坐标钉进侧档——否则每次点选
+    都会污染 .editor/quest_graph_layout.json（审查 P0-1 ②，现存侧档 [0,0] 化石
+    即此路径产物）。"""
+    cb = getattr(item, "on_moved", None)
+    key = getattr(item, "layout_key", None)
+    if cb is None or not key:
+        return
+    p = item.pos()
+    cur = (float(p.x()), float(p.y()))
+    baseline = getattr(item, "layout_baseline", None)
+    if baseline is not None and tuple(baseline) == cur:
+        return
+    item.layout_baseline = cur
+    try:
+        cb(key, cur[0], cur[1])
+    except Exception:
+        # 持久化失败绝不影响交互
+        pass
+
+
+def _notify_release(item) -> None:
+    """拖拽结束的持久化入口：多选拖动时只有被抓取项收到 release，须把随之移动的
+    其它选中项一并持久化（审查 P0-1 ③）；每项各自按「位置真实变化」门控。"""
+    _persist_layout_if_moved(item)
+    scene = item.scene()
+    if scene is None:
+        return
+    for it in scene.selectedItems():
+        if it is item:
+            continue
+        _persist_layout_if_moved(it)
 
 
 class QuestEdgeItem(QGraphicsPathItem):
@@ -182,10 +298,24 @@ class QuestEdgeItem(QGraphicsPathItem):
             label = "(precond)"
         self._label = QGraphicsTextItem(label, self)
         self._label.setDefaultTextColor(color.lighter(140) if not implicit else QColor(160, 160, 180))
-        self._label.setFont(QFont(_FONT, 7))
+        theme.set_graphics_text_font(
+            self._label,
+            theme.FONT_ROLE_CANVAS_MICRO,
+            family=_FONT,
+        )
+
+        cond_text = format_conditions(self.conditions)
+        tip_lines = ["前置依赖（隐式）" if implicit else "解锁连边"]
+        tip_lines.append(f"条件：{cond_text}" if cond_text else "条件：无")
+        if bypass:
+            tip_lines.append("bypass：满足条件即可绕过前置")
+        self.setToolTip("\n".join(tip_lines))
 
         src_item.add_edge(self)
         dst_item.add_edge(self)
+        self.update_path()
+
+    def refresh_editor_font(self) -> None:
         self.update_path()
 
     def update_path(self) -> None:

@@ -78,7 +78,7 @@ csim llm audit tail -n 10
 - `requirements.txt`：`pydantic>=2 typer>=0.12 ruamel.yaml>=0.18 rich>=13 anyio>=4 chromadb>=0.4.24 mcp>=1.0 openai>=1.0 httpx>=0.27 networkx>=3 numpy>=1.24 PyYAML>=6 json-repair>=0.58 PySide6>=6.6 markdown>=3.5`（PySide6 留到 P4 用，但锁版本）
 - `pyproject.toml`（可选；至少 entry_point `csim = tools.chronicle_sim_v3.cli.main:app`）
 - `tools/chronicle_sim_v3/__init__.py`、`__main__.py`（仅打印 `csim --help` 引导）
-- `chronicle-sim.cmd`（Windows 包装：`@python -m tools.chronicle_sim_v3 %*`）
+- `./dev.sh chronicle-sim` 或 `.tools/venv/bin/python -m tools.chronicle_sim_v3`
 - `tests/__init__.py` + `tests/conftest.py`（PYTHONPATH 注入；与 v2 conftest 完全独立）
 - `pytest.ini`：`testpaths = tools/chronicle_sim_v3/tests`、`asyncio_mode = auto`
 
@@ -167,7 +167,7 @@ csim llm audit tail -n 10
 - `llm/backend/`：
   - `base.py`：`ChatBackend` / `EmbedBackend` / `BackendObserver` Protocol + `BackendResult`
   - `cline.py`：`ClineBackend` 完整实现（§5.2）
-    - 临时 cwd / `.clinerules/` / `input.md` / 凭据刷新 / argv / env / Windows 处理 / stderr 流式 / 工作区文件回读 / 归档
+    - 临时 cwd / `.clinerules/` / `input.md` / 凭据刷新 / argv / env / stderr 流式 / 工作区文件回读 / 归档
     - 全部从零写，**0 行 import v2**
   - `openai_compat_chat.py`：`OpenAICompatChatBackend`（直 HTTP，httpx 实现；P0 实现但 P6 才默认放进 routes 示例）
   - `openai_compat_embed.py`：`OpenAICompatEmbedBackend`（DashScope 单批 ≤10）
@@ -644,7 +644,7 @@ CI **不**跑真实 LLM（凭据敏感）；本地手动跑或专用 secrets 跑
 | 风险 | 对策 |
 |---|---|
 | 表达式求值器写出 bug 导致缓存命中错值 | P0-3 单测覆盖率拉到 100%；P1-4 cache key 测试再覆盖一遍组合 |
-| ClineBackend 与 v2 经验偏离 | P0-5 实现时对照 v2 cline_runner 的所有边角处理（Windows 重试 / NO_PROXY / argv 短句 / input.md / 工作区文件回读 / CLINE_DIR / auth -m 省略策略），逐项打勾；不 import 但行为对齐 |
+| ClineBackend 与 v2 经验偏离 | P0-5 实现时对照 v2 cline_runner 的所有边角处理（NO_PROXY / argv 短句 / input.md / 工作区文件回读 / CLINE_DIR / auth -m 省略策略），逐项打勾；不 import 但行为对齐 |
 | 子图展开导致 state.json 爆炸 | P1-4 用 jsonl + lazy load；GUI 中 collapsed_subgraphs 折叠显示 |
 | LLM 缓存与节点 cache 互相影响导致命中错位 | RFC §10/§7.3 分层设计 + CI 防回归测；物理目录隔离 |
 | 节点 reads 声明遗漏导致 cache 命中错值 | CI 加 ast 检查节点 cook 函数实际调用 ctx 方法 vs 声明 reads；偏差即 fail |
@@ -682,7 +682,7 @@ PR 描述模板：
 > - 目录骨架（engine/ llm/ nodes/ cli/ data/ tests/）
 > - requirements.txt
 > - pytest 配置
-> - chronicle-sim.cmd 包装脚本
+> - `./dev.sh chronicle-sim` 入口
 > - tests/test_smoke.py
 >
 > ### 不包含

@@ -1,20 +1,19 @@
 """ClineRunner —— 起 cline CLI 子进程；凭据来自 ProviderService。
 
 行为参考旧 llm/backend/cline.py（已删除），但结构 / 错误 / 凭据来源全部改造：
-1. cline_executable 自动探测（PATH / Windows %APPDATA%/npm/cline.cmd）
+1. cline_executable 自动探测（显式配置 / PATH）
 2. 临时 cwd `<run>/.chronicle_sim/ws/cline_<uuid>/`
 3. `.clinerules/{01_role.md, 02_mcp.md (条件), 03_output_contract.md}` 由 spec 注入
 4. `input.md`（user 全文）
 5. argv：`cline task -y -a --config <dir> -c <cwd> --timeout <sec> [--json] <SHORT_PROMPT>`
-   - 末参恒为短引导句（避免 Windows CreateProcess 命令行总长限制）
+   - 末参恒为短引导句
    - openai_compat + base_url：task 省略 -m（让 cline auth 写入的模型生效）
 6. `cline auth -p openai -k <key> -m <model> -b <base>` 刷凭据（ollama 不传 -k）
 7. env：`CLINE_DIR=<run>/.cline_config`，剥代理变量，`NO_PROXY=*`
-8. Windows：`CREATE_NO_WINDOW`；libuv 0xC0000409 / UV_HANDLE_CLOSING / async.c 抖动重试 3 次
-9. stderr 流式 → observer.on_log_line
-10. 工作区文件优先回读（按 ref_artifact_filename），stdout 兜底
-11. 成功后 archive_workspace（便于排查归档）
-12. 错误分类映射到 AgentRunnerError
+8. stderr 流式 → observer.on_log_line
+9. 工作区文件优先回读（按 ref_artifact_filename），stdout 兜底
+10. 成功后 archive_workspace（便于排查归档）
+11. 错误分类映射到 AgentRunnerError
 """
 from __future__ import annotations
 
@@ -468,19 +467,9 @@ def resolve_cline_executable(explicit: str = "") -> str:
         if w:
             return w
         return explicit
-    for name in ("cline", "cline.cmd"):
-        w = shutil.which(name)
-        if w:
-            return w
-    if os.name == "nt":
-        for env_key in ("APPDATA", "LOCALAPPDATA"):
-            base = os.environ.get(env_key, "")
-            if not base:
-                continue
-            for fname in ("cline.cmd", "cline"):
-                cand = Path(base) / "npm" / fname
-                if cand.is_file():
-                    return str(cand.resolve())
+    w = shutil.which("cline")
+    if w:
+        return w
     return "cline"
 
 

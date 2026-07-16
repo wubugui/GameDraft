@@ -27,6 +27,9 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QBrush
 
 from ..project_model import ProjectModel
+from .. import theme
+from ..shared import confirm
+from ..shared.form_layout import compact_form
 from ..shared.rich_text_field import RichTextTextEdit
 
 _STRING_NODE_KIND = Qt.ItemDataRole.UserRole + 10
@@ -67,6 +70,7 @@ class StringEditor(QWidget):
         top = QHBoxLayout()
         self._search = QLineEdit()
         self._search.setPlaceholderText("Search keys / values...")
+        self._search.setToolTip("按键名或值文本过滤树；命中节点会自动展开")
         self._search.textChanged.connect(self._filter)
         top.addWidget(self._search)
         cat_btn = QPushButton("新分类")
@@ -77,7 +81,12 @@ class StringEditor(QWidget):
         key_btn.setToolTip("在当前选中的分类下新增一条键（默认字符串类型）")
         key_btn.clicked.connect(self._add_key_under_category)
         top.addWidget(key_btn)
+        del_btn = QPushButton("删除")
+        del_btn.setToolTip("删除当前选中的分类或键（Delete 键 / 右键菜单亦可）")
+        del_btn.clicked.connect(self._delete_selected_node)
+        top.addWidget(del_btn)
         apply_btn = QPushButton("Apply")
+        apply_btn.setToolTip("把整棵字符串树提交回模型（校验通过后写入）")
         apply_btn.clicked.connect(self._apply)
         top.addWidget(apply_btn)
         lay.addLayout(top)
@@ -90,15 +99,20 @@ class StringEditor(QWidget):
         self._tree.setAlternatingRowColors(True)
         self._tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._tree.currentItemChanged.connect(self._on_tree_selection)
+        self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._tree.customContextMenuRequested.connect(self._show_tree_menu)
+        self._tree.installEventFilter(self)
         split.addWidget(self._tree)
 
         detail = QWidget()
         dl = QVBoxLayout(detail)
         self._path_label = QLabel("")
-        self._path_label.setStyleSheet("color:#888;font-size:12px;")
+        self._path_label.setStyleSheet("color:#888;")
+        theme.set_editor_font_role(self._path_label, theme.FONT_ROLE_SECONDARY)
         dl.addWidget(self._path_label)
-        form = QFormLayout()
+        form = compact_form(QFormLayout())
         self._key_edit = QLineEdit()
+        self._key_edit.setMinimumWidth(240)
         self._key_edit.setPlaceholderText("选中树节点后可编辑键名（分类或叶子）")
         self._key_edit.textChanged.connect(self._on_key_edit_changed)
         form.addRow("Key", self._key_edit)
@@ -343,6 +357,56 @@ class StringEditor(QWidget):
         self._tree.scrollToItem(leaf)
         self._filter(self._search.text().lower())
 
+    def _delete_selected_node(self) -> None:
+        it = self._tree.currentItem()
+        if it is None:
+            QMessageBox.information(self, "删除", "请先在树中选中要删除的分类或键。")
+            return
+        kind = self._node_kind(it)
+        key = it.text(0).strip() or "?"
+        if kind == "group" and it.childCount() > 0:
+            what = f"分类「{key}」及其下 {it.childCount()} 条键"
+        elif kind == "group":
+            what = f"空分类「{key}」"
+        else:
+            what = f"键「{key}」"
+        if not confirm.confirm_delete(self, what):
+            return
+        parent = it.parent()
+        if parent is None:
+            self._tree.takeTopLevelItem(self._tree.indexOfTopLevelItem(it))
+        else:
+            parent.removeChild(it)
+        # 树是 strings 的真源，删除后 _is_dirty 比较即可检测；mark_dirty 让 Save All 立即感知。
+        self._model.mark_dirty("strings")
+
+    def _show_tree_menu(self, pos) -> None:
+        from PySide6.QtWidgets import QMenu
+        it = self._tree.itemAt(pos)
+        if it is not None:
+            self._tree.setCurrentItem(it)
+        menu = QMenu(self._tree)
+        cur = self._tree.currentItem()
+        if cur is not None and self._node_kind(cur) == "group":
+            menu.addAction("在此分类下新增键", self._add_key_under_category)
+        menu.addAction("新增顶层分类", self._add_top_level_category)
+        if cur is not None:
+            menu.addSeparator()
+            menu.addAction("删除此节点", self._delete_selected_node)
+        menu.exec(self._tree.viewport().mapToGlobal(pos))
+
+    def eventFilter(self, obj, event):  # type: ignore[override]
+        from PySide6.QtGui import QKeyEvent
+        if (
+            obj is self._tree
+            and isinstance(event, QKeyEvent)
+            and event.type() == QKeyEvent.Type.KeyPress
+            and event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace)
+        ):
+            self._delete_selected_node()
+            return True
+        return super().eventFilter(obj, event)
+
     def _refresh(self) -> None:
         self._syncing = True
         try:
@@ -375,6 +439,42 @@ class StringEditor(QWidget):
                 self._set_node_kind(node, "leaf")
                 vtype, payload = _json_leaf_pair(val)
                 self._set_leaf_typed(node, vtype, payload)
+
+    def select_by_pointer(self, segments: list[str]) -> bool | str:
+        """全局搜索/跳转落点：按 JSON 指针段（键路径）逐层定位树节点。
+
+        能走多深走多深（中途断了就停在最深命中层）。返回值区分命中深度(审查 P3):
+        - True   → 完整命中(定位到指针最末段);
+        - "partial:<定位到的路径>" → 部分命中(只落到最深可达的上级分类,末段已改名/删除);
+        - False  → 一段都没匹配上(彻底未命中)。"""
+        if self._search.text():
+            self._search.clear()  # 目标节点可能被过滤隐藏
+        item: QTreeWidgetItem | None = None
+        parent = self._tree.invisibleRootItem()
+        matched = 0
+        for seg in segments:
+            found = None
+            for i in range(parent.childCount()):
+                ch = parent.child(i)
+                if ch.text(0) == seg:
+                    found = ch
+                    break
+            if found is None:
+                break
+            item = found
+            parent = found
+            matched += 1
+        if item is None:
+            return False
+        p = item.parent()
+        while p is not None:
+            p.setExpanded(True)
+            p = p.parent()
+        self._tree.setCurrentItem(item)
+        self._tree.scrollToItem(item)
+        if matched >= len(segments):
+            return True
+        return f"partial:{self._item_path(item)}"
 
     def _filter(self, text: str) -> None:
         text = text.lower()
@@ -433,15 +533,53 @@ class StringEditor(QWidget):
         self._set_leaf_typed(it, "number", n)
         return True
 
+    def _collect_tree(self) -> dict:
+        """把整棵树收集成 strings 字典（不校验、不写模型）。脏判断与提交共用。"""
+        result: dict = {}
+        for i in range(self._tree.topLevelItemCount()):
+            self._collect(self._tree.topLevelItem(i), result)
+        return result
+
+    def _is_dirty(self) -> bool:
+        """树（值控件 live 写入，始终与 UI 同步）与模型是否有差异。"""
+        try:
+            return self._collect_tree() != (self._model.strings or {})
+        except Exception:
+            return True  # 结构异常时保守判脏，宁可提示也不丢
+
+    def flush_to_model(self) -> bool:
+        """Save All 钩子：未应用编辑在保存前提交；校验失败则中止保存。"""
+        if not self._is_dirty():
+            return True
+        self._apply()
+        # _apply 校验失败时不写盘；若仍判脏，说明被拦截，返回 False 让保存上报中止。
+        return not self._is_dirty()
+
+    def confirm_close(self, parent=None) -> bool:
+        if not self._is_dirty():
+            return True
+        r = QMessageBox.question(
+            self, "未应用的修改", "字符串表有未应用的修改。保存到模型？",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+        )
+        if r == QMessageBox.StandardButton.Cancel:
+            return False
+        if r == QMessageBox.StandardButton.Save:
+            self._apply()
+        else:
+            # Discard：把整棵树回滚到模型当前值。否则关闭路径随后的统一 flush 会按
+            # 树≠模型判脏，把刚被放弃的编辑重新提交（复核 P1-01）。
+            self._refresh()
+        return True
+
     def _apply(self) -> None:
         if not self._validate_tree_structure():
             return
         if not self._flush_current_leaf_from_ui_into_tree():
             return
-        result: dict = {}
-        for i in range(self._tree.topLevelItemCount()):
-            self._collect(self._tree.topLevelItem(i), result)
-        self._model.strings = result
+        self._model.strings = self._collect_tree()
         self._model.mark_dirty("strings")
 
     def _validate_tree_structure(self) -> bool:

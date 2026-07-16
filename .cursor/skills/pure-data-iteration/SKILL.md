@@ -7,6 +7,8 @@ description: Handles game iteration when only pure data changes are needed (no c
 
 仅涉及修改纯数据（JSON、图对话、场景与各类 `public/assets/data` 配置）的迭代流程。不改代码，先确认能力再改数据，改完做数据校验，通过后通知用户。
 
+> 权威知识卡：机制通道 `agent_docs/content/mechanisms/content-expression-channels.md`、往返契约 `agent_docs/content/mechanisms/editor-roundtrip-contract.md`、校验门 `agent_docs/content/recipes/content-validation-gate.md`；域规范 `agent_docs/content/norms.md`。
+
 ## 何时使用
 
 当同时满足以下条件时使用本技能：
@@ -70,6 +72,6 @@ description: Handles game iteration when only pure data changes are needed (no c
 
 ## 校验参考来源
 
-- 数据格式与字段约定：`游戏架构设计文档.md` 中各系统对 JSON / 图对话的说明。
+- 结构/引用/命令与盲区：`agent_docs/content/recipes/content-validation-gate.md` + `agent_docs/content/mechanisms/editor-roundtrip-contract.md`（列举型清单以代码为准，架构文档的表会漂移，勿当权威）。
 - 现有数据样例与引用方式：`public/assets/data/`、`public/assets/dialogues/graphs/`、`public/assets/scenes/` 下的现有文件。
-- 玩法与规则约束：若存在 `玩法功能需求清单.md` 或类似文档，校验时需考虑其中与数据相关的规则。
+- 玩法与规则约束：`docs/玩法功能需求清单.md` 中与数据相关的规则。

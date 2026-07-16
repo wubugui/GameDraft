@@ -1,0 +1,232 @@
+{
+  "schemaVersion": 1,
+  "id": "寻狗_鬼打墙",
+  "entry": "root",
+  "meta": {
+    "title": "寻狗Demo·鬼打墙空间循环（绕回原地 ×2 → 豁出去坠崖 → 死亡系绳）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "flag": "guidaoqiang_loops",
+              "op": "==",
+              "value": 2
+            }
+          ],
+          "next": "fall1"
+        },
+        {
+          "conditions": [
+            {
+              "flag": "guidaoqiang_loops",
+              "op": "==",
+              "value": 1
+            }
+          ],
+          "next": "loop2_sfx"
+        }
+      ],
+      "defaultNext": "loop1a"
+    },
+    "loop1a": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "闷头往崖下走，没几步——脚下一软，又绕回崖墓口那块碑石跟前。先前撒的、丢的，原封回到脚边。",
+      "next": "loop1b"
+    },
+    "loop1b": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "……啷个又绕回来咯？",
+      "next": "loop1_act",
+      "portrait": {
+        "emotion": "fear"
+      }
+    },
+    "loop1_act": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "playSfx",
+          "params": {
+            "id": "sfx_guidaoqiang_loop"
+          }
+        },
+        {
+          "type": "fadeWorldToBlack",
+          "params": {
+            "durationMs": 200
+          }
+        },
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "guidaoqiang_loops",
+            "value": 1
+          }
+        },
+        {
+          "type": "switchScene",
+          "params": {
+            "targetScene": "崖墓",
+            "targetSpawnPoint": "崖墓口"
+          }
+        },
+        {
+          "type": "fadeWorldFromBlack",
+          "params": {
+            "durationMs": 280
+          }
+        }
+      ],
+      "next": "end1"
+    },
+    "loop2_sfx": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "playSfx",
+          "params": {
+            "id": "sfx_guidaoqiang_corpse_breath"
+          }
+        }
+      ],
+      "next": "loop2a"
+    },
+    "loop2a": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "光脚倒走、撒泡尿、糙米、桃木、求爹爹告奶奶……背尸老手那点家底全使了一遍，路还是绕回原地。",
+      "next": "loop2b"
+    },
+    "loop2b": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "背上那尸，贴着他后颈，半个字半个字地，开了口。",
+      "next": "loop2_act"
+    },
+    "loop2_act": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "fadeWorldToBlack",
+          "params": {
+            "durationMs": 200
+          }
+        },
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "guidaoqiang_loops",
+            "value": 2
+          }
+        },
+        {
+          "type": "switchScene",
+          "params": {
+            "targetScene": "崖墓",
+            "targetSpawnPoint": "崖墓口"
+          }
+        },
+        {
+          "type": "fadeWorldFromBlack",
+          "params": {
+            "durationMs": 280
+          }
+        }
+      ],
+      "next": "end1"
+    },
+    "fall1": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "工钱……工钱个屁！！",
+      "next": "fall2",
+      "portrait": {
+        "emotion": "angry"
+      }
+    },
+    "fall2": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "他豁出去连滚带爬往崖下冲——脚下猛一空，从崖径一头栽下，落进崖下那汪深潭。冷水灌进鼻子、耳朵，天光一寸寸缩小。就在要沉到底的当口——",
+      "next": "fall_tether"
+    },
+    "fall_tether": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "triggerDeathTether",
+          "params": {}
+        }
+      ],
+      "next": "fall3"
+    },
+    "fall3": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "一股看不见的劲，从怀里那个包里漫出来，把他从水底硬生生拽了回来。他呛着水爬上岸，趴在泥里，半条命——身上那缕香粉味，没散。",
+      "next": "fall_flag"
+    },
+    "fall_flag": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "beishi_carrying",
+            "value": false
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_鬼打墙",
+            "signal": "beishi_fled"
+          }
+        },
+        {
+          "type": "fadeWorldToBlack",
+          "params": {
+            "durationMs": 900
+          }
+        },
+        {
+          "type": "switchScene",
+          "params": {
+            "targetScene": "雾津街头",
+            "targetSpawnPoint": "from_event"
+          }
+        }
+      ],
+      "next": "end1"
+    },
+    "end1": {
+      "type": "end"
+    }
+  }
+}

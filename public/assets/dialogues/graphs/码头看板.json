@@ -3,8 +3,7 @@
   "id": "码头看板",
   "entry": "n_1",
   "meta": {
-    "title": "码头看板",
-    "scenarioId": "码头水鬼"
+    "title": "码头看板"
   },
   "preconditions": [],
   "nodes": {
@@ -48,7 +47,7 @@
             "lines": [
               {
                 "speaker": "你",
-                "text": "哪家的婆娘能有这么戳，这啥鸡毛丑八怪！"
+                "text": "哪家的婆娘能有恁个戳，勒个啥鸡毛丑八怪！"
               }
             ]
           }
@@ -72,20 +71,6 @@
           "type": "hideOverlayImage",
           "params": {
             "id": "水猴子告示X"
-          }
-        },
-        {
-          "type": "activateScenario",
-          "params": {
-            "scenarioId": "码头水鬼"
-          }
-        },
-        {
-          "type": "setScenarioPhase",
-          "params": {
-            "scenarioId": "码头水鬼",
-            "phase": "看板初读",
-            "status": "done"
           }
         },
         {

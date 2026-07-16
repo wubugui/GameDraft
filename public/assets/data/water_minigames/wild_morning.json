@@ -51,6 +51,7 @@
         "y": 180
       },
       "depth": 0.02,
+      "consumeOnSuccess": true,
       "motion": {
         "path": "drift",
         "speed": 0.05

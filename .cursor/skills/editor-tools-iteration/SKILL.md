@@ -7,6 +7,8 @@ description: Guides safe, pattern-based iteration on GameDraft PySide editor too
 
 在修改 `GameDraft/tools/editor`、`tools/graph_editor`、`tools/scene_depth_editor` 等基于 PySide 的编辑器时，**必须先读本技能再改代码**。
 
+> 域规范与知识卡（先查再动手）：`agent_docs/editor-tools/norms.md`；数据同步范式 `agent_docs/editor-tools/mechanisms/editor-data-sync-paradigm.md`、写盘与脏桶 `save-all-dirty-buckets.md`、关闭路径 `close-path-flush-discard.md`、新面板接入 `mainwindow-editor-hooks.md`、控件保值 `shared-widget-value-fidelity.md`；收尾验证门 `agent_docs/editor-tools/recipes/editor-change-verification-gate.md`。
+
 ## 1. 数据正确性（最高优先级）
 
 - 明确数据的**单一来源**：内存模型（如 `ProjectModel`）、JSON 路径、`Apply`/`flush_to_model`/`save_all` 的调用链；改 UI 必须同步到与现有保存路径一致的字段。
@@ -21,6 +23,31 @@ description: Guides safe, pattern-based iteration on GameDraft PySide editor too
 - `QLineEdit` 仅保留给**确属自由文案且无法选择器化**的字段（描述、台词、JSON 专家模式等）；若字段看似文本但实际受已有清单约束，不得偷懒用自由输入代替。
 - 若清单来自模型，在 `reload` / 切换行时刷新候选项，避免 Apply 前选项过期。
 - 与运行时/校验器约定的枚举，必须与 TS/Python 侧白名单一致，禁止靠用户拼写。
+
+### 2.1 现成选择器控件目录（优先复用，别自己造）
+
+| 字段类型 | 控件 | 位置 |
+|---|---|---|
+| id 引用（scene/item/quest/rule/cutscene/npc/spawn…） | `IdRefSelector` / Action 里用 `_make_id_selector(kind=…)` | `shared/id_ref_selector.py`、`shared/action_editor.py` |
+| 枚举 / 已登记类型（动画 state、Action 子类型、graphId） | `FilterableTypeCombo(select_only=True)` | `shared/action_editor.py` |
+| Action 主类型（超长列表） | `ActionTypePickerField` / `ActionTypePickerDialog` | `shared/action_editor.py` |
+| flag 键 / 值 | `FlagKeyPickField`(+`FlagPickerDialog`) / `FlagValueEdit` | `shared/flag_key_field.py`、`shared/flag_value_edit.py` |
+| 条件数组 / 动作数组 | `ConditionEditor` / `ActionEditor` | `shared/condition_editor.py`、`shared/action_editor.py` |
+| 位置 / 坐标 / 途经点 | `MoveEntityToMapPickerDialog`（地图点选）/ 场景预览拾取 | `shared/move_entity_map_picker.py` |
+| 出生点 | 只读框 + "选择出生点…" → 场景预览点选 | `editors/scene_editor.py`、`timeline_editor.py` |
+| 图片 / 资源路径 | `CutsceneImagePathRow`（Browse，自动入 `runtime/`） | `shared/image_path_picker.py` |
+| 颜色 hex | `HexColorPickRow`（取色器） | 目前埋在 `editors/water_minigame_editor.py`，复用前应上移到 `shared/` |
+| 含 `[tag:…]` 的玩家可见文本 | `RichTextLineEdit` / `RichTextTextEdit`(+`InsertRefDialog`) | `shared/rich_text_field.py` |
+| 多选字符串集合（tags 等） | `pick_strings_multi` / `pick_string_tag_marker` | `shared/pick_strings_dialog.py` |
+
+候选项一律取自 `ProjectModel` 的 id-provider（`all_scene_ids` / `all_item_ids` / `npc_ids_for_scene` / `spawn_point_keys_for_scene` / `animation_state_names_for_actor` 等约 25 个）；选定父项后要刷新子候选（如选 scene 后刷新 spawn、选 actor 后刷新动画 state）。
+
+### 2.2 「定义自身 id」 vs 「引用他者 id」
+
+- **定义新实体自己的 id**（item/quest/rule/archive 条目等的 `id`）：裸 `QLineEdit` 合理——是在命名，不是引用。
+- **引用已存在的他者**（targetScene、itemId、dialogueGraphId、graph 的 entry 节点、targetSpawnPoint、坐标…）：**必须用选择器**。
+
+已知反例（应改为选择器，别照抄）：`scene_editor.py` 的 `dialogueGraphEntry` / inspect `entry`（裸框填对话图节点 id，应从所选图节点下拉）、patrol 的 move anim state（裸框填动画 state，应用 `animation_state_names_for_actor` 下拉）。
 
 ## 3. 界面与交互
 

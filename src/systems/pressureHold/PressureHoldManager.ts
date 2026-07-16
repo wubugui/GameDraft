@@ -2,7 +2,7 @@ import type { ActionExecutor } from '../../core/ActionExecutor';
 import type { AssetManager } from '../../core/AssetManager';
 import type { GameContext, IGameSystem } from '../../data/types';
 import { TEXT_URLS } from '../../core/projectPaths';
-import { clamp01, validateInterruptRatios } from './holdProgress';
+import { clamp01, validateInterruptChain } from './holdProgress';
 import type { PressureHoldDef, PressureHoldInterruptDef, PressureHoldOutcome } from './types';
 
 export interface PressureHoldRuntimeBinding {
@@ -106,6 +106,26 @@ export class PressureHoldManager implements IGameSystem {
     }
   }
 
+  /** Read-only visual-capture request made from the same loaded definition and text resolver. */
+  getDebugPreviewRequest(id: string): Parameters<PressureHoldRuntimeBinding['runSegment']>[0] | null {
+    const def = this.defs.get(id);
+    const binding = this.binding;
+    if (!def || !binding) return null;
+    const interrupts = [...(def.interrupts ?? [])].sort((a, b) => a.atRatio - b.atRatio);
+    const request: Parameters<PressureHoldRuntimeBinding['runSegment']>[0] = {
+      prompt: binding.resolveDisplayText(def.prompt),
+      startRatio: 0,
+      stopRatio: interrupts[0]?.atRatio ?? 1,
+      fillSeconds: def.fillSeconds,
+      decayPerSecond: def.decayPerSecond ?? DEFAULT_DECAY_PER_SECOND,
+    };
+    if (def.releaseHint) request.releaseHint = binding.resolveDisplayText(def.releaseHint);
+    const barColor = parseHexColor(def.barColor);
+    if (barColor !== undefined) request.barColor = barColor;
+    if (def.abortOnReleaseFromRatio !== undefined) request.abortOnReleaseFromRatio = def.abortOnReleaseFromRatio;
+    return request;
+  }
+
   private async runFlow(
     def: PressureHoldDef,
     binding: PressureHoldRuntimeBinding,
@@ -177,7 +197,9 @@ export class PressureHoldManager implements IGameSystem {
       throw new Error('abortOnReleaseFromRatio 须在 (0,1) 开区间内');
     }
     const interrupts: PressureHoldInterruptDef[] = def.interrupts ?? [];
-    validateInterruptRatios(interrupts.map((i) => i.atRatio));
+    // B14：连同 resetToRatio 与下一停点的关系一起在加载期校验，
+    // 防止 runFlow 中段以 startRatio ≥ stopRatio 构造 HoldProgress 运行期抛错
+    validateInterruptChain(interrupts);
   }
 }
 

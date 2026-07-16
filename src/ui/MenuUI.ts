@@ -1,5 +1,7 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import { UITheme, fadeIn } from './UITheme';
+import { drawPanelBase, SKINS } from './PanelSkin';
+import { clientToCanvas } from './uiPointerCoords';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
 import type { ISaveDataProvider, IAudioSettingsProvider } from '../data/types';
@@ -21,6 +23,8 @@ export class MenuUI {
   private _isOpen = false;
   private mode: MenuMode = 'main';
   private previousMode: MenuMode = 'main';
+  /** 滑条拖拽期间挂在 window 上的 pointermove/up 摘除器；面板关闭/销毁时必须清，否则监听泄漏且回调摸已销毁对象 */
+  private sliderDragCleanups: Set<() => void> = new Set();
 
   constructor(
     renderer: Renderer,
@@ -127,7 +131,7 @@ export class MenuUI {
     this.container.addChild(title);
 
     const buttons: { label: string; action: () => void }[] = [
-      { label: this.strings.get('menu', 'resume'), action: () => this.close() },
+      { label: this.strings.get('menu', 'resume'), action: () => { this.close(); this.eventBus.emit('menu:resume', {}); } },
       { label: this.strings.get('menu', 'save'), action: () => { this.previousMode = this.mode; this.mode = 'save'; this.build(); } },
       { label: this.strings.get('menu', 'load'), action: () => { this.previousMode = this.mode; this.mode = 'load'; this.build(); } },
       { label: this.strings.get('menu', 'settings'), action: () => { this.previousMode = this.mode; this.mode = 'settings'; this.build(); } },
@@ -152,10 +156,7 @@ export class MenuUI {
     this.container.addChild(overlay);
 
     const bg = new Graphics();
-    bg.roundRect(px, py, PANEL_W, 300, UITheme.panel.borderRadius);
-    bg.fill({ color: UITheme.colors.panelBg, alpha: UITheme.alpha.panelBg });
-    bg.roundRect(px, py, PANEL_W, 300, UITheme.panel.borderRadius);
-    bg.stroke({ color: UITheme.colors.panelBorder, width: 1 });
+    drawPanelBase(bg, px, py, PANEL_W, 300, SKINS.panel);
     this.container.addChild(bg);
 
     const title = new Text({
@@ -171,10 +172,7 @@ export class MenuUI {
       const slotY = py + 56 + i * 70;
 
       const slotBg = new Graphics();
-      slotBg.roundRect(px + 16, slotY, PANEL_W - 32, 60, UITheme.panel.borderRadiusSmall);
-      slotBg.fill({ color: UITheme.colors.rowBg, alpha: UITheme.alpha.slotBg });
-      slotBg.roundRect(px + 16, slotY, PANEL_W - 32, 60, UITheme.panel.borderRadiusSmall);
-      slotBg.stroke({ color: UITheme.colors.borderSubtle, width: 1 });
+      drawPanelBase(slotBg, px + 16, slotY, PANEL_W - 32, 60, SKINS.row);
       this.container.addChild(slotBg);
 
       if (meta) {
@@ -205,23 +203,56 @@ export class MenuUI {
         slotBg.cursor = 'pointer';
         slotBg.on('pointerdown', () => {
           if (action === 'save') {
-            this.saveData.save(i);
+            const ok = this.saveData.save(i);
             this.eventBus.emit('notification:show', {
-              text: this.strings.get('menu', 'saveSlot', { slot: i + 1 }),
-              type: 'info',
+              text: ok
+                ? this.strings.get('menu', 'saveSlot', { slot: i + 1 })
+                : this.strings.get('menu', 'saveFailed'),
+              type: ok ? 'info' : 'error',
             });
             this.build();
           } else {
-            this.saveData.load(i).then(() => {
-              this.close();
-              this.eventBus.emit('notification:show', {
-                text: this.strings.get('menu', 'loadSlot', { slot: i + 1 }),
-                type: 'info',
-              });
+            this.saveData.load(i).then((ok) => {
+              if (ok) {
+                this.close();
+                this.eventBus.emit('notification:show', {
+                  text: this.strings.get('menu', 'loadSlot', { slot: i + 1 }),
+                  type: 'info',
+                });
+              } else {
+                // 读档失败：SaveManager 已回滚到读档前状态，留在面板让玩家换槽位重试
+                this.eventBus.emit('notification:show', {
+                  text: this.strings.get('menu', 'loadFailed'),
+                  type: 'error',
+                });
+              }
             });
           }
         });
       }
+
+      if (meta) {
+        const exportLink = new Text({
+          text: 'JSON ↓',
+          style: { fontSize: 11, fill: UITheme.colors.link, fontFamily: UITheme.fonts.ui },
+        });
+        exportLink.x = px + PANEL_W - 82;
+        exportLink.y = slotY + 7;
+        exportLink.eventMode = 'static';
+        exportLink.cursor = 'pointer';
+        exportLink.on('pointerdown', () => this.exportSaveFile(i));
+        this.container.addChild(exportLink);
+      }
+      const importLink = new Text({
+        text: 'JSON ↑',
+        style: { fontSize: 11, fill: UITheme.colors.link, fontFamily: UITheme.fonts.ui },
+      });
+      importLink.x = px + PANEL_W - 82;
+      importLink.y = slotY + 35;
+      importLink.eventMode = 'static';
+      importLink.cursor = 'pointer';
+      importLink.on('pointerdown', () => this.importSaveFile(i));
+      this.container.addChild(importLink);
     }
 
     const backBtn = new Text({
@@ -242,6 +273,40 @@ export class MenuUI {
     fadeIn(this.container);
   }
 
+  private exportSaveFile(slot: number): void {
+    const raw = this.saveData.exportSlotPayload(slot);
+    if (!raw) {
+      this.eventBus.emit('notification:show', { text: this.strings.get('menu', 'saveFailed'), type: 'error' });
+      return;
+    }
+    const blob = new Blob([raw.endsWith('\n') ? raw : raw + '\n'], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `gamedraft_save_${slot + 1}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
+  private importSaveFile(slot: number): void {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'application/json,.json';
+    input.style.display = 'none';
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      const ok = file ? this.saveData.importSlotPayload(slot, await file.text()) : false;
+      input.remove();
+      this.eventBus.emit('notification:show', {
+        text: ok ? this.strings.get('menu', 'loadSlot', { slot: slot + 1 }) : this.strings.get('menu', 'loadFailed'),
+        type: ok ? 'info' : 'error',
+      });
+      if (ok) this.build();
+    };
+    document.body.appendChild(input);
+    input.click();
+  }
+
   private buildSettings(): void {
     this.container = new Container();
     const sw = this.renderer.screenWidth;
@@ -255,10 +320,7 @@ export class MenuUI {
     this.container.addChild(overlay);
 
     const bg = new Graphics();
-    bg.roundRect(px, py, PANEL_W, 280, UITheme.panel.borderRadius);
-    bg.fill({ color: UITheme.colors.panelBg, alpha: UITheme.alpha.panelBg });
-    bg.roundRect(px, py, PANEL_W, 280, UITheme.panel.borderRadius);
-    bg.stroke({ color: UITheme.colors.panelBorder, width: 1 });
+    drawPanelBase(bg, px, py, PANEL_W, 280, SKINS.panel);
     this.container.addChild(bg);
 
     const title = new Text({
@@ -347,11 +409,13 @@ export class MenuUI {
       pct.text = `${Math.round(v * 100)}%`;
     };
 
-    const onMove = (e: PointerEvent) => { if (dragging) updateValue(e.clientX); };
+    // 拖拽跟随的是 window 级 PointerEvent，clientX 在画布被 CSS 缩放时与逻辑坐标不同系，须换算
+    const onMove = (e: PointerEvent) => { if (dragging) updateValue(clientToCanvas(this.renderer, e.clientX, e.clientY).x); };
     const onUp = () => {
       dragging = false;
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
+      this.sliderDragCleanups.delete(onUp);
     };
 
     track.eventMode = 'static';
@@ -359,11 +423,12 @@ export class MenuUI {
     handle.eventMode = 'static';
     handle.cursor = 'pointer';
 
-    const startDrag = (e: any) => {
+    const startDrag = (e: { globalX: number }) => {
       dragging = true;
       updateValue(e.globalX);
       window.addEventListener('pointermove', onMove);
       window.addEventListener('pointerup', onUp);
+      this.sliderDragCleanups.add(onUp);
     };
     track.on('pointerdown', startDrag);
     handle.on('pointerdown', startDrag);
@@ -383,10 +448,7 @@ export class MenuUI {
       this.container!.addChild(hoverBg);
 
       const bg = new Graphics();
-      bg.roundRect(bx, by, 200, BTN_H, UITheme.panel.borderRadiusMed);
-      bg.fill({ color: UITheme.colors.rowBg, alpha: UITheme.alpha.rowBg });
-      bg.roundRect(bx, by, 200, BTN_H, UITheme.panel.borderRadiusMed);
-      bg.stroke({ color: UITheme.colors.panelBorder, width: 1 });
+      drawPanelBase(bg, bx, by, 200, BTN_H, SKINS.row, { border: UITheme.colors.panelBorder });
       bg.eventMode = 'static';
       bg.cursor = 'pointer';
       bg.on('pointerdown', btn.action);
@@ -406,6 +468,8 @@ export class MenuUI {
   }
 
   private destroyUI(): void {
+    for (const cleanup of [...this.sliderDragCleanups]) cleanup();
+    this.sliderDragCleanups.clear();
     if (this.container) {
       if (this.container.parent) this.container.parent.removeChild(this.container);
       this.container.destroy({ children: true });

@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "id": "寻狗_挑衅蹲坑",
+  "entry": "root",
+  "meta": {
+    "title": "寻狗Demo·①.5雾津街头·挑衅蹲坑的仇人（挑衅/算了·找补人物）"
+  },
+  "nodes": {
+    "root": {
+      "type": "choice",
+      "promptLine": {
+        "speaker": {
+          "kind": "literal",
+          "name": "旁白"
+        },
+        "text": "背街茅厕边，正撞见白天那个壮汉——正蹲着坑呢。"
+      },
+      "options": [
+        {
+          "id": "taunt",
+          "text": "站远点儿骂他",
+          "next": "taunt"
+        },
+        {
+          "id": "leave",
+          "text": "算了惹不起",
+          "next": "leave"
+        }
+      ]
+    },
+    "taunt": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "刚才撞了老子就想跑？",
+      "next": "t2",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "t2": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "龟儿子等老子出来！",
+      "next": "t3",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "t3": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "壮汉气得想站起来又蹲回去，只能干骂。关二狗得意洋洋又补了两句，撒腿就跑。",
+      "next": "t_act"
+    },
+    "t_act": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_挑衅蹲坑",
+            "signal": "tiaoxin_done"
+          }
+        }
+      ],
+      "next": "end1"
+    },
+    "leave": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "关二狗偷偷绕开了——惹不起，怂人本色。",
+      "next": "end1"
+    },
+    "end1": {
+      "type": "end"
+    }
+  }
+}

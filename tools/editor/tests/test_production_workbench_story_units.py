@@ -163,7 +163,9 @@ class ProductionWorkbenchStoryUnitTests(TestCase):
             unit.record.blockers = [Blocker(text="缺戒指道具图")]
             saved = save_story_unit_workspace(ws)
 
-            self.assertEqual(saved, story_units_path(root))
+            # macOS 上 TemporaryDirectory 的 /var 是 /private/var 的符号链接；保存层返回
+            # 规范化后的真实路径，故比较前两侧都 resolve()，避免 /var vs /private/var 误报。
+            self.assertEqual(saved.resolve(), story_units_path(root).resolve())
             self.assertEqual(runtime_path.read_text(encoding="utf-8"), before)
             payload = json.loads(saved.read_text(encoding="utf-8"))
             rec = payload["units"]["unit_ringboy_intro"]

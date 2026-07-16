@@ -12,6 +12,14 @@
         {
           "conditions": [
             {
+              "plane": "背尸"
+            }
+          ],
+          "next": "beishi_busy"
+        },
+        {
+          "conditions": [
+            {
               "narrative": "scenario_婆子家",
               "state": "paid",
               "reached": true
@@ -27,44 +35,56 @@
       "speaker": {
         "kind": "npc"
       },
-      "text": "小先生的恩，老婆子记下了。",
-      "next": "end1"
+      "text": "小先生的恩，老婆子记到起的。",
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "n1": {
       "type": "line",
       "speaker": {
         "kind": "npc"
       },
-      "text": "可算寻着了！你就是……李天狗那一脉的小先生不？",
-      "next": "n2"
+      "text": "可算寻到你了！你就是……李天狗那一脉的小先生迈？",
+      "next": "n2",
+      "portrait": {
+        "emotion": "sad"
+      }
     },
     "n2": {
       "type": "line",
       "speaker": {
         "kind": "player"
       },
-      "text": "（李天狗那一脉？……哦。俺。）正是。",
-      "next": "n3"
+      "text": "（李天狗那一脉？……哦。说的我。）正是。",
+      "next": "n3",
+      "portrait": {
+        "emotion": "smirk"
+      }
     },
     "n3": {
       "type": "line",
       "speaker": {
         "kind": "npc"
       },
-      "text": "俺家院里，夜夜有动静！鸡也不下蛋了，狗叫到后半夜——钱，老婆子拍这儿了！您可得给瞧瞧！",
-      "next": "c1"
+      "text": "我屋头院坝头，夜夜都有响动！鸡也不下蛋了，狗叫到大半夜——钱，老婆子拍这点了！你总要给我看哈嘛！",
+      "next": "c1",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "c1": {
       "type": "choice",
       "options": [
         {
           "id": "jie",
-          "text": "「走。带俺去看。」",
+          "text": "「走。带老子去看。」",
           "next": "c_jie"
         },
         {
           "id": "tai",
-          "text": "〔抬抬价〕「这种活……寻常先生可不接。」",
+          "text": "〔抬抬价〕「这种活路……一般先生可不接哦。」",
           "next": "c_tai"
         }
       ]
@@ -74,8 +94,11 @@
       "speaker": {
         "kind": "npc"
       },
-      "text": "（一咬牙）再加十文！不能再多了，小先生！",
-      "next": "c_tai_pay"
+      "text": "（一咬牙）再加十文！真的不能再多了，小先生！",
+      "next": "c_tai_pay",
+      "portrait": {
+        "emotion": "sad"
+      }
     },
     "c_tai_pay": {
       "type": "runActions",
@@ -94,8 +117,11 @@
       "speaker": {
         "kind": "npc"
       },
-      "text": "哎！哎！小先生这边走——",
-      "next": "n4"
+      "text": "哎！哎！小先生这边走嘛——",
+      "next": "n4",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "n4": {
       "type": "line",
@@ -103,7 +129,7 @@
         "kind": "literal",
         "name": "旁白"
       },
-      "text": "这是头一个主动找上门的活儿。关二狗跟着婆子出城，一路把说书先生的词在肚子里又过了一遍。",
+      "text": "这是头一个主动找上门的活路。关二狗跟着婆子出城，一路把说书先生的词在肚子里又过了一遍。",
       "next": "n_go"
     },
     "n_go": {
@@ -129,6 +155,17 @@
     },
     "end1": {
       "type": "end"
+    },
+    "beishi_busy": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "哎哟你背个死人子站到我跟前做啥子嘛！快送切快送切，回头再说！",
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
     }
   }
 }

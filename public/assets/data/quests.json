@@ -197,8 +197,8 @@
     "id": "xg02_beishi",
     "group": "xungou",
     "type": "main",
-    "title": "背庄家尸",
-    "description": "庄家的人寻来找「背尸的」。旁人一听阴婚纷纷后退，可工钱已经勾住了你的脚。",
+    "title": "夜背崖墓尸",
+    "description": "面生的雇主寻来找「背尸的」。那具尸恶名在外，正经班子全推了，可工钱已经勾住了你的脚。",
     "preconditions": [],
     "completionConditions": [
       {
@@ -242,7 +242,7 @@
     "group": "xungou",
     "type": "main",
     "title": "第一单：婆子家的动静",
-    "description": "一个婆子找上门，说院里夜夜有动静，钱已经拍在桌上。这是第一个主动找上门的活儿。",
+    "description": "一个婆子找上门，说院里夜夜有动静，钱已经拍在桌上。这是头一个主动找上门的活路。",
     "preconditions": [],
     "completionConditions": [
       {
@@ -264,7 +264,7 @@
     "group": "xungou",
     "type": "main",
     "title": "连夜回城",
-    "description": "活儿办完了，钱也到手了。趁天没亮透，从河滩绕回城去。",
+    "description": "活路办完了，钱也到手了。趁天没亮透，从河滩绕回城去。",
     "preconditions": [],
     "completionConditions": [
       {
@@ -298,7 +298,7 @@
     "rewards": [],
     "nextQuests": [
       {
-        "questId": "xg07_kujing",
+        "questId": "xg08_xiangdao",
         "conditions": []
       }
     ]
@@ -306,24 +306,26 @@
   {
     "id": "xg07_kujing",
     "group": "xungou",
-    "type": "main",
+    "type": "side",
+    "sideType": "commission",
     "title": "枯井里的「狗」",
     "description": "土地庙后枯井掉了条狗，叫了两天两夜，夜里像小孩哭。给几个钱，问谁能捞上来。",
-    "preconditions": [],
+    "preconditions": [
+      {
+        "narrative": "scenario_枯井",
+        "state": "hired",
+        "reached": true
+      }
+    ],
     "completionConditions": [
       {
-        "narrative": "flow_xungou_main",
-        "state": "s07_kujing",
+        "narrative": "scenario_枯井",
+        "state": "fled",
         "reached": true
       }
     ],
     "rewards": [],
-    "nextQuests": [
-      {
-        "questId": "xg08_xiangdao",
-        "conditions": []
-      }
-    ]
+    "nextQuests": []
   },
   {
     "id": "xg08_xiangdao",
@@ -364,17 +366,17 @@
     "rewards": [],
     "nextQuests": [
       {
-        "questId": "xg10_yizhuang",
+        "questId": "xg10_zhaomu",
         "conditions": []
       }
     ]
   },
   {
-    "id": "xg10_yizhuang",
+    "id": "xg10_zhaomu",
     "group": "xungou",
     "type": "main",
-    "title": "义庄的两具尸",
-    "description": "义庄管事脸色发白来寻你：两具尸在地上扭着、揪着、互相压。守夜的吓跑了，正经先生请不起。",
+    "title": "克拉拉的定钱",
+    "description": "从阎王岭回到城里，街角灯下那洋女人克拉拉候着你。她要进神仙顶，开价三十块大洋、先付十块定钱，要你做向导。",
     "preconditions": [],
     "completionConditions": [
       {
@@ -394,6 +396,30 @@
         "conditions": []
       }
     ]
+  },
+  {
+    "id": "xg10_yizhuang",
+    "group": "xungou",
+    "type": "side",
+    "sideType": "commission",
+    "title": "义庄的两具尸",
+    "description": "义庄管事脸色发白来寻你：两具尸在地上扭着、揪着、互相压。守夜的吓跑了，正经先生请不起。",
+    "preconditions": [
+      {
+        "narrative": "scenario_义庄镇尸",
+        "state": "entered",
+        "reached": true
+      }
+    ],
+    "completionConditions": [
+      {
+        "narrative": "scenario_义庄镇尸",
+        "state": "all_done",
+        "reached": true
+      }
+    ],
+    "rewards": [],
+    "nextQuests": []
   },
   {
     "id": "xg11_shouye",
@@ -424,6 +450,52 @@
       {
         "narrative": "flow_xungou_main",
         "state": "s12_chufa",
+        "reached": true
+      }
+    ],
+    "rewards": [],
+    "nextQuests": []
+  },
+  {
+    "id": "背尸-零工路倒",
+    "group": "背尸零活",
+    "type": "side",
+    "title": "拉具路倒去义庄",
+    "description": "义庄门口一个老汉塞来的头一单腌臜活：巷口墙根一具没人认的路倒，自己去背来搁停尸凳上，找管事结五文。",
+    "preconditions": [
+      {
+        "narrative": "flow_背尸_零工活",
+        "state": "accepted",
+        "reached": true
+      }
+    ],
+    "completionConditions": [
+      {
+        "narrative": "flow_背尸_零工活",
+        "state": "delivered",
+        "reached": true
+      }
+    ],
+    "rewards": [],
+    "nextQuests": []
+  },
+  {
+    "id": "背尸-淹尸送义庄",
+    "group": "背尸零活",
+    "type": "side",
+    "title": "拉个泡涨的去义庄",
+    "description": "河头捞起个泡涨的淹死人，官面验过没人认。工头出八文：从码头巷口背去义庄，搁上停尸凳，找管事结钱。",
+    "preconditions": [
+      {
+        "narrative": "flow_背尸_淹尸活",
+        "state": "accepted",
+        "reached": true
+      }
+    ],
+    "completionConditions": [
+      {
+        "narrative": "flow_背尸_淹尸活",
+        "state": "delivered",
         "reached": true
       }
     ],

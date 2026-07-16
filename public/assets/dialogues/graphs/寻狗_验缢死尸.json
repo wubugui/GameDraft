@@ -1,0 +1,231 @@
+{
+  "schemaVersion": 1,
+  "id": "寻狗_验缢死尸",
+  "entry": "root",
+  "meta": {
+    "title": "寻狗Demo·背尸教学·破屋验缢死尸（读线索+守规矩/贪快决策）"
+  },
+  "nodes": {
+    "root": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "破屋昏黑，梁上垂下一截断绳，尸就吊在下头，脚离地半尺。走投无路的穷人，自个了断的。先看清楚，再动手。",
+      "next": "look"
+    },
+    "look": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "narrative": "wrap_验缢死尸",
+              "state": "neck_seen",
+              "reached": true
+            }
+          ],
+          "next": "look_deep"
+        }
+      ],
+      "defaultNext": "look_first"
+    },
+    "look_first": {
+      "type": "choice",
+      "promptLine": {
+        "speaker": {
+          "kind": "literal",
+          "name": "旁白"
+        },
+        "text": "凑近了看——"
+      },
+      "options": [
+        {
+          "id": "neck",
+          "text": "〔看脖子〕",
+          "next": "c_neck"
+        },
+        {
+          "id": "body",
+          "text": "〔翻翻随身〕",
+          "next": "c_body"
+        }
+      ]
+    },
+    "look_deep": {
+      "type": "choice",
+      "promptLine": {
+        "speaker": {
+          "kind": "literal",
+          "name": "旁白"
+        },
+        "text": "还看不看？看够了就得动手了。"
+      },
+      "options": [
+        {
+          "id": "body",
+          "text": "〔翻翻随身〕",
+          "next": "c_body"
+        },
+        {
+          "id": "face",
+          "text": "〔看脸〕",
+          "next": "c_face"
+        },
+        {
+          "id": "shoulder",
+          "text": "〔看够了，上尸〕",
+          "next": "decide"
+        }
+      ]
+    },
+    "c_neck": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_验缢死尸",
+            "signal": "yan_neck_seen"
+          }
+        }
+      ],
+      "next": "c_neck_line"
+    },
+    "c_neck_line": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "颈上一道深勒痕，斜着往上吊——绳勒的，缢死，自个吊的。舌头青黑吐出来老长。缢死是大凶，怨气最重，最爱找替身。这一路，忌讳多。",
+      "next": "look_deep"
+    },
+    "c_body": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "怀里揣着半张当票、一只干瘪的空钱袋。欠了一屁股债，走投无路，才寻的短见。可怜人。",
+      "next": "look_deep"
+    },
+    "c_face": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "翻白的眼半睁着，像还盯着什么。关二狗心里一紧，赶紧移开——背尸忌讳，别跟尸对脸。",
+      "next": "look_deep"
+    },
+    "decide": {
+      "type": "choice",
+      "promptLine": {
+        "speaker": {
+          "kind": "literal",
+          "name": "旁白"
+        },
+        "text": "缢死大凶。是按老规矩慢慢来，还是图快硬扛？",
+        "portrait": {
+          "emotion": "nervous"
+        }
+      },
+      "options": [
+        {
+          "id": "guiju",
+          "text": "〔守规矩〕割绳、念句安尸话、避着脸把尸摆正——慢，但稳当。",
+          "next": "shou"
+        },
+        {
+          "id": "tanquai",
+          "text": "〔图快〕忌讳不忌讳的，一把扛走赶紧交差。",
+          "next": "tan"
+        }
+      ]
+    },
+    "shou": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_验缢死尸",
+            "signal": "beishi_guiju_shou"
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_验缢死尸",
+            "signal": "beishi_corpse_inspected"
+          }
+        }
+      ],
+      "next": "shou_line"
+    },
+    "shou_line": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "得罪了啊老哥，送你去义庄，一路好走，莫怪我。",
+      "next": "shoulder",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "tan": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_验缢死尸",
+            "signal": "beishi_tanquai"
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_验缢死尸",
+            "signal": "beishi_corpse_inspected"
+          }
+        }
+      ],
+      "next": "tan_line"
+    },
+    "tan_line": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "规矩规矩，规矩能当饭吃？扛了就走。",
+      "next": "shoulder",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "end1": {
+      "type": "end"
+    },
+    "shoulder": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startPressureHold",
+          "params": {
+            "id": "carry_hanging_corpse"
+          }
+        }
+      ],
+      "next": "end1"
+    }
+  }
+}

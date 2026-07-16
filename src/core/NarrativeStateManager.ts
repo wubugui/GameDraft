@@ -8,8 +8,10 @@ import { evaluateConditionExprList } from '../systems/graphDialogue/conditionEva
 import {
   blockingNarrativeValidationErrors,
   validateNarrativeGraphData,
+  DEFAULT_NARRATIVE_DRAFT_SIGNAL,
   type NarrativeValidationIssue,
 } from './narrativeGraphValidation';
+import { reportDevError } from './devErrorOverlay';
 import { TEXT_URLS } from './projectPaths';
 
 export type NarrativeOwnerType =
@@ -19,6 +21,7 @@ export type NarrativeOwnerType =
   | 'zone'
   | 'quest'
   | 'scenario'
+  | 'scene'
   | 'dialogue'
   | 'minigame'
   | 'cutscene'
@@ -48,6 +51,12 @@ export interface NarrativeStateNode {
   description?: string;
   /** When true, entering this state auto-emits derived signal state:<graphId>:<stateId>. */
   broadcastOnEnter?: boolean;
+  /**
+   * 位面点名（见 `systems/plane/types.ts`）：该状态激活期间点名的位面 id。
+   * 当前所有激活叙事状态中存在点名时激活该位面；无点名时激活 `normal`。
+   * 静态图数据、不进存档；由 PlaneReconciler 监听 narrative:stateChanged 派生。
+   */
+  activePlane?: string;
   onEnterActions?: ActionDef[];
   onExitActions?: ActionDef[];
   meta?: Record<string, unknown>;
@@ -95,6 +104,20 @@ export interface NarrativeGraphsFile {
   schemaVersion?: number;
   graphs?: NarrativeGraph[];
   compositions?: NarrativeComposition[];
+  migrations?: NarrativeSaveMigrations;
+}
+
+/**
+ * 旧存档迁移映射（对齐 FlagStore 的 flag_registry.migrations 机制）：改名叙事图/状态后，
+ * 在 narrative_graphs.json 顶层声明 旧名→新名，deserialize 先重映射再按现行图校验。
+ * 单跳、不追链（a→b、b→c 不会把 a 映到 c）；`states` 的外层键一律用**当前**
+ * （图改名之后的新）图 id——图改名先应用，状态改名后应用。
+ */
+export interface NarrativeSaveMigrations {
+  /** 旧图 id → 新图 id */
+  graphs?: Record<string, string>;
+  /** 图 id（当前名）→ { 旧 state id → 新 state id } */
+  states?: Record<string, Record<string, string>>;
 }
 
 export type NarrativeCompositionElementKind =
@@ -200,13 +223,38 @@ export class NarrativeStateManager implements IGameSystem {
   private completedQueueItems: QueuedItem[] = [];
   private draining = false;
   private drainPromise: Promise<void> | null = null;
+  /**
+   * 嵌套排空互斥：按发起时的 runningActionsDepth 分槽，同一深度任何时刻至多一个排空循环
+   * （后来者复用在飞 promise）。不同深度必须允许并存——更深一层的动作可能正 await 一个
+   * 排队项，而浅层循环恰好挂起在该动作批上，若合并会互相等待死锁。
+   */
+  private nestedDrainPromises: Map<number, Promise<void>> = new Map();
   private runningActionsDepth = 0;
   private drainStepCount = 0;
   private destroyed = false;
+  /**
+   * 时间线代际：deserialize / registerGraphs / destroy 时自增。在飞的迁移（挂起在生命周期
+   * 动作 await 上）恢复后比对代际，不一致即放弃剩余写入（置态/广播/事件）——旧时间线
+   * 不得污染恢复后的状态（norms 不变量 4）。队列项在代际切换时统一 reject，不静默丢。
+   */
+  private generation = 0;
+  /**
+   * 被动 flag:changed → reactive 重评的微任务合批标志。一个 action 批内连 setFlag N 次只排一次
+   * 微任务、只跑一轮全量 reactive 扫描（与 ArchiveManager 的 queueMicrotask 合批策略一致）。
+   * 仅覆盖被动路径；信号/setState/注入/读档等主动重评仍直接同步 kick，不受此合批影响。
+   */
+  private reactiveEvalScheduled = false;
+  private readonly onFlagChangedListener = () => this.handleFlagChanged();
+  private readonly onSaveRestoringListener = () => this.invalidateInFlightTimeline('save restore');
   private recentTransitions: NarrativeTransitionRecord[] = [];
   /** graphId → 到达过的状态集合（含 initialState 与当前状态），随存档持久化 */
   private reachedStates: Map<string, Set<string>> = new Map();
   private recentIssues: NarrativeRuntimeIssue[] = [];
+  private saveMigrations: NarrativeSaveMigrations | null = null;
+  /** 全部已注册图 signal 型 transition 的监听键缓存（registerGraphs 时失效，懒重建）。 */
+  private listenedSignalKeysCache: Set<string> | null = null;
+  /** 已上报过的悬垂信号键（同名只进一次错误面/issue，避免重复发射刷屏）。 */
+  private reportedUnlistenedSignalKeys: Set<string> = new Set();
   private recentTrace: NarrativeTraceEvent[] = [];
   private traceSeq = 0;
   private primaryOwnerWarningKeys: Set<string> = new Set();
@@ -218,6 +266,13 @@ export class NarrativeStateManager implements IGameSystem {
     this.eventBus = eventBus;
     this.flagStore = flagStore;
     this.actionExecutor = actionExecutor;
+    // reactive 迁移的条件几乎全是 flag 叶子：flag 变化时唤醒重评，
+    // 否则 reactive 只在队列排空后重评，纯 setFlag 驱动的迁移会"沉睡"到下一个信号才醒。
+    this.eventBus.on('flag:changed', this.onFlagChangedListener);
+    // 读档统一钩子（与 zone 的 clearActiveZonesForRestore 同一契约层）：旧时间线的
+    // 队列/在飞迁移不得写入恢复后的状态；deserialize 自身也会清（覆盖直接调用/测试路径），
+    // 挂钩子是为老档缺 narrative 条目、deserialize 不被调用的边角兜底。
+    this.eventBus.on('save:restoring', this.onSaveRestoringListener);
   }
 
   static readonly DEFAULT_DRAFT_SIGNAL = '__draft__';
@@ -245,8 +300,41 @@ export class NarrativeStateManager implements IGameSystem {
   init(_ctx: GameContext): void {}
   update(_dt: number): void {}
 
+  /**
+   * 叙事编排是否空闲：队列无积压、无在飞排空/生命周期动作。
+   * SaveManager 的 canSave 依赖它——队列与在飞广播不入档，级联中途的存档
+   * 读回后 signal 型迁移无法补发（子图已到末态、主图停在旧里程碑，档即卡死）。
+   */
+  isIdle(): boolean {
+    return !this.draining
+      && this.queue.length === 0
+      && this.runningActionsDepth === 0
+      && this.nestedDrainPromises.size === 0;
+  }
+
+  /**
+   * 时间线失效：代际自增并 reject 全部积压队列项（旧时间线的信号对恢复后的世界无意义，
+   * 静默丢弃会让 await 方永久悬挂——norms 红线）；已处理完仅待落定的项照常 resolve。
+   * 在飞迁移恢复后由 enterState / processTrigger 的代际比对放弃剩余写入。
+   */
+  private invalidateInFlightTimeline(reason: string): void {
+    this.generation += 1;
+    if (this.queue.length > 0) {
+      this.recordTrace('issue', {
+        message: `timeline invalidated (${reason}): ${this.queue.length} queued trigger(s) rejected`,
+      });
+    }
+    this.rejectQueuedItems(new Error(`NarrativeStateManager: timeline invalidated (${reason}); stale queued trigger discarded`));
+    this.resolveCompletedQueueItems();
+  }
+
   setConditionEvalContextFactory(factory: (() => ConditionEvalContext) | null): void {
     this.conditionCtxFactory = factory;
+    // 装配顺序上下文注入可能晚于 loadFromAsset/registerGraphs（Game 目前如此）：
+    // 注册期被判 false 的 reactive 迁移在具备求值能力后立即补评一轮。
+    if (factory && this.graphs.size > 0) {
+      this.kickReactiveEvaluation();
+    }
   }
 
   setRuntimeValidationMode(mode: NarrativeRuntimeValidationMode): void {
@@ -257,6 +345,7 @@ export class NarrativeStateManager implements IGameSystem {
     try {
       const data = await assetManager.loadJson<NarrativeGraphsFile>(path);
       this.validateLoadedData(data, path);
+      this.setSaveMigrations(data.migrations);
       this.registerGraphs(compileNarrativeGraphs(data));
     } catch (e) {
       const message = `NarrativeStateManager: narrative_graphs.json not found or invalid: ${String(e)}`;
@@ -265,17 +354,30 @@ export class NarrativeStateManager implements IGameSystem {
         throw e;
       }
       console.warn('NarrativeStateManager: narrative_graphs.json not found or invalid, running empty', e);
+      this.setSaveMigrations(null);
       this.registerGraphs([]);
     }
   }
 
+  /**
+   * 注入旧存档迁移映射（loadFromAsset 从数据文件自动接线；直接 registerGraphs 的装配方/
+   * 测试可手动注入）。传 null/undefined 清空。
+   */
+  setSaveMigrations(migrations: NarrativeSaveMigrations | null | undefined): void {
+    this.saveMigrations = migrations ?? null;
+  }
+
   registerGraphs(graphs: NarrativeGraph[]): void {
+    // 换图册=换时间线：积压项 reject（而非旧实现的静默清空——那会让 await 方永久悬挂），
+    // 在飞迁移经代际比对放弃剩余写入。
+    this.invalidateInFlightTimeline('graphs re-registered');
     this.graphs.clear();
     this.activeStates.clear();
     this.reachedStates.clear();
     this.ownerIndex.clear();
-    this.queue.length = 0;
     this.primaryOwnerWarningKeys.clear();
+    this.listenedSignalKeysCache = null;
+    this.reportedUnlistenedSignalKeys.clear();
     this.recentIssues = this.recentIssues.filter((issue) => issue.code === 'narrative.load.failed');
     for (const graph of graphs) {
       if (!graph || !graph.id || !graph.initialState || !graph.states?.[graph.initialState]) {
@@ -289,9 +391,14 @@ export class NarrativeStateManager implements IGameSystem {
         continue;
       }
       if (this.graphs.has(graph.id)) {
-        const message = `NarrativeStateManager: duplicate graph id "${graph.id}"`;
+        // 与上面「跳过无效图」同一策略：重复 id 无法判定用哪张，保留先注册的、跳过重复的，
+        // 记录 error 供 recentIssues/校验暴露，而非在启动时硬崩整套叙事系统。
+        // 编辑器保存校验已阻止重复 id；throw 模式的失败早在 validateLoadedData（TS 权威校验，
+        // 同样报 graph.id.duplicate）就抛出，这里只做优雅降级，合法数据行为完全不变。
+        const message = `NarrativeStateManager: duplicate graph id "${graph.id}" (skipped duplicate, kept first)`;
         this.recordIssue({ severity: 'error', code: 'graph.id.duplicate', message, graphId: graph.id });
-        throw new Error(message);
+        console.warn(message);
+        continue;
       }
       this.graphs.set(graph.id, graph);
       this.activeStates.set(graph.id, graph.initialState);
@@ -305,10 +412,53 @@ export class NarrativeStateManager implements IGameSystem {
     }
     this.recordDuplicateOwnerBindings();
     // Evaluate reactive transitions on initial states
+    this.kickReactiveEvaluation();
+  }
+
+  /** 重评全部 reactive 迁移；有命中则启动后台排空（注册后 / 读档后 / flag 变化 / 注入求值上下文时共用）。 */
+  private kickReactiveEvaluation(): void {
+    if (this.destroyed) return;
     this.evaluateReactiveTriggers();
-    if (this.queue.length > 0 && !this.draining) {
-      void this.drainQueue();
+    if (this.queue.length === 0) return;
+    if (!this.draining) {
+      this.startDetachedDrain();
+    } else if (this.runningActionsDepth > 0) {
+      // 与 enqueueGraphStateEntered 同策略：动作执行期入队须嵌套排空，否则外层循环挂起等不到。
+      void this.drainNestedQueue();
     }
+    // 其余情形：在飞排空循环会在下一轮 while 检查时消费新入队项。
+  }
+
+  private handleFlagChanged(): void {
+    if (this.destroyed || this.graphs.size === 0) return;
+    // 无求值上下文时任何 reactive 条件都判 false（conditionsMet 会告警），直接跳过避免刷屏；
+    // 上下文注入时 setConditionEvalContextFactory 会补评。
+    if (!this.conditionCtxFactory) return;
+    // 合批：不立即全量扫描。一个同步段 / 微任务批内多次 flag:changed（一个 action 批连写 N 个 flag）
+    // 只排一个微任务、只跑一轮 reactive 重评。已排则直接返回，不重复排。
+    if (this.reactiveEvalScheduled) return;
+    this.reactiveEvalScheduled = true;
+    queueMicrotask(() => {
+      this.reactiveEvalScheduled = false;
+      if (this.destroyed || this.graphs.size === 0) return;
+      this.kickReactiveEvaluation();
+    });
+  }
+
+  /** 启动一次无人 await 的后台排空：错误路由到 recordIssue，不产生 unhandled rejection。 */
+  private startDetachedDrain(): void {
+    if (this.draining || this.queue.length === 0) return;
+    const drain = this.drainQueue();
+    this.drainPromise = drain.finally(() => {
+      this.drainPromise = null;
+    });
+    this.drainPromise.catch((e) => {
+      this.recordIssue({
+        severity: 'error',
+        code: 'drain.detached.failed',
+        message: `NarrativeStateManager: detached drain failed: ${e instanceof Error ? e.message : String(e)}`,
+      });
+    });
   }
 
   getActiveState(graphId: string): string | undefined {
@@ -342,6 +492,17 @@ export class NarrativeStateManager implements IGameSystem {
 
   getGraph(graphId: string): NarrativeGraph | undefined {
     return this.graphs.get(graphId);
+  }
+
+  /**
+   * 诊断用：判定条件叶子引用的图/状态是否存在于注册数据（区别于「存在但未到达/未激活」）。
+   * 图册为空（尚未加载或加载失败）时返回 'unavailable'，调用方应跳过判定，避免装配期误报。
+   */
+  classifyStateRef(graphId: string, stateId: string): 'ok' | 'missingGraph' | 'missingState' | 'unavailable' {
+    if (this.graphs.size === 0) return 'unavailable';
+    const graph = this.graphs.get(String(graphId ?? '').trim());
+    if (!graph) return 'missingGraph';
+    return graph.states[String(stateId ?? '').trim()] ? 'ok' : 'missingState';
   }
 
   getGraphs(): NarrativeGraph[] {
@@ -448,15 +609,54 @@ export class NarrativeStateManager implements IGameSystem {
       activeStates?: Record<string, unknown>;
       reachedStates?: Record<string, unknown>;
     };
+    // 恢复前先失效旧时间线（审查 R2）：积压队列项 reject、在飞迁移放弃剩余写入——
+    // 否则旧时间线的广播/信号会打进恢复后的世界（子图回到起点、主图却被幽灵广播推进）。
+    // save:restoring 钩子已清过时此处为幂等重清（直接调用 deserialize 的测试/装配路径靠这里）。
+    this.invalidateInFlightTimeline('deserialize');
+    // 先把全部图复位到「注册后初始态」再按存档恢复：restore 只覆盖存档里有的图、只增量标记
+    // reached，不复位会把本会话越过的进度残留进更早的档（reached:true 门控提前打开）。
+    this.resetStatesToRegisteredBaseline();
     this.restoreActiveStates(raw?.activeStates ?? {});
     this.restoreReachedStates(raw?.reachedStates);
+    // 读档后的状态组合可能已满足某些 reactive 迁移条件（读档期间 FlagStore.deserialize
+    // 不广播 flag:changed），此处统一补评一轮。
+    this.kickReactiveEvaluation();
+  }
+
+  /** 与 registerGraphs 注册完成时一致：activeStates=initialState，reached 仅含 initialState。 */
+  private resetStatesToRegisteredBaseline(): void {
+    this.activeStates.clear();
+    this.reachedStates.clear();
+    for (const graph of this.graphs.values()) {
+      this.activeStates.set(graph.id, graph.initialState);
+      this.markStateReached(graph.id, graph.initialState);
+    }
   }
 
   restoreActiveStates(states: Record<string, unknown>): void {
-    for (const [graphId, stateRaw] of Object.entries(states ?? {})) {
+    for (const [rawGraphId, stateRaw] of Object.entries(states ?? {})) {
+      const graphId = this.migrateSaveGraphId(rawGraphId);
+      const rawStateId = String(stateRaw ?? '').trim();
+      const stateId = rawStateId ? this.migrateSaveStateId(graphId, rawStateId) : '';
       const graph = this.graphs.get(graphId);
-      const stateId = String(stateRaw ?? '').trim();
-      if (!graph || !stateId || !graph.states[stateId]) continue;
+      if (!graph) {
+        this.warnDroppedSaveEntry(
+          'save.active.graphMissing',
+          `NarrativeStateManager: save references unknown narrative graph "${rawGraphId}"${this.migrationSuffix(rawGraphId, graphId)}; dropped active state "${rawStateId}". If the graph was renamed, declare it in narrative_graphs.json migrations.graphs.`,
+          graphId,
+          stateId || undefined,
+        );
+        continue;
+      }
+      if (!stateId || !graph.states[stateId]) {
+        this.warnDroppedSaveEntry(
+          'save.active.stateMissing',
+          `NarrativeStateManager: save references unknown state "${rawStateId}"${this.migrationSuffix(rawStateId, stateId)} in graph "${graphId}"; graph falls back to initialState "${graph.initialState}". If the state was renamed, declare it in narrative_graphs.json migrations.states.`,
+          graphId,
+          stateId || rawStateId || undefined,
+        );
+        continue;
+      }
       this.activeStates.set(graphId, stateId);
     }
   }
@@ -464,12 +664,33 @@ export class NarrativeStateManager implements IGameSystem {
   /** 旧档无 reachedStates 时回填：initialState + 当前 activeState 视为到达过。 */
   private restoreReachedStates(states: Record<string, unknown> | undefined): void {
     if (states && typeof states === 'object') {
-      for (const [graphId, listRaw] of Object.entries(states)) {
+      for (const [rawGraphId, listRaw] of Object.entries(states)) {
+        if (!Array.isArray(listRaw)) continue;
+        const graphId = this.migrateSaveGraphId(rawGraphId);
         const graph = this.graphs.get(graphId);
-        if (!graph || !Array.isArray(listRaw)) continue;
+        if (!graph) {
+          const dropped = listRaw.map((s) => String(s ?? '').trim()).filter(Boolean);
+          this.warnDroppedSaveEntry(
+            'save.reached.graphMissing',
+            `NarrativeStateManager: save references unknown narrative graph "${rawGraphId}"${this.migrationSuffix(rawGraphId, graphId)}; dropped reached states [${dropped.join(', ')}] (reached-gates re-lock). If the graph was renamed, declare it in narrative_graphs.json migrations.graphs.`,
+            graphId,
+          );
+          continue;
+        }
         for (const sRaw of listRaw) {
-          const stateId = String(sRaw ?? '').trim();
-          if (stateId && graph.states[stateId]) this.markStateReached(graphId, stateId);
+          const rawStateId = String(sRaw ?? '').trim();
+          if (!rawStateId) continue;
+          const stateId = this.migrateSaveStateId(graphId, rawStateId);
+          if (!graph.states[stateId]) {
+            this.warnDroppedSaveEntry(
+              'save.reached.stateMissing',
+              `NarrativeStateManager: save references unknown state "${rawStateId}"${this.migrationSuffix(rawStateId, stateId)} in graph "${graphId}"; dropped from reached states (its reached-gate re-locks). If the state was renamed, declare it in narrative_graphs.json migrations.states.`,
+              graphId,
+              stateId,
+            );
+            continue;
+          }
+          this.markStateReached(graphId, stateId);
         }
       }
     }
@@ -480,11 +701,46 @@ export class NarrativeStateManager implements IGameSystem {
     }
   }
 
+  /** 单跳重映射存档里的图 id（对齐 FlagStore.migrations 语义：命中即映射、不追链）。 */
+  private migrateSaveGraphId(graphId: string): string {
+    const mapped = this.saveMigrations?.graphs?.[graphId];
+    return typeof mapped === 'string' && mapped.trim() ? mapped.trim() : graphId;
+  }
+
+  /** 单跳重映射存档里的状态 id；graphId 须为图改名之后的当前 id。 */
+  private migrateSaveStateId(graphId: string, stateId: string): string {
+    const mapped = this.saveMigrations?.states?.[graphId]?.[stateId];
+    return typeof mapped === 'string' && mapped.trim() ? mapped.trim() : stateId;
+  }
+
+  /** 迁移映射生效过时在告警里点出来，方便区分"改名没配映射"和"映射目标配错"。 */
+  private migrationSuffix(rawId: string, migratedId: string): string {
+    return migratedId && migratedId !== rawId ? ` (migrated to "${migratedId}")` : '';
+  }
+
+  /** 存档条目重映射后仍对不上注册图：进 recentIssues 留痕 + console.warn 点名，不再静默丢弃。 */
+  private warnDroppedSaveEntry(code: string, message: string, graphId: string, stateId?: string): void {
+    this.recordIssue({ severity: 'warning', code, message, graphId, stateId });
+    console.warn(message);
+  }
+
   destroy(): void {
     this.destroyed = true;
+    this.generation += 1;
+    // 清合批标志：已排入的微任务见 destroyed 早退（下句已断监听，不会再有新 flag:changed 入批）。
+    this.reactiveEvalScheduled = false;
+    this.eventBus.off('flag:changed', this.onFlagChangedListener);
+    this.eventBus.off('save:restoring', this.onSaveRestoringListener);
+    // 挂起项显式 reject（而非静默丢弃），让 await 中的动作链尽快失败退出；
+    // 已处理完仅待落定的项照常 resolve。
+    this.rejectQueuedItems(new Error('NarrativeStateManager destroyed'));
+    this.resolveCompletedQueueItems();
     this.graphs.clear();
     this.activeStates.clear();
     this.reachedStates.clear();
+    this.ownerIndex.clear();
+    this.nestedDrainPromises.clear();
+    this.saveMigrations = null;
     this.queue.length = 0;
   }
 
@@ -564,6 +820,7 @@ export class NarrativeStateManager implements IGameSystem {
     });
     this.recordTrace('trigger.enqueued', this.tracePatchForTrigger(trigger));
     if (!this.draining) {
+      this.consumeDiscardedRejection(queued);
       const drain = this.drainQueue();
       this.drainPromise = drain.finally(() => {
         this.drainPromise = null;
@@ -574,7 +831,24 @@ export class NarrativeStateManager implements IGameSystem {
       void this.drainNestedQueue();
       return queued;
     }
-    return this.drainPromise ?? queued;
+    const shared = this.drainPromise;
+    if (shared) {
+      this.consumeDiscardedRejection(queued);
+      return shared;
+    }
+    return queued;
+  }
+
+  /**
+   * 返回给调用方的是共享 drain promise 时，排队项自身的 promise 无人持有；
+   * 挂 catch 消费其 rejection（错误已由 drain 侧 recordIssue/告警），避免 unhandledrejection 噪音。
+   */
+  private consumeDiscardedRejection(p: Promise<void>): void {
+    p.catch((e) => {
+      this.recordTrace('issue', {
+        message: `discarded queued trigger rejected: ${e instanceof Error ? e.message : String(e)}`,
+      });
+    });
   }
 
   private async drainQueue(): Promise<void> {
@@ -587,23 +861,55 @@ export class NarrativeStateManager implements IGameSystem {
     } finally {
       this.resolveCompletedQueueItems();
       this.draining = false;
+      // 收尾窗口内（末次队列检查之后、draining 复位之前）入队的项没人处理，补启一轮。
+      if (!this.destroyed && this.queue.length > 0) {
+        this.startDetachedDrain();
+      }
     }
   }
 
+  /**
+   * 动作执行期入队的排队项由嵌套排空处理（外层循环此刻挂起在动作批上）。
+   * 同一 runningActionsDepth 槽位互斥：并发的第二个进入者等待在飞循环退场后重查队列，
+   * 只在仍有积压时才另起循环——确保同一深度任何时刻只有一个排空循环在跑。
+   */
   private async drainNestedQueue(): Promise<void> {
+    const depth = this.runningActionsDepth;
+    for (;;) {
+      const inflight = this.nestedDrainPromises.get(depth);
+      if (!inflight) break;
+      await inflight;
+    }
+    if (this.destroyed || this.queue.length === 0) return;
+    const loop = this.runNestedDrainLoop().finally(() => {
+      if (this.nestedDrainPromises.get(depth) === loop) {
+        this.nestedDrainPromises.delete(depth);
+      }
+    });
+    this.nestedDrainPromises.set(depth, loop);
+    return loop;
+  }
+
+  private async runNestedDrainLoop(): Promise<void> {
     try {
-      await this.drainAvailableQueue();
+      await this.drainAvailableQueue(true);
     } catch {
       // The queued item's own promise carries the rejection to the awaiting action.
     }
   }
 
-  private async drainAvailableQueue(): Promise<void> {
+  private async drainAvailableQueue(nested = false): Promise<void> {
     try {
       while (this.queue.length > 0) {
         if (++this.drainStepCount > NarrativeStateManager.MAX_DRAIN_STEPS) {
-          const error = new Error('NarrativeStateManager: drain loop guard tripped');
-          console.warn(error.message);
+          // 兜底防死循环：几乎总是反应式迁移条件互相触发形成振荡（内容错误）。
+          // 记录为可诊断的 error issue（进 recentIssues / debugSnapshot），而非只 console.warn 近乎静默，
+          // 便于策划/开发定位"叙事为何停在这里"。清空队列的兜底行为保持不变（fail-loud）。
+          const message = 'NarrativeStateManager: drain loop guard tripped '
+            + `(exceeded ${NarrativeStateManager.MAX_DRAIN_STEPS} steps; likely oscillating reactive transitions)`;
+          const error = new Error(message);
+          this.recordIssue({ severity: 'error', code: 'drain.loop.guard', message });
+          console.warn(message);
           this.rejectQueuedItems(error);
           this.resolveCompletedQueueItems();
           break;
@@ -612,6 +918,10 @@ export class NarrativeStateManager implements IGameSystem {
         await this.processQueueItem(item);
         if (this.queue.length === 0) {
           this.resolveCompletedQueueItems();
+          // 嵌套循环只负责把队列清到让上层 await 的项落定为止：清空即退出，
+          // 反应式重评一律留给最外层循环——否则嵌套循环因 reactive 追加而继续跑时，
+          // 恰好被它解锁的外层循环也会恢复迭代，形成两个并发排空循环（B23）。
+          if (nested) break;
           // After the queue is drained, evaluate reactive transitions.
           // If any fire, they push back to the queue, so the loop continues.
           if (!this.destroyed) {
@@ -621,6 +931,9 @@ export class NarrativeStateManager implements IGameSystem {
       }
     } catch (e) {
       this.rejectQueuedItems(e instanceof Error ? e : new Error(String(e)));
+      // 已处理成功、仅待落定的项必须 resolve：嵌套排空的异常路径若把它们留在
+      // completedQueueItems，外层动作 await 的 promise 永久悬挂 → 整个排空循环死锁（审查 W1）。
+      this.resolveCompletedQueueItems();
       throw e;
     }
   }
@@ -659,10 +972,13 @@ export class NarrativeStateManager implements IGameSystem {
   }
 
   private async processTrigger(triggerKey: NarrativeTriggerKey): Promise<void> {
+    const gen = this.generation;
     const migratedGraphs = new Set<string>();
     const graphEntries = [...this.graphs.entries()];
     const matchedGraphIds: string[] = [];
     for (const [graphId, graph] of graphEntries) {
+      // 逐图 await 之间可能发生读档/换册：本信号属旧时间线，剩余图不再扫。
+      if (gen !== this.generation) break;
       if (migratedGraphs.has(graphId)) continue;
       const active = this.activeStates.get(graphId) ?? graph.initialState;
       const candidates = graph.transitions
@@ -688,6 +1004,9 @@ export class NarrativeStateManager implements IGameSystem {
       migratedGraphs.add(graphId);
       matchedGraphIds.push(graphId);
     }
+    if (matchedGraphIds.length === 0) {
+      this.reportUnlistenedSignal(triggerKey);
+    }
     this.recordTrace('signal.processed', {
       triggerKey,
       payload: { matchedGraphIds },
@@ -695,9 +1014,54 @@ export class NarrativeStateManager implements IGameSystem {
     });
   }
 
+  private getListenedSignalKeys(): Set<string> {
+    if (!this.listenedSignalKeysCache) {
+      const keys = new Set<string>();
+      for (const graph of this.graphs.values()) {
+        for (const t of graph.transitions) {
+          if (t.trigger && t.trigger !== 'signal') continue;
+          const key = NarrativeStateManager.normalizeTriggerKey(t.signal);
+          if (key) keys.add(key);
+        }
+      }
+      this.listenedSignalKeysCache = keys;
+    }
+    return this.listenedSignalKeysCache;
+  }
+
+  /**
+   * 信号本次零命中且**静态**无任何图监听 = 悬垂（多为信号改名/删除后遗留的发射端）。
+   * 区别于「有监听但 from 状态不在位」的正常重复/迟到发射——那种保持 trace-only 不打扰。
+   * dev 顶部错误面点名 + recentIssues 留痕（prod 只留痕），同名只报一次。
+   */
+  private reportUnlistenedSignal(triggerKey: NarrativeTriggerKey): void {
+    const key = NarrativeStateManager.normalizeTriggerKey(triggerKey);
+    if (!key || key === DEFAULT_NARRATIVE_DRAFT_SIGNAL) return;
+    if (this.graphs.size === 0) return;
+    if (this.reportedUnlistenedSignalKeys.has(key)) return;
+    if (this.getListenedSignalKeys().has(key)) return;
+    this.reportedUnlistenedSignalKeys.add(key);
+    const message = `NarrativeStateManager: signal "${key}" has no listening transition in any registered graph (emit is a no-op); likely dangling after rename/delete`;
+    this.recordIssue({ severity: 'warning', code: 'signal.unlistened', message });
+    reportDevError(
+      `叙事信号 "${key}" 没有任何已注册叙事图的 transition 监听，发射不推动任何状态——疑似信号改名/删除后的悬垂发射端`,
+      '[narrative]',
+    );
+  }
+
   private conditionsMet(conditions: ConditionExpr[] | undefined): boolean {
     if (!conditions?.length) return true;
-    const ctx = this.conditionCtxFactory?.();
+    let ctx: ConditionEvalContext | undefined;
+    try {
+      ctx = this.conditionCtxFactory?.();
+    } catch (e) {
+      // 工厂抛错若放行到排空循环里，会经嵌套排空异常路径把整个循环拖挂（审查 W1）；
+      // 按"缺上下文"同口径保守拒绝该守卫迁移。
+      const message = `NarrativeStateManager: condition context factory threw; rejecting guarded transition: ${e instanceof Error ? e.message : String(e)}`;
+      this.recordIssue({ severity: 'error', code: 'condition.ctxFactory.threw', message });
+      console.warn(message, e);
+      return false;
+    }
     if (!ctx) {
       console.warn('NarrativeStateManager: missing condition context; rejecting guarded transition');
       return false;
@@ -713,24 +1077,26 @@ export class NarrativeStateManager implements IGameSystem {
   private evaluateReactiveTriggers(): void {
     for (const [graphId, graph] of this.graphs) {
       const active = this.activeStates.get(graphId) ?? graph.initialState;
-      const candidates = graph.transitions
-        .filter((t) => {
-          if (!t.trigger || t.trigger === 'signal') return false;
-          if (t.from !== active) return false;
-          if (!this.isLocalEndpoint(t.from) || !this.isLocalEndpoint(t.to)) {
-            this.recordUnsupportedEndpoint(graphId, t.id);
-            return false;
-          }
-          return this.evaluateReactiveConditions(t);
-        })
-        .map((t, index) => ({ t, index }))
-        .sort((a, b) => {
-          const pa = a.t.priority ?? 0;
-          const pb = b.t.priority ?? 0;
-          if (pa !== pb) return pb - pa;
-          return a.index - b.index;
-        });
-      const selected = candidates[0]?.t;
+      // 单遍取最优候选，免去每次扫描的 filter().map().sort() 三次临时数组分配。
+      // 仍遍历全部 transition、按原顺序求同一组谓词（含 recordUnsupportedEndpoint 副作用），
+      // 与旧「先全量筛选、再按 priority 降序 / 声明序升序排」的选择结果逐字节等价。
+      let selected: NarrativeTransition | undefined;
+      let selectedPriority = 0;
+      for (const t of graph.transitions) {
+        if (!t.trigger || t.trigger === 'signal') continue;
+        if (t.from !== active) continue;
+        if (!this.isLocalEndpoint(t.from) || !this.isLocalEndpoint(t.to)) {
+          this.recordUnsupportedEndpoint(graphId, t.id);
+          continue;
+        }
+        if (!this.evaluateReactiveConditions(t)) continue;
+        const priority = t.priority ?? 0;
+        // 声明序即遍历序：严格更高优先级才替换，平级保留先出现者。
+        if (selected === undefined || priority > selectedPriority) {
+          selected = t;
+          selectedPriority = priority;
+        }
+      }
       if (!selected) continue;
       this.recordTrace('reactive.queued', {
         graphId,
@@ -808,6 +1174,18 @@ export class NarrativeStateManager implements IGameSystem {
       this.recordUnsupportedEndpoint(graph.id, transition.id);
       return;
     }
+    // 提交前复核当前 active（signal 路径与 reactive 路径同一口径）：候选筛选与提交之间
+    // 可能有嵌套排空已迁移本图（如前序图的动作发出的信号），过期迁移直接放弃，防双迁移丢更新。
+    const activeNow = this.activeStates.get(graph.id) ?? graph.initialState;
+    if (transition.from !== activeNow) {
+      this.recordTrace('signal.ignored', {
+        graphId: graph.id,
+        transitionId: transition.id,
+        triggerKey,
+        message: `stale transition: from=${transition.from} but active=${activeNow}`,
+      });
+      return;
+    }
     const fromStateId = transition.from;
     const toStateId = transition.to;
     if (!graph.states[fromStateId]) {
@@ -832,9 +1210,21 @@ export class NarrativeStateManager implements IGameSystem {
     triggerKey: NarrativeTriggerKey,
     transitionId = '',
   ): Promise<void> {
+    const gen = this.generation;
     const fromState = graph.states[fromStateId];
     const toState = graph.states[toStateId];
     await this.runActions(fromState?.onExitActions, `${graph.id}.${fromStateId}.onExit`);
+    // onExit 动作 await 期间可能发生读档/换册（代际切换）：旧时间线的迁移不得再写
+    // 恢复后的状态（置态/事件/广播全部放弃）。动作自身的副作用无法撤销，属已知边界。
+    if (gen !== this.generation) {
+      this.recordTrace('signal.ignored', {
+        graphId: graph.id,
+        transitionId,
+        triggerKey,
+        message: `stale timeline: state restored during ${graph.id}.${fromStateId}.onExit; transition aborted`,
+      });
+      return;
+    }
     this.recordTrace('transition.applied', {
       graphId: graph.id,
       transitionId,
@@ -861,6 +1251,16 @@ export class NarrativeStateManager implements IGameSystem {
       transitionId,
     });
     await this.runActions(toState?.onEnterActions, `${graph.id}.${toStateId}.onEnter`);
+    // onEnter 动作 await 期间发生读档/换册：本次置态已被恢复流程覆盖，广播属旧时间线，放弃。
+    if (gen !== this.generation) {
+      this.recordTrace('signal.ignored', {
+        graphId: graph.id,
+        stateId: toStateId,
+        triggerKey,
+        message: `stale timeline: state restored during ${graph.id}.${toStateId}.onEnter; broadcast suppressed`,
+      });
+      return;
+    }
     if (toState?.broadcastOnEnter === true) {
       this.enqueueGraphStateEntered(graph.id, toStateId);
     }

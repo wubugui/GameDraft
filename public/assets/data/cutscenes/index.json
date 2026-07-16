@@ -6,7 +6,7 @@
       {
         "kind": "present",
         "type": "showImg",
-        "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/taoist_finds_scroll_cliff.png"
+        "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/01_mountain_path_to_shenxianling.png"
       },
       {
         "kind": "action",
@@ -205,7 +205,7 @@
         "kind": "present",
         "type": "showDialogue",
         "speaker": "旁白",
-        "text": "一个挑着担子的汉子出现在街口。看他那担子上的东西，倒都是些驱邪辟邪的玩意儿。"
+        "text": "一个挑着担子的汉子出现在街口。看他那担子上的东西，倒都是些驱邪辟邪的物件。"
       },
       {
         "kind": "present",
@@ -383,13 +383,13 @@
         "kind": "present",
         "type": "showDialogue",
         "speaker": "???",
-        "text": "小子，你就是关二狗？"
+        "text": "后生，你就是关二狗？"
       },
       {
         "kind": "present",
         "type": "showDialogue",
         "speaker": "关二狗",
-        "text": "你谁啊？找我有事？"
+        "text": "你哪个？找老子做啥子？"
       },
       {
         "kind": "present",
@@ -621,20 +621,9 @@
       },
       {
         "kind": "present",
-        "type": "showImg",
-        "id": "ghost_bride_memory",
-        "image": "/resources/runtime/images/illustrations/ghost_bride_flashback.png"
-      },
-      {
-        "kind": "present",
         "type": "showDialogue",
         "speaker": "旁白",
-        "text": "你半梦半醒间，又梦见两个月前替人背阴婚新娘的那一夜。她压得你喘不过气，你和那张惨白的脸贴得太近，近得像要把魂也看出来。"
-      },
-      {
-        "kind": "present",
-        "type": "hideImg",
-        "id": "ghost_bride_memory"
+        "text": "你半梦半醒，又想起昨晚那趟活路——崖墓里头七没过的那具尸，沉得不讲道理，崖路绕啊绕啊绕不出去。那股廉价香粉味，现在还没散。"
       },
       {
         "kind": "present",
@@ -674,13 +663,13 @@
         "kind": "present",
         "type": "showDialogue",
         "speaker": "旁白",
-        "text": "梁上的那张脸，和你记忆里那具阴婚新娘的脸，像隔着两个月的晦气忽然重叠在了一起。"
+        "text": "梁上的那张脸，和你记忆里那具崖墓尸的脸，像隔着两个月的晦气忽然重叠在了一起。"
       },
       {
         "kind": "present",
         "type": "showDialogue",
         "speaker": "关二狗",
-        "text": "……怎么会是她？"
+        "text": "……啷个会是它？"
       },
       {
         "kind": "present",
@@ -1315,9 +1304,41 @@
     "steps": [
       {
         "kind": "present",
+        "type": "showMovieBar",
+        "heightPercent": 0.12
+      },
+      {
+        "kind": "present",
+        "type": "parallaxScene",
+        "id": "01_mountain_path_to_shenxianling",
+        "handle": "shuoshu"
+      },
+      {
+        "kind": "present",
         "type": "showImg",
-        "id": "_img",
-        "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/redraw_round2/01_mountain_path_to_shenxianling_round2.png"
+        "id": "fx_layer",
+        "image": "/resources/runtime/images/ui_vfx/fog_cold_thin_v1.png",
+        "zIndex": 60,
+        "kenBurns": {
+          "fromScale": 1.06,
+          "toScale": 1.12,
+          "fromX": -3,
+          "toX": 3,
+          "toY": 1,
+          "durationMs": 14000
+        }
+      },
+      {
+        "kind": "action",
+        "type": "playSfx",
+        "params": {
+          "id": "sfx_jingju_luogu"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "waitTime",
+        "duration": 1800.0
       },
       {
         "kind": "present",
@@ -1325,133 +1346,597 @@
         "text": "说有一天李天狗来到一处穷山恶水之地。",
         "subtitleBand": "movieBottom",
         "subtitleAlign": "center",
-        "subtitleEmote": {
-          "target": "storyteller_zhang",
-          "emote": "!!",
-          "duration": 1500.0,
-          "anchorOffsetX": 0.0,
-          "anchorOffsetY": 0.0
+        "subtitleVoice": "voice_001",
+        "subtitleAutoAdvance": "voice"
+      },
+      {
+        "kind": "present",
+        "type": "parallaxScene",
+        "id": "02_taoist_enters_shenxianling",
+        "handle": "shuoshu"
+      },
+      {
+        "kind": "present",
+        "type": "showImg",
+        "id": "fx_layer",
+        "image": "/resources/runtime/images/ui_vfx/fog_cold_large_v1.png",
+        "zIndex": 60,
+        "kenBurns": {
+          "fromScale": 1.06,
+          "toScale": 1.12,
+          "fromX": -3,
+          "toX": 3,
+          "toY": 1,
+          "durationMs": 14000
         }
       },
       {
         "kind": "present",
-        "type": "showImg",
-        "id": "",
-        "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/redraw_round2/02_taoist_enters_shenxianling_round2.png"
-      },
-      {
-        "kind": "present",
         "type": "showSubtitle",
-        "text": "",
+        "text": "那地方唤作神仙顶——名头好听，",
         "subtitleBand": "movieBottom",
-        "subtitleAlign": "center"
+        "subtitleAlign": "center",
+        "subtitleVoice": "voice_002a",
+        "subtitleAutoAdvance": "voice"
+      },
+      {
+        "kind": "parallel",
+        "tracks": [
+          {
+            "kind": "action",
+            "type": "playSfx",
+            "params": {
+              "id": "sfx_yinfeng_gust"
+            }
+          },
+          {
+            "kind": "present",
+            "type": "showSubtitle",
+            "text": "实则乱坟遍野，阴风刮得人脊背发凉。",
+            "subtitleBand": "movieBottom",
+            "subtitleAlign": "center",
+            "subtitleVoice": "voice_002b",
+            "subtitleAutoAdvance": "voice"
+          }
+        ]
       },
       {
         "kind": "present",
-        "type": "showImg",
-        "id": "",
-        "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/redraw_round2/03_taoist_reaches_grave_site_round2.png"
-      },
-      {
-        "kind": "present",
-        "type": "showSubtitle",
-        "text": "",
-        "subtitleBand": "movieBottom",
-        "subtitleAlign": "center"
-      },
-      {
-        "kind": "present",
-        "type": "showImg",
-        "id": "",
-        "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/redraw_round2/04_taoist_discovers_tomb_omen_round2.png"
-      },
-      {
-        "kind": "present",
-        "type": "showSubtitle",
-        "text": "",
-        "subtitleBand": "movieBottom",
-        "subtitleAlign": "center"
+        "type": "parallaxScene",
+        "id": "03_taoist_reaches_grave_site",
+        "handle": "shuoshu"
       },
       {
         "kind": "present",
         "type": "showImg",
-        "id": "",
-        "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/redraw_round2/05_graverobbers_unearth_hanba_round2.png"
+        "id": "fx_layer",
+        "image": "/resources/runtime/images/ui_vfx/fog_cold_thin_v1.png",
+        "zIndex": 60,
+        "kenBurns": {
+          "fromScale": 1.06,
+          "toScale": 1.12,
+          "fromX": -3,
+          "toX": 2.5,
+          "toY": 1,
+          "durationMs": 14000
+        }
       },
       {
         "kind": "present",
         "type": "showSubtitle",
-        "text": "",
+        "text": "李天狗一袭旧道袍，独自循着邪气，摸到半山一座古墓跟前。",
         "subtitleBand": "movieBottom",
-        "subtitleAlign": "center"
+        "subtitleAlign": "center",
+        "subtitleVoice": "voice_003",
+        "subtitleAutoAdvance": "voice"
+      },
+      {
+        "kind": "present",
+        "type": "parallaxScene",
+        "id": "04_taoist_discovers_tomb_omen",
+        "handle": "shuoshu"
+      },
+      {
+        "kind": "present",
+        "type": "animLayer",
+        "animFile": "/resources/runtime/animation/fx_teapot_steam/anim.json",
+        "id": "fx_layer",
+        "xPercent": 50,
+        "yPercent": 68,
+        "widthPercent": 46,
+        "alpha": 0.7,
+        "zIndex": 60
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "墓砖焦黑，土缝里直冒热气。",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center",
+        "subtitleVoice": "voice_004a",
+        "subtitleAutoAdvance": "voice"
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "他心里咯噔一声——底下镇着的，是个旱魃！",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center",
+        "subtitleVoice": "voice_004b",
+        "subtitleAutoAdvance": "voice"
+      },
+      {
+        "kind": "action",
+        "type": "playSfx",
+        "params": {
+          "id": "sfx_stone_press"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "waitTime",
+        "duration": 600.0
+      },
+      {
+        "kind": "parallel",
+        "tracks": [
+          {
+            "kind": "present",
+            "type": "flashWhite",
+            "duration": 200.0
+          },
+          {
+            "kind": "present",
+            "type": "parallaxScene",
+            "id": "05_graverobbers_unearth_hanba"
+          }
+        ]
       },
       {
         "kind": "present",
         "type": "showImg",
-        "id": "",
-        "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/redraw_round2/06_taoist_rescues_graverobbers_wide_round2.png"
+        "id": "fx_layer",
+        "image": "/resources/runtime/images/ui_vfx/smoke_warm_thin_v1.png",
+        "kenBurns": {
+          "fromScale": 1.06,
+          "toScale": 1.14,
+          "fromY": 3,
+          "toY": -3,
+          "durationMs": 11000
+        },
+        "zIndex": 60
+      },
+      {
+        "kind": "parallel",
+        "tracks": [
+          {
+            "kind": "action",
+            "type": "playSfx",
+            "params": {
+              "id": "sfx_hanba_roar"
+            }
+          },
+          {
+            "kind": "present",
+            "type": "showSubtitle",
+            "text": "那墓门一开，地里腾起一只大旱魃，赤地千里，草木一舔就焦！",
+            "subtitleBand": "movieBottom",
+            "subtitleAlign": "center",
+            "subtitleVoice": "voice_005",
+            "subtitleAutoAdvance": "voice"
+          }
+        ]
+      },
+      {
+        "kind": "action",
+        "type": "playSfx",
+        "params": {
+          "id": "sfx_gavel_rap"
+        }
       },
       {
         "kind": "present",
-        "type": "showSubtitle",
-        "text": "",
-        "subtitleBand": "movieBottom",
-        "subtitleAlign": "center"
-      },
-      {
-        "kind": "present",
-        "type": "showImg",
-        "id": "",
-        "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/redraw_round2/07_taoist_duels_hanba_medium_round2.png"
-      },
-      {
-        "kind": "present",
-        "type": "showSubtitle",
-        "text": "",
-        "subtitleBand": "movieBottom",
-        "subtitleAlign": "center"
-      },
-      {
-        "kind": "present",
-        "type": "showImg",
-        "id": "",
-        "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/redraw_round2/08_taoist_duels_hanba_close_round2.png"
-      },
-      {
-        "kind": "present",
-        "type": "showSubtitle",
-        "text": "",
-        "subtitleBand": "movieBottom",
-        "subtitleAlign": "center"
-      },
-      {
-        "kind": "present",
-        "type": "showImg",
-        "id": "",
-        "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/redraw_round2/09_taoist_subdues_hanba_round2.png"
-      },
-      {
-        "kind": "present",
-        "type": "showSubtitle",
-        "text": "",
-        "subtitleBand": "movieBottom",
-        "subtitleAlign": "center"
+        "type": "parallaxScene",
+        "id": "06_taoist_rescues_graverobbers_wide",
+        "handle": "shuoshu"
       },
       {
         "kind": "present",
         "type": "showImg",
-        "id": "",
-        "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/redraw_round2/10_graverobbers_offer_reward_round2.png"
+        "id": "fx_layer",
+        "image": "/resources/runtime/images/ui_vfx/smoke_warm_thin_v1.png",
+        "kenBurns": {
+          "fromScale": 1.06,
+          "toScale": 1.14,
+          "fromY": 3,
+          "toY": -3,
+          "durationMs": 11000
+        },
+        "zIndex": 60
       },
       {
         "kind": "present",
         "type": "showSubtitle",
-        "text": "",
+        "text": "几个倒斗的吓瘫在地，眼看就要喂了妖物。",
         "subtitleBand": "movieBottom",
-        "subtitleAlign": "center"
+        "subtitleAlign": "center",
+        "subtitleVoice": "voice_006a",
+        "subtitleAutoAdvance": "voice"
+      },
+      {
+        "kind": "parallel",
+        "tracks": [
+          {
+            "kind": "action",
+            "type": "playSfx",
+            "params": {
+              "id": "sfx_sword_swing"
+            }
+          },
+          {
+            "kind": "present",
+            "type": "showSubtitle",
+            "text": "说时迟那时快，李天狗一把将人拽到身后！",
+            "subtitleBand": "movieBottom",
+            "subtitleAlign": "center",
+            "subtitleVoice": "voice_006b",
+            "subtitleAutoAdvance": "voice"
+          }
+        ]
+      },
+      {
+        "kind": "parallel",
+        "tracks": [
+          {
+            "kind": "present",
+            "type": "flashWhite",
+            "duration": 150.0
+          },
+          {
+            "kind": "present",
+            "type": "parallaxScene",
+            "id": "07_taoist_duels_hanba_medium",
+            "handle": "shuoshu"
+          }
+        ]
+      },
+      {
+        "kind": "present",
+        "type": "showImg",
+        "id": "fx_layer",
+        "image": "/resources/runtime/images/ui_vfx/smoke_warm_thin_v1.png",
+        "kenBurns": {
+          "fromScale": 1.06,
+          "toScale": 1.14,
+          "fromY": 3,
+          "toY": -3,
+          "durationMs": 11000
+        },
+        "zIndex": 60
+      },
+      {
+        "kind": "parallel",
+        "tracks": [
+          {
+            "kind": "action",
+            "type": "playSfx",
+            "params": {
+              "id": "sfx_sword_clash"
+            }
+          },
+          {
+            "kind": "present",
+            "type": "showSubtitle",
+            "text": "「只见那李天狗——拔剑！咬指！画符！剑光跟焦风撞在一处！」",
+            "subtitleBand": "movieBottom",
+            "subtitleAlign": "center",
+            "subtitleVoice": "voice_007",
+            "subtitleAutoAdvance": "voice"
+          }
+        ]
+      },
+      {
+        "kind": "parallel",
+        "tracks": [
+          {
+            "kind": "present",
+            "type": "flashWhite",
+            "duration": 150.0
+          },
+          {
+            "kind": "present",
+            "type": "parallaxScene",
+            "id": "08_taoist_duels_hanba_close"
+          }
+        ]
+      },
+      {
+        "kind": "present",
+        "type": "showImg",
+        "id": "fx_layer",
+        "image": "/resources/runtime/images/ui_vfx/smoke_warm_thin_v1.png",
+        "kenBurns": {
+          "fromScale": 1.06,
+          "toScale": 1.14,
+          "fromY": 3,
+          "toY": -3,
+          "durationMs": 11000
+        },
+        "zIndex": 60
+      },
+      {
+        "kind": "parallel",
+        "tracks": [
+          {
+            "kind": "action",
+            "type": "playSfx",
+            "params": {
+              "id": "sfx_fireball_whoosh"
+            }
+          },
+          {
+            "kind": "present",
+            "type": "showSubtitle",
+            "text": "那旱魃张口喷火、扑爪带风；",
+            "subtitleBand": "movieBottom",
+            "subtitleAlign": "center",
+            "subtitleVoice": "voice_008a",
+            "subtitleAutoAdvance": "voice"
+          }
+        ]
+      },
+      {
+        "kind": "parallel",
+        "tracks": [
+          {
+            "kind": "action",
+            "type": "playSfx",
+            "params": {
+              "id": "sfx_paper_hand_rustle"
+            }
+          },
+          {
+            "kind": "present",
+            "type": "showSubtitle",
+            "text": "道士咬定牙关，符纸一张接着一张，往它身上招呼！",
+            "subtitleBand": "movieBottom",
+            "subtitleAlign": "center",
+            "subtitleVoice": "voice_008b",
+            "subtitleAutoAdvance": "voice"
+          }
+        ]
+      },
+      {
+        "kind": "parallel",
+        "tracks": [
+          {
+            "kind": "present",
+            "type": "flashWhite",
+            "duration": 250.0
+          }
+        ]
+      },
+      {
+        "kind": "present",
+        "type": "parallaxScene",
+        "id": "09_taoist_subdues_hanba",
+        "handle": "shuoshu"
+      },
+      {
+        "kind": "present",
+        "type": "showImg",
+        "id": "fx_layer",
+        "image": "/resources/runtime/images/ui_vfx/fog_cold_thin_v1.png",
+        "kenBurns": {
+          "fromScale": 1.06,
+          "toScale": 1.12,
+          "fromX": -3,
+          "toX": 3,
+          "toY": 1,
+          "durationMs": 14000
+        },
+        "zIndex": 60
+      },
+      {
+        "kind": "parallel",
+        "tracks": [
+          {
+            "kind": "action",
+            "type": "playSfx",
+            "params": {
+              "id": "sfx_force_swallowed_thud"
+            }
+          },
+          {
+            "kind": "present",
+            "type": "showSubtitle",
+            "text": "「最后只见李天狗一道符，生生把那旱魃镇进地里！」",
+            "subtitleBand": "movieBottom",
+            "subtitleAlign": "center",
+            "subtitleVoice": "voice_009",
+            "subtitleAutoAdvance": "voice"
+          }
+        ]
+      },
+      {
+        "kind": "present",
+        "type": "parallaxScene",
+        "id": "10_graverobbers_offer_reward",
+        "handle": "shuoshu"
+      },
+      {
+        "kind": "present",
+        "type": "hideImg",
+        "id": "fx_layer"
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "「倒斗的连滚带爬，捧着银钱磕头谢恩呐——」",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center",
+        "subtitleVoice": "voice_010",
+        "subtitleAutoAdvance": "voice"
+      },
+      {
+        "kind": "present",
+        "type": "parallaxScene",
+        "id": "11_taoist_walks_deeper_into_shenxianling",
+        "handle": "shuoshu"
+      },
+      {
+        "kind": "present",
+        "type": "showImg",
+        "id": "fx_layer",
+        "image": "/resources/runtime/images/ui_vfx/fog_cold_large_v1.png",
+        "kenBurns": {
+          "fromScale": 1.06,
+          "toScale": 1.12,
+          "fromX": -3,
+          "toX": 3,
+          "toY": 1,
+          "durationMs": 14000
+        },
+        "zIndex": 60
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "说这李天狗降了旱魃，一路往西风风火火地继续深入神仙顶。",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center",
+        "subtitleVoice": "voice_011a",
+        "subtitleAutoAdvance": "voice"
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "他到底是去干嘛呢？",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center",
+        "subtitleVoice": "voice_011b",
+        "subtitleAutoAdvance": "voice"
+      },
+      {
+        "kind": "action",
+        "type": "playSfx",
+        "params": {
+          "id": "sfx_gavel_rap",
+          "volume": 1.8
+        }
+      },
+      {
+        "kind": "present",
+        "type": "waitTime",
+        "duration": 1500.0
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "欲知后事如何，各位看官，且听下回分解吧。",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center",
+        "subtitleVoice": "voice_012",
+        "subtitleAutoAdvance": "voice"
+      },
+      {
+        "kind": "action",
+        "type": "playSfx",
+        "params": {
+          "id": "sfx_jingju_luogu"
+        }
+      },
+      {
+        "kind": "action",
+        "type": "playSfx",
+        "params": {
+          "id": "sfx_teahouse_cheer"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "fadeToBlack",
+        "duration": 1500
+      },
+      {
+        "kind": "present",
+        "type": "hideImg",
+        "id": "fx_layer"
+      },
+      {
+        "kind": "present",
+        "type": "hideImg",
+        "id": "shuoshu"
+      },
+      {
+        "kind": "present",
+        "type": "hideMovieBar"
+      },
+      {
+        "kind": "present",
+        "type": "cameraZoom",
+        "scale": 2.2,
+        "duration": 1
+      },
+      {
+        "kind": "present",
+        "type": "cameraMove",
+        "x": 485,
+        "y": 431,
+        "duration": 1
+      },
+      {
+        "kind": "present",
+        "type": "fadeIn",
+        "duration": 1500
       }
     ],
-    "targetScene": "teahouse"
+    "targetScene": "teahouse",
+    "restoreState": false
+  },
+  {
+    "id": "说书-收场运镜",
+    "steps": [
+      {
+        "kind": "parallel",
+        "tracks": [
+          {
+            "kind": "present",
+            "type": "cameraMove",
+            "x": 115,
+            "y": 228,
+            "duration": 2800
+          },
+          {
+            "kind": "present",
+            "type": "showTitle",
+            "text": "[tag:string:place:wujin]",
+            "duration": 2600
+          }
+        ]
+      },
+      {
+        "kind": "present",
+        "type": "showTitle",
+        "text": "寻狗记 · 开端",
+        "duration": 1600
+      }
+    ],
+    "targetScene": "teahouse",
+    "restoreState": false
+  },
+  {
+    "id": "说书-景别复位",
+    "steps": [
+      {
+        "kind": "present",
+        "type": "cameraZoom",
+        "scale": 0,
+        "duration": 900
+      }
+    ],
+    "targetScene": "teahouse",
+    "restoreState": false
   },
   {
     "id": "cutscene_11",
@@ -1461,117 +1946,390 @@
     "id": "寻狗_开场",
     "targetScene": "teahouse",
     "steps": [
-      { "kind": "present", "type": "showTitle", "text": "[tag:string:place:wujin]", "duration": 1600 },
-      { "kind": "present", "type": "waitTime", "duration": 400 },
-      { "kind": "present", "type": "showTitle", "text": "寻狗记 · 开端", "duration": 1600 },
-      { "kind": "action", "type": "playSfx", "params": { "id": "story_intro" } },
-      { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "茶碗、瓜子壳、半空的热气。满堂茶客围着说书先生。醒木一拍——" },
+      {
+        "kind": "present",
+        "type": "showTitle",
+        "text": "[tag:string:place:wujin]",
+        "duration": 1600
+      },
+      {
+        "kind": "present",
+        "type": "waitTime",
+        "duration": 400
+      },
+      {
+        "kind": "present",
+        "type": "showTitle",
+        "text": "寻狗记 · 开端",
+        "duration": 1600
+      },
+      {
+        "kind": "action",
+        "type": "playSfx",
+        "params": {
+          "id": "story_intro"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "旁白",
+        "text": "茶碗、瓜子壳、半空的热气。满堂茶客围着说书先生。醒木一拍——"
+      },
       {
         "kind": "present",
         "type": "showImg",
         "id": "kc",
         "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/redraw_round3/05_graverobbers_unearth_hanba_round3.png"
       },
-      { "kind": "present", "type": "showDialogue", "speaker": "说书先生", "text": "「……那墓门一开，地里腾起一只大旱魃！赤地千里，草木一舔就焦——」" },
-      { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "一伙倒斗的撬开墓门，焦黄的妖物窜出，地面龟裂冒烟。" },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "说书先生",
+        "text": "「……那墓门一开，地里腾起一只大旱魃！赤地千里，草木一舔就焦——」"
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "旁白",
+        "text": "一伙倒斗的撬开墓门，焦黄的妖物窜出，地面龟裂冒烟。"
+      },
       {
         "kind": "present",
         "type": "showImg",
         "id": "kc",
         "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/redraw_round3/07_taoist_duels_hanba_medium_round3.png"
       },
-      { "kind": "present", "type": "showDialogue", "speaker": "说书先生", "text": "「李天狗一袭旧道袍路过神仙顶——拔剑！咬指！画符！剑光跟焦风撞在一处！」" },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "说书先生",
+        "text": "「李天狗一袭旧道袍路过神仙顶——拔剑！咬指！画符！剑光跟焦风撞在一处！」"
+      },
       {
         "kind": "present",
         "type": "showImg",
         "id": "kc",
         "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/redraw_round3/09_taoist_subdues_hanba_round3.png"
       },
-      { "kind": "present", "type": "showDialogue", "speaker": "说书先生", "text": "「一道符，生生把那旱魃镇进地里！」" },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "说书先生",
+        "text": "「一道符，生生把那旱魃镇进地里！」"
+      },
       {
         "kind": "present",
         "type": "showImg",
         "id": "kc",
         "image": "/resources/runtime/images/illustrations/李天狗神仙岭大战旱魃/redraw_round3/10_graverobbers_offer_reward_round3.png"
       },
-      { "kind": "present", "type": "showDialogue", "speaker": "说书先生", "text": "「倒斗的连滚带爬，捧着银钱磕头谢恩呐——」" },
-      { "kind": "present", "type": "hideImg", "id": "kc" },
-      { "kind": "present", "type": "fadeIn", "duration": 900 },
-      { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "人堆最后头，关二狗踮着脚伸长脖子。没点茶。从小没爹没娘，靠帮人跑腿背尸混口饭吃。" },
-      { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "他不是来听道理的——他是听见「拿钱谢恩」四个字，眼睛唰地亮了。" }
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "说书先生",
+        "text": "「倒斗的连滚带爬，捧着银钱磕头谢恩呐——」"
+      },
+      {
+        "kind": "present",
+        "type": "hideImg",
+        "id": "kc"
+      },
+      {
+        "kind": "present",
+        "type": "fadeIn",
+        "duration": 900
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "旁白",
+        "text": "人堆最后头，关二狗踮着脚伸长脖子。没点茶。从小没爹没娘，靠帮人跑腿背尸混口饭吃。"
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "旁白",
+        "text": "他不是来听道理的——他是听见「拿钱谢恩」四个字，眼睛唰地亮了。"
+      }
     ]
   },
   {
     "id": "寻狗_名声蒙太奇",
     "steps": [
-      { "kind": "present", "type": "fadeToBlack", "duration": 900 },
-      { "kind": "present", "type": "showTitle", "text": "几天后", "duration": 1500 },
-      { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "婆子家的事，加上码头那一场，再经茶馆这口大锅一炖——" },
-      { "kind": "present", "type": "showDialogue", "speaker": "茶客们", "text": "「李天狗那一脉的来了雾津！背尸出身，专管邪门事！」" },
-      { "kind": "present", "type": "showDialogue", "speaker": "脚帮的", "text": "「人家念两句，院里的邪祟自个儿就退了——价钱还公道！」" },
-      { "kind": "present", "type": "showDialogue", "speaker": "街坊", "text": "「嘘——听说他师爷当年在神仙顶，一道符镇了旱魃……」" },
-      { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "名声滚起来了。滚得连关二狗自己都开始信：俺兴许真有两下子？" },
-      { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "接着，有人为一条「狗」，找上门来。" },
-      { "kind": "present", "type": "fadeIn", "duration": 900 }
+      {
+        "kind": "present",
+        "type": "fadeToBlack",
+        "duration": 900
+      },
+      {
+        "kind": "present",
+        "type": "showTitle",
+        "text": "几天后",
+        "duration": 1500
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "旁白",
+        "text": "婆子家的事，加上码头那一场，再经茶馆这口大锅一炖——"
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "茶客们",
+        "text": "「李天狗那一脉的来了雾津！背尸出身，专管邪门事！」"
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "脚帮的",
+        "text": "「人家念两句，院里的邪祟自家就退了——价钱还公道得很！」"
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "街坊",
+        "text": "「嘘——听说他师爷当年在神仙顶，一道符镇了旱魃……」"
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "旁白",
+        "text": "名声滚起来了。滚得连关二狗自己都开始信：老子兴许真有两下子？"
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "旁白",
+        "text": "接着，有人为一条「狗」，找上门来。"
+      },
+      {
+        "kind": "present",
+        "type": "fadeIn",
+        "duration": 900
+      }
     ]
   },
   {
     "id": "寻狗_终幕",
     "steps": [
-      { "kind": "present", "type": "showMovieBar", "heightPercent": 0.12 },
-      { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "三人一驴，过了城门。雾把路吞到第十步开外。" },
-      { "kind": "present", "type": "cameraMove", "x": 900, "y": 180, "duration": 2400 },
-      { "kind": "present", "type": "showSubtitle", "text": "茶馆里：「听说了吗，洋人把『李天狗那一脉』请去神仙顶了！」", "subtitleBand": "movieBottom", "subtitleAlign": "center" },
-      { "kind": "present", "type": "showSubtitle", "text": "脚帮里：「阎王岭喊名那一夜，人家眉头都没皱——真人不露相。」", "subtitleBand": "movieBottom", "subtitleAlign": "center" },
-      { "kind": "present", "type": "showSubtitle", "text": "义庄管事：「两具僵尸，四样镇下！我亲眼瞧见的！！」", "subtitleBand": "movieBottom", "subtitleAlign": "center" },
-      { "kind": "present", "type": "showDialogue", "speaker": "关二狗", "text": "（传成什么样的都有。……行吧，就当是真的。贫道——出发了。）" },
-      { "kind": "present", "type": "fadeToBlack", "duration": 1400 },
+      {
+        "kind": "present",
+        "type": "showMovieBar",
+        "heightPercent": 0.12
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "旁白",
+        "text": "三人一驴，过了城门。雾把路吞到第十步开外。"
+      },
+      {
+        "kind": "present",
+        "type": "cameraMove",
+        "x": 1308.14,
+        "y": 261.63,
+        "duration": 2400
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "茶馆里：「听说了吗，洋人把『李天狗那一脉』请去神仙顶了！」",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center"
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "脚帮里：「阎王岭喊名那一夜，人家眉头都没皱——真人不露相。」",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center"
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "义庄管事：「两具僵尸，四样镇下！我亲眼瞧见的！！」",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center"
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "关二狗",
+        "text": "（传成啥子样的都有。……要得，就当是真的。老子这个『道长』——切了。）"
+      },
+      {
+        "kind": "present",
+        "type": "fadeToBlack",
+        "duration": 1400
+      },
       {
         "kind": "present",
         "type": "showImg",
         "id": "endpanel",
         "image": "/resources/runtime/images/illustrations/demo/demo_end_panel.png"
       },
-      { "kind": "present", "type": "showTitle", "text": "寻狗记 · Demo 完", "duration": 2600 },
-      { "kind": "present", "type": "showDialogue", "speaker": "", "text": "——他还不知道自己背后跟着什么。观众也只闻到了一缕香粉味。（点击继续）" },
-      { "kind": "present", "type": "hideImg", "id": "endpanel" },
-      { "kind": "present", "type": "fadeIn", "duration": 900 }
+      {
+        "kind": "present",
+        "type": "showTitle",
+        "text": "寻狗记 · Demo 完",
+        "duration": 2600
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "",
+        "text": "——他还不知道自己背后跟着什么。观众也只闻到了一缕香粉味。（点击继续）"
+      },
+      {
+        "kind": "present",
+        "type": "hideImg",
+        "id": "endpanel"
+      },
+      {
+        "kind": "present",
+        "type": "fadeIn",
+        "duration": 900
+      }
     ]
   },
   {
     "id": "寻狗_脚帮闲扯",
     "steps": [
-      { "kind": "present", "type": "showMovieBar", "heightPercent": 0.1 },
-      { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "同路的两个脚夫一前一后，扁担吱呀。出城这段路还宽敞，太阳也还高。" },
-      { "kind": "present", "type": "showDialogue", "speaker": "脚夫甲", "text": "哟，这不是「李天狗那一脉」么。揣个皮纸鬼鬼祟祟的，又接了什么邪门活计？" },
-      { "kind": "present", "type": "showDialogue", "speaker": "关二狗", "text": "跑腿。正经跑腿。（笑骂两句，混了过去。）" },
-      { "kind": "present", "type": "showDialogue", "speaker": "脚夫乙", "text": "对了先生，往岭上走有句老话——山里要是有人喊你名字，一声一声，像个熟人，千万、千万别应。" },
-      { "kind": "present", "type": "showDialogue", "speaker": "关二狗", "text": "（这帮人讲古不要钱，吓人也不要钱。）……晓得了。" },
-      { "kind": "present", "type": "hideMovieBar" }
+      {
+        "kind": "present",
+        "type": "showMovieBar",
+        "heightPercent": 0.1
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "旁白",
+        "text": "同路的两个脚夫一前一后，扁担吱呀。出城这段路还宽敞，太阳也还高。"
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "脚夫甲",
+        "text": "哟，这不是「李天狗那一脉」迈。揣张皮纸鬼鬼祟祟的，又接了啥子邪门活路？"
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "关二狗",
+        "text": "跑腿。正经跑腿。（笑骂两句，混了过切。）"
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "脚夫乙",
+        "text": "对了先生，往岭上走有句老话——山里头要是有人喊你名字，一声一声，像个熟人，千万、千万莫应。"
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "关二狗",
+        "text": "（这帮人讲古不要钱，吓人也不要钱。）……晓得了。"
+      },
+      {
+        "kind": "present",
+        "type": "hideMovieBar"
+      }
     ]
   },
   {
     "id": "寻狗_义庄进门",
     "steps": [
-      { "kind": "present", "type": "showMovieBar", "heightPercent": 0.1 },
-      { "kind": "present", "type": "cameraZoom", "scale": 1.45, "duration": 800 },
-      { "kind": "action", "type": "playSfx", "params": { "id": "sfx_bone_dull_knock" } },
-      { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "门一推开，他先听见的不是声音——是没有声音。" },
-      { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "两具尸在地上扭着。揪着。互相压着。布料窸窣，骨头磕地，闷闷的。" },
-      { "kind": "action", "type": "playSfx", "params": { "id": "sfx_corpse_cloth_creak" } },
-      { "kind": "present", "type": "showDialogue", "speaker": "关二狗", "text": "（跑。现在跑还来得及。）（……跑了，「李天狗那一脉」明儿就成笑话。）" },
-      { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "脑子在打架，手已经伸向了供桌——背过尸的手，是熟的。" },
-      { "kind": "present", "type": "hideMovieBar" }
+      {
+        "kind": "present",
+        "type": "showMovieBar",
+        "heightPercent": 0.1
+      },
+      {
+        "kind": "present",
+        "type": "cameraZoom",
+        "scale": 1.45,
+        "duration": 800
+      },
+      {
+        "kind": "action",
+        "type": "playSfx",
+        "params": {
+          "id": "sfx_bone_dull_knock"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "旁白",
+        "text": "门一推开，他先听见的不是声音——是没有声音。"
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "旁白",
+        "text": "两具尸在地上扭着。揪着。互相压着。布料窸窣，骨头磕地，闷闷的。"
+      },
+      {
+        "kind": "action",
+        "type": "playSfx",
+        "params": {
+          "id": "sfx_corpse_cloth_creak"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "关二狗",
+        "text": "（跑。现在跑还来得及。）（……跑了，「李天狗那一脉」明天就成笑话。）"
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "旁白",
+        "text": "脑子在打架，手已经伸向了供桌——背过尸的手，是熟的。"
+      },
+      {
+        "kind": "present",
+        "type": "hideMovieBar"
+      }
     ]
   },
   {
     "id": "寻狗_两尸松手",
     "steps": [
-      { "kind": "present", "type": "showMovieBar", "heightPercent": 0.1 },
-      { "kind": "action", "type": "playSfx", "params": { "id": "sfx_force_swallowed_thud" } },
-      { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "第四样落地。庄里那股拧着的劲——散了。" },
-      { "kind": "action", "type": "playSignalCue", "params": { "id": "axiu_full" } },
-      { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "香粉味陡然浓了一瞬。耳边极轻地，飘过半句跑了调的小曲——像谁哼着哄孩子。" },
+      {
+        "kind": "present",
+        "type": "showMovieBar",
+        "heightPercent": 0.1
+      },
+      {
+        "kind": "action",
+        "type": "playSfx",
+        "params": {
+          "id": "sfx_force_swallowed_thud"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "旁白",
+        "text": "第四样落地。庄里那股拧着的劲——散了。"
+      },
+      {
+        "kind": "action",
+        "type": "playSignalCue",
+        "params": {
+          "id": "axiu_full"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "旁白",
+        "text": "香粉味陡然浓了一瞬。耳边极轻地，飘过半句跑了调的小曲——像谁哼着哄孩子。"
+      },
       {
         "kind": "action",
         "type": "setHotspotDisplayImage",
@@ -1583,42 +2341,136 @@
           "worldHeight": 140
         }
       },
-      { "kind": "action", "type": "playSfx", "params": { "id": "sfx_corpse_cloth_creak" } },
-      { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "两具尸，松了手。直挺挺躺平，规规矩矩，像睡熟的。" },
-      { "kind": "present", "type": "showDialogue", "speaker": "关二狗", "text": "（成了？……是俺哪一样使对了？米？线？石子？剪子？）" },
-      { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "他不知道。他只闻见那缕香粉味，慢慢淡下去——像有人办完了事，掸掸手，退回暗处。" },
-      { "kind": "present", "type": "hideMovieBar" }
+      {
+        "kind": "action",
+        "type": "playSfx",
+        "params": {
+          "id": "sfx_corpse_cloth_creak"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "旁白",
+        "text": "两具尸，松了手。直挺挺躺平，规规矩矩，像睡熟的。"
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "关二狗",
+        "text": "（成了？……是老子哪一样使对了？米？线？石子？剪子？）"
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "旁白",
+        "text": "他不知道。他只闻见那缕香粉味，慢慢淡下去——像有人办完了事，掸掸手，退回暗处。"
+      },
+      {
+        "kind": "present",
+        "type": "hideMovieBar"
+      }
     ]
   },
   {
     "id": "寻狗_置办蒙太奇",
     "steps": [
-      { "kind": "present", "type": "fadeToBlack", "duration": 800 },
-      { "kind": "present", "type": "showTitle", "text": "置办行头", "duration": 1400 },
+      {
+        "kind": "present",
+        "type": "fadeToBlack",
+        "duration": 800
+      },
+      {
+        "kind": "present",
+        "type": "showTitle",
+        "text": "置办行头",
+        "duration": 1400
+      },
       {
         "kind": "present",
         "type": "showImg",
         "id": "outfit",
         "image": "/resources/runtime/images/illustrations/demo/fake_taoist_kit.png"
       },
-      { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "当铺淘的旧道袍，洗三遍还是那股霉味。桃木剑是真桃木——就是轻得像烧火棍。" },
-      { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "符是城东先生画的。先生收钱的时候手很稳，画符的时候手很不稳。" },
-      { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "钱花光了，行头凑齐了——凑合齐了。" },
-      { "kind": "present", "type": "hideImg", "id": "outfit" },
-      { "kind": "present", "type": "fadeIn", "duration": 800 }
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "旁白",
+        "text": "当铺淘的旧道袍，洗三遍还是那股霉味。桃木剑是真桃木——就是轻得像烧火棍。"
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "旁白",
+        "text": "符是城东先生画的。先生收钱的时候手很稳，画符的时候手很不稳。"
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "旁白",
+        "text": "钱花光了，行头凑齐了——凑合齐了。"
+      },
+      {
+        "kind": "present",
+        "type": "hideImg",
+        "id": "outfit"
+      },
+      {
+        "kind": "present",
+        "type": "fadeIn",
+        "duration": 800
+      }
     ]
   },
   {
-    "id": "寻狗_灵堂进场",
+    "id": "寻狗_崖墓进场",
     "steps": [
-      { "kind": "present", "type": "showMovieBar", "heightPercent": 0.1 },
-      { "kind": "present", "type": "cameraZoom", "scale": 1.45, "duration": 900 },
-      { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "灵堂阴冷。白烛的火苗压得很低，像也不愿多看。" },
-      { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "板上停着一具穿大红嫁衣的女尸——脸惨白。该塌的没塌，该烂的没烂。" },
-      { "kind": "action", "type": "playSfx", "params": { "id": "sfx_corpse_cloth_creak" } },
-      { "kind": "present", "type": "showDialogue", "speaker": "关二狗", "text": "（停了多日的尸……跟才刚停下似的。）" },
-      { "kind": "present", "type": "showDialogue", "speaker": "旁白", "text": "庄家的人不知什么时候已经退到了门外。门口的风灯晃了一下。" },
-      { "kind": "present", "type": "hideMovieBar" }
+      {
+        "kind": "present",
+        "type": "showMovieBar",
+        "heightPercent": 0.1
+      },
+      {
+        "kind": "present",
+        "type": "cameraZoom",
+        "scale": 1.45,
+        "duration": 900
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "旁白",
+        "text": "崖洞里阴冷。陪葬的烛火压得很低，像也不愿多看。"
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "旁白",
+        "text": "凿台上停着一具尸——面色铅灰，手脚还平展。该塌的没塌，该烂的没烂。"
+      },
+      {
+        "kind": "action",
+        "type": "playSfx",
+        "params": {
+          "id": "sfx_corpse_cloth_creak"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "关二狗",
+        "text": "（停了好多天的尸……像才刚停下来一样。）"
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "旁白",
+        "text": "雇主不知什么时候已经退到了洞口。洞口的风灯晃了一下。"
+      },
+      {
+        "kind": "present",
+        "type": "hideMovieBar"
+      }
     ]
   }
 ]

@@ -1,5 +1,6 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import { UITheme, fadeIn } from './UITheme';
+import { drawPanelBase, SKINS } from './PanelSkin';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
 import type { StringsProvider } from '../core/StringsProvider';
@@ -63,7 +64,10 @@ export class InventoryUI {
 
     const w = this.renderer.screenWidth;
     const h = this.renderer.screenHeight;
-    const rows = Math.ceil(MAX_SLOTS / GRID_COLS);
+    // critical 给予（关键道具保底）可临时超过 12 槽——网格按实际物品数增行，溢出物品不隐身
+    const itemCount = this.inventoryData.getAllItems().length;
+    const slotCount = Math.max(MAX_SLOTS, itemCount);
+    const rows = Math.ceil(slotCount / GRID_COLS);
     const gridW = GRID_COLS * (CELL_SIZE + CELL_GAP) + CELL_GAP;
     const gridH = rows * (CELL_SIZE + CELL_GAP) + CELL_GAP;
     const panelW = gridW + 220;
@@ -77,10 +81,7 @@ export class InventoryUI {
     this.container.addChild(overlay);
 
     const panel = new Graphics();
-    panel.roundRect(px, py, panelW, panelH, UITheme.panel.borderRadius);
-    panel.fill({ color: UITheme.colors.panelBg, alpha: UITheme.alpha.panelBg });
-    panel.roundRect(px, py, panelW, panelH, UITheme.panel.borderRadius);
-    panel.stroke({ color: UITheme.colors.panelBorder, width: 1 });
+    drawPanelBase(panel, px, py, panelW, panelH, SKINS.panel);
     this.container.addChild(panel);
 
     const title = new Text({
@@ -103,17 +104,14 @@ export class InventoryUI {
     const gridStartX = px + CELL_GAP + 10;
     const gridStartY = py + 50;
 
-    for (let i = 0; i < MAX_SLOTS; i++) {
+    for (let i = 0; i < slotCount; i++) {
       const col = i % GRID_COLS;
       const row = Math.floor(i / GRID_COLS);
       const cx = gridStartX + col * (CELL_SIZE + CELL_GAP);
       const cy = gridStartY + row * (CELL_SIZE + CELL_GAP);
 
       const cell = new Graphics();
-      cell.roundRect(cx, cy, CELL_SIZE, CELL_SIZE, UITheme.panel.borderRadiusSmall);
-      cell.fill({ color: UITheme.colors.rowBgDark, alpha: UITheme.alpha.rowBg });
-      cell.roundRect(cx, cy, CELL_SIZE, CELL_SIZE, UITheme.panel.borderRadiusSmall);
-      cell.stroke({ color: UITheme.colors.borderMid, width: 1 });
+      drawPanelBase(cell, cx, cy, CELL_SIZE, CELL_SIZE, SKINS.row, { border: UITheme.colors.borderMid });
       this.container.addChild(cell);
 
       if (i < items.length) {
@@ -200,10 +198,7 @@ export class InventoryUI {
     const detailH = Math.max(160, descText.y - y + descText.height + 50);
 
     const bg = new Graphics();
-    bg.roundRect(x, y, 200, detailH, UITheme.panel.borderRadiusMed);
-    bg.fill({ color: UITheme.colors.detailBg, alpha: UITheme.alpha.panelBg });
-    bg.roundRect(x, y, 200, detailH, UITheme.panel.borderRadiusMed);
-    bg.stroke({ color: UITheme.colors.panelBorder, width: 1 });
+    drawPanelBase(bg, x, y, 200, detailH, SKINS.detail);
     this.detailContainer.addChild(bg);
 
     this.detailContainer.addChild(nameText);

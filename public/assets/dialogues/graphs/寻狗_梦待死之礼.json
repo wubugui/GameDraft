@@ -37,7 +37,7 @@
         "kind": "literal",
         "name": "旁白"
       },
-      "text": "他没回城。腿肚子还在转筋，顺着墙根滑进一孔废砖窑，把自己塞进黑里。冷、饿、乏——眼皮一合，人就沉了底。",
+      "text": "深潭那口冷水，差点把他带走。等那股劲把他从水底拽上岸，他已经分不清是死是活——趴在泥里，冷、呛、乏，眼皮一合，人就沉了底。",
       "next": "n2"
     },
     "n2": {
@@ -54,8 +54,11 @@
       "speaker": {
         "kind": "player"
       },
-      "text": "（脚自己在往那边走。路两旁什么都没有。静得只剩俺自己的脚步声。）",
-      "next": "n_house"
+      "text": "（脚自己在往那边走。路两旁啥子都没得。静得只剩我自己的脚步声。）",
+      "next": "n_house",
+      "portrait": {
+        "emotion": "empty_eyes"
+      }
     },
     "n_house": {
       "type": "runActions",
@@ -83,11 +86,14 @@
     "n5": {
       "type": "line",
       "speaker": {
-        "kind": "literal",
-        "name": "老妇人"
+        "kind": "sceneNpc",
+        "npcId": "npc_dream_old_woman"
       },
       "text": "「可算回来了。」",
-      "next": "n6"
+      "next": "n6",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "n6": {
       "type": "line",
@@ -113,7 +119,10 @@
         "kind": "player"
       },
       "text": "（饿。饿得前胸贴后背。老两口在旁边看着他，和善地，等。）",
-      "next": "n_eat"
+      "next": "n_eat",
+      "portrait": {
+        "emotion": "empty_eyes"
+      }
     },
     "n_eat": {
       "type": "runActions",
@@ -126,22 +135,13 @@
             "options": [
               {
                 "text": "【吃】",
-                "actions": [
-                  {
-                    "type": "emitNarrativeSignal",
-                    "params": {
-                      "sourceType": "dialogue",
-                      "sourceId": "寻狗_梦待死之礼",
-                      "signal": "meng_ate"
-                    }
-                  }
-                ]
+                "actions": []
               }
             ]
           }
         }
       ],
-      "next": "n9"
+      "next": "n_eat_sig"
     },
     "n9": {
       "type": "line",
@@ -176,7 +176,10 @@
         "kind": "player"
       },
       "text": "（……样式真旧。）",
-      "next": "n_clothed"
+      "next": "n_clothed",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "n_clothed": {
       "type": "runActions",
@@ -222,11 +225,14 @@
     "n16": {
       "type": "line",
       "speaker": {
-        "kind": "literal",
-        "name": "老头"
+        "kind": "sceneNpc",
+        "npcId": "npc_dream_old_man"
       },
       "text": "（轻声）「给你烧的。」",
-      "next": "n17"
+      "next": "n17",
+      "portrait": {
+        "emotion": "empty_eyes"
+      }
     },
     "n17": {
       "type": "line",
@@ -384,7 +390,10 @@
         "kind": "player"
       },
       "text": "……好饿。",
-      "next": "n28"
+      "next": "n28",
+      "portrait": {
+        "emotion": "empty_eyes"
+      }
     },
     "n28": {
       "type": "line",
@@ -417,6 +426,20 @@
     },
     "end1": {
       "type": "end"
+    },
+    "n_eat_sig": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_梦待死之礼",
+            "signal": "meng_ate"
+          }
+        }
+      ],
+      "next": "n9"
     }
   }
 }

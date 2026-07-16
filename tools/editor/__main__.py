@@ -1,4 +1,4 @@
-"""Entry point: .\\.tools\\Python311\\python.exe -m tools.editor [project_path]."""
+"""Entry point: .tools/venv/bin/python -m tools.editor [project_path]."""
 from __future__ import annotations
 
 import faulthandler
@@ -35,18 +35,21 @@ def _install_global_excepthook() -> None:
 
 
 def _install_native_faulthandler() -> None:
-    """开启 faulthandler，下次 native crash（segfault/abort）会把 C/Python 栈
-    打到 stderr，并写入工程根目录下的 .editor_crash.log。
-    用于定位 Qt 原生层 crash（无 Python traceback 的"闪退"）。"""
-    faulthandler.enable(file=sys.stderr, all_threads=True)
+    """开启 faulthandler：下次 native crash（segfault/abort）把 C/Python 栈写入
+    工程根目录 .editor_crash.log，用于定位 Qt 原生层 crash（无 Python traceback 的"闪退"）。
+
+    faulthandler 在 C 层直接对单一 fd 写字节，无法 tee 到 stderr+文件双 sink
+    （Python 包装对象的 write 根本不会被调用，历史上的 _Tee 是从未生效的死代码）。
+    注册到日志文件——从 Finder/桌面启动无终端时也能事后取栈；Python 层异常仍经
+    excepthook 走 stderr。日志路径启动时打印一行便于查找。
+    """
     try:
         log_path = Path(__file__).resolve().parent.parent.parent / ".editor_crash.log"
-        # 'a' 模式追加，避免覆盖之前的 crash
         f = log_path.open("a", encoding="utf-8")
         faulthandler.enable(file=f, all_threads=True)
-        print(f"[editor] faulthandler crash log: {log_path}", file=sys.stderr)
+        print(f"[editor] faulthandler → {log_path}（native crash 栈写入此文件）", file=sys.stderr)
     except OSError:
-        pass
+        faulthandler.enable(file=sys.stderr, all_threads=True)
 
 
 def main() -> None:

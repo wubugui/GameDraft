@@ -128,6 +128,278 @@ def build_M(camera, mapping: DepthMapping) -> OrthoProjection:
 
 
 # ==================================================================
+# Ground-plane fitting (RANSAC height field)
+# ==================================================================
+
+def fit_ground_plane(
+    X: np.ndarray,
+    Y: np.ndarray,
+    Z: np.ndarray,
+    inlier_threshold: float | None = None,
+    iterations: int = 200,
+    seed: int = 0,
+) -> tuple[tuple[float, float, float], np.ndarray, float]:
+    """RANSAC-fit the ground as a height field ``Y ≈ a*X + b*Z + c``.
+
+    The ground is the dominant (near-coplanar) lower surface; objects sitting
+    on it produce large positive residuals and are treated as outliers.
+
+    Returns ``((a, b, c), height_above_ground, inlier_ratio)`` where
+    ``height_above_ground = Y - (a*X + b*Z + c)`` has the same shape as ``X``:
+    ~0 on the floor, large positive where geometry rises above it.
+    """
+    xs = X.ravel().astype(np.float64)
+    ys = Y.ravel().astype(np.float64)
+    zs = Z.ravel().astype(np.float64)
+    n = xs.size
+    if n < 3:
+        c = float(np.median(ys)) if n else 0.0
+        return (0.0, 0.0, c), (Y - c).astype(np.float64), 0.0
+
+    span = float(ys.max() - ys.min())
+    if inlier_threshold is None or inlier_threshold <= 0:
+        inlier_threshold = max(span * 0.02, 1e-4)
+
+    rng = np.random.default_rng(seed)
+    A_all = np.column_stack([xs, zs, np.ones_like(xs)])  # Y = a*x + b*z + c
+
+    # 用低处点更可能属于地面：按 (越低权重越大) 偏置采样假设
+    denom = max(span, 1e-9)
+    low_weight = (ys.max() - ys) / denom + 1e-3
+    low_weight /= low_weight.sum()
+
+    # 大网格时只用子集做假设与打分，最终高度仍按全量算
+    if n > 60000:
+        sub = rng.choice(n, size=60000, replace=False, p=low_weight)
+        A_score = A_all[sub]
+        y_score = ys[sub]
+        w_score = low_weight[sub] / low_weight[sub].sum()
+        n_score = 60000
+    else:
+        A_score = A_all
+        y_score = ys
+        w_score = low_weight
+        n_score = n
+
+    best_inliers = None
+    best_count = -1
+    for _ in range(max(1, iterations)):
+        idx = rng.choice(n_score, size=3, replace=False, p=w_score)
+        try:
+            coeff, *_ = np.linalg.lstsq(A_score[idx], y_score[idx], rcond=None)
+        except np.linalg.LinAlgError:
+            continue
+        inliers = np.abs(y_score - A_score @ coeff) < inlier_threshold
+        cnt = int(inliers.sum())
+        if cnt > best_count:
+            best_count = cnt
+            best_inliers = inliers
+
+    if best_inliers is None or best_count < 3:
+        coeff, *_ = np.linalg.lstsq(A_score, y_score, rcond=None)
+    else:
+        coeff, *_ = np.linalg.lstsq(A_score[best_inliers], y_score[best_inliers], rcond=None)
+
+    a, b, c = float(coeff[0]), float(coeff[1]), float(coeff[2])
+    height = (Y - (a * X + b * Z + c)).astype(np.float64)
+    inlier_ratio = float(np.mean(np.abs(height) < inlier_threshold))
+    return (a, b, c), height, inlier_ratio
+
+
+def _morph_1d(A: np.ndarray, radius: int, op, axis: int) -> np.ndarray:
+    """沿某轴的窗口归约(min/max)，边缘复制填充。窗口 = 2*radius+1。"""
+    n = A.shape[axis]
+    pad = [(radius, radius) if a == axis else (0, 0) for a in range(A.ndim)]
+    P = np.pad(A, pad, mode="edge")
+    sl = [slice(None)] * A.ndim
+    res = None
+    for d in range(2 * radius + 1):
+        sl[axis] = slice(d, d + n)
+        chunk = P[tuple(sl)]
+        res = chunk if res is None else op(res, chunk)
+    return res
+
+
+def _grid_open(A: np.ndarray, radius: int) -> np.ndarray:
+    """灰度形态学开运算：先腐蚀(窗口取 min)再膨胀(窗口取 max)。
+
+    抹掉比窗口窄的高凸起(立在地面上的物体)，保留宽缓的地面(斜坡/台阶)。
+    """
+    if radius < 1:
+        return A
+    ero = _morph_1d(_morph_1d(A, radius, np.minimum, 0), radius, np.minimum, 1)
+    dil = _morph_1d(_morph_1d(ero, radius, np.maximum, 0), radius, np.maximum, 1)
+    return dil
+
+
+def _destripe(A: np.ndarray, rh: int = 2, rw: int = 1) -> np.ndarray:
+    """对 2D 数组做中值滤波(竖向窗口更大)，抑制深度图阶梯化产生的横向条纹。"""
+    n0, n1 = A.shape
+    pad = np.pad(A, ((rh, rh), (rw, rw)), mode="edge")
+    stk = [pad[i:i + n0, j:j + n1]
+           for i in range(2 * rh + 1) for j in range(2 * rw + 1)]
+    return np.median(np.stack(stk, axis=0), axis=0)
+
+
+def fit_ground_surface(
+    X: np.ndarray,
+    Y: np.ndarray,
+    Z: np.ndarray,
+    cell_size: float | None = None,
+    destripe: bool = True,
+) -> tuple[np.ndarray, float, float, float, np.ndarray]:
+    """拟合**非平面**地面高度场 ``Y = G(X, Z)``（不是单一平面）。
+
+    每个 XZ 栅格取格内点最低 Y 作地面（下包络）。真实重建里，立在地面上的物体
+    （墙/建筑）其 footprint 栅格内**同时含地面点(基部)与高处点**，故下包络≈地面，
+    物体高处自然高出地面。
+
+    **刻意不做形态学开运算**：开运算用窗口最小值压基准，在透视/起伏地面(地面高度
+    跨画面变化)上会把基准压到远处的低点，导致大片真地面被误判成凸起（红条纹）。
+
+    空格由邻域扩散填补；最后对离地高度做中值，去掉深度图阶梯化造成的横纹。
+
+    返回 ``(G, x_min, z_min, cell_size, height_above)``；贴地≈0，凸起为正。
+    """
+    x_min, x_max = float(X.min()), float(X.max())
+    z_min, z_max = float(Z.min()), float(Z.max())
+    if cell_size is None:
+        span = max(x_max - x_min, z_max - z_min, 0.01)
+        cell_size = span / 140.0
+    gw = max(1, int(np.ceil((x_max - x_min) / cell_size)) + 1)
+    gh = max(1, int(np.ceil((z_max - z_min) / cell_size)) + 1)
+
+    gx = np.clip(((X.ravel() - x_min) / cell_size).astype(np.intp), 0, gw - 1)
+    gz = np.clip(((Z.ravel() - z_min) / cell_size).astype(np.intp), 0, gh - 1)
+    yv = Y.ravel().astype(np.float64)
+
+    lower = np.full((gh, gw), np.inf, dtype=np.float64)
+    np.minimum.at(lower, (gz, gx), yv)
+    known = np.isfinite(lower)
+    if not known.any():
+        return (np.zeros((gh, gw)), x_min, z_min, cell_size,
+                np.zeros_like(Y, dtype=np.float64))
+
+    # 空格用邻域均值扩散填补（下包络直接作地面，跟随起伏/透视，不抬高也不压低）
+    ground = np.where(known, lower, 0.0)
+    fmask = known.copy()
+    for _ in range(80):
+        if fmask.all():
+            break
+        P = np.pad(ground, 1, mode="edge")
+        M = np.pad(fmask.astype(np.float64), 1, mode="edge")
+        s = (P[:-2, 1:-1] * M[:-2, 1:-1] + P[2:, 1:-1] * M[2:, 1:-1] +
+             P[1:-1, :-2] * M[1:-1, :-2] + P[1:-1, 2:] * M[1:-1, 2:])
+        wsum = M[:-2, 1:-1] + M[2:, 1:-1] + M[1:-1, :-2] + M[1:-1, 2:]
+        newly = (~fmask) & (wsum > 0)
+        ground = np.where(newly, s / np.maximum(wsum, 1e-9), ground)
+        fmask = fmask | newly
+
+    height_above = (yv - ground[gz, gx]).reshape(Y.shape)
+    if destripe:
+        height_above = _destripe(height_above)
+    return ground, x_min, z_min, cell_size, height_above
+
+
+# ==================================================================
+# 多边形地面标定（试验）：框定地面区域 → 拟合完整地面深度
+# ==================================================================
+
+def polygon_mask(points: list[tuple[float, float]], height: int, width: int) -> np.ndarray:
+    """把屏幕多边形(图像坐标 (x,y))光栅化成布尔 mask(even-odd)。"""
+    mask = np.zeros((height, width), dtype=bool)
+    n = len(points)
+    if n < 3:
+        return mask
+    ys, xs = np.mgrid[0:height, 0:width]
+    px = np.array([p[0] for p in points], dtype=np.float64)
+    py = np.array([p[1] for p in points], dtype=np.float64)
+    inside = np.zeros((height, width), dtype=bool)
+    j = n - 1
+    for i in range(n):
+        cond = (py[i] > ys) != (py[j] > ys)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            x_int = (px[j] - px[i]) * (ys - py[i]) / (py[j] - py[i]) + px[i]
+        inside ^= cond & (xs < x_int)
+        j = i
+    return inside
+
+
+def _resize_f(arr: np.ndarray, hw: tuple[int, int]) -> np.ndarray:
+    h, w = hw
+    im = Image.fromarray(arr.astype(np.float32), mode="F").resize(
+        (w, h), Image.Resampling.BILINEAR)
+    return np.asarray(im, dtype=np.float64)
+
+
+def _wsmooth(d: np.ndarray, weight: np.ndarray, region: np.ndarray,
+             passes: int) -> np.ndarray:
+    """从可信像素(weight)扩散平滑、填补区域(region)内其余像素。
+
+    关键:每步把已获得值的像素也升级为「源」(weight→1),填充前沿逐步推进,
+    才能桥接较宽的物体空洞(否则只有紧邻可信像素的一圈被填、内部填不进去)。
+    """
+    w = weight.astype(np.float64)
+    v = np.where(weight, d, 0.0)
+    for _ in range(passes):
+        P = np.pad(v, 1, mode="edge")
+        Wp = np.pad(w, 1, mode="edge")
+        num = (P[:-2, 1:-1] * Wp[:-2, 1:-1] + P[2:, 1:-1] * Wp[2:, 1:-1] +
+               P[1:-1, :-2] * Wp[1:-1, :-2] + P[1:-1, 2:] * Wp[1:-1, 2:])
+        den = (Wp[:-2, 1:-1] + Wp[2:, 1:-1] + Wp[1:-1, :-2] + Wp[1:-1, 2:])
+        sm = np.where(den > 0, num / np.maximum(den, 1e-9), v)
+        v = np.where(region, sm, v)
+        w = np.where(region & (den > 0), 1.0, w)
+    return v
+
+
+def fit_floor_depth_in_polygon(
+    depth: np.ndarray,
+    mask: np.ndarray,
+    rise_threshold: float,
+    coarse_w: int = 120,
+    robust_iters: int = 10,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """在多边形(mask)内拟合**完整地面深度**。
+
+    思路：地面深度在画面里是平滑变化的;立在地面上的物体会让深度**突然偏离**地面
+    趋势。于是在 mask 内**稳健拟合地面趋势**(迭代:平滑→把偏离过大的"突起"换成趋势
+    再平滑,从而不被物体带偏、并在物体下方平滑插值);偏离趋势超阈值的连通区=遮挡物。
+
+    产物:
+    - ``F``：完整地面深度。**可见地面 = 原 AI 深度**,**遮挡处 = 拟合趋势(补全)**。
+    - ``occ``：遮挡物 mask(突起区)。
+    - ``floor_trend``：拟合出的平滑地面深度(全 mask 内)。
+
+    在 coarse 网格上拟合趋势(地面是低频)再上采样,最后在全分辨率判遮挡/合成。
+    """
+    H, W = depth.shape
+    cw = max(8, min(coarse_w, W))
+    ch = max(2, int(round(H * (cw / W))))
+    dC = _resize_f(depth.astype(np.float32), (ch, cw))
+    mC = _resize_f(mask.astype(np.float32), (ch, cw)) > 0.5
+    if int(mC.sum()) < 8:
+        return depth.copy(), np.zeros((H, W), dtype=bool), depth.copy()
+
+    inlier = mC.copy()
+    trend = dC.copy()
+    passes = cw  # 足够桥接到整幅宽度的大遮挡物
+    for _ in range(robust_iters):
+        trend = _wsmooth(dC, inlier, mC, passes)
+        resid = dC - trend
+        rin = resid[mC]
+        med = float(np.median(rin))
+        mad = float(np.median(np.abs(rin - med))) + 1e-9
+        inlier = mC & (np.abs(resid - med) < 3.0 * mad)  # 偏离小=可信地面源
+
+    floor_trend = _resize_f(trend.astype(np.float32), (H, W))
+    dev = depth - floor_trend
+    occ = mask & (np.abs(dev) > rise_threshold)
+    F = np.where(occ, floor_trend, depth)
+    return F, occ, floor_trend
+
+
+# ==================================================================
 # World-space XZ collision map (non-stretched quad projection)
 # ==================================================================
 
@@ -238,6 +510,95 @@ class WorldHeightMap:
         return WorldHeightMap(grid=grid, covered=covered,
                               x_min=x_min, z_min=z_min,
                               cell_size=cell_size)
+
+    @staticmethod
+    def from_ground_fit(
+        X: np.ndarray, Y: np.ndarray, Z: np.ndarray,
+        plane: tuple[float, float, float],
+        height_threshold: float,
+        cell_size: float | None = None,
+    ) -> WorldHeightMap:
+        """Build collision from a fitted ground height-field.
+
+        With the ground fully described by ``plane`` (Y = a*X + b*Z + c), a cell
+        is an obstacle (``covered``) when any sample above it rises more than
+        ``height_threshold`` above that ground.  This is the user's insight:
+        once the ground is fit, collision falls out — anything standing proud of
+        the ground is a blocker. ``grid`` stores max height-above-ground per cell
+        (so the existing ``collision_mask`` / ``is_collision`` height_offset still
+        applies on top), keeping the export/runtime path unchanged.
+        """
+        a, b, c = plane
+        height = Y - (a * X + b * Z + c)
+        x_min, x_max = float(X.min()), float(X.max())
+        z_min, z_max = float(Z.min()), float(Z.max())
+        if cell_size is None:
+            span = max(x_max - x_min, z_max - z_min, 0.01)
+            cell_size = span / 200.0
+        gw = max(1, int(np.ceil((x_max - x_min) / cell_size)) + 1)
+        gh = max(1, int(np.ceil((z_max - z_min) / cell_size)) + 1)
+
+        grid = np.zeros((gh, gw), dtype=np.float64)
+        covered = np.zeros((gh, gw), dtype=np.bool_)
+        h_m, w_m = X.shape
+        if h_m < 2 or w_m < 2:
+            return WorldHeightMap(grid=grid, covered=covered,
+                                  x_min=x_min, z_min=z_min, cell_size=cell_size)
+
+        # 逐四边形栅格化（填满格子，避免细网格上逐点采样留缝）。
+        # 与 from_mesh 一致先丢弃深度断裂的拉伸四边形，再按四角「离地高度」分类：
+        # 最大角高 > 阈值 → 该 quad 的 AABB 整片标为障碍；地面(高≈0)自然留白=可走。
+        x_tl, x_tr, x_bl, x_br = X[:-1, :-1], X[:-1, 1:], X[1:, :-1], X[1:, 1:]
+        y_tl, y_tr, y_bl, y_br = Y[:-1, :-1], Y[:-1, 1:], Y[1:, :-1], Y[1:, 1:]
+        z_tl, z_tr, z_bl, z_br = Z[:-1, :-1], Z[:-1, 1:], Z[1:, :-1], Z[1:, 1:]
+        h_tl, h_tr, h_bl, h_br = (height[:-1, :-1], height[:-1, 1:],
+                                  height[1:, :-1], height[1:, 1:])
+
+        def _edge(ax, ay, az, bx, by, bz):
+            return np.sqrt((ax - bx) ** 2 + (ay - by) ** 2 + (az - bz) ** 2)
+
+        e_top = _edge(x_tl, y_tl, z_tl, x_tr, y_tr, z_tr)
+        e_bot = _edge(x_bl, y_bl, z_bl, x_br, y_br, z_br)
+        e_lft = _edge(x_tl, y_tl, z_tl, x_bl, y_bl, z_bl)
+        e_rgt = _edge(x_tr, y_tr, z_tr, x_br, y_br, z_br)
+        max_edge = np.maximum(np.maximum(e_top, e_bot), np.maximum(e_lft, e_rgt))
+        median_edge = float(np.median(max_edge))
+        valid = max_edge <= median_edge * 3.0
+
+        qh = np.maximum(np.maximum(h_tl, h_tr), np.maximum(h_bl, h_br))
+        obstacle = valid & (qh > height_threshold)
+        if not obstacle.any():
+            return WorldHeightMap(grid=grid, covered=covered,
+                                  x_min=x_min, z_min=z_min, cell_size=cell_size)
+
+        qx_lo = np.minimum(np.minimum(x_tl, x_tr), np.minimum(x_bl, x_br))[obstacle]
+        qx_hi = np.maximum(np.maximum(x_tl, x_tr), np.maximum(x_bl, x_br))[obstacle]
+        qz_lo = np.minimum(np.minimum(z_tl, z_tr), np.minimum(z_bl, z_br))[obstacle]
+        qz_hi = np.maximum(np.maximum(z_tl, z_tr), np.maximum(z_bl, z_br))[obstacle]
+        qh = qh[obstacle]
+
+        gx_lo = np.clip(((qx_lo - x_min) / cell_size).astype(np.intp), 0, gw - 1)
+        gx_hi = np.clip(((qx_hi - x_min) / cell_size).astype(np.intp), 0, gw - 1)
+        gz_lo = np.clip(((qz_lo - z_min) / cell_size).astype(np.intp), 0, gh - 1)
+        gz_hi = np.clip(((qz_hi - z_min) / cell_size).astype(np.intp), 0, gh - 1)
+
+        span_x = int((gx_hi - gx_lo).max()) + 1
+        span_z = int((gz_hi - gz_lo).max()) + 1
+        flat_h = qh.ravel()
+        f_gx_lo, f_gz_lo = gx_lo.ravel(), gz_lo.ravel()
+        f_span_x, f_span_z = (gx_hi - gx_lo).ravel(), (gz_hi - gz_lo).ravel()
+        for dz in range(span_z):
+            for dx in range(span_x):
+                m = (dx <= f_span_x) & (dz <= f_span_z)
+                if not m.any():
+                    continue
+                tgx = np.clip(f_gx_lo[m] + dx, 0, gw - 1)
+                tgz = np.clip(f_gz_lo[m] + dz, 0, gh - 1)
+                np.maximum.at(grid, (tgz, tgx), flat_h[m])
+                covered[tgz, tgx] = True
+
+        return WorldHeightMap(grid=grid, covered=covered,
+                              x_min=x_min, z_min=z_min, cell_size=cell_size)
 
     def is_collision(self, x: float, z: float,
                      height_offset: float = 0.0) -> bool:

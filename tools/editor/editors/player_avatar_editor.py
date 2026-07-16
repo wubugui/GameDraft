@@ -20,6 +20,8 @@ from PySide6.QtWidgets import (
 )
 
 from ..project_model import ProjectModel
+from ..shared.form_layout import compact_form
+from ..shared.portrait_catalog import load_portrait_sets
 
 _DEFAULT_MANIFEST = "/resources/runtime/animation/player_anim/anim.json"
 _IDENTITY = "（与逻辑名相同，不映射）"
@@ -52,7 +54,7 @@ class PlayerAvatarEditor(QWidget):
     def __init__(self, model: ProjectModel, parent: QWidget | None = None):
         super().__init__(parent)
         self._model = model
-        self.setMinimumSize(520, 560)
+        self.setMinimumSize(420, 460)
 
         root = QVBoxLayout(self)
         scroll = QScrollArea()
@@ -63,26 +65,35 @@ class PlayerAvatarEditor(QWidget):
         lay = QVBoxLayout(inner)
 
         hint = QLabel(
-            "逻辑状态名 <b>idle / walk / run</b> 由游戏代码固定（见 <code>Player.ts</code>）。"
-            "此处选择动画包并为三态指定 <code>anim.json</code> 里 <code>states</code> 的键。"
-            "<br/>事件中可用 Action：<b>setPlayerAvatar</b>（<code>animManifest</code> 或 <code>bundleId</code> +可选 <code>stateMap</code>）"
-            "切换化身；<b>resetPlayerAvatar</b> 恢复为下方保存的默认（与 <code>game_config</code> 一致）。"
-        )
+            "逻辑状态名 <b>idle / walk / run</b> 由游戏代码固定（见 <code>Player.ts</code>）。")
         hint.setWordWrap(True)
         hint.setTextFormat(Qt.TextFormat.RichText)
+        hint.setToolTip(
+            "此处选择动画包并为三态指定 anim.json 里 states 的键。\n"
+            "事件中可用 Action：setPlayerAvatar（animManifest 或 bundleId + 可选 stateMap）"
+            "切换化身；resetPlayerAvatar 恢复为下方保存的默认（与 game_config 一致）。"
+        )
         lay.addWidget(hint)
 
         pack_box = QGroupBox("动画包（anim.json）")
-        pack_form = QFormLayout(pack_box)
+        pack_form = compact_form(QFormLayout(pack_box))
         self._bundle_combo = QComboBox()
-        self._bundle_combo.setMinimumWidth(280)
+        self._bundle_combo.setMinimumWidth(200)
+        self._bundle_combo.setToolTip(
+            "选择工程内已导出的动画包；选定后自动填充下方 animManifest URL。"
+            "选「仅手动填写 URL」可直接编辑路径。"
+        )
         self._bundle_combo.currentIndexChanged.connect(self._on_bundle_changed)
         pack_form.addRow("工程内动画包", self._bundle_combo)
 
         man_row = QHBoxLayout()
         self._manifest_edit = QLineEdit()
         self._manifest_edit.setPlaceholderText(_DEFAULT_MANIFEST)
-        self._manifest_edit.setMinimumWidth(400)
+        self._manifest_edit.setMinimumWidth(240)
+        self._manifest_edit.setToolTip(
+            "写入 playerAvatar.animManifest 的 anim.json URL；"
+            "形如 /resources/runtime/animation/<包名>/anim.json。"
+        )
         man_row.addWidget(self._manifest_edit, 1)
         reset_m = QPushButton("按包名填充路径")
         reset_m.setToolTip(f"写入 {_MANIFEST_RE.pattern} 形式的标准 URL")
@@ -90,28 +101,41 @@ class PlayerAvatarEditor(QWidget):
         man_row.addWidget(reset_m)
         pack_form.addRow("animManifest URL", man_row)
 
+        self._portrait_combo = QComboBox()
+        self._portrait_combo.setMinimumWidth(200)
+        self._portrait_combo.setToolTip(
+            "对话头像立绘集（resources/runtime/images/dialogue_portraits/<slug>/）。\n"
+            "留空 = 按动画包目录名同名推导（如 player_taoist_anim）。\n"
+            "图对话行头像选「跟随说话人」时，主角行按此解析；setPlayerAvatar 换装可覆盖。"
+        )
+        pack_form.addRow("portraitSlug（对话头像）", self._portrait_combo)
+
         lay.addWidget(pack_box)
 
         map_box = QGroupBox("逻辑状态 → clip（states 键）")
-        map_form = QFormLayout(map_box)
+        map_form = compact_form(QFormLayout(map_box))
         self._clip_combos: dict[str, QComboBox] = {}
         for logical, desc in _LOGICAL_ROWS:
             row = QHBoxLayout()
-            lab = QLabel(f"<b>{logical}</b> — {desc}")
-            lab.setWordWrap(True)
+            short_desc, _, detail = desc.partition("（")
+            short_desc = short_desc.strip()
+            lab = QLabel(f"<b>{logical}</b> — {short_desc}")
             lab.setTextFormat(Qt.TextFormat.RichText)
-            row.addWidget(lab, 1)
+            row.addWidget(lab)
             cb = QComboBox()
-            cb.setMinimumWidth(220)
+            cb.setMinimumWidth(180)
+            if detail:
+                cb.setToolTip(detail.rstrip("）"))
             self._clip_combos[logical] = cb
-            row.addWidget(cb)
+            row.addWidget(cb, 1)
             w = QWidget()
             w.setLayout(row)
             map_form.addRow(w)
         lay.addWidget(map_box)
 
         btn_row = QHBoxLayout()
-        apply_btn = QPushButton("写入 game_config（Apply）")
+        apply_btn = QPushButton("Apply")
+        apply_btn.setToolTip("把上方动画包与三态映射写入 game_config.playerAvatar 并标脏；保存工程后写入磁盘。")
         apply_btn.clicked.connect(self._apply)
         btn_row.addWidget(apply_btn)
         reload_anim = QPushButton("从磁盘重载动画列表")
@@ -143,6 +167,12 @@ class PlayerAvatarEditor(QWidget):
     def _flush_player_avatar_model_sync(self) -> None:
         if not self._sync_player_avatar_deferred:
             return
+        # 脏保护（P2 ⑥，照 anim_editor 样板）：有未 Apply 的选择时，别用模型值重载覆盖
+        # 正在编辑的表单（否则「别页动过 config 后切回」= 静默丢当前编辑）。
+        # 候选（动画包列表）仍刷新，只是不回填字段。
+        if self._is_dirty():
+            self._rebuild_bundle_combo()
+            return
         self._sync_player_avatar_deferred = False
         self._rebuild_bundle_combo()
         self._load_from_model()
@@ -150,6 +180,32 @@ class PlayerAvatarEditor(QWidget):
     def showEvent(self, event) -> None:  # type: ignore[override]
         super().showEvent(event)
         self._flush_player_avatar_model_sync()
+
+    def _compose_player_avatar(self) -> tuple[dict, dict | None]:
+        """把当前 UI 组成 playerAvatar dict，并返回 (新值, 模型旧值)。_apply 与脏判断共用。"""
+        man = self._manifest_edit.text().strip() or _DEFAULT_MANIFEST
+        state_map: dict[str, str] = {}
+        for logical, cb in self._clip_combos.items():
+            clip = str(cb.currentData() or "").strip()
+            if clip and clip != _IDENTITY_DATA:
+                state_map[logical] = clip
+        old = self._model.game_config.get("playerAvatar")
+        pa: dict[str, Any] = dict(old) if isinstance(old, dict) else {}
+        pa["animManifest"] = man
+        if state_map:
+            pa["stateMap"] = state_map
+        else:
+            pa.pop("stateMap", None)
+        slug = str(self._portrait_combo.currentData() or "").strip()
+        if slug:
+            pa["portraitSlug"] = slug
+        else:
+            pa.pop("portraitSlug", None)
+        return pa, (old if isinstance(old, dict) else None)
+
+    def _is_dirty(self) -> bool:
+        pa, old = self._compose_player_avatar()
+        return pa != (old or {})
 
     def _reload_anims(self) -> None:
         self._model.reload_animations_from_disk()
@@ -232,6 +288,26 @@ class PlayerAvatarEditor(QWidget):
                 cb.setCurrentIndex(0)
             cb.blockSignals(False)
 
+    def _populate_portrait_combo(self) -> None:
+        cfg = self._model.game_config.get("playerAvatar") or {}
+        cur = str(cfg.get("portraitSlug") or "").strip()
+        self._portrait_combo.blockSignals(True)
+        self._portrait_combo.clear()
+        self._portrait_combo.addItem("（按动画包同名推导）", "")
+        sets = (
+            load_portrait_sets(self._model.project_path)
+            if self._model.project_path is not None
+            else []
+        )
+        for s in sets:
+            self._portrait_combo.addItem(s, s)
+        if cur and self._portrait_combo.findData(cur) < 0:
+            # 数据里带了磁盘上不存在的立绘集：保留可见，不静默清掉
+            self._portrait_combo.addItem(f"{cur}（缺集）", cur)
+        idx = self._portrait_combo.findData(cur)
+        self._portrait_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self._portrait_combo.blockSignals(False)
+
     def _load_from_model(self) -> None:
         cfg = self._model.game_config.get("playerAvatar")
         if not isinstance(cfg, dict):
@@ -254,18 +330,13 @@ class PlayerAvatarEditor(QWidget):
         self._bundle_combo.blockSignals(False)
 
         self._repopulate_clip_combos()
+        self._populate_portrait_combo()
 
     def _apply(self) -> None:
-        man = self._manifest_edit.text().strip() or _DEFAULT_MANIFEST
-        state_map: dict[str, str] = {}
-        for logical, cb in self._clip_combos.items():
-            clip = str(cb.currentData() or "").strip()
-            if clip and clip != _IDENTITY_DATA:
-                state_map[logical] = clip
-
-        pa: dict[str, Any] = {"animManifest": man}
-        if state_map:
-            pa["stateMap"] = state_map
+        # 保留未知子键（未来字段），只更新本面板管理的键（compose 与脏判断共用）。
+        pa, old = self._compose_player_avatar()
+        if pa == old:
+            return  # 无实质变化：不写不标脏（否则每次 Save All 都重写 game_config）
         self._model.game_config["playerAvatar"] = pa
         self._model.mark_dirty("config")
         self._status_message("已更新 playerAvatar")

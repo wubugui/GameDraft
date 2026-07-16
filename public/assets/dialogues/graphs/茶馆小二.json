@@ -33,11 +33,13 @@
     "first_1": {
       "type": "line",
       "speaker": {
-        "kind": "literal",
-        "name": "小二"
+        "kind": "npc"
       },
-      "text": "哟，关二狗，今儿又来蹭茶气？先说好，赊着的那两碗茶钱我可都记着呢。",
-      "next": "first_set_met"
+      "text": "哟，关二狗，今天又来蹭茶气迈？先说好，赊起那两碗茶钱老子可记得清楚的。",
+      "next": "first_set_met",
+      "portrait": {
+        "emotion": "smirk"
+      }
     },
     "first_set_met": {
       "type": "runActions",
@@ -57,12 +59,12 @@
       "options": [
         {
           "id": "a",
-          "text": "少废话，瞎子李今天怎么来了",
+          "text": "少啰嗦，瞎子李今天啷个来了",
           "next": "first_a"
         },
         {
           "id": "b",
-          "text": "张叨叨今天讲什么呢",
+          "text": "张叨叨今天讲啥子",
           "next": "first_b"
         }
       ]
@@ -70,29 +72,35 @@
     "first_a": {
       "type": "line",
       "speaker": {
-        "kind": "literal",
-        "name": "小二"
+        "kind": "npc"
       },
-      "text": "刚摸进来没多久。你要真有事求他，先让张叨叨把那段书摆完，省得那老瞎子嫌你心浮气躁。",
-      "next": "end1"
+      "text": "刚摸进来没好久。你要真有事求他，先等张叨叨把那段书摆完嘛，免得那老瞎子嫌你毛焦火辣。",
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "first_b": {
       "type": "line",
       "speaker": {
-        "kind": "literal",
-        "name": "小二"
+        "kind": "npc"
       },
-      "text": "还不是那些神仙道士、坟里头爬出来的怪东西。可偏偏茶客就爱听这个。",
-      "next": "end1"
+      "text": "还不是那些神仙道士、坟里头爬出来的怪东西。可偏偏茶客就爱听勒个。",
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "return_1": {
       "type": "line",
       "speaker": {
-        "kind": "literal",
-        "name": "小二"
+        "kind": "npc"
       },
-      "text": "又来啦？今儿这茶馆可没什么空位，想听书就自己挤一挤。",
-      "next": "return_choice"
+      "text": "又来咯？今天这茶馆可没得啥子空位，想听书就自己挤一哈。",
+      "next": "return_choice",
+      "portrait": {
+        "emotion": "smirk"
+      }
     },
     "return_choice": {
       "type": "choice",
@@ -104,12 +112,12 @@
         },
         {
           "id": "r2",
-          "text": "城隍庙那边最近闹什么怪",
+          "text": "城隍庙那点最近闹啥子怪",
           "next": "return_r2"
         },
         {
           "id": "r3",
-          "text": "没事，我随便转转",
+          "text": "没得啥事，我随便转哈",
           "next": "return_r3"
         }
       ]
@@ -117,29 +125,35 @@
     "return_r1": {
       "type": "line",
       "speaker": {
-        "kind": "literal",
-        "name": "小二"
+        "kind": "npc"
       },
       "next": "end1",
-      "text": "谁知道呢，那老瞎子看着和气，真要不顺心，嘴比刀子还快。你自己掂量着点说。"
+      "text": "哪个晓得葛，那老瞎子看着和气，真要不顺心，嘴巴比刀子还快。你自己掂量着点说哈。",
+      "portrait": {
+        "emotion": "smirk"
+      }
     },
     "return_r2": {
       "type": "line",
       "speaker": {
-        "kind": "literal",
-        "name": "小二"
+        "kind": "npc"
       },
       "next": "return_r2b",
-      "text": "你还真问着了。前些天有人翻出一张旧戏单，说当年柳家班就在城隍庙戏台唱过堂会，后来班里那个最红的旦角，说没就没了。"
+      "text": "你还真问着了。前几天有人翻出一张旧戏单，说当年柳家班就在城隍庙戏台唱过堂会，后来班里那个最红的旦角，说没落就没落了。",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "return_r2b": {
       "type": "line",
       "speaker": {
-        "kind": "literal",
-        "name": "小二"
+        "kind": "npc"
       },
       "next": "return_r2flags",
-      "text": "这几日城里又有人说，夜里从庙后头过，能听见女人吊着嗓子唱戏。有人说她是在害人，也有人说她像是在找人。"
+      "text": "这几天城里又有人说，夜里头从庙后头过，能听见女人吊起嗓子唱戏。有人说她是在害人，也有人说她像是在找人。",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "return_r2flags": {
       "type": "runActions",
@@ -164,32 +178,36 @@
     "return_r3": {
       "type": "line",
       "speaker": {
-        "kind": "literal",
-        "name": "小二"
+        "kind": "npc"
       },
       "next": "end1",
-      "text": "转吧转吧，别碰翻茶碗就成。"
+      "text": "转嘛转嘛，莫碰翻茶碗就要得。",
+      "portrait": {
+        "emotion": "smirk"
+      }
     },
     "after_box_1": {
       "type": "line",
       "speaker": {
-        "kind": "literal",
-        "name": "小二"
+        "kind": "npc"
       },
       "next": "after_choice",
-      "text": "咦，你怎么一副魂不守舍的样子？刚才不是还在瞎子李那儿赔笑么。"
+      "text": "咦，你啷个一副魂都掉了的样子？刚才不是还在瞎子李那点赔笑脸迈。",
+      "portrait": {
+        "emotion": "smirk"
+      }
     },
     "after_choice": {
       "type": "choice",
       "options": [
         {
           "id": "x",
-          "text": "没事，先走了",
+          "text": "没得啥事，先切了",
           "next": "after_x"
         },
         {
           "id": "y",
-          "text": "给我倒碗凉茶压压惊",
+          "text": "给老子倒碗凉茶压一哈惊",
           "next": "after_y"
         }
       ]
@@ -197,20 +215,24 @@
     "after_x": {
       "type": "line",
       "speaker": {
-        "kind": "literal",
-        "name": "小二"
+        "kind": "npc"
       },
       "next": "end1",
-      "text": "行，走路看着点，别又把自己摔沟里去。"
+      "text": "要得，走路看到点，莫又把自己摔沟里头切了。",
+      "portrait": {
+        "emotion": "calm"
+      }
     },
     "after_y": {
       "type": "line",
       "speaker": {
-        "kind": "literal",
-        "name": "小二"
+        "kind": "npc"
       },
       "next": "end1",
-      "text": "稀奇，关二狗也有肯掏钱喝茶的时候？算了，这碗先记账上。"
+      "text": "稀奇，关二狗也有肯掏钱喝茶的时候迈？算了，这碗先记到账上。",
+      "portrait": {
+        "emotion": "smirk"
+      }
     },
     "end1": {
       "type": "end"

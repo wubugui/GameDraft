@@ -1,5 +1,7 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import { UITheme, fadeIn } from './UITheme';
+import { drawPanelBase, SKINS } from './PanelSkin';
+import { canvasPointFromEvent } from './uiPointerCoords';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
 import type { StringsProvider } from '../core/StringsProvider';
@@ -20,6 +22,10 @@ export class DialogueLogUI {
   private _isOpen = false;
   private entries: DialogueLogEntry[] = [];
   private scrollOffset = 0;
+  /** 面板骨架（overlay/底板/标题/遮罩）只在 open 时建一次；滚动只重建列表区 */
+  private listContent: Container | null = null;
+  private scrollHint: Text | null = null;
+  private shellGeom: { px: number; py: number; panelW: number; panelH: number } | null = null;
 
   private lineCb: (line: DialogueLine) => void;
   private choiceCb: (payload: { index: number; text?: string }) => void;
@@ -61,7 +67,8 @@ export class DialogueLogUI {
     if (this._isOpen) return;
     this._isOpen = true;
     this.scrollOffset = Math.max(0, this.entries.length - VISIBLE_LINES);
-    this.build();
+    this.buildShell();
+    this.renderList();
     window.addEventListener('keydown', this.onKeyBound);
     window.addEventListener('wheel', this.onWheelBound, { passive: false });
   }
@@ -76,9 +83,12 @@ export class DialogueLogUI {
       this.container.destroy({ children: true });
       this.container = null;
     }
+    this.listContent = null;
+    this.scrollHint = null;
+    this.shellGeom = null;
   }
 
-  private build(): void {
+  private buildShell(): void {
     if (this.container) {
       if (this.container.parent) this.container.parent.removeChild(this.container);
       this.container.destroy({ children: true });
@@ -98,10 +108,7 @@ export class DialogueLogUI {
     this.container.addChild(overlay);
 
     const panel = new Graphics();
-    panel.roundRect(px, py, panelW, panelH, UITheme.panel.borderRadius);
-    panel.fill({ color: UITheme.colors.panelBg, alpha: UITheme.alpha.panelBg });
-    panel.roundRect(px, py, panelW, panelH, UITheme.panel.borderRadius);
-    panel.stroke({ color: UITheme.colors.panelBorder, width: 1 });
+    drawPanelBase(panel, px, py, panelW, panelH, SKINS.panel);
     this.container.addChild(panel);
 
     const title = new Text({
@@ -115,6 +122,44 @@ export class DialogueLogUI {
     const content = new Container();
     content.x = px + PADDING;
     content.y = py + 46;
+
+    const contentMask = new Graphics();
+    contentMask.rect(px + PADDING, py + 46, panelW - PADDING * 2, panelH - 80);
+    contentMask.fill({ color: 0xffffff });
+    this.container.addChild(contentMask);
+    content.mask = contentMask;
+    this.container.addChild(content);
+    this.listContent = content;
+
+    if (this.entries.length === 0) {
+      const empty = new Text({
+        text: this.strings.get('dialogueLog', 'empty'),
+        style: { fontSize: 12, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: panelW - PADDING * 2 },
+      });
+      empty.x = px + PADDING + 10;
+      empty.y = py + 60;
+      this.container.addChild(empty);
+    }
+
+    this.scrollHint = new Text({
+      text: '',
+      style: { fontSize: 11, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: panelW - PADDING * 2 },
+    });
+    this.container.addChild(this.scrollHint);
+
+    this.shellGeom = { px, py, panelW, panelH };
+
+    this.renderer.uiLayer.addChild(this.container);
+    fadeIn(this.container);
+  }
+
+  /** 只重建列表区行与页码提示；骨架不动（曾经每格滚轮整面板重建，长日志时明显卡顿/闪烁）。 */
+  private renderList(): void {
+    if (!this.listContent || !this.shellGeom || !this.scrollHint) return;
+    const { px, py, panelW, panelH } = this.shellGeom;
+
+    const removed = this.listContent.removeChildren();
+    for (const child of removed) child.destroy({ children: true });
 
     const endIdx = Math.min(this.scrollOffset + VISIBLE_LINES, this.entries.length);
     const startIdx = this.scrollOffset;
@@ -137,57 +182,39 @@ export class DialogueLogUI {
         },
       });
       t.y = cy;
-      content.addChild(t);
+      this.listContent.addChild(t);
       cy += Math.max(LINE_HEIGHT, t.height + 2);
-    }
-
-    const contentMask = new Graphics();
-    contentMask.rect(px + PADDING, py + 46, panelW - PADDING * 2, panelH - 80);
-    contentMask.fill({ color: 0xffffff });
-    this.container.addChild(contentMask);
-    content.mask = contentMask;
-    this.container.addChild(content);
-
-    if (this.entries.length === 0) {
-      const empty = new Text({
-        text: this.strings.get('dialogueLog', 'empty'),
-        style: { fontSize: 12, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: panelW - PADDING * 2 },
-      });
-      empty.x = px + PADDING + 10;
-      empty.y = py + 60;
-      this.container.addChild(empty);
     }
 
     const scrollInfo = this.entries.length > VISIBLE_LINES
       ? `${this.scrollOffset + 1}-${endIdx} / ${this.entries.length}`
       : '';
-    const hint = new Text({
-      text: `${scrollInfo}  ${this.strings.get('dialogueLog', 'closeHint')}`,
-      style: { fontSize: 11, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: panelW - PADDING * 2 },
-    });
-    hint.x = px + panelW - hint.width - 16;
-    hint.y = py + panelH - 24;
-    this.container.addChild(hint);
+    this.scrollHint.text = `${scrollInfo}  ${this.strings.get('dialogueLog', 'closeHint')}`;
+    this.scrollHint.x = px + panelW - this.scrollHint.width - 16;
+    this.scrollHint.y = py + panelH - 24;
+  }
 
-    this.renderer.uiLayer.addChild(this.container);
-    fadeIn(this.container);
+  private setScrollOffset(next: number): void {
+    const clamped = Math.max(0, Math.min(Math.max(0, this.entries.length - VISIBLE_LINES), next));
+    if (clamped === this.scrollOffset) return;
+    this.scrollOffset = clamped;
+    this.renderList();
   }
 
   private onKey(e: KeyboardEvent): void {
     if (e.code === 'ArrowUp') {
-      this.scrollOffset = Math.max(0, this.scrollOffset - 1);
-      this.build();
+      this.setScrollOffset(this.scrollOffset - 1);
     } else if (e.code === 'ArrowDown') {
-      this.scrollOffset = Math.min(Math.max(0, this.entries.length - VISIBLE_LINES), this.scrollOffset + 1);
-      this.build();
+      this.setScrollOffset(this.scrollOffset + 1);
     }
   }
 
   private onWheel(e: WheelEvent): void {
+    // 事件来自 DOM 面板（调试侧栏等）时放行，不劫持其滚动
+    if (!canvasPointFromEvent(this.renderer, e)) return;
     e.preventDefault();
     const delta = e.deltaY > 0 ? 3 : -3;
-    this.scrollOffset = Math.max(0, Math.min(Math.max(0, this.entries.length - VISIBLE_LINES), this.scrollOffset + delta));
-    this.build();
+    this.setScrollOffset(this.scrollOffset + delta);
   }
 
   serialize(): object {

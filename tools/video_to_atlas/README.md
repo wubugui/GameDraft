@@ -4,20 +4,20 @@
 
 ## 环境
 
-- 项目本地 Python：`.\.tools\Python311\python.exe`
+- 项目本地 Python：`.tools/venv/bin/python`
 
 ## 安装
 
-```bat
-cd /d f:\GameDraft
-.\install-deps.cmd
+```sh
+cd /path/to/GameDraft
+./dev.sh install-deps
 ```
 
 ## 启动
 
-```bat
-cd /d f:\GameDraft
-.\.tools\Python311\python.exe -m tools.video_to_atlas
+```sh
+cd /path/to/GameDraft
+.tools/venv/bin/python -m tools.video_to_atlas
 ```
 
 ## 模块结构
@@ -33,8 +33,7 @@ cd /d f:\GameDraft
 | `export_panel.py` | 导出工作台：per-job 参数、分别导出、合并导出 |
 | `atlas_core.py` | 图像处理核心：抽帧解码、色键、图集打包、导出格式生成 |
 | `loop_range_bar.py` | 双关键点循环区间条 UI 组件 |
-| `gui.py` | (旧版主窗口，已废弃，保留备查) |
-| `project_model.py` | (旧版数据模型，已废弃，保留备查) |
+| `workspace_ui_concept.html` | 早期 UI 概念参考，不是运行入口 |
 
 ## 工作区持久化格式
 

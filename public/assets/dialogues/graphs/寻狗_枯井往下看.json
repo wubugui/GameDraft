@@ -167,8 +167,11 @@
       "speaker": {
         "kind": "player"
       },
-      "text": "（河滩。井底。……这些东西，到底拿俺当什么？）",
-      "next": "n_flag"
+      "text": "（河滩。井底。……这些东西，到底拿老子当啥子？）",
+      "next": "n_flag",
+      "portrait": {
+        "emotion": "fear"
+      }
     },
     "n_flag": {
       "type": "runActions",

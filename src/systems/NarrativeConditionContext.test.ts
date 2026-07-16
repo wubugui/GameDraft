@@ -10,20 +10,28 @@ function baseContext(active = true, multiOwner = false): { eventBus: EventBus; f
   const eventBus = new EventBus();
   const flagStore = new FlagStore(eventBus);
   const ownerGraphIds = multiOwner ? ['npc_ringboy_a', 'npc_ringboy_b'] : ['npc_ringboy_a'];
+  // 与真实 NarrativeStateManager 一致：isStateActive ≡ getActiveState(graphId) === stateId
+  const getActiveState = (graphId: string) => {
+    if (graphId === 'flow') return active ? 'ready' : 'other';
+    if (graphId === 'npc_ringboy_a') return active ? 'after_event' : 'before_event';
+    if (graphId === 'npc_ringboy_b') return active ? 'ring_taken' : 'before_event';
+    if (graphId === 'scene_wrapper') return active ? 'scene_open' : 'scene_closed';
+    return 'other';
+  };
   const narrativeState = {
-    getActiveState: (graphId: string) => {
-      if (graphId === 'flow') return active ? 'ready' : 'other';
-      if (graphId === 'npc_ringboy_a') return active ? 'after_event' : 'before_event';
-      if (graphId === 'npc_ringboy_b') return active ? 'ring_taken' : 'before_event';
-      return 'other';
-    },
-    isStateActive: (graphId: string, stateId: string) => graphId === 'flow' && stateId === 'ready' && active,
+    getActiveState,
+    isStateActive: (graphId: string, stateId: string) => getActiveState(graphId) === stateId,
     getGraph: (graphId: string) => {
-      if (graphId === 'npc_ringboy_a' || graphId === 'npc_ringboy_b') return { id: graphId };
+      if (graphId === 'npc_ringboy_a' || graphId === 'npc_ringboy_b' || graphId === 'scene_wrapper') return { id: graphId };
       return undefined;
     },
     getGraphIdsByOwner: (ownerType: string, ownerId: string) =>
       ownerType === 'npc' && ownerId === 'npc_ringboy' ? ownerGraphIds : [],
+    getPrimaryGraphByOwner: (ownerType: string, ownerId: string) => {
+      if (ownerType === 'npc' && ownerId === 'npc_ringboy' && ownerGraphIds.length === 1) return { id: ownerGraphIds[0] };
+      if (ownerType === 'scene' && ownerId === 'scene_test') return { id: 'scene_wrapper' };
+      return undefined;
+    },
     getPrimaryActiveStateByOwner: (ownerType: string, ownerId: string) =>
       ownerType === 'npc' && ownerId === 'npc_ringboy' && active && ownerGraphIds.length === 1
         ? 'after_event'
@@ -41,6 +49,7 @@ function baseContext(active = true, multiOwner = false): { eventBus: EventBus; f
         getLineLifecycleState: () => 'inactive',
       } as any,
       narrativeState,
+      currentSceneId: 'scene_test',
     },
   };
 }
@@ -77,6 +86,56 @@ describe('narrative condition context injection', () => {
     // 未注入 hasReachedState 时 reached 退化为 isStateActive
     delete (ctx.narrativeState as any).hasReachedState;
     expect(evaluateConditionExprList([{ narrative: 'flow', state: 'ready', reached: true } as any], ctx)).toBe(false);
+  });
+
+  it('keeps the trace evaluator aligned with the non-trace evaluator on reached leaves', async () => {
+    const { evaluateConditionExpr, evaluateConditionExprWithTrace } =
+      await import('./graphDialogue/evaluateGraphCondition');
+    const { ctx } = baseContext(false);
+    (ctx.narrativeState as any).hasReachedState = (g: string, s: string) => g === 'flow' && s === 'ready';
+    const reachedExpr = { narrative: 'flow', state: 'ready', reached: true } as any;
+    const activeExpr = { narrative: 'flow', state: 'ready' } as any;
+    // 对话图 switch / preconditions 走的 trace 版必须与非 trace 版同判（R7 曾缺 reached 分支）
+    expect(evaluateConditionExprWithTrace(reachedExpr, ctx).result).toBe(evaluateConditionExpr(reachedExpr, ctx));
+    expect(evaluateConditionExprWithTrace(reachedExpr, ctx).result).toBe(true);
+    expect(evaluateConditionExprWithTrace(activeExpr, ctx).result).toBe(evaluateConditionExpr(activeExpr, ctx));
+    expect(evaluateConditionExprWithTrace(activeExpr, ctx).result).toBe(false);
+    // 未注入 hasReachedState 时两版一致退化为 isStateActive
+    delete (ctx.narrativeState as any).hasReachedState;
+    expect(evaluateConditionExprWithTrace(reachedExpr, ctx).result).toBe(evaluateConditionExpr(reachedExpr, ctx));
+    expect(evaluateConditionExprWithTrace(reachedExpr, ctx).result).toBe(false);
+  });
+
+  it('evaluates plane leaves against the injected active plane (normal fallback when absent)', async () => {
+    const { evaluateConditionExprList } = await import('./graphDialogue/conditionEvalBridge');
+    const { evaluateConditionExpr, evaluateConditionExprWithTrace } =
+      await import('./graphDialogue/evaluateGraphCondition');
+    const { ctx } = baseContext(true);
+    // 未注入 getActivePlaneId：按 normal 比较
+    expect(evaluateConditionExprList([{ plane: 'normal' } as any], ctx)).toBe(true);
+    expect(evaluateConditionExprList([{ plane: '背尸' } as any], ctx)).toBe(false);
+    // 注入后按激活位面比较；trace 版与非 trace 版同判
+    ctx.getActivePlaneId = () => '背尸';
+    const leaf = { plane: '背尸' } as any;
+    expect(evaluateConditionExpr(leaf, ctx)).toBe(true);
+    expect(evaluateConditionExprWithTrace(leaf, ctx).result).toBe(true);
+    // 组合语义：非 normal
+    expect(evaluateConditionExpr({ not: { plane: 'normal' } } as any, ctx)).toBe(true);
+    // 空 id 判 false
+    expect(evaluateConditionExpr({ plane: '' } as any, ctx)).toBe(false);
+  });
+
+  it('fails closed on unknown flag condition operators and warns once per operator', async () => {
+    const { evaluateConditionExprList } = await import('./graphDialogue/conditionEvalBridge');
+    const { flagStore, ctx } = baseContext(true);
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    flagStore.set('x', 1);
+    // 非法 op（如 '===' 笔误）判 false，而非被静默跳过恒真
+    expect(evaluateConditionExprList([{ flag: 'x', op: '===', value: 1 } as any], ctx)).toBe(false);
+    expect(evaluateConditionExprList([{ flag: 'x', op: '==', value: 1 } as any], ctx)).toBe(true);
+    evaluateConditionExprList([{ flag: 'x', op: '===', value: 1 } as any], ctx);
+    expect(spy.mock.calls.filter((c) => String(c[0]).includes('未知运算符')).length).toBe(1);
+    spy.mockRestore();
   });
 
   it('lets graph dialogue preconditions read narrative state', async () => {
@@ -293,6 +352,57 @@ describe('narrative condition context injection', () => {
     miss.eventBus.on('dialogue:line', (payload) => { text = payload?.text ?? ''; });
     await miss.manager.startDialogueGraph({ graphId: 'ctx', npcName: 'NPC' });
     expect(text).toBe('flow-miss');
+  });
+
+  it('resolves @owner switch condition to the dialogue owner wrapper', async () => {
+    const switchGraph = {
+      id: 'owner_token',
+      entry: 'switch',
+      nodes: {
+        switch: {
+          type: 'switch',
+          defaultNext: 'fallback',
+          cases: [{ condition: { narrative: '@owner', state: 'after_event' }, next: 'hit' }],
+        },
+        hit: { type: 'line', speaker: { kind: 'npc' }, text: 'owner-hit', next: 'end' },
+        fallback: { type: 'line', speaker: { kind: 'npc' }, text: 'owner-miss', next: 'end' },
+        end: { type: 'end' },
+      },
+    };
+    const runtime = graphDialogue(true, switchGraph);
+    let text = '';
+    runtime.eventBus.on('dialogue:line', (payload) => { text = payload?.text ?? ''; });
+    await runtime.manager.startDialogueGraph({ graphId: 'owner_token', npcName: 'NPC', npcId: 'npc_ringboy' });
+    expect(text).toBe('owner-hit');
+  });
+
+  it('resolves @scene switch condition to the current scene wrapper (onEnter owner inheritance)', async () => {
+    const switchGraph = {
+      id: 'scene_token',
+      entry: 'switch',
+      nodes: {
+        switch: {
+          type: 'switch',
+          defaultNext: 'fallback',
+          cases: [{ condition: { narrative: '@scene', state: 'scene_open' }, next: 'hit' }],
+        },
+        hit: { type: 'line', speaker: { kind: 'npc' }, text: 'scene-hit', next: 'end' },
+        fallback: { type: 'line', speaker: { kind: 'npc' }, text: 'scene-miss', next: 'end' },
+        end: { type: 'end' },
+      },
+    };
+    // 模拟 onEnter：以场景为 owner 启动（无 npcId），@scene 解析为 scene_test 的 wrapper。
+    const hit = graphDialogue(true, switchGraph);
+    let text = '';
+    hit.eventBus.on('dialogue:line', (payload) => { text = payload?.text ?? ''; });
+    await hit.manager.startDialogueGraph({ graphId: 'scene_token', npcName: 'NPC', ownerType: 'scene', ownerId: 'scene_test' });
+    expect(text).toBe('scene-hit');
+
+    const miss = graphDialogue(false, switchGraph);
+    let missText = '';
+    miss.eventBus.on('dialogue:line', (payload) => { missText = payload?.text ?? ''; });
+    await miss.manager.startDialogueGraph({ graphId: 'scene_token', npcName: 'NPC', ownerType: 'scene', ownerId: 'scene_test' });
+    expect(missText).toBe('scene-miss');
   });
 
   it('lets document reveal conditions read narrative state', async () => {

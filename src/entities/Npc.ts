@@ -1,5 +1,6 @@
 import { Container, Graphics, Text, Texture } from 'pixi.js';
 import type { NpcDef, AnimationSetDef, ICutsceneActor } from '../data/types';
+import { portraitSlugFromAnimFile } from '../data/characterRegistry';
 import type { TexelsPerWorld } from '../rendering/EntityPixelDensityMatch';
 import { SpriteEntity } from '../rendering/SpriteEntity';
 
@@ -32,6 +33,16 @@ export class Npc implements ICutsceneActor {
   private patrolSkipWaypointAdvance = false;
   /** 与玩家开对话前记录的 `container.scale.x`（含左右镜像），结束时还原 */
   private facingScaleXBeforeDialogue: number | null = null;
+
+  /**
+   * 显隐三通道，最终 visible = 派生基底 ∧ 条件 ∧ override≠false，只在 applyEffectiveVisible
+   * 一处合成。与 Hotspot 同构：InteractionSystem 每帧只回写「派生/条件」通道，
+   * 外部 setVisible（setEntityEnabled 等会话级动作）落在覆盖通道，不被每帧派生冲掉。
+   */
+  private derivedBaseVisible = true;
+  private conditionVisible = true;
+  /** 会话级显隐覆盖（不入档）；null=无覆盖，true 等价 null */
+  private sessionEnabledOverride: boolean | null = null;
 
   constructor(def: NpcDef) {
     this.def = def;
@@ -118,8 +129,51 @@ export class Npc implements ICutsceneActor {
   get interactionRange(): number { return this.def.interactionRange; }
   get id(): string { return this.def.id; }
 
+  /**
+   * 当前生效装扮配置的对话头像立绘集：显式 portraitSlug（NpcDef 就地 / 角色注册表继承）优先，
+   * 缺省按 animFile 动画包目录名推导（多数「包名==头像名」的角色因此无需配 portraitSlug）。
+   * 装扮配置解耦：NPC 换装走 `setEntityField(npc, portraitSlug/animFile)`——运行时字段直接改写本
+   * 实体 def 并经 sceneMemory 进存档；改 animFile 时头像也随包名推导自动跟着换。
+   */
+  get currentPortraitSlug(): string | null {
+    return this.def.portraitSlug?.trim() || portraitSlugFromAnimFile(this.def.animFile);
+  }
+
+  /** 投影阴影用：当前显示帧纹理；无精灵时 null */
+  getDisplayTexture(): Texture | null {
+    return this.sprite?.getDisplayTexture() ?? null;
+  }
+
+  /** 投影阴影用：世界尺寸（宽高） */
+  getWorldSize(): { width: number; height: number } {
+    return this.sprite?.getWorldSize() ?? { width: 0, height: 0 };
+  }
+
+  /** 投影阴影用：左右朝向（来自 container.scale.x 符号） */
+  getFacing(): 1 | -1 {
+    return this.container.scale.x < 0 ? -1 : 1;
+  }
+
   getDisplayObject(): unknown {
     return this.container;
+  }
+
+  /** 跨运行壳视觉门禁用的稳定只读状态。 */
+  getDebugVisualState(): Record<string, unknown> {
+    return {
+      id: this.id,
+      x: this.x,
+      y: this.y,
+      visible: this.container.visible,
+      scaleX: this.container.scale.x,
+      scaleY: this.container.scale.y,
+      animation: this.sprite?.getDebugVisualState() ?? null,
+    };
+  }
+
+
+  resetAnimationClock(): void {
+    this.sprite?.resetAnimationClock();
   }
 
   /** 气泡底边在头顶附近；无精灵时用占位圆顶部估算 */
@@ -159,8 +213,36 @@ export class Npc implements ICutsceneActor {
     this.sprite?.setDirection(1, 0);
   }
 
+  /**
+   * 外部（Action / 过场 / 持久化立即生效路径）显隐入口：写会话覆盖通道，
+   * 不会被 InteractionSystem 的每帧派生回写冲掉；true 即清除覆盖（回到派生基底决定）。
+   */
   setVisible(visible: boolean): void {
-    this.container.visible = visible;
+    this.setSessionEnabledOverride(visible ? null : false);
+  }
+
+  /** 会话级覆盖通道（SceneManager.setEntitySessionEnabled / setVisible 落点）。 */
+  setSessionEnabledOverride(v: boolean | null): void {
+    this.sessionEnabledOverride = v;
+    this.applyEffectiveVisible();
+  }
+
+  /** 派生基底通道：过场绑定 / sceneMemory enabled 推导值，由 InteractionSystem / SceneManager 每帧刷新。 */
+  setDerivedBaseVisible(base: boolean): void {
+    this.derivedBaseVisible = base;
+    this.applyEffectiveVisible();
+  }
+
+  /** 条件通道：conditionHidesEntity 时的条件求值结果（其余情况传 true）。 */
+  setConditionVisible(ok: boolean): void {
+    this.conditionVisible = ok;
+    this.applyEffectiveVisible();
+  }
+
+  /** 三通道合成的唯一出口。 */
+  private applyEffectiveVisible(): void {
+    this.container.visible =
+      this.derivedBaseVisible && this.conditionVisible && this.sessionEnabledOverride !== false;
   }
 
   playAnimation(name: string): void {
@@ -237,8 +319,21 @@ export class Npc implements ICutsceneActor {
     moveAnimState?: string,
     faceTowardMovement?: boolean,
   ): Promise<void> {
+    // 过场 skip 后被放弃的动作链可能继续对已销毁的 `_cut_*` 演员发 moveTo：
+    // 此时 cutsceneUpdate 不再被调用，建出的 moveTarget 永不推进也永不 resolve，直接空履约。
+    if (this.container.destroyed) return Promise.resolve();
     if (this.moveTarget) {
       this.moveTarget.resolve();
+      this.moveTarget = null;
+    }
+    // 零距离目标幂等早退：不重播移动动画、不建 moveTarget（巡逻 ping-pong 端点重合 /
+    // 单路点 route 会以自身坐标为目标反复 moveTo，走完整流程会每帧抖动画帧并空转）。
+    {
+      const dx0 = targetX - this._x;
+      const dy0 = targetY - this._y;
+      if (dx0 * dx0 + dy0 * dy0 < 1e-6) {
+        return Promise.resolve();
+      }
     }
     return new Promise<void>(resolve => {
       const toward = faceTowardMovement === true;

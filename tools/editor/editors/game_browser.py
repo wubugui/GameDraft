@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import html
+import os
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal, QUrl, QSize, QTimer, QEventLoop, QStandardPaths
@@ -11,17 +13,36 @@ from PySide6.QtWidgets import (
     QLineEdit, QStyle, QSizePolicy,
 )
 
+from .. import theme
+
 # Default must match vite.config.ts server.port
 GAME_DEV_URL = "http://127.0.0.1:5173/"
 
 _PLACEHOLDER_HTML = """<!DOCTYPE html><html><head><meta charset="utf-8"/>
 <style>body{margin:0;height:100vh;display:flex;align-items:center;justify-content:center;
-background:#1e1e1e;color:#9a9a9a;font-family:system-ui,sans-serif;font-size:15px;}
+background:__BG__;color:__FG__;font-family:system-ui,sans-serif;font-size:__FONT_PX__;}
 </style></head><body><p>__MSG__</p></body></html>"""
 
 
+def _placeholder_colors() -> tuple[str, str]:
+    """占位页背景/前景跟随当前主题(审查 P3:此前硬编码深色,浅色主题不可读)。"""
+    try:
+        if theme.is_dark_theme(theme.current_theme_id()):
+            return "#1e1e1e", "#9a9a9a"
+    except Exception:
+        return "#1e1e1e", "#9a9a9a"
+    return "#ececec", "#555555"
+
+
 def _safe_placeholder(message: str) -> str:
-    return _PLACEHOLDER_HTML.replace("__MSG__", html.escape(message))
+    bg, fg = _placeholder_colors()
+    return (
+        _PLACEHOLDER_HTML
+        .replace("__MSG__", html.escape(message))
+        .replace("__FONT_PX__", theme.css_font_px(theme.FONT_ROLE_PROMINENT))
+        .replace("__BG__", bg)
+        .replace("__FG__", fg)
+    )
 
 
 try:
@@ -38,6 +59,16 @@ except ImportError:  # pragma: no cover
 _GAME_WEB_PROFILE = None
 
 
+def _default_app_data_dir() -> Path:
+    """Platform-appropriate fallback when Qt cannot resolve AppLocalDataLocation."""
+    home = Path.home()
+    if sys.platform == "darwin":
+        return home / "Library" / "Application Support" / "GameDraft"
+    xdg = os.environ.get("XDG_DATA_HOME", "")
+    base = Path(xdg) if xdg else home / ".local" / "share"
+    return base / "GameDraft"
+
+
 def _game_webengine_profile():
     """Persistent profile for game preview; default Qt profile is off-the-record here."""
     global _GAME_WEB_PROFILE
@@ -49,7 +80,7 @@ def _game_webengine_profile():
     profile = QWebEngineProfile("GameDraftGamePreview")
     base = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation)
     if not base:
-        base = str(Path.home() / "AppData" / "Local" / "GameDraft")
+        base = str(_default_app_data_dir())
     root = Path(base) / "webengine_game_preview"
     cache = root / "cache"
     storage = root / "storage"
@@ -85,6 +116,7 @@ class GameBrowserTab(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._has_webengine = QWebEngineView is not None
+        self._placeholder_message: str | None = None
 
         root = QVBoxLayout(self)
         root.setContentsMargins(4, 4, 4, 4)
@@ -166,6 +198,7 @@ class GameBrowserTab(QWidget):
         if not target.endswith("/"):
             target += "/"
         self._url_line.setText(target)
+        self._placeholder_message = None
         self._view.load(QUrl(target))
 
     def reload_dev_url(self) -> None:
@@ -175,7 +208,12 @@ class GameBrowserTab(QWidget):
     def show_message(self, message: str) -> None:
         if not self._view:
             return
+        self._placeholder_message = message
         self._view.setHtml(_safe_placeholder(message))
+
+    def on_editor_theme_changed(self, _theme_id: str) -> None:
+        if self._placeholder_message is not None:
+            self.show_message(self._placeholder_message)
 
     def is_webengine_available(self) -> bool:
         return self._has_webengine

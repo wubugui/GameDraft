@@ -8,7 +8,7 @@ from typing import Any
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QUndoStack, QUndoCommand
 
-from .file_io import read_json, write_json, list_json_files
+from .file_io import StagedJsonWriter, read_json, write_json, list_json_files
 from .shared.project_paths import ProjectPaths
 
 
@@ -48,6 +48,16 @@ class ProjectModel(QObject):
         self.project_path: Path | None = None
         self.undo_stack = QUndoStack(self)
 
+        # 载入期被静默修正/丢弃的数据异常（如角色 id 重复被后者覆盖）。载入不打断、
+        # 不修盘，只记录；validator 把它们作为 warning 冒出来，避免问题从此不可见。
+        self.load_anomalies: list[str] = []
+
+        # 外部修改防护（审查 P1-19）：受管文件的 (st_mtime_ns, st_size) 基线。
+        # 键 = 相对工程根的 posix 路径；值 = 载入/上次成功保存时的盘面状态，
+        # _BASELINE_ABSENT 表示「彼时文件不存在」。detect_external_changes() 用它
+        # 找出「基线之后被外部改动、且本次 Save All 将要覆写」的文件。
+        self._file_baselines: dict[str, tuple[int, int]] = {}
+
         self.game_config: dict = {}
         self.items: list[dict] = []
         self.quests: list[dict] = []
@@ -56,9 +66,16 @@ class ProjectModel(QObject):
         self.rules_data: dict = {}
         self.shops: list[dict] = []
         self.map_nodes: list[dict] = []
+        self.map_background_image: str = ""
+        self._map_config_is_object: bool = False
+        self._map_config_had_background_image_key: bool = False
         self.cutscenes: list[dict] = []
+        # parallax_scenes.json：由独立的 parallax Web 编辑器维护，主编辑器只读加载，
+        # 供 cutscene present:parallaxScene 步的场景 id 选择器与校验用（不写回，避免与工具争抢）。
+        self.parallax_scenes: list[dict] = []
         self.audio_config: dict = {}
         self.strings: dict = {}
+        self.character_registry: dict[str, dict] = {}
         self.archive_characters: list[dict] = []
         self.archive_lore: dict = {}
         self.archive_books: list[dict] = []
@@ -71,8 +88,30 @@ class ProjectModel(QObject):
         self.scenarios_catalog: dict = {}
         self.narrative_graphs: dict = {}
         self.document_reveals: list = []
+        self.smell_profiles: dict = {}
         self.pressure_holds: list[dict] = []
         self.signal_cues: list[dict] = []
+        # planes.json：位面注册表（PlaneDef[]，TS 权威类型 src/systems/plane/types.ts）。
+        # 文件可能尚未创建（由运行时/内容侧初始化），缺失时容错为空数组。
+        self.planes: list[dict] = []
+        # narrative_templates.json：叙事状态机模板（archetype）注册表——编辑器专用，运行时永不加载。
+        # 归一形状 {schemaVersion, templates:[...]}；缺失时容错为空表。见 shared/narrative_templates.py。
+        self.narrative_templates: dict = {"schemaVersion": 1, "templates": []}
+        # narrative_categories.json：叙事状态机「整理分组」标签——编辑器专用，运行时永不加载，绝不进
+        # narrative_graphs.json。形状 {schemaVersion, compositions:{id:name}, subgraphs:{compId:{elId:name}}}；
+        # 缺失时容错为空注册表。见 shared/narrative_categories.py。
+        from .shared.narrative_categories import default_categories_file
+        self.narrative_categories: dict = default_categories_file()
+        # 模板盖章暂存的空白对话桩（id → 图 JSON）：随 Save All 一次性写盘（脏键 dialogue_stubs），
+        # 只写尚不存在的文件、永不覆盖。全有全无：盖章本身零磁盘写入，放弃/崩溃即三样全无。
+        self.pending_dialogue_stubs: dict[str, dict] = {}
+        # 信号重构等跨文件操作对**既有**对话图文件的暂存修改（id → 整份图 JSON）：随 Save All
+        # 覆写原文件（脏键 dialogue_graph_edits）。与 dialogue_stubs 同为零磁盘写入的暂存面，
+        # 放弃/崩溃即消失，磁盘不动。见 shared/signal_refactor.py。
+        self.pending_dialogue_graph_edits: dict[str, dict] = {}
+        # 叙事重构（信号/状态/图 id 改名、信号删除）的共享撤销日志：web 桥与 PyQt
+        # 信号管理器同一份（同一引擎、同一撤销栈），换工程即清空。
+        self.narrative_refactor_journal: list[dict] = []
 
         self.water_minigames_index: list[dict] = []
         self.water_minigames_instances: dict[str, dict] = {}
@@ -125,6 +164,22 @@ class ProjectModel(QObject):
     def scenes_path(self) -> Path:
         return self.assets_path / "scenes"
 
+    def map_config_document(self) -> list[dict] | dict:
+        """Return the exact top-level document shape used for map_config.json.
+
+        Older projects store map nodes as a bare array. Newer projects can attach
+        map-wide settings, currently the runtime paper-map background, next to the
+        node list. Keep this as the single serialization contract so editor save
+        paths and safety tests do not have to know the storage shape.
+        """
+        if self._map_config_is_object or self.map_background_image:
+            doc: dict = {}
+            if self.map_background_image or self._map_config_had_background_image_key:
+                doc["backgroundImage"] = self.map_background_image
+            doc["nodes"] = self.map_nodes
+            return doc
+        return self.map_nodes
+
     @property
     def animation_bundles_path(self) -> Path:
         """每个子目录含 anim.json +图集，与 video_to_atlas 导出一致。"""
@@ -137,19 +192,81 @@ class ProjectModel(QObject):
     # ---- loading ----------------------------------------------------------
 
     def load_project(self, project_path: Path) -> None:
+        """换工程半途失败必须回滚：旧实现先改 project_path 再逐文件读，任一文件损坏就留下
+        「新路径 + 新旧混合数据」，之后 Save All 会把混合数据写进新工程（审查 P1-30）。
+        现在快照全部属性，失败时整体还原到打开前状态再抛错。"""
+        _prev_state = dict(self.__dict__)
+        try:
+            self._load_project_inner(project_path)
+        except Exception:
+            self.__dict__.clear()
+            self.__dict__.update(_prev_state)
+            raise
+
+    def _load_project_inner(self, project_path: Path) -> None:
         self.project_path = project_path
         dp = self.data_path
         sp = self.scenes_path
 
+        self.load_anomalies = []
         self.game_config = self._load(dp / "game_config.json", {})
+        _char_reg = self._load(dp / "character_registry.json", {})
+        _chars = _char_reg.get("characters") if isinstance(_char_reg, dict) else None
+        # id -> 角色定义（name/animFile/portraitSlug）；供 NPC 读取端合并继承。
+        # 重复/缺 id 条目不再静默吞掉——记入 load_anomalies 由 validator 冒出。
+        self.character_registry: dict[str, dict] = {}
+        for c in (_chars or []):
+            if not isinstance(c, dict) or not str(c.get("id") or "").strip():
+                self.load_anomalies.append(
+                    "character_registry.json: 存在缺 id 或非对象的角色条目（载入时被忽略）",
+                )
+                continue
+            cid = str(c["id"]).strip()
+            if cid in self.character_registry:
+                self.load_anomalies.append(
+                    f"character_registry.json: 角色 id {cid!r} 重复（载入时后者覆盖前者）",
+                )
+            self.character_registry[cid] = c
         self.items = self._load(dp / "items.json", [])
         self.quests = self._load(dp / "quests.json", [])
         self.quest_groups = self._load(dp / "questGroups.json", [])
         self.encounters = self._load(dp / "encounters.json", [])
         self.rules_data = self._load(dp / "rules.json", {})
         self.shops = self._load(dp / "shops.json", [])
-        self.map_nodes = self._load(dp / "map_config.json", [])
+        raw_map_config = self._load(dp / "map_config.json", [])
+        self._map_config_is_object = isinstance(raw_map_config, dict)
+        if isinstance(raw_map_config, dict):
+            self._map_config_had_background_image_key = "backgroundImage" in raw_map_config
+            raw_nodes = raw_map_config.get("nodes")
+            self.map_nodes = raw_nodes if isinstance(raw_nodes, list) else []
+            self.map_background_image = str(raw_map_config.get("backgroundImage") or "")
+        elif isinstance(raw_map_config, list):
+            self.map_nodes = raw_map_config
+            self.map_background_image = ""
+            self._map_config_had_background_image_key = False
+        else:
+            self.map_nodes = []
+            self.map_background_image = ""
+            self._map_config_had_background_image_key = False
+            if raw_map_config is not None and (dp / "map_config.json").exists():
+                self.load_anomalies.append(
+                    "map_config.json: 根既非数组也非对象，载入为空地图（下次保存 map 会覆写该文件）",
+                )
         self.cutscenes = self._load(dp / "cutscenes" / "index.json", [])
+        raw_parallax = self._load(dp / "parallax_scenes.json", [])
+        if isinstance(raw_parallax, list):
+            self.parallax_scenes = [x for x in raw_parallax if isinstance(x, dict)]
+            _dropped = len(raw_parallax) - len(self.parallax_scenes)
+            if _dropped:
+                self.load_anomalies.append(
+                    f"parallax_scenes.json: {_dropped} 条非对象条目载入时被忽略（该文件只读，不会被改写）",
+                )
+        else:
+            self.parallax_scenes = []
+            if (dp / "parallax_scenes.json").exists():
+                self.load_anomalies.append(
+                    "parallax_scenes.json: 根不是数组，载入为空（该文件只读，不会被改写）",
+                )
         self.audio_config = self._load(dp / "audio_config.json", {})
         self.strings = self._load(dp / "strings.json", {})
         self.archive_characters = self._load(dp / "archive" / "characters.json", [])
@@ -158,6 +275,35 @@ class ProjectModel(QObject):
         self.archive_documents = self._load(dp / "archive" / "documents.json", [])
         self.pressure_holds = self._load(dp / "pressure_holds.json", [])
         self.signal_cues = self._load(dp / "signal_cues.json", [])
+        self.smell_profiles = self._load(dp / "smell_profiles.json", {})
+        raw_planes = self._load(dp / "planes.json", [])
+        if isinstance(raw_planes, list):
+            self.planes = [x for x in raw_planes if isinstance(x, dict)]
+            _dropped = len(raw_planes) - len(self.planes)
+            if _dropped:
+                self.load_anomalies.append(
+                    f"planes.json: {_dropped} 条非对象条目载入时被丢弃（下次保存 planes 会把丢弃结果写盘）",
+                )
+        else:
+            self.planes = []
+            if (dp / "planes.json").exists():
+                self.load_anomalies.append(
+                    "planes.json: 根不是数组，载入为空（下次保存 planes 会覆写该文件）",
+                )
+        from .shared.narrative_templates import normalize_templates_file
+        self.narrative_templates = normalize_templates_file(
+            self._load(dp / "narrative_templates.json", {"schemaVersion": 1, "templates": []})
+        )
+        from .shared.narrative_categories import (
+            default_categories_file,
+            normalize_categories_file,
+        )
+        self.narrative_categories = normalize_categories_file(
+            self._load(dp / "narrative_categories.json", default_categories_file())
+        )
+        self.pending_dialogue_stubs = {}
+        self.pending_dialogue_graph_edits = {}
+        self.narrative_refactor_journal = []
 
         self.animations = {}
         anim_root = self.animation_bundles_path
@@ -168,12 +314,37 @@ class ProjectModel(QObject):
                     if aj.is_file():
                         self.animations[sub.name] = self._load(aj, {})
 
+        # 场景以**文件名 stem 为键**载入（审查 P1-06）。旧实现按内部 id 建键：
+        # 两个文件内部 id 相同（agent 复制场景忘改 id）时后者静默影子化前者，
+        # Save All 再把可见者写进 scenes/{id}.json 覆毁另一文件。stem 键保证
+        # 每个文件保存回自己（保存路径 scenes/{键}.json），不丢任何一份数据；
+        # 「内部 id ≠ 文件名」记 load_anomalies 并由 validator 冒 error。
         self.scenes = {}
+        _seen_scene_internal_ids: dict[str, str] = {}
         for p in list_json_files(sp, "*.json"):
             if p.parent == sp:
                 data = self._load(p, {})
-                sid = data.get("id", p.stem)
-                self.scenes[sid] = data
+                if not isinstance(data, dict):
+                    self.load_anomalies.append(
+                        f"scenes/{p.name}: 根不是 JSON 对象，载入时被跳过（磁盘文件保持不动）",
+                    )
+                    continue
+                internal_id = str(data.get("id", "") or "").strip()
+                if internal_id and internal_id != p.stem:
+                    self.load_anomalies.append(
+                        f"scenes/{p.name}: 内部 id {internal_id!r} 与文件名不一致"
+                        f"（编辑器按文件名 {p.stem!r} 管理该场景；保存会写回原文件，不覆盖他人）",
+                    )
+                if internal_id:
+                    prev = _seen_scene_internal_ids.get(internal_id)
+                    if prev is not None:
+                        self.load_anomalies.append(
+                            f"scenes/{p.name}: 内部 id {internal_id!r} 与 scenes/{prev} 重复"
+                            f"（两个文件都已按各自文件名载入，未互相覆盖；请修正其一的 id）",
+                        )
+                    else:
+                        _seen_scene_internal_ids[internal_id] = p.name
+                self.scenes[p.stem] = data
 
         self.filter_defs = {}
         filters_dir = dp / "filters"
@@ -185,75 +356,39 @@ class ProjectModel(QObject):
         self.flag_registry = load_flag_registry(flag_registry_path(self.assets_path))
 
         self.overlay_images = self._load(dp / "overlay_images.json", {})
-        raw_sc = self._load(dp / "scenarios.json", {})
-        self.scenarios_catalog = raw_sc if isinstance(raw_sc, dict) else {}
+        # scenarios.json 缺失 → 默认 {"scenarios": []}（审查 P2）：旧默认 {} 会让
+        # presave 校验「缺少 scenarios 字段」把无 scenarios.json 的工程整体锁死。
+        raw_sc = self._load(dp / "scenarios.json", {"scenarios": []})
+        if isinstance(raw_sc, dict):
+            self.scenarios_catalog = raw_sc
+        else:
+            self.scenarios_catalog = {"scenarios": []}
+            self.load_anomalies.append(
+                "scenarios.json: 根不是 JSON 对象，载入为空清单（下次保存 scenarios 会覆写该文件）",
+            )
         raw_ng = self._load(dp / "narrative_graphs.json", {"schemaVersion": 2, "compositions": []})
-        self.narrative_graphs = raw_ng if isinstance(raw_ng, dict) else {"schemaVersion": 2, "compositions": []}
+        if isinstance(raw_ng, dict):
+            self.narrative_graphs = raw_ng
+        else:
+            self.narrative_graphs = {"schemaVersion": 2, "compositions": []}
+            self.load_anomalies.append(
+                "narrative_graphs.json: 根不是 JSON 对象，载入为空图集（下次保存 narrative_graphs 会覆写该文件）",
+            )
         raw_dr = self._load(dp / "document_reveals.json", [])
-        self.document_reveals = raw_dr if isinstance(raw_dr, list) else []
+        if isinstance(raw_dr, list):
+            self.document_reveals = raw_dr
+        else:
+            self.document_reveals = []
+            self.load_anomalies.append(
+                "document_reveals.json: 根不是数组，载入为空（下次保存 document_reveals 会覆写该文件）",
+            )
 
-        self.water_minigames_index = []
-        self.water_minigames_instances = {}
-        wm_dir = dp / "water_minigames"
-        wm_idx = wm_dir / "index.json"
-        if wm_idx.is_file():
-            raw_wm = self._load(wm_idx, [])
-            if isinstance(raw_wm, list):
-                self.water_minigames_index = [x for x in raw_wm if isinstance(x, dict)]
-            for row in self.water_minigames_index:
-                fid = row.get("file")
-                iid = str(row.get("id") or "").strip()
-                if not iid or not isinstance(fid, str) or not fid.endswith(".json"):
-                    continue
-                inst_path = wm_dir / fid
-                data = self._load(inst_path, {})
-                if not isinstance(data, dict):
-                    continue
-                if str(data.get("id") or "").strip() != iid:
-                    data["id"] = iid
-                self.water_minigames_instances[iid] = data
-
-        self.sugar_wheel_index = []
-        self.sugar_wheel_instances = {}
-        sw_dir = dp / "sugar_wheel"
-        sw_idx = sw_dir / "index.json"
-        if sw_idx.is_file():
-            raw_sw = self._load(sw_idx, [])
-            if isinstance(raw_sw, list):
-                self.sugar_wheel_index = [x for x in raw_sw if isinstance(x, dict)]
-            for row in self.sugar_wheel_index:
-                fid = row.get("file")
-                iid = str(row.get("id") or "").strip()
-                if not iid or not isinstance(fid, str) or not fid.endswith(".json"):
-                    continue
-                inst_path = sw_dir / fid
-                data = self._load(inst_path, {})
-                if not isinstance(data, dict):
-                    continue
-                if str(data.get("id") or "").strip() != iid:
-                    data["id"] = iid
-                self.sugar_wheel_instances[iid] = data
-
-        self.paper_craft_index = []
-        self.paper_craft_instances = {}
-        pc_dir = dp / "paper_craft"
-        pc_idx = pc_dir / "index.json"
-        if pc_idx.is_file():
-            raw_pc = self._load(pc_idx, [])
-            if isinstance(raw_pc, list):
-                self.paper_craft_index = [x for x in raw_pc if isinstance(x, dict)]
-            for row in self.paper_craft_index:
-                fid = row.get("file")
-                iid = str(row.get("id") or "").strip()
-                if not iid or not isinstance(fid, str) or not fid.endswith(".json"):
-                    continue
-                inst_path = pc_dir / fid
-                data = self._load(inst_path, {})
-                if not isinstance(data, dict):
-                    continue
-                if str(data.get("id") or "").strip() != iid:
-                    data["id"] = iid
-                self.paper_craft_instances[iid] = data
+        self.water_minigames_index, self.water_minigames_instances = \
+            self._load_minigame_family(dp, "water_minigames")
+        self.sugar_wheel_index, self.sugar_wheel_instances = \
+            self._load_minigame_family(dp, "sugar_wheel")
+        self.paper_craft_index, self.paper_craft_instances = \
+            self._load_minigame_family(dp, "paper_craft")
 
         self._dirty.clear()
         self._dirty_scene_ids.clear()
@@ -261,6 +396,13 @@ class ProjectModel(QObject):
         self.undo_stack.clear()
         self.dirty_changed.emit(False)
         if self._rebuild_dialogue_graph_ids_from_graph_files():
+            # 载入即回写派生索引 → 工程一打开就带脏（scenarios）。记一条 load_anomalies
+            # 让策划看到「脏从哪来」（审查 P3）：这是自动对齐 dialogueGraphIds 的结果，
+            # 保存一次即消除，非误标。
+            self.load_anomalies.append(
+                "scenarios.json: 各 scenario 的 dialogueGraphIds 派生索引与对话图 meta.scenarioId "
+                "不一致，载入时已自动对齐（工程因此标记为待保存；保存一次即固化）",
+            )
             self.mark_dirty("scenarios")
 
     def reload_filters_from_disk(self) -> None:
@@ -288,11 +430,264 @@ class ProjectModel(QObject):
                         self.animations[sub.name] = self._load(aj, {})
         self.data_changed.emit("animation", "")
 
-    @staticmethod
-    def _load(path: Path, default: Any) -> Any:
+    def save_animation_bundle(self, bundle_id: str, anim: dict) -> Path:
+        """把单个动画包的 anim.json 写回磁盘并同步内存。
+
+        - 只写 ``animation/<id>/anim.json``，不碰图集 PNG / atlas.meta.json（像素布局相关字段
+          cols/rows/cellWidth/cellHeight/atlasFrames 由调用方原样带回，避免与图集脱钩）。
+        - 经 :func:`file_io.write_json` 落盘：UTF-8、2 空格缩进、中文不转义、保留键序、末尾换行，
+          与 video_to_atlas 导出及仓库内既有 anim.json 约定一致（编辑器可往返）。
+        - 写后回读，保证内存 ``self.animations[id]`` 与盘面字节一致，再广播 ``animation`` 变更。
+        """
+        if self.project_path is None:
+            raise RuntimeError("未加载工程")
+        bid = str(bundle_id).strip()
+        if not bid:
+            raise ValueError("空动画包 ID")
+        aj = self.animation_bundles_path / bid / "anim.json"
+        if not aj.parent.is_dir():
+            raise FileNotFoundError(f"动画包目录不存在：{aj.parent}")
+        write_json(aj, anim)
+        self.animations[bid] = read_json(aj)
+        self.data_changed.emit("animation", bid)
+        return aj
+
+    def _load_minigame_family(
+        self, dp: Path, family: str,
+    ) -> tuple[list[dict], dict[str, dict]]:
+        """载入 water_minigames / sugar_wheel / paper_craft 三个同构小游戏族。
+
+        统一了三处以前重复的载入逻辑，并把过去静默的清洗一律记 load_anomalies
+        （审查 P2）：
+        - index 非数组 / 条目非对象 → 记异常并跳过；
+        - 登记项指向的实例文件缺失 → **不再凭空造空实例**（旧行为会静默造 {} 空实例，
+          下次保存把真数据抹成空白），改记 load_anomalies；
+        - 实例内部 id 与登记 id 不符 → 就地改写内存副本并记异常（保存时以登记 id 为准）。
+        """
+        index: list[dict] = []
+        instances: dict[str, dict] = {}
+        base_dir = dp / family
+        idx_path = base_dir / "index.json"
+        if not idx_path.is_file():
+            return index, instances
+        raw_idx = self._load(idx_path, [])
+        if isinstance(raw_idx, list):
+            index = [x for x in raw_idx if isinstance(x, dict)]
+            dropped = len(raw_idx) - len(index)
+            if dropped:
+                self.load_anomalies.append(
+                    f"{family}/index.json: {dropped} 条非对象条目载入时被忽略",
+                )
+        else:
+            self.load_anomalies.append(
+                f"{family}/index.json: 根不是数组，载入为空",
+            )
+            return index, instances
+        for row in index:
+            fid = row.get("file")
+            iid = str(row.get("id") or "").strip()
+            if not iid or not isinstance(fid, str) or not fid.endswith(".json"):
+                continue
+            inst_path = base_dir / fid
+            if not inst_path.exists():
+                self.load_anomalies.append(
+                    f"{family}: 登记项 {iid!r} 指向的实例文件 {family}/{fid} 缺失"
+                    f"（未凭空创建空实例；请补文件或从 index 删除该登记，否则保存时该项无实例可写）",
+                )
+                continue
+            data = self._load(inst_path, {})
+            if not isinstance(data, dict):
+                self.load_anomalies.append(
+                    f"{family}/{fid}: 实例根不是 JSON 对象，登记项 {iid!r} 载入时被跳过",
+                )
+                continue
+            if str(data.get("id") or "").strip() != iid:
+                self.load_anomalies.append(
+                    f"{family}/{fid}: 实例内部 id 与 index 登记 id {iid!r} 不一致"
+                    f"（编辑器以登记 id 为准；保存时写回登记 id）",
+                )
+                data["id"] = iid
+            instances[iid] = data
+        return index, instances
+
+    def _load(self, path: Path, default: Any) -> Any:
+        """读一个受管 JSON；顺带记录外部修改基线（文件缺失记「彼时不存在」）。"""
         if path.exists():
-            return read_json(path)
+            data = read_json(path)
+            self._record_file_baseline(path)
+            return data
+        self._file_baselines[self._baseline_key(path)] = self._BASELINE_ABSENT
         return default
+
+    # ---- external-change detection (审查 P1-19) ----------------------------
+
+    #: 「基线采集时文件不存在」的哨兵值（区别于"未跟踪"= 键不存在）。
+    _BASELINE_ABSENT: tuple[int, int] = (-1, -1)
+
+    def _baseline_key(self, path: Path) -> str:
+        """基线字典键：相对工程根的 posix 路径（工程外/未设根时退化为绝对路径）。"""
+        p = Path(path)
+        if self.project_path is not None:
+            try:
+                return p.resolve().relative_to(Path(self.project_path).resolve()).as_posix()
+            except ValueError:
+                pass
+        return p.resolve().as_posix()
+
+    def _record_file_baseline(self, path: Path) -> None:
+        """把 path 当前盘面状态记为基线（= 内存与磁盘同步的时刻）。"""
+        try:
+            st = Path(path).stat()
+        except OSError:
+            self._file_baselines[self._baseline_key(path)] = self._BASELINE_ABSENT
+            return
+        self._file_baselines[self._baseline_key(path)] = (st.st_mtime_ns, st.st_size)
+
+    def detect_external_changes(self) -> list[str]:
+        """返回「自基线（载入或上次成功 Save All）后被外部改动、且本次 Save All 将要
+        覆写」的文件相对路径（相对工程根，posix，有序）。
+
+        只提供检测 API，不弹窗不拦截——主窗在 Save All 前调用并决定提示策略。
+        语义：
+        - 基线不存在（未跟踪文件，如从未读过的对话图）→ 不报告；
+        - 基线为「彼时不存在」而现在盘上有文件 → 报告（外部新建，将被覆写）；
+        - 基线存在而文件已被删除 → 报告（外部删除，保存会凭空复活旧内容）；
+        - (mtime_ns, size) 与基线不一致 → 报告。
+        """
+        if self.project_path is None or not self.is_dirty:
+            return []
+        out: list[str] = []
+        for path in self._planned_write_paths():
+            key = self._baseline_key(path)
+            baseline = self._file_baselines.get(key)
+            if baseline is None:
+                continue  # 未跟踪：无从判断，不误报
+            try:
+                st = Path(path).stat()
+                current: tuple[int, int] | None = (st.st_mtime_ns, st.st_size)
+            except OSError:
+                current = None
+            if baseline == self._BASELINE_ABSENT:
+                if current is not None:
+                    out.append(key)
+            elif current is None or current != baseline:
+                out.append(key)
+        return sorted(set(out))
+
+    def _planned_write_paths(self) -> list[Path]:
+        """按当前脏桶推演本次 save_all 将写盘的目标文件（只读，不产生副作用）。
+
+        与 save_all 的 if 链一一对应（同步维护）；dialogue_stubs 刻意排除——
+        它只写「盘上尚不存在」的文件、永不覆盖，构不成外部修改冲突。
+        """
+        if self.project_path is None:
+            return []
+        dp = self.data_path
+        sp = self.scenes_path
+        dty = self._dirty
+        out: list[Path] = []
+        if "config" in dty:
+            out.append(dp / "game_config.json")
+        if "characterRegistry" in dty:
+            out.append(dp / "character_registry.json")
+        if "item" in dty:
+            out.append(dp / "items.json")
+        if "quest" in dty:
+            out.append(dp / "quests.json")
+        if "questGroup" in dty:
+            out.append(dp / "questGroups.json")
+        if "encounter" in dty:
+            out.append(dp / "encounters.json")
+        if "rules" in dty:
+            out.append(dp / "rules.json")
+        if "shop" in dty:
+            out.append(dp / "shops.json")
+        if "map" in dty:
+            out.append(dp / "map_config.json")
+        if "cutscene" in dty:
+            out.append(dp / "cutscenes" / "index.json")
+        if "audio" in dty:
+            out.append(dp / "audio_config.json")
+        if "strings" in dty:
+            out.append(dp / "strings.json")
+        if "archive" in dty:
+            out.extend([
+                dp / "archive" / "characters.json",
+                dp / "archive" / "lore.json",
+                dp / "archive" / "books.json",
+                dp / "archive" / "documents.json",
+            ])
+        if "scene" in dty:
+            if self._dirty_scenes_all or not self._dirty_scene_ids:
+                scene_ids = sorted(self.scenes.keys())
+            else:
+                scene_ids = sorted(set(self._dirty_scene_ids) & set(self.scenes.keys()))
+            out.extend(sp / f"{sid}.json" for sid in scene_ids)
+        if "flag_registry" in dty:
+            from .flag_registry import flag_registry_path
+            out.append(flag_registry_path(self.assets_path))
+        if "overlay_images" in dty:
+            out.append(dp / "overlay_images.json")
+        if "scenarios" in dty:
+            out.append(dp / "scenarios.json")
+        if "narrative_graphs" in dty:
+            out.append(dp / "narrative_graphs.json")
+        if "document_reveals" in dty:
+            out.append(dp / "document_reveals.json")
+        if "smell_profiles" in dty:
+            out.append(dp / "smell_profiles.json")
+        if "pressure_holds" in dty:
+            out.append(dp / "pressure_holds.json")
+        if "signal_cues" in dty:
+            out.append(dp / "signal_cues.json")
+        if "planes" in dty:
+            out.append(dp / "planes.json")
+        if "narrative_templates" in dty:
+            out.append(dp / "narrative_templates.json")
+        if "narrative_categories" in dty:
+            out.append(dp / "narrative_categories.json")
+        if "dialogue_graph_edits" in dty:
+            from .shared.narrative_templates import _dialogue_id_error
+            graphs_dir = self.dialogues_path / "graphs"
+            for gid, graph in self.pending_dialogue_graph_edits.items():
+                gid_s = str(gid).strip()
+                if not gid_s or _dialogue_id_error(gid_s) or not isinstance(graph, dict):
+                    continue
+                out.append(graphs_dir / f"{gid_s}.json")
+        if "water_minigames" in dty:
+            wm_dir = dp / "water_minigames"
+            out.append(wm_dir / "index.json")
+            for row in self.water_minigames_index:
+                if not isinstance(row, dict):
+                    continue
+                iid = str(row.get("id") or "").strip()
+                fid = row.get("file")
+                if self.water_minigames_instances.get(iid) and isinstance(fid, str):
+                    out.append(wm_dir / fid)
+        if "sugar_wheel" in dty:
+            sw_dir = dp / "sugar_wheel"
+            out.append(sw_dir / "index.json")
+            for row in self.sugar_wheel_index:
+                if not isinstance(row, dict):
+                    continue
+                iid = str(row.get("id") or "").strip()
+                fid = row.get("file")
+                if self.sugar_wheel_instances.get(iid) and isinstance(fid, str):
+                    out.append(sw_dir / fid)
+        if "paper_craft" in dty:
+            pc_dir = dp / "paper_craft"
+            out.append(pc_dir / "index.json")
+            for row in self.paper_craft_index:
+                if not isinstance(row, dict):
+                    continue
+                iid = str(row.get("id") or "").strip()
+                fid = row.get("file")
+                if self.paper_craft_instances.get(iid) and isinstance(fid, str):
+                    out.append(pc_dir / fid)
+        if "filter" in dty:
+            filters_dir = dp / "filters"
+            out.extend(filters_dir / f"{stem}.json" for stem in sorted(self.filter_defs.keys()))
+        return out
 
     # ---- saving -----------------------------------------------------------
 
@@ -315,67 +710,32 @@ class ProjectModel(QObject):
         from .shared.ref_validator import validate_refs_for_save
 
         with perf_span("model.save_all.presave_validators"):
-            ref_err = validate_refs_for_save(self)
+            # 按脏桶收口（审查 P2-③）：只校验本次将写盘的域，盘上无关域的历史坏
+            # 数据不再锁死保存。
+            ref_err = validate_refs_for_save(self, dirty=set(dty))
             if ref_err:
                 raise ValueError(ref_err)
 
-            sc_err = validate_scenarios_catalog_for_save(
-                self.scenarios_catalog,
-                flag_registry=self.flag_registry,
-                model=self,
-            )
-            if sc_err:
-                raise ValueError(sc_err)
-
-        maybe_stamp(clk, "预校验通过 — 顺序：refs → scenarios → writes")
-
-        try:
-            if "config" in dty:
-                write_json(dp / "game_config.json", self.game_config)
-            if "item" in dty:
-                write_json(dp / "items.json", self.items)
-            if "quest" in dty:
-                write_json(dp / "quests.json", self.quests)
-            if "questGroup" in dty:
-                write_json(dp / "questGroups.json", self.quest_groups)
-            if "encounter" in dty:
-                write_json(dp / "encounters.json", self.encounters)
-            if "rules" in dty:
-                write_json(dp / "rules.json", self.rules_data)
-            if "shop" in dty:
-                write_json(dp / "shops.json", self.shops)
-            if "map" in dty:
-                write_json(dp / "map_config.json", self.map_nodes)
-            if "cutscene" in dty:
-                write_json(dp / "cutscenes" / "index.json", self.cutscenes)
-            if "audio" in dty:
-                write_json(dp / "audio_config.json", self.audio_config)
-            if "strings" in dty:
-                write_json(dp / "strings.json", self.strings)
-            if "archive" in dty:
-                write_json(dp / "archive" / "characters.json", self.archive_characters)
-                write_json(dp / "archive" / "lore.json", self.archive_lore)
-                write_json(dp / "archive" / "books.json", self.archive_books)
-                write_json(dp / "archive" / "documents.json", self.archive_documents)
-            maybe_stamp(clk, "已写入 data 下聚合 JSON（按 dirty）")
-            if "scene" in dty:
-                if self._dirty_scenes_all or not self._dirty_scene_ids:
-                    scene_ids = sorted(self.scenes.keys())
-                else:
-                    scene_ids = sorted(
-                        set(self._dirty_scene_ids) & set(self.scenes.keys()),
-                    )
-                for sid in scene_ids:
-                    write_json(sp / f"{sid}.json", self.scenes[sid])
-                maybe_stamp(clk, f"已写入 {len(scene_ids)} 个场景 JSON")
-            if "flag_registry" in dty:
-                from .flag_registry import flag_registry_path
-
-                write_json(flag_registry_path(self.assets_path), self.flag_registry)
-            if "overlay_images" in dty:
-                write_json(dp / "overlay_images.json", self.overlay_images)
+            # scenarios 校验只在本次要写 scenarios 时把关（旧实现无条件跑：无
+            # scenarios.json 的工程改任何东西都存不了——现默认 {"scenarios": []}
+            # 已能通过，这里仍收口到脏桶，避免盘上既有坏 scenarios 锁死无关域）。
             if "scenarios" in dty:
-                write_json(dp / "scenarios.json", self.scenarios_catalog)
+                sc_errs = validate_scenarios_catalog_for_save(
+                    self.scenarios_catalog,
+                    flag_registry=self.flag_registry,
+                    model=self,
+                )
+                if sc_errs:
+                    raise ValueError("scenarios.json 校验失败：\n" + "\n".join(sc_errs))
+
+            # 仅在本次要写 paper_craft 时把关：不因磁盘上既有的坏数据拦住无关域的保存。
+            if "paper_craft" in dty:
+                pc_err = self._paper_craft_presave_error()
+                if pc_err:
+                    raise ValueError(pc_err)
+
+            # narrative_graphs 规范化+校验前移到任何写盘之前：历史实现放在写盘序列
+            # 中段，quest 已落盘后才发现 narrative 非法 → 半保存出孤儿镜像任务。
             if "narrative_graphs" in dty:
                 from .editors.narrative_state_editor import (
                     _normalize_file as _normalize_narrative_graphs,
@@ -385,19 +745,136 @@ class ProjectModel(QObject):
                 narrative_errors = _narrative_validation_errors_for_save(normalized_narrative, self)
                 if narrative_errors:
                     preview = "; ".join(str(e.get("message") or e.get("code")) for e in narrative_errors[:4])
-                    raise ValueError(f"narrative_graphs validation failed: {len(narrative_errors)} error(s). {preview}")
+                    raise ValueError(
+                        f"narrative_graphs.json 校验未通过：{len(narrative_errors)} 条错误。{preview}"
+                    )
                 self.narrative_graphs = normalized_narrative
-                write_json(dp / "narrative_graphs.json", self.narrative_graphs)
+
+            # 位面 extends 缺父/成环：运行时只 warn 并静默忽略继承（数据意义改变），
+            # 保存前必须拦成硬错误（复核 P1-04）。
+            if "planes" in dty:
+                from .validator import plane_extends_errors
+                plane_errs = plane_extends_errors(self.planes)
+                if plane_errs:
+                    msg = "\n".join(f"位面 {pid!r}: {m}" for pid, m in plane_errs[:8])
+                    raise ValueError(f"planes.json 保存被拦截：\n{msg}")
+
+        maybe_stamp(clk, "预校验通过 — 顺序：refs → scenarios → narrative → planes → writes")
+
+        # ---- 两阶段写（复核 P1-03）：先把全部脏桶序列化并落同目录 .tmp（任何失败
+        # 经 abort 清理，磁盘零变化），再统一 os.replace 提交。删除类副作用（filters
+        # 淘汰、pending 暂存清空）一律推迟到提交成功之后。
+        w = StagedJsonWriter()
+        deferred_unlinks: list[Path] = []
+        try:
+            if "config" in dty:
+                w.add(dp / "game_config.json", self.game_config)
+            if "characterRegistry" in dty:
+                # 按载入顺序回写（往返保真优先，审查 P2-⑤）：character_registry 是
+                # 插入序 dict（载入时按文件内数组顺序建键），保存沿用该顺序，不再强制
+                # sorted——否则首次保存必改写磁盘顺序（现盘面未按 id 排）。
+                w.add(
+                    dp / "character_registry.json",
+                    {"characters": list(self.character_registry.values())},
+                )
+            if "item" in dty:
+                w.add(dp / "items.json", self.items)
+            if "quest" in dty:
+                w.add(dp / "quests.json", self.quests)
+            if "questGroup" in dty:
+                w.add(dp / "questGroups.json", self.quest_groups)
+            if "encounter" in dty:
+                w.add(dp / "encounters.json", self.encounters)
+            if "rules" in dty:
+                w.add(dp / "rules.json", self.rules_data)
+            if "shop" in dty:
+                w.add(dp / "shops.json", self.shops)
+            if "map" in dty:
+                map_doc = self.map_config_document()
+                w.add(dp / "map_config.json", map_doc)
+                self._map_config_is_object = isinstance(map_doc, dict)
+                self._map_config_had_background_image_key = (
+                    isinstance(map_doc, dict) and "backgroundImage" in map_doc
+                )
+            if "cutscene" in dty:
+                w.add(dp / "cutscenes" / "index.json", self.cutscenes)
+            if "audio" in dty:
+                w.add(dp / "audio_config.json", self.audio_config)
+            if "strings" in dty:
+                w.add(dp / "strings.json", self.strings)
+            if "archive" in dty:
+                w.add(dp / "archive" / "characters.json", self.archive_characters)
+                w.add(dp / "archive" / "lore.json", self.archive_lore)
+                w.add(dp / "archive" / "books.json", self.archive_books)
+                w.add(dp / "archive" / "documents.json", self.archive_documents)
+            maybe_stamp(clk, "已暂存 data 下聚合 JSON（按 dirty）")
+            if "scene" in dty:
+                if self._dirty_scenes_all or not self._dirty_scene_ids:
+                    scene_ids = sorted(self.scenes.keys())
+                else:
+                    scene_ids = sorted(
+                        set(self._dirty_scene_ids) & set(self.scenes.keys()),
+                    )
+                for sid in scene_ids:
+                    w.add(sp / f"{sid}.json", self.scenes[sid])
+                maybe_stamp(clk, f"已暂存 {len(scene_ids)} 个场景 JSON")
+            if "flag_registry" in dty:
+                from .flag_registry import flag_registry_path
+
+                w.add(flag_registry_path(self.assets_path), self.flag_registry)
+            if "overlay_images" in dty:
+                w.add(dp / "overlay_images.json", self.overlay_images)
+            if "scenarios" in dty:
+                w.add(dp / "scenarios.json", self.scenarios_catalog)
+            if "narrative_graphs" in dty:
+                # 规范化与校验已在预校验段完成（写盘前零副作用拦截）。
+                w.add(dp / "narrative_graphs.json", self.narrative_graphs)
             if "document_reveals" in dty:
-                write_json(dp / "document_reveals.json", self.document_reveals)
+                w.add(dp / "document_reveals.json", self.document_reveals)
+            if "smell_profiles" in dty:
+                w.add(dp / "smell_profiles.json", self.smell_profiles)
             if "pressure_holds" in dty:
-                write_json(dp / "pressure_holds.json", self.pressure_holds)
+                w.add(dp / "pressure_holds.json", self.pressure_holds)
             if "signal_cues" in dty:
-                write_json(dp / "signal_cues.json", self.signal_cues)
+                w.add(dp / "signal_cues.json", self.signal_cues)
+            if "planes" in dty:
+                w.add(dp / "planes.json", self.planes)
+            if "narrative_templates" in dty:
+                from .shared.narrative_templates import normalize_templates_file
+                self.narrative_templates = normalize_templates_file(self.narrative_templates)
+                w.add(dp / "narrative_templates.json", self.narrative_templates)
+            if "narrative_categories" in dty:
+                # 编辑器专用整理分组：归一（排序/丢空）后写旁挂文件，绝不进 narrative_graphs.json。
+                from .shared.narrative_categories import normalize_categories_file
+                self.narrative_categories = normalize_categories_file(self.narrative_categories)
+                w.add(dp / "narrative_categories.json", self.narrative_categories)
+            if "dialogue_stubs" in dty:
+                # 模板盖章暂存的空白对话桩：只写尚不存在的文件，永不覆盖既有对话图。
+                # pending 的清空推迟到提交成功之后，失败时暂存内容不丢。
+                from .shared.narrative_templates import _dialogue_id_error
+                stubs_dir = self.dialogues_path / "graphs"
+                for gid, graph in list(self.pending_dialogue_stubs.items()):
+                    gid_s = str(gid).strip()
+                    if not gid_s or _dialogue_id_error(gid_s) or not isinstance(graph, dict):
+                        continue
+                    target = stubs_dir / f"{gid_s}.json"
+                    if not target.exists():
+                        w.add(target, graph)
+                maybe_stamp(clk, "dialogue_stubs 已暂存")
+            if "dialogue_graph_edits" in dty:
+                # 信号重构等跨文件操作对既有对话图的暂存修改：覆写原文件（区别于
+                # dialogue_stubs 的只写新文件）。pending 清空推迟到提交成功之后。
+                from .shared.narrative_templates import _dialogue_id_error
+                graphs_dir = self.dialogues_path / "graphs"
+                for gid, graph in list(self.pending_dialogue_graph_edits.items()):
+                    gid_s = str(gid).strip()
+                    if not gid_s or _dialogue_id_error(gid_s) or not isinstance(graph, dict):
+                        continue
+                    w.add(graphs_dir / f"{gid_s}.json", graph)
+                maybe_stamp(clk, "dialogue_graph_edits 已暂存")
             if "water_minigames" in dty:
                 wm_dir = dp / "water_minigames"
-                wm_dir.mkdir(parents=True, exist_ok=True)
-                write_json(wm_dir / "index.json", self.water_minigames_index)
+                w.add(wm_dir / "index.json", self.water_minigames_index)
                 for row in self.water_minigames_index:
                     if not isinstance(row, dict):
                         continue
@@ -406,12 +883,11 @@ class ProjectModel(QObject):
                     inst = self.water_minigames_instances.get(iid)
                     if not inst or not isinstance(fid, str):
                         continue
-                    write_json(wm_dir / fid, inst)
-                maybe_stamp(clk, "water_minigames 已写入")
+                    w.add(wm_dir / fid, inst)
+                maybe_stamp(clk, "water_minigames 已暂存")
             if "sugar_wheel" in dty:
                 sw_dir = dp / "sugar_wheel"
-                sw_dir.mkdir(parents=True, exist_ok=True)
-                write_json(sw_dir / "index.json", self.sugar_wheel_index)
+                w.add(sw_dir / "index.json", self.sugar_wheel_index)
                 for row in self.sugar_wheel_index:
                     if not isinstance(row, dict):
                         continue
@@ -420,11 +896,11 @@ class ProjectModel(QObject):
                     inst = self.sugar_wheel_instances.get(iid)
                     if not inst or not isinstance(fid, str):
                         continue
-                    write_json(sw_dir / fid, inst)
+                    w.add(sw_dir / fid, inst)
+                maybe_stamp(clk, "sugar_wheel 已暂存")
             if "paper_craft" in dty:
                 pc_dir = dp / "paper_craft"
-                pc_dir.mkdir(parents=True, exist_ok=True)
-                write_json(pc_dir / "index.json", self.paper_craft_index)
+                w.add(pc_dir / "index.json", self.paper_craft_index)
                 for row in self.paper_craft_index:
                     if not isinstance(row, dict):
                         continue
@@ -433,22 +909,40 @@ class ProjectModel(QObject):
                     inst = self.paper_craft_instances.get(iid)
                     if not inst or not isinstance(fid, str):
                         continue
-                    write_json(pc_dir / fid, inst)
-                maybe_stamp(clk, "paper_craft 已写入")
-                maybe_stamp(clk, "sugar_wheel 已写入")
+                    w.add(pc_dir / fid, inst)
+                maybe_stamp(clk, "paper_craft 已暂存")
             if "filter" in dty:
                 filters_dir = dp / "filters"
-                filters_dir.mkdir(parents=True, exist_ok=True)
                 keep = set(self.filter_defs.keys())
                 if filters_dir.is_dir():
                     for p in list(filters_dir.glob("*.json")):
                         if p.stem not in keep:
-                            p.unlink()
+                            deferred_unlinks.append(p)
                 for stem, data in sorted(self.filter_defs.items()):
-                    write_json(filters_dir / f"{stem}.json", data)
-                maybe_stamp(clk, "filters 同步完成")
-        except Exception:
-            raise
+                    w.add(filters_dir / f"{stem}.json", data)
+                maybe_stamp(clk, "filters 已暂存")
+            maybe_stamp(clk, "全部暂存完成，开始提交（os.replace 序列）")
+            w.commit()
+        finally:
+            w.abort()  # commit 成功后为 no-op；中途失败时清理 .tmp，磁盘零变化
+
+        # ---- 提交成功后的收尾（不再有可失败回滚的写盘）----
+        # 外部修改基线（审查 P1-19）：本次写盘的文件现在内存==磁盘，刷新基线，
+        # 否则下次保存会把自己刚写的内容误报成外部改动。dialogue_stubs 只写新文件、
+        # 永不覆盖，无需纳入冲突检测，不刷新其基线。
+        for path in self._planned_write_paths():
+            self._record_file_baseline(path)
+        for stale in deferred_unlinks:
+            try:
+                stale.unlink()
+            except OSError:
+                pass
+            # 被淘汰的 filter 文件：基线记为「已不存在」。
+            self._file_baselines[self._baseline_key(stale)] = self._BASELINE_ABSENT
+        if "dialogue_stubs" in dty:
+            self.pending_dialogue_stubs = {}
+        if "dialogue_graph_edits" in dty:
+            self.pending_dialogue_graph_edits = {}
 
         self._dirty.clear()
         self._dirty_scene_ids.clear()
@@ -456,7 +950,46 @@ class ProjectModel(QObject):
         self.dirty_changed.emit(False)
         maybe_stamp(clk, "结束（清 dirty）")
 
+    def _paper_craft_presave_error(self) -> str | None:
+        """扎纸订单硬约束：每张订单 paperOptions/finishOptions 非空——运行时缺失即拒载
+        （PaperCraftMinigameScene 加载时 throw），存出去就是坏档，保存前必须拦下。"""
+        errs: list[str] = []
+        for iid, inst in self.paper_craft_instances.items():
+            if not isinstance(inst, dict):
+                continue
+            for order in inst.get("orders") or []:
+                if not isinstance(order, dict):
+                    continue
+                oid = str(order.get("id") or "").strip() or "?"
+                for key, label in (("paperOptions", "纸色"), ("finishOptions", "收尾")):
+                    rows = order.get(key)
+                    if not isinstance(rows, list) or not rows:
+                        errs.append(
+                            f"paper_craft[{iid}] 订单「{oid}」的 {key} 为空：{label}选项至少 1 条（运行时拒载）",
+                        )
+        if not errs:
+            return None
+        return "扎纸订单校验失败，未保存：\n" + "\n".join(errs)
+
+    #: save_all 认领的全部脏桶键（与其 if 链一一对应）。mark_dirty 只接受这里登记的
+    #: 键——历史教训：标错键（如 "quests" vs "quest"）时 Save All 不写文件却清脏标记，
+    #: 暂存内容无声丢失（复核 P1-02 护栏）。新增数据域时两处同步更新。
+    KNOWN_DIRTY_BUCKETS: frozenset = frozenset({
+        "config", "characterRegistry", "item", "quest", "questGroup", "encounter",
+        "rules", "shop", "map", "cutscene", "audio", "strings", "archive", "scene",
+        "flag_registry", "overlay_images", "scenarios", "narrative_graphs",
+        "document_reveals", "smell_profiles", "pressure_holds", "signal_cues",
+        "planes", "narrative_templates", "narrative_categories", "dialogue_stubs",
+        "dialogue_graph_edits", "water_minigames", "sugar_wheel", "paper_craft", "filter",
+    })
+
     def mark_dirty(self, data_type: str, item_id: str = "") -> None:
+        if data_type not in self.KNOWN_DIRTY_BUCKETS:
+            raise ValueError(
+                f"未知脏桶 {data_type!r}：save_all 不认领它，标记会被无声丢弃"
+                "（写盘跳过、脏标记却被清除）。新增数据域时同步更新 "
+                "ProjectModel.KNOWN_DIRTY_BUCKETS 与 save_all 的写盘分支。"
+            )
         was_dirty = self.is_dirty
         self._dirty.add(data_type)
         if data_type == "scene":
@@ -568,6 +1101,27 @@ class ProjectModel(QObject):
             return out
         return []
 
+    def character_field(self, npc: dict, key: str) -> str:
+        """NPC 的 name/animFile/portraitSlug 生效值：就地字段优先，缺省从 characterId 引用的角色继承。"""
+        v = npc.get(key)
+        if isinstance(v, str) and v.strip():
+            return v
+        cid = str(npc.get("characterId") or "").strip()
+        if cid:
+            ch = self.character_registry.get(cid)
+            if isinstance(ch, dict):
+                cv = ch.get(key)
+                if isinstance(cv, str) and cv.strip():
+                    return cv
+        return str(v) if v is not None else ""
+
+    def _npc_label(self, npc: dict) -> str:
+        return (
+            npc.get("label")
+            or self.character_field(npc, "name")
+            or str(npc.get("id") or npc.get("npcId") or "")
+        )
+
     def all_npc_ids_global(self) -> list[tuple[str, str]]:
         """All NPC ids across all scenes, deduplicated."""
         seen: dict[str, str] = {}
@@ -579,12 +1133,11 @@ class ProjectModel(QObject):
                     continue
                 nid = npc.get("id") or npc.get("npcId")
                 if nid and str(nid) not in seen:
-                    label = npc.get("label") or npc.get("name") or str(nid)
-                    seen[str(nid)] = str(label)[:40]
+                    seen[str(nid)] = str(self._npc_label(npc))[:40]
         return [(k, v) for k, v in sorted(seen.items())]
 
     def all_npc_names(self) -> list[str]:
-        """All unique NPC display names across all scenes."""
+        """All unique NPC display names across all scenes（含角色注册表继承名）。"""
         names: set[str] = set()
         for sc in self.scenes.values():
             if not isinstance(sc, dict):
@@ -592,9 +1145,14 @@ class ProjectModel(QObject):
             for npc in sc.get("npcs") or []:
                 if not isinstance(npc, dict):
                     continue
-                name = npc.get("name") or npc.get("label") or npc.get("id")
+                name = self.character_field(npc, "name") or npc.get("label") or npc.get("id")
                 if name:
                     names.add(str(name))
+        # 角色注册表里可能有尚未在任何场景摆放的角色名，一并纳入
+        for ch in self.character_registry.values():
+            nm = ch.get("name")
+            if isinstance(nm, str) and nm.strip():
+                names.add(nm.strip())
         return sorted(names)
 
     def npc_ids_for_scene(self, scene_id: str | None) -> list[tuple[str, str]]:
@@ -608,8 +1166,7 @@ class ProjectModel(QObject):
                 continue
             nid = npc.get("id") or npc.get("npcId")
             if nid:
-                label = npc.get("label") or npc.get("name") or str(nid)
-                out.append((str(nid), str(label)[:40]))
+                out.append((str(nid), str(self._npc_label(npc))[:40]))
         return out
 
     def hotspot_ids_for_scene(self, scene_id: str | None) -> list[tuple[str, str]]:
@@ -734,6 +1291,22 @@ class ProjectModel(QObject):
     def all_cutscene_ids(self) -> list[tuple[str, str]]:
         return [(c["id"], c["id"]) for c in self.cutscenes]
 
+    def all_parallax_scene_ids(self) -> list[tuple[str, str]]:
+        """`(id, label)`：parallax_scenes.json 的场景 id，供 present:parallaxScene 步选场景。
+
+        label 附图层数，方便在下拉里辨认（如 `shenxianding_02_demo · 2 层`）。
+        """
+        out: list[tuple[str, str]] = []
+        for s in self.parallax_scenes:
+            if not isinstance(s, dict):
+                continue
+            sid = str(s.get("id") or "").strip()
+            if not sid:
+                continue
+            n = len(s.get("layers") or []) if isinstance(s.get("layers"), list) else 0
+            out.append((sid, f"{sid} · {n} 层"))
+        return out
+
     def all_shop_ids(self) -> list[tuple[str, str]]:
         return [(s["id"], s.get("name", s["id"])) for s in self.shops]
 
@@ -774,6 +1347,75 @@ class ProjectModel(QObject):
                 continue
             label = str(row.get("label") or "").strip()
             out.append((iid, label or iid))
+        return out
+
+    def all_plane_ids(self) -> list[tuple[str, str]]:
+        """`(id, label)`：planes.json（PlaneDef[]）登记项。文件缺失时为空列表；按 id 去重（保留首条）。"""
+        out: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for row in self.planes:
+            if not isinstance(row, dict):
+                continue
+            pid = str(row.get("id") or "").strip()
+            if not pid or pid in seen:
+                continue
+            seen.add(pid)
+            label = str(row.get("label") or "").strip()
+            out.append((pid, label or pid))
+        return out
+
+    def plane_membership(self, plane_id: str) -> str:
+        """位面世界模型 'shared' | 'exclusive'（与运行时 PlaneReconciler 同口径）。
+
+        本位面未写 membership 时沿 extends 链向父解析（槽级继承）；normal / 未登记 /
+        链断裂 / 成环兜底 shared（保守：世界保持可见）。
+        """
+        pid = str(plane_id or "").strip()
+        if not pid or pid == "normal":
+            return "shared"
+        by_id: dict[str, dict] = {}
+        for row in self.planes:
+            if isinstance(row, dict):
+                rid = str(row.get("id") or "").strip()
+                if rid and rid not in by_id:
+                    by_id[rid] = row
+        trail: set[str] = set()
+        cur: str | None = pid
+        while cur and cur in by_id and cur not in trail:
+            trail.add(cur)
+            row = by_id[cur]
+            mem = row.get("membership")
+            if mem == "exclusive":
+                return "exclusive"
+            if mem == "shared":
+                return "shared"
+            ext = row.get("extends")
+            cur = str(ext).strip() if isinstance(ext, str) and ext.strip() else None
+        return "shared"
+
+    def all_narrative_template_ids(self) -> list[tuple[str, str]]:
+        """`(id, label)`：narrative_templates.json 的模板条目。文件缺失时为空列表。"""
+        out: list[tuple[str, str]] = []
+        data = self.narrative_templates if isinstance(self.narrative_templates, dict) else {}
+        for row in data.get("templates") or []:
+            if not isinstance(row, dict):
+                continue
+            tid = str(row.get("id") or "").strip()
+            if not tid:
+                continue
+            label = str(row.get("label") or "").strip()
+            out.append((tid, label or tid))
+        return out
+
+    def all_smell_profile_ids(self) -> list[tuple[str, str]]:
+        """`(id, name)`：smell_profiles.json 的 profiles 词条（供 setSmell.scent 下拉）。"""
+        data = self.smell_profiles if isinstance(self.smell_profiles, dict) else {}
+        profs = data.get("profiles", {})
+        out: list[tuple[str, str]] = []
+        if isinstance(profs, dict):
+            for pid, p in profs.items():
+                name = (p.get("name") if isinstance(p, dict) else "") or pid
+                out.append((str(pid), str(name)))
         return out
 
     def all_filter_ids(self) -> list[str]:
@@ -861,6 +1503,33 @@ class ProjectModel(QObject):
             for c in raw
             if isinstance(c, dict) and str(c.get("id", "")).strip()
         ]
+
+    def narrative_signal_rows(self) -> list[tuple[str, str]]:
+        """Registered narrative signals as ``(display, id)`` rows for pickers."""
+        if not isinstance(self.narrative_graphs, dict):
+            return []
+        raw = self.narrative_graphs.get("signals")
+        if not isinstance(raw, list):
+            return []
+        out: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for row in raw:
+            if not isinstance(row, dict):
+                continue
+            sid = str(row.get("id") or "").strip()
+            if not sid or sid in seen:
+                continue
+            seen.add(sid)
+            label = str(row.get("label") or "").strip()
+            desc = str(row.get("description") or "").strip()
+            if label and label != sid:
+                display = f"{sid} - {label}"
+            else:
+                display = sid
+            if desc:
+                display = f"{display} ({desc[:48]})"
+            out.append((display, sid))
+        return out
 
     def all_scene_entity_ids(self) -> list[tuple[str, str]]:
         out: list[tuple[str, str]] = []
@@ -1150,9 +1819,9 @@ class ProjectModel(QObject):
             raw = npc.get("id") or npc.get("npcId")
             if raw is None or str(raw).strip() != nid:
                 continue
-            af = npc.get("animFile")
-            if af is not None and str(af).strip():
-                return str(af).strip()
+            af = self.character_field(npc, "animFile")
+            if af.strip():
+                return af.strip()
         return ""
 
     def player_avatar_anim_manifest(self) -> str:

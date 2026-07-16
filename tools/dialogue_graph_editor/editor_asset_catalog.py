@@ -90,3 +90,15 @@ def load_rule_id_name_pairs(project_root: Path) -> list[tuple[str, str]]:
                 name = str(r.get("name") or "").strip() or rid
                 out.append((rid, name))
     return sorted(out, key=lambda x: (x[1].lower(), x[0].lower()))
+
+
+# ---------------- 对话头像（立绘集） ----------------
+# 实现已上移到 tools/editor/shared/portrait_catalog（场景编辑器 NPC.portraitSlug 共用），
+# 此处 re-export 维持本模块既有导入路径不变。
+from tools.editor.shared.portrait_catalog import (  # noqa: E402,F401
+    PORTRAIT_EMOTIONS_FALLBACK as _PORTRAIT_EMOTIONS_FALLBACK,
+    load_portrait_emotions,
+    load_portrait_sets,
+    portrait_image_path,
+    portrait_sets_root,
+)

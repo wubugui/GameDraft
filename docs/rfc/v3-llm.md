@@ -133,7 +133,7 @@ retry:
       - network
       - rate_limit
       - server_5xx
-      - cline_libuv_crash               # Windows 下 0xC0000409 这类
+      - cline_backend_crash
     no_retry_on:
       - auth_error
       - bad_request
@@ -782,7 +782,7 @@ ClineBackend：
 - 子进程超时 → `LLMTimeoutError`，retry tag `timeout`
 - exit code != 0 含 "401" / "403" / "auth" → `LLMAuthError`，tag `auth_error`
 - exit code != 0 含 "rate" / "429" → `LLMRateLimitError`，tag `rate_limit`
-- Windows 0xC0000409 / `UV_HANDLE_CLOSING` → `LLMBackendCrashError`，tag `cline_libuv_crash`
+- `UV_HANDLE_CLOSING` 等后端崩溃 → `LLMBackendCrashError`，tag `cline_backend_crash`
 - exit code != 0 含 "500" / "502" / "503" → `LLMServerError`，tag `server_5xx`
 - 其它 exit != 0 → `LLMError`，tag `unknown`
 

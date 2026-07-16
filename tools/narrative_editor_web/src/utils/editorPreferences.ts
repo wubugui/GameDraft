@@ -14,6 +14,8 @@ export type EditorPreferences = {
   reduceMotion: boolean;
   /** 进入接线/调试模式时默认勾选小地图 */
   defaultShowMiniMap: boolean;
+  /** 画布信号显示模式：'label'=显示注册表中文名（默认），'id'=显示原始信号 id */
+  canvasSignalDisplay: 'label' | 'id';
 };
 
 export const DEFAULT_EDITOR_PREFERENCES: EditorPreferences = {
@@ -25,6 +27,7 @@ export const DEFAULT_EDITOR_PREFERENCES: EditorPreferences = {
   canvasShowGrid: true,
   reduceMotion: false,
   defaultShowMiniMap: false,
+  canvasSignalDisplay: 'label',
 };
 
 const STORAGE_KEY = 'narrative-editor-preferences-v1';
@@ -80,10 +83,16 @@ export function normalizeEditorPreferences(raw: Partial<EditorPreferences> | nul
     canvasShowGrid: raw.canvasShowGrid !== false,
     reduceMotion: raw.reduceMotion === true,
     defaultShowMiniMap: raw.defaultShowMiniMap === true,
+    canvasSignalDisplay: raw.canvasSignalDisplay === 'id' ? 'id' : 'label',
   };
 }
 
-export function loadEditorPreferences(): EditorPreferences {
+/**
+ * localStorage 读写只作**纯 Web 开发态兜底**——主路径是 Qt 宿主经 bridge 落工程文件
+ * （见 bridge.ts loadEditorPreferencesRemote / saveEditorPreferencesRemote）。
+ * WebEngine 内嵌时 localStorage 可能不落盘，故绝不作为唯一持久化（debug-ui-persistence 范式）。
+ */
+export function loadEditorPreferencesLocal(): EditorPreferences {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return { ...DEFAULT_EDITOR_PREFERENCES };
@@ -93,8 +102,12 @@ export function loadEditorPreferences(): EditorPreferences {
   }
 }
 
-export function saveEditorPreferences(preferences: EditorPreferences): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizeEditorPreferences(preferences)));
+export function saveEditorPreferencesLocal(preferences: EditorPreferences): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizeEditorPreferences(preferences)));
+  } catch {
+    /* WebEngine 可能禁 localStorage 写入——静默降级，主路径已落工程文件 */
+  }
 }
 
 export function applyEditorPreferences(preferences: EditorPreferences): void {

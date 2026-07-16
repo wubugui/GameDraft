@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "id": "寻狗_袍哥秒怂",
+  "entry": "root",
+  "meta": {
+    "title": "寻狗Demo·①.5雾津街头·袍哥路过秒怂（自动演出·一次性·立人物）"
+  },
+  "nodes": {
+    "root": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "几个短打裹头的袍哥迎面走来。关二狗本来晃悠着，一眼看见，立马贴到墙根站好，头低着，肩膀缩着。",
+      "next": "pass"
+    },
+    "pass": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "等那几个人过去了，他才敢直起腰。",
+      "next": "spit"
+    },
+    "spit": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "啥玩意儿……",
+      "next": "act",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "act": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_袍哥秒怂",
+            "signal": "paoge_seen"
+          }
+        }
+      ],
+      "next": "end1"
+    },
+    "end1": {
+      "type": "end"
+    }
+  }
+}

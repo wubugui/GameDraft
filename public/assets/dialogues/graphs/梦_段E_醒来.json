@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "id": "梦_段E_醒来",
+  "entry": "n25",
+  "meta": {
+    "title": "梦·段E·醒来"
+  },
+  "nodes": {
+    "n25": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "—— 两 天 后 ——",
+      "next": "n26"
+    },
+    "n26": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "大晴天。鸟叫。城外土路上，牛车碾过辙印。关二狗坐在路边石头上：头发乱成鸡窝，眼下两团青黑。他盯着地上一只蚂蚁，看了很久，很久。",
+      "next": "n27"
+    },
+    "n27": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "……好饿。",
+      "next": "n28",
+      "portrait": {
+        "emotion": "empty_eyes"
+      }
+    },
+    "n28": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "他站起来，拍拍屁股，往城里走。身上还是自己那身破衣裳——梦里的东西，一件都没跟出来。除了饿。",
+      "next": "n_wake"
+    },
+    "n_wake": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_梦待死之礼",
+            "signal": "meng_woken"
+          }
+        },
+        {
+          "type": "fadeWorldToBlack",
+          "params": {
+            "durationMs": 800
+          }
+        },
+        {
+          "type": "switchScene",
+          "params": {
+            "targetScene": "雾津街头",
+            "targetSpawnPoint": "from_dream"
+          }
+        },
+        {
+          "type": "fadeWorldFromBlack",
+          "params": {
+            "durationMs": 1200
+          }
+        }
+      ],
+      "next": "end1"
+    },
+    "end1": {
+      "type": "end"
+    }
+  }
+}

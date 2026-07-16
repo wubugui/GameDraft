@@ -1,10 +1,10 @@
 {
   "id": "雾津街头",
   "name": "雾津街头",
-  "worldWidth": 1376.0,
-  "worldHeight": 768.0,
+  "worldWidth": 4000.0,
+  "worldHeight": 2251.2,
   "camera": {
-    "zoom": 1.15,
+    "zoom": 0.87,
     "pixelsPerUnit": 1.0
   },
   "backgrounds": [
@@ -19,25 +19,33 @@
     "人声闹市"
   ],
   "spawnPoint": {
-    "x": 660.0,
-    "y": 470.0
+    "x": 2083.2,
+    "y": 2195.2
   },
   "spawnPoints": {
     "from_teahouse": {
-      "x": 805.0,
-      "y": 420.0
+      "x": 2083.2,
+      "y": 2050.0
     },
     "from_dock": {
-      "x": 165.0,
-      "y": 600.0
+      "x": 2260.0,
+      "y": 2100.0
     },
     "from_river": {
-      "x": 1230.0,
-      "y": 180.0
+      "x": 1950.0,
+      "y": 2100.0
     },
     "from_event": {
-      "x": 620.0,
-      "y": 500.0
+      "x": 2083.2,
+      "y": 1970.0
+    },
+    "from_dream": {
+      "x": 1990.0,
+      "y": 1970.0
+    },
+    "from_yizhuang": {
+      "x": 3400.0,
+      "y": 1780.0
     }
   },
   "hotspots": [
@@ -45,32 +53,38 @@
       "id": "T_进茶馆",
       "type": "transition",
       "label": "进茶馆",
-      "x": 840.0,
-      "y": 390.0,
+      "x": 1836.0,
+      "y": 1790.0,
       "interactionRange": 56.0,
       "data": {
         "targetScene": "teahouse",
         "targetSpawnPoint": "from_street"
-      }
+      },
+      "planes": [
+        "normal"
+      ]
     },
     {
       "id": "T_去码头",
       "type": "transition",
       "label": "去码头",
-      "x": 110.0,
-      "y": 620.0,
+      "x": 2085.0,
+      "y": 2193.0,
       "interactionRange": 60.0,
       "data": {
         "targetScene": "码头白天",
         "targetSpawnPoint": "spawn_0"
-      }
+      },
+      "planes": [
+        "normal"
+      ]
     },
     {
       "id": "T_出城",
       "type": "transition",
       "label": "出城（河滩方向）",
-      "x": 1260.0,
-      "y": 150.0,
+      "x": 198.9,
+      "y": 962.7,
       "interactionRange": 64.0,
       "conditions": [
         {
@@ -83,14 +97,17 @@
       "data": {
         "targetScene": "河边",
         "targetSpawnPoint": "从城里"
-      }
+      },
+      "planes": [
+        "normal"
+      ]
     },
     {
       "id": "T_去城隍庙",
       "type": "transition",
       "label": "去城隍庙（守夜的活）",
-      "x": 1080.0,
-      "y": 540.0,
+      "x": 3096.0,
+      "y": 642.0,
       "interactionRange": 60.0,
       "conditions": [
         {
@@ -102,14 +119,17 @@
       "data": {
         "targetScene": "城隍庙夜",
         "targetSpawnPoint": "entry"
-      }
+      },
+      "planes": [
+        "normal"
+      ]
     },
     {
       "id": "T_去城门",
       "type": "transition",
       "label": "去城门口",
-      "x": 1180.0,
-      "y": 300.0,
+      "x": 1348.9,
+      "y": 1090.4,
       "interactionRange": 64.0,
       "conditions": [
         {
@@ -126,23 +146,30 @@
       "data": {
         "targetScene": "城门口",
         "targetSpawnPoint": "entry"
-      }
+      },
+      "planes": [
+        "normal"
+      ]
     },
     {
       "id": "hs_围观人群",
       "type": "inspect",
       "label": "围观的人堆",
-      "x": 430.0,
-      "y": 330.0,
+      "x": 1748.0,
+      "y": 1540.0,
       "interactionRange": 70.0,
       "conditions": [
         {
-          "narrative": "flow_xungou_main",
-          "state": "s07_kujing"
+          "narrative": "scenario_向导",
+          "state": "noticed",
+          "reached": true
         },
         {
-          "narrative": "scenario_向导",
-          "state": "noticed"
+          "not": {
+            "narrative": "scenario_向导",
+            "state": "outfitted",
+            "reached": true
+          }
         }
       ],
       "conditionHidesEntity": true,
@@ -154,25 +181,31 @@
       },
       "data": {
         "graphId": "寻狗_围观竞争"
-      }
+      },
+      "planes": [
+        "normal"
+      ]
     },
     {
       "id": "hs_街头闲话",
       "type": "inspect",
       "label": "听街坊闲话",
-      "x": 980.0,
-      "y": 480.0,
+      "x": 2576.0,
+      "y": 1088.0,
       "interactionRange": 60.0,
       "data": {
-        "text": "街坊们凑在屋檐底下躲雨，三句话不离怪事：谁家夜里听见瓦响，哪条巷子不让走夜路。雾津就是这样，越潮的天，闲话越多。"
-      }
+        "graphId": "寻狗_街头闲话"
+      },
+      "planes": [
+        "normal"
+      ]
     },
     {
-      "id": "T_去庄家灵堂",
+      "id": "T_去崖墓",
       "type": "transition",
-      "label": "去庄家（灵堂）",
-      "x": 1010.0,
-      "y": 250.0,
+      "label": "上崖墓",
+      "x": 1692.7,
+      "y": 989.5,
       "interactionRange": 60.0,
       "conditions": [
         {
@@ -190,16 +223,19 @@
       ],
       "conditionHidesEntity": true,
       "data": {
-        "targetScene": "庄家灵堂",
+        "targetScene": "崖墓",
         "targetSpawnPoint": "entry"
-      }
+      },
+      "planes": [
+        "normal"
+      ]
     },
     {
       "id": "T_去婆子家院",
       "type": "transition",
       "label": "去婆子家小院",
-      "x": 320.0,
-      "y": 220.0,
+      "x": 1184.0,
+      "y": 1836.0,
       "interactionRange": 60.0,
       "conditions": [
         {
@@ -219,14 +255,17 @@
       "data": {
         "targetScene": "婆子家院",
         "targetSpawnPoint": "entry"
-      }
+      },
+      "planes": [
+        "normal"
+      ]
     },
     {
       "id": "T_去土地庙",
       "type": "transition",
       "label": "去土地庙（枯井）",
-      "x": 1320.0,
-      "y": 480.0,
+      "x": 3325.3,
+      "y": 473.4,
       "interactionRange": 60.0,
       "conditions": [
         {
@@ -246,14 +285,17 @@
       "data": {
         "targetScene": "枯井土地庙",
         "targetSpawnPoint": "entry"
-      }
+      },
+      "planes": [
+        "normal"
+      ]
     },
     {
       "id": "T_去阎王岭",
       "type": "transition",
       "label": "上阎王岭（送货）",
-      "x": 1320.0,
-      "y": 230.0,
+      "x": 3780.0,
+      "y": 180.0,
       "interactionRange": 60.0,
       "conditions": [
         {
@@ -273,25 +315,45 @@
       "data": {
         "targetScene": "阎王岭山口",
         "targetSpawnPoint": "entry"
-      }
+      },
+      "planes": [
+        "normal"
+      ]
     },
     {
       "id": "T_去义庄",
       "type": "transition",
       "label": "去义庄",
-      "x": 1150.0,
-      "y": 650.0,
+      "x": 3348.0,
+      "y": 884.0,
       "interactionRange": 60.0,
       "conditions": [
         {
           "any": [
             {
               "narrative": "flow_xungou_main",
-              "state": "s09_songhuo"
+              "state": "s09_songhuo",
+              "reached": true
             },
             {
-              "narrative": "flow_xungou_main",
-              "state": "s10_yizhuang"
+              "narrative": "flow_背尸_淹尸活",
+              "state": "carrying"
+            },
+            {
+              "narrative": "flow_背尸_淹尸活",
+              "state": "placed"
+            },
+            {
+              "narrative": "flow_背尸_零工活",
+              "state": "looking"
+            },
+            {
+              "narrative": "flow_背尸_零工活",
+              "state": "carrying"
+            },
+            {
+              "narrative": "flow_背尸_零工活",
+              "state": "placed"
             }
           ]
         }
@@ -301,14 +363,270 @@
         "targetScene": "义庄",
         "targetSpawnPoint": "entry"
       }
+    },
+    {
+      "id": "hs_当铺道袍",
+      "type": "inspect",
+      "label": "街角当铺 · 赊件旧道袍",
+      "x": 620.0,
+      "y": 1068.0,
+      "interactionRange": 60.0,
+      "conditions": [
+        {
+          "narrative": "scenario_向导",
+          "state": "watched",
+          "reached": true
+        },
+        {
+          "not": {
+            "flag": "got_xingtou_daopao",
+            "value": true
+          }
+        }
+      ],
+      "conditionHidesEntity": true,
+      "data": {
+        "graphId": "寻狗_淘道袍"
+      },
+      "planes": [
+        "normal"
+      ]
+    },
+    {
+      "id": "hs_庙会罗盘",
+      "type": "inspect",
+      "label": "庙会摊 · 踅摸个罗盘",
+      "x": 1476.0,
+      "y": 1018.0,
+      "interactionRange": 60.0,
+      "conditions": [
+        {
+          "narrative": "scenario_向导",
+          "state": "watched",
+          "reached": true
+        },
+        {
+          "not": {
+            "flag": "got_xingtou_luopan",
+            "value": true
+          }
+        }
+      ],
+      "conditionHidesEntity": true,
+      "data": {
+        "graphId": "寻狗_淘罗盘"
+      },
+      "planes": [
+        "normal"
+      ]
+    },
+    {
+      "id": "hs_城东桃木",
+      "type": "inspect",
+      "label": "城东先生处 · 顺把桃木剑",
+      "x": 3108.0,
+      "y": 1188.0,
+      "interactionRange": 60.0,
+      "conditions": [
+        {
+          "narrative": "scenario_向导",
+          "state": "watched",
+          "reached": true
+        },
+        {
+          "not": {
+            "flag": "got_xingtou_taomu",
+            "value": true
+          }
+        }
+      ],
+      "conditionHidesEntity": true,
+      "data": {
+        "graphId": "寻狗_淘桃木"
+      },
+      "planes": [
+        "normal"
+      ]
+    },
+    {
+      "id": "hs_纸扎日工",
+      "type": "inspect",
+      "label": "雾津纸扎铺 · 接桩糊纸人日工",
+      "x": 812.0,
+      "y": 1256.0,
+      "interactionRange": 60.0,
+      "data": {
+        "actions": [
+          {
+            "type": "playScriptedDialogue",
+            "params": {
+              "lines": [
+                {
+                  "speaker": "纸扎铺掌柜",
+                  "text": "搭把手不嘛？铺子接了桩白事活路，糊几个随葬纸人，按件给钱。手脚麻利点，莫把忌讳犯了。"
+                }
+              ]
+            }
+          },
+          {
+            "type": "chooseAction",
+            "params": {
+              "prompt": "接这桩糊纸人的日工不？",
+              "allowCancel": true,
+              "options": [
+                {
+                  "text": "接（按件算钱）",
+                  "actions": [
+                    {
+                      "type": "startPaperCraftMinigame",
+                      "params": {
+                        "id": "wujin_paper_servant_daywork"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "text": "莫得空，先走",
+                  "actions": []
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "planes": [
+        "normal"
+      ]
+    },
+    {
+      "id": "hs_淹尸",
+      "type": "inspect",
+      "label": "苇席底下泡涨的尸",
+      "x": 2068.0,
+      "y": 1016.0,
+      "interactionRange": 70.0,
+      "conditions": [
+        {
+          "narrative": "flow_背尸_淹尸活",
+          "state": "accepted"
+        }
+      ],
+      "displayImage": {
+        "image": "/resources/runtime/images/corpses/back_carry/waterlogged_corpse.png",
+        "worldWidth": 140.0,
+        "worldHeight": 70.0
+      },
+      "data": {
+        "actions": [
+          {
+            "type": "sniff",
+            "params": {}
+          },
+          {
+            "type": "startDialogueGraph",
+            "params": {
+              "graphId": "寻狗_淹尸验尸"
+            }
+          }
+        ]
+      },
+      "conditionHidesEntity": true
+    },
+    {
+      "id": "hs_踩铜板",
+      "type": "inspect",
+      "label": "地上的铜板",
+      "x": 1650.0,
+      "y": 1700.0,
+      "interactionRange": 56.0,
+      "data": {
+        "graphId": "寻狗_踩铜板"
+      },
+      "castShadow": false,
+      "conditions": [
+        {
+          "not": {
+            "narrative": "wrap_踩铜板",
+            "state": "taken",
+            "reached": true
+          }
+        }
+      ],
+      "conditionHidesEntity": true
+    },
+    {
+      "id": "hs_摸橘子",
+      "type": "inspect",
+      "label": "水果摊",
+      "x": 2200.0,
+      "y": 1550.0,
+      "interactionRange": 64.0,
+      "data": {
+        "graphId": "寻狗_摸橘子"
+      },
+      "castShadow": false,
+      "conditions": [
+        {
+          "not": {
+            "narrative": "wrap_摸橘子",
+            "state": "taken",
+            "reached": true
+          }
+        }
+      ],
+      "conditionHidesEntity": true
+    },
+    {
+      "id": "T_去破屋",
+      "type": "transition",
+      "label": "城郊破屋·取尸",
+      "x": 360.0,
+      "y": 780.0,
+      "interactionRange": 95.0,
+      "conditions": [
+        {
+          "narrative": "flow_背尸_零工活",
+          "state": "accepted",
+          "reached": true
+        },
+        {
+          "not": {
+            "flag": "beishi_carrying"
+          }
+        }
+      ],
+      "data": {
+        "targetScene": "破屋",
+        "targetSpawnPoint": "from_jie"
+      }
     }
   ],
   "npcs": [
     {
+      "id": "npc_零工工头",
+      "name": "挑空担的汉子",
+      "x": 1118.0,
+      "y": 1512.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/npc_coolie_c_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "right",
+      "dialogueGraphId": "寻狗_零工接活",
+      "dialogueCameraZoom": 1.5,
+      "conditions": [
+        {
+          "narrative": "flow_背尸_零工活",
+          "state": "delivered",
+          "reached": true
+        }
+      ],
+      "conditionHidesEntity": true
+    },
+    {
       "id": "npc_庄家来人",
       "name": "庄家来人",
-      "x": 760.0,
-      "y": 470.0,
+      "x": 1548.0,
+      "y": 1648.0,
       "interactionRange": 64.0,
       "animFile": "/resources/runtime/animation/npc_coolie_c_anim/anim.json",
       "initialAnimState": "idle",
@@ -319,6 +637,11 @@
         {
           "narrative": "flow_xungou_main",
           "state": "s01_tingshu"
+        },
+        {
+          "narrative": "flow_背尸_零工活",
+          "state": "delivered",
+          "reached": true
         }
       ],
       "conditionHidesEntity": true
@@ -327,7 +650,7 @@
       "id": "npc_婆子",
       "name": "找上门的婆子",
       "x": 720.0,
-      "y": 450.0,
+      "y": 1768.0,
       "interactionRange": 64.0,
       "animFile": "/resources/runtime/animation/npc_popo_anim/anim.json",
       "initialAnimState": "idle",
@@ -345,8 +668,8 @@
     {
       "id": "npc_枯井街坊",
       "name": "土地庙方向来的街坊",
-      "x": 540.0,
-      "y": 520.0,
+      "x": 1184.0,
+      "y": 1836.0,
       "interactionRange": 64.0,
       "animFile": "/resources/runtime/animation/npc_coolie_b_anim/anim.json",
       "initialAnimState": "idle",
@@ -364,8 +687,8 @@
     {
       "id": "npc_送货雇主",
       "name": "半遮着脸的雇主",
-      "x": 880.0,
-      "y": 520.0,
+      "x": 2032.0,
+      "y": 1988.0,
       "interactionRange": 64.0,
       "animFile": "/resources/runtime/animation/npc_employer_anim/anim.json",
       "initialAnimState": "idle",
@@ -383,8 +706,8 @@
     {
       "id": "npc_义庄管事",
       "name": "脸色发白的义庄管事",
-      "x": 700.0,
-      "y": 480.0,
+      "x": 2288.0,
+      "y": 1608.0,
       "interactionRange": 70.0,
       "animFile": "/resources/runtime/animation/npc_yizhuang_keeper_anim/anim.json",
       "initialAnimState": "idle",
@@ -394,13 +717,208 @@
       "conditions": [
         {
           "narrative": "flow_xungou_main",
-          "state": "s09_songhuo"
+          "state": "s09_songhuo",
+          "reached": true
+        }
+      ],
+      "conditionHidesEntity": true
+    },
+    {
+      "id": "npc_克拉拉",
+      "characterId": "clara",
+      "x": 3344.0,
+      "y": 1888.0,
+      "interactionRange": 70.0,
+      "initialAnimState": "克拉拉_走路",
+      "initialFacing": "left",
+      "dialogueGraphId": "寻狗_克拉拉招募",
+      "dialogueCameraZoom": 1.5,
+      "conditions": [
+        {
+          "narrative": "scenario_送货",
+          "state": "returned",
+          "reached": true
+        }
+      ],
+      "conditionHidesEntity": true
+    },
+    {
+      "id": "npc_街头脚夫",
+      "name": "歇脚的脚夫",
+      "x": 3572.0,
+      "y": 1732.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/npc_coolie_a_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "dialogueGraphId": "寻狗_街头吹牛",
+      "dialogueCameraZoom": 1.5
+    },
+    {
+      "id": "npc_街头瞎子李",
+      "name": "卦摊瞎子李",
+      "x": 3516.0,
+      "y": 1516.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/npc_blind_li_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "dialogueGraphId": "寻狗_瞎子李算命",
+      "dialogueCameraZoom": 1.5
+    },
+    {
+      "id": "npc_街头叫花子",
+      "name": "墙根老叫花子",
+      "x": 720.0,
+      "y": 1500.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/npc_coolie_b_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "right",
+      "dialogueGraphId": "寻狗_叫花子斗嘴",
+      "dialogueCameraZoom": 1.5
+    },
+    {
+      "id": "npc_街头肥鸡",
+      "name": "篱笆里的肥鸡",
+      "x": 900.0,
+      "y": 1900.0,
+      "interactionRange": 56.0,
+      "animFile": "/resources/runtime/animation/chicken_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "dialogueGraphId": "寻狗_偷鸡",
+      "dialogueCameraZoom": 1.5
+    },
+    {
+      "id": "npc_街头土狗",
+      "name": "刨食的土狗",
+      "x": 1000.0,
+      "y": 1950.0,
+      "interactionRange": 56.0,
+      "animFile": "/resources/runtime/animation/dog_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "dialogueGraphId": "寻狗_踢狗",
+      "dialogueCameraZoom": 1.5
+    },
+    {
+      "id": "npc_街头瘦猫",
+      "name": "屋檐下的瘦猫",
+      "x": 600.0,
+      "y": 1600.0,
+      "interactionRange": 56.0,
+      "animFile": "/resources/runtime/animation/cat_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "dialogueGraphId": "寻狗_踢猫",
+      "dialogueCameraZoom": 1.5
+    },
+    {
+      "id": "npc_街头袍哥",
+      "name": "裹头的袍哥",
+      "x": 1900.0,
+      "y": 1300.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/guanchai_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "dialogueGraphId": "寻狗_袍哥秒怂",
+      "dialogueCameraZoom": 1.5,
+      "conditions": [
+        {
+          "not": {
+            "narrative": "wrap_袍哥",
+            "state": "seen",
+            "reached": true
+          }
+        }
+      ],
+      "conditionHidesEntity": true
+    },
+    {
+      "id": "npc_街头壮汉",
+      "name": "蛮横的壮汉",
+      "x": 2400.0,
+      "y": 1200.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/npc_employer_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "dialogueGraphId": "寻狗_壮汉撞人",
+      "dialogueCameraZoom": 1.5,
+      "conditions": [
+        {
+          "not": {
+            "narrative": "wrap_壮汉",
+            "state": "chuang",
+            "reached": true
+          }
+        }
+      ],
+      "conditionHidesEntity": true
+    },
+    {
+      "id": "npc_茅厕壮汉",
+      "name": "蹲坑的壮汉",
+      "x": 700.0,
+      "y": 1900.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/npc_employer_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "dialogueGraphId": "寻狗_挑衅蹲坑",
+      "dialogueCameraZoom": 1.5,
+      "conditions": [
+        {
+          "narrative": "wrap_壮汉",
+          "state": "chuang",
+          "reached": true
         }
       ],
       "conditionHidesEntity": true
     }
   ],
   "zones": [
+    {
+      "id": "z_找活_起意",
+      "polygon": [
+        {
+          "x": 1043.9,
+          "y": 118.2
+        },
+        {
+          "x": 1283.9,
+          "y": 118.2
+        },
+        {
+          "x": 1283.9,
+          "y": 278.2
+        },
+        {
+          "x": 1043.9,
+          "y": 278.2
+        }
+      ],
+      "conditions": [
+        {
+          "narrative": "flow_xungou_main",
+          "state": "s01_tingshu"
+        },
+        {
+          "narrative": "flow_背尸_零工活",
+          "state": "initial"
+        }
+      ],
+      "onEnter": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "寻狗_找活"
+          }
+        }
+      ]
+    },
     {
       "id": "z_梦待死之礼",
       "polygon": [
@@ -436,16 +954,506 @@
         {
           "type": "fadeWorldToBlack",
           "params": {
-            "durationMs": 80
+            "durationMs": 600
           }
         },
         {
+          "type": "switchScene",
+          "params": {
+            "targetScene": "梦_夜路"
+          }
+        }
+      ],
+      "planes": [
+        "normal"
+      ]
+    },
+    {
+      "id": "z_淹尸_水腥",
+      "polygon": [
+        {
+          "x": 100.0,
+          "y": 470.0
+        },
+        {
+          "x": 340.0,
+          "y": 470.0
+        },
+        {
+          "x": 340.0,
+          "y": 660.0
+        },
+        {
+          "x": 100.0,
+          "y": 660.0
+        }
+      ],
+      "conditions": [
+        {
+          "narrative": "flow_背尸_淹尸活",
+          "state": "accepted"
+        }
+      ],
+      "smell": {
+        "scent": "corpse",
+        "intensity": 42
+      }
+    },
+    {
+      "id": "z_背尸_水汽_远",
+      "planes": [
+        "背尸"
+      ],
+      "polygon": [
+        {
+          "x": 40.0,
+          "y": 400.0
+        },
+        {
+          "x": 720.0,
+          "y": 400.0
+        },
+        {
+          "x": 720.0,
+          "y": 768.0
+        },
+        {
+          "x": 40.0,
+          "y": 768.0
+        }
+      ],
+      "smell": {
+        "scent": "yin",
+        "intensity": 32,
+        "dir": -0.6
+      }
+    },
+    {
+      "id": "z_背尸_水汽_近",
+      "planes": [
+        "背尸"
+      ],
+      "polygon": [
+        {
+          "x": 40.0,
+          "y": 500.0
+        },
+        {
+          "x": 520.0,
+          "y": 500.0
+        },
+        {
+          "x": 520.0,
+          "y": 768.0
+        },
+        {
+          "x": 40.0,
+          "y": 768.0
+        }
+      ],
+      "smell": {
+        "scent": "yin",
+        "intensity": 58,
+        "dir": -0.75
+      }
+    },
+    {
+      "id": "z_背尸_水汽_淹",
+      "planes": [
+        "背尸"
+      ],
+      "polygon": [
+        {
+          "x": 40.0,
+          "y": 580.0
+        },
+        {
+          "x": 360.0,
+          "y": 580.0
+        },
+        {
+          "x": 360.0,
+          "y": 748.0
+        },
+        {
+          "x": 40.0,
+          "y": 748.0
+        }
+      ],
+      "smell": {
+        "scent": "yin",
+        "intensity": 85,
+        "dir": -0.9,
+        "flicker": true
+      },
+      "onEnter": [
+        {
+          "type": "damagePlayer",
+          "params": {
+            "amount": 5
+          }
+        },
+        {
+          "type": "playScriptedDialogue",
+          "params": {
+            "lines": [
+              {
+                "speaker": "",
+                "text": "一脚踩到水洼边，背上那身子陡然一沉，凉气顺着脊梁骨往上爬。"
+              },
+              {
+                "speaker": "{{player}}",
+                "text": "啧——水汽勾水汽。离水远点，离水远点。"
+              }
+            ]
+          }
+        }
+      ],
+      "onStay": [
+        {
+          "type": "damagePlayer",
+          "params": {
+            "amount": 2
+          }
+        }
+      ],
+      "conditions": [
+        {
+          "narrative": "flow_背尸_淹尸活",
+          "state": "carrying"
+        }
+      ]
+    },
+    {
+      "id": "z_背尸_积水_街心",
+      "planes": [
+        "背尸"
+      ],
+      "polygon": [
+        {
+          "x": 584.0,
+          "y": 520.0
+        },
+        {
+          "x": 1008.0,
+          "y": 520.0
+        },
+        {
+          "x": 1008.0,
+          "y": 695.0
+        },
+        {
+          "x": 584.0,
+          "y": 695.0
+        }
+      ],
+      "conditions": [
+        {
+          "narrative": "flow_背尸_淹尸活",
+          "state": "carrying"
+        }
+      ],
+      "smell": {
+        "scent": "yin",
+        "intensity": 60
+      },
+      "onEnter": [
+        {
+          "type": "damagePlayer",
+          "params": {
+            "amount": 2
+          }
+        },
+        {
+          "type": "playScriptedDialogue",
+          "params": {
+            "lines": [
+              {
+                "speaker": "",
+                "text": "一脚蹚进街心的积水，背上那身子猛地往下一坠，凉气顺着湿透的鞋往上灌。"
+              },
+              {
+                "speaker": "{{player}}",
+                "text": "水汽勾水汽……绕！绕开走！"
+              }
+            ]
+          }
+        }
+      ],
+      "onStay": [
+        {
+          "type": "damagePlayer",
+          "params": {
+            "amount": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "z_背尸_纸火盆",
+      "planes": [
+        "背尸"
+      ],
+      "polygon": [
+        {
+          "x": 800.0,
+          "y": 408.0
+        },
+        {
+          "x": 884.0,
+          "y": 408.0
+        },
+        {
+          "x": 884.0,
+          "y": 470.0
+        },
+        {
+          "x": 800.0,
+          "y": 470.0
+        }
+      ],
+      "conditions": [
+        {
+          "plane": "背尸"
+        },
+        {
+          "flag": "淹尸_烤过火",
+          "op": "==",
+          "value": false
+        }
+      ],
+      "onEnter": [
+        {
+          "type": "playScriptedDialogue",
+          "params": {
+            "lines": [
+              {
+                "speaker": "",
+                "text": "铺子廊檐下撂着一只瓦盆，纸灰未冷，底下还压着几星红炭——晓不得是哪家给亡人烧的。"
+              }
+            ]
+          }
+        },
+        {
+          "type": "chooseAction",
+          "params": {
+            "prompt": "借这盆纸火烘一烘？",
+            "allowCancel": true,
+            "options": [
+              {
+                "text": "烘。阳火驱阴湿，搭手的功夫而已。",
+                "actions": [
+                  {
+                    "type": "waitMs",
+                    "params": {
+                      "ms": 1500
+                    }
+                  },
+                  {
+                    "type": "setFlag",
+                    "params": {
+                      "key": "淹尸_烤过火",
+                      "value": true
+                    }
+                  },
+                  {
+                    "type": "healPlayer",
+                    "params": {
+                      "amount": 8
+                    }
+                  },
+                  {
+                    "type": "playScriptedDialogue",
+                    "params": {
+                      "lines": [
+                        {
+                          "speaker": "",
+                          "text": "手心手背在炭火上翻了两遭，一股热气从掌心爬回胳膊——后颈那口凉，总算松了半分。"
+                        },
+                        {
+                          "speaker": "{{player}}",
+                          "text": "多谢哪个的火。走了。"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "text": "莫理。别家的火，别家的亡人。",
+                "actions": [
+                  {
+                    "type": "playScriptedDialogue",
+                    "params": {
+                      "lines": [
+                        {
+                          "speaker": "{{player}}",
+                          "text": "烧给亡人的火，我一个背死人子的凑啥子热闹。"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "z_零工_尸味",
+      "polygon": [
+        {
+          "x": 360.0,
+          "y": 620.0
+        },
+        {
+          "x": 520.0,
+          "y": 620.0
+        },
+        {
+          "x": 520.0,
+          "y": 760.0
+        },
+        {
+          "x": 360.0,
+          "y": 760.0
+        }
+      ],
+      "conditions": [
+        {
+          "narrative": "flow_背尸_零工活",
+          "state": "accepted"
+        }
+      ],
+      "smell": {
+        "scent": "corpse",
+        "intensity": 25
+      }
+    },
+    {
+      "id": "z_袍哥秒怂",
+      "polygon": [
+        {
+          "x": 1780.0,
+          "y": 1360.0
+        },
+        {
+          "x": 2060.0,
+          "y": 1360.0
+        },
+        {
+          "x": 2060.0,
+          "y": 1560.0
+        },
+        {
+          "x": 1780.0,
+          "y": 1560.0
+        }
+      ],
+      "conditions": [
+        {
+          "not": {
+            "narrative": "wrap_袍哥",
+            "state": "seen",
+            "reached": true
+          }
+        }
+      ],
+      "onEnter": [
+        {
           "type": "startDialogueGraph",
           "params": {
-            "graphId": "寻狗_梦待死之礼"
+            "graphId": "寻狗_袍哥秒怂"
+          }
+        }
+      ]
+    },
+    {
+      "id": "z_找活",
+      "polygon": [
+        {
+          "x": 1733.1999999999998,
+          "y": 1700.0
+        },
+        {
+          "x": 2433.2,
+          "y": 1700.0
+        },
+        {
+          "x": 2433.2,
+          "y": 2400.0
+        },
+        {
+          "x": 1733.1999999999998,
+          "y": 2400.0
+        }
+      ],
+      "conditions": [
+        {
+          "narrative": "flow_xungou_main",
+          "state": "s01_tingshu"
+        },
+        {
+          "narrative": "flow_背尸_零工活",
+          "state": "initial"
+        }
+      ],
+      "onEnter": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "寻狗_找活"
           }
         }
       ]
     }
-  ]
+  ],
+  "depthConfig": {
+    "depth_map": "raw_depth_rg.png",
+    "collision_map": "collision.png",
+    "M": {
+      "R": [
+        [
+          0.0,
+          -0.7193398003386512,
+          -0.6946583704589973
+        ],
+        [
+          0.0,
+          0.6946583704589973,
+          -0.7193398003386512
+        ],
+        [
+          -1.0,
+          0.0,
+          -0.0
+        ]
+      ],
+      "ppu": 252.0,
+      "cx": 836.0,
+      "cy": 470.5
+    },
+    "depth_mapping": {
+      "invert": true,
+      "scale": 4.69,
+      "offset": -2.94
+    },
+    "shader": {
+      "depth_per_sy": 0.004109247276946705,
+      "floor_depth_A": -0.003832098312726484,
+      "floor_depth_B": 1.8030022561378105
+    },
+    "depth_tolerance": 0.0,
+    "floor_offset": 0.0,
+    "collision": {
+      "x_min": -2.5119627716117807,
+      "z_min": -3.3015873015873014,
+      "cell_size": 0.033095238095238094,
+      "grid_width": 180,
+      "grid_height": 201,
+      "height_offset": 0.1
+    }
+  },
+  "filterId": "day"
 }

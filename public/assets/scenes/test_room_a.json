@@ -573,7 +573,8 @@
           }
         ],
         "speed": 60
-      }
+      },
+      "portraitSlug": "constable_spear"
     },
     {
       "id": "new_npc_2",
@@ -627,7 +628,8 @@
         ],
         "speed": 60
       },
-      "initialFacing": "left"
+      "initialFacing": "left",
+      "portraitSlug": "clara"
     },
     {
       "id": "new_npc_4",
@@ -646,6 +648,324 @@
       "interactionRange": 50.0,
       "animFile": "/resources/runtime/animation/npc_blind_li_anim/anim.json",
       "initialAnimState": "idle"
+    },
+    {
+      "id": "wujin_noodle_vendor",
+      "name": "前街面摊摊主",
+      "x": 1118.0,
+      "y": 1512.0,
+      "interactionRange": 58.0,
+      "animFile": "/resources/runtime/animation/npc_teahouse_owner_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "right",
+      "dialogueGraphId": "街巷_市井闲谈",
+      "dialogueGraphEntry": "noodle_vendor"
+    },
+    {
+      "id": "wujin_washerwoman",
+      "name": "前街洗衣婆",
+      "x": 720.0,
+      "y": 1768.0,
+      "interactionRange": 58.0,
+      "animFile": "/resources/runtime/animation/npc_popo_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "right",
+      "dialogueGraphId": "街巷_市井闲谈",
+      "dialogueGraphEntry": "washerwoman"
+    },
+    {
+      "id": "wujin_chess_grandpa",
+      "name": "前街观棋老爷子",
+      "x": 2288.0,
+      "y": 1608.0,
+      "interactionRange": 58.0,
+      "animFile": "/resources/runtime/animation/npc_storyteller_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "dialogueGraphId": "街巷_市井闲谈",
+      "dialogueGraphEntry": "chess_grandpa"
+    },
+    {
+      "id": "wujin_sugar_child",
+      "name": "前街守糖画的小娃",
+      "x": 812.0,
+      "y": 1256.0,
+      "interactionRange": 52.0,
+      "animFile": "/resources/runtime/animation/boy_ring_anim/anim.json",
+      "initialAnimState": "boy_stand_ring",
+      "initialFacing": "right",
+      "dialogueGraphId": "街巷_市井闲谈",
+      "dialogueGraphEntry": "sugar_child"
+    },
+    {
+      "id": "wujin_chasing_child",
+      "name": "前街追跑的小孩",
+      "x": 1184.0,
+      "y": 1836.0,
+      "interactionRange": 52.0,
+      "animFile": "/resources/runtime/animation/boy_ring_anim/anim.json",
+      "initialAnimState": "boy_walk",
+      "dialogueGraphId": "街巷_市井闲谈",
+      "dialogueGraphEntry": "chasing_child",
+      "patrol": {
+        "route": [
+          {
+            "x": 1104.0,
+            "y": 1812.0
+          },
+          {
+            "x": 1258.0,
+            "y": 1744.0
+          },
+          {
+            "x": 1406.0,
+            "y": 1668.0
+          }
+        ],
+        "speed": 62,
+        "moveAnimState": "boy_walk"
+      }
+    },
+    {
+      "id": "wujin_coolie_rice_sack",
+      "name": "前街扛米脚夫",
+      "x": 2032.0,
+      "y": 1988.0,
+      "interactionRange": 58.0,
+      "animFile": "/resources/runtime/animation/npc_coolie_a_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "dialogueGraphId": "街巷_市井闲谈",
+      "dialogueGraphEntry": "coolie_rice_sack"
+    },
+    {
+      "id": "wujin_coolie_rope",
+      "name": "后街等活的脚帮汉",
+      "x": 2068.0,
+      "y": 1016.0,
+      "interactionRange": 58.0,
+      "animFile": "/resources/runtime/animation/npc_coolie_b_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "right",
+      "dialogueGraphId": "街巷_市井闲谈",
+      "dialogueGraphEntry": "coolie_rope"
+    },
+    {
+      "id": "wujin_lifu_runner",
+      "name": "后街赶脚力夫",
+      "x": 2576.0,
+      "y": 1088.0,
+      "interactionRange": 58.0,
+      "animFile": "/resources/runtime/animation/npc_lifu_anim/anim.json",
+      "initialAnimState": "lifu_stand",
+      "dialogueGraphId": "街巷_市井闲谈",
+      "dialogueGraphEntry": "lifu_runner",
+      "patrol": {
+        "route": [
+          {
+            "x": 2448.0,
+            "y": 1138.0
+          },
+          {
+            "x": 2708.0,
+            "y": 1042.0
+          },
+          {
+            "x": 2924.0,
+            "y": 926.0
+          }
+        ],
+        "speed": 48,
+        "moveAnimState": "lifu_walk"
+      }
+    },
+    {
+      "id": "wujin_paoge_teaman",
+      "name": "前街袍哥闲汉",
+      "x": 1748.0,
+      "y": 1540.0,
+      "interactionRange": 60.0,
+      "animFile": "/resources/runtime/animation/npc_teahouse_owner_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "dialogueGraphId": "街巷_市井闲谈",
+      "dialogueGraphEntry": "paoge_teaman"
+    },
+    {
+      "id": "wujin_street_runner",
+      "name": "前街跑腿伙计",
+      "x": 1548.0,
+      "y": 1648.0,
+      "interactionRange": 58.0,
+      "animFile": "/resources/runtime/animation/npc_employer_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "right",
+      "dialogueGraphId": "街巷_市井闲谈",
+      "dialogueGraphEntry": "street_runner"
+    },
+    {
+      "id": "wujin_fortune_teller",
+      "name": "后街路口算命先生",
+      "x": 620.0,
+      "y": 1068.0,
+      "interactionRange": 60.0,
+      "animFile": "/resources/runtime/animation/npc_blind_li_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "dialogueGraphId": "街巷_市井闲谈",
+      "dialogueGraphEntry": "fortune_teller"
+    },
+    {
+      "id": "wujin_ascetic_monk",
+      "name": "后街化缘苦行僧",
+      "x": 3108.0,
+      "y": 1188.0,
+      "interactionRange": 58.0,
+      "animFile": "/resources/runtime/animation/npc_ascetic_monk_anim/anim.json",
+      "initialAnimState": "monk_stand",
+      "dialogueGraphId": "街巷_市井闲谈",
+      "dialogueGraphEntry": "ascetic_monk",
+      "patrol": {
+        "route": [
+          {
+            "x": 3008.0,
+            "y": 1236.0
+          },
+          {
+            "x": 3216.0,
+            "y": 1126.0
+          },
+          {
+            "x": 3392.0,
+            "y": 1018.0
+          }
+        ],
+        "speed": 24,
+        "moveAnimState": "monk_walk"
+      }
+    },
+    {
+      "id": "wujin_wandering_taoist",
+      "name": "后街游方道人",
+      "x": 1476.0,
+      "y": 1018.0,
+      "interactionRange": 58.0,
+      "animFile": "/resources/runtime/animation/player_taoist_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "right",
+      "dialogueGraphId": "街巷_市井闲谈",
+      "dialogueGraphEntry": "wandering_taoist"
+    },
+    {
+      "id": "wujin_constable_blade",
+      "name": "后街巡街刀差",
+      "x": 3348.0,
+      "y": 884.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/官差刀_anim/anim.json",
+      "initialAnimState": "官兵刀_站立",
+      "dialogueGraphId": "街巷_市井闲谈",
+      "dialogueGraphEntry": "constable_blade",
+      "patrol": {
+        "route": [
+          {
+            "x": 3188.0,
+            "y": 958.0
+          },
+          {
+            "x": 3428.0,
+            "y": 822.0
+          },
+          {
+            "x": 3628.0,
+            "y": 688.0
+          }
+        ],
+        "speed": 42,
+        "moveAnimState": "官兵刀_走路"
+      },
+      "portraitSlug": "constable_blade"
+    },
+    {
+      "id": "wujin_constable_resting",
+      "name": "前街靠墙歇脚的差役",
+      "x": 3572.0,
+      "y": 1732.0,
+      "interactionRange": 60.0,
+      "animFile": "/resources/runtime/animation/官差刀_anim/anim.json",
+      "initialAnimState": "官兵刀_站立",
+      "initialFacing": "left",
+      "dialogueGraphId": "街巷_市井闲谈",
+      "dialogueGraphEntry": "constable_resting",
+      "portraitSlug": "constable_blade"
+    },
+    {
+      "id": "wujin_foreign_lady",
+      "name": "前街看货的洋行女客",
+      "x": 3344.0,
+      "y": 1888.0,
+      "interactionRange": 60.0,
+      "animFile": "/resources/runtime/animation/npc_li_tiangou_anim/anim.json",
+      "initialAnimState": "idle",
+      "dialogueGraphId": "街巷_市井闲谈",
+      "dialogueGraphEntry": "foreign_lady",
+      "patrol": {
+        "route": [
+          {
+            "x": 3268.0,
+            "y": 1844.0
+          },
+          {
+            "x": 3468.0,
+            "y": 1948.0
+          },
+          {
+            "x": 3644.0,
+            "y": 2040.0
+          }
+        ],
+        "speed": 34,
+        "moveAnimState": "walk"
+      },
+      "portraitSlug": "npc_yangren_anim"
+    },
+    {
+      "id": "wujin_foreign_cargo_hand",
+      "name": "后街验货的洋行伙计",
+      "x": 3096.0,
+      "y": 642.0,
+      "interactionRange": 58.0,
+      "animFile": "/resources/runtime/animation/埃德加_anim/anim.json",
+      "initialAnimState": "埃德加_走路",
+      "dialogueGraphId": "街巷_市井闲谈",
+      "dialogueGraphEntry": "foreign_cargo_hand",
+      "patrol": {
+        "route": [
+          {
+            "x": 3004.0,
+            "y": 660.0
+          },
+          {
+            "x": 3224.0,
+            "y": 604.0
+          }
+        ],
+        "speed": 28,
+        "moveAnimState": "埃德加_走路"
+      },
+      "portraitSlug": "edgar"
+    },
+    {
+      "id": "wujin_incense_granny",
+      "name": "前街卖香烛的婆婆",
+      "x": 3516.0,
+      "y": 1516.0,
+      "interactionRange": 58.0,
+      "animFile": "/resources/runtime/animation/npc_popo_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "dialogueGraphId": "街巷_市井闲谈",
+      "dialogueGraphEntry": "incense_granny"
     }
   ],
   "zones": [

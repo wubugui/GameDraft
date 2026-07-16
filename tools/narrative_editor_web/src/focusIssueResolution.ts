@@ -313,58 +313,75 @@ export function applyFocusIssueResult(result: FocusIssueResult, ctx: FocusIssueC
   ctx.setSelectedId(result.selectedId);
 }
 
-export function resolveValidationIssueFocus(issue: ValidationIssueDef, data: NarrativeGraphsFileDef): FocusIssueResult | null {
-  const targetResult = resolveTargetFocus(issue.target, data);
-  if (targetResult) return targetResult;
+/**
+ * 从校验 path 的 `states.` 之后的尾串里解析出真正的 state id。
+ *
+ * state id 是作者自由字符串，可含 `.`/`[`/`]`；而 path 尾串可能还带字段后缀
+ * （如 `<stateId>.onEnterActions[0]`）。旧写法用 `([^.[\]]+)` 一遇到 `.` 就截断，
+ * 会把 `s.1` 截成 `s` 导致聚焦失败。这里从完整尾串起、逐段剥掉尾部字段，
+ * 取第一个在图里真实存在的 state id（兼顾"带点的 id"与"带字段后缀"两种情况）。
+ */
+function resolveStateIdFromPathTail(graph: NarrativeGraphDef, tail: string): string | null {
+  let candidate = tail;
+  while (candidate) {
+    if (graph.states?.[candidate]) return candidate;
+    const cut = candidate.lastIndexOf('.');
+    if (cut < 0) return null;
+    candidate = candidate.slice(0, cut);
+  }
+  return null;
+}
 
-  const itemId = issue.itemId?.trim() ?? '';
-  const path = issue.path?.trim() ?? '';
-  const compositions = data.compositions ?? [];
-
+/** 策略一：按校验器给出的 JSON path 定位（compositions[i].mainGraph.states.x 等）。 */
+function resolveFocusByPath(path: string, compositions: NarrativeCompositionDef[]): FocusIssueResult | null {
   const compIndexMatch = /compositions\[(\d+)\]/.exec(path);
-  if (compIndexMatch) {
-    const comp = compositions[Number(compIndexMatch[1])];
-    if (comp) {
-      const mainTransitionMatch = /mainGraph\.transitions\[(\d+)\]/.exec(path);
-      if (mainTransitionMatch) {
-        const transition = comp.mainGraph.transitions?.[Number(mainTransitionMatch[1])];
-        if (transition) return resolveTransitionFocus(comp, { graph: comp.mainGraph }, transition);
-      }
-      const elementTransitionMatch = /elements\[(\d+)\]\.graph\.transitions\[(\d+)\]/.exec(path);
-      if (elementTransitionMatch) {
-        const element = comp.elements?.[Number(elementTransitionMatch[1])];
-        const transition = element?.graph?.transitions?.[Number(elementTransitionMatch[2])];
-        if (element?.graph && transition) {
-          return resolveTransitionFocus(comp, { graph: element.graph, element }, transition);
-        }
-      }
-      const mainStateMatch = /mainGraph\.states\.([^.[\]]+)/.exec(path);
-      if (mainStateMatch) {
-        return resolveStateFocus(comp, { graph: comp.mainGraph }, mainStateMatch[1]!);
-      }
-      const elementStateMatch = /elements\[(\d+)\]\.graph\.states\.([^.[\]]+)/.exec(path);
-      if (elementStateMatch) {
-        const element = comp.elements?.[Number(elementStateMatch[1])];
-        const stateId = elementStateMatch[2]!;
-        if (element?.graph) {
-          return resolveStateFocus(comp, { graph: element.graph, element }, stateId);
-        }
-      }
-      const elementGraphFieldMatch = /elements\[(\d+)\]\.graph\.(initialState|entryState|exitStates|ownerType|ownerId|id|projectFlags)/.exec(path);
-      if (elementGraphFieldMatch) {
-        const element = comp.elements?.[Number(elementGraphFieldMatch[1])];
-        if (element?.graph && isSubgraphElement(element)) {
-          return resolveSubgraphGraphFocus(comp, element);
-        }
-      }
-      const elementOnlyIndex = matchElementOnlyIndex(path);
-      if (elementOnlyIndex !== null) {
-        const element = comp.elements?.[elementOnlyIndex];
-        if (element) return resolveElementFocus(comp, element);
-      }
+  if (!compIndexMatch) return null;
+  const comp = compositions[Number(compIndexMatch[1])];
+  if (!comp) return null;
+
+  const mainTransitionMatch = /mainGraph\.transitions\[(\d+)\]/.exec(path);
+  if (mainTransitionMatch) {
+    const transition = comp.mainGraph.transitions?.[Number(mainTransitionMatch[1])];
+    if (transition) return resolveTransitionFocus(comp, { graph: comp.mainGraph }, transition);
+  }
+  const elementTransitionMatch = /elements\[(\d+)\]\.graph\.transitions\[(\d+)\]/.exec(path);
+  if (elementTransitionMatch) {
+    const element = comp.elements?.[Number(elementTransitionMatch[1])];
+    const transition = element?.graph?.transitions?.[Number(elementTransitionMatch[2])];
+    if (element?.graph && transition) {
+      return resolveTransitionFocus(comp, { graph: element.graph, element }, transition);
     }
   }
+  const mainStateMatch = /mainGraph\.states\.(.+)$/.exec(path);
+  if (mainStateMatch) {
+    const sid = resolveStateIdFromPathTail(comp.mainGraph, mainStateMatch[1]!);
+    if (sid) return resolveStateFocus(comp, { graph: comp.mainGraph }, sid);
+  }
+  const elementStateMatch = /elements\[(\d+)\]\.graph\.states\.(.+)$/.exec(path);
+  if (elementStateMatch) {
+    const element = comp.elements?.[Number(elementStateMatch[1])];
+    if (element?.graph) {
+      const sid = resolveStateIdFromPathTail(element.graph, elementStateMatch[2]!);
+      if (sid) return resolveStateFocus(comp, { graph: element.graph, element }, sid);
+    }
+  }
+  const elementGraphFieldMatch = /elements\[(\d+)\]\.graph\.(initialState|entryState|exitStates|ownerType|ownerId|id|projectFlags)/.exec(path);
+  if (elementGraphFieldMatch) {
+    const element = comp.elements?.[Number(elementGraphFieldMatch[1])];
+    if (element?.graph && isSubgraphElement(element)) {
+      return resolveSubgraphGraphFocus(comp, element);
+    }
+  }
+  const elementOnlyIndex = matchElementOnlyIndex(path);
+  if (elementOnlyIndex !== null) {
+    const element = comp.elements?.[elementOnlyIndex];
+    if (element) return resolveElementFocus(comp, element);
+  }
+  return null;
+}
 
+/** 策略二：按 itemId 定位——先图作用域（graphId.localId），再跨编排全局扫描。 */
+function resolveFocusByItemId(itemId: string, compositions: NarrativeCompositionDef[]): FocusIssueResult | null {
   const scoped = itemId ? parseGraphScopedItemId(itemId) : null;
   if (scoped) {
     for (const comp of compositions) {
@@ -431,8 +448,19 @@ export function resolveValidationIssueFocus(issue: ValidationIssueDef, data: Nar
       }
     }
   }
-
   return null;
+}
+
+export function resolveValidationIssueFocus(issue: ValidationIssueDef, data: NarrativeGraphsFileDef): FocusIssueResult | null {
+  const targetResult = resolveTargetFocus(issue.target, data);
+  if (targetResult) return targetResult;
+
+  const itemId = issue.itemId?.trim() ?? '';
+  const path = issue.path?.trim() ?? '';
+  const compositions = data.compositions ?? [];
+
+  // 顺序不变：先按 path 定位，未命中再按 itemId 定位。
+  return resolveFocusByPath(path, compositions) ?? resolveFocusByItemId(itemId, compositions);
 }
 
 export function focusValidationIssue(issue: ValidationIssueDef, data: NarrativeGraphsFileDef, ctx: FocusIssueContext): FocusIssueResult | null {

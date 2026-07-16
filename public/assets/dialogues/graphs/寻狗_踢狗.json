@@ -1,0 +1,125 @@
+{
+  "schemaVersion": 1,
+  "id": "寻狗_踢狗",
+  "entry": "root",
+  "meta": {
+    "title": "寻狗Demo·①.5雾津街头·踢狗（概率·跑/反咬掉血）"
+  },
+  "nodes": {
+    "root": {
+      "type": "choice",
+      "promptLine": {
+        "speaker": {
+          "kind": "literal",
+          "name": "旁白"
+        },
+        "text": "墙根一条脏兮兮的土狗，正低头刨食。"
+      },
+      "options": [
+        {
+          "id": "kick",
+          "text": "踹它一脚",
+          "next": "kick"
+        },
+        {
+          "id": "leave",
+          "text": "懒得理",
+          "next": "leave"
+        }
+      ]
+    },
+    "kick": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "关二狗没来由地一脚踹过去——",
+      "next": "roll"
+    },
+    "roll": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "randomBranch",
+          "params": {
+            "probability": 0.5,
+            "aboveActions": [
+              {
+                "type": "emitNarrativeSignal",
+                "params": {
+                  "sourceType": "dialogue",
+                  "sourceId": "寻狗_踢狗",
+                  "signal": "tigou_run"
+                }
+              }
+            ],
+            "belowActions": [
+              {
+                "type": "decHealth",
+                "params": {
+                  "amount": 1
+                }
+              },
+              {
+                "type": "emitNarrativeSignal",
+                "params": {
+                  "sourceType": "dialogue",
+                  "sourceId": "寻狗_踢狗",
+                  "signal": "tigou_bite"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "next": "chk"
+    },
+    "chk": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "narrative": "wrap_踢狗",
+              "state": "bite",
+              "reached": true
+            }
+          ],
+          "next": "bite_line"
+        }
+      ],
+      "defaultNext": "run_line"
+    },
+    "run_line": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "狗嗷一声，夹着尾巴窜了。关二狗嘿嘿一乐。",
+      "next": "end1"
+    },
+    "bite_line": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "狗急了反口咬住他裤腿，关二狗跳着脚甩它——「畜牲！」",
+      "next": "end1"
+    },
+    "leave": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "关二狗瞥了一眼，懒得理，走了。",
+      "next": "end1"
+    },
+    "end1": {
+      "type": "end"
+    }
+  }
+}

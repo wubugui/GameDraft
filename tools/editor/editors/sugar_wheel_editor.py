@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import math
+import random
 import re
 from typing import Any
 
@@ -11,11 +12,15 @@ from PySide6.QtGui import QBrush, QColor, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QAbstractSpinBox,
+    QCheckBox,
     QComboBox,
+    QDialog,
     QDoubleSpinBox,
     QFormLayout,
     QGraphicsEllipseItem,
     QGraphicsItem,
+    QGraphicsItemGroup,
+    QGraphicsLineItem,
     QGraphicsPixmapItem,
     QGraphicsScene,
     QGraphicsSceneWheelEvent,
@@ -43,7 +48,12 @@ from PySide6.QtWidgets import (
 )
 
 from ..project_model import ProjectModel
+from .. import theme
+from ..shared import confirm
 from ..shared.action_editor import ActionEditor
+from .atmosphere_script_editor import AtmosphereScriptEditor
+from ..shared.collapsible_section import CollapsibleSection
+from ..shared.form_layout import compact_form
 from ..shared.image_path_picker import CutsceneImagePathRow, disk_path_for_runtime_url
 
 
@@ -74,13 +84,196 @@ def _num(raw: Any, fallback: float) -> float:
     return n if n == n and n not in (float("inf"), float("-inf")) else fallback
 
 
-def _preview_wheel_radius_px(doc: dict, scene_w: float, scene_h: float) -> float:
-    """与画布 refresh 中盘面半径算法一致（半轴长 R），供表单默认蓄力偏移预览。"""
-    max_pct = max(0.2, min(1.0, _num(doc.get("wheelMaxSizePercent"), 0.72)))
+# ── 与运行时 SugarWheelMinigameScene 完全一致的布局常量（保证预览所见 = 游戏所得）──
+_RUNTIME_TOP_RESERVE = 96.0
+_RUNTIME_BOTTOM_RESERVE = 126.0
+
+
+def _runtime_wheel_size(doc: dict, sw: float, sh: float) -> float:
+    """盘面直径，逐项对齐 ``SugarWheelMinigameScene`` 的 baseSize 算法。"""
+    usable_h = max(260.0, sh - _RUNTIME_TOP_RESERVE - _RUNTIME_BOTTOM_RESERVE)
+    pct = max(0.2, min(1.0, _num(doc.get("wheelMaxSizePercent"), 0.72)))
     max_px = max(64.0, _num(doc.get("wheelMaxSizePx"), 660))
-    size = max(160.0, min(scene_w * max_pct, scene_h * 0.72, max_px))
-    size *= max(0.1, min(3.0, _num(doc.get("wheelScale"), 1)))
-    return size / 2
+    base = max(220.0, min(sw * pct, usable_h, max_px))
+    return base * max(0.1, min(3.0, _num(doc.get("wheelScale"), 1)))
+
+
+def _runtime_wheel_center(sw: float, sh: float) -> tuple[float, float]:
+    """盘面中心：水平居中，竖直按 topReserve + usableH/2（与运行时一致，非纯居中）。"""
+    usable_h = max(260.0, sh - _RUNTIME_TOP_RESERVE - _RUNTIME_BOTTOM_RESERVE)
+    return (sw / 2.0, _RUNTIME_TOP_RESERVE + usable_h / 2.0)
+
+
+def _preview_wheel_radius_px(doc: dict, sw: float, sh: float) -> float:
+    """盘面半径 R（半轴长），供表单默认蓄力偏移预览。"""
+    return _runtime_wheel_size(doc, sw, sh) / 2.0
+
+
+# ── 分格几何：与 sugarWheelSpinPhysics.ts / SugarWheelMinigameScene.ts 同一套约定 ──
+#   几何角 0 = 正上，顺时针为正；屏上点 = (R·sinθ, −R·cosθ)。
+_PHYS_TAU = 2.0 * math.pi
+
+
+def _phys_finite(raw: Any, fallback: float) -> float:
+    return float(raw) if isinstance(raw, (int, float)) and math.isfinite(float(raw)) else fallback
+
+
+def _phys_clamp(v: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, v))
+
+
+def _phys_norm_angle(v: float) -> float:
+    return ((v % _PHYS_TAU) + _PHYS_TAU) % _PHYS_TAU
+
+
+def _phys_sectors(doc: dict) -> list[dict]:
+    raw = doc.get("sectors")
+    return [s for s in raw if isinstance(s, dict)] if isinstance(raw, list) else []
+
+
+def _phys_sector_layout(doc: dict) -> tuple[int, float, float]:
+    """(n, step, left0)，对齐 ``sectorLayoutFromInstance``。"""
+    n = len(_phys_sectors(doc))
+    if n <= 0:
+        return (0, _PHYS_TAU, 0.0)
+    step = _PHYS_TAU / n
+    offset = math.radians(_phys_finite(doc.get("sectorAngleOffsetDeg"), 0))
+    phase = _phys_finite(doc.get("sectorCenterPhase"), 0)
+    return (n, step, offset + phase * step)
+
+
+def _geom_point(r: float, ang: float) -> tuple[float, float]:
+    return (r * math.sin(ang), -r * math.cos(ang))
+
+
+def _phys_sector_index(geom_mod: float, layout: tuple[int, float, float]) -> int:
+    n, step, left0 = layout
+    if n <= 0:
+        return 0
+    rel = _phys_norm_angle(geom_mod - left0)
+    idx = int(math.floor(rel / step + 1e-9))
+    return ((idx % n) + n) % n
+
+
+# 与 sugarWheelSpinPhysics.ts 常量一致。
+_PHYS_DEFAULT_BIAS_STRENGTH = 4.2
+_PHYS_MIN_TERRAIN_WEIGHT = 0.05
+_PHYS_DEFAULT_DRY_FRICTION = 0.34
+_PHYS_DEFAULT_BIAS_CREEP_REF = 1.2
+
+
+def _phys_sector_weight(sec: dict) -> float:
+    w = sec.get("weight")
+    if isinstance(w, (int, float)) and math.isfinite(float(w)) and float(w) >= 0:
+        return float(w)
+    return 1.0
+
+
+def _phys_terrain_sin_sum(phi: float, sectors: list[dict], layout: tuple[int, float, float]) -> float:
+    n, step, left0 = layout
+    if n <= 0:
+        return 0.0
+    s = 0.0
+    for i in range(n):
+        raw = _phys_sector_weight(sectors[i]) if i < len(sectors) else 1.0
+        height = -math.log(max(_PHYS_MIN_TERRAIN_WEIGHT, raw))
+        s += height * math.sin(phi - (left0 + (i + 0.5) * step))
+    return s
+
+
+def _phys_bias_scale(doc: dict) -> float:
+    cfg = doc.get("spinWeightBiasStrengthRadPerSec2")
+    if isinstance(cfg, (int, float)) and math.isfinite(float(cfg)) and float(cfg) > 0:
+        return float(cfg)
+    return _PHYS_DEFAULT_BIAS_STRENGTH
+
+
+def _phys_drag_k(omega: float, doc: dict) -> float:
+    k0 = max(0.0, _phys_finite(doc.get("spinLinearDragPerSec"), 0.58))
+    k_floor = 0.035
+    thr = _phys_finite(doc.get("spinDragLowSpeedThresholdRadPerSec"), 0)
+    boost = max(0.0, _phys_finite(doc.get("spinDragLowSpeedBoostPerSec"), 0))
+    if thr <= 1e-6 or boost <= 1e-6:
+        return max(k_floor, k0)
+    t = _phys_clamp(1 - abs(omega) / thr, 0, 1)
+    blend = t * t * t * (t * (t * 6 - 15) + 10)
+    return max(k_floor, k0 + boost * blend)
+
+
+def _phys_advance(
+    doc: dict, sectors: list[dict], layout: tuple[int, float, float],
+    omega: float, alpha: float, phi: float, dt: float,
+) -> tuple[float, float, float]:
+    dt = _phys_clamp(dt, 0, 0.05)
+    half = _phys_finite(doc.get("spinAccelHalfLifeSec"), 0.42)
+    alpha = alpha * math.pow(0.5, dt / half) if half > 1e-5 else 0.0
+    k = _phys_drag_k(omega, doc)
+    bias = _phys_bias_scale(doc) * _phys_terrain_sin_sum(phi, sectors, layout)
+    creep_cfg = doc.get("spinWeightBiasCreepRefRadPerSec")
+    if creep_cfg is None:
+        creep_ref = _PHYS_DEFAULT_BIAS_CREEP_REF
+    elif isinstance(creep_cfg, (int, float)) and math.isfinite(float(creep_cfg)) and float(creep_cfg) > 1e-6:
+        creep_ref = float(creep_cfg)
+    else:
+        creep_ref = float("nan")
+    if math.isfinite(creep_ref) and creep_ref > 1e-6 and abs(omega) < creep_ref:
+        bias *= _phys_clamp(abs(omega) / creep_ref, 0, 1)
+    omega += (alpha - k * omega + bias) * dt
+    dry_cfg = doc.get("spinDryFrictionAccelRadPerSec2")
+    if isinstance(dry_cfg, (int, float)) and math.isfinite(float(dry_cfg)):
+        dry = 0.0 if float(dry_cfg) <= 0 else float(dry_cfg)
+    else:
+        dry = _PHYS_DEFAULT_DRY_FRICTION
+    if dry > 1e-11 and abs(omega) > 1e-24:
+        dec = dry * dt
+        omega = 0.0 if abs(omega) <= dec else omega - math.copysign(dec, omega)
+    return omega, alpha, _phys_norm_angle(phi + omega * dt)
+
+
+def _phys_simulate_landing(doc: dict, sectors: list[dict], layout: tuple[int, float, float], rnd: random.Random) -> int:
+    if layout[0] <= 0:
+        return 0
+    phi = _phys_norm_angle(rnd.random() * _PHYS_TAU)
+    power = _phys_clamp(rnd.random(), 0, 1)
+    sign = -1.0 if doc.get("sectorDirection") == "counterclockwise" else 1.0
+    omega = sign * (
+        _phys_finite(doc.get("spinChargeMinVelocityRadPerSec"), 0)
+        + (_phys_finite(doc.get("spinChargeMaxVelocityRadPerSec"), 11)
+           - _phys_finite(doc.get("spinChargeMinVelocityRadPerSec"), 0)) * power
+    )
+    alpha = sign * (
+        _phys_finite(doc.get("spinChargeMinAccelRadPerSec2"), 0)
+        + (_phys_finite(doc.get("spinChargeMaxAccelRadPerSec2"), 9)
+           - _phys_finite(doc.get("spinChargeMinAccelRadPerSec2"), 0)) * power
+    )
+    stop_eps = max(1e-3, _phys_finite(doc.get("spinStopSpeedRadPerSec"), 0.06))
+    settle_need = max(0.0, _phys_finite(doc.get("spinStopSettleSec"), 0.085))
+    settle = 0.0
+    for _ in range(20000):
+        omega, alpha, phi = _phys_advance(doc, sectors, layout, omega, alpha, phi, 0.05)
+        if abs(omega) < stop_eps:
+            settle += 0.05
+            if settle >= settle_need:
+                return _phys_sector_index(phi, layout)
+        else:
+            settle = 0.0
+    return _phys_sector_index(phi, layout)
+
+
+def simulate_landing_counts(doc: dict, trials: int = 3000) -> list[int]:
+    """蒙特卡洛：随机蓄力 + 随机起手，统计落格次数（与运行时积分同构，仅作体感近似）。"""
+    layout = _phys_sector_layout(doc)
+    n = layout[0]
+    if n <= 0:
+        return []
+    sectors = _phys_sectors(doc)
+    counts = [0] * n
+    rnd = random.Random(1234567)  # 固定种子：读数稳定不抖
+    for _ in range(max(1, trials)):
+        idx = _phys_simulate_landing(doc, sectors, layout, rnd)
+        if 0 <= idx < n:
+            counts[idx] += 1
+    return counts
 
 
 # 与运行时 SugarWheelMinigameScene 默认锚点一致；JSON 无 speechAnchors 时画布仍显示可拖圆点。
@@ -138,6 +331,19 @@ class _SugarWheelMovablePixmap(QGraphicsPixmapItem):
         return res
 
 
+class _CenteredGraphicsSimpleTextItem(QGraphicsSimpleTextItem):
+    def __init__(self, text: str, center: QPointF) -> None:
+        super().__init__(text)
+        self._center = QPointF(center)
+
+    def refresh_editor_font(self) -> None:
+        rect = self.boundingRect()
+        self.setPos(
+            self._center.x() - rect.width() / 2,
+            self._center.y() - rect.height() / 2,
+        )
+
+
 class _SugarWheelSpeechAnchorItem(QGraphicsEllipseItem):
     """可拖动的气泡锚点（屏上比例坐标）。"""
 
@@ -164,10 +370,14 @@ class _SugarWheelSpeechAnchorItem(QGraphicsEllipseItem):
         self.setPen(QPen(pen, 2))
         self.setToolTip(f"气泡锚点 role={role}\n拖动调整 xRatio/yRatio（与右侧表同步）")
         lab = caption.strip() or role
-        txt = QGraphicsSimpleTextItem(lab, self)
-        txt.setBrush(QBrush(QColor(250, 245, 230)))
-        br = txt.boundingRect()
-        txt.setPos(-br.width() / 2, -br.height() - 4)
+        self._label = QGraphicsSimpleTextItem(lab, self)
+        self._label.setBrush(QBrush(QColor(250, 245, 230)))
+        theme.set_graphics_text_font(self._label, theme.FONT_ROLE_CANVAS_SECONDARY)
+        self.refresh_editor_font()
+
+    def refresh_editor_font(self) -> None:
+        br = self._label.boundingRect()
+        self._label.setPos(-br.width() / 2, -br.height() - 4)
 
     def itemChange(self, change: QGraphicsItem.GraphicsItemChange, value: Any) -> Any:  # noqa: ANN401
         res = super().itemChange(change, value)
@@ -194,6 +404,7 @@ class _SugarWheelChargeButtonItem(QGraphicsEllipseItem):
         self.setPen(QPen(QColor(190, 220, 255), 2))
         self._label = QGraphicsSimpleTextItem("蓄", self)
         self._label.setBrush(QBrush(QColor(250, 245, 230)))
+        theme.set_graphics_text_font(self._label, theme.FONT_ROLE_CANVAS_PRIMARY)
         br = self._label.boundingRect()
         self._label.setPos(-br.width() / 2, -br.height() / 2)
         self._apply_rect()
@@ -208,6 +419,11 @@ class _SugarWheelChargeButtonItem(QGraphicsEllipseItem):
         self.setRect(-h, -h, self._d, self._d)
         sc = max(0.45, min(1.5, self._d / 52.0))
         self._label.setScale(sc)
+        br = self._label.boundingRect()
+        self._label.setPos(-br.width() * sc / 2, -br.height() * sc / 2)
+
+    def refresh_editor_font(self) -> None:
+        self._apply_rect()
 
     def diameter(self) -> float:
         return self._d
@@ -253,8 +469,9 @@ class SugarWheelCanvas(QWidget):
         self._view = QGraphicsView(self._scene, self)
         self._view.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
         self._view.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
-        self._view.setMinimumSize(520, 420)
+        self._view.setMinimumSize(380, 320)  # 画布有 fit/缩放，缩小下限以适配 13"
         self._btn_fit = QPushButton("适应窗口")
+        self._btn_fit.setToolTip("将预览缩放到适应窗口大小")
         self._btn_fit.clicked.connect(self._fit)
 
         self._wheel_item: _SugarWheelMovablePixmap | None = None
@@ -267,15 +484,26 @@ class SugarWheelCanvas(QWidget):
         self._charge_item: _SugarWheelChargeButtonItem | None = None
         self._charge_ox = 0.0
         self._charge_oy = 0.0
+        self._sector_overlay: QGraphicsItemGroup | None = None
+        self._show_sectors = True
+        self._last_doc: dict | None = None
 
         bar = QHBoxLayout()
         bar.addWidget(self._btn_fit)
-        bar.addWidget(
-            QLabel(
-                "预览：背景→转盘→指针→前景→蓄力圆(蓝)→气泡锚点；"
-                "可拖盘面/指针/蓄力圆/彩色圆点；蓄力圆 Ctrl+滚轮调直径"
-            )
+        self._chk_sectors = QCheckBox("扇区线")
+        self._chk_sectors.setChecked(True)
+        self._chk_sectors.setToolTip(
+            "叠加逻辑扇区边界 + id/label + 正上(0°)参考线；\n"
+            "用于把分格对齐到盘面美术（sectorAngleOffsetDeg / sectorCenterPhase）。仅预览，不写数据。"
         )
+        self._chk_sectors.toggled.connect(self._on_toggle_sectors)
+        bar.addWidget(self._chk_sectors)
+        _preview_hint = QLabel("预览")
+        _preview_hint.setToolTip(
+            "预览：背景→转盘→扇区线→指针→前景→蓄力圆(蓝)→气泡锚点；"
+            "可拖盘面/指针/蓄力圆/彩色圆点；蓄力圆 Ctrl+滚轮调直径"
+        )
+        bar.addWidget(_preview_hint)
         bar.addStretch()
 
         root = QVBoxLayout(self)
@@ -287,13 +515,32 @@ class SugarWheelCanvas(QWidget):
         super().resizeEvent(event)
         self._fit()
 
+    def viewport_size(self) -> tuple[float, float]:
+        """游戏视口尺寸（与运行时一致，让预览所见=游戏所得）。读不到则回退 1280×720。"""
+        cfg = getattr(self._model, "game_config", None)
+        if isinstance(cfg, dict):
+            for key in ("windowSize", "viewport"):
+                d = cfg.get(key)
+                if isinstance(d, dict):
+                    w, h = d.get("width"), d.get("height")
+                    if isinstance(w, (int, float)) and isinstance(h, (int, float)) and w > 0 and h > 0:
+                        return (float(w), float(h))
+        return (1280.0, 720.0)
+
+    def _on_toggle_sectors(self, on: bool) -> None:
+        self._show_sectors = bool(on)
+        self.refresh(self._last_doc)
+
     def refresh(self, doc: dict | None) -> None:
+        self._last_doc = doc if isinstance(doc, dict) else None
         self._wheel_item = None
         self._pointer_item = None
         self._layout_cx_cy = None
         self._speech_anchor_items = {}
+        self._sector_overlay = None
         self._scene.clear()
-        self._scene.setSceneRect(QRectF(0, 0, 960, 720))
+        sw, sh = self.viewport_size()
+        self._scene.setSceneRect(QRectF(0, 0, sw, sh))
         self._scene.setBackgroundBrush(QBrush(QColor(5, 5, 9)))
         if not isinstance(doc, dict):
             self._draw_empty()
@@ -319,8 +566,7 @@ class SugarWheelCanvas(QWidget):
 
         wheel_pm = _load_runtime_pixmap(self._model, str(doc.get("wheelImage") or ""))
         pointer_pm = _load_runtime_pixmap(self._model, str(doc.get("pointerImage") or ""))
-        cx = r.width() / 2
-        cy = r.height() / 2
+        cx, cy = _runtime_wheel_center(r.width(), r.height())
         wx = _num(doc.get("wheelCenterOffsetXPx"), 0)
         wy = _num(doc.get("wheelCenterOffsetYPx"), 0)
         px_off = _num(doc.get("pointerOffsetXPx"), 0)
@@ -328,10 +574,7 @@ class SugarWheelCanvas(QWidget):
         self._layout_cx_cy = (cx, cy)
         self._px = px_off
         self._py = py_off
-        max_pct = max(0.2, min(1.0, _num(doc.get("wheelMaxSizePercent"), 0.72)))
-        max_px = max(64.0, _num(doc.get("wheelMaxSizePx"), 660))
-        size = max(160.0, min(r.width() * max_pct, r.height() * 0.72, max_px))
-        size *= max(0.1, min(3.0, _num(doc.get("wheelScale"), 1)))
+        size = _runtime_wheel_size(doc, r.width(), r.height())
 
         wheel_scale = 1.0
         if wheel_pm is not None:
@@ -348,6 +591,14 @@ class SugarWheelCanvas(QWidget):
         else:
             self._draw_missing("wheelImage", QRectF(cx - size / 2, cy - size / 2, size, size), 10)
 
+        if self._show_sectors and self._wheel_item is not None:
+            grp = self._build_sector_overlay(doc, size)
+            if grp is not None:
+                self._scene.addItem(grp)
+                grp.setZValue(15)
+                grp.setPos(self._wheel_item.pos())
+                self._sector_overlay = grp
+
         if pointer_pm is not None and self._wheel_item is not None:
             anchor_x = max(0.0, min(1.0, _num(doc.get("pointerAnchorX"), 0.5)))
             anchor_y = max(0.0, min(1.0, _num(doc.get("pointerAnchorY"), 0.9)))
@@ -362,7 +613,10 @@ class SugarWheelCanvas(QWidget):
             ptr.setToolTip("拖动：指针相对盘心的像素偏移（pointerOffsetX/Y）")
             self._scene.addItem(ptr)
             self._pointer_item = ptr
-        elif pointer_pm is not None:
+        elif pointer_pm is None:
+            # 指针图缺失（未配或文件丢失）时才画「缺少 pointerImage」提示。
+            # 旧写法 elif pointer_pm is not None 写反了：pointer_pm 为 None 时两支都不走，
+            # 缺图静默无提示（审查 P3）。
             self._draw_missing("pointerImage", QRectF(cx - 20, cy - size / 2, 40, size), 20)
 
         fg_pm = _load_runtime_pixmap(self._model, str(doc.get("foregroundImage") or ""))
@@ -446,6 +700,8 @@ class SugarWheelCanvas(QWidget):
                     self._pointer_item.setPos(wpos.x() + self._px, wpos.y() + self._py)
                 if self._charge_item is not None:
                     self._charge_item.setPos(wpos.x() + self._charge_ox, wpos.y() + self._charge_oy)
+                if self._sector_overlay is not None:
+                    self._sector_overlay.setPos(wpos)
             finally:
                 self._move_silent = False
         if self._pointer_item is None:
@@ -456,6 +712,39 @@ class SugarWheelCanvas(QWidget):
         self._px = ppos.x() - wpos.x()
         self._py = ppos.y() - wpos.y()
         self.layout_offsets_changed.emit(wx, wy, self._px, self._py)
+
+    def _build_sector_overlay(self, doc: dict, size: float) -> QGraphicsItemGroup | None:
+        """逻辑扇区叠加层（局部坐标，盘心=0,0）：n 条边界射线 + 每格 id/label + 正上 0° 参考。
+        几何与运行时 geomDebug 同一套（0=正上、顺时针、点=(R·sinθ,−R·cosθ)）。"""
+        n, step, left0 = _phys_sector_layout(doc)
+        if n <= 0 or size <= 0:
+            return None
+        R = size / 2
+        grp = QGraphicsItemGroup()
+        boundary_pen = QPen(QColor(255, 255, 255, 120), 1)
+        for k in range(n):
+            x, y = _geom_point(R, left0 + k * step)
+            ln = QGraphicsLineItem(0.0, 0.0, x, y)
+            ln.setPen(boundary_pen)
+            grp.addToGroup(ln)
+        # 正上 0°（停针解析的参考方向）
+        up = QGraphicsLineItem(0.0, 0.0, 0.0, -R * 1.12)
+        up.setPen(QPen(QColor(0, 255, 153, 170), 2, Qt.PenStyle.DashLine))
+        grp.addToGroup(up)
+        # 每格 id / label，置于扇区中心角
+        sectors = _phys_sectors(doc)
+        r_label = R * 0.6
+        for i in range(n):
+            lx, ly = _geom_point(r_label, left0 + (i + 0.5) * step)
+            sid = str(sectors[i].get("id") or "") if i < len(sectors) else ""
+            lab = str(sectors[i].get("label") or "") if i < len(sectors) else ""
+            cap = f"{i}·{sid}" + (f"\n{lab}" if lab else "")
+            txt = _CenteredGraphicsSimpleTextItem(cap, QPointF(lx, ly))
+            theme.set_graphics_text_font(txt, theme.FONT_ROLE_CANVAS_PROMINENT)
+            txt.setBrush(QBrush(QColor(255, 244, 214)))
+            txt.refresh_editor_font()
+            grp.addToGroup(txt)
+        return grp
 
     def _after_charge_adjust(self) -> None:
         if self._move_silent or self._wheel_item is None or self._charge_item is None:
@@ -486,11 +775,13 @@ class SugarWheelCanvas(QWidget):
         self.speech_anchor_changed.emit(role, xr, yr)
 
     def _draw_empty(self) -> None:
-        self._scene.addText("没有选中转盘实例")
+        text = self._scene.addText("没有选中转盘实例")
+        theme.set_graphics_text_font(text, theme.FONT_ROLE_SECONDARY)
 
     def _draw_missing(self, label: str, rect: QRectF, z: float) -> None:
         self._scene.addRect(rect, QPen(QColor(220, 90, 80), 2, Qt.PenStyle.DashLine), QBrush(QColor(60, 20, 20, 80))).setZValue(z)
         text = self._scene.addText(f"缺少 {label}")
+        theme.set_graphics_text_font(text, theme.FONT_ROLE_SECONDARY)
         text.setDefaultTextColor(QColor(240, 150, 120))
         text.setPos(rect.left() + 8, rect.top() + 8)
         text.setZValue(z + 1)
@@ -527,13 +818,22 @@ class SugarWheelEditor(QWidget):
         ll = QVBoxLayout(left)
         ll.setContentsMargins(0, 0, 0, 0)
         self._list = QListWidget()
-        self._list.setMinimumWidth(220)
+        self._list.setMinimumWidth(180)  # 三栏预算：实例列表下限收窄
         ll.addWidget(QLabel("转盘实例"))
+        self._list_search = QLineEdit()
+        self._list_search.setPlaceholderText("搜索…")
+        self._list_search.setToolTip("按标题 / id 过滤下方实例列表（仅隐藏不匹配项，不改数据）")
+        self._list_search.setClearButtonEnabled(True)
+        self._list_search.textChanged.connect(self._on_list_search_changed)
+        ll.addWidget(self._list_search)
         ll.addWidget(self._list, stretch=1)
         br = QHBoxLayout()
         self._btn_add = QPushButton("新增")
         self._btn_del = QPushButton("删除")
         self._btn_preview = QPushButton("预览…")
+        self._btn_add.setToolTip("新增一个转盘实例（id 作为文件名）")
+        self._btn_del.setToolTip("删除当前选中的转盘实例")
+        self._btn_preview.setToolTip("在游戏内预览当前转盘实例")
         br.addWidget(self._btn_add)
         br.addWidget(self._btn_del)
         br.addWidget(self._btn_preview)
@@ -547,15 +847,15 @@ class SugarWheelEditor(QWidget):
         right = QScrollArea()
         right.setWidgetResizable(True)
         right.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        right.setMinimumWidth(320)
+        right.setMinimumWidth(280)  # 三栏预算：表单面板下限收窄
         right_inner = QWidget()
         rv = QVBoxLayout(right_inner)
         rv.setContentsMargins(0, 0, 0, 0)
 
         self._label = QLineEdit()
 
-        g_res = QGroupBox("外观与资源")
-        ff_r = QFormLayout(g_res)
+        g_res = QGroupBox()
+        ff_r = compact_form(QFormLayout(g_res))
         self._bg = CutsceneImagePathRow(model, "", external_copy_subdir="sugar_wheel", path_edit_read_only=True)
         self._bg_fit = QComboBox()
         self._bg_fit.addItems(["cover", "contain"])
@@ -577,6 +877,22 @@ class SugarWheelEditor(QWidget):
         self._charge_btn_ox = self._double(-1200, 1200, 0, 1)
         self._charge_btn_oy = self._double(-1200, 1200, 0, 1)
         self._charge_btn_d = self._double(28, 160, 52, 0)
+        for _spin in (
+            self._pointer_anchor_x,
+            self._pointer_anchor,
+            self._pointer_scale,
+            self._wheel_scale,
+            self._wheel_pct,
+            self._wheel_px,
+            self._wheel_cx_off,
+            self._wheel_cy_off,
+            self._ptr_ox,
+            self._ptr_oy,
+            self._charge_btn_ox,
+            self._charge_btn_oy,
+            self._charge_btn_d,
+        ):
+            _spin.setMaximumWidth(110)
         self._wheel_cx_off.setToolTip("转盘层相对布局中心的水平偏移（px），可在画布拖动盘面。")
         self._wheel_cy_off.setToolTip("转盘层相对布局中心的竖直偏移（px），可在画布拖动盘面。")
         self._ptr_ox.setToolTip("指针在转盘局部坐标内相对盘心的水平偏移（px），可在画布拖动指针。")
@@ -606,10 +922,12 @@ class SugarWheelEditor(QWidget):
         ff_r.addRow("chargeButtonWheelOffsetXPx", self._charge_btn_ox)
         ff_r.addRow("chargeButtonWheelOffsetYPx", self._charge_btn_oy)
         ff_r.addRow("chargeButtonDiameterPx", self._charge_btn_d)
-        rv.addWidget(g_res)
+        _sec_res = CollapsibleSection("外观与资源", start_open=True)
+        _sec_res.add_body(g_res)
+        rv.addWidget(_sec_res)
 
-        g_sec = QGroupBox("分格与指针校准")
-        ff_s = QFormLayout(g_sec)
+        g_sec = QGroupBox()
+        ff_s = compact_form(QFormLayout(g_sec))
         self._angle = self._double(-360, 360, 0, 2)
         self._sector_phase = self._double(-2, 2, 0, 3)
         self._pointer_art_deg = self._double(-180, 180, 0, 2)
@@ -622,10 +940,12 @@ class SugarWheelEditor(QWidget):
         ff_s.addRow("sectorCenterPhase", self._sector_phase)
         ff_s.addRow("pointerArtOffsetDeg", self._pointer_art_deg)
         ff_s.addRow("sectorDirection", self._direction)
-        rv.addWidget(g_sec)
+        _sec_calib = CollapsibleSection("分格与指针校准", start_open=False)
+        _sec_calib.add_body(g_sec)
+        rv.addWidget(_sec_calib)
 
-        g_chg = QGroupBox("蓄力曲线")
-        ff_h = QFormLayout(g_chg)
+        g_chg = QGroupBox()
+        ff_h = compact_form(QFormLayout(g_chg))
         self._charge_ms = self._double(100, 15000, 2600, 0)
         self._min_power = self._double(0, 1, 0, 3)
         self._charge_curve = self._double(1, 3, 1.4, 2)
@@ -633,22 +953,42 @@ class SugarWheelEditor(QWidget):
         ff_h.addRow("powerChargeMs", self._charge_ms)
         ff_h.addRow("minLaunchPower", self._min_power)
         ff_h.addRow("powerChargeCurve", self._charge_curve)
-        rv.addWidget(g_chg)
+        _sec_chg = CollapsibleSection("蓄力曲线", start_open=False)
+        _sec_chg.add_body(g_chg)
+        rv.addWidget(_sec_chg)
 
-        g_phy = QGroupBox("物理停针（运行时）")
-        ff_p = QFormLayout(g_phy)
+        g_phy = QGroupBox()
+        g_phy_lay = QVBoxLayout(g_phy)
+        g_phy_lay.setContentsMargins(0, 0, 0, 0)
         self._drag = self._double(0.02, 8, 0.58, 3)
         self._drag_low_thr = self._double(0, 20, 2.2, 3)
         self._drag_low_boost = self._double(0, 15, 2.0, 3)
         self._v_min = self._double(0, 80, 0, 3)
-        self._v_max = self._double(0, 80, 10.5, 3)
+        self._v_max = self._double(0, 80, 11, 3)
         self._a_min = self._double(0, 200, 0, 3)
-        self._a_max = self._double(0, 200, 8.5, 3)
+        self._a_max = self._double(0, 200, 9, 3)
         self._a_hl = self._double(0, 10, 0.42, 3)
         self._stop_w = self._double(0.001, 2, 0.06, 3)
-        self._stop_settle = self._double(0, 2, 0.12, 3)
+        self._stop_settle = self._double(0, 2, 0.085, 3)
         self._dry_fric = self._double(0, 4, 0.34, 3)
         self._bias_creep = self._double(0, 6, 1.2, 2)
+        self._bias_strength = self._double(0, 40, 4.2, 2)
+        for _spin in (
+            self._drag,
+            self._drag_low_thr,
+            self._drag_low_boost,
+            self._v_min,
+            self._v_max,
+            self._a_min,
+            self._a_max,
+            self._a_hl,
+            self._stop_w,
+            self._stop_settle,
+            self._dry_fric,
+            self._bias_creep,
+            self._bias_strength,
+        ):
+            _spin.setMaximumWidth(110)
         self._drag.setToolTip("阻力 k（1/s），ω ← ω + (α − k·ω)·Δt；高速段基准。")
         self._drag_low_thr.setToolTip("|ω| 低于该值（rad/s）时阻力在 k 上渐增，0=关闭。")
         self._drag_low_boost.setToolTip("停转附近最大额外 k（1/s）；与阈值内 smootherstep 混合，末段柔和。")
@@ -663,22 +1003,44 @@ class SugarWheelEditor(QWidget):
             "低于该角速度（rad/s）时按比例削弱 weight 势能扭矩，避免临界角速下被偏置「顶着」慢悠悠转。\n"
             "写 0 = 不削弱偏置扭矩。"
         )
-        ff_p.addRow("spinLinearDragPerSec", self._drag)
-        ff_p.addRow("spinDragLowSpeedThresholdRadPerSec", self._drag_low_thr)
-        ff_p.addRow("spinDragLowSpeedBoostPerSec", self._drag_low_boost)
-        ff_p.addRow("spinChargeMinVelocityRadPerSec", self._v_min)
-        ff_p.addRow("spinChargeMaxVelocityRadPerSec", self._v_max)
-        ff_p.addRow("spinChargeMinAccelRadPerSec2", self._a_min)
-        ff_p.addRow("spinChargeMaxAccelRadPerSec2", self._a_max)
-        ff_p.addRow("spinAccelHalfLifeSec", self._a_hl)
-        ff_p.addRow("spinStopSpeedRadPerSec", self._stop_w)
-        ff_p.addRow("spinStopSettleSec", self._stop_settle)
-        ff_p.addRow("spinDryFrictionAccelRadPerSec2", self._dry_fric)
-        ff_p.addRow("spinWeightBiasCreepRefRadPerSec", self._bias_creep)
-        rv.addWidget(g_phy)
+        self._bias_strength.setToolTip(
+            "weight 跑道高低的整体强度（rad/s²），对应 spinWeightBiasStrengthRadPerSec2。\n"
+            "放大/缩小「低谷易停、高坡难停」的体感差距；0 或留默认时运行时用 4.2。仍不是精确中奖率。"
+        )
+        g_phy_drag = QGroupBox("阻力（drag）")
+        ff_p_drag = compact_form(QFormLayout(g_phy_drag))
+        ff_p_drag.addRow("spinLinearDragPerSec", self._drag)
+        ff_p_drag.addRow("spinDragLowSpeedThresholdRadPerSec", self._drag_low_thr)
+        ff_p_drag.addRow("spinDragLowSpeedBoostPerSec", self._drag_low_boost)
+        ff_p_drag.addRow("spinDryFrictionAccelRadPerSec2", self._dry_fric)
+        g_phy_lay.addWidget(g_phy_drag)
 
-        g_pre_ch = QGroupBox("蓄力前：条件与 Action（beforeCharge）")
-        g_pre_ch.setToolTip(
+        g_phy_charge = QGroupBox("蓄力 → 角速度映射（charge）")
+        ff_p_charge = compact_form(QFormLayout(g_phy_charge))
+        ff_p_charge.addRow("spinChargeMinVelocityRadPerSec", self._v_min)
+        ff_p_charge.addRow("spinChargeMaxVelocityRadPerSec", self._v_max)
+        ff_p_charge.addRow("spinChargeMinAccelRadPerSec2", self._a_min)
+        ff_p_charge.addRow("spinChargeMaxAccelRadPerSec2", self._a_max)
+        ff_p_charge.addRow("spinAccelHalfLifeSec", self._a_hl)
+        g_phy_lay.addWidget(g_phy_charge)
+
+        g_phy_bias = QGroupBox("weight 偏置（bias）")
+        ff_p_bias = compact_form(QFormLayout(g_phy_bias))
+        ff_p_bias.addRow("spinWeightBiasStrengthRadPerSec2", self._bias_strength)
+        ff_p_bias.addRow("spinWeightBiasCreepRefRadPerSec", self._bias_creep)
+        g_phy_lay.addWidget(g_phy_bias)
+
+        g_phy_stop = QGroupBox("停转检测（stop）")
+        ff_p_stop = compact_form(QFormLayout(g_phy_stop))
+        ff_p_stop.addRow("spinStopSpeedRadPerSec", self._stop_w)
+        ff_p_stop.addRow("spinStopSettleSec", self._stop_settle)
+        g_phy_lay.addWidget(g_phy_stop)
+        _sec_phy = CollapsibleSection("物理停针（运行时）", start_open=False)
+        _sec_phy.add_body(g_phy)
+        rv.addWidget(_sec_phy)
+
+        g_pre_ch = QGroupBox()
+        _pre_ch_tip = (
             "玩家按住蓄力钮时：先对 beforeChargeCondition 求值（ConditionExpr，与热区同源）；\n"
             "通过则执行 beforeChargePassActions 再进入蓄力；不通过则执行 beforeChargeFailActions 且不蓄力。\n"
             "条件留空表示始终通过。"
@@ -701,14 +1063,19 @@ class SugarWheelEditor(QWidget):
             ae.changed.connect(self._on_before_charge_changed)
         pre_l.addWidget(self._ae_before_charge_pass)
         pre_l.addWidget(self._ae_before_charge_fail)
-        rv.addWidget(g_pre_ch)
+        _sec_pre_ch = CollapsibleSection("蓄力前：条件与 Action（beforeCharge）", start_open=False)
+        _sec_pre_ch.set_header_tool_tip(_pre_ch_tip)
+        _sec_pre_ch.add_body(g_pre_ch)
+        rv.addWidget(_sec_pre_ch)
 
-        g_sp = QGroupBox("对白气泡 showSpeech")
-        ff_sp = QFormLayout(g_sp)
+        g_sp = QGroupBox()
+        ff_sp = compact_form(QFormLayout(g_sp))
         self._speech_dur = self._double(500, 120000, 3000, 0)
         self._speech_dur.setToolTip("默认气泡停留毫秒（外部调用未传 durationMs 时）。")
         ff_sp.addRow("speechDurationMs", self._speech_dur)
-        rv.addWidget(g_sp)
+        _sec_sp = CollapsibleSection("对白气泡 showSpeech", start_open=False)
+        _sec_sp.add_body(g_sp)
+        rv.addWidget(_sec_sp)
 
         self._speech_table = QTableWidget(0, 5)
         self._speech_table.setHorizontalHeaderLabels(["role", "label", "xRatio", "yRatio", "tailDirection"])
@@ -724,11 +1091,13 @@ class SugarWheelEditor(QWidget):
         self._speech_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._speech_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._speech_table.verticalHeader().setVisible(False)
-        self._speech_table.setMinimumHeight(140)
+        self._speech_table.setMinimumHeight(110)
         self._speech_table.horizontalHeader().setStretchLastSection(True)
         sb_sp = QHBoxLayout()
         self._btn_add_speech = QPushButton("+锚点")
-        self._btn_del_speech = QPushButton("−锚点")
+        self._btn_del_speech = QPushButton("-锚点")
+        self._btn_add_speech.setToolTip("新增一个气泡锚点行")
+        self._btn_del_speech.setToolTip("删除选中的气泡锚点行")
         sb_sp.addWidget(QLabel("speechAnchors"))
         sb_sp.addStretch()
         sb_sp.addWidget(self._btn_add_speech)
@@ -738,7 +1107,9 @@ class SugarWheelEditor(QWidget):
         sw_spl.setContentsMargins(0, 0, 0, 0)
         sw_spl.addLayout(sb_sp)
         sw_spl.addWidget(self._speech_table)
-        rv.addWidget(sw_sp)
+        _sec_speech = CollapsibleSection("对白锚点 speechAnchors", start_open=False)
+        _sec_speech.add_body(sw_sp)
+        rv.addWidget(_sec_speech)
 
         self._sector_table = QTableWidget(0, 4)
         self._sector_table.setHorizontalHeaderLabels(["id", "label", "weight", "payload JSON"])
@@ -761,32 +1132,48 @@ class SugarWheelEditor(QWidget):
         self._sector_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._sector_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._sector_table.verticalHeader().setVisible(False)
-        self._sector_table.setMinimumHeight(220)
+        self._sector_table.setMinimumHeight(140)  # 表在滚动区内，降低下限省竖向空间
         self._sector_table.horizontalHeader().setStretchLastSection(True)
         sb = QHBoxLayout()
         self._btn_add_sector = QPushButton("+格子")
-        self._btn_del_sector = QPushButton("−格子")
-        _sec_lbl = QLabel("格子 sectors（顺时针须与贴图一致；weight 悬停列表头可看说明）")
+        self._btn_del_sector = QPushButton("-格子")
+        self._btn_up_sector = QPushButton("上移")
+        self._btn_down_sector = QPushButton("下移")
+        self._btn_add_sector.setToolTip("新增一格")
+        self._btn_del_sector.setToolTip("删除选中的格子")
+        self._btn_up_sector.setToolTip("将选中格子上移一位")
+        self._btn_down_sector.setToolTip("将选中格子下移一位")
+        _sec_lbl = QLabel("格子 sectors")
         _sec_lbl.setToolTip(
             "每行对应盘面上一格。\n「weight」不设=1，视为平地。\n"
             "想体感上少中就写小一点（高坡），容易中就写大一点（低谷）；不是要填「概率％」。"
         )
+        self._btn_sim_dist = QPushButton("试转分布…")
+        self._btn_sim_dist.setToolTip(
+            "蒙特卡洛模拟（随机蓄力 + 随机起手）N 次，显示各格落点占比。\n"
+            "把不直观的 weight 翻译成体感概率；仅读数，不写数据。"
+        )
         sb.addWidget(_sec_lbl)
         sb.addStretch()
+        sb.addWidget(self._btn_sim_dist)
         sb.addWidget(self._btn_add_sector)
         sb.addWidget(self._btn_del_sector)
+        sb.addWidget(self._btn_up_sector)
+        sb.addWidget(self._btn_down_sector)
         sw = QWidget()
         swl = QVBoxLayout(sw)
         swl.setContentsMargins(0, 0, 0, 0)
         swl.addLayout(sb)
         swl.addWidget(self._sector_table)
-        rv.addWidget(sw)
+        _sec_sectors = CollapsibleSection("格子 sectors", start_open=False)
+        _sec_sectors.add_body(sw)
+        rv.addWidget(_sec_sectors)
 
-        self._g_sector_actions = QGroupBox("选中格 · Action（与水族馆实体相同筛选器）")
-        self._g_sector_actions.setToolTip(
+        self._g_sector_actions = QGroupBox()
+        _sector_actions_tip = (
             "在左侧表格选中一行格子后编辑。\n"
             "· actionsOnPointerDrag：idle/查看结果时在盘面上拖指针并松手后执行（命中当前针对的扇区）。\n"
-            "· actionsOnSpinLanding：蓄力开奖停针落在该格后顺序执行，再横幅与 minigame:sugarWheelResult。",
+            "· actionsOnSpinLanding：蓄力开奖停针落在该格后顺序执行，再横幅与 minigame:sugarWheelResult。"
         )
         ga_l = QVBoxLayout(self._g_sector_actions)
         ga_l.setContentsMargins(8, 12, 8, 8)
@@ -797,12 +1184,15 @@ class SugarWheelEditor(QWidget):
             ae.changed.connect(self._on_sector_actions_editor_changed)
         ga_l.addWidget(self._ae_sector_drag)
         ga_l.addWidget(self._ae_sector_landing)
-        rv.addWidget(self._g_sector_actions)
+        _sec_sector_actions = CollapsibleSection("选中格 · Action（与水族馆实体相同筛选器）", start_open=False)
+        _sec_sector_actions.set_header_tool_tip(_sector_actions_tip)
+        _sec_sector_actions.add_body(self._g_sector_actions)
+        rv.addWidget(_sec_sector_actions)
         self._bind_wheel_action_speech_role_getter()
 
         # ── 旋转氛围脚本 ──
-        g_atmos = QGroupBox("旋转氛围脚本 atmosphereGroups")
-        g_atmos.setToolTip(
+        g_atmos = QGroupBox()
+        _atmos_tip = (
             "每次抽奖随机选一组；每组四阶段（start / spinning / slowing / stop），\n"
             "每阶段是有序步骤列表。步骤使用固定 opcode。"
         )
@@ -811,11 +1201,14 @@ class SugarWheelEditor(QWidget):
 
         atmos_bar = QHBoxLayout()
         self._atmos_group_list = QListWidget()
-        self._atmos_group_list.setMaximumHeight(100)
+        self._atmos_group_list.setMinimumHeight(80)
         self._atmos_group_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._btn_add_atmos_group = QPushButton("+组")
         self._btn_del_atmos_group = QPushButton("-组")
         self._btn_dup_atmos_group = QPushButton("复制")
+        self._btn_add_atmos_group.setToolTip("新增一个氛围组")
+        self._btn_del_atmos_group.setToolTip("删除选中的氛围组及其全部步骤")
+        self._btn_dup_atmos_group.setToolTip("复制选中的氛围组")
         atmos_bar.addWidget(QLabel("氛围组"))
         atmos_bar.addStretch()
         atmos_bar.addWidget(self._btn_add_atmos_group)
@@ -824,7 +1217,7 @@ class SugarWheelEditor(QWidget):
         atmos_root.addLayout(atmos_bar)
         atmos_root.addWidget(self._atmos_group_list)
 
-        ag_form = QFormLayout()
+        ag_form = compact_form(QFormLayout())
         self._atmos_group_id = QLineEdit()
         self._atmos_group_id.setPlaceholderText("组 id")
         self._atmos_group_label = QLineEdit()
@@ -841,7 +1234,7 @@ class SugarWheelEditor(QWidget):
 
         # ── vars: 池列表 + 池内文案列表 ──
         vars_split = QSplitter(Qt.Orientation.Horizontal)
-        vars_split.setMaximumHeight(180)
+        vars_split.setMinimumHeight(90)  # 降低下限以适配 13"，可拖大
         vars_left = QWidget()
         vll = QVBoxLayout(vars_left)
         vll.setContentsMargins(0, 0, 0, 0)
@@ -851,6 +1244,9 @@ class SugarWheelEditor(QWidget):
         self._btn_add_var_pool = QPushButton("+池")
         self._btn_del_var_pool = QPushButton("-池")
         self._btn_rename_var_pool = QPushButton("改名")
+        self._btn_add_var_pool.setToolTip("新增一个文案池")
+        self._btn_del_var_pool.setToolTip("删除选中的文案池")
+        self._btn_rename_var_pool.setToolTip("重命名选中的文案池")
         vars_bar.addWidget(self._btn_add_var_pool)
         vars_bar.addWidget(self._btn_rename_var_pool)
         vars_bar.addWidget(self._btn_del_var_pool)
@@ -866,6 +1262,8 @@ class SugarWheelEditor(QWidget):
         lines_bar.addStretch()
         self._btn_add_var_line = QPushButton("+台词")
         self._btn_del_var_line = QPushButton("-台词")
+        self._btn_add_var_line.setToolTip("向当前文案池新增一条台词")
+        self._btn_del_var_line.setToolTip("删除选中的台词")
         lines_bar.addWidget(self._btn_add_var_line)
         lines_bar.addWidget(self._btn_del_var_line)
         vrl.addLayout(lines_bar)
@@ -883,47 +1281,27 @@ class SugarWheelEditor(QWidget):
         self._atmos_phase_tabs.setTabPosition(QTabWidget.TabPosition.North)
         self._ATMOS_PHASE_NAMES = ["start", "spinning", "slowing", "stop"]
         self._ATMOS_PHASE_LABELS = ["start 开始转", "spinning 旋转中", "slowing 慢下来", "stop 停止"]
-        self._atmos_step_tables: dict[str, QTableWidget] = {}
-        _op_choices = ["say", "pick", "wait", "chance", "when_near_sector"]
+        # 每阶段一个 RPGMaker-event 式可嵌套指令列表（chance/when_near 在行下挂 then/else 子列表）。
+        self._atmos_phase_editors: dict[str, AtmosphereScriptEditor] = {}
         for pname, plabel in zip(self._ATMOS_PHASE_NAMES, self._ATMOS_PHASE_LABELS):
-            page = QWidget()
-            pl = QVBoxLayout(page)
-            pl.setContentsMargins(0, 0, 0, 0)
-            step_bar = QHBoxLayout()
-            btn_add = QPushButton("+步骤")
-            btn_del = QPushButton("-步骤")
-            btn_up = QPushButton("上移")
-            btn_down = QPushButton("下移")
-            step_bar.addStretch()
-            step_bar.addWidget(btn_add)
-            step_bar.addWidget(btn_del)
-            step_bar.addWidget(btn_up)
-            step_bar.addWidget(btn_down)
-            pl.addLayout(step_bar)
-            tbl = QTableWidget(0, 7)
-            tbl.setHorizontalHeaderLabels(["op", "role", "pool/text", "sec", "p(0-1)", "sectorId", "degBuf"])
-            tbl.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-            tbl.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-            tbl.verticalHeader().setVisible(False)
-            tbl.setMinimumHeight(140)
-            tbl.horizontalHeader().setStretchLastSection(True)
-            h0 = tbl.horizontalHeaderItem(0)
-            if h0:
-                h0.setToolTip("say=说话  pick=抽句入槽  wait=等待  chance=概率  when_near_sector=邻近扇区")
-            h2 = tbl.horizontalHeaderItem(2)
-            if h2:
-                h2.setToolTip("say: 填 pool 名则从文案池随机抽；填直接文案则直接说。\npick: 填 pool 名。")
-            pl.addWidget(tbl)
-            self._atmos_step_tables[pname] = tbl
-            btn_add.clicked.connect(lambda _c=False, _p=pname: self._atmos_step_add(_p))
-            btn_del.clicked.connect(lambda _c=False, _p=pname: self._atmos_step_del(_p))
-            btn_up.clicked.connect(lambda _c=False, _p=pname: self._atmos_step_move(_p, -1))
-            btn_down.clicked.connect(lambda _c=False, _p=pname: self._atmos_step_move(_p, 1))
-            tbl.itemChanged.connect(lambda _it, _p=pname: self._on_atmos_step_item_changed(_p))
-            self._atmos_phase_tabs.addTab(page, plabel)
+            ed = AtmosphereScriptEditor(
+                roles_getter=self._speech_role_rows_for_action_editor,
+                sectors_getter=self._atmos_sector_ids,
+                pools_getter=self._atmos_pool_names,
+            )
+            ed.changed.connect(lambda _p=pname: self._on_atmos_phase_changed(_p))
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setWidget(ed)
+            scroll.setMinimumHeight(170)
+            self._atmos_phase_editors[pname] = ed
+            self._atmos_phase_tabs.addTab(scroll, plabel)
         atmos_root.addWidget(self._atmos_phase_tabs)
 
-        rv.addWidget(g_atmos)
+        _sec_atmos = CollapsibleSection("旋转氛围脚本 atmosphereGroups", start_open=False)
+        _sec_atmos.set_header_tool_tip(_atmos_tip)
+        _sec_atmos.add_body(g_atmos)
+        rv.addWidget(_sec_atmos)
 
         rv.addStretch()
         right.setWidget(right_inner)
@@ -991,6 +1369,7 @@ class SugarWheelEditor(QWidget):
             self._stop_settle,
             self._dry_fric,
             self._bias_creep,
+            self._bias_strength,
             self._speech_dur,
         ):
             w.valueChanged.connect(self._on_config_changed)
@@ -1000,6 +1379,9 @@ class SugarWheelEditor(QWidget):
         self._speech_table.itemChanged.connect(self._on_speech_item_changed)
         self._btn_add_sector.clicked.connect(self._add_sector)
         self._btn_del_sector.clicked.connect(self._delete_sector)
+        self._btn_up_sector.clicked.connect(lambda _c=False: self._move_sector(-1))
+        self._btn_down_sector.clicked.connect(lambda _c=False: self._move_sector(1))
+        self._btn_sim_dist.clicked.connect(self._show_landing_distribution)
         self._btn_add_speech.clicked.connect(self._add_speech_row)
         self._btn_del_speech.clicked.connect(self._delete_speech_row)
         self._sector_table.itemSelectionChanged.connect(self._on_sector_selection_changed)
@@ -1007,7 +1389,11 @@ class SugarWheelEditor(QWidget):
         self._btn_add_atmos_group.clicked.connect(self._add_atmos_group)
         self._btn_del_atmos_group.clicked.connect(self._del_atmos_group)
         self._btn_dup_atmos_group.clicked.connect(self._dup_atmos_group)
-        self._atmos_group_id.textChanged.connect(self._on_atmos_group_field_changed)
+        # id 走独立的 live(逐键写,不判重) + commit(editingFinished 判重回滚) 双路径,
+        # 不再挂 _on_atmos_group_field_changed(那会逐键判重、退格路过已存在 id 即整框
+        # 重置——审查 P3)。
+        self._atmos_group_id.textChanged.connect(self._on_atmos_group_id_live)
+        self._atmos_group_id.editingFinished.connect(self._on_atmos_group_id_commit)
         self._atmos_group_label.textChanged.connect(self._on_atmos_group_field_changed)
         self._atmos_group_weight.valueChanged.connect(self._on_atmos_group_field_changed)
         self._var_pool_list.currentRowChanged.connect(self._on_var_pool_selected)
@@ -1032,6 +1418,11 @@ class SugarWheelEditor(QWidget):
     def _flush_before_charge_from_editors(self) -> None:
         if self._loading or not self._doc:
             return
+        # 该 flush 也在 Save All / 关闭前对所有面板统一调用；若无条件 mark_dirty，"打开
+        # 转盘编辑器啥都没改直接关闭"也会被伪标脏、弹出保存提示。故先快照三键、写回后只在
+        # 确有变化时才标脏（用户真改条件/动作时值必变，仍照常标脏）。
+        _keys = ("beforeChargeCondition", "beforeChargePassActions", "beforeChargeFailActions")
+        before = json.dumps({k: self._doc.get(k) for k in _keys}, ensure_ascii=False, sort_keys=True)
         ex = self._before_charge_cond.get_expr()
         if ex:
             self._doc["beforeChargeCondition"] = ex
@@ -1047,7 +1438,9 @@ class SugarWheelEditor(QWidget):
             self._doc["beforeChargeFailActions"] = lf
         else:
             self._doc.pop("beforeChargeFailActions", None)
-        self._mark_dirty(refresh_canvas=False)
+        after = json.dumps({k: self._doc.get(k) for k in _keys}, ensure_ascii=False, sort_keys=True)
+        if after != before:
+            self._mark_dirty(refresh_canvas=False)
 
     def _on_before_charge_changed(self) -> None:
         self._flush_before_charge_from_editors()
@@ -1081,68 +1474,25 @@ class SugarWheelEditor(QWidget):
             self._ae_before_charge_fail,
         ):
             ae.refresh_wheel_speech_role_combos()
-        self._refresh_atmos_role_combos()
+        # 角色集合（speechAnchors）变了 → 让氛围指令编辑器里的角色下拉按当前数据重建。
+        for ed in self._atmos_phase_editors.values():
+            ed.refresh_choices()
 
-    def _default_atmos_say_role(self) -> str:
-        for a in _merge_speech_anchors_for_canvas(self._doc or {}):
-            rid = str(a.get("role") or "").strip()
-            if rid:
-                return rid
-        return "child_a"
+    def _reload_atmos_editors_from_group(self) -> None:
+        """按当前氛围组的数据重载四阶段指令编辑器（set_data 静默，不触发 changed 回写）。"""
+        g = self._cur_atmos_group()
+        for pname, ed in self._atmos_phase_editors.items():
+            steps = (g or {}).get(pname)
+            ed.set_data(steps if isinstance(steps, list) else [])
 
-    def _fill_atmos_role_combo(self, cb: QComboBox, current_role: str) -> None:
-        cb.blockSignals(True)
-        try:
-            cb.clear()
-            cur = (current_role or "").strip()
-            for a in _merge_speech_anchors_for_canvas(self._doc or {}):
-                rid = str(a.get("role") or "").strip()
-                if not rid:
-                    continue
-                lab = str(a.get("label") or "").strip()
-                disp = f"{rid} · {lab}" if lab else rid
-                cb.addItem(disp, rid)
-            idx = cb.findData(cur)
-            if idx >= 0:
-                cb.setCurrentIndex(idx)
-            elif cur:
-                cb.addItem(f"(数据中) {cur}", cur)
-                cb.setCurrentIndex(cb.count() - 1)
-            elif cb.count():
-                cb.setCurrentIndex(0)
-        finally:
-            cb.blockSignals(False)
-
-    def _refresh_atmos_role_combos(self) -> None:
-        if not self._doc:
-            return
-        for pname in self._ATMOS_PHASE_NAMES:
-            tbl = self._atmos_step_tables[pname]
-            for r in range(tbl.rowCount()):
-                w = tbl.cellWidget(r, 1)
-                if not isinstance(w, QComboBox):
-                    continue
-                rd = w.currentData()
-                cur = str(rd) if rd is not None else w.currentText().strip()
-                self._fill_atmos_role_combo(w, cur)
-
-    def _role_cell_from_atmos_table(self, tbl: QTableWidget, r: int) -> str:
-        w = tbl.cellWidget(r, 1)
-        if isinstance(w, QComboBox):
-            data = w.currentData()
-            if data is not None:
-                return str(data).strip()
-            return w.currentText().strip()
-        it = tbl.item(r, 1)
-        return it.text().strip() if it else ""
-
-    def _pull_atmos_step_from_ui(self, pname: str) -> None:
+    def _on_atmos_phase_changed(self, pname: str) -> None:
+        """某阶段指令列表被编辑 → 写回当前组（结构与运行时一致，then/else 由子编辑器递归产出）。"""
         if self._loading or not self._doc:
             return
         g = self._cur_atmos_group()
         if g is None:
             return
-        g[pname] = self._read_atmos_step_table(pname)
+        g[pname] = self._atmos_phase_editors[pname].to_list()
         self._mark_dirty(refresh_canvas=False)
 
     def _on_canvas_layout_offsets(self, wx: float, wy: float, px: float, py: float) -> None:
@@ -1234,6 +1584,8 @@ class SugarWheelEditor(QWidget):
             if select_id and iid == select_id:
                 sel = self._list.count() - 1
         self._list.blockSignals(False)
+        if getattr(self, "_list_search", None) is not None:
+            self._on_list_search_changed(self._list_search.text())
         if self._list.count() > 0:
             self._list.setCurrentRow(sel)
         else:
@@ -1241,14 +1593,45 @@ class SugarWheelEditor(QWidget):
             self._doc = None
             self._canvas.refresh(None)
 
-    def select_by_id(self, item_id: str, _scene_id: str = "") -> None:
+    def _on_list_search_changed(self, text: str) -> None:
+        # 纯视图过滤：只 setHidden，不改/不重排任何数据。
+        q = (text or "").strip().lower()
+        for row in range(self._list.count()):
+            it = self._list.item(row)
+            if it is None:
+                continue
+            it.setHidden(bool(q) and q not in it.text().lower())
+
+    def select_by_id(self, item_id: str, _scene_id: str = "") -> bool:
         iid = (item_id or "").strip()
         if not iid:
-            return
+            return False
         for row in self._model.sugar_wheel_index if isinstance(self._model.sugar_wheel_index, list) else []:
             if isinstance(row, dict) and str(row.get("id") or "").strip() == iid:
                 self._reload_list(iid)
-                return
+                return True
+        return False
+
+    def reload_refs_from_model(self) -> None:
+        """主窗切页激活时重拉动作/条件/氛围编辑器候选（item/flag/quest/scene 等在别处
+        新增后不切页看不见）。ActionEditor.set_project_context 因 model 相同会 early-return，
+        故用 set_data(to_list()) 原值重建；氛围指令编辑器走 refresh_choices。内容不变、
+        不触发 changed（set_data 静默）、不重置其它表单字段。"""
+        prev = self._loading
+        self._loading = True
+        try:
+            for ae in (
+                self._ae_sector_drag,
+                self._ae_sector_landing,
+                self._ae_before_charge_pass,
+                self._ae_before_charge_fail,
+            ):
+                ae.set_data(ae.to_list())
+            self._before_charge_cond.set_model_refresh()
+            for ed in self._atmos_phase_editors.values():
+                ed.refresh_choices()
+        finally:
+            self._loading = prev
 
     def _set_enabled(self, on: bool) -> None:
         for w in (
@@ -1260,9 +1643,10 @@ class SugarWheelEditor(QWidget):
             self._pointer_art_deg, self._direction,
             self._charge_ms, self._min_power, self._charge_curve,
             self._drag, self._drag_low_thr, self._drag_low_boost, self._v_min, self._v_max, self._a_min, self._a_max,
-            self._a_hl, self._stop_w, self._stop_settle, self._dry_fric, self._bias_creep,
+            self._a_hl, self._stop_w, self._stop_settle, self._dry_fric, self._bias_creep, self._bias_strength,
             self._speech_dur,
             self._sector_table, self._btn_add_sector, self._btn_del_sector,
+            self._btn_up_sector, self._btn_down_sector, self._btn_sim_dist,
             self._g_sector_actions,
             self._speech_table, self._btn_add_speech, self._btn_del_speech,
             self._btn_preview,
@@ -1293,6 +1677,7 @@ class SugarWheelEditor(QWidget):
             sec.pop("actionsOnSpinLanding", None)
 
     def _fill_sector_action_editors(self, row: int) -> None:
+        _prev_loading = self._loading  # 嵌套调用不得提前解锁外层 _loading（审查 P2-22）
         self._loading = True
         try:
             sectors = self._sectors()
@@ -1312,7 +1697,7 @@ class SugarWheelEditor(QWidget):
                     else [],
                 )
         finally:
-            self._loading = False
+            self._loading = _prev_loading
 
     def _sync_sector_selection_from_table(self, prev_sel: int) -> None:
         sectors = self._sectors()
@@ -1395,8 +1780,11 @@ class SugarWheelEditor(QWidget):
             self._wheel_cy_off.setValue(_num(d.get("wheelCenterOffsetYPx"), 0))
             self._ptr_ox.setValue(_num(d.get("pointerOffsetXPx"), 0))
             self._ptr_oy.setValue(_num(d.get("pointerOffsetYPx"), 0))
-            rr = self._canvas._scene.sceneRect()
-            R = _preview_wheel_radius_px(d, float(rr.width()), float(rr.height()))
+            # 用游戏视口尺寸算默认蓄力偏移，而非画布 sceneRect：首次进页画布尚未
+            # refresh/resize，sceneRect 为空(0×0)会把默认算成 ~79px（正确约 179px），
+            # 一动 spin 就把错误默认写进 JSON（审查 P3）。viewport_size 与运行时一致。
+            _vw, _vh = self._canvas.viewport_size()
+            R = _preview_wheel_radius_px(d, float(_vw), float(_vh))
             def_ox = R * 0.72
             def_oy = R * 0.72
             self._charge_json_explicit = any(
@@ -1422,14 +1810,15 @@ class SugarWheelEditor(QWidget):
             self._drag_low_thr.setValue(_num(d.get("spinDragLowSpeedThresholdRadPerSec"), 0))
             self._drag_low_boost.setValue(_num(d.get("spinDragLowSpeedBoostPerSec"), 0))
             self._v_min.setValue(_num(d.get("spinChargeMinVelocityRadPerSec"), 0))
-            self._v_max.setValue(_num(d.get("spinChargeMaxVelocityRadPerSec"), 10.5))
+            self._v_max.setValue(_num(d.get("spinChargeMaxVelocityRadPerSec"), 11))
             self._a_min.setValue(_num(d.get("spinChargeMinAccelRadPerSec2"), 0))
-            self._a_max.setValue(_num(d.get("spinChargeMaxAccelRadPerSec2"), 8.5))
+            self._a_max.setValue(_num(d.get("spinChargeMaxAccelRadPerSec2"), 9))
             self._a_hl.setValue(_num(d.get("spinAccelHalfLifeSec"), 0.42))
             self._stop_w.setValue(_num(d.get("spinStopSpeedRadPerSec"), 0.06))
-            self._stop_settle.setValue(_num(d.get("spinStopSettleSec"), 0.12))
+            self._stop_settle.setValue(_num(d.get("spinStopSettleSec"), 0.085))
             self._dry_fric.setValue(_num(d.get("spinDryFrictionAccelRadPerSec2"), 0.34))
             self._bias_creep.setValue(_num(d.get("spinWeightBiasCreepRefRadPerSec"), 1.2))
+            self._bias_strength.setValue(_num(d.get("spinWeightBiasStrengthRadPerSec2"), 4.2))
             self._speech_dur.setValue(_num(d.get("speechDurationMs"), 3000))
             bcc = d.get("beforeChargeCondition")
             self._before_charge_cond.set_expr(bcc if isinstance(bcc, dict) else None)
@@ -1451,6 +1840,9 @@ class SugarWheelEditor(QWidget):
                 self._atmos_group_list.setCurrentRow(0)
             self._fill_atmos_group_detail()
             self._refresh_wheel_speech_dependent_combos()
+            # 载入基线：_on_config_changed 据此区分"用户改动"与"控件缺省"
+            self._config_widget_baseline = self._config_widget_values()
+            self._charge_widget_baseline = self._charge_widget_values()
         finally:
             self._loading = False
 
@@ -1486,14 +1878,13 @@ class SugarWheelEditor(QWidget):
         return out
 
     def _speech_rows(self) -> list[dict]:
+        """只读视图：不 setdefault、不过滤替换——仅选中实例不得注入 speechAnchors 键
+        （审查 P3-7）。写路径（_add_speech_row 等）自行 setdefault。"""
         assert self._doc is not None
-        raw = self._doc.setdefault("speechAnchors", [])
+        raw = self._doc.get("speechAnchors")
         if not isinstance(raw, list):
-            raw = []
-            self._doc["speechAnchors"] = raw
-        out = [x for x in raw if isinstance(x, dict)]
-        self._doc["speechAnchors"] = out
-        return out
+            return []
+        return [x for x in raw if isinstance(x, dict)]
 
     def _fill_speech_rows(self) -> None:
         if not self._doc:
@@ -1517,34 +1908,55 @@ class SugarWheelEditor(QWidget):
                 self._speech_table.setItem(r, c, QTableWidgetItem(val))
         self._speech_table.blockSignals(False)
 
-    def _on_speech_item_changed(self, _item: QTableWidgetItem) -> None:
+    def _revert_speech_cell(self, r: int, c: int, text: str) -> None:
+        self._loading = True
+        try:
+            it = self._speech_table.item(r, c)
+            if it is not None:
+                it.setText(text)
+        finally:
+            self._loading = False
+
+    def _on_speech_item_changed(self, item: QTableWidgetItem) -> None:
         if self._loading or not self._doc:
             return
         anchors = self._speech_rows()
-        for r in range(len(anchors)):
-            if r >= self._speech_table.rowCount():
-                break
-            a = anchors[r]
-            a["role"] = (self._speech_table.item(r, 0).text() if self._speech_table.item(r, 0) else "").strip()
-            lab = (self._speech_table.item(r, 1).text() if self._speech_table.item(r, 1) else "").strip()
+        r = item.row()
+        if r < 0 or r >= len(anchors):
+            return
+        # 只写被编辑的那一行那一格：不再"任一格一动重写所有行"（审查 P3-7）
+        a = anchors[r]
+        c = item.column()
+        if c == 0:
+            a["role"] = item.text().strip()
+        elif c == 1:
+            lab = item.text().strip()
             if lab:
                 a["label"] = lab
             else:
                 a.pop("label", None)
-            for key, col in (("xRatio", 2), ("yRatio", 3)):
-                txt = (self._speech_table.item(r, col).text() if self._speech_table.item(r, col) else "").strip()
-                if txt:
-                    try:
-                        a[key] = float(txt)
-                    except ValueError:
-                        pass
-                else:
-                    a.pop(key, None)
-            tail = (self._speech_table.item(r, 4).text() if self._speech_table.item(r, 4) else "").strip().lower()
-            if tail in ("up", "down", "none"):
-                a["tailDirection"] = tail
+        elif c in (2, 3):
+            key = "xRatio" if c == 2 else "yRatio"
+            txt = item.text().strip()
+            if txt:
+                try:
+                    a[key] = float(txt)
+                except ValueError:
+                    # 非法数字：回显原值，不静默忽略造成表格与模型不一致
+                    old = a.get(key)
+                    self._revert_speech_cell(r, c, "" if old is None else str(float(old)))
+                    return
             else:
-                a["tailDirection"] = "none"
+                a.pop(key, None)
+        elif c == 4:
+            tail = item.text().strip().lower()
+            if tail in ("up", "down", "none"):
+                if "tailDirection" in a or tail != "none":
+                    a["tailDirection"] = tail
+            else:
+                # 打错字：回显原值，不静默改成 "none"
+                self._revert_speech_cell(r, c, str(a.get("tailDirection") or "none"))
+                return
         self._mark_dirty()
         self._refresh_wheel_speech_dependent_combos()
 
@@ -1592,50 +2004,107 @@ class SugarWheelEditor(QWidget):
         self._doc["pointerImage"] = self._pointer.path()
         self._mark_dirty()
 
+    @staticmethod
+    def _keep_num(new_val, old_val):
+        if (
+            isinstance(old_val, (int, float))
+            and not isinstance(old_val, bool)
+            and float(old_val) == float(new_val)
+        ):
+            return old_val
+        return new_val
+
+    def _config_widget_values(self) -> dict[str, Any]:
+        """配置区键 → 当前控件值（唯一映射表，_on_config_changed 与基线快照共用）。"""
+        return {
+            "backgroundFit": self._bg_fit.currentText(),
+            "foregroundFit": self._foreground_fit.currentText(),
+            "pointerAnchorX": float(self._pointer_anchor_x.value()),
+            "pointerAnchorY": float(self._pointer_anchor.value()),
+            "pointerScale": float(self._pointer_scale.value()),
+            "wheelScale": float(self._wheel_scale.value()),
+            "wheelMaxSizePercent": float(self._wheel_pct.value()),
+            "wheelMaxSizePx": int(round(self._wheel_px.value())),
+            "wheelCenterOffsetXPx": float(self._wheel_cx_off.value()),
+            "wheelCenterOffsetYPx": float(self._wheel_cy_off.value()),
+            "pointerOffsetXPx": float(self._ptr_ox.value()),
+            "pointerOffsetYPx": float(self._ptr_oy.value()),
+            "sectorAngleOffsetDeg": float(self._angle.value()),
+            "sectorCenterPhase": float(self._sector_phase.value()),
+            "pointerArtOffsetDeg": float(self._pointer_art_deg.value()),
+            "sectorDirection": self._direction.currentText(),
+            "powerChargeMs": int(round(self._charge_ms.value())),
+            "minLaunchPower": float(self._min_power.value()),
+            "powerChargeCurve": float(self._charge_curve.value()),
+            "spinLinearDragPerSec": float(self._drag.value()),
+            "spinDragLowSpeedThresholdRadPerSec": float(self._drag_low_thr.value()),
+            "spinDragLowSpeedBoostPerSec": float(self._drag_low_boost.value()),
+            "spinChargeMinVelocityRadPerSec": float(self._v_min.value()),
+            "spinChargeMaxVelocityRadPerSec": float(self._v_max.value()),
+            "spinChargeMinAccelRadPerSec2": float(self._a_min.value()),
+            "spinChargeMaxAccelRadPerSec2": float(self._a_max.value()),
+            "spinAccelHalfLifeSec": float(self._a_hl.value()),
+            "spinStopSpeedRadPerSec": float(self._stop_w.value()),
+            "spinStopSettleSec": float(self._stop_settle.value()),
+            "spinDryFrictionAccelRadPerSec2": float(self._dry_fric.value()),
+            "spinWeightBiasCreepRefRadPerSec": float(self._bias_creep.value()),
+            "spinWeightBiasStrengthRadPerSec2": float(self._bias_strength.value()),
+            "speechDurationMs": int(round(self._speech_dur.value())),
+        }
+
+    def _charge_widget_values(self) -> dict[str, float]:
+        return {
+            "chargeButtonWheelOffsetXPx": float(self._charge_btn_ox.value()),
+            "chargeButtonWheelOffsetYPx": float(self._charge_btn_oy.value()),
+            "chargeButtonDiameterPx": float(self._charge_btn_d.value()),
+        }
+
     def _on_config_changed(self, *_args: Any) -> None:
         if self._loading or not self._doc:
             return
-        self._doc["backgroundFit"] = self._bg_fit.currentText()
-        self._doc["foregroundFit"] = self._foreground_fit.currentText()
-        self._doc["pointerAnchorX"] = float(self._pointer_anchor_x.value())
-        self._doc["pointerAnchorY"] = float(self._pointer_anchor.value())
-        self._doc["pointerScale"] = float(self._pointer_scale.value())
-        self._doc["wheelScale"] = float(self._wheel_scale.value())
-        self._doc["wheelMaxSizePercent"] = float(self._wheel_pct.value())
-        self._doc["wheelMaxSizePx"] = int(round(self._wheel_px.value()))
-        self._doc["wheelCenterOffsetXPx"] = float(self._wheel_cx_off.value())
-        self._doc["wheelCenterOffsetYPx"] = float(self._wheel_cy_off.value())
-        self._doc["pointerOffsetXPx"] = float(self._ptr_ox.value())
-        self._doc["pointerOffsetYPx"] = float(self._ptr_oy.value())
-        self._doc["sectorAngleOffsetDeg"] = float(self._angle.value())
-        self._doc["sectorCenterPhase"] = float(self._sector_phase.value())
-        self._doc["pointerArtOffsetDeg"] = float(self._pointer_art_deg.value())
-        self._doc["sectorDirection"] = self._direction.currentText()
-        self._doc["powerChargeMs"] = int(round(self._charge_ms.value()))
-        self._doc["minLaunchPower"] = float(self._min_power.value())
-        self._doc["powerChargeCurve"] = float(self._charge_curve.value())
-        self._doc["spinLinearDragPerSec"] = float(self._drag.value())
-        self._doc["spinDragLowSpeedThresholdRadPerSec"] = float(self._drag_low_thr.value())
-        self._doc["spinDragLowSpeedBoostPerSec"] = float(self._drag_low_boost.value())
-        self._doc["spinChargeMinVelocityRadPerSec"] = float(self._v_min.value())
-        self._doc["spinChargeMaxVelocityRadPerSec"] = float(self._v_max.value())
-        self._doc["spinChargeMinAccelRadPerSec2"] = float(self._a_min.value())
-        self._doc["spinChargeMaxAccelRadPerSec2"] = float(self._a_max.value())
-        self._doc["spinAccelHalfLifeSec"] = float(self._a_hl.value())
-        self._doc["spinStopSpeedRadPerSec"] = float(self._stop_w.value())
-        self._doc["spinStopSettleSec"] = float(self._stop_settle.value())
-        self._doc["spinDryFrictionAccelRadPerSec2"] = float(self._dry_fric.value())
-        self._doc["spinWeightBiasCreepRefRadPerSec"] = float(self._bias_creep.value())
-        self._doc["speechDurationMs"] = int(round(self._speech_dur.value()))
-        self._doc.pop("speechMaxVisible", None)
+        # 基线驱动写回（审查 P2-12）：
+        # - 已在 doc 的键：keep_num 更新（未改动按原始 int/float 表示）
+        # - 缺键：仅当用户把控件从载入基线改走时才写——不再"动一个字段 30 个键全注入"，
+        #   缺省键继续留给运行时默认（如 spinStopSettleSec 缺省 0.085）
+        cur = self._config_widget_values()
+        baseline = getattr(self, "_config_widget_baseline", {}) or {}
+        changed = False
+        for k, v in cur.items():
+            if k in self._doc:
+                nv = (
+                    self._keep_num(v, self._doc.get(k))
+                    if isinstance(v, (int, float)) and not isinstance(v, bool)
+                    else v
+                )
+                if nv != self._doc.get(k) or type(nv) is not type(self._doc.get(k)):
+                    self._doc[k] = nv
+                    changed = True
+            else:
+                if k in baseline and v == baseline.get(k):
+                    continue
+                self._doc[k] = v
+                changed = True
+        if self._doc.pop("speechMaxVisible", None) is not None:
+            changed = True
+        # chargeButton 三键：原本显式才写；用户改动任一充能控件时三键显式化
+        charge_cur = self._charge_widget_values()
+        charge_base = getattr(self, "_charge_widget_baseline", {}) or {}
+        if not self._charge_json_explicit and any(
+            charge_cur.get(k) != charge_base.get(k) for k in charge_cur
+        ):
+            self._charge_json_explicit = True
         if self._charge_json_explicit:
-            self._doc["chargeButtonWheelOffsetXPx"] = float(self._charge_btn_ox.value())
-            self._doc["chargeButtonWheelOffsetYPx"] = float(self._charge_btn_oy.value())
-            self._doc["chargeButtonDiameterPx"] = float(self._charge_btn_d.value())
+            for k, v in charge_cur.items():
+                nv = self._keep_num(v, self._doc.get(k))
+                if k not in self._doc or nv != self._doc.get(k) or type(nv) is not type(self._doc.get(k)):
+                    self._doc[k] = nv
+                    changed = True
         else:
-            for k in ("chargeButtonWheelOffsetXPx", "chargeButtonWheelOffsetYPx", "chargeButtonDiameterPx"):
-                self._doc.pop(k, None)
-        self._mark_dirty()
+            for k in charge_cur:
+                if self._doc.pop(k, None) is not None:
+                    changed = True
+        if changed:
+            self._mark_dirty()
 
     def _on_sector_item_changed(self, item: QTableWidgetItem) -> None:
         if self._loading or not self._doc:
@@ -1645,7 +2114,21 @@ class SugarWheelEditor(QWidget):
         if r < 0 or r >= len(sectors):
             return
         sec = sectors[r]
-        sec["id"] = (self._sector_table.item(r, 0).text() if self._sector_table.item(r, 0) else "").strip()
+        old_id = str(sec.get("id") or "")
+        new_id = (self._sector_table.item(r, 0).text() if self._sector_table.item(r, 0) else "").strip()
+        if item.column() == 0 and new_id and new_id != old_id and any(
+            j != r and str(sectors[j].get("id") or "").strip() == new_id for j in range(len(sectors))
+        ):
+            QMessageBox.warning(self, "转盘小游戏", f"扇区 id「{new_id}」与其它格子重复，已撤销")
+            self._loading = True
+            try:
+                c0 = self._sector_table.item(r, 0)
+                if c0 is not None:
+                    c0.setText(old_id)
+            finally:
+                self._loading = False
+            return
+        sec["id"] = new_id
         sec["label"] = (self._sector_table.item(r, 1).text() if self._sector_table.item(r, 1) else "").strip()
         w_txt = (self._sector_table.item(r, 2).text() if self._sector_table.item(r, 2) else "").strip()
         if w_txt:
@@ -1675,6 +2158,15 @@ class SugarWheelEditor(QWidget):
                 else:
                     sec["payload"] = {"value": payload}
             except json.JSONDecodeError:
+                self._loading = True
+                try:
+                    pc = self._sector_table.item(r, 3)
+                    if pc is not None:
+                        old_pl = sec.get("payload")
+                        pc.setText(json.dumps(old_pl, ensure_ascii=False) if isinstance(old_pl, dict) else "")
+                finally:
+                    self._loading = False
+                QMessageBox.warning(self, "转盘小游戏", "payload 不是合法 JSON，已撤销该单元格")
                 return
         else:
             sec.pop("payload", None)
@@ -1696,11 +2188,27 @@ class SugarWheelEditor(QWidget):
         sectors = self._sectors()
         if r < 0 or r >= len(sectors):
             return
+        if not confirm.confirm_delete(self, f"扇区「{sectors[r].get('id', '')}」"):
+            return
         sectors.pop(r)
         self._mark_dirty()
         n = len(sectors)
         hint = max(0, min(r, n - 1)) if n > 0 else -1
         self._fill_sectors(hint)
+
+    def _move_sector(self, direction: int) -> None:
+        if not self._doc:
+            return
+        r = self._sector_table.currentRow()
+        sectors = self._sectors()
+        if r < 0 or r >= len(sectors):
+            return
+        nr = r + direction
+        if nr < 0 or nr >= len(sectors):
+            return
+        sectors[r], sectors[nr] = sectors[nr], sectors[r]
+        self._mark_dirty()
+        self._fill_sectors(nr)
 
     def _add_instance(self) -> None:
         raw, ok = QInputDialog.getText(self, "新增转盘实例", "实例 id（将作为文件名 stem）：")
@@ -1750,7 +2258,7 @@ class SugarWheelEditor(QWidget):
             "spinChargeMaxAccelRadPerSec2": 8.5,
             "spinAccelHalfLifeSec": 0.42,
             "spinStopSpeedRadPerSec": 0.06,
-            "spinStopSettleSec": 0.12,
+            "spinStopSettleSec": 0.085,
             "spinDryFrictionAccelRadPerSec2": 0.34,
             "spinWeightBiasCreepRefRadPerSec": 1.2,
             "sectors": [{"id": "sector_1", "label": "格子1"}],
@@ -1776,9 +2284,63 @@ class SugarWheelEditor(QWidget):
         if self._current_id:
             self.preview_requested.emit(self._current_id)
 
+    def _show_landing_distribution(self) -> None:
+        """蒙特卡洛试转，弹出各格落点占比（把 weight 翻成体感概率）。只读，不改数据。"""
+        if not self._doc:
+            return
+        sectors = self._sectors()
+        if not sectors:
+            QMessageBox.information(self, "试转分布", "请先添加格子")
+            return
+        trials = 3000
+        counts = simulate_landing_counts(self._doc, trials)
+        total = sum(counts) or 1
+        dlg = QDialog(self)
+        dlg.setWindowTitle("试转落点分布（蒙特卡洛近似）")
+        lay = QVBoxLayout(dlg)
+        note = QLabel(
+            f"随机蓄力 + 随机起手，模拟 {trials} 次的落格占比（与运行时积分同构）。\n"
+            "这是体感近似，不是精确中奖率：weight 调的是「跑道高低」而非百分比。"
+        )
+        note.setWordWrap(True)
+        lay.addWidget(note)
+        tbl = QTableWidget(len(sectors), 4)
+        tbl.setHorizontalHeaderLabels(["#", "id / label", "weight", "落点占比"])
+        tbl.verticalHeader().setVisible(False)
+        tbl.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        tbl.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        for i, sec in enumerate(sectors):
+            c = counts[i] if i < len(counts) else 0
+            pct = 100.0 * c / total
+            sid = str(sec.get("id") or "")
+            lab = str(sec.get("label") or "")
+            w = sec.get("weight")
+            wtxt = "1（默认）" if w is None else str(w)
+            cells = [str(i), sid + (f" · {lab}" if lab else ""), wtxt, f"{pct:.1f}%  ({c})"]
+            for col, val in enumerate(cells):
+                it = QTableWidgetItem(val)
+                if col in (0, 2, 3):
+                    it.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                tbl.setItem(i, col, it)
+        tbl.resizeColumnsToContents()
+        tbl.horizontalHeader().setStretchLastSection(True)
+        tbl.setMinimumSize(440, 220)
+        lay.addWidget(tbl)
+        btn = QPushButton("关闭")
+        btn.clicked.connect(dlg.accept)
+        lay.addWidget(btn)
+        dlg.resize(500, 400)
+        dlg.exec()
+
     # ── 氛围脚本 helpers ──
 
     def _atmos_groups(self) -> list[dict]:
+        """只读视图：不 setdefault 注入 atmosphereGroups（审查 P3-7）。"""
+        assert self._doc is not None
+        raw = self._doc.get("atmosphereGroups")
+        return raw if isinstance(raw, list) else []
+
+    def _atmos_groups_mut(self) -> list[dict]:
         assert self._doc is not None
         raw = self._doc.setdefault("atmosphereGroups", [])
         if not isinstance(raw, list):
@@ -1797,28 +2359,31 @@ class SugarWheelEditor(QWidget):
         self._atmos_group_list.blockSignals(False)
 
     def _fill_atmos_group_detail(self) -> None:
+        _prev_loading = self._loading
         self._loading = True
         try:
             r = self._atmos_group_list.currentRow()
             groups = self._atmos_groups() if self._doc else []
             if r < 0 or r >= len(groups):
                 self._atmos_group_id.setText("")
+                self._atmos_group_id_committed = ""
                 self._atmos_group_label.setText("")
                 self._atmos_group_weight.setValue(1)
                 self._var_pool_list.clear()
                 self._var_lines_list.clear()
-                for pname in self._ATMOS_PHASE_NAMES:
-                    self._atmos_step_tables[pname].setRowCount(0)
+                for ed in self._atmos_phase_editors.values():
+                    ed.set_data([])
                 return
             g = groups[r]
             self._atmos_group_id.setText(str(g.get("id") or ""))
+            # id 查重回滚基线：当前组载入时的 id 即"上一个有效值"。
+            self._atmos_group_id_committed = str(g.get("id") or "")
             self._atmos_group_label.setText(str(g.get("label") or ""))
             self._atmos_group_weight.setValue(_num(g.get("weight"), 1))
             self._fill_var_pool_list(g)
-            for pname in self._ATMOS_PHASE_NAMES:
-                self._fill_atmos_step_table(pname, g.get(pname))
+            self._reload_atmos_editors_from_group()
         finally:
-            self._loading = False
+            self._loading = _prev_loading
 
     def _on_atmos_group_selected(self, _row: int) -> None:
         self._fill_atmos_group_detail()
@@ -1826,8 +2391,11 @@ class SugarWheelEditor(QWidget):
     def _add_atmos_group(self) -> None:
         if not self._doc:
             return
-        groups = self._atmos_groups()
+        groups = self._atmos_groups_mut()
+        taken = {str(g.get("id") or "") for g in groups}
         n = len(groups) + 1
+        while f"group_{n}" in taken:
+            n += 1
         groups.append({"id": f"group_{n}", "label": f"氛围{n}", "weight": 1, "vars": {}})
         self._fill_atmos_group_list()
         self._atmos_group_list.setCurrentRow(len(groups) - 1)
@@ -1840,8 +2408,12 @@ class SugarWheelEditor(QWidget):
         groups = self._atmos_groups()
         if r < 0 or r >= len(groups):
             return
+        if not confirm.confirm_delete(self, "该氛围分组及其全部步骤"):
+            return
         groups.pop(r)
         self._fill_atmos_group_list()
+        if groups:
+            self._atmos_group_list.setCurrentRow(min(r, len(groups) - 1))
         self._fill_atmos_group_detail()
         self._mark_dirty(refresh_canvas=False)
 
@@ -1854,28 +2426,75 @@ class SugarWheelEditor(QWidget):
             return
         import copy
         dup = copy.deepcopy(groups[r])
-        dup["id"] = str(dup.get("id", "")) + "_copy"
+        taken = {str(g.get("id") or "") for g in groups}
+        base_id = str(dup.get("id", "")) + "_copy"
+        new_gid = base_id
+        k = 2
+        while new_gid in taken:
+            new_gid = f"{base_id}{k}"
+            k += 1
+        dup["id"] = new_gid
         dup["label"] = str(dup.get("label", "")) + " (副本)"
         groups.insert(r + 1, dup)
         self._fill_atmos_group_list()
         self._atmos_group_list.setCurrentRow(r + 1)
         self._mark_dirty(refresh_canvas=False)
 
-    def _on_atmos_group_field_changed(self, *_a: Any) -> None:
-        if self._loading or not self._doc:
-            return
+    def _atmos_group_with_row(self) -> tuple[dict | None, int]:
         r = self._atmos_group_list.currentRow()
         groups = self._atmos_groups()
         if r < 0 or r >= len(groups):
+            return None, -1
+        return groups[r], r
+
+    def _refresh_atmos_group_list_label(self, r: int, g: dict) -> None:
+        it = self._atmos_group_list.item(r)
+        if it is not None:
+            it.setText(f"{g.get('label') or g.get('id') or ''}  [{g.get('id') or ''}]")
+
+    def _on_atmos_group_field_changed(self, *_a: Any) -> None:
+        """label / weight 实时写回（id 走独立 live+commit 路径）。"""
+        if self._loading or not self._doc:
             return
-        g = groups[r]
-        g["id"] = self._atmos_group_id.text().strip()
+        g, r = self._atmos_group_with_row()
+        if g is None:
+            return
         g["label"] = self._atmos_group_label.text().strip()
-        g["weight"] = float(self._atmos_group_weight.value())
-        old_text = self._atmos_group_list.item(r)
-        if old_text:
-            old_text.setText(f"{g.get('label') or g['id']}  [{g['id']}]")
+        g["weight"] = self._keep_num(float(self._atmos_group_weight.value()), g.get("weight"))
+        self._refresh_atmos_group_list_label(r, g)
         self._mark_dirty(refresh_canvas=False)
+
+    def _on_atmos_group_id_live(self, _t: str = "") -> None:
+        """氛围组 id 逐键即时写回（不判重，避免退格路过已存在 id 被整框重置——审查 P3）。"""
+        if self._loading or not self._doc:
+            return
+        g, r = self._atmos_group_with_row()
+        if g is None:
+            return
+        g["id"] = self._atmos_group_id.text().strip()
+        self._refresh_atmos_group_list_label(r, g)
+        self._mark_dirty(refresh_canvas=False)
+
+    def _on_atmos_group_id_commit(self) -> None:
+        """id 提交时（editingFinished）判空/查重并回滚到上一个有效 id。"""
+        if self._loading or not self._doc:
+            return
+        g, r = self._atmos_group_with_row()
+        if g is None:
+            return
+        new_gid = self._atmos_group_id.text().strip()
+        groups = self._atmos_groups()
+        dup = any(
+            j != r and str(groups[j].get("id") or "").strip() == new_gid
+            for j in range(len(groups))
+        )
+        if new_gid and not dup:
+            self._atmos_group_id_committed = new_gid
+            return
+        msg = "氛围组 id 不能为空，已还原" if not new_gid else f"氛围组 id「{new_gid}」与其它组重复，已还原"
+        prev = getattr(self, "_atmos_group_id_committed", "") or str(g.get("id") or "")
+        self._atmos_group_id.setText(prev)  # 触发 live 写回，恢复模型/列表一致
+        QMessageBox.warning(self, "转盘小游戏", msg)
 
     # ── vars 文案池 UI ──
 
@@ -1950,6 +2569,7 @@ class SugarWheelEditor(QWidget):
                     break
         finally:
             self._loading = False
+        self._reload_atmos_editors_from_group()
         self._mark_dirty(refresh_canvas=False)
 
     def _del_var_pool(self) -> None:
@@ -1959,6 +2579,8 @@ class SugarWheelEditor(QWidget):
         cur = self._var_pool_list.currentItem()
         if cur is None:
             return
+        if not confirm.confirm_delete(self, f"变量池「{cur.text()}」"):
+            return
         v = self._cur_vars()
         v.pop(cur.text(), None)
         self._loading = True
@@ -1966,6 +2588,7 @@ class SugarWheelEditor(QWidget):
             self._fill_var_pool_list(g)
         finally:
             self._loading = False
+        self._reload_atmos_editors_from_group()
         self._mark_dirty(refresh_canvas=False)
 
     def _rename_var_pool(self) -> None:
@@ -1986,11 +2609,14 @@ class SugarWheelEditor(QWidget):
             return
         arr = v.pop(old_name, [])
         v[new_name] = arr
+        for pname in self._ATMOS_PHASE_NAMES:
+            self._rename_pool_refs(g.get(pname), old_name, new_name)
         self._loading = True
         try:
             self._fill_var_pool_list(g)
         finally:
             self._loading = False
+        self._reload_atmos_editors_from_group()
         self._mark_dirty(refresh_canvas=False)
 
     def _add_var_line(self) -> None:
@@ -2040,147 +2666,45 @@ class SugarWheelEditor(QWidget):
         arr[r] = item.text()
         self._mark_dirty(refresh_canvas=False)
 
-    # ── 步骤表格 UI ──
+    # ── 引用候选 getter（供氛围指令编辑器的下拉用）+ 改名传播 ──
 
-    _STEP_OP_CHOICES = ["say", "pick", "wait", "chance", "when_near_sector"]
-
-    def _fill_atmos_step_table(self, pname: str, steps: Any) -> None:
-        tbl = self._atmos_step_tables[pname]
-        tbl.blockSignals(True)
-        try:
-            tbl.setRowCount(0)
-            if isinstance(steps, list):
-                tbl.setRowCount(len(steps))
-                for i, s in enumerate(steps):
-                    if not isinstance(s, dict):
-                        s = {}
-                    tbl.setItem(i, 0, QTableWidgetItem(str(s.get("op", "say"))))
-                    cb = QComboBox()
-                    self._fill_atmos_role_combo(cb, str(s.get("role", "")))
-                    cb.currentIndexChanged.connect(
-                        lambda _idx, _p=pname: self._pull_atmos_step_from_ui(_p))
-                    tbl.setCellWidget(i, 1, cb)
-                    pool_or_text = str(s.get("pool") or s.get("text") or "")
-                    tbl.setItem(i, 2, QTableWidgetItem(pool_or_text))
-                    tbl.setItem(i, 3, QTableWidgetItem(str(s.get("sec", "")) if "sec" in s else ""))
-                    tbl.setItem(i, 4, QTableWidgetItem(str(s.get("p", "")) if "p" in s else ""))
-                    tbl.setItem(i, 5, QTableWidgetItem(str(s.get("sectorId", ""))))
-                    tbl.setItem(i, 6, QTableWidgetItem(str(s.get("degBuffer", "")) if "degBuffer" in s else ""))
-        finally:
-            tbl.blockSignals(False)
-
-    def _read_atmos_step_table(self, pname: str) -> list[dict]:
-        tbl = self._atmos_step_tables[pname]
-        out: list[dict] = []
-        for r in range(tbl.rowCount()):
-            def _cell(c: int) -> str:
-                it = tbl.item(r, c)
-                return it.text().strip() if it else ""
-            op = _cell(0) or "say"
-            step: dict[str, Any] = {"op": op}
-            role = self._role_cell_from_atmos_table(tbl, r)
-            pool_or_text = _cell(2)
-            sec = _cell(3)
-            p = _cell(4)
-            sid = _cell(5)
-            deg = _cell(6)
-            if op == "say":
-                if role:
-                    step["role"] = role
-                v = self._cur_vars()
-                if pool_or_text in v:
-                    step["pool"] = pool_or_text
-                elif pool_or_text:
-                    step["text"] = pool_or_text
-            elif op == "pick":
-                if pool_or_text:
-                    step["pool"] = pool_or_text
-            elif op == "wait":
-                try:
-                    step["sec"] = float(sec) if sec else 1.0
-                except ValueError:
-                    step["sec"] = 1.0
-            elif op == "chance":
-                try:
-                    step["p"] = max(0.0, min(1.0, float(p))) if p else 0.5
-                except ValueError:
-                    step["p"] = 0.5
-            elif op == "when_near_sector":
-                if sid:
-                    step["sectorId"] = sid
-                try:
-                    step["degBuffer"] = float(deg) if deg else 15.0
-                except ValueError:
-                    step["degBuffer"] = 15.0
-            out.append(step)
-        return out
-
-    def _atmos_step_add(self, pname: str) -> None:
-        if not self._doc:
-            return
+    def _atmos_pool_names(self) -> list[str]:
+        """当前氛围组已定义的文案池名（vars 键）。"""
         g = self._cur_atmos_group()
-        if g is None:
-            return
-        steps = g.setdefault(pname, [])
+        if isinstance(g, dict):
+            v = g.get("vars")
+            if isinstance(v, dict):
+                return [str(k) for k in v]
+        return []
+
+    def _atmos_sector_ids(self) -> list[str]:
+        """本实例已定义的格子 id（只读，不触发 setdefault）。"""
+        doc = self._doc if isinstance(self._doc, dict) else {}
+        raw = doc.get("sectors")
+        if not isinstance(raw, list):
+            return []
+        return [str(x.get("id", "")) for x in raw if isinstance(x, dict) and x.get("id")]
+
+    def _rename_pool_refs(self, steps: Any, old: str, new: str) -> None:
+        """把某阶段（含嵌套 then/else）里所有引用 old 池的 pool 改成 new，避免改名后步骤变孤儿引用。"""
         if not isinstance(steps, list):
-            steps = []
-            g[pname] = steps
-        steps.append({"op": "say", "role": self._default_atmos_say_role(), "text": ""})
-        self._loading = True
-        try:
-            self._fill_atmos_step_table(pname, steps)
-        finally:
-            self._loading = False
-        tbl = self._atmos_step_tables[pname]
-        tbl.selectRow(tbl.rowCount() - 1)
-        self._mark_dirty(refresh_canvas=False)
-
-    def _atmos_step_del(self, pname: str) -> None:
-        if not self._doc:
             return
-        g = self._cur_atmos_group()
-        if g is None:
-            return
-        tbl = self._atmos_step_tables[pname]
-        r = tbl.currentRow()
-        steps = g.get(pname)
-        if not isinstance(steps, list) or r < 0 or r >= len(steps):
-            return
-        steps.pop(r)
-        self._loading = True
-        try:
-            self._fill_atmos_step_table(pname, steps)
-        finally:
-            self._loading = False
-        self._mark_dirty(refresh_canvas=False)
-
-    def _atmos_step_move(self, pname: str, direction: int) -> None:
-        if not self._doc:
-            return
-        g = self._cur_atmos_group()
-        if g is None:
-            return
-        tbl = self._atmos_step_tables[pname]
-        r = tbl.currentRow()
-        steps = g.get(pname)
-        if not isinstance(steps, list) or r < 0 or r >= len(steps):
-            return
-        nr = r + direction
-        if nr < 0 or nr >= len(steps):
-            return
-        steps[r], steps[nr] = steps[nr], steps[r]
-        self._loading = True
-        try:
-            self._fill_atmos_step_table(pname, steps)
-        finally:
-            self._loading = False
-        tbl.selectRow(nr)
-        self._mark_dirty(refresh_canvas=False)
-
-    def _on_atmos_step_item_changed(self, pname: str) -> None:
-        self._pull_atmos_step_from_ui(pname)
+        for s in steps:
+            if not isinstance(s, dict):
+                continue
+            if s.get("pool") == old:
+                s["pool"] = new
+            self._rename_pool_refs(s.get("then"), old, new)
+            self._rename_pool_refs(s.get("else"), old, new)
 
     def flush_to_model(self) -> None:
+        # 保存前先把"懒回写"的编辑器内容落进模型：当前激活 sector 的动作、充能前置
+        # 条件/动作等都是切行/切实例时才提交，若不在此 flush，未切换的最后一处编辑
+        # 会在 Save All 时静默丢失（save-roundtrip 数据丢失）。
+        if self._doc is not None:
+            self._flush_before_charge_from_editors()
+            if self._selected_sector_row >= 0:
+                self._flush_sector_actions_row(self._selected_sector_row)
         for iid, doc in self._model.sugar_wheel_instances.items():
             if not isinstance(doc, dict):
                 raise ValueError(f"sugar_wheel[{iid}]: 根必须为对象")

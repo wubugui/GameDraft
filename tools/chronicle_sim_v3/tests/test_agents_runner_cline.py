@@ -45,17 +45,17 @@ def test_resolve_cline_executable_falls_back_to_name() -> None:
 
 
 def test_resolve_cline_executable_explicit_existing_path(tmp_path: Path) -> None:
-    fake = tmp_path / "cline.cmd"
-    fake.write_text("@echo off\n", encoding="utf-8")
+    fake = tmp_path / "cline"
+    fake.write_text("#!/usr/bin/env sh\n", encoding="utf-8")
     out = resolve_cline_executable(str(fake))
     assert Path(out).resolve() == fake.resolve()
 
 
 def test_build_auth_argv_openai_compat() -> None:
     p = _provider("openai_compat", "https://x.example/v1", "sk-secret")
-    argv = _build_auth_argv("cline.cmd", Path("/cfg"), p, "qwen3.5-plus")
+    argv = _build_auth_argv("cline", Path("/cfg"), p, "qwen3.5-plus")
     assert argv is not None
-    assert argv[0] == "cline.cmd"
+    assert argv[0] == "cline"
     assert "auth" in argv
     assert "-p" in argv and "openai" in argv
     assert "-k" in argv and "sk-secret" in argv
@@ -199,7 +199,7 @@ async def test_cline_runner_end_to_end_mocked(
 
     async def fake_run_one(
         self, argv, env, cwd, *, timeout, observer, stream_stderr,
-        phase, source="subprocess", return_streams=False, retry_libuv=3,
+        phase, source="subprocess", return_streams=False,
     ):
         captured_calls.append({
             "phase": phase, "argv0": argv[0], "argv": argv, "cwd": cwd,
@@ -220,7 +220,7 @@ async def test_cline_runner_end_to_end_mocked(
     # 同时也 mock 可执行探测（避免依赖系统装了 cline）
     monkeypatch.setattr(
         cline_mod, "resolve_cline_executable",
-        lambda explicit="": "fake-cline.cmd",
+        lambda explicit="": "fake-cline",
     )
 
     ctx = AgentRunnerContext(

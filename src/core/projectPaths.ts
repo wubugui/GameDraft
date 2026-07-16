@@ -26,8 +26,11 @@ export const TEXT_URLS = {
   filtersDir: '/assets/data/filters',
   archiveDir: '/assets/data/archive',
   cutscenesIndex: '/assets/data/cutscenes/index.json',
+  parallaxScenes: '/assets/data/parallax_scenes.json',
   gameConfig: '/assets/data/game_config.json',
+  characterRegistry: '/assets/data/character_registry.json',
   flagRegistry: '/assets/data/flag_registry.json',
+  smellProfiles: '/assets/data/smell_profiles.json',
   overlayImages: '/assets/data/overlay_images.json',
   scenarios: '/assets/data/scenarios.json',
   documentReveals: '/assets/data/document_reveals.json',
@@ -43,6 +46,7 @@ export const TEXT_URLS = {
   sugarWheelIndex: '/assets/data/sugar_wheel/index.json',
   paperCraftIndex: '/assets/data/paper_craft/index.json',
   narrativeGraphs: '/assets/data/narrative_graphs.json',
+  planes: '/assets/data/planes.json',
   pressureHolds: '/assets/data/pressure_holds.json',
   signalCues: '/assets/data/signal_cues.json',
 } as const;
@@ -129,21 +133,24 @@ export function sceneRuntimeDirUrl(sceneId: string): string {
 
 /**
  * 把场景 JSON 中相对资源（短文件名或子路径）解析成完整媒体 URL：
- * `<scene_runtime_dir>/<ref>`。当 ref 是完整 URL（`/resources/...`、`/assets/...`、
- * 绝对 http(s) 或本地绝对路径）时原样返回；`/assets/...` 媒体引用是不允许的，会抛错。
+ * `<scene_runtime_dir>/<ref>`。当 ref 是完整 URL（`/resources/...`、绝对 http(s)
+ * 或本地绝对路径）时原样返回。
+ *
+ * 场景媒体路径拼接的**唯一实现源**：`AssetManager.resolveSceneAssetPath` 与
+ * `SceneDepthSystem.load` 均委托此处，不再各自拼 `resources/runtime/scenes/...`。
+ * 指向 assets 根的媒体引用属越界写法，但运行时选宽松语义：warn 后原样放行
+ * （不抛错，避免旧数据整场景炸掉；越界引用由素材审计 / validate-data 负责清零）。
  */
 export function sceneRuntimeAssetUrl(sceneId: string, ref: string): string {
   const r = (ref ?? '').trim();
   if (!r) throw new Error('sceneRuntimeAssetUrl: ref required');
   if (r.startsWith('http://') || r.startsWith('https://')) return r;
-  if (r.startsWith(ASSETS_PREFIX)) {
-    throw new Error(`sceneRuntimeAssetUrl: 媒体不可指向 assets 根: ${r}`);
+  if (r.startsWith(ASSETS_PREFIX) || r.startsWith('assets/')) {
+    console.warn(`sceneRuntimeAssetUrl: 媒体不应指向 assets 根（迁移后媒体一律在 runtime 下）: ${r}`);
+    return r;
   }
   if (r.startsWith(RUNTIME_PREFIX)) return r;
   if (r.startsWith('resources/')) return `/${r}`;
-  if (r.startsWith('assets/')) {
-    throw new Error(`sceneRuntimeAssetUrl: 媒体不可指向 assets 根: ${r}`);
-  }
   // 本地绝对路径（用户机器上的） - 直接返回
   if (/^[a-zA-Z]:[\\/]/.test(r) || r.startsWith('/')) return r;
   return `${sceneRuntimeDirUrl(sceneId)}/${trimLeadingSlashes(r)}`;

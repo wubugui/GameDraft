@@ -1,0 +1,33 @@
+{
+  "rules": [
+    { "pattern": "public/assets/data/archive/*.json", "disposition": "runtime", "consumers": ["ArchiveManager", "BookReaderUI", "CharacterBookUI", "LoreBookUI", "DocumentBoxUI"] },
+    { "pattern": "public/assets/data/audio_config.json", "disposition": "runtime", "consumers": ["AudioManager"] },
+    { "pattern": "public/assets/data/character_registry.json", "disposition": "runtime", "consumers": ["characterRegistry", "SceneManager", "GraphDialogueManager"] },
+    { "pattern": "public/assets/data/cutscenes/index.json", "disposition": "runtime", "consumers": ["CutsceneManager", "CutsceneRenderer"] },
+    { "pattern": "public/assets/data/dev_narrative_warps.json", "disposition": "dev_only", "consumers": ["Game dev startup route", "DevModeUI"] },
+    { "pattern": "public/assets/data/document_reveals.json", "disposition": "runtime", "consumers": ["DocumentRevealManager", "CutsceneManager overlay blend"] },
+    { "pattern": "public/assets/data/encounters.json", "disposition": "runtime", "consumers": ["EncounterManager", "EncounterUI"] },
+    { "pattern": "public/assets/data/filters/*.json", "disposition": "runtime", "consumers": ["FilterLoader", "WorldFilterPipeline"] },
+    { "pattern": "public/assets/data/flag_registry.json", "disposition": "runtime", "consumers": ["FlagStore", "DebugPanelUI"] },
+    { "pattern": "public/assets/data/game_config.json", "disposition": "runtime", "consumers": ["Game", "Renderer", "Player", "HealthSystem", "EntityLighting pipeline"] },
+    { "pattern": "public/assets/data/items.json", "disposition": "runtime", "consumers": ["InventoryManager", "InventoryUI", "resolveText"] },
+    { "pattern": "public/assets/data/map_config.json", "disposition": "runtime", "consumers": ["MapUI", "resolveText"] },
+    { "pattern": "public/assets/data/narrative_graphs.json", "disposition": "runtime", "consumers": ["NarrativeStateManager", "PlaneReconciler", "DebugPanelUI"] },
+    { "pattern": "public/assets/data/narrative_templates.json", "disposition": "editor_only", "consumers": ["narrative template editor", "validator"] },
+    { "pattern": "public/assets/data/overlay_images.json", "disposition": "runtime", "consumers": ["Game overlay registry", "ActionRegistry", "CutsceneManager"] },
+    { "pattern": "public/assets/data/paper_craft/*.json", "disposition": "runtime", "consumers": ["PaperCraftMinigameManager", "PaperCraftMinigameScene"] },
+    { "pattern": "public/assets/data/parallax_scenes.json", "disposition": "runtime", "consumers": ["CutsceneManager", "CutsceneRenderer"] },
+    { "pattern": "public/assets/data/planes.json", "disposition": "runtime", "consumers": ["PlaneReconciler", "SceneManager", "Camera", "HealthSystem"] },
+    { "pattern": "public/assets/data/pressure_holds.json", "disposition": "runtime", "consumers": ["PressureHoldManager", "PressureHoldUI"] },
+    { "pattern": "public/assets/data/questGroups.json", "disposition": "editor_only", "consumers": ["quest editor", "validator"] },
+    { "pattern": "public/assets/data/quests.json", "disposition": "runtime", "consumers": ["QuestManager", "QuestPanelUI"] },
+    { "pattern": "public/assets/data/rules.json", "disposition": "runtime", "consumers": ["RulesManager", "RulesPanelUI", "RuleUseUI", "EncounterManager"] },
+    { "pattern": "public/assets/data/scenarios.json", "disposition": "runtime", "consumers": ["ScenarioStateManager", "ConditionEvaluator"] },
+    { "pattern": "public/assets/data/shops.json", "disposition": "runtime", "consumers": ["ShopUI", "InventoryManager"] },
+    { "pattern": "public/assets/data/signal_cues.json", "disposition": "runtime", "consumers": ["SignalCueManager", "ActionExecutor"] },
+    { "pattern": "public/assets/data/smell_profiles.json", "disposition": "runtime", "consumers": ["HUD", "SmellIndicatorRenderer", "DebugTools"] },
+    { "pattern": "public/assets/data/strings.json", "disposition": "runtime", "consumers": ["StringsProvider", "all player-facing UI"] },
+    { "pattern": "public/assets/data/sugar_wheel/*.json", "disposition": "runtime", "consumers": ["SugarWheelMinigameManager", "SugarWheelMinigameScene", "SugarWheelAtmosphereScheduler"] },
+    { "pattern": "public/assets/data/water_minigames/*.json", "disposition": "runtime", "consumers": ["WaterMinigameManager", "WaterMinigameScene", "WaterEntity", "WaterPullPanel"] }
+  ]
+}

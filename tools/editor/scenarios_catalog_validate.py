@@ -76,26 +76,35 @@ def validate_scenarios_list(
     *,
     flag_registry: dict[str, Any],
     model: ProjectModel,
-) -> str | None:
-    """校验 scenarios 数组（与 ScenariosCatalogEditor 规则一致）。通过返回 None，否则返回错误说明。"""
+) -> list[str]:
+    """校验 scenarios 数组（与 ScenariosCatalogEditor 规则一致）。
+
+    收集**全部**错误一次报完（审查 P3：旧实现遇错即 return，策划打地鼠一条条修）。
+    同一条 scenario 的结构性致命错（非对象 / 空 id / dup id）会跳过该条后续检查
+    （继续检查会崩），其余条目照常校验。返回空列表 = 通过。
+    """
+    errs: list[str] = []
     seen: set[str] = set()
     for i, e in enumerate(scenarios_data):
         if not isinstance(e, dict):
-            return f"第 {i + 1} 条 scenario 须为 JSON 对象"
+            errs.append(f"第 {i + 1} 条 scenario 须为 JSON 对象")
+            continue
         sid = str(e.get("id", "")).strip()
         if not sid:
-            return f"第 {i + 1} 条 scenario 的 id 不能为空"
+            errs.append(f"第 {i + 1} 条 scenario 的 id 不能为空")
+            continue
+        if sid in seen:
+            errs.append(f"scenario id 重复：{sid!r}")
+            continue
+        seen.add(sid)
         mlc = e.get("manualLineLifecycle")
         if mlc is not None and not isinstance(mlc, bool):
-            return f"{sid!r} 的 manualLineLifecycle 须为布尔或省略"
-        if sid in seen:
-            return f"scenario id 重复：{sid!r}"
-        seen.add(sid)
+            errs.append(f"{sid!r} 的 manualLineLifecycle 须为布尔或省略")
         phases = e.get("phases") if isinstance(e.get("phases"), dict) else {}
         pnames = [str(k) for k in phases.keys()]
         dup_ph = {x for x in pnames if pnames.count(x) > 1}
         if dup_ph:
-            return f"{sid!r} 下 phase 名重复：{dup_ph!r}"
+            errs.append(f"{sid!r} 下 phase 名重复：{dup_ph!r}")
         req = e.get("requires")
         if req is not None:
             pset = set(phases.keys())
@@ -105,13 +114,21 @@ def validate_scenarios_list(
                 where=f"{sid!r} 的 scenario 进线 requires",
             )
             if err:
-                return err
-            cyc = scenario_entry_prereq_cycle_among_leaves(req, phases, sid=sid)
-            if cyc:
-                return cyc
+                errs.append(err)
+            else:
+                cyc = scenario_entry_prereq_cycle_among_leaves(req, phases, sid=sid)
+                if cyc:
+                    errs.append(cyc)
         eat = str(e.get("exposeAfterPhase", "")).strip()
         if eat and eat not in phases:
-            return f"{sid!r} 的 exposeAfterPhase {eat!r} 不在 phases 中"
+            errs.append(f"{sid!r} 的 exposeAfterPhase {eat!r} 不在 phases 中")
+        exposes_val = e.get("exposes")
+        if isinstance(exposes_val, dict) and exposes_val and not eat:
+            errs.append(
+                f"{sid!r} 配了 exposes 但未设 exposeAfterPhase："
+                "运行时只在 exposeAfterPhase 指定的 phase 变为 done 时写入这些 flag，"
+                "当前配置永不触发；请设置 exposeAfterPhase 或清空 exposes"
+            )
         pset = {str(k) for k in phases.keys()}
         adj: dict[str, list[str]] = {}
         skip_cycle = False
@@ -127,12 +144,14 @@ def validate_scenarios_list(
                         where=f"{sid!r} 的 phase {pn!r} requires",
                     )
                     if err:
-                        return err
-                    flat = flatten_and_of_phase_strings(pr)
-                    if flat is None:
+                        errs.append(err)
                         skip_cycle = True
                     else:
-                        req_list = flat
+                        flat = flatten_and_of_phase_strings(pr)
+                        if flat is None:
+                            skip_cycle = True
+                        else:
+                            req_list = flat
             adj[pn] = req_list
         white, grey, black = 0, 1, 2
         color = {n: white for n in adj}
@@ -152,7 +171,8 @@ def validate_scenarios_list(
         if not skip_cycle:
             for n in adj:
                 if color.get(n) == white and _cyc(n):
-                    return f"{sid!r} 的 phases.requires 存在循环依赖"
+                    errs.append(f"{sid!r} 的 phases.requires 存在循环依赖")
+                    break
         exp_err = scenario_exposes_flag_errors(
             e.get("exposes"),
             flag_registry or {},
@@ -160,19 +180,24 @@ def validate_scenarios_list(
             scenario_id=sid,
         )
         if exp_err:
-            return exp_err
+            errs.append(exp_err)
         dg = e.get("dialogueGraphIds")
         if dg is not None:
             if not isinstance(dg, list):
-                return f"{sid!r} 的 dialogueGraphIds 须为 JSON 数组"
-            stems = set(model.all_dialogue_graph_ids())
-            for j, x in enumerate(dg):
-                if not isinstance(x, str) or not str(x).strip():
-                    return f"{sid!r} 的 dialogueGraphIds[{j}] 须为非空字符串"
-                xs = str(x).strip()
-                if xs not in stems:
-                    return f"{sid!r} 的 dialogueGraphIds 含未知图 id {xs!r}（无 dialogues/graphs/{xs}.json）"
-    return None
+                errs.append(f"{sid!r} 的 dialogueGraphIds 须为 JSON 数组")
+            else:
+                stems = set(model.all_dialogue_graph_ids())
+                for j, x in enumerate(dg):
+                    if not isinstance(x, str) or not str(x).strip():
+                        errs.append(f"{sid!r} 的 dialogueGraphIds[{j}] 须为非空字符串")
+                        continue
+                    xs = str(x).strip()
+                    if xs not in stems:
+                        errs.append(
+                            f"{sid!r} 的 dialogueGraphIds 含未知图 id {xs!r}"
+                            f"（无 dialogues/graphs/{xs}.json）"
+                        )
+    return errs
 
 
 def validate_scenarios_catalog_for_save(
@@ -180,13 +205,13 @@ def validate_scenarios_catalog_for_save(
     *,
     flag_registry: dict[str, Any],
     model: ProjectModel,
-) -> str | None:
-    """写入磁盘前的 scenarios.json 根对象校验。"""
+) -> list[str]:
+    """写入磁盘前的 scenarios.json 根对象校验。收集全部错误（空列表=通过）。"""
     if not isinstance(catalog, dict):
-        return "scenarios.json：根须为 JSON 对象"
+        return ["scenarios.json：根须为 JSON 对象"]
     arr = catalog.get("scenarios")
     if arr is None:
-        return "scenarios.json：缺少 scenarios 字段（须为数组）"
+        return ["scenarios.json：缺少 scenarios 字段（须为数组）"]
     if not isinstance(arr, list):
-        return "scenarios.json：scenarios 须为数组"
+        return ["scenarios.json：scenarios 须为数组"]
     return validate_scenarios_list(arr, flag_registry=flag_registry, model=model)

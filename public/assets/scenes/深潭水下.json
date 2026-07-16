@@ -1,0 +1,59 @@
+{
+  "id": "深潭水下",
+  "name": "深潭水下",
+  "worldWidth": 1376.0,
+  "worldHeight": 768.0,
+  "camera": {
+    "zoom": 1.0,
+    "pixelsPerUnit": 1.0
+  },
+  "backgrounds": [
+    {
+      "image": "background.png",
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "ambientSounds": [
+    "阴风"
+  ],
+  "spawnPoint": {
+    "x": 688,
+    "y": 610
+  },
+  "spawnPoints": {
+    "center": {
+      "x": 688,
+      "y": 610
+    }
+  },
+  "zones": [
+    {
+      "id": "new_zone_0",
+      "polygon": [
+        {
+          "x": 406.0,
+          "y": 451.1
+        },
+        {
+          "x": 606.0,
+          "y": 451.1
+        },
+        {
+          "x": 606.0,
+          "y": 551.1
+        },
+        {
+          "x": 406.0,
+          "y": 551.1
+        }
+      ],
+      "smell": {
+        "scent": "yin",
+        "intensity": 60,
+        "flicker": true
+      }
+    }
+  ],
+  "hotspots": []
+}

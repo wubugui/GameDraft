@@ -66,3 +66,12 @@ tmp/*
 
 # 宣传视频模板（克隆项目）
 oss-video-skill/
+
+# 编辑器本地状态（图布局等），非游戏数据，不入库
+.editor/
+
+# 本地资产备份目录：图片/中间结果较大，不入 Git，也不交给 DVC 管理
+asset-backups/
+
+# Godot 视觉对齐审查截图(776MB 二进制,不入 Git;要长期归档可改挂 DVC)
+artifact/Reviews/godot-parity-visual/

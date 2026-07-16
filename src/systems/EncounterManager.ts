@@ -27,6 +27,8 @@ export class EncounterManager implements IGameSystem {
   private currentEncounter: EncounterDef | null = null;
   private currentOptions: ResolvedOption[] = [];
   private active: boolean = false;
+  /** chooseOption 在途锁：消耗道具/结果动作含 await，期间禁止再次进入，避免重复消耗/重复执行。 */
+  private resolving: boolean = false;
 
   private ruleNameResolver: RuleNameResolveFn | null = null;
   private resolveDisplay: ((s: string) => string) | null = null;
@@ -84,6 +86,11 @@ export class EncounterManager implements IGameSystem {
     } catch {
       console.warn('EncounterManager: encounters.json not found');
     }
+  }
+
+  /** 只读查询：遭遇 def 是否已加载（供 ActionRegistry 先验证再 setState，R13）。 */
+  hasEncounter(encounterId: string): boolean {
+    return this.encounterDefs.has(encounterId);
   }
 
   startEncounter(encounterId: string): void {
@@ -190,34 +197,54 @@ export class EncounterManager implements IGameSystem {
       });
     }
 
+    if (this.currentOptions.length === 0) {
+      // 选项被条件/规矩门槛过滤殆尽：不发空数组让 UI 干等（选项相无 Esc/离开出口，唯一恢复
+      // 路径 encounter:resultDone 永不到来）。记 error 后走正常 endEncounter 收束——
+      // encounter:end 发出，EventBridge 恢复 Exploring、EncounterUI 关闭。
+      console.error(
+        `EncounterManager: encounter "${this.currentEncounter.id}" 过滤后选项集为空，自动收束（检查各选项 conditions / requiredRuleId 配置）`,
+      );
+      this.endEncounter();
+      return;
+    }
+
     this.eventBus.emit('encounter:options', { options: this.currentOptions });
   }
 
   async chooseOption(index: number): Promise<void> {
+    if (this.resolving || !this.active) return;
     const opt = this.currentOptions[index];
     if (!opt || !opt.enabled) return;
 
-    if (opt.consumeItems) {
-      for (const req of opt.consumeItems) {
-        await this.actionExecutor.executeAwait({
-          type: 'removeItem',
-          params: { id: req.id, count: req.count },
-        });
+    this.resolving = true;
+    // 进入结算即清空选项：opt.enabled 是生成时缓存值，await 边界上不再可信；
+    // 清空后第二次进入会因 currentOptions[index] 为空而短路，杜绝重复消耗/重复结果。
+    this.currentOptions = [];
+    try {
+      if (opt.consumeItems) {
+        for (const req of opt.consumeItems) {
+          await this.actionExecutor.executeAwait({
+            type: 'removeItem',
+            params: { id: req.id, count: req.count },
+          });
+        }
       }
-    }
 
-    if (opt.resultActions.length > 0) {
-      try {
-        await this.actionExecutor.executeBatchAwait(opt.resultActions);
-      } catch (e) {
-        console.warn('EncounterManager: resultActions failed', e);
+      if (opt.resultActions.length > 0) {
+        try {
+          await this.actionExecutor.executeBatchAwait(opt.resultActions);
+        } catch (e) {
+          console.warn('EncounterManager: resultActions failed', e);
+        }
       }
-    }
 
-    if (opt.resultText) {
-      this.eventBus.emit('encounter:result', { text: this.r(opt.resultText) });
-    } else {
-      this.endEncounter();
+      if (opt.resultText) {
+        this.eventBus.emit('encounter:result', { text: this.r(opt.resultText) });
+      } else {
+        this.endEncounter();
+      }
+    } finally {
+      this.resolving = false;
     }
   }
 

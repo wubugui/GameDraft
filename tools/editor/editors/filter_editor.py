@@ -12,6 +12,8 @@ from PySide6.QtWidgets import (
 )
 
 from ..project_model import ProjectModel
+from ..shared.form_layout import compact_form
+from ..shared.list_affordances import make_list_search_box
 from .. import theme as app_theme
 
 try:
@@ -63,7 +65,17 @@ class FilterEditor(QWidget):
         ll.addLayout(row)
         self._list = QListWidget()
         self._list.currentRowChanged.connect(self._on_select)
+        self._search = make_list_search_box(
+            self._list,
+            tooltip="按滤镜 id 过滤下方列表（仅隐藏不匹配项，不改动数据）。")
+        ll.addWidget(self._search)
         ll.addWidget(self._list)
+        self._empty_hint = QLabel("暂无滤镜，点击「+ Filter」新增")
+        self._empty_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_hint.setWordWrap(True)
+        self._empty_hint.setStyleSheet("color: gray; padding: 12px;")
+        self._empty_hint.hide()
+        ll.addWidget(self._empty_hint)
 
         right = QWidget()
         rl = QVBoxLayout(right)
@@ -72,14 +84,6 @@ class FilterEditor(QWidget):
         self._path_lbl.setStyleSheet(
             app_theme.secondary_label_stylesheet(app_theme.current_theme_id()))
         rl.addWidget(self._path_lbl)
-
-        hint = QLabel(
-            "matrix：20 个浮点，与 Pixi ColorMatrixFilter、filter_tool 导出格式一致。"
-            "逗号/空格分隔或 JSON 数组。filter_tool 里点「保存滤镜」会写进上方目录；"
-            "编辑后请「从磁盘重载」或关闭滤镜工具后再本页点重载。",
-        )
-        hint.setWordWrap(True)
-        rl.addWidget(hint)
 
         if BUILTIN_PRESETS:
             preset_row = QHBoxLayout()
@@ -97,21 +101,32 @@ class FilterEditor(QWidget):
             rl.addLayout(preset_row)
 
         preset_hint = QLabel(
-            "内置 id：" + ", ".join(sorted(BUILTIN_PRESETS.keys()))
+            "内置预制：上方下拉选择后「填入 matrix」"
             if BUILTIN_PRESETS
             else "（未能导入 tools.filter_tool.presets）"
         )
-        preset_hint.setWordWrap(True)
+        if BUILTIN_PRESETS:
+            preset_hint.setToolTip(
+                "内置 id：" + ", ".join(sorted(BUILTIN_PRESETS.keys())))
+            if hasattr(self, "_preset_combo"):
+                self._preset_combo.setToolTip(
+                    "内置预制（与 filter_tool 相同）。内置 id："
+                    + ", ".join(sorted(BUILTIN_PRESETS.keys())))
         self._preset_hint = preset_hint
         self._preset_hint.setStyleSheet(
             app_theme.secondary_label_stylesheet(app_theme.current_theme_id()))
         rl.addWidget(self._preset_hint)
 
-        form = QFormLayout()
+        form = compact_form(QFormLayout())
         self._lbl_stem = QLabel("-")
         form.addRow("id（文件名）", self._lbl_stem)
         self._matrix_edit = QLineEdit()
         self._matrix_edit.setPlaceholderText("1, 0, 0, 0, 0, 0, 1, 0, ...")
+        self._matrix_edit.setMinimumWidth(240)
+        self._matrix_edit.setToolTip(
+            "matrix：20 个浮点（逗号/空格分隔或 JSON 数组），"
+            "与 Pixi ColorMatrixFilter、filter_tool 导出格式一致。"
+        )
         form.addRow("matrix", self._matrix_edit)
         self._alpha = QDoubleSpinBox()
         self._alpha.setRange(0, 1)
@@ -187,8 +202,9 @@ class FilterEditor(QWidget):
             QMessageBox.warning(
                 self,
                 "滤镜工具",
-                "无法启动。请在仓库根目录确认已运行 install-deps.cmd，并执行：\n"
-                ".\\.tools\\Python311\\python.exe -m tools.filter_tool",
+                "无法启动。请在仓库根目录确认已安装依赖"
+                "（./dev.sh install-deps），并执行：\n"
+                "./dev.sh filter-tool",
             )
             proc.deleteLater()
             return
@@ -201,9 +217,46 @@ class FilterEditor(QWidget):
     def _reload_from_disk(self) -> None:
         self._model.reload_filters_from_disk()
 
+    def _is_dirty(self) -> bool:
+        """表单与模型比对；matrix 文本不可解析也算脏（有未落库的输入）。"""
+        stem = self._current_stem
+        if not stem:
+            return False
+        data = self._model.filter_defs.get(stem, {})
+        mat = self._parse_matrix()
+        if mat is None:
+            return bool(self._matrix_edit.text().strip())
+        if mat != data.get("matrix", _IDENTITY_MATRIX):
+            return True
+        old_alpha = data.get("alpha", 1)
+        try:
+            return float(old_alpha) != float(self._alpha.value())
+        except (TypeError, ValueError):
+            return True
+
     def flush_to_model(self) -> None:
-        if self._current_stem:
+        if self._current_stem and self._is_dirty():
             self._apply(show_errors=False)
+
+    def confirm_close(self, parent=None) -> bool:
+        if not self._current_stem or not self._is_dirty():
+            return True
+        from PySide6.QtWidgets import QMessageBox as _MB
+        r = _MB.question(
+            self, "未应用的修改", "当前滤镜有未应用的修改。保存到模型？",
+            _MB.StandardButton.Save | _MB.StandardButton.Discard | _MB.StandardButton.Cancel,
+        )
+        if r == _MB.StandardButton.Cancel:
+            return False
+        if r == _MB.StandardButton.Save:
+            self._apply(show_errors=True)
+            if self._is_dirty():
+                return False  # matrix 非法等原因没保成，留在编辑器里改
+        else:
+            # Discard：把表单回滚到模型当前值。否则关闭路径随后的统一 flush 会按
+            # UI≠模型判脏，把刚被放弃的编辑重新提交（复核 P1-01）。
+            self._load_stem_into_form(self._current_stem)
+        return True
 
     def _refresh_list(self) -> None:
         self._list.blockSignals(True)
@@ -211,8 +264,25 @@ class FilterEditor(QWidget):
         for stem in sorted(self._model.filter_defs.keys()):
             self._list.addItem(stem)
         self._list.blockSignals(False)
+        # 重新套用搜索过滤，使 setHidden 与新内容一致
+        self._search.textChanged.emit(self._search.text())
+        self._empty_hint.setVisible(self._list.count() == 0)
+
+    def select_by_id(self, stem: str, _scene_id: str = "") -> bool:
+        """全局搜索/跳转落点：按滤镜文件名（stem）选中。"""
+        if self._search.text():
+            self._search.clear()  # 目标行可能被过滤隐藏
+        for i in range(self._list.count()):
+            it = self._list.item(i)
+            if it is not None and it.text() == stem:
+                self._list.setCurrentRow(i)
+                return True
+        return False
 
     def _on_select(self, row: int) -> None:
+        # commit-on-leave：切走前提交上一条的未应用编辑（与其它表单编辑器一致）
+        if self._current_stem and self._is_dirty():
+            self._apply(show_errors=False)
         if row < 0:
             self._current_stem = None
             self._lbl_stem.setText("-")
@@ -229,7 +299,9 @@ class FilterEditor(QWidget):
         self._lbl_stem.setText(stem)
         m = data.get("matrix", _IDENTITY_MATRIX)
         if isinstance(m, list) and len(m) == 20:
-            self._matrix_edit.setText(", ".join(str(float(x)) for x in m))
+            # 保留原始 int/float 表示（1 显示 "1" 而非 "1.0"），配合 _parse_matrix 的
+            # int 保真解析，"仅点选+Save All" 不再把整数矩阵重写成 float。
+            self._matrix_edit.setText(", ".join(str(x) for x in m))
         else:
             self._matrix_edit.setText("")
         self._alpha.setValue(float(data.get("alpha", 1)))
@@ -246,24 +318,35 @@ class FilterEditor(QWidget):
         raw = self._matrix_edit.text().strip()
         if not raw:
             return None
+        def _num(tok: str):
+            try:
+                return json.loads(tok)  # "1"->int 1、"0.5"->float 0.5
+            except (json.JSONDecodeError, ValueError):
+                return float(tok)  # 容忍 "1." 等非严格 JSON 数字
+
         if raw.startswith("["):
             try:
                 arr = json.loads(raw)
             except json.JSONDecodeError:
                 return None
             if isinstance(arr, list) and len(arr) == 20:
-                try:
-                    return [float(x) for x in arr]
-                except (TypeError, ValueError):
-                    return None
+                out: list = []
+                for x in arr:
+                    if isinstance(x, bool) or not isinstance(x, (int, float)):
+                        return None
+                    out.append(x)
+                return out
             return None
         parts = raw.replace(",", " ").split()
         if len(parts) != 20:
             return None
         try:
-            return [float(x) for x in parts]
-        except ValueError:
+            vals = [_num(t) for t in parts]
+        except (TypeError, ValueError):
             return None
+        if any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in vals):
+            return None
+        return vals
 
     def _apply(self, *, show_errors: bool = True) -> None:
         if not self._current_stem:
@@ -278,11 +361,22 @@ class FilterEditor(QWidget):
                 )
             return
         stem = self._current_stem
-        self._model.filter_defs[stem] = {
-            "id": stem,
-            "matrix": mat,
-            "alpha": float(self._alpha.value()),
-        }
+        old = self._model.filter_defs.get(stem)
+        cand: dict = dict(old) if isinstance(old, dict) else {"id": stem}
+        cand.setdefault("id", stem)
+        cand["matrix"] = mat
+        alpha_v: object = float(self._alpha.value())
+        old_alpha = (old or {}).get("alpha") if isinstance(old, dict) else None
+        if (
+            isinstance(old_alpha, (int, float))
+            and not isinstance(old_alpha, bool)
+            and float(old_alpha) == alpha_v
+        ):
+            alpha_v = old_alpha  # 未改动按原始 int/float 表示回写
+        cand["alpha"] = alpha_v
+        if cand == old:
+            return  # 无实质变化：不写不标脏
+        self._model.filter_defs[stem] = cand
         self._model.mark_dirty("filter")
 
     def _add(self) -> None:

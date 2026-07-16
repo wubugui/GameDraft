@@ -9,7 +9,7 @@
   },
   "backgrounds": [
     {
-      "image": "/resources/runtime/scenes/test_room_a/background.png",
+      "image": "background.png",
       "x": 0,
       "y": 0
     }

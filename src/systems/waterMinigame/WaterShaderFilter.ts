@@ -172,4 +172,17 @@ export class WaterShaderFilter extends Filter {
     if (!u || !Number.isFinite(depth)) return;
     u['uWaterBottomDepth'] = Math.max(0, depth);
   }
+
+  getDebugUniformState(): Record<string, unknown> {
+    const u = this._u;
+    return {
+      time: u?.['uTime'],
+      murk: u?.['uMurk'],
+      darkness: u?.['uDarkness'],
+      rain: u?.['uRain'],
+      sigma: Array.from((u?.['uSigma'] as Float32Array | undefined) ?? []),
+      minAlpha: u?.['uMinAlpha'],
+      waterBottomDepth: u?.['uWaterBottomDepth'],
+    };
+  }
 }

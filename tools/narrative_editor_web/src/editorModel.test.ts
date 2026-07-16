@@ -23,7 +23,8 @@ function sample(): NarrativeGraphsFileDef {
           id: 'flow',
           ownerType: 'flow',
           initialState: 'a',
-          states: { a: { id: 'a' }, b: { id: 'b' } },
+          // b 被 npc 子图监听(state:flow:b),按「数据只由用户改」需作者显式勾广播——normalize 不代写。
+          states: { a: { id: 'a' }, b: { id: 'b', broadcastOnEnter: true } },
           transitions: [{ id: 'go', from: 'a', to: 'b', signal: 'external:system:test:go' }],
         },
         elements: [
@@ -188,7 +189,7 @@ describe('editorModel', () => {
     comp.mainGraph.transitions.push({
       id: 'enter_scenario',
       from: 'a',
-      to: { graphId: 'scenario', stateId: 'entry' },
+      to: { graphId: 'scenario', stateId: 'entry' } as unknown as string,
       signal: 'external:system:test:enter',
     });
     const result = simulateSignalImpact(data, 'enter');
@@ -231,7 +232,7 @@ describe('editorModel', () => {
     comp.mainGraph.transitions.push({
       id: 'bad_enter',
       from: 'a',
-      to: { graphId: 'scenario', stateId: 'middle' },
+      to: { graphId: 'scenario', stateId: 'middle' } as unknown as string,
       signal: 'external:system:test:bad',
     });
     const codes = validateNarrativeData(data).map((issue) => issue.code);
@@ -534,6 +535,51 @@ describe('editorModel', () => {
     expect(compositionId).toBe('comp');
   });
 
+  it('resolveValidationIssueFocus focuses a dotted state id with a field suffix (path tail not truncated)', () => {
+    const data = normalizeFile({
+      schemaVersion: 3,
+      signals: [],
+      compositions: [{
+        id: 'comp',
+        mainGraph: {
+          id: 'flow',
+          ownerType: 'flow',
+          initialState: 'a',
+          states: { a: { id: 'a' }, 's.1': { id: 's.1' } },
+          transitions: [],
+        },
+        elements: [],
+      }],
+    });
+    // state id 含 '.' 且 path 尾串带字段后缀——旧 `([^.[\]]+)` 会截成 's' 导致聚焦失败。
+    const result = resolveValidationIssueFocus(
+      {
+        severity: 'error',
+        code: 'state.onEnterActions',
+        message: 'bad',
+        path: 'compositions[0].mainGraph.states.s.1.onEnterActions[0]',
+      },
+      data,
+    );
+    expect(result?.selectedId).toBe('state:s.1');
+    expect(result?.nodeIds).toContain('state:s.1');
+  });
+
+  it('normalizeFile keeps duplicate/empty/reserved author signals for validation to flag (never deletes rows)', () => {
+    const data = normalizeFile({
+      schemaVersion: 3,
+      signals: [{ id: 'go' }, { id: 'go', label: 'dup' }, { id: '' }, { id: '__draft__' }],
+      compositions: [],
+    } as unknown as Parameters<typeof normalizeFile>[0]);
+    // normalize 不删行（删=丢用户数据且让校验码不可达，2026-07-17 W-E9）；
+    // 空 id / 保留字 / 重复 全部交校验器报 error。
+    expect(data.signals?.map((s) => s.id)).toEqual(['go', 'go', '', '__draft__']);
+    const codes = validateNarrativeData(data).map((issue) => issue.code);
+    expect(codes).toContain('signal.id.duplicate');
+    expect(codes).toContain('signal.id.empty');
+    expect(codes).toContain('signal.id.reserved');
+  });
+
   it('focusValidationIssue opens exclusive subgraph editor for element transitions', () => {
     const data = normalizeFile({
       schemaVersion: 3,
@@ -753,13 +799,18 @@ describe('editorModel', () => {
     ).toBe(true);
   });
 
-  it('auto-marks broadcastOnEnter for derived signal listeners during normalize', () => {
+  it('normalize never auto-marks broadcastOnEnter; validation reports state.broadcast.missing instead', () => {
+    // 数据只由用户改：监听 state:<g>:<s> 而源状态未勾广播，normalize 不得代写标记，
+    // 由校验器报 error 引导用户自己去状态面板勾选。
     const data = normalizeFile(sample());
     const npc = data.compositions![0]!.elements![0]!.graph!;
     npc.transitions[0]!.signal = 'state:flow:b';
     delete data.compositions![0]!.mainGraph.states.b!.broadcastOnEnter;
     const normalized = normalizeFile(data);
-    expect(normalized.compositions![0]!.mainGraph.states.b?.broadcastOnEnter).toBe(true);
+    expect(normalized.compositions![0]!.mainGraph.states.b?.broadcastOnEnter).toBeUndefined();
+    expect(
+      validateNarrativeData(normalized).some((issue) => issue.code === 'state.broadcast.missing'),
+    ).toBe(true);
   });
 
   it('simulation only queues derived signals for broadcastOnEnter states', () => {

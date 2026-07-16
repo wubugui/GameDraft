@@ -4713,7 +4713,6 @@ def _open_file_in_vscode(path: Path) -> bool:
             [code, str(path)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except OSError:
         return False

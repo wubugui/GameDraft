@@ -4,6 +4,7 @@ import sys
 from PySide6.QtWidgets import QApplication, QStyleFactory
 from PySide6.QtGui import QPalette, QColor
 
+from tools.editor import theme as app_theme
 from tools.editor.shared.qt_combo_wheel_guard import install_global_combo_wheel_block
 
 from .main_window import MainWindow
@@ -20,6 +21,7 @@ def setup_dark_theme(app: QApplication):
     palette.setColor(QPalette.ColorRole.Highlight, QColor(65, 105, 225))
     palette.setColor(QPalette.ColorRole.HighlightedText, QColor(255, 255, 255))
     app.setPalette(palette)
+    role_qss = app_theme.font_role_stylesheet(app_theme.DEFAULT_FONT_PX)
     app.setStyleSheet(
         """
         QMainWindow { background-color: #1e1e1e; }
@@ -47,6 +49,7 @@ def setup_dark_theme(app: QApplication):
         }
         QScrollArea { border: none; }
         """
+        + role_qss
     )
 
 

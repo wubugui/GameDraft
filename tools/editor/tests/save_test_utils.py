@@ -95,3 +95,15 @@ def write_minimal_loadable_project(root: Path) -> None:
                    ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
+
+
+def patch_staged_add(side_effect):
+    """save_all 两阶段写后的测试观察缝：拦截 StagedJsonWriter.add（不真正落盘），
+    以与旧 `patch(project_model.write_json)` 相同的 (path, data) 形参回调 side_effect。
+    save_all 改为 StagedJsonWriter 暂存+提交后，write_json 不再是它的写盘入口。"""
+    from unittest.mock import patch as _patch
+
+    def _add(_self, path, data):
+        side_effect(Path(path), data)
+
+    return _patch("tools.editor.file_io.StagedJsonWriter.add", _add)

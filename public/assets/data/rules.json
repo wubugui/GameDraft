@@ -17,7 +17,7 @@
       "category": "taboo",
       "layers": {
         "xiang": {
-          "text": "王大爷说的，城隍庙后山半夜三更有白影子飘来飘去的，还会唱戏。老辈人都说那地方不干净，三更天别往那儿跑。",
+          "text": "王大爷说的，城隍庙后山半夜三更有白影子飘来飘去的，还会唱戏。老辈人都说那地方不干净，三更天莫往那点跑。",
           "verified": "unverified"
         }
       }
@@ -74,6 +74,22 @@
       }
     },
     {
+      "id": "rule_no_touch_offering",
+      "name": "路祭不能动",
+      "incompleteName": "一条路边的忌讳",
+      "category": "taboo",
+      "layers": {
+        "xiang": {
+          "text": "路边摆着的酒肉、纸钱是给野鬼吃的供——路过见了别动，那是人家的。动了就欠了它一口，它就有理由跟上你。",
+          "verified": "unverified"
+        },
+        "li": {
+          "text": "亲身犯了这条：山口那摊路祭，饿急了端来吃了，还冲着林子骂了两句——那东西立刻缠上脚踝往里拖。后来有个道士点明：又吃供又骂人，回半个字，魂就归它管了。",
+          "verified": "effective"
+        }
+      }
+    },
+    {
       "id": "rule_zhenshi_sizhang",
       "name": "镇尸四样",
       "incompleteName": "背尸行里的土办法",
@@ -86,6 +102,18 @@
         "shu": {
           "text": "义庄里真用过一回：四样下去，两具扭在一起的尸真就松了手，直挺挺躺平。……虽说到现在也不知道，到底是哪一样起的作用，还是——另有什么替他把场面圆上了。",
           "verified": "questionable"
+        }
+      }
+    },
+    {
+      "id": "rule_drowned_corpse",
+      "name": "淹死的，水汽重",
+      "incompleteName": "关于淹死人的门道",
+      "category": "jargon",
+      "layers": {
+        "xiang": {
+          "text": "义庄管事顺嘴点的：淹死的泡过水，水汽阴沉，上了肩就往水那头坠。背着走道莫沿水边——水汽勾水汽，越走越沉。",
+          "verified": "effective"
         }
       }
     }

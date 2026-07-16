@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import math
 import re
+from copy import deepcopy
 from typing import Callable
 
 from PySide6.QtWidgets import (
@@ -20,12 +21,13 @@ from PySide6.QtWidgets import (
     QComboBox, QLabel, QSpinBox, QDoubleSpinBox, QCheckBox, QFormLayout, QFrame, QGroupBox,
     QTextEdit, QApplication, QToolButton, QDialog, QListWidget, QListWidgetItem,
     QDialogButtonBox, QSizePolicy, QInputDialog, QAbstractSpinBox, QMessageBox,
+    QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
 )
 
 from PySide6.QtCore import Qt, QTimer, Signal, QSize
 from PySide6.QtGui import QWheelEvent
 
-from .rich_text_field import RichTextLineEdit
+from .rich_text_field import RichTextLineEdit, RichTextTextEdit
 
 # Qt6: ItemDataRole.UserRole
 _USER_ROLE = Qt.ItemDataRole.UserRole
@@ -38,10 +40,10 @@ def _hide_combo_popups_under(widget: QWidget) -> None:
         cb.hidePopup()
 
 
-# 以下四个函数为历史兜底（曾用于手动清理 Windows 上偶发残留的 QComboBoxPrivateContainer）。
+# 以下四个函数为历史兜底（曾用于手动清理偶发残留的 QComboBoxPrivateContainer）。
 # 按 Qt 官方立场（https://forum.qt.io/topic/132029），QComboBoxPrivateContainer 是 editable QComboBox
-# 的内部顶层容器，应该「just ignore it」；主动 close/deleteLater 反而会让 HWND 被 DWM 采样到，
-# 表现为任务栏叠图标 + 顶层小窗闪烁。任何新代码禁止在 rebuild 路径中调用这些函数。
+# 的内部顶层容器，应该「just ignore it」；主动 close/deleteLater 反而会增加顶层小窗闪烁风险。
+# 任何新代码禁止在 rebuild 路径中调用这些函数。
 def _hide_active_application_popups(max_rounds: int = 8) -> None:
     """[已弃用] 仅收起 QApplication.activePopupWidget 链。勿在重建路径中调用，保留仅为潜在兜底。"""
     app = QApplication.instance()
@@ -99,20 +101,106 @@ def _purge_qcombobox_private_containers(*, protected_ids: set[int] | None = None
 
 from .flag_key_field import FlagKeyPickField
 from .flag_value_edit import FlagValueEdit
+from .portrait_catalog import load_portrait_sets
 from .id_ref_selector import IdRefSelector
+from .audio_preview_selector import AudioIdPreviewSelector
 from .blend_overlay_preview import BlendOverlayPreviewWidget
+from .collapsible_section import CollapsibleSection
+from .dialog_geometry import remember_dialog_geometry
+from .form_layout import compact_form
 from .image_path_picker import CutsceneImagePathRow
 from .cutscene_dialogue_speaker_row import npc_items_for_dialogue_picker
 from .scripted_lines_editor import ScriptedLinesEditor
 from .runtime_field_schema import entity_kind_choices, field_meta
+from .numeric_roundtrip import preserve_numeric_repr
+
+# 这些参数在 schema 里恒会被写出，但语义上"缺省即未设"。当某键原本不在数据里、且当前值
+# 等于其中性默认时，剔除它——避免编辑器"打开即保存"凭空添加 direction:""/anchorOffset:0。
+# 仅作用于"原本就没有该键"的情形；用户显式设过（原数据里有）的一律保留。
+_OMIT_WHEN_ABSENT_AND_DEFAULT: dict[str, object] = {
+    "direction": "",
+    "anchorOffsetX": 0.0,
+    "anchorOffsetY": 0.0,
+    # emitNarrativeSignal 的 sourceType/sourceId 为可选；schema 总会建出空控件，
+    # 原数据没有且仍为空时剔除，避免「打开即注入空 sourceId/sourceType」。
+    "sourceType": "",
+    "sourceId": "",
+    # 以下均为"缺省即未设"的可选键：原本没有且仍为中性默认时不写出
+    #（chooseAction prompt/allowCancel、waitClickContinue text、faceEntity faceTarget、
+    #  pickup isCurrency、blendOverlayImage delayMs）。
+    "prompt": "",
+    "allowCancel": False,
+    "text": "",
+    "faceTarget": "",
+    "isCurrency": False,
+    "delayMs": 0.0,
+    # switchScene/changeScene 缺省出生点 = 默认 spawn；缺省 key（setFlag/addFlagValue 未填）同理
+    "targetSpawnPoint": "",
+    "key": "",
+    "itemName": "",
+    # setSmell 的方位/明灭为可选：原数据没有且仍为中性默认时不写出
+    #（否则含 setSmell 的条目"打开即注入" dir:0.0/flicker:false）
+    "dir": 0.0,
+    "flicker": False,
+    # giveItem critical（关键给予绕过槽上限）为可选：原本没有且未勾选时不写出
+    "critical": False,
+    # enableRuleOffers.slots / chooseAction.options：原本没有该键且列表仍为空时不写出，
+    # 配合"载入空列表不再自动注入空行"，保证 slots:[] / options:[] 与缺键两种旧形状均往返不漂移。
+    "slots": [],
+    "options": [],
+}
+
+def _coerce_bool_param(val: object) -> bool:
+    """bool 参数控件初始化：字符串 "false"/"0"/"no"/"off"（大小写不敏感）解析为 False，
+    与运行时字符串语义一致；绝不能 bool("false")→True 造成保存后行为静默翻转。"""
+    if isinstance(val, str):
+        return val.strip().lower() not in ("", "false", "0", "no", "off")
+    return bool(val)
+
+
+# 这些 action 的 int 参数运行时有**非零**默认（见 src/core/ActionRegistry.ts 的 `?? N`），但编辑器
+# 泛型 int 控件一律默认 0。若不处理，缺该键的数据"打开即保存"会被写成 0——不只是格式漂移，更会
+# **改变行为**（giveItem count:0=不给物品、fadeMs:0=瞬切、durationMs:0=瞬变）。
+# 修法（与 present 默认值一致）：按运行时默认 seed 控件 + 原本缺该键且仍为该默认时不回写。
+# 键为 (action_type, param)，因同名 fadeMs 在不同 action 默认值不同（1000 vs 500）。
+# 注：blendOverlayImage.durationMs 由其专属构造器自行 seed 600，这里仅登记以便往返剔除。
+_ACTION_PARAM_RUNTIME_DEFAULTS: dict[tuple[str, str], int] = {
+    ("giveItem", "count"): 1,
+    ("removeItem", "count"): 1,
+    ("pickup", "count"): 1,
+    ("playBgm", "fadeMs"): 1000,
+    ("stopBgm", "fadeMs"): 1000,
+    ("stopSceneAmbient", "fadeMs"): 500,
+    ("fadingZoom", "durationMs"): 600,
+    ("fadingRestoreSceneCameraZoom", "durationMs"): 600,
+    ("fadeWorldToBlack", "durationMs"): 600,
+    ("fadeWorldFromBlack", "durationMs"): 600,
+    ("waitMs", "durationMs"): 600,
+    ("blendOverlayImage", "durationMs"): 600,
+    # showEmote/showSpeechBubble(AndWait) duration ?? 1500（ActionRegistry.ts:635/668）
+    ("showEmote", "duration"): 1500,
+    ("showEmoteAndWait", "duration"): 1500,
+    ("showSpeechBubble", "duration"): 1500,
+    ("showSpeechBubbleAndWait", "duration"): 1500,
+    # moveEntityTo speed ?? 80
+    ("moveEntityTo", "speed"): 80,
+    # sugarWheelShowSpeech durationMs 缺省=实例 speechDurationMs（兜底 3000）：
+    # seed 3000 防"打开即写 0→被 Math.max 钳成 500ms"；缺键且仍 3000 时不写出。
+    ("sugarWheelShowSpeech", "durationMs"): 3000,
+    # setSmell intensity 缺省 60（SmellSystem.ts:23）
+    ("setSmell", "intensity"): 60,
+}
 
 ACTION_TYPES = [
     "runActions", "chooseAction", "randomBranch",
     "setFlag", "setScenarioPhase", "startScenario", "activateScenario", "completeScenario", "emitNarrativeSignal", "setNarrativeState", "appendFlag", "giveItem", "removeItem", "giveCurrency", "removeCurrency",
     "giveRule", "grantRuleLayer", "giveFragment", "updateQuest", "startEncounter",
-    "playBgm", "stopBgm", "playSfx", "endDay", "addDelayedEvent",
+    "playBgm", "stopBgm", "playSfx", "stopSceneAmbient", "endDay", "addDelayedEvent",
     "addArchiveEntry", "startCutscene", "startWaterMinigame", "startSugarWheelMinigame", "startPaperCraftMinigame",
     "startPressureHold", "playSignalCue", "addFlagValue",
+    "damagePlayer", "healPlayer", "resetHealth", "setHealth", "incHealth", "decHealth", "triggerDeathTether",
+    "setSmell", "clearSmell", "sniff",
+    "activatePlane", "deactivatePlane",
     "sugarWheelShowSpeech", "sugarWheelDismissSpeech", "sugarWheelDismissAllSpeech",
     "sugarWheelResetPointer",
     "debugAlertActionParams",
@@ -136,7 +224,43 @@ ACTION_TYPES = [
 ]
 
 DEBUG_ONLY_ACTION_TYPES = {"setNarrativeState"}
-CONTENT_ACTION_TYPES = [t for t in ACTION_TYPES if t not in DEBUG_ONLY_ACTION_TYPES]
+# Legacy：旧扣血/回血。新内容统一用 decHealth/incHealth（编排控值）+ triggerDeathTether（系绳）。
+# 仍保留在 ACTION_TYPES（兼容历史数据、校验通过、运行时可用），但从编辑器内容下拉中移除。
+LEGACY_ACTION_TYPES = {"damagePlayer", "healPlayer"}
+CONTENT_ACTION_TYPES = [t for t in ACTION_TYPES if t not in DEBUG_ONLY_ACTION_TYPES and t not in LEGACY_ACTION_TYPES]
+
+# _make_selector 的 kind → schema_build.CONTENT_ID_PARAMS 宇宙名。
+# 用途：为每个 id 引用参数所建的选择器打上"这是哪个内容宇宙的选择器"标记
+# （widget._content_id_universe），供 test_shared_widget_selectors 做「宇宙级」parity——
+# 断言 giveItem.id 建出的确是 items 选择器，而不仅仅是"某个非裸 QLineEdit 选择器"。
+# 新增 _make_selector kind 且用于某内容 id 参数时，必须在此登记对应宇宙（parity 测试会拦）。
+_SELECTOR_KIND_UNIVERSE: dict[str, str] = {
+    "item": "items",
+    "rule": "rules",
+    "fragment": "fragments",
+    "quest": "quests",
+    "encounter": "encounters",
+    "cutscene": "cutscenes",
+    "shop": "shops",
+    "audio_bgm": "bgm",
+    "audio_sfx": "sfx",
+    "audio_ambient": "ambient",
+    "smell": "smells",
+    "plane": "planes",
+    "water_minigame": "water_minigames",
+    "sugar_wheel_minigame": "sugar_wheel_minigames",
+    "paper_craft_minigame": "paper_craft_minigames",
+    "pressure_hold": "pressure_holds",
+    "signal_cue": "signal_cues",
+}
+
+
+def _tag_content_universe(widget, universe: str | None) -> None:
+    """给 id 引用选择器打上其服务的内容宇宙标记（宇宙级 parity 用，见 _SELECTOR_KIND_UNIVERSE）。"""
+    try:
+        widget._content_id_universe = universe
+    except (AttributeError, TypeError):
+        pass
 
 # 编辑器用：会改动存档/可持久化数据 vs 以运行时演出与瞬时状态为主（与实现细节若有出入以策划理解为准，见文档注释）。
 # "save" = 常关联存档、任务、背包、flag、持久化 override 等；"memory" = 多为镜头、UI、过场、等待、切场景、音效等
@@ -164,6 +288,7 @@ ACTION_PERSISTENCE: dict[str, str] = {
     "playBgm": "memory",
     "stopBgm": "memory",
     "playSfx": "memory",
+    "stopSceneAmbient": "memory",
     "endDay": "save",
     "addDelayedEvent": "save",
     "addArchiveEntry": "save",
@@ -171,6 +296,19 @@ ACTION_PERSISTENCE: dict[str, str] = {
     "addFlagValue": "save",
     "startPressureHold": "memory",
     "playSignalCue": "memory",
+    "damagePlayer": "save",
+    "healPlayer": "save",
+    "resetHealth": "save",
+    "setHealth": "save",
+    "incHealth": "save",
+    "decHealth": "save",
+    "triggerDeathTether": "save",
+    "setSmell": "save",
+    "clearSmell": "save",
+    "sniff": "save",
+    # 位面：激活位面从叙事状态重派生（PlaneReconciler 零持久化），不入存档
+    "activatePlane": "memory",
+    "deactivatePlane": "memory",
     "startWaterMinigame": "memory",
     "startSugarWheelMinigame": "memory",
     "startPaperCraftMinigame": "memory",
@@ -276,7 +414,19 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "addFlagValue": [("key", "str"), ("delta", "float")],
     "startPressureHold": [("id", "str")],
     "playSignalCue": [("id", "str")],
-    "giveItem": [("id", "str"), ("count", "int")],
+    "damagePlayer": [("amount", "int")],
+    "healPlayer": [("amount", "int")],
+    "resetHealth": [],
+    "setHealth": [("amount", "int")],
+    "incHealth": [("amount", "int")],
+    "decHealth": [("amount", "int")],
+    "triggerDeathTether": [],
+    "setSmell": [("scent", "str"), ("intensity", "int"), ("dir", "float"), ("flicker", "bool")],
+    "clearSmell": [],
+    "sniff": [],
+    "activatePlane": [("id", "str")],
+    "deactivatePlane": [],
+    "giveItem": [("id", "str"), ("count", "int"), ("critical", "bool")],
     "removeItem": [("id", "str"), ("count", "int")],
     "giveCurrency": [("amount", "int")],
     "removeCurrency": [("amount", "str")],
@@ -288,6 +438,7 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "playBgm": [("id", "str"), ("fadeMs", "int")],
     "stopBgm": [("fadeMs", "int")],
     "playSfx": [("id", "str")],
+    "stopSceneAmbient": [("id", "str"), ("fadeMs", "int")],
     "endDay": [],
     "addArchiveEntry": [("bookType", "str"), ("entryId", "str")],
     "startCutscene": [("id", "str")],
@@ -426,6 +577,23 @@ def _id_ref_rows_with_orphan(
     return out
 
 
+def _refill_scoped_combo_preserve(
+    combo: "FilterableTypeCombo",
+    rows: list[tuple[str, str]],
+) -> None:
+    """按父项刷新 select_only 子选择器候选，且**保留当前值**：
+
+    旧 hotspotId/zoneId 不在新场景候选时以「(数据) 」前缀注入保留，绝不静默顶替第一项。
+    当前值为空时交由 FilterableTypeCombo 落到首个候选（占位或首项，与首帧构造一致）。
+    """
+    cur = combo.committed_type()
+    values = {v for _d, v in rows}
+    if cur and cur not in values:
+        rows = [(f"(数据) {cur}", cur), *rows]
+    combo.set_entries(rows)
+    combo.set_committed_type(cur)
+
+
 class EmoteBubbleParamWidget(QWidget):
     """气泡 emote：必选下拉 + 快捷「插入」占位 +「其他…」对话框；禁止当纯手输框用。"""
 
@@ -543,6 +711,547 @@ def _cutscene_spawn_id_choices(
                 seen.add(tid)
                 rows.append((tid, tid))
     return rows
+
+
+def _narrative_signal_rows_with_orphan(model, committed: str) -> list[tuple[str, str]]:
+    """Registered narrative signals plus the saved value if it is currently orphaned."""
+    cur = (committed or "").strip()
+    rows = model.narrative_signal_rows() if model else []
+    if not rows:
+        rows = [("（narrative_graphs.signals 为空）", "")]
+    if cur and all(v != cur for _, v in rows):
+        return [(f"{cur} · 未在 signals 注册表登记", cur)] + rows
+    return rows
+
+
+def _iter_narrative_graphs_for_signals(data: dict):
+    comps = data.get("compositions") if isinstance(data, dict) else []
+    if not isinstance(comps, list):
+        return
+    for comp in comps:
+        if not isinstance(comp, dict):
+            continue
+        main = comp.get("mainGraph")
+        if isinstance(main, dict) and str(main.get("id") or "").strip():
+            yield main
+        for el in comp.get("elements") or []:
+            if not isinstance(el, dict):
+                continue
+            graph = el.get("graph")
+            if isinstance(graph, dict) and str(graph.get("id") or "").strip():
+                yield graph
+
+
+def _narrative_derived_signal_ids(data: dict) -> set[str]:
+    out: set[str] = set()
+    for graph in _iter_narrative_graphs_for_signals(data) or []:
+        gid = str(graph.get("id") or "").strip()
+        states = graph.get("states")
+        if not gid or not isinstance(states, dict):
+            continue
+        for sid, raw in states.items():
+            if isinstance(raw, dict) and bool(raw.get("broadcastOnEnter")):
+                out.add(f"state:{gid}:{sid}")
+    return out
+
+
+def _narrative_listener_counts(data: dict) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for graph in _iter_narrative_graphs_for_signals(data) or []:
+        for tr in graph.get("transitions") or []:
+            if not isinstance(tr, dict):
+                continue
+            sig = str(tr.get("signal") or "").strip()
+            if sig:
+                counts[sig] = counts.get(sig, 0) + 1
+    return counts
+
+
+def _rename_narrative_signal_refs(data: dict, old_id: str, new_id: str) -> None:
+    old = (old_id or "").strip()
+    new = (new_id or "").strip()
+    if not old or not new or old == new:
+        return
+    for graph in _iter_narrative_graphs_for_signals(data) or []:
+        for tr in graph.get("transitions") or []:
+            if isinstance(tr, dict) and str(tr.get("signal") or "").strip() == old:
+                tr["signal"] = new
+    for comp in data.get("compositions") or []:
+        if not isinstance(comp, dict):
+            continue
+        for el in comp.get("elements") or []:
+            if not isinstance(el, dict):
+                continue
+            meta = el.get("meta")
+            if not isinstance(meta, dict) or not isinstance(meta.get("emits"), list):
+                continue
+            meta["emits"] = [new if str(sig) == old else sig for sig in meta["emits"]]
+
+
+def _validate_narrative_signals_for_manager(data: dict) -> tuple[list[str], list[str]]:
+    errors: list[str] = []
+    warnings: list[str] = []
+    registered: set[str] = set()
+    seen: set[str] = set()
+    for idx, row in enumerate(data.get("signals") or []):
+        if not isinstance(row, dict):
+            warnings.append(f"signals[{idx}] 不是对象，将被保存流程规范化处理")
+            continue
+        sid = str(row.get("id") or "").strip()
+        if not sid:
+            errors.append(f"signals[{idx}].id 不能为空")
+            continue
+        if sid in seen:
+            errors.append(f"信号 id 重复: {sid}")
+        seen.add(sid)
+        if sid == "__draft__" or sid.startswith("state:"):
+            errors.append(f"作者信号 id 使用了保留/派生命名: {sid}")
+        registered.add(sid)
+
+    derived = _narrative_derived_signal_ids(data)
+    listeners = _narrative_listener_counts(data)
+    for graph in _iter_narrative_graphs_for_signals(data) or []:
+        gid = str(graph.get("id") or "").strip()
+        for tr in graph.get("transitions") or []:
+            if not isinstance(tr, dict):
+                continue
+            trigger = str(tr.get("trigger") or "").strip()
+            if trigger in ("reactive", "reactiveAll", "reactiveAny"):
+                continue
+            tid = str(tr.get("id") or "?")
+            sig = str(tr.get("signal") or "").strip()
+            if not sig:
+                errors.append(f"Transition {gid}.{tid} 缺少 signal")
+            elif sig == "__draft__":
+                warnings.append(f"Transition {gid}.{tid} 仍在使用草稿信号 __draft__")
+            elif sig.startswith("state:"):
+                if sig not in derived:
+                    errors.append(f"Transition {gid}.{tid} 监听了不存在或未广播的派生信号: {sig}")
+            elif sig not in registered:
+                errors.append(f"Transition {gid}.{tid} 监听了未登记信号: {sig}")
+
+    for sid in sorted(registered):
+        if listeners.get(sid, 0) == 0:
+            warnings.append(f"信号 {sid} 当前没有 Transition 监听")
+    return errors, warnings
+
+
+class NarrativeSignalManagerDialog(QDialog):
+    """Manage narrative author signals and select one for emitNarrativeSignal."""
+
+    def __init__(self, model, current: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("叙事信号管理器")
+        self.setMinimumSize(900, 620)
+        self.resize(980, 680)
+        self._model = model
+        src = model.narrative_graphs if model and isinstance(model.narrative_graphs, dict) else {}
+        self._data = json.loads(json.dumps(src, ensure_ascii=False))
+        self._data.setdefault("signals", [])
+        if not isinstance(self._data["signals"], list):
+            self._data["signals"] = []
+        self._selected = (current or "").strip()
+        self._populating = False
+        self._row_to_signal_index: dict[int, int] = {}
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 12, 12, 12)
+
+        self._search = QLineEdit(self)
+        self._search.setPlaceholderText("搜索信号 id / label / notes...")
+        self._search.setClearButtonEnabled(True)
+        self._search.textChanged.connect(lambda _t: self._rebuild_table())
+        root.addWidget(self._search)
+
+        self._table = QTableWidget(0, 4, self)
+        self._table.setHorizontalHeaderLabels(["id", "label", "notes", "监听"])
+        self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._table.setAlternatingRowColors(True)
+        hh = self._table.horizontalHeader()
+        hh.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        hh.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        hh.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        hh.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self._table.itemChanged.connect(self._on_item_changed)
+        self._table.itemSelectionChanged.connect(self._on_selection_changed)
+        self._table.itemDoubleClicked.connect(lambda _it: self._select_current())
+        root.addWidget(self._table, 1)
+
+        tools = QHBoxLayout()
+        add_btn = QPushButton("新增", self)
+        del_btn = QPushButton("删除", self)
+        undo_btn = QPushButton("撤销重构", self)
+        undo_btn.setToolTip(
+            "撤销最近一次叙事重构（改 id / 删除的全项目级联）。\n"
+            "与叙事编辑器共用同一撤销日志；只动暂存不落盘。"
+        )
+        self._select_btn = QPushButton("选用当前信号", self)
+        validate_btn = QPushButton("校验", self)
+        add_btn.clicked.connect(self._add_signal)
+        del_btn.clicked.connect(self._delete_signal)
+        undo_btn.clicked.connect(self._undo_refactor)
+        self._select_btn.clicked.connect(self._select_current)
+        validate_btn.clicked.connect(self._refresh_validation)
+        tools.addWidget(add_btn)
+        tools.addWidget(del_btn)
+        tools.addWidget(undo_btn)
+        tools.addStretch(1)
+        tools.addWidget(validate_btn)
+        tools.addWidget(self._select_btn)
+        root.addLayout(tools)
+
+        self._validation = QTextEdit(self)
+        self._validation.setReadOnly(True)
+        self._validation.setMinimumHeight(120)
+        root.addWidget(self._validation)
+
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            parent=self,
+        )
+        btns.accepted.connect(self._accept_without_select)
+        btns.rejected.connect(self.reject)
+        root.addWidget(btns)
+
+        self._rebuild_table()
+        self._refresh_validation()
+
+    def selected_signal(self) -> str:
+        return self._selected
+
+    def _signals(self) -> list[dict]:
+        raw = self._data.setdefault("signals", [])
+        if not isinstance(raw, list):
+            raw = []
+            self._data["signals"] = raw
+        return raw
+
+    def _current_signal_index(self) -> int | None:
+        row = self._table.currentRow()
+        if row < 0:
+            return None
+        return self._row_to_signal_index.get(row)
+
+    def _matches_query(self, row: dict, query: str) -> bool:
+        if not query:
+            return True
+        text = " ".join(
+            str(row.get(k) or "")
+            for k in ("id", "label", "notes", "description")
+        ).lower()
+        return query.lower() in text
+
+    def _rebuild_table(self) -> None:
+        query = self._search.text().strip()
+        counts = _narrative_listener_counts(self._data)
+        self._populating = True
+        try:
+            self._row_to_signal_index.clear()
+            self._table.setRowCount(0)
+            for sig_index, sig in enumerate(self._signals()):
+                if not isinstance(sig, dict):
+                    continue
+                if not self._matches_query(sig, query):
+                    continue
+                r = self._table.rowCount()
+                self._table.insertRow(r)
+                self._row_to_signal_index[r] = sig_index
+                sid = str(sig.get("id") or "")
+                vals = [
+                    sid,
+                    str(sig.get("label") or ""),
+                    str(sig.get("notes") or sig.get("description") or ""),
+                    str(counts.get(sid.strip(), 0)),
+                ]
+                for c, val in enumerate(vals):
+                    item = QTableWidgetItem(val)
+                    if c == 3:
+                        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    self._table.setItem(r, c, item)
+                if sid.strip() == self._selected:
+                    self._table.selectRow(r)
+            if self._table.currentRow() < 0 and self._table.rowCount() > 0:
+                self._table.selectRow(0)
+        finally:
+            self._populating = False
+        self._on_selection_changed()
+
+    def _on_item_changed(self, item: QTableWidgetItem) -> None:
+        if self._populating:
+            return
+        sig_index = self._row_to_signal_index.get(item.row())
+        if sig_index is None:
+            return
+        signals = self._signals()
+        if sig_index < 0 or sig_index >= len(signals) or not isinstance(signals[sig_index], dict):
+            return
+        row = signals[sig_index]
+        old_id = str(row.get("id") or "").strip()
+        text = item.text().strip()
+        if item.column() == 0:
+            if old_id and text and old_id != text:
+                # 改 id 走全项目重构引擎（与叙事编辑器同一引擎/同一撤销日志），
+                # 拒绝或失败时表格重建即还原显示（本地拷贝与模型均未变）。
+                if not self._refactor_rename(old_id, text):
+                    self._rebuild_table()
+                    self._refresh_validation()
+                    return
+                if self._selected == old_id:
+                    self._selected = text
+            else:
+                row["id"] = text
+        elif item.column() == 1:
+            if text:
+                row["label"] = text
+            else:
+                row.pop("label", None)
+        elif item.column() == 2:
+            row.pop("description", None)
+            if text:
+                row["notes"] = text
+            else:
+                row.pop("notes", None)
+        self._refresh_validation()
+        if item.column() == 0:
+            self._rebuild_table()
+
+    def _on_selection_changed(self) -> None:
+        idx = self._current_signal_index()
+        self._select_btn.setEnabled(idx is not None)
+
+    def _new_unique_signal_id(self) -> str:
+        existing = {
+            str(row.get("id") or "").strip()
+            for row in self._signals()
+            if isinstance(row, dict)
+        }
+        base = "new_signal"
+        if base not in existing:
+            return base
+        i = 2
+        while f"{base}_{i}" in existing:
+            i += 1
+        return f"{base}_{i}"
+
+    def _add_signal(self) -> None:
+        sid = self._new_unique_signal_id()
+        self._signals().append({"id": sid, "label": sid})
+        self._selected = sid
+        self._search.setText("")
+        self._rebuild_table()
+        self._refresh_validation()
+
+    def _delete_signal(self) -> None:
+        idx = self._current_signal_index()
+        if idx is None:
+            return
+        signals = self._signals()
+        if idx < 0 or idx >= len(signals):
+            return
+        sid = str(signals[idx].get("id") or "").strip() if isinstance(signals[idx], dict) else ""
+        if self._model is None or not sid:
+            # 脱机/空 id 兜底：保持旧的本地拷贝行为
+            if sid and _narrative_listener_counts(self._data).get(sid, 0) > 0:
+                ok = QMessageBox.question(
+                    self,
+                    "删除信号",
+                    f"信号 {sid!r} 正被 Transition 监听。删除后校验会报错，确定删除？",
+                )
+                if ok != QMessageBox.StandardButton.Yes:
+                    return
+            del signals[idx]
+        else:
+            # 走全项目重构引擎：有引用先列数目并确认强制清理（监听置草稿、发射动作移除）
+            from .signal_refactor import SignalRefactorError, delete_signal, push_journal, scan_signal_usages
+
+            if not self._stage_copy_to_model():
+                return
+            usages = scan_signal_usages(self._model, sid)
+            refs = usages["totalRefs"]
+            prompt = (
+                f"删除信号 {sid!r}？共 {refs} 处引用将被强制清理：\n"
+                f"监听 transition 置为草稿（__draft__），发射动作从对话/场景/资产中移除\n"
+                f"（对话图 {len(usages['dialogues'])} 个、场景/资产 {len(usages['assets'])} 个条目）。\n\n"
+                "改动只进暂存、不落盘（Save All 才写文件）；可经「撤销重构」精确复原，"
+                "不随本对话框取消而回滚。"
+                if refs
+                else f"删除信号 {sid!r}（无引用，仅移除注册表行）？可经「撤销重构」复原。"
+            )
+            ok = QMessageBox.question(self, "重构删除", prompt)
+            if ok != QMessageBox.StandardButton.Yes:
+                return
+            try:
+                summary, reverse_ops = delete_signal(self._model, sid, force=bool(refs))
+            except SignalRefactorError as exc:
+                QMessageBox.warning(self, "重构删除失败", str(exc))
+                return
+            push_journal(self._model, {"op": "delete", "signalId": sid, "summary": summary, "reverseOps": reverse_ops})
+            self._resync_from_model()
+        if self._selected == sid:
+            self._selected = ""
+        self._rebuild_table()
+        self._refresh_validation()
+
+    def _stage_copy_to_model(self) -> bool:
+        """把本对话框的当前拷贝（含 label/notes 编辑）暂存进模型——重构必须作用在最新数据上。
+        校验错误时拒绝（与 OK 提交同一道闸），不产生任何修改。"""
+        errors, _warnings = self._refresh_validation()
+        if errors:
+            QMessageBox.warning(self, "信号校验未通过", "请先修复错误，再执行重构。")
+            return False
+        self._model.narrative_graphs = self._data
+        self._model.mark_dirty("narrative_graphs")
+        return True
+
+    def _resync_from_model(self) -> None:
+        """重构后从模型取回最新数据（引擎直接改模型，本地拷贝必须跟上）。"""
+        src = self._model.narrative_graphs if isinstance(self._model.narrative_graphs, dict) else {}
+        self._data = json.loads(json.dumps(src, ensure_ascii=False))
+        self._data.setdefault("signals", [])
+        if not isinstance(self._data["signals"], list):
+            self._data["signals"] = []
+
+    def _refactor_rename(self, old_id: str, new_id: str) -> bool:
+        """信号改 id 的全项目级联（共享引擎）。脱机（无模型）退回旧的拷贝内级联。"""
+        if self._model is None:
+            for row in self._signals():
+                if isinstance(row, dict) and str(row.get("id") or "").strip() == old_id:
+                    row["id"] = new_id
+            _rename_narrative_signal_refs(self._data, old_id, new_id)
+            return True
+        from .signal_refactor import SignalRefactorError, push_journal, rename_signal, scan_signal_usages
+
+        if not self._stage_copy_to_model():
+            return False
+        usages = scan_signal_usages(self._model, old_id)
+        ok = QMessageBox.question(
+            self,
+            "重构改名",
+            f"把信号 {old_id!r} 全项目改名为 {new_id!r}？\n\n"
+            f"共 {usages['totalRefs']} 处引用将级联更新"
+            f"（对话图 {len(usages['dialogues'])} 个、场景/资产 {len(usages['assets'])} 个条目、"
+            f"监听 transition {len(usages['listeners'])} 条）。\n\n"
+            "改动只进暂存、不落盘（Save All 才写文件）；可经「撤销重构」回退，"
+            "不随本对话框取消而回滚。",
+        )
+        if ok != QMessageBox.StandardButton.Yes:
+            return False
+        try:
+            summary = rename_signal(self._model, old_id, new_id)
+        except SignalRefactorError as exc:
+            QMessageBox.warning(self, "重构改名失败", str(exc))
+            return False
+        push_journal(self._model, {"op": "rename", "oldId": old_id, "newId": new_id, "summary": summary})
+        self._resync_from_model()
+        return True
+
+    def _undo_refactor(self) -> None:
+        if self._model is None:
+            QMessageBox.information(self, "撤销重构", "脱机模式没有重构日志。")
+            return
+        from .signal_refactor import undo_last
+
+        result = undo_last(self._model)
+        if not result.get("ok"):
+            QMessageBox.information(self, "撤销重构", str(result.get("reason") or "没有可撤销的重构操作"))
+            return
+        self._resync_from_model()
+        self._rebuild_table()
+        self._refresh_validation()
+        QMessageBox.information(self, "撤销重构", f"{result.get('description')}（仍未落盘）")
+
+    def _refresh_validation(self) -> tuple[list[str], list[str]]:
+        errors, warnings = _validate_narrative_signals_for_manager(self._data)
+        lines: list[str] = []
+        if not errors and not warnings:
+            lines.append("校验通过")
+        else:
+            lines.extend(f"错误: {msg}" for msg in errors)
+            lines.extend(f"警告: {msg}" for msg in warnings)
+        self._validation.setPlainText("\n".join(lines))
+        return errors, warnings
+
+    def _commit_if_valid(self) -> bool:
+        errors, _warnings = self._refresh_validation()
+        if errors:
+            QMessageBox.warning(self, "信号校验未通过", "请先修复错误，再保存信号管理器。")
+            return False
+        if self._model is not None:
+            self._model.narrative_graphs = self._data
+            self._model.mark_dirty("narrative_graphs")
+        return True
+
+    def _select_current(self) -> None:
+        idx = self._current_signal_index()
+        if idx is None:
+            return
+        signals = self._signals()
+        if idx < 0 or idx >= len(signals) or not isinstance(signals[idx], dict):
+            return
+        sid = str(signals[idx].get("id") or "").strip()
+        if not sid:
+            return
+        self._selected = sid
+        if self._commit_if_valid():
+            self.accept()
+
+    def _accept_without_select(self) -> None:
+        if self._commit_if_valid():
+            self.accept()
+
+
+class NarrativeSignalPickerField(QWidget):
+    """Read-only signal field; all edits go through NarrativeSignalManagerDialog."""
+
+    valueChanged = Signal(str)
+
+    def __init__(self, model, committed: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._model = model
+        self._value = (committed or "").strip()
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        self._line = QLineEdit(self)
+        self._line.setReadOnly(True)
+        self._line.setPlaceholderText("通过信号管理器选择")
+        self._line.setToolTip("不可手写；点「信号管理器…」选择或维护 narrative_graphs.signals。")
+        btn = QPushButton("信号管理器…", self)
+        btn.clicked.connect(self._open_manager)
+        lay.addWidget(self._line, 1)
+        lay.addWidget(btn)
+        self._refresh_line()
+
+    def current_signal(self) -> str:
+        return self._value
+
+    def _display_for_value(self, value: str) -> str:
+        val = (value or "").strip()
+        if not val:
+            return ""
+        for display, sid in _narrative_signal_rows_with_orphan(self._model, val):
+            if sid == val:
+                return display
+        return val
+
+    def _refresh_line(self) -> None:
+        self._line.setText(self._display_for_value(self._value))
+
+    def _open_manager(self) -> None:
+        if self._model is None:
+            QMessageBox.warning(self, "信号管理器", "当前没有工程上下文，无法管理 narrative_graphs.signals。")
+            return
+        dlg = NarrativeSignalManagerDialog(self._model, self._value, self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            self._refresh_line()
+            return
+        new_value = dlg.selected_signal().strip()
+        if new_value != self._value:
+            self._value = new_value
+            self._refresh_line()
+            self.valueChanged.emit(self._value)
+        else:
+            self._refresh_line()
 
 
 class FilterableTypeCombo(QComboBox):
@@ -938,7 +1647,8 @@ class ActionTypePickerDialog(QDialog):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("选择 Action 类型")
-        self.setMinimumSize(760, 560)
+        # 解除"最小=初始"的死锁：保留较小下限让 13" 上可缩，初始仍 760×560，并记忆几何
+        self.setMinimumSize(560, 360)
         self.resize(760, 560)
         self._all_rows: list[tuple[str, str]] = []
         self._selected: str = ""
@@ -961,7 +1671,7 @@ class ActionTypePickerDialog(QDialog):
 
         self._list = QListWidget(self)
         self._list.setAlternatingRowColors(True)
-        self._list.setMinimumHeight(400)
+        self._list.setMinimumHeight(240)  # 下限降低，让弹窗在 13" 上能压缩
         root.addWidget(self._list, stretch=1)
 
         btns = QDialogButtonBox(
@@ -971,6 +1681,7 @@ class ActionTypePickerDialog(QDialog):
         btns.accepted.connect(self._on_accept)
         btns.rejected.connect(self.reject)
         root.addWidget(btns)
+        remember_dialog_geometry(self, "action_type_picker")
 
     def set_rows(
         self,
@@ -1201,12 +1912,11 @@ class RuleSlotsParamEditor(QWidget):
         btn_add.clicked.connect(self._add_empty_slot)
         root.addWidget(btn_add)
         raw = slots if isinstance(slots, list) else []
-        if raw:
-            for s in raw:
-                if isinstance(s, dict):
-                    self._append_slot_ui(s)
-        else:
-            self._append_slot_ui({})
+        # 空列表不自动注入空槽：载入 slots:[] 保存仍是 slots:[]（往返不漂移），
+        # 需要新槽时用「+ 规矩槽位」按钮显式添加。
+        for s in raw:
+            if isinstance(s, dict):
+                self._append_slot_ui(s)
 
     def _add_empty_slot(self) -> None:
         self._append_slot_ui({})
@@ -1266,8 +1976,9 @@ class RuleSlotsParamEditor(QWidget):
         rm.setFixedWidth(24)
         rm.setToolTip("删除")
         bl.addWidget(QLabel("resultText"))
-        tx = QTextEdit()
-        tx.setMaximumHeight(80)
+        tx = RichTextTextEdit(self._model)
+        tx.setMinimumHeight(56)
+        tx.setMaximumHeight(140)
         tx.setPlainText(str(data.get("resultText", "")))
         tx.textChanged.connect(lambda: self.changed.emit())
         bl.addWidget(tx)
@@ -1370,10 +2081,10 @@ class ActionChoiceOptionsEditor(QWidget):
         add_btn.clicked.connect(lambda: self._add_option({}))
         top.addWidget(add_btn)
         self._root.addLayout(top)
+        # 空列表不自动注入空选项：载入 options:[] 保存仍是 options:[]（往返不漂移），
+        # 需要新选项时用「+ 选项」按钮显式添加。
         for opt in options if isinstance(options, list) else []:
             self._add_option(opt if isinstance(opt, dict) else {})
-        if not self._rows:
-            self._add_option({})
 
     def set_wheel_speech_role_rows_getter(
         self,
@@ -1516,8 +2227,7 @@ class ActionRow(QWidget):
         outer.setSpacing(2)
         self._outer_layout = outer
 
-        # 所有子 widget 均显式传 parent=self：避免任何 QWidget 子类（尤其 QComboBox）在构造时
-        # 以"无 parent"短暂成为 top-level HWND，Windows 上会被 DWM 采样表现为任务栏闪现小窗。
+        # 所有子 widget 均显式传 parent=self，避免任何 QWidget 子类在构造时短暂成为 top-level。
         top = QHBoxLayout()
         self._fold_toggle = QToolButton(self)
         self._fold_toggle.setAutoRaise(True)
@@ -1559,7 +2269,11 @@ class ActionRow(QWidget):
 
         self._params_frame = QFrame(self._foldable_body)
         self._params_layout = QFormLayout(self._params_frame)
-        self._params_layout.setContentsMargins(20, 0, 0, 0)
+        # 字段按内容宽度排布：短参数（数字/枚举/复选框）不再被拉满整行。
+        self._params_layout.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint,
+        )
+        self._params_layout.setContentsMargins(12, 0, 0, 0)
         self._foldable_layout.addWidget(self._params_frame)
         outer.addWidget(self._foldable_body)
         self._foldable_body.setVisible(False)
@@ -1570,10 +2284,38 @@ class ActionRow(QWidget):
             "params": dict(raw.get("params", {})),
         }
         self._normalize_action_params(self._data["type"], self._data["params"])
+        # 原始参数快照：to_dict 据此把未改动的数值恢复 int/float 原始表示、并剔除原本就没有的
+        # 空/默认占位键，避免"打开即保存"漂移（1000->1000.0、新增 direction:""/anchorOffset:0 等）。
+        self._original_params = deepcopy(self._data["params"])
         self.type_combo.set_committed_type(self._data.get("type", "setFlag"))
+        # 记录当前类型：用户切换类型时据此弹确认/回退（程序性 set 不经 typeCommitted，不受影响）
+        self._last_committed_type: str = self.type_combo.committed_type()
         self._rebuild_params()
 
         self.type_combo.typeCommitted.connect(self._on_type_committed)
+        # 折叠时也能一眼看出该动作的关键参数（M6）：摘要做成只读 tooltip，
+        # 走既有 to_dict()（纯读，不改数据），随编辑/换类型刷新。
+        self.changed.connect(self._update_summary_tooltip)
+        self.type_combo.typeCommitted.connect(
+            lambda *_: self._update_summary_tooltip())
+        self._update_summary_tooltip()
+
+    def _update_summary_tooltip(self) -> None:
+        try:
+            d = self.to_dict()
+        except Exception:
+            return
+        params = d.get("params", {}) or {}
+
+        def _short(v: object) -> str:
+            s = str(v)
+            return s if len(s) <= 24 else s[:23] + "…"
+
+        parts = [f"{k}={_short(v)}" for k, v in params.items()
+                 if not isinstance(v, (list, dict))]
+        typ = str(d.get("type", "") or "")
+        summary = "  ·  ".join(parts)
+        self.setToolTip(f"{typ}\n{summary}" if summary else typ)
 
     def _on_fold_clicked(self) -> None:
         self._collapsed = not self._collapsed
@@ -1706,8 +2448,58 @@ class ActionRow(QWidget):
         self._rebuild_params()
         maybe_stamp(_pct, f'rebuild done type={self.type_combo.committed_type()!s}')
 
+    @staticmethod
+    def _meaningful_param_count(params: dict) -> int:
+        """"已配置"参数计数：非空字符串 / 非空列表 / 非空 dict 才算。
+
+        bool / 数字不计——它们多为控件自动默认（fresh 行的 value:true、seed 的时长等），
+        计入会让"新加一行随手换类型"也弹确认。真正会被蒸发且难以重建的是
+        id/文本与嵌套 action 列表，这里全都覆盖。
+        """
+        n = 0
+        for v in (params or {}).values():
+            if isinstance(v, str):
+                if v.strip():
+                    n += 1
+            elif isinstance(v, (list, dict)):
+                if v:
+                    n += 1
+        return n
+
+    def _confirm_type_switch_clear(self, prev_type: str, new_type: str, count: int) -> bool:
+        """切换类型将清空已配置参数时的确认；测试可 monkeypatch。默认 No（不清空）。"""
+        ret = QMessageBox.question(
+            self,
+            "切换 Action 类型",
+            f"从 {prev_type} 切换到 {new_type} 将清空已配置的 {count} 项参数"
+            "（含嵌套子动作，切回不会还原）。确定切换？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return ret == QMessageBox.StandardButton.Yes
+
     def _on_type_committed(self, _text: str) -> None:
+        new_type = self.type_combo.committed_type()
+        prev_type = getattr(self, "_last_committed_type", "")
+        if prev_type and new_type != prev_type:
+            # typeCommitted 时 committed 已是新类型；临时回位用旧类型序列化旧控件，
+            # 得到"即将被清空"的真实参数（含嵌套 action 列表）。set_committed_type 程序性不发信号。
+            self.type_combo.set_committed_type(prev_type)
+            try:
+                old_params = (self.to_dict() or {}).get("params") or {}
+            except Exception:
+                old_params = {}
+            finally:
+                self.type_combo.set_committed_type(new_type)
+            n = self._meaningful_param_count(old_params)
+            if n > 0 and not self._confirm_type_switch_clear(prev_type, new_type, n):
+                # 用户放弃：类型回退，控件与参数原样保留
+                self.type_combo.set_committed_type(prev_type)
+                return
+        self._last_committed_type = new_type
         self._data["params"] = {}
+        # 切换 action 类型即换了一套参数语义：旧类型的原始快照不再适用，清空以免误保真/误剔除。
+        self._original_params = {}
         self._rebuild_params()
         self.changed.emit()
 
@@ -1717,6 +2509,20 @@ class ActionRow(QWidget):
         if not isinstance(ts_w, IdRefSelector) or not isinstance(sp_w, IdRefSelector):
             return
 
+        # 首帧 sp_w 候选项还没填，已加载的 targetSpawnPoint 在初始 set_current 时会落空被吞；
+        # 用当前参数值作首帧目标（中途重建时以 self._data 为准，别用磁盘原值回滚本次会话的修改），
+        # 避免「打开 switchScene 节点即丢出生点」。
+        _cur_params = {}
+        try:
+            _cur_params = dict((self._data or {}).get("params") or {})
+        except (AttributeError, TypeError):
+            _cur_params = {}
+        _init_v = _cur_params.get(
+            "targetSpawnPoint",
+            (self._original_params or {}).get("targetSpawnPoint", ""),
+        )
+        initial = {"v": str(_init_v or "")}
+
         def refresh_spawn(_: str = "") -> None:
             sid = ts_w.current_id()
             keys = (
@@ -1724,13 +2530,17 @@ class ActionRow(QWidget):
                 if self._ctx_model
                 else [""]
             )
-            items: list[tuple[str, str]] = [(k, k if k else "(default)") for k in keys]
-            cur = sp_w.current_id()
+            # 空键不入候选：allow_empty 的 "(none)" 行已是唯一空值（语义 = 不写该键，进场用默认
+            # 出生点）。此前 "(none)" 与 "(default)" 双空值同列，语义重复且易误解。
+            items: list[tuple[str, str]] = [(k, k) for k in keys if k]
+            if initial["v"] is not None:
+                cur = initial["v"]
+                initial["v"] = None
+            else:
+                cur = sp_w.current_id()
             sp_w.set_items(items)
-            if cur in keys:
-                sp_w.set_current(cur)
-            elif keys:
-                sp_w.set_current(keys[0])
+            # 悬垂出生点保值（IdRefSelector 孤儿行），绝不静默改指第一项
+            sp_w.set_current(cur)
 
         ts_w.value_changed.connect(refresh_spawn)
         refresh_spawn()
@@ -1750,11 +2560,8 @@ class ActionRow(QWidget):
             )
             cur = en_w.current_id()
             en_w.set_items(items)
-            ids = [p[0] for p in items]
-            if cur in ids:
-                en_w.set_current(cur)
-            elif ids:
-                en_w.set_current(ids[0])
+            # 悬垂/空 entryId 保值展示（孤儿行/占位），绝不静默改指第一条档案
+            en_w.set_current(cur)
 
         bt_w.currentTextChanged.connect(refresh_entry)
         refresh_entry()
@@ -2032,13 +2839,14 @@ class ActionRow(QWidget):
         self,
         kind: str,
         val: str,
-    ) -> IdRefSelector:
+    ) -> QWidget:
         """下拉选 id；若干 kind 禁止手输未知值，并从数据追加「孤儿」行。"""
         m = self._ctx_model
         committed = str(val if val is not None else "").strip()
         strict_pick = kind in (
             "actor", "emote_target", "npc_only",
             "water_minigame", "sugar_wheel_minigame", "paper_craft_minigame",
+            "smell", "plane", "pressure_hold", "signal_cue",
         )
 
         pairs: list[tuple[str, str]] = []
@@ -2062,10 +2870,17 @@ class ActionRow(QWidget):
             pairs = [(a, a) for a in (m.all_audio_ids("bgm") if m else [])]
         elif kind == "audio_sfx":
             pairs = [(a, a) for a in (m.all_audio_ids("sfx") if m else [])]
+        elif kind == "audio_ambient":
+            pairs = [(a, a) for a in (m.all_audio_ids("ambient") if m else [])]
         elif kind == "spawn":
-            pairs = [("", "(default)")]
+            # 空值只保留 allow_empty 的 "(none)" 行（= 不写该键，默认出生点），
+            # 不再注入 ("", "(default)") 同义空值行。
+            pairs = []
         elif kind == "emote_target":
             if m:
+                # 与 actor kind 的候选源对齐（project_model.actor_id_items_for_scene）：
+                # 运行时 resolveEmoteTarget 支持过场临时演员 _cut_*，strict 下拉必须给得出。
+                pairs.extend(m.collect_cutscene_temp_actor_ids())
                 pairs.extend(m.npc_ids_for_scene(self._ctx_scene_id))
                 pairs.extend(m.hotspot_ids_for_scene(self._ctx_scene_id))
             pairs.append(("player", "player"))
@@ -2079,11 +2894,46 @@ class ActionRow(QWidget):
             pairs = m.all_sugar_wheel_minigame_ids() if m else []
         elif kind == "paper_craft_minigame":
             pairs = m.all_paper_craft_minigame_ids() if m else []
+        elif kind == "smell":
+            pairs = m.all_smell_profile_ids() if m else []
+        elif kind == "plane":
+            pairs = m.all_plane_ids() if m else []
+        elif kind == "pressure_hold":
+            # project_model 暂无专用 id-provider，这里只读其 pressure_holds 列表（数据同源）
+            pairs = [
+                (str(p.get("id", "")).strip(), str(p.get("prompt") or p.get("id", "")).strip()[:32])
+                for p in ((m.pressure_holds if m else None) or [])
+                if isinstance(p, dict) and str(p.get("id", "")).strip()
+            ]
+        elif kind == "signal_cue":
+            # project_model 暂无专用 id-provider，这里只读其 signal_cues 列表（数据同源）
+            pairs = [
+                (str(c.get("id", "")).strip(), str(c.get("description") or c.get("id", "")).strip()[:32])
+                for c in ((m.signal_cues if m else None) or [])
+                if isinstance(c, dict) and str(c.get("id", "")).strip()
+            ]
         else:
             pairs = []
 
         if strict_pick:
             pairs = _id_ref_rows_with_orphan(pairs, committed)
+
+        if kind in ("audio_bgm", "audio_sfx", "audio_ambient") and m is not None:
+            channel = {"audio_bgm": "bgm", "audio_sfx": "sfx", "audio_ambient": "ambient"}[kind]
+            w_audio = AudioIdPreviewSelector(
+                m,
+                channel,
+                self,
+                allow_empty=True,
+                editable=True,
+            )
+            w_audio.setMinimumWidth(160)
+            w_audio.set_items(pairs)
+            w_audio.set_current(committed)
+            w_audio.value_changed.connect(self.changed)
+            w_audio.setToolTip("选择 audio_config 中的音频 id；右侧按钮可直接试听当前选择。")
+            _tag_content_universe(w_audio, _SELECTOR_KIND_UNIVERSE.get(kind))
+            return w_audio
 
         w = IdRefSelector(
             self, allow_empty=True, editable=not strict_pick,
@@ -2103,9 +2953,17 @@ class ActionRow(QWidget):
             "water_minigame": "仅下拉选择；列表来自 water_minigames/index.json。",
             "sugar_wheel_minigame": "仅下拉选择；列表来自 sugar_wheel/index.json。",
             "paper_craft_minigame": "仅下拉选择；列表来自 paper_craft/index.json。",
+            "smell": "仅下拉选择；列表来自 smell_profiles.json 的 profiles（香火/阴腥/尸臭/血腥/霉/香粉…）。留空=回落正常态。",
+            "plane": "仅下拉选择；列表来自 planes.json（位面面板维护）。\n"
+                     "activatePlane 作用域：过场内激活随过场结束自动清除；"
+                     "过场外持续至 deactivatePlane / 读档，且压过叙事点名。",
+            "spawn": "选目标场景的出生点；(none) = 不指定（进场用默认出生点）。",
+            "pressure_hold": "仅下拉选择；列表来自 pressure_holds.json（按压蓄力配置）。",
+            "signal_cue": "仅下拉选择；列表来自 signal_cues.json（信号演出配置）。",
         }.get(kind)
         if tip:
             w.setToolTip(tip)
+        _tag_content_universe(w, _SELECTOR_KIND_UNIVERSE.get(kind))
         return w
 
     def _rebuild_params(self) -> None:
@@ -2189,7 +3047,7 @@ class ActionRow(QWidget):
             self._params_layout.addRow("fieldName", field_combo)
 
             value_frame = QFrame(self)
-            value_layout = QFormLayout(value_frame)
+            value_layout = compact_form(QFormLayout(value_frame))
             value_layout.setContentsMargins(0, 0, 0, 0)
             self._param_widgets["_valueFrame"] = value_frame
             self._params_layout.addRow("value", value_frame)
@@ -2215,8 +3073,12 @@ class ActionRow(QWidget):
                 saved = str(params.get("entityId") or "").strip()
                 prev = entity_combo.committed_type()
                 prefer = saved if keep_saved else prev
-                entity_combo.set_entries(rows)
                 values = {v for _d, v in rows}
+                if prefer and prefer not in values:
+                    # 悬垂实体保值：追加「缺失」行，绝不静默改指第一个实体
+                    rows = rows + [(f"{prefer}（缺失）", prefer)]
+                    values.add(prefer)
+                entity_combo.set_entries(rows)
                 if prefer in values:
                     entity_combo.set_committed_type(prefer)
                 elif rows:
@@ -2230,8 +3092,12 @@ class ActionRow(QWidget):
                 saved = str(params.get("fieldName") or "").strip()
                 prev = field_combo.committed_type()
                 prefer = saved if keep_saved else prev
-                field_combo.set_entries(rows)
                 values = {v for _d, v in rows}
+                if prefer and prefer not in values:
+                    # 未知字段名保值（同实体悬垂处理），绝不静默改指第一个字段
+                    rows = rows + [(f"{prefer}（缺失）", prefer)]
+                    values.add(prefer)
+                field_combo.set_entries(rows)
                 if prefer in values:
                     field_combo.set_committed_type(prefer)
                 elif rows:
@@ -2316,6 +3182,23 @@ class ActionRow(QWidget):
                     sort.typeCommitted.connect(lambda _t: self.changed.emit())
                     self._param_widgets["value.spriteSort"] = sort
                     value_layout.addRow("spriteSort", sort)
+                elif fkind == "string" and picker == "portraitSlug":
+                    rows = (
+                        [(s, s) for s in load_portrait_sets(m.project_path)]
+                        if m and m.project_path is not None
+                        else []
+                    ) or [("（无立绘集）", "")]
+                    cur = str(raw_value or "").strip()
+                    if cur and cur not in [x[1] for x in rows]:
+                        rows = [(f"(数据) {cur}", cur)] + rows
+                    w = FilterableTypeCombo(rows, self, select_only=True)
+                    if cur:
+                        w.set_committed_type(cur)
+                    elif rows:
+                        w.set_committed_type(rows[0][1])
+                    w.typeCommitted.connect(lambda _t: self.changed.emit())
+                    self._param_widgets["value"] = w
+                    value_layout.addRow(field, w)
                 else:
                     w = QLineEdit(str(raw_value or ""), self)
                     w.textChanged.connect(self.changed)
@@ -2445,14 +3328,18 @@ class ActionRow(QWidget):
                 if not rows:
                     rows = [("（当前场景无实体）", "")]
                 cur = ent_w.committed_type().strip()
-                ent_w.set_entries(rows)
                 vals = {v for _d, v in rows}
-                if cur in vals:
-                    ent_w.set_committed_type(cur)
-                elif pr_eid and pr_eid in vals:
-                    ent_w.set_committed_type(pr_eid)
-                else:
-                    ent_w.set_committed_type(rows[0][1])
+                keep = cur if cur in vals else (pr_eid if pr_eid and pr_eid in vals else "")
+                if not keep:
+                    dangling = cur or pr_eid
+                    if dangling:
+                        # 悬垂实体保值：追加「缺失」行；_apply_xy_for_selection 因 eid==pr_eid
+                        # 会还原原存 x/y，不再用别的实体坐标覆盖
+                        rows = rows + [(f"{dangling}（缺失）", dangling)]
+                        vals.add(dangling)
+                        keep = dangling
+                ent_w.set_entries(rows)
+                ent_w.set_committed_type(keep if keep else rows[0][1])
                 _apply_xy_for_selection()
                 self.changed.emit()
 
@@ -2522,10 +3409,7 @@ class ActionRow(QWidget):
                 rows = [(f"{hid} ({label})", hid) for hid, label in raw_rows]
                 if not rows:
                     rows = [("（当前场景无热点）", "")]
-                cur = id_combo.committed_type()
-                id_combo.set_entries(rows)
-                values = {v for _d, v in rows}
-                id_combo.set_committed_type(cur if cur in values else rows[0][1])
+                _refill_scoped_combo_preserve(id_combo, rows)
                 self.changed.emit()
 
             scene_combo.typeCommitted.connect(_refill_hotspots)
@@ -2629,10 +3513,7 @@ class ActionRow(QWidget):
                 rows = [(f"{hid} ({label})", hid) for hid, label in raw_rows]
                 if not rows:
                     rows = [("（当前场景无热点）", "")]
-                cur = id_combo.committed_type()
-                id_combo.set_entries(rows)
-                values = {v for _d, v in rows}
-                id_combo.set_committed_type(cur if cur in values else rows[0][1])
+                _refill_scoped_combo_preserve(id_combo, rows)
                 self.changed.emit()
 
             scene_combo.typeCommitted.connect(_refill_hotspots_fac)
@@ -2692,10 +3573,7 @@ class ActionRow(QWidget):
                 rows = [(f"{hid} ({label})", hid) for hid, label in raw_rows]
                 if not rows:
                     rows = [("（当前场景无热点）", "")]
-                cur = id_combo.committed_type()
-                id_combo.set_entries(rows)
-                values = {v for _d, v in rows}
-                id_combo.set_committed_type(cur if cur in values else rows[0][1])
+                _refill_scoped_combo_preserve(id_combo, rows)
                 self.changed.emit()
 
             scene_combo.typeCommitted.connect(_refill_hotspots_pe)
@@ -2783,11 +3661,12 @@ class ActionRow(QWidget):
                 sid_combo.set_committed_type(cur_sid)
             elif scen_ids:
                 sid_combo.set_committed_type(scen_ids[0])
+            _tag_content_universe(sid_combo, "scenarios")
             self._param_widgets["scenarioId"] = sid_combo
             self._params_layout.addRow("scenarioId", sid_combo)
 
             phase_combo = QComboBox(self)
-            # 非 editable：避免构造时创建 QComboBoxPrivateContainer 顶层 HWND 闪烁；
+            # 非 editable：避免构造时创建 QComboBoxPrivateContainer 顶层弹窗；
             # 未知 phase（旧数据）会以 "(缺失) xxx" 条目形式保留。
             phase_combo.setEditable(False)
 
@@ -2831,13 +3710,14 @@ class ActionRow(QWidget):
             status_combo = QComboBox(self)
             status_combo.setEditable(False)
             for st in ("pending", "active", "done", "locked"):
-                status_combo.addItem(st)
+                status_combo.addItem(st, st)
             st_val = str(params.get("status") or "pending").strip() or "pending"
-            i = status_combo.findText(st_val)
+            i = status_combo.findData(st_val)
             if i >= 0:
                 status_combo.setCurrentIndex(i)
             else:
-                status_combo.addItem(f"(非枚举) {st_val}")
+                # userData 存真实值：展示带"(非枚举)"前缀，写盘取 currentData 原值不污染
+                status_combo.addItem(f"(非枚举) {st_val}", st_val)
                 status_combo.setCurrentIndex(status_combo.count() - 1)
             status_combo.currentIndexChanged.connect(lambda _i: self.changed.emit())
             self._param_widgets["status"] = status_combo
@@ -2895,6 +3775,7 @@ class ActionRow(QWidget):
             elif scen_ids:
                 sid_combo.set_committed_type(scen_ids[0])
             sid_combo.typeCommitted.connect(lambda _t: self.changed.emit())
+            _tag_content_universe(sid_combo, "scenarios")
             self._param_widgets["scenarioId"] = sid_combo
             self._params_layout.addRow("scenarioId", sid_combo)
             self._sync_foldable_visibility()
@@ -2924,6 +3805,7 @@ class ActionRow(QWidget):
             elif doc_ids:
                 doc_combo.set_committed_type(doc_ids[0])
             doc_combo.typeCommitted.connect(lambda _t: self.changed.emit())
+            _tag_content_universe(doc_combo, "documents")
             self._param_widgets["documentId"] = doc_combo
             self._params_layout.addRow("documentId", doc_combo)
             self._sync_foldable_visibility()
@@ -3000,7 +3882,10 @@ class ActionRow(QWidget):
             self._params_layout.addRow("widthPercent（占屏宽）", self._param_widgets["widthPercent"])
 
             bprev = BlendOverlayPreviewWidget(self._ctx_model, self._blend_preview_params, self)
-            self._params_layout.addRow("过渡预览（Qt 近似）", bprev)
+            # 预览是辅助查看面板，默认折叠，避免常驻占大块固定区域。
+            _bprev_sec = CollapsibleSection("过渡预览（Qt 近似）", start_open=False)
+            _bprev_sec.add_body(bprev)
+            self._params_layout.addRow(_bprev_sec)
             from_row.changed.connect(bprev.schedule_refresh)
             to_row.changed.connect(bprev.schedule_refresh)
             dur.valueChanged.connect(bprev.schedule_refresh)
@@ -3034,6 +3919,7 @@ class ActionRow(QWidget):
             elif gids:
                 gid_combo.set_committed_type(gids[0])
             gid_combo.typeCommitted.connect(lambda _t: self.changed.emit())
+            _tag_content_universe(gid_combo, "dialogue_graphs")
             self._param_widgets["graphId"] = gid_combo
             self._params_layout.addRow("graphId", gid_combo)
 
@@ -3090,6 +3976,13 @@ class ActionRow(QWidget):
             owner_id.textChanged.connect(self.changed)
             self._param_widgets["ownerId"] = owner_id
             self._params_layout.addRow("ownerId（可选）", owner_id)
+
+            dim_cb = QCheckBox("对话期间压暗场景背景", self)
+            dim_cb.setChecked(params.get("dimBackground") is True)
+            dim_cb.setToolTip("勾选后本次对话全程压一层 25% 暗幕托出立绘与面板；默认不压。")
+            dim_cb.toggled.connect(self.changed)
+            self._param_widgets["dimBackground"] = dim_cb
+            self._params_layout.addRow("dimBackground", dim_cb)
             self._sync_foldable_visibility()
             return
 
@@ -3112,6 +4005,13 @@ class ActionRow(QWidget):
             snpc.setToolTip("供 speaker 中 {{npc}} 使用；图对话 runActions 时也可用图内 npcId。")
             self._param_widgets["scriptedNpcId"] = snpc
             self._params_layout.addRow("scriptedNpcId（{{npc}} 默认）", snpc)
+
+            dim_cb = QCheckBox("对话期间压暗场景背景", self)
+            dim_cb.setChecked(params.get("dimBackground") is True)
+            dim_cb.setToolTip("勾选后本段脚本台词全程压一层 25% 暗幕托出立绘与面板；默认不压。")
+            dim_cb.toggled.connect(self.changed)
+            self._param_widgets["dimBackground"] = dim_cb
+            self._params_layout.addRow("dimBackground", dim_cb)
 
             raw_lines = params.get("lines", [])
             ed = ScriptedLinesEditor(
@@ -3353,6 +4253,23 @@ class ActionRow(QWidget):
                 self._param_widgets[logical] = cw
                 self._params_layout.addRow(f"clip:{logical}", cw)
 
+            # 装扮配置的对话头像立绘集：留空=按动画包目录名同名推导（主角头像跟配置走）
+            por_rows: list[tuple[str, str]] = [("（按动画包同名推导）", "")]
+            if m and m.project_path is not None:
+                por_rows += [(s, s) for s in load_portrait_sets(m.project_path)]
+            por0 = str(params.get("portraitSlug", "") or "").strip()
+            if por0 and por0 not in [x[1] for x in por_rows]:
+                por_rows = [(f"(数据) {por0}", por0)] + por_rows
+            por_combo = FilterableTypeCombo(por_rows, self, select_only=True)
+            por_combo.set_committed_type(por0)
+            por_combo.setToolTip(
+                "本套装扮配置的对话头像立绘集（dialogue_portraits/<slug>/）。\n"
+                "留空 = 按动画包目录名同名推导（如 player_taoist_anim）。"
+            )
+            self._param_widgets["portraitSlug"] = por_combo
+            self._params_layout.addRow("portraitSlug", por_combo)
+            por_combo.typeCommitted.connect(lambda _t: self.changed.emit())
+
             def on_bundle_changed(_v: str = "") -> None:
                 stem = bid.current_id().strip()
                 if stem and m:
@@ -3414,7 +4331,12 @@ class ActionRow(QWidget):
             elif ptype == "int":
                 w = QSpinBox(self)
                 w.setRange(-999999, 999999)
-                w.setValue(int(val) if val != "" else 0)
+                seed = _ACTION_PARAM_RUNTIME_DEFAULTS.get((act_type, pname), 0)
+                try:
+                    # float-first：脏数据 "3.5" 不再崩（展开即抛 ValueError），按截断显示
+                    w.setValue(int(float(val)) if val != "" else int(seed))
+                except (TypeError, ValueError):
+                    w.setValue(int(seed))
                 w.valueChanged.connect(self.changed)
             elif ptype == "float":
                 w = QDoubleSpinBox(self)
@@ -3455,8 +4377,20 @@ class ActionRow(QWidget):
                         w.setValue(float(val) if val != "" else 0.0)
                     except (TypeError, ValueError):
                         w.setValue(0.0)
+                elif act_type == "cutsceneSpawnActor" and pname in ("x", "y"):
+                    # 出生点是世界坐标（可达数千），不能用下面 ±50 的偏移量程，否则会被 clamp 成
+                    # 50 造成坐标丢失。给足世界坐标量程，小数位与既有数据一致。
+                    w.setRange(-1000000.0, 1000000.0)
+                    w.setDecimals(2)
+                    w.setSingleStep(10)
+                    try:
+                        w.setValue(float(val) if val != "" else 0.0)
+                    except (TypeError, ValueError):
+                        w.setValue(0.0)
                 else:
-                    w.setRange(-50.0, 50.0)
+                    # 泛型 float 量程必须容纳世界坐标/大数值（persistNpcAt x/y、addFlagValue delta、
+                    # setSceneDepthFloorOffset 等曾被旧 ±50 量程 clamp 毁值）——一律给足量程。
+                    w.setRange(-1000000.0, 1000000.0)
                     w.setDecimals(4)
                     w.setSingleStep(0.05)
                     try:
@@ -3466,21 +4400,38 @@ class ActionRow(QWidget):
                 w.valueChanged.connect(self.changed)
             elif ptype == "bool":
                 w = QCheckBox(self)
-                w.setChecked(bool(val))
+                # 字符串 "false"/"0" 必须解析为 False（运行时同语义），不能 bool("false")→True
+                w.setChecked(_coerce_bool_param(val))
+                if act_type == "giveItem" and pname == "critical":
+                    w.setToolTip(
+                        "关键给予：背包满时绕过 12 槽上限也要给到手。\n"
+                        "剧情必得道具（分支按 flag 推进、不可再入）勾这个，防止满包时道具永久丢失。"
+                    )
                 w.stateChanged.connect(self.changed)
             elif ptype == "flag_val":
                 w = FlagValueEdit(self, self._ctx_model.flag_registry if self._ctx_model else {})
                 if act_type not in ("setFlag",):
                     w.set_value(val if val != "" else True)
                 w.valueChanged.connect(self.changed)
-            elif act_type in ("setFlag", "appendFlag") and pname == "key":
+            elif act_type in ("setFlag", "appendFlag", "addFlagValue") and pname == "key":
+                # addFlagValue.key 与 setFlag/appendFlag 同为 flag 键引用（CONTENT_ID_PARAMS 登记）：
+                # 手打错=运行时静默在错误 flag 上加数值，validator 抓不到。统一走登记表选择器。
                 cur = str(val) if val is not None else ""
                 w = FlagKeyPickField(self._ctx_model, self._ctx_scene_id, cur, self)
                 w.setMinimumWidth(96)
+                _tag_content_universe(w, "__flag__")
+            elif act_type == "startPressureHold" and pname == "id":
+                w = self._make_selector("pressure_hold", str(val) if val is not None else "")
+            elif act_type == "playSignalCue" and pname == "id":
+                w = self._make_selector("signal_cue", str(val) if val is not None else "")
             elif act_type in ("switchScene", "changeScene") and pname == "targetScene":
                 w = self._make_selector("scene", str(val) if val is not None else "")
             elif act_type in ("switchScene", "changeScene") and pname == "targetSpawnPoint":
                 w = self._make_selector("spawn", str(val) if val is not None else "")
+            elif act_type == "setSmell" and pname == "scent":
+                w = self._make_selector("smell", str(val) if val is not None else "")
+            elif act_type == "activatePlane" and pname == "id":
+                w = self._make_selector("plane", str(val) if val is not None else "")
             elif act_type == "giveItem" and pname == "id":
                 w = self._make_selector("item", str(val) if val is not None else "")
             elif act_type == "removeItem" and pname == "id":
@@ -3506,6 +4457,12 @@ class ActionRow(QWidget):
                 w = self._make_selector("audio_bgm", str(val) if val is not None else "")
             elif act_type == "playSfx" and pname == "id":
                 w = self._make_selector("audio_sfx", str(val) if val is not None else "")
+            elif act_type == "stopSceneAmbient" and pname == "id":
+                w = self._make_selector("audio_ambient", str(val) if val is not None else "")
+                w.setToolTip(
+                    "可选：留空 = 清掉全部场景环境音层；选 id = 只停该层。"
+                    "列表来自 audio_config.ambient，右侧按钮可试听。",
+                )
             elif act_type == "startCutscene" and pname == "id":
                 w = self._make_selector("cutscene", str(val) if val is not None else "")
             elif act_type == "startWaterMinigame" and pname == "id":
@@ -3546,19 +4503,30 @@ class ActionRow(QWidget):
                 w.set_items(items)
                 w.set_current(str(val) if val is not None else "")
                 w.value_changed.connect(self.changed)
+                _tag_content_universe(w, "archive_entries")
             elif act_type == "showNotification" and pname == "type":
                 w = QComboBox(self)
-                # 非 editable：notification type 是固定枚举，不需要手写；同时避免 HWND 闪烁。
+                # 非 editable：notification type 是固定枚举，不需要手写；同时避免顶层弹窗闪烁。
                 w.setEditable(False)
-                w.addItems(list(_NOTIFICATION_TYPES))
+                for _nt in _NOTIFICATION_TYPES:
+                    w.addItem(_nt, _nt)
                 tv = str(val) if val is not None else "info"
-                i = w.findText(tv)
+                i = w.findData(tv)
                 if i >= 0:
                     w.setCurrentIndex(i)
                 else:
-                    w.addItem(f"(非枚举) {tv}")
+                    # userData 存真实值：展示带前缀，写盘取 currentData 原值不污染
+                    w.addItem(f"(非枚举) {tv}", tv)
                     w.setCurrentIndex(w.count() - 1)
                 w.currentIndexChanged.connect(lambda _i: self.changed.emit())
+            elif act_type == "emitNarrativeSignal" and pname == "signal":
+                cur = str(val) if val is not None else ""
+                w = NarrativeSignalPickerField(self._ctx_model, cur, self)
+                w.setToolTip(
+                    "只能通过信号管理器填写；管理器直接维护 narrative_graphs.signals。"
+                )
+                w.valueChanged.connect(lambda _t: self.changed.emit())
+                _tag_content_universe(w, "narrative_signals")
             elif act_type == "showEmote" and pname == "target":
                 w = self._make_selector("emote_target", str(val) if val is not None else "")
                 w.setToolTip(
@@ -3699,6 +4667,34 @@ class ActionRow(QWidget):
                 initial_state=str(params.get("state", "") or ""),
             )
 
+        if act_type == "playSfx":
+            # 可选音量：1=素材原始；<1 调小；>1 调大（顶到系统满幅上限，浏览器音频封顶 1.0，
+            # 默认全局 SFX=0.8 时约有 +25% 余量）。设为 1 不写键，保持数据干净。
+            orig_vol = params.get("volume")
+            self._playsfx_volume_orig = orig_vol
+            try:
+                vol_init = float(orig_vol) if orig_vol is not None else 1.0
+            except (TypeError, ValueError):
+                vol_init = 1.0
+            vol_init = max(0.0, min(4.0, vol_init))
+            vw = QDoubleSpinBox(self)
+            vw.setRange(0.0, 4.0)
+            vw.setDecimals(2)
+            vw.setSingleStep(0.05)
+            vw.setValue(vol_init)
+            vw.setMaximumWidth(96)
+            vw.setToolTip(
+                "音效音量：1=素材原始音量（会再乘全局 SFX 音量）；<1 调小、>1 调大。"
+                "调大只能顶到系统满幅（浏览器封顶 1.0）——默认全局 SFX 0.8 时约有 +25% 余量，"
+                "若素材本身偏轻需另行放大音频文件。设为 1 时不写入 volume 键。"
+            )
+            vw.valueChanged.connect(self.changed)
+            self._param_widgets["volume"] = vw
+            self._params_layout.addRow("音量", vw)
+            # volume 由本 GUI 全权管理：从透传集合摘除，避免 to_dict 末尾按原值把它塞回。
+            if isinstance(self._original_params, dict):
+                self._original_params.pop("volume", None)
+
         if act_type == "setFlag":
             kw = self._param_widgets.get("key")
             vw = self._param_widgets.get("value")
@@ -3808,10 +4804,7 @@ class ActionRow(QWidget):
             rows = [(f"{zid}（zone）", zid) for zid, _ in raw_rows]
             if not rows:
                 rows = [("（当前场景无普通 Zone）", "")]
-            cur = id_combo.committed_type()
-            id_combo.set_entries(rows)
-            values = {v for _d, v in rows}
-            id_combo.set_committed_type(cur if cur in values else rows[0][1])
+            _refill_scoped_combo_preserve(id_combo, rows)
             self.changed.emit()
 
         scene_combo.typeCommitted.connect(_refill_zones_ze)
@@ -3984,6 +4977,9 @@ class ActionRow(QWidget):
             oi = oi_w.text().strip()
             if oi:
                 prm["ownerId"] = oi
+        dim_w = self._param_widgets.get("dimBackground")
+        if isinstance(dim_w, QCheckBox) and dim_w.isChecked():
+            prm["dimBackground"] = True
         return {"type": "startDialogueGraph", "params": prm}
 
     def _to_dict_play_scripted_dialogue(self) -> dict:
@@ -3994,6 +4990,9 @@ class ActionRow(QWidget):
         prm: dict = {"lines": lines}
         if sid:
             prm["scriptedNpcId"] = sid
+        dim_w = self._param_widgets.get("dimBackground")
+        if isinstance(dim_w, QCheckBox) and dim_w.isChecked():
+            prm["dimBackground"] = True
         return {"type": "playScriptedDialogue", "params": prm}
 
     def _to_dict_set_player_avatar(self) -> dict:
@@ -4023,6 +5022,11 @@ class ActionRow(QWidget):
                 sm[logical] = t
         if sm:
             params["stateMap"] = sm
+        pw = self._param_widgets.get("portraitSlug")
+        if isinstance(pw, FilterableTypeCombo):
+            ps = pw.committed_type().strip()
+            if ps:
+                params["portraitSlug"] = ps
         return {"type": "setPlayerAvatar", "params": params}
 
     def _to_dict_set_scenario_phase(self) -> dict:
@@ -4032,7 +5036,11 @@ class ActionRow(QWidget):
         out_w = self._param_widgets.get("outcome")
         sid = sid_w.committed_type() if isinstance(sid_w, FilterableTypeCombo) else ""
         ph = ph_w.currentText().strip() if isinstance(ph_w, QComboBox) else ""
-        st = st_w.currentText().strip() if isinstance(st_w, QComboBox) else ""
+        if isinstance(st_w, QComboBox):
+            st_d = st_w.currentData()
+            st = str(st_d) if isinstance(st_d, str) else st_w.currentText().strip()
+        else:
+            st = ""
         out_raw = out_w.text().strip() if isinstance(out_w, QLineEdit) else ""
         pr: dict = {"scenarioId": sid, "phase": ph, "status": st}
         if out_raw:
@@ -4078,13 +5086,15 @@ class ActionRow(QWidget):
         wp_src = getattr(self, "_move_entity_waypoints_store", None)
         wp_tuples = list(wp_src[0]) if isinstance(wp_src, list) and wp_src else []
         out_wp = [{"x": round(float(px), 2), "y": round(float(py), 2)} for px, py in wp_tuples]
-        prm: dict = {
-            "target": tgt,
-            "sceneId": sid,
-            "x": round(xv, 2),
-            "y": round(yv, 2),
-            "speed": spd_final,
-        }
+        # sceneId 仅供编辑器复现地图，运行时不读（见 ActionRegistry moveEntityTo）。无场景上下文时
+        # 该下拉会自动落到工程第一个场景（任意值），写出去即凭空漂移；故仅当原数据本就带 sceneId
+        # 才回写（重开时 _default_map_sid 会据上下文重算）。key 顺序维持 target,[sceneId],x,y,speed。
+        prm = {"target": tgt}
+        if sid and "sceneId" in self._original_params:
+            prm["sceneId"] = sid
+        prm["x"] = round(xv, 2)
+        prm["y"] = round(yv, 2)
+        prm["speed"] = spd_final
         if ma:
             prm["moveAnimState"] = ma
         if out_wp:
@@ -4119,6 +5129,29 @@ class ActionRow(QWidget):
         }
 
     def to_dict(self) -> dict:
+        result = self._to_dict_raw()
+        params = result.get("params") if isinstance(result, dict) else None
+        if isinstance(params, dict):
+            # 1) 未改动的数值参数恢复原始 int/float 表示（1000.0 -> 1000）。
+            preserve_numeric_repr(params, self._original_params)
+            # 2) 剔除"原本没有、且为中性默认"的占位键（direction:""/anchorOffsetX/Y:0/allowCancel:false…）。
+            for k, default in _OMIT_WHEN_ABSENT_AND_DEFAULT.items():
+                if k in params and k not in self._original_params and params[k] == default:
+                    cur_is_bool = isinstance(params[k], bool)
+                    def_is_bool = isinstance(default, bool)
+                    if cur_is_bool != def_is_bool:
+                        continue  # 0==False 之类的跨类型巧合不剔
+                    del params[k]
+            # 3) 运行时非零默认的 int 参数（fadeMs/count/durationMs…）：原本缺该键且仍为运行时默认时
+            #    不回写——既保持往返不漂移，又让运行时沿用其默认行为（用户显式设的非默认值仍保留）。
+            act_type = result.get("type", "")
+            for (at, pk), dv in _ACTION_PARAM_RUNTIME_DEFAULTS.items():
+                if at == act_type and pk in params and pk not in self._original_params \
+                        and not isinstance(params[pk], bool) and params[pk] == dv:
+                    del params[pk]
+        return result
+
+    def _to_dict_raw(self) -> dict:
         act_type = self.type_combo.committed_type()
         if act_type == "setSceneEntityPosition":
             return self._to_dict_set_scene_entity_position()
@@ -4167,18 +5200,24 @@ class ActionRow(QWidget):
             elif ptype == "bool":
                 params[pname] = w.isChecked()
             elif ptype == "flag_val" and isinstance(w, FlagValueEdit):
-                v = w.get_value()
-                params[pname] = v if isinstance(v, (bool, str)) else float(v)
-            elif act_type in ("setFlag", "appendFlag") and pname == "key" and isinstance(w, FlagKeyPickField):
+                # 不做 float() 强转：FlagValueEdit 原值保留（int 保 int、raw 保原类型）
+                params[pname] = w.get_value()
+            elif act_type in ("setFlag", "appendFlag", "addFlagValue") and pname == "key" and isinstance(w, FlagKeyPickField):
                 params[pname] = w.key()
             elif isinstance(w, EmoteBubbleParamWidget):
                 params[pname] = w.emote_text()
             elif isinstance(w, FilterableTypeCombo):
                 params[pname] = w.committed_type()
+            elif isinstance(w, NarrativeSignalPickerField):
+                params[pname] = w.current_signal()
+            elif isinstance(w, AudioIdPreviewSelector):
+                params[pname] = w.current_id()
             elif isinstance(w, IdRefSelector):
                 params[pname] = w.current_id()
             elif isinstance(w, QComboBox):
-                params[pname] = w.currentText()
+                # userData 优先：'(非枚举) xxx' 等展示文案不得写回 JSON
+                _d = w.currentData()
+                params[pname] = _d if isinstance(_d, str) else w.currentText()
             elif isinstance(w, RichTextLineEdit):
                 params[pname] = w.text()
             else:
@@ -4203,6 +5242,27 @@ class ActionRow(QWidget):
             params["belowActions"] = (
                 self._random_below_editor.to_list() if self._random_below_editor else []
             )
+        if act_type == "playSfx":
+            vw = self._param_widgets.get("volume")
+            if isinstance(vw, QDoubleSpinBox):
+                v = float(vw.value())
+                # 仅在偏离 1.0（原始音量）时写键；等于 1.0 → 省略，回到"素材原始音量"。
+                if abs(v - 1.0) > 1e-9:
+                    out = {"volume": v}
+                    preserve_numeric_repr(out, {"volume": getattr(self, "_playsfx_volume_orig", None)})
+                    params["volume"] = out["volume"]
+        if act_type == "stopSceneAmbient":
+            # id 可选："" 与缺键同义（清全部环境层）。原本没有该键且仍为空时不写出，
+            # 避免旧数据"打开即注入 id:\"\""破坏往返。
+            if not params.get("id") and "id" not in (self._original_params or {}):
+                params.pop("id", None)
+
+        # 运行时认识但 schema 未登记的参数（changeScene.cameraX/cameraY、legacy duration 别名、
+        # sugarWheelResetPointer.angle…）：GUI 改不到它们，按原值透传——绝不"保存即删"。
+        # _original_params 在类型切换时已被清空，故不会把旧类型的参数带进新类型。
+        for _k, _v in (self._original_params or {}).items():
+            if _k not in params:
+                params[_k] = deepcopy(_v)
         return {"type": act_type, "params": params}
 
 
@@ -4314,11 +5374,10 @@ class ActionEditor(QWidget):
             r.deleteLater()
         self._rows.clear()
         # 禁止主动 _dismiss_active_popup_stack / processEvents / sendPostedEvents：
-        # 这些组合会显式化 QComboBoxPrivateContainer 的 HWND 生命周期，在 Windows 上造成闪烁。
+        # 这些组合会显式化 QComboBoxPrivateContainer 的生命周期，增加弹窗闪烁风险。
 
     def _add_row(self, data: dict | None = None) -> None:
-        # parent=self：让 ActionRow 从构造的第一刻起就不是无 parent 的 top-level，
-        # 避免 Windows 上 QWidget 作为 top-level 短暂 create HWND 引发任务栏闪现。
+        # parent=self：让 ActionRow 从构造的第一刻起就不是无 parent 的 top-level。
         row = ActionRow(
             data,
             parent=self,

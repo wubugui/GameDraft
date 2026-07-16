@@ -1,16 +1,42 @@
 from __future__ import annotations
 
 import json
+import shutil
+import sys
 import threading
-import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
 
 import numpy as np
+
+_QT_UI = sys.platform == "darwin"
+
+if _QT_UI:
+    from . import qt_compat as tk
+    filedialog = tk.filedialog
+    messagebox = tk.messagebox
+    ttk = tk.ttk
+    ImageTk = None
+else:
+    import tkinter as tk
+    from tkinter import filedialog, messagebox, ttk
+    from PIL import ImageTk
 
 
 def _make_scrollable(parent, width: int) -> tuple[ttk.Frame, tk.Canvas]:
     """Create a scrollable frame. Returns (interior_frame, canvas)."""
+    if _QT_UI:
+        from PySide6.QtWidgets import QScrollArea
+        from PySide6.QtCore import Qt as _Qt
+        area = QScrollArea(parent)
+        area.setWidgetResizable(True)
+        area.setMinimumWidth(width)
+        # 只竖向滚动：禁掉横向滚动条，内容被压到面板宽度内，杜绝数值被裁/横向溢出
+        area.setHorizontalScrollBarPolicy(_Qt.ScrollBarAlwaysOff)
+        interior = ttk.Frame()
+        area.setWidget(interior)
+        parent._layout.addWidget(area, 0, 0)
+        return interior, area
+
     canvas = tk.Canvas(parent, width=width, highlightthickness=0)
     scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
     interior = ttk.Frame(canvas, width=width)
@@ -35,18 +61,20 @@ def _make_scrollable(parent, width: int) -> tuple[ttk.Frame, tk.Canvas]:
 
 def _bind_wheel_recursive(widget, canvas):
     """Bind MouseWheel to widget and all descendants so scrolling works over any control."""
+    if _QT_UI:
+        return
     widget.bind("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1 * (e.delta / 120)), "units"))
     for c in widget.winfo_children():
         _bind_wheel_recursive(c, canvas)
 
 
-from PIL import Image, ImageTk
+from PIL import Image, ImageChops
 
 from .calibration import OrthoCamera, reconstruct_points
 from .depth_estimator import MODEL_OPTIONS, DepthEstimator
 from .reconstruction import (
     DepthMapping, OrthoProjection, WorldHeightMap, apply_depth_mapping,
-    inverse_depth_mapping, build_M, encode_depth_rg16,
+    inverse_depth_mapping, build_M, encode_depth_rg16, fit_ground_surface,
     generate_screen_collision_overlay, render_billboard_occlusion_2d,
 )
 
@@ -62,6 +90,12 @@ except ImportError as exc:
         "缺少 OpenGL 依赖。请执行:\n"
         ".\\.tools\\Python311\\python.exe -m pip install PyOpenGL pyopengltk"
     ) from exc
+
+
+def _make_photo_image(img: Image.Image):
+    if _QT_UI:
+        return tk.PhotoImage(img)
+    return ImageTk.PhotoImage(img)
 
 
 def _repo_root() -> Path:
@@ -86,6 +120,21 @@ def _workspace_scenes_dir() -> Path:
     return _project_paths().default_dir(DIR_KIND_EDITOR_SCENE_WORKSPACE)
 
 
+def _assert_path_within(path: Path, base: Path) -> Path:
+    """安全闸：确保 path 落在 base 目录内，否则抛错。
+
+    本工具的文件增删/写入只允许发生在该场景自己的 workspace 目录内；一旦目标
+    越出 base，直接抛错而非擅自处理，杜绝误删/误改其它目录的文件。
+    """
+    rp = path.resolve()
+    rb = base.resolve()
+    try:
+        rp.relative_to(rb)
+    except ValueError:
+        raise RuntimeError(f"拒绝操作 workspace 之外的文件：{rp}（限定目录 {rb}）")
+    return rp
+
+
 class SceneDepthEditorApp:
     """Scene depth reconstruction tool.
 
@@ -93,7 +142,11 @@ class SceneDepthEditorApp:
     Right panel: OpenGL 3-D mesh viewer with axes and floor grid.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, project_root: Path | None = None) -> None:
+        from tools.editor.shared.project_paths import ProjectPaths
+        self._project_root = (project_root or _repo_root()).resolve()
+        self._paths = ProjectPaths(self._project_root)
+
         self.root = tk.Tk()
         self.root.title("场景深度重建工具")
         self.root.geometry("1400x860")
@@ -102,6 +155,9 @@ class SceneDepthEditorApp:
         self.depth_estimator = DepthEstimator()
 
         self._scene_path: Path | None = None
+        # 绑定的游戏场景 id（来自项目场景选择器）；workspace 按此 id 键入，
+        # 保存写 workspace、导出回写 runtime/scenes/<id> + assets/scenes/<id>.json。
+        self._bound_scene_id: str | None = None
         self.source_image: Image.Image | None = None
         self.depth_image: Image.Image | None = None
         self.raw_depth_array: np.ndarray | None = None
@@ -143,6 +199,7 @@ class SceneDepthEditorApp:
         self.stretch_factor_var = tk.DoubleVar(value=3.0)
         self.collision_height_var = tk.DoubleVar(value=0.05)
         self.collision_alpha_var = tk.DoubleVar(value=0.3)
+        self.ground_height_threshold_var = tk.DoubleVar(value=0.1)
         self._occlusion_uv: list[float] = [0.0, 0.0]
         self._occlusion_sprite: Image.Image | None = None
         self._occlusion_window: tk.Toplevel | None = None
@@ -150,6 +207,11 @@ class SceneDepthEditorApp:
         self._occlusion_label: tk.Label | None = None
         self._occlusion_display_ratio: float = 1.0
         self._world_height_map: WorldHeightMap | None = None
+        self._ground_refresh_pending = False
+        # 地面拟合预览（仅测试/可视化，独立窗口，不碰碰撞/导出/运行时）
+        self._ground_window = None
+        self._ground_label = None
+        self._ground_photo = None
         self._screen_collision: np.ndarray | None = None
         self._cached_mesh_xyz: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None
         self._collision_locked: bool = False
@@ -179,7 +241,7 @@ class SceneDepthEditorApp:
         left_outer.grid(row=0, column=0, sticky="ns")
         left_outer.rowconfigure(0, weight=1)
         left_outer.columnconfigure(0, weight=1)
-        left, left_canvas = _make_scrollable(left_outer, width=300)
+        left, left_canvas = _make_scrollable(left_outer, width=330)
         left.configure(padding=8)
 
         # -- Right panel (GL viewer, expanding) --
@@ -212,6 +274,7 @@ class SceneDepthEditorApp:
         row = self._build_billboard_section(left, row)
         row = self._build_occlusion_section(left, row)
         row = self._build_collision_edit_section(left, row)
+        row = self._build_ground_fit_section(left, row)
         row = self._build_depth_edit_section(left, row)
         row = self._build_export_section(left, row)
 
@@ -224,14 +287,24 @@ class SceneDepthEditorApp:
         box.grid(row=row, column=0, sticky="ew", pady=(0, 8))
         box.columnconfigure(0, weight=1)
 
-        r1 = ttk.Frame(box); r1.grid(row=0, column=0, sticky="ew")
+        # 项目场景选择器：自动列出 public/assets/scenes/*.json（场景在主编辑器创建）。
+        pick_row = ttk.Frame(box); pick_row.grid(row=0, column=0, sticky="ew")
+        pick_row.columnconfigure(0, weight=1)
+        self.scene_pick_var = tk.StringVar()
+        self._scene_picker_combo = ttk.Combobox(
+            pick_row, state="readonly", textvariable=self.scene_pick_var)
+        self._scene_picker_combo.grid(row=0, column=0, sticky="ew", padx=(0, 2))
+        ttk.Button(pick_row, text="刷新", width=5,
+                   command=self._refresh_scene_picker).grid(row=0, column=1)
+
+        r1 = ttk.Frame(box); r1.grid(row=1, column=0, sticky="ew", pady=(4, 0))
         r1.columnconfigure(0, weight=1); r1.columnconfigure(1, weight=1)
-        ttk.Button(r1, text="新建场景", command=self._new_scene).grid(
+        ttk.Button(r1, text="打开选中场景", command=self._open_selected_scene).grid(
             row=0, column=0, sticky="ew", padx=(0, 2))
-        ttk.Button(r1, text="打开场景", command=self._open_scene).grid(
+        ttk.Button(r1, text="打开文件夹(遗留)", command=self._open_scene).grid(
             row=0, column=1, sticky="ew", padx=(2, 0))
 
-        r2 = ttk.Frame(box); r2.grid(row=1, column=0, sticky="ew", pady=(4, 0))
+        r2 = ttk.Frame(box); r2.grid(row=2, column=0, sticky="ew", pady=(4, 0))
         r2.columnconfigure(0, weight=1); r2.columnconfigure(1, weight=1)
         ttk.Button(r2, text="保存场景", command=self._save_scene).grid(
             row=0, column=0, sticky="ew", padx=(0, 2))
@@ -240,28 +313,185 @@ class SceneDepthEditorApp:
 
         self._scene_label = ttk.Label(box, text="未打开场景", foreground="#888",
                                       wraplength=260, justify="left")
-        self._scene_label.grid(row=2, column=0, sticky="ew", pady=(6, 0))
+        self._scene_label.grid(row=3, column=0, sticky="ew", pady=(6, 0))
 
-        ttk.Separator(box, orient="horizontal").grid(row=3, column=0, sticky="ew", pady=6)
+        ttk.Separator(box, orient="horizontal").grid(row=4, column=0, sticky="ew", pady=6)
 
         ttk.Button(box, text="导入背景图", command=self._import_background).grid(
-            row=4, column=0, sticky="ew")
+            row=5, column=0, sticky="ew")
 
         self.image_label = ttk.Label(box, text="无背景图", foreground="#888",
                                      wraplength=260, justify="left")
-        self.image_label.grid(row=5, column=0, sticky="ew", pady=(4, 0))
+        self.image_label.grid(row=6, column=0, sticky="ew", pady=(4, 0))
 
         self.thumb_label = ttk.Label(box)
-        self.thumb_label.grid(row=6, column=0, pady=(4, 0))
+        self.thumb_label.grid(row=7, column=0, pady=(4, 0))
 
         mode_frame = ttk.Frame(box)
-        mode_frame.grid(row=7, column=0, sticky="w", pady=(4, 0))
+        mode_frame.grid(row=8, column=0, sticky="w", pady=(4, 0))
         ttk.Radiobutton(mode_frame, text="原图", variable=self.preview_mode_var,
                         value="source", command=self._update_thumb).pack(side="left")
         ttk.Radiobutton(mode_frame, text="深度", variable=self.preview_mode_var,
                         value="depth", command=self._update_thumb).pack(side="left", padx=8)
 
+        self._refresh_scene_picker()
         return row + 1
+
+    # ---- 项目场景选择器（按 id 绑定 workspace）----
+
+    def _list_project_scene_ids(self) -> list[str]:
+        out: list[str] = []
+        try:
+            sdir = self._paths.scenes_dir
+        except (AttributeError, OSError):
+            return out
+        if not sdir.is_dir():
+            return out
+        for p in sorted(sdir.glob("*.json")):
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+                sid = str(data.get("id") or p.stem)
+            except (json.JSONDecodeError, OSError):
+                sid = p.stem
+            out.append(sid)
+        return out
+
+    def _refresh_scene_picker(self) -> None:
+        ids = self._list_project_scene_ids()
+        try:
+            self._scene_picker_combo.configure(values=ids)
+        except Exception:
+            return
+        if self._bound_scene_id and self._bound_scene_id in ids:
+            self.scene_pick_var.set(self._bound_scene_id)
+        elif ids and not (self.scene_pick_var.get() or "").strip():
+            self.scene_pick_var.set(ids[0])
+
+    def _open_selected_scene(self) -> None:
+        sid = (self.scene_pick_var.get() or "").strip()
+        if not sid:
+            messagebox.showinfo("提示", "请先在下拉框选择一个场景。")
+            return
+        self._open_scene_by_id(sid)
+
+    def open_scene_by_id_safe(self, scene_id: str) -> None:
+        """启动期自动打开场景（失败仅记状态，不抛）。"""
+        try:
+            self._open_scene_by_id(scene_id)
+        except Exception as exc:  # noqa: BLE001
+            self._set_status(f"自动打开场景失败: {scene_id} ({exc})")
+
+    def _open_scene_by_id(self, scene_id: str) -> None:
+        scene_id = (scene_id or "").strip()
+        if not scene_id:
+            return
+        ws = self._workspace_scenes_root() / scene_id
+        ws.mkdir(parents=True, exist_ok=True)
+        # 兼容旧版"选目录+输名字"产生的嵌套 workspace（<id>/<id>/）：新版平铺目录
+        # 尚无内容而旧嵌套有时，一次性采纳其文件，避免已做好的深度工作被孤立。
+        self._adopt_legacy_nested_workspace(ws, scene_id)
+        self._scene_path = ws
+        self._bound_scene_id = scene_id
+        self._reset_state()
+        self._scene_label.configure(text=f"场景: {scene_id}")
+        self.root.title(f"场景深度重建工具 - {scene_id}")
+
+        # 导出目标固定为该场景的 runtime 媒体目录。
+        try:
+            self._game_export_path = self._normalize_path_for_config(
+                self._paths.scene_runtime_dir(scene_id))
+        except (ValueError, OSError):
+            self._game_export_path = None
+
+        # workspace 已有的标定 / 编辑器状态。
+        scene_json = ws / self._SCENE_JSON
+        if scene_json.exists():
+            try:
+                data = json.loads(scene_json.read_text(encoding="utf-8"))
+                self._apply_calibration_data(data.get("calibration", {}))
+            except (json.JSONDecodeError, OSError):
+                pass
+        editor_json = ws / self._EDITOR_JSON
+        if editor_json.exists():
+            try:
+                self._apply_editor_data(
+                    json.loads(editor_json.read_text(encoding="utf-8")))
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        # 背景图单一真源：游戏侧 runtime/scenes/<id>/background.png 为准，workspace
+        # 只是深度计算的派生工作副本。打开时总是从游戏侧同步；像素发生变化则把旧
+        # depth_cache 置为失效（重命名为 .stale 并不加载），强制重算，杜绝"用旧图旧
+        # 深度覆盖主编辑器换过的新背景"。
+        # 写入目标固定在本场景 workspace 内（越界即抛错）；从游戏侧只读取背景，不改它。
+        bg = _assert_path_within(ws / self._BG_FILENAME, ws)
+        try:
+            game_bg = self._paths.scene_runtime_dir(scene_id) / "background.png"
+        except (ValueError, OSError):
+            game_bg = None
+
+        depth_invalidated = False
+        if game_bg is not None and game_bg.exists():
+            if not bg.exists() or not self._same_image_pixels(game_bg, bg):
+                # 失败不静默吞掉——直接抛错，避免带着旧图旧深度继续。
+                shutil.copyfile(game_bg, bg)
+                cache = ws / self._DEPTH_CACHE
+                if cache.exists():
+                    cache.replace(_assert_path_within(
+                        ws / (self._DEPTH_CACHE + ".stale"), ws))
+                    depth_invalidated = True
+        if bg.exists():
+            self._load_background(bg)
+
+        depth = ws / self._DEPTH_CACHE
+        if not depth_invalidated and depth.exists() and self.source_image is not None:
+            self.raw_depth_array = np.load(str(depth)).astype(np.float64)
+            self.depth_image = Image.fromarray(
+                (self.raw_depth_array * 255).clip(0, 255).astype(np.uint8), "L")
+            self._recompute_calibrated_depth()
+            self._update_thumb()
+            self._refresh_3d()
+
+        self._load_collision(silent=True)
+        self._refresh_scene_picker()
+        if depth_invalidated:
+            self._set_status(
+                f"场景已绑定: {scene_id}（背景图已在主编辑器更新，原深度作废，请重新「计算深度图」）")
+        elif bg.exists():
+            self._set_status(f"场景已绑定: {scene_id}")
+        else:
+            self._set_status(
+                f"场景已绑定: {scene_id}（游戏侧无背景图，请先在主编辑器导入背景图）")
+
+    @staticmethod
+    def _same_image_pixels(a: Path, b: Path) -> bool:
+        """两张图像素是否完全一致（忽略 PNG 编码差异，避免重编码造成的假失效）。"""
+        try:
+            ia = Image.open(a).convert("RGB")
+            ib = Image.open(b).convert("RGB")
+        except (OSError, ValueError):
+            return False
+        if ia.size != ib.size:
+            return False
+        return ImageChops.difference(ia, ib).getbbox() is None
+
+    def _adopt_legacy_nested_workspace(self, ws: Path, scene_id: str) -> None:
+        legacy = ws / scene_id
+        if (ws / self._SCENE_JSON).exists():
+            return
+        if not (legacy / self._SCENE_JSON).exists():
+            return
+        for fn in (
+            self._SCENE_JSON, self._EDITOR_JSON, self._DEPTH_CACHE,
+            self._BG_FILENAME, "collision.png", "collision_grid.npy",
+            "collision_meta.json",
+        ):
+            src = legacy / fn
+            if src.exists():
+                # 仅在本场景 workspace 内拷贝（源是其下旧嵌套子目录、目标是平铺目录）；
+                # 越界即抛错，拷贝失败也直接抛错，不静默吞掉。
+                _assert_path_within(src, ws)
+                shutil.copyfile(src, _assert_path_within(ws / fn, ws))
 
     # ---- Depth estimation section ----
 
@@ -312,7 +542,7 @@ class SceneDepthEditorApp:
         scale_row.columnconfigure(0, weight=1)
         self._scale_slider = tk.Scale(
             scale_row, from_=0.01, to=100.0, orient="horizontal", resolution=0.01,
-            variable=self.dm_scale_var, showvalue=True, highlightthickness=0,
+            variable=self.dm_scale_var, showvalue=False, highlightthickness=0,
             command=lambda _: self._sync_scale_entry())
         self._scale_slider.grid(row=0, column=0, sticky="ew", padx=(0, 4))
         self._scale_entry = ttk.Entry(scale_row, width=8)
@@ -327,7 +557,7 @@ class SceneDepthEditorApp:
         offset_row.columnconfigure(0, weight=1)
         self._offset_slider = tk.Scale(
             offset_row, from_=-200.0, to=200.0, orient="horizontal", resolution=0.1,
-            variable=self.dm_offset_var, showvalue=True, highlightthickness=0,
+            variable=self.dm_offset_var, showvalue=False, highlightthickness=0,
             command=lambda _: self._sync_offset_entry())
         self._offset_slider.grid(row=0, column=0, sticky="ew", padx=(0, 4))
         self._offset_entry = ttk.Entry(offset_row, width=8)
@@ -456,6 +686,30 @@ class SceneDepthEditorApp:
 
         return row + 1
 
+    # ---- Ground-fit (auto collision) section ----
+
+    def _build_ground_fit_section(self, parent, row: int) -> int:
+        box = ttk.LabelFrame(parent, text="地面拟合预览（仅测试）", padding=6)
+        box.grid(row=row, column=0, sticky="ew", pady=(0, 8))
+        box.columnconfigure(0, weight=1)
+
+        ttk.Button(box, text="拟合非平面地面并预览",
+                   command=self._open_ground_fit_preview).grid(
+            row=0, column=0, sticky="ew")
+        ttk.Button(box, text="多边形地面标定（试验）",
+                   command=self._open_ground_calib).grid(
+            row=1, column=0, sticky="ew", pady=(4, 0))
+        self._slider(box, "离地高度上限(着色)", self.ground_height_threshold_var,
+                     2, 0.01, 2.0, 0.01)
+
+        self._ground_fit_label = ttk.Label(
+            box, text="仅测试/可视化，不改碰撞/导出/运行时。\n"
+                      "「预览」=离地高度着色；「多边形标定」=框地面→补全完整地面深度。",
+            foreground="#888", wraplength=300, justify="left")
+        self._ground_fit_label.grid(row=4, column=0, sticky="w", pady=(4, 0))
+
+        return row + 1
+
     # ---- Depth editing section ----
 
     def _build_depth_edit_section(self, parent, row: int) -> int:
@@ -530,6 +784,7 @@ class SceneDepthEditorApp:
         self.billboard_scale_var.trace_add("write", lambda *_: self._on_billboard_scale_changed())
         self.stretch_factor_var.trace_add("write", lambda *_: self._on_stretch_factor_changed())
         self.collision_height_var.trace_add("write", lambda *_: self._on_collision_height_changed())
+        self.ground_height_threshold_var.trace_add("write", lambda *_: self._on_ground_threshold_changed())
         self.brush_radius_var.trace_add("write", lambda *_: self.gl_viewer.set_brush_radius(
             self.brush_radius_var.get()))
         self._refresh_pending = False
@@ -612,9 +867,20 @@ class SceneDepthEditorApp:
         self.thumb_label.configure(image="")
         self.mesh_info_label.configure(text="")
 
+    def _workspace_scenes_root(self) -> Path:
+        from tools.editor.shared.project_paths import (
+            DIR_KIND_EDITOR_SCENE_WORKSPACE,
+        )
+        return self._paths.default_dir(DIR_KIND_EDITOR_SCENE_WORKSPACE)
+
     def _workspace_scenes_initialdir(self) -> str:
-        d = _workspace_scenes_dir()
-        return str(d) if d.is_dir() else str(_repo_root())
+        d = self._workspace_scenes_root()
+        return str(d) if d.is_dir() else str(self._project_root)
+
+    def _editor_data_initialdir(self) -> str:
+        from tools.editor.shared.project_paths import DIR_KIND_EDITOR_DATA
+        d = self._paths.default_dir(DIR_KIND_EDITOR_DATA)
+        return str(d) if d.is_dir() else str(self._project_root)
 
     def _game_export_picker_initialdir(self) -> str:
         if self._game_export_path:
@@ -623,13 +889,13 @@ class SceneDepthEditorApp:
                 return str(resolved.parent)
         # 迁移后场景媒体导出目标统一在 public/resources/runtime/scenes 下
         from tools.editor.shared.project_paths import DIR_KIND_RUNTIME_SCENES
-        d = _project_paths().default_dir(DIR_KIND_RUNTIME_SCENES)
-        return str(d if d.is_dir() else _repo_root())
+        d = self._paths.default_dir(DIR_KIND_RUNTIME_SCENES)
+        return str(d if d.is_dir() else self._project_root)
 
     def _normalize_path_for_config(self, p: Path) -> str:
         p = p.resolve()
         try:
-            rel = p.relative_to(_repo_root())
+            rel = p.relative_to(self._project_root)
             return rel.as_posix()
         except ValueError:
             return str(p)
@@ -642,7 +908,7 @@ class SceneDepthEditorApp:
             return None
         p = Path(raw)
         if not p.is_absolute():
-            p = _repo_root() / p
+            p = self._project_root / p
         return p.resolve()
 
     def _persist_game_export_path(self, folder: Path) -> None:
@@ -664,7 +930,7 @@ class SceneDepthEditorApp:
         # 迁移后场景 JSON 走 public/assets/scenes/<id>.json，而媒体走
         # public/resources/runtime/scenes/<id>/。
         try:
-            scene_json_path = _project_paths().scene_json_path(scene_id)
+            scene_json_path = self._paths.scene_json_path(scene_id)
         except ValueError as exc:
             return False, str(exc)
         return True, str(scene_json_path)
@@ -672,11 +938,19 @@ class SceneDepthEditorApp:
     def _prepare_scene_data_for_export(
         self, scene_json_path: Path, scene_id: str
     ) -> tuple[dict, bool]:
-        """加载或构建可写入游戏的场景 JSON 对象；缺字段时补齐。
+        """合并式加载可写入游戏的场景 JSON 对象。
 
-        返回 (scene_data, repaired)。repaired 表示新建文件、JSON 无法解析、
-        或曾补全/修正关键字段（会与导出结果一并写回）。"""
+        权属划分：``name`` / ``worldWidth`` / ``worldHeight`` / ``camera`` /
+        ``spawnPoint`` 等由**主编辑器**拥有——文件已存在时一律原样保留，深度导出
+        只负责 ``depthConfig``（调用方在返回后写入）、媒体文件，以及把
+        ``backgrounds[0].image`` 对齐到 ``background.png``。
+        仅当场景 JSON 原本不存在 / 损坏时，才回退补一份最小骨架（深度工具独立
+        创建场景的兜底）。
+
+        返回 (scene_data, repaired)。repaired=True 表示新建/修复了文件或改动了
+        关键字段，会提示用户。"""
         data: dict = {}
+        existed = False
         repaired = False
 
         if scene_json_path.exists():
@@ -684,6 +958,7 @@ class SceneDepthEditorApp:
                 raw = json.loads(scene_json_path.read_text(encoding="utf-8"))
                 if isinstance(raw, dict):
                     data = raw
+                    existed = True
                 else:
                     repaired = True
             except (json.JSONDecodeError, OSError):
@@ -696,78 +971,46 @@ class SceneDepthEditorApp:
         else:
             img_w, img_h = self.source_image.size
 
-        def _mark_repair() -> None:
-            nonlocal repaired
+        # id 始终对齐。
+        if data.get("id") != scene_id:
+            data["id"] = scene_id
             repaired = True
 
-        if data.get("id") != scene_id:
-            _mark_repair()
-            data["id"] = scene_id
+        # backgrounds[0].image 始终对齐到 background.png（保留其余字段与额外图层）。
+        bgs = data.get("backgrounds")
+        if (not isinstance(bgs, list) or len(bgs) == 0
+                or not isinstance(bgs[0], dict) or not bgs[0].get("image")):
+            data["backgrounds"] = [{"image": "background.png", "x": 0, "y": 0}]
+            repaired = True
+        elif bgs[0].get("image") != "background.png":
+            first_fixed = dict(bgs[0])
+            first_fixed["image"] = "background.png"
+            data["backgrounds"] = [first_fixed] + list(bgs[1:])
+            repaired = True
 
-        name = data.get("name")
-        if not name:
-            _mark_repair()
-            data["name"] = str(scene_id)
+        if existed:
+            # 主编辑器拥有的字段（name/world/camera/spawn）一律不动。
+            return data, repaired
 
-        ww, wh = data.get("worldWidth"), data.get("worldHeight")
-        try:
-            ww_ok = ww is not None and float(ww) > 0
-        except (TypeError, ValueError):
-            ww_ok = False
-        try:
-            wh_ok = wh is not None and float(wh) > 0
-        except (TypeError, ValueError):
-            wh_ok = False
-        if not ww_ok:
-            _mark_repair()
+        # —— 文件原本不存在 / 损坏：补最小骨架 ——
+        data.setdefault("name", str(scene_id))
+        if not (isinstance(data.get("worldWidth"), (int, float)) and data["worldWidth"] > 0):
             data["worldWidth"] = int(img_w)
-        if not wh_ok:
-            _mark_repair()
+        if not (isinstance(data.get("worldHeight"), (int, float)) and data["worldHeight"] > 0):
             data["worldHeight"] = int(img_h)
-
         cam = data.get("camera")
         if not isinstance(cam, dict):
-            _mark_repair()
             data["camera"] = {"zoom": 1.0, "pixelsPerUnit": 1.0}
         else:
-            if "zoom" not in cam:
-                _mark_repair()
-                cam["zoom"] = 1.0
-            if "pixelsPerUnit" not in cam:
-                _mark_repair()
-                cam["pixelsPerUnit"] = 1.0
-
-        bgs = data.get("backgrounds")
-        if not isinstance(bgs, list) or len(bgs) == 0:
-            _mark_repair()
-            data["backgrounds"] = [{"image": "background.png", "x": 0, "y": 0}]
-        else:
-            first = bgs[0]
-            if not isinstance(first, dict) or not first.get("image"):
-                _mark_repair()
-                data["backgrounds"] = [{"image": "background.png", "x": 0, "y": 0}]
-            elif first.get("image") != "background.png":
-                _mark_repair()
-                first_fixed = dict(first)
-                first_fixed["image"] = "background.png"
-                data["backgrounds"] = [first_fixed] + list(bgs[1:])
-
+            cam.setdefault("zoom", 1.0)
+            cam.setdefault("pixelsPerUnit", 1.0)
         sp = data.get("spawnPoint")
-        if not isinstance(sp, dict):
-            _mark_repair()
+        if not isinstance(sp, dict) or "x" not in sp or "y" not in sp:
             data["spawnPoint"] = {
                 "x": round(img_w / 2.0, 1),
                 "y": round(img_h * 0.85, 1),
             }
-        else:
-            if "x" not in sp or "y" not in sp:
-                _mark_repair()
-                data["spawnPoint"] = {
-                    "x": round(img_w / 2.0, 1),
-                    "y": round(img_h * 0.85, 1),
-                }
-
-        return data, repaired
+        return data, True
 
     def _new_scene(self) -> None:
         path = filedialog.askdirectory(
@@ -775,8 +1018,7 @@ class SceneDepthEditorApp:
             initialdir=self._workspace_scenes_initialdir())
         if not path:
             return
-        from tkinter import simpledialog
-        name = simpledialog.askstring("新建场景", "场景名称:", parent=self.root)
+        name = tk.simpledialog.askstring("新建场景", "场景名称:", parent=self.root)
         if not name or not name.strip():
             return
         scene_dir = Path(path) / name.strip()
@@ -794,13 +1036,15 @@ class SceneDepthEditorApp:
     def _open_scene(self) -> None:
         path = filedialog.askdirectory(
             title="打开场景文件夹",
-            initialdir=self._workspace_scenes_initialdir())
+            initialdir=self._editor_data_initialdir())
         if not path:
             return
         scene_dir = Path(path)
         if not scene_dir.is_dir():
             return
         self._scene_path = scene_dir
+        # 遗留文件夹模式：与游戏场景 id 脱钩，导出走 game_export_path / 手选。
+        self._bound_scene_id = None
         self._reset_state()
         self._scene_label.configure(text=f"场景: {scene_dir.name}")
         self.root.title(f"场景深度重建工具 - {scene_dir.name}")
@@ -860,6 +1104,12 @@ class SceneDepthEditorApp:
         if self._scene_path is None:
             messagebox.showinfo("提示", "请先新建或打开一个场景。")
             return
+        if self._bound_scene_id:
+            messagebox.showinfo(
+                "提示",
+                "绑定项目模式下，背景图由主编辑器统一管理（单一真源）。\n"
+                "请在主编辑器导入/更换背景图后，回到本工具重新打开该场景。")
+            return
         path = filedialog.askopenfilename(
             title="选择背景图片",
             filetypes=[("Image files", "*.png *.jpg *.jpeg *.webp *.bmp"),
@@ -893,7 +1143,7 @@ class SceneDepthEditorApp:
     # ---- Scene data collect / apply ----
 
     def _collect_editor_data(self) -> dict:
-        return {
+        data = {
             "depth_model": self.depth_model_combo.get(),
             "subsample": self.subsample_var.get(),
             "wireframe": self.wireframe_var.get(),
@@ -919,8 +1169,12 @@ class SceneDepthEditorApp:
                 "tolerance": self.occlusion_tolerance_var.get(),
                 "floor_offset": self.occlusion_floor_offset_var.get(),
             },
-            "game_export_path": self._game_export_path,
         }
+        # game_export_path 仅遗留文件夹模式才需要记忆；绑定项目时导出目标由场景 id
+        # 推出，不再写入——存在的旧值会在下次保存时随之清除。
+        if not self._bound_scene_id:
+            data["game_export_path"] = self._game_export_path
+        return data
 
     def _apply_editor_data(self, data: dict) -> None:
         if "depth_model" in data:
@@ -960,10 +1214,12 @@ class SceneDepthEditorApp:
                        ("floor_offset", self.occlusion_floor_offset_var)]:
             if k in occ:
                 var.set(occ[k])
-        if "game_export_path" in data and data["game_export_path"]:
-            self._game_export_path = str(data["game_export_path"])
-        else:
-            self._game_export_path = None
+        # 绑定项目时导出目标由 id 推出（调用方已设好），忽略文件里的旧 game_export_path。
+        if not self._bound_scene_id:
+            if data.get("game_export_path"):
+                self._game_export_path = str(data["game_export_path"])
+            else:
+                self._game_export_path = None
         self._sync_viewer_from_vars()
 
     def _sync_viewer_from_vars(self) -> None:
@@ -990,7 +1246,9 @@ class SceneDepthEditorApp:
                     status=lambda t: self.root.after(0, lambda: self._set_status(t)))
                 self.root.after(0, lambda: self._on_depth_done(result))
             except Exception as exc:
-                self.root.after(0, lambda: self._show_error(str(exc)))
+                # 必须先取出消息：except 块结束后 exc 会被解绑，延迟到主线程的 lambda 里再读会 NameError
+                msg = str(exc)
+                self.root.after(0, lambda: self._show_error(msg))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -1100,7 +1358,7 @@ class SceneDepthEditorApp:
         ratio = min(max_w / img.width, max_h / img.height, 1.0)
         thumb = img.resize((int(img.width * ratio), int(img.height * ratio)),
                            Image.Resampling.LANCZOS)
-        self._thumb_photo = ImageTk.PhotoImage(thumb)
+        self._thumb_photo = _make_photo_image(thumb)
         self.thumb_label.configure(image=self._thumb_photo)
 
     # ==================================================================
@@ -1180,6 +1438,102 @@ class SceneDepthEditorApp:
         n = int(self._world_height_map.covered.sum()) if self._world_height_map else 0
         self._collision_edit_label.configure(text=f"草稿已生成 ({n} 个碰撞格)")
         self._set_status("碰撞草稿已生成，可使用工具编辑")
+
+    # ==================================================================
+    # Ground fit → auto collision
+    # ==================================================================
+
+    # ---- 地面拟合预览：仅测试/可视化；不写碰撞、不写导出、不碰运行时 ----
+
+    def _open_ground_fit_preview(self) -> None:
+        if self._cached_mesh_xyz is None or self.source_image is None:
+            self._set_status("请先加载背景图并生成深度")
+            return
+        if self._ground_window is not None and self._ground_window.winfo_exists():
+            self._ground_window.focus_force()
+            self._refresh_ground_fit_preview()
+            return
+        win = tk.Toplevel(self.root)
+        win.title("地面拟合预览  绿=贴地 红=凸起  (仅测试，不改任何数据)")
+        self._ground_window = win
+        self._ground_label = tk.Label(win)
+        self._ground_label.pack(fill="both", expand=True)
+        win.protocol("WM_DELETE_WINDOW", self._close_ground_fit_preview)
+        self._refresh_ground_fit_preview()
+        win.focus_force()
+
+    def _close_ground_fit_preview(self) -> None:
+        if self._ground_window is not None:
+            self._ground_window.destroy()
+            self._ground_window = None
+            self._ground_label = None
+
+    def _refresh_ground_fit_preview(self) -> None:
+        if self._cached_mesh_xyz is None or self.source_image is None:
+            return
+        if self._ground_window is None or not self._ground_window.winfo_exists():
+            return
+        X, Y, Z = self._cached_mesh_xyz
+        _G, _x0, _z0, _cell, height_above = fit_ground_surface(X, Y, Z)
+        hi = max(1e-6, self.ground_height_threshold_var.get())
+        h = np.clip(height_above / hi, 0.0, 1.0)
+        rgba = np.zeros((h.shape[0], h.shape[1], 4), dtype=np.uint8)
+        rgba[..., 0] = (h * 255).astype(np.uint8)          # 红 = 凸起
+        rgba[..., 1] = ((1.0 - h) * 255).astype(np.uint8)  # 绿 = 贴地
+        rgba[..., 2] = 0
+        rgba[..., 3] = 130
+        small = Image.fromarray(rgba, "RGBA")
+        big = small.resize(self.source_image.size, Image.Resampling.BILINEAR)
+        base = self.source_image.convert("RGBA")
+        result = Image.alpha_composite(base, big).convert("RGB")
+        self._show_ground_image(result)
+
+        ground_ratio = float(np.mean(h < 0.5)) * 100.0
+        if hasattr(self, "_ground_fit_label") and self._ground_fit_label.winfo_exists():
+            self._ground_fit_label.configure(
+                text=f"非平面地面已拟合(仅测试)。贴地占比≈{ground_ratio:.0f}%，"
+                     f"上限 {hi:.2f}。绿=贴地、红=凸起；不改碰撞/导出。")
+
+    def _show_ground_image(self, img: Image.Image) -> None:
+        max_w, max_h = 1200, 800
+        ratio = min(max_w / img.width, max_h / img.height, 1.0)
+        disp = img.resize((int(img.width * ratio), int(img.height * ratio)),
+                          Image.Resampling.LANCZOS)
+        win = self._ground_window
+        if win is not None and win.winfo_exists():
+            win.geometry(f"{disp.width}x{disp.height}")
+        self._ground_photo = tk.PhotoImage(disp)
+        if self._ground_label is not None:
+            self._ground_label.configure(image=self._ground_photo)
+
+    def _on_ground_threshold_changed(self) -> None:
+        # 仅当预览窗口打开时即时重算着色；不触碰碰撞/导出
+        if self._ground_window is None or not self._ground_window.winfo_exists():
+            return
+        if self._ground_refresh_pending:
+            return
+        self._ground_refresh_pending = True
+        self.root.after(80, self._do_ground_threshold_refresh)
+
+    def _do_ground_threshold_refresh(self) -> None:
+        self._ground_refresh_pending = False
+        self._refresh_ground_fit_preview()
+
+    # ---- 多边形地面标定（试验，独立 PySide 窗口；不碰碰撞/导出/运行时） ----
+
+    def _open_ground_calib(self) -> None:
+        if self.source_image is None or self.calibrated_depth is None:
+            self._set_status("请先加载背景图并生成深度")
+            return
+        try:
+            from .ground_calib import GroundCalibDialog
+        except Exception as exc:
+            self._show_error(f"地面标定窗口加载失败：{exc}")
+            return
+        self._ground_calib_dlg = GroundCalibDialog(
+            self.source_image, self.calibrated_depth)
+        self._ground_calib_dlg.show()
+        self._set_status("多边形地面标定（试验）：左键画地面、右键闭合、点「计算」")
 
     def _on_collision_edit(self, action: str, points: list, radius: float) -> None:
         hmap = self._world_height_map
@@ -1376,12 +1730,24 @@ class SceneDepthEditorApp:
 
         dst_path: Path | None = None
         scene_json_path: Path | None = None
-        resolved = self._resolve_game_export_dir()
-        if resolved is not None and resolved.is_dir():
-            ok, msg_or_json = self._validate_export_target(resolved)
-            if ok:
-                dst_path = resolved
-                scene_json_path = Path(msg_or_json)
+
+        # 绑定了游戏场景 id：导出目标确定，无需手选文件夹。
+        if self._bound_scene_id:
+            try:
+                dst_path = self._paths.scene_runtime_dir(self._bound_scene_id)
+                dst_path.mkdir(parents=True, exist_ok=True)
+                scene_json_path = self._paths.scene_json_path(self._bound_scene_id)
+            except (ValueError, OSError) as exc:
+                messagebox.showerror("错误", f"无法解析场景 {self._bound_scene_id} 的导出路径：{exc}")
+                return
+
+        if dst_path is None:
+            resolved = self._resolve_game_export_dir()
+            if resolved is not None and resolved.is_dir():
+                ok, msg_or_json = self._validate_export_target(resolved)
+                if ok:
+                    dst_path = resolved
+                    scene_json_path = Path(msg_or_json)
 
         if dst_path is None:
             picked = filedialog.askdirectory(
@@ -1409,7 +1775,10 @@ class SceneDepthEditorApp:
         rg16_img = encode_depth_rg16(self.raw_depth_array)
         rg16_img.save(str(dst_path / "raw_depth_rg.png"))
 
-        self.source_image.save(str(dst_path / "background.png"), format="PNG")
+        # 背景图单一真源：绑定项目时由主编辑器拥有，深度导出不回写，避免用工作副本
+        # 覆盖游戏背景（遗留文件夹模式仍按旧逻辑写出自带的背景图）。
+        if not self._bound_scene_id:
+            self.source_image.save(str(dst_path / "background.png"), format="PNG")
 
         hmap = self._world_height_map
         if hmap is not None:
@@ -1602,7 +1971,7 @@ class SceneDepthEditorApp:
             if cur_geo != target:
                 win.geometry(target)
 
-        self._occlusion_photo = ImageTk.PhotoImage(display)
+        self._occlusion_photo = _make_photo_image(display)
         if self._occlusion_label is not None:
             self._occlusion_label.configure(image=self._occlusion_photo)
 
@@ -1672,8 +2041,7 @@ class SceneDepthEditorApp:
             json.dumps(presets, indent=2, ensure_ascii=False), encoding="utf-8")
 
     def _save_preset(self) -> None:
-        from tkinter import simpledialog
-        name = simpledialog.askstring("保存 Preset", "请输入 Preset 名称:", parent=self.root)
+        name = tk.simpledialog.askstring("保存 Preset", "请输入 Preset 名称:", parent=self.root)
         if not name or not name.strip():
             return
         name = name.strip()
@@ -1736,7 +2104,22 @@ class SceneDepthEditorApp:
 
 
 def main() -> None:
-    SceneDepthEditorApp().run()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="场景深度重建工具")
+    parser.add_argument(
+        "--project", dest="project", default=None,
+        help="GameDraft 工程根目录（缺省自动定位仓库根）。")
+    parser.add_argument(
+        "--scene", dest="scene", default=None,
+        help="启动后自动打开的场景 id（来自 public/assets/scenes/<id>.json）。")
+    args, _ = parser.parse_known_args()
+
+    project_root = Path(args.project).resolve() if args.project else None
+    app = SceneDepthEditorApp(project_root=project_root)
+    if args.scene:
+        app.open_scene_by_id_safe(args.scene)
+    app.run()
 
 
 if __name__ == "__main__":
