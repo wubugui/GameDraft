@@ -98,13 +98,13 @@ func _run_contract() -> void:
 		and not game.scene_depth_system.filters.has(enter_hotspot_swap.old_filter) \
 		and enter_hotspot.get_depth_occlusion_filter() != null \
 		and not is_same(enter_hotspot.get_depth_occlusion_filter(), enter_hotspot_swap.old_filter)
-	checks["enter selected NPC shadow unregister/destroy/replace"] = old_enter_npc_shadow.root == null \
+	checks["enter selected NPC shadow unregister/destroy/replace"] = _shadow_is_destroyed(old_enter_npc_shadow) \
 		and not game.scene_depth_system.shadows.has(old_enter_npc_shadow_id) \
 		and not enter_npc_entry.is_empty() \
 		and not is_same(enter_npc_entry.shadow, old_enter_npc_shadow) \
 		and is_same(enter_npc_entry.owner, enter_npc) \
 		and not is_same(enter_npc_entry.src, target_npc_entry.src)
-	checks["enter selected hotspot shadow unregister/destroy/replace"] = old_enter_hotspot_shadow.root == null \
+	checks["enter selected hotspot shadow unregister/destroy/replace"] = _shadow_is_destroyed(old_enter_hotspot_shadow) \
 		and not game.scene_depth_system.shadows.has(old_enter_hotspot_shadow_id) \
 		and not enter_hotspot_entry.is_empty() \
 		and not is_same(enter_hotspot_entry.shadow, old_enter_hotspot_shadow) \
@@ -150,8 +150,8 @@ func _run_contract() -> void:
 		and not is_same(RuntimeSceneEntityFilterBinding.get_filter(exit_npc.container), exit_npc_swap.old_filter) \
 		and exit_hotspot.get_depth_occlusion_filter() != null \
 		and not is_same(exit_hotspot.get_depth_occlusion_filter(), exit_hotspot_swap.old_filter)
-	checks["exit selected shadows unregister/destroy/replace"] = old_exit_npc_shadow.root == null \
-		and old_exit_hotspot_shadow.root == null \
+	checks["exit selected shadows unregister/destroy/replace"] = _shadow_is_destroyed(old_exit_npc_shadow) \
+		and _shadow_is_destroyed(old_exit_hotspot_shadow) \
 		and not game.scene_depth_system.shadows.has(old_exit_npc_shadow_id) \
 		and not game.scene_depth_system.shadows.has(old_exit_hotspot_shadow_id) \
 		and not is_same(exit_npc_entry.shadow, old_exit_npc_shadow) \
@@ -220,8 +220,8 @@ func _run_contract() -> void:
 	})
 	checks["missing payload ids clear stale entries only"] = not game.entity_shadows.has(TARGET_NPC_ID) \
 		and not game.entity_shadows.has(target_hotspot_key) \
-		and missing_npc_shadow.root == null \
-		and missing_hotspot_shadow.root == null \
+		and _shadow_is_destroyed(missing_npc_shadow) \
+		and _shadow_is_destroyed(missing_hotspot_shadow) \
 		and not game.scene_depth_system.shadows.has(missing_npc_shadow_id) \
 		and not game.scene_depth_system.shadows.has(missing_hotspot_shadow_id)
 	checks["missing NPC does not stop or restart patrol"] = int(game.npc_patrol_epoch.get(TARGET_NPC_ID, 0)) == missing_epoch
@@ -233,6 +233,15 @@ func _run_contract() -> void:
 	await _cleanup(game)
 	for label: String in checks:
 		assert(checks[label], label)
+
+
+func _shadow_is_destroyed(shadow: Variant) -> bool:
+	if shadow is RuntimeDeferredEntityShadow:
+		return shadow._mesh == null and shadow._shader == null and shadow._geometry == null
+	if shadow is RuntimePlanarEntityShadow:
+		return shadow._cast_mesh == null and shadow._cast_shader == null and shadow._cast_geometry == null \
+			and shadow._contact_mesh == null and shadow._contact_shader == null and shadow._contact_geometry == null
+	return false
 
 
 func _wait_until_runtime_ready(game: Node) -> void:
