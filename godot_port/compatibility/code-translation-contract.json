@@ -1,0 +1,295 @@
+{
+  "schemaVersion": 1,
+  "sourceOfTruth": "Every non-test TypeScript module under src",
+  "rules": [
+    "One executable TypeScript module maps to one named Godot module unless the mapping declares an engine adapter.",
+    "Class/module boundaries, constructor dependencies, fields, methods, method order, call order and failure semantics are preserved.",
+    "Godot-only domain hooks, registration groups, service locators and compatibility staging are forbidden.",
+    "Tests prove a translation; tests do not define replacement behavior.",
+    "Declaration-only and barrel-only modules stay explicit in the ledger; they may omit a Godot target only because they own no runtime behavior."
+  ],
+  "engineAdapters": [
+    {
+      "sourcePrimitive": "JavaScript microtask queue and Promise continuation ordering",
+      "target": "godot_port/scripts/runtime/microtask_queue.gd",
+      "reason": "Godot has no browser microtask checkpoint, and a synchronous GDScript await does not yield like await Promise.resolve(...); the adapter preserves queueMicrotask, Promise-tail and continuation order without moving domain decisions out of their source modules."
+    },
+    {
+      "sourcePrimitive": "browser fetch/URL resolution",
+      "target": "godot_port/scripts/runtime/resource_locator.gd",
+      "reason": "Godot loads the same exported resource tree through res:// and filesystem paths."
+    },
+    {
+      "sourcePrimitive": "Promise-based local asset reads",
+      "target": "godot_port/scripts/runtime/asset_manager.gd",
+      "reason": "Godot ResourceLoader/filesystem access is synchronous, so the source inflight Promise interval collapses; null/false plus get_last_error form the explicit adapter for rejected asset Promises while cache sequencing stays source-owned."
+    },
+    {
+      "sourcePrimitive": "ArchiveManager requestIdleCallback with setTimeout fallback and pooled asynchronous texture preload",
+      "target": "godot_port/scripts/systems/archive_manager.gd SceneTreeTimer and synchronous bounded round-robin preload boundary",
+      "reason": "Godot has no browser idle callback and local ResourceLoader reads are synchronous; a cancellable 1.5-second SceneTreeTimer preserves the source fallback lifetime while the three-worker Promise pool collapses to the same bounded texture start order."
+    },
+    {
+      "sourcePrimitive": "browser DOM keyboard/pointer/focus listeners",
+      "target": "godot_port/scripts/runtime/input_manager.gd",
+      "reason": "Godot delivers the same event lifecycle through Node _input and application focus notifications; DOM code names are normalized at this boundary."
+    },
+    {
+      "sourcePrimitive": "DebugTools browser DOM listeners and HTMLElement debug controls",
+      "target": "godot_port/scripts/core/debug_tools.gd and godot_port/scripts/ui/debug_panel_ui.gd",
+      "reason": "Godot routes the source-owned debug input lifecycle through Node _input and translates the same section action/extra-control shape to Control nodes; DebugTools retains all debug state, decisions and callbacks."
+    },
+    {
+      "sourcePrimitive": "browser DOM fixed-position development error overlay",
+      "target": "godot_port/scripts/core/dev_error_overlay.gd",
+      "reason": "Godot has no DOM; a top-layer CanvasLayer preserves the development-only console reporting, visible overlay, duplicate folding and clear lifecycle without moving error classification out of source-owning modules."
+    },
+	{
+	  "sourcePrimitive": "Pixi filter arrays, GPU filter construction, and CanvasItem material binding",
+	  "target": "godot_port/scripts/rendering/scene_depth_filter_adapter.gd and godot_port/scripts/rendering/scene_entity_filter_binding.gd",
+	  "reason": "Godot exposes one CanvasItem material instead of Pixi filter arrays; these adapters only translate GPU uniforms and attachment metadata while SceneDepthSystem retains the source filter collection, creation, update and removal ownership."
+	},
+	{
+	  "sourcePrimitive": "DepthDebugVisualizer Pixi background-layer filter attachment",
+	  "target": "godot_port/scripts/debug/depth_debug_visualizer.gd and the CanvasGroup background layer in godot_port/scripts/rendering/renderer.gd",
+	  "reason": "Godot composites a group through one CanvasGroup material; the adapter preserves the source visualizer's mode, scene-data, attach/detach and lifetime ownership without relocating its debug decisions."
+	},
+    {
+      "sourcePrimitive": "browser localStorage string key/value persistence",
+      "target": "godot_port/scripts/runtime/local_storage.gd",
+      "reason": "Godot has no browser localStorage; the adapter preserves getItem/setItem/removeItem null and failure semantics over atomic user-storage files while SaveManager retains the source fields and raw-string API."
+    },
+    {
+      "sourcePrimitive": "JavaScript Promise tail chaining",
+      "target": "godot_port/scripts/runtime/async_tail.gd",
+      "reason": "GDScript coroutines are not first-class Promises; the adapter preserves then(run, run) serialization while domain managers retain one tail field."
+    },
+    {
+      "sourcePrimitive": "JavaScript Promise completion latch",
+      "target": "godot_port/scripts/runtime/async_latch.gd",
+      "reason": "GDScript has no first-class Promise constructor; resolve/reject/wait latches preserve Game-owned EventBus completion and NarrativeStateManager queued-item/drain/nested-drain promise ownership without moving domain decisions into adapters."
+    },
+    {
+      "sourcePrimitive": "JavaScript exception and rejected-Promise failure channel",
+      "target": "Godot translated runtime methods returning false or null",
+      "reason": "GDScript has no catchable exception channel; false for boolean/void guards and null for value-returning guards mechanically represent a thrown domain guard or rejected Promise without moving the validation decision into another owner."
+    },
+    {
+      "sourcePrimitive": "JavaScript String/Number coercion, truthy fallback, and caught Error result construction",
+      "target": "godot_port/scripts/runtime/javascript_runtime_adapter.gd",
+      "reason": "GDScript lacks JavaScript undefined/coercion and catchable exceptions; the adapter contains only language-level conversion and error-result mechanics so devRuntimeCommands remains a fieldless file module with the same function surface and dispatch ownership."
+    },
+    {
+      "sourcePrimitive": "Vite import.meta.env accessed through NarrativeStateManager's local import.meta alias",
+      "target": "godot_port/scripts/systems/narrative_state_manager.gd inline platform boundary",
+      "reason": "Vite does not inject env fields through the source's indirect meta alias, so its effective DEV/MODE/custom values are absent. The inline target translation preserves that observed source behavior instead of incorrectly substituting Godot's engine debug-build bit."
+    }
+  ],
+  "directUtilityTranslations": [
+    {
+      "source": "src/utils/deterministicRandom.ts",
+      "target": "godot_port/scripts/utils/deterministic_random.gd",
+      "status": "verified-direct"
+    },
+    {
+      "source": "src/ui/ClickContinuePrompt.ts",
+      "target": "godot_port/scripts/ui/click_continue_prompt.gd",
+      "status": "verified-direct"
+    },
+    {
+      "source": "src/utils/scriptedDialogueSpeaker.ts",
+      "target": "godot_port/scripts/utils/scripted_dialogue_speaker.gd",
+      "status": "verified-direct"
+    },
+    {
+      "source": "src/data/resolveAnimationSet.ts",
+      "target": "godot_port/scripts/utils/animation_set_resolver.gd",
+      "status": "verified-direct"
+    },
+    {
+      "source": "src/rendering/PlaceholderFactory.ts",
+      "target": "godot_port/scripts/rendering/placeholder_factory.gd",
+      "status": "verified-direct"
+    },
+    {
+      "source": "src/ui/BookshelfUI.ts",
+      "target": "godot_port/scripts/ui/bookshelf_ui.gd",
+      "status": "verified-direct"
+    },
+    {
+      "source": "src/ui/CharacterBookUI.ts",
+      "target": "godot_port/scripts/ui/character_book_ui.gd",
+      "status": "verified-direct"
+    },
+    {
+      "source": "src/ui/LoreBookUI.ts",
+      "target": "godot_port/scripts/ui/lore_book_ui.gd",
+      "status": "verified-direct"
+    },
+    {
+      "source": "src/ui/DocumentBoxUI.ts",
+      "target": "godot_port/scripts/ui/document_box_ui.gd",
+      "status": "verified-direct"
+    },
+    {
+      "source": "src/ui/BookReaderUI.ts",
+      "target": "godot_port/scripts/ui/book_reader_ui.gd",
+      "status": "verified-direct"
+    }
+  ],
+  "modules": [
+    {"source": "src/core/ActionExecutor.ts", "target": "godot_port/scripts/runtime/action_executor.gd", "status": "verified-direct"},
+    {"source": "src/core/ActionRegistry.ts", "target": "godot_port/scripts/runtime/action_registry.gd", "status": "verified-direct"},
+    {"source": "src/core/actionParamManifest.ts", "target": "godot_port/scripts/runtime/action_param_manifest.gd", "status": "verified-direct"},
+    {"source": "src/core/AssetManager.ts", "target": "godot_port/scripts/runtime/asset_manager.gd", "status": "verified-direct"},
+    {"source": "src/core/DebugTools.ts", "target": "godot_port/scripts/core/debug_tools.gd", "status": "verified-direct"},
+    {"source": "src/core/EventBridge.ts", "target": "godot_port/scripts/core/event_bridge.gd", "status": "verified-direct"},
+    {"source": "src/core/EventBus.ts", "target": "godot_port/scripts/runtime/event_bus.gd", "status": "verified-direct"},
+    {"source": "src/core/FlagKeys.ts", "target": "godot_port/scripts/runtime/flag_keys.gd", "status": "verified-direct"},
+    {"source": "src/core/FlagStore.ts", "target": "godot_port/scripts/runtime/flag_store.gd", "status": "verified-direct"},
+    {"source": "src/core/Game.ts", "target": "godot_port/scripts/bootstrap.gd", "status": "translating"},
+    {"source": "src/core/GameStateController.ts", "target": "godot_port/scripts/runtime/game_state_controller.gd", "status": "verified-direct"},
+    {"source": "src/core/InputManager.ts", "target": "godot_port/scripts/runtime/input_manager.gd", "status": "verified-direct"},
+    {"source": "src/core/InteractionCoordinator.ts", "target": "godot_port/scripts/core/interaction_coordinator.gd", "status": "verified-direct"},
+    {"source": "src/core/NarrativeStateManager.ts", "target": "godot_port/scripts/systems/narrative_state_manager.gd", "status": "verified-direct"},
+    {"source": "src/core/RuleOfferRegistry.ts", "target": "godot_port/scripts/systems/rule_offer_registry.gd", "status": "verified-direct"},
+    {"source": "src/core/SaveManager.ts", "target": "godot_port/scripts/runtime/save_manager.gd", "status": "verified-direct"},
+    {"source": "src/core/ScenarioStateManager.ts", "target": "godot_port/scripts/systems/scenario_state_manager.gd", "status": "verified-direct"},
+    {"source": "src/core/SceneDepthSystem.ts", "target": "godot_port/scripts/systems/scene_depth_system.gd", "status": "verified-direct"},
+    {"source": "src/core/StringsProvider.ts", "target": "godot_port/scripts/runtime/strings_provider.gd", "status": "verified-direct"},
+    {"source": "src/core/assetPath.ts", "target": "godot_port/scripts/runtime/resource_locator.gd", "status": "engine-adapter"},
+    {"source": "src/core/depthLog.ts", "target": "godot_port/scripts/core/depth_log.gd", "status": "verified-direct"},
+    {"source": "src/core/devErrorOverlay.ts", "target": "godot_port/scripts/core/dev_error_overlay.gd", "status": "verified-direct"},
+    {"source": "src/core/devRuntimeCommands.ts", "target": "godot_port/scripts/core/dev_runtime_commands.gd", "status": "verified-direct"},
+    {"source": "src/core/narrativeGraphValidation.ts", "target": "godot_port/scripts/core/narrative_graph_validation.gd", "status": "verified-direct"},
+    {"source": "src/core/pageErrorTrap.ts", "target": null, "status": "browser-platform-only"},
+    {"source": "src/core/projectPaths.ts", "target": "godot_port/scripts/runtime/resource_locator.gd", "status": "engine-adapter"},
+    {"source": "src/core/resolveText.ts", "target": "godot_port/scripts/runtime/text_resolver.gd", "status": "verified-direct"},
+
+    {"source": "src/debug/DepthDebugVisualizer.ts", "target": "godot_port/scripts/debug/depth_debug_visualizer.gd", "status": "verified-direct"},
+    {"source": "src/debug/debugPanelRuntimeLog.ts", "target": null, "status": "browser-platform-only"},
+    {"source": "src/debug/webglPanelDiagnostics.ts", "target": null, "status": "browser-platform-only"},
+
+    {"source": "src/systems/ArchiveManager.ts", "target": "godot_port/scripts/systems/archive_manager.gd", "status": "verified-direct"},
+    {"source": "src/systems/AudioManager.ts", "target": "godot_port/scripts/systems/audio_manager.gd", "status": "verified-direct"},
+    {"source": "src/systems/CutsceneManager.ts", "target": "godot_port/scripts/systems/cutscene_manager.gd", "status": "verified-direct"},
+    {"source": "src/systems/DayManager.ts", "target": "godot_port/scripts/systems/day_manager.gd", "status": "verified-direct"},
+    {"source": "src/systems/DialogueManager.ts", "target": "godot_port/scripts/systems/dialogue_manager.gd", "status": "verified-direct"},
+    {"source": "src/systems/DocumentRevealManager.ts", "target": "godot_port/scripts/systems/document_reveal_manager.gd", "status": "verified-direct"},
+    {"source": "src/systems/EmoteBubbleManager.ts", "target": "godot_port/scripts/systems/emote_bubble_manager.gd", "status": "verified-direct"},
+    {"source": "src/systems/EncounterManager.ts", "target": "godot_port/scripts/systems/encounter_manager.gd", "status": "verified-direct"},
+    {"source": "src/systems/GraphDialogueManager.ts", "target": "godot_port/scripts/systems/graph_dialogue_manager.gd", "status": "verified-direct"},
+    {"source": "src/systems/HealthSystem.ts", "target": "godot_port/scripts/systems/health_system.gd", "status": "verified-direct"},
+    {"source": "src/systems/InteractionSystem.ts", "target": "godot_port/scripts/systems/interaction_system.gd", "status": "verified-direct"},
+    {"source": "src/systems/InventoryManager.ts", "target": "godot_port/scripts/systems/inventory_manager.gd", "status": "verified-direct"},
+    {"source": "src/systems/PlaneReconciler.ts", "target": "godot_port/scripts/systems/plane_reconciler.gd", "status": "verified-direct"},
+    {"source": "src/systems/QuestManager.ts", "target": "godot_port/scripts/systems/quest_manager.gd", "status": "verified-direct"},
+    {"source": "src/systems/RulesManager.ts", "target": "godot_port/scripts/systems/rules_manager.gd", "status": "verified-direct"},
+    {"source": "src/systems/SceneManager.ts", "target": "godot_port/scripts/systems/scene_manager.gd", "status": "verified-direct"},
+    {"source": "src/systems/SignalCueManager.ts", "target": "godot_port/scripts/systems/signal_cue_manager.gd", "status": "verified-direct"},
+    {"source": "src/systems/SmellSystem.ts", "target": "godot_port/scripts/systems/smell_system.gd", "status": "verified-direct"},
+    {"source": "src/systems/ZoneSystem.ts", "target": "godot_port/scripts/systems/zone_system.gd", "status": "verified-direct"},
+    {"source": "src/systems/graphDialogue/conditionEvalBridge.ts", "target": "godot_port/scripts/runtime/condition_eval_bridge.gd", "status": "verified-direct"},
+    {"source": "src/systems/graphDialogue/evaluateGraphCondition.ts", "target": "godot_port/scripts/runtime/condition_evaluator.gd", "status": "verified-direct"},
+    {"source": "src/systems/minigameScript.ts", "target": "godot_port/scripts/minigames/minigame_script_runner.gd", "status": "verified-direct"},
+    {"source": "src/systems/minigameSession.ts", "target": "godot_port/scripts/minigames/minigame_session.gd", "status": "verified-direct"},
+    {"source": "src/systems/paperCraft/PaperCraftMinigameManager.ts", "target": "godot_port/scripts/minigames/paper_craft_manager.gd", "status": "verified-direct"},
+    {"source": "src/systems/paperCraft/PaperCraftMinigameScene.ts", "target": "godot_port/scripts/minigames/paper_craft_scene.gd", "status": "verified-direct"},
+    {"source": "src/systems/pressureHold/PressureHoldManager.ts", "target": "godot_port/scripts/systems/pressure_hold_manager.gd", "status": "verified-direct"},
+    {"source": "src/systems/pressureHold/holdProgress.ts", "target": "godot_port/scripts/systems/hold_progress.gd", "status": "verified-direct"},
+    {"source": "src/systems/sugarWheel/SugarWheelMinigameManager.ts", "target": "godot_port/scripts/minigames/sugar_wheel_manager.gd", "status": "verified-direct"},
+    {"source": "src/systems/sugarWheel/SugarWheelMinigameScene.ts", "target": "godot_port/scripts/minigames/sugar_wheel_scene.gd", "status": "verified-direct"},
+    {"source": "src/systems/sugarWheel/sugarWheelAtmosphere.ts", "target": "godot_port/scripts/minigames/sugar_wheel_atmosphere.gd", "status": "verified-direct"},
+    {"source": "src/systems/sugarWheel/sugarWheelSpinPhysics.ts", "target": "godot_port/scripts/minigames/sugar_wheel_spin_physics.gd", "status": "verified-direct"},
+    {"source": "src/systems/waterMinigame/WaterEntity.ts", "target": "godot_port/scripts/minigames/water_entity.gd", "status": "verified-direct"},
+    {"source": "src/systems/waterMinigame/WaterMinigameManager.ts", "target": "godot_port/scripts/minigames/water_manager.gd", "status": "verified-direct"},
+    {"source": "src/systems/waterMinigame/WaterMinigameScene.ts", "target": "godot_port/scripts/minigames/water_scene.gd", "status": "verified-direct"},
+    {"source": "src/systems/waterMinigame/WaterParamEncodeFilter.ts", "target": "godot_port/scripts/minigames/water_param_encode.gdshader", "status": "engine-adapter"},
+    {"source": "src/systems/waterMinigame/WaterPullPanel.ts", "target": "godot_port/scripts/minigames/water_pull_panel.gd", "status": "verified-direct"},
+    {"source": "src/systems/waterMinigame/WaterShaderFilter.ts", "target": "godot_port/scripts/minigames/water_surface.gdshader", "status": "engine-adapter"},
+
+    {"source": "src/data/EntityRuntimeFieldSchema.ts", "target": "godot_port/scripts/runtime/entity_runtime_field_schema.gd", "status": "verified-direct"},
+    {"source": "src/data/characterRegistry.ts", "target": "godot_port/scripts/data/character_registry.gd", "status": "verified-direct"},
+    {"source": "src/data/resolveAnimationSet.ts", "target": "godot_port/scripts/utils/animation_set_resolver.gd", "status": "verified-direct"},
+    {"source": "src/data/types.ts", "target": "godot_port/scripts/data/data_types.gd", "status": "verified-direct"},
+
+    {"source": "src/entities/Hotspot.ts", "target": "godot_port/scripts/entities/hotspot.gd", "status": "verified-direct"},
+    {"source": "src/entities/Npc.ts", "target": "godot_port/scripts/entities/npc.gd", "status": "verified-direct"},
+    {"source": "src/entities/Player.ts", "target": "godot_port/scripts/entities/player.gd", "status": "verified-direct"},
+
+    {"source": "src/main.ts", "target": "godot_port/scripts/runtime/game_startup_adapter.gd", "status": "engine-adapter"},
+
+    {"source": "src/rendering/BackgroundDebugFilter.ts", "target": "godot_port/scripts/rendering/background_debug_filter.gd", "status": "engine-adapter"},
+    {"source": "src/rendering/Camera.ts", "target": "godot_port/scripts/rendering/camera.gd", "status": "engine-adapter"},
+    {"source": "src/rendering/CutsceneRenderer.ts", "target": "godot_port/scripts/rendering/cutscene_renderer.gd", "status": "verified-direct"},
+    {"source": "src/rendering/DeferredEntityShadow.ts", "target": "godot_port/scripts/rendering/deferred_entity_shadow.gd", "status": "audit-required"},
+    {"source": "src/rendering/DepthOcclusionFilter.ts", "target": "godot_port/scripts/rendering/depth_occlusion_filter.gd", "status": "engine-adapter"},
+    {"source": "src/rendering/EntityLightingFilter.ts", "target": "godot_port/scripts/rendering/entity_lighting_filter.gd", "status": "engine-adapter"},
+    {"source": "src/rendering/EntityPixelDensityMatch.ts", "target": "godot_port/scripts/rendering/entity_pixel_density_match.gd", "status": "engine-adapter"},
+    {"source": "src/rendering/EntityShadow.ts", "target": "godot_port/scripts/rendering/planar_entity_shadow.gd", "status": "audit-required"},
+    {"source": "src/rendering/PlaceholderFactory.ts", "target": "godot_port/scripts/rendering/placeholder_factory.gd", "status": "verified-direct"},
+    {"source": "src/rendering/Renderer.ts", "target": "godot_port/scripts/rendering/renderer.gd", "status": "engine-adapter"},
+    {"source": "src/rendering/SpriteEntity.ts", "target": "godot_port/scripts/rendering/sprite_entity.gd", "status": "engine-adapter"},
+    {"source": "src/rendering/entityShadowTypes.ts", "target": null, "status": "declaration-only"},
+    {"source": "src/rendering/filter/FilterLoader.ts", "target": "godot_port/scripts/rendering/filter/filter_loader.gd", "status": "engine-adapter"},
+    {"source": "src/rendering/filter/WorldFilterPipeline.ts", "target": "godot_port/scripts/rendering/world_filter_pipeline.gd", "status": "engine-adapter"},
+    {"source": "src/rendering/filter/index.ts", "target": null, "status": "barrel-only"},
+    {"source": "src/rendering/filter/types.ts", "target": "godot_port/scripts/rendering/filter/types.gd", "status": "verified-direct"},
+    {"source": "src/rendering/irradianceProbe.ts", "target": "godot_port/scripts/rendering/scene_depth_filter_adapter.gd", "status": "engine-adapter"},
+    {"source": "src/rendering/lightEnv.ts", "target": "godot_port/scripts/rendering/light_env_resolver.gd", "status": "verified-direct"},
+    {"source": "src/rendering/lightEnvCurve.ts", "target": "godot_port/scripts/rendering/light_env_curve.gd", "status": "verified-direct"},
+    {"source": "src/rendering/overlayBlendShader.ts", "target": "godot_port/scripts/rendering/cutscene_renderer.gd", "status": "engine-adapter"},
+    {"source": "src/rendering/shadowField.ts", "target": "godot_port/scripts/rendering/uniform_shadow_field.gd", "status": "verified-direct"},
+
+    {"source": "src/smell_preview_entry.ts", "target": null, "status": "browser-platform-only"},
+
+    {"source": "src/systems/paperCraft/types.ts", "target": null, "status": "declaration-only"},
+    {"source": "src/systems/plane/types.ts", "target": null, "status": "declaration-only"},
+    {"source": "src/systems/pressureHold/types.ts", "target": null, "status": "declaration-only"},
+    {"source": "src/systems/sugarWheel/types.ts", "target": null, "status": "declaration-only"},
+    {"source": "src/systems/waterMinigame/types.ts", "target": null, "status": "declaration-only"},
+
+    {"source": "src/ui/ActionChoiceUI.ts", "target": "godot_port/scripts/ui/action_choice_ui.gd", "status": "audit-required"},
+    {"source": "src/ui/BookReaderUI.ts", "target": "godot_port/scripts/ui/book_reader_ui.gd", "status": "verified-direct"},
+    {"source": "src/ui/BookshelfUI.ts", "target": "godot_port/scripts/ui/bookshelf_ui.gd", "status": "verified-direct"},
+    {"source": "src/ui/CharacterBookUI.ts", "target": "godot_port/scripts/ui/character_book_ui.gd", "status": "verified-direct"},
+    {"source": "src/ui/ClickContinuePrompt.ts", "target": "godot_port/scripts/ui/click_continue_prompt.gd", "status": "verified-direct"},
+    {"source": "src/ui/DebugPanelUI.ts", "target": "godot_port/scripts/ui/debug_panel_ui.gd", "status": "audit-required"},
+    {"source": "src/ui/DevModeUI.ts", "target": "godot_port/scripts/ui/dev_mode_ui.gd", "status": "verified-direct"},
+    {"source": "src/ui/DialogueLogUI.ts", "target": "godot_port/scripts/ui/dialogue_log_ui.gd", "status": "audit-required"},
+    {"source": "src/ui/DialogueUI.ts", "target": "godot_port/scripts/ui/dialogue_ui.gd", "status": "audit-required"},
+    {"source": "src/ui/DocumentBoxUI.ts", "target": "godot_port/scripts/ui/document_box_ui.gd", "status": "verified-direct"},
+    {"source": "src/ui/EncounterUI.ts", "target": "godot_port/scripts/ui/encounter_ui.gd", "status": "audit-required"},
+    {"source": "src/ui/HUD.ts", "target": "godot_port/scripts/ui/hud.gd", "status": "verified-direct"},
+    {"source": "src/ui/InspectBox.ts", "target": "godot_port/scripts/ui/inspect_box.gd", "status": "audit-required"},
+    {"source": "src/ui/InventoryUI.ts", "target": "godot_port/scripts/ui/inventory_ui.gd", "status": "audit-required"},
+    {"source": "src/ui/LoreBookUI.ts", "target": "godot_port/scripts/ui/lore_book_ui.gd", "status": "verified-direct"},
+    {"source": "src/ui/MapUI.ts", "target": "godot_port/scripts/ui/map_ui.gd", "status": "verified-direct"},
+    {"source": "src/ui/MenuUI.ts", "target": "godot_port/scripts/ui/menu_ui.gd", "status": "audit-required"},
+    {"source": "src/ui/NotificationUI.ts", "target": "godot_port/scripts/ui/notification_ui.gd", "status": "audit-required"},
+    {"source": "src/ui/PanelSkin.ts", "target": null, "status": "missing"},
+    {"source": "src/ui/PickupNotification.ts", "target": "godot_port/scripts/ui/pickup_notification.gd", "status": "audit-required"},
+    {"source": "src/ui/PressureHoldUI.ts", "target": "godot_port/scripts/ui/pressure_hold_ui.gd", "status": "audit-required"},
+    {"source": "src/ui/QuestPanelUI.ts", "target": "godot_port/scripts/ui/quest_panel_ui.gd", "status": "audit-required"},
+    {"source": "src/ui/RichContent.ts", "target": "godot_port/scripts/ui/rich_content.gd", "status": "audit-required"},
+    {"source": "src/ui/RuleUseUI.ts", "target": "godot_port/scripts/ui/rule_use_ui.gd", "status": "audit-required"},
+    {"source": "src/ui/RulesPanelUI.ts", "target": "godot_port/scripts/ui/rules_panel_ui.gd", "status": "audit-required"},
+    {"source": "src/ui/ShopUI.ts", "target": "godot_port/scripts/ui/shop_ui.gd", "status": "audit-required"},
+    {"source": "src/ui/TouchMobileControls.ts", "target": "godot_port/scripts/ui/touch_mobile_controls.gd", "status": "audit-required"},
+    {"source": "src/ui/UITheme.ts", "target": null, "status": "missing"},
+    {"source": "src/ui/debugFlagSection.ts", "target": null, "status": "missing"},
+    {"source": "src/ui/smell/SmellIndicatorRenderer.ts", "target": "godot_port/scripts/ui/smell_indicator_renderer.gd", "status": "audit-required"},
+    {"source": "src/ui/uiPointerCoords.ts", "target": "godot_port/scripts/runtime/input_manager.gd", "status": "engine-adapter"},
+
+    {"source": "src/utils/depthFloorZones.ts", "target": "godot_port/scripts/runtime/depth_floor_zones.gd", "status": "verified-direct"},
+    {"source": "src/utils/deterministicRandom.ts", "target": "godot_port/scripts/utils/deterministic_random.gd", "status": "verified-direct"},
+    {"source": "src/utils/fillTemplate.ts", "target": "godot_port/scripts/utils/fill_template.gd", "status": "verified-direct"},
+    {"source": "src/utils/hotspotCollision.ts", "target": "godot_port/scripts/utils/hotspot_collision.gd", "status": "verified-direct"},
+    {"source": "src/utils/hotspotInteraction.ts", "target": "godot_port/scripts/runtime/hotspot_interaction.gd", "status": "verified-direct"},
+    {"source": "src/utils/resizeObserverQuiet.ts", "target": null, "status": "browser-platform-only"},
+    {"source": "src/utils/scriptedDialogueSpeaker.ts", "target": "godot_port/scripts/utils/scripted_dialogue_speaker.gd", "status": "verified-direct"},
+    {"source": "src/utils/zoneGeometry.ts", "target": "godot_port/scripts/runtime/zone_geometry.gd", "status": "verified-direct"},
+
+    {"source": "src/vite-env.d.ts", "target": null, "status": "declaration-only"}
+  ]
+}

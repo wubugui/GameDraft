@@ -1,0 +1,3 @@
+- 现实：①嵌套排空使"动作内发射的信号插队完成"——同一信号先后到达不同图的顺序依赖图在 JSON 中的位置与动作时序（2026-07-17 审查 R1 已实证、判定为现行语义非 bug，当前内容零暴露）；②reactive 迁移唤醒源=flag:changed/排空尾/注册/读档/注入 ctx，`activatePlane` 手动覆盖与未来新增条件叶子无人唤醒（W3）。
+- 打架对象：narrative-signal-spine 卡未记载信号插队语义；runtime norms/L2 升级清单未含"新增条件叶子必须同步回答谁唤醒它"的义务。
+- 出处：artifact/Reviews/叙事状态机全面审查-2026-07-17.md（R1/W3）与同名修复记录"刻意不修/移交"节；建议治理时分别补进 narrative-signal-spine 卡"已知坑"与 norms 过程义务。
