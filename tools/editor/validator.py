@@ -113,6 +113,38 @@ def validate(model: ProjectModel) -> list[Issue]:
                     f"背景图文件名必须是 background.png，实际为 {bg0_img!r}；"
                     f"请在场景编辑器重新导入背景图。",
                 ))
+        # 场景内实体 id 重复：编辑器画布图元按 "kind:id" 建键互相覆盖、属性/删除按
+        # id 首匹配串台（P1-26 风险面）；npc 与 hotspot 互为 emote 目标命名空间
+        # （重构引擎撞名互拒同口径），跨类同 id 一并拦。zone 独立命名空间单查。
+        _ent_seen: dict[str, str] = {}
+        for _key, _kind in (("hotspots", "hotspot"), ("npcs", "npc")):
+            for _ent in sc.get(_key, []) or []:
+                if not isinstance(_ent, dict):
+                    continue
+                _eid = str(_ent.get("id", "") or "").strip()
+                if not _eid:
+                    continue
+                if _eid in _ent_seen:
+                    issues.append(Issue(
+                        "error", "scene", sid,
+                        f"实体 id 重复: {_kind} {_eid!r} 与同场景 {_ent_seen[_eid]} 同名"
+                        "（npc/hotspot 共用寻址命名空间；画布/属性/引用按 id 解析会静默串台）",
+                    ))
+                else:
+                    _ent_seen[_eid] = f"{_kind} {_eid!r}"
+        _zone_seen: set[str] = set()
+        for _z in sc.get("zones", []) or []:
+            if not isinstance(_z, dict):
+                continue
+            _zid = str(_z.get("id", "") or "").strip()
+            if not _zid:
+                continue
+            if _zid in _zone_seen:
+                issues.append(Issue(
+                    "error", "scene", sid,
+                    f"Zone id 重复: {_zid!r}（同场景两条，画布与 setZoneEnabled 类寻址会静默串台）",
+                ))
+            _zone_seen.add(_zid)
         for hs in sc.get("hotspots", []):
             hid = str(hs.get("id", "")) or "?"
             di = hs.get("displayImage")

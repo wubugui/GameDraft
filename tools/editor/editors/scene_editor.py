@@ -7467,6 +7467,17 @@ class SceneEditor(QWidget):
         del_btn.clicked.connect(self._delete_selected)
         tb.addWidget(del_btn)
         refactor_menu = QMenu(self)
+        self._act_duplicate = refactor_menu.addAction(
+            "复制实体（本场景）", self._duplicate_selected)
+        self._act_duplicate.setShortcut(QKeySequence("Ctrl+D"))
+        # 弹出菜单里的 QAction 快捷键默认只在菜单可见时生效；挂回编辑器本体
+        # 并限定 WidgetWithChildren，画布/面板聚焦时 Ctrl+D 直达（与 Delete 键同族）。
+        self._act_duplicate.setShortcutContext(
+            Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self.addAction(self._act_duplicate)
+        self._act_duplicate.setToolTip(
+            "深拷贝选中实体为副本（新 id、整体偏移落位）；过场绑定不随副本复制。")
+        refactor_menu.addSeparator()
         refactor_menu.addAction("迁移到场景…", lambda: self._refactor_selected("move"))
         refactor_menu.addAction("重命名 id…", lambda: self._refactor_selected("rename"))
         refactor_menu.addAction("安全删除（引用报告）…", lambda: self._refactor_selected("delete"))
@@ -7475,8 +7486,9 @@ class SceneEditor(QWidget):
         refactor_btn = QToolButton()
         refactor_btn.setText("重构")
         refactor_btn.setToolTip(
-            "选中 NPC / 热区 / Zone / 出生点后：跨场景迁移、全项目改名、带引用报告的安全删除；"
-            "先扫描全项目引用并预览，确认才执行（未 Save All 前仅内存变更）。"
+            "选中 NPC / 热区 / Zone / 出生点后：本场景复制（Ctrl+D）、跨场景迁移、"
+            "全项目改名、带引用报告的安全删除；"
+            "迁移/改名/删除先扫描全项目引用并预览，确认才执行（未 Save All 前仅内存变更）。"
             "Zone 的入站引用与出生点的入站 transition/切场景动作会全量机械改写跟随；"
             "polygon / 坐标需迁移后在目标场景重画。")
         refactor_btn.setMenu(refactor_menu)
@@ -9205,6 +9217,52 @@ class SceneEditor(QWidget):
             msg = (f"已删除「{eid}」；"
                    f"{summary.get('danglingRefs', 0)} 处引用悬垂（跑 Validate Data 查看）。")
         QMessageBox.information(self, "实体重构", msg)
+
+    def _duplicate_selected(self) -> None:
+        """本场景复制选中实体（引擎 duplicate op：deepcopy + 新 id + 偏移落位）。
+
+        成功路径静默（副本被选中即反馈），仅剥离过场绑定时弹一次提示；
+        撤销走「重构 → 撤销上次重构」（journal 记 duplicateEntity）。"""
+        sc = self._require_scene()
+        if sc is None:
+            return
+        ref = self._selected_entity_ref()
+        kind = ""
+        if ref is not None:
+            kind = {"npc_collision": "npc", "hotspot_collision": "hotspot"}.get(ref[0], ref[0])
+        if ref is None or kind not in ("npc", "hotspot", "zone", "spawn"):
+            QMessageBox.information(
+                self, "复制实体", "请先选中一个 NPC / 热区 / Zone / 出生点。")
+            return
+        eid = ref[1]
+        if kind == "spawn" and eid == "default":
+            QMessageBox.information(
+                self, "复制实体", "默认出生点不参与复制（如需新出生点请直接添加）。")
+            return
+        # commit-on-leave：先把属性面板/画布 staging 落进模型，副本基于已提交数据
+        # 深拷贝（否则复制到的是打开实体时的旧快照，P1-01 家族）。
+        self._commit_pending_scene_edits()
+        from ..shared import entity_refactor as er
+        try:
+            summary = er.duplicate_entity(
+                self._model, self._current_scene_id or "", kind, eid)
+        except er.EntityRefactorError as exc:
+            QMessageBox.warning(self, "复制实体", str(exc))
+            return
+        er.push_journal(self._model, summary)
+        new_id = str(summary.get("newId") or "")
+        self._load_scene(self._current_scene_id, reset_view=False)
+        if kind == "spawn":
+            self._restore_canvas_selection("spawn", new_id)
+        else:
+            self._select_scene_entity_by_kind(
+                kind, new_id, self._current_scene_id or "")
+        stripped = summary.get("strippedCutsceneIds") or []
+        if stripped:
+            QMessageBox.information(
+                self, "复制实体",
+                f"已复制为「{new_id}」。\n原实体的过场绑定（{'、'.join(stripped)}）未随"
+                "副本复制：过场步骤按 id 只驱动原实体，副本挂空绑定无意义。")
 
     def _undo_entity_refactor(self) -> None:
         # commit-on-leave：先把未应用的画布/面板 staging 落进模型，否则迟到的

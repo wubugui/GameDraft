@@ -19,6 +19,7 @@ from tools.editor.shared.entity_refactor import (
     EntityRefactorError,
     delete_entity,
     dialogue_graph_scene_reach,
+    duplicate_entity,
     move_entity,
     push_journal,
     rename_entity,
@@ -586,3 +587,145 @@ def test_validator_reachability_fires_on_cross_scene_ref() -> None:
     hits = [i for i in validate(m)
             if i.data_type == "dialogue" and i.item_id == gid and "可达场景" in i.message]
     assert hits, f"注入 {gid} → {nid} 的跨场景硬引用后，可达性检查未开火"
+
+
+# --------------------------------------------------------------------------- #
+# 复制（duplicate）
+# --------------------------------------------------------------------------- #
+
+def test_duplicate_npc_deepcopy_offset_insert(model: FakeModel) -> None:
+    summary = duplicate_entity(model, "甲村", "npc", "npc_张三")
+    assert summary["op"] == "duplicateEntity"
+    assert summary["newId"] == "npc_张三_copy"
+    npcs = model.scenes["甲村"]["npcs"]
+    # 紧挨原实体之后插入
+    assert [n["id"] for n in npcs[:2]] == ["npc_张三", "npc_张三_copy"]
+    orig, dup = npcs[0], npcs[1]
+    # 坐标整体平移且保持 int 形态（数值往返保真）
+    assert (dup["x"], dup["y"]) == (140, 240)
+    assert isinstance(dup["x"], int) and isinstance(dup["y"], int)
+    # 巡逻路点同幅平移
+    assert dup["patrol"]["route"] == [{"x": 41, "y": 42}]
+    # 出站引用保留（同场景复制天然有效）
+    assert dup["dialogueGraphId"] == "对话_张三"
+    # deepcopy 独立：改副本嵌套结构不得污染原实体
+    dup["patrol"]["route"][0]["x"] = 999
+    assert orig["patrol"]["route"] == [{"x": 1, "y": 2}]
+    assert ("scene", "甲村") in model.dirty
+
+
+def test_duplicate_id_probing_respects_cross_kind_namespace(model: FakeModel) -> None:
+    # npc/hotspot 互为 emote 目标命名空间：探测取号必须跨类避让
+    model.scenes["甲村"]["npcs"].append({"id": "hs_摊位_copy", "x": 0, "y": 0})
+    summary = duplicate_entity(model, "甲村", "hotspot", "hs_摊位")
+    assert summary["newId"] == "hs_摊位_copy_2"
+
+
+def test_duplicate_strips_cutscene_bindings(model: FakeModel) -> None:
+    hs = model.scenes["甲村"]["hotspots"][0]
+    hs["cutsceneIds"] = ["cut_1"]
+    hs["cutsceneOnly"] = True
+    summary = duplicate_entity(model, "甲村", "hotspot", "hs_摊位")
+    dup = model.scenes["甲村"]["hotspots"][1]
+    assert dup["id"] == summary["newId"]
+    assert "cutsceneIds" not in dup and "cutsceneOnly" not in dup
+    assert summary["strippedCutsceneIds"] == ["cut_1"]
+    # 原实体绑定不动
+    assert hs["cutsceneIds"] == ["cut_1"] and hs["cutsceneOnly"] is True
+
+
+def test_duplicate_zone_translates_polygon_and_trace(model: FakeModel) -> None:
+    summary = duplicate_entity(model, "甲村", "zone", "z_门口")
+    dup = model.scenes["甲村"]["zones"][1]
+    assert dup["id"] == summary["newId"] == "z_门口_copy"
+    # 数组点形状的 polygon 也要整体平移
+    assert dup["polygon"] == [[40, 40], [41, 40], [41, 41]]
+    # 溯源复合串 "场景:实体" 跟随副本新 id（trace-only 零歧义）
+    emits = [a for a in dup["onEnter"] if a["type"] == "emitNarrativeSignal"]
+    assert emits and emits[0]["params"]["sourceId"] == "甲村:z_门口_copy"
+    orig_emits = [a for a in model.scenes["甲村"]["zones"][0]["onEnter"]
+                  if a["type"] == "emitNarrativeSignal"]
+    assert orig_emits[0]["params"]["sourceId"] == "甲村:z_门口"
+    # 其余出站引用原样保留
+    assert any(a["type"] == "showSpeechBubble" and a["params"]["target"] == "npc_张三"
+               for a in dup["onEnter"])
+
+
+def test_duplicate_spawn_inserts_after_original(model: FakeModel) -> None:
+    summary = duplicate_entity(model, "甲村", "spawn", "entry")
+    sps = model.scenes["甲村"]["spawnPoints"]
+    assert list(sps) == ["entry", "entry_copy", "back"]
+    assert sps["entry_copy"] == {"x": 50, "y": 60}
+    assert summary["newId"] == "entry_copy"
+
+
+def test_duplicate_explicit_new_id_and_collision(model: FakeModel) -> None:
+    summary = duplicate_entity(model, "甲村", "npc", "npc_张三", new_id="npc_李四")
+    assert summary["newId"] == "npc_李四"
+    with pytest.raises(EntityRefactorError):
+        duplicate_entity(model, "甲村", "npc", "npc_张三", new_id="npc_重名")
+    with pytest.raises(EntityRefactorError):
+        duplicate_entity(model, "甲村", "npc", "npc_张三", new_id="npc_张三")
+    # 撞名闸在修改前抛出：列表不得残留半改状态
+    assert [n["id"] for n in model.scenes["甲村"]["npcs"]
+            if n["id"].startswith("npc_张三")] == ["npc_张三"]
+
+
+def test_duplicate_guards(model: FakeModel) -> None:
+    with pytest.raises(EntityRefactorError):
+        duplicate_entity(model, "甲村", "npc", "不存在")
+    with pytest.raises(EntityRefactorError):
+        duplicate_entity(model, "不存在", "npc", "npc_张三")
+    with pytest.raises(EntityRefactorError):
+        duplicate_entity(model, "甲村", "spawn", "default")
+
+
+def test_duplicate_undo_removes_copy(model: FakeModel) -> None:
+    summary = duplicate_entity(model, "甲村", "npc", "npc_张三")
+    push_journal(model, summary)
+    before = copy.deepcopy(model.scenes["甲村"]["npcs"][0])
+    result = undo_last(model)
+    assert result["ok"], result
+    ids = [n["id"] for n in model.scenes["甲村"]["npcs"]]
+    assert "npc_张三_copy" not in ids
+    assert model.scenes["甲村"]["npcs"][0] == before
+    # journal 已弹空
+    assert undo_last(model)["ok"] is False
+
+
+def test_duplicate_spawn_undo(model: FakeModel) -> None:
+    summary = duplicate_entity(model, "甲村", "spawn", "entry")
+    push_journal(model, summary)
+    result = undo_last(model)
+    assert result["ok"], result
+    assert list(model.scenes["甲村"]["spawnPoints"]) == ["entry", "back"]
+
+
+def test_validator_flags_duplicate_entity_ids_in_scene() -> None:
+    """场景内实体 id 重复（含 npc↔hotspot 跨类撞名）必须出 error——这是复制类
+    操作写错时的静默灾难面（画布图元键覆盖 / 属性按 id 首匹配串台），此前零检查。"""
+    from tools.editor.project_model import ProjectModel
+    from tools.editor.tests.save_test_utils import write_minimal_loadable_project
+    from tools.editor.validator import validate
+    from tempfile import TemporaryDirectory
+
+    with TemporaryDirectory() as td:
+        root = Path(td) / "p"
+        write_minimal_loadable_project(root)
+        m = ProjectModel()
+        m.load_project(root)
+        sid = next(iter(m.scenes))
+        sc = m.scenes[sid]
+        sc["npcs"] = [{"id": "撞", "x": 0, "y": 0}, {"id": "撞", "x": 1, "y": 1}]
+        sc["hotspots"] = [{"id": "跨类", "type": "inspect", "x": 0, "y": 0,
+                           "interactionRange": 50, "data": {"text": ""}}]
+        sc["npcs"].append({"id": "跨类", "x": 2, "y": 2})
+        sc["zones"] = [{"id": "z重", "polygon": [{"x": 0, "y": 0}]},
+                       {"id": "z重", "polygon": [{"x": 1, "y": 1}]}]
+        hits = [i for i in validate(m)
+                if i.data_type == "scene" and i.item_id == sid
+                and "重复" in i.message and i.severity == "error"]
+        dup_msgs = "\n".join(i.message for i in hits)
+        assert any("撞" in msg for msg in dup_msgs.splitlines()), dup_msgs
+        assert any("跨类" in msg for msg in dup_msgs.splitlines()), dup_msgs
+        assert any("z重" in msg for msg in dup_msgs.splitlines()), dup_msgs
