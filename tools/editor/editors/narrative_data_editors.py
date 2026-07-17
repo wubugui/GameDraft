@@ -1806,7 +1806,7 @@ class DocumentRevealsEditor(QWidget):
             self._dr_fill_scenario_combo()
             self._dr_cond_tree.set_model_refresh()
             self._dr_q_id.blockSignals(True)
-            self._dr_q_id.set_items(self._model.all_quest_ids())
+            self._dr_q_id.set_items(self._model.quest_status_target_ids())
             self._dr_q_id.blockSignals(False)
             self._dr_id_sel.blockSignals(True)
             self._dr_id_sel.set_items(self._dr_document_id_choice_tuples(row))
@@ -1865,7 +1865,7 @@ class DocumentRevealsEditor(QWidget):
                 self._dr_fl_val.set_value(expr.get("value", True))
             elif kind == 2 and isinstance(expr, dict):
                 self._dr_q_id.blockSignals(True)
-                self._dr_q_id.set_items(self._model.all_quest_ids())
+                self._dr_q_id.set_items(self._model.quest_status_target_ids())
                 self._dr_q_id.set_current(str(expr.get("quest", "")).strip())
                 self._dr_q_id.blockSignals(False)
                 qs = str(expr.get("questStatus", expr.get("status", "Completed")))

@@ -16,6 +16,7 @@ export type ConditionTrace =
   | { kind: 'scenario'; result: boolean; label: string }
   | { kind: 'scenarioLine'; result: boolean; label: string }
   | { kind: 'narrative'; result: boolean; label: string }
+  | { kind: 'narrativeCount'; result: boolean; label: string }
   | { kind: 'plane'; result: boolean; label: string }
   | { kind: 'unknown'; result: boolean; label: string };
 
@@ -44,6 +45,8 @@ export interface ConditionEvalContext {
     isOwnerStateActive?(ownerType: string, ownerId: string, stateId: string): boolean;
     /** 诊断用（dev 悬垂引用检测）：判定图/状态是否存在于注册数据；图册未就绪返回 'unavailable'。 */
     classifyStateRef?(graphId: string, stateId: string): 'ok' | 'missingGraph' | 'missingState' | 'unavailable';
+    /** 活计原型累计结算计数（narrativeCount 叶）。exitStateId 缺省=全部出口合计。未注入时按 0 计。 */
+    getSettledRunCount?(archetypeId: string, exitStateId?: string): number;
   };
   /**
    * Flag 条件叶子中 `value` 为 string 时，比较前调用（与 resolveDisplayText 一致，支持 [tag:…]）。
@@ -135,6 +138,32 @@ function isNarrativeStateLeaf(x: ConditionExpr): x is { narrative: string; state
     m.quest === undefined &&
     m.scenario === undefined
   );
+}
+
+function isNarrativeCountLeaf(x: ConditionExpr): x is {
+  narrativeCount: string; exitState?: string; op?: '==' | '!=' | '>' | '>=' | '<' | '<='; value: number;
+} {
+  const m = x as { narrativeCount?: unknown; value?: unknown };
+  return typeof m.narrativeCount === 'string' && typeof m.value === 'number';
+}
+
+function evalNarrativeCountLeaf(
+  expr: { narrativeCount: string; exitState?: string; op?: string; value: number },
+  ctx: ConditionEvalContext,
+): boolean {
+  const archetype = expr.narrativeCount.trim();
+  if (!archetype || !Number.isFinite(expr.value)) return false;
+  const exit = typeof expr.exitState === 'string' && expr.exitState.trim() ? expr.exitState.trim() : undefined;
+  const count = ctx.narrativeState?.getSettledRunCount?.(archetype, exit) ?? 0;
+  switch (expr.op ?? '>=') {
+    case '==': return count === expr.value;
+    case '!=': return count !== expr.value;
+    case '>': return count > expr.value;
+    case '>=': return count >= expr.value;
+    case '<': return count < expr.value;
+    case '<=': return count <= expr.value;
+    default: return false;
+  }
 }
 
 function isAllNode(x: ConditionExpr): x is { all: ConditionExpr[] } {
@@ -296,6 +325,10 @@ export function evaluateConditionExpr(
     return evalNarrativeLeaf(graphId, stateId, narrativeLeafReached(expr), ctx);
   }
 
+  if (isNarrativeCountLeaf(expr)) {
+    return evalNarrativeCountLeaf(expr, ctx);
+  }
+
   if (isPlaneLeaf(expr)) {
     return evalPlaneLeaf(expr, ctx);
   }
@@ -392,6 +425,16 @@ export function evaluateConditionExprWithTrace(
       ? `narrative「${ref}」期望 reached=${stateId || '—'}，当前=${got ?? '—'}`
       : `narrative「${ref}」期望=${stateId || '—'}实际=${got ?? '—'}`;
     return { result: ok, trace: { kind: 'narrative', result: ok, label } };
+  }
+
+  if (isNarrativeCountLeaf(expr)) {
+    const ok = evalNarrativeCountLeaf(expr, ctx);
+    const got = ctx.narrativeState?.getSettledRunCount?.(
+      expr.narrativeCount.trim(),
+      typeof expr.exitState === 'string' && expr.exitState.trim() ? expr.exitState.trim() : undefined,
+    ) ?? 0;
+    const label = `narrativeCount「${expr.narrativeCount}」${expr.exitState ? `[${expr.exitState}]` : ''} ${expr.op ?? '>='} ${expr.value}，实际=${got}`;
+    return { result: ok, trace: { kind: 'narrativeCount', result: ok, label } };
   }
 
   if (isPlaneLeaf(expr)) {

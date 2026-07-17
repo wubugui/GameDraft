@@ -2586,6 +2586,9 @@ def _is_condition_shape(expr: Any) -> bool:
         return True
     if isinstance(expr.get("plane"), str):
         return bool(expr["plane"].strip())
+    # 叙事活计计数叶（S1 v2）：narrativeCount 需数值 value（活计当前态用普通 narrative 叶）。
+    if isinstance(expr.get("narrativeCount"), str):
+        return isinstance(expr.get("value"), (int, float)) and not isinstance(expr.get("value"), bool)
     return False
 
 

@@ -83,3 +83,27 @@ def test_editor_and_validator_present_types_agree() -> None:
         "编辑器 PRESENT_TYPES 与 validator._CUTSCENE_PRESENT_TYPES 不一致："
         f"仅编辑器={sorted(editor - validator)} 仅校验器={sorted(validator - editor)}"
     )
+
+
+def test_camera_easing_three_way_parity() -> None:
+    """cameraMove/cameraZoom 的 easing 词表三方镜像：
+    运行时 CutsceneManager.CUTSCENE_CAMERA_EASINGS（解析闸门）、
+    编辑器 timeline_editor._CAMERA_EASING_ROWS（下拉候选，空值=不写键除外）、
+    校验器 validator._PARALLAX_EASINGS（validate-data error 闸门）。
+    """
+    text = (REPO / "src/systems/CutsceneManager.ts").read_text("utf-8")
+    m = re.search(
+        r"CUTSCENE_CAMERA_EASINGS[^=]*=\s*new Set\(\[([^\]]*)\]\)", text)
+    assert m, "未找到 CutsceneManager 的 CUTSCENE_CAMERA_EASINGS 定义"
+    runtime = set(re.findall(r"'([A-Za-z]+)'", m.group(1)))
+
+    from tools.editor.editors.timeline_editor import _CAMERA_EASING_ROWS
+    editor = {v for _, v in _CAMERA_EASING_ROWS if v}
+
+    from tools.editor.validator import _PARALLAX_EASINGS
+    validator = set(_PARALLAX_EASINGS)
+
+    assert runtime == editor == validator, (
+        "easing 词表三方漂移："
+        f"运行时={sorted(runtime)} 编辑器={sorted(editor)} 校验器={sorted(validator)}"
+    )

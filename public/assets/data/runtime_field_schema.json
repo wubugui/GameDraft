@@ -55,6 +55,20 @@
       "picker": "portraitSlug",
       "apply": "none",
       "label": "portraitSlug（对话头像立绘集）"
+    },
+    "scale": {
+      "kind": "number",
+      "persistent": true,
+      "picker": "plain",
+      "apply": "transform",
+      "label": "scale（实例等比缩放）"
+    },
+    "rotation": {
+      "kind": "number",
+      "persistent": true,
+      "picker": "plain",
+      "apply": "transform",
+      "label": "rotation（实例旋转，度）"
     }
   },
   "hotspot": {
@@ -85,6 +99,20 @@
       "picker": "hotspotDisplayImage",
       "apply": "reloadHotspotDisplayImage",
       "label": "displayImage"
+    },
+    "scale": {
+      "kind": "number",
+      "persistent": true,
+      "picker": "plain",
+      "apply": "transform",
+      "label": "scale（实例等比缩放）"
+    },
+    "rotation": {
+      "kind": "number",
+      "persistent": true,
+      "picker": "plain",
+      "apply": "transform",
+      "label": "rotation（实例旋转，度）"
     }
   }
 }

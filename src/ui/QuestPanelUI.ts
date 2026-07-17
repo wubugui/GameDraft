@@ -25,6 +25,8 @@ export class QuestPanelUI {
   private onWheelBound: (e: WheelEvent) => void;
   private onScrollKeyBound: (e: KeyboardEvent) => void;
   private resolveDisplay: ((s: string) => string) | null = null;
+  /** 面板"追踪"点击→激活活计（组装层注入 activateNarrativeRun；走队列，await 后重建面板） */
+  private activateRunHandler: ((graphId: string) => Promise<void>) | null = null;
 
   constructor(renderer: Renderer, questData: IQuestDataProvider, strings: StringsProvider) {
     this.renderer = renderer;
@@ -32,6 +34,10 @@ export class QuestPanelUI {
     this.strings = strings;
     this.onWheelBound = this.onWheel.bind(this);
     this.onScrollKeyBound = this.onScrollKey.bind(this);
+  }
+
+  setActivateRunHandler(fn: ((graphId: string) => Promise<void>) | null): void {
+    this.activateRunHandler = fn;
   }
 
   setResolveDisplay(fn: ((s: string) => string) | null): void {
@@ -149,6 +155,45 @@ export class QuestPanelUI {
     }
     cy += SECTION_GAP;
 
+    // -- Repeatable jobs（零活：活计图运行镜像，无状态机，条目由生命周期派生） --
+    const repeatables = this.questData.getRepeatableQuestEntries();
+    if (repeatables.length > 0) {
+      addSectionLabel(this.strings.get('quest', 'repeatable', { count: repeatables.length }));
+      for (const entry of repeatables) {
+        const { def, run } = entry;
+        const archiveText = run.settled
+          .map((s) => this.strings.get('quest', 'runArchive', { label: this.r(s.label), count: s.count }))
+          .join('，');
+        if (run.active !== undefined) {
+          // 有实例：标题带单号 + 追踪状态；未激活的可点击追踪
+          const ordinal = this.strings.get('quest', 'runOrdinal', { n: run.ordinal });
+          const marker = run.activated
+            ? this.strings.get('quest', 'runTracked')
+            : this.strings.get('quest', 'runSuspended');
+          const stateLine = this.strings.get('quest', 'runCurrent', { state: this.r(run.activeLabel ?? '') });
+          const desc = archiveText ? `${stateLine}\n${archiveText}` : stateLine;
+          const clickY = cy;
+          addQuestEntry(`${this.r(def.title)}（${ordinal}）${marker}`, `${desc}\n${this.r(def.description)}`,
+            run.activated ? UITheme.colors.questMain : UITheme.colors.questSide, UITheme.colors.descTextDim);
+          if (!run.activated && this.activateRunHandler) {
+            // 点击标题行=追踪（激活槽切换走叙事队列，完成后重建面板反映新状态）
+            const hit = new Graphics();
+            hit.rect(0, clickY, wrapWidth + 20, 20);
+            hit.fill({ color: 0xffffff, alpha: 0.001 });
+            hit.eventMode = 'static';
+            hit.cursor = 'pointer';
+            const gid = run.graphId;
+            hit.on('pointertap', () => { void this.onActivateRun(gid); });
+            content.addChild(hit);
+          }
+        } else {
+          // 无实例但有结算历史：只展示归档汇总
+          addQuestEntry(this.r(def.title), archiveText, UITheme.colors.questCompleted, UITheme.colors.hint);
+        }
+      }
+      cy += SECTION_GAP;
+    }
+
     // -- Completed quests --
     const completedQuests = this.questData.getCompletedQuests();
     addSectionLabel(this.strings.get('quest', 'completed', { count: completedQuests.length }));
@@ -208,6 +253,23 @@ export class QuestPanelUI {
 
     this.renderer.uiLayer.addChild(this.container);
     fadeIn(this.container);
+  }
+
+  /** 追踪点击：激活活计（走叙事队列）后原地重建，反映新的追踪/挂起标记 */
+  private async onActivateRun(graphId: string): Promise<void> {
+    if (!this.activateRunHandler) return;
+    try {
+      await this.activateRunHandler(graphId);
+    } catch (e) {
+      console.warn('QuestPanelUI: activate run failed', e);
+    }
+    if (!this._isOpen) return;
+    if (this.container) {
+      if (this.container.parent) this.container.parent.removeChild(this.container);
+      this.container.destroy({ children: true });
+      this.container = null;
+    }
+    this.build();
   }
 
   private onWheel(e: WheelEvent): void {

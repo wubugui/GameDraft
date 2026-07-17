@@ -1,5 +1,19 @@
 import { BlurFilter, Container, Sprite, Texture, Rectangle } from 'pixi.js';
-import type { AnimationSetDef, AnimationStateDef } from '../data/types';
+import type { AnimationPlaybackParams, AnimationSetDef, AnimationStateDef } from '../data/types';
+
+/** 步速匹配倍率夹取范围：帧动画循环被拉出此区间会明显难看（步频与素材脱节） */
+export const LOCOMOTION_RATE_MIN = 0.5;
+export const LOCOMOTION_RATE_MAX = 2;
+
+/** 显式播放倍率的合法区间（防 0/负数/极端值把 update 帧步进循环拖垮） */
+const PLAYBACK_SPEED_MIN = 0.1;
+const PLAYBACK_SPEED_MAX = 10;
+
+function normalizePlaybackSpeed(raw: unknown): number {
+  const v = Number(raw);
+  if (!Number.isFinite(v) || v <= 0) return 1;
+  return Math.min(PLAYBACK_SPEED_MAX, Math.max(PLAYBACK_SPEED_MIN, v));
+}
 import {
   blurStrengthFromPixelDensityK,
   computePixelDensityK,
@@ -41,6 +55,12 @@ export class SpriteEntity {
   private frameTimer: number = 0;
   private playing: boolean = false;
   private onCompleteCallback: (() => void) | null = null;
+  /** 播放倍率（显式参数或步速匹配写入；playAnimation 切状态时重置为 1） */
+  private playbackSpeed: number = 1;
+  /** true = 反向步进（末帧→首帧） */
+  private playbackReverse: boolean = false;
+  /** 非循环片段完成后自动切换的状态名（按默认参数播放） */
+  private pendingThenState: string | null = null;
   /** 逻辑状态名（如 idle）-> anim.json 中的 states 键；未配置则同名 */
   private logicalToClip: Map<string, string> = new Map();
 
@@ -108,6 +128,9 @@ export class SpriteEntity {
     this.frameTimer = 0;
     this.playing = false;
     this.onCompleteCallback = null;
+    this.playbackSpeed = 1;
+    this.playbackReverse = false;
+    this.pendingThenState = null;
     this.currentState = '';
   }
 
@@ -136,9 +159,14 @@ export class SpriteEntity {
     return this.logicalToClip.get(stateName) ?? stateName;
   }
 
-  playAnimation(stateName: string, onComplete?: () => void): void {
+  /**
+   * 播放状态。`playback` 缺省时与旧签名行为完全一致（同状态播放中重入为幂等 no-op——
+   * Player.update 每帧调用依赖此路径）；显式携带 `playback` 时总是按新参数重启片段，
+   * 语义可预期（内容侧动作是一次性触发，不走每帧路径）。
+   */
+  playAnimation(stateName: string, onComplete?: () => void, playback?: AnimationPlaybackParams): void {
     const clip = this.resolveClip(stateName);
-    if (this.currentState === clip && this.playing) return;
+    if (!playback && this.currentState === clip && this.playing) return;
 
     const frameDef = this.animDef?.states[clip];
     const textures = this.frames.get(clip);
@@ -147,11 +175,32 @@ export class SpriteEntity {
     this.currentState = clip;
     this.currentFrames = textures;
     this.currentFrameDef = frameDef;
-    this.frameIndex = 0;
     this.frameTimer = 0;
-    this.playing = true;
     this.onCompleteCallback = onComplete ?? null;
-    this.sprite.texture = textures[0];
+    this.playbackSpeed = playback?.speed !== undefined ? normalizePlaybackSpeed(playback.speed) : 1;
+    this.playbackReverse = playback?.reverse === true;
+    const thenState = playback?.thenState?.trim();
+    this.pendingThenState = thenState || null;
+
+    const hold = playback?.holdFrame;
+    const start = playback?.startFrame;
+    if (typeof hold === 'number' && Number.isFinite(hold)) {
+      const n = textures.length;
+      this.frameIndex = ((Math.trunc(hold) % n) + n) % n;
+      this.playing = false;
+      this.pendingThenState = null;
+    } else if (typeof start === 'number' && Number.isFinite(start)) {
+      // 起播帧（去同步错相）：正/反向都从此帧开始步进
+      const n = textures.length;
+      this.frameIndex = ((Math.trunc(start) % n) + n) % n;
+      this.playing = true;
+    } else {
+      this.frameIndex = this.playbackReverse ? textures.length - 1 : 0;
+      this.playing = true;
+    }
+    this.sprite.texture = textures[this.frameIndex];
+    // 帧框尺寸可能逐帧不同（atlasFrames），起播/定格帧非 0 时须立刻按所示帧重算缩放
+    this.applySpriteScale();
   }
 
   setDirection(dx: number, _dy: number): void {
@@ -169,19 +218,22 @@ export class SpriteEntity {
     this.frameTimer += dt;
     const fpsRaw = Number(this.currentFrameDef.frameRate);
     const fps = Number.isFinite(fpsRaw) && fpsRaw > 0 ? fpsRaw : 8;
-    const frameDuration = 1 / fps;
+    const frameDuration = 1 / (fps * this.playbackSpeed);
 
     while (this.frameTimer >= frameDuration) {
       this.frameTimer -= frameDuration;
-      this.frameIndex++;
+      this.frameIndex += this.playbackReverse ? -1 : 1;
 
-      if (this.frameIndex >= this.currentFrames.length) {
+      if (this.frameIndex < 0 || this.frameIndex >= this.currentFrames.length) {
         if (this.currentFrameDef.loop) {
-          this.frameIndex = 0;
+          this.frameIndex = this.playbackReverse ? this.currentFrames.length - 1 : 0;
         } else {
-          this.frameIndex = this.currentFrames.length - 1;
+          this.frameIndex = this.playbackReverse ? 0 : this.currentFrames.length - 1;
           this.playing = false;
           this.onCompleteCallback?.();
+          const next = this.pendingThenState;
+          this.pendingThenState = null;
+          if (next) this.playAnimation(next);
           break;
         }
       }
@@ -227,12 +279,29 @@ export class SpriteEntity {
     };
   }
 
-  /** 固定时钟门禁起点：保留当前动画状态/播放标志，只归零游标与余量。 */
+  /**
+   * 步速匹配：当前状态声明了 referenceSpeed 时，按实际移动速度缩放播放倍率（夹取
+   * LOCOMOTION_RATE_MIN..MAX 防丑）；未声明或速度非法时回到 1 倍速。移动驱动方每帧调用，
+   * 只改倍率不重启片段。
+   */
+  applyLocomotionSpeed(worldSpeed: number): void {
+    const ref = Number(this.currentFrameDef?.referenceSpeed);
+    if (!Number.isFinite(ref) || ref <= 0 || !Number.isFinite(worldSpeed) || worldSpeed <= 0) {
+      this.playbackSpeed = 1;
+      return;
+    }
+    this.playbackSpeed = Math.min(
+      LOCOMOTION_RATE_MAX,
+      Math.max(LOCOMOTION_RATE_MIN, worldSpeed / ref),
+    );
+  }
+
+  /** 固定时钟门禁起点：保留当前动画状态/播放标志，只归零游标与余量（反向播放起点为末帧）。 */
   resetAnimationClock(): void {
-    this.frameIndex = 0;
+    this.frameIndex = this.playbackReverse ? Math.max(0, this.currentFrames.length - 1) : 0;
     this.frameTimer = 0;
     if (this.currentFrames.length > 0) {
-      this.sprite.texture = this.currentFrames[0];
+      this.sprite.texture = this.currentFrames[this.frameIndex];
       this.applySpriteScale();
     }
   }
@@ -249,11 +318,16 @@ export class SpriteEntity {
     this.syncPosition();
   }
 
-  /** 暂停 / 恢复帧推进（供预览工具）。恢复时若已到非循环末帧则从头。 */
+  /** 暂停 / 恢复帧推进（供预览工具）。恢复时若已到非循环终点帧则回到起点帧（反向播放的终点是首帧）。 */
   setPlaying(playing: boolean): void {
     if (playing && !this.playing && this.currentFrames.length > 0) {
-      if (this.frameIndex >= this.currentFrames.length - 1 && !this.currentFrameDef?.loop) {
-        this.frameIndex = 0;
+      if (!this.currentFrameDef?.loop) {
+        const atEnd = this.playbackReverse
+          ? this.frameIndex <= 0
+          : this.frameIndex >= this.currentFrames.length - 1;
+        if (atEnd) {
+          this.frameIndex = this.playbackReverse ? this.currentFrames.length - 1 : 0;
+        }
       }
     }
     this.playing = playing && this.currentFrames.length > 0;

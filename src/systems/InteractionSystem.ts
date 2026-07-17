@@ -169,7 +169,7 @@ export class InteractionSystem implements IGameSystem {
       if (hotspot.def.autoTrigger && this.autoTriggeredInRange.has(hotspot)) {
         const dxA = pos.x - hotspot.centerX;
         const dyA = pos.y - hotspot.centerY;
-        if (Math.sqrt(dxA * dxA + dyA * dyA) > hotspot.def.interactionRange) {
+        if (Math.sqrt(dxA * dxA + dyA * dyA) > hotspot.effectiveInteractionRange) {
           this.autoTriggeredInRange.delete(hotspot);
         }
       }
@@ -184,7 +184,7 @@ export class InteractionSystem implements IGameSystem {
       const dy = pos.y - hotspot.centerY;
       const dist = Math.sqrt(dx * dx + dy * dy);
 
-      if (dist <= hotspot.def.interactionRange && dist < closestDist) {
+      if (dist <= hotspot.effectiveInteractionRange && dist < closestDist) {
         closestTarget = { kind: 'hotspot', hotspot };
         closestDist = dist;
       }
@@ -199,7 +199,7 @@ export class InteractionSystem implements IGameSystem {
       const dy = pos.y - npc.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
 
-      if (dist <= npc.interactionRange && dist < closestDist) {
+      if (dist <= npc.effectiveInteractionRange && dist < closestDist) {
         closestTarget = { kind: 'npc', npc };
         closestDist = dist;
       }
@@ -292,8 +292,8 @@ export class InteractionSystem implements IGameSystem {
       out.push({
         kind: 'hotspot', id: hotspot.def.id, type: hotspot.def.type,
         x: hotspot.centerX, y: hotspot.centerY,
-        interactionRange: hotspot.def.interactionRange,
-        available, inRange: available && dist <= hotspot.def.interactionRange,
+        interactionRange: hotspot.effectiveInteractionRange,
+        available, inRange: available && dist <= hotspot.effectiveInteractionRange,
         distance: Math.round(dist * 10) / 10,
       });
     }
@@ -307,8 +307,8 @@ export class InteractionSystem implements IGameSystem {
       const dist = Math.sqrt(dx * dx + dy * dy);
       out.push({
         kind: 'npc', id: npc.entityId, x: npc.x, y: npc.y,
-        interactionRange: npc.interactionRange,
-        available, inRange: available && dist <= npc.interactionRange,
+        interactionRange: npc.effectiveInteractionRange,
+        available, inRange: available && dist <= npc.effectiveInteractionRange,
         distance: Math.round(dist * 10) / 10,
       });
     }

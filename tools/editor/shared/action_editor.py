@@ -144,6 +144,10 @@ _OMIT_WHEN_ABSENT_AND_DEFAULT: dict[str, object] = {
     "flicker": False,
     # giveItem critical（关键给予绕过槽上限）为可选：原本没有且未勾选时不写出
     "critical": False,
+    # playNpcAnimation 可选播放参数（reverse 倒放 / thenState 播完自动切换）：
+    # 原本没有且仍为中性默认时不写出（speed/holdFrame 走 _ACTION_PARAM_RUNTIME_DEFAULTS）
+    "reverse": False,
+    "thenState": "",
     # enableRuleOffers.slots / chooseAction.options：原本没有该键且列表仍为空时不写出，
     # 配合"载入空列表不再自动注入空行"，保证 slots:[] / options:[] 与缺键两种旧形状均往返不漂移。
     "slots": [],
@@ -184,16 +188,26 @@ _ACTION_PARAM_RUNTIME_DEFAULTS: dict[tuple[str, str], int] = {
     ("showSpeechBubbleAndWait", "duration"): 1500,
     # moveEntityTo speed ?? 80
     ("moveEntityTo", "speed"): 80,
+    # moveGroupBy speed 缺省=0（瞬移分支）；登记后"未填 speed"打开保存不注入键（审查 P1-1）
+    ("moveGroupBy", "speed"): 0,
     # sugarWheelShowSpeech durationMs 缺省=实例 speechDurationMs（兜底 3000）：
     # seed 3000 防"打开即写 0→被 Math.max 钳成 500ms"；缺键且仍 3000 时不写出。
     ("sugarWheelShowSpeech", "durationMs"): 3000,
     # setSmell intensity 缺省 60（SmellSystem.ts:23）
     ("setSmell", "intensity"): 60,
+    # playNpcAnimation 可选播放参数：speed 倍率缺省 1（原速）；holdFrame 定格帧缺省 -1
+    #（-1=不定格，0 是合法帧号所以不能用 0 当哨兵）。缺键且仍为缺省时不回写。
+    # 注：speed 是 float 控件（seed 在 float 分支特判硬编码 1.0），此处登记只用于往返剔除
+    #（1.0 == 1 成立）；holdFrame 的 seed 与剔除都由本表驱动。
+    ("playNpcAnimation", "speed"): 1,
+    ("playNpcAnimation", "holdFrame"): -1,
 }
 
 ACTION_TYPES = [
     "runActions", "chooseAction", "randomBranch",
-    "setFlag", "setScenarioPhase", "startScenario", "activateScenario", "completeScenario", "emitNarrativeSignal", "setNarrativeState", "appendFlag", "giveItem", "removeItem", "giveCurrency", "removeCurrency",
+    "setFlag", "setScenarioPhase", "startScenario", "activateScenario", "completeScenario", "emitNarrativeSignal", "setNarrativeState",
+    "startNarrativeRun", "resetNarrativeRun", "revertNarrativeRun", "activateNarrativeRun",
+    "appendFlag", "giveItem", "removeItem", "giveCurrency", "removeCurrency",
     "giveRule", "grantRuleLayer", "giveFragment", "updateQuest", "startEncounter",
     "playBgm", "stopBgm", "playSfx", "stopSceneAmbient", "endDay", "addDelayedEvent",
     "addArchiveEntry", "startCutscene", "startWaterMinigame", "startSugarWheelMinigame", "startPaperCraftMinigame",
@@ -221,6 +235,7 @@ ACTION_TYPES = [
     "waitMs",
     "enableRuleOffers", "disableRuleOffers",
     "moveEntityTo", "faceEntity", "cutsceneSpawnActor", "cutsceneRemoveActor", "showEmoteAndWait", "showSpeechBubbleAndWait",
+    "setGroupEnabled", "moveGroupBy",
 ]
 
 DEBUG_ONLY_ACTION_TYPES = {"setNarrativeState"}
@@ -252,6 +267,8 @@ _SELECTOR_KIND_UNIVERSE: dict[str, str] = {
     "paper_craft_minigame": "paper_craft_minigames",
     "pressure_hold": "pressure_holds",
     "signal_cue": "signal_cues",
+    # 叙事活计生命周期（S1）：候选=声明 run 的活计图，宇宙沿用 narrative 条件叶的图 id 集合
+    "narrative_run_archetype": "narrative_graph_ids",
 }
 
 
@@ -275,6 +292,10 @@ ACTION_PERSISTENCE: dict[str, str] = {
     "completeScenario": "save",
     "emitNarrativeSignal": "save",
     "setNarrativeState": "save",
+    "startNarrativeRun": "save",
+    "resetNarrativeRun": "save",
+    "revertNarrativeRun": "save",
+    "activateNarrativeRun": "save",
     "appendFlag": "save",
     "giveItem": "save",
     "removeItem": "save",
@@ -368,6 +389,8 @@ ACTION_PERSISTENCE: dict[str, str] = {
     "cutsceneRemoveActor": "memory",
     "showEmoteAndWait": "memory",
     "showSpeechBubbleAndWait": "memory",
+    "setGroupEnabled": "memory",
+    "moveGroupBy": "memory",
 }
 
 ACTION_SAVE_DOT_TOOLTIP = (
@@ -410,6 +433,11 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "setFlag": [("key", "str"), ("value", "flag_val")],
     "emitNarrativeSignal": [("signal", "str"), ("sourceType", "str"), ("sourceId", "str")],
     "setNarrativeState": [("graphId", "str"), ("stateId", "str")],
+    # 叙事活计生命周期（S1）：graphId=活计图；revert 的 stateId=回退目标状态（S2 升级为该图状态选择器）。
+    "startNarrativeRun": [("graphId", "str")],
+    "resetNarrativeRun": [("graphId", "str")],
+    "revertNarrativeRun": [("graphId", "str"), ("stateId", "str")],
+    "activateNarrativeRun": [("graphId", "str")],
     "appendFlag": [("key", "str"), ("text", "str")],
     "addFlagValue": [("key", "str"), ("delta", "float")],
     "startPressureHold": [("id", "str")],
@@ -464,7 +492,14 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
         ("anchorOffsetX", "float"),
         ("anchorOffsetY", "float"),
     ],
-    "playNpcAnimation": [("target", "str"), ("state", "str")],
+    "playNpcAnimation": [
+        ("target", "str"),
+        ("state", "str"),
+        ("speed", "float"),
+        ("reverse", "bool"),
+        ("holdFrame", "int"),
+        ("thenState", "str"),
+    ],
     "setEntityEnabled": [("target", "str"), ("enabled", "bool")],
     "openShop": [("shopId", "str")],
     "switchScene": [("targetScene", "str"), ("targetSpawnPoint", "str")],
@@ -519,6 +554,15 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
         ("duration", "float"),
         ("anchorOffsetX", "float"),
         ("anchorOffsetY", "float"),
+    ],
+    # 分组批量：group 是纯标签（非实体 id 引用，勿登记 ENTITY_REF_PARAMS）；
+    # 组存在性 validator 检查暂缺（已知限制，见设计稿第八节 4），主创作路径是实体树指派。
+    "setGroupEnabled": [("group", "str"), ("enabled", "bool")],
+    "moveGroupBy": [
+        ("group", "str"),
+        ("dx", "float"),
+        ("dy", "float"),
+        ("speed", "float"),
     ],
 }
 
@@ -2566,13 +2610,28 @@ class ActionRow(QWidget):
         bt_w.currentTextChanged.connect(refresh_entry)
         refresh_entry()
 
-    def _connect_play_npc_animation_pickers(self, *, initial_state: str) -> None:
+    def _connect_play_npc_animation_pickers(self, *, initial_state: str, initial_then: str = "") -> None:
         tgt_w = self._param_widgets.get("target")
         st_w = self._param_widgets.get("state")
+        then_w = self._param_widgets.get("thenState")
         if not isinstance(tgt_w, IdRefSelector) or not isinstance(st_w, FilterableTypeCombo):
             return
         init_st = (initial_state or "").strip()
+        init_then = (initial_then or "").strip()
         _refresh_calls = 0
+
+        def _apply_states(
+            combo: FilterableTypeCombo, placeholder: str, states: list[str], cur: str,
+        ) -> None:
+            rows: list[tuple[str, str]] = [(placeholder, "")]
+            rows.extend((s, s) for s in states)
+            combo.set_entries(rows)
+            if cur in states or cur == "":
+                combo.set_committed_type(cur)
+            else:
+                # 悬垂值保值展示（共享控件保值契约），绝不静默清空/顶替
+                combo.set_entries([(f"(数据) {cur}", cur)] + rows[1:])
+                combo.set_committed_type(cur)
 
         def refresh_state(_: str = "") -> None:
             nonlocal _refresh_calls
@@ -2584,19 +2643,16 @@ class ActionRow(QWidget):
                 if m
                 else []
             )
-            rows: list[tuple[str, str]] = [("（选 state）", "")]
-            rows.extend((s, s) for s in states)
             cur = st_w.committed_type().strip()
             if _refresh_calls == 1 and not cur and init_st:
                 cur = init_st
-            st_w.set_entries(rows)
-            if cur in states or cur == "":
-                st_w.set_committed_type(cur)
-            elif cur:
-                st_w.set_entries([(f"(数据) {cur}", cur)] + rows[1:])
-                st_w.set_committed_type(cur)
-            else:
-                st_w.set_committed_type("")
+            _apply_states(st_w, "（选 state）", states, cur)
+            # thenState 与 state 共享同一目标的候选集，一并随 target 刷新
+            if isinstance(then_w, FilterableTypeCombo):
+                cur_then = then_w.committed_type().strip()
+                if _refresh_calls == 1 and not cur_then and init_then:
+                    cur_then = init_then
+                _apply_states(then_w, "（播完不切换）", states, cur_then)
 
         tgt_w.value_changed.connect(refresh_state)
         refresh_state()
@@ -2852,10 +2908,13 @@ class ActionRow(QWidget):
         pairs: list[tuple[str, str]] = []
         if kind == "scene":
             pairs = [(s, s) for s in (m.all_scene_ids() if m else [])]
+        elif kind == "narrative_run_archetype":
+            pairs = [(g, g) for g in (m.narrative_instanced_graph_ids_ordered() if m else [])]
         elif kind == "item":
             pairs = m.all_item_ids() if m else []
         elif kind == "quest":
-            pairs = m.all_quest_ids() if m else []
+            # updateQuest 等状态机目标：排除 repeatable（无状态机可推）
+            pairs = m.quest_status_target_ids() if m else []
         elif kind == "encounter":
             pairs = m.all_encounter_ids() if m else []
         elif kind == "rule":
@@ -4337,6 +4396,12 @@ class ActionRow(QWidget):
                     w.setValue(int(float(val)) if val != "" else int(seed))
                 except (TypeError, ValueError):
                     w.setValue(int(seed))
+                if act_type == "playNpcAnimation" and pname == "holdFrame":
+                    w.setToolTip(
+                        "定格帧：≥0 时切到该状态并停在此帧（0 基，越界按帧数取模），不推进播放——\n"
+                        "把片段任意一帧当 pose 用。-1=不定格（缺省，不写键）。\n"
+                        "定格时 speed/reverse/thenState 不生效。",
+                    )
                 w.valueChanged.connect(self.changed)
             elif ptype == "float":
                 w = QDoubleSpinBox(self)
@@ -4387,6 +4452,19 @@ class ActionRow(QWidget):
                         w.setValue(float(val) if val != "" else 0.0)
                     except (TypeError, ValueError):
                         w.setValue(0.0)
+                elif act_type == "playNpcAnimation" and pname == "speed":
+                    # 播放倍率：seed 1.0（运行时默认原速），量程与 SpriteEntity 夹取一致
+                    w.setRange(0.1, 10.0)
+                    w.setDecimals(2)
+                    w.setSingleStep(0.1)
+                    try:
+                        w.setValue(float(val) if val != "" else 1.0)
+                    except (TypeError, ValueError):
+                        w.setValue(1.0)
+                    w.setToolTip(
+                        "播放速度倍率（乘在该状态 frameRate 上）：1=原速、2=两倍速、0.5=半速。\n"
+                        "保持 1 不写键（沿用运行时默认）。",
+                    )
                 else:
                     # 泛型 float 量程必须容纳世界坐标/大数值（persistNpcAt x/y、addFlagValue delta、
                     # setSceneDepthFloorOffset 等曾被旧 ±50 量程 clamp 毁值）——一律给足量程。
@@ -4407,6 +4485,11 @@ class ActionRow(QWidget):
                         "关键给予：背包满时绕过 12 槽上限也要给到手。\n"
                         "剧情必得道具（分支按 flag 推进、不可再入）勾这个，防止满包时道具永久丢失。"
                     )
+                if act_type == "playNpcAnimation" and pname == "reverse":
+                    w.setToolTip(
+                        "倒放：从末帧向首帧播放；非循环片段在首帧完成（停在首帧）。\n"
+                        "可把开门/起身等动画当关门/坐下复用。缺省不写键。"
+                    )
                 w.stateChanged.connect(self.changed)
             elif ptype == "flag_val":
                 w = FlagValueEdit(self, self._ctx_model.flag_registry if self._ctx_model else {})
@@ -4420,6 +4503,9 @@ class ActionRow(QWidget):
                 w = FlagKeyPickField(self._ctx_model, self._ctx_scene_id, cur, self)
                 w.setMinimumWidth(96)
                 _tag_content_universe(w, "__flag__")
+            elif act_type in ("startNarrativeRun", "resetNarrativeRun", "revertNarrativeRun", "activateNarrativeRun") and pname == "graphId":
+                # 活计图引用（选择器铁律；候选=声明了 run 的图，保值展示未知值）
+                w = self._make_selector("narrative_run_archetype", str(val) if val is not None else "")
             elif act_type == "startPressureHold" and pname == "id":
                 w = self._make_selector("pressure_hold", str(val) if val is not None else "")
             elif act_type == "playSignalCue" and pname == "id":
@@ -4581,6 +4667,13 @@ class ActionRow(QWidget):
             elif act_type == "playNpcAnimation" and pname == "state":
                 w = FilterableTypeCombo([("（选 state）", "")], self, select_only=True)
                 w.typeCommitted.connect(lambda _t: self.changed.emit())
+            elif act_type == "playNpcAnimation" and pname == "thenState":
+                w = FilterableTypeCombo([("（播完不切换）", "")], self, select_only=True)
+                w.setToolTip(
+                    "非循环片段播完后自动切换到的状态（如一次性动作播完自动回 idle）。\n"
+                    "循环片段与定格（holdFrame≥0）时不生效；留空不写键。",
+                )
+                w.typeCommitted.connect(lambda _t: self.changed.emit())
             elif act_type == "setEntityEnabled" and pname == "target":
                 w = self._make_selector("actor", str(val) if val is not None else "")
             elif act_type in ("stopNpcPatrol", "persistNpcDisablePatrol", "persistNpcEnablePatrol") and pname == "npcId":
@@ -4661,6 +4754,7 @@ class ActionRow(QWidget):
         if act_type == "playNpcAnimation":
             self._connect_play_npc_animation_pickers(
                 initial_state=str(params.get("state", "") or ""),
+                initial_then=str(params.get("thenState", "") or ""),
             )
         if act_type in ("persistNpcAnimState", "persistPlayNpcAnimation"):
             self._connect_persist_npc_anim_state_pickers(

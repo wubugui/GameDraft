@@ -36,7 +36,7 @@ import type { SignalCueManager } from '../systems/SignalCueManager';
 import type { HealthSystem } from '../systems/HealthSystem';
 import type { SmellSystem } from '../systems/SmellSystem';
 import type { PlaneReconciler } from '../systems/PlaneReconciler';
-import type { ActionDef, DialogueLine, DialoguePortraitRef, ICutsceneActor, IEmoteBubbleAnchor, ZoneRuleSlot, RuleLayerKey } from '../data/types';
+import type { ActionDef, AnimationPlaybackParams, DialogueLine, DialoguePortraitRef, ICutsceneActor, IEmoteBubbleAnchor, ZoneRuleSlot, RuleLayerKey } from '../data/types';
 import { GameState } from '../data/types';
 import type { SceneEntityKind, RuntimeFieldValue } from '../data/EntityRuntimeFieldSchema';
 import { applyDialogueColonSpeakerFromResolvedText } from './resolveText';
@@ -98,6 +98,37 @@ function parseLooseBooleanParam(raw: unknown): boolean | null {
   if (s === 'true' || s === '1') return true;
   if (s === 'false' || s === '0') return false;
   return null;
+}
+
+/**
+ * playNpcAnimation 的可选播放参数（speed/reverse/holdFrame/thenState）。
+ * 全部缺省或全部非法时返回 undefined——此时走 SpriteEntity 旧调用路径，保留
+ * 「同状态播放中重入幂等」语义；参数存在但非法则告警并忽略该项（容错跳过）。
+ */
+function parseAnimationPlaybackParams(params: Record<string, unknown>): AnimationPlaybackParams | undefined {
+  const out: AnimationPlaybackParams = {};
+  if (params.speed !== undefined && params.speed !== null && String(params.speed).trim() !== '') {
+    const speed = Number(params.speed);
+    if (Number.isFinite(speed) && speed > 0) {
+      out.speed = speed;
+    } else {
+      console.warn(`playNpcAnimation: 非法 speed "${String(params.speed)}"（需 >0），忽略`);
+    }
+  }
+  const reverse = parseLooseBooleanParam(params.reverse);
+  if (reverse === true) out.reverse = true;
+  if (params.holdFrame !== undefined && params.holdFrame !== null && String(params.holdFrame).trim() !== '') {
+    const hold = Number(params.holdFrame);
+    if (Number.isFinite(hold) && hold >= 0) {
+      out.holdFrame = Math.trunc(hold);
+    } else if (!Number.isFinite(hold)) {
+      console.warn(`playNpcAnimation: 非法 holdFrame "${String(params.holdFrame)}"，忽略`);
+    }
+    // 负值（编辑器 -1 哨兵 = 未设）静默跳过，不告警
+  }
+  const thenState = typeof params.thenState === 'string' ? params.thenState.trim() : '';
+  if (thenState) out.thenState = thenState;
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 /**
@@ -454,6 +485,41 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     });
   }, ['signal']);
 
+  // ---- 叙事活计生命周期（S1）：开跑/重来/回退/切激活。结算不设动作（到达 exitStates 自动）。 ----
+  executor.register('startNarrativeRun', (p) => {
+    const graphId = String(p.graphId ?? '').trim();
+    if (!graphId) {
+      console.warn('startNarrativeRun: 需要 graphId（活计图）');
+      return;
+    }
+    return d.narrativeStateManager.startNarrativeRun(graphId);
+  }, ['graphId']);
+
+  executor.register('resetNarrativeRun', (p) => {
+    const graphId = String(p.graphId ?? '').trim();
+    if (!graphId) {
+      console.warn('resetNarrativeRun: 需要 graphId');
+      return;
+    }
+    return d.narrativeStateManager.resetNarrativeRun(graphId);
+  }, ['graphId']);
+
+  executor.register('revertNarrativeRun', (p) => {
+    const graphId = String(p.graphId ?? '').trim();
+    const stateId = String(p.stateId ?? '').trim();
+    if (!graphId || !stateId) {
+      console.warn('revertNarrativeRun: 需要 graphId 与 stateId');
+      return;
+    }
+    return d.narrativeStateManager.revertNarrativeRun(graphId, stateId);
+  }, ['graphId', 'stateId']);
+
+  executor.register('activateNarrativeRun', (p) => {
+    // graphId 传空串=清激活槽（配合任务面板「取消追踪」）。
+    const graphId = String(p.graphId ?? '').trim();
+    return d.narrativeStateManager.activateNarrativeRun(graphId);
+  }, ['graphId']);
+
   // critical=true 为关键给予（剧情必得道具）：绕过背包槽上限——给予分支常按 flag 推进且不可再入，
   // 满包时丢弃即永久丢失。非 critical 失败时 addItem 已弹"包袱满了"，此处仅 warn 留痕
   // （动作批彼此独立，失败不中止批内后续动作；需要事务语义的购买路径见 shopPurchase 的退款处理）。
@@ -774,7 +840,11 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     d.emoteBubbleManager.show(subject, text, parseBubbleDurationParam(p), off);
   }, ['target', 'text', 'duration', 'anchorOffsetX', 'anchorOffsetY']);
 
-  /** `target` 为 NPC id 或 `player`；`state` 为 anim.json 中的状态名（与 `npcAnim` 旧标签语义一致，统一走 Action）。 */
+  /**
+   * `target` 为 NPC id 或 `player`；`state` 为 anim.json 中的状态名（与 `npcAnim` 旧标签语义一致，统一走 Action）。
+   * 可选播放参数 speed（倍率）/ reverse（倒放）/ holdFrame（定格帧，与其余互斥生效）/
+   * thenState（非循环播完自动切换），见 AnimationPlaybackParams；不持久化（进场景不恢复）。
+   */
   executor.register('playNpcAnimation', (p) => {
     const target = String(p.target ?? '').trim();
     const state = String(p.state ?? '').trim();
@@ -787,8 +857,8 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       console.warn(`playNpcAnimation: 找不到实体 "${target}"`);
       return;
     }
-    actor.playAnimation(state);
-  }, ['target', 'state']);
+    actor.playAnimation(state, parseAnimationPlaybackParams(p));
+  }, ['target', 'state', 'speed', 'reverse', 'holdFrame', 'thenState']);
 
   /** `target` 为场景 NPC 的 `id` 或 `player`；`enabled` 为 false 时隐藏实体（不卸载，可再设为 true 显示）。 */
   executor.register('setEntityEnabled', (p) => {
@@ -1373,6 +1443,70 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     const ms = Number.isFinite(durationMs) && durationMs >= 0 ? durationMs : 0;
     if (ms > 0) await new Promise<void>(resolve => setTimeout(resolve, ms));
   }, ['durationMs']);
+
+  // ----------------------------------------------------------------
+  // 分组批量（group 纯标签寻址；P4，设计见 场景编辑器Unity对齐 设计稿 B2）
+  // ----------------------------------------------------------------
+
+  executor.register('setGroupEnabled', (p) => {
+    const group = String(p.group ?? '').trim();
+    const enabled = parseLooseBooleanParam(p.enabled);
+    if (!group || enabled === null) {
+      console.warn(`setGroupEnabled: 需要 group 与合法 enabled（收到 ${String(p.enabled)}）`);
+      return;
+    }
+    // 与 setEntityEnabled 同通道：走 SceneManager 会话桶（重进场景/过场重建
+    // 同会话内保持），不直调实体级 override（那会在实例重建时静默弹回）。
+    let hit = 0;
+    for (const npc of d.sceneManager.getCurrentNpcs()) {
+      if (String(npc.def.group ?? '').trim() === group) {
+        d.sceneManager.setEntitySessionEnabled('npc', npc.def.id, enabled);
+        hit++;
+      }
+    }
+    for (const h of d.sceneManager.getCurrentHotspots()) {
+      if (String(h.def.group ?? '').trim() === group) {
+        d.sceneManager.setEntitySessionEnabled('hotspot', h.def.id, enabled);
+        hit++;
+      }
+    }
+    if (hit === 0) console.warn(`setGroupEnabled: 当前场景没有分组 "${group}" 的实体`);
+  }, ['group', 'enabled']);
+
+  executor.register('moveGroupBy', async (p) => {
+    const group = String(p.group ?? '').trim();
+    const dx = typeof p.dx === 'number' ? p.dx : Number(p.dx);
+    const dy = typeof p.dy === 'number' ? p.dy : Number(p.dy);
+    const speedRaw = p.speed;
+    const speed =
+      speedRaw === undefined ? 0 : typeof speedRaw === 'number' ? speedRaw : Number(speedRaw);
+    if (!group || !Number.isFinite(dx) || !Number.isFinite(dy)) {
+      console.warn('moveGroupBy: 需要 group、有限数值 dx/dy');
+      return;
+    }
+    // 成员各自 世界坐标+delta；带 speed 的 NPC 走 moveTo（返回覆盖真实完成时间的
+    // Promise，Promise.all 封口）；热点/无 speed 即时落位。x/y 语义与 moveEntityTo
+    // 一致（非持久化演出位移）。
+    const moves: Promise<void>[] = [];
+    let hit = 0;
+    for (const npc of d.sceneManager.getCurrentNpcs()) {
+      if (String(npc.def.group ?? '').trim() !== group) continue;
+      hit++;
+      if (Number.isFinite(speed) && speed > 0) {
+        moves.push(npc.moveTo(npc.x + dx, npc.y + dy, speed));
+      } else {
+        npc.x = npc.x + dx;
+        npc.y = npc.y + dy;
+      }
+    }
+    for (const h of d.sceneManager.getCurrentHotspots()) {
+      if (String(h.def.group ?? '').trim() !== group) continue;
+      hit++;
+      h.setPosition(h.def.x + dx, h.def.y + dy);
+    }
+    if (hit === 0) console.warn(`moveGroupBy: 当前场景没有分组 "${group}" 的实体`);
+    if (moves.length > 0) await Promise.all(moves);
+  }, ['group', 'dx', 'dy', 'speed']);
 
   // ----------------------------------------------------------------
   // Cutscene 白名单 Action（无副作用，可出现在 A 类表演中）

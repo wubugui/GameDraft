@@ -1,0 +1,3 @@
+- 现实：吹牛 warp 的「说书」过场在 Claude 浏览器(5178)卡死在 path8 showSubtitle（subtitleAutoAdvance=voice）。**根因已实验确认（探针：20s 内 rAF=0、visibilityState 恒 hidden）**：该浏览器页对页面报告 hidden，Chrome 对 hidden 页 rAF 零调度，只有 CDP 截图/输入会强制 BeginFrame。showSubtitle 的等待经"双 rAF 后武装 resolver"（防同帧点击串步），帧泵光后武装永不发生→点击/skip()（只会落**已武装**的 resolver）/配音 onEnd（AudioContext 在 hidden 页无手势恒 suspended）三条出路全灭=永久悬死。游戏此前"能跑"是因为每次截图泵一帧、计时 tween 按大 dt 一帧追平。
+- 打架的卡：runtime 真机验证配方（"被动等 cutscene 自然放完"）——被动等待恰恰断帧；07-13 跑通是因为逐步操作在持续泵帧。
+- 影响/绕法：无头驱动含 voice 字幕的过场时**每步截一张图当帧泵**，或直接素车 `?mode=dev` 绕过场；真实玩家不受影响（可见页 rAF 常在、点击总可推进）。若要加固自动化可驱动性：arm 改 setTimeout(0)（已有 120ms not-before 防串步）或让 skip() 能收束未武装等待。

@@ -265,6 +265,46 @@ def test_rename_graph_cascades_and_migrations(disk_model: FakeModel) -> None:
     }
 
 
+def test_rename_run_graph_cascades_lifecycle_count_and_run_archetype(disk_model: FakeModel) -> None:
+    """活计三类新引用面跟随改名：生命周期动作 graphId / narrativeCount 叶 / quests.runArchetype；
+    出口状态改名再级联 narrativeCount.exitState 与 revertNarrativeRun.stateId（S2 收尾）。"""
+    main = disk_model.narrative_graphs["compositions"][0]["mainGraph"]
+    main["run"] = {"repeatable": True, "resumable": True}
+    main["entryState"] = "s0"
+    main["exitStates"] = ["s1"]
+    disk_model.scenes["场景1"]["zones"][0]["conditions"] = [
+        {"narrativeCount": "flow_main", "exitState": "s1", "op": ">=", "value": 1},
+    ]
+    disk_model.scenes["场景1"]["hotspots"] = [
+        {"id": "h1", "actions": [
+            {"type": "startNarrativeRun", "params": {"graphId": "flow_main"}},
+            {"type": "revertNarrativeRun", "params": {"graphId": "flow_main", "stateId": "s1"}},
+            {"type": "activateNarrativeRun", "params": {"graphId": "flow_main"}},
+        ]},
+    ]
+    disk_model.quests = [
+        {"id": "q_job", "type": "repeatable", "runArchetype": "flow_main"},
+        {"id": "q_other", "type": "side"},
+    ]
+
+    scan = scan_graph_usages(disk_model, "flow_main")
+    assert scan["runArchetypes"] == 1
+    assert sum(h["count"] for h in scan["external"]) >= 4  # countLeaf 1 + 生命周期动作 3
+
+    rename_graph(disk_model, "flow_main", "flow_job_v2")
+    assert disk_model.scenes["场景1"]["zones"][0]["conditions"][0]["narrativeCount"] == "flow_job_v2"
+    acts = disk_model.scenes["场景1"]["hotspots"][0]["actions"]
+    assert [a["params"]["graphId"] for a in acts] == ["flow_job_v2"] * 3
+    assert disk_model.quests[0]["runArchetype"] == "flow_job_v2"
+    assert disk_model.quests[1] == {"id": "q_other", "type": "side"}, "无 runArchetype 的任务不受波及"
+    assert ("quest", "") in disk_model.dirty
+
+    rename_state(disk_model, "flow_job_v2", "s1", "delivered")
+    assert disk_model.scenes["场景1"]["zones"][0]["conditions"][0]["exitState"] == "delivered"
+    assert acts[1]["params"]["stateId"] == "delivered"
+    assert disk_model.narrative_graphs["compositions"][0]["mainGraph"]["exitStates"] == ["delivered"]
+
+
 def test_rename_state_and_graph_validation_gates(disk_model: FakeModel) -> None:
     with pytest.raises(SignalRefactorError):
         rename_state(disk_model, "flow_main", "s0", "s1")  # 撞既有状态

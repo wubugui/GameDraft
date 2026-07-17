@@ -614,9 +614,14 @@ describe('NarrativeStateManager', () => {
     await narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 'test', signal: 'go' });
     await flush();
     expect(narrative.getActiveState('g')).toBe('b');
+    // v2 存档：v1 兼容字段（activeStates/reachedStates，仅常驻图）照旧携带，另有活计层三字段。
     expect(narrative.serialize()).toEqual({
+      version: 2,
       activeStates: { g: 'b' },
       reachedStates: { g: ['a', 'b'] },
+      runs: {},
+      counters: {},
+      activatedArchetype: null,
     });
 
     narrative.deserialize({ activeStates: { g: 'a' } });
@@ -1066,6 +1071,357 @@ describe('保留前缀信号发射拦截（W5 回归）', () => {
     const reserved = issues.filter((i) => i.code === 'action.signal.reserved');
     expect(reserved).toHaveLength(2);
     expect(reserved.every((i) => i.severity === 'error')).toBe(true);
+  });
+});
+
+/**
+ * 叙事运行实例化 S1（artifact/Design/叙事运行实例化-技术设计-2026-07-17.md）：
+ * 原型/实例分离、生命周期、单激活槽、计数器、存档 v2。
+ */
+describe('叙事活计运行实例化 S1（单活可重复机器）', () => {
+  const JOB: NarrativeGraph = {
+    id: 'job',
+    ownerType: 'scenario',
+    run: { repeatable: true, resumable: true },
+    initialState: 'accepted',
+    entryState: 'accepted',
+    exitStates: ['delivered'],
+    states: {
+      accepted: { id: 'accepted' },
+      doing: { id: 'doing' },
+      delivered: { id: 'delivered' },
+    },
+    transitions: [
+      { id: 't1', from: 'accepted', to: 'doing', signal: 'job_start' },
+      { id: 't2', from: 'doing', to: 'delivered', signal: 'job_deliver' },
+    ],
+  };
+  const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x)) as T;
+
+  it('常驻图注册不变；活计图注册不种实例，start 建实例并激活', async () => {
+    const { narrative } = makeRuntime();
+    narrative.registerGraphs([clone(JOB), {
+      id: 'solo', ownerType: 'flow', initialState: 'a',
+      states: { a: { id: 'a' }, b: { id: 'b' } },
+      transitions: [{ id: 't', from: 'a', to: 'b', signal: 'go' }],
+    }]);
+    expect(narrative.getActiveState('job')).toBeUndefined(); // 活计图无实例
+    expect(narrative.getActiveState('solo')).toBe('a');
+    await narrative.startNarrativeRun('job');
+    await flush();
+    expect(narrative.getActiveState('job')).toBe('accepted');
+    expect(narrative.getActivatedArchetype()).toBe('job');
+    expect(narrative.getActiveRunArchetypes()).toEqual(['job']);
+  });
+
+  it('start 守卫：非活计图拒绝、已有实例拒绝', async () => {
+    const { narrative } = makeRuntime();
+    narrative.registerGraphs([clone(JOB), {
+      id: 'solo', ownerType: 'flow', initialState: 'a', states: { a: { id: 'a' } }, transitions: [],
+    }]);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await narrative.startNarrativeRun('solo');
+    expect(narrative.getActiveRunArchetypes()).toEqual([]);
+    await narrative.startNarrativeRun('job');
+    await narrative.startNarrativeRun('job'); // 已有实例
+    warn.mockRestore();
+    const codes = (narrative.debugSnapshot().recentIssues as Array<{ code: string }>).map((i) => i.code);
+    expect(codes).toContain('run.start.notRunGraph');
+    expect(codes).toContain('run.start.exists');
+  });
+
+  it('信号只推激活活计；到达出口自动结算（计数+删实例+清激活槽）', async () => {
+    const { narrative } = makeRuntime();
+    narrative.registerGraphs([clone(JOB)]);
+    await narrative.startNarrativeRun('job');
+    await narrative.emitNarrativeSignal({ signal: 'job_start' });
+    await flush();
+    expect(narrative.getActiveState('job')).toBe('doing');
+    await narrative.emitNarrativeSignal({ signal: 'job_deliver' });
+    await flush();
+    expect(narrative.getActiveRunArchetypes()).toEqual([]); // 结算删实例
+    expect(narrative.getSettledRunCount('job')).toBe(1);
+    expect(narrative.getSettledRunCount('job', 'delivered')).toBe(1);
+    expect(narrative.getActivatedArchetype()).toBeNull();
+  });
+
+  it('runStarted 事件带单号；getRunPanelInfo 全生命周期派生（S2批2 quest 镜像口）', async () => {
+    const { narrative, eventBus } = makeRuntime();
+    const graph = clone(JOB);
+    (graph.states as Record<string, { id: string; label?: string }>).doing.label = '干着';
+    (graph.states as Record<string, { id: string; label?: string }>).delivered.label = '已交付';
+    narrative.registerGraphs([graph, {
+      id: 'solo', ownerType: 'flow', initialState: 'a', states: { a: { id: 'a' } }, transitions: [],
+    }]);
+    const started: Array<{ archetypeId: string; ordinal: number }> = [];
+    eventBus.on('narrative:runStarted', (p: { archetypeId: string; ordinal: number }) => started.push(p));
+
+    expect(narrative.getRunPanelInfo('solo')).toBeNull();          // 常驻图无面板信息
+    expect(narrative.getRunPanelInfo('missing')).toBeNull();
+    // 无历史：蛰伏
+    expect(narrative.getRunPanelInfo('job')).toMatchObject({ active: undefined, ordinal: 0, activated: false, settled: [] });
+
+    await narrative.startNarrativeRun('job');
+    expect(started).toEqual([{ archetypeId: 'job', ordinal: 1 }]);
+    await narrative.emitNarrativeSignal({ signal: 'job_start' });
+    await flush();
+    expect(narrative.getRunPanelInfo('job')).toMatchObject({
+      active: 'doing', activeLabel: '干着', ordinal: 1, activated: true, suspended: false,
+    });
+    await narrative.emitNarrativeSignal({ signal: 'job_deliver' });
+    await flush();
+    // 结算后：无实例但归档汇总在（label 取出口状态 label）
+    expect(narrative.getRunPanelInfo('job')).toMatchObject({
+      active: undefined, activated: false,
+      settled: [{ exitId: 'delivered', label: '已交付', count: 1 }],
+    });
+    // 第二单：单号=2；挂起态可见
+    await narrative.startNarrativeRun('job');
+    expect(started[1]).toEqual({ archetypeId: 'job', ordinal: 2 });
+    await narrative.activateNarrativeRun('');
+    await flush();
+    expect(narrative.getRunPanelInfo('job')).toMatchObject({ active: 'accepted', ordinal: 2, activated: false, suspended: true });
+  });
+
+  it('narrative 普通叶直读活计当前态（有实例命中、无实例 false）', async () => {
+    const { narrative, flagStore } = makeRuntime();
+    narrative.registerGraphs([clone(JOB), {
+      id: 'watcher', ownerType: 'flow', initialState: 'w0',
+      states: { w0: { id: 'w0' }, w1: { id: 'w1' } },
+      transitions: [{ id: 't', from: 'w0', to: 'w1', signal: '__draft__', trigger: 'reactive',
+        conditions: [{ narrative: 'job', state: 'doing' } as never] }],
+    }]);
+    expect(narrative.getActiveState('watcher')).toBe('w0'); // 无活计实例，条件 false
+    await narrative.startNarrativeRun('job');
+    await narrative.emitNarrativeSignal({ signal: 'job_start' }); // job→doing
+    await flush();
+    void flagStore;
+    expect(narrative.getActiveState('watcher')).toBe('w1'); // 读到活计当前态
+  });
+
+  it('reset 从头再来（回 initialState + 清 reached，静默、cause=reset）', async () => {
+    const { narrative, eventBus } = makeRuntime();
+    narrative.registerGraphs([clone(JOB)]);
+    const causes: string[] = [];
+    eventBus.on('narrative:stateChanged', (p: { cause?: string }) => causes.push(String(p?.cause)));
+    await narrative.startNarrativeRun('job');
+    await narrative.emitNarrativeSignal({ signal: 'job_start' });
+    await flush();
+    expect(narrative.hasReachedState('job', 'doing')).toBe(true);
+    await narrative.resetNarrativeRun('job');
+    await flush();
+    expect(narrative.getActiveState('job')).toBe('accepted');
+    expect(narrative.hasReachedState('job', 'doing')).toBe(false); // reached 清空
+    expect(causes).toContain('reset');
+    const snap = narrative.debugSnapshot() as { runCounters: Record<string, { reset: number }> };
+    expect(snap.runCounters['job']!.reset).toBe(1);
+  });
+
+  it('revert 回退到指定状态（改 active、保留 reached、cause=revert）', async () => {
+    const { narrative } = makeRuntime();
+    narrative.registerGraphs([clone(JOB)]);
+    await narrative.startNarrativeRun('job');
+    await narrative.emitNarrativeSignal({ signal: 'job_start' }); // doing
+    await flush();
+    await narrative.revertNarrativeRun('job', 'accepted');
+    await flush();
+    expect(narrative.getActiveState('job')).toBe('accepted');
+    expect(narrative.hasReachedState('job', 'doing')).toBe(true); // 历史保留
+  });
+
+  it('resumable=true：切走挂起、切回从当前态续；非激活活计冻结不吃信号', async () => {
+    const { narrative } = makeRuntime();
+    const jobB = clone(JOB); jobB.id = 'job2';
+    narrative.registerGraphs([clone(JOB), jobB]);
+    await narrative.startNarrativeRun('job');
+    await narrative.emitNarrativeSignal({ signal: 'job_start' }); // job→doing
+    await flush();
+    await narrative.startNarrativeRun('job2'); // 顶替激活；job 挂起在 doing
+    expect(narrative.getActivatedArchetype()).toBe('job2');
+    expect(narrative.getActiveState('job')).toBe('doing'); // 挂起态保留
+    await narrative.emitNarrativeSignal({ signal: 'job_deliver' }); // 只有激活的 job2 在 accepted，不匹配
+    await flush();
+    expect(narrative.getActiveState('job')).toBe('doing'); // 挂起 job 冻结，未被推进
+    await narrative.activateNarrativeRun('job'); // 切回
+    await narrative.emitNarrativeSignal({ signal: 'job_deliver' }); // job 从 doing 续
+    await flush();
+    expect(narrative.getSettledRunCount('job', 'delivered')).toBe(1);
+  });
+
+  it('resumable=false：切走即弃（删实例+aborted++），切回需 start 重开', async () => {
+    const { narrative } = makeRuntime();
+    const once = clone(JOB); once.run = { repeatable: true, resumable: false };
+    const jobB = clone(JOB); jobB.id = 'job2';
+    narrative.registerGraphs([once, jobB]);
+    await narrative.startNarrativeRun('job');
+    await narrative.startNarrativeRun('job2'); // 顶替；job 非 resumable → 弃置
+    expect(narrative.getActiveState('job')).toBeUndefined();
+    const snap = narrative.debugSnapshot() as { runCounters: Record<string, { aborted: number }> };
+    expect(snap.runCounters['job']!.aborted).toBe(1);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await narrative.activateNarrativeRun('job'); // 无实例，拒绝
+    warn.mockRestore();
+    expect(narrative.getActivatedArchetype()).toBe('job2');
+  });
+
+  it('narrativeCount 条件叶驱动常驻里程碑（交付→计数→reactive 醒）', async () => {
+    const { narrative } = makeRuntime();
+    narrative.registerGraphs([clone(JOB), {
+      id: 'milestone', ownerType: 'flow', initialState: 'waiting',
+      states: { waiting: { id: 'waiting' }, unlocked: { id: 'unlocked' } },
+      transitions: [{
+        id: 't', from: 'waiting', to: 'unlocked', signal: '__draft__', trigger: 'reactiveAll',
+        conditions: [{ narrativeCount: 'job', exitState: 'delivered', op: '>=', value: 1 } as never],
+      }],
+    }]);
+    await narrative.startNarrativeRun('job');
+    await narrative.emitNarrativeSignal({ signal: 'job_start' });
+    expect(narrative.getActiveState('milestone')).toBe('waiting');
+    await narrative.emitNarrativeSignal({ signal: 'job_deliver' });
+    await flush();
+    await flush();
+    expect(narrative.getActiveState('milestone')).toBe('unlocked');
+  });
+
+  it('存档 v2 往返：runs/挂起/计数/激活槽全恢复；v1 旧档升格为纯常驻基线', async () => {
+    const { narrative } = makeRuntime();
+    const jobB = clone(JOB); jobB.id = 'job2';
+    narrative.registerGraphs([clone(JOB), jobB]);
+    await narrative.startNarrativeRun('job');
+    await narrative.emitNarrativeSignal({ signal: 'job_start' }); // job→doing (激活)
+    await narrative.startNarrativeRun('job2'); // job 挂起 doing，job2 激活 accepted
+    await flush();
+    const save = JSON.parse(JSON.stringify(narrative.serialize()));
+    const rt2 = makeRuntime();
+    rt2.narrative.registerGraphs([clone(JOB), clone(jobB)]);
+    rt2.narrative.deserialize(save);
+    expect(rt2.narrative.getActiveState('job')).toBe('doing');
+    expect(rt2.narrative.getActiveState('job2')).toBe('accepted');
+    expect(rt2.narrative.getActivatedArchetype()).toBe('job2');
+    expect(rt2.narrative.getActiveRunArchetypes().sort()).toEqual(['job', 'job2']);
+    // v1 旧档：升格后活计层空
+    const rt3 = makeRuntime();
+    rt3.narrative.registerGraphs([clone(JOB)]);
+    rt3.narrative.deserialize({ activeStates: {}, reachedStates: {} });
+    expect(rt3.narrative.getActiveRunArchetypes()).toEqual([]);
+    expect(rt3.narrative.getActivatedArchetype()).toBeNull();
+  });
+
+  it('旧档常驻条目撞上已改活计图：丢弃点名，不造幽灵实例', async () => {
+    const { narrative } = makeRuntime();
+    narrative.registerGraphs([clone(JOB)]);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    narrative.deserialize({ activeStates: { job: 'doing' }, reachedStates: { job: ['accepted', 'doing'] } });
+    warn.mockRestore();
+    expect(narrative.getActiveState('job')).toBeUndefined();
+    const codes = (narrative.debugSnapshot().recentIssues as Array<{ code: string }>).map((i) => i.code);
+    expect(codes).toContain('save.active.becameRunGraph');
+  });
+
+  it('S1 校验防火墙：run 声明/动作目标/narrativeCount/活计广播 warning/id 字符', () => {
+    const issues = validateNarrativeGraphData({
+      schemaVersion: 3,
+      signals: [{ id: 'go' }],
+      compositions: [{
+        id: 'comp',
+        mainGraph: {
+          id: 'flow',
+          ownerType: 'flow',
+          initialState: 'a',
+          states: {
+            a: { id: 'a' },
+            b: {
+              id: 'b',
+              onEnterActions: [
+                { type: 'startNarrativeRun', params: { graphId: 'flow' } },       // 常驻目标 → notRunGraph
+                { type: 'startNarrativeRun', params: { graphId: 'nope' } },       // 不存在 → graphMissing
+                { type: 'startNarrativeRun', params: { graphId: 'job' } },        // 合法
+                { type: 'revertNarrativeRun', params: { graphId: 'job', stateId: 'ghost' } }, // 状态不存在 → stateMissing
+              ],
+            },
+          },
+          transitions: [
+            { id: 't', from: 'a', to: 'b', signal: 'go' },
+            // 常驻图裸听活计图广播 → warning
+            { id: 't2', from: 'a', to: 'b', signal: 'state:job:delivered' },
+            // narrative 叶指活计图现在合法（单活直读）——不应报 instanced 类 error
+            { id: 't3', from: 'a', to: 'b', signal: 'go', conditions: [{ narrative: 'job', state: 'doing' }] },
+            { id: 't4', from: 'a', to: 'b', signal: 'go', conditions: [
+              { narrativeCount: 'job', exitState: 'delivered', op: '>=', value: 1 },
+              { narrativeCount: 'flow', value: 1 },                                // 非活计图 → notRunGraph
+              { narrativeCount: 'job', exitState: 'doing', value: 1 },             // 非出口 → exitMissing
+            ] },
+          ],
+        },
+        elements: [{
+          id: 'el_job',
+          kind: 'scenarioSubgraph',
+          refId: 'job',
+          graph: {
+            id: 'job',
+            ownerType: 'scenario',
+            run: { repeatable: true },
+            initialState: 'accepted',
+            entryState: 'accepted',
+            exitStates: ['delivered'],
+            states: { accepted: { id: 'accepted', broadcastOnEnter: false }, doing: { id: 'doing' }, delivered: { id: 'delivered', broadcastOnEnter: true } },
+            transitions: [{ id: 't', from: 'accepted', to: 'delivered', signal: 'go' }],
+          },
+        }, {
+          id: 'el_bad',
+          kind: 'wrapperGraph',
+          ownerType: 'npc',
+          ownerId: 'npc_1',
+          graph: {
+            id: 'bad@id',                                                          // → graph.id.delimiter
+            ownerType: 'npc',
+            run: { repeatable: 'yes' as never },                                  // → run.repeatable.invalid + run.wrapper.unsupported
+            initialState: 'x',
+            states: { x: { id: 'x' } },
+            transitions: [],
+          },
+        }],
+      }],
+    });
+    const codes = issues.map((i) => i.code);
+    for (const expected of [
+      'runAction.notRunGraph', 'runAction.graphMissing', 'runAction.stateMissing',
+      'state.broadcast.runSourceListenedByResident',
+      'condition.narrativeCount.notRunGraph',
+      'condition.narrativeCount.exitMissing',
+      'run.repeatable.invalid',
+      'run.wrapper.unsupported',
+      'graph.id.delimiter',
+    ]) {
+      expect(codes, expected).toContain(expected);
+    }
+    // narrative 叶指活计图不再报 instanced 类 error
+    expect(codes).not.toContain('condition.narrative.instanced');
+  });
+
+  it('活计出口可达性：断链出口报 run.exit.unreachable（结算永不发生），可达不报', () => {
+    const mk = (transitions: Array<{ id: string; from: string; to: string; signal: string }>) =>
+      validateNarrativeGraphData({
+        schemaVersion: 2,
+        signals: [{ id: 'a' }, { id: 'b' }],
+        compositions: [{
+          id: 'c',
+          mainGraph: {
+            id: 'j', ownerType: 'flow', initialState: 's0', run: { repeatable: true },
+            entryState: 's0', exitStates: ['done'],
+            states: { s0: { id: 's0' }, mid: { id: 'mid' }, done: { id: 'done' } },
+            transitions,
+          },
+          elements: [],
+        }],
+      } as unknown as NarrativeGraphsFile);
+    const broken = mk([{ id: 't1', from: 's0', to: 'mid', signal: 'a' }]); // done 无入边
+    expect(broken.map((i) => i.code)).toContain('run.exit.unreachable');
+    const ok = mk([
+      { id: 't1', from: 's0', to: 'mid', signal: 'a' },
+      { id: 't2', from: 'mid', to: 'done', signal: 'b' },
+    ]);
+    expect(ok.map((i) => i.code)).not.toContain('run.exit.unreachable');
   });
 });
 

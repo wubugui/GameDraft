@@ -511,6 +511,9 @@ class NodeInspector(QWidget):
         if not pm:
             return []
         try:
+            # quest 叶目标排除 repeatable（无状态机，指向它=校验 error）
+            if hasattr(pm, "quest_status_target_ids"):
+                return list(pm.quest_status_target_ids())
             return list(pm.all_quest_ids())
         except Exception:
             return []

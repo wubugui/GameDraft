@@ -2,13 +2,14 @@ import type { ActionExecutor } from './ActionExecutor';
 import type { AssetManager } from './AssetManager';
 import type { EventBus } from './EventBus';
 import type { FlagStore } from './FlagStore';
-import type { ActionDef, ConditionExpr, GameContext, IGameSystem } from '../data/types';
+import type { ActionDef, ConditionExpr, GameContext, IGameSystem, NarrativeRunPanelInfo } from '../data/types';
 import type { ConditionEvalContext } from '../systems/graphDialogue/evaluateGraphCondition';
 import { evaluateConditionExprList } from '../systems/graphDialogue/conditionEvalBridge';
 import {
   blockingNarrativeValidationErrors,
   validateNarrativeGraphData,
   DEFAULT_NARRATIVE_DRAFT_SIGNAL,
+  DERIVED_NARRATIVE_STATE_SIGNAL_PREFIX,
   type NarrativeValidationIssue,
 } from './narrativeGraphValidation';
 import { reportDevError } from './devErrorOverlay';
@@ -85,6 +86,18 @@ export interface NarrativeTransition {
   priority?: number;
 }
 
+/**
+ * 活计图声明（设计稿 artifact/Design/叙事运行实例化-技术设计-2026-07-17.md v2）：
+ * 声明该图为「可反复运行的活计机器」——每原型至多一个实例（不并发），实例 id 即 graphId。
+ * 缺省（不写）= 常驻图：开机自动一份、永不回收，与历史行为逐字节一致。
+ */
+export interface NarrativeRunDef {
+  /** 走到出口结算后可再次开跑（计数 +1）。 */
+  repeatable?: boolean;
+  /** true=切走时挂起存快照续玩；缺省 false=切走即弃、切回从头。 */
+  resumable?: boolean;
+}
+
 export interface NarrativeGraph {
   id: string;
   label?: string;
@@ -92,12 +105,27 @@ export interface NarrativeGraph {
   ownerId?: string;
   /** Author note/category for wrapper usage grouping in tooling. */
   category?: string;
+  run?: NarrativeRunDef;
   initialState: string;
   entryState?: string;
   exitStates?: string[];
   states: Record<string, NarrativeStateNode>;
   transitions: NarrativeTransition[];
   projectFlags?: boolean;
+}
+
+/** 活计图（有 run 声明）——每原型至多一个实例，弃置/结算时删除条目。 */
+export function isRunGraph(graph: Pick<NarrativeGraph, 'run'> | null | undefined): boolean {
+  return Boolean(graph?.run);
+}
+
+/** 原型累计计数器（随存档持久化；跨轮持久历史的唯一真相）。 */
+export interface NarrativeRunCounters {
+  started: number;
+  reset: number;
+  aborted: number;
+  /** 按出口状态计的结算次数。 */
+  settled: Record<string, number>;
 }
 
 export interface NarrativeGraphsFile {
@@ -149,10 +177,14 @@ export interface NarrativeComposition {
   elements?: NarrativeCompositionElement[];
 }
 
+/** stateChanged 的原因维度（系统层消费者按需过滤；缺省 transition）。 */
+export type NarrativeStateChangeCause = 'transition' | 'reset' | 'revert' | 'resume' | 'settle' | 'discard';
+
 type QueuedTrigger =
   | { kind: 'external'; key: NarrativeTriggerKey; source?: NarrativeSignal }
   | { kind: 'setState'; graphId: string; stateId: string }
-  | { kind: 'reactive'; graphId: string; transitionId: string };
+  | { kind: 'reactive'; graphId: string; transitionId: string }
+  | { kind: 'runLifecycle'; op: 'start' | 'reset' | 'revert' | 'activate'; graphId: string; stateId?: string };
 
 interface QueuedItem {
   trigger: QueuedTrigger;
@@ -189,6 +221,7 @@ export type NarrativeTraceEventType =
   | 'state.command'
   | 'state.changed'
   | 'reactive.queued'
+  | 'run.lifecycle'
   | 'actions.start'
   | 'actions.end'
   | 'actions.failed'
@@ -217,8 +250,18 @@ export class NarrativeStateManager implements IGameSystem {
   private actionExecutor: ActionExecutor;
   private conditionCtxFactory: (() => ConditionEvalContext) | null = null;
   private graphs: Map<string, NarrativeGraph> = new Map();
+  /**
+   * active/reached 两表按 graphId 键控（每原型至多一个实例故 key 即 graphId）：常驻图恒在；
+   * 活计图有实例时在、弃置/结算时删除条目。
+   */
   private activeStates: Map<string, string> = new Map();
   private ownerIndex: Map<string, string[]> = new Map();
+  /** 当前推进的活计图 id（全局单激活槽；只有它参与信号/reactive；随存档持久化）。 */
+  private activatedArchetype: string | null = null;
+  /** 有实例但非激活（挂起冻结，不推进）的活计图 id 集。 */
+  private suspendedRunArchetypes: Set<string> = new Set();
+  /** 原型累计计数器（started/reset/aborted/settled-by-exit；随存档持久化）。 */
+  private runCounters: Map<string, NarrativeRunCounters> = new Map();
   private queue: QueuedItem[] = [];
   private completedQueueItems: QueuedItem[] = [];
   private draining = false;
@@ -375,6 +418,9 @@ export class NarrativeStateManager implements IGameSystem {
     this.activeStates.clear();
     this.reachedStates.clear();
     this.ownerIndex.clear();
+    this.suspendedRunArchetypes.clear();
+    this.runCounters.clear();
+    this.activatedArchetype = null;
     this.primaryOwnerWarningKeys.clear();
     this.listenedSignalKeysCache = null;
     this.reportedUnlistenedSignalKeys.clear();
@@ -401,6 +447,11 @@ export class NarrativeStateManager implements IGameSystem {
         continue;
       }
       this.graphs.set(graph.id, graph);
+      if (isRunGraph(graph)) {
+        // 活计图：只登记形状，不种实例（实例由 startNarrativeRun 创建）；
+        // 不进 owner 索引（@owner/主 wrapper 语义只属常驻图，校验器同口径拦）。
+        continue;
+      }
       this.activeStates.set(graph.id, graph.initialState);
       this.markStateReached(graph.id, graph.initialState);
       this.indexGraphOwner(graph);
@@ -463,6 +514,87 @@ export class NarrativeStateManager implements IGameSystem {
 
   getActiveState(graphId: string): string | undefined {
     return this.activeStates.get(graphId);
+  }
+
+  /**
+   * 信号/reactive 扫描的迭代单位：全部常驻图 + 激活的那一张活计图（若有）。
+   * 挂起活计图冻结、不参与推进（拍板：非激活活计不会推进也不会失败）。
+   */
+  private listLiveGraphEntries(): Array<[string, NarrativeGraph]> {
+    const out: Array<[string, NarrativeGraph]> = [];
+    for (const [gid, graph] of this.graphs) {
+      if (!isRunGraph(graph)) {
+        out.push([gid, graph]);
+      } else if (gid === this.activatedArchetype && this.activeStates.has(gid)) {
+        out.push([gid, graph]);
+      }
+    }
+    return out;
+  }
+
+  /** 有实例（激活或挂起）的活计图 id 列表——诊断/派生用。 */
+  getActiveRunArchetypes(): string[] {
+    const out: string[] = [];
+    for (const [gid, graph] of this.graphs) {
+      if (isRunGraph(graph) && this.activeStates.has(gid)) out.push(gid);
+    }
+    return out;
+  }
+
+  /** 常驻图 + 有实例的活计图（含挂起）的激活态快照（PlaneReconciler 全量派生用）。 */
+  getActiveInstanceStates(): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const [gid, active] of this.activeStates.entries()) out[gid] = active;
+    return out;
+  }
+
+  /** 当前激活（推进中）的活计图 id（全局单槽；null=无激活单）。 */
+  getActivatedArchetype(): string | null {
+    return this.activatedArchetype;
+  }
+
+  /** narrativeCount 条件叶后端：原型累计结算计数（exitStateId 缺省=全部出口合计）。 */
+  getSettledRunCount(archetypeId: string, exitStateId?: string): number {
+    const counters = this.runCounters.get(String(archetypeId ?? '').trim());
+    if (!counters) return 0;
+    if (exitStateId !== undefined) {
+      const exit = String(exitStateId ?? '').trim();
+      return exit ? counters.settled[exit] ?? 0 : 0;
+    }
+    let total = 0;
+    for (const n of Object.values(counters.settled)) total += n;
+    return total;
+  }
+
+  private countersFor(graphId: string): NarrativeRunCounters {
+    let counters = this.runCounters.get(graphId);
+    if (!counters) {
+      counters = { started: 0, reset: 0, aborted: 0, settled: {} };
+      this.runCounters.set(graphId, counters);
+    }
+    return counters;
+  }
+
+  /** 活计运行面板信息（repeatable 任务镜像的只读派生口）；非活计图/图缺失返回 null。 */
+  getRunPanelInfo(graphId: string): NarrativeRunPanelInfo | null {
+    const gid = String(graphId ?? '').trim();
+    const graph = this.graphs.get(gid);
+    if (!graph || !isRunGraph(graph)) return null;
+    const counters = this.runCounters.get(gid);
+    const active = this.activeStates.get(gid);
+    const settled: NarrativeRunPanelInfo['settled'] = [];
+    for (const [exitId, count] of Object.entries(counters?.settled ?? {})) {
+      if (count > 0) settled.push({ exitId, label: graph.states[exitId]?.label || exitId, count });
+    }
+    return {
+      graphId: gid,
+      active,
+      activeLabel: active !== undefined ? graph.states[active]?.label || active : undefined,
+      ordinal: counters?.started ?? 0,
+      activated: this.activatedArchetype === gid,
+      suspended: this.suspendedRunArchetypes.has(gid),
+      settled,
+    };
   }
 
   isStateActive(graphId: string, stateId: string): boolean {
@@ -595,12 +727,219 @@ export class NarrativeStateManager implements IGameSystem {
     return this.debugSetNarrativeState(graphId, stateId);
   }
 
+  // ------------------------------------------------------------------ //
+  // 活计生命周期（start / reset / revert / activate；结算由 exitStates 自动）
+  // 每原型至多一个实例（id 即 graphId）；全经队列串行，与信号处理/代际失效/isIdle 同时序。
+  // ------------------------------------------------------------------ //
+
+  /** 开一轮新活计并激活（顶替当前激活的，旧的按 resumable 挂起/弃置）。已有实例=警告跳过。 */
+  startNarrativeRun(graphId: string): Promise<void> {
+    const gid = String(graphId ?? '').trim();
+    if (!gid) return Promise.resolve();
+    return this.enqueue({ kind: 'runLifecycle', op: 'start', graphId: gid });
+  }
+
+  /** 当前实例回 initialState + 清 reached（"从头再来"，静默重基线，不碰激活槽）。 */
+  resetNarrativeRun(graphId: string): Promise<void> {
+    const gid = String(graphId ?? '').trim();
+    if (!gid) return Promise.resolve();
+    return this.enqueue({ kind: 'runLifecycle', op: 'reset', graphId: gid });
+  }
+
+  /** 当前实例回退到指定状态（静默重基线；改 active 不抹 reached，不碰激活槽）。 */
+  revertNarrativeRun(graphId: string, stateId: string): Promise<void> {
+    const gid = String(graphId ?? '').trim();
+    const sid = String(stateId ?? '').trim();
+    if (!gid || !sid) return Promise.resolve();
+    return this.enqueue({ kind: 'runLifecycle', op: 'revert', graphId: gid, stateId: sid });
+  }
+
+  /** 切换激活到已存在的活计实例（恢复挂起）。传空串清槽；目标无实例=警告（开新用 start）。 */
+  activateNarrativeRun(graphId: string): Promise<void> {
+    return this.enqueue({ kind: 'runLifecycle', op: 'activate', graphId: String(graphId ?? '').trim() });
+  }
+
+  private lifecycleIssue(code: string, message: string, graphId: string): void {
+    this.recordIssue({ severity: 'warning', code, message, graphId });
+    console.warn(message);
+  }
+
+  private async applyRunLifecycle(trigger: Extract<QueuedTrigger, { kind: 'runLifecycle' }>): Promise<void> {
+    if (trigger.op === 'start') return this.applyStartRun(trigger.graphId);
+    if (trigger.op === 'reset') return this.applyResetRun(trigger.graphId);
+    if (trigger.op === 'revert') return this.applyRevertRun(trigger.graphId, trigger.stateId ?? '');
+    return this.applyActivateRun(trigger.graphId);
+  }
+
+  /** 校验目标是活计图并返回它；否则记 issue 返回 null。 */
+  private requireRunGraph(graphId: string, op: string): NarrativeGraph | null {
+    const graph = this.graphs.get(graphId);
+    if (!graph) {
+      this.lifecycleIssue(`run.${op}.graphMissing`, `NarrativeStateManager: ${op}NarrativeRun 目标图不存在: ${graphId}`, graphId);
+      return null;
+    }
+    if (!isRunGraph(graph)) {
+      this.lifecycleIssue(`run.${op}.notRunGraph`, `NarrativeStateManager: 图 ${graphId} 未声明 run（不是活计图，常驻图不可 ${op}）`, graphId);
+      return null;
+    }
+    return graph;
+  }
+
+  private applyStartRun(graphId: string): void {
+    const graph = this.requireRunGraph(graphId, 'start');
+    if (!graph) return;
+    if (this.activeStates.has(graphId)) {
+      this.lifecycleIssue('run.start.exists', `NarrativeStateManager: 活计 ${graphId} 已有实例（重来用 reset、切回用 activate）`, graphId);
+      return;
+    }
+    // 顶替当前激活的（旧的按 resumable 挂起/弃置），再建新实例并激活。
+    this.suspendOrDiscardActivated();
+    this.activeStates.set(graphId, graph.initialState);
+    this.markStateReached(graphId, graph.initialState);
+    this.countersFor(graphId).started += 1;
+    this.recordTrace('run.lifecycle', { graphId, message: `run started at ${graph.initialState}` });
+    this.eventBus.emit('narrative:runStarted', { archetypeId: graphId, ordinal: this.countersFor(graphId).started });
+    this.setActivatedArchetype(graphId, 'resume');
+  }
+
+  private applyResetRun(graphId: string): void {
+    const graph = this.requireRunGraph(graphId, 'reset');
+    if (!graph) return;
+    if (!this.activeStates.has(graphId)) {
+      this.lifecycleIssue('run.reset.missing', `NarrativeStateManager: 活计 ${graphId} 无实例可 reset（开新用 start）`, graphId);
+      return;
+    }
+    // 静默重基线：回 initialState、reached 只剩 initial。不跑 onExit/onEnter、不广播。
+    this.activeStates.set(graphId, graph.initialState);
+    this.reachedStates.set(graphId, new Set([graph.initialState]));
+    this.countersFor(graphId).reset += 1;
+    this.recordTrace('run.lifecycle', { graphId, message: `run reset to ${graph.initialState}` });
+    this.eventBus.emit('narrative:stateChanged', {
+      graphId, from: undefined, to: graph.initialState, cause: 'reset', triggerKey: `reset:${graphId}`,
+    });
+    this.kickReactiveEvaluation();
+  }
+
+  private applyRevertRun(graphId: string, stateId: string): void {
+    const graph = this.requireRunGraph(graphId, 'revert');
+    if (!graph) return;
+    if (!this.activeStates.has(graphId)) {
+      this.lifecycleIssue('run.revert.missing', `NarrativeStateManager: 活计 ${graphId} 无实例可 revert`, graphId);
+      return;
+    }
+    if (!graph.states[stateId]) {
+      this.lifecycleIssue('run.revert.stateMissing', `NarrativeStateManager: revert 目标状态不存在: ${graphId}.${stateId}`, graphId);
+      return;
+    }
+    // 静默：改 active 到 stateId，reached 保留历史（revert 是跳回节点续玩，不是抹除）。
+    const from = this.activeStates.get(graphId);
+    this.activeStates.set(graphId, stateId);
+    this.markStateReached(graphId, stateId);
+    this.recordTrace('run.lifecycle', { graphId, message: `run reverted ${from ?? '?'} -> ${stateId}` });
+    this.eventBus.emit('narrative:stateChanged', {
+      graphId, from, to: stateId, cause: 'revert', triggerKey: `revert:${graphId}`,
+    });
+    this.kickReactiveEvaluation();
+  }
+
+  private applyActivateRun(graphId: string): void {
+    if (!graphId) {
+      this.suspendOrDiscardActivated();
+      this.setActivatedArchetype(null, 'discard');
+      return;
+    }
+    if (!this.requireRunGraph(graphId, 'activate')) return;
+    if (graphId === this.activatedArchetype) return; // 已激活
+    if (!this.activeStates.has(graphId)) {
+      this.lifecycleIssue('run.activate.missing', `NarrativeStateManager: 活计 ${graphId} 无实例可激活（开新用 start）`, graphId);
+      return;
+    }
+    // 挂起当前激活的，再恢复目标（目标从挂起集移出、继续从当前态推进）。
+    this.suspendOrDiscardActivated();
+    this.suspendedRunArchetypes.delete(graphId);
+    this.setActivatedArchetype(graphId, 'resume');
+  }
+
+  /** 切走当前激活活计：resumable 留（进挂起集）、否则弃（删实例 + aborted++）。 */
+  private suspendOrDiscardActivated(): void {
+    const prev = this.activatedArchetype;
+    if (!prev) return;
+    const graph = this.graphs.get(prev);
+    if (graph?.run?.resumable === true) {
+      this.suspendedRunArchetypes.add(prev);
+      this.recordTrace('run.lifecycle', { graphId: prev, message: 'run suspended' });
+    } else {
+      this.discardRunInstance(prev, 'discard');
+      this.countersFor(prev).aborted += 1;
+    }
+  }
+
+  private setActivatedArchetype(graphId: string | null, cause: NarrativeStateChangeCause): void {
+    if (this.activatedArchetype === graphId) return;
+    const previous = this.activatedArchetype;
+    this.activatedArchetype = graphId;
+    this.recordTrace('run.lifecycle', {
+      graphId: graphId ?? undefined,
+      message: `run activated (previous: ${previous ?? 'none'}, cause: ${cause})`,
+    });
+    this.eventBus.emit('narrative:runActivated', { archetypeId: graphId, previous });
+    // 激活切换可能让某个 narrative 叶（读活计当前态）满足新条件，补评一轮。
+    this.kickReactiveEvaluation();
+  }
+
+  /** 结算（到达 exitStates 时由 enterState 调用）：计数、删实例、清激活槽。 */
+  private settleRunInstance(graphId: string, exitStateId: string): void {
+    this.countersFor(graphId).settled[exitStateId] = (this.countersFor(graphId).settled[exitStateId] ?? 0) + 1;
+    this.discardRunInstance(graphId, 'settle');
+    this.recordTrace('run.lifecycle', { graphId, message: `run settled at ${exitStateId}` });
+    this.eventBus.emit('narrative:runSettled', { archetypeId: graphId, exitStateId });
+    if (this.activatedArchetype === graphId) this.setActivatedArchetype(null, 'settle');
+  }
+
+  /**
+   * 删除活计实例（active/reached 出表、移出挂起集）；不动计数器与激活槽。
+   * 发一条 to 为空的 stateChanged（带 cause）：位面对账器等增量消费者据此清掉该图的
+   * 派生（点名位面等）——否则实例停在点名态被删时位面会残留到下一次全量重算。
+   */
+  private discardRunInstance(graphId: string, cause: NarrativeStateChangeCause): void {
+    const from = this.activeStates.get(graphId);
+    this.activeStates.delete(graphId);
+    this.reachedStates.delete(graphId);
+    this.suspendedRunArchetypes.delete(graphId);
+    this.recordTrace('run.lifecycle', { graphId, message: `run discarded (${cause})` });
+    this.eventBus.emit('narrative:stateChanged', {
+      graphId, from, to: '', cause, triggerKey: `${cause}:${graphId}`,
+    });
+  }
+
   serialize(): object {
+    const singletons: Record<string, string> = {};
+    const singletonReached: Record<string, string[]> = {};
+    const runs: Record<string, { active: string; reached: string[] }> = {};
+    for (const [gid, active] of this.activeStates.entries()) {
+      const reached = [...(this.reachedStates.get(gid) ?? [])];
+      if (isRunGraph(this.graphs.get(gid))) {
+        runs[gid] = { active, reached };   // 活计图（激活或挂起，每原型一条）
+      } else {
+        singletons[gid] = active;          // 常驻图
+        singletonReached[gid] = reached;
+      }
+    }
     return {
-      activeStates: Object.fromEntries(this.activeStates.entries()),
-      reachedStates: Object.fromEntries(
-        [...this.reachedStates.entries()].map(([g, set]) => [g, [...set]]),
+      version: 2,
+      // v1 兼容字段照旧携带（仅常驻图）：老读者/工具读 activeStates 仍取到与历史等价的数据。
+      activeStates: singletons,
+      reachedStates: singletonReached,
+      runs,
+      counters: Object.fromEntries(
+        [...this.runCounters.entries()].map(([gid, c]) => [gid, {
+          started: c.started,
+          reset: c.reset,
+          aborted: c.aborted,
+          settled: { ...c.settled },
+        }]),
       ),
+      activatedArchetype: this.activatedArchetype,
     };
   }
 
@@ -608,6 +947,9 @@ export class NarrativeStateManager implements IGameSystem {
     const raw = data as {
       activeStates?: Record<string, unknown>;
       reachedStates?: Record<string, unknown>;
+      runs?: Record<string, unknown>;
+      counters?: Record<string, unknown>;
+      activatedArchetype?: unknown;
     };
     // 恢复前先失效旧时间线（审查 R2）：积压队列项 reject、在飞迁移放弃剩余写入——
     // 否则旧时间线的广播/信号会打进恢复后的世界（子图回到起点、主图却被幽灵广播推进）。
@@ -615,22 +957,108 @@ export class NarrativeStateManager implements IGameSystem {
     this.invalidateInFlightTimeline('deserialize');
     // 先把全部图复位到「注册后初始态」再按存档恢复：restore 只覆盖存档里有的图、只增量标记
     // reached，不复位会把本会话越过的进度残留进更早的档（reached:true 门控提前打开）。
+    // 基线含实例层：无 run、零计数、空激活槽（v1 旧档天然落在此基线=功能出现前的语义）。
     this.resetStatesToRegisteredBaseline();
     this.restoreActiveStates(raw?.activeStates ?? {});
     this.restoreReachedStates(raw?.reachedStates);
+    this.restoreRuns(raw?.runs);
+    this.restoreRunCounters(raw?.counters);
+    this.restoreActivatedArchetype(raw?.activatedArchetype);
     // 读档后的状态组合可能已满足某些 reactive 迁移条件（读档期间 FlagStore.deserialize
     // 不广播 flag:changed），此处统一补评一轮。
     this.kickReactiveEvaluation();
   }
 
-  /** 与 registerGraphs 注册完成时一致：activeStates=initialState，reached 仅含 initialState。 */
+  /** 与 registerGraphs 注册完成时一致：常驻图=initialState、reached 仅含 initialState；活计层全空。 */
   private resetStatesToRegisteredBaseline(): void {
     this.activeStates.clear();
     this.reachedStates.clear();
+    this.suspendedRunArchetypes.clear();
+    this.runCounters.clear();
+    this.activatedArchetype = null;
     for (const graph of this.graphs.values()) {
+      if (isRunGraph(graph)) continue;
       this.activeStates.set(graph.id, graph.initialState);
       this.markStateReached(graph.id, graph.initialState);
     }
+  }
+
+  /**
+   * 恢复活计实例层（v2；每原型至多一条，恢复即挂起——deserialize 末尾按 activatedArchetype 激活一个）。
+   * 图 id 经 migrations 单跳重映射，状态同 restoreActiveStates 口径。
+   */
+  private restoreRuns(runsRaw: Record<string, unknown> | undefined): void {
+    if (!runsRaw || typeof runsRaw !== 'object') return;
+    for (const [rawGraphId, entryRaw] of Object.entries(runsRaw)) {
+      const graphId = this.migrateSaveGraphId(rawGraphId);
+      const graph = this.graphs.get(graphId);
+      if (!graph || !isRunGraph(graph)) {
+        this.warnDroppedSaveEntry(
+          'save.runs.graphMissing',
+          `NarrativeStateManager: save references unknown/non-run archetype "${rawGraphId}"${this.migrationSuffix(rawGraphId, graphId)}; dropped its run`,
+          graphId,
+        );
+        continue;
+      }
+      const entry = entryRaw as { active?: unknown; reached?: unknown } | null;
+      const rawStateId = String(entry?.active ?? '').trim();
+      const stateId = rawStateId ? this.migrateSaveStateId(graphId, rawStateId) : '';
+      if (!stateId || !graph.states[stateId]) {
+        this.warnDroppedSaveEntry(
+          'save.runs.stateMissing',
+          `NarrativeStateManager: run "${graphId}" references unknown state "${rawStateId}"; run dropped`,
+          graphId,
+          stateId || rawStateId || undefined,
+        );
+        continue;
+      }
+      this.activeStates.set(graphId, stateId);
+      this.markStateReached(graphId, graph.initialState);
+      this.markStateReached(graphId, stateId);
+      if (Array.isArray(entry?.reached)) {
+        for (const sRaw of entry.reached) {
+          const rid = this.migrateSaveStateId(graphId, String(sRaw ?? '').trim());
+          if (rid && graph.states[rid]) this.markStateReached(graphId, rid);
+        }
+      }
+      // 恢复即挂起；末尾 restoreActivatedArchetype 会把激活的那个移出挂起集。
+      this.suspendedRunArchetypes.add(graphId);
+    }
+  }
+
+  private restoreRunCounters(countersRaw: Record<string, unknown> | undefined): void {
+    if (!countersRaw || typeof countersRaw !== 'object') return;
+    for (const [rawGraphId, cRaw] of Object.entries(countersRaw)) {
+      const graphId = this.migrateSaveGraphId(rawGraphId);
+      const c = cRaw as { started?: unknown; reset?: unknown; aborted?: unknown; settled?: unknown } | null;
+      if (!c || typeof c !== 'object') continue;
+      const settled: Record<string, number> = {};
+      if (c.settled && typeof c.settled === 'object') {
+        for (const [exitRaw, n] of Object.entries(c.settled as Record<string, unknown>)) {
+          const exit = this.migrateSaveStateId(graphId, String(exitRaw ?? '').trim());
+          if (exit && typeof n === 'number' && Number.isFinite(n)) settled[exit] = (settled[exit] ?? 0) + n;
+        }
+      }
+      const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+      this.runCounters.set(graphId, {
+        started: num(c.started), reset: num(c.reset), aborted: num(c.aborted), settled,
+      });
+    }
+  }
+
+  private restoreActivatedArchetype(raw: unknown): void {
+    const gid = typeof raw === 'string' ? this.migrateSaveGraphId(raw.trim()) : '';
+    if (!gid) return;
+    if (!this.activeStates.has(gid) || !isRunGraph(this.graphs.get(gid))) {
+      this.warnDroppedSaveEntry(
+        'save.activatedArchetype.missing',
+        `NarrativeStateManager: save activatedArchetype "${gid}" 无对应活计实例，激活槽置空`,
+        gid,
+      );
+      return;
+    }
+    this.suspendedRunArchetypes.delete(gid);   // 激活的那个移出挂起集
+    this.activatedArchetype = gid;
   }
 
   restoreActiveStates(states: Record<string, unknown>): void {
@@ -643,6 +1071,17 @@ export class NarrativeStateManager implements IGameSystem {
         this.warnDroppedSaveEntry(
           'save.active.graphMissing',
           `NarrativeStateManager: save references unknown narrative graph "${rawGraphId}"${this.migrationSuffix(rawGraphId, graphId)}; dropped active state "${rawStateId}". If the graph was renamed, declare it in narrative_graphs.json migrations.graphs.`,
+          graphId,
+          stateId || undefined,
+        );
+        continue;
+      }
+      if (isRunGraph(graph)) {
+        // 旧档写入时该图还是常驻图、现已改声明为活计图：常驻条目不可回灌（会造幽灵实例），
+        // 丢弃并点名（内容改声明属破档级变更，本告警即迁移提示；活计实例走 runs 字段恢复）。
+        this.warnDroppedSaveEntry(
+          'save.active.becameRunGraph',
+          `NarrativeStateManager: 图 "${graphId}" 现为活计图，旧档常驻条目已丢弃（active "${rawStateId}"）`,
           graphId,
           stateId || undefined,
         );
@@ -677,6 +1116,7 @@ export class NarrativeStateManager implements IGameSystem {
           );
           continue;
         }
+        if (isRunGraph(graph)) continue; // 同 save.active.becameRunGraph 口径（active 侧已点名；活计走 runs 字段）
         for (const sRaw of listRaw) {
           const rawStateId = String(sRaw ?? '').trim();
           if (!rawStateId) continue;
@@ -739,6 +1179,9 @@ export class NarrativeStateManager implements IGameSystem {
     this.activeStates.clear();
     this.reachedStates.clear();
     this.ownerIndex.clear();
+    this.suspendedRunArchetypes.clear();
+    this.runCounters.clear();
+    this.activatedArchetype = null;
     this.nestedDrainPromises.clear();
     this.saveMigrations = null;
     this.queue.length = 0;
@@ -752,6 +1195,10 @@ export class NarrativeStateManager implements IGameSystem {
     return {
       activeStates: Object.fromEntries(this.activeStates.entries()),
       graphIds: [...this.graphs.keys()],
+      runArchetypes: this.getActiveRunArchetypes(),
+      suspendedRuns: [...this.suspendedRunArchetypes],
+      runCounters: Object.fromEntries(this.runCounters.entries()),
+      activatedArchetype: this.activatedArchetype,
       ownerIndex,
       multiWrapperOwners,
       // keep legacy fields for older debug consumers
@@ -956,6 +1403,8 @@ export class NarrativeStateManager implements IGameSystem {
         await this.applyStateCommand(trigger.graphId, trigger.stateId);
       } else if (trigger.kind === 'reactive') {
         await this.processReactiveTrigger(trigger.graphId, trigger.transitionId);
+      } else if (trigger.kind === 'runLifecycle') {
+        await this.applyRunLifecycle(trigger);
       } else {
         await this.processTrigger(NarrativeStateManager.normalizeTriggerKey(trigger.key));
       }
@@ -973,19 +1422,22 @@ export class NarrativeStateManager implements IGameSystem {
 
   private async processTrigger(triggerKey: NarrativeTriggerKey): Promise<void> {
     const gen = this.generation;
-    const migratedGraphs = new Set<string>();
-    const graphEntries = [...this.graphs.entries()];
-    const matchedGraphIds: string[] = [];
-    for (const [graphId, graph] of graphEntries) {
+    const migratedInstances = new Set<string>();
+    // 迭代单位=常驻图 + 激活活计图（挂起活计冻结不扫）。快照迭代：
+    // 处理途中被结算/弃置的活计经 getInstanceActive===undefined 与提交前复核自然跳过。
+    const instanceEntries = this.listLiveGraphEntries();
+    const matchedInstanceIds: string[] = [];
+    for (const [instanceId, graph] of instanceEntries) {
       // 逐图 await 之间可能发生读档/换册：本信号属旧时间线，剩余图不再扫。
       if (gen !== this.generation) break;
-      if (migratedGraphs.has(graphId)) continue;
-      const active = this.activeStates.get(graphId) ?? graph.initialState;
+      if (migratedInstances.has(instanceId)) continue;
+      const active = this.getInstanceActive(instanceId, graph);
+      if (active === undefined) continue; // 活计实例已在本次扫描途中结算/移除
       const candidates = graph.transitions
         .filter((t) => {
           if (!NarrativeStateManager.triggerKeysEqual(t.signal, triggerKey)) return false;
           if (!this.isLocalEndpoint(t.from) || !this.isLocalEndpoint(t.to)) {
-            this.recordUnsupportedEndpoint(graphId, t.id);
+            this.recordUnsupportedEndpoint(instanceId, t.id);
             return false;
           }
           return t.from === active &&
@@ -1000,18 +1452,28 @@ export class NarrativeStateManager implements IGameSystem {
         });
       const selected = candidates[0]?.t;
       if (!selected) continue;
-      await this.applyTransition(graph, selected, triggerKey);
-      migratedGraphs.add(graphId);
-      matchedGraphIds.push(graphId);
+      await this.applyTransition(graph, instanceId, selected, triggerKey);
+      migratedInstances.add(instanceId);
+      matchedInstanceIds.push(instanceId);
     }
-    if (matchedGraphIds.length === 0) {
+    if (matchedInstanceIds.length === 0) {
       this.reportUnlistenedSignal(triggerKey);
     }
     this.recordTrace('signal.processed', {
       triggerKey,
-      payload: { matchedGraphIds },
-      message: matchedGraphIds.length ? `matched ${matchedGraphIds.length} graph(s)` : 'no matching transition',
+      payload: { matchedGraphIds: matchedInstanceIds },
+      message: matchedInstanceIds.length ? `matched ${matchedInstanceIds.length} instance(s)` : 'no matching transition',
     });
+  }
+
+  /**
+   * 图当前激活态：常驻图回退 initialState（历史行为）；活计图实例不存在即 undefined
+   * （已结算/已弃置——绝不回退 initialState，否则消亡实例会以出生态复活匹配迁移）。
+   */
+  private getInstanceActive(graphId: string, graph: NarrativeGraph): string | undefined {
+    const active = this.activeStates.get(graphId);
+    if (active !== undefined) return active;
+    return isRunGraph(graph) ? undefined : graph.initialState;
   }
 
   private getListenedSignalKeys(): Set<string> {
@@ -1075,8 +1537,9 @@ export class NarrativeStateManager implements IGameSystem {
    * Pushes matching transitions directly into the queue for processing.
    */
   private evaluateReactiveTriggers(): void {
-    for (const [graphId, graph] of this.graphs) {
-      const active = this.activeStates.get(graphId) ?? graph.initialState;
+    for (const [instanceId, graph] of this.listLiveGraphEntries()) {
+      const active = this.getInstanceActive(instanceId, graph);
+      if (active === undefined) continue;
       // 单遍取最优候选，免去每次扫描的 filter().map().sort() 三次临时数组分配。
       // 仍遍历全部 transition、按原顺序求同一组谓词（含 recordUnsupportedEndpoint 副作用），
       // 与旧「先全量筛选、再按 priority 降序 / 声明序升序排」的选择结果逐字节等价。
@@ -1086,7 +1549,7 @@ export class NarrativeStateManager implements IGameSystem {
         if (!t.trigger || t.trigger === 'signal') continue;
         if (t.from !== active) continue;
         if (!this.isLocalEndpoint(t.from) || !this.isLocalEndpoint(t.to)) {
-          this.recordUnsupportedEndpoint(graphId, t.id);
+          this.recordUnsupportedEndpoint(instanceId, t.id);
           continue;
         }
         if (!this.evaluateReactiveConditions(t)) continue;
@@ -1099,12 +1562,12 @@ export class NarrativeStateManager implements IGameSystem {
       }
       if (!selected) continue;
       this.recordTrace('reactive.queued', {
-        graphId,
+        graphId: instanceId,
         transitionId: selected.id,
         triggerKey: '__reactive__',
       });
       this.queue.push({
-        trigger: { kind: 'reactive', graphId, transitionId: selected.id },
+        trigger: { kind: 'reactive', graphId: graph.id, transitionId: selected.id },
         resolve: () => {},
         reject: () => {},
       });
@@ -1136,16 +1599,25 @@ export class NarrativeStateManager implements IGameSystem {
     const graph = this.graphs.get(graphId);
     const transition = graph?.transitions.find(t => t.id === transitionId);
     if (graph && transition?.trigger) {
-      const active = this.activeStates.get(graphId) ?? graph.initialState;
-      if (transition.from !== active) return;
+      // 活计图仅在激活时才推进（挂起冻结）；实例不存在（结算/弃置）时 getInstanceActive 为 undefined。
+      if (isRunGraph(graph) && graphId !== this.activatedArchetype) return;
+      const active = this.getInstanceActive(graphId, graph);
+      if (active === undefined || transition.from !== active) return;
       if (this.evaluateReactiveConditions(transition)) {
-        await this.applyTransition(graph, transition, '__reactive__');
+        await this.applyTransition(graph, graphId, transition, '__reactive__');
       }
     }
   }
 
   private async applyStateCommand(graphId: string, stateId: string): Promise<void> {
     const graph = this.graphs.get(graphId);
+    if (graph && isRunGraph(graph)) {
+      // setState/warp 不支持活计图（会凭空造出幽灵实例条目）；进活计走 start+信号，修复走 reset/revert。
+      const message = `NarrativeStateManager: setState 不支持活计图 ${graphId}（用 startNarrativeRun+信号，或 reset/revert）`;
+      this.recordIssue({ severity: 'warning', code: 'setState.runGraph.unsupported', message, graphId, stateId });
+      console.warn(message);
+      return;
+    }
     if (!graph || !graph.states[stateId]) {
       const message = `NarrativeStateManager: setState target missing ${graphId}.${stateId}`;
       this.recordIssue({ severity: 'warning', code: 'setState.target.missing', message, graphId, stateId });
@@ -1162,107 +1634,119 @@ export class NarrativeStateManager implements IGameSystem {
     }
     const from = this.activeStates.get(graphId) ?? graph.initialState;
     this.recordTrace('state.command', { graphId, stateId, from, to: stateId, message: 'applying debug state command' });
-    await this.enterState(graph, from, stateId, `setState:${graphId}:${stateId}`);
+    await this.enterState(graph, graphId, from, stateId, `setState:${graphId}:${stateId}`);
   }
 
   private async applyTransition(
     graph: NarrativeGraph,
+    instanceId: string,
     transition: NarrativeTransition,
     triggerKey: NarrativeTriggerKey,
   ): Promise<void> {
     if (!this.isLocalEndpoint(transition.from) || !this.isLocalEndpoint(transition.to)) {
-      this.recordUnsupportedEndpoint(graph.id, transition.id);
+      this.recordUnsupportedEndpoint(instanceId, transition.id);
       return;
     }
     // 提交前复核当前 active（signal 路径与 reactive 路径同一口径）：候选筛选与提交之间
-    // 可能有嵌套排空已迁移本图（如前序图的动作发出的信号），过期迁移直接放弃，防双迁移丢更新。
-    const activeNow = this.activeStates.get(graph.id) ?? graph.initialState;
-    if (transition.from !== activeNow) {
+    // 可能有嵌套排空已迁移本实例（如前序图的动作发出的信号），过期迁移直接放弃，防双迁移丢更新。
+    // 实例已消亡（结算/弃单）时 getInstanceActive 为 undefined，同样放弃。
+    const activeNow = this.getInstanceActive(instanceId, graph);
+    if (activeNow === undefined || transition.from !== activeNow) {
       this.recordTrace('signal.ignored', {
-        graphId: graph.id,
+        graphId: instanceId,
         transitionId: transition.id,
         triggerKey,
-        message: `stale transition: from=${transition.from} but active=${activeNow}`,
+        message: `stale transition: from=${transition.from} but active=${activeNow ?? '<gone>'}`,
       });
       return;
     }
     const fromStateId = transition.from;
     const toStateId = transition.to;
     if (!graph.states[fromStateId]) {
-      const message = `NarrativeStateManager: transition source missing ${graph.id}.${fromStateId}`;
-      this.recordIssue({ severity: 'warning', code: 'transition.from.missing', message, graphId: graph.id, stateId: fromStateId, transitionId: transition.id });
+      const message = `NarrativeStateManager: transition source missing ${instanceId}.${fromStateId}`;
+      this.recordIssue({ severity: 'warning', code: 'transition.from.missing', message, graphId: instanceId, stateId: fromStateId, transitionId: transition.id });
       console.warn(message);
       return;
     }
     if (!graph.states[toStateId]) {
-      const message = `NarrativeStateManager: transition target missing ${graph.id}.${toStateId}`;
-      this.recordIssue({ severity: 'warning', code: 'transition.target.missing', message, graphId: graph.id, stateId: toStateId, transitionId: transition.id });
+      const message = `NarrativeStateManager: transition target missing ${instanceId}.${toStateId}`;
+      this.recordIssue({ severity: 'warning', code: 'transition.target.missing', message, graphId: instanceId, stateId: toStateId, transitionId: transition.id });
       console.warn(message);
       return;
     }
-    await this.enterState(graph, fromStateId, toStateId, triggerKey, transition.id);
+    await this.enterState(graph, instanceId, fromStateId, toStateId, triggerKey, transition.id);
   }
 
   private async enterState(
     graph: NarrativeGraph,
+    instanceId: string,
     fromStateId: string,
     toStateId: string,
     triggerKey: NarrativeTriggerKey,
     transitionId = '',
   ): Promise<void> {
     const gen = this.generation;
+    const runGraph = isRunGraph(graph);
     const fromState = graph.states[fromStateId];
     const toState = graph.states[toStateId];
-    await this.runActions(fromState?.onExitActions, `${graph.id}.${fromStateId}.onExit`);
+    await this.runActions(fromState?.onExitActions, `${instanceId}.${fromStateId}.onExit`);
     // onExit 动作 await 期间可能发生读档/换册（代际切换）：旧时间线的迁移不得再写
     // 恢复后的状态（置态/事件/广播全部放弃）。动作自身的副作用无法撤销，属已知边界。
-    if (gen !== this.generation) {
+    // 实例还可能在 await 期间被结算/弃单（消亡）——同样放弃。
+    if (gen !== this.generation || this.getInstanceActive(instanceId, graph) !== fromStateId) {
       this.recordTrace('signal.ignored', {
-        graphId: graph.id,
+        graphId: instanceId,
         transitionId,
         triggerKey,
-        message: `stale timeline: state restored during ${graph.id}.${fromStateId}.onExit; transition aborted`,
+        message: `stale timeline: state restored or instance changed during ${instanceId}.${fromStateId}.onExit; transition aborted`,
       });
       return;
     }
     this.recordTrace('transition.applied', {
-      graphId: graph.id,
+      graphId: instanceId,
       transitionId,
       triggerKey,
       from: fromStateId,
       to: toStateId,
     });
-    this.activeStates.set(graph.id, toStateId);
-    this.markStateReached(graph.id, toStateId);
-    this.recentTransitions.push({ graphId: graph.id, transitionId, from: fromStateId, to: toStateId, triggerKey });
+    this.activeStates.set(instanceId, toStateId);
+    this.markStateReached(instanceId, toStateId);
+    this.recentTransitions.push({ graphId: instanceId, transitionId, from: fromStateId, to: toStateId, triggerKey });
     if (this.recentTransitions.length > 50) this.recentTransitions.splice(0, this.recentTransitions.length - 50);
     this.recordTrace('state.changed', {
-      graphId: graph.id,
+      graphId: instanceId,
       transitionId,
       triggerKey,
       from: fromStateId,
       to: toStateId,
     });
     this.eventBus.emit('narrative:stateChanged', {
-      graphId: graph.id,
+      graphId: instanceId,
       from: fromStateId,
       to: toStateId,
       triggerKey,
       transitionId,
+      cause: 'transition',
     });
-    await this.runActions(toState?.onEnterActions, `${graph.id}.${toStateId}.onEnter`);
+    await this.runActions(toState?.onEnterActions, `${instanceId}.${toStateId}.onEnter`);
     // onEnter 动作 await 期间发生读档/换册：本次置态已被恢复流程覆盖，广播属旧时间线，放弃。
-    if (gen !== this.generation) {
+    // 实例被并发结算/弃单或状态被顶替（active 复核）同样放弃广播与结算（审查遗留实现注记）。
+    if (gen !== this.generation || this.activeStates.get(instanceId) !== toStateId) {
       this.recordTrace('signal.ignored', {
-        graphId: graph.id,
+        graphId: instanceId,
         stateId: toStateId,
         triggerKey,
-        message: `stale timeline: state restored during ${graph.id}.${toStateId}.onEnter; broadcast suppressed`,
+        message: `stale timeline: state restored or instance changed during ${instanceId}.${toStateId}.onEnter; broadcast suppressed`,
       });
       return;
     }
     if (toState?.broadcastOnEnter === true) {
-      this.enqueueGraphStateEntered(graph.id, toStateId);
+      this.enqueueGraphStateEntered(instanceId, toStateId);
+    }
+    // 到达出口状态=自动结算（onEnter 已跑完、广播已入队；结算发生在两者之后，
+    // 保证交付演出/发钱发物先完成、跨图监听者拿得到广播键字符串）。
+    if (runGraph && Array.isArray(graph.exitStates) && graph.exitStates.includes(toStateId)) {
+      this.settleRunInstance(instanceId, toStateId);
     }
   }
 
@@ -1370,6 +1854,13 @@ export class NarrativeStateManager implements IGameSystem {
         stateId: trigger.stateId,
         triggerKey: `setState:${trigger.graphId}:${trigger.stateId}`,
         payload: { kind: trigger.kind },
+      };
+    }
+    if (trigger.kind === 'runLifecycle') {
+      return {
+        graphId: trigger.graphId,
+        triggerKey: `run:${trigger.op}`,
+        payload: { kind: trigger.kind, op: trigger.op, ...(trigger.stateId ? { stateId: trigger.stateId } : {}) },
       };
     }
     return {

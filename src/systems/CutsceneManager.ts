@@ -3,7 +3,7 @@ import type { FlagStore } from '../core/FlagStore';
 import type { ActionExecutor } from '../core/ActionExecutor';
 import type { AssetManager } from '../core/AssetManager';
 import type { InputManager } from '../core/InputManager';
-import type { CutsceneRenderer, ShowSubtitleLayout } from '../rendering/CutsceneRenderer';
+import type { CutsceneRenderer, ShowSubtitleLayout, CutsceneCameraEasing } from '../rendering/CutsceneRenderer';
 import type { Camera } from '../rendering/Camera';
 import type { ICutsceneActor, IEmoteBubbleAnchor, IEmoteBubbleProvider, EmoteBubbleOffsetOpts, NpcDef, IGameSystem, GameContext, NewCutsceneDef, CutsceneStep, CutsceneKenBurns, ICutsceneAudioPlayer, AudioPlaybackHandle, ParallaxSceneDef } from '../data/types';
 import { CUTSCENE_ACTION_WHITELIST, CUTSCENE_ANON_SHOT_ID } from '../data/types';
@@ -58,6 +58,15 @@ const CUTSCENE_EMOTE_OWNER = 'cutscene';
 function resolveCutsceneImageHandle(raw: unknown): string {
   const s = typeof raw === 'string' ? raw.trim() : '';
   return s || CUTSCENE_ANON_SHOT_ID;
+}
+
+const CUTSCENE_CAMERA_EASINGS: ReadonlySet<string> = new Set(['linear', 'easeIn', 'easeOut', 'easeInOut']);
+
+/** cameraMove / cameraZoom 步骤的可选 easing；非法值当缺省（沿用各自历史默认曲线） */
+function parseCameraEasing(raw: unknown): CutsceneCameraEasing | undefined {
+  return typeof raw === 'string' && CUTSCENE_CAMERA_EASINGS.has(raw)
+    ? raw as CutsceneCameraEasing
+    : undefined;
 }
 
 /** 与 playScriptedDialogue 一致：解析 speaker 中的 {{player}} / {{npc}} 等 */
@@ -881,7 +890,11 @@ export class CutsceneManager implements IGameSystem {
         );
         break;
       case 'cameraMove':
-        await this.cutsceneRenderer.cameraMove(step.x as number, step.y as number, step.duration as number ?? 1000);
+        await this.cutsceneRenderer.cameraMove(
+          step.x as number, step.y as number,
+          step.duration as number ?? 1000,
+          parseCameraEasing(step.easing),
+        );
         break;
       case 'cameraZoom': {
         // scale 缺省/≤0 = 恢复场景配置基线缩放（scene.camera.zoom）。内容侧不写字面量，
@@ -890,7 +903,11 @@ export class CutsceneManager implements IGameSystem {
         const scale = typeof rawScale === 'number' && rawScale > 0
           ? rawScale
           : this.cameraAccessor?.getSceneBaseZoom() ?? 1;
-        await this.cutsceneRenderer.cameraZoom(scale, step.duration as number ?? 500);
+        await this.cutsceneRenderer.cameraZoom(
+          scale,
+          step.duration as number ?? 500,
+          parseCameraEasing(step.easing),
+        );
         break;
       }
       case 'showCharacter':

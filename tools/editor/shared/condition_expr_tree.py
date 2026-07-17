@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QScrollArea,
     QSizePolicy,
+    QSpinBox,
 )
 
 from .flag_key_field import FlagKeyPickField
@@ -89,6 +90,7 @@ class ConditionExprNodeEditor(QWidget):
             ("Scenario 阶段", "scenario"),
             ("Scenario 线（生命周期）", "scenarioLine"),
             ("叙事状态", "narrative"),
+            ("活计计数 (做过几单)", "narrativeCount"),
             ("激活位面", "plane"),
         ):
             self._kind.addItem(lab, val)
@@ -130,6 +132,11 @@ class ConditionExprNodeEditor(QWidget):
         self._nv_graph: QComboBox | None = None
         self._nv_state: QComboBox | None = None
         self._nv_reached: QCheckBox | None = None
+        self._nc_wrap: QWidget | None = None
+        self._nc_graph: QComboBox | None = None
+        self._nc_exit: QComboBox | None = None
+        self._nc_op: QComboBox | None = None
+        self._nc_value: QSpinBox | None = None
         self._pl_wrap: QWidget | None = None
         self._pl_id: IdRefSelector | None = None
 
@@ -187,6 +194,8 @@ class ConditionExprNodeEditor(QWidget):
             return _combo_has(self._sl_id)
         if k == "narrative":
             return _combo_has(self._nv_graph)
+        if k == "narrativeCount":
+            return _combo_has(self._nc_graph)
         if k == "plane":
             return bool(self._pl_id and self._pl_id.current_id().strip())
         return False
@@ -255,6 +264,11 @@ class ConditionExprNodeEditor(QWidget):
         self._nv_graph = None
         self._nv_state = None
         self._nv_reached = None
+        self._nc_wrap = None
+        self._nc_graph = None
+        self._nc_exit = None
+        self._nc_op = None
+        self._nc_value = None
         self._pl_wrap = None
         self._pl_id = None
 
@@ -347,7 +361,10 @@ class ConditionExprNodeEditor(QWidget):
             qf = compact_form(QFormLayout(qw))
             self._q_id = IdRefSelector(allow_empty=True, editable=False, click_opens_popup=True)
             _qm = self._model()
-            if _qm is not None and hasattr(_qm, "all_quest_ids"):
+            # 候选排除 repeatable（无状态机，quest 叶指向它=校验 error）
+            if _qm is not None and hasattr(_qm, "quest_status_target_ids"):
+                self._q_id.set_items(list(_qm.quest_status_target_ids()))
+            elif _qm is not None and hasattr(_qm, "all_quest_ids"):
                 self._q_id.set_items(list(_qm.all_quest_ids()))
             self._q_id.value_changed.connect(lambda *_: self._emit_changed())
             self._q_st = QComboBox()
@@ -413,6 +430,37 @@ class ConditionExprNodeEditor(QWidget):
             self._nv_wrap = nw
             self._body.addWidget(nw)
             self._fill_narrative_combos()
+        elif kind == "narrativeCount":
+            cw = QWidget()
+            cf = compact_form(QFormLayout(cw))
+            self._nc_graph = QComboBox()
+            self._nc_graph.setEditable(False)
+            self._nc_graph.setToolTip(
+                "活计图（声明了 run 的叙事图）。计数=该活计历史累计结算次数，跨轮持久、入存档。"
+            )
+            self._nc_graph.currentIndexChanged.connect(self._on_narrative_count_graph_combo)
+            self._nc_exit = QComboBox()
+            self._nc_exit.setEditable(False)
+            self._nc_exit.setToolTip("按哪个出口计数；「全部出口合计」= 不区分交付/失败等出口")
+            self._nc_exit.currentIndexChanged.connect(lambda _i: self._emit_changed())
+            self._nc_op = QComboBox()
+            for _op in (">=", "==", "!=", ">", "<", "<="):
+                self._nc_op.addItem(_op, _op)
+            self._nc_op.currentIndexChanged.connect(lambda _i: self._emit_changed())
+            self._nc_value = QSpinBox()
+            self._nc_value.setRange(0, 9999)
+            self._nc_value.setValue(1)
+            self._nc_value.valueChanged.connect(lambda _v: self._emit_changed())
+            cf.addRow("活计图", self._nc_graph)
+            cf.addRow("出口", self._nc_exit)
+            row = QHBoxLayout()
+            row.addWidget(self._nc_op, 0)
+            row.addWidget(self._nc_value, 0)
+            row.addStretch(1)
+            cf.addRow("结算次数", row)
+            self._nc_wrap = cw
+            self._body.addWidget(cw)
+            self._fill_narrative_count_combos()
         elif kind == "plane":
             pw = QWidget()
             pf = compact_form(QFormLayout(pw))
@@ -466,6 +514,43 @@ class ConditionExprNodeEditor(QWidget):
     def _on_narrative_graph_combo(self, _i: int) -> None:
         self._fill_narrative_state_combo()
         self._emit_changed()
+
+    def _fill_narrative_count_combos(self) -> None:
+        if not self._nc_graph:
+            return
+        self._nc_graph.blockSignals(True)
+        self._nc_graph.clear()
+        self._nc_graph.addItem("（选择活计图）", "")
+        for label, gid, g in self._narrative_graph_entries():
+            if isinstance(g.get("run"), dict):
+                self._nc_graph.addItem(label, gid)
+        self._nc_graph.blockSignals(False)
+        self._fill_narrative_count_exit_combo()
+
+    def _on_narrative_count_graph_combo(self, _i: int) -> None:
+        self._fill_narrative_count_exit_combo()
+        self._emit_changed()
+
+    def _fill_narrative_count_exit_combo(self) -> None:
+        if not self._nc_exit or not self._nc_graph:
+            return
+        gid = self._nc_graph.currentData()
+        gid = gid.strip() if isinstance(gid, str) else ""
+        self._nc_exit.blockSignals(True)
+        self._nc_exit.clear()
+        self._nc_exit.addItem("（全部出口合计）", "")
+        if gid:
+            for _label, g_id, g in self._narrative_graph_entries():
+                if g_id != gid:
+                    continue
+                states = g.get("states") or {}
+                for sid in (g.get("exitStates") or []):
+                    sid = str(sid)
+                    st = states.get(sid)
+                    lab = str((st or {}).get("label") or sid) if isinstance(st, dict) else sid
+                    self._nc_exit.addItem(f"{lab} ({sid})" if lab != sid else sid, sid)
+                break
+        self._nc_exit.blockSignals(False)
 
     def _fill_narrative_state_combo(self) -> None:
         if not self._nv_state or not self._nv_graph:
@@ -651,8 +736,10 @@ class ConditionExprNodeEditor(QWidget):
             self._kind.setCurrentIndex(5)
         elif isinstance(data.get("narrative"), str) and str(data.get("narrative", "")).strip():
             self._kind.setCurrentIndex(7)
+        elif isinstance(data.get("narrativeCount"), str) and str(data.get("narrativeCount", "")).strip():
+            self._kind.setCurrentIndex(self._kind.findData("narrativeCount"))
         elif isinstance(data.get("plane"), str) and str(data.get("plane", "")).strip():
-            self._kind.setCurrentIndex(8)
+            self._kind.setCurrentIndex(self._kind.findData("plane"))
         else:
             self._kind.setCurrentIndex(3)
         k = self._kind.currentData()
@@ -698,11 +785,12 @@ class ConditionExprNodeEditor(QWidget):
         elif k == "quest" and self._q_id and self._q_st:
             _qid = str(data.get("quest", ""))
             _qm = self._model()
-            _items = (
-                list(_qm.all_quest_ids())
-                if (_qm is not None and hasattr(_qm, "all_quest_ids"))
-                else []
-            )
+            if _qm is not None and hasattr(_qm, "quest_status_target_ids"):
+                _items = list(_qm.quest_status_target_ids())
+            elif _qm is not None and hasattr(_qm, "all_quest_ids"):
+                _items = list(_qm.all_quest_ids())
+            else:
+                _items = []
             _ids = [i[0] if isinstance(i, (list, tuple)) else i for i in _items]
             if _qid and _qid not in _ids:
                 _items.append((_qid, _qid))  # 保留指向已删/未知任务的既有值,不静默丢失
@@ -780,6 +868,33 @@ class ConditionExprNodeEditor(QWidget):
             self._nv_state.setCurrentIndex(max(0, i2))
             self._nv_state.blockSignals(False)
             self._nv_reached.setChecked(data.get("reached") is True)
+        elif k == "narrativeCount" and self._nc_graph and self._nc_exit and self._nc_op and self._nc_value:
+            gid = str(data.get("narrativeCount", "")).strip()
+            idx = self._nc_graph.findData(gid)
+            if idx < 0 and gid:
+                self._nc_graph.addItem(f"（数据）{gid}", gid)  # 指向已删/改名活计的既有值不静默丢
+                idx = self._nc_graph.count() - 1
+            self._nc_graph.blockSignals(True)
+            self._nc_graph.setCurrentIndex(max(0, idx))
+            self._nc_graph.blockSignals(False)
+            self._fill_narrative_count_exit_combo()
+            exit_id = str(data.get("exitState", "")).strip()
+            i2 = self._nc_exit.findData(exit_id)
+            if i2 < 0 and exit_id:
+                self._nc_exit.addItem(f"（数据）{exit_id}", exit_id)
+                i2 = self._nc_exit.count() - 1
+            self._nc_exit.blockSignals(True)
+            self._nc_exit.setCurrentIndex(max(0, i2))
+            self._nc_exit.blockSignals(False)
+            op = str(data.get("op", ">="))
+            iop = self._nc_op.findData(op)
+            self._nc_op.blockSignals(True)
+            self._nc_op.setCurrentIndex(max(0, iop))
+            self._nc_op.blockSignals(False)
+            v = data.get("value")
+            self._nc_value.blockSignals(True)
+            self._nc_value.setValue(int(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else 1)
+            self._nc_value.blockSignals(False)
         elif k == "plane" and self._pl_id:
             pid = str(data.get("plane", "")).strip()
             _pm = self._model()
@@ -899,6 +1014,20 @@ class ConditionExprNodeEditor(QWidget):
             leaf: dict[str, Any] = {"narrative": gid, "state": sid}
             if self._nv_reached.isChecked():
                 leaf["reached"] = True
+            return leaf
+        if k == "narrativeCount" and self._nc_graph and self._nc_exit and self._nc_op and self._nc_value:
+            gid = self._nc_graph.currentData()
+            gid = gid.strip() if isinstance(gid, str) else ""
+            if not gid:
+                return {}
+            leaf: dict[str, Any] = {"narrativeCount": gid}
+            exit_id = self._nc_exit.currentData()
+            exit_id = exit_id.strip() if isinstance(exit_id, str) else ""
+            if exit_id:
+                leaf["exitState"] = exit_id
+            op_d = self._nc_op.currentData()
+            leaf["op"] = str(op_d) if op_d is not None else ">="
+            leaf["value"] = int(self._nc_value.value())
             return leaf
         if k == "plane" and self._pl_id:
             pid = self._pl_id.current_id().strip()

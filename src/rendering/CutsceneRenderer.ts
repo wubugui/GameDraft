@@ -41,6 +41,19 @@ function easeInOutCubic(t: number): number {
   return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
 }
 
+/** cameraMove / cameraZoom 步骤可选的缓动名（cubic 家族；数据缺省时各自沿用历史默认曲线） */
+export type CutsceneCameraEasing = 'linear' | 'easeIn' | 'easeOut' | 'easeInOut';
+
+function applyCameraEase(t: number, easing: CutsceneCameraEasing): number {
+  const x = Math.min(1, Math.max(0, t));
+  switch (easing) {
+    case 'linear': return x;
+    case 'easeIn': return x * x * x;
+    case 'easeOut': return 1 - Math.pow(1 - x, 3);
+    default: return easeInOutCubic(x);
+  }
+}
+
 export class CutsceneRenderer {
   private resolveDisplay: ((s: string) => string) | null = null;
   private renderer: Renderer;
@@ -431,7 +444,7 @@ export class CutsceneRenderer {
     return epoch !== this.opEpoch || this.imageRequestSeq.get(id) !== seq;
   }
 
-  async cameraMove(x: number, y: number, duration: number): Promise<void> {
+  async cameraMove(x: number, y: number, duration: number, easing?: CutsceneCameraEasing): Promise<void> {
     const startX = this.camera.getX();
     const startY = this.camera.getY();
     const dx = x - startX;
@@ -449,7 +462,7 @@ export class CutsceneRenderer {
       const finish = this.createOpFinisher(() => resolve());
       const tick = () => {
         const t = Math.min((performance.now() - startTime) / duration, 1);
-        const s = easeInOutCubic(t);
+        const s = applyCameraEase(t, easing ?? 'easeInOut');
         this.camera.snapTo(startX + ux * dist * s, startY + uy * dist * s);
         if (t < 1) this.trackRaf(tick); else finish();
       };
@@ -457,7 +470,7 @@ export class CutsceneRenderer {
     });
   }
 
-  async cameraZoom(scale: number, duration: number): Promise<void> {
+  async cameraZoom(scale: number, duration: number, easing?: CutsceneCameraEasing): Promise<void> {
     const startScale = this.camera.getZoom();
     const startTime = performance.now();
     const dur = Math.max(1, duration);
@@ -466,7 +479,10 @@ export class CutsceneRenderer {
       const finish = this.createOpFinisher(() => resolve());
       const tick = () => {
         const t = Math.min((performance.now() - startTime) / dur, 1);
-        const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+        // 数据缺省时沿用历史默认曲线（ease-in-out quad），显式 easing 走 cubic 家族
+        const ease = easing !== undefined
+          ? applyCameraEase(t, easing)
+          : (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
         this.camera.setZoom(startScale + (scale - startScale) * ease);
         if (t < 1) this.trackRaf(tick); else finish();
       };

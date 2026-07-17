@@ -575,6 +575,8 @@ export type GraphUsagesDef = {
   metaReads: number;
   narrativeConditions: number;
   external: Array<{ bucket: string; itemId: string; count: number }>;
+  /** repeatable 任务的 runArchetype 硬绑定命中数（活计图改名跟随，S2 收尾） */
+  runArchetypes?: number;
   totalRefs: number;
 };
 

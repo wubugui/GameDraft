@@ -129,6 +129,7 @@ import { RenderTexture, Texture, UPDATE_PRIORITY } from 'pixi.js';
 import { sceneJsonUrl, TEXT_URLS } from './projectPaths';
 import {
   coerceRuntimeFieldValue,
+  getRuntimeFieldDescriptor,
   isHotspotDisplayImage,
   type RuntimeFieldValue,
   type SceneEntityKind,
@@ -856,6 +857,11 @@ export class Game {
     const mkCondCtx = (): ConditionEvalContext => this.buildConditionEvalContext();
     this.flagStore.setConditionEvalContextFactory(mkCondCtx);
     this.questManager.setConditionEvalContextFactory(mkCondCtx);
+    // repeatable 任务镜像：活计运行信息只读口 + 面板"追踪"点击→激活槽（同一真相源双向）
+    this.questManager.setRunInfoProvider((gid) => this.narrativeStateManager.getRunPanelInfo(gid));
+    this.questPanelUI.setActivateRunHandler(async (gid) => {
+      await this.narrativeStateManager.activateNarrativeRun(gid);
+    });
     this.zoneSystem.setConditionEvalContextFactory(mkCondCtx);
     this.interactionSystem.setConditionEvalContextFactory(mkCondCtx);
     this.interactionSystem.setEntityBaseVisibilityReaders(
@@ -3286,6 +3292,11 @@ export class Game {
     else def[fieldName] = value;
     if (fieldName === 'x' && typeof value === 'number') npc.x = value;
     else if (fieldName === 'y' && typeof value === 'number') npc.y = value;
+    else if (getRuntimeFieldDescriptor('npc', fieldName)?.apply === 'transform') {
+      // apply 派发读 schema（而非再手抄一份字段名清单）：新 transform 类字段登记
+      // runtime_field_schema.json 后此处自动生效（审查 P3-6）
+      npc.applyInstanceTransform();
+    }
     else if (fieldName === 'enabled' && typeof value === 'boolean') npc.setVisible(value);
     else if (fieldName === 'animState' && typeof value === 'string') npc.playAnimation(value);
     else if (fieldName === 'patrolDisabled' && typeof value === 'boolean') {
@@ -3334,7 +3345,14 @@ export class Game {
     }
     if (fieldName === 'x' && typeof value === 'number') h.setPosition(value, h.def.y);
     else if (fieldName === 'y' && typeof value === 'number') h.setPosition(h.def.x, value);
-    else if (fieldName === 'enabled' && typeof value === 'boolean') h.setEnabled(value);
+    else if (getRuntimeFieldDescriptor('hotspot', fieldName)?.apply === 'transform') {
+      // 热点路径没有 NPC 那样的通用 def 写入（逐字段特化），transform 需先落 def 再应用；
+      // 派发读 schema（审查 P3-6）
+      const defRec = h.def as unknown as Record<string, unknown>;
+      if (value === null) delete defRec[fieldName];
+      else if (typeof value === 'number') defRec[fieldName] = value;
+      h.applyInstanceTransform();
+    } else if (fieldName === 'enabled' && typeof value === 'boolean') h.setEnabled(value);
     else if (fieldName === 'displayImage') {
       if (value === null) {
         delete h.def.displayImage;
@@ -3800,6 +3818,14 @@ export class Game {
       debugInteractNpc: (npcId) => this.interactionCoordinator.debugInteractNpcById(npcId),
       debugWait: (durationMs) => this.debugWait(durationMs),
       debugSetPlayerPosition: (x, y, snapCamera) => this.debugSetPlayerPosition(x, y, snapCamera),
+      debugSetEntityField: (kind, entityId, fieldName, value) =>
+        this.setSceneEntityFieldFromAction(
+          this.sceneManager.currentSceneData?.id ?? '',
+          kind,
+          entityId,
+          fieldName,
+          value as RuntimeFieldValue,
+        ),
       debugMovePlayerTo: (x, y, speed, snapCamera) => this.debugMovePlayerTo(x, y, speed, snapCamera),
       debugClick: (x, y) => this.debugClick(x, y),
       debugDrag: (fromX, fromY, toX, toY, durationMs) => this.debugDrag(fromX, fromY, toX, toY, durationMs),

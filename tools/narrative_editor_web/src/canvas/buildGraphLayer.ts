@@ -147,7 +147,8 @@ export function buildGraphLayer(input: GraphLayerInput & { includeTransitionAnch
       deletable: false,
       data: {
         label: graphDisplayName(graph),
-        subtitle: '主图',
+        // 活计图徽章：可重复运行的委托（蛰伏/接单/结算语义），一眼与常驻图区分
+        subtitle: graph.run ? '主图 · ⟳ 活计' : '主图',
         kind: 'graphAnchor',
         detail: graph.id,
         active: Boolean(activeStates[graph.id]),

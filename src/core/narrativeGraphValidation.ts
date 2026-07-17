@@ -56,12 +56,17 @@ interface NarrativeGraphLike {
   ownerType?: string;
   ownerId?: string;
   category?: string;
+  run?: { repeatable?: unknown; resumable?: unknown };
   initialState?: string;
   entryState?: string;
   exitStates?: unknown;
   projectFlags?: boolean;
   states?: Record<string, NarrativeStateLike>;
   transitions?: NarrativeTransitionLike[];
+}
+
+function isRunGraphLike(graph: NarrativeGraphLike | undefined): boolean {
+  return Boolean(graph?.run);
 }
 
 interface CompositionElementLike {
@@ -336,7 +341,25 @@ function validateGraph(
   if (graph.projectFlags === true) {
     addIssue(issues, 'error', 'projectFlags.deprecated', `${graph.id}: projectFlags is deprecated; use narrative state reads instead of projected flags`, `${path}.projectFlags`, graph.id, { ...graphTarget, field: 'projectFlags' });
   }
-  if (elementKind === 'scenarioSubgraph' || graph.ownerType === 'scenario') {
+  const runGraph = isRunGraphLike(graph);
+  if (graph.run !== undefined) {
+    // 活计图（S1）声明形状：run 为对象、repeatable/resumable 布尔。
+    if (graph.run === null || typeof graph.run !== 'object') {
+      addIssue(issues, 'error', 'run.shape.invalid', `${graph.id}: run must be an object { repeatable?, resumable? }`, `${path}.run`, graph.id, { ...graphTarget, field: 'run' });
+    } else {
+      for (const flag of ['repeatable', 'resumable'] as const) {
+        const v = graph.run[flag];
+        if (v !== undefined && typeof v !== 'boolean') {
+          addIssue(issues, 'error', `run.${flag}.invalid`, `${graph.id}: run.${flag} must be a boolean`, `${path}.run.${flag}`, graph.id, { ...graphTarget, field: 'run' });
+        }
+      }
+    }
+    if (elementKind === 'wrapperGraph') {
+      // 活计图不进 owner 索引（@owner/主 wrapper 语义只属常驻图）——不可作 wrapper 绑定。
+      addIssue(issues, 'error', 'run.wrapper.unsupported', `${graph.id}: run graph cannot be a wrapper graph (owner binding is resident-only)`, `${path}.run`, graph.id, { ...graphTarget, field: 'run' });
+    }
+  }
+  if (elementKind === 'scenarioSubgraph' || graph.ownerType === 'scenario' || runGraph) {
     if (!graph.entryState || !graph.states?.[graph.entryState]) {
       addIssue(issues, 'error', 'scenario.entryState.invalid', `${graph.id}: scenario entryState must point to an existing state`, `${path}.entryState`, graph.id, { ...graphTarget, field: 'entryState' });
     }
@@ -347,6 +370,27 @@ function validateGraph(
     for (const [idx, sid] of exits.entries()) {
       if (!graph.states?.[sid]) {
         addIssue(issues, 'error', 'scenario.exitState.invalid', `${graph.id}: scenario exitState does not exist: ${sid}`, `${path}.exitStates[${idx}]`, graph.id, { ...graphTarget, field: 'exitStates' });
+      }
+    }
+    // 活计出口可达性（模拟器活计感知配套校验）：entryState 沿 transitions 的可达闭包
+    // （忽略条件=过近似，只报结构性绝对不可达）。不可达出口 = 该出口的结算永不发生，
+    // "做满 N 单"类 narrativeCount 门将静默永假。
+    if (runGraph && graph.entryState && graph.states?.[graph.entryState] && exits.length) {
+      const reachable = new Set<string>([graph.entryState]);
+      const frontier = [graph.entryState];
+      while (frontier.length) {
+        const from = frontier.pop()!;
+        for (const t of graph.transitions ?? []) {
+          if (t.from === from && typeof t.to === 'string' && graph.states?.[t.to] && !reachable.has(t.to)) {
+            reachable.add(t.to);
+            frontier.push(t.to);
+          }
+        }
+      }
+      for (const [idx, sid] of exits.entries()) {
+        if (graph.states?.[sid] && !reachable.has(sid)) {
+          addIssue(issues, 'warning', 'run.exit.unreachable', `${graph.id}: 出口 ${sid} 从入口 ${graph.entryState} 沿迁移不可达——结算永不发生（narrativeCount 门恒假）`, `${path}.exitStates[${idx}]`, graph.id, { ...graphTarget, field: 'exitStates' });
+        }
       }
     }
   }
@@ -366,6 +410,8 @@ function validateGraph(
       } else if (opts?.planeIds && !opts.planeIds.has(state.activePlane.trim())) {
         addIssue(issues, 'error', 'state.activePlane.unknown', `${graph.id}.${sid}: activePlane references unknown plane: ${state.activePlane.trim()}`, `${path}.states.${sid}.activePlane`, sid, { ...stateTarget, field: 'activePlane' });
       }
+      // 活计图点名位面合法：v2 实例 id 即 graphId，位面对账器增量（stateChanged）与
+      // 全量（getActiveState）两路天生命中活计实例；实例删除路径由 discard 事件清点名。
     }
     validateActions(state.onEnterActions, `${path}.states.${sid}.onEnterActions`, issues, `${graph.id}.${sid}`, { ...stateTarget, field: 'onEnterActions' });
     validateActions(state.onExitActions, `${path}.states.${sid}.onExitActions`, issues, `${graph.id}.${sid}`, { ...stateTarget, field: 'onExitActions' });
@@ -400,7 +446,12 @@ function validateGraph(
 
 const validWrapperOwnerTypes = new Set(['npc', 'hotspot', 'zone', 'quest', 'dialogue', 'minigame', 'cutscene', 'scenario', 'scene', 'system']);
 
-/** 作者信号 id + 全部 broadcastOnEnter 状态的派生 `state:<graphId>:<stateId>` 信号。 */
+/**
+ * 作者信号 id + 全部 broadcastOnEnter 状态的派生 `state:<graphId>:<stateId>` 信号。
+ * 实例化原型的派生键**不进目录**：运行时对 run 发的是实例形态（state:图@key:状态），
+ * 活计图广播用普通形态 state:图:态（每原型一实例故 graphId 唯一），进目录；
+ * 每轮重发的语义由 validateBroadcastStateSignals 对"常驻图监听活计广播"报 warning 兜。
+ */
 function collectKnownSignals(data: NarrativeGraphsFileLike): ReadonlySet<string> {
   const known = new Set((data.signals ?? []).map((s) => String(s.id ?? '').trim()).filter(Boolean));
   for (const { graph } of compileGraphs(data)) {
@@ -517,6 +568,27 @@ function validateStateCommandTargets(data: NarrativeGraphsFileLike, graphIndex: 
       const stateTarget = stateTargetFromCtx({ compositionId, graphId: String(graph.id ?? ''), elementId }, sid);
       for (const [listName, actions] of Object.entries({ onEnterActions: state.onEnterActions, onExitActions: state.onExitActions })) {
         for (const [idx, action] of (actions ?? []).entries()) {
+          if (action?.type === 'startNarrativeRun' || action?.type === 'resetNarrativeRun'
+              || action?.type === 'revertNarrativeRun' || action?.type === 'activateNarrativeRun') {
+            const params = action.params && typeof action.params === 'object' && !Array.isArray(action.params)
+              ? action.params as Record<string, unknown>
+              : {};
+            const targetGid = String(params.graphId ?? '').trim();
+            // activateNarrativeRun 空 graphId = 清激活槽（合法）；其余必填由 manifest 校验兜。
+            if (!targetGid) continue;
+            const targetGraph = graphIndex.graphs.get(targetGid);
+            if (!targetGraph) {
+              addIssue(issues, 'error', 'runAction.graphMissing', `${graph.id}.${sid}: ${action.type} 目标图不存在: ${targetGid}`, `${graph.id}.${sid}.${listName}[${idx}]`, `${graph.id}.${sid}`, { ...stateTarget, field: listName });
+            } else if (!isRunGraphLike(targetGraph)) {
+              addIssue(issues, 'error', 'runAction.notRunGraph', `${graph.id}.${sid}: ${action.type} 目标图未声明 run（常驻图不可 start/reset/revert/activate）: ${targetGid}`, `${graph.id}.${sid}.${listName}[${idx}]`, `${graph.id}.${sid}`, { ...stateTarget, field: listName });
+            } else if (action.type === 'revertNarrativeRun') {
+              const targetState = String(params.stateId ?? '').trim();
+              if (targetState && !targetGraph.states?.[targetState]) {
+                addIssue(issues, 'error', 'runAction.stateMissing', `${graph.id}.${sid}: revertNarrativeRun 目标状态不存在: ${targetGid}.${targetState}`, `${graph.id}.${sid}.${listName}[${idx}]`, `${graph.id}.${sid}`, { ...stateTarget, field: listName });
+              }
+            }
+            continue;
+          }
           if (action?.type !== 'setNarrativeState') continue;
           addIssue(
             issues,
@@ -616,6 +688,23 @@ function validateBroadcastStateSignals(data: NarrativeGraphsFileLike, issues: Na
     const parsed = parseNarrativeDerivedStateSignal(sig);
     if (!parsed) continue;
     const sourceGraph = graphById.get(parsed.graphId);
+    if (sourceGraph && isRunGraphLike(sourceGraph)) {
+      // 活计图广播每轮重发；常驻图（非活计图）裸听它容易被反复触发——建议改用 narrativeCount
+      // 条件门（"做满 N 单"）。仅 warning：活计图之间/挂起语义下有合理用法。
+      for (const ref of refs) {
+        if (isRunGraphLike(graphById.get(ref.graphId))) continue;
+        const owner = ownerByGraphId.get(ref.graphId);
+        addIssue(
+          issues,
+          'warning',
+          'state.broadcast.runSourceListenedByResident',
+          `${ref.graphId}.${ref.transitionId}: ${sig} 的源图是活计图（每轮重发）——常驻图裸听易反复触发，建议改用 narrativeCount 条件门`,
+          `${ref.graphId}.transitions`,
+          ref.transitionId,
+          owner ? transitionTargetFromCtx(owner, ref.transitionId) : undefined,
+        );
+      }
+    }
     const state = sourceGraph?.states?.[parsed.stateId];
     const statePath = `${parsed.graphId}.${parsed.stateId}`;
     if (!state) {
@@ -875,9 +964,42 @@ function validateConditionExpr(
       addIssue(issues, 'error', 'condition.narrative.graphMissing', `${owner}: narrative graph does not exist: ${graphId}`, `${path}.narrative`, owner, target);
       return false;
     }
+    // 单活模型：narrative 叶可读活计图当前态（无活计实例=运行时 false），故活计图合法、不拦。
     if (!graph.states?.[stateId]) {
       addIssue(issues, 'error', 'condition.narrative.stateMissing', `${owner}: narrative state does not exist: ${graphId}.${stateId}`, `${path}.state`, owner, target);
       return false;
+    }
+    return true;
+  }
+  if (typeof (x as { narrativeCount?: unknown }).narrativeCount === 'string') {
+    const graphId = String((x as { narrativeCount: string }).narrativeCount).trim();
+    const value = (x as { value?: unknown }).value;
+    const op = (x as { op?: unknown }).op;
+    const exitState = (x as { exitState?: unknown }).exitState;
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      addIssue(issues, 'error', 'condition.shape', `${owner}: narrativeCount condition requires numeric value`, path, owner, target);
+      return false;
+    }
+    if (op !== undefined && !['==', '!=', '>', '>=', '<', '<='].includes(String(op))) {
+      addIssue(issues, 'error', 'condition.narrativeCount.op', `${owner}: narrativeCount op must be one of == != > >= < <=`, `${path}.op`, owner, target);
+      return false;
+    }
+    const graph = graphIndex.graphs.get(graphId);
+    if (!graph) {
+      addIssue(issues, 'error', 'condition.narrativeCount.graphMissing', `${owner}: narrativeCount graph does not exist: ${graphId}`, `${path}.narrativeCount`, owner, target);
+      return false;
+    }
+    if (!isRunGraphLike(graph)) {
+      addIssue(issues, 'error', 'condition.narrativeCount.notRunGraph', `${owner}: narrativeCount target ${graphId} is not a run graph`, `${path}.narrativeCount`, owner, target);
+      return false;
+    }
+    if (exitState !== undefined) {
+      const exit = String(exitState ?? '').trim();
+      const exits = Array.isArray(graph.exitStates) ? graph.exitStates.map((s) => String(s ?? '').trim()) : [];
+      if (!exit || !exits.includes(exit)) {
+        addIssue(issues, 'error', 'condition.narrativeCount.exitMissing', `${owner}: narrativeCount exitState is not an exit of ${graphId}: ${exit}`, `${path}.exitState`, owner, target);
+        return false;
+      }
     }
     return true;
   }
@@ -1003,8 +1125,9 @@ function validateIdDelimiter(
   target?: NarrativeValidationTarget,
 ): void {
   const id = String(value ?? '');
-  if (/[:|]/.test(id)) {
-    addIssue(issues, 'error', code, `${id}: id cannot contain ":" or "|"`, path, itemId, target);
+  // `@` 是 run 实例 id（graphId@key）与 @owner/@scene 相对 token 的保留字符（实例化 S1 收紧；现网 0 处）。
+  if (/[:|@]/.test(id)) {
+    addIssue(issues, 'error', code, `${id}: id cannot contain ":", "|" or "@"`, path, itemId, target);
   }
 }
 

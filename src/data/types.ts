@@ -285,6 +285,15 @@ export interface HotspotDef {
   collisionPolygonLocal?: boolean;
   /** 投射阴影 + 接触 AO 开关（合并）；缺省视为 true。false 时该实体不投影也无接触 AO。仅对有 displayImage 的热区有意义。 */
   castShadow?: boolean;
+  /**
+   * 实例级等比缩放（quad 级真变换，绕脚底锚点）：渲染/碰撞多边形/交互半径/
+   * 阴影尺寸/气泡/遮挡随动；缺省 1。可经 setEntityField 运行时改并入档。
+   */
+  scale?: number;
+  /** 实例级旋转（度，绕脚底锚点）；quad 级真变换同上；缺省 0。 */
+  rotation?: number;
+  /** 分组标签（纯标签、非 id 引用）：供组动作（setGroupEnabled/moveGroupBy）批量寻址。 */
+  group?: string;
 }
 
 /** 无 graphId 的 inspect：可选正文浮层 + 可选 actions（可与 actions 单独存在） */
@@ -387,6 +396,18 @@ export type NarrativeStateConditionLeaf = {
 };
 
 /**
+ * 结算计数叶（叙事运行实例化 v2，设计稿 artifact/Design/叙事运行实例化-技术设计-2026-07-17.md §3.5）：
+ * 活计原型累计结算次数比较（跨轮持久历史的一等表达；「首次接单」= { op: '==', value: 0 }）。
+ * exitState 缺省 = 全部出口合计。活计当前状态用普通 NarrativeStateConditionLeaf（单活模型下直接读）。
+ */
+export type NarrativeRunCountConditionLeaf = {
+  narrativeCount: string;
+  exitState?: string;
+  op?: '==' | '!=' | '>' | '>=' | '<' | '<=';
+  value: number;
+};
+
+/**
  * 位面叶子：当前**激活位面** === 该 id（含 manual override 压过叙事点名后的结果）。
  * 组合语义用 all/any/not（如「非 normal」= { not: { plane: 'normal' } }）。
  */
@@ -401,6 +422,7 @@ export type GraphConditionLeaf =
   | ScenarioConditionLeaf
   | ScenarioLineConditionLeaf
   | NarrativeStateConditionLeaf
+  | NarrativeRunCountConditionLeaf
   | PlaneConditionLeaf;
 
 /**
@@ -646,6 +668,8 @@ export interface NpcDef {
   portraitSlug?: string;
   /** 进入场景时播放的状态名；缺省时优先 idle，否则取 states 中第一个 */
   initialAnimState?: string;
+  /** 初始状态的播放参数（调速/倒放/定格/起播帧错相）；语义见 NpcInitialAnimPlayback */
+  initialAnimPlayback?: NpcInitialAnimPlayback;
   /**
    * 进入场景时的左右朝向（脚底为锚点，镜像 container.scale.x）。
    * 缺省为 right。对话/巡逻中仍可由逻辑改写朝向。
@@ -668,6 +692,15 @@ export interface NpcDef {
    * 再叠一层逐 entity 光照会与背景色调不符、露出方框接缝。缺省视为 false（正常受光）。
    */
   renderRaw?: boolean;
+  /**
+   * 实例级等比缩放（quad 级真变换，绕脚底锚点）：渲染/碰撞多边形/交互半径/
+   * 阴影尺寸/气泡/深度接地线随动；缺省 1。可经 setEntityField 运行时改并入档。
+   */
+  scale?: number;
+  /** 实例级旋转（度，绕脚底锚点）；quad 级真变换同上；缺省 0。 */
+  rotation?: number;
+  /** 分组标签（纯标签、非 id 引用）：供组动作（setGroupEnabled/moveGroupBy）批量寻址。 */
+  group?: string;
 }
 
 export type CutsceneBindableEntityDef = Pick<NpcDef | HotspotDef, 'cutsceneIds' | 'cutsceneOnly'>;
@@ -728,6 +761,9 @@ export interface NpcRuntimeOverride {
   animFile?: string | null;
   initialAnimState?: string | null;
   animState?: string | null;
+  /** 实例 transform 运行时覆盖（setEntityField 通道；null=清除回落 def/缺省） */
+  scale?: number | null;
+  rotation?: number | null;
 }
 
 export interface HotspotRuntimeOverride {
@@ -735,6 +771,9 @@ export interface HotspotRuntimeOverride {
   x?: number;
   y?: number;
   displayImage?: HotspotDisplayImage | null;
+  /** 实例 transform 运行时覆盖（setEntityField 通道；null=清除回落 def/缺省） */
+  scale?: number | null;
+  rotation?: number | null;
 }
 
 /** 普通 Zone 的可存档覆盖（depth_floor 不参与） */
@@ -786,8 +825,13 @@ export interface QuestEdge {
 export interface QuestDef {
   id: string;
   group: string;
-  type: 'main' | 'side';
+  /** repeatable：可重复活计的面板镜像，硬绑一张活计图（runArchetype），
+   *  不走 preconditions/completionConditions/rewards/nextQuests 状态机——
+   *  条目/完成/归档全部由活计生命周期（start/settle/discard）派生。 */
+  type: 'main' | 'side' | 'repeatable';
   sideType?: 'errand' | 'inquiry' | 'investigation' | 'commission';
+  /** type='repeatable' 必填：绑定的活计图 id（声明了 run 的叙事图），1:1 */
+  runArchetype?: string;
   title: string;
   description: string;
   preconditions: ConditionExpr[];
@@ -926,7 +970,47 @@ export interface AnimationStateDef {
   frames: number[];
   frameRate: number;
   loop: boolean;
+  /**
+   * 步速匹配基准（世界单位/秒）：该循环在此移动速度下步频与位移吻合（不滑步）。
+   * 仅对移动类状态有意义；配置后移动驱动方按 实际速度/referenceSpeed 缩放播放倍率（夹取见
+   * SpriteEntity.LOCOMOTION_RATE_*）。缺省 = 不参与匹配，恒 1 倍速播放。
+   */
+  referenceSpeed?: number;
 }
+
+/**
+ * 动画播放参数（playNpcAnimation 等动作可选携带；全部缺省时播放行为与旧调用完全一致）。
+ * holdFrame 与其余参数互斥生效：定格后不推进、不触发完成、thenState 不会发生。
+ */
+export interface AnimationPlaybackParams {
+  /** 播放速度倍率（>0，乘在状态 frameRate 上）；缺省 1 */
+  speed?: number;
+  /** true = 反向播放（末帧起步进向首帧；非循环片段在首帧完成） */
+  reverse?: boolean;
+  /**
+   * 定格帧：切到该状态并停在此帧（0 基，越界按帧数取模），用于把片段任意一帧当 pose。
+   * 动作层（playNpcAnimation）负值视为未设（编辑器以 -1 为「不定格」哨兵）。
+   */
+  holdFrame?: number;
+  /** 非循环片段播完后自动切换到的状态（按默认参数播放）；循环片段忽略 */
+  thenState?: string;
+  /**
+   * 起播帧（0 基，越界按帧数取模）：正/反向都从此帧开始步进；holdFrame 存在时忽略。
+   * 主要供场景实体去同步（同包多拷贝错开相位）；playNpcAnimation 动作层暂不暴露此参数。
+   */
+  startFrame?: number;
+}
+
+/**
+ * 场景实体（NpcDef）的初始播放参数：仅在进场起播 `initialAnimState` 那一次生效
+ * （loadSprite；运行时换 animFile 重载精灵时同理）。之后任何 playAnimation（动作/
+ * 巡逻/对话）按既有语义重置参数——这是「初始值」不是常驻覆盖。
+ * 数值负值/非法视为未设（与动作层口径一致；编辑器以 -1 为「未设」哨兵且缺省不写键）。
+ */
+export type NpcInitialAnimPlayback = Pick<
+  AnimationPlaybackParams,
+  'speed' | 'reverse' | 'holdFrame' | 'startFrame'
+>;
 
 // ============================================================
 // 对话记录
@@ -1033,7 +1117,8 @@ export interface ICutsceneActor extends IEmoteBubbleAnchor {
     moveAnimState?: string,
     faceTowardMovement?: boolean,
   ): Promise<void>;
-  playAnimation(name: string): void;
+  /** `playback` 缺省时行为与旧签名完全一致；参见 AnimationPlaybackParams。 */
+  playAnimation(name: string, playback?: AnimationPlaybackParams): void;
   setFacing(dx: number, dy: number): void;
   setVisible(visible: boolean): void;
   cutsceneUpdate(dt: number): void;
@@ -1106,6 +1191,8 @@ export interface ActionStep {
  * `parallaxScene`：播放一个多层多关键帧 parallax 场景（见 ParallaxSceneDef）。字段：`id`（从 parallax_scenes.json 检索）
  * 或内联 `scene`；可选 `handle`：写了 → 手动管理（hideImg(handle) / 同 handle 换场景）；不写 → 匿名镜头位
  * 自动托管（同 showImg 缺省 id 语义）。fire-and-forget，不阻塞后续步骤。
+ * `cameraMove` / `cameraZoom` 可选 `easing`（linear|easeIn|easeOut|easeInOut，cubic 家族）；
+ * 缺省沿用历史默认曲线（move=ease-in-out cubic，zoom=ease-in-out quad）。
  */
 export interface PresentStep {
   kind: 'present';
@@ -1421,6 +1508,8 @@ export interface ZoneSmellConfig {
 
 export interface ZoneDef {
   id: string;
+  /** 分组标签（纯标签、非 id 引用）：编辑器可指派；组动作首期不消费 zone（预留）。 */
+  group?: string;
   /**
    * 位面归属（见 `systems/plane/types.ts` PlaneDef）：缺省 = zone 存在于**所有**位面；
    * 有值时仅当激活位面包含于该列表时才注册进 ZoneSystem（切位面后由刷新入口重注册）。
@@ -1526,10 +1615,29 @@ export interface EntityLightingConfig {
 // UI 只读数据提供接口 — UI 层依赖这些接口而非具体系统类
 // ============================================================
 
+/** 活计图运行面板信息（NarrativeStateManager 只读派生，供任务面板/HUD 镜像用） */
+export interface NarrativeRunPanelInfo {
+  graphId: string;
+  /** 当前实例所在状态 id；undefined = 无实例（蛰伏） */
+  active?: string;
+  /** 当前状态的显示 label（缺省回退状态 id） */
+  activeLabel?: string;
+  /** 第几单（= 累计 started 计数，reset 不增；无历史为 0） */
+  ordinal: number;
+  /** 是否占据全局激活槽（=追踪中） */
+  activated: boolean;
+  /** 是否挂起（有实例但未激活） */
+  suspended: boolean;
+  /** 各出口累计结算（label 取出口状态 label，缺省回退 id；只含 count>0 项） */
+  settled: { exitId: string; label: string; count: number }[];
+}
+
 export interface IQuestDataProvider {
   getCurrentMainQuest(): QuestDef | null;
   getActiveQuests(): { def: QuestDef; status: QuestStatus }[];
   getCompletedQuests(): { def: QuestDef }[];
+  /** repeatable 任务条目（含运行信息）；无实例且无结算历史的不返回 */
+  getRepeatableQuestEntries(): { def: QuestDef; run: NarrativeRunPanelInfo }[];
 }
 
 export interface IInventoryDataProvider {

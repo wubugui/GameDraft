@@ -115,6 +115,16 @@ _PRESENT_PARAM_DEFAULTS: dict[str, dict[str, float]] = {
     "cameraMove": {"duration": 1000.0},
 }
 
+# cameraMove / cameraZoom 可选 easing（与运行时 CutsceneRenderer.applyCameraEase、
+# validator._PARALLAX_EASINGS 同源）。空值 = 不写键，运行时沿用各自历史默认曲线。
+_CAMERA_EASING_ROWS: list[tuple[str, str]] = [
+    ("缓入缓出（默认，不写键）", ""),
+    ("匀速 · linear", "linear"),
+    ("缓入 · easeIn", "easeIn"),
+    ("缓出 · easeOut", "easeOut"),
+    ("缓入缓出 · easeInOut", "easeInOut"),
+]
+
 # 泛型 float 控件的量程 / 小数位 / 提示覆盖（默认 range=-99999..99999, decimals=2）。
 # heightPercent 是 0–1 比例、scale 是缩放倍数，原先共用 ±99999 的裸量程极易填错。
 _PRESENT_FLOAT_HINTS: dict[tuple[str, str], dict[str, Any]] = {
@@ -748,6 +758,34 @@ class StepWidget(QFrame):
             self._widgets[pname] = w
             self._present_params_layout.addRow(label, w)
 
+        if ptype in ("cameraMove", "cameraZoom"):
+            self._add_camera_easing_row()
+
+    def _add_camera_easing_row(self) -> None:
+        """cameraMove / cameraZoom 可选 easing 下拉（空 = 不写键，运行时沿用各自默认曲线）。"""
+        cur = str(self._step_data.get("easing", "") or "").strip()
+        rows = list(_CAMERA_EASING_ROWS)
+        if cur and cur not in {v for _, v in rows}:
+            rows.append((f"{cur}（未登记值）", cur))
+        combo = FilterableTypeCombo(rows, self, select_only=True)
+        combo.set_committed_type(cur)
+        combo.typeCommitted.connect(self._emit_dirty)
+        combo.setToolTip(
+            "镜头插值缓动。默认（不写键）= 运行时历史曲线：cameraMove 为缓入缓出 cubic、"
+            "cameraZoom 为缓入缓出 quad；linear = 匀速；easeIn / easeOut / easeInOut 为 cubic 家族。"
+        )
+        self._widgets["_camera_easing"] = combo
+        self._present_params_layout.addRow("easing（缓动）", combo)
+
+    def _merge_camera_easing_optional(self, d: dict) -> None:
+        """easing 空 = 不写键；非空原样写回（未登记值也保留，交由 validator 报 error）。"""
+        w = self._widgets.get("_camera_easing")
+        if not isinstance(w, FilterableTypeCombo):
+            return
+        ez = w.committed_type().strip()
+        if ez:
+            d["easing"] = ez
+
     def _build_camera_move_present_params(self) -> None:
         """cameraMove：x/y 可手输，也可用绑定场景地图点选。"""
         val_x = self._step_data.get("x", "")
@@ -787,6 +825,7 @@ class StepWidget(QFrame):
         self._widgets["duration"] = sd
         self._present_params_layout.addRow("目标位置（世界坐标）", row)
         self._present_params_layout.addRow("duration (ms)", sd)
+        self._add_camera_easing_row()
 
     def _on_pick_camera_move_point(self) -> None:
         ed = self._editor
@@ -1897,6 +1936,8 @@ class StepWidget(QFrame):
             if ptype == "showImg":
                 self._show_img_merge_zindex_optional(d)
                 self._show_img_merge_ken_burns_optional(d)
+            if ptype in ("cameraMove", "cameraZoom"):
+                self._merge_camera_easing_optional(d)
             return self._preserve_present_numbers(d)
 
         if kind == "parallel":

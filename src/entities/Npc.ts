@@ -1,8 +1,44 @@
 import { Container, Graphics, Text, Texture } from 'pixi.js';
-import type { NpcDef, AnimationSetDef, ICutsceneActor } from '../data/types';
+import type {
+  NpcDef,
+  AnimationPlaybackParams,
+  AnimationSetDef,
+  ICutsceneActor,
+  NpcInitialAnimPlayback,
+} from '../data/types';
+
+/**
+ * 场景数据里的初始播放参数消毒：与动作层同口径——speed 须 >0，holdFrame/startFrame
+ * 须 ≥0（负值=编辑器「未设」哨兵），非法值静默忽略（构建期由 validator warning 兜）。
+ * 全部无效时返回 undefined，走 SpriteEntity 旧调用路径。
+ */
+function sanitizeInitialAnimPlayback(
+  raw: NpcInitialAnimPlayback | undefined,
+): AnimationPlaybackParams | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const out: AnimationPlaybackParams = {};
+  const speed = Number(raw.speed);
+  if (raw.speed !== undefined && Number.isFinite(speed) && speed > 0) out.speed = speed;
+  if (raw.reverse === true) out.reverse = true;
+  const hold = Number(raw.holdFrame);
+  if (raw.holdFrame !== undefined && Number.isFinite(hold) && hold >= 0) {
+    out.holdFrame = Math.trunc(hold);
+  }
+  const start = Number(raw.startFrame);
+  if (raw.startFrame !== undefined && Number.isFinite(start) && start >= 0) {
+    out.startFrame = Math.trunc(start);
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
 import { portraitSlugFromAnimFile } from '../data/characterRegistry';
 import type { TexelsPerWorld } from '../rendering/EntityPixelDensityMatch';
 import { SpriteEntity } from '../rendering/SpriteEntity';
+import {
+  entityRotationRadOf,
+  entityScaleOf,
+  quadGroundYAroundFoot,
+  quadTopLocalYAroundFoot,
+} from '../utils/entityTransform';
 
 const MARKER_SIZE = 20;
 
@@ -66,6 +102,50 @@ export class Npc implements ICutsceneActor {
     this.nameLabel.y = 6;
     this.container.addChild(this.nameLabel);
     this.applyInitialFacing();
+    this.applyInstanceTransform();
+  }
+
+  /**
+   * 实例 transform（def.scale/rotation，quad 级真变换）：容器级施加（绕脚底锚点），
+   * 朝向符号保留；名字标签/提示图标/占位圆反向补偿（保持可读、不随实体旋转缩放）。
+   * setEntityField 改字段后调用即生效；碰撞/交互半径等在各自求值处读 def，无需失效。
+   */
+  applyInstanceTransform(): void {
+    const s = entityScaleOf(this.def);
+    const sx = this.container.scale.x < 0 ? -1 : 1;
+    this.container.scale.set(sx * s, s);
+    this.container.rotation = entityRotationRadOf(this.def);
+    this._syncOverlayCompensation();
+    this._syncSortFootY();
+  }
+
+  /** 名字标签/提示图标/占位圆：抵消实例缩放与旋转（含镜像符号，旧 setFacing 语义超集）。
+   *
+   * 镜像与旋转不对易：容器线性部 = R(φ)·S(sx·s, s)，要让子节点世界姿态回到直立
+   * 不镜像（= I），子节点须取 C = R(sx·(−φ))·S(sx/s, 1/s)——朝左（sx=−1）时补偿
+   * 旋转符号翻转，否则标签歪 2φ（审查 F2，数值实证）。 */
+  private _syncOverlayCompensation(): void {
+    const s = entityScaleOf(this.def);
+    const inv = 1 / s;
+    const sx = this.container.scale.x < 0 ? -1 : 1;
+    const rot = sx * -this.container.rotation;
+    for (const child of [this.nameLabel, this.promptIcon, this.marker]) {
+      if (!child) continue;
+      child.rotation = rot;
+      child.scale.set(sx * inv, inv);
+    }
+  }
+
+  /** 深度排序接地线：旋转时把变换后 quad 的底边 y 写给 Renderer.sortEntityLayer。 */
+  private _syncSortFootY(): void {
+    const c = this.container as Container & { entitySortFootY?: number };
+    const rad = entityRotationRadOf(this.def);
+    if (rad === 0) {
+      delete c.entitySortFootY;
+      return;
+    }
+    const size = this.getWorldSize();
+    c.entitySortFootY = quadGroundYAroundFoot(this._y, size.width, size.height, rad);
   }
 
   /** 按 def.initialFacing 设置左右镜像（无精灵时同步占位与标签）。 */
@@ -99,17 +179,23 @@ export class Npc implements ICutsceneActor {
       (animDef.states.idle ? 'idle' : keys[0]);
     this.restAnimState = resolved ?? null;
     if (resolved) {
-      this.sprite.playAnimation(resolved);
+      // 初始播放参数只在这一次起播生效；之后任何 playAnimation 按既有语义重置
+      this.sprite.playAnimation(resolved, undefined, sanitizeInitialAnimPlayback(this.def.initialAnimPlayback));
     }
     this.container.addChildAt(this.sprite.container, 0);
     this.sprite.container.x = 0;
     this.sprite.container.y = 0;
     this.applyInitialFacing();
+    // 精灵就位后重派生实例 transform 的尺寸派生量（构造时 sprite 为空、
+    // entitySortFootY 按 0 尺寸算过一次；换动画包重载同理。审查 F4）。
+    this.applyInstanceTransform();
   }
 
   private _syncContainerPosition(): void {
     this.container.x = this._x;
     this.container.y = this._y;
+    const c = this.container as Container & { entitySortFootY?: number };
+    if (c.entitySortFootY !== undefined) this._syncSortFootY();
   }
 
   get entityId(): string { return this.def.id; }
@@ -127,6 +213,10 @@ export class Npc implements ICutsceneActor {
   }
 
   get interactionRange(): number { return this.def.interactionRange; }
+  /** 交互半径 × |实例 scale|（quad 级真变换：大个子交互圈也大）。 */
+  get effectiveInteractionRange(): number {
+    return this.def.interactionRange * entityScaleOf(this.def);
+  }
   get id(): string { return this.def.id; }
 
   /**
@@ -144,9 +234,11 @@ export class Npc implements ICutsceneActor {
     return this.sprite?.getDisplayTexture() ?? null;
   }
 
-  /** 投影阴影用：世界尺寸（宽高） */
+  /** 投影阴影/光照探针用：**有效**世界尺寸（帧世界尺寸 × 实例 scale）。 */
   getWorldSize(): { width: number; height: number } {
-    return this.sprite?.getWorldSize() ?? { width: 0, height: 0 };
+    const raw = this.sprite?.getWorldSize() ?? { width: 0, height: 0 };
+    const s = entityScaleOf(this.def);
+    return { width: raw.width * s, height: raw.height * s };
   }
 
   /** 投影阴影用：左右朝向（来自 container.scale.x 符号） */
@@ -176,12 +268,17 @@ export class Npc implements ICutsceneActor {
     this.sprite?.resetAnimationClock();
   }
 
-  /** 气泡底边在头顶附近；无精灵时用占位圆顶部估算 */
+  /** 气泡底边在头顶附近（变换后 quad 顶部，缩放变高/旋转躺倒都跟随）；无精灵时用占位圆估算 */
   getEmoteBubbleAnchorLocalY(): number {
     const headGap = 8;
     if (this.sprite) {
-      const h = Math.max(this.sprite.getWorldSize().height, 1);
-      return -h - headGap;
+      const size = this.getWorldSize();
+      const topLocalY = quadTopLocalYAroundFoot(
+        Math.max(size.width, 1),
+        Math.max(size.height, 1),
+        entityRotationRadOf(this.def),
+      );
+      return topLocalY - headGap;
     }
     return -MARKER_SIZE * 2 - headGap;
   }
@@ -206,9 +303,8 @@ export class Npc implements ICutsceneActor {
     this.container.scale.x = sx * baseX;
     this.container.scale.y = baseY;
 
-    this.nameLabel.scale.x = sx;
-    if (this.promptIcon) this.promptIcon.scale.x = sx;
-    if (this.marker) this.marker.scale.x = sx;
+    // 标签/图标/占位圆的镜像抵消并入实例 transform 补偿（同一处、同一口径）
+    this._syncOverlayCompensation();
 
     this.sprite?.setDirection(1, 0);
   }
@@ -245,8 +341,8 @@ export class Npc implements ICutsceneActor {
       this.derivedBaseVisible && this.conditionVisible && this.sessionEnabledOverride !== false;
   }
 
-  playAnimation(name: string): void {
-    this.sprite?.playAnimation(name);
+  playAnimation(name: string, playback?: AnimationPlaybackParams): void {
+    this.sprite?.playAnimation(name, undefined, playback);
   }
 
   /** 纯渲染：与背景像素密度对齐（内层精灵，不碰深度与碰撞） */
@@ -293,11 +389,12 @@ export class Npc implements ICutsceneActor {
     if (this.facingScaleXBeforeDialogue === null) return;
     const saved = this.facingScaleXBeforeDialogue;
     this.facingScaleXBeforeDialogue = null;
-    this.container.scale.x = saved;
+    // 只还原「朝向符号」，幅值按当前 def 实例 transform 重派生：对话期间若动作改过
+    // scale（图对话合法动作），直接回写 saved 会让 x/y 幅值劈叉、标签补偿也失配
+    //（审查 F3）。统一走 applyInstanceTransform 的单一口径。
     const sx = Math.sign(saved) || 1;
-    this.nameLabel.scale.x = sx;
-    if (this.promptIcon) this.promptIcon.scale.x = sx;
-    if (this.marker) this.marker.scale.x = sx;
+    this.container.scale.x = sx * Math.abs(this.container.scale.x);
+    this.applyInstanceTransform();
     this.sprite?.setDirection(1, 0);
   }
 
@@ -371,6 +468,8 @@ export class Npc implements ICutsceneActor {
         }
         this.x += nx * step;
         this.y += ny * step;
+        // 步速匹配：仅当当前状态声明了 referenceSpeed 才生效，否则内部回落 1 倍速
+        this.sprite?.applyLocomotionSpeed(t.speed);
       }
     }
     this.sprite?.update(dt);
@@ -391,9 +490,9 @@ export class Npc implements ICutsceneActor {
     });
     this.promptIcon.anchor.set(0.5, 0.5);
     this.promptIcon.y = -(MARKER_SIZE * 2 + 12);
-    const sx = Math.sign(this.container.scale.x) || 1;
-    this.promptIcon.scale.x = sx;
     this.container.addChild(this.promptIcon);
+    // 镜像符号 + 实例 transform 反向补偿统一走一处（迟建的图标也要立即对齐）
+    this._syncOverlayCompensation();
   }
 
   hidePrompt(): void {

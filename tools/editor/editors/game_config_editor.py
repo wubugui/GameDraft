@@ -67,7 +67,7 @@ class GameConfigEditor(QWidget):
         f.addRow("initialScene", self._initial_scene)
 
         self._initial_quest = IdRefSelector(allow_empty=True, click_opens_popup=True)
-        self._initial_quest.set_items(model.all_quest_ids())
+        self._initial_quest.set_items(model.quest_status_target_ids())
         self._initial_quest.setToolTip("新存档自动激活的初始任务")
         f.addRow("initialQuest", self._initial_quest)
 
@@ -154,7 +154,7 @@ class GameConfigEditor(QWidget):
         FlagKeyPickField，无需在此刷新（复核 P2 ③）。"""
         for sel, items in (
             (self._initial_scene, [(s, s) for s in self._model.all_scene_ids()]),
-            (self._initial_quest, self._model.all_quest_ids()),
+            (self._initial_quest, self._model.quest_status_target_ids()),
             (self._fallback_scene, [(s, s) for s in self._model.all_scene_ids()]),
             (self._initial_cutscene, self._model.all_cutscene_ids()),
         ):

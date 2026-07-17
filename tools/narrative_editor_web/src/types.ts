@@ -63,6 +63,8 @@ export interface NarrativeGraphDef {
   ownerId?: string;
   /** Free-form wrapper category/remark used for grouping in entity view. */
   category?: string;
+  /** 活计图声明（可重复运行的委托机器）；缺省=常驻图。见叙事运行实例化设计稿 v2。 */
+  run?: { repeatable?: boolean; resumable?: boolean };
   initialState: string;
   entryState?: string;
   exitStates?: string[];

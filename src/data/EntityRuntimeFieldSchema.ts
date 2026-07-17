@@ -17,6 +17,8 @@ export type RuntimeFieldApply =
   | 'playAnimation'
   | 'patrol'
   | 'reloadHotspotDisplayImage'
+  /** 实例 transform（scale/rotation，quad 级真变换）：写回 def 后调 applyInstanceTransform */
+  | 'transform'
   /** 无需立即应用：写回 def 即生效（如 portraitSlug，下一句对话行自然读到） */
   | 'none';
 
@@ -131,7 +133,7 @@ export function applyNpcRuntimeOverride(base: NpcDef, override: Record<string, R
     }
     const desc = getRuntimeFieldDescriptor('npc', key);
     if (!desc?.persistent) continue;
-    if (key === 'x' || key === 'y') {
+    if (key === 'x' || key === 'y' || key === 'scale' || key === 'rotation') {
       if (typeof value === 'number') (out as unknown as Record<string, unknown>)[key] = value;
     } else if (key === 'animFile' || key === 'initialAnimState' || key === 'portraitSlug') {
       if (typeof value === 'string') (out as unknown as Record<string, unknown>)[key] = value;
@@ -153,7 +155,7 @@ export function applyHotspotRuntimeOverride(
     }
     const desc = getRuntimeFieldDescriptor('hotspot', key);
     if (!desc?.persistent) continue;
-    if (key === 'x' || key === 'y') {
+    if (key === 'x' || key === 'y' || key === 'scale' || key === 'rotation') {
       if (typeof value === 'number') (out as unknown as Record<string, unknown>)[key] = value;
     } else if (key === 'displayImage' && isHotspotDisplayImage(value)) {
       out.displayImage = value;

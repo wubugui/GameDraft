@@ -49,6 +49,11 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
 
   // ---- 叙事 / scenario ----
   emitNarrativeSignal: { required: ['signal'], nonEmpty: ['signal'], optional: ['sourceType', 'sourceId'] },
+  // 叙事活计生命周期（S1）：graphId=活计图引用；activateNarrativeRun 的 graphId 允许空串（清激活槽）
+  startNarrativeRun: { required: ['graphId'], nonEmpty: ['graphId'] },
+  resetNarrativeRun: { required: ['graphId'], nonEmpty: ['graphId'] },
+  revertNarrativeRun: { required: ['graphId', 'stateId'], nonEmpty: ['graphId', 'stateId'] },
+  activateNarrativeRun: { required: ['graphId'] },
   setScenarioPhase: {
     required: ['scenarioId', 'phase', 'status'],
     nonEmpty: ['scenarioId', 'phase', 'status'],
@@ -133,7 +138,12 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
     nonEmpty: ['target', 'text'],
     optional: ['emote', 'duration', 'anchorOffsetX', 'anchorOffsetY'],
   },
-  playNpcAnimation: { required: ['target', 'state'], nonEmpty: ['target', 'state'] },
+  playNpcAnimation: {
+    required: ['target', 'state'],
+    nonEmpty: ['target', 'state'],
+    // speed 倍率 / reverse 倒放 / holdFrame 定格帧 / thenState 非循环播完自动切换
+    optional: ['speed', 'reverse', 'holdFrame', 'thenState'],
+  },
   setEntityEnabled: { required: ['target', 'enabled'], nonEmpty: ['target'] },
 
   // ---- 场景切换 / 相机 / 深度 ----
@@ -223,6 +233,10 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
   // ---- 规矩供给（zone 上下文动作）----
   enableRuleOffers: { required: ['slots'] },
   disableRuleOffers: { required: [] },
+
+  // ---- 分组批量（group 纯标签寻址，当前场景内生效）----
+  setGroupEnabled: { required: ['group', 'enabled'], nonEmpty: ['group'] },
+  moveGroupBy: { required: ['group', 'dx', 'dy'], nonEmpty: ['group'], optional: ['speed'] },
 };
 
 /** manifest 是否收录该动作类型（未收录 = 校验器报未知类型）。 */

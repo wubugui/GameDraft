@@ -575,15 +575,24 @@ def _delete_signal_impl(
 # 条件叶子 / setNarrativeState 的跨文件走访（状态名 / 图 id 重构共用）
 # --------------------------------------------------------------------------- #
 
+_GRAPH_PARAM_ACTION_TYPES = frozenset({
+    # params 带 graphId（revert 另带 stateId）的动作：setNarrativeState + 活计生命周期四件套
+    "setNarrativeState", "startNarrativeRun", "resetNarrativeRun",
+    "revertNarrativeRun", "activateNarrativeRun",
+})
+
+
 def _walk_narrative_refs(node: Any, visit) -> int:
-    """深度遍历任意结构，对 {narrative:str, state:str} 条件叶子与
-    type=='setNarrativeState' 的动作调用 visit(kind, obj)，返回 visit 命中计数之和。
-    visit 返回 1 表示命中（计数/已替换），0 表示不匹配。"""
+    """深度遍历任意结构，对 {narrative:str, state:str} / {narrativeCount:str} 条件叶子与
+    graphId 参数动作（setNarrativeState + 活计生命周期四件套）调用 visit(kind, obj)，
+    返回 visit 命中计数之和。visit 返回 1 表示命中（计数/已替换），0 表示不匹配。"""
     count = 0
     if isinstance(node, dict):
         if isinstance(node.get("narrative"), str) and isinstance(node.get("state"), str):
             count += visit("leaf", node)
-        if str(node.get("type") or "").strip() == "setNarrativeState":
+        if isinstance(node.get("narrativeCount"), str):
+            count += visit("countLeaf", node)
+        if str(node.get("type") or "").strip() in _GRAPH_PARAM_ACTION_TYPES:
             params = node.get("params")
             if isinstance(params, dict):
                 count += visit("setState", params)
@@ -597,14 +606,20 @@ def _walk_narrative_refs(node: Any, visit) -> int:
 
 def _state_ref_visitor(gid: str, sid: str, new_sid: str | None):
     """sid 引用的计数/替换 visitor（new_sid=None 只计数）。narrative 字段必须精确等于
-    图 id 才算命中；@owner/@scene 相对 token 静态解析不了，刻意不动（扫描单独报出）。"""
+    图 id 才算命中；@owner/@scene 相对 token 静态解析不了，刻意不动（扫描单独报出）。
+    countLeaf 的 exitState / revertNarrativeRun 的 stateId 同样跟随（活计出口改名级联）。"""
     def visit(kind: str, obj: dict[str, Any]) -> int:
         if kind == "leaf":
             if str(obj.get("narrative") or "").strip() == gid and str(obj.get("state") or "").strip() == sid:
                 if new_sid is not None:
                     obj["state"] = new_sid
                 return 1
-        else:  # setState params
+        elif kind == "countLeaf":
+            if str(obj.get("narrativeCount") or "").strip() == gid and str(obj.get("exitState") or "").strip() == sid:
+                if new_sid is not None:
+                    obj["exitState"] = new_sid
+                return 1
+        else:  # setState / 活计生命周期动作 params（start/reset/activate 无 stateId，天然不命中）
             if str(obj.get("graphId") or "").strip() == gid and str(obj.get("stateId") or "").strip() == sid:
                 if new_sid is not None:
                     obj["stateId"] = new_sid
@@ -615,7 +630,7 @@ def _state_ref_visitor(gid: str, sid: str, new_sid: str | None):
 
 def _graph_ref_visitor(gid: str, new_gid: str | None):
     def visit(kind: str, obj: dict[str, Any]) -> int:
-        key = "narrative" if kind == "leaf" else "graphId"
+        key = {"leaf": "narrative", "countLeaf": "narrativeCount"}.get(kind, "graphId")
         if str(obj.get(key) or "").strip() == gid:
             if new_gid is not None:
                 obj[key] = new_gid
@@ -936,14 +951,17 @@ def scan_graph_usages(model: Any, graph_id: str) -> dict[str, Any]:
     narrative_conditions = _walk_narrative_refs(narrative, _graph_ref_visitor(gid, None))
     external = _count_over_sources(model, _graph_ref_visitor(gid, None))
     meta_commands, meta_emits = _rewrite_meta_graph_refs(narrative, gid, None)
+    run_archetypes = _rewrite_quest_run_archetypes(model, gid, None)
     total = (
         derived + reads + narrative_conditions
         + sum(h["count"] for h in external) + meta_commands + meta_emits
+        + run_archetypes
     )
     return {
         "graphId": gid, "derivedListeners": derived, "metaReads": reads,
         "narrativeConditions": narrative_conditions, "external": external,
-        "metaCommands": meta_commands, "metaEmits": meta_emits, "totalRefs": total,
+        "metaCommands": meta_commands, "metaEmits": meta_emits,
+        "runArchetypes": run_archetypes, "totalRefs": total,
     }
 
 
@@ -999,6 +1017,8 @@ def _rename_graph_impl(
     external = _apply_over_sources(model, _graph_ref_visitor(old, new))
     # 元素 meta.commands / meta.emits（派生信号声明）跟随图改名（2026-07-17 审查 W-E4）
     meta_commands, meta_emits = _rewrite_meta_graph_refs(narrative, old, new)
+    # repeatable 任务的 runArchetype 硬绑定跟随（活计↔quest 1:1；不跟会悬垂成校验 error）
+    run_archetypes = _rewrite_quest_run_archetypes(model, old, new)
 
     if update_migrations:
         mig_root = narrative.setdefault("migrations", {})
@@ -1017,7 +1037,21 @@ def _rename_graph_impl(
         "derivedListeners": derived, "metaReads": reads,
         "narrativeConditions": narrative_refs, "external": external,
         "metaCommands": meta_commands, "metaEmits": meta_emits,
+        "runArchetypes": run_archetypes,
     }
+
+
+def _rewrite_quest_run_archetypes(model: Any, gid: str, new_gid: str | None) -> int:
+    """quests.json 里 repeatable 任务的 runArchetype == gid 的跟改/计数（new_gid=None 只计数）。"""
+    hits = 0
+    for q in getattr(model, "quests", None) or []:
+        if isinstance(q, dict) and str(q.get("runArchetype") or "").strip() == gid:
+            if new_gid is not None:
+                q["runArchetype"] = new_gid
+            hits += 1
+    if hits and new_gid is not None:
+        model.mark_dirty("quest")
+    return hits
 
 
 # --------------------------------------------------------------------------- #

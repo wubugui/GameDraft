@@ -54,6 +54,7 @@ export type RuntimeCommand =
   | { id?: unknown; type: 'debugInteractNpc'; npcId?: unknown; reason?: unknown }
   | { id?: unknown; type: 'debugWait'; durationMs?: unknown; reason?: unknown }
   | { id?: unknown; type: 'debugSetPlayerPosition'; x?: unknown; y?: unknown; snapCamera?: unknown; reason?: unknown }
+  | { id?: unknown; type: 'debugSetEntityField'; kind?: unknown; entityId?: unknown; fieldName?: unknown; value?: unknown; reason?: unknown }
   | { id?: unknown; type: 'debugMovePlayerTo'; x?: unknown; y?: unknown; speed?: unknown; snapCamera?: unknown; reason?: unknown }
   | { id?: unknown; type: 'debugClick'; x?: unknown; y?: unknown; reason?: unknown }
   | {
@@ -120,6 +121,8 @@ export type RuntimeCommandDeps = {
   debugInteractNpc(npcId: string): Promise<boolean>;
   debugWait(durationMs: number): Promise<void>;
   debugSetPlayerPosition(x: number, y: number, snapCamera: boolean): void | Promise<void>;
+  /** 走完整 setEntityField 生产路径（coerce→运行态存储→立即应用→入档），供无头验收驱动实体字段（含实例 transform）。 */
+  debugSetEntityField(kind: 'npc' | 'hotspot', entityId: string, fieldName: string, value: unknown): Promise<void>;
   debugMovePlayerTo(x: number, y: number, speed: number, snapCamera: boolean): Promise<void>;
   debugClick(x: number, y: number): Promise<void>;
   debugDrag(fromX: number, fromY: number, toX: number, toY: number, durationMs: number): Promise<void>;
@@ -322,6 +325,20 @@ export async function applyDevRuntimeCommand(
         );
         await deps.captureSnapshot(optionalString(command.reason) || 'runtime-command:debugSetPlayerPosition');
         return ok(id, type, 'player position set for debug');
+      }
+      case 'debugSetEntityField': {
+        const kindRaw = requiredString(command.kind, 'kind');
+        if (kindRaw !== 'npc' && kindRaw !== 'hotspot') {
+          throw new Error(`kind must be npc|hotspot: ${kindRaw}`);
+        }
+        await deps.debugSetEntityField(
+          kindRaw,
+          requiredString(command.entityId, 'entityId'),
+          requiredString(command.fieldName, 'fieldName'),
+          command.value,
+        );
+        await deps.captureSnapshot(optionalString(command.reason) || 'runtime-command:debugSetEntityField');
+        return ok(id, type, 'entity field set for debug');
       }
       case 'debugMovePlayerTo': {
         await deps.debugMovePlayerTo(

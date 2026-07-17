@@ -227,12 +227,15 @@ class AnimEditor(QWidget):
         states_hdr = QLabel("<b>States（可编辑）</b>")
         states_hdr.setToolTip(
             "name=状态名（运行时引用，需唯一非空）；frames=图集线性槽位逗号列表（0 基，<cols×rows）；\n"
-            "frameRate=每秒帧数（≥1）；loop=是否循环。改这些只写 anim.json，不重打图集。"
+            "frameRate=每秒帧数（≥1）；loop=是否循环；refSpeed=步速匹配基准（世界单位/秒）——\n"
+            "该循环在此移动速度下不滑步，配置后移动时按 实际速度/refSpeed 自动缩放播放倍率（夹取 0.5~2），\n"
+            "留空=不参与匹配（恒 1 倍速，现状行为）。仅移动类状态（walk/run 等）需要填。\n"
+            "改这些只写 anim.json，不重打图集。"
         )
         dl.addWidget(states_hdr)
-        self._state_table = QTableWidget(0, 4)
+        self._state_table = QTableWidget(0, 5)
         self._state_table.setHorizontalHeaderLabels(
-            ["name", "frames", "frameRate", "loop"])
+            ["name", "frames", "frameRate", "loop", "refSpeed"])
         self._state_table.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.Stretch)
         self._state_table.verticalHeader().setDefaultSectionSize(32)
@@ -560,6 +563,7 @@ class AnimEditor(QWidget):
                     self._frames_to_cell_text(sdef.get("frames", [0])),
                     int(sdef.get("frameRate", 8)),
                     bool(sdef.get("loop", True)),
+                    self._ref_speed_to_cell_text(sdef.get("referenceSpeed")),
                 )
             if self._state_table.rowCount() > 0:
                 self._state_table.selectRow(0)
@@ -568,10 +572,21 @@ class AnimEditor(QWidget):
         self._clear_dirty()
         self._refresh_preview()
 
+    @staticmethod
+    def _ref_speed_to_cell_text(v: object) -> str:
+        """referenceSpeed → 单元格文本：非正数/非数值/缺失显示为空（不参与匹配）。
+        保留原字面表示（int 不带小数点），供未编辑时按原值写回。"""
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            return ""
+        if v <= 0:
+            return ""
+        return str(v)
+
     def _set_state_row(
-        self, r: int, name: str, frames_text: str, rate: int, loop: bool
+        self, r: int, name: str, frames_text: str, rate: int, loop: bool,
+        ref_speed_text: str = "",
     ) -> None:
-        """填一行 state：name/frames/frameRate 为可编辑文本，loop 为复选框（无文本）。"""
+        """填一行 state：name/frames/frameRate/refSpeed 为可编辑文本，loop 为复选框（无文本）。"""
         name_it = QTableWidgetItem(name)
         name_it.setData(Qt.ItemDataRole.UserRole, name)  # 旧名快照，重名/空名时回退
         self._state_table.setItem(r, 0, name_it)
@@ -585,6 +600,7 @@ class AnimEditor(QWidget):
         loop_it.setCheckState(
             Qt.CheckState.Checked if loop else Qt.CheckState.Unchecked)
         self._state_table.setItem(r, 3, loop_it)
+        self._state_table.setItem(r, 4, QTableWidgetItem(ref_speed_text))
 
     # ---- 编辑 / 脏标记 / 保存 ------------------------------------------------
 
@@ -713,7 +729,7 @@ class AnimEditor(QWidget):
         try:
             r = self._state_table.rowCount()
             self._state_table.insertRow(r)
-            self._set_state_row(r, name, "0", 8, True)
+            self._set_state_row(r, name, "0", 8, True, "")
         finally:
             self._loading = False
         self._state_table.selectRow(r)
@@ -753,11 +769,12 @@ class AnimEditor(QWidget):
         self._state_table.selectRow(j)
         self._mark_dirty()
 
-    def _read_state_row(self, r: int) -> tuple[str, str, int, bool]:
+    def _read_state_row(self, r: int) -> tuple[str, str, int, bool, str]:
         name_it = self._state_table.item(r, 0)
         frames_it = self._state_table.item(r, 1)
         rate_it = self._state_table.item(r, 2)
         loop_it = self._state_table.item(r, 3)
+        ref_it = self._state_table.item(r, 4)
         name = name_it.text() if name_it else ""
         frames_text = frames_it.text() if frames_it else "0"
         try:
@@ -765,7 +782,8 @@ class AnimEditor(QWidget):
         except ValueError:
             rate = 8
         loop = bool(loop_it and loop_it.checkState() == Qt.CheckState.Checked)
-        return name, frames_text, max(1, rate), loop
+        ref_text = ref_it.text().strip() if ref_it else ""
+        return name, frames_text, max(1, rate), loop, ref_text
 
     def _parse_frames_strict(self, text: str) -> list[int] | None:
         t = (text or "").strip()
@@ -831,6 +849,8 @@ class AnimEditor(QWidget):
                 return None, f"状态 {name!r} 的帧率须 ≥ 1。"
             loop_it = self._state_table.item(r, 3)
             loop = bool(loop_it and loop_it.checkState() == Qt.CheckState.Checked)
+            ref_it = self._state_table.item(r, 4)
+            ref_text = ref_it.text().strip() if ref_it else ""
             old_name = name_it.data(Qt.ItemDataRole.UserRole) if name_it else None
             src = None
             if isinstance(old_name, str):
@@ -840,8 +860,26 @@ class AnimEditor(QWidget):
             sdef: dict = {"frames": frames, "frameRate": rate, "loop": loop}
             if isinstance(src, dict):
                 for k, v in src.items():
-                    if k not in ("frames", "frameRate", "loop"):
+                    # referenceSpeed 由 refSpeed 列显式管理（空=删除），不走未知键透传
+                    if k not in ("frames", "frameRate", "loop", "referenceSpeed"):
                         sdef[k] = v
+            if ref_text:
+                try:
+                    ref_val = float(ref_text)
+                except ValueError:
+                    return None, f"状态 {name!r} 的 refSpeed 必须是数字（或留空=不参与匹配）。"
+                if not (ref_val > 0):
+                    return None, f"状态 {name!r} 的 refSpeed 须 > 0（或留空=不参与匹配）。"
+                orig_ref = src.get("referenceSpeed") if isinstance(src, dict) else None
+                if (
+                    not isinstance(orig_ref, bool)
+                    and isinstance(orig_ref, (int, float))
+                    and float(orig_ref) == ref_val
+                ):
+                    # 未编辑（数值等于原字面值）→ 按原对象写回，保留 int/float 表示
+                    sdef["referenceSpeed"] = orig_ref
+                else:
+                    sdef["referenceSpeed"] = int(ref_val) if ref_val.is_integer() else ref_val
             out[name] = sdef
         return out, None
 

@@ -7,6 +7,13 @@ import {
   createPixelDensityBlurFilter,
   type TexelsPerWorld,
 } from '../rendering/EntityPixelDensityMatch';
+import {
+  entityRotationRadOf,
+  entityScaleOf,
+  quadAabbAroundFoot,
+  quadGroundYAroundFoot,
+  quadTopLocalYAroundFoot,
+} from '../utils/entityTransform';
 import { hotspotCollisionPolygonToWorld } from '../utils/hotspotCollision';
 import { isValidZonePolygon } from '../utils/zoneGeometry';
 
@@ -60,6 +67,45 @@ export class Hotspot {
 
     this._syncContainerPosition();
     this._syncEntitySortBand();
+    this.applyInstanceTransform();
+  }
+
+  /**
+   * 实例 transform（def.scale/rotation，quad 级真变换，绕脚底锚点）：容器级施加；
+   * 彩色圆点/E 提示反向补偿保持可读；遮挡多边形与深度接地线同步重派生。
+   * setEntityField 改字段后调用即生效；碰撞/交互半径在各自求值处读 def，无需失效。
+   */
+  applyInstanceTransform(): void {
+    const s = entityScaleOf(this.def);
+    this.container.scale.set(s, s);
+    this.container.rotation = entityRotationRadOf(this.def);
+    this._syncOverlayCompensation();
+    this._syncEntitySortBand();
+    this._syncSortFootY();
+  }
+
+  /** 圆点标记 / E 提示：抵消实例缩放与旋转（展示图/朝向不受影响）。 */
+  private _syncOverlayCompensation(): void {
+    const s = entityScaleOf(this.def);
+    const inv = 1 / s;
+    const rot = -this.container.rotation;
+    for (const child of [this.marker as Container | null, this.promptIcon]) {
+      if (!child) continue;
+      child.rotation = rot;
+      child.scale.set(inv, inv);
+    }
+  }
+
+  /** 深度排序接地线：旋转时把变换后 quad 底边 y 写给 Renderer.sortEntityLayer。 */
+  private _syncSortFootY(): void {
+    const c = this.container as Container & { entitySortFootY?: number };
+    const rad = entityRotationRadOf(this.def);
+    const size = this.getWorldSize();
+    if (rad === 0 || size.height <= 0) {
+      delete c.entitySortFootY;
+      return;
+    }
+    c.entitySortFootY = quadGroundYAroundFoot(this.def.y, size.width, size.height, rad);
   }
 
   /** EventBus 调试 trace 投影：只吐可序列化关键数据，绝不暴露 `container`（活 PIXI 对象图，
@@ -136,7 +182,8 @@ export class Hotspot {
     this._displayWorldHeight = worldHeight;
     this._applyDisplayImageFacing(spr);
     this.marker.visible = false;
-    this._syncEntitySortBand();
+    // 换图后尺寸变了：实例 transform 的接地线/遮挡多边形一并重派生（含 band 同步）
+    this.applyInstanceTransform();
   }
 
   private _effectiveDisplayFacing(): 'left' | 'right' {
@@ -165,9 +212,13 @@ export class Hotspot {
     return this.container.y;
   }
 
-  /** 投射阴影用：展示图世界尺寸；无展示图时为 0（阴影源该帧不画） */
+  /** 投射阴影用：展示图**有效**世界尺寸（× 实例 scale）；无展示图时为 0（阴影源该帧不画） */
   getWorldSize(): { width: number; height: number } {
-    return { width: this.def.displayImage?.worldWidth ?? 0, height: this._displayWorldHeight };
+    const s = entityScaleOf(this.def);
+    return {
+      width: (this.def.displayImage?.worldWidth ?? 0) * s,
+      height: this._displayWorldHeight * s,
+    };
   }
 
   /** 投射阴影用：当前展示帧纹理（剪影）；无展示图返回 null */
@@ -264,10 +315,20 @@ export class Hotspot {
     return this.def.y;
   }
 
+  /** 交互半径 × |实例 scale|（quad 级真变换：放大后交互圈也大）。 */
+  get effectiveInteractionRange(): number {
+    return this.def.interactionRange * entityScaleOf(this.def);
+  }
+
   setPosition(x: number, y: number): void {
     this.def.x = x;
     this.def.y = y;
     this._syncContainerPosition();
+    // 遮挡带多边形是位置的派生量（world 坐标缓存在容器上），移动后必须重派生——
+    // 否则 Renderer 前后带判定按旧位置多边形算，与求值时变换的阻挡碰撞裂脑（审查 F6）。
+    this._syncEntitySortBand();
+    const c = this.container as Container & { entitySortFootY?: number };
+    if (c.entitySortFootY !== undefined) this._syncSortFootY();
   }
 
   /** 合成后的可交互/可见态（只读；写入走各通道 setter）。 */
@@ -333,12 +394,14 @@ export class Hotspot {
   getEmoteWorldQuad(): { left: number; top: number; width: number; height: number } {
     const di = this.def.displayImage;
     if (this.displaySprite && di && di.worldWidth > 0 && this._displayWorldHeight > 0) {
-      return {
-        left: this.container.x - di.worldWidth / 2,
-        top: this.container.y - this._displayWorldHeight,
-        width: di.worldWidth,
-        height: this._displayWorldHeight,
-      };
+      const size = this.getWorldSize();
+      return quadAabbAroundFoot(
+        this.container.x,
+        this.container.y,
+        size.width,
+        size.height,
+        entityRotationRadOf(this.def),
+      );
     }
     const markerSize = 16;
     return {
@@ -360,9 +423,16 @@ export class Hotspot {
    * 仅有彩色圆点时：对齐在圆点上方的估算位置。
    */
   getEmoteBubbleAnchorLocalY(): number {
+    // 仅 entityAttachLayer 缺席的退化路径会走到（正常路径用 getEmoteWorldQuad，已变换）；
+    // 同口径取变换后 quad 顶部（审查 P3-7）。
     const headGap = 8;
     if (this.displaySprite && this._displayWorldHeight > 0) {
-      return -this._displayWorldHeight - headGap;
+      const size = this.getWorldSize();
+      return quadTopLocalYAroundFoot(
+        Math.max(size.width, 1),
+        Math.max(size.height, 1),
+        entityRotationRadOf(this.def),
+      ) - headGap;
     }
     return -16 - headGap;
   }
@@ -385,6 +455,8 @@ export class Hotspot {
     this.promptIcon.addChild(text);
 
     this.container.addChild(this.promptIcon);
+    // 迟建的提示图标立即抵消实例 transform（保持可读、不随实体旋转缩放）
+    this._syncOverlayCompensation();
   }
 
   hidePrompt(): void {

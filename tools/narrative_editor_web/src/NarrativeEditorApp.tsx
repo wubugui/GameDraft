@@ -151,6 +151,8 @@ import {
   parseExternalSignalKey,
   setKnownPlaneIdsForValidation,
   setStateEditorPosition,
+  emptySimulationRunLayer,
+  simulateRunLifecycle,
   simulateSignalImpact,
   stateEditorPosition,
   stateReferenceLabel,
@@ -159,6 +161,8 @@ import {
   resolveEndpoint,
   type GraphRef,
   type SimulationResult,
+  type SimulationRunLayer,
+  type SimulationRunOp,
 } from './editorModel';
 import type {
   ActionDef,
@@ -286,6 +290,8 @@ function NarrativeEditorInner() {
   const { startLeft, startRight, startValidation } = usePanelResize({ setLayout: setPanelLayout, leftCollapsed, rightCollapsed });
   const [signalKey, setSignalKey] = useState('');
   const [simulation, setSimulation] = useState<SimulationResult | null>(null);
+  /** 活计运行层模拟状态：跨多次「本地模拟」持续（接单→推进→结算的循环干跑靠它） */
+  const [simRunLayer, setSimRunLayer] = useState<SimulationRunLayer>(emptySimulationRunLayer);
   const [runtimeSnapshot, setRuntimeSnapshot] = useState<RuntimeDebugSnapshotDef>({ ok: false, reason: 'Runtime not queried yet' });
   const [dirty, setDirty] = useState(false);
   const [savedDataHash, setSavedDataHash] = useState('');
@@ -520,6 +526,16 @@ function NarrativeEditorInner() {
   }
   const graph = useMemo(() => getEditableGraph(composition, graphRef), [composition, graphRef]);
   const activeStates = useMemo(() => extractActiveStates(runtimeSnapshot) ?? simulation?.activeStates ?? {}, [runtimeSnapshot, simulation]);
+  /** 全部活计图（主图 + 万一有的元素图），Debug 页签活计模拟操作行的数据源 */
+  const simRunGraphs = useMemo(() => {
+    const out: { id: string; label: string; states: string[] }[] = [];
+    for (const comp of data.compositions ?? []) {
+      for (const g of [comp.mainGraph, ...(comp.elements ?? []).map((el) => el.graph)]) {
+        if (g?.run) out.push({ id: g.id, label: g.label || g.id, states: Object.keys(g.states ?? {}) });
+      }
+    }
+    return out;
+  }, [data]);
   const knownSignals = useMemo(() => collectKnownSignals(data), [data]);
   const selectedObject = useMemo(
     () => getSelectedSummary(composition, graph, graphRef, selectedId),
@@ -1385,11 +1401,31 @@ function NarrativeEditorInner() {
       setStatus('信号为空');
       return;
     }
-    const result = simulateSignalImpact(data, key, extractActiveStates(runtimeSnapshot) ?? undefined);
+    // 状态链：运行时快照优先，其次上一次本地模拟（多步干跑连续性——活计循环验证靠它）
+    const carried = extractActiveStates(runtimeSnapshot) ?? simulation?.activeStates ?? undefined;
+    const result = simulateSignalImpact(data, key, carried, simRunLayer);
     setSimulation(result);
+    setSimRunLayer(result.runLayer);
     setRuntimeSnapshot({ ok: false, reason: '正在显示本地模拟' });
     setStatus(`已模拟 ${result.recentTransitions.length} 条迁移`);
-  }, [data, runtimeSnapshot, signalKey]);
+  }, [data, runtimeSnapshot, signalKey, simulation, simRunLayer]);
+
+  /** 活计生命周期模拟操作（接单/重开/回退/切换激活）：与本地模拟共用状态链 */
+  const applySimRunOp = useCallback((op: SimulationRunOp, graphId: string, stateId?: string) => {
+    const carried = extractActiveStates(runtimeSnapshot) ?? simulation?.activeStates ?? undefined;
+    const result = simulateRunLifecycle(data, op, graphId, { activeStates: carried, runLayer: simRunLayer, stateId });
+    setSimulation(result);
+    setSimRunLayer(result.runLayer);
+    setRuntimeSnapshot({ ok: false, reason: '正在显示本地模拟' });
+    setStatus(result.log.at(-1) ?? `已执行 ${op}`);
+  }, [data, runtimeSnapshot, simulation, simRunLayer]);
+
+  const clearLocalSimulation = useCallback(() => {
+    setSimulation(null);
+    setSimRunLayer(emptySimulationRunLayer());
+    setRuntimeSnapshot({ ok: false, reason: '本地模拟已清空' });
+    setStatus('本地模拟状态已清空（活计计数一并归零）');
+  }, []);
 
   const pullRuntimeSnapshot = useCallback(async () => {
     const result = await getRuntimeSnapshot();
@@ -2129,7 +2165,44 @@ function NarrativeEditorInner() {
               <button type="button" onClick={runLocalSimulation}>本地模拟</button>
               <button type="button" onClick={pullRuntimeSnapshot}>拉取运行时</button>
               <button type="button" className="danger" onClick={emitRuntime}>发送运行时信号</button>
+              <button type="button" onClick={clearLocalSimulation} title="清掉本地模拟的状态链与活计计数，从头再来">清空模拟</button>
             </div>
+            {simRunGraphs.length > 0 && (
+              <div className="field">
+                <label title="与运行时同语义：蛰伏不吃信号、全局单激活槽、到出口自动结算计数。用于在编辑器里干跑接单→交付→再接的循环。">活计模拟</label>
+                {simRunGraphs.map((rg) => {
+                  const active = activeStates[rg.id] as string | undefined;
+                  const isActivated = simRunLayer.activatedArchetype === rg.id;
+                  const isSuspended = simRunLayer.suspended.includes(rg.id);
+                  const started = simRunLayer.started[rg.id] ?? 0;
+                  const settledText = Object.entries(simRunLayer.settled[rg.id] ?? {})
+                    .map(([exit, n]) => `${exit}×${n}`).join('，');
+                  const statusText = active === undefined
+                    ? `蛰伏${settledText ? ` · 已结算 ${settledText}` : started > 0 ? '' : '（未接过）'}`
+                    : `第${started}单 · ${active}${isActivated ? ' · 激活中' : isSuspended ? ' · 挂起' : ''}${settledText ? ` · 已结算 ${settledText}` : ''}`;
+                  return (
+                    <div key={rg.id} style={{ marginBottom: 6 }}>
+                      <div className="muted">⟳ {rg.label}｜{statusText}</div>
+                      <div className="inspector-actions">
+                        <button type="button" disabled={active !== undefined} title="startNarrativeRun：开新一轮并激活（顶替当前激活单）" onClick={() => applySimRunOp('start', rg.id)}>接单</button>
+                        <button type="button" disabled={active === undefined || isActivated} title="activateNarrativeRun：切换激活，从当前态续跑" onClick={() => applySimRunOp('activate', rg.id)}>激活</button>
+                        <button type="button" disabled={!isActivated} title="activateNarrativeRun('')：放下当前单（resumable 挂起、否则弃置）" onClick={() => applySimRunOp('activate', '')}>放下</button>
+                        <button type="button" disabled={active === undefined} title="resetNarrativeRun：回初始状态重来（静默不广播）" onClick={() => applySimRunOp('reset', rg.id)}>重开</button>
+                        <select
+                          value=""
+                          disabled={active === undefined}
+                          title="revertNarrativeRun：跳回指定状态续玩（静默不广播）"
+                          onChange={(e) => { if (e.target.value) applySimRunOp('revert', rg.id, e.target.value); }}
+                        >
+                          <option value="">回退到…</option>
+                          {rg.states.map((sid) => <option key={sid} value={sid}>{sid}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
             <PreviewPanel simulation={simulation} runtimeSnapshot={runtimeSnapshot} />
             {graph && selectedId.startsWith('state:') && (
               <div className="inspector-actions">
@@ -2530,7 +2603,48 @@ function GraphInspector(props: {
         />
       )}
       <SelectField label="初始状态" value={graph.initialState} values={Object.keys(graph.states)} onChange={(value) => updateCurrentGraph((g) => { g.initialState = value; })} />
-      {(graph.ownerType === 'scenario' || graph.entryState || graph.exitStates?.length) && (
+      <label className="toggle single-line-toggle" title="活计=可重复接取的委托（背尸单等）：运行时不自动实例化，由 startNarrativeRun 接单开一轮，走到出口状态自动结算计数。常驻图（主线/一次性支线）不勾。">
+        <input
+          type="checkbox"
+          checked={Boolean(graph.run)}
+          onChange={(e) => updateCurrentGraph((g) => {
+            // 勾选=声明活计（默认可重复）；取消=删键回常驻图（不写空对象）
+            if (e.target.checked) g.run = { repeatable: true };
+            else delete g.run;
+          })}
+        />
+        活计图（可重复运行的委托）
+      </label>
+      {graph.run && (
+        <>
+          <label className="toggle single-line-toggle" title="做完一单（到出口状态结算）后可再次接单开新一轮。">
+            <input
+              type="checkbox"
+              checked={graph.run.repeatable === true}
+              onChange={(e) => updateCurrentGraph((g) => {
+                if (!g.run) return;
+                if (e.target.checked) g.run.repeatable = true;
+                else delete g.run.repeatable;
+              })}
+            />
+            可重复（结算后能再接）
+          </label>
+          <label className="toggle single-line-toggle" title="切换激活到别的活计时：勾=本单挂起存进度、切回续玩；不勾=切走即弃、切回从头。">
+            <input
+              type="checkbox"
+              checked={graph.run.resumable === true}
+              onChange={(e) => updateCurrentGraph((g) => {
+                if (!g.run) return;
+                if (e.target.checked) g.run.resumable = true;
+                else delete g.run.resumable;
+              })}
+            />
+            可挂起（切走保进度）
+          </label>
+          <div className="property-line note">活计图必须配入口/出口状态；出口=交付点，进入即结算（计数 +1、实例回收）。</div>
+        </>
+      )}
+      {(graph.ownerType === 'scenario' || Boolean(graph.run) || graph.entryState || graph.exitStates?.length) && (
         <>
           <SelectField label="入口状态" value={graph.entryState ?? ''} values={Object.keys(graph.states)} onChange={(value) => updateCurrentGraph((g) => { g.entryState = value; })} />
           <StringListField label="出口状态" value={graph.exitStates ?? []} onChange={(value) => updateCurrentGraph((g) => { g.exitStates = value; })} />
@@ -3170,6 +3284,12 @@ function PreviewPanel({ simulation, runtimeSnapshot }: { simulation: SimulationR
     <div className="preview-panel">
       <div className="section-title">Active States</div>
       <pre>{Object.keys(activeStates).length ? JSON.stringify(activeStates, null, 2) : '(none)'}</pre>
+      {simulation && (simulation.runLayer.activatedArchetype !== null || Object.keys(simulation.runLayer.started).length > 0) && (
+        <>
+          <div className="section-title">Run Layer（活计）</div>
+          <pre>{JSON.stringify(simulation.runLayer, null, 2)}</pre>
+        </>
+      )}
       {runtimeTrace.length > 0 && (
         <>
           <div className="section-title">Runtime Trace</div>

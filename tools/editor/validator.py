@@ -145,6 +145,49 @@ def validate(model: ProjectModel) -> list[Issue]:
                     f"Zone id 重复: {_zid!r}（同场景两条，画布与 setZoneEnabled 类寻址会静默串台）",
                 ))
             _zone_seen.add(_zid)
+        # 实例 transform（scale/rotation，quad 级真变换）与 group 标签的形状检查。
+        # warning 级：运行时对非法值容错回落缺省（scale=1/rotation=0），Python 兜底不得更严。
+        import math as _math
+        for _key2, _kind2 in (("hotspots", "hotspot"), ("npcs", "npc")):
+            for _ent2 in sc.get(_key2, []) or []:
+                if not isinstance(_ent2, dict):
+                    continue
+                _eid2 = str(_ent2.get("id", "") or "").strip() or "?"
+                _sv = _ent2.get("scale")
+                if _sv is not None and (
+                    not isinstance(_sv, (int, float)) or isinstance(_sv, bool)
+                    or not _math.isfinite(float(_sv)) or float(_sv) <= 0
+                ):
+                    issues.append(Issue(
+                        "warning", "scene", sid,
+                        f"{_kind2} '{_eid2}' scale 须为正有限数（当前 {_sv!r}；运行时按 1 回落）",
+                    ))
+                _rv = _ent2.get("rotation")
+                if _rv is not None and (
+                    not isinstance(_rv, (int, float)) or isinstance(_rv, bool)
+                    or not _math.isfinite(float(_rv))
+                ):
+                    issues.append(Issue(
+                        "warning", "scene", sid,
+                        f"{_kind2} '{_eid2}' rotation 须为有限数（度；当前 {_rv!r}；运行时按 0 回落）",
+                    ))
+                _gv = _ent2.get("group")
+                if _gv is not None and (not isinstance(_gv, str) or not _gv.strip()):
+                    issues.append(Issue(
+                        "warning", "scene", sid,
+                        f"{_kind2} '{_eid2}' group 须为非空字符串标签（当前 {_gv!r}）",
+                    ))
+        # zone 只有 group 标签（无 transform 字段是设计）：形状检查对齐 npc/hotspot
+        for _z2 in sc.get("zones", []) or []:
+            if not isinstance(_z2, dict):
+                continue
+            _gvz = _z2.get("group")
+            if _gvz is not None and (not isinstance(_gvz, str) or not _gvz.strip()):
+                _zid2 = str(_z2.get("id", "") or "").strip() or "?"
+                issues.append(Issue(
+                    "warning", "scene", sid,
+                    f"zone '{_zid2}' group 须为非空字符串标签（当前 {_gvz!r}）",
+                ))
         for hs in sc.get("hotspots", []):
             hid = str(hs.get("id", "")) or "?"
             di = hs.get("displayImage")
@@ -348,6 +391,50 @@ def validate(model: ProjectModel) -> list[Issue]:
                     f"public/resources/runtime/animation/{anim_bundle}/anim.json"
                     "（改名/删除导致的孤儿引用？）",
                 ))
+            iap = npc.get("initialAnimPlayback")
+            if iap is not None:
+                if not isinstance(iap, dict):
+                    issues.append(Issue(
+                        "error", "scene", sid,
+                        f"NPC '{nid}' initialAnimPlayback 须为对象（speed/reverse/holdFrame/startFrame）",
+                    ))
+                else:
+                    _iap_known = {"speed", "reverse", "holdFrame", "startFrame"}
+                    for k in iap.keys():
+                        if k not in _iap_known:
+                            issues.append(Issue(
+                                "warning", "scene", sid,
+                                f"NPC '{nid}' initialAnimPlayback 含未知键 {k!r}（运行时忽略；拼写错误？）",
+                            ))
+                    iap_spd = iap.get("speed")
+                    if iap_spd is not None:
+                        try:
+                            fv = float(iap_spd)
+                        except (TypeError, ValueError):
+                            fv = float("nan")
+                        if not math.isfinite(fv) or fv <= 0:
+                            issues.append(Issue(
+                                "warning", "scene", sid,
+                                f"NPC '{nid}' initialAnimPlayback.speed {iap_spd!r} 须为 >0 数值（运行时忽略）",
+                            ))
+                    if iap.get("reverse") is not None and not isinstance(iap.get("reverse"), bool):
+                        issues.append(Issue(
+                            "warning", "scene", sid,
+                            f"NPC '{nid}' initialAnimPlayback.reverse 须为布尔（运行时忽略非 true）",
+                        ))
+                    for _ik in ("holdFrame", "startFrame"):
+                        iv = iap.get(_ik)
+                        if iv is None:
+                            continue
+                        try:
+                            fv = float(iv)
+                        except (TypeError, ValueError):
+                            fv = float("nan")
+                        if not math.isfinite(fv) or fv < 0:
+                            issues.append(Issue(
+                                "warning", "scene", sid,
+                                f"NPC '{nid}' initialAnimPlayback.{_ik} {iv!r} 须为 ≥0 整数（运行时忽略）",
+                            ))
             cref = npc.get("characterId")
             if cref is not None:
                 cid = str(cref).strip()
@@ -623,6 +710,42 @@ def validate(model: ProjectModel) -> list[Issue]:
             cur = parent_g.get("parentGroup", "") if parent_g else ""
 
     # --- quests ---
+    # repeatable（活计镜像任务）硬绑定：runArchetype 必填且须活计图、活计↔任务 1:1、
+    # 禁一切条件/动作/后继字段——条目/完成/归档全部由活计生命周期派生，写了也不会被读，
+    # 且运行时 QuestManager 对 repeatable 直接跳过状态机（乱配=静默失效，故一律 error）。
+    _run_graph_ids = _narrative_run_graph_ids(model)
+    _seen_run_archetypes: dict[str, str] = {}
+    for q in model.quests:
+        qid = str(q.get("id", "?"))
+        qtype = str(q.get("type", ""))
+        arch = str(q.get("runArchetype", "") or "").strip()
+        if qtype not in ("main", "side", "repeatable"):
+            issues.append(Issue("error", "quest", qid,
+                                f"type {qtype!r} 须为 main|side|repeatable"))
+        if qtype == "repeatable":
+            if not arch:
+                issues.append(Issue("error", "quest", qid,
+                                    "repeatable 任务必须配 runArchetype（绑定的活计图 id）"))
+            elif arch not in _run_graph_ids:
+                issues.append(Issue("error", "quest", qid,
+                                    f"runArchetype {arch!r} 不是活计图（须为 narrative_graphs 中声明了 run 的图）"))
+            elif arch in _seen_run_archetypes:
+                issues.append(Issue("error", "quest", qid,
+                                    f"活计图 {arch!r} 已被任务 '{_seen_run_archetypes[arch]}' 绑定（活计↔repeatable 任务须 1:1）"))
+            else:
+                _seen_run_archetypes[arch] = qid
+            banned = [k for k in ("preconditions", "completionConditions",
+                                  "acceptActions", "rewards", "nextQuests") if q.get(k)]
+            if q.get("nextQuestId"):
+                banned.append("nextQuestId")
+            if q.get("sideType"):
+                banned.append("sideType")
+            if banned:
+                issues.append(Issue("error", "quest", qid,
+                                    f"repeatable 任务禁配 {'/'.join(banned)}（全部由活计生命周期派生，运行时不读）"))
+        elif arch:
+            issues.append(Issue("error", "quest", qid,
+                                "runArchetype 仅 repeatable 任务可配（type 改 repeatable，或删掉该字段）"))
     for q in model.quests:
         grp = q.get("group", "")
         if grp and grp not in quest_group_ids:
@@ -633,6 +756,9 @@ def validate(model: ProjectModel) -> list[Issue]:
             if eid and eid not in quest_ids:
                 issues.append(Issue("error", "quest", q["id"],
                                     f"nextQuests 的 questId '{eid}' 不存在"))
+            elif eid and eid in _repeatable_quest_ids(model):
+                issues.append(Issue("error", "quest", q["id"],
+                                    f"nextQuests 不可指向 repeatable 任务 '{eid}'（无状态机可接取；派单用 startNarrativeRun）"))
         nxt = q.get("nextQuestId")
         if nxt and not q.get("nextQuests") and nxt not in quest_ids:
             issues.append(Issue("error", "quest", q["id"],
@@ -760,6 +886,9 @@ def validate(model: ProjectModel) -> list[Issue]:
     if cfg.get("initialQuest") and cfg["initialQuest"] not in quest_ids:
         issues.append(Issue("error", "config", "game_config",
                             f"initialQuest '{cfg['initialQuest']}' 不存在"))
+    elif cfg.get("initialQuest") and cfg["initialQuest"] in _repeatable_quest_ids(model):
+        issues.append(Issue("error", "config", "game_config",
+                            f"initialQuest 不可指向 repeatable 任务 '{cfg['initialQuest']}'（无状态机可接取）"))
     if cfg.get("initialCutscene") and cfg["initialCutscene"] not in cutscene_ids:
         issues.append(Issue("warning", "config", "game_config",
                             f"initialCutscene '{cfg['initialCutscene']}' 不存在"))
@@ -902,6 +1031,24 @@ def _narrative_registered_signal_ids(model: ProjectModel) -> set[str]:
     }
 
 
+def _narrative_run_graph_ids(model: ProjectModel) -> set[str]:
+    """活计图（声明了 run）的图 id 集合（叙事运行实例化 S1）。"""
+    out: set[str] = set()
+    for g in _iter_narrative_graphs(model):
+        if isinstance(g.get("run"), dict):
+            out.add(str(g.get("id") or "").strip())
+    return out
+
+
+def _repeatable_quest_ids(model: ProjectModel) -> set[str]:
+    """repeatable（活计镜像）任务 id 集合：无状态机，quest 叶/updateQuest/nextQuests 不可指向。"""
+    return {
+        str(q.get("id", ""))
+        for q in model.quests
+        if isinstance(q, dict) and str(q.get("type", "")) == "repeatable" and q.get("id")
+    }
+
+
 def _validate_narrative(model: ProjectModel, issues: list[Issue]) -> None:
     """叙事状态机数据一致性：信号注册表、Transition 信号引用、黑盒 emits 与对话图实际发信号的漂移。
 
@@ -917,6 +1064,8 @@ def _validate_narrative(model: ProjectModel, issues: list[Issue]) -> None:
     # 运行时对未知任务 id 无声跳过，画布上「盖章推进任务」实际不生效。
     _quest_ids = {str(q.get("id", "")) for q in model.quests if isinstance(q, dict) and q.get("id")}
 
+    _repeatable_ids = _repeatable_quest_ids(model)
+
     def _scan_update_quest(obj: Any, gid: str) -> None:
         if isinstance(obj, dict):
             if obj.get("type") == "updateQuest":
@@ -925,6 +1074,11 @@ def _validate_narrative(model: ProjectModel, issues: list[Issue]) -> None:
                     issues.append(Issue(
                         "error", "narrative", gid,
                         f"updateQuest 目标任务 {qid!r} 不在 quests.json（运行时静默跳过，任务不会推进）",
+                    ))
+                elif qid and qid in _repeatable_ids:
+                    issues.append(Issue(
+                        "error", "narrative", gid,
+                        f"updateQuest 不可指向 repeatable 任务 {qid!r}（无状态机；活计用 start/reset/revertNarrativeRun 驱动）",
                     ))
             for v in obj.values():
                 _scan_update_quest(v, gid)
@@ -2033,6 +2187,27 @@ def _append_action_param_ref_issues(
                     f"emitNarrativeSignal 信号 {sig!r} 没有任何 Transition 监听（发出后不会推动任何迁移）",
                 ))
 
+    if t in ("startNarrativeRun", "resetNarrativeRun", "revertNarrativeRun", "activateNarrativeRun"):
+        gid = str(p.get("graphId") or "").strip()
+        if not gid and t != "activateNarrativeRun":  # activate 空 graphId=清激活槽（合法）
+            issues.append(Issue("error", data_type, item_id, f"{t} 缺少 graphId（活计图）"))
+        elif gid:
+            known_graphs = {str(g.get("id") or "").strip() for g in _iter_narrative_graphs(model)}
+            run_graphs = _narrative_run_graph_ids(model)
+            if gid not in known_graphs:
+                issues.append(Issue("error", data_type, item_id, f"{t} 目标叙事图 {gid!r} 不存在"))
+            elif gid not in run_graphs:
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    f"{t} 目标图 {gid!r} 未声明 run（常驻图不可 start/reset/revert/activate）",
+                ))
+            elif t == "revertNarrativeRun":
+                sid = str(p.get("stateId") or "").strip()
+                graph = next((g for g in _iter_narrative_graphs(model) if str(g.get("id") or "").strip() == gid), None)
+                states = graph.get("states") if isinstance(graph, dict) else None
+                if sid and isinstance(states, dict) and sid not in states:
+                    issues.append(Issue("error", data_type, item_id, f"revertNarrativeRun 目标状态不存在: {gid}.{sid}"))
+
     if t == "startPressureHold":
         hid = str(p.get("id") or "").strip()
         known = {str(h.get("id") or "") for h in model.pressure_holds if isinstance(h, dict)}
@@ -2466,12 +2641,41 @@ def _append_action_param_ref_issues(
         if t == "playNpcAnimation":
             tgt = str(p.get("target") or "").strip()
             st = str(p.get("state") or "").strip()
-            if tgt and st:
-                known = set(model.animation_state_names_for_actor(scene_id, tgt))
-                if known and st not in known:
+            known = set(model.animation_state_names_for_actor(scene_id, tgt)) if tgt else set()
+            if tgt and st and known and st not in known:
+                issues.append(Issue(
+                    "warning", data_type, item_id,
+                    f"playNpcAnimation state {st!r} 不在目标 {tgt!r} 的 anim.json states 中",
+                ))
+            # 可选播放参数（speed/reverse/holdFrame/thenState）：运行时对非法值容错跳过，
+            # 这里 warning 提前抓（Python 兜底 ⊆ TS 权威，不升 error）
+            then_st = str(p.get("thenState") or "").strip()
+            if tgt and then_st and known and then_st not in known:
+                issues.append(Issue(
+                    "warning", data_type, item_id,
+                    f"playNpcAnimation thenState {then_st!r} 不在目标 {tgt!r} 的 anim.json states 中",
+                ))
+            spd_raw = p.get("speed")
+            if spd_raw is not None and str(spd_raw).strip() != "":
+                try:
+                    spd = float(spd_raw)
+                except (TypeError, ValueError):
+                    spd = float("nan")
+                if not math.isfinite(spd) or spd <= 0:
                     issues.append(Issue(
                         "warning", data_type, item_id,
-                        f"playNpcAnimation state {st!r} 不在目标 {tgt!r} 的 anim.json states 中",
+                        f"playNpcAnimation speed {spd_raw!r} 须为 >0 的数值（运行时将忽略该参数）",
+                    ))
+            hf_raw = p.get("holdFrame")
+            if hf_raw is not None and str(hf_raw).strip() != "":
+                try:
+                    hf = float(hf_raw)
+                except (TypeError, ValueError):
+                    hf = float("nan")
+                if not math.isfinite(hf):
+                    issues.append(Issue(
+                        "warning", data_type, item_id,
+                        f"playNpcAnimation holdFrame {hf_raw!r} 须为数值（运行时将忽略该参数）",
                     ))
 
         if t == "moveEntityTo":
@@ -2722,6 +2926,12 @@ def _scan_condition_expr(
                 "warning", data_type, item_id,
                 f"quest 条件引用 {qid!r} 不在 quests.json",
             ))
+        elif qid and qid in _repeatable_quest_ids(model):
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"quest 条件不可指向 repeatable 任务 {qid!r}（无状态机、flag 不再同步）；"
+                "判活计进度用 narrative / narrativeCount 叶",
+            ))
         return
     if isinstance(expr.get("scenario"), str):
         sid = str(expr["scenario"]).strip()
@@ -2783,6 +2993,44 @@ def _scan_condition_expr(
             issues.append(Issue(
                 "error", data_type, item_id,
                 f"plane 条件引用的位面 {pid!r} 不在 planes.json 中",
+            ))
+        return
+    if isinstance(expr.get("narrativeCount"), str):
+        # 活计结算计数叶（叙事运行实例化 S1）：目标须活计图；exitState 须为该图出口。
+        gid = str(expr["narrativeCount"]).strip()
+        graphs = _narrative_graph_index(model)
+        run_graphs = _narrative_run_graph_ids(model)
+        if not gid or gid not in graphs:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"narrativeCount 条件引用的图 {gid!r} 不在 narrative_graphs.json",
+            ))
+        elif gid not in run_graphs:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"narrativeCount 目标图 {gid!r} 未声明 run（常驻图无结算计数）",
+            ))
+        else:
+            exit_state = expr.get("exitState")
+            if exit_state is not None:
+                graph = next((g for g in _iter_narrative_graphs(model) if str(g.get("id") or "").strip() == gid), None)
+                exits = {str(x).strip() for x in (graph.get("exitStates") or []) if isinstance(graph, dict)} if graph else set()
+                if str(exit_state).strip() not in exits:
+                    issues.append(Issue(
+                        "error", data_type, item_id,
+                        f"narrativeCount 的 exitState {exit_state!r} 不是图 {gid!r} 的出口状态",
+                    ))
+        value = expr.get("value")
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            issues.append(Issue(
+                "error", data_type, item_id,
+                "narrativeCount 条件需要数值 value",
+            ))
+        op = expr.get("op")
+        if op is not None and str(op) not in ("==", "!=", ">", ">=", "<", "<="):
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"narrativeCount 的 op {op!r} 不合法（== != > >= < <=）",
             ))
         return
     issues.append(Issue(
@@ -3428,6 +3676,14 @@ def _validate_cutscene_steps(
                     "warning", "cutscene", cid,
                     f"step #{i+1} showImg 缺 image（运行时将加载空路径）",
                 ))
+            if t in ("cameraMove", "cameraZoom") and "easing" in step:
+                ez = step.get("easing")
+                if ez not in _PARALLAX_EASINGS:
+                    issues.append(Issue(
+                        "error", "cutscene", cid,
+                        f"step #{i+1} {t} 的 easing {ez!r} 非法"
+                        f"（仅 {sorted(_PARALLAX_EASINGS)}；运行时会静默退回默认曲线）",
+                    ))
             if t == "animLayer":
                 af = str(step.get("animFile") or "").strip()
                 if not af:

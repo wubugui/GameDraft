@@ -50,7 +50,21 @@ class ConditionExprRoundtripTests(unittest.TestCase):
                         "label": "主线",
                         "states": {"st_intro": {"label": "开场"}},
                     }
-                }
+                },
+                {
+                    "mainGraph": {
+                        "id": "ng_job",
+                        "label": "淹尸活",
+                        "run": {"repeatable": True, "resumable": True},
+                        "initialState": "initial",
+                        "entryState": "initial",
+                        "exitStates": ["delivered"],
+                        "states": {
+                            "initial": {"label": "未接"},
+                            "delivered": {"label": "已交付"},
+                        },
+                    }
+                },
             ]
         }
         m.flag_registry = {
@@ -100,6 +114,39 @@ class ConditionExprRoundtripTests(unittest.TestCase):
             m = self._model(Path(td) / "p")
             self._assert_roundtrip(
                 m, {"scenario": "已删场景", "phase": "某阶段", "status": "active"},
+            )
+
+    # ---- narrativeCount（活计结算计数叶，S2 收尾新增控件） ------------------
+
+    def test_narrative_count_full_roundtrips(self) -> None:
+        with TemporaryDirectory() as td:
+            m = self._model(Path(td) / "p")
+            self._assert_roundtrip(
+                m, {"narrativeCount": "ng_job", "exitState": "delivered", "op": ">=", "value": 1},
+            )
+
+    def test_narrative_count_without_exit_state_roundtrips(self) -> None:
+        """无 exitState = 全部出口合计：往返不得凭空补出 exitState 键。"""
+        with TemporaryDirectory() as td:
+            m = self._model(Path(td) / "p")
+            self._assert_roundtrip(
+                m, {"narrativeCount": "ng_job", "op": "==", "value": 3},
+            )
+
+    def test_narrative_count_without_op_preserved_verbatim(self) -> None:
+        """缺省 op（运行时默认 >=）的既有数据：UI 未编辑时逐字返回，不补 op 键。"""
+        with TemporaryDirectory() as td:
+            m = self._model(Path(td) / "p")
+            self._assert_roundtrip(
+                m, {"narrativeCount": "ng_job", "value": 2},
+            )
+
+    def test_narrative_count_dangling_graph_preserved(self) -> None:
+        """指向已删/改名活计图的条件须原样保留（追加「（数据）」项，不静默丢）。"""
+        with TemporaryDirectory() as td:
+            m = self._model(Path(td) / "p")
+            self._assert_roundtrip(
+                m, {"narrativeCount": "ghost_job", "exitState": "done", "op": ">", "value": 5},
             )
 
     # ---- scenarioLine ------------------------------------------------------

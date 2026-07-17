@@ -52,6 +52,7 @@ function usageLinesFor(scan: AnyUsages): string[] {
     if (u.derivedListeners) lines.push(`派生信号监听（state:图:*）：${u.derivedListeners} 处`);
     if (u.metaReads) lines.push(`画布声明（meta.reads）：${u.metaReads} 处`);
     if (u.narrativeConditions) lines.push(`叙事图内条件/强制设状态引用：${u.narrativeConditions} 处`);
+    if (u.runArchetypes) lines.push(`repeatable 任务绑定（runArchetype）：${u.runArchetypes} 处`);
     for (const e of u.external) lines.push(`${e.bucket} · ${e.itemId}：条件/设状态引用 ${e.count} 处`);
   }
   return lines;

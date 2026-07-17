@@ -57,9 +57,10 @@
         {
           "conditions": [
             {
-              "narrative": "flow_背尸_淹尸活",
-              "state": "delivered",
-              "reached": true
+              "narrativeCount": "flow_背尸_淹尸活",
+              "exitState": "delivered",
+              "op": ">=",
+              "value": 1
             }
           ],
           "next": "yan_done"
@@ -159,6 +160,12 @@
       "type": "runActions",
       "actions": [
         {
+          "type": "startNarrativeRun",
+          "params": {
+            "graphId": "flow_背尸_淹尸活"
+          }
+        },
+        {
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
@@ -218,8 +225,8 @@
       "speaker": {
         "kind": "npc"
       },
-      "text": "淹的那个交了嗦？要得。回头再有活路喊你。",
-      "next": "end1",
+      "text": "又来找活路嗦？要得——河头又捞起一个泡涨的，还是拉切义庄，八文。整不整？",
+      "next": "yan_choice",
       "portrait": {
         "emotion": "calm"
       }

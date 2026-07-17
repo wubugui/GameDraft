@@ -36,13 +36,15 @@
 ## 场景 / 世界(`scene_editor.py`)
 
 > 位面归属:hotspot/NPC/zone 详情面板均有「位面归属」行(多选自 planes.json,缺省=存在于所有位面;含保值孤儿项)。
+> 2026-07-18 起:场景编辑器支持撤销/重做(Ctrl+Z,场景内增删改/拖动/gizmo/分组各为一条命令;跨文件重构仍走「重构→撤销上次重构」)、左栏实体树(类型/分组视图+过滤,与画布双向同步)、多选(树 Ctrl/Shift+画布框选;批量拖动/删除/复制/指派分组)。
+> 组动作 setGroupEnabled/moveGroupBy 按 group 标签寻址,首期只作用于当前场景的 NPC/热区(zone 可挂 group 标签但暂不被组动作消费)。
 
 | 实体 | 可编辑字段 | 操作 |
 |---|---|---|
 | **场景顶层** | name / worldWidth / worldHeight(可锁宽高比) / worldScale / bgm / filterId / camera.zoom / camera.pixelsPerUnit / playerWalkSpeed / playerRunSpeed / ambientSounds / onEnter(场景级动作) / depthConfig.depth_tolerance + floor_offset | 无"新建场景"入口 |
-| **热区 hotspot** | 通用:id / type(inspect/pickup/transition/npc/encounter) / label(富文本) / x / y / interactionRange / autoTrigger / cutsceneIds / cutsceneOnly / conditions / conditionHidesEntity / displayImage / collisionPolygon。data 见下 | 增/删、画布拖位置+拖碰撞多边形 |
-| **区域 zone** | id / zoneKind(standard/depth_floor) / floorOffsetBoost(仅 depth_floor) / polygon(画布画/拖/插删点) / conditions / onEnter / onStay / onExit(均仅 standard) | 增/删、画布编辑多边形 |
-| **NPC** | id / name / x / y / initialFacing / dialogueGraphId / dialogueGraphEntry / dialogueCameraZoom / interactionRange / cutsceneIds / cutsceneOnly / conditions / conditionHidesEntity / animFile / initialAnimState / patrol / collisionPolygon | 增/删、画布拖位置+巡逻折线 |
+| **热区 hotspot** | 通用:id / type(inspect/pickup/transition/npc/encounter) / label(富文本) / x / y / interactionRange / **scale / rotation(实例 transform,quad 级真变换;缺省 1/0 不写键;画布 gizmo 可拖)** / **group(分组标签,树右键/多选页指派)** / autoTrigger / cutsceneIds / cutsceneOnly / conditions / conditionHidesEntity / displayImage / collisionPolygon。data 见下 | 增/删、画布拖位置+拖碰撞多边形+transform gizmo |
+| **区域 zone** | id / zoneKind(standard/depth_floor) / floorOffsetBoost(仅 depth_floor) / polygon(画布画/拖/插删点) / **group(分组标签)** / conditions / onEnter / onStay / onExit(均仅 standard) | 增/删、画布编辑多边形 |
+| **NPC** | id / name / x / y / initialFacing / dialogueGraphId / dialogueGraphEntry / dialogueCameraZoom / interactionRange / **scale / rotation(实例 transform,同热区)** / **group(分组标签)** / cutsceneIds / cutsceneOnly / conditions / conditionHidesEntity / animFile / initialAnimState / initialAnimPlayback(speed/reverse/holdFrame/startFrame,进场起播一次性生效,-1=未设) / patrol / collisionPolygon | 增/删、画布拖位置+巡逻折线+transform gizmo |
 | **出生点** | key(default 只读) / x / y | 增/删(default 不可删) |
 
 **热区每种 type 的 `data`(均整体重建)**:
@@ -55,7 +57,7 @@
 - 重建区:`hotspot.data`(尤其 inspect `data.text`)、`npc.patrol`(只 route/speed/moveAnimState)、`spawnPoint`(只 `{x,y}`)。
 - 主动删除:`zone.x/y/width/height/ruleSlots`、`npc.dialogueFile/dialogueKnot`;切 depth_floor 会删 zone 的 onEnter/onStay/onExit。
 - 盲区:`backgrounds`(主编辑器不可编辑,只 Scene Depth Editor 或手写)、`depthConfig` 主体(M/shader/collision/depth_map…只 Scene Depth Editor 导出)。
-- 无复制、无列表重排;`anim.json` 编辑器只读(靠 video_to_atlas 导出)。
+- 无复制、无列表重排;`anim.json` 场景编辑器内只读(states 等廉价参数去「动画」面板改,图集像素布局靠 video_to_atlas 导出)。
 
 ---
 
@@ -72,7 +74,7 @@
 ## Cutscene 过场(`timeline_editor.py`)
 
 - 顶层:id / targetScene / targetSpawnPoint / targetX / targetY / restoreState(旧 `commands` 被 pop)。
-- 15 种 present:fadeToBlack / fadeIn / flashWhite / waitTime / waitClick / showTitle / showDialogue(speaker+text+scriptedNpcId) / showImg(id+image) / hideImg / showMovieBar / hideMovieBar / showSubtitle(classic position 或 movie band+align+可选 subtitleVoice/subtitleEmote) / cameraMove(x/y/duration,可地图点选) / cameraZoom(scale/duration) / showCharacter(visible)。
+- 15 种 present:fadeToBlack / fadeIn / flashWhite / waitTime / waitClick / showTitle / showDialogue(speaker+text+scriptedNpcId) / showImg(id+image) / hideImg / showMovieBar / hideMovieBar / showSubtitle(classic position 或 movie band+align+可选 subtitleVoice/subtitleEmote) / cameraMove(x/y/duration+可选easing,可地图点选) / cameraZoom(scale/duration+可选easing) / showCharacter(visible)。easing 下拉:linear/easeIn/easeOut/easeInOut,缺省=运行时默认曲线。
 - action 步:type 来自 33 项白名单(`src/data/cutscene_action_allowlist.json`),白名单外+改存档的被拒。
 - parallel:tracks[] 可嵌套 present/action/parallel。
 - 步骤增删、折叠大纲拖拽重排。
@@ -123,6 +125,7 @@
 | **filter** | filters/*.json | id(=文件名,只读)/matrix[20]/alpha | id 不可改名(只能删建) |
 | **flag_registry** | flag_registry.json | static(key+valueType)/patterns(id/prefix/suffix/idSource/valueType) | **`migrations`/`runtime` 块 GUI 完全不暴露**(原样保留,需手改) |
 | **action_registry** | (无文件) | 只读汇总视图 | — |
+| **动画包** | runtime/animation/*/anim.json | states 表(name/frames/frameRate/loop/refSpeed=步速匹配基准·留空不参与)/worldWidth/worldHeight | 图集布局(cols/rows/cell/atlasFrames)只读,改布局回产线重导;refSpeed 仅移动类状态有意义 |
 | **pressure_holds** | pressure_holds.json | id/prompt/releaseHint/fillSeconds/decayPerSecond/holdSfx/barColor/interrupts(atRatio/resetToRatio/abort+ActionEditor)/onComplete | barColor/holdSfx 裸输入 |
 | **signal_cues** | signal_cues.json | id/description/actions | — |
 | **水域小游戏** | water_minigames/index+实例 | label/spotId/surface(location/time/weather)/bounds/waterBottom/entities(category/sprite/pos/depth/displaySize/hitRadius/motion/pull/valueTier/cue/hint/onPick/onPullSuccess/onPullFail);**有画布** | displaySize/hitRadius 留空=按品类默认(不写键) |

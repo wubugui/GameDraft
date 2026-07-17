@@ -71,8 +71,8 @@
     {
       "id": "teahouse_notice",
       "type": "inspect",
-      "x": 714.3,
-      "y": 66.4,
+      "x": 54.9,
+      "y": 192.8,
       "interactionRange": 64.3,
       "label": "告示板",
       "data": {
@@ -149,8 +149,8 @@
       "id": "hs_向导传闻",
       "type": "inspect",
       "label": "新贴的告示 · 重金寻向导",
-      "x": 714.3,
-      "y": 120.0,
+      "x": 348.3,
+      "y": 429.7,
       "interactionRange": 64.0,
       "conditions": [
         {
@@ -172,8 +172,8 @@
     {
       "id": "storyteller_zhang",
       "name": "说书人张叨叨",
-      "x": 485.7,
-      "y": 431.6,
+      "x": 418.9,
+      "y": 420.5,
       "dialogueGraphId": "寻狗_说书人",
       "interactionRange": 71.4,
       "animFile": "/resources/runtime/animation/npc_storyteller_anim/anim.json",
@@ -190,7 +190,7 @@
         ],
         "speed": 20
       },
-      "initialAnimState": "run"
+      "initialAnimState": "slow_walk"
     },
     {
       "id": "blind_li",
@@ -230,8 +230,8 @@
     {
       "id": "fx_steam_1",
       "name": "热气",
-      "x": 191.0,
-      "y": 362.0,
+      "x": 179.6,
+      "y": 371.8,
       "interactionRange": 0,
       "castShadow": false,
       "animFile": "/resources/runtime/animation/fx_teapot_steam/anim.json",
@@ -240,8 +240,48 @@
     {
       "id": "fx_steam_2",
       "name": "热气",
-      "x": 420.0,
-      "y": 262.0,
+      "x": 344.1,
+      "y": 315.1,
+      "interactionRange": 0,
+      "castShadow": false,
+      "animFile": "/resources/runtime/animation/fx_teapot_steam/anim.json",
+      "initialAnimState": "idle"
+    },
+    {
+      "id": "fx_steam_2_copy_2",
+      "name": "热气",
+      "x": 328.8,
+      "y": 305.9,
+      "interactionRange": 0,
+      "castShadow": false,
+      "animFile": "/resources/runtime/animation/fx_teapot_steam/anim.json",
+      "initialAnimState": "idle"
+    },
+    {
+      "id": "fx_steam_2_copy_2_copy",
+      "name": "热气",
+      "x": 461.9,
+      "y": 220.2,
+      "interactionRange": 0,
+      "castShadow": false,
+      "animFile": "/resources/runtime/animation/fx_teapot_steam/anim.json",
+      "initialAnimState": "idle"
+    },
+    {
+      "id": "fx_steam_2_copy",
+      "name": "热气",
+      "x": 557.6,
+      "y": 281.8,
+      "interactionRange": 0,
+      "castShadow": false,
+      "animFile": "/resources/runtime/animation/fx_teapot_steam/anim.json",
+      "initialAnimState": "idle"
+    },
+    {
+      "id": "fx_steam_2_copy_copy",
+      "name": "热气",
+      "x": 568.2,
+      "y": 263.7,
       "interactionRange": 0,
       "castShadow": false,
       "animFile": "/resources/runtime/animation/fx_teapot_steam/anim.json",
@@ -250,8 +290,8 @@
     {
       "id": "fx_steam_3",
       "name": "热气",
-      "x": 505.0,
-      "y": 385.0,
+      "x": 503.3,
+      "y": 396.4,
       "interactionRange": 0,
       "castShadow": false,
       "animFile": "/resources/runtime/animation/fx_teapot_steam/anim.json",
@@ -260,8 +300,8 @@
     {
       "id": "fx_glow_1",
       "name": "灯",
-      "x": 244.0,
-      "y": 31.0,
+      "x": 333.9,
+      "y": 66.2,
       "interactionRange": 0,
       "castShadow": false,
       "animFile": "/resources/runtime/animation/fx_lantern_glow/anim.json",
@@ -270,8 +310,8 @@
     {
       "id": "fx_glow_2",
       "name": "灯",
-      "x": 137.0,
-      "y": 90.0,
+      "x": 143.5,
+      "y": 133.6,
       "interactionRange": 0,
       "castShadow": false,
       "animFile": "/resources/runtime/animation/fx_lantern_glow/anim.json",
@@ -282,7 +322,7 @@
       "name": "笑客",
       "x": 147.5,
       "y": 369.8,
-      "interactionRange": 0.0,
+      "interactionRange": 0,
       "castShadow": false,
       "renderRaw": true,
       "animFile": "/resources/runtime/animation/fx_patron_laugh/anim.json",
@@ -293,7 +333,7 @@
       "name": "茶客甲",
       "x": 496.8,
       "y": 332.6,
-      "interactionRange": 0.0,
+      "interactionRange": 0,
       "castShadow": false,
       "renderRaw": true,
       "animFile": "/resources/runtime/animation/fx_patron_chatA/anim.json",
@@ -303,8 +343,8 @@
       "id": "fx_patron_sage",
       "name": "老者甲",
       "x": 298.4,
-      "y": 328.8,
-      "interactionRange": 0.0,
+      "y": 329.5,
+      "interactionRange": 0,
       "castShadow": false,
       "renderRaw": true,
       "animFile": "/resources/runtime/animation/fx_patron_sage/anim.json",
@@ -315,7 +355,7 @@
       "name": "喝茶客",
       "x": 236.4,
       "y": 371.5,
-      "interactionRange": 0.0,
+      "interactionRange": 0,
       "castShadow": false,
       "renderRaw": true,
       "animFile": "/resources/runtime/animation/fx_patron_drinker/anim.json",
@@ -326,7 +366,7 @@
       "name": "邻桌客",
       "x": 598.7,
       "y": 360.6,
-      "interactionRange": 0.0,
+      "interactionRange": 0,
       "castShadow": false,
       "renderRaw": true,
       "animFile": "/resources/runtime/animation/fx_patron_eater/anim.json",

@@ -192,6 +192,8 @@ export class Renderer {
       const ext = child as {
         entitySortBand?: 'back' | 'front';
         entityOcclusionPolygon?: ReadonlyArray<{ x: number; y: number }>;
+        /** 实例旋转实体的变换后接地线 y（实体自身维护）；缺省用容器 y（锚点） */
+        entitySortFootY?: number;
       };
       let band = ext.entitySortBand;
       if (hasPlayer && ext.entityOcclusionPolygon && ext.entityOcclusionPolygon.length >= 3) {
@@ -202,9 +204,10 @@ export class Renderer {
           band = 'front';
         }
       }
-      let z = child.y;
-      if (band === 'back') z = -bandSize + child.y;
-      else if (band === 'front') z = bandSize + child.y;
+      const footY = ext.entitySortFootY ?? child.y;
+      let z = footY;
+      if (band === 'back') z = -bandSize + footY;
+      else if (band === 'front') z = bandSize + footY;
       child.zIndex = z;
     }
     this.entityLayer.sortChildren();

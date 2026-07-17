@@ -57,8 +57,25 @@ export interface SimulationTransitionRecord {
   triggerKey: string;
 }
 
+/** 活计运行层模拟状态（对齐运行时 v2 单活模型：实例在 activeStates 表、无 @key） */
+export interface SimulationRunLayer {
+  /** 全局单激活槽：只有它吃信号/跑 reactive；null=无激活单 */
+  activatedArchetype: string | null;
+  /** 有实例但未激活（挂起冻结）的活计图 id */
+  suspended: string[];
+  /** 累计接单次数（graphId → started；reset 不增） */
+  started: Record<string, number>;
+  /** 累计结算计数（graphId → exitStateId → count），narrativeCount 叶的模拟后端 */
+  settled: Record<string, Record<string, number>>;
+}
+
+export function emptySimulationRunLayer(): SimulationRunLayer {
+  return { activatedArchetype: null, suspended: [], started: {}, settled: {} };
+}
+
 export interface SimulationResult {
   activeStates: Record<string, string>;
+  runLayer: SimulationRunLayer;
   recentTransitions: SimulationTransitionRecord[];
   log: string[];
   queued: string[];
@@ -551,42 +568,111 @@ function parseLegacyExternalSignalKey(key: string): null | { sourceType: string;
   }
 }
 
-export function simulateSignalImpact(
+function isRunGraphDef(graph: NarrativeGraphDef): boolean {
+  return Boolean(graph.run && typeof graph.run === 'object');
+}
+
+function cloneRunLayer(layer: SimulationRunLayer): SimulationRunLayer {
+  return {
+    activatedArchetype: layer.activatedArchetype,
+    suspended: [...layer.suspended],
+    started: { ...layer.started },
+    settled: Object.fromEntries(Object.entries(layer.settled).map(([g, m]) => [g, { ...m }])),
+  };
+}
+
+interface SimContext {
+  graphs: NarrativeGraphDef[];
+  graphMap: Map<string, NarrativeGraphDef>;
+  activeStates: Record<string, string>;
+  runLayer: SimulationRunLayer;
+  queue: string[];
+  recentTransitions: SimulationTransitionRecord[];
+  log: string[];
+  loopGuardTripped: boolean;
+}
+
+/** 对齐运行时 listLiveGraphEntries：常驻图恒在场；活计图须有实例且占激活槽（挂起=冻结） */
+function simGraphLive(sim: SimContext, graph: NarrativeGraphDef): boolean {
+  if (!isRunGraphDef(graph)) return true;
+  return sim.activeStates[graph.id] !== undefined && sim.runLayer.activatedArchetype === graph.id;
+}
+
+/** 进态收口：写表、广播入队；活计到出口自动结算（计数+删实例+清激活槽），对齐运行时 enterState→settle */
+function enterSimState(sim: SimContext, graph: NarrativeGraphDef, to: string): void {
+  sim.activeStates[graph.id] = to;
+  if (sim.graphMap.get(graph.id)?.states[to]?.broadcastOnEnter === true) {
+    sim.queue.push(stateEnteredSignalKey(graph.id, to));
+  }
+  if (isRunGraphDef(graph) && (graph.exitStates ?? []).includes(to)) {
+    const settledByExit = sim.runLayer.settled[graph.id] ?? (sim.runLayer.settled[graph.id] = {});
+    settledByExit[to] = (settledByExit[to] ?? 0) + 1;
+    delete sim.activeStates[graph.id];
+    sim.runLayer.suspended = sim.runLayer.suspended.filter((g) => g !== graph.id);
+    if (sim.runLayer.activatedArchetype === graph.id) sim.runLayer.activatedArchetype = null;
+    sim.log.push(`${graph.id}: 结算于出口 ${to}（累计 ${settledByExit[to]}），实例回收、激活槽清空`);
+  }
+}
+
+/** 建模拟上下文：常驻图恒在场（无先前值回退 initialState）；活计图只在实例携带时在场（蛰伏不吃信号） */
+function makeSimContext(
   dataRaw: NarrativeGraphsFileDef,
-  triggerKey: string,
   initialActiveStates?: Record<string, string>,
-): SimulationResult {
-  const maxSteps = 128;
+  runLayerIn?: SimulationRunLayer,
+): SimContext {
   const data = normalizeFile(dataRaw);
   const graphs = compileGraphs(data).map((g) => g.graph);
   const graphMap = new Map(graphs.map((graph) => [graph.id, graph]));
-  const activeStates = Object.fromEntries(graphs.map((graph) => {
-    const active = initialActiveStates?.[graph.id];
-    return [graph.id, active && graph.states?.[active] ? active : graph.initialState];
-  }));
-  const queue = [triggerKey].filter(Boolean);
-  const recentTransitions: SimulationTransitionRecord[] = [];
-  const log: string[] = [];
-  let loopGuardTripped = false;
+  const activeStates: Record<string, string> = {};
+  for (const graph of graphs) {
+    const carried = initialActiveStates?.[graph.id];
+    const valid = carried && graph.states?.[carried] ? carried : undefined;
+    if (isRunGraphDef(graph)) {
+      if (valid !== undefined) activeStates[graph.id] = valid;
+    } else {
+      activeStates[graph.id] = valid ?? graph.initialState;
+    }
+  }
+  return {
+    graphs, graphMap, activeStates,
+    runLayer: cloneRunLayer(runLayerIn ?? emptySimulationRunLayer()),
+    queue: [], recentTransitions: [], log: [], loopGuardTripped: false,
+  };
+}
 
-  for (let steps = 0; queue.length > 0; steps += 1) {
-    if (steps >= maxSteps) {
-      loopGuardTripped = true;
-      log.push(`loop guard tripped at ${maxSteps} queued triggers`);
-      queue.length = 0;
+function simResult(sim: SimContext): SimulationResult {
+  return {
+    activeStates: sim.activeStates,
+    runLayer: sim.runLayer,
+    recentTransitions: sim.recentTransitions,
+    log: sim.log,
+    queued: sim.queue,
+    loopGuardTripped: sim.loopGuardTripped,
+  };
+}
+
+const SIM_MAX_STEPS = 128;
+
+function drainSimQueue(sim: SimContext): void {
+  for (let steps = 0; sim.queue.length > 0; steps += 1) {
+    if (steps >= SIM_MAX_STEPS) {
+      sim.loopGuardTripped = true;
+      sim.log.push(`loop guard tripped at ${SIM_MAX_STEPS} queued triggers`);
+      sim.queue.length = 0;
       break;
     }
-    const key = queue.shift()!;
+    const key = sim.queue.shift()!;
     let migrated = 0;
-    for (const graph of graphs) {
-      const active = activeStates[graph.id] ?? graph.initialState;
+    for (const graph of sim.graphs) {
+      if (!simGraphLive(sim, graph)) continue;
+      const active = sim.activeStates[graph.id] ?? graph.initialState;
       const selected = (graph.transitions ?? [])
         .map((transition, index) => ({ transition, index }))
         .filter(({ transition }) => {
           if (typeof transition.from !== 'string' || typeof transition.to !== 'string') return false;
           return transition.from === active &&
             triggerKeysEqual(transition.signal, key) &&
-            conditionsMet(transition.conditions, activeStates);
+            conditionsMet(transition.conditions, sim);
         })
         .sort((a, b) => {
           const pa = a.transition.priority ?? 0;
@@ -597,104 +683,215 @@ export function simulateSignalImpact(
       if (!selected) continue;
       const from = selected.from;
       const to = selected.to;
-      if (!graphMap.get(graph.id)?.states[to]) continue;
-      const previousState = activeStates[graph.id] ?? graph.initialState;
-      activeStates[graph.id] = to;
-      recentTransitions.push({
+      if (!sim.graphMap.get(graph.id)?.states[to]) continue;
+      const previousState = sim.activeStates[graph.id] ?? graph.initialState;
+      sim.recentTransitions.push({
         graphId: graph.id,
         transitionId: selected.id,
         from,
         to,
         triggerKey: key,
       });
-      log.push(`${graph.id}: ${previousState} -> ${to} via ${graph.id}.${selected.id}`);
-      if (graphMap.get(graph.id)?.states[to]?.broadcastOnEnter === true) {
-        queue.push(stateEnteredSignalKey(graph.id, to));
-      }
+      sim.log.push(`${graph.id}: ${previousState} -> ${to} via ${graph.id}.${selected.id}`);
+      enterSimState(sim, graph, to);
       migrated += 1;
     }
-    if (migrated === 0) log.push(`no transition matched ${key}`);
-
-    // Evaluate reactive transitions after each signal step
-    let reactiveFired = true;
-    let reactiveSteps = 0;
-    while (reactiveFired) {
-      if (reactiveSteps >= maxSteps) {
-        loopGuardTripped = true;
-        log.push(`loop guard tripped at ${maxSteps} reactive transitions`);
-        queue.length = 0;
-        break;
-      }
-      reactiveSteps += 1;
-      reactiveFired = false;
-      for (const graph of graphs) {
-        const active = activeStates[graph.id] ?? graph.initialState;
-        const candidates = (graph.transitions ?? [])
-          .filter((t) => {
-            if (!t.trigger || t.trigger === 'signal') return false;
-            if (typeof t.from !== 'string' || typeof t.to !== 'string') return false;
-            return t.from === active && simulateReactiveConditionsMet(t, activeStates);
-          })
-          .map((t, index) => ({ t, index }))
-          .sort((a, b) => {
-            const pa = a.t.priority ?? 0;
-            const pb = b.t.priority ?? 0;
-            if (pa !== pb) return pb - pa;
-            return a.index - b.index;
-          });
-        const selected = candidates[0]?.t;
-        if (!selected) continue;
-        const from = selected.from as string;
-        const to = selected.to as string;
-        if (!graphMap.get(graph.id)?.states[to]) continue;
-        const previousState = activeStates[graph.id] ?? graph.initialState;
-        activeStates[graph.id] = to;
-        recentTransitions.push({
-          graphId: graph.id,
-          transitionId: selected.id,
-          from,
-          to,
-          triggerKey: '__reactive__',
-        });
-        log.push(`${graph.id}: ${previousState} -> ${to} via ${graph.id}.${selected.id} [reactive:${selected.trigger}]`);
-        if (graphMap.get(graph.id)?.states[to]?.broadcastOnEnter === true) {
-          queue.push(stateEnteredSignalKey(graph.id, to));
-        }
-        reactiveFired = true;
-        migrated += 1;
-      }
-    }
+    if (migrated === 0) sim.log.push(`no transition matched ${key}`);
+    runSimReactivePass(sim);
+    if (sim.loopGuardTripped) break;
   }
-  return { activeStates, recentTransitions, log, queued: queue, loopGuardTripped };
 }
 
-function simulateReactiveConditionsMet(t: NarrativeTransitionDef, activeStates: Record<string, string>): boolean {
+/** 每个信号步之后的 reactive 收敛（与主循环共用 liveness / 进态 / 结算语义） */
+function runSimReactivePass(sim: SimContext): void {
+  let reactiveFired = true;
+  let reactiveSteps = 0;
+  while (reactiveFired) {
+    if (reactiveSteps >= SIM_MAX_STEPS) {
+      sim.loopGuardTripped = true;
+      sim.log.push(`loop guard tripped at ${SIM_MAX_STEPS} reactive transitions`);
+      sim.queue.length = 0;
+      break;
+    }
+    reactiveSteps += 1;
+    reactiveFired = false;
+    for (const graph of sim.graphs) {
+      if (!simGraphLive(sim, graph)) continue;
+      const active = sim.activeStates[graph.id] ?? graph.initialState;
+      const candidates = (graph.transitions ?? [])
+        .filter((t) => {
+          if (!t.trigger || t.trigger === 'signal') return false;
+          if (typeof t.from !== 'string' || typeof t.to !== 'string') return false;
+          return t.from === active && simulateReactiveConditionsMet(t, sim);
+        })
+        .map((t, index) => ({ t, index }))
+        .sort((a, b) => {
+          const pa = a.t.priority ?? 0;
+          const pb = b.t.priority ?? 0;
+          if (pa !== pb) return pb - pa;
+          return a.index - b.index;
+        });
+      const selected = candidates[0]?.t;
+      if (!selected) continue;
+      const from = selected.from as string;
+      const to = selected.to as string;
+      if (!sim.graphMap.get(graph.id)?.states[to]) continue;
+      const previousState = sim.activeStates[graph.id] ?? graph.initialState;
+      sim.recentTransitions.push({
+        graphId: graph.id,
+        transitionId: selected.id,
+        from,
+        to,
+        triggerKey: '__reactive__',
+      });
+      sim.log.push(`${graph.id}: ${previousState} -> ${to} via ${graph.id}.${selected.id} [reactive:${selected.trigger}]`);
+      enterSimState(sim, graph, to);
+      reactiveFired = true;
+    }
+  }
+}
+
+export function simulateSignalImpact(
+  dataRaw: NarrativeGraphsFileDef,
+  triggerKey: string,
+  initialActiveStates?: Record<string, string>,
+  runLayerIn?: SimulationRunLayer,
+): SimulationResult {
+  const sim = makeSimContext(dataRaw, initialActiveStates, runLayerIn);
+  sim.queue.push(...[triggerKey].filter(Boolean));
+  drainSimQueue(sim);
+  return simResult(sim);
+}
+
+export type SimulationRunOp = 'start' | 'reset' | 'revert' | 'activate';
+
+/**
+ * 活计生命周期模拟（对齐运行时 start/reset/revert/activate 语义）：
+ * start=接单（已有实例拒绝；顶替当前激活单——resumable 挂起、否则弃置）；
+ * reset=回 initialState（静默）；revert=跳指定态（静默）；
+ * activate=切换激活（graphId 空=放下当前单，只清槽/挂起）。
+ * 操作后跑一轮 reactive 收敛 + 排空广播（新激活单可能立即满足 reactive 条件）。
+ */
+export function simulateRunLifecycle(
+  dataRaw: NarrativeGraphsFileDef,
+  op: SimulationRunOp,
+  graphId: string,
+  opts?: { activeStates?: Record<string, string>; runLayer?: SimulationRunLayer; stateId?: string },
+): SimulationResult {
+  const sim = makeSimContext(dataRaw, opts?.activeStates, opts?.runLayer);
+  const gid = graphId.trim();
+  const graph = gid ? sim.graphMap.get(gid) : undefined;
+
+  const suspendOrDiscardActivated = (): void => {
+    const prev = sim.runLayer.activatedArchetype;
+    if (!prev) return;
+    const prevGraph = sim.graphMap.get(prev);
+    if (prevGraph?.run?.resumable === true) {
+      if (!sim.runLayer.suspended.includes(prev)) sim.runLayer.suspended.push(prev);
+      sim.log.push(`${prev}: 挂起（resumable，进度保留）`);
+    } else {
+      delete sim.activeStates[prev];
+      sim.log.push(`${prev}: 弃置（非 resumable，实例回收）`);
+    }
+    sim.runLayer.activatedArchetype = null;
+  };
+
+  if (op === 'activate' && !gid) {
+    suspendOrDiscardActivated();
+    sim.log.push('激活槽清空（放下当前单）');
+  } else if (!graph || !isRunGraphDef(graph)) {
+    sim.log.push(`${op}: ${gid || '(空)'} 不是活计图，忽略`);
+  } else if (op === 'start') {
+    if (sim.activeStates[gid] !== undefined) {
+      sim.log.push(`start: ${gid} 已有实例（重来用 reset、切回用 activate），忽略`);
+    } else {
+      suspendOrDiscardActivated();
+      sim.activeStates[gid] = graph.initialState;
+      sim.runLayer.started[gid] = (sim.runLayer.started[gid] ?? 0) + 1;
+      sim.runLayer.activatedArchetype = gid;
+      sim.log.push(`${gid}: 接单（第 ${sim.runLayer.started[gid]} 单）→ ${graph.initialState}，已激活`);
+    }
+  } else if (op === 'reset') {
+    if (sim.activeStates[gid] === undefined) {
+      sim.log.push(`reset: ${gid} 无实例（开新用 start），忽略`);
+    } else {
+      sim.activeStates[gid] = graph.initialState;
+      sim.log.push(`${gid}: 重开 → ${graph.initialState}（静默，不广播）`);
+    }
+  } else if (op === 'revert') {
+    const sid = (opts?.stateId ?? '').trim();
+    if (sim.activeStates[gid] === undefined) {
+      sim.log.push(`revert: ${gid} 无实例，忽略`);
+    } else if (!sid || !graph.states?.[sid]) {
+      sim.log.push(`revert: 目标状态 ${sid || '(空)'} 不存在于 ${gid}，忽略`);
+    } else {
+      sim.activeStates[gid] = sid;
+      sim.log.push(`${gid}: 回退 → ${sid}（静默，不广播）`);
+    }
+  } else if (op === 'activate') {
+    if (sim.runLayer.activatedArchetype === gid) {
+      sim.log.push(`activate: ${gid} 已是激活单，忽略`);
+    } else if (sim.activeStates[gid] === undefined) {
+      sim.log.push(`activate: ${gid} 无实例可激活（开新用 start），忽略`);
+    } else {
+      suspendOrDiscardActivated();
+      sim.runLayer.suspended = sim.runLayer.suspended.filter((g) => g !== gid);
+      sim.runLayer.activatedArchetype = gid;
+      sim.log.push(`${gid}: 切换激活，从 ${sim.activeStates[gid]} 续跑`);
+    }
+  }
+
+  runSimReactivePass(sim);
+  drainSimQueue(sim);
+  return simResult(sim);
+}
+
+function simulateReactiveConditionsMet(t: NarrativeTransitionDef, sim: SimContext): boolean {
   if (!t.conditions?.length) return false;
   if (t.trigger === 'reactive') {
-    return conditionsMet(t.conditions, activeStates);
+    return conditionsMet(t.conditions, sim);
   }
   if (t.trigger === 'reactiveAll') {
-    return conditionsMet([{ all: t.conditions }], activeStates);
+    return conditionsMet([{ all: t.conditions }], sim);
   }
   if (t.trigger === 'reactiveAny') {
-    return conditionsMet([{ any: t.conditions }], activeStates);
+    return conditionsMet([{ any: t.conditions }], sim);
   }
   return false;
 }
 
-function conditionsMet(conditions: unknown[] | undefined, activeStates: Record<string, string>): boolean {
+function conditionsMet(conditions: unknown[] | undefined, sim: SimContext): boolean {
   if (!conditions?.length) return true;
-  return conditions.every((expr) => evalCondition(expr, activeStates));
+  return conditions.every((expr) => evalCondition(expr, sim));
 }
 
-function evalCondition(expr: unknown, activeStates: Record<string, string>): boolean {
+const NARRATIVE_COUNT_OPS: Record<string, (a: number, b: number) => boolean> = {
+  '==': (a, b) => a === b,
+  '!=': (a, b) => a !== b,
+  '>': (a, b) => a > b,
+  '>=': (a, b) => a >= b,
+  '<': (a, b) => a < b,
+  '<=': (a, b) => a <= b,
+};
+
+function evalCondition(expr: unknown, sim: SimContext): boolean {
   if (!expr || typeof expr !== 'object' || Array.isArray(expr)) return false;
   const x = expr as Record<string, unknown>;
-  if (Array.isArray(x.all)) return x.all.every((e) => evalCondition(e, activeStates));
-  if (Array.isArray(x.any)) return x.any.some((e) => evalCondition(e, activeStates));
-  if (x.not && typeof x.not === 'object') return !evalCondition(x.not, activeStates);
+  if (Array.isArray(x.all)) return x.all.every((e) => evalCondition(e, sim));
+  if (Array.isArray(x.any)) return x.any.some((e) => evalCondition(e, sim));
+  if (x.not && typeof x.not === 'object') return !evalCondition(x.not, sim);
   if (typeof x.narrative === 'string' && typeof x.state === 'string') {
-    return activeStates[x.narrative] === x.state;
+    // 活计图无实例时表里无键 → 恒 false（蛰伏语义），与运行时单活直读一致
+    return sim.activeStates[x.narrative] === x.state;
+  }
+  if (typeof x.narrativeCount === 'string' && typeof x.value === 'number') {
+    const settledByExit = sim.runLayer.settled[x.narrativeCount] ?? {};
+    const exit = typeof x.exitState === 'string' ? x.exitState.trim() : '';
+    const total = exit
+      ? settledByExit[exit] ?? 0
+      : Object.values(settledByExit).reduce((a, b) => a + b, 0);
+    const op = typeof x.op === 'string' && x.op in NARRATIVE_COUNT_OPS ? x.op : '>=';
+    return NARRATIVE_COUNT_OPS[op](total, x.value);
   }
   return false;
 }

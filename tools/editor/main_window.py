@@ -352,9 +352,9 @@ class MainWindow(QMainWindow):
 
         edit_menu = mb.addMenu("Edit")
         self._act(edit_menu, "Save", self._save_current_editor, QKeySequence.StandardKey.Save)
-        self._undo_action = self._act(edit_menu, "Undo", lambda: self._model.undo_stack.undo(),
+        self._undo_action = self._act(edit_menu, "Undo", self._dispatch_undo,
                                        QKeySequence.StandardKey.Undo)
-        self._redo_action = self._act(edit_menu, "Redo", lambda: self._model.undo_stack.redo(),
+        self._redo_action = self._act(edit_menu, "Redo", self._dispatch_redo,
                                        QKeySequence.StandardKey.Redo)
 
         run_menu = mb.addMenu("Run")
@@ -1463,6 +1463,32 @@ class MainWindow(QMainWindow):
         if item is not None:
             item.setText(0, f"● {label}" if dirty else label)
         self._refresh_status_chips()
+
+    def _current_editor_instance(self) -> QWidget | None:
+        """当前激活页的编辑器实例（页面外壳 _StackPageHost 不算；末尾浏览页不在
+        _editor_instances 内，返回 None）。"""
+        idx = self._stack.currentIndex()
+        if 0 <= idx < len(self._editor_instances):
+            return self._editor_instances[idx]
+        return None
+
+    def _dispatch_undo(self) -> None:
+        """Edit→Undo：优先转发当前编辑器的局部撤销（鸭子钩子 editor_undo，
+        场景编辑器提供；含文本框焦点委托）；无钩子回落全局 undo_stack。"""
+        ed = self._current_editor_instance()
+        fn = getattr(ed, "editor_undo", None)
+        if callable(fn):
+            fn()
+            return
+        self._model.undo_stack.undo()
+
+    def _dispatch_redo(self) -> None:
+        ed = self._current_editor_instance()
+        fn = getattr(ed, "editor_redo", None)
+        if callable(fn):
+            fn()
+            return
+        self._model.undo_stack.redo()
 
     def _save_current_editor(self) -> None:
         idx = self._stack.currentIndex()

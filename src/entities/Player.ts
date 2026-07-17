@@ -1,6 +1,6 @@
 import { SpriteEntity } from '../rendering/SpriteEntity';
 import type { InputManager } from '../core/InputManager';
-import type { ICutsceneActor, SceneData } from '../data/types';
+import type { AnimationPlaybackParams, ICutsceneActor, SceneData } from '../data/types';
 
 /** 默认行走速度（世界单位/秒） */
 export const DEFAULT_PLAYER_WALK_SPEED = 100;
@@ -136,8 +136,8 @@ export class Player implements ICutsceneActor {
     });
   }
 
-  playAnimation(name: string): void {
-    this.sprite.playAnimation(name);
+  playAnimation(name: string, playback?: AnimationPlaybackParams): void {
+    this.sprite.playAnimation(name, undefined, playback);
   }
 
   cutsceneUpdate(dt: number): void {
@@ -165,6 +165,8 @@ export class Player implements ICutsceneActor {
         }
         this.sprite.x += nx * step;
         this.sprite.y += ny * step;
+        // 步速匹配：仅当当前状态声明了 referenceSpeed 才生效，否则内部回落 1 倍速
+        this.sprite.applyLocomotionSpeed(t.speed);
       }
     }
     this.sprite.update(dt);
@@ -205,6 +207,8 @@ export class Player implements ICutsceneActor {
       } else {
         this.sprite.playAnimation(ANIM_WALK);
       }
+      // 步速匹配：状态未声明 referenceSpeed 时内部回落 1 倍速（现状全部包如此，行为不变）
+      this.sprite.applyLocomotionSpeed(speed);
     } else {
       this.sprite.playAnimation(ANIM_IDLE);
     }

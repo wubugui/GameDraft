@@ -4830,6 +4830,14 @@
         "ownerType": "flow",
         "ownerId": "背尸淹尸活",
         "label": "背尸·淹尸活",
+        "run": {
+          "repeatable": true,
+          "resumable": true
+        },
+        "entryState": "initial",
+        "exitStates": [
+          "delivered"
+        ],
         "initialState": "initial",
         "states": {
           "initial": {

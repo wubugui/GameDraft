@@ -79,6 +79,11 @@ CONTENT_ID_PARAMS: dict[tuple[str, str], str] = {
     ("completeScenario", "scenarioId"): "scenarios",
     ("addArchiveEntry", "entryId"): "archive_entries",
     ("emitNarrativeSignal", "signal"): "narrative_signals",
+    # 叙事活计生命周期（S1）：目标是活计图；宇宙沿用 narrative 条件叶的图 id 集合
+    ("startNarrativeRun", "graphId"): "narrative_graph_ids",
+    ("resetNarrativeRun", "graphId"): "narrative_graph_ids",
+    ("revertNarrativeRun", "graphId"): "narrative_graph_ids",
+    ("activateNarrativeRun", "graphId"): "narrative_graph_ids",
 }
 
 # 跨字段收窄:(action, 作用域参数, 被收窄参数) → (scoped 映射名, 允许空串, 标签宇宙)
@@ -244,6 +249,7 @@ def _condition_snippets(spec: LanguageSpec) -> list[dict]:
         "scenarioLine": {"scenarioLine": "$1",
                          "lineStatus": spec.scenario_line_statuses[0] if spec.scenario_line_statuses else "active"},
         "narrative": {"narrative": "$1", "state": "$2"},
+        "narrativeCount": {"narrativeCount": "$1", "exitState": "$2", "op": ">=", "value": 1},
         "plane": {"plane": "$1"},
     }
     snippets = [
@@ -356,10 +362,23 @@ def _condition_expr(spec: LanguageSpec, ud: UniverseData) -> dict:
             },
             {"allOf": state_variants} if state_variants else None,
         ))
+    if "narrativeCount" in modeled:
+        # 活计结算计数叶（叙事运行实例化 S1）：目标须活计图（validator 裁决）、
+        # exitState 为该图出口（缺省=全部出口合计）、op 缺省 '>='
+        count_graph_enum = _universe_schema("narrative_graph_ids", ud)
+        branches.append(leaf(
+            ["narrativeCount", "value"],
+            {
+                "narrativeCount": count_graph_enum or {"type": "string"},
+                "exitState": {"type": "string"},
+                "op": {"enum": ["==", "!=", ">", ">=", "<", "<="]},
+                "value": {"type": "number"},
+            },
+        ))
     if "plane" in modeled:
         branches.append(leaf(["plane"], {"plane": _universe_schema("planes", ud)}))
     # 提取到未建模叶子时(extract 已出 warning)加一条兜底,免得新叶子全量报错
-    for extra_leaf in modeled - {"flag", "quest", "scenario", "scenarioLine", "narrative", "plane"}:
+    for extra_leaf in modeled - {"flag", "quest", "scenario", "scenarioLine", "narrative", "narrativeCount", "plane"}:
         branches.append(leaf([extra_leaf], {extra_leaf: {}}))
     return {"anyOf": branches}
 

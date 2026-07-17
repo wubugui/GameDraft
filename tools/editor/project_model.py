@@ -1274,6 +1274,15 @@ class ProjectModel(QObject):
     def all_quest_ids(self) -> list[tuple[str, str]]:
         return [(q["id"], q.get("title", q["id"])) for q in self.quests]
 
+    def quest_status_target_ids(self) -> list[tuple[str, str]]:
+        """有状态机的任务 id（quest 叶 / updateQuest / nextQuests / initialQuest 的合法目标）。
+
+        排除 repeatable：活计镜像任务无 Inactive/Active/Completed 状态机，
+        指向它是校验 error（判活计进度用 narrative / narrativeCount 叶）。
+        存在性检查（wrapper owner、目录宇宙）仍用 all_quest_ids。"""
+        return [(q["id"], q.get("title", q["id"])) for q in self.quests
+                if str(q.get("type", "")) != "repeatable"]
+
     def all_quest_group_ids(self) -> list[tuple[str, str]]:
         return [(g["id"], g.get("name", g["id"])) for g in self.quest_groups]
 
@@ -1491,6 +1500,29 @@ class ProjectModel(QObject):
                 if isinstance(g, dict) and str(g.get("id", "")).strip()
             ]
         return []
+
+    def narrative_instanced_graph_ids_ordered(self) -> list[str]:
+        """声明了 run 的活计图 id（start/reset/revert/activateNarrativeRun 候选）。"""
+        out: list[str] = []
+        for gid in self.narrative_graph_ids_ordered():
+            graph = self._find_narrative_graph_by_id(gid)
+            if isinstance(graph, dict) and isinstance(graph.get("run"), dict):
+                out.append(gid)
+        return out
+
+    def _find_narrative_graph_by_id(self, graph_id: str) -> dict | None:
+        comps = self.narrative_graphs.get("compositions") if isinstance(self.narrative_graphs, dict) else None
+        for comp in comps or []:
+            if not isinstance(comp, dict):
+                continue
+            main = comp.get("mainGraph")
+            if isinstance(main, dict) and str(main.get("id", "")).strip() == graph_id:
+                return main
+            for el in comp.get("elements") or []:
+                if isinstance(el, dict) and isinstance(el.get("graph"), dict):
+                    if str(el["graph"].get("id", "")).strip() == graph_id:
+                        return el["graph"]
+        return None
 
     def narrative_composition_ids_ordered(self) -> list[str]:
         if not isinstance(self.narrative_graphs, dict):

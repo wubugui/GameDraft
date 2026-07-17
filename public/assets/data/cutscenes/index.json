@@ -1903,9 +1903,10 @@
           {
             "kind": "present",
             "type": "cameraMove",
-            "x": 115,
+            "x": 330,
             "y": 228,
-            "duration": 2800
+            "duration": 2800,
+            "easing": "easeOut"
           },
           {
             "kind": "present",

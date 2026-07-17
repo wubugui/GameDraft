@@ -6,6 +6,7 @@ import {
   normalizeFile,
   renameGraph,
   renameStateInGraph,
+  simulateRunLifecycle,
   simulateSignalImpact,
   validateNarrativeData,
 } from './editorModel';
@@ -164,6 +165,120 @@ describe('editorModel', () => {
     const result = simulateSignalImpact(data, 'noop');
     expect(result.loopGuardTripped).toBe(true);
     expect(result.log.at(-1)).toBe('loop guard tripped at 128 reactive transitions');
+  });
+
+  // ---- 活计运行层模拟（模拟器活计感知：蛰伏/单激活/结算计数，校验用途须与运行时同语义） ----
+
+  function jobSample(): NarrativeGraphsFileDef {
+    return {
+      schemaVersion: 2,
+      compositions: [
+        {
+          id: 'comp_job',
+          mainGraph: {
+            id: 'job', ownerType: 'flow', initialState: 's0',
+            run: { repeatable: true, resumable: true },
+            entryState: 's0', exitStates: ['done'],
+            states: { s0: { id: 's0' }, doing: { id: 'doing' }, done: { id: 'done', broadcastOnEnter: true } },
+            transitions: [
+              { id: 't1', from: 's0', to: 'doing', signal: 'job_go' },
+              { id: 't2', from: 'doing', to: 'done', signal: 'job_finish' },
+            ],
+          },
+          elements: [],
+        },
+        {
+          id: 'comp_job2',
+          mainGraph: {
+            id: 'job2', ownerType: 'flow', initialState: 'u0',
+            run: { repeatable: true },
+            entryState: 'u0', exitStates: ['u1'],
+            states: { u0: { id: 'u0' }, u1: { id: 'u1' } },
+            transitions: [{ id: 'ut1', from: 'u0', to: 'u1', signal: 'job2_finish' }],
+          },
+          elements: [],
+        },
+        {
+          id: 'comp_watch',
+          mainGraph: {
+            id: 'watcher', ownerType: 'flow', initialState: 'w0',
+            states: { w0: { id: 'w0' }, w1: { id: 'w1' }, w2: { id: 'w2' } },
+            transitions: [
+              { id: 'wt1', from: 'w0', to: 'w1', signal: 'state:job:done' },
+              {
+                id: 'wt2', from: 'w1', to: 'w2', signal: 'job_check',
+                conditions: [{ narrativeCount: 'job', exitState: 'done', op: '>=', value: 1 }],
+              },
+            ],
+          },
+          elements: [],
+        },
+      ],
+    };
+  }
+
+  it('活计蛰伏：无实例不吃信号、不被种入 activeStates，常驻图不受影响', () => {
+    const result = simulateSignalImpact(jobSample(), 'job_go');
+    expect(result.activeStates.job).toBeUndefined();
+    expect(result.activeStates.watcher).toBe('w0');
+    expect(result.recentTransitions).toEqual([]);
+    // narrativeCount 未结算过 → 条件不放行
+    const check = simulateSignalImpact(jobSample(), 'job_check', { watcher: 'w1' });
+    expect(check.activeStates.watcher).toBe('w1');
+  });
+
+  it('接单→推进→结算：计数/删实例/清槽，出口广播照发，narrativeCount 条件随计数生效', () => {
+    const data = jobSample();
+    let r = simulateRunLifecycle(data, 'start', 'job');
+    expect(r.activeStates.job).toBe('s0');
+    expect(r.runLayer).toMatchObject({ activatedArchetype: 'job', started: { job: 1 } });
+    r = simulateSignalImpact(data, 'job_go', r.activeStates, r.runLayer);
+    expect(r.activeStates.job).toBe('doing');
+    r = simulateSignalImpact(data, 'job_finish', r.activeStates, r.runLayer);
+    expect(r.activeStates.job).toBeUndefined();          // 结算删实例
+    expect(r.runLayer.settled.job).toEqual({ done: 1 });
+    expect(r.runLayer.activatedArchetype).toBeNull();
+    expect(r.activeStates.watcher).toBe('w1');           // state:job:done 广播照发
+    r = simulateSignalImpact(data, 'job_check', r.activeStates, r.runLayer);
+    expect(r.activeStates.watcher).toBe('w2');           // narrativeCount >= 1 放行
+    // 可重复：再接单单号 +1
+    r = simulateRunLifecycle(data, 'start', 'job', { activeStates: r.activeStates, runLayer: r.runLayer });
+    expect(r.runLayer.started.job).toBe(2);
+    expect(r.activeStates.job).toBe('s0');
+  });
+
+  it('单激活槽：start 顶替（resumable 挂起/非 resumable 弃置）、挂起冻结、activate 切回、reset/revert/守卫', () => {
+    const data = jobSample();
+    let r = simulateRunLifecycle(data, 'start', 'job');
+    r = simulateSignalImpact(data, 'job_go', r.activeStates, r.runLayer);
+    // start job2 顶替：job resumable → 挂起且进度保留
+    r = simulateRunLifecycle(data, 'start', 'job2', { activeStates: r.activeStates, runLayer: r.runLayer });
+    expect(r.runLayer.activatedArchetype).toBe('job2');
+    expect(r.runLayer.suspended).toEqual(['job']);
+    expect(r.activeStates.job).toBe('doing');
+    // 挂起冻结：job 的信号不再吃
+    r = simulateSignalImpact(data, 'job_finish', r.activeStates, r.runLayer);
+    expect(r.activeStates.job).toBe('doing');
+    expect(r.runLayer.settled.job).toBeUndefined();
+    // activate 切回：job2 非 resumable → 弃置（实例回收）
+    r = simulateRunLifecycle(data, 'activate', 'job', { activeStates: r.activeStates, runLayer: r.runLayer });
+    expect(r.runLayer.activatedArchetype).toBe('job');
+    expect(r.runLayer.suspended).toEqual([]);
+    expect(r.activeStates.job2).toBeUndefined();
+    // revert 指定态 / reset 回初始（静默）
+    r = simulateRunLifecycle(data, 'revert', 'job', { activeStates: r.activeStates, runLayer: r.runLayer, stateId: 'doing' });
+    expect(r.activeStates.job).toBe('doing');
+    r = simulateRunLifecycle(data, 'reset', 'job', { activeStates: r.activeStates, runLayer: r.runLayer });
+    expect(r.activeStates.job).toBe('s0');
+    expect(r.runLayer.started.job).toBe(1);              // reset 不涨单号
+    // 守卫：已有实例再 start 忽略；activate 空 id = 放下当前单
+    const before = r;
+    r = simulateRunLifecycle(data, 'start', 'job', { activeStates: r.activeStates, runLayer: r.runLayer });
+    expect(r.runLayer.started.job).toBe(before.runLayer.started.job);
+    expect(r.log.some((l) => l.includes('已有实例'))).toBe(true);
+    r = simulateRunLifecycle(data, 'activate', '', { activeStates: r.activeStates, runLayer: r.runLayer });
+    expect(r.runLayer.activatedArchetype).toBeNull();
+    expect(r.runLayer.suspended).toEqual(['job']);       // resumable 放下=挂起
   });
 
   it('does not simulate legacy cross-graph transition endpoints', () => {

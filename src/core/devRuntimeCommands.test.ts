@@ -94,6 +94,11 @@ function deps() {
       debugSetPlayerPosition: (x: number, y: number, snapCamera: boolean) => {
         calls.push(`playerSet:${x}:${y}:${snapCamera}`);
       },
+      debugSetEntityField: async (
+        kind: 'npc' | 'hotspot', entityId: string, fieldName: string, value: unknown,
+      ) => {
+        calls.push(`entityField:${kind}:${entityId}:${fieldName}:${JSON.stringify(value)}`);
+      },
       debugMovePlayerTo: async (x: number, y: number, speed: number, snapCamera: boolean) => {
         calls.push(`playerMove:${x}:${y}:${speed}:${snapCamera}`);
       },

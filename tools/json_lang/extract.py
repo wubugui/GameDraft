@@ -32,7 +32,7 @@ TYPES_TS = "src/data/types.ts"
 # ConditionTrace 里非叶子的 kind;剩下的就是条件叶子清单(机器可校验锚点)
 _NON_LEAF_TRACE_KINDS = {"all", "any", "not", "unknown"}
 # 本工具已建模的叶子;提取出新 kind → warning "有新条件叶子,json_lang 需要跟进"
-_MODELED_LEAVES = {"flag", "quest", "scenario", "scenarioLine", "narrative", "plane"}
+_MODELED_LEAVES = {"flag", "quest", "scenario", "scenarioLine", "narrative", "narrativeCount", "plane"}
 # ENTITY_REF_PARAMS 已知 kind;出现新 kind → warning
 _KNOWN_REF_KINDS = {
     "actor", "emote_subject", "npc", "npc_soft", "owner",

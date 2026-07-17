@@ -7,6 +7,7 @@
     "inventoryFull": "包袱满了！",
     "questAccepted": "新任务：{title}",
     "questCompleted": "任务完成：{title}",
+    "jobDiscarded": "撂下了活计：{title}",
     "currencyInsufficient": "铜钱不足!",
     "shopPurchased": "购买了 {name}",
     "mapTravelBlocked": "此刻脱不开身，无法看图赶路。"
@@ -110,10 +111,16 @@
     "title": "任务",
     "mainline": "-- 主线 --",
     "sideline": "-- 支线 ({count}) --",
+    "repeatable": "-- 零活 ({count}) --",
     "completed": "-- 已完成 ({count}) --",
     "done": "[Done]",
     "empty": "(暂无)",
-    "closeHint": "按 Tab 关闭"
+    "closeHint": "按 Tab 关闭",
+    "runOrdinal": "第{n}单",
+    "runTracked": " ▶ 追踪中",
+    "runSuspended": " ‖ 搁置·点击追踪",
+    "runCurrent": "当前：{state}",
+    "runArchive": "{label} ×{count}"
   },
   "rulesPanel": {
     "title": "规矩本",

@@ -251,7 +251,8 @@ class _NextQuestsEditor(QWidget):
 
         top_row = QHBoxLayout()
         sel = IdRefSelector(allow_empty=False, editable=False, click_opens_popup=True)
-        sel.set_items(self._model.all_quest_ids())
+        # nextQuests 目标排除 repeatable（无状态机可接取；派单走 startNarrativeRun）
+        sel.set_items(self._model.quest_status_target_ids())
         sel.set_current(edge.get("questId", ""))
         top_row.addWidget(QLabel("目标:"))
         top_row.addWidget(sel, 1)
@@ -577,11 +578,22 @@ class QuestEditor(QWidget):
         self._q_group = IdRefSelector(allow_empty=False, editable=False, click_opens_popup=True)
         f.addRow("group", self._q_group)
         self._q_type = QComboBox()
-        self._q_type.addItems(["main", "side"])
+        self._q_type.addItems(["main", "side", "repeatable"])
+        self._q_type.setToolTip(
+            "repeatable = 可重复活计的面板镜像：硬绑一张活计图（runArchetype），\n"
+            "条目/完成/归档全部由活计生命周期派生，不走条件/奖励/后继。"
+        )
         f.addRow("type", self._q_type)
         self._q_side_type = QComboBox()
         self._q_side_type.addItems(["", "errand", "inquiry", "investigation", "commission"])
         f.addRow("sideType", self._q_side_type)
+        self._q_run_arch = IdRefSelector(allow_empty=True, editable=False, click_opens_popup=True)
+        self._q_run_arch.setToolTip(
+            "绑定的活计图（narrative_graphs 中声明了 run 的图），与本任务 1:1。\n"
+            "仅 type=repeatable 可配；活计接单/结算即驱动本任务条目。"
+        )
+        f.addRow("runArchetype", self._q_run_arch)
+        self._q_type.currentTextChanged.connect(self._on_quest_type_changed)
         self._q_title = RichTextLineEdit(self._model)
         f.addRow("title", self._q_title)
         self._q_desc = RichTextTextEdit(self._model)
@@ -647,7 +659,16 @@ class QuestEditor(QWidget):
     def _update_selectors(self) -> None:
         self._g_parent.set_items(self._model.all_quest_group_ids())
         self._q_group.set_items(self._model.all_quest_group_ids())
+        self._q_run_arch.set_items(self._model.narrative_instanced_graph_ids_ordered())
         self._q_next_editor._model = self._model
+
+    def _on_quest_type_changed(self, qtype: str) -> None:
+        """repeatable 任务无状态机：条件/动作/后继编辑区整体禁用，runArchetype 反向启用。"""
+        repeatable = qtype == "repeatable"
+        self._q_run_arch.setEnabled(repeatable)
+        self._q_side_type.setEnabled(not repeatable)
+        for w in (self._q_pre, self._q_comp, self._q_accept, self._q_rewards, self._q_next_editor):
+            w.setEnabled(not repeatable)
 
     def _snapshot_tree_expansion(self) -> dict:
         """记录各节点（按其 UserRole 标识）的展开状态，供 rebuild 后恢复。"""
@@ -851,6 +872,8 @@ class QuestEditor(QWidget):
             if self._q_type.currentText() != q.get("type", "main"):
                 return True
             if self._q_side_type.currentText() != q.get("sideType", ""):
+                return True
+            if (self._q_run_arch.current_id() or "") != (q.get("runArchetype") or ""):
                 return True
             if self._q_title.text() != q.get("title", ""):
                 return True
@@ -1221,6 +1244,9 @@ class QuestEditor(QWidget):
         self._q_group.set_current(q.get("group", ""))
         self._q_type.setCurrentText(q.get("type", "main"))
         self._q_side_type.setCurrentText(q.get("sideType", ""))
+        self._q_run_arch.set_items(self._model.narrative_instanced_graph_ids_ordered())
+        self._q_run_arch.set_current(q.get("runArchetype", ""))
+        self._on_quest_type_changed(self._q_type.currentText())
         self._q_title.setText(q.get("title", ""))
         self._q_desc.setPlainText(q.get("description", ""))
         self._q_pre.set_flag_pattern_context(self._model, None)
@@ -1311,21 +1337,45 @@ class QuestEditor(QWidget):
                     if edge.get("questId") == qid:
                         edge["questId"] = new_id
             self._cascade_quest_rename_refs(qid, new_id, report)
+        new_type = self._q_type.currentText()
+        repeatable = new_type == "repeatable"
+        run_arch = self._q_run_arch.current_id() or ""
+        if repeatable and not run_arch:
+            QMessageBox.warning(
+                self, "runArchetype",
+                "repeatable 任务必须绑定一张活计图（narrative_graphs 中声明了 run 的图）。")
+            return False
+        if repeatable:
+            dup = next(
+                (qq for qq in self._model.quests
+                 if qq is not q and qq.get("type") == "repeatable"
+                 and qq.get("runArchetype") == run_arch),
+                None)
+            if dup:
+                QMessageBox.warning(
+                    self, "runArchetype",
+                    f"活计图 {run_arch} 已被任务「{dup.get('id')}」绑定（须 1:1）。")
+                return False
         q["id"] = new_id
         q["group"] = self._q_group.current_id() or ""
-        q["type"] = self._q_type.currentText()
+        q["type"] = new_type
         st = self._q_side_type.currentText()
-        if st:
+        if st and not repeatable:
             q["sideType"] = st
         elif "sideType" in q:
             del q["sideType"]
+        if repeatable:
+            q["runArchetype"] = run_arch
+        elif "runArchetype" in q:
+            del q["runArchetype"]
         q["title"] = self._q_title.text()
         q["description"] = self._q_desc.toPlainText()
-        q["preconditions"] = self._q_pre.to_list()
-        q["completionConditions"] = self._q_comp.to_list()
-        q["acceptActions"] = self._q_accept.to_list()
-        q["rewards"] = self._q_rewards.to_list()
-        q["nextQuests"] = self._q_next_editor.to_list()
+        # repeatable 无状态机：条件/动作/后继一律写空（校验器对非空直接 error）
+        q["preconditions"] = [] if repeatable else self._q_pre.to_list()
+        q["completionConditions"] = [] if repeatable else self._q_comp.to_list()
+        q["acceptActions"] = [] if repeatable else self._q_accept.to_list()
+        q["rewards"] = [] if repeatable else self._q_rewards.to_list()
+        q["nextQuests"] = [] if repeatable else self._q_next_editor.to_list()
         if "nextQuestId" in q:
             del q["nextQuestId"]
         self._current_selection = new_id

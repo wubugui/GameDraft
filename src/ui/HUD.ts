@@ -58,6 +58,7 @@ export class HUD {
   private currencyCb: (p: { newTotal: number }) => void;
   private questAcceptedCb: (p: { questId: string; title: string }) => void;
   private questCompletedCb: (p: { questId: string; title: string }) => void;
+  private questUntrackedCb: (p: { questId: string }) => void;
   /** 已接未完成的任务（按接取顺序）；追踪栏显示最近接取且仍激活的一个，完成时回退到上一个而非清空 */
   private trackedQuests: { id: string; title: string }[] = [];
   /** 读档开始：清上一局追踪残留（随后 QuestManager.deserialize 补发 quest:accepted{restored} 重建） */
@@ -175,6 +176,12 @@ export class HUD {
       const last = this.trackedQuests[this.trackedQuests.length - 1];
       this.setQuestHint(last ? last.title : '');
     };
+    // repeatable 活计被切走/弃置：摘除追踪但不算完成（quest:completed 语义留给真结算）
+    this.questUntrackedCb = (p) => {
+      this.trackedQuests = this.trackedQuests.filter((q) => q.id !== p.questId);
+      const last = this.trackedQuests[this.trackedQuests.length - 1];
+      this.setQuestHint(last ? last.title : '');
+    };
     this.saveRestoringCb = () => {
       this.trackedQuests = [];
       this.setQuestHint('');
@@ -205,6 +212,7 @@ export class HUD {
     this.eventBus.on('currency:changed', this.currencyCb);
     this.eventBus.on('quest:accepted', this.questAcceptedCb);
     this.eventBus.on('quest:completed', this.questCompletedCb);
+    this.eventBus.on('quest:untracked', this.questUntrackedCb);
     this.eventBus.on('save:restoring', this.saveRestoringCb);
     this.eventBus.on('zone:ruleAvailable', this.zoneEnterCb);
     this.eventBus.on('zone:ruleUnavailable', this.zoneExitCb);
@@ -456,6 +464,7 @@ export class HUD {
     this.eventBus.off('currency:changed', this.currencyCb);
     this.eventBus.off('quest:accepted', this.questAcceptedCb);
     this.eventBus.off('quest:completed', this.questCompletedCb);
+    this.eventBus.off('quest:untracked', this.questUntrackedCb);
     this.eventBus.off('save:restoring', this.saveRestoringCb);
     this.eventBus.off('zone:ruleAvailable', this.zoneEnterCb);
     this.eventBus.off('zone:ruleUnavailable', this.zoneExitCb);
