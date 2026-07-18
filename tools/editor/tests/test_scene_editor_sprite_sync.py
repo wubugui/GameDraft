@@ -31,6 +31,7 @@ class _CapturingRuntime:
     def __init__(self) -> None:
         self.last_xy: tuple[float, float] | None = None
         self.last_transform: tuple[float, float] | None = None
+        self.last_playback: tuple[float, bool, int | None, int | None] | None = None
 
     def tick(self, dt: float, x: float, y: float) -> None:
         self.last_xy = (x, y)
@@ -40,6 +41,12 @@ class _CapturingRuntime:
 
     def set_instance_transform(self, scale: float, rot_deg: float) -> None:
         self.last_transform = (scale, rot_deg)
+
+    def set_playback(
+        self, speed: float, reverse: bool,
+        hold: int | None, start: int | None,
+    ) -> None:
+        self.last_playback = (speed, reverse, hold, start)
 
 
 def _scene(sid: str) -> dict:

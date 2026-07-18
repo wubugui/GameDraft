@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
     QTreeWidget, QTreeWidgetItem,
     QSizePolicy, QGraphicsSceneMouseEvent, QGraphicsSceneHoverEvent,
     QGraphicsSceneContextMenuEvent,     QTableWidget, QTableWidgetItem, QHeaderView, QSlider,
-    QRadioButton, QButtonGroup, QCompleter,
+    QRadioButton, QButtonGroup, QCompleter, QFrame,
 )
 from PySide6.QtGui import (
     QPixmap, QImage, QPen, QBrush, QColor, QFontMetricsF, QPainter, QWheelEvent,
@@ -375,6 +375,28 @@ def _crop_atlas_cell(
     return atlas.copy(QRect(x, y, sw, sh))
 
 
+def _npc_initial_playback_tuple(npc: dict) -> tuple[float, bool, int | None, int | None]:
+    """从 npc dict 解析 initialAnimPlayback → (speed, reverse, holdFrame, startFrame)。
+    与运行时 Npc.sanitizeInitialAnimPlayback 同口径：speed>0、hold/start≥0，负值/非法=未设。"""
+    raw = npc.get("initialAnimPlayback")
+    d = raw if isinstance(raw, dict) else {}
+    try:
+        spd = float(d.get("speed", 1.0))
+    except (TypeError, ValueError):
+        spd = 1.0
+    if not (spd > 0):
+        spd = 1.0
+
+    def _nn(v: object) -> int | None:
+        try:
+            iv = int(float(v))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return None
+        return iv if iv >= 0 else None
+
+    return spd, d.get("reverse") is True, _nn(d.get("holdFrame")), _nn(d.get("startFrame"))
+
+
 class _SceneNpcAnimRuntime:
     """场景画布上单个 NPC 的循环动画（与脚底锚点、世界尺寸一致）。"""
 
@@ -385,6 +407,7 @@ class _SceneNpcAnimRuntime:
         "frame_rate", "loop",
         "facing_x", "_prev_x", "_prev_y", "_have_prev",
         "inst_scale", "inst_rot_deg",
+        "speed_mult", "reverse", "hold_frame", "start_frame",
     )
 
     def __init__(
@@ -427,24 +450,58 @@ class _SceneNpcAnimRuntime:
         # 实例 transform（quad 级真变换预览；与运行时 container 级施加同口径）
         self.inst_scale = 1.0
         self.inst_rot_deg = 0.0
+        # 初始播放参数（initialAnimPlayback 预览；与 tick 循环的位置/transform 同为每拍拉取）
+        self.speed_mult = 1.0
+        self.reverse = False
+        self.hold_frame: int | None = None
+        self.start_frame: int | None = None
 
     def set_instance_transform(self, scale: float, rot_deg: float) -> None:
         self.inst_scale = float(scale) if scale and scale > 0 else 1.0
         self.inst_rot_deg = float(rot_deg) if rot_deg else 0.0
 
+    def set_playback(
+        self, speed: float, reverse: bool,
+        hold: int | None, start: int | None,
+    ) -> None:
+        """每拍拉取式套用初始播放参数。speed/reverse 是连续量直接覆盖；hold/start/reverse
+        的**变化边沿**才拨动游标（与运行时起播语义一致：hold 定格 > start 起播帧 >
+        反向末帧/正向 0），否则每拍重置游标动画就永远停在起点了。"""
+        self.speed_mult = float(speed) if speed and speed > 0 else 1.0
+        n = max(1, len(self.frames))
+        rev = bool(reverse)
+        rev_changed = rev != self.reverse
+        self.reverse = rev
+        hold_changed = hold != self.hold_frame
+        self.hold_frame = hold
+        start_changed = start != self.start_frame
+        self.start_frame = start
+        if hold is not None:
+            if hold_changed:
+                self.frame_idx = int(hold) % n
+                self._accum = 0.0
+            return
+        if hold_changed or start_changed or rev_changed:
+            if start is not None:
+                self.frame_idx = int(start) % n
+            else:
+                self.frame_idx = (n - 1) if rev else 0
+            self._accum = 0.0
+
     def tick(self, dt: float, npc_x: float, npc_y: float) -> None:
-        self._accum += dt
-        step = 1.0 / self.frame_rate
-        while self._accum >= step and len(self.frames) > 1:
-            self._accum -= step
-            self.frame_idx += 1
-            if self.frame_idx >= len(self.frames):
-                if self.loop:
-                    self.frame_idx = 0
-                else:
-                    self.frame_idx = len(self.frames) - 1
-                    self._accum = 0.0
-                    break
+        if self.hold_frame is None:
+            self._accum += dt
+            step = 1.0 / max(1e-6, self.frame_rate * self.speed_mult)
+            while self._accum >= step and len(self.frames) > 1:
+                self._accum -= step
+                self.frame_idx += -1 if self.reverse else 1
+                if self.frame_idx < 0 or self.frame_idx >= len(self.frames):
+                    if self.loop:
+                        self.frame_idx = (len(self.frames) - 1) if self.reverse else 0
+                    else:
+                        self.frame_idx = 0 if self.reverse else (len(self.frames) - 1)
+                        self._accum = 0.0
+                        break
         if self._have_prev:
             dx = npc_x - self._prev_x
             if abs(dx) > 1e-4:
@@ -8144,28 +8201,48 @@ class SceneEditor(QWidget):
         self._combo_plane_view.typeCommitted.connect(self._on_plane_view_changed)
         ll.addWidget(self._combo_plane_view)
 
-        self._btn_new_scene = QPushButton("+ 新建场景")
-        self._btn_new_scene.setToolTip(
-            "创建一个新的空场景（最小骨架：id / name / 出生点）。"
-            "背景图与世界尺寸随后在右侧场景属性面板配置；深度/碰撞为可选附加层，"
-            "需要时再用 Scene Depth Editor 处理。")
-        self._btn_new_scene.clicked.connect(self._new_scene)
-        ll.addWidget(self._btn_new_scene)
+        # 场景切换器（2026-07-18 布局重组）：场景列表是低频「项目级导航」，与高频
+        # 常驻的实体树（Unity Hierarchy 心智）没有同时可见的需求，不再纵向分割抢
+        # 左栏空间——降级为一行当前场景按钮 + 带搜索的弹窗列表（29+ 场景属大候选
+        # 集，按 2026-07-11 下拉 vs 弹窗拍板走弹窗，不做长下拉）。
+        self._scene_switch_btn = QToolButton()
+        self._scene_switch_btn.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._scene_switch_btn.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self._scene_switch_btn.setText("▾ （选择场景…）")
+        self._scene_switch_btn.setToolTip("当前编辑的场景。点击弹出可搜索的场景列表切换。")
+        self._scene_switch_btn.clicked.connect(self._open_scene_popup)
+        ll.addWidget(self._scene_switch_btn)
 
         self._scene_list = QListWidget()
         self._scene_list.currentItemChanged.connect(self._on_scene_selected)
         self._scene_search = make_list_search_box(
             self._scene_list,
             tooltip="按场景 id / 名称过滤下方列表（仅隐藏不匹配项，不改动数据）。")
+        self._btn_new_scene = QPushButton("+ 新建场景")
+        self._btn_new_scene.setToolTip(
+            "创建一个新的空场景（最小骨架：id / name / 出生点）。"
+            "背景图与世界尺寸随后在右侧场景属性面板配置；深度/碰撞为可选附加层，"
+            "需要时再用 Scene Depth Editor 处理。")
+        self._btn_new_scene.clicked.connect(self._on_new_scene_clicked)
 
-        # 左栏纵向分割：上=场景列表，下=场景内实体树（类型/分组视图 + 过滤 + 多选）。
-        scenes_box = QWidget()
-        sbx = QVBoxLayout(scenes_box)
-        sbx.setContentsMargins(0, 0, 0, 0)
-        sbx.setSpacing(2)
-        sbx.addWidget(self._scene_search)
-        sbx.addWidget(self._scene_list)
+        # 场景弹窗：搜索 + 列表 + 新建。列表控件常驻只是不再常显——隐藏时程序化
+        # setCurrentItem 仍触发切换，select_scene_by_id / _refresh_scene_list /
+        # _new_scene 等既有通路零改动；测试也继续直取 _scene_list。
+        self._scene_popup = QFrame(self, Qt.WindowType.Popup)
+        self._scene_popup.setFrameShape(QFrame.Shape.StyledPanel)
+        pv = QVBoxLayout(self._scene_popup)
+        pv.setContentsMargins(6, 6, 6, 6)
+        pv.setSpacing(4)
+        pv.addWidget(self._scene_search)
+        pv.addWidget(self._scene_list, 1)
+        pv.addWidget(self._btn_new_scene)
+        self._scene_popup.resize(320, 420)
+        self._scene_list.itemClicked.connect(lambda *_: self._scene_popup.hide())
+        self._scene_list.itemActivated.connect(lambda *_: self._scene_popup.hide())
 
+        # 实体树独占左栏其余高度（场景内层级 = 编辑期常驻高频面板）。
         tree_box = QWidget()
         tbx = QVBoxLayout(tree_box)
         tbx.setContentsMargins(0, 0, 0, 0)
@@ -8203,12 +8280,7 @@ class SceneEditor(QWidget):
             self._on_tree_context_menu)
         tbx.addLayout(tree_row)
         tbx.addWidget(self._entity_tree)
-
-        left_split = QSplitter(Qt.Orientation.Vertical)
-        left_split.addWidget(scenes_box)
-        left_split.addWidget(tree_box)
-        left_split.setSizes([240, 360])
-        ll.addWidget(left_split, 1)
+        ll.addWidget(tree_box, 1)
 
         # center: canvas
         self._canvas = SceneCanvas()
@@ -8302,7 +8374,7 @@ class SceneEditor(QWidget):
         cl.addWidget(self._canvas, 1)
         splitter.addWidget(center)
         splitter.addWidget(self._props)
-        splitter.setSizes([160, 740, 300])  # 合计 1200，13"(1240) 可容；仍可拖动
+        splitter.setSizes([200, 700, 300])  # 合计 1200，13"(1240) 可容；仍可拖动
         root.addWidget(splitter)
 
         del_sc = QShortcut(QKeySequence.StandardKey.Delete, self)
@@ -8616,10 +8688,12 @@ class SceneEditor(QWidget):
         else:
             state_name = next(iter(states.keys()))
         pat = npc.get("patrol")
+        use_patrol_anim = False
         if isinstance(pat, dict) and npc_id in self._patrol_preview_ids:
             ma = str(pat.get("moveAnimState", "") or "").strip()
             if ma and ma in states:
                 state_name = ma
+                use_patrol_anim = True
         st = states.get(state_name)
         if not isinstance(st, dict):
             return
@@ -8661,6 +8735,10 @@ class SceneEditor(QWidget):
         facing = str(npc.get("initialFacing", "") or "").strip().lower()
         rt.facing_x = -1 if facing == "left" else 1
         pos0 = self._npc_render_pos_dict(npc_id, npc)
+        if not use_patrol_anim:
+            # 初始播放参数仅作用于初始状态（巡逻预览播 moveAnimState 时素播，与运行时
+            # moveTo 语义一致）；读 staging 感知的 pos0，与 tick 循环同源
+            rt.set_playback(*_npc_initial_playback_tuple(pos0))
         rt.set_instance_transform(
             entity_scale_of(pos0), entity_rotation_deg_of(pos0))
         nx = float(pos0.get("x", 0))
@@ -8737,14 +8815,20 @@ class SceneEditor(QWidget):
             if not npc:
                 continue
             if rid in self._patrol_preview_ids:
+                # 巡逻预览播 moveAnimState：素播（与运行时 moveTo 重置参数同语义）
+                rt.set_playback(1.0, False, None, None)
                 px, py = self._patrol_preview_advance(rid, npc, dt)
                 rt.tick(dt, px, py)
             else:
                 pos = self._npc_render_pos_dict(rid, npc)
                 # 实例 transform 与位置同源（staging 感知）：数值框/gizmo 的 live 改动
                 # 下一拍即反映在精灵预览上，与运行时 container 级施加同口径。
+                # 初始播放参数同为每拍拉取且**必须同读 staging 感知的 pos**（speed/reverse
+                # 连续覆盖，hold/start 边沿拨游标）——读模型 dict 会掉进「定时器读模型、
+                # 编辑写 staging」的 8ms 回弹坑（见 _npc_render_pos_dict 注释）。
                 rt.set_instance_transform(
                     entity_scale_of(pos), entity_rotation_deg_of(pos))
+                rt.set_playback(*_npc_initial_playback_tuple(pos))
                 x = float(pos.get("x", 0))
                 y = float(pos.get("y", 0))
                 rt.tick(dt, x, y)
@@ -8848,6 +8932,41 @@ class SceneEditor(QWidget):
         sid = current.data(Qt.ItemDataRole.UserRole)
         self._load_scene(sid)
 
+    def _sync_scene_switch_btn(self) -> None:
+        """场景切换按钮跟随当前场景；完整名进 tooltip，按钮文本按列宽省略。"""
+        sid = self._current_scene_id or ""
+        sc = self._model.scenes.get(sid)
+        full = f"{sid}  [{(sc or {}).get('name', '')}]" if sid else "（选择场景…）"
+        fm = self._scene_switch_btn.fontMetrics()
+        elided = fm.elidedText(full, Qt.TextElideMode.ElideMiddle, 170)
+        self._scene_switch_btn.setText(f"▾ {elided}")
+        self._scene_switch_btn.setToolTip(
+            f"当前场景：{full}\n点击弹出可搜索的场景列表切换。")
+
+    def _open_scene_popup(self) -> None:
+        # 打开时清空过滤，并把列表 current 静默对齐到当前场景（blockSignals：
+        # 对齐不是切换，避免触发同场景重载丢画布选中）。
+        self._scene_search.clear()
+        lst = self._scene_list
+        lst.blockSignals(True)
+        try:
+            for i in range(lst.count()):
+                it = lst.item(i)
+                if it is not None and it.data(Qt.ItemDataRole.UserRole) == self._current_scene_id:
+                    lst.setCurrentItem(it)
+                    lst.scrollToItem(it)
+                    break
+        finally:
+            lst.blockSignals(False)
+        self._scene_popup.move(self._scene_switch_btn.mapToGlobal(
+            QPoint(0, self._scene_switch_btn.height())))
+        self._scene_popup.show()
+        self._scene_search.setFocus()
+
+    def _on_new_scene_clicked(self) -> None:
+        self._scene_popup.hide()
+        self._new_scene()
+
     def _load_scene(self, scene_id: str, *, reset_view: bool = True) -> None:
         # 离开当前场景前先提交未应用的画布/面板编辑，避免切场景静默丢弃。
         # （提交本身记为可撤销命令；命令回放期间该入口自动短路。）
@@ -8864,6 +8983,8 @@ class SceneEditor(QWidget):
         sc = self._model.scenes.get(scene_id)
         if sc is None:
             return
+        # 所有切换路径（弹窗点选/select_scene_by_id/重构后 reload）都汇入此处，单点同步切换按钮
+        self._sync_scene_switch_btn()
         if _migrate_scene_hotspot_collision_to_local(sc):
             self._model.mark_dirty("scene", scene_id)
         self._clear_scene_npc_anim_layers()
