@@ -6,7 +6,7 @@
     "zoom": 1.5,
     "pixelsPerUnit": 1.0
   },
-  "playerWalkSpeed": 100.0,
+  "playerWalkSpeed": 80.0,
   "playerRunSpeed": 180.0,
   "backgrounds": [
     {
@@ -172,25 +172,18 @@
     {
       "id": "storyteller_zhang",
       "name": "说书人张叨叨",
-      "x": 418.9,
-      "y": 420.5,
+      "x": 421.8,
+      "y": 512.8,
       "dialogueGraphId": "寻狗_说书人",
-      "interactionRange": 71.4,
+      "interactionRange": 40.0,
       "animFile": "/resources/runtime/animation/npc_storyteller_anim/anim.json",
-      "patrol": {
-        "route": [
-          {
-            "x": 347.7,
-            "y": 458.6
-          },
-          {
-            "x": 487.7,
-            "y": 367.6
-          }
-        ],
-        "speed": 20
+      "initialAnimState": "crouch",
+      "scale": 0.9,
+      "initialFacing": "left",
+      "initialAnimPlayback": {
+        "holdFrame": 7
       },
-      "initialAnimState": "slow_walk"
+      "portraitSlug": "npc_storyteller_anim"
     },
     {
       "id": "blind_li",
@@ -211,8 +204,8 @@
     {
       "id": "npc_掌柜",
       "name": "茶馆掌柜",
-      "x": 259.0,
-      "y": 187.0,
+      "x": 250.3,
+      "y": 191.7,
       "interactionRange": 64.0,
       "animFile": "/resources/runtime/animation/npc_teahouse_owner_anim/anim.json",
       "initialAnimState": "idle",
@@ -245,7 +238,14 @@
       "interactionRange": 0,
       "castShadow": false,
       "animFile": "/resources/runtime/animation/fx_teapot_steam/anim.json",
-      "initialAnimState": "idle"
+      "initialAnimState": "idle",
+      "initialAnimPlayback": {
+        "speed": 0.8,
+        "reverse": true,
+        "startFrame": 8
+      },
+      "scale": 0.65,
+      "initialFacing": "left"
     },
     {
       "id": "fx_steam_2_copy_2",
@@ -255,7 +255,12 @@
       "interactionRange": 0,
       "castShadow": false,
       "animFile": "/resources/runtime/animation/fx_teapot_steam/anim.json",
-      "initialAnimState": "idle"
+      "initialAnimState": "idle",
+      "scale": 0.5,
+      "initialAnimPlayback": {
+        "speed": 0.5,
+        "startFrame": 1
+      }
     },
     {
       "id": "fx_steam_2_copy_2_copy",
@@ -265,7 +270,12 @@
       "interactionRange": 0,
       "castShadow": false,
       "animFile": "/resources/runtime/animation/fx_teapot_steam/anim.json",
-      "initialAnimState": "idle"
+      "initialAnimState": "idle",
+      "scale": 0.5,
+      "initialAnimPlayback": {
+        "speed": 0.6,
+        "startFrame": 7
+      }
     },
     {
       "id": "fx_steam_2_copy",
@@ -275,7 +285,11 @@
       "interactionRange": 0,
       "castShadow": false,
       "animFile": "/resources/runtime/animation/fx_teapot_steam/anim.json",
-      "initialAnimState": "idle"
+      "initialAnimState": "idle",
+      "initialAnimPlayback": {
+        "reverse": true
+      },
+      "scale": 0.5
     },
     {
       "id": "fx_steam_2_copy_copy",
@@ -285,7 +299,12 @@
       "interactionRange": 0,
       "castShadow": false,
       "animFile": "/resources/runtime/animation/fx_teapot_steam/anim.json",
-      "initialAnimState": "idle"
+      "initialAnimState": "idle",
+      "scale": 0.5,
+      "initialAnimPlayback": {
+        "speed": 0.3,
+        "startFrame": 4
+      }
     },
     {
       "id": "fx_steam_3",
@@ -326,7 +345,11 @@
       "castShadow": false,
       "renderRaw": true,
       "animFile": "/resources/runtime/animation/fx_patron_laugh/anim.json",
-      "initialAnimState": "idle"
+      "initialAnimState": "idle",
+      "initialAnimPlayback": {
+        "reverse": true,
+        "startFrame": 4
+      }
     },
     {
       "id": "fx_patron_chatA",
@@ -337,7 +360,11 @@
       "castShadow": false,
       "renderRaw": true,
       "animFile": "/resources/runtime/animation/fx_patron_chatA/anim.json",
-      "initialAnimState": "idle"
+      "initialAnimState": "idle",
+      "initialAnimPlayback": {
+        "reverse": true,
+        "startFrame": 1
+      }
     },
     {
       "id": "fx_patron_sage",
@@ -348,7 +375,11 @@
       "castShadow": false,
       "renderRaw": true,
       "animFile": "/resources/runtime/animation/fx_patron_sage/anim.json",
-      "initialAnimState": "idle"
+      "initialAnimState": "idle",
+      "initialAnimPlayback": {
+        "speed": 0.7,
+        "startFrame": 5
+      }
     },
     {
       "id": "fx_patron_drinker",
@@ -359,7 +390,11 @@
       "castShadow": false,
       "renderRaw": true,
       "animFile": "/resources/runtime/animation/fx_patron_drinker/anim.json",
-      "initialAnimState": "idle"
+      "initialAnimState": "idle",
+      "initialAnimPlayback": {
+        "speed": 0.7,
+        "startFrame": 2
+      }
     },
     {
       "id": "fx_patron_eater",
@@ -371,6 +406,18 @@
       "renderRaw": true,
       "animFile": "/resources/runtime/animation/fx_patron_eater/anim.json",
       "initialAnimState": "idle"
+    },
+    {
+      "id": "new_npc_0",
+      "name": "New NPC",
+      "x": 131.6,
+      "y": 235.7,
+      "interactionRange": 50,
+      "animFile": "/resources/runtime/animation/player_anim/anim.json",
+      "initialAnimState": "crouch",
+      "initialAnimPlayback": {
+        "holdFrame": 9
+      }
     }
   ],
   "depthConfig": {
@@ -419,12 +466,17 @@
       "height_offset": 0.03
     }
   },
-  "onEnter": [
-    {
-      "type": "startDialogueGraph",
-      "params": {
-        "graphId": "寻狗_听书开场"
+  "worldHeight": 525.0,
+  "perspectiveScale": {
+    "rulers": [
+      {
+        "y": 210.0,
+        "scale": 1.0
+      },
+      {
+        "y": 525.0,
+        "scale": 1.6
       }
-    }
-  ]
+    ]
+  }
 }

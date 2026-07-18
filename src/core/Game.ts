@@ -13,6 +13,7 @@ import { SceneManager } from '../systems/SceneManager';
 import { DialogueManager } from '../systems/DialogueManager';
 import { GraphDialogueManager } from '../systems/GraphDialogueManager';
 import { QuestManager } from '../systems/QuestManager';
+import { NarrativePackageDirector } from '../systems/NarrativePackageDirector';
 import { RulesManager } from '../systems/RulesManager';
 import { InventoryManager } from '../systems/InventoryManager';
 import { EncounterManager } from '../systems/EncounterManager';
@@ -111,6 +112,10 @@ import { DeferredEntityShadow } from '../rendering/DeferredEntityShadow';
 import type { ShadowSource, IEntityShadow } from '../rendering/entityShadowTypes';
 import { UniformShadowField, type ShadowProjectionField } from '../rendering/shadowField';
 import { resolveDepthFloorOffsetBoost } from '../utils/depthFloorZones';
+import {
+  createPerspectiveScaleResolver,
+  type PerspectiveScaleResolver as ScenePerspectiveScaleResolver,
+} from '../utils/perspectiveScale';
 import type { ConditionEvalContext } from '../systems/graphDialogue/evaluateGraphCondition';
 import { evaluateConditionExpr } from '../systems/graphDialogue/evaluateGraphCondition';
 import { isPointInPolygon, isValidZonePolygon } from '../utils/zoneGeometry';
@@ -220,6 +225,7 @@ export class Game {
   private narrativeStateManager: NarrativeStateManager;
   private documentRevealManager: DocumentRevealManager;
   private questManager: QuestManager;
+  private narrativePackageDirector!: NarrativePackageDirector;
   private rulesManager: RulesManager;
   private inventoryManager: InventoryManager;
   private encounterManager: EncounterManager;
@@ -281,6 +287,8 @@ export class Game {
   private pressureHoldUI!: PressureHoldUI;
   private depthDebugVisualizer!: DepthDebugVisualizer;
   private playerDepthFilter: IEntityShadingFilter | null = null;
+  /** 场景透视缩放（近大远小）句柄：scene:ready 从场景数据构建、beforeUnload 清空；实体注入共享同一实例 */
+  private perspectiveScaleResolver: ScenePerspectiveScaleResolver | null = null;
 
   /** 当前场景辐照度探针 RT（逐 entity 色调融入），场景卸载时销毁 */
   private currentProbe: RenderTexture | null = null;
@@ -420,6 +428,9 @@ export class Game {
     this.emoteBubbleManager = new EmoteBubbleManager();
     this.zoneSystem = new ZoneSystem(this.eventBus, this.flagStore, this.actionExecutor, this.ruleOfferRegistry);
     this.sceneDepthSystem = new SceneDepthSystem();
+    // 章节导演（C2）：按清单在 scene:revealed / narrative:stateChanged 上评估开拍/收工；
+    // 自身无状态（live 集在叙事档），控制口与条件工厂在下方统一接线。
+    this.narrativePackageDirector = new NarrativePackageDirector(this.eventBus, this.actionExecutor);
 
     const ctx = { eventBus: this.eventBus, flagStore: this.flagStore, strings: this.stringsProvider, assetManager: this.assetManager };
     this.registeredSystems = [
@@ -434,6 +445,7 @@ export class Game {
       { name: 'narrativeStateManager', system: this.narrativeStateManager },
       // 位面对账器排在叙事之后：deserialize 时叙事激活态已恢复，可立即重派生激活位面。
       { name: 'planeReconciler', system: this.planeReconciler },
+      { name: 'narrativePackageDirector', system: this.narrativePackageDirector },
       { name: 'documentRevealManager', system: this.documentRevealManager },
       { name: 'encounterManager', system: this.encounterManager },
       { name: 'audioManager', system: this.audioManager },
@@ -859,6 +871,12 @@ export class Game {
     this.questManager.setConditionEvalContextFactory(mkCondCtx);
     // repeatable 任务镜像：活计运行信息只读口 + 面板"追踪"点击→激活槽（同一真相源双向）
     this.questManager.setRunInfoProvider((gid) => this.narrativeStateManager.getRunPanelInfo(gid));
+    // 章节导演接线：条件工厂（when/done 查任何图状态）+ 包 live/dormant 控制口
+    this.narrativePackageDirector.setConditionEvalContextFactory(mkCondCtx);
+    this.narrativePackageDirector.setControl({
+      setNarrativePackageLive: (pkg, live) => this.narrativeStateManager.setNarrativePackageLive(pkg, live),
+      isNarrativePackageLive: (pkg) => this.narrativeStateManager.isNarrativePackageLive(pkg),
+    });
     this.questPanelUI.setActivateRunHandler(async (gid) => {
       await this.narrativeStateManager.activateNarrativeRun(gid);
     });
@@ -1309,6 +1327,7 @@ export class Game {
       this.inventoryManager.loadDefs(),
       this.rulesManager.loadDefs(),
       this.questManager.loadDefs(),
+      this.narrativePackageDirector.loadDefs(),
       this.encounterManager.loadDefs(),
       this.pressureHoldManager.loadDefs(),
       this.planeReconciler.loadDefs(),
@@ -2033,7 +2052,7 @@ export class Game {
       if (this.sceneDepthSystem.isCollision(wx, wy)) return true;
       for (const h of this.sceneManager.getCurrentHotspots()) {
         if (!h.active) continue;
-        const worldPoly = hotspotCollisionPolygonToWorld(h.def);
+        const worldPoly = hotspotCollisionPolygonToWorld(h.def, h.depthScaleFactor);
         if (worldPoly && isValidZonePolygon(worldPoly) && isPointInPolygon(worldPoly, wx, wy)) return true;
       }
       for (const n of this.sceneManager.getCurrentNpcs()) {
@@ -2558,6 +2577,9 @@ export class Game {
     this.listenEvent('scene:beforeUnload', () => {
       this.patrolGeneration++;
       this.npcPatrolEpoch.clear();
+      // 透视缩放随场景走：先清句柄防旧场景系数漂到新场景（NPC/热点随实例销毁）
+      this.perspectiveScaleResolver = null;
+      this.player.setPerspectiveScale(null);
       for (const h of this.sceneManager.getCurrentHotspots()) {
         const f = h.detachDepthOcclusionFilter();
         if (f) {
@@ -2568,6 +2590,11 @@ export class Game {
     });
     this.listenEvent('scene:ready', () => {
       this.player.syncMovementFromScene(this.sceneManager.currentSceneData);
+      // 透视缩放注入须在光照滤镜/阴影创建之前：probe 采样高度按**有效**尺寸烘焙
+      this.perspectiveScaleResolver = createPerspectiveScaleResolver(
+        this.sceneManager.currentSceneData?.perspectiveScale,
+      );
+      this.player.setPerspectiveScale(this.perspectiveScaleResolver);
       this.interactionSystem.update(0);
 
       const lightingOn = this.sceneDepthSystem.isLightingEnabled;
@@ -2590,11 +2617,13 @@ export class Game {
       }
 
       for (const npc of this.sceneManager.getCurrentNpcs()) {
+        npc.setPerspectiveScale(this.perspectiveScaleResolver);
         this.attachNpcSceneFilters(npc);
         this.startNpcPatrolIfEligible(npc);
       }
 
       for (const h of this.sceneManager.getCurrentHotspots()) {
+        h.setPerspectiveScale(this.perspectiveScaleResolver);
         this.attachHotspotDepthFilter(h);
       }
 
@@ -2650,12 +2679,14 @@ export class Game {
           if (!npc) continue;
           // 防双协程：旧实例协程按 npcPatrolEpoch 立即失效，再按条件评估重启
           this.stopNpcPatrol(id);
+          npc.setPerspectiveScale(this.perspectiveScaleResolver);
           this.attachNpcSceneFilters(npc);
           if (p.phase === 'exit') this.startNpcPatrolIfEligible(npc);
         }
         for (const id of p.hotspotIds ?? []) {
           const h = this.sceneManager.getCurrentHotspots().find((x) => x.def.id === id);
           if (!h) continue;
+          h.setPerspectiveScale(this.perspectiveScaleResolver);
           this.attachHotspotDepthFilter(h);
         }
         // 只对本次重建的实体换阴影实例（不整体销毁重建全场），与 owner-swap 缓存一致。
@@ -3039,6 +3070,7 @@ export class Game {
     // 全部恢复后再放开；恢复出的状态本身自洽，无需强制重评。
     this.questManager.setRestoring(true);
     this.archiveManager.setRestoring(true);
+    this.narrativePackageDirector.setRestoring(true);
     try {
       if (data['flagStore']) this.flagStore.deserialize(data['flagStore'] as Record<string, boolean | number>);
       for (const entry of this.registeredSystems) {
@@ -3052,6 +3084,7 @@ export class Game {
     } finally {
       this.questManager.setRestoring(false);
       this.archiveManager.setRestoring(false);
+      this.narrativePackageDirector.setRestoring(false);
     }
   }
 

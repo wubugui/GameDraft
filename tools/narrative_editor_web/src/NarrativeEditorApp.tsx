@@ -2603,6 +2603,28 @@ function GraphInspector(props: {
         />
       )}
       <SelectField label="初始状态" value={graph.initialState} values={Object.keys(graph.states)} onChange={(value) => updateCurrentGraph((g) => { g.initialState = value; })} />
+      {parentElement && composition && (
+        <div className="property-line" title="本子图归入哪个章节包：填包名=进那章才 live（吃信号/放演出）、出那章 dormant（状态永存冻结）；留空=常驻（永远 live）。主线里程碑图不填=常驻脊椎。装卸时机在「章节导演」清单里配。">
+          <label>章节包</label>
+          <input
+            list="narrative-package-ids"
+            value={String(parentElement.package ?? '')}
+            placeholder="（常驻，不填）"
+            onChange={(e) => updateCurrentGraph((_g, next) => {
+              const comp = getComposition(next, composition.id);
+              const el = comp?.elements?.find((item) => item.id === parentElement.id);
+              if (!el) return;
+              const v = e.target.value.trim();
+              if (v) el.package = v; else delete el.package;
+            })}
+          />
+          <datalist id="narrative-package-ids">
+            {[...new Set((props.data.compositions ?? []).flatMap((c) =>
+              [c.package, ...(c.elements ?? []).map((el) => el.package)]).filter((p): p is string => Boolean(p)))]
+              .map((p) => <option key={p} value={p} />)}
+          </datalist>
+        </div>
+      )}
       <label className="toggle single-line-toggle" title="活计=可重复接取的委托（背尸单等）：运行时不自动实例化，由 startNarrativeRun 接单开一轮，走到出口状态自动结算计数。常驻图（主线/一次性支线）不勾。">
         <input
           type="checkbox"

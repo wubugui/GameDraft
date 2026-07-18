@@ -83,6 +83,8 @@ export interface CompositionElementDef {
   graph?: NarrativeGraphDef;
   x?: number;
   y?: number;
+  /** 元素级章节包标（C4）：本子图归入此包，进包 live/出包 dormant；无=常驻。 */
+  package?: string;
   meta?: ElementMetaDef;
 }
 
@@ -90,6 +92,8 @@ export interface NarrativeCompositionDef {
   id: string;
   label?: string;
   description?: string;
+  /** composition 级章节包标（整组）；元素可用 element.package 覆盖。 */
+  package?: string;
   mainGraph: NarrativeGraphDef;
   elements?: CompositionElementDef[];
 }

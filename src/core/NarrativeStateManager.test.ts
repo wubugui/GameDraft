@@ -614,7 +614,7 @@ describe('NarrativeStateManager', () => {
     await narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 'test', signal: 'go' });
     await flush();
     expect(narrative.getActiveState('g')).toBe('b');
-    // v2 存档：v1 兼容字段（activeStates/reachedStates，仅常驻图）照旧携带，另有活计层三字段。
+    // v2 存档：v1 兼容字段（activeStates/reachedStates，仅常驻图）照旧携带，另有活计层三字段 + 章节包 live 集。
     expect(narrative.serialize()).toEqual({
       version: 2,
       activeStates: { g: 'b' },
@@ -622,6 +622,7 @@ describe('NarrativeStateManager', () => {
       runs: {},
       counters: {},
       activatedArchetype: null,
+      livePackages: [],
     });
 
     narrative.deserialize({ activeStates: { g: 'a' } });
@@ -1422,6 +1423,115 @@ describe('叙事活计运行实例化 S1（单活可重复机器）', () => {
       { id: 't2', from: 'mid', to: 'done', signal: 'b' },
     ]);
     expect(ok.map((i) => i.code)).not.toContain('run.exit.unreachable');
+  });
+});
+
+describe('章节包 live/dormant（C1：电影摄制模型——状态永存，live 只管行为）', () => {
+  const PKG_GRAPH: NarrativeGraph = {
+    id: 'story', ownerType: 'flow', packageId: 'ch1', initialState: 'p0',
+    states: { p0: { id: 'p0' }, p1: { id: 'p1', broadcastOnEnter: true }, p2: { id: 'p2' } },
+    transitions: [
+      { id: 't1', from: 'p0', to: 'p1', signal: 'story_go' },
+      { id: 't2', from: 'p1', to: 'p2', signal: 'story_end' },
+    ],
+  };
+  const CORE_GRAPH: NarrativeGraph = {
+    id: 'core', ownerType: 'flow', initialState: 'c0',
+    states: { c0: { id: 'c0' }, c1: { id: 'c1' } },
+    transitions: [{ id: 'ct', from: 'c0', to: 'c1', signal: 'state:story:p1' }],
+  };
+  const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x)) as T;
+
+  it('compileNarrativeGraphs 把 composition.package 盖章到主图与元素图', () => {
+    const graphs = compileNarrativeGraphs({
+      schemaVersion: 2,
+      compositions: [{
+        id: 'c', package: 'ch1',
+        mainGraph: clone(PKG_GRAPH),
+        elements: [{ id: 'e', kind: 'wrapperGraph', graph: { ...clone(CORE_GRAPH), id: 'sub' } }],
+      }],
+    } as unknown as NarrativeGraphsFile);
+    expect(graphs.map((g) => [g.id, g.packageId])).toEqual([['story', 'ch1'], ['sub', 'ch1']]);
+  });
+
+  it('元素级 package（C4 主线拆包）：mainGraph 不打标=常驻，各元素各打各拍的包', () => {
+    // 主线现实：里程碑 mainGraph 与子图同编排。element.package 覆盖单元素，mainGraph 不继承 → 常驻脊椎。
+    const graphs = compileNarrativeGraphs({
+      schemaVersion: 2,
+      compositions: [{
+        id: 'main',
+        mainGraph: { ...clone(CORE_GRAPH), id: 'milestone' },   // 无 composition.package → 常驻
+        elements: [
+          { id: 'e1', kind: 'wrapperGraph', package: '章节_听书', graph: { ...clone(CORE_GRAPH), id: 'g_tingshu' } },
+          { id: 'e2', kind: 'wrapperGraph', package: '章节_背尸', graph: { ...clone(CORE_GRAPH), id: 'g_beishi' } },
+          { id: 'e3', kind: 'wrapperGraph', graph: { ...clone(CORE_GRAPH), id: 'g_resident' } }, // 无 package → 常驻
+        ],
+      }],
+    } as unknown as NarrativeGraphsFile);
+    expect(graphs.map((g) => [g.id, g.packageId])).toEqual([
+      ['milestone', undefined],       // 里程碑常驻
+      ['g_tingshu', '章节_听书'],
+      ['g_beishi', '章节_背尸'],
+      ['g_resident', undefined],      // 未打标子图常驻
+    ]);
+  });
+
+  it('dormant 包冻结（不吃信号），live 后解冻推进且出口广播可被常驻图听到', async () => {
+    const { narrative } = makeRuntime();
+    narrative.registerGraphs([clone(PKG_GRAPH), clone(CORE_GRAPH)]);
+    // 默认 dormant：状态照常注册可查（永久记录），但不吃信号
+    expect(narrative.getActiveState('story')).toBe('p0');
+    await narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 't', signal: 'story_go' });
+    await flush();
+    expect(narrative.getActiveState('story')).toBe('p0');   // 冻结
+    // 开拍：置 live → 吃信号推进，广播照发（core 听 state:story:p1）
+    await narrative.setNarrativePackageLive('ch1', true);
+    expect(narrative.getLivePackages()).toEqual(['ch1']);
+    await narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 't', signal: 'story_go' });
+    await flush();
+    expect(narrative.getActiveState('story')).toBe('p1');
+    expect(narrative.getActiveState('core')).toBe('c1');
+    // 收工：dormant 冻结但状态原地保留、条件可查（hasReachedState 不受 live 影响）
+    await narrative.setNarrativePackageLive('ch1', false);
+    await narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 't', signal: 'story_end' });
+    await flush();
+    expect(narrative.getActiveState('story')).toBe('p1');   // 冻结在 p1
+    expect(narrative.hasReachedState('story', 'p1')).toBe(true);
+    // 未知包：记 issue 忽略
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await narrative.setNarrativePackageLive('nope', true);
+    warn.mockRestore();
+    const codes = (narrative.debugSnapshot().recentIssues as Array<{ code: string }>).map((i) => i.code);
+    expect(codes).toContain('package.unknown');
+  });
+
+  it('livePackages 入档还原；未知包条目丢弃；旧档缺字段=全 dormant', async () => {
+    const { narrative } = makeRuntime();
+    const graphs = [clone(PKG_GRAPH), clone(CORE_GRAPH)];
+    narrative.registerGraphs(graphs);
+    await narrative.setNarrativePackageLive('ch1', true);
+    await narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 't', signal: 'story_go' });
+    await flush();
+    const save = narrative.serialize() as { livePackages: string[] };
+    expect(save.livePackages).toEqual(['ch1']);
+
+    const { narrative: fresh } = makeRuntime();
+    fresh.registerGraphs(graphs.map(clone));
+    fresh.deserialize(save);
+    expect(fresh.getLivePackages()).toEqual(['ch1']);
+    expect(fresh.getActiveState('story')).toBe('p1');       // 包内状态照旧还原
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { narrative: legacy } = makeRuntime();
+    legacy.registerGraphs(graphs.map(clone));
+    legacy.deserialize({ ...save, livePackages: ['ch1', 'ghost_pkg'] });
+    expect(legacy.getLivePackages()).toEqual(['ch1']);      // 未知包丢弃
+
+    const { narrative: old } = makeRuntime();
+    old.registerGraphs(graphs.map(clone));
+    old.deserialize({ activeStates: {}, reachedStates: {} });
+    warn.mockRestore();
+    expect(old.getLivePackages()).toEqual([]);              // 旧档：全 dormant，导演重评
   });
 });
 

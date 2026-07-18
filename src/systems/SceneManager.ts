@@ -1327,6 +1327,11 @@ export class SceneManager implements IGameSystem {
       }
     }
 
+    // 揭幕完成的中性世界事件（与 scene:enter 同为纯事实通报，SceneManager 不知道谁在听）。
+    // 时序=旧 onEnter 起跑点：场景可见之后、根 onEnter 批之前——供需要"呈现完成后进场编排"的
+    // 消费者（如叙事包导演的开拍评估）对齐旧 onEnter 的视觉时机。
+    this.eventBus.emit('scene:revealed', { sceneId, fromSceneId: fromSceneId ?? null });
+
     // onEnter 语义 = 场景已进入且呈现完成之后的一次性脚本逻辑（置 flag / 发信号 / 起演出）。
     const rootEnter = sceneData.onEnter;
     if (rootEnter?.length && this.sceneEnterRunner) {

@@ -36,25 +36,25 @@ Codex, Claude, or another agent client can reference this file directly instead 
 
 ## Audit Summary
 
-- Generated: `2026-07-11T10:16:38`
+- Generated: `2026-07-19T00:15:08`
 - Root: `/Users/dannyteng/AIWork/GameDraft`
-- Artifacts: `70`
-- Issues: `25`
-- By severity: `{"info": 15, "warn": 10}`
-- By category: `{"drift-risk": 7, "missing-lifecycle": 14, "missing-metadata": 3, "possible-overlap": 1}`
+- Artifacts: `91`
+- Issues: `47`
+- By severity: `{"info": 32, "warn": 15}`
+- By category: `{"broken-reference": 2, "drift-risk": 10, "missing-lifecycle": 22, "missing-metadata": 3, "possible-overlap": 10}`
 
 ## Governance Resources
 
 - `governance://hub` (1): 治理台 Host 快照。完整 MCP Host / Agent Workbench 快照。
 - `governance://canvas/current` (0): 当前画布状态。0 个引用，视图 workpacks
-- `governance://audit/stats` (25): 审计统计。70 个资产，25 个问题
-- `governance://dashboard/elements` (206): 页面元素引用索引。dashboard 中 206 个可引用的数据元素和面板入口。
-- `governance://workpacks` (4): 治理包索引。4 个治理包
-- `governance://issues` (25): 证据库。25 条原始证据
-- `governance://artifacts` (70): 资产清单。70 个 skill/workflow/agent 资产
+- `governance://audit/stats` (47): 审计统计。91 个资产，47 个问题
+- `governance://dashboard/elements` (253): 页面元素引用索引。dashboard 中 253 个可引用的数据元素和面板入口。
+- `governance://workpacks` (5): 治理包索引。5 个治理包
+- `governance://issues` (47): 证据库。47 条原始证据
+- `governance://artifacts` (91): 资产清单。91 个 skill/workflow/agent 资产
 - `governance://apps` (5): 治理台应用。已注册的内置应用和外部 MCP/命令应用。
 - `governance://tools` (14): 治理台工具。Host 暴露给 agent 的工具清单。
-- `governance://prompts` (7): 治理台提示词。Host 暴露给 agent 的 prompt 模板。
+- `governance://prompts` (8): 治理台提示词。Host 暴露给 agent 的 prompt 模板。
 - `governance://agent/jobs` (0): Agent 运行记录。0 个当前 console 内存中的 agent job
 - `governance://policy/write-gates` (3): 写入权限和审批边界。chat 为只读；fix 才允许写入；修复后必须自动审计。
 - `governance://view/mcp-install` (1): MCP 安装区。安装命令、客户端配置和 MCP 自检状态。
@@ -62,43 +62,68 @@ Codex, Claude, or another agent client can reference this file directly instead 
 - `governance://view/workpacks` (1): 治理包区。按优先级分组的可执行治理包。
 - `governance://view/issues` (1): 证据库区。原始 issue / evidence 列表。
 - `governance://view/artifacts` (1): 资产清单区。扫描到的 skill / workflow / script 资产。
-- `governance://stat/workpack-count` (4): 治理包数量。4
-- `governance://stat/issue-count` (25): 证据项数量。25
+- `governance://stat/workpack-count` (5): 治理包数量。5
+- `governance://stat/issue-count` (47): 证据项数量。47
 - `governance://stat/error-count` (0): 断链/错误数量。0
-- `governance://stat/warn-count` (10): 需复核数量。10
-- `governance://workpack/drift-risk` (7): 规则漂移复核包。规则/工作流引用的代码或文档更新过，说明文字可能已经落后。
+- `governance://stat/warn-count` (15): 需复核数量。15
+- `governance://workpack/broken-reference` (2): 断链修复包。缺失引用集中处理，不要逐条手改。按文件分组检查改名、移动、删除三种情况。
+- `governance://workpack/drift-risk` (10): 规则漂移复核包。规则/工作流引用的代码或文档更新过，说明文字可能已经落后。
 - `governance://workpack/missing-metadata` (3): Skill 触发条件补齐包。Skill 没写清什么时候该用，容易让 Codex 和 Claude 误触发或漏触发。
-- `governance://workpack/missing-lifecycle` (14): 生命周期元数据补齐包。缺少 status / owner / last verified 这类治理字段，可以标准化批量补。
-- `governance://workpack/possible-overlap` (1): Skill 重叠边界包。相似 skill 可能职责重叠，先确认边界，再决定合并、拆分或互链。
-- `governance://issue/missing-trigger.claude-skill.agent-docs-cli` (1): Skill has no clear trigger/use condition。.claude/skills/agent-docs-cli/SKILL.md:1
+- `governance://workpack/missing-lifecycle` (22): 生命周期元数据补齐包。缺少 status / owner / last verified 这类治理字段，可以标准化批量补。
+- `governance://workpack/possible-overlap` (10): Skill 重叠边界包。相似 skill 可能职责重叠，先确认边界，再决定合并、拆分或互链。
+- `governance://issue/missing-trigger.claude-skill.agent-docs-cli` (1): Skill has no clear trigger/use condition。.cursor/skills/agent-docs-cli/SKILL.md:1
 - `governance://issue/missing-trigger.cursor-skill.agent-docs-cli` (1): Skill has no clear trigger/use condition。.cursor/skills/agent-docs-cli/SKILL.md:1
 - `governance://issue/missing-trigger.cursor-skill.animation-production` (1): Skill has no clear trigger/use condition。.cursor/skills/animation-production/SKILL.md:1
+- `governance://issue/drift.claude-skill.gameplay-iteration.22.docs-.md` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/gameplay-iteration/SKILL.md:22
 - `governance://issue/drift.cursor-skill.gameplay-iteration.22.docs-.md` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/gameplay-iteration/SKILL.md:22
+- `governance://issue/drift.claude-skill.gameplay-iteration.33.docs-.md` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/gameplay-iteration/SKILL.md:33
 - `governance://issue/drift.cursor-skill.gameplay-iteration.33.docs-.md` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/gameplay-iteration/SKILL.md:33
+- `governance://issue/drift.claude-skill.gameplay-iteration.58.docs-.md` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/gameplay-iteration/SKILL.md:58
 - `governance://issue/drift.cursor-skill.gameplay-iteration.58.docs-.md` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/gameplay-iteration/SKILL.md:58
 - `governance://issue/drift.cursor-skill.push-gamedraft-story-temp-proxy.20..git-config` (1): Referenced artifact is newer than this rule/workflow。.cursor/skills/push-gamedraft-story-temp-proxy/SKILL.md:20
 - `governance://issue/drift.artifact-cursor-workflow-guide.42.docs-.md` (1): Referenced artifact is newer than this rule/workflow。artifact/cursor-workflow-guide.md:42
 - `governance://issue/drift.artifact-cursor-workflow-guide.47.docs-.md` (1): Referenced artifact is newer than this rule/workflow。artifact/cursor-workflow-guide.md:47
 - `governance://issue/drift.artifact-cursor-workflow-guide.138.src-core-game.ts` (1): Referenced artifact is newer than this rule/workflow。artifact/cursor-workflow-guide.md:138
-- `governance://issue/missing-lifecycle.claude-skill.agent-docs-cli` (1): Skill has no lifecycle metadata。.claude/skills/agent-docs-cli/SKILL.md:1
-- `governance://issue/overlap.claude-skill.agent-docs-cli.cursor-skill.agent-docs-cli` (1): Two skills may overlap。.claude/skills/agent-docs-cli/SKILL.md:1
+- `governance://issue/broken-ref.tools-anim_preview-readme.106.setup.png` (1): Reference target is missing。tools/anim_preview/README.md:106
+- `governance://issue/broken-ref.tools-anim_preview-readme.125.setup.png` (1): Reference target is missing。tools/anim_preview/README.md:125
+- `governance://issue/missing-lifecycle.claude-skill.add-game-action` (1): Skill has no lifecycle metadata。.cursor/skills/add-game-action/SKILL.md:1
 - `governance://issue/missing-lifecycle.cursor-skill.add-game-action` (1): Skill has no lifecycle metadata。.cursor/skills/add-game-action/SKILL.md:1
+- `governance://issue/overlap.claude-skill.add-game-action.cursor-skill.add-game-action` (1): Two skills may overlap。.cursor/skills/add-game-action/SKILL.md:1
+- `governance://issue/missing-lifecycle.claude-skill.add-text-ref` (1): Skill has no lifecycle metadata。.cursor/skills/add-text-ref/SKILL.md:1
 - `governance://issue/missing-lifecycle.cursor-skill.add-text-ref` (1): Skill has no lifecycle metadata。.cursor/skills/add-text-ref/SKILL.md:1
+- `governance://issue/overlap.claude-skill.add-text-ref.cursor-skill.add-text-ref` (1): Two skills may overlap。.cursor/skills/add-text-ref/SKILL.md:1
+- `governance://issue/missing-lifecycle.claude-skill.agent-docs-cli` (1): Skill has no lifecycle metadata。.cursor/skills/agent-docs-cli/SKILL.md:1
 - `governance://issue/missing-lifecycle.cursor-skill.agent-docs-cli` (1): Skill has no lifecycle metadata。.cursor/skills/agent-docs-cli/SKILL.md:1
+- `governance://issue/overlap.claude-skill.agent-docs-cli.cursor-skill.agent-docs-cli` (1): Two skills may overlap。.cursor/skills/agent-docs-cli/SKILL.md:1
 - `governance://issue/missing-lifecycle.cursor-skill.animation-production` (1): Skill has no lifecycle metadata。.cursor/skills/animation-production/SKILL.md:1
+- `governance://issue/overlap.claude-skill.core-framework-architecture-review.cursor-skill.core-framework-architecture-review` (1): Two skills may overlap。.cursor/skills/core-framework-architecture-review/SKILL.md:1
+- `governance://issue/missing-lifecycle.claude-skill.debug-panel-extension` (1): Skill has no lifecycle metadata。.cursor/skills/debug-panel-extension/SKILL.md:1
 - `governance://issue/missing-lifecycle.cursor-skill.debug-panel-extension` (1): Skill has no lifecycle metadata。.cursor/skills/debug-panel-extension/SKILL.md:1
+- `governance://issue/overlap.claude-skill.debug-panel-extension.cursor-skill.debug-panel-extension` (1): Two skills may overlap。.cursor/skills/debug-panel-extension/SKILL.md:1
+- `governance://issue/missing-lifecycle.claude-skill.editor-tools-iteration` (1): Skill has no lifecycle metadata。.cursor/skills/editor-tools-iteration/SKILL.md:1
 - `governance://issue/missing-lifecycle.cursor-skill.editor-tools-iteration` (1): Skill has no lifecycle metadata。.cursor/skills/editor-tools-iteration/SKILL.md:1
+- `governance://issue/overlap.claude-skill.editor-tools-iteration.cursor-skill.editor-tools-iteration` (1): Two skills may overlap。.cursor/skills/editor-tools-iteration/SKILL.md:1
+- `governance://issue/missing-lifecycle.claude-skill.feature-iteration` (1): Skill has no lifecycle metadata。.cursor/skills/feature-iteration/SKILL.md:1
 - `governance://issue/missing-lifecycle.cursor-skill.feature-iteration` (1): Skill has no lifecycle metadata。.cursor/skills/feature-iteration/SKILL.md:1
+- `governance://issue/overlap.claude-skill.feature-iteration.cursor-skill.feature-iteration` (1): Two skills may overlap。.cursor/skills/feature-iteration/SKILL.md:1
+- `governance://issue/missing-lifecycle.claude-skill.gameplay-iteration` (1): Skill has no lifecycle metadata。.cursor/skills/gameplay-iteration/SKILL.md:1
 - `governance://issue/missing-lifecycle.cursor-skill.gameplay-iteration` (1): Skill has no lifecycle metadata。.cursor/skills/gameplay-iteration/SKILL.md:1
+- `governance://issue/overlap.claude-skill.gameplay-iteration.cursor-skill.gameplay-iteration` (1): Two skills may overlap。.cursor/skills/gameplay-iteration/SKILL.md:1
 - `governance://issue/missing-lifecycle.cursor-skill.interactive-architecture-html` (1): Skill has no lifecycle metadata。.cursor/skills/interactive-architecture-html/SKILL.md:1
+- `governance://issue/missing-lifecycle.claude-skill.production-mode` (1): Skill has no lifecycle metadata。.cursor/skills/production-mode/SKILL.md:1
 - `governance://issue/missing-lifecycle.cursor-skill.production-mode` (1): Skill has no lifecycle metadata。.cursor/skills/production-mode/SKILL.md:1
+- `governance://issue/overlap.claude-skill.production-mode.cursor-skill.production-mode` (1): Two skills may overlap。.cursor/skills/production-mode/SKILL.md:1
+- `governance://issue/missing-lifecycle.claude-skill.pure-data-iteration` (1): Skill has no lifecycle metadata。.cursor/skills/pure-data-iteration/SKILL.md:1
 - `governance://issue/missing-lifecycle.cursor-skill.pure-data-iteration` (1): Skill has no lifecycle metadata。.cursor/skills/pure-data-iteration/SKILL.md:1
+- `governance://issue/overlap.claude-skill.pure-data-iteration.cursor-skill.pure-data-iteration` (1): Two skills may overlap。.cursor/skills/pure-data-iteration/SKILL.md:1
 - `governance://issue/missing-lifecycle.cursor-skill.push-gamedraft-story-temp-proxy` (1): Skill has no lifecycle metadata。.cursor/skills/push-gamedraft-story-temp-proxy/SKILL.md:1
 - `governance://issue/missing-lifecycle.cursor-skill.restart-gamedraft` (1): Skill has no lifecycle metadata。.cursor/skills/restart-gamedraft/SKILL.md:1
 - `governance://artifact/agent.agents` (1): GameDraft Agent Entry。AGENTS.md
 - `governance://artifact/agent.claude` (1): GameDraft — Claude 工作规则。CLAUDE.md
 - `governance://artifact/.github-workflows-publish-findingdog-dist` (1): 将 Vite 构建产物推送到独立仓库 wubugui/findingdogdist，供帽子云等静态托管拉取。。.github/workflows/publish-findingdog-dist.yml
+- `governance://artifact/package-script.assemble-anim-preview-remote` (1): npm run assemble:anim-preview-remote。package.json
 - `governance://artifact/package-script.build` (1): npm run build。package.json
+- `governance://artifact/package-script.build-anim-preview-remote` (1): npm run build:anim-preview-remote。package.json
 - `governance://artifact/package-script.build-narrative-editor` (1): npm run build:narrative-editor。package.json
 - `governance://artifact/package-script.dev` (1): npm run dev。package.json
 - `governance://artifact/package-script.dev-anim-preview` (1): npm run dev:anim-preview。package.json
@@ -108,6 +133,13 @@ Codex, Claude, or another agent client can reference this file directly instead 
 - `governance://artifact/package-script.planner-gui` (1): npm run planner:gui。package.json
 - `governance://artifact/package-script.preview` (1): npm run preview。package.json
 - `governance://artifact/package-script.test` (1): npm run test。package.json
+- `governance://artifact/package-script.test-anim-preview` (1): npm run test:anim-preview。package.json
+- `governance://artifact/package-script.test-godot-dialogue-visuals` (1): npm run test:godot-dialogue-visuals。package.json
+- `governance://artifact/package-script.test-godot-fade-visuals` (1): npm run test:godot-fade-visuals。package.json
+- `governance://artifact/package-script.test-godot-minigame-visuals` (1): npm run test:godot-minigame-visuals。package.json
+- `governance://artifact/package-script.test-godot-scene-visuals` (1): npm run test:godot-scene-visuals。package.json
+- `governance://artifact/package-script.test-godot-visual-parity` (1): npm run test:godot-visual-parity。package.json
+- `governance://artifact/package-script.typecheck-anim-preview` (1): npm run typecheck:anim-preview。package.json
 - `governance://artifact/package-script.typecheck-narrative-editor` (1): npm run typecheck:narrative-editor。package.json
 - `governance://artifact/bootstrap` (1): GameDraft bootstrap for macOS/Linux. Creates a project venv (.tools/venv)。bootstrap.sh
 - `governance://artifact/dev` (1): macOS/Linux task entry: ./dev.sh <task> [args]。dev.sh
@@ -133,18 +165,28 @@ Codex, Claude, or another agent client can reference this file directly instead 
 - `governance://artifact/tools-chronicle_sim_v2-scripts-run_rumor_week_stats` (1): run_rumor_week_stats。tools/chronicle_sim_v2/scripts/run_rumor_week_stats.py
 - `governance://artifact/tools-chronicle_sim_v2-scripts-run_simulation_once` (1): run_simulation_once。tools/chronicle_sim_v2/scripts/run_simulation_once.py
 - `governance://artifact/tools-chronicle_sim_v3-scripts-bootstrap_v2_demo_seed_to_v3` (1): bootstrap_v2_demo_seed_to_v3。tools/chronicle_sim_v3/scripts/bootstrap_v2_demo_seed_to_v3.py
-- `governance://artifact/claude-skill.agent-docs-cli` (1): agent-docs-cli(薄壳)。.claude/skills/agent-docs-cli/SKILL.md
+- `governance://artifact/tools-json_lang-vscode-ext-install` (1): 把本扩展目录符号链接进 VS Code / Cursor 的用户扩展目录(唯一的手动安装步骤)。。tools/json_lang/vscode-ext/install.sh
+- `governance://artifact/claude-skill.add-game-action` (1): 添加游戏 Action（项目约定）。.cursor/skills/add-game-action/SKILL.md
 - `governance://artifact/cursor-skill.add-game-action` (1): 添加游戏 Action（项目约定）。.cursor/skills/add-game-action/SKILL.md
+- `governance://artifact/claude-skill.add-text-ref` (1): 文本引用系统扩展清单。.cursor/skills/add-text-ref/SKILL.md
 - `governance://artifact/cursor-skill.add-text-ref` (1): 文本引用系统扩展清单。.cursor/skills/add-text-ref/SKILL.md
+- `governance://artifact/claude-skill.agent-docs-cli` (1): agent-docs-cli(薄壳)。.cursor/skills/agent-docs-cli/SKILL.md
 - `governance://artifact/cursor-skill.agent-docs-cli` (1): agent-docs-cli(薄壳)。.cursor/skills/agent-docs-cli/SKILL.md
 - `governance://artifact/cursor-skill.animation-production` (1): 动画生产 — agent 入口(SOP)。.cursor/skills/animation-production/SKILL.md
+- `governance://artifact/claude-skill.core-framework-architecture-review` (1): 核心框架架构审查。.cursor/skills/core-framework-architecture-review/SKILL.md
 - `governance://artifact/cursor-skill.core-framework-architecture-review` (1): 核心框架架构审查。.cursor/skills/core-framework-architecture-review/SKILL.md
+- `governance://artifact/claude-skill.debug-panel-extension` (1): Debug Panel Extension。.cursor/skills/debug-panel-extension/SKILL.md
 - `governance://artifact/cursor-skill.debug-panel-extension` (1): Debug Panel Extension。.cursor/skills/debug-panel-extension/SKILL.md
+- `governance://artifact/claude-skill.editor-tools-iteration` (1): GameDraft 编辑器工具迭代。.cursor/skills/editor-tools-iteration/SKILL.md
 - `governance://artifact/cursor-skill.editor-tools-iteration` (1): GameDraft 编辑器工具迭代。.cursor/skills/editor-tools-iteration/SKILL.md
+- `governance://artifact/claude-skill.feature-iteration` (1): Feature Iteration。.cursor/skills/feature-iteration/SKILL.md
 - `governance://artifact/cursor-skill.feature-iteration` (1): Feature Iteration。.cursor/skills/feature-iteration/SKILL.md
+- `governance://artifact/claude-skill.gameplay-iteration` (1): Gameplay Iteration。.cursor/skills/gameplay-iteration/SKILL.md
 - `governance://artifact/cursor-skill.gameplay-iteration` (1): Gameplay Iteration。.cursor/skills/gameplay-iteration/SKILL.md
 - `governance://artifact/cursor-skill.interactive-architecture-html` (1): 交互式 C4 架构图 HTML（与 architecture-v3 同形）。.cursor/skills/interactive-architecture-html/SKILL.md
+- `governance://artifact/claude-skill.production-mode` (1): 策划模式（Production Mode）。.cursor/skills/production-mode/SKILL.md
 - `governance://artifact/cursor-skill.production-mode` (1): 策划模式（Production Mode）。.cursor/skills/production-mode/SKILL.md
+- `governance://artifact/claude-skill.pure-data-iteration` (1): Pure Data Iteration。.cursor/skills/pure-data-iteration/SKILL.md
 - `governance://artifact/cursor-skill.pure-data-iteration` (1): Pure Data Iteration。.cursor/skills/pure-data-iteration/SKILL.md
 - `governance://artifact/cursor-skill.push-gamedraft-story-temp-proxy` (1): GameDraft 与 Story 推送（用户提供代理端口，临时代理，不改配置）。.cursor/skills/push-gamedraft-story-temp-proxy/SKILL.md
 - `governance://artifact/cursor-skill.restart-gamedraft` (1): GameDraft 重启游戏（开发服）。.cursor/skills/restart-gamedraft/SKILL.md
@@ -161,11 +203,12 @@ Codex, Claude, or another agent client can reference this file directly instead 
 - `governance://artifact/docs-plan-production-tooling-requirements` (1): GameDraft 生产工具需求总表。docs/plan/production-tooling-requirements.md
 - `governance://artifact/docs-plan-production-workbench-acceptance-checklist` (1): 生产工作台功能验收清单。docs/plan/production-workbench-acceptance-checklist.md
 - `governance://artifact/docs-plan-production-workbench-acceptance-status` (1): 生产工作台交付验收状态。docs/plan/production-workbench-acceptance-status.md
+- `governance://artifact/tools-anim_preview-readme` (1): 统一动画资源工作台。tools/anim_preview/README.md
 - `governance://artifact/tools-animation_pipeline-readme` (1): animation_pipeline — stabilized clips → game-ready sprite atlas。tools/animation_pipeline/README.md
 - `governance://artifact/tools-chronicle_sim_v2-readme` (1): ChronicleSim v2。tools/chronicle_sim_v2/README.md
 - `governance://artifact/tools-filter_tool-readme` (1): 滤镜工具。tools/filter_tool/README.md
+- `governance://artifact/tools-json_lang-readme` (1): json_lang —「JSON=语言」工具链(第一块:schema 索引器)。tools/json_lang/README.md
 - `governance://artifact/tools-video_to_atlas-readme` (1): Video-to-Atlas Workspace (GameDraft)。tools/video_to_atlas/README.md
-- `governance://source/.claude%2Fskills%2Fagent-docs-cli%2FSKILL.md` (1): .claude/skills/agent-docs-cli/SKILL.md。项目内源码/文档路径。
 - `governance://source/.cursor%2Fskills%2Fadd-game-action%2FSKILL.md` (1): .cursor/skills/add-game-action/SKILL.md。项目内源码/文档路径。
 - `governance://source/.cursor%2Fskills%2Fadd-text-ref%2FSKILL.md` (1): .cursor/skills/add-text-ref/SKILL.md。项目内源码/文档路径。
 - `governance://source/.cursor%2Fskills%2Fagent-docs-cli%2FSKILL.md` (1): .cursor/skills/agent-docs-cli/SKILL.md。项目内源码/文档路径。
@@ -201,6 +244,7 @@ Codex, Claude, or another agent client can reference this file directly instead 
 - `governance://source/scripts%2Fpytool.cjs` (1): scripts/pytool.cjs。项目内源码/文档路径。
 - `governance://source/scripts%2Fsync-dvc-cache.py` (1): scripts/sync-dvc-cache.py。项目内源码/文档路径。
 - `governance://source/scripts%2Ftest_oss_bootstrap_contract.py` (1): scripts/test_oss_bootstrap_contract.py。项目内源码/文档路径。
+- `governance://source/tools%2Fanim_preview%2FREADME.md` (1): tools/anim_preview/README.md。项目内源码/文档路径。
 - `governance://source/tools%2Fanimation_pipeline%2FREADME.md` (1): tools/animation_pipeline/README.md。项目内源码/文档路径。
 - `governance://source/tools%2Fasset_browser%2Frequirements.txt` (1): tools/asset_browser/requirements.txt。项目内源码/文档路径。
 - `governance://source/tools%2Fchronicle_sim_v2%2FREADME.md` (1): tools/chronicle_sim_v2/README.md。项目内源码/文档路径。
@@ -222,6 +266,8 @@ Codex, Claude, or another agent client can reference this file directly instead 
 - `governance://source/tools%2Feditor%2Frequirements.txt` (1): tools/editor/requirements.txt。项目内源码/文档路径。
 - `governance://source/tools%2Ffilter_tool%2FREADME.md` (1): tools/filter_tool/README.md。项目内源码/文档路径。
 - `governance://source/tools%2Ffilter_tool%2Frequirements.txt` (1): tools/filter_tool/requirements.txt。项目内源码/文档路径。
+- `governance://source/tools%2Fjson_lang%2FREADME.md` (1): tools/json_lang/README.md。项目内源码/文档路径。
+- `governance://source/tools%2Fjson_lang%2Fvscode-ext%2Finstall.sh` (1): tools/json_lang/vscode-ext/install.sh。项目内源码/文档路径。
 - `governance://source/tools%2Fscene_depth_editor%2Frequirements.txt` (1): tools/scene_depth_editor/requirements.txt。项目内源码/文档路径。
 - `governance://source/tools%2Fvideo_to_atlas%2FREADME.md` (1): tools/video_to_atlas/README.md。项目内源码/文档路径。
 - `governance://source/tools%2Fvideo_to_atlas%2Frequirements.txt` (1): tools/video_to_atlas/requirements.txt。项目内源码/文档路径。
@@ -247,6 +293,7 @@ Codex, Claude, or another agent client can reference this file directly instead 
 - `governance://prompt/governance.triage` (1): 治理总览。基于当前画布解释优先级、风险和执行顺序。
 - `governance://prompt/governance.auto-vs-confirm` (1): 自动/确认分流。区分哪些可以自动修，哪些必须人工确认。
 - `governance://prompt/governance.fix-plan` (1): 修复计划。生成 fix 模式可执行计划，包含验证命令。
+- `governance://prompt/governance.workpack.broken-reference` (1): 断链修复包。交给 agent 执行：能确定的路径直接修；明显过期的引用删；无法判断的只列成确认清单。
 - `governance://prompt/governance.workpack.drift-risk` (1): 规则漂移复核包。交给 agent 对比规则和当前实现：过时就改规则，仍然正确就标记已验证。
 - `governance://prompt/governance.workpack.missing-metadata` (1): Skill 触发条件补齐包。交给 agent 批量补 when-to-use / when-not-to-use，不改变 skill 正文语义。
 - `governance://prompt/governance.workpack.missing-lifecycle` (1): 生命周期元数据补齐包。交给 agent 批量插入统一生命周期块，默认 owner 为 shared，验证日期用本次审计日期。
@@ -271,11 +318,32 @@ Codex, Claude, or another agent client can reference this file directly instead 
 
 ## Workpacks
 
+### P0 断链修复包
+
+- URI: `governance://workpack/broken-reference`
+- Kind: `agent-fix`
+- Issues: `2`
+- Summary: 缺失引用集中处理，不要逐条手改。按文件分组检查改名、移动、删除三种情况。
+- Next: 交给 agent 执行：能确定的路径直接修；明显过期的引用删；无法判断的只列成确认清单。
+- Paths:
+  - `tools/anim_preview/README.md`
+
+Prompt:
+
+```text
+请处理 GameDraft Skill/Workflow 治理包：断链修复包（broken-reference，2 项）。
+目标：缺失引用集中处理，不要逐条手改。按文件分组检查改名、移动、删除三种情况。
+执行方式：交给 agent 执行：能确定的路径直接修；明显过期的引用删；无法判断的只列成确认清单。
+要求：不要逐条问用户；先按文件分组，能自动修的直接修，无法判断的最后汇总成不超过 5 条确认项；完成后运行 `python3 -B tools/skill_workflow_governance/govern.py audit` 验证。
+涉及文件：
+- tools/anim_preview/README.md
+```
+
 ### P1 规则漂移复核包
 
 - URI: `governance://workpack/drift-risk`
 - Kind: `agent-review`
-- Issues: `7`
+- Issues: `10`
 - Summary: 规则/工作流引用的代码或文档更新过，说明文字可能已经落后。
 - Next: 交给 agent 对比规则和当前实现：过时就改规则，仍然正确就标记已验证。
 - Paths:
@@ -286,7 +354,7 @@ Codex, Claude, or another agent client can reference this file directly instead 
 Prompt:
 
 ```text
-请处理 GameDraft Skill/Workflow 治理包：规则漂移复核包（drift-risk，7 项）。
+请处理 GameDraft Skill/Workflow 治理包：规则漂移复核包（drift-risk，10 项）。
 目标：规则/工作流引用的代码或文档更新过，说明文字可能已经落后。
 执行方式：交给 agent 对比规则和当前实现：过时就改规则，仍然正确就标记已验证。
 要求：不要逐条问用户；先按文件分组，能自动修的直接修，无法判断的最后汇总成不超过 5 条确认项；完成后运行 `python3 -B tools/skill_workflow_governance/govern.py audit` 验证。
@@ -304,7 +372,6 @@ Prompt:
 - Summary: Skill 没写清什么时候该用，容易让 Codex 和 Claude 误触发或漏触发。
 - Next: 交给 agent 批量补 when-to-use / when-not-to-use，不改变 skill 正文语义。
 - Paths:
-  - `.claude/skills/agent-docs-cli/SKILL.md`
   - `.cursor/skills/agent-docs-cli/SKILL.md`
   - `.cursor/skills/animation-production/SKILL.md`
 
@@ -316,7 +383,6 @@ Prompt:
 执行方式：交给 agent 批量补 when-to-use / when-not-to-use，不改变 skill 正文语义。
 要求：不要逐条问用户；先按文件分组，能自动修的直接修，无法判断的最后汇总成不超过 5 条确认项；完成后运行 `python3 -B tools/skill_workflow_governance/govern.py audit` 验证。
 涉及文件：
-- .claude/skills/agent-docs-cli/SKILL.md
 - .cursor/skills/agent-docs-cli/SKILL.md
 - .cursor/skills/animation-production/SKILL.md
 ```
@@ -325,11 +391,10 @@ Prompt:
 
 - URI: `governance://workpack/missing-lifecycle`
 - Kind: `batch-edit`
-- Issues: `14`
+- Issues: `22`
 - Summary: 缺少 status / owner / last verified 这类治理字段，可以标准化批量补。
 - Next: 交给 agent 批量插入统一生命周期块，默认 owner 为 shared，验证日期用本次审计日期。
 - Paths:
-  - `.claude/skills/agent-docs-cli/SKILL.md`
   - `.cursor/skills/add-game-action/SKILL.md`
   - `.cursor/skills/add-text-ref/SKILL.md`
   - `.cursor/skills/agent-docs-cli/SKILL.md`
@@ -341,16 +406,16 @@ Prompt:
   - `.cursor/skills/interactive-architecture-html/SKILL.md`
   - `.cursor/skills/production-mode/SKILL.md`
   - `.cursor/skills/pure-data-iteration/SKILL.md`
+  - `.cursor/skills/push-gamedraft-story-temp-proxy/SKILL.md`
 
 Prompt:
 
 ```text
-请处理 GameDraft Skill/Workflow 治理包：生命周期元数据补齐包（missing-lifecycle，14 项）。
+请处理 GameDraft Skill/Workflow 治理包：生命周期元数据补齐包（missing-lifecycle，22 项）。
 目标：缺少 status / owner / last verified 这类治理字段，可以标准化批量补。
 执行方式：交给 agent 批量插入统一生命周期块，默认 owner 为 shared，验证日期用本次审计日期。
 要求：不要逐条问用户；先按文件分组，能自动修的直接修，无法判断的最后汇总成不超过 5 条确认项；完成后运行 `python3 -B tools/skill_workflow_governance/govern.py audit` 验证。
 涉及文件：
-- .claude/skills/agent-docs-cli/SKILL.md
 - .cursor/skills/add-game-action/SKILL.md
 - .cursor/skills/add-text-ref/SKILL.md
 - .cursor/skills/agent-docs-cli/SKILL.md
@@ -370,21 +435,39 @@ Prompt:
 
 - URI: `governance://workpack/possible-overlap`
 - Kind: `agent-review`
-- Issues: `1`
+- Issues: `10`
 - Summary: 相似 skill 可能职责重叠，先确认边界，再决定合并、拆分或互链。
 - Next: 交给 agent 比较触发条件，只输出边界建议和候选改法，不直接大改。
 - Paths:
-  - `.claude/skills/agent-docs-cli/SKILL.md`
+  - `.cursor/skills/add-game-action/SKILL.md`
+  - `.cursor/skills/add-text-ref/SKILL.md`
+  - `.cursor/skills/agent-docs-cli/SKILL.md`
+  - `.cursor/skills/core-framework-architecture-review/SKILL.md`
+  - `.cursor/skills/debug-panel-extension/SKILL.md`
+  - `.cursor/skills/editor-tools-iteration/SKILL.md`
+  - `.cursor/skills/feature-iteration/SKILL.md`
+  - `.cursor/skills/gameplay-iteration/SKILL.md`
+  - `.cursor/skills/production-mode/SKILL.md`
+  - `.cursor/skills/pure-data-iteration/SKILL.md`
 
 Prompt:
 
 ```text
-请处理 GameDraft Skill/Workflow 治理包：Skill 重叠边界包（possible-overlap，1 项）。
+请处理 GameDraft Skill/Workflow 治理包：Skill 重叠边界包（possible-overlap，10 项）。
 目标：相似 skill 可能职责重叠，先确认边界，再决定合并、拆分或互链。
 执行方式：交给 agent 比较触发条件，只输出边界建议和候选改法，不直接大改。
 要求：不要逐条问用户；先按文件分组，能自动修的直接修，无法判断的最后汇总成不超过 5 条确认项；完成后运行 `python3 -B tools/skill_workflow_governance/govern.py audit` 验证。
 涉及文件：
-- .claude/skills/agent-docs-cli/SKILL.md
+- .cursor/skills/add-game-action/SKILL.md
+- .cursor/skills/add-text-ref/SKILL.md
+- .cursor/skills/agent-docs-cli/SKILL.md
+- .cursor/skills/core-framework-architecture-review/SKILL.md
+- .cursor/skills/debug-panel-extension/SKILL.md
+- .cursor/skills/editor-tools-iteration/SKILL.md
+- .cursor/skills/feature-iteration/SKILL.md
+- .cursor/skills/gameplay-iteration/SKILL.md
+- .cursor/skills/production-mode/SKILL.md
+- .cursor/skills/pure-data-iteration/SKILL.md
 ```
 
 ## Compact Host Snapshot
@@ -419,31 +502,32 @@ Prompt:
     "filters": {},
     "visibleView": "workpacks",
     "stats": {
-      "artifact_count": 70,
-      "issue_count": 25,
+      "artifact_count": 91,
+      "issue_count": 47,
       "by_type": {
         "agent_rules": 2,
         "ci_workflow": 1,
-        "package_script": 11,
-        "script": 24,
-        "skill": 15,
+        "package_script": 20,
+        "script": 25,
+        "skill": 24,
         "tool_requirements": 9,
-        "workflow_doc": 8
+        "workflow_doc": 10
       },
       "by_severity": {
-        "info": 15,
-        "warn": 10
+        "info": 32,
+        "warn": 15
       },
       "by_category": {
-        "drift-risk": 7,
-        "missing-lifecycle": 14,
+        "broken-reference": 2,
+        "drift-risk": 10,
+        "missing-lifecycle": 22,
         "missing-metadata": 3,
-        "possible-overlap": 1
+        "possible-overlap": 10
       }
     },
-    "workpackCount": 4,
-    "issueCount": 25,
-    "artifactCount": 70
+    "workpackCount": 5,
+    "issueCount": 47,
+    "artifactCount": 91
   },
   "enabled_apps": [
     {
@@ -525,36 +609,36 @@ Prompt:
       "uri": "governance://audit/stats",
       "title": "审计统计",
       "kind": "audit",
-      "summary": "70 个资产，25 个问题",
-      "count": 25
+      "summary": "91 个资产，47 个问题",
+      "count": 47
     },
     {
       "uri": "governance://dashboard/elements",
       "title": "页面元素引用索引",
       "kind": "element-index",
-      "summary": "dashboard 中 206 个可引用的数据元素和面板入口。",
-      "count": 206
+      "summary": "dashboard 中 253 个可引用的数据元素和面板入口。",
+      "count": 253
     },
     {
       "uri": "governance://workpacks",
       "title": "治理包索引",
       "kind": "workpack-index",
-      "summary": "4 个治理包",
-      "count": 4
+      "summary": "5 个治理包",
+      "count": 5
     },
     {
       "uri": "governance://issues",
       "title": "证据库",
       "kind": "issue-index",
-      "summary": "25 条原始证据",
-      "count": 25
+      "summary": "47 条原始证据",
+      "count": 47
     },
     {
       "uri": "governance://artifacts",
       "title": "资产清单",
       "kind": "artifact-index",
-      "summary": "70 个 skill/workflow/agent 资产",
-      "count": 70
+      "summary": "91 个 skill/workflow/agent 资产",
+      "count": 91
     },
     {
       "uri": "governance://apps",
@@ -575,7 +659,7 @@ Prompt:
       "title": "治理台提示词",
       "kind": "prompt-index",
       "summary": "Host 暴露给 agent 的 prompt 模板。",
-      "count": 7
+      "count": 8
     },
     {
       "uri": "governance://agent/jobs",
@@ -630,15 +714,15 @@ Prompt:
       "uri": "governance://stat/workpack-count",
       "title": "治理包数量",
       "kind": "stat",
-      "summary": "4",
-      "count": 4
+      "summary": "5",
+      "count": 5
     },
     {
       "uri": "governance://stat/issue-count",
       "title": "证据项数量",
       "kind": "stat",
-      "summary": "25",
-      "count": 25
+      "summary": "47",
+      "count": 47
     },
     {
       "uri": "governance://stat/error-count",
@@ -651,15 +735,22 @@ Prompt:
       "uri": "governance://stat/warn-count",
       "title": "需复核数量",
       "kind": "stat",
-      "summary": "10",
-      "count": 10
+      "summary": "15",
+      "count": 15
+    },
+    {
+      "uri": "governance://workpack/broken-reference",
+      "title": "断链修复包",
+      "kind": "workpack",
+      "summary": "缺失引用集中处理，不要逐条手改。按文件分组检查改名、移动、删除三种情况。",
+      "count": 2
     },
     {
       "uri": "governance://workpack/drift-risk",
       "title": "规则漂移复核包",
       "kind": "workpack",
       "summary": "规则/工作流引用的代码或文档更新过，说明文字可能已经落后。",
-      "count": 7
+      "count": 10
     },
     {
       "uri": "governance://workpack/missing-metadata",
@@ -673,20 +764,20 @@ Prompt:
       "title": "生命周期元数据补齐包",
       "kind": "workpack",
       "summary": "缺少 status / owner / last verified 这类治理字段，可以标准化批量补。",
-      "count": 14
+      "count": 22
     },
     {
       "uri": "governance://workpack/possible-overlap",
       "title": "Skill 重叠边界包",
       "kind": "workpack",
       "summary": "相似 skill 可能职责重叠，先确认边界，再决定合并、拆分或互链。",
-      "count": 1
+      "count": 10
     },
     {
       "uri": "governance://issue/missing-trigger.claude-skill.agent-docs-cli",
       "title": "Skill has no clear trigger/use condition",
       "kind": "issue",
-      "summary": ".claude/skills/agent-docs-cli/SKILL.md:1",
+      "summary": ".cursor/skills/agent-docs-cli/SKILL.md:1",
       "count": 1
     },
     {
@@ -704,6 +795,13 @@ Prompt:
       "count": 1
     },
     {
+      "uri": "governance://issue/drift.claude-skill.gameplay-iteration.22.docs-.md",
+      "title": "Referenced artifact is newer than this rule/workflow",
+      "kind": "issue",
+      "summary": ".cursor/skills/gameplay-iteration/SKILL.md:22",
+      "count": 1
+    },
+    {
       "uri": "governance://issue/drift.cursor-skill.gameplay-iteration.22.docs-.md",
       "title": "Referenced artifact is newer than this rule/workflow",
       "kind": "issue",
@@ -711,10 +809,24 @@ Prompt:
       "count": 1
     },
     {
+      "uri": "governance://issue/drift.claude-skill.gameplay-iteration.33.docs-.md",
+      "title": "Referenced artifact is newer than this rule/workflow",
+      "kind": "issue",
+      "summary": ".cursor/skills/gameplay-iteration/SKILL.md:33",
+      "count": 1
+    },
+    {
       "uri": "governance://issue/drift.cursor-skill.gameplay-iteration.33.docs-.md",
       "title": "Referenced artifact is newer than this rule/workflow",
       "kind": "issue",
       "summary": ".cursor/skills/gameplay-iteration/SKILL.md:33",
+      "count": 1
+    },
+    {
+      "uri": "governance://issue/drift.claude-skill.gameplay-iteration.58.docs-.md",
+      "title": "Referenced artifact is newer than this rule/workflow",
+      "kind": "issue",
+      "summary": ".cursor/skills/gameplay-iteration/SKILL.md:58",
       "count": 1
     },
     {
@@ -753,17 +865,24 @@ Prompt:
       "count": 1
     },
     {
-      "uri": "governance://issue/missing-lifecycle.claude-skill.agent-docs-cli",
-      "title": "Skill has no lifecycle metadata",
+      "uri": "governance://issue/broken-ref.tools-anim_preview-readme.106.setup.png",
+      "title": "Reference target is missing",
       "kind": "issue",
-      "summary": ".claude/skills/agent-docs-cli/SKILL.md:1",
+      "summary": "tools/anim_preview/README.md:106",
       "count": 1
     },
     {
-      "uri": "governance://issue/overlap.claude-skill.agent-docs-cli.cursor-skill.agent-docs-cli",
-      "title": "Two skills may overlap",
+      "uri": "governance://issue/broken-ref.tools-anim_preview-readme.125.setup.png",
+      "title": "Reference target is missing",
       "kind": "issue",
-      "summary": ".claude/skills/agent-docs-cli/SKILL.md:1",
+      "summary": "tools/anim_preview/README.md:125",
+      "count": 1
+    },
+    {
+      "uri": "governance://issue/missing-lifecycle.claude-skill.add-game-action",
+      "title": "Skill has no lifecycle metadata",
+      "kind": "issue",
+      "summary": ".cursor/skills/add-game-action/SKILL.md:1",
       "count": 1
     },
     {
@@ -774,6 +893,20 @@ Prompt:
       "count": 1
     },
     {
+      "uri": "governance://issue/overlap.claude-skill.add-game-action.cursor-skill.add-game-action",
+      "title": "Two skills may overlap",
+      "kind": "issue",
+      "summary": ".cursor/skills/add-game-action/SKILL.md:1",
+      "count": 1
+    },
+    {
+      "uri": "governance://issue/missing-lifecycle.claude-skill.add-text-ref",
+      "title": "Skill has no lifecycle metadata",
+      "kind": "issue",
+      "summary": ".cursor/skills/add-text-ref/SKILL.md:1",
+      "count": 1
+    },
+    {
       "uri": "governance://issue/missing-lifecycle.cursor-skill.add-text-ref",
       "title": "Skill has no lifecycle metadata",
       "kind": "issue",
@@ -781,8 +914,29 @@ Prompt:
       "count": 1
     },
     {
+      "uri": "governance://issue/overlap.claude-skill.add-text-ref.cursor-skill.add-text-ref",
+      "title": "Two skills may overlap",
+      "kind": "issue",
+      "summary": ".cursor/skills/add-text-ref/SKILL.md:1",
+      "count": 1
+    },
+    {
+      "uri": "governance://issue/missing-lifecycle.claude-skill.agent-docs-cli",
+      "title": "Skill has no lifecycle metadata",
+      "kind": "issue",
+      "summary": ".cursor/skills/agent-docs-cli/SKILL.md:1",
+      "count": 1
+    },
+    {
       "uri": "governance://issue/missing-lifecycle.cursor-skill.agent-docs-cli",
       "title": "Skill has no lifecycle metadata",
+      "kind": "issue",
+      "summary": ".cursor/skills/agent-docs-cli/SKILL.md:1",
+      "count": 1
+    },
+    {
+      "uri": "governance://issue/overlap.claude-skill.agent-docs-cli.cursor-skill.agent-docs-cli",
+      "title": "Two skills may overlap",
       "kind": "issue",
       "summary": ".cursor/skills/agent-docs-cli/SKILL.md:1",
       "count": 1
@@ -795,10 +949,38 @@ Prompt:
       "count": 1
     },
     {
+      "uri": "governance://issue/overlap.claude-skill.core-framework-architecture-review.cursor-skill.core-framework-architecture-review",
+      "title": "Two skills may overlap",
+      "kind": "issue",
+      "summary": ".cursor/skills/core-framework-architecture-review/SKILL.md:1",
+      "count": 1
+    },
+    {
+      "uri": "governance://issue/missing-lifecycle.claude-skill.debug-panel-extension",
+      "title": "Skill has no lifecycle metadata",
+      "kind": "issue",
+      "summary": ".cursor/skills/debug-panel-extension/SKILL.md:1",
+      "count": 1
+    },
+    {
       "uri": "governance://issue/missing-lifecycle.cursor-skill.debug-panel-extension",
       "title": "Skill has no lifecycle metadata",
       "kind": "issue",
       "summary": ".cursor/skills/debug-panel-extension/SKILL.md:1",
+      "count": 1
+    },
+    {
+      "uri": "governance://issue/overlap.claude-skill.debug-panel-extension.cursor-skill.debug-panel-extension",
+      "title": "Two skills may overlap",
+      "kind": "issue",
+      "summary": ".cursor/skills/debug-panel-extension/SKILL.md:1",
+      "count": 1
+    },
+    {
+      "uri": "governance://issue/missing-lifecycle.claude-skill.editor-tools-iteration",
+      "title": "Skill has no lifecycle metadata",
+      "kind": "issue",
+      "summary": ".cursor/skills/editor-tools-iteration/SKILL.md:1",
       "count": 1
     },
     {
@@ -809,6 +991,20 @@ Prompt:
       "count": 1
     },
     {
+      "uri": "governance://issue/overlap.claude-skill.editor-tools-iteration.cursor-skill.editor-tools-iteration",
+      "title": "Two skills may overlap",
+      "kind": "issue",
+      "summary": ".cursor/skills/editor-tools-iteration/SKILL.md:1",
+      "count": 1
+    },
+    {
+      "uri": "governance://issue/missing-lifecycle.claude-skill.feature-iteration",
+      "title": "Skill has no lifecycle metadata",
+      "kind": "issue",
+      "summary": ".cursor/skills/feature-iteration/SKILL.md:1",
+      "count": 1
+    },
+    {
       "uri": "governance://issue/missing-lifecycle.cursor-skill.feature-iteration",
       "title": "Skill has no lifecycle metadata",
       "kind": "issue",
@@ -816,8 +1012,29 @@ Prompt:
       "count": 1
     },
     {
+      "uri": "governance://issue/overlap.claude-skill.feature-iteration.cursor-skill.feature-iteration",
+      "title": "Two skills may overlap",
+      "kind": "issue",
+      "summary": ".cursor/skills/feature-iteration/SKILL.md:1",
+      "count": 1
+    },
+    {
+      "uri": "governance://issue/missing-lifecycle.claude-skill.gameplay-iteration",
+      "title": "Skill has no lifecycle metadata",
+      "kind": "issue",
+      "summary": ".cursor/skills/gameplay-iteration/SKILL.md:1",
+      "count": 1
+    },
+    {
       "uri": "governance://issue/missing-lifecycle.cursor-skill.gameplay-iteration",
       "title": "Skill has no lifecycle metadata",
+      "kind": "issue",
+      "summary": ".cursor/skills/gameplay-iteration/SKILL.md:1",
+      "count": 1
+    },
+    {
+      "uri": "governance://issue/overlap.claude-skill.gameplay-iteration.cursor-skill.gameplay-iteration",
+      "title": "Two skills may overlap",
       "kind": "issue",
       "summary": ".cursor/skills/gameplay-iteration/SKILL.md:1",
       "count": 1
@@ -830,6 +1047,13 @@ Prompt:
       "count": 1
     },
     {
+      "uri": "governance://issue/missing-lifecycle.claude-skill.production-mode",
+      "title": "Skill has no lifecycle metadata",
+      "kind": "issue",
+      "summary": ".cursor/skills/production-mode/SKILL.md:1",
+      "count": 1
+    },
+    {
       "uri": "governance://issue/missing-lifecycle.cursor-skill.production-mode",
       "title": "Skill has no lifecycle metadata",
       "kind": "issue",
@@ -837,8 +1061,29 @@ Prompt:
       "count": 1
     },
     {
+      "uri": "governance://issue/overlap.claude-skill.production-mode.cursor-skill.production-mode",
+      "title": "Two skills may overlap",
+      "kind": "issue",
+      "summary": ".cursor/skills/production-mode/SKILL.md:1",
+      "count": 1
+    },
+    {
+      "uri": "governance://issue/missing-lifecycle.claude-skill.pure-data-iteration",
+      "title": "Skill has no lifecycle metadata",
+      "kind": "issue",
+      "summary": ".cursor/skills/pure-data-iteration/SKILL.md:1",
+      "count": 1
+    },
+    {
       "uri": "governance://issue/missing-lifecycle.cursor-skill.pure-data-iteration",
       "title": "Skill has no lifecycle metadata",
+      "kind": "issue",
+      "summary": ".cursor/skills/pure-data-iteration/SKILL.md:1",
+      "count": 1
+    },
+    {
+      "uri": "governance://issue/overlap.claude-skill.pure-data-iteration.cursor-skill.pure-data-iteration",
+      "title": "Two skills may overlap",
       "kind": "issue",
       "summary": ".cursor/skills/pure-data-iteration/SKILL.md:1",
       "count": 1
@@ -879,8 +1124,22 @@ Prompt:
       "count": 1
     },
     {
+      "uri": "governance://artifact/package-script.assemble-anim-preview-remote",
+      "title": "npm run assemble:anim-preview-remote",
+      "kind": "artifact",
+      "summary": "package.json",
+      "count": 1
+    },
+    {
       "uri": "governance://artifact/package-script.build",
       "title": "npm run build",
+      "kind": "artifact",
+      "summary": "package.json",
+      "count": 1
+    },
+    {
+      "uri": "governance://artifact/package-script.build-anim-preview-remote",
+      "title": "npm run build:anim-preview-remote",
       "kind": "artifact",
       "summary": "package.json",
       "count": 1
@@ -944,6 +1203,55 @@ Prompt:
     {
       "uri": "governance://artifact/package-script.test",
       "title": "npm run test",
+      "kind": "artifact",
+      "summary": "package.json",
+      "count": 1
+    },
+    {
+      "uri": "governance://artifact/package-script.test-anim-preview",
+      "title": "npm run test:anim-preview",
+      "kind": "artifact",
+      "summary": "package.json",
+      "count": 1
+    },
+    {
+      "uri": "governance://artifact/package-script.test-godot-dialogue-visuals",
+      "title": "npm run test:godot-dialogue-visuals",
+      "kind": "artifact",
+      "summary": "package.json",
+      "count": 1
+    },
+    {
+      "uri": "governance://artifact/package-script.test-godot-fade-visuals",
+      "title": "npm run test:godot-fade-visuals",
+      "kind": "artifact",
+      "summary": "package.json",
+      "count": 1
+    },
+    {
+      "uri": "governance://artifact/package-script.test-godot-minigame-visuals",
+      "title": "npm run test:godot-minigame-visuals",
+      "kind": "artifact",
+      "summary": "package.json",
+      "count": 1
+    },
+    {
+      "uri": "governance://artifact/package-script.test-godot-scene-visuals",
+      "title": "npm run test:godot-scene-visuals",
+      "kind": "artifact",
+      "summary": "package.json",
+      "count": 1
+    },
+    {
+      "uri": "governance://artifact/package-script.test-godot-visual-parity",
+      "title": "npm run test:godot-visual-parity",
+      "kind": "artifact",
+      "summary": "package.json",
+      "count": 1
+    },
+    {
+      "uri": "governance://artifact/package-script.typecheck-anim-preview",
+      "title": "npm run typecheck:anim-preview",
       "kind": "artifact",
       "summary": "package.json",
       "count": 1
@@ -1124,10 +1432,17 @@ Prompt:
       "count": 1
     },
     {
-      "uri": "governance://artifact/claude-skill.agent-docs-cli",
-      "title": "agent-docs-cli(薄壳)",
+      "uri": "governance://artifact/tools-json_lang-vscode-ext-install",
+      "title": "把本扩展目录符号链接进 VS Code / Cursor 的用户扩展目录(唯一的手动安装步骤)。",
       "kind": "artifact",
-      "summary": ".claude/skills/agent-docs-cli/SKILL.md",
+      "summary": "tools/json_lang/vscode-ext/install.sh",
+      "count": 1
+    },
+    {
+      "uri": "governance://artifact/claude-skill.add-game-action",
+      "title": "添加游戏 Action（项目约定）",
+      "kind": "artifact",
+      "summary": ".cursor/skills/add-game-action/SKILL.md",
       "count": 1
     },
     {
@@ -1138,10 +1453,24 @@ Prompt:
       "count": 1
     },
     {
+      "uri": "governance://artifact/claude-skill.add-text-ref",
+      "title": "文本引用系统扩展清单",
+      "kind": "artifact",
+      "summary": ".cursor/skills/add-text-ref/SKILL.md",
+      "count": 1
+    },
+    {
       "uri": "governance://artifact/cursor-skill.add-text-ref",
       "title": "文本引用系统扩展清单",
       "kind": "artifact",
       "summary": ".cursor/skills/add-text-ref/SKILL.md",
+      "count": 1
+    },
+    {
+      "uri": "governance://artifact/claude-skill.agent-docs-cli",
+      "title": "agent-docs-cli(薄壳)",
+      "kind": "artifact",
+      "summary": ".cursor/skills/agent-docs-cli/SKILL.md",
       "count": 1
     },
     {
@@ -1159,10 +1488,24 @@ Prompt:
       "count": 1
     },
     {
+      "uri": "governance://artifact/claude-skill.core-framework-architecture-review",
+      "title": "核心框架架构审查",
+      "kind": "artifact",
+      "summary": ".cursor/skills/core-framework-architecture-review/SKILL.md",
+      "count": 1
+    },
+    {
       "uri": "governance://artifact/cursor-skill.core-framework-architecture-review",
       "title": "核心框架架构审查",
       "kind": "artifact",
       "summary": ".cursor/skills/core-framework-architecture-review/SKILL.md",
+      "count": 1
+    },
+    {
+      "uri": "governance://artifact/claude-skill.debug-panel-extension",
+      "title": "Debug Panel Extension",
+      "kind": "artifact",
+      "summary": ".cursor/skills/debug-panel-extension/SKILL.md",
       "count": 1
     },
     {
@@ -1173,6 +1516,13 @@ Prompt:
       "count": 1
     },
     {
+      "uri": "governance://artifact/claude-skill.editor-tools-iteration",
+      "title": "GameDraft 编辑器工具迭代",
+      "kind": "artifact",
+      "summary": ".cursor/skills/editor-tools-iteration/SKILL.md",
+      "count": 1
+    },
+    {
       "uri": "governance://artifact/cursor-skill.editor-tools-iteration",
       "title": "GameDraft 编辑器工具迭代",
       "kind": "artifact",
@@ -1180,10 +1530,24 @@ Prompt:
       "count": 1
     },
     {
+      "uri": "governance://artifact/claude-skill.feature-iteration",
+      "title": "Feature Iteration",
+      "kind": "artifact",
+      "summary": ".cursor/skills/feature-iteration/SKILL.md",
+      "count": 1
+    },
+    {
       "uri": "governance://artifact/cursor-skill.feature-iteration",
       "title": "Feature Iteration",
       "kind": "artifact",
       "summary": ".cursor/skills/feature-iteration/SKILL.md",
+      "count": 1
+    },
+    {
+      "uri": "governance://artifact/claude-skill.gameplay-iteration",
+      "title": "Gameplay Iteration",
+      "kind": "artifact",
+      "summary": ".cursor/skills/gameplay-iteration/SKILL.md",
       "count": 1
     },
     {
@@ -1201,10 +1565,24 @@ Prompt:
       "count": 1
     },
     {
+      "uri": "governance://artifact/claude-skill.production-mode",
+      "title": "策划模式（Production Mode）",
+      "kind": "artifact",
+      "summary": ".cursor/skills/production-mode/SKILL.md",
+      "count": 1
+    },
+    {
       "uri": "governance://artifact/cursor-skill.production-mode",
       "title": "策划模式（Production Mode）",
       "kind": "artifact",
       "summary": ".cursor/skills/production-mode/SKILL.md",
+      "count": 1
+    },
+    {
+      "uri": "governance://artifact/claude-skill.pure-data-iteration",
+      "title": "Pure Data Iteration",
+      "kind": "artifact",
+      "summary": ".cursor/skills/pure-data-iteration/SKILL.md",
       "count": 1
     },
     {
@@ -1320,6 +1698,13 @@ Prompt:
       "count": 1
     },
     {
+      "uri": "governance://artifact/tools-anim_preview-readme",
+      "title": "统一动画资源工作台",
+      "kind": "artifact",
+      "summary": "tools/anim_preview/README.md",
+      "count": 1
+    },
+    {
       "uri": "governance://artifact/tools-animation_pipeline-readme",
       "title": "animation_pipeline — stabilized clips → game-ready sprite atlas",
       "kind": "artifact",
@@ -1341,17 +1726,17 @@ Prompt:
       "count": 1
     },
     {
+      "uri": "governance://artifact/tools-json_lang-readme",
+      "title": "json_lang —「JSON=语言」工具链(第一块:schema 索引器)",
+      "kind": "artifact",
+      "summary": "tools/json_lang/README.md",
+      "count": 1
+    },
+    {
       "uri": "governance://artifact/tools-video_to_atlas-readme",
       "title": "Video-to-Atlas Workspace (GameDraft)",
       "kind": "artifact",
       "summary": "tools/video_to_atlas/README.md",
-      "count": 1
-    },
-    {
-      "uri": "governance://source/.claude%2Fskills%2Fagent-docs-cli%2FSKILL.md",
-      "title": ".claude/skills/agent-docs-cli/SKILL.md",
-      "kind": "source",
-      "summary": "项目内源码/文档路径。",
       "count": 1
     },
     {
@@ -1600,6 +1985,13 @@ Prompt:
       "count": 1
     },
     {
+      "uri": "governance://source/tools%2Fanim_preview%2FREADME.md",
+      "title": "tools/anim_preview/README.md",
+      "kind": "source",
+      "summary": "项目内源码/文档路径。",
+      "count": 1
+    },
+    {
       "uri": "governance://source/tools%2Fanimation_pipeline%2FREADME.md",
       "title": "tools/animation_pipeline/README.md",
       "kind": "source",
@@ -1742,6 +2134,20 @@ Prompt:
     {
       "uri": "governance://source/tools%2Ffilter_tool%2Frequirements.txt",
       "title": "tools/filter_tool/requirements.txt",
+      "kind": "source",
+      "summary": "项目内源码/文档路径。",
+      "count": 1
+    },
+    {
+      "uri": "governance://source/tools%2Fjson_lang%2FREADME.md",
+      "title": "tools/json_lang/README.md",
+      "kind": "source",
+      "summary": "项目内源码/文档路径。",
+      "count": 1
+    },
+    {
+      "uri": "governance://source/tools%2Fjson_lang%2Fvscode-ext%2Finstall.sh",
+      "title": "tools/json_lang/vscode-ext/install.sh",
       "kind": "source",
       "summary": "项目内源码/文档路径。",
       "count": 1
@@ -1922,6 +2328,13 @@ Prompt:
       "count": 1
     },
     {
+      "uri": "governance://prompt/governance.workpack.broken-reference",
+      "title": "断链修复包",
+      "kind": "prompt",
+      "summary": "交给 agent 执行：能确定的路径直接修；明显过期的引用删；无法判断的只列成确认清单。",
+      "count": 1
+    },
+    {
       "uri": "governance://prompt/governance.workpack.drift-risk",
       "title": "规则漂移复核包",
       "kind": "prompt",
@@ -2065,6 +2478,11 @@ Prompt:
       "name": "governance.fix-plan",
       "title": "修复计划",
       "description": "生成 fix 模式可执行计划，包含验证命令。"
+    },
+    {
+      "name": "governance.workpack.broken-reference",
+      "title": "断链修复包",
+      "description": "交给 agent 执行：能确定的路径直接修；明显过期的引用删；无法判断的只列成确认清单。"
     },
     {
       "name": "governance.workpack.drift-risk",

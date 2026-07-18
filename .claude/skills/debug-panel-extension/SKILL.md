@@ -1,0 +1,1 @@
+../../../.cursor/skills/debug-panel-extension/SKILL.md

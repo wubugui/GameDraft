@@ -48,6 +48,12 @@ export class SpriteEntity {
   private worldWidth: number = 0;
   private worldHeight: number = 0;
 
+  /**
+   * 场景透视缩放系数（近大远小，纯派生态不入档）：由移动驱动方按脚底 y 求值写入。
+   * 单点闸：乘进帧缩放与 getWorldSize，从尺寸派生的消费方（阴影/气泡/密度匹配）自动跟随。
+   */
+  private depthScaleFactor: number = 1;
+
   private currentState: string = '';
   private currentFrames: Texture[] = [];
   private currentFrameDef: AnimationStateDef | null = null;
@@ -274,6 +280,7 @@ export class SpriteEntity {
       facing: this.facingDirection,
       worldWidth: this.worldWidth,
       worldHeight: this.worldHeight,
+      depthScaleFactor: this.depthScaleFactor,
       frame: frame ? { x: frame.x, y: frame.y, width: frame.width, height: frame.height } : null,
       pixelDensityMatchActive: this.pixelDensityMatchActive,
     };
@@ -338,8 +345,24 @@ export class SpriteEntity {
     return this.animDef ? Object.keys(this.animDef.states) : [];
   }
 
+  /** **有效**世界尺寸（× 透视缩放系数）；阴影/气泡/密度匹配等派生消费方经此自动跟随 */
   getWorldSize(): { width: number; height: number } {
-    return { width: this.worldWidth, height: this.worldHeight };
+    return {
+      width: this.worldWidth * this.depthScaleFactor,
+      height: this.worldHeight * this.depthScaleFactor,
+    };
+  }
+
+  /** 透视缩放系数（近大远小）；非法/≤0 回落 1。变化时立即重投帧缩放。 */
+  setDepthScaleFactor(f: number): void {
+    const v = Number.isFinite(f) && f > 0 ? f : 1;
+    if (v === this.depthScaleFactor) return;
+    this.depthScaleFactor = v;
+    this.applySpriteScale();
+  }
+
+  getDepthScaleFactor(): number {
+    return this.depthScaleFactor;
   }
 
   /** 当前显示帧纹理（供投影阴影复用剪影）；未加载时返回 null */
@@ -376,7 +399,14 @@ export class SpriteEntity {
       return;
     }
     const { frameW, frameH } = this.getCurrentFramePixelSize();
-    const k = computePixelDensityK(frameW, frameH, this.worldWidth, this.worldHeight, dBg);
+    // 透视缩小后有效世界尺寸变小 → k 变大 → 低通更强，随深度自适应
+    const k = computePixelDensityK(
+      frameW,
+      frameH,
+      this.worldWidth * this.depthScaleFactor,
+      this.worldHeight * this.depthScaleFactor,
+      dBg,
+    );
     const strength = blurStrengthFromPixelDensityK(k, strengthScale);
     if (strength <= 0) {
       this.unmountPixelDensityBlur();
@@ -446,8 +476,8 @@ export class SpriteEntity {
     const { frameW, frameH } = this.getCurrentFramePixelSize();
 
     this.sprite.scale.set(
-      (this.worldWidth / frameW) * this.facingX,
-      this.worldHeight / frameH,
+      (this.worldWidth * this.depthScaleFactor / frameW) * this.facingX,
+      (this.worldHeight * this.depthScaleFactor) / frameH,
     );
   }
 }

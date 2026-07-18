@@ -16,6 +16,7 @@ import {
 } from '../utils/entityTransform';
 import { hotspotCollisionPolygonToWorld } from '../utils/hotspotCollision';
 import { isValidZonePolygon } from '../utils/zoneGeometry';
+import type { PerspectiveScaleResolver } from '../utils/perspectiveScale';
 
 const TYPE_COLORS: Record<string, number> = {
   inspect: 0x44aaff,
@@ -55,6 +56,11 @@ export class Hotspot {
   private promptIcon: Container | null = null;
   private showingPrompt: boolean = false;
 
+  /** 场景透视缩放句柄（Game 注入；热点缺省不参与，perspectiveScaleEnabled===true 才存） */
+  private perspectiveResolver: PerspectiveScaleResolver | null = null;
+  /** 当前透视系数 f(footY)（派生态不入档）；与实例 scale 复合在 container 级 */
+  private _depthScaleFactor = 1;
+
   constructor(def: HotspotDef) {
     this.def = def;
     this.container = new Container();
@@ -71,12 +77,39 @@ export class Hotspot {
   }
 
   /**
-   * 实例 transform（def.scale/rotation，quad 级真变换，绕脚底锚点）：容器级施加；
+   * 注入/清除场景透视缩放（近大远小）。热点缺省**不参与**（多为 WYSIWYG 贴背景绘制，
+   * 缩放破坏对位；贴墙热点脚底 y 也不代表真实深度），perspectiveScaleEnabled===true 才生效。
+   */
+  setPerspectiveScale(resolver: PerspectiveScaleResolver | null): void {
+    this.perspectiveResolver = this.def.perspectiveScaleEnabled === true ? resolver : null;
+    this._refreshDepthScale();
+  }
+
+  /** 透视系数（供碰撞多边形换算/调试读取） */
+  get depthScaleFactor(): number {
+    return this._depthScaleFactor;
+  }
+
+  /** 实例 scale × 透视系数：容器缩放与全部 extent 派生量的统一口径 */
+  private _combinedScale(): number {
+    return entityScaleOf(this.def) * this._depthScaleFactor;
+  }
+
+  /** 按当前脚底 y 重求透视系数；变化时经 applyInstanceTransform 重派生全部派生量。 */
+  private _refreshDepthScale(): void {
+    const f = this.perspectiveResolver?.scaleAt(this.def.y) ?? 1;
+    if (f === this._depthScaleFactor) return;
+    this._depthScaleFactor = f;
+    this.applyInstanceTransform();
+  }
+
+  /**
+   * 实例 transform（def.scale/rotation，quad 级真变换，绕脚底锚点）×透视系数：容器级施加；
    * 彩色圆点/E 提示反向补偿保持可读；遮挡多边形与深度接地线同步重派生。
    * setEntityField 改字段后调用即生效；碰撞/交互半径在各自求值处读 def，无需失效。
    */
   applyInstanceTransform(): void {
-    const s = entityScaleOf(this.def);
+    const s = this._combinedScale();
     this.container.scale.set(s, s);
     this.container.rotation = entityRotationRadOf(this.def);
     this._syncOverlayCompensation();
@@ -84,9 +117,9 @@ export class Hotspot {
     this._syncSortFootY();
   }
 
-  /** 圆点标记 / E 提示：抵消实例缩放与旋转（展示图/朝向不受影响）。 */
+  /** 圆点标记 / E 提示：抵消缩放（实例×透视）与旋转（展示图/朝向不受影响）。 */
   private _syncOverlayCompensation(): void {
-    const s = entityScaleOf(this.def);
+    const s = this._combinedScale();
     const inv = 1 / s;
     const rot = -this.container.rotation;
     for (const child of [this.marker as Container | null, this.promptIcon]) {
@@ -143,7 +176,7 @@ export class Hotspot {
       delete c.entitySortBand;
     }
 
-    const worldPoly = hotspotCollisionPolygonToWorld(this.def);
+    const worldPoly = hotspotCollisionPolygonToWorld(this.def, this._depthScaleFactor);
     if (worldPoly && isValidZonePolygon(worldPoly)) {
       c.entityOcclusionPolygon = worldPoly;
     } else {
@@ -212,9 +245,9 @@ export class Hotspot {
     return this.container.y;
   }
 
-  /** 投射阴影用：展示图**有效**世界尺寸（× 实例 scale）；无展示图时为 0（阴影源该帧不画） */
+  /** 投射阴影用：展示图**有效**世界尺寸（× 实例 scale × 透视系数）；无展示图时为 0（阴影源该帧不画） */
   getWorldSize(): { width: number; height: number } {
-    const s = entityScaleOf(this.def);
+    const s = this._combinedScale();
     return {
       width: (this.def.displayImage?.worldWidth ?? 0) * s,
       height: this._displayWorldHeight * s,
@@ -315,15 +348,17 @@ export class Hotspot {
     return this.def.y;
   }
 
-  /** 交互半径 × |实例 scale|（quad 级真变换：放大后交互圈也大）。 */
+  /** 交互半径 × |实例 scale| × 透视系数（放大后交互圈也大；透视缩小同步收窄）。 */
   get effectiveInteractionRange(): number {
-    return this.def.interactionRange * entityScaleOf(this.def);
+    return this.def.interactionRange * this._combinedScale();
   }
 
   setPosition(x: number, y: number): void {
     this.def.x = x;
     this.def.y = y;
     this._syncContainerPosition();
+    // 透视系数是脚底 y 的派生量：移动后先重求（变化时内部已整套重派生）
+    this._refreshDepthScale();
     // 遮挡带多边形是位置的派生量（world 坐标缓存在容器上），移动后必须重派生——
     // 否则 Renderer 前后带判定按旧位置多边形算，与求值时变换的阻挡碰撞裂脑（审查 F6）。
     this._syncEntitySortBand();

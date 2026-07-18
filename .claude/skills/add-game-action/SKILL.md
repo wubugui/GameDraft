@@ -1,0 +1,1 @@
+../../../.cursor/skills/add-game-action/SKILL.md

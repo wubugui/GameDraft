@@ -2348,7 +2348,8 @@
                 "signal": "tingshu_kicked"
               }
             ]
-          }
+          },
+          "package": "章节_听书"
         },
         {
           "id": "el_scenario_吹牛",

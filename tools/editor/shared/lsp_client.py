@@ -279,6 +279,7 @@ _SIMPLE_OVERLAY_FILES: dict[str, list[tuple[str, str]]] = {
     "overlay_images": [("overlay_images.json", "overlay_images")],
     "scenarios": [("scenarios.json", "scenarios_catalog")],
     "narrative_graphs": [("narrative_graphs.json", "narrative_graphs")],
+    "narrative_packages": [("narrative_packages.json", "narrative_packages")],
     "document_reveals": [("document_reveals.json", "document_reveals")],
     "smell_profiles": [("smell_profiles.json", "smell_profiles")],
     "pressure_holds": [("pressure_holds.json", "pressure_holds")],

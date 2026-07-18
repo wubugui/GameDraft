@@ -58,3 +58,84 @@ def inverse_transform_world_vec(vx: float, vy: float, scale: float, rot_deg: flo
         vx /= scale
         vy /= scale
     return vx, vy
+
+
+# ---------------------------------------------------------------------------
+# 场景透视缩放（近大远小）—— 运行时 src/utils/perspectiveScale.ts 的编辑器镜像。
+# 画布预览必须经此求系数（防预览撒谎）；语义级 parity 测试锁定两侧口径。
+# ---------------------------------------------------------------------------
+
+PERSPECTIVE_SCALE_MIN = 0.01
+
+
+def _persp_num(v: object) -> float | None:
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    f = float(v)
+    return f if math.isfinite(f) else None
+
+
+def perspective_valid_rulers(cfg: dict | None) -> list[tuple[float, float]]:
+    """cfg = 场景 perspectiveScale dict；返回有效基准线 [(y, scale)...]（原顺序，未排序）。"""
+    raw = (cfg or {}).get("rulers") if isinstance(cfg, dict) else None
+    out: list[tuple[float, float]] = []
+    if not isinstance(raw, list):
+        return out
+    for r in raw:
+        if not isinstance(r, dict):
+            continue
+        y = _persp_num(r.get("y"))
+        s = _persp_num(r.get("scale"))
+        if y is None or s is None or s <= 0:
+            continue
+        out.append((y, s))
+    return out
+
+
+def perspective_scale_at(cfg: dict | None, foot_y: float) -> float:
+    """脚底 y 处的透视缩放系数 f(y)；有效基准线不足 2 条或 y 非法时恒 1。
+    与 TS perspectiveScaleAt 同口径：按 y 升序分段线性插值、端点钳制、重复 y 取后者。"""
+    rulers = perspective_valid_rulers(cfg)
+    if len(rulers) < 2 or not math.isfinite(foot_y):
+        return 1.0
+    srt = sorted(rulers, key=lambda t: t[0])
+    lo_y, lo_s = srt[0]
+    if foot_y <= lo_y:
+        return max(PERSPECTIVE_SCALE_MIN, lo_s)
+    hi_y, hi_s = srt[-1]
+    if foot_y >= hi_y:
+        return max(PERSPECTIVE_SCALE_MIN, hi_s)
+    for i in range(1, len(srt)):
+        a_y, a_s = srt[i - 1]
+        b_y, b_s = srt[i]
+        if foot_y <= b_y:
+            if b_y == a_y:
+                return max(PERSPECTIVE_SCALE_MIN, b_s)
+            t = (foot_y - a_y) / (b_y - a_y)
+            return max(PERSPECTIVE_SCALE_MIN, a_s + (b_s - a_s) * t)
+    return max(PERSPECTIVE_SCALE_MIN, hi_s)
+
+
+def entity_participates_perspective(ent: dict | None, kind: str) -> bool:
+    """参与判定镜像：npc 缺省参与（renderRaw 抠图贴回原位者除外）；hotspot 缺省不参与。"""
+    d = ent or {}
+    raw = d.get("perspectiveScaleEnabled")
+    if isinstance(raw, bool):
+        return raw
+    if kind == "npc":
+        return d.get("renderRaw") is not True
+    return False
+
+
+def entity_perspective_factor(
+    cfg: dict | None, ent: dict | None, kind: str, foot_y: float | None = None,
+) -> float:
+    """实体在画布上的透视系数：参与判定 × f(脚底 y)。foot_y 缺省取实体 y（巡逻预览可传瞬时 y）。"""
+    if not entity_participates_perspective(ent, kind):
+        return 1.0
+    if foot_y is None:
+        y = _persp_num((ent or {}).get("y"))
+        if y is None:
+            return 1.0
+        foot_y = y
+    return perspective_scale_at(cfg, foot_y)

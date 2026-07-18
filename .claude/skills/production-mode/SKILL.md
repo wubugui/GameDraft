@@ -1,0 +1,1 @@
+../../../.cursor/skills/production-mode/SKILL.md

@@ -84,6 +84,8 @@ CONTENT_ID_PARAMS: dict[tuple[str, str], str] = {
     ("resetNarrativeRun", "graphId"): "narrative_graph_ids",
     ("revertNarrativeRun", "graphId"): "narrative_graph_ids",
     ("activateNarrativeRun", "graphId"): "narrative_graph_ids",
+    ("loadNarrativePackage", "packageId"): "narrative_package_ids",
+    ("unloadNarrativePackage", "packageId"): "narrative_package_ids",
 }
 
 # 跨字段收窄:(action, 作用域参数, 被收窄参数) → (scoped 映射名, 允许空串, 标签宇宙)

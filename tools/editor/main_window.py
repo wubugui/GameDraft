@@ -1320,6 +1320,7 @@ class MainWindow(QMainWindow):
             DocumentRevealsEditor,
         )
         from .editors.narrative_state_editor import NarrativeStateEditor
+        from .editors.narrative_packages_editor import NarrativePackagesEditor
         from .editors.dialogue_graph_editor_tab import DialogueGraphEditorTab
         from .editors.water_minigame_editor import WaterMinigameEditor
         from .editors.sugar_wheel_editor import SugarWheelEditor
@@ -1335,6 +1336,7 @@ class MainWindow(QMainWindow):
             (["数据编辑", "叙事编排"], "过场", TimelineEditor),
             (["数据编辑", "叙事编排"], "图对话", DialogueGraphEditorTab),
             (["数据编辑", "叙事编排"], "叙事状态机", NarrativeStateEditor),
+            (["数据编辑", "叙事编排"], "章节导演", NarrativePackagesEditor),
             (["数据编辑", "叙事编排"], "位面", PlaneEditor),
             (["数据编辑", "叙事编排"], "Encounter", EncounterEditor),
             (["数据编辑", "叙事编排"], "临场长按", PressureHoldEditor),

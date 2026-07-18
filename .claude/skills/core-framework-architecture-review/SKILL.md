@@ -1,0 +1,1 @@
+../../../.cursor/skills/core-framework-architecture-review/SKILL.md

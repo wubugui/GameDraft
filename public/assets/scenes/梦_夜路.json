@@ -21,20 +21,6 @@
     "x": 869.6,
     "y": 1580.9
   },
-  "onEnter": [
-    {
-      "type": "fadeWorldFromBlack",
-      "params": {
-        "durationMs": 800
-      }
-    },
-    {
-      "type": "startDialogueGraph",
-      "params": {
-        "graphId": "梦_段A_夜路"
-      }
-    }
-  ],
   "zones": [
     {
       "id": "z_梦_到农家院",

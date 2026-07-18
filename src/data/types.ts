@@ -178,6 +178,26 @@ export interface LightEnvCurveDef {
   points: LightEnvCurvePoint[];
 }
 
+/** 透视缩放基准线：脚底 y 落在该线上时实体缩放为 scale */
+export interface PerspectiveScaleRuler {
+  y: number;
+  /** 该基准线上的缩放系数（>0） */
+  scale: number;
+}
+
+/**
+ * 场景透视缩放（近大远小）：按实体**脚底 y** 在基准线间分段线性插值出系数 f(y)，
+ * 端点外钳制到最近基准线。最终缩放 = 实例 scale（手动基准）× f(y)；系数为纯派生态不入档。
+ * 缺省（不写键）= 不缩放，存量场景零变化。玩家/NPC 默认参与；热点默认不参与
+ * （多为 WYSIWYG 贴背景绘制），可经 HotspotDef.perspectiveScaleEnabled 逐热点开启。
+ */
+export interface PerspectiveScaleConfig {
+  /** 至少 2 条；运行时按 y 升序求值（顺序无要求，求值前排序） */
+  rulers: PerspectiveScaleRuler[];
+  /** 移动步长是否同步 × f(y)（防远处滑步）；缺省 true */
+  affectsSpeed?: boolean;
+}
+
 export interface SceneData {
   id: string;
   name: string;
@@ -196,6 +216,8 @@ export interface SceneData {
   /** 氛围滤镜 ID，对应 assets/data/filters/{filterId}.json，未写则不应用滤镜 */
   filterId?: string;
   depthConfig?: SceneDepthConfig;
+  /** 透视缩放（近大远小）；缺省 = 不缩放。与 depthConfig 相互独立（正交模型不含透视信息） */
+  perspectiveScale?: PerspectiveScaleConfig;
   /** 光照环境（逐 entity 阴影/色调/AO）；缺省回落到全局默认 */
   lightEnv?: SceneLightEnv;
   /** 光照环境曲线：玩家位置投影到折线后插值切换光照关键帧；缺省=用静态 lightEnv（现状不变） */
@@ -292,6 +314,11 @@ export interface HotspotDef {
   scale?: number;
   /** 实例级旋转（度，绕脚底锚点）；quad 级真变换同上；缺省 0。 */
   rotation?: number;
+  /**
+   * 参与场景透视缩放（SceneData.perspectiveScale）：热点缺省 **false**（多为 WYSIWYG
+   * 贴背景绘制，缩放反而破坏对位）；地面道具（displayImage、可能被移动）可显式开启。
+   */
+  perspectiveScaleEnabled?: boolean;
   /** 分组标签（纯标签、非 id 引用）：供组动作（setGroupEnabled/moveGroupBy）批量寻址。 */
   group?: string;
 }
@@ -699,6 +726,11 @@ export interface NpcDef {
   scale?: number;
   /** 实例级旋转（度，绕脚底锚点）；quad 级真变换同上；缺省 0。 */
   rotation?: number;
+  /**
+   * 参与场景透视缩放（SceneData.perspectiveScale）：NPC 缺省 **true**（站位/巡逻都在
+   * 地面，脚底 y 即深度）；贴墙/悬空装饰实体可显式关闭。
+   */
+  perspectiveScaleEnabled?: boolean;
   /** 分组标签（纯标签、非 id 引用）：供组动作（setGroupEnabled/moveGroupBy）批量寻址。 */
   group?: string;
 }

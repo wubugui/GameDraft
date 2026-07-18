@@ -56,6 +56,7 @@ class SignalRefactorError(ValueError):
 # 条件叶子 {narrative, state} 与 setNarrativeState 动作可出现的集合，比发射面更广
 # （地图节点可见性、图鉴解锁、物品动态描述等）。attr 缺失时 getattr 兜 None 自动跳过。
 CONDITION_EXTRA_SOURCES: dict[str, tuple[str, bool]] = {
+    "narrative_packages": ("narrative_packages", False),  # 章节清单 when/done 条件 + autoPlay 动作
     "map_nodes": ("map", False),
     "quest_groups": ("questGroup", False),
     "items": ("item", False),

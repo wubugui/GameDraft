@@ -664,12 +664,11 @@
     {
       "id": "wujin_washerwoman",
       "name": "前街洗衣婆",
-      "x": 720.0,
-      "y": 1768.0,
+      "x": 826.5,
+      "y": 1766.3,
       "interactionRange": 58.0,
       "animFile": "/resources/runtime/animation/npc_popo_anim/anim.json",
       "initialAnimState": "idle",
-      "initialFacing": "right",
       "dialogueGraphId": "街巷_市井闲谈",
       "dialogueGraphEntry": "washerwoman"
     },

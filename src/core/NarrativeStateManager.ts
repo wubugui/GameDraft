@@ -105,6 +105,9 @@ export interface NarrativeGraph {
   ownerId?: string;
   /** Author note/category for wrapper usage grouping in tooling. */
   category?: string;
+  /** 章节包归属（编译期从 composition.package 盖章）：无标=常驻核心永远 live；
+   *  有标=包 dormant 时冻结（不吃信号/不跑 reactive，状态原地保留、条件照常可查）。 */
+  packageId?: string;
   run?: NarrativeRunDef;
   initialState: string;
   entryState?: string;
@@ -166,6 +169,9 @@ export interface NarrativeCompositionElement {
   graph?: NarrativeGraph;
   x?: number;
   y?: number;
+  /** 元素级章节包标：本元素图归入此包（无=继承 composition.package）。
+   *  主线场景——里程碑 mainGraph 不打标（常驻）、各拍子图元素各打各拍的包。 */
+  package?: string;
   meta?: Record<string, unknown>;
 }
 
@@ -173,6 +179,8 @@ export interface NarrativeComposition {
   id: string;
   label?: string;
   description?: string;
+  /** 章节包标：编排整组归入此包（无标=常驻核心）。编译时盖到组内每张图的 packageId。 */
+  package?: string;
   mainGraph: NarrativeGraph;
   elements?: NarrativeCompositionElement[];
 }
@@ -184,7 +192,8 @@ type QueuedTrigger =
   | { kind: 'external'; key: NarrativeTriggerKey; source?: NarrativeSignal }
   | { kind: 'setState'; graphId: string; stateId: string }
   | { kind: 'reactive'; graphId: string; transitionId: string }
-  | { kind: 'runLifecycle'; op: 'start' | 'reset' | 'revert' | 'activate'; graphId: string; stateId?: string };
+  | { kind: 'runLifecycle'; op: 'start' | 'reset' | 'revert' | 'activate'; graphId: string; stateId?: string }
+  | { kind: 'packageLifecycle'; packageId: string; live: boolean };
 
 interface QueuedItem {
   trigger: QueuedTrigger;
@@ -222,6 +231,7 @@ export type NarrativeTraceEventType =
   | 'state.changed'
   | 'reactive.queued'
   | 'run.lifecycle'
+  | 'package.lifecycle'
   | 'actions.start'
   | 'actions.end'
   | 'actions.failed'
@@ -260,6 +270,8 @@ export class NarrativeStateManager implements IGameSystem {
   private activatedArchetype: string | null = null;
   /** 有实例但非激活（挂起冻结，不推进）的活计图 id 集。 */
   private suspendedRunArchetypes: Set<string> = new Set();
+  /** live 的章节包（电影摄制模型：live=剧组在场吃信号跑演出；dormant=冻结但状态永存可查）。 */
+  private livePackages: Set<string> = new Set();
   /** 原型累计计数器（started/reset/aborted/settled-by-exit；随存档持久化）。 */
   private runCounters: Map<string, NarrativeRunCounters> = new Map();
   private queue: QueuedItem[] = [];
@@ -419,6 +431,7 @@ export class NarrativeStateManager implements IGameSystem {
     this.reachedStates.clear();
     this.ownerIndex.clear();
     this.suspendedRunArchetypes.clear();
+    this.livePackages.clear();
     this.runCounters.clear();
     this.activatedArchetype = null;
     this.primaryOwnerWarningKeys.clear();
@@ -523,6 +536,9 @@ export class NarrativeStateManager implements IGameSystem {
   private listLiveGraphEntries(): Array<[string, NarrativeGraph]> {
     const out: Array<[string, NarrativeGraph]> = [];
     for (const [gid, graph] of this.graphs) {
+      // 章节包维度：dormant 包整组冻结（含其中活计），与活计挂起同款语义——
+      // 不吃信号/不跑 reactive，状态原地保留、条件叶照常可查（状态=永久记录）。
+      if (graph.packageId && !this.livePackages.has(graph.packageId)) continue;
       if (!isRunGraph(graph)) {
         out.push([gid, graph]);
       } else if (gid === this.activatedArchetype && this.activeStates.has(gid)) {
@@ -530,6 +546,50 @@ export class NarrativeStateManager implements IGameSystem {
       }
     }
     return out;
+  }
+
+  /** 全部已注册的章节包 id（图上盖章的并集）。 */
+  getKnownPackageIds(): string[] {
+    const out = new Set<string>();
+    for (const graph of this.graphs.values()) {
+      if (graph.packageId) out.add(graph.packageId);
+    }
+    return [...out];
+  }
+
+  getLivePackages(): string[] {
+    return [...this.livePackages];
+  }
+
+  isNarrativePackageLive(packageId: string): boolean {
+    return this.livePackages.has(String(packageId ?? '').trim());
+  }
+
+  /** 章节包 live/dormant 切换（走队列，与信号/生命周期同时序）。幂等；未知包记 issue 忽略。 */
+  setNarrativePackageLive(packageId: string, live: boolean): Promise<void> {
+    const pkg = String(packageId ?? '').trim();
+    if (!pkg) return Promise.resolve();
+    return this.enqueue({ kind: 'packageLifecycle', packageId: pkg, live });
+  }
+
+  private applyPackageLifecycle(packageId: string, live: boolean): void {
+    if (!this.getKnownPackageIds().includes(packageId)) {
+      this.lifecycleIssue(
+        'package.unknown',
+        `NarrativeStateManager: 章节包 ${packageId} 不存在（没有任何图盖此包标）`,
+        packageId,
+      );
+      return;
+    }
+    if (live === this.livePackages.has(packageId)) return; // 幂等
+    if (live) this.livePackages.add(packageId);
+    else this.livePackages.delete(packageId);
+    this.recordTrace('package.lifecycle', {
+      message: `package ${packageId} ${live ? 'live（开拍）' : 'dormant（收工冻结）'}`,
+    });
+    this.eventBus.emit('narrative:packageChanged', { packageId, live });
+    // 新 live 的图可能立即满足 reactive 条件（状态早已恢复/推进过），补评一轮。
+    if (live) this.kickReactiveEvaluation();
   }
 
   /** 有实例（激活或挂起）的活计图 id 列表——诊断/派生用。 */
@@ -940,6 +1000,9 @@ export class NarrativeStateManager implements IGameSystem {
         }]),
       ),
       activatedArchetype: this.activatedArchetype,
+      // 章节包 live 集：live 是"导演喊过开拍"的历史事实，不能靠 when 条件重推导，入档。
+      // 包内图状态照旧走 activeStates/runs（状态永存，与 live 无关）。
+      livePackages: [...this.livePackages],
     };
   }
 
@@ -950,6 +1013,7 @@ export class NarrativeStateManager implements IGameSystem {
       runs?: Record<string, unknown>;
       counters?: Record<string, unknown>;
       activatedArchetype?: unknown;
+      livePackages?: unknown;
     };
     // 恢复前先失效旧时间线（审查 R2）：积压队列项 reject、在飞迁移放弃剩余写入——
     // 否则旧时间线的广播/信号会打进恢复后的世界（子图回到起点、主图却被幽灵广播推进）。
@@ -964,6 +1028,7 @@ export class NarrativeStateManager implements IGameSystem {
     this.restoreRuns(raw?.runs);
     this.restoreRunCounters(raw?.counters);
     this.restoreActivatedArchetype(raw?.activatedArchetype);
+    this.restoreLivePackages(raw?.livePackages);
     // 读档后的状态组合可能已满足某些 reactive 迁移条件（读档期间 FlagStore.deserialize
     // 不广播 flag:changed），此处统一补评一轮。
     this.kickReactiveEvaluation();
@@ -974,6 +1039,7 @@ export class NarrativeStateManager implements IGameSystem {
     this.activeStates.clear();
     this.reachedStates.clear();
     this.suspendedRunArchetypes.clear();
+    this.livePackages.clear();
     this.runCounters.clear();
     this.activatedArchetype = null;
     for (const graph of this.graphs.values()) {
@@ -1043,6 +1109,25 @@ export class NarrativeStateManager implements IGameSystem {
       this.runCounters.set(graphId, {
         started: num(c.started), reset: num(c.reset), aborted: num(c.aborted), settled,
       });
+    }
+  }
+
+  private restoreLivePackages(raw: unknown): void {
+    this.livePackages.clear();
+    if (!Array.isArray(raw)) return; // 旧档无此字段：全部包 dormant，导演按 when∧¬done 重评
+    const known = new Set(this.getKnownPackageIds());
+    for (const entry of raw) {
+      const pkg = String(entry ?? '').trim();
+      if (!pkg) continue;
+      if (!known.has(pkg)) {
+        this.warnDroppedSaveEntry(
+          'save.livePackage.missing',
+          `NarrativeStateManager: save livePackages 含未知包 "${pkg}"，丢弃`,
+          pkg,
+        );
+        continue;
+      }
+      this.livePackages.add(pkg);
     }
   }
 
@@ -1180,6 +1265,7 @@ export class NarrativeStateManager implements IGameSystem {
     this.reachedStates.clear();
     this.ownerIndex.clear();
     this.suspendedRunArchetypes.clear();
+    this.livePackages.clear();
     this.runCounters.clear();
     this.activatedArchetype = null;
     this.nestedDrainPromises.clear();
@@ -1199,6 +1285,8 @@ export class NarrativeStateManager implements IGameSystem {
       suspendedRuns: [...this.suspendedRunArchetypes],
       runCounters: Object.fromEntries(this.runCounters.entries()),
       activatedArchetype: this.activatedArchetype,
+      livePackages: [...this.livePackages],
+      knownPackages: this.getKnownPackageIds(),
       ownerIndex,
       multiWrapperOwners,
       // keep legacy fields for older debug consumers
@@ -1405,6 +1493,8 @@ export class NarrativeStateManager implements IGameSystem {
         await this.processReactiveTrigger(trigger.graphId, trigger.transitionId);
       } else if (trigger.kind === 'runLifecycle') {
         await this.applyRunLifecycle(trigger);
+      } else if (trigger.kind === 'packageLifecycle') {
+        this.applyPackageLifecycle(trigger.packageId, trigger.live);
       } else {
         await this.processTrigger(NarrativeStateManager.normalizeTriggerKey(trigger.key));
       }
@@ -1863,6 +1953,12 @@ export class NarrativeStateManager implements IGameSystem {
         payload: { kind: trigger.kind, op: trigger.op, ...(trigger.stateId ? { stateId: trigger.stateId } : {}) },
       };
     }
+    if (trigger.kind === 'packageLifecycle') {
+      return {
+        triggerKey: `package:${trigger.live ? 'load' : 'unload'}:${trigger.packageId}`,
+        payload: { kind: trigger.kind, packageId: trigger.packageId, live: trigger.live },
+      };
+    }
     return {
       graphId: trigger.graphId,
       transitionId: trigger.transitionId,
@@ -1919,13 +2015,20 @@ export function compileNarrativeGraphs(data: NarrativeGraphsFile | null | undefi
     const out: NarrativeGraph[] = [];
     for (const comp of data.compositions) {
       if (!comp || typeof comp !== 'object') continue;
+      // 章节包标（电影摄制模型——包只切 live/dormant，状态永存）：
+      // composition.package 盖整组；element.package 覆盖单元素（主线里程碑图与子图同编排——
+      // mainGraph 只随 composition.package，不继承元素包 → 天然常驻；子图各打各拍的包）。
+      const compPkg = typeof comp.package === 'string' && comp.package.trim() ? comp.package.trim() : undefined;
       if (isNarrativeGraph(comp.mainGraph)) {
+        if (compPkg) comp.mainGraph.packageId = compPkg;
         out.push(comp.mainGraph);
       }
       const elements = Array.isArray(comp.elements) ? comp.elements : [];
       for (const el of elements) {
         if (!el || typeof el !== 'object') continue;
         if ((el.kind === 'wrapperGraph' || el.kind === 'scenarioSubgraph') && isNarrativeGraph(el.graph)) {
+          const elPkg = typeof el.package === 'string' && el.package.trim() ? el.package.trim() : compPkg;
+          if (elPkg) el.graph.packageId = elPkg;
           out.push(el.graph);
         }
       }

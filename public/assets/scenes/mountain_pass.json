@@ -1,7 +1,7 @@
 {
   "id": "mountain_pass",
   "name": "山路",
-  "worldWidth": 2500.0,
+  "worldWidth": 1500.0,
   "camera": {
     "zoom": 1.0,
     "pixelsPerUnit": 1.0
@@ -36,8 +36,8 @@
       "id": "exit_to_street",
       "type": "transition",
       "label": "回街巷",
-      "x": 65.8,
-      "y": 1498.0,
+      "x": 285.3,
+      "y": 786.0,
       "interactionRange": 53.5,
       "data": {
         "targetScene": "test_room_a",
@@ -60,8 +60,8 @@
       "id": "T到河边",
       "type": "transition",
       "label": "到河边",
-      "x": 1592.1,
-      "y": 1537.9,
+      "x": 1003.2,
+      "y": 820.6,
       "interactionRange": 50.0,
       "data": {
         "targetScene": "河边",
@@ -115,8 +115,19 @@
       "height_offset": 0.67
     }
   },
-  "worldHeight": 1568.33,
+  "worldHeight": 941.0,
   "ambientSounds": [
     "野外鸟叫"
+  ],
+  "npcs": [
+    {
+      "id": "new_npc_0",
+      "name": "New NPC",
+      "x": 1185.9,
+      "y": 549.8,
+      "interactionRange": 50,
+      "animFile": "/resources/runtime/animation/player_anim/anim.json",
+      "initialAnimState": "idle"
+    }
   ]
 }

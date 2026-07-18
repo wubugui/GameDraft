@@ -318,6 +318,20 @@ def collect_id_universes(root: Path, read_text=None) -> UniverseData:
     labels["narrative_graph_ids"] = narrative_labels
     scoped["narrative_states"] = narrative_states
 
+    # 章节包宇宙(C2/C4):composition.package + element.package 并集(load/unloadNarrativePackage 引用)
+    package_ids: list[str] = []
+    if isinstance(ng, dict):
+        for comp in ng.get("compositions") or []:
+            if not isinstance(comp, dict):
+                continue
+            for pkg in [comp.get("package")] + [
+                el.get("package") for el in (comp.get("elements") or []) if isinstance(el, dict)
+            ]:
+                p = str(pkg or "").strip()
+                if p and p not in package_ids:
+                    package_ids.append(p)
+    u["narrative_package_ids"] = sorted(package_ids)
+
     # ---- flag:静态键 + 模式前缀(前缀走 pattern,不进枚举) ----
     fr = _load(data / "flag_registry.json", read)
     if isinstance(fr, dict):

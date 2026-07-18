@@ -1,7 +1,7 @@
 {
   "id": "bridge_underpass",
   "name": "桥下",
-  "worldWidth": 2000.0,
+  "worldWidth": 4000.0,
   "camera": {
     "zoom": 1.0,
     "pixelsPerUnit": 1.0
@@ -108,5 +108,17 @@
   },
   "ambientSounds": [
     "夜晚蛐蛐叫"
+  ],
+  "worldHeight": 2232.42,
+  "npcs": [
+    {
+      "id": "new_npc_0",
+      "name": "New NPC",
+      "x": 3125.4,
+      "y": 1669.6,
+      "interactionRange": 50,
+      "animFile": "/resources/runtime/animation/player_anim/anim.json",
+      "initialAnimState": "idle"
+    }
   ]
 }

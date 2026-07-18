@@ -39,6 +39,7 @@ import {
   quadGroundYAroundFoot,
   quadTopLocalYAroundFoot,
 } from '../utils/entityTransform';
+import type { PerspectiveScaleResolver } from '../utils/perspectiveScale';
 
 const MARKER_SIZE = 20;
 
@@ -69,6 +70,11 @@ export class Npc implements ICutsceneActor {
   private patrolSkipWaypointAdvance = false;
   /** 与玩家开对话前记录的 `container.scale.x`（含左右镜像），结束时还原 */
   private facingScaleXBeforeDialogue: number | null = null;
+
+  /** 场景透视缩放句柄（Game 在 scene:ready / entitiesRebuilt 注入；不参与时为 null） */
+  private perspectiveResolver: PerspectiveScaleResolver | null = null;
+  /** 当前透视系数 f(footY)（派生态不入档）；施加在内部 sprite 层，不碰 container.scale（镜像/图对话 scale 动作互不干扰） */
+  private _depthScaleFactor = 1;
 
   /**
    * 显隐三通道，最终 visible = 派生基底 ∧ 条件 ∧ override≠false，只在 applyEffectiveVisible
@@ -189,11 +195,38 @@ export class Npc implements ICutsceneActor {
     // 精灵就位后重派生实例 transform 的尺寸派生量（构造时 sprite 为空、
     // entitySortFootY 按 0 尺寸算过一次；换动画包重载同理。审查 F4）。
     this.applyInstanceTransform();
+    // 新 SpriteEntity 实例透视系数是缺省 1，把当前系数下推（换动画包重载同理）
+    this.sprite.setDepthScaleFactor(this._depthScaleFactor);
+  }
+
+  /**
+   * 注入/清除场景透视缩放（近大远小）。参与判定在实体侧：显式 perspectiveScaleEnabled
+   * 优先；缺省时 renderRaw（背景抠图贴回原位，透视已烤进背景）不参与、普通 NPC 参与。
+   */
+  setPerspectiveScale(resolver: PerspectiveScaleResolver | null): void {
+    const participates = this.def.perspectiveScaleEnabled ?? !this.def.renderRaw;
+    this.perspectiveResolver = participates ? resolver : null;
+    this._refreshDepthScale();
+  }
+
+  /** 透视系数（供碰撞多边形换算/调试读取） */
+  get depthScaleFactor(): number {
+    return this._depthScaleFactor;
+  }
+
+  /** 按当前脚底 y 重求透视系数；变化时下推 sprite 并重派生旋转排序接地线。 */
+  private _refreshDepthScale(): void {
+    const f = this.perspectiveResolver?.scaleAt(this._y) ?? 1;
+    if (f === this._depthScaleFactor) return;
+    this._depthScaleFactor = f;
+    this.sprite?.setDepthScaleFactor(f);
+    this._syncSortFootY();
   }
 
   private _syncContainerPosition(): void {
     this.container.x = this._x;
     this.container.y = this._y;
+    this._refreshDepthScale();
     const c = this.container as Container & { entitySortFootY?: number };
     if (c.entitySortFootY !== undefined) this._syncSortFootY();
   }
@@ -213,9 +246,9 @@ export class Npc implements ICutsceneActor {
   }
 
   get interactionRange(): number { return this.def.interactionRange; }
-  /** 交互半径 × |实例 scale|（quad 级真变换：大个子交互圈也大）。 */
+  /** 交互半径 × |实例 scale| × 透视系数（大个子交互圈也大；走远了交互圈同步缩小）。 */
   get effectiveInteractionRange(): number {
-    return this.def.interactionRange * entityScaleOf(this.def);
+    return this.def.interactionRange * entityScaleOf(this.def) * this._depthScaleFactor;
   }
   get id(): string { return this.def.id; }
 
@@ -234,7 +267,7 @@ export class Npc implements ICutsceneActor {
     return this.sprite?.getDisplayTexture() ?? null;
   }
 
-  /** 投影阴影/光照探针用：**有效**世界尺寸（帧世界尺寸 × 实例 scale）。 */
+  /** 投影阴影/光照探针用：**有效**世界尺寸（帧世界尺寸 × 实例 scale × 透视系数——后者已在 sprite 层）。 */
   getWorldSize(): { width: number; height: number } {
     const raw = this.sprite?.getWorldSize() ?? { width: 0, height: 0 };
     const s = entityScaleOf(this.def);
@@ -449,7 +482,9 @@ export class Npc implements ICutsceneActor {
       const dx = t.x - this._x;
       const dy = t.y - this._y;
       const dist = Math.sqrt(dx * dx + dy * dy);
-      const step = t.speed * dt;
+      // 透视步长补偿：远处（系数小）每帧走更少世界单位，防相对背景滑步
+      const speedF = this.perspectiveResolver?.affectsSpeed ? this._depthScaleFactor : 1;
+      const step = t.speed * speedF * dt;
 
       if (dist <= step) {
         this.x = t.x;
@@ -468,7 +503,7 @@ export class Npc implements ICutsceneActor {
         }
         this.x += nx * step;
         this.y += ny * step;
-        // 步速匹配：仅当当前状态声明了 referenceSpeed 才生效，否则内部回落 1 倍速
+        // 步速匹配传**未补偿**速度：精灵与步幅同被 f 缩放，步频对补偿后位移天然吻合
         this.sprite?.applyLocomotionSpeed(t.speed);
       }
     }

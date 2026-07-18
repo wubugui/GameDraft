@@ -520,6 +520,25 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     return d.narrativeStateManager.activateNarrativeRun(graphId);
   }, ['graphId']);
 
+  // ---- 叙事章节包（C2）：导演清单之外的显式开拍/收工兜底（内容特殊编排可硬调）。 ----
+  executor.register('loadNarrativePackage', (p) => {
+    const packageId = String(p.packageId ?? '').trim();
+    if (!packageId) {
+      console.warn('loadNarrativePackage: 需要 packageId（章节包）');
+      return;
+    }
+    return d.narrativeStateManager.setNarrativePackageLive(packageId, true);
+  }, ['packageId']);
+
+  executor.register('unloadNarrativePackage', (p) => {
+    const packageId = String(p.packageId ?? '').trim();
+    if (!packageId) {
+      console.warn('unloadNarrativePackage: 需要 packageId');
+      return;
+    }
+    return d.narrativeStateManager.setNarrativePackageLive(packageId, false);
+  }, ['packageId']);
+
   // critical=true 为关键给予（剧情必得道具）：绕过背包槽上限——给予分支常按 flag 推进且不可再入，
   // 满包时丢弃即永久丢失。非 critical 失败时 addItem 已弹"包袱满了"，此处仅 warn 留痕
   // （动作批彼此独立，失败不中止批内后续动作；需要事务语义的购买路径见 shopPurchase 的退款处理）。

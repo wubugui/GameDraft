@@ -1,0 +1,1 @@
+../../../.cursor/skills/pure-data-iteration/SKILL.md

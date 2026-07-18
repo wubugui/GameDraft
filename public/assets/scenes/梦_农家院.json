@@ -27,20 +27,6 @@
       "y": 623
     }
   },
-  "onEnter": [
-    {
-      "type": "fadeWorldFromBlack",
-      "params": {
-        "durationMs": 600
-      }
-    },
-    {
-      "type": "startDialogueGraph",
-      "params": {
-        "graphId": "梦_段B_农家院"
-      }
-    }
-  ],
   "npcs": [
     {
       "id": "npc_dream_old_man",

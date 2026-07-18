@@ -41,10 +41,10 @@
 
 | 实体 | 可编辑字段 | 操作 |
 |---|---|---|
-| **场景顶层** | name / worldWidth / worldHeight(可锁宽高比) / worldScale / bgm / filterId / camera.zoom / camera.pixelsPerUnit / playerWalkSpeed / playerRunSpeed / ambientSounds / onEnter(场景级动作) / depthConfig.depth_tolerance + floor_offset | 无"新建场景"入口 |
-| **热区 hotspot** | 通用:id / type(inspect/pickup/transition/npc/encounter) / label(富文本) / x / y / interactionRange / **scale / rotation(实例 transform,quad 级真变换;缺省 1/0 不写键;画布 gizmo 可拖)** / **group(分组标签,树右键/多选页指派)** / autoTrigger / cutsceneIds / cutsceneOnly / conditions / conditionHidesEntity / displayImage / collisionPolygon。data 见下 | 增/删、画布拖位置+拖碰撞多边形+transform gizmo |
+| **场景顶层** | name / worldWidth / worldHeight(可锁宽高比) / worldScale / bgm / filterId / camera.zoom / camera.pixelsPerUnit / playerWalkSpeed / playerRunSpeed / ambientSounds / onEnter(场景级动作) / depthConfig.depth_tolerance + floor_offset / **perspectiveScale(透视缩放:启用开关+基准线表 y×scale+affectsSpeed;画布橙色虚线可拖 y;缺省不写键=不缩放)** | 无"新建场景"入口 |
+| **热区 hotspot** | 通用:id / type(inspect/pickup/transition/npc/encounter) / label(富文本) / x / y / interactionRange / **scale / rotation(实例 transform,quad 级真变换;缺省 1/0 不写键;画布 gizmo 可拖)** / **perspectiveScaleEnabled(透视缩放参与,三态下拉;热区缺省不参与)** / **group(分组标签,树右键/多选页指派)** / autoTrigger / cutsceneIds / cutsceneOnly / conditions / conditionHidesEntity / displayImage / collisionPolygon。data 见下 | 增/删、画布拖位置+拖碰撞多边形+transform gizmo |
 | **区域 zone** | id / zoneKind(standard/depth_floor) / floorOffsetBoost(仅 depth_floor) / polygon(画布画/拖/插删点) / **group(分组标签)** / conditions / onEnter / onStay / onExit(均仅 standard) | 增/删、画布编辑多边形 |
-| **NPC** | id / name / x / y / initialFacing / dialogueGraphId / dialogueGraphEntry / dialogueCameraZoom / interactionRange / **scale / rotation(实例 transform,同热区)** / **group(分组标签)** / cutsceneIds / cutsceneOnly / conditions / conditionHidesEntity / animFile / initialAnimState / initialAnimPlayback(speed/reverse/holdFrame/startFrame,进场起播一次性生效,-1=未设) / patrol / collisionPolygon | 增/删、画布拖位置+巡逻折线+transform gizmo |
+| **NPC** | id / name / x / y / initialFacing / dialogueGraphId / dialogueGraphEntry / dialogueCameraZoom / interactionRange / **scale / rotation(实例 transform,同热区)** / **perspectiveScaleEnabled(透视缩放参与,三态下拉;NPC 缺省参与、renderRaw 缺省不参与)** / **group(分组标签)** / cutsceneIds / cutsceneOnly / conditions / conditionHidesEntity / animFile / initialAnimState / initialAnimPlayback(speed/reverse/holdFrame/startFrame,进场起播一次性生效,-1=未设) / patrol / collisionPolygon | 增/删、画布拖位置+巡逻折线+transform gizmo |
 | **出生点** | key(default 只读) / x / y | 增/删(default 不可删) |
 
 **热区每种 type 的 `data`(均整体重建)**:
@@ -57,6 +57,7 @@
 - 重建区:`hotspot.data`(尤其 inspect `data.text`)、`npc.patrol`(只 route/speed/moveAnimState)、`spawnPoint`(只 `{x,y}`)。
 - 主动删除:`zone.x/y/width/height/ruleSlots`、`npc.dialogueFile/dialogueKnot`;切 depth_floor 会删 zone 的 onEnter/onStay/onExit。
 - 盲区:`backgrounds`(主编辑器不可编辑,只 Scene Depth Editor 或手写)、`depthConfig` 主体(M/shader/collision/depth_map…只 Scene Depth Editor 导出)。
+- 透视缩放下的碰撞多边形:可编辑多边形按 authored 空间显示(顶点拖拽/表格写回零换算);参与透视且系数≠1 时另画**只读虚线幽灵轮廓**=运行时实际命中面(authored 多边形绕锚点×f(y),与 anchorCollisionPolygonToWorld 同口径)。展示图/交互圈/NPC 精灵预览直接按系数缩放。
 - 无复制、无列表重排;`anim.json` 场景编辑器内只读(states 等廉价参数去「动画」面板改,图集像素布局靠 video_to_atlas 导出)。
 
 ---

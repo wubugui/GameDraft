@@ -9,7 +9,7 @@ from pathlib import Path, PurePosixPath
 from PySide6.QtCore import QProcess
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QListWidget,
-    QFormLayout, QLineEdit, QSpinBox, QPushButton, QLabel, QComboBox,
+    QFormLayout, QLineEdit, QSpinBox, QDoubleSpinBox, QPushButton, QLabel, QComboBox,
     QTableWidget, QTableWidgetItem, QHeaderView, QScrollArea,
     QAbstractItemView,
     QCheckBox,
@@ -35,8 +35,10 @@ def _make_list_search_box(list_widget: QListWidget) -> QLineEdit:
 
     box.textChanged.connect(_filter)
     return box
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
 from PySide6.QtCore import Qt, QRect, QElapsedTimer, QTimer
+
+from ..shared.collapsible_section import CollapsibleSection
 
 # 与游戏 tick、FrameSequencePlayer 一致：累加 dt，每 1/frameRate 秒换帧；限制 dt 避免卡死后一次跳多格
 _PREVIEW_MAX_DT_SEC = 0.1
@@ -49,6 +51,138 @@ def _preview_poll_interval_ms(fps: float) -> int:
 
 from ..project_model import ProjectModel
 from ..shared.form_layout import compact_form
+
+
+class _WalkCalibStrip(QWidget):
+    """步速匹配调校走廊：精灵按「移动速度」左右往返，帧率按 clamp(速度/refSpeed, 0.5~2)
+    缩放——与运行时 SpriteEntity.applyLocomotionSpeed 同口径。地面刻度与精灵共用同一套
+    world→px 映射，脚底相对刻度的滑动肉眼可判（向前飘=动画偏慢，原地小碎步=动画偏快）。
+    refSpeed ≤0 = 不匹配恒原速。步进由外部计时器驱动（tick），可见性由调用方把关。
+    """
+
+    _TICK_WORLD = 50.0     # 地面刻度间隔（世界单位）
+    _SPRITE_DISP_H = 110   # 精灵显示高度（px）；world→px 比例由此与 worldHeight 推出
+    _MARGIN_PX = 12
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setFixedHeight(150)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._frames: list[int] = []
+        self._rate = 8.0
+        self._ref: float | None = None
+        self._speed = 60.0
+        self._world_w = 100.0
+        self._world_h = 150.0
+        self._crop_fn = None
+        self._cache: dict[int, QPixmap] = {}
+        self._pos_w = 0.0
+        self._dir = 1
+        self._seq = 0
+        self._accum = 0.0
+
+    def set_clip(self, frames, rate, world_w, world_h, crop_fn) -> None:
+        """换片段：帧序/帧率/世界尺寸/裁帧函数；重置游标与位置，清帧缓存。"""
+        self._frames = [int(x) for x in frames] if frames else []
+        self._rate = max(1e-6, float(rate))
+        self._world_w = max(1.0, float(world_w))
+        self._world_h = max(1.0, float(world_h))
+        self._crop_fn = crop_fn
+        self._cache.clear()
+        self._pos_w = 0.0
+        self._dir = 1
+        self._seq = 0
+        self._accum = 0.0
+        self.update()
+
+    def set_speed(self, v: float) -> None:
+        self._speed = max(0.0, float(v))
+        self.update()
+
+    def set_ref_speed(self, v: float | None) -> None:
+        self._ref = float(v) if v and v > 0 else None
+        self.update()
+
+    def multiplier(self) -> tuple[float, bool]:
+        """(播放倍率, 是否被夹取)；夹取区间同运行时 LOCOMOTION_RATE_MIN/MAX=0.5~2。"""
+        if not self._ref or self._speed <= 0:
+            return 1.0, False
+        raw = self._speed / self._ref
+        m = min(2.0, max(0.5, raw))
+        return m, abs(m - raw) > 1e-9
+
+    def _ppw(self) -> float:
+        return self._SPRITE_DISP_H / self._world_h
+
+    def tick(self, dt: float) -> None:
+        if self._crop_fn is None or not self._frames or self._speed <= 0:
+            return
+        mult, _ = self.multiplier()
+        if len(self._frames) > 1:
+            self._accum += dt
+            step = 1.0 / (self._rate * mult)
+            while self._accum >= step:
+                self._accum -= step
+                self._seq = (self._seq + 1) % len(self._frames)
+        ppw = self._ppw()
+        span_w = max(1.0, (self.width() - 2 * self._MARGIN_PX) / ppw - self._world_w)
+        self._pos_w += self._dir * self._speed * dt
+        if self._pos_w >= span_w:
+            self._pos_w = span_w
+            self._dir = -1
+        elif self._pos_w <= 0.0:
+            self._pos_w = 0.0
+            self._dir = 1
+        self.update()
+
+    def _pix(self, idx: int) -> QPixmap | None:
+        pm = self._cache.get(idx)
+        if pm is None and self._crop_fn is not None:
+            got = self._crop_fn(idx)
+            if got is not None and not got.isNull():
+                pm = got
+                self._cache[idx] = pm
+        return pm
+
+    def paintEvent(self, _ev) -> None:  # noqa: N802 — Qt 命名
+        p = QPainter(self)
+        try:
+            p.fillRect(self.rect(), QColor("#1a1a1a"))
+            ground_y = self.height() - 22
+            ppw = self._ppw()
+            p.setPen(QPen(QColor("#555")))
+            p.drawLine(0, ground_y, self.width(), ground_y)
+            tick_px = max(8.0, self._TICK_WORLD * ppw)
+            x = float(self._MARGIN_PX)
+            while x < self.width():
+                p.drawLine(int(x), ground_y, int(x), ground_y + 6)
+                x += tick_px
+            if not self._frames or self._crop_fn is None:
+                p.setPen(QColor("#777"))
+                p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "（选中一行移动状态后在此来回走）")
+                return
+            pm = self._pix(self._frames[self._seq % len(self._frames)])
+            if pm is None:
+                return
+            disp_w = max(1, int(round(self._world_w * ppw)))
+            disp_h = max(1, int(round(self._world_h * ppw)))
+            scaled = pm.scaled(
+                disp_w, disp_h,
+                Qt.AspectRatioMode.IgnoreAspectRatio,
+                Qt.TransformationMode.FastTransformation,
+            )
+            foot_x = self._MARGIN_PX + self._pos_w * ppw + disp_w / 2.0
+            top = ground_y - disp_h
+            if self._dir < 0:
+                p.save()
+                p.translate(foot_x, 0)
+                p.scale(-1.0, 1.0)
+                p.drawPixmap(int(-disp_w / 2.0), int(top), scaled)
+                p.restore()
+            else:
+                p.drawPixmap(int(foot_x - disp_w / 2.0), int(top), scaled)
+        finally:
+            p.end()
 
 _ATLAS_VIEW_MAX_W = 580
 _ATLAS_VIEW_MAX_H = 300
@@ -280,6 +414,58 @@ class AnimEditor(QWidget):
         pv_bar.addWidget(self._lbl_preview_info, 1)
         dl.addLayout(pv_bar)
 
+        calib_box = CollapsibleSection("步速匹配调校（来回走）", start_open=False)
+        calib_box.set_header_tool_tip(
+            "选中一行移动状态（walk/run…），精灵按「移动速度」在走廊里往返，帧率按\n"
+            "clamp(速度÷refSpeed, 0.5~2) 实时缩放——与游戏运行时同口径。\n"
+            "refSpeed 在此调节即写入表格该行（保存路径同表格编辑）。")
+        calib_inner = QWidget()
+        calib_l = QVBoxLayout(calib_inner)
+        calib_bar = QHBoxLayout()
+        calib_bar.addWidget(QLabel("移动速度"))
+        self._calib_speed = QDoubleSpinBox()
+        self._calib_speed.setRange(1.0, 500.0)
+        self._calib_speed.setDecimals(0)
+        self._calib_speed.setSingleStep(5.0)
+        self._calib_speed.setValue(60.0)
+        self._calib_speed.setMaximumWidth(80)
+        self._calib_speed.setToolTip(
+            "模拟的实际移动速度（世界单位/秒）。参考：NPC 巡逻默认 60、玩家走 100、跑 180。")
+        self._calib_speed.valueChanged.connect(self._on_calib_speed_changed)
+        calib_bar.addWidget(self._calib_speed)
+        calib_bar.addWidget(QLabel("refSpeed"))
+        self._calib_ref = QDoubleSpinBox()
+        self._calib_ref.setRange(0.0, 500.0)
+        self._calib_ref.setDecimals(1)
+        self._calib_ref.setSingleStep(5.0)
+        self._calib_ref.setSpecialValueText("（不匹配）")
+        self._calib_ref.setMaximumWidth(96)
+        self._calib_ref.setToolTip(
+            "与表格选中行的 refSpeed 列双向同步：在此调节即改表格、走同一保存路径。\n"
+            "0=留空不参与匹配。起点建议=上面的实际移速，再按滑步方向微调。")
+        self._calib_ref.valueChanged.connect(self._on_calib_ref_changed)
+        calib_bar.addWidget(self._calib_ref)
+        self._lbl_calib_mult = QLabel("")
+        self._lbl_calib_mult.setStyleSheet("color: #aaa;")
+        calib_bar.addWidget(self._lbl_calib_mult, 1)
+        calib_l.addLayout(calib_bar)
+        self._calib_strip = _WalkCalibStrip()
+        calib_l.addWidget(self._calib_strip)
+        calib_hint = QLabel(
+            "盯脚底与地面刻度的相对滑动：向前飘（溜冰）= 调小 refSpeed；原地小碎步 = 调大。")
+        calib_hint.setStyleSheet("color: #888;")
+        calib_hint.setWordWrap(True)
+        calib_l.addWidget(calib_hint)
+        calib_box.add_body(calib_inner)
+        dl.addWidget(calib_box)
+        self._calib_box = calib_box
+        self._calib_timer = QTimer(self)
+        self._calib_timer.setTimerType(Qt.TimerType.CoarseTimer)
+        self._calib_timer.setInterval(16)
+        self._calib_timer.timeout.connect(self._tick_calib)
+        self._calib_elapsed = QElapsedTimer()
+        self._calib_ref_syncing = False
+
         atlas_frame_row = QHBoxLayout()
         atlas_col = QVBoxLayout()
         atlas_col.addWidget(QLabel("<b>雪碧图 Atlas（完整原图）</b>"))
@@ -373,15 +559,18 @@ class AnimEditor(QWidget):
         self._flush_anim_list_from_model()
         # 面板重新可见：恢复预览播放（离开时被 hideEvent 停掉，避免后台空转，P3）。
         self._restart_preview_animation()
+        self._calib_elapsed.start()
+        self._calib_timer.start()
 
     def hideEvent(self, event) -> None:  # type: ignore[override]
         # 面板不可见时停预览定时器：4~16ms tick 在后台空转纯耗 CPU（P3）。
         self._stop_preview_timer()
+        self._calib_timer.stop()
         super().hideEvent(event)
 
     def has_unsaved_changes(self) -> bool:
         """供主窗 Save All 成功提示追加动画包未保存提醒（anim 直写 anim.json，不进
-        ProjectModel dirty 桶，Save All 不含它——见集成钩子说明，P3）。"""
+        ProjectModel dirty 桶；Save All 经 flush_to_model 钩子收集本面板）。"""
         return bool(self._dirty and self._current_key)
 
     def _open_video_atlas_detached(self) -> None:
@@ -503,6 +692,7 @@ class AnimEditor(QWidget):
         self._set_atlas_full_placeholder("")
         self._lbl_atlas_meta.setText("")
         self._set_frame_preview_placeholder("(未选择动画)")
+        self._calib_strip.set_clip([], 8.0, 100.0, 150.0, None)
         self._loading = False
         self._clear_dirty()
 
@@ -713,6 +903,10 @@ class AnimEditor(QWidget):
         self._mark_dirty()
         if col in (1, 2, 3) and item.row() == self._state_table.currentRow():
             self._restart_preview_animation()
+        elif col == 4 and item.row() == self._state_table.currentRow():
+            # refSpeed 列改动 → 只同步调校 spinbox/走带倍率，不重置走位
+            self._sync_calib_ref_from_row()
+            self._update_calib_mult_label()
 
     def _add_state(self) -> None:
         existing = {
@@ -952,25 +1146,56 @@ class AnimEditor(QWidget):
             out = rebuilt
         return out, None
 
-    def _do_save(self) -> bool:
+    def _save_current_bundle(self) -> str | None:
+        """把当前包的表格状态写盘（save_animation_bundle 直写 anim.json）。
+        成功返回 None，失败返回错误文案——不弹窗，供保存按钮与 Save All flush 两个入口复用。"""
         if not self._current_key:
-            return False
+            return "未选中动画包"
         new_dict, err = self._build_saved_anim_dict()
         if err or new_dict is None:
-            QMessageBox.warning(self, "无法保存", err or "未知错误")
-            return False
+            return err or "未知错误"
         try:
             self._model.save_animation_bundle(self._current_key, new_dict)
         except Exception as e:  # noqa: BLE001 — 反馈给用户即可
-            QMessageBox.critical(self, "保存失败", str(e))
-            return False
+            return str(e)
         self._original_anim = copy.deepcopy(
             self._model.animations.get(self._current_key, new_dict))
         # 保存后以盘面新值为基线重建种子，防止"改回种子值"误还原成保存前的旧字面值
         self._capture_world_snapshot(self._original_anim)
         self._clear_dirty()
         self._refresh_preview()
+        return None
+
+    def _do_save(self) -> bool:
+        if not self._current_key:
+            return False
+        err = self._save_current_bundle()
+        if err:
+            QMessageBox.warning(self, "无法保存", err)
+            return False
         return True
+
+    def flush_to_model(self, for_save_all: bool = False) -> bool:
+        """Save All 钩子（主窗鸭子协议）：把当前包未保存的表格编辑落盘。
+
+        动画包不走 model 脏桶——save_animation_bundle 直写 anim.json 并同步内存，
+        缺此钩子时 Save All 会静默跳过本面板：改了帧率/refSpeed 等只标脏、盘面零 diff，
+        除非用户记得点面板自己的「保存」按钮。无脏或未选包时空转成功。
+        ``for_save_all`` 仅为统一调用签名，逻辑不区分。
+        """
+        if not self._dirty or not self._current_key:
+            return True
+        err = self._save_current_bundle()
+        if err:
+            self._flush_error = err
+            return False
+        return True
+
+    def pop_flush_error(self) -> str | None:
+        """Save All 失败详情（主窗在 flush 返回 False 后取用，一次性）。"""
+        err = getattr(self, "_flush_error", None)
+        self._flush_error = None
+        return err
 
     def _do_discard(self) -> None:
         if not self._dirty or not self._current_key:
@@ -1079,6 +1304,87 @@ class AnimEditor(QWidget):
     def _on_state_selection_changed(self) -> None:
         self._restart_preview_animation()
 
+    # ---- 步速匹配调校走廊 ----------------------------------------------------
+
+    def _gather_row_ref_speed(self, row: int) -> float | None:
+        if row < 0 or row >= self._state_table.rowCount():
+            return None
+        it = self._state_table.item(row, 4)
+        txt = it.text().strip() if it else ""
+        if not txt:
+            return None
+        try:
+            v = float(txt)
+        except ValueError:
+            return None
+        return v if v > 0 else None
+
+    def _reload_calib_from_row(self) -> None:
+        row = self._state_table.currentRow()
+        data = self._gather_row_preview(row)
+        if not data or self._sheet_pixmap is None or self._sheet_pixmap.isNull():
+            self._calib_strip.set_clip([], 8.0, 100.0, 150.0, None)
+        else:
+            _name, frames, rate, _loop = data
+            self._calib_strip.set_clip(
+                frames, rate,
+                float(max(1, self._a_ww.value())),
+                float(max(1, self._a_wh.value())),
+                self._atlas_crop,
+            )
+            self._calib_strip.set_speed(float(self._calib_speed.value()))
+        self._sync_calib_ref_from_row()
+        self._update_calib_mult_label()
+
+    def _sync_calib_ref_from_row(self) -> None:
+        """表格 refSpeed 列 → 调校 spinbox/走带（不重置走位；spinbox 侧回写有环路守卫）。"""
+        ref = self._gather_row_ref_speed(self._state_table.currentRow())
+        self._calib_ref_syncing = True
+        try:
+            self._calib_ref.setValue(float(ref) if ref else 0.0)
+        finally:
+            self._calib_ref_syncing = False
+        self._calib_strip.set_ref_speed(ref)
+
+    def _on_calib_speed_changed(self, v: float) -> None:
+        self._calib_strip.set_speed(float(v))
+        self._update_calib_mult_label()
+
+    def _on_calib_ref_changed(self, v: float) -> None:
+        if self._calib_ref_syncing:
+            return
+        row = self._state_table.currentRow()
+        if row < 0:
+            return
+        it = self._state_table.item(row, 4)
+        if it is None:
+            it = QTableWidgetItem("")
+            self._state_table.setItem(row, 4, it)
+        vv = float(v)
+        # 写表格该行 refSpeed 列 → itemChanged 标脏，保存路径与手改表格完全一致
+        it.setText("" if vv <= 0 else f"{vv:g}")
+        self._calib_strip.set_ref_speed(vv if vv > 0 else None)
+        self._update_calib_mult_label()
+
+    def _update_calib_mult_label(self) -> None:
+        mult, clamped = self._calib_strip.multiplier()
+        if self._calib_ref.value() <= 0:
+            self._lbl_calib_mult.setText("未匹配（恒原速）")
+        else:
+            self._lbl_calib_mult.setText(
+                f"倍率 {mult:.2f}×" + ("（已夹取 0.5~2）" if clamped else ""))
+
+    def _tick_calib(self) -> None:
+        if not self._calib_strip.isVisible():
+            # 折叠/被遮挡时不推进也不累积 dt（展开瞬间不跳帧）
+            self._calib_elapsed.restart()
+            return
+        dt = self._calib_elapsed.restart() / 1000.0
+        if dt < 0:
+            dt = 0.0
+        dt = min(dt, _PREVIEW_MAX_DT_SEC)
+        self._calib_strip.tick(dt)
+
     def _gather_row_preview(self, row: int) -> tuple[str, list[int], float, bool] | None:
         if row < 0 or row >= self._state_table.rowCount():
             return None
@@ -1157,6 +1463,8 @@ class AnimEditor(QWidget):
         self._preview.setText("")
 
     def _restart_preview_animation(self) -> None:
+        # 调校走廊与静态预览同源重载（选行/改帧序帧率/换包/重新可见都会走到这里）
+        self._reload_calib_from_row()
         self._stop_preview_timer()
         self._preview_accum = 0.0
         self._preview_frames = []

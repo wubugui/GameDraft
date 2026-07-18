@@ -54,6 +54,9 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
   resetNarrativeRun: { required: ['graphId'], nonEmpty: ['graphId'] },
   revertNarrativeRun: { required: ['graphId', 'stateId'], nonEmpty: ['graphId', 'stateId'] },
   activateNarrativeRun: { required: ['graphId'] },
+  // 叙事章节包（C2）：packageId=章节包引用（编排 package 标的并集）
+  loadNarrativePackage: { required: ['packageId'], nonEmpty: ['packageId'] },
+  unloadNarrativePackage: { required: ['packageId'], nonEmpty: ['packageId'] },
   setScenarioPhase: {
     required: ['scenarioId', 'phase', 'status'],
     nonEmpty: ['scenarioId', 'phase', 'status'],

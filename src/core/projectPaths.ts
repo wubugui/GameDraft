@@ -33,6 +33,7 @@ export const TEXT_URLS = {
   smellProfiles: '/assets/data/smell_profiles.json',
   overlayImages: '/assets/data/overlay_images.json',
   scenarios: '/assets/data/scenarios.json',
+  narrativePackages: '/assets/data/narrative_packages.json',
   documentReveals: '/assets/data/document_reveals.json',
   audioConfig: '/assets/data/audio_config.json',
   strings: '/assets/data/strings.json',

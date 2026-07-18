@@ -87,6 +87,8 @@ class ProjectModel(QObject):
         self.overlay_images: dict[str, str] = {}
         self.scenarios_catalog: dict = {}
         self.narrative_graphs: dict = {}
+        #: 章节导演清单（C2 电影摄制模型）：行={id,package?,scene?,when,autoPlay,done}
+        self.narrative_packages: dict = {}
         self.document_reveals: list = []
         self.smell_profiles: dict = {}
         self.pressure_holds: list[dict] = []
@@ -374,6 +376,14 @@ class ProjectModel(QObject):
             self.load_anomalies.append(
                 "narrative_graphs.json: 根不是 JSON 对象，载入为空图集（下次保存 narrative_graphs 会覆写该文件）",
             )
+        raw_np = self._load(dp / "narrative_packages.json", {"packages": []})
+        if isinstance(raw_np, dict):
+            self.narrative_packages = raw_np
+        else:
+            self.narrative_packages = {"packages": []}
+            self.load_anomalies.append(
+                "narrative_packages.json: 根不是 JSON 对象，载入为空清单（下次保存 narrative_packages 会覆写该文件）",
+            )
         raw_dr = self._load(dp / "document_reveals.json", [])
         if isinstance(raw_dr, list):
             self.document_reveals = raw_dr
@@ -632,6 +642,8 @@ class ProjectModel(QObject):
             out.append(dp / "scenarios.json")
         if "narrative_graphs" in dty:
             out.append(dp / "narrative_graphs.json")
+        if "narrative_packages" in dty:
+            out.append(dp / "narrative_packages.json")
         if "document_reveals" in dty:
             out.append(dp / "document_reveals.json")
         if "smell_profiles" in dty:
@@ -829,6 +841,8 @@ class ProjectModel(QObject):
             if "narrative_graphs" in dty:
                 # 规范化与校验已在预校验段完成（写盘前零副作用拦截）。
                 w.add(dp / "narrative_graphs.json", self.narrative_graphs)
+            if "narrative_packages" in dty:
+                w.add(dp / "narrative_packages.json", self.narrative_packages)
             if "document_reveals" in dty:
                 w.add(dp / "document_reveals.json", self.document_reveals)
             if "smell_profiles" in dty:
@@ -977,7 +991,7 @@ class ProjectModel(QObject):
     KNOWN_DIRTY_BUCKETS: frozenset = frozenset({
         "config", "characterRegistry", "item", "quest", "questGroup", "encounter",
         "rules", "shop", "map", "cutscene", "audio", "strings", "archive", "scene",
-        "flag_registry", "overlay_images", "scenarios", "narrative_graphs",
+        "flag_registry", "overlay_images", "scenarios", "narrative_graphs", "narrative_packages",
         "document_reveals", "smell_profiles", "pressure_holds", "signal_cues",
         "planes", "narrative_templates", "narrative_categories", "dialogue_stubs",
         "dialogue_graph_edits", "water_minigames", "sugar_wheel", "paper_craft", "filter",
@@ -1508,6 +1522,26 @@ class ProjectModel(QObject):
             graph = self._find_narrative_graph_by_id(gid)
             if isinstance(graph, dict) and isinstance(graph.get("run"), dict):
                 out.append(gid)
+        return out
+
+    def narrative_package_ids_ordered(self) -> list[str]:
+        """章节包 id 并集（composition.package + 各 element.package，按出现序）——
+        load/unloadNarrativePackage 与元素级章节包选择器候选。"""
+        out: list[str] = []
+
+        def _add(pkg: object) -> None:
+            p = str(pkg or "").strip()
+            if p and p not in out:
+                out.append(p)
+
+        comps = self.narrative_graphs.get("compositions") if isinstance(self.narrative_graphs, dict) else None
+        for comp in comps or []:
+            if not isinstance(comp, dict):
+                continue
+            _add(comp.get("package"))
+            for el in comp.get("elements") or []:
+                if isinstance(el, dict):
+                    _add(el.get("package"))
         return out
 
     def _find_narrative_graph_by_id(self, graph_id: str) -> dict | None:

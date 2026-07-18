@@ -1,0 +1,95 @@
+{
+  "packages": [
+    {
+      "id": "听书开场",
+      "scene": "teahouse",
+      "package": "章节_听书",
+      "autoPlay": {
+        "type": "startDialogueGraph",
+        "params": {
+          "graphId": "寻狗_听书开场"
+        }
+      },
+      "done": [
+        {
+          "narrative": "scenario_听书",
+          "state": "kicked_out",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "id": "梦_夜路开场",
+      "scene": "梦_夜路",
+      "autoPlay": {
+        "type": "runActions",
+        "params": {
+          "actions": [
+            {
+              "type": "fadeWorldFromBlack",
+              "params": {
+                "durationMs": 800
+              }
+            },
+            {
+              "type": "startDialogueGraph",
+              "params": {
+                "graphId": "梦_段A_夜路"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "梦_农家院开场",
+      "scene": "梦_农家院",
+      "autoPlay": {
+        "type": "runActions",
+        "params": {
+          "actions": [
+            {
+              "type": "fadeWorldFromBlack",
+              "params": {
+                "durationMs": 600
+              }
+            },
+            {
+              "type": "startDialogueGraph",
+              "params": {
+                "graphId": "梦_段B_农家院"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "梦_醒来土路开场",
+      "scene": "梦_醒来土路",
+      "autoPlay": {
+        "type": "runActions",
+        "params": {
+          "actions": [
+            {
+              "type": "stopBgm",
+              "params": {}
+            },
+            {
+              "type": "fadeWorldFromBlack",
+              "params": {
+                "durationMs": 1000
+              }
+            },
+            {
+              "type": "startDialogueGraph",
+              "params": {
+                "graphId": "梦_段E_醒来"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

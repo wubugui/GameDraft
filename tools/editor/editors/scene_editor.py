@@ -21,7 +21,7 @@ from pathlib import Path, PurePosixPath
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QListWidget, QListWidgetItem,
     QGraphicsView, QGraphicsScene, QGraphicsEllipseItem, QGraphicsRectItem,
-    QGraphicsItem, QGraphicsObject,
+    QGraphicsItem, QGraphicsObject, QGraphicsPolygonItem,
     QGraphicsPixmapItem, QGroupBox, QFormLayout, QLineEdit, QDoubleSpinBox,
     QSpinBox, QComboBox, QCheckBox, QLabel, QPushButton, QScrollArea,
     QStackedWidget, QToolBar, QMenu, QGraphicsTextItem,
@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
     QTreeWidget, QTreeWidgetItem,
     QSizePolicy, QGraphicsSceneMouseEvent, QGraphicsSceneHoverEvent,
     QGraphicsSceneContextMenuEvent,     QTableWidget, QTableWidgetItem, QHeaderView, QSlider,
-    QRadioButton, QButtonGroup, QCompleter, QFrame,
+    QRadioButton, QButtonGroup, QCompleter, QTabWidget,
 )
 from PySide6.QtGui import (
     QPixmap, QImage, QPen, QBrush, QColor, QFontMetricsF, QPainter, QWheelEvent,
@@ -39,6 +39,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtCore import (
     Qt,
+    QEvent,
     QRect,
     QRectF,
     QPoint,
@@ -51,9 +52,12 @@ from PySide6.QtCore import (
 
 from .scene_undo import SceneUndoController
 from ..shared.entity_transform_math import (
+    entity_perspective_factor,
     entity_rotation_deg_of,
     entity_scale_of,
     inverse_transform_world_vec,
+    perspective_scale_at,
+    perspective_valid_rulers,
     transform_local_vec,
 )
 
@@ -406,8 +410,9 @@ class _SceneNpcAnimRuntime:
         "world_w", "world_h", "frames", "frame_idx", "_accum",
         "frame_rate", "loop",
         "facing_x", "_prev_x", "_prev_y", "_have_prev",
-        "inst_scale", "inst_rot_deg",
+        "inst_scale", "inst_rot_deg", "persp",
         "speed_mult", "reverse", "hold_frame", "start_frame",
+        "ref_speed",
     )
 
     def __init__(
@@ -426,6 +431,7 @@ class _SceneNpcAnimRuntime:
         cell_w: int | None = None,
         cell_h: int | None = None,
         atlas_frames: list[dict] | None = None,
+        ref_speed: float | None = None,
     ) -> None:
         self.npc_id = npc_id
         self.item = item
@@ -450,11 +456,15 @@ class _SceneNpcAnimRuntime:
         # 实例 transform（quad 级真变换预览；与运行时 container 级施加同口径）
         self.inst_scale = 1.0
         self.inst_rot_deg = 0.0
+        # 场景透视缩放系数（近大远小预览；随位置每拍拉取，与运行时 sprite 级施加同口径）
+        self.persp = 1.0
         # 初始播放参数（initialAnimPlayback 预览；与 tick 循环的位置/transform 同为每拍拉取）
         self.speed_mult = 1.0
         self.reverse = False
         self.hold_frame: int | None = None
         self.start_frame: int | None = None
+        # 本 runtime 所播状态的步速匹配基准（anim.json state.referenceSpeed；巡逻预览步速缩放用）
+        self.ref_speed = float(ref_speed) if ref_speed and ref_speed > 0 else None
 
     def set_instance_transform(self, scale: float, rot_deg: float) -> None:
         self.inst_scale = float(scale) if scale and scale > 0 else 1.0
@@ -537,8 +547,9 @@ class _SceneNpcAnimRuntime:
         fw = max(1, pm.width())
         fh = max(1, pm.height())
         self.item.setPixmap(pm)
-        sx = (self.world_w / fw) * self.facing_x * self.inst_scale
-        sy = (self.world_h / fh) * self.inst_scale
+        eff = self.inst_scale * (self.persp if self.persp and self.persp > 0 else 1.0)
+        sx = (self.world_w / fw) * self.facing_x * eff
+        sy = (self.world_h / fh) * eff
         t = QTransform()
         t.translate(float(npc_x), float(npc_y))
         if self.inst_rot_deg:
@@ -1816,6 +1827,84 @@ class _LightCurvePolyline(QGraphicsObject):
 # Canvas view  (coordinate system = world units)
 # ---------------------------------------------------------------------------
 
+class _PerspRulerLine(QGraphicsObject):
+    """透视缩放水平基准线：横贯世界宽度的虚线 + 「y=… ×scale」标签，仅可垂直拖动。
+
+    拖动 live 只动线与标签；release 经 SceneCanvas.persp_ruler_committed(index, y)
+    一次提交（面板据此改表格 → 走既有 pending/dirty 通路）。index 为场景
+    perspectiveScale.rulers 原始下标（含非法条目占位，保证写回不串行）。
+    """
+
+    def __init__(self, canvas: "SceneCanvas", index: int, y: float, scale_v: float):
+        super().__init__()
+        self._canvas = canvas
+        self.index = int(index)
+        self.scale_v = float(scale_v)
+        self._dragging = False
+        self._press_scene_y = 0.0
+        self._press_item_y = 0.0
+        self.setPos(0.0, float(y))
+        self.setZValue(8_000)
+        self.setAcceptedMouseButtons(Qt.MouseButton.LeftButton)
+        self.setCursor(Qt.CursorShape.SizeVerCursor)
+
+    def _grab_h(self) -> float:
+        return max(8.0, self._canvas._world_h * 0.012)
+
+    def boundingRect(self) -> QRectF:
+        h = self._grab_h()
+        return QRectF(-4.0, -h, self._canvas._world_w + 8.0, h * 2)
+
+    def shape(self) -> QPainterPath:
+        h = self._grab_h()
+        path = QPainterPath()
+        path.addRect(QRectF(0.0, -h * 0.5, self._canvas._world_w, h))
+        return path
+
+    def paint(self, painter: QPainter, _opt, _widget=None) -> None:
+        pen = QPen(QColor(255, 170, 60, 200), 0, Qt.PenStyle.DashLine)
+        painter.setPen(pen)
+        painter.drawLine(QPointF(0.0, 0.0), QPointF(self._canvas._world_w, 0.0))
+        painter.setFont(theme.make_editor_font(
+            theme.FONT_ROLE_CANVAS_SECONDARY,
+            family=MONO_FONT_FAMILY,
+        ))
+        painter.setPen(QPen(QColor(255, 200, 120, 230), 0))
+        painter.drawText(
+            QPointF(6.0, -4.0),
+            f"透视 y={self.pos().y():.0f}  ×{self.scale_v:g}",
+        )
+
+    def refresh_editor_font(self) -> None:
+        self.prepareGeometryChange()
+        self.update()
+
+    def mousePressEvent(self, event: QGraphicsSceneMouseEvent) -> None:
+        self._dragging = True
+        self._press_scene_y = event.scenePos().y()
+        self._press_item_y = self.pos().y()
+        event.accept()
+
+    def mouseMoveEvent(self, event: QGraphicsSceneMouseEvent) -> None:
+        if not self._dragging:
+            event.ignore()
+            return
+        ny = self._press_item_y + (event.scenePos().y() - self._press_scene_y)
+        self.prepareGeometryChange()
+        self.setPos(0.0, ny)
+        self.update()
+        event.accept()
+
+    def mouseReleaseEvent(self, event: QGraphicsSceneMouseEvent) -> None:
+        if not self._dragging:
+            event.ignore()
+            return
+        self._dragging = False
+        if self.pos().y() != self._press_item_y:
+            self._canvas.persp_ruler_committed.emit(self.index, float(self.pos().y()))
+        event.accept()
+
+
 class SceneCanvas(QGraphicsView):
     item_selected = Signal(str, str)   # (entity_kind, entity_id)
     item_deselected = Signal()
@@ -1845,6 +1934,8 @@ class SceneCanvas(QGraphicsView):
     # (kind, id, scale, rotation_deg)
     transform_gizmo_live = Signal(str, str, float, float)
     transform_gizmo_committed = Signal(str, str, float, float)
+    # 透视缩放基准线拖动提交：(rulers 原始下标, 新 y)
+    persp_ruler_committed = Signal(int, float)
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -1891,6 +1982,10 @@ class SceneCanvas(QGraphicsView):
         # 点选类对话框（出生点/相机/位置 picker）置 True：恢复 NoDrag 单手势语义——
         # 它们只连 item_moved，批量信号无人消费会造成"框选拖动视觉动、数据不写"（审查 P2-B）。
         self._single_gesture_only = False
+        # 场景透视缩放（近大远小）：面板/加载路径经 set_perspective_config 写入；
+        # 实体预览统一经 persp_factor 求系数（与运行时同口径，防预览撒谎）。
+        self._persp_cfg: dict | None = None
+        self._persp_ruler_items: list[_PerspRulerLine] = []
 
     def set_single_gesture_only(self) -> None:
         self._single_gesture_only = True
@@ -1924,6 +2019,70 @@ class SceneCanvas(QGraphicsView):
         self._patrol_overlays.clear()
         self._lightcurve_overlay = None
         self._transform_gizmo = None  # 图元已随 _gfx.clear() 析构
+        self._persp_cfg = None
+        self._persp_ruler_items = []  # 图元已随 _gfx.clear() 析构
+
+    def set_perspective_config(self, cfg: dict | None) -> None:
+        """写入当前场景 perspectiveScale（None=未启用）并重建画布基准线。
+        实体图元不在此刷新——调用方按需刷新（加载路径随后 add_*，编辑路径显式刷）。"""
+        self._persp_cfg = cfg if isinstance(cfg, dict) else None
+        for it in self._persp_ruler_items:
+            if it.scene() is self._gfx:
+                self._gfx.removeItem(it)
+        self._persp_ruler_items = []
+        raw = self._persp_cfg.get("rulers") if self._persp_cfg else None
+        if isinstance(raw, list):
+            for i, r in enumerate(raw):
+                if not isinstance(r, dict):
+                    continue
+                ys = perspective_valid_rulers({"rulers": [r]})
+                if not ys:
+                    continue
+                line = _PerspRulerLine(self, i, ys[0][0], ys[0][1])
+                self._gfx.addItem(line)
+                self._persp_ruler_items.append(line)
+
+    def persp_factor(self, ent: dict | None, kind: str, foot_y: float | None = None) -> float:
+        """实体画布预览的透视系数（参与判定 × f(脚底 y)）；未配置时恒 1。"""
+        return entity_perspective_factor(self._persp_cfg, ent, kind, foot_y)
+
+    def _sync_collision_persp_ghost(
+        self,
+        key: str,
+        anchor_x: float,
+        anchor_y: float,
+        world_pts: list[tuple[float, float]],
+        pf: float,
+        color: QColor,
+    ) -> None:
+        """运行时命中面幽灵轮廓：参与透视（pf≠1）且有碰撞多边形时，把 authored 世界多边形
+        绕锚点 × 透视系数画成只读虚线（与运行时 anchorCollisionPolygonToWorld extraScale
+        同口径）。可编辑多边形保持 authored 空间（顶点拖拽/表格写回零改动），两者并存防预览撒谎。"""
+        show = pf != 1.0 and len(world_pts) >= 3
+        it = self._entity_items.get(key)
+        if not show:
+            if it is not None:
+                self._entity_items.pop(key, None)
+                if it.scene() is self._gfx:
+                    self._gfx.removeItem(it)
+            return
+        poly = QPolygonF([
+            QPointF(anchor_x + (px - anchor_x) * pf, anchor_y + (py - anchor_y) * pf)
+            for px, py in world_pts
+        ])
+        if isinstance(it, QGraphicsPolygonItem) and it.scene() is self._gfx:
+            it.setPolygon(poly)
+            return
+        if it is not None and it.scene() is self._gfx:
+            self._gfx.removeItem(it)
+        g = QGraphicsPolygonItem(poly)
+        g.setPen(QPen(QColor(color.red(), color.green(), color.blue(), 210), 0,
+                      Qt.PenStyle.DashLine))
+        g.setBrush(Qt.BrushStyle.NoBrush)
+        g.setZValue(-2)
+        g.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        self._gfx.addItem(g)
+        self._entity_items[key] = g
 
     def show_transform_gizmo(
         self, kind: str, eid: str, ax: float, ay: float,
@@ -2007,7 +2166,8 @@ class SceneCanvas(QGraphicsView):
     def add_hotspot(self, hs: dict) -> None:
         ht = hs.get("type", "inspect")
         color = _HOTSPOT_COLORS.get(ht, _HOTSPOT_COLORS["inspect"])
-        ir = float(hs.get("interactionRange", 50) or 0) * entity_scale_of(hs)
+        ir = (float(hs.get("interactionRange", 50) or 0)
+              * entity_scale_of(hs) * self.persp_factor(hs, "hotspot"))
         item = _DraggableCircle(
             hs["x"], hs["y"], self.handle_radius,
             color, hs.get("id", "?"), "hotspot",
@@ -2035,7 +2195,9 @@ class SceneCanvas(QGraphicsView):
         cx = float(hs.get("x", 0))
         cy = float(hs.get("y", 0))
         facing = str(di.get("facing", "") or "right").strip().lower()
-        inst_s = entity_scale_of(hs)
+        # 实例 scale × 透视系数：与运行时 Hotspot 容器级复合同口径（防预览撒谎）
+        pf = self.persp_factor(hs, "hotspot")
+        inst_s = entity_scale_of(hs) * pf
         inst_rot = entity_rotation_deg_of(hs)
 
         def _foot_anchor_transform(frame_w: float, frame_h: float) -> QTransform:
@@ -2101,6 +2263,9 @@ class SceneCanvas(QGraphicsView):
         col_key = f"hotspot_collision:{hid}"
         poly = hs.get("collisionPolygon")
         pts: list[tuple[float, float]] = []
+        # 碰撞多边形保持 authored 空间显示（不乘透视系数）：表格/顶点拖拽/写回同一空间，
+        # 引入系数会与既有双向同步（表格 world ↔ 画布 world）裂脑。运行时命中面按系数
+        # 缩放属已知预览差（参与透视的实体通常用交互半径，见 authoring-surface 文档）。
         if isinstance(poly, list) and len(poly) >= 3:
             if hs.get("collisionPolygonLocal") is True:
                 for p in _hotspot_collision_local_to_world(hs, poly):
@@ -2136,6 +2301,9 @@ class SceneCanvas(QGraphicsView):
             old_col = self._entity_items.pop(col_key, None)
             if old_col is not None and old_col.scene() is self._gfx:
                 self._gfx.removeItem(old_col)
+        self._sync_collision_persp_ghost(
+            f"hotspot_collision_ghost:{hid}", cx, cy, pts, pf,
+            _HOTSPOT_COLLISION_ZONE_COLOR)
 
     def update_hotspot_collision_polygon(self, entity_id: str, polygon: list) -> None:
         key = f"hotspot_collision:{entity_id}"
@@ -2151,6 +2319,8 @@ class SceneCanvas(QGraphicsView):
         col_key = f"npc_collision:{nid}"
         poly = npc.get("collisionPolygon")
         pts: list[tuple[float, float]] = []
+        # 碰撞多边形保持 authored 空间显示（不乘透视系数），理由同 hotspot 侧注释；
+        # 运行时命中面另画只读幽灵轮廓（函数尾）。
         if isinstance(poly, list) and len(poly) >= 3:
             if npc.get("collisionPolygonLocal") is True:
                 for p in _hotspot_collision_local_to_world(npc, poly):
@@ -2188,6 +2358,11 @@ class SceneCanvas(QGraphicsView):
             old_col = self._entity_items.pop(col_key, None)
             if old_col is not None and old_col.scene() is self._gfx:
                 self._gfx.removeItem(old_col)
+        self._sync_collision_persp_ghost(
+            f"npc_collision_ghost:{nid}",
+            float(npc.get("x", 0)), float(npc.get("y", 0)),
+            pts, self.persp_factor(npc, "npc"),
+            _NPC_COLLISION_ZONE_COLOR)
 
     def update_npc_collision_polygon(self, entity_id: str, polygon: list) -> None:
         key = f"npc_collision:{entity_id}"
@@ -2196,7 +2371,8 @@ class SceneCanvas(QGraphicsView):
             item.set_points_from_model(polygon)
 
     def add_npc(self, npc: dict) -> None:
-        ir = float(npc.get("interactionRange", 50) or 0) * entity_scale_of(npc)
+        ir = (float(npc.get("interactionRange", 50) or 0)
+              * entity_scale_of(npc) * self.persp_factor(npc, "npc"))
         item = _DraggableCircle(
             npc["x"], npc["y"], self.handle_radius,
             _NPC_COLOR, npc.get("id", "?"), "npc",
@@ -2376,7 +2552,8 @@ class SceneCanvas(QGraphicsView):
         if not hid:
             return
         self._entity_planes.pop(f"hotspot:{hid}", None)
-        for key in (f"hotspot:{hid}", f"hotspot_display:{hid}", f"hotspot_collision:{hid}"):
+        for key in (f"hotspot:{hid}", f"hotspot_display:{hid}", f"hotspot_collision:{hid}",
+                    f"hotspot_collision_ghost:{hid}"):
             it = self._entity_items.pop(key, None)
             if it is not None and it.scene() is self._gfx:
                 self._gfx.removeItem(it)
@@ -2387,7 +2564,7 @@ class SceneCanvas(QGraphicsView):
             return
         self.remove_npc_patrol_overlay(nid)
         self._entity_planes.pop(f"npc:{nid}", None)
-        for key in (f"npc:{nid}", f"npc_collision:{nid}"):
+        for key in (f"npc:{nid}", f"npc_collision:{nid}", f"npc_collision_ghost:{nid}"):
             it = self._entity_items.pop(key, None)
             if it is not None and it.scene() is self._gfx:
                 self._gfx.removeItem(it)
@@ -2434,9 +2611,10 @@ class SceneCanvas(QGraphicsView):
         lk = str(logical_kind).strip().lower()
         keys: list[str] = []
         if lk == "hotspot":
-            keys = [f"hotspot:{eid}", f"hotspot_display:{eid}", f"hotspot_collision:{eid}"]
+            keys = [f"hotspot:{eid}", f"hotspot_display:{eid}", f"hotspot_collision:{eid}",
+                    f"hotspot_collision_ghost:{eid}"]
         elif lk == "npc":
-            keys = [f"npc:{eid}", f"npc_collision:{eid}"]
+            keys = [f"npc:{eid}", f"npc_collision:{eid}", f"npc_collision_ghost:{eid}"]
             ov = self._patrol_overlays.get(eid)
             if ov is not None:
                 ov.setVisible(visible)
@@ -3474,6 +3652,8 @@ class ScenePropertyPanel(QScrollArea):
     delete_current_entity_requested = Signal()
     # 巡逻折线显示/数据变更后刷新画布 overlay
     npc_patrol_overlay_refresh_requested = Signal()
+    # 透视缩放配置 live 预览：携带按当前 UI 生成的 cfg dict（未启用为 None）
+    perspective_preview_changed = Signal(object)
     # 光环境曲线数据变化→请求画布重建 overlay
     lightcurve_overlay_refresh_requested = Signal()
     # npc_id, enabled — 仅编辑器内沿路径预览精灵
@@ -3916,6 +4096,56 @@ class ScenePropertyPanel(QScrollArea):
         depth_box.add_body(depth_inner)
         outer.addWidget(depth_box)
 
+        self._persp_box = CollapsibleSection("透视缩放 perspectiveScale（近大远小）", start_open=False)
+        self._persp_box.set_header_tool_tip(
+            "实体按脚底 y 在基准线间线性插值缩放；缺省不启用=完全不缩放。"
+            "玩家/NPC 默认参与（renderRaw 抠图实体除外），热点需逐个开启。",
+        )
+        persp_inner = QWidget()
+        persp_lay = QVBoxLayout(persp_inner)
+        persp_lay.setContentsMargins(0, 0, 0, 0)
+        persp_lay.setSpacing(4)
+        self._sc_persp_enable = QCheckBox("启用透视缩放")
+        self._sc_persp_enable.setToolTip(
+            "开启后按下方基准线求 f(y)；关闭并 Apply 会从场景 JSON 删除 perspectiveScale。",
+        )
+        self._sc_persp_enable.stateChanged.connect(lambda _s: self._on_persp_widgets_changed())
+        persp_lay.addWidget(self._sc_persp_enable)
+        self._sc_persp_table = QTableWidget(0, 2)
+        self._sc_persp_table.setHorizontalHeaderLabels(["基准线 y", "缩放"])
+        self._sc_persp_table.horizontalHeader().setStretchLastSection(True)
+        self._sc_persp_table.verticalHeader().setVisible(False)
+        self._sc_persp_table.setMaximumHeight(120)
+        self._sc_persp_table.setToolTip(
+            "至少两条；画布上的橙色虚线即基准线，可直接上下拖动改 y。"
+            "远处（y 小）配小缩放、近处（y 大）配 1.0 即近大远小。",
+        )
+        self._sc_persp_table.itemChanged.connect(lambda _i: self._on_persp_widgets_changed())
+        persp_lay.addWidget(self._sc_persp_table)
+        self._install_vertex_table_affordances(
+            self._sc_persp_table, self._on_persp_remove_row, label="删除选中基准线")
+        persp_btns = QHBoxLayout()
+        b_add = QPushButton("＋ 基准线")
+        b_add.setToolTip("在表尾加一条基准线（y 取画布中部，缩放 1.0）")
+        b_add.clicked.connect(self._on_persp_add_row)
+        persp_btns.addWidget(b_add)
+        b_del = QPushButton("－ 删除选中")
+        b_del.setToolTip("删除选中的基准线（也可按 Delete）")
+        b_del.clicked.connect(self._on_persp_remove_row)
+        persp_btns.addWidget(b_del)
+        persp_btns.addStretch(1)
+        persp_lay.addLayout(persp_btns)
+        self._sc_persp_speed = QCheckBox("移动速度同步补偿 affectsSpeed")
+        self._sc_persp_speed.setChecked(True)
+        self._sc_persp_speed.setToolTip(
+            "开：移动步长同乘 f(y)，远处角色不会相对背景滑步（推荐）；"
+            "关：只缩放视觉，速度不变。",
+        )
+        self._sc_persp_speed.stateChanged.connect(lambda _s: self._on_persp_widgets_changed())
+        persp_lay.addWidget(self._sc_persp_speed)
+        self._persp_box.add_body(persp_inner)
+        outer.addWidget(self._persp_box)
+
         move_g = self._section("角色移动速度", start_open=True)
         move_inner = QWidget()
         move_f = compact_form(QFormLayout(move_inner))
@@ -4184,6 +4414,7 @@ class ScenePropertyPanel(QScrollArea):
             finally:
                 self._sc_depth_tol.blockSignals(False)
                 self._sc_floor_offset.blockSignals(False)
+            self._load_persp_widgets(st)
             raw_amb = st.get("ambientSounds", [])
             if not isinstance(raw_amb, list):
                 raw_amb = []
@@ -4200,6 +4431,139 @@ class ScenePropertyPanel(QScrollArea):
         if not self._sc_depth_tol.isEnabled():
             return
         self._emit_props_changed()
+
+    # ---- 透视缩放 perspectiveScale --------------------------------------
+    @staticmethod
+    def _persp_cell_text(v: object) -> str:
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            return str(v) if v is not None else ""
+        return str(v)
+
+    def _on_persp_widgets_changed(self) -> None:
+        if getattr(self, "_persp_updating", False):
+            return
+        self._emit_props_changed()
+        self.perspective_preview_changed.emit(self._persp_cfg_preview())
+
+    def _persp_cfg_preview(self) -> dict | None:
+        """按当前 UI 生成画布预览用 cfg（未启用 None）；不做 orig 保真（那是 flush 的事）。"""
+        if not self._sc_persp_enable.isChecked():
+            return None
+        rulers: list[dict] = []
+        t = self._sc_persp_table
+        for i in range(t.rowCount()):
+            it_y = t.item(i, 0)
+            it_s = t.item(i, 1)
+            try:
+                y = float((it_y.text() if it_y else "").strip())
+                s = float((it_s.text() if it_s else "").strip())
+            except (TypeError, ValueError):
+                continue
+            rulers.append({"y": y, "scale": s})
+        return {"rulers": rulers}
+
+    def _on_persp_add_row(self) -> None:
+        t = self._sc_persp_table
+        wh = float(self._sc_height.value() or 0) or 600.0
+        default_y = wh * 0.4 if t.rowCount() == 0 else wh
+        self._persp_updating = True
+        try:
+            r = t.rowCount()
+            t.insertRow(r)
+            t.setItem(r, 0, QTableWidgetItem(f"{default_y:.0f}"))
+            t.setItem(r, 1, QTableWidgetItem("1.0" if r > 0 else "0.6"))
+        finally:
+            self._persp_updating = False
+        self._on_persp_widgets_changed()
+
+    def _on_persp_remove_row(self) -> None:
+        r = self._sc_persp_table.currentRow()
+        if r < 0:
+            return
+        self._persp_updating = True
+        try:
+            self._sc_persp_table.removeRow(r)
+        finally:
+            self._persp_updating = False
+        self._on_persp_widgets_changed()
+
+    def apply_persp_ruler_y(self, idx: int, y: float) -> None:
+        """画布基准线拖动提交：写回表格对应行的 y（经 itemChanged 走统一 dirty/预览通路）。"""
+        t = self._sc_persp_table
+        if not (0 <= idx < t.rowCount()):
+            return
+        it = t.item(idx, 0)
+        if it is None:
+            it = QTableWidgetItem()
+            t.setItem(idx, 0, it)
+        it.setText(f"{round(float(y), 1):g}")
+
+    def _load_persp_widgets(self, st: dict) -> None:
+        cfg = st.get("perspectiveScale")
+        self._persp_updating = True
+        try:
+            t = self._sc_persp_table
+            t.blockSignals(True)
+            t.setRowCount(0)
+            raw = cfg.get("rulers") if isinstance(cfg, dict) else None
+            if isinstance(raw, list):
+                for r in raw:
+                    if not isinstance(r, dict):
+                        continue
+                    row = t.rowCount()
+                    t.insertRow(row)
+                    t.setItem(row, 0, QTableWidgetItem(self._persp_cell_text(r.get("y"))))
+                    t.setItem(row, 1, QTableWidgetItem(self._persp_cell_text(r.get("scale"))))
+            t.blockSignals(False)
+            self._sc_persp_enable.blockSignals(True)
+            self._sc_persp_enable.setChecked(isinstance(cfg, dict))
+            self._sc_persp_enable.blockSignals(False)
+            self._sc_persp_speed.blockSignals(True)
+            self._sc_persp_speed.setChecked(
+                not (isinstance(cfg, dict) and cfg.get("affectsSpeed") is False))
+            self._sc_persp_speed.blockSignals(False)
+            self._persp_box.set_expanded(isinstance(cfg, dict))
+        finally:
+            self._persp_updating = False
+
+    def _flush_persp_into(self, sc: dict) -> None:
+        """UI → staging：零编辑时按值比较原样保留原 dict（键序/数值表示零变化）。"""
+        orig = sc.get("perspectiveScale")
+        if not self._sc_persp_enable.isChecked():
+            sc.pop("perspectiveScale", None)
+            return
+        base = orig if isinstance(orig, dict) else {}
+        orig_rulers = base.get("rulers") if isinstance(base.get("rulers"), list) else []
+        t = self._sc_persp_table
+        new_rulers: list[dict] = []
+        for i in range(t.rowCount()):
+            od = orig_rulers[i] if i < len(orig_rulers) and isinstance(orig_rulers[i], dict) else {}
+            it_y = t.item(i, 0)
+            it_s = t.item(i, 1)
+            try:
+                y = float((it_y.text() if it_y else "").strip())
+                s = float((it_s.text() if it_s else "").strip())
+            except (TypeError, ValueError):
+                # 单元格解析不了：有原条目则原样保留（不静默丢），纯新行跳过
+                if od:
+                    new_rulers.append(od)
+                continue
+            nd = dict(od)
+            nd["y"] = self._keep_num(y, od.get("y"))
+            nd["scale"] = self._keep_num(s, od.get("scale"))
+            new_rulers.append(od if nd == od else nd)
+        out = dict(base)
+        out["rulers"] = new_rulers
+        if self._sc_persp_speed.isChecked():
+            # 缺省 true：仅原本就显式 true 时保留键，否则省略
+            if base.get("affectsSpeed") is not True:
+                out.pop("affectsSpeed", None)
+        else:
+            out["affectsSpeed"] = False
+        if isinstance(orig, dict) and out == orig:
+            sc["perspectiveScale"] = orig
+        else:
+            sc["perspectiveScale"] = out
 
     def _on_lock_aspect_toggled(self, checked: bool) -> None:
         if checked:
@@ -4549,6 +4913,7 @@ class ScenePropertyPanel(QScrollArea):
                 float(self._sc_depth_tol.value()), dc_save.get("depth_tolerance"))
             dc_save["floor_offset"] = self._keep_num(
                 float(self._sc_floor_offset.value()), dc_save.get("floor_offset"))
+        self._flush_persp_into(sc)
         ambs = self._ambient_ids_from_widgets()
         if ambs:
             sc["ambientSounds"] = ambs
@@ -5028,6 +5393,16 @@ class ScenePropertyPanel(QScrollArea):
             "实例旋转（度，绕脚底锚点）：quad 级真变换同上；缺省 0 不写入 JSON。")
         self._hs_rot.valueChanged.connect(self._on_hs_transform_live)
         form.addRow("rotation°", self._hs_rot)
+        self._hs_persp = QComboBox()
+        self._hs_persp.addItem("缺省（不参与）", None)
+        self._hs_persp.addItem("参与", True)
+        self._hs_persp.addItem("不参与", False)
+        self._hs_persp.setToolTip(
+            "场景透视缩放（perspectiveScale）参与开关：热点缺省不参与——多为贴背景 WYSIWYG "
+            "绘制、贴墙热点脚底 y 也不代表真实深度；地面道具（displayImage、会被移动）可选「参与」。"
+            "场景未启用透视缩放时本项无效果。")
+        self._hs_persp.currentIndexChanged.connect(self._on_hs_persp_changed)
+        form.addRow("透视缩放", self._hs_persp)
         self._hs_auto = QCheckBox(); form.addRow("autoTrigger", self._hs_auto)
         self._hs_auto.stateChanged.connect(lambda _s: self._emit_props_changed())
         self._hs_cast_shadow = QCheckBox("投射阴影 + 接触AO")
@@ -5717,6 +6092,11 @@ class ScenePropertyPanel(QScrollArea):
             self._hs_rot.blockSignals(True)
             self._hs_rot.setValue(entity_rotation_deg_of(st))
             self._hs_rot.blockSignals(False)
+            self._hs_persp.blockSignals(True)
+            _pv = st.get("perspectiveScaleEnabled")
+            self._hs_persp.setCurrentIndex(
+                0 if not isinstance(_pv, bool) else (1 if _pv else 2))
+            self._hs_persp.blockSignals(False)
             self._hs_auto.setChecked(st.get("autoTrigger", False))
             self._hs_cast_shadow.setChecked(st.get("castShadow", True) is not False)
             self._hs_cutscene_ids_pending = self._entity_cutscene_ids_from_data(st)
@@ -5914,6 +6294,39 @@ class ScenePropertyPanel(QScrollArea):
             self.hotspot_visual_refresh_requested.emit(eid)
             self.interaction_range_changed.emit(
                 "hotspot", eid, float(hs.get("interactionRange", 50) or 0))
+
+    def _on_hs_persp_changed(self, _i: int) -> None:
+        hs = self._pending_hotspot
+        if hs is None or self._stack.currentWidget() != self._hotspot_panel:
+            return
+        v = self._hs_persp.currentData()
+        if v is None:
+            hs.pop("perspectiveScaleEnabled", None)
+        else:
+            hs["perspectiveScaleEnabled"] = bool(v)
+        eid = str(hs.get("id", ""))
+        self._emit_props_changed()
+        if eid:
+            # 参与态翻转即时反映到展示图/交互圈（复用实例 transform 的 live 刷新链路）
+            self.hotspot_visual_refresh_requested.emit(eid)
+            self.interaction_range_changed.emit(
+                "hotspot", eid, float(hs.get("interactionRange", 50) or 0))
+
+    def _on_npc_persp_changed(self, _i: int) -> None:
+        npc = self._pending_npc
+        if npc is None or self._stack.currentWidget() != self._npc_panel:
+            return
+        v = self._npc_persp.currentData()
+        if v is None:
+            npc.pop("perspectiveScaleEnabled", None)
+        else:
+            npc["perspectiveScaleEnabled"] = bool(v)
+        eid = str(npc.get("id", ""))
+        self._emit_props_changed()
+        if eid:
+            self.npc_xy_live_changed.emit(eid)
+            self.interaction_range_changed.emit(
+                "npc", eid, float(npc.get("interactionRange", 50) or 0))
 
     def _on_npc_transform_live(self, _v: float) -> None:
         npc = self._pending_npc
@@ -6118,6 +6531,12 @@ class ScenePropertyPanel(QScrollArea):
             hs["rotation"] = self._keep_num(round(_r_val, 1), hs.get("rotation"))
         else:
             hs.pop("rotation", None)
+        # 透视缩放参与：缺省不写键（热点缺省不参与），显式选择才落 true/false
+        _hp = self._hs_persp.currentData()
+        if _hp is None:
+            hs.pop("perspectiveScaleEnabled", None)
+        else:
+            hs["perspectiveScaleEnabled"] = bool(_hp)
         if self._hs_auto.isChecked():
             hs["autoTrigger"] = True
         elif "autoTrigger" in hs:
@@ -6316,6 +6735,16 @@ class ScenePropertyPanel(QScrollArea):
             "实例旋转（度，绕脚底锚点）：quad 级真变换同上；缺省 0 不写入 JSON。")
         self._npc_rot.valueChanged.connect(self._on_npc_transform_live)
         form.addRow("rotation°", self._npc_rot)
+        self._npc_persp = QComboBox()
+        self._npc_persp.addItem("缺省（参与；renderRaw 不参与）", None)
+        self._npc_persp.addItem("参与", True)
+        self._npc_persp.addItem("不参与", False)
+        self._npc_persp.setToolTip(
+            "场景透视缩放（perspectiveScale）参与开关：NPC 缺省参与（脚底 y 即深度）；"
+            "renderRaw 背景抠图实体缺省不参与（透视已烤进背景）。贴墙/悬空装饰可选「不参与」。"
+            "场景未启用透视缩放时本项无效果。")
+        self._npc_persp.currentIndexChanged.connect(self._on_npc_persp_changed)
+        form.addRow("透视缩放", self._npc_persp)
         self._npc_cutscene_only = QCheckBox("仅过场实体（普通场景不生成）")
         self._npc_cutscene_only.setToolTip(
             "默认开启：实体只在关联过场中从场景文件初始化，不读 committed sceneMemory。"
@@ -7188,6 +7617,11 @@ class ScenePropertyPanel(QScrollArea):
             self._npc_rot.blockSignals(True)
             self._npc_rot.setValue(entity_rotation_deg_of(st))
             self._npc_rot.blockSignals(False)
+            self._npc_persp.blockSignals(True)
+            _pv = st.get("perspectiveScaleEnabled")
+            self._npc_persp.setCurrentIndex(
+                0 if not isinstance(_pv, bool) else (1 if _pv else 2))
+            self._npc_persp.blockSignals(False)
             self._npc_cutscene_ids_pending = self._entity_cutscene_ids_from_data(st)
             self._npc_cutscene_ids_label.setText(
                 self._format_cutscene_ids_label(self._npc_cutscene_ids_pending),
@@ -7322,6 +7756,12 @@ class ScenePropertyPanel(QScrollArea):
             npc["rotation"] = self._keep_num(round(_r_val, 1), npc.get("rotation"))
         else:
             npc.pop("rotation", None)
+        # 透视缩放参与：缺省不写键（NPC 缺省参与、renderRaw 缺省不参与），显式选择才落 true/false
+        _np = self._npc_persp.currentData()
+        if _np is None:
+            npc.pop("perspectiveScaleEnabled", None)
+        else:
+            npc["perspectiveScaleEnabled"] = bool(_np)
         npc_ids = [x for x in self._npc_cutscene_ids_pending if str(x).strip()]
         if npc_ids:
             npc["cutsceneIds"] = npc_ids
@@ -8201,22 +8641,24 @@ class SceneEditor(QWidget):
         self._combo_plane_view.typeCommitted.connect(self._on_plane_view_changed)
         ll.addWidget(self._combo_plane_view)
 
-        # 场景切换器（2026-07-18 布局重组）：场景列表是低频「项目级导航」，与高频
-        # 常驻的实体树（Unity Hierarchy 心智）没有同时可见的需求，不再纵向分割抢
-        # 左栏空间——降级为一行当前场景按钮 + 带搜索的弹窗列表（29+ 场景属大候选
-        # 集，按 2026-07-11 下拉 vs 弹窗拍板走弹窗，不做长下拉）。
-        self._scene_switch_btn = QToolButton()
-        self._scene_switch_btn.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self._scene_switch_btn.setToolButtonStyle(
-            Qt.ToolButtonStyle.ToolButtonTextOnly)
-        self._scene_switch_btn.setText("▾ （选择场景…）")
-        self._scene_switch_btn.setToolTip("当前编辑的场景。点击弹出可搜索的场景列表切换。")
-        self._scene_switch_btn.clicked.connect(self._open_scene_popup)
-        ll.addWidget(self._scene_switch_btn)
+        # 左栏双页签（2026-07-18 布局重组二轮：弹窗切换器手感差，用户拍板改 tab）：
+        # 场景列表与实体树是两级导航、永不同时使用——「场景 | 实体」页签互斥、各占
+        # 整栏高度。单击选场景不跳页（连续浏览不被打断），双击/回车视为「进入」跳到
+        # 实体页；程序化跳实体（全局搜索/引用导航）也落到实体页。
+        self._current_scene_lab = QLabel("")
+        ll.addWidget(self._current_scene_lab)
 
         self._scene_list = QListWidget()
         self._scene_list.currentItemChanged.connect(self._on_scene_selected)
+        self._scene_list.setToolTip(
+            "单击切换场景（画布随之加载）；再点一下当前场景（或双击/回车）"
+            "进入「实体」页开始编辑。")
+        # 「进入」手势的时序免疫基座：press 时快照当前场景 id。双击的第一下会同步
+        # 触发场景加载，重场景下加载耗时吃掉双击间隔、平台把双击拆成两次单击——
+        # 故不依赖 Qt 双击合成，itemClicked 里对比快照判定「点的是已当前场景」。
+        self._scene_sid_at_press: str | None = None
+        self._scene_list.viewport().installEventFilter(self)
+        self._scene_list.itemClicked.connect(self._on_scene_item_clicked)
         self._scene_search = make_list_search_box(
             self._scene_list,
             tooltip="按场景 id / 名称过滤下方列表（仅隐藏不匹配项，不改动数据）。")
@@ -8225,22 +8667,15 @@ class SceneEditor(QWidget):
             "创建一个新的空场景（最小骨架：id / name / 出生点）。"
             "背景图与世界尺寸随后在右侧场景属性面板配置；深度/碰撞为可选附加层，"
             "需要时再用 Scene Depth Editor 处理。")
-        self._btn_new_scene.clicked.connect(self._on_new_scene_clicked)
+        self._btn_new_scene.clicked.connect(self._new_scene)
 
-        # 场景弹窗：搜索 + 列表 + 新建。列表控件常驻只是不再常显——隐藏时程序化
-        # setCurrentItem 仍触发切换，select_scene_by_id / _refresh_scene_list /
-        # _new_scene 等既有通路零改动；测试也继续直取 _scene_list。
-        self._scene_popup = QFrame(self, Qt.WindowType.Popup)
-        self._scene_popup.setFrameShape(QFrame.Shape.StyledPanel)
-        pv = QVBoxLayout(self._scene_popup)
-        pv.setContentsMargins(6, 6, 6, 6)
-        pv.setSpacing(4)
-        pv.addWidget(self._scene_search)
-        pv.addWidget(self._scene_list, 1)
-        pv.addWidget(self._btn_new_scene)
-        self._scene_popup.resize(320, 420)
-        self._scene_list.itemClicked.connect(lambda *_: self._scene_popup.hide())
-        self._scene_list.itemActivated.connect(lambda *_: self._scene_popup.hide())
+        scenes_tab = QWidget()
+        sv = QVBoxLayout(scenes_tab)
+        sv.setContentsMargins(0, 4, 0, 0)
+        sv.setSpacing(4)
+        sv.addWidget(self._scene_search)
+        sv.addWidget(self._scene_list, 1)
+        sv.addWidget(self._btn_new_scene)
 
         # 实体树独占左栏其余高度（场景内层级 = 编辑期常驻高频面板）。
         tree_box = QWidget()
@@ -8280,7 +8715,20 @@ class SceneEditor(QWidget):
             self._on_tree_context_menu)
         tbx.addLayout(tree_row)
         tbx.addWidget(self._entity_tree)
-        ll.addWidget(tree_box, 1)
+
+        self._left_tabs = QTabWidget()
+        self._left_tabs.setDocumentMode(True)
+        self._left_tabs.addTab(scenes_tab, "场景")
+        self._left_tabs.addTab(tree_box, "实体")
+        self._left_tabs.setTabToolTip(
+            0, "项目场景列表：单击切换场景，点当前场景 / 双击 / 回车进入「实体」页。")
+        self._left_tabs.setTabToolTip(
+            1, "当前场景的实体层级：点选=画布定位选中；Ctrl/Shift 多选；右键批量操作。")
+        # 双击/回车「进入」的快路径（快机器/键盘）；慢路径由 _on_scene_item_clicked
+        # 的快照判定兜底（见 _scene_sid_at_press 注释）。
+        self._scene_list.itemActivated.connect(self._enter_entity_tab)
+        self._scene_list.itemDoubleClicked.connect(self._enter_entity_tab)
+        ll.addWidget(self._left_tabs, 1)
 
         # center: canvas
         self._canvas = SceneCanvas()
@@ -8342,6 +8790,8 @@ class SceneEditor(QWidget):
             self._on_npc_patrol_route_committed)
         self._canvas.item_lightcurve_committed.connect(
             self._on_lightcurve_committed)
+        self._canvas.persp_ruler_committed.connect(self._on_persp_ruler_committed)
+        self._props.perspective_preview_changed.connect(self._on_persp_preview_changed)
 
         splitter.addWidget(left)
         # 画布列：顶部一行轻量「实体查找」入口 + 画布本体（小屏纪律：单行紧凑，不加大面板）。
@@ -8494,6 +8944,43 @@ class SceneEditor(QWidget):
         # 落进模型并成为一条命令（光曲线画布手势因此可撤销）。
         with self._undo.capture("编辑光环境曲线"):
             self._props.apply_lightcurve_committed(points)
+
+    def _on_persp_ruler_committed(self, idx: int, y: float) -> None:
+        # 与光曲线同门：画布手势 → 面板表格（itemChanged 走统一 dirty/预览），一条撤销命令
+        with self._undo.capture("拖动透视基准线"):
+            self._props.apply_persp_ruler_y(int(idx), float(y))
+
+    def _on_persp_preview_changed(self, cfg: object) -> None:
+        """面板透视配置 live 变更：重建画布基准线并刷新全部实体预览（与运行时同口径）。"""
+        self._canvas.set_perspective_config(cfg if isinstance(cfg, dict) else None)
+        self._refresh_all_persp_previews()
+
+    def _refresh_all_persp_previews(self) -> None:
+        sc = self._model.scenes.get(self._current_scene_id or "")
+        if not sc:
+            return
+        for hs in sc.get("hotspots", []):
+            if not isinstance(hs, dict) or not self._entity_visible_for_cutscene_edit(hs):
+                continue
+            eid = str(hs.get("id", "") or "")
+            item = self._canvas._entity_items.get(f"hotspot:{eid}")
+            if isinstance(item, _DraggableCircle):
+                item.set_interaction_range(
+                    float(hs.get("interactionRange", 50) or 0)
+                    * entity_scale_of(hs) * self._canvas.persp_factor(hs, "hotspot"))
+            self._canvas.refresh_hotspot_visuals(hs)
+        for npc in sc.get("npcs", []):
+            if not isinstance(npc, dict) or not self._entity_visible_for_cutscene_edit(npc):
+                continue
+            eid = str(npc.get("id", "") or "")
+            item = self._canvas._entity_items.get(f"npc:{eid}")
+            if isinstance(item, _DraggableCircle):
+                item.set_interaction_range(
+                    float(npc.get("interactionRange", 50) or 0)
+                    * entity_scale_of(npc) * self._canvas.persp_factor(npc, "npc"))
+            # 命中面幽灵轮廓随配置变化重派生（多边形本体 authored 空间不动）
+            self._canvas.refresh_npc_collision_visuals(npc)
+        # NPC 精灵预览由动画 tick 每拍拉取 persp（无需在此显式刷）
 
     def _refresh_npc_patrol_overlay(self) -> None:
         self._patrol_overlay_refresh_timer.start(0)
@@ -8710,6 +9197,10 @@ class SceneEditor(QWidget):
             frames_i = [0]
         rate = float(st.get("frameRate", 8) or 8)
         loop = bool(st.get("loop", True))
+        try:
+            ref_speed = float(st.get("referenceSpeed", 0) or 0)
+        except (TypeError, ValueError):
+            ref_speed = 0.0
         item = QGraphicsPixmapItem()
         item.setZValue(_NPC_SCENE_ANIM_PREVIEW_Z)
         item.setOpacity(0.9)
@@ -8731,6 +9222,7 @@ class SceneEditor(QWidget):
             cell_w=cell_w,
             cell_h=cell_h,
             atlas_frames=atlas_frames,
+            ref_speed=ref_speed if ref_speed > 0 else None,
         )
         facing = str(npc.get("initialFacing", "") or "").strip().lower()
         rt.facing_x = -1 if facing == "left" else 1
@@ -8743,6 +9235,7 @@ class SceneEditor(QWidget):
             entity_scale_of(pos0), entity_rotation_deg_of(pos0))
         nx = float(pos0.get("x", 0))
         ny = float(pos0.get("y", 0))
+        rt.persp = self._canvas.persp_factor(pos0, "npc", ny)
         rt.draw_at(nx, ny)
         self._scene_npc_runtimes[npc_id] = rt
 
@@ -8815,9 +9308,22 @@ class SceneEditor(QWidget):
             if not npc:
                 continue
             if rid in self._patrol_preview_ids:
-                # 巡逻预览播 moveAnimState：素播（与运行时 moveTo 重置参数同语义）
-                rt.set_playback(1.0, False, None, None)
+                # 巡逻预览播 moveAnimState：素播 + 步速匹配（与运行时 moveTo 素播后每帧
+                # applyLocomotionSpeed 同口径——状态配了 referenceSpeed 才缩放，夹取区间
+                # 同 SpriteEntity.LOCOMOTION_RATE_MIN/MAX=0.5~2；巡逻速度缺省 60 同 Game.ts）
+                mult = 1.0
+                if rt.ref_speed:
+                    pat = npc.get("patrol")
+                    try:
+                        pspd = float(pat.get("speed", 60) or 60) if isinstance(pat, dict) else 60.0
+                    except (TypeError, ValueError):
+                        pspd = 60.0
+                    if pspd > 0:
+                        mult = min(2.0, max(0.5, pspd / rt.ref_speed))
+                rt.set_playback(mult, False, None, None)
                 px, py = self._patrol_preview_advance(rid, npc, dt)
+                # 透视系数随巡逻瞬时脚底 y 每拍拉取（与运行时移动中重求同口径）
+                rt.persp = self._canvas.persp_factor(npc, "npc", py)
                 rt.tick(dt, px, py)
             else:
                 pos = self._npc_render_pos_dict(rid, npc)
@@ -8831,6 +9337,8 @@ class SceneEditor(QWidget):
                 rt.set_playback(*_npc_initial_playback_tuple(pos))
                 x = float(pos.get("x", 0))
                 y = float(pos.get("y", 0))
+                # 透视系数与位置同源每拍拉取（staging 感知：拖动/数值框 live 改 y 即时反映）
+                rt.persp = self._canvas.persp_factor(pos, "npc", y)
                 rt.tick(dt, x, y)
         self._canvas.viewport().update()
 
@@ -8932,40 +9440,37 @@ class SceneEditor(QWidget):
         sid = current.data(Qt.ItemDataRole.UserRole)
         self._load_scene(sid)
 
-    def _sync_scene_switch_btn(self) -> None:
-        """场景切换按钮跟随当前场景；完整名进 tooltip，按钮文本按列宽省略。"""
+    def eventFilter(self, obj, event) -> bool:
+        # 场景列表 press 快照：itemClicked 时对比判定「点的是否已当前场景」
+        #（press 本身可能同步换场景，release 时 current 已变，须在此提前取样）。
+        if obj is self._scene_list.viewport() \
+                and event.type() == QEvent.Type.MouseButtonPress:
+            self._scene_sid_at_press = self._current_scene_id
+        return super().eventFilter(obj, event)
+
+    def _on_scene_item_clicked(self, item: QListWidgetItem | None) -> None:
+        """点击已是当前场景的项 =「进入」；切换型点击只切不跳（连续浏览不被打断）。
+        双击在重场景下被平台拆成两次单击（首击的加载耗时吃掉双击间隔），
+        第二击落到本判定 → 仍然进入，手势对时序免疫。"""
+        if item is None:
+            return
+        sid = item.data(Qt.ItemDataRole.UserRole)
+        if sid and sid == self._scene_sid_at_press:
+            self._enter_entity_tab()
+
+    def _enter_entity_tab(self, *_args) -> None:
+        self._left_tabs.setCurrentIndex(1)
+
+    def _sync_current_scene_label(self) -> None:
+        """左栏顶部当前场景指示（实体页下场景名不可见，靠它兜底）；完整名进
+        tooltip，文本按列宽省略。"""
         sid = self._current_scene_id or ""
         sc = self._model.scenes.get(sid)
-        full = f"{sid}  [{(sc or {}).get('name', '')}]" if sid else "（选择场景…）"
-        fm = self._scene_switch_btn.fontMetrics()
-        elided = fm.elidedText(full, Qt.TextElideMode.ElideMiddle, 170)
-        self._scene_switch_btn.setText(f"▾ {elided}")
-        self._scene_switch_btn.setToolTip(
-            f"当前场景：{full}\n点击弹出可搜索的场景列表切换。")
-
-    def _open_scene_popup(self) -> None:
-        # 打开时清空过滤，并把列表 current 静默对齐到当前场景（blockSignals：
-        # 对齐不是切换，避免触发同场景重载丢画布选中）。
-        self._scene_search.clear()
-        lst = self._scene_list
-        lst.blockSignals(True)
-        try:
-            for i in range(lst.count()):
-                it = lst.item(i)
-                if it is not None and it.data(Qt.ItemDataRole.UserRole) == self._current_scene_id:
-                    lst.setCurrentItem(it)
-                    lst.scrollToItem(it)
-                    break
-        finally:
-            lst.blockSignals(False)
-        self._scene_popup.move(self._scene_switch_btn.mapToGlobal(
-            QPoint(0, self._scene_switch_btn.height())))
-        self._scene_popup.show()
-        self._scene_search.setFocus()
-
-    def _on_new_scene_clicked(self) -> None:
-        self._scene_popup.hide()
-        self._new_scene()
+        full = f"{sid}  [{(sc or {}).get('name', '')}]" if sid else "（未选择场景）"
+        fm = self._current_scene_lab.fontMetrics()
+        self._current_scene_lab.setText(
+            fm.elidedText(full, Qt.TextElideMode.ElideMiddle, 180))
+        self._current_scene_lab.setToolTip(f"当前场景：{full}")
 
     def _load_scene(self, scene_id: str, *, reset_view: bool = True) -> None:
         # 离开当前场景前先提交未应用的画布/面板编辑，避免切场景静默丢弃。
@@ -8983,8 +9488,8 @@ class SceneEditor(QWidget):
         sc = self._model.scenes.get(scene_id)
         if sc is None:
             return
-        # 所有切换路径（弹窗点选/select_scene_by_id/重构后 reload）都汇入此处，单点同步切换按钮
-        self._sync_scene_switch_btn()
+        # 所有切换路径（页签点选/select_scene_by_id/重构后 reload）都汇入此处，单点同步指示标签
+        self._sync_current_scene_label()
         if _migrate_scene_hotspot_collision_to_local(sc):
             self._model.mark_dirty("scene", scene_id)
         self._clear_scene_npc_anim_layers()
@@ -8994,6 +9499,9 @@ class SceneEditor(QWidget):
 
         world_w, world_h = resolve_world_size_for_scene_json(sc, img_path)
         self._canvas.setup_world(world_w, world_h)
+        # 透视缩放须在实体图元创建前写入画布（add_* 的交互圈/展示图按系数求半径）
+        pcfg = sc.get("perspectiveScale")
+        self._canvas.set_perspective_config(pcfg if isinstance(pcfg, dict) else None)
 
         if img_path:
             self._canvas.load_background(img_path, world_w, world_h)
@@ -9369,15 +9877,17 @@ class SceneEditor(QWidget):
             return
         s = entity_scale_of(d)
         rot = entity_rotation_deg_of(d)
+        # 环半径按画布显示尺寸（× 透视系数）；gizmo 数值本体仍是实例 scale（提交不除回）
+        pf = self._canvas.persp_factor(d, kind)
         if kind == "hotspot":
             di = d.get("displayImage") if isinstance(d.get("displayImage"), dict) else {}
             hint = max(
                 float(di.get("worldWidth", 0) or 0),
                 float(di.get("worldHeight", 0) or 0),
-            ) * s or 90.0
+            ) * s * pf or 90.0
         else:
             rt = self._scene_npc_runtimes.get(eid)
-            hint = (max(rt.world_w, rt.world_h) * s) if rt is not None else 90.0
+            hint = (max(rt.world_w, rt.world_h) * s * pf) if rt is not None else 90.0
         self._canvas.show_transform_gizmo(
             kind, eid, float(d.get("x", 0)), float(d.get("y", 0)), s, rot, hint)
 
@@ -9389,7 +9899,8 @@ class SceneEditor(QWidget):
         return None
 
     def _refresh_transform_previews(self, kind: str, eid: str, d: dict) -> None:
-        eff_r = float(d.get("interactionRange", 50) or 0) * entity_scale_of(d)
+        eff_r = (float(d.get("interactionRange", 50) or 0)
+                 * entity_scale_of(d) * self._canvas.persp_factor(d, kind))
         if kind == "hotspot":
             self._canvas.move_entity_handle("hotspot", eid, d.get("x", 0), d.get("y", 0))
             self._canvas.refresh_hotspot_visuals(d)
@@ -9541,8 +10052,9 @@ class SceneEditor(QWidget):
             d = self._staging_hotspot_for_canvas_drag(eid)
         elif kind == "npc":
             d = self._staging_npc_for_canvas_drag(eid)
-        # 画布交互圈显示有效半径（× 实例 scale），与运行时 effectiveInteractionRange 同口径
-        self._canvas.update_interaction_range(kind, eid, float(r) * entity_scale_of(d))
+        # 画布交互圈显示有效半径（× 实例 scale × 透视系数），与运行时 effectiveInteractionRange 同口径
+        self._canvas.update_interaction_range(
+            kind, eid, float(r) * entity_scale_of(d) * self._canvas.persp_factor(d, kind))
 
     def _on_props_zone_polygon_changed(self, eid: str, polygon: object) -> None:
         poly_list = polygon if isinstance(polygon, list) else []
@@ -9623,6 +10135,8 @@ class SceneEditor(QWidget):
 
         def _deferred_hotspot_collision_ui() -> None:
             self._props.refresh_hotspot_collision_table(eid)
+            # 命中面幽灵轮廓随新顶点重派生（延迟回调里做，不在鼠标事件栈内动图元）
+            self._canvas.refresh_hotspot_visuals(target)
             self._canvas.item_selected.emit("hotspot_collision", eid)
 
         QTimer.singleShot(0, _deferred_hotspot_collision_ui)
@@ -9661,6 +10175,8 @@ class SceneEditor(QWidget):
 
         def _deferred_npc_collision_ui() -> None:
             self._props.refresh_npc_collision_table(eid)
+            # 命中面幽灵轮廓随新顶点重派生（延迟回调里做，不在鼠标事件栈内动图元）
+            self._canvas.refresh_npc_collision_visuals(target)
             self._canvas.item_selected.emit("npc_collision", eid)
 
         QTimer.singleShot(0, _deferred_npc_collision_ui)
@@ -10053,7 +10569,8 @@ class SceneEditor(QWidget):
         elif isinstance(item, _DraggableCircle):
             item.setPos(float(hs.get("x", 0)), float(hs.get("y", 0)))
             item.set_interaction_range(
-                float(hs.get("interactionRange", 50)) * entity_scale_of(hs))
+                float(hs.get("interactionRange", 50))
+                * entity_scale_of(hs) * self._canvas.persp_factor(hs, "hotspot"))
         typ = str(hs.get("type", "inspect") or "inspect")
         self._canvas.update_hotspot_type_color(new_id, typ)
         lbl = str(hs.get("id", "") or "").strip() or new_id
@@ -10086,7 +10603,8 @@ class SceneEditor(QWidget):
         elif isinstance(item, _DraggableCircle):
             item.setPos(float(npc.get("x", 0)), float(npc.get("y", 0)))
             item.set_interaction_range(
-                float(npc.get("interactionRange", 50)) * entity_scale_of(npc))
+                float(npc.get("interactionRange", 50))
+                * entity_scale_of(npc) * self._canvas.persp_factor(npc, "npc"))
         disp = str(npc.get("name", "") or "").strip() or new_id
         self._canvas.update_entity_circle_label("npc", new_id, disp)
         self._canvas.refresh_npc_collision_visuals(npc)
@@ -10706,6 +11224,8 @@ class SceneEditor(QWidget):
             return False
         for entity in sc.get(collection, []):
             if isinstance(entity, dict) and str(entity.get("id", "")).strip() == item_id:
+                # 实体级跳转（全局搜索/引用导航/重构回选）落到「实体」页，树高亮可见
+                self._left_tabs.setCurrentIndex(1)
                 self._restore_canvas_selection(kind, item_id)
                 self._focus_canvas_on_entity(kind, item_id)
                 return True

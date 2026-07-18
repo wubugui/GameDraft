@@ -207,6 +207,7 @@ ACTION_TYPES = [
     "runActions", "chooseAction", "randomBranch",
     "setFlag", "setScenarioPhase", "startScenario", "activateScenario", "completeScenario", "emitNarrativeSignal", "setNarrativeState",
     "startNarrativeRun", "resetNarrativeRun", "revertNarrativeRun", "activateNarrativeRun",
+    "loadNarrativePackage", "unloadNarrativePackage",
     "appendFlag", "giveItem", "removeItem", "giveCurrency", "removeCurrency",
     "giveRule", "grantRuleLayer", "giveFragment", "updateQuest", "startEncounter",
     "playBgm", "stopBgm", "playSfx", "stopSceneAmbient", "endDay", "addDelayedEvent",
@@ -269,6 +270,8 @@ _SELECTOR_KIND_UNIVERSE: dict[str, str] = {
     "signal_cue": "signal_cues",
     # 叙事活计生命周期（S1）：候选=声明 run 的活计图，宇宙沿用 narrative 条件叶的图 id 集合
     "narrative_run_archetype": "narrative_graph_ids",
+    # 叙事章节包（C2）：候选=编排 package 标并集
+    "narrative_package": "narrative_package_ids",
 }
 
 
@@ -296,6 +299,8 @@ ACTION_PERSISTENCE: dict[str, str] = {
     "resetNarrativeRun": "save",
     "revertNarrativeRun": "save",
     "activateNarrativeRun": "save",
+    "loadNarrativePackage": "save",
+    "unloadNarrativePackage": "save",
     "appendFlag": "save",
     "giveItem": "save",
     "removeItem": "save",
@@ -438,6 +443,9 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "resetNarrativeRun": [("graphId", "str")],
     "revertNarrativeRun": [("graphId", "str"), ("stateId", "str")],
     "activateNarrativeRun": [("graphId", "str")],
+    # 叙事章节包（C2）：packageId=章节包（编排 package 标）
+    "loadNarrativePackage": [("packageId", "str")],
+    "unloadNarrativePackage": [("packageId", "str")],
     "appendFlag": [("key", "str"), ("text", "str")],
     "addFlagValue": [("key", "str"), ("delta", "float")],
     "startPressureHold": [("id", "str")],
@@ -2910,6 +2918,8 @@ class ActionRow(QWidget):
             pairs = [(s, s) for s in (m.all_scene_ids() if m else [])]
         elif kind == "narrative_run_archetype":
             pairs = [(g, g) for g in (m.narrative_instanced_graph_ids_ordered() if m else [])]
+        elif kind == "narrative_package":
+            pairs = [(p, p) for p in (m.narrative_package_ids_ordered() if m else [])]
         elif kind == "item":
             pairs = m.all_item_ids() if m else []
         elif kind == "quest":
@@ -4506,6 +4516,9 @@ class ActionRow(QWidget):
             elif act_type in ("startNarrativeRun", "resetNarrativeRun", "revertNarrativeRun", "activateNarrativeRun") and pname == "graphId":
                 # 活计图引用（选择器铁律；候选=声明了 run 的图，保值展示未知值）
                 w = self._make_selector("narrative_run_archetype", str(val) if val is not None else "")
+            elif act_type in ("loadNarrativePackage", "unloadNarrativePackage") and pname == "packageId":
+                # 章节包引用（选择器铁律；候选=编排 package 标并集）
+                w = self._make_selector("narrative_package", str(val) if val is not None else "")
             elif act_type == "startPressureHold" and pname == "id":
                 w = self._make_selector("pressure_hold", str(val) if val is not None else "")
             elif act_type == "playSignalCue" and pname == "id":

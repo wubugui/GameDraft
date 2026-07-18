@@ -33,6 +33,7 @@ def _editor_classes() -> list:
         DocumentRevealsEditor,
     )
     from tools.editor.editors.quest_editor import QuestEditor
+    from tools.editor.editors.narrative_packages_editor import NarrativePackagesEditor
     from tools.editor.editors.rule_editor import RuleEditor
     from tools.editor.editors.shop_editor import ShopEditor
     from tools.editor.editors.item_editor import ItemEditor
@@ -52,7 +53,7 @@ def _editor_classes() -> list:
         SceneEditor, MapEditor, TimelineEditor, EncounterEditor,
         PressureHoldEditor, SignalCueEditor, WaterMinigameEditor,
         SugarWheelEditor, PaperCraftEditor, ScenariosCatalogEditor,
-        DocumentRevealsEditor, QuestEditor, RuleEditor, ShopEditor,
+        DocumentRevealsEditor, QuestEditor, NarrativePackagesEditor, RuleEditor, ShopEditor,
         ItemEditor, FilterEditor, FlagRegistryEditor, ArchiveEditor,
         StringEditor, AudioEditor, AnimEditor, PlayerAvatarEditor,
         OverlayImagesEditor, GameConfigEditor, PlaneEditor,
