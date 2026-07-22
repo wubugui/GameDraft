@@ -6,6 +6,22 @@ import type { AssetManager } from '../core/AssetManager';
 import type { CutsceneKenBurns, AnimationSetDef, ParallaxSceneDef, ParallaxLayerDef, ParallaxKeyframe } from '../data/types';
 import { CUTSCENE_ANON_SHOT_ID } from '../data/types';
 
+/**
+ * 过场对话框(present:showDialogue)的观感样式，由组装层(Game)注入，令其与常规对话框
+ * (DialogueUI) 同皮同字——避免过场对白与普通对白割裂。渲染层不反向依赖 UI 层：
+ * 与 `setResolveDisplay` 一样走注入，皮肤绘制(drawPanelBase/SKINS)与主题色(UITheme)
+ * 都在 Game 里绑好再传进来。未注入时 showDialogueBox 走朴素兜底底框(测试/未接线场景)。
+ */
+export interface CutsceneDialoguePanelStyle {
+  /** 画对话框底：与常规对话框同皮(SKINS.dialogue) */
+  drawBox: (g: Graphics, x: number, y: number, w: number, h: number) => void;
+  /** 画说话人名牌底(SKINS.panelAlt) */
+  drawSpeakerPlate: (g: Graphics, x: number, y: number, w: number, h: number) => void;
+  speakerColor: number;
+  bodyColor: number;
+  fontFamily: string;
+}
+
 /** 字幕位置：top/center/bottom 或 0-1 表示距底部高度比例 */
 export type SubtitlePosition = 'top' | 'center' | 'bottom' | number;
 
@@ -56,6 +72,7 @@ function applyCameraEase(t: number, easing: CutsceneCameraEasing): number {
 
 export class CutsceneRenderer {
   private resolveDisplay: ((s: string) => string) | null = null;
+  private dialoguePanelStyle: CutsceneDialoguePanelStyle | null = null;
   private renderer: Renderer;
   private camera: Camera;
   private assetManager: AssetManager;
@@ -108,6 +125,10 @@ export class CutsceneRenderer {
 
   setResolveDisplay(fn: ((s: string) => string) | null): void {
     this.resolveDisplay = fn;
+  }
+
+  setDialoguePanelStyle(style: CutsceneDialoguePanelStyle | null): void {
+    this.dialoguePanelStyle = style;
   }
 
   private r(s: string): string {
@@ -318,34 +339,111 @@ export class CutsceneRenderer {
     tc.destroy({ children: true });
   }
 
-  showDialogueBox(text: string, speaker?: string): Container {
+  /**
+   * 过场对白框。观感与常规对话框(DialogueUI)对齐：同尺(BOX_MARGIN=20/BOX_HEIGHT=140)、
+   * 同皮(经注入的 SKINS.dialogue 底 + SKINS.panelAlt 说话人名牌)、同字(UITheme)。
+   * 生命周期仍由 CutsceneManager 掌控(await/skip)；此处只画一句静态对白，无打字机/选项。
+   * portrait 恒带 slug（解析在 CutsceneManager 层做完）；有立绘则正文/名牌让出 PORTRAIT_INSET。
+   */
+  showDialogueBox(text: string, speaker?: string, portrait?: { slug: string; emotion: string }): Container {
     const sw = this.screenWidth;
     const sh = this.screenHeight;
 
+    // 与 DialogueUI 同几何常量
+    const BOX_MARGIN = 20;
+    const BOX_HEIGHT = 140;
+    const TEXT_PADDING = 20;
+    // 立绘构图【刻意复刻】DialogueUI 的锁定值（240px、锚点(0.5,1)、底边出画、让位 248），
+    // 独立一份而非共享——确保过场外的 playScriptedDialogue/DialogueUI 路径零改动。
+    // ⚠ 若 DialogueUI 的立绘构图改动，此处需同步。
+    const PORTRAIT_SIZE = 240;
+    const PORTRAIT_INSET = 248;
+    const boxWidth = sw - BOX_MARGIN * 2;
+    const boxY = sh - BOX_HEIGHT - BOX_MARGIN;
+
+    const hasPortrait = !!(portrait && portrait.slug && portrait.emotion);
+    const inset = hasPortrait ? PORTRAIT_INSET : 0;
+
+    const style = this.dialoguePanelStyle;
+    const speakerColor = style?.speakerColor ?? 0xffcc88;
+    const bodyColor = style?.bodyColor ?? 0xdddddd;
+    const fontFamily = style?.fontFamily ?? 'sans-serif';
+
     const box = new Container();
+
     const bg = new Graphics();
-    const boxH = 120;
-    bg.rect(0, sh - boxH - 20, sw, boxH + 20);
-    bg.fill({ color: 0x111122, alpha: 0.9 });
+    if (style) {
+      style.drawBox(bg, BOX_MARGIN, boxY, boxWidth, BOX_HEIGHT);
+    } else {
+      // 未注入(测试/未接线)：朴素兜底底框，非皮肤系统的复制
+      bg.roundRect(BOX_MARGIN, boxY, boxWidth, BOX_HEIGHT, 4).fill({ color: 0x1a1526, alpha: 0.92 });
+    }
     box.addChild(bg);
 
-    if (speaker) {
-      const sp = new Text({
-        text: this.r(speaker),
-        style: { fontSize: 16, fill: 0xffcc88, fontFamily: 'sans-serif', fontWeight: 'bold' },
-      });
-      sp.x = 30;
-      sp.y = sh - boxH - 5;
-      box.addChild(sp);
+    // 立绘压面板前景（底边伸出画面外，脸永不被框遮）；缺图静默收起，正文空间已让出。
+    if (hasPortrait) {
+      const p = portrait as { slug: string; emotion: string };
+      const sprite = new Sprite();
+      sprite.eventMode = 'none';
+      sprite.visible = false;
+      box.addChild(sprite);
+      const path = `resources/runtime/images/dialogue_portraits/${p.slug}/${p.slug}_${p.emotion}.png`;
+      const place = (tex: Texture): void => {
+        if (sprite.destroyed || !sprite.parent) return; // 对白框已 dismiss：放弃在途贴图
+        sprite.texture = tex;
+        sprite.anchor.set(0.5, 1);
+        sprite.width = PORTRAIT_SIZE;
+        sprite.height = PORTRAIT_SIZE;
+        sprite.x = BOX_MARGIN + PORTRAIT_SIZE / 2;
+        sprite.y = sh + 4;
+        sprite.visible = true;
+      };
+      const cached = this.assetManager.getTexture(path);
+      if (cached && cached !== Texture.EMPTY) {
+        place(cached);
+      } else {
+        void this.assetManager.loadTexture(path).then(place).catch(() => { /* 缺图静默收起 */ });
+      }
     }
 
-    const t = new Text({
+    const speakerR = speaker ? this.r(speaker) : '';
+    if (speakerR) {
+      const spText = new Text({
+        text: speakerR,
+        style: { fontSize: 15, fill: speakerColor, fontFamily, fontWeight: 'bold' },
+      });
+      const plateX = BOX_MARGIN + 12 + inset;
+      const plateY = boxY + 8;
+      const plateH = 26;
+      const maxW = sw - BOX_MARGIN * 2 - 24 - inset;
+      const plateW = Math.min(spText.width + 24, maxW);
+      const plate = new Graphics();
+      if (style) {
+        style.drawSpeakerPlate(plate, plateX, plateY, plateW, plateH);
+      } else {
+        plate.roundRect(plateX, plateY, plateW, plateH, 4).fill({ color: 0x000000, alpha: 0.35 });
+      }
+      box.addChild(plate);
+      spText.x = plateX + 12;
+      spText.y = plateY + 5;
+      box.addChild(spText);
+    }
+
+    const bodyText = new Text({
       text: this.r(text),
-      style: { fontSize: 14, fill: 0xdddddd, fontFamily: 'sans-serif', wordWrap: true, wordWrapWidth: sw - 60 },
+      style: {
+        fontSize: 15,
+        fill: bodyColor,
+        fontFamily,
+        wordWrap: true,
+        breakWords: true,
+        wordWrapWidth: boxWidth - TEXT_PADDING * 2 - inset,
+        lineHeight: 22,
+      },
     });
-    t.x = 30;
-    t.y = sh - boxH + 20;
-    box.addChild(t);
+    bodyText.x = BOX_MARGIN + TEXT_PADDING + inset;
+    bodyText.y = boxY + 46;
+    box.addChild(bodyText);
 
     this.renderer.uiLayer.addChild(box);
     return box;

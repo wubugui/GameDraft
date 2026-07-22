@@ -171,6 +171,17 @@ def validate(model: ProjectModel) -> list[Issue]:
                         "warning", "scene", sid,
                         f"{_kind2} '{_eid2}' rotation 须为有限数（度；当前 {_rv!r}；运行时按 0 回落）",
                     ))
+                # 遮挡混合系数：运行时对非有限值回落场景默认、对越界值钳到 [0,1]，故 warning 级（兜底不严于运行时）
+                _ob = _ent2.get("occlusionBlendFactor")
+                if _ob is not None and (
+                    not isinstance(_ob, (int, float)) or isinstance(_ob, bool)
+                    or not _math.isfinite(float(_ob)) or not (0.0 <= float(_ob) <= 1.0)
+                ):
+                    issues.append(Issue(
+                        "warning", "scene", sid,
+                        f"{_kind2} '{_eid2}' occlusionBlendFactor 须为 [0,1] 有限数"
+                        f"（当前 {_ob!r}；运行时非有限→场景默认、越界→钳制）",
+                    ))
                 _gv = _ent2.get("group")
                 if _gv is not None and (not isinstance(_gv, str) or not _gv.strip()):
                     issues.append(Issue(
@@ -184,7 +195,7 @@ def validate(model: ProjectModel) -> list[Issue]:
                         f"{_kind2} '{_eid2}' perspectiveScaleEnabled 须为布尔"
                         f"（当前 {_pe!r}；运行时按缺省参与规则回落）",
                     ))
-        # 场景透视缩放 perspectiveScale：形状检查（运行时对非法配置容错为不缩放，warning 级）
+        # 场景透视缩放 perspectiveScale（深度轴模型）：形状检查（运行时对非法配置容错为不缩放，warning 级）
         _pcfg = sc.get("perspectiveScale")
         if _pcfg is not None:
             if not isinstance(_pcfg, dict):
@@ -193,40 +204,57 @@ def validate(model: ProjectModel) -> list[Issue]:
                     f"perspectiveScale 须为对象（当前 {type(_pcfg).__name__}；运行时忽略不缩放）",
                 ))
             else:
-                _prs = _pcfg.get("rulers")
-                _valid_n = 0
-                if not isinstance(_prs, list):
-                    issues.append(Issue(
-                        "warning", "scene", sid,
-                        "perspectiveScale.rulers 须为数组（运行时忽略不缩放）",
-                    ))
-                else:
-                    for _pi, _pr in enumerate(_prs):
-                        if not isinstance(_pr, dict):
-                            issues.append(Issue(
-                                "warning", "scene", sid,
-                                f"perspectiveScale.rulers[{_pi}] 须为 {{y, scale}} 对象",
-                            ))
-                            continue
-                        _py = _pr.get("y")
-                        _ps = _pr.get("scale")
-                        _ok_y = (isinstance(_py, (int, float)) and not isinstance(_py, bool)
-                                 and _math.isfinite(float(_py)))
-                        _ok_s = (isinstance(_ps, (int, float)) and not isinstance(_ps, bool)
-                                 and _math.isfinite(float(_ps)) and float(_ps) > 0)
-                        if not _ok_y or not _ok_s:
-                            issues.append(Issue(
-                                "warning", "scene", sid,
-                                f"perspectiveScale.rulers[{_pi}] 需要有限数 y 与正有限数 scale"
-                                f"（当前 y={_py!r}, scale={_ps!r}；运行时跳过该条）",
-                            ))
-                        else:
-                            _valid_n += 1
-                if _valid_n < 2 and isinstance(_prs, list):
-                    issues.append(Issue(
-                        "warning", "scene", sid,
-                        f"perspectiveScale 有效基准线仅 {_valid_n} 条（<2 运行时视为未配置不缩放）",
-                    ))
+                def _fin_num(v: object) -> float | None:
+                    if isinstance(v, bool) or not isinstance(v, (int, float)):
+                        return None
+                    return float(v) if _math.isfinite(float(v)) else None
+
+                def _check_point(label: str, pt: object) -> tuple[float, float] | None:
+                    if not isinstance(pt, dict):
+                        issues.append(Issue(
+                            "warning", "scene", sid,
+                            f"perspectiveScale.{label} 须为 {{x, y, scale}} 对象（运行时忽略不缩放）",
+                        ))
+                        return None
+                    x = _fin_num(pt.get("x"))
+                    y = _fin_num(pt.get("y"))
+                    s = _fin_num(pt.get("scale"))
+                    if x is None or y is None or s is None or s <= 0:
+                        issues.append(Issue(
+                            "warning", "scene", sid,
+                            f"perspectiveScale.{label} 需要有限数 x/y 与正有限数 scale"
+                            f"（当前 {pt!r}；运行时忽略不缩放）",
+                        ))
+                        return None
+                    return (x, y)
+
+                _n = _check_point("near", _pcfg.get("near"))
+                _f = _check_point("far", _pcfg.get("far"))
+                if _n is not None and _f is not None:
+                    _dx = _f[0] - _n[0]
+                    _dy = _f[1] - _n[1]
+                    if _dx * _dx + _dy * _dy <= 1e-6:
+                        issues.append(Issue(
+                            "warning", "scene", sid,
+                            "perspectiveScale near≈far 深度轴退化（长度≈0，运行时视为未配置不缩放）",
+                        ))
+                _mids = _pcfg.get("midStops")
+                if _mids is not None:
+                    if not isinstance(_mids, list):
+                        issues.append(Issue(
+                            "warning", "scene", sid,
+                            "perspectiveScale.midStops 须为数组（运行时忽略中途点）",
+                        ))
+                    else:
+                        for _mi, _m in enumerate(_mids):
+                            _mp = _fin_num(_m.get("pos")) if isinstance(_m, dict) else None
+                            _ms = _fin_num(_m.get("scale")) if isinstance(_m, dict) else None
+                            if _mp is None or _ms is None or not (0.0 < _mp < 1.0) or _ms <= 0:
+                                issues.append(Issue(
+                                    "warning", "scene", sid,
+                                    f"perspectiveScale.midStops[{_mi}] 需要 pos∈(0,1) 与正 scale"
+                                    f"（当前 {_m!r}；运行时跳过该条）",
+                                ))
                 _pas = _pcfg.get("affectsSpeed")
                 if _pas is not None and not isinstance(_pas, bool):
                     issues.append(Issue(
@@ -1106,42 +1134,11 @@ def _repeatable_quest_ids(model: ProjectModel) -> set[str]:
     }
 
 
-#: 场景根 onEnter 纯化闸（C3 电影摄制模型）：场景不得自动起叙事——一切进场编排走章节导演清单
-#: （narrative_packages.json）。此集合内动作出现在场景根 onEnter（含 runActions/chooseAction 嵌套）
-#: = error。玩家交互面（热区/zone/NPC）不受限。
-_SCENE_ONENTER_NARRATIVE_ACTIONS = frozenset({
-    "startDialogueGraph", "playScriptedDialogue", "startCutscene",
-    "emitNarrativeSignal", "setNarrativeState",
-    "startNarrativeRun", "resetNarrativeRun", "revertNarrativeRun", "activateNarrativeRun",
-    "loadNarrativePackage", "unloadNarrativePackage",
-    "setScenarioPhase", "startScenario", "activateScenario", "completeScenario",
-    "updateQuest",
-})
-
-
-def _scan_scene_onenter_purity(obj: Any, issues: list[Issue], scene_id: str) -> None:
-    if isinstance(obj, dict):
-        act = str(obj.get("type") or "").strip()
-        if act in _SCENE_ONENTER_NARRATIVE_ACTIONS:
-            issues.append(Issue(
-                "error", "scene", scene_id,
-                f"场景根 onEnter 含叙事动作 {act!r}：场景必须与叙事解耦（可复用、可拍另一场戏），"
-                "进场编排一律迁到章节导演清单 narrative_packages.json（scene 行 + autoPlay）",
-            ))
-        for v in obj.values():
-            _scan_scene_onenter_purity(v, issues, scene_id)
-    elif isinstance(obj, list):
-        for v in obj:
-            _scan_scene_onenter_purity(v, issues, scene_id)
-
-
 def _validate_narrative_packages(model: ProjectModel, issues: list[Issue]) -> None:
-    """章节导演清单（narrative_packages.json，C2）+ 场景根 onEnter 纯化闸。"""
-    # ---- 场景纯化闸 ----
-    for sid, sc in (model.scenes or {}).items():
-        if isinstance(sc, dict) and sc.get("onEnter"):
-            _scan_scene_onenter_purity(sc.get("onEnter"), issues, str(sid))
-
+    """章节导演清单（narrative_packages.json）。⚠**章节包=纯组织标签，不承担任何运行时正确性**
+    （2026-07-19 降级定案）：包只标"哪张图属哪章、当前活跃哪些章"，供 UI/编辑器/工具分组展示；
+    图恒吃信号、进场演哪场戏走 onEnter→图对话 switch——都与包 live/dormant 无关。本校验只保证清单
+    这份组织数据自洽（id/package/scene 存在、when/done 条件合法），不因它推断任何运行时行为。"""
     data = model.narrative_packages if isinstance(model.narrative_packages, dict) else {}
     rows = data.get("packages")
     if rows is None:
@@ -1166,20 +1163,24 @@ def _validate_narrative_packages(model: ProjectModel, issues: list[Issue]) -> No
         seen_ids.add(rid)
         pkg = str(row.get("package") or "").strip()
         scene = str(row.get("scene") or "").strip()
-        if pkg and pkg not in known_packages:
+        if not pkg:
             issues.append(Issue("error", "narrative_packages", rid,
-                                f"package {pkg!r} 不存在（没有任何编排打此包标；运行时开拍会被忽略）"))
-        if not pkg and not scene:
+                                "清单行必须配 package：清单是章节包（纯组织标签）的活跃度声明，无 package 的行无意义。"
+                                "进场演出与包无关——走场景 onEnter → startDialogueGraph 路由图（策划在图对话里 switch）"))
+        elif pkg not in known_packages:
             issues.append(Issue("error", "narrative_packages", rid,
-                                "cue 行（无 package）必须带 scene：进场是它唯一的重放闩锁，"
-                                "无 scene 会在每次状态变化时重放 autoPlay"))
+                                f"package {pkg!r} 不存在（没有任何编排打此包标）"))
+        if row.get("autoPlay") is not None:
+            issues.append(Issue("error", "narrative_packages", rid,
+                                "导演不触发演出（autoPlay 已废弃）：进场演出走场景 onEnter → "
+                                "startDialogueGraph 入口路由图，策划在图对话 switch 里选分支"))
         if scene and scene not in scene_ids:
             issues.append(Issue("error", "narrative_packages", rid,
                                 f"scene {scene!r} 不存在"))
         if pkg and not (isinstance(row.get("done"), list) and row.get("done")):
             issues.append(Issue("warning", "narrative_packages", rid,
-                                "package 行无 done 判据：这场戏永不自动收工（包一直 live）——"
-                                "确认是有意常开，否则补 done"))
+                                "package 行无 done 判据：这章永不自动标记为非活跃（组织标记而已，不影响行为）——"
+                                "确认是有意常标活跃，否则补 done"))
         for cond_key in ("when", "done"):
             conds = row.get(cond_key)
             if conds is None:
@@ -1188,15 +1189,6 @@ def _validate_narrative_packages(model: ProjectModel, issues: list[Issue]) -> No
                 issues.append(Issue("error", "narrative_packages", rid, f"{cond_key} 须为条件数组"))
                 continue
             _walk_conditions(model, issues, conds, "narrative_packages", rid, None)
-        auto = row.get("autoPlay")
-        if auto is not None:
-            if not isinstance(auto, dict):
-                issues.append(Issue("error", "narrative_packages", rid, "autoPlay 须为单个动作对象"))
-            else:
-                _walk_action_defs(model, issues, [auto], "narrative_packages", rid, None)
-        if not pkg and auto is None:
-            issues.append(Issue("warning", "narrative_packages", rid,
-                                "行既无 package 也无 autoPlay：开拍时什么都不会发生"))
 
 
 def _validate_narrative(model: ProjectModel, issues: list[Issue]) -> None:

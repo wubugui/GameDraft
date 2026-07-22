@@ -1,27 +1,11 @@
 {
   "schemaVersion": 1,
   "id": "寻狗_听书开场",
-  "entry": "root",
+  "entry": "n_1",
   "meta": {
     "title": "寻狗Demo·听书开场（进茶馆自动·只播一次·说书cutscene→掐架→被赶）"
   },
   "nodes": {
-    "root": {
-      "type": "switch",
-      "cases": [
-        {
-          "conditions": [
-            {
-              "narrative": "scenario_听书",
-              "state": "kicked_out",
-              "reached": true
-            }
-          ],
-          "next": "done"
-        }
-      ],
-      "defaultNext": "fire_cutscene"
-    },
     "fire_cutscene": {
       "type": "runActions",
       "actions": [
@@ -35,6 +19,12 @@
           "type": "startCutscene",
           "params": {
             "id": "说书-收场运镜"
+          }
+        },
+        {
+          "type": "startCutscene",
+          "params": {
+            "id": "说书-景别复位"
           }
         }
       ],
@@ -249,6 +239,21 @@
         }
       ],
       "next": "done"
+    },
+    "n_1": {
+      "type": "contextState",
+      "cases": [
+        {
+          "state": "s01_tingshu",
+          "next": ""
+        },
+        {
+          "state": "initial",
+          "next": "fire_cutscene"
+        }
+      ],
+      "defaultNext": "done",
+      "graphId": "flow_xungou_main"
     }
   }
 }

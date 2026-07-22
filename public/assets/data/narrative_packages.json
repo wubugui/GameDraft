@@ -4,12 +4,6 @@
       "id": "听书开场",
       "scene": "teahouse",
       "package": "章节_听书",
-      "autoPlay": {
-        "type": "startDialogueGraph",
-        "params": {
-          "graphId": "寻狗_听书开场"
-        }
-      },
       "done": [
         {
           "narrative": "scenario_听书",
@@ -19,77 +13,220 @@
       ]
     },
     {
-      "id": "梦_夜路开场",
-      "scene": "梦_夜路",
-      "autoPlay": {
-        "type": "runActions",
-        "params": {
-          "actions": [
-            {
-              "type": "fadeWorldFromBlack",
-              "params": {
-                "durationMs": 800
-              }
-            },
-            {
-              "type": "startDialogueGraph",
-              "params": {
-                "graphId": "梦_段A_夜路"
-              }
-            }
-          ]
+      "id": "章节_背尸",
+      "package": "章节_背尸",
+      "when": [
+        {
+          "narrative": "flow_xungou_main",
+          "state": "s01_tingshu",
+          "reached": true
         }
-      }
+      ],
+      "done": [
+        {
+          "narrative": "flow_xungou_main",
+          "state": "s02_beishi",
+          "reached": true
+        }
+      ]
     },
     {
-      "id": "梦_农家院开场",
-      "scene": "梦_农家院",
-      "autoPlay": {
-        "type": "runActions",
-        "params": {
-          "actions": [
-            {
-              "type": "fadeWorldFromBlack",
-              "params": {
-                "durationMs": 600
-              }
-            },
-            {
-              "type": "startDialogueGraph",
-              "params": {
-                "graphId": "梦_段B_农家院"
-              }
-            }
-          ]
+      "id": "章节_梦",
+      "package": "章节_梦",
+      "when": [
+        {
+          "narrative": "flow_xungou_main",
+          "state": "s01_tingshu",
+          "reached": true
         }
-      }
+      ],
+      "done": [
+        {
+          "narrative": "flow_xungou_main",
+          "state": "s02b_meng",
+          "reached": true
+        }
+      ]
     },
     {
-      "id": "梦_醒来土路开场",
-      "scene": "梦_醒来土路",
-      "autoPlay": {
-        "type": "runActions",
-        "params": {
-          "actions": [
-            {
-              "type": "stopBgm",
-              "params": {}
-            },
-            {
-              "type": "fadeWorldFromBlack",
-              "params": {
-                "durationMs": 1000
-              }
-            },
-            {
-              "type": "startDialogueGraph",
-              "params": {
-                "graphId": "梦_段E_醒来"
-              }
-            }
-          ]
+      "id": "章节_吹牛",
+      "package": "章节_吹牛",
+      "when": [
+        {
+          "narrative": "flow_xungou_main",
+          "state": "s02b_meng",
+          "reached": true
         }
-      }
+      ],
+      "done": [
+        {
+          "narrative": "flow_xungou_main",
+          "state": "s03_chuiniu",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "id": "章节_婆子家",
+      "package": "章节_婆子家",
+      "when": [
+        {
+          "narrative": "flow_xungou_main",
+          "state": "s03_chuiniu",
+          "reached": true
+        }
+      ],
+      "done": [
+        {
+          "narrative": "flow_xungou_main",
+          "state": "s04_pozi",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "id": "章节_河边",
+      "package": "章节_河边",
+      "when": [
+        {
+          "narrative": "flow_xungou_main",
+          "state": "s04_pozi",
+          "reached": true
+        }
+      ],
+      "done": [
+        {
+          "narrative": "flow_xungou_main",
+          "state": "s05_hebian",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "id": "章节_码头",
+      "package": "章节_码头",
+      "when": [
+        {
+          "narrative": "flow_xungou_main",
+          "state": "s05_hebian",
+          "reached": true
+        }
+      ],
+      "done": [
+        {
+          "narrative": "flow_xungou_main",
+          "state": "s06_laoxiang",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "id": "章节_向导",
+      "package": "章节_向导",
+      "when": [
+        {
+          "narrative": "flow_xungou_main",
+          "state": "s06_laoxiang",
+          "reached": true
+        }
+      ],
+      "done": [
+        {
+          "narrative": "flow_xungou_main",
+          "state": "s08_xiangdao",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "id": "章节_送货",
+      "package": "章节_送货",
+      "when": [
+        {
+          "narrative": "flow_xungou_main",
+          "state": "s08_xiangdao",
+          "reached": true
+        }
+      ],
+      "done": [
+        {
+          "narrative": "flow_xungou_main",
+          "state": "s09_songhuo",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "id": "章节_招募",
+      "package": "章节_招募",
+      "when": [
+        {
+          "narrative": "flow_xungou_main",
+          "state": "s09_songhuo",
+          "reached": true
+        }
+      ],
+      "done": [
+        {
+          "narrative": "flow_xungou_main",
+          "state": "s11_zhaomu",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "id": "章节_终幕",
+      "package": "章节_终幕",
+      "when": [
+        {
+          "narrative": "flow_xungou_main",
+          "state": "s11_zhaomu",
+          "reached": true
+        }
+      ],
+      "done": [
+        {
+          "narrative": "flow_xungou_main",
+          "state": "s12_chufa",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "id": "章节_义庄",
+      "scene": "义庄",
+      "package": "章节_义庄",
+      "done": [
+        {
+          "narrative": "scenario_义庄镇尸",
+          "state": "all_done",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "id": "章节_枯井",
+      "scene": "枯井土地庙",
+      "package": "章节_枯井",
+      "done": [
+        {
+          "narrative": "scenario_枯井",
+          "state": "fled",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "id": "章节_守夜",
+      "scene": "城隍庙夜",
+      "package": "章节_守夜",
+      "done": [
+        {
+          "narrative": "wrap_守夜",
+          "state": "done",
+          "reached": true
+        }
+      ]
     }
   ]
 }

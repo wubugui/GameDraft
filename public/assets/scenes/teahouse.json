@@ -166,59 +166,76 @@
       "data": {
         "graphId": "寻狗_向导传闻"
       }
+    },
+    {
+      "id": "new_hotspot_0",
+      "type": "inspect",
+      "label": "小二1",
+      "x": 222.7,
+      "y": 210.1,
+      "interactionRange": 50,
+      "data": {
+        "text": ""
+      },
+      "displayImage": {
+        "image": "/resources/runtime/images/illustrations/old_yamen_gatekeeper_side_right_0306.png",
+        "worldWidth": 38.2,
+        "worldHeight": 150.0
+      },
+      "perspectiveScaleEnabled": true
     }
   ],
   "npcs": [
     {
       "id": "storyteller_zhang",
       "name": "说书人张叨叨",
-      "x": 421.8,
-      "y": 512.8,
+      "x": 363.9,
+      "y": 490.7,
       "dialogueGraphId": "寻狗_说书人",
       "interactionRange": 40.0,
       "animFile": "/resources/runtime/animation/npc_storyteller_anim/anim.json",
-      "initialAnimState": "crouch",
+      "initialAnimState": "idle",
       "scale": 0.9,
       "initialFacing": "left",
       "initialAnimPlayback": {
-        "holdFrame": 7
+        "holdFrame": 0
       },
       "portraitSlug": "npc_storyteller_anim"
     },
     {
       "id": "blind_li",
       "name": "瞎子李",
-      "x": 326.1,
-      "y": 203.0,
+      "x": 247.0,
+      "y": 264.5,
       "dialogueGraphId": "茶馆瞎子李",
       "interactionRange": 71.4,
       "animFile": "/resources/runtime/animation/npc_blind_li_anim/anim.json",
-      "initialAnimState": "boy_run_ring",
-      "conditions": [
-        {
-          "flag": "legacy_iron_box_flow"
-        }
-      ],
-      "conditionHidesEntity": true
+      "initialAnimState": "crouch",
+      "initialAnimPlayback": {
+        "holdFrame": 5
+      },
+      "initialFacing": "left"
     },
     {
       "id": "npc_掌柜",
       "name": "茶馆掌柜",
-      "x": 250.3,
-      "y": 191.7,
+      "x": 363.6,
+      "y": 199.6,
       "interactionRange": 64.0,
       "animFile": "/resources/runtime/animation/npc_teahouse_owner_anim/anim.json",
       "initialAnimState": "idle",
-      "initialFacing": "left",
-      "dialogueGraphId": "寻狗_茶馆掌柜"
+      "dialogueGraphId": "寻狗_茶馆掌柜",
+      "initialFacing": "left"
     },
     {
       "id": "waiter_xiaoer",
       "name": "小二",
-      "x": 216.1,
-      "y": 323.4,
+      "x": 81.1,
+      "y": 273.9,
       "dialogueGraphId": "茶馆小二",
-      "interactionRange": 64.3
+      "interactionRange": 64.3,
+      "animFile": "/resources/runtime/animation/npc_lifu_anim/anim.json",
+      "initialAnimState": "idle"
     },
     {
       "id": "fx_steam_1",
@@ -309,8 +326,8 @@
     {
       "id": "fx_steam_3",
       "name": "热气",
-      "x": 503.3,
-      "y": 396.4,
+      "x": 527.8,
+      "y": 358.2,
       "interactionRange": 0,
       "castShadow": false,
       "animFile": "/resources/runtime/animation/fx_teapot_steam/anim.json",
@@ -408,16 +425,15 @@
       "initialAnimState": "idle"
     },
     {
-      "id": "new_npc_0",
-      "name": "New NPC",
-      "x": 131.6,
-      "y": 235.7,
+      "id": "new_npc_1",
+      "name": "茶馆狗",
+      "x": 342.2,
+      "y": 224.9,
       "interactionRange": 50,
-      "animFile": "/resources/runtime/animation/player_anim/anim.json",
-      "initialAnimState": "crouch",
-      "initialAnimPlayback": {
-        "holdFrame": 9
-      }
+      "animFile": "/resources/runtime/animation/dog_anim/anim.json",
+      "initialAnimState": "idle",
+      "scale": 0.75,
+      "initialFacing": "left"
     }
   ],
   "depthConfig": {
@@ -427,13 +443,13 @@
       "R": [
         [
           0.0,
-          -0.529919264233205,
-          -0.848048096156426
+          -0.7071067811865475,
+          -0.7071067811865476
         ],
         [
           0.0,
-          0.8480480961564261,
-          -0.5299192642332049
+          0.7071067811865476,
+          -0.7071067811865475
         ],
         [
           -1.0,
@@ -441,42 +457,50 @@
           -0.0
         ]
       ],
-      "ppu": 409.0,
-      "cx": 600.0,
-      "cy": 448.0
+      "ppu": 56.0,
+      "cx": 1024.0,
+      "cy": 768.0
     },
     "depth_mapping": {
       "invert": true,
-      "scale": 4.69,
-      "offset": -3.6
+      "scale": 28.43,
+      "offset": -17.0
     },
     "shader": {
-      "depth_per_sy": 0.0015277979264286738,
-      "floor_depth_A": -0.003912798359513571,
-      "floor_depth_B": 1.75293366506208
+      "depth_per_sy": 0.017857142857142856,
+      "floor_depth_A": -0.017857142857142863,
+      "floor_depth_B": 13.714285714285719
     },
     "depth_tolerance": 0.0,
     "floor_offset": 0.0,
     "collision": {
-      "x_min": -1.4568284797968425,
-      "z_min": -1.4572127139364304,
-      "cell_size": 0.024085983072081395,
+      "x_min": -17.52715680052541,
+      "z_min": -18.214285714285715,
+      "cell_size": 0.19017055030545918,
       "grid_width": 201,
-      "grid_height": 123,
-      "height_offset": 0.03
+      "grid_height": 193,
+      "height_offset": 0.05
     }
   },
   "worldHeight": 525.0,
   "perspectiveScale": {
-    "rulers": [
-      {
-        "y": 210.0,
-        "scale": 1.0
-      },
-      {
-        "y": 525.0,
-        "scale": 1.6
+    "near": {
+      "x": 350.0,
+      "y": 525.0,
+      "scale": 1.5
+    },
+    "far": {
+      "x": 350.0,
+      "y": 210.0,
+      "scale": 1.0
+    }
+  },
+  "onEnter": [
+    {
+      "type": "startDialogueGraph",
+      "params": {
+        "graphId": "寻狗_听书开场"
       }
-    ]
-  }
+    }
+  ]
 }

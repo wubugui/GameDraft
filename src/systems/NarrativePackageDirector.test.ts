@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { ActionExecutor } from '../core/ActionExecutor';
 import { EventBus } from '../core/EventBus';
 import { FlagStore } from '../core/FlagStore';
 import { NarrativePackageDirector, type NarrativePackageRow } from './NarrativePackageDirector';
@@ -8,19 +7,16 @@ function flush(): Promise<void> {
   return new Promise((r) => setTimeout(r, 0));
 }
 
-/** 最小环境：真 EventBus/ActionExecutor + 可控的叙事记录 stub + live 集 stub。 */
+/** 最小环境：真 EventBus + 可控叙事记录 stub（reached 集）+ 活跃标记集 stub。
+ *  导演只维护"当前活跃章节"组织标记（不触发演出、不 gate 行为，2026-07-19 降级）；本测试验其跟踪逻辑对不对。 */
 async function makeDirector(rows: NarrativePackageRow[]) {
   const eventBus = new EventBus();
   const flagStore = new FlagStore(eventBus);
-  const actionExecutor = new ActionExecutor(eventBus, flagStore);
-  const played: string[] = [];
-  actionExecutor.register('testPlay', (p) => { played.push(String(p.tag ?? '')); }, ['tag']);
-
   const live = new Set<string>();
   const liveLog: Array<[string, boolean]> = [];
   const reached = new Set<string>();      // "图:状态" 到达记录（模拟永存状态）
 
-  const director = new NarrativePackageDirector(eventBus, actionExecutor);
+  const director = new NarrativePackageDirector(eventBus);
   director.setControl({
     setNarrativePackageLive: async (pkg, isLive) => {
       liveLog.push([pkg, isLive]);
@@ -45,82 +41,91 @@ async function makeDirector(rows: NarrativePackageRow[]) {
     assetManager: { loadJson: async () => ({ packages: rows }) },
   } as never);
   await director.loadDefs();
-  return { eventBus, director, played, live, liveLog, reached };
+  return { eventBus, director, live, liveLog, reached };
 }
 
 const DONE_LEAF = { narrative: 'scenario_op', state: 'over', reached: true };
 
-describe('NarrativePackageDirector（C2 章节导演：开拍/收工按清单，状态永存直接查询）', () => {
-  it('cue 行：进对应场景开拍 autoPlay；无 done=每次进场重放；done 到达后永不再拍', async () => {
-    const { eventBus, played, reached } = await makeDirector([
-      { id: '开场', scene: 'teahouse', autoPlay: { type: 'testPlay', params: { tag: 'op' } }, done: [DONE_LEAF] },
-      { id: '梦', scene: 'dream', autoPlay: { type: 'testPlay', params: { tag: 'dream' } } },
+describe('NarrativePackageDirector（维护活跃章节组织标记：按里程碑/场景 标活跃/非活跃，不触发演出、不 gate 行为）', () => {
+  it('里程碑驱动包行：when 成立 tick 载入=live 闩锁不重载；done 成立即 dormant，状态永存', async () => {
+    const { eventBus, live, liveLog, reached } = await makeDirector([
+      { id: '一章', package: 'ch1', when: [{ narrative: 'flow', state: 'beat1', reached: true }], done: [DONE_LEAF] },
     ]);
-    eventBus.emit('scene:revealed', { sceneId: 'teahouse' });
-    await flush();
-    expect(played).toEqual(['op']);
-    eventBus.emit('scene:revealed', { sceneId: 'other' });   // 别的场景不触发
-    await flush();
-    expect(played).toEqual(['op']);
-    eventBus.emit('scene:revealed', { sceneId: 'dream' });   // 无 done 的梦境行：进场即放
-    eventBus.emit('scene:revealed', { sceneId: 'dream' });   // 再进再放（忠实旧 onEnter 语义）
-    await flush();
-    expect(played).toEqual(['op', 'dream', 'dream']);
-    // 剧情永远完成后（记录可查）：再进茶馆不重拍
-    reached.add('scenario_op:over');
-    eventBus.emit('scene:revealed', { sceneId: 'teahouse' });
-    await flush();
-    expect(played.filter((t) => t === 'op')).toEqual(['op']);
-  });
-
-  it('package 行：开拍=置 live+autoPlay（live 即闩锁不重拍）；done 成立即收工置 dormant', async () => {
-    const { eventBus, played, live, liveLog, reached } = await makeDirector([
-      {
-        id: '一章', package: 'ch1', scene: 'street',
-        autoPlay: { type: 'testPlay', params: { tag: 'ch1' } },
-        done: [DONE_LEAF],
-      },
-    ]);
-    eventBus.emit('scene:revealed', { sceneId: 'street' });
-    await flush();
-    expect(liveLog).toEqual([['ch1', true]]);
-    expect(played).toEqual(['ch1']);
-    eventBus.emit('scene:revealed', { sceneId: 'street' });  // 已 live：不重拍
-    await flush();
-    expect(played).toEqual(['ch1']);
-    // 拍完（记录到达终态）→ 任意状态变化 tick 收工
-    reached.add('scenario_op:over');
+    // when 未成立：不载
     eventBus.emit('narrative:stateChanged', { graphId: 'x', from: 'a', to: 'b' });
     await flush();
     expect(live.has('ch1')).toBe(false);
-    expect(liveLog).toEqual([['ch1', true], ['ch1', false]]);
-    // 收工后再进场：done 已成立，不再开拍
-    eventBus.emit('scene:revealed', { sceneId: 'street' });
+    // when 成立 → 载入
+    reached.add('flow:beat1');
+    eventBus.emit('narrative:stateChanged', { graphId: 'flow', from: 'a', to: 'beat1' });
     await flush();
-    expect(played).toEqual(['ch1']);
+    expect(liveLog).toEqual([['ch1', true]]);
+    // 已 live：再 tick 不重载
+    eventBus.emit('narrative:stateChanged', { graphId: 'x', from: 'b', to: 'c' });
+    await flush();
+    expect(liveLog).toEqual([['ch1', true]]);
+    // done 成立 → dormant
+    reached.add('scenario_op:over');
+    eventBus.emit('narrative:stateChanged', { graphId: 'x', from: 'c', to: 'd' });
+    await flush();
+    expect(live.has('ch1')).toBe(false);
+    expect(liveLog).toEqual([['ch1', true], ['ch1', false]]);
+    // 收工后不再重载（done 已成立）
+    reached.delete('flow:beat1'); reached.add('flow:beat1'); // when 仍成立，但 done 也成立
+    eventBus.emit('narrative:stateChanged', { graphId: 'x', from: 'd', to: 'e' });
+    await flush();
+    expect(liveLog).toEqual([['ch1', true], ['ch1', false]]);
   });
 
-  it('无 scene 的 package 行只在状态变化 tick 评估；restoring 抑制评估、恢复完成跑收工清扫', async () => {
-    const { eventBus, director, played, live, reached } = await makeDirector([
-      { id: '常开', package: 'amb', autoPlay: { type: 'testPlay', params: { tag: 'amb' } }, done: [DONE_LEAF] },
+  it('场景驱动包行：进对应场景才载包；别的场景/tick 不载；done 后不再载', async () => {
+    const { eventBus, live, liveLog, reached } = await makeDirector([
+      { id: '支线', package: 'side', scene: '义庄', done: [DONE_LEAF] },
     ]);
-    eventBus.emit('scene:revealed', { sceneId: 'anywhere' }); // sceneEntry 不评估无 scene 行
+    eventBus.emit('scene:revealed', { sceneId: '别处' });     // 别的场景不载
     await flush();
-    expect(played).toEqual([]);
-    eventBus.emit('narrative:stateChanged', { graphId: 'x', from: 'a', to: 'b' });
+    expect(live.has('side')).toBe(false);
+    eventBus.emit('narrative:stateChanged', { graphId: 'x', from: 'a', to: 'b' }); // 有 scene 的行不在 tick 载
     await flush();
-    expect(played).toEqual(['amb']);
-    expect(live.has('amb')).toBe(true);
-    // restoring：一切评估抑制
-    director.setRestoring(true);
+    expect(live.has('side')).toBe(false);
+    eventBus.emit('scene:revealed', { sceneId: '义庄' });      // 进本场景 → 载
+    await flush();
+    expect(liveLog).toEqual([['side', true]]);
+    // done 成立后收工 + 再进场不重载
     reached.add('scenario_op:over');
     eventBus.emit('narrative:stateChanged', { graphId: 'x', from: 'b', to: 'c' });
     await flush();
+    expect(live.has('side')).toBe(false);
+    eventBus.emit('scene:revealed', { sceneId: '义庄' });
+    await flush();
+    expect(liveLog).toEqual([['side', true], ['side', false]]);
+  });
+
+  it('restoring 抑制评估；恢复完成跑一轮装卸清扫', async () => {
+    const { eventBus, director, live, reached } = await makeDirector([
+      { id: '常开', package: 'amb', when: [{ narrative: 'flow', state: 'w', reached: true }], done: [DONE_LEAF] },
+    ]);
+    reached.add('flow:w');
+    eventBus.emit('narrative:stateChanged', { graphId: 'flow', from: 'a', to: 'w' });
+    await flush();
     expect(live.has('amb')).toBe(true);
-    // 恢复完成：收工清扫跑（done 已成立→dormant），且不触发任何 cue 重放
+    // restoring：评估抑制
+    director.setRestoring(true);
+    reached.add('scenario_op:over');
+    eventBus.emit('narrative:stateChanged', { graphId: 'x', from: 'w', to: 'z' });
+    await flush();
+    expect(live.has('amb')).toBe(true);
+    // 恢复完成：清扫跑（done 成立→dormant）
     director.setRestoring(false);
     await flush();
     expect(live.has('amb')).toBe(false);
-    expect(played).toEqual(['amb']);
+  });
+
+  it('无 package 的行被忽略（导演只管包）', async () => {
+    const { eventBus, liveLog } = await makeDirector([
+      { id: '空行', scene: 'teahouse' } as NarrativePackageRow,
+    ]);
+    eventBus.emit('scene:revealed', { sceneId: 'teahouse' });
+    await flush();
+    expect(liveLog).toEqual([]);
   });
 });

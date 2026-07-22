@@ -22,6 +22,9 @@ export class SceneDepthSystem implements IGameSystem {
     private collisionW = 0;
     private collisionH = 0;
     private filters: IEntityShadingFilter[] = [];
+    /** 持有显式 occlusionBlendFactor 覆盖的滤镜：F2 全局遮挡混合广播跳过它们
+     *  （单一所有者：实体作者值不被场景级调试滑块静默盖掉） */
+    private blendOverriddenFilters = new Set<IEntityShadingFilter>();
     /** 已建阴影实例（由 Game 在创建/销毁时注册/注销）：深度调参 setter 广播到此，避免只有滤镜生效而阴影读旧值 */
     private shadows = new Set<IEntityShadow>();
 
@@ -65,13 +68,24 @@ export class SceneDepthSystem implements IGameSystem {
         this.broadcastDepthParamsToShadows();
     }
 
-    /** 深度遮挡半透明混合系数（调试）：遮挡像素 alpha *= factor，0 为硬裁切 */
+    /** 场景级深度遮挡半透明混合系数（F2 调试 / 实体缺省来源）：遮挡像素 alpha *= factor，0 为硬裁切。
+     *  持有显式实体级覆盖的滤镜不受此广播影响。 */
     get occlusionBlendFactor(): number { return this._occlusionBlendFactor; }
     set occlusionBlendFactor(v: number) {
         const c = Math.min(1, Math.max(0, Number(v) || 0));
         this._occlusionBlendFactor = c;
-        for (const f of this.filters) f.setOcclusionBlendFactor(c);
+        for (const f of this.filters) {
+            if (!this.blendOverriddenFilters.has(f)) f.setOcclusionBlendFactor(c);
+        }
         this.broadcastDepthParamsToShadows();
+    }
+
+    /** 解析实体级遮挡混合系数：有限数则钳到 [0,1] 作为覆盖，否则回落场景默认（不覆盖） */
+    private resolveEntityBlend(override: number | undefined): { value: number; overridden: boolean } {
+        if (typeof override === 'number' && Number.isFinite(override)) {
+            return { value: Math.min(1, Math.max(0, override)), overridden: true };
+        }
+        return { value: this._occlusionBlendFactor, overridden: false };
     }
 
     /** 注册阴影实例进调参广播列表；注册即同步一次当前值（阴影构造时烘焙的是快照） */
@@ -200,6 +214,7 @@ export class SceneDepthSystem implements IGameSystem {
         this.config = null;
         this.enabled = false;
         this.filters = [];
+        this.blendOverriddenFilters.clear();
         // 阴影实例由 Game 负责注销；此处兜底清空，防跨场景残留引用
         this.shadows.clear();
         this.worldToPixelX = 1;
@@ -317,14 +332,16 @@ export class SceneDepthSystem implements IGameSystem {
         return this.collisionData[gz * this.collisionW + gx] > 127;
     }
 
-    createFilterForEntity(): DepthOcclusionFilter | null {
+    createFilterForEntity(occlusionBlendOverride?: number): DepthOcclusionFilter | null {
         depthLog(T, 'createFilter: enabled=', this.enabled, 'depthTex=', !!this.depthTexture, 'config=', !!this.config);
         if (!this.enabled || !this.depthTexture || !this.config) return null;
         try {
             const f = DepthOcclusionFilter.createForEntity(this.depthTexture, this.config);
             f.setSceneSize(this.sceneW, this.sceneH);
             f.setWorldToPixel(this.worldToPixelX, this.worldToPixelY);
-            f.setOcclusionBlendFactor(this._occlusionBlendFactor);
+            const blend = this.resolveEntityBlend(occlusionBlendOverride);
+            f.setOcclusionBlendFactor(blend.value);
+            if (blend.overridden) this.blendOverriddenFilters.add(f);
             this.filters.push(f);
             depthLog(T, 'filter created, sceneSize (rendered):', this.sceneW, 'x', this.sceneH, 'total:', this.filters.length);
             return f;
@@ -339,7 +356,7 @@ export class SceneDepthSystem implements IGameSystem {
      * 仅在 lightingEnabled 时返回；depth 同时启用则一并做遮挡（替代独立的 DepthOcclusionFilter）。
      * @param sampleLiftWorld 在脚部之上多少世界单位处采样 probe（≈0.4×角色高度）
      */
-    createLightingFilterForEntity(sampleLiftWorld: number): IEntityShadingFilter | null {
+    createLightingFilterForEntity(sampleLiftWorld: number, occlusionBlendOverride?: number): IEntityShadingFilter | null {
         if (!this.lightingEnabled || !this.lightEnv) return null;
         try {
             const f = EntityLightingFilter.createForEntity({
@@ -351,7 +368,12 @@ export class SceneDepthSystem implements IGameSystem {
             });
             f.setSceneSize(this.sceneW, this.sceneH);
             f.setWorldToPixel(this.worldToPixelX, this.worldToPixelY);
-            if (this.enabled) f.setOcclusionBlendFactor(this._occlusionBlendFactor);
+            // 遮挡仅在 depth 启用时发生；lighting-only 场景无遮挡，覆盖无意义故不登记
+            if (this.enabled) {
+                const blend = this.resolveEntityBlend(occlusionBlendOverride);
+                f.setOcclusionBlendFactor(blend.value);
+                if (blend.overridden) this.blendOverriddenFilters.add(f);
+            }
             this.filters.push(f);
             return f;
         } catch (e) {
@@ -364,6 +386,7 @@ export class SceneDepthSystem implements IGameSystem {
     removeFilter(f: IEntityShadingFilter): void {
         const i = this.filters.indexOf(f);
         if (i >= 0) this.filters.splice(i, 1);
+        this.blendOverriddenFilters.delete(f);
     }
 
     setCollisionTextureOnFilters(tex: Texture): void {

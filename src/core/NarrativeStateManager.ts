@@ -105,8 +105,10 @@ export interface NarrativeGraph {
   ownerId?: string;
   /** Author note/category for wrapper usage grouping in tooling. */
   category?: string;
-  /** 章节包归属（编译期从 composition.package 盖章）：无标=常驻核心永远 live；
-   *  有标=包 dormant 时冻结（不吃信号/不跑 reactive，状态原地保留、条件照常可查）。 */
+  /** 章节包归属（编译期从 composition.package / element.package 盖章）：**纯组织标签**，
+   *  标明这张图属于哪个章节，供导演清单/编辑器/工具分组用。
+   *  ⚠不承担任何运行时正确性：图恒吃信号/恒跑 reactive，与其包被标 live 还是 dormant 无关
+   *  （包已降级，见 listScannableGraphEntries 注释）。 */
   packageId?: string;
   run?: NarrativeRunDef;
   initialState: string;
@@ -179,7 +181,8 @@ export interface NarrativeComposition {
   id: string;
   label?: string;
   description?: string;
-  /** 章节包标：编排整组归入此包（无标=常驻核心）。编译时盖到组内每张图的 packageId。 */
+  /** 章节包标（纯组织标签）：编排整组归入此包，编译时盖到组内每张图的 packageId。
+   *  仅供章节分组/工具展示，不 gate 运行时行为（见 packageId / listScannableGraphEntries）。 */
   package?: string;
   mainGraph: NarrativeGraph;
   elements?: NarrativeCompositionElement[];
@@ -270,7 +273,8 @@ export class NarrativeStateManager implements IGameSystem {
   private activatedArchetype: string | null = null;
   /** 有实例但非激活（挂起冻结，不推进）的活计图 id 集。 */
   private suspendedRunArchetypes: Set<string> = new Set();
-  /** live 的章节包（电影摄制模型：live=剧组在场吃信号跑演出；dormant=冻结但状态永存可查）。 */
+  /** 导演标为"当前活跃章节"的包集合（**纯组织/工具追踪**，随存档持久化，供章节感知 UI/工具查询）。
+   *  ⚠已降级：不 gate 任何运行时行为——图恒吃信号，与此集合是否含其包无关。 */
   private livePackages: Set<string> = new Set();
   /** 原型累计计数器（started/reset/aborted/settled-by-exit；随存档持久化）。 */
   private runCounters: Map<string, NarrativeRunCounters> = new Map();
@@ -533,12 +537,18 @@ export class NarrativeStateManager implements IGameSystem {
    * 信号/reactive 扫描的迭代单位：全部常驻图 + 激活的那一张活计图（若有）。
    * 挂起活计图冻结、不参与推进（拍板：非激活活计不会推进也不会失败）。
    */
-  private listLiveGraphEntries(): Array<[string, NarrativeGraph]> {
+  /**
+   * 参与信号扫描的图：全部常驻图 + 当前激活的活计图（挂起活计冻结不扫）。
+   * ⚠章节包（packageId / livePackages）**不在这里 gate**——包已降级为纯组织标签，
+   * 所有已注册的图恒吃信号/恒跑 reactive，无论其包被导演标为 live 还是 dormant。
+   * （证据：全项目 131 种信号 129 种单图独占、2 种多听均良性，from-state 门已隔离图与图；
+   *  且所有图启动即编译进内存，包从不省加载。包的 live/dormant 只是章节归属的组织/工具信息，
+   *  不承担任何运行时正确性。切勿在此重新按 livePackages 过滤。）
+   * 唯一在此 gate 的是活计实例机（另一套系统）：挂起的活计原型冻结不扫。
+   */
+  private listScannableGraphEntries(): Array<[string, NarrativeGraph]> {
     const out: Array<[string, NarrativeGraph]> = [];
     for (const [gid, graph] of this.graphs) {
-      // 章节包维度：dormant 包整组冻结（含其中活计），与活计挂起同款语义——
-      // 不吃信号/不跑 reactive，状态原地保留、条件叶照常可查（状态=永久记录）。
-      if (graph.packageId && !this.livePackages.has(graph.packageId)) continue;
       if (!isRunGraph(graph)) {
         out.push([gid, graph]);
       } else if (gid === this.activatedArchetype && this.activeStates.has(gid)) {
@@ -565,7 +575,8 @@ export class NarrativeStateManager implements IGameSystem {
     return this.livePackages.has(String(packageId ?? '').trim());
   }
 
-  /** 章节包 live/dormant 切换（走队列，与信号/生命周期同时序）。幂等；未知包记 issue 忽略。 */
+  /** 章节包"活跃/非活跃"标记切换（**纯组织追踪**，走队列保时序）。幂等；未知包记 issue 忽略。
+   *  ⚠不 gate 运行时行为——仅维护 livePackages 这个组织/工具集合，供章节感知 UI 查询。 */
   setNarrativePackageLive(packageId: string, live: boolean): Promise<void> {
     const pkg = String(packageId ?? '').trim();
     if (!pkg) return Promise.resolve();
@@ -585,11 +596,10 @@ export class NarrativeStateManager implements IGameSystem {
     if (live) this.livePackages.add(packageId);
     else this.livePackages.delete(packageId);
     this.recordTrace('package.lifecycle', {
-      message: `package ${packageId} ${live ? 'live（开拍）' : 'dormant（收工冻结）'}`,
+      message: `package ${packageId} 标记为 ${live ? '活跃章节' : '非活跃章节'}（组织追踪，不 gate 行为）`,
     });
     this.eventBus.emit('narrative:packageChanged', { packageId, live });
-    // 新 live 的图可能立即满足 reactive 条件（状态早已恢复/推进过），补评一轮。
-    if (live) this.kickReactiveEvaluation();
+    // ⚠降级后不再补评 reactive：图恒吃信号，切换活跃标记不改变任何图的可扫描性，无新反应机会。
   }
 
   /** 有实例（激活或挂起）的活计图 id 列表——诊断/派生用。 */
@@ -1000,8 +1010,8 @@ export class NarrativeStateManager implements IGameSystem {
         }]),
       ),
       activatedArchetype: this.activatedArchetype,
-      // 章节包 live 集：live 是"导演喊过开拍"的历史事实，不能靠 when 条件重推导，入档。
-      // 包内图状态照旧走 activeStates/runs（状态永存，与 live 无关）。
+      // 章节包活跃标记集（纯组织追踪）：入档保存导演标过的活跃章节，供章节感知 UI 还原。
+      // 不 gate 行为，图状态永存照旧走 activeStates/runs（与此集合无关）。
       livePackages: [...this.livePackages],
     };
   }
@@ -1114,7 +1124,7 @@ export class NarrativeStateManager implements IGameSystem {
 
   private restoreLivePackages(raw: unknown): void {
     this.livePackages.clear();
-    if (!Array.isArray(raw)) return; // 旧档无此字段：全部包 dormant，导演按 when∧¬done 重评
+    if (!Array.isArray(raw)) return; // 旧档无此字段：活跃标记集留空，导演重评（纯组织追踪，不影响行为）
     const known = new Set(this.getKnownPackageIds());
     for (const entry of raw) {
       const pkg = String(entry ?? '').trim();
@@ -1515,7 +1525,7 @@ export class NarrativeStateManager implements IGameSystem {
     const migratedInstances = new Set<string>();
     // 迭代单位=常驻图 + 激活活计图（挂起活计冻结不扫）。快照迭代：
     // 处理途中被结算/弃置的活计经 getInstanceActive===undefined 与提交前复核自然跳过。
-    const instanceEntries = this.listLiveGraphEntries();
+    const instanceEntries = this.listScannableGraphEntries();
     const matchedInstanceIds: string[] = [];
     for (const [instanceId, graph] of instanceEntries) {
       // 逐图 await 之间可能发生读档/换册：本信号属旧时间线，剩余图不再扫。
@@ -1627,7 +1637,7 @@ export class NarrativeStateManager implements IGameSystem {
    * Pushes matching transitions directly into the queue for processing.
    */
   private evaluateReactiveTriggers(): void {
-    for (const [instanceId, graph] of this.listLiveGraphEntries()) {
+    for (const [instanceId, graph] of this.listScannableGraphEntries()) {
       const active = this.getInstanceActive(instanceId, graph);
       if (active === undefined) continue;
       // 单遍取最优候选，免去每次扫描的 filter().map().sort() 三次临时数组分配。
@@ -2015,9 +2025,9 @@ export function compileNarrativeGraphs(data: NarrativeGraphsFile | null | undefi
     const out: NarrativeGraph[] = [];
     for (const comp of data.compositions) {
       if (!comp || typeof comp !== 'object') continue;
-      // 章节包标（电影摄制模型——包只切 live/dormant，状态永存）：
+      // 章节包标（纯组织标签，不 gate 运行时——见 packageId / listScannableGraphEntries）：
       // composition.package 盖整组；element.package 覆盖单元素（主线里程碑图与子图同编排——
-      // mainGraph 只随 composition.package，不继承元素包 → 天然常驻；子图各打各拍的包）。
+      // mainGraph 只随 composition.package，不继承元素包；子图各打各章节的包，仅供分组）。
       const compPkg = typeof comp.package === 'string' && comp.package.trim() ? comp.package.trim() : undefined;
       if (isNarrativeGraph(comp.mainGraph)) {
         if (compPkg) comp.mainGraph.packageId = compPkg;

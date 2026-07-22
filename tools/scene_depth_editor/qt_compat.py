@@ -134,7 +134,9 @@ class Variable:
 
 
 class StringVar(Variable):
-    pass
+    def get(self) -> str:
+        v = super().get()
+        return "" if v is None else str(v)
 
 
 class DoubleVar(Variable):
@@ -421,6 +423,9 @@ class Radiobutton(QRadioButton, _WidgetMixin):
                  variable: Variable | None = None, value: Any = None,
                  command: Callable[..., None] | None = None, **_: Any) -> None:
         super().__init__(text, parent)
+        # 碰撞工具与深度工具分属不同 parent，但共用同一 StringVar。
+        # Qt 默认按 parent 互斥，会把跨分组的选中状态打乱；改由 Variable 统一同步。
+        self.setAutoExclusive(False)
         self._variable = variable
         self._value = value
         if variable is not None:
@@ -452,15 +457,48 @@ class Entry(QLineEdit, _WidgetMixin):
 
 class Combobox(QComboBox, _WidgetMixin):
     def __init__(self, parent: QWidget | None = None, values: list[str] | tuple[str, ...] = (),
-                 **_: Any) -> None:
+                 textvariable: Variable | None = None, **_: Any) -> None:
         super().__init__(parent)
         self.addItems([str(v) for v in values])
+        self._variable = textvariable
+        if textvariable is not None:
+            textvariable.bind_widget(self._sync_from_variable)
+            self.currentTextChanged.connect(self._on_text_changed)
+
+    def _sync_from_variable(self, value: Any) -> None:
+        text = "" if value is None else str(value)
+        if text == self.currentText():
+            return
+        idx = self.findText(text)
+        self.blockSignals(True)
+        self.setCurrentIndex(idx)  # 找不到时 -1 = 清空选择
+        self.blockSignals(False)
+
+    def _on_text_changed(self, text: str) -> None:
+        if self._variable is not None and self._variable.get() != text:
+            self._variable.set(text)
 
     def current(self, index: int) -> None:
         self.setCurrentIndex(index)
 
     def get(self) -> str:
         return self.currentText()
+
+    def configure(self, **kwargs: Any) -> None:
+        # tkinter 用 configure(values=...) 动态刷新候选；不实现会把
+        # 场景选择器整个变成空下拉框(项目绑定流程不可用)。
+        if "values" in kwargs:
+            values = [str(v) for v in kwargs.pop("values")]
+            cur = self.currentText()
+            self.blockSignals(True)
+            self.clear()
+            self.addItems(values)
+            self.setCurrentIndex(self.findText(cur))
+            self.blockSignals(False)
+            if self._variable is not None and self.currentText() != (self._variable.get() or ""):
+                self._variable.set(self.currentText())
+        if kwargs:
+            self.config(**kwargs)
 
     def __getitem__(self, key: str) -> tuple[str, ...]:
         if key == "values":
@@ -616,7 +654,9 @@ class _SimpleDialog:
 class _KeyEvent:
     def __init__(self, event) -> None:
         self.keysym = QKeySequence(event.key()).toString().lower() or event.text().lower()
-        self.state = 0x4 if event.modifiers() & Qt.ControlModifier else 0
+        # macOS 上 Qt 把物理 Ctrl 映射为 MetaModifier(ControlModifier=Cmd)，两个都算
+        mods = event.modifiers()
+        self.state = 0x4 if mods & (Qt.ControlModifier | Qt.MetaModifier) else 0
 
 
 class _Ttk:

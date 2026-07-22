@@ -184,3 +184,4 @@
 - 2026-07-16 intake:改2 —— 把 narrative-flow-authoring 绑进"进入策划模式即载入":①.cursor/skills/production-mode/SKILL.md 开头新增「进入本模式即载入 core 能力」节(涉及事件必载该卡);②content/methods/production-mode-workflow.md 向下指针置顶该卡。新卡补触发词(策划模式/production mode/做内容)。用户拍板"任何 agent 进策划模式获得 full 能力"。
 - 2026-07-16 intake:改1 —— cutscene-step-semantics 补"任何过场按 Esc 整段跳过"(GameStateController.handleEscape→CutsceneManager.skip,加该 authority 锚点);附验证含义:长过场走命令通道跳过后状态断言,computer-use 的 key 事件未必送达 canvas(实测浏览器 Esc 不生效)——再证"测试走命令通道不点像素"。用户拍板 intake。
 - 2026-07-16 intake:改1 —— narrative-flow-authoring 核心公理①收紧:判据从"大小"改为「事件关联」——有事件关联(预埋伏笔/有后果/被门闸/被别处读)不论多小必须上脊椎;纯孤立flavor(不预埋无后果没人读)才可孤立对话;补坑"世界观闲话若预埋后事件即有关联、非纯flavor"(①.5散落闲话踩过并已改回脊椎)。用户拍板"任何具事件关联的叙事必须走状态机"。
+- 2026-07-21 intake:收1/改0/降0/拒0 —— 新增 runtime 决策「二维场景辐射度还原与发光增益管线定稿」：逐图曝光 + 开放词汇候选分割 + 对象辐射证据生成局部增益，HDR 辐射场最终只在伪世界深度中积分为实体 irradiance；纯 agent、纯亮度、纯模型直出与屏幕空间传光路线均否。

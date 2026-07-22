@@ -13,7 +13,7 @@ import narrativeGraphsData from '../../public/assets/data/narrative_graphs.json'
 
 const FLOW = 'flow_xungou_main';
 
-function makeRuntime() {
+async function makeRuntime() {
   const eventBus = new EventBus();
   const flagStore = new FlagStore(eventBus);
   const actionExecutor = new ActionExecutor(eventBus, flagStore);
@@ -25,6 +25,9 @@ function makeRuntime() {
     narrativeState: narrative,
   }));
   narrative.registerGraphs(compileNarrativeGraphs(narrativeGraphsData as unknown as NarrativeGraphsFile));
+  // ⚠2026-07-19 降级后：章节包=纯组织标签、不 gate 信号接收，故**无需加载任何包**——
+  // 全部子图注册即恒吃信号。本测试完全不碰 setNarrativePackageLive 却能全主线走通，
+  // 正是"包不承担运行时正确性"的活证明（对比降级前须一次点亮全部包才不冻结第一拍）。
   return { narrative };
 }
 
@@ -34,7 +37,7 @@ function flush(): Promise<void> {
 
 describe('寻狗记Demo 主线编排（真实数据）', () => {
   it('从听书到出城黑屏：全信号序列推进 11 个主线里程碑（枯井/义庄已降支线，含①.5梦）', async () => {
-    const { narrative } = makeRuntime();
+    const { narrative } = await makeRuntime();
     const emit = async (sourceType: string, sourceId: string, signal: string) => {
       narrative.emitNarrativeSignal({ sourceType: sourceType as never, sourceId, signal });
       await flush();
@@ -192,7 +195,7 @@ describe('寻狗记Demo 主线编排（真实数据）', () => {
   });
 
   it('乱序信号不越级：跳过中间 beat 的出口信号不推动主线', async () => {
-    const { narrative } = makeRuntime();
+    const { narrative } = await makeRuntime();
     narrative.emitNarrativeSignal({ sourceType: 'dialogue', sourceId: 'x', signal: 'chuiniu_spread' });
     await flush();
     expect(narrative.getActiveState(FLOW)).toBe('initial');
@@ -200,7 +203,7 @@ describe('寻狗记Demo 主线编排（真实数据）', () => {
   });
 
   it('梦·待死之礼乱序保护：背尸未逃，梦门不开', async () => {
-    const { narrative } = makeRuntime();
+    const { narrative } = await makeRuntime();
     narrative.emitNarrativeSignal({ sourceType: 'dialogue', sourceId: 'x', signal: 'meng_ate' });
     await flush();
     expect(narrative.getActiveState('scenario_梦待死之礼')).toBe('not_started');
@@ -214,7 +217,7 @@ describe('林中喊名 两段式分支（真实数据）', () => {
   type Pick = 'right' | 'wrong' | 'skipped';
 
   async function driveToClimax(x2: Pick, x3: Pick) {
-    const { narrative } = makeRuntime();
+    const { narrative } = await makeRuntime();
     const emit = async (sourceType: string, sourceId: string, signal: string) => {
       narrative.emitNarrativeSignal({ sourceType: sourceType as never, sourceId, signal });
       await flush();
@@ -281,7 +284,7 @@ describe('林中喊名 两段式分支（真实数据）', () => {
   });
 
   it('越点线即不喊：zone 越线信号与热点选择互斥收敛', async () => {
-    const { narrative } = makeRuntime();
+    const { narrative } = await makeRuntime();
     const emit = async (sourceType: string, sourceId: string, signal: string) => {
       narrative.emitNarrativeSignal({ sourceType: sourceType as never, sourceId, signal });
       await flush();

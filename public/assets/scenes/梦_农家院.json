@@ -101,5 +101,19 @@
     }
   ],
   "notes": "坐标待微调：spawnPoint(300,680) 假定入院在背景左下；两NPC(760,440)/(700,455) 与 hs_院门(720,400) 及 z_进屋多边形(640-820,360-460) 均按背景中部估算，需对照 scenes/梦_农家院/background.png 微调使 NPC 站在屋门口、玩家踩进 z_进屋即触发进屋转场。NPC 源图朝右，initialFacing=left 使其朝向自左下入院的玩家。",
-  "bgm": "bgm_placeholder_low_tension"
+  "bgm": "bgm_placeholder_low_tension",
+  "onEnter": [
+    {
+      "type": "fadeWorldFromBlack",
+      "params": {
+        "durationMs": 600
+      }
+    },
+    {
+      "type": "startDialogueGraph",
+      "params": {
+        "graphId": "梦_段B_农家院"
+      }
+    }
+  ]
 }

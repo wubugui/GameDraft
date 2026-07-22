@@ -1,6 +1,8 @@
 [
   "moveEntityTo",
   "faceEntity",
+  "cameraFollowActor",
+  "cameraStopFollow",
   "cutsceneSpawnActor",
   "cutsceneRemoveActor",
   "showEmoteAndWait",
@@ -33,5 +35,7 @@
   "sugarWheelResetPointer",
   "randomBranch",
   "activatePlane",
-  "deactivatePlane"
+  "deactivatePlane",
+  "showBlackout",
+  "hideBlackout"
 ]

@@ -683,14 +683,21 @@ class StepWidget(QFrame):
 
         if ptype == "showDialogue":
             cur_sid = str(self._step_data.get("scriptedNpcId", "") or "")
+            # 说话人 NPC 候选限定到本过场「targetScene」（与表情锚点/action NPC 下拉一致）；
+            # 未绑定 targetScene 时 bind_sid 为空 → npc_items_for_dialogue_picker 回退全工程。
+            ed_sc = self._editor
+            bind_sid = ""
+            if ed_sc is not None and hasattr(ed_sc, "cutscene_binding_target_scene"):
+                bind_sid = ed_sc.cutscene_binding_target_scene()
             wdg = CutsceneShowDialogueFields(
                 self._model,
-                None,
+                bind_sid,
                 str(self._step_data.get("speaker", "") or ""),
                 str(self._step_data.get("text", "") or ""),
                 cur_sid,
                 self,
                 on_change=self._emit_dirty,
+                portrait=self._step_data.get("portrait") if isinstance(self._step_data.get("portrait"), dict) else None,
             )
             self._widgets["__showDialogue__"] = wdg
             self._present_params_layout.addRow(wdg)
@@ -885,6 +892,21 @@ class StepWidget(QFrame):
             sel.set_current(cur)
         finally:
             sel.blockSignals(False)
+
+    def refresh_show_dialogue_scene_scope(self) -> None:
+        """过场 targetScene 变更时刷新 showDialogue 说话人 NPC 候选（与表情锚点刷新一致）。"""
+        if self._kind_combo.currentData() != "present":
+            return
+        if self._type_combo.committed_type() != "showDialogue":
+            return
+        wdg = self._widgets.get("__showDialogue__")
+        if not isinstance(wdg, CutsceneShowDialogueFields):
+            return
+        ed = self._editor
+        sid = ""
+        if ed is not None and hasattr(ed, "cutscene_binding_target_scene"):
+            sid = ed.cutscene_binding_target_scene()
+        wdg.refresh_scene_scope(sid or None)
 
     def _subtitle_on_present_mode_changed(self) -> None:
         combo = self._widgets.get("_subtitle_mode")
@@ -3589,6 +3611,7 @@ class TimelineEditor(QWidget):
             if isinstance(ar, ActionRow):
                 ar.set_project_context(self._model, sid_n, cutscene_id=cid)
             sw.refresh_subtitle_emote_target_items()
+            sw.refresh_show_dialogue_scene_scope()
 
     def _refresh_all_present_overlay_id_selectors(self) -> None:
         """步骤树变化后刷新 showImg / hideImg 的 id 下拉候选项。"""

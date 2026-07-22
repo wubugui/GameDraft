@@ -5,7 +5,7 @@ import type { AssetManager } from '../core/AssetManager';
 import type { InputManager } from '../core/InputManager';
 import type { CutsceneRenderer, ShowSubtitleLayout, CutsceneCameraEasing } from '../rendering/CutsceneRenderer';
 import type { Camera } from '../rendering/Camera';
-import type { ICutsceneActor, IEmoteBubbleAnchor, IEmoteBubbleProvider, EmoteBubbleOffsetOpts, NpcDef, IGameSystem, GameContext, NewCutsceneDef, CutsceneStep, CutsceneKenBurns, ICutsceneAudioPlayer, AudioPlaybackHandle, ParallaxSceneDef } from '../data/types';
+import type { ICutsceneActor, IEmoteBubbleAnchor, IEmoteBubbleProvider, EmoteBubbleOffsetOpts, NpcDef, IGameSystem, GameContext, NewCutsceneDef, CutsceneStep, CutsceneKenBurns, ICutsceneAudioPlayer, AudioPlaybackHandle, ParallaxSceneDef, DialoguePortraitRef } from '../data/types';
 import { CUTSCENE_ACTION_WHITELIST, CUTSCENE_ANON_SHOT_ID } from '../data/types';
 import { Npc } from '../entities/Npc';
 import { splitSpeakerBodyAfterResolve } from '../core/resolveText';
@@ -71,6 +71,27 @@ function parseCameraEasing(raw: unknown): CutsceneCameraEasing | undefined {
 
 /** 与 playScriptedDialogue 一致：解析 speaker 中的 {{player}} / {{npc}} 等 */
 export type ScriptedSpeakerResolver = (raw: string, scriptedNpcId?: string) => string;
+
+/**
+ * present:showDialogue 立绘解析：复用与 playScriptedDialogue 同源的逐行头像解析
+ * （显式 slug 原样用；仅带 emotion 时按说话人 player/npc 装扮解析出 slug；解析不到则不显）。
+ * 由组装层(Game)注入 —— 渲染层拿到的 portrait 恒带 slug（解析在管理器层做完）。
+ */
+export type ScriptedPortraitResolver = (
+  ref: DialoguePortraitRef | undefined,
+  rawSpeaker: string,
+  scriptedNpcId?: string,
+) => DialoguePortraitRef | undefined;
+
+/**
+ * present:showDialogue 说话人头顶「……」气泡的锚点解析：与常规对话一致，把 speaker
+ * 占位（{{player}}/{{npc[:id]}}）解析成在场实体锚点（临时演员/场景 NPC/玩家）；
+ * 旁白/字面名/未在场 → 解析不到 → 不冒。由组装层(Game)注入。
+ */
+export type SpeakingBubbleAnchorResolver = (
+  rawSpeaker: string,
+  scriptedNpcId?: string,
+) => IEmoteBubbleAnchor | null;
 
 export interface SceneManagerCutsceneAPI {
   beginCutsceneStaging(cutsceneId: string, sceneId: string): void;
@@ -139,6 +160,8 @@ export class CutsceneManager implements IGameSystem {
   private cameraAccessor: Camera | null = null;
   private spawnPointResolver: ((spawnKey: string) => { x: number; y: number } | null) | null = null;
   private scriptedSpeakerResolver: ScriptedSpeakerResolver | null = null;
+  private scriptedPortraitResolver: ScriptedPortraitResolver | null = null;
+  private speakingBubbleAnchorResolver: SpeakingBubbleAnchorResolver | null = null;
   /**
    * 与 playScriptedDialogue 一致：解引用后的 narratorLabel 展示串。
    * 仅当 present.showDialogue 的显式 speaker（解引用后）与此串相等时，才允许从正文首冒号剥皮。
@@ -244,6 +267,14 @@ export class CutsceneManager implements IGameSystem {
   /** present:showDialogue 的 speaker 与 playScriptedDialogue 共用占位解析 */
   setScriptedSpeakerResolver(fn: ScriptedSpeakerResolver | null): void {
     this.scriptedSpeakerResolver = fn;
+  }
+
+  setScriptedPortraitResolver(fn: ScriptedPortraitResolver | null): void {
+    this.scriptedPortraitResolver = fn;
+  }
+
+  setSpeakingBubbleAnchorResolver(fn: SpeakingBubbleAnchorResolver | null): void {
+    this.speakingBubbleAnchorResolver = fn;
   }
 
   /** present 字幕等：走与 UI 相同的 [tag:…] / resolveText */
@@ -823,8 +854,21 @@ export class CutsceneManager implements IGameSystem {
         } else {
           speakerOut = undefined;
         }
+        const rawPortrait = (step as { portrait?: DialoguePortraitRef }).portrait;
+        // 立绘解析在管理器层做完（与 playScriptedDialogue 同源）；渲染器只吃带 slug 的结果。
+        // 无注入解析器时退化为「仅显式 slug 直传」，绝不在渲染层再解析。
+        const resolvedPortrait = this.scriptedPortraitResolver
+          ? this.scriptedPortraitResolver(rawPortrait, rawSpeaker, scriptedNpcId || undefined)
+          : (rawPortrait?.slug && rawPortrait.emotion ? rawPortrait : undefined);
+        const portrait = resolvedPortrait?.slug && resolvedPortrait.emotion
+          ? { slug: resolvedPortrait.slug, emotion: resolvedPortrait.emotion }
+          : undefined;
+        // 说话人头顶「……」气泡：与常规对话一致,把 speaker 解析成在场实体锚点;旁白/未在场则不冒。
+        const speakingAnchor = this.speakingBubbleAnchorResolver
+          ? this.speakingBubbleAnchorResolver(rawSpeaker, scriptedNpcId || undefined)
+          : null;
         const merged = this.mergePresentShowDialogueLine(step.text as string, speakerOut);
-        await this.showDialogueText(merged.text, merged.speaker);
+        await this.showDialogueText(merged.text, merged.speaker, portrait, speakingAnchor);
         break;
       }
       case 'showImg': {
@@ -1015,27 +1059,40 @@ export class CutsceneManager implements IGameSystem {
     return { speaker: speakerR, text: textR };
   }
 
-  private async showDialogueText(text: string, speaker?: string): Promise<void> {
-    const box = this.cutsceneRenderer.showDialogueBox(text, speaker);
-    await new Promise<void>(resolve => {
-      const arm = () => {
-        /** 同 waitForClick：arming 窗口内已 skip / 读档 / 拆除则立即落地 */
-        if (!this.canArmWait()) {
-          resolve();
-          return;
-        }
-        this.dialogueAdvanceNotBefore = performance.now() + 120;
-        this.dialogueResolve = () => {
-          this.dialogueResolve = null;
-          this.dialogueAdvanceNotBefore = 0;
-          resolve();
+  private async showDialogueText(
+    text: string,
+    speaker?: string,
+    portrait?: { slug: string; emotion: string },
+    speakingAnchor?: IEmoteBubbleAnchor | null,
+  ): Promise<void> {
+    const box = this.cutsceneRenderer.showDialogueBox(text, speaker, portrait);
+    /** 说话人头顶「……」气泡：与本步同生命周期,finally 撤;skip/读档/拆除经 cleanup 定向清 CUTSCENE_EMOTE_OWNER 兜底。 */
+    const dismissSpeakingBubble = speakingAnchor && this.emoteBubbleProvider
+      ? this.emoteBubbleProvider.showSticky(speakingAnchor, '……', undefined, CUTSCENE_EMOTE_OWNER)
+      : null;
+    try {
+      await new Promise<void>(resolve => {
+        const arm = () => {
+          /** 同 waitForClick：arming 窗口内已 skip / 读档 / 拆除则立即落地 */
+          if (!this.canArmWait()) {
+            resolve();
+            return;
+          }
+          this.dialogueAdvanceNotBefore = performance.now() + 120;
+          this.dialogueResolve = () => {
+            this.dialogueResolve = null;
+            this.dialogueAdvanceNotBefore = 0;
+            resolve();
+          };
         };
-      };
-      requestAnimationFrame(() => {
-        requestAnimationFrame(arm);
+        requestAnimationFrame(() => {
+          requestAnimationFrame(arm);
+        });
       });
-    });
-    this.cutsceneRenderer.dismissDialogueBox(box);
+    } finally {
+      dismissSpeakingBubble?.();
+      this.cutsceneRenderer.dismissDialogueBox(box);
+    }
   }
 
   /** showSubtitle：`subtitleBand`+`subtitleAlign` 同时为白名单值时走黑边槽位，否则走经典 `position`。 */

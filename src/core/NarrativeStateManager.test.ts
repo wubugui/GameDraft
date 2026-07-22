@@ -1426,7 +1426,7 @@ describe('叙事活计运行实例化 S1（单活可重复机器）', () => {
   });
 });
 
-describe('章节包 live/dormant（C1：电影摄制模型——状态永存，live 只管行为）', () => {
+describe('章节包 = 纯组织标签（2026-07-19 降级：不 gate 行为，图恒吃信号；packageId/livePackages 仅供分组/工具）', () => {
   const PKG_GRAPH: NarrativeGraph = {
     id: 'story', ownerType: 'flow', packageId: 'ch1', initialState: 'p0',
     states: { p0: { id: 'p0' }, p1: { id: 'p1', broadcastOnEnter: true }, p2: { id: 'p2' } },
@@ -1476,27 +1476,24 @@ describe('章节包 live/dormant（C1：电影摄制模型——状态永存，l
     ]);
   });
 
-  it('dormant 包冻结（不吃信号），live 后解冻推进且出口广播可被常驻图听到', async () => {
+  it('降级：包不 gate 信号——不标活跃也照吃信号推进 + 出口广播；setNarrativePackageLive 只维护组织标记', async () => {
     const { narrative } = makeRuntime();
     narrative.registerGraphs([clone(PKG_GRAPH), clone(CORE_GRAPH)]);
-    // 默认 dormant：状态照常注册可查（永久记录），但不吃信号
+    // 未标任何章节活跃（livePackages 空），但打了包标的 story 照样吃信号推进——包不冻结接收
+    expect(narrative.getLivePackages()).toEqual([]);
     expect(narrative.getActiveState('story')).toBe('p0');
     await narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 't', signal: 'story_go' });
     await flush();
-    expect(narrative.getActiveState('story')).toBe('p0');   // 冻结
-    // 开拍：置 live → 吃信号推进，广播照发（core 听 state:story:p1）
+    expect(narrative.getActiveState('story')).toBe('p1');   // 恒吃信号（非冻结）
+    expect(narrative.getActiveState('core')).toBe('c1');    // p1 出口广播照发、常驻图照听
+    // setNarrativePackageLive 只维护组织标记集，不改任何运行时行为
     await narrative.setNarrativePackageLive('ch1', true);
     expect(narrative.getLivePackages()).toEqual(['ch1']);
-    await narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 't', signal: 'story_go' });
-    await flush();
-    expect(narrative.getActiveState('story')).toBe('p1');
-    expect(narrative.getActiveState('core')).toBe('c1');
-    // 收工：dormant 冻结但状态原地保留、条件可查（hasReachedState 不受 live 影响）
-    await narrative.setNarrativePackageLive('ch1', false);
     await narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 't', signal: 'story_end' });
     await flush();
-    expect(narrative.getActiveState('story')).toBe('p1');   // 冻结在 p1
-    expect(narrative.hasReachedState('story', 'p1')).toBe(true);
+    expect(narrative.getActiveState('story')).toBe('p2');   // 标不标活跃都推进
+    await narrative.setNarrativePackageLive('ch1', false);  // 标非活跃也不冻结
+    expect(narrative.hasReachedState('story', 'p2')).toBe(true);
     // 未知包：记 issue 忽略
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     await narrative.setNarrativePackageLive('nope', true);
@@ -1505,7 +1502,7 @@ describe('章节包 live/dormant（C1：电影摄制模型——状态永存，l
     expect(codes).toContain('package.unknown');
   });
 
-  it('livePackages 入档还原；未知包条目丢弃；旧档缺字段=全 dormant', async () => {
+  it('livePackages（组织标记）入档还原；未知包条目丢弃；旧档缺字段=标记集空', async () => {
     const { narrative } = makeRuntime();
     const graphs = [clone(PKG_GRAPH), clone(CORE_GRAPH)];
     narrative.registerGraphs(graphs);
@@ -1531,7 +1528,7 @@ describe('章节包 live/dormant（C1：电影摄制模型——状态永存，l
     old.registerGraphs(graphs.map(clone));
     old.deserialize({ activeStates: {}, reachedStates: {} });
     warn.mockRestore();
-    expect(old.getLivePackages()).toEqual([]);              // 旧档：全 dormant，导演重评
+    expect(old.getLivePackages()).toEqual([]);              // 旧档：活跃标记集空（组织标记，不影响行为）
   });
 });
 

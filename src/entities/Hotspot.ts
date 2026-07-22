@@ -58,7 +58,7 @@ export class Hotspot {
 
   /** 场景透视缩放句柄（Game 注入；热点缺省不参与，perspectiveScaleEnabled===true 才存） */
   private perspectiveResolver: PerspectiveScaleResolver | null = null;
-  /** 当前透视系数 f(footY)（派生态不入档）；与实例 scale 复合在 container 级 */
+  /** 当前透视系数 f(脚底点投影)（派生态不入档）；与实例 scale 复合在 container 级 */
   private _depthScaleFactor = 1;
 
   constructor(def: HotspotDef) {
@@ -95,9 +95,9 @@ export class Hotspot {
     return entityScaleOf(this.def) * this._depthScaleFactor;
   }
 
-  /** 按当前脚底 y 重求透视系数；变化时经 applyInstanceTransform 重派生全部派生量。 */
+  /** 按当前脚底点重求透视系数；变化时经 applyInstanceTransform 重派生全部派生量。 */
   private _refreshDepthScale(): void {
-    const f = this.perspectiveResolver?.scaleAt(this.def.y) ?? 1;
+    const f = this.perspectiveResolver?.scaleAt(this.def.x, this.def.y) ?? 1;
     if (f === this._depthScaleFactor) return;
     this._depthScaleFactor = f;
     this.applyInstanceTransform();
@@ -357,7 +357,7 @@ export class Hotspot {
     this.def.x = x;
     this.def.y = y;
     this._syncContainerPosition();
-    // 透视系数是脚底 y 的派生量：移动后先重求（变化时内部已整套重派生）
+    // 透视系数是脚底点的派生量：移动后先重求（变化时内部已整套重派生）
     this._refreshDepthScale();
     // 遮挡带多边形是位置的派生量（world 坐标缓存在容器上），移动后必须重派生——
     // 否则 Renderer 前后带判定按旧位置多边形算，与求值时变换的阻挡碰撞裂脑（审查 F6）。

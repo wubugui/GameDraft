@@ -229,5 +229,19 @@
   },
   "bgm": "bgm_placeholder_low_tension",
   "worldHeight": 1674.42,
-  "npcs": []
+  "npcs": [],
+  "onEnter": [
+    {
+      "type": "fadeWorldFromBlack",
+      "params": {
+        "durationMs": 800
+      }
+    },
+    {
+      "type": "startDialogueGraph",
+      "params": {
+        "graphId": "梦_段A_夜路"
+      }
+    }
+  ]
 }

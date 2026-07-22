@@ -57,6 +57,8 @@ export class SpriteEntity {
   private currentState: string = '';
   private currentFrames: Texture[] = [];
   private currentFrameDef: AnimationStateDef | null = null;
+  /** 本次播放的有效循环标志：动作层 playback.loop 覆盖优先，否则取状态定义 frameDef.loop。 */
+  private effectiveLoop: boolean = false;
   private frameIndex: number = 0;
   private frameTimer: number = 0;
   private playing: boolean = false;
@@ -130,6 +132,7 @@ export class SpriteEntity {
     this.frames.clear();
     this.currentFrames = [];
     this.currentFrameDef = null;
+    this.effectiveLoop = false;
     this.frameIndex = 0;
     this.frameTimer = 0;
     this.playing = false;
@@ -181,6 +184,8 @@ export class SpriteEntity {
     this.currentState = clip;
     this.currentFrames = textures;
     this.currentFrameDef = frameDef;
+    // 有效循环标志：动作层 playback.loop（显式 true/false）覆盖状态定义，缺省沿用 frameDef.loop
+    this.effectiveLoop = playback?.loop ?? frameDef.loop;
     this.frameTimer = 0;
     this.onCompleteCallback = onComplete ?? null;
     this.playbackSpeed = playback?.speed !== undefined ? normalizePlaybackSpeed(playback.speed) : 1;
@@ -231,7 +236,7 @@ export class SpriteEntity {
       this.frameIndex += this.playbackReverse ? -1 : 1;
 
       if (this.frameIndex < 0 || this.frameIndex >= this.currentFrames.length) {
-        if (this.currentFrameDef.loop) {
+        if (this.effectiveLoop) {
           this.frameIndex = this.playbackReverse ? this.currentFrames.length - 1 : 0;
         } else {
           this.frameIndex = this.playbackReverse ? 0 : this.currentFrames.length - 1;
@@ -328,7 +333,7 @@ export class SpriteEntity {
   /** 暂停 / 恢复帧推进（供预览工具）。恢复时若已到非循环终点帧则回到起点帧（反向播放的终点是首帧）。 */
   setPlaying(playing: boolean): void {
     if (playing && !this.playing && this.currentFrames.length > 0) {
-      if (!this.currentFrameDef?.loop) {
+      if (!this.effectiveLoop) {
         const atEnd = this.playbackReverse
           ? this.frameIndex <= 0
           : this.frameIndex >= this.currentFrames.length - 1;

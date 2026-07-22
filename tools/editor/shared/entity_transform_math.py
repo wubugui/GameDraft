@@ -75,45 +75,79 @@ def _persp_num(v: object) -> float | None:
     return f if math.isfinite(f) else None
 
 
-def perspective_valid_rulers(cfg: dict | None) -> list[tuple[float, float]]:
-    """cfg = 场景 perspectiveScale dict；返回有效基准线 [(y, scale)...]（原顺序，未排序）。"""
-    raw = (cfg or {}).get("rulers") if isinstance(cfg, dict) else None
-    out: list[tuple[float, float]] = []
-    if not isinstance(raw, list):
-        return out
-    for r in raw:
-        if not isinstance(r, dict):
-            continue
-        y = _persp_num(r.get("y"))
-        s = _persp_num(r.get("scale"))
-        if y is None or s is None or s <= 0:
-            continue
-        out.append((y, s))
-    return out
+AXIS_MIN_LEN_SQ = 1e-6
 
 
-def perspective_scale_at(cfg: dict | None, foot_y: float) -> float:
-    """脚底 y 处的透视缩放系数 f(y)；有效基准线不足 2 条或 y 非法时恒 1。
-    与 TS perspectiveScaleAt 同口径：按 y 升序分段线性插值、端点钳制、重复 y 取后者。"""
-    rulers = perspective_valid_rulers(cfg)
-    if len(rulers) < 2 or not math.isfinite(foot_y):
+def _persp_point(p: object) -> tuple[float, float, float] | None:
+    """深度轴端点 {x,y,scale}：有限坐标 + scale>0 才有效。"""
+    if not isinstance(p, dict):
+        return None
+    x = _persp_num(p.get("x"))
+    y = _persp_num(p.get("y"))
+    s = _persp_num(p.get("scale"))
+    if x is None or y is None or s is None or s <= 0:
+        return None
+    return (x, y, s)
+
+
+def perspective_axis_data(cfg: dict | None):
+    """预解析深度轴：返回 (nx, ny, ax, ay, len_sq, stops[(pos,scale)...]) 或 None（未配置/退化）。
+    与 TS axisData 同口径：near/far 有效且轴非退化；stops 含 0/1 端点 + 合法 midStops，按 pos 升序。"""
+    if not isinstance(cfg, dict):
+        return None
+    near = _persp_point(cfg.get("near"))
+    far = _persp_point(cfg.get("far"))
+    if near is None or far is None:
+        return None
+    nx, ny, ns = near
+    fx, fy, fs = far
+    ax = fx - nx
+    ay = fy - ny
+    len_sq = ax * ax + ay * ay
+    if len_sq <= AXIS_MIN_LEN_SQ:
+        return None
+    stops: list[tuple[float, float]] = [(0.0, ns)]
+    mids = cfg.get("midStops")
+    if isinstance(mids, list):
+        for m in mids:
+            if not isinstance(m, dict):
+                continue
+            pos = _persp_num(m.get("pos"))
+            s = _persp_num(m.get("scale"))
+            if pos is None or s is None or not (0.0 < pos < 1.0) or s <= 0:
+                continue
+            stops.append((pos, s))
+    stops.append((1.0, fs))
+    stops.sort(key=lambda t: t[0])
+    return (nx, ny, ax, ay, len_sq, stops)
+
+
+def perspective_scale_at(cfg: dict | None, foot_x: float, foot_y: float) -> float:
+    """脚底点 (foot_x, foot_y) 处的透视缩放系数 f；未配置/退化/非有限脚底时恒 1。
+    与 TS perspectiveScaleAt 同口径：脚底点在 near→far 轴上归一化投影 [0,1] 后分段线性插值。"""
+    a = perspective_axis_data(cfg)
+    if a is None or not math.isfinite(foot_x) or not math.isfinite(foot_y):
         return 1.0
-    srt = sorted(rulers, key=lambda t: t[0])
-    lo_y, lo_s = srt[0]
-    if foot_y <= lo_y:
-        return max(PERSPECTIVE_SCALE_MIN, lo_s)
-    hi_y, hi_s = srt[-1]
-    if foot_y >= hi_y:
-        return max(PERSPECTIVE_SCALE_MIN, hi_s)
-    for i in range(1, len(srt)):
-        a_y, a_s = srt[i - 1]
-        b_y, b_s = srt[i]
-        if foot_y <= b_y:
-            if b_y == a_y:
-                return max(PERSPECTIVE_SCALE_MIN, b_s)
-            t = (foot_y - a_y) / (b_y - a_y)
-            return max(PERSPECTIVE_SCALE_MIN, a_s + (b_s - a_s) * t)
-    return max(PERSPECTIVE_SCALE_MIN, hi_s)
+    nx, ny, ax, ay, len_sq, stops = a
+    raw = ((foot_x - nx) * ax + (foot_y - ny) * ay) / len_sq
+    t = 0.0 if raw <= 0.0 else (1.0 if raw >= 1.0 else raw)
+    if t <= stops[0][0]:
+        return max(PERSPECTIVE_SCALE_MIN, stops[0][1])
+    if t >= stops[-1][0]:
+        return max(PERSPECTIVE_SCALE_MIN, stops[-1][1])
+    for i in range(1, len(stops)):
+        lo_p, lo_s = stops[i - 1]
+        hi_p, hi_s = stops[i]
+        if t <= hi_p:
+            if hi_p == lo_p:
+                return max(PERSPECTIVE_SCALE_MIN, hi_s)
+            k = (t - lo_p) / (hi_p - lo_p)
+            return max(PERSPECTIVE_SCALE_MIN, lo_s + (hi_s - lo_s) * k)
+    return max(PERSPECTIVE_SCALE_MIN, stops[-1][1])
+
+
+def has_perspective_scale(cfg: dict | None) -> bool:
+    return perspective_axis_data(cfg) is not None
 
 
 def entity_participates_perspective(ent: dict | None, kind: str) -> bool:
@@ -128,14 +162,18 @@ def entity_participates_perspective(ent: dict | None, kind: str) -> bool:
 
 
 def entity_perspective_factor(
-    cfg: dict | None, ent: dict | None, kind: str, foot_y: float | None = None,
+    cfg: dict | None, ent: dict | None, kind: str,
+    foot_x: float | None = None, foot_y: float | None = None,
 ) -> float:
-    """实体在画布上的透视系数：参与判定 × f(脚底 y)。foot_y 缺省取实体 y（巡逻预览可传瞬时 y）。"""
+    """实体在画布上的透视系数：参与判定 × f(脚底点)。foot_x/foot_y 缺省取实体 x/y
+    （巡逻预览可传瞬时坐标）。"""
     if not entity_participates_perspective(ent, kind):
         return 1.0
+    d = ent or {}
+    if foot_x is None:
+        foot_x = _persp_num(d.get("x"))
     if foot_y is None:
-        y = _persp_num((ent or {}).get("y"))
-        if y is None:
-            return 1.0
-        foot_y = y
-    return perspective_scale_at(cfg, foot_y)
+        foot_y = _persp_num(d.get("y"))
+    if foot_x is None or foot_y is None:
+        return 1.0
+    return perspective_scale_at(cfg, foot_x, foot_y)

@@ -27,6 +27,8 @@ import { ZoneSystem } from '../systems/ZoneSystem';
 import { InspectBox } from '../ui/InspectBox';
 import { PickupNotification } from '../ui/PickupNotification';
 import { DialogueUI } from '../ui/DialogueUI';
+import { drawPanelBase, SKINS } from '../ui/PanelSkin';
+import { UITheme } from '../ui/UITheme';
 import { EncounterUI } from '../ui/EncounterUI';
 import { ActionChoiceUI } from '../ui/ActionChoiceUI';
 import { PressureHoldUI } from '../ui/PressureHoldUI';
@@ -234,6 +236,11 @@ export class Game {
   private cutsceneManager!: CutsceneManager;
   private cutsceneRenderer!: CutsceneRenderer;
   private resolveActorFn!: (id: string) => ICutsceneActor | null;
+  /** 相机跟随目标实体 id（cameraFollowActor 设、cameraStopFollow 清）：仅过场态每帧锚到该
+   *  实体实时坐标；null=默认锚点（探索/动作链跟玩家）。过场结束由主循环自动解除，不入存档。 */
+  private cameraFollowTargetId: string | null = null;
+  /** 跟随模式：true=硬锁居中（每帧 snapTo，逐帧锁定），false=平滑跟随（camera.follow 插值）。 */
+  private cameraFollowSnap = true;
   /** 地图节点 sceneId -> 显示名；供 [tag:scene:…] 与 NPC 全局名缓存扫描 */
   private sceneDisplayNameById = new Map<string, string>();
   private npcDisplayNameById = new Map<string, string>();
@@ -430,7 +437,7 @@ export class Game {
     this.sceneDepthSystem = new SceneDepthSystem();
     // 章节导演（C2）：按清单在 scene:revealed / narrative:stateChanged 上评估开拍/收工；
     // 自身无状态（live 集在叙事档），控制口与条件工厂在下方统一接线。
-    this.narrativePackageDirector = new NarrativePackageDirector(this.eventBus, this.actionExecutor);
+    this.narrativePackageDirector = new NarrativePackageDirector(this.eventBus);
 
     const ctx = { eventBus: this.eventBus, flagStore: this.flagStore, strings: this.stringsProvider, assetManager: this.assetManager };
     this.registeredSystems = [
@@ -730,6 +737,15 @@ export class Game {
     this.mapUI = new MapUI(this.renderer, this.eventBus, this.flagStore, this.stringsProvider, this.assetManager);
 
     this.cutsceneRenderer = new CutsceneRenderer(this.renderer, this.camera, this.assetManager);
+    // 过场对白框复用全站面板皮肤 + 主题色，与常规对话框(DialogueUI)对齐观感。
+    // 皮肤/主题属 UI 层，渲染层不反向依赖——在组装层绑好绘制器与颜色再注入。
+    this.cutsceneRenderer.setDialoguePanelStyle({
+      drawBox: (g, x, y, w, h) => drawPanelBase(g, x, y, w, h, SKINS.dialogue),
+      drawSpeakerPlate: (g, x, y, w, h) => drawPanelBase(g, x, y, w, h, SKINS.panelAlt),
+      speakerColor: UITheme.colors.title,
+      bodyColor: UITheme.colors.body,
+      fontFamily: UITheme.fonts.ui,
+    });
     this.cutsceneManager = new CutsceneManager(
       this.eventBus, this.flagStore, this.actionExecutor,
       this.cutsceneRenderer,
@@ -790,6 +806,32 @@ export class Game {
         fallbackNpcId: scriptedNpcId ?? '',
       }),
     );
+    // present:showDialogue 的立绘解析：复用 playScriptedDialogue 同一条逐行头像解析
+    // （resolveScriptedLineExtras 只读、不改其自身路径），令过场对白与常规对话头像语义一致。
+    this.cutsceneManager.setScriptedPortraitResolver((ref, rawSpeaker, scriptedNpcId) =>
+      this.resolveScriptedLineExtras(rawSpeaker, ref, scriptedNpcId ?? '').portrait,
+    );
+    // present:showDialogue 说话人头顶「……」气泡的锚点。旁白/未在场 → null → 不冒。
+    this.cutsceneManager.setSpeakingBubbleAnchorResolver((rawSpeaker, scriptedNpcId) => {
+      // 1) speaker 占位（{{player}}/{{npc}}/{{npc:id}}）优先——与常规对话 speakerEntity→anchor 同源。
+      const entity = resolveScriptedSpeakerEntity(rawSpeaker, {
+        graphDialogueNpcId: this.graphDialogueManager.getContextNpcId(),
+        fallbackNpcId: scriptedNpcId ?? '',
+      });
+      if (entity) {
+        return this.resolveEmoteTarget(entity.kind === 'player' ? 'player' : entity.npcId);
+      }
+      // 2) 字面显示名 + 显式 scriptedNpcId（编辑器「说话NPC」下拉）→ 锚到该在场角色，
+      //    让策划保留显示名"关二狗"也能冒气泡。旁白守卫：说话人解析为旁白标签 / 空说话人则不冒。
+      const snpc = (scriptedNpcId ?? '').trim();
+      if (!snpc) return null;
+      const speakerDisplay = this.resolveDisplayText(rawSpeaker).trim();
+      if (!speakerDisplay) return null;
+      const narrKey = this.stringsProvider.get('dialogue', 'narratorLabel');
+      const narrator = this.resolveDisplayText(narrKey && narrKey !== 'narratorLabel' ? narrKey : '旁白').trim();
+      if (speakerDisplay === narrator) return null;
+      return this.resolveEmoteTarget(snpc);
+    });
     this.saveManager = new SaveManager(
       () => this.collectSaveData(),
       (data) => this.distributeSaveData(data),
@@ -984,6 +1026,13 @@ export class Game {
       },
       fadingRestoreSceneCameraZoom: (durationMs) => {
         return this.cutsceneManager.fadingCameraZoom(this.getCameraBaselineZoom(), durationMs);
+      },
+      setCameraFollowTarget: (targetId, snap) => {
+        this.cameraFollowTargetId = targetId;
+        this.cameraFollowSnap = snap;
+      },
+      clearCameraFollowTarget: () => {
+        this.cameraFollowTargetId = null;
       },
       stopNpcPatrol: (npcId) => {
         this.stopNpcPatrol(npcId);
@@ -2703,9 +2752,10 @@ export class Game {
     const lightingOn = this.sceneDepthSystem.isLightingEnabled;
     try {
       const npcLift = 0.4 * npc.getWorldSize().height;
+      const npcBlend = npc.def.occlusionBlendFactor;
       const npcFilter = lightingOn
-        ? this.sceneDepthSystem.createLightingFilterForEntity(npcLift)
-        : this.sceneDepthSystem.createFilterForEntity();
+        ? this.sceneDepthSystem.createLightingFilterForEntity(npcLift, npcBlend)
+        : this.sceneDepthSystem.createFilterForEntity(npcBlend);
       if (npcFilter) {
         depthLog('Game', 'attaching entity filter to NPC:', npc.id, 'lighting=', lightingOn);
         npc.container.filters = [npcFilter];
@@ -2732,7 +2782,7 @@ export class Game {
   private attachHotspotDepthFilter(h: Hotspot): void {
     if (!h.hasDepthDisplayImage()) return;
     try {
-      const hf = this.sceneDepthSystem.createFilterForEntity();
+      const hf = this.sceneDepthSystem.createFilterForEntity(h.def.occlusionBlendFactor);
       if (hf) {
         depthLog('Game', 'attaching depth filter to hotspot display:', h.def.id);
         h.attachDepthOcclusionFilter(hf);
@@ -3422,7 +3472,7 @@ export class Game {
     h.setDisplayTexture(tex, displayImage.worldWidth, displayImage.worldHeight);
     if (h.hasDepthDisplayImage()) {
       try {
-        const hf = this.sceneDepthSystem.createFilterForEntity();
+        const hf = this.sceneDepthSystem.createFilterForEntity(h.def.occlusionBlendFactor);
         if (hf) {
           depthLog('Game', 'setEntityField: reattach depth to hotspot display:', h.def.id);
           h.attachDepthOcclusionFilter(hf);
@@ -3911,6 +3961,28 @@ export class Game {
     });
   }
 
+  /**
+   * 过场 / 动作链态每帧的相机锚点决策（cameraFollowActor / cameraStopFollow 驱动）：
+   * 有跟随目标且可解析 → 每帧锚到该实体（NPC/临时演员/玩家）实时坐标，snap=硬锁居中、
+   * 否则平滑跟随（靠 camera.update 插值）；目标失效（销毁/换场景解析不到）则自动解除。
+   * 无跟随目标时：fallbackToPlayer=true 锚玩家（动作链态镜头默认跟玩家），false 不动镜头
+   * （过场态交由 cameraMove 摆布）。回到 Exploring 态的自动解除在主循环清除守卫处。
+   */
+  private applyCameraFollow(fallbackToPlayer: boolean): void {
+    if (this.cameraFollowTargetId !== null) {
+      const followed = this.resolveActorFn(this.cameraFollowTargetId);
+      if (followed) {
+        if (this.cameraFollowSnap) this.camera.snapTo(followed.x, followed.y);
+        else this.camera.follow(followed.x, followed.y);
+        return;
+      }
+      this.cameraFollowTargetId = null;
+    }
+    if (fallbackToPlayer) {
+      this.camera.follow(this.player.x, this.player.y);
+    }
+  }
+
   private async debugSetPlayerPosition(x: number, y: number, snapCamera: boolean): Promise<void> {
     this.player.x = x;
     this.player.y = y;
@@ -4142,6 +4214,14 @@ export class Game {
     // 必须在本帧 zoneSystem.update 之前补刷，否则旧位面 zone 会以过期集合多跑一帧 enter/stay。
     this.planeReconciler.update(dt);
 
+    // 相机跟随（cameraFollowActor）是"演出期间"的临时行为：Cutscene / ActionSequence（锁玩家的
+    // 动作链）态才消费；一旦回到玩家自由探索态（Exploring）——无论过场播完还是动作链播完——
+    // 立即解除跟随、复位回跟玩家，不必显式 cameraStopFollow。（读档/切场景也会经 Exploring 归零。）
+    if (this.cameraFollowTargetId !== null &&
+        this.stateController.currentState === GameState.Exploring) {
+      this.cameraFollowTargetId = null;
+    }
+
     if (this.stateController.currentState === GameState.Exploring) {
       this.updatePlayerNav();
       this.player.update(dt);
@@ -4163,6 +4243,8 @@ export class Game {
       for (const [, npc] of this.cutsceneManager.getTempActors()) {
         npc.cutsceneUpdate(dt);
       }
+      // 过场态相机跟随（cameraFollowActor）：无跟随目标时不动镜头，交由 cameraMove 摆布。
+      this.applyCameraFollow(false);
     }
 
     if (this.stateController.currentState === GameState.Dialogue) {
@@ -4203,9 +4285,10 @@ export class Game {
       for (const npc of this.sceneManager.getCurrentNpcs()) {
         npc.cutsceneUpdate(dt);
       }
-      // 探索触发的动作链（zone / 热区等）会短暂进入此状态；镜头仍需以玩家为锚点，
-      // 否则 fadingZoom 与 moveEntityTo 等组合下会出现「缩放中心漂移、走动不跟镜」。
-      this.camera.follow(this.player.x, this.player.y);
+      // 探索触发的动作链（zone / 热区等）会短暂进入此状态。默认镜头以玩家为锚点（否则
+      // fadingZoom 与 moveEntityTo 组合会「缩放中心漂移、走动不跟镜」）；动作链里若用
+      // cameraFollowActor 指定了跟随目标则改跟该 NPC，播完回 Exploring 自动复位跟玩家。
+      this.applyCameraFollow(true);
     }
 
     this.emoteBubbleManager.update(dt);

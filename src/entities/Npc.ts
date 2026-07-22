@@ -61,6 +61,8 @@ export class Npc implements ICutsceneActor {
     resolve: () => void;
     /** false：仅在段起点 setFacing 一次（巡逻/旧演出）；true：段内每帧随运动方向更新左右镜像 */
     faceTowardMovement: boolean;
+    /** 段末收尾动画：undefined=回 restAnimState；字符串=播该状态；null=不切（折线中途点） */
+    arriveAnimState: string | null | undefined;
   } | null = null;
   /** loadSprite 时解析的静止状态，用于巡逻/演出移动结束后恢复，不硬编码 idle */
   private restAnimState: string | null = null;
@@ -73,7 +75,7 @@ export class Npc implements ICutsceneActor {
 
   /** 场景透视缩放句柄（Game 在 scene:ready / entitiesRebuilt 注入；不参与时为 null） */
   private perspectiveResolver: PerspectiveScaleResolver | null = null;
-  /** 当前透视系数 f(footY)（派生态不入档）；施加在内部 sprite 层，不碰 container.scale（镜像/图对话 scale 动作互不干扰） */
+  /** 当前透视系数 f(脚底点投影)（派生态不入档）；施加在内部 sprite 层，不碰 container.scale（镜像/图对话 scale 动作互不干扰） */
   private _depthScaleFactor = 1;
 
   /**
@@ -214,9 +216,9 @@ export class Npc implements ICutsceneActor {
     return this._depthScaleFactor;
   }
 
-  /** 按当前脚底 y 重求透视系数；变化时下推 sprite 并重派生旋转排序接地线。 */
+  /** 按当前脚底点重求透视系数；变化时下推 sprite 并重派生旋转排序接地线。 */
   private _refreshDepthScale(): void {
-    const f = this.perspectiveResolver?.scaleAt(this._y) ?? 1;
+    const f = this.perspectiveResolver?.scaleAt(this._x, this._y) ?? 1;
     if (f === this._depthScaleFactor) return;
     this._depthScaleFactor = f;
     this.sprite?.setDepthScaleFactor(f);
@@ -448,6 +450,7 @@ export class Npc implements ICutsceneActor {
     speed: number,
     moveAnimState?: string,
     faceTowardMovement?: boolean,
+    arriveAnimState?: string | null,
   ): Promise<void> {
     // 过场 skip 后被放弃的动作链可能继续对已销毁的 `_cut_*` 演员发 moveTo：
     // 此时 cutsceneUpdate 不再被调用，建出的 moveTarget 永不推进也永不 resolve，直接空履约。
@@ -467,7 +470,14 @@ export class Npc implements ICutsceneActor {
     }
     return new Promise<void>(resolve => {
       const toward = faceTowardMovement === true;
-      this.moveTarget = { x: targetX, y: targetY, speed, resolve, faceTowardMovement: toward };
+      this.moveTarget = {
+        x: targetX,
+        y: targetY,
+        speed,
+        resolve,
+        faceTowardMovement: toward,
+        arriveAnimState,
+      };
       this.setFacing(targetX - this._x, targetY - this._y);
       const anim = moveAnimState?.trim();
       if (anim) {
@@ -489,8 +499,13 @@ export class Npc implements ICutsceneActor {
       if (dist <= step) {
         this.x = t.x;
         this.y = t.y;
-        if (this.restAnimState) {
-          this.playAnimation(this.restAnimState);
+        // null=中途点不切动画（playAnimation 幂等保护使移动动画跨段连续）；到点那帧
+        // 先渲染后才跑下一段的微任务，这里切了 idle 就会闪一帧、走路循环也被归零。
+        if (t.arriveAnimState !== null) {
+          const arriveState = t.arriveAnimState ?? this.restAnimState;
+          if (arriveState) {
+            this.playAnimation(arriveState);
+          }
         }
         const resolve = t.resolve;
         this.moveTarget = null;

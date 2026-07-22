@@ -144,8 +144,8 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
   playNpcAnimation: {
     required: ['target', 'state'],
     nonEmpty: ['target', 'state'],
-    // speed 倍率 / reverse 倒放 / holdFrame 定格帧 / thenState 非循环播完自动切换
-    optional: ['speed', 'reverse', 'holdFrame', 'thenState'],
+    // speed 倍率 / reverse 倒放 / loop 循环覆盖 / holdFrame 定格帧 / thenState 非循环播完自动切换
+    optional: ['speed', 'reverse', 'loop', 'holdFrame', 'thenState'],
   },
   setEntityEnabled: { required: ['target', 'enabled'], nonEmpty: ['target'] },
 
@@ -166,6 +166,12 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
   fadingRestoreSceneCameraZoom: { required: [], optional: ['durationMs', 'duration'] },
   fadeWorldToBlack: { required: [], optional: ['durationMs', 'duration'] },
   fadeWorldFromBlack: { required: [], optional: ['durationMs', 'duration'] },
+  showBlackout: { required: [], optional: ['durationMs', 'duration'] },
+  hideBlackout: { required: [], optional: ['durationMs', 'duration'] },
+  // 相机跟随实体（仅过场态生效，过场结束自动复位回玩家）：smooth 缺省=硬锁居中（逐帧
+  // snapTo），true=平滑跟随（camera.follow 插值）。target 为实体引用，登记 ENTITY_REF_PARAMS。
+  cameraFollowActor: { required: ['target'], nonEmpty: ['target'], optional: ['smooth'] },
+  cameraStopFollow: { required: [] },
 
   // ---- NPC 巡逻 / 持久化 override ----
   stopNpcPatrol: { required: ['npcId'], nonEmpty: ['npcId'] },
@@ -225,8 +231,9 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
   moveEntityTo: {
     required: ['target', 'x', 'y'],
     nonEmpty: ['target'],
-    // sceneId 仅编辑器复现地图用，运行时忽略。
-    optional: ['speed', 'waypoints', 'moveAnimState', 'faceTowardMovement', 'sceneId'],
+    // sceneId 仅编辑器复现地图用，运行时忽略。arriveAnimState 只作用于终点段末
+    //（缺省=回 rest/idle 旧语义；途经点段末一律不切动画）。
+    optional: ['speed', 'waypoints', 'moveAnimState', 'arriveAnimState', 'faceTowardMovement', 'sceneId'],
   },
   // direction / faceTarget 二选一（运行时校验至少一个），条件必填不在缺参检查建模。
   faceEntity: { required: ['target'], nonEmpty: ['target'], optional: ['direction', 'faceTarget'] },

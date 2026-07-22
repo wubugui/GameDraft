@@ -1,8 +1,9 @@
 """章节导演清单编辑器（narrative_packages.json）。
 
-电影摄制模型：一行=一场戏。进某场景（scene）时导演评估 when∧¬done，成立就「开拍」——
-置章节包 live（package）并执行 autoPlay。done 成立即「收工」（置 dormant）。状态永久可查，
-done 直接查叙事记录。策划只在此可视化编辑，不碰 JSON。
+导演只管章节包 live/dormant（谁在听信号），**不触发演出**——一行=一个章节包的装卸规则：
+`when∧¬done` 成立 → 置包 live（开拍=剧组在场）；`done` 成立 → 置包 dormant（收工冻结，状态永存可查）。
+「进场演哪场戏」由策划在场景 onEnter → 图对话路由里 switch 自己拍板（2026-07-18 制作人定案），不在此配。
+状态永久可查，done 直接查叙事记录。策划只在此可视化编辑，不碰 JSON。
 """
 from __future__ import annotations
 
@@ -23,7 +24,6 @@ from PySide6.QtWidgets import (
 )
 
 from ..project_model import ProjectModel
-from ..shared.action_editor import ActionEditor
 from ..shared.collapsible_section import CollapsibleSection
 from ..shared.condition_editor import ConditionEditor
 from ..shared.form_layout import compact_form
@@ -48,16 +48,17 @@ class NarrativePackagesEditor(QWidget):
 
         root = QVBoxLayout(self)
         tip = QLabel(
-            "章节导演清单：一行=一场戏。到某场景时导演按「开拍条件」判断要不要演，演完靠「收工判据」永久收工。"
+            "章节导演清单：一行=一个章节包的装卸规则。导演只管包 live/dormant（谁在听信号），不触发演出——"
+            "进场演哪场戏在「场景 onEnter → 图对话路由」里由你 switch 拍板。"
         )
         tip.setWordWrap(True)
         tip.setToolTip(
-            "电影摄制模型——场景本身不含叙事，进场只是中性事件；由这张清单的导演决定开哪场戏。\n"
-            "· 场景：进这个场景时才评估本行（cue 行必填）\n"
-            "· 章节包：本行属于哪个叙事包（编排上打了 package 标的）；留空=只放一段演出、不装卸包（cue 行）\n"
-            "· 开拍条件(when)：满足才开拍；留空=只要没收工就开拍\n"
-            "· 开拍动作(autoPlay)：开拍时做什么（起对话/过场等）；多条会自动打包成一个 runActions\n"
-            "· 收工判据(done)：满足即永久收工，之后再进场不再开拍；留空=每次进场都重放（如梦境）\n"
+            "导演只管章节包 live/dormant，不开戏。一行=一个章节包何时 live、何时 dormant。\n"
+            "· 章节包（必填）：本行装卸哪个叙事包（编排上打了 package 标的）\n"
+            "· 场景：进这个场景时载包（场景驱动，如支线/开局章节）；留空=里程碑驱动，任何叙事状态变化时按条件评估\n"
+            "· 开拍条件(when)：满足才 live；留空=只要没收工就 live\n"
+            "· 收工判据(done)：满足即 dormant（状态永存冻结），越过窗口自动卸\n"
+            "进场自动演出：写在场景的 onEnter → startDialogueGraph 入口路由图，路由图里用 switch 选分支。\n"
             "改完点「应用」→ Ctrl+S 保存工程。"
         )
         root.addWidget(tip)
@@ -102,30 +103,23 @@ class NarrativePackagesEditor(QWidget):
         f.addRow("场景", self._f_scene)
 
         self._f_package = IdRefSelector(allow_empty=True, editable=False, click_opens_popup=True)
-        self._f_package.setToolTip("本行装卸哪个叙事章节包（编排上打了 package 标的）。留空=cue 行（只放演出、不装卸包）")
+        self._f_package.setToolTip("本行装卸哪个叙事章节包（编排上打了 package 标的）。必填——导演只管包。")
         self._f_package.value_changed.connect(self._on_edit)
         f.addRow("章节包", self._f_package)
         rl.addWidget(head)
 
-        # 三个复杂块进折叠区、默认折叠（编辑器铁律：复杂块折叠且默认折叠，别铺满一屏）
+        # 两个复杂块进折叠区、默认折叠（编辑器铁律：复杂块折叠且默认折叠，别铺满一屏）
         self._f_when = ConditionEditor("")
         self._f_when.changed.connect(self._on_edit)
         sec_when = CollapsibleSection("开拍条件 when（留空=恒真）", start_open=False)
-        sec_when.set_header_tool_tip("满足才开拍；留空=只要没收工就开拍")
+        sec_when.set_header_tool_tip("满足才 live；留空=只要没收工就 live")
         sec_when.add_body(self._f_when)
         rl.addWidget(sec_when)
 
-        self._f_autoplay = ActionEditor("")
-        self._f_autoplay.changed.connect(self._on_edit)
-        sec_auto = CollapsibleSection("开拍动作 autoPlay（多条自动打包为 runActions）", start_open=False)
-        sec_auto.set_header_tool_tip("开拍时做什么：起对话/过场等；填多条会自动打包成一个 runActions")
-        sec_auto.add_body(self._f_autoplay)
-        rl.addWidget(sec_auto)
-
         self._f_done = ConditionEditor("")
         self._f_done.changed.connect(self._on_edit)
-        sec_done = CollapsibleSection("收工判据 done（留空=每次进场重放）", start_open=False)
-        sec_done.set_header_tool_tip("满足即永久收工，之后再进场不再开拍；留空=每次进场都重放（如梦境）")
+        sec_done = CollapsibleSection("收工判据 done（满足即 dormant 冻结）", start_open=False)
+        sec_done.set_header_tool_tip("满足即 dormant（状态永存冻结），越过窗口自动卸；留空=永不自动收工")
         sec_done.add_body(self._f_done)
         rl.addWidget(sec_done)
 
@@ -175,7 +169,6 @@ class NarrativePackagesEditor(QWidget):
         self._f_package.set_items([(p, p) for p in self._model.narrative_package_ids_ordered()])
         self._f_when.set_flag_pattern_context(self._model, None)
         self._f_done.set_flag_pattern_context(self._model, None)
-        self._f_autoplay.set_project_context(self._model, None)
 
     def _clear_form(self) -> None:
         self._loading = True
@@ -185,7 +178,6 @@ class NarrativePackagesEditor(QWidget):
         self._f_package.set_current("")
         self._f_when.set_data([])
         self._f_done.set_data([])
-        self._f_autoplay.set_data([])
         self._loading = False
 
     def _on_row_changed(self, row: int) -> None:
@@ -206,15 +198,6 @@ class NarrativePackagesEditor(QWidget):
         self._f_package.set_current(str(r.get("package") or ""))
         self._f_when.set_data([c for c in (r.get("when") or []) if isinstance(c, dict)])
         self._f_done.set_data([c for c in (r.get("done") or []) if isinstance(c, dict)])
-        auto = r.get("autoPlay")
-        # autoPlay=单个动作对象；runActions 展开成多条便于编辑，保存时再打包回去
-        if isinstance(auto, dict) and auto.get("type") == "runActions":
-            inner = (auto.get("params") or {}).get("actions")
-            self._f_autoplay.set_data([a for a in inner if isinstance(a, dict)] if isinstance(inner, list) else [])
-        elif isinstance(auto, dict):
-            self._f_autoplay.set_data([auto])
-        else:
-            self._f_autoplay.set_data([])
         self._loading = False
         self._dirty = False   # 刚载入=与模型一致
 
@@ -234,26 +217,19 @@ class NarrativePackagesEditor(QWidget):
         row: dict = {"id": rid}
         scene = self._f_scene.current_id() or ""
         pkg = self._f_package.current_id() or ""
-        if scene:
-            row["scene"] = scene
-        if pkg:
-            row["package"] = pkg
-        if not scene and not pkg:
+        if not pkg:
             if not silent:
                 QMessageBox.warning(
                     self, "章节清单",
-                    "至少要填「场景」或「章节包」之一：\n"
-                    "· cue 行（无包）必须有场景，否则每次状态变化都会重放；\n"
-                    "· 纯包行可只有包（任何状态变化时评估）。")
+                    "必须选「章节包」：导演只管章节包 live/dormant。\n"
+                    "进场自动演出请写在场景的 onEnter → startDialogueGraph 入口路由图（图对话里 switch）。")
             return None
+        if scene:
+            row["scene"] = scene
+        row["package"] = pkg
         when = self._f_when.to_list()
         if when:
             row["when"] = when
-        actions = self._f_autoplay.to_list()
-        if len(actions) == 1:
-            row["autoPlay"] = actions[0]
-        elif len(actions) > 1:
-            row["autoPlay"] = {"type": "runActions", "params": {"actions": actions}}
         done = self._f_done.to_list()
         if done:
             row["done"] = done

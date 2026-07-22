@@ -97,9 +97,11 @@ def _make_text_texture(text: str, color: tuple[float, float, float]) -> tuple[in
 
 
 class SceneGLViewer(OpenGLFrame):
-    """Tkinter-embeddable OpenGL viewer for reconstructed scene meshes.
+    """Tkinter/Qt-embeddable OpenGL viewer for reconstructed scene meshes.
 
-    Left-drag: orbit,  Right/Middle-drag: pan,  Scroll: zoom.
+    导航（工具=无）: 左键拖=轨道旋转, 右键/中键拖=平移, 滚轮=缩放.
+    编辑（已选工具）: 左键=直接编辑（无需 Ctrl）, 右键拖=旋转, 中键拖=平移.
+    多边形: 左键加点, 右键闭合（≥3 点）, Esc 取消.
     """
 
     def __init__(self, master, **kw):
@@ -174,6 +176,30 @@ class SceneGLViewer(OpenGLFrame):
         self._billboard_move_step = 0.1
         self._billboard_moved_cb: Callable[[float, float], None] | None = None
         self._billboard_pending_image: Image.Image | None = None
+        self._key_action_cb: Callable[[str], bool] | None = None
+
+        # Entity-lighting debugger: calibrated camera-facing quad plus traced rays.
+        self._lighting_quad_enabled = False
+        self._lighting_quad_corners: np.ndarray | None = None
+        self._lighting_quad_surface_vertices: np.ndarray | None = None
+        self._lighting_quad_surface_uvs: np.ndarray | None = None
+        self._lighting_quad_surface_indices: np.ndarray | None = None
+        self._lighting_quad_tex_id: int | None = None
+        self._lighting_quad_pending_image: Image.Image | None = None
+        self._lighting_normal_origin = np.zeros(3, dtype=np.float32)
+        self._lighting_normal_endpoint = np.zeros(3, dtype=np.float32)
+        self._lighting_normal_enabled = False
+        self._lighting_rays_enabled = False
+        self._lighting_ray_origins = np.zeros((0, 3), dtype=np.float32)
+        self._lighting_ray_endpoints = np.zeros((0, 3), dtype=np.float32)
+        self._lighting_ray_fates = np.zeros(0, dtype=np.uint8)
+        self._lighting_ray_toward_background = np.zeros(0, dtype=bool)
+        self._lighting_ray_show_hit = True
+        self._lighting_ray_show_exit = True
+        self._lighting_ray_show_range = True
+        self._lighting_ray_direction_filter = "all"
+        self._lighting_ray_limit = 1200
+        self._lighting_ray_xray = False
 
         # Calibration camera for axes (X=image right, Y=image up, Z=depth)
         self._calib_camera = None
@@ -199,12 +225,15 @@ class SceneGLViewer(OpenGLFrame):
         self._depth_edit_cb: Callable | None = None
         self._depth_edit_end_cb: Callable | None = None
 
+        self._rbtn_moved = False
+
         if not _QT_OPENGL:
             self.bind("<ButtonPress-1>", self._btn1_down)
             self.bind("<B1-Motion>", self._btn1_drag)
             self.bind("<ButtonRelease-1>", self._btn1_up)
             self.bind("<ButtonPress-3>", self._btn3_down)
             self.bind("<B3-Motion>", self._btn3_drag)
+            self.bind("<ButtonRelease-3>", self._btn3_up)
             self.bind("<ButtonPress-2>", self._btn2_down)
             self.bind("<B2-Motion>", self._btn2_drag)
             self.bind("<MouseWheel>", self._on_scroll)
@@ -279,6 +308,8 @@ class SceneGLViewer(OpenGLFrame):
             self._upload_mesh_texture()
         if self._billboard_pending_image is not None and self._gl_ready:
             self._upload_billboard_texture()
+        if self._lighting_quad_pending_image is not None and self._gl_ready:
+            self._upload_lighting_quad_texture()
 
         if self._show_grid:
             self._draw_grid()
@@ -289,6 +320,11 @@ class SceneGLViewer(OpenGLFrame):
             self._draw_collision()
         if self._billboard_enabled and self._billboard_tex_id is not None:
             self._draw_billboard()
+        if self._lighting_quad_enabled and self._lighting_quad_tex_id is not None:
+            self._draw_lighting_quad()
+            self._draw_lighting_normal()
+        if self._lighting_rays_enabled:
+            self._draw_lighting_rays()
         self._draw_edit_overlay()
 
     if _QT_OPENGL:
@@ -638,12 +674,281 @@ class SceneGLViewer(OpenGLFrame):
         glBindTexture(GL_TEXTURE_2D, 0)
         glDisable(GL_TEXTURE_2D)
 
+    # ------------------------------------------------------------------
+    # Entity-lighting debugger
+    # ------------------------------------------------------------------
+
+    def _draw_lighting_quad(self) -> None:
+        corners = self._lighting_quad_corners
+        if corners is None or len(corners) != 4 or self._lighting_quad_tex_id is None:
+            return
+        glEnable(GL_TEXTURE_2D)
+        glBindTexture(GL_TEXTURE_2D, self._lighting_quad_tex_id)
+        glEnable(GL_ALPHA_TEST)
+        glAlphaFunc(GL_GREATER, 0.02)
+        glColor4f(1.0, 1.0, 1.0, 1.0)
+        if (
+            self._lighting_quad_surface_vertices is not None
+            and self._lighting_quad_surface_uvs is not None
+            and self._lighting_quad_surface_indices is not None
+        ):
+            glEnableClientState(GL_VERTEX_ARRAY)
+            glEnableClientState(GL_TEXTURE_COORD_ARRAY)
+            glVertexPointer(3, GL_FLOAT, 0, self._lighting_quad_surface_vertices)
+            glTexCoordPointer(2, GL_FLOAT, 0, self._lighting_quad_surface_uvs)
+            glDrawElements(
+                GL_TRIANGLES,
+                len(self._lighting_quad_surface_indices),
+                GL_UNSIGNED_INT,
+                self._lighting_quad_surface_indices,
+            )
+            glDisableClientState(GL_TEXTURE_COORD_ARRAY)
+            glDisableClientState(GL_VERTEX_ARRAY)
+        else:
+            glBegin(GL_QUADS)
+            for uv, corner in zip(((0, 0), (1, 0), (1, 1), (0, 1)), corners):
+                glTexCoord2f(*uv)
+                glVertex3fv(corner)
+            glEnd()
+        glDisable(GL_ALPHA_TEST)
+        glBindTexture(GL_TEXTURE_2D, 0)
+        glDisable(GL_TEXTURE_2D)
+
+        # A stable outline makes the mathematical quad visible through transparent pixels.
+        glLineWidth(2.0)
+        glColor4f(0.2, 0.9, 1.0, 0.9)
+        glBegin(GL_LINE_LOOP)
+        for corner in corners:
+            glVertex3fv(corner)
+        glEnd()
+
+    def _draw_lighting_normal(self) -> None:
+        if not self._lighting_normal_enabled:
+            return
+        vertices = np.stack([
+            self._lighting_normal_origin,
+            self._lighting_normal_endpoint,
+        ]).astype(np.float32)
+        glDisable(GL_DEPTH_TEST)
+        glDepthMask(GL_FALSE)
+        glLineWidth(4.0)
+        glColor4f(1.0, 0.86, 0.12, 1.0)
+        glEnableClientState(GL_VERTEX_ARRAY)
+        glVertexPointer(3, GL_FLOAT, 0, vertices)
+        glDrawArrays(GL_LINES, 0, 2)
+        glPointSize(9.0)
+        glDrawArrays(GL_POINTS, 1, 1)
+        glDisableClientState(GL_VERTEX_ARRAY)
+        glDepthMask(GL_TRUE)
+        glEnable(GL_DEPTH_TEST)
+
+    def _draw_lighting_rays(self) -> None:
+        count = len(self._lighting_ray_fates)
+        if count == 0:
+            return
+        mask = np.ones(count, dtype=bool)
+        fate = self._lighting_ray_fates
+        allowed = np.zeros(count, dtype=bool)
+        if self._lighting_ray_show_range:
+            allowed |= fate == 0
+        if self._lighting_ray_show_hit:
+            allowed |= fate == 1
+        if self._lighting_ray_show_exit:
+            allowed |= fate == 2
+        mask &= allowed
+        if self._lighting_ray_direction_filter == "camera":
+            mask &= ~self._lighting_ray_toward_background
+        elif self._lighting_ray_direction_filter == "background":
+            mask &= self._lighting_ray_toward_background
+        indices = np.flatnonzero(mask)
+        limit = max(1, int(self._lighting_ray_limit))
+        if len(indices) > limit:
+            indices = indices[np.linspace(0, len(indices) - 1, limit).astype(np.intp)]
+        if len(indices) == 0:
+            return
+
+        origins = self._lighting_ray_origins[indices]
+        endpoints = self._lighting_ray_endpoints[indices]
+        selected_fates = fate[indices]
+        vertices = np.empty((len(indices) * 2, 3), dtype=np.float32)
+        vertices[0::2] = origins
+        vertices[1::2] = endpoints
+        palette = np.array([
+            [0.88, 0.25, 1.00, 0.72],  # maximum distance
+            [0.18, 0.95, 0.48, 0.95],  # hit
+            [1.00, 0.56, 0.18, 0.72],  # screen exit
+        ], dtype=np.float32)
+        colors = np.repeat(palette[selected_fates], 2, axis=0)
+
+        if self._lighting_ray_xray:
+            glDisable(GL_DEPTH_TEST)
+        glDepthMask(GL_FALSE)
+        glLineWidth(1.25)
+        glEnableClientState(GL_VERTEX_ARRAY)
+        glEnableClientState(GL_COLOR_ARRAY)
+        glVertexPointer(3, GL_FLOAT, 0, vertices)
+        glColorPointer(4, GL_FLOAT, 0, colors)
+        glDrawArrays(GL_LINES, 0, len(vertices))
+        glDisableClientState(GL_COLOR_ARRAY)
+        glDisableClientState(GL_VERTEX_ARRAY)
+
+        hit_points = endpoints[selected_fates == 1]
+        if len(hit_points):
+            glPointSize(5.0)
+            glColor4f(0.35, 1.0, 0.65, 1.0)
+            glEnableClientState(GL_VERTEX_ARRAY)
+            glVertexPointer(3, GL_FLOAT, 0, hit_points.astype(np.float32, copy=False))
+            glDrawArrays(GL_POINTS, 0, len(hit_points))
+            glDisableClientState(GL_VERTEX_ARRAY)
+        glDepthMask(GL_TRUE)
+        if self._lighting_ray_xray:
+            glEnable(GL_DEPTH_TEST)
+
+    def _upload_lighting_quad_texture(self) -> None:
+        image = self._lighting_quad_pending_image
+        self._lighting_quad_pending_image = None
+        if image is None:
+            return
+        if self._lighting_quad_tex_id is not None:
+            glDeleteTextures([self._lighting_quad_tex_id])
+        self._lighting_quad_tex_id = _image_to_texture(image)
+
+    def set_lighting_quad(
+        self,
+        corners_world: np.ndarray,
+        image: Image.Image,
+        *,
+        enabled: bool = True,
+        surface_world: np.ndarray | None = None,
+        main_normal_world: np.ndarray | None = None,
+    ) -> None:
+        corners = np.asarray(corners_world, dtype=np.float32)
+        if corners.shape != (4, 3):
+            raise ValueError("lighting quad corners must have shape (4, 3)")
+        self._lighting_quad_corners = corners.copy()
+        self._lighting_quad_surface_vertices = None
+        self._lighting_quad_surface_uvs = None
+        self._lighting_quad_surface_indices = None
+        if surface_world is not None:
+            surface = np.asarray(surface_world, dtype=np.float32)
+            if surface.ndim != 3 or surface.shape[2] != 3:
+                raise ValueError("lighting quad surface must have shape (height, width, 3)")
+            rows, columns = surface.shape[:2]
+            if rows < 2 or columns < 2:
+                raise ValueError("lighting quad surface must be at least 2 by 2")
+            u = np.linspace(0.0, 1.0, columns, dtype=np.float32)
+            v = np.linspace(1.0, 0.0, rows, dtype=np.float32)
+            uu, vv = np.meshgrid(u, v)
+            grid = np.arange(rows * columns, dtype=np.uint32).reshape(rows, columns)
+            top_left = grid[:-1, :-1].reshape(-1)
+            top_right = grid[:-1, 1:].reshape(-1)
+            bottom_left = grid[1:, :-1].reshape(-1)
+            bottom_right = grid[1:, 1:].reshape(-1)
+            indices = np.stack([
+                top_left, bottom_left, top_right,
+                top_right, bottom_left, bottom_right,
+            ], axis=-1).reshape(-1)
+            self._lighting_quad_surface_vertices = np.ascontiguousarray(
+                surface.reshape(-1, 3), dtype=np.float32,
+            )
+            self._lighting_quad_surface_uvs = np.ascontiguousarray(
+                np.stack([uu, vv], axis=-1).reshape(-1, 2), dtype=np.float32,
+            )
+            self._lighting_quad_surface_indices = np.ascontiguousarray(
+                indices, dtype=np.uint32,
+            )
+        self._lighting_quad_pending_image = image.convert("RGBA")
+        self._lighting_quad_enabled = bool(enabled)
+        self._lighting_normal_enabled = False
+        if main_normal_world is not None:
+            normal = np.asarray(main_normal_world, dtype=np.float32).reshape(3)
+            length = float(np.linalg.norm(normal))
+            if np.isfinite(length) and length >= 1e-6:
+                normal /= length
+                origin = np.mean(corners, axis=0).astype(np.float32)
+                quad_height = float(np.linalg.norm(corners[3] - corners[0]))
+                self._lighting_normal_origin = origin
+                self._lighting_normal_endpoint = (
+                    origin + normal * np.float32(max(quad_height * 0.45, 0.05))
+                )
+                self._lighting_normal_enabled = True
+        self._request_redraw()
+
+    def set_lighting_quad_enabled(self, enabled: bool) -> None:
+        self._lighting_quad_enabled = bool(enabled)
+        self._request_redraw()
+
+    def set_lighting_rays(
+        self,
+        origins_world: np.ndarray,
+        endpoints_world: np.ndarray,
+        fates: np.ndarray,
+        toward_background: np.ndarray,
+    ) -> None:
+        origins = np.asarray(origins_world, dtype=np.float32).reshape(-1, 3)
+        endpoints = np.asarray(endpoints_world, dtype=np.float32).reshape(-1, 3)
+        fate_values = np.asarray(fates, dtype=np.uint8).reshape(-1)
+        direction_values = np.asarray(toward_background, dtype=bool).reshape(-1)
+        count = len(fate_values)
+        if len(origins) != count or len(endpoints) != count or len(direction_values) != count:
+            raise ValueError("lighting ray arrays must have the same length")
+        self._lighting_ray_origins = origins.copy()
+        self._lighting_ray_endpoints = endpoints.copy()
+        self._lighting_ray_fates = fate_values.copy()
+        self._lighting_ray_toward_background = direction_values.copy()
+        self._lighting_rays_enabled = count > 0
+        self._request_redraw()
+
+    def clear_lighting_rays(self) -> None:
+        self._lighting_ray_origins = np.zeros((0, 3), dtype=np.float32)
+        self._lighting_ray_endpoints = np.zeros((0, 3), dtype=np.float32)
+        self._lighting_ray_fates = np.zeros(0, dtype=np.uint8)
+        self._lighting_ray_toward_background = np.zeros(0, dtype=bool)
+        self._lighting_rays_enabled = False
+        self._request_redraw()
+
+    def set_lighting_ray_visibility(self, enabled: bool) -> None:
+        self._lighting_rays_enabled = bool(enabled) and len(self._lighting_ray_fates) > 0
+        self._request_redraw()
+
+    def set_lighting_ray_filters(
+        self,
+        *,
+        show_hit: bool,
+        show_exit: bool,
+        show_range: bool,
+        direction_filter: str,
+        limit: int,
+        xray: bool,
+    ) -> None:
+        self._lighting_ray_show_hit = bool(show_hit)
+        self._lighting_ray_show_exit = bool(show_exit)
+        self._lighting_ray_show_range = bool(show_range)
+        self._lighting_ray_direction_filter = (
+            direction_filter if direction_filter in ("all", "camera", "background") else "all"
+        )
+        self._lighting_ray_limit = max(1, int(limit))
+        self._lighting_ray_xray = bool(xray)
+        self._request_redraw()
+
+    def clear_lighting_debug(self) -> None:
+        self._lighting_quad_enabled = False
+        self._lighting_quad_corners = None
+        self._lighting_quad_surface_vertices = None
+        self._lighting_quad_surface_uvs = None
+        self._lighting_quad_surface_indices = None
+        self._lighting_normal_enabled = False
+        self.clear_lighting_rays()
+
     def on_key(self, keysym: str) -> bool:
-        """Handle WASD for billboard movement on the Y=0 ground plane.
+        """Dispatch viewport shortcuts, then handle legacy billboard movement.
 
         W/S: move along world Z.
         A/D: move along world X.
         """
+        if self._key_action_cb is not None and self._key_action_cb(keysym):
+            self._request_redraw()
+            return True
         if not self._billboard_enabled:
             return False
         step = self._billboard_move_step
@@ -826,6 +1131,9 @@ class SceneGLViewer(OpenGLFrame):
 
     def set_billboard_moved_callback(self, cb: Callable[[float, float], None] | None) -> None:
         self._billboard_moved_cb = cb
+
+    def set_key_action_callback(self, cb: Callable[[str], bool] | None) -> None:
+        self._key_action_cb = cb
 
     def _upload_billboard_texture(self) -> None:
         if self._billboard_pending_image is None:
@@ -1036,75 +1344,101 @@ class SceneGLViewer(OpenGLFrame):
     # Mouse interaction
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _ctrl_held(e) -> bool:
-        return bool(e.state & 0x4)
+    def _orbit(self, dx: float, dy: float) -> None:
+        self._azimuth += dx * 0.4
+        self._elevation = max(-89.0, min(89.0, self._elevation - dy * 0.3))
+
+    def _begin_left_edit(self, x: int, y: int) -> bool:
+        """若当前工具可编辑则开始编辑，返回是否进入编辑态。"""
+        if self._edit_tool in (TOOL_BRUSH, TOOL_ERASER):
+            xz = self._screen_to_xz(x, y)
+            if xz and self._on_edit_cb:
+                action = "brush" if self._edit_tool == TOOL_BRUSH else "erase"
+                self._on_edit_cb(action, [xz], self._brush_radius)
+            return True
+        if self._edit_tool == TOOL_POLYGON:
+            xz = self._screen_to_xz(x, y)
+            if xz:
+                self._polygon_verts.append(xz)
+            return True
+        if self._edit_tool in _DEPTH_TOOLS:
+            xz = self._screen_to_xz(x, y)
+            if xz and self._depth_edit_cb:
+                self._depth_edit_cb(self._edit_tool, xz, self._brush_radius)
+            return True
+        return False
+
+    def _drag_left_edit(self, x: int, y: int) -> None:
+        if self._edit_tool in (TOOL_BRUSH, TOOL_ERASER):
+            xz = self._screen_to_xz(x, y)
+            if xz and self._on_edit_cb:
+                action = "brush" if self._edit_tool == TOOL_BRUSH else "erase"
+                self._on_edit_cb(action, [xz], self._brush_radius)
+        elif self._edit_tool in _DEPTH_TOOLS:
+            xz = self._screen_to_xz(x, y)
+            if xz and self._depth_edit_cb:
+                self._depth_edit_cb(self._edit_tool, xz, self._brush_radius)
+        self._last_mx, self._last_my = x, y
+
+    def _end_left_edit(self) -> None:
+        if not self._editing_active:
+            return
+        if self._edit_tool in (TOOL_BRUSH, TOOL_ERASER):
+            if self._on_edit_end_cb:
+                self._on_edit_end_cb()
+        elif self._edit_tool in _DEPTH_TOOLS:
+            if self._depth_edit_end_cb:
+                self._depth_edit_end_cb()
+        self._editing_active = False
+
+    def _close_polygon_if_ready(self) -> bool:
+        if self._edit_tool != TOOL_POLYGON or not self._polygon_verts:
+            return False
+        if len(self._polygon_verts) >= 3 and self._on_edit_cb:
+            self._on_edit_cb("polygon", list(self._polygon_verts), 0.0)
+        self._polygon_verts.clear()
+        if self._on_edit_end_cb:
+            self._on_edit_end_cb()
+        self._request_redraw()
+        return True
 
     def _btn1_down(self, e):
         self._last_mx, self._last_my = e.x, e.y
-        if self._ctrl_held(e) and self._edit_tool in (TOOL_BRUSH, TOOL_ERASER):
-            xz = self._screen_to_xz(e.x, e.y)
-            if xz and self._on_edit_cb:
-                action = "brush" if self._edit_tool == TOOL_BRUSH else "erase"
-                self._on_edit_cb(action, [xz], self._brush_radius)
-            self._editing_active = True
-        elif self._ctrl_held(e) and self._edit_tool == TOOL_POLYGON:
-            xz = self._screen_to_xz(e.x, e.y)
-            if xz:
-                self._polygon_verts.append(xz)
-            self._editing_active = True
-        elif self._ctrl_held(e) and self._edit_tool in _DEPTH_TOOLS:
-            xz = self._screen_to_xz(e.x, e.y)
-            if xz and self._depth_edit_cb:
-                self._depth_edit_cb(self._edit_tool, xz, self._brush_radius)
-            self._editing_active = True
-        else:
-            self._editing_active = False
+        self._editing_active = self._begin_left_edit(e.x, e.y)
 
     def _btn1_drag(self, e):
-        if self._editing_active and self._edit_tool in (TOOL_BRUSH, TOOL_ERASER):
-            xz = self._screen_to_xz(e.x, e.y)
-            if xz and self._on_edit_cb:
-                action = "brush" if self._edit_tool == TOOL_BRUSH else "erase"
-                self._on_edit_cb(action, [xz], self._brush_radius)
-            self._last_mx, self._last_my = e.x, e.y
-        elif self._editing_active and self._edit_tool in _DEPTH_TOOLS:
-            xz = self._screen_to_xz(e.x, e.y)
-            if xz and self._depth_edit_cb:
-                self._depth_edit_cb(self._edit_tool, xz, self._brush_radius)
-            self._last_mx, self._last_my = e.x, e.y
-        else:
+        if self._editing_active and self._edit_tool in (
+            TOOL_BRUSH, TOOL_ERASER, *_DEPTH_TOOLS,
+        ):
+            self._drag_left_edit(e.x, e.y)
+        elif not self._editing_active:
             dx = self._last_mx - e.x
             dy = self._last_my - e.y
             self._last_mx, self._last_my = e.x, e.y
-            self._pan(dx, dy)
+            self._orbit(dx, dy)
 
     def _btn1_up(self, e):
-        if self._editing_active:
-            if self._edit_tool in (TOOL_BRUSH, TOOL_ERASER):
-                if self._on_edit_end_cb:
-                    self._on_edit_end_cb()
-            elif self._edit_tool in _DEPTH_TOOLS:
-                if self._depth_edit_end_cb:
-                    self._depth_edit_end_cb()
-        self._editing_active = False
+        self._end_left_edit()
 
     def _btn3_down(self, e):
-        if self._ctrl_held(e) and self._edit_tool == TOOL_POLYGON and self._polygon_verts:
-            if len(self._polygon_verts) >= 3 and self._on_edit_cb:
-                self._on_edit_cb("polygon", list(self._polygon_verts), 0.0)
-            self._polygon_verts.clear()
-            if self._on_edit_end_cb:
-                self._on_edit_end_cb()
-        else:
-            self._last_mx, self._last_my = e.x, e.y
+        self._last_mx, self._last_my = e.x, e.y
+        self._rbtn_moved = False
 
     def _btn3_drag(self, e):
         dx = self._last_mx - e.x
         dy = self._last_my - e.y
+        if abs(dx) + abs(dy) > 2:
+            self._rbtn_moved = True
         self._last_mx, self._last_my = e.x, e.y
-        self._azimuth += dx * 0.4
-        self._elevation = max(-89.0, min(89.0, self._elevation - dy * 0.3))
+        # 编辑中右键拖=旋转（左键被编辑占用）；导航时右键拖=平移
+        if self._edit_tool != TOOL_NONE:
+            self._orbit(dx, dy)
+        else:
+            self._pan(dx, dy)
+
+    def _btn3_up(self, e):
+        if not self._rbtn_moved:
+            self._close_polygon_if_ready()
 
     def _btn2_down(self, e):
         self._last_mx, self._last_my = e.x, e.y
@@ -1139,10 +1473,6 @@ class SceneGLViewer(OpenGLFrame):
 
     if _QT_OPENGL:
         @staticmethod
-        def _qt_ctrl_held(event) -> bool:
-            return bool(event.modifiers() & Qt.ControlModifier)
-
-        @staticmethod
         def _qt_xy(event) -> tuple[int, int]:
             p = event.position()
             return int(p.x()), int(p.y())
@@ -1152,22 +1482,36 @@ class SceneGLViewer(OpenGLFrame):
             self._last_mx, self._last_my = x, y
             button = event.button()
             if button == Qt.LeftButton:
-                self._qt_left_down(x, y, self._qt_ctrl_held(event))
-            elif button in (Qt.RightButton, Qt.MiddleButton):
-                self._last_mx, self._last_my = x, y
+                self._editing_active = self._begin_left_edit(x, y)
+            elif button == Qt.RightButton:
+                self._rbtn_moved = False
+            elif button == Qt.MiddleButton:
+                pass
+            self._request_redraw()
 
         def mouseMoveEvent(self, event):  # noqa: N802
             x, y = self._qt_xy(event)
             buttons = event.buttons()
-            ctrl = self._qt_ctrl_held(event)
             if buttons & Qt.LeftButton:
-                self._qt_left_drag(x, y)
+                if self._editing_active and self._edit_tool in (
+                    TOOL_BRUSH, TOOL_ERASER, *_DEPTH_TOOLS,
+                ):
+                    self._drag_left_edit(x, y)
+                elif not self._editing_active:
+                    dx = self._last_mx - x
+                    dy = self._last_my - y
+                    self._last_mx, self._last_my = x, y
+                    self._orbit(dx, dy)
             elif buttons & Qt.RightButton:
                 dx = self._last_mx - x
                 dy = self._last_my - y
+                if abs(dx) + abs(dy) > 2:
+                    self._rbtn_moved = True
                 self._last_mx, self._last_my = x, y
-                self._azimuth += dx * 0.4
-                self._elevation = max(-89.0, min(89.0, self._elevation - dy * 0.3))
+                if self._edit_tool != TOOL_NONE:
+                    self._orbit(dx, dy)
+                else:
+                    self._pan(dx, dy)
             elif buttons & Qt.MiddleButton:
                 dx = self._last_mx - x
                 dy = self._last_my - y
@@ -1175,12 +1519,18 @@ class SceneGLViewer(OpenGLFrame):
                 self._pan(dx, dy)
             elif self._edit_tool != TOOL_NONE:
                 self._mouse_xz = self._screen_to_xz(x, y)
-            if ctrl or buttons:
+            # 编辑工具下悬停也要刷笔刷光标，不能只在按键时 redraw
+            if buttons or self._edit_tool != TOOL_NONE:
                 self._request_redraw()
 
         def mouseReleaseEvent(self, event):  # noqa: N802
             if event.button() == Qt.LeftButton:
-                self._qt_left_up()
+                self._end_left_edit()
+                self._request_redraw()
+            elif event.button() == Qt.RightButton:
+                if not self._rbtn_moved:
+                    self._close_polygon_if_ready()
+                self._request_redraw()
 
         def wheelEvent(self, event):  # noqa: N802
             delta = event.angleDelta().y()
@@ -1194,55 +1544,9 @@ class SceneGLViewer(OpenGLFrame):
                     self._polygon_verts.clear()
                     self._request_redraw()
                 return
+            if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+                if self._close_polygon_if_ready():
+                    return
             text = event.text().lower()
             if text:
                 self.on_key(text)
-
-        def _qt_left_down(self, x: int, y: int, ctrl: bool) -> None:
-            if ctrl and self._edit_tool in (TOOL_BRUSH, TOOL_ERASER):
-                xz = self._screen_to_xz(x, y)
-                if xz and self._on_edit_cb:
-                    action = "brush" if self._edit_tool == TOOL_BRUSH else "erase"
-                    self._on_edit_cb(action, [xz], self._brush_radius)
-                self._editing_active = True
-            elif ctrl and self._edit_tool == TOOL_POLYGON:
-                xz = self._screen_to_xz(x, y)
-                if xz:
-                    self._polygon_verts.append(xz)
-                self._editing_active = True
-            elif ctrl and self._edit_tool in _DEPTH_TOOLS:
-                xz = self._screen_to_xz(x, y)
-                if xz and self._depth_edit_cb:
-                    self._depth_edit_cb(self._edit_tool, xz, self._brush_radius)
-                self._editing_active = True
-            else:
-                self._editing_active = False
-
-        def _qt_left_drag(self, x: int, y: int) -> None:
-            if self._editing_active and self._edit_tool in (TOOL_BRUSH, TOOL_ERASER):
-                xz = self._screen_to_xz(x, y)
-                if xz and self._on_edit_cb:
-                    action = "brush" if self._edit_tool == TOOL_BRUSH else "erase"
-                    self._on_edit_cb(action, [xz], self._brush_radius)
-                self._last_mx, self._last_my = x, y
-            elif self._editing_active and self._edit_tool in _DEPTH_TOOLS:
-                xz = self._screen_to_xz(x, y)
-                if xz and self._depth_edit_cb:
-                    self._depth_edit_cb(self._edit_tool, xz, self._brush_radius)
-                self._last_mx, self._last_my = x, y
-            else:
-                dx = self._last_mx - x
-                dy = self._last_my - y
-                self._last_mx, self._last_my = x, y
-                self._pan(dx, dy)
-
-        def _qt_left_up(self) -> None:
-            if self._editing_active:
-                if self._edit_tool in (TOOL_BRUSH, TOOL_ERASER):
-                    if self._on_edit_end_cb:
-                        self._on_edit_end_cb()
-                elif self._edit_tool in _DEPTH_TOOLS:
-                    if self._depth_edit_end_cb:
-                        self._depth_edit_end_cb()
-            self._editing_active = False
-            self._request_redraw()

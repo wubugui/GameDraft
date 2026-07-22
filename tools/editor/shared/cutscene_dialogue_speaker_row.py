@@ -22,6 +22,7 @@ from PySide6.QtGui import QAction
 from .id_ref_selector import IdRefSelector
 from .rich_text_field import RichTextLineEdit
 from .form_layout import compact_form
+from .portrait_ref_field import PortraitRefField
 
 _SPEAKER_INSERTS = (
     ("{{player}}", "玩家显示名"),
@@ -138,8 +139,10 @@ class CutsceneShowDialogueFields(QWidget):
         parent: QWidget | None = None,
         *,
         on_change: Callable[[], None],
+        portrait: dict | None = None,
     ) -> None:
         super().__init__(parent)
+        self._model = model
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         form = compact_form(QFormLayout())
@@ -170,7 +173,20 @@ class CutsceneShowDialogueFields(QWidget):
         self._text.setPlainText(str(text or ""))
         self._text.textChanged.connect(on_change)
         form.addRow("text", self._text)
+        # 立绘：与 playScriptedDialogue 行共用同一个三态选择器（无 / 跟随说话人 / 指定立绘集 + 表情）。
+        # 运行时仅过场内的 present:showDialogue 消费它；不触及过场外的 playScriptedDialogue 路径。
+        proot = getattr(model, "project_path", None) if model else None
+        self._portrait = PortraitRefField(proot, portrait if isinstance(portrait, dict) else None)
+        self._portrait.changed.connect(lambda: on_change())
+        form.addRow(self._portrait)
         root.addLayout(form)
+
+    def refresh_scene_scope(self, scene_id: str | None) -> None:
+        """过场 targetScene 变更时，把 scriptedNpcId 说话人候选重限定到该场景（保留当前选择）。
+        与 showSubtitle 表情锚点、各 action NPC 下拉一致——过场的「当前场景」即 targetScene。"""
+        cur = self._snpc.current_id().strip()
+        self._snpc.set_items(npc_items_for_dialogue_picker(self._model, scene_id))
+        self._snpc.set_current(cur)
 
     def to_step_dict(self) -> dict:
         d: dict = {
@@ -180,4 +196,7 @@ class CutsceneShowDialogueFields(QWidget):
         sid = self._snpc.current_id().strip()
         if sid:
             d["scriptedNpcId"] = sid
+        por = self._portrait.to_ref()
+        if por:
+            d["portrait"] = por
         return d

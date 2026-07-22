@@ -39,5 +39,23 @@
       }
     }
   ],
-  "zones": []
+  "zones": [],
+  "onEnter": [
+    {
+      "type": "stopBgm",
+      "params": {}
+    },
+    {
+      "type": "fadeWorldFromBlack",
+      "params": {
+        "durationMs": 1000
+      }
+    },
+    {
+      "type": "startDialogueGraph",
+      "params": {
+        "graphId": "梦_段E_醒来"
+      }
+    }
+  ]
 }

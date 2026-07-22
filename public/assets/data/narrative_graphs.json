@@ -523,8 +523,8 @@
             "label": "开局·茶馆门外的人",
             "meta": {
               "editor": {
-                "x": 26,
-                "y": -13
+                "x": 30,
+                "y": 17
               }
             }
           },
@@ -637,6 +637,16 @@
                 "y": 24
               }
             }
+          },
+          "state_1": {
+            "id": "state_1",
+            "meta": {
+              "editor": {
+                "x": -185,
+                "y": 23
+              }
+            },
+            "label": "未开始"
           }
         },
         "transitions": [
@@ -705,6 +715,12 @@
             "from": "s11_zhaomu",
             "to": "s12_chufa",
             "signal": "state:scenario_终幕:departed"
+          },
+          {
+            "id": "t_1",
+            "from": "state_1",
+            "to": "initial",
+            "signal": "__draft__"
           }
         ],
         "label": "寻狗Demo主线"
@@ -1258,7 +1274,8 @@
             "emits": [],
             "reads": [],
             "commands": []
-          }
+          },
+          "package": "章节_婆子家"
         },
         {
           "id": "el_wrap_读人_儿子",
@@ -1309,7 +1326,8 @@
             "emits": [],
             "reads": [],
             "commands": []
-          }
+          },
+          "package": "章节_婆子家"
         },
         {
           "id": "el_wrap_码头选择",
@@ -1392,7 +1410,8 @@
             "emits": [],
             "reads": [],
             "commands": []
-          }
+          },
+          "package": "章节_码头"
         },
         {
           "id": "el_wrap_守夜",
@@ -1532,7 +1551,8 @@
             "emits": [],
             "reads": [],
             "commands": []
-          }
+          },
+          "package": "章节_守夜"
         },
         {
           "id": "el_wrap_镇尸_撒米",
@@ -1583,7 +1603,8 @@
             "emits": [],
             "reads": [],
             "commands": []
-          }
+          },
+          "package": "章节_义庄"
         },
         {
           "id": "el_wrap_镇尸_墨斗",
@@ -1634,7 +1655,8 @@
             "emits": [],
             "reads": [],
             "commands": []
-          }
+          },
+          "package": "章节_义庄"
         },
         {
           "id": "el_wrap_镇尸_石子",
@@ -1685,7 +1707,8 @@
             "emits": [],
             "reads": [],
             "commands": []
-          }
+          },
+          "package": "章节_义庄"
         },
         {
           "id": "el_wrap_镇尸_剪子",
@@ -1736,7 +1759,8 @@
             "emits": [],
             "reads": [],
             "commands": []
-          }
+          },
+          "package": "章节_义庄"
         },
         {
           "id": "el_scenario_义庄镇尸",
@@ -2018,7 +2042,8 @@
             "emits": [],
             "reads": [],
             "commands": []
-          }
+          },
+          "package": "章节_义庄"
         },
         {
           "id": "el_scenario_背尸",
@@ -2274,7 +2299,8 @@
                 "signal": "beishi_fled"
               }
             ]
-          }
+          },
+          "package": "章节_背尸"
         },
         {
           "id": "dlg_beishi_hire",
@@ -2430,7 +2456,8 @@
                 "signal": "chuiniu_spread"
               }
             ]
-          }
+          },
+          "package": "章节_吹牛"
         },
         {
           "id": "el_scenario_婆子家",
@@ -2605,7 +2632,8 @@
                 "signal": "pozi_paid"
               }
             ]
-          }
+          },
+          "package": "章节_婆子家"
         },
         {
           "id": "el_scenario_河边",
@@ -2764,7 +2792,8 @@
                 "signal": "hebian_fled"
               }
             ]
-          }
+          },
+          "package": "章节_河边"
         },
         {
           "id": "el_scenario_码头",
@@ -2828,7 +2857,8 @@
                 "signal": "dock_resolved"
               }
             ]
-          }
+          },
+          "package": "章节_码头"
         },
         {
           "id": "el_scenario_枯井",
@@ -2998,7 +3028,8 @@
                 "signal": "kujing_fled"
               }
             ]
-          }
+          },
+          "package": "章节_枯井"
         },
         {
           "id": "el_scenario_向导",
@@ -3101,7 +3132,8 @@
                 "signal": "outfit_bought"
               }
             ]
-          }
+          },
+          "package": "章节_向导"
         },
         {
           "id": "el_scenario_送货",
@@ -3609,7 +3641,8 @@
                 "signal": "songhuo_returned"
               }
             ]
-          }
+          },
+          "package": "章节_送货"
         },
         {
           "id": "el_scenario_招募",
@@ -3673,7 +3706,8 @@
                 "signal": "zhaomu_recruited"
               }
             ]
-          }
+          },
+          "package": "章节_招募"
         },
         {
           "id": "el_scenario_终幕",
@@ -3737,7 +3771,8 @@
                 "signal": "chufa_departed"
               }
             ]
-          }
+          },
+          "package": "章节_终幕"
         },
         {
           "id": "el_scenario_梦待死之礼",
@@ -3913,7 +3948,8 @@
                 "signal": "meng_woken"
               }
             ]
-          }
+          },
+          "package": "章节_梦"
         },
         {
           "id": "el_wrap_喊名_点二",
@@ -3996,7 +4032,8 @@
                 "signal": "hanming_x2_skipped"
               }
             ]
-          }
+          },
+          "package": "章节_送货"
         },
         {
           "id": "el_wrap_喊名_点三",
@@ -4079,7 +4116,8 @@
                 "signal": "hanming_x3_skipped"
               }
             ]
-          }
+          },
+          "package": "章节_送货"
         },
         {
           "id": "el_wrap_喊名_恍然",
@@ -4130,7 +4168,8 @@
                 "signal": "hanming_awakening"
               }
             ]
-          }
+          },
+          "package": "章节_送货"
         },
         {
           "id": "dlg_meng",

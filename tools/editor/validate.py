@@ -71,6 +71,59 @@ def _json_lang_issues(project_root: Path) -> list[Issue]:
     return out
 
 
+def _lighting_payload_issues(project_root: Path) -> list[Issue]:
+    """角色照明烘焙载荷防腐门(character_lighting_lab 导出物,P1 数据通道)。
+
+    只对存在 lighting/ 目录的场景生效:①lighting.json 结构齐全;②三份 probe bin
+    与 ground_d.png 在盘且尺寸吻合 probe 网格;③背景内容哈希一致——背景重画而
+    烘焙未跟上时记 error(运行时同样会据此禁用,防"静默过期"照明)。"""
+    import hashlib
+    import json as _json
+
+    out: list[Issue] = []
+    scenes_dir = project_root / "public" / "resources" / "runtime" / "scenes"
+    if not scenes_dir.is_dir():
+        return out
+    required = {"version", "background_sha1", "work", "cal", "world",
+                "probes", "ambient_sh", "lights", "ground_d"}
+    for lj in sorted(scenes_dir.glob("*/lighting/lighting.json")):
+        scene = lj.parent.parent.name
+        tag = f"scenes/{scene}/lighting"
+        try:
+            payload = _json.loads(lj.read_text())
+        except Exception as exc:  # noqa: BLE001
+            out.append(Issue("error", "lighting-bake", tag, f"lighting.json 解析失败: {exc}"))
+            continue
+        missing = required - set(payload)
+        if missing:
+            out.append(Issue("error", "lighting-bake", tag, f"lighting.json 缺字段: {sorted(missing)}"))
+            continue
+        pr = payload["probes"]
+        pn = int(pr.get("nx", 0)) * int(pr.get("ny", 0)) * int(pr.get("nz", 0))
+        expect = {"probes_l2.bin": pn * 9 * 4 * 2,
+                  "probes_l2amb.bin": pn * 9 * 3 * 2,
+                  "probes_l2nee.bin": pn * 9 * 3 * 2}
+        for fname, size in expect.items():
+            f = lj.parent / fname
+            if not f.exists():
+                out.append(Issue("error", "lighting-bake", tag, f"缺文件 {fname}"))
+            elif pn and f.stat().st_size != size:
+                out.append(Issue("error", "lighting-bake", tag,
+                                 f"{fname} 尺寸 {f.stat().st_size} != 期望 {size}(probe 网格不匹配)"))
+        if not (lj.parent / "ground_d.png").exists():
+            out.append(Issue("error", "lighting-bake", tag, "缺文件 ground_d.png"))
+        bg = lj.parent.parent / "background.png"
+        if not bg.exists():
+            out.append(Issue("error", "lighting-bake", tag, "场景缺 background.png"))
+        else:
+            h = hashlib.sha1(bg.read_bytes()).hexdigest()[:12]
+            if h != payload["background_sha1"]:
+                out.append(Issue("error", "lighting-bake", tag,
+                                 f"背景内容哈希失配(烘焙 {payload['background_sha1']} vs 现况 {h})"
+                                 "——背景已重画,需在角色照明实验室重烘并重新导出"))
+    return out
+
+
 def _format(iss: Issue) -> str:
     prefix = "ERR " if iss.severity == "error" else "WARN"
     return f"[{prefix}] [{iss.data_type}] {iss.item_id}: {iss.message}"
@@ -116,6 +169,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     issues.extend(_json_lang_issues(project_root))
+    issues.extend(_lighting_payload_issues(project_root))
 
     errors = [i for i in issues if i.severity == "error"]
     warnings = [i for i in issues if i.severity != "error"]

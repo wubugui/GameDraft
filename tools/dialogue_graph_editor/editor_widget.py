@@ -509,48 +509,22 @@ class DialogueGraphEditorWidget(QWidget):
             self._edit_title,
         )
         self._edit_meta_scenario = QComboBox()
-        self._edit_meta_scenario.setEditable(True)
-        self._edit_meta_scenario.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self._edit_meta_scenario.setEditable(False)
+        self._edit_meta_scenario.setEnabled(False)  # 只读：按信号自动推导，不再手填
         self._edit_meta_scenario.setMinimumWidth(180)
-        if self._injected_project_model is not None:
-            self._edit_meta_scenario.setToolTip(
-                "须选自 scenarios.json 清单。保存后写入 meta.scenarioId，并同步更新该 scenario 的 dialogueGraphIds。\n"
-                "留空表示不归属任何 scenario（左侧列表归入「未归属」）。",
-            )
-        else:
-            # 独立运行模式诚实化（审查 P2）：没有主编辑器 ProjectModel，保存只写图 JSON 的
-            # meta.scenarioId，不会自动同步 scenarios.json 的 dialogueGraphIds 索引。
-            self._edit_meta_scenario.setToolTip(
-                "须选自 scenarios.json 清单。保存后写入图 JSON 的 meta.scenarioId。\n"
-                "留空表示不归属任何 scenario（左侧列表归入「未归属」）。\n\n"
-                "注意：当前为独立运行模式，不会自动同步 scenarios.json 的 dialogueGraphIds 索引；\n"
-                "改叙事归属 / 重命名 / 删除图后，请在主编辑器内保存一次，或跑 ./dev.sh validate-data 核对索引。",
-            )
-        _scen_le = self._edit_meta_scenario.lineEdit()
-        if _scen_le is not None:
-            _scen_le.setPlaceholderText("从下拉选择 scenario id")
+        self._edit_meta_scenario.setToolTip(
+            "只读：按本图 emit 的叙事信号自动推导到所属章节，左栏据此分组。\n"
+            "喷了没人听 / 纯闲聊不喷信号 → 未归属。老 meta.scenarioId 手填 + scenarios.json 同步已于 2026-07-19 废弃。",
+        )
         self._meta_scenario_row = QWidget(self._graph_prop_body)
         _ms_lay = QHBoxLayout(self._meta_scenario_row)
         _ms_lay.setContentsMargins(0, 0, 0, 0)
         _ms_lay.addWidget(self._edit_meta_scenario, 1)
-        self._btn_open_scenario = QPushButton("打开叙事页…", self._meta_scenario_row)
-        self._btn_open_scenario.setToolTip(
-            "在主编辑器中打开「数据编辑 → 叙事编排 → Scenarios」并选中当前 scenario。",
-        )
-        self._btn_open_scenario.clicked.connect(self._on_open_linked_scenario_clicked)
-        _ms_lay.addWidget(self._btn_open_scenario)
-        if self._injected_project_model is not None:
-            _narr_tip = (
-                "对应 JSON：meta.scenarioId。与 scenarios.json 双向维护：本图会出现在该 scenario 的 dialogueGraphIds 中。"
-            )
-        else:
-            _narr_tip = (
-                "对应 JSON：meta.scenarioId。独立运行模式只写本图 JSON，"
-                "不自动同步 scenarios.json 的 dialogueGraphIds 索引——"
-                "请在主编辑器内保存一次，或跑 ./dev.sh validate-data 核对。"
-            )
         gform.addRow(
-            _graph_form_label("叙事归属", tip=_narr_tip),
+            _graph_form_label(
+                "叙事归属（自动）",
+                tip="按本图 emit 的信号自动推导到所属章节，只读；左栏据此分组。不写 meta.scenarioId。",
+            ),
             self._meta_scenario_row,
         )
         gform.addRow(QLabel(), self._pre_cond_ed)
@@ -563,7 +537,6 @@ class DialogueGraphEditorWidget(QWidget):
             self._edit_title,
         ):
             w.textChanged.connect(self._on_graph_meta_changed)
-        self._edit_meta_scenario.currentTextChanged.connect(self._on_graph_meta_changed)
 
         self._inspector = NodeInspector(
             self._node_ids_sorted,
@@ -2072,6 +2045,36 @@ class DialogueGraphEditorWidget(QWidget):
         meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
         return str(meta.get("scenarioId", "")).strip()
 
+    def _derive_chapter_key_for_data(self, data: dict[str, Any]) -> str:
+        """左栏分组键：对话图 emit 的信号 → 监听它的叙事图 → 该图所属章节包。
+        无信号/喷了没人听 → '' (未归属)；owner 图无章节包 → '__resident__' (常驻/街景)。
+        索引 `_chapter_sig_owners`/`_chapter_pkg_map` 由 `_rebuild_file_tree` 每轮建；
+        若在首次建树前被调用（如详情面板先加载），此处按需惰性建一次。"""
+        from .graph_analysis import (
+            derive_dialogue_owner,
+            build_narrative_signal_owners,
+            build_graph_package_map,
+        )
+        if getattr(self, "_chapter_sig_owners", None) is None or getattr(self, "_chapter_pkg_map", None) is None:
+            pm = self._injected_project_model or self._get_project_model_for_inspector()
+            ng = getattr(pm, "narrative_graphs", None) if pm is not None else None
+            self._chapter_sig_owners = build_narrative_signal_owners(ng)
+            self._chapter_pkg_map = build_graph_package_map(ng)
+        owner = derive_dialogue_owner(data if isinstance(data, dict) else {}, self._chapter_sig_owners or {})
+        if not owner:
+            return ""
+        pkg = (self._chapter_pkg_map or {}).get(owner, "")
+        return pkg if pkg else "__resident__"
+
+    def _derive_chapter_key_for_path(self, path: Path) -> str:
+        try:
+            data = load_json(path)
+        except Exception:
+            return ""
+        if not isinstance(data, dict):
+            return ""
+        return self._derive_chapter_key_for_data(data)
+
     def _walk_file_tree_items(self, parent: QTreeWidgetItem | None = None):
         if parent is None:
             for i in range(self._file_tree.topLevelItemCount()):
@@ -2089,11 +2092,24 @@ class DialogueGraphEditorWidget(QWidget):
     ) -> None:
         q = (self._file_list_filter.text() or "").strip().lower()
         pm = self._injected_project_model or self._get_project_model_for_inspector()
+        # 左栏「叙事归属」按信号自动推导到章节包（2026-07-19 起，老 meta.scenarioId/scenarios.json 已废）：
+        # 对话图 emit 的信号 → 监听它的叙事图 → 该图所属章节包。索引一轮建好供逐图查。
+        from .graph_analysis import build_narrative_signal_owners, build_graph_package_map
+        ng = getattr(pm, "narrative_graphs", None) if pm is not None else None
+        self._chapter_sig_owners = build_narrative_signal_owners(ng)
+        self._chapter_pkg_map = build_graph_package_map(ng)
+        # 章节顺序优先按导演清单行序（narrative_packages.json = 里程碑序）；清单外的按编排出现序补后。
         known_scenarios: list[str] = []
-        known_set: set[str] = set()
-        if pm is not None:
-            known_scenarios = pm.scenario_ids_ordered()
-            known_set = set(known_scenarios)
+        _clist = getattr(pm, "narrative_packages", None) if pm is not None else None
+        if isinstance(_clist, dict):
+            for _row in _clist.get("packages") or []:
+                _pkg = str((_row or {}).get("package") or "").strip() if isinstance(_row, dict) else ""
+                if _pkg and _pkg not in known_scenarios:
+                    known_scenarios.append(_pkg)
+        for _gid, _pkg in self._chapter_pkg_map.items():
+            if _pkg and _pkg not in known_scenarios:
+                known_scenarios.append(_pkg)
+        known_set: set[str] = set(known_scenarios)
 
         prev_path: Path | None = None
         prev_unsaved = False
@@ -2112,7 +2128,9 @@ class DialogueGraphEditorWidget(QWidget):
         def gkey_title(sid: str) -> tuple[str, str]:
             s = (sid or "").strip()
             if not s:
-                return "__ungrouped__", "未归属"
+                return "__ungrouped__", "未归属（不喷叙事信号）"
+            if s == "__resident__":
+                return "__resident__", "常驻 / 无章节（街景·零工等）"
             if s in known_set:
                 return s, s
             return f"__orphan__:{s}", f"未知：{s}"
@@ -2120,13 +2138,13 @@ class DialogueGraphEditorWidget(QWidget):
         bucket: dict[str, tuple[str, list[tuple[str, Any]]]] = {}
         draft_label = f"【未保存】{self._data.get('id', '新图')}"
         if self._current_path is None and isinstance(self._data.get("nodes"), dict) and self._data["nodes"]:
-            gk, gt = gkey_title(self._meta_scenario_value())
+            gk, gt = gkey_title(self._derive_chapter_key_for_data(self._data))
             if gk not in bucket:
                 bucket[gk] = (gt, [])
             bucket[gk][1].append((draft_label, self._unsaved_list_token))
 
         for p in list_graph_files(self._project):
-            sid = self._read_graph_meta_scenario_for_path(p)
+            sid = self._derive_chapter_key_for_path(p)
             gk, gt = gkey_title(sid)
             if gk not in bucket:
                 bucket[gk] = (gt, [])
@@ -2136,6 +2154,8 @@ class DialogueGraphEditorWidget(QWidget):
         for sid in known_scenarios:
             if sid in bucket:
                 ordered_gkeys.append(sid)
+        if "__resident__" in bucket and "__resident__" not in ordered_gkeys:
+            ordered_gkeys.append("__resident__")
         orphans = sorted(k for k in bucket if k.startswith("__orphan__:"))
         for k in orphans:
             if k not in ordered_gkeys:
@@ -2474,45 +2494,6 @@ class DialogueGraphEditorWidget(QWidget):
         finally:
             self._file_tree.blockSignals(False)
 
-    def _refresh_meta_scenario_combo(self) -> None:
-        cb = self._edit_meta_scenario
-        cb.blockSignals(True)
-        cb.clear()
-        cb.addItem("（未指定）", "")
-        pm = self._get_project_model_for_inspector()
-        if pm:
-            for sid in pm.scenario_ids_ordered():
-                cb.addItem(sid, sid)
-        cb.blockSignals(False)
-
-    def _set_meta_scenario_value(self, val: str) -> None:
-        cb = self._edit_meta_scenario
-        cb.blockSignals(True)
-        v = (val or "").strip()
-        if not v:
-            cb.setCurrentIndex(0)
-        else:
-            idx = cb.findData(v)
-            if idx >= 0:
-                cb.setCurrentIndex(idx)
-            else:
-                cb.setCurrentIndex(-1)
-                cb.setEditText(v)
-        cb.blockSignals(False)
-
-    def _meta_scenario_value(self) -> str:
-        cb = self._edit_meta_scenario
-        if cb.currentIndex() == 0:
-            return ""
-        t = cb.currentText().strip()
-        if t == "（未指定）":
-            return ""
-        if cb.currentIndex() > 0:
-            d = cb.itemData(cb.currentIndex())
-            if isinstance(d, str) and d.strip():
-                return d.strip()
-        return t
-
     def _apply_data_to_widgets(self):
         for w in (
             self._edit_graph_id,
@@ -2527,9 +2508,11 @@ class DialogueGraphEditorWidget(QWidget):
             self._edit_entry.setText(str(self._data.get("entry", "")))
             meta = self._data.get("meta") or {}
             self._edit_title.setText(str(meta.get("title", "")))
-            saved_sc = str(meta.get("scenarioId", "")) if isinstance(meta, dict) else ""
-            self._refresh_meta_scenario_combo()
-            self._set_meta_scenario_value(saved_sc)
+            _ch = self._derive_chapter_key_for_data(self._data)
+            _disp = "（未归属）" if not _ch else ("常驻 / 无章节" if _ch == "__resident__" else _ch)
+            self._edit_meta_scenario.clear()
+            self._edit_meta_scenario.addItem(_disp)
+            self._edit_meta_scenario.setCurrentIndex(0)
             pre = self._data.get("preconditions")
             editable_pre, unknown_pre = _split_graph_preconditions_for_editor(pre)
             self._pre_unknown_preconditions = copy.deepcopy(unknown_pre)
@@ -2588,7 +2571,7 @@ class DialogueGraphEditorWidget(QWidget):
             graph_id=self._edit_graph_id.text().strip(),
             entry=self._edit_entry.text().strip(),
             title=self._edit_title.text().strip(),
-            scenario_id=self._meta_scenario_value(),
+            scenario_id="",  # 叙事归属已改自动推导，不再写 meta.scenarioId（与旧空值字节等价）
             preconditions=merged_preconditions,
             schema_version_present=getattr(
                 self, "_orig_schema_version_present", "schemaVersion" in self._data
@@ -2721,22 +2704,6 @@ class DialogueGraphEditorWidget(QWidget):
         if self._editing_node_id and self._editing_node_id in self._model.nodes:
             return self._editing_node_id
         return None
-
-    def _on_open_linked_scenario_clicked(self) -> None:
-        sid = self._meta_scenario_value().strip()
-        if not sid:
-            QMessageBox.information(self, "叙事归属", "请先在「叙事归属」下拉中选择 scenario。")
-            return
-        w = self.window()
-        fn = getattr(w, "navigate_to_scenario_catalog", None)
-        if callable(fn):
-            fn(sid)
-        else:
-            QMessageBox.information(
-                self,
-                "叙事编排",
-                "请从主编辑器打开：数据编辑 → 叙事编排 → Scenarios。",
-            )
 
     def _on_file_tree_item_changed(
         self, cur: QTreeWidgetItem | None, prev: QTreeWidgetItem | None

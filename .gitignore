@@ -14,6 +14,7 @@ build/
 coverage/
 .vite/
 artifact/content_pipeline/
+artifact/Experiments/
 *.log
 *.tmp
 *.temp

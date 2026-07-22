@@ -1,10 +1,10 @@
 {
   "id": "temple",
   "name": "破烂城隍庙",
-  "worldWidth": 2000.0,
-  "worldHeight": 1116.0,
+  "worldWidth": 800.0,
+  "worldHeight": 446.4,
   "camera": {
-    "zoom": 1.0,
+    "zoom": 1.82,
     "pixelsPerUnit": 1.0
   },
   "backgrounds": [
@@ -15,8 +15,8 @@
     }
   ],
   "spawnPoint": {
-    "x": 822.5,
-    "y": 795.5
+    "x": 302.0,
+    "y": 355.8
   },
   "spawnPoints": {
     "from_street": {
@@ -24,8 +24,8 @@
       "y": 959.4
     },
     "spawn_0": {
-      "x": 735.8,
-      "y": 722.7
+      "x": 221.7,
+      "y": 390.2
     }
   },
   "hotspots": [
@@ -241,5 +241,16 @@
       "grid_height": 172,
       "height_offset": 0.05
     }
-  }
+  },
+  "npcs": [
+    {
+      "id": "new_npc_0",
+      "name": "New NPC",
+      "x": 525.6,
+      "y": 287.7,
+      "interactionRange": 50,
+      "animFile": "/resources/runtime/animation/player_taoist_anim_v1/anim.json",
+      "initialAnimState": "idle"
+    }
+  ]
 }

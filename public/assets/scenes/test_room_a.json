@@ -1096,5 +1096,17 @@
       "height_offset": 0.1
     }
   },
-  "worldHeight": 2251.2
+  "worldHeight": 2251.2,
+  "perspectiveScale": {
+    "near": {
+      "x": 1200,
+      "y": 2100,
+      "scale": 1.0
+    },
+    "far": {
+      "x": 2800,
+      "y": 400,
+      "scale": 0.45
+    }
+  }
 }

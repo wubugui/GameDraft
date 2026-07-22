@@ -71,6 +71,7 @@ ENTITY_REF_PARAMS: dict[str, dict[str, str]] = {
     "setEntityEnabled": {"target": "actor"},
     "moveEntityTo": {"target": "actor", "sceneId": "scene_hint"},
     "faceEntity": {"target": "actor", "faceTarget": "actor"},
+    "cameraFollowActor": {"target": "actor"},
     "persistNpcEntityEnabled": {"target": "actor"},
     "persistNpcAt": {"target": "actor"},
     "persistNpcAnimState": {"target": "actor"},

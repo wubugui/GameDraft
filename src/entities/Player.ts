@@ -39,6 +39,8 @@ export class Player implements ICutsceneActor {
     playIdleOnArrive: boolean;
     /** true：段内每帧按剩余位移方向更新 sprite 朝向（斜向行走） */
     faceTowardMovement: boolean;
+    /** 段末收尾动画：undefined=旧语义（playIdleOnArrive 时回 idle）；字符串=播该状态；null=不切（折线中途点） */
+    arriveAnimState: string | null | undefined;
   } | null = null;
 
   private collisionsEnabled = true;
@@ -63,18 +65,18 @@ export class Player implements ICutsceneActor {
     this.movementModifier = fn;
   }
 
-  /** 注入/清除场景透视缩放（近大远小）；立即按当前脚底 y 施加，之后每帧移动前刷新。 */
+  /** 注入/清除场景透视缩放（近大远小）；立即按当前脚底点施加，之后每帧移动前刷新。 */
   setPerspectiveScale(resolver: PerspectiveScaleResolver | null): void {
     this.perspectiveScale = resolver;
     this.refreshPerspectiveScale();
   }
 
   /**
-   * 按当前脚底 y 刷新透视系数并返回**步长系数**（affectsSpeed 关时步长恒 1、视觉照常缩放）。
+   * 按当前脚底点刷新透视系数并返回**步长系数**（affectsSpeed 关时步长恒 1、视觉照常缩放）。
    * 传送/出生点落位后下一次 update 即自愈，无需外部显式刷新。
    */
   private refreshPerspectiveScale(): number {
-    const f = this.perspectiveScale?.scaleAt(this.sprite.y) ?? 1;
+    const f = this.perspectiveScale?.scaleAt(this.sprite.x, this.sprite.y) ?? 1;
     this.sprite.setDepthScaleFactor(f);
     return this.perspectiveScale?.affectsSpeed ? f : 1;
   }
@@ -127,6 +129,7 @@ export class Player implements ICutsceneActor {
     speed: number,
     moveAnimState?: string,
     faceTowardMovement?: boolean,
+    arriveAnimState?: string | null,
   ): Promise<void> {
     if (this.moveTarget) {
       this.moveTarget.resolve();
@@ -141,6 +144,7 @@ export class Player implements ICutsceneActor {
         resolve,
         playIdleOnArrive: Boolean(anim),
         faceTowardMovement: toward,
+        arriveAnimState,
       };
       const dx = targetX - this.sprite.x;
       const dy = targetY - this.sprite.y;
@@ -171,8 +175,13 @@ export class Player implements ICutsceneActor {
       if (dist <= step) {
         this.sprite.x = t.x;
         this.sprite.y = t.y;
-        if (t.playIdleOnArrive) {
-          this.sprite.playAnimation(ANIM_IDLE);
+        // null=中途点不切动画（playAnimation 幂等保护使移动动画跨段连续）；到点那帧
+        // 先渲染后才跑下一段的微任务，这里切了 idle 就会闪一帧、走路循环也被归零。
+        if (t.arriveAnimState !== null) {
+          const arriveState = t.arriveAnimState ?? (t.playIdleOnArrive ? ANIM_IDLE : '');
+          if (arriveState) {
+            this.sprite.playAnimation(arriveState);
+          }
         }
         const resolve = t.resolve;
         this.moveTarget = null;

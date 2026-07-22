@@ -144,9 +144,10 @@ _OMIT_WHEN_ABSENT_AND_DEFAULT: dict[str, object] = {
     "flicker": False,
     # giveItem critical（关键给予绕过槽上限）为可选：原本没有且未勾选时不写出
     "critical": False,
-    # playNpcAnimation 可选播放参数（reverse 倒放 / thenState 播完自动切换）：
+    # playNpcAnimation 可选播放参数（reverse 倒放 / loop 循环覆盖 / thenState 播完自动切换）：
     # 原本没有且仍为中性默认时不写出（speed/holdFrame 走 _ACTION_PARAM_RUNTIME_DEFAULTS）
     "reverse": False,
+    "loop": "",
     "thenState": "",
     # enableRuleOffers.slots / chooseAction.options：原本没有该键且列表仍为空时不写出，
     # 配合"载入空列表不再自动注入空行"，保证 slots:[] / options:[] 与缺键两种旧形状均往返不漂移。
@@ -179,6 +180,8 @@ _ACTION_PARAM_RUNTIME_DEFAULTS: dict[tuple[str, str], int] = {
     ("fadingRestoreSceneCameraZoom", "durationMs"): 600,
     ("fadeWorldToBlack", "durationMs"): 600,
     ("fadeWorldFromBlack", "durationMs"): 600,
+    ("showBlackout", "durationMs"): 0,
+    ("hideBlackout", "durationMs"): 600,
     ("waitMs", "durationMs"): 600,
     ("blendOverlayImage", "durationMs"): 600,
     # showEmote/showSpeechBubble(AndWait) duration ?? 1500（ActionRegistry.ts:635/668）
@@ -229,6 +232,8 @@ ACTION_TYPES = [
     "setCameraZoom", "restoreSceneCameraZoom",
     "fadingZoom", "fadingRestoreSceneCameraZoom",
     "fadeWorldToBlack", "fadeWorldFromBlack",
+    "showBlackout", "hideBlackout",
+    "cameraFollowActor", "cameraStopFollow",
     "hideOverlayImage", "playScriptedDialogue", "showOverlayImage", "setHotspotDisplayImage",
     "tempSetHotspotDisplayFacing", "setEntityField", "setSceneEntityPosition", "blendOverlayImage",
     "revealDocument", "startDialogueGraph",
@@ -374,6 +379,10 @@ ACTION_PERSISTENCE: dict[str, str] = {
     "fadingRestoreSceneCameraZoom": "memory",
     "fadeWorldToBlack": "memory",
     "fadeWorldFromBlack": "memory",
+    "showBlackout": "memory",
+    "hideBlackout": "memory",
+    "cameraFollowActor": "memory",
+    "cameraStopFollow": "memory",
     "hideOverlayImage": "memory",
     "playScriptedDialogue": "memory",
     "showOverlayImage": "memory",
@@ -505,6 +514,7 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
         ("state", "str"),
         ("speed", "float"),
         ("reverse", "bool"),
+        ("loop", "str"),
         ("holdFrame", "int"),
         ("thenState", "str"),
     ],
@@ -534,6 +544,10 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "fadingRestoreSceneCameraZoom": [("durationMs", "int")],
     "fadeWorldToBlack": [("durationMs", "int")],
     "fadeWorldFromBlack": [("durationMs", "int")],
+    "showBlackout": [("durationMs", "int")],
+    "hideBlackout": [("durationMs", "int")],
+    "cameraFollowActor": [("target", "str"), ("smooth", "bool")],
+    "cameraStopFollow": [],
     "hideOverlayImage": [("id", "str")],
     "waitClickContinue": [("text", "str")],
     "waitMs": [("durationMs", "int")],
@@ -544,6 +558,7 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
         ("y", "float"),
         ("speed", "float"),
         ("moveAnimState", "str"),
+        ("arriveAnimState", "str"),
         ("faceTowardMovement", "bool"),
     ],
     "faceEntity": [("target", "str"), ("direction", "str"), ("faceTarget", "str")],
@@ -2711,7 +2726,7 @@ class ActionRow(QWidget):
         m = self._ctx_model
         tip = QLabel(
             "在「地图 sceneId」上用弹窗必选终点坐标；可选用途经点勾勒出世界坐标下的折线路径。\n"
-            "x/y 只读禁止手输；速度与 moveAnimState 在此编辑。sceneId 仅存档供编辑器复现地图。"
+            "x/y 只读禁止手输；速度、移动/到达动画在此编辑。sceneId 仅存档供编辑器复现地图。"
         )
         tip.setWordWrap(True)
         self._params_layout.addRow(tip)
@@ -2837,6 +2852,15 @@ class ActionRow(QWidget):
         self._param_widgets["moveAnimState"] = st_combo
         self._params_layout.addRow("moveAnimState", st_combo)
 
+        aa_init = str(params.get("arriveAnimState", "") or "").strip()
+        aa_combo = FilterableTypeCombo([("（默认：到点回站立/idle）", "")], self, select_only=True)
+        if aa_init:
+            aa_combo.set_committed_type(aa_init)
+        aa_combo.typeCommitted.connect(lambda _t: self.changed.emit())
+        aa_combo.setToolTip("终点到达后播放的动画状态；留空=回各实体的站立/idle。途经点段末一律不切动画。")
+        self._param_widgets["arriveAnimState"] = aa_combo
+        self._params_layout.addRow("arriveAnimState", aa_combo)
+
         face_cb = QCheckBox("自动调节朝向（沿路运动方向更新朝向）", self)
         face_raw = params.get("faceTowardMovement")
         face_cb.setChecked(face_raw is True or str(face_raw).strip().lower() in ("true", "1", "yes"))
@@ -2845,19 +2869,24 @@ class ActionRow(QWidget):
         self._params_layout.addRow("朝向", face_cb)
 
         self._sync_foldable_visibility()
-        self._connect_move_entity_animation_pickers(initial_state=ma_init)
+        self._connect_move_entity_animation_pickers(initial_state=ma_init, initial_arrive_state=aa_init)
 
-    def _connect_move_entity_animation_pickers(self, *, initial_state: str) -> None:
+    def _connect_move_entity_animation_pickers(self, *, initial_state: str, initial_arrive_state: str = "") -> None:
         tgt_w = self._param_widgets.get("target")
-        st_w = self._param_widgets.get("moveAnimState")
         sc_w = self._param_widgets.get("sceneId")
-        if (
-            not isinstance(tgt_w, IdRefSelector)
-            or not isinstance(st_w, FilterableTypeCombo)
-            or not isinstance(sc_w, FilterableTypeCombo)
-        ):
+        if not isinstance(tgt_w, IdRefSelector) or not isinstance(sc_w, FilterableTypeCombo):
             return
-        init_st = (initial_state or "").strip()
+        # (控件, 首刷种子值, 空值行文案)：moveAnimState 与 arriveAnimState 共用同一份
+        # 候选（animation_state_names_for_actor），未知旧值按共享控件保值契约注入「(数据) 」行。
+        combos: list[tuple[FilterableTypeCombo, str, str]] = []
+        st_w = self._param_widgets.get("moveAnimState")
+        if isinstance(st_w, FilterableTypeCombo):
+            combos.append((st_w, (initial_state or "").strip(), "（不播放移动动画）"))
+        aa_w = self._param_widgets.get("arriveAnimState")
+        if isinstance(aa_w, FilterableTypeCombo):
+            combos.append((aa_w, (initial_arrive_state or "").strip(), "（默认：到点回站立/idle）"))
+        if not combos:
+            return
         calls = [0]
 
         def refresh_state(_: str = "") -> None:
@@ -2866,20 +2895,21 @@ class ActionRow(QWidget):
             sid = sc_w.committed_type().strip()
             mm = self._ctx_model
             states = mm.animation_state_names_for_actor(sid, aid) if mm and sid else []
-            rows: list[tuple[str, str]] = [("（不播放移动动画）", "")]
-            rows.extend((s, s) for s in states)
-            cur = st_w.committed_type().strip()
-            if calls[0] == 1 and not cur and init_st:
-                cur = init_st
-            st_w.set_entries(rows)
             allowed = {""} | set(states)
-            if cur in allowed:
-                st_w.set_committed_type(cur)
-            elif cur:
-                st_w.set_entries([(f"(数据) {cur}", cur)] + rows[1:])
-                st_w.set_committed_type(cur)
-            else:
-                st_w.set_committed_type("")
+            for w, init_v, empty_label in combos:
+                rows: list[tuple[str, str]] = [(empty_label, "")]
+                rows.extend((s, s) for s in states)
+                cur = w.committed_type().strip()
+                if calls[0] == 1 and not cur and init_v:
+                    cur = init_v
+                w.set_entries(rows)
+                if cur in allowed:
+                    w.set_committed_type(cur)
+                elif cur:
+                    w.set_entries([(f"(数据) {cur}", cur)] + rows[1:])
+                    w.set_committed_type(cur)
+                else:
+                    w.set_committed_type("")
 
         tgt_w.value_changed.connect(refresh_state)
         sc_w.typeCommitted.connect(lambda _t: refresh_state())
@@ -4687,8 +4717,33 @@ class ActionRow(QWidget):
                     "循环片段与定格（holdFrame≥0）时不生效；留空不写键。",
                 )
                 w.typeCommitted.connect(lambda _t: self.changed.emit())
+            elif act_type == "playNpcAnimation" and pname == "loop":
+                loop_rows = [
+                    ("（跟随动画定义）", ""),
+                    ("强制循环", "true"),
+                    ("播一次停", "false"),
+                ]
+                # 布尔/字符串都归一到 ""/"true"/"false"（str(True).lower()=="true"）
+                curl = str(val).strip().lower() if val is not None else ""
+                w = FilterableTypeCombo(loop_rows, self, select_only=True)
+                if curl in ("", "true", "false"):
+                    w.set_committed_type(curl)
+                else:
+                    w.set_entries([(f"(数据) {curl}", curl)] + loop_rows)
+                    w.set_committed_type(curl)
+                w.setToolTip(
+                    "循环覆盖：覆盖该动画状态在 anim.json 里的 loop。\n"
+                    "跟随动画定义=不写键（多数状态本就循环）；播一次停=让循环状态也只播一遍、\n"
+                    "停在末帧（可配 thenState 自动回 idle）；强制循环=让非循环状态持续循环。",
+                )
+                w.typeCommitted.connect(lambda _t: self.changed.emit())
             elif act_type == "setEntityEnabled" and pname == "target":
                 w = self._make_selector("actor", str(val) if val is not None else "")
+            elif act_type == "cameraFollowActor" and pname == "target":
+                w = self._make_selector("actor", str(val) if val is not None else "")
+                w.setToolTip(
+                    "跟随目标：NPC / 临时演员 / player。仅过场态每帧把镜头锚到其实时坐标。",
+                )
             elif act_type in ("stopNpcPatrol", "persistNpcDisablePatrol", "persistNpcEnablePatrol") and pname == "npcId":
                 w = self._make_selector("npc_only", str(val) if val is not None else "")
             elif act_type in (
@@ -5190,6 +5245,8 @@ class ActionRow(QWidget):
             spd = 80.0
         spd_final = round(min(spd, 9999.0), 2)
         ma = st_w.committed_type().strip() if isinstance(st_w, FilterableTypeCombo) else ""
+        aa_w = self._param_widgets.get("arriveAnimState")
+        aa = aa_w.committed_type().strip() if isinstance(aa_w, FilterableTypeCombo) else ""
         wp_src = getattr(self, "_move_entity_waypoints_store", None)
         wp_tuples = list(wp_src[0]) if isinstance(wp_src, list) and wp_src else []
         out_wp = [{"x": round(float(px), 2), "y": round(float(py), 2)} for px, py in wp_tuples]
@@ -5204,6 +5261,8 @@ class ActionRow(QWidget):
         prm["speed"] = spd_final
         if ma:
             prm["moveAnimState"] = ma
+        if aa:
+            prm["arriveAnimState"] = aa
         if out_wp:
             prm["waypoints"] = out_wp
         face_w = self._param_widgets.get("faceTowardMovement")

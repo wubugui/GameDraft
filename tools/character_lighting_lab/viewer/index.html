@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>角色照明工具 — 伪世界 RT / irradiance cache</title>
+<style>
+:root{--bg:#101418;--fg:#d8dde2;--mut:#8b939b;--acc:#e0764a;--line:#2a3138;--ok:#3dbb6e;--blue:#5b9dd9}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:13px/1.5 "PingFang SC",system-ui,sans-serif;display:flex;height:100vh;overflow:hidden}
+#stage{flex:1;display:flex;align-items:center;justify-content:center;min-width:0;position:relative;background:#0a0d10}
+canvas#gl{max-width:100%;max-height:100%;outline:none}
+#hud{position:absolute;left:10px;top:8px;font:12px ui-monospace,monospace;color:#fff;
+  background:#000a;padding:4px 10px;border-radius:4px;pointer-events:none;white-space:pre;z-index:5}
+#panel{width:316px;flex:none;background:#151a1f;border-left:1px solid var(--line);
+  padding:0 14px 14px;overflow-y:auto}
+#topbar{position:sticky;top:0;background:#151a1f;padding:10px 0 8px;z-index:10;border-bottom:1px solid var(--line)}
+h1{font-size:13px;margin:0 0 8px;color:var(--acc);letter-spacing:.08em}
+.sec{margin-top:14px;border:1px solid var(--line);border-radius:6px;padding:8px 10px 10px;background:#171c22}
+.sec>.st{font-size:12px;font-weight:700;color:var(--fg);margin:0 0 2px}
+.sec>.sd{font-size:11px;color:var(--mut);margin:0 0 8px;line-height:1.6}
+.sec .st b{color:var(--acc)}
+label{display:flex;align-items:center;gap:8px;margin:4px 0;color:var(--fg)}
+label span.k{flex:none;width:96px;color:var(--mut)}
+label span.v{flex:none;width:46px;text-align:right;font:11px ui-monospace,monospace}
+input[type=range]{flex:1;accent-color:var(--acc);min-width:0}
+select,button{background:#1d242b;color:var(--fg);border:1px solid var(--line);border-radius:4px;
+  padding:4px 8px;font:12px inherit;width:100%}
+button{cursor:pointer}
+button:hover{border-color:var(--acc)}
+button#rebuild{background:var(--acc);color:#14100e;font-weight:700;padding:8px;margin-top:6px}
+button#rebuild.dirty{animation:pulse 1.2s infinite}
+@keyframes pulse{50%{filter:brightness(1.3)}}
+.modes,.views{display:flex;gap:4px;margin:6px 0 2px}
+.modes button,.views button{padding:5px 2px;font-size:11px}
+.modes button.on,.views button.on{background:var(--acc);color:#111;border-color:var(--acc);font-weight:600}
+#modeinfo{font-size:11px;color:var(--blue);margin:2px 0 4px;line-height:1.5}
+#log{font:10px ui-monospace,monospace;color:var(--mut);white-space:pre-wrap;max-height:100px;overflow-y:auto;margin-top:6px}
+.chk{display:flex;gap:8px;flex-wrap:wrap}
+.chk label{margin:2px 0}
+#hdrstats{font:11px ui-monospace,monospace;color:var(--mut);white-space:pre-wrap;margin:4px 0}
+#hist{width:100%;height:64px;background:#0d1114;border:1px solid var(--line);border-radius:4px}
+.keys{font-size:11px;color:var(--mut);line-height:1.7;margin-top:6px}
+.keys b{color:var(--fg);font-weight:600}
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="gl" tabindex="0"></canvas><div id="hud"></div></div>
+<div id="panel">
+  <div id="topbar">
+    <h1>角色照明 · 伪世界 v2</h1>
+    <label title="切换已构建的场景,数据各自独立缓存"><span class="k">场景</span><select id="scene"></select></label>
+    <div class="views">
+      <button data-v="0" class="on" title="原画视角:角色行走+实时着色">2D 场景</button>
+      <button data-v="1" title="正交轨道相机检视重建的伪世界 mesh">3D 检视</button>
+    </div>
+  </div>
+
+  <div class="sec">
+    <div class="st">① 重建 <b>(几何 + 重烘光照,点按钮才生效)</b></div>
+    <div class="sd">下面这些参数改完<b>必须点橙色按钮</b>重跑离线管线(深度标定→mesh→体素→probe 全部重烘,约 10 秒)。按钮闪烁 = 有改动未应用。</div>
+    <label title="相机俯视角,决定世界竖直方向"><span class="k">俯角°</span><input type="range" id="rb_pitch" min="20" max="70" step="1" value="45"><span class="v" id="rb_pitch_v"></span></label>
+    <label title="像素/世界单位比例,决定世界尺度(影响角色相对大小)"><span class="k">ppu比例</span><input type="range" id="rb_ppu" min="0.08" max="0.4" step="0.01" value="0.22"><span class="v" id="rb_ppu_v"></span></label>
+    <label title="结构相对地面的深度残差放大(补偿单目深度对竖直对比的压缩)"><span class="k">起伏增益</span><input type="range" id="rb_relief" min="0.5" max="4" step="0.1" value="1.8"><span class="v" id="rb_relief_v"></span></label>
+    <label title="场景曝光 EV,影响辐射度绝对水平"><span class="k">场景EV</span><input type="range" id="rb_ev" min="-3" max="3" step="0.5" value="0"><span class="v" id="rb_ev_v"></span></label>
+    <label title="HDR 恢复:发光体最大提升 EV(0=关闭 HDR 恢复)"><span class="k">HDR最大EV</span><input type="range" id="rb_gain" min="0" max="5" step="0.25" value="3.32"><span class="v" id="rb_gain_v"></span></label>
+    <label title="凸出物检测阈值(占深度范围比例),影响分层与补全"><span class="k">凸出阈值</span><input type="range" id="rb_tau" min="0.04" max="0.3" step="0.01" value="0.10"><span class="v" id="rb_tau_v"></span></label>
+    <label title="烘焙 probe 时是否用双面折叠填补朝相机的洞。关掉后 miss 闭包旋钮(②区)才有可见效果"><span class="k">烘焙折叠</span><input type="checkbox" id="rb_fold" checked style="flex:none"><span class="v">A7</span></label>
+    <label title="SAM3 语义门控:发光体判定叠加物体分割证据(烛/灯/窗提示词),压掉亮但不发光的误报。首次每场景推理一次(~10s),之后按图哈希缓存"><span class="k">语义门控</span><input type="checkbox" id="rb_sem" checked style="flex:none"><span class="v">SAM3</span></label>
+    <label title="probe 网格 X 数量(世界空间)"><span class="k">probe X</span><input type="range" id="rb_px" min="8" max="40" step="1" value="20"><span class="v" id="rb_px_v"></span></label>
+    <label title="probe 网格 高度层数"><span class="k">probe 高</span><input type="range" id="rb_py" min="3" max="16" step="1" value="6"><span class="v" id="rb_py_v"></span></label>
+    <label title="probe 网格 深度数量"><span class="k">probe 深</span><input type="range" id="rb_pz" min="6" max="30" step="1" value="14"><span class="v" id="rb_pz_v"></span></label>
+    <button id="rebuild" title="重跑整条离线管线并重载本场景">⟳ 应用上面参数:重建几何+重烘光照</button>
+    <div class="row2" style="margin-top:6px">
+      <button id="build_new" title="选一张背景图,按上面参数全自动入库为新场景(深度/标定/mesh/光照全跑)">＋ 新场景入库…</button>
+      <button id="rebuild_all" title="按各场景已保存参数逐个重烘(队列执行,可离开页面)">⟳ 重烘全部</button>
+    </div>
+    <div class="row2" style="margin-top:6px">
+      <button id="export_rt" title="把当前场景的烘焙结果导出为游戏运行时载荷:public/resources/runtime/scenes/<场景>/lighting/(L2三分账+地面场+标定+背景哈希防腐门)">⇪ 导出到游戏</button>
+    </div>
+    <input type="file" id="new_file" accept="image/png,image/jpeg,image/webp" style="display:none">
+    <div id="log"></div>
+  </div>
+
+  <div class="sec">
+    <div class="st">② 照明模式 <b>(即时生效,无需重建)</b></div>
+    <div class="sd">Tab 或 1234 切换。四种模式渲染同一角色,用于互相对比。</div>
+    <div class="modes">
+      <button data-m="0" title="每帧对每个角色像素发射 spp 条光线在体素里步进——真·实时光线追踪(GPU,毫秒级)">RT</button>
+      <button data-m="1" title="预烘焙 probe,一阶球谐(4系数)插值,最便宜">L1</button>
+      <button data-m="2" title="预烘焙 probe,二阶球谐(9系数)插值,漫反射近乎无损">L2</button>
+      <button data-m="3" title="预烘焙 probe,8×8法线bin 纯数据,无球谐截断">BIN</button>
+    </div>
+    <div id="modeinfo"></div>
+    <label title="RT 每像素光线数,只影响 RT 模式"><span class="k">RT spp</span><input type="range" id="spp" min="8" max="192" step="8" value="64"><span class="v" id="spp_v"></span></label>
+    <label title="RT 步进长度(体素),只影响 RT"><span class="k">步长(体素)</span><input type="range" id="step" min="0.5" max="2.0" step="0.1" value="0.9"><span class="v" id="step_v"></span></label>
+    <label title="RT 最大步数,只影响 RT"><span class="k">最大步数</span><input type="range" id="msteps" min="32" max="256" step="16" value="160"><span class="v" id="msteps_v"></span></label>
+    <label title="RT 运行时:朝相机的光线镜像后继续追(A7 折叠)。cache 模式由『烘焙折叠』决定"><span class="k">RT折叠</span><input type="checkbox" id="fold" checked style="flex:none"><span class="v">A7</span></label>
+    <label title="NEE 直接光:提取的发光体 surfel 显式采样直接光(带遮挡),余弦射线命中发光体时只记 base 不记 emit(分账无重复)。关=旧行为(emit 走余弦命中)。RT 与 cache 同开关,即时生效"><span class="k">NEE直接光</span><input type="checkbox" id="nee" style="flex:none"><span class="v">直采</span></label>
+    <label title="miss 光线补的全局环境 J̄ 强度。0=miss记黑(严格模式)。注意:折叠开着时几乎没有 miss,此旋钮无效是正常物理"><span class="k">miss环境强度</span><input type="range" id="amb" min="0" max="2" step="0.05" value="1"><span class="v" id="amb_v"></span></label>
+    <label title="miss 光线不参与平均(按命中覆盖率归一化),替代补环境"><span class="k">miss不计入</span><input type="checkbox" id="missnorm" style="flex:none"><span class="v">归一</span></label>
+    <label title="角色物理曝光(只乘角色,不乘背景),用于和背景对齐亮度"><span class="k">曝光 β(EV)</span><input type="range" id="beta" min="-2" max="4" step="0.1" value="0"><span class="v" id="beta_v"></span></label>
+    <label title="脚下程序化软阴影强度(合成项,非物理)"><span class="k">接触阴影</span><input type="range" id="contact" min="0" max="1" step="0.05" value="0.55"><span class="v" id="contact_v"></span></label>
+  </div>
+
+  <div class="sec">
+    <div class="st">③ 角色 <b>(即时生效)</b></div>
+    <div class="sd">2D 视图:<b>点击地面=瞬移</b>,方向键/WASD 走动。</div>
+    <label title="关=自由行走(忽略可走掩码);开=只能走可走区"><span class="k">碰撞</span><input type="checkbox" id="collide" checked style="flex:none"><span class="v">walk</span></label>
+    <label title="quad 整体缩放(同时缩放照明采样范围)"><span class="k">整体缩放</span><input type="range" id="qscale" min="0.3" max="3" step="0.05" value="1"><span class="v" id="qscale_v"></span></label>
+    <label title="角色世界身高(米)"><span class="k">身高(米)</span><input type="range" id="charh" min="0.8" max="2.4" step="0.05" value="1.5"><span class="v" id="charh_v"></span></label>
+    <label title="剪影充气的深度幅度(影响法线和采样位置)"><span class="k">隆起深度</span><input type="range" id="bulge" min="0" max="0.6" step="0.02" value="0.22"><span class="v" id="bulge_v"></span></label>
+    <label title="法线向纯平面(朝相机)插值:1=完全平面法线"><span class="k">法线压平</span><input type="range" id="flatten" min="0" max="1" step="0.05" value="0"><span class="v" id="flatten_v"></span></label>
+  </div>
+
+  <div class="sec">
+    <div class="st">④ 显示与可视化 <b>(纯显示,不影响任何计算)</b></div>
+    <div class="sd">看不清就拉预览亮度;背景可切 HDR 视图直接观察恢复结果。</div>
+    <label title="全局显示增益(背景/角色/3D同乘),不进物理量"><span class="k">预览亮度</span><input type="range" id="pgain" min="-2" max="3" step="0.1" value="0"><span class="v" id="pgain_v"></span></label>
+    <label title="2D 背景显示内容"><span class="k">背景显示</span><select id="bgview">
+      <option value="0">原画</option>
+      <option value="1">HDR 恢复辐射(配合预览亮度扫曝光)</option>
+      <option value="2">HDR 增益热力图</option>
+      <option value="3">标定深度</option>
+    </select></label>
+    <div class="chk">
+      <label title="世界可走区投影(绿点)"><input type="checkbox" id="dbg_walk">可走</label>
+      <label title="probe 位置(2D投影 / 3D球)"><input type="checkbox" id="dbg_probes">probe</label>
+      <label title="角色被场景遮挡剔除(关=角色永远画在最上层)"><input type="checkbox" id="dbg_occl" checked>遮挡</label>
+      <label title="角色渲染其法线(朝相机=橄榄色)"><input type="checkbox" id="dbg_normal">法线</label>
+      <label title="从角色胸口画40根采样射线:黄=命中 橙=折叠命中 蓝=miss"><input type="checkbox" id="dbg_rays">射线</label>
+      <label title="提取的 NEE 光源 surfel(橙十字,大小=功率)"><input type="checkbox" id="dbg_lights">光源</label>
+    </div>
+    <div class="chk" id="cloud_chk" style="margin-top:4px">
+      <label title="3D:蒙皮三角mesh(关=点云)"><input type="checkbox" id="pc_mesh" checked>网格</label>
+      <label title="3D:观测到的可见表面层"><input type="checkbox" id="pc_front" checked>可见壳</label>
+      <label title="3D:被遮挡处补全的背景层(inpaint)"><input type="checkbox" id="pc_hidden" checked>补全层</label>
+      <label title="3D:地面延拓层(绿调)"><input type="checkbox" id="pc_ground" checked>地面延拓</label>
+    </div>
+    <div id="hdrstats"></div>
+    <canvas id="hist" width="286" height="64" title="log2 亮度直方图:灰=原图,橙=HDR恢复后"></canvas>
+    <div class="keys">
+      <b>2D</b>:点击瞬移 · 滚轮缩放 · 右键拖平移 · 双击复位 · Tab/1234 切模式<br>
+      <b>3D</b>:左键拖旋转 · 滚轮缩放 · Shift+拖平移(正交相机)
+    </div>
+  </div>
+</div>
+<script src="/viewer/app.js"></script>
+</body>
+</html>

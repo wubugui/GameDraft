@@ -1685,11 +1685,10 @@ class MainWindow(QMainWindow):
                 self._pending_launch_params = launch_params
                 self._game_open_when_ready = True
                 self._status.showMessage("开发服务器正在启动；就绪后会自动打开预览。", 5000)
+                # 游戏在独立窗口预览，不把当前编辑页切到占位页——保持用户停在原编辑器
+                # （如过场编辑器），只更新占位页文字供手动切过去时查看。
                 if self._game_browser is not None:
                     self._game_browser.show_message("Starting dev server…")
-                    idx = self._stack_index_of_page(self._game_browser)
-                    if idx >= 0:
-                        self._show_stack_page(idx)
             return
 
         self._start_game_backend(open_when_ready=True, launch_params=launch_params)
@@ -1738,10 +1737,8 @@ class MainWindow(QMainWindow):
             5000,
         )
         if open_when_ready and self._game_browser is not None:
+            # 游戏在独立窗口预览，不切走当前编辑页（见 _run_game 同款注释）。
             self._game_browser.show_message("Starting dev server…")
-            idx = self._stack_index_of_page(self._game_browser)
-            if idx >= 0:
-                self._show_stack_page(idx)
         self._game_ready_timer.start(60_000)
         self._refresh_status_chips()
 
@@ -1796,13 +1793,12 @@ class MainWindow(QMainWindow):
             target = target + sep + extra_params
 
         if self._game_browser is not None:
+            # 游戏在独立窗口预览，不把主编辑器切到占位页——保持用户停在原编辑器
+            # （如过场编辑器），点 Play 只弹独立游戏窗口，不打断编辑上下文。
             self._game_browser.show_message(
                 "Game is running in a separate window.\n"
                 "Press F5 to reopen if closed.",
             )
-            idx = self._stack_index_of_page(self._game_browser)
-            if idx >= 0:
-                self._show_stack_page(idx)
 
         if self._game_play_window is None:
             w, h = self._get_game_window_size()

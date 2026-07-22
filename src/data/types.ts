@@ -178,23 +178,34 @@ export interface LightEnvCurveDef {
   points: LightEnvCurvePoint[];
 }
 
-/** 透视缩放基准线：脚底 y 落在该线上时实体缩放为 scale */
-export interface PerspectiveScaleRuler {
+/** 透视深度轴端点：世界坐标 + 该端缩放系数（>0） */
+export interface PerspectivePoint {
+  x: number;
   y: number;
-  /** 该基准线上的缩放系数（>0） */
+  scale: number;
+}
+
+/** 深度轴中途缩放停靠点：pos 为沿 near→far 的归一化位置（0..1，端点独占 0/1，中途取开区间） */
+export interface PerspectiveMidStop {
+  pos: number;
   scale: number;
 }
 
 /**
- * 场景透视缩放（近大远小）：按实体**脚底 y** 在基准线间分段线性插值出系数 f(y)，
- * 端点外钳制到最近基准线。最终缩放 = 实例 scale（手动基准）× f(y)；系数为纯派生态不入档。
+ * 场景透视缩放（近大远小）：作者画一根「深度轴」箭头（near=近端大 → far=远端小，可任意方向，
+ * 贴合斜街/斜纵深），实体按**脚底点在该轴上的投影**分段线性插值出系数 f。轴外投影钳到端点。
+ * 最终缩放 = 实例 scale（手动基准）× f；系数为纯派生态不入档。等值线（等缩放）自动垂直于轴。
  * 缺省（不写键）= 不缩放，存量场景零变化。玩家/NPC 默认参与；热点默认不参与
  * （多为 WYSIWYG 贴背景绘制），可经 HotspotDef.perspectiveScaleEnabled 逐热点开启。
  */
 export interface PerspectiveScaleConfig {
-  /** 至少 2 条；运行时按 y 升序求值（顺序无要求，求值前排序） */
-  rulers: PerspectiveScaleRuler[];
-  /** 移动步长是否同步 × f(y)（防远处滑步）；缺省 true */
+  /** 近端（大）：轴起点 + 该端缩放 */
+  near: PerspectivePoint;
+  /** 远端（小）：轴终点 + 该端缩放 */
+  far: PerspectivePoint;
+  /** 可选中途停靠点（非线性纵深，如台阶）；pos∈(0,1)，求值前按 pos 排序 */
+  midStops?: PerspectiveMidStop[];
+  /** 移动步长是否同步 × f（防远处滑步）；缺省 true */
   affectsSpeed?: boolean;
 }
 
@@ -314,6 +325,12 @@ export interface HotspotDef {
   scale?: number;
   /** 实例级旋转（度，绕脚底锚点）；quad 级真变换同上；缺省 0。 */
   rotation?: number;
+  /**
+   * 深度遮挡半透明混合系数 [0,1]：被场景深度遮挡的精灵像素 alpha 乘此系数
+   * （0=硬裁切完全隐藏，1=完全不裁）。缺省时用场景默认（SceneDepthSystem 当前 0.28）。
+   * 显式给值的实体不再随 F2 全局遮挡混合滑块变化。
+   */
+  occlusionBlendFactor?: number;
   /**
    * 参与场景透视缩放（SceneData.perspectiveScale）：热点缺省 **false**（多为 WYSIWYG
    * 贴背景绘制，缩放反而破坏对位）；地面道具（displayImage、可能被移动）可显式开启。
@@ -727,6 +744,12 @@ export interface NpcDef {
   /** 实例级旋转（度，绕脚底锚点）；quad 级真变换同上；缺省 0。 */
   rotation?: number;
   /**
+   * 深度遮挡半透明混合系数 [0,1]：被场景深度遮挡的精灵像素 alpha 乘此系数
+   * （0=硬裁切完全隐藏，1=完全不裁）。缺省时用场景默认（SceneDepthSystem 当前 0.28）。
+   * 显式给值的实体不再随 F2 全局遮挡混合滑块变化。
+   */
+  occlusionBlendFactor?: number;
+  /**
    * 参与场景透视缩放（SceneData.perspectiveScale）：NPC 缺省 **true**（站位/巡逻都在
    * 地面，脚底 y 即深度）；贴墙/悬空装饰实体可显式关闭。
    */
@@ -1019,6 +1042,8 @@ export interface AnimationPlaybackParams {
   speed?: number;
   /** true = 反向播放（末帧起步进向首帧；非循环片段在首帧完成） */
   reverse?: boolean;
+  /** 循环覆盖：显式 true/false 覆盖状态定义的 loop 标志；缺省（不写）沿用状态定义 */
+  loop?: boolean;
   /**
    * 定格帧：切到该状态并停在此帧（0 基，越界按帧数取模），用于把片段任意一帧当 pose。
    * 动作层（playNpcAnimation）负值视为未设（编辑器以 -1 为「不定格」哨兵）。
@@ -1141,6 +1166,8 @@ export interface ICutsceneActor extends IEmoteBubbleAnchor {
   /**
    * moveAnimState 省略则移动段末不强制切 idle（见 Player/Npc 实现）。
    * faceTowardMovement 为 true 时沿路径每帧根据运动方向更新朝向（含斜向）；默认 false 保持旧语义。
+   * arriveAnimState：段末收尾动画。undefined=缺省行为（Npc 回 rest、Player 带 moveAnimState 时回
+   * idle）；字符串=播该状态；null=不切动画（折线中途点用，保证移动动画跨段连续不重置）。
    */
   moveTo(
     targetX: number,
@@ -1148,6 +1175,7 @@ export interface ICutsceneActor extends IEmoteBubbleAnchor {
     speed: number,
     moveAnimState?: string,
     faceTowardMovement?: boolean,
+    arriveAnimState?: string | null,
   ): Promise<void>;
   /** `playback` 缺省时行为与旧签名完全一致；参见 AnimationPlaybackParams。 */
   playAnimation(name: string, playback?: AnimationPlaybackParams): void;

@@ -56,8 +56,8 @@ from ..shared.entity_transform_math import (
     entity_rotation_deg_of,
     entity_scale_of,
     inverse_transform_world_vec,
+    perspective_axis_data,
     perspective_scale_at,
-    perspective_valid_rulers,
     transform_local_vec,
 )
 
@@ -132,6 +132,10 @@ _ZONE_PICK_FROZEN_FILL = QColor(150, 150, 150, 88)
 _ZONE_PICK_FROZEN_PEN = QColor(95, 95, 95, 220)
 # 叠放实体循环点选「同一落点」的视口像素容差（见 SceneCanvas.mousePressEvent）
 _PICK_CYCLE_PX_TOL = 4
+
+# 深度遮挡半透明混合系数的场景默认（与运行时 SceneDepthSystem._occlusionBlendFactor 对齐）。
+# 实体缺省不写 occlusionBlendFactor 键 → 运行时用此默认；仅「自定义」勾选才落显式值。
+_OCCLUSION_BLEND_DEFAULT = 0.28
 
 
 def _entity_cutscene_ids_from_data(ent: dict) -> list[str]:
@@ -1827,81 +1831,166 @@ class _LightCurvePolyline(QGraphicsObject):
 # Canvas view  (coordinate system = world units)
 # ---------------------------------------------------------------------------
 
-class _PerspRulerLine(QGraphicsObject):
-    """透视缩放水平基准线：横贯世界宽度的虚线 + 「y=… ×scale」标签，仅可垂直拖动。
+def _persp_editor_num(v: object) -> float | None:
+    """透视字段数值解析（与运行时同口径：布尔/非数值/非有限一律 None）。"""
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    f = float(v)
+    return f if math.isfinite(f) else None
 
-    拖动 live 只动线与标签；release 经 SceneCanvas.persp_ruler_committed(index, y)
-    一次提交（面板据此改表格 → 走既有 pending/dirty 通路）。index 为场景
-    perspectiveScale.rulers 原始下标（含非法条目占位，保证写回不串行）。
+
+def _persp_cell_text(v: object) -> str:
+    """透视表格单元原始文本（保留作者数值表示；非数值原样 str）。"""
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return str(v) if v is not None else ""
+    return str(v)
+
+
+class _PerspAxisItem(QGraphicsObject):
+    """透视缩放深度轴：作者画的 near→far 箭头（任意方向）+ 两端可拖手柄 +
+    垂直于轴的等缩放等值线（near/far/中途点各一条虚线，视觉确认"等值线自动垂直生成"）。
+
+    拖 near/far 端点：live 经 canvas._persp_axis_drag_update 更新画布预览（不入 model/脏），
+    release 经 SceneCanvas.persp_axis_committed(which, x, y) 一次提交（面板→undo→model）。
+    中途点只读展示（pos 数值在面板表格编辑）。
     """
 
-    def __init__(self, canvas: "SceneCanvas", index: int, y: float, scale_v: float):
+    HANDLE_R = 12.0
+
+    def __init__(
+        self, canvas: "SceneCanvas",
+        near_xy: tuple[float, float], far_xy: tuple[float, float],
+        near_scale: float, far_scale: float,
+        mid_stops: list[tuple[float, float]],
+    ):
         super().__init__()
         self._canvas = canvas
-        self.index = int(index)
-        self.scale_v = float(scale_v)
-        self._dragging = False
-        self._press_scene_y = 0.0
-        self._press_item_y = 0.0
-        self.setPos(0.0, float(y))
+        self.near = QPointF(float(near_xy[0]), float(near_xy[1]))
+        self.far = QPointF(float(far_xy[0]), float(far_xy[1]))
+        self.near_scale = float(near_scale)
+        self.far_scale = float(far_scale)
+        self.mid_stops = list(mid_stops)  # [(pos, scale)...]
+        self._drag: str | None = None  # 'near' | 'far' | None
         self.setZValue(8_000)
         self.setAcceptedMouseButtons(Qt.MouseButton.LeftButton)
-        self.setCursor(Qt.CursorShape.SizeVerCursor)
 
-    def _grab_h(self) -> float:
-        return max(8.0, self._canvas._world_h * 0.012)
+    # ---- 几何 --------------------------------------------------------------
+    def _axis_len(self) -> float:
+        dx = self.far.x() - self.near.x()
+        dy = self.far.y() - self.near.y()
+        return math.hypot(dx, dy)
+
+    def _perp_unit(self) -> tuple[float, float]:
+        dx = self.far.x() - self.near.x()
+        dy = self.far.y() - self.near.y()
+        L = math.hypot(dx, dy) or 1.0
+        return (-dy / L, dx / L)  # 垂直于轴
+
+    def _iso_half(self) -> float:
+        return max(40.0, self._canvas._world_w * 0.06, self._canvas._world_h * 0.06)
+
+    def _point_at(self, pos: float) -> QPointF:
+        return QPointF(
+            self.near.x() + (self.far.x() - self.near.x()) * pos,
+            self.near.y() + (self.far.y() - self.near.y()) * pos,
+        )
 
     def boundingRect(self) -> QRectF:
-        h = self._grab_h()
-        return QRectF(-4.0, -h, self._canvas._world_w + 8.0, h * 2)
+        ih = self._iso_half() + self.HANDLE_R * 2
+        left = min(self.near.x(), self.far.x()) - ih
+        top = min(self.near.y(), self.far.y()) - ih
+        w = abs(self.far.x() - self.near.x()) + ih * 2
+        h = abs(self.far.y() - self.near.y()) + ih * 2
+        return QRectF(left, top, w, h)
 
     def shape(self) -> QPainterPath:
-        h = self._grab_h()
+        # 只有两个端点手柄参与命中：轴体/等值线不遮挡下方实体点选
         path = QPainterPath()
-        path.addRect(QRectF(0.0, -h * 0.5, self._canvas._world_w, h))
+        r = self.HANDLE_R * 1.5
+        path.addEllipse(self.near, r, r)
+        path.addEllipse(self.far, r, r)
         return path
 
-    def paint(self, painter: QPainter, _opt, _widget=None) -> None:
-        pen = QPen(QColor(255, 170, 60, 200), 0, Qt.PenStyle.DashLine)
-        painter.setPen(pen)
-        painter.drawLine(QPointF(0.0, 0.0), QPointF(self._canvas._world_w, 0.0))
-        painter.setFont(theme.make_editor_font(
-            theme.FONT_ROLE_CANVAS_SECONDARY,
-            family=MONO_FONT_FAMILY,
-        ))
-        painter.setPen(QPen(QColor(255, 200, 120, 230), 0))
-        painter.drawText(
-            QPointF(6.0, -4.0),
-            f"透视 y={self.pos().y():.0f}  ×{self.scale_v:g}",
+    def _draw_iso(self, painter: QPainter, center: QPointF) -> None:
+        ux, uy = self._perp_unit()
+        h = self._iso_half()
+        painter.drawLine(
+            QPointF(center.x() - ux * h, center.y() - uy * h),
+            QPointF(center.x() + ux * h, center.y() + uy * h),
         )
+
+    def paint(self, painter: QPainter, _opt, _widget=None) -> None:
+        # 轴线（实线）+ 箭头指向 far
+        painter.setPen(QPen(QColor(255, 170, 60, 230), 0))
+        painter.drawLine(self.near, self.far)
+        L = self._axis_len() or 1.0
+        dx = (self.far.x() - self.near.x()) / L
+        dy = (self.far.y() - self.near.y()) / L
+        ah = max(18.0, self._iso_half() * 0.35)
+        for sgn in (0.5, -0.5):
+            painter.drawLine(
+                self.far,
+                QPointF(self.far.x() - dx * ah + (-dy) * ah * sgn,
+                        self.far.y() - dy * ah + (dx) * ah * sgn),
+            )
+        # 等缩放等值线（虚线，垂直于轴）：near / far / 各中途点
+        painter.setPen(QPen(QColor(255, 170, 60, 140), 0, Qt.PenStyle.DashLine))
+        self._draw_iso(painter, self.near)
+        self._draw_iso(painter, self.far)
+        for pos, _s in self.mid_stops:
+            self._draw_iso(painter, self._point_at(pos))
+        # 端点手柄：near 实心大（近端大）、far 空心小（远端小）
+        painter.setPen(QPen(QColor(150, 100, 20, 230), 0))
+        painter.setBrush(QBrush(QColor(255, 200, 90, 230)))
+        painter.drawEllipse(self.near, self.HANDLE_R, self.HANDLE_R)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(self.far, self.HANDLE_R * 0.72, self.HANDLE_R * 0.72)
+        # 标签
+        painter.setFont(theme.make_editor_font(
+            theme.FONT_ROLE_CANVAS_SECONDARY, family=MONO_FONT_FAMILY))
+        painter.setPen(QPen(QColor(255, 210, 130, 235), 0))
+        painter.drawText(QPointF(self.near.x() + 8, self.near.y() - 6),
+                         f"近 ×{self.near_scale:g}")
+        painter.drawText(QPointF(self.far.x() + 8, self.far.y() - 6),
+                         f"远 ×{self.far_scale:g}")
 
     def refresh_editor_font(self) -> None:
         self.prepareGeometryChange()
         self.update()
 
+    # ---- 交互 --------------------------------------------------------------
     def mousePressEvent(self, event: QGraphicsSceneMouseEvent) -> None:
-        self._dragging = True
-        self._press_scene_y = event.scenePos().y()
-        self._press_item_y = self.pos().y()
-        event.accept()
+        p = event.pos()
+        for which, handle in (("near", self.near), ("far", self.far)):
+            if math.hypot(p.x() - handle.x(), p.y() - handle.y()) <= self.HANDLE_R * 1.6:
+                self._drag = which
+                event.accept()
+                return
+        event.ignore()
 
     def mouseMoveEvent(self, event: QGraphicsSceneMouseEvent) -> None:
-        if not self._dragging:
+        if self._drag is None:
             event.ignore()
             return
-        ny = self._press_item_y + (event.scenePos().y() - self._press_scene_y)
+        p = event.pos()
         self.prepareGeometryChange()
-        self.setPos(0.0, ny)
+        if self._drag == "near":
+            self.near = QPointF(p.x(), p.y())
+        else:
+            self.far = QPointF(p.x(), p.y())
         self.update()
+        # live：只更新画布预览（不入 model / 不置脏）
+        self._canvas._persp_axis_drag_update(self._drag, float(p.x()), float(p.y()))
         event.accept()
 
     def mouseReleaseEvent(self, event: QGraphicsSceneMouseEvent) -> None:
-        if not self._dragging:
+        if self._drag is None:
             event.ignore()
             return
-        self._dragging = False
-        if self.pos().y() != self._press_item_y:
-            self._canvas.persp_ruler_committed.emit(self.index, float(self.pos().y()))
+        which = self._drag
+        self._drag = None
+        handle = self.near if which == "near" else self.far
+        self._canvas.persp_axis_committed.emit(which, float(handle.x()), float(handle.y()))
         event.accept()
 
 
@@ -1934,8 +2023,10 @@ class SceneCanvas(QGraphicsView):
     # (kind, id, scale, rotation_deg)
     transform_gizmo_live = Signal(str, str, float, float)
     transform_gizmo_committed = Signal(str, str, float, float)
-    # 透视缩放基准线拖动提交：(rulers 原始下标, 新 y)
-    persp_ruler_committed = Signal(int, float)
+    # 透视深度轴端点拖动提交：(which 'near'|'far', 新 x, 新 y)
+    persp_axis_committed = Signal(str, float, float)
+    # 深度轴端点拖动 live：画布已就地更新 cfg 端点，通知编辑器刷新实体预览（不入 model）
+    persp_axis_live_refresh = Signal()
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -1985,7 +2076,7 @@ class SceneCanvas(QGraphicsView):
         # 场景透视缩放（近大远小）：面板/加载路径经 set_perspective_config 写入；
         # 实体预览统一经 persp_factor 求系数（与运行时同口径，防预览撒谎）。
         self._persp_cfg: dict | None = None
-        self._persp_ruler_items: list[_PerspRulerLine] = []
+        self._persp_axis_item: "_PerspAxisItem | None" = None
 
     def set_single_gesture_only(self) -> None:
         self._single_gesture_only = True
@@ -2020,31 +2111,53 @@ class SceneCanvas(QGraphicsView):
         self._lightcurve_overlay = None
         self._transform_gizmo = None  # 图元已随 _gfx.clear() 析构
         self._persp_cfg = None
-        self._persp_ruler_items = []  # 图元已随 _gfx.clear() 析构
+        self._persp_axis_item = None  # 图元已随 _gfx.clear() 析构
 
     def set_perspective_config(self, cfg: dict | None) -> None:
-        """写入当前场景 perspectiveScale（None=未启用）并重建画布基准线。
-        实体图元不在此刷新——调用方按需刷新（加载路径随后 add_*，编辑路径显式刷）。"""
-        self._persp_cfg = cfg if isinstance(cfg, dict) else None
-        for it in self._persp_ruler_items:
-            if it.scene() is self._gfx:
-                self._gfx.removeItem(it)
-        self._persp_ruler_items = []
-        raw = self._persp_cfg.get("rulers") if self._persp_cfg else None
-        if isinstance(raw, list):
-            for i, r in enumerate(raw):
-                if not isinstance(r, dict):
-                    continue
-                ys = perspective_valid_rulers({"rulers": [r]})
-                if not ys:
-                    continue
-                line = _PerspRulerLine(self, i, ys[0][0], ys[0][1])
-                self._gfx.addItem(line)
-                self._persp_ruler_items.append(line)
+        """写入当前场景 perspectiveScale（None=未启用）并重建画布深度轴箭头。
+        实体图元不在此刷新——调用方按需刷新（加载路径随后 add_*，编辑路径显式刷）。
+        **必须深拷贝**：加载路径传入的是 model 的 dict，画布 live 拖动会就地改 cfg 端点，
+        直接持引用会污染 model / 破坏撤销基线（审查：拖轴撤销回不去）。"""
+        self._persp_cfg = copy.deepcopy(cfg) if isinstance(cfg, dict) else None
+        if self._persp_axis_item is not None and self._persp_axis_item.scene() is self._gfx:
+            self._gfx.removeItem(self._persp_axis_item)
+        self._persp_axis_item = None
+        a = perspective_axis_data(self._persp_cfg)
+        if a is not None:
+            near = self._persp_cfg["near"]
+            far = self._persp_cfg["far"]
+            mids: list[tuple[float, float]] = []
+            for m in (self._persp_cfg.get("midStops") or []):
+                if isinstance(m, dict):
+                    mp = _persp_editor_num(m.get("pos"))
+                    ms = _persp_editor_num(m.get("scale"))
+                    if mp is not None and ms is not None and 0.0 < mp < 1.0 and ms > 0:
+                        mids.append((mp, ms))
+            item = _PerspAxisItem(
+                self,
+                (float(near["x"]), float(near["y"])),
+                (float(far["x"]), float(far["y"])),
+                float(near["scale"]), float(far["scale"]), mids)
+            self._gfx.addItem(item)
+            self._persp_axis_item = item
 
-    def persp_factor(self, ent: dict | None, kind: str, foot_y: float | None = None) -> float:
-        """实体画布预览的透视系数（参与判定 × f(脚底 y)）；未配置时恒 1。"""
-        return entity_perspective_factor(self._persp_cfg, ent, kind, foot_y)
+    def _persp_axis_drag_update(self, which: str, x: float, y: float) -> None:
+        """深度轴端点拖动 live：更新画布 cfg 副本端点坐标 + 刷新全部实体预览（不入 model/脏）。"""
+        if not isinstance(self._persp_cfg, dict):
+            return
+        key = "near" if which == "near" else "far"
+        pt = self._persp_cfg.get(key)
+        if isinstance(pt, dict):
+            pt["x"] = x
+            pt["y"] = y
+        self.persp_axis_live_refresh.emit()
+
+    def persp_factor(
+        self, ent: dict | None, kind: str,
+        foot_x: float | None = None, foot_y: float | None = None,
+    ) -> float:
+        """实体画布预览的透视系数（参与判定 × f(脚底点)）；未配置时恒 1。"""
+        return entity_perspective_factor(self._persp_cfg, ent, kind, foot_x, foot_y)
 
     def _sync_collision_persp_ghost(
         self,
@@ -4098,8 +4211,9 @@ class ScenePropertyPanel(QScrollArea):
 
         self._persp_box = CollapsibleSection("透视缩放 perspectiveScale（近大远小）", start_open=False)
         self._persp_box.set_header_tool_tip(
-            "实体按脚底 y 在基准线间线性插值缩放；缺省不启用=完全不缩放。"
-            "玩家/NPC 默认参与（renderRaw 抠图实体除外），热点需逐个开启。",
+            "画一根深度轴箭头（近端大→远端小，可斜任意方向贴合斜街）；实体按脚底点在轴上"
+            "的投影缩放。缺省不启用=完全不缩放。玩家/NPC 默认参与（renderRaw 抠图实体除外），"
+            "热点需逐个开启。",
         )
         persp_inner = QWidget()
         persp_lay = QVBoxLayout(persp_inner)
@@ -4107,30 +4221,57 @@ class ScenePropertyPanel(QScrollArea):
         persp_lay.setSpacing(4)
         self._sc_persp_enable = QCheckBox("启用透视缩放")
         self._sc_persp_enable.setToolTip(
-            "开启后按下方基准线求 f(y)；关闭并 Apply 会从场景 JSON 删除 perspectiveScale。",
+            "开启后按深度轴求系数；首次开启会在画布中央生成一根竖直轴，"
+            "拖两端手柄改方向/位置。关闭并 Apply 会从场景 JSON 删除 perspectiveScale。",
         )
         self._sc_persp_enable.stateChanged.connect(lambda _s: self._on_persp_widgets_changed())
         persp_lay.addWidget(self._sc_persp_enable)
+        self._sc_persp_axis_hint = QLabel("在画布拖动橙色箭头两端设置深度轴（近端■大 / 远端○小）")
+        self._sc_persp_axis_hint.setWordWrap(True)
+        self._sc_persp_axis_hint.setStyleSheet("color:#c89050;")
+        persp_lay.addWidget(self._sc_persp_axis_hint)
+        persp_scale_row = compact_form(QFormLayout())
+        self._sc_persp_near_scale = QDoubleSpinBox()
+        self._sc_persp_near_scale.setRange(0.01, 20.0)
+        self._sc_persp_near_scale.setDecimals(3)
+        self._sc_persp_near_scale.setSingleStep(0.05)
+        self._sc_persp_near_scale.setValue(1.0)
+        self._sc_persp_near_scale.setMaximumWidth(110)
+        self._sc_persp_near_scale.setToolTip("近端（箭头尾■）缩放系数，通常 1.0（离镜头最近最大）。")
+        self._sc_persp_near_scale.valueChanged.connect(lambda _v: self._on_persp_widgets_changed())
+        persp_scale_row.addRow("近端缩放", self._sc_persp_near_scale)
+        self._sc_persp_far_scale = QDoubleSpinBox()
+        self._sc_persp_far_scale.setRange(0.01, 20.0)
+        self._sc_persp_far_scale.setDecimals(3)
+        self._sc_persp_far_scale.setSingleStep(0.05)
+        self._sc_persp_far_scale.setValue(0.5)
+        self._sc_persp_far_scale.setMaximumWidth(110)
+        self._sc_persp_far_scale.setToolTip("远端（箭头头○）缩放系数，通常 <1（离镜头最远最小）。")
+        self._sc_persp_far_scale.valueChanged.connect(lambda _v: self._on_persp_widgets_changed())
+        persp_scale_row.addRow("远端缩放", self._sc_persp_far_scale)
+        persp_lay.addLayout(persp_scale_row)
+        mid_lbl = QLabel("中途点（可选，非线性纵深如台阶）：")
+        persp_lay.addWidget(mid_lbl)
         self._sc_persp_table = QTableWidget(0, 2)
-        self._sc_persp_table.setHorizontalHeaderLabels(["基准线 y", "缩放"])
+        self._sc_persp_table.setHorizontalHeaderLabels(["位置 0–1", "缩放"])
         self._sc_persp_table.horizontalHeader().setStretchLastSection(True)
         self._sc_persp_table.verticalHeader().setVisible(False)
-        self._sc_persp_table.setMaximumHeight(120)
+        self._sc_persp_table.setMaximumHeight(110)
         self._sc_persp_table.setToolTip(
-            "至少两条；画布上的橙色虚线即基准线，可直接上下拖动改 y。"
-            "远处（y 小）配小缩放、近处（y 大）配 1.0 即近大远小。",
+            "沿近→远轴的中途缩放点：位置为 0（近）到 1（远）之间的归一化值；"
+            "留空即两端线性插值。",
         )
         self._sc_persp_table.itemChanged.connect(lambda _i: self._on_persp_widgets_changed())
         persp_lay.addWidget(self._sc_persp_table)
         self._install_vertex_table_affordances(
-            self._sc_persp_table, self._on_persp_remove_row, label="删除选中基准线")
+            self._sc_persp_table, self._on_persp_remove_row, label="删除选中中途点")
         persp_btns = QHBoxLayout()
-        b_add = QPushButton("＋ 基准线")
-        b_add.setToolTip("在表尾加一条基准线（y 取画布中部，缩放 1.0）")
+        b_add = QPushButton("＋ 中途点")
+        b_add.setToolTip("在轴中点加一个中途缩放点（位置 0.5）")
         b_add.clicked.connect(self._on_persp_add_row)
         persp_btns.addWidget(b_add)
         b_del = QPushButton("－ 删除选中")
-        b_del.setToolTip("删除选中的基准线（也可按 Delete）")
+        b_del.setToolTip("删除选中的中途点（也可按 Delete）")
         b_del.clicked.connect(self._on_persp_remove_row)
         persp_btns.addWidget(b_del)
         persp_btns.addStretch(1)
@@ -4138,11 +4279,13 @@ class ScenePropertyPanel(QScrollArea):
         self._sc_persp_speed = QCheckBox("移动速度同步补偿 affectsSpeed")
         self._sc_persp_speed.setChecked(True)
         self._sc_persp_speed.setToolTip(
-            "开：移动步长同乘 f(y)，远处角色不会相对背景滑步（推荐）；"
+            "开：移动步长同乘 f，远处角色不会相对背景滑步（推荐）；"
             "关：只缩放视觉，速度不变。",
         )
         self._sc_persp_speed.stateChanged.connect(lambda _s: self._on_persp_widgets_changed())
         persp_lay.addWidget(self._sc_persp_speed)
+        # 深度轴端点坐标（画布拖动写入；面板只读展示，不手输）
+        self._sc_persp_axis: dict | None = None
         self._persp_box.add_body(persp_inner)
         outer.addWidget(self._persp_box)
 
@@ -4432,46 +4575,60 @@ class ScenePropertyPanel(QScrollArea):
             return
         self._emit_props_changed()
 
-    # ---- 透视缩放 perspectiveScale --------------------------------------
-    @staticmethod
-    def _persp_cell_text(v: object) -> str:
-        if isinstance(v, bool) or not isinstance(v, (int, float)):
-            return str(v) if v is not None else ""
-        return str(v)
-
+    # ---- 透视缩放 perspectiveScale（深度轴模型） -------------------------
     def _on_persp_widgets_changed(self) -> None:
         if getattr(self, "_persp_updating", False):
             return
+        # 首次启用且无轴：在画布中央生成默认竖直轴（近端底部大→远端顶部小）
+        if self._sc_persp_enable.isChecked() and not isinstance(self._sc_persp_axis, dict):
+            ww = float(self._sc_width.value() or 0) or 800.0
+            wh = float(self._sc_height.value() or 0) or 600.0
+            self._sc_persp_axis = {
+                "near": {"x": ww * 0.5, "y": wh * 0.92},
+                "far": {"x": ww * 0.5, "y": wh * 0.30},
+            }
         self._emit_props_changed()
         self.perspective_preview_changed.emit(self._persp_cfg_preview())
 
-    def _persp_cfg_preview(self) -> dict | None:
-        """按当前 UI 生成画布预览用 cfg（未启用 None）；不做 orig 保真（那是 flush 的事）。"""
-        if not self._sc_persp_enable.isChecked():
-            return None
-        rulers: list[dict] = []
+    def _persp_mid_stops(self) -> list[dict]:
+        out: list[dict] = []
         t = self._sc_persp_table
         for i in range(t.rowCount()):
-            it_y = t.item(i, 0)
+            it_p = t.item(i, 0)
             it_s = t.item(i, 1)
             try:
-                y = float((it_y.text() if it_y else "").strip())
+                pos = float((it_p.text() if it_p else "").strip())
                 s = float((it_s.text() if it_s else "").strip())
             except (TypeError, ValueError):
                 continue
-            rulers.append({"y": y, "scale": s})
-        return {"rulers": rulers}
+            out.append({"pos": pos, "scale": s})
+        return out
+
+    def _persp_cfg_preview(self) -> dict | None:
+        """按当前 UI + 轴端点生成画布预览用 cfg（未启用或无轴 None）。"""
+        if not self._sc_persp_enable.isChecked() or not isinstance(self._sc_persp_axis, dict):
+            return None
+        near = self._sc_persp_axis.get("near", {})
+        far = self._sc_persp_axis.get("far", {})
+        cfg: dict = {
+            "near": {"x": float(near.get("x", 0)), "y": float(near.get("y", 0)),
+                     "scale": float(self._sc_persp_near_scale.value())},
+            "far": {"x": float(far.get("x", 0)), "y": float(far.get("y", 0)),
+                    "scale": float(self._sc_persp_far_scale.value())},
+        }
+        mids = self._persp_mid_stops()
+        if mids:
+            cfg["midStops"] = mids
+        return cfg
 
     def _on_persp_add_row(self) -> None:
         t = self._sc_persp_table
-        wh = float(self._sc_height.value() or 0) or 600.0
-        default_y = wh * 0.4 if t.rowCount() == 0 else wh
         self._persp_updating = True
         try:
             r = t.rowCount()
             t.insertRow(r)
-            t.setItem(r, 0, QTableWidgetItem(f"{default_y:.0f}"))
-            t.setItem(r, 1, QTableWidgetItem("1.0" if r > 0 else "0.6"))
+            t.setItem(r, 0, QTableWidgetItem("0.5"))
+            t.setItem(r, 1, QTableWidgetItem("0.75"))
         finally:
             self._persp_updating = False
         self._on_persp_widgets_changed()
@@ -4487,75 +4644,106 @@ class ScenePropertyPanel(QScrollArea):
             self._persp_updating = False
         self._on_persp_widgets_changed()
 
-    def apply_persp_ruler_y(self, idx: int, y: float) -> None:
-        """画布基准线拖动提交：写回表格对应行的 y（经 itemChanged 走统一 dirty/预览通路）。"""
-        t = self._sc_persp_table
-        if not (0 <= idx < t.rowCount()):
-            return
-        it = t.item(idx, 0)
-        if it is None:
-            it = QTableWidgetItem()
-            t.setItem(idx, 0, it)
-        it.setText(f"{round(float(y), 1):g}")
+    def apply_persp_axis_endpoint(self, which: str, x: float, y: float) -> None:
+        """画布深度轴端点拖动提交：写回 staging 轴端点坐标（经统一 dirty/预览通路）。"""
+        if not isinstance(self._sc_persp_axis, dict):
+            self._sc_persp_axis = {"near": {"x": 0.0, "y": 0.0}, "far": {"x": 0.0, "y": 0.0}}
+        key = "near" if which == "near" else "far"
+        self._sc_persp_axis[key] = {"x": round(float(x), 1), "y": round(float(y), 1)}
+        self._on_persp_widgets_changed()
 
     def _load_persp_widgets(self, st: dict) -> None:
         cfg = st.get("perspectiveScale")
+        on = isinstance(cfg, dict)
         self._persp_updating = True
         try:
+            near = cfg.get("near") if on else None
+            far = cfg.get("far") if on else None
+            if isinstance(near, dict) and isinstance(far, dict):
+                self._sc_persp_axis = {
+                    "near": {"x": _persp_editor_num(near.get("x")) or 0.0,
+                             "y": _persp_editor_num(near.get("y")) or 0.0},
+                    "far": {"x": _persp_editor_num(far.get("x")) or 0.0,
+                            "y": _persp_editor_num(far.get("y")) or 0.0},
+                }
+            else:
+                self._sc_persp_axis = None
+            self._sc_persp_near_scale.blockSignals(True)
+            self._sc_persp_near_scale.setValue(
+                _persp_editor_num((near or {}).get("scale")) or 1.0 if isinstance(near, dict) else 1.0)
+            self._sc_persp_near_scale.blockSignals(False)
+            self._sc_persp_far_scale.blockSignals(True)
+            self._sc_persp_far_scale.setValue(
+                _persp_editor_num((far or {}).get("scale")) or 0.5 if isinstance(far, dict) else 0.5)
+            self._sc_persp_far_scale.blockSignals(False)
             t = self._sc_persp_table
             t.blockSignals(True)
             t.setRowCount(0)
-            raw = cfg.get("rulers") if isinstance(cfg, dict) else None
-            if isinstance(raw, list):
-                for r in raw:
-                    if not isinstance(r, dict):
+            mids = cfg.get("midStops") if on else None
+            if isinstance(mids, list):
+                for m in mids:
+                    if not isinstance(m, dict):
                         continue
                     row = t.rowCount()
                     t.insertRow(row)
-                    t.setItem(row, 0, QTableWidgetItem(self._persp_cell_text(r.get("y"))))
-                    t.setItem(row, 1, QTableWidgetItem(self._persp_cell_text(r.get("scale"))))
+                    t.setItem(row, 0, QTableWidgetItem(_persp_cell_text(m.get("pos"))))
+                    t.setItem(row, 1, QTableWidgetItem(_persp_cell_text(m.get("scale"))))
             t.blockSignals(False)
             self._sc_persp_enable.blockSignals(True)
-            self._sc_persp_enable.setChecked(isinstance(cfg, dict))
+            self._sc_persp_enable.setChecked(on)
             self._sc_persp_enable.blockSignals(False)
             self._sc_persp_speed.blockSignals(True)
-            self._sc_persp_speed.setChecked(
-                not (isinstance(cfg, dict) and cfg.get("affectsSpeed") is False))
+            self._sc_persp_speed.setChecked(not (on and cfg.get("affectsSpeed") is False))
             self._sc_persp_speed.blockSignals(False)
-            self._persp_box.set_expanded(isinstance(cfg, dict))
+            self._persp_box.set_expanded(on)
         finally:
             self._persp_updating = False
 
     def _flush_persp_into(self, sc: dict) -> None:
-        """UI → staging：零编辑时按值比较原样保留原 dict（键序/数值表示零变化）。"""
+        """UI + 轴端点 → staging：零编辑时按值比较原样保留原 dict（键序/数值表示零变化）。"""
         orig = sc.get("perspectiveScale")
-        if not self._sc_persp_enable.isChecked():
+        if not self._sc_persp_enable.isChecked() or not isinstance(self._sc_persp_axis, dict):
             sc.pop("perspectiveScale", None)
             return
         base = orig if isinstance(orig, dict) else {}
-        orig_rulers = base.get("rulers") if isinstance(base.get("rulers"), list) else []
+        o_near = base.get("near") if isinstance(base.get("near"), dict) else {}
+        o_far = base.get("far") if isinstance(base.get("far"), dict) else {}
+        ax_near = self._sc_persp_axis.get("near", {})
+        ax_far = self._sc_persp_axis.get("far", {})
+
+        def _pt(o: dict, ax: dict, scale_v: float) -> dict:
+            nd = dict(o)
+            nd["x"] = self._keep_num(round(float(ax.get("x", 0)), 1), o.get("x"))
+            nd["y"] = self._keep_num(round(float(ax.get("y", 0)), 1), o.get("y"))
+            nd["scale"] = self._keep_num(round(scale_v, 3), o.get("scale"))
+            return o if nd == o else nd
+
+        out = dict(base)
+        out["near"] = _pt(o_near, ax_near, float(self._sc_persp_near_scale.value()))
+        out["far"] = _pt(o_far, ax_far, float(self._sc_persp_far_scale.value()))
+        o_mids = base.get("midStops") if isinstance(base.get("midStops"), list) else []
+        new_mids: list[dict] = []
         t = self._sc_persp_table
-        new_rulers: list[dict] = []
         for i in range(t.rowCount()):
-            od = orig_rulers[i] if i < len(orig_rulers) and isinstance(orig_rulers[i], dict) else {}
-            it_y = t.item(i, 0)
+            om = o_mids[i] if i < len(o_mids) and isinstance(o_mids[i], dict) else {}
+            it_p = t.item(i, 0)
             it_s = t.item(i, 1)
             try:
-                y = float((it_y.text() if it_y else "").strip())
+                pos = float((it_p.text() if it_p else "").strip())
                 s = float((it_s.text() if it_s else "").strip())
             except (TypeError, ValueError):
-                # 单元格解析不了：有原条目则原样保留（不静默丢），纯新行跳过
-                if od:
-                    new_rulers.append(od)
+                if om:
+                    new_mids.append(om)
                 continue
-            nd = dict(od)
-            nd["y"] = self._keep_num(y, od.get("y"))
-            nd["scale"] = self._keep_num(s, od.get("scale"))
-            new_rulers.append(od if nd == od else nd)
-        out = dict(base)
-        out["rulers"] = new_rulers
+            nm = dict(om)
+            nm["pos"] = self._keep_num(round(pos, 4), om.get("pos"))
+            nm["scale"] = self._keep_num(round(s, 3), om.get("scale"))
+            new_mids.append(om if nm == om else nm)
+        if new_mids:
+            out["midStops"] = new_mids
+        elif "midStops" in out:
+            del out["midStops"]
         if self._sc_persp_speed.isChecked():
-            # 缺省 true：仅原本就显式 true 时保留键，否则省略
             if base.get("affectsSpeed") is not True:
                 out.pop("affectsSpeed", None)
         else:
@@ -5412,6 +5600,32 @@ class ScenePropertyPanel(QScrollArea):
         )
         self._hs_cast_shadow.stateChanged.connect(lambda _s: self._emit_props_changed())
         form.addRow("castShadow", self._hs_cast_shadow)
+        # 遮挡混合系数：缺省用场景默认（当前 0.28）；勾「自定义」写显式 [0,1] 值并脱离 F2 全局滑块
+        _hs_occ_tip = (
+            "深度遮挡半透明混合系数 [0,1]：被场景深度遮挡的展示图像素 alpha 乘此系数"
+            "（0=硬裁切完全隐藏，1=完全不裁）。不勾「自定义」= 用场景默认 0.28，"
+            "随 F2 全局遮挡混合滑块联动；勾选后写显式值、不再受全局滑块影响。"
+        )
+        self._hs_occblend_on = QCheckBox("自定义")
+        self._hs_occblend_on.setToolTip(_hs_occ_tip)
+        self._hs_occblend = QDoubleSpinBox()
+        self._hs_occblend.setRange(0.0, 1.0)
+        self._hs_occblend.setDecimals(2)
+        self._hs_occblend.setSingleStep(0.05)
+        self._hs_occblend.setValue(_OCCLUSION_BLEND_DEFAULT)
+        self._hs_occblend.setEnabled(False)
+        self._hs_occblend.setMaximumWidth(90)
+        self._hs_occblend.setToolTip(_hs_occ_tip)
+        self._hs_occblend_on.toggled.connect(self._hs_occblend.setEnabled)
+        self._hs_occblend_on.toggled.connect(lambda *_: self._emit_props_changed())
+        self._hs_occblend.valueChanged.connect(lambda *_: self._emit_props_changed())
+        _hs_occ_row = QWidget()
+        _hs_occ_l = QHBoxLayout(_hs_occ_row)
+        _hs_occ_l.setContentsMargins(0, 0, 0, 0)
+        _hs_occ_l.addWidget(self._hs_occblend_on)
+        _hs_occ_l.addWidget(self._hs_occblend)
+        _hs_occ_l.addStretch(1)
+        form.addRow("遮挡混合", _hs_occ_row)
         self._hs_cutscene_only = QCheckBox("仅过场实体（普通场景不生成）")
         self._hs_cutscene_only.setToolTip(
             "默认开启：实体只在关联过场中从场景文件初始化，不读 committed sceneMemory。"
@@ -6092,6 +6306,15 @@ class ScenePropertyPanel(QScrollArea):
             self._hs_rot.blockSignals(True)
             self._hs_rot.setValue(entity_rotation_deg_of(st))
             self._hs_rot.blockSignals(False)
+            self._hs_occblend_on.blockSignals(True)
+            self._hs_occblend.blockSignals(True)
+            _hs_ob = st.get("occlusionBlendFactor")
+            _hs_ob_set = isinstance(_hs_ob, (int, float)) and not isinstance(_hs_ob, bool)
+            self._hs_occblend_on.setChecked(_hs_ob_set)
+            self._hs_occblend.setValue(float(_hs_ob) if _hs_ob_set else _OCCLUSION_BLEND_DEFAULT)
+            self._hs_occblend.setEnabled(_hs_ob_set)
+            self._hs_occblend_on.blockSignals(False)
+            self._hs_occblend.blockSignals(False)
             self._hs_persp.blockSignals(True)
             _pv = st.get("perspectiveScaleEnabled")
             self._hs_persp.setCurrentIndex(
@@ -6531,6 +6754,12 @@ class ScenePropertyPanel(QScrollArea):
             hs["rotation"] = self._keep_num(round(_r_val, 1), hs.get("rotation"))
         else:
             hs.pop("rotation", None)
+        # 遮挡混合系数：仅「自定义」勾选时写显式 [0,1]，否则删除键（用场景默认）
+        if self._hs_occblend_on.isChecked():
+            hs["occlusionBlendFactor"] = self._keep_num(
+                round(float(self._hs_occblend.value()), 2), hs.get("occlusionBlendFactor"))
+        else:
+            hs.pop("occlusionBlendFactor", None)
         # 透视缩放参与：缺省不写键（热点缺省不参与），显式选择才落 true/false
         _hp = self._hs_persp.currentData()
         if _hp is None:
@@ -6735,6 +6964,32 @@ class ScenePropertyPanel(QScrollArea):
             "实例旋转（度，绕脚底锚点）：quad 级真变换同上；缺省 0 不写入 JSON。")
         self._npc_rot.valueChanged.connect(self._on_npc_transform_live)
         form.addRow("rotation°", self._npc_rot)
+        # 遮挡混合系数：缺省用场景默认（当前 0.28）；勾「自定义」写显式 [0,1] 值并脱离 F2 全局滑块
+        _npc_occ_tip = (
+            "深度遮挡半透明混合系数 [0,1]：被场景深度遮挡的精灵像素 alpha 乘此系数"
+            "（0=硬裁切完全隐藏，1=完全不裁）。不勾「自定义」= 用场景默认 0.28，"
+            "随 F2 全局遮挡混合滑块联动；勾选后写显式值、不再受全局滑块影响。"
+        )
+        self._npc_occblend_on = QCheckBox("自定义")
+        self._npc_occblend_on.setToolTip(_npc_occ_tip)
+        self._npc_occblend = QDoubleSpinBox()
+        self._npc_occblend.setRange(0.0, 1.0)
+        self._npc_occblend.setDecimals(2)
+        self._npc_occblend.setSingleStep(0.05)
+        self._npc_occblend.setValue(_OCCLUSION_BLEND_DEFAULT)
+        self._npc_occblend.setEnabled(False)
+        self._npc_occblend.setMaximumWidth(90)
+        self._npc_occblend.setToolTip(_npc_occ_tip)
+        self._npc_occblend_on.toggled.connect(self._npc_occblend.setEnabled)
+        self._npc_occblend_on.toggled.connect(lambda *_: self._emit_props_changed())
+        self._npc_occblend.valueChanged.connect(lambda *_: self._emit_props_changed())
+        _npc_occ_row = QWidget()
+        _npc_occ_l = QHBoxLayout(_npc_occ_row)
+        _npc_occ_l.setContentsMargins(0, 0, 0, 0)
+        _npc_occ_l.addWidget(self._npc_occblend_on)
+        _npc_occ_l.addWidget(self._npc_occblend)
+        _npc_occ_l.addStretch(1)
+        form.addRow("遮挡混合", _npc_occ_row)
         self._npc_persp = QComboBox()
         self._npc_persp.addItem("缺省（参与；renderRaw 不参与）", None)
         self._npc_persp.addItem("参与", True)
@@ -7617,6 +7872,15 @@ class ScenePropertyPanel(QScrollArea):
             self._npc_rot.blockSignals(True)
             self._npc_rot.setValue(entity_rotation_deg_of(st))
             self._npc_rot.blockSignals(False)
+            self._npc_occblend_on.blockSignals(True)
+            self._npc_occblend.blockSignals(True)
+            _npc_ob = st.get("occlusionBlendFactor")
+            _npc_ob_set = isinstance(_npc_ob, (int, float)) and not isinstance(_npc_ob, bool)
+            self._npc_occblend_on.setChecked(_npc_ob_set)
+            self._npc_occblend.setValue(float(_npc_ob) if _npc_ob_set else _OCCLUSION_BLEND_DEFAULT)
+            self._npc_occblend.setEnabled(_npc_ob_set)
+            self._npc_occblend_on.blockSignals(False)
+            self._npc_occblend.blockSignals(False)
             self._npc_persp.blockSignals(True)
             _pv = st.get("perspectiveScaleEnabled")
             self._npc_persp.setCurrentIndex(
@@ -7756,6 +8020,12 @@ class ScenePropertyPanel(QScrollArea):
             npc["rotation"] = self._keep_num(round(_r_val, 1), npc.get("rotation"))
         else:
             npc.pop("rotation", None)
+        # 遮挡混合系数：仅「自定义」勾选时写显式 [0,1]，否则删除键（用场景默认）
+        if self._npc_occblend_on.isChecked():
+            npc["occlusionBlendFactor"] = self._keep_num(
+                round(float(self._npc_occblend.value()), 2), npc.get("occlusionBlendFactor"))
+        else:
+            npc.pop("occlusionBlendFactor", None)
         # 透视缩放参与：缺省不写键（NPC 缺省参与、renderRaw 缺省不参与），显式选择才落 true/false
         _np = self._npc_persp.currentData()
         if _np is None:
@@ -8790,7 +9060,8 @@ class SceneEditor(QWidget):
             self._on_npc_patrol_route_committed)
         self._canvas.item_lightcurve_committed.connect(
             self._on_lightcurve_committed)
-        self._canvas.persp_ruler_committed.connect(self._on_persp_ruler_committed)
+        self._canvas.persp_axis_committed.connect(self._on_persp_axis_committed)
+        self._canvas.persp_axis_live_refresh.connect(self._refresh_all_persp_previews)
         self._props.perspective_preview_changed.connect(self._on_persp_preview_changed)
 
         splitter.addWidget(left)
@@ -8945,10 +9216,10 @@ class SceneEditor(QWidget):
         with self._undo.capture("编辑光环境曲线"):
             self._props.apply_lightcurve_committed(points)
 
-    def _on_persp_ruler_committed(self, idx: int, y: float) -> None:
-        # 与光曲线同门：画布手势 → 面板表格（itemChanged 走统一 dirty/预览），一条撤销命令
-        with self._undo.capture("拖动透视基准线"):
-            self._props.apply_persp_ruler_y(int(idx), float(y))
+    def _on_persp_axis_committed(self, which: str, x: float, y: float) -> None:
+        # 与光曲线同门：画布手势 → 面板 staging（走统一 dirty/预览），一条撤销命令
+        with self._undo.capture("拖动透视深度轴"):
+            self._props.apply_persp_axis_endpoint(str(which), float(x), float(y))
 
     def _on_persp_preview_changed(self, cfg: object) -> None:
         """面板透视配置 live 变更：重建画布基准线并刷新全部实体预览（与运行时同口径）。"""
@@ -9235,7 +9506,7 @@ class SceneEditor(QWidget):
             entity_scale_of(pos0), entity_rotation_deg_of(pos0))
         nx = float(pos0.get("x", 0))
         ny = float(pos0.get("y", 0))
-        rt.persp = self._canvas.persp_factor(pos0, "npc", ny)
+        rt.persp = self._canvas.persp_factor(pos0, "npc", nx, ny)
         rt.draw_at(nx, ny)
         self._scene_npc_runtimes[npc_id] = rt
 
@@ -9322,8 +9593,8 @@ class SceneEditor(QWidget):
                         mult = min(2.0, max(0.5, pspd / rt.ref_speed))
                 rt.set_playback(mult, False, None, None)
                 px, py = self._patrol_preview_advance(rid, npc, dt)
-                # 透视系数随巡逻瞬时脚底 y 每拍拉取（与运行时移动中重求同口径）
-                rt.persp = self._canvas.persp_factor(npc, "npc", py)
+                # 透视系数随巡逻瞬时脚底点每拍拉取（与运行时移动中重求同口径）
+                rt.persp = self._canvas.persp_factor(npc, "npc", px, py)
                 rt.tick(dt, px, py)
             else:
                 pos = self._npc_render_pos_dict(rid, npc)
@@ -9337,8 +9608,8 @@ class SceneEditor(QWidget):
                 rt.set_playback(*_npc_initial_playback_tuple(pos))
                 x = float(pos.get("x", 0))
                 y = float(pos.get("y", 0))
-                # 透视系数与位置同源每拍拉取（staging 感知：拖动/数值框 live 改 y 即时反映）
-                rt.persp = self._canvas.persp_factor(pos, "npc", y)
+                # 透视系数与位置同源每拍拉取（staging 感知：拖动/数值框 live 改坐标即时反映）
+                rt.persp = self._canvas.persp_factor(pos, "npc", x, y)
                 rt.tick(dt, x, y)
         self._canvas.viewport().update()
 

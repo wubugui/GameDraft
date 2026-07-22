@@ -105,6 +105,16 @@ export class SceneManager implements IGameSystem {
   /** 切场景请求串行队列，避免并发 switch 静默丢弃或交错 isSwitching */
   private sceneSwitchTail: Promise<void> = Promise.resolve();
   private animRafId: number = 0;
+  /**
+   * 持久黑幕：独立于切场遮幕 transitionOverlay，只被显式 showBlackout / hideBlackout 控制，
+   * 不随过场 cleanup、也不随切场景自动销毁——供把长演出拆成多段时「跨段保留黑屏」，
+   * 遮住段与段之间的准备动作（同场景摆位 / 换立绘等），避免穿帮。
+   * 纯表现层，不入档（重载后天然无幕）；用独立 rafId，不与切场淡入淡出抢占 animRafId。
+   */
+  private blackoutOverlay: Graphics | null = null;
+  private blackoutRafId: number = 0;
+  /** 在途黑幕动画的 resolve 句柄：被新动画打断或销毁时调用它封口，避免 await 悬挂。 */
+  private blackoutAnimResolve: (() => void) | null = null;
 
   /** 当前播放或过场预览绑定的 cutscene id；用于筛选 cutsceneOnly 实体。 */
   private activeCutsceneBindingId: string | null = null;
@@ -1334,7 +1344,12 @@ export class SceneManager implements IGameSystem {
 
     // onEnter 语义 = 场景已进入且呈现完成之后的一次性脚本逻辑（置 flag / 发信号 / 起演出）。
     const rootEnter = sceneData.onEnter;
-    if (rootEnter?.length && this.sceneEnterRunner) {
+    // cutscene 跨场景 staging：此场景是被 cutscene 借作「舞台」加载的（beginCutsceneStaging 在切场景
+    // 前已置 staging），而非玩家正常走入——跳过其根 onEnter，避免 onEnter 的自动剧情（如
+    // startDialogueGraph）与正在播的 cutscene 抢状态机、造成「从别处入口一进场景就抢播对话、演出
+    // 不串行」。正常玩家走入切场景时 cutsceneStaging 为 null，onEnter 照常执行。
+    const loadedAsCutsceneStage = this.cutsceneStaging?.sceneId === sceneId;
+    if (rootEnter?.length && this.sceneEnterRunner && !loadedAsCutsceneStage) {
       // 批内的 changeScene 由 switchScene 识别为重入（见 sceneEnterBatchDepth）：
       // 只登记不排队自等——排队会造成「当前 job 等 onEnter、onEnter 等队尾新 job」的环形死锁
       this.sceneEnterBatchDepth++;
@@ -1710,6 +1725,82 @@ export class SceneManager implements IGameSystem {
     });
   }
 
+  private ensureBlackoutOverlay(): Graphics {
+    if (!this.blackoutOverlay) {
+      const g = new Graphics();
+      g.rect(0, 0, this.renderer.screenWidth + 200, this.renderer.screenHeight + 200).fill(0x000000);
+      g.x = -100;
+      g.y = -100;
+      g.alpha = 0;
+      this.renderer.uiLayer.addChild(g);
+      this.blackoutOverlay = g;
+    }
+    return this.blackoutOverlay;
+  }
+
+  /**
+   * 盖上持久黑幕：durationMs<=0 瞬间全黑，>0 淡入。盖上时移到 uiLayer 末尾（渲染最上），
+   * 确保盖住世界层 / 过场层 / 切场遮幕之上的一切。跨段演出通常在第一段末尾（画面已黑时）
+   * 以 durationMs=0 无感接管，随后第一段过场 cleanup 拆掉自己的 fadeOverlay，黑屏由本遮罩延续。
+   */
+  async showBlackout(durationMs: number): Promise<void> {
+    const g = this.ensureBlackoutOverlay();
+    if (g.parent) g.parent.addChild(g);
+    await this.animateBlackoutAlpha(g, g.alpha, 1, durationMs);
+  }
+
+  /** 揭开持久黑幕：durationMs<=0 瞬间，>0 淡出；完成后销毁遮罩。当前无黑幕时安全空转。 */
+  async hideBlackout(durationMs: number): Promise<void> {
+    if (!this.blackoutOverlay) return;
+    await this.animateBlackoutAlpha(this.blackoutOverlay, this.blackoutOverlay.alpha, 0, durationMs);
+    this.removeBlackoutOverlay();
+  }
+
+  private removeBlackoutOverlay(): void {
+    this.cancelBlackoutAnim();
+    if (this.blackoutOverlay) {
+      if (this.blackoutOverlay.parent) this.blackoutOverlay.parent.removeChild(this.blackoutOverlay);
+      this.blackoutOverlay.destroy();
+      this.blackoutOverlay = null;
+    }
+  }
+
+  /** 取消在途黑幕动画并封口其 Promise（打断/销毁路径共用），保证不留悬挂 await 与残留 RAF。 */
+  private cancelBlackoutAnim(): void {
+    cancelAnimationFrame(this.blackoutRafId);
+    this.blackoutRafId = 0;
+    const resolve = this.blackoutAnimResolve;
+    this.blackoutAnimResolve = null;
+    if (resolve) resolve();
+  }
+
+  /** 与 animateAlpha 同款缓动，但用独立 blackoutRafId + 封口句柄，避免与切场淡入淡出互相 cancel。 */
+  private animateBlackoutAlpha(target: { alpha: number }, from: number, to: number, durationMs: number): Promise<void> {
+    this.cancelBlackoutAnim();
+    return new Promise(resolve => {
+      if (!(durationMs > 0)) {
+        target.alpha = to;
+        resolve();
+        return;
+      }
+      this.blackoutAnimResolve = resolve;
+      const startTime = performance.now();
+      target.alpha = from;
+      const tick = () => {
+        const t = Math.min((performance.now() - startTime) / durationMs, 1);
+        target.alpha = from + (to - from) * t;
+        if (t < 1) {
+          this.blackoutRafId = requestAnimationFrame(tick);
+        } else {
+          this.blackoutRafId = 0;
+          this.blackoutAnimResolve = null;
+          resolve();
+        }
+      };
+      this.blackoutRafId = requestAnimationFrame(tick);
+    });
+  }
+
   serialize(): object {
     // 存档前 flush 当前场景运行态（幂等；运行态本身已即时入 memory，此处兜底建桶）
     this.saveCurrentSceneMemory();
@@ -1784,6 +1875,7 @@ export class SceneManager implements IGameSystem {
     this.eventBus.off('hotspot:inspected', this.onHotspotInspected);
     this.unloadScene();
     this.removeTransitionOverlay();
+    this.removeBlackoutOverlay();
     this.sceneMemory.clear();
     this.cutsceneStaging = null;
     this.playerPositionSetter = null;

@@ -101,7 +101,7 @@ function parseLooseBooleanParam(raw: unknown): boolean | null {
 }
 
 /**
- * playNpcAnimation 的可选播放参数（speed/reverse/holdFrame/thenState）。
+ * playNpcAnimation 的可选播放参数（speed/reverse/loop/holdFrame/thenState）。
  * 全部缺省或全部非法时返回 undefined——此时走 SpriteEntity 旧调用路径，保留
  * 「同状态播放中重入幂等」语义；参数存在但非法则告警并忽略该项（容错跳过）。
  */
@@ -117,6 +117,9 @@ function parseAnimationPlaybackParams(params: Record<string, unknown>): Animatio
   }
   const reverse = parseLooseBooleanParam(params.reverse);
   if (reverse === true) out.reverse = true;
+  // loop 覆盖：true/false 显式覆盖状态定义的循环标志；缺省（null，含空串/未设）不写，沿用定义
+  const loop = parseLooseBooleanParam(params.loop);
+  if (loop !== null) out.loop = loop;
   if (params.holdFrame !== undefined && params.holdFrame !== null && String(params.holdFrame).trim() !== '') {
     const hold = Number(params.holdFrame);
     if (Number.isFinite(hold) && hold >= 0) {
@@ -203,6 +206,11 @@ export interface ActionRegistryDeps {
   restoreSceneCameraZoom: () => void;
   /** 渐变拉远/还原到当前场景 JSON 中的 camera.zoom（durationMs 毫秒） */
   fadingRestoreSceneCameraZoom: (durationMs: number) => Promise<void>;
+  /** 相机跟随实体：仅过场态每帧把镜头锚到该实体实时坐标；snap=true 硬锁居中，false 平滑跟随。
+   *  过场结束由主循环自动解除、复位回玩家（不入存档）。 */
+  setCameraFollowTarget: (targetId: string, snap: boolean) => void;
+  /** 解除相机跟随（回到默认锚点：探索/动作链态跟玩家；过场态改由 cameraMove 摆布）。 */
+  clearCameraFollowTarget: () => void;
   /** 停止指定 NPC 的巡逻协程（打断位移 + 失效该次巡逻 token） */
   stopNpcPatrol: (npcId: string) => void;
   /** 在当前场景为该 NPC 重新启动巡逻（会先 stop再跑，避免重复协程） */
@@ -861,8 +869,9 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
 
   /**
    * `target` 为 NPC id 或 `player`；`state` 为 anim.json 中的状态名（与 `npcAnim` 旧标签语义一致，统一走 Action）。
-   * 可选播放参数 speed（倍率）/ reverse（倒放）/ holdFrame（定格帧，与其余互斥生效）/
-   * thenState（非循环播完自动切换），见 AnimationPlaybackParams；不持久化（进场景不恢复）。
+   * 可选播放参数 speed（倍率）/ reverse（倒放）/ loop（循环覆盖：显式 true/false 覆盖状态定义）/
+   * holdFrame（定格帧，与其余互斥生效）/ thenState（非循环播完自动切换），见
+   * AnimationPlaybackParams；不持久化（进场景不恢复）。
    */
   executor.register('playNpcAnimation', (p) => {
     const target = String(p.target ?? '').trim();
@@ -877,7 +886,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       return;
     }
     actor.playAnimation(state, parseAnimationPlaybackParams(p));
-  }, ['target', 'state', 'speed', 'reverse', 'holdFrame', 'thenState']);
+  }, ['target', 'state', 'speed', 'reverse', 'loop', 'holdFrame', 'thenState']);
 
   /** `target` 为场景 NPC 的 `id` 或 `player`；`enabled` 为 false 时隐藏实体（不卸载，可再设为 true 显示）。 */
   executor.register('setEntityEnabled', (p) => {
@@ -1065,6 +1074,20 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     await d.fadingRestoreSceneCameraZoom(parseDurationMsParam(p, 600));
   }, ['durationMs']);
 
+  executor.register('cameraFollowActor', (p) => {
+    const target = typeof p.target === 'string' ? p.target.trim() : '';
+    if (!target) {
+      console.warn('cameraFollowActor: params.target 需为非空实体 id');
+      return;
+    }
+    // smooth 缺省/非 true=硬锁居中（每帧 snapTo，逐帧锁定）；smooth===true=平滑跟随（follow 插值）。
+    d.setCameraFollowTarget(target, p.smooth !== true);
+  }, ['target', 'smooth']);
+
+  executor.register('cameraStopFollow', (_p) => {
+    d.clearCameraFollowTarget();
+  }, []);
+
   executor.register('stopNpcPatrol', (p) => {
     const id = typeof p.npcId === 'string' ? p.npcId.trim() : '';
     if (!id) {
@@ -1248,6 +1271,24 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
   executor.register('fadeWorldFromBlack', (p) => {
     return d.cutsceneManager.fadeWorldFromBlack(parseDurationMsParam(p, 600)).catch((e) => {
       console.warn('ActionRegistry: fadeWorldFromBlack failed', e);
+    });
+  }, ['durationMs']);
+
+  /**
+   * 持久黑幕（跨过场保留）：showBlackout 盖上、hideBlackout 揭开，由 SceneManager 持有，
+   * 不随过场 cleanup / 切场景销毁。用于把长演出拆成多段时遮住段间准备动作（同场景摆位 / 换立绘）。
+   * showBlackout 默认 0（瞬间接管，衔接第一段末尾已黑的画面）；hideBlackout 默认 600（淡出揭幕）。
+   * 必须成对使用——只盖不揭会锁死全黑。
+   */
+  executor.register('showBlackout', (p) => {
+    return d.sceneManager.showBlackout(parseDurationMsParam(p, 0)).catch((e) => {
+      console.warn('ActionRegistry: showBlackout failed', e);
+    });
+  }, ['durationMs']);
+
+  executor.register('hideBlackout', (p) => {
+    return d.sceneManager.hideBlackout(parseDurationMsParam(p, 600)).catch((e) => {
+      console.warn('ActionRegistry: hideBlackout failed', e);
     });
   }, ['durationMs']);
 
@@ -1542,6 +1583,9 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     const moveAnimRaw = p.moveAnimState;
     const moveAnim =
       typeof moveAnimRaw === 'string' && moveAnimRaw.trim() ? moveAnimRaw.trim() : undefined;
+    const arriveAnimRaw = p.arriveAnimState;
+    const arriveAnim =
+      typeof arriveAnimRaw === 'string' && arriveAnimRaw.trim() ? arriveAnimRaw.trim() : undefined;
     const faceTowardMovement = parseFaceTowardMovementParam(p.faceTowardMovement);
     if (!target || !Number.isFinite(x) || !Number.isFinite(y)) {
       console.warn('moveEntityTo: 需要 target、有限数值 x/y');
@@ -1552,11 +1596,15 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       console.warn(`moveEntityTo: 找不到实体 "${target}"`);
       return;
     }
-    for (const pt of segments) {
-      await actor.moveTo(pt.x, pt.y, spd, moveAnim, faceTowardMovement);
+    // 中途点段末传 null（不切动画，移动动画跨段连续）；只有终点段按 arriveAnimState
+    // 收尾（缺省=实体各自的 rest/idle 旧语义）。
+    for (let i = 0; i < segments.length; i++) {
+      const pt = segments[i];
+      const arrive = i === segments.length - 1 ? arriveAnim : null;
+      await actor.moveTo(pt.x, pt.y, spd, moveAnim, faceTowardMovement, arrive);
     }
     // runtime 不要求 sceneId；JSON 中带 sceneId 仅编辑器复现地图
-  }, ['target', 'x', 'y', 'speed', 'waypoints', 'moveAnimState', 'faceTowardMovement']);
+  }, ['target', 'x', 'y', 'speed', 'waypoints', 'moveAnimState', 'arriveAnimState', 'faceTowardMovement']);
 
   executor.register('faceEntity', (p) => {
     const target = String(p.target ?? '').trim();

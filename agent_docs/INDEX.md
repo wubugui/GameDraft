@@ -44,6 +44,7 @@
 - [对话立绘构图定稿](runtime/decisions/2026-07-07-dialogue-portrait-composition.md) — VN 式小半身像(240px)压面板前景、底边伸出画面外、暗幕 opt-in;大立绘/默认压暗/垫面板后/底部渐隐均被否
 - [位面基建 v3 模型拍板](runtime/decisions/2026-07-05-plane-v3-model.md) — 位面=全局一等资产+实体归属+叙事只点名+对账器重派生;v1(绑任务图)/v2(实体变体表)/接管式小游戏均被否
 - [scenarios.json 一等公民系统退役](runtime/decisions/2026-07-15-scenario-firstclass-retirement.md) — 2026-07-13 拍板退役一等公民 scenario 系统;stage-1 数据侧已落地(scenarios.json 清空、码头两线迁 narrative),stage-2 代码删除待做(届时 6→4 条件叶为 approval①)
+- [二维场景辐射度还原与发光增益管线定稿](runtime/decisions/2026-07-21-scene-radiance-restoration-pipeline.md) — LDR 场景先线性化并逐图定曝光；开放词汇分割只提发光候选，对象辐射证据裁决局部增益，最终在伪世界深度中积分为实体 IBL
 - [UI 面板美学方向定稿](runtime/decisions/2026-07-05-ui-panel-skin-direction.md) — 民俗草根·极简——暖近黑底+一条素旧木边+小圆角,纯程序化零素材;繁复雕木/符箓/印章金线云纹全被否
 
 ## editor-tools
