@@ -157,5 +157,51 @@
       }
     }
   ],
-  "npcs": []
+  "npcs": [],
+  "depthConfig": {
+    "depth_map": "raw_depth_rg.png",
+    "collision_map": "collision.png",
+    "M": {
+      "R": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.766044443118978,
+          -0.6427876096865393
+        ],
+        [
+          0.0,
+          0.6427876096865393,
+          0.766044443118978
+        ]
+      ],
+      "ppu": 491.52,
+      "cx": 1024.0,
+      "cy": 571.5
+    },
+    "depth_mapping": {
+      "invert": false,
+      "scale": 3.6352327730178837,
+      "offset": -3.274562699890137
+    },
+    "shader": {
+      "depth_per_sy": 0.0017071525699407552,
+      "floor_depth_A": -0.0024767214065818176,
+      "floor_depth_B": 1.3957498146223113
+    },
+    "collision": {
+      "x_min": -2.0833334922790527,
+      "z_min": -2.1571492900793463,
+      "cell_size": 0.026157447692597573,
+      "grid_width": 160,
+      "grid_height": 154,
+      "height_offset": 0.0
+    },
+    "depth_tolerance": 0.05,
+    "floor_offset": 0.0
+  }
 }

@@ -115,5 +115,51 @@
         "graphId": "梦_段B_农家院"
       }
     }
-  ]
+  ],
+  "depthConfig": {
+    "depth_map": "raw_depth_rg.png",
+    "collision_map": "collision.png",
+    "M": {
+      "R": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.8090169943749475,
+          -0.5877852522924731
+        ],
+        [
+          0.0,
+          0.5877852522924731,
+          0.8090169943749475
+        ]
+      ],
+      "ppu": 573.44,
+      "cx": 1024.0,
+      "cy": 571.5
+    },
+    "depth_mapping": {
+      "invert": false,
+      "scale": 3.0883876945495605,
+      "offset": -1.5652898384094238
+    },
+    "shader": {
+      "depth_per_sy": 0.0012669896205450629,
+      "floor_depth_A": -0.002227622449231559,
+      "floor_depth_B": 1.233805617305476
+    },
+    "collision": {
+      "x_min": -1.7857142686843872,
+      "z_min": -1.8760772935514785,
+      "cell_size": 0.023297079248366014,
+      "grid_width": 154,
+      "grid_height": 160,
+      "height_offset": 0.0
+    },
+    "depth_tolerance": 0.05,
+    "floor_offset": 0.0
+  }
 }

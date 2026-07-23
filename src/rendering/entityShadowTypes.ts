@@ -60,5 +60,11 @@ export interface IEntityShadow {
    * 不消费深度参数的实现（deferred）可不实现。
    */
   setDepthParams?(tolerance: number, floorOffset: number, occlusionBlendFactor: number): void;
+  /**
+   * 脚点行走面深度（`lighting/ground_d.png` 采样值）。影子落在地面上，其深度必须与
+   * 角色脚点同源——用线性 floor 模型会产生系统性标定偏移（2026-06-17 已在 deferred
+   * 上踩过一次，见 entity-lighting 机制卡）。null = 该场景无行走面场，回落旧口径。
+   */
+  setGroundFootDepth?(v: number | null): void;
   destroy(): void;
 }

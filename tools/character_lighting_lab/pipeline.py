@@ -43,13 +43,23 @@ LUMA_W = np.array([0.2126, 0.7152, 0.0722], np.float32)
 
 DEFAULTS = dict(
     pitch_deg=45.0,
+    azimuth_deg=0.0,       # camera azimuth: rotates the world about the up axis
     ppu_ratio=0.22,        # ppu = ppu_ratio * W_G
+    depth_model='base',    # depth-anything variant: small | base | large
+    depth_scale_adj=1.0,   # manual trim on top of the auto calibration
+    depth_offset_adj=0.0,
+    col_h_lo=0.35,         # collision occupancy probe heights above local ground
+    col_h_hi=1.3,
     ev=0.0,                # scene exposure EV
     max_gain_ev=math.log2(10.0),  # HDR emitter max boost
+    hdr_method=0,          # LDR→HDR 恢复法:0 emitter门 / 1 逆Reinhard / 2 gamma / 3 亮度扩展
+    hdr_pa=0.7,            # 方法参数(1=展开硬度 / 2=gamma强度 / 3=起始亮度阈值)
     vol_nx=192, vol_nz=64, # voxel grid (ny derived from aspect)
     probe_nx=20, probe_ny=6, probe_nz=14,  # WORLD-space probe grid (x, up, depth)
     probe_dirs=196,
-    probe_band=2.6,        # probe volume: ground .. ground + band (world units)
+    probe_band=1.6,        # **角色最大活动高度**(世界单位,中位地面往上)= probe 盒顶。
+                           # ≈ 角色身高 1.5 + 余量;人只在地上活动,头顶以上没人,
+                           # 烘上去就是稀释那 ny 层的竖直分辨率(实测见 world_bounds)。
     fold=1,                # double-sided fold for camera-side rays (0/1)
     semantic_gate=1,       # SAM3 object-gated emitter confidence (0/1)
     relief=1.8,            # structure depth gain relative to the pinned ground
@@ -62,14 +72,62 @@ DEFAULTS = dict(
 )
 
 
-def world_matrix(theta: float) -> np.ndarray:
-    """M: q -> world.  Xw=qx; Yw=qy c - qz s; Zw=-(qy s + qz c).
+EDIT_RANGE_Q = 2.0     # depth brush delta range: +-2 q units, u16 encoded (32768 = 0)
+
+
+def load_depth_edit(out_dir: Path, shape: tuple[int, int]) -> np.ndarray | None:
+    """RG16 编码(浏览器 canvas 只能可靠读写 8bit 通道,故 r*256+g):
+    delta_q = (u16-32768)/32768 * EDIT_RANGE_Q"""
+    p = out_dir / 'depth_edit.png'
+    if not p.exists():
+        return None
+    img = np.asarray(Image.open(p).convert('RGB'), np.float32)
+    e16 = img[..., 0] * 256.0 + img[..., 1]
+    if e16.shape != shape:
+        e16 = resize_f(e16, (shape[1], shape[0]))
+    return ((e16 - 32768.0) / 32768.0 * EDIT_RANGE_Q).astype(np.float32)
+
+
+def load_collision_edit(out_dir: Path, shape: tuple[int, int]) -> np.ndarray | None:
+    """0 = auto, 1 = force-walkable, 2 = force-blocked (work-res, screen space)."""
+    p = out_dir / 'collision_edit.png'
+    if not p.exists():
+        return None
+    # 直读红通道:convert('L') 的亮度加权会把 R=2 压成 1(阻挡静默变可走,踩过)
+    e = np.asarray(Image.open(p).convert('RGB'), np.uint8)[..., 0]
+    if e.shape != shape:
+        e = np.asarray(Image.fromarray(e).resize((shape[1], shape[0]), Image.Resampling.NEAREST), np.uint8)
+    return e
+
+
+def geometry_signature(out_dir: Path, h: str, P: dict) -> str:
+    """Everything that shapes the mesh/world. Lighting baked under a different
+    signature => stale, the viewer must nag for a rebake."""
+    geo_keys = ('pitch_deg', 'azimuth_deg', 'ppu_ratio', 'depth_model',
+                'depth_scale_adj', 'depth_offset_adj', 'col_h_lo', 'col_h_hi',
+                'relief', 'occluder_tau', 'thickness_k',
+                'bg_thickness_q', 'ground_up_dot', 'vol_nx', 'vol_nz', 'walk_res')
+    parts = [h] + [f'{k}={P[k]}' for k in geo_keys]
+    for f in ('depth_edit.png', 'collision_edit.png'):
+        fp = out_dir / f
+        parts.append(f'{f}:{hashlib.sha1(fp.read_bytes()).hexdigest()[:10]}' if fp.exists() else f'{f}:-')
+    return hashlib.sha1('|'.join(parts).encode()).hexdigest()[:16]
+
+
+def world_matrix(theta: float, azimuth: float = 0.0) -> np.ndarray:
+    """M: q -> world.  Base: Xw=qx; Yw=qy c - qz s; Zw=-(qy s + qz c),
+    then rotated about world-up by the camera azimuth.
 
     q (x right, y up, z away) is LEFT-handed; the Z negation makes the world
     RIGHT-handed so GL viewers don't mirror it. M stays orthogonal (det=-1):
     transpose==inverse and isometry both still hold."""
     c, s = math.cos(theta), math.sin(theta)
-    return np.array([[1, 0, 0], [0, c, -s], [0, -s, -c]], np.float64)
+    M = np.array([[1, 0, 0], [0, c, -s], [0, -s, -c]], np.float64)
+    if abs(azimuth) > 1e-9:
+        ca, sa = math.cos(azimuth), math.sin(azimuth)
+        Ry = np.array([[ca, 0, sa], [0, 1, 0], [-sa, 0, ca]], np.float64)
+        M = Ry @ M
+    return M
 
 
 # ---------------------------------------------------------------- helpers
@@ -127,15 +185,16 @@ def laplace_inpaint(field: np.ndarray, known: np.ndarray, iters=400) -> np.ndarr
 
 
 # ---------------------------------------------------------------- stages
-def stage_depth(img_path: Path, cache_dir: Path, h: str) -> np.ndarray:
-    cache = cache_dir / f'raw_depth_{h}.npy'
+def stage_depth(img_path: Path, cache_dir: Path, h: str, model: str = 'base') -> np.ndarray:
+    cache = cache_dir / (f'raw_depth_{h}.npy' if model == 'base' else f'raw_depth_{h}_{model}.npy')
     if cache.exists():
         return np.load(cache)
-    print('[depth] inferring with Depth Anything (base)...', flush=True)
+    print(f'[depth] inferring with Depth Anything ({model})...', flush=True)
     from tools.scene_depth_editor.depth_estimator import DepthEstimator, MODEL_OPTIONS
     est = DepthEstimator()
     src = Image.open(img_path).convert('RGB')
-    res = est.generate_depth(src, MODEL_OPTIONS['base'], lambda s: print('  ', s, flush=True))
+    res = est.generate_depth(src, MODEL_OPTIONS.get(model, MODEL_OPTIONS['base']),
+                             lambda s: print('  ', s, flush=True))
     raw = np.asarray(res.raw_normalized, np.float32)
     cache_dir.mkdir(parents=True, exist_ok=True)
     np.save(cache, raw)
@@ -263,13 +322,35 @@ def stage_layers(cal: dict, rgb_lin: np.ndarray, P: dict) -> dict:
                 c_bg=c_bg.astype(np.float32))
 
 
+def _hdr_recover(linear: np.ndarray, conf: np.ndarray, method: int, pa: float, max_ev: float) -> np.ndarray:
+    """LDR→HDR 恢复:全图 rad(display-linear HDR)。与查看器 hdrRad() 逐式对应,
+    保证"实验室预览的方法 = 烘焙用的方法"。method:0 emitter门 / 1 逆Reinhard /
+    2 全局gamma / 3 亮度扩展。pa=方法参数,max_ev=HDR最大EV。"""
+    lum = np.maximum(linear @ LUMA_W, 1e-5)[..., None]
+    if method == 1:            # 逆Reinhard 全局高光展开(Banterle 式)
+        k = float(np.clip(pa, 0.0, 0.985))
+        return (linear / np.maximum(1.0 - k * lum, 0.015)).astype(np.float32)
+    if method == 2:            # 全局 gamma 展开
+        g = 1.0 + (0.34 - 1.0) * float(np.clip(pa, 0.0, 1.0))   # mix(1, 0.34, pa)
+        return (np.power(np.maximum(linear, 0.0), g) * (2.0 ** (max_ev * 0.12))).astype(np.float32)
+    if method == 3:            # 亮度扩展映射(Rempel/Banterle 式)
+        lo = float(np.clip(pa, 0.0, 0.9))
+        e = smoothstep(lo, min(lo + 0.35, 1.0), lum)
+        return (linear * (1.0 + (2.0 ** max_ev - 1.0) * e)).astype(np.float32)
+    # 0 emitter门(conf 驱动;当前保守法)
+    return (linear * np.power(2.0, max_ev * np.power(conf, 0.72))[..., None]).astype(np.float32)
+
+
 def stage_hdr(rgb_srgb: np.ndarray, P: dict, sem_gate: np.ndarray | None = None) -> dict:
-    """Unified LDR->HDR, returns display-linear radiance (1.0 = display white),
-    plus the gain field and stats/histograms for the viewer's audit panel.
-    sem_gate: optional [0,1] SAM3 object gate multiplied into the confidence
-    (the statistical model already carries the daylight/scene gate)."""
+    """LDR→HDR 恢复 + 语义分离(2026-07-23 重做)。
+
+    架构(用户拍板):①按选定方法把整张 LDR 恢复成 HDR `rad`;②`mask` = **纯 SAM3
+    语义分割**(哪些像素是发光物体,零亮度参与);③`emit = rad × mask`(直接光源)、
+    `base = rad × (1−mask)`(背景照明)。两张一路带到体素/probe。
+    ⚠ 语义 mask 绝不能掺亮度——emitter conf 只作方法0的恢复驱动与 gain场可视化,不当 mask。"""
     linear = srgb_to_linear(rgb_srgb)
     luma100 = (linear @ LUMA_W) * 100.0
+    # emitter 置信度(仅方法0恢复 + gain场热力;不乘语义,不当 mask)
     log_l = np.log2(np.maximum(luma100, 0.03))
     w = luma100.shape[1]
     ls = log_l - gaussian_filter(log_l, sigma=max(1.2, w / 320.0), mode='reflect')
@@ -282,14 +363,28 @@ def stage_hdr(rgb_srgb: np.ndarray, P: dict, sem_gate: np.ndarray | None = None)
     absb = smoothstep(12.0, 60.0, luma100)
     relb = smoothstep(float(p99), max(float(p99) + 1e-4, float(p9999)), luma100)
     conf = np.clip((1.0 - daylight) * local * np.maximum(absb, relb * 0.72), 0, 1)
+
+    # ① 恢复:全图 rad(方法可选)
+    method = int(P.get('hdr_method', 0))
+    pa = float(P.get('hdr_pa', 0.7))
+    max_ev = float(P['max_gain_ev'])
+    rad = _hdr_recover(linear, conf, method, pa, max_ev)
+
+    # ② 语义 mask(纯 SAM3;无门控则空 mask=无直接光,全归背景)
     if sem_gate is not None:
-        conf = conf * np.clip(sem_gate, 0, 1)
-    gain_ev = float(P['max_gain_ev']) * np.power(conf, 0.72)
-    rad = (linear * np.power(2.0, gain_ev)[..., None]).astype(np.float32)
-    # NEE split: base = observed painting (all real bounces), emit = synthetic
-    # emissive delta added by the HDR boost. rad == base + emit exactly.
-    base = linear.astype(np.float32)
-    emit = (rad - base).astype(np.float32)
+        mask = np.clip(sem_gate, 0, 1).astype(np.float32)
+    else:
+        mask = np.zeros(luma100.shape, np.float32)
+        print('[hdr] ⚠ 无语义门控(SAM3)→ 无直接光 mask,全辐射归背景。'
+              '开「语义门控」重烘才能分离光源。')
+
+    # ③ 分离:emit=直接光源、base=背景照明
+    m3 = mask[..., None]
+    emit = (rad * m3).astype(np.float32)
+    base = (rad * (1.0 - m3)).astype(np.float32)
+
+    # gain_ev 场(供 gain场缩略图:方法0=真实提升,其余给展开量指示)
+    gain_ev = (max_ev * np.power(conf, 0.72)).astype(np.float32)
 
     def hist(vals, lo=-6.0, hi=6.0, bins=64):
         h, _ = np.histogram(np.log2(np.maximum(vals, 1e-4)), bins=bins, range=(lo, hi))
@@ -298,12 +393,14 @@ def stage_hdr(rgb_srgb: np.ndarray, P: dict, sem_gate: np.ndarray | None = None)
     luma_out = (rad @ LUMA_W) * 100.0
     stats = dict(
         p50_nits=float(p50), p99_nits=float(p99), daylight_score=daylight,
+        hdr_method=method,
         emitter_pixel_pct=float(np.mean(conf > 0.35) * 100.0),
+        mask_pixel_pct=float(np.mean(mask > 0.35) * 100.0),
         max_gain_applied_ev=float(gain_ev.max()),
         hist_pre=hist(luma100 / 100.0), hist_post=hist(luma_out / 100.0),
         hist_lo=-6.0, hist_hi=6.0,
     )
-    return dict(rad=rad, base=base, emit=emit,
+    return dict(rad=rad, base=base, emit=emit, mask=mask,
                 gain_ev=gain_ev.astype(np.float32), stats=stats)
 
 
@@ -364,11 +461,29 @@ def stage_voxelize(cal: dict, lay: dict, base_front: np.ndarray, emit_front: np.
                 qz_min=qz_min, qz_max=qz_max)
 
 
+def _ray_box_enter(pos: np.ndarray, dirs_i: np.ndarray, N: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """把每条射线推进到体素盒 [0,N-1] 的入口(slab 求交),返回新起点与"能进盒"掩码。
+
+    为什么需要:伪世界只覆盖画面那一块 q 盒,**画面上边缘以上就没有数据了**。而世界里
+    "地面往上 1.5m"(角色头顶)对远处地面来说恰恰落在图外——实测 44~83% 的角色位置如此。
+    起点在盒外就一步出界的老写法会让这些 probe 全程 miss、被判废,角色上半身只能退回
+    全局环境。盒外是**未观测的空气**(closure 本来就用 J̄ 兜 miss),射线理应能从那儿飞进来
+    打到下面的几何——这与"把体素盒往上垫一层空体素"数学等价,但不花一分内存。"""
+    d = np.where(np.abs(dirs_i) < 1e-9, 1e-9, dirs_i)
+    lo = (0.0 - pos) / d
+    hi = ((N - 1).astype(np.float32) - pos) / d
+    t_near = np.maximum(np.minimum(lo, hi), 0.0).max(-1)      # 已在盒内 → 0
+    t_far = np.maximum(lo, hi).min(-1)
+    enters = t_far >= t_near
+    return pos + dirs_i * t_near[..., None], enters
+
+
 def _trace(vol: dict, origins: np.ndarray, dirs: np.ndarray, step=0.9, max_steps=220,
            fold: bool = False):
     """March rays in voxel index space. origins (P,3) index coords, dirs (D,3)
     in q-space (will be scaled per-axis to index space). Returns radiance (P,D,3)
     and hit mask (P,D).
+    origins 允许在盒外:先 _ray_box_enter 推进到入口再走(见该函数注释)。
     fold: double-sided paper closure -- camera-side rays (dz<0) are traced with
     the qz component mirrored, so they sample the local OBSERVED half instead
     of exiting instantly. Misses after folding fall to the caller's ambient."""
@@ -384,7 +499,8 @@ def _trace(vol: dict, origins: np.ndarray, dirs: np.ndarray, step=0.9, max_steps
     dirs_i = dirs_i / np.maximum(dl, 1e-9)
     Pn, Dn = origins.shape[0], dirs.shape[0]
     pos = np.repeat(origins[:, None, :], Dn, axis=1).astype(np.float32)
-    alive = np.ones((Pn, Dn), bool)
+    pos, alive = _ray_box_enter(pos, np.broadcast_to(dirs_i, pos.shape),
+                                np.array([Nx, Ny, Nz], np.float32))
     hit = np.zeros((Pn, Dn), bool)
     hidx = np.full((Pn, Dn), -1, np.int64)     # flat voxel index of first hit
     occ3 = vol['occ3']
@@ -517,9 +633,24 @@ A_L = np.array([math.pi, 2.0 * math.pi / 3.0, math.pi / 4.0], np.float32)
 
 
 def world_bounds(cal: dict, lay: dict, P: dict) -> dict:
-    """WORLD-space AABB of the character-relevant band: ground .. ground+band."""
+    """WORLD-space AABB of the character-relevant band: ground .. ground+band.
+
+    这就是 probe 盒。x/z 取地面片的世界范围;y **由"人能到哪"定死**:
+
+    - 下界:最低地面往下一点点(人站地面上,地下没人)。
+    - 上界:**中位地面 + 角色最大活动高度**(`probe_band`,默认 1.6 ≈ 角色身高 1.5 + 余量)。
+      人只在地上活动,头顶以上没人,烘上去纯浪费层数。
+
+    别再按"地面 + 一个宽带"或"顶到画面/体素盒"去摊——实测(bridge,6 层,对角色
+    身上 0.1~1.55m 与射线真值比):盒顶 1.35~1.6 平均误差 8.4%,摊到 2.45/2.85 是
+    12.4%/11.1%(层距被稀释),压到世界最高点 1.10 又太紧(头顶被钳,17%)。
+    层数就那么几层,**盒顶贴着人的头顶**时最准。
+
+    地面起伏大时用 g98+0.3 兜底(站高处的人头顶也得有层);再套一道常识上界
+    "不超过世界最高点 3m"。盒**不必**整个落在体素盒(画面盒)内——盒外由 _trace
+    的射线-盒求交正常采样(见 _ray_box_enter),但那是兜底,不是往天上放 probe 的理由。"""
     theta = cal['theta']
-    M = world_matrix(theta)
+    M = world_matrix(theta, math.radians(float(P.get('azimuth_deg', 0.0))))
     Hg, Wg = cal['d'].shape
     ppu, cx, cy = cal['ppu'], cal['cx'], cal['cy']
     sxg, syg = np.meshgrid(np.arange(Wg, dtype=np.float32), np.arange(Hg, dtype=np.float32))
@@ -531,8 +662,17 @@ def world_bounds(cal: dict, lay: dict, P: dict) -> dict:
     Yg = lay['Yg']
     x0, x1 = float(Xg[:, 0].min()), float(Xg[:, 0].max())
     z0, z1 = float(Xg[:, 2].min()), float(Xg[:, 2].max())
-    y0 = float(np.percentile(Yg, 2)) - 0.15
-    y1 = float(np.percentile(Yg, 98)) + float(P['probe_band'])
+    # 世界最高点 = 可见前表面的世界 Y 上界(P99.9 去掉单像素噪点毛刺),只用作常识上界
+    Yfront = (np.stack([qx, qyp, cal['d']], -1).reshape(-1, 3) @ M.T)[:, 1]
+    world_top = float(np.percentile(Yfront, 99.9))
+    g02, g50, g98 = (float(v) for v in np.percentile(Yg, [2, 50, 98]))
+    band = float(P['probe_band'])                 # 角色最大活动高度(地面往上)
+    y0 = g02 - 0.15
+    y1 = max(g50 + band, g98 + 0.30)              # 头顶为界;地面起伏大时抬一点兜底
+    y1 = min(y1, world_top + 3.0)                 # 常识上界:人不会比世界最高点还高 3m
+    y1 = max(y1, y0 + 0.80)                       # 别塌成一张饼
+    print(f'[bounds] 地面 P2/P50/P98 {g02:.2f}/{g50:.2f}/{g98:.2f}  世界最高点 {world_top:.2f}  '
+          f'角色活动高 {band}  → probe 盒 y[{y0:.2f},{y1:.2f}]')
     return dict(M=M, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1)
 
 
@@ -561,10 +701,11 @@ def _visible_to(vol: dict, origins_idx: np.ndarray, target_idx: np.ndarray,
         if not act.any():
             break
         pos[act] += dirn[act] * step
-        xi = np.clip(np.round(pos[act, 0]).astype(np.int32), 0, Nx - 1)
-        yi = np.clip(np.round(pos[act, 1]).astype(np.int32), 0, Ny - 1)
-        zi = np.clip(np.round(pos[act, 2]).astype(np.int32), 0, Nz - 1)
-        hitb = occ3[zi, yi, xi]
+        rx, ry, rz = (np.round(pos[act, i]).astype(np.int32) for i in (0, 1, 2))
+        # 盒外的采样点不算遮挡(老写法 clip 到盒面,会把盒面上的实心误判成挡光)
+        ins = ((rx >= 0) & (rx < Nx) & (ry >= 0) & (ry < Ny) & (rz >= 0) & (rz < Nz))
+        xi = np.clip(rx, 0, Nx - 1); yi = np.clip(ry, 0, Ny - 1); zi = np.clip(rz, 0, Nz - 1)
+        hitb = occ3[zi, yi, xi] & ins
         idx = np.where(act)[0]
         blocked[idx[hitb]] = True
     return ~blocked
@@ -589,13 +730,18 @@ def stage_probes(vol: dict, amb: dict, wb: dict, lights: list[dict], P: dict) ->
     off_grid = ((oi[:, 0] != np.clip(oi[:, 0], 0, vol['Nx'] - 1)) |
                 (oi[:, 1] != np.clip(oi[:, 1], 0, vol['Ny'] - 1)) |
                 (oi[:, 2] != np.clip(oi[:, 2], 0, vol['Nz'] - 1)))
-    inside_solid = occ[zc, yc, xc]
+    # 实心吸附只对**盒内**的 probe 做:盒外的原点是合法的(角色带高过画面上沿),
+    # 拿盒面上的实心去判它"埋在墙里"再吸附,只会把它拽回盒里、丢掉真实位置。
+    inside_solid = occ[zc, yc, xc] & ~off_grid
     nz_, ny_, nx_ = idx_near[0][zc, yc, xc], idx_near[1][zc, yc, xc], idx_near[2][zc, yc, xc]
     do_snap = inside_solid
     origins[do_snap, 0] = nx_[do_snap].astype(np.float32)
     origins[do_snap, 1] = ny_[do_snap].astype(np.float32)
     origins[do_snap, 2] = nz_[do_snap].astype(np.float32)
-    valid = ~off_grid
+    # 盒外 probe 不再判废:_trace 会把射线推进到盒入口再走,它们照样采到下方的几何,
+    # miss 由 closure 的 J̄ 兜住——这正是"画面上沿以上是开阔空气"的正确答案。
+    # valid 保留在载荷里(格式不变),现在恒为 1;着色器因此不再丢角、也不会突然掉回全局环境。
+    valid = np.ones(len(origins), bool)
 
     dirs = fib_sphere(int(P['probe_dirs']))
     t0 = time.time()
@@ -678,6 +824,10 @@ def stage_probes(vol: dict, amb: dict, wb: dict, lights: list[dict], P: dict) ->
     print(f'[probes] {origins.shape[0]} world probes x {dirs.shape[0]} dirs '
           f'(fold={int(bool(P["fold"]))}, lights={len(lights)}) in {time.time()-t0:.1f}s, '
           f'nee mean {float(nee_sh[:, 0, :].mean()):.4f}')
+    print(f'[probes] box y[{wb["y0"]:.2f},{wb["y1"]:.2f}] band={float(P["probe_band"])} '
+          f'({(wb["y1"]-wb["y0"])/max(Ny-1,1):.2f}m/层)  盒外(画面外空气,靠射线-盒求交采样) '
+          f'{off_grid.mean()*100:.1f}%  实心吸附 {inside_solid.mean()*100:.1f}%  '
+          f'命中率 {hit.mean()*100:.1f}%')
     return dict(nx=Nx, ny=Ny, nz=Nz, gx=gx, gy=gy, gz=gz, valid=valid,
                 world_pos=snapped_world.astype(np.float32),
                 l1=E_l1.astype(np.float16), l2=E_l2.astype(np.float16),
@@ -720,7 +870,8 @@ def stage_character(P: dict, out_dir: Path):
     print('[char] baked albedo + bulged normal map')
 
 
-def stage_walk_world(cal: dict, lay: dict, vol: dict, wb: dict, P: dict) -> dict:
+def stage_walk_world(cal: dict, lay: dict, vol: dict, wb: dict, P: dict,
+                     col_edit: np.ndarray | None = None) -> dict:
     """WORLD-space walk grid on the (non-planar) ground field.
     blocked == solid occupancy in the body column ABOVE the local ground --
     decoupled from screen occlusion: walking BEHIND a foreground object is legal."""
@@ -752,7 +903,8 @@ def stage_walk_world(cal: dict, lay: dict, vol: dict, wb: dict, P: dict) -> dict
     Xc = wb['x0'] + XXi / max(nx - 1, 1) * spanx
     Zc = wb['z0'] + ZZ / max(nz - 1, 1) * spanz
     blocked = np.zeros((nz, nx), bool)
-    for h in (0.35, 0.8, 1.3):
+    h_lo, h_hi = float(P.get('col_h_lo', 0.35)), float(P.get('col_h_hi', 1.3))
+    for h in (h_lo, (h_lo + h_hi) / 2, h_hi):
         Pw = np.stack([Xc, ygrid + h, Zc], -1)
         vi = _world_to_volidx(Pw, wb, vol)
         ii = np.clip(vi.round().astype(np.int32),
@@ -773,6 +925,14 @@ def stage_walk_world(cal: dict, lay: dict, vol: dict, wb: dict, P: dict) -> dict
     covered = np.isfinite(ymax) & ((ymax - ygrid) > 0.45)
     walk = has & ~blocked & ~covered
     walk = binary_closing(walk, np.ones((3, 3)))
+    # manual collision brush (screen-space strokes -> world cells; block beats walk)
+    if col_edit is not None and (col_edit > 0).any():
+        fw = np.zeros((nz, nx), np.int32); fb = np.zeros((nz, nx), np.int32)
+        m1 = (col_edit.reshape(-1) == 1); m2 = (col_edit.reshape(-1) == 2)
+        np.add.at(fw, (gz[m1], gx[m1]), 1)
+        np.add.at(fb, (gz[m2], gx[m2]), 1)
+        walk = (walk | (fw > 0)) & ~(fb > 0)
+        print(f'[walk] collision brush: +walk cells {(fw>0).sum()}, +block cells {(fb>0).sum()}')
     print(f'[walk] world grid {nx}x{nz}, walkable {walk.mean()*100:.0f}%')
     return dict(nx=nx, nz=nz, y=ygrid, mask=walk,
                 x0=wb['x0'], z0=wb['z0'], dx=spanx / max(nx - 1, 1), dz=spanz / max(nz - 1, 1))
@@ -909,12 +1069,19 @@ def build(img_path: Path, name: str, params: dict):
     h = img_hash(img_path)
 
     src = Image.open(img_path).convert('RGB')
-    raw_native = stage_depth(img_path, out_dir, h)
+    raw_native = stage_depth(img_path, out_dir, h, model=str(P.get('depth_model', 'base')))
     Hg = round(src.height * W_G / src.width)
     raw = resize_f(raw_native, (W_G, Hg))
     rgb_srgb = np.asarray(src.resize((W_G, Hg), Image.Resampling.LANCZOS), np.float32) / 255.0
 
     cal = stage_calibrate(raw, P)
+    # 手动深度映射微调(叠加在自动解上;旧工具 dm_scale/dm_offset 的对应物)
+    dsa, doa = float(P.get('depth_scale_adj', 1.0)), float(P.get('depth_offset_adj', 0.0))
+    if abs(dsa - 1.0) > 1e-4 or abs(doa) > 1e-4:
+        theta0 = cal['theta']
+        cal['d'] = (cal['d'] * dsa + doa).astype(np.float32)
+        cal['Y'] = (cal['qy'] * math.cos(theta0) - cal['d'] * math.sin(theta0)).astype(np.float32)
+        print(f'[calib] manual trim: xscale {dsa:.3f}, offset {doa:+.3f}')
     print(f"[calib] s={cal['s']:.4f} o={cal['o']:.4f} ground|Y|p95={cal['ground_y_p95']:.4f} "
           f"ground={cal['ground_mask'].mean()*100:.0f}%")
     sem = None
@@ -935,12 +1102,21 @@ def build(img_path: Path, name: str, params: dict):
                                  cal['d'] + 0.02).astype(np.float32)
         theta = cal['theta']
         cal['Y'] = (cal['qy'] * math.cos(theta) - cal['d'] * math.sin(theta)).astype(np.float32)
+    # manual depth-brush edit layer (authored in the viewer, survives rebakes)
+    edit = load_depth_edit(out_dir, cal['d'].shape)
+    if edit is not None:
+        cal['d'] = (cal['d'] + edit).astype(np.float32)
+        theta = cal['theta']
+        cal['Y'] = (cal['qy'] * math.cos(theta) - cal['d'] * math.sin(theta)).astype(np.float32)
+        print(f'[edit] depth brush applied, |delta| max {np.abs(edit).max():.3f} q, '
+              f'edited px {(np.abs(edit) > 1e-3).sum()}')
     vol = stage_voxelize(cal, lay, hdr['base'], hdr['emit'], rad_bg, P)
     wb = world_bounds(cal, lay, P)
     lights = stage_lights(cal, lay, hdr['emit'], wb, P)
     amb = stage_ambient(vol, cal, lay, P)
     probes = stage_probes(vol, amb, wb, lights, P)
-    walk = stage_walk_world(cal, lay, vol, wb, P)
+    walk = stage_walk_world(cal, lay, vol, wb, P,
+                            col_edit=load_collision_edit(out_dir, cal['d'].shape))
     cloud = stage_pointcloud(cal, lay, rgb_srgb, wb)
     mesh = stage_mesh(cal, lay, rgb_srgb, wb, P)
     stage_character(P, out_dir)
@@ -966,6 +1142,8 @@ def build(img_path: Path, name: str, params: dict):
     # gain map as 8-bit heat png (for the HDR overlay)
     g01 = np.clip(hdr['gain_ev'] / max(float(P['max_gain_ev']), 1e-6), 0, 1)
     Image.fromarray((g01 * 255).astype(np.uint8)).save(out_dir / 'gain.png')
+    # 语义 mask(纯 SAM3)8-bit:查看器「光源分割图」直接显示这张,分离直接光的依据
+    Image.fromarray((np.clip(hdr['mask'], 0, 1) * 255).astype(np.uint8)).save(out_dir / 'mask.png')
     # inpainted hidden-layer colour as display-sRGB texture (mesh skinning)
     hid8 = np.clip(np.power(np.clip(lay['c_bg'], 0, 1), 1 / 2.2) * 255, 0, 255).astype(np.uint8)
     Image.fromarray(hid8).save(out_dir / 'hidden.png')
@@ -988,6 +1166,7 @@ def build(img_path: Path, name: str, params: dict):
                     gz=list(map(float, probes['gz']))),
         hdr=hdr['stats'],
         lights=lights,
+        geometry_sig=geometry_signature(out_dir, h, P),
         point_count=int(len(cloud)),
         mesh=dict(verts=int(len(mesh['verts'])), tris=int(len(mesh['idx']))),
         built=time.strftime('%Y-%m-%d %H:%M:%S'),
@@ -997,13 +1176,42 @@ def build(img_path: Path, name: str, params: dict):
     print(f'[done] {out_dir}')
 
 
-def export_runtime(name: str) -> Path:
-    """P1 数据通道:把实验室烘焙结果变换成游戏运行时载荷,写入
+# 非 bake 着色参数(运行时可调那套)的导出默认:与查看器 UI 默认一致,唯 mode
+# 交付默认 L2(RT 是对比模式);查看器「⇪ 导出照明」会传面板当前值覆盖这套。
+# ⚠ pgain(预览亮度)是实验室显示增益(背景+人同乘),纯预览设施,**永不导出**
+# ——游戏只消费 β 作角色曝光,背景是原画不动,乘 pgain 会破坏人:背景比例。
+SHADING_DEFAULTS = dict(
+    mode=2, spp=64, step=0.9, msteps=160,
+    fold=1, miss_mode=0, nee=0,
+    beta=0.0, amb=1.0,
+    bulge=0.22, flatten=0.0,
+)
+
+
+def _normalize_shading(shading: dict | None) -> dict:
+    out = dict(SHADING_DEFAULTS)
+    for k, v in (shading or {}).items():
+        if k not in SHADING_DEFAULTS:
+            continue
+        out[k] = int(v) if isinstance(SHADING_DEFAULTS[k], int) else float(v)
+    out['mode'] = min(3, max(0, out['mode']))
+    return out
+
+
+def export_runtime(name: str, shading: dict | None = None) -> Path:
+    """数据通道:把实验室烘焙结果变换成游戏运行时载荷,写入
     public/resources/runtime/scenes/<name>/lighting/。纯文件变换,不重烘。
 
-    载荷 = lighting.json(标定/世界/probe网格/ambient/光源/背景哈希防腐门)
-         + probes_l2{,amb,nee}.bin(L2 三分账,f16)
-         + ground_d.png(行走面深度场,RG16 编码,work-res)"""
+    v2(运行时逐像素着色全量数据,与查看器 CHAR_FS 同源):
+      lighting.json          标定/世界/probe网格/vol维度/ambient/光源/哈希门
+                             + shading 块(非 bake 着色参数=场景配置;游戏 F2
+                             打开即此值,F2 改动只是运行时测试)
+      atlas_l1|l2|bin.bin    probe 图集,列块 [base+cov|amb|emit|nee],f16 RGBA
+                             (与查看器 atlas4() 同布局,K=4/9/64)
+      probes_valid.bin       u8 0/255 × Pn
+      vol_rad.bin|vol_emit.bin  体素卷 Z 切片平铺 2D 图集,f16 RGBA
+                             (行=y,列=x,切片按 tiles_x 横排;alpha=占据/0)
+      ground_d.png           行走面深度场,RG16 编码,work-res"""
     src_dir = OUT / name
     man = json.loads((src_dir / 'manifest.json').read_text())
     scene_dir = ROOT / 'public' / 'resources' / 'runtime' / 'scenes' / name
@@ -1021,9 +1229,49 @@ def export_runtime(name: str) -> Path:
         bg_hash = img_hash(game_bg)
     dest = scene_dir / 'lighting'
     dest.mkdir(parents=True, exist_ok=True)
-
+    # v1 遗留文件清理(被 atlas_*.bin 取代)
     for f in ('probes_l2.bin', 'probes_l2amb.bin', 'probes_l2nee.bin'):
-        (dest / f).write_bytes((src_dir / f).read_bytes())
+        (dest / f).unlink(missing_ok=True)
+
+    P = man['probes']
+    Pn = P['nx'] * P['ny'] * P['nz']
+
+    def _read_probe(stem: str, K: int, ch: int) -> np.ndarray:
+        raw = np.frombuffer((src_dir / f'probes_{stem}.bin').read_bytes(), np.float16)
+        return raw.reshape(Pn, K, ch)
+
+    def _atlas4(stem: str, K: int) -> None:
+        """查看器 atlas4() 的离线版:列块 [base+cov | amb | emit | nee]。"""
+        main = _read_probe(stem, K, 4)
+        out = np.zeros((Pn, K * 4, 4), np.float16)
+        out[:, :K, :] = main
+        for bi, acc in enumerate(('amb', 'emit', 'nee')):
+            block = _read_probe(f'{stem}{acc}', K, 3)
+            sl = slice(K * (bi + 1), K * (bi + 2))
+            out[:, sl, :3] = block
+            out[:, sl, 3] = np.float16(1.0)
+        (dest / f'atlas_{"bin" if stem == "bins" else stem}.bin').write_bytes(out.tobytes())
+
+    _atlas4('l1', 4)
+    _atlas4('l2', 9)
+    _atlas4('bins', 64)
+    (dest / 'probes_valid.bin').write_bytes((src_dir / 'probes_valid.bin').read_bytes())
+
+    V = man['vol']
+    Nx, Ny, Nz = int(V['Nx']), int(V['Ny']), int(V['Nz'])
+    tiles_x = int(math.ceil(math.sqrt(Nz)))
+    tiles_y = int(math.ceil(Nz / tiles_x))
+
+    def _tile_volume(fname: str, out_name: str) -> None:
+        vol = np.frombuffer((src_dir / fname).read_bytes(), np.float16).reshape(Nz, Ny, Nx, 4)
+        atlas = np.zeros((tiles_y * Ny, tiles_x * Nx, 4), np.float16)
+        for z in range(Nz):
+            ty, tx = divmod(z, tiles_x)
+            atlas[ty * Ny:(ty + 1) * Ny, tx * Nx:(tx + 1) * Nx] = vol[z]
+        (dest / out_name).write_bytes(atlas.tobytes())
+
+    _tile_volume('volume.bin', 'vol_rad.bin')
+    _tile_volume('volume_emit.bin', 'vol_emit.bin')
 
     W, Hh = man['work']['w'], man['work']['h']
     d_walk = np.frombuffer((src_dir / 'walk_depth.bin').read_bytes(), np.float32).reshape(Hh, W)
@@ -1035,13 +1283,18 @@ def export_runtime(name: str) -> Path:
     Image.fromarray(rg).save(dest / 'ground_d.png', optimize=True)
 
     payload = dict(
-        version=1,
+        version=2,
         background_sha1=bg_hash,               # 防腐门:游戏背景重画即失配禁用
         work=man['work'], cal=man['cal'], world=man['world'],
-        probes={k: man['probes'][k] for k in ('nx', 'ny', 'nz')},
+        probes={k: P[k] for k in ('nx', 'ny', 'nz')},
+        vol=dict(nx=Nx, ny=Ny, nz=Nz, tiles_x=tiles_x, tiles_y=tiles_y,
+                 qx_min=V['qx_min'], qx_max=V['qx_max'],
+                 qy_min=V['qy_min'], qy_max=V['qy_max'],
+                 qz_min=V['qz_min'], qz_max=V['qz_max']),
         ambient_sh=man['ambient']['sh'],
         lights=man.get('lights', []),
         ground_d=dict(min=d_lo, max=d_hi),
+        shading=_normalize_shading(shading),
         baked_params=man['params'],
         built=man['built'],
     )
@@ -1049,6 +1302,103 @@ def export_runtime(name: str) -> Path:
         json.dumps(payload, ensure_ascii=False, indent=1) + '\n')
     print(f'[export] {dest}')
     return dest
+
+
+def export_scene_depth(name: str) -> dict:
+    """接管旧场景深度工具:把实验室的有效深度(标定+起伏+笔刷编辑)导出为
+    游戏运行时消费的 depthConfig 契约 —— RG16 深度图 + M(游戏 det+1 约定)+
+    depth_mapping + 最佳拟合 floor 线 + 方形 cell 碰撞网格;既有手调参数保值。"""
+    src_dir = OUT / name
+    man = json.loads((src_dir / 'manifest.json').read_text())
+    scene_media = ROOT / 'public' / 'resources' / 'runtime' / 'scenes' / name
+    scene_json_path = ROOT / 'public' / 'assets' / 'scenes' / f'{name}.json'
+    if not scene_json_path.exists():
+        raise RuntimeError(f'场景 JSON 不存在: {scene_json_path}(先在主编辑器建场景)')
+    game_bg = scene_media / 'background.png'
+    if game_bg.exists():
+        a = np.asarray(Image.open(game_bg).convert('RGB'))
+        b = np.asarray(Image.open(src_dir / 'background.png').convert('RGB'))
+        if a.shape != b.shape or not np.array_equal(a, b):
+            raise RuntimeError('游戏背景与实验室烘焙输入像素不一致——先重烘再导出')
+
+    W, Hh = man['work']['w'], man['work']['h']
+    nw, nh = man['native']['w'], man['native']['h']
+    theta = man['cal']['theta']
+    scale_px = nw / W
+    ppu_nat = man['cal']['ppu'] * scale_px
+
+    d = np.frombuffer((src_dir / 'front_depth.bin').read_bytes(), np.float32).reshape(Hh, W)
+    d_walk = np.frombuffer((src_dir / 'walk_depth.bin').read_bytes(), np.float32).reshape(Hh, W)
+
+    # ---- 深度图:原生分辨率 RG16,线性 mapping(invert:false) ----
+    d_nat = resize_f(d, (nw, nh))
+    d_lo = float(d_nat.min()) - 1e-4
+    d_hi = float(d_nat.max()) + 1e-4
+    raw16 = np.round((d_nat - d_lo) / (d_hi - d_lo) * 65535).astype(np.uint16)
+    rg = np.zeros((nh, nw, 3), np.uint8)
+    rg[..., 0] = raw16 >> 8
+    rg[..., 1] = raw16 & 0xFF
+    old_scene = json.loads(scene_json_path.read_text())
+    old_cfg = old_scene.get('depthConfig') or {}
+    depth_name = old_cfg.get('depth_map', 'raw_depth_rg.png')
+    Image.fromarray(rg).save(scene_media / depth_name, optimize=True)
+
+    # ---- floor 线(遗留线性字段):非平面地面的最佳拟合,按原生 sy ----
+    sy_nat = (np.arange(Hh, dtype=np.float64) + 0.5) * (nh / Hh)
+    row_d = np.median(d_walk, axis=1)
+    A_, B_ = np.polyfit(sy_nat, row_d, 1)
+    depth_per_sy = math.tan(theta) / ppu_nat
+
+    # ---- 碰撞:实验室世界网格 → 游戏方形 cell 网格(注意 lab Z 翻转还原) ----
+    wk = man['walk']
+    mask_img = np.asarray(Image.open(src_dir.parent / name / 'walk_mask.png').convert('L'), np.uint8)
+    walk = mask_img > 127                              # (nz, nx) lab-world grid
+    cell = float(max(wk['dx'], wk['dz']))
+    z_lab_min, z_lab_max = wk['z0'], wk['z0'] + (wk['nz'] - 1) * wk['dz']
+    # game wz = -lab z(实验室为 GL 右手系翻了 Z;游戏约定 det=+1)
+    gz_min, gz_max = -z_lab_max, -z_lab_min
+    gx_min = wk['x0']
+    gw = int(math.ceil((wk['nx'] - 1) * wk['dx'] / cell)) + 1
+    gh = int(math.ceil((gz_max - gz_min) / cell)) + 1
+    col = np.zeros((gh, gw), np.uint8)
+    for gj in range(gh):
+        wz_game = gz_min + gj * cell
+        z_lab = -wz_game
+        zi = int(round((z_lab - wk['z0']) / wk['dz']))
+        for gi in range(gw):
+            wx = gx_min + gi * cell
+            xi = int(round((wx - wk['x0']) / wk['dx']))
+            ok = 0 <= zi < wk['nz'] and 0 <= xi < wk['nx'] and walk[zi, xi]
+            col[gj, gi] = 0 if ok else 255            # 255 = blocked(红通道)
+    col_name = old_cfg.get('collision_map', 'collision.png')
+    Image.fromarray(col).save(scene_media / col_name, optimize=True)
+
+    # ---- depthConfig 写回场景 JSON(编辑器往返约定,手调参数保值) ----
+    c, s = math.cos(theta), math.sin(theta)
+    az = math.radians(float(man['params'].get('azimuth_deg', 0.0)))
+    R_base = np.array([[1.0, 0.0, 0.0], [0.0, c, -s], [0.0, s, c]])
+    if abs(az) > 1e-9:
+        ca, sa = math.cos(az), math.sin(az)
+        R_base = np.array([[ca, 0, sa], [0, 1, 0], [-sa, 0, ca]]) @ R_base
+    cfg = {
+        'depth_map': depth_name,
+        'collision_map': col_name,
+        'M': {'R': [[float(v) for v in row] for row in R_base],
+              'ppu': ppu_nat, 'cx': nw / 2.0, 'cy': nh / 2.0},
+        'depth_mapping': {'invert': False, 'scale': d_hi - d_lo, 'offset': d_lo},
+        'shader': {'depth_per_sy': depth_per_sy,
+                   'floor_depth_A': float(A_), 'floor_depth_B': float(B_)},
+        'collision': {'x_min': float(gx_min), 'z_min': float(gz_min),
+                      'cell_size': cell, 'grid_width': gw, 'grid_height': gh,
+                      'height_offset': float((old_cfg.get('collision') or {}).get('height_offset', 0.0))},
+        'depth_tolerance': float(old_cfg.get('depth_tolerance', 0.05)),
+        'floor_offset': float(old_cfg.get('floor_offset', 0.0)),
+    }
+    old_scene['depthConfig'] = cfg
+    scene_json_path.write_text(json.dumps(old_scene, ensure_ascii=False, indent=2) + '\n')
+    print(f'[export-depth] {scene_json_path.name}: depth {nw}x{nh}, '
+          f'floor A={A_:.5f} B={B_:.3f}, collision {gw}x{gh} cell={cell:.3f}')
+    return cfg
 
 
 def main():

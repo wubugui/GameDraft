@@ -57,6 +57,9 @@ uniform float uEntityFootWorldY; // 精灵脚部世界坐标 Y
 uniform float uDebug;          // 调试模式：1=输出调试颜色
 /** F2：遮挡像素 alpha 乘数 [0,1]。0=discard；1=完全不裁 alpha（调试用） */
 uniform float uOcclusionBlendFactor;
+uniform float uFootDepthQ;     // 脚点行走面深度（实验室 uFootQ.z）
+uniform float uUseFootDepth;   // 1=实验室 billboard 口径
+uniform float uFootBias;       // 实验室 0.045
 
 // M矩阵参数（像素→伪3D，仅调试用）
 uniform float uM_ppu;
@@ -97,12 +100,19 @@ void main(void) {
     float d_raw = uInvert > 0.5 ? 1.0 - rawDepth : rawDepth;
     float sceneDepth = d_raw * uScale + uOffset;
 
-    // 精灵立面深度：floor / depth_per_sy 按背景纹理像素 sy 标定（与 isCollision 一致）
-    float footWy = uEntityFootWorldY;
-    float syTexFoot = footWy * uWorldToPixelY;
+    // 精灵深度代理：**立在伪世界里的直立 quad**（uDepthPerSy = tanθ/ppu 就是它的深度梯度，
+    // 往上越靠近相机）。两个分支只差脚点深度的来源：有行走面场用实测脚深，没有就用 floor
+    // 拟合线。（旧写法整张 sprite 取脚点深度 = 相机平行 billboard，已废除）
+    float syTexFoot = uEntityFootWorldY * uWorldToPixelY;
     float syTex = wy * uWorldToPixelY;
-    float d_base = uFloorA * syTexFoot + uFloorB + uFloorOffset + uFloorOffsetExtra;
-    float spriteDepth = d_base + uDepthPerSy * (syTex - syTexFoot);
+    float upright = uDepthPerSy * (syTex - syTexFoot);
+    float spriteDepth;
+    if (uUseFootDepth > 0.5) {
+        spriteDepth = uFootDepthQ + upright + uFloorOffset + uFloorOffsetExtra - uFootBias;
+    } else {
+        float d_base = uFloorA * syTexFoot + uFloorB + uFloorOffset + uFloorOffsetExtra;
+        spriteDepth = d_base + upright;
+    }
 
     // ========== 调试模式 ==========
     if (uDebug > 0.5) {
@@ -201,6 +211,9 @@ export class DepthOcclusionFilter extends Filter {
                     uEntityFootWorldY: { value: 0, type: 'f32' },
                     uDebug: { value: 0, type: 'f32' },
                     uOcclusionBlendFactor: { value: 0, type: 'f32' },
+                    uFootDepthQ: { value: 0, type: 'f32' },
+                    uUseFootDepth: { value: 0, type: 'f32' },
+                    uFootBias: { value: 0.045, type: 'f32' },
                     // M矩阵（调试用）
                     uM_ppu: { value: cfg.M.ppu, type: 'f32' },
                     uM_cx: { value: cfg.M.cx, type: 'f32' },
@@ -316,5 +329,20 @@ export class DepthOcclusionFilter extends Filter {
     setOcclusionBlendFactor(v: number): void {
         const u = this._du;
         if (u) u['uOcclusionBlendFactor'] = Math.min(1, Math.max(0, v));
+    }
+
+    /** 脚点行走面深度（实验室 uFootQ.z）；null = 回落旧的 floor 直线口径 */
+    setFootDepthQ(v: number | null): void {
+        const u = this._du;
+        if (!u) return;
+        if (v === null || !Number.isFinite(v)) { u['uUseFootDepth'] = 0; return; }
+        u['uFootDepthQ'] = v;
+        u['uUseFootDepth'] = 1;
+    }
+
+    /** 脚点遮挡偏置（实验室常数 0.045） */
+    setFootBias(v: number): void {
+        const u = this._du;
+        if (u) u['uFootBias'] = Math.max(0, v);
     }
 }

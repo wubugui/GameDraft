@@ -267,9 +267,13 @@ export class DeferredEntityShadow implements IEntityShadow {
       u['uSoftSamples'] = Math.max(1, Math.min(8, Math.round(env.shadow.softSamples)));
       u['uSoftRadius'] = env.shadow.softRadius;
       u['uAOContact'] = Math.max(0, Math.min(1, env.shadow.contact));
-      u['uAOContactRadius'] = w * Math.max(0.1, env.shadow.contactSize) * 0.65;
+      // 0.28:接触斑贴脚(0.65 时 148 宽 sprite 出直径 ~190wu 巨晕,暗地上读成
+      // "没有 AO",且把方向性投影吞没——2026-07-22 白底渲染实证)
+      u['uAOContactRadius'] = w * Math.max(0.1, env.shadow.contactSize) * 0.28;
       const f = u['uSilFrame'] as Float32Array;
       f[0] = fr.x / sw; f[1] = fr.y / sh; f[2] = fr.width / sw; f[3] = fr.height / sh;
+      // Mesh 路径 UniformGroup 突变必须 update() 才会同步 GPU(见 EntityShadow.setU 注)
+      (this.shader.resources as Record<string, { update?: () => void }>)['defUniforms']?.update?.();
     }
 
     // 边缘柔化(模糊),由 softness 控制

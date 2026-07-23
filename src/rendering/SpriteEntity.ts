@@ -1,4 +1,4 @@
-import { BlurFilter, Container, Sprite, Texture, Rectangle } from 'pixi.js';
+import { BlurFilter, Container, Sprite, Texture, Rectangle, type TextureSource } from 'pixi.js';
 import type { AnimationPlaybackParams, AnimationSetDef, AnimationStateDef } from '../data/types';
 
 /** 步速匹配倍率夹取范围：帧动画循环被拉出此区间会明显难看（步频与素材脱节） */
@@ -43,6 +43,31 @@ export class SpriteEntity {
   /** 当前朝向（供调试快照只读）。 */
   get facingDirection(): 'left' | 'right' {
     return this.facingX < 0 ? 'left' : 'right';
+  }
+
+  /**
+   * 烘焙着色驱动:图集源 + 网格(运行时法线图集生成)+ 当前帧归一化 uv rect + 镜像。
+   * 无图集(未 loadFromDef)返回 null,滤镜回退平面法线。
+   */
+  getShadingFrameInfo(): {
+    source: TextureSource;
+    cols: number;
+    rows: number;
+    rect: [number, number, number, number];
+    flipX: boolean;
+  } | null {
+    if (!this.baseTexture || !this.animDef) return null;
+    const src = this.baseTexture.source;
+    const w = src.width, h = src.height;
+    if (!w || !h) return null;
+    const fr = this.sprite.texture.frame;
+    return {
+      source: src,
+      cols: this.animDef.cols,
+      rows: this.animDef.rows,
+      rect: [fr.x / w, fr.y / h, fr.width / w, fr.height / h],
+      flipX: this.facingX < 0,
+    };
   }
 
   private worldWidth: number = 0;

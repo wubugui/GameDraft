@@ -95,6 +95,13 @@ import { InteractionCoordinator } from './InteractionCoordinator';
 import { EventBridge } from './EventBridge';
 import { DebugTools, type ScenarioDebugPanelRow } from './DebugTools';
 import { SceneDepthSystem } from './SceneDepthSystem';
+import {
+  CharacterLightingSystem,
+  type CharShadingEntityInfo,
+  type ShadowLightSample,
+} from './CharacterLightingSystem';
+import { CharacterShadingFilter } from '../rendering/CharacterShadingFilter';
+import { buildNormalAtlas } from '../rendering/spriteNormalAtlas';
 import { WaterMinigameManager } from '../systems/waterMinigame/WaterMinigameManager';
 import { SugarWheelMinigameManager } from '../systems/sugarWheel/SugarWheelMinigameManager';
 import { PaperCraftMinigameManager } from '../systems/paperCraft/PaperCraftMinigameManager';
@@ -110,7 +117,6 @@ import {
 } from '../rendering/lightEnvCurve';
 import { buildIrradianceProbe } from '../rendering/irradianceProbe';
 import { PlanarEntityShadow } from '../rendering/EntityShadow';
-import { DeferredEntityShadow } from '../rendering/DeferredEntityShadow';
 import type { ShadowSource, IEntityShadow } from '../rendering/entityShadowTypes';
 import { UniformShadowField, type ShadowProjectionField } from '../rendering/shadowField';
 import { resolveDepthFloorOffsetBoost } from '../utils/depthFloorZones';
@@ -132,7 +138,7 @@ import {
   resolveScriptedSpeakerEntity,
   type ScriptedSpeakerEntity,
 } from '../utils/scriptedDialogueSpeaker';
-import { RenderTexture, Texture, UPDATE_PRIORITY } from 'pixi.js';
+import { Graphics, RenderTexture, Texture, UPDATE_PRIORITY } from 'pixi.js';
 import { sceneJsonUrl, TEXT_URLS } from './projectPaths';
 import {
   coerceRuntimeFieldValue,
@@ -209,6 +215,31 @@ type DevNarrativeWarp = {
  *  此处留边界余量，超限即丢弃最重的 eventTrace 后再上报，防 413 与主线程卡顿。 */
 const RUNTIME_DEBUG_SNAPSHOT_MAX_BYTES = 1_900_000;
 
+/** 光源驱动阴影:单槽平滑状态(按光源身份绑定,时间低通消抖/交叉淡化) */
+type ShadowSlotState = {
+  /** 绑定的光源(-1=太阳,-3=能流主光,-2=空槽) */
+  light: number;
+  /** 影子屏幕方向角(deg,planar 剪切方向,最短弧平滑) */
+  az: number;
+  /** 光源仰角(deg,决定影长) */
+  el: number;
+  w: number;
+  tan: number;
+};
+
+/** 每实体阴影 entry:shadow=手调单影(兼 deferred);auto 模式用 extra 里的 planar 剪影槽 */
+type EntityShadowEntry = {
+  shadow: IEntityShadow;
+  src: ShadowSource;
+  owner: unknown;
+  /** 光源驱动模式的 planar 剪影槽(0..K-1;此时 shadow 熄灭。剪影形状=用户红线) */
+  extra?: IEntityShadow[];
+  /** 槽平滑状态(与 extra 对位) */
+  slots?: ShadowSlotState[];
+  /** 每槽 env 覆盖对象(缓存复用,避免逐帧分配;末位=熄灭 env) */
+  envSlots?: ResolvedLightEnv[];
+};
+
 export class Game {
   private eventBus: EventBus;
   private flagStore: FlagStore;
@@ -282,6 +313,8 @@ export class Game {
   /** T1：仅 DEV 装配（F10 坐标、中键缩放、F2 调试区块等纯开发设施），生产为 null */
   private debugTools: DebugTools | null = null;
   private sceneDepthSystem: SceneDepthSystem;
+  /** 角色照明(烘焙 probe 消费端);载荷缺失/过期时 inactive,回落旧色调管线 */
+  private characterLighting: CharacterLightingSystem;
   private waterMinigameManager: WaterMinigameManager;
   private sugarWheelMinigameManager: SugarWheelMinigameManager;
   private paperCraftMinigameManager: PaperCraftMinigameManager;
@@ -294,6 +327,8 @@ export class Game {
   private pressureHoldUI!: PressureHoldUI;
   private depthDebugVisualizer!: DepthDebugVisualizer;
   private playerDepthFilter: IEntityShadingFilter | null = null;
+  /** F2 probe 点云调试覆盖层(世界坐标系,随相机;场景卸载即销毁) */
+  private probeVizGfx: Graphics | null = null;
   /** 场景透视缩放（近大远小）句柄：scene:ready 从场景数据构建、beforeUnload 清空；实体注入共享同一实例 */
   private perspectiveScaleResolver: ScenePerspectiveScaleResolver | null = null;
 
@@ -307,12 +342,14 @@ export class Game {
   private planeLightEnvOverride: SceneLightEnv | null = null;
   /** 阴影方向/长度来源（今天=全局 LightEnv 均匀场；将来可换成场景灯光方向场） */
   private currentShadowField: ShadowProjectionField | null = null;
+  /** 光源驱动阴影:时间低通的上帧时间戳(ms) */
+  private shadowDriveLastMs = 0;
   /**
    * 玩家/NPC/热点的投影阴影（key: 'player' / npc.id / `hotspot:<id>`）。
    * F2 性能：ShadowSource 按实体缓存（owner 记录实例身份，实例被过场重建时按需换源），
    * updateEntityShadows 不再逐帧新建闭包包。
    */
-  private entityShadows = new Map<string, { shadow: IEntityShadow; src: ShadowSource; owner: unknown }>();
+  private entityShadows = new Map<string, EntityShadowEntry>();
   /**
    * 场景 onEnter 执行期间的隐式叙事 owner（`scene:<场景id>`）。
    * 供 onEnter 里未显式指定 owner 的 startDialogueGraph 与条件 `@owner` 继承当前场景。
@@ -435,6 +472,15 @@ export class Game {
     this.emoteBubbleManager = new EmoteBubbleManager();
     this.zoneSystem = new ZoneSystem(this.eventBus, this.flagStore, this.actionExecutor, this.ruleOfferRegistry);
     this.sceneDepthSystem = new SceneDepthSystem();
+    this.characterLighting = new CharacterLightingSystem();
+    // 载荷就绪(depthLoader 内已 await,先于 scene:ready):把行走面深度场交给深度系统——
+    // 遮挡脚点/碰撞反投影/影子落地面从此以它为真值,不再用 floor_depth_A/B 全图拟合直线
+    // (见 entity-lighting「脚点锚必须同源」)。滤镜由随后的 scene:ready 权威挂载(此时
+    // shadingResources 已就绪),故此处不再 reattach——避免抢在实体建好前挂、且泄漏重复滤镜。
+    this.characterLighting.onReady = () => {
+      this.sceneDepthSystem.setGroundDepthField(this.characterLighting.groundDepthField);
+      this.refreshPlayerWorldCollision();
+    };
     // 章节导演（C2）：按清单在 scene:revealed / narrative:stateChanged 上评估开拍/收工；
     // 自身无状态（live 集在叙事档），控制口与条件工厂在下方统一接线。
     this.narrativePackageDirector = new NarrativePackageDirector(this.eventBus);
@@ -1342,6 +1388,38 @@ export class Game {
         this.sceneDepthSystem.occlusionBlendFactor = factor;
       },
       depthOcclusionActive: () => this.sceneDepthSystem.isEnabled,
+      getDepthFootModel: () => ({
+        groundField: this.sceneDepthSystem.hasGroundDepthField,
+        footBias: this.sceneDepthSystem.footBias,
+      }),
+      setDepthFootBias: (v) => { this.sceneDepthSystem.footBias = v; },
+      getCharLightingDebug: () => {
+        const cl = this.characterLighting;
+        const info = cl.loadedInfo;
+        if (!info) return null;
+        return {
+          active: cl.active, enabled: cl.enabled,
+          probes: info.probes, lights: info.lights,
+          hasVolumes: cl.hasVolumes,
+          params: { ...cl.params, sunColor: [...cl.params.sunColor] as [number, number, number] },
+          shadowAuto: {
+            enabled: cl.shadowAuto.enabled, k: cl.shadowAuto.k,
+            ambScale: cl.shadowAuto.ambScale, tauMs: cl.shadowAuto.tauMs,
+            gain: cl.shadowAuto.gain, ready: cl.shadowAutoReady,
+          },
+        };
+      },
+      setCharLighting: (patch) => {
+        const cl = this.characterLighting;
+        if (patch.enabled !== undefined && patch.enabled !== cl.enabled) {
+          cl.enabled = patch.enabled;
+          this.reattachBakedEntityFilters();   // 开关切换 = 新旧滤镜互换
+        }
+        if (patch.params) Object.assign(cl.params, patch.params);
+        if (patch.shadowAuto) Object.assign(cl.shadowAuto, patch.shadowAuto);
+      },
+      toggleCharProbeViz: () => this.toggleCharProbeViz(),
+      charProbeVizActive: () => this.probeVizGfx !== null,
       entityShadowActive: () => this.entityShadowDebugActive(),
       getEntityShadowDebug: () => this.getEntityShadowDebug(),
       cycleShadowMode: () => this.cycleShadowModeDebug(),
@@ -2064,10 +2142,17 @@ export class Game {
         }
       }
       this.setupSceneLighting(sceneData, worldToPixelX, worldToPixelY);
+      // 角色照明烘焙载荷:**必须 await 纳入加载门**——否则进度条/黑屏已撤,这批图集
+      // 还在后台 fetch+解码,进场景后卡顿(哈希门失配自动禁用,内部 epoch 防旧时间线写回)。
+      // 体素卷(RT gather 用)仅 dev 加载:生产只吃 probe 缓存,免下最重两块;dev 才做实时 RT 对比。
+      await this.characterLighting.load(sceneId, sceneData.worldWidth, sceneData.worldHeight,
+        { loadVolumes: import.meta.env.DEV });
       this.refreshPlayerWorldCollision();
     });
 
     this.sceneManager.setDepthUnloader(() => {
+      if (this.probeVizGfx) { this.probeVizGfx.destroy(); this.probeVizGfx = null; }
+      this.characterLighting.destroy();   // 清载荷+涨 epoch,拦截在途加载写回(律4)
       this.sceneDepthSystem.unload();
       this.refreshPlayerWorldCollision();
       // NPC/热区滤镜已在场景卸载更早处销毁；此处先经 unload() 清空系统滤镜表，
@@ -2164,6 +2249,11 @@ export class Game {
   private rebuildEntityShadows(): void {
     this.clearEntityShadows();
     const env = this.currentLightEnv;
+    // 光源驱动阴影的 q→M-world 基(depthConfig R);无深度上下文 → auto 不可用
+    const sctx = this.sceneDepthSystem.getShadowSceneContext();
+    this.characterLighting.setShadowBasis(sctx
+      ? [sctx.r00, sctx.r01, sctx.r02, sctx.r10, sctx.r11, sctx.r12, sctx.r20, sctx.r21, sctx.r22]
+      : null);
     if (!env || env.shadow.mode === 'off' || !this.sceneDepthSystem.isLightingEnabled) return;
 
     this.entityShadows.set('player', {
@@ -2208,6 +2298,10 @@ export class Game {
     if (!entry) return;
     this.sceneDepthSystem.unregisterShadow(entry.shadow);
     entry.shadow.destroy();
+    for (const ex of entry.extra ?? []) {
+      this.sceneDepthSystem.unregisterShadow(ex);
+      ex.destroy();
+    }
     this.entityShadows.delete(key);
   }
 
@@ -2233,20 +2327,48 @@ export class Game {
     });
   }
 
-  /** 按模式建阴影实现：real+有深度→deferred；否则→planar（real 无深度时退化为纯平面）。
+  /** 建阴影实现:一律 planar 剪影(用户拍板 2026-07-22:影子=角色 mask 剪切剪影,
+   *  模糊在剪影上做;deferred 逐像素与重建面求交会啃烂形状,已彻底弃用)。
    *  实例注册进 SceneDepthSystem 调参广播列表（F2 改 tolerance/floorOffset 实时传播）。 */
-  private createShadowImpl(mode: 'real' | 'planar' | 'off'): IEntityShadow {
+  private createShadowImpl(_mode: 'real' | 'planar' | 'off'): IEntityShadow {
     const layer = this.renderer.shadowLayer;
     const ctx = this.sceneDepthSystem.getShadowSceneContext();
-    const sh = mode === 'real' && ctx
-      ? new DeferredEntityShadow(layer, ctx)
-      : new PlanarEntityShadow(layer, ctx);
+    const sh = new PlanarEntityShadow(layer, ctx);
     this.sceneDepthSystem.registerShadow(sh);
     return sh;
   }
 
-  /** 按 toneEnabled / mode 设置所有光照滤镜的 tone 与 sprite-AO（接触斑唯一归地面侧，避免双压：
-   *  阴影开启时接触斑由阴影实现绘制，滤镜侧 aoContact 归零；阴影 off 时才走滤镜侧 ao.contact）。 */
+  /** F2:probe 点云可视化开关(实验室查看器点云的游戏侧对应物,调试用)。 */
+  private toggleCharProbeViz(): boolean {
+    if (this.probeVizGfx) {
+      this.probeVizGfx.destroy();
+      this.probeVizGfx = null;
+      return false;
+    }
+    const pts = this.characterLighting.getProbeViz();
+    if (!pts) return false;
+    const gfx = new Graphics();
+    for (const p of pts) {
+      if (p.valid) gfx.circle(p.x, p.y, 1.6).fill({ color: p.color });
+      else gfx.circle(p.x, p.y, 1.0).fill({ color: 0x555555, alpha: 0.5 });
+    }
+    this.renderer.worldContainer.addChild(gfx);
+    this.probeVizGfx = gfx;
+    return true;
+  }
+
+  /** 逐帧驱动烘焙着色滤镜:脚点/quad 尺寸/当前帧法线 rect + F2 参数全量同步。 */
+  private driveBakedShading(
+    filter: IEntityShadingFilter,
+    worldX: number,
+    worldY: number,
+    ent: CharShadingEntityInfo | null,
+  ): void {
+    if (filter instanceof CharacterShadingFilter) {
+      this.characterLighting.driveFilter(filter, worldX, worldY, ent);
+    }
+  }
+
   private applyShadowAndAO(): void {
     const env = this.currentLightEnv;
     if (!env) return;
@@ -2335,15 +2457,20 @@ export class Game {
   }
 
   /** 每帧更新投影阴影（位置/剪影/朝向跟随实体）。ShadowSource 复用缓存（F2 性能）；
-   *  仍按当前实体列表寻址——实例被过场重建（owner 变化）时就地换源，不更新已不在场的实体。 */
+   *  仍按当前实体列表寻址——实例被过场重建（owner 变化）时就地换源，不更新已不在场的实体。
+   *  光源驱动模式(shadowAutoReady)下逐实体走多槽驱动:方向/浓度/软度由光源表解析。 */
   private updateEntityShadows(): void {
     const env = this.currentLightEnv;
     if (!env || this.entityShadows.size === 0) return;
 
+    const now = performance.now();
+    const dtMs = this.shadowDriveLastMs > 0 ? Math.min(now - this.shadowDriveLastMs, 100) : 16;
+    this.shadowDriveLastMs = now;
+
     const field = this.currentShadowField;
     const playerEntry = this.entityShadows.get('player');
     if (playerEntry) {
-      playerEntry.shadow.update(playerEntry.src, env, field);
+      this.driveEntryShadows(playerEntry, env, field, dtMs);
     }
     for (const npc of this.sceneManager.getCurrentNpcs()) {
       const entry = this.entityShadows.get(npc.id);
@@ -2352,7 +2479,7 @@ export class Game {
         entry.owner = npc;
         entry.src = this.makeNpcShadowSource(npc);
       }
-      entry.shadow.update(entry.src, env, field);
+      this.driveEntryShadows(entry, env, field, dtMs);
     }
     for (const h of this.sceneManager.getCurrentHotspots()) {
       const entry = this.entityShadows.get(`hotspot:${h.def.id}`);
@@ -2361,8 +2488,131 @@ export class Game {
         entry.owner = h;
         entry.src = this.makeHotspotShadowSource(h);
       }
-      entry.shadow.update(entry.src, env, field);
+      this.driveEntryShadows(entry, env, field, dtMs);
     }
+  }
+
+  /**
+   * 单实体阴影驱动。手调模式=原单影路径;光源驱动模式=K 个 **planar 剪影槽**:
+   * 影子形状=角色 mask 剪影经光向剪切(脚边钉住、头边偏移,用户红线——deferred
+   * 逐像素与重建面求交会把形状啃烂,auto 一律不用);模糊在剪影上做。
+   * 逐灯样本(屏幕方向/仰角/份额/角尺寸)→按光源身份绑槽→时间低通→逐槽 env 覆盖;
+   * 过渡即物理:份额归一化交叉淡化。
+   */
+  private driveEntryShadows(
+    entry: EntityShadowEntry,
+    env: ResolvedLightEnv,
+    field: ShadowProjectionField | null,
+    dtMs: number,
+  ): void {
+    const cl = this.characterLighting;
+    const offSlot = (): ResolvedLightEnv => {
+      const off = this.getSlotEnv(entry, 3, env);
+      off.shadow.darkness = 0; off.shadow.contact = 0;
+      return off;
+    };
+    // 影子落地面深度锚:与角色遮挡脚点同源(行走面场),否则影子与本体错位
+    const footD = this.sceneDepthSystem.sampleGroundDepth(
+      entry.src.getFootX(), entry.src.getFootY(),
+    );
+    entry.shadow.setGroundFootDepth?.(footD);
+    for (const ex of entry.extra ?? []) ex.setGroundFootDepth?.(footD);
+    if (!cl.shadowAutoReady) {
+      entry.shadow.update(entry.src, env, field);
+      // 从 auto 切回手调:planar 槽熄灭
+      if (entry.extra?.length) {
+        const off = offSlot();
+        for (const ex of entry.extra) ex.update(entry.src, off, null);
+      }
+      return;
+    }
+
+    // auto:手调影子熄灭,K 个 planar 剪影槽接管
+    entry.shadow.update(entry.src, offSlot(), field);
+    const K = Math.max(1, Math.min(3, Math.round(cl.shadowAuto.k)));
+    entry.slots ??= [];
+    entry.extra ??= [];
+    while (entry.extra.length < K) entry.extra.push(this.createShadowImpl('planar'));
+    for (const ex of entry.extra) ex.setGroundFootDepth?.(footD);   // 本帧新建的槽也要锚
+    const impls = entry.extra;
+    while (entry.slots.length < impls.length) {
+      entry.slots.push({ light: -2, az: 90, el: 45, w: 0, tan: 0.05 });
+    }
+
+    const samples = cl.resolveShadowLights(
+      entry.src.getFootX(), entry.src.getFootY(), entry.src.getWorldHeight(),
+    );
+    // 槽位分配:已绑光源续用;失配槽淡出;新样本进空槽(w≈0 起步 → 淡入)
+    const bound = new Map<number, ShadowSlotState>();
+    for (const slot of entry.slots) if (slot.light !== -2) bound.set(slot.light, slot);
+    const targets = new Map<ShadowSlotState, ShadowLightSample>();
+    for (const s of samples) {
+      const slot = bound.get(s.light);
+      if (slot) { targets.set(slot, s); continue; }
+      const free = entry.slots.find((sl) => sl.light === -2 || (sl.w < 0.015 && !targets.has(sl)));
+      if (free) {
+        free.light = s.light;
+        free.az = s.screenAngleDeg; free.el = s.elevationDeg; free.tan = s.tanAlpha;
+        free.w = 0;   // 淡入起点
+        targets.set(free, s);
+      }
+    }
+
+    const k = 1 - Math.exp(-dtMs / Math.max(cl.shadowAuto.tauMs, 1));
+    for (let i = 0; i < impls.length; i++) {
+      const slot = entry.slots[i];
+      const t = targets.get(slot);
+      if (t) {
+        const da = ((t.screenAngleDeg - slot.az + 540) % 360) - 180;   // 最短弧
+        slot.az += da * k;
+        slot.el += (t.elevationDeg - slot.el) * k;
+        slot.w += (t.weight - slot.w) * k;
+        slot.tan += (t.tanAlpha - slot.tan) * k;
+      } else {
+        slot.w += (0 - slot.w) * k;
+        if (slot.w < 0.005) slot.light = -2;   // 槽释放
+      }
+      const se = this.getSlotEnv(entry, i, env);
+      // planar 取向:angleRad = (key.azimuthDeg+180);slot.az 已是屏幕影子方向
+      se.key.azimuthDeg = slot.az - 180;
+      se.key.elevationDeg = slot.el;
+      // 浓度全自动:√份额(感知压缩,相对强弱)× 全局强度调制(绝对可见度总控)
+      se.shadow.darkness = Math.min(1, cl.shadowAuto.gain * Math.sqrt(Math.max(0, Math.min(slot.w, 1))));
+      // 影长=1/tan(仰角)自动(planar reach=H·length),封顶防拖满屏
+      const tanEl = Math.tan((Math.max(slot.el, 5) * Math.PI) / 180);
+      se.shadow.length = Math.min(2.5, Math.max(0.4, 1 / Math.max(tanEl, 0.05)));
+      // 模糊自动:做在剪影上,强度∝光源角尺寸 tanα
+      se.shadow.softness = Math.max(0.25, Math.min(1.2, slot.tan * 6));
+      // 接触斑=主槽,强度随全局 gain(自动,不再读手调 env.shadow.contact)
+      se.shadow.contact = i === 0 ? Math.min(1, 0.5 * cl.shadowAuto.gain) : 0;
+      // field 会覆盖 key 方向,auto 槽必须传 null 走本槽 env
+      const impl = impls[i] as IEntityShadow & { setShadowColor?: (c: [number, number, number]) => void };
+      impl.setShadowColor?.(cl.shadowAuto.color);
+      impl.update(entry.src, se, null);
+    }
+  }
+
+  /** 槽 env 覆盖对象:缓存复用,每帧从活 env 刷新标量再由调用方覆写方向/浓度/软度。 */
+  private getSlotEnv(entry: EntityShadowEntry, i: number, env: ResolvedLightEnv): ResolvedLightEnv {
+    entry.envSlots ??= [];
+    let se = entry.envSlots[i];
+    if (!se) {
+      se = {
+        key: { ...env.key },
+        ambient: env.ambient,
+        shadow: { ...env.shadow },
+        toneStrength: env.toneStrength,
+        toneEnabled: env.toneEnabled,
+        ao: env.ao,
+      };
+      entry.envSlots[i] = se;
+    }
+    se.key.color = env.key.color;
+    se.key.intensity = env.key.intensity;
+    se.ambient = env.ambient;
+    se.ao = env.ao;
+    Object.assign(se.shadow, env.shadow);
+    return se;
   }
 
   private makePlayerShadowSource(): ShadowSource {
@@ -2406,6 +2656,10 @@ export class Game {
     for (const entry of this.entityShadows.values()) {
       this.sceneDepthSystem.unregisterShadow(entry.shadow);
       entry.shadow.destroy();
+      for (const ex of entry.extra ?? []) {
+        this.sceneDepthSystem.unregisterShadow(ex);
+        ex.destroy();
+      }
     }
     this.entityShadows.clear();
   }
@@ -2646,24 +2900,7 @@ export class Game {
       this.player.setPerspectiveScale(this.perspectiveScaleResolver);
       this.interactionSystem.update(0);
 
-      const lightingOn = this.sceneDepthSystem.isLightingEnabled;
-      try {
-        const playerLift = 0.4 * this.player.sprite.getWorldSize().height;
-        this.playerDepthFilter = lightingOn
-          ? this.sceneDepthSystem.createLightingFilterForEntity(playerLift)
-          : this.sceneDepthSystem.createFilterForEntity();
-        if (this.playerDepthFilter) {
-          depthLog('Game', 'attaching entity filter to player, lighting=', lightingOn);
-          this.player.sprite.container.filters = [this.playerDepthFilter];
-        } else {
-          depthLog('Game', 'no entity filter for player (disabled or no data)');
-          this.player.sprite.container.filters = [];
-        }
-      } catch (e) {
-        depthError('Game', 'player filter FAILED', e);
-        this.playerDepthFilter = null;
-        this.player.sprite.container.filters = [];
-      }
+      this.attachPlayerSceneFilter();
 
       for (const npc of this.sceneManager.getCurrentNpcs()) {
         npc.setPerspectiveScale(this.perspectiveScaleResolver);
@@ -2747,17 +2984,80 @@ export class Game {
   }
 
   /** scene:ready 与 scene:entitiesRebuilt 共用：为 NPC 附加光照/深度遮挡滤镜。 */
+  /** 玩家场景滤镜:有烘焙载荷 → CHAR_FS 物理着色;否则旧管线(曲线/纯遮挡)。 */
+  private attachPlayerSceneFilter(): void {
+    const lightingOn = this.sceneDepthSystem.isLightingEnabled;
+    const baked = this.characterLighting.shadingResources;
+    try {
+      if (baked) {
+        const f = this.sceneDepthSystem.createBakedFilterForEntity(baked);
+        if (f) {
+          const info = this.player.sprite.getShadingFrameInfo();
+          if (info) f.setNormalTexture(buildNormalAtlas(info.source, info.cols, info.rows));
+        }
+        this.playerDepthFilter = f;
+      } else {
+        const playerLift = 0.4 * this.player.sprite.getWorldSize().height;
+        this.playerDepthFilter = lightingOn
+          ? this.sceneDepthSystem.createLightingFilterForEntity(playerLift)
+          : this.sceneDepthSystem.createFilterForEntity();
+      }
+      if (this.playerDepthFilter) {
+        depthLog('Game', 'attaching entity filter to player, lighting=', lightingOn, 'baked=', !!baked);
+        this.player.sprite.container.filters = [this.playerDepthFilter];
+      } else {
+        depthLog('Game', 'no entity filter for player (disabled or no data)');
+        this.player.sprite.container.filters = [];
+      }
+    } catch (e) {
+      depthError('Game', 'player filter FAILED', e);
+      this.playerDepthFilter = null;
+      this.player.sprite.container.filters = [];
+    }
+  }
+
+  /** 烘焙载荷异步就绪(或 F2 开关切换)后重挂角色滤镜:scene:ready 时载荷往往还在途。 */
+  private reattachBakedEntityFilters(): void {
+    if (!this.sceneManager.currentSceneData) return;
+    const old = this.playerDepthFilter;
+    if (old) this.sceneDepthSystem.removeFilter(old);
+    this.attachPlayerSceneFilter();
+    for (const npc of this.sceneManager.getCurrentNpcs()) {
+      const prev = npc.container.filters?.[0] as unknown as IEntityShadingFilter | undefined;
+      if (prev?._isDepthOcclusion) this.sceneDepthSystem.removeFilter(prev);
+      this.attachNpcSceneFilters(npc);
+    }
+    // 热点也随烘焙载荷/F2 开关切换在 CHAR_FS ↔ 旧遮挡间互换,与玩家/NPC 同步。
+    for (const h of this.sceneManager.getCurrentHotspots()) {
+      const prev = h.detachDepthOcclusionFilter();
+      if (prev) { this.sceneDepthSystem.removeFilter(prev); prev.destroy(); }
+      this.attachHotspotDepthFilter(h);
+    }
+    this.applyShadowAndAO();   // AO 广播补到新滤镜
+  }
+
   private attachNpcSceneFilters(npc: Npc): void {
     if (npc.def.renderRaw) { npc.container.filters = []; return; }
     const lightingOn = this.sceneDepthSystem.isLightingEnabled;
+    const baked = this.characterLighting.shadingResources;
     try {
-      const npcLift = 0.4 * npc.getWorldSize().height;
       const npcBlend = npc.def.occlusionBlendFactor;
-      const npcFilter = lightingOn
-        ? this.sceneDepthSystem.createLightingFilterForEntity(npcLift, npcBlend)
-        : this.sceneDepthSystem.createFilterForEntity(npcBlend);
+      let npcFilter: IEntityShadingFilter | null;
+      if (baked) {
+        const f = this.sceneDepthSystem.createBakedFilterForEntity(baked, npcBlend);
+        if (f) {
+          const info = npc.getShadingFrameInfo();
+          if (info) f.setNormalTexture(buildNormalAtlas(info.source, info.cols, info.rows));
+        }
+        npcFilter = f;
+      } else {
+        const npcLift = 0.4 * npc.getWorldSize().height;
+        npcFilter = lightingOn
+          ? this.sceneDepthSystem.createLightingFilterForEntity(npcLift, npcBlend)
+          : this.sceneDepthSystem.createFilterForEntity(npcBlend);
+      }
       if (npcFilter) {
-        depthLog('Game', 'attaching entity filter to NPC:', npc.id, 'lighting=', lightingOn);
+        depthLog('Game', 'attaching entity filter to NPC:', npc.id, 'lighting=', lightingOn, 'baked=', !!baked);
         npc.container.filters = [npcFilter];
       }
     } catch (e) {
@@ -2778,13 +3078,32 @@ export class Game {
     }
   }
 
-  /** scene:ready 与 scene:entitiesRebuilt 共用：带展示图的热点附加深度遮挡滤镜。 */
+  /**
+   * 热点展示图的场景滤镜:有烘焙载荷 → CHAR_FS 物理着色(与玩家/NPC 同一 albedo×E 管线);
+   * 否则旧遮挡滤镜(fallback)。热点展示图是单张静图 → 法线图集按 1×1 网格从展示纹理算。
+   * scene:ready / scene:entitiesRebuilt / 运行时换展示图三处共用,避免漂移。
+   */
+  private makeHotspotSceneFilter(h: Hotspot): IEntityShadingFilter | null {
+    const baked = this.characterLighting.shadingResources;
+    if (baked) {
+      const f = this.sceneDepthSystem.createBakedFilterForEntity(baked, h.def.occlusionBlendFactor);
+      if (f) {
+        const tex = h.getDisplayTexture();
+        if (tex) f.setNormalTexture(buildNormalAtlas(tex.source, 1, 1));
+      }
+      return f;
+    }
+    return this.sceneDepthSystem.createFilterForEntity(h.def.occlusionBlendFactor);
+  }
+
+  /** scene:ready 与 scene:entitiesRebuilt 共用：带展示图的热点附加场景滤镜(CHAR_FS 或旧遮挡)。 */
   private attachHotspotDepthFilter(h: Hotspot): void {
     if (!h.hasDepthDisplayImage()) return;
     try {
-      const hf = this.sceneDepthSystem.createFilterForEntity(h.def.occlusionBlendFactor);
+      const hf = this.makeHotspotSceneFilter(h);
       if (hf) {
-        depthLog('Game', 'attaching depth filter to hotspot display:', h.def.id);
+        depthLog('Game', 'attaching scene filter to hotspot display:', h.def.id,
+          'baked=', !!this.characterLighting.shadingResources);
         h.attachDepthOcclusionFilter(hf);
       }
     } catch (e) {
@@ -3472,9 +3791,9 @@ export class Game {
     h.setDisplayTexture(tex, displayImage.worldWidth, displayImage.worldHeight);
     if (h.hasDepthDisplayImage()) {
       try {
-        const hf = this.sceneDepthSystem.createFilterForEntity(h.def.occlusionBlendFactor);
+        const hf = this.makeHotspotSceneFilter(h);
         if (hf) {
-          depthLog('Game', 'setEntityField: reattach depth to hotspot display:', h.def.id);
+          depthLog('Game', 'setEntityField: reattach scene filter to hotspot display:', h.def.id);
           h.attachDepthOcclusionFilter(hf);
         }
       } catch (e) {
@@ -4089,6 +4408,7 @@ export class Game {
      *  不会在系统逐个销毁期间继续 moveTo 已销毁的实体（HMR 悬挂根因）。 */
     this.patrolGeneration++;
     this.npcPatrolEpoch.clear();
+    this.characterLighting.destroy();
 
     if (this.mainTick && this.renderer?.app?.ticker) {
       try {
@@ -4331,7 +4651,18 @@ export class Game {
           this.player.y,
           ex,
         );
+        const ps = this.player.sprite;
+        const pSize = ps.getWorldSize();
+        const pInfo = ps.getShadingFrameInfo();
+        this.driveBakedShading(this.playerDepthFilter, this.player.x, this.player.y, {
+          worldW: pSize.width,
+          worldH: pSize.height,
+          flipX: (pInfo?.flipX ?? false) !== (ps.container.scale.x < 0),
+          nrmRect: pInfo?.rect ?? null,
+        });
       }
+      const npcByContainer = new Map<unknown, Npc>();
+      for (const npc of this.sceneManager.getCurrentNpcs()) npcByContainer.set(npc.container, npc);
       for (const child of this.renderer.entityLayer.children) {
         const c = child as unknown as {
           filters?: readonly { _isDepthOcclusion?: boolean }[];
@@ -4348,6 +4679,15 @@ export class Game {
                 c.y,
                 ex,
               );
+              const npc = npcByContainer.get(child);
+              const size = npc?.getWorldSize();
+              const info = npc?.getShadingFrameInfo() ?? null;
+              this.driveBakedShading(f as unknown as IEntityShadingFilter, c.x, c.y, npc ? {
+                worldW: size!.width,
+                worldH: size!.height,
+                flipX: info?.flipX ?? false,
+                nrmRect: info?.rect ?? null,
+              } : null);
             }
           }
         }
@@ -4358,6 +4698,15 @@ export class Game {
         const footY = h.depthOcclusionFootWorldY();
         const ex = resolveDepthFloorOffsetBoost(zones, h.container.x, footY, this.flagStore, floorCondCtx);
         this.sceneDepthSystem.updateEntityDepthOcclusion(hf, h.container.x, footY, ex);
+        // 烘焙场景:热点也走 CHAR_FS,逐帧喂脚点/尺寸/法线(单张静图 → 整帧 rect)。
+        // 展示图翻转经 sprite.scale.x(滤镜外),法线图集为未翻转原图 → flipX 传当前朝向。
+        const size = h.getWorldSize();
+        this.driveBakedShading(hf, h.container.x, footY, {
+          worldW: size.width,
+          worldH: size.height,
+          flipX: h.getFacing() < 0,
+          nrmRect: [0, 0, 1, 1],
+        });
       }
     }
 

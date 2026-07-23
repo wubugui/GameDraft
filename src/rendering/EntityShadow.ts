@@ -35,8 +35,21 @@ uniform sampler2D uDepthMap;
 uniform sampler2D uCollisionMap;
 
 uniform float uDarkness;
+uniform vec3  uShadowColor;   // 全局阴影颜色(默认纯黑)
 uniform float uColEnabled;
 uniform float uOccEnabled;
+// cast 剪影 UV:片元内从世界坐标反解平行四边形参数(uUvMode=1)。
+// 曾走 aUV 顶点缓冲逐帧 update,GPU 端不生效(剪影被整张图集横扫成条纹,
+// 2026-07-22 白底渲染实证);contact 的静态 UV(uUvMode=0)不受影响。
+uniform float uUvMode;
+// 全用标量:vec 型 uniform 在 Mesh 路径的就地突变曾出现不同步(标量实证可靠)
+uniform float uShearX;     // 影子头端偏移(世界px)
+uniform float uShearY;
+uniform float uHalfW;      // 底边半宽
+uniform float uU0;         // 剪影帧 uv:u0/v0=脚(底), u1/v1=头(顶)
+uniform float uV0;
+uniform float uU1;
+uniform float uV1;
 uniform vec2  uSceneSize;
 uniform float uFootX;
 uniform float uFootY;
@@ -50,6 +63,8 @@ uniform float uFloorB;
 uniform float uFloorOffset;
 uniform float uTolerance;
 uniform float uOccBlend;
+uniform float uGroundFootD;    // 脚点行走面深度（实验室 uFootQ.z）
+uniform float uUseGroundFoot;  // 1=地面深度锚在行走面场上（否则用 floor 直线截距）
 uniform float uM_ppu;
 uniform float uM_cx;
 uniform float uM_cy;
@@ -61,10 +76,19 @@ uniform float uCol_cell;
 uniform float uCol_gw;
 uniform float uCol_gh;
 
+/** 地面深度：优先把 floor 斜率锚在实体脚下的行走面真值上（截距 uFloorB 在多层地面
+ *  场景可整体偏出 200+ 行；影子落地面与角色脚点必须同源，否则影子系统性错位）。 */
+float groundDepthAt(float syTex) {
+    if (uUseGroundFoot > 0.5) {
+        return uGroundFootD + uFloorA * (syTex - uFootY * uW2pY);
+    }
+    return uFloorA * syTex + uFloorB;
+}
+
 bool isCollisionAt(vec2 wp) {
     float sx = wp.x * uW2pX;
     float sy = wp.y * uW2pY;
-    float dFloor = uFloorA * sy + uFloorB;
+    float dFloor = groundDepthAt(sy);
     float px = (sx - uM_cx) / uM_ppu;
     float py = (uM_cy - sy) / uM_ppu;
     float cwx = uM_R00 * px + uM_R01 * py + uM_R02 * dFloor;
@@ -76,7 +100,16 @@ bool isCollisionAt(vec2 wp) {
 }
 
 void main(void) {
-    float sil = texture(uTexture, vUV).a;
+    vec2 uv = vUV;
+    if (uUvMode > 0.5) {
+        // 平行四边形反解:vWorld = foot + (s-0.5)·2hw·x̂ + t·off
+        float offY = abs(uShearY) < 1e-3 ? (uShearY < 0.0 ? -1e-3 : 1e-3) : uShearY;
+        float t = (vWorld.y - uFootY) / offY;
+        float s = ((vWorld.x - uFootX) - uShearX * t) / max(uHalfW * 2.0, 1e-3) + 0.5;
+        if (t < 0.0 || t > 1.0 || s < 0.0 || s > 1.0) { discard; }
+        uv = vec2(mix(uU0, uU1, s), mix(uV0, uV1, t));
+    }
+    float sil = texture(uTexture, uv).a;
     if (sil < 0.01) { discard; }
     float a = sil * uDarkness;
 
@@ -100,12 +133,12 @@ void main(void) {
             float dRaw = uInvert > 0.5 ? 1.0 - rawD : rawD;
             float sceneDepth = dRaw * uScale + uOffset;
             float syTex = vWorld.y * uW2pY;
-            float shadowDepth = uFloorA * syTex + uFloorB + uFloorOffset;
+            float shadowDepth = groundDepthAt(syTex) + uFloorOffset;
             if (sceneDepth + uTolerance < shadowDepth) { a *= uOccBlend; }
         }
     }
 
-    finalColor = vec4(0.0, 0.0, 0.0, a);
+    finalColor = vec4(uShadowColor, a);
 }
 `;
 
@@ -142,8 +175,14 @@ function makePlanarShader(ctx: ShadowSceneContext | null, texSource: TextureSour
     resources: {
       shadowUniforms: {
         uDarkness: f32(0.4),
+        uShadowColor: { value: new Float32Array([0, 0, 0]), type: 'vec3<f32>' },
         uColEnabled: f32(on && ctx!.collisionTexture ? 1 : 0),
         uOccEnabled: f32(on ? 1 : 0),
+        uUvMode: f32(colOcc ? 1 : 0),   // cast=片元反解 UV;contact=静态 vUV
+        uShearX: f32(0),
+        uShearY: f32(1),
+        uHalfW: f32(1),
+        uU0: f32(0), uV0: f32(1), uU1: f32(1), uV1: f32(0),
         uSceneSize: { value: new Float32Array([ctx?.sceneW ?? 1, ctx?.sceneH ?? 1]), type: 'vec2<f32>' },
         uFootX: f32(0),
         uFootY: f32(0),
@@ -157,6 +196,8 @@ function makePlanarShader(ctx: ShadowSceneContext | null, texSource: TextureSour
         uFloorOffset: f32(ctx?.floorOffset ?? 0),
         uTolerance: f32(ctx?.tolerance ?? 0),
         uOccBlend: f32(ctx?.occlusionBlendFactor ?? 0.28),
+        uGroundFootD: f32(0),
+        uUseGroundFoot: f32(0),
         uM_ppu: f32(ctx?.ppu ?? 1),
         uM_cx: f32(ctx?.cx ?? 0),
         uM_cy: f32(ctx?.cy ?? 0),
@@ -176,8 +217,13 @@ function makePlanarShader(ctx: ShadowSceneContext | null, texSource: TextureSour
 }
 
 function setU(shader: Shader, key: string, v: number): void {
-  const u = (shader.resources as Record<string, { uniforms?: Record<string, unknown> }>)['shadowUniforms']?.uniforms;
-  if (u) u[key] = v;
+  const grp = (shader.resources as Record<string, { uniforms?: Record<string, unknown>; update?: () => void }>)['shadowUniforms'];
+  if (grp?.uniforms) {
+    grp.uniforms[key] = v;
+    // Mesh 路径的 UniformGroup 靠 dirtyId 同步:不 update() 突变永远到不了 GPU
+    // (滤镜路径每帧强制同步无此坑;2026-07-22 剪影条纹实证)
+    grp.update?.();
+  }
 }
 
 /**
@@ -234,10 +280,10 @@ export class PlanarEntityShadow implements IEntityShadow {
     const w = Math.max(1, src.getWorldWidth());
     const H = Math.max(1, src.getWorldHeight());
 
-    // contact 椭圆 quad
+    // contact 椭圆 quad(0.55/0.26:帧宽多为透明边距,1.3 会出直径≈2×帧宽的巨晕)
     if (env.shadow.contact > 0 && env.shadow.contactSize > 0) {
-      const cw = w * 1.3 * env.shadow.contactSize;
-      const ch = w * 0.6 * env.shadow.contactSize;
+      const cw = w * 0.55 * env.shadow.contactSize;
+      const ch = w * 0.26 * env.shadow.contactSize;
       const cp = this.contactPositions;
       cp[0] = fx - cw / 2; cp[1] = fy - ch / 2;
       cp[2] = fx + cw / 2; cp[3] = fy - ch / 2;
@@ -282,17 +328,23 @@ export class PlanarEntityShadow implements IEntityShadow {
     const vBot = (fr.y + fr.height) / sh;
 
     const p = this.castPositions;
-    const uv = this.castUVs;
-    p[0] = fx - hw;        p[1] = fy;          uv[0] = u0; uv[1] = vBot; // BL 脚
-    p[2] = fx + hw;        p[3] = fy;          uv[2] = u1; uv[3] = vBot; // BR 脚
-    p[4] = fx + hw + offX; p[5] = fy + offY;   uv[4] = u1; uv[5] = vTop; // TR 头
-    p[6] = fx - hw + offX; p[7] = fy + offY;   uv[6] = u0; uv[7] = vTop; // TL 头
+    p[0] = fx - hw;        p[1] = fy;          // BL 脚
+    p[2] = fx + hw;        p[3] = fy;          // BR 脚
+    p[4] = fx + hw + offX; p[5] = fy + offY;   // TR 头
+    p[6] = fx - hw + offX; p[7] = fy + offY;   // TL 头
     this.castGeometry.getBuffer('aPosition').update();
-    this.castGeometry.getBuffer('aUV').update();
 
     setU(this.castShader, 'uDarkness', Math.max(0, Math.min(1, env.shadow.darkness)));
     setU(this.castShader, 'uFootX', fx);
     setU(this.castShader, 'uFootY', fy);
+    // 剪影 UV 走片元反解(uUvMode=1);顶点 aUV 缓冲逐帧 update 在 GPU 端不生效
+    setU(this.castShader, 'uShearX', offX);
+    setU(this.castShader, 'uShearY', offY);
+    setU(this.castShader, 'uHalfW', hw);
+    setU(this.castShader, 'uU0', u0);
+    setU(this.castShader, 'uV0', vBot);
+    setU(this.castShader, 'uU1', u1);
+    setU(this.castShader, 'uV1', vTop);
 
     const softness = env.shadow.softness;
     if (softness > 0) {
@@ -314,10 +366,32 @@ export class PlanarEntityShadow implements IEntityShadow {
   }
 
   /** 深度调参广播（contact shader 的 col/occ 恒关，深度参数无效，仅 cast 需要） */
+  /** 脚点行走面深度（Game 每帧随实体位置注入）；null = 无场，回落 floor 直线截距 */
+  setGroundFootDepth(v: number | null): void {
+    if (v === null || !Number.isFinite(v)) {
+      setU(this.castShader, 'uUseGroundFoot', 0);
+      return;
+    }
+    setU(this.castShader, 'uGroundFootD', v);
+    setU(this.castShader, 'uUseGroundFoot', 1);
+  }
+
   setDepthParams(tolerance: number, floorOffset: number, occlusionBlendFactor: number): void {
     setU(this.castShader, 'uTolerance', tolerance);
     setU(this.castShader, 'uFloorOffset', floorOffset);
     setU(this.castShader, 'uOccBlend', occlusionBlendFactor);
+  }
+
+  /** 全局阴影颜色(cast + contact 同色);逐帧由光源阴影系统广播。 */
+  setShadowColor(c: [number, number, number]): void {
+    for (const sh of [this.castShader, this.contactShader]) {
+      const grp = (sh.resources as Record<string, { uniforms?: Record<string, unknown>; update?: () => void }>)['shadowUniforms'];
+      if (grp?.uniforms) {
+        const a = grp.uniforms['uShadowColor'] as Float32Array;
+        a[0] = c[0]; a[1] = c[1]; a[2] = c[2];
+        grp.update?.();
+      }
+    }
   }
 
   destroy(): void {

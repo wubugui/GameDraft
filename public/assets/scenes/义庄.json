@@ -429,5 +429,51 @@
       "dialogueGraphId": "寻狗_管事义庄内",
       "dialogueCameraZoom": 1.45
     }
-  ]
+  ],
+  "depthConfig": {
+    "depth_map": "raw_depth_rg.png",
+    "collision_map": "collision.png",
+    "M": {
+      "R": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.7071067811865476,
+          -0.7071067811865475
+        ],
+        [
+          0.0,
+          0.7071067811865475,
+          0.7071067811865476
+        ]
+      ],
+      "ppu": 450.56,
+      "cx": 1024.0,
+      "cy": 571.5
+    },
+    "depth_mapping": {
+      "invert": false,
+      "scale": 3.3835249807357792,
+      "offset": -2.819219930267334
+    },
+    "shader": {
+      "depth_per_sy": 0.002219460227272727,
+      "floor_depth_A": -0.002233557160469798,
+      "floor_depth_B": 1.271873890077373
+    },
+    "collision": {
+      "x_min": -2.2727272510528564,
+      "z_min": -2.1791080561403238,
+      "cell_size": 0.028632124958915414,
+      "grid_width": 160,
+      "grid_height": 142,
+      "height_offset": 0.0
+    },
+    "depth_tolerance": 0.05,
+    "floor_offset": 0.0
+  }
 }

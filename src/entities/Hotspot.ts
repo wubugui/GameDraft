@@ -1,6 +1,6 @@
 import { BlurFilter, Container, Graphics, Sprite, Text, Texture, type Filter } from 'pixi.js';
 import type { HotspotDef } from '../data/types';
-import type { DepthOcclusionFilter } from '../rendering/DepthOcclusionFilter';
+import type { IEntityShadingFilter } from '../rendering/EntityLightingFilter';
 import {
   blurStrengthFromPixelDensityK,
   computePixelDensityK,
@@ -50,7 +50,7 @@ export class Hotspot {
   private runtimeDisplayFacingOverride: 'left' | 'right' | null = null;
   /** displayImage 世界高度；贴图为底中锚点，与 NPC/Player 脚底一致 */
   private _displayWorldHeight = 0;
-  private depthOcclusionFilter: DepthOcclusionFilter | null = null;
+  private depthOcclusionFilter: IEntityShadingFilter | null = null;
   /** 展示图专用；与 DepthOcclusionFilter 组合为 [density, depth]，深度实例引用不变 */
   private pixelDensityBlur: BlurFilter | null = null;
   private promptIcon: Container | null = null;
@@ -268,13 +268,13 @@ export class Hotspot {
    * 仅挂到 displaySprite，避免 E 提示等子节点被深度裁切。
    * 须在场景 depth 加载完成之后调用。
    */
-  attachDepthOcclusionFilter(filter: DepthOcclusionFilter | null): void {
+  attachDepthOcclusionFilter(filter: IEntityShadingFilter | null): void {
     this.depthOcclusionFilter = filter;
     this.rebuildDisplaySpriteFilters();
   }
 
   /** 场景卸载前由 Game 摘除并 destroy 滤镜 */
-  detachDepthOcclusionFilter(): DepthOcclusionFilter | null {
+  detachDepthOcclusionFilter(): IEntityShadingFilter | null {
     const f = this.depthOcclusionFilter;
     this.depthOcclusionFilter = null;
     this.rebuildDisplaySpriteFilters();
@@ -326,7 +326,7 @@ export class Hotspot {
     this.rebuildDisplaySpriteFilters();
   }
 
-  getDepthOcclusionFilter(): DepthOcclusionFilter | null {
+  getDepthOcclusionFilter(): IEntityShadingFilter | null {
     return this.depthOcclusionFilter;
   }
 

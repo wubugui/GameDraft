@@ -281,6 +281,13 @@ export class Npc implements ICutsceneActor {
     return this.container.scale.x < 0 ? -1 : 1;
   }
 
+  /** 烘焙着色驱动:委托 SpriteEntity(镜像并入容器符号,双重来源取或)。 */
+  getShadingFrameInfo(): ReturnType<SpriteEntity['getShadingFrameInfo']> {
+    const info = this.sprite?.getShadingFrameInfo() ?? null;
+    if (info && this.container.scale.x < 0) info.flipX = !info.flipX;
+    return info;
+  }
+
   getDisplayObject(): unknown {
     return this.container;
   }

@@ -7,6 +7,7 @@ import type { InventoryManager } from '../systems/InventoryManager';
 import type { DebugPanelUI } from '../ui/DebugPanelUI';
 import { NARRATIVE_DEBUG_SECTION_ID } from '../ui/DebugPanelUI';
 import type { DepthDebugVisualizer, BgDebugMode } from '../debug/DepthDebugVisualizer';
+import type { CharShadingParams } from '../rendering/CharacterShadingFilter';
 import type { SmellFormParams } from '../ui/smell/SmellIndicatorRenderer';
 
 /** F2 气味指示器调试：驱动味种 + 实时调烟形参数（只影响显示，不写盘/不动存档）。 */
@@ -72,6 +73,24 @@ export interface DebugToolsDeps {
   getDepthOcclusionBlendFactor: () => number;
   setDepthOcclusionBlendFactor: (factor: number) => void;
   depthOcclusionActive: () => boolean;
+  /** 遮挡口径读数：是否已接管行走面深度场 + 当前脚点偏置 */
+  getDepthFootModel: () => { groundField: boolean; footBias: number };
+  setDepthFootBias: (v: number) => void;
+  /** F2:角色物理着色(实验室 CHAR_FS 移植)全量参数;太阳方向独立,与阴影方位解耦 */
+  getCharLightingDebug: () => {
+    active: boolean; enabled: boolean; probes: number; lights: number;
+    hasVolumes: boolean;
+    params: CharShadingParams;
+    shadowAuto: { enabled: boolean; k: number; ambScale: number; tauMs: number; gain: number; ready: boolean };
+  } | null;
+  setCharLighting: (patch: {
+    enabled?: boolean;
+    params?: Partial<CharShadingParams>;
+    shadowAuto?: Partial<{ enabled: boolean; k: number; ambScale: number; tauMs: number; gain: number }>;
+  }) => void;
+  /** F2:probe 点云可视化(实验室查看器点云的游戏侧对应物) */
+  toggleCharProbeViz: () => boolean;
+  charProbeVizActive: () => boolean;
   /** F2：阴影/AO 模式与参数实时调试（仅影响渲染，不动存档/配置文件） */
   entityShadowActive: () => boolean;
   getEntityShadowDebug: () => { mode: string; toneEnabled: boolean; billboard: string; enabled: boolean; azimuthDeg: number; elevationDeg: number; lengthFactor: number; darkness: number; contact: number; contactSize: number; softSamples: number } | null;
@@ -860,14 +879,38 @@ export class DebugTools {
         extra = wrap;
       }
 
+      const fm = this.deps.getDepthFootModel();
       return {
         text:
           (active
             ? `遮挡混合系数（当前）: ${factor.toFixed(2)}`
             : '当前场景未加载 depthConfig 或深度纹理未就绪，无精灵深度遮挡。') +
+          (fm.groundField
+            ? `\n判据：实验室口径 = 相机平行 billboard @ 行走面脚点深度，偏置 ${fm.footBias.toFixed(3)}。`
+            : '\n判据：旧口径 = floor_depth_A/B 拟合直线 + depth_per_sy 倾斜面（本场景无 lighting/ground_d.png）。') +
           '\n不影响碰撞与存档。',
         actions: active
           ? [
+              ...(fm.groundField
+                ? [
+                    {
+                      label: `脚点偏置 ${fm.footBias.toFixed(3)} → 0`,
+                      fn: () => {
+                        this.deps.setDepthFootBias(0);
+                        debugPanelUI.log('脚点遮挡偏置 -> 0');
+                        debugPanelUI.refresh();
+                      },
+                    },
+                    {
+                      label: '脚点偏置复位 0.045（实验室值）',
+                      fn: () => {
+                        this.deps.setDepthFootBias(0.045);
+                        debugPanelUI.log('脚点遮挡偏置 -> 0.045');
+                        debugPanelUI.refresh();
+                      },
+                    },
+                  ]
+                : []),
               {
                 label: '系数归零（硬裁切）',
                 fn: () => {
@@ -887,6 +930,131 @@ export class DebugTools {
             ]
           : [],
         extra,
+      };
+    });
+
+    debugPanelUI.addSection('角色照明（烘焙）', () => {
+      const s = this.deps.getCharLightingDebug();
+      if (!s) {
+        return { text: '本场景无照明烘焙载荷（scenes/<id>/lighting/ 缺失、版本过旧或哈希过期）。在角色照明实验室烘焙并「导出照明」后生效。' };
+      }
+      const MODE_NAMES = ['RT', 'L1', 'L2', 'BIN'];
+      const wrap = document.createElement('div');
+      wrap.className = 'debug-dock__section-extra';
+      const valLine = document.createElement('div');
+      valLine.className = 'debug-dock__slider-hint';
+      const p = (): CharShadingParams => this.deps.getCharLightingDebug()!.params;
+      const patch = (part: Partial<CharShadingParams>): void =>
+        this.deps.setCharLighting({ params: part });
+      const sync = (): void => {
+        const cur = this.deps.getCharLightingDebug();
+        if (!cur) return;
+        const pp = cur.params;
+        valLine.textContent =
+          `着色 ${cur.enabled ? '开' : '关'}(${cur.active ? '生效' : '未生效'})　模式 ${MODE_NAMES[pp.mode] ?? pp.mode}`
+          + `${cur.hasVolumes ? '（RT可选）' : '（RT需dev体素·仅缓存）'}　`
+          + `probe ${cur.probes}　光源 ${cur.lights}\n`
+          + `NEE ${pp.nee ? '开' : '关'}　miss${pp.missMode ? '不计入' : `强度 ${pp.ambStrength.toFixed(2)}`}　折叠 ${pp.fold ? '开' : '关'}　`
+          + `β 2^${pp.beta.toFixed(1)}\n`
+          + `spp ${pp.spp}　步长 ${pp.step.toFixed(2)}　步数 ${pp.msteps}　隆起 ${pp.bulge.toFixed(2)}　压平 ${pp.flatten.toFixed(2)}　`
+          + `probe点云 ${this.deps.charProbeVizActive() ? '开' : '关'}\n`
+          + `影子跟灯 ${cur.shadowAuto.enabled ? (cur.shadowAuto.ready ? '开(生效)' : '开(不可用)') : '关'}　`
+          + `全局强度 ${cur.shadowAuto.gain.toFixed(2)}　槽 ${cur.shadowAuto.k}　环境稀释 ${cur.shadowAuto.ambScale.toFixed(2)}　平滑 ${Math.round(cur.shadowAuto.tauMs)}ms\n`
+          + `太阳 ${pp.sunEnabled ? '开' : '关'}　方位 ${Math.round(pp.sunAzimuthDeg)}°　仰角 ${Math.round(pp.sunElevationDeg)}°　强度 ${pp.sunIntensity.toFixed(2)}`;
+      };
+      const hint = document.createElement('div');
+      hint.className = 'debug-dock__slider-hint';
+      hint.textContent =
+        '实验室 CHAR_FS 逐像素移植:sprite=albedo,色=albedo×E/π×β(角色曝光唯一旋钮;'
+        + '实验室预览亮度 pgain 不进游戏);E 来自 probe 图集三线性(L1/L2/BIN)或实时 RT gather'
+        + '(spp/步长/步数只作用于 RT)。法线由 alpha 轮廓运行时鼓包现算。参数初值=场景配置'
+        + '(实验室导出照明时的面板值),此处改动纯测试、场景重载回配置。关闭着色=回落旧曲线管线。'
+        + '太阳方位独立(0°右/90°纵深/180°左/270°朝镜头),与「投影阴影」不耦合。只改运行时,不动存档。';
+
+      const mkSlider = (
+        min: number, max: number, stepV: number, get: () => number,
+        set: (v: number) => void, fmt: (v: number) => string,
+      ): HTMLDivElement => {
+        const row = document.createElement('div');
+        row.className = 'debug-dock__slider-row';
+        const range = document.createElement('input');
+        range.type = 'range';
+        range.min = String(min); range.max = String(max); range.step = String(stepV);
+        range.value = String(get());
+        const span = document.createElement('span');
+        span.className = 'debug-dock__slider-value';
+        span.textContent = fmt(get());
+        range.addEventListener('input', () => {
+          set(Number(range.value));
+          span.textContent = fmt(Number(range.value));
+          sync();
+        });
+        row.appendChild(range); row.appendChild(span);
+        return row;
+      };
+      wrap.appendChild(valLine);
+      wrap.appendChild(hint);
+      wrap.appendChild(mkSlider(-3, 3, 0.1, () => p().beta,
+        (v) => patch({ beta: v }), (v) => `曝光β 2^${v.toFixed(1)}`));
+      wrap.appendChild(mkSlider(0, 2, 0.05, () => p().ambStrength,
+        (v) => patch({ ambStrength: v }), (v) => `miss强度 ${v.toFixed(2)}`));
+      wrap.appendChild(mkSlider(0, 0.5, 0.01, () => p().bulge,
+        (v) => patch({ bulge: v }), (v) => `隆起 ${v.toFixed(2)}`));
+      wrap.appendChild(mkSlider(0, 1, 0.05, () => p().flatten,
+        (v) => patch({ flatten: v }), (v) => `压平 ${v.toFixed(2)}`));
+      wrap.appendChild(mkSlider(8, 192, 8, () => p().spp,
+        (v) => patch({ spp: Math.round(v) }), (v) => `RT spp ${Math.round(v)}`));
+      wrap.appendChild(mkSlider(0.5, 2, 0.05, () => p().step,
+        (v) => patch({ step: v }), (v) => `RT步长 ${v.toFixed(2)}`));
+      wrap.appendChild(mkSlider(40, 256, 8, () => p().msteps,
+        (v) => patch({ msteps: Math.round(v) }), (v) => `RT步数 ${Math.round(v)}`));
+      wrap.appendChild(mkSlider(0, 359, 1, () => p().sunAzimuthDeg,
+        (v) => patch({ sunAzimuthDeg: v }), (v) => `日方位 ${Math.round(v)}°`));
+      wrap.appendChild(mkSlider(5, 85, 1, () => p().sunElevationDeg,
+        (v) => patch({ sunElevationDeg: v }), (v) => `日仰角 ${Math.round(v)}°`));
+      wrap.appendChild(mkSlider(0, 3, 0.05, () => p().sunIntensity,
+        (v) => patch({ sunIntensity: v }), (v) => `日强度 ${v.toFixed(2)}`));
+      const sa = (): { enabled: boolean; k: number; ambScale: number; tauMs: number; gain: number; ready: boolean } =>
+        this.deps.getCharLightingDebug()!.shadowAuto;
+      const patchSa = (part: Partial<{ enabled: boolean; k: number; ambScale: number; tauMs: number; gain: number }>): void =>
+        this.deps.setCharLighting({ shadowAuto: part });
+      wrap.appendChild(mkSlider(0, 4, 0.1, () => sa().gain,
+        (v) => patchSa({ gain: v }), (v) => `全局阴影强度 ${v.toFixed(1)}`));
+      wrap.appendChild(mkSlider(1, 3, 1, () => sa().k,
+        (v) => patchSa({ k: Math.round(v) }), (v) => `影子槽 ${Math.round(v)}`));
+      wrap.appendChild(mkSlider(0, 4, 0.1, () => sa().ambScale,
+        (v) => patchSa({ ambScale: v }), (v) => `环境稀释 ${v.toFixed(1)}`));
+      wrap.appendChild(mkSlider(40, 600, 10, () => sa().tauMs,
+        (v) => patchSa({ tauMs: v }), (v) => `影子平滑 ${Math.round(v)}ms`));
+      sync();
+
+      const btn = (label: string, fn: () => void): { label: string; fn: () => void; noRefresh: boolean } => ({
+        label,
+        noRefresh: true,
+        fn: () => { fn(); sync(); },
+      });
+      return {
+        text: '',
+        extra: wrap,
+        actions: [
+          btn('着色 开/关', () => this.deps.setCharLighting({ enabled: !this.deps.getCharLightingDebug()?.enabled })),
+          btn('模式 RT/L1/L2/BIN', () => {
+            // 实时 RT 对比:cache(L1/L2/BIN) ↔ RT(0) 同帧切换同一角色即对比。
+            // RT 需 dev 体素卷;未载(生产/未开 dev)则跳过 0,只在缓存三档循环。
+            let next = (p().mode + 1) % 4;
+            if (next === 0 && !this.deps.getCharLightingDebug()?.hasVolumes) next = 1;
+            patch({ mode: next });
+          }),
+          btn('NEE 开/关', () => patch({ nee: !p().nee })),
+          btn('miss不计入 开/关', () => patch({ missMode: !p().missMode })),
+          btn('折叠 开/关', () => patch({ fold: !p().fold })),
+          btn('法线显示 开/关', () => patch({ showNormals: !p().showNormals })),
+          btn('probe点云 开/关', () => this.deps.toggleCharProbeViz()),
+          btn('太阳 开/关', () => patch({ sunEnabled: !p().sunEnabled })),
+          btn('影子跟灯 开/关', () => this.deps.setCharLighting({
+            shadowAuto: { enabled: !this.deps.getCharLightingDebug()?.shadowAuto.enabled },
+          })),
+        ],
       };
     });
 

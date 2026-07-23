@@ -74,9 +74,9 @@ def _json_lang_issues(project_root: Path) -> list[Issue]:
 def _lighting_payload_issues(project_root: Path) -> list[Issue]:
     """角色照明烘焙载荷防腐门(character_lighting_lab 导出物,P1 数据通道)。
 
-    只对存在 lighting/ 目录的场景生效:①lighting.json 结构齐全;②三份 probe bin
-    与 ground_d.png 在盘且尺寸吻合 probe 网格;③背景内容哈希一致——背景重画而
-    烘焙未跟上时记 error(运行时同样会据此禁用,防"静默过期"照明)。"""
+    只对存在 lighting/ 目录的场景生效:①lighting.json 结构齐全(v2 含 vol 块);
+    ②probe 图集/valid/体素卷/ground_d.png 在盘且尺寸吻合网格;③背景内容哈希
+    一致——背景重画而烘焙未跟上时记 error(运行时同样据此禁用,防静默过期)。"""
     import hashlib
     import json as _json
 
@@ -85,7 +85,7 @@ def _lighting_payload_issues(project_root: Path) -> list[Issue]:
     if not scenes_dir.is_dir():
         return out
     required = {"version", "background_sha1", "work", "cal", "world",
-                "probes", "ambient_sh", "lights", "ground_d"}
+                "probes", "vol", "ambient_sh", "lights", "ground_d", "shading"}
     for lj in sorted(scenes_dir.glob("*/lighting/lighting.json")):
         scene = lj.parent.parent.name
         tag = f"scenes/{scene}/lighting"
@@ -100,9 +100,16 @@ def _lighting_payload_issues(project_root: Path) -> list[Issue]:
             continue
         pr = payload["probes"]
         pn = int(pr.get("nx", 0)) * int(pr.get("ny", 0)) * int(pr.get("nz", 0))
-        expect = {"probes_l2.bin": pn * 9 * 4 * 2,
-                  "probes_l2amb.bin": pn * 9 * 3 * 2,
-                  "probes_l2nee.bin": pn * 9 * 3 * 2}
+        vol = payload.get("vol") or {}
+        vol_bytes = (int(vol.get("tiles_x", 0)) * int(vol.get("nx", 0))
+                     * int(vol.get("tiles_y", 0)) * int(vol.get("ny", 0)) * 4 * 2)
+        # atlas 布局 = 查看器 atlas4():每 probe 一行,列块 [base+cov|amb|emit|nee]
+        expect = {"atlas_l1.bin": pn * 4 * 4 * 4 * 2,
+                  "atlas_l2.bin": pn * 9 * 4 * 4 * 2,
+                  "atlas_bin.bin": pn * 64 * 4 * 4 * 2,
+                  "probes_valid.bin": pn,
+                  "vol_rad.bin": vol_bytes,
+                  "vol_emit.bin": vol_bytes}
         for fname, size in expect.items():
             f = lj.parent / fname
             if not f.exists():

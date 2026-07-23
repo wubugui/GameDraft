@@ -19,6 +19,14 @@ export interface IEntityShadingFilter extends Filter {
   setFloorOffsetExtra(v: number): void;
   setTolerance(v: number): void;
   setOcclusionBlendFactor(v: number): void;
+  /**
+   * 脚点行走面深度（实验室 `uFootQ.z`）。非 null 时遮挡改走实验室口径：
+   * 整片 sprite 用「相机平行 billboard @ 脚点深度」判，不再用 floor 直线 + 倾斜面。
+   * 传 null 回落旧口径（无烘焙场景）。
+   */
+  setFootDepthQ(v: number | null): void;
+  /** 脚点遮挡偏置（实验室常数 0.045） */
+  setFootBias(v: number): void;
   setDebug(on: boolean): void;
   setCollisionTexture(tex: Texture): void;
   /** 仅 EntityLightingFilter:色调融入强度(独立开关) */
@@ -89,6 +97,9 @@ uniform float uFloorOffsetExtra;
 uniform float uTolerance;
 uniform float uOcclusionBlendFactor;
 uniform float uDebug;
+uniform float uFootDepthQ;     // 脚点行走面深度（实验室 uFootQ.z）
+uniform float uUseFootDepth;   // 1=实验室 billboard 口径，0=旧 floor 直线 + 倾斜面
+uniform float uFootBias;       // 实验室 0.045
 
 // 光照
 uniform vec3  uKeyColor;
@@ -118,10 +129,18 @@ void main(void) {
             float rawDepth = (depthSample.r * 255.0 * 256.0 + depthSample.g * 255.0) / 65535.0;
             float d_raw = uInvert > 0.5 ? 1.0 - rawDepth : rawDepth;
             float sceneDepth = d_raw * uScale + uOffset;
-            float syTexFoot = uEntityFootWorldY * uWorldToPixelY;
-            float syTex = wy * uWorldToPixelY;
-            float d_base = uFloorA * syTexFoot + uFloorB + uFloorOffset + uFloorOffsetExtra;
-            float spriteDepth = d_base + uDepthPerSy * (syTex - syTexFoot);
+            float spriteDepth;
+            if (uUseFootDepth > 0.5) {
+                // 实验室 CHAR_FS 口径：整片 sprite = 相机平行 billboard @ 脚点行走面深度。
+                // 倾斜面（depth_per_sy × 屏幕行差）刻意不做——它把未标定的高度轴误差
+                // 全堆到上半身，正是 pop-through / 腰斩的来源。
+                spriteDepth = uFootDepthQ + uFloorOffset + uFloorOffsetExtra - uFootBias;
+            } else {
+                float syTexFoot = uEntityFootWorldY * uWorldToPixelY;
+                float syTex = wy * uWorldToPixelY;
+                float d_base = uFloorA * syTexFoot + uFloorB + uFloorOffset + uFloorOffsetExtra;
+                spriteDepth = d_base + uDepthPerSy * (syTex - syTexFoot);
+            }
             occluded = sceneDepth + uTolerance < spriteDepth;
         }
     }
@@ -139,7 +158,7 @@ void main(void) {
 
     vec3 rgb = color.rgb; // Pixi 预乘 alpha
 
-    // ---------- 色调融入：脚部(略抬高)采样 probe → 保亮度白平衡 ----------
+    // ---------- 色调:probe 保亮度白平衡(光环境曲线管线) ----------
     if (uToneStrength > 1e-4) {
         float su = clamp(uEntityFootWorldX / max(uSceneSize.x, 1e-3), 0.0, 1.0);
         float sv = clamp((uEntityFootWorldY - uSampleLiftWorld) / max(uSceneSize.y, 1e-3), 0.0, 1.0);
@@ -217,6 +236,9 @@ export class EntityLightingFilter extends Filter implements IEntityShadingFilter
           uTolerance: { value: cfg?.depth_tolerance ?? 0, type: 'f32' },
           uOcclusionBlendFactor: { value: 0, type: 'f32' },
           uDebug: { value: 0, type: 'f32' },
+          uFootDepthQ: { value: 0, type: 'f32' },
+          uUseFootDepth: { value: 0, type: 'f32' },
+          uFootBias: { value: 0.045, type: 'f32' },
 
           uKeyColor: { value: new Float32Array(lightEnv.key.color), type: 'vec3<f32>' },
           uKeyIntensity: { value: lightEnv.key.intensity, type: 'f32' },
@@ -298,6 +320,19 @@ export class EntityLightingFilter extends Filter implements IEntityShadingFilter
   setOcclusionBlendFactor(v: number): void {
     const u = this._lu;
     if (u) u['uOcclusionBlendFactor'] = Math.min(1, Math.max(0, v));
+  }
+
+  setFootDepthQ(v: number | null): void {
+    const u = this._lu;
+    if (!u) return;
+    if (v === null || !Number.isFinite(v)) { u['uUseFootDepth'] = 0; return; }
+    u['uFootDepthQ'] = v;
+    u['uUseFootDepth'] = 1;
+  }
+
+  setFootBias(v: number): void {
+    const u = this._lu;
+    if (u) u['uFootBias'] = Math.max(0, v);
   }
 
   /** 色调融入强度（与阴影模式解耦的独立开关：关时传 0） */

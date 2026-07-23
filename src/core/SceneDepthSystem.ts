@@ -6,12 +6,21 @@ import {
   EntityLightingFilter,
   type IEntityShadingFilter,
 } from '../rendering/EntityLightingFilter';
+import {
+  CharacterShadingFilter,
+  type CharShadingSceneResources,
+} from '../rendering/CharacterShadingFilter';
 import type { ResolvedLightEnv } from '../rendering/lightEnv';
 import type { ShadowSceneContext, IEntityShadow } from '../rendering/entityShadowTypes';
 import { depthLog, depthError } from './depthLog';
 import { sceneRuntimeAssetUrl } from './projectPaths';
+import { sampleGroundFieldWorld, type GroundDepthField } from '../utils/groundDepthField';
 
 const T = 'DepthSystem';
+
+/** 实验室 CHAR_FS 的遮挡偏置常数（`dFront < uFootQ.z - .045`）：
+ *  脚点深度直接取自行走面场，残差≈0，这点余量用来吃掉采样/量化噪声。 */
+const LAB_OCCLUSION_BIAS = 0.045;
 
 export class SceneDepthSystem implements IGameSystem {
     private enabled = false;
@@ -37,6 +46,12 @@ export class SceneDepthSystem implements IGameSystem {
     private _floorOffset = 0;
     /** F2 可改；默认半透明混合（非硬裁切），与地图预乘合成 */
     private _occlusionBlendFactor = 0.28;
+    /** 实验室口径的脚点遮挡偏置（F2 可改） */
+    private _footBias = LAB_OCCLUSION_BIAS;
+
+    /** 行走面深度场（照明载荷带来，Game 在就绪/卸载时注入）：遮挡脚点与碰撞反投影的地面真值。
+     *  为 null 时全部回落旧的 floor_depth_A/B 直线口径（无烘焙场景逐字节零回归）。 */
+    private groundField: GroundDepthField | null = null;
 
     private R00 = 0; private R01 = 0; private R02 = 0;
     private R10 = 0; private R11 = 0; private R12 = 0;
@@ -78,6 +93,31 @@ export class SceneDepthSystem implements IGameSystem {
             if (!this.blendOverriddenFilters.has(f)) f.setOcclusionBlendFactor(c);
         }
         this.broadcastDepthParamsToShadows();
+    }
+
+    /** 脚点遮挡偏置（实验室 0.045；仅在有行走面场时生效） */
+    get footBias(): number { return this._footBias; }
+    set footBias(v: number) {
+        this._footBias = Math.max(0, Number(v) || 0);
+        for (const f of this.filters) f.setFootBias?.(this._footBias);
+    }
+
+    /**
+     * 注入/清除行走面深度场。单一所有者：场由 CharacterLightingSystem 载入并持有，
+     * 本系统只借用只读引用；载荷卸载时 Game 必须传 null（律5 生命周期对称）。
+     */
+    setGroundDepthField(field: GroundDepthField | null): void {
+        this.groundField = field;
+        depthLog(T, 'groundDepthField', field ? `${field.w}x${field.h}` : 'cleared');
+    }
+
+    get hasGroundDepthField(): boolean { return this.groundField !== null; }
+
+    /** 场景世界坐标处的行走面深度；无场返回 null（调用方回落旧直线口径） */
+    sampleGroundDepth(worldX: number, worldY: number): number | null {
+        const f = this.groundField;
+        if (!f) return null;
+        return sampleGroundFieldWorld(f, this.sceneW, this.sceneH, worldX, worldY);
     }
 
     /** 解析实体级遮挡混合系数：有限数则钳到 [0,1] 作为覆盖，否则回落场景默认（不覆盖） */
@@ -222,6 +262,8 @@ export class SceneDepthSystem implements IGameSystem {
         this.lightingEnabled = false;
         this.probeSource = null;
         this.lightEnv = null;
+        // 场归 CharacterLightingSystem 所有，这里只断引用（防跨场景采到上一张图的地面）
+        this.groundField = null;
     }
 
     /**
@@ -317,8 +359,9 @@ export class SceneDepthSystem implements IGameSystem {
         const sx = worldX * this.worldToPixelX;
         const sy = worldY * this.worldToPixelY;
 
-        // 像素坐标 → 伪3D空间 → 碰撞网格（逻辑不变）
-        const dFloor = this.floorA * sy + this.floorB;
+        // 像素坐标 → 伪3D空间 → 碰撞网格。
+        // 地面深度优先取行走面场（非平面真值）；无场才回落 floor 直线。
+        const dFloor = this.sampleGroundDepth(worldX, worldY) ?? (this.floorA * sy + this.floorB);
         const px = (sx - this.cx) / this.ppu;
         const py = (this.cy - sy) / this.ppu;
 
@@ -342,6 +385,7 @@ export class SceneDepthSystem implements IGameSystem {
             const blend = this.resolveEntityBlend(occlusionBlendOverride);
             f.setOcclusionBlendFactor(blend.value);
             if (blend.overridden) this.blendOverriddenFilters.add(f);
+            f.setFootBias(this._footBias);
             this.filters.push(f);
             depthLog(T, 'filter created, sceneSize (rendered):', this.sceneW, 'x', this.sceneH, 'total:', this.filters.length);
             return f;
@@ -374,10 +418,43 @@ export class SceneDepthSystem implements IGameSystem {
                 f.setOcclusionBlendFactor(blend.value);
                 if (blend.overridden) this.blendOverriddenFilters.add(f);
             }
+            f.setFootBias(this._footBias);
             this.filters.push(f);
             return f;
         } catch (e) {
             depthError(T, 'createLightingFilter FAILED', e);
+            return null;
+        }
+    }
+
+    /**
+     * 为实体创建「烘焙着色滤镜」(实验室 CHAR_FS 移植:albedo×E 逐像素物理着色)。
+     * 资源由 CharacterLightingSystem 载入;此处只负责组装遮挡上下文与注册驱动列表
+     * (与 createLightingFilterForEntity 同型)。游戏侧 AO 经 applyShadowFilterToneAO
+     * 广播命中 setAO;tone 无 setter=淘汰,不会被旧曲线写入。
+     */
+    createBakedFilterForEntity(
+        scene: CharShadingSceneResources,
+        occlusionBlendOverride?: number,
+    ): CharacterShadingFilter | null {
+        try {
+            const f = CharacterShadingFilter.createForEntity({
+                depthTexture: this.enabled ? this.depthTexture : null,
+                cfg: this.enabled ? this.config : null,
+                scene,
+            });
+            f.setSceneSize(this.sceneW, this.sceneH);
+            f.setWorldToPixel(this.worldToPixelX, this.worldToPixelY);
+            if (this.enabled) {
+                const blend = this.resolveEntityBlend(occlusionBlendOverride);
+                f.setOcclusionBlendFactor(blend.value);
+                if (blend.overridden) this.blendOverriddenFilters.add(f);
+            }
+            f.setFootBias(this._footBias);
+            this.filters.push(f);
+            return f;
+        } catch (e) {
+            depthError(T, 'createBakedFilter FAILED', e);
             return null;
         }
     }
@@ -442,6 +519,9 @@ export class SceneDepthSystem implements IGameSystem {
         filter.setEntityFootY(footWorldY);
         filter.setEntityFootX?.(footWorldX);
         filter.setFloorOffsetExtra(floorOffsetExtra);
+        // 实验室口径:遮挡按「相机平行 billboard @ 脚点深度」判,脚深度取行走面场真值。
+        // 无场时传 null → 滤镜回落旧的 floor 直线 + 倾斜面。
+        filter.setFootDepthQ?.(this.sampleGroundDepth(footWorldX, footWorldY));
         // 按时间节流：按调用数取模在多实体场景下频率随实体数放大，会刷屏。
         const now = performance.now();
         if (now - this._lastFootLogMs >= 5000) {

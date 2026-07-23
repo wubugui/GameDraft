@@ -4,6 +4,9 @@ import numpy as np
 from PIL import Image
 import pytest
 
+# 旧 scene_depth_editor 已弃用(由 tools/character_lighting_lab 取代):保留代码但退出回归。
+pytestmark = pytest.mark.skip(reason="scene_depth_editor deprecated, superseded by character_lighting_lab")
+
 from tools.scene_depth_editor.hdr_reconstruction import (
     HDRSettings,
     PREVIEW_EV_HEATMAP,

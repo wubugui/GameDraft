@@ -62,5 +62,51 @@
       "dialogueGraphId": "寻狗_城门汇合",
       "dialogueCameraZoom": 1.45
     }
-  ]
+  ],
+  "depthConfig": {
+    "depth_map": "raw_depth_rg.png",
+    "collision_map": "collision.png",
+    "M": {
+      "R": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.7071067811865476,
+          -0.7071067811865475
+        ],
+        [
+          0.0,
+          0.7071067811865475,
+          0.7071067811865476
+        ]
+      ],
+      "ppu": 450.56,
+      "cx": 1024.0,
+      "cy": 571.5
+    },
+    "depth_mapping": {
+      "invert": false,
+      "scale": 3.86239334602356,
+      "offset": -2.513248307800293
+    },
+    "shader": {
+      "depth_per_sy": 0.002219460227272727,
+      "floor_depth_A": -0.0020134907259395053,
+      "floor_depth_B": 1.0913059062129444
+    },
+    "collision": {
+      "x_min": -2.2727272510528564,
+      "z_min": -1.8783403901464577,
+      "cell_size": 0.028544155458875835,
+      "grid_width": 160,
+      "grid_height": 131,
+      "height_offset": 0.0
+    },
+    "depth_tolerance": 0.05,
+    "floor_offset": 0.0
+  }
 }

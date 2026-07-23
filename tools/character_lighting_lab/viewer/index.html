@@ -7,7 +7,8 @@
 :root{--bg:#101418;--fg:#d8dde2;--mut:#8b939b;--acc:#e0764a;--line:#2a3138;--ok:#3dbb6e;--blue:#5b9dd9}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:13px/1.5 "PingFang SC",system-ui,sans-serif;display:flex;height:100vh;overflow:hidden}
-#stage{flex:1;display:flex;align-items:center;justify-content:center;min-width:0;position:relative;background:#0a0d10}
+#stage{flex:1;display:flex;flex-direction:column;min-width:0;background:#0a0d10}
+#stage_main{flex:1;display:flex;align-items:center;justify-content:center;min-height:0;position:relative}
 canvas#gl{max-width:100%;max-height:100%;outline:none}
 #hud{position:absolute;left:10px;top:8px;font:12px ui-monospace,monospace;color:#fff;
   background:#000a;padding:4px 10px;border-radius:4px;pointer-events:none;white-space:pre;z-index:5}
@@ -41,43 +42,119 @@ button#rebuild.dirty{animation:pulse 1.2s infinite}
 #hist{width:100%;height:64px;background:#0d1114;border:1px solid var(--line);border-radius:4px}
 .keys{font-size:11px;color:var(--mut);line-height:1.7;margin-top:6px}
 .keys b{color:var(--fg);font-weight:600}
+#preview_bar{flex:none;height:150px;display:flex;align-items:center;gap:12px;padding:8px 12px;
+  background:#0d1114;border-top:1px solid var(--line)}
+.pv{display:flex;flex-direction:column}
+.pv .pvl{font-size:11px;color:var(--fg);margin-bottom:3px}
+.pv .pvm{font-size:10px;color:var(--mut);margin-left:4px}
+.pv canvas{display:block;width:200px;height:112px;border:1px solid var(--line);border-radius:3px;background:#000}
+.subh{font-size:11px;font-weight:700;color:var(--acc);margin:10px 0 3px;padding-bottom:2px;border-bottom:1px solid var(--line);letter-spacing:.5px}
+.subh:first-of-type{margin-top:4px}
+.subh .hint{font-weight:400;color:var(--mut);letter-spacing:0;margin-left:5px}
+#preview_note{flex:1;min-width:0;font-size:11px;color:var(--mut);line-height:1.55;align-self:stretch;padding-top:16px}
+#preview_note b{color:var(--acc)}
+/* probe 检视面板:展开图 + 射线图 */
+#probe_sec .pbl{font-size:11px;color:var(--fg);margin:7px 0 2px}
+#probe_sec .pbl span{color:var(--mut);font-size:10px;margin-left:4px}
+#probe_sec canvas{display:block;width:100%;height:auto;border:1px solid var(--line);border-radius:3px;background:#000}
+#pb_info{font:11px/1.5 ui-monospace,monospace;color:var(--mut);white-space:pre-wrap;margin:2px 0 6px}
+#pb_axis{font-size:10px;color:var(--mut);line-height:1.5;margin-top:5px}
+#pb_close{width:auto;padding:0 7px;float:right;margin-top:-2px;color:var(--mut)}
+#scene_info{font-size:11px;color:var(--mut);line-height:1.55;margin:3px 0 0}
+#scene_info b{color:var(--acc)}
+#scene_info .warn{color:#e0764a;font-weight:600}
 </style>
 </head>
 <body>
-<div id="stage"><canvas id="gl" tabindex="0"></canvas><div id="hud"></div></div>
+<div id="stage">
+  <div id="stage_main"><canvas id="gl" tabindex="0"></canvas><div id="hud"></div></div>
+  <div id="preview_bar">
+    <div class="pv"><div class="pvl">HDR 场景 <span class="pvm">Reinhard·trace 实际吃的</span></div><canvas id="thumb_hdr" width="200" height="112"></canvas></div>
+    <div class="pv"><div class="pvl">光源分割图 <span class="pvm" style="color:var(--acc)">emit=rad×语义mask·◯=surfel</span></div><canvas id="thumb_lights" width="200" height="112"></canvas></div>
+    <div class="pv"><div class="pvl">HDR 提升场 <span class="pvm">当前方法逐像素提升·全黑=没提亮</span></div><canvas id="thumb_gain" width="200" height="112"></canvas></div>
+    <div id="preview_note"></div>
+  </div>
+</div>
 <div id="panel">
   <div id="topbar">
     <h1>角色照明 · 伪世界 v2</h1>
-    <label title="切换已构建的场景,数据各自独立缓存"><span class="k">场景</span><select id="scene"></select></label>
+    <label title="工程里的**全部**游戏场景(扫 public/assets/scenes/*.json)。○=还没烘过,选中直接点下面的橙色按钮就地烘;背景图/落点全部由场景 id 自动推导,不用选文件"><span class="k">场景</span><select id="scene"></select></label>
+    <div id="scene_info"></div>
     <div class="views">
       <button data-v="0" class="on" title="原画视角:角色行走+实时着色">2D 场景</button>
-      <button data-v="1" title="正交轨道相机检视重建的伪世界 mesh">3D 检视</button>
+      <button data-v="1" title="进入重建的伪世界:默认第一人称漫游(WASD+拖动看向),也可切轨道">3D 检视</button>
     </div>
+  </div>
+
+  <div class="sec" id="probe_sec" style="display:none">
+    <div class="st">⑥ probe 检视 <b id="pb_title">—</b>
+      <button id="pb_close" title="取消选中">×</button></div>
+    <div class="sd">勾「probe」后:3D 里<b>点圆点</b>选中,2D 里 <b>Alt/Shift+点</b>选(普通点击留给瞬移)。本面板<b>纯可视化</b>:不改任何烘焙数值,也不导出。</div>
+    <div id="pb_info"></div>
+    <label title="用哪套基函数重建这颗 probe 的 E(n)——和②照明模式同一套解码,可直接对比 L1/L2/BIN 的截断损失"><span class="k">基函数</span><select id="pb_basis">
+      <option value="0">跟随②模式(RT→L2)</option>
+      <option value="1">L1(4系数)</option>
+      <option value="2">L2(9系数)</option>
+      <option value="3">BIN(8×8 octa)</option>
+    </select></label>
+    <label title="只作用于本面板四张图的显示曝光(与 probe 点云亮度、全局预览亮度都独立),不进任何物理量"><span class="k">可视化亮度</span><input type="range" id="pb_gain" min="-4" max="12" step="0.25" value="0"><span class="v" id="pb_gain_v"></span></label>
+    <label title="选中的 probe 在 3D/2D 视图里画出它的采样射线(黄=命中 橙=折叠后命中 蓝=miss)"><span class="k">画出射线</span><input type="checkbox" id="pb_rays" checked style="flex:none"><span class="v">3D/2D</span></label>
+
+    <div class="pbl">① irradiance cache E(n) <span>当前基函数重建·经纬展开</span></div>
+    <canvas id="pb_irr" width="160" height="80"></canvas>
+    <div class="pbl">② 亮度分层 <span>曝光后按 1EV 分带·洋红=撞顶</span></div>
+    <canvas id="pb_zone" width="160" height="80"></canvas>
+    <div class="pbl">③ 射线命中 <span>色=命中距离 蓝=miss 灰纹=折叠</span></div>
+    <canvas id="pb_hit" width="128" height="64"></canvas>
+    <div class="pbl">④ 命中辐射 L(ω) <span>射线真正看见的东西(E 的被积函数)</span></div>
+    <canvas id="pb_rad" width="128" height="64"></canvas>
+    <div id="pb_axis">横轴=水平一圈:<b>中=朝相机(−z)</b> 左=−x 右=+x 两端=背向相机;纵轴=上(+y)→下(−y)。<br>
+      ①②是 cache 里存的 E(n)(已含余弦卷积);③④是<b>现场重追</b>同一颗 probe 的射线(与烘焙同 step/fold),用来对账 cache 和几何。</div>
   </div>
 
   <div class="sec">
     <div class="st">① 重建 <b>(几何 + 重烘光照,点按钮才生效)</b></div>
-    <div class="sd">下面这些参数改完<b>必须点橙色按钮</b>重跑离线管线(深度标定→mesh→体素→probe 全部重烘,约 10 秒)。按钮闪烁 = 有改动未应用。</div>
+    <div class="sd"><b style="color:var(--acc)">HDR辐射恢复那组(恢复方法/方法参数/最大EV)拖动即时预览左下三张图,不用重烘</b>——探索够了再点重烘写盘。几何/probe 参数改完才必须<b>点底部橙色按钮</b>重跑管线(约 10 秒,深度/SAM3 已缓存)。按钮闪烁 = 有改动未应用。</div>
+
+    <div class="subh">几何 / 标定 <span class="hint">深度重建与世界尺度</span></div>
     <label title="相机俯视角,决定世界竖直方向"><span class="k">俯角°</span><input type="range" id="rb_pitch" min="20" max="70" step="1" value="45"><span class="v" id="rb_pitch_v"></span></label>
     <label title="像素/世界单位比例,决定世界尺度(影响角色相对大小)"><span class="k">ppu比例</span><input type="range" id="rb_ppu" min="0.08" max="0.4" step="0.01" value="0.22"><span class="v" id="rb_ppu_v"></span></label>
+    <label title="相机方位角:绕竖轴旋转世界(默认 0)"><span class="k">方位角°</span><input type="range" id="rb_az" min="-45" max="45" step="1" value="0"><span class="v" id="rb_az_v"></span></label>
+    <label title="深度推理模型:small 快 / base 质量好(改后首次重烘需重新推理)"><span class="k">深度模型</span><select id="rb_model"><option value="small">small</option><option value="base" selected>base</option></select></label>
+    <label title="手动深度缩放微调(乘在自动标定结果上;旧工具 dm_scale 对应物)"><span class="k">深度缩放</span><input type="range" id="rb_dscale" min="0.5" max="2" step="0.02" value="1"><span class="v" id="rb_dscale_v"></span></label>
+    <label title="手动深度偏移微调(加在自动标定结果上;旧工具 dm_offset 对应物)"><span class="k">深度偏移</span><input type="range" id="rb_doff" min="-1" max="1" step="0.02" value="0"><span class="v" id="rb_doff_v"></span></label>
     <label title="结构相对地面的深度残差放大(补偿单目深度对竖直对比的压缩)"><span class="k">起伏增益</span><input type="range" id="rb_relief" min="0.5" max="4" step="0.1" value="1.8"><span class="v" id="rb_relief_v"></span></label>
-    <label title="场景曝光 EV,影响辐射度绝对水平"><span class="k">场景EV</span><input type="range" id="rb_ev" min="-3" max="3" step="0.5" value="0"><span class="v" id="rb_ev_v"></span></label>
-    <label title="HDR 恢复:发光体最大提升 EV(0=关闭 HDR 恢复)"><span class="k">HDR最大EV</span><input type="range" id="rb_gain" min="0" max="5" step="0.25" value="3.32"><span class="v" id="rb_gain_v"></span></label>
     <label title="凸出物检测阈值(占深度范围比例),影响分层与补全"><span class="k">凸出阈值</span><input type="range" id="rb_tau" min="0.04" max="0.3" step="0.01" value="0.10"><span class="v" id="rb_tau_v"></span></label>
+    <label title="碰撞占据测试:离地最低采样高度(米)"><span class="k">碰撞高·低</span><input type="range" id="rb_chlo" min="0.1" max="0.8" step="0.05" value="0.35"><span class="v" id="rb_chlo_v"></span></label>
+    <label title="碰撞占据测试:离地最高采样高度(米)"><span class="k">碰撞高·高</span><input type="range" id="rb_chhi" min="0.8" max="2" step="0.05" value="1.3"><span class="v" id="rb_chhi_v"></span></label>
+
+    <div class="subh">HDR 辐射恢复 <span class="hint">LDR→HDR 怎么建 base/emit 两图(下方3预览即时反映)</span></div>
+    <label title="LDR→HDR 恢复方法——决定 base(背景)/emit(直接光)两张 HDR 图怎么建。改它下方三张预览立即反映;满意后点重烘写盘。emitter门只对夜景有灯的场景有效;白天/整体提亮用全局gamma"><span class="k">恢复方法</span><select id="hdr_method">
+      <option value="0">emitter门(只提发光体·需夜景有灯)</option>
+      <option value="1">逆Reinhard 高光展开</option>
+      <option value="2">全局gamma展开(白天/整体提亮)</option>
+      <option value="3">亮度扩展(只提亮区)</option>
+    </select></label>
+    <label title="所选方法的参数(即时预览):方法1=展开硬度,方法2=gamma强度,方法3=起始亮度阈值(越低提越多;暗场景要调到 0.1~0.3 才有效)。方法0不用它,用下面 HDR最大EV"><span class="k">方法参数</span><input type="range" id="hdr_pa" min="0" max="0.95" step="0.02" value="0.7"><span class="v" id="hdr_pa_v"></span></label>
+    <label title="场景曝光 EV,影响辐射度绝对水平"><span class="k">场景EV</span><input type="range" id="rb_ev" min="-3" max="3" step="0.5" value="0"><span class="v" id="rb_ev_v"></span></label>
+    <label title="HDR 恢复最大提升 EV(0=关闭)。emitter门/亮度扩展用它定提升上限。拖动即时预览,无需重烘"><span class="k">HDR最大EV</span><input type="range" id="rb_gain" min="0" max="5" step="0.25" value="3.32"><span class="v" id="rb_gain_v"></span></label>
+    <label title="SAM3 语义门控:emit 直接光图靠它分离发光体(烛/灯/窗提示词)。白天/无灯场景本就分不出光源→emit 全黑是对的,全部辐射归 base。首次每场景推理一次(~10s),之后按图哈希缓存"><span class="k">语义门控</span><input type="checkbox" id="rb_sem" checked style="flex:none"><span class="v">SAM3</span></label>
+
+    <div class="subh">probe 烘焙 <span class="hint">irradiance 网格与折叠</span></div>
     <label title="烘焙 probe 时是否用双面折叠填补朝相机的洞。关掉后 miss 闭包旋钮(②区)才有可见效果"><span class="k">烘焙折叠</span><input type="checkbox" id="rb_fold" checked style="flex:none"><span class="v">A7</span></label>
-    <label title="SAM3 语义门控:发光体判定叠加物体分割证据(烛/灯/窗提示词),压掉亮但不发光的误报。首次每场景推理一次(~10s),之后按图哈希缓存"><span class="k">语义门控</span><input type="checkbox" id="rb_sem" checked style="flex:none"><span class="v">SAM3</span></label>
     <label title="probe 网格 X 数量(世界空间)"><span class="k">probe X</span><input type="range" id="rb_px" min="8" max="40" step="1" value="20"><span class="v" id="rb_px_v"></span></label>
     <label title="probe 网格 高度层数"><span class="k">probe 高</span><input type="range" id="rb_py" min="3" max="16" step="1" value="6"><span class="v" id="rb_py_v"></span></label>
     <label title="probe 网格 深度数量"><span class="k">probe 深</span><input type="range" id="rb_pz" min="6" max="30" step="1" value="14"><span class="v" id="rb_pz_v"></span></label>
-    <button id="rebuild" title="重跑整条离线管线并重载本场景">⟳ 应用上面参数:重建几何+重烘光照</button>
+    <label title="**角色最大活动高度**(中位地面往上),= probe 盒顶。人只在地上活动,头顶以上没人——盒顶贴着头顶时那 ny 层竖直分辨率才用在刀刃上。默认 1.6 ≈ 角色身高 1.5 + 余量;实测(6层)盒顶 1.35~1.6 平均误差 8.4%,摊到 2.45/2.85 反而是 12.4%/11.1%。地面起伏大时会自动抬一点兜底"><span class="k">角色活动高</span><input type="range" id="rb_band" min="0.8" max="3.0" step="0.1" value="1.6"><span class="v" id="rb_band_v"></span></label>
+
+    <button id="rebuild" title="重跑整条离线管线并重载本场景" style="margin-top:10px">⟳ 应用上面参数:重建几何+重烘光照</button>
     <div class="row2" style="margin-top:6px">
-      <button id="build_new" title="选一张背景图,按上面参数全自动入库为新场景(深度/标定/mesh/光照全跑)">＋ 新场景入库…</button>
-      <button id="rebuild_all" title="按各场景已保存参数逐个重烘(队列执行,可离开页面)">⟳ 重烘全部</button>
+      <button id="rebuild_all" title="按各场景已保存参数逐个重烘(队列执行,可离开页面)">⟳ 重烘全部已烘场景</button>
     </div>
     <div class="row2" style="margin-top:6px">
-      <button id="export_rt" title="把当前场景的烘焙结果导出为游戏运行时载荷:public/resources/runtime/scenes/<场景>/lighting/(L2三分账+地面场+标定+背景哈希防腐门)">⇪ 导出到游戏</button>
+      <button id="export_rt" title="导出照明载荷:scenes/<场景>/lighting/(L2三分账+地面场+标定+哈希防腐门)">⇪ 导出照明</button>
+      <button id="export_depth" title="接管旧场景深度工具:导出深度图(RG16)+depthConfig(M/floor线/碰撞网格)写进场景 JSON,遮挡/阴影/碰撞全部改用实验室重建">⇪ 导出场景深度</button>
     </div>
-    <input type="file" id="new_file" accept="image/png,image/jpeg,image/webp" style="display:none">
     <div id="log"></div>
   </div>
 
@@ -113,13 +190,42 @@ button#rebuild.dirty{animation:pulse 1.2s infinite}
   </div>
 
   <div class="sec">
+    <div class="st">⑤ 几何编辑 <b>(笔刷,存盘后需重烘)</b></div>
+    <div class="sd">在 2D 视图上涂抹修正重建;改完<b>保存编辑 → 重烘</b>才生效。编辑随场景持久保存,重烘不丢。</div>
+    <label><span class="k">笔刷</span><select id="brush">
+      <option value="0">关闭(正常交互)</option>
+      <option value="1">深度:抬高(拉近)</option>
+      <option value="2">深度:压低(推远)</option>
+      <option value="3">深度:抹平到地面</option>
+      <option value="4">碰撞:改为可走</option>
+      <option value="5">碰撞:改为阻挡</option>
+      <option value="6">擦除编辑</option>
+      <option value="7">深度:平滑</option>
+      <option value="8">多边形:抹平到地面</option>
+      <option value="9">多边形:改为可走</option>
+      <option value="10">多边形:改为阻挡</option>
+      <option value="11">多边形:擦除</option>
+    </select></label>
+    <div class="sd" style="margin-top:2px">多边形模式:单击加顶点,<b>双击闭合并填充</b>,Esc 取消。</div>
+    <label><span class="k">半径(px)</span><input type="range" id="brushr" min="3" max="48" step="1" value="12"><span class="v" id="brushr_v"></span></label>
+    <label><span class="k">深度强度(q)</span><input type="range" id="brushs" min="0.02" max="0.6" step="0.02" value="0.15"><span class="v" id="brushs_v"></span></label>
+    <div class="row2">
+      <button id="edit_save" title="把深度/碰撞编辑写盘(之后需重烘生效)">💾 保存编辑</button>
+      <button id="edit_clear" title="删除本场景全部笔刷编辑(需重烘)">🗑 清除编辑</button>
+    </div>
+    <div id="geo_warn" style="display:none;color:#e0764a;font-size:12px;font-weight:600;margin-top:6px">⚠ 几何已改动,光照/导出已过期——请重烘</div>
+  </div>
+
+  <div class="sec">
     <div class="st">④ 显示与可视化 <b>(纯显示,不影响任何计算)</b></div>
     <div class="sd">看不清就拉预览亮度;背景可切 HDR 视图直接观察恢复结果。</div>
     <label title="全局显示增益(背景/角色/3D同乘),不进物理量"><span class="k">预览亮度</span><input type="range" id="pgain" min="-2" max="3" step="0.1" value="0"><span class="v" id="pgain_v"></span></label>
+    <label title="**只**缩放 probe 点的显示亮度(2D 点/3D 球同用),用来扫出 probe 之间的相对明暗。纯预览:不入 probe 数值、不重烘、不导出,也不吃上面的全局预览亮度。载入场景时按本场景 probe 分布自动给一个合适起点"><span class="k">probe 亮度</span><input type="range" id="probegain" min="-4" max="12" step="0.25" value="0"><span class="v" id="probegain_v"></span></label>
     <label title="2D 背景显示内容"><span class="k">背景显示</span><select id="bgview">
       <option value="0">原画</option>
       <option value="1">HDR 恢复辐射(配合预览亮度扫曝光)</option>
       <option value="2">HDR 增益热力图</option>
+      <option value="4">亮度分层(EV带·蓝暗→红亮·洋红=撞顶)</option>
       <option value="3">标定深度</option>
     </select></label>
     <div class="chk">
@@ -136,11 +242,18 @@ button#rebuild.dirty{animation:pulse 1.2s infinite}
       <label title="3D:被遮挡处补全的背景层(inpaint)"><input type="checkbox" id="pc_hidden" checked>补全层</label>
       <label title="3D:地面延拓层(绿调)"><input type="checkbox" id="pc_ground" checked>地面延拓</label>
     </div>
+    <label title="漫游=第一人称进场景里飞(透视相机,WASD+QE 移动、拖动看向、滚轮进退);轨道=老的绕中心正交检视,适合看整体几何" style="margin-top:6px"><span class="k">3D 相机</span>
+      <span class="views" id="cam_modes" style="flex:1;margin:0"><button data-cm="fly" class="on">漫游</button><button data-cm="orbit">轨道</button></span></label>
+    <label title="漫游移动速度(世界单位/秒);按住 Shift 临时 ×4"><span class="k">漫游速度</span><input type="range" id="camspeed" min="0.4" max="24" step="0.2" value="4"><span class="v" id="camspeed_v"></span></label>
+    <label title="漫游相机视场角(透视);轨道模式用正交,不受它影响"><span class="k">视场角°</span><input type="range" id="camfov" min="30" max="100" step="1" value="60"><span class="v" id="camfov_v"></span></label>
     <div id="hdrstats"></div>
     <canvas id="hist" width="286" height="64" title="log2 亮度直方图:灰=原图,橙=HDR恢复后"></canvas>
+    <div class="sd" style="margin-top:6px">常驻 HDR 场景 / 光源分割图见画面左下角浮层(与 trace 同源)。</div>
     <div class="keys">
       <b>2D</b>:点击瞬移 · 滚轮缩放 · 右键拖平移 · 双击复位 · Tab/1234 切模式<br>
-      <b>3D</b>:左键拖旋转 · 滚轮缩放 · Shift+拖平移(正交相机)
+      <b>3D 漫游</b>:WASD 平移 · Q/E 升降 · Shift 加速 · 左键拖看向 · 右键/Shift+拖平移 · 滚轮进退 · 双击复位<br>
+      <b>3D 轨道</b>:左键拖旋转 · 滚轮缩放 · Shift+拖平移(正交)<br>
+      <b>probe</b>:勾「probe」后,3D 里<b>点圆点</b>即选中;2D 里用 <b>Alt/Shift+点</b>选(普通点击仍是瞬移),右栏出⑥检视面板
     </div>
   </div>
 </div>

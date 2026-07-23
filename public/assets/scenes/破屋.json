@@ -73,5 +73,51 @@
     }
   ],
   "zones": [],
-  "worldHeight": 584.89
+  "worldHeight": 584.89,
+  "depthConfig": {
+    "depth_map": "raw_depth_rg.png",
+    "collision_map": "collision.png",
+    "M": {
+      "R": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.6427876096865394,
+          -0.766044443118978
+        ],
+        [
+          0.0,
+          0.766044443118978,
+          0.6427876096865394
+        ]
+      ],
+      "ppu": 450.56,
+      "cx": 1024.0,
+      "cy": 571.5
+    },
+    "depth_mapping": {
+      "invert": false,
+      "scale": 2.6535544063568115,
+      "offset": -1.786709411239624
+    },
+    "shader": {
+      "depth_per_sy": 0.002645049699472234,
+      "floor_depth_A": -0.0017752606566403448,
+      "floor_depth_B": 1.0267242024242869
+    },
+    "collision": {
+      "x_min": -2.2727272510528564,
+      "z_min": -1.633758757653303,
+      "cell_size": 0.02868946529602409,
+      "grid_width": 160,
+      "grid_height": 122,
+      "height_offset": 0.0
+    },
+    "depth_tolerance": 0.05,
+    "floor_offset": 0.0
+  }
 }

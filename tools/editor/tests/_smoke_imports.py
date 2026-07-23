@@ -52,16 +52,13 @@ def main() -> None:
     import tools.production_workbench.graph_diagnostics  # noqa: F401
     import tools.production_workbench.workbench_window  # noqa: F401
 
-    # video_to_atlas / scene_depth_editor 依赖 numpy/PyOpenGL，
-    # 这里只在能导入时做 smoke check
+    # video_to_atlas 依赖 numpy/PyOpenGL，这里只在能导入时做 smoke check
     try:
         import tools.video_to_atlas.export_panel  # noqa: F401
     except ModuleNotFoundError:
         pass
-    try:
-        import tools.scene_depth_editor.app  # noqa: F401
-    except ModuleNotFoundError:
-        pass
+    # scene_depth_editor 已弃用(character_lighting_lab 取代):不再 smoke 导入其编辑器 app,
+    # 退出回归。其 depth_estimator 仍被 lab pipeline 复用,不受影响。
 
     print("imports OK")
 
