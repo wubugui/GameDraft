@@ -32,7 +32,9 @@ REBUILD_KEYS = {'pitch_deg', 'azimuth_deg', 'ppu_ratio', 'ev', 'max_gain_ev',
                 'col_h_lo', 'col_h_hi', 'vol_nx', 'vol_nz',
                 'probe_nx', 'probe_ny', 'probe_nz', 'probe_dirs', 'probe_band',
                 'fold', 'relief', 'semantic_gate', 'occluder_tau', 'thickness_k',
-                'bg_thickness_q', 'ground_up_dot', 'walk_res'}
+                'bg_thickness_q', 'ground_up_dot', 'walk_res',
+                'object_seg', 'object_score_min', 'object_groups', 'object_prompts_extra',
+                'object_geom_fallback', 'ground_max_step_frac'}
 
 # ------------------------------------------------------------- 游戏场景清单
 # 这个工具深度绑定工程:场景身份**只认游戏场景 id**(= public/assets/scenes/<id>.json 的
@@ -356,13 +358,14 @@ class H(SimpleHTTPRequestHandler):
         if u.path == '/api/save_edit':
             name = q.get('scene', [''])[0]
             kind = q.get('kind', [''])[0]
-            if kind not in ('depth', 'collision') or not (TOOL / 'out' / name).is_dir():
+            if kind not in ('depth', 'collision', 'object') or not (TOOL / 'out' / name).is_dir():
                 return self._json({'ok': False, 'err': 'bad scene/kind'}, 400)
             length = int(self.headers.get('Content-Length', 0))
             if length <= 0 or length > 8 * 1024 * 1024:
                 return self._json({'ok': False, 'err': 'bad size'}, 400)
             data = self.rfile.read(length)
-            fname = 'depth_edit.png' if kind == 'depth' else 'collision_edit.png'
+            fname = {'depth': 'depth_edit.png', 'collision': 'collision_edit.png',
+                     'object': 'object_edit.png'}[kind]
             if length <= 8 and data[:5] == b'CLEAR':          # clear-all sentinel
                 (TOOL / 'out' / name / fname).unlink(missing_ok=True)
             else:

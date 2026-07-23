@@ -632,9 +632,11 @@ const S = {
   spp:64, step:0.9, msteps:160, beta:0, amb:1, contact:0.55,
   qscale:1, charH:1.5, bulge:0.22, flatten:0, fold:1, missMode:0, collide:1, nee:0,
   lights:[], pgain:1, hdrMethod:0, hdrPA:0.7, v2:{zoom:1, ox:0, oy:0},
-  dbg:{depth:0,walk:0,probes:0,occl:1,normal:0,rays:0,gain:0,lights:0},
+  dbg:{depth:0,walk:0,probes:0,occl:1,normal:0,rays:0,gain:0,lights:0,terrain:0},
   brush:0, brushR:12, brushS:0.15,
   editDepth:null, editDepthBaked:null, editCol:null, editDirty:false, geoStale:false,
+  // 物体/地形判定:objAuto=SAM 自动结果(按分数门槛), editObj=人工覆写(1=物体 2=地形)
+  objAuto:null, editObj:null, objIds:null, objMeta:null, objScoreMin:0.35, topPoly:[],
   frontD:null, walkD2:null,
   pcShow:[1,1,1], meshMode:1, meshTris:0,
   footW:{x:0,z:0},           // WORLD position
@@ -775,6 +777,23 @@ async function loadScene(man){
       S.editDepth[i]=(u16-32768)/32768*2.0; } });
   await tryEdit(`${base}/collision_edit.png`, d=>{
     for(let i=0;i<W*H;i++) S.editCol[i]=d[i*4]; });
+  // 物体识别结果(实例 id 图 RG 编码 + 元信息)与人工覆写层
+  S.editObj=new Uint8Array(W*H); S.objAuto=new Uint8Array(W*H);
+  S.objIds=new Uint16Array(W*H); S.objMeta=null;
+  try{
+    const meta=await (await fetch(`${base}/objects_${man.hash}.json?t=`+Date.now())).json();
+    S.objMeta=new Map(meta.map(m=>[m.id,m]));
+    const img=await loadImg(`${base}/objects_${man.hash}.png?t=`+Date.now());
+    const c3=document.createElement('canvas'); c3.width=W; c3.height=H;
+    const x3=c3.getContext('2d',{willReadFrequently:true});
+    x3.imageSmoothingEnabled=false;                 // id 图必须最近邻,插值会造出不存在的 id
+    x3.drawImage(img,0,0,W,H);
+    const d3=x3.getImageData(0,0,W,H).data;
+    for(let i=0;i<W*H;i++) S.objIds[i]=(d3[i*4]<<8)|d3[i*4+1];
+    recomputeObjAuto();
+  }catch(e){ S.objMeta=null; }                      // 尚未跑过物体识别的旧场景
+  await tryEdit(`${base}/object_edit.png`, d=>{
+    for(let i=0;i<W*H;i++) S.editObj[i]=d[i*4]; });
   S.editDepthBaked=S.editDepth.slice();
   if(!S.tex.edit){ /* created lazily in refreshEditOverlay */ }
   refreshEditOverlay();
@@ -1410,6 +1429,23 @@ function renderProbePanel(){
 }
 
 // ------------------------------------------------------------- geometry brush
+/** SAM 实例 + 分数门槛 → 自动物体掩膜(改门槛不用重跑推理,元信息里带分数) */
+function recomputeObjAuto(){
+  if(!S.objIds||!S.objMeta) return;
+  const n=S.objAuto.length;
+  for(let i=0;i<n;i++){
+    const id=S.objIds[i];
+    const m=id?S.objMeta.get(id):null;
+    S.objAuto[i]=(m&&m.score>=S.objScoreMin)?1:0;
+  }
+}
+/** 最终判定:人工覆写优先(1=物体 2=地形),否则听自动 */
+function isObjectAt(i){
+  const e=S.editObj?S.editObj[i]:0;
+  if(e===1) return 1; if(e===2) return 0;
+  return S.objAuto?S.objAuto[i]:0;
+}
+
 function refreshEditOverlay(){
   const {w,h}=S.work;
   const rgba=new Uint8Array(w*h*4);
@@ -1423,6 +1459,12 @@ function refreshEditOverlay(){
     }
     if(c===1){ r=40;g=230;b=90; a=Math.max(a,150); }
     if(c===2){ r=235;g=50;b=50; a=Math.max(a,150); }
+    if(S.dbg.terrain){                         // 地形判定:绿=地形 红=物体,人工覆写更亮
+      const o=isObjectAt(i), manual=S.editObj&&S.editObj[i]!==0;
+      const rr=o?210:30, gg=o?40:210, bb=o?60:110;
+      const aa=manual?190:110;
+      if(aa>a){ r=rr; g=gg; b=bb; a=aa; }
+    }
     rgba[i*4]=r; rgba[i*4+1]=g; rgba[i*4+2]=b; rgba[i*4+3]=a;
   }
   if(!S.tex.edit){
@@ -1456,7 +1498,9 @@ function paintAt(wx, wy){
         } break;
       case 4: S.editCol[i]=1; break;
       case 5: S.editCol[i]=2; break;
-      case 6: S.editDepth[i]=0; S.editCol[i]=0; break;
+      case 6: S.editDepth[i]=0; S.editCol[i]=0; S.editObj[i]=0; break;
+      case 12: S.editObj[i]=1; break;
+      case 13: S.editObj[i]=2; break;
       case 7: if(S.frontD){    // 平滑:圆盘均值(基于最终深度),按衰减混入
           const K=3; let sum=0,n=0;
           for(let sy=-K;sy<=K;sy++)for(let sx=-K;sx<=K;sx++){
@@ -1498,7 +1542,9 @@ function polyApply(){
         } break;
       case 9: S.editCol[i]=1; break;
       case 10: S.editCol[i]=2; break;
-      case 11: S.editDepth[i]=0; S.editCol[i]=0; break;
+      case 11: S.editDepth[i]=0; S.editCol[i]=0; S.editObj[i]=0; break;
+      case 14: S.editObj[i]=1; break;
+      case 15: S.editObj[i]=2; break;
     }
   }
   S.polyPts=[]; S.editDirty=true;
@@ -1525,25 +1571,41 @@ function encodeEditPngs(){
   const xc=cc.getContext('2d'); const idc=xc.createImageData(w,h);
   for(let i=0;i<w*h;i++){ idc.data[i*4]=S.editCol[i]; idc.data[i*4+3]=255; }
   xc.putImageData(idc,0,0);
+  const co=document.createElement('canvas'); co.width=w; co.height=h;
+  const xo=co.getContext('2d'); const ido=xo.createImageData(w,h);
+  for(let i=0;i<w*h;i++){ ido.data[i*4]=S.editObj?S.editObj[i]:0; ido.data[i*4+3]=255; }
+  xo.putImageData(ido,0,0);
   return Promise.all([
     new Promise(r=>cd.toBlob(r,'image/png')),
     new Promise(r=>cc.toBlob(r,'image/png')),
+    new Promise(r=>co.toBlob(r,'image/png')),
   ]);
 }
 $('edit_save').onclick=async()=>{
   const name=activeScene(); if(!name) return;
-  const [bd,bc]=await encodeEditPngs();
-  await fetch(`/api/save_edit?scene=${encodeURIComponent(name)}&kind=depth`,{method:'POST',body:bd});
-  await fetch(`/api/save_edit?scene=${encodeURIComponent(name)}&kind=collision`,{method:'POST',body:bc});
+  const [bd,bc,bo]=await encodeEditPngs();
+  const bad=[];
+  for(const [kind,body] of [['depth',bd],['collision',bc],['object',bo]]){
+    try{
+      const r=await fetch(`/api/save_edit?scene=${encodeURIComponent(name)}&kind=${kind}`,
+                          {method:'POST',body});
+      if(!r.ok) bad.push(kind);
+    }catch(e){ bad.push(kind); }
+  }
+  if(bad.length){
+    $('log').textContent=`✗ 这些层没存上:${bad.join('/')}(服务端不认该 kind?`+
+      ` 改过 serve.py 要重启实验室服务)——编辑仍在内存里,别关页面`;
+    return;
+  }
   S.editDirty=false;
   $('log').textContent='✓ 编辑已保存——需重烘生效';
   refreshGeoStatus(name);
 };
 $('edit_clear').onclick=async()=>{
   const name=activeScene(); if(!name) return;
-  S.editDepth.fill(0); S.editCol.fill(0); S.editDirty=false;
+  S.editDepth.fill(0); S.editCol.fill(0); if(S.editObj) S.editObj.fill(0); S.editDirty=false;
   refreshEditOverlay();
-  for(const k of ['depth','collision'])
+  for(const k of ['depth','collision','object'])
     await fetch(`/api/save_edit?scene=${encodeURIComponent(name)}&kind=${k}`,{method:'POST',body:'CLEAR'});
   $('log').textContent='✓ 编辑已清除——需重烘生效';
   refreshGeoStatus(name);
@@ -1618,7 +1680,7 @@ function draw2D(){
     gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D,S.tex.edit);
     gl.uniform1i(gl.getUniformLocation(pBG,'uEdit'),3);
   }
-  gl.uniform1i(gl.getUniformLocation(pBG,'uShowEdit'),(S.brush>0||S.editDirty)?1:0);
+  gl.uniform1i(gl.getUniformLocation(pBG,'uShowEdit'),(S.brush>0||S.editDirty||S.dbg.terrain)?1:0);
   gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
 
   // walkable overlay: project world walk mask cells to screen as green points
@@ -1948,7 +2010,8 @@ function draw(){
   const now=performance.now(); S.frames++;
   if(now-S.tFPS>500){ S.fps=Math.round(S.frames*1000/(now-S.tFPS)); S.frames=0; S.tFPS=now; }
   if(!S.man) return;
-  if(S.view===0){ move(now); draw2D(); } else { moveCam(now); draw3D(); }
+  if(S.view===2){ /* 顶视是独立 2D 画布,不走 GL 主循环 */ }
+  else if(S.view===0){ move(now); draw2D(); } else { moveCam(now); draw3D(); }
   const wy=S.walk?groundY(S.footW.x,S.footW.z):0;
   const c=S.cam, eye=camEye(c);
   const viewTxt=S.view
@@ -2021,8 +2084,127 @@ function setMode(m){ S.mode=m;
 document.querySelectorAll('.modes button').forEach(b=>b.onclick=()=>setMode(+b.dataset.m));
 setMode(0);
 function setView(v){ S.view=v;
-  document.querySelectorAll('.views button').forEach(b=>b.classList.toggle('on',+b.dataset.v===v)); }
+  document.querySelectorAll('.views button').forEach(b=>b.classList.toggle('on',+b.dataset.v===v));
+  const tv=$('topview'), th=$('topview_hint');
+  const on=(v===2);
+  tv.style.display=on?'block':'none'; th.style.display=on?'block':'none';
+  $('hud').style.display=on?'none':'block';        // 顶视有自己的图例,HUD 会残留 3D 文案
+  canvas.style.visibility=on?'hidden':'visible';
+  S.topPoly=[];
+  if(on) buildTopView();
+}
+
+// ---------------------------------------------------- 顶视编辑(世界 XZ 正投影)
+// 相机视角下,楼后面的地看不见也点不到,而且屏幕多边形映射到世界依赖深度、本身有歧义。
+// 顶视 XZ 里每个世界格恰好出现一次:无遮挡、无歧义,而且这就是行走网格与地形高度场
+// 自己的坐标系——一个多边形同时把「地形该不该有这块」改对。
+const TOP_SCALE=5;
+function topGeom(){
+  const wk=S.walk, man=S.man;
+  return {wk, M:man.world.M, cal:man.cal, TW:wk.nx*TOP_SCALE, TH:wk.nz*TOP_SCALE};
+}
+/** 工作分辨率像素 → 它脚下地面的世界 (X,Z) */
+function groundXZ(sx, sy, i){
+  const {M,cal}=topGeom();
+  const d=S.walkD2?S.walkD2[i]:0;
+  const qx=(sx-cal.cx)/cal.ppu, qy=(cal.cy-sy)/cal.ppu;
+  return [M[0][0]*qx+M[0][1]*qy+M[0][2]*d, M[2][0]*qx+M[2][1]*qy+M[2][2]*d];
+}
+function buildTopView(){
+  if(!S.man||!S.walk||!S.work) return;
+  const {wk,TW,TH}=topGeom(), {w,h}=S.work;
+  const cv=$('topview'); cv.width=TW; cv.height=TH;
+  const box=$('stage_main').getBoundingClientRect();
+  const k=Math.min(box.width/TW, box.height/TH);
+  cv.style.width=(TW*k)+'px'; cv.style.height=(TH*k)+'px';
+  const cls=new Int8Array(wk.nx*wk.nz).fill(-1);
+  const man=new Uint8Array(wk.nx*wk.nz);
+  for(let sy=0;sy<h;sy++)for(let sx=0;sx<w;sx++){
+    const i=sy*w+sx;
+    const [X,Z]=groundXZ(sx,sy,i);
+    const gx=Math.round((X-wk.x0)/wk.dx), gz=Math.round((Z-wk.z0)/wk.dz);
+    if(gx<0||gx>=wk.nx||gz<0||gz>=wk.nz) continue;
+    const kk=gz*wk.nx+gx, c=isObjectAt(i);
+    if(c>cls[kk]) cls[kk]=c;                       // 物体盖住地面
+    if(S.editObj&&S.editObj[i]) man[kk]=1;
+  }
+  const ctx=cv.getContext('2d');
+  const img=ctx.createImageData(TW,TH);
+  for(let gz=0;gz<wk.nz;gz++)for(let gx=0;gx<wk.nx;gx++){
+    const kk=gz*wk.nx+gx, c=cls[kk];
+    const walkable=S.walk.mask&&S.walk.mask[kk];
+    let r,g,b;
+    if(c<0){ r=26;g=30;b=36; }                                     // 无数据
+    else if(c===1){ r=209;g=58;b=68; }                             // 物体
+    else { r=walkable?74:52; g=walkable?222:150; b=walkable?128:96; } // 地形(亮=可走)
+    if(man[kk]){ r=Math.min(255,r+60); g=Math.min(255,g+60); b=Math.min(255,b+60); }
+    for(let dy=0;dy<TOP_SCALE;dy++)for(let dx=0;dx<TOP_SCALE;dx++){
+      const o=((gz*TOP_SCALE+dy)*TW+(gx*TOP_SCALE+dx))*4;
+      img.data[o]=r; img.data[o+1]=g; img.data[o+2]=b; img.data[o+3]=255;
+    }
+  }
+  ctx.putImageData(img,0,0);
+  if(S.topPoly&&S.topPoly.length){                 // 正在画的多边形
+    ctx.strokeStyle='#ffd54a'; ctx.fillStyle='#ffd54a'; ctx.lineWidth=2;
+    ctx.beginPath(); S.topPoly.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));
+    ctx.stroke();
+    for(const [x,y] of S.topPoly) ctx.fillRect(x-2,y-2,4,4);
+  }
+}
+/** 顶视多边形 → 世界 XZ 多边形 → 落到工作分辨率像素上写覆写层 */
+function topPolyApply(){
+  const pts=S.topPoly; if(!pts||pts.length<3){ S.topPoly=[]; return; }
+  const {wk}=topGeom(), {w,h}=S.work;
+  const wpts=pts.map(([x,y])=>[wk.x0+(x/TOP_SCALE)*wk.dx, wk.z0+(y/TOP_SCALE)*wk.dz]);
+  const inside=(X,Z)=>{
+    let c=false;
+    for(let i=0,j=wpts.length-1;i<wpts.length;j=i++){
+      const [xi,zi]=wpts[i],[xj,zj]=wpts[j];
+      if(((zi>Z)!==(zj>Z)) && (X<(xj-xi)*(Z-zi)/(zj-zi)+xi)) c=!c;
+    }
+    return c;
+  };
+  if(S.brush<12||S.brush>15){                     // 防呆:没选地形笔刷就别乱改判定
+    S.topPoly=[]; buildTopView();
+    $('log').textContent='顶视圈选需要先把笔刷切到「地形:标为物体/地形」或「多边形:标为物体/地形」';
+    return;
+  }
+  const val=(S.brush===15||S.brush===13)?2:1;      // 15/13=标为地形,其余=标为物体
+  let n=0;
+  for(let sy=0;sy<h;sy++)for(let sx=0;sx<w;sx++){
+    const i=sy*w+sx;
+    const [X,Z]=groundXZ(sx,sy,i);
+    if(!inside(X,Z)) continue;
+    S.editObj[i]=val; n++;
+  }
+  S.topPoly=[]; S.editDirty=true;
+  refreshEditOverlay(); buildTopView();
+  $('log').textContent=`✓ 顶视圈选:${n} 个像素标为${val===1?'物体':'地形'}——保存编辑后重烘生效`;
+}
 document.querySelectorAll('.views button').forEach(b=>b.onclick=()=>{ setView(+b.dataset.v); canvas.focus(); });
+
+// 顶视画布:单击加顶点,双击闭合填充,Esc 取消(与 2D 视图多边形同手势)
+(function(){
+  const tv=$('topview');
+  const toLocal=e=>{
+    const r=tv.getBoundingClientRect();
+    return [(e.clientX-r.left)/r.width*tv.width, (e.clientY-r.top)/r.height*tv.height];
+  };
+  tv.addEventListener('click',e=>{
+    if(S.view!==2) return;
+    S.topPoly.push(toLocal(e)); buildTopView();
+  });
+  tv.addEventListener('dblclick',e=>{
+    if(S.view!==2) return;
+    if(S.topPoly.length>=3) S.topPoly.pop();      // 双击的第二次 click 已入队,去掉
+    topPolyApply();
+  });
+  tv.addEventListener('contextmenu',e=>{ e.preventDefault(); S.topPoly=[]; buildTopView(); });
+  window.addEventListener('keydown',e=>{
+    if(S.view===2&&e.key==='Escape'){ S.topPoly=[]; buildTopView(); }
+  });
+  window.addEventListener('resize',()=>{ if(S.view===2) buildTopView(); });
+})();
 
 function bindSlider(id,key,fmt=v=>v,onchg){
   const el=$(id), lab=$(id+'_v');
@@ -2048,8 +2230,9 @@ bindSlider('flatten','flatten',v=>v.toFixed(2));
 $('fold').addEventListener('change',e=>{ S.fold=e.target.checked?1:0; S.rays=null; });
 $('missnorm').addEventListener('change',e=>{ S.missMode=e.target.checked?1:0; probeRefresh(); });
 $('collide').addEventListener('change',e=>{ S.collide=e.target.checked?1:0; });
-for(const k of ['walk','probes','occl','normal','rays','lights'])
-  $('dbg_'+k).addEventListener('change',e=>{ S.dbg[k]=e.target.checked?1:0; });
+for(const k of ['walk','probes','occl','normal','rays','lights','terrain'])
+  $('dbg_'+k).addEventListener('change',e=>{ S.dbg[k]=e.target.checked?1:0;
+    if(k==='terrain') refreshEditOverlay(); });
 $('nee').addEventListener('change',e=>{ S.nee=e.target.checked?1:0; probeRefresh(); });
 
 // probe 显示(纯预览:不入数值、不重烘、不导出)

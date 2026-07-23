@@ -67,7 +67,15 @@ button#rebuild.dirty{animation:pulse 1.2s infinite}
 </head>
 <body>
 <div id="stage">
-  <div id="stage_main"><canvas id="gl" tabindex="0"></canvas><div id="hud"></div></div>
+  <div id="stage_main"><canvas id="gl" tabindex="0"></canvas>
+    <canvas id="topview" style="display:none;position:absolute;inset:0;margin:auto;
+      background:#0a0d10;image-rendering:pixelated;cursor:crosshair"></canvas>
+    <div id="topview_hint" style="display:none;position:absolute;left:10px;top:10px;
+      font-size:12px;color:#cfd6dd;background:#0009;padding:6px 9px;border-radius:4px;line-height:1.6">
+      顶视(世界 XZ) · <b style="color:#4ade80">绿=地形</b> <b style="color:#f87171">红=物体</b> 灰=无数据<br>
+      单击加顶点,<b>双击闭合</b> → 按当前笔刷填充,Esc 取消
+    </div>
+    <div id="hud"></div></div>
   <div id="preview_bar">
     <div class="pv"><div class="pvl">HDR 场景 <span class="pvm">Reinhard·trace 实际吃的</span></div><canvas id="thumb_hdr" width="200" height="112"></canvas></div>
     <div class="pv"><div class="pvl">光源分割图 <span class="pvm" style="color:var(--acc)">emit=rad×语义mask·◯=surfel</span></div><canvas id="thumb_lights" width="200" height="112"></canvas></div>
@@ -83,6 +91,7 @@ button#rebuild.dirty{animation:pulse 1.2s infinite}
     <div class="views">
       <button data-v="0" class="on" title="原画视角:角色行走+实时着色">2D 场景</button>
       <button data-v="1" title="进入重建的伪世界:默认第一人称漫游(WASD+拖动看向),也可切轨道">3D 检视</button>
+      <button data-v="2" title="从正上方看伪世界地面:每个世界格恰好出现一次,无遮挡无歧义,多边形圈选最准">顶视编辑</button>
     </div>
   </div>
 
@@ -205,7 +214,13 @@ button#rebuild.dirty{animation:pulse 1.2s infinite}
       <option value="9">多边形:改为可走</option>
       <option value="10">多边形:改为阻挡</option>
       <option value="11">多边形:擦除</option>
+      <option value="12">地形:标为物体(扣掉)</option>
+      <option value="13">地形:标为地形(留下)</option>
+      <option value="14">多边形:标为物体</option>
+      <option value="15">多边形:标为地形</option>
     </select></label>
+    <div class="sd" style="margin-top:2px">「地形/物体」两笔覆写自动识别:物体会从地形高度场里扣掉,
+      角色不会站到它上面。改完同样要<b>保存编辑 → 重烘</b>。</div>
     <div class="sd" style="margin-top:2px">多边形模式:单击加顶点,<b>双击闭合并填充</b>,Esc 取消。</div>
     <label><span class="k">半径(px)</span><input type="range" id="brushr" min="3" max="48" step="1" value="12"><span class="v" id="brushr_v"></span></label>
     <label><span class="k">深度强度(q)</span><input type="range" id="brushs" min="0.02" max="0.6" step="0.02" value="0.15"><span class="v" id="brushs_v"></span></label>
@@ -235,6 +250,7 @@ button#rebuild.dirty{animation:pulse 1.2s infinite}
       <label title="角色渲染其法线(朝相机=橄榄色)"><input type="checkbox" id="dbg_normal">法线</label>
       <label title="从角色胸口画40根采样射线:黄=命中 橙=折叠命中 蓝=miss"><input type="checkbox" id="dbg_rays">射线</label>
       <label title="提取的 NEE 光源 surfel(橙十字,大小=功率)"><input type="checkbox" id="dbg_lights">光源</label>
+      <label title="地形/物体判定叠加:绿=地形(角色能站) 红=物体(会被扣掉);亮色描边=人工覆写过"><input type="checkbox" id="dbg_terrain">地形判定</label>
     </div>
     <div class="chk" id="cloud_chk" style="margin-top:4px">
       <label title="3D:蒙皮三角mesh(关=点云)"><input type="checkbox" id="pc_mesh" checked>网格</label>
