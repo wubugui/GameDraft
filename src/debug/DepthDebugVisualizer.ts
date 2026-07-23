@@ -2,7 +2,7 @@ import type { SceneDepthSystem } from '../core/SceneDepthSystem';
 import type { Renderer } from '../rendering/Renderer';
 import type { Camera } from '../rendering/Camera';
 import type { AssetManager } from '../core/AssetManager';
-import { Texture } from 'pixi.js';
+import { Texture, type TextureSource } from 'pixi.js';
 import type { SceneDepthConfig } from '../data/types';
 import { BackgroundDebugFilter } from '../rendering/BackgroundDebugFilter';
 
@@ -114,6 +114,12 @@ export class DepthDebugVisualizer {
     if (this.currentMode === 'collision') {
       this.loadCollisionTexture();
     }
+  }
+
+  /** 注入行走面深度场（碰撞可视化的地面来源）。Game 在照明载荷就绪时调用；
+   *  null = 该场景无场 → 碰撞可视化置灰，不拿已废除的 floor 直线糊弄。 */
+  setGroundTexture(g: { tex: TextureSource; min: number; max: number } | null): void {
+    this.filter.setGroundTexture(g);
   }
 
   /** 调试：仅更新世界尺寸（与 applyDebugWorldSize 一致时背景调试叠加仍对齐） */

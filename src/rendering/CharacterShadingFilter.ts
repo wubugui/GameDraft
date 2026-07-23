@@ -74,13 +74,11 @@ uniform float uInvert;
 uniform float uScale;
 uniform float uOffset;
 uniform float uDepthPerSy;
-uniform float uFloorA;
-uniform float uFloorB;
 uniform float uFloorOffset;
 uniform float uFloorOffsetExtra;
 uniform float uTolerance;
 uniform float uOcclusionBlendFactor;
-uniform float uUseFootDepth;   // 1=实验室 billboard 口径（脚深度取 uFootQ.z）
+uniform float uHasFootDepth;   // 0=本帧没拿到脚深度 → 整段遮挡跳过
 uniform float uFootBias;       // 实验室 0.045
 uniform float uDebug;
 
@@ -343,7 +341,7 @@ void main(void) {
 
     bool occluded = false;
     // ---------- 深度遮挡(P2a 契约,与旧滤镜一致) ----------
-    if (uDepthEnabled > 0.5) {
+    if (uDepthEnabled > 0.5 && uHasFootDepth > 0.5) {   // 缺行走面场就不遮挡
         vec2 depthUV = vec2(wx / uSceneSize.x, wy / uSceneSize.y);
         if (depthUV.x >= 0.0 && depthUV.x <= 1.0 && depthUV.y >= 0.0 && depthUV.y <= 1.0) {
             vec4 depthSample = texture(uDepthMap, depthUV);
@@ -351,19 +349,13 @@ void main(void) {
             float d_raw = uInvert > 0.5 ? 1.0 - rawDepth : rawDepth;
             float sceneDepth = d_raw * uScale + uOffset;
             // 遮挡与着色用**同一个**代理:立在伪世界里的直立 quad。
-            // uDepthPerSy = tanθ/ppu 正是直立 quad 的深度梯度(往上越靠近相机),
-            // 两个分支只差"脚点深度从哪来":有行走面场用实测脚深,没有就用 floor 拟合线。
-            // (旧写法整张 sprite 取脚点深度=相机平行 billboard,已废除)
+            // uDepthPerSy = tanθ/ppu 正是直立 quad 的深度梯度(往上越靠近相机)。
+            // 脚点深度只认行走面场实测值(uFootQ.z,与着色同源)——floor 拟合直线已废除
+            // (多层街巷可偏出 200+ 行地面),没有场就整段不遮挡,绝不退回旧模型顶上。
             float syTexFoot = uEntityFootWorldY * uWorldToPixelY;
             float syTex = wy * uWorldToPixelY;
             float upright = uDepthPerSy * (syTex - syTexFoot);
-            float spriteDepth;
-            if (uUseFootDepth > 0.5) {
-                spriteDepth = uFootQ.z + upright + uFloorOffset + uFloorOffsetExtra - uFootBias;
-            } else {
-                float d_base = uFloorA * syTexFoot + uFloorB + uFloorOffset + uFloorOffsetExtra;
-                spriteDepth = d_base + upright;
-            }
+            float spriteDepth = uFootQ.z + upright + uFloorOffset + uFloorOffsetExtra - uFootBias;
             occluded = sceneDepth + uTolerance < spriteDepth;
         }
     }
@@ -534,13 +526,11 @@ export class CharacterShadingFilter extends Filter implements IEntityShadingFilt
           // 直立 quad 的深度梯度 tanθ/ppu。缺字段时**从 M 现推**——退成 0 等于
           // 悄悄变回 billboard(整张 sprite 一个深度),那正是已废除的口径。
           uDepthPerSy: { value: sh?.depth_per_sy ?? uprightGradientFromM(cfg), type: 'f32' },
-          uFloorA: { value: sh?.floor_depth_A ?? 0, type: 'f32' },
-          uFloorB: { value: sh?.floor_depth_B ?? 0, type: 'f32' },
           uFloorOffset: { value: cfg?.floor_offset ?? 0, type: 'f32' },
           uFloorOffsetExtra: { value: 0, type: 'f32' },
           uTolerance: { value: cfg?.depth_tolerance ?? 0, type: 'f32' },
           uOcclusionBlendFactor: { value: 0, type: 'f32' },
-          uUseFootDepth: { value: 0, type: 'f32' },
+          uHasFootDepth: { value: 0, type: 'f32' },
           uFootBias: { value: 0.045, type: 'f32' },
           uDebug: { value: 0, type: 'f32' },
 
@@ -657,9 +647,9 @@ export class CharacterShadingFilter extends Filter implements IEntityShadingFilt
   setFootDepthQ(v: number | null): void {
     const u = this._u;
     if (!u) return;
-    if (v === null || !Number.isFinite(v)) { u['uUseFootDepth'] = 0; return; }
+    if (v === null || !Number.isFinite(v)) { u['uHasFootDepth'] = 0; return; }
     (u['uFootQ'] as Float32Array)[2] = v;
-    u['uUseFootDepth'] = 1;
+    u['uHasFootDepth'] = 1;
   }
 
   /** 脚点遮挡偏置（实验室常数 0.045） */
@@ -671,7 +661,6 @@ export class CharacterShadingFilter extends Filter implements IEntityShadingFilt
     const u = this._u;
     if (u) u['uDebug'] = on ? 1 : 0;
   }
-  setCollisionTexture(_tex: Texture): void { /* 碰撞不进着色滤镜 */ }
   /** 保留的游戏侧 sprite AO(applyShadowFilterToneAO 广播命中;tone 无 setter=淘汰) */
   setAO(contact: number, form: number): void {
     const u = this._u;

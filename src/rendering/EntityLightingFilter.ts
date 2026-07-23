@@ -20,15 +20,14 @@ export interface IEntityShadingFilter extends Filter {
   setTolerance(v: number): void;
   setOcclusionBlendFactor(v: number): void;
   /**
-   * 脚点行走面深度（实验室 `uFootQ.z`）。非 null 时遮挡改走实验室口径：
-   * 整片 sprite 用「相机平行 billboard @ 脚点深度」判，不再用 floor 直线 + 倾斜面。
-   * 传 null 回落旧口径（无烘焙场景）。
+   * 脚点行走面深度（`lighting/ground_d.png` 实测）。这是遮挡的**唯一**脚点来源：
+   * floor_depth_A/B 拟合直线已废除（多层街巷可偏出 200+ 行地面）。
+   * 传 null＝本场景没有行走面场 → **不做遮挡**，绝不退回旧模型悄悄顶上。
    */
   setFootDepthQ(v: number | null): void;
   /** 脚点遮挡偏置（实验室常数 0.045） */
   setFootBias(v: number): void;
   setDebug(on: boolean): void;
-  setCollisionTexture(tex: Texture): void;
   /** 仅 EntityLightingFilter:色调融入强度(独立开关) */
   setTone?(v: number): void;
   /** 仅 EntityLightingFilter:sprite 空间 AO(按模式钳 contact) */
@@ -90,15 +89,13 @@ uniform float uInvert;
 uniform float uScale;
 uniform float uOffset;
 uniform float uDepthPerSy;
-uniform float uFloorA;
-uniform float uFloorB;
 uniform float uFloorOffset;
 uniform float uFloorOffsetExtra;
 uniform float uTolerance;
 uniform float uOcclusionBlendFactor;
 uniform float uDebug;
-uniform float uFootDepthQ;     // 脚点行走面深度（实验室 uFootQ.z）
-uniform float uUseFootDepth;   // 1=实验室 billboard 口径，0=旧 floor 直线 + 倾斜面
+uniform float uFootDepthQ;     // 脚点行走面深度（ground_d 场实测）
+uniform float uHasFootDepth;   // 0=本帧没拿到脚深度 → 整段遮挡跳过
 uniform float uFootBias;       // 实验室 0.045
 
 // 光照
@@ -121,26 +118,21 @@ void main(void) {
     float wy = (vScreenPos.y - uWorldContainerPos.y) / S;
 
     bool occluded = false;
-    // ---------- 深度遮挡（gated） ----------
-    if (uDepthEnabled > 0.5) {
+    // ---------- 深度遮挡（需深度图 + 行走面脚点深度；缺一不做，绝不退回旧模型） ----------
+    if (uDepthEnabled > 0.5 && uHasFootDepth > 0.5) {
         vec2 depthUV = vec2(wx / uSceneSize.x, wy / uSceneSize.y);
         if (depthUV.x >= 0.0 && depthUV.x <= 1.0 && depthUV.y >= 0.0 && depthUV.y <= 1.0) {
             vec4 depthSample = texture(uDepthMap, depthUV);
             float rawDepth = (depthSample.r * 255.0 * 256.0 + depthSample.g * 255.0) / 65535.0;
             float d_raw = uInvert > 0.5 ? 1.0 - rawDepth : rawDepth;
             float sceneDepth = d_raw * uScale + uOffset;
-            float spriteDepth;
-            if (uUseFootDepth > 0.5) {
-                // 实验室 CHAR_FS 口径：整片 sprite = 相机平行 billboard @ 脚点行走面深度。
-                // 倾斜面（depth_per_sy × 屏幕行差）刻意不做——它把未标定的高度轴误差
-                // 全堆到上半身，正是 pop-through / 腰斩的来源。
-                spriteDepth = uFootDepthQ + uFloorOffset + uFloorOffsetExtra - uFootBias;
-            } else {
-                float syTexFoot = uEntityFootWorldY * uWorldToPixelY;
-                float syTex = wy * uWorldToPixelY;
-                float d_base = uFloorA * syTexFoot + uFloorB + uFloorOffset + uFloorOffsetExtra;
-                spriteDepth = d_base + uDepthPerSy * (syTex - syTexFoot);
-            }
+            // 精灵深度代理：**立在伪世界里的直立 quad**（uDepthPerSy = tanθ/ppu 是它的
+            // 深度梯度，往上越靠近相机）。脚点深度取行走面场实测值——floor 拟合直线
+            // 在多层街巷可偏出 200+ 行地面，已废除，无场时干脆不遮挡（见 uHasFootDepth）。
+            float syTexFoot = uEntityFootWorldY * uWorldToPixelY;
+            float syTex = wy * uWorldToPixelY;
+            float upright = uDepthPerSy * (syTex - syTexFoot);
+            float spriteDepth = uFootDepthQ + upright + uFloorOffset + uFloorOffsetExtra - uFootBias;
             occluded = sceneDepth + uTolerance < spriteDepth;
         }
     }
@@ -229,15 +221,13 @@ export class EntityLightingFilter extends Filter implements IEntityShadingFilter
           uScale: { value: dm?.scale ?? 1, type: 'f32' },
           uOffset: { value: dm?.offset ?? 0, type: 'f32' },
           uDepthPerSy: { value: sh?.depth_per_sy ?? 0, type: 'f32' },
-          uFloorA: { value: sh?.floor_depth_A ?? 0, type: 'f32' },
-          uFloorB: { value: sh?.floor_depth_B ?? 0, type: 'f32' },
           uFloorOffset: { value: cfg?.floor_offset ?? 0, type: 'f32' },
           uFloorOffsetExtra: { value: 0, type: 'f32' },
           uTolerance: { value: cfg?.depth_tolerance ?? 0, type: 'f32' },
           uOcclusionBlendFactor: { value: 0, type: 'f32' },
           uDebug: { value: 0, type: 'f32' },
           uFootDepthQ: { value: 0, type: 'f32' },
-          uUseFootDepth: { value: 0, type: 'f32' },
+          uHasFootDepth: { value: 0, type: 'f32' },
           uFootBias: { value: 0.045, type: 'f32' },
 
           uKeyColor: { value: new Float32Array(lightEnv.key.color), type: 'vec3<f32>' },
@@ -325,9 +315,9 @@ export class EntityLightingFilter extends Filter implements IEntityShadingFilter
   setFootDepthQ(v: number | null): void {
     const u = this._lu;
     if (!u) return;
-    if (v === null || !Number.isFinite(v)) { u['uUseFootDepth'] = 0; return; }
+    if (v === null || !Number.isFinite(v)) { u['uHasFootDepth'] = 0; return; }
     u['uFootDepthQ'] = v;
-    u['uUseFootDepth'] = 1;
+    u['uHasFootDepth'] = 1;
   }
 
   setFootBias(v: number): void {
@@ -375,8 +365,4 @@ export class EntityLightingFilter extends Filter implements IEntityShadingFilter
     if (u) u['uDebug'] = on ? 1 : 0;
   }
 
-  /** EntityLightingFilter 不使用碰撞贴图，保留接口兼容 */
-  setCollisionTexture(_tex: Texture): void {
-    /* no-op */
-  }
 }

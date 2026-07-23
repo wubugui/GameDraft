@@ -1,7 +1,0 @@
-torch
-transformers
-Pillow
-numpy
-PySide6>=6.5.0
-PyOpenGL
-pyopengltk

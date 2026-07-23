@@ -49,9 +49,12 @@ export class SceneDepthSystem implements IGameSystem {
     /** 实验室口径的脚点遮挡偏置（F2 可改） */
     private _footBias = LAB_OCCLUSION_BIAS;
 
-    /** 行走面深度场（照明载荷带来，Game 在就绪/卸载时注入）：遮挡脚点与碰撞反投影的地面真值。
-     *  为 null 时全部回落旧的 floor_depth_A/B 直线口径（无烘焙场景逐字节零回归）。 */
+    /** 行走面深度场（照明载荷带来，Game 在就绪/卸载时注入）：遮挡脚点、碰撞反投影、
+     *  影子落地面的**唯一**地面真值。为 null 时这三者一律**不做**（遮挡关、碰撞恒 false、
+     *  影子不裁切）——floor_depth_A/B 直线口径已彻底废除，绝不静默顶上。 */
     private groundField: GroundDepthField | null = null;
+    /** 行走面场的 GPU 版(影子逐像素取地面用);与 groundField 同源,由 Game 一并注入 */
+    private groundTex: { tex: TextureSource; min: number; max: number } | null = null;
 
     private R00 = 0; private R01 = 0; private R02 = 0;
     private R10 = 0; private R11 = 0; private R12 = 0;
@@ -59,7 +62,6 @@ export class SceneDepthSystem implements IGameSystem {
     private ppu = 1; private cx = 0; private cy = 0;
     private colXMin = 0; private colZMin = 0; private colCellSize = 1;
     private colHeightOffset = 0;
-    private floorA = 0; private floorB = 0;
 
     private sceneW = 0;
     private sceneH = 0;
@@ -106,8 +108,12 @@ export class SceneDepthSystem implements IGameSystem {
      * 注入/清除行走面深度场。单一所有者：场由 CharacterLightingSystem 载入并持有，
      * 本系统只借用只读引用；载荷卸载时 Game 必须传 null（律5 生命周期对称）。
      */
-    setGroundDepthField(field: GroundDepthField | null): void {
+    setGroundDepthField(
+        field: GroundDepthField | null,
+        tex: { tex: TextureSource; min: number; max: number } | null = null,
+    ): void {
         this.groundField = field;
+        this.groundTex = tex;
         depthLog(T, 'groundDepthField', field ? `${field.w}x${field.h}` : 'cleared');
     }
 
@@ -218,8 +224,6 @@ export class SceneDepthSystem implements IGameSystem {
             depthLog(T, 'collision grid:', col);
         }
 
-        this.floorA = depthConfig.shader.floor_depth_A;
-        this.floorB = depthConfig.shader.floor_depth_B;
         this._depthTolerance = depthConfig.depth_tolerance;
         this._floorOffset = depthConfig.floor_offset;
 
@@ -264,6 +268,7 @@ export class SceneDepthSystem implements IGameSystem {
         this.lightEnv = null;
         // 场归 CharacterLightingSystem 所有，这里只断引用（防跨场景采到上一张图的地面）
         this.groundField = null;
+        this.groundTex = null;
     }
 
     /**
@@ -312,9 +317,10 @@ export class SceneDepthSystem implements IGameSystem {
             invert: dm.invert ? 1 : 0,
             scale: dm.scale,
             offset: dm.offset,
-            floorA: this.floorA,
-            floorB: this.floorB,
             floorOffset: this._floorOffset,
+            groundTexture: this.groundTex?.tex ?? null,
+            groundMin: this.groundTex?.min ?? 0,
+            groundMax: this.groundTex?.max ?? 1,
             tolerance: this._depthTolerance,
             occlusionBlendFactor: this._occlusionBlendFactor,
             ppu: this.ppu,
@@ -359,9 +365,10 @@ export class SceneDepthSystem implements IGameSystem {
         const sx = worldX * this.worldToPixelX;
         const sy = worldY * this.worldToPixelY;
 
-        // 像素坐标 → 伪3D空间 → 碰撞网格。
-        // 地面深度优先取行走面场（非平面真值）；无场才回落 floor 直线。
-        const dFloor = this.sampleGroundDepth(worldX, worldY) ?? (this.floorA * sy + this.floorB);
+        // 像素坐标 → 伪3D空间 → 碰撞网格。地面深度只认行走面场——floor 拟合直线在
+        // 多层街巷可偏出 200+ 行地面，会把碰撞读到错误的格子上，已废除。
+        const dFloor = this.sampleGroundDepth(worldX, worldY);
+        if (dFloor === null) return false;
         const px = (sx - this.cx) / this.ppu;
         const py = (this.cy - sy) / this.ppu;
 
@@ -466,10 +473,6 @@ export class SceneDepthSystem implements IGameSystem {
         this.blendOverriddenFilters.delete(f);
     }
 
-    setCollisionTextureOnFilters(tex: Texture): void {
-        for (const f of this.filters) f.setCollisionTexture(tex);
-    }
-
     setDebugOnFilters(on: boolean): void {
         for (const f of this.filters) f.setDebug(on);
     }
@@ -526,14 +529,11 @@ export class SceneDepthSystem implements IGameSystem {
         const now = performance.now();
         if (now - this._lastFootLogMs >= 5000) {
             this._lastFootLogMs = now;
-            const floorA = this.config?.shader.floor_depth_A ?? 0;
-            const floorB = this.config?.shader.floor_depth_B ?? 0;
-            const syTex = footWorldY * this.worldToPixelY;
-            const dBase = floorA * syTex + floorB + this._floorOffset + floorOffsetExtra;
+            const gd = this.sampleGroundDepth(footWorldX, footWorldY);
             depthLog(
                 T,
                 'foot:', footWorldX.toFixed(2), footWorldY.toFixed(2),
-                'syTex:', syTex.toFixed(2), 'd_base:', dBase.toFixed(4),
+                'groundD:', gd === null ? '无场' : gd.toFixed(4),
             );
         }
     }

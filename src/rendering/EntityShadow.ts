@@ -58,13 +58,13 @@ uniform float uW2pY;
 uniform float uInvert;
 uniform float uScale;
 uniform float uOffset;
-uniform float uFloorA;
-uniform float uFloorB;
 uniform float uFloorOffset;
 uniform float uTolerance;
 uniform float uOccBlend;
-uniform float uGroundFootD;    // 脚点行走面深度（实验室 uFootQ.z）
-uniform float uUseGroundFoot;  // 1=地面深度锚在行走面场上（否则用 floor 直线截距）
+uniform sampler2D uGroundD;    // 行走面深度场（RG16，与角色遮挡同一份）
+uniform float uGroundMin;      // 解码：d = min + (r*256+g)/65535 * (max-min)
+uniform float uGroundMax;
+uniform float uHasGroundTex;   // 0=无场 → 影子不做地面遮挡/碰撞裁切
 uniform float uM_ppu;
 uniform float uM_cx;
 uniform float uM_cy;
@@ -76,19 +76,20 @@ uniform float uCol_cell;
 uniform float uCol_gw;
 uniform float uCol_gh;
 
-/** 地面深度：优先把 floor 斜率锚在实体脚下的行走面真值上（截距 uFloorB 在多层地面
- *  场景可整体偏出 200+ 行；影子落地面与角色脚点必须同源，否则影子系统性错位）。 */
-float groundDepthAt(float syTex) {
-    if (uUseGroundFoot > 0.5) {
-        return uGroundFootD + uFloorA * (syTex - uFootY * uW2pY);
-    }
-    return uFloorA * syTex + uFloorB;
+/** 地面深度：逐像素取行走面场。影子落在地上，其深度必须与角色脚点同源——线性 floor
+ *  模型会产生系统性标定偏移（2026-06-17 在 deferred 上踩过一次，2026-07-23 又在
+ *  planar 与碰撞反投影上各踩一次），那条拟合直线已彻底废除。 */
+float groundDepthAt(vec2 wp) {
+    vec2 uv = vec2(wp.x / max(uSceneSize.x, 1e-3), wp.y / max(uSceneSize.y, 1e-3));
+    vec4 g = texture(uGroundD, clamp(uv, 0.0, 1.0));
+    float t = (g.r * 255.0 * 256.0 + g.g * 255.0) / 65535.0;
+    return uGroundMin + t * (uGroundMax - uGroundMin);
 }
 
 bool isCollisionAt(vec2 wp) {
     float sx = wp.x * uW2pX;
     float sy = wp.y * uW2pY;
-    float dFloor = groundDepthAt(sy);
+    float dFloor = groundDepthAt(wp);
     float px = (sx - uM_cx) / uM_ppu;
     float py = (uM_cy - sy) / uM_ppu;
     float cwx = uM_R00 * px + uM_R01 * py + uM_R02 * dFloor;
@@ -114,7 +115,7 @@ void main(void) {
     float a = sil * uDarkness;
 
     // 碰撞方向阻挡:从脚底沿投射方向 march,撞到碰撞格则其后整段裁掉
-    if (uColEnabled > 0.5) {
+    if (uColEnabled > 0.5 && uHasGroundTex > 0.5) {
         vec2 foot = vec2(uFootX, uFootY);
         vec2 d = vWorld - foot;
         bool blocked = false;
@@ -125,15 +126,14 @@ void main(void) {
     }
 
     // 前景遮挡 blend:落点在前景几何之后 → 像角色一样按 occlusionBlendFactor 混合
-    if (uOccEnabled > 0.5) {
+    if (uOccEnabled > 0.5 && uHasGroundTex > 0.5) {
         vec2 dUV = vec2(vWorld.x / uSceneSize.x, vWorld.y / uSceneSize.y);
         if (dUV.x >= 0.0 && dUV.x <= 1.0 && dUV.y >= 0.0 && dUV.y <= 1.0) {
             vec4 ds = texture(uDepthMap, dUV);
             float rawD = (ds.r * 255.0 * 256.0 + ds.g * 255.0) / 65535.0;
             float dRaw = uInvert > 0.5 ? 1.0 - rawD : rawD;
             float sceneDepth = dRaw * uScale + uOffset;
-            float syTex = vWorld.y * uW2pY;
-            float shadowDepth = groundDepthAt(syTex) + uFloorOffset;
+            float shadowDepth = groundDepthAt(vWorld) + uFloorOffset;
             if (sceneDepth + uTolerance < shadowDepth) { a *= uOccBlend; }
         }
     }
@@ -191,13 +191,12 @@ function makePlanarShader(ctx: ShadowSceneContext | null, texSource: TextureSour
         uInvert: f32(ctx?.invert ?? 0),
         uScale: f32(ctx?.scale ?? 1),
         uOffset: f32(ctx?.offset ?? 0),
-        uFloorA: f32(ctx?.floorA ?? 0),
-        uFloorB: f32(ctx?.floorB ?? 0),
         uFloorOffset: f32(ctx?.floorOffset ?? 0),
         uTolerance: f32(ctx?.tolerance ?? 0),
         uOccBlend: f32(ctx?.occlusionBlendFactor ?? 0.28),
-        uGroundFootD: f32(0),
-        uUseGroundFoot: f32(0),
+        uGroundMin: f32(ctx?.groundMin ?? 0),
+        uGroundMax: f32(ctx?.groundMax ?? 1),
+        uHasGroundTex: f32(ctx?.groundTexture ? 1 : 0),
         uM_ppu: f32(ctx?.ppu ?? 1),
         uM_cx: f32(ctx?.cx ?? 0),
         uM_cy: f32(ctx?.cy ?? 0),
@@ -212,6 +211,7 @@ function makePlanarShader(ctx: ShadowSceneContext | null, texSource: TextureSour
       uTexture: texSource,
       uDepthMap: ctx?.depthTexture?.source ?? Texture.WHITE.source,
       uCollisionMap: ctx?.collisionTexture?.source ?? Texture.WHITE.source,
+      uGroundD: ctx?.groundTexture ?? Texture.WHITE.source,
     },
   });
 }
@@ -366,16 +366,6 @@ export class PlanarEntityShadow implements IEntityShadow {
   }
 
   /** 深度调参广播（contact shader 的 col/occ 恒关，深度参数无效，仅 cast 需要） */
-  /** 脚点行走面深度（Game 每帧随实体位置注入）；null = 无场，回落 floor 直线截距 */
-  setGroundFootDepth(v: number | null): void {
-    if (v === null || !Number.isFinite(v)) {
-      setU(this.castShader, 'uUseGroundFoot', 0);
-      return;
-    }
-    setU(this.castShader, 'uGroundFootD', v);
-    setU(this.castShader, 'uUseGroundFoot', 1);
-  }
-
   setDepthParams(tolerance: number, floorOffset: number, occlusionBlendFactor: number): void {
     setU(this.castShader, 'uTolerance', tolerance);
     setU(this.castShader, 'uFloorOffset', floorOffset);

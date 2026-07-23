@@ -886,8 +886,8 @@ export class DebugTools {
             ? `遮挡混合系数（当前）: ${factor.toFixed(2)}`
             : '当前场景未加载 depthConfig 或深度纹理未就绪，无精灵深度遮挡。') +
           (fm.groundField
-            ? `\n判据：实验室口径 = 相机平行 billboard @ 行走面脚点深度，偏置 ${fm.footBias.toFixed(3)}。`
-            : '\n判据：旧口径 = floor_depth_A/B 拟合直线 + depth_per_sy 倾斜面（本场景无 lighting/ground_d.png）。') +
+            ? `\n判据：直立 quad（depth_per_sy = tanθ/ppu 为其深度梯度）@ 行走面脚点深度，偏置 ${fm.footBias.toFixed(3)}。`
+            : '\n本场景无 lighting/ground_d.png → **遮挡整体关闭**（旧的 floor 直线口径已废除，不做静默兜底）。烘焙该场景即可恢复。') +
           '\n不影响碰撞与存档。',
         actions: active
           ? [

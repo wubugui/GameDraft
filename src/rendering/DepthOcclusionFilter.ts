@@ -41,14 +41,11 @@ uniform sampler2D uDepthMap;
 
 uniform vec2  uSceneSize;      // 场景世界宽高（worldWidth / worldHeight）
 uniform float uProjectionScale; // Camera 投影 S，世界单位→屏幕像素
-uniform float uWorldToPixelX;   // 世界X → 背景纹理像素
 uniform float uWorldToPixelY;   // 世界Y → 背景纹理像素（与 isCollision 一致）
 uniform float uInvert;
 uniform float uScale;
 uniform float uOffset;
 uniform float uDepthPerSy;
-uniform float uFloorA;
-uniform float uFloorB;
 uniform float uFloorOffset;
 uniform float uFloorOffsetExtra;
 uniform float uTolerance;
@@ -58,21 +55,9 @@ uniform float uDebug;          // 调试模式：1=输出调试颜色
 /** F2：遮挡像素 alpha 乘数 [0,1]。0=discard；1=完全不裁 alpha（调试用） */
 uniform float uOcclusionBlendFactor;
 uniform float uFootDepthQ;     // 脚点行走面深度（实验室 uFootQ.z）
-uniform float uUseFootDepth;   // 1=实验室 billboard 口径
+uniform float uHasFootDepth;   // 0=本帧没拿到脚深度 → 不遮挡
 uniform float uFootBias;       // 实验室 0.045
 
-// M矩阵参数（像素→伪3D，仅调试用）
-uniform float uM_ppu;
-uniform float uM_cx;
-uniform float uM_cy;
-uniform float uM_R00; uniform float uM_R01; uniform float uM_R02;
-uniform float uM_R20; uniform float uM_R21; uniform float uM_R22;
-uniform float uCol_xMin;
-uniform float uCol_zMin;
-uniform float uCol_cellSize;
-uniform float uCol_gridW;
-uniform float uCol_gridH;
-uniform sampler2D uCollisionMap;
 
 void main(void) {
     vec4 color = texture(uTexture, vTextureCoord);
@@ -89,8 +74,9 @@ void main(void) {
     // 深度图与背景按世界归一化 UV 对齐
     vec2 depthUV = vec2(wx / uSceneSize.x, wy / uSceneSize.y);
 
-    if (depthUV.x < 0.0 || depthUV.x > 1.0 || depthUV.y < 0.0 || depthUV.y > 1.0) {
-        finalColor = color;
+    if (uHasFootDepth < 0.5 ||
+        depthUV.x < 0.0 || depthUV.x > 1.0 || depthUV.y < 0.0 || depthUV.y > 1.0) {
+        finalColor = color;        // 无行走面场 / 出界 → 不遮挡
         return;
     }
 
@@ -101,47 +87,20 @@ void main(void) {
     float sceneDepth = d_raw * uScale + uOffset;
 
     // 精灵深度代理：**立在伪世界里的直立 quad**（uDepthPerSy = tanθ/ppu 就是它的深度梯度，
-    // 往上越靠近相机）。两个分支只差脚点深度的来源：有行走面场用实测脚深，没有就用 floor
-    // 拟合线。（旧写法整张 sprite 取脚点深度 = 相机平行 billboard，已废除）
+    // 往上越靠近相机）。
+    // 脚点深度只认行走面场实测值——floor 拟合直线已废除（多层街巷可偏出 200+ 行地面），
+    // 没有场就整段不遮挡（见 uHasFootDepth），绝不退回旧模型悄悄顶上。
     float syTexFoot = uEntityFootWorldY * uWorldToPixelY;
     float syTex = wy * uWorldToPixelY;
     float upright = uDepthPerSy * (syTex - syTexFoot);
-    float spriteDepth;
-    if (uUseFootDepth > 0.5) {
-        spriteDepth = uFootDepthQ + upright + uFloorOffset + uFloorOffsetExtra - uFootBias;
-    } else {
-        float d_base = uFloorA * syTexFoot + uFloorB + uFloorOffset + uFloorOffsetExtra;
-        spriteDepth = d_base + upright;
-    }
+    float spriteDepth = uFootDepthQ + upright + uFloorOffset + uFloorOffsetExtra - uFootBias;
 
     // ========== 调试模式 ==========
     if (uDebug > 0.5) {
-        vec3 dbgColor = vec3(0.0);
-
-        float sxTex = wx * uWorldToPixelX;
-        float syTexDbg = wy * uWorldToPixelY;
-        float ppx = (sxTex - uM_cx) / uM_ppu;
-        float ppy = (uM_cy - syTexDbg) / uM_ppu;
-        float dFloor = uFloorA * syTexDbg + uFloorB;
-        float wx = uM_R00 * ppx + uM_R01 * ppy + uM_R02 * dFloor;
-        float wz = uM_R20 * ppx + uM_R21 * ppy + uM_R22 * dFloor;
-        float gx = (wx - uCol_xMin) / uCol_cellSize;
-        float gz = (wz - uCol_zMin) / uCol_cellSize;
-
-        float isCollision = 0.0;
-        if (gx >= 0.0 && gx < uCol_gridW && gz >= 0.0 && gz < uCol_gridH) {
-            vec2 colUV = vec2(gx / uCol_gridW, gz / uCol_gridH);
-            vec4 colSample = texture(uCollisionMap, colUV);
-            isCollision = colSample.r > 0.5 ? 1.0 : 0.0;
-        }
-
-        // 遮挡检测
-        float isOccluded = sceneDepth + uTolerance < spriteDepth ? 1.0 : 0.0;
-
-        dbgColor.r = isOccluded;
-        dbgColor.g = isCollision;
-
-        finalColor = vec4(dbgColor, 0.7);
+        // 红=被遮挡 蓝=可见。碰撞通道已删:它靠 floor 拟合直线做逐像素反投影,
+        // 那条线已废除;要看碰撞去实验室查看器的顶视图(世界 XZ,无遮挡无歧义)。
+        finalColor = vec4(sceneDepth + uTolerance < spriteDepth
+            ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 0.0, 1.0), 0.7);
         return;
     }
     // ========== 正常渲染 ==========
@@ -196,14 +155,11 @@ export class DepthOcclusionFilter extends Filter {
                 depthUniforms: {
                     uSceneSize: { value: new Float32Array([0, 0]), type: 'vec2<f32>' },
                     uProjectionScale: { value: 1, type: 'f32' },
-                    uWorldToPixelX: { value: 1, type: 'f32' },
                     uWorldToPixelY: { value: 1, type: 'f32' },
                     uInvert: { value: cfg.depth_mapping.invert ? 1.0 : 0.0, type: 'f32' },
                     uScale: { value: cfg.depth_mapping.scale, type: 'f32' },
                     uOffset: { value: cfg.depth_mapping.offset, type: 'f32' },
                     uDepthPerSy: { value: cfg.shader.depth_per_sy, type: 'f32' },
-                    uFloorA: { value: cfg.shader.floor_depth_A, type: 'f32' },
-                    uFloorB: { value: cfg.shader.floor_depth_B, type: 'f32' },
                     uFloorOffset: { value: cfg.floor_offset, type: 'f32' },
                     uFloorOffsetExtra: { value: 0, type: 'f32' },
                     uTolerance: { value: cfg.depth_tolerance, type: 'f32' },
@@ -212,29 +168,10 @@ export class DepthOcclusionFilter extends Filter {
                     uDebug: { value: 0, type: 'f32' },
                     uOcclusionBlendFactor: { value: 0, type: 'f32' },
                     uFootDepthQ: { value: 0, type: 'f32' },
-                    uUseFootDepth: { value: 0, type: 'f32' },
+                    uHasFootDepth: { value: 0, type: 'f32' },
                     uFootBias: { value: 0.045, type: 'f32' },
-                    // M矩阵（调试用）
-                    uM_ppu: { value: cfg.M.ppu, type: 'f32' },
-                    uM_cx: { value: cfg.M.cx, type: 'f32' },
-                    uM_cy: { value: cfg.M.cy, type: 'f32' },
-                    uM_R00: { value: cfg.M.R[0][0], type: 'f32' },
-                    uM_R01: { value: cfg.M.R[0][1], type: 'f32' },
-                    uM_R02: { value: cfg.M.R[0][2], type: 'f32' },
-                    uM_R20: { value: cfg.M.R[2][0], type: 'f32' },
-                    uM_R21: { value: cfg.M.R[2][1], type: 'f32' },
-                    uM_R22: { value: cfg.M.R[2][2], type: 'f32' },
-                    // 碰撞网格（调试用）
-                    uCol_xMin: { value: cfg.collision?.x_min ?? 0, type: 'f32' },
-                    uCol_zMin: { value: cfg.collision?.z_min ?? 0, type: 'f32' },
-                    uCol_cellSize: { value: cfg.collision?.cell_size ?? 1, type: 'f32' },
-                    uCol_gridW: { value: cfg.collision?.grid_width ?? 0, type: 'f32' },
-                    uCol_gridH: { value: cfg.collision?.grid_height ?? 0, type: 'f32' },
                 },
                 uDepthMap: depthTexture.source,
-                // collision texture set later via setCollisionTexture
-                // using depth texture as placeholder so the shader has a valid sampler
-                uCollisionMap: depthTexture.source,
             },
         });
 
@@ -286,10 +223,9 @@ export class DepthOcclusionFilter extends Filter {
         if (u) u['uProjectionScale'] = s;
     }
 
-    setWorldToPixel(tx: number, ty: number): void {
+    setWorldToPixel(_tx: number, ty: number): void {
         const u = this._du;
         if (u) {
-            u['uWorldToPixelX'] = tx;
             u['uWorldToPixelY'] = ty;
         }
     }
@@ -321,10 +257,6 @@ export class DepthOcclusionFilter extends Filter {
         if (u) u['uDebug'] = on ? 1.0 : 0.0;
     }
 
-    setCollisionTexture(tex: Texture): void {
-        (this.resources as Record<string, unknown>)['uCollisionMap'] = tex.source;
-    }
-
     /** 被遮挡时精灵 alpha 乘数；0=discard */
     setOcclusionBlendFactor(v: number): void {
         const u = this._du;
@@ -335,9 +267,9 @@ export class DepthOcclusionFilter extends Filter {
     setFootDepthQ(v: number | null): void {
         const u = this._du;
         if (!u) return;
-        if (v === null || !Number.isFinite(v)) { u['uUseFootDepth'] = 0; return; }
+        if (v === null || !Number.isFinite(v)) { u['uHasFootDepth'] = 0; return; }
         u['uFootDepthQ'] = v;
-        u['uUseFootDepth'] = 1;
+        u['uHasFootDepth'] = 1;
     }
 
     /** 脚点遮挡偏置（实验室常数 0.045） */

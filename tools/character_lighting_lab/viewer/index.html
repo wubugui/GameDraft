@@ -264,6 +264,20 @@ button#rebuild.dirty{animation:pulse 1.2s infinite}
       <span class="views" id="cam_modes" style="flex:1;margin:0"><button data-cm="fly" class="on">漫游</button><button data-cm="orbit">轨道</button></span></label>
     <label title="漫游移动速度(世界单位/秒);按住 Shift 临时 ×4"><span class="k">漫游速度</span><input type="range" id="camspeed" min="0.4" max="24" step="0.2" value="4"><span class="v" id="camspeed_v"></span></label>
     <label title="漫游相机视场角(透视);轨道模式用正交,不受它影响"><span class="k">视场角°</span><input type="range" id="camfov" min="30" max="100" step="1" value="60"><span class="v" id="camfov_v"></span></label>
+
+    <div class="subh">probe 全景 <span class="hint">漫游时把可视化裹在相机周围</span></div>
+    <div class="sd" style="margin:0 0 4px">开启后你周围**就是**这套可视化的全景，方向严格对世界方向；飞到哪算到哪。只在「漫游」相机下有效（正交没有单一视点）。</div>
+    <label title="选一种可视化裹住相机;与⑥probe 检视面板的四张图同源同算法"><span class="k">全景</span>
+      <span class="views" id="pano_modes" style="flex:1;margin:0">
+        <button data-pm="-1" class="on" title="关闭全景">关</button>
+        <button data-pm="0" title="irradiance E(n):朝这个方向的一小片表面能收到多少光">①E(n)</button>
+        <button data-pm="1" title="亮度分层:曝光后按 1EV 分带,看动态范围/有没有撞顶">②分层</button>
+        <button data-pm="2" title="射线命中:色=命中距离 蓝=miss 交错纹=折叠命中">③命中</button>
+        <button data-pm="3" title="命中辐射 L(ω):射线真正看见的东西(E 的被积函数)">④辐射</button>
+      </span></label>
+    <label title="0=全是全景,1=全是重建 mesh,中间按比例混合。probe 点/角色/射线这些"仪表"始终画在最上层"><span class="k">全景↔mesh</span><input type="range" id="pano_blend" min="0" max="1" step="0.05" value="0.35"><span class="v" id="pano_blend_v"></span></label>
+    <label title="开=按游戏口径,周围 8 颗 probe 三线性插值(含 valid 权重与四分账合成);关=只取最近那一颗 probe 的原始数据(③④ 则改从那颗 probe 的实际采样点打射线)"><span class="k">插值</span><input type="checkbox" id="pano_interp" checked style="flex:none"><span class="v">8角</span></label>
+    <label title="在 3D 里画出角色的直立 quad,并用当前照明模式真着色——周围全景和角色被照成什么样可以对着看"><span class="k">画角色</span><input type="checkbox" id="pano_char" checked style="flex:none"><span class="v">quad</span></label>
     <div id="hdrstats"></div>
     <canvas id="hist" width="286" height="64" title="log2 亮度直方图:灰=原图,橙=HDR恢复后"></canvas>
     <div class="sd" style="margin-top:6px">常驻 HDR 场景 / 光源分割图见画面左下角浮层(与 trace 同源)。</div>

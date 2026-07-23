@@ -1,4 +1,4 @@
-import { Filter, GlProgram, Texture } from 'pixi.js';
+import { Filter, GlProgram, Texture, type TextureSource } from 'pixi.js';
 import type { SceneDepthConfig } from '../data/types';
 
 const VERT = /* glsl */ `
@@ -53,8 +53,10 @@ uniform float uM_cx;
 uniform float uM_cy;
 uniform float uM_R00; uniform float uM_R01; uniform float uM_R02;
 uniform float uM_R20; uniform float uM_R21; uniform float uM_R22;
-uniform float uFloorA;
-uniform float uFloorB;
+uniform sampler2D uGroundD;    // 行走面深度场(RG16,与遮挡/影子同一份)
+uniform float uGroundMin;
+uniform float uGroundMax;
+uniform float uHasGroundTex;   // 0=无场 → 碰撞可视化整片置灰(不拿死掉的 floor 线糊弄)
 
 // 碰撞网格
 uniform float uCol_xMin;
@@ -119,7 +121,10 @@ void main(void) {
         float texX = uv.x * uTexSize.x;
         float texY = uv.y * uTexSize.y;
 
-        float dFloor = uFloorA * texY + uFloorB;
+        if (uHasGroundTex < 0.5) { finalColor = vec4(0.25, 0.25, 0.28, 1.0); return; }
+        vec4 gsm = texture(uGroundD, uv);
+        float dFloor = uGroundMin
+            + ((gsm.r * 255.0 * 256.0 + gsm.g * 255.0) / 65535.0) * (uGroundMax - uGroundMin);
         float px = (texX - uM_cx) / uM_ppu;
         float py = (uM_cy - texY) / uM_ppu;
 
@@ -182,8 +187,6 @@ export class BackgroundDebugFilter extends Filter {
                     uM_R20: { value: 0, type: 'f32' },
                     uM_R21: { value: 0, type: 'f32' },
                     uM_R22: { value: 1, type: 'f32' },
-                    uFloorA: { value: 0, type: 'f32' },
-                    uFloorB: { value: 0, type: 'f32' },
                     uCol_xMin: { value: 0, type: 'f32' },
                     uCol_zMin: { value: 0, type: 'f32' },
                     uCol_cellSize: { value: 1, type: 'f32' },
@@ -194,6 +197,7 @@ export class BackgroundDebugFilter extends Filter {
                 },
                 uDepthMap: placeholder.source,
                 uCollisionMap: placeholder.source,
+                uGroundD: placeholder.source,
             },
         });
     }
@@ -258,8 +262,6 @@ export class BackgroundDebugFilter extends Filter {
         u['uM_R00'] = M.R[0][0]; u['uM_R01'] = M.R[0][1]; u['uM_R02'] = M.R[0][2];
         u['uM_R20'] = M.R[2][0]; u['uM_R21'] = M.R[2][1]; u['uM_R22'] = M.R[2][2];
 
-        u['uFloorA'] = cfg.shader.floor_depth_A;
-        u['uFloorB'] = cfg.shader.floor_depth_B;
 
         const col = cfg.collision;
         if (col) {
@@ -285,6 +287,16 @@ export class BackgroundDebugFilter extends Filter {
             const arr = u['uSceneSize'] as Float32Array;
             arr[0] = w; arr[1] = h;
         }
+    }
+
+    /** 注入行走面深度场(碰撞可视化的地面来源);null=无场,可视化置灰 */
+    setGroundTexture(g: { tex: TextureSource; min: number; max: number } | null): void {
+        const u = this._u;
+        if (!u) return;
+        (this.resources as Record<string, unknown>)['uGroundD'] = g?.tex ?? Texture.WHITE.source;
+        u['uGroundMin'] = g?.min ?? 0;
+        u['uGroundMax'] = g?.max ?? 1;
+        u['uHasGroundTex'] = g ? 1 : 0;
     }
 
     setCollisionTexture(tex: Texture): void {

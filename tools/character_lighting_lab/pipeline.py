@@ -69,16 +69,9 @@ DEFAULTS = dict(
     thickness_k=0.55,      # occluder thickness = k * min(bbox)/ppu
     bg_thickness_q=0.60,   # default slab thickness for background shell (q units)
     ground_up_dot=0.75,    # world-up cosine threshold for ground candidacy
-    object_seg=1,          # 图像域物体识别(先扣物体、剩下才是地形);0=退回旧的纯几何猜地面
     object_score_min=0.35, # 实例采信分数门槛(调它不必重跑推理)
     object_groups='',      # 提示词组,逗号分隔;空=默认组(见 object_seg.DEFAULT_GROUPS)
     object_prompts_extra='',  # 本场景额外提示词,逗号分隔
-    # 几何兜底默认关:2026-07-23 在 雾津街头(城镇)与 阎王岭山口(山地) 两张图实测
-    # **零收益**——它补判的抬升块早已被「朝上+从画面底部洪泛」排除在地面掩膜之外,
-    # 却要多标 +14~20% 的画面为物体。真山坡上它还有把地形误判成建筑的风险。
-    # 留作 opt-in:某场景 SAM 词表整类漏检时再开。
-    object_geom_fallback=0,   # 几何兜底:补判 SAM 漏掉的抬升结构
-    ground_max_step_frac=0.04,  # 抬升阈值,占画幅高的比例(尺度无关;街面自身起伏约 1.5%)
     walk_res=160,          # world XZ walk grid resolution (max dimension)
 )
 
@@ -130,8 +123,7 @@ def geometry_signature(out_dir: Path, h: str, P: dict) -> str:
                 'depth_scale_adj', 'depth_offset_adj', 'col_h_lo', 'col_h_hi',
                 'relief', 'occluder_tau', 'thickness_k',
                 'bg_thickness_q', 'ground_up_dot', 'vol_nx', 'vol_nz', 'walk_res',
-                'object_seg', 'object_score_min', 'object_groups', 'object_prompts_extra',
-                'object_geom_fallback', 'ground_max_step_frac')
+                'object_score_min', 'object_groups', 'object_prompts_extra')
     parts = [h] + [f'{k}={P[k]}' for k in geo_keys]
     for f in ('depth_edit.png', 'collision_edit.png', 'object_edit.png'):
         fp = out_dir / f
@@ -220,7 +212,7 @@ def stage_depth(img_path: Path, cache_dir: Path, h: str, model: str = 'base') ->
     if cache.exists():
         return np.load(cache)
     print(f'[depth] inferring with Depth Anything ({model})...', flush=True)
-    from tools.scene_depth_editor.depth_estimator import DepthEstimator, MODEL_OPTIONS
+    from tools.character_lighting_lab.depth_estimator import DepthEstimator, MODEL_OPTIONS
     est = DepthEstimator()
     src = Image.open(img_path).convert('RGB')
     res = est.generate_depth(src, MODEL_OPTIONS.get(model, MODEL_OPTIONS['base']),
@@ -232,10 +224,15 @@ def stage_depth(img_path: Path, cache_dir: Path, h: str, model: str = 'base') ->
 
 
 def _ground_mask_from(d, qy, theta, thresh, prior=None):
-    """Up-facing surfaces flood-connected to the frame bottom.
+    """地面掩膜 = 语义(prior) ∩ 几何(朝上 + 从画面底部洪泛)。
 
-    ``prior`` = 候选地形(物体识别的补集)。给了就先与之取交——朝上判据本身分不开
-    「街面」和「屋顶」(两者都朝上、还在 2D 上连成一片),必须靠物体掩膜先切断。
+    **两路证据缺一不可**(2026-07-23 实测):
+    - 只用几何:朝上判据分不开街面与屋顶(都朝上、2D 上还连成一片),屋顶被烘进地形;
+      而且 `ground_up_dot=0.75` 等价于「坡度 < 41.4°」,陡坡看不见。
+    - 只用语义:雾津街头门槛 0.15 时干净(污染 1.5%),但 temple 这种暗色室内**没有
+      可用门槛**——0.15 会把 55% 的真地板当物体吃掉,0.35 又留 42% 污染。
+    交集在 雾津街头/temple/阎王岭山口 三张上污染都 ≤1.3%。所以几何这路不是「旧方案
+    残留」,是与语义正交的第二路证据;两路各有盲区,别再想着删掉哪一路。
     """
     d_su = np.gradient(d, axis=1)
     d_sv = np.gradient(d, axis=0)
@@ -314,48 +311,6 @@ def stage_calibrate(raw: np.ndarray, P: dict, ground_prior: np.ndarray | None = 
     return dict(s=a_best, o=b_best, theta=theta, ppu=ppu, cx=cx, cy=cy,
                 d=d, Y=Y, ground_mask=mask, qy=qy, depth_shift=o,
                 ground_y_p95=float(np.percentile(np.abs(Y[mask]), 95)) if mask.any() else -1.0)
-
-
-def augment_objects_geometric(cal: dict, objects: np.ndarray, P: dict,
-                              status=print) -> np.ndarray:
-    """几何兜底:把 SAM 漏掉的抬升结构补判为物体。
-
-    语义分割再准也会漏(词表覆盖不到的物件、被裁切的边角楼)。漏一座房子,它就
-    整个被烘进地形高度场,角色站到那一列时脚深度取到屋顶——正是这套东西最初的病。
-    所以在语义之后加一道纯几何的网:**候选地形里凡是明显高出四周地形的连通块,
-    补判为物体**。
-
-    阈值用「抬升量折算成屏幕表观高度,占画幅高的比例」表达,与场景尺度无关
-    (实测:雾津街头街面自身起伏约占画幅 1.5%,屋顶高出约 7.6%)。
-    """
-    Y = cal['Y']
-    gm = cal['ground_mask']
-    Hg, Wg = Y.shape
-    if not gm.any():
-        return objects
-    # 以已确认地面外推出「四周地形应有的高度」,抬升量相对它算
-    Ybase = gaussian_filter(laplace_inpaint(Y, gm, iters=200), 2.0)
-    rise_px = (Y - Ybase) * math.cos(cal['theta']) * cal['ppu']
-    thr = float(P.get('ground_max_step_frac', 0.04)) * Hg
-    cand = (rise_px > thr) & ~objects
-    cand = binary_opening(cand, np.ones((3, 3)))
-    lab_, n = label(cand)
-    min_area = max(64, int(0.0004 * Hg * Wg))
-    add = np.zeros_like(objects)
-    kept = 0
-    for i in range(1, n + 1):
-        m = lab_ == i
-        if m.sum() < min_area:
-            continue
-        add |= m
-        kept += 1
-    if not kept:
-        return objects
-    add = binary_fill_holes(binary_closing(add, np.ones((5, 5))))
-    status(f'[objects] 几何兜底补判 {kept} 块抬升结构 '
-           f'(阈值 {thr:.0f}px = 画幅 {P.get("ground_max_step_frac", 0.04)*100:.0f}%, '
-           f'+{add.mean() * 100:.1f}% 画面)')
-    return objects | add
 
 
 def refresh_ground_mask(cal: dict, objects: np.ndarray, P: dict) -> None:
@@ -1198,9 +1153,8 @@ def build(img_path: Path, name: str, params: dict):
 
     # ① 物体识别(只看图,不依赖深度)。地形 = 扣掉物体之后剩下的部分——
     #    朝上判据分不开街面与屋顶,必须先由这一步切断,否则房子会被烘进地形高度场。
-    objects = None
-    if int(P.get('object_seg', 1)):
-        from tools.character_lighting_lab.object_seg import object_mask, segment_objects
+    from tools.character_lighting_lab.object_seg import object_mask, segment_objects
+    if True:
         obj_ids_native, obj_meta = segment_objects(img_path, out_dir, h, P)
         obj_ids = resize_nn(obj_ids_native, (W_G, Hg))
         obj_edit = load_object_edit(out_dir, (Hg, W_G))
@@ -1209,12 +1163,6 @@ def build(img_path: Path, name: str, params: dict):
         print(f'[objects] 物体占画面 {objects.mean() * 100:.1f}%,候选地形 {(~objects).mean() * 100:.1f}%')
 
     cal = stage_calibrate(raw, P, ground_prior=None if objects is None else ~objects)
-    if objects is not None and int(P.get('object_geom_fallback', 1)):
-        aug = augment_objects_geometric(cal, objects, P)
-        if aug.sum() > objects.sum():
-            objects = aug
-            refresh_ground_mask(cal, objects, P)
-            np.save(out_dir / 'object_mask.npy', objects)
     cal['objects'] = objects if objects is not None else np.zeros(raw.shape, bool)
     # 手动深度映射微调(叠加在自动解上;旧工具 dm_scale/dm_offset 的对应物)
     dsa, doa = float(P.get('depth_scale_adj', 1.0)), float(P.get('depth_offset_adj', 0.0))
@@ -1485,10 +1433,9 @@ def export_scene_depth(name: str) -> dict:
     depth_name = old_cfg.get('depth_map', 'raw_depth_rg.png')
     Image.fromarray(rg).save(scene_media / depth_name, optimize=True)
 
-    # ---- floor 线(遗留线性字段):非平面地面的最佳拟合,按原生 sy ----
-    sy_nat = (np.arange(Hh, dtype=np.float64) + 0.5) * (nh / Hh)
-    row_d = np.median(d_walk, axis=1)
-    A_, B_ = np.polyfit(sy_nat, row_d, 1)
+    # ---- 直立 quad 的深度梯度(遮挡唯一还用的 shader 参数) ----
+    # floor_depth_A/B 那条最小二乘拟合直线**已废除**:运行时的脚点深度一律取
+    # lighting/ground_d.png 逐点采样(那条直线在多层街巷可偏出 200+ 行地面)。
     depth_per_sy = math.tan(theta) / ppu_nat
 
     # ---- 碰撞:实验室世界网格 → 游戏方形 cell 网格(注意 lab Z 翻转还原) ----
@@ -1528,8 +1475,7 @@ def export_scene_depth(name: str) -> dict:
         'M': {'R': [[float(v) for v in row] for row in R_base],
               'ppu': ppu_nat, 'cx': nw / 2.0, 'cy': nh / 2.0},
         'depth_mapping': {'invert': False, 'scale': d_hi - d_lo, 'offset': d_lo},
-        'shader': {'depth_per_sy': depth_per_sy,
-                   'floor_depth_A': float(A_), 'floor_depth_B': float(B_)},
+        'shader': {'depth_per_sy': depth_per_sy},
         'collision': {'x_min': float(gx_min), 'z_min': float(gz_min),
                       'cell_size': cell, 'grid_width': gw, 'grid_height': gh,
                       'height_offset': float((old_cfg.get('collision') or {}).get('height_offset', 0.0))},
@@ -1539,7 +1485,7 @@ def export_scene_depth(name: str) -> dict:
     old_scene['depthConfig'] = cfg
     scene_json_path.write_text(json.dumps(old_scene, ensure_ascii=False, indent=2) + '\n')
     print(f'[export-depth] {scene_json_path.name}: depth {nw}x{nh}, '
-          f'floor A={A_:.5f} B={B_:.3f}, collision {gw}x{gh} cell={cell:.3f}')
+          f'depth_per_sy={depth_per_sy:.6f}, collision {gw}x{gh} cell={cell:.3f}')
     return cfg
 
 

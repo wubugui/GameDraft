@@ -478,7 +478,11 @@ export class Game {
     // (见 entity-lighting「脚点锚必须同源」)。滤镜由随后的 scene:ready 权威挂载(此时
     // shadingResources 已就绪),故此处不再 reattach——避免抢在实体建好前挂、且泄漏重复滤镜。
     this.characterLighting.onReady = () => {
-      this.sceneDepthSystem.setGroundDepthField(this.characterLighting.groundDepthField);
+      this.sceneDepthSystem.setGroundDepthField(
+        this.characterLighting.groundDepthField,
+        this.characterLighting.groundDepthTexture,
+      );
+      this.depthDebugVisualizer?.setGroundTexture(this.characterLighting.groundDepthTexture);
       this.refreshPlayerWorldCollision();
     };
     // 章节导演（C2）：按清单在 scene:revealed / narrative:stateChanged 上评估开拍/收工；
@@ -2511,12 +2515,6 @@ export class Game {
       off.shadow.darkness = 0; off.shadow.contact = 0;
       return off;
     };
-    // 影子落地面深度锚:与角色遮挡脚点同源(行走面场),否则影子与本体错位
-    const footD = this.sceneDepthSystem.sampleGroundDepth(
-      entry.src.getFootX(), entry.src.getFootY(),
-    );
-    entry.shadow.setGroundFootDepth?.(footD);
-    for (const ex of entry.extra ?? []) ex.setGroundFootDepth?.(footD);
     if (!cl.shadowAutoReady) {
       entry.shadow.update(entry.src, env, field);
       // 从 auto 切回手调:planar 槽熄灭
@@ -2533,7 +2531,6 @@ export class Game {
     entry.slots ??= [];
     entry.extra ??= [];
     while (entry.extra.length < K) entry.extra.push(this.createShadowImpl('planar'));
-    for (const ex of entry.extra) ex.setGroundFootDepth?.(footD);   // 本帧新建的槽也要锚
     const impls = entry.extra;
     while (entry.slots.length < impls.length) {
       entry.slots.push({ light: -2, az: 90, el: 45, w: 0, tan: 0.05 });

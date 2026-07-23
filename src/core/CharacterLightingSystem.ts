@@ -101,6 +101,8 @@ export class CharacterLightingSystem implements IGameSystem {
   private _hasVolumes = false;
   private meta: LightingPayloadMeta | null = null;
   private groundD: Float32Array | null = null;
+  /** 行走面深度场的 GPU 版(RG16 原图)。影子/背景调试要逐像素取地面,CPU 数组喂不了 shader */
+  private groundTex: TextureSource | null = null;
   private resources: CharShadingSceneResources | null = null;
   private ownedTextures: TextureSource[] = [];
   private probeViz: ProbeVizPoint[] | null = null;
@@ -156,6 +158,7 @@ export class CharacterLightingSystem implements IGameSystem {
     this.epoch++;
     this.meta = null;
     this.groundD = null;
+    this.groundTex = null;
     this.resources = null;
     this.probeViz = null;
     this.lightLum = null;
@@ -455,11 +458,18 @@ export class CharacterLightingSystem implements IGameSystem {
       // ground_d.png:RG16 → 深度场(footQ 的 CPU 采样源)
       const bmp = await createImageBitmap(groundBuf);
       if (myEpoch !== this.epoch) { bmp.close(); return; }
+      const bmp0w = bmp.width, bmp0h = bmp.height;
       const cv = new OffscreenCanvas(bmp.width, bmp.height);
       const ctx2 = cv.getContext('2d')!;
       ctx2.drawImage(bmp, 0, 0);
       const id = ctx2.getImageData(0, 0, bmp.width, bmp.height).data;
       bmp.close();
+      // GPU 版:直接用原始 RG16 位图建纹理,shader 里按 min/max 解码(与 CPU 侧同一份数据)
+      const gtex = new BufferImageSource({
+        resource: new Uint8Array(id.buffer.slice(0)), width: bmp0w, height: bmp0h,
+        format: 'rgba8unorm', scaleMode: 'nearest', alphaMode: 'no-premultiply-alpha',
+      });
+      this.ownedTextures.push(gtex);
       const g = new Float32Array(meta.work.w * meta.work.h);
       const span = meta.ground_d.max - meta.ground_d.min;
       for (let i = 0; i < g.length; i++) {
@@ -495,6 +505,7 @@ export class CharacterLightingSystem implements IGameSystem {
       const pn = meta.probes;
       this.meta = meta;
       this.groundD = g;
+      this.groundTex = gtex;
       this.lightLum = lightLum;
       this.l2u16 = new Uint16Array(l2);
       this.validU8 = new Uint8Array(valid);
@@ -595,6 +606,14 @@ export class CharacterLightingSystem implements IGameSystem {
    * 与烘焙的 probe/体素无关:只要载荷在就可用,着色总开关关掉也照常供给。
    * 供 SceneDepthSystem 接管(Game 在载荷就绪时注入),取代旧的 floor_depth_A/B 拟合直线。
    */
+  /** 行走面深度场的 GPU 纹理 + 解码区间(RG16:d = min + (r*256+g)/65535 * (max-min)) */
+  get groundDepthTexture(): { tex: TextureSource; min: number; max: number } | null {
+    const m = this.meta;
+    return m && this.groundTex
+      ? { tex: this.groundTex, min: m.ground_d.min, max: m.ground_d.max }
+      : null;
+  }
+
   get groundDepthField(): GroundDepthField | null {
     const m = this.meta; const g = this.groundD;
     return m && g ? { data: g, w: m.work.w, h: m.work.h } : null;

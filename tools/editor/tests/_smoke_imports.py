@@ -57,7 +57,6 @@ def main() -> None:
         import tools.video_to_atlas.export_panel  # noqa: F401
     except ModuleNotFoundError:
         pass
-    # scene_depth_editor 已弃用(character_lighting_lab 取代):不再 smoke 导入其编辑器 app,
     # 退出回归。其 depth_estimator 仍被 lab pipeline 复用,不受影响。
 
     print("imports OK")

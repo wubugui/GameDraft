@@ -396,7 +396,6 @@ class MainWindow(QMainWindow):
         ext = tools_menu.addMenu("External tools (new process)")
         self._act(ext, "Graph Editor", self._launch_graph_editor_external)
         self._act(ext, "Dialogue Graph Editor", self._launch_dialogue_graph_editor_external)
-        self._act(ext, "Scene Depth Editor", self._launch_scene_depth_editor_external)
         self._act(ext, "Filter Tool", self._launch_filter_tool_external)
         self._act(ext, "Image Resizer", self._launch_image_resizer_external)
         self._act(ext, "Copy Manager", self._launch_copy_manager_external)
@@ -1150,9 +1149,6 @@ class MainWindow(QMainWindow):
             "Dialogue Graph Editor",
             root=root,
         )
-
-    def _launch_scene_depth_editor_external(self) -> None:
-        self._launch_external_tool("tools.scene_depth_editor", [], "Scene Depth Editor")
 
     def _launch_filter_tool_external(self) -> None:
         self._launch_external_tool("tools.filter_tool", [], "Filter Tool")

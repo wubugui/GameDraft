@@ -125,32 +125,29 @@ void main(){
   frag=vec4(lin2srgb(srgb2lin(c)*uPGain),1.);
 }`;
 
-const CHAR_FS = `#version 300 es
-precision highp float;
-precision highp sampler3D;
-in vec2 vUV; out vec4 frag;
-uniform sampler2D uAlb, uNrm, uValid, uDepthTex;
+// probe/RT 那套 uniform 与函数被三个程序共用(2D 角色 CHAR_FS / 3D 角色 CHAR3D_FS /
+// 全景 PANO_FS),抽成公共块——同一份数学只写一遍,免得三处漂移。
+const LIGHT_UNIFORMS = `
+uniform sampler2D uValid;
 // probe atlases: columns [0,K)=base+cov | [K,2K)=amb | [2K,3K)=emit | [3K,4K)=nee
 uniform sampler2D uPL1, uPL2, uPBin;
-uniform sampler3D uVolEmit;
+uniform sampler3D uVol, uVolEmit;
 uniform int uNEE, uLightCount;
 uniform vec4 uLightQ[48];                 // q pos + area
 uniform vec4 uLightE[48];                 // emissive radiance rgb
 uniform vec4 uLightN[48];                 // normal in q
-uniform sampler3D uVol;
-uniform ivec2 uWork;
-uniform vec3 uFootQ;
-uniform float uCharH, uCharW, uCosT, uSinT;
-uniform vec4 uCal;               // ppu,_,cx,cy
 uniform vec3 uQMin, uQMax;
 uniform ivec3 uVolN;
 uniform mat3 uM;                 // q -> world
 uniform vec3 uWMin, uWScale;     // probe grid: t=(Xw-uWMin)*uWScale  in [0,PN-1]
 uniform ivec3 uPN;
 uniform vec3 uAmbSH[9];
-uniform int uMode, uSpp, uMSteps, uOccl, uFold, uShowN, uMissMode;
-uniform float uStep, uBeta, uAmb, uBulge, uFlatten, uPGain;
-${COMMON}
+uniform int uMode, uSpp, uMSteps, uFold, uMissMode;
+uniform float uStep, uAmb;
+// 单 probe 直查(全景「插值关」用):>=0 时跳过三线性,直接读这颗
+uniform int uProbeOne;`;
+
+const LIGHT_FNS = `
 vec3 ambRad(vec3 d){
   vec3 m=vec3(d.xy, abs(d.z)); vec3 L=vec3(0.);
   for(int k=0;k<9;k++) L+=uAmbSH[k]*shY(k,m);
@@ -256,26 +253,10 @@ vec2 octaEnc(vec3 n){
   return p*.5+.5;
 }
 vec3 fetchCoeff(sampler2D tex,int p,int k){ return texelFetch(tex, ivec2(k,p),0).rgb; }
-vec3 probeE(vec3 q, vec3 n){
-  vec3 Xw = uM * q;                              // -> WORLD, interp axes are world
-  vec3 t = clamp((Xw-uWMin)*uWScale, vec3(0.), vec3(uPN)-1.001);
-  ivec3 b0=ivec3(t); vec3 f=t-vec3(b0);
-  vec3 Esum=vec3(0.); float wsum=0.;
-  vec2 ouv; ivec2 ob0; vec2 of;
-  if(uMode==3){
-    ouv=octaEnc(n)*8.-.5;
-    ob0=ivec2(clamp(floor(ouv),vec2(0.),vec2(6.)));
-    of=clamp(ouv-vec2(ob0),0.,1.);
-  }
-  float covSum=0.; vec3 Asum=vec3(0.); vec3 EEsum=vec3(0.); vec3 NNsum=vec3(0.);
-  for(int c=0;c<8;c++){
-    ivec3 off=ivec3(c&1,(c>>1)&1,(c>>2)&1);
-    ivec3 pi=min(b0+off,uPN-1);
-    float w=mix(1.-f.x,f.x,float(off.x))*mix(1.-f.y,f.y,float(off.y))*mix(1.-f.z,f.z,float(off.z));
-    int flat_=pi.x*(uPN.y*uPN.z)+pi.y*uPN.z+pi.z;
-    w*=step(.002, texelFetch(uValid, ivec2(flat_,0),0).r);
-    if(w<1e-5) continue;
-    vec3 E=vec3(0.); vec3 Ea=vec3(0.); vec3 Ee=vec3(0.); vec3 En=vec3(0.); float cov=0.;
+// 单颗 probe 的四分账解码(基函数由 uMode 决定)。八角插值与「只看一颗」共用同一份解码。
+void probeFetch(int flat_, vec3 n, ivec2 ob0, vec2 of,
+                out vec3 E, out vec3 Ea, out vec3 Ee, out vec3 En, out float cov){
+    E=vec3(0.); Ea=vec3(0.); Ee=vec3(0.); En=vec3(0.); cov=0.;
     if(uMode==1){
       for(int k=0;k<4;k++){ vec4 q4=texelFetch(uPL1, ivec2(k,flat_),0);
         float y=shY(k,n); E+=q4.rgb*y; cov+=q4.a*y;
@@ -302,20 +283,64 @@ vec3 probeE(vec3 q, vec3 n){
       En=mix(mix(texelFetch(uPBin,b00+oN,0).rgb,texelFetch(uPBin,b10+oN,0).rgb,of.x),
              mix(texelFetch(uPBin,b01+oN,0).rgb,texelFetch(uPBin,b11+oN,0).rgb,of.x),of.y);
     }
-    Esum+=max(E,vec3(0.))*w; Asum+=max(Ea,vec3(0.))*w;
-    EEsum+=max(Ee,vec3(0.))*w; NNsum+=max(En,vec3(0.))*w;
-    covSum+=cov*w; wsum+=w;
-  }
-  if(wsum<1e-4) return ambIrr(n);
-  vec3 Ebase=Esum/wsum, Eamb=Asum/wsum, Eemit=EEsum/wsum, Enee=NNsum/wsum;
-  float cov01=clamp(covSum/wsum/3.14159265, 0., 1.);
-  // ray-gathered parts (base, and emit when NEE off) obey the miss policy;
-  // the analytic NEE term is exact direct light and joins untouched.
+}
+// 四分账 → 最终 E(与运行时同式:base/emit 走 miss 策略,NEE 是解析直射直接加)
+vec3 probeCompose(vec3 Ebase, vec3 Eamb, vec3 Eemit, vec3 Enee, float cov01){
   vec3 Eray = Ebase + (uNEE==0 ? Eemit : vec3(0.));
   vec3 E_ = (uMissMode==1) ? Eray/max(cov01,.06) : Eray + Eamb*uAmb;
   if(uNEE==1) E_ += Enee;
   return E_;
 }
+vec3 probeE(vec3 q, vec3 n){
+  vec2 ouv; ivec2 ob0=ivec2(0); vec2 of=vec2(0.);
+  if(uMode==3){
+    ouv=octaEnc(n)*8.-.5;
+    ob0=ivec2(clamp(floor(ouv),vec2(0.),vec2(6.)));
+    of=clamp(ouv-vec2(ob0),0.,1.);
+  }
+  vec3 E,Ea,Ee,En; float cov;
+  if(uProbeOne>=0){                              // 全景「插值关」:只看指定那一颗
+    probeFetch(uProbeOne,n,ob0,of,E,Ea,Ee,En,cov);
+    return probeCompose(max(E,vec3(0.)),max(Ea,vec3(0.)),max(Ee,vec3(0.)),max(En,vec3(0.)),
+                        clamp(cov/3.14159265,0.,1.));
+  }
+  vec3 Xw = uM * q;                              // -> WORLD, interp axes are world
+  vec3 t = clamp((Xw-uWMin)*uWScale, vec3(0.), vec3(uPN)-1.001);
+  ivec3 b0=ivec3(t); vec3 f=t-vec3(b0);
+  vec3 Esum=vec3(0.), Asum=vec3(0.), EEsum=vec3(0.), NNsum=vec3(0.);
+  float covSum=0., wsum=0.;
+  for(int c=0;c<8;c++){
+    ivec3 off=ivec3(c&1,(c>>1)&1,(c>>2)&1);
+    ivec3 pi=min(b0+off,uPN-1);
+    float w=mix(1.-f.x,f.x,float(off.x))*mix(1.-f.y,f.y,float(off.y))*mix(1.-f.z,f.z,float(off.z));
+    int flat_=pi.x*(uPN.y*uPN.z)+pi.y*uPN.z+pi.z;
+    w*=step(.002, texelFetch(uValid, ivec2(flat_,0),0).r);
+    if(w<1e-5) continue;
+    probeFetch(flat_,n,ob0,of,E,Ea,Ee,En,cov);
+    Esum+=max(E,vec3(0.))*w; Asum+=max(Ea,vec3(0.))*w;
+    EEsum+=max(Ee,vec3(0.))*w; NNsum+=max(En,vec3(0.))*w;
+    covSum+=cov*w; wsum+=w;
+  }
+  if(wsum<1e-4) return ambIrr(n);
+  return probeCompose(Esum/wsum, Asum/wsum, EEsum/wsum, NNsum/wsum,
+                      clamp(covSum/wsum/3.14159265, 0., 1.));
+}
+`;
+
+const CHAR_FS = `#version 300 es
+precision highp float;
+precision highp sampler3D;
+in vec2 vUV; out vec4 frag;
+uniform sampler2D uAlb, uNrm, uDepthTex;
+uniform ivec2 uWork;
+uniform vec3 uFootQ;
+uniform float uCharH, uCharW, uCosT, uSinT;
+uniform vec4 uCal;               // ppu,_,cx,cy
+uniform int uOccl, uShowN;
+uniform float uBeta, uBulge, uFlatten, uPGain;
+${LIGHT_UNIFORMS}
+${COMMON}
+${LIGHT_FNS}
 void main(){
   vec4 alb=texture(uAlb,vUV);
   if(alb.a<.03) discard;
@@ -334,6 +359,118 @@ void main(){
   // 不该影响谁挡谁。(旧写法整张 sprite 取脚点深度=相机平行 billboard,已废除)
   float qzOcc=uFootQ.z-h*uSinT;
   if(uOccl==1 && dFront<qzOcc-.045) discard;
+  if(uShowN==1){ frag=vec4(n*.5+.5, alb.a); return; }
+  vec3 E=(uMode==0)?gatherRT(q+n*.02,n):probeE(q,n);
+  vec3 col=srgb2lin(alb.rgb)*E/3.14159265*uBeta*uPGain;
+  frag=vec4(lin2srgb(col), alb.a);
+}`;
+
+// ---------------------------------------------------------------- 3D 全景
+// 漫游相机被 probe 可视化包起来:每个像素的视线方向(世界)→ Mᵀ 转回 q → 取值。
+// 所以你转头看到的方向**就是**世界方向。四种可视化与⑥面板同源:
+//   0 irradiance E(n) / 1 亮度分层 / 2 射线命中 / 3 命中辐射 L(ω)
+// 插值开:E 走 probeE 的八角三线性(= 游戏口径),射线从相机位置打;
+// 插值关:E 只读 uProbeOne 那颗,射线从那颗 probe 的实际采样点打。
+const PANO_FS = `#version 300 es
+precision highp float;
+precision highp sampler3D;
+in vec2 vUV; out vec4 frag;
+uniform vec3 uEyeQ;              // 相机(或最近 probe)在 q 空间的位置
+uniform vec3 uCamR, uCamU, uCamF; // 相机基(世界)
+uniform vec2 uTanHalf;           // tan(fov/2)*aspect, tan(fov/2)
+uniform float uGain, uAlpha, uMaxDist;
+uniform int uPanoMode, uClamped;
+${LIGHT_UNIFORMS}
+${COMMON}
+${LIGHT_FNS}
+vec3 ramp2(float t){
+  vec3 s0=vec3(.06,.06,.24),s1=vec3(.16,.35,.78),s2=vec3(.12,.78,.82),s3=vec3(.9,.86,.16),s4=vec3(.86,.16,.12);
+  t=clamp(t,0.,1.)*4.; int i=int(t); float f=fract(t);
+  if(i==0)return mix(s0,s1,f); if(i==1)return mix(s1,s2,f); if(i==2)return mix(s2,s3,f); return mix(s3,s4,f);
+}
+vec3 zone2(float ev){                       // 与 BG_FS::zone 同式:1EV 一带 + 层界黑线
+  float b=clamp(ev,-8.,6.);
+  vec3 col=ramp2((b+8.)/14.);
+  if(ev>=6.) col=vec3(1.,.15,.9);
+  float f=fract(b);
+  float e=1.-smoothstep(0.,.10,min(f,1.-f));
+  return col*mix(1.,.12,e);
+}
+void main(){
+  // 屏幕像素 → 世界视线 → q 空间方向(uM 正交,逆=转置:d_q = dW * uM)
+  vec2 p=vUV*2.-1.;
+  vec3 dW=normalize(uCamF + uCamR*p.x*uTanHalf.x + uCamU*p.y*uTanHalf.y);
+  vec3 d=normalize(dW*uM);
+  vec3 col;
+  if(uPanoMode<=1){                          // ① E(n) / ② 亮度分层
+    vec3 E=probeE(uEyeQ,d)/3.14159265;
+    col = (uPanoMode==0) ? lin2srgb(E*uGain)
+                         : lin2srgb(zone2(log2(max(dot(E*uGain,vec3(.2126,.7152,.0722)),1e-9))));
+  }else{                                     // ③ 射线命中 / ④ 命中辐射
+    vec3 scaleIdx=vec3(uVolN-1)/max(uQMax-uQMin,vec3(1e-5));
+    vec3 invN=1./vec3(uVolN);
+    vec3 p0=(uEyeQ-uQMin)*scaleIdx;
+    vec3 dd=d; float folded=0.;
+    if(uFold==1 && dd.z<0.){ dd.z=-dd.z; folded=1.; }
+    vec3 dn=normalize(dd*scaleIdx);
+    vec2 be=boxEnter(p0,dn,vec3(uVolN-1));
+    bool hit=false; vec3 Li=vec3(0.); float trav=0.;
+    if(be.y>=0.){
+      float wPerIdx=length(vec3(dn.x/scaleIdx.x,dn.y/scaleIdx.y,dn.z/scaleIdx.z));
+      vec3 pp=p0+dn*be.x;
+      for(int s=0;s<256;s++){
+        if(s>=uMSteps) break;
+        pp+=dn*uStep; trav+=uStep;
+        if(any(lessThan(pp,vec3(0.)))||any(greaterThan(pp,vec3(uVolN-1)))) break;
+        vec4 v=texture(uVol,(pp+.5)*invN);
+        if(v.a>.45){ Li=v.rgb; if(uNEE==0) Li+=texture(uVolEmit,(pp+.5)*invN).rgb;
+          hit=true; trav=(be.x+trav)*wPerIdx; break; }
+      }
+    }
+    if(uPanoMode==2){
+      if(!hit) col=vec3(.08,.14,.34);                       // miss:深蓝
+      else{
+        col=ramp2(1.-clamp(trav/max(uMaxDist,1e-3),0.,1.)); // 近=暖 远=冷
+        if(folded>.5 && mod(floor(gl_FragCoord.x)+floor(gl_FragCoord.y),2.)<.5) col*=.72;
+      }
+    }else{
+      vec3 L = hit ? Li : ambRad(dd);
+      col=lin2srgb(L*uGain);
+    }
+  }
+  // 相机被钳进 probe 盒/体素盒时,屏幕四边描红——"这不是你站的位置的真值"
+  if(uClamped==1){
+    vec2 e=min(vUV,1.-vUV);
+    if(min(e.x,e.y)<0.012) col=mix(col,vec3(.95,.2,.15),.85);
+  }
+  frag=vec4(col,uAlpha);
+}`;
+
+// 3D 里的角色 quad:立在伪世界的直立四边形,走与 2D 完全同一套着色(albedo×E/π×β)
+const CHAR3D_VS = `#version 300 es
+layout(location=0) in vec3 aP;    // 世界坐标
+layout(location=1) in vec3 aQ;    // 对应的 q 坐标
+layout(location=2) in vec2 aUV;
+uniform mat4 uMVP;
+out vec3 vQ; out vec2 vUVc;
+void main(){ vQ=aQ; vUVc=aUV; gl_Position=uMVP*vec4(aP,1.); }`;
+const CHAR3D_FS = `#version 300 es
+precision highp float;
+precision highp sampler3D;
+in vec3 vQ; in vec2 vUVc; out vec4 frag;
+uniform sampler2D uAlb, uNrm;
+uniform float uBeta, uBulge, uFlatten, uPGain;
+uniform int uShowN;
+${LIGHT_UNIFORMS}
+${COMMON}
+${LIGHT_FNS}
+void main(){
+  vec4 alb=texture(uAlb,vUVc);
+  if(alb.a<.03) discard;
+  vec4 ne=texture(uNrm,vUVc);
+  vec3 n=normalize(vec3(-(ne.r*2.-1.), -(ne.g*2.-1.), -max(ne.b,.05)));
+  n=normalize(mix(n, vec3(0.,0.,-1.), uFlatten));
+  vec3 q=vec3(vQ.x, vQ.y, vQ.z-ne.a*uBulge);      // 与 2D 同:bulge 只推着色位置
   if(uShowN==1){ frag=vec4(n*.5+.5, alb.a); return; }
   vec3 E=(uMode==0)?gatherRT(q+n*.02,n):probeE(q,n);
   vec3 col=srgb2lin(alb.rgb)*E/3.14159265*uBeta*uPGain;
@@ -447,6 +584,7 @@ function bindQuad(){ gl.bindBuffer(gl.ARRAY_BUFFER,quadVBO);
 const pBG=prog(QUAD_VS,BG_FS), pChar=prog(QUAD_VS,CHAR_FS), pShadow=prog(QUAD_VS,SHADOW_FS);
 const pP3=prog(P3_VS,P3_FS), pL2=prog(L2_VS,L2_FS), pMesh=prog(MESH_VS,MESH_FS);
 const pProbe=prog(PB_VS,PB_FS);
+const pPano=prog(QUAD_VS,PANO_FS), pChar3D=prog(CHAR3D_VS,CHAR3D_FS);
 
 // 常驻缩略图:恢复的 HDR 场景 + 分割出的光源图。与 trace 同源(rad=linear·2^gain,
 // emit=rad−base=HDR 提升量),Reinhard 色调映射一张看全动态范围,不用扫曝光。
@@ -652,6 +790,9 @@ const S = {
   cam:{mode:'fly',yaw:-0.7,pitch:0.45,dist:10,tgt:[0,0,0],pos:[0,0,0],speed:4,fov:60,far:400},
   probe:null,                 // CPU 侧 probe 全量(四分账 × 三基),给检视面板/点云配色
   probeDC:null, probeGain:1, selProbe:null, pbGain:1, pbBasisSel:0, pbRays:1,
+  // 3D 全景:mode -1=关 / 0=E(n) / 1=亮度分层 / 2=射线命中 / 3=命中辐射
+  // blend 0=全是全景,1=全是 mesh;interp 关=只看最近那颗 probe
+  pano:{mode:-1, blend:0.35, interp:1, drawChar:1, activeProbe:-1},
   tex:{}, bufs:{}, probeCount:0, pointCount:0,
   fps:0, frames:0, tFPS:performance.now(),
 };
@@ -1683,6 +1824,45 @@ let charReady=false;
   charReady=true;
 })();
 
+/** 绑定 LIGHT_UNIFORMS 那一组(2D 角色 / 3D 角色 / 全景 三个程序共用同一份 probe 数据
+ *  与运行时开关,一处绑完,免得三处漂移)。返回下一个可用纹理单元号。 */
+function bindLightUniforms(p){
+  const u=n=>gl.getUniformLocation(p,n);
+  const man=S.man, V=man.vol, P=man.probes, wd=man.world, M=man.world.M;
+  let unit=0;
+  for(const [nm,t,tt] of [['uValid',S.tex.valid,gl.TEXTURE_2D],['uPL1',S.tex.l1,gl.TEXTURE_2D],
+      ['uPL2',S.tex.l2,gl.TEXTURE_2D],['uPBin',S.tex.bins,gl.TEXTURE_2D],
+      ['uVol',S.tex.vol,gl.TEXTURE_3D],['uVolEmit',S.tex.volEmit,gl.TEXTURE_3D]]){
+    gl.activeTexture(gl.TEXTURE0+unit); gl.bindTexture(tt,t); gl.uniform1i(u(nm),unit); unit++;
+  }
+  gl.uniform3f(u('uQMin'),V.qx_min,V.qy_min,V.qz_min);
+  gl.uniform3f(u('uQMax'),V.qx_max,V.qy_max,V.qz_max);
+  gl.uniform3i(u('uVolN'),V.Nx,V.Ny,V.Nz);
+  gl.uniformMatrix3fv(u('uM'),false,[M[0][0],M[1][0],M[2][0],M[0][1],M[1][1],M[2][1],M[0][2],M[1][2],M[2][2]]);
+  gl.uniform3f(u('uWMin'),wd.x0,wd.y0,wd.z0);
+  gl.uniform3f(u('uWScale'),(P.nx-1)/Math.max(wd.x1-wd.x0,1e-5),
+    (P.ny-1)/Math.max(wd.y1-wd.y0,1e-5),(P.nz-1)/Math.max(wd.z1-wd.z0,1e-5));
+  gl.uniform3i(u('uPN'),P.nx,P.ny,P.nz);
+  const amb=man.ambient.sh;
+  for(let k=0;k<9;k++) gl.uniform3f(u(`uAmbSH[${k}]`),amb[k*3],amb[k*3+1],amb[k*3+2]);
+  gl.uniform1i(u('uMode'),S.mode); gl.uniform1i(u('uSpp'),S.spp);
+  gl.uniform1i(u('uMSteps'),S.msteps); gl.uniform1i(u('uFold'),S.fold);
+  gl.uniform1i(u('uMissMode'),S.missMode); gl.uniform1i(u('uNEE'),S.nee);
+  gl.uniform1f(u('uStep'),S.step); gl.uniform1f(u('uAmb'),S.amb);
+  gl.uniform1i(u('uProbeOne'),-1);          // 默认走八角插值;全景「插值关」时另行覆盖
+  const LN=Math.min(48,S.lights.length);
+  gl.uniform1i(u('uLightCount'),LN);
+  if(LN){
+    const lq=new Float32Array(48*4), le=new Float32Array(48*4), ln=new Float32Array(48*4);
+    for(let i=0;i<LN;i++){ const L=S.lights[i];
+      lq.set([L.q[0],L.q[1],L.q[2],L.area],i*4);
+      le.set([L.e[0],L.e[1],L.e[2],0],i*4);
+      ln.set([L.nq[0],L.nq[1],L.nq[2],0],i*4); }
+    gl.uniform4fv(u('uLightQ'),lq); gl.uniform4fv(u('uLightE'),le); gl.uniform4fv(u('uLightN'),ln);
+  }
+  return unit;
+}
+
 // ------------------------------------------------------------- draw 2D
 function draw2D(){
   const man=S.man, cal=man.cal;
@@ -1781,47 +1961,20 @@ function draw2D(){
   gl.useProgram(pChar); bindQuad();
   const u=n=>gl.getUniformLocation(pChar,n);
   gl.uniform4f(u('uRect'), sxToClip(fsx-wPx/2), syToClip(fsy-hPx), wPx/zW*2, -(hPx/zH*2));
-  const binds=[['uAlb',S.tex.alb,gl.TEXTURE_2D],['uNrm',S.tex.nrm,gl.TEXTURE_2D],
-    ['uDepthTex',S.tex.depth,gl.TEXTURE_2D],['uVol',S.tex.vol,gl.TEXTURE_3D],
-    ['uPL1',S.tex.l1,gl.TEXTURE_2D],['uPL2',S.tex.l2,gl.TEXTURE_2D],
-    ['uPBin',S.tex.bins,gl.TEXTURE_2D],['uValid',S.tex.valid,gl.TEXTURE_2D],
-    ['uVolEmit',S.tex.volEmit,gl.TEXTURE_3D]];
-  binds.forEach(([nm,t,tt],i)=>{ gl.activeTexture(gl.TEXTURE0+i); gl.bindTexture(tt,t); gl.uniform1i(u(nm),i); });
+  let unit=bindLightUniforms(pChar);              // probe/体素/开关那一组(三程序共用)
+  for(const [nm,t] of [['uAlb',S.tex.alb],['uNrm',S.tex.nrm],['uDepthTex',S.tex.depth]]){
+    gl.activeTexture(gl.TEXTURE0+unit); gl.bindTexture(gl.TEXTURE_2D,t);
+    gl.uniform1i(u(nm),unit); unit++;
+  }
   gl.uniform2i(u('uWork'),S.work.w,S.work.h);
   gl.uniform4f(u('uCal'),cal.ppu,0,cal.cx,cal.cy);
-  const V=man.vol;
-  gl.uniform3f(u('uQMin'),V.qx_min,V.qy_min,V.qz_min);
-  gl.uniform3f(u('uQMax'),V.qx_max,V.qy_max,V.qz_max);
-  gl.uniform3i(u('uVolN'),V.Nx,V.Ny,V.Nz);
-  const M=man.world.M;
-  gl.uniformMatrix3fv(u('uM'),false,[M[0][0],M[1][0],M[2][0],M[0][1],M[1][1],M[2][1],M[0][2],M[1][2],M[2][2]]);
-  const wd=man.world, P=man.probes;
-  gl.uniform3f(u('uWMin'),wd.x0,wd.y0,wd.z0);
-  gl.uniform3f(u('uWScale'),(P.nx-1)/Math.max(wd.x1-wd.x0,1e-5),(P.ny-1)/Math.max(wd.y1-wd.y0,1e-5),(P.nz-1)/Math.max(wd.z1-wd.z0,1e-5));
-  gl.uniform3i(u('uPN'),P.nx,P.ny,P.nz);
-  const amb=man.ambient.sh;
-  for(let k=0;k<9;k++) gl.uniform3f(u(`uAmbSH[${k}]`),amb[k*3],amb[k*3+1],amb[k*3+2]);
   gl.uniform3f(u('uFootQ'),footQ[0],footQ[1],footQ[2]);
   gl.uniform1f(u('uCharH'),effH);
   gl.uniform1f(u('uCharW'),wPx/cal.ppu);
   gl.uniform1f(u('uCosT'),cosT); gl.uniform1f(u('uSinT'),sinT);
-  gl.uniform1i(u('uMode'),S.mode); gl.uniform1i(u('uSpp'),S.spp);
-  gl.uniform1i(u('uMSteps'),S.msteps); gl.uniform1i(u('uOccl'),S.dbg.occl);
-  gl.uniform1i(u('uFold'),S.fold); gl.uniform1i(u('uShowN'),S.dbg.normal);
-  gl.uniform1i(u('uMissMode'),S.missMode);
-  gl.uniform1i(u('uNEE'),S.nee);
-  const LN=Math.min(48,S.lights.length);
-  gl.uniform1i(u('uLightCount'),LN);
-  if(LN){
-    const lq=new Float32Array(48*4), le=new Float32Array(48*4), ln=new Float32Array(48*4);
-    for(let i=0;i<LN;i++){ const L=S.lights[i];
-      lq.set([L.q[0],L.q[1],L.q[2],L.area],i*4);
-      le.set([L.e[0],L.e[1],L.e[2],0],i*4);
-      ln.set([L.nq[0],L.nq[1],L.nq[2],0],i*4); }
-    gl.uniform4fv(u('uLightQ'),lq); gl.uniform4fv(u('uLightE'),le); gl.uniform4fv(u('uLightN'),ln);
-  }
-  gl.uniform1f(u('uStep'),S.step); gl.uniform1f(u('uBeta'),Math.pow(2,S.beta));
-  gl.uniform1f(u('uAmb'),S.amb); gl.uniform1f(u('uBulge'),S.bulge);
+  gl.uniform1i(u('uOccl'),S.dbg.occl); gl.uniform1i(u('uShowN'),S.dbg.normal);
+  gl.uniform1f(u('uBeta'),Math.pow(2,S.beta));
+  gl.uniform1f(u('uBulge'),S.bulge);
   gl.uniform1f(u('uFlatten'),S.flatten);
   gl.uniform1f(u('uPGain'),S.pgain);
   gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
@@ -1863,6 +2016,95 @@ function drawL2(pts, prim){
   gl.drawArrays(prim,0,pts.length);
 }
 
+// --------------------------------------------------- 3D 全景 / 3D 角色 quad
+/** 离 world 点最近的 probe(按规则格点找,= 插值真正会用到的那批格点)。 */
+function nearestProbeIdx(X){
+  const P=S.man.probes;
+  const near=(arr,v)=>{ let bi=0,bd=1e18; for(let i=0;i<arr.length;i++){ const d=Math.abs(arr[i]-v);
+    if(d<bd){bd=d;bi=i;} } return bi; };
+  const i=near(P.gx,X[0]), j=near(P.gy,X[1]), k=near(P.gz,X[2]);
+  return (i*P.ny+j)*P.nz+k;
+}
+/** 相机是否被钳出了 probe 盒(= 显示的不是你站的位置的真值,要标出来)。 */
+function camClamped(){
+  const wd=S.man.world, e=camEye();
+  return (e[0]<wd.x0||e[0]>wd.x1||e[1]<wd.y0||e[1]>wd.y1||e[2]<wd.z0||e[2]>wd.z1)?1:0;
+}
+function drawPano(){
+  const c=S.cam, man=S.man, wd=man.world;
+  const eye=camEye(c), f=camForward(c), r=camRight(c);
+  const up=cross3(r,f);                                  // 相机基(世界)
+  // 插值关:视点换成"最近那颗 probe 的实际采样点",看单颗 probe 的真面目
+  const one = S.pano.interp ? -1 : nearestProbeIdx(eye);
+  const org = (one>=0) ? [S.probe.pos[one*3],S.probe.pos[one*3+1],S.probe.pos[one*3+2]] : eye;
+  S.pano.activeProbe = one;
+  const q = qFromWorld(org);
+  gl.disable(gl.DEPTH_TEST);
+  gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
+  gl.useProgram(pPano); bindQuad();
+  const u=n=>gl.getUniformLocation(pPano,n);
+  gl.uniform4f(u('uRect'),-1,-1,2,2);
+  bindLightUniforms(pPano);
+  // ①② 读的是 cache,②模式选 RT(0) 时没有对应的基——按⑥面板同一条规则退 L2。
+  // (③④ 自己 march,不看 uMode)
+  gl.uniform1i(u('uMode'), S.mode===0?2:S.mode);
+  gl.uniform1i(u('uProbeOne'),one);
+  gl.uniform3f(u('uEyeQ'),q[0],q[1],q[2]);
+  gl.uniform3f(u('uCamR'),r[0],r[1],r[2]);
+  gl.uniform3f(u('uCamU'),up[0],up[1],up[2]);
+  gl.uniform3f(u('uCamF'),f[0],f[1],f[2]);
+  const th=Math.tan(c.fov*Math.PI/360);
+  gl.uniform2f(u('uTanHalf'),th*canvas.width/canvas.height,th);
+  gl.uniform1f(u('uGain'),S.pbGain);                     // 与⑥面板同一根曝光
+  gl.uniform1f(u('uAlpha'),1-S.pano.blend);              // 0=全是全景 1=全是 mesh
+  gl.uniform1f(u('uMaxDist'),Math.hypot(wd.x1-wd.x0,wd.y1-wd.y0,wd.z1-wd.z0)*0.6);
+  gl.uniform1i(u('uPanoMode'),S.pano.mode);
+  gl.uniform1i(u('uClamped'),camClamped());
+  gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+  gl.disable(gl.BLEND);
+  gl.enable(gl.DEPTH_TEST);
+}
+/** 3D 里画角色:直立 quad 的 4 个角在 q 空间算好,再转世界;逐像素走同一套着色。 */
+function drawChar3D(mvp){
+  const cal=S.man.cal, cosT=Math.cos(cal.theta), sinT=Math.sin(cal.theta);
+  const wy=groundY(S.footW.x,S.footW.z);
+  const fq=qFromWorld([S.footW.x,wy,S.footW.z]);
+  const effH=S.charH*S.qscale, hPx=effH*cosT*cal.ppu;
+  const wWu=(hPx*S.charAspect)/cal.ppu;                  // quad 宽(q 单位),与 2D 同式
+  const corner=(sx,h)=>{
+    const q=[fq[0]+sx*wWu*0.5, fq[1]+h*cosT, fq[2]-h*sinT];
+    return {q, w:worldFromQ(q)};
+  };
+  const c00=corner(-1,0), c10=corner(1,0), c01=corner(-1,effH), c11=corner(1,effH);
+  // 两个三角形:pos3 + q3 + uv2
+  const v=[];
+  const push=(c,u_,v_)=>v.push(c.w[0],c.w[1],c.w[2], c.q[0],c.q[1],c.q[2], u_,v_);
+  push(c01,0,0); push(c11,1,0); push(c00,0,1);
+  push(c11,1,0); push(c10,1,1); push(c00,0,1);
+  if(!S.bufs.char3d) S.bufs.char3d=gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER,S.bufs.char3d);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(v),gl.DYNAMIC_DRAW);
+  gl.useProgram(pChar3D);
+  const u=n=>gl.getUniformLocation(pChar3D,n);
+  gl.uniformMatrix4fv(u('uMVP'),false,mvp);
+  let unit=bindLightUniforms(pChar3D);
+  for(const [nm,t] of [['uAlb',S.tex.alb],['uNrm',S.tex.nrm]]){
+    gl.activeTexture(gl.TEXTURE0+unit); gl.bindTexture(gl.TEXTURE_2D,t);
+    gl.uniform1i(u(nm),unit); unit++;
+  }
+  gl.uniform1f(u('uBeta'),Math.pow(2,S.beta));
+  gl.uniform1f(u('uBulge'),S.bulge); gl.uniform1f(u('uFlatten'),S.flatten);
+  gl.uniform1f(u('uPGain'),S.pgain); gl.uniform1i(u('uShowN'),S.dbg.normal);
+  const S32=32;
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,3,gl.FLOAT,false,S32,0);
+  gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1,3,gl.FLOAT,false,S32,12);
+  gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2,2,gl.FLOAT,false,S32,24);
+  gl.enable(gl.BLEND); gl.blendFuncSeparate(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA,gl.ONE,gl.ONE_MINUS_SRC_ALPHA);
+  gl.drawArrays(gl.TRIANGLES,0,6);
+  gl.disable(gl.BLEND);
+  gl.disableVertexAttribArray(2);
+}
+
 // ------------------------------------------------------------- draw 3D
 function draw3D(){
   gl.viewport(0,0,canvas.width,canvas.height);
@@ -1901,6 +2143,11 @@ function draw3D(){
     gl.drawArrays(gl.POINTS,0,S.pointCount);
   }
 
+  // ---- probe 全景:把可视化裹在相机周围(漫游模式才有意义,正交没有单一视点)
+  if(S.pano.mode>=0 && S.cam.mode==='fly' && S.probe){
+    drawPano();
+  }
+
   // probes(专用程序:线性 E/π + probe 专属显示增益 + 选中环)
   if(S.dbg.probes && S.probe){
     gl.useProgram(pProbe);
@@ -1916,6 +2163,9 @@ function draw3D(){
     gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1,4,gl.FLOAT,false,16,0);
     gl.drawArrays(gl.POINTS,0,S.probeCount);
   }   // 后面的 char marker / 光源 / 射线块自己会 useProgram(pP3),uniform 是按程序存的
+
+  // 角色 quad:立在伪世界里的直立四边形,与 2D 同一套着色(看光照对不对最直观)
+  if(S.pano.drawChar && charReady) drawChar3D(mvp);
 
   // character marker: vertical line + foot cross
   const wy=groundY(S.footW.x,S.footW.z), effH=S.charH*S.qscale;
@@ -2070,9 +2320,17 @@ function draw(){
   const posTxt=S.view
     ? `cam(${eye[0].toFixed(2)}, ${eye[1].toFixed(2)}, ${eye[2].toFixed(2)})`
     : `world(${S.footW.x.toFixed(2)}, ${wy.toFixed(2)}, ${S.footW.z.toFixed(2)})`;
+  let panoTxt='';
+  if(S.view===1 && S.pano.mode>=0 && c.mode==='fly'){
+    const nm=['irradiance E(n)','亮度分层','射线命中','命中辐射 L(ω)'][S.pano.mode];
+    panoTxt=`\n全景 ${nm} · ${S.pano.interp?'8角插值(游戏口径)':`只看 probe #${S.pano.activeProbe}`}`
+      + (camClamped()?'  ⚠相机在 probe 盒外(已钳到边界,显示的不是本位置真值)':'');
+  }else if(S.view===1 && S.pano.mode>=0){
+    panoTxt='\n⚠ 全景只在「漫游」相机下有效——正交没有单一视点';
+  }
   $('hud').textContent=
     `${['RT 实时追踪·每帧GPU重算','Cache·SH L1·预烘焙插值','Cache·SH L2·预烘焙插值','Cache·BIN·预烘焙插值'][S.mode]}  |  ${S.fps} fps  |  ${viewTxt}\n`+
-    posTxt + (S.selProbe!=null?`   probe #${S.selProbe} 已选中`:'');
+    posTxt + (S.selProbe!=null?`   probe #${S.selProbe} 已选中`:'') + panoTxt;
 }
 
 // ------------------------------------------------------------- input
@@ -2302,6 +2560,17 @@ document.querySelectorAll('#cam_modes button').forEach(b=>
   b.onclick=()=>{ setCamMode(b.dataset.cm); canvas.focus(); });
 bindSlider('camspeed',null,v=>v.toFixed(1)+'m/s',v=>{ S.cam.speed=v; });
 bindSlider('camfov',null,v=>v.toFixed(0)+'°',v=>{ S.cam.fov=v; });
+// probe 全景
+function setPanoMode(m){
+  S.pano.mode=m;
+  document.querySelectorAll('#pano_modes button').forEach(b=>b.classList.toggle('on',+b.dataset.pm===m));
+  if(m>=0 && S.cam.mode!=='fly') setCamMode('fly');     // 全景只在漫游下成立,顺手切过去
+}
+document.querySelectorAll('#pano_modes button').forEach(b=>
+  b.onclick=()=>{ setPanoMode(+b.dataset.pm); canvas.focus(); });
+bindSlider('pano_blend',null,v=>v.toFixed(2),v=>{ S.pano.blend=v; });
+$('pano_interp').addEventListener('change',e=>{ S.pano.interp=e.target.checked?1:0; });
+$('pano_char').addEventListener('change',e=>{ S.pano.drawChar=e.target.checked?1:0; });
 S.bgview=0;
 $('bgview').addEventListener('change',e=>{ S.bgview=+e.target.value; });
 $('hdr_method').addEventListener('change',e=>{ S.hdrMethod=+e.target.value; if(S.man)refreshThumbs(); });

@@ -77,7 +77,10 @@ export interface SceneDepthConfig {
   collision_map: string;
   M: { R: number[][]; ppu: number; cx: number; cy: number };
   depth_mapping: { invert: boolean; scale: number; offset: number };
-  shader: { depth_per_sy: number; floor_depth_A: number; floor_depth_B: number };
+  shader: {
+    /** 直立 quad 的深度梯度 = tanθ/ppu（往上越靠近相机）。遮挡唯一还用的 shader 参数 */
+    depth_per_sy: number;
+  };
   collision?: {
     x_min: number; z_min: number; cell_size: number;
     grid_width: number; grid_height: number; height_offset: number;
