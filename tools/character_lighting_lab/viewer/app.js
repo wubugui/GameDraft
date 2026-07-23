@@ -1744,6 +1744,50 @@ function encodeEditPngs(){
     new Promise(r=>co.toBlob(r,'image/png')),
   ]);
 }
+// ---- 秒级重算地形 + 站位体检(改完覆写层立刻看结果,不用陪跑整条烘焙管线) ----
+$('terrain_recalc').onclick=async()=>{
+  const name=activeScene(); if(!name) return;
+  $('terrain_stats').textContent='重算中…';
+  if(S.editDirty){                                  // 覆写层在内存里,先落盘服务端才读得到
+    const [bd,bc,bo]=await encodeEditPngs();
+    for(const [k,b] of [['depth',bd],['collision',bc],['object',bo]])
+      await fetch(`/api/save_edit?scene=${encodeURIComponent(name)}&kind=${k}`,{method:'POST',body:b});
+    S.editDirty=false;
+  }
+  try{
+    const r=await (await fetch('/api/terrain?scene='+encodeURIComponent(name))).json();
+    if(!r.ok){ $('terrain_stats').textContent='✗ '+(r.err||''); return; }
+    const s2=r.stats;
+    $('terrain_stats').textContent=
+      `站位体检(脚下是可见地面的点 ${s2.samples}):\n`+
+      `  全遮挡 ${(s2.full_occluded*100).toFixed(1)}%  重度>50% ${(s2.heavy*100).toFixed(1)}%  中位 ${s2.median.toFixed(3)}\n`+
+      `地面掩膜 ${(s2.ground_mask*100).toFixed(1)}%  物体 ${(s2.objects*100).toFixed(1)}%  地形高度 p95 ${s2.terrain_p95.toFixed(3)}\n`+
+      `注意:可走掩膜/碰撞图不在快通道里,仍需完整重烘`;
+    S.terrainReady=true;
+    showTerrainImage(0);
+  }catch(e){ $('terrain_stats').textContent='✗ '+e; }
+};
+let terrainImgIdx=0;
+function showTerrainImage(idx){
+  const name=activeScene(); if(!name) return;
+  const files=['terrain_preview.png','occupancy_preview.png'];
+  const labels=['地形高度场(蓝低→红高)','站位体检(绿=不被遮 红=整块被吃)'];
+  terrainImgIdx=idx%files.length;
+  const tv=$('topview'), th=$('topview_hint');
+  const img=new Image();
+  img.onload=()=>{
+    tv.width=img.width; tv.height=img.height;
+    tv.getContext('2d').drawImage(img,0,0);
+    tv.style.display='block'; th.style.display='block';
+    fitOverlayCanvas(tv);
+    th.innerHTML=`${labels[terrainImgIdx]} · 再点「看结果」切换另一张 · 点视图按钮退出`;
+    canvas.style.visibility='hidden'; $('hud').style.display='none';
+    S.view=-1;                                     // 图片查看态:不走 GL 主循环也不吃多边形
+  };
+  img.src=`out/${encodeURIComponent(name)}/${files[terrainImgIdx]}?t=`+Date.now();
+}
+$('terrain_show').onclick=()=>{ showTerrainImage(terrainImgIdx+1); };
+
 $('edit_save').onclick=async()=>{
   const name=activeScene(); if(!name) return;
   const [bd,bc,bo]=await encodeEditPngs();
@@ -2310,7 +2354,7 @@ function draw(){
   const now=performance.now(); S.frames++;
   if(now-S.tFPS>500){ S.fps=Math.round(S.frames*1000/(now-S.tFPS)); S.frames=0; S.tFPS=now; }
   if(!S.man) return;
-  if(S.view===2){ /* 顶视是独立 2D 画布,不走 GL 主循环 */ }
+  if(S.view===2||S.view===-1){ /* 顶视/图片查看:独立 2D 画布,不走 GL 主循环 */ }
   else if(S.view===0){ move(now); draw2D(); } else { moveCam(now); draw3D(); }
   const wy=S.walk?groundY(S.footW.x,S.footW.z):0;
   const c=S.cam, eye=camEye(c);
@@ -2407,6 +2451,13 @@ function setView(v){ S.view=v;
 // 顶视 XZ 里每个世界格恰好出现一次:无遮挡、无歧义,而且这就是行走网格与地形高度场
 // 自己的坐标系——一个多边形同时把「地形该不该有这块」改对。
 const TOP_SCALE=5;
+/** 叠加画布自适应:交给 CSS(max-width/height 100% + 保持画布固有比例),**不做测量**。
+ *  之前按 stage_main 包围盒算 CSS 尺寸,布局未稳时量到 0、甚至算出负值 →
+ *  样式被丢弃 → 画面全黑而像素其实早画好了。测量本身就是不必要的脆弱点。 */
+function fitOverlayCanvas(cv){
+  cv.style.width='auto'; cv.style.height='auto';
+  cv.style.maxWidth='100%'; cv.style.maxHeight='100%';
+}
 function topGeom(){
   const wk=S.walk, man=S.man;
   return {wk, M:man.world.M, cal:man.cal, TW:wk.nx*TOP_SCALE, TH:wk.nz*TOP_SCALE};
@@ -2422,9 +2473,7 @@ function buildTopView(){
   if(!S.man||!S.walk||!S.work) return;
   const {wk,TW,TH}=topGeom(), {w,h}=S.work;
   const cv=$('topview'); cv.width=TW; cv.height=TH;
-  const box=$('stage_main').getBoundingClientRect();
-  const k=Math.min(box.width/TW, box.height/TH);
-  cv.style.width=(TW*k)+'px'; cv.style.height=(TH*k)+'px';
+  fitOverlayCanvas(cv);
   const cls=new Int8Array(wk.nx*wk.nz).fill(-1);
   const man=new Uint8Array(wk.nx*wk.nz);
   const hot=new Uint8Array(wk.nx*wk.nz);
@@ -2515,7 +2564,10 @@ document.querySelectorAll('.views button').forEach(b=>b.onclick=()=>{ setView(+b
   window.addEventListener('keydown',e=>{
     if(S.view===2&&e.key==='Escape'){ S.topPoly=[]; buildTopView(); }
   });
-  window.addEventListener('resize',()=>{ if(S.view===2) buildTopView(); });
+  window.addEventListener('resize',()=>{
+    if(S.view===2) buildTopView();
+    else if(S.view===-1) fitOverlayCanvas(tv);
+  });
 })();
 
 function bindSlider(id,key,fmt=v=>v,onchg){

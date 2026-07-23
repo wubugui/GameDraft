@@ -227,6 +227,11 @@ button#rebuild.dirty{animation:pulse 1.2s infinite}
     <label><span class="k">半径(px)</span><input type="range" id="brushr" min="3" max="48" step="1" value="12"><span class="v" id="brushr_v"></span></label>
     <label><span class="k">深度强度(q)</span><input type="range" id="brushs" min="0.02" max="0.6" step="0.02" value="0.15"><span class="v" id="brushs_v"></span></label>
     <div class="row2">
+      <button id="terrain_recalc" title="秒级重算地形并出站位体检图(跳过标定网格搜索)。注意:可走掩膜/碰撞图仍需完整重烘">⟳ 重算地形+体检</button>
+      <button id="terrain_show" title="全屏查看上次重算的两张图:地形高度场 / 站位体检">🔍 看结果</button>
+    </div>
+    <div id="terrain_stats" style="font:11px ui-monospace,monospace;color:var(--mut);white-space:pre-wrap;margin:4px 0 6px"></div>
+    <div class="row2">
       <button id="edit_save" title="把深度/碰撞编辑写盘(之后需重烘生效)">💾 保存编辑</button>
       <button id="edit_clear" title="删除本场景全部笔刷编辑(需重烘)">🗑 清除编辑</button>
     </div>

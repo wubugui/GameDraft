@@ -76,6 +76,10 @@ DEFAULTS = dict(
 )
 
 
+#: 站位体检用的角色世界尺寸,与游戏 player 动画 anim.json 的 worldWidth/Height 同源
+PLAYER_WORLD_W = 142.235294
+PLAYER_WORLD_H = 155.0
+
 EDIT_RANGE_Q = 2.0     # depth brush delta range: +-2 q units, u16 encoded (32768 = 0)
 
 
@@ -1392,6 +1396,113 @@ def export_runtime(name: str, shading: dict | None = None) -> Path:
         json.dumps(payload, ensure_ascii=False, indent=1) + '\n')
     print(f'[export] {dest}')
     return dest
+
+
+def terrain_preview(name: str) -> dict:
+    """秒级地形预览 + 站位体检 —— 圈两笔就能看结果,不用陪跑整条烘焙管线。
+
+    为什么能秒级:视差→深度那两个参数 (a,b) 已在 manifest 里,**不必重跑网格搜索**——
+    它是在已经很干净的掩膜上拟合的全局解,人工改几块不足以挪动它;而地面零点(中位
+    归零)本来就是每次重算的廉价量。于是只剩「掩膜 + 调和外推」,秒级。
+
+    **它给不了什么**(别当成重烘):可走掩膜/碰撞图要 stage_voxelize 的体素占据来做
+    遮挡测试,不在快通道里。所以"能不能走"仍然必须完整重烘。
+
+    产出两张图:
+    - terrain_preview.png  地形高度场(蓝低→红高)。改完覆写层先看它对不对。
+    - occupancy_preview.png 站位体检:按**运行时同一套遮挡口径**(直立 quad @ 行走面
+      脚点深度 − 0.045)算"角色站这儿被吃掉几成",绿→红。地形对不对不是目的,
+      遮挡对不对才是。
+    """
+    src_dir = OUT / name
+    man = json.loads((src_dir / 'manifest.json').read_text())
+    P = {**DEFAULTS, **man['params']}
+    scene_json = ROOT / 'public' / 'assets' / 'scenes' / f'{name}.json'
+    scene = json.loads(scene_json.read_text(encoding='utf-8')) if scene_json.exists() else {}
+    img_path = ROOT / 'public' / 'resources' / 'runtime' / 'scenes' / name / 'background.png'
+    h = img_hash(img_path)
+    W, Hh = man['work']['w'], man['work']['h']
+    cal_m = man['cal']
+    theta, ppu, cx, cy = cal_m['theta'], cal_m['ppu'], cal_m['cx'], cal_m['cy']
+
+    raw = resize_f(stage_depth(img_path, src_dir, h, model=str(P['depth_model'])), (W, Hh))
+    d = (1.0 / (cal_m['s'] * raw + cal_m['o'])).astype(np.float32)
+    sy = np.arange(Hh, dtype=np.float32)[:, None]
+    qy = ((cy - sy) / ppu * np.ones((1, W))).astype(np.float32)
+
+    from tools.character_lighting_lab.object_seg import object_mask, segment_objects
+    ids_native, meta = segment_objects(img_path, src_dir, h, P)
+    objects = object_mask(resize_nn(ids_native, (W, Hh)), meta, P,
+                          load_object_edit(src_dir, (Hh, W)))
+
+    gm = _ground_mask_from(d, qy, theta, P['ground_up_dot'], prior=~objects)
+    if gm.any():                       # 地面中位高度归零(与 stage_calibrate 末尾同式)
+        d = (d + float(np.median(qy[gm] / math.tan(theta) - d[gm]))).astype(np.float32)
+    Y = (qy * math.cos(theta) - d * math.sin(theta)).astype(np.float32)
+    Yg = gaussian_filter(laplace_inpaint(Y, gm, iters=300), 2.0)
+    d_walk = ((qy * math.cos(theta) - Yg) / math.sin(theta)).astype(np.float32)
+
+    # 场景深度按运行时口径:relief 之后(游戏 raw_depth_rg.png 就是这个)
+    k = float(P['relief'])
+    d_front = d_walk + (d - d_walk) * k if abs(k - 1.0) > 1e-3 else d
+
+    # ---- 站位体检:与三个滤镜同式 spriteDepth = footD + dps*(sy-syFoot) - bias ----
+    dps = math.tan(theta) / ppu
+    bias = 0.045
+    char_h_px, char_w_px = Hh * 0.0, W * 0.0
+    ww, wh = scene.get('worldWidth'), scene.get('worldHeight')
+    if ww and wh:                       # 角色在 work 分辨率下的像素尺寸(与游戏同源)
+        char_w_px = PLAYER_WORLD_W / ww * W
+        char_h_px = PLAYER_WORLD_H / wh * Hh
+    char_w_px = max(char_w_px, 4.0); char_h_px = max(char_h_px, 4.0)
+    step = max(4, int(W / 90))
+    occ_map = np.full((Hh, W), np.nan, np.float32)
+    vals = []
+    eps = 0.15 * dps * char_h_px
+    for fy in range(int(Hh * 0.25), Hh, step):
+        for fx in range(4, W - 4, step):
+            if abs(d_front[fy, fx] - d_walk[fy, fx]) > eps:
+                continue                # 脚下不是可见地面(站在物体上)→ 不计
+            x0 = max(0, int(fx - char_w_px / 2)); x1 = min(W, int(fx + char_w_px / 2))
+            y0 = max(0, int(fy - char_h_px)); y1 = fy
+            if x1 - x0 < 2 or y1 - y0 < 2:
+                continue
+            rows = np.arange(y0, y1, dtype=np.float32)[:, None]
+            sprite = d_walk[fy, fx] + dps * (rows - fy) - bias
+            frac = float((d_front[y0:y1, x0:x1] < sprite).mean())
+            occ_map[max(0, fy - step // 2):fy + step // 2,
+                    max(0, fx - step // 2):fx + step // 2] = frac
+            vals.append(frac)
+
+    def _save(arr, path, cmap_bad=None):
+        Image.fromarray(arr).save(path, optimize=True)
+
+    n = (Yg - Yg.min()) / max(float(Yg.max() - Yg.min()), 1e-6)
+    _save(_cmap(n), src_dir / 'terrain_preview.png')
+    vis = np.zeros((Hh, W, 3), np.uint8)
+    ok = ~np.isnan(occ_map)
+    f = np.nan_to_num(occ_map)
+    vis[..., 0] = np.where(ok, (f * 255), 30).astype(np.uint8)
+    vis[..., 1] = np.where(ok, ((1 - f) * 255), 30).astype(np.uint8)
+    vis[..., 2] = np.where(ok, 40, 36).astype(np.uint8)
+    _save(vis, src_dir / 'occupancy_preview.png')
+
+    v = np.array(vals) if vals else np.zeros(1)
+    stats = dict(
+        samples=len(vals),
+        full_occluded=float(np.mean(v > 0.9)),
+        heavy=float(np.mean(v > 0.5)),
+        median=float(np.median(v)),
+        mean=float(v.mean()),
+        ground_mask=float(gm.mean()),
+        objects=float(objects.mean()),
+        terrain_p95=float(np.percentile(Yg, 95)),
+        terrain_max=float(Yg.max()),
+    )
+    (src_dir / 'terrain_preview.json').write_text(json.dumps(stats, ensure_ascii=False, indent=1) + '\n')
+    print(f'[terrain] {name}: 可见地面站位 {len(vals)},全遮挡 {stats["full_occluded"]*100:.1f}%,'
+          f'重度 {stats["heavy"]*100:.1f}%,中位 {stats["median"]:.3f}')
+    return stats
 
 
 def export_scene_depth(name: str) -> dict:

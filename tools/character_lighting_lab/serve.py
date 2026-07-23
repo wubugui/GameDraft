@@ -6,6 +6,7 @@ Static viewer + a tiny ASYNC bake job queue so ALL baking lives in the app:
   GET  /api/rebuild_all             -> {job} queue rebake of every scene
   POST /api/build_new?name=X&...    -> {job} body = image bytes; new scene
   GET  /api/job?id=N                -> {status, log, queue}
+  GET  /api/terrain?scene=X         -> {stats} 秒级地形预览+站位体检(不重烘)
 Jobs run serially in a worker thread; logs stream into the job record.
 """
 from __future__ import annotations
@@ -278,6 +279,16 @@ class H(SimpleHTTPRequestHandler):
             baked = man.get('geometry_sig', '')
             return self._json({'ok': True, 'stale': cur != baked,
                                'baked': baked, 'current': cur})
+        if u.path == '/api/terrain':
+            # 秒级地形预览 + 站位体检(跳过标定网格搜索;不含可走掩膜——那要重烘)
+            name = q.get('scene', [''])[0]
+            if not (TOOL / 'out' / name).is_dir():
+                return self._json({'ok': False, 'err': 'no such baked scene'}, 400)
+            try:
+                from tools.character_lighting_lab.pipeline import terrain_preview
+                return self._json({'ok': True, 'stats': terrain_preview(name)})
+            except Exception as e:                      # noqa: BLE001
+                return self._json({'ok': False, 'err': f'{type(e).__name__}: {e}'}, 500)
         if u.path == '/api/export_depth':
             name = q.get('scene', [''])[0]
             if not name or not (TOOL / 'out' / name / 'manifest.json').exists():
