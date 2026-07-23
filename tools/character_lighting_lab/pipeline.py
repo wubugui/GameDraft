@@ -374,6 +374,32 @@ def refresh_ground_mask(cal: dict, objects: np.ndarray, P: dict) -> None:
     cal['ground_y_p95'] = float(np.percentile(np.abs(cal['Y'][gm]), 95))
 
 
+def check_geometry_sanity(cal: dict, lay: dict, objects: np.ndarray, status=print) -> None:
+    """烘焙期几何自检:把「结构相对地面的抬升」折算成屏幕表观高度,与画幅高比。
+
+    **画面里的东西不可能比画面本身还高。** 越界就说明这一层出了问题——俯角填错、
+    深度尺度失控,或单目近端被反比映射放飞(temple 曾出现屋檐折算「离地 3300px」
+    而画幅只有 1143px)。这个判据尺度无关、不依赖任何人工标注,烘一次就顺手验一次。
+
+    只报警不阻断:重建有救不回来的场景,值不值得用是人的判断。
+    """
+    Hg, _ = cal['d'].shape
+    rise_px = (cal['Y'] - lay['Yg']) * math.cos(cal['theta']) * cal['ppu']
+    p99 = float(np.percentile(rise_px, 99))
+    over = float(np.mean(rise_px > Hg))
+    msg = (f'[sanity] 结构表观高度 p99={p99:.0f}px / 画幅 {Hg}px = {p99 / Hg:.2f}×, '
+           f'超画幅像素 {over * 100:.1f}%')
+    if p99 > 1.5 * Hg or over > 0.05:
+        status(f'{msg}  ⚠ 越界:重建的近端被放飞,遮挡会把角色整片吞掉。'
+               f'检查俯角/深度缩放,或看是不是物体识别漏了大块结构')
+    else:
+        status(msg + '  ✓')
+    if objects is not None and objects.any():
+        # 物体像素相对地面的抬升中位:纯诊断,给人看的量,不设阈值
+        med = float(np.median(rise_px[objects]))
+        status(f'[sanity] 物体像素抬升中位 {med:.0f}px = 画幅 {med / Hg * 100:.1f}%')
+
+
 def stage_layers(cal: dict, rgb_lin: np.ndarray, P: dict) -> dict:
     """Occluder pop-out detection, thickness, hidden background inpaint,
     ground field extension (non-planar)."""
@@ -1207,6 +1233,7 @@ def build(img_path: Path, name: str, params: dict):
             sem = resize_f(gate_full, (W_G, Hg))
     hdr = stage_hdr(rgb_srgb, P, sem_gate=sem)
     lay = stage_layers(cal, hdr['base'], P)   # bg layer inpaints BASE (no emitter smear)
+    check_geometry_sanity(cal, lay, cal.get('objects'))   # relief 之前量:纯净重建的体检
     rad_bg = lay['c_bg']
     # relief gain: amplify structure depth relative to the pinned ground field
     # (ground itself is unchanged; monocular models compress vertical contrast)

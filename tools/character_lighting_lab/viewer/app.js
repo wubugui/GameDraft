@@ -637,6 +637,7 @@ const S = {
   editDepth:null, editDepthBaked:null, editCol:null, editDirty:false, geoStale:false,
   // 物体/地形判定:objAuto=SAM 自动结果(按分数门槛), editObj=人工覆写(1=物体 2=地形)
   objAuto:null, editObj:null, objIds:null, objMeta:null, objScoreMin:0.35, topPoly:[],
+  hotInstance:0,                                   // 悬停/选中的实例(两视图联动高亮)
   frontD:null, walkD2:null,
   pcShow:[1,1,1], meshMode:1, meshTris:0,
   footW:{x:0,z:0},           // WORLD position
@@ -907,6 +908,8 @@ async function loadScene(man){
   setSlider('rb_ev',man.params.ev); setSlider('rb_tau',man.params.occluder_tau);
   setSlider('rb_gain',man.params.max_gain_ev??3.32);
   setSlider('rb_relief',man.params.relief??1.8);
+  setSlider('rb_objthr',man.params.object_score_min??0.35);
+  S.objScoreMin=+(man.params.object_score_min??0.35);
   const rbf=$('rb_fold'); if(rbf) rbf.checked=!!(man.params.fold??1);
   const rbs=$('rb_sem'); if(rbs) rbs.checked=!!(man.params.semantic_gate??1);
   // HDR 恢复方法/参数:同步到烘焙值(否则 reload 后下拉回 method0,看着像"白改了")
@@ -1439,6 +1442,23 @@ function recomputeObjAuto(){
     S.objAuto[i]=(m&&m.score>=S.objScoreMin)?1:0;
   }
 }
+/** 点选整个实例翻转:比多边形快,适合「这座楼判错了」这种整块改判。
+ *  写的是覆写层而非自动结果——重烘后 SAM 重算,人工决定仍然优先。 */
+function flipInstance(id){
+  if(!id||!S.objIds||!S.editObj) return 0;
+  let first=-1, n=0;
+  for(let i=0;i<S.objIds.length;i++) if(S.objIds[i]===id){ first=i; break; }
+  if(first<0) return 0;
+  const val=isObjectAt(first)?2:1;                 // 当前是物体 → 翻成地形,反之亦然
+  for(let i=0;i<S.objIds.length;i++) if(S.objIds[i]===id){ S.editObj[i]=val; n++; }
+  S.editDirty=true;
+  refreshEditOverlay(); if(S.view===2) buildTopView();
+  const m=S.objMeta&&S.objMeta.get(id);
+  $('log').textContent=`✓ 实例 #${id}${m?`(${m.prompt} ${m.score.toFixed(2)})`:''} `+
+    `${n} 像素翻为${val===1?'物体':'地形'}——保存编辑后重烘生效`;
+  return n;
+}
+
 /** 最终判定:人工覆写优先(1=物体 2=地形),否则听自动 */
 function isObjectAt(i){
   const e=S.editObj?S.editObj[i]:0;
@@ -1459,7 +1479,9 @@ function refreshEditOverlay(){
     }
     if(c===1){ r=40;g=230;b=90; a=Math.max(a,150); }
     if(c===2){ r=235;g=50;b=50; a=Math.max(a,150); }
-    if(S.dbg.terrain){                         // 地形判定:绿=地形 红=物体,人工覆写更亮
+    if(S.hotInstance&&S.objIds&&S.objIds[i]===S.hotInstance){
+      r=255; g=213; b=74; a=210;                   // 联动高亮:两视图同一枚实例
+    } else if(S.dbg.terrain){                      // 地形判定:绿=地形 红=物体,人工覆写更亮
       const o=isObjectAt(i), manual=S.editObj&&S.editObj[i]!==0;
       const rr=o?210:30, gg=o?40:210, bb=o?60:110;
       const aa=manual?190:110;
@@ -1616,13 +1638,26 @@ $('export_depth').onclick=async()=>{
   $('log').textContent=r.ok?'✓ 场景深度已导出(depthConfig+RG16+碰撞已写入游戏)':'✗ '+(r.err||'');
 };
 $('brush').addEventListener('change',e=>{ S.brush=+e.target.value; });
+bindSlider('rb_objthr',null,v=>(+v).toFixed(2),v=>{
+  S.objScoreMin=+v;
+  if(!S.work||!S.objIds) return;                    // bindSlider 会在载场景前先跑一次
+  recomputeObjAuto(); refreshEditOverlay();
+  if(S.view===2) buildTopView();
+  markDirty(true);                                  // 门槛进 rbParams,重烘才正式生效
+});
 bindSlider('brushr','brushR',v=>v.toFixed(0));
 bindSlider('brushs','brushS',v=>v.toFixed(2));
 let painting=false;
 S.polyPts=[];
 canvas.addEventListener('mousedown',e=>{
   if(S.view!==0||S.brush===0||e.button!==0) return;
-  if(S.brush>=8){                                   // polygon mode: collect vertices
+  if(S.brush===16){                                 // 点选实例:单击即翻转,不涂不圈
+    const [wx,wy]=canvasToWork(e);
+    const x=Math.floor(wx), y=Math.floor(wy);
+    if(x>=0&&y>=0&&x<S.work.w&&y<S.work.h&&S.objIds) flipInstance(S.objIds[y*S.work.w+x]|0);
+    return;
+  }
+  if(S.brush>=8&&S.brush<=11){                      // polygon mode: collect vertices
     const [wx,wy]=canvasToWork(e);
     S.polyPts.push([wx,wy]);
     return;
@@ -1631,7 +1666,7 @@ canvas.addEventListener('mousedown',e=>{
   const [wx,wy]=canvasToWork(e); paintAt(wx,wy); refreshEditOverlay();
 });
 window.addEventListener('mousemove',e=>{
-  if(!painting||S.view!==0||S.brush===0||S.brush>=8) return;
+  if(!painting||S.view!==0||S.brush===0||S.brush>=8) return;   // 8+ 是多边形/点选,不走涂抹
   const [wx,wy]=canvasToWork(e); paintAt(wx,wy); refreshEditOverlay();
 });
 window.addEventListener('mouseup',()=>{ painting=false; });
@@ -1973,6 +2008,21 @@ function clamp2D(){
   S.v2.oy=Math.max(0,Math.min(mh,S.v2.oy));
 }
 let pan2d=false,plx=0,ply=0;
+// 笔刷16(点选实例):2D 视图里悬停高亮、单击整块翻转。相机视角认得出「这是哪座楼」,
+// 顶视认不出——所以点选放在 2D,圈选放在顶视,两边高亮联动。
+canvas.addEventListener('mousemove',e=>{
+  if(S.view!==0||S.brush!==16||!S.objIds) return;
+  const [wx,wy]=canvasToWork(e);
+  const x=Math.floor(wx), y=Math.floor(wy);
+  if(x<0||y<0||x>=S.work.w||y>=S.work.h) return;
+  const id=S.objIds[y*S.work.w+x]|0;
+  if(id!==S.hotInstance){
+    S.hotInstance=id; refreshEditOverlay();
+    const m=id&&S.objMeta?S.objMeta.get(id):null;
+    $('hud').textContent=m?`实例 #${id}  ${m.prompt}  ${m.score.toFixed(2)}  ${m.area}px`
+                          :'(此处无实例)';
+  }
+});
 canvas.addEventListener('contextmenu',e=>e.preventDefault());
 canvas.addEventListener('mousedown',e=>{ if(S.view===0&&e.button===2){ pan2d=true; plx=e.clientX; ply=e.clientY; } });
 window.addEventListener('mouseup',()=>pan2d=false);
@@ -1985,7 +2035,7 @@ window.addEventListener('mousemove',e=>{
 });
 canvas.addEventListener('dblclick',e=>{
   if(S.view===1){ if(S.man) fitCamera(); return; }               // 3D:双击=相机复位
-  if(S.brush>=8&&S.polyPts.length>=3){ polyApply(); return; }   // 多边形闭合优先
+  if(S.brush>=8&&S.brush<=11&&S.polyPts.length>=3){ polyApply(); return; }  // 多边形闭合优先
   S.v2={zoom:1,ox:0,oy:0};
 });
 // click-to-place: teleport to the ground point that projects nearest the click
@@ -2119,6 +2169,7 @@ function buildTopView(){
   cv.style.width=(TW*k)+'px'; cv.style.height=(TH*k)+'px';
   const cls=new Int8Array(wk.nx*wk.nz).fill(-1);
   const man=new Uint8Array(wk.nx*wk.nz);
+  const hot=new Uint8Array(wk.nx*wk.nz);
   for(let sy=0;sy<h;sy++)for(let sx=0;sx<w;sx++){
     const i=sy*w+sx;
     const [X,Z]=groundXZ(sx,sy,i);
@@ -2127,6 +2178,7 @@ function buildTopView(){
     const kk=gz*wk.nx+gx, c=isObjectAt(i);
     if(c>cls[kk]) cls[kk]=c;                       // 物体盖住地面
     if(S.editObj&&S.editObj[i]) man[kk]=1;
+    if(S.hotInstance&&S.objIds&&S.objIds[i]===S.hotInstance) hot[kk]=1;
   }
   const ctx=cv.getContext('2d');
   const img=ctx.createImageData(TW,TH);
@@ -2138,6 +2190,7 @@ function buildTopView(){
     else if(c===1){ r=209;g=58;b=68; }                             // 物体
     else { r=walkable?74:52; g=walkable?222:150; b=walkable?128:96; } // 地形(亮=可走)
     if(man[kk]){ r=Math.min(255,r+60); g=Math.min(255,g+60); b=Math.min(255,b+60); }
+    if(hot[kk]){ r=255; g=213; b=74; }             // 与 2D 视图同色的联动高亮
     for(let dy=0;dy<TOP_SCALE;dy++)for(let dx=0;dx<TOP_SCALE;dx++){
       const o=((gz*TOP_SCALE+dy)*TW+(gx*TOP_SCALE+dx))*4;
       img.data[o]=r; img.data[o+1]=g; img.data[o+2]=b; img.data[o+3]=255;
@@ -2274,6 +2327,7 @@ function rbParams(){
     col_h_lo:$('rb_chlo').value, col_h_hi:$('rb_chhi').value,
     max_gain_ev:$('rb_gain').value, occluder_tau:$('rb_tau').value,
     relief:$('rb_relief').value, fold:$('rb_fold').checked?1:0,
+    object_score_min:$('rb_objthr').value,
     semantic_gate:$('rb_sem').checked?1:0,
     // 当前选中的 HDR 恢复法/参数(④显示 的下拉与滑条)→ 烘焙用同一方法,预览即所烘
     hdr_method:S.hdrMethod??0, hdr_pa:S.hdrPA??0.7,

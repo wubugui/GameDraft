@@ -218,7 +218,9 @@ button#rebuild.dirty{animation:pulse 1.2s infinite}
       <option value="13">地形:标为地形(留下)</option>
       <option value="14">多边形:标为物体</option>
       <option value="15">多边形:标为地形</option>
+      <option value="16">地形:点选整个实例翻转</option>
     </select></label>
+    <label title="SAM 实例的采信分数门槛。只筛已算好的实例,改它**不用重跑推理**;拖动即时预览,重烘后正式生效"><span class="k">物体采信分</span><input type="range" id="rb_objthr" min="0.15" max="0.9" step="0.05" value="0.35"><span class="v" id="rb_objthr_v"></span></label>
     <div class="sd" style="margin-top:2px">「地形/物体」两笔覆写自动识别:物体会从地形高度场里扣掉,
       角色不会站到它上面。改完同样要<b>保存编辑 → 重烘</b>。</div>
     <div class="sd" style="margin-top:2px">多边形模式:单击加顶点,<b>双击闭合并填充</b>,Esc 取消。</div>

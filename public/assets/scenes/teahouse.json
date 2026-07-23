@@ -427,8 +427,8 @@
     {
       "id": "new_npc_1",
       "name": "茶馆狗",
-      "x": 342.2,
-      "y": 224.9,
+      "x": 341.6,
+      "y": 214.1,
       "interactionRange": 50,
       "animFile": "/resources/runtime/animation/dog_anim/anim.json",
       "initialAnimState": "idle",

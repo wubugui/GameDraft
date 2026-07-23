@@ -194,14 +194,12 @@ export class CharacterLightingSystem implements IGameSystem {
     const m = this.meta; const g = this.groundD; const res = this.resources;
     const R = this.shadowBasis; const lum = this.lightLum;
     if (!m || !g || !res || !R) return [];
-    // 脚点 → q(与 driveFilter 同源)
+    // 脚点 → q(与 driveFilter / SceneDepthSystem 同一个采样器:三处脚深度必须同源,
+    // 各写一份迟早漂——遮挡、阴影、着色一旦用上不同的地面值就会互相打架)
     const W = m.work.w, H = m.work.h;
     const sx = (worldX / Math.max(this.sceneWorldW, 1e-6)) * W;
     const sy = (worldY / Math.max(this.sceneWorldH, 1e-6)) * H;
-    const xi = Math.max(0, Math.min(W - 2, sx)), yi = Math.max(0, Math.min(H - 2, sy));
-    const x0 = Math.floor(xi), y0 = Math.floor(yi), fx = xi - x0, fy = yi - y0;
-    const d = g[y0 * W + x0] * (1 - fx) * (1 - fy) + g[y0 * W + x0 + 1] * fx * (1 - fy)
-      + g[(y0 + 1) * W + x0] * (1 - fx) * fy + g[(y0 + 1) * W + x0 + 1] * fx * fy;
+    const d = sampleGroundField(g, W, H, sx, sy);
     const th = m.cal.theta;
     const cosT = Math.cos(th), sinT = Math.sin(th);
     const hWu = (worldH * (H / Math.max(this.sceneWorldH, 1e-6))) / Math.max(cosT * m.cal.ppu, 1e-6);
