@@ -2505,12 +2505,13 @@ document.querySelectorAll('.views button').forEach(b=>b.onclick=()=>{ setView(+b
     if(S.view!==2) return;
     S.topPoly.push(toLocal(e)); buildTopView();
   });
-  tv.addEventListener('dblclick',e=>{
+  // 右键=闭合并填充(双击那套要靠 pop() 补偿多出来的顶点,是将就写法,已去掉)
+  tv.addEventListener('contextmenu',e=>{
+    e.preventDefault();
     if(S.view!==2) return;
-    if(S.topPoly.length>=3) S.topPoly.pop();      // 双击的第二次 click 已入队,去掉
-    topPolyApply();
+    if(S.topPoly.length>=3) topPolyApply();
+    else { S.topPoly=[]; buildTopView(); }        // 不足三点=取消
   });
-  tv.addEventListener('contextmenu',e=>{ e.preventDefault(); S.topPoly=[]; buildTopView(); });
   window.addEventListener('keydown',e=>{
     if(S.view===2&&e.key==='Escape'){ S.topPoly=[]; buildTopView(); }
   });

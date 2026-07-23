@@ -18,13 +18,13 @@
     "amb_night_forest_loop"
   ],
   "spawnPoint": {
-    "x": 1010.0,
-    "y": 905.0
+    "x": 520.7,
+    "y": 382.8
   },
   "spawnPoints": {
     "from_jie": {
-      "x": 1010.0,
-      "y": 905.0
+      "x": 520.7,
+      "y": 382.8
     }
   },
   "npcs": [],
