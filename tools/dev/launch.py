@@ -30,7 +30,9 @@ TOOL_MODULES: dict[str, tuple[str, list[str]]] = {
     "skill-governance": ("tools.skill_workflow_governance.console", []),
     "validate-data": ("tools.editor.validate", []),
     "audit-depth": ("tools.character_lighting_lab.audit_depth", []),
+    "audit-walkable": ("tools.character_lighting_lab.audit_walkable", []),
     "json-lang": ("tools.json_lang.build", []),
+    "bake-normals": ("tools.animation_pipeline.bake_normal_atlas", []),
 }
 
 

@@ -23,14 +23,18 @@ from tools.production_workbench.console import (
 from tools.production_workbench.workbench_window import WorkbenchWindow
 
 
-def _wait_for_qt(condition, *, timeout_sec: float = 5.0) -> None:
+def _wait_for_qt(condition, *, timeout_sec: float = 30.0) -> None:
+    """预算 30 秒的理由同 test_production_workbench_story_unit_gui._wait_for_qt。"""
     deadline = time.monotonic() + timeout_sec
     while time.monotonic() < deadline:
         QApplication.processEvents()
         if condition():
             return
         time.sleep(0.01)
-    raise AssertionError("timed out waiting for Qt condition")
+    raise AssertionError(
+        f"timed out waiting for Qt condition after {timeout_sec}s "
+        "(重负载下常见；若稳定复现请查后台线程是否真的没结束)"
+    )
 
 
 def _reload_story_tab(tab) -> None:

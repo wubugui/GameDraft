@@ -56,7 +56,7 @@ import { RuleUseUI } from '../ui/RuleUseUI';
 import { DebugPanelUI } from '../ui/DebugPanelUI';
 import { GameStateController } from './GameStateController';
 import { StringsProvider } from './StringsProvider';
-import { GameState } from '../data/types';
+import { GameState, normalizeEmoteBubbleScale } from '../data/types';
 import type {
   ActionDef,
   IGameSystem,
@@ -101,7 +101,8 @@ import {
   type ShadowLightSample,
 } from './CharacterLightingSystem';
 import { CharacterShadingFilter } from '../rendering/CharacterShadingFilter';
-import { buildNormalAtlas } from '../rendering/spriteNormalAtlas';
+import { getNormalAtlasSource, normalAtlasUrlFor } from '../rendering/spriteNormalAtlas';
+import type { LitShaderProvider } from '../rendering/SpriteEntity';
 import { WaterMinigameManager } from '../systems/waterMinigame/WaterMinigameManager';
 import { SugarWheelMinigameManager } from '../systems/sugarWheel/SugarWheelMinigameManager';
 import { PaperCraftMinigameManager } from '../systems/paperCraft/PaperCraftMinigameManager';
@@ -136,9 +137,10 @@ import { TouchMobileControls } from '../ui/TouchMobileControls';
 import {
   resolveScriptedSpeakerDisplay,
   resolveScriptedSpeakerEntity,
+  scriptedSpeakerEntityFromId,
   type ScriptedSpeakerEntity,
 } from '../utils/scriptedDialogueSpeaker';
-import { Graphics, RenderTexture, Texture, UPDATE_PRIORITY } from 'pixi.js';
+import { Culler, Graphics, RenderTexture, Texture, UPDATE_PRIORITY } from 'pixi.js';
 import { sceneJsonUrl, TEXT_URLS } from './projectPaths';
 import {
   coerceRuntimeFieldValue,
@@ -160,6 +162,8 @@ import { warmUpDepthOcclusionGlProgramForDiagnostics } from '../rendering/DepthO
 export interface GameStartOptions {
   devMode?: boolean;
   playCutscene?: string;
+  /** 配合 playCutscene：顶层步下标，之前的步瞬时快进后从该步起常速（URL `play_cutscene_from=`） */
+  playCutsceneFrom?: string;
   /** 开发模式下直接进入指定场景（URL `devScene=` / `dev_scene=`） */
   devScene?: string;
   /** 开发模式下直接进入指定叙事跳转（URL `narrativeWarp=` / `narrative_warp=`） */
@@ -177,7 +181,10 @@ export interface GameStartOptions {
 declare global {
   interface Window {
     __gameDevAPI?: {
-      playCutscene(id: string): void;
+      /** @param fromStep 顶层步下标：之前的步瞬时快进建立画面状态，从该步起常速排演 */
+      playCutscene(id: string, fromStep?: number): void;
+      /** 编辑器缩略条播放头轮询用：当前播到哪段过场的哪一步（未播放时 path 为 null） */
+      getCutscenePlayback(): { cutsceneId: string | null; path: string | null; label: string | null };
       reload(): void;
       isReady(): boolean;
       /** 重新打开 Dev Mode 面板（从场景列表跳转后不会自动再开） */
@@ -197,9 +204,18 @@ declare global {
       playAudioProbe(id: string, fadeMs: number): void;
       getAudioDebugState(): Record<string, unknown>;
       suppressSceneEnterForVisualCapture(): void;
+      /**
+       * 编辑器气泡锚控件的「同步到游戏」：在真场景真透视里把气泡摆到 anchorY 看一眼。
+       * anchorY 省略 = 用实体自算档（看默认落点）。返回是否找到了 target。
+       */
+      previewBubbleAnchor(req: { target: string; anchorY?: number; emote?: string; scale?: number }): boolean;
+      clearBubbleAnchorPreview(): void;
     };
   }
 }
+
+/** 编辑器气泡锚预览气泡的归属标记：只清自己这一路，不误伤对话/过场的气泡。 */
+const BUBBLE_ANCHOR_PREVIEW_OWNER = 'editor-bubble-anchor-preview';
 
 /** dev 菜单「叙事」跳转配置（public/assets/data/dev_narrative_warps.json）。 */
 type DevNarrativeWarp = {
@@ -327,8 +343,16 @@ export class Game {
   private pressureHoldUI!: PressureHoldUI;
   private depthDebugVisualizer!: DepthDebugVisualizer;
   private playerDepthFilter: IEntityShadingFilter | null = null;
+  /** 视锥剔除:屏外 NPC/热点不进 GPU 渲染。写 Pixi 原生 culled 位(localDisplayStatus 第 3 bit),
+   *  与实体显隐四通道的 visible 完全正交——绝不碰实体 visible 合成(见 entity-visibility-channels)。
+   *  默认开(生产也跑),F2 可切;玩家容器恒不剔。 */
+  private frustumCullingEnabled = true;
+  /** 剔除上一帧是否活跃:关闭时据此一次性清 culled,避免残留实体隐身 */
+  private frustumCullingWasActive = false;
   /** F2 probe 点云调试覆盖层(世界坐标系,随相机;场景卸载即销毁) */
   private probeVizGfx: Graphics | null = null;
+  /** F2 角色照明切档(体素卷/probe 图集)正在拉取中,期间重复切档去重(见 applyCharMode) */
+  private charModeSwitching = false;
   /** 场景透视缩放（近大远小）句柄：scene:ready 从场景数据构建、beforeUnload 清空；实体注入共享同一实例 */
   private perspectiveScaleResolver: ScenePerspectiveScaleResolver | null = null;
 
@@ -371,6 +395,16 @@ export class Game {
    */
   private npcPatrolEpoch = new Map<string, number>();
   private mainTick: (() => void) | null = null;
+  /** sprite 网格着色的共享帧组同步(挂 Pixi ticker,不经游戏状态分支;destroy 时摘除) */
+  private charLitFrameSync: (() => void) | null = null;
+  /** 网格着色 shader 供给方:实体只管几何,shader 建/换/收归照明系统 + 法线图集寻址在这 */
+  private readonly litShaderProvider: LitShaderProvider = {
+    create: (colorTex, sheetUrl) => this.characterLighting.createEntityLitShader(
+      colorTex, getNormalAtlasSource(this.assetManager, sheetUrl)),
+    swapTextures: (sh, colorTex, sheetUrl) => this.characterLighting.swapEntityLitTextures(
+      sh, colorTex, getNormalAtlasSource(this.assetManager, sheetUrl)),
+    release: (sh) => this.characterLighting.releaseEntityLitShader(sh),
+  };
   /** Pixi 渲染之后 drain gl.getError（优先级 UTILITY，低于内置 render） */
   private glPostRenderDrain: (() => void) | null = null;
   private webglContextLostHandler: ((ev: Event) => void) | null = null;
@@ -482,8 +516,15 @@ export class Game {
         this.characterLighting.groundDepthField,
         this.characterLighting.groundDepthTexture,
       );
-      this.depthDebugVisualizer?.setGroundTexture(this.characterLighting.groundDepthTexture);
       this.refreshPlayerWorldCollision();
+      // 调试可视化排最后 + 单独兜错：本回调跑在 load() 的 try 里，从这里抛出去会被
+      // load() 的 catch 当成"载荷坏了"整包丢弃（连带销毁纹理，深度系统随即采到已销毁
+      // 的源而崩）。**F2 调试链路失手绝不能连坐玩法照明。**
+      try {
+        this.depthDebugVisualizer?.setGroundTexture(this.characterLighting.groundDepthTexture);
+      } catch (e) {
+        console.warn('[Game] 深度调试可视化注入行走面场失败（不影响玩法照明）', e);
+      }
     };
     // 章节导演（C2）：按清单在 scene:revealed / narrative:stateChanged 上评估开拍/收工；
     // 自身无状态（live 集在叙事档），控制口与条件工厂在下方统一接线。
@@ -575,8 +616,9 @@ export class Game {
   }
 
   /**
-   * `playScriptedDialogue` 逐行的头像 + 说话实体解析（与图对话 {@link GraphDialogueManager.resolvePortrait} 同语义）：
-   * - speakerEntity：由 speaker 字段占位（`{{player}}` / `{{npc[:id]}}`）推导，供「…」气泡定位与头像跟随；
+   * `playScriptedDialogue` / 过场 `present:showDialogue` 逐行的头像 + 说话实体解析
+   * （与图对话 {@link GraphDialogueManager.resolvePortrait} 同语义）：
+   * - speakerEntity：见 {@link resolveScriptedSpeakerEntityForLine}，供「…」气泡定位与头像跟随；
    * - portrait：显式 slug 原样用；仅带 emotion 时跟随 speakerEntity（player→当前装扮立绘集、npc→场景 NPC 的 portraitSlug），解析不到则本行不显头像。
    */
   private resolveScriptedLineExtras(
@@ -584,11 +626,34 @@ export class Game {
     portraitRef: DialoguePortraitRef | undefined,
     scriptedNpcId: string,
   ): { portrait?: DialoguePortraitRef; speakerEntity?: DialogueLine['speakerEntity'] } {
-    const entity = resolveScriptedSpeakerEntity(rawSpeaker, {
+    const entity = this.resolveScriptedSpeakerEntityForLine(rawSpeaker, scriptedNpcId);
+    return { portrait: this.resolveScriptedPortrait(portraitRef, entity), speakerEntity: entity };
+  }
+
+  /**
+   * 脚本台词行的「说话人实体」唯一口径（头像跟随说话人 + 「…」气泡锚点共用）：
+   * 1. speaker 里的占位 `{{player}}` / `{{npc[:id]}}` 优先（与图对话 speakerEntity 同源）；
+   * 2. 没写占位时认「说话 NPC」下拉填的 `scriptedNpcId`——策划把显示名写成字面（"关二狗"）
+   *    是常规写法，此前这类行解析不出实体，「跟随说话人」的立绘一律不显；
+   * 3. 旁白不认实体：speaker 留空、或解析后等于旁白标签，一律 undefined（不显头像、不冒气泡）。
+   */
+  private resolveScriptedSpeakerEntityForLine(
+    rawSpeaker: string,
+    scriptedNpcId: string,
+  ): ScriptedSpeakerEntity | undefined {
+    const byPlaceholder = resolveScriptedSpeakerEntity(rawSpeaker, {
       graphDialogueNpcId: this.graphDialogueManager.getContextNpcId(),
       fallbackNpcId: scriptedNpcId,
     });
-    return { portrait: this.resolveScriptedPortrait(portraitRef, entity), speakerEntity: entity };
+    if (byPlaceholder) return byPlaceholder;
+    const snpc = (scriptedNpcId ?? '').trim();
+    if (!snpc) return undefined;
+    const speakerDisplay = this.resolveDisplayText(rawSpeaker ?? '').trim();
+    if (!speakerDisplay) return undefined;
+    const narrKey = this.stringsProvider.get('dialogue', 'narratorLabel');
+    const narrator = this.resolveDisplayText(narrKey && narrKey !== 'narratorLabel' ? narrKey : '旁白').trim();
+    if (speakerDisplay === narrator) return undefined;
+    return scriptedSpeakerEntityFromId(snpc);
   }
 
   private resolveScriptedPortrait(
@@ -598,12 +663,24 @@ export class Game {
     if (!ref || !ref.emotion) return undefined;
     const slug = ref.slug?.trim();
     if (slug) return { slug, emotion: ref.emotion };
-    if (!entity) return undefined;
+    // 「跟随说话人」：按说话人实体的**当前装扮配置**取立绘集 id
+    // （NPC=就地 portraitSlug / 角色注册表继承 / animFile 包名推导；玩家=当前装扮）。
+    if (!entity) {
+      console.warn('[portrait] 「跟随说话人」解析不出说话人实体：speaker 无 {{…}} 占位且未填 scriptedNpcId（或说话人是旁白），本行不显头像');
+      return undefined;
+    }
     if (entity.kind === 'player') {
       const p = this.currentPlayerPortraitSlug?.trim();
+      if (!p) console.warn('[portrait] 「跟随说话人」= 主角，但当前装扮未提供立绘集，本行不显头像');
       return p ? { slug: p, emotion: ref.emotion } : undefined;
     }
     const npcSlug = this.sceneManager.getNpcById(entity.npcId)?.currentPortraitSlug;
+    if (!npcSlug) {
+      console.warn(
+        `[portrait] 「跟随说话人」取不到立绘集：NPC ${JSON.stringify(entity.npcId)} `
+        + '不在当前场景，或其 portraitSlug/animFile 都推不出立绘集，本行不显头像',
+      );
+    }
     return npcSlug ? { slug: npcSlug, emotion: ref.emotion } : undefined;
   }
 
@@ -728,6 +805,10 @@ export class Game {
     if (this.gameConfig.viewport) {
       this.renderer.setViewportSize(this.gameConfig.viewport.width, this.gameConfig.viewport.height);
     }
+    // 头顶气泡全局缩放（缺省 1）；单处仍可用 action / 对话行的 bubbleScale 覆盖
+    this.emoteBubbleManager.setDefaultScale(
+      normalizeEmoteBubbleScale(this.gameConfig.emoteBubbleScale, 1),
+    );
     /** game_config.health → HealthSystem：构造期 init 已按默认配置执行；configure 后按
      *  IGameSystem「重 init 与首次一致」契约重跑 init 套用上限/阈值（此时尚无伤害与存档写入）。 */
     if (this.gameConfig.health) {
@@ -752,7 +833,17 @@ export class Game {
       if (!se) return;
       const anchor = se.kind === 'player' ? this.player : this.sceneManager.getNpcById(se.npcId);
       if (!anchor) return;
-      this.emoteBubbleManager.showSticky(anchor, '……', undefined, SPEAKING_BUBBLE_OWNER);
+      // 本行授权了绝对头顶锚就用它（图对话行级/节点级可编排），否则实体按当前帧内容自算
+      const hasAnchor = typeof line.bubbleAnchorY === 'number' && Number.isFinite(line.bubbleAnchorY);
+      const hasScale = typeof line.bubbleScale === 'number' && Number.isFinite(line.bubbleScale)
+        && line.bubbleScale > 0;
+      const opts = hasAnchor || hasScale
+        ? {
+            ...(hasAnchor ? { anchorY: line.bubbleAnchorY } : {}),
+            ...(hasScale ? { scale: line.bubbleScale } : {}),
+          }
+        : undefined;
+      this.emoteBubbleManager.showSticky(anchor, '……', opts, SPEAKING_BUBBLE_OWNER);
     });
     const clearSpeakingBubble = () => this.emoteBubbleManager.cleanupByOwner(SPEAKING_BUBBLE_OWNER);
     this.eventBus.on('dialogue:end', clearSpeakingBubble);
@@ -862,25 +953,11 @@ export class Game {
       this.resolveScriptedLineExtras(rawSpeaker, ref, scriptedNpcId ?? '').portrait,
     );
     // present:showDialogue 说话人头顶「……」气泡的锚点。旁白/未在场 → null → 不冒。
+    // 说话人实体与头像跟随同一口径（占位优先，其次「说话NPC」下拉，旁白不认）。
     this.cutsceneManager.setSpeakingBubbleAnchorResolver((rawSpeaker, scriptedNpcId) => {
-      // 1) speaker 占位（{{player}}/{{npc}}/{{npc:id}}）优先——与常规对话 speakerEntity→anchor 同源。
-      const entity = resolveScriptedSpeakerEntity(rawSpeaker, {
-        graphDialogueNpcId: this.graphDialogueManager.getContextNpcId(),
-        fallbackNpcId: scriptedNpcId ?? '',
-      });
-      if (entity) {
-        return this.resolveEmoteTarget(entity.kind === 'player' ? 'player' : entity.npcId);
-      }
-      // 2) 字面显示名 + 显式 scriptedNpcId（编辑器「说话NPC」下拉）→ 锚到该在场角色，
-      //    让策划保留显示名"关二狗"也能冒气泡。旁白守卫：说话人解析为旁白标签 / 空说话人则不冒。
-      const snpc = (scriptedNpcId ?? '').trim();
-      if (!snpc) return null;
-      const speakerDisplay = this.resolveDisplayText(rawSpeaker).trim();
-      if (!speakerDisplay) return null;
-      const narrKey = this.stringsProvider.get('dialogue', 'narratorLabel');
-      const narrator = this.resolveDisplayText(narrKey && narrKey !== 'narratorLabel' ? narrKey : '旁白').trim();
-      if (speakerDisplay === narrator) return null;
-      return this.resolveEmoteTarget(snpc);
+      const entity = this.resolveScriptedSpeakerEntityForLine(rawSpeaker, scriptedNpcId ?? '');
+      if (!entity) return null;
+      return this.resolveEmoteTarget(entity.kind === 'player' ? 'player' : entity.npcId);
     });
     this.saveManager = new SaveManager(
       () => this.collectSaveData(),
@@ -1335,6 +1412,8 @@ export class Game {
       },
       applyDebugSceneWorldSize: (w, h) => this.applyDebugSceneWorldSize(w, h),
       isDevMode: () => this.isDevMode,
+      getFrustumCulling: () => this.frustumCullingEnabled,
+      toggleFrustumCulling: () => { this.frustumCullingEnabled = !this.frustumCullingEnabled; },
       goToDevScene: () => {
         void this.devLoadScene('dev_room');
       },
@@ -1419,9 +1498,20 @@ export class Game {
           cl.enabled = patch.enabled;
           this.reattachBakedEntityFilters();   // 开关切换 = 新旧滤镜互换
         }
-        if (patch.params) Object.assign(cl.params, patch.params);
+        if (patch.params) {
+          const prevMode = cl.params.mode;
+          Object.assign(cl.params, patch.params);
+          const nextMode = cl.params.mode;
+          // 任意切档都要按需换资源(RT↔体素卷 / cache↔对应 probe 图集,进场景只载当前 mode)
+          if (nextMode !== prevMode) {
+            cl.params.mode = prevMode;               // 先留原档,资源到位后才真正切
+            void this.applyCharMode(nextMode);
+          }
+        }
         if (patch.shadowAuto) Object.assign(cl.shadowAuto, patch.shadowAuto);
       },
+      getCharEChroma: () => this.characterLighting.eChroma,
+      setCharEChroma: (v) => { this.characterLighting.eChroma = v; },
       toggleCharProbeViz: () => this.toggleCharProbeViz(),
       charProbeVizActive: () => this.probeVizGfx !== null,
       entityShadowActive: () => this.entityShadowDebugActive(),
@@ -1555,8 +1645,18 @@ export class Game {
       if (!this.fixedTickMode) this.tick(dt);
     };
     ticker.add(this.mainTick);
+    // sprite 网格着色的共享帧组:挂在 **Pixi ticker** 上、渲染前必跑 —— 刻意不放进 tick 的
+    // 任何状态分支(filter 路径的"Cutscene 态驱动被跳过 → uniform 冻死"正是这么来的)。
+    this.charLitFrameSync = () => {
+      const wc = this.renderer.worldContainer;
+      this.characterLighting.syncFrame(wc.x, wc.y, this.camera.getProjectionScale());
+    };
+    ticker.add(this.charLitFrameSync, undefined, UPDATE_PRIORITY.LOW + 1);
 
     if (this.isDevMode) {
+      /** 走字段而非再加一个位置参数：startDevMode 的形参已过长，且此值只在直达路由用一次。 */
+      const rawFrom = Number(options.playCutsceneFrom);
+      this.devPlayCutsceneFromStep = Number.isFinite(rawFrom) && rawFrom > 0 ? Math.floor(rawFrom) : 0;
       await this.startDevMode(
         options.playCutscene,
         options.waterPreview,
@@ -1821,11 +1921,13 @@ export class Game {
     try {
       const animRaw = await this.assetManager.loadJson<AnimationSetDefInput>(animPath);
       if (animRaw.spritesheet) {
-        refs.push({
-          type: 'texture',
-          path: resolvePathRelativeToAnimManifest(animPath, animRaw.spritesheet),
-          label: `${labelPrefix}图集`,
-        });
+        const sheetPath = resolvePathRelativeToAnimManifest(animPath, animRaw.spritesheet);
+        refs.push({ type: 'texture', path: sheetPath, label: `${labelPrefix}图集` });
+        // 法线图集与图集同批预载：挂滤镜时只做同步缓存读，取不到即走平面法线兜底
+        const normalPath = normalAtlasUrlFor(sheetPath);
+        if (normalPath) {
+          refs.push({ type: 'texture', path: normalPath, label: `${labelPrefix}法线图集` });
+        }
       }
     } catch {
       // 实际加载会走占位图；startup manifest 只做尽力预热。
@@ -1841,7 +1943,7 @@ export class Game {
       if (animRaw.spritesheet) {
         const sheetPath = resolvePathRelativeToAnimManifest(playerAnimPath, animRaw.spritesheet);
         const texture = await this.assetManager.loadTexture(sheetPath);
-        const animDef = normalizeAnimationSetDef(animRaw, texture.width, texture.height);
+        const animDef = normalizeAnimationSetDef(animRaw, texture.width, texture.height, sheetPath);
         return { texture, animDef };
       }
       const placeholder = createPlaceholderPlayerTextures(this.renderer.app);
@@ -2148,22 +2250,27 @@ export class Game {
       this.setupSceneLighting(sceneData, worldToPixelX, worldToPixelY);
       // 角色照明烘焙载荷:**必须 await 纳入加载门**——否则进度条/黑屏已撤,这批图集
       // 还在后台 fetch+解码,进场景后卡顿(哈希门失配自动禁用,内部 epoch 防旧时间线写回)。
-      // 体素卷(RT gather 用)仅 dev 加载:生产只吃 probe 缓存,免下最重两块;dev 才做实时 RT 对比。
-      await this.characterLighting.load(sceneId, sceneData.worldWidth, sceneData.worldHeight,
-        { loadVolumes: import.meta.env.DEV });
+      // 体素卷(RT gather 用,20–27MB/场景)不在此列:进场景恒不加载,F2 开 RT 时才现拉。
+      await this.characterLighting.load(sceneId, sceneData.worldWidth, sceneData.worldHeight);
       this.refreshPlayerWorldCollision();
     });
 
     this.sceneManager.setDepthUnloader(() => {
       if (this.probeVizGfx) { this.probeVizGfx.destroy(); this.probeVizGfx = null; }
-      this.characterLighting.destroy();   // 清载荷+涨 epoch,拦截在途加载写回(律4)
+      // 顺序即正确性：**先拆掉所有引用照明载荷纹理的东西，最后才销毁载荷**。
+      // 影子现在也持有行走面场纹理(逐像素取地面)，若沿用旧顺序先 destroy 载荷，
+      // 残留影子会在下一次绑定时拿到已销毁的 TextureSource → style 为 null 直接崩。
+      // NPC/热区滤镜已在场景卸载更早处销毁；此处经 unload() 清空系统滤镜表。
       this.sceneDepthSystem.unload();
-      this.refreshPlayerWorldCollision();
-      // NPC/热区滤镜已在场景卸载更早处销毁；此处先经 unload() 清空系统滤镜表，
-      // 再断开玩家滤镜，最后销毁探针 RT，确保无残留引用采样已销毁的纹理。
       this.player.sprite.container.filters = [];
       this.playerDepthFilter = null;
       this.clearEntityShadows();
+      // 调试可视化滤镜是**跨场景长活**的，不在上面几行的清扫范围内，却绑着按场景销毁的
+      // 载荷纹理。Pixi 的 BindGroup 见到所绑资源 destroyed 会把自己作废，之后读写即抛——
+      // 抛点正好在下一张场景的 onReady 里，会把整份照明载荷带走。故销毁载荷前必须解绑。
+      this.depthDebugVisualizer?.unbindSceneTextures();
+      this.characterLighting.destroy();   // 清载荷+涨 epoch,拦截在途加载写回(律4)
+      this.refreshPlayerWorldCollision();
       if (this.currentProbe) {
         this.currentProbe.destroy(true);
         this.currentProbe = null;
@@ -2362,6 +2469,46 @@ export class Game {
   }
 
   /** 逐帧驱动烘焙着色滤镜:脚点/quad 尺寸/当前帧法线 rect + F2 参数全量同步。 */
+  /** 视口边距系数:实体全离开「屏幕×(1+2×margin)」框才剔,留余量吃滤镜边缘/防慢速平移 pop */
+  private static readonly FRUSTUM_CULL_MARGIN = 0.2;
+
+  setFrustumCullingEnabled(on: boolean): void {
+    this.frustumCullingEnabled = on;
+  }
+  isFrustumCullingEnabled(): boolean {
+    return this.frustumCullingEnabled;
+  }
+
+  /**
+   * 视锥剔除:给 entityLayer 里的 NPC/热点容器打 Pixi cullable,按带边距的屏幕框算 culled,
+   * 屏外实体整棵跳过渲染。写的是 localDisplayStatus 的 culled 位,与显隐四通道的 visible
+   * 正交(见 entity-visibility-channels),不影响玩法可见性;玩家容器不剔(恒在镜头中心)。
+   * 关闭时一次性清 culled 复原。必须在 depth 驱动块**之前**调用:同帧内屏外实体既跳渲染、
+   * 也跳着色驱动,而重回画面当帧已被 uncull → 当帧即驱动,零残帧。
+   */
+  private updateFrustumCulling(): void {
+    const layer = this.renderer.entityLayer;
+    if (!this.frustumCullingEnabled) {
+      if (this.frustumCullingWasActive) {
+        for (const child of layer.children) {
+          child.cullable = false;
+          child.culled = false;
+        }
+        this.frustumCullingWasActive = false;
+      }
+      return;
+    }
+    this.frustumCullingWasActive = true;
+    const playerContainer = this.player.sprite.container;
+    for (const child of layer.children) {
+      child.cullable = child !== playerContainer;
+    }
+    const m = Game.FRUSTUM_CULL_MARGIN;
+    const screen = this.renderer.app.screen;
+    const view = screen.clone().pad(screen.width * m, screen.height * m);
+    Culler.shared.cull(layer, view);
+  }
+
   private driveBakedShading(
     filter: IEntityShadingFilter,
     worldX: number,
@@ -2369,6 +2516,13 @@ export class Game {
     ent: CharShadingEntityInfo | null,
   ): void {
     if (filter instanceof CharacterShadingFilter) {
+      // 法线图集**逐帧跟随当前图集**。原来只在 attach*SceneFilter 里绑一次,实体一换图集
+      // (玩家常态/背尸/道士,或 NPC 经 setEntityField 重载动画)就变成"新坐标查旧图" ——
+      // 采样落到无关区域:角色变暗 + 随帧闪烁 + 无规律。setNormalTexture 内部对同源短路,
+      // 逐帧调用零开销。
+      if (ent && ent.sheetUrl !== undefined) {
+        filter.setNormalTexture(getNormalAtlasSource(this.assetManager, ent.sheetUrl));
+      }
       this.characterLighting.driveFilter(filter, worldX, worldY, ent);
     }
   }
@@ -2383,6 +2537,8 @@ export class Game {
       env.shadow.mode === 'off' ? env.ao.contact : 0,
       aoForm,
     );
+    // sprite 网格着色的 AO 同源同值(经共享帧组下发,syncFrame 每帧带出)
+    this.characterLighting.setSharedAO(env.shadow.mode === 'off' ? env.ao.contact : 0, aoForm);
   }
 
   /** F2 切换 shadowMode/tone/billboard 后重建阴影实例并重设滤镜 tone/AO。 */
@@ -2987,13 +3143,12 @@ export class Game {
     const baked = this.characterLighting.shadingResources;
     try {
       if (baked) {
-        const f = this.sceneDepthSystem.createBakedFilterForEntity(baked);
-        if (f) {
-          const info = this.player.sprite.getShadingFrameInfo();
-          if (info) f.setNormalTexture(buildNormalAtlas(info.source, info.cols, info.rows));
-        }
-        this.playerDepthFilter = f;
+        // 烘焙场景(2026-07-25 起):着色走 sprite 网格(同 UV 采 color+normal,零逐帧驱动),
+        // 遮挡走纯 DepthOcclusionFilter —— filter 只干它真擅长的屏幕空间活。
+        this.player.sprite.enableBakedShading(this.litShaderProvider);
+        this.playerDepthFilter = this.sceneDepthSystem.createFilterForEntity();
       } else {
+        this.player.sprite.disableBakedShading();
         const playerLift = 0.4 * this.player.sprite.getWorldSize().height;
         this.playerDepthFilter = lightingOn
           ? this.sceneDepthSystem.createLightingFilterForEntity(playerLift)
@@ -3010,6 +3165,43 @@ export class Game {
       depthError('Game', 'player filter FAILED', e);
       this.playerDepthFilter = null;
       this.player.sprite.container.filters = [];
+    }
+  }
+
+  /**
+   * F2 切角色照明档(RT / L1 / L2 / BIN)时按需拉/卸对应资源。进场景只加载当前 mode 的资源:
+   *   RT(mode 0)  → RT-gather 体素卷(20–27MB,ensureVolumes/releaseVolumes)
+   *   cache(1/2/3)→ 对应 probe 图集(固化后 L2 仅 ~0.12MB,ensureProbeAtlas 只留当前 mode)
+   * 时序硬约束:**必须先重挂滤镜(绑上新资源),再销毁旧纹理**——Pixi v8 的 BindGroup 见到
+   * 所绑资源已 destroyed 会把自己作废,顺序反了永久烧毁滤镜。拉取失败不切档(留原档,避免采空得黑)。
+   */
+  private async applyCharMode(nextMode: number): Promise<void> {
+    const cl = this.characterLighting;
+    if (this.charModeSwitching) return;   // 加载期间重复点击去重
+    this.charModeSwitching = true;
+    try {
+      if (nextMode < 1) {
+        this.debugPanelUI?.log('[照明] 拉取 RT 体素卷…');
+        if (!await cl.ensureVolumes()) {
+          this.debugPanelUI?.log('[照明] 体素卷加载失败,保持原档');
+          return;
+        }
+      } else {
+        cl.releaseVolumes();                       // 从 RT 切回 cache:卸体素卷
+        if (!await cl.ensureProbeAtlas(nextMode)) {
+          this.debugPanelUI?.log('[照明] probe 图集加载失败,保持原档');
+          return;
+        }
+      }
+      cl.params.mode = nextMode;                   // 资源到位才真正切档
+      this.reattachBakedEntityFilters();           // 先重挂(绑新资源)
+      cl.disposeStaleVolumeTextures();             // 再销毁旧纹理(顺序不可反)
+      cl.disposeStaleProbeTextures();
+      this.debugPanelUI?.log(`[照明] 已切至 mode ${nextMode}`);
+    } catch (e) {
+      console.warn('Game: 角色照明切档失败', e);
+    } finally {
+      this.charModeSwitching = false;
     }
   }
 
@@ -3041,13 +3233,11 @@ export class Game {
       const npcBlend = npc.def.occlusionBlendFactor;
       let npcFilter: IEntityShadingFilter | null;
       if (baked) {
-        const f = this.sceneDepthSystem.createBakedFilterForEntity(baked, npcBlend);
-        if (f) {
-          const info = npc.getShadingFrameInfo();
-          if (info) f.setNormalTexture(buildNormalAtlas(info.source, info.cols, info.rows));
-        }
-        npcFilter = f;
+        // 同玩家:着色=sprite 网格(几何自带 UV/镜像/脚点),遮挡=纯 DepthOcclusionFilter
+        npc.enableBakedShading(this.litShaderProvider);
+        npcFilter = this.sceneDepthSystem.createFilterForEntity(npcBlend);
       } else {
+        npc.disableBakedShading();
         const npcLift = 0.4 * npc.getWorldSize().height;
         npcFilter = lightingOn
           ? this.sceneDepthSystem.createLightingFilterForEntity(npcLift, npcBlend)
@@ -3077,7 +3267,7 @@ export class Game {
 
   /**
    * 热点展示图的场景滤镜:有烘焙载荷 → CHAR_FS 物理着色(与玩家/NPC 同一 albedo×E 管线);
-   * 否则旧遮挡滤镜(fallback)。热点展示图是单张静图 → 法线图集按 1×1 网格从展示纹理算。
+   * 否则旧遮挡滤镜(fallback)。热点展示图是单张静图 → 法线图按 1×1 格离线烘,与展示图同目录。
    * scene:ready / scene:entitiesRebuilt / 运行时换展示图三处共用,避免漂移。
    */
   private makeHotspotSceneFilter(h: Hotspot): IEntityShadingFilter | null {
@@ -3085,8 +3275,7 @@ export class Game {
     if (baked) {
       const f = this.sceneDepthSystem.createBakedFilterForEntity(baked, h.def.occlusionBlendFactor);
       if (f) {
-        const tex = h.getDisplayTexture();
-        if (tex) f.setNormalTexture(buildNormalAtlas(tex.source, 1, 1));
+        f.setNormalTexture(getNormalAtlasSource(this.assetManager, h.def.displayImage?.image));
       }
       return f;
     }
@@ -3112,6 +3301,9 @@ export class Game {
 
   /** dev 启动直达路由：startDevMode 组装、start() 在 ticker 挂载后执行（见 startDevMode 注释） */
   private devStartupRoute: (() => Promise<void>) | null = null;
+
+  /** 启动直达过场的快进起点（URL `play_cutscene_from=`）；0 = 整段常速播放 */
+  private devPlayCutsceneFromStep = 0;
 
   private async loadNarrativeWarps(): Promise<void> {
     try {
@@ -3244,7 +3436,8 @@ export class Game {
     });
 
     window.__gameDevAPI = {
-      playCutscene: (id: string) => this.devPlayCutscene(id),
+      playCutscene: (id: string, fromStep?: number) => this.devPlayCutscene(id, fromStep),
+      getCutscenePlayback: () => this.cutsceneManager.getPlaybackHudSnapshot(),
       reload: () => this.devReload(),
       isReady: () => true,
       openDevPanel: () => this.devModeUI?.open(),
@@ -3291,12 +3484,33 @@ export class Game {
       playAudioProbe: (id, fadeMs) => this.audioManager.playBgm(id, fadeMs),
       getAudioDebugState: () => this.audioManager.getDebugOutputState(),
       suppressSceneEnterForVisualCapture: () => this.sceneManager.setSceneEnterRunner(null),
+      previewBubbleAnchor: (req) => {
+        const target = String(req?.target ?? '').trim();
+        const subject = target ? this.resolveEmoteTarget(target) : null;
+        if (!subject) return false;
+        this.emoteBubbleManager.cleanupByOwner(BUBBLE_ANCHOR_PREVIEW_OWNER);
+        const anchorY = Number(req?.anchorY);
+        const scale = Number(req?.scale);
+        this.emoteBubbleManager.showSticky(
+          subject,
+          String(req?.emote ?? '').trim() || '……',
+          {
+            ...(Number.isFinite(anchorY) ? { anchorY } : {}),
+            ...(Number.isFinite(scale) && scale > 0 ? { scale } : {}),
+          },
+          BUBBLE_ANCHOR_PREVIEW_OWNER,
+        );
+        return true;
+      },
+      clearBubbleAnchorPreview: () => {
+        this.emoteBubbleManager.cleanupByOwner(BUBBLE_ANCHOR_PREVIEW_OWNER);
+      },
     };
     /** 启动直达路由（过场直启 / 场景直达 / 各小游戏预览）需要主 tick 驱动位移与小游戏
      *  update——存起来由 start() 在 `ticker.add(mainTick)` 之后调用（真实就绪信号，
      *  替代旧 300/900/450ms 魔数延时）；顺序 await 保证过场播完才进下一站。 */
     this.devStartupRoute = async () => {
-      if (playCutscene) await this.devPlayCutscene(playCutscene);
+      if (playCutscene) await this.devPlayCutscene(playCutscene, this.devPlayCutsceneFromStep);
       const nw = (narrativeWarp ?? '').trim();
       if (nw) {
         await this.enterNarrativeWarp(nw);
@@ -3327,14 +3541,20 @@ export class Game {
     };
   }
 
-  private async devPlayCutscene(id: string): Promise<void> {
+  /**
+   * @param fromStep 顶层步下标：之前的步瞬时快进（建立底图/图层/黑边/相机/演员站位）后
+   *   从该步起常速播放，供编辑器「从这一步开始播」反复调参数用。
+   */
+  private async devPlayCutscene(id: string, fromStep?: number): Promise<void> {
     if (this.cutsceneManager.isPlaying) return;
     this.devModeUI?.close();
     this.stateController.setState(GameState.Cutscene);
+    const rawFrom = Number(fromStep);
+    const ff = Number.isFinite(rawFrom) && rawFrom > 0 ? Math.floor(rawFrom) : 0;
     /** 过场抛错时也必须复位状态机（对齐 tryStartInitialPrologue），否则 GameState 卡在 Cutscene、
      *  输入被门控。startCutscene 自身 finally 已回收其资源，这里只兜 Game 层状态。 */
     try {
-      await this.cutsceneManager.startCutscene(id);
+      await this.cutsceneManager.startCutscene(id, ff > 0 ? { fastForwardTo: ff } : undefined);
     } catch (e) {
       console.warn('DevMode: 过场播放失败', id, e);
     } finally {
@@ -3714,7 +3934,7 @@ export class Game {
       const animRaw = await this.assetManager.loadJson<AnimationSetDefInput>(animFile);
       const sheetPath = resolvePathRelativeToAnimManifest(animFile, animRaw.spritesheet);
       const tex = await this.assetManager.loadTexture(sheetPath);
-      const animDef = normalizeAnimationSetDef(animRaw, tex.width, tex.height);
+      const animDef = normalizeAnimationSetDef(animRaw, tex.width, tex.height, sheetPath);
       npc.loadSprite(tex, animDef, npc.def.initialAnimState);
     } catch (e) {
       console.warn('setEntityField: reload NPC animation failed', npc.id, animFile, e);
@@ -4250,9 +4470,14 @@ export class Game {
     await new Promise<void>((resolve) => window.setTimeout(resolve, ms));
   }
 
-  private async debugStepTicks(ticks: number, dtMs: number): Promise<void> {
-    const count = Math.max(1, Math.min(200, Math.trunc(ticks)));
-    const dt = Math.max(0.001, Math.min(0.1, dtMs / 1000));
+  private async debugStepTicks(ticks: number, dtMs?: number): Promise<void> {
+    // 参数一律先夹成有限值再用：命令通道那头有兜底，但 `__gameDevAPI.stepFixedTicks` 是**裸暴露**的，
+    // 少传一个 dtMs 就是 undefined/1000 = NaN → dt=NaN → 步长 `0*NaN=NaN` → 玩家世界坐标被写成 NaN。
+    // 这个坏法极其阴：位移分支靠 `stepX !== 0` 放行，NaN 恰好过闸；越界/碰撞判据遇 NaN 又全是 false，
+    // 于是 NaN 一路写进 sprite.x/y，相机跟着 NaN，整个世界渲染不出来且不可逆——还不报任何错。
+    const count = Number.isFinite(ticks) ? Math.max(1, Math.min(200, Math.trunc(ticks))) : 1;
+    const ms = Number.isFinite(dtMs) ? (dtMs as number) : 1000 / 60;
+    const dt = Math.max(0.001, Math.min(0.1, ms / 1000));
     for (let index = 0; index < count; index++) {
       this.tick(dt);
       this.hud.stepFixedTick(dt);
@@ -4422,6 +4647,14 @@ export class Game {
         /* ignore */
       }
       this.glPostRenderDrain = null;
+    }
+    if (this.charLitFrameSync && this.renderer?.app?.ticker) {
+      try {
+        this.renderer.app.ticker.remove(this.charLitFrameSync);
+      } catch {
+        /* ignore */
+      }
+      this.charLitFrameSync = null;
     }
     const canvas = this.renderer?.app?.canvas as HTMLCanvasElement | undefined;
     if (canvas) {
@@ -4614,6 +4847,9 @@ export class Game {
     this.debugTools?.update(dt);
     this.depthDebugVisualizer?.update();
 
+    // 视锥剔除:先于下方 depth 驱动块——同帧内屏外实体既跳 GPU 渲染,也跳着色驱动。
+    this.updateFrustumCulling();
+
     this.syncEntityPixelDensityMatch();
 
     if (this.sceneDepthSystem.isActive) {
@@ -4656,11 +4892,13 @@ export class Game {
           worldH: pSize.height,
           flipX: (pInfo?.flipX ?? false) !== (ps.container.scale.x < 0),
           nrmRect: pInfo?.rect ?? null,
+          sheetUrl: pInfo?.sheetUrl ?? null,      // 换图集(背尸/道士)时法线跟着换
         });
       }
       const npcByContainer = new Map<unknown, Npc>();
       for (const npc of this.sceneManager.getCurrentNpcs()) npcByContainer.set(npc.container, npc);
       for (const child of this.renderer.entityLayer.children) {
+        if (child.culled) continue;   // 剔除:屏外实体跳过着色驱动(重回画面当帧已 uncull)
         const c = child as unknown as {
           filters?: readonly { _isDepthOcclusion?: boolean }[];
           x: number;
@@ -4684,12 +4922,16 @@ export class Game {
                 worldH: size!.height,
                 flipX: info?.flipX ?? false,
                 nrmRect: info?.rect ?? null,
+                sheetUrl: info?.sheetUrl ?? null,   // NPC 经 setEntityField 换动画时同上
+                // NPC 容器还挂着名字标签,包围盒比 sprite 高一截 → 必须换算
+                spriteRect: npc.normalUvSpriteRect() ?? undefined,
               } : null);
             }
           }
         }
       }
       for (const h of this.sceneManager.getCurrentHotspots()) {
+        if (h.container.culled) continue;   // 剔除:屏外热点跳过着色驱动
         const hf = h.getDepthOcclusionFilter();
         if (!hf) continue;
         const footY = h.depthOcclusionFootWorldY();
@@ -4703,6 +4945,7 @@ export class Game {
           worldH: size.height,
           flipX: h.getFacing() < 0,
           nrmRect: [0, 0, 1, 1],
+          sheetUrl: h.def.displayImage?.image ?? null,   // 热点换图同理
         });
       }
     }

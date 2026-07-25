@@ -1,4 +1,6 @@
 import { Filter, GlProgram, Texture, type TextureSource } from 'pixi.js';
+// 角色着色核心 GLSL 的唯一真相源(与灯光实验室共用同一份,消灭 shader 镜像漂移)。
+import CHAR_SHADE_CORE from './charShadeCore.glsl?raw';
 import type { SceneDepthConfig } from '../data/types';
 import type { IEntityShadingFilter } from './EntityLightingFilter';
 
@@ -82,6 +84,16 @@ uniform float uHasFootDepth;   // 0=本帧没拿到脚深度 → 整段遮挡跳
 uniform float uFootBias;       // 实验室 0.045
 uniform float uDebug;
 
+// ---- 角色 quad(逐帧驱动;**filter 专用**——mesh 路径的 UV/翻转/脚点全部来自几何,无此依赖) ----
+uniform vec3  uFootQ;
+uniform float uCharH;            // 直立 quad 高(wu)
+uniform float uCharW;
+uniform vec4  uNrmRect;          // 法线图集内当前帧 uv rect(x,y,w,h)
+uniform float uFlipX;
+uniform vec4 uSpriteWorldRect;
+uniform float uHasNrm;
+
+//__CLC_BEGIN__
 // ---- 标定/伪世界(实验室 manifest 同源) ----
 uniform vec2  uWorkSize;         // 载荷工作分辨率
 uniform vec2  uWorldToWork;      // 场景世界坐标 → work px
@@ -100,14 +112,6 @@ uniform vec3  uAmbSH[9];
 uniform vec4  uLightQ[48];       // q 位置 + 面积
 uniform vec4  uLightE[48];       // 发光辐射 rgb
 uniform float uLightCount;
-
-// ---- 角色 quad(逐帧驱动) ----
-uniform vec3  uFootQ;
-uniform float uCharH;            // 直立 quad 高(wu)
-uniform float uCharW;
-uniform vec4  uNrmRect;          // 法线图集内当前帧 uv rect(x,y,w,h)
-uniform float uFlipX;
-uniform float uHasNrm;
 
 // ---- 照明参数(F2 全量可调,与实验室同名同义) ----
 uniform float uMode;             // 0=RT 1=L1 2=L2 3=BIN
@@ -128,12 +132,16 @@ uniform float uSunOn;
 uniform vec3  uSunDirQ;          // q 空间指向光源方向
 uniform vec3  uSunColor;         // 颜色×强度
 
+// ---- E 明暗/色度权重(F2 测试旋钮):0=只借场景明暗(luma)、角色保留自己颜色;1=完整彩色 E ----
+uniform float uEChroma;
+
 // ---- 保留的游戏侧 sprite AO ----
 uniform float uAOContact;
 uniform float uAOForm;
 
 vec3 srgb2lin(vec3 c){ return mix(c/12.92, pow((c+.055)/1.055, vec3(2.4)), step(.04045,c)); }
 vec3 lin2srgb(vec3 c){ c=max(c,0.); return mix(c*12.92, 1.055*pow(c,vec3(1./2.4))-.055, step(.0031308,c)); }
+${CHAR_SHADE_CORE}
 float shY(int k, vec3 n){
   if(k==0) return .282095;
   if(k==1) return .488603*n.y;  if(k==2) return .488603*n.z;  if(k==3) return .488603*n.x;
@@ -281,7 +289,7 @@ vec3 probeE(vec3 q, vec3 n){
     ob0=ivec2(clamp(floor(ouv),vec2(0.),vec2(6.)));
     of=clamp(ouv-vec2(ob0),0.,1.);
   }
-  float covSum=0.; vec3 Esum=vec3(0.); vec3 Asum=vec3(0.); vec3 EEsum=vec3(0.); vec3 NNsum=vec3(0.);
+  vec3 Esum=vec3(0.);
   ivec3 pn = ivec3(uPN + .5);
   for(int c=0;c<8;c++){
     ivec3 off=ivec3(c&1,(c>>1)&1,(c>>2)&1);
@@ -290,46 +298,25 @@ vec3 probeE(vec3 q, vec3 n){
     int flat_=pi.x*(pn.y*pn.z)+pi.y*pn.z+pi.z;
     w*=step(.002, texelFetch(uValid, ivec2(flat_,0),0).r);
     if(w<1e-5) continue;
-    vec3 E=vec3(0.); vec3 Ea=vec3(0.); vec3 Ee=vec3(0.); vec3 En=vec3(0.); float cov=0.;
+    // v3 固化:probe 图集只存最终 E 的球谐(L1=4列/L2=9列/BIN=64方向),按法线重建即得该方向 E。
+    // nee/miss_mode/amb 已在导出时 compose 进 E,运行时不再读分账、不再组合(那些只 RT 用)。
+    vec3 E=vec3(0.);
     if(mode==1){
-      for(int k=0;k<4;k++){ vec4 q4=texelFetch(uPL1, ivec2(k,flat_),0);
-        float y=shY(k,n); E+=q4.rgb*y; cov+=q4.a*y;
-        Ea+=texelFetch(uPL1, ivec2(4+k,flat_),0).rgb*y;
-        Ee+=texelFetch(uPL1, ivec2(8+k,flat_),0).rgb*y;
-        En+=texelFetch(uPL1, ivec2(12+k,flat_),0).rgb*y; }
+      for(int k=0;k<4;k++) E+=texelFetch(uPL1, ivec2(k,flat_),0).rgb*shY(k,n);
     } else if(mode==2){
-      for(int k=0;k<9;k++){ vec4 q4=texelFetch(uPL2, ivec2(k,flat_),0);
-        float y=shY(k,n); E+=q4.rgb*y; cov+=q4.a*y;
-        Ea+=texelFetch(uPL2, ivec2(9+k,flat_),0).rgb*y;
-        Ee+=texelFetch(uPL2, ivec2(18+k,flat_),0).rgb*y;
-        En+=texelFetch(uPL2, ivec2(27+k,flat_),0).rgb*y; }
+      for(int k=0;k<9;k++) E+=texelFetch(uPL2, ivec2(k,flat_),0).rgb*shY(k,n);
     } else {
       ivec2 b00=ivec2(ob0.y*8+ob0.x,flat_), b10=ivec2(ob0.y*8+ob0.x+1,flat_);
       ivec2 b01=ivec2((ob0.y+1)*8+ob0.x,flat_), b11=ivec2((ob0.y+1)*8+ob0.x+1,flat_);
-      ivec2 oA=ivec2(64,0), oE=ivec2(128,0), oN=ivec2(192,0);
-      vec4 q4=mix(mix(texelFetch(uPBin,b00,0),texelFetch(uPBin,b10,0),of.x),
-                  mix(texelFetch(uPBin,b01,0),texelFetch(uPBin,b11,0),of.x),of.y);
-      E=q4.rgb; cov=q4.a*3.14159265;   // bins 存 cov/π
-      Ea=mix(mix(texelFetch(uPBin,b00+oA,0).rgb,texelFetch(uPBin,b10+oA,0).rgb,of.x),
-             mix(texelFetch(uPBin,b01+oA,0).rgb,texelFetch(uPBin,b11+oA,0).rgb,of.x),of.y);
-      Ee=mix(mix(texelFetch(uPBin,b00+oE,0).rgb,texelFetch(uPBin,b10+oE,0).rgb,of.x),
-             mix(texelFetch(uPBin,b01+oE,0).rgb,texelFetch(uPBin,b11+oE,0).rgb,of.x),of.y);
-      En=mix(mix(texelFetch(uPBin,b00+oN,0).rgb,texelFetch(uPBin,b10+oN,0).rgb,of.x),
-             mix(texelFetch(uPBin,b01+oN,0).rgb,texelFetch(uPBin,b11+oN,0).rgb,of.x),of.y);
+      E=mix(mix(texelFetch(uPBin,b00,0).rgb,texelFetch(uPBin,b10,0).rgb,of.x),
+            mix(texelFetch(uPBin,b01,0).rgb,texelFetch(uPBin,b11,0).rgb,of.x),of.y);
     }
-    Esum+=max(E,vec3(0.))*w; Asum+=max(Ea,vec3(0.))*w;
-    EEsum+=max(Ee,vec3(0.))*w; NNsum+=max(En,vec3(0.))*w;
-    covSum+=cov*w; wsum+=w;
+    Esum+=max(E,vec3(0.))*w; wsum+=w;
   }
   if(wsum<1e-4) return ambIrr(n);
-  vec3 Ebase=Esum/wsum, Eamb=Asum/wsum, Eemit=EEsum/wsum, Enee=NNsum/wsum;
-  float cov01=clamp(covSum/wsum/3.14159265, 0., 1.);
-  // 射线聚集的分账(base,及 NEE 关时的 emit)服从 miss 策略;NEE 解析直射精确不动
-  vec3 Eray = Ebase + (uNEE<.5 ? Eemit : vec3(0.));
-  vec3 E_ = (uMissMode>.5) ? Eray/max(cov01,.06) : Eray + Eamb*uAmbStrength;
-  if(uNEE>.5) E_ += Enee;
-  return E_;
+  return Esum/wsum;
 }
+//__CLC_END__
 
 void main(void) {
     vec4 color = texture(uTexture, vTextureCoord);
@@ -380,12 +367,24 @@ void main(void) {
     float h = max((footSy - syw) / max(uCosT * ppu, 1e-6), 0.0);
 
     // ---------- 法线(运行时鼓包图集;无图集 → 平面朝相机) ----------
+    // ⚠⚠ 法线 local UV **只**取自渲染几何本身(vObjUV),绝不从世界坐标反推。
+    //
+    // 老写法是 ul = 0.5 + (qx - uFootQ.x)/uCharW、vl = 1 - h/uCharH —— 绕世界坐标
+    // 回来,依赖 uFootQ / uCharW 两个**每帧驱动**的 uniform。任何一帧没喂上,ul 就整体
+    // 越界、被 clamp 死在 0 或 1,全身反复采**同一列边缘像素**:
+    //   · 通体单色;翻转时 ul=1-ul 从另一端夹住 → 另一个颜色(实测的绿↔黄);
+    //   · uNrmRect/uHasNrm 在默认值与真值间跳变 → 角色不动也逐帧闪。
+    // 实测触发条件:非 Exploring 态(如 Cutscene)整段着色驱动被跳过,而滤镜仍挂着,
+    // uniform 停在构造缺省(charW=0.6 / foot=(0,0,0) / hasNrm=0)。
+    //
+    // 现在:vObjUV 是顶点着色器直接给的包围盒归一化坐标,**不依赖任何驱动**;
+    // 换算到 sprite 自身矩形后,与 color 帧用同一套 UV;镜像就只翻 local u。
     vec4 ne = vec4(0.5, 0.5, 1.0, 0.35);
     if (uHasNrm > 0.5) {
-        float ul = 0.5 + (qx - uFootQ.x) / max(uCharW, 1e-5);
-        float vl = 1.0 - h / max(uCharH, 1e-5);
-        if (uFlipX > 0.5) ul = 1.0 - ul;
-        vec2 uvn = uNrmRect.xy + clamp(vec2(ul, vl), 0.0, 1.0) * uNrmRect.zw;
+        // 像素世界坐标 (wx,wy) 在 sprite 世界 AABB 内的比例 = 与 color 帧完全同一套 local UV
+        vec2 luv = (vec2(wx, wy) - uSpriteWorldRect.xy) / max(uSpriteWorldRect.zw, vec2(1e-5));
+        if (uFlipX > 0.5) luv.x = 1.0 - luv.x;      // 镜像:只翻 local u
+        vec2 uvn = uNrmRect.xy + clamp(luv, 0.0, 1.0) * uNrmRect.zw;
         ne = texture(uNrm, uvn);
     }
     vec3 n = normalize(vec3(-(ne.r*2.-1.), -(ne.g*2.-1.), -max(ne.b,.05)));
@@ -406,11 +405,10 @@ void main(void) {
         float ndl = max(dot(n, uSunDirQ), 0.0);
         E += uSunColor * ndl;
     }
-
-    // ---------- albedo × E(实验室同式;pgain 是实验室预览增益,游戏不消费) ----------
+    // ---------- 角色着色核心(共享:charShadeCore.glsl 的 shadeCharacterLinear) ----------
+    // E 分解 + albedo×E 在唯一真相源里;游戏不乘实验室 pgain,直接 lin2srgb+clamp。
     vec3 alb = color.rgb / max(color.a, 1e-4);   // Pixi 预乘 → 直通 albedo
-    vec3 col = srgb2lin(alb) * E / 3.14159265 * uBeta;
-    vec3 outRgb = clamp(lin2srgb(col), 0.0, 1.0);
+    vec3 outRgb = clamp(lin2srgb(shadeCharacterLinear(alb, E, uEChroma, uBeta)), 0.0, 1.0);
 
     // ---------- 保留:游戏侧 sprite 空间 AO ----------
     float vy = clamp(vTextureCoord.y, 0.0, 1.0);
@@ -422,6 +420,14 @@ void main(void) {
     finalColor = vec4(outRgb * color.a, color.a);
 }
 `;
+
+// 照明数学公共块(标定/伪世界 uniform + 体素三线性 + SH + gatherRT + probeE + 着色核心):
+// filter 与 CharacterLitSprite(sprite 网格着色)**共用同一段字符串**——同一份数学只写一遍,
+// 改一处两处同步(与实验室 LIGHT_FNS 同一纪律)。标记由上面 FRAG 内的 __CLC_*__ 注释界定。
+const CLC_B = '//__CLC_BEGIN__';
+const CLC_E = '//__CLC_END__';
+export const CHAR_LIGHT_COMMON_GLSL: string =
+  FRAG.substring(FRAG.indexOf(CLC_B) + CLC_B.length, FRAG.indexOf(CLC_E));
 
 let sharedProgram: GlProgram | null = null;
 /** 直立 quad 的深度梯度 tanθ/ppu:从 depthConfig 的 M 现推(R 第二行 = [0, cosθ, −sinθ])。 */
@@ -557,6 +563,7 @@ export class CharacterShadingFilter extends Filter implements IEntityShadingFilt
           uCharW: { value: 0.6, type: 'f32' },
           uNrmRect: { value: new Float32Array([0, 0, 1, 1]), type: 'vec4<f32>' },
           uFlipX: { value: 0, type: 'f32' },
+          uSpriteWorldRect: { value: new Float32Array([0, 0, 1, 1]), type: 'vec4<f32>' },
           uHasNrm: { value: 0, type: 'f32' },
 
           uMode: { value: 2, type: 'f32' },
@@ -575,6 +582,8 @@ export class CharacterShadingFilter extends Filter implements IEntityShadingFilt
           uSunOn: { value: 0, type: 'f32' },
           uSunDirQ: { value: new Float32Array([0, 1, 0]), type: 'vec3<f32>' },
           uSunColor: { value: new Float32Array([0, 0, 0]), type: 'vec3<f32>' },
+
+          uEChroma: { value: 0, type: 'f32' },
 
           uAOContact: { value: 0, type: 'f32' },
           uAOForm: { value: 0, type: 'f32' },
@@ -691,7 +700,19 @@ export class CharacterShadingFilter extends Filter implements IEntityShadingFilt
     }
     u['uFlipX'] = flipX ? 1 : 0;
   }
+  /** sprite 的世界 AABB(左上 x,y + 宽高)—— 法线 local UV 的唯一依据,裁剪无关。 */
+  setSpriteWorldRect(x: number, y: number, w: number, h: number): void {
+    const u = this._u;
+    if (!u) return;
+    const a = u['uSpriteWorldRect'] as Float32Array;
+    a[0] = x; a[1] = y; a[2] = Math.max(w, 1e-5); a[3] = Math.max(h, 1e-5);
+  }
+  /** 当前绑定的法线图集源;用于逐帧同步时跳过未变的情况(见 boundNormalSource)。 */
+  private _nrmSrc: TextureSource | null = null;
+  get boundNormalSource(): TextureSource | null { return this._nrmSrc; }
   setNormalTexture(src: TextureSource | null): void {
+    if (src === this._nrmSrc) return;                 // 未变:逐帧调用零开销
+    this._nrmSrc = src ?? null;
     (this.resources as Record<string, unknown>)['uNrm'] = src ?? Texture.WHITE.source;
   }
   applyParams(p: CharShadingParams): void {
@@ -721,5 +742,11 @@ export class CharacterShadingFilter extends Filter implements IEntityShadingFilt
     c[0] = p.sunColor[0] * p.sunIntensity;
     c[1] = p.sunColor[1] * p.sunIntensity;
     c[2] = p.sunColor[2] * p.sunIntensity;
+  }
+
+  /** F2 测试旋钮:E 色度权重 0(只借明暗)~1(完整彩色 E)。 */
+  setEChroma(v: number): void {
+    const u = this._u;
+    if (u) u['uEChroma'] = v;
   }
 }

@@ -32,12 +32,14 @@ function sanitizeInitialAnimPlayback(
 }
 import { portraitSlugFromAnimFile } from '../data/characterRegistry';
 import type { TexelsPerWorld } from '../rendering/EntityPixelDensityMatch';
-import { SpriteEntity } from '../rendering/SpriteEntity';
+import { SpriteEntity, type LitShaderProvider } from '../rendering/SpriteEntity';
 import {
   entityRotationRadOf,
   entityScaleOf,
   quadGroundYAroundFoot,
   quadTopLocalYAroundFoot,
+  contentTopLocalYAroundFoot,
+  transformLocalVector,
 } from '../utils/entityTransform';
 import type { PerspectiveScaleResolver } from '../utils/perspectiveScale';
 
@@ -63,6 +65,21 @@ export class Npc implements ICutsceneActor {
     faceTowardMovement: boolean;
     /** 段末收尾动画：undefined=回 restAnimState；字符串=播该状态；null=不切（折线中途点） */
     arriveAnimState: string | null | undefined;
+  } | null = null;
+  /** 跳跃演出（jumpTo）：脚点线性、精灵抛物线抬升、起跳动画按进度插帧；与 moveTarget 互斥（起跳时清空 moveTarget）。 */
+  private jumpTarget: {
+    startX: number;
+    startY: number;
+    targetX: number;
+    targetY: number;
+    durationSec: number;
+    arcHeight: number;
+    elapsedSec: number;
+    jumpAnim: string | undefined;
+    frameCount: number;
+    landAnimState: string | null | undefined;
+    faceTowardMovement: boolean;
+    resolve: () => void;
   } | null = null;
   /** loadSprite 时解析的静止状态，用于巡逻/演出移动结束后恢复，不硬编码 idle */
   private restAnimState: string | null = null;
@@ -282,6 +299,34 @@ export class Npc implements ICutsceneActor {
   }
 
   /** 烘焙着色驱动:委托 SpriteEntity(镜像并入容器符号,双重来源取或)。 */
+  /**
+   * 精灵在**本实体容器包围盒**里占的归一化矩形 —— 法线 local UV 换算用。
+   * NPC 容器还挂着名字标签,包围盒比精灵高一截(实测 26px),不换算法线整体纵向错位。
+   * 两者等大或取不到时返回 null(着色器走缺省 [0,0,1,1])。
+   */
+  normalUvSpriteRect(): [number, number, number, number] | null {
+    const sb = this.sprite?.getSpriteWorldBounds() ?? null;
+    if (!sb) return null;
+    const cb = this.container.getBounds();
+    if (!(cb.width > 1e-5) || !(cb.height > 1e-5)) return null;
+    const r: [number, number, number, number] = [
+      (sb.x - cb.x) / cb.width, (sb.y - cb.y) / cb.height,
+      sb.width / cb.width, sb.height / cb.height,
+    ];
+    const same = Math.abs(r[0]) < 1e-4 && Math.abs(r[1]) < 1e-4
+      && Math.abs(r[2] - 1) < 1e-4 && Math.abs(r[3] - 1) < 1e-4;
+    return same ? null : r;
+  }
+
+  /** 烘焙照明:sprite 网格着色开关(透传;sprite 私有,Game 只经这两个口)。 */
+  enableBakedShading(provider: LitShaderProvider): void {
+    this.sprite?.enableBakedShading(provider);
+  }
+
+  disableBakedShading(): void {
+    this.sprite?.disableBakedShading();
+  }
+
   getShadingFrameInfo(): ReturnType<SpriteEntity['getShadingFrameInfo']> {
     const info = this.sprite?.getShadingFrameInfo() ?? null;
     if (info && this.container.scale.x < 0) info.flipX = !info.flipX;
@@ -310,15 +355,35 @@ export class Npc implements ICutsceneActor {
     this.sprite?.resetAnimationClock();
   }
 
-  /** 气泡底边在头顶附近（变换后 quad 顶部，缩放变高/旋转躺倒都跟随）；无精灵时用占位圆估算 */
+  /**
+   * 气泡底边在头顶附近：锚在**当前帧可见内容**顶部（蹲/躺/跑这些矮帧跟着降下来，
+   * 跳跃弧线也跟着抬），缩放/旋转躺倒同样跟随。
+   * 图集没登记 `atlasFrames`（少数 fx_* 包）时回落到旧的格子 quad 顶边口径；无精灵时用占位圆估算。
+   */
   getEmoteBubbleAnchorLocalY(): number {
     const headGap = 8;
     if (this.sprite) {
+      const s = entityScaleOf(this.def);
+      const rotationRad = entityRotationRadOf(this.def);
+      // 图集授权锚优先：它是轴上一个点（不是框），按实例 transform 直接变换即可
+      const authored = this.sprite.getAuthoredBubbleAnchorLocalY();
+      if (authored !== null) {
+        return transformLocalVector(0, authored, this.def).y - headGap;
+      }
+      const content = this.sprite.getContentBoxLocal();
+      if (content) {
+        return contentTopLocalYAroundFoot(
+          Math.max(content.width * s, 1),
+          Math.max(content.height * s, 1),
+          content.bottomGap * s,
+          rotationRad,
+        ) - headGap;
+      }
       const size = this.getWorldSize();
       const topLocalY = quadTopLocalYAroundFoot(
         Math.max(size.width, 1),
         Math.max(size.height, 1),
-        entityRotationRadOf(this.def),
+        rotationRad,
       );
       return topLocalY - headGap;
     }
@@ -394,11 +459,16 @@ export class Npc implements ICutsceneActor {
     this.sprite.applyPixelDensityMatch(dBg, strengthScale);
   }
 
-  /** 打断当前 moveTo（与 onDialogueStart 内取消位移一致），供停止巡逻等逻辑调用 */
+  /** 打断当前 moveTo/jumpTo（与 onDialogueStart 内取消位移一致），供停止巡逻等逻辑调用 */
   cancelActiveMove(): void {
     if (this.moveTarget) {
       this.moveTarget.resolve();
       this.moveTarget = null;
+    }
+    if (this.jumpTarget) {
+      this.sprite?.setVisualLiftY(0); // 打断跳跃：复位视觉抬升，避免角色停在半空
+      this.jumpTarget.resolve();
+      this.jumpTarget = null;
     }
   }
 
@@ -493,7 +563,98 @@ export class Npc implements ICutsceneActor {
     });
   }
 
+  jumpTo(
+    targetX: number,
+    targetY: number,
+    durationMs: number,
+    arcHeight: number,
+    jumpAnimState?: string,
+    landAnimState?: string | null,
+    faceTowardMovement?: boolean,
+  ): Promise<void> {
+    // 过场 skip 后被放弃的动作链可能继续对已销毁演员发 jumpTo：容器已毁则空履约（不悬挂）。
+    if (this.container.destroyed) return Promise.resolve();
+    // 与位移互斥：起跳前清空在途 moveTarget（含巡逻发起的）与旧 jumpTarget。
+    if (this.moveTarget) {
+      this.moveTarget.resolve();
+      this.moveTarget = null;
+    }
+    if (this.jumpTarget) {
+      this.jumpTarget.resolve();
+      this.jumpTarget = null;
+    }
+    const startX = this._x;
+    const startY = this._y;
+    const durationSec = Math.max(1, Number.isFinite(durationMs) ? durationMs : 600) / 1000;
+    const arcH = Math.max(0, Number.isFinite(arcHeight) ? arcHeight : 0);
+    const jumpAnim = jumpAnimState?.trim() || undefined;
+    // 起跳朝向落点一次（faceTowardMovement 时后续每帧再更新）。
+    this.setFacing(targetX - startX, targetY - startY);
+    // 载入起跳片段并冻结帧推进——帧由 _advanceJump 按移动进度插值（只播一次，不走自走时钟）。
+    let frameCount = 1;
+    if (jumpAnim) {
+      this.sprite?.playAnimation(jumpAnim, undefined, { loop: false });
+      this.sprite?.setPlaying(false);
+      frameCount = Math.max(1, this.sprite?.getFrameCount() ?? 1);
+    }
+    return new Promise<void>(resolve => {
+      this.jumpTarget = {
+        startX,
+        startY,
+        targetX,
+        targetY,
+        durationSec,
+        arcHeight: arcH,
+        elapsedSec: 0,
+        jumpAnim,
+        frameCount,
+        landAnimState,
+        faceTowardMovement: faceTowardMovement === true,
+        resolve,
+      };
+    });
+  }
+
+  /** jumpTarget 每帧推进：脚点线性位移（走 x/y setter 驱动深度/排序/阴影）、精灵抛物线抬升、起跳动画按进度插帧、落地复位并切态。 */
+  private _advanceJump(dt: number): void {
+    const j = this.jumpTarget;
+    if (!j) return;
+    j.elapsedSec += dt;
+    let t = j.durationSec > 0 ? j.elapsedSec / j.durationSec : 1;
+    if (t > 1) t = 1;
+    // 脚点线性位移：透视/深度/排序/阴影都锚脚点，跟随地面 A→B。
+    this.x = j.startX + (j.targetX - j.startX) * t;
+    this.y = j.startY + (j.targetY - j.startY) * t;
+    if (j.faceTowardMovement) {
+      this.setFacing(j.targetX - j.startX, j.targetY - j.startY);
+    }
+    // 抛物线视觉抬升（4t(1-t)：两端 0、t=0.5 达峰）；乘当前透视系数使远处跳起视觉等比收缩。
+    const arc = 4 * t * (1 - t);
+    this.sprite?.setVisualLiftY(-j.arcHeight * arc * this._depthScaleFactor);
+    // 起跳动画按移动进度插帧（只播一次）。
+    if (j.jumpAnim && j.frameCount > 1) {
+      this.sprite?.setFrameIndex(Math.round(t * (j.frameCount - 1)));
+    }
+    if (t >= 1) {
+      this.sprite?.setVisualLiftY(0);
+      // 落地态：null=不切（保留起跳末帧冻结）；否则 undefined 回 restAnimState、字符串播该态。
+      if (j.landAnimState !== null) {
+        const land = j.landAnimState ?? this.restAnimState;
+        if (land) this.playAnimation(land);
+      }
+      const resolve = j.resolve;
+      this.jumpTarget = null;
+      resolve();
+    }
+  }
+
   cutsceneUpdate(dt: number): void {
+    // 跳跃演出与位移互斥：起跳期间独占更新（脚点线性 + 弧线抬升 + 插帧），跳过 moveTarget。
+    if (this.jumpTarget) {
+      this._advanceJump(dt);
+      this.sprite?.update(dt);
+      return;
+    }
     if (this.moveTarget) {
       const t = this.moveTarget;
       const dx = t.x - this._x;
@@ -567,6 +728,10 @@ export class Npc implements ICutsceneActor {
     if (this.moveTarget) {
       this.moveTarget.resolve();
       this.moveTarget = null;
+    }
+    if (this.jumpTarget) {
+      this.jumpTarget.resolve();
+      this.jumpTarget = null;
     }
     if (this.sprite) {
       this.sprite.destroy();

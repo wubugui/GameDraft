@@ -65,11 +65,14 @@ export function normalizeAnimationSetDef(
   input: AnimationSetDefInput,
   texturePixelWidth: number,
   texturePixelHeight: number,
+  /** `spritesheet` 解析后的完整 URL；传入即随 def 走，供法线图集按约定寻址 */
+  resolvedSheetUrl?: string,
 ): AnimationSetDef {
   const { cellW, cellH } = effectiveCellPixelSize(input, texturePixelWidth, texturePixelHeight);
   const { worldWidth, worldHeight } = resolveAnimationWorldSize(input, texturePixelWidth, texturePixelHeight);
   return {
     ...input,
+    resolvedSheetUrl,
     worldWidth,
     worldHeight,
     cellWidth: Math.round(cellW * 1e6) / 1e6,

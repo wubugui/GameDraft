@@ -59,5 +59,5 @@ last_governed: 2026-07-16
 ## 怎么验证
 
 - 旧产线:`<out>/finals.json` 硬闸门全过(退出码 0)+ agent 按 `AGENT_SCHEMA` 裁决全部 flag。
-- 新适配器:`.tools/venv/bin/python -m pytest -p no:cacheprovider tools/animation_pipeline/tests/test_workbench_stages.py -q`，
+- 新适配器:`.tools/venv/bin/python -m pytest tools/animation_pipeline/tests/test_workbench_stages.py -q`，
   再在[统一动画资源工作台](anim-preview-tool.md)逐阶段人工目验。

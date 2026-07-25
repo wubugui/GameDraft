@@ -491,6 +491,14 @@ export interface DialogueLinePayload {
   textKey?: string;
   /** 可选头像（编辑器可视化选择器写入）；不设则该拍不显头像 */
   portrait?: DialoguePortraitRef;
+  /**
+   * 可选：说话中「…」气泡的**绝对**头顶锚（说话实体局部 y，脚点 0、向上为负）。
+   * 不设 = 继承实体按当前帧内容自算（绝大多数情况）；设了就固定在这个高度。
+   * 与 portrait 同范式：节点级作各拍默认，拍内自带的覆盖之。
+   */
+  bubbleAnchorY?: number;
+  /** 可选：本行气泡缩放；不设 = 用全局 `game_config.emoteBubbleScale`。同样节点级作各拍默认。 */
+  bubbleScale?: number;
 }
 
 export interface GraphChoiceOptionDef {
@@ -518,6 +526,10 @@ export type DialogueGraphNodeDef =
       textKey?: string;
       /** 可选头像（首拍/单拍用；多拍各拍在 lines[].portrait 上） */
       portrait?: DialoguePortraitRef;
+      /** 可选：说话气泡绝对头顶锚，作各拍默认（拍内自带的覆盖之）；见 DialogueLinePayload.bubbleAnchorY */
+      bubbleAnchorY?: number;
+      /** 可选：说话气泡缩放，作各拍默认；见 DialogueLinePayload.bubbleScale */
+      bubbleScale?: number;
       /** 多拍连续对白（每拍仍需点击继续）；若存在则按顺序播放，且首拍应与 speaker/text/textKey 一致（可由编辑器镜像） */
       lines?: DialogueLinePayload[];
       next: string;
@@ -1004,6 +1016,11 @@ export interface AtlasFrameBoxDef {
 
 export interface AnimationSetDef {
   spritesheet: string;
+  /**
+   * `spritesheet` 相对 anim.json 解析后的完整 URL（仅运行时装配，不入 JSON）。
+   * 供离线法线图集按 `<图集名>.normal.png` 约定寻址（见 rendering/spriteNormalAtlas）。
+   */
+  resolvedSheetUrl?: string;
   cols: number;
   rows: number;
   /** 单格像素尺寸；与 texture.width/cols、texture.height/rows 一致时可省略 */
@@ -1034,6 +1051,14 @@ export interface AnimationStateDef {
    * SpriteEntity.LOCOMOTION_RATE_*）。缺省 = 不参与匹配，恒 1 倍速播放。
    */
   referenceSpeed?: number;
+  /**
+   * 可选：本状态的**授权头顶锚**——格高归一化比例（0=脚点，1=格子顶边），气泡底边贴在此高度。
+   *
+   * 缺省 = 按每帧可见内容自动求（`SpriteEntity.getContentBoxLocal`），绝大多数状态用自动就对。
+   * 什么时候需要手填：**内容顶 ≠ 头顶**的状态——举枪、扛尸、打伞，自动锚会挂到道具尖上。
+   * 注意它是 per-state 常量，状态内每帧同一高度（不随内容起伏），这正是"钉死在头顶"的用意。
+   */
+  bubbleAnchor?: number;
 }
 
 /**
@@ -1090,6 +1115,10 @@ export interface DialogueLine {
   portrait?: DialoguePortraitRef;
   /** 说话人对应的世界实体（说话中「…」气泡定位用）；旁白/literal 无 */
   speakerEntity?: { kind: 'npc'; npcId: string } | { kind: 'player' };
+  /** 本行「…」气泡的绝对头顶锚（可选覆盖）；不设则由实体按当前帧内容自算 */
+  bubbleAnchorY?: number;
+  /** 本行「…」气泡的缩放（可选覆盖）；不设则用全局 game_config.emoteBubbleScale */
+  bubbleScale?: number;
   /** 本行所属对话是否压暗场景（startDialogueGraph 动作可选项 dimBackground；默认不压） */
   dim?: boolean;
 }
@@ -1180,6 +1209,22 @@ export interface ICutsceneActor extends IEmoteBubbleAnchor {
     faceTowardMovement?: boolean,
     arriveAnimState?: string | null,
   ): Promise<void>;
+  /**
+   * 沿抛物线弧线在 `durationMs` 内跳到 (targetX,targetY)：脚点(x/y)按进度线性位移驱动
+   * 深度/排序/阴影，画面精灵按弧线抬起（峰高 `arcHeight` 世界 px，t=0.5 达峰），落地复位。
+   * `jumpAnimState`：起跳动画只播一次，**帧游标按移动进度 0→1 插值**（非自走时钟）；缺省=不切动画。
+   * `landAnimState`：落地后切到的状态——undefined=回各自 rest/idle；字符串=播该状态；null=不切动画。
+   * `faceTowardMovement`：true=沿运动方向持续更新左右朝向；缺省只在起跳时朝向落点一次。
+   */
+  jumpTo(
+    targetX: number,
+    targetY: number,
+    durationMs: number,
+    arcHeight: number,
+    jumpAnimState?: string,
+    landAnimState?: string | null,
+    faceTowardMovement?: boolean,
+  ): Promise<void>;
   /** `playback` 缺省时行为与旧签名完全一致；参见 AnimationPlaybackParams。 */
   playAnimation(name: string, playback?: AnimationPlaybackParams): void;
   setFacing(dx: number, dy: number): void;
@@ -1191,7 +1236,28 @@ export interface ICutsceneActor extends IEmoteBubbleAnchor {
 export type EmoteBubbleOffsetOpts = {
   anchorOffsetX?: number;
   anchorOffsetY?: number;
+  /**
+   * **绝对**头顶锚（实体局部 y，脚点为 0、向上为负）：给了就顶掉实体按当前帧内容自算的那一档，
+   * `anchorOffsetY` 仍叠加其上。缺省（不给）= 继承实体自算，这是绝大多数情况。
+   *
+   * 为什么是绝对值而不是又一个偏移：编辑器要能"展开就显示当前生效的锚点值、直接微调"，
+   * 偏移量的基准是随角色与动画状态变的活值，只给偏移等于让人对着 0 盲调。
+   */
+  anchorY?: number;
+  /** 本次气泡的缩放覆盖；缺省 = 用全局 `game_config.emoteBubbleScale`。 */
+  scale?: number;
 };
+
+/** 气泡缩放夹取范围：小于下限看不清，大于上限一句话糊住半个屏幕 */
+export const EMOTE_BUBBLE_SCALE_MIN = 0.3;
+export const EMOTE_BUBBLE_SCALE_MAX = 4;
+
+/** 夹取气泡缩放；非法/缺省回落 `fallback`（全局默认恒为 1 起步）。 */
+export function normalizeEmoteBubbleScale(raw: unknown, fallback = 1): number {
+  const n = typeof raw === 'number' ? raw : Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.min(EMOTE_BUBBLE_SCALE_MAX, Math.max(EMOTE_BUBBLE_SCALE_MIN, n));
+}
 
 /** 演出气泡提供者接口，用于 CutsceneManager 解耦对 EmoteBubbleManager 的直接依赖 */
 export interface IEmoteBubbleProvider {
@@ -1649,6 +1715,12 @@ export interface GameConfig {
   entityPixelDensityMatchBlurScale?: number;
   /** 逐 entity 光照（阴影 + 色调融入 + AO）配置，关闭时完全走旧渲染管线 */
   entityLighting?: EntityLightingConfig;
+  /**
+   * 头顶气泡（说话「…」/ showEmote / showSpeechBubble）的**全局默认缩放**，缺省 1。
+   * 字号、内边距、圆角、描边一起等比放大——不是把 20px 的字拉大，是按新字号重排，文字保持清晰。
+   * 夹取范围见 `EMOTE_BUBBLE_SCALE_MIN/MAX`；单处可用 action/对话行的 `bubbleScale` 覆盖。
+   */
+  emoteBubbleScale?: number;
   /**
    * 血量/死亡系绳配置覆盖。字段与 `systems/HealthSystem.HealthConfig` 一致——
    * data 层不得反向 import systems（律1），此处为结构复制；两处字段改动必须同步。

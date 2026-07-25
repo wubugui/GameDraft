@@ -81,7 +81,6 @@ export class CutsceneRenderer {
   /** 仅遮住世界与 cutsceneOverlay 内容，不遮住 uiLayer（供对话期间「游戏画面渐黑」、台词仍用 DialogueUI 显示）。 */
   private worldFadeOverlay: Graphics | null = null;
   private titleContainer: Container | null = null;
-  private activeEmotes: Container[] = [];
   private images: Map<string, {
     sprite: Sprite | Graphics | Container | Mesh;
     /** 与 Assets.load 使用的解析路径一致，仅作记录；不在 hideImg 里 unload，避免与 Pixi 缓存键/共享 Texture 冲突。 */
@@ -452,46 +451,6 @@ export class CutsceneRenderer {
   dismissDialogueBox(box: Container): void {
     if (box.parent) box.parent.removeChild(box);
     box.destroy({ children: true });
-  }
-
-  /** @param anchorBottomY displayObj 局部坐标中气泡底边应对齐的 Y（与 EmoteBubbleManager、ICutsceneActor 一致，默认按约 96 像素高角色估算） */
-  async showEmoteBubble(displayObj: Container, emote: string, duration: number, anchorBottomY: number = -104): Promise<void> {
-    const bubble = new Container();
-
-    const txt = new Text({
-      text: emote,
-      style: { fontSize: 20, fill: 0x222222, fontFamily: 'sans-serif', fontWeight: 'bold' },
-    });
-
-    const padX = 8;
-    const padY = 4;
-    const bw = txt.width + padX * 2;
-    const bh = txt.height + padY * 2;
-
-    const bg = new Graphics();
-    bg.roundRect(0, 0, bw, bh, 6);
-    bg.fill({ color: 0xffffff, alpha: 0.95 });
-    bg.stroke({ color: 0x888888, width: 1 });
-    bubble.addChild(bg);
-
-    txt.x = padX;
-    txt.y = padY;
-    bubble.addChild(txt);
-
-    bubble.x = -bw / 2;
-    bubble.y = anchorBottomY - bh;
-
-    displayObj.addChild(bubble);
-    this.activeEmotes.push(bubble);
-
-    await this.wait(duration);
-
-    // cleanup 已把它从 activeEmotes 摘除并 destroy（如过场 skip）→ 不可再触碰
-    const idx = this.activeEmotes.indexOf(bubble);
-    if (idx < 0) return;
-    this.activeEmotes.splice(idx, 1);
-    if (bubble.parent) bubble.parent.removeChild(bubble);
-    bubble.destroy({ children: true });
   }
 
   private trackRaf(fn: () => void): void {
@@ -1279,11 +1238,6 @@ export class CutsceneRenderer {
     this.hideMovieBar();
     // 字幕容器本身由 CutsceneManager 在其 finally 中 dismissSubtitle 销毁，此处仅停止 resize 重排跟踪
     this.activeSubtitles.clear();
-    for (const emote of this.activeEmotes) {
-      if (emote.parent) emote.parent.removeChild(emote);
-      emote.destroy({ children: true });
-    }
-    this.activeEmotes.length = 0;
     // showImg/showAnimLayer/showMovieBar 用到 zIndex 时会把共享 cutsceneOverlay 的 sortableChildren
     // 置 true；overlay 已清空，复位为 false，不把本过场的排序开关残留给后续过场。
     this.renderer.cutsceneOverlay.sortableChildren = false;

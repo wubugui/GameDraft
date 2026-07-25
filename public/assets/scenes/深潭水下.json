@@ -55,5 +55,49 @@
       }
     }
   ],
-  "hotspots": []
+  "hotspots": [],
+  "depthConfig": {
+    "depth_map": "raw_depth_rg.png",
+    "collision_map": "collision.png",
+    "M": {
+      "R": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.7071067811865476,
+          -0.7071067811865475
+        ],
+        [
+          0.0,
+          0.7071067811865475,
+          0.7071067811865476
+        ]
+      ],
+      "ppu": 302.72,
+      "cx": 688.0,
+      "cy": 384.0
+    },
+    "depth_mapping": {
+      "invert": false,
+      "scale": 2.898631897163391,
+      "offset": -1.9190211130142212
+    },
+    "shader": {
+      "depth_per_sy": 0.0033033826638477794
+    },
+    "collision": {
+      "x_min": -2.2727272510528564,
+      "z_min": -1.8898002025502667,
+      "cell_size": 0.02853192923203954,
+      "grid_width": 160,
+      "grid_height": 132,
+      "height_offset": 0.0
+    },
+    "depth_tolerance": 0.05,
+    "floor_offset": 0.0
+  }
 }

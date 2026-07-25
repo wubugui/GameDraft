@@ -32,6 +32,11 @@ from tools.editor.shared.portrait_catalog import (
     portrait_image_path,
 )
 from tools.editor.shared.portrait_ref_field import PortraitRefField
+from tools.editor.shared.bubble_anchor_field import (
+    BubbleAnchorPickField,
+    actor_for_dialogue_speaker,
+)
+from tools.editor.shared.collapsible_section import CollapsibleSection
 from .editor_asset_catalog import load_rule_id_name_pairs
 from .node_picker_dialog import NodePickerDialog
 from .npc_picker_dialog import NpcPickerDialog
@@ -792,8 +797,14 @@ class NodeInspector(QWidget):
                     "tked": tked,
                     "btn_up": btn_up,
                     "btn_down": btn_down,
-                    # 拍级头像无 UI（节点级选择器作各拍默认），但既有数据必须随行保真回写
+                    # 拍级头像 / 气泡锚无 UI（节点级选择器作各拍默认），但既有数据必须随行保真回写
                     "portrait": copy.deepcopy((beat or {}).get("portrait"))
+                    if isinstance(beat, dict)
+                    else None,
+                    "bubbleAnchorY": (beat or {}).get("bubbleAnchorY")
+                    if isinstance(beat, dict)
+                    else None,
+                    "bubbleScale": (beat or {}).get("bubbleScale")
                     if isinstance(beat, dict)
                     else None,
                 }
@@ -1068,6 +1079,36 @@ class NodeInspector(QWidget):
         _form_wrap_rows(flp)
         flp.addRow("头像（可选）", por_wrap)
 
+        # —— 说话气泡头顶锚（可选）：写 node.bubbleAnchorY；多拍模式下作各拍默认。
+        # 不勾「覆盖」= 不写键，运行时按说话实体当前帧内容自动算（绝大多数情况用这个就对）。
+        bub_field = BubbleAnchorPickField(
+            self._body,
+            self._project_model_getter() if self._project_model_getter else None,
+            data.get("bubbleAnchorY"),
+            lambda: actor_for_dialogue_speaker(
+                self._project_model_getter() if self._project_model_getter else None,
+                str(kind_cb.currentData() or ""),
+                extra_edit.text(),
+                self._dialogue_graph_id_getter() if self._dialogue_graph_id_getter else "",
+            ),
+            committed_scale=data.get("bubbleScale"),
+        )
+        bub_field.changed.connect(self._emit_changed)
+        # 换说话人 = 换预览对象（纯预览刷新，不改数据、不触发 changed）
+        kind_cb.currentIndexChanged.connect(lambda _i: bub_field.refresh_actor())
+        extra_edit.textChanged.connect(lambda _t: bub_field.refresh_actor())
+        # 重块默认折叠（布局纪律）：绝大多数行不需要动锚点，展开才占位
+        bub_sec = CollapsibleSection("说话气泡位置（可选）", start_open=False, parent=self._body)
+        bub_sec.set_header_tool_tip(
+            "说话时角色头顶那个「…」气泡挂在哪。\n"
+            "默认继承——按说话人当前帧的可见内容自动贴头顶（蹲/躺也跟着降）。\n"
+            "只有个别情况（举着道具、背着东西挡住）才需要勾「覆盖」手调。",
+        )
+        bub_sec.add_body(bub_field)
+        flp.addRow(bub_sec)
+        if data.get("bubbleAnchorY") is not None or data.get("bubbleScale") is not None:
+            bub_sec.set_expanded(True)   # 已经调过的行，一打开就看得见
+
         def collect_portrait() -> dict[str, Any] | None:
             slug = str(slug_cb.currentData() or "").strip()
             if slug == POR_RAW:
@@ -1119,6 +1160,10 @@ class NodeInspector(QWidget):
                     b["textKey"] = tk
                 if r.get("portrait") is not None:
                     b["portrait"] = copy.deepcopy(r["portrait"])
+                if r.get("bubbleAnchorY") is not None:
+                    b["bubbleAnchorY"] = r["bubbleAnchorY"]
+                if r.get("bubbleScale") is not None:
+                    b["bubbleScale"] = r["bubbleScale"]
                 out_beats.append(b)
             return out_beats
 
@@ -1155,6 +1200,12 @@ class NodeInspector(QWidget):
                 por = collect_portrait()
                 if por is not None:
                     out["portrait"] = por
+                bay = bub_field.value()
+                if bay is not None:
+                    out["bubbleAnchorY"] = bay
+                bsc = bub_field.scale_value()
+                if bsc is not None:
+                    out["bubbleScale"] = bsc
                 return out
             k = kind_cb.currentData()
             ex = extra_edit.text().strip()
@@ -1170,6 +1221,12 @@ class NodeInspector(QWidget):
             por = collect_portrait()
             if por is not None:
                 out["portrait"] = por
+            bay = bub_field.value()
+            if bay is not None:
+                out["bubbleAnchorY"] = bay
+            bsc = bub_field.scale_value()
+            if bsc is not None:
+                out["bubbleScale"] = bsc
             return out
 
         self._getter = getter

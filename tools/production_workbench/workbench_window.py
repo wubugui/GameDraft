@@ -652,7 +652,10 @@ class WorkbenchWindow(QMainWindow):
         self.register_tab_console(self.asset_task_tab, self.asset_task_tab.prompt_dock)
         self.register_tab_console(self.codex_tab, self.codex_tab.output_dock)
         self._reload_tabs()
-        QTimer.singleShot(0, self._sync_current_tab_console)
+        # 带 context 的重载：窗口先死时这次延迟调用自动取消。裸 singleShot 的
+        # QSingleShotTimer 是独立 QObject，bound method 还拖住 shiboken 包装器，
+        # 控件销毁后照样触发 → 打到已析构的 self.tabs 上。
+        QTimer.singleShot(0, self, self._sync_current_tab_console)
 
     def _pick_project(self) -> None:
         running = self._running_background_thread_names()
@@ -732,6 +735,25 @@ class WorkbenchWindow(QMainWindow):
             f"下面这些后台任务还没结束，先等它们跑完再{action}:\n\n"
             + "\n".join(f"- {name}" for name in running),
         )
+
+    def wait_for_background_threads(self, timeout_ms: int = 10000) -> list[str]:
+        """窗口真正析构前把还在跑的后台线程等回来，返回等不回来的线程名。
+
+        QThread 在仍然 ``isRunning()`` 时被析构 = qFatal → 整个进程 SIGABRT，
+        用户看到的是崩溃而不是 traceback。这些 ``run()`` 里都没有 ``exec()``（无事件
+        循环），所以 ``quit()`` 是空操作，真正管用的只有 ``wait()``。
+
+        **调用点在 ``main.main()`` 的 finally**（``app.exec()`` 返回之后、``window``
+        随栈析构之前）——那才是唯一真的会踩到这条路的边界：``closeEvent`` 已经用
+        ``_running_background_thread_names()`` 把"有线程在跑就不给关"拦在前面了，
+        在它后面再等一次恒为空转；而 ``QApplication.quit()`` / 槽函数里未捕获异常
+        外抛这两条路根本不发 close 事件，绕过那道拦截。
+        """
+        stuck: list[str] = []
+        for thread in self.findChildren(QThread):
+            if thread.isRunning() and not thread.wait(timeout_ms):
+                stuck.append(type(thread).__name__)
+        return stuck
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt override name.
         running = self._running_background_thread_names()
@@ -1012,7 +1034,8 @@ class StoryUnitTab(QWidget):
         self._clear_fields()
         self.summary.setPlainText("正在准备加载剧情单元...")
         self._set_story_loading(True)
-        QTimer.singleShot(0, self.reload)
+        # 带 context：本 tab 先死时取消这次 reload（否则打到已析构的 btn_refresh 上）。
+        QTimer.singleShot(0, self, self.reload)
 
     def reload(self) -> None:
         if self._story_thread is not None and self._story_thread.isRunning():

@@ -57,6 +57,13 @@
       "autoPort": false
     },
     {
+      "name": "char-lighting-lab",
+      "runtimeExecutable": ".tools/venv/bin/python",
+      "runtimeArgs": ["-m", "tools.character_lighting_lab", "--port", "5311", "--no-open"],
+      "port": 5311,
+      "autoPort": false
+    },
+    {
       "name": "acos-web",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "/Users/dannyteng/AIWork/agent-canvas-os/web", "run", "dev"],

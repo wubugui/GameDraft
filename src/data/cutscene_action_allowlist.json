@@ -1,5 +1,6 @@
 [
   "moveEntityTo",
+  "jumpEntityTo",
   "faceEntity",
   "cameraFollowActor",
   "cameraStopFollow",

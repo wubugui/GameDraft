@@ -1042,11 +1042,29 @@ export class GraphDialogueManager implements IGameSystem {
   ): DialogueLinePayload[] {
     const lines = node.lines;
     if (Array.isArray(lines) && lines.length > 0) {
-      // 节点级 portrait 作为各拍默认，拍内自带的覆盖之（编辑器只在节点级出选择器）
-      if (node.portrait === undefined) return lines;
-      return lines.map((p) => (p.portrait === undefined ? { ...p, portrait: node.portrait } : p));
+      // 节点级 portrait / bubbleAnchorY 作为各拍默认，拍内自带的覆盖之
+      if (node.portrait === undefined && node.bubbleAnchorY === undefined
+          && node.bubbleScale === undefined) return lines;
+      return lines.map((p) => {
+        const out = { ...p };
+        if (out.portrait === undefined && node.portrait !== undefined) out.portrait = node.portrait;
+        if (out.bubbleAnchorY === undefined && node.bubbleAnchorY !== undefined) {
+          out.bubbleAnchorY = node.bubbleAnchorY;
+        }
+        if (out.bubbleScale === undefined && node.bubbleScale !== undefined) {
+          out.bubbleScale = node.bubbleScale;
+        }
+        return out;
+      });
     }
-    return [{ speaker: node.speaker, text: node.text, textKey: node.textKey, portrait: node.portrait }];
+    return [{
+      speaker: node.speaker,
+      text: node.text,
+      textKey: node.textKey,
+      portrait: node.portrait,
+      bubbleAnchorY: node.bubbleAnchorY,
+      bubbleScale: node.bubbleScale,
+    }];
   }
 
   private linePayloadToDialogueLine(p: DialogueLinePayload): DialogueLine {
@@ -1065,6 +1083,12 @@ export class GraphDialogueManager implements IGameSystem {
       tags: [],
       portrait: this.resolvePortrait(p),
       speakerEntity: this.speakerEntityOf(p.speaker),
+      ...(typeof p.bubbleAnchorY === 'number' && Number.isFinite(p.bubbleAnchorY)
+        ? { bubbleAnchorY: p.bubbleAnchorY }
+        : {}),
+      ...(typeof p.bubbleScale === 'number' && Number.isFinite(p.bubbleScale) && p.bubbleScale > 0
+        ? { bubbleScale: p.bubbleScale }
+        : {}),
       dim: this.dimBackground || undefined,
     };
   }

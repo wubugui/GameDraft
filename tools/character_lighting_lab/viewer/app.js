@@ -11,6 +11,40 @@ const canvas = $('gl');
 const gl = canvas.getContext('webgl2', {antialias: true});
 if (!gl) { alert('need WebGL2'); throw 0; }
 
+// ------------------------------------------------------- 反馈通道(B-1 / B-3)
+// 病灶:单个 #log 曾承载烘焙状态/导出成败/保存结果/闸门拒绝/异常全部消息,只靠 ✓✗
+// 前缀区分,且后一条直接冲掉前一条 —— 错误一滚就没。
+// 现在:分级着色 + 保留最近若干条;**err 常驻**,只会被下一条 err 顶掉。
+const LOG_KEEP = 5;
+const _logLines = [];                       // [{msg, kind}]
+function setLog(msg, kind = 'info') {
+  if (msg == null) return;
+  _logLines.push({ msg: String(msg), kind });
+  while (_logLines.length > LOG_KEEP) {     // 优先丢最老的非 err,全是 err 才丢最老的
+    const i = _logLines.findIndex(l => l.kind !== 'err');
+    _logLines.splice(i < 0 ? 0 : i, 1);
+  }
+  const box = $('log'); if (!box) return;
+  box.textContent = '';
+  for (const l of _logLines) {
+    const el = document.createElement('span');
+    el.className = 'l ' + l.kind;
+    el.textContent = l.msg;
+    box.appendChild(el);
+  }
+  box.scrollTop = box.scrollHeight;
+}
+// B-1:异步动作必须在**第一帧**就有反馈。原来 7 个动作按钮里 6 个要等网络往返
+// 才改一个像素(导出照明写 ~25MB 期间界面完全静止)—— 那正是「看不出点没点」。
+function busy(btn, msg) {
+  if (btn) { btn.disabled = true; btn.dataset.busy = '1'; }
+  setLog(msg, 'pending');
+}
+function idle(btn, msg, kind = 'ok') {
+  if (btn) { btn.disabled = false; delete btn.dataset.busy; }
+  if (msg != null) setLog(msg, kind);
+}
+
 // ------------------------------------------------------------- tiny math
 function f16(h){ const s=(h&0x8000)?-1:1,e=(h>>10)&31,m=h&1023;
   if(e===0) return s*m*5.96046448e-8;
@@ -58,7 +92,9 @@ float shY(int k, vec3 n){
   if(k==4) return 1.092548*n.x*n.y; if(k==5) return 1.092548*n.y*n.z;
   if(k==6) return .315392*(3.*n.z*n.z-1.);
   if(k==7) return 1.092548*n.x*n.z; return .546274*(n.x*n.x-n.y*n.y);
-}`;
+}
+` + '\n' + (window.CHAR_SHADE_CORE || '\n// [warn] CHAR_SHADE_CORE 未载入(旧 index.html 被缓存?硬刷新页面)\n');
+if(!window.CHAR_SHADE_CORE) console.error('[viewer] 缺角色着色核心 CHAR_SHADE_CORE：请硬刷新(/api/char_shade_core.js 未随 index.html 载入)');
 
 // LDR→HDR 恢复方法(可实验室下拉切换,即时预览;都是有出处的算子,不是手搓)。
 // base=srgb2lin(bg),g01=烘焙 gain 场,uMaxGain=最大提升EV,uPA=方法参数。
@@ -337,7 +373,7 @@ uniform vec3 uFootQ;
 uniform float uCharH, uCharW, uCosT, uSinT;
 uniform vec4 uCal;               // ppu,_,cx,cy
 uniform int uOccl, uShowN;
-uniform float uBeta, uBulge, uFlatten, uPGain;
+uniform float uBeta, uBulge, uFlatten, uPGain, uEChroma;
 ${LIGHT_UNIFORMS}
 ${COMMON}
 ${LIGHT_FNS}
@@ -361,7 +397,8 @@ void main(){
   if(uOccl==1 && dFront<qzOcc-.045) discard;
   if(uShowN==1){ frag=vec4(n*.5+.5, alb.a); return; }
   vec3 E=(uMode==0)?gatherRT(q+n*.02,n):probeE(q,n);
-  vec3 col=srgb2lin(alb.rgb)*E/3.14159265*uBeta*uPGain;
+  // 角色着色核心走共享真相源 shadeCharacterLinear(charShadeCore.glsl);pgain 是实验室预览增益(线性域)
+  vec3 col=shadeCharacterLinear(alb.rgb, E, uEChroma, uBeta)*uPGain;
   frag=vec4(lin2srgb(col), alb.a);
 }`;
 
@@ -459,7 +496,7 @@ precision highp float;
 precision highp sampler3D;
 in vec3 vQ; in vec2 vUVc; out vec4 frag;
 uniform sampler2D uAlb, uNrm;
-uniform float uBeta, uBulge, uFlatten, uPGain;
+uniform float uBeta, uBulge, uFlatten, uPGain, uEChroma;
 uniform int uShowN;
 ${LIGHT_UNIFORMS}
 ${COMMON}
@@ -473,7 +510,8 @@ void main(){
   vec3 q=vec3(vQ.x, vQ.y, vQ.z-ne.a*uBulge);      // 与 2D 同:bulge 只推着色位置
   if(uShowN==1){ frag=vec4(n*.5+.5, alb.a); return; }
   vec3 E=(uMode==0)?gatherRT(q+n*.02,n):probeE(q,n);
-  vec3 col=srgb2lin(alb.rgb)*E/3.14159265*uBeta*uPGain;
+  // 角色着色核心走共享真相源 shadeCharacterLinear(charShadeCore.glsl);pgain 是实验室预览增益(线性域)
+  vec3 col=shadeCharacterLinear(alb.rgb, E, uEChroma, uBeta)*uPGain;
   frag=vec4(lin2srgb(col), alb.a);
 }`;
 
@@ -766,8 +804,8 @@ function texImg(img,filter=gl.LINEAR){
 
 // ------------------------------------------------------------- state
 const S = {
-  scenes:[], man:null, view:0, mode:0,
-  spp:64, step:0.9, msteps:160, beta:0, amb:1, contact:0.55,
+  scenes:[], man:null, view:0, mode:1,   // 进入默认 L1 cache(RT 实时追踪太吃 GPU,留作手动对比)
+  spp:64, step:0.9, msteps:160, beta:0, amb:1, contact:0.55, eChroma:0,
   qscale:1, charH:1.5, bulge:0.22, flatten:0, fold:1, missMode:0, collide:1, nee:0,
   lights:[], pgain:1, hdrMethod:0, hdrPA:0.7, v2:{zoom:1, ox:0, oy:0},
   dbg:{depth:0,walk:0,probes:0,occl:1,normal:0,rays:0,gain:0,lights:0,terrain:0},
@@ -776,6 +814,11 @@ const S = {
   // 物体/地形判定:objAuto=SAM 自动结果(按分数门槛), editObj=人工覆写(1=物体 2=地形)
   objAuto:null, editObj:null, objIds:null, objMeta:null, objScoreMin:0.35, topPoly:[],
   hotInstance:0,                                   // 悬停/选中的实例(两视图联动高亮)
+  objBBox:null,                                    // id → [x0,y0,x1,y1],脏矩形用(A-5)
+  hoverInfo:'',                                    // 悬停实例读数:并进 HUD 合成
+  //  ⚠ 原来悬停时直接写 $('hud').textContent,而 draw() 每帧无条件重写 HUD
+  //    → 读数下一帧就被冲掉,等于看不见。现在走状态,由 HUD 合成统一输出。
+  cursorW:{x:0,y:0,on:0},                          // 光标(工作分辨率坐标),笔刷圆环用(D-4)
   frontD:null, walkD2:null,
   pcShow:[1,1,1], meshMode:1, meshTris:0,
   footW:{x:0,z:0},           // WORLD position
@@ -792,7 +835,7 @@ const S = {
   probeDC:null, probeGain:1, selProbe:null, pbGain:1, pbBasisSel:0, pbRays:1,
   // 3D 全景:mode -1=关 / 0=E(n) / 1=亮度分层 / 2=射线命中 / 3=命中辐射
   // blend 0=全是全景,1=全是 mesh;interp 关=只看最近那颗 probe
-  pano:{mode:-1, blend:0.35, interp:1, drawChar:1, activeProbe:-1},
+  pano:{mode:-1, blend:0.35, interp:1, drawChar:1, fold:0, activeProbe:-1},
   tex:{}, bufs:{}, probeCount:0, pointCount:0,
   fps:0, frames:0, tFPS:performance.now(),
 };
@@ -932,8 +975,17 @@ async function loadScene(man){
     x3.drawImage(img,0,0,W,H);
     const d3=x3.getImageData(0,0,W,H).data;
     for(let i=0;i<W*H;i++) S.objIds[i]=(d3[i*4]<<8)|d3[i*4+1];
+    // A-5:每个实例的包围盒只算这一次。悬停高亮/整块翻转靠它做**脏矩形**更新,
+    // 不再为了给一块着色就重建整张叠加层(那是 15-20 万次循环 + 0.6MB 上传)。
+    S.objBBox=new Map();
+    for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+      const id=S.objIds[y*W+x]; if(!id) continue;
+      const b=S.objBBox.get(id);
+      if(!b) S.objBBox.set(id,[x,y,x,y]);
+      else{ if(x<b[0])b[0]=x; if(y<b[1])b[1]=y; if(x>b[2])b[2]=x; if(y>b[3])b[3]=y; }
+    }
     recomputeObjAuto();
-  }catch(e){ S.objMeta=null; }                      // 尚未跑过物体识别的旧场景
+  }catch(e){ S.objMeta=null; S.objBBox=null; }      // 尚未跑过物体识别的旧场景
   await tryEdit(`${base}/object_edit.png`, d=>{
     for(let i=0;i<W*H;i++) S.editObj[i]=d[i*4]; });
   S.editDepthBaked=S.editDepth.slice();
@@ -1059,7 +1111,13 @@ async function loadScene(man){
   const rf=$('fold'); if(rf){ rf.checked=!!(man.params.fold??1); S.fold=rf.checked?1:0; }
   setSlider('rb_px',man.params.probe_nx); setSlider('rb_py',man.params.probe_ny);
   setSlider('rb_pz',man.params.probe_nz); setSlider('rb_band',man.params.probe_band??1.6);
-  markDirty(false);
+  refreshDirtyMarks();     // 控件刚与已烘参数对齐 → 清掉全部改动标记与计数
+  // 着色参数(非 bake)不在 manifest 里,得从**已导出的载荷**读回,否则面板显示的是
+  // 写死初值 → 既看不到真值,存盘时还会把之前调好的覆盖掉。
+  syncShadingFromExport(man.name).then(had=>{
+    setLog(had ? `已同步 ${man.name} 已导出的着色参数(β/E色度/模式等)`
+               : `${man.name} 尚未导出照明,着色参数用缺省值`, 'info');
+  });
   renderHDRPanel();
   refreshThumbs();   // 底部常驻 HDR 场景 + 光源分割条(与 trace 同源)
 }
@@ -1593,10 +1651,12 @@ function flipInstance(id){
   const val=isObjectAt(first)?2:1;                 // 当前是物体 → 翻成地形,反之亦然
   for(let i=0;i<S.objIds.length;i++) if(S.objIds[i]===id){ S.editObj[i]=val; n++; }
   S.editDirty=true;
-  refreshEditOverlay(); if(S.view===2) buildTopView();
+  const bb=instBBox(id);                           // A-5:只刷这枚实例的包围盒
+  if(bb) refreshEditOverlay(bb[0],bb[1],bb[2],bb[3]); else refreshEditOverlay();
+  if(S.view===2) buildTopView();
   const m=S.objMeta&&S.objMeta.get(id);
-  $('log').textContent=`✓ 实例 #${id}${m?`(${m.prompt} ${m.score.toFixed(2)})`:''} `+
-    `${n} 像素翻为${val===1?'物体':'地形'}——保存编辑后重烘生效`;
+  setLog(`✓ 实例 #${id}${m?`(${m.prompt} ${m.score.toFixed(2)})`:''} `+
+    `${n} 像素翻为${val===1?'物体':'地形'}——保存编辑后重烘生效`,'ok');
   return n;
 }
 
@@ -1607,29 +1667,14 @@ function isObjectAt(i){
   return S.objAuto?S.objAuto[i]:0;
 }
 
-function refreshEditOverlay(){
-  const {w,h}=S.work;
-  const rgba=new Uint8Array(w*h*4);
-  for(let i=0;i<w*h;i++){
-    const d=S.editDepth[i], c=S.editCol[i];
-    let r=0,g=0,b=0,a=0;
-    if(Math.abs(d)>1e-4){
-      const t=Math.min(1,Math.abs(d)/0.6);
-      if(d>0){ r=60;g=120;b=255; } else { r=255;g=110;b=40; }   // 抬高(近)=蓝 压低(远)=橙
-      a=Math.round(90+t*140);
-    }
-    if(c===1){ r=40;g=230;b=90; a=Math.max(a,150); }
-    if(c===2){ r=235;g=50;b=50; a=Math.max(a,150); }
-    if(S.hotInstance&&S.objIds&&S.objIds[i]===S.hotInstance){
-      r=255; g=213; b=74; a=210;                   // 联动高亮:两视图同一枚实例
-    } else if(S.dbg.terrain){                      // 地形判定:绿=地形 红=物体,人工覆写更亮
-      const o=isObjectAt(i), manual=S.editObj&&S.editObj[i]!==0;
-      const rr=o?210:30, gg=o?40:210, bb=o?60:110;
-      const aa=manual?190:110;
-      if(aa>a){ r=rr; g=gg; b=bb; a=aa; }
-    }
-    rgba[i*4]=r; rgba[i*4+1]=g; rgba[i*4+2]=b; rgba[i*4+3]=a;
-  }
+// ============================================================ 编辑叠加层(A-4)
+// 病灶:本函数原来每次调用都 `new Uint8Array(w*h*4)`(0.6-0.8MB)+ 全图 15-20 万次
+// 循环 + 整张 texImage2D 上传,而它被挂在**涂抹的 mousemove** 上 —— 60Hz 下等于每秒
+// 900 万次循环 + 36MB/s 上传 + 每秒 60 次 GC 压力,全压在 34fps 基线的 rAF 循环上。
+// 现在:① 缓冲复用(只在分辨率变化时重新分配);② 支持脏矩形 + texSubImage2D,
+// 半径≤48 的一笔最多 97×97=9.4k 像素,较全图省约 20 倍。
+let _ovBuf=null, _ovW=0, _ovH=0, _ovSub=null;
+function _ovTexInit(w,h){
   if(!S.tex.edit){
     S.tex.edit=gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D,S.tex.edit);
@@ -1637,11 +1682,66 @@ function refreshEditOverlay(){
     gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+    _ovW=0;                                        // 新纹理:强制走下面的整张分配
+  }
+  if(_ovW!==w||_ovH!==h){                          // 只有换场景/换分辨率才重新分配
+    _ovW=w; _ovH=h; _ovBuf=new Uint8Array(w*h*4); _ovSub=null;
+    gl.bindTexture(gl.TEXTURE_2D,S.tex.edit);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT,1);
+    // 用零缓冲铺满一次,之后的脏矩形 texSubImage2D 才有合法底图
+    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,w,h,0,gl.RGBA,gl.UNSIGNED_BYTE,_ovBuf);
+  }
+}
+/** 单像素叠加色 —— 逐行照搬旧逻辑,只是抽出来给全图/脏矩形两条路共用 */
+function _ovPixel(i,out,o){
+  const d=S.editDepth[i], c=S.editCol[i];
+  let r=0,g=0,b=0,a=0;
+  if(Math.abs(d)>1e-4){
+    const t=Math.min(1,Math.abs(d)/0.6);
+    if(d>0){ r=60;g=120;b=255; } else { r=255;g=110;b=40; }   // 抬高(近)=蓝 压低(远)=橙
+    a=Math.round(90+t*140);
+  }
+  if(c===1){ r=40;g=230;b=90; a=Math.max(a,150); }
+  if(c===2){ r=235;g=50;b=50; a=Math.max(a,150); }
+  if(S.hotInstance&&S.objIds&&S.objIds[i]===S.hotInstance){
+    r=255; g=213; b=74; a=210;                     // 联动高亮:两视图同一枚实例
+  } else if(S.dbg.terrain){                        // 地形判定:绿=地形 红=物体,人工覆写更亮
+    const o2=isObjectAt(i), manual=S.editObj&&S.editObj[i]!==0;
+    const rr=o2?210:30, gg=o2?40:210, bb=o2?60:110;
+    const aa=manual?190:110;
+    if(aa>a){ r=rr; g=gg; b=bb; a=aa; }
+  }
+  out[o]=r; out[o+1]=g; out[o+2]=b; out[o+3]=a;
+}
+/** 不传参数=全图重建;传 (x0,y0,x1,y1) 只更新这块(含端点)。 */
+function refreshEditOverlay(x0,y0,x1,y1){
+  if(!S.editDepth||!S.work) return;
+  const {w,h}=S.work;
+  _ovTexInit(w,h);
+  x0=Math.max(0,Math.floor(x0==null?0:x0));
+  y0=Math.max(0,Math.floor(y0==null?0:y0));
+  x1=Math.min(w-1,Math.ceil(x1==null?w-1:x1));
+  y1=Math.min(h-1,Math.ceil(y1==null?h-1:y1));
+  if(x1<x0||y1<y0) return;
+  const rw=x1-x0+1, rh=y1-y0+1, full=(rw===w&&rh===h);
+  let buf;
+  if(full) buf=_ovBuf;
+  else{
+    const need=rw*rh*4;
+    if(!_ovSub||_ovSub.length<need) _ovSub=new Uint8Array(need);
+    buf=_ovSub;
+  }
+  let o=0;
+  for(let y=y0;y<=y1;y++){
+    let i=y*w+x0;
+    for(let x=x0;x<=x1;x++,i++,o+=4) _ovPixel(i,buf,o);
   }
   gl.bindTexture(gl.TEXTURE_2D,S.tex.edit);
   gl.pixelStorei(gl.UNPACK_ALIGNMENT,1);
-  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,w,h,0,gl.RGBA,gl.UNSIGNED_BYTE,rgba);
+  gl.texSubImage2D(gl.TEXTURE_2D,0,x0,y0,rw,rh,gl.RGBA,gl.UNSIGNED_BYTE,buf);
 }
+/** 某个实例的包围盒(A-5 脏矩形用);没有就返回 null 表示"整张" */
+function instBBox(id){ return (id&&S.objBBox)?S.objBBox.get(id):null; }
 function paintAt(wx, wy){
   const {w,h}=S.work, R=S.brushR, R2=R*R;
   const x0=Math.max(0,Math.floor(wx-R)), x1=Math.min(w-1,Math.ceil(wx+R));
@@ -1679,8 +1779,13 @@ function paintAt(wx, wy){
     }
   }
   S.editDirty=true;
+  return [x0,y0,x1,y1];        // A-4:把这一笔的包围盒交给调用方做脏矩形更新
 }
-// ---- polygon region tool (brush 8-11): click=vertex, dblclick=close+fill, Esc=cancel
+// ---- polygon region tool: 左键加顶点, 右键闭合填充, Esc 取消(2D 与顶视手势一致)
+/** D-3:多边形类笔刷判定。⚠ 14/15(多边形:标为物体/地形)曾是**死控件** —— polyApply()
+ *  里 case 14/15 的逻辑本来就写好了,但顶点收集与闭合两处谓词写死 `>=8&&<=11`,
+ *  把它们挡在门外:2D 里选中后单击无反应,双击反而触发画布缩放复位。 */
+const isPolyBrush=b=>(b>=8&&b<=11)||b===14||b===15;
 function polyApply(){
   const pts=S.polyPts; if(!pts||pts.length<3){ S.polyPts=[]; return; }
   const {w,h}=S.work;
@@ -1711,7 +1816,7 @@ function polyApply(){
     }
   }
   S.polyPts=[]; S.editDirty=true;
-  refreshEditOverlay();
+  refreshEditOverlay(x0,y0,x1,y1);          // A-4:只刷多边形包围盒
 }
 async function refreshGeoStatus(name){
   try{
@@ -1719,7 +1824,7 @@ async function refreshGeoStatus(name){
     S.geoStale=!!(r.ok&&r.stale);
   }catch(e){ S.geoStale=false; }
   $('geo_warn').style.display=S.geoStale?'block':'none';
-  markDirty(S.geoStale);
+  refreshDirtyMarks();     // 几何过期与"参数未应用"合成同一个 dirty 信号
 }
 function encodeEditPngs(){
   const {w,h}=S.work;
@@ -1747,16 +1852,18 @@ function encodeEditPngs(){
 // ---- 秒级重算地形 + 站位体检(改完覆写层立刻看结果,不用陪跑整条烘焙管线) ----
 $('terrain_recalc').onclick=async()=>{
   const name=activeScene(); if(!name) return;
+  const btn=$('terrain_recalc');
+  busy(btn,'重算地形中…');
   $('terrain_stats').textContent='重算中…';
-  if(S.editDirty){                                  // 覆写层在内存里,先落盘服务端才读得到
-    const [bd,bc,bo]=await encodeEditPngs();
-    for(const [k,b] of [['depth',bd],['collision',bc],['object',bo]])
-      await fetch(`/api/save_edit?scene=${encodeURIComponent(name)}&kind=${k}`,{method:'POST',body:b});
-    S.editDirty=false;
-  }
   try{
+    if(S.editDirty){                                // 覆写层在内存里,先落盘服务端才读得到
+      const [bd,bc,bo]=await encodeEditPngs();
+      for(const [k,b] of [['depth',bd],['collision',bc],['object',bo]])
+        await fetch(`/api/save_edit?scene=${encodeURIComponent(name)}&kind=${k}`,{method:'POST',body:b});
+      S.editDirty=false;
+    }
     const r=await (await fetch('/api/terrain?scene='+encodeURIComponent(name))).json();
-    if(!r.ok){ $('terrain_stats').textContent='✗ '+(r.err||''); return; }
+    if(!r.ok){ $('terrain_stats').textContent='✗ '+(r.err||''); idle(btn,'✗ 重算地形:'+(r.err||''),'err'); return; }
     const s2=r.stats;
     $('terrain_stats').textContent=
       `站位体检(脚下是可见地面的点 ${s2.samples}):\n`+
@@ -1764,8 +1871,9 @@ $('terrain_recalc').onclick=async()=>{
       `地面掩膜 ${(s2.ground_mask*100).toFixed(1)}%  物体 ${(s2.objects*100).toFixed(1)}%  地形高度 p95 ${s2.terrain_p95.toFixed(3)}\n`+
       `注意:可走掩膜/碰撞图不在快通道里,仍需完整重烘`;
     S.terrainReady=true;
+    idle(btn,'✓ 地形已重算,已切到体检图','ok');
     showTerrainImage(0);
-  }catch(e){ $('terrain_stats').textContent='✗ '+e; }
+  }catch(e){ $('terrain_stats').textContent='✗ '+e; idle(btn,'✗ 重算地形失败:'+e,'err'); }
 };
 let terrainImgIdx=0;
 function showTerrainImage(idx){
@@ -1780,55 +1888,91 @@ function showTerrainImage(idx){
     tv.getContext('2d').drawImage(img,0,0);
     tv.style.display='block'; th.style.display='block';
     fitOverlayCanvas(tv);
-    th.innerHTML=`${labels[terrainImgIdx]} · 再点「看结果」切换另一张 · 点视图按钮退出`;
+    th.innerHTML=`${labels[terrainImgIdx]} · 再点「查看地形图」切换另一张`;
     canvas.style.visibility='hidden'; $('hud').style.display='none';
+    // E-3:图片查看态原来把画布和 HUD 全藏了,视图按钮行**一个都不高亮**,
+    // 出口只写在一行小字里 —— 人会以为卡在这张图里出不去。给一个明确的返回按钮。
+    $('img_exit').style.display='block';
     S.view=-1;                                     // 图片查看态:不走 GL 主循环也不吃多边形
+    updateKeyHelp();                               // 这条路径不经过 setView,提示要自己刷
   };
+  img.onerror=()=>{ setLog('✗ 还没有这张图,先点「重算地形+体检」','warn'); };
   img.src=`out/${encodeURIComponent(name)}/${files[terrainImgIdx]}?t=`+Date.now();
 }
 $('terrain_show').onclick=()=>{ showTerrainImage(terrainImgIdx+1); };
+$('img_exit').onclick=()=>{ setView(0); canvas.focus(); };
 
 $('edit_save').onclick=async()=>{
   const name=activeScene(); if(!name) return;
-  const [bd,bc,bo]=await encodeEditPngs();
-  const bad=[];
-  for(const [kind,body] of [['depth',bd],['collision',bc],['object',bo]]){
-    try{
-      const r=await fetch(`/api/save_edit?scene=${encodeURIComponent(name)}&kind=${kind}`,
-                          {method:'POST',body});
-      if(!r.ok) bad.push(kind);
-    }catch(e){ bad.push(kind); }
-  }
-  if(bad.length){
-    $('log').textContent=`✗ 这些层没存上:${bad.join('/')}(服务端不认该 kind?`+
-      ` 改过 serve.py 要重启实验室服务)——编辑仍在内存里,别关页面`;
-    return;
-  }
-  S.editDirty=false;
-  $('log').textContent='✓ 编辑已保存——需重烘生效';
-  refreshGeoStatus(name);
+  const btn=$('edit_save');
+  busy(btn,'保存编辑中…');                          // B-1:第一帧就有反馈
+  try{
+    const [bd,bc,bo]=await encodeEditPngs();
+    const bad=[];
+    for(const [kind,body] of [['depth',bd],['collision',bc],['object',bo]]){
+      try{
+        const r=await fetch(`/api/save_edit?scene=${encodeURIComponent(name)}&kind=${kind}`,
+                            {method:'POST',body});
+        if(!r.ok) bad.push(kind);
+      }catch(e){ bad.push(kind); }
+    }
+    if(bad.length){
+      idle(btn,`✗ 这些层没存上:${bad.join('/')}(服务端不认该 kind?`+
+        ` 改过 serve.py 要重启实验室服务)——编辑仍在内存里,别关页面`,'err');
+      return;
+    }
+    S.editDirty=false;
+    idle(btn,'✓ 编辑已保存——需重烘生效','ok');
+    refreshGeoStatus(name);
+  }catch(err){ idle(btn,'✗ 保存编辑失败:'+err,'err'); }
 };
 $('edit_clear').onclick=async()=>{
   const name=activeScene(); if(!name) return;
-  S.editDepth.fill(0); S.editCol.fill(0); if(S.editObj) S.editObj.fill(0); S.editDirty=false;
-  refreshEditOverlay();
-  for(const k of ['depth','collision','object'])
-    await fetch(`/api/save_edit?scene=${encodeURIComponent(name)}&kind=${k}`,{method:'POST',body:'CLEAR'});
-  $('log').textContent='✓ 编辑已清除——需重烘生效';
-  refreshGeoStatus(name);
+  // E-1:清除是不可逆的(删掉本场景全部笔刷编辑),先确认
+  if(!confirm(`清除「${name}」的全部笔刷编辑?\n\n`+
+              `深度 / 碰撞 / 地形三层覆写会被一起删除,且无法撤销。\n`+
+              `清除后需要重烘才会反映到几何上。`)) return;
+  const btn=$('edit_clear');
+  busy(btn,'清除编辑中…');
+  try{
+    S.editDepth.fill(0); S.editCol.fill(0); if(S.editObj) S.editObj.fill(0); S.editDirty=false;
+    refreshEditOverlay();
+    for(const k of ['depth','collision','object'])
+      await fetch(`/api/save_edit?scene=${encodeURIComponent(name)}&kind=${k}`,{method:'POST',body:'CLEAR'});
+    idle(btn,'✓ 编辑已清除——需重烘生效','ok');
+    refreshGeoStatus(name);
+  }catch(err){ idle(btn,'✗ 清除编辑失败:'+err,'err'); }
 };
 $('export_depth').onclick=async()=>{
   const name=activeScene(); if(!name) return;
-  const r=await (await fetch('/api/export_depth?scene='+encodeURIComponent(name))).json();
-  $('log').textContent=r.ok?'✓ 场景深度已导出(depthConfig+RG16+碰撞已写入游戏)':'✗ '+(r.err||'');
+  // E-1:破坏性写盘,改写游戏工程里的场景 JSON,不可撤销 → 必须确认
+  if(!confirm(`即将覆盖游戏场景深度\n\n`+
+              `场景:${name}\n`+
+              `写入:public/assets/scenes/${name}.json 的 depthConfig\n`+
+              `　　  + 同场景 runtime 目录的深度图(RG16)与碰撞图\n\n`+
+              `遮挡 / 阴影 / 碰撞将全部改用实验室重建结果。此操作不可撤销,确认?`)) return;
+  const btn=$('export_depth');
+  busy(btn,'导出场景深度中…');
+  try{
+    const r=await (await fetch('/api/export_depth?scene='+encodeURIComponent(name))).json();
+    idle(btn, r.ok?'✓ 场景深度已导出(depthConfig+RG16+碰撞已写入游戏)':('✗ '+(r.err||'')),
+         r.ok?'ok':'err');
+  }catch(err){ idle(btn,'✗ 导出场景深度失败:'+err,'err'); }
 };
-$('brush').addEventListener('change',e=>{ S.brush=+e.target.value; });
+$('brush').addEventListener('change',e=>{
+  S.brush=+e.target.value;
+  S.polyPts=[];                                     // 换笔刷时丢掉画了一半的多边形
+  // D-4:圆刷模式下用我们自己画的圆环当光标,藏掉系统箭头(免得两个光标打架)
+  canvas.style.cursor=(S.brush>0&&S.brush!==16&&!isPolyBrush(S.brush))?'none'
+                     :(S.brush?'crosshair':'default');
+  updateKeyHelp();                                  // E-4:提示跟着笔刷类型走
+});
 bindSlider('rb_objthr',null,v=>(+v).toFixed(2),v=>{
   S.objScoreMin=+v;
   if(!S.work||!S.objIds) return;                    // bindSlider 会在载场景前先跑一次
   recomputeObjAuto(); refreshEditOverlay();
   if(S.view===2) buildTopView();
-  markDirty(true);                                  // 门槛进 rbParams,重烘才正式生效
+  refreshDirtyMarks();                              // 门槛进 rbParams,重烘才正式生效
 });
 bindSlider('brushr','brushR',v=>v.toFixed(0));
 bindSlider('brushs','brushS',v=>v.toFixed(2));
@@ -1842,17 +1986,19 @@ canvas.addEventListener('mousedown',e=>{
     if(x>=0&&y>=0&&x<S.work.w&&y<S.work.h&&S.objIds) flipInstance(S.objIds[y*S.work.w+x]|0);
     return;
   }
-  if(S.brush>=8&&S.brush<=11){                      // polygon mode: collect vertices
+  if(isPolyBrush(S.brush)){                         // 多边形:左键加顶点(右键闭合)
     const [wx,wy]=canvasToWork(e);
     S.polyPts.push([wx,wy]);
     return;
   }
   painting=true;
-  const [wx,wy]=canvasToWork(e); paintAt(wx,wy); refreshEditOverlay();
+  const [wx,wy]=canvasToWork(e);
+  const bb=paintAt(wx,wy); refreshEditOverlay(bb[0],bb[1],bb[2],bb[3]);   // A-4 脏矩形
 });
 window.addEventListener('mousemove',e=>{
-  if(!painting||S.view!==0||S.brush===0||S.brush>=8) return;   // 8+ 是多边形/点选,不走涂抹
-  const [wx,wy]=canvasToWork(e); paintAt(wx,wy); refreshEditOverlay();
+  if(!painting||S.view!==0||S.brush===0||isPolyBrush(S.brush)||S.brush===16) return;
+  const [wx,wy]=canvasToWork(e);
+  const bb=paintAt(wx,wy); refreshEditOverlay(bb[0],bb[1],bb[2],bb[3]);   // A-4 脏矩形
 });
 window.addEventListener('mouseup',()=>{ painting=false; });
 window.addEventListener('keydown',e=>{
@@ -2018,6 +2164,7 @@ function draw2D(){
   gl.uniform1f(u('uCosT'),cosT); gl.uniform1f(u('uSinT'),sinT);
   gl.uniform1i(u('uOccl'),S.dbg.occl); gl.uniform1i(u('uShowN'),S.dbg.normal);
   gl.uniform1f(u('uBeta'),Math.pow(2,S.beta));
+  gl.uniform1f(u('uEChroma'),S.eChroma);
   gl.uniform1f(u('uBulge'),S.bulge);
   gl.uniform1f(u('uFlatten'),S.flatten);
   gl.uniform1f(u('uPGain'),S.pgain);
@@ -2031,6 +2178,20 @@ function draw2D(){
       seg.push([a[0]-2,a[1],1,1,1],[a[0]+2,a[1],1,1,1]);
       seg.push([a[0],a[1]-2,1,1,1],[a[0],a[1]+2,1,1,1]);
     }
+    drawL2(seg, gl.LINES);
+  }
+  // D-4:圆刷光标环。brushR(3-48px)原来**只参与数学、从不渲染**,主画布 cursor 也
+  // 从不改变 —— 等于盲涂:下笔前完全不知道会盖住多大一块。环画在工作分辨率坐标系里,
+  // pL2 的 uV2 负责缩放,所以 2D 放大后环仍与实际影响范围严格重合。
+  if(S.brush>0 && S.brush!==16 && !isPolyBrush(S.brush) && S.cursorW.on){
+    const seg=[], N=48, R=S.brushR, cx=S.cursorW.x, cy=S.cursorW.y;
+    for(let i=0;i<N;i++){
+      const a0=i/N*6.2831853, a1=(i+1)/N*6.2831853;
+      seg.push([cx+Math.cos(a0)*R, cy+Math.sin(a0)*R, 1,.84,.29]);
+      seg.push([cx+Math.cos(a1)*R, cy+Math.sin(a1)*R, 1,.84,.29]);
+    }
+    seg.push([cx-1.5,cy,1,1,1],[cx+1.5,cy,1,1,1]);      // 中心十字,便于对位
+    seg.push([cx,cy-1.5,1,1,1],[cx,cy+1.5,1,1,1]);
     drawL2(seg, gl.LINES);
   }
   const drawLineBuf=(buf,n)=>{
@@ -2092,6 +2253,11 @@ function drawPano(){
   // ①② 读的是 cache,②模式选 RT(0) 时没有对应的基——按⑥面板同一条规则退 L2。
   // (③④ 自己 march,不看 uMode)
   gl.uniform1i(u('uMode'), S.mode===0?2:S.mode);
+  // 全景的折叠**独立于** RT 折叠,且默认关:A7 折叠是给 gather 用的闭合假设
+  // (朝相机侧没数据 → 镜像回观测半球再积分),拿它当"我周围长什么样"会看到
+  // 一个左右镜像的假世界。真相是那一侧就是没数据(miss)。开它是为了看"烘焙到底吃了什么"。
+  // ①② 无法去折叠——折叠已经烘进 SH/bin 系数里,那是 cache 的既成事实。
+  gl.uniform1i(u('uFold'), S.pano.fold);
   gl.uniform1i(u('uProbeOne'),one);
   gl.uniform3f(u('uEyeQ'),q[0],q[1],q[2]);
   gl.uniform3f(u('uCamR'),r[0],r[1],r[2]);
@@ -2137,6 +2303,7 @@ function drawChar3D(mvp){
     gl.uniform1i(u(nm),unit); unit++;
   }
   gl.uniform1f(u('uBeta'),Math.pow(2,S.beta));
+  gl.uniform1f(u('uEChroma'),S.eChroma);
   gl.uniform1f(u('uBulge'),S.bulge); gl.uniform1f(u('uFlatten'),S.flatten);
   gl.uniform1f(u('uPGain'),S.pgain); gl.uniform1i(u('uShowN'),S.dbg.normal);
   const S32=32;
@@ -2301,35 +2468,55 @@ function clamp2D(){
   S.v2.ox=Math.max(0,Math.min(mw,S.v2.ox));
   S.v2.oy=Math.max(0,Math.min(mh,S.v2.oy));
 }
-let pan2d=false,plx=0,ply=0;
+let pan2d=false,plx=0,ply=0,panPx=0;
 // 笔刷16(点选实例):2D 视图里悬停高亮、单击整块翻转。相机视角认得出「这是哪座楼」,
 // 顶视认不出——所以点选放在 2D,圈选放在顶视,两边高亮联动。
 canvas.addEventListener('mousemove',e=>{
-  if(S.view!==0||S.brush!==16||!S.objIds) return;
+  if(S.view!==0) return;
   const [wx,wy]=canvasToWork(e);
+  S.cursorW.x=wx; S.cursorW.y=wy; S.cursorW.on=1;   // D-4:笔刷圆环跟随光标
+  if(S.brush!==16||!S.objIds) return;
   const x=Math.floor(wx), y=Math.floor(wy);
   if(x<0||y<0||x>=S.work.w||y>=S.work.h) return;
   const id=S.objIds[y*S.work.w+x]|0;
   if(id!==S.hotInstance){
-    S.hotInstance=id; refreshEditOverlay();
+    const prev=S.hotInstance;
+    S.hotInstance=id;
+    // A-5:只刷「旧实例」+「新实例」两个包围盒。原来为了给一块换个颜色就重建整张
+    // 叠加层(全图循环 + 全纹理上传),划过画面时每变一次实例就来一发。
+    for(const q of [instBBox(prev), instBBox(id)])
+      if(q) refreshEditOverlay(q[0],q[1],q[2],q[3]);
     const m=id&&S.objMeta?S.objMeta.get(id):null;
-    $('hud').textContent=m?`实例 #${id}  ${m.prompt}  ${m.score.toFixed(2)}  ${m.area}px`
-                          :'(此处无实例)';
+    S.hoverInfo=m?`实例 #${id}  ${m.prompt}  ${m.score.toFixed(2)}  ${m.area}px`
+                 :(id?`实例 #${id}`:'');
   }
 });
-canvas.addEventListener('contextmenu',e=>e.preventDefault());
-canvas.addEventListener('mousedown',e=>{ if(S.view===0&&e.button===2){ pan2d=true; plx=e.clientX; ply=e.clientY; } });
+canvas.addEventListener('mouseleave',()=>{ S.cursorW.on=0; });
+// D-3:2D 也用**右键闭合**多边形,与顶视完全一致。原来 2D 用双击、顶视用右键,同一个
+// 动作两种手势;而且双击会先派发两次 mousedown 多塞两个顶点(顶视注释自承是"将就写法")。
+// 右键与"右键拖动=平移"共存靠位移判据:没拖动(<5px)才当作闭合。
+canvas.addEventListener('contextmenu',e=>{
+  e.preventDefault();
+  if(S.view!==0||panPx>=5) return;
+  if(!isPolyBrush(S.brush)||!S.polyPts.length) return;
+  if(S.polyPts.length>=3) polyApply();
+  else S.polyPts=[];                                // 不足三点=取消
+});
+canvas.addEventListener('mousedown',e=>{ if(S.view===0&&e.button===2){ pan2d=true; plx=e.clientX; ply=e.clientY; panPx=0; } });
 window.addEventListener('mouseup',()=>pan2d=false);
 window.addEventListener('mousemove',e=>{
   if(!pan2d||S.view!==0) return;
   const r=canvas.getBoundingClientRect();
-  S.v2.ox-=(e.clientX-plx)/r.width*S.work.w/S.v2.zoom;
-  S.v2.oy-=(e.clientY-ply)/r.height*S.work.h/S.v2.zoom;
+  const dx=e.clientX-plx, dy=e.clientY-ply;
+  panPx+=Math.abs(dx)+Math.abs(dy);
+  S.v2.ox-=dx/r.width*S.work.w/S.v2.zoom;
+  S.v2.oy-=dy/r.height*S.work.h/S.v2.zoom;
   plx=e.clientX; ply=e.clientY; clamp2D();
 });
 canvas.addEventListener('dblclick',e=>{
   if(S.view===1){ if(S.man) fitCamera(); return; }               // 3D:双击=相机复位
-  if(S.brush>=8&&S.brush<=11&&S.polyPts.length>=3){ polyApply(); return; }  // 多边形闭合优先
+  // D-3:多边形闭合已统一到**右键**(与顶视一致)。双击在 2D 专职"缩放复位",
+  // 语义不再重载 —— 双击本来就会先派发两次 mousedown,拿它闭合必然多塞两个顶点。
   S.v2={zoom:1,ox:0,oy:0};
 });
 // click-to-place: teleport to the ground point that projects nearest the click
@@ -2368,19 +2555,30 @@ function draw(){
   if(S.view===1 && S.pano.mode>=0 && c.mode==='fly'){
     const nm=['irradiance E(n)','亮度分层','射线命中','命中辐射 L(ω)'][S.pano.mode];
     panoTxt=`\n全景 ${nm} · ${S.pano.interp?'8角插值(游戏口径)':`只看 probe #${S.pano.activeProbe}`}`
+      + (S.pano.mode>=2&&S.pano.fold?'  ⚠③④折叠开:朝相机侧是镜像回来的假世界,不是真周围':'')
+      + (S.pano.mode<=1?'  (①②的A7折叠已烘进系数,去不掉)':'')
       + (camClamped()?'  ⚠相机在 probe 盒外(已钳到边界,显示的不是本位置真值)':'');
   }else if(S.view===1 && S.pano.mode>=0){
     panoTxt='\n⚠ 全景只在「漫游」相机下有效——正交没有单一视点';
   }
-  $('hud').textContent=
-    `${['RT 实时追踪·每帧GPU重算','Cache·SH L1·预烘焙插值','Cache·SH L2·预烘焙插值','Cache·BIN·预烘焙插值'][S.mode]}  |  ${S.fps} fps  |  ${viewTxt}\n`+
-    posTxt + (S.selProbe!=null?`   probe #${S.selProbe} 已选中`:'') + panoTxt;
+  // A-3:键盘焦点在哪必须写出来 —— 画布是 WASD/方向键/Tab 的唯一接收方,
+  //      从右栏拖完滑杆后按 WASD 人不动,原来界面上没有任何线索。
+  const kbd=(document.activeElement===canvas)?'画布':'面板';
+  const txt=
+    `${['RT 实时追踪·每帧GPU重算','Cache·SH L1·预烘焙插值','Cache·SH L2·预烘焙插值','Cache·BIN·预烘焙插值'][S.mode]}  |  ${S.fps} fps  |  ${viewTxt}  |  键盘:${kbd}\n`+
+    posTxt + (S.selProbe!=null?`   probe #${S.selProbe} 已选中`:'') + panoTxt +
+    (S.hoverInfo?'\n'+S.hoverInfo:'');
+  // A-6:原来每帧无条件写 DOM(连顶视态 hud 已 display:none 时也照写),
+  //      每帧都触发一次 style 重算。现在只在字符串真变了才写。
+  if(txt!==_hudLast){ _hudLast=txt; $('hud').textContent=txt; }
 }
+let _hudLast='';
 
 // ------------------------------------------------------------- input
 window.addEventListener('keydown',e=>{
   if(e.target.tagName==='INPUT'||e.target.tagName==='SELECT') return;
   if(e.key==='Tab'){ e.preventDefault(); setMode((S.mode+1)%4); return; }
+  if(e.key==='?'||e.key==='/'){ _keyFull=!_keyFull; updateKeyHelp(); return; }   // E-4
   if(e.key>='1'&&e.key<='4'){ setMode(+e.key-1); return; }
   S.keys[e.key.toLowerCase()]=1; S.keys[e.key]=1;
   if(e.key.startsWith('Arrow')) e.preventDefault();
@@ -2434,16 +2632,42 @@ function setMode(m){ S.mode=m;
   const mi=$('modeinfo'); if(mi) mi.textContent=MODE_INFO[m];
   if(S.selProbe!=null&&!S.pbBasisSel) renderProbePanel(); }   // ⑥「跟随②模式」时同步
 document.querySelectorAll('.modes button').forEach(b=>b.onclick=()=>setMode(+b.dataset.m));
-setMode(0);
+setMode(1);   // 进入默认 L1(与 S.mode 初值一致);RT 仍可 Tab/点按钮手动切
 function setView(v){ S.view=v;
-  document.querySelectorAll('.views button').forEach(b=>b.classList.toggle('on',+b.dataset.v===v));
+  // ⚠ 必须作用域到 #view_tabs:`.views` 这个类同时给 #cam_modes / #pano_modes 用作样式,
+  // 老写法 `.views button` 会把那两组按钮的 .on 一起清掉 —— 切一次视图,「漫游/轨道」和
+  // 「全景」的高亮就没了,而 setCamMode 有 `if(m===c.mode) return` 守卫,再也回不来。
+  document.querySelectorAll('#view_tabs button').forEach(b=>b.classList.toggle('on',+b.dataset.v===v));
   const tv=$('topview'), th=$('topview_hint');
   const on=(v===2);
   tv.style.display=on?'block':'none'; th.style.display=on?'block':'none';
   $('hud').style.display=on?'none':'block';        // 顶视有自己的图例,HUD 会残留 3D 文案
   canvas.style.visibility=on?'hidden':'visible';
-  S.topPoly=[];
+  $('img_exit').style.display='none';              // E-3:离开图片查看态就收起返回按钮
+  S.topPoly=[]; S.polyPts=[];
+  updateKeyHelp();
   if(on) buildTopView();
+}
+// E-4:快捷键提示随视图上下文变化,常驻画面左下。原来只有面板**最底部**一小块静态
+// 文字,一整套 Tab/WASD/QE/Alt+点/Esc 全靠翻到底才看得见。
+let _keyFull=false;
+const KEY_HELP={
+  0:'<b>2D</b>:点击瞬移 · 滚轮缩放 · 右键拖平移 · 双击复位 · Tab/1234 切照明模式 · Alt/Shift+点选 probe',
+  1:'<b>3D 漫游</b>:WASD 平移 · Q/E 升降 · Shift 加速 · 左键拖看向 · 右键或 Shift+拖平移 · 滚轮进退 · 双击复位 · 点圆点选 probe',
+  2:'<b>顶视</b>:左键加顶点 · 右键闭合并填充 · Esc 取消(需先选「地形/物体」类笔刷)',
+  '-1':'<b>图片查看</b>:点右上角「← 返回 2D」退出',
+};
+function updateKeyHelp(){
+  const el=$('keyhelp'); if(!el) return;
+  let s=KEY_HELP[String(S.view)]||'';
+  if(S.view===0&&S.brush>0){
+    s+= isPolyBrush(S.brush) ? '<br><b>多边形</b>:左键加顶点 · <b>右键闭合填充</b> · Esc 取消'
+      : (S.brush===16 ? '<br><b>点选</b>:单击整枚实例翻转 地形↔物体'
+                      : '<br><b>圆刷</b>:按住左键涂抹 · 圆环=实际影响范围');
+  }
+  if(_keyFull) s=Object.values(KEY_HELP).join('<br>');
+  s+='　<span style="opacity:.6">[? 全部]</span>';
+  el.innerHTML=s;
 }
 
 // ---------------------------------------------------- 顶视编辑(世界 XZ 正投影)
@@ -2526,7 +2750,7 @@ function topPolyApply(){
   };
   if(S.brush<12||S.brush>15){                     // 防呆:没选地形笔刷就别乱改判定
     S.topPoly=[]; buildTopView();
-    $('log').textContent='顶视圈选需要先把笔刷切到「地形:标为物体/地形」或「多边形:标为物体/地形」';
+    setLog('顶视圈选需要先把笔刷切到「地形:标为物体/地形」或「多边形:标为物体/地形」','warn');
     return;
   }
   const val=(S.brush===15||S.brush===13)?2:1;      // 15/13=标为地形,其余=标为物体
@@ -2539,9 +2763,9 @@ function topPolyApply(){
   }
   S.topPoly=[]; S.editDirty=true;
   refreshEditOverlay(); buildTopView();
-  $('log').textContent=`✓ 顶视圈选:${n} 个像素标为${val===1?'物体':'地形'}——保存编辑后重烘生效`;
+  setLog(`✓ 顶视圈选:${n} 个像素标为${val===1?'物体':'地形'}——保存编辑后重烘生效`,'ok');
 }
-document.querySelectorAll('.views button').forEach(b=>b.onclick=()=>{ setView(+b.dataset.v); canvas.focus(); });
+document.querySelectorAll('#view_tabs button').forEach(b=>b.onclick=()=>{ setView(+b.dataset.v); canvas.focus(); });
 
 // 顶视画布:单击加顶点,双击闭合填充,Esc 取消(与 2D 视图多边形同手势)
 (function(){
@@ -2579,12 +2803,27 @@ function bindSlider(id,key,fmt=v=>v,onchg){
   el.addEventListener('input',upd); upd();
 }
 function setSlider(id,v){ const el=$(id); if(el){ el.value=v; el.dispatchEvent(new Event('input')); } }
+// D-2:折叠状态跨会话保持。原生 <details> 本身零动画(铁律 1),这里只管记忆开合。
+// 默认全折叠 —— 首屏可见控件从 84 个降到 30 出头,专家参数一键就能展开。
+(function(){
+  const KEY='clab.folds';
+  let saved={};
+  try{ saved=JSON.parse(localStorage.getItem(KEY)||'{}'); }catch(e){ saved={}; }
+  document.querySelectorAll('details.fold').forEach(d=>{
+    if(saved[d.id]) d.open=true;
+    d.addEventListener('toggle',()=>{
+      saved[d.id]=d.open;
+      try{ localStorage.setItem(KEY,JSON.stringify(saved)); }catch(e){}
+    });
+  });
+})();
 const rayReset=()=>{ S.rays=null; };
 bindSlider('pgain',null,v=>'2^'+v.toFixed(1),v=>{ S.pgain=Math.pow(2,v); });
 bindSlider('spp','spp',v=>v.toFixed(0));
 bindSlider('step','step',v=>v.toFixed(1),rayReset);
 bindSlider('msteps','msteps',v=>v.toFixed(0),rayReset);
 bindSlider('beta','beta',v=>'2^'+v.toFixed(1));
+bindSlider('echroma','eChroma',v=>v.toFixed(2));
 bindSlider('amb','amb',v=>v.toFixed(2),()=>probeRefresh());
 bindSlider('contact','contact',v=>v.toFixed(2));
 bindSlider('qscale','qscale',v=>'×'+v.toFixed(2),rayReset);
@@ -2624,19 +2863,72 @@ document.querySelectorAll('#pano_modes button').forEach(b=>
 bindSlider('pano_blend',null,v=>v.toFixed(2),v=>{ S.pano.blend=v; });
 $('pano_interp').addEventListener('change',e=>{ S.pano.interp=e.target.checked?1:0; });
 $('pano_char').addEventListener('change',e=>{ S.pano.drawChar=e.target.checked?1:0; });
+$('pano_fold').addEventListener('change',e=>{ S.pano.fold=e.target.checked?1:0; });
 S.bgview=0;
 $('bgview').addEventListener('change',e=>{ S.bgview=+e.target.value; });
-$('hdr_method').addEventListener('change',e=>{ S.hdrMethod=+e.target.value; if(S.man)refreshThumbs(); });
-bindSlider('hdr_pa',null,v=>v.toFixed(2),v=>{ S.hdrPA=v; if(S.man)refreshThumbs(); });
+$('hdr_method').addEventListener('change',e=>{ S.hdrMethod=+e.target.value;
+  if(S.man){ refreshThumbs(); refreshDirtyMarks(); } });
+bindSlider('hdr_pa',null,v=>v.toFixed(2),v=>{ S.hdrPA=v;
+  if(S.man){ refreshThumbs(); refreshDirtyMarks(); } });
 [['pc_front',0],['pc_hidden',1],['pc_ground',2]].forEach(([id,i])=>
   $(id).addEventListener('change',e=>{ S.pcShow[i]=e.target.checked?1:0; }));
 $('pc_mesh').addEventListener('change',e=>{ S.meshMode=e.target.checked?1:0; });
 
 const RB_IDS=['rb_pitch','rb_az','rb_ppu','rb_dscale','rb_doff','rb_chlo','rb_chhi',
               'rb_ev','rb_gain','rb_tau','rb_relief','rb_px','rb_py','rb_pz','rb_band'];
-$('rb_model').addEventListener('change',()=>{ if(S.man)markDirty(true); });
+// E-2:控件 → 已烘 manifest 里的参数键。有了它就能回答两个问题:
+//   ①「N 项参数未应用」到底是哪几项(给 label 打左边框,一眼定位);
+//   ② 折叠块里藏着几项改动(summary 上的静态计数,免得"折起来就忘了")。
+const RB_PARAM_KEY={
+  rb_pitch:'pitch_deg', rb_az:'azimuth_deg', rb_ppu:'ppu_ratio', rb_ev:'ev',
+  rb_model:'depth_model', rb_dscale:'depth_scale_adj', rb_doff:'depth_offset_adj',
+  rb_chlo:'col_h_lo', rb_chhi:'col_h_hi', rb_gain:'max_gain_ev', rb_tau:'occluder_tau',
+  rb_relief:'relief', rb_fold:'fold', rb_objthr:'object_score_min', rb_sem:'semantic_gate',
+  hdr_method:'hdr_method', hdr_pa:'hdr_pa',
+  rb_px:'probe_nx', rb_py:'probe_ny', rb_pz:'probe_nz', rb_band:'probe_band',
+};
+function _ctlValue(el){
+  if(el.type==='checkbox') return el.checked?1:0;
+  const n=parseFloat(el.value);
+  return Number.isFinite(n)?n:el.value;
+}
+/** 与已烘参数逐项比对 → 打标记 + 计数 + 决定重烘按钮是否 dirty。 */
+function refreshDirtyMarks(){
+  const baked=(S.man&&S.man.params)||null;
+  const perFold={}; const changed=[];
+  for(const [id,key] of Object.entries(RB_PARAM_KEY)){
+    const el=$(id); if(!el) continue;
+    const lab=el.closest('label');
+    let diff=false;
+    if(baked && key in baked){
+      const cur=_ctlValue(el), was=baked[key];
+      const wasN=parseFloat(was);
+      diff=(typeof cur==='number'&&Number.isFinite(wasN))
+            ? Math.abs(cur-wasN)>1e-9
+            : String(cur)!==String(was);
+    }
+    if(lab) lab.classList.toggle('touched',diff);
+    if(diff){
+      changed.push((lab&&lab.querySelector('.k')?lab.querySelector('.k').textContent:id));
+      const fold=el.closest('details.fold');
+      if(fold) perFold[fold.id]=(perFold[fold.id]||0)+1;
+    }
+  }
+  document.querySelectorAll('details.fold').forEach(f=>{
+    const c=f.querySelector('summary .cnt'); if(!c) return;
+    c.textContent=perFold[f.id]?String(perFold[f.id]):'';
+  });
+  const note=$('dirty_note');
+  if(note) note.textContent=changed.length
+    ? `${changed.length} 项参数未应用:${changed.join('、')}` : '';
+  markDirty(changed.length>0||S.geoStale);
+  return changed.length;
+}
+$('rb_model').addEventListener('change',()=>{ if(S.man)refreshDirtyMarks(); });
 function markDirty(d){ $('rebuild').classList.toggle('dirty',d); }
-RB_IDS.forEach(id=>bindSlider(id,null,v=>(''+v).slice(0,5),()=>{ if(S.man)markDirty(true); }));
+RB_IDS.forEach(id=>bindSlider(id,null,v=>(''+v).slice(0,5),()=>{ if(S.man)refreshDirtyMarks(); }));
+for(const id of ['rb_fold','rb_sem'])
+  $(id).addEventListener('change',()=>{ if(S.man)refreshDirtyMarks(); });
 // HDR最大EV 拖动即实时刷新 HDR/光源缩略图(只缩放已烘 gain 场,无需重烘)
 $('rb_gain').addEventListener('input',()=>{ if(S.man)refreshThumbs(); });
 
@@ -2685,8 +2977,10 @@ async function refreshSceneList(prefer){
 /** 选中某场景:刷新状态行与主按钮语义;已烘过的返回它的 manifest。 */
 function applySceneSelection(id){
   const g=sceneInfo(id), m=bakedManifest(id), btn=$('rebuild'), info=$('scene_info');
-  btn.textContent=m ? '⟳ 应用上面参数:重建几何+重烘光照'
-                    : '⤓ 首次烘焙此场景(自动取游戏背景)';
+  // C-2:去 emoji,统一动词。UI 文案里不再出现「重建」——只留「重烘」(跑完整管线)
+  // 与「重算地形」(秒级快通道)两个词,免得三个近义动词混着记。
+  btn.textContent=m ? '应用参数:重烘此场景'
+                    : '首次烘焙此场景(约 4~5 分钟)';
   if(info){
     if(!g){ info.textContent=''; }
     else if(g.orphan){
@@ -2705,77 +2999,205 @@ function applySceneSelection(id){
 
 /** 导出/编辑类操作的闸门:必须有已加载场景,且下拉选的就是它(防"选了A导出了B")。 */
 function activeScene(){
-  if(!S.man){ $('log').textContent='✗ 还没有任何已烘焙的场景'; return null; }
+  if(!S.man){ setLog('✗ 还没有任何已烘焙的场景','err'); return null; }
   if($('scene').value!==S.man.name){
-    $('log').textContent=`✗ 下拉选的是 ${$('scene').value}(未烘焙),画面上是 ${S.man.name}`+
-      '——先把它烘出来,或切回已烘焙的场景再操作';
+    setLog(`✗ 下拉选的是 ${$('scene').value}(未烘焙),画面上是 ${S.man.name}`+
+      '——先把它烘出来,或切回已烘焙的场景再操作','err');
     return null;
   }
   return S.man.name;
 }
 
 const BAKE_BTNS=['rebuild','rebuild_all'];
+// B-2:阶段清单标签。渲染成静态勾选行 —— 已过=✓绿,当前=▸橙,未到=○灰,
+// 越过但没出现(如无编辑时的 edit)=· 跳过。全程没有任何东西在动,变的只有数据。
+const STAGE_LABEL={depth:'深度推理',objects:'物体识别',calib:'标定',hdr:'HDR恢复',
+  edit:'笔刷编辑',voxel:'体素化',bounds:'世界边界',lights:'光源提取',ambient:'环境闭合',
+  probes:'probe烘焙',walk:'可走/碰撞',mesh:'网格',char:'角色贴图',done:'写盘'};
+function renderStages(r){
+  const box=$('bake_stages'); if(!box) return;
+  if(!r||!r.stage_order||r.status==='done'||r.status==='failed'){ box.style.display='none'; return; }
+  const order=r.stage_order, seen=new Set(r.stages||[]), cur=r.stage;
+  const curIdx=order.indexOf(cur);
+  let html=`<span class="el">${r.scene||''} · 已用 ${Math.round(r.elapsed||0)}s`+
+           (r.queue_position?` · 排队第 ${r.queue_position}`:'')+`</span>`;
+  for(let i=0;i<order.length;i++){
+    const t=order[i], nm=STAGE_LABEL[t]||t;
+    let cls='', mark='○';
+    if(t===cur){ cls='cur'; mark='▸'; }
+    else if(seen.has(t)){ cls='done'; mark='✓'; }
+    else if(curIdx>=0&&i<curIdx){ mark='·'; }      // 越过了但没出现 = 本次跳过
+    html+=`<span class="sg ${cls}">${mark}${nm}</span>`;
+  }
+  box.innerHTML=html; box.style.display='block';
+}
 async function watchJob(jobId, reloadName){
-  BAKE_BTNS.forEach(id=>$(id).disabled=true);
+  BAKE_BTNS.forEach(id=>{ const b=$(id); b.disabled=true; b.dataset.busy='1'; });
   try{
     for(;;){
       const r=await (await fetch('/api/job?id='+jobId)).json();
-      if(!r.ok){ $('log').textContent='✗ 任务丢失'; break; }
-      const tail=(r.log||'').split('\n').slice(-7).join('\n');
-      $('log').textContent=`[${r.label}] ${r.status}`+
-        (r.queue_position?` (排队第 ${r.queue_position})`:'')+'\n'+tail;
+      if(!r.ok){ setLog('✗ 任务丢失(服务重启过?)','err'); break; }
+      renderStages(r);
       if(r.status==='done'||r.status==='failed'){
-        $('log').textContent=(r.status==='done'?'✓ 完成\n':'✗ 失败\n')+tail;
+        renderStages(null);
+        const tail=(r.log||'').split('\n').filter(s=>s.trim()).slice(-4).join('\n');
         if(r.status==='done'){
+          setLog(`✓ ${r.label} 完成(用时 ${Math.round(r.elapsed||0)}s)`,'ok');
           const cur=await refreshSceneList(reloadName);
           const target=applySceneSelection(cur);
           if(target) await loadScene(target);      // loadScene refreshes geo status
+        }else{
+          setLog(`✗ ${r.label} 失败\n${tail}`,'err');
         }
         break;
       }
       await new Promise(res=>setTimeout(res,1200));
     }
-  }catch(err){ $('log').textContent='✗ '+err; }
-  BAKE_BTNS.forEach(id=>$(id).disabled=false);
+  }catch(err){ setLog('✗ 烘焙任务中断:'+err,'err'); renderStages(null); }
+  BAKE_BTNS.forEach(id=>{ const b=$(id); b.disabled=false; delete b.dataset.busy; });
 }
 $('rebuild').onclick=async()=>{
   const id=$('scene').value;
   if(!id) return;
   // 已烘过 = 重烘;没烘过 = 首次烘焙(服务端按场景 id 自动把游戏背景拷进 out/<id>/)
   const first=!bakedManifest(id);
-  const q=new URLSearchParams({scene:id, ...rbParams()});
-  const r=await (await fetch((first?'/api/import?':'/api/rebuild?')+q)).json();
-  if(r.ok) watchJob(r.job, id); else $('log').textContent='✗ '+(r.err||'');
+  const btn=$('rebuild');
+  // B-2:首烘含深度推理 + SAM3 语义门控,实测 4~5 分钟 —— 必须提前说,
+  // 否则任何人第一次点都会以为卡死了。
+  busy(btn, first?`首次烘焙 ${id} 已入队 —— 含深度推理 + SAM3 语义门控,约需 4~5 分钟`
+                 :`重烘 ${id} 已入队…`);
   markDirty(false);
+  try{
+    const q=new URLSearchParams({scene:id, ...rbParams()});
+    const r=await (await fetch((first?'/api/import?':'/api/rebuild?')+q)).json();
+    if(r.ok) watchJob(r.job, id);
+    else idle(btn,'✗ '+(r.err||'入队失败'),'err');
+  }catch(err){ idle(btn,'✗ 入队失败:'+err,'err'); }
 };
 $('rebuild_all').onclick=async()=>{
-  const r=await (await fetch('/api/rebuild_all')).json();
-  if(r.ok) watchJob(r.job, S.man&&S.man.name); else $('log').textContent='✗ '+(r.err||'');
+  const n=(S.scenes||[]).length;
+  if(!confirm(`重烘全部已烘场景?\n\n`+
+              `共 ${n} 个场景,按各自已保存的参数逐个排队执行。\n`+
+              `耗时可能很长(每场景约 10 秒起,含首次推理的更久)。\n`+
+              `期间可以离开页面,任务在服务端继续跑。`)) return;
+  const btn=$('rebuild_all');
+  busy(btn,`重烘全部 ${n} 个场景已入队…`);
+  try{
+    const r=await (await fetch('/api/rebuild_all')).json();
+    if(r.ok) watchJob(r.job, S.man&&S.man.name);
+    else idle(btn,'✗ '+(r.err||'入队失败'),'err');
+  }catch(err){ idle(btn,'✗ 入队失败:'+err,'err'); }
 };
-$('export_rt').onclick=async()=>{
-  const name=activeScene(); if(!name) return;
-  // 面板当前非 bake 着色参数一并导出为场景配置(游戏 F2 打开即这些值)。
-  // pgain(预览亮度)是实验室显示设施,刻意不导出——游戏侧角色曝光只认 β。
-  const sh=new URLSearchParams({
+// 面板当前非 bake 着色参数 → 场景配置(游戏 F2 打开即这些值);两个导出按钮共用一处构造,
+// 免得漂移。pgain(预览亮度)是实验室显示设施,刻意不导出——游戏侧角色曝光只认 β。
+function shQuery(name){
+  return new URLSearchParams({
     scene:name, mode:S.mode, spp:S.spp, step:S.step, msteps:S.msteps,
     fold:S.fold, miss_mode:S.missMode, nee:S.nee, beta:S.beta,
-    amb:S.amb, bulge:S.bulge, flatten:S.flatten,
+    amb:S.amb, bulge:S.bulge, flatten:S.flatten, eChroma:S.eChroma,
   });
-  const r=await (await fetch('/api/export?'+sh)).json();
-  $('log').textContent=r.ok?('✓ 已导出到游戏(含着色参数配置)\n'+r.dest):('✗ '+(r.err||''));
+}
+// ---------------------------------------------------- 读回已导出的着色参数
+// ⚠ 这是补的一个**真会丢数据**的洞:查看器原来从不读回 lighting.json 的 shading 块,
+// 面板上的 β/E色度/隆起/压平 永远是 HTML 里那个写死的初值。于是——
+//   ① 你看不到这个场景当前实际生效的值(调好 β=3.0 存进游戏,刷新页面又显示 0.0);
+//   ② 更要命:刷新或切场景后再点「只存着色参数」,会拿面板上的默认值把之前调好的
+//      **悄悄覆盖掉**(teahouse 的 eChroma 被写回 0.0 就是这么来的)。
+// 现在:载场景时同步一次真值;该场景没导出过就回落到与服务端 SHADING_DEFAULTS 同源的缺省。
+const SHADING_UI_DEFAULTS={mode:2,spp:64,step:0.9,msteps:160,fold:1,miss_mode:0,nee:0,
+                           beta:0,amb:1,bulge:0.22,flatten:0,eChroma:0};
+function applyShadingConfig(sh){
+  const v={...SHADING_UI_DEFAULTS, ...(sh||{})};
+  setMode(Math.max(0,Math.min(3,+v.mode|0)));
+  setSlider('spp',v.spp); setSlider('step',v.step); setSlider('msteps',v.msteps);
+  setSlider('beta',v.beta); setSlider('amb',v.amb);
+  setSlider('bulge',v.bulge); setSlider('flatten',v.flatten);
+  setSlider('echroma',v.eChroma);
+  for(const [id,on] of [['fold',+v.fold>0],['missnorm',+v.miss_mode>0],['nee',+v.nee>0]]){
+    const el=$(id); if(!el) continue;
+    if(el.checked!==on){ el.checked=on; el.dispatchEvent(new Event('change')); }
+  }
+}
+async function syncShadingFromExport(sceneId){
+  try{
+    const r=await (await fetch('/api/shading?scene='+encodeURIComponent(sceneId),
+                               {cache:'no-store'})).json();
+    applyShadingConfig(r && r.ok ? r.shading : null);
+    return !!(r && r.ok && r.shading);
+  }catch(e){ applyShadingConfig(null); return false; }
+}
+// 「不进游戏」的旋钮统一用 ◌ 角标**静态标出**(见 index.html 的 .tm.lab),不做任何
+// 存盘时的弹窗/警告——反复提示比标记烦得多,而且标记是常驻的、调之前就看得见。
+//   · 接触阴影:实验室合成预览;游戏侧接触阴影来自场景环境配置 env.ao.contact
+//     (src/core/Game.ts:2489),不走照明载荷;
+//   · 预览亮度/probe亮度:纯显示增益(导出会破坏"人:背景"比例,游戏亮度只认 β);
+//   · 碰撞/整体缩放/身高:实验室摆位设施,游戏用角色自身尺寸与场景碰撞。
+/** 存盘后回报**实际写进去的值** —— 一行回执,不是警告。 */
+function reportShadingWritten(){
+  const names=['RT','L1','L2','BIN'];
+  setLog(`实际写入:模式 ${names[S.mode]} · β ${(+S.beta).toFixed(2)}EV · E色度 ${(+S.eChroma).toFixed(2)}`
+    + ` · 隆起 ${(+S.bulge).toFixed(2)} · 压平 ${(+S.flatten).toFixed(2)}`,'info');
+}
+$('export_rt').onclick=async()=>{
+  const name=activeScene(); if(!name) return;
+  // E-1:破坏性写盘(~25MB 进游戏工程),不可撤销 → 必须确认
+  if(!confirm(`即将把照明载荷写进游戏工程\n\n`+
+              `场景:${name}\n`+
+              `写入:public/resources/runtime/scenes/${name}/lighting/\n`+
+              `内容:probe 图集(L1/L2/BIN)+ 地面场 + 标定 + 当前着色参数,约 25MB\n\n`+
+              `会覆盖该场景已有的照明载荷。此操作不可撤销,确认?`)) return;
+  const btn=$('export_rt');
+  busy(btn,'导出照明中(重新产出 probe 数据,约 25MB)…');
+  try{
+    const r=await (await fetch('/api/export?'+shQuery(name))).json();
+    idle(btn, r.ok?('✓ 已导出到游戏(probe 数据+着色参数)\n'+r.dest):('✗ '+(r.err||'')),
+         r.ok?'ok':'err');
+  }catch(err){ idle(btn,'✗ 导出照明失败:'+err,'err'); }
+};
+// 只补 lighting.json 的 shading 块,不重跑数据通道(秒存)。nee/amb/miss_mode 已固化进
+// 图集,服务端会拒绝并提示改走「导出照明」——不静默写出与图集不符的参数。
+$('export_params').onclick=async()=>{
+  const name=activeScene(); if(!name) return;
+  const btn=$('export_params');
+  busy(btn,'保存着色参数中…');
+  try{
+    const r=await (await fetch('/api/export_params?'+shQuery(name))).json();
+    idle(btn, r.ok?('✓ 已存着色参数(未动 probe 图集)\n'+r.dest):('✗ '+(r.err||'')),
+         r.ok?'ok':'err');
+    if(r.ok) reportShadingWritten();     // 回报真写进去的值 + 警告不导出的旋钮
+  }catch(err){ idle(btn,'✗ 保存着色参数失败:'+err,'err'); }
 };
 $('scene').addEventListener('change',async e=>{
-  const m=applySceneSelection(e.target.value);
-  if(m) await loadScene(m);
-  else $('log').textContent='该场景还没烘焙——点上面橙色按钮「首次烘焙」即可(背景自动从工程取)';
+  const id=e.target.value;
+  const m=applySceneSelection(id);
+  if(m){
+    // B-4:loadScene 并发 ~24 个二进制 fetch,原来全程零反馈,切场景时画面直接冻住
+    setLog(`载入 ${id}…`,'pending');
+    try{ await loadScene(m); setLog(`✓ 已载入 ${id}`,'ok'); }
+    catch(err){ setLog(`✗ 载入 ${id} 失败:${err}(该场景产物可能不全,重烘一次)`,'err'); }
+  }
+  else setLog('该场景还没烘焙——点上面橙色按钮「首次烘焙」即可(背景自动从工程取)','warn');
   canvas.focus();
 });
 
 // ------------------------------------------------------------- boot
 (async()=>{
-  const cur=await refreshSceneList();
-  const m=applySceneSelection(cur);
-  if(m) await loadScene(m);
+  // B-4:启动路径原来没有 try/catch,Promise.all 里任一文件缺失就整体 reject →
+  // 页面静默黑屏,连场景下拉都出不来。现在保证「列表可用 + 错误说人话」。
+  try{
+    const cur=await refreshSceneList();
+    const m=applySceneSelection(cur);
+    if(m){
+      setLog(`载入 ${cur}…`,'pending');
+      try{ await loadScene(m); setLog(`✓ 已载入 ${cur}`,'ok'); }
+      catch(err){ setLog(`✗ 载入 ${cur} 失败:${err}\n该场景产物不全,换个场景或重烘一次`,'err'); }
+    }else{
+      setLog('还没有已烘焙的场景——选一个场景后点橙色按钮开始首次烘焙','warn');
+    }
+  }catch(err){
+    setLog('✗ 拉场景清单失败:'+err+'(实验室服务没起来?)','err');
+  }
+  updateKeyHelp();
   canvas.focus();
   draw();
 })();

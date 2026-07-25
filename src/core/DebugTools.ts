@@ -54,6 +54,9 @@ export interface DebugToolsDeps {
   applyDebugSceneWorldSize: (width: number, height: number) => void;
   /** `?mode=dev` 时为 true */
   isDevMode: () => boolean;
+  /** F2 视锥剔除性能开关：屏外实体不进 GPU 渲染 */
+  getFrustumCulling: () => boolean;
+  toggleFrustumCulling: () => void;
   /** 切换到开发用 dev_room 场景 */
   goToDevScene: () => void;
   /** game_config 中 entityPixelDensityMatch */
@@ -88,6 +91,9 @@ export interface DebugToolsDeps {
     params?: Partial<CharShadingParams>;
     shadowAuto?: Partial<{ enabled: boolean; k: number; ambScale: number; tauMs: number; gain: number }>;
   }) => void;
+  /** F2 测试旋钮：E 色度权重 0(只借场景明暗)~1(完整彩色 E) */
+  getCharEChroma: () => number;
+  setCharEChroma: (v: number) => void;
   /** F2:probe 点云可视化(实验室查看器点云的游戏侧对应物) */
   toggleCharProbeViz: () => boolean;
   charProbeVizActive: () => boolean;
@@ -951,13 +957,9 @@ export class DebugTools {
         if (!cur) return;
         const pp = cur.params;
         valLine.textContent =
-          `着色 ${cur.enabled ? '开' : '关'}(${cur.active ? '生效' : '未生效'})　模式 ${MODE_NAMES[pp.mode] ?? pp.mode}`
-          + `${cur.hasVolumes ? '（RT可选）' : '（RT需dev体素·仅缓存）'}　`
-          + `probe ${cur.probes}　光源 ${cur.lights}\n`
-          + `NEE ${pp.nee ? '开' : '关'}　miss${pp.missMode ? '不计入' : `强度 ${pp.ambStrength.toFixed(2)}`}　折叠 ${pp.fold ? '开' : '关'}　`
-          + `β 2^${pp.beta.toFixed(1)}\n`
-          + `spp ${pp.spp}　步长 ${pp.step.toFixed(2)}　步数 ${pp.msteps}　隆起 ${pp.bulge.toFixed(2)}　压平 ${pp.flatten.toFixed(2)}　`
-          + `probe点云 ${this.deps.charProbeVizActive() ? '开' : '关'}\n`
+          `着色 ${cur.enabled ? '开' : '关'}(${cur.active ? '生效' : '未生效'})　模式 ${MODE_NAMES[pp.mode] ?? pp.mode}　probe ${cur.probes}　光源 ${cur.lights}\n`
+          + `★曝光 β 2^${pp.beta.toFixed(1)}　★E色度 ${this.deps.getCharEChroma().toFixed(2)}（0=只借明暗 1=彩色E）\n`
+          + `隆起 ${pp.bulge.toFixed(2)}　压平 ${pp.flatten.toFixed(2)}　probe点云 ${this.deps.charProbeVizActive() ? '开' : '关'}\n`
           + `影子跟灯 ${cur.shadowAuto.enabled ? (cur.shadowAuto.ready ? '开(生效)' : '开(不可用)') : '关'}　`
           + `全局强度 ${cur.shadowAuto.gain.toFixed(2)}　槽 ${cur.shadowAuto.k}　环境稀释 ${cur.shadowAuto.ambScale.toFixed(2)}　平滑 ${Math.round(cur.shadowAuto.tauMs)}ms\n`
           + `太阳 ${pp.sunEnabled ? '开' : '关'}　方位 ${Math.round(pp.sunAzimuthDeg)}°　仰角 ${Math.round(pp.sunElevationDeg)}°　强度 ${pp.sunIntensity.toFixed(2)}`;
@@ -993,21 +995,23 @@ export class DebugTools {
         return row;
       };
       wrap.appendChild(valLine);
-      wrap.appendChild(hint);
+      // ★核心调色(probe 与 RT 都生效,调色主力):曝光 + E色度融入。这两个最重要,置顶。
+      const coreHint = document.createElement('div');
+      coreHint.className = 'debug-dock__slider-hint';
+      coreHint.textContent =
+        '★核心调色(probe 与 RT 都用):曝光 β=角色整体亮度;E色度=融入度'
+        + '(0=只借场景明暗、角色保留自己颜色不被场景色染;1=完整彩色 E,场景色二次染)。';
+      wrap.appendChild(coreHint);
       wrap.appendChild(mkSlider(-3, 3, 0.1, () => p().beta,
-        (v) => patch({ beta: v }), (v) => `曝光β 2^${v.toFixed(1)}`));
-      wrap.appendChild(mkSlider(0, 2, 0.05, () => p().ambStrength,
-        (v) => patch({ ambStrength: v }), (v) => `miss强度 ${v.toFixed(2)}`));
+        (v) => patch({ beta: v }), (v) => `★曝光β 2^${v.toFixed(1)}`));
+      wrap.appendChild(mkSlider(0, 1, 0.02, () => this.deps.getCharEChroma(),
+        (v) => this.deps.setCharEChroma(v), (v) => `★E色度(融入) ${v.toFixed(2)}`));
+      wrap.appendChild(hint);
+      // probe/cache 组合参数(进场景生效)
       wrap.appendChild(mkSlider(0, 0.5, 0.01, () => p().bulge,
         (v) => patch({ bulge: v }), (v) => `隆起 ${v.toFixed(2)}`));
       wrap.appendChild(mkSlider(0, 1, 0.05, () => p().flatten,
         (v) => patch({ flatten: v }), (v) => `压平 ${v.toFixed(2)}`));
-      wrap.appendChild(mkSlider(8, 192, 8, () => p().spp,
-        (v) => patch({ spp: Math.round(v) }), (v) => `RT spp ${Math.round(v)}`));
-      wrap.appendChild(mkSlider(0.5, 2, 0.05, () => p().step,
-        (v) => patch({ step: v }), (v) => `RT步长 ${v.toFixed(2)}`));
-      wrap.appendChild(mkSlider(40, 256, 8, () => p().msteps,
-        (v) => patch({ msteps: Math.round(v) }), (v) => `RT步数 ${Math.round(v)}`));
       wrap.appendChild(mkSlider(0, 359, 1, () => p().sunAzimuthDeg,
         (v) => patch({ sunAzimuthDeg: v }), (v) => `日方位 ${Math.round(v)}°`));
       wrap.appendChild(mkSlider(5, 85, 1, () => p().sunElevationDeg,
@@ -1038,22 +1042,92 @@ export class DebugTools {
         extra: wrap,
         actions: [
           btn('着色 开/关', () => this.deps.setCharLighting({ enabled: !this.deps.getCharLightingDebug()?.enabled })),
-          btn('模式 RT/L1/L2/BIN', () => {
-            // 实时 RT 对比:cache(L1/L2/BIN) ↔ RT(0) 同帧切换同一角色即对比。
-            // RT 需 dev 体素卷;未载(生产/未开 dev)则跳过 0,只在缓存三档循环。
-            let next = (p().mode + 1) % 4;
-            if (next === 0 && !this.deps.getCharLightingDebug()?.hasVolumes) next = 1;
-            patch({ mode: next });
-          }),
-          btn('NEE 开/关', () => patch({ nee: !p().nee })),
-          btn('miss不计入 开/关', () => patch({ missMode: !p().missMode })),
-          btn('折叠 开/关', () => patch({ fold: !p().fold })),
           btn('法线显示 开/关', () => patch({ showNormals: !p().showNormals })),
           btn('probe点云 开/关', () => this.deps.toggleCharProbeViz()),
           btn('太阳 开/关', () => patch({ sunEnabled: !p().sunEnabled })),
           btn('影子跟灯 开/关', () => this.deps.setCharLighting({
             shadowAuto: { enabled: !this.deps.getCharLightingDebug()?.shadowAuto.enabled },
           })),
+        ],
+      };
+    });
+
+    // 仅 RT 才用到的参数 + 开 RT 的模式切换单独成组:进场景走 cache(L1/L2/BIN)不消费这些,
+    // 免得和上面 probe/游戏真正生效的参数混在一起扰乱视听。
+    debugPanelUI.addSection('角色照明 · RT 预览（不影响游戏）', () => {
+      const s = this.deps.getCharLightingDebug();
+      if (!s) return { text: '本场景无照明烘焙载荷。' };
+      const MODE_NAMES = ['RT', 'L1', 'L2', 'BIN'];
+      const wrap = document.createElement('div');
+      wrap.className = 'debug-dock__section-extra';
+      const p = (): CharShadingParams => this.deps.getCharLightingDebug()!.params;
+      const patch = (part: Partial<CharShadingParams>): void =>
+        this.deps.setCharLighting({ params: part });
+      const valLine = document.createElement('div');
+      valLine.className = 'debug-dock__slider-hint';
+      const sync = (): void => {
+        const cur = this.deps.getCharLightingDebug();
+        if (!cur) return;
+        const pp = cur.params;
+        valLine.textContent =
+          `模式 ${MODE_NAMES[pp.mode] ?? pp.mode}${cur.hasVolumes ? '（RT可选）' : '（RT需dev体素·仅缓存）'}　`
+          + `折叠 ${pp.fold ? '开' : '关'}　spp ${pp.spp}　步长 ${pp.step.toFixed(2)}　步数 ${pp.msteps}`;
+      };
+      const hint = document.createElement('div');
+      hint.className = 'debug-dock__slider-hint';
+      hint.textContent =
+        '⚠ 这些只作用于 F2 手动开的实时 RT(mode=0)——游戏进场景走 cache(L1/L2/BIN),不消费 spp/步长/步数/折叠。'
+        + 'RT 需 dev 体素卷(切到 RT 现拉 20–27MB、切离卸载)。「模式」按钮循环 RT↔L1↔L2↔BIN 用于同帧对比;'
+        + '游戏默认 L2,进场景 mode 恒钳到 ≥1(RT 只在此处手动开)。';
+      const mkSlider = (
+        min: number, max: number, stepV: number, get: () => number,
+        set: (v: number) => void, fmt: (v: number) => string,
+      ): HTMLDivElement => {
+        const row = document.createElement('div');
+        row.className = 'debug-dock__slider-row';
+        const range = document.createElement('input');
+        range.type = 'range';
+        range.min = String(min); range.max = String(max); range.step = String(stepV);
+        range.value = String(get());
+        const span = document.createElement('span');
+        span.className = 'debug-dock__slider-value';
+        span.textContent = fmt(get());
+        range.addEventListener('input', () => {
+          set(Number(range.value));
+          span.textContent = fmt(Number(range.value));
+          sync();
+        });
+        row.appendChild(range); row.appendChild(span);
+        return row;
+      };
+      wrap.appendChild(valLine);
+      wrap.appendChild(hint);
+      wrap.appendChild(mkSlider(8, 192, 8, () => p().spp,
+        (v) => patch({ spp: Math.round(v) }), (v) => `RT spp ${Math.round(v)}`));
+      wrap.appendChild(mkSlider(0.5, 2, 0.05, () => p().step,
+        (v) => patch({ step: v }), (v) => `RT步长 ${v.toFixed(2)}`));
+      wrap.appendChild(mkSlider(40, 256, 8, () => p().msteps,
+        (v) => patch({ msteps: Math.round(v) }), (v) => `RT步数 ${Math.round(v)}`));
+      // nee/miss_mode/amb 固化后 cache 不消费(已 compose 进 probe E),只 RT gather 实时用
+      wrap.appendChild(mkSlider(0, 2, 0.05, () => p().ambStrength,
+        (v) => patch({ ambStrength: v }), (v) => `miss强度(仅RT) ${v.toFixed(2)}`));
+      sync();
+      const btn = (label: string, fn: () => void): { label: string; fn: () => void; noRefresh: boolean } => ({
+        label,
+        noRefresh: true,
+        fn: () => { fn(); sync(); },
+      });
+      return {
+        text: '',
+        extra: wrap,
+        actions: [
+          btn('模式 RT/L1/L2/BIN（开RT）', () => {
+            // 切到 0(RT)由 Game 现拉体素卷、切离卸载;加载期间点击去重忽略。
+            patch({ mode: (p().mode + 1) % 4 });
+          }),
+          btn('折叠 开/关（仅RT）', () => patch({ fold: !p().fold })),
+          btn('NEE 开/关（仅RT）', () => patch({ nee: !p().nee })),
+          btn('miss不计入 开/关（仅RT）', () => patch({ missMode: !p().missMode })),
         ],
       };
     });
@@ -1142,6 +1216,14 @@ export class DebugTools {
         ],
       };
     });
+
+    debugPanelUI.addSection('视锥剔除（性能）', () => ({
+      text:
+        `屏外 NPC/热点不进 GPU 渲染（Pixi culled 位，与显隐四通道正交，不碰玩法可见性）。` +
+        `当前：${this.deps.getFrustumCulling() ? '开' : '关'}（默认开，仅影响渲染，不动存档）。` +
+        `宽滚动场景（雾津街头/码头）收益大；单屏小室（teahouse）几乎无收益。`,
+      actions: [{ label: '视锥剔除 开/关', fn: () => this.deps.toggleFrustumCulling() }],
+    }));
 
     debugPanelUI.addSection('Scene world 尺寸', () => {
       const sz = this.deps.getDebugSceneWorldSize();

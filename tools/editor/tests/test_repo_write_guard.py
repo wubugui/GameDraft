@@ -58,6 +58,47 @@ def test_guard_blocks_lexical_repository_path_through_symlink(tmp_path: Path) ->
         )
 
 
+def test_dir_fd_relative_path_is_resolved_against_the_fd_not_cwd(tmp_path: Path) -> None:
+    """``shutil.rmtree`` 走 fd 遍历时只给裸文件名 + dir_fd。
+
+    早期实现把裸名拼到 ``Path.cwd()``（跑测时就是仓库根）上，于是「删临时目录里的
+    items.json」被误判成「删仓库里的 items.json」——pytest 的 tmp 清理因此每轮失败，
+    ``$TMPDIR/pytest-of-*`` 常年堆着上百个删不掉的 ``garbage-*``。
+    """
+    fake_repository = tmp_path / "repo"
+    (fake_repository / "public").mkdir(parents=True)
+    (fake_repository / "public" / "items.json").write_text("{}", encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "items.json").write_text("{}", encoding="utf-8")
+    guard = RepositoryWriteGuard(fake_repository)
+
+    previous_cwd = Path.cwd()
+    outside_fd = -1
+    inside_fd = -1
+    try:
+        os.chdir(fake_repository / "public")  # cwd 落在仓库内，复刻跑测时的现场
+        outside_fd = os.open(outside, os.O_RDONLY)
+        inside_fd = os.open(fake_repository / "public", os.O_RDONLY)
+        # 仓库外的 fd + 裸名：放行（早期实现在这里误拦）
+        guard("os.remove", ("items.json", outside_fd))
+        # 仓库内的 fd + 裸名：照拦（不能因为带 fd 就一律放行）
+        with pytest.raises(RepositoryWriteBlocked, match="real GameDraft working tree"):
+            guard("os.remove", ("items.json", inside_fd))
+        # 没有 dir_fd（-1）时仍按 cwd 解析
+        with pytest.raises(RepositoryWriteBlocked, match="real GameDraft working tree"):
+            guard("os.remove", ("items.json", -1))
+        # 绝对路径 + 还原不出的 dir_fd：绝对路径不需要 base，不得因此漏判
+        with pytest.raises(RepositoryWriteBlocked, match="real GameDraft working tree"):
+            guard("os.remove", (str(fake_repository / "public" / "items.json"), 999999))
+    finally:
+        if outside_fd >= 0:
+            os.close(outside_fd)
+        if inside_fd >= 0:
+            os.close(inside_fd)
+        os.chdir(previous_cwd)
+
+
 def test_real_project_dialogue_layout_write_is_redirected(
     isolated_dialogue_layout_store: Path,
 ) -> None:

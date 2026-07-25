@@ -877,7 +877,7 @@ class DialogueGraphEditorWidget(QWidget):
         self._focus_node_in_editor(nid)
         self._oden.center_on_node(nid)
         self._apply_selected_node_to_inspector()
-        QTimer.singleShot(0, lambda: self._refocus_view_if_present(nid))
+        QTimer.singleShot(0, self, lambda: self._refocus_view_if_present(nid))
         return True
 
     def _refocus_view_if_present(self, nid: str) -> None:
@@ -2367,7 +2367,7 @@ class DialogueGraphEditorWidget(QWidget):
         self._rebuild_flow_scene()
         if regen_layout or migrated_frames or layout_fixed:
             self._flush_flow_layout_to_disk()
-        QTimer.singleShot(0, self._flow_fit_view)
+        QTimer.singleShot(0, self, self._flow_fit_view)
         self._emit_title()
         self._refresh_file_list()
         self._sync_file_list_selection(path)

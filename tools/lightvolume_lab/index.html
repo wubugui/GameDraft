@@ -207,7 +207,13 @@ function reconstruct(gx,gy,depth){
            c.right[1]*px + c.up[1]*py + c.vd[1]*depth,
            c.right[2]*px + c.up[2]*py + c.vd[2]*depth ];
 }
-function floorDepthAt(gy){ const c=S.cfg; const sy=gy*c.wtpY; return c.floorA*sy + c.floorB; }
+function floorDepthAt(gy){
+  const c=S.cfg;
+  if(!Number.isFinite(c.floorA)||!Number.isFinite(c.floorB))
+    throw new Error('该场景已按新管线重烘(无 floor_depth_A/B)——lightvolume_lab 依赖已废除的'
+      +'拟合地面,请改用 character_lighting_lab');
+  const sy=gy*c.wtpY; return c.floorA*sy + c.floorB;
+}
 
 // 预解码后的深度标量(near=小);最近邻足够(march 用)
 function depthAtUV(u,v){
@@ -469,6 +475,9 @@ function buildCfg(scene){
   const dc=scene.depthConfig, dm=dc.depth_mapping, sh=dc.shader, M=dc.M, R=M.R;
   return {
     invert: dm.invert?1:0, scale:dm.scale, offset:dm.offset,
+    // ⚠ 本工具是 character_lighting_lab 的**前身实验**(语义门已被移植走),地面高度仍按
+    // 已废除的最小二乘拟合直线 floor_depth_A/B 算。重烘过的场景不再导出这两个字段 →
+    // 这里会变 undefined → floorDepthAt 全程 NaN,画面**静默**错掉。宁可当场炸。
     floorA:sh.floor_depth_A, floorB:sh.floor_depth_B,
     ppu:M.ppu, cx:M.cx, cy:M.cy,
     W:scene.worldWidth, H:scene.worldHeight ?? (scene.worldWidth*S.bgH/S.bgW),

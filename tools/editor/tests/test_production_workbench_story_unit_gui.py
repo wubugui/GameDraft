@@ -50,14 +50,24 @@ from tools.production_workbench.runtime_debug import runtime_debug_snapshot_path
 from tools.editor.project_model import ProjectModel
 
 
-def _wait_for_qt(condition, *, timeout_sec: float = 5.0) -> None:
+def _wait_for_qt(condition, *, timeout_sec: float = 30.0) -> None:
+    """等一个 Qt 侧条件成立。
+
+    预算给到 30 秒而不是 5 秒：全套现在默认 `-n auto` 并行，整机满载时后台线程
+    （StoryUnitLoadThread 等）拿到 CPU 的时间会被拉长，5 秒预算在重负载下会边缘性
+    超时，表现为低频非确定性失败。这里等的是"线程跑完"，不是"性能达标"，把预算
+    放宽不会掩盖任何被测行为。
+    """
     deadline = time.monotonic() + timeout_sec
     while time.monotonic() < deadline:
         QApplication.processEvents()
         if condition():
             return
         time.sleep(0.01)
-    raise AssertionError("timed out waiting for Qt condition")
+    raise AssertionError(
+        f"timed out waiting for Qt condition after {timeout_sec}s "
+        "(重负载下常见；若稳定复现请查后台线程是否真的没结束)"
+    )
 
 
 def _table_text(table) -> str:
@@ -73,6 +83,32 @@ def _table_text(table) -> str:
 def _reload_story_tab(tab) -> None:
     tab.reload()
     _wait_for_qt(lambda: tab._story_thread is None)
+
+
+def _write_spatial_picker_project(root: Path) -> None:
+    """剧情单元工程 + 一个带真实背景文件的场景，供空间/素材选择器用。
+
+    不要把这个场景塞进共享的 `_write_story_unit_project`——
+    test_production_workbench_story_units / daily_check 系列对那份工程的
+    单元数与告警数有精确断言，加场景会横向污染。
+    """
+    _write_story_unit_project(root)
+    scene = {
+        "id": "teahouse",
+        "name": "茶馆",
+        "backgrounds": [{"image": "background.png", "x": 0, "y": 0}],
+        "hotspots": [],
+        "zones": [{"id": "counter", "label": "柜台", "x": 10, "y": 20, "width": 30, "height": 40}],
+        "spawnPoints": {},
+    }
+    scenes_dir = root / "public" / "assets" / "scenes"
+    scenes_dir.mkdir(parents=True, exist_ok=True)
+    (scenes_dir / "teahouse.json").write_text(
+        json.dumps(scene, ensure_ascii=False, indent=2) + "\n", encoding="utf-8",
+    )
+    runtime_scene = root / "public" / "resources" / "runtime" / "scenes" / "teahouse"
+    runtime_scene.mkdir(parents=True, exist_ok=True)
+    (runtime_scene / "background.png").write_bytes(_png_bytes(8, 8))
 
 
 class ProductionWorkbenchStoryUnitGuiTests(TestCase):
@@ -107,19 +143,21 @@ class ProductionWorkbenchStoryUnitGuiTests(TestCase):
             self.assertNotIn("advance", tab.edit_script_actions.toPlainText().splitlines())
 
     def test_spatial_and_asset_picker_sources_are_available(self) -> None:
-        root = Path.cwd()
-        window = WorkbenchWindow(root)
-        tab = window.story_tab
-        model = tab._load_picker_model()
-        scene = model.scenes["teahouse"]
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            _write_spatial_picker_project(root)
+            window = WorkbenchWindow(root)
+            tab = window.story_tab
+            model = tab._load_picker_model()
+            scene = model.scenes["teahouse"]
 
-        background = _resolve_scene_background_path(root, "teahouse", scene)
+            background = _resolve_scene_background_path(root, "teahouse", scene)
 
-        self.assertIsNotNone(background)
-        self.assertTrue(background.is_file() if background else False)
-        self.assertTrue(_asset_items(root))
-        self.assertIsInstance(_zone_items(model), list)
-        self.assertEqual(_fmt_point(10.0, 20.5), "10,20.5")
+            self.assertIsNotNone(background)
+            self.assertTrue(background.is_file() if background else False)
+            self.assertTrue(_asset_items(root))
+            self.assertIn("counter", [x["value"] for x in _zone_items(model)])
+            self.assertEqual(_fmt_point(10.0, 20.5), "10,20.5")
 
     def test_asset_picker_uses_fast_file_index_not_deep_audit(self) -> None:
         with TemporaryDirectory() as td:
@@ -297,17 +335,19 @@ class ProductionWorkbenchStoryUnitGuiTests(TestCase):
             self.assertEqual(guide_window_text, tab._workflow_guide_dialog.output.toPlainText())
 
     def test_planner_workbench_uses_search_picker_fields_not_combo_boxes(self) -> None:
-        root = Path.cwd()
-        window = WorkbenchWindow(root)
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            _write_story_unit_project(root)
+            window = WorkbenchWindow(root)
 
-        self.assertEqual(window.findChildren(QComboBox), [])
-        self.assertTrue(window.graph_tab.edit_composition.isReadOnly())
-        self.assertTrue(window.asset_candidate_tab.edit_review.isReadOnly())
-        self.assertTrue(window.asset_candidate_tab.edit_post_format.isReadOnly())
-        self.assertTrue(window.image_tab.edit_format.isReadOnly())
-        self.assertTrue(window.asset_task_tab.edit_category.isReadOnly())
-        self.assertTrue(window.asset_task_tab.edit_operation.isReadOnly())
-        self.assertTrue(window.asset_task_tab.edit_transparent.isReadOnly())
+            self.assertEqual(window.findChildren(QComboBox), [])
+            self.assertTrue(window.graph_tab.edit_composition.isReadOnly())
+            self.assertTrue(window.asset_candidate_tab.edit_review.isReadOnly())
+            self.assertTrue(window.asset_candidate_tab.edit_post_format.isReadOnly())
+            self.assertTrue(window.image_tab.edit_format.isReadOnly())
+            self.assertTrue(window.asset_task_tab.edit_category.isReadOnly())
+            self.assertTrue(window.asset_task_tab.edit_operation.isReadOnly())
+            self.assertTrue(window.asset_task_tab.edit_transparent.isReadOnly())
 
     def test_search_picker_filters_and_accepts_current_row(self) -> None:
         picker = SearchPickerDialog(
@@ -435,15 +475,17 @@ class ProductionWorkbenchStoryUnitGuiTests(TestCase):
             self.assertEqual(len(calls), 2)
 
     def test_busy_toolbar_rows_are_scrollable(self) -> None:
-        root = Path.cwd()
-        window = WorkbenchWindow(root)
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            _write_story_unit_project(root)
+            window = WorkbenchWindow(root)
 
-        toolbars = window.findChildren(QScrollArea, "workbenchScrollableToolbar")
+            toolbars = window.findChildren(QScrollArea, "workbenchScrollableToolbar")
 
-        self.assertGreaterEqual(len(toolbars), 6)
-        for toolbar in toolbars:
-            self.assertFalse(toolbar.verticalScrollBar().isVisible())
-            self.assertIsNotNone(toolbar.widget())
+            self.assertGreaterEqual(len(toolbars), 6)
+            for toolbar in toolbars:
+                self.assertFalse(toolbar.verticalScrollBar().isVisible())
+                self.assertIsNotNone(toolbar.widget())
 
     def test_open_reports_folder_creates_and_opens_report_root(self) -> None:
         with TemporaryDirectory() as td:

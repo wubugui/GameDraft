@@ -214,6 +214,9 @@ def laplace_inpaint(field: np.ndarray, known: np.ndarray, iters=400) -> np.ndarr
 def stage_depth(img_path: Path, cache_dir: Path, h: str, model: str = 'base') -> np.ndarray:
     cache = cache_dir / (f'raw_depth_{h}.npy' if model == 'base' else f'raw_depth_{h}_{model}.npy')
     if cache.exists():
+        # 阶段标签也要在缓存分支打:否则查看器的阶段清单会把"用了缓存"显示成"跳过",
+        # 让人以为深度没跑(实测就是这个误导)。
+        print(f'[depth] 用缓存 ({model})', flush=True)
         return np.load(cache)
     print(f'[depth] inferring with Depth Anything ({model})...', flush=True)
     from tools.character_lighting_lab.depth_estimator import DepthEstimator, MODEL_OPTIONS
@@ -430,6 +433,9 @@ def stage_hdr(rgb_srgb: np.ndarray, P: dict, sem_gate: np.ndarray | None = None)
     `base = rad × (1−mask)`(背景照明)。两张一路带到体素/probe。
     ⚠ 语义 mask 绝不能掺亮度——emitter conf 只作方法0的恢复驱动与 gain场可视化,不当 mask。"""
     linear = srgb_to_linear(rgb_srgb)
+    print(f'[hdr] 恢复方法 {int(P.get("hdr_method", 0))} '
+          f'(pa={float(P.get("hdr_pa", 0.7)):.2f}, maxEV={float(P.get("max_gain_ev", 0)):.2f})',
+          flush=True)
     luma100 = (linear @ LUMA_W) * 100.0
     # emitter 置信度(仅方法0恢复 + gain场热力;不乘语义,不当 mask)
     log_l = np.log2(np.maximum(luma100, 0.03))
@@ -927,6 +933,7 @@ def stage_character(P: dict, out_dir: Path):
     ch.mkdir(exist_ok=True)
     alb_p, nrm_p = ch / 'albedo.png', ch / 'normal.png'
     if alb_p.exists() and nrm_p.exists():
+        print('[char] 复用已有 albedo/normal', flush=True)   # 与 [depth] 一致:缓存也报阶段
         return
     atlas = Image.open(ROOT / 'public/resources/runtime/animation/player_anim/atlas.png').convert('RGBA')
     anim = json.loads((ROOT / 'public/resources/runtime/animation/player_anim/anim.json').read_text())
@@ -1279,6 +1286,8 @@ SHADING_DEFAULTS = dict(
     fold=1, miss_mode=0, nee=0,
     beta=0.0, amb=1.0,
     bulge=0.22, flatten=0.0,
+    # E 色度权重:0=只借场景明暗(luma)、角色保留自己颜色不被场景色染;1=完整彩色 E
+    eChroma=0.0,
 )
 
 
@@ -1290,6 +1299,43 @@ def _normalize_shading(shading: dict | None) -> dict:
         out[k] = int(v) if isinstance(SHADING_DEFAULTS[k], int) else float(v)
     out['mode'] = min(3, max(0, out['mode']))
     return out
+
+
+#: 固化进 probe 图集的 compose 输入(v3):改这些必须重导出照明,单存参数改不动已烤好的 E
+BAKED_INTO_ATLAS = ('nee', 'amb', 'miss_mode')
+
+
+def export_shading_params(name: str, shading: dict | None = None) -> Path:
+    """只更新已导出场景的 shading 块(运行时着色参数),**不碰 probe 图集/地面场/体素卷**。
+
+    与 export_runtime 的分工:导出照明=重新产出 probe 数据(固化 E),本函数=只存那几个
+    运行时小参数(beta/eChroma/bulge/flatten/mode/RT 那组)。因此拒绝三种情况,避免写出
+    「lighting.json 声称的值 ≠ 图集实际按其固化的值」这种自相矛盾的载荷:
+      1. 该场景还没导出过照明(无 lighting.json)——没有可打补丁的对象;
+      2. 载荷是旧版 v2——运行时本就禁用,单补参数救不回来,得重导出;
+      3. 改了 nee/amb/miss_mode——它们已烤进固化 E(见 BAKED_INTO_ATLAS),
+         只有重导出照明才能真正生效。
+    """
+    dest = ROOT / 'public' / 'resources' / 'runtime' / 'scenes' / name / 'lighting'
+    f = dest / 'lighting.json'
+    if not f.exists():
+        raise RuntimeError(f'{name} 还没导出过照明——先点「导出照明」完整导一次')
+    meta = json.loads(f.read_text())
+    if int(meta.get('version') or 0) < 3:
+        raise RuntimeError(
+            f'{name} 的载荷是旧版 v{meta.get("version")}(运行时已禁用)——'
+            f'需点「导出照明」重导出为 v3 固化,单存参数救不回来')
+    old = meta.get('shading') or {}
+    new = _normalize_shading(shading)
+    changed = [k for k in BAKED_INTO_ATLAS if old.get(k) != new[k]]
+    if changed:
+        raise RuntimeError(
+            f'{"/".join(changed)} 已固化进 probe 图集,单存参数改不动它——'
+            f'要改这些请点「导出照明」重导出')
+    meta['shading'] = new
+    f.write_text(json.dumps(meta, ensure_ascii=False, indent=1) + '\n')
+    print(f'[export-params] {f}')
+    return f
 
 
 def export_runtime(name: str, shading: dict | None = None) -> Path:
@@ -1334,16 +1380,26 @@ def export_runtime(name: str, shading: dict | None = None) -> Path:
         raw = np.frombuffer((src_dir / f'probes_{stem}.bin').read_bytes(), np.float16)
         return raw.reshape(Pn, K, ch)
 
+    # 导出即固化(v3):用当前 shading 的 nee/amb 把 4 分账(base/amb/emit/nee)compose 成
+    # 单一最终 E 的球谐系数——miss_mode=0 时着色是分账的线性组合,SH 域可精确合成。
+    # 游戏运行时只查这一块、不再逐帧组合(nee/miss_mode/amb 固化进 E,游戏侧不消费)。
+    # 实验室预览不受影响:viewer 读的是 OUT/ 的分账缓存,走自己的实时组合。
+    # miss_mode=1 的 /cov 是逐方向非线性、无法在 SH 域精确合成——按 miss_mode=0 近似并告警。
+    sh_c = _normalize_shading(shading)
+    _nee_on = sh_c['nee'] > 0
+    _amb_w = float(sh_c['amb'])
+    if sh_c['miss_mode'] > 0:
+        print('  [warn] miss_mode=1 无法在 SH 域精确固化(/cov 逐方向),按 miss_mode=0 近似导出')
+
     def _atlas4(stem: str, K: int) -> None:
-        """查看器 atlas4() 的离线版:列块 [base+cov | amb | emit | nee]。"""
-        main = _read_probe(stem, K, 4)
-        out = np.zeros((Pn, K * 4, 4), np.float16)
-        out[:, :K, :] = main
-        for bi, acc in enumerate(('amb', 'emit', 'nee')):
-            block = _read_probe(f'{stem}{acc}', K, 3)
-            sl = slice(K * (bi + 1), K * (bi + 2))
-            out[:, sl, :3] = block
-            out[:, sl, 3] = np.float16(1.0)
+        """固化:base + (nee开?nee:emit) + amb×权重 → 单块最终 E 球谐(K 列 RGBA,α 未用)。"""
+        base = _read_probe(stem, K, 4)[:, :, :3].astype(np.float32)
+        amb = _read_probe(f'{stem}amb', K, 3).astype(np.float32)
+        emit = _read_probe(f'{stem}emit', K, 3).astype(np.float32)
+        nee = _read_probe(f'{stem}nee', K, 3).astype(np.float32)
+        final = base + (nee if _nee_on else emit) + amb * _amb_w
+        out = np.zeros((Pn, K, 4), np.float16)
+        out[:, :, :3] = final.astype(np.float16)
         (dest / f'atlas_{"bin" if stem == "bins" else stem}.bin').write_bytes(out.tobytes())
 
     _atlas4('l1', 4)
@@ -1377,7 +1433,7 @@ def export_runtime(name: str, shading: dict | None = None) -> Path:
     Image.fromarray(rg).save(dest / 'ground_d.png', optimize=True)
 
     payload = dict(
-        version=2,
+        version=3,                             # v3:probe 图集为固化最终 E(单块球谐,非分账)
         background_sha1=bg_hash,               # 防腐门:游戏背景重画即失配禁用
         work=man['work'], cal=man['cal'], world=man['world'],
         probes={k: P[k] for k in ('nx', 'ny', 'nz')},

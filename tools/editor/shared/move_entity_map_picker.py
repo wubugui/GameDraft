@@ -385,7 +385,7 @@ class MoveEntityToMapPickerDialog(QDialog):
         _intro.setStyleSheet("color:#888;")
         theme.set_editor_font_role(_intro, theme.FONT_ROLE_HINT)
         _intro.setToolTip(
-            "「途经点」模式下左键逐个追加折线顶点；切换到「终点」模式后单击设定最终到达位置。\n"
+            "默认「终点」模式：单击设定最终到达位置。切到「途经点」模式后左键逐个追加折线顶点。\n"
             "终点为必填；未设置途经点时游戏中沿直线移动到终点。"
         )
         root.addWidget(_intro)
@@ -393,7 +393,7 @@ class MoveEntityToMapPickerDialog(QDialog):
         toolbar = QHBoxLayout()
         self._rb_vertex = QRadioButton("途经点模式")
         self._rb_dest = QRadioButton("终点模式")
-        self._rb_vertex.setChecked(True)
+        self._rb_dest.setChecked(True)   # 默认「终点模式」：终点是必填项，途经点可选
         grp = QButtonGroup(self)
         grp.addButton(self._rb_vertex)
         grp.addButton(self._rb_dest)
@@ -434,7 +434,7 @@ class MoveEntityToMapPickerDialog(QDialog):
         self._rb_vertex.toggled.connect(lambda _on: self._sync_mode_radio())
         self._rb_dest.toggled.connect(lambda _on: self._sync_mode_radio())
         self._sync_mode_radio()
-        QTimer.singleShot(0, self._view.fit_scene)
+        QTimer.singleShot(0, self._view, self._view.fit_scene)
         self._sync_label()
         remember_dialog_geometry(self, "move_entity_map_picker")
 

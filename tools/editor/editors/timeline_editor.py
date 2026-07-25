@@ -27,6 +27,7 @@ from ..project_model import ProjectModel
 from .. import theme as app_theme
 from ..shared import confirm
 from ..shared.audio_preview_selector import AudioIdPreviewSelector
+from ..shared.bubble_anchor_field import BubbleAnchorPickField, actor_for_emote_target
 from ..shared.id_ref_selector import IdRefSelector
 from ..shared.image_path_picker import CutsceneImagePathRow
 from ..shared.action_editor import (
@@ -36,6 +37,10 @@ from ..shared.action_editor import (
     _id_ref_rows_with_orphan,
 )
 from ..shared.cutscene_dialogue_speaker_row import CutsceneShowDialogueFields
+from ..shared.cutscene_dialogue_run_dialog import (
+    DialogueRunEditorDialog,
+    new_dialogue_step,
+)
 from ..shared.rich_text_field import RichTextTextEdit
 from ..shared.qt_icon_buttons import outline_row_tool_button, delete_standard_pixmap
 from ..shared.fonts import MONO_FONT_FAMILY
@@ -348,6 +353,24 @@ def estimate_step_duration_ms(step: dict) -> int | None:
     if t == "cameraZoom":
         return _float_ms(step, "duration", 500)
     return None
+
+
+def kind_palette(kind: str, theme_id: str) -> tuple[str, str, str]:
+    """步骤 kind 的三色：色条 / 徽章底 / 徽章字。
+
+    大纲行表头与缩略时间轴共用同一处色值——两边各存一份必然漂移。
+    """
+    if app_theme.is_dark_theme(theme_id):
+        if kind == "action":
+            return "#4dabf7", "#1864ab", "#ffffff"
+        if kind == "parallel":
+            return "#9775fa", "#5f3dc4", "#ffffff"
+        return "#51cf66", "#2f9e44", "#ffffff"
+    if kind == "action":
+        return "#0d6efd", "#cfe2ff", "#084298"
+    if kind == "parallel":
+        return "#6f42c1", "#e2d9f3", "#432874"
+    return "#198754", "#d1e7dd", "#0f5132"
 
 
 def format_duration_hint(ms: int | None) -> str:
@@ -698,6 +721,8 @@ class StepWidget(QFrame):
                 self,
                 on_change=self._emit_dirty,
                 portrait=self._step_data.get("portrait") if isinstance(self._step_data.get("portrait"), dict) else None,
+                bubble_anchor_y=self._step_data.get("bubbleAnchorY"),
+                bubble_scale=self._step_data.get("bubbleScale"),
             )
             self._widgets["__showDialogue__"] = wdg
             self._present_params_layout.addRow(wdg)
@@ -954,13 +979,23 @@ class StepWidget(QFrame):
             ox = float(ox_w.value())
         if isinstance(oy_w, QDoubleSpinBox):
             oy = float(oy_w.value())
-        d["subtitleEmote"] = {
+        spec: dict = {
             "target": tt,
             "emote": ee,
             "duration": dur,
             "anchorOffsetX": ox,
             "anchorOffsetY": oy,
         }
+        # 位置/大小：不勾覆盖就不写键（继承实体自算 / 全局 emoteBubbleScale）
+        bub_w = self._widgets.get("_subtitle_emote_bubble")
+        if isinstance(bub_w, BubbleAnchorPickField):
+            bay = bub_w.value()
+            if bay is not None:
+                spec["bubbleAnchorY"] = bay
+            bsc = bub_w.scale_value()
+            if bsc is not None:
+                spec["bubbleScale"] = bsc
+        d["subtitleEmote"] = spec
 
     def _subtitle_voice_initial(self) -> tuple[str, bool, bool, float]:
         raw = self._step_data.get("subtitleVoice")
@@ -1188,6 +1223,8 @@ class StepWidget(QFrame):
 
         se_raw = self._step_data.get("subtitleEmote")
         se_t, se_e, se_d, se_ox, se_oy = "", "", 1500.0, 0.0, 0.0
+        se_ay: object = None
+        se_sc: object = None
         if isinstance(se_raw, dict):
             se_t = str(se_raw.get("target") or "").strip()
             se_e = str(se_raw.get("emote") or "").strip()
@@ -1205,6 +1242,8 @@ class StepWidget(QFrame):
                 se_oy = float(se_raw.get("anchorOffsetY", 0))
             except (TypeError, ValueError):
                 se_oy = 0.0
+            se_ay = se_raw.get("bubbleAnchorY")
+            se_sc = se_raw.get("bubbleScale")
 
         emote_body = QWidget(self)
         emote_form = compact_form(QFormLayout(emote_body))
@@ -1256,6 +1295,18 @@ class StepWidget(QFrame):
         emote_form.addRow("duration (ms)", emote_dur)
         emote_form.addRow("anchorOffsetX", emote_ox)
         emote_form.addRow("anchorOffsetY", emote_oy)
+        emote_bubble = BubbleAnchorPickField(
+            self,
+            self._model,
+            se_ay,
+            lambda: actor_for_emote_target(self._model, bind_sid, emote_tgt.current_id()),
+            bubble_text_provider=emote_txt.emote_text,
+            committed_scale=se_sc,
+        )
+        emote_bubble.changed.connect(self._emit_dirty)
+        emote_tgt.value_changed.connect(lambda _v: emote_bubble.refresh_actor())
+        self._widgets["_subtitle_emote_bubble"] = emote_bubble
+        emote_form.addRow("位置/大小", emote_bubble)
 
         emote_section = _CollapsibleSection("字幕旁表情（可选）", emote_body, self)
         emote_section.setToolTip(
@@ -2002,6 +2053,8 @@ class StepOutlineFrame(QFrame):
         self._indent_px = indent_px
         self._zebra_alt = zebra_alt
         self._collapsed = True
+        self._focused = False
+        self._issue_level: str | None = None
         self._cutscene_id = (cutscene_id or "") or None
         self._step_snapshot = deepcopy(step)
         self._step: StepWidget | None = None
@@ -2057,6 +2110,20 @@ class StepOutlineFrame(QFrame):
         self._gantt.setScaledContents(False)
         self._gantt.setToolTip("相对时长（只读，仅供参考）")
         hl.addWidget(self._gantt)
+
+        # 从这一步排演：反复调参数的主循环，必须一键可达（藏进「⋯」菜单等于没有）
+        self._btn_play = outline_row_tool_button(
+            self._header, "从这一步开始播",
+            std=QStyle.StandardPixmap.SP_MediaPlay,
+            fixed_width=28,
+            fixed_height=26,
+        )
+        self._btn_play.setToolTip(
+            "从这一步开始播：游戏侧先把之前的步瞬时走一遍（建立底图/图层/黑边/相机/"
+            "演员站位，跳过等待、对白与音效），到本步恢复常速。"
+        )
+        self._btn_play.clicked.connect(self._on_play_from_here)
+        hl.addWidget(self._btn_play)
 
         self._btn_up = outline_row_tool_button(
             self._header, "上移",
@@ -2172,7 +2239,21 @@ class StepOutlineFrame(QFrame):
         self._idx_lbl.setMinimumWidth(width)
         self._idx_lbl.setMaximumWidth(width)
 
+    def _on_play_from_here(self) -> None:
+        ed = self._editor
+        if ed is not None:
+            ed.focus_outline(self)
+            ed.play_from_outline(self)
+
+    def issue_level(self) -> str | None:
+        """最近一次校验给本行打的标记（None / "warn" / "error"）；缩略条据此打红点。"""
+        return getattr(self, "_issue_level", None)
+
+    def is_collapsed(self) -> bool:
+        return self._collapsed
+
     def set_issue_marker(self, level: str | None, messages: list[str]) -> None:
+        self._issue_level = level or None
         if not level:
             self._issue_lbl.setText("")
             self._issue_lbl.setToolTip("")
@@ -2217,23 +2298,32 @@ class StepOutlineFrame(QFrame):
             else:
                 even, odd = "#ffffff", "#f1f3f5"
         bg = odd if self._zebra_alt else even
+        if self._focused:
+            # 当前焦点条：整行换底 + 左侧粗强调边。斑马纹/展开态都不够跳，
+            # 长列表里「我在改哪条」必须一眼认出来（这是滚动位置回答不了的问题）。
+            if app_theme.is_dark_theme(tid):
+                bg, accent = "#3d4250", "#ffd43b"
+            else:
+                bg, accent = "#fff3bf", "#e8590c"
+            self._header.setStyleSheet(
+                f"QFrame#cutsceneStepHeader {{ background-color: {bg};"
+                f" border-bottom: 1px solid {border};"
+                f" border-left: 3px solid {accent}; }}"
+            )
+            return
         self._header.setStyleSheet(
-            f"QFrame#cutsceneStepHeader {{ background-color: {bg}; border-bottom: 1px solid {border}; }}"
+            f"QFrame#cutsceneStepHeader {{ background-color: {bg};"
+            f" border-bottom: 1px solid {border}; border-left: 3px solid transparent; }}"
         )
+
+    def set_focused(self, on: bool) -> None:
+        if on != self._focused:
+            self._focused = on
+            self._refresh_header_surface()
 
     def _kind_palette(self, kind: str, theme_id: str) -> tuple[str, str, str]:
         """strip, badge_bg, badge_fg"""
-        if app_theme.is_dark_theme(theme_id):
-            if kind == "action":
-                return "#4dabf7", "#1864ab", "#ffffff"
-            if kind == "parallel":
-                return "#9775fa", "#5f3dc4", "#ffffff"
-            return "#51cf66", "#2f9e44", "#ffffff"
-        if kind == "action":
-            return "#0d6efd", "#cfe2ff", "#084298"
-        if kind == "parallel":
-            return "#6f42c1", "#e2d9f3", "#432874"
-        return "#198754", "#d1e7dd", "#0f5132"
+        return kind_palette(kind, theme_id)
 
     def refresh_header(self) -> None:
         tid = self._editor_theme_id()
@@ -2384,6 +2474,9 @@ class StepOutlineFrame(QFrame):
             self.refresh_header()
 
     def _toggle_collapse(self) -> None:
+        # 点表头即认定「我在看这条」——展开与收起都算（收起后仍是刚动过的那条）
+        if self._editor is not None:
+            self._editor.focus_outline(self)
         self.set_collapsed(not self._collapsed)
 
     def _get_owner_list_and_layout(self):
@@ -2475,12 +2568,31 @@ class StepOutlineFrame(QFrame):
         ed._relayout_outline_list(lst, layout)
         ed._refresh_outline_indices_and_zebra()
         self._emit_dirty()
-        QTimer.singleShot(0, lambda: ed._steps_scroll.ensureWidgetVisible(new_ol))
+        QTimer.singleShot(0, new_ol, lambda: ed._steps_scroll.ensureWidgetVisible(new_ol))
 
     def _populate_step_menu(self) -> None:
         ed = self._editor
         m = self._step_menu
         m.clear()
+
+        # 连续对白段：一次改一串台词，不必逐句展开卡片。
+        run = ed.dialogue_run_bounds(self)
+        if run is not None:
+            lo, hi = run
+            a_run = QAction(f"✎ 批量编辑这段对白（第 {lo + 1}–{hi + 1} 句）", self)
+            a_run.setToolTip(
+                "把与本步相邻的连续对白/字幕步摊成一列逐句改；单条可展开成"
+                "与外层完全一致的完整表单。"
+            )
+            a_run.triggered.connect(lambda: ed.edit_dialogue_run(self))
+            m.addAction(a_run)
+
+        a_new_block = QAction("＋ 在本步后插入对话块…", self)
+        a_new_block.setToolTip("开一个空对话块连着写几句，确认后一次性插到本步之后。")
+        a_new_block.setEnabled(self._parallel_parent is None)
+        a_new_block.triggered.connect(lambda: ed.new_dialogue_block(after_ol=self))
+        m.addAction(a_new_block)
+        m.addSeparator()
 
         if self._parallel_parent is None:
             for after, head in ((False, "在本步前插入"), (True, "在本步后插入")):
@@ -2562,11 +2674,396 @@ class StepOutlineFrame(QFrame):
 
 
 # ===============================================================
+# 对白分组行（纯视图聚合：连续对白收成一行）
+# ===============================================================
+
+class DialogueGroupHeader(QFrame):
+    """一段连续对白/字幕在列表里的组头行。
+
+    **纯视图层**：cutscene 的 schema 是平铺 `steps` 数组，运行时也只认平铺，
+    真加一层 group 会同时破坏往返契约与执行语义。所以这里只管「怎么显示」——
+    折叠即把组内各行 setVisible(False)，磁盘上仍是一条条独立的 step。
+    """
+
+    def __init__(self, editor: "TimelineEditor", parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setObjectName("cutsceneDialogueGroup")
+        self._editor = editor
+        self._collapsed = False
+        self._members: list[StepOutlineFrame] = []
+        self._key: str = ""
+
+        hl = QHBoxLayout(self)
+        hl.setContentsMargins(4, 2, 4, 2)
+        hl.setSpacing(6)
+
+        self._toggle = QToolButton(self)
+        self._toggle.setAutoRaise(True)
+        self._toggle.setFixedSize(22, 22)
+        self._toggle.setArrowType(Qt.ArrowType.DownArrow)
+        self._toggle.setToolTip("折叠/展开这段对白")
+        self._toggle.clicked.connect(self.toggle)
+        hl.addWidget(self._toggle)
+
+        self._title = QLabel(self)
+        tf = self._title.font()
+        tf.setBold(True)
+        self._title.setFont(tf)
+        hl.addWidget(self._title)
+
+        self._preview = QLabel(self)
+        self._preview.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        hl.addWidget(self._preview, stretch=1)
+
+        self._btn_play = outline_row_tool_button(
+            self, "从这段开头开始播",
+            std=QStyle.StandardPixmap.SP_MediaPlay, fixed_width=28, fixed_height=24)
+        self._btn_play.clicked.connect(self._play_group)
+        hl.addWidget(self._btn_play)
+
+        self._btn_edit = outline_row_tool_button(
+            self, "批量编辑这段对白",
+            std=QStyle.StandardPixmap.SP_FileDialogDetailedView,
+            fallback_text="✎", fixed_width=28, fixed_height=24)
+        self._btn_edit.clicked.connect(self._edit_group)
+        hl.addWidget(self._btn_edit)
+
+        self._btn_add = outline_row_tool_button(
+            self, "往这段末尾接写一句",
+            std=QStyle.StandardPixmap.SP_FileDialogNewFolder,
+            fallback_text="+", fixed_width=28, fixed_height=24)
+        self._btn_add.clicked.connect(self._append_line)
+        hl.addWidget(self._btn_add)
+
+    # ---- 内容 ----
+
+    def set_members(self, members: list["StepOutlineFrame"], key: str) -> None:
+        self._members = list(members)
+        self._key = key
+        self.refresh_text()
+
+    def group_key(self) -> str:
+        return self._key
+
+    def members(self) -> list["StepOutlineFrame"]:
+        return list(self._members)
+
+    def refresh_text(self) -> None:
+        n = len(self._members)
+        self._title.setText(f"对白 ×{n}")
+        first = ""
+        if self._members:
+            try:
+                d = self._members[0]._header_dict()
+                first = str(d.get("text") or "").replace("\n", " ")
+            except Exception:  # noqa: BLE001
+                first = ""
+        if len(first) > 42:
+            first = first[:42] + "…"
+        self._preview.setText(first)
+        idx = ""
+        ed = self._editor
+        if ed is not None and self._members:
+            try:
+                lo = ed._step_outlines.index(self._members[0]) + 1
+                hi = ed._step_outlines.index(self._members[-1]) + 1
+                idx = f"第 {lo}–{hi} 步"
+            except ValueError:
+                idx = ""
+        self.setToolTip(f"{idx}：{n} 句连续对白/字幕。点箭头或标题折叠整段。")
+        self.refresh_surface()
+
+    def refresh_surface(self) -> None:
+        tid = app_theme.current_theme_id()
+        ed = self._editor
+        if ed is not None and getattr(ed, "_theme_id", None) in app_theme.ALL_THEME_IDS:
+            tid = str(ed._theme_id)
+        if app_theme.is_dark_theme(tid):
+            bg, fg, border = "#2f3a33", "#8ce99a", "#454b54"
+        else:
+            bg, fg, border = "#e6fcf5", "#0b7285", "#dee2e6"
+        self.setStyleSheet(
+            f"QFrame#cutsceneDialogueGroup {{ background-color: {bg};"
+            f" border-bottom: 1px solid {border}; border-left: 3px solid {fg}; }}"
+        )
+        self._title.setStyleSheet(f"color: {fg};")
+        muted = "#a0a0a0" if app_theme.is_dark_theme(tid) else "#666666"
+        self._preview.setStyleSheet(f"color: {muted};")
+
+    # ---- 折叠 ----
+
+    def is_collapsed(self) -> bool:
+        return self._collapsed
+
+    def set_collapsed(self, collapsed: bool) -> None:
+        self._collapsed = bool(collapsed)
+        self._toggle.setArrowType(
+            Qt.ArrowType.RightArrow if self._collapsed else Qt.ArrowType.DownArrow)
+        for m in self._members:
+            try:
+                m.setVisible(not self._collapsed)
+            except RuntimeError:
+                pass
+        ed = self._editor
+        if ed is not None:
+            ed.remember_dialogue_group_state()
+
+    def toggle(self) -> None:
+        self.set_collapsed(not self._collapsed)
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:  # type: ignore[override]
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.toggle()
+        super().mousePressEvent(event)
+
+    # ---- 动作 ----
+
+    def _first_member(self) -> "StepOutlineFrame | None":
+        return self._members[0] if self._members else None
+
+    def _play_group(self) -> None:
+        ol = self._first_member()
+        if ol is not None and self._editor is not None:
+            self._editor.play_from_outline(ol)
+
+    def _edit_group(self) -> None:
+        ol = self._first_member()
+        if ol is not None and self._editor is not None:
+            self._editor.edit_dialogue_run(ol)
+
+    def _append_line(self) -> None:
+        if self._members and self._editor is not None:
+            self._editor.append_line_to_group(self._members[-1])
+
+
+# ===============================================================
+# 缩略时间轴（顶层步骤的横向总览条）
+# ===============================================================
+
+class _MinimapCell:
+    """缩略条上的一格 = 一个顶层步。"""
+
+    __slots__ = ("kind", "ms", "summary", "issue", "x", "w")
+
+    def __init__(self, kind: str, ms: int | None, summary: str, issue: str | None):
+        self.kind = kind
+        self.ms = ms
+        self.summary = summary
+        self.issue = issue          # None / "warn" / "error"
+        self.x = 0.0                # 布局后填：像素左沿
+        self.w = 0.0                # 布局后填：像素宽
+
+
+class StepMinimapBar(QWidget):
+    """顶层步骤的横向缩略总览：一格一步、宽度按估时、颜色按 kind。
+
+    存在理由是两个纵向列表天然给不了的东西：
+    1. **我翻到哪了** —— 叠一层当前视口区间指示，滚动时实时跟随；
+    2. **整段节奏什么形状** —— 宽度按估时（sqrt 压缩，免得一个 14s 的 kenBurns 吃掉整条），
+       等待/对白这类"不定"时长画虚线格，一眼看出哪儿堆了慢镜、哪儿是连珠炮对白。
+
+    点击某格 = 跳到该步（滚动 + 展开）。
+    """
+
+    cell_clicked = Signal(int)
+
+    #: 每格最小像素宽——再密也要点得中
+    _MIN_W = 5.0
+    #: "不定"时长（对白/等待点击）按此毫秒参与分宽：约等于念一句话
+    _INDETERMINATE_MS = 2500
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._cells: list[_MinimapCell] = []
+        self._theme_id: str = app_theme.current_theme_id()
+        self._current: int = -1
+        self._vp_first: int = -1
+        self._vp_last: int = -2
+        self._hover: int = -1
+        #: 游戏正在播的顶层步（轮询 __gameDevAPI.getCutscenePlayback 得来）；-1 = 没在播
+        self._playhead: int = -1
+        self.setFixedHeight(22)
+        self.setMouseTracking(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip("")
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+    # ---- 数据入口 ----
+
+    def set_cells(self, cells: list[_MinimapCell]) -> None:
+        self._cells = cells
+        self._relayout()
+        self.update()
+
+    def set_theme(self, theme_id: str) -> None:
+        self._theme_id = theme_id
+        self.update()
+
+    def set_current(self, idx: int) -> None:
+        if idx != self._current:
+            self._current = idx
+            self.update()
+
+    def set_viewport(self, first: int, last: int) -> None:
+        if (first, last) != (self._vp_first, self._vp_last):
+            self._vp_first, self._vp_last = first, last
+            self.update()
+
+    def set_playhead(self, idx: int) -> None:
+        """游戏播到第 idx 个顶层步；-1 = 没在播（清除播放头）。"""
+        if idx != self._playhead:
+            self._playhead = idx
+            self.update()
+
+    # ---- 布局 ----
+
+    def _weight(self, ms: int | None) -> float:
+        base = self._INDETERMINATE_MS if ms is None else max(int(ms), 0)
+        # sqrt 压缩：长镜头仍然更宽，但不至于把几十个短步挤成看不见的线
+        return (max(base, 120)) ** 0.5
+
+    def _relayout(self) -> None:
+        n = len(self._cells)
+        if n == 0:
+            return
+        avail = max(self.width() - 2, n * self._MIN_W)
+        weights = [self._weight(c.ms) for c in self._cells]
+        total = sum(weights) or 1.0
+        # 先按权重分，再抬到最小宽；抬高的部分从"富余"格里按比例扣回，保证总宽不溢出
+        raw = [avail * w / total for w in weights]
+        widths = [max(r, self._MIN_W) for r in raw]
+        over = sum(widths) - avail
+        if over > 0:
+            slack = [(i, widths[i] - self._MIN_W) for i in range(n)]
+            pool = sum(s for _i, s in slack) or 1.0
+            for i, s in slack:
+                widths[i] -= over * (s / pool)
+        x = 1.0
+        for c, w in zip(self._cells, widths):
+            c.x, c.w = x, max(w, 1.0)
+            x += c.w
+
+    def resizeEvent(self, event) -> None:  # type: ignore[override]
+        super().resizeEvent(event)
+        self._relayout()
+
+    def _cell_at(self, px: float) -> int:
+        for i, c in enumerate(self._cells):
+            if c.x <= px < c.x + c.w:
+                return i
+        return -1
+
+    # ---- 交互 ----
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:  # type: ignore[override]
+        if event.button() == Qt.MouseButton.LeftButton:
+            i = self._cell_at(event.position().x())
+            if i >= 0:
+                self.cell_clicked.emit(i)
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:  # type: ignore[override]
+        i = self._cell_at(event.position().x())
+        if i != self._hover:
+            self._hover = i
+            if 0 <= i < len(self._cells):
+                c = self._cells[i]
+                self.setToolTip(
+                    f"#{i + 1}  {c.kind.upper()}  {format_duration_hint(c.ms)}\n{c.summary}"
+                )
+            else:
+                self.setToolTip("")
+            self.update()
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event) -> None:  # type: ignore[override]
+        if self._hover != -1:
+            self._hover = -1
+            self.update()
+        super().leaveEvent(event)
+
+    # ---- 绘制 ----
+
+    def paintEvent(self, event) -> None:  # type: ignore[override]
+        from PySide6.QtGui import QPainter, QColor, QPen
+        dark = app_theme.is_dark_theme(self._theme_id)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        h = self.height()
+
+        track = QColor("#2b2f33") if dark else QColor("#e9ecef")
+        p.fillRect(self.rect(), track)
+
+        if not self._cells:
+            p.setPen(QColor("#868e96"))
+            p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "（无步骤）")
+            p.end()
+            return
+
+        # 视口区间底色：先铺，免得盖住格子
+        if 0 <= self._vp_first <= self._vp_last < len(self._cells):
+            a = self._cells[self._vp_first]
+            b = self._cells[self._vp_last]
+            vp = QColor("#ffffff") if dark else QColor("#000000")
+            vp.setAlpha(28 if dark else 18)
+            p.fillRect(int(a.x) - 1, 0, int(b.x + b.w - a.x) + 2, h, vp)
+
+        top, cell_h = 4, h - 8
+        for i, c in enumerate(self._cells):
+            strip, _bb, _bf = kind_palette(c.kind, self._theme_id)
+            col = QColor(strip)
+            x, w = int(c.x), max(int(c.w), 1)
+            if c.ms is None:
+                # 不定时长：空心格，与固定时长的实心块区分开
+                col.setAlpha(90)
+                p.fillRect(x, top, w, cell_h, col)
+                pen = QPen(QColor(strip))
+                pen.setWidth(1)
+                p.setPen(pen)
+                p.drawRect(x, top, max(w - 1, 1), cell_h - 1)
+            else:
+                p.fillRect(x, top, w, cell_h, col)
+
+            if c.issue:
+                bad = QColor("#fa5252") if c.issue == "error" else QColor("#fab005")
+                p.fillRect(x, 0, max(w, 2), 3, bad)
+
+            if i == self._hover and w >= 2:
+                hl = QColor("#ffffff") if dark else QColor("#000000")
+                hl.setAlpha(60)
+                p.fillRect(x, top, w, cell_h, hl)
+
+        # 当前步：整高描边
+        if 0 <= self._current < len(self._cells):
+            c = self._cells[self._current]
+            pen = QPen(QColor("#ffd43b") if dark else QColor("#e8590c"))
+            pen.setWidth(2)
+            p.setPen(pen)
+            p.drawRect(int(c.x), 1, max(int(c.w) - 1, 2), h - 3)
+
+        # 播放头：游戏此刻正在播的那一步——实心填充 + 左沿竖线，
+        # 与"当前编辑步"的空心描边分得开（两者常常不是同一步）。
+        if 0 <= self._playhead < len(self._cells):
+            c = self._cells[self._playhead]
+            glow = QColor("#ff6b6b") if dark else QColor("#c92a2a")
+            fill = QColor(glow)
+            fill.setAlpha(120)
+            p.fillRect(int(c.x), top, max(int(c.w), 2), cell_h, fill)
+            pen = QPen(glow)
+            pen.setWidth(2)
+            p.setPen(pen)
+            p.drawLine(int(c.x), 0, int(c.x), h)
+
+        p.end()
+
+
+# ===============================================================
 # TimelineEditor — 主 Tab
 # ===============================================================
 
 class TimelineEditor(QWidget):
-    play_requested = Signal(str)
+    #: (cutscene_id, from_step)；from_step=0 整段常速播，>0 时前 N 个顶层步瞬时快进后从该步排演
+    play_requested = Signal(str, int)
 
     # 步骤剪贴板（类级：可跨过场、跨编辑器实例粘贴一步的深拷贝）。
     _step_clipboard: dict | None = None
@@ -2595,6 +3092,9 @@ class TimelineEditor(QWidget):
         self._overlay_selectors_fp_cache = ""
         self._overlay_selectors_fp_valid = False
         self._dnd_cutscene_step_source: StepOutlineFrame | None = None
+        # 对白分组组头（纯视图行，不进 _step_outlines）与当前焦点条
+        self._dialogue_groups: list[DialogueGroupHeader] = []
+        self._focused_outline: StepOutlineFrame | None = None
         # 内容编辑（逐键）触发的大纲序号/斑马/摘要全量刷新去抖；结构性操作仍即时刷新。
         self._index_refresh_debounce = QTimer(self)
         self._index_refresh_debounce.setSingleShot(True)
@@ -2762,6 +3262,16 @@ class TimelineEditor(QWidget):
         self._search_matches: list[StepOutlineFrame] = []
         self._search_match_idx: int = -1
 
+        # 缩略时间轴：滚动区的「地图」——常驻在列表正上方，滚到哪、整段什么形状一眼可见。
+        self._minimap = StepMinimapBar()
+        self._minimap.setToolTip(
+            "整段缩略：一格一个顶层步，宽度按估时、颜色按 kind、虚框=时长不定；"
+            "浅色区间=当前可视范围，黄框=当前步，红格=游戏此刻正播到的步；"
+            "格顶红/橙点=校验问题。点击跳到该步。"
+        )
+        self._minimap.cell_clicked.connect(self._on_minimap_cell_clicked)
+        rl.addWidget(self._minimap)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         self._steps_scroll = scroll
@@ -2770,8 +3280,22 @@ class TimelineEditor(QWidget):
         self._steps_layout.setSpacing(2)
         scroll.setWidget(self._steps_container)
         rl.addWidget(scroll, stretch=1)
+        # 滚动即更新视口指示；只重绘不重算格子，54 步下无感。
+        scroll.verticalScrollBar().valueChanged.connect(self._sync_minimap_viewport)
 
         step_btns = QHBoxLayout()
+        # 常用预设放最前：新建一步的绝大多数场合都落在这几个组合里，
+        # 不必再从空白 waitClick 去 16 种类型里翻。
+        btn_block = QPushButton("+ 对话块")
+        btn_block.setToolTip("开一个空对话块连着写几句，确认后一次性追加到末尾")
+        btn_block.clicked.connect(lambda: self.new_dialogue_block(after_ol=None))
+        step_btns.addWidget(btn_block)
+        self._btn_preset = QToolButton()
+        self._btn_preset.setText("+ 常用…")
+        self._btn_preset.setToolTip("按常用组合一键插入（对白 / 字幕 / 音效 / 插画 / 黑场 / 黑边 / 推镜头）")
+        self._btn_preset.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._build_preset_menu(self._btn_preset)
+        step_btns.addWidget(self._btn_preset)
         add_present = QPushButton("+ Present")
         add_present.clicked.connect(lambda: self._add_step("present"))
         add_action = QPushButton("+ Action")
@@ -2952,7 +3476,7 @@ class TimelineEditor(QWidget):
         self._relayout_outline_list(lst, layout)
         self._refresh_outline_indices_and_zebra()
         self.mark_pending_changes()
-        QTimer.singleShot(0, lambda: self._steps_scroll.ensureWidgetVisible(new_ol))
+        QTimer.singleShot(0, new_ol, lambda: self._steps_scroll.ensureWidgetVisible(new_ol))
 
     def paste_step_append(self) -> None:
         """把剪贴板步骤追加到顶层末尾（覆盖空过场 / 末尾粘贴场景）。"""
@@ -2966,11 +3490,14 @@ class TimelineEditor(QWidget):
         self._steps_layout.addWidget(new_ol)
         self._refresh_outline_indices_and_zebra()
         self.mark_pending_changes()
-        QTimer.singleShot(0, lambda: self._steps_scroll.ensureWidgetVisible(new_ol))
+        QTimer.singleShot(0, new_ol, lambda: self._steps_scroll.ensureWidgetVisible(new_ol))
 
     def on_editor_theme_changed(self, theme_id: str) -> None:
         self._theme_id = theme_id
+        self._minimap.set_theme(theme_id)
         self._refresh_outline_indices_and_zebra()
+        for h in self._dialogue_groups:
+            h.refresh_surface()
 
     def _reorder_outline_to_index(self, outline: StepOutlineFrame, new_index: int) -> bool:
         """把 outline 移动到同级列表的最终下标 new_index。
@@ -3100,6 +3627,7 @@ class TimelineEditor(QWidget):
         self._steps_scroll.ensureWidgetVisible(ol)
         ol.flash_highlight()
         self._search_count.setText(f"{self._search_match_idx + 1}/{n}")
+        self.focus_outline(ol)
 
     def _reapply_step_filter_if_active(self) -> None:
         box = getattr(self, "_step_search", None)
@@ -3111,10 +3639,13 @@ class TimelineEditor(QWidget):
         if not cid:
             return
         expanded = [i for i, ol in enumerate(self._step_outlines) if not ol._collapsed]
-        self._view_state_by_cid[cid] = {
-            "expanded": expanded,
-            "scroll": self._steps_scroll.verticalScrollBar().value(),
-        }
+        # 就地更新而非整体赋值：分组折叠态也存在这个 dict 里，覆盖会把它抹掉
+        st = self._view_state_by_cid.setdefault(cid, {})
+        st["expanded"] = expanded
+        st["scroll"] = self._steps_scroll.verticalScrollBar().value()
+        st["groups_collapsed"] = [
+            h.group_key() for h in self._dialogue_groups if h.is_collapsed()
+        ]
 
     def _remembered_expanded_indices(self, cid: str | None) -> set[int]:
         st = self._view_state_by_cid.get(cid or "")
@@ -3198,10 +3729,13 @@ class TimelineEditor(QWidget):
         self._validate_summary.setToolTip(
             "\n".join(f"[{it.severity}] {it.message}" for it in all_issues)
             if all_issues else "本过场未发现问题。")
+        # 问题标记刚落到行上：重建缩略条，红/橙点随之出现在对应格顶。
+        self._rebuild_minimap()
         if scroll_to_first and first_row is not None:
             ol = self._step_outlines[first_row]
             self._steps_scroll.ensureWidgetVisible(ol)
             ol.flash_highlight()
+            self._minimap.set_current(first_row)
 
     def _autoscroll_steps_for_drag(self) -> None:
         """拖拽重排时，光标接近步骤滚动区上下边缘则自动滚动，便于远距离搬运。"""
@@ -3227,6 +3761,236 @@ class TimelineEditor(QWidget):
         # 结构变更（增删/重排/复制粘贴/合并）都经此处：重跑过滤，使命中集只含存活行、
         # 新步骤按当前关键词决定可见性，避免命中集里残留已 deleteLater 的悬空引用。
         self._reapply_step_filter_if_active()
+        self._rebuild_dialogue_groups()
+        self._rebuild_minimap()
+        # 重排/增删后焦点条对象没变（高亮跟着走），但缩略条的当前格是下标、会过期
+        foc = getattr(self, "_focused_outline", None)
+        if foc is not None and any(foc is x for x in self._iter_all_step_outlines()):
+            self._sync_minimap_current(foc)
+
+    # ----- 缩略时间轴 -----
+
+    def _rebuild_minimap(self) -> None:
+        """重算格子。与大纲序号/斑马同一时机（已去抖），逐键编辑不会每字符重算。"""
+        mm = getattr(self, "_minimap", None)
+        if mm is None:
+            return
+        cells: list[_MinimapCell] = []
+        for ol in self._step_outlines:
+            try:
+                d = ol._header_dict()
+            except Exception:  # noqa: BLE001 — 缩略条是辅助视图，绝不能因坏数据打断编辑
+                d = {"kind": "present"}
+            kind = str(d.get("kind", "present"))
+            if kind == "parallel" and ol._step is not None:
+                summary = parallel_tracks_summary(
+                    [c.to_dict() for c in ol._step._child_outlines])
+            else:
+                summary = step_summary_line(d)
+            cells.append(_MinimapCell(
+                kind=kind,
+                ms=estimate_step_duration_ms(d),
+                summary=summary,
+                issue=ol.issue_level(),
+            ))
+        mm.set_cells(cells)
+        self._sync_minimap_viewport()
+
+    def _sync_minimap_viewport(self) -> None:
+        """把滚动区当前可见的步区间标到缩略条上——「我翻到哪了」的答案。"""
+        mm = getattr(self, "_minimap", None)
+        sc = getattr(self, "_steps_scroll", None)
+        if mm is None or sc is None or not self._step_outlines:
+            return
+        vp = sc.viewport()
+        top, bottom = 0, vp.height()
+        first, last = -1, -2
+        for i, ol in enumerate(self._step_outlines):
+            if not ol.isVisible():
+                continue
+            y = ol.mapTo(vp, QPoint(0, 0)).y()
+            if y + ol.height() < top or y > bottom:
+                continue
+            if first < 0:
+                first = i
+            last = i
+        mm.set_viewport(first, last)
+
+    # ----- 对白分组（纯视图聚合） -----
+
+    #: 少于这个句数不成组——两句以下收起来反而更难找
+    _GROUP_MIN = 2
+
+    def _dialogue_group_spans(self) -> list[tuple[int, int]]:
+        """顶层里所有连续对白/字幕区间 [lo, hi]（长度 ≥ _GROUP_MIN）。"""
+        spans: list[tuple[int, int]] = []
+        lo: int | None = None
+        for i, ol in enumerate(self._step_outlines):
+            if self._is_dialogue_step(ol):
+                if lo is None:
+                    lo = i
+            else:
+                if lo is not None and i - lo >= self._GROUP_MIN:
+                    spans.append((lo, i - 1))
+                lo = None
+        n = len(self._step_outlines)
+        if lo is not None and n - lo >= self._GROUP_MIN:
+            spans.append((lo, n - 1))
+        return spans
+
+    @staticmethod
+    def _group_key_for(members: list["StepOutlineFrame"]) -> str:
+        """分组的记忆键：用首句正文而非下标——增删步后下标全变，按正文才认得回来。"""
+        if not members:
+            return ""
+        try:
+            d = members[0]._header_dict()
+            return f"{d.get('type', '')}|{str(d.get('text') or '')[:40]}"
+        except Exception:  # noqa: BLE001
+            return ""
+
+    def _rebuild_dialogue_groups(self) -> None:
+        """重建组头行。与序号/斑马同一时机（已去抖）。
+
+        `_step_outlines` 结构**不动**——组头只是额外插进布局的装饰行，
+        序号、拖拽、to_dict、Apply 全都照旧看平铺列表。
+        """
+        if getattr(self, "_loading_ui", False):
+            return
+        prev_state = {h.group_key(): h.is_collapsed()
+                      for h in getattr(self, "_dialogue_groups", [])}
+        for h in getattr(self, "_dialogue_groups", []):
+            self._steps_layout.removeWidget(h)
+            h.setParent(None)
+            h.deleteLater()
+        self._dialogue_groups = []
+
+        # 过滤激活时不分组：过滤本身就是另一种视图，组头会和命中集打架
+        box = getattr(self, "_step_search", None)
+        if box is not None and box.text().strip():
+            return
+
+        remembered = self._remembered_group_collapsed(self._current_cutscene_id())
+        for lo, hi in self._dialogue_group_spans():
+            members = self._step_outlines[lo:hi + 1]
+            header = DialogueGroupHeader(self, self._steps_container)
+            key = self._group_key_for(members)
+            header.set_members(members, key)
+            at = self._steps_layout.indexOf(members[0])
+            if at < 0:
+                at = 0
+            self._steps_layout.insertWidget(at, header)
+            self._dialogue_groups.append(header)
+            # 记忆优先级：本次会话内的现状 > 该过场记住的状态 > 展开
+            if key in prev_state:
+                header.set_collapsed(prev_state[key])
+            elif key in remembered:
+                header.set_collapsed(True)
+
+    def _remembered_group_collapsed(self, cid: str | None) -> set[str]:
+        st = self._view_state_by_cid.get(cid or "")
+        if not st:
+            return set()
+        return {str(k) for k in st.get("groups_collapsed", [])}
+
+    def remember_dialogue_group_state(self) -> None:
+        """把当前折叠的分组记进本过场的视图状态（切走再回来还是这样）。"""
+        cid = self._current_cutscene_id()
+        if not cid:
+            return
+        st = self._view_state_by_cid.setdefault(cid, {})
+        st["groups_collapsed"] = [
+            h.group_key() for h in getattr(self, "_dialogue_groups", []) if h.is_collapsed()
+        ]
+
+    def _refresh_dialogue_group_texts(self) -> None:
+        for h in getattr(self, "_dialogue_groups", []):
+            try:
+                h.refresh_text()
+            except RuntimeError:
+                pass
+
+    def append_line_to_group(self, after_ol: "StepOutlineFrame") -> None:
+        """往某段对白末尾接写一句（继承该句的说话人/立绘设置）。"""
+        try:
+            d = after_ol.to_dict()
+        except Exception:  # noqa: BLE001
+            d = {"kind": "present", "type": "showDialogue"}
+        step = deepcopy(d)
+        step["text"] = ""
+        if str(step.get("type")) == "showDialogue":
+            step.setdefault("speaker", "")
+        self.insert_steps_after(after_ol, [step], expand_first=True)
+
+    # ----- 当前焦点条（「我在改哪条」——长列表里唯一一眼可认的锚） -----
+
+    def focus_outline(self, ol: "StepOutlineFrame | None") -> None:
+        """把强高亮移到 ol；同时只有一条焦点。ol=None 则清除。
+
+        所有「跳到某步」的入口都要过这里：点表头、展开、缩略条点击、搜索命中、
+        全局搜索落点、条目播放键。否则用户跳过去了却认不出落在哪行。
+        """
+        prev = getattr(self, "_focused_outline", None)
+        if prev is ol:
+            if ol is not None:
+                self._sync_minimap_current(ol)
+            return
+        if prev is not None and any(prev is x for x in self._iter_all_step_outlines()):
+            try:
+                prev.set_focused(False)
+            except RuntimeError:
+                pass          # 已析构：忽略（结构操作后旧引用可能失效）
+        self._focused_outline = ol
+        if ol is not None:
+            ol.set_focused(True)
+            self._sync_minimap_current(ol)
+
+    def _sync_minimap_current(self, ol: "StepOutlineFrame") -> None:
+        """焦点条对应的顶层步同步到缩略条（并行子轨归其所属顶层步）。"""
+        mm = getattr(self, "_minimap", None)
+        if mm is None:
+            return
+        top = ol
+        while top._parallel_parent is not None:
+            owner = top._parallel_parent._outline_frame
+            if owner is None or owner is top:
+                break
+            top = owner
+        for i, x in enumerate(self._step_outlines):
+            if x is top:
+                mm.set_current(i)
+                return
+
+    def set_playback_position(self, cutscene_id: str, path: str | None) -> None:
+        """主窗轮询游戏后推进来：把播放头点到缩略条上。
+
+        `path` 是运行时的步路径（"7" / "32.p1"）——取首段即顶层下标；
+        过场 id 与当前正在编辑的不一致时不点（别在 A 段上画 B 段的播放头）。
+        """
+        mm = getattr(self, "_minimap", None)
+        if mm is None:
+            return
+        cur = (self._current_cutscene_id() or "").strip()
+        if not path or not cur or (cutscene_id or "").strip() != cur:
+            mm.set_playhead(-1)
+            return
+        head = str(path).split(".", 1)[0]
+        try:
+            idx = int(head)
+        except ValueError:
+            mm.set_playhead(-1)
+            return
+        mm.set_playhead(idx if 0 <= idx < len(self._step_outlines) else -1)
+
+    def _on_minimap_cell_clicked(self, idx: int) -> None:
+        if not (0 <= idx < len(self._step_outlines)):
+            return
+        ol = self._step_outlines[idx]
+        if ol.is_collapsed():
+            ol.set_collapsed(False)
+        self._steps_scroll.ensureWidgetVisible(ol)
+        ol.flash_highlight()
+        self.focus_outline(ol)
 
     def _refresh_parallel_track_zebra(self) -> None:
         for i, top in enumerate(self._step_outlines):
@@ -3282,7 +4046,7 @@ class TimelineEditor(QWidget):
         super().showEvent(event)
         if self._scene_model_refresh_pending_while_hidden:
             self._scene_model_refresh_pending_while_hidden = False
-            QTimer.singleShot(0, self._run_debounced_scene_model_refresh)
+            QTimer.singleShot(0, self, self._run_debounced_scene_model_refresh)
 
     def mark_pending_changes(self, *args) -> None:
         if self._loading_ui:
@@ -3397,6 +4161,7 @@ class TimelineEditor(QWidget):
                 p.ensureWidgetVisible(ol, 48, 48)
                 break
             p = p.parentWidget()
+        self.focus_outline(ol)
         return True
 
     def _on_target_scene_changed(self, sid: str) -> None:
@@ -3501,6 +4266,8 @@ class TimelineEditor(QWidget):
         self, steps: list[dict], *, expanded_indices: set[int] | None = None,
     ) -> None:
         self._overlay_selectors_fp_valid = False
+        # 焦点引用必须先断：下面整批 deleteLater，留着会变悬空指针
+        self._focused_outline = None
         for ol in self._step_outlines:
             self._steps_layout.removeWidget(ol)
             ol.deleteLater()
@@ -3527,6 +4294,13 @@ class TimelineEditor(QWidget):
             self._steps_layout.addWidget(ol)
         self._refresh_outline_indices_and_zebra()
         self._reapply_step_filter_if_active()
+        # 载入期 _loading_ui 为 True，上面那轮分组重建被门掉了；载入落定后补建一次。
+        # 视口区间同理——要等布局稳定才量得准。
+        QTimer.singleShot(0, self, self._post_rebuild_view_sync)
+
+    def _post_rebuild_view_sync(self) -> None:
+        self._rebuild_dialogue_groups()
+        self._sync_minimap_viewport()
 
     def _current_cutscene_id(self) -> str | None:
         if 0 <= self._current_idx < len(self._model.cutscenes):
@@ -3665,21 +4439,150 @@ class TimelineEditor(QWidget):
         self._overlay_selectors_fp_valid = True
 
     def _add_step(self, kind: str) -> None:
+        self._append_steps([_new_step_data(kind)])
+
+    def insert_steps_after(
+        self, after_ol: "StepOutlineFrame | None", datas: list[dict],
+        *, expand_first: bool = False,
+    ) -> None:
+        """在某个顶层步之后插入若干步；after_ol=None 则追加到末尾。"""
+        if not datas:
+            return
+        if after_ol is None or after_ol._parallel_parent is not None:
+            self._append_steps(datas, expand_first=expand_first)
+            return
+        try:
+            at = self._step_outlines.index(after_ol) + 1
+        except ValueError:
+            self._append_steps(datas, expand_first=expand_first)
+            return
         self.push_undo_snapshot()
-        ol = StepOutlineFrame(
-            _new_step_data(kind), self._model, self, self._steps_container,
-            indent_px=0,
-            parallel_parent=None,
-            zebra_alt=(len(self._step_outlines) % 2 == 1),
-            cutscene_id=self._current_cutscene_id(),
-        )
-        ol.contentChanged.connect(self._on_any_outline_changed)
-        self._step_outlines.append(ol)
-        self._steps_layout.addWidget(ol)
+        cid = self._current_cutscene_id()
+        first: StepOutlineFrame | None = None
+        for offset, data in enumerate(datas):
+            ol = StepOutlineFrame(
+                data, self._model, self, self._steps_container,
+                indent_px=0, parallel_parent=None, zebra_alt=False, cutscene_id=cid,
+            )
+            ol.contentChanged.connect(self._on_any_outline_changed)
+            self._step_outlines.insert(at + offset, ol)
+            if first is None:
+                first = ol
+        self._relayout_outline_list(self._step_outlines, self._steps_layout)
+        if expand_first and first is not None:
+            try:
+                first.set_collapsed(False)
+            except Exception:  # noqa: BLE001
+                pass
         self._refresh_outline_indices_and_zebra()
         self.mark_pending_changes()
+        if first is not None:
+            self.focus_outline(first)
+            QTimer.singleShot(0, first, lambda: self._steps_scroll.ensureWidgetVisible(first))
+
+    def _append_steps(self, datas: list[dict], *, expand_first: bool = False) -> None:
+        """把一组步骤追加到顶层末尾（+Present/+Action/+Parallel 与常用预设共用）。"""
+        if not datas:
+            return
+        self.push_undo_snapshot()
+        first: StepOutlineFrame | None = None
+        for data in datas:
+            ol = StepOutlineFrame(
+                data, self._model, self, self._steps_container,
+                indent_px=0,
+                parallel_parent=None,
+                zebra_alt=(len(self._step_outlines) % 2 == 1),
+                cutscene_id=self._current_cutscene_id(),
+            )
+            ol.contentChanged.connect(self._on_any_outline_changed)
+            self._step_outlines.append(ol)
+            self._steps_layout.addWidget(ol)
+            if first is None:
+                first = ol
+        if expand_first and first is not None:
+            # 预设建出来就是要马上填内容的：省掉「再点一下展开」
+            try:
+                first.set_collapsed(False)
+            except Exception:  # noqa: BLE001 — 展开失败不该拖累插入本身
+                pass
+        self._refresh_outline_indices_and_zebra()
+        self.mark_pending_changes()
+        if first is not None:
+            self.focus_outline(first)
         # 追加后滚到新步，避免它落在视口外看不见（布局稳定后再滚）
-        QTimer.singleShot(0, lambda: self._steps_scroll.ensureWidgetVisible(ol))
+        last = self._step_outlines[-1]
+        QTimer.singleShot(0, last, lambda: self._steps_scroll.ensureWidgetVisible(last))
+
+    # ----- 常用步骤预设 -----
+
+    def _last_dialogue_context(self) -> dict:
+        """末尾往前找最近的一句对白，取其说话人/立绘设置作为新对白的底模。
+
+        连着写一段某人的台词时，这几个字段每句都一样——每次重填是纯粹的浪费。
+        """
+        for ol in reversed(self._step_outlines):
+            try:
+                d = ol._header_dict()
+            except Exception:  # noqa: BLE001
+                continue
+            if str(d.get("kind")) == "present" and str(d.get("type")) == "showDialogue":
+                out: dict = {}
+                for k in ("scriptedNpcId", "portrait", "speaker"):
+                    if k in d:
+                        out[k] = deepcopy(d[k])
+                return out
+        return {}
+
+    def _insert_preset(self, key: str) -> None:
+        if key == "dialogue":
+            step = {"kind": "present", "type": "showDialogue", "speaker": "", "text": ""}
+            step.update(self._last_dialogue_context())
+            step["text"] = ""          # 继承说话人/立绘，但正文必须空着
+            self._append_steps([step], expand_first=True)
+        elif key == "subtitle":
+            self._append_steps(
+                [{"kind": "present", "type": "showSubtitle", "text": "", "position": "bottom"}],
+                expand_first=True)
+        elif key == "blackout":
+            # 成对出现：本工程 9 次 fadeToBlack / 11 次 fadeIn，几乎总是夹着换景
+            self._append_steps([
+                {"kind": "present", "type": "fadeToBlack", "duration": 1000},
+                {"kind": "present", "type": "fadeIn", "duration": 1000},
+            ])
+        elif key == "movieband":
+            self._append_steps([
+                {"kind": "present", "type": "showMovieBar", "heightPercent": 0.12},
+            ])
+        elif key == "shot":
+            self._append_steps([
+                {"kind": "present", "type": "cameraMove", "x": 0, "y": 0, "duration": 1000},
+                {"kind": "present", "type": "waitTime", "duration": 800},
+            ], expand_first=True)
+        elif key == "sfx":
+            self._append_steps(
+                [{"kind": "action", "type": "playSfx", "params": {"id": ""}}],
+                expand_first=True)
+        elif key == "illust":
+            self._append_steps([
+                {"kind": "present", "type": "showImg", "id": "", "image": ""},
+            ], expand_first=True)
+
+    def _build_preset_menu(self, btn: QToolButton) -> None:
+        menu = QMenu(btn)
+        for key, label, tip in (
+            ("dialogue", "一句对白", "showDialogue；自动继承上一句的说话人实体与立绘设置"),
+            ("subtitle", "一句字幕", "showSubtitle（底部）"),
+            ("sfx", "一个音效", "action:playSfx"),
+            ("illust", "一张插画", "showImg（选图后填句柄 id）"),
+            ("blackout", "黑场转场", "fadeToBlack 1000ms + fadeIn 1000ms 两步"),
+            ("movieband", "上电影黑边", "showMovieBar 12%"),
+            ("shot", "推镜头 + 停顿", "cameraMove 1000ms + waitTime 800ms 两步"),
+        ):
+            act = QAction(label, menu)
+            act.setToolTip(tip)
+            act.triggered.connect(lambda _c=False, k=key: self._insert_preset(k))
+            menu.addAction(act)
+        btn.setMenu(menu)
 
     def _apply(self) -> bool:
         from ..editor_perf import PerfClock, maybe_stamp, perf_log_enabled
@@ -3791,10 +4694,158 @@ class TimelineEditor(QWidget):
         # 自动选中新建过场，省去再去左侧点一下
         self._list.setCurrentRow(len(self._model.cutscenes) - 1)
 
-    def _on_play(self) -> None:
+    def _on_play(self, from_step: int = 0) -> None:
         cid = self._c_id.text().strip()
         if cid:
-            self.play_requested.emit(cid)
+            self.play_requested.emit(cid, max(0, int(from_step)))
+
+    # ----- 连续对白段批量编辑 -----
+
+    #: 可进批量对白编辑的 present 类型（都以 speaker/text 为主体）
+    _DIALOGUE_RUN_TYPES = ("showDialogue", "showSubtitle")
+
+    def _is_dialogue_step(self, ol: "StepOutlineFrame") -> bool:
+        try:
+            d = ol._header_dict()
+        except Exception:  # noqa: BLE001
+            return False
+        return (str(d.get("kind")) == "present"
+                and str(d.get("type")) in self._DIALOGUE_RUN_TYPES)
+
+    def dialogue_run_bounds(self, ol: "StepOutlineFrame") -> tuple[int, int] | None:
+        """含 ol 在内的、同为对白/字幕的最长连续顶层区间；ol 非对白或不在顶层则 None。
+
+        只认顶层：并行子轨里的对白各属不同轨，摊平成一列会丢掉 fork-join 语义。
+        """
+        if ol._parallel_parent is not None or not self._is_dialogue_step(ol):
+            return None
+        try:
+            i = self._step_outlines.index(ol)
+        except ValueError:
+            return None
+        lo = i
+        while lo > 0 and self._is_dialogue_step(self._step_outlines[lo - 1]):
+            lo -= 1
+        hi = i
+        last = len(self._step_outlines) - 1
+        while hi < last and self._is_dialogue_step(self._step_outlines[hi + 1]):
+            hi += 1
+        return lo, hi
+
+    def edit_dialogue_run(self, ol: "StepOutlineFrame") -> None:
+        bounds = self.dialogue_run_bounds(ol)
+        if bounds is None:
+            return
+        lo, hi = bounds
+        try:
+            steps = [self._step_outlines[i].to_dict() for i in range(lo, hi + 1)]
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.warning(self, "批量编辑对白", f"读取这段对白失败：{e}")
+            return
+        dlg = DialogueRunEditorDialog(
+            steps, self._model, self, self, first_step_no=lo + 1)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        new_steps = dlg.result_steps()
+        if new_steps == steps:
+            return
+        self._replace_top_range(lo, hi, new_steps)
+        self._status_after_run_edit(len(steps), len(new_steps))
+
+    def new_dialogue_block(self, after_ol: "StepOutlineFrame | None" = None) -> None:
+        """开一个空对话块连着写几句，确认后一次性插入。
+
+        after_ol=None 追加到末尾；否则插到该步之后。新句继承最近一句对白的
+        说话人实体与立绘设置——连着写同一个人的台词时省掉逐句重填。
+        """
+        seed = new_dialogue_step(self._last_dialogue_context_step(after_ol))
+        dlg = DialogueRunEditorDialog(
+            [seed], self._model, self, self, creating=True)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        # 判空只看正文：speaker 是从上一句继承来的默认值（常是 {{npc}}），
+        # 拿它当「写了东西」会把一句没填的空块也插进去。
+        steps = [s for s in dlg.result_steps() if str(s.get("text") or "").strip()]
+        if not steps:
+            return          # 一句没写：当作放弃，不插空步
+        self.insert_steps_after(after_ol, steps, expand_first=False)
+        self._status_after_run_edit(0, len(steps))
+
+    def _last_dialogue_context_step(
+        self, before_ol: "StepOutlineFrame | None" = None,
+    ) -> dict | None:
+        """取参照对白步的完整 dict（新块的底模）：从 before_ol 往前找，没有就从末尾往前找。"""
+        end = len(self._step_outlines)
+        if before_ol is not None:
+            try:
+                end = self._step_outlines.index(before_ol) + 1
+            except ValueError:
+                pass
+        for i in range(end - 1, -1, -1):
+            ol = self._step_outlines[i]
+            if self._is_dialogue_step(ol):
+                try:
+                    return ol.to_dict()
+                except Exception:  # noqa: BLE001
+                    return None
+        return None
+
+    def _replace_top_range(self, lo: int, hi: int, new_steps: list[dict]) -> None:
+        """把顶层 [lo, hi] 整段换成 new_steps（句数可增可减），并把焦点落回段首。"""
+        self.push_undo_snapshot()
+        for i in range(hi, lo - 1, -1):
+            old = self._step_outlines.pop(i)
+            self._steps_layout.removeWidget(old)
+            old.deleteLater()
+        self._focused_outline = None      # 刚删的可能正是焦点条，断掉悬空引用
+        cid = self._current_cutscene_id()
+        first: StepOutlineFrame | None = None
+        for offset, data in enumerate(new_steps):
+            new_ol = StepOutlineFrame(
+                data, self._model, self, self._steps_container,
+                indent_px=0, parallel_parent=None,
+                zebra_alt=False, cutscene_id=cid,
+            )
+            new_ol.contentChanged.connect(self._on_any_outline_changed)
+            self._step_outlines.insert(lo + offset, new_ol)
+            if first is None:
+                first = new_ol
+        self._relayout_outline_list(self._step_outlines, self._steps_layout)
+        self._refresh_outline_indices_and_zebra()
+        self.mark_pending_changes()
+        # 编完回到外层对应位置——「找不到刚才编的是哪段」的解药
+        if first is not None:
+            self.focus_outline(first)
+            QTimer.singleShot(0, first, lambda: self._steps_scroll.ensureWidgetVisible(first))
+
+    def _status_after_run_edit(self, before: int, after: int) -> None:
+        if before == 0:
+            msg = f"已插入 {after} 句对白"
+        elif after == before:
+            msg = f"已更新 {after} 句对白"
+        elif after > before:
+            msg = f"已更新对白：{before} → {after} 句（新增 {after - before}）"
+        else:
+            msg = f"已更新对白：{before} → {after} 句（删除 {before - after}）"
+        win = self.window()
+        bar = getattr(win, "_status", None)
+        if bar is not None:
+            bar.showMessage(msg + "（Ctrl+Z 可撤销；仍需 Apply）", 5000)
+
+    def play_from_outline(self, ol: "StepOutlineFrame") -> None:
+        """从某个顶层步开播：之前的步在游戏侧瞬时快进（建立底图/图层/黑边/相机/演员站位），
+        到该步恢复常速。并行子轨没有独立的顶层下标，按其所属并行块整体起播。"""
+        top = ol
+        while top._parallel_parent is not None:
+            owner = top._parallel_parent._outline_frame
+            if owner is None or owner is top:
+                break
+            top = owner
+        try:
+            idx = self._step_outlines.index(top)
+        except ValueError:
+            idx = 0
+        self._on_play(idx)
 
     # ----- 并行结构：移出 / 并入（供 StepOutlineFrame 菜单调用） -----
 
@@ -3873,6 +4924,11 @@ class TimelineEditor(QWidget):
             w = layout.itemAt(k).widget()
             if w is not None:
                 current.append(w)
+        # 对白组头不属于 lst，会被当成「常驻控件」殿后到末尾——它们本就是每次
+        # _refresh_outline_indices_and_zebra 重建的，这里直接摘掉，免得中间态闪一下错位。
+        groups = getattr(self, "_dialogue_groups", [])
+        if groups:
+            current = [w for w in current if not any(w is g for g in groups)]
         others = [w for w in current if not any(w is x for x in lst)]
         for i, w in enumerate(lst):
             layout.removeWidget(w)

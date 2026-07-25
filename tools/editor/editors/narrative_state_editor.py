@@ -1207,7 +1207,7 @@ class NarrativeEditorBridge(QObject):
                     return value
                 return {"ok": False, "reason": "Runtime returned a non-object result"}
             loop = QEventLoop()
-            QTimer.singleShot(50, loop.quit)
+            QTimer.singleShot(50, loop, loop.quit)
             loop.exec()
         return {"ok": False, "reason": "Runtime JS timed out"}
 
@@ -1502,11 +1502,11 @@ class NarrativeStateEditor(QWidget):
             except Exception:
                 pass
             if left > 0:
-                QTimer.singleShot(400, lambda: attempt(left - 1))
+                QTimer.singleShot(400, self, lambda: attempt(left - 1))
             else:
                 print(f"[narrative] 定位 {gid}.{sid} 超时:web 页面迟迟未就绪", flush=True)
 
-        QTimer.singleShot(400, lambda: attempt(tries))
+        QTimer.singleShot(400, self, lambda: attempt(tries))
 
     def pop_flush_error(self) -> str | None:
         message = self._last_flush_error
@@ -1555,7 +1555,7 @@ class NarrativeStateEditor(QWidget):
             if attempt + 1 >= attempts:
                 return last
             loop = QEventLoop()
-            QTimer.singleShot(wait_ms, loop.quit)
+            QTimer.singleShot(wait_ms, loop, loop.quit)
             loop.exec()
         return None
 
@@ -1698,7 +1698,7 @@ class NarrativeStateEditor(QWidget):
             loop.quit()
 
         self._view.page().runJavaScript(code, finish)
-        QTimer.singleShot(timeout_ms, lambda: finish(None))
+        QTimer.singleShot(timeout_ms, loop, lambda: finish(None))
         loop.exec()
         return box["value"]
 

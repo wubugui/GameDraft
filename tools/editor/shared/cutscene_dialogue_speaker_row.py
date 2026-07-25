@@ -23,6 +23,12 @@ from .id_ref_selector import IdRefSelector
 from .rich_text_field import RichTextLineEdit
 from .form_layout import compact_form
 from .portrait_ref_field import PortraitRefField
+from .bubble_anchor_field import (
+    BubbleAnchorActor,
+    BubbleAnchorPickField,
+    actor_for_emote_target,
+)
+from .collapsible_section import CollapsibleSection
 
 _SPEAKER_INSERTS = (
     ("{{player}}", "玩家显示名"),
@@ -36,6 +42,23 @@ def npc_items_for_dialogue_picker(model, scene_id: str | None) -> list[tuple[str
         if items:
             return items
     return model.all_npc_ids_global() if model else []
+
+
+#: 运行时保留实体 id：`player` 恒指主角（与 Game.resolveActor / scriptedDialogueSpeaker 同口径）。
+PLAYER_ENTITY_ID = "player"
+
+
+def scripted_speaker_items(model, scene_id: str | None) -> list[tuple[str, str]]:
+    """「说话 NPC」（scriptedNpcId）候选：主角恒在首位 + 场景/全工程 NPC。
+
+    主角不是场景 NPC、任何场景的 NPC 表里都没有它，但脚本台词的说话人常常就是主角；
+    运行时把 `player` 当保留 id 处理——speaker 里的 {{npc}} 出玩家显示名、「跟随说话人」
+    的立绘取主角当前装扮立绘集、「…」气泡锚到主角。
+    """
+    items = list(npc_items_for_dialogue_picker(model, scene_id))
+    if any(str(i[0]) == PLAYER_ENTITY_ID for i in items):
+        return items
+    return [(PLAYER_ENTITY_ID, "玩家（主角）")] + items
 
 
 class NpcIdPickDialog(QDialog):
@@ -140,9 +163,12 @@ class CutsceneShowDialogueFields(QWidget):
         *,
         on_change: Callable[[], None],
         portrait: dict | None = None,
+        bubble_anchor_y: object = None,
+        bubble_scale: object = None,
     ) -> None:
         super().__init__(parent)
         self._model = model
+        self._scene_id = scene_id
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         form = compact_form(QFormLayout())
@@ -154,10 +180,14 @@ class CutsceneShowDialogueFields(QWidget):
         form.addRow(tip)
         self._snpc = IdRefSelector(self, allow_empty=True, editable=False, click_opens_popup=True)
         self._snpc.setMinimumWidth(140)
-        self._snpc.set_items(npc_items_for_dialogue_picker(model, scene_id))
+        self._snpc.set_items(scripted_speaker_items(model, scene_id))
         self._snpc.set_current(str(scripted_npc_id or ""))
         self._snpc.value_changed.connect(lambda _v: on_change())
-        form.addRow("scriptedNpcId（{{npc}} 默认）", self._snpc)
+        self._snpc.setToolTip(
+            "本行的说话人实体：{{npc}} 取它的显示名；立绘选「跟随说话人」时按它的装扮配置"
+            "取立绘集；说话时头顶「…」也锚到它。主角选「player」。",
+        )
+        form.addRow("scriptedNpcId（说话人实体）", self._snpc)
         sh, self._speaker = build_speaker_line_with_inserts(
             self,
             model,
@@ -179,14 +209,45 @@ class CutsceneShowDialogueFields(QWidget):
         self._portrait = PortraitRefField(proot, portrait if isinstance(portrait, dict) else None)
         self._portrait.changed.connect(lambda: on_change())
         form.addRow(self._portrait)
+
+        # 说话气泡位置/大小（可选）：与图对话 line 节点、showEmote 同一个控件同一套阶梯。
+        # 过场里 present:showDialogue 的「…」气泡以前完全没有可编排字段（opts 恒 undefined）。
+        self._bubble = BubbleAnchorPickField(
+            self,
+            model,
+            bubble_anchor_y,
+            self._bubble_actor,
+            committed_scale=bubble_scale,
+        )
+        self._bubble.changed.connect(lambda: on_change())
+        self._snpc.value_changed.connect(lambda _v: self._bubble.refresh_actor())
+        self._bubble_sec = CollapsibleSection("说话气泡位置/大小（可选）", start_open=False, parent=self)
+        self._bubble_sec.set_header_tool_tip(
+            "过场里这句话时，说话人头顶那个「…」气泡挂多高、多大。\n"
+            "默认继承——位置按说话人当前帧内容自动贴头顶，大小按全局 emoteBubbleScale。\n"
+            "只有个别情况（举着道具挡住、这句要特别大）才勾覆盖。",
+        )
+        self._bubble_sec.add_body(self._bubble)
+        form.addRow(self._bubble_sec)
+        if bubble_anchor_y is not None or bubble_scale is not None:
+            self._bubble_sec.set_expanded(True)
         root.addLayout(form)
+
+    def _bubble_actor(self) -> BubbleAnchorActor:
+        """预览对象 = scriptedNpcId 指的实体（过场的「当前场景」即 targetScene）。"""
+        sid = self._snpc.current_id().strip()
+        if not sid:
+            return BubbleAnchorActor(hint="先选 scriptedNpcId（说话人实体）才能预览气泡")
+        return actor_for_emote_target(self._model, self._scene_id, sid)
 
     def refresh_scene_scope(self, scene_id: str | None) -> None:
         """过场 targetScene 变更时，把 scriptedNpcId 说话人候选重限定到该场景（保留当前选择）。
         与 showSubtitle 表情锚点、各 action NPC 下拉一致——过场的「当前场景」即 targetScene。"""
         cur = self._snpc.current_id().strip()
-        self._snpc.set_items(npc_items_for_dialogue_picker(self._model, scene_id))
+        self._scene_id = scene_id
+        self._snpc.set_items(scripted_speaker_items(self._model, scene_id))
         self._snpc.set_current(cur)
+        self._bubble.refresh_actor()
 
     def to_step_dict(self) -> dict:
         d: dict = {
@@ -199,4 +260,10 @@ class CutsceneShowDialogueFields(QWidget):
         por = self._portrait.to_ref()
         if por:
             d["portrait"] = por
+        bay = self._bubble.value()
+        if bay is not None:
+            d["bubbleAnchorY"] = bay
+        bsc = self._bubble.scale_value()
+        if bsc is not None:
+            d["bubbleScale"] = bsc
         return d

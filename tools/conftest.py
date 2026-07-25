@@ -2,10 +2,17 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import tempfile
 from pathlib import Path
 from typing import Callable, Iterator
+
+# 离屏是测试的默认平台，省得每条命令都手打 QT_QPA_PLATFORM=offscreen。
+# 用 setdefault：想开真窗口调试的人 `QT_QPA_PLATFORM=cocoa pytest ...` 照常生效。
+# Qt 的平台插件在 QGuiApplication 构造时才解析这个变量，所以放模块顶层（早于任何
+# QApplication 构造）就够，不必赶在 PySide6 import 之前。
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 

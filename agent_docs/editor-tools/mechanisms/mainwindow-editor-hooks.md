@@ -38,5 +38,5 @@ last_governed: 2026-07-11
 
 ## 怎么验证
 
-- 离屏构造冒烟:`QT_QPA_PLATFORM=offscreen .tools/venv/bin/python -m unittest tools.editor.tests.test_all_editors_construct`。
+- 离屏构造冒烟:`.tools/venv/bin/python -m pytest tools/editor/tests/test_all_editors_construct.py -q`(别用 `python -m unittest`,它绕过 conftest 的写保护与控件销毁收尾)。
 - 流程探针:编辑 → 切页/关闭 → 断言模型;模型层测试全绿不代表门控接对了(审查教训:425 测试全绿但流程层零覆盖)。

@@ -80,7 +80,7 @@ csim llm audit tail -n 10
 - `tools/chronicle_sim_v3/__init__.py`、`__main__.py`（仅打印 `csim --help` 引导）
 - `./dev.sh chronicle-sim` 或 `.tools/venv/bin/python -m tools.chronicle_sim_v3`
 - `tests/__init__.py` + `tests/conftest.py`（PYTHONPATH 注入；与 v2 conftest 完全独立）
-- `pytest.ini`：`testpaths = tools/chronicle_sim_v3/tests`、`asyncio_mode = auto`
+- ~~`pytest.ini`：`testpaths = tools/chronicle_sim_v3/tests`、`asyncio_mode = auto`~~ —— 作废（2026-07-25）：仓库根已有统一 `pytest.ini`（`testpaths = tools`），子项目不再各自建一份；v3 全部用显式 `@pytest.mark.asyncio`，不需要 `asyncio_mode = auto`
 
 **测试**：仅 `test_smoke.py`：`import tools.chronicle_sim_v3` 不报错。
 

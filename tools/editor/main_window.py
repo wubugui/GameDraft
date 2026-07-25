@@ -289,6 +289,14 @@ class MainWindow(QMainWindow):
         self._stack_index_to_item: dict[int, QTreeWidgetItem] = {}
         self._editor_instances: list = []
         self._editor_labels: list[str] = []
+        # 过场缩略条播放头：轮询游戏「现在播到哪一步」并推给过场编辑器
+        self._timeline_editor = None
+        self._cutscene_playback_timer: QTimer | None = None
+        self._cutscene_playback_inflight = False
+        # 气泡锚控件的「同步到游戏」推送口：共享控件散在多个包里，用模块级注册而非层层穿参
+        from .shared.bubble_anchor_field import set_game_anchor_pusher
+
+        set_game_anchor_pusher(self._push_bubble_anchor_preview)
         self._nav_tree.currentItemChanged.connect(self._on_nav_tree_current_changed)
 
         # 导航历史栈（浏览器式后退/前进）——见 _record_nav / _replay_nav。
@@ -828,10 +836,10 @@ class MainWindow(QMainWindow):
         self._refresh_window_title()
         self._status.showMessage(f"Loaded: {path}", 5000)
         self._populate_tabs()
-        QTimer.singleShot(500, self._prewarm_game_backend)
+        QTimer.singleShot(500, self, self._prewarm_game_backend)
         # 换工程/重开工程一律重启 LSP:旧 client 的 root/overlay 都是上一工程的,
         # 复用会让搜索/查引用继续搜旧工程、丢新工程 overlay(对抗审查确认项)。
-        QTimer.singleShot(800, self._restart_lsp)
+        QTimer.singleShot(800, self, self._restart_lsp)
 
     # ------------------------------------------------------------------ #
     # json_lang LSP 接入(「JSON=语言」大脑):编辑器作 overlay 发布者 +
@@ -1384,6 +1392,7 @@ class MainWindow(QMainWindow):
                 self._editor_labels.append(label)
                 if isinstance(ed, TimelineEditor):
                     ed.play_requested.connect(self._on_cutscene_play_requested)
+                    self._timeline_editor = ed
                 preview_sig = getattr(ed, "preview_requested", None)
                 if preview_sig is not None:
                     if isinstance(ed, SugarWheelEditor):
@@ -1429,7 +1438,9 @@ class MainWindow(QMainWindow):
 
         self._connect_action_nav()
         self._sync_theme_to_editors()
-        QTimer.singleShot(0, self._apply_nav_tree_width_from_content)
+        if self._timeline_editor is not None:
+            self._ensure_cutscene_playback_timer()
+        QTimer.singleShot(0, self, self._apply_nav_tree_width_from_content)
 
     def _apply_nav_tree_width_from_content(self) -> None:
         """左侧导航宽度按最长条目略留边距，避免大块留白。"""
@@ -1941,7 +1952,7 @@ class MainWindow(QMainWindow):
                 "Dev server stopped. Press Run (F5) to start again.",
             )
 
-    def _on_cutscene_play_requested(self, cutscene_id: str) -> None:
+    def _on_cutscene_play_requested(self, cutscene_id: str, from_step: int = 0) -> None:
         if not cutscene_id:
             return
         if not self._save_all():
@@ -1949,23 +1960,124 @@ class MainWindow(QMainWindow):
         is_running = (self._game_proc is not None
                       and self._game_proc.state() != QProcess.ProcessState.NotRunning)
 
+        # from_step>0：游戏侧把之前的顶层步瞬时快进（建状态、跳等待/对白/音效）后从该步常速播。
+        step = max(0, int(from_step or 0))
+        from_param = f"&play_cutscene_from={step}" if step > 0 else ""
+        tip = f"Playing cutscene: {cutscene_id}"
+        if step > 0:
+            tip = f"Playing cutscene: {cutscene_id} — 从第 {step + 1} 步"
+
         if is_running and self._game_play_window is not None:
             cid_js = json.dumps(cutscene_id)
-            js = f'window.__gameDevAPI && window.__gameDevAPI.playCutscene({cid_js})'
+            js = (f'window.__gameDevAPI && '
+                  f'window.__gameDevAPI.playCutscene({cid_js}, {step})')
             self._game_play_window.run_js(js)
             self._game_play_window.raise_()
             self._game_play_window.activateWindow()
-            self._status.showMessage(f"Playing cutscene: {cutscene_id}", 3000)
+            self._status.showMessage(tip, 3000)
         elif is_running:
             self._focus_game_tab_and_load(
                 self._last_vite_dev_url,
-                extra_params=f"mode=dev&play_cutscene={cutscene_id}",
+                extra_params=f"mode=dev&play_cutscene={cutscene_id}{from_param}",
             )
-            self._status.showMessage(f"Playing cutscene: {cutscene_id}", 3000)
+            self._status.showMessage(tip, 3000)
         else:
             self._run_game(
-                launch_params=f"mode=dev&play_cutscene={cutscene_id}",
+                launch_params=f"mode=dev&play_cutscene={cutscene_id}{from_param}",
             )
+
+    # ----- 过场缩略条播放头（游戏 → 编辑器的唯一反向通道） -----
+
+    def _game_js_surface(self):
+        """当前承载游戏的 WebEngine 面：弹出窗口优先，其次内嵌页签；都没有则 None。
+
+        两者都实现 run_js_async(code, callback)（鸭子接口），调用方不必分辨是哪一种。
+        """
+        w = self._game_play_window
+        if w is not None and hasattr(w, "run_js_async"):
+            return w
+        b = self._game_browser
+        if b is not None and b.is_webengine_available() and hasattr(b, "run_js_async"):
+            return b
+        return None
+
+    # ----- 气泡锚「同步到游戏」（编辑器 → 游戏的推送口） -----
+
+    def _push_bubble_anchor_preview(
+        self,
+        target: str,
+        anchor_y: float | None,
+        emote: str,
+        scale: float = 1.0,
+    ) -> bool:
+        """把气泡锚推进正在跑的游戏（BubbleAnchorPickField 的「同步到游戏」）。
+
+        target 为空 = 清除预览气泡。返回 False 表示没有可推的游戏面——控件据此自动关掉开关，
+        不给"以为同步上了其实没有"的假象（fail-safe 不 fail-open）。
+        """
+        surface = self._game_js_surface()
+        if surface is None:
+            return False
+        tgt = json.dumps(str(target or ""), ensure_ascii=False)
+        if not str(target or "").strip():
+            js = ("(function(){try{var a=window.__gameDevAPI;"
+                  "if(a&&a.clearBubbleAnchorPreview){a.clearBubbleAnchorPreview();return true;}"
+                  "return false;}catch(e){return false;}})()")
+            return bool(surface.run_js_async(js, lambda _v=None: None))
+        ay = "undefined" if anchor_y is None else repr(float(anchor_y))
+        emo = json.dumps(str(emote or "……"), ensure_ascii=False)
+        sc = repr(float(scale) if scale and scale > 0 else 1.0)
+        js = ("(function(){try{var a=window.__gameDevAPI;"
+              "if(!a||!a.previewBubbleAnchor)return false;"
+              f"return a.previewBubbleAnchor({{target:{tgt},anchorY:{ay},emote:{emo},scale:{sc}}});"
+              "}catch(e){return false;}})()")
+        return bool(surface.run_js_async(js, lambda _v=None: None))
+
+    def _ensure_cutscene_playback_timer(self) -> None:
+        if self._cutscene_playback_timer is not None:
+            return
+        t = QTimer(self)
+        t.setInterval(250)          # 比一帧粗、比人眼挑剔细；轮询开销可忽略
+        t.timeout.connect(self._poll_cutscene_playback)
+        self._cutscene_playback_timer = t
+        t.start()
+
+    def _poll_cutscene_playback(self) -> None:
+        """问游戏「现在播到哪一步」，把结果推给过场编辑器点亮播放头。
+
+        只在过场页当前可见时问——切到别的编辑器就没人看这个播放头，白问。
+        """
+        ed = self._timeline_editor
+        if ed is None or not hasattr(ed, "set_playback_position"):
+            return
+        if self._stack.currentWidget() is not ed:
+            return
+        if self._cutscene_playback_inflight:
+            return          # 上一次还没回来：不叠发，避免慢机上排队堆积
+        surface = self._game_js_surface()
+        if surface is None:
+            ed.set_playback_position("", None)
+            return
+
+        def done(value: object | None = None) -> None:
+            self._cutscene_playback_inflight = False
+            cid, path = "", None
+            if isinstance(value, dict):
+                cid = str(value.get("cutsceneId") or "")
+                raw = value.get("path")
+                path = str(raw) if raw else None
+            try:
+                ed.set_playback_position(cid, path)
+            except Exception:  # noqa: BLE001 — 播放头是纯装饰，绝不能反噬编辑器
+                pass
+
+        js = ("(function(){try{return window.__gameDevAPI"
+              " && window.__gameDevAPI.getCutscenePlayback"
+              " ? window.__gameDevAPI.getCutscenePlayback() : null;}"
+              "catch(e){return null;}})()")
+        self._cutscene_playback_inflight = True
+        if not surface.run_js_async(js, done):
+            self._cutscene_playback_inflight = False
 
     def _on_game_play_window_closed(self) -> None:
         self._game_play_window = None
@@ -2337,9 +2449,9 @@ class MainWindow(QMainWindow):
                 print(f"[search-nav] 聚光失败(条目级定位不受影响): {e!r}", flush=True)
                 return
             if retry_left > 0:
-                QTimer.singleShot(350, lambda: attempt(retry_left - 1))
+                QTimer.singleShot(350, self, lambda: attempt(retry_left - 1))
 
-        QTimer.singleShot(80, lambda: attempt(1))
+        QTimer.singleShot(80, self, lambda: attempt(1))
 
     def _navigate_to_search_hit_inner(self, file: str, pointer: str,
                                       anchors: list) -> tuple[bool | None, str]:

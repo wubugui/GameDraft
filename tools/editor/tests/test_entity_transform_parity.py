@@ -22,9 +22,11 @@ from PySide6.QtWidgets import QApplication
 from tools.editor.project_model import ProjectModel
 from tools.editor.shared.action_editor import ActionEditor
 from tools.editor.shared.entity_transform_math import (
+    content_top_local_y_around_foot,
     entity_rotation_deg_of,
     entity_scale_of,
     inverse_transform_world_vec,
+    quad_top_local_y_around_foot,
     transform_local_vec,
 )
 from tools.editor.tests.save_test_utils import write_minimal_loadable_project
@@ -54,6 +56,25 @@ GOLDEN_LOCAL_VEC_CASES = [
     ((-5.0, -8.0, 0.5, -120.0), (-2.214102, 4.165064)),
     ((7.0, 2.0, 1.0, 0.0), (7.0, 2.0)),
 ]
+# 头顶锚：(effW, effH, rotDeg) -> quad 顶部局部 y
+GOLDEN_QUAD_TOP_CASES = [
+    ((100.0, 160.0, 0.0), -160.0),
+    ((100.0, 160.0, 37.0), -157.872433),
+    ((80.0, 120.0, 90.0), -40.0),
+    ((60.0, 60.0, 180.0), 0.0),
+    ((100.0, 160.0, -120.0), -43.30127),
+]
+# 头顶锚：(effContentW, effContentH, effBottomGap, rotDeg) -> 内容框顶部局部 y
+# 第 4 例（180°）为正值：整个实体倒过来，"内容顶"落到脚点下方，双侧都不得夹成 0。
+# 第 5 例是 player_anim 躺倒帧的真实量级（内容仅 26.5 世界 px 高）。
+GOLDEN_CONTENT_TOP_CASES = [
+    ((40.0, 30.0, 5.0, 0.0), -35.0),
+    ((40.0, 30.0, 5.0, 37.0), -39.988543),
+    ((40.0, 30.0, 5.0, 90.0), -20.0),
+    ((40.0, 30.0, 5.0, 180.0), 5.0),
+    ((136.0, 26.5, 5.5, 0.0), -32.0),
+    ((120.0, 150.0, 7.5, -120.0), -48.211524),
+]
 
 
 class EntityTransformParityTests(unittest.TestCase):
@@ -70,6 +91,16 @@ class EntityTransformParityTests(unittest.TestCase):
             x, y = transform_local_vec(lx, ly, s, deg)
             self.assertAlmostEqual(x, wx, places=5, msg=f"case {(lx, ly, s, deg)}")
             self.assertAlmostEqual(y, wy, places=5, msg=f"case {(lx, ly, s, deg)}")
+
+    def test_quad_top_golden(self) -> None:
+        for (w, h, deg), want in GOLDEN_QUAD_TOP_CASES:
+            got = quad_top_local_y_around_foot(w, h, math.radians(deg))
+            self.assertAlmostEqual(got, want, places=5, msg=f"quad_top case {(w, h, deg)}")
+
+    def test_content_top_golden(self) -> None:
+        for (w, h, gap, deg), want in GOLDEN_CONTENT_TOP_CASES:
+            got = content_top_local_y_around_foot(w, h, gap, math.radians(deg))
+            self.assertAlmostEqual(got, want, places=5, msg=f"content_top case {(w, h, gap, deg)}")
 
     def test_inverse_is_true_inverse(self) -> None:
         for (lx, ly, s, deg), _ in GOLDEN_LOCAL_VEC_CASES:

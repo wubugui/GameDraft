@@ -36,7 +36,7 @@ import type { SignalCueManager } from '../systems/SignalCueManager';
 import type { HealthSystem } from '../systems/HealthSystem';
 import type { SmellSystem } from '../systems/SmellSystem';
 import type { PlaneReconciler } from '../systems/PlaneReconciler';
-import type { ActionDef, AnimationPlaybackParams, DialogueLine, DialoguePortraitRef, ICutsceneActor, IEmoteBubbleAnchor, ZoneRuleSlot, RuleLayerKey } from '../data/types';
+import type { ActionDef, AnimationPlaybackParams, DialogueLine, DialoguePortraitRef, EmoteBubbleOffsetOpts, ICutsceneActor, IEmoteBubbleAnchor, ZoneRuleSlot, RuleLayerKey } from '../data/types';
 import { GameState } from '../data/types';
 import type { SceneEntityKind, RuntimeFieldValue } from '../data/EntityRuntimeFieldSchema';
 import { applyDialogueColonSpeakerFromResolvedText } from './resolveText';
@@ -313,12 +313,23 @@ export interface ActionRegistryDeps {
   planeReconciler: PlaneReconciler;
 }
 
-function parseEmoteOffsetParams(params: Record<string, unknown>): { anchorOffsetX: number; anchorOffsetY: number } {
+function parseEmoteOffsetParams(params: Record<string, unknown>): EmoteBubbleOffsetOpts {
   const ox = Number(params.anchorOffsetX);
   const oy = Number(params.anchorOffsetY);
+  // bubbleAnchorY 是**绝对**头顶锚（脚点为 0，向上为负），顶掉实体自算的那一档；
+  // 缺省（不写键）= 继承实体自算。anchorOffsetX/Y 是叠在其上的相对微调，语义不变。
+  const ay = Number(params.bubbleAnchorY);
+  // bubbleScale 缺省（不写键）= 用全局 game_config.emoteBubbleScale
+  const sc = Number(params.bubbleScale);
   return {
     anchorOffsetX: Number.isFinite(ox) ? ox : 0,
     anchorOffsetY: Number.isFinite(oy) ? oy : 0,
+    ...(params.bubbleAnchorY !== undefined && params.bubbleAnchorY !== null && Number.isFinite(ay)
+      ? { anchorY: ay }
+      : {}),
+    ...(params.bubbleScale !== undefined && params.bubbleScale !== null && Number.isFinite(sc) && sc > 0
+      ? { scale: sc }
+      : {}),
   };
 }
 
@@ -841,7 +852,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     dbg(d, 'showEmote', `调用 bubble.show durMs=${duration} off=(${off.anchorOffsetX},${off.anchorOffsetY})`);
     d.emoteBubbleManager.show(subject, emote, duration, off);
     dbg(d, 'showEmote', `bubble.show 已返回`);
-  }, ['target', 'emote', 'duration', 'anchorOffsetX', 'anchorOffsetY']);
+  }, ['target', 'emote', 'duration', 'anchorOffsetX', 'anchorOffsetY', 'bubbleAnchorY', 'bubbleScale']);
 
   /** 与 showEmote 相同锚点与白底气泡；params.text 为对白（经 resolveDisplayText，支持 `[tag:…]`）。 */
   executor.register('showSpeechBubble', (p) => {
@@ -865,7 +876,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     }
     const off = parseEmoteOffsetParams(p);
     d.emoteBubbleManager.show(subject, text, parseBubbleDurationParam(p), off);
-  }, ['target', 'text', 'duration', 'anchorOffsetX', 'anchorOffsetY']);
+  }, ['target', 'text', 'duration', 'anchorOffsetX', 'anchorOffsetY', 'bubbleAnchorY', 'bubbleScale']);
 
   /**
    * `target` 为 NPC id 或 `player`；`state` 为 anim.json 中的状态名（与 `npcAnim` 旧标签语义一致，统一走 Action）。
@@ -1606,6 +1617,39 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     // runtime 不要求 sceneId；JSON 中带 sceneId 仅编辑器复现地图
   }, ['target', 'x', 'y', 'speed', 'waypoints', 'moveAnimState', 'arriveAnimState', 'faceTowardMovement']);
 
+  executor.register('jumpEntityTo', async (p) => {
+    const target = String(p.target ?? '').trim();
+    const x = typeof p.x === 'number' ? p.x : Number(p.x);
+    const y = typeof p.y === 'number' ? p.y : Number(p.y);
+    const durationRaw = p.durationMs;
+    const durationMs =
+      typeof durationRaw === 'number' ? durationRaw : durationRaw !== undefined ? Number(durationRaw) : 600;
+    const dur = Number.isFinite(durationMs) && durationMs > 0 ? durationMs : 600;
+    const arcRaw = p.arcHeight;
+    const arcHeight =
+      typeof arcRaw === 'number' ? arcRaw : arcRaw !== undefined ? Number(arcRaw) : 120;
+    const arc = Number.isFinite(arcHeight) && arcHeight >= 0 ? arcHeight : 120;
+    const jumpAnimRaw = p.jumpAnimState;
+    const jumpAnim =
+      typeof jumpAnimRaw === 'string' && jumpAnimRaw.trim() ? jumpAnimRaw.trim() : undefined;
+    const landAnimRaw = p.landAnimState;
+    const landAnim =
+      typeof landAnimRaw === 'string' && landAnimRaw.trim() ? landAnimRaw.trim() : undefined;
+    const faceTowardMovement = parseFaceTowardMovementParam(p.faceTowardMovement);
+    if (!target || !Number.isFinite(x) || !Number.isFinite(y)) {
+      console.warn('jumpEntityTo: 需要 target、有限数值 x/y');
+      return;
+    }
+    const actor = d.resolveActor(target);
+    if (!actor) {
+      console.warn(`jumpEntityTo: 找不到实体 "${target}"`);
+      return;
+    }
+    // 脚点沿弧线落到 (x,y)、起跳动画按移动进度插帧只播一次、落地切 landAnimState（缺省回 rest/idle）。
+    await actor.jumpTo(x, y, dur, arc, jumpAnim, landAnim, faceTowardMovement);
+    // runtime 不要求 sceneId；JSON 中带 sceneId 仅编辑器复现地图
+  }, ['target', 'x', 'y', 'durationMs', 'arcHeight', 'jumpAnimState', 'landAnimState', 'faceTowardMovement']);
+
   executor.register('faceEntity', (p) => {
     const target = String(p.target ?? '').trim();
     if (!target) {
@@ -1690,7 +1734,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     dbg(d, 'showEmoteAndWait', `await showAndWait durMs=${duration} off=(${off.anchorOffsetX},${off.anchorOffsetY})`);
     await d.emoteBubbleManager.showAndWait(subject, emote, duration, off);
     dbg(d, 'showEmoteAndWait', 'showAndWait 结束');
-  }, ['target', 'emote', 'duration', 'anchorOffsetX', 'anchorOffsetY']);
+  }, ['target', 'emote', 'duration', 'anchorOffsetX', 'anchorOffsetY', 'bubbleAnchorY', 'bubbleScale']);
 
   executor.register('showSpeechBubbleAndWait', async (p) => {
     const target = String(p.target ?? '').trim();
@@ -1716,7 +1760,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     dbg(d, 'showSpeechBubbleAndWait', `await showAndWait durMs=${duration}`);
     await d.emoteBubbleManager.showAndWait(subject, text, duration, off);
     dbg(d, 'showSpeechBubbleAndWait', 'showAndWait 结束');
-  }, ['target', 'text', 'duration', 'anchorOffsetX', 'anchorOffsetY']);
+  }, ['target', 'text', 'duration', 'anchorOffsetX', 'anchorOffsetY', 'bubbleAnchorY', 'bubbleScale']);
 
   executor.register('revealDocument', async (p) => {
     await d.documentRevealManager.checkAndReveal(String(p.documentId ?? ''));

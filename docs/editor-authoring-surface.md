@@ -56,7 +56,7 @@
 **危险区**
 - 重建区:`hotspot.data`(尤其 inspect `data.text`)、`npc.patrol`(只 route/speed/moveAnimState)、`spawnPoint`(只 `{x,y}`)。
 - 主动删除:`zone.x/y/width/height/ruleSlots`、`npc.dialogueFile/dialogueKnot`;切 depth_floor 会删 zone 的 onEnter/onStay/onExit。
-- 盲区:`backgrounds`(主编辑器不可编辑,只 Scene Depth Editor 或手写)、`depthConfig` 主体(M/shader/collision/depth_map…只 Scene Depth Editor 导出)。
+- 盲区:`backgrounds`(主编辑器不可编辑,只「角色照明实验室」或手写)、`depthConfig` 主体(M/shader/collision/depth_map…只实验室烘焙导出;`tools/scene_depth_editor` 已于 2026-07-23 整体删除)。
 - 透视缩放深度轴:场景面板启用后画布出现橙色箭头(近端■大→远端○小),拖两端手柄设任意方向的深度轴;等缩放等值线自动垂直于轴。竖直轴=普通上下纵深,斜轴=斜街。
 - 透视缩放下的碰撞多边形:可编辑多边形按 authored 空间显示(顶点拖拽/表格写回零换算);参与透视且系数≠1 时另画**只读虚线幽灵轮廓**=运行时实际命中面(authored 多边形绕锚点×f,与 anchorCollisionPolygonToWorld 同口径)。展示图/交互圈/NPC 精灵预览直接按系数缩放。
 - 无复制、无列表重排;`anim.json` 场景编辑器内只读(states 等廉价参数去「动画」面板改,图集像素布局靠 video_to_atlas 导出)。

@@ -13,10 +13,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 import sys
 import threading
+import time
 from http.server import SimpleHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
@@ -168,15 +170,38 @@ _next_id = [1]
 _worker_started = [False]
 
 
+# B-2:烘焙阶段清单。pipeline 本来就在吐 `[tag] ...` 结构化阶段标签,这里顺手解析成
+# 结构化进度 —— 查看器据此画一个**静态**勾选清单(打勾/当前/未到 + 已耗时秒数)。
+# 刻意不做 spinner/进度条动画:变化的只有数据本身(铁律 1「零动效」)。
+# 顺序取自 pipeline.build() 的真实调用序列;`objects`/`edit` 等可能被跳过,
+# 查看器把"已越过但没出现"的显示为跳过,不会卡在那里假装还没跑。
+BAKE_STAGE_ORDER = ['depth', 'objects', 'calib', 'hdr', 'edit', 'voxel', 'bounds',
+                    'lights', 'ambient', 'probes', 'walk', 'mesh', 'char', 'done']
+_STAGE_RE = re.compile(r'^\[([a-z_]+)\]')
+
+
 def _run_bake(job: dict) -> None:
     for scene, extra in job['builds']:
         src = TOOL / 'out' / scene / 'background.png'
-        cmd = [sys.executable, str(TOOL / 'pipeline.py'), str(src), '--name', scene, *extra]
+        # ⚠ `-u` 不可省:pipeline 的阶段 print 多数没写 flush=True,而子进程 stdout 是
+        # 管道时默认**块缓冲** —— 不加 -u 的话所有阶段标签会憋到进程退出才一次性吐出,
+        # 阶段清单全程停在"未开始",等于白做(实测就是这个现象)。
+        cmd = [sys.executable, '-u', str(TOOL / 'pipeline.py'), str(src), '--name', scene, *extra]
         job['log'] += f'\n=== {scene} ===\n'
+        job['scene'] = scene
+        job['stages'] = []                      # 本场景已出现过的阶段(有序、去重)
+        job['stage'] = ''
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                              text=True, bufsize=1)
         for line in p.stdout:
             job['log'] = (job['log'] + line)[-12000:]
+            m = _STAGE_RE.match(line)
+            if m:
+                tag = m.group(1)
+                if tag in BAKE_STAGE_ORDER:
+                    if tag not in job['stages']:
+                        job['stages'].append(tag)
+                    job['stage'] = tag
         p.wait()
         if p.returncode != 0:
             job['status'] = 'failed'
@@ -207,7 +232,9 @@ def _enqueue(builds: list[tuple[str, list[str]]], label: str) -> dict:
             _worker_started[0] = True
         jid = _next_id[0]; _next_id[0] += 1
         _jobs[jid] = {'id': jid, 'label': label, 'status': 'queued',
-                      'log': '', 'builds': builds}
+                      'log': '', 'builds': builds, 'stages': [], 'stage': '',
+                      'scene': builds[0][0] if builds else '',
+                      't0': time.time(), 'total': len(builds)}
         _queue.append(jid)
     return {'ok': True, 'job': jid}
 
@@ -224,6 +251,14 @@ class H(SimpleHTTPRequestHandler):
     def __init__(self, *a, **k):
         super().__init__(*a, directory=str(TOOL), **k)
 
+    def end_headers(self):
+        # ⚠ 本地开发工具:一律禁缓存。SimpleHTTPRequestHandler 默认只发 Last-Modified,
+        # 浏览器会把 index.html / app.js 缓存住 —— 改完代码刷新看不到变化,得手动硬刷新
+        # (app.js 里那句「缺控件…请硬刷新页面(旧 HTML 被缓存)」正是这个坑的补丁)。
+        # out/ 下的 .bin/.png 同理:重烘后同名文件被覆盖,缓存会喂旧字节。
+        self.send_header('Cache-Control', 'no-store, must-revalidate')
+        super().end_headers()
+
     def _json(self, obj, code=200):
         body = json.dumps(obj, ensure_ascii=False).encode()
         self.send_response(code)
@@ -238,6 +273,18 @@ class H(SimpleHTTPRequestHandler):
         if u.path == '/':
             self.path = '/viewer/index.html'
             return super().do_GET()
+        if u.path == '/api/char_shade_core.js':
+            # 角色着色核心 GLSL 的唯一真相源(与运行时 CharacterShadingFilter 共用同一份磁盘文件)。
+            # 包成 window.CHAR_SHADE_CORE 供 viewer 的 shader 拼接,消灭 shader 镜像漂移。
+            glsl = (ROOT / 'src' / 'rendering' / 'charShadeCore.glsl').read_text(encoding='utf-8')
+            body = ('window.CHAR_SHADE_CORE=' + json.dumps(glsl) + ';').encode('utf-8')
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/javascript; charset=utf-8')
+            self.send_header('Cache-Control', 'no-store')  # 改 glsl 后硬刷即生效,不被缓存住
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if u.path == '/api/scenes':
             scenes = []
             for m in sorted((TOOL / 'out').glob('*/manifest.json')):
@@ -265,6 +312,13 @@ class H(SimpleHTTPRequestHandler):
                 pos = _queue.index(jid) + 1 if jid in _queue else 0
             return self._json({'ok': True, 'status': job['status'],
                                'label': job['label'], 'queue_position': pos,
+                               # B-2:结构化进度,查看器画静态阶段清单
+                               'stage': job.get('stage', ''),
+                               'stages': job.get('stages', []),
+                               'stage_order': BAKE_STAGE_ORDER,
+                               'scene': job.get('scene', ''),
+                               'total': job.get('total', 1),
+                               'elapsed': round(time.time() - job.get('t0', time.time()), 1),
                                'log': job['log'][-3000:]})
         if u.path == '/api/geo_status':
             name = q.get('scene', [''])[0]
@@ -303,7 +357,10 @@ class H(SimpleHTTPRequestHandler):
                     return self._json({'ok': False,
                                        'err': '几何已改动但未重烘——先重烘再导出'}, 409)
                 cfg = export_scene_depth(name)
-                return self._json({'ok': True, 'floor_A': cfg['shader']['floor_depth_A']})
+                # 回带 depth_per_sy(直立 quad 的深度梯度)——旧的 floor_depth_A 已随最小二乘
+                # 拟合地面一起废除,再读就是 KeyError,而 KeyError 会被下面的 except 吞成
+                # 「导出失败」,让每一次深度导出都假报错。viewer 只看 ok,这里纯诊断用。
+                return self._json({'ok': True, 'depth_per_sy': cfg['shader']['depth_per_sy']})
             except Exception as e:                     # noqa: BLE001
                 return self._json({'ok': False, 'err': str(e)}, 500)
         if u.path == '/api/export':
@@ -330,6 +387,33 @@ class H(SimpleHTTPRequestHandler):
                 return self._json({'ok': True, 'dest': str(dest)})
             except Exception as e:                     # noqa: BLE001
                 return self._json({'ok': False, 'err': str(e)}, 500)
+        if u.path == '/api/shading':
+            # 读回该场景**当前已导出**的 shading 块。没有它的话查看器只能显示 HTML 里那个
+            # 写死的初值 —— 后果不只是"看不到真值":刷新/切场景后再点「只存着色参数」,
+            # 会拿面板上的默认值把之前调好的悄悄覆盖掉(真踩过:teahouse 的 eChroma 被写回 0)。
+            name = q.get('scene', [''])[0]
+            f = SCENES_RT / name / 'lighting' / 'lighting.json'
+            if not (name and f.exists()):
+                return self._json({'ok': True, 'shading': None})
+            try:
+                meta = json.loads(f.read_text(encoding='utf-8'))
+                return self._json({'ok': True, 'shading': meta.get('shading'),
+                                   'version': meta.get('version')})
+            except Exception as e:                     # noqa: BLE001 — 坏载荷不该让面板挂掉
+                return self._json({'ok': False, 'err': str(e)})
+        if u.path == '/api/export_params':
+            name = q.get('scene', [''])[0]
+            if not name:
+                return self._json({'ok': False, 'err': 'unknown scene'}, 400)
+            try:    # 只补 shading 块,不重跑数据通道 → 无需 manifest/几何签名那套闸
+                sys.path.insert(0, str(TOOL.parents[1]))
+                from tools.character_lighting_lab.pipeline import (
+                    SHADING_DEFAULTS, export_shading_params)
+                shading = {k: q[k][0] for k in SHADING_DEFAULTS if k in q}
+                dest = export_shading_params(name, shading or None)
+                return self._json({'ok': True, 'dest': str(dest)})
+            except Exception as e:                     # noqa: BLE001
+                return self._json({'ok': False, 'err': str(e)}, 400)
         if u.path == '/api/rebuild':
             name = q.get('scene', [''])[0]
             if not name or not (TOOL / 'out' / name / 'background.png').exists():

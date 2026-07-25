@@ -282,7 +282,22 @@ export class AssetManager {
       'texture',
       resolved,
       async () => {
-        const texture = await Assets.load<Texture>(resolved);
+        // ⚠ 法线图集(*.normal.png)的 alpha 是鼓包 profile(**数据**,不是透明度),
+        // rgb 绝不能被 ×a。实测:文件帧均值 r=0.500(完美中性碗、平均法线≈(0,0,-0.86)),
+        // 默认加载后 GPU 采到 0.749 —— 污染发生在 **createImageBitmap 解码期**(浏览器
+        // 默认 premultiply),GL 层的 alphaMode 怎么设都救不回(实测 no-premultiply-alpha
+        // 与默认逐字节相同)。后果:法线场被 profile 系统性拽歪,镜像取反后假倾斜反号 →
+        // 角色朝右通体黄/朝左通体绿;实验室查看器自己 texImage2D 上传(无预乘)所以一直正确。
+        //
+        // Pixi v8 装载器(loadTextures.js)**只有** data.alphaMode === 'premultiplied-alpha'
+        // 这一个值会走 createImageBitmap(blob, {premultiplyAlpha:'none'}) 保留原始字节
+        // (语义="数据已预乘,别再动",名字反直觉但这是唯一的原样通道)。
+        const texture = resolved.endsWith('.normal.png')
+          ? await Assets.load<Texture>({
+              src: resolved,
+              data: { alphaMode: 'premultiplied-alpha' },
+            })
+          : await Assets.load<Texture>(resolved);
         assertSafeTextureSize(texture, resolved);
         return texture;
       },

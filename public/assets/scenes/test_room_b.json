@@ -20,8 +20,8 @@
   },
   "spawnPoints": {
     "from_a": {
-      "x": 177.3,
-      "y": 400.6
+      "x": 179.26,
+      "y": 426.78
     }
   },
   "hotspots": [
@@ -223,5 +223,49 @@
         }
       ]
     }
-  ]
+  ],
+  "depthConfig": {
+    "depth_map": "raw_depth_rg.png",
+    "collision_map": "collision.png",
+    "M": {
+      "R": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.7071067811865476,
+          -0.7071067811865475
+        ],
+        [
+          0.0,
+          0.7071067811865475,
+          0.7071067811865476
+        ]
+      ],
+      "ppu": 220.0,
+      "cx": 500.0,
+      "cy": 281.0
+    },
+    "depth_mapping": {
+      "invert": false,
+      "scale": 4.164161410522461,
+      "offset": -2.8208218647003176
+    },
+    "shader": {
+      "depth_per_sy": 0.004545454545454545
+    },
+    "collision": {
+      "x_min": -2.2727272510528564,
+      "z_min": -2.3881950312675944,
+      "cell_size": 0.02853192923203954,
+      "grid_width": 160,
+      "grid_height": 149,
+      "height_offset": 0.0
+    },
+    "depth_tolerance": 0.05,
+    "floor_offset": 0.0
+  }
 }

@@ -122,6 +122,11 @@ export class DepthDebugVisualizer {
     this.filter.setGroundTexture(g);
   }
 
+  /** 场景卸载：解绑本场景的深度/碰撞/行走面纹理（见 BackgroundDebugFilter.unbindSceneTextures） */
+  unbindSceneTextures(): void {
+    this.filter.unbindSceneTextures();
+  }
+
   /** 调试：仅更新世界尺寸（与 applyDebugWorldSize 一致时背景调试叠加仍对齐） */
   updateSceneWorldSize(worldWidth: number, worldHeight: number): void {
     this.sceneW = worldWidth;

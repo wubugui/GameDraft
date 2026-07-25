@@ -233,5 +233,5 @@ class IdRefSelector(QComboBox):
                 not self.isEditable() and obj is self
             )
             if ok:
-                QTimer.singleShot(0, self.showPopup)
+                QTimer.singleShot(0, self, self.showPopup)
         return super().eventFilter(obj, event)

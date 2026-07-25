@@ -14,13 +14,15 @@ tools: Bash, Read, Grep, Glob
 | 运行时测试 | `npx vitest run` | 动了 `src/**` |
 | 数据校验 | `./dev.sh validate-data`(严格:`./dev.sh validate-data -- --strict`) | 动了 `public/assets/**` 任何 JSON |
 | 素材存在性 | `.tools/venv/bin/python -m tools.editor.shared.asset_reference_audit . --strict` | 动了 `public/assets/**` 或资源文件 |
-| 编辑器测试 | `QT_QPA_PLATFORM=offscreen .tools/venv/bin/python -m pytest tools/editor/tests -q` | 动了 `tools/editor/**` |
-| 图对话编辑器测试 | `QT_QPA_PLATFORM=offscreen .tools/venv/bin/python -m pytest tools/dialogue_graph_editor/tests -q` | 动了 `tools/dialogue_graph_editor/**` 或 `tools/json_lang/**` |
+| 编辑器测试 | `.tools/venv/bin/python -m pytest tools/editor/tests -q` | 动了 `tools/editor/**` |
+| 图对话编辑器测试 | `.tools/venv/bin/python -m pytest tools/dialogue_graph_editor/tests -q` | 动了 `tools/dialogue_graph_editor/**` 或 `tools/json_lang/**` |
+
+离屏平台与并行参数已由根 `pytest.ini` + `tools/conftest.py` 固化（`QT_QPA_PLATFORM=offscreen`、`-n auto --dist loadfile`），不必再手打；编辑器全套约 40 秒。要单步调试加 `-n0`。
 
 ## 执行规则
 
 1. prompt 给了文件列表就按列表选门;没给就 `git status --porcelain` 看工作区改动选门;prompt 说"全跑"就全跑。拿不准宁可多跑。
-2. 长命令(vitest / validate-data / pytest)串行跑,别并行挤 CPU 导致超时误报。
+2. 长命令(vitest / validate-data / pytest)**门与门之间**串行跑,别自己同时开几个导致超时误报。pytest 自身已由 pytest.ini 开了进程内并行(`-n auto`),那是配置好的,别去关。
 3. 命令失败先看是不是环境问题(venv 缺、端口占用),环境问题如实标注"环境问题非代码问题"。
 4. 该项目工作区常年有大量未提交改动——这是常态,不是异常,不要报告"工作区脏"。
 

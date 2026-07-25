@@ -52,7 +52,7 @@ type TabId =
   | typeof TAB_FLAGS
   | typeof TAB_LOG;
 
-/** 区块渲染上下文：tools 默认折叠；其余默认展开。screen=游戏画面常驻卡（只有 ✕ 取消常驻） */
+/** 区块渲染上下文：tools / screen 默认折叠；其余默认展开。screen=游戏画面常驻卡（只有 ✕ 取消常驻） */
 type SectionContext = 'tools' | 'narrative' | 'quick' | 'screen';
 
 function normalizePinList(data: unknown): string[] {
@@ -527,7 +527,10 @@ export class DebugPanelUI implements IDebugPanelAPI {
     details.className = 'debug-dock__section';
     if (ctx === 'screen') details.classList.add('debug-screen-pins__card');
     const stateKey = `${ctx}:${id}`;
-    details.open = this.sectionOpenState.get(stateKey) ?? ctx !== 'tools';
+    // 默认折叠：工具页 + 游戏画面常驻卡（常驻卡默认折叠只留标题条，不挡画面；
+    // 用户手动展开的状态仍记在 sectionOpenState 里，本次会话内的重建不会丢）
+    const defaultOpen = ctx !== 'tools' && ctx !== 'screen';
+    details.open = this.sectionOpenState.get(stateKey) ?? defaultOpen;
     details.addEventListener('toggle', () => {
       this.sectionOpenState.set(stateKey, details.open);
     });

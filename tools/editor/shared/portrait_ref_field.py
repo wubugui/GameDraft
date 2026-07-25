@@ -45,7 +45,12 @@ class PortraitRefField(QWidget):
         row.addWidget(QLabel("立绘"))
         self._slug = QComboBox()
         self._slug.setToolTip(
-            "无头像 / 跟随说话人（运行时按 speaker 对应 NPC 的 portraitSlug 或玩家装扮解析）/ 指定立绘集"
+            "无头像 / 跟随说话人 / 指定立绘集。\n"
+            "「跟随说话人」= 运行时按说话人实体的装扮配置找立绘集 id：\n"
+            "  说话人实体 = speaker 里的 {{player}}/{{npc[:id]}} 占位，没写占位则用「说话人实体」"
+            "（scriptedNpcId）下拉选的那位；旁白（speaker 留空）不显头像。\n"
+            "  取到的 id = NPC 的 portraitSlug（就地 / 角色注册表继承 / 按 animFile 包名推导）；"
+            "主角则取当前装扮的立绘集。"
         )
         self._slug.addItem("（无头像）", "")
         self._slug.addItem("跟随说话人", _FOLLOW)

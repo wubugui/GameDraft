@@ -203,7 +203,15 @@ export class BackgroundDebugFilter extends Filter {
     }
 
     private get _u() {
-        return (this.resources as Record<string, { uniforms: Record<string, unknown> }>)['bgDebug']?.uniforms;
+        // Pixi 的 BindGroup 在所绑资源被 destroy 时会**自毁**(onResourceChange → resources=null)，
+        // 此后读 filter.resources 直接抛。本滤镜跨场景长活、却绑着按场景销毁的照明载荷纹理
+        // (uGroundD)，所以这条路真会走到——一旦抛进调用方，照明就绪回调会被掀翻、整场景照明
+        // 载荷被静默丢弃(见 unbindSceneTextures)。**调试可视化坏掉可以，绝不能拖垮玩法。**
+        try {
+            return (this.resources as Record<string, { uniforms: Record<string, unknown> }>)['bgDebug']?.uniforms;
+        } catch {
+            return undefined;
+        }
     }
 
     setMode(mode: number): void {
@@ -300,6 +308,28 @@ export class BackgroundDebugFilter extends Filter {
     }
 
     setCollisionTexture(tex: Texture): void {
+        const u = this._u;
+        if (!u) return;
         (this.resources as Record<string, unknown>)['uCollisionMap'] = tex.source;
+    }
+
+    /**
+     * 场景卸载必调：把所有**按场景销毁**的纹理换回 Texture.WHITE。
+     *
+     * 本滤镜跨场景长活，而 uGroundD(照明载荷) / uDepthMap / uCollisionMap 都随场景销毁。
+     * Pixi 的 BindGroup 监听所绑资源的 change 事件，一旦发现资源 destroyed 就把自己整个作废
+     * (resources=null)，之后这个滤镜的任何 uniform 读写都抛。**必须先解绑再销毁纹理**，
+     * 顺序反了就等于把滤镜烧掉——而调用方(照明就绪回调)被抛穿后，整份照明载荷会被 load()
+     * 的 catch 丢弃，表现为"这张场景没光照 + 影子采到已销毁纹理直接崩"。
+     */
+    unbindSceneTextures(): void {
+        const u = this._u;
+        if (!u) return;
+        const white = Texture.WHITE.source;
+        const r = this.resources as Record<string, unknown>;
+        r['uGroundD'] = white;
+        r['uDepthMap'] = white;
+        r['uCollisionMap'] = white;
+        u['uHasGroundTex'] = 0;
     }
 }

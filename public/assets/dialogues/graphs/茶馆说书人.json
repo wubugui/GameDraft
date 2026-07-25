@@ -27,8 +27,8 @@
         "kind": "sceneNpc",
         "npcId": "storyteller_zhang"
       },
-      "text": "话说这崂山道士捡了本天书，正要上神仙顶，哪晓得半路上撞见一伙倒斗摸金的，从古墓头放出个大旱魃来。",
       "next": "fv_arc",
+      "text": "话说这崂山道士捡了本天书，正要上神仙顶，哪晓得半路上撞见一伙摸坟的，从古墓头放出个大旱魃来。",
       "portrait": {
         "emotion": "laugh"
       }

@@ -1,4 +1,4 @@
-import { BufferImageSource, type TextureSource } from 'pixi.js';
+import { BufferImageSource, type Shader, type TextureSource, type UniformGroup } from 'pixi.js';
 import type { IGameSystem, GameContext } from '../data/types';
 import { sceneRuntimeAssetUrl } from './projectPaths';
 import { depthLog, depthError } from './depthLog';
@@ -8,6 +8,12 @@ import type {
   CharShadingSceneResources,
   CharacterShadingFilter,
 } from '../rendering/CharacterShadingFilter';
+import {
+  createFrameLitUniforms,
+  createLitShader,
+  createSceneLitUniforms,
+  setLitShaderTexture,
+} from '../rendering/CharacterLitSprite';
 
 const T = 'CharLighting';
 
@@ -85,6 +91,21 @@ export interface CharShadingEntityInfo {
   flipX: boolean;
   /** 法线图集内当前帧 uv rect(x,y,w,h;归一化);null = 平面法线回退 */
   nrmRect: [number, number, number, number] | null;
+  /**
+   * 当前帧所属**源图集** URL(法线图按 `<图集名>.normal.png` 寻址)。
+   *
+   * ⚠ 必须逐帧带上:实体会在运行时换图集(玩家有常态/背尸/道士多套,NPC 可经
+   * setEntityField 重载动画)。而法线纹理原来只在 scene:ready 附加滤镜时绑定一次 ——
+   * 换图集后,**新图集的 uNrmRect 坐标被拿去查旧图集的法线图**,采到毫不相干的区域:
+   * 角色变暗、随动画帧闪烁、且看不出规律。绑定必须跟着当前图集走。
+   */
+  sheetUrl?: string | null;
+  /**
+   * sprite 在**被滤镜对象包围盒**里占的归一化矩形 [x,y,w,h]。
+   * 容器里若还有名字标签等兄弟节点,包围盒会比 sprite 大(实测 NPC 高出 26px)。
+   * 不传 = [0,0,1,1](容器就是 sprite,玩家即此情形)—— 缺省即正确,属优雅降级。
+   */
+  spriteRect?: [number, number, number, number];
 }
 
 /**
@@ -105,7 +126,44 @@ export class CharacterLightingSystem implements IGameSystem {
   private groundTex: TextureSource | null = null;
   private resources: CharShadingSceneResources | null = null;
   private ownedTextures: TextureSource[] = [];
+  /**
+   * 体素卷纹理(占位 1×1 或真卷),与 ownedTextures 分开管:它可在场景生命周期**中途**
+   * 被 ensureVolumes/releaseVolumes 换掉,不能跟着载荷整体销毁的那批走。
+   */
+  private volTextures: TextureSource[] = [];
+  /** 已换下、等调用方重挂滤镜后再销毁的旧体素卷(先销毁会烧毁仍绑着它的滤镜) */
+  private staleVolTextures: TextureSource[] = [];
+  /** 当前载荷所属场景 id;ensureVolumes 按它拼 URL,也用于跨场景丢弃 */
+  private loadedSceneId: string | null = null;
+  /** 在途的体素卷拉取(去重并发调用);epoch 变化即作废 */
+  private volInflight: Promise<boolean> | null = null;
+  /**
+   * probe 图集纹理(当前 mode 的真图 + 另两种 1×1 占位),与 ownedTextures 分开管:
+   * 进场景只加载当前 mode 那一种,F2 切档由 ensureProbeAtlas 换,可中途整批换掉。
+   */
+  private probeTextures: TextureSource[] = [];
+  private staleProbeTextures: TextureSource[] = [];
+  /** 当前已加载真图的 cache mode(1/2/3);0=未加载。ensureProbeAtlas 按它去重。 */
+  private loadedProbeMode = 0;
+  private probeInflight: Promise<boolean> | null = null;
   private probeViz: ProbeVizPoint[] | null = null;
+
+  /**
+   * E 色度权重(F2 测试旋钮,不入存档):0=只借场景明暗(luma)、角色保留自己颜色不被场景色染;
+   * 1=完整彩色 E。sprite 本身是着色后的 color(自带颜色),缺的是场景明暗——默认只借明暗。
+   */
+  eChroma = 0;
+
+  // ---------------------------------------------------------------- mesh 着色(2026-07-25)
+  // sprite 网格着色的共享 uniform 组与活 shader 注册表。frameLit 跨场景常驻、每帧同步一次
+  // (syncFrame,由 Pixi ticker 驱动 —— **不经任何游戏状态分支**,Cutscene 里也照跑);
+  // sceneLit 每场景重建。litShaders 用于体素卷/probe 图集热替换时就地重绑纹理。
+  private readonly frameLit: UniformGroup = createFrameLitUniforms();
+  private sceneLit: UniformGroup | null = null;
+  private readonly litShaders = new Set<Shader>();
+  private groundRange: [number, number] = [0, 1];
+  private aoContact = 0;
+  private aoForm = 0;
 
   /** F2 可调照明参数(运行时,不入存档;默认值与实验室查看器一致,模式默认 L2) */
   readonly params: CharShadingParams = {
@@ -139,8 +197,10 @@ export class CharacterLightingSystem implements IGameSystem {
   private shadowBasis: Float32Array | null = null;
   /** 每光源 lum(radiance)×area(权重分子,load 时预算) */
   private lightLum: Float32Array | null = null;
-  /** L2 图集 CPU 拷贝(能流采样用,(P,36,4) f16) */
-  private l2u16: Uint16Array | null = null;
+  /** 当前 mode 固化 probe 图集的 CPU 拷贝(能流采样/点云可视化用,(P,probeAtlasCol,4) f16;按需加载会随切档更新) */
+  private probeAtlasU16: Uint16Array | null = null;
+  /** probeAtlasU16 的列数(=当前 mode 系数数:L1=4 / L2=9 / BIN=64) */
+  private probeAtlasCol = 9;
   /** probe valid CPU 拷贝 */
   private validU8: Uint8Array | null = null;
 
@@ -162,11 +222,24 @@ export class CharacterLightingSystem implements IGameSystem {
     this.resources = null;
     this.probeViz = null;
     this.lightLum = null;
-    this.l2u16 = null;
+    this.probeAtlasU16 = null;
+    this.probeAtlasCol = 9;
     this.validU8 = null;
     this.shadowBasis = null;
+    this._hasVolumes = false;
+    this.volInflight = null;
+    this.loadedSceneId = null;
+    this.parkLitShaders();
     for (const t of this.ownedTextures) t.destroy();
     this.ownedTextures = [];
+    for (const t of this.volTextures) t.destroy();
+    this.volTextures = [];
+    this.disposeStaleVolumeTextures();
+    for (const t of this.probeTextures) t.destroy();
+    this.probeTextures = [];
+    this.disposeStaleProbeTextures();
+    this.loadedProbeMode = 0;
+    this.probeInflight = null;
   }
 
   /** probe 点云(F2 调试可视化);无载荷 → null */
@@ -311,8 +384,10 @@ export class CharacterLightingSystem implements IGameSystem {
   /** probe E 场 L0/L1 亮度采样(q 胸口点):base+amb+nee 三账合流,world 轴三线性。 */
   private sampleFluxLum(qx: number, qy: number, qz: number):
     { l0: number; fx: number; fy: number; fz: number } | null {
-    const res = this.resources; const u16 = this.l2u16; const validU8 = this.validU8;
+    const res = this.resources; const u16 = this.probeAtlasU16; const validU8 = this.validU8;
+    const nCol = this.probeAtlasCol;
     if (!res || !u16) return null;
+    if (nCol !== 4 && nCol !== 9) return null;   // 能流方向取 SH L0/L1;BIN(方向桶)无 SH,不供影子跟灯
     const M = res.mCol;
     const wx = M[0] * qx + M[3] * qy + M[6] * qz;
     const wy = M[1] * qx + M[4] * qy + M[7] * qz;
@@ -323,7 +398,7 @@ export class CharacterLightingSystem implements IGameSystem {
     const tz = Math.max(0, Math.min(pn[2] - 1.001, (wz - res.wMin[2]) * res.wScale[2]));
     const bx = Math.floor(tx), by = Math.floor(ty), bz = Math.floor(tz);
     const fx = tx - bx, fy = ty - by, fz = tz - bz;
-    // 系数亮度累计:k=0..3;列布局 [0..8]=base [9..17]=amb [27..35]=nee
+    // 固化后每 probe 一块最终 E(base+amb+emit/nee 已合流),k=0..3 = SH L0/L1;列步长=nCol
     let c0 = 0, c1 = 0, c2 = 0, c3 = 0, wsum = 0;
     for (let c = 0; c < 8; c++) {
       const ox = c & 1, oy = (c >> 1) & 1, oz = (c >> 2) & 1;
@@ -332,13 +407,10 @@ export class CharacterLightingSystem implements IGameSystem {
       if (wgt < 1e-6) continue;
       const flat = (px * pn[1] + py) * pn[2] + pz;
       if (validU8 && validU8[flat] === 0) continue;
-      const row = flat * 36 * 4;
+      const row = flat * nCol * 4;
       for (let k = 0; k < 4; k++) {
-        let lr = 0, lg = 0, lb = 0;
-        for (const col of [k, 9 + k, 27 + k]) {
-          const o = row + col * 4;
-          lr += f16(u16[o]); lg += f16(u16[o + 1]); lb += f16(u16[o + 2]);
-        }
+        const o = row + k * 4;
+        const lr = f16(u16[o]), lg = f16(u16[o + 1]), lb = f16(u16[o + 2]);
         const lm = 0.2126 * lr + 0.7152 * lg + 0.0722 * lb;
         if (k === 0) c0 += wgt * lm;
         else if (k === 1) c1 += wgt * lm;
@@ -365,25 +437,202 @@ export class CharacterLightingSystem implements IGameSystem {
   /** RT gather 体素卷是否已载(仅 dev);false 时 RT 模式(0)会采空卷 → F2 应禁选 RT。 */
   get hasVolumes(): boolean { return this._hasVolumes; }
 
-  /** 场景切换时调用;无载荷/哈希失配 → 本场景保持 inactive(回落旧管线)。 */
+  /** 体素卷纹理工厂;产物登记在 volTextures(可中途整批换掉),不进 ownedTextures。 */
+  private makeVolumeTexture(buf: ArrayBuffer, w: number, h: number): TextureSource {
+    const tex = new BufferImageSource({
+      resource: new Uint16Array(buf), width: w, height: h,
+      format: 'rgba16float', scaleMode: 'nearest',
+      alphaMode: 'no-premultiply-alpha',
+    });
+    this.volTextures.push(tex);
+    return tex;
+  }
+
   /**
-   * @param opts.loadVolumes 是否加载 RT-gather 3D 体素卷(vol_rad/vol_emit,较重)。
-   *   生产**只吃 probe 图集缓存**(mode≥1),体素卷是 dev 的实时 RT 对比才需要 →
-   *   缺省 false 时跳过体素 fetch、用 1×1 占位纹理保 shader 绑定,并把 mode 钳到 ≥1(永不 RT)。
+   * 把 resources 上的体素卷换成给定两张。**旧纹理只移入待销毁队列,不当场销毁**——
+   * 活着的角色滤镜仍绑着它们,调用方必须先重挂滤镜、再 `disposeStaleVolumeTextures()`。
+   */
+  private swapVolumeTextures(radBuf: ArrayBuffer, emitBuf: ArrayBuffer, w: number, h: number): void {
+    this.staleVolTextures.push(...this.volTextures);
+    this.volTextures = [];
+    const rad = this.makeVolumeTexture(radBuf, w, h);
+    const emit = this.makeVolumeTexture(emitBuf, w, h);
+    if (this.resources) {
+      this.resources.volRad = rad;
+      this.resources.volEmit = emit;
+    }
+    this.rebindLitSceneTextures();   // 同上:体素卷热替换直达 mesh shader
+  }
+
+  /**
+   * 销毁上一批体素卷纹理,释放显存。**只能在调用方重挂完角色滤镜之后调**:
+   * Pixi v8 的 BindGroup 一旦发现所绑资源已 destroyed 就把自己作废(resources=null),
+   * 之后读 filter.resources 直接抛——先销毁不是泄漏,是把那些滤镜永久烧毁。
+   * (根因见 agent_docs/_meta/inbox/2026-07-23-pixi-bindgroup-self-destruct-on-texture-destroy.md)
+   */
+  disposeStaleVolumeTextures(): void {
+    for (const t of this.staleVolTextures) t.destroy();
+    this.staleVolTextures = [];
+  }
+
+  /**
+   * 按需拉 RT-gather 体素卷(vol_rad/vol_emit,20–27MB)。仅 F2 开 RT 时调用。
+   * 已载 → 直接 true;在途 → 复用同一个 Promise(去重并发点击)。
+   * 返回后调用方必须重挂角色滤镜——滤镜在构造时捕获纹理,换卷不会自动生效。
+   */
+  async ensureVolumes(): Promise<boolean> {
+    if (this._hasVolumes) return true;
+    if (this.volInflight) return this.volInflight;
+    const meta = this.meta;
+    const sceneId = this.loadedSceneId;
+    if (!meta || !sceneId || !this.resources) return false;
+
+    const myEpoch = this.epoch;
+    const base = sceneRuntimeAssetUrl(sceneId, 'lighting');
+    const V = meta.vol;
+    const task = (async (): Promise<boolean> => {
+      try {
+        const [rad, emit] = await Promise.all([
+          fetch(`${base}/vol_rad.bin`).then((r) => r.arrayBuffer()),
+          fetch(`${base}/vol_emit.bin`).then((r) => r.arrayBuffer()),
+        ]);
+        // 旧时间线不写新状态:拉取期间切了场景/重载了载荷 → 整批丢弃
+        if (myEpoch !== this.epoch) return false;
+        this.swapVolumeTextures(rad, emit, V.tiles_x * V.nx, V.tiles_y * V.ny);
+        this._hasVolumes = true;
+        depthLog(T, sceneId, `: RT 体素卷已载 (${((rad.byteLength + emit.byteLength) / 1048576).toFixed(1)}MB)`);
+        return true;
+      } catch (e) {
+        depthError(T, 'volume load failed', e);
+        return false;
+      } finally {
+        if (myEpoch === this.epoch) this.volInflight = null;
+      }
+    })();
+    this.volInflight = task;
+    return task;
+  }
+
+  /**
+   * 卸掉体素卷、换回 1×1 占位并释放显存;mode 若停在 RT 则抬回 cache(L2),
+   * 否则会采空卷得黑。同样需要调用方重挂滤镜。
+   */
+  releaseVolumes(): void {
+    this.volInflight = null;
+    if (!this._hasVolumes) return;
+    this.swapVolumeTextures(new Uint16Array(4).buffer, new Uint16Array(4).buffer, 1, 1);
+    this._hasVolumes = false;
+    if (this.params.mode < 1) this.params.mode = 2;
+    depthLog(T, this.loadedSceneId ?? '?', ': RT 体素卷已卸');
+  }
+
+  /** cache mode → probe 图集规格(v3 固化:L1=4列/L2=9列/BIN=64方向);越界回落 L2。 */
+  private static probeCfg(mode: number): { col: number; file: string } {
+    if (mode === 1) return { col: 4, file: 'atlas_l1.bin' };
+    if (mode === 3) return { col: 64, file: 'atlas_bin.bin' };
+    return { col: 9, file: 'atlas_l2.bin' };   // 2 及其它
+  }
+
+  /** probe 图集纹理工厂;登记在 probeTextures(可中途整批换掉),不进 ownedTextures。 */
+  private makeProbeTexture(buf: ArrayBuffer, col: number, rows: number): TextureSource {
+    const tex = new BufferImageSource({
+      resource: new Uint16Array(buf), width: col, height: rows,
+      format: 'rgba16float', scaleMode: 'nearest',
+      alphaMode: 'no-premultiply-alpha',
+    });
+    this.probeTextures.push(tex);
+    return tex;
+  }
+
+  /**
+   * 把 resources 上的三张 probe 图集换成「mode 真图 + 另两种 1×1 占位」。
+   * shader 按 mode 采样,只采当前 mode 那张,占位不被采。**旧纹理只移入待销毁队列**——
+   * 活着的滤镜仍绑着,调用方须先重挂滤镜、再 disposeStaleProbeTextures()(同体素卷)。
+   */
+  private swapProbeAtlas(mode: number, buf: ArrayBuffer, rows: number): void {
+    if (!this.resources) return;
+    this.staleProbeTextures.push(...this.probeTextures);
+    this.probeTextures = [];
+    const cfg = CharacterLightingSystem.probeCfg(mode);
+    const real = this.makeProbeTexture(buf, cfg.col, rows);
+    const ph = (): TextureSource => this.makeProbeTexture(new Uint16Array(4).buffer, 1, 1);
+    this.resources.atlasL1 = mode === 1 ? real : ph();
+    this.resources.atlasL2 = mode === 2 ? real : ph();
+    this.resources.atlasBin = mode === 3 ? real : ph();
+    this.loadedProbeMode = mode;
+    // CPU 侧能流采样(影子跟灯)跟随切档到的 mode;点云 viz 颜色仍是首载值(仅调试着色,不重算)
+    this.probeAtlasU16 = new Uint16Array(buf);
+    this.probeAtlasCol = cfg.col;
+    this.rebindLitSceneTextures();   // mesh shader 就地跟随新图集(filter 靠重挂,mesh 靠这)
+  }
+
+  disposeStaleProbeTextures(): void {
+    for (const t of this.staleProbeTextures) t.destroy();
+    this.staleProbeTextures = [];
+  }
+
+  /**
+   * 按需加载指定 cache mode 的 probe 图集(进场景只载当前 mode,F2 切档才拉别的)。
+   * 已载 → true;在途 → 复用同一 Promise。返回后调用方必须重挂滤镜(滤镜捕获纹理)。
+   */
+  async ensureProbeAtlas(mode: number): Promise<boolean> {
+    const m = mode === 1 || mode === 3 ? mode : 2;
+    if (this.loadedProbeMode === m) return true;
+    if (this.probeInflight) return this.probeInflight;
+    const meta = this.meta;
+    const sceneId = this.loadedSceneId;
+    if (!meta || !sceneId || !this.resources) return false;
+    const myEpoch = this.epoch;
+    const base = sceneRuntimeAssetUrl(sceneId, 'lighting');
+    const rows = meta.probes.nx * meta.probes.ny * meta.probes.nz;
+    const cfg = CharacterLightingSystem.probeCfg(m);
+    const task = (async (): Promise<boolean> => {
+      try {
+        const buf = await fetch(`${base}/${cfg.file}`).then((r) => r.arrayBuffer());
+        if (myEpoch !== this.epoch) return false;   // 旧时间线不写新状态
+        this.swapProbeAtlas(m, buf, rows);
+        depthLog(T, sceneId, `: probe 图集切至 mode ${m} (${(buf.byteLength / 1048576).toFixed(2)}MB)`);
+        return true;
+      } catch (e) {
+        depthError(T, 'probe atlas load failed', e);
+        return false;
+      } finally {
+        if (myEpoch === this.epoch) this.probeInflight = null;
+      }
+    })();
+    this.probeInflight = task;
+    return task;
+  }
+
+  /**
+   * 场景切换时调用;无载荷/哈希失配 → 本场景保持 inactive(回落旧管线)。
+   *
+   * **从不加载体素卷**:vol_rad/vol_emit 合计 20–27MB/场景,只有 F2 的实时 RT 对比
+   * (mode 0)用得上,进场景一律用 1×1 占位纹理保 shader 绑定、并把 mode 钳到 ≥1。
+   * 要 RT 时由 `ensureVolumes()` 现拉、关掉时 `releaseVolumes()` 立刻还回去。
    */
   async load(
     sceneId: string,
     worldW: number,
     worldH: number,
-    opts?: { loadVolumes?: boolean },
   ): Promise<void> {
-    const loadVolumes = opts?.loadVolumes ?? false;
     const myEpoch = ++this.epoch;
     this._hasVolumes = false;
+    this.volInflight = null;   // 旧场景的在途拉取作废(epoch 已变,回来也写不进)
+    this.loadedSceneId = null;
     this.meta = null; this.groundD = null; this.resources = null; this.probeViz = null;
-    this.lightLum = null; this.l2u16 = null; this.validU8 = null;
+    this.lightLum = null; this.probeAtlasU16 = null; this.validU8 = null;
+    this.parkLitShaders();      // 活 shader 先退白图,再销毁旧纹理(防 BindGroup 自毁)
     for (const t of this.ownedTextures) t.destroy();
     this.ownedTextures = [];
+    for (const t of this.volTextures) t.destroy();
+    this.volTextures = [];
+    this.disposeStaleVolumeTextures();
+    for (const t of this.probeTextures) t.destroy();
+    this.probeTextures = [];
+    this.disposeStaleProbeTextures();
+    this.loadedProbeMode = 0;
+    this.probeInflight = null;
     this.sceneWorldW = worldW; this.sceneWorldH = worldH;
     const base = sceneRuntimeAssetUrl(sceneId, 'lighting');
     let meta: LightingPayloadMeta;
@@ -392,10 +641,11 @@ export class CharacterLightingSystem implements IGameSystem {
       if (!r.ok) { depthLog(T, sceneId, ': no lighting payload'); return; }
       meta = await r.json();
       // vite dev 的 SPA fallback 会给缺失文件回 200+HTML;json() 抛错走 catch,
-      // 但反序列化侥幸成功的畸形体也要挡:验证载荷形状(v2 必含 vol 块)
-      if (typeof meta?.version !== 'number' || meta.version < 2
+      // 但反序列化侥幸成功的畸形体也要挡:验证载荷形状。
+      // v3 起 probe 图集为固化最终 E(单块球谐);v2(分账)与本运行时列布局不兼容 → 需重导出。
+      if (typeof meta?.version !== 'number' || meta.version < 3
         || !meta.probes || !meta.world || !meta.cal || !meta.vol) {
-        depthLog(T, sceneId, ': lighting payload missing/old-version, ignored');
+        depthLog(T, sceneId, ': lighting payload missing/旧版(需重导出 v3 固化), ignored');
         return;
       }
     } catch { depthLog(T, sceneId, ': no lighting payload'); return; }
@@ -414,33 +664,26 @@ export class CharacterLightingSystem implements IGameSystem {
     if (myEpoch !== this.epoch) return;
 
     try {
-      // 体素卷(vol_rad/vol_emit)只在 dev RT 对比需要 → 生产不 fetch(省下最重的两块)。
-      const volFetch = (name: string): Promise<ArrayBuffer | null> =>
-        loadVolumes ? fetch(`${base}/${name}`).then((r) => r.arrayBuffer()) : Promise.resolve(null);
-      const [l1, l2, binA, valid, volRad, volEmit, groundBuf] = await Promise.all([
-        fetch(`${base}/atlas_l1.bin`).then((r) => r.arrayBuffer()),
-        fetch(`${base}/atlas_l2.bin`).then((r) => r.arrayBuffer()),
-        fetch(`${base}/atlas_bin.bin`).then((r) => r.arrayBuffer()),
+      // probe 图集**按需加载**:进场景只拉当前 mode 那一种(游戏默认 L2=9列);另两种 F2 切档
+      // 才由 ensureProbeAtlas 现拉。省掉白加载(尤其 BIN 那份;固化后 L2 仅 ~0.12MB)。
+      const shMode0 = (meta.shading as { mode?: number } | undefined)?.mode;
+      const targetProbeMode = shMode0 === 1 || shMode0 === 3 ? shMode0 : 2;
+      const probeCfg0 = CharacterLightingSystem.probeCfg(targetProbeMode);
+      const [atlasBuf, valid, groundBuf] = await Promise.all([
+        fetch(`${base}/${probeCfg0.file}`).then((r) => r.arrayBuffer()),
         fetch(`${base}/probes_valid.bin`).then((r) => r.arrayBuffer()),
-        volFetch('vol_rad.bin'),
-        volFetch('vol_emit.bin'),
         fetch(`${base}/ground_d.png`).then((r) => r.blob()),
       ]);
       if (myEpoch !== this.epoch) return;
 
       const P = meta.probes.nx * meta.probes.ny * meta.probes.nz;
-      const f16Tex = (buf: ArrayBuffer, w: number, h: number): TextureSource => {
-        const tex = new BufferImageSource({
-          resource: new Uint16Array(buf), width: w, height: h,
-          format: 'rgba16float', scaleMode: 'nearest',
-          alphaMode: 'no-premultiply-alpha',
-        });
-        this.ownedTextures.push(tex);
-        return tex;
-      };
-      const atlasL1 = f16Tex(l1, 16, P);
-      const atlasL2 = f16Tex(l2, 36, P);
-      const atlasBin = f16Tex(binA, 256, P);
+      // 当前 mode 建真图,另两种 1×1 占位(shader 按 mode 采样,占位不被采)。三张进 probeTextures(可换)。
+      const realAtlas = this.makeProbeTexture(atlasBuf, probeCfg0.col, P);
+      const phTex = (): TextureSource => this.makeProbeTexture(new Uint16Array(4).buffer, 1, 1);
+      const atlasL1 = targetProbeMode === 1 ? realAtlas : phTex();
+      const atlasL2 = targetProbeMode === 2 ? realAtlas : phTex();
+      const atlasBin = targetProbeMode === 3 ? realAtlas : phTex();
+      this.loadedProbeMode = targetProbeMode;
       const validTex = new BufferImageSource({
         resource: new Uint8Array(valid), width: P, height: 1,
         format: 'r8unorm', scaleMode: 'nearest',
@@ -448,12 +691,11 @@ export class CharacterLightingSystem implements IGameSystem {
       });
       this.ownedTextures.push(validTex);
       const V = meta.vol;
-      // 生产用 1×1 占位卷保 shader 采样器绑定合法;cache 着色路径(mode≥1)从不采样它。
-      const volRadTex = volRad ? f16Tex(volRad, V.tiles_x * V.nx, V.tiles_y * V.ny)
-        : f16Tex(new Uint16Array(4).buffer, 1, 1);
-      const volEmitTex = volEmit ? f16Tex(volEmit, V.tiles_x * V.nx, V.tiles_y * V.ny)
-        : f16Tex(new Uint16Array(4).buffer, 1, 1);
-      this._hasVolumes = !!(volRad && volEmit);
+      // 进场景一律 1×1 占位卷保 shader 采样器绑定合法;cache 着色路径(mode≥1)从不采样它。
+      // 真卷由 ensureVolumes() 在开 RT 时现拉替换(volTextures 独立于 ownedTextures 管理)。
+      const volRadTex = this.makeVolumeTexture(new Uint16Array(4).buffer, 1, 1);
+      const volEmitTex = this.makeVolumeTexture(new Uint16Array(4).buffer, 1, 1);
+      this._hasVolumes = false;
 
       // ground_d.png:RG16 → 深度场(footQ 的 CPU 采样源)
       const bmp = await createImageBitmap(groundBuf);
@@ -507,7 +749,8 @@ export class CharacterLightingSystem implements IGameSystem {
       this.groundD = g;
       this.groundTex = gtex;
       this.lightLum = lightLum;
-      this.l2u16 = new Uint16Array(l2);
+      this.probeAtlasU16 = new Uint16Array(atlasBuf);
+      this.probeAtlasCol = probeCfg0.col;
       this.validU8 = new Uint8Array(valid);
       this.resources = {
         atlasL1, atlasL2, atlasBin, valid: validTex,
@@ -536,9 +779,10 @@ export class CharacterLightingSystem implements IGameSystem {
         lightsQ, lightsE, lightCount,
       };
       // probe 点云可视化数据:规则晶格位置(=运行时插值实际用的格点)投回场景
-      // 世界系;颜色取 L2 base 首系数,与实验室查看器点云同配方(×0.9 → 1/2.2)。
+      // 世界系;颜色取固化 E 的 DC 系数(coeff 0),与实验室查看器点云同配方(×0.9 → 1/2.2)。
       {
-        const l2u16 = new Uint16Array(l2);
+        const atlasU16 = this.probeAtlasU16!;
+        const nCol = this.probeAtlasCol;
         const validU8 = new Uint8Array(valid);
         const pts: ProbeVizPoint[] = [];
         const s2wX = meta.work.w / Math.max(worldW, 1e-6);
@@ -557,7 +801,7 @@ export class CharacterLightingSystem implements IGameSystem {
               const sy = meta.cal.cy - qy * meta.cal.ppu;
               let color = 0;
               for (let c = 0; c < 3; c++) {
-                const v = Math.max(f16(l2u16[(flat * 36) * 4 + c]) * 0.9, 0);
+                const v = Math.max(f16(atlasU16[(flat * nCol) * 4 + c]) * 0.9, 0);
                 const b = Math.max(30, Math.min(255, Math.round(Math.pow(v, 1 / 2.2) * 255)));
                 color = (color << 8) | b;
               }
@@ -581,18 +825,44 @@ export class CharacterLightingSystem implements IGameSystem {
           beta: sh.beta, ambStrength: sh.amb,
           bulge: sh.bulge, flatten: sh.flatten,
         });
+        // E 色度权重(实验室调色区导出;缺省 0=只借场景明暗)。F2 旋钮可临时覆盖测试。
+        const ec = (sh as { eChroma?: number }).eChroma;
+        this.eChroma = typeof ec === 'number' && Number.isFinite(ec) ? ec : 0;
       }
-      // 未载体素卷 → 强制 cache 着色(mode≥1),RT(mode 0)会采样占位卷得黑。
-      if (!loadVolumes && this.params.mode < 1) this.params.mode = 2;
-      depthLog(T, sceneId, `: lighting v2 active, ${P} probes, ${lightCount} lights, `
+      // 进场景恒未载体素卷 → 强制 cache 着色(mode≥1),RT(mode 0)会采样占位卷得黑。
+      if (this.params.mode < 1) this.params.mode = 2;
+      // sprite 网格着色:场景静态组(mesh 路径与 filter 同源同值)
+      this.groundRange = [meta.ground_d.min, meta.ground_d.max];
+      this.sceneLit = createSceneLitUniforms({
+        worldToWorkX: this.resources.worldToWorkX, worldToWorkY: this.resources.worldToWorkY,
+        cal: this.resources.cal, vol: this.resources.vol,
+        mCol: this.resources.mCol, wMin: this.resources.wMin, wScale: this.resources.wScale,
+        pn: this.resources.pn, ambSH: this.resources.ambSH,
+        lightsQ: this.resources.lightsQ, lightsE: this.resources.lightsE,
+        lightCount: this.resources.lightCount,
+        groundMin: this.groundRange[0], groundMax: this.groundRange[1],
+        sceneWorldW: this.sceneWorldW, sceneWorldH: this.sceneWorldH,
+        workW: this.resources.workW, workH: this.resources.workH,
+      });
+      this.loadedSceneId = sceneId;
+      depthLog(T, sceneId, `: lighting v3 active, ${P} probes, ${lightCount} lights, `
         + `vol ${V.nx}x${V.ny}x${V.nz}, shading ${sh ? `cfg(mode ${sh.mode})` : 'defaults'}`);
       this.onReady?.();
     } catch (e) {
       depthError(T, 'payload load failed', e);
       if (myEpoch === this.epoch) {
         this.meta = null; this.groundD = null; this.resources = null;
+        this.loadedSceneId = null; this._hasVolumes = false;
         for (const t of this.ownedTextures) t.destroy();
         this.ownedTextures = [];
+        for (const t of this.volTextures) t.destroy();
+        this.volTextures = [];
+        this.disposeStaleVolumeTextures();
+        for (const t of this.probeTextures) t.destroy();
+        this.probeTextures = [];
+        this.disposeStaleProbeTextures();
+        this.loadedProbeMode = 0;
+        this.probeInflight = null;
       }
     }
   }
@@ -652,7 +922,100 @@ export class CharacterLightingSystem implements IGameSystem {
         * this.params.heightScale;
       filter.setCharSize(wWu, hWu);
       filter.setNormalFrame(ent.nrmRect, ent.flipX);
+      // 法线 local UV 的唯一依据:sprite 的世界 AABB(锚点=底中,故左上 = x−w/2, y−h)。
+      // 与 color 帧同一套 UV;裁剪无关(半出屏的实体不再整块采到边缘列)。
+      filter.setSpriteWorldRect(
+        worldX - ent.worldW / 2, worldY - ent.worldH, ent.worldW, ent.worldH,
+      );
     }
     filter.applyParams(this.params);
+    filter.setEChroma(this.eChroma);
+  }
+
+  // ---------------------------------------------------------------- mesh 着色 API(2026-07-25)
+
+  /** 场景卸载/重载前把活 shader 的场景纹理全部退到白图 —— 防 BindGroup 绑到已销毁纹理自毁。 */
+  private parkLitShaders(): void {
+    for (const sh of this.litShaders) {
+      for (const k of ['uPL1', 'uPL2', 'uPBin', 'uValid', 'uVolRad', 'uVolEmit', 'uGround', 'uNrm']) {
+        setLitShaderTexture(sh, k, null);
+      }
+    }
+    this.sceneLit = null;
+  }
+
+  /** 体素卷/probe 图集热替换后,把新纹理就地重绑到所有活 shader(mesh 不走"重挂滤镜"那套)。 */
+  private rebindLitSceneTextures(): void {
+    const r = this.resources;
+    if (!r) return;
+    for (const sh of this.litShaders) {
+      setLitShaderTexture(sh, 'uPL1', r.atlasL1);
+      setLitShaderTexture(sh, 'uPL2', r.atlasL2);
+      setLitShaderTexture(sh, 'uPBin', r.atlasBin);
+      setLitShaderTexture(sh, 'uValid', r.valid);
+      setLitShaderTexture(sh, 'uVolRad', r.volRad);
+      setLitShaderTexture(sh, 'uVolEmit', r.volEmit);
+      if (this.groundTex) setLitShaderTexture(sh, 'uGround', this.groundTex);
+    }
+  }
+
+  /** 为一个实体建 sprite 网格着色 shader;无载荷/关闭时返回 null(实体走旧管线)。 */
+  createEntityLitShader(colorTex: TextureSource, nrm: TextureSource | null): Shader | null {
+    const r = this.resources;
+    if (!r || !this.sceneLit || !this.groundTex || !this.enabled) return null;
+    const sh = createLitShader(this.sceneLit, this.frameLit, {
+      colorTex, nrm, ground: this.groundTex,
+      atlasL1: r.atlasL1, atlasL2: r.atlasL2, atlasBin: r.atlasBin,
+      valid: r.valid, volRad: r.volRad, volEmit: r.volEmit,
+    });
+    this.litShaders.add(sh);
+    return sh;
+  }
+
+  /** 实体销毁/关闭着色时回收(shader 归照明系统管,mesh/geometry 归实体)。 */
+  releaseEntityLitShader(sh: Shader): void {
+    this.litShaders.delete(sh);
+    sh.destroy();
+  }
+
+  /** 实体运行时换图集(背尸/道士/setEntityField):就地换 color+normal 源,同源短路。 */
+  swapEntityLitTextures(sh: Shader, colorTex: TextureSource, nrm: TextureSource | null): void {
+    setLitShaderTexture(sh, 'uColorTex', colorTex);
+    setLitShaderTexture(sh, 'uNrm', nrm);
+  }
+
+  /** AO(env 驱动;与 filter 的 applyShadowFilterToneAO 同一组值,由 Game 在同处喂)。 */
+  setSharedAO(contact: number, form: number): void {
+    this.aoContact = contact;
+    this.aoForm = form;
+  }
+
+  /**
+   * 每渲染帧同步共享帧组(worldContainer 位姿 + 全部照明参数)。
+   * 由 Pixi ticker 直接驱动(Game 注册),**不经任何游戏状态分支** —— filter 路径那次
+   * "Cutscene 态整段驱动被跳过 → uniform 冻在默认值"的事故面在这里结构上不存在。
+   */
+  syncFrame(wcX: number, wcY: number, projectionScale: number): void {
+    const u = this.frameLit.uniforms as Record<string, unknown>;
+    const wc = u['uWCPos'] as Float32Array;
+    wc[0] = wcX; wc[1] = wcY;
+    u['uWCScale'] = projectionScale;
+    const p = this.params;
+    u['uMode'] = p.mode; u['uSpp'] = p.spp; u['uMSteps'] = p.msteps;
+    u['uFold'] = p.fold ? 1 : 0; u['uMissMode'] = p.missMode ? 1 : 0; u['uNEE'] = p.nee ? 1 : 0;
+    u['uStep'] = p.step; u['uBeta'] = Math.pow(2, p.beta); u['uAmbStrength'] = p.ambStrength;
+    u['uBulge'] = p.bulge; u['uFlatten'] = p.flatten; u['uShowN'] = p.showNormals ? 1 : 0;
+    u['uSunOn'] = p.sunEnabled ? 1 : 0;
+    const az = (p.sunAzimuthDeg * Math.PI) / 180;
+    const el = (p.sunElevationDeg * Math.PI) / 180;
+    const d = u['uSunDirQ'] as Float32Array;
+    d[0] = Math.cos(el) * Math.cos(az); d[1] = Math.sin(el); d[2] = Math.cos(el) * Math.sin(az);
+    const c = u['uSunColor'] as Float32Array;
+    c[0] = p.sunColor[0] * p.sunIntensity;
+    c[1] = p.sunColor[1] * p.sunIntensity;
+    c[2] = p.sunColor[2] * p.sunIntensity;
+    u['uEChroma'] = this.eChroma;
+    u['uAOContact'] = this.aoContact; u['uAOForm'] = this.aoForm;
+    this.frameLit.update();
   }
 }

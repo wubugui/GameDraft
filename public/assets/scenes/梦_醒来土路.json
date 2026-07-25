@@ -57,5 +57,49 @@
         "graphId": "梦_段E_醒来"
       }
     }
-  ]
+  ],
+  "depthConfig": {
+    "depth_map": "raw_depth_rg.png",
+    "collision_map": "collision.png",
+    "M": {
+      "R": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.7071067811865476,
+          -0.7071067811865475
+        ],
+        [
+          0.0,
+          0.7071067811865475,
+          0.7071067811865476
+        ]
+      ],
+      "ppu": 450.56,
+      "cx": 1024.0,
+      "cy": 571.5
+    },
+    "depth_mapping": {
+      "invert": false,
+      "scale": 4.219181742858887,
+      "offset": -2.7749351097106936
+    },
+    "shader": {
+      "depth_per_sy": 0.002219460227272727
+    },
+    "collision": {
+      "x_min": -2.2727272510528564,
+      "z_min": -2.316106555812378,
+      "cell_size": 0.028553961009785005,
+      "grid_width": 160,
+      "grid_height": 147,
+      "height_offset": 0.0
+    },
+    "depth_tolerance": 0.05,
+    "floor_offset": 0.0
+  }
 }

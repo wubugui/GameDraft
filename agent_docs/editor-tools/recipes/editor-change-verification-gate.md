@@ -16,17 +16,24 @@ triggers:
 last_governed: 2026-07-11
 ---
 
-实测环境与日期:macOS(darwin)、`.tools/venv/bin/python`(带 PySide6,**不是** `.venv`)、`QT_QPA_PLATFORM=offscreen`;2026-06-20 至 2026-07-11 多轮编辑器修复全程实测。
+实测环境与日期:macOS(darwin)、`.tools/venv/bin/python`(带 PySide6,**不是** `.venv`);2026-06-20 至 2026-07-11 多轮编辑器修复全程实测。**离屏平台与并行参数已固化**(2026-07-25):`QT_QPA_PLATFORM=offscreen` 由 `tools/conftest.py` `setdefault`,`-n auto --dist loadfile` 由根 `pytest.ini` 的 addopts 带上——两者都不必再手打。并行依赖 `pytest-xdist`(已入 `tools/editor/requirements.txt`),缺它会全线 `unrecognized arguments: --dist`。
 
 ## 三件套(每次改完必跑)
 
 ```bash
-QT_QPA_PLATFORM=offscreen .tools/venv/bin/python -m pytest tools/editor/tests/ -q
+.tools/venv/bin/python -m pytest tools/editor/tests/ -q                          # 全套约 40 秒
 .tools/venv/bin/python -m tools.editor.shared.asset_reference_audit . --strict   # 应 issues: 0
 ./dev.sh validate-data                                                           # 应 exit=0、0 error(既有 [WARN] 非本改动)
 ```
 
+单步调试某条测试时加 `-n0` 关并行(`--pdb` 与 xdist 不兼容)。
+
 关键测试:`test_canvas_roundtrip_safety.py`(黄金往返:真实工程全 JSON load→save→reparse 语义一致)、`test_all_editors_construct.py`(全编辑器离屏可构造,py_compile 查不出的运行期错误靠它)、`test_form_editor_persistence.py`(表单不丢编辑)。改了图对话另跑 `pytest tools/dialogue_graph_editor/tests/`;改了叙事网页另跑 `npx vitest run tools/narrative_editor_web` + `npm run build:narrative-editor`。
+
+## Qt 生命周期两条硬规矩(2026-07-25 立)
+
+- **`QTimer.singleShot` 必须带 context 对象**(3 参版)。2 参版排的定时器没有 receiver,宿主控件销毁后照样触发,回调一碰 C++ 就 `RuntimeError: Internal C++ object already deleted`,并且 PySide 会把异常沿最近的 Python-override 边界向外抛、炸在**毫不相干的下一段操作**里。护栏:`tools/editor/tests/test_single_shot_context_parity.py`(静态扫 `tools/editor` / `tools/dialogue_graph_editor` / `tools/production_workbench`)。
+- **测试里 `deleteLater()` 销毁不掉控件**:测试进程没有事件循环(loopLevel 0),`processEvents()` 不投递 `DeferredDelete`。收尾由 `tools/editor/tests/conftest.py` 的 autouse fixture 显式 `sendPostedEvents(None, DeferredDelete)` 统一收(护栏 `test_qt_widget_teardown.py`)。**别把这个 fixture 上提到 `tools/conftest.py`**——图对话编辑器测试会因此段错误退出(它自己的生命周期残留还没修)。
 
 ## 已知盲区(绿灯≠对,按需补探针)
 
@@ -48,4 +55,4 @@ QT_QPA_PLATFORM=offscreen .tools/venv/bin/python -m pytest tools/editor/tests/ -
 
 ## 布局类改动附加冒烟
 
-`QT_QPA_PLATFORM=offscreen .tools/venv/bin/python -m unittest tools.editor.tests.test_all_editors_construct`;小屏回归 `test_small_screen_layout.py`(面板最小宽护栏)。
+`.tools/venv/bin/python -m pytest tools/editor/tests/test_all_editors_construct.py -q`;小屏回归 `test_small_screen_layout.py`(面板最小宽护栏)。**别用 `python -m unittest`**——它完全不加载 conftest,等于绕过仓库写保护、QSettings 隔离、对话布局侧档重定向和控件销毁收尾。

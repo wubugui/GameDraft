@@ -105,11 +105,15 @@ from .portrait_catalog import load_portrait_sets
 from .id_ref_selector import IdRefSelector
 from .audio_preview_selector import AudioIdPreviewSelector
 from .blend_overlay_preview import BlendOverlayPreviewWidget
+from .bubble_anchor_field import BubbleAnchorPickField, actor_for_emote_target
 from .collapsible_section import CollapsibleSection
 from .dialog_geometry import remember_dialog_geometry
 from .form_layout import compact_form
 from .image_path_picker import CutsceneImagePathRow
-from .cutscene_dialogue_speaker_row import npc_items_for_dialogue_picker
+from .cutscene_dialogue_speaker_row import (
+    npc_items_for_dialogue_picker,
+    scripted_speaker_items,
+)
 from .scripted_lines_editor import ScriptedLinesEditor
 from .runtime_field_schema import entity_kind_choices, field_meta
 from .numeric_roundtrip import preserve_numeric_repr
@@ -191,6 +195,9 @@ _ACTION_PARAM_RUNTIME_DEFAULTS: dict[tuple[str, str], int] = {
     ("showSpeechBubbleAndWait", "duration"): 1500,
     # moveEntityTo speed ?? 80
     ("moveEntityTo", "speed"): 80,
+    # jumpEntityTo durationMs ?? 600 / arcHeight ?? 120（ActionRegistry.ts）：缺键且仍为默认时不回写。
+    ("jumpEntityTo", "durationMs"): 600,
+    ("jumpEntityTo", "arcHeight"): 120,
     # moveGroupBy speed 缺省=0（瞬移分支）；登记后"未填 speed"打开保存不注入键（审查 P1-1）
     ("moveGroupBy", "speed"): 0,
     # sugarWheelShowSpeech durationMs 缺省=实例 speechDurationMs（兜底 3000）：
@@ -240,7 +247,7 @@ ACTION_TYPES = [
     "waitClickContinue",
     "waitMs",
     "enableRuleOffers", "disableRuleOffers",
-    "moveEntityTo", "faceEntity", "cutsceneSpawnActor", "cutsceneRemoveActor", "showEmoteAndWait", "showSpeechBubbleAndWait",
+    "moveEntityTo", "jumpEntityTo", "faceEntity", "cutsceneSpawnActor", "cutsceneRemoveActor", "showEmoteAndWait", "showSpeechBubbleAndWait",
     "setGroupEnabled", "moveGroupBy",
 ]
 
@@ -398,6 +405,7 @@ ACTION_PERSISTENCE: dict[str, str] = {
     "enableRuleOffers": "save",
     "disableRuleOffers": "save",
     "moveEntityTo": "memory",
+    "jumpEntityTo": "memory",
     "faceEntity": "memory",
     "cutsceneSpawnActor": "memory",
     "cutsceneRemoveActor": "memory",
@@ -501,6 +509,8 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
         ("duration", "float"),
         ("anchorOffsetX", "float"),
         ("anchorOffsetY", "float"),
+        ("bubbleAnchorY", "bubble_anchor"),
+        ("bubbleScale", "bubble_scale"),
     ],
     "showSpeechBubble": [
         ("target", "str"),
@@ -508,6 +518,8 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
         ("duration", "float"),
         ("anchorOffsetX", "float"),
         ("anchorOffsetY", "float"),
+        ("bubbleAnchorY", "bubble_anchor"),
+        ("bubbleScale", "bubble_scale"),
     ],
     "playNpcAnimation": [
         ("target", "str"),
@@ -561,6 +573,17 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
         ("arriveAnimState", "str"),
         ("faceTowardMovement", "bool"),
     ],
+    "jumpEntityTo": [
+        ("target", "str"),
+        ("sceneId", "str"),
+        ("x", "float"),
+        ("y", "float"),
+        ("durationMs", "int"),
+        ("arcHeight", "int"),
+        ("jumpAnimState", "str"),
+        ("landAnimState", "str"),
+        ("faceTowardMovement", "bool"),
+    ],
     "faceEntity": [("target", "str"), ("direction", "str"), ("faceTarget", "str")],
     "cutsceneSpawnActor": [("id", "str"), ("name", "str"), ("x", "float"), ("y", "float")],
     "cutsceneRemoveActor": [("id", "str")],
@@ -570,6 +593,8 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
         ("duration", "float"),
         ("anchorOffsetX", "float"),
         ("anchorOffsetY", "float"),
+        ("bubbleAnchorY", "bubble_anchor"),
+        ("bubbleScale", "bubble_scale"),
     ],
     "showSpeechBubbleAndWait": [
         ("target", "str"),
@@ -577,6 +602,8 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
         ("duration", "float"),
         ("anchorOffsetX", "float"),
         ("anchorOffsetY", "float"),
+        ("bubbleAnchorY", "bubble_anchor"),
+        ("bubbleScale", "bubble_scale"),
     ],
     # 分组批量：group 是纯标签（非实体 id 引用，勿登记 ENTITY_REF_PARAMS）；
     # 组存在性 validator 检查暂缺（已知限制，见设计稿第八节 4），主创作路径是实体树指派。
@@ -1518,7 +1545,7 @@ class FilterableTypeCombo(QComboBox):
                 self._suppress_editing_finish = False
 
         # 若在 activated 栈内立刻 clear()，部分平台/主题下弹出层尚未完全卸载，会闪退
-        QTimer.singleShot(0, _deferred_apply)
+        QTimer.singleShot(0, self, _deferred_apply)
 
     def _apply_committed(self, value: str) -> None:
         prev = self._committed
@@ -2915,6 +2942,205 @@ class ActionRow(QWidget):
         sc_w.typeCommitted.connect(lambda _t: refresh_state())
         refresh_state()
 
+    def _rebuild_jump_entity_to_params(self, params: dict) -> None:
+        """jumpEntityTo：复用 moveEntityTo 的地图选点 + 动画 state 选择器；改：无途经点、speed→durationMs+arcHeight、起跳/落地动画。"""
+        from ..shared.move_entity_map_picker import MoveEntityToMapPickerDialog
+
+        self._params_frame.setVisible(True)
+        while self._params_layout.rowCount() > 0:
+            self._params_layout.removeRow(0)
+        self._param_widgets.clear()
+
+        m = self._ctx_model
+        tip = QLabel(
+            "在「地图 sceneId」上用弹窗必选落点坐标；x/y 只读禁止手输。\n"
+            "durationMs=腾空总时长(毫秒)，arcHeight=抛物线峰高(世界像素)；起跳动画只播一次、"
+            "帧按移动进度插值，落地切「落地动画」。sceneId 仅存档供编辑器复现地图。"
+        )
+        tip.setWordWrap(True)
+        self._params_layout.addRow(tip)
+
+        # target —— 复用 actor id 选择器
+        tgt_w = self._make_selector("actor", str(params.get("target", "") or ""))
+        self._param_widgets["target"] = tgt_w
+        self._params_layout.addRow("target", tgt_w)
+
+        # 地图 sceneId —— 复用 moveEntityTo 的默认场景推导
+        scene_rows = [(s, s) for s in (m.all_scene_ids() if m else [])] or [("（无场景）", "")]
+
+        def _default_map_sid() -> str:
+            ms = str(params.get("sceneId") or "").strip()
+            if ms:
+                return ms
+            if self._ctx_scene_id:
+                return str(self._ctx_scene_id).strip()
+            cid = self._ctx_cutscene_id
+            if m and cid:
+                for cv in m.cutscenes or []:
+                    if isinstance(cv, dict) and str(cv.get("id", "")).strip() == str(cid).strip():
+                        return str(cv.get("targetScene") or "").strip()
+            return ""
+
+        sid0 = _default_map_sid()
+        map_scene_combo = FilterableTypeCombo(scene_rows, self, select_only=True)
+        vals = {v for _d, v in scene_rows if v}
+        if sid0 and sid0 in vals:
+            map_scene_combo.set_committed_type(sid0)
+        elif scene_rows and scene_rows[0][1]:
+            map_scene_combo.set_committed_type(scene_rows[0][1])
+        map_scene_combo.setToolTip("选点弹窗使用该场景的背景与尺寸。")
+        map_scene_combo.typeCommitted.connect(lambda _t: self.changed.emit())
+        self._param_widgets["sceneId"] = map_scene_combo
+        self._params_layout.addRow("地图 sceneId（仅编辑）", map_scene_combo)
+
+        # x/y —— 只读，只由地图弹窗写入
+        try:
+            ix = float(params.get("x"))
+            iy = float(params.get("y"))
+        except (TypeError, ValueError):
+            ix, iy = 0.0, 0.0
+        if not (math.isfinite(ix) and math.isfinite(iy)):
+            ix, iy = 0.0, 0.0
+
+        sx_v = QDoubleSpinBox(self)
+        sx_v.setRange(-1e9, 1e9)
+        sx_v.setDecimals(2)
+        sx_v.setReadOnly(True)
+        sx_v.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        sx_v.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        sx_v.setValue(ix)
+        sy_v = QDoubleSpinBox(self)
+        sy_v.setRange(-1e9, 1e9)
+        sy_v.setDecimals(2)
+        sy_v.setReadOnly(True)
+        sy_v.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        sy_v.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        sy_v.setValue(iy)
+        self._param_widgets["x"] = sx_v
+        self._param_widgets["y"] = sy_v
+        self._params_layout.addRow("落点 x", sx_v)
+        self._params_layout.addRow("落点 y", sy_v)
+
+        # 地图选落点（复用 MoveEntityToMapPickerDialog，无途经点故传 []）
+        pick_btn = QPushButton("地图选落点…", self)
+
+        def _open_jump_pick() -> None:
+            sid = map_scene_combo.committed_type().strip()
+            if not m:
+                QMessageBox.warning(self, "选点", "未加载工程。")
+                return
+            if not sid or sid not in m.scenes:
+                QMessageBox.information(self, "选点", "请选择有效的地图场景 sceneId。")
+                return
+            dlg = MoveEntityToMapPickerDialog(m, sid, float(sx_v.value()), float(sy_v.value()), [], self)
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+            px, py = dlg.result_destination()
+            sx_v.setValue(float(px))
+            sy_v.setValue(float(py))
+            self.changed.emit()
+
+        pick_btn.clicked.connect(_open_jump_pick)
+        self._params_layout.addRow("", pick_btn)
+
+        # durationMs (int) —— 腾空总时长
+        try:
+            dur_v = int(params.get("durationMs", 600))
+        except (TypeError, ValueError):
+            dur_v = 600
+        dur_sb = QSpinBox(self)
+        dur_sb.setRange(1, 60000)
+        dur_sb.setValue(max(1, dur_v))
+        dur_sb.valueChanged.connect(lambda _v: self.changed.emit())
+        self._param_widgets["durationMs"] = dur_sb
+        self._params_layout.addRow("durationMs（腾空毫秒）", dur_sb)
+
+        # arcHeight (int) —— 抛物线峰高（世界像素）
+        try:
+            arc_v = int(params.get("arcHeight", 120))
+        except (TypeError, ValueError):
+            arc_v = 120
+        arc_sb = QSpinBox(self)
+        arc_sb.setRange(0, 100000)
+        arc_sb.setValue(max(0, arc_v))
+        arc_sb.valueChanged.connect(lambda _v: self.changed.emit())
+        self._param_widgets["arcHeight"] = arc_sb
+        self._params_layout.addRow("arcHeight（峰高像素）", arc_sb)
+
+        # jumpAnimState / landAnimState —— 复用共享动画 state 选择器机制
+        ja_init = str(params.get("jumpAnimState", "") or "").strip()
+        ja_combo = FilterableTypeCombo([("（不播放起跳动画）", "")], self, select_only=True)
+        if ja_init:
+            ja_combo.set_committed_type(ja_init)
+        ja_combo.typeCommitted.connect(lambda _t: self.changed.emit())
+        ja_combo.setToolTip("起跳动画：只播一次，帧游标按脚点移动进度 0→1 插值。")
+        self._param_widgets["jumpAnimState"] = ja_combo
+        self._params_layout.addRow("jumpAnimState", ja_combo)
+
+        la_init = str(params.get("landAnimState", "") or "").strip()
+        la_combo = FilterableTypeCombo([("（默认：落地回站立/idle）", "")], self, select_only=True)
+        if la_init:
+            la_combo.set_committed_type(la_init)
+        la_combo.typeCommitted.connect(lambda _t: self.changed.emit())
+        la_combo.setToolTip("落地后播放的动画状态；留空=回各实体的站立/idle。")
+        self._param_widgets["landAnimState"] = la_combo
+        self._params_layout.addRow("landAnimState", la_combo)
+
+        # faceTowardMovement (bool)
+        face_cb = QCheckBox("自动调节朝向（朝落点方向）", self)
+        face_raw = params.get("faceTowardMovement")
+        face_cb.setChecked(face_raw is True or str(face_raw).strip().lower() in ("true", "1", "yes"))
+        face_cb.toggled.connect(lambda _c: self.changed.emit())
+        self._param_widgets["faceTowardMovement"] = face_cb
+        self._params_layout.addRow("朝向", face_cb)
+
+        self._sync_foldable_visibility()
+        self._connect_jump_entity_animation_pickers(initial_jump=ja_init, initial_land=la_init)
+
+    def _connect_jump_entity_animation_pickers(self, *, initial_jump: str, initial_land: str = "") -> None:
+        tgt_w = self._param_widgets.get("target")
+        sc_w = self._param_widgets.get("sceneId")
+        if not isinstance(tgt_w, IdRefSelector) or not isinstance(sc_w, FilterableTypeCombo):
+            return
+        # (控件, 首刷种子值, 空值行文案)：jumpAnimState 与 landAnimState 共用同一份
+        # 候选（animation_state_names_for_actor），未知旧值按共享控件保值契约注入「(数据) 」行。
+        combos: list[tuple[FilterableTypeCombo, str, str]] = []
+        ja_w = self._param_widgets.get("jumpAnimState")
+        if isinstance(ja_w, FilterableTypeCombo):
+            combos.append((ja_w, (initial_jump or "").strip(), "（不播放起跳动画）"))
+        la_w = self._param_widgets.get("landAnimState")
+        if isinstance(la_w, FilterableTypeCombo):
+            combos.append((la_w, (initial_land or "").strip(), "（默认：落地回站立/idle）"))
+        if not combos:
+            return
+        calls = [0]
+
+        def refresh_state(_: str = "") -> None:
+            calls[0] += 1
+            aid = tgt_w.current_id().strip()
+            sid = sc_w.committed_type().strip()
+            mm = self._ctx_model
+            states = mm.animation_state_names_for_actor(sid, aid) if mm and sid else []
+            allowed = {""} | set(states)
+            for w, init_v, empty_label in combos:
+                rows: list[tuple[str, str]] = [(empty_label, "")]
+                rows.extend((s, s) for s in states)
+                cur = w.committed_type().strip()
+                if calls[0] == 1 and not cur and init_v:
+                    cur = init_v
+                w.set_entries(rows)
+                if cur in allowed:
+                    w.set_committed_type(cur)
+                elif cur:
+                    w.set_entries([(f"(数据) {cur}", cur)] + rows[1:])
+                    w.set_committed_type(cur)
+                else:
+                    w.set_committed_type("")
+
+        tgt_w.value_changed.connect(refresh_state)
+        sc_w.typeCommitted.connect(lambda _t: refresh_state())
+        refresh_state()
+
     def _build_overlay_id_combo(self, value: str) -> FilterableTypeCombo:
         """show/hide/blend 叠图 id：overlay_images.json 短 id + 自由输入（非 select_only）。"""
         m = self._ctx_model
@@ -2928,6 +3154,33 @@ class ActionRow(QWidget):
         w.set_committed_type(cur)
         w.typeCommitted.connect(lambda _t: self.changed.emit())
         return w
+
+    def _emote_target_text(self) -> str:
+        """气泡锚预览用：当前 target 控件里的 id（还没建出来就取原始参数）。"""
+        w = self._param_widgets.get("target")
+        if isinstance(w, IdRefSelector):
+            return w.current_id().strip()
+        if isinstance(w, FilterableTypeCombo):
+            return w.committed_type().strip()
+        if isinstance(w, QLineEdit):
+            return w.text().strip()
+        return str(self._data.get("params", {}).get("target") or "").strip()
+
+    def _emote_bubble_text(self) -> str:
+        """气泡锚预览用：气泡里那串字（决定预览气泡的宽高）。emote 与 text 谁在用取谁。"""
+        for key in ("emote", "text"):
+            w = self._param_widgets.get(key)
+            if isinstance(w, EmoteBubbleParamWidget):
+                t = w.emote_text().strip()
+            elif isinstance(w, RichTextLineEdit):
+                t = w.text().strip()
+            elif isinstance(w, QLineEdit):
+                t = w.text().strip()
+            else:
+                t = str(self._data.get("params", {}).get(key) or "").strip()
+            if t:
+                return t
+        return "……"
 
     def _make_selector(
         self,
@@ -3106,6 +3359,10 @@ class ActionRow(QWidget):
 
         if act_type == "moveEntityTo":
             self._rebuild_move_entity_to_params(params)
+            return
+
+        if act_type == "jumpEntityTo":
+            self._rebuild_jump_entity_to_params(params)
             return
 
         if act_type == "setEntityField":
@@ -4098,12 +4355,16 @@ class ActionRow(QWidget):
             self._params_layout.addRow(tip)
             snpc = IdRefSelector(self, allow_empty=True, editable=True)
             snpc.setMinimumWidth(160)
-            snpc.set_items(npc_items_for_dialogue_picker(self._ctx_model, self._ctx_scene_id))
+            snpc.set_items(scripted_speaker_items(self._ctx_model, self._ctx_scene_id))
             snpc.set_current(str(params.get("scriptedNpcId", "") or ""))
             snpc.value_changed.connect(self.changed)
-            snpc.setToolTip("供 speaker 中 {{npc}} 使用；图对话 runActions 时也可用图内 npcId。")
+            snpc.setToolTip(
+                "这段台词的说话人实体：{{npc}} 取它的显示名；行立绘选「跟随说话人」时按它的"
+                "装扮配置取立绘集；说话时头顶「…」也锚到它。主角选「player」。"
+                "图对话 runActions 内则优先用图内 npcId。",
+            )
             self._param_widgets["scriptedNpcId"] = snpc
-            self._params_layout.addRow("scriptedNpcId（{{npc}} 默认）", snpc)
+            self._params_layout.addRow("scriptedNpcId（说话人实体）", snpc)
 
             dim_cb = QCheckBox("对话期间压暗场景背景", self)
             dim_cb.setChecked(params.get("dimBackground") is True)
@@ -4408,7 +4669,34 @@ class ActionRow(QWidget):
         for pname, ptype in schema:
             val = params.get(pname, "")
             w: QWidget
-            if act_type == "removeCurrency" and pname == "amount":
+            if ptype == "bubble_scale":
+                # 大小与位置同属一个控件（BubbleAnchorPickField 左边预览要同时反映两者），
+                # 不建第二个控件、也不占第二行；把同一实例登记到本参数名下，
+                # 收集循环才取得到（那里以 _param_widgets 有无为准，缺登记会被整个跳过）。
+                aw = self._param_widgets.get("bubbleAnchorY")
+                if isinstance(aw, BubbleAnchorPickField):
+                    self._param_widgets[pname] = aw
+                continue
+            if ptype == "bubble_anchor":
+                # 气泡头顶锚：可视化舞台 + 「继承/覆盖」闸门。target 与 emote/text 在 schema 里
+                # 排在本行之前，故此刻 _param_widgets 里已有它们——用惰性闭包读，切 target 即刷新。
+                w = BubbleAnchorPickField(
+                    self,
+                    self._ctx_model,
+                    params.get(pname),
+                    lambda: actor_for_emote_target(
+                        self._ctx_model, self._ctx_scene_id, self._emote_target_text(),
+                    ),
+                    bubble_text_provider=self._emote_bubble_text,
+                    committed_scale=params.get("bubbleScale"),
+                )
+                w.changed.connect(self.changed)
+                tgt_w = self._param_widgets.get("target")
+                if isinstance(tgt_w, IdRefSelector):
+                    tgt_w.value_changed.connect(lambda _v, _w=w: _w.refresh_actor())
+                # 气泡文案变了只需重量宽高，不必重建状态列表（那会把预览状态选择顶回缺省）
+                self.changed.connect(w.refresh_bubble_text)
+            elif act_type == "removeCurrency" and pname == "amount":
                 if isinstance(val, (int, float)) and not isinstance(val, bool):
                     fv = float(val)
                     ps = str(int(fv)) if fv.is_integer() else str(val)
@@ -5270,6 +5558,42 @@ class ActionRow(QWidget):
             prm["faceTowardMovement"] = True
         return {"type": "moveEntityTo", "params": prm}
 
+    def _to_dict_jump_entity_to(self) -> dict:
+        tgt_w = self._param_widgets.get("target")
+        sc_w = self._param_widgets.get("sceneId")
+        sx_v = self._param_widgets.get("x")
+        sy_v = self._param_widgets.get("y")
+        dur_w = self._param_widgets.get("durationMs")
+        arc_w = self._param_widgets.get("arcHeight")
+        ja_w = self._param_widgets.get("jumpAnimState")
+        la_w = self._param_widgets.get("landAnimState")
+        tgt = tgt_w.current_id().strip() if isinstance(tgt_w, IdRefSelector) else ""
+        sid = sc_w.committed_type().strip() if isinstance(sc_w, FilterableTypeCombo) else ""
+        xv = float(sx_v.value()) if isinstance(sx_v, QDoubleSpinBox) else 0.0
+        yv = float(sy_v.value()) if isinstance(sy_v, QDoubleSpinBox) else 0.0
+        dur = int(dur_w.value()) if isinstance(dur_w, QSpinBox) else 600
+        arc = int(arc_w.value()) if isinstance(arc_w, QSpinBox) else 120
+        ja = ja_w.committed_type().strip() if isinstance(ja_w, FilterableTypeCombo) else ""
+        la = la_w.committed_type().strip() if isinstance(la_w, FilterableTypeCombo) else ""
+        # sceneId 仅供编辑器复现地图（同 moveEntityTo）：仅当原数据本就带 sceneId 才回写。key 顺序
+        # 维持 target,[sceneId],x,y,durationMs,arcHeight。durationMs/arcHeight 恒写，缺省值由
+        # _ACTION_PARAM_RUNTIME_DEFAULTS 在 to_dict 后处理剔除（原缺键且仍为默认时不注入）。
+        prm = {"target": tgt}
+        if sid and "sceneId" in self._original_params:
+            prm["sceneId"] = sid
+        prm["x"] = round(xv, 2)
+        prm["y"] = round(yv, 2)
+        prm["durationMs"] = dur
+        prm["arcHeight"] = arc
+        if ja:
+            prm["jumpAnimState"] = ja
+        if la:
+            prm["landAnimState"] = la
+        face_w = self._param_widgets.get("faceTowardMovement")
+        if isinstance(face_w, QCheckBox) and face_w.isChecked():
+            prm["faceTowardMovement"] = True
+        return {"type": "jumpEntityTo", "params": prm}
+
     def _to_dict_set_scene_entity_position(self) -> dict:
         sc_w = self._param_widgets.get("sceneId")
         k_w = self._param_widgets.get("entityKind")
@@ -5353,13 +5677,27 @@ class ActionRow(QWidget):
             return self._to_dict_reveal_document()
         if act_type == "moveEntityTo":
             return self._to_dict_move_entity_to()
+        if act_type == "jumpEntityTo":
+            return self._to_dict_jump_entity_to()
         schema = _PARAM_SCHEMAS.get(act_type, [])
         params: dict = {}
         for pname, ptype in schema:
             w = self._param_widgets.get(pname)
             if w is None:
                 continue
-            if ptype == "int":
+            if ptype == "bubble_scale":
+                # 与 bubbleAnchorY 共用同一控件（见构造处）；None = 继承全局，不写键
+                if isinstance(w, BubbleAnchorPickField):
+                    sv = w.scale_value()
+                    if sv is not None:
+                        params[pname] = float(sv)
+            elif ptype == "bubble_anchor":
+                # None = 继承（不写键）。绝不写 0 占位——0 会被运行时当成"锚在脚点"。
+                if isinstance(w, BubbleAnchorPickField):
+                    v = w.value()
+                    if v is not None:
+                        params[pname] = float(v)
+            elif ptype == "int":
                 params[pname] = w.value()
             elif ptype == "float":
                 params[pname] = float(w.value())

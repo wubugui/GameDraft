@@ -43,6 +43,22 @@ export class Player implements ICutsceneActor {
     arriveAnimState: string | null | undefined;
   } | null = null;
 
+  /** 跳跃演出（jumpTo）：脚点线性、精灵抛物线抬升、起跳动画按进度插帧；与 moveTarget 互斥。 */
+  private jumpTarget: {
+    startX: number;
+    startY: number;
+    targetX: number;
+    targetY: number;
+    durationSec: number;
+    arcHeight: number;
+    elapsedSec: number;
+    jumpAnim: string | undefined;
+    frameCount: number;
+    landAnimState: string | null | undefined;
+    faceTowardMovement: boolean;
+    resolve: () => void;
+  } | null = null;
+
   private collisionsEnabled = true;
   private walkSpeed = DEFAULT_PLAYER_WALK_SPEED;
   private runSpeed = DEFAULT_PLAYER_RUN_SPEED;
@@ -108,10 +124,20 @@ export class Player implements ICutsceneActor {
     return this.sprite.container;
   }
 
-  /** 气泡底边落在头顶稍上方（Sprite 锚点在脚底） */
+  /**
+   * 气泡底边落在头顶稍上方（Sprite 锚点在脚底）：锚在**当前帧可见内容**顶部——
+   * 蹲/躺/睡这些矮帧跟着降下来，跳跃弧线跟着抬。
+   * 图集 `states[*].bubbleAnchor` 授权了就用授权值；没登记 `atlasFrames` 时回落格子 quad 顶边。
+   */
   getEmoteBubbleAnchorLocalY(): number {
-    const h = Math.max(this.sprite.getWorldSize().height, 1);
     const headGap = 8;
+    const authored = this.sprite.getAuthoredBubbleAnchorLocalY();
+    if (authored !== null) return authored - headGap;
+    const content = this.sprite.getContentBoxLocal();
+    if (content) {
+      return -(content.bottomGap + Math.max(content.height, 1)) - headGap;
+    }
+    const h = Math.max(this.sprite.getWorldSize().height, 1);
     return -h - headGap;
   }
 
@@ -163,7 +189,94 @@ export class Player implements ICutsceneActor {
     this.sprite.playAnimation(name, undefined, playback);
   }
 
+  jumpTo(
+    targetX: number,
+    targetY: number,
+    durationMs: number,
+    arcHeight: number,
+    jumpAnimState?: string,
+    landAnimState?: string | null,
+    faceTowardMovement?: boolean,
+  ): Promise<void> {
+    if (this.moveTarget) {
+      this.moveTarget.resolve();
+      this.moveTarget = null;
+    }
+    if (this.jumpTarget) {
+      this.jumpTarget.resolve();
+      this.jumpTarget = null;
+    }
+    const startX = this.sprite.x;
+    const startY = this.sprite.y;
+    const durationSec = Math.max(1, Number.isFinite(durationMs) ? durationMs : 600) / 1000;
+    const arcH = Math.max(0, Number.isFinite(arcHeight) ? arcHeight : 0);
+    const jumpAnim = jumpAnimState?.trim() || undefined;
+    this.setFacing(targetX - startX, targetY - startY);
+    // 载入起跳片段并冻结帧推进——帧由 _advanceJump 按移动进度插值（只播一次，不走自走时钟）。
+    let frameCount = 1;
+    if (jumpAnim) {
+      this.sprite.playAnimation(jumpAnim, undefined, { loop: false });
+      this.sprite.setPlaying(false);
+      frameCount = Math.max(1, this.sprite.getFrameCount());
+    }
+    return new Promise<void>(resolve => {
+      this.jumpTarget = {
+        startX,
+        startY,
+        targetX,
+        targetY,
+        durationSec,
+        arcHeight: arcH,
+        elapsedSec: 0,
+        jumpAnim,
+        frameCount,
+        landAnimState,
+        faceTowardMovement: faceTowardMovement === true,
+        resolve,
+      };
+    });
+  }
+
+  /** jumpTarget 每帧推进：脚点线性位移（sprite.x/y 驱动透视/深度/阴影）、精灵抛物线抬升、起跳动画按进度插帧、落地复位并切态。 */
+  private _advanceJump(dt: number): void {
+    const j = this.jumpTarget;
+    if (!j) return;
+    j.elapsedSec += dt;
+    let t = j.durationSec > 0 ? j.elapsedSec / j.durationSec : 1;
+    if (t > 1) t = 1;
+    // 脚点线性位移：透视/深度/阴影都锚脚点，跟随地面 A→B（不经碰撞——演出位移）。
+    this.sprite.x = j.startX + (j.targetX - j.startX) * t;
+    this.sprite.y = j.startY + (j.targetY - j.startY) * t;
+    if (j.faceTowardMovement) {
+      this.setFacing(j.targetX - j.startX, j.targetY - j.startY);
+    }
+    // 抛物线视觉抬升（4t(1-t)：两端 0、t=0.5 达峰）；乘当前透视系数使远处跳起视觉等比收缩。
+    const arc = 4 * t * (1 - t);
+    this.sprite.setVisualLiftY(-j.arcHeight * arc * this.refreshPerspectiveScale());
+    // 起跳动画按移动进度插帧（只播一次）。
+    if (j.jumpAnim && j.frameCount > 1) {
+      this.sprite.setFrameIndex(Math.round(t * (j.frameCount - 1)));
+    }
+    if (t >= 1) {
+      this.sprite.setVisualLiftY(0);
+      // 落地态：null=不切（保留起跳末帧冻结）；否则 undefined 回 idle、字符串播该态。
+      if (j.landAnimState !== null) {
+        const land = j.landAnimState ?? ANIM_IDLE;
+        if (land) this.sprite.playAnimation(land);
+      }
+      const resolve = j.resolve;
+      this.jumpTarget = null;
+      resolve();
+    }
+  }
+
   cutsceneUpdate(dt: number): void {
+    // 跳跃演出与位移互斥：起跳期间独占更新（脚点线性 + 弧线抬升 + 插帧），跳过 moveTarget。
+    if (this.jumpTarget) {
+      this._advanceJump(dt);
+      this.sprite.update(dt);
+      return;
+    }
     if (this.moveTarget) {
       const t = this.moveTarget;
       const dx = t.x - this.sprite.x;
@@ -202,7 +315,7 @@ export class Player implements ICutsceneActor {
   }
 
   update(dt: number): void {
-    if (this.moveTarget) {
+    if (this.moveTarget || this.jumpTarget) {
       this.cutsceneUpdate(dt);
       return;
     }

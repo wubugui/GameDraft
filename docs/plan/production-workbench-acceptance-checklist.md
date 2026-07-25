@@ -531,7 +531,7 @@ npm run dev
 1. 在项目根目录运行：
 
 ```sh
-.tools/venv/bin/python -m unittest discover tools/editor/tests -p "test_production_workbench*.py"
+.tools/venv/bin/python -m pytest tools/editor/tests -q -k production_workbench
 ```
 
 2. 再运行：

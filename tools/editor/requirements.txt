@@ -9,3 +9,8 @@ Pillow>=10.0.0
 PyOpenGL>=3.1.7
 pyopengltk>=0.0.4
 grandalf>=0.8  # 对话图自动布局 Sugiyama 分层算法
+
+# 测试（根 pytest.ini 的 addopts 默认带 -n auto --dist loadfile，缺 xdist 会全线报
+# "unrecognized arguments"，所以它是硬依赖不是可选项）
+pytest>=8
+pytest-xdist>=3.6

@@ -111,3 +111,36 @@ export function quadTopLocalYAroundFoot(
   const aabb = quadAabbAroundFoot(0, 0, effW, effH, rotationRad);
   return aabb.top;
 }
+
+/**
+ * 变换后**内容框**顶部相对锚点的局部 y（负值）：气泡头顶锚的精确口径。
+ *
+ * 与 {@link quadTopLocalYAroundFoot} 的差别在于内容框不是贴着脚点的整块 quad——它是格子内
+ * 上下都内缩的一块（底边离脚点 `effBottomGap`，见 SpriteEntity.getContentBoxLocal），
+ * 旋转后顶点集不同，不能拿 quad 那套算。尺寸/间距传**有效值**（已含实例 scale），
+ * 本函数只做旋转。无旋转时 = -(effBottomGap + effContentH)。
+ */
+export function contentTopLocalYAroundFoot(
+  effContentW: number,
+  effContentH: number,
+  effBottomGap: number,
+  rotationRad: number,
+): number {
+  const topY = -(effBottomGap + effContentH);
+  if (rotationRad === 0) return topY;
+  const bottomY = -effBottomGap;
+  const c = Math.cos(rotationRad);
+  const n = Math.sin(rotationRad);
+  const hw = effContentW / 2;
+  let minY = Infinity;
+  for (const [lx, ly] of [
+    [-hw, bottomY],
+    [hw, bottomY],
+    [hw, topY],
+    [-hw, topY],
+  ] as const) {
+    const y = lx * n + ly * c;
+    if (y < minY) minY = y;
+  }
+  return minY;
+}

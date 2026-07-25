@@ -1557,7 +1557,7 @@
       {
         "kind": "present",
         "type": "showSubtitle",
-        "text": "几个倒斗的吓瘫在地，眼看就要喂了妖物。",
+        "text": "几个摸坟的吓瘫在地，眼看就要喂了妖物。",
         "subtitleBand": "movieBottom",
         "subtitleAlign": "center",
         "subtitleVoice": "voice_006a",
@@ -1772,7 +1772,7 @@
       {
         "kind": "present",
         "type": "showSubtitle",
-        "text": "「倒斗的连滚带爬，捧着银钱磕头谢恩呐——」",
+        "text": "「摸坟的连滚带爬，捧着银钱磕头谢恩呐——」",
         "subtitleBand": "movieBottom",
         "subtitleAlign": "center",
         "subtitleVoice": "voice_010",
@@ -1998,10 +1998,28 @@
     "id": "说书-景别复位",
     "steps": [
       {
+        "kind": "parallel",
+        "tracks": [
+          {
+            "kind": "present",
+            "type": "cameraZoom",
+            "scale": 2.5,
+            "duration": 500.0
+          },
+          {
+            "kind": "present",
+            "type": "cameraMove",
+            "x": 164.73,
+            "y": 181.32,
+            "duration": 500.0
+          }
+        ]
+      },
+      {
         "kind": "present",
         "type": "showDialogue",
         "speaker": "{{npc:blind_li}}",
-        "text": "哎，说书的尽拣热闹的讲，哪有恁个容易的事哦？",
+        "text": "哎，说书的尽拣热闹的讲。哪有恁个容易的事哦？",
         "scriptedNpcId": "blind_li",
         "portrait": {
           "slug": "npc_blind_li_anim",
@@ -2012,7 +2030,7 @@
         "kind": "present",
         "type": "showDialogue",
         "speaker": "{{npc}}",
-        "text": "飞僵集了几十年的阴煞，莫说桃木剑，就是墨斗线加黑狗血都未必压得住，搞不好还要遭反噬。",
+        "text": "想对付旱魃？莫说桃木剑和几张符，墨斗和黑驴蹄子都不一定得行。",
         "scriptedNpcId": "blind_li",
         "portrait": {
           "slug": "npc_blind_li_anim",
@@ -2022,8 +2040,340 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "",
-        "text": ""
+        "speaker": "{{npc}}",
+        "text": "搞不好啊，还要遭反噬。",
+        "scriptedNpcId": "blind_li",
+        "portrait": {
+          "slug": "npc_blind_li_anim",
+          "emotion": "calm"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "{{npc}}",
+        "text": "咦——李瞎子，降妖伏魔的本事给你懂完了。",
+        "scriptedNpcId": "waiter_xiaoer",
+        "portrait": {
+          "slug": "npc_lifu_anim",
+          "emotion": "laugh"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "{{npc}}",
+        "text": "天天在这儿冲壳子。你干脆也去说一段，比你瞎起眼睛算命来钱快。",
+        "scriptedNpcId": "waiter_xiaoer",
+        "portrait": {
+          "slug": "npc_lifu_anim",
+          "emotion": "laugh"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "{{npc}}",
+        "text": "说书？屁大点娃儿，求精不懂。",
+        "scriptedNpcId": "blind_li",
+        "portrait": {
+          "slug": "npc_blind_li_anim",
+          "emotion": "calm"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "{{npc}}",
+        "text": "老夫摸到神仙顶那阵，你还不晓得在哪儿抓糖巴鸡屎吃。",
+        "scriptedNpcId": "blind_li",
+        "portrait": {
+          "slug": "npc_blind_li_anim",
+          "emotion": "calm"
+        }
+      },
+      {
+        "kind": "action",
+        "type": "faceEntity",
+        "params": {
+          "target": "npc_掌柜",
+          "direction": "left"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "{{npc}}",
+        "text": "也，听到没得？狗日又摸到神仙顶去了。这个月都去了几次了哦？",
+        "scriptedNpcId": "npc_掌柜",
+        "portrait": {
+          "slug": "npc_teahouse_owner_anim",
+          "emotion": "laugh"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "{{npc}}",
+        "text": "……从那南坡上头下来，要不是我牵条黑狗，那不晓得要死好多人。",
+        "scriptedNpcId": "blind_li",
+        "portrait": {
+          "slug": "npc_blind_li_anim",
+          "emotion": "calm"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "{{npc}}",
+        "text": "说的跟真的样，哈哈哈",
+        "scriptedNpcId": "waiter_xiaoer",
+        "portrait": {
+          "slug": "npc_lifu_anim",
+          "emotion": "laugh"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "{{npc}}",
+        "text": "昨天你说的是牵头驴啊，哈哈哈",
+        "scriptedNpcId": "npc_掌柜",
+        "portrait": {
+          "slug": "npc_teahouse_owner_anim",
+          "emotion": "laugh"
+        }
+      },
+      {
+        "kind": "action",
+        "type": "faceEntity",
+        "params": {
+          "target": "player",
+          "direction": "left",
+          "faceTarget": ""
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "{{player}}",
+        "text": "那你是不是就是遭了反噬，才整瞎的哟？嘻嘻...",
+        "scriptedNpcId": "player",
+        "portrait": {
+          "emotion": "smirk"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "{{npc}}",
+        "text": "……",
+        "scriptedNpcId": "blind_li",
+        "portrait": {
+          "emotion": "smirk"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "{{npc}}",
+        "text": "……你娃过来一点。",
+        "scriptedNpcId": "blind_li",
+        "portrait": {
+          "emotion": "smirk"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "{{player}}",
+        "text": "干啥？",
+        "scriptedNpcId": "player",
+        "portrait": {
+          "emotion": "smirk"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "{{npc}}",
+        "text": "你来嘛......",
+        "scriptedNpcId": "blind_li",
+        "portrait": {
+          "emotion": "smirk"
+        }
+      },
+      {
+        "kind": "action",
+        "type": "playNpcAnimation",
+        "params": {
+          "target": "player",
+          "state": "crouch",
+          "reverse": true,
+          "loop": "false",
+          "thenState": "walk"
+        }
+      },
+      {
+        "kind": "action",
+        "type": "moveEntityTo",
+        "params": {
+          "target": "player",
+          "x": 112.5,
+          "y": 284.77,
+          "speed": 60.0,
+          "moveAnimState": "walk",
+          "faceTowardMovement": true
+        }
+      },
+      {
+        "kind": "action",
+        "type": "playNpcAnimation",
+        "params": {
+          "target": "player",
+          "state": "crouch"
+        }
+      },
+      {
+        "kind": "action",
+        "type": "faceEntity",
+        "params": {
+          "target": "player",
+          "direction": "right"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "{{player}}",
+        "text": "嘻嘻嘻",
+        "scriptedNpcId": "player",
+        "portrait": {
+          "emotion": "laugh"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "{{npc}}",
+        "text": "【嗅了下鼻子】",
+        "scriptedNpcId": "blind_li",
+        "portrait": {
+          "emotion": "calm"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "{{npc}}",
+        "text": "……香灰味压起尸臭味。",
+        "scriptedNpcId": "blind_li",
+        "portrait": {
+          "emotion": "calm"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "{{npc}}",
+        "text": "杠房那头过来的哇。",
+        "scriptedNpcId": "blind_li",
+        "portrait": {
+          "emotion": "calm"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "{{npc}}",
+        "text": "我日，难怪。",
+        "scriptedNpcId": "npc_掌柜",
+        "portrait": {
+          "emotion": "angry"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "{{npc}}",
+        "text": "杠房咋个啊？",
+        "scriptedNpcId": "player",
+        "portrait": {
+          "emotion": "smirk"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "{{npc}}",
+        "text": "杠房才有真本事撒。老子凭本事吃饭。",
+        "scriptedNpcId": "player",
+        "portrait": {
+          "emotion": "smirk"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "{{npc}}",
+        "text": "背死人子，是多有本事! 哈哈哈哈!",
+        "scriptedNpcId": "blind_li",
+        "portrait": {
+          "emotion": "laugh"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "{{npc}}",
+        "text": "爬哟，背死人子的所？老子挨到起坐了半天！呸呸呸！",
+        "scriptedNpcId": "waiter_xiaoer",
+        "portrait": {
+          "emotion": "angry"
+        }
+      },
+      {
+        "kind": "action",
+        "type": "playNpcAnimation",
+        "params": {
+          "target": "waiter_xiaoer",
+          "state": "crouch",
+          "reverse": true,
+          "loop": "false"
+        }
+      },
+      {
+        "kind": "action",
+        "type": "jumpEntityTo",
+        "params": {
+          "target": "waiter_xiaoer",
+          "x": 48.05,
+          "y": 282.42,
+          "durationMs": 300,
+          "arcHeight": 50,
+          "jumpAnimState": "jump",
+          "landAnimState": "idle"
+        }
+      },
+      {
+        "kind": "action",
+        "type": "faceEntity",
+        "params": {
+          "target": "waiter_xiaoer",
+          "faceTarget": "player"
+        }
+      },
+      {
+        "kind": "action",
+        "type": "showEmoteAndWait",
+        "params": {
+          "target": "player",
+          "emote": "!",
+          "duration": 750.0,
+          "anchorOffsetY": 0.0,
+          "bubbleAnchorY": -95.9,
+          "bubbleScale": 1.0
+        }
       },
       {
         "kind": "action",
@@ -2037,10 +2387,304 @@
         }
       },
       {
+        "kind": "action",
+        "type": "faceEntity",
+        "params": {
+          "target": "player",
+          "faceTarget": "waiter_xiaoer"
+        }
+      },
+      {
         "kind": "present",
-        "type": "cameraZoom",
-        "scale": 0.0,
-        "duration": 500.0
+        "type": "showDialogue",
+        "speaker": "{{player}}",
+        "text": "莫怕撒。",
+        "scriptedNpcId": "player",
+        "portrait": {
+          "emotion": "smirk"
+        }
+      },
+      {
+        "kind": "action",
+        "type": "moveEntityTo",
+        "params": {
+          "target": "player",
+          "x": 105.47,
+          "y": 256.64,
+          "speed": 60.0,
+          "moveAnimState": "walk",
+          "arriveAnimState": "idle",
+          "faceTowardMovement": true
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "{{player}}",
+        "text": "来嘛，老子这只手昨天才摸过死人子——给你摸一哈，摸一哈嘛！",
+        "scriptedNpcId": "player",
+        "portrait": {
+          "emotion": "laugh"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "{{npc}}",
+        "text": "我滚你仙人！莫来挨老子哈！",
+        "scriptedNpcId": "waiter_xiaoer",
+        "portrait": {
+          "emotion": "fear"
+        }
+      },
+      {
+        "kind": "parallel",
+        "tracks": [
+          {
+            "kind": "action",
+            "type": "moveEntityTo",
+            "params": {
+              "target": "waiter_xiaoer",
+              "x": 240.23,
+              "y": 205.08,
+              "speed": 120.0,
+              "moveAnimState": "run",
+              "arriveAnimState": "idle",
+              "faceTowardMovement": true
+            }
+          },
+          {
+            "kind": "action",
+            "type": "faceEntity",
+            "params": {
+              "target": "player",
+              "direction": "right"
+            }
+          }
+        ]
+      },
+      {
+        "kind": "action",
+        "type": "faceEntity",
+        "params": {
+          "target": "waiter_xiaoer",
+          "faceTarget": "player"
+        }
+      },
+      {
+        "kind": "action",
+        "type": "moveEntityTo",
+        "params": {
+          "target": "player",
+          "x": 148.83,
+          "y": 232.03,
+          "speed": 80.0,
+          "moveAnimState": "walk",
+          "arriveAnimState": "idle",
+          "faceTowardMovement": true
+        }
+      },
+      {
+        "kind": "action",
+        "type": "moveEntityTo",
+        "params": {
+          "target": "new_npc_1",
+          "x": 285.94,
+          "y": 193.36,
+          "moveAnimState": "slow_walk",
+          "faceTowardMovement": true
+        }
+      },
+      {
+        "kind": "action",
+        "type": "playNpcAnimation",
+        "params": {
+          "target": "new_npc_1",
+          "state": "bark",
+          "speed": 1.3,
+          "loop": "true"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "{{player}}",
+        "text": "莫走嘛。",
+        "scriptedNpcId": "player",
+        "portrait": {
+          "emotion": "laugh"
+        }
+      },
+      {
+        "kind": "action",
+        "type": "moveEntityTo",
+        "params": {
+          "target": "npc_掌柜",
+          "x": 315.23,
+          "y": 206.25,
+          "speed": 150.0,
+          "moveAnimState": "walk",
+          "arriveAnimState": "idle",
+          "faceTowardMovement": true
+        }
+      },
+      {
+        "kind": "action",
+        "type": "faceEntity",
+        "params": {
+          "target": "npc_掌柜",
+          "faceTarget": "player"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "{{npc}}",
+        "text": "关二狗，我日你仙人！搞忙点给老子爬出去！",
+        "scriptedNpcId": "npc_掌柜",
+        "portrait": {
+          "emotion": "angry"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "{{npc}}",
+        "text": "快点爬爬爬！仙人板板，你蹲过那块地，老子还要拿石灰去撒。",
+        "scriptedNpcId": "waiter_xiaoer",
+        "portrait": {
+          "emotion": "angry"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "{{npc}}",
+        "text": "快，快点把他给老子踢出去，这狗日的死温桑。",
+        "scriptedNpcId": "npc_掌柜",
+        "portrait": {
+          "emotion": "angry"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "{{npc}}",
+        "text": "走嘛走嘛，书都听完了，爷爷是时候回府了。",
+        "scriptedNpcId": "player",
+        "portrait": {
+          "emotion": "smirk"
+        }
+      },
+      {
+        "kind": "parallel",
+        "tracks": [
+          {
+            "kind": "present",
+            "type": "cameraZoom",
+            "scale": 2.0,
+            "duration": 500.0
+          },
+          {
+            "kind": "action",
+            "type": "moveEntityTo",
+            "params": {
+              "target": "player",
+              "x": 86.72,
+              "y": 168.75,
+              "speed": 80.0,
+              "moveAnimState": "run",
+              "arriveAnimState": "idle",
+              "waypoints": [
+                {
+                  "x": 164.06,
+                  "y": 186.33
+                },
+                {
+                  "x": 144.14,
+                  "y": 155.86
+                }
+              ],
+              "faceTowardMovement": true
+            }
+          },
+          {
+            "kind": "action",
+            "type": "moveEntityTo",
+            "params": {
+              "target": "new_npc_1",
+              "x": 210.94,
+              "y": 200.39,
+              "speed": 120.0,
+              "moveAnimState": "slow_walk",
+              "arriveAnimState": "bark",
+              "faceTowardMovement": true
+            }
+          }
+        ]
+      },
+      {
+        "kind": "action",
+        "type": "moveEntityTo",
+        "params": {
+          "target": "waiter_xiaoer",
+          "x": 223.83,
+          "y": 193.36,
+          "moveAnimState": "slow_walk",
+          "arriveAnimState": "idle"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "{{player}}",
+        "text": "下回老子背个死人子来和蹲一排~",
+        "scriptedNpcId": "player",
+        "portrait": {
+          "emotion": "laugh"
+        }
+      },
+      {
+        "kind": "action",
+        "type": "moveEntityTo",
+        "params": {
+          "target": "player",
+          "x": 9.38,
+          "y": 8.2,
+          "moveAnimState": "run",
+          "arriveAnimState": "idle",
+          "faceTowardMovement": true
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "{{npc}}",
+        "text": "赫——呸！你狗日的再来，老子把你龟儿脚杆撇断！",
+        "scriptedNpcId": "waiter_xiaoer",
+        "portrait": {
+          "emotion": "angry"
+        }
+      },
+      {
+        "kind": "action",
+        "type": "playNpcAnimation",
+        "params": {
+          "target": "new_npc_1",
+          "state": "bark",
+          "speed": 1.7,
+          "loop": "true"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "waitTime",
+        "duration": 1500.0
+      },
+      {
+        "kind": "present",
+        "type": "fadeToBlack",
+        "duration": 1000.0
       }
     ],
     "targetScene": "teahouse",
@@ -2100,7 +2744,7 @@
         "kind": "present",
         "type": "showDialogue",
         "speaker": "旁白",
-        "text": "一伙倒斗的撬开墓门，焦黄的妖物窜出，地面龟裂冒烟。"
+        "text": "一伙摸坟的撬开墓门，焦黄的妖物窜出，地面龟裂冒烟。"
       },
       {
         "kind": "present",
@@ -2136,7 +2780,7 @@
         "kind": "present",
         "type": "showDialogue",
         "speaker": "说书先生",
-        "text": "「倒斗的连滚带爬，捧着银钱磕头谢恩呐——」"
+        "text": "「摸坟的连滚带爬，捧着银钱磕头谢恩呐——」"
       },
       {
         "kind": "present",

@@ -47,6 +47,46 @@ def transform_local_vec(lx: float, ly: float, scale: float, rot_deg: float) -> t
     return sx * c - sy * n, sx * n + sy * c
 
 
+def quad_top_local_y_around_foot(eff_w: float, eff_h: float, rotation_rad: float) -> float:
+    """底中锚 quad 变换后顶部相对锚点的局部 y（负值）。镜像 TS quadTopLocalYAroundFoot。
+
+    w/h 传**有效尺寸**（已含实例 scale），本函数只做旋转。
+    """
+    if rotation_rad == 0:
+        return -eff_h
+    c = math.cos(rotation_rad)
+    n = math.sin(rotation_rad)
+    hw = eff_w / 2.0
+    return min(
+        lx * n + ly * c
+        for lx, ly in ((-hw, 0.0), (hw, 0.0), (hw, -eff_h), (-hw, -eff_h))
+    )
+
+
+def content_top_local_y_around_foot(
+    eff_content_w: float,
+    eff_content_h: float,
+    eff_bottom_gap: float,
+    rotation_rad: float,
+) -> float:
+    """**内容框**变换后顶部相对锚点的局部 y（负值）。镜像 TS contentTopLocalYAroundFoot。
+
+    内容框不是贴着脚点的整块 quad——它底边离脚点 ``eff_bottom_gap``、上下都内缩，
+    旋转后顶点集与 quad 不同，不能套 quad 那套算。无旋转时 = -(gap + h)。
+    """
+    top_y = -(eff_bottom_gap + eff_content_h)
+    if rotation_rad == 0:
+        return top_y
+    bottom_y = -eff_bottom_gap
+    c = math.cos(rotation_rad)
+    n = math.sin(rotation_rad)
+    hw = eff_content_w / 2.0
+    return min(
+        lx * n + ly * c
+        for lx, ly in ((-hw, bottom_y), (hw, bottom_y), (hw, top_y), (-hw, top_y))
+    )
+
+
 def inverse_transform_world_vec(vx: float, vy: float, scale: float, rot_deg: float) -> tuple[float, float]:
     """变换后向量（相对锚点）→ 原始局部向量：先反旋转后反缩放。"""
     if rot_deg != 0:

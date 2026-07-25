@@ -18,13 +18,13 @@
     "阴风"
   ],
   "spawnPoint": {
-    "x": 389,
-    "y": 623
+    "x": 390.79,
+    "y": 633.16
   },
   "spawnPoints": {
     "from_night_road": {
-      "x": 389,
-      "y": 623
+      "x": 390.79,
+      "y": 633.16
     }
   },
   "npcs": [
@@ -143,20 +143,18 @@
     },
     "depth_mapping": {
       "invert": false,
-      "scale": 3.0883876945495605,
-      "offset": -1.5652898384094238
+      "scale": 4.144245948982239,
+      "offset": -1.9708027673721313
     },
     "shader": {
-      "depth_per_sy": 0.0012669896205450629,
-      "floor_depth_A": -0.002227622449231559,
-      "floor_depth_B": 1.233805617305476
+      "depth_per_sy": 0.0012669896205450629
     },
     "collision": {
       "x_min": -1.7857142686843872,
-      "z_min": -1.8760772935514785,
-      "cell_size": 0.023297079248366014,
-      "grid_width": 154,
-      "grid_height": 160,
+      "z_min": -1.7494419415634104,
+      "cell_size": 0.02241794418238994,
+      "grid_width": 160,
+      "grid_height": 159,
       "height_offset": 0.0
     },
     "depth_tolerance": 0.05,

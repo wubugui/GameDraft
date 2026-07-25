@@ -131,6 +131,69 @@ class AnimEditorSaveFidelityTests(unittest.TestCase):
         finally:
             td.cleanup()
 
+    def test_bubble_anchor_authoring_roundtrip(self) -> None:
+        """授权头顶锚：写入→落盘、清除→删键、没动过→原样保留（含重导出并回后的值）。"""
+        model, root, td = self._temp_model()
+        try:
+            bid = "npc_blind_li_anim"
+            self.assertIn(bid, model.animations)
+            aj = (root / "public" / "resources" / "runtime" / "animation"
+                  / bid / "anim.json")
+            state = next(iter(model.animations[bid]["states"].keys()))
+
+            editor = AnimEditor(model)
+            editor._on_select(bid)
+            row = next(
+                r for r in range(editor._state_table.rowCount())
+                if (editor._state_table.item(r, 0) or QTableWidgetItem("")).text() == state
+            )
+            editor._state_table.setCurrentCell(row, 0)
+
+            # ① 授权：控件说的是"气泡底边绝对世界 y"，落盘应换算成格高归一化比例
+            wh = float(max(1, editor._a_wh.value()))
+            editor._bubble_field._chk.setChecked(True)
+            editor._bubble_field._spin.setValue(-0.9 * wh - 8.0)   # 期望 frac≈0.9
+            editor._on_bubble_anchor_changed()
+            self.assertTrue(editor._do_save(), "保存应成功")
+            saved = json.loads(aj.read_text(encoding="utf-8"))
+            self.assertAlmostEqual(saved["states"][state]["bubbleAnchor"], 0.9, places=3)
+
+            # ② 没动过的行：再存一次不得漂移
+            editor2 = AnimEditor(model)
+            editor2._on_select(bid)
+            out, err = editor2._build_saved_anim_dict()
+            self.assertIsNone(err)
+            self.assertEqual(out, saved, "未编辑重存不得改动授权锚")
+
+            # ③ 清除授权：键应被删掉，而不是写 0（0 会被运行时当成"锚在脚点"）
+            editor2._state_table.setCurrentCell(row, 0)
+            editor2._bubble_field._chk.setChecked(False)
+            editor2._on_bubble_anchor_changed()
+            self.assertTrue(editor2._do_save(), "保存应成功")
+            saved2 = json.loads(aj.read_text(encoding="utf-8"))
+            self.assertNotIn("bubbleAnchor", saved2["states"][state])
+        finally:
+            td.cleanup()
+
+    def test_reexport_preserves_manual_state_fields(self) -> None:
+        """重导出动画包不得抹掉人工 per-state 字段（refSpeed / 授权锚）——既有 bug，P4 前置。"""
+        from tools.video_to_atlas.atlas_core import merge_preserved_anim_fields
+
+        old = {"states": {"idle": {
+            "frames": [0], "frameRate": 12, "loop": True,
+            "referenceSpeed": 70, "bubbleAnchor": 0.86,
+        }}}
+        new = {"states": {"idle": {"frames": [0, 1], "frameRate": 8, "loop": True}}}
+        merged = merge_preserved_anim_fields(new, old)
+        self.assertEqual(merged["states"]["idle"]["referenceSpeed"], 70)
+        self.assertEqual(merged["states"]["idle"]["bubbleAnchor"], 0.86)
+        self.assertEqual(merged["states"]["idle"]["frames"], [0, 1], "帧序仍应取新导出的")
+        # 新导出显式给了值就不被旧值顶掉；旧包里已不存在的状态不复活
+        merged2 = merge_preserved_anim_fields(
+            {"states": {"idle": {"bubbleAnchor": 0.5}}}, old)
+        self.assertEqual(merged2["states"]["idle"]["bubbleAnchor"], 0.5)
+        self.assertNotIn("走路", merge_preserved_anim_fields({"states": {}}, old)["states"])
+
     def test_out_of_range_frame_is_rejected(self) -> None:
         model, _root, td = self._temp_model()
         try:

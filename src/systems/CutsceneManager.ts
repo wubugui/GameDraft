@@ -39,6 +39,31 @@ const CUTSCENE_GLOBAL_SAVE_ACTION_BLOCKLIST: ReadonlySet<string> = new Set([
   'revealDocument',
 ]);
 
+/**
+ * dev-only「从第 N 步开播」快进期整步跳过的 present 类型：纯瞬态演出，不留画面状态。
+ * 反过来说——凡是**留下**状态的（showImg / hideImg / animLayer / parallaxScene /
+ * movieBar / cameraMove / cameraZoom / showCharacter）都不在此列，快进时照常执行，
+ * 只是补间时长归零。
+ */
+const CUTSCENE_FAST_FORWARD_SKIP_PRESENTS: ReadonlySet<string> = new Set([
+  'waitTime',
+  'waitClick',
+  'showTitle',
+  'showDialogue',
+  'showSubtitle',
+  'flashWhite',
+]);
+
+/**
+ * 同上，快进期跳过的 action：一次性音效（快进会糊成一串噪音）与纯耗时的等待型表情。
+ * playBgm / 环境音**刻意不在**此列——它们建立音频基线，跳过会让排演起点听感不对。
+ */
+const CUTSCENE_FAST_FORWARD_SKIP_ACTIONS: ReadonlySet<string> = new Set([
+  'playSfx',
+  'playSignalCue',
+  'showEmoteAndWait',
+]);
+
 export type ChangeSceneParams = {
   targetScene: string;
   targetSpawnPoint?: string;
@@ -47,6 +72,24 @@ export type ChangeSceneParams = {
 };
 
 export type SceneSwitcher = (params: ChangeSceneParams) => Promise<void>;
+
+/**
+ * present `showDialogue` 步的说话气泡外观覆盖：`bubbleAnchorY`（绝对头顶锚）/ `bubbleScale`（缩放）。
+ * 两者缺省（不写键）= 继承实体自算 / 全局 `emoteBubbleScale`——与图对话行、showEmote 同一套阶梯。
+ * 全缺省时返回 undefined，调用侧行为与加本参数之前逐字一致。
+ */
+function parsePresentBubbleOpts(step: Record<string, unknown>): EmoteBubbleOffsetOpts | undefined {
+  const ay = Number(step.bubbleAnchorY);
+  const sc = Number(step.bubbleScale);
+  const hasAnchor = step.bubbleAnchorY !== undefined && step.bubbleAnchorY !== null && Number.isFinite(ay);
+  const hasScale = step.bubbleScale !== undefined && step.bubbleScale !== null
+    && Number.isFinite(sc) && sc > 0;
+  if (!hasAnchor && !hasScale) return undefined;
+  return {
+    ...(hasAnchor ? { anchorY: ay } : {}),
+    ...(hasScale ? { scale: sc } : {}),
+  };
+}
 
 /** 过场发出的表情气泡归属标记：cleanup 定向清理用（EmoteBubbleManager.cleanupByOwner） */
 const CUTSCENE_EMOTE_OWNER = 'cutscene';
@@ -142,6 +185,10 @@ export class CutsceneManager implements IGameSystem {
   private unsubKey: (() => void) | null = null;
   private destroyed = false;
   private skipping = false;
+  /** dev-only「从第 N 步开播」：顶层前 N 步瞬时执行（零时长补间、跳过等待/对白/音效），
+   *  到第 N 步复位为常速。目的是把画面状态（底图/图层/黑边/相机/演员站位）建起来再排演，
+   *  而不是从缺底图的空壳开始。只由 devPlayCutscene 传入，正式播放路径恒为 false。 */
+  private fastForwarding = false;
   /** R9：中止在途 steps 的代际——skip / deserialize / destroy 推进。`skipping` 标志会在 finally
    *  复位，被 parallel race 放弃的轨道靠此代际在其当前 await 归来时终止，不再执行后续步。 */
   private stepEpoch = 0;
@@ -413,7 +460,11 @@ export class CutsceneManager implements IGameSystem {
     }
   }
 
-  async startCutscene(id: string): Promise<void> {
+  /**
+   * @param opts.fastForwardTo dev-only：顶层步下标，之前的步瞬时执行（建立画面状态）后
+   *   从该步起恢复常速。0/缺省 = 常规整段播放。
+   */
+  async startCutscene(id: string, opts?: { fastForwardTo?: number }): Promise<void> {
     const def = this.cutsceneDefs.get(id);
     if (!def) {
       console.warn(`CutsceneManager: unknown cutscene "${id}"`);
@@ -423,6 +474,7 @@ export class CutsceneManager implements IGameSystem {
     if (this.playing) return;
     this.playing = true;
     this.skipping = false;
+    this.fastForwarding = false;
     /** 本次会话的代际快照：steps 执行与 finally 收尾据此判断是否已被 skip / 读档 / 拆除作废 */
     const stepEpochAtStart = this.stepEpoch;
     const worldEpochAtStart = this.worldEpoch;
@@ -487,7 +539,11 @@ export class CutsceneManager implements IGameSystem {
          *  playSignalCue 嵌套批次）；executeOneStep 的顶层 step 过滤保留作纵深防御。 */
         this.actionExecutor.pushActionPolicy(CUTSCENE_GLOBAL_SAVE_ACTION_BLOCKLIST, `cutscene:${id}`);
         try {
-          await this.executeSteps((def as NewCutsceneDef).steps, stepEpochAtStart);
+          const steps = (def as NewCutsceneDef).steps;
+          const rawFf = Math.floor(opts?.fastForwardTo ?? 0);
+          /** 越界夹回：编辑器传来的下标可能已被删步/重排作废，夹到 [0, len) 保证仍能开演。 */
+          const ff = Number.isFinite(rawFf) ? Math.max(0, Math.min(rawFf, steps.length)) : 0;
+          await this.executeSteps(steps, stepEpochAtStart, ff);
         } finally {
           this.actionExecutor.popActionPolicy();
         }
@@ -711,11 +767,18 @@ export class CutsceneManager implements IGameSystem {
     return !this.skipping && !this.destroyed && this.playing;
   }
 
-  private async executeSteps(steps: CutsceneStep[], epoch: number): Promise<void> {
+  private async executeSteps(
+    steps: CutsceneStep[],
+    epoch: number,
+    fastForwardTo = 0,
+  ): Promise<void> {
     for (let i = 0; i < steps.length; i++) {
       if (this.isStepStale(epoch)) return;
+      /** 顶层下标决定快进边界；parallel 子轨随所属顶层步一起快进（读同一实例标志）。 */
+      this.fastForwarding = i < fastForwardTo;
       await this.executeOneStep(steps[i], String(i), epoch);
     }
+    this.fastForwarding = false;
   }
 
   /** 人类可读的当前 step 摘要（调试用） */
@@ -778,7 +841,8 @@ export class CutsceneManager implements IGameSystem {
 
   private async executeOneStep(step: CutsceneStep, path: string, epoch: number): Promise<void> {
     if (this.isStepStale(epoch)) return;
-    this.emitPlaybackStep(path, step);
+    /** 快进期不发步进事件：调试 HUD / 编辑器播放头只关心真正开演后的位置，不该被瞬时刷屏。 */
+    if (!this.fastForwarding) this.emitPlaybackStep(path, step);
     switch (step.kind) {
       case 'action':
         if (CUTSCENE_GLOBAL_SAVE_ACTION_BLOCKLIST.has(step.type)) {
@@ -789,6 +853,10 @@ export class CutsceneManager implements IGameSystem {
           console.warn(`CutsceneManager: Action type "${step.type}" is not in the Cutscene whitelist — skipped`);
           break;
         }
+        /** 快进期跳过一次性音效与带等待的表情动作：前者会在到位前糊成一串噪音，后者纯耗时。
+         *  playBgm / 环境音**不在**此列——它们建立音频基线，跳过会让排演起点听感不对
+         *  （见 cutscene-audio-reclamation 契约）。 */
+        if (this.fastForwarding && CUTSCENE_FAST_FORWARD_SKIP_ACTIONS.has(step.type)) break;
         await this.actionExecutor.executeAwait({ type: step.type, params: step.params });
         break;
       case 'present':
@@ -822,24 +890,31 @@ export class CutsceneManager implements IGameSystem {
 
   private async executePresent(step: { kind: 'present'; type: string; [key: string]: unknown }): Promise<void> {
     if (this.skipping || this.destroyed) return;
+    /** 快进期整步跳过的纯瞬态演出：等待、对白、字幕、标题、白闪本身不留画面状态，
+     *  排演起点不需要它们；留下来只会拖时间或糊一屏。 */
+    if (this.fastForwarding && CUTSCENE_FAST_FORWARD_SKIP_PRESENTS.has(step.type)) return;
+    /** 快进期一律零时长：补间类步骤瞬间到位（黑场/相机位这些**是**要保留的状态）。 */
+    const dur = (v: unknown, dflt: number): number => (
+      this.fastForwarding ? 0 : (v as number ?? dflt)
+    );
     switch (step.type) {
       case 'fadeToBlack':
-        await this.cutsceneRenderer.fadeToBlack(step.duration as number ?? 1000);
+        await this.cutsceneRenderer.fadeToBlack(dur(step.duration, 1000));
         break;
       case 'fadeIn':
-        await this.cutsceneRenderer.fadeFromBlack(step.duration as number ?? 1000);
+        await this.cutsceneRenderer.fadeFromBlack(dur(step.duration, 1000));
         break;
       case 'flashWhite':
-        await this.cutsceneRenderer.flashWhite(step.duration as number ?? 200);
+        await this.cutsceneRenderer.flashWhite(dur(step.duration, 200));
         break;
       case 'waitTime':
-        await this.cutsceneRenderer.wait(step.duration as number ?? 1000);
+        await this.cutsceneRenderer.wait(dur(step.duration, 1000));
         break;
       case 'waitClick':
         await this.waitForClick();
         break;
       case 'showTitle':
-        await this.cutsceneRenderer.showTitle(step.text as string, step.duration as number ?? 2000);
+        await this.cutsceneRenderer.showTitle(step.text as string, dur(step.duration, 2000));
         break;
       case 'showDialogue': {
         const rawSpeaker = step.speaker !== undefined && step.speaker !== null
@@ -868,7 +943,10 @@ export class CutsceneManager implements IGameSystem {
           ? this.speakingBubbleAnchorResolver(rawSpeaker, scriptedNpcId || undefined)
           : null;
         const merged = this.mergePresentShowDialogueLine(step.text as string, speakerOut);
-        await this.showDialogueText(merged.text, merged.speaker, portrait, speakingAnchor);
+        await this.showDialogueText(
+          merged.text, merged.speaker, portrait, speakingAnchor,
+          parsePresentBubbleOpts(step),
+        );
         break;
       }
       case 'showImg': {
@@ -936,7 +1014,7 @@ export class CutsceneManager implements IGameSystem {
       case 'cameraMove':
         await this.cutsceneRenderer.cameraMove(
           step.x as number, step.y as number,
-          step.duration as number ?? 1000,
+          dur(step.duration, 1000),
           parseCameraEasing(step.easing),
         );
         break;
@@ -949,7 +1027,7 @@ export class CutsceneManager implements IGameSystem {
           : this.cameraAccessor?.getSceneBaseZoom() ?? 1;
         await this.cutsceneRenderer.cameraZoom(
           scale,
-          step.duration as number ?? 500,
+          dur(step.duration, 500),
           parseCameraEasing(step.easing),
         );
         break;
@@ -1064,11 +1142,12 @@ export class CutsceneManager implements IGameSystem {
     speaker?: string,
     portrait?: { slug: string; emotion: string },
     speakingAnchor?: IEmoteBubbleAnchor | null,
+    bubbleOpts?: EmoteBubbleOffsetOpts,
   ): Promise<void> {
     const box = this.cutsceneRenderer.showDialogueBox(text, speaker, portrait);
     /** 说话人头顶「……」气泡：与本步同生命周期,finally 撤;skip/读档/拆除经 cleanup 定向清 CUTSCENE_EMOTE_OWNER 兜底。 */
     const dismissSpeakingBubble = speakingAnchor && this.emoteBubbleProvider
-      ? this.emoteBubbleProvider.showSticky(speakingAnchor, '……', undefined, CUTSCENE_EMOTE_OWNER)
+      ? this.emoteBubbleProvider.showSticky(speakingAnchor, '……', bubbleOpts, CUTSCENE_EMOTE_OWNER)
       : null;
     try {
       await new Promise<void>(resolve => {
@@ -1134,6 +1213,10 @@ export class CutsceneManager implements IGameSystem {
     const durationMs = Number.isFinite(durationParsed) && durationParsed > 0 ? durationParsed : 1500;
     const ox = Number(o.anchorOffsetX);
     const oy = Number(o.anchorOffsetY);
+    // 与 showEmote 同口径：bubbleAnchorY 是绝对头顶锚、bubbleScale 是缩放，
+    // 两者缺省（不写键）分别 = 实体自算 / 全局 emoteBubbleScale
+    const ay = Number(o.bubbleAnchorY);
+    const sc = Number(o.bubbleScale);
     return {
       target,
       emote,
@@ -1141,6 +1224,12 @@ export class CutsceneManager implements IGameSystem {
       opts: {
         anchorOffsetX: Number.isFinite(ox) ? ox : 0,
         anchorOffsetY: Number.isFinite(oy) ? oy : 0,
+        ...(o.bubbleAnchorY !== undefined && o.bubbleAnchorY !== null && Number.isFinite(ay)
+          ? { anchorY: ay }
+          : {}),
+        ...(o.bubbleScale !== undefined && o.bubbleScale !== null && Number.isFinite(sc) && sc > 0
+          ? { scale: sc }
+          : {}),
       },
     };
   }
@@ -1299,6 +1388,9 @@ export class CutsceneManager implements IGameSystem {
    *   自然播完传 false——只关闭捕获作用域、让末拍音效按编排收尾。所有退出路径都经 cleanup，是音频收尾唯一收口。
    */
   private cleanup(stopCutsceneSfx: boolean): void {
+    /** Esc 跳过 / 读档 / 拆除会让 executeSteps 中途 return，快进标志不经其尾部复位——
+     *  在此兜底，避免残留态污染下一段过场的常速播放。 */
+    this.fastForwarding = false;
     this.stopActiveSubtitleVoices();
     this.audioManager?.endCutsceneSfxCapture(stopCutsceneSfx);
     this.cutsceneRenderer.cleanup();

@@ -58,8 +58,8 @@
     "中文人声闹市"
   ],
   "spawnPoint": {
-    "x": 115.5,
-    "y": 227.9
+    "x": 141.9,
+    "y": 225.82
   },
   "spawnPoints": {
     "from_street": {
@@ -171,8 +171,8 @@
       "id": "new_hotspot_0",
       "type": "inspect",
       "label": "小二1",
-      "x": 222.7,
-      "y": 210.1,
+      "x": 267.1,
+      "y": 177.1,
       "interactionRange": 50,
       "data": {
         "text": ""
@@ -205,8 +205,8 @@
     {
       "id": "blind_li",
       "name": "瞎子李",
-      "x": 247.0,
-      "y": 264.5,
+      "x": 154.8,
+      "y": 307.2,
       "dialogueGraphId": "茶馆瞎子李",
       "interactionRange": 71.4,
       "animFile": "/resources/runtime/animation/npc_blind_li_anim/anim.json",
@@ -219,23 +219,25 @@
     {
       "id": "npc_掌柜",
       "name": "茶馆掌柜",
-      "x": 363.6,
-      "y": 199.6,
+      "x": 192.8,
+      "y": 230.9,
       "interactionRange": 64.0,
       "animFile": "/resources/runtime/animation/npc_teahouse_owner_anim/anim.json",
       "initialAnimState": "idle",
-      "dialogueGraphId": "寻狗_茶馆掌柜",
-      "initialFacing": "left"
+      "dialogueGraphId": "寻狗_茶馆掌柜"
     },
     {
       "id": "waiter_xiaoer",
       "name": "小二",
       "x": 81.1,
-      "y": 273.9,
+      "y": 256.8,
       "dialogueGraphId": "茶馆小二",
       "interactionRange": 64.3,
       "animFile": "/resources/runtime/animation/npc_lifu_anim/anim.json",
-      "initialAnimState": "idle"
+      "initialAnimState": "crouch",
+      "initialAnimPlayback": {
+        "holdFrame": 9
+      }
     },
     {
       "id": "fx_steam_1",
@@ -427,8 +429,8 @@
     {
       "id": "new_npc_1",
       "name": "茶馆狗",
-      "x": 341.6,
-      "y": 214.1,
+      "x": 333.6,
+      "y": 199.9,
       "interactionRange": 50,
       "animFile": "/resources/runtime/animation/dog_anim/anim.json",
       "initialAnimState": "idle",
@@ -442,9 +444,9 @@
     "M": {
       "R": [
         [
+          1.0,
           0.0,
-          -0.7071067811865475,
-          -0.7071067811865476
+          0.0
         ],
         [
           0.0,
@@ -452,35 +454,33 @@
           -0.7071067811865475
         ],
         [
-          -1.0,
           0.0,
-          -0.0
+          0.7071067811865475,
+          0.7071067811865476
         ]
       ],
-      "ppu": 56.0,
+      "ppu": 450.56,
       "cx": 1024.0,
       "cy": 768.0
     },
     "depth_mapping": {
-      "invert": true,
-      "scale": 28.43,
-      "offset": -17.0
+      "invert": false,
+      "scale": 4.189799037170411,
+      "offset": -2.7627836299896242
     },
     "shader": {
-      "depth_per_sy": 0.017857142857142856,
-      "floor_depth_A": -0.017857142857142863,
-      "floor_depth_B": 13.714285714285719
+      "depth_per_sy": 0.002219460227272727
+    },
+    "collision": {
+      "x_min": -2.2727272510528564,
+      "z_min": -2.437647108737184,
+      "cell_size": 0.030666353932819426,
+      "grid_width": 149,
+      "grid_height": 160,
+      "height_offset": 0.05
     },
     "depth_tolerance": 0.0,
-    "floor_offset": 0.0,
-    "collision": {
-      "x_min": -17.52715680052541,
-      "z_min": -18.214285714285715,
-      "cell_size": 0.19017055030545918,
-      "grid_width": 201,
-      "grid_height": 193,
-      "height_offset": 0.05
-    }
+    "floor_offset": 0.0
   },
   "worldHeight": 525.0,
   "perspectiveScale": {
@@ -502,5 +502,18 @@
         "graphId": "寻狗_听书开场"
       }
     }
-  ]
+  ],
+  "characterGrade": {
+    "slope": [
+      0.574,
+      0.497,
+      0.436
+    ],
+    "offset": [
+      -0.016,
+      0.024,
+      0.042
+    ],
+    "saturation": 1.0
+  }
 }

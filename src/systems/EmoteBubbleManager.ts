@@ -1,5 +1,6 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import type { EmoteBubbleOffsetOpts, IEmoteBubbleAnchor, IGameSystem, GameContext } from '../data/types';
+import { normalizeEmoteBubbleScale } from '../data/types';
 import { Hotspot } from '../entities/Hotspot';
 
 interface ActiveBubble {
@@ -18,6 +19,14 @@ interface ActiveBubble {
     bh: number;
     ox: number;
     oy: number;
+    /** 调用点授权的绝对头顶锚（null=走实体自算）；每帧重摆时与挂载时同口径 */
+    anchorYOverride: number | null;
+    /**
+     * 平滑后的头顶锚（实体局部 y）：锚点跟随当前帧内容高，走路循环里逐帧有几像素起伏，
+     * 直接用会抖。**只平滑锚点，不平滑实体位置**——实体走动必须实时跟，否则气泡拖在身后。
+     * 挂载时直接取当前值（不从 0 缓入），躺倒/起身这类真实姿态变化仍会平滑地跟过去。
+     */
+    smoothedAnchorY: number;
   };
 }
 
@@ -32,6 +41,32 @@ interface ActiveBubble {
 /** 气泡底边落在 quad 顶边之上（世界单位近似，与 NPC headGap 同量级） */
 const QUAD_ABOVE_GAP = 8;
 
+/** 头顶锚平滑速率（每秒趋近比例的系数）：60fps 下单帧约走完 20% 的差值 */
+const ANCHOR_LERP_PER_SEC = 12;
+
+/**
+ * 气泡外观基准量（缩放 1 时的值，世界单位）。编辑器预览按同一组基准量气泡尺寸
+ * （`tools/editor/shared/bubble_anchor_field.py` 的 `_BUBBLE_*`），改这里必须同步改那边。
+ *
+ * 2026-07-25 基准整体减半（原 20/8/4/6/1）：原尺寸在 1024×768 视口下压掉大半个角色。
+ * 这是**基准**不是参数——`emoteBubbleScale` 与单处 `bubbleScale` 仍以此为 1 倍基准往上乘。
+ */
+const BUBBLE_FONT_SIZE = 10;
+const BUBBLE_PAD_X = 4;
+const BUBBLE_PAD_Y = 2;
+const BUBBLE_RADIUS = 3;
+const BUBBLE_STROKE = 0.5;
+
+/** 调用点授权的**绝对**头顶锚；未授权（含非有限值）返回 null = 走实体自算。 */
+function resolveAnchorYOverride(opts?: EmoteBubbleOffsetOpts): number | null {
+  const v = opts?.anchorY;
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+function resolveAnchorLocalY(anchor: IEmoteBubbleAnchor, override: number | null): number {
+  return override !== null ? override : anchor.getEmoteBubbleAnchorLocalY();
+}
+
 export class EmoteBubbleManager implements IGameSystem {
   private activeBubbles: ActiveBubble[] = [];
   private pendingTimers = new Set<ReturnType<typeof setTimeout>>();
@@ -39,6 +74,20 @@ export class EmoteBubbleManager implements IGameSystem {
   private entityAttachLayer: Container | null = null;
   /** F2 调试面板 */
   private debugPanelLog: ((message: string) => void) | null = null;
+  /** 全局气泡缩放（game_config.emoteBubbleScale）；单处 opts.scale 覆盖之 */
+  private defaultScale = 1;
+
+  /**
+   * 全局气泡缩放。由 Game 在读到 game_config 后设置；**只影响此后新建的气泡**
+   * （已挂出的不重排——重排会让正在显示的气泡跳一下，且没有任何调用方需要那样）。
+   */
+  setDefaultScale(scale: number): void {
+    this.defaultScale = normalizeEmoteBubbleScale(scale, 1);
+  }
+
+  getDefaultScale(): number {
+    return this.defaultScale;
+  }
 
   /**
    * 由 Game 在 renderer.init() 之后设置；供热点气泡挂靠世界实体层。
@@ -79,20 +128,29 @@ export class EmoteBubbleManager implements IGameSystem {
 
     const bubble = new Container();
 
+    // 缩放：单处覆盖 > 全局 game_config.emoteBubbleScale > 1。
+    // **按新字号重排**而不是把 20px 的字拉大——Text 是纹理，container.scale 放大会糊。
+    const k = normalizeEmoteBubbleScale(opts?.scale, this.defaultScale);
+
     const txt = new Text({
       text: emote,
-      style: { fontSize: 20, fill: 0x222222, fontFamily: 'sans-serif', fontWeight: 'bold' },
+      style: {
+        fontSize: BUBBLE_FONT_SIZE * k,
+        fill: 0x222222,
+        fontFamily: 'sans-serif',
+        fontWeight: 'bold',
+      },
     });
 
-    const padX = 8;
-    const padY = 4;
+    const padX = BUBBLE_PAD_X * k;
+    const padY = BUBBLE_PAD_Y * k;
     const bw = txt.width + padX * 2;
     const bh = txt.height + padY * 2;
 
     const bg = new Graphics();
-    bg.roundRect(0, 0, bw, bh, 6);
+    bg.roundRect(0, 0, bw, bh, BUBBLE_RADIUS * k);
     bg.fill({ color: 0xffffff, alpha: 0.95 });
-    bg.stroke({ color: 0x888888, width: 1 });
+    bg.stroke({ color: 0x888888, width: BUBBLE_STROKE * k });
     bubble.addChild(bg);
 
     txt.x = padX;
@@ -101,10 +159,11 @@ export class EmoteBubbleManager implements IGameSystem {
 
     const ox = opts?.anchorOffsetX ?? 0;
     const oy = opts?.anchorOffsetY ?? 0;
+    const anchorYOverride = resolveAnchorYOverride(opts);
 
     let attachParent: Container = displayObj;
     let bx = -bw / 2 + ox;
-    let by = anchor.getEmoteBubbleAnchorLocalY() + oy - bh;
+    let by = resolveAnchorLocalY(anchor, anchorYOverride) + oy - bh;
     let follow: ActiveBubble['follow'];
 
     if (this.entityAttachLayer !== null && anchor instanceof Hotspot) {
@@ -112,11 +171,15 @@ export class EmoteBubbleManager implements IGameSystem {
       (bubble as Container & { entitySortBand?: 'front' }).entitySortBand = 'front';
       const quad = anchor.getEmoteWorldQuad();
       bx = quad.left + quad.width / 2 - bw / 2 + ox;
-      by = quad.top - QUAD_ABOVE_GAP - bh + oy;
+      // 授权了绝对锚就按脚点（容器 y）算，不再取 quad 顶边——两者语义同为「实体局部 y」
+      by = anchorYOverride !== null
+        ? displayObj.y + anchorYOverride + oy - bh
+        : quad.top - QUAD_ABOVE_GAP - bh + oy;
       this.dbg(
         `  热点 worldQuad→entityLayer ` +
           `quad xywh=(${quad.left.toFixed(1)},${quad.top.toFixed(1)}) ${quad.width.toFixed(1)}×${quad.height.toFixed(1)} ` +
-          `bubble=(${bx.toFixed(1)},${by.toFixed(1)}) band=front`,
+          `bubble=(${bx.toFixed(1)},${by.toFixed(1)}) band=front` +
+          (anchorYOverride !== null ? ` 授权锚=${anchorYOverride.toFixed(1)}` : ''),
       );
     } else if (this.entityAttachLayer !== null && displayObj.parent === this.entityAttachLayer) {
       // 玩家/NPC/过场演员：实体容器带光照/遮挡滤镜，气泡挂进去会撑大滤镜 bounds、触发 AO 重标定，
@@ -124,9 +187,10 @@ export class EmoteBubbleManager implements IGameSystem {
       // 坐标同空间），实体会移动，故记 follow 由 update 每帧按脚点重摆。
       attachParent = this.entityAttachLayer;
       (bubble as Container & { entitySortBand?: 'front' }).entitySortBand = 'front';
+      const anchorY = resolveAnchorLocalY(anchor, anchorYOverride);
       bx = displayObj.x - bw / 2 + ox;
-      by = displayObj.y + anchor.getEmoteBubbleAnchorLocalY() + oy - bh;
-      follow = { anchor, displayObj, bw, bh, ox, oy };
+      by = displayObj.y + anchorY + oy - bh;
+      follow = { anchor, displayObj, bw, bh, ox, oy, anchorYOverride, smoothedAnchorY: anchorY };
       this.dbg(`  实体气泡→entityLayer 跟随 bubble=(${bx.toFixed(1)},${by.toFixed(1)}) band=front`);
     } else if (anchor instanceof Hotspot && this.entityAttachLayer === null) {
       this.dbg('  警告: Hotspot 但 entityAttachLayer 未设置，气泡仅在热点容器内（易被遮挡）');
@@ -215,15 +279,18 @@ export class EmoteBubbleManager implements IGameSystem {
     for (let i = this.activeBubbles.length - 1; i >= 0; i--) {
       const entry = this.activeBubbles[i];
       if (entry.follow) {
-        const { anchor, displayObj, bw, bh, ox, oy } = entry.follow;
+        const f = entry.follow;
+        const { anchor, displayObj, bw, bh, ox, oy } = f;
         // 锚定实体已被拆除（切场/过场收尾）：气泡没有可跟随的目标，立即移除，别悬浮在旧位置
         if (displayObj.destroyed || !displayObj.parent) {
           this.removeBubble(entry);
           this.activeBubbles.splice(i, 1);
           continue;
         }
+        const k = Math.min(1, Math.max(0, dt) * ANCHOR_LERP_PER_SEC);
+        f.smoothedAnchorY += (resolveAnchorLocalY(anchor, f.anchorYOverride) - f.smoothedAnchorY) * k;
         entry.bubble.x = displayObj.x - bw / 2 + ox;
-        entry.bubble.y = displayObj.y + anchor.getEmoteBubbleAnchorLocalY() + oy - bh;
+        entry.bubble.y = displayObj.y + f.smoothedAnchorY + oy - bh;
       }
       if (entry.noAutoExpire) continue;
       entry.remainingMs -= dt * 1000;

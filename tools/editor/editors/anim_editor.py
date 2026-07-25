@@ -35,7 +35,7 @@ def _make_list_search_box(list_widget: QListWidget) -> QLineEdit:
 
     box.textChanged.connect(_filter)
     return box
-from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
 from PySide6.QtCore import Qt, QRect, QElapsedTimer, QTimer
 
 from ..shared.collapsible_section import CollapsibleSection
@@ -50,6 +50,11 @@ def _preview_poll_interval_ms(fps: float) -> int:
     return max(4, min(16, int(round(ideal))))
 
 from ..project_model import ProjectModel
+from ..shared.anim_atlas_preview import (
+    HEAD_GAP as BUBBLE_HEAD_GAP,
+    anim_manifest_url_for_bundle,
+)
+from ..shared.bubble_anchor_field import BubbleAnchorActor, BubbleAnchorPickField
 from ..shared.form_layout import compact_form
 
 
@@ -338,6 +343,24 @@ class AnimEditor(QWidget):
         self._a_wh.setRange(1, 9999)
         self._a_wh.valueChanged.connect(self._on_field_edited)
         f.addRow("worldHeight", self._a_wh)
+        # 法线烘焙（per-animation；写入 anim.json 的 normalBake，供 bake-normals 读取）
+        self._a_bake_enable = QCheckBox("烘焙法线（关闭=运行时用平面法线）")
+        self._a_bake_enable.setToolTip(
+            "是否为本动画烘焙鼓包法线图（<图集>.normal.png）。关闭并重烘会删掉法线图，"
+            "运行时该角色回退到垂直平面法线（不参与逐像素明暗）。"
+        )
+        self._a_bake_enable.stateChanged.connect(self._on_field_edited)
+        f.addRow("法线烘焙", self._a_bake_enable)
+        self._a_bake_downscale = QSpinBox()
+        self._a_bake_downscale.setRange(1, 32)
+        self._a_bake_downscale.setValue(4)
+        self._a_bake_downscale.setMaximumWidth(90)
+        self._a_bake_downscale.setToolTip(
+            "法线图边长 = 源图的 1/N。越大越省体积但越糊、太小(如 16)会导致动画帧间闪烁；"
+            "4 是实测不闪的推荐值，更省可试 8。1=源分辨率。"
+        )
+        self._a_bake_downscale.valueChanged.connect(self._on_field_edited)
+        f.addRow("法线分辨率 1/N", self._a_bake_downscale)
         dl.addLayout(f)
 
         # 保存/放弃改动（仅写 anim.json 的 states 与世界尺寸；图集不动）
@@ -353,6 +376,13 @@ class AnimEditor(QWidget):
         self._btn_discard.setToolTip("丢弃未保存的改动，从磁盘当前 anim.json 重新载入。")
         self._btn_discard.clicked.connect(self._do_discard)
         save_row.addWidget(self._btn_discard)
+        self._btn_rebake_normal = QPushButton("重烘本动画法线")
+        self._btn_rebake_normal.setToolTip(
+            "按当前「法线烘焙」配置重烘本动画的 <图集>.normal.png（先自动存盘 anim.json）。"
+            "关闭烘焙则删除法线图。"
+        )
+        self._btn_rebake_normal.clicked.connect(self._do_rebake_normal)
+        save_row.addWidget(self._btn_rebake_normal)
         self._lbl_dirty = QLabel("")
         self._lbl_dirty.setStyleSheet("color: #e0a030;")
         save_row.addWidget(self._lbl_dirty, 1)
@@ -482,6 +512,19 @@ class AnimEditor(QWidget):
         self._atlas_full.setFixedSize(_ATLAS_VIEW_MIN_W, 120)
         self._atlas_full.setStyleSheet("background: #1a1a1a;")
         atlas_col.addWidget(self._atlas_full, 1)
+        # 法线图预览：紧挨图集，直观看烘焙产物 <图集>.normal.png
+        normal_col = QVBoxLayout()
+        normal_col.addWidget(QLabel("<b>法线图 Normal（烘焙产物）</b>"))
+        self._lbl_normal_meta = QLabel("")
+        self._lbl_normal_meta.setStyleSheet("color: #888;")
+        self._lbl_normal_meta.setWordWrap(True)
+        normal_col.addWidget(self._lbl_normal_meta)
+        self._normal_full = QLabel()
+        self._normal_full.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._normal_full.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+        self._normal_full.setFixedSize(_ATLAS_VIEW_MIN_W, 120)
+        self._normal_full.setStyleSheet("background: #1a1a1a;")
+        normal_col.addWidget(self._normal_full, 1)
         frame_col = QVBoxLayout()
         frame_col.addWidget(QLabel("<b>当前帧</b>"))
         self._preview = QLabel()
@@ -495,8 +538,28 @@ class AnimEditor(QWidget):
         frame_col.addWidget(self._preview)
         frame_col.addStretch(1)
         atlas_frame_row.addLayout(atlas_col, 1)
+        atlas_frame_row.addLayout(normal_col, 1)
         atlas_frame_row.addLayout(frame_col, 0)
         dl.addLayout(atlas_frame_row)
+
+        # —— 本状态授权头顶锚（可选）：写 states[<所选状态>].bubbleAnchor。
+        # 缺省不写键 = 运行时按每帧可见内容自动求；只有"内容顶≠头顶"的状态
+        #（举枪、扛尸、打伞——自动锚会挂到道具尖上）才需要在这里钉死。
+        self._bubble_field = BubbleAnchorPickField(
+            self, self._model, None, self._bubble_actor_for_selected_state,
+        )
+        self._bubble_field.changed.connect(self._on_bubble_anchor_changed)
+        self._bubble_sec = CollapsibleSection(
+            "说话气泡头顶锚（所选状态，可选）", start_open=False, parent=self,
+        )
+        self._bubble_sec.set_header_tool_tip(
+            "角色说话时头顶那个「…」气泡贴在哪。\n"
+            "默认不写 = 运行时按每帧可见内容自动贴（蹲/躺/跑都自己跟）。\n"
+            "只有内容顶 ≠ 头顶的状态才需要钉死：举枪、扛尸、打伞——自动锚会挂到道具尖上。\n"
+            "写盘为 states[<状态>].bubbleAnchor（格高归一化比例，0=脚点、1=格子顶边）。",
+        )
+        self._bubble_sec.add_body(self._bubble_field)
+        dl.addWidget(self._bubble_sec)
 
         self._preview_timer = QTimer(self)
         self._preview_timer.setTimerType(Qt.TimerType.CoarseTimer)
@@ -688,6 +751,9 @@ class AnimEditor(QWidget):
         self._a_world_mode.setCurrentIndex(0)
         self._a_ww.setValue(100)
         self._a_wh.setValue(160)
+        self._a_bake_enable.setChecked(True)
+        self._a_bake_downscale.setValue(4)
+        self._orig_had_bake = False
         self._clear_state_rows()
         self._set_atlas_full_placeholder("")
         self._lbl_atlas_meta.setText("")
@@ -737,6 +803,14 @@ class AnimEditor(QWidget):
             self._a_ww.setValue(ww if ww > 0 else 100)
             self._a_wh.setValue(wh if wh > 0 else 160)
             self._apply_world_mode_enabled()
+            # 法线烘焙配置（normalBake；未配=默认启用 1/4）
+            nb = a.get("normalBake")
+            self._orig_had_bake = isinstance(nb, dict)
+            nb = nb if isinstance(nb, dict) else {}
+            self._a_bake_enable.setChecked(nb.get("enabled") is not False)
+            _ds = nb.get("downscale")
+            self._a_bake_downscale.setValue(
+                int(_ds) if isinstance(_ds, (int, float)) and not isinstance(_ds, bool) and 1 <= _ds <= 32 else 4)
 
             self._clear_state_rows()
             states = a.get("states", {})
@@ -1057,6 +1131,12 @@ class AnimEditor(QWidget):
                     # referenceSpeed 由 refSpeed 列显式管理（空=删除），不走未知键透传
                     if k not in ("frames", "frameRate", "loop", "referenceSpeed"):
                         sdef[k] = v
+            # 授权头顶锚：气泡锚控件改过才动，没动过沿用上面透传来的磁盘原值
+            bub_edit = name_it.data(Qt.ItemDataRole.UserRole + 1) if name_it else None
+            if bub_edit == "clear":
+                sdef.pop("bubbleAnchor", None)
+            elif isinstance(bub_edit, (int, float)) and not isinstance(bub_edit, bool):
+                sdef["bubbleAnchor"] = round(float(bub_edit), 4)
             if ref_text:
                 try:
                     ref_val = float(ref_text)
@@ -1100,6 +1180,19 @@ class AnimEditor(QWidget):
             return orig_v
         return ctrl_val
 
+    def _bake_field_for_save(self) -> dict | None:
+        """法线烘焙字段的写盘值：None=不写（保持文件无此键，最小 diff）。
+
+        往返保真：原文件已有 normalBake → 始终写回（保留其存在与位置）；原文件没有且
+        当前是默认（启用+1/4）→ 不写（无编辑不无中生有加键）。
+        """
+        enabled = self._a_bake_enable.isChecked()
+        ds = int(self._a_bake_downscale.value())
+        is_default = enabled and ds == 4
+        if getattr(self, "_orig_had_bake", False) or not is_default:
+            return {"enabled": enabled, "downscale": ds}
+        return None
+
     def _build_saved_anim_dict(self) -> tuple[dict | None, str | None]:
         new_states, err = self._collect_states_from_table()
         if err:
@@ -1117,6 +1210,7 @@ class AnimEditor(QWidget):
         wh_out = self._world_value_for_save("worldHeight", wh)
         # 键序保真：原有键（含 states/worldWidth/worldHeight）一律回原位置，
         # 只有原文件没有的世界尺寸键才新插在 states 之后。
+        bake_out = self._bake_field_for_save()   # dict 或 None（None=不写该键）
         orig = self._original_anim if isinstance(self._original_anim, dict) else {}
         out: dict = {}
         for k, v in orig.items():
@@ -1128,10 +1222,15 @@ class AnimEditor(QWidget):
             elif k == "worldHeight":
                 if want_wh:
                     out["worldHeight"] = wh_out
+            elif k == "normalBake":
+                if bake_out is not None:
+                    out["normalBake"] = bake_out   # 原位保真；None=从文件删除该键
             else:
                 out[k] = v
         if "states" not in out:
             out = {"states": new_states, **out}
+        if bake_out is not None and "normalBake" not in out:
+            out["normalBake"] = bake_out           # 原文件无此键、现需写入 → 追加末尾
         missing_ww = want_ww and "worldWidth" not in out
         missing_wh = want_wh and "worldHeight" not in out
         if missing_ww or missing_wh:
@@ -1174,6 +1273,28 @@ class AnimEditor(QWidget):
             QMessageBox.warning(self, "无法保存", err)
             return False
         return True
+
+    def _do_rebake_normal(self) -> None:
+        """按当前配置重烘本动画法线：先存盘（持久化 normalBake），再调 bake-normals 单烘。"""
+        if not self._current_key:
+            return
+        err = self._save_current_bundle()   # 存盘后 anim.json 的 normalBake = 当前控件值
+        if err:
+            QMessageBox.warning(self, "无法保存", err)
+            return
+        if not self._model.project_path:
+            QMessageBox.warning(self, "无法重烘", "工程未加载。")
+            return
+        anim_dir = (Path(self._model.project_path)
+                    / "public/resources/runtime/animation" / self._current_key)
+        try:
+            from tools.animation_pipeline.bake_normal_atlas import bake_one
+            msg = bake_one(anim_dir, force=True, cli_downscale=None)
+        except Exception as e:  # noqa: BLE001 — 反馈给用户即可
+            QMessageBox.warning(self, "重烘失败", str(e))
+            return
+        self._refresh_preview()
+        QMessageBox.information(self, "重烘法线", msg)
 
     def flush_to_model(self, for_save_all: bool = False) -> bool:
         """Save All 钩子（主窗鸭子协议）：把当前包未保存的表格编辑落盘。
@@ -1239,6 +1360,7 @@ class AnimEditor(QWidget):
     def _refresh_preview(self) -> None:
         self._sheet_pixmap = None
         self._sheet_cache_key = ""
+        self._update_normal_full()
         if self._model.project_path is None or not self._current_key:
             self._update_atlas_full_label()
             return
@@ -1264,6 +1386,46 @@ class AnimEditor(QWidget):
         self._lbl_atlas_meta.setText("")
         self._set_frame_preview_placeholder(f"无法加载图集")
         self._stop_preview_timer()
+
+    def _normal_disk_path(self) -> Path | None:
+        """当前包图集的法线图磁盘路径（<图集>.normal.png），无则 None。"""
+        if self._model.project_path is None or not self._current_key:
+            return None
+        sheet_path = self._a_sheet.text().strip()
+        if not sheet_path:
+            return None
+        man = self._manifest_url(self._current_key)
+        full = _spritesheet_disk(self._model.project_path, man, sheet_path)
+        if full is None:
+            return None
+        return full.with_name(full.stem + ".normal.png")
+
+    def _update_normal_full(self) -> None:
+        """把 <图集>.normal.png 显示在图集旁边；未烘焙则给提示占位。"""
+        np_path = self._normal_disk_path()
+        if np_path is None or not np_path.is_file():
+            self._normal_full.setPixmap(QPixmap())
+            self._normal_full.setFixedSize(_ATLAS_VIEW_MIN_W, 120)
+            self._normal_full.setText("未烘焙\n（点「重烘本动画法线」）"
+                                      if self._a_bake_enable.isChecked() else "已禁用烘焙")
+            self._lbl_normal_meta.setText("")
+            return
+        # 经 QImage 解码再转 QPixmap，避免重烘后同名文件命中旧解码缓存（与场景缩略图同法）
+        pm = QPixmap.fromImage(QImage(str(np_path)))
+        if pm.isNull():
+            self._normal_full.setPixmap(QPixmap())
+            self._normal_full.setText("(法线图无法加载)")
+            self._lbl_normal_meta.setText("")
+            return
+        avail_w = self._atlas_target_view_width()
+        scaled = pm.scaled(avail_w, _ATLAS_VIEW_MAX_H,
+                           Qt.AspectRatioMode.KeepAspectRatio,
+                           Qt.TransformationMode.SmoothTransformation)
+        self._normal_full.setPixmap(scaled)
+        self._normal_full.setFixedSize(scaled.size())
+        self._normal_full.setText("")
+        kb = np_path.stat().st_size / 1024
+        self._lbl_normal_meta.setText(f"法线图 {pm.width()}×{pm.height()} px  ·  {kb:.0f} KB")
 
     def _update_atlas_full_label(self) -> None:
         if self._sheet_pixmap is None or self._sheet_pixmap.isNull():
@@ -1303,6 +1465,87 @@ class AnimEditor(QWidget):
 
     def _on_state_selection_changed(self) -> None:
         self._restart_preview_animation()
+        self._sync_bubble_field_to_row()
+
+    # ---- 本状态授权头顶锚 ------------------------------------------------
+
+    def _selected_state_name(self) -> str:
+        row = self._state_table.currentRow()
+        it = self._state_table.item(row, 0) if row >= 0 else None
+        return it.text().strip() if it else ""
+
+    def _bubble_actor_for_selected_state(self) -> BubbleAnchorActor:
+        """舞台对象来自**编辑器当前载入的包**（不经 ProjectModel），未保存的世界尺寸改动也照出。"""
+        a = self._original_anim
+        name = self._selected_state_name()
+        if not isinstance(a, dict) or not name:
+            return BubbleAnchorActor(hint="先在上面的表里选一个状态")
+        if not self._current_key:
+            return BubbleAnchorActor(hint="当前没有载入动画包")
+        data = copy.deepcopy(a)
+        # 世界尺寸取表单当前值（可能还没保存），其余取磁盘原样
+        ww = float(max(1, self._a_ww.value()))
+        wh = float(max(1, self._a_wh.value()))
+        data["worldWidth"] = ww
+        data["worldHeight"] = wh
+        # 本行待写入的授权值先反映进预览数据，切状态回来还能看见
+        edit = self._pending_bubble_edit_for_row(self._state_table.currentRow())
+        if edit is not None:
+            sd = data.setdefault("states", {}).setdefault(name, {})
+            if edit == "clear":
+                sd.pop("bubbleAnchor", None)
+            else:
+                sd["bubbleAnchor"] = edit
+        return BubbleAnchorActor(
+            kind="actor",
+            label=f"{self._current_key} / {name}",
+            hint="",
+            anim_data=data,
+            anim_manifest_url=anim_manifest_url_for_bundle(self._current_key),
+            world_w=ww,
+            world_h=wh,
+            states=[name],
+            default_state=name,
+        )
+
+    def _pending_bubble_edit_for_row(self, row: int) -> float | str | None:
+        """本行尚未落盘的授权锚编辑：float=授权值、"clear"=清除授权、None=没动过。
+
+        存在 name 单元格的 UserRole+1 上——跟着行走，改名/重排/删行自动跟随，
+        不用另建一份按名字索引的账（那种账在重命名后必对不上）。
+        """
+        it = self._state_table.item(row, 0) if row >= 0 else None
+        return it.data(Qt.ItemDataRole.UserRole + 1) if it else None
+
+    def _sync_bubble_field_to_row(self) -> None:
+        if not hasattr(self, "_bubble_field"):
+            return
+        self._bubble_field.refresh_actor()
+        row = self._state_table.currentRow()
+        edit = self._pending_bubble_edit_for_row(row)
+        name = self._selected_state_name()
+        stored = None
+        if isinstance(self._original_anim, dict) and name:
+            sd = (self._original_anim.get("states") or {}).get(name)
+            if isinstance(sd, dict):
+                stored = sd.get("bubbleAnchor")
+        frac = edit if isinstance(edit, (int, float)) else (None if edit == "clear" else stored)
+        wh = float(max(1, self._a_wh.value()))
+        self._bubble_field.set_committed_anchor(
+            None if frac is None else -float(frac) * wh - BUBBLE_HEAD_GAP,
+        )
+
+    def _on_bubble_anchor_changed(self) -> None:
+        row = self._state_table.currentRow()
+        it = self._state_table.item(row, 0) if row >= 0 else None
+        if it is None:
+            return
+        v = self._bubble_field.value()
+        wh = float(max(1, self._a_wh.value()))
+        # 控件说的是"气泡底边的绝对世界 y（含 headGap）"，anim.json 存的是格高归一化比例
+        frac = None if v is None else max(0.0, (-float(v) - BUBBLE_HEAD_GAP) / wh)
+        it.setData(Qt.ItemDataRole.UserRole + 1, "clear" if frac is None else frac)
+        self._mark_dirty()
 
     # ---- 步速匹配调校走廊 ----------------------------------------------------
 

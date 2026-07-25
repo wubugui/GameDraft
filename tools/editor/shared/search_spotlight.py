@@ -41,7 +41,7 @@ class _FlashOverlay(QWidget):
         self.setGeometry(geo)
         self.show()
         self.raise_()
-        QTimer.singleShot(_FLASH_MS, self.deleteLater)
+        QTimer.singleShot(_FLASH_MS, self, self.deleteLater)
 
     def paintEvent(self, _event) -> None:
         p = QPainter(self)

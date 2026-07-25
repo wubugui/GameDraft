@@ -802,6 +802,45 @@ def _dump_json_text(data: dict[str, Any]) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
 
 
+#: 人工在 anim 编辑器里填、导出器算不出来的 per-state 字段。
+#: 重导出必须原样保留，否则"更新一次角色动画"就把手调值全抹了。
+PRESERVED_STATE_FIELDS = ("referenceSpeed", "bubbleAnchor")
+
+
+def merge_preserved_anim_fields(
+    new_anim: dict[str, Any],
+    existing_anim: Optional[dict[str, Any]],
+) -> dict[str, Any]:
+    """把旧 anim.json 里的人工 per-state 字段并回新导出结果（按 state 名对齐）。
+
+    导出器是"从零拼 dict"，重导出会整份覆盖 anim.json；``referenceSpeed``（步速匹配基准）
+    与 ``bubbleAnchor``（授权头顶锚）都是人在 anim 编辑器里调出来、导出器无从推算的值，
+    不并回去就等于每次更新素材都白调一次。同名 state 才并；新导出已显式给值的不覆盖。
+    """
+    if not isinstance(existing_anim, dict):
+        return new_anim
+    old_states = existing_anim.get("states")
+    new_states = new_anim.get("states")
+    if not isinstance(old_states, dict) or not isinstance(new_states, dict):
+        return new_anim
+    for name, new_sd in new_states.items():
+        old_sd = old_states.get(name)
+        if not isinstance(old_sd, dict) or not isinstance(new_sd, dict):
+            continue
+        for key in PRESERVED_STATE_FIELDS:
+            if key in old_sd and key not in new_sd:
+                new_sd[key] = old_sd[key]
+    return new_anim
+
+
+def _read_json_or_none(path: Path) -> Optional[dict[str, Any]]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def save_outputs(
     atlas: Image.Image,
     meta: dict[str, Any],
@@ -815,4 +854,9 @@ def save_outputs(
     if out_meta_json is not None:
         out_meta_json.write_text(_dump_json_text(meta), encoding="utf-8")
     if gamedraft is not None and out_anim_json is not None:
+        # 覆盖已有动画包时先把人工 per-state 字段捞回来（唯一写盘口，两条导出路径都经此）
+        if out_anim_json.is_file():
+            gamedraft = merge_preserved_anim_fields(
+                gamedraft, _read_json_or_none(out_anim_json),
+            )
         out_anim_json.write_text(_dump_json_text(gamedraft), encoding="utf-8")

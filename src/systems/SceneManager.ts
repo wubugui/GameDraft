@@ -27,6 +27,7 @@ import { isCutsceneOnlyEntity, isEntityBoundToCutscene } from '../data/types';
 import { applyCharacterDefaults, type CharacterRegistry } from '../data/characterRegistry';
 import type { AnimationSetDefInput } from '../data/resolveAnimationSet';
 import { normalizeAnimationSetDef } from '../data/resolveAnimationSet';
+import { normalAtlasUrlFor } from '../rendering/spriteNormalAtlas';
 import { resolvePathRelativeToAnimManifest } from '../core/assetPath';
 import type { IGameSystem } from '../data/types';
 import {
@@ -1005,7 +1006,7 @@ export class SceneManager implements IGameSystem {
         const animRaw = await this.assetManager.loadJson<AnimationSetDefInput>(defToUse.animFile);
         const sheetPath = resolvePathRelativeToAnimManifest(defToUse.animFile, animRaw.spritesheet);
         const tex = await this.assetManager.loadTexture(sheetPath);
-        const animDef = normalizeAnimationSetDef(animRaw, tex.width, tex.height);
+        const animDef = normalizeAnimationSetDef(animRaw, tex.width, tex.height, sheetPath);
         npc.loadSprite(tex, animDef, defToUse.initialAnimState);
       } catch (_e) {
         // 加载失败时保留占位外观
@@ -1090,6 +1091,11 @@ export class SceneManager implements IGameSystem {
       );
       if (defToUse.displayImage?.image) {
         add({ type: 'texture', path: defToUse.displayImage.image, label: `Hotspot: ${def.id}` });
+        // 法线图与展示图同批预载（离线烘焙产物），挂滤镜时只做同步缓存读
+        const normalPath = normalAtlasUrlFor(defToUse.displayImage.image);
+        if (normalPath) {
+          add({ type: 'texture', path: normalPath, label: `Hotspot 法线: ${def.id}` });
+        }
       }
     }
 
@@ -1112,11 +1118,12 @@ export class SceneManager implements IGameSystem {
       try {
         const animRaw = await this.assetManager.loadJson<AnimationSetDefInput>(defToUse.animFile);
         if (animRaw.spritesheet) {
-          add({
-            type: 'texture',
-            path: resolvePathRelativeToAnimManifest(defToUse.animFile, animRaw.spritesheet),
-            label: `NPC 图集: ${npcDef.id}`,
-          });
+          const sheetPath = resolvePathRelativeToAnimManifest(defToUse.animFile, animRaw.spritesheet);
+          add({ type: 'texture', path: sheetPath, label: `NPC 图集: ${npcDef.id}` });
+          const normalPath = normalAtlasUrlFor(sheetPath);
+          if (normalPath) {
+            add({ type: 'texture', path: normalPath, label: `NPC 法线图集: ${npcDef.id}` });
+          }
         }
       } catch {
         // 实例化时仍会降级为占位；manifest 只做尽力收集。

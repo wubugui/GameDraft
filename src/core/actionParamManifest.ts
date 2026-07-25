@@ -124,22 +124,22 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
   showEmote: {
     required: ['target', 'emote'],
     nonEmpty: ['target', 'emote'],
-    optional: ['duration', 'anchorOffsetX', 'anchorOffsetY'],
+    optional: ['duration', 'anchorOffsetX', 'anchorOffsetY', 'bubbleAnchorY', 'bubbleScale'],
   },
   showSpeechBubble: {
     required: ['target', 'text'],
     nonEmpty: ['target', 'text'],
-    optional: ['emote', 'duration', 'anchorOffsetX', 'anchorOffsetY'],
+    optional: ['emote', 'duration', 'anchorOffsetX', 'anchorOffsetY', 'bubbleAnchorY', 'bubbleScale'],
   },
   showEmoteAndWait: {
     required: ['target', 'emote'],
     nonEmpty: ['target', 'emote'],
-    optional: ['duration', 'anchorOffsetX', 'anchorOffsetY'],
+    optional: ['duration', 'anchorOffsetX', 'anchorOffsetY', 'bubbleAnchorY', 'bubbleScale'],
   },
   showSpeechBubbleAndWait: {
     required: ['target', 'text'],
     nonEmpty: ['target', 'text'],
-    optional: ['emote', 'duration', 'anchorOffsetX', 'anchorOffsetY'],
+    optional: ['emote', 'duration', 'anchorOffsetX', 'anchorOffsetY', 'bubbleAnchorY', 'bubbleScale'],
   },
   playNpcAnimation: {
     required: ['target', 'state'],
@@ -234,6 +234,14 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
     // sceneId 仅编辑器复现地图用，运行时忽略。arriveAnimState 只作用于终点段末
     //（缺省=回 rest/idle 旧语义；途经点段末一律不切动画）。
     optional: ['speed', 'waypoints', 'moveAnimState', 'arriveAnimState', 'faceTowardMovement', 'sceneId'],
+  },
+  jumpEntityTo: {
+    required: ['target', 'x', 'y'],
+    nonEmpty: ['target'],
+    // 脚点沿抛物线弧线落到 x/y；durationMs 缺省 600、arcHeight 缺省 120（世界 px 峰高）。
+    // jumpAnimState 只播一次且帧游标按移动进度插值；landAnimState 缺省回 rest/idle。
+    // sceneId 仅编辑器复现地图用，运行时忽略。
+    optional: ['durationMs', 'arcHeight', 'jumpAnimState', 'landAnimState', 'faceTowardMovement', 'sceneId'],
   },
   // direction / faceTarget 二选一（运行时校验至少一个），条件必填不在缺参检查建模。
   faceEntity: { required: ['target'], nonEmpty: ['target'], optional: ['direction', 'faceTarget'] },

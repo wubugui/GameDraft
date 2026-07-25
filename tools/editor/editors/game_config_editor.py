@@ -5,7 +5,7 @@ import copy
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QPushButton, QLabel,
-    QTableWidget, QHeaderView, QSpinBox, QCheckBox, QMessageBox,
+    QTableWidget, QHeaderView, QSpinBox, QDoubleSpinBox, QCheckBox, QMessageBox,
     QScrollArea, QGroupBox,
 )
 
@@ -110,6 +110,27 @@ class GameConfigEditor(QWidget):
         )
         disp_lay.addLayout(ws_row)
 
+        # 头顶气泡全局缩放：不勾 = 不写键（运行时按 1 走）
+        bub_row = QHBoxLayout()
+        self._bubble_scale_chk = QCheckBox("头顶气泡缩放")
+        self._bubble_scale_chk.setToolTip(
+            "说话「…」气泡 / showEmote / showSpeechBubble 的**全局**大小倍率，缺省 1。\n"
+            "字号、内边距、圆角、描边一起等比放大（按新字号重排，文字不会糊）。\n"
+            "单处要不一样，在那条对话行 / 那个 action 里勾「覆盖」单独给值。",
+        )
+        bub_row.addWidget(self._bubble_scale_chk)
+        self._bubble_scale = QDoubleSpinBox()
+        self._bubble_scale.setRange(0.3, 4.0)
+        self._bubble_scale.setSingleStep(0.1)
+        self._bubble_scale.setDecimals(2)
+        self._bubble_scale.setValue(1.0)
+        self._bubble_scale.setMaximumWidth(90)
+        self._bubble_scale.setEnabled(False)
+        self._bubble_scale_chk.toggled.connect(self._bubble_scale.setEnabled)
+        bub_row.addWidget(self._bubble_scale)
+        bub_row.addStretch(1)
+        disp_lay.addLayout(bub_row)
+
         disp_section.add_body(disp_inner)
         lay.addWidget(disp_section)
 
@@ -185,6 +206,14 @@ class GameConfigEditor(QWidget):
             self._ws_h.setValue(int(ws["height"]))
         else:
             self._ws_chk.setChecked(False)
+
+        bs = cfg.get("emoteBubbleScale")
+        if isinstance(bs, (int, float)) and not isinstance(bs, bool) and bs > 0:
+            self._bubble_scale_chk.setChecked(True)
+            self._bubble_scale.setValue(float(bs))
+        else:
+            self._bubble_scale_chk.setChecked(False)
+            self._bubble_scale.setValue(1.0)
 
         sf = cfg.get("startupFlags", {})
         self._flags_table.setRowCount(0)
@@ -281,6 +310,12 @@ class GameConfigEditor(QWidget):
             cfg["windowSize"] = {"width": self._ws_w.value(), "height": self._ws_h.value()}
         elif "windowSize" in cfg:
             del cfg["windowSize"]
+
+        if self._bubble_scale_chk.isChecked():
+            v = float(self._bubble_scale.value())
+            cfg["emoteBubbleScale"] = int(v) if float(v).is_integer() else v
+        elif "emoteBubbleScale" in cfg:
+            del cfg["emoteBubbleScale"]
 
         sf: dict = {}
         for i in range(self._flags_table.rowCount()):

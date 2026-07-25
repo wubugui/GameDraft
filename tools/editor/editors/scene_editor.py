@@ -79,7 +79,6 @@ from ..shared.portrait_catalog import load_portrait_sets
 from ..shared.project_paths import ProjectPaths
 from ..shared.fonts import MONO_FONT_FAMILY
 
-
 def _assert_path_within(path: Path, base: Path) -> Path:
     """安全闸：确保 path 落在 base 目录内，否则抛错。
 
@@ -93,7 +92,6 @@ def _assert_path_within(path: Path, base: Path) -> Path:
     except ValueError:
         raise RuntimeError(f"拒绝操作场景目录之外的文件：{rp}（限定目录 {rb}）")
     return rp
-
 
 def _scene_background_disk_path(model: ProjectModel, scene_id: str, sc: dict) -> Path | None:
     """场景 JSON 背景项 → ``public/resources/runtime/scenes/<id>/background.png``。
@@ -137,7 +135,6 @@ _PICK_CYCLE_PX_TOL = 4
 # 实体缺省不写 occlusionBlendFactor 键 → 运行时用此默认；仅「自定义」勾选才落显式值。
 _OCCLUSION_BLEND_DEFAULT = 0.28
 
-
 def _entity_cutscene_ids_from_data(ent: dict) -> list[str]:
     out: list[str] = []
     raw = ent.get("cutsceneIds")
@@ -148,14 +145,11 @@ def _entity_cutscene_ids_from_data(ent: dict) -> list[str]:
                 out.append(s)
     return out
 
-
 def _entity_has_cutscene_binding(ent: dict) -> bool:
     return len(_entity_cutscene_ids_from_data(ent)) > 0
 
-
 def _entity_is_cutscene_only(ent: dict) -> bool:
     return _entity_has_cutscene_binding(ent) and ent.get("cutsceneOnly", True) is not False
-
 
 def _hotspot_collision_world_to_local(hs: dict, world_poly: list) -> list[dict[str, float]]:
     """画布世界点 → authored 局部点：先去锚点平移，再按实例 transform 反变换
@@ -173,7 +167,6 @@ def _hotspot_collision_world_to_local(hs: dict, world_poly: list) -> list[dict[s
             out.append({"x": round(lx, 1), "y": round(ly, 1)})
     return out
 
-
 def _hotspot_collision_local_to_world(hs: dict, local_poly: list) -> list[dict[str, float]]:
     """authored 局部点 → 画布世界点：实例 transform 正变换后加锚点（与运行时同口径）。"""
     x0 = float(hs.get("x", 0))
@@ -187,14 +180,12 @@ def _hotspot_collision_local_to_world(hs: dict, local_poly: list) -> list[dict[s
             out.append({"x": round(wx + x0, 1), "y": round(wy + y0, 1)})
     return out
 
-
 def _default_hotspot_collision_triangle_local() -> list[dict[str, float]]:
     return [
         {"x": -20.0, "y": -15.0},
         {"x": 20.0, "y": -15.0},
         {"x": 0.0, "y": 20.0},
     ]
-
 
 def _hotspot_display_image_pixel_size(
     model: ProjectModel | None, path_url: str,
@@ -209,18 +200,15 @@ def _hotspot_display_image_pixel_size(
         return None
     return sz.width(), sz.height()
 
-
 def _display_world_height_from_width(ww: float, pw: int, ph: int) -> float:
     if ww <= 0 or pw <= 0 or ph <= 0:
         return 0.0
     return round(ww * (ph / pw), 1)
 
-
 def _display_world_width_from_height(hh: float, pw: int, ph: int) -> float:
     if hh <= 0 or pw <= 0 or ph <= 0:
         return 0.0
     return round(hh * (pw / ph), 1)
-
 
 def _hotspot_display_image_dict(
     path: str, ww: float, hh: float, facing: str, sprite_sort: str,
@@ -232,7 +220,6 @@ def _hotspot_display_image_dict(
     if ss in ("back", "front"):
         d["spriteSort"] = ss
     return d
-
 
 def _migrate_scene_hotspot_collision_to_local(sc: dict) -> bool:
     """旧数据 collisionPolygon 为世界坐标：转为相对 (x,y) 的局部坐标并打标。"""
@@ -253,7 +240,6 @@ def _migrate_scene_hotspot_collision_to_local(sc: dict) -> bool:
         changed = True
     return changed
 
-
 def _zone_canvas_color(zone: dict) -> QColor:
     if zone.get("zoneKind") == "depth_floor":
         return _ZONE_COLOR_DEPTH_FLOOR
@@ -273,115 +259,15 @@ _PATROL_OVERLAY_Z = 2.0
 _LIGHTCURVE_LINE_COLOR = QColor(255, 196, 64, 230)  # 暖金,区别于巡逻的青色
 _LIGHTCURVE_OVERLAY_Z = 2.5
 
-
-def _anim_bundle_key_from_manifest_url(url: str) -> str:
-    p = PurePosixPath(str(url).strip().replace("\\", "/").lstrip("/"))
-    if p.name == "anim.json":
-        return p.parent.name
-    return p.stem
-
-
-def _spritesheet_public_path(
-    model: ProjectModel,
-    spritesheet: str,
-    anim_manifest_url: str | None,
-) -> Path | None:
-    """与运行时 resolvePathRelativeToAnimManifest 一致，返回 public 下的绝对路径。"""
-    if not model.project_path:
-        return None
-    pub = model.project_path / "public"
-    sh = str(spritesheet or "").strip()
-    if not sh:
-        return None
-    if sh.startswith("/assets/"):
-        return pub / sh.lstrip("/")
-    if not anim_manifest_url:
-        return None
-    base = PurePosixPath(anim_manifest_url.strip().lstrip("/")).parent
-    part = sh[2:] if sh.startswith("./") else sh
-    return pub / (base / PurePosixPath(part))
-
-
-def _resolved_anim_world_pair(
-    data: dict,
-    model: ProjectModel,
-    *,
-    anim_manifest_url: str | None = None,
-) -> tuple[float, float] | None:
-    """与运行时 normalizeAnimationSetDef 一致：worldWidth/worldHeight 可只填其一。"""
-    cols = max(1, int(data.get("cols", 1) or 1))
-    rows = max(1, int(data.get("rows", 1) or 1))
-    w = float(data.get("worldWidth", 0) or 0)
-    h = float(data.get("worldHeight", 0) or 0)
-    if w > 0 and h > 0:
-        return (w, h)
-    sheet = str(data.get("spritesheet", "") or "").strip()
-    sp = _spritesheet_public_path(model, sheet, anim_manifest_url)
-    if sp is None or not sp.is_file():
-        return None
-    pm = QPixmap(str(sp))
-    if pm.isNull() or pm.width() <= 0:
-        return None
-    cw = int(data.get("cellWidth", 0) or 0)
-    ch = int(data.get("cellHeight", 0) or 0)
-    fw = max(1, cw if cw > 0 else pm.width() // cols)
-    fh = max(1, ch if ch > 0 else pm.height() // rows)
-    aspect_hw = fh / fw
-    if w > 0:
-        return (w, w * aspect_hw)
-    if h > 0:
-        return (h / aspect_hw, h)
-    return None
-
-
-def _npc_reference_world_size(model: ProjectModel) -> tuple[float, float]:
-    """取 player_anim，否则任一动画的推导世界尺寸；缺省 100×160。"""
-    pa = model.animations.get("player_anim")
-    if isinstance(pa, dict):
-        r = _resolved_anim_world_pair(
-            pa, model, anim_manifest_url="/resources/runtime/animation/player_anim/anim.json")
-        if r:
-            return r
-    for stem, data in sorted(model.animations.items()):
-        if not isinstance(data, dict):
-            continue
-        r = _resolved_anim_world_pair(
-            data, model, anim_manifest_url=f"/resources/runtime/animation/{stem}/anim.json")
-        if r:
-            return r
-    return (100.0, 160.0)
-
-
-def _crop_atlas_cell(
-    atlas: QPixmap,
-    cols: int,
-    rows: int,
-    atlas_index: int,
-    *,
-    cell_w: int | None = None,
-    cell_h: int | None = None,
-    slice_w: int | None = None,
-    slice_h: int | None = None,
-) -> QPixmap | None:
-    if atlas is None or atlas.isNull():
-        return None
-    pw = atlas.width()
-    ph = atlas.height()
-    c = max(1, cols)
-    r = max(1, rows)
-    stride_w = max(1, int(cell_w) if cell_w and cell_w > 0 else pw // c)
-    stride_h = max(1, int(cell_h) if cell_h and cell_h > 0 else ph // r)
-    sw = max(1, int(slice_w) if slice_w and slice_w > 0 else stride_w)
-    sh = max(1, int(slice_h) if slice_h and slice_h > 0 else stride_h)
-    col = atlas_index % c
-    row = atlas_index // c
-    if col >= c or row >= r:
-        return None
-    x, y = col * stride_w, row * stride_h
-    if x + sw > pw or y + sh > ph:
-        return None
-    return atlas.copy(QRect(x, y, sw, sh))
-
+# 图集寻址/切分/世界尺寸推导已抽到 shared/anim_atlas_preview.py（气泡锚控件与本画布共用，
+# 两份实现会各自漂移）。此处保留私有别名，call site 不变。
+from ..shared.anim_atlas_preview import (          # noqa: E402
+    anim_bundle_key_from_manifest_url as _anim_bundle_key_from_manifest_url,
+    crop_atlas_cell as _crop_atlas_cell,
+    resolved_anim_world_pair as _resolved_anim_world_pair,
+    spritesheet_public_path as _spritesheet_public_path,
+    reference_world_size as _npc_reference_world_size,
+)
 
 def _npc_initial_playback_tuple(npc: dict) -> tuple[float, bool, int | None, int | None]:
     """从 npc dict 解析 initialAnimPlayback → (speed, reverse, holdFrame, startFrame)。
@@ -403,7 +289,6 @@ def _npc_initial_playback_tuple(npc: dict) -> tuple[float, bool, int | None, int
         return iv if iv >= 0 else None
 
     return spd, d.get("reverse") is True, _nn(d.get("holdFrame")), _nn(d.get("startFrame"))
-
 
 class _SceneNpcAnimRuntime:
     """场景画布上单个 NPC 的循环动画（与脚底锚点、世界尺寸一致）。"""
@@ -564,7 +449,6 @@ class _SceneNpcAnimRuntime:
         self.item.setPos(0.0, 0.0)
         self.item.show()
 
-
 def _background_pixel_aspect(model: ProjectModel, scene_id: str, sc: dict) -> float | None:
     """背景图像素高/宽，与 worldHeight/worldWidth 比例一致时匹配画面。"""
     img_path = _scene_background_disk_path(model, scene_id, sc)
@@ -574,7 +458,6 @@ def _background_pixel_aspect(model: ProjectModel, scene_id: str, sc: dict) -> fl
     if pm.isNull() or pm.width() <= 0:
         return None
     return float(pm.height()) / float(pm.width())
-
 
 def _zone_polygon_points_for_editor(zone: dict) -> list[tuple[float, float]]:
     """画布用：优先 polygon；否则用遗留矩形字段生成四角；再否则小三角形。"""
@@ -593,7 +476,6 @@ def _zone_polygon_points_for_editor(zone: dict) -> list[tuple[float, float]]:
     if w > 0 and h > 0:
         return [(x, y), (x + w, y), (x + w, y + h), (x, y + h)]
     return [(x, y), (x + 80, y), (x + 40, y + 60)]
-
 
 # ---------------------------------------------------------------------------
 # Draggable graphics items  (all sizes in world units)
@@ -702,7 +584,6 @@ class _DraggableCircle(QGraphicsEllipseItem):
                 self.entity_kind, self.entity_id, p.x(), p.y())
         return result
 
-
 class _DraggableRect(QGraphicsRectItem):
     """A rectangle positioned and sized in world units."""
 
@@ -730,7 +611,6 @@ class _DraggableRect(QGraphicsRectItem):
         self._label.setFlag(
             QGraphicsTextItem.GraphicsItemFlag.ItemIsSelectable, False)
         self._label.setPos(2, 2)
-
 
 class _TransformGizmo(QGraphicsObject):
     """选中实体的实例 transform 手柄（P3）：绕脚底锚点的细环 + 两个世界尺寸手柄。
@@ -880,7 +760,6 @@ class _TransformGizmo(QGraphicsObject):
         self.update()
         self._view.transform_gizmo_live.emit(
             self.kind, self.eid, float(self.scale_v), float(self.rot_deg))
-
 
 class _EditableZonePolygon(QGraphicsObject):
     """Zone：世界坐标闭合多边形；拖顶点、拖内部平移、双击边插点、右键删顶点。
@@ -1280,7 +1159,6 @@ class _EditableZonePolygon(QGraphicsObject):
         self.update()
         super().hoverLeaveEvent(event)
 
-
 class _NpcPatrolPolyline(QGraphicsObject):
     """NPC 巡逻开放折线：仅顶点参与命中，线段中点可选中下层 NPC 圆点。"""
 
@@ -1494,7 +1372,6 @@ class _NpcPatrolPolyline(QGraphicsObject):
         self._hover_vertex = None
         self.update()
         super().hoverLeaveEvent(event)
-
 
 class _LightCurvePolyline(QGraphicsObject):
     """光环境曲线开放折线(画布直编):拖顶点 / 双击边插点 / 右键删点。
@@ -1826,7 +1703,6 @@ class _LightCurvePolyline(QGraphicsObject):
         self.update()
         super().hoverLeaveEvent(event)
 
-
 # ---------------------------------------------------------------------------
 # Canvas view  (coordinate system = world units)
 # ---------------------------------------------------------------------------
@@ -1838,13 +1714,11 @@ def _persp_editor_num(v: object) -> float | None:
     f = float(v)
     return f if math.isfinite(f) else None
 
-
 def _persp_cell_text(v: object) -> str:
     """透视表格单元原始文本（保留作者数值表示；非数值原样 str）。"""
     if isinstance(v, bool) or not isinstance(v, (int, float)):
         return str(v) if v is not None else ""
     return str(v)
-
 
 class _PerspAxisItem(QGraphicsObject):
     """透视缩放深度轴：作者画的 near→far 箭头（任意方向）+ 两端可拖手柄 +
@@ -1992,7 +1866,6 @@ class _PerspAxisItem(QGraphicsObject):
         handle = self.near if which == "near" else self.far
         self._canvas.persp_axis_committed.emit(which, float(handle.x()), float(handle.y()))
         event.accept()
-
 
 class SceneCanvas(QGraphicsView):
     item_selected = Signal(str, str)   # (entity_kind, entity_id)
@@ -2885,8 +2758,8 @@ class SceneCanvas(QGraphicsView):
         tok = self._fit_layout_token
         self._perform_fit_all()
         for ms in (0, 40, 120, 240):
-            QTimer.singleShot(ms, lambda t=tok: self._fit_stabilize_step(t))
-        QTimer.singleShot(320, lambda t=tok: self._end_auto_fit_after_layout(t))
+            QTimer.singleShot(ms, self, lambda t=tok: self._fit_stabilize_step(t))
+        QTimer.singleShot(320, self, lambda t=tok: self._end_auto_fit_after_layout(t))
 
     def _fit_stabilize_step(self, token: int) -> None:
         if not self._auto_fit_after_layout or token != self._fit_layout_token:
@@ -2918,7 +2791,7 @@ class SceneCanvas(QGraphicsView):
         super().showEvent(event)
         if self._auto_fit_after_layout:
             tok = self._fit_layout_token
-            QTimer.singleShot(0, lambda t=tok: self._fit_stabilize_step(t))
+            QTimer.singleShot(0, self, lambda t=tok: self._fit_stabilize_step(t))
 
     def wheelEvent(self, event: QWheelEvent) -> None:
         # 触控板：无修饰双指滚动 = 平移；Ctrl+滚轮 = 缩放（与 map/picker 三处画布统一）。
@@ -3164,7 +3037,6 @@ class SceneCanvas(QGraphicsView):
         else:
             self.item_deselected.emit()
 
-
 # ---------------------------------------------------------------------------
 # Transition target: pick spawn on target scene (preview + list + new)
 # ---------------------------------------------------------------------------
@@ -3354,12 +3226,9 @@ class TargetSpawnPickerDialog(QDialog):
         self._reload_all()
         self._sync_selection_after_reload()
 
-
 # ---------------------------------------------------------------------------
 # Cutscene cameraMove: pick world point on scene background
 # ---------------------------------------------------------------------------
-
-
 
 class CutsceneCameraPointPickerDialog(QDialog):
     """过场 cameraMove：在绑定场景背景上点击得到世界坐标 x,y。"""
@@ -3413,7 +3282,7 @@ class CutsceneCameraPointPickerDialog(QDialog):
         self._view.setup_from_scene_json(model, scene_id)
         self._view.set_marker_world(self._px, self._py)
         self._sync_lbl()
-        QTimer.singleShot(0, self._view.fit_scene)
+        QTimer.singleShot(0, self._view, self._view.fit_scene)
 
     def _sync_lbl(self) -> None:
         self._coord_lbl.setText(f"x = {self._px:.2f}   y = {self._py:.2f}  （世界单位）")
@@ -3425,7 +3294,6 @@ class CutsceneCameraPointPickerDialog(QDialog):
 
     def picked_xy(self) -> tuple[float, float]:
         return self._px, self._py
-
 
 def scene_entity_xy_for_action(
     model: ProjectModel | None,
@@ -3452,7 +3320,6 @@ def scene_entity_xy_for_action(
                 except (TypeError, ValueError):
                     return 0.0, 0.0
     return 0.0, 0.0
-
 
 class SceneEntityPositionPickerDialog(QDialog):
     """过场 setSceneEntityPosition：在绑定场景背景上点击得到世界坐标（与 cameraMove 同源）。"""
@@ -3512,7 +3379,7 @@ class SceneEntityPositionPickerDialog(QDialog):
         self._view.setup_from_scene_json(model, scene_id)
         self._view.set_marker_world(self._px, self._py)
         self._sync_lbl()
-        QTimer.singleShot(0, self._view.fit_scene)
+        QTimer.singleShot(0, self._view, self._view.fit_scene)
 
     def _sync_lbl(self) -> None:
         self._coord_lbl.setText(f"x = {self._px:.2f}   y = {self._py:.2f}  （世界单位）")
@@ -3524,7 +3391,6 @@ class SceneEntityPositionPickerDialog(QDialog):
 
     def picked_xy(self) -> tuple[float, float]:
         return self._px, self._py
-
 
 # ---------------------------------------------------------------------------
 # 光照环境曲线（lightEnvCurve）
@@ -3543,7 +3409,6 @@ _LC_BASELINE_ENV: dict = {
     "ao": {"contact": 0.45, "form": 0.25},
 }
 
-
 def _rgb01_to_hex(c: object) -> str:
     """光照颜色 [r,g,b]（0..1，可超 1 的 HDR 在编辑器内夹到 1）→ #rrggbb。"""
     if not isinstance(c, (list, tuple)) or len(c) < 3:
@@ -3556,13 +3421,11 @@ def _rgb01_to_hex(c: object) -> str:
         return max(0, min(255, round(max(0.0, min(1.0, f)) * 255)))
     return f"#{ch(c[0]):02x}{ch(c[1]):02x}{ch(c[2]):02x}"
 
-
 def _hex_to_rgb01(hx: str) -> list[float]:
     col = QColor(hx if hx.startswith("#") else f"#{hx}")
     if not col.isValid():
         return [1.0, 1.0, 1.0]
     return [round(col.red() / 255, 3), round(col.green() / 255, 3), round(col.blue() / 255, 3)]
-
 
 def _spin(lo: float, hi: float, step: float, decimals: int) -> QDoubleSpinBox:
     s = QDoubleSpinBox()
@@ -3571,7 +3434,6 @@ def _spin(lo: float, hi: float, step: float, decimals: int) -> QDoubleSpinBox:
     s.setDecimals(decimals)
     s.setMaximumWidth(90)
     return s
-
 
 class _LightEnvKeyframeEditor(QWidget):
     """单关键帧光照环境编辑器：key/ambient/shadow/tone/ao 全字段，写「完整」env。
@@ -3739,11 +3601,9 @@ class _LightEnvKeyframeEditor(QWidget):
             },
         }
 
-
 # ---------------------------------------------------------------------------
 # Property panel
 # ---------------------------------------------------------------------------
-
 
 class ScenePropertyPanel(QScrollArea):
     changed = Signal()
@@ -4181,7 +4041,7 @@ class ScenePropertyPanel(QScrollArea):
 
         depth_box = CollapsibleSection("depthConfig（2D 遮挡深度）", start_open=False)
         depth_box.set_header_tool_tip(
-            "默认折叠；与 Scene Depth Editor 导出一致，此处仅微调 tolerance / floor_offset",
+            "默认折叠；与「角色照明实验室」导出一致，此处仅微调 tolerance / floor_offset",
         )
         depth_inner = QWidget()
         depth_form = compact_form(QFormLayout(depth_inner))
@@ -4190,7 +4050,7 @@ class ScenePropertyPanel(QScrollArea):
         self._sc_depth_tol.setDecimals(4)
         self._sc_depth_tol.setSingleStep(0.05)
         self._sc_depth_tol.setToolTip(
-            "depth_tolerance：精灵与场景深度比较时的容差（标定深度空间），对应 Scene Depth Editor「深度容差」。",
+            "depth_tolerance：精灵与场景深度比较时的容差（标定深度空间），对应实验室「深度容差」。",
         )
         depth_form.addRow("depth_tolerance", self._sc_depth_tol)
         self._sc_floor_offset = QDoubleSpinBox()
@@ -4198,7 +4058,7 @@ class ScenePropertyPanel(QScrollArea):
         self._sc_floor_offset.setDecimals(4)
         self._sc_floor_offset.setSingleStep(0.05)
         self._sc_floor_offset.setToolTip(
-            "floor_offset：脚底深度衬底偏移（标定深度空间），对应 Scene Depth Editor「地板偏移」。",
+            "floor_offset：脚底深度衬底偏移（标定深度空间），对应实验室「地板偏移」。",
         )
         depth_form.addRow("floor_offset", self._sc_floor_offset)
         self._sc_depth_hint = QLabel()
@@ -4544,7 +4404,7 @@ class ScenePropertyPanel(QScrollArea):
                     self._sc_depth_tol.setValue(float(dc.get("depth_tolerance", 0)))
                     self._sc_floor_offset.setValue(float(dc.get("floor_offset", 0)))
                     self._sc_depth_hint.setText(
-                        "与运行时 SceneDepthSystem 一致；其余 depthConfig 请在 Scene Depth Editor 中导出。",
+                        "与运行时 SceneDepthSystem 一致；其余 depthConfig 请在「角色照明实验室」中导出。",
                     )
                 else:
                     self._sc_depth_tol.setEnabled(False)
@@ -4552,7 +4412,7 @@ class ScenePropertyPanel(QScrollArea):
                     self._sc_depth_tol.setValue(0.0)
                     self._sc_floor_offset.setValue(0.0)
                     self._sc_depth_hint.setText(
-                        "当前场景无 depthConfig。请先用主菜单「Scene Depth Editor」导出后再在此处微调这两项。",
+                        "当前场景无 depthConfig。请先在「角色照明实验室」烘焙并导出后，再在此处微调这两项。",
                     )
             finally:
                 self._sc_depth_tol.blockSignals(False)
@@ -4816,7 +4676,7 @@ class ScenePropertyPanel(QScrollArea):
         if has_depth:
             self._sc_bg_depth_warn.setText(
                 "⚠ 本场景已有深度数据（depthConfig）。更换背景图后深度/碰撞会与新图失配，"
-                "需在 Scene Depth Editor 重新打开本场景、重算并导出深度。")
+                "需在「角色照明实验室」重新打开本场景、重烘并导出深度。")
 
     def _refresh_bg_thumb(self, scene_id: str, sc: dict) -> None:
         img_path = _scene_background_disk_path(self._model, scene_id, sc)
@@ -4912,7 +4772,7 @@ class ScenePropertyPanel(QScrollArea):
             QMessageBox.warning(
                 self, "背景已更换",
                 "本场景原有深度数据（depthConfig）现已与新背景失配。\n"
-                "请在主菜单「Scene Depth Editor」中重新打开本场景，重算并导出深度；"
+                "请在「角色照明实验室」中重新打开本场景，重烘并导出深度；"
                 "在那之前游戏内的深度遮挡/碰撞仍按旧图，可能不对。")
 
     def _on_derive_world_size_from_bg(self) -> None:
@@ -6231,7 +6091,7 @@ class ScenePropertyPanel(QScrollArea):
         # 改 targetScene 本身就是编辑：先置脏，随后弹的出生点对话框即使 Cancel 也不丢置脏
         self._emit_props_changed()
         # 可编辑 Combo 在下拉关闭的同一事件里弹模态框容易导致列表闪退；延后一拍再打开出生点对话框。
-        QTimer.singleShot(0, self._open_trans_spawn_picker)
+        QTimer.singleShot(0, self, self._open_trans_spawn_picker)
 
     def _refresh_trans_spawn_display(self) -> None:
         sid = self._hs_trans_scene.current_id()
@@ -8718,7 +8578,6 @@ class ScenePropertyPanel(QScrollArea):
             return
         self._write_spawn_widgets_to_dict(self._spawn_scene)
 
-
 # ---------------------------------------------------------------------------
 # Main scene editor widget
 # ---------------------------------------------------------------------------
@@ -8936,7 +8795,7 @@ class SceneEditor(QWidget):
         self._btn_new_scene.setToolTip(
             "创建一个新的空场景（最小骨架：id / name / 出生点）。"
             "背景图与世界尺寸随后在右侧场景属性面板配置；深度/碰撞为可选附加层，"
-            "需要时再用 Scene Depth Editor 处理。")
+            "需要时再用「角色照明实验室」处理。")
         self._btn_new_scene.clicked.connect(self._new_scene)
 
         scenes_tab = QWidget()
@@ -10410,7 +10269,7 @@ class SceneEditor(QWidget):
             self._canvas.refresh_hotspot_visuals(target)
             self._canvas.item_selected.emit("hotspot_collision", eid)
 
-        QTimer.singleShot(0, _deferred_hotspot_collision_ui)
+        QTimer.singleShot(0, self, _deferred_hotspot_collision_ui)
 
     def _on_props_hotspot_collision_polygon_changed(self, eid: str, polygon: object) -> None:
         poly_list = polygon if isinstance(polygon, list) else []
@@ -10450,7 +10309,7 @@ class SceneEditor(QWidget):
             self._canvas.refresh_npc_collision_visuals(target)
             self._canvas.item_selected.emit("npc_collision", eid)
 
-        QTimer.singleShot(0, _deferred_npc_collision_ui)
+        QTimer.singleShot(0, self, _deferred_npc_collision_ui)
 
     def _on_props_npc_collision_polygon_changed(self, eid: str, polygon: object) -> None:
         poly_list = polygon if isinstance(polygon, list) else []
@@ -11521,7 +11380,7 @@ class SceneEditor(QWidget):
                 pass  # 视口聚焦是锦上添花,失败不影响选中本身
 
         _go()
-        QTimer.singleShot(320, _go)
+        QTimer.singleShot(320, self, _go)
 
     def select_npc_by_id(self, item_id: str, scene_id: str = "") -> None:
         self._select_scene_entity_by_kind("npc", item_id, scene_id)

@@ -109,6 +109,9 @@ _WIDGET_JSON_TYPE: dict[str, dict] = {
     "int": {"type": "number"},
     "float": {"type": "number"},
     "bool": {"type": "boolean"},
+    # 气泡头顶锚 / 大小：控件是可视化舞台，落盘仍是数（缺省不写键=继承）
+    "bubble_anchor": {"type": "number"},
+    "bubble_scale": {"type": "number", "exclusiveMinimum": 0},
 }
 
 # 脚手架占位值:必填参数按控件类型给默认

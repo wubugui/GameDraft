@@ -218,6 +218,17 @@ class GameBrowserTab(QWidget):
     def is_webengine_available(self) -> bool:
         return self._has_webengine
 
+    def run_js_async(self, code: str, callback) -> bool:
+        """非阻塞取值：结果经 callback 回传。返回是否真的发出去了。
+
+        与 GamePlayWindow.run_js_async 同签名——游戏可能跑在内嵌页签也可能在弹出窗口，
+        调用方（主窗轮询）按同一个鸭子接口对待两者。
+        """
+        if not self._view:
+            return False
+        self._view.page().runJavaScript(code, callback)
+        return True
+
     # ---- internals --------------------------------------------------------
 
     def _reload(self) -> None:
@@ -273,6 +284,17 @@ class GamePlayWindow(QWidget):
         if self._view:
             self._view.page().runJavaScript(code)
 
+    def run_js_async(self, code: str, callback) -> bool:
+        """非阻塞取值：结果经 callback 回传。返回是否真的发出去了。
+
+        轮询类用途（如缩略条播放头）必须走这条，不能用 run_js_result——
+        后者内嵌 QEventLoop 阻塞，按 250ms 节奏跑会把编辑器 UI 拖住。
+        """
+        if not self._view:
+            return False
+        self._view.page().runJavaScript(code, callback)
+        return True
+
     def run_js_result(self, code: str, timeout_ms: int = 1500) -> object | None:
         if not self._view:
             return None
@@ -288,7 +310,7 @@ class GamePlayWindow(QWidget):
             loop.quit()
 
         self._view.page().runJavaScript(code, finish)
-        QTimer.singleShot(timeout_ms, finish)
+        QTimer.singleShot(timeout_ms, loop, finish)
         loop.exec()
         return result["value"]
 
@@ -318,4 +340,4 @@ class GamePlayWindow(QWidget):
 try{if(window.Howler){if(typeof Howler.stop==='function')Howler.stop();
 if(typeof Howler.unload==='function')Howler.unload();}}catch(e){}})();0;"""
         self._view.page().runJavaScript(js, arm_and_close)
-        QTimer.singleShot(400, arm_and_close)
+        QTimer.singleShot(400, self, arm_and_close)
