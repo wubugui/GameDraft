@@ -5,6 +5,7 @@ import { createOverlayBlendMesh } from './overlayBlendShader';
 import type { AssetManager } from '../core/AssetManager';
 import type { CutsceneKenBurns, AnimationSetDef, ParallaxSceneDef, ParallaxLayerDef, ParallaxKeyframe } from '../data/types';
 import { CUTSCENE_ANON_SHOT_ID } from '../data/types';
+import { DEFAULT_SPEAKER_SIDE, type SpeakerSide } from '../utils/dialogueSpeakerSide';
 
 /**
  * 过场对话框(present:showDialogue)的观感样式，由组装层(Game)注入，令其与常规对话框
@@ -17,7 +18,11 @@ export interface CutsceneDialoguePanelStyle {
   drawBox: (g: Graphics, x: number, y: number, w: number, h: number) => void;
   /** 画说话人名牌底(SKINS.panelAlt) */
   drawSpeakerPlate: (g: Graphics, x: number, y: number, w: number, h: number) => void;
+  /** 画主角说话人名牌底(SKINS.speakerSelf)——「这句是你说的」的标记，与右侧站位互为冗余 */
+  drawSelfSpeakerPlate: (g: Graphics, x: number, y: number, w: number, h: number) => void;
   speakerColor: number;
+  /** 主角说话人名字色（UITheme.colors.speakerSelf） */
+  selfSpeakerColor: number;
   bodyColor: number;
   fontFamily: string;
 }
@@ -343,8 +348,15 @@ export class CutsceneRenderer {
    * 同皮(经注入的 SKINS.dialogue 底 + SKINS.panelAlt 说话人名牌)、同字(UITheme)。
    * 生命周期仍由 CutsceneManager 掌控(await/skip)；此处只画一句静态对白，无打字机/选项。
    * portrait 恒带 slug（解析在 CutsceneManager 层做完）；有立绘则正文/名牌让出 PORTRAIT_INSET。
+   * side 决定立绘/名牌贴哪一侧（主角在右、其余在左；解析同在 CutsceneManager 层做完）。
    */
-  showDialogueBox(text: string, speaker?: string, portrait?: { slug: string; emotion: string }): Container {
+  showDialogueBox(
+    text: string,
+    speaker?: string,
+    portrait?: { slug: string; emotion: string },
+    side: SpeakerSide = DEFAULT_SPEAKER_SIDE,
+    isSelf: boolean = false,
+  ): Container {
     const sw = this.screenWidth;
     const sh = this.screenHeight;
 
@@ -362,9 +374,13 @@ export class CutsceneRenderer {
 
     const hasPortrait = !!(portrait && portrait.slug && portrait.emotion);
     const inset = hasPortrait ? PORTRAIT_INSET : 0;
+    /** 立绘只压自己那一侧：在右时正文不左移、只收窄。 */
+    const insetLeft = side === 'left' ? inset : 0;
 
     const style = this.dialoguePanelStyle;
-    const speakerColor = style?.speakerColor ?? 0xffcc88;
+    const speakerColor = isSelf
+      ? (style?.selfSpeakerColor ?? style?.speakerColor ?? 0xfff0d8)
+      : (style?.speakerColor ?? 0xffcc88);
     const bodyColor = style?.bodyColor ?? 0xdddddd;
     const fontFamily = style?.fontFamily ?? 'sans-serif';
 
@@ -393,7 +409,9 @@ export class CutsceneRenderer {
         sprite.anchor.set(0.5, 1);
         sprite.width = PORTRAIT_SIZE;
         sprite.height = PORTRAIT_SIZE;
-        sprite.x = BOX_MARGIN + PORTRAIT_SIZE / 2;
+        sprite.x = side === 'right'
+          ? sw - BOX_MARGIN - PORTRAIT_SIZE / 2
+          : BOX_MARGIN + PORTRAIT_SIZE / 2;
         sprite.y = sh + 4;
         sprite.visible = true;
       };
@@ -411,14 +429,17 @@ export class CutsceneRenderer {
         text: speakerR,
         style: { fontSize: 15, fill: speakerColor, fontFamily, fontWeight: 'bold' },
       });
-      const plateX = BOX_MARGIN + 12 + inset;
       const plateY = boxY + 8;
       const plateH = 26;
       const maxW = sw - BOX_MARGIN * 2 - 24 - inset;
       const plateW = Math.min(spText.width + 24, maxW);
+      const plateX = side === 'right'
+        ? sw - BOX_MARGIN - 12 - inset - plateW
+        : BOX_MARGIN + 12 + inset;
       const plate = new Graphics();
       if (style) {
-        style.drawSpeakerPlate(plate, plateX, plateY, plateW, plateH);
+        const drawPlate = isSelf ? style.drawSelfSpeakerPlate : style.drawSpeakerPlate;
+        drawPlate(plate, plateX, plateY, plateW, plateH);
       } else {
         plate.roundRect(plateX, plateY, plateW, plateH, 4).fill({ color: 0x000000, alpha: 0.35 });
       }
@@ -440,7 +461,7 @@ export class CutsceneRenderer {
         lineHeight: 22,
       },
     });
-    bodyText.x = BOX_MARGIN + TEXT_PADDING + inset;
+    bodyText.x = BOX_MARGIN + TEXT_PADDING + insetLeft;
     bodyText.y = boxY + 46;
     box.addChild(bodyText);
 

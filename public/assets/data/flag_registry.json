@@ -9,6 +9,10 @@
       "valueType": "float"
     },
     {
+      "key": "player_display_name",
+      "valueType": "string"
+    },
+    {
       "key": "current_smell",
       "valueType": "string"
     },

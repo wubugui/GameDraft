@@ -23,6 +23,7 @@ import type { EventBus } from '../core/EventBus';
 import type { StringsProvider } from '../core/StringsProvider';
 import type { FlagStore } from '../core/FlagStore';
 import type { AssetManager } from '../core/AssetManager';
+import type { SpeakerSide } from '../utils/dialogueSpeakerSide';
 
 import cutsceneActionAllowlist from './cutscene_action_allowlist.json';
 
@@ -499,6 +500,11 @@ export interface DialogueLinePayload {
   bubbleAnchorY?: number;
   /** 可选：本行气泡缩放；不设 = 用全局 `game_config.emoteBubbleScale`。同样节点级作各拍默认。 */
   bubbleScale?: number;
+  /**
+   * 可选：本拍立绘/名牌所在边，覆盖「主角在右、其余在左」的默认推导。
+   * 用于两个 NPC 对谈也想各占一边的场合；与 portrait 同范式。
+   */
+  speakerSide?: SpeakerSide;
 }
 
 export interface GraphChoiceOptionDef {
@@ -1113,8 +1119,13 @@ export interface DialogueLine {
   tags: string[];
   /** 可选头像（运行时随行下发给 DialogueUI）；不设则不显头像 */
   portrait?: DialoguePortraitRef;
-  /** 说话人对应的世界实体（说话中「…」气泡定位用）；旁白/literal 无 */
+  /** 说话人对应的世界实体（说话中「…」气泡定位 + 立绘分边用）；旁白/literal 无 */
   speakerEntity?: { kind: 'npc'; npcId: string } | { kind: 'player' };
+  /**
+   * 可选：本行立绘/名牌所在边（覆盖按 speakerEntity 的推导）。
+   * 不设 = 主角在右、其余在左；见 utils/dialogueSpeakerSide。
+   */
+  speakerSide?: SpeakerSide;
   /** 本行「…」气泡的绝对头顶锚（可选覆盖）；不设则由实体按当前帧内容自算 */
   bubbleAnchorY?: number;
   /** 本行「…」气泡的缩放（可选覆盖）；不设则用全局 game_config.emoteBubbleScale */

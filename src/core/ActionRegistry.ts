@@ -41,6 +41,7 @@ import { GameState } from '../data/types';
 import type { SceneEntityKind, RuntimeFieldValue } from '../data/EntityRuntimeFieldSchema';
 import { applyDialogueColonSpeakerFromResolvedText } from './resolveText';
 import { ACTION_PARAM_MANIFEST } from './actionParamManifest';
+import { isSpeakerSide } from '../utils/dialogueSpeakerSide';
 
 /**
  * playScriptedDialogue 行内 `portrait` 字段的宽松解析：需带非空 `emotion` 才生效，`slug` 可选（缺省=跟随说话人）。
@@ -159,6 +160,8 @@ export interface ActionRegistryDeps {
   randomValue: () => number;
   /** playScriptedDialogue speaker 中的 {{player}} / {{npc}} 等占位解析；scriptedNpcId 为 params.scriptedNpcId */
   resolveScriptedSpeaker: (raw: string, scriptedNpcId?: string) => string;
+  /** 逐行显示名留空时的回落：取「说话 NPC」所指实体的名字（主角=当前主角显示名）；无则空串=旁白 */
+  scriptedSpeakerDisplayFallback: (scriptedNpcId: string) => string;
   /** playScriptedDialogue 逐行头像 + 说话实体解析（头像跟随说话人 + 「…」气泡定位） */
   resolveScriptedLineExtras: (
     rawSpeaker: string,
@@ -1476,7 +1479,10 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       if (!item || typeof item !== 'object') continue;
       const o = item as Record<string, unknown>;
       const speakerRaw = String(o.speaker ?? '').trim();
-      const speakerResolved = speakerRaw ? d.resolveScriptedSpeaker(speakerRaw, scriptedNpcId) : '';
+      /** 显示名写了就用；留空则跟本动作的「说话 NPC」走；两者都空才落到旁白标签。 */
+      const speakerResolved = speakerRaw
+        ? d.resolveScriptedSpeaker(speakerRaw, scriptedNpcId)
+        : d.scriptedSpeakerDisplayFallback(scriptedNpcId);
       const text = String(o.text ?? '').trim();
       if (!text) continue;
       const speakerResolvedDisplay = d.resolveDisplayTextForPlayScripted(
@@ -1498,6 +1504,8 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
         tags: [],
         ...(portrait ? { portrait } : {}),
         ...(speakerEntity ? { speakerEntity } : {}),
+        /** 分边默认按 speakerEntity 推导（主角在右）；逐行 speakerSide 可显式覆盖 */
+        ...(isSpeakerSide(o.speakerSide) ? { speakerSide: o.speakerSide } : {}),
         ...(dim ? { dim: true } : {}),
       });
     }

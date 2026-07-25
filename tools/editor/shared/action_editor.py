@@ -4349,8 +4349,8 @@ class ActionRow(QWidget):
             self._param_widgets.clear()
             tip = QLabel("台词上下文", self)
             tip.setToolTip(
-                "speaker 支持在文本中插入 {{player}}、{{npc}}（用下方「台词用 NPC」作默认）、"
-                "{{npc:某id}}；运行时解析为显示名。",
+                "逐行 speaker 留空 = 跟下方这个说话人走（显示名取它的名字）；"
+                "都没设才是旁白。也可在文本中插入 {{player}}、{{npc}}、{{npc:某id}}。",
             )
             self._params_layout.addRow(tip)
             snpc = IdRefSelector(self, allow_empty=True, editable=True)
@@ -4359,8 +4359,9 @@ class ActionRow(QWidget):
             snpc.set_current(str(params.get("scriptedNpcId", "") or ""))
             snpc.value_changed.connect(self.changed)
             snpc.setToolTip(
-                "这段台词的说话人实体：{{npc}} 取它的显示名；行立绘选「跟随说话人」时按它的"
-                "装扮配置取立绘集；说话时头顶「…」也锚到它。主角选「player」。"
+                "这段台词的默认说话人实体：逐行 speaker 留空时显示名取它的名字；行立绘选"
+                "「跟随说话人」时按它的装扮配置取立绘集；说话时头顶「…」锚到它；左右分边"
+                "也按它（主角在右并高亮名牌）。主角选「玩家（主角）」。"
                 "图对话 runActions 内则优先用图内 npcId。",
             )
             self._param_widgets["scriptedNpcId"] = snpc

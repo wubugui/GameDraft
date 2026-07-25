@@ -1,6 +1,7 @@
 """过场 present:showDialogue 与 playScriptedDialogue 共用的 speaker 行（插入占位 + 可选 scriptedNpcId）。"""
 from __future__ import annotations
 
+import re
 from typing import Callable
 
 from PySide6.QtWidgets import (
@@ -61,6 +62,29 @@ def scripted_speaker_items(model, scene_id: str | None) -> list[tuple[str, str]]
     return [(PLAYER_ENTITY_ID, "玩家（主角）")] + items
 
 
+#: speaker 恰好是「一个占位、别无他物」时的形态——下拉与文本框据此双向同步。
+_SOLE_PLACEHOLDER_RE = re.compile(r"^\{\{\s*(player|npc)\s*(?::\s*([^}]*?)\s*)?\}\}$")
+
+
+def speaker_placeholder_entity(text: str) -> str:
+    """speaker 整体就是一个占位时返回它指的实体 id；混排文本/字面名/空 → 空串。"""
+    m = _SOLE_PLACEHOLDER_RE.match(str(text or "").strip())
+    if not m:
+        return ""
+    kind, ident = m.group(1), (m.group(2) or "").strip()
+    if kind == "player":
+        return PLAYER_ENTITY_ID
+    return ident if ident and ident != "@context" else ""
+
+
+def speaker_text_for_entity(entity_id: str) -> str:
+    """下拉选中的实体 → 写进 speaker 的占位；选空 = 清空（运行时跟说话人走）。"""
+    eid = str(entity_id or "").strip()
+    if not eid:
+        return ""
+    return "{{player}}" if eid == PLAYER_ENTITY_ID else f"{{{{npc:{eid}}}}}"
+
+
 class NpcIdPickDialog(QDialog):
     def __init__(self, model, scene_id: str | None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -90,10 +114,13 @@ def build_speaker_line_with_inserts(
     initial_speaker: str,
     on_change: Callable[[], None],
     rich_refs: bool = False,
+    with_speaker_picker: bool = False,
 ) -> tuple[QHBoxLayout, QLineEdit | RichTextLineEdit]:
-    """返回一行：speaker（QLineEdit 或 RichTextLineEdit）+「插入占位…」菜单。
+    """返回一行：[可选「说话人」下拉] + speaker（QLineEdit 或 RichTextLineEdit）+「插入占位…」菜单。
 
     rich_refs=True 且 model 非空时使用 RichTextLineEdit，可与正文一致插入 [tag:…]。
+    with_speaker_picker=True 时在最左侧挂一个说话人下拉——选一下就把 speaker 写成对应占位，
+    是填说话人的最快路径；给本身没有 scriptedNpcId 字段的逐行台词用（showDialogue 已有独立下拉）。
     """
     hdr = QHBoxLayout()
     hdr.setAlignment(Qt.AlignmentFlag.AlignTop)
@@ -101,11 +128,10 @@ def build_speaker_line_with_inserts(
 
     use_rich = bool(rich_refs and model)
 
+    hint = "留空=跟说话人走（说话人也没选才是旁白）；点「引用」插入 [tag:…]；或右侧菜单插入占位"
     if use_rich:
         sp = RichTextLineEdit(model, parent)
-        sp.setPlaceholderText(
-            "留空=旁白；点「引用」插入 [tag:…]；或右侧菜单插入 {{player}}/{{npc}}",
-        )
+        sp.setPlaceholderText(hint)
         sp.setText(initial_speaker)
 
         def insert_tok(tok: str) -> None:
@@ -115,7 +141,7 @@ def build_speaker_line_with_inserts(
         sp.textChanged.connect(lambda *_: on_change())
     else:
         sp_plain = QLineEdit(parent)
-        sp_plain.setPlaceholderText("留空=旁白；可插入 {{player}} / {{npc}}")
+        sp_plain.setPlaceholderText("留空=跟说话人走（都没设才是旁白）；可插入 {{player}} / {{npc}}")
         sp_plain.setText(initial_speaker)
         sp_plain.textChanged.connect(lambda *_: on_change())
         sp = sp_plain
@@ -123,6 +149,35 @@ def build_speaker_line_with_inserts(
         def insert_tok(tok: str) -> None:
             sp_plain.insert(tok)
             on_change()
+
+    if with_speaker_picker:
+        picker = IdRefSelector(parent, allow_empty=True, editable=False, click_opens_popup=True)
+        picker.setMinimumWidth(130)
+        picker.set_items(scripted_speaker_items(model, scene_id))
+        picker.set_current(speaker_placeholder_entity(initial_speaker))
+        picker.setToolTip(
+            "这句谁说的。选一下即把 speaker 写成对应占位（主角→{{player}}、NPC→{{npc:id}}）；\n"
+            "显示名、立绘（跟随说话人）、头顶「…」气泡、左右分边全按它走。\n"
+            "留空 = 跟本动作的说话人走；两者都没设才是旁白。",
+        )
+
+        def _on_pick(_v=None) -> None:
+            sp.setText(speaker_text_for_entity(picker.current_id()))
+            on_change()
+
+        picker.value_changed.connect(_on_pick)
+
+        def _sync_picker(*_args) -> None:
+            """手打/插入占位后回填下拉；混排文本时归到「（空）」，不去猜。"""
+            want = speaker_placeholder_entity(sp.text())
+            if want == picker.current_id().strip():
+                return
+            picker.blockSignals(True)
+            picker.set_current(want)
+            picker.blockSignals(False)
+
+        sp.textChanged.connect(_sync_picker)
+        hdr.addWidget(picker, stretch=0)
 
     def pick_npc() -> None:
         dlg = NpcIdPickDialog(model, scene_id, parent)
@@ -172,10 +227,12 @@ class CutsceneShowDialogueFields(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         form = compact_form(QFormLayout())
-        tip = QLabel("speaker：工程内可走「引用」插入 [tag:…]；或 {{player}}/{{npc}}", self)
+        tip = QLabel("speaker：留空即用下方说话人的名字；要改写显示名才填", self)
         tip.setToolTip(
-            "与 playScriptedDialogue 一致；{{npc}} 使用下方 scriptedNpcId 或图对话 npcId；"
-            "有工程时单行「引用」与 resolveText 一致。",
+            "最省的写法是只选下方「说话人」、speaker 留空——显示名自动取该实体的名字"
+            "（主角随当前主角走）。\n"
+            "只有需要盖掉显示名时才填（如匿名的「???」）。speaker 与说话人都没设才是旁白。\n"
+            "与 playScriptedDialogue 一致；有工程时单行「引用」与 resolveText 一致。",
         )
         form.addRow(tip)
         self._snpc = IdRefSelector(self, allow_empty=True, editable=False, click_opens_popup=True)
@@ -184,8 +241,9 @@ class CutsceneShowDialogueFields(QWidget):
         self._snpc.set_current(str(scripted_npc_id or ""))
         self._snpc.value_changed.connect(lambda _v: on_change())
         self._snpc.setToolTip(
-            "本行的说话人实体：{{npc}} 取它的显示名；立绘选「跟随说话人」时按它的装扮配置"
-            "取立绘集；说话时头顶「…」也锚到它。主角选「player」。",
+            "本行的说话人实体——填了它这行就齐了：speaker 留空时显示名取它的名字；"
+            "立绘选「跟随说话人」时按它的装扮配置取立绘集；说话时头顶「…」锚到它；"
+            "左右分边也按它（主角在右并高亮名牌）。主角选「玩家（主角）」。",
         )
         form.addRow("scriptedNpcId（说话人实体）", self._snpc)
         sh, self._speaker = build_speaker_line_with_inserts(

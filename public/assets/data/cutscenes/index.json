@@ -388,8 +388,8 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "关二狗",
-        "text": "你哪个？找老子做啥子？"
+        "text": "你哪个？找老子做啥子？",
+        "scriptedNpcId": "player"
       },
       {
         "kind": "present",
@@ -668,8 +668,8 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "关二狗",
-        "text": "……啷个会是它？"
+        "text": "……啷个会是它？",
+        "scriptedNpcId": "player"
       },
       {
         "kind": "present",
@@ -2018,77 +2018,63 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "{{npc:blind_li}}",
         "text": "哎，说书的尽拣热闹的讲。哪有恁个容易的事哦？",
         "scriptedNpcId": "blind_li",
         "portrait": {
-          "slug": "npc_blind_li_anim",
           "emotion": "calm"
         }
       },
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "{{npc}}",
         "text": "想对付旱魃？莫说桃木剑和几张符，墨斗和黑驴蹄子都不一定得行。",
         "scriptedNpcId": "blind_li",
         "portrait": {
-          "slug": "npc_blind_li_anim",
           "emotion": "calm"
         }
       },
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "{{npc}}",
         "text": "搞不好啊，还要遭反噬。",
         "scriptedNpcId": "blind_li",
         "portrait": {
-          "slug": "npc_blind_li_anim",
           "emotion": "calm"
         }
       },
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "{{npc}}",
         "text": "咦——李瞎子，降妖伏魔的本事给你懂完了。",
         "scriptedNpcId": "waiter_xiaoer",
         "portrait": {
-          "slug": "npc_lifu_anim",
           "emotion": "laugh"
         }
       },
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "{{npc}}",
         "text": "天天在这儿冲壳子。你干脆也去说一段，比你瞎起眼睛算命来钱快。",
         "scriptedNpcId": "waiter_xiaoer",
         "portrait": {
-          "slug": "npc_lifu_anim",
           "emotion": "laugh"
         }
       },
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "{{npc}}",
         "text": "说书？屁大点娃儿，求精不懂。",
         "scriptedNpcId": "blind_li",
         "portrait": {
-          "slug": "npc_blind_li_anim",
           "emotion": "calm"
         }
       },
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "{{npc}}",
         "text": "老夫摸到神仙顶那阵，你还不晓得在哪儿抓糖巴鸡屎吃。",
         "scriptedNpcId": "blind_li",
         "portrait": {
-          "slug": "npc_blind_li_anim",
           "emotion": "calm"
         }
       },
@@ -2103,44 +2089,36 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "{{npc}}",
         "text": "也，听到没得？狗日又摸到神仙顶去了。这个月都去了几次了哦？",
         "scriptedNpcId": "npc_掌柜",
         "portrait": {
-          "slug": "npc_teahouse_owner_anim",
           "emotion": "laugh"
         }
       },
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "{{npc}}",
         "text": "……从那南坡上头下来，要不是我牵条黑狗，那不晓得要死好多人。",
         "scriptedNpcId": "blind_li",
         "portrait": {
-          "slug": "npc_blind_li_anim",
           "emotion": "calm"
         }
       },
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "{{npc}}",
         "text": "说的跟真的样，哈哈哈",
         "scriptedNpcId": "waiter_xiaoer",
         "portrait": {
-          "slug": "npc_lifu_anim",
           "emotion": "laugh"
         }
       },
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "{{npc}}",
         "text": "昨天你说的是牵头驴啊，哈哈哈",
         "scriptedNpcId": "npc_掌柜",
         "portrait": {
-          "slug": "npc_teahouse_owner_anim",
           "emotion": "laugh"
         }
       },
@@ -2156,7 +2134,6 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "{{player}}",
         "text": "那你是不是就是遭了反噬，才整瞎的哟？嘻嘻...",
         "scriptedNpcId": "player",
         "portrait": {
@@ -2166,7 +2143,6 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "{{npc}}",
         "text": "……",
         "scriptedNpcId": "blind_li",
         "portrait": {
@@ -2176,7 +2152,6 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "{{npc}}",
         "text": "……你娃过来一点。",
         "scriptedNpcId": "blind_li",
         "portrait": {
@@ -2186,7 +2161,6 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "{{player}}",
         "text": "干啥？",
         "scriptedNpcId": "player",
         "portrait": {
@@ -2196,7 +2170,6 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "{{npc}}",
         "text": "你来嘛......",
         "scriptedNpcId": "blind_li",
         "portrait": {
@@ -2245,7 +2218,6 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "{{player}}",
         "text": "嘻嘻嘻",
         "scriptedNpcId": "player",
         "portrait": {
@@ -2255,7 +2227,6 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "{{npc}}",
         "text": "【嗅了下鼻子】",
         "scriptedNpcId": "blind_li",
         "portrait": {
@@ -2265,7 +2236,6 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "{{npc}}",
         "text": "……香灰味压起尸臭味。",
         "scriptedNpcId": "blind_li",
         "portrait": {
@@ -2275,8 +2245,7 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "{{npc}}",
-        "text": "杠房那头过来的哇。",
+        "text": "义庄那头过来的哇。",
         "scriptedNpcId": "blind_li",
         "portrait": {
           "emotion": "calm"
@@ -2285,7 +2254,6 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "{{npc}}",
         "text": "我日，难怪。",
         "scriptedNpcId": "npc_掌柜",
         "portrait": {
@@ -2295,8 +2263,7 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "{{npc}}",
-        "text": "杠房咋个啊？",
+        "text": "义庄咋个嘛？",
         "scriptedNpcId": "player",
         "portrait": {
           "emotion": "smirk"
@@ -2305,8 +2272,7 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "{{npc}}",
-        "text": "杠房才有真本事撒。老子凭本事吃饭。",
+        "text": "敢挨死人子的才有真本事撒。老子凭本事吃饭。",
         "scriptedNpcId": "player",
         "portrait": {
           "emotion": "smirk"
@@ -2315,8 +2281,7 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "{{npc}}",
-        "text": "背死人子，是多有本事! 哈哈哈哈!",
+        "text": "是是是，是多有本事! 哈哈哈哈!",
         "scriptedNpcId": "blind_li",
         "portrait": {
           "emotion": "laugh"
@@ -2325,7 +2290,6 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "{{npc}}",
         "text": "爬哟，背死人子的所？老子挨到起坐了半天！呸呸呸！",
         "scriptedNpcId": "waiter_xiaoer",
         "portrait": {
@@ -2397,7 +2361,6 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "{{player}}",
         "text": "莫怕撒。",
         "scriptedNpcId": "player",
         "portrait": {
@@ -2420,7 +2383,6 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "{{player}}",
         "text": "来嘛，老子这只手昨天才摸过死人子——给你摸一哈，摸一哈嘛！",
         "scriptedNpcId": "player",
         "portrait": {
@@ -2430,7 +2392,6 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "{{npc}}",
         "text": "我滚你仙人！莫来挨老子哈！",
         "scriptedNpcId": "waiter_xiaoer",
         "portrait": {
@@ -2508,7 +2469,6 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "{{player}}",
         "text": "莫走嘛。",
         "scriptedNpcId": "player",
         "portrait": {
@@ -2539,7 +2499,6 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "{{npc}}",
         "text": "关二狗，我日你仙人！搞忙点给老子爬出去！",
         "scriptedNpcId": "npc_掌柜",
         "portrait": {
@@ -2549,7 +2508,6 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "{{npc}}",
         "text": "快点爬爬爬！仙人板板，你蹲过那块地，老子还要拿石灰去撒。",
         "scriptedNpcId": "waiter_xiaoer",
         "portrait": {
@@ -2559,7 +2517,6 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "{{npc}}",
         "text": "快，快点把他给老子踢出去，这狗日的死温桑。",
         "scriptedNpcId": "npc_掌柜",
         "portrait": {
@@ -2569,7 +2526,6 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "{{npc}}",
         "text": "走嘛走嘛，书都听完了，爷爷是时候回府了。",
         "scriptedNpcId": "player",
         "portrait": {
@@ -2637,7 +2593,6 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "{{player}}",
         "text": "下回老子背个死人子来和蹲一排~",
         "scriptedNpcId": "player",
         "portrait": {
@@ -2659,7 +2614,6 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "{{npc}}",
         "text": "赫——呸！你狗日的再来，老子把你龟儿脚杆撇断！",
         "scriptedNpcId": "waiter_xiaoer",
         "portrait": {
@@ -2738,7 +2692,8 @@
         "kind": "present",
         "type": "showDialogue",
         "speaker": "说书先生",
-        "text": "「……那墓门一开，地里腾起一只大旱魃！赤地千里，草木一舔就焦——」"
+        "text": "「……那墓门一开，地里腾起一只大旱魃！赤地千里，草木一舔就焦——」",
+        "scriptedNpcId": "storyteller_zhang"
       },
       {
         "kind": "present",
@@ -2756,7 +2711,8 @@
         "kind": "present",
         "type": "showDialogue",
         "speaker": "说书先生",
-        "text": "「李天狗一袭旧道袍路过神仙顶——拔剑！咬指！画符！剑光跟焦风撞在一处！」"
+        "text": "「李天狗一袭旧道袍路过神仙顶——拔剑！咬指！画符！剑光跟焦风撞在一处！」",
+        "scriptedNpcId": "storyteller_zhang"
       },
       {
         "kind": "present",
@@ -2768,7 +2724,8 @@
         "kind": "present",
         "type": "showDialogue",
         "speaker": "说书先生",
-        "text": "「一道符，生生把那旱魃镇进地里！」"
+        "text": "「一道符，生生把那旱魃镇进地里！」",
+        "scriptedNpcId": "storyteller_zhang"
       },
       {
         "kind": "present",
@@ -2780,7 +2737,8 @@
         "kind": "present",
         "type": "showDialogue",
         "speaker": "说书先生",
-        "text": "「摸坟的连滚带爬，捧着银钱磕头谢恩呐——」"
+        "text": "「摸坟的连滚带爬，捧着银钱磕头谢恩呐——」",
+        "scriptedNpcId": "storyteller_zhang"
       },
       {
         "kind": "present",
@@ -2908,8 +2866,8 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "关二狗",
-        "text": "（传成啥子样的都有。……要得，就当是真的。老子这个『道长』——切了。）"
+        "text": "（传成啥子样的都有。……要得，就当是真的。老子这个『道长』——切了。）",
+        "scriptedNpcId": "player"
       },
       {
         "kind": "present",
@@ -2969,8 +2927,8 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "关二狗",
-        "text": "跑腿。正经跑腿。（笑骂两句，混了过切。）"
+        "text": "跑腿。正经跑腿。（笑骂两句，混了过切。）",
+        "scriptedNpcId": "player"
       },
       {
         "kind": "present",
@@ -2981,8 +2939,8 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "关二狗",
-        "text": "（这帮人讲古不要钱，吓人也不要钱。）……晓得了。"
+        "text": "（这帮人讲古不要钱，吓人也不要钱。）……晓得了。",
+        "scriptedNpcId": "player"
       },
       {
         "kind": "present",
@@ -3033,8 +2991,8 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "关二狗",
-        "text": "（跑。现在跑还来得及。）（……跑了，「李天狗那一脉」明天就成笑话。）"
+        "text": "（跑。现在跑还来得及。）（……跑了，「李天狗那一脉」明天就成笑话。）",
+        "scriptedNpcId": "player"
       },
       {
         "kind": "present",
@@ -3109,8 +3067,8 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "关二狗",
-        "text": "（成了？……是老子哪一样使对了？米？线？石子？剪子？）"
+        "text": "（成了？……是老子哪一样使对了？米？线？石子？剪子？）",
+        "scriptedNpcId": "player"
       },
       {
         "kind": "present",
@@ -3210,8 +3168,8 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "speaker": "关二狗",
-        "text": "（停了好多天的尸……像才刚停下来一样。）"
+        "text": "（停了好多天的尸……像才刚停下来一样。）",
+        "scriptedNpcId": "player"
       },
       {
         "kind": "present",

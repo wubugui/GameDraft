@@ -9,6 +9,7 @@ import type { ICutsceneActor, IEmoteBubbleAnchor, IEmoteBubbleProvider, EmoteBub
 import { CUTSCENE_ACTION_WHITELIST, CUTSCENE_ANON_SHOT_ID } from '../data/types';
 import { Npc } from '../entities/Npc';
 import { splitSpeakerBodyAfterResolve } from '../core/resolveText';
+import { DEFAULT_SPEAKER_SIDE, type SpeakerSide } from '../utils/dialogueSpeakerSide';
 import { TEXT_URLS } from '../core/projectPaths';
 
 export type EntityResolver = (id: string) => ICutsceneActor | null;
@@ -116,6 +117,12 @@ function parseCameraEasing(raw: unknown): CutsceneCameraEasing | undefined {
 export type ScriptedSpeakerResolver = (raw: string, scriptedNpcId?: string) => string;
 
 /**
+ * 显示名留空时的名字回落：取「说话 NPC」下拉所指实体的名字（主角=当前主角显示名）。
+ * 只填下拉、不打名字是最省的写法；两者都空才是旁白。由组装层(Game)注入。
+ */
+export type ScriptedSpeakerDisplayFallback = (scriptedNpcId: string) => string;
+
+/**
  * present:showDialogue 立绘解析：复用与 playScriptedDialogue 同源的逐行头像解析
  * （显式 slug 原样用；仅带 emotion 时按说话人 player/npc 装扮解析出 slug；解析不到则不显）。
  * 由组装层(Game)注入 —— 渲染层拿到的 portrait 恒带 slug（解析在管理器层做完）。
@@ -135,6 +142,27 @@ export type SpeakingBubbleAnchorResolver = (
   rawSpeaker: string,
   scriptedNpcId?: string,
 ) => IEmoteBubbleAnchor | null;
+
+/**
+ * present:showDialogue 立绘/名牌的左右分边：与常规对话同一口径
+ * （{@link ../utils/dialogueSpeakerSide.resolveSpeakerSide}）——只认说话实体是不是
+ * 当前受控主角，步骤上的 speakerSide 可显式覆盖。由组装层(Game)注入；
+ * 未注入时全部按默认侧渲染（构图与历史一致）。
+ */
+export type ScriptedSpeakerSideResolver = (
+  rawSpeaker: string,
+  scriptedNpcId?: string,
+  override?: unknown,
+) => SpeakerSide;
+
+/**
+ * 这句是不是主角说的（名牌/名字色的「你」标记）。与分边刻意分开解析：
+ * side 可被数据的 speakerSide 覆盖，而本标记只认说话实体，不能被站位带偏。
+ */
+export type ScriptedSpeakerIsSelfResolver = (
+  rawSpeaker: string,
+  scriptedNpcId?: string,
+) => boolean;
 
 export interface SceneManagerCutsceneAPI {
   beginCutsceneStaging(cutsceneId: string, sceneId: string): void;
@@ -209,6 +237,9 @@ export class CutsceneManager implements IGameSystem {
   private scriptedSpeakerResolver: ScriptedSpeakerResolver | null = null;
   private scriptedPortraitResolver: ScriptedPortraitResolver | null = null;
   private speakingBubbleAnchorResolver: SpeakingBubbleAnchorResolver | null = null;
+  private scriptedSpeakerSideResolver: ScriptedSpeakerSideResolver | null = null;
+  private scriptedSpeakerDisplayFallback: ScriptedSpeakerDisplayFallback | null = null;
+  private scriptedSpeakerIsSelfResolver: ScriptedSpeakerIsSelfResolver | null = null;
   /**
    * 与 playScriptedDialogue 一致：解引用后的 narratorLabel 展示串。
    * 仅当 present.showDialogue 的显式 speaker（解引用后）与此串相等时，才允许从正文首冒号剥皮。
@@ -322,6 +353,18 @@ export class CutsceneManager implements IGameSystem {
 
   setSpeakingBubbleAnchorResolver(fn: SpeakingBubbleAnchorResolver | null): void {
     this.speakingBubbleAnchorResolver = fn;
+  }
+
+  setScriptedSpeakerSideResolver(fn: ScriptedSpeakerSideResolver | null): void {
+    this.scriptedSpeakerSideResolver = fn;
+  }
+
+  setScriptedSpeakerDisplayFallback(fn: ScriptedSpeakerDisplayFallback | null): void {
+    this.scriptedSpeakerDisplayFallback = fn;
+  }
+
+  setScriptedSpeakerIsSelfResolver(fn: ScriptedSpeakerIsSelfResolver | null): void {
+    this.scriptedSpeakerIsSelfResolver = fn;
   }
 
   /** present 字幕等：走与 UI 相同的 [tag:…] / resolveText */
@@ -921,11 +964,14 @@ export class CutsceneManager implements IGameSystem {
           ? String(step.speaker).trim()
           : '';
         const scriptedNpcId = String((step as { scriptedNpcId?: unknown }).scriptedNpcId ?? '').trim();
+        // 显示名：写了就用（占位经解析器），留空则跟「说话 NPC」走；两者都空才是旁白。
         let speakerOut: string | undefined;
         if (rawSpeaker && this.scriptedSpeakerResolver) {
           speakerOut = this.scriptedSpeakerResolver(rawSpeaker, scriptedNpcId || undefined);
         } else if (rawSpeaker) {
           speakerOut = rawSpeaker;
+        } else if (scriptedNpcId && this.scriptedSpeakerDisplayFallback) {
+          speakerOut = this.scriptedSpeakerDisplayFallback(scriptedNpcId) || undefined;
         } else {
           speakerOut = undefined;
         }
@@ -942,10 +988,22 @@ export class CutsceneManager implements IGameSystem {
         const speakingAnchor = this.speakingBubbleAnchorResolver
           ? this.speakingBubbleAnchorResolver(rawSpeaker, scriptedNpcId || undefined)
           : null;
+        // 立绘/名牌分边：与常规对话同口径（主角在右），步骤上的 speakerSide 可覆盖。
+        const side = this.scriptedSpeakerSideResolver
+          ? this.scriptedSpeakerSideResolver(
+            rawSpeaker,
+            scriptedNpcId || undefined,
+            (step as { speakerSide?: unknown }).speakerSide,
+          )
+          : DEFAULT_SPEAKER_SIDE;
+        // 「这句是你说的」标记：只认说话实体，不跟 side 走（side 可被数据覆盖）。
+        const isSelf = this.scriptedSpeakerIsSelfResolver
+          ? this.scriptedSpeakerIsSelfResolver(rawSpeaker, scriptedNpcId || undefined)
+          : false;
         const merged = this.mergePresentShowDialogueLine(step.text as string, speakerOut);
         await this.showDialogueText(
           merged.text, merged.speaker, portrait, speakingAnchor,
-          parsePresentBubbleOpts(step),
+          parsePresentBubbleOpts(step), side, isSelf,
         );
         break;
       }
@@ -1143,8 +1201,10 @@ export class CutsceneManager implements IGameSystem {
     portrait?: { slug: string; emotion: string },
     speakingAnchor?: IEmoteBubbleAnchor | null,
     bubbleOpts?: EmoteBubbleOffsetOpts,
+    side: SpeakerSide = DEFAULT_SPEAKER_SIDE,
+    isSelf: boolean = false,
   ): Promise<void> {
-    const box = this.cutsceneRenderer.showDialogueBox(text, speaker, portrait);
+    const box = this.cutsceneRenderer.showDialogueBox(text, speaker, portrait, side, isSelf);
     /** 说话人头顶「……」气泡：与本步同生命周期,finally 撤;skip/读档/拆除经 cleanup 定向清 CUTSCENE_EMOTE_OWNER 兜底。 */
     const dismissSpeakingBubble = speakingAnchor && this.emoteBubbleProvider
       ? this.emoteBubbleProvider.showSticky(speakingAnchor, '……', bubbleOpts, CUTSCENE_EMOTE_OWNER)

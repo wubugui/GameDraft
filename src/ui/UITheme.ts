@@ -26,6 +26,8 @@ export const UITheme = {
     encounterHover: 0x332222,
 
     title: 0xffcc88,
+    /** 主角说话人名：同一暖色系里提亮一档，与 NPC 的 title 拉开而不跳出配色 */
+    speakerSelf: 0xfff0d8,
     body: 0xdddddd,
     bodyMuted: 0xccbbaa,
     bodyDim: 0xbbbbcc,
