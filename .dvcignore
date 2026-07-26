@@ -10,3 +10,9 @@ asset-backups/
 
 # 生产工作台运行日志：数量大、可再生成，不作为共享资源同步
 resources/editor_projects/editor_data/production_workbench/console_logs/
+
+# 运行时调试快照：dev 模式下浏览器每跑一次游戏就重写一次
+#（见 docs/plan/production-tooling-requirements.md:414）。
+# 与 console_logs 同性质，2026-07-09 加 ignore 时漏了它——
+# 结果是任何人开一次 dev 跑一下游戏，dvc status 就脏一次。
+resources/editor_projects/editor_data/production_workbench/runtime_debug_snapshot.json
