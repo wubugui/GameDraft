@@ -487,3 +487,82 @@ def test_archive_lore_is_registered_emit_source(disk_model: FakeModel) -> None:
     assert {"bucket": "archive", "attr": "archive_lore", "itemId": "lore_1", "count": 1} in scan["assets"]
     rename_signal(disk_model, "sig_a", "sig_a2")
     assert disk_model.archive_lore[0]["firstViewActions"][0]["params"]["signal"] == "sig_a2"
+
+
+def test_rule_leaf_is_walked_for_state_and_graph_refs(disk_model: FakeModel) -> None:
+    """规矩条件叶 {rule, layer, version} 引用的是派生层图 `<ruleId>__<layer>`。
+
+    不认它的后果（迁移计划 §4 B2）：反查恒 0（面板永远显示"这条规矩没人用"）、
+    改名静默跳过（全项目每一处规矩条件无声失效、零报错）。
+    """
+    disk_model.narrative_graphs["compositions"].append({
+        "id": "rule_ledger",
+        "elements": [{
+            "id": "el_gan_shi_li",
+            "kind": "wrapperGraph",
+            "graph": {
+                "id": "rule_gan_shi__li",
+                "initialState": "未闻",
+                "states": {"未闻": {"id": "未闻"}, "未验": {"id": "未验"}, "验成": {"id": "验成"}},
+                "transitions": [],
+            },
+        }],
+    })
+    disk_model.scenes["场景1"]["hotspots"] = [{
+        "id": "hs_rule",
+        "conditions": [{"rule": "rule_gan_shi", "layer": "li", "mode": "usable", "version": "验成"}],
+    }]
+
+    # 状态反查 + 改名级联：version 跟随，rule/layer 不动
+    assert scan_state_usages(disk_model, "rule_gan_shi__li", "验成")["totalRefs"] >= 1
+    rename_state(disk_model, "rule_gan_shi__li", "验成", "验过了")
+    leaf = disk_model.scenes["场景1"]["hotspots"][0]["conditions"][0]
+    assert leaf["version"] == "验过了"
+    assert leaf["rule"] == "rule_gan_shi" and leaf["layer"] == "li"
+
+    # 图反查 + 改名级联：新 id 仍符合 <ruleId>__<layer> 约定时，rule/layer 跟随回写
+    assert scan_graph_usages(disk_model, "rule_gan_shi__li")["totalRefs"] >= 1
+    rename_graph(disk_model, "rule_gan_shi__li", "rule_ganshi_v2__li")
+    leaf = disk_model.scenes["场景1"]["hotspots"][0]["conditions"][0]
+    assert leaf["rule"] == "rule_ganshi_v2" and leaf["layer"] == "li"
+
+
+def test_rule_leaf_graph_rename_off_convention_counts_but_does_not_corrupt(
+    disk_model: FakeModel,
+) -> None:
+    """新图 id 不符合 `<ruleId>__<layer>` 约定时：计数报出来，但不瞎改 rule/layer。
+
+    宁可让扫描把它报成待处理，也不能把叶子写成一个解析不回去的值。
+    """
+    disk_model.narrative_graphs["compositions"].append({
+        "id": "rule_ledger",
+        "elements": [{
+            "id": "el_x",
+            "kind": "wrapperGraph",
+            "graph": {
+                "id": "rule_x__shu",
+                "initialState": "未闻",
+                "states": {"未闻": {"id": "未闻"}},
+                "transitions": [],
+            },
+        }],
+    })
+    disk_model.scenes["场景1"]["hotspots"] = [
+        {"id": "hs_x", "conditions": [{"rule": "rule_x", "layer": "shu"}]},
+    ]
+    assert scan_graph_usages(disk_model, "rule_x__shu")["totalRefs"] >= 1
+    rename_graph(disk_model, "rule_x__shu", "不合约定的名字")
+    leaf = disk_model.scenes["场景1"]["hotspots"][0]["conditions"][0]
+    assert leaf == {"rule": "rule_x", "layer": "shu"}
+
+
+def test_rule_leaf_does_not_collide_with_plain_narrative_leaf(disk_model: FakeModel) -> None:
+    """普通 narrative 叶不因新增 ruleLeaf 分支被重复计数。"""
+    disk_model.scenes["场景1"]["hotspots"] = [
+        {"id": "hs_n", "conditions": [{"narrative": "flow_main", "state": "s1"}]},
+    ]
+    before = scan_state_usages(disk_model, "flow_main", "s1")["totalRefs"]
+    disk_model.scenes["场景1"]["hotspots"].append(
+        {"id": "hs_r", "conditions": [{"rule": "rule_q", "layer": "xiang", "version": "验成"}]},
+    )
+    assert scan_state_usages(disk_model, "flow_main", "s1")["totalRefs"] == before

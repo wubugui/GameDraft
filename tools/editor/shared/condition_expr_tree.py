@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from .flag_key_field import FlagKeyPickField
+from .rule_graph_naming import is_rule_layer_graph_id, is_rule_ledger_composition
 from .flag_value_edit import FlagValueEdit
 from .id_ref_selector import IdRefSelector
 from .rich_text_field import RichTextLineEdit
@@ -478,24 +479,30 @@ class ConditionExprNodeEditor(QWidget):
             self._body.addWidget(pw)
 
     def _narrative_graph_entries(self) -> list[tuple[str, str, dict[str, Any]]]:
-        """(显示名, graphId, graph dict)：主图 + wrapper 子图，与 narrative_graphs.json 一致。"""
+        """(显示名, graphId, graph dict)：主图 + wrapper 子图，与 narrative_graphs.json 一致。
+
+        **规矩层图不进这个候选**：它们是 rules.json 的派生物、数量随规矩数线性增长
+        （20 条规矩 = 40~60 张），而本下拉出现在全项目每一处条件编辑。规矩条件走专用的
+        规矩叶（rule/layer），不该从这里挑图。见 rule_graph_naming。
+        已经写在数据里的值不受影响——找不到候选时调用方会补「（数据）xxx」保值项。
+        """
         m = self._model()
         data = getattr(m, "narrative_graphs", None) if m else None
         out: list[tuple[str, str, dict[str, Any]]] = []
         if not isinstance(data, dict):
             return out
         for comp in data.get("compositions") or []:
-            if not isinstance(comp, dict):
+            if not isinstance(comp, dict) or is_rule_ledger_composition(comp):
                 continue
             main = comp.get("mainGraph")
-            if isinstance(main, dict) and main.get("id"):
+            if isinstance(main, dict) and main.get("id") and not is_rule_layer_graph_id(main["id"]):
                 label = str(main.get("label") or comp.get("label") or main["id"])
                 out.append((f"{label} ({main['id']})", str(main["id"]), main))
             for el in comp.get("elements") or []:
                 if not isinstance(el, dict) or el.get("kind") != "wrapperGraph":
                     continue
                 g = el.get("graph")
-                if isinstance(g, dict) and g.get("id"):
+                if isinstance(g, dict) and g.get("id") and not is_rule_layer_graph_id(g["id"]):
                     label = str(el.get("label") or g.get("label") or g["id"])
                     out.append((f"{label} ({g['id']})", str(g["id"]), g))
         return out
