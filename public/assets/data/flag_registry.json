@@ -205,14 +205,6 @@
       "valueType": "bool"
     },
     {
-      "key": "rule_rule_ghost_origin_acquired",
-      "valueType": "bool"
-    },
-    {
-      "key": "rule_rule_no_go_night_acquired",
-      "valueType": "bool"
-    },
-    {
       "key": "saw_hanged_woman",
       "valueType": "bool"
     },
@@ -238,10 +230,6 @@
     },
     {
       "key": "used_origin_dark_alley",
-      "valueType": "bool"
-    },
-    {
-      "key": "used_rule_dark_alley",
       "valueType": "bool"
     },
     {
@@ -318,68 +306,6 @@
       "id": "picked_up",
       "prefix": "picked_up_",
       "idSource": "hotspot_any_scene",
-      "valueType": "bool"
-    },
-    {
-      "id": "rule_used",
-      "prefix": "rule_used_",
-      "idSource": "rule",
-      "valueType": "bool"
-    },
-    {
-      "id": "rule_acquired",
-      "prefix": "rule_",
-      "suffix": "_acquired",
-      "idSource": "rule",
-      "valueType": "bool"
-    },
-    {
-      "id": "rule_discovered",
-      "prefix": "rule_",
-      "suffix": "_discovered",
-      "idSource": "rule",
-      "valueType": "bool"
-    },
-    {
-      "id": "rule_fragments_collected",
-      "prefix": "rule_",
-      "suffix": "_fragments_collected",
-      "idSource": "rule",
-      "valueType": "float"
-    },
-    {
-      "id": "rule_fragments_total",
-      "prefix": "rule_",
-      "suffix": "_fragments_total",
-      "idSource": "rule",
-      "valueType": "float"
-    },
-    {
-      "id": "rule_layer_xiang_done",
-      "prefix": "rule_",
-      "suffix": "_xiang_done",
-      "idSource": "rule",
-      "valueType": "bool"
-    },
-    {
-      "id": "rule_layer_li_done",
-      "prefix": "rule_",
-      "suffix": "_li_done",
-      "idSource": "rule",
-      "valueType": "bool"
-    },
-    {
-      "id": "rule_layer_shu_done",
-      "prefix": "rule_",
-      "suffix": "_shu_done",
-      "idSource": "rule",
-      "valueType": "bool"
-    },
-    {
-      "id": "fragment_acquired",
-      "prefix": "fragment_",
-      "suffix": "_acquired",
-      "idSource": "fragment",
       "valueType": "bool"
     },
     {

@@ -25,6 +25,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
+from .rule_graph_naming import parse_rule_layer_graph_id, rule_layer_graph_id
+
 _DERIVED_PREFIX = "state:"
 _DRAFT_SIGNAL = "__draft__"
 
@@ -584,15 +586,24 @@ _GRAPH_PARAM_ACTION_TYPES = frozenset({
 
 
 def _walk_narrative_refs(node: Any, visit) -> int:
-    """深度遍历任意结构，对 {narrative:str, state:str} / {narrativeCount:str} 条件叶子与
-    graphId 参数动作（setNarrativeState + 活计生命周期四件套）调用 visit(kind, obj)，
-    返回 visit 命中计数之和。visit 返回 1 表示命中（计数/已替换），0 表示不匹配。"""
+    """深度遍历任意结构，对下列引用面调用 visit(kind, obj)，返回命中计数之和。
+    visit 返回 1 表示命中（计数/已替换），0 表示不匹配。
+
+    - "leaf"      {narrative:str, state:str} 条件叶子
+    - "countLeaf" {narrativeCount:str} 条件叶子
+    - "ruleLeaf"  {rule:str, layer:str, version?:str} 规矩条件叶子——它引用的是
+                  层图 `<ruleId>__<layer>`（见 rule_graph_naming），version 引用该图的状态。
+                  不认它 = 反查恒 0 且改名静默跳过，规矩条件会无声失效。
+    - "setState"  graphId 参数动作（setNarrativeState + 活计生命周期四件套）的 params
+    """
     count = 0
     if isinstance(node, dict):
         if isinstance(node.get("narrative"), str) and isinstance(node.get("state"), str):
             count += visit("leaf", node)
         if isinstance(node.get("narrativeCount"), str):
             count += visit("countLeaf", node)
+        if isinstance(node.get("rule"), str) and isinstance(node.get("layer"), str):
+            count += visit("ruleLeaf", node)
         if str(node.get("type") or "").strip() in _GRAPH_PARAM_ACTION_TYPES:
             params = node.get("params")
             if isinstance(params, dict):
@@ -620,6 +631,13 @@ def _state_ref_visitor(gid: str, sid: str, new_sid: str | None):
                 if new_sid is not None:
                     obj["exitState"] = new_sid
                 return 1
+        elif kind == "ruleLeaf":
+            # 规矩叶引用的图是派生的 <ruleId>__<layer>；version 指向该图的状态。
+            leaf_gid = rule_layer_graph_id(obj.get("rule") or "", obj.get("layer") or "")
+            if leaf_gid == gid and str(obj.get("version") or "").strip() == sid:
+                if new_sid is not None:
+                    obj["version"] = new_sid
+                return 1
         else:  # setState / 活计生命周期动作 params（start/reset/activate 无 stateId，天然不命中）
             if str(obj.get("graphId") or "").strip() == gid and str(obj.get("stateId") or "").strip() == sid:
                 if new_sid is not None:
@@ -631,6 +649,16 @@ def _state_ref_visitor(gid: str, sid: str, new_sid: str | None):
 
 def _graph_ref_visitor(gid: str, new_gid: str | None):
     def visit(kind: str, obj: dict[str, Any]) -> int:
+        if kind == "ruleLeaf":
+            # 规矩叶不直接写图 id，写的是 rule+layer。只有新图 id 仍符合
+            # <ruleId>__<layer> 约定时才跟随改写；否则只计数（扫描会把它报出来）。
+            if rule_layer_graph_id(obj.get("rule") or "", obj.get("layer") or "") != gid:
+                return 0
+            if new_gid is not None:
+                parsed = parse_rule_layer_graph_id(new_gid)
+                if parsed is not None:
+                    obj["rule"], obj["layer"] = parsed
+            return 1
         key = {"leaf": "narrative", "countLeaf": "narrativeCount"}.get(kind, "graphId")
         if str(obj.get(key) or "").strip() == gid:
             if new_gid is not None:

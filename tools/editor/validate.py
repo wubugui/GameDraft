@@ -103,10 +103,13 @@ def _lighting_payload_issues(project_root: Path) -> list[Issue]:
         vol = payload.get("vol") or {}
         vol_bytes = (int(vol.get("tiles_x", 0)) * int(vol.get("nx", 0))
                      * int(vol.get("tiles_y", 0)) * int(vol.get("ny", 0)) * 4 * 2)
-        # atlas 布局 = 查看器 atlas4():每 probe 一行,列块 [base+cov|amb|emit|nee]
-        expect = {"atlas_l1.bin": pn * 4 * 4 * 4 * 2,
-                  "atlas_l2.bin": pn * 9 * 4 * 4 * 2,
-                  "atlas_bin.bin": pn * 64 * 4 * 4 * 2,
+        # atlas 布局 = (Pn, K, RGBA) f16 单块——base + (nee|emit) + amb×权重 已在烘焙期
+        # 固化进同一块，不再是旧的四列块 [base+cov|amb|emit|nee]。
+        # 权威在 tools/character_lighting_lab/pipeline.py::_atlas4（out = zeros((Pn, K, 4), f16)）。
+        # 旧式期望值多乘了一个 4，会让全部场景恒报 error、把内容侧收尾门刷成永远红的。
+        expect = {"atlas_l1.bin": pn * 4 * 4 * 2,
+                  "atlas_l2.bin": pn * 9 * 4 * 2,
+                  "atlas_bin.bin": pn * 64 * 4 * 2,
                   "probes_valid.bin": pn,
                   "vol_rad.bin": vol_bytes,
                   "vol_emit.bin": vol_bytes}

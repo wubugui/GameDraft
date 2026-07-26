@@ -117,6 +117,7 @@ from .cutscene_dialogue_speaker_row import (
 from .scripted_lines_editor import ScriptedLinesEditor
 from .runtime_field_schema import entity_kind_choices, field_meta
 from .numeric_roundtrip import preserve_numeric_repr
+from .rule_graph_naming import RULE_LAYER_KEYS, rule_layer_graph_id
 
 # 这些参数在 schema 里恒会被写出，但语义上"缺省即未设"。当某键原本不在数据里、且当前值
 # 等于其中性默认时，剔除它——避免编辑器"打开即保存"凭空添加 direction:""/anchorOffset:0。
@@ -219,7 +220,7 @@ ACTION_TYPES = [
     "startNarrativeRun", "resetNarrativeRun", "revertNarrativeRun", "activateNarrativeRun",
     "loadNarrativePackage", "unloadNarrativePackage",
     "appendFlag", "giveItem", "removeItem", "giveCurrency", "removeCurrency",
-    "giveRule", "grantRuleLayer", "giveFragment", "updateQuest", "startEncounter",
+    "advanceRule", "updateQuest", "startEncounter",
     "playBgm", "stopBgm", "playSfx", "stopSceneAmbient", "endDay", "addDelayedEvent",
     "addArchiveEntry", "startCutscene", "startWaterMinigame", "startSugarWheelMinigame", "startPaperCraftMinigame",
     "startPressureHold", "playSignalCue", "addFlagValue",
@@ -318,9 +319,7 @@ ACTION_PERSISTENCE: dict[str, str] = {
     "removeItem": "save",
     "giveCurrency": "save",
     "removeCurrency": "save",
-    "giveRule": "save",
-    "grantRuleLayer": "save",
-    "giveFragment": "save",
+    "advanceRule": "save",
     "updateQuest": "save",
     "startEncounter": "save",
     "playBgm": "memory",
@@ -483,9 +482,7 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "removeItem": [("id", "str"), ("count", "int")],
     "giveCurrency": [("amount", "int")],
     "removeCurrency": [("amount", "str")],
-    "giveRule": [("id", "str")],
-    "grantRuleLayer": [("ruleId", "str"), ("layer", "str")],
-    "giveFragment": [("id", "str")],
+    "advanceRule": [("ruleId", "str"), ("layer", "str"), ("to", "str")],
     "updateQuest": [("id", "str")],
     "startEncounter": [("id", "str")],
     "playBgm": [("id", "str"), ("fadeMs", "int")],
@@ -3182,6 +3179,47 @@ class ActionRow(QWidget):
                 return t
         return "……"
 
+    def _make_rule_version_combo(self, params: dict, val: str) -> QWidget:
+        """advanceRule 的目标版本：候选 = 该 (规矩, 层) 层图的状态。
+
+        层图是 rules.json 的派生物；还没跑过生成器时候选为空，此时仍要把既有值
+        原样带回（追加「（数据）xxx」行），不能静默清成空串。
+        """
+        committed = str(val or "").strip()
+        rid = str(params.get("ruleId") or "").strip()
+        layer = str(params.get("layer") or "").strip()
+        states: list[str] = []
+        data = getattr(self._ctx_model, "narrative_graphs", None) if self._ctx_model else None
+        if rid and layer in RULE_LAYER_KEYS and isinstance(data, dict):
+            want = rule_layer_graph_id(rid, layer)
+            for comp in data.get("compositions") or []:
+                if not isinstance(comp, dict):
+                    continue
+                for el in comp.get("elements") or []:
+                    if not isinstance(el, dict) or el.get("kind") != "wrapperGraph":
+                        continue
+                    g = el.get("graph")
+                    if isinstance(g, dict) and str(g.get("id") or "").strip() == want:
+                        st = g.get("states")
+                        if isinstance(st, dict):
+                            states = [str(s) for s in st.keys()]
+        w = QComboBox(self)
+        w.addItem("（选择目标版本）", "")
+        for sid in states:
+            w.addItem(sid, sid)
+        if committed:
+            idx = w.findData(committed)
+            if idx < 0:
+                w.addItem(f"（数据）{committed}", committed)
+                idx = w.count() - 1
+            w.setCurrentIndex(idx)
+        w.setToolTip(
+            "把这一层推到哪个版本（层图的状态）。解锁一层 / 验成 / 存疑 / 推翻 / 细化"
+            "都是同一个动作，区别只在目标版本。候选来自 rules.json 生成的层图。",
+        )
+        w.currentIndexChanged.connect(lambda _i: self.changed.emit())
+        return w
+
     def _make_selector(
         self,
         kind: str,
@@ -4854,19 +4892,19 @@ class ActionRow(QWidget):
                 w = self._make_selector("item", str(val) if val is not None else "")
             elif act_type == "removeItem" and pname == "id":
                 w = self._make_selector("item", str(val) if val is not None else "")
-            elif act_type == "giveRule" and pname == "id":
+            elif act_type == "advanceRule" and pname == "ruleId":
                 w = self._make_selector("rule", str(val) if val is not None else "")
-            elif act_type == "grantRuleLayer" and pname == "ruleId":
-                w = self._make_selector("rule", str(val) if val is not None else "")
-            elif act_type == "grantRuleLayer" and pname == "layer":
+            elif act_type == "advanceRule" and pname == "layer":
                 w = QComboBox(self)
-                w.addItems(["xiang", "li", "shu"])
-                tv = str(val) if val else "xiang"
+                w.addItems(list(RULE_LAYER_KEYS))
+                tv = str(val) if val else RULE_LAYER_KEYS[0]
                 i = w.findText(tv)
                 w.setCurrentIndex(i if i >= 0 else 0)
                 w.currentTextChanged.connect(self.changed)
-            elif act_type == "giveFragment" and pname == "id":
-                w = self._make_selector("fragment", str(val) if val is not None else "")
+            elif act_type == "advanceRule" and pname == "to":
+                # 目标版本 = 该层图的状态。层图还没生成时退化成可编辑框（保值不丢），
+                # 生成后是纯选择——策划不该手打版本名。
+                w = self._make_rule_version_combo(params, str(val) if val is not None else "")
             elif act_type == "updateQuest" and pname == "id":
                 w = self._make_selector("quest", str(val) if val is not None else "")
             elif act_type == "startEncounter" and pname == "id":

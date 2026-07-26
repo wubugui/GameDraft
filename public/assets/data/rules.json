@@ -12,49 +12,154 @@
   },
   "rules": [
     {
-      "id": "rule_no_go_night",
-      "name": "城隍庙后山三更勿去",
-      "category": "taboo",
+      "id": "rule_drowned_corpse",
+      "name": "淹死的，水汽重",
+      "incompleteName": "关于淹死人的门道",
+      "category": "jargon",
       "layers": {
         "xiang": {
-          "text": "王大爷说的，城隍庙后山半夜三更有白影子飘来飘去的，还会唱戏。老辈人都说那地方不干净，三更天莫往那点跑。",
+          "text": "义庄管事顺嘴点的：淹死的泡过水，上了肩就往水那头坠。背着走莫沿水边。",
+          "verified": "unverified"
+        },
+        "li": {
+          "text": "水汽勾水汽，是往「水」那头坠。可不止水——淹死的认物不认人，他身上的东西搁在哪点，他就摸得到哪点的路。",
+          "verified": "unverified"
+        },
+        "shu": {
+          "text": "背着走，宁可绕坡也莫沿河。他的东西要送回停尸的地方，还要报一声出处——某某家还你的。",
           "verified": "unverified"
         }
+      },
+      "versions": {
+        "xiang": [
+          {
+            "id": "验成",
+            "text": "自己背过一趟才晓得管事没哄人：一沿河走，那具就跟灌了铅一样，越走越坠。",
+            "verified": "effective"
+          }
+        ],
+        "li": [
+          {
+            "id": "验成",
+            "text": "亲眼见的：李家把那件衣裳留在屋头，石阶上的湿脚印就一路上坡摸到他家门口。认物不认人，一点不假。",
+            "verified": "effective"
+          }
+        ],
+        "shu": [
+          {
+            "id": "验成",
+            "text": "衣裳背回义庄，在停尸凳前报了一声「李家还你的」——第二天石阶上干干净净。",
+            "verified": "effective"
+          },
+          {
+            "id": "细化_莫烧",
+            "text": "衣裳送回停尸处、报一声出处就完了。切莫图省事烧掉——烧了他找不到路，会在整条街上乱走，比原先难收拾十倍。",
+            "verified": "effective",
+            "supersededText": "他的东西要送回停尸的地方，还要报一声出处。"
+          }
+        ]
       }
     },
     {
-      "id": "rule_zombie_fire",
-      "name": "白毛僵尸怕火",
-      "incompleteName": "某种关于僵尸的传闻",
+      "id": "rule_no_switch_shoulder",
+      "name": "上肩莫换肩",
+      "incompleteName": "背尸行里的一条老规矩",
+      "category": "jargon",
+      "layers": {
+        "xiang": {
+          "text": "老背尸的都说，一趟只上一次肩，宁可歇死也莫在半道换肩。问为啥，没得人讲得清楚，只说「莫换就是了」。",
+          "verified": "unverified"
+        },
+        "li": {
+          "text": "换肩那一下，人是松了力的，尸身要重新找位置——就在那一下，它「醒」了一醒。不是它想动，是你把它放平了，它才想得起自己该是个啥形状。",
+          "verified": "unverified"
+        },
+        "shu": {
+          "text": "出门前把路算清楚：在哪点歇、歇几气、哪段坡不能停。中途只落脚不落肩。真要换，先寻个凳子或石坎把人放稳当，报一声「换个手」再动。",
+          "verified": "unverified"
+        }
+      },
+      "versions": {
+        "li": [
+          {
+            "id": "验成",
+            "text": "崖墓那一趟自己撞明白的。换肩那一瞬他清清楚楚感觉到背上那具「找了一下位置」——这辈子不想再感觉第二回。",
+            "verified": "effective"
+          }
+        ],
+        "shu": [
+          {
+            "id": "验成",
+            "text": "野道那趟按算好的路歇了三气，一次没换肩，稳稳当当到的义庄。管事多给了两个钱。",
+            "verified": "effective"
+          }
+        ]
+      }
+    },
+    {
+      "id": "rule_dry_corpse_walks",
+      "name": "干尸才走",
+      "incompleteName": "关于尸身干湿的某个说法",
       "category": "ward",
       "layers": {
         "xiang": {
-          "text": "据说白毛僵尸最怕火，见了明火就不敢靠近。桃木点燃效果更佳，寻常松脂火把也管用。",
+          "text": "上手背过就晓得：泡过水的沉，干透的轻，而且硬。井里那个、棚子里那个，摸着都是干的。",
           "verified": "unverified"
-        }
-      }
-    },
-    {
-      "id": "rule_ghost_verified",
-      "name": "后山确有古怪",
-      "category": "taboo",
-      "layers": {
-        "xiang": {
-          "text": "亲身经历过了，城隍庙后山确实不太平。那唱戏的白影子……不像是活人。",
+        },
+        "li": {
+          "text": "尸身上的白毛是受潮生的霉，跟凶不凶一点不搭界。真要命的是干不干——干透了它才走得动，湿的走不动。",
+          "verified": "effective"
+        },
+        "shu": {
+          "text": "见了火，头一件事是灭，不是添。要让它重新躺回去，就得让它重新湿：泼水、盖湿布、拖到雨里去。没得水就一趟一趟背上来——它走得慢，你走得快，就这点便宜。",
           "verified": "effective"
         }
+      },
+      "versions": {
+        "shu": [
+          {
+            "id": "验成",
+            "text": "柴棚那回真按这个做的：先灭火，再从底下河沟背了三趟水泼上去。它软下去，直挺挺躺平了。",
+            "verified": "effective"
+          }
+        ]
       }
     },
     {
-      "id": "rule_ghost_origin",
-      "name": "唱戏白影的来历",
-      "incompleteName": "某个关于白影子的传闻",
-      "category": "streetwise",
+      "id": "rule_zhenshi_sizhang",
+      "name": "镇尸四样",
+      "incompleteName": "背尸行里的土办法",
+      "category": "ward",
       "layers": {
         "xiang": {
-          "text": "据各方传闻拼凑，城隍庙后山的唱戏白影子，很可能是早年间[tag:string:place:wujin]柳家戏班子的人。她不是在害人，而是在找人。",
+          "text": "背尸行传下来的土办法，专对不安分的尸：糙米连豆子绕尸撒一圈；墨斗线在中间绷一道；七颗枣核（没有就用石子）按进尸背；剪子横在中间。",
+          "verified": "unverified"
+        },
+        "shu": {
+          "text": "四样一齐下。哪样管用没人说得清——也没人敢试第二回。",
           "verified": "unverified"
         }
+      },
+      "versions": {
+        "shu": [
+          {
+            "id": "四样齐下",
+            "text": "义庄里真用过一回：四样下去，两具扭在一起的尸真就松了手，直挺挺躺平。……可到现在也不晓得是哪一样起的作用，还是——另有什么替他把场面圆上了。",
+            "verified": "questionable"
+          },
+          {
+            "id": "细化_墨线不打紧",
+            "text": "故意少绷了墨斗线，照样松手了。那么墨线大概是凑数的。剩下三样，还得再试。",
+            "verified": "questionable",
+            "supersededText": "四样一齐下。哪样管用没人说得清。"
+          },
+          {
+            "id": "细化_石子少不得",
+            "text": "少按石子那回，外乡那具当场就扑了过来——石子是少不得的。到底是石子本身管用，还是「七颗」这个数管用，还是不晓得。",
+            "verified": "questionable",
+            "supersededText": "四样一齐下。哪样管用没人说得清。"
+          }
+        ]
       }
     },
     {
@@ -68,9 +173,30 @@
           "verified": "unverified"
         },
         "li": {
-          "text": "亲身撞上了一回。那是山里的杂气学人声，应一声，魂就被勾了去，像马屠户那样在林子里转到死。它跟了一截，像凑近打量他、认不准他是个什么，散了。为什么认不准——他没敢细想。",
-          "verified": "effective"
+          "text": "那是山里的杂气学人声，应一声，魂就被勾了去，像马屠户那样在林子里转到死。",
+          "verified": "unverified"
+        },
+        "shu": {
+          "text": "闷头赶路，不回头、不接话、不问那是哪个。脚都软了就数自己的脚步声，数到它没得声音为止。万一已经应出去了半个字——原路退回去，莫再往前走，它认路不认人。",
+          "verified": "unverified"
         }
+      },
+      "versions": {
+        "li": [
+          {
+            "id": "验成",
+            "text": "亲身撞上了一回。它跟了一截，像凑近打量他、认不准他是个什么，散了。为什么认不准——他没敢细想。",
+            "verified": "effective"
+          }
+        ],
+        "shu": [
+          {
+            "id": "细化_来路的声音",
+            "text": "闷头走、不回头、不接话。但有一样要分清：声音要是从来路方向来、叫的还是小名，那多半是掉队的活人——那种不应，是要出人命的。",
+            "verified": "questionable",
+            "supersededText": "闷头赶路，不回头、不接话、不问那是哪个。"
+          }
+        ]
       }
     },
     {
@@ -84,75 +210,99 @@
           "verified": "unverified"
         },
         "li": {
-          "text": "亲身犯了这条：山口那摊路祭，饿急了端来吃了，还冲着林子骂了两句——那东西立刻缠上脚踝往里拖。后来有个道士点明：又吃供又骂人，回半个字，魂就归它管了。",
-          "verified": "effective"
-        }
-      }
-    },
-    {
-      "id": "rule_zhenshi_sizhang",
-      "name": "镇尸四样",
-      "incompleteName": "背尸行里的土办法",
-      "category": "ward",
-      "layers": {
-        "xiang": {
-          "text": "背尸行传下来的土办法，专对不安分的尸：糙米连豆子绕尸撒一圈；墨斗线在中间绷一道；七颗枣核（没有就用石子）按进尸背；剪子横在中间。哪样管用没人说得清——没人敢试第二回。",
+          "text": "动了就欠它一口，它有理由跟上你。又吃供又骂人，回半个字，魂就归它管了。",
           "verified": "unverified"
         },
         "shu": {
-          "text": "义庄里真用过一回：四样下去，两具扭在一起的尸真就松了手，直挺挺躺平。……虽说到现在也不知道，到底是哪一样起的作用，还是——另有什么替他把场面圆上了。",
-          "verified": "questionable"
+          "text": "宁可绕远也莫从供前过。真饿昏了头动了嘴，就把身上等价的物件搁回原处——一个铜板换一口酒，一张纸换一张纸——而且从头到尾一声不吭。",
+          "verified": "unverified"
         }
+      },
+      "versions": {
+        "li": [
+          {
+            "id": "验成",
+            "text": "亲身犯了这条：山口那摊路祭，饿急了端来吃了，还冲着林子骂了两句——那东西立刻缠上脚踝往里拖。后来有个道士点明的。",
+            "verified": "effective"
+          }
+        ]
       }
     },
     {
-      "id": "rule_drowned_corpse",
-      "name": "淹死的，水汽重",
-      "incompleteName": "关于淹死人的门道",
-      "category": "jargon",
+      "id": "rule_avoid_night_road",
+      "name": "莫走夜路",
+      "incompleteName": "瞎子李算的那一卦",
+      "category": "taboo",
       "layers": {
         "xiang": {
-          "text": "义庄管事顺嘴点的：淹死的泡过水，水汽阴沉，上了肩就往水那头坠。背着走道莫沿水边——水汽勾水汽，越走越沉。",
-          "verified": "effective"
+          "text": "瞎子李捏着他的手，捏了半天，只说了六个字：你少走夜路。问他为啥，他把手抽回去了，说卦钱不够。",
+          "verified": "unverified"
         }
       }
-    }
-  ],
-  "fragments": [
-    {
-      "id": "frag_zombie_fire_01",
-      "text": "听一个老道说过，僵尸这东西，年份越久越厉害，白毛的最怕火……",
-      "ruleId": "rule_zombie_fire",
-      "layer": "xiang",
-      "source": "老道士"
     },
     {
-      "id": "frag_zombie_fire_02",
-      "text": "赶尸匠的手札上写着：遇白毛，速点桃木，火光所及，其不敢进。",
-      "ruleId": "rule_zombie_fire",
-      "layer": "xiang",
-      "source": "赶尸匠手札"
+      "id": "rule_read_the_room",
+      "name": "一屋子人，先看谁看谁",
+      "category": "streetwise",
+      "layers": {
+        "xiang": {
+          "text": "街面上混出来的：进了门莫忙开口，先杵到一边站一气，看哪个的眼睛先往哪个身上飘。",
+          "verified": "effective"
+        },
+        "li": {
+          "text": "先看过去那个，心头有鬼；被看的那个，才是正主。慌的人守不住眼睛，事主守得住嘴守不住别人的眼睛。",
+          "verified": "unverified"
+        },
+        "shu": {
+          "text": "话要冲着正主说，莫理会先开口的那个。而且越含糊越像——把话说死了反而露怯，留个口子让他自己往里头填，他填得比你编的还像。",
+          "verified": "unverified"
+        }
+      },
+      "versions": {
+        "li": [
+          {
+            "id": "验成",
+            "text": "婆子家院里坐实了：从头到尾是婆子在绞着围裙角说话，可她每说一句，眼睛就往门框那边瞟一下——正主是倚在门框上的那个后生。",
+            "verified": "effective"
+          }
+        ],
+        "shu": [
+          {
+            "id": "验成",
+            "text": "话是冲着门框那个后生说的，一句实话没讲，全是从说书那儿抄的词，还留了个口子让他自己往里头填。钱照样收了，街面上也传开了。",
+            "verified": "effective"
+          }
+        ]
+      }
     },
     {
-      "id": "frag_ghost_origin_01",
-      "text": "说书人说：有人在后山看到白影子唱戏，回来就疯了，嘟囔着'好一似食尽鸟投林'。那是《红楼》里的曲词。",
-      "ruleId": "rule_ghost_origin",
-      "layer": "xiang",
-      "source": "说书人张叨叨"
-    },
-    {
-      "id": "frag_ghost_origin_02",
-      "text": "据说早年间[tag:string:place:wujin]有个柳家戏班子，后来不知怎么就散了。有人说唱戏的白影子就是戏班里的人。",
-      "ruleId": "rule_ghost_origin",
-      "layer": "xiang",
-      "source": "说书人张叨叨"
-    },
-    {
-      "id": "frag_ghost_origin_03",
-      "text": "茶馆小二说，有个书生见了白影后说了句话：她不是在害人，她是在找人。",
-      "ruleId": "rule_ghost_origin",
-      "layer": "xiang",
-      "source": "茶馆小二"
+      "id": "rule_zombie_fire",
+      "name": "白毛僵尸怕火",
+      "incompleteName": "某种关于僵尸的传闻",
+      "category": "ward",
+      "layers": {
+        "xiang": {
+          "text": "说书先生讲的：白毛僵尸最怕火，见了明火就不敢靠近。桃木点燃效果更佳，寻常松脂火把也管用。",
+          "verified": "unverified"
+        }
+      },
+      "versions": {
+        "xiang": [
+          {
+            "id": "存疑",
+            "text": "照着加了火，它反而站起来了。……说书的到底是听哪个讲的？",
+            "verified": "questionable",
+            "supersededText": "白毛僵尸最怕火，见了明火就不敢靠近。桃木点燃效果更佳。"
+          },
+          {
+            "id": "推翻",
+            "text": "这条从根上就是错的。白毛是尸身受潮生的霉，跟凶不凶不搭界；火不是驱它，是把它烤干了才起得来。说书的嘴，图个热闹，信不得。",
+            "verified": "questionable",
+            "refuted": true,
+            "supersededText": "白毛僵尸最怕火，见了明火就不敢靠近。桃木点燃效果更佳。"
+          }
+        ]
+      }
     }
   ]
 }

@@ -52,14 +52,91 @@
         {
           "narrative": "scenario_婆子家",
           "state": "hired"
+        },
+        {
+          "rule": "rule_read_the_room",
+          "layer": "xiang"
         }
       ],
       "onEnter": [
+        {
+          "type": "playScriptedDialogue",
+          "params": {
+            "lines": [
+              {
+                "speaker": "",
+                "text": "先莫进去。院坝里站着两个人，一个在说话，一个不说话。"
+              },
+              {
+                "speaker": "{{player}}",
+                "text": "（老规矩：进门莫忙开口。先看哪个的眼睛往哪个身上飘。）"
+              }
+            ]
+          }
+        },
         {
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "zone",
             "sourceId": "婆子家院:z_院外扫脸色",
+            "signal": "pozi_intro_entered"
+          }
+        }
+      ]
+    },
+    {
+      "id": "z_院外_看不出",
+      "polygon": [
+        {
+          "x": 200.0,
+          "y": 560.0
+        },
+        {
+          "x": 470.0,
+          "y": 560.0
+        },
+        {
+          "x": 470.0,
+          "y": 700.0
+        },
+        {
+          "x": 200.0,
+          "y": 700.0
+        }
+      ],
+      "conditions": [
+        {
+          "narrative": "scenario_婆子家",
+          "state": "hired"
+        },
+        {
+          "not": {
+            "rule": "rule_read_the_room",
+            "layer": "xiang"
+          }
+        }
+      ],
+      "onEnter": [
+        {
+          "type": "playScriptedDialogue",
+          "params": {
+            "lines": [
+              {
+                "speaker": "",
+                "text": "院坝里站着两个人，一个在说话，一个不说话。"
+              },
+              {
+                "speaker": "{{player}}",
+                "text": "（……看不出个啥。进去再说。）"
+              }
+            ]
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "zone",
+            "sourceId": "婆子家院:z_院外_看不出",
             "signal": "pozi_intro_entered"
           }
         }
@@ -98,8 +175,16 @@
       "interactionRange": 70.0,
       "conditions": [
         {
-          "narrative": "scenario_婆子家",
-          "state": "read_all"
+          "any": [
+            {
+              "narrative": "scenario_婆子家",
+              "state": "at_courtyard"
+            },
+            {
+              "narrative": "scenario_婆子家",
+              "state": "read_all"
+            }
+          ]
         }
       ],
       "conditionHidesEntity": true,

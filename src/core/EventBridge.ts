@@ -158,7 +158,9 @@ export class EventBridge {
       } catch (e) {
         console.warn('EventBridge: ruleUse:apply actions failed', e);
       }
-      await actionExecutor.executeAwait({ type: 'setFlag', params: { key: FlagKeys.ruleUsed(p.ruleId), value: true } });
+      // 曾在这里写 rule_used_<id> —— 全仓无任何读者的死键，且规矩状态已迁入叙事状态机、
+      // 不再往 FlagStore 写任何规矩相关键。要记「这条规矩用过了」就在 slot 的 actions 里
+      // 显式 advanceRule / emitNarrativeSignal，由编排决定，而不是系统偷偷记一笔。
       if (p.resultText) {
         stateController.setState(GameState.UIOverlay);
         await inspectBox.show(p.resultText);

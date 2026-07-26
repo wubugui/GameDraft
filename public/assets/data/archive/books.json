@@ -80,11 +80,7 @@
         "pageNum": 5,
         "title": "附录·戏班",
         "content": "[tag:string:place:wujin]旧有柳家班，班主柳老板。班中旦角柳如烟，唱腔婉转，一时名动渝都。\n\n然庚申年冬，戏班忽散，柳如烟不知所终。坊间传言纷纭，有人说她嫁了富商，有人说她投了江，也有人说她根本不是人……\n\n此后城隍庙后山便常有白影唱曲。",
-        "unlockConditions": [
-          {
-            "flag": "rule_rule_ghost_origin_acquired"
-          }
-        ]
+        "unlockConditions": []
       }
     ]
   }

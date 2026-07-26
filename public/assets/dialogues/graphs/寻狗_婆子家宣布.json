@@ -3,7 +3,7 @@
   "id": "寻狗_婆子家宣布",
   "entry": "root",
   "meta": {
-    "title": "寻狗Demo·第一单收尾（板着脸宣布）"
+    "title": "寻狗Demo·第一单收尾（冲谁说 / 怎么说，玩家自己挑）"
   },
   "nodes": {
     "root": {
@@ -12,30 +12,227 @@
         "kind": "literal",
         "name": "旁白"
       },
-      "text": "关二狗进屋绕了一圈，水缸看了，房梁咳了，又从说书先生那点听来的词里挑了几句，抑扬顿挫地念出来。",
-      "next": "n2"
+      "text": "关二狗进屋绕了一圈，水缸看了，房梁咳了。词也在肚子里过了一遍。剩下的事只有一件——冲哪个说。",
+      "next": "c_who"
     },
-    "n2": {
+    "c_who": {
+      "type": "choice",
+      "promptLine": {
+        "speaker": {
+          "kind": "literal",
+          "name": "旁白"
+        },
+        "text": "婆子还在絮絮叨叨。后生倚着门框，一句没搭。"
+      },
+      "options": [
+        {
+          "id": "who_popo",
+          "text": "〔冲婆子说〕她嗓门最大，慌得最凶",
+          "next": "who_popo"
+        },
+        {
+          "id": "who_son_read",
+          "text": "〔冲后生说〕她每说一句，眼睛就往门框那边瞟一下",
+          "next": "who_son",
+          "requireCondition": {
+            "rule": "rule_read_the_room",
+            "layer": "li"
+          }
+        },
+        {
+          "id": "who_son_blind",
+          "text": "〔冲后生说〕那个闷起脑壳的",
+          "next": "who_son_blind",
+          "requireCondition": {
+            "not": {
+              "rule": "rule_read_the_room",
+              "layer": "li"
+            }
+          }
+        }
+      ]
+    },
+    "who_popo": {
       "type": "line",
       "speaker": {
         "kind": "player"
       },
-      "text": "（板着脸，声音压得又沉又慢）「要得。——镇住咯。」",
-      "next": "n3",
+      "text": "（板着脸，声音压得又沉又慢）「老人家，你屋头这桩事，根子在你身上。」",
+      "next": "popo_2",
       "portrait": {
         "emotion": "calm"
       }
     },
-    "n3": {
+    "popo_2": {
       "type": "line",
       "speaker": {
         "kind": "literal",
         "name": "旁白"
       },
-      "text": "院里安静了一瞬。不知怎么，风向变了一变——狗不叫了，鸡窝里也没了响动。",
-      "next": "n_cue"
+      "text": "婆子的手停了。她抬起头，眼睛直直盯着他——那不是害怕，是「你在说啥子」。门框那边的后生，也慢慢转过脸来。",
+      "next": "popo_3"
     },
-    "n_cue": {
+    "popo_3": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "（……糟。挑错人了。）",
+      "next": "popo_axiu",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "popo_axiu": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "playSignalCue",
+          "params": {
+            "id": "axiu_hint"
+          }
+        }
+      ],
+      "next": "popo_4"
+    },
+    "popo_4": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "就在这一息——屋角有什么退开了半步。院里那股说不清的滞劲，忽然松了。婆子愣愣地眨了下眼，脸上的怀疑散了。",
+      "next": "popo_5"
+    },
+    "popo_5": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "（……蒙对了？龟儿子，老子这张嘴。）",
+      "next": "n_cue_blind",
+      "portrait": {
+        "emotion": "smirk"
+      }
+    },
+    "who_son_blind": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "关二狗也说不清为啥，就是觉得该冲那个闷起脑壳的说。转过身去了。",
+      "next": "c_how"
+    },
+    "who_son": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "他没理会还在絮叨的婆子，转身冲着门框那个后生。后生的肩膀，肉眼可见地绷了一下。",
+      "next": "c_how"
+    },
+    "c_how": {
+      "type": "choice",
+      "promptLine": {
+        "speaker": {
+          "kind": "literal",
+          "name": "旁白"
+        },
+        "text": "后生的脸色已经不对了。这时候的话，讲多讲少，是两回事。"
+      },
+      "options": [
+        {
+          "id": "how_full",
+          "text": "〔把话说死〕报个来路出来，越具体越唬人",
+          "next": "how_full"
+        },
+        {
+          "id": "how_open_shu",
+          "text": "〔留个口子〕话说一半就停——让他自己往里头填",
+          "next": "how_open",
+          "requireCondition": {
+            "rule": "rule_read_the_room",
+            "layer": "shu"
+          }
+        },
+        {
+          "id": "how_open_blind",
+          "text": "〔话说一半就停〕",
+          "next": "how_open",
+          "requireCondition": {
+            "not": {
+              "rule": "rule_read_the_room",
+              "layer": "shu"
+            }
+          }
+        }
+      ]
+    },
+    "how_full": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "（一口气说完）「你屋头夜里那个动静，是个吊颈的老太婆，正月里没得香火，来讨口吃的——老子已经给她打发走咯！」",
+      "next": "full_2",
+      "portrait": {
+        "emotion": "smirk"
+      }
+    },
+    "full_2": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "说得太满了。后生愣了一下，反倒松了口气——他心头那桩事，跟吊颈老太婆一点关系都没得。婆子的脸也垮了半边。",
+      "next": "full_3"
+    },
+    "full_3": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "（……说漏了。莫慌，接到走。）「总之，镇住咯。」",
+      "next": "n_cue_half",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "how_open": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "（声音压得又沉又慢）「屋头这桩事……有个来路。你晓得是啥子来路。」",
+      "next": "open_2",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "open_2": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "话说到这儿就停了。留了个口子——后生的脸唰一下白了，嘴唇动了两下，自己往里头填了半截。填得比关二狗编的还像。",
+      "next": "open_3"
+    },
+    "open_3": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "「要得。——镇住咯。」",
+      "next": "n_cue_clean",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "n_cue_clean": {
       "type": "runActions",
       "actions": [
         {
@@ -47,32 +244,119 @@
           }
         }
       ],
-      "next": "n4"
+      "next": "sw_clean"
     },
-    "n4": {
-      "type": "line",
-      "speaker": {
-        "kind": "literal",
-        "name": "旁白"
-      },
-      "text": "谁也没看见什么。旁人只看见：道士来了，事就平了。",
-      "next": "n5"
+    "sw_clean": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "all": [
+                {
+                  "rule": "rule_read_the_room",
+                  "layer": "li"
+                },
+                {
+                  "rule": "rule_read_the_room",
+                  "layer": "shu"
+                }
+              ]
+            }
+          ],
+          "next": "pay_clean"
+        }
+      ],
+      "defaultNext": "pay_clean_luck"
     },
-    "n5": {
+    "n_cue_half": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_婆子家宣布",
+            "signal": "pozi_performed"
+          }
+        }
+      ],
+      "next": "sw_half"
+    },
+    "sw_half": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "rule": "rule_read_the_room",
+              "layer": "li"
+            }
+          ],
+          "next": "pay_half"
+        }
+      ],
+      "defaultNext": "pay_half_luck"
+    },
+    "n_cue_blind": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_婆子家宣布",
+            "signal": "pozi_performed"
+          }
+        }
+      ],
+      "next": "pay_blind"
+    },
+    "pay_clean": {
       "type": "line",
       "speaker": {
         "kind": "sceneNpc",
         "npcId": "npc_院中婆子"
       },
-      "text": "灵了！硬是灵了！！小先生——钱！钱你收好！",
-      "next": "n_pay",
+      "text": "灵了！硬是灵了！！小先生——钱你收好！我去跟街坊说切！",
+      "next": "pay_clean_a",
       "portrait": {
         "emotion": "laugh"
       }
     },
-    "n_pay": {
+    "pay_clean_a": {
       "type": "runActions",
       "actions": [
+        {
+          "type": "giveCurrency",
+          "params": {
+            "amount": 30
+          }
+        },
+        {
+          "type": "advanceRule",
+          "params": {
+            "ruleId": "rule_read_the_room",
+            "layer": "li",
+            "to": "验成"
+          }
+        },
+        {
+          "type": "advanceRule",
+          "params": {
+            "ruleId": "rule_read_the_room",
+            "layer": "shu",
+            "to": "验成"
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_婆子家宣布",
+            "signal": "pozi_paid_clean"
+          }
+        },
         {
           "type": "emitNarrativeSignal",
           "params": {
@@ -82,6 +366,194 @@
           }
         }
       ],
+      "next": "n4"
+    },
+    "pay_clean_luck": {
+      "type": "line",
+      "speaker": {
+        "kind": "sceneNpc",
+        "npcId": "npc_院中婆子"
+      },
+      "text": "灵了！硬是灵了！！小先生——钱你收好！",
+      "next": "pay_clean_luck_a",
+      "portrait": {
+        "emotion": "laugh"
+      }
+    },
+    "pay_clean_luck_a": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "giveCurrency",
+          "params": {
+            "amount": 30
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_婆子家宣布",
+            "signal": "pozi_paid_clean"
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_婆子家宣布",
+            "signal": "pozi_paid"
+          }
+        }
+      ],
+      "next": "luck_note"
+    },
+    "luck_note": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "（成咯。……可老子到现在也说不上来，刚才那一下为啥就成了。）",
+      "next": "n4",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "pay_half": {
+      "type": "line",
+      "speaker": {
+        "kind": "sceneNpc",
+        "npcId": "npc_院中婆子"
+      },
+      "text": "……哦。那，那就好。小先生辛苦咯，这点你先拿到起。",
+      "next": "pay_half_a",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "pay_half_a": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "giveCurrency",
+          "params": {
+            "amount": 15
+          }
+        },
+        {
+          "type": "advanceRule",
+          "params": {
+            "ruleId": "rule_read_the_room",
+            "layer": "li",
+            "to": "验成"
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_婆子家宣布",
+            "signal": "pozi_paid_half"
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_婆子家宣布",
+            "signal": "pozi_paid"
+          }
+        }
+      ],
+      "next": "n4"
+    },
+    "pay_half_luck": {
+      "type": "line",
+      "speaker": {
+        "kind": "sceneNpc",
+        "npcId": "npc_院中婆子"
+      },
+      "text": "……哦。那就好。这点你先拿到起。",
+      "next": "pay_half_luck_a",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "pay_half_luck_a": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "giveCurrency",
+          "params": {
+            "amount": 15
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_婆子家宣布",
+            "signal": "pozi_paid_half"
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_婆子家宣布",
+            "signal": "pozi_paid"
+          }
+        }
+      ],
+      "next": "n4"
+    },
+    "pay_blind": {
+      "type": "line",
+      "speaker": {
+        "kind": "sceneNpc",
+        "npcId": "npc_院中婆子"
+      },
+      "text": "……平了就好，平了就好。钱在这儿。你走嘛。",
+      "next": "pay_blind_a",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "pay_blind_a": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "giveCurrency",
+          "params": {
+            "amount": 10
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_婆子家宣布",
+            "signal": "pozi_paid_blind"
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_婆子家宣布",
+            "signal": "pozi_paid"
+          }
+        }
+      ],
+      "next": "n4"
+    },
+    "n4": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "院里安静了一瞬。风向变了一变——狗不叫了，鸡窝里也没了响动。谁也没看见什么。旁人只看见：道士来了，事就平了。",
       "next": "n6"
     },
     "n6": {

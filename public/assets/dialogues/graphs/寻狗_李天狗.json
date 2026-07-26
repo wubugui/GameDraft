@@ -104,10 +104,11 @@
       "type": "runActions",
       "actions": [
         {
-          "type": "grantRuleLayer",
+          "type": "advanceRule",
           "params": {
             "ruleId": "rule_no_touch_offering",
-            "layer": "li"
+            "layer": "li",
+            "to": "未验"
           }
         },
         {

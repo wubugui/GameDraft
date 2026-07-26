@@ -11,6 +11,11 @@ from .file_io import read_json
 from .shared.cutscene_action_allowlist_io import cutscene_action_allowlist_frozenset
 from .shared.move_entity_map_picker import normalize_move_entity_waypoints
 from .shared.narrative_catalog import emitted_signal_ids
+from .shared.rule_graph_naming import RULE_LAYER_KEYS, rule_layer_graph_id
+
+#: 规矩推进信号的保留前缀（与 shared/rule_graph_sync.py::rule_advance_signal 同源）。
+RULE_SIGNAL_PREFIX = "rule:"
+from .shared.rule_graph_sync import rule_ledger_drift
 from .shared.runtime_field_schema import field_meta, is_valid_field, value_matches_field
 
 if TYPE_CHECKING:
@@ -995,6 +1000,7 @@ def validate(model: ProjectModel) -> list[Issue]:
     _validate_paper_craft(model, issues)
     _validate_narrative(model, issues)
     _validate_narrative_packages(model, issues)
+    _validate_rule_graph_drift(model, issues)
     _validate_planes(model, issues)
     _validate_plane_action_pairing(model, issues)
     _validate_narrative_templates(model, issues)
@@ -1303,6 +1309,13 @@ def _validate_narrative(model: ProjectModel, issues: list[Issue]) -> None:
                         "error", "narrative", gid,
                         f"Transition {tid!r} 的跨图信号引用的状态 {ref_g}:{ref_s} 不存在",
                     ))
+                continue
+            if sig.startswith(RULE_SIGNAL_PREFIX):
+                # 规矩推进信号（rule:<规矩>:<层>:<版本>）：层图由 rules.json 生成器机械产出、
+                # advanceRule 在运行时按同一约定拼装发射，两端同源。它既不该进作者信号目录
+                # （会淹没手写信号），扫描也扫不到字面量发射点（发射端是构造出来的）——
+                # 整个 `rule:` 前缀是保留命名空间，两项检查一并豁免。TS 侧同款豁免见
+                # src/core/narrativeGraphValidation.ts::RULE_SIGNAL_PREFIX。
                 continue
             if sig not in registered:
                 issues.append(Issue(
@@ -3232,10 +3245,110 @@ def _scan_condition_expr(
                 f"narrativeCount 的 op {op!r} 不合法（== != > >= < <=）",
             ))
         return
+    if isinstance(expr.get("rule"), str):
+        _validate_rule_condition_leaf(model, expr, data_type, item_id, issues)
+        return
     issues.append(Issue(
         "warning", data_type, item_id,
         f"无法识别的条件叶子（键: {sorted(expr.keys())!s}）",
     ))
+
+
+def _validate_rule_graph_drift(model: ProjectModel, issues: list[Issue]) -> None:
+    """规矩层图是 rules.json 的派生物——不同步就意味着条件/动作指向不存在的状态。
+
+    报 error 但**文案里带上修复命令**：AI 直接改 rules.json 后必须能自己把这条清掉，
+    否则收尾校验就从质量闸变成只能开 GUI 才解得开的死锁闸。
+    """
+    drift = rule_ledger_drift(model)
+    if drift:
+        issues.append(Issue("error", "rule-graph", "rule_ledger", drift))
+
+
+_RULE_LEAF_MODES = ("usable", "known", "discovered", "acquired")
+
+
+def _validate_rule_condition_leaf(
+    model: ProjectModel, expr: dict, data_type: str, item_id: str, issues: list[Issue],
+) -> None:
+    """规矩叶 {rule, layer?, mode?, version?}。
+
+    它读的是层图 ``<ruleId>__<layer>`` 的 reached/active——所以既要 rules.json 里那条规矩
+    真的定义了这一层，也要层图真的存在。这里是本域**唯一**能同时看到两个文件的地方
+    （TS 校验器只吃 narrative_graphs），漏一条就意味着运行时静默恒 false。
+    """
+    rid = str(expr.get("rule") or "").strip()
+    rules_by_id = {
+        str(r.get("id") or "").strip(): r
+        for r in model.rules_data.get("rules", [])
+        if isinstance(r, dict)
+    }
+    if not rid:
+        issues.append(Issue("error", data_type, item_id, "rule 条件需要非空规矩 id"))
+        return
+    rule_def = rules_by_id.get(rid)
+    if rule_def is None:
+        issues.append(Issue(
+            "error", data_type, item_id,
+            f"rule 条件引用的规矩 {rid!r} 不在 rules.json 中",
+        ))
+        return
+
+    mode = expr.get("mode")
+    if mode is not None and str(mode) not in _RULE_LEAF_MODES:
+        issues.append(Issue(
+            "error", data_type, item_id,
+            f"rule 条件的 mode {mode!r} 不合法（{' / '.join(_RULE_LEAF_MODES)}）",
+        ))
+    mode_value = str(mode or "usable")
+
+    layer = str(expr.get("layer") or "").strip()
+    if mode_value in ("discovered", "acquired"):
+        if layer and layer not in RULE_LAYER_KEYS:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"rule 条件的 layer {layer!r} 不合法（{' / '.join(RULE_LAYER_KEYS)}）",
+            ))
+        return
+
+    if not layer:
+        issues.append(Issue(
+            "error", data_type, item_id,
+            f"rule 条件（mode={mode_value}）必须指明 layer；漏填时运行时恒 false",
+        ))
+        return
+    if layer not in RULE_LAYER_KEYS:
+        issues.append(Issue(
+            "error", data_type, item_id,
+            f"rule 条件的 layer {layer!r} 不合法（{' / '.join(RULE_LAYER_KEYS)}）",
+        ))
+        return
+    layers = rule_def.get("layers")
+    if not isinstance(layers, dict) or layer not in layers:
+        issues.append(Issue(
+            "error", data_type, item_id,
+            f"规矩 {rid!r} 没有定义 {layer!r} 层——该条件恒 false",
+        ))
+        return
+
+    version = expr.get("version")
+    if version is None:
+        return
+    gid = rule_layer_graph_id(rid, layer)
+    graphs = _narrative_graph_index(model)
+    vid = str(version).strip()
+    if not vid:
+        issues.append(Issue("error", data_type, item_id, "rule 条件的 version 不可为空串"))
+    elif gid not in graphs:
+        issues.append(Issue(
+            "error", data_type, item_id,
+            f"rule 条件带 version，但层图 {gid!r} 不存在（先跑 sync-rule-graphs 生成）",
+        ))
+    elif vid not in graphs[gid]:
+        issues.append(Issue(
+            "error", data_type, item_id,
+            f"rule 条件的 version {vid!r} 不是层图 {gid!r} 的状态",
+        ))
 
 
 def _collect_dialogue_graph_entry_overrides(model: ProjectModel) -> dict[str, set[str]]:

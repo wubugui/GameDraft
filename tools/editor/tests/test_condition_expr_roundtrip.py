@@ -202,3 +202,79 @@ class ConditionExprRoundtripTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    # ---- rule（规矩：象/理/术） ------------------------------------------
+
+    def _model_with_rules(self, root: Path) -> ProjectModel:
+        """在基础模型上补规矩定义与一张层图，供 rule 叶的候选/级联使用。"""
+        m = self._model(root)
+        m.rules_data = {
+            "rules": [
+                {
+                    "id": "rule_dry_corpse",
+                    "name": "干尸才走",
+                    "layers": {
+                        "xiang": {"text": "干的硬，湿的沉。"},
+                        "li": {"text": "白毛是霉，跟凶不搭界。"},
+                        "shu": {"text": "灭火，泼水。"},
+                    },
+                },
+            ],
+            "fragments": [],
+        }
+        m.narrative_graphs["compositions"].append({
+            "id": "rule_ledger",
+            "elements": [{
+                "id": "el_dry_li",
+                "kind": "wrapperGraph",
+                "graph": {
+                    "id": "rule_dry_corpse__li",
+                    "initialState": "未闻",
+                    "states": {"未闻": {}, "未验": {}, "验成": {}, "推翻": {}},
+                    "transitions": [],
+                },
+            }],
+        })
+        return m
+
+    def test_rule_leaf_minimal_roundtrips(self) -> None:
+        """缺省 mode=usable 不写进 JSON——保持数据最简，且往返不多长出键。"""
+        with TemporaryDirectory() as td:
+            m = self._model_with_rules(Path(td) / "p")
+            self._assert_roundtrip(m, {"rule": "rule_dry_corpse", "layer": "li"})
+
+    def test_rule_leaf_all_fields_roundtrip(self) -> None:
+        with TemporaryDirectory() as td:
+            m = self._model_with_rules(Path(td) / "p")
+            self._assert_roundtrip(
+                m, {"rule": "rule_dry_corpse", "layer": "li", "mode": "known", "version": "验成"},
+            )
+
+    def test_rule_leaf_discovered_roundtrips(self) -> None:
+        with TemporaryDirectory() as td:
+            m = self._model_with_rules(Path(td) / "p")
+            self._assert_roundtrip(m, {"rule": "rule_dry_corpse", "mode": "discovered"})
+
+    def test_rule_leaf_unknown_rule_id_preserved(self) -> None:
+        """指向已删/未知规矩的既有值必须保留，不被静默清空（与 scenario/narrative 同契约）。"""
+        with TemporaryDirectory() as td:
+            m = self._model_with_rules(Path(td) / "p")
+            self._assert_roundtrip(m, {"rule": "rule_已经删了的", "layer": "shu"})
+
+    def test_rule_leaf_unknown_version_preserved(self) -> None:
+        """层图还没生成 / 版本被改名时，既有 version 值同样必须原样带回。"""
+        with TemporaryDirectory() as td:
+            m = self._model_with_rules(Path(td) / "p")
+            self._assert_roundtrip(
+                m, {"rule": "rule_dry_corpse", "layer": "shu", "version": "层图还没生成"},
+            )
+
+    def test_rule_leaf_inside_all_any_not(self) -> None:
+        with TemporaryDirectory() as td:
+            m = self._model_with_rules(Path(td) / "p")
+            self._assert_roundtrip(m, {
+                "all": [
+                    {"rule": "rule_dry_corpse", "layer": "li"},
+                    {"not": {"rule": "rule_dry_corpse", "layer": "shu", "mode": "known"}},
+                ],
+            })

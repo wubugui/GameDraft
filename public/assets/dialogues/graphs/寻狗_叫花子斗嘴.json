@@ -125,7 +125,7 @@
         "name": "旁白"
       },
       "text": "俩人你一句我一句斗了半天嘴，谁也没占着便宜，倒都乐呵。",
-      "next": "end1"
+      "next": "b5"
     },
     "leave": {
       "type": "line",
@@ -138,6 +138,31 @@
     },
     "end1": {
       "type": "end"
+    },
+    "b5": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "（斗嘴归斗嘴——刚才他一提「背尸」，旁边看热闹那几个的眼睛，齐刷刷往一个方向飘了一下。……街上这套，老子门儿清。）",
+      "next": "b_rule",
+      "portrait": {
+        "emotion": "smirk"
+      }
+    },
+    "b_rule": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "advanceRule",
+          "params": {
+            "ruleId": "rule_read_the_room",
+            "layer": "xiang",
+            "to": "未验"
+          }
+        }
+      ],
+      "next": "end1"
     }
   }
 }

@@ -9,9 +9,11 @@
         "conditions": [],
         "resultActions": [
           {
-            "type": "giveFragment",
+            "type": "advanceRule",
             "params": {
-              "id": "frag_zombie_fire_02"
+              "ruleId": "rule_zombie_fire",
+              "layer": "xiang",
+              "to": "未验"
             }
           },
           {
@@ -37,7 +39,7 @@
             }
           }
         ],
-        "resultText": "你合上了箱盖。那些发霉的味道让你不想继续翻了。[tag:rule:rule_ghost_origin]"
+        "resultText": "你合上了箱盖。那些发霉的味道让你不想继续翻了。"
       }
     ]
   },
@@ -70,12 +72,7 @@
       {
         "text": "[规矩] 按王大爷说的，三更天不该来这点，先找个地方躲起来观察",
         "type": "rule",
-        "conditions": [
-          {
-            "flag": "rule_rule_no_go_night_acquired"
-          }
-        ],
-        "requiredRuleId": "rule_no_go_night",
+        "conditions": [],
         "resultActions": [
           {
             "type": "setFlag",
@@ -120,9 +117,11 @@
             }
           },
           {
-            "type": "giveFragment",
+            "type": "advanceRule",
             "params": {
-              "id": "frag_zombie_fire_01"
+              "ruleId": "rule_zombie_fire",
+              "layer": "xiang",
+              "to": "未验"
             }
           }
         ],

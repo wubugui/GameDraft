@@ -42,6 +42,8 @@ import type { SceneEntityKind, RuntimeFieldValue } from '../data/EntityRuntimeFi
 import { applyDialogueColonSpeakerFromResolvedText } from './resolveText';
 import { ACTION_PARAM_MANIFEST } from './actionParamManifest';
 import { isSpeakerSide } from '../utils/dialogueSpeakerSide';
+import { RULE_LAYER_KEYS, ruleAdvanceSignal, ruleLayerGraphId } from '../data/ruleGraphNaming';
+import { reportDevError } from './devErrorOverlay';
 
 /**
  * playScriptedDialogue 行内 `portrait` 字段的宽松解析：需带非空 `emotion` 才生效，`slug` 可选（缺省=跟随说话人）。
@@ -584,17 +586,63 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     if (amt === null) return;
     void d.inventoryManager.removeCoins(amt);
   }, ['amount']);
-  executor.register('giveRule', (p) => { void d.rulesManager.giveRule(p.id as string); }, ['id']);
-  executor.register('grantRuleLayer', (p) => {
+  // giveRule / grantRuleLayer / giveFragment 已退役（2026-07-26 规矩状态迁入叙事状态机）：
+  // 前两个被 advanceRule 取代（解锁一层 = 推到「未验」版本），碎片整体退役
+  // （象/理/术 本身就是碎片）。旧写法在校验器里报 error，不做静默兼容。
+
+  /**
+   * 规矩推进：把某条规矩的某一层推到某个版本。
+   * 「解锁一层 / 验成 / 存疑 / 推翻 / 细化」全是这一个动作——层图状态即正文版本。
+   *
+   * 它只是往层图发一个规范信号，真相仍在叙事状态机里，**不写任何 flag**。
+   *
+   * 自查两件事（缺了这段，「授予了但没生效」在运行时完全不可见）：
+   * `reportUnlistenedSignal` 有 getListenedSignalKeys 短路——只要图里挂过这个 signal
+   * （哪怕 from 不匹配）就连 warning 都不报，所以必须在这里自己查。
+   */
+  executor.register('advanceRule', (p) => {
     const ruleId = String(p.ruleId ?? '').trim();
-    const layerRaw = String(p.layer ?? '').trim();
-    if (!ruleId || !['xiang', 'li', 'shu'].includes(layerRaw)) {
-      console.warn('grantRuleLayer: 需要 params.ruleId 与 params.layer（xiang|li|shu）');
+    const layer = String(p.layer ?? '').trim();
+    const to = String(p.to ?? '').trim();
+    if (!ruleId || !RULE_LAYER_KEYS.includes(layer as RuleLayerKey) || !to) {
+      console.warn('advanceRule: 需要 params.ruleId、params.layer（xiang|li|shu）与 params.to（目标版本）', p);
       return;
     }
-    d.rulesManager.grantLayer(ruleId, layerRaw as RuleLayerKey);
-  }, ['ruleId', 'layer']);
-  executor.register('giveFragment', (p) => { void d.rulesManager.giveFragment(p.id as string); }, ['id']);
+    const graphId = ruleLayerGraphId(ruleId, layer);
+    const verdict = d.narrativeStateManager.classifyStateRef(graphId, to);
+    if (verdict === 'missingGraph') {
+      reportDevError(
+        `advanceRule 目标层图 "${graphId}" 不存在——本次推进无效。规矩层图是 rules.json 的派生物，先跑 ./dev.sh sync-rule-graphs`,
+        '[rule]',
+      );
+      return;
+    }
+    if (verdict === 'missingState') {
+      reportDevError(
+        `advanceRule 目标版本 "${to}" 不在层图 "${graphId}" 中——本次推进无效（版本改名后忘了同步？）`,
+        '[rule]',
+      );
+      return;
+    }
+    if (verdict === 'ok') {
+      // 目标存在，但当前 active 未必有到它的出边——生成器本该从所有前驱连边，漏了就在这儿喊。
+      const graph = d.narrativeStateManager.getGraph(graphId);
+      const active = d.narrativeStateManager.getActiveState(graphId);
+      const signal = ruleAdvanceSignal(ruleId, layer, to);
+      const reachable = graph?.transitions?.some((t) => t.from === active && t.signal === signal);
+      if (graph && active !== undefined && !reachable) {
+        reportDevError(
+          `advanceRule "${graphId}" 当前在 "${active}"，没有到 "${to}" 的边——本次推进会静默无效。`
+          + '层图应从所有合法前驱各连一条边，重新生成即可',
+          '[rule]',
+        );
+      }
+    }
+    return d.narrativeStateManager.emitNarrativeSignal({
+      signal: ruleAdvanceSignal(ruleId, layer, to),
+    });
+  }, ['ruleId', 'layer', 'to']);
+
   executor.register('updateQuest', (p) => { void d.questManager.acceptQuest(p.id as string); }, ['id']);
 
   /** R13：先验证 def 存在再切状态（对齐 startCutscene 失败即恢复模式）——

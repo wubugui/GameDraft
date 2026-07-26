@@ -226,6 +226,8 @@ type DevNarrativeWarp = {
   flowGraph?: string;
   flowState?: string;
   set?: Array<{ graph: string; state: string }>;
+  /** 跳转后按序发的信号（scenario 中间态只能这样到达，setState 会被边界拦下）。 */
+  emit?: string[];
 };
 
 /** runtime-debug-snapshot 客户端兜底字节上限。服务端硬限 2_000_000（vite.config.ts），
@@ -467,7 +469,8 @@ export class Game {
     this.interactionSystem = new InteractionSystem(this.eventBus, this.flagStore, this.inputManager);
     this.sceneManager = new SceneManager(this.assetManager, this.eventBus, this.renderer);
     this.inventoryManager = new InventoryManager(this.eventBus, this.flagStore);
-    this.rulesManager = new RulesManager(this.eventBus, this.flagStore);
+    // 规矩状态住在叙事状态机里，RulesManager 只是它的只读投影——不再注入 FlagStore。
+    this.rulesManager = new RulesManager(this.eventBus);
     this.dialogueManager = new DialogueManager(this.eventBus);
     this.questManager = new QuestManager(this.eventBus, this.flagStore, this.actionExecutor);
     this.scenarioStateManager = new ScenarioStateManager();
@@ -532,6 +535,9 @@ export class Game {
     this.narrativePackageDirector = new NarrativePackageDirector(this.eventBus);
 
     const ctx = { eventBus: this.eventBus, flagStore: this.flagStore, strings: this.stringsProvider, assetManager: this.assetManager };
+    // 规矩状态的唯一真相源是层图；把叙事读取面交给 RulesManager 做投影。
+    this.rulesManager.setNarrativeReader(this.narrativeStateManager);
+
     this.registeredSystems = [
       { name: 'sceneManager', system: this.sceneManager },
       { name: 'interactionSystem', system: this.interactionSystem },
@@ -588,7 +594,14 @@ export class Game {
         return fb && fb !== 'defaultProtagonistName' ? fb : '你';
       },
       questTitle: (id) => this.questManager.getQuestTitle(id),
-      ruleName: (id) => this.rulesManager.getRuleDef(id)?.name,
+      // [tag:rule:X] 按掌握度回落：没听说过这条规矩时不该在正文里直接喊出它的正名，
+      // 否则台词/档案会替玩家剧透（「某种关于僵尸的传闻」才是他此刻该看到的）。
+      ruleName: (id) => {
+        const def = this.rulesManager.getRuleDef(id);
+        if (!def) return undefined;
+        if (this.rulesManager.isRuleDiscovered(id)) return def.name;
+        return def.incompleteName ?? def.name;
+      },
       sceneDisplayName: (sid) => {
         const t = sid.trim();
         return this.sceneDisplayNameById.get(t) ?? t;
@@ -1069,7 +1082,11 @@ export class Game {
     this.encounterManager.setRuleNameResolver((ruleId) => {
       const def = this.rulesManager.getRuleDef(ruleId);
       if (!def) return undefined;
-      return { name: def.name, incompleteName: def.incompleteName };
+      return {
+        name: def.name,
+        incompleteName: def.incompleteName,
+        depth: this.rulesManager.getRuleDepth(ruleId),
+      };
     });
 
     /** B8：条件上下文工厂必须先于 narrativeStateManager.loadFromAsset 注入——
@@ -2972,6 +2989,8 @@ export class Game {
       currentOwner: this.ambientNarrativeOwner ?? undefined,
       // plane 叶子：当前激活位面（含 manual override）；全部条件消费方经此工厂自动可用
       getActivePlaneId: () => this.planeReconciler.getActivePlaneId(),
+      // rule 叶子：规矩掌握度/可信度。RulesManager 是叙事状态的只读投影，不是第二真相源。
+      ruleState: this.rulesManager,
     };
   }
 
@@ -3406,6 +3425,14 @@ export class Game {
     }
     for (const st of warp.set ?? []) {
       await this.narrativeStateManager.debugSetNarrativeState(st.graph, st.state);
+    }
+    // `emit` 是 `set` 的补充：scenario 子图的 setState 只接受入口/出口态
+    //（中间态会被 setState.scenarioBoundary 拦下、warn 后原地不动），
+    // 所以想把一拍停在中间态，只能按正常方式发信号让它自己走过去。
+    for (const signal of warp.emit ?? []) {
+      const sig = String(signal ?? '').trim();
+      if (!sig) continue;
+      await this.narrativeStateManager.emitNarrativeSignal({ signal: sig });
     }
     await this.devLoadScene(warp.scene);
   }

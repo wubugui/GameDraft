@@ -80,12 +80,10 @@ export class RuleUseUI {
       if (layersOk) {
         result.push({ slot, ruleName: this.r(ruleDef.name), enabled: true });
       } else if (this.rulesData.isDiscovered(slot.ruleId)) {
-        const progress = this.rulesData.getFragmentProgress(slot.ruleId);
         const displayName = this.r(ruleDef.incompleteName ?? this.strings.get('ruleUse', 'unknown'));
+        // 碎片退役后进度就是「掌握了几层」——象/理/术 本身就是碎片。
         const depth = this.rulesData.getRuleDepth(slot.ruleId);
-        const progressText = req?.length
-          ? `${depth.unlocked}/${depth.total}`
-          : `${progress.collected}/${progress.total}`;
+        const progressText = `${depth.unlocked}/${depth.total}`;
         result.push({
           slot,
           ruleName: displayName,

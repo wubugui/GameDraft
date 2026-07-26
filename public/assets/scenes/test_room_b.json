@@ -161,25 +161,6 @@
           "params": {
             "slots": [
               {
-                "ruleId": "rule_no_go_night",
-                "resultText": "你默念着\"三更勿去\"，小心翼翼地环顾四周。果然，墙角处有一缕若有若无的白烟正在消散。你停下脚步，那白烟便没了踪影。看来王大爷的话不是随便说说的。",
-                "resultActions": [
-                  {
-                    "type": "setFlag",
-                    "params": {
-                      "key": "used_rule_dark_alley",
-                      "value": true
-                    }
-                  },
-                  {
-                    "type": "giveRule",
-                    "params": {
-                      "id": "rule_ghost_verified"
-                    }
-                  }
-                ]
-              },
-              {
                 "ruleId": "rule_zombie_fire",
                 "resultText": "你掏出桃木片在角落里点燃，火光照亮了阴暗的巷道。你注意到墙壁上有些奇怪的刮痕，像是什么东西挣扎留下的。火光闪烁间，刮痕处渗出了一丝暗红色的液体……",
                 "resultActions": [
@@ -187,19 +168,6 @@
                     "type": "setFlag",
                     "params": {
                       "key": "used_fire_dark_alley",
-                      "value": true
-                    }
-                  }
-                ]
-              },
-              {
-                "ruleId": "rule_ghost_origin",
-                "resultText": "你想起那些关于柳家戏班的传闻——\"她不是在害人，她是在找人。\"你轻声说道。风停了。四周忽然安静得出奇，仿佛有什么东西在听你说话。",
-                "resultActions": [
-                  {
-                    "type": "setFlag",
-                    "params": {
-                      "key": "used_origin_dark_alley",
                       "value": true
                     }
                   }

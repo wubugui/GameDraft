@@ -23,6 +23,11 @@ from PySide6.QtWidgets import (
 )
 
 from .flag_key_field import FlagKeyPickField
+from .rule_graph_naming import (
+    is_rule_layer_graph_id,
+    is_rule_ledger_composition,
+    rule_layer_graph_id,
+)
 from .flag_value_edit import FlagValueEdit
 from .id_ref_selector import IdRefSelector
 from .rich_text_field import RichTextLineEdit
@@ -92,6 +97,7 @@ class ConditionExprNodeEditor(QWidget):
             ("叙事状态", "narrative"),
             ("活计计数 (做过几单)", "narrativeCount"),
             ("激活位面", "plane"),
+            ("规矩 (象/理/术)", "rule"),
         ):
             self._kind.addItem(lab, val)
         self._kind.currentIndexChanged.connect(self._on_kind_changed)
@@ -139,6 +145,11 @@ class ConditionExprNodeEditor(QWidget):
         self._nc_value: QSpinBox | None = None
         self._pl_wrap: QWidget | None = None
         self._pl_id: IdRefSelector | None = None
+        self._ru_wrap: QWidget | None = None
+        self._ru_id: IdRefSelector | None = None
+        self._ru_layer: QComboBox | None = None
+        self._ru_mode: QComboBox | None = None
+        self._ru_version: QComboBox | None = None
 
         self._remove_callback: Callable[[ConditionExprNodeEditor], None] | None = None
 
@@ -198,6 +209,8 @@ class ConditionExprNodeEditor(QWidget):
             return _combo_has(self._nc_graph)
         if k == "plane":
             return bool(self._pl_id and self._pl_id.current_id().strip())
+        if k == "rule":
+            return bool(self._ru_id and self._ru_id.current_id().strip())
         return False
 
     def _confirm_destructive_discard(self, action_label: str) -> bool:
@@ -271,6 +284,11 @@ class ConditionExprNodeEditor(QWidget):
         self._nc_value = None
         self._pl_wrap = None
         self._pl_id = None
+        self._ru_wrap = None
+        self._ru_id = None
+        self._ru_layer = None
+        self._ru_mode = None
+        self._ru_version = None
 
     def _rebuild_body(self, kind: str) -> None:
         self._active_kind = kind
@@ -476,26 +494,127 @@ class ConditionExprNodeEditor(QWidget):
             pf.addRow("plane", self._pl_id)
             self._pl_wrap = pw
             self._body.addWidget(pw)
+        elif kind == "rule":
+            rw = QWidget()
+            rf = compact_form(QFormLayout(rw))
+            self._ru_id = IdRefSelector(allow_empty=True, editable=False, click_opens_popup=True)
+            self._ru_id.setToolTip(
+                "读「这条规矩的某一层，我掌握到什么程度」。底下走的是层图 <规矩id>__<层> 的"
+                "reached/active，不读任何 flag。列表来自 rules.json。",
+            )
+            _rm = self._model()
+            if _rm is not None and hasattr(_rm, "all_rule_ids"):
+                self._ru_id.set_items(list(_rm.all_rule_ids()))
+            self._ru_id.value_changed.connect(lambda *_: self._on_rule_ref_changed())
+
+            self._ru_layer = QComboBox()
+            self._ru_layer.setEditable(False)
+            for lab, val in (("象（看出门道）", "xiang"), ("理（想明白）", "li"), ("术（怎么办）", "shu")):
+                self._ru_layer.addItem(lab, val)
+            self._ru_layer.currentIndexChanged.connect(lambda _i: self._on_rule_ref_changed())
+
+            self._ru_mode = QComboBox()
+            self._ru_mode.setEditable(False)
+            for lab, val in (
+                ("可用（掌握且未被推翻）", "usable"),
+                ("已掌握（不问可信度）", "known"),
+                ("听说过（整条规矩，忽略层）", "discovered"),
+            ):
+                self._ru_mode.addItem(lab, val)
+            self._ru_mode.setToolTip(
+                "缺省「可用」：被推翻的规矩不会继续开着门。只有明知规矩是错的也要放行时才选「已掌握」。",
+            )
+            self._ru_mode.currentIndexChanged.connect(lambda _i: self._emit_changed())
+
+            self._ru_version = QComboBox()
+            self._ru_version.setEditable(False)
+            self._ru_version.setToolTip(
+                "另外要求「他现在信的是哪一版」。留空 = 不限版本（绝大多数情况）。候选来自该层图的状态。",
+            )
+            self._ru_version.currentIndexChanged.connect(lambda _i: self._emit_changed())
+
+            rf.addRow("规矩", self._ru_id)
+            rf.addRow("层", self._ru_layer)
+            rf.addRow("要求", self._ru_mode)
+            rf.addRow("版本", self._ru_version)
+            self._ru_wrap = rw
+            self._body.addWidget(rw)
+            self._fill_rule_version_combo()
+
+    def _on_rule_ref_changed(self) -> None:
+        self._fill_rule_version_combo()
+        self._emit_changed()
+
+    def _rule_layer_graph_states(self) -> list[str]:
+        """当前 (规矩, 层) 对应层图的状态清单；层图还没生成时返回空（版本下拉即只剩「不限」）。"""
+        if not self._ru_id or not self._ru_layer:
+            return []
+        rid = self._ru_id.current_id().strip()
+        layer = self._ru_layer.currentData()
+        if not rid or not isinstance(layer, str) or not layer:
+            return []
+        want = rule_layer_graph_id(rid, layer)
+        m = self._model()
+        data = getattr(m, "narrative_graphs", None) if m else None
+        if not isinstance(data, dict):
+            return []
+        for comp in data.get("compositions") or []:
+            if not isinstance(comp, dict):
+                continue
+            for el in comp.get("elements") or []:
+                if not isinstance(el, dict) or el.get("kind") != "wrapperGraph":
+                    continue
+                g = el.get("graph")
+                if isinstance(g, dict) and str(g.get("id") or "").strip() == want:
+                    states = g.get("states")
+                    return [str(s) for s in states.keys()] if isinstance(states, dict) else []
+        return []
+
+    def _fill_rule_version_combo(self) -> None:
+        """版本候选跟随 (规矩, 层) 级联；保留既有值不因层图缺失被静默清空。"""
+        cb = self._ru_version
+        if cb is None:
+            return
+        prev = cb.currentData()
+        prev = prev.strip() if isinstance(prev, str) else ""
+        cb.blockSignals(True)
+        cb.clear()
+        cb.addItem("（不限版本）", "")
+        for sid in self._rule_layer_graph_states():
+            cb.addItem(sid, sid)
+        if prev:
+            idx = cb.findData(prev)
+            if idx < 0:
+                cb.addItem(f"（数据）{prev}", prev)
+                idx = cb.count() - 1
+            cb.setCurrentIndex(idx)
+        cb.blockSignals(False)
 
     def _narrative_graph_entries(self) -> list[tuple[str, str, dict[str, Any]]]:
-        """(显示名, graphId, graph dict)：主图 + wrapper 子图，与 narrative_graphs.json 一致。"""
+        """(显示名, graphId, graph dict)：主图 + wrapper 子图，与 narrative_graphs.json 一致。
+
+        **规矩层图不进这个候选**：它们是 rules.json 的派生物、数量随规矩数线性增长
+        （20 条规矩 = 40~60 张），而本下拉出现在全项目每一处条件编辑。规矩条件走专用的
+        规矩叶（rule/layer），不该从这里挑图。见 rule_graph_naming。
+        已经写在数据里的值不受影响——找不到候选时调用方会补「（数据）xxx」保值项。
+        """
         m = self._model()
         data = getattr(m, "narrative_graphs", None) if m else None
         out: list[tuple[str, str, dict[str, Any]]] = []
         if not isinstance(data, dict):
             return out
         for comp in data.get("compositions") or []:
-            if not isinstance(comp, dict):
+            if not isinstance(comp, dict) or is_rule_ledger_composition(comp):
                 continue
             main = comp.get("mainGraph")
-            if isinstance(main, dict) and main.get("id"):
+            if isinstance(main, dict) and main.get("id") and not is_rule_layer_graph_id(main["id"]):
                 label = str(main.get("label") or comp.get("label") or main["id"])
                 out.append((f"{label} ({main['id']})", str(main["id"]), main))
             for el in comp.get("elements") or []:
                 if not isinstance(el, dict) or el.get("kind") != "wrapperGraph":
                     continue
                 g = el.get("graph")
-                if isinstance(g, dict) and g.get("id"):
+                if isinstance(g, dict) and g.get("id") and not is_rule_layer_graph_id(g["id"]):
                     label = str(el.get("label") or g.get("label") or g["id"])
                     out.append((f"{label} ({g['id']})", str(g["id"]), g))
         return out
@@ -740,6 +859,8 @@ class ConditionExprNodeEditor(QWidget):
             self._kind.setCurrentIndex(self._kind.findData("narrativeCount"))
         elif isinstance(data.get("plane"), str) and str(data.get("plane", "")).strip():
             self._kind.setCurrentIndex(self._kind.findData("plane"))
+        elif isinstance(data.get("rule"), str) and str(data.get("rule", "")).strip():
+            self._kind.setCurrentIndex(self._kind.findData("rule"))
         else:
             self._kind.setCurrentIndex(3)
         k = self._kind.currentData()
@@ -908,6 +1029,45 @@ class ConditionExprNodeEditor(QWidget):
                 _items.append((pid, pid))  # 保留指向已删/未知位面的既有值，不静默丢失
             self._pl_id.set_items(_items)
             self._pl_id.set_current(pid)
+        elif k == "rule" and self._ru_id and self._ru_layer and self._ru_mode and self._ru_version:
+            rid = str(data.get("rule", "")).strip()
+            _rm = self._model()
+            _items = (
+                list(_rm.all_rule_ids())
+                if (_rm is not None and hasattr(_rm, "all_rule_ids"))
+                else []
+            )
+            _ids = [i[0] if isinstance(i, (list, tuple)) else i for i in _items]
+            if rid and rid not in _ids:
+                _items.append((rid, rid))  # 保留指向已删/未知规矩的既有值，不静默丢失
+            self._ru_id.set_items(_items)
+            self._ru_id.set_current(rid)
+
+            layer = str(data.get("layer", "")).strip()
+            i_layer = self._ru_layer.findData(layer) if layer else -1
+            self._ru_layer.blockSignals(True)
+            self._ru_layer.setCurrentIndex(max(0, i_layer))
+            self._ru_layer.blockSignals(False)
+
+            mode = str(data.get("mode", "")).strip() or "usable"
+            i_mode = self._ru_mode.findData(mode)
+            self._ru_mode.blockSignals(True)
+            self._ru_mode.setCurrentIndex(max(0, i_mode))
+            self._ru_mode.blockSignals(False)
+
+            # 先按新 (规矩,层) 重填候选，再落既有版本值（缺失时补「（数据）」保值项）
+            self._fill_rule_version_combo()
+            version = str(data.get("version", "")).strip()
+            self._ru_version.blockSignals(True)
+            if version:
+                i_ver = self._ru_version.findData(version)
+                if i_ver < 0:
+                    self._ru_version.addItem(f"（数据）{version}", version)
+                    i_ver = self._ru_version.count() - 1
+                self._ru_version.setCurrentIndex(i_ver)
+            else:
+                self._ru_version.setCurrentIndex(0)
+            self._ru_version.blockSignals(False)
         # 记录原始 dict 与"载入后立即序列化"的规范化基线：
         # to_dict 时若规范化输出仍等于基线（= UI 无实际编辑），逐字返回原 dict。
         self._orig_data = copy.deepcopy(data)
@@ -1034,6 +1194,24 @@ class ConditionExprNodeEditor(QWidget):
             if not pid:
                 return {}
             return {"plane": pid}
+        if k == "rule" and self._ru_id and self._ru_layer and self._ru_mode and self._ru_version:
+            rid = self._ru_id.current_id().strip()
+            if not rid:
+                return {}
+            leaf: dict[str, Any] = {"rule": rid}
+            mode_d = self._ru_mode.currentData()
+            mode = str(mode_d) if isinstance(mode_d, str) and mode_d else "usable"
+            # discovered 问的是整条规矩，不写 layer（写了运行时也忽略，别留误导性字段）
+            if mode != "discovered":
+                layer_d = self._ru_layer.currentData()
+                if isinstance(layer_d, str) and layer_d:
+                    leaf["layer"] = layer_d
+            if mode != "usable":  # usable 是缺省，不写进 JSON 保持数据最简
+                leaf["mode"] = mode
+            ver_d = self._ru_version.currentData()
+            if mode != "discovered" and isinstance(ver_d, str) and ver_d.strip():
+                leaf["version"] = ver_d.strip()
+            return leaf
         return {}
 
 

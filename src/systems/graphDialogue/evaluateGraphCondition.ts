@@ -1,5 +1,5 @@
 import type { Condition, ScenarioLineConditionLeaf } from '../../data/types';
-import type { ConditionExpr } from '../../data/types';
+import type { ConditionExpr, RuleConditionLeaf, RuleLayerKey } from '../../data/types';
 import type { QuestManager } from '../QuestManager';
 import type { FlagStore } from '../../core/FlagStore';
 import type { ScenarioStateManager } from '../../core/ScenarioStateManager';
@@ -18,6 +18,7 @@ export type ConditionTrace =
   | { kind: 'narrative'; result: boolean; label: string }
   | { kind: 'narrativeCount'; result: boolean; label: string }
   | { kind: 'plane'; result: boolean; label: string }
+  | { kind: 'rule'; result: boolean; label: string }
   | { kind: 'unknown'; result: boolean; label: string };
 
 const questStatusMap: Record<string, QuestStatus> = {
@@ -59,6 +60,23 @@ export interface ConditionEvalContext {
   currentSceneId?: string;
   /** 当前激活位面 id（PlaneReconciler 派生，含 manual override）。未注入时 plane 叶子按 'normal' 比较。 */
   getActivePlaneId?: () => string;
+  /**
+   * 规矩查询（rule 叶子）。由 RulesManager 提供，而 RulesManager 自身是**叙事状态的只读投影**
+   * ——它不存规矩状态、不写 flag，全部答案来自层图 `<ruleId>__<layer>` 的 reached/active。
+   * 未注入时 rule 叶子恒 false（保守：没有规矩系统即什么都没掌握）。
+   */
+  ruleState?: {
+    /** 该层是否已掌握（层图 reached 过入口版本）。 */
+    isLayerKnown(ruleId: string, layer: RuleLayerKey): boolean;
+    /** 该层是否可用 = 已掌握 **且** 当前版本未被推翻。 */
+    isLayerUsable(ruleId: string, layer: RuleLayerKey): boolean;
+    /** 这条规矩听说过没有（任一层已掌握）。 */
+    isRuleDiscovered(ruleId: string): boolean;
+    /** 整条规矩每一层都掌握了。 */
+    isRuleAcquired(ruleId: string): boolean;
+    /** 该层当前生效的版本状态 id；未掌握返回 undefined。 */
+    getLayerVersion(ruleId: string, layer: RuleLayerKey): string | undefined;
+  };
 }
 
 /**
@@ -127,6 +145,62 @@ function isPlaneLeaf(x: ConditionExpr): x is { plane: string } {
     m.scenario === undefined &&
     m.narrative === undefined
   );
+}
+
+const RULE_LAYER_KEYS = new Set<string>(['xiang', 'li', 'shu']);
+
+function isRuleLeaf(x: ConditionExpr): x is RuleConditionLeaf {
+  const m = x as {
+    rule?: unknown; flag?: unknown; quest?: unknown; scenario?: unknown;
+    narrative?: unknown; narrativeCount?: unknown; plane?: unknown;
+  };
+  return (
+    typeof m.rule === 'string' &&
+    typeof m.flag !== 'string' &&
+    m.quest === undefined &&
+    m.scenario === undefined &&
+    m.narrative === undefined &&
+    m.narrativeCount === undefined &&
+    m.plane === undefined
+  );
+}
+
+/**
+ * 规矩叶子求值。全部答案来自 ctx.ruleState（其背后是层图的 reached/active），本函数零存储。
+ * mode 缺省 usable——safe-by-default：被推翻的规矩不会继续开着门。
+ */
+function evalRuleLeaf(expr: RuleConditionLeaf, ctx: ConditionEvalContext): boolean {
+  const rs = ctx.ruleState;
+  const ruleId = expr.rule.trim();
+  if (!rs || !ruleId) return false;
+
+  const mode = expr.mode ?? 'usable';
+  if (mode === 'discovered') {
+    // layer 可省；填了也只当作「这条听说过」的更强写法不额外收窄（层级细分交给 known/usable）。
+    return rs.isRuleDiscovered(ruleId);
+  }
+  if (mode === 'acquired') {
+    return rs.isRuleAcquired(ruleId);
+  }
+
+  const layer = String(expr.layer ?? '').trim();
+  // 非 discovered 模式必须指明层：漏填时恒 false 而不是悄悄放行。
+  if (!RULE_LAYER_KEYS.has(layer)) return false;
+  const layerKey = layer as RuleLayerKey;
+
+  const base = mode === 'known' ? rs.isLayerKnown(ruleId, layerKey) : rs.isLayerUsable(ruleId, layerKey);
+  if (!base) return false;
+
+  const wantVersion = String(expr.version ?? '').trim();
+  if (!wantVersion) return true;
+  return rs.getLayerVersion(ruleId, layerKey) === wantVersion;
+}
+
+function ruleLeafLabel(expr: RuleConditionLeaf): string {
+  const mode = expr.mode ?? 'usable';
+  const layer = expr.layer ? `.${expr.layer}` : '';
+  const version = expr.version ? ` = ${expr.version}` : '';
+  return `规矩 ${expr.rule}${layer} [${mode}]${version}`;
 }
 
 function isNarrativeStateLeaf(x: ConditionExpr): x is { narrative: string; state: string } {
@@ -333,6 +407,10 @@ export function evaluateConditionExpr(
     return evalPlaneLeaf(expr, ctx);
   }
 
+  if (isRuleLeaf(expr)) {
+    return evalRuleLeaf(expr, ctx);
+  }
+
   if (isQuestLeaf(expr)) {
     const m = expr as { quest: string; questStatus?: string; status?: string };
     return evalQuestLeaf(m.quest, m.questStatus ?? m.status, ctx);
@@ -442,6 +520,16 @@ export function evaluateConditionExprWithTrace(
     const active = ctx.getActivePlaneId ? ctx.getActivePlaneId() : 'normal';
     const label = `plane 期望=${expr.plane.trim() || '—'}实际=${active}`;
     return { result: ok, trace: { kind: 'plane', result: ok, label } };
+  }
+
+  if (isRuleLeaf(expr)) {
+    const ok = evalRuleLeaf(expr, ctx);
+    const layer = String(expr.layer ?? '').trim();
+    const got = RULE_LAYER_KEYS.has(layer)
+      ? ctx.ruleState?.getLayerVersion(expr.rule.trim(), layer as RuleLayerKey)
+      : undefined;
+    const label = `${ruleLeafLabel(expr)}，当前版本=${got ?? '—'}`;
+    return { result: ok, trace: { kind: 'rule', result: ok, label } };
   }
 
   if (isQuestLeaf(expr)) {

@@ -187,10 +187,10 @@ export class RulesPanelUI {
               cy += descText.height + ITEM_GAP;
             }
 
-            const progress = this.rulesData.getFragmentProgress(r.def.id);
+            const progress = this.rulesData.getRuleDepth(r.def.id);
             if (progress.total > 0) {
               const progText = new Text({
-                text: `${this.strings.get('rulesPanel', 'fragments')} ${progress.collected}/${progress.total}`,
+                text: `${this.strings.get('rulesPanel', 'depth')} ${progress.unlocked}/${progress.total}`,
                 style: { fontSize: 10, fill: UITheme.colors.ruleProgress, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 520 },
               });
               progText.x = 10;
@@ -266,55 +266,60 @@ export class RulesPanelUI {
           cy += barH + 8;
 
           if (isExpanded) {
-            const perLayer = this.rulesData.getLayerFragmentProgress(entry.def.id);
+            // 碎片退役后，展开区列的是「这条规矩的三层，我掌握了哪些、现在信哪一版」。
+            const texts = this.rulesData.getUnlockedLayerTexts(entry.def.id);
             for (const L of LAYER_ORDER) {
-              const lp = perLayer[L];
-              if (!lp || lp.total === 0) continue;
+              if (!entry.def.layers[L]) continue;
               const layerLabel = this.strings.get(
                 'rulesPanel',
                 L === 'xiang' ? 'layerXiang' : L === 'li' ? 'layerLi' : 'layerShu',
               );
+              const known = this.rulesData.hasLayer(entry.def.id, L);
+              const verified = known ? this.rulesData.getLayerVerified(entry.def.id, L) : undefined;
+              const tag = verified ? `（${this.rulesData.getVerifiedLabel(verified)}）` : '';
               const layerCap = new Text({
-                text: `「${layerLabel}」 ${lp.collected}/${lp.total}`,
+                text: `「${layerLabel}」${tag}`,
                 style: { fontSize: 11, fill: UITheme.colors.section, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: wrapWidth },
               });
               layerCap.x = 16;
               layerCap.y = cy;
               content.addChild(layerCap);
               cy += 16;
-            }
-            const allFragProgress = this.rulesData.getFragmentProgress(entry.def.id);
-            for (const frag of allFragProgress.fragments) {
-              const isCollected = this.rulesData.hasFragment(frag.id);
-              if (isCollected) {
-                const fragText = new Text({
-                  text: `"${this.r(frag.text)}"`,
-                  style: { fontSize: 11, fill: UITheme.colors.ruleDesc, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: wrapWidth - 20 },
-                });
-                fragText.x = 20;
-                fragText.y = cy;
-                content.addChild(fragText);
-                cy += fragText.height + 2;
 
-                if (frag.source) {
-                  const srcText = new Text({
-                    text: `-- ${this.r(frag.source)}`,
-                    style: { fontSize: 10, fill: UITheme.colors.ruleSource, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 520 },
-                  });
-                  srcText.x = 24;
-                  srcText.y = cy;
-                  content.addChild(srcText);
-                  cy += 14;
-                }
-              } else {
-                const unknownText = new Text({
-                  text: this.strings.get('rulesPanel', 'hidden'),
-                  style: { fontSize: 11, fill: UITheme.colors.disabledDark, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 520 },
+              const body = known ? this.r(texts[L] ?? '') : this.strings.get('rulesPanel', 'hidden');
+              const bodyText = new Text({
+                text: body,
+                style: {
+                  fontSize: 11,
+                  fill: known ? UITheme.colors.ruleDesc : UITheme.colors.disabledDark,
+                  fontFamily: UITheme.fonts.ui,
+                  wordWrap: true,
+                  breakWords: true,
+                  wordWrapWidth: wrapWidth - 20,
+                },
+              });
+              bodyText.x = 20;
+              bodyText.y = cy;
+              content.addChild(bodyText);
+              // 被推翻的说法画一道删除线——错的留在本子里，下面跟着打脸，这才是真实的笔记本。
+              if (known && this.rulesData.isLayerRefuted(entry.def.id, L)) {
+                const strike = new Graphics();
+                strike.rect(20, cy + bodyText.height / 2, bodyText.width, 1);
+                strike.fill({ color: UITheme.colors.ruleSource });
+                content.addChild(strike);
+              }
+              cy += bodyText.height + 2;
+
+              const superseded = known ? this.rulesData.getLayerSupersededText(entry.def.id, L) : undefined;
+              if (superseded) {
+                const oldText = new Text({
+                  text: `（当初以为：${this.r(superseded)}）`,
+                  style: { fontSize: 10, fill: UITheme.colors.ruleSource, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: wrapWidth - 24 },
                 });
-                unknownText.x = 20;
-                unknownText.y = cy;
-                content.addChild(unknownText);
-                cy += 16;
+                oldText.x = 24;
+                oldText.y = cy;
+                content.addChild(oldText);
+                cy += oldText.height + 2;
               }
               cy += 2;
             }

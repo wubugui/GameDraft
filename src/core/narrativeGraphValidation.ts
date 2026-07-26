@@ -1,5 +1,10 @@
 import { getActionParamManifest } from './actionParamManifest';
 
+/** 规矩推进信号的保留前缀（与 src/data/ruleGraphNaming.ts::ruleAdvanceSignal 同源）。 */
+const RULE_SIGNAL_PREFIX = 'rule:';
+const RULE_LAYER_KEYS = new Set(['xiang', 'li', 'shu']);
+const RULE_LEAF_MODES = new Set(['usable', 'known', 'discovered', 'acquired']);
+
 export type NarrativeValidationSeverity = 'error' | 'warning';
 
 export interface NarrativeValidationIssue {
@@ -502,6 +507,12 @@ function validateTransitionSignal(
     );
     return;
   }
+  if (sig.startsWith(RULE_SIGNAL_PREFIX)) {
+    // 规矩推进信号（rule:<ruleId>:<layer>:<版本>）由 rules.json 生成器机械产出、
+    // advanceRule 机械发射，两端同源。把它们塞进作者信号目录只会淹没手写信号，
+    // 所以整个 `rule:` 前缀是保留命名空间，不参与 knownSignals 校验。
+    return;
+  }
   if (!knownSignals.has(sig)) {
     addIssue(
       issues,
@@ -967,6 +978,42 @@ function validateConditionExpr(
     // 单活模型：narrative 叶可读活计图当前态（无活计实例=运行时 false），故活计图合法、不拦。
     if (!graph.states?.[stateId]) {
       addIssue(issues, 'error', 'condition.narrative.stateMissing', `${owner}: narrative state does not exist: ${graphId}.${stateId}`, `${path}.state`, owner, target);
+      return false;
+    }
+    return true;
+  }
+  if (typeof (x as { rule?: unknown }).rule === 'string') {
+    // 规矩叶 {rule, layer?, mode?, version?}。
+    //
+    // D6（单一权威）本来打算给本函数加 rules.json 索引，实测**不需要**：规矩层图
+    // `<ruleId>__<layer>` 就生成在同一个 narrative_graphs.json 里，graphIndex 已经有了。
+    // 于是 TS 侧能独立校验层存在性与版本存在性，签名一行不用改；
+    // 「rules.json 与层图是否同步」由 Python 的 rule_ledger 漂移检查兜（那才是真正跨文件的部分）。
+    const ruleId = String((x as { rule: string }).rule).trim();
+    const mode = typeof x.mode === 'string' ? x.mode.trim() : 'usable';
+    if (!ruleId) {
+      addIssue(issues, 'error', 'condition.rule.empty', `${owner}: rule condition requires a rule id`, path, owner, target);
+      return false;
+    }
+    if (!RULE_LEAF_MODES.has(mode)) {
+      addIssue(issues, 'error', 'condition.rule.mode', `${owner}: unknown rule condition mode: ${mode}`, `${path}.mode`, owner, target);
+      return false;
+    }
+    if (mode === 'discovered' || mode === 'acquired') return true;
+    const layer = typeof x.layer === 'string' ? x.layer.trim() : '';
+    if (!RULE_LAYER_KEYS.has(layer)) {
+      addIssue(issues, 'error', 'condition.rule.layer', `${owner}: rule condition (mode=${mode}) requires layer xiang|li|shu`, `${path}.layer`, owner, target);
+      return false;
+    }
+    const layerGraphId = `${ruleId}__${layer}`;
+    const layerGraph = graphIndex.graphs.get(layerGraphId);
+    if (!layerGraph) {
+      addIssue(issues, 'error', 'condition.rule.layerMissing', `${owner}: rule layer graph does not exist: ${layerGraphId} (run ./dev.sh sync-rule-graphs)`, `${path}.rule`, owner, target);
+      return false;
+    }
+    const version = typeof x.version === 'string' ? x.version.trim() : '';
+    if (version && !layerGraph.states?.[version]) {
+      addIssue(issues, 'error', 'condition.rule.versionMissing', `${owner}: rule version does not exist: ${layerGraphId}.${version}`, `${path}.version`, owner, target);
       return false;
     }
     return true;

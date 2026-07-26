@@ -15,7 +15,8 @@ import type { ConditionEvalContext } from './graphDialogue/evaluateGraphConditio
 import { evaluateConditionExprList } from './graphDialogue/conditionEvalBridge';
 import { TEXT_URLS } from '../core/projectPaths';
 
-type RuleNameResolveFn = (ruleId: string) => { name: string; incompleteName?: string } | undefined;
+type RuleNameResolveFn = (ruleId: string) =>
+  { name: string; incompleteName?: string; depth: { unlocked: number; total: number } } | undefined;
 
 export class EncounterManager implements IGameSystem {
   private eventBus: EventBus;
@@ -117,14 +118,15 @@ export class EncounterManager implements IGameSystem {
     for (const opt of this.currentEncounter.options) {
       if (opt.requiredRuleId) {
         const ruleId = opt.requiredRuleId;
-        const ruleAcquired = this.flagStore.get(`rule_${ruleId}_acquired`) === true;
-        const ruleDiscovered = this.flagStore.get(`rule_${ruleId}_discovered`) === true;
+        // 规矩状态一律经统一条件求值（rule 叶 → 层图 reached/active），不再直读 FlagStore。
+        const ruleAcquired = this.evalConditions([{ rule: ruleId, mode: 'acquired' }]);
+        const ruleDiscovered = this.evalConditions([{ rule: ruleId, mode: 'discovered' }]);
         const layerReq = opt.requiredRuleLayers;
         const needLayers = !!(layerReq && layerReq.length > 0);
         const layersOk =
           needLayers &&
-          (layerReq as RuleLayerKey[]).every(
-            (L) => this.flagStore.get(`rule_${ruleId}_${L}_done`) === true,
+          this.evalConditions(
+            (layerReq as RuleLayerKey[]).map((L) => ({ rule: ruleId, layer: L, mode: 'usable' as const })),
           );
         const requirementMet = needLayers ? layersOk : ruleAcquired;
 
@@ -150,8 +152,9 @@ export class EncounterManager implements IGameSystem {
               resultText: opt.resultText ? this.r(opt.resultText) : opt.resultText,
             });
           } else {
-            const collected = (this.flagStore.get(`rule_${ruleId}_fragments_collected`) as number) ?? 0;
-            const total = (this.flagStore.get(`rule_${ruleId}_fragments_total`) as number) ?? 0;
+            // 碎片退役后，进度就是「掌握了几层」。
+            const collected = ruleInfo?.depth.unlocked ?? 0;
+            const total = ruleInfo?.depth.total ?? 0;
             this.currentOptions.push({
               index: idx++,
               text: `${displayName} (${collected}/${total})`,

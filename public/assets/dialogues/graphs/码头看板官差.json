@@ -73,9 +73,7 @@
         {
           "id": "intel",
           "text": "搬几句听来的夜间忌讳诈他一诈",
-          "next": "n_intel_1",
-          "requireFlag": "rule_rule_no_go_night_acquired",
-          "ruleHintId": "rule_no_go_night"
+          "next": "n_intel_1"
         }
       ]
     },

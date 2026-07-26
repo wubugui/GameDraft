@@ -29,6 +29,7 @@ TOOL_MODULES: dict[str, tuple[str, list[str]]] = {
     "parallax-editor": ("tools.parallax_editor", []),
     "skill-governance": ("tools.skill_workflow_governance.console", []),
     "validate-data": ("tools.editor.validate", []),
+    "sync-rule-graphs": ("tools.editor.sync_rule_graphs", []),
     "audit-depth": ("tools.character_lighting_lab.audit_depth", []),
     "audit-walkable": ("tools.character_lighting_lab.audit_walkable", []),
     "json-lang": ("tools.json_lang.build", []),

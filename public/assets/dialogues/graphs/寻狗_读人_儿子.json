@@ -17,6 +17,17 @@
             }
           ],
           "next": "again_1"
+        },
+        {
+          "conditions": [
+            {
+              "not": {
+                "rule": "rule_read_the_room",
+                "layer": "xiang"
+              }
+            }
+          ],
+          "next": "n_flat"
         }
       ],
       "defaultNext": "n1"
@@ -66,6 +77,15 @@
     },
     "end1": {
       "type": "end"
+    },
+    "n_flat": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "后生倚着门框，一句话没说。看着就是个闷葫芦，没啥好看的。",
+      "next": "end1"
     }
   }
 }

@@ -463,6 +463,28 @@ export type PlaneConditionLeaf = {
   plane: string;
 };
 
+/**
+ * 规矩叶子：读「这条规矩的某一层，我掌握到什么程度、现在信哪一版」。
+ *
+ * 底下 100% 走叙事状态机——一条规矩的每一层各是一张层图 `<ruleId>__<layer>`，
+ * `reached('未验')` = 掌握了这一层（单调只增），`active` = 当前信的是哪一版。
+ * 本叶子只是这套查询的读法糖，**不是第二真相源**，也不读任何 flag。
+ *
+ * `mode` 语义（缺省 `usable`，safe-by-default）：
+ * - `usable`     已掌握 **且** 当前版本没被推翻——绝大多数门控都该用它
+ * - `known`      只问掌握、不问可信度（明知规矩是错的也要放行时才写）
+ * - `discovered` 这条规矩听说过没有（任一层已掌握）；此时 `layer` 可省
+ * - `acquired`   整条规矩的**每一层**都掌握了；此时 `layer` 可省
+ *
+ * `version` 另填时，额外要求该层当前生效版本 === 它（读「他现在信的是哪一版」）。
+ */
+export type RuleConditionLeaf = {
+  rule: string;
+  layer?: RuleLayerKey;
+  mode?: 'usable' | 'known' | 'discovered' | 'acquired';
+  version?: string;
+};
+
 /** 图对话原子条件（无逻辑组合） */
 export type GraphConditionLeaf =
   | Condition
@@ -471,7 +493,8 @@ export type GraphConditionLeaf =
   | ScenarioLineConditionLeaf
   | NarrativeStateConditionLeaf
   | NarrativeRunCountConditionLeaf
-  | PlaneConditionLeaf;
+  | PlaneConditionLeaf
+  | RuleConditionLeaf;
 
 /**
  * 递归条件：叶子或 all / any / not（与叙事文档 ConditionExpr 一致）。
@@ -1795,11 +1818,16 @@ export interface IInventoryDataProvider {
   canDiscard(id: string): boolean;
 }
 
+/**
+ * 规矩读取面。
+ *
+ * 「碎片」已于 2026-07-26 退役——象/理/术 三层本身就是碎片，不需要第四层分步
+ * （制作人原话：「规矩本身其实就是碎片了，每一个象、理、术其实都是碎片」）。
+ * 进度改用 `getRuleDepth`（已解锁层数 / 总层数）表达。
+ */
 export interface IRulesDataProvider {
   getAcquiredRules(): { def: RuleDef; acquired: boolean }[];
   getDiscoveredRules(): { def: RuleDef; collected: number; total: number }[];
-  getFragmentProgress(ruleId: string): { collected: number; total: number; fragments: RuleFragmentDef[] };
-  hasFragment(fragmentId: string): boolean;
   hasRule(ruleId: string): boolean;
   getRuleDef(ruleId: string): RuleDef | undefined;
   isDiscovered(ruleId: string): boolean;
@@ -1808,9 +1836,12 @@ export interface IRulesDataProvider {
   getRuleDepth(ruleId: string): { unlocked: number; total: number };
   hasLayer(ruleId: string, layer: RuleLayerKey): boolean;
   getUnlockedLayerTexts(ruleId: string): Partial<Record<RuleLayerKey, string>>;
-  getLayerFragmentProgress(ruleId: string): Partial<
-    Record<RuleLayerKey, { collected: number; total: number; fragments: RuleFragmentDef[] }>
-  >;
+  /** 该层当前版本的验证态（未掌握返回 undefined）。 */
+  getLayerVerified(ruleId: string, layer: RuleLayerKey): RuleVerified | undefined;
+  /** 该层当前版本是否被推翻（规矩本画删除线）。 */
+  isLayerRefuted(ruleId: string, layer: RuleLayerKey): boolean;
+  /** 被取代的旧说法（规矩本折叠展示「我当初是这么以为的」）。 */
+  getLayerSupersededText(ruleId: string, layer: RuleLayerKey): string | undefined;
 }
 
 export interface IArchiveDataProvider {

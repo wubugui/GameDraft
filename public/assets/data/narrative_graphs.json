@@ -835,7 +835,10 @@
           "meta": {
             "emits": [
               "pozi_performed",
-              "pozi_paid"
+              "pozi_paid",
+              "pozi_paid_clean",
+              "pozi_paid_half",
+              "pozi_paid_blind"
             ],
             "reads": [
               "flow_xungou_main"
@@ -2422,10 +2425,11 @@
                 "label": "师承种子已埋",
                 "onEnterActions": [
                   {
-                    "type": "grantRuleLayer",
+                    "type": "advanceRule",
                     "params": {
                       "ruleId": "rule_zhenshi_sizhang",
-                      "layer": "xiang"
+                      "layer": "xiang",
+                      "to": "未验"
                     }
                   }
                 ]
@@ -2519,11 +2523,7 @@
                       "lines": [
                         {
                           "speaker": "",
-                          "text": "进门前，关二狗在院外站了一哈——这是背尸行里学来的：先看人，再看屋。"
-                        },
-                        {
-                          "speaker": "",
-                          "text": "谁最慌、谁一开口另一个先去看他，比屋里有什么都说得明白。"
+                          "text": "院坝不大。婆子在说话，她儿子倚着门框，一句没搭。"
                         }
                       ]
                     }
@@ -2578,15 +2578,7 @@
                   }
                 },
                 "label": "收钱走人（beat完成）",
-                "broadcastOnEnter": true,
-                "onEnterActions": [
-                  {
-                    "type": "giveCurrency",
-                    "params": {
-                      "amount": 30
-                    }
-                  }
-                ]
+                "broadcastOnEnter": true
               }
             },
             "transitions": [
@@ -2620,6 +2612,12 @@
                 ]
               },
               {
+                "id": "t_perf_blind",
+                "from": "at_courtyard",
+                "to": "performed",
+                "signal": "pozi_performed"
+              },
+              {
                 "id": "t_perf",
                 "from": "read_all",
                 "to": "performed",
@@ -2634,6 +2632,55 @@
             ]
           },
           "package": "章节_婆子家"
+        },
+        {
+          "id": "el_wrap_婆子家口碑",
+          "kind": "wrapperGraph",
+          "label": "婆子家·口碑（第一单办成什么样）",
+          "ownerId": "婆子家:口碑",
+          "graph": {
+            "id": "wrap_婆子家口碑",
+            "label": "婆子家·口碑",
+            "initialState": "未办",
+            "states": {
+              "未办": {
+                "id": "未办",
+                "label": "还没接这单"
+              },
+              "办漂亮": {
+                "id": "办漂亮",
+                "label": "认出正主、话留了口子——街坊传开了"
+              },
+              "半吊子": {
+                "id": "半吊子",
+                "label": "人认对了，话说破了——将信将疑"
+              },
+              "糊弄过去": {
+                "id": "糊弄过去",
+                "label": "挑错了人，蒙混过关——这家从此不认他"
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_clean",
+                "from": "未办",
+                "to": "办漂亮",
+                "signal": "pozi_paid_clean"
+              },
+              {
+                "id": "t_half",
+                "from": "未办",
+                "to": "半吊子",
+                "signal": "pozi_paid_half"
+              },
+              {
+                "id": "t_blind",
+                "from": "未办",
+                "to": "糊弄过去",
+                "signal": "pozi_paid_blind"
+              }
+            ]
+          }
         },
         {
           "id": "el_scenario_河边",
@@ -3205,10 +3252,11 @@
                     }
                   },
                   {
-                    "type": "grantRuleLayer",
+                    "type": "advanceRule",
                     "params": {
                       "ruleId": "rule_no_answer_name",
-                      "layer": "xiang"
+                      "layer": "xiang",
+                      "to": "未验"
                     }
                   }
                 ]
@@ -3416,10 +3464,11 @@
                     }
                   },
                   {
-                    "type": "grantRuleLayer",
+                    "type": "advanceRule",
                     "params": {
                       "ruleId": "rule_no_answer_name",
-                      "layer": "li"
+                      "layer": "li",
+                      "to": "未验"
                     }
                   }
                 ]
@@ -5659,6 +5708,1080 @@
           }
         }
       ]
+    },
+    {
+      "id": "rule_ledger",
+      "label": "规矩账本（rules.json 生成，勿手改）",
+      "description": "由 rules.json 生成，勿手改——下次 ./dev.sh sync-rule-graphs 会覆盖。改规矩请去规矩编辑器。",
+      "mainGraph": {
+        "id": "rule_ledger_index",
+        "label": "规矩账本·锚（占位，无逻辑）",
+        "initialState": "常驻",
+        "states": {
+          "常驻": {
+            "id": "常驻",
+            "label": "常驻"
+          }
+        },
+        "transitions": []
+      },
+      "elements": [
+        {
+          "id": "el_rule_drowned_corpse__xiang",
+          "kind": "wrapperGraph",
+          "ownerId": "rule_drowned_corpse:xiang",
+          "label": "淹死的，水汽重·xiang",
+          "graph": {
+            "id": "rule_drowned_corpse__xiang",
+            "label": "淹死的，水汽重·xiang",
+            "initialState": "未闻",
+            "states": {
+              "未闻": {
+                "id": "未闻",
+                "label": "没听说过"
+              },
+              "未验": {
+                "id": "未验",
+                "label": "听来的，没验过"
+              },
+              "验成": {
+                "id": "验成"
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_未闻_到_未验",
+                "from": "未闻",
+                "to": "未验",
+                "signal": "rule:rule_drowned_corpse:xiang:未验"
+              },
+              {
+                "id": "t_验成_到_未验",
+                "from": "验成",
+                "to": "未验",
+                "signal": "rule:rule_drowned_corpse:xiang:未验"
+              },
+              {
+                "id": "t_未闻_到_验成",
+                "from": "未闻",
+                "to": "验成",
+                "signal": "rule:rule_drowned_corpse:xiang:验成"
+              },
+              {
+                "id": "t_未验_到_验成",
+                "from": "未验",
+                "to": "验成",
+                "signal": "rule:rule_drowned_corpse:xiang:验成"
+              }
+            ]
+          }
+        },
+        {
+          "id": "el_rule_drowned_corpse__li",
+          "kind": "wrapperGraph",
+          "ownerId": "rule_drowned_corpse:li",
+          "label": "淹死的，水汽重·li",
+          "graph": {
+            "id": "rule_drowned_corpse__li",
+            "label": "淹死的，水汽重·li",
+            "initialState": "未闻",
+            "states": {
+              "未闻": {
+                "id": "未闻",
+                "label": "没听说过"
+              },
+              "未验": {
+                "id": "未验",
+                "label": "听来的，没验过"
+              },
+              "验成": {
+                "id": "验成"
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_未闻_到_未验",
+                "from": "未闻",
+                "to": "未验",
+                "signal": "rule:rule_drowned_corpse:li:未验"
+              },
+              {
+                "id": "t_验成_到_未验",
+                "from": "验成",
+                "to": "未验",
+                "signal": "rule:rule_drowned_corpse:li:未验"
+              },
+              {
+                "id": "t_未闻_到_验成",
+                "from": "未闻",
+                "to": "验成",
+                "signal": "rule:rule_drowned_corpse:li:验成"
+              },
+              {
+                "id": "t_未验_到_验成",
+                "from": "未验",
+                "to": "验成",
+                "signal": "rule:rule_drowned_corpse:li:验成"
+              }
+            ]
+          }
+        },
+        {
+          "id": "el_rule_drowned_corpse__shu",
+          "kind": "wrapperGraph",
+          "ownerId": "rule_drowned_corpse:shu",
+          "label": "淹死的，水汽重·shu",
+          "graph": {
+            "id": "rule_drowned_corpse__shu",
+            "label": "淹死的，水汽重·shu",
+            "initialState": "未闻",
+            "states": {
+              "未闻": {
+                "id": "未闻",
+                "label": "没听说过"
+              },
+              "未验": {
+                "id": "未验",
+                "label": "听来的，没验过"
+              },
+              "验成": {
+                "id": "验成"
+              },
+              "细化_莫烧": {
+                "id": "细化_莫烧"
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_未闻_到_未验",
+                "from": "未闻",
+                "to": "未验",
+                "signal": "rule:rule_drowned_corpse:shu:未验"
+              },
+              {
+                "id": "t_验成_到_未验",
+                "from": "验成",
+                "to": "未验",
+                "signal": "rule:rule_drowned_corpse:shu:未验"
+              },
+              {
+                "id": "t_细化_莫烧_到_未验",
+                "from": "细化_莫烧",
+                "to": "未验",
+                "signal": "rule:rule_drowned_corpse:shu:未验"
+              },
+              {
+                "id": "t_未闻_到_验成",
+                "from": "未闻",
+                "to": "验成",
+                "signal": "rule:rule_drowned_corpse:shu:验成"
+              },
+              {
+                "id": "t_未验_到_验成",
+                "from": "未验",
+                "to": "验成",
+                "signal": "rule:rule_drowned_corpse:shu:验成"
+              },
+              {
+                "id": "t_细化_莫烧_到_验成",
+                "from": "细化_莫烧",
+                "to": "验成",
+                "signal": "rule:rule_drowned_corpse:shu:验成"
+              },
+              {
+                "id": "t_未闻_到_细化_莫烧",
+                "from": "未闻",
+                "to": "细化_莫烧",
+                "signal": "rule:rule_drowned_corpse:shu:细化_莫烧"
+              },
+              {
+                "id": "t_未验_到_细化_莫烧",
+                "from": "未验",
+                "to": "细化_莫烧",
+                "signal": "rule:rule_drowned_corpse:shu:细化_莫烧"
+              },
+              {
+                "id": "t_验成_到_细化_莫烧",
+                "from": "验成",
+                "to": "细化_莫烧",
+                "signal": "rule:rule_drowned_corpse:shu:细化_莫烧"
+              }
+            ]
+          }
+        },
+        {
+          "id": "el_rule_no_switch_shoulder__xiang",
+          "kind": "wrapperGraph",
+          "ownerId": "rule_no_switch_shoulder:xiang",
+          "label": "上肩莫换肩·xiang",
+          "graph": {
+            "id": "rule_no_switch_shoulder__xiang",
+            "label": "上肩莫换肩·xiang",
+            "initialState": "未闻",
+            "states": {
+              "未闻": {
+                "id": "未闻",
+                "label": "没听说过"
+              },
+              "未验": {
+                "id": "未验",
+                "label": "听来的，没验过"
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_未闻_到_未验",
+                "from": "未闻",
+                "to": "未验",
+                "signal": "rule:rule_no_switch_shoulder:xiang:未验"
+              }
+            ]
+          }
+        },
+        {
+          "id": "el_rule_no_switch_shoulder__li",
+          "kind": "wrapperGraph",
+          "ownerId": "rule_no_switch_shoulder:li",
+          "label": "上肩莫换肩·li",
+          "graph": {
+            "id": "rule_no_switch_shoulder__li",
+            "label": "上肩莫换肩·li",
+            "initialState": "未闻",
+            "states": {
+              "未闻": {
+                "id": "未闻",
+                "label": "没听说过"
+              },
+              "未验": {
+                "id": "未验",
+                "label": "听来的，没验过"
+              },
+              "验成": {
+                "id": "验成"
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_未闻_到_未验",
+                "from": "未闻",
+                "to": "未验",
+                "signal": "rule:rule_no_switch_shoulder:li:未验"
+              },
+              {
+                "id": "t_验成_到_未验",
+                "from": "验成",
+                "to": "未验",
+                "signal": "rule:rule_no_switch_shoulder:li:未验"
+              },
+              {
+                "id": "t_未闻_到_验成",
+                "from": "未闻",
+                "to": "验成",
+                "signal": "rule:rule_no_switch_shoulder:li:验成"
+              },
+              {
+                "id": "t_未验_到_验成",
+                "from": "未验",
+                "to": "验成",
+                "signal": "rule:rule_no_switch_shoulder:li:验成"
+              }
+            ]
+          }
+        },
+        {
+          "id": "el_rule_no_switch_shoulder__shu",
+          "kind": "wrapperGraph",
+          "ownerId": "rule_no_switch_shoulder:shu",
+          "label": "上肩莫换肩·shu",
+          "graph": {
+            "id": "rule_no_switch_shoulder__shu",
+            "label": "上肩莫换肩·shu",
+            "initialState": "未闻",
+            "states": {
+              "未闻": {
+                "id": "未闻",
+                "label": "没听说过"
+              },
+              "未验": {
+                "id": "未验",
+                "label": "听来的，没验过"
+              },
+              "验成": {
+                "id": "验成"
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_未闻_到_未验",
+                "from": "未闻",
+                "to": "未验",
+                "signal": "rule:rule_no_switch_shoulder:shu:未验"
+              },
+              {
+                "id": "t_验成_到_未验",
+                "from": "验成",
+                "to": "未验",
+                "signal": "rule:rule_no_switch_shoulder:shu:未验"
+              },
+              {
+                "id": "t_未闻_到_验成",
+                "from": "未闻",
+                "to": "验成",
+                "signal": "rule:rule_no_switch_shoulder:shu:验成"
+              },
+              {
+                "id": "t_未验_到_验成",
+                "from": "未验",
+                "to": "验成",
+                "signal": "rule:rule_no_switch_shoulder:shu:验成"
+              }
+            ]
+          }
+        },
+        {
+          "id": "el_rule_dry_corpse_walks__xiang",
+          "kind": "wrapperGraph",
+          "ownerId": "rule_dry_corpse_walks:xiang",
+          "label": "干尸才走·xiang",
+          "graph": {
+            "id": "rule_dry_corpse_walks__xiang",
+            "label": "干尸才走·xiang",
+            "initialState": "未闻",
+            "states": {
+              "未闻": {
+                "id": "未闻",
+                "label": "没听说过"
+              },
+              "未验": {
+                "id": "未验",
+                "label": "听来的，没验过"
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_未闻_到_未验",
+                "from": "未闻",
+                "to": "未验",
+                "signal": "rule:rule_dry_corpse_walks:xiang:未验"
+              }
+            ]
+          }
+        },
+        {
+          "id": "el_rule_dry_corpse_walks__li",
+          "kind": "wrapperGraph",
+          "ownerId": "rule_dry_corpse_walks:li",
+          "label": "干尸才走·li",
+          "graph": {
+            "id": "rule_dry_corpse_walks__li",
+            "label": "干尸才走·li",
+            "initialState": "未闻",
+            "states": {
+              "未闻": {
+                "id": "未闻",
+                "label": "没听说过"
+              },
+              "未验": {
+                "id": "未验",
+                "label": "听来的，没验过"
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_未闻_到_未验",
+                "from": "未闻",
+                "to": "未验",
+                "signal": "rule:rule_dry_corpse_walks:li:未验"
+              }
+            ]
+          }
+        },
+        {
+          "id": "el_rule_dry_corpse_walks__shu",
+          "kind": "wrapperGraph",
+          "ownerId": "rule_dry_corpse_walks:shu",
+          "label": "干尸才走·shu",
+          "graph": {
+            "id": "rule_dry_corpse_walks__shu",
+            "label": "干尸才走·shu",
+            "initialState": "未闻",
+            "states": {
+              "未闻": {
+                "id": "未闻",
+                "label": "没听说过"
+              },
+              "未验": {
+                "id": "未验",
+                "label": "听来的，没验过"
+              },
+              "验成": {
+                "id": "验成"
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_未闻_到_未验",
+                "from": "未闻",
+                "to": "未验",
+                "signal": "rule:rule_dry_corpse_walks:shu:未验"
+              },
+              {
+                "id": "t_验成_到_未验",
+                "from": "验成",
+                "to": "未验",
+                "signal": "rule:rule_dry_corpse_walks:shu:未验"
+              },
+              {
+                "id": "t_未闻_到_验成",
+                "from": "未闻",
+                "to": "验成",
+                "signal": "rule:rule_dry_corpse_walks:shu:验成"
+              },
+              {
+                "id": "t_未验_到_验成",
+                "from": "未验",
+                "to": "验成",
+                "signal": "rule:rule_dry_corpse_walks:shu:验成"
+              }
+            ]
+          }
+        },
+        {
+          "id": "el_rule_zhenshi_sizhang__xiang",
+          "kind": "wrapperGraph",
+          "ownerId": "rule_zhenshi_sizhang:xiang",
+          "label": "镇尸四样·xiang",
+          "graph": {
+            "id": "rule_zhenshi_sizhang__xiang",
+            "label": "镇尸四样·xiang",
+            "initialState": "未闻",
+            "states": {
+              "未闻": {
+                "id": "未闻",
+                "label": "没听说过"
+              },
+              "未验": {
+                "id": "未验",
+                "label": "听来的，没验过"
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_未闻_到_未验",
+                "from": "未闻",
+                "to": "未验",
+                "signal": "rule:rule_zhenshi_sizhang:xiang:未验"
+              }
+            ]
+          }
+        },
+        {
+          "id": "el_rule_zhenshi_sizhang__shu",
+          "kind": "wrapperGraph",
+          "ownerId": "rule_zhenshi_sizhang:shu",
+          "label": "镇尸四样·shu",
+          "graph": {
+            "id": "rule_zhenshi_sizhang__shu",
+            "label": "镇尸四样·shu",
+            "initialState": "未闻",
+            "states": {
+              "未闻": {
+                "id": "未闻",
+                "label": "没听说过"
+              },
+              "未验": {
+                "id": "未验",
+                "label": "听来的，没验过"
+              },
+              "四样齐下": {
+                "id": "四样齐下"
+              },
+              "细化_墨线不打紧": {
+                "id": "细化_墨线不打紧"
+              },
+              "细化_石子少不得": {
+                "id": "细化_石子少不得"
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_未闻_到_未验",
+                "from": "未闻",
+                "to": "未验",
+                "signal": "rule:rule_zhenshi_sizhang:shu:未验"
+              },
+              {
+                "id": "t_四样齐下_到_未验",
+                "from": "四样齐下",
+                "to": "未验",
+                "signal": "rule:rule_zhenshi_sizhang:shu:未验"
+              },
+              {
+                "id": "t_细化_墨线不打紧_到_未验",
+                "from": "细化_墨线不打紧",
+                "to": "未验",
+                "signal": "rule:rule_zhenshi_sizhang:shu:未验"
+              },
+              {
+                "id": "t_细化_石子少不得_到_未验",
+                "from": "细化_石子少不得",
+                "to": "未验",
+                "signal": "rule:rule_zhenshi_sizhang:shu:未验"
+              },
+              {
+                "id": "t_未闻_到_四样齐下",
+                "from": "未闻",
+                "to": "四样齐下",
+                "signal": "rule:rule_zhenshi_sizhang:shu:四样齐下"
+              },
+              {
+                "id": "t_未验_到_四样齐下",
+                "from": "未验",
+                "to": "四样齐下",
+                "signal": "rule:rule_zhenshi_sizhang:shu:四样齐下"
+              },
+              {
+                "id": "t_细化_墨线不打紧_到_四样齐下",
+                "from": "细化_墨线不打紧",
+                "to": "四样齐下",
+                "signal": "rule:rule_zhenshi_sizhang:shu:四样齐下"
+              },
+              {
+                "id": "t_细化_石子少不得_到_四样齐下",
+                "from": "细化_石子少不得",
+                "to": "四样齐下",
+                "signal": "rule:rule_zhenshi_sizhang:shu:四样齐下"
+              },
+              {
+                "id": "t_未闻_到_细化_墨线不打紧",
+                "from": "未闻",
+                "to": "细化_墨线不打紧",
+                "signal": "rule:rule_zhenshi_sizhang:shu:细化_墨线不打紧"
+              },
+              {
+                "id": "t_未验_到_细化_墨线不打紧",
+                "from": "未验",
+                "to": "细化_墨线不打紧",
+                "signal": "rule:rule_zhenshi_sizhang:shu:细化_墨线不打紧"
+              },
+              {
+                "id": "t_四样齐下_到_细化_墨线不打紧",
+                "from": "四样齐下",
+                "to": "细化_墨线不打紧",
+                "signal": "rule:rule_zhenshi_sizhang:shu:细化_墨线不打紧"
+              },
+              {
+                "id": "t_细化_石子少不得_到_细化_墨线不打紧",
+                "from": "细化_石子少不得",
+                "to": "细化_墨线不打紧",
+                "signal": "rule:rule_zhenshi_sizhang:shu:细化_墨线不打紧"
+              },
+              {
+                "id": "t_未闻_到_细化_石子少不得",
+                "from": "未闻",
+                "to": "细化_石子少不得",
+                "signal": "rule:rule_zhenshi_sizhang:shu:细化_石子少不得"
+              },
+              {
+                "id": "t_未验_到_细化_石子少不得",
+                "from": "未验",
+                "to": "细化_石子少不得",
+                "signal": "rule:rule_zhenshi_sizhang:shu:细化_石子少不得"
+              },
+              {
+                "id": "t_四样齐下_到_细化_石子少不得",
+                "from": "四样齐下",
+                "to": "细化_石子少不得",
+                "signal": "rule:rule_zhenshi_sizhang:shu:细化_石子少不得"
+              },
+              {
+                "id": "t_细化_墨线不打紧_到_细化_石子少不得",
+                "from": "细化_墨线不打紧",
+                "to": "细化_石子少不得",
+                "signal": "rule:rule_zhenshi_sizhang:shu:细化_石子少不得"
+              }
+            ]
+          }
+        },
+        {
+          "id": "el_rule_no_answer_name__xiang",
+          "kind": "wrapperGraph",
+          "ownerId": "rule_no_answer_name:xiang",
+          "label": "山里喊名，千万别应·xiang",
+          "graph": {
+            "id": "rule_no_answer_name__xiang",
+            "label": "山里喊名，千万别应·xiang",
+            "initialState": "未闻",
+            "states": {
+              "未闻": {
+                "id": "未闻",
+                "label": "没听说过"
+              },
+              "未验": {
+                "id": "未验",
+                "label": "听来的，没验过"
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_未闻_到_未验",
+                "from": "未闻",
+                "to": "未验",
+                "signal": "rule:rule_no_answer_name:xiang:未验"
+              }
+            ]
+          }
+        },
+        {
+          "id": "el_rule_no_answer_name__li",
+          "kind": "wrapperGraph",
+          "ownerId": "rule_no_answer_name:li",
+          "label": "山里喊名，千万别应·li",
+          "graph": {
+            "id": "rule_no_answer_name__li",
+            "label": "山里喊名，千万别应·li",
+            "initialState": "未闻",
+            "states": {
+              "未闻": {
+                "id": "未闻",
+                "label": "没听说过"
+              },
+              "未验": {
+                "id": "未验",
+                "label": "听来的，没验过"
+              },
+              "验成": {
+                "id": "验成"
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_未闻_到_未验",
+                "from": "未闻",
+                "to": "未验",
+                "signal": "rule:rule_no_answer_name:li:未验"
+              },
+              {
+                "id": "t_验成_到_未验",
+                "from": "验成",
+                "to": "未验",
+                "signal": "rule:rule_no_answer_name:li:未验"
+              },
+              {
+                "id": "t_未闻_到_验成",
+                "from": "未闻",
+                "to": "验成",
+                "signal": "rule:rule_no_answer_name:li:验成"
+              },
+              {
+                "id": "t_未验_到_验成",
+                "from": "未验",
+                "to": "验成",
+                "signal": "rule:rule_no_answer_name:li:验成"
+              }
+            ]
+          }
+        },
+        {
+          "id": "el_rule_no_answer_name__shu",
+          "kind": "wrapperGraph",
+          "ownerId": "rule_no_answer_name:shu",
+          "label": "山里喊名，千万别应·shu",
+          "graph": {
+            "id": "rule_no_answer_name__shu",
+            "label": "山里喊名，千万别应·shu",
+            "initialState": "未闻",
+            "states": {
+              "未闻": {
+                "id": "未闻",
+                "label": "没听说过"
+              },
+              "未验": {
+                "id": "未验",
+                "label": "听来的，没验过"
+              },
+              "细化_来路的声音": {
+                "id": "细化_来路的声音"
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_未闻_到_未验",
+                "from": "未闻",
+                "to": "未验",
+                "signal": "rule:rule_no_answer_name:shu:未验"
+              },
+              {
+                "id": "t_细化_来路的声音_到_未验",
+                "from": "细化_来路的声音",
+                "to": "未验",
+                "signal": "rule:rule_no_answer_name:shu:未验"
+              },
+              {
+                "id": "t_未闻_到_细化_来路的声音",
+                "from": "未闻",
+                "to": "细化_来路的声音",
+                "signal": "rule:rule_no_answer_name:shu:细化_来路的声音"
+              },
+              {
+                "id": "t_未验_到_细化_来路的声音",
+                "from": "未验",
+                "to": "细化_来路的声音",
+                "signal": "rule:rule_no_answer_name:shu:细化_来路的声音"
+              }
+            ]
+          }
+        },
+        {
+          "id": "el_rule_no_touch_offering__xiang",
+          "kind": "wrapperGraph",
+          "ownerId": "rule_no_touch_offering:xiang",
+          "label": "路祭不能动·xiang",
+          "graph": {
+            "id": "rule_no_touch_offering__xiang",
+            "label": "路祭不能动·xiang",
+            "initialState": "未闻",
+            "states": {
+              "未闻": {
+                "id": "未闻",
+                "label": "没听说过"
+              },
+              "未验": {
+                "id": "未验",
+                "label": "听来的，没验过"
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_未闻_到_未验",
+                "from": "未闻",
+                "to": "未验",
+                "signal": "rule:rule_no_touch_offering:xiang:未验"
+              }
+            ]
+          }
+        },
+        {
+          "id": "el_rule_no_touch_offering__li",
+          "kind": "wrapperGraph",
+          "ownerId": "rule_no_touch_offering:li",
+          "label": "路祭不能动·li",
+          "graph": {
+            "id": "rule_no_touch_offering__li",
+            "label": "路祭不能动·li",
+            "initialState": "未闻",
+            "states": {
+              "未闻": {
+                "id": "未闻",
+                "label": "没听说过"
+              },
+              "未验": {
+                "id": "未验",
+                "label": "听来的，没验过"
+              },
+              "验成": {
+                "id": "验成"
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_未闻_到_未验",
+                "from": "未闻",
+                "to": "未验",
+                "signal": "rule:rule_no_touch_offering:li:未验"
+              },
+              {
+                "id": "t_验成_到_未验",
+                "from": "验成",
+                "to": "未验",
+                "signal": "rule:rule_no_touch_offering:li:未验"
+              },
+              {
+                "id": "t_未闻_到_验成",
+                "from": "未闻",
+                "to": "验成",
+                "signal": "rule:rule_no_touch_offering:li:验成"
+              },
+              {
+                "id": "t_未验_到_验成",
+                "from": "未验",
+                "to": "验成",
+                "signal": "rule:rule_no_touch_offering:li:验成"
+              }
+            ]
+          }
+        },
+        {
+          "id": "el_rule_no_touch_offering__shu",
+          "kind": "wrapperGraph",
+          "ownerId": "rule_no_touch_offering:shu",
+          "label": "路祭不能动·shu",
+          "graph": {
+            "id": "rule_no_touch_offering__shu",
+            "label": "路祭不能动·shu",
+            "initialState": "未闻",
+            "states": {
+              "未闻": {
+                "id": "未闻",
+                "label": "没听说过"
+              },
+              "未验": {
+                "id": "未验",
+                "label": "听来的，没验过"
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_未闻_到_未验",
+                "from": "未闻",
+                "to": "未验",
+                "signal": "rule:rule_no_touch_offering:shu:未验"
+              }
+            ]
+          }
+        },
+        {
+          "id": "el_rule_avoid_night_road__xiang",
+          "kind": "wrapperGraph",
+          "ownerId": "rule_avoid_night_road:xiang",
+          "label": "莫走夜路·xiang",
+          "graph": {
+            "id": "rule_avoid_night_road__xiang",
+            "label": "莫走夜路·xiang",
+            "initialState": "未闻",
+            "states": {
+              "未闻": {
+                "id": "未闻",
+                "label": "没听说过"
+              },
+              "未验": {
+                "id": "未验",
+                "label": "听来的，没验过"
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_未闻_到_未验",
+                "from": "未闻",
+                "to": "未验",
+                "signal": "rule:rule_avoid_night_road:xiang:未验"
+              }
+            ]
+          }
+        },
+        {
+          "id": "el_rule_read_the_room__xiang",
+          "kind": "wrapperGraph",
+          "ownerId": "rule_read_the_room:xiang",
+          "label": "一屋子人，先看谁看谁·xiang",
+          "graph": {
+            "id": "rule_read_the_room__xiang",
+            "label": "一屋子人，先看谁看谁·xiang",
+            "initialState": "未闻",
+            "states": {
+              "未闻": {
+                "id": "未闻",
+                "label": "没听说过"
+              },
+              "未验": {
+                "id": "未验",
+                "label": "听来的，没验过"
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_未闻_到_未验",
+                "from": "未闻",
+                "to": "未验",
+                "signal": "rule:rule_read_the_room:xiang:未验"
+              }
+            ]
+          }
+        },
+        {
+          "id": "el_rule_read_the_room__li",
+          "kind": "wrapperGraph",
+          "ownerId": "rule_read_the_room:li",
+          "label": "一屋子人，先看谁看谁·li",
+          "graph": {
+            "id": "rule_read_the_room__li",
+            "label": "一屋子人，先看谁看谁·li",
+            "initialState": "未闻",
+            "states": {
+              "未闻": {
+                "id": "未闻",
+                "label": "没听说过"
+              },
+              "未验": {
+                "id": "未验",
+                "label": "听来的，没验过"
+              },
+              "验成": {
+                "id": "验成"
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_未闻_到_未验",
+                "from": "未闻",
+                "to": "未验",
+                "signal": "rule:rule_read_the_room:li:未验"
+              },
+              {
+                "id": "t_验成_到_未验",
+                "from": "验成",
+                "to": "未验",
+                "signal": "rule:rule_read_the_room:li:未验"
+              },
+              {
+                "id": "t_未闻_到_验成",
+                "from": "未闻",
+                "to": "验成",
+                "signal": "rule:rule_read_the_room:li:验成"
+              },
+              {
+                "id": "t_未验_到_验成",
+                "from": "未验",
+                "to": "验成",
+                "signal": "rule:rule_read_the_room:li:验成"
+              }
+            ]
+          }
+        },
+        {
+          "id": "el_rule_read_the_room__shu",
+          "kind": "wrapperGraph",
+          "ownerId": "rule_read_the_room:shu",
+          "label": "一屋子人，先看谁看谁·shu",
+          "graph": {
+            "id": "rule_read_the_room__shu",
+            "label": "一屋子人，先看谁看谁·shu",
+            "initialState": "未闻",
+            "states": {
+              "未闻": {
+                "id": "未闻",
+                "label": "没听说过"
+              },
+              "未验": {
+                "id": "未验",
+                "label": "听来的，没验过"
+              },
+              "验成": {
+                "id": "验成"
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_未闻_到_未验",
+                "from": "未闻",
+                "to": "未验",
+                "signal": "rule:rule_read_the_room:shu:未验"
+              },
+              {
+                "id": "t_验成_到_未验",
+                "from": "验成",
+                "to": "未验",
+                "signal": "rule:rule_read_the_room:shu:未验"
+              },
+              {
+                "id": "t_未闻_到_验成",
+                "from": "未闻",
+                "to": "验成",
+                "signal": "rule:rule_read_the_room:shu:验成"
+              },
+              {
+                "id": "t_未验_到_验成",
+                "from": "未验",
+                "to": "验成",
+                "signal": "rule:rule_read_the_room:shu:验成"
+              }
+            ]
+          }
+        },
+        {
+          "id": "el_rule_zombie_fire__xiang",
+          "kind": "wrapperGraph",
+          "ownerId": "rule_zombie_fire:xiang",
+          "label": "白毛僵尸怕火·xiang",
+          "graph": {
+            "id": "rule_zombie_fire__xiang",
+            "label": "白毛僵尸怕火·xiang",
+            "initialState": "未闻",
+            "states": {
+              "未闻": {
+                "id": "未闻",
+                "label": "没听说过"
+              },
+              "未验": {
+                "id": "未验",
+                "label": "听来的，没验过"
+              },
+              "存疑": {
+                "id": "存疑"
+              },
+              "推翻": {
+                "id": "推翻"
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_未闻_到_未验",
+                "from": "未闻",
+                "to": "未验",
+                "signal": "rule:rule_zombie_fire:xiang:未验"
+              },
+              {
+                "id": "t_存疑_到_未验",
+                "from": "存疑",
+                "to": "未验",
+                "signal": "rule:rule_zombie_fire:xiang:未验"
+              },
+              {
+                "id": "t_推翻_到_未验",
+                "from": "推翻",
+                "to": "未验",
+                "signal": "rule:rule_zombie_fire:xiang:未验"
+              },
+              {
+                "id": "t_未闻_到_存疑",
+                "from": "未闻",
+                "to": "存疑",
+                "signal": "rule:rule_zombie_fire:xiang:存疑"
+              },
+              {
+                "id": "t_未验_到_存疑",
+                "from": "未验",
+                "to": "存疑",
+                "signal": "rule:rule_zombie_fire:xiang:存疑"
+              },
+              {
+                "id": "t_推翻_到_存疑",
+                "from": "推翻",
+                "to": "存疑",
+                "signal": "rule:rule_zombie_fire:xiang:存疑"
+              },
+              {
+                "id": "t_未闻_到_推翻",
+                "from": "未闻",
+                "to": "推翻",
+                "signal": "rule:rule_zombie_fire:xiang:推翻"
+              },
+              {
+                "id": "t_未验_到_推翻",
+                "from": "未验",
+                "to": "推翻",
+                "signal": "rule:rule_zombie_fire:xiang:推翻"
+              },
+              {
+                "id": "t_存疑_到_推翻",
+                "from": "存疑",
+                "to": "推翻",
+                "signal": "rule:rule_zombie_fire:xiang:推翻"
+              }
+            ]
+          }
+        }
+      ]
     }
   ],
   "signals": [
@@ -6130,6 +7253,18 @@
     {
       "id": "yedao_chalu_done",
       "label": "yedao_chalu_done"
+    },
+    {
+      "id": "pozi_paid_clean",
+      "label": "婆子家·办得漂亮"
+    },
+    {
+      "id": "pozi_paid_half",
+      "label": "婆子家·半吊子"
+    },
+    {
+      "id": "pozi_paid_blind",
+      "label": "婆子家·糊弄过去"
     }
   ]
 }

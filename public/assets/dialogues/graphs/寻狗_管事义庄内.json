@@ -183,10 +183,11 @@
           }
         },
         {
-          "type": "grantRuleLayer",
+          "type": "advanceRule",
           "params": {
             "ruleId": "rule_drowned_corpse",
-            "layer": "xiang"
+            "layer": "xiang",
+            "to": "未验"
           }
         }
       ],
