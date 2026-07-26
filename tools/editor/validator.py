@@ -98,6 +98,7 @@ def validate(model: ProjectModel) -> list[Issue]:
             ))
         _cut_seen.add(_cid)
 
+    _validate_cutscene_speakers(model, issues)
     _validate_scenarios_catalog(model, issues)
 
     # --- scenes ---
@@ -2941,6 +2942,62 @@ def _append_action_param_ref_issues(
                 issues.append(Issue(
                     "warning", data_type, item_id,
                     f"{t} state {st!r} 不在 NPC {tgt!r} 的 anim.json states 中",
+                ))
+
+
+def _iter_cutscene_show_dialogue(steps: object):
+    """展平过场步骤（含 parallel.tracks），产出 (下标路径, showDialogue 步骤)。"""
+    if not isinstance(steps, list):
+        return
+    for si, step in enumerate(steps):
+        if not isinstance(step, dict):
+            continue
+        if step.get("kind") == "parallel":
+            for sub_path, sub in _iter_cutscene_show_dialogue(step.get("tracks")):
+                yield f"[{si}].tracks{sub_path}", sub
+        elif step.get("type") == "showDialogue":
+            yield f"[{si}]", step
+
+
+def _validate_cutscene_speakers(model: ProjectModel, issues: list[Issue]) -> None:
+    """过场台词的说话人配置。
+
+    漏填说话人实体是**静默失败**——运行时只打一条 console.warn，不显立绘、不冒「…」气泡、
+    左右分边也失效，跑测试一样过。这里把它变成看得见的问题。
+
+    只在「显示名恰好等于某个在场 NPC 的名字」时报——作者显然是指那位却没连上。
+    有意匿名的「???」「女人」这类不匹配任何 NPC，不会误报。
+    """
+    narrator = "旁白"
+    for cut in model.cutscenes:
+        if not isinstance(cut, dict):
+            continue
+        cid = str(cut.get("id", "") or "")
+        scene_id = str(cut.get("targetScene", "") or "").strip()
+        by_name: dict[str, str] = {}
+        known_ids: set[str] = set()
+        for nid, label in model.npc_ids_for_scene(scene_id or None):
+            known_ids.add(str(nid))
+            by_name.setdefault(str(label).strip(), str(nid))
+        for path, step in _iter_cutscene_show_dialogue(cut.get("steps")):
+            where = f"cutscenes[{cid}].steps{path}"
+            speaker = str(step.get("speaker", "") or "").strip()
+            snpc = str(step.get("scriptedNpcId", "") or "").strip()
+            if snpc and snpc != "player" and scene_id and known_ids and snpc not in known_ids:
+                issues.append(Issue(
+                    "warning", "cutsceneSpeaker", where,
+                    f"说话人 {snpc!r} 不在 targetScene {scene_id!r} 的 NPC 表中"
+                    "——运行时取不到实体，本行不显立绘、不冒气泡",
+                ))
+            if snpc or not speaker or "{{" in speaker or speaker == narrator:
+                continue
+            hit = by_name.get(speaker)
+            if hit:
+                issues.append(Issue(
+                    "warning", "cutsceneSpeaker", where,
+                    f"显示名 {speaker!r} 写成了字面值，但未选说话人（该名字对应场景 NPC {hit!r}）"
+                    "——本行不显立绘、不冒「…」气泡、左右分边失效。选上说话人即可，"
+                    "选后 speaker 可留空由实体给名字",
                 ))
 
 

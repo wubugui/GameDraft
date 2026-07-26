@@ -140,6 +140,7 @@ import {
   scriptedSpeakerEntityFromId,
   type ScriptedSpeakerEntity,
 } from '../utils/scriptedDialogueSpeaker';
+import { resolveSpeakerSide } from '../utils/dialogueSpeakerSide';
 import { Culler, Graphics, RenderTexture, Texture, UPDATE_PRIORITY } from 'pixi.js';
 import { sceneJsonUrl, TEXT_URLS } from './projectPaths';
 import {
@@ -635,7 +636,10 @@ export class Game {
    * 1. speaker 里的占位 `{{player}}` / `{{npc[:id]}}` 优先（与图对话 speakerEntity 同源）；
    * 2. 没写占位时认「说话 NPC」下拉填的 `scriptedNpcId`——策划把显示名写成字面（"关二狗"）
    *    是常规写法，此前这类行解析不出实体，「跟随说话人」的立绘一律不显；
-   * 3. 旁白不认实体：speaker 留空、或解析后等于旁白标签，一律 undefined（不显头像、不冒气泡）。
+   * 3. **显示名留空 = 跟「说话 NPC」走**（不是旁白）：只填下拉、不打名字是最省的写法，
+   *    此时实体即该下拉，显示名由 {@link scriptedSpeakerDisplayFallback} 取该实体的名字；
+   * 4. 只有 speaker 与 scriptedNpcId **都**没设、或显示名被显式写成旁白标签，才是旁白
+   *    （undefined：不显头像、不冒气泡、不分边）。
    */
   private resolveScriptedSpeakerEntityForLine(
     rawSpeaker: string,
@@ -649,11 +653,29 @@ export class Game {
     const snpc = (scriptedNpcId ?? '').trim();
     if (!snpc) return undefined;
     const speakerDisplay = this.resolveDisplayText(rawSpeaker ?? '').trim();
-    if (!speakerDisplay) return undefined;
+    // 显示名留空：跟下拉选中的实体走（此前这里当旁白，等于把选好的说话人丢掉）
+    if (!speakerDisplay) return scriptedSpeakerEntityFromId(snpc);
     const narrKey = this.stringsProvider.get('dialogue', 'narratorLabel');
     const narrator = this.resolveDisplayText(narrKey && narrKey !== 'narratorLabel' ? narrKey : '旁白').trim();
     if (speakerDisplay === narrator) return undefined;
     return scriptedSpeakerEntityFromId(snpc);
+  }
+
+  /**
+   * 显示名留空时的名字回落：取「说话 NPC」下拉所指实体的名字
+   * （主角=当前主角显示名，NPC=场景 NPC 的 name）。两者都没设 → 空串 = 旁白。
+   */
+  scriptedSpeakerDisplayFallback(scriptedNpcId: string): string {
+    const id = (scriptedNpcId ?? '').trim();
+    if (!id) return '';
+    // {{npc:<id>}} 已覆盖两种情形：保留 id `player` 出主角显示名，其余出场景 NPC 的 name。
+    return resolveScriptedSpeakerDisplay(`{{npc:${id}}}`, {
+      strings: this.stringsProvider,
+      flagStore: this.flagStore,
+      sceneManager: this.sceneManager,
+      graphDialogueNpcId: this.graphDialogueManager.getContextNpcId(),
+      fallbackNpcId: id,
+    });
   }
 
   private resolveScriptedPortrait(
@@ -883,7 +905,9 @@ export class Game {
     this.cutsceneRenderer.setDialoguePanelStyle({
       drawBox: (g, x, y, w, h) => drawPanelBase(g, x, y, w, h, SKINS.dialogue),
       drawSpeakerPlate: (g, x, y, w, h) => drawPanelBase(g, x, y, w, h, SKINS.panelAlt),
+      drawSelfSpeakerPlate: (g, x, y, w, h) => drawPanelBase(g, x, y, w, h, SKINS.speakerSelf),
       speakerColor: UITheme.colors.title,
+      selfSpeakerColor: UITheme.colors.speakerSelf,
       bodyColor: UITheme.colors.body,
       fontFamily: UITheme.fonts.ui,
     });
@@ -951,6 +975,21 @@ export class Game {
     // （resolveScriptedLineExtras 只读、不改其自身路径），令过场对白与常规对话头像语义一致。
     this.cutsceneManager.setScriptedPortraitResolver((ref, rawSpeaker, scriptedNpcId) =>
       this.resolveScriptedLineExtras(rawSpeaker, ref, scriptedNpcId ?? '').portrait,
+    );
+    // present:showDialogue 显示名留空时跟「说话 NPC」走（两者都空才是旁白）。
+    this.cutsceneManager.setScriptedSpeakerDisplayFallback((scriptedNpcId) =>
+      this.scriptedSpeakerDisplayFallback(scriptedNpcId),
+    );
+    // present:showDialogue 立绘/名牌分边：与常规对话同一口径（只认说话实体是不是当前受控主角）。
+    this.cutsceneManager.setScriptedSpeakerSideResolver((rawSpeaker, scriptedNpcId, override) =>
+      resolveSpeakerSide(
+        this.resolveScriptedSpeakerEntityForLine(rawSpeaker, scriptedNpcId ?? ''),
+        override,
+      ),
+    );
+    // present:showDialogue 的「这句是你说的」标记：只认说话实体是不是当前受控主角。
+    this.cutsceneManager.setScriptedSpeakerIsSelfResolver((rawSpeaker, scriptedNpcId) =>
+      this.resolveScriptedSpeakerEntityForLine(rawSpeaker, scriptedNpcId ?? '')?.kind === 'player',
     );
     // present:showDialogue 说话人头顶「……」气泡的锚点。旁白/未在场 → null → 不冒。
     // 说话人实体与头像跟随同一口径（占位优先，其次「说话NPC」下拉，旁白不认）。
@@ -1117,6 +1156,8 @@ export class Game {
           graphDialogueNpcId: this.graphDialogueManager.getContextNpcId(),
           fallbackNpcId: scriptedNpcId ?? '',
         }),
+      scriptedSpeakerDisplayFallback: (scriptedNpcId) =>
+        this.scriptedSpeakerDisplayFallback(scriptedNpcId ?? ''),
       resolveScriptedLineExtras: (rawSpeaker, portraitRef, scriptedNpcId) =>
         this.resolveScriptedLineExtras(rawSpeaker, portraitRef, scriptedNpcId ?? ''),
       ruleOfferRegistry: this.ruleOfferRegistry,

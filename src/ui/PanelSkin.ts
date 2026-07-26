@@ -39,6 +39,8 @@ export const SKINS = {
   dialogue: { fill: C.dialogueBg, fillAlpha: A.dialogueBg, radius: 4, borderWidth: 1.5, border: FRAME },
   panel: { fill: C.panelBg, fillAlpha: A.panelBg, radius: 4, borderWidth: 1.5, border: FRAME },
   panelAlt: { fill: C.panelBgAlt, fillAlpha: A.panelBg, radius: 4, borderWidth: 1.5, border: FRAME },
+  /** 主角说话人名牌：比 panelAlt 抬一档底色，与右侧站位一起标出「这句是你说的」 */
+  speakerSelf: { fill: C.rowBg, fillAlpha: A.panelBg, radius: 4, borderWidth: 1.5, border: C.borderActive },
   menu: { fill: C.mainMenuBg, fillAlpha: 0.97, radius: 4, borderWidth: 1.5, border: FRAME },
   book: { fill: C.bookBg, fillAlpha: A.panelBg, radius: 4, borderWidth: 1.5, border: FRAME },
   detail: { fill: C.detailBg, fillAlpha: A.panelBg, radius: 4, borderWidth: 1, border: FRAME_DIM },

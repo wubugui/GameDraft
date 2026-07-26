@@ -7,6 +7,7 @@ import type { EventBus } from '../core/EventBus';
 import type { StringsProvider } from '../core/StringsProvider';
 import type { AssetManager } from '../core/AssetManager';
 import type { DialogueLine, DialogueChoice, DialoguePortraitRef } from '../data/types';
+import { DEFAULT_SPEAKER_SIDE, resolveSpeakerSide, type SpeakerSide } from '../utils/dialogueSpeakerSide';
 
 const BOX_HEIGHT = 140;
 const BOX_MARGIN = 20;
@@ -45,6 +46,13 @@ export class DialogueUI {
   private portraitToken: number = 0;
   /** 当前行是否让出头像横向空间（有头像=PORTRAIT_INSET，无=0） */
   private currentInset: number = 0;
+  /** 当前行立绘/名牌所在边（主角在右、其余在左；见 utils/dialogueSpeakerSide） */
+  private currentSide: SpeakerSide = DEFAULT_SPEAKER_SIDE;
+  /**
+   * 当前行是不是主角说的。与 currentSide 刻意分开：side 可被数据覆盖（两个 NPC 各占一边），
+   * 而「这是你说的」这个标记只认说话实体，不能被站位带偏。
+   */
+  private currentIsSelf: boolean = false;
 
   private fullText: string = '';
   private displayedChars: number = 0;
@@ -104,7 +112,16 @@ export class DialogueUI {
     this.waitingForChoice = false;
   }
 
-  /** 按当前说话人名字给名牌定尺寸/定位；无说话人（旁白）时隐藏名牌。名牌随头像 inset 右移。 */
+  /** 立绘让出的横向空间：只压在立绘所在的那一侧，另一侧为 0。 */
+  private insetLeft(): number {
+    return this.currentSide === 'left' ? this.currentInset : 0;
+  }
+
+  /**
+   * 按当前说话人名字给名牌定尺寸/定位；无说话人（旁白）时隐藏名牌。
+   * 名牌**恒定贴左**（只让开左侧立绘的 inset）——跟着说话人左右跳会让底栏读起来发飘；
+   * 「这句是你说的」由名牌配色 + 立绘站位表达，位置保持稳定的阅读锚点。
+   */
   private layoutSpeaker(): void {
     if (!this.speakerPlate || !this.speakerText) return;
     const boxY = this.renderer.screenHeight - BOX_HEIGHT - BOX_MARGIN;
@@ -116,22 +133,29 @@ export class DialogueUI {
     }
     this.speakerPlate.visible = true;
     this.speakerText.visible = true;
-    const plateX = BOX_MARGIN + 12 + this.currentInset;
     const plateY = boxY + 8;
     const plateH = 26;
     const maxW = this.renderer.screenWidth - BOX_MARGIN * 2 - 24 - this.currentInset;
     const plateW = Math.min(this.speakerText.width + 24, maxW);
-    drawPanelBase(this.speakerPlate, plateX, plateY, plateW, plateH, SKINS.panelAlt);
+    const plateX = BOX_MARGIN + 12 + this.insetLeft();
+    // 主角行：名牌与名字色一起提亮，与右侧站位互为冗余（无立绘时分边信号太弱）
+    drawPanelBase(
+      this.speakerPlate, plateX, plateY, plateW, plateH,
+      this.currentIsSelf ? SKINS.speakerSelf : SKINS.panelAlt,
+    );
+    this.speakerText.style.fill = this.currentIsSelf
+      ? UITheme.colors.speakerSelf
+      : UITheme.colors.title;
     this.speakerText.x = plateX + 12;
     this.speakerText.y = plateY + 5;
   }
 
-  /** 正文区（正文位置/换行宽度/裁剪遮罩）随头像 inset 重排。 */
+  /** 正文区（正文位置/换行宽度/裁剪遮罩）随头像 inset 重排；立绘在右时正文不左移、只收窄。 */
   private relayout(): void {
     if (!this.container || !this.bodyText || !this.bodyMask) return;
     const boxWidth = this.renderer.screenWidth - BOX_MARGIN * 2;
     const boxY = this.renderer.screenHeight - BOX_HEIGHT - BOX_MARGIN;
-    const left = BOX_MARGIN + TEXT_PADDING + this.currentInset;
+    const left = BOX_MARGIN + TEXT_PADDING + this.insetLeft();
     const wrapW = Math.max(80, boxWidth - TEXT_PADDING * 2 - this.currentInset);
     this.bodyText.x = left;
     this.bodyText.y = boxY + 46;
@@ -177,7 +201,10 @@ export class DialogueUI {
     s.anchor.set(0.5, 1);
     s.width = PORTRAIT_SIZE;
     s.height = PORTRAIT_SIZE;
-    s.x = BOX_MARGIN + PORTRAIT_SIZE / 2; // 与面板左缘对齐站位
+    // 与面板同侧缘对齐站位（主角在右、其余在左）
+    s.x = this.currentSide === 'right'
+      ? this.renderer.screenWidth - BOX_MARGIN - PORTRAIT_SIZE / 2
+      : BOX_MARGIN + PORTRAIT_SIZE / 2;
     s.y = this.renderer.screenHeight + 4; // 底边伸出画面底边之外：人物立足屏底，裁切边永不可见
     s.visible = true;
   }
@@ -263,6 +290,9 @@ export class DialogueUI {
 
     this.speakerText!.text = line.speaker;
     if (this.sceneDim) this.sceneDim.visible = line.dim === true;
+    // 分边与「是不是你说的」必须先于立绘/名牌/正文布局定下——三者都读它
+    this.currentSide = resolveSpeakerSide(line.speakerEntity, line.speakerSide);
+    this.currentIsSelf = line.speakerEntity?.kind === 'player';
     this.showPortrait(line.portrait);
     this.layoutSpeaker();
     this.relayout();

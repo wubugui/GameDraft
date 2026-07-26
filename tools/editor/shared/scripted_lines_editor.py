@@ -39,8 +39,10 @@ class ScriptedLinesEditor(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         lab = QLabel("lines（至少一行）")
         lab.setToolTip(
-            "说话人：有工程时可点单行「引用」插入 [tag:…]，或菜单插入 {{player}} / {{npc}} / {{npc:id}}；"
-            "正文点「插入引用」；运行时均在台词展示前经 resolveText。",
+            "说话人：每行最左的下拉选一下即可（主角/场景 NPC），也可点「引用」插入 [tag:…] "
+            "或菜单插入 {{player}} / {{npc}} / {{npc:id}}；正文点「插入引用」；"
+            "运行时均在台词展示前经 resolveText。\n"
+            "留空 = 跟本动作的 scriptedNpcId 走；两者都没设才是旁白。",
         )
         root.addWidget(lab)
         self._list_layout = QVBoxLayout()
@@ -103,6 +105,7 @@ class ScriptedLinesEditor(QWidget):
             initial_speaker=str(data.get("speaker", "") or ""),
             on_change=self.changed.emit,
             rich_refs=bool(self._model),
+            with_speaker_picker=True,
         )
         up = QPushButton("\u2191")
         up.setFixedWidth(24)

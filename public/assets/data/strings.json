@@ -155,7 +155,7 @@
   },
   "dialogue": {
     "ruleTag": "[规]",
-    "defaultProtagonistName": "你",
+    "defaultProtagonistName": "关二狗",
     "narratorLabel": "旁白",
     "choiceNeedRule": "规矩本里尚未收录「{name}」，无法使用该说法。",
     "choiceFlagLocked": "条件未满足，无法选择该选项。",

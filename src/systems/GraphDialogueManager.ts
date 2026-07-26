@@ -10,6 +10,7 @@ import type { InventoryManager } from './InventoryManager';
 import type { StringsProvider } from '../core/StringsProvider';
 import type { ScenarioStateManager } from '../core/ScenarioStateManager';
 import { dialogueGraphJsonUrl } from '../core/projectPaths';
+import { isSpeakerSide } from '../utils/dialogueSpeakerSide';
 import type {
   ActionDef,
   DialogueChoice,
@@ -1083,6 +1084,7 @@ export class GraphDialogueManager implements IGameSystem {
       tags: [],
       portrait: this.resolvePortrait(p),
       speakerEntity: this.speakerEntityOf(p.speaker),
+      ...(isSpeakerSide(p.speakerSide) ? { speakerSide: p.speakerSide } : {}),
       ...(typeof p.bubbleAnchorY === 'number' && Number.isFinite(p.bubbleAnchorY)
         ? { bubbleAnchorY: p.bubbleAnchorY }
         : {}),
