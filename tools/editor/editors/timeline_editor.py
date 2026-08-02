@@ -13,7 +13,8 @@ from PySide6.QtWidgets import (
     QFormLayout, QLineEdit, QComboBox, QTextEdit, QPushButton, QLabel,
     QScrollArea, QCheckBox, QDoubleSpinBox, QFrame, QMessageBox,
     QDialog, QGroupBox, QToolButton, QSizePolicy, QMenu, QStyle,
-    QApplication, QInputDialog, QPlainTextEdit,
+    QApplication, QInputDialog, QPlainTextEdit, QDialogButtonBox,
+    QListWidgetItem, QAbstractItemView,
 )
 from PySide6.QtCore import (
     Qt, Signal, QEvent, QObject, QSignalBlocker, QTimer, QPoint, QByteArray,
@@ -2603,6 +2604,17 @@ class StepOutlineFrame(QFrame):
                         lambda _c=False, kk=k, af=after: self._insert_sibling(kk, after=af))
             m.addSeparator()
 
+            a_split = QAction("从本步后拆分为两个新过场…", self)
+            try:
+                split_at = ed._step_outlines.index(self)
+            except ValueError:
+                split_at = -1
+            a_split.setEnabled(0 <= split_at < len(ed._step_outlines) - 1)
+            a_split.setToolTip("原过场保留；前后步骤分别复制到两个新 id")
+            a_split.triggered.connect(lambda: ed.split_after_outline(self))
+            m.addAction(a_split)
+            m.addSeparator()
+
         a_lift = QAction("从并行移出到外层（插在该并行块之后）", self)
         a_lift.setEnabled(self._parallel_parent is not None)
         a_lift.triggered.connect(lambda: ed.lift_parallel_track_out(self))
@@ -3058,6 +3070,346 @@ class StepMinimapBar(QWidget):
 
 
 # ===============================================================
+# 过场资产级拆分 / 组合向导
+# ===============================================================
+
+
+def _unique_cutscene_id(base: str, taken: set[str]) -> str:
+    """为非破坏式资产操作生成稳定且不冲突的建议 id。"""
+    stem = (base or "cutscene_part").strip() or "cutscene_part"
+    if stem not in taken:
+        return stem
+    n = 2
+    while f"{stem}_{n}" in taken:
+        n += 1
+    return f"{stem}_{n}"
+
+
+class CutsceneSplitDialog(QDialog):
+    """将一段过场复制拆成两个新资产；原资产始终保留。"""
+
+    def __init__(
+        self,
+        source_id: str,
+        *,
+        first_count: int,
+        second_count: int,
+        taken_ids: set[str],
+        bound_entity_count: int,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("拆分过场")
+        self.resize(540, 300)
+        self._taken_ids = set(taken_ids)
+
+        root = QVBoxLayout(self)
+        note = QLabel(
+            f"将「{source_id}」复制拆成两个新过场（{first_count} 步 + "
+            f"{second_count} 步）。\n原过场与它的所有引用保持不变。"
+        )
+        note.setWordWrap(True)
+        root.addWidget(note)
+
+        form = compact_form(QFormLayout())
+        first_default = _unique_cutscene_id(f"{source_id}__part1", self._taken_ids)
+        second_taken = self._taken_ids | {first_default}
+        second_default = _unique_cutscene_id(f"{source_id}__part2", second_taken)
+        self._first_id = QLineEdit(first_default)
+        self._second_id = QLineEdit(second_default)
+        form.addRow("前半段 id", self._first_id)
+        form.addRow("后半段 id", self._second_id)
+        root.addLayout(form)
+
+        self._continuous = QCheckBox("前半段结束后保持现场（restoreState=false）")
+        self._continuous.setChecked(True)
+        self._continuous.setToolTip(
+            "将两段连续播放时，前半段不应在中间恢复入场前现场；"
+            "后半段继承原过场的 restoreState 语义。"
+        )
+        root.addWidget(self._continuous)
+
+        self._copy_bindings = QCheckBox(
+            f"把原过场绑定的 {bound_entity_count} 个 NPC/Hotspot 同步绑定到两个新段"
+        )
+        self._copy_bindings.setChecked(True)
+        self._copy_bindings.setEnabled(bound_entity_count > 0)
+        self._copy_bindings.setToolTip(
+            "新过场 id 若没有同步到实体 cutsceneIds，cutsceneOnly 演员会在新段中缺席。"
+        )
+        root.addWidget(self._copy_bindings)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+        )
+        buttons.accepted.connect(self._accept_checked)
+        buttons.rejected.connect(self.reject)
+        root.addWidget(buttons)
+
+    def _accept_checked(self) -> None:
+        first = self.first_id()
+        second = self.second_id()
+        if not first or not second:
+            QMessageBox.warning(self, "拆分过场", "两个新过场 id 都不能为空。")
+            return
+        if first == second:
+            QMessageBox.warning(self, "拆分过场", "前后两段必须使用不同 id。")
+            return
+        conflicts = [cid for cid in (first, second) if cid in self._taken_ids]
+        if conflicts:
+            QMessageBox.warning(
+                self, "拆分过场",
+                "下列 id 已存在，不会覆盖：\n" + "\n".join(conflicts),
+            )
+            return
+        self.accept()
+
+    def first_id(self) -> str:
+        return self._first_id.text().strip()
+
+    def second_id(self) -> str:
+        return self._second_id.text().strip()
+
+    def keep_continuity(self) -> bool:
+        return self._continuous.isChecked()
+
+    def copy_bindings(self) -> bool:
+        return self._copy_bindings.isChecked()
+
+
+class CutsceneCombineDialog(QDialog):
+    """从多段已有过场挑选并排序，生成一个新顺序过场。"""
+
+    def __init__(
+        self,
+        cutscenes: list[dict],
+        *,
+        initial_id: str = "",
+        binding_signatures: dict[str, frozenset[tuple[str, str, str]]] | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("组合过场")
+        self.resize(760, 540)
+        self._cutscenes = [c for c in cutscenes if isinstance(c, dict)]
+        id_counts: dict[str, int] = {}
+        for cutscene in self._cutscenes:
+            cid = str(cutscene.get("id", "")).strip()
+            if cid:
+                id_counts[cid] = id_counts.get(cid, 0) + 1
+        self._duplicate_ids = {cid for cid, count in id_counts.items() if count > 1}
+        self._by_id = {
+            str(c.get("id", "")).strip(): c for c in self._cutscenes
+            if str(c.get("id", "")).strip()
+        }
+        self._binding_signatures = binding_signatures or {}
+        self._selected_ids: list[str] = []
+        if initial_id in self._by_id:
+            self._selected_ids.append(initial_id)
+
+        root = QVBoxLayout(self)
+        note = QLabel(
+            "按右侧顺序拼接顶层 steps，生成一个新过场；"
+            "来源过场和旧引用都不会改动。只有根级场景绑定相容的过场才能组合。"
+        )
+        note.setWordWrap(True)
+        root.addWidget(note)
+
+        id_form = compact_form(QFormLayout())
+        taken = set(self._by_id)
+        base = f"{initial_id}__combined" if initial_id else "cutscene_combined"
+        self._new_id = QLineEdit(_unique_cutscene_id(base, taken))
+        id_form.addRow("新过场 id", self._new_id)
+        root.addLayout(id_form)
+
+        lists = QHBoxLayout()
+        left = QVBoxLayout()
+        left.addWidget(QLabel("可选过场（双击加入）"))
+        self._search = QLineEdit()
+        self._search.setPlaceholderText("搜索 id / 场景 / 步数…")
+        self._search.setClearButtonEnabled(True)
+        self._search.textChanged.connect(self._refill_available)
+        left.addWidget(self._search)
+        self._available = QListWidget()
+        self._available.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self._available.itemDoubleClicked.connect(lambda _it: self._add_selected())
+        left.addWidget(self._available, 1)
+        add_btn = QPushButton("添加 →")
+        add_btn.clicked.connect(self._add_selected)
+        left.addWidget(add_btn)
+        lists.addLayout(left, 1)
+
+        right = QVBoxLayout()
+        right.addWidget(QLabel("组合顺序（双击移除）"))
+        self._chosen = QListWidget()
+        self._chosen.itemDoubleClicked.connect(lambda _it: self._remove_selected())
+        right.addWidget(self._chosen, 1)
+        order_row = QHBoxLayout()
+        remove_btn = QPushButton("移除")
+        remove_btn.clicked.connect(self._remove_selected)
+        up_btn = QPushButton("上移")
+        up_btn.clicked.connect(lambda: self._move_selected(-1))
+        down_btn = QPushButton("下移")
+        down_btn.clicked.connect(lambda: self._move_selected(1))
+        order_row.addWidget(remove_btn)
+        order_row.addWidget(up_btn)
+        order_row.addWidget(down_btn)
+        order_row.addStretch(1)
+        right.addLayout(order_row)
+        lists.addLayout(right, 1)
+        root.addLayout(lists, 1)
+
+        self._compatibility = QLabel("")
+        self._compatibility.setWordWrap(True)
+        root.addWidget(self._compatibility)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+        )
+        buttons.accepted.connect(self._accept_checked)
+        buttons.rejected.connect(self.reject)
+        root.addWidget(buttons)
+
+        self._refill_available("")
+        self._refill_chosen()
+
+    @staticmethod
+    def _label(cutscene: dict) -> str:
+        cid = str(cutscene.get("id", "") or "?")
+        steps = cutscene.get("steps")
+        n = len(steps) if isinstance(steps, list) else 0
+        scene = str(cutscene.get("targetScene", "") or "").strip()
+        return f"{cid}  ·  {n}步" + (f"  →{scene}" if scene else "")
+
+    @staticmethod
+    def _root_signature(cutscene: dict) -> dict:
+        """连续拼接时必须全程一致的根级语义；restoreState 取末段。"""
+        return {
+            k: deepcopy(v) for k, v in cutscene.items()
+            if k not in {"id", "steps", "commands", "restoreState"}
+        }
+
+    def _refill_available(self, query: str) -> None:
+        q = (query or "").strip().casefold()
+        self._available.clear()
+        for cutscene in self._cutscenes:
+            cid = str(cutscene.get("id", "") or "").strip()
+            if not cid or cid in self._selected_ids:
+                continue
+            label = self._label(cutscene)
+            if q and q not in label.casefold():
+                continue
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, cid)
+            self._available.addItem(item)
+
+    def _refill_chosen(self, current_row: int | None = None) -> None:
+        self._chosen.clear()
+        for cid in self._selected_ids:
+            cutscene = self._by_id.get(cid)
+            if cutscene is None:
+                continue
+            item = QListWidgetItem(self._label(cutscene))
+            item.setData(Qt.ItemDataRole.UserRole, cid)
+            self._chosen.addItem(item)
+        if self._chosen.count() > 0:
+            row = self._chosen.count() - 1 if current_row is None else current_row
+            self._chosen.setCurrentRow(max(0, min(row, self._chosen.count() - 1)))
+        self._refill_available(self._search.text())
+        self._refresh_compatibility()
+
+    def _add_selected(self) -> None:
+        ids = [
+            str(it.data(Qt.ItemDataRole.UserRole) or "").strip()
+            for it in self._available.selectedItems()
+        ]
+        if not ids and self._available.currentItem() is not None:
+            ids = [str(self._available.currentItem().data(Qt.ItemDataRole.UserRole) or "").strip()]
+        for cid in ids:
+            if cid and cid not in self._selected_ids:
+                self._selected_ids.append(cid)
+        self._refill_chosen()
+
+    def _remove_selected(self) -> None:
+        row = self._chosen.currentRow()
+        if not (0 <= row < len(self._selected_ids)):
+            return
+        self._selected_ids.pop(row)
+        self._refill_chosen(max(0, row - 1))
+
+    def _move_selected(self, delta: int) -> None:
+        row = self._chosen.currentRow()
+        dst = row + delta
+        if not (0 <= row < len(self._selected_ids) and 0 <= dst < len(self._selected_ids)):
+            return
+        self._selected_ids[row], self._selected_ids[dst] = (
+            self._selected_ids[dst], self._selected_ids[row]
+        )
+        self._refill_chosen(dst)
+
+    def _compatibility_error(self) -> str:
+        if len(self._selected_ids) < 2:
+            return "请至少选择两段过场。"
+        selected_duplicates = [cid for cid in self._selected_ids if cid in self._duplicate_ids]
+        if selected_duplicates:
+            return "来源 id 在项目中不唯一，无法确定要组合的资产：" + "、".join(
+                selected_duplicates
+            )
+        cuts = [self._by_id[cid] for cid in self._selected_ids if cid in self._by_id]
+        base = self._root_signature(cuts[0])
+        bad = [str(c.get("id", "")) for c in cuts[1:] if self._root_signature(c) != base]
+        if bad:
+            return (
+                "根级场景/出生点/位置或未知扩展字段不一致，无法无损组合："
+                + "、".join(bad)
+            )
+        if self._binding_signatures:
+            base_bindings = self._binding_signatures.get(self._selected_ids[0], frozenset())
+            bad_bindings = [
+                cid for cid in self._selected_ids[1:]
+                if self._binding_signatures.get(cid, frozenset()) != base_bindings
+            ]
+            if bad_bindings:
+                return (
+                    "NPC/Hotspot 的 cutsceneIds 绑定集合不一致，直接组合会改变"
+                    " cutsceneOnly 演员显影语义：" + "、".join(bad_bindings)
+                )
+        return ""
+
+    def _refresh_compatibility(self) -> None:
+        err = self._compatibility_error()
+        if err:
+            self._compatibility.setText("⚠ " + err)
+            self._compatibility.setStyleSheet("color: #d9a441;")
+        else:
+            steps = sum(
+                len(self._by_id[cid].get("steps") or []) for cid in self._selected_ids
+            )
+            self._compatibility.setText(f"✓ 可无损组合，共 {steps} 个顶层步骤。")
+            self._compatibility.setStyleSheet("color: #4caf78;")
+
+    def _accept_checked(self) -> None:
+        new_id = self.new_id()
+        if not new_id:
+            QMessageBox.warning(self, "组合过场", "新过场 id 不能为空。")
+            return
+        if new_id in self._by_id:
+            QMessageBox.warning(self, "组合过场", f"id「{new_id}」已存在，不会覆盖。")
+            return
+        err = self._compatibility_error()
+        if err:
+            QMessageBox.warning(self, "组合过场", err)
+            return
+        self.accept()
+
+    def new_id(self) -> str:
+        return self._new_id.text().strip()
+
+    def selected_ids(self) -> list[str]:
+        return list(self._selected_ids)
+
+
+# ===============================================================
 # TimelineEditor — 主 Tab
 # ===============================================================
 
@@ -3118,10 +3470,14 @@ class TimelineEditor(QWidget):
         btn_row = QHBoxLayout()
         btn_add = QPushButton("+ 过场")
         btn_add.clicked.connect(self._add)
+        btn_combine = QPushButton("组合…")
+        btn_combine.setToolTip("筛选并排序多段相容过场，生成一个新过场；来源资产不改动")
+        btn_combine.clicked.connect(self._open_combine_dialog)
         btn_del = QPushButton("删除")
         btn_del.setToolTip("删除选中的过场（不可恢复）")
         btn_del.clicked.connect(self._delete)
         btn_row.addWidget(btn_add)
+        btn_row.addWidget(btn_combine)
         btn_row.addWidget(btn_del)
         btn_row.addStretch(1)
         ll.addLayout(btn_row)
@@ -3145,6 +3501,12 @@ class TimelineEditor(QWidget):
         self._play_btn = QPushButton("Play")
         self._play_btn.setToolTip("在游戏预览中播放该过场")
         self._play_btn.clicked.connect(self._on_play)
+        self._split_btn = QPushButton("拆分…")
+        self._split_btn.setToolTip(
+            "在当前焦点顶层步骤之后拆分，生成两个新过场；原过场不改动"
+        )
+        self._split_btn.clicked.connect(self._split_at_focused_outline)
+        top_row.addWidget(self._split_btn)
         top_row.addWidget(self._play_btn)
         rl.addLayout(top_row)
 
@@ -3204,7 +3566,8 @@ class TimelineEditor(QWidget):
             "竖排 = 执行顺序；PRESENT / ACTION / PARALLEL 色条区分；"
             "可拖动表头调整顺序（仅限同级）；点击表头空白或摘要可折叠/展开详情；"
             "右侧「不定/~ms」与灰条为粗估，仅供参考；"
-            "「⋯」菜单：并行轨移出到外层、两项合并为并行、并入上/下一并行"
+            "「⋯」菜单：从本步后拆分过场、并行轨移出到外层、两项合并为并行、"
+            "并入上/下一并行"
         )
         hint.setWordWrap(True)
         hint_row.addWidget(hint)
@@ -4672,6 +5035,293 @@ class TimelineEditor(QWidget):
         except Exception:  # noqa: BLE001 — 校验绝不能让 Apply 失败
             pass
         return True
+
+    # ----- 过场资产级拆分 / 组合（非破坏式：来源资产始终保留） -----
+
+    def _prepare_asset_operation(self) -> bool:
+        """先处理当前表单暂存，避免拆分/组合读到 UI 与模型的混合状态。"""
+        if not self._pending_changes or self._current_idx < 0:
+            return True
+        r = QMessageBox.question(
+            self,
+            "过场资产操作",
+            "当前过场有未 Apply 的修改。继续前要如何处理？",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Save,
+        )
+        if r == QMessageBox.StandardButton.Cancel:
+            return False
+        if r == QMessageBox.StandardButton.Save:
+            return self._apply()
+        # Discard 不能只清脏标记：必须把表单与步骤树恢复到模型快照，之后的
+        # 拆分位置和来源内容才来自同一份数据。
+        self._pending_changes = False
+        self._on_select(self._current_idx)
+        return True
+
+    def _bound_entity_refs(
+        self, cutscene_id: str,
+    ) -> list[tuple[str, str, int, dict]]:
+        """返回通过 cutsceneIds 绑定 cid 的场景实体；不修正任何脏数据。"""
+        cid = (cutscene_id or "").strip()
+        if not cid:
+            return []
+        out: list[tuple[str, str, int, dict]] = []
+        for scene_id, scene in self._model.scenes.items():
+            if not isinstance(scene, dict):
+                continue
+            for collection in ("npcs", "hotspots"):
+                entities = scene.get(collection)
+                if not isinstance(entities, list):
+                    continue
+                for index, entity in enumerate(entities):
+                    if not isinstance(entity, dict):
+                        continue
+                    ids = entity.get("cutsceneIds")
+                    if isinstance(ids, list) and cid in ids:
+                        out.append((str(scene_id), collection, index, entity))
+        return out
+
+    def _cutscene_binding_signature(
+        self, cutscene_id: str,
+    ) -> frozenset[tuple[str, str, str]]:
+        return frozenset(
+            (
+                scene_id,
+                collection,
+                str(entity.get("id") or f"#{index}"),
+            )
+            for scene_id, collection, index, entity
+            in self._bound_entity_refs(cutscene_id)
+        )
+
+    def _append_bindings_to_entities(
+        self,
+        refs: list[tuple[str, str, int, dict]],
+        new_ids: list[str],
+    ) -> None:
+        """只追加缺失 id，保留既有顺序/重复/未知实体字段。"""
+        dirty_scenes: set[str] = set()
+        for scene_id, _collection, _index, entity in refs:
+            ids = entity.get("cutsceneIds")
+            if not isinstance(ids, list):
+                continue
+            changed = False
+            for cid in new_ids:
+                if cid not in ids:
+                    ids.append(cid)
+                    changed = True
+            if changed:
+                dirty_scenes.add(scene_id)
+        for scene_id in sorted(dirty_scenes):
+            self._model.mark_dirty("scene", scene_id)
+
+    def _create_split_assets(
+        self,
+        source_index: int,
+        split_after: int,
+        first_id: str,
+        second_id: str,
+        *,
+        keep_continuity: bool,
+        copy_bindings: bool,
+    ) -> tuple[dict, dict]:
+        """创建两个拆分副本；校验全部通过前不修改模型。"""
+        cuts = self._model.cutscenes
+        if not (0 <= source_index < len(cuts)):
+            raise ValueError("来源过场已不存在，请刷新后重试。")
+        source = cuts[source_index]
+        if not isinstance(source, dict):
+            raise ValueError("来源过场不是对象，无法安全拆分。")
+        steps = source.get("steps")
+        if not isinstance(steps, list) or len(steps) < 2:
+            raise ValueError("过场至少需要两个顶层步骤才能拆分。")
+        if not (0 <= split_after < len(steps) - 1):
+            raise ValueError("拆分点必须位于首步与末步之间。")
+        first_id = (first_id or "").strip()
+        second_id = (second_id or "").strip()
+        if not first_id or not second_id or first_id == second_id:
+            raise ValueError("两个新过场必须使用不同的非空 id。")
+        taken = {str(c.get("id", "")).strip() for c in cuts if isinstance(c, dict)}
+        source_id = str(source.get("id", "")).strip()
+        if not source_id or sum(
+            1 for c in cuts
+            if isinstance(c, dict) and str(c.get("id", "")).strip() == source_id
+        ) != 1:
+            raise ValueError("来源过场 id 为空或不唯一，无法安全复制它的引用。")
+        conflict = [cid for cid in (first_id, second_id) if cid in taken]
+        if conflict:
+            raise ValueError("id 已存在，不会覆盖：" + "、".join(conflict))
+
+        first = deepcopy(source)
+        second = deepcopy(source)
+        first["id"] = first_id
+        second["id"] = second_id
+        first["steps"] = deepcopy(steps[:split_after + 1])
+        second["steps"] = deepcopy(steps[split_after + 1:])
+        first.pop("commands", None)
+        second.pop("commands", None)
+        if keep_continuity:
+            first["restoreState"] = False
+
+        # 到这里才开始变更内存；来源对象从未被改动。
+        cuts[source_index + 1:source_index + 1] = [first, second]
+        self._model.mark_dirty("cutscene")
+        if copy_bindings:
+            self._append_bindings_to_entities(
+                self._bound_entity_refs(source_id),
+                [first_id, second_id],
+            )
+        self._pending_changes = False
+        self._refresh()
+        self.select_by_id(first_id)
+        return first, second
+
+    def _create_combined_asset(
+        self,
+        source_ids: list[str],
+        new_id: str,
+    ) -> dict:
+        """顺序拼接相容资产；来源与旧绑定保留，新资产继承共同绑定。"""
+        ids = [(cid or "").strip() for cid in source_ids]
+        if len(ids) < 2 or len(set(ids)) != len(ids):
+            raise ValueError("请选择至少两个不同的来源过场。")
+        occurrences: dict[str, list[tuple[int, dict]]] = {}
+        for i, cutscene in enumerate(self._model.cutscenes):
+            if not isinstance(cutscene, dict):
+                continue
+            cid = str(cutscene.get("id", "")).strip()
+            if cid:
+                occurrences.setdefault(cid, []).append((i, cutscene))
+        ambiguous = [cid for cid in ids if len(occurrences.get(cid, [])) > 1]
+        if ambiguous:
+            raise ValueError("来源 id 在项目中不唯一：" + "、".join(ambiguous))
+        by_id = {cid: rows[0] for cid, rows in occurrences.items() if len(rows) == 1}
+        missing = [cid for cid in ids if cid not in by_id]
+        if missing:
+            raise ValueError("来源过场已不存在：" + "、".join(missing))
+        new_id = (new_id or "").strip()
+        if not new_id:
+            raise ValueError("新过场 id 不能为空。")
+        if new_id in occurrences:
+            raise ValueError(f"id「{new_id}」已存在，不会覆盖。")
+        sources = [by_id[cid][1] for cid in ids]
+        base_signature = CutsceneCombineDialog._root_signature(sources[0])
+        if any(
+            CutsceneCombineDialog._root_signature(source) != base_signature
+            for source in sources[1:]
+        ):
+            raise ValueError("来源过场的根级场景绑定或扩展字段不一致，无法无损组合。")
+        step_lists = [source.get("steps") for source in sources]
+        if any(not isinstance(steps, list) for steps in step_lists):
+            raise ValueError("来源过场存在非数组 steps，无法安全组合。")
+        binding_signatures = [self._cutscene_binding_signature(cid) for cid in ids]
+        if any(sig != binding_signatures[0] for sig in binding_signatures[1:]):
+            raise ValueError(
+                "来源过场的 NPC/Hotspot 绑定集合不一致，组合会改变演员显影语义。"
+            )
+
+        combined = deepcopy(sources[0])
+        combined["id"] = new_id
+        combined["steps"] = [
+            deepcopy(step)
+            for steps in step_lists
+            for step in steps
+        ]
+        combined.pop("commands", None)
+        last = sources[-1]
+        if "restoreState" in last:
+            combined["restoreState"] = deepcopy(last["restoreState"])
+        else:
+            combined.pop("restoreState", None)
+
+        insert_at = max(by_id[cid][0] for cid in ids) + 1
+        self._model.cutscenes.insert(insert_at, combined)
+        self._model.mark_dirty("cutscene")
+        self._append_bindings_to_entities(self._bound_entity_refs(ids[0]), [new_id])
+        self._pending_changes = False
+        self._refresh()
+        self.select_by_id(new_id)
+        return combined
+
+    def split_after_outline(self, outline: StepOutlineFrame) -> None:
+        if outline._parallel_parent is not None or outline not in self._step_outlines:
+            QMessageBox.information(self, "拆分过场", "只能在顶层步骤之间拆分。")
+            return
+        split_after = self._step_outlines.index(outline)
+        if split_after >= len(self._step_outlines) - 1:
+            QMessageBox.information(self, "拆分过场", "末步之后没有可拆出的后半段。")
+            return
+        if not self._prepare_asset_operation():
+            return
+        source_index = self._current_idx
+        if not (0 <= source_index < len(self._model.cutscenes)):
+            return
+        source = self._model.cutscenes[source_index]
+        source_id = str(source.get("id", "")).strip()
+        steps = source.get("steps")
+        if not isinstance(steps, list) or split_after >= len(steps) - 1:
+            QMessageBox.warning(self, "拆分过场", "来源步骤已变化，请重新选择拆分点。")
+            return
+        dlg = CutsceneSplitDialog(
+            source_id,
+            first_count=split_after + 1,
+            second_count=len(steps) - split_after - 1,
+            taken_ids={
+                str(c.get("id", "")).strip()
+                for c in self._model.cutscenes if isinstance(c, dict)
+            },
+            bound_entity_count=len(self._bound_entity_refs(source_id)),
+            parent=self,
+        )
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        try:
+            self._create_split_assets(
+                source_index,
+                split_after,
+                dlg.first_id(),
+                dlg.second_id(),
+                keep_continuity=dlg.keep_continuity(),
+                copy_bindings=dlg.copy_bindings(),
+            )
+        except ValueError as exc:
+            QMessageBox.warning(self, "拆分过场", str(exc))
+
+    def _split_at_focused_outline(self) -> None:
+        outline = self._focused_outline
+        if outline is None:
+            QMessageBox.information(self, "拆分过场", "请先点击要作为前半段末尾的顶层步骤。")
+            return
+        self.split_after_outline(outline)
+
+    def _open_combine_dialog(self) -> None:
+        if len(self._model.cutscenes) < 2:
+            QMessageBox.information(self, "组合过场", "至少需要两段过场才能组合。")
+            return
+        if not self._prepare_asset_operation():
+            return
+        initial_id = self._current_cutscene_id() or ""
+        signatures = {
+            str(c.get("id", "")).strip(): self._cutscene_binding_signature(
+                str(c.get("id", "")),
+            )
+            for c in self._model.cutscenes if isinstance(c, dict)
+        }
+        dlg = CutsceneCombineDialog(
+            self._model.cutscenes,
+            initial_id=initial_id,
+            binding_signatures=signatures,
+            parent=self,
+        )
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        try:
+            self._create_combined_asset(dlg.selected_ids(), dlg.new_id())
+        except ValueError as exc:
+            QMessageBox.warning(self, "组合过场", str(exc))
 
     def _add(self) -> None:
         # 新增前处理当前过场未 Apply 的编辑：与左侧切行同一套确认，

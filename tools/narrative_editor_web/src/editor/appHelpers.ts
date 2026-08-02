@@ -13,6 +13,7 @@ import type {
   NarrativeTransitionDef,
   ProjectionEdgeDef,
   ProjectionResult,
+  ReferenceCatalogEntryDef,
   RuntimeDebugSnapshotDef,
 } from '../types';
 
@@ -24,6 +25,7 @@ type CatalogListKey =
   | 'sceneNpcRefs'
   | 'sceneHotspotRefs'
   | 'zoneRefs'
+  | 'sceneGroupRefs'
   | 'minigameIds'
   | 'cutsceneIds';
 
@@ -38,6 +40,7 @@ export const WRAPPER_OWNER_REGISTRY: Record<string, WrapperOwnerRule> = {
   npc: { catalogKey: 'sceneNpcRefs', navigationKind: 'npc' },
   hotspot: { catalogKey: 'sceneHotspotRefs', navigationKind: 'hotspot' },
   zone: { catalogKey: 'zoneRefs', navigationKind: 'zone' },
+  sceneGroup: { catalogKey: 'sceneGroupRefs', navigationKind: 'sceneGroup' },
   // 场景级 wrapper（给整张场景挂状态机）。运行时/校验/Python 目录均已支持 scene owner；
   // 此前 web 注册表漏了 scene，导致"绑定类型"下拉选不到。navigationKind:'scene' 配合
   // SceneEditor.select_scene_by_id + main_window SOURCE_NAVIGATION_TABS["scene"]，"跳转资源"可定位场景。
@@ -55,6 +58,45 @@ export const WRAPPER_OWNER_TYPES = Object.keys(WRAPPER_OWNER_REGISTRY);
 export function ownerChoicesForType(ownerType: string | undefined, catalog: AuthoringCatalogDef): string[] {
   const key = WRAPPER_OWNER_REGISTRY[(ownerType ?? '').trim() as keyof typeof WRAPPER_OWNER_REGISTRY]?.catalogKey;
   return key ? catalog[key] : [];
+}
+
+export const BLACKBOX_REFERENCE_KIND: Partial<Record<CompositionElementDef['kind'], string>> = {
+  dialogueBlackbox: 'dialogue',
+  zoneBlackbox: 'zone',
+  minigameBlackbox: 'minigame',
+  cutsceneBlackbox: 'cutscene',
+  scenarioSubgraph: 'scenario',
+};
+
+/** The source type is a consequence of element.kind, never an author-typed field. */
+export function referenceKindForElement(element: CompositionElementDef): string {
+  if (element.kind === 'wrapperGraph') return (element.ownerType ?? '').trim();
+  return BLACKBOX_REFERENCE_KIND[element.kind] ?? '';
+}
+
+export function referenceEntriesForType(
+  ownerType: string | undefined,
+  catalog: AuthoringCatalogDef,
+): ReferenceCatalogEntryDef[] {
+  const kind = (ownerType ?? '').trim();
+  if (!kind) return [];
+  const rich = (catalog.referenceEntries ?? []).filter((entry) => entry.kind === kind);
+  if (rich.length > 0) return rich;
+  // Older Qt hosts do not expose rich rows. Keep the popup functional with ids
+  // alone, while still refusing free-form input.
+  return ownerChoicesForType(kind, catalog).map((id) => ({
+    kind,
+    id,
+    qualifiedId: id,
+    label: id,
+  }));
+}
+
+export function referenceEntriesForElement(
+  element: CompositionElementDef,
+  catalog: AuthoringCatalogDef,
+): ReferenceCatalogEntryDef[] {
+  return referenceEntriesForType(referenceKindForElement(element), catalog);
 }
 
 export function extractActiveStates(runtimeSnapshot: RuntimeDebugSnapshotDef): Record<string, string> | null {

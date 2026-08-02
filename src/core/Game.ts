@@ -106,6 +106,7 @@ import type { LitShaderProvider } from '../rendering/SpriteEntity';
 import { WaterMinigameManager } from '../systems/waterMinigame/WaterMinigameManager';
 import { SugarWheelMinigameManager } from '../systems/sugarWheel/SugarWheelMinigameManager';
 import { PaperCraftMinigameManager } from '../systems/paperCraft/PaperCraftMinigameManager';
+import { ObjectExamineManager } from '../systems/objectExamine/ObjectExamineManager';
 import { DepthDebugVisualizer } from '../debug/DepthDebugVisualizer';
 import type { IEntityShadingFilter } from '../rendering/EntityLightingFilter';
 import { resolveLightEnv, type ResolvedLightEnv } from '../rendering/lightEnv';
@@ -199,7 +200,7 @@ declare global {
       clearWorldFilter(): void;
       setWorldFadeAlpha(alpha: number): void;
       completeDialogueText(): void;
-      startMinigame(kind: 'water' | 'sugarWheel' | 'paperCraft' | 'pressureHold', id: string): Promise<boolean>;
+      startMinigame(kind: 'water' | 'sugarWheel' | 'paperCraft' | 'pressureHold' | 'objectExamine', id: string): Promise<boolean>;
       stepFixedTicks(ticks: number, dtMs: number): Promise<void>;
       getMinigameDebugState(): Record<string, unknown>;
       playAudioProbe(id: string, fadeMs: number): void;
@@ -335,6 +336,7 @@ export class Game {
   private waterMinigameManager: WaterMinigameManager;
   private sugarWheelMinigameManager: SugarWheelMinigameManager;
   private paperCraftMinigameManager: PaperCraftMinigameManager;
+  private objectExamineManager: ObjectExamineManager;
   private pressureHoldManager: PressureHoldManager;
   private signalCueManager: SignalCueManager;
   private healthSystem: HealthSystem;
@@ -498,6 +500,7 @@ export class Game {
     this.waterMinigameManager = new WaterMinigameManager();
     this.sugarWheelMinigameManager = new SugarWheelMinigameManager();
     this.paperCraftMinigameManager = new PaperCraftMinigameManager();
+    this.objectExamineManager = new ObjectExamineManager();
     this.pressureHoldManager = new PressureHoldManager(this.actionExecutor);
     this.signalCueManager = new SignalCueManager(this.actionExecutor);
     this.healthSystem = new HealthSystem(this.eventBus, this.flagStore, this.actionExecutor);
@@ -552,6 +555,7 @@ export class Game {
       { name: 'waterMinigameManager', system: this.waterMinigameManager },
       { name: 'sugarWheelMinigameManager', system: this.sugarWheelMinigameManager },
       { name: 'paperCraftMinigameManager', system: this.paperCraftMinigameManager },
+      { name: 'objectExamineManager', system: this.objectExamineManager },
       { name: 'pressureHoldManager', system: this.pressureHoldManager },
       { name: 'signalCueManager', system: this.signalCueManager },
       { name: 'healthSystem', system: this.healthSystem },
@@ -1089,10 +1093,16 @@ export class Game {
       await this.narrativeStateManager.activateNarrativeRun(gid);
     });
     this.zoneSystem.setConditionEvalContextFactory(mkCondCtx);
+    this.zoneSystem.setEntityGroupConditionReader(
+      (groupId) => this.sceneManager.getCurrentSceneGroupConditions(groupId),
+    );
     this.interactionSystem.setConditionEvalContextFactory(mkCondCtx);
     this.interactionSystem.setEntityBaseVisibilityReaders(
       (h) => this.sceneManager.getHotspotBaseEnabledForInteraction(h),
       (n) => this.sceneManager.getNpcBaseVisibleForInteraction(n),
+    );
+    this.interactionSystem.setEntityGroupConditionReader(
+      (groupId) => this.sceneManager.getCurrentSceneGroupConditions(groupId),
     );
     this.encounterManager.setConditionEvalContextFactory(mkCondCtx);
     this.mapUI.setConditionEvalContextFactory(mkCondCtx);
@@ -1227,9 +1237,14 @@ export class Game {
           }
           // owner 优先级：显式参数 > npcId（NPC 上下文）> onEnter 期间的隐式场景 owner。
           const ambient = this.ambientNarrativeOwner;
+          const explicitOwnerType = ownerType?.trim() || '';
           const ownerTypeTrim =
-            ownerType?.trim() || (npcIdTrim ? 'npc' : '') || (ambient?.ownerType ?? '');
-          const ownerIdTrim = ownerId?.trim() || npcIdTrim || (ambient?.ownerId ?? '');
+            explicitOwnerType || (npcIdTrim ? 'npc' : '') || (ambient?.ownerType ?? '');
+          // 显式 ownerType 与 ownerId 必须成对；类型已显式时绝不能把 npc/scene
+          // 的 id 偷换到另一种 owner 命名空间。无显式类型才继承上下文。
+          const ownerIdTrim = explicitOwnerType
+            ? (ownerId?.trim() || '')
+            : (ownerId?.trim() || npcIdTrim || (ambient?.ownerId ?? ''));
           await this.graphDialogueManager.startDialogueGraph({
             graphId,
             entry,
@@ -1308,6 +1323,7 @@ export class Game {
       waterMinigameManager: this.waterMinigameManager,
       sugarWheelMinigameManager: this.sugarWheelMinigameManager,
       paperCraftMinigameManager: this.paperCraftMinigameManager,
+      objectExamineManager: this.objectExamineManager,
       pressureHoldManager: this.pressureHoldManager,
       signalCueManager: this.signalCueManager,
       healthSystem: this.healthSystem,
@@ -1372,6 +1388,35 @@ export class Game {
       resolveDisplayText: (s) => this.resolveDisplayText(s),
     });
     await this.paperCraftMinigameManager.loadIndex();
+
+    this.objectExamineManager.bindRuntime({
+      renderer: this.renderer,
+      inputManager: this.inputManager,
+      stateController: this.stateController,
+      actionExecutor: this.actionExecutor,
+      resolveDisplayText: (s) => this.resolveDisplayText(s),
+      getString: (ns, key) => this.stringsProvider.get(ns, key),
+      audio: {
+        playSfx: (id, volume) => this.audioManager.playSfx(id, volume),
+        addAmbient: (id) => this.audioManager.addAmbient(id),
+        removeAmbient: (id) => this.audioManager.removeAmbient(id),
+      },
+      smell: {
+        setSmell: (scent, intensity, dir, flicker) =>
+          this.smellSystem.setSmell(scent, intensity, dir, flicker),
+        clearSmell: () => this.smellSystem.clearSmell(),
+      },
+      inventory: {
+        hasItem: (itemId) => this.inventoryManager.hasItem(itemId),
+        listBagItems: () =>
+          this.inventoryManager.getAllItems().map((it) => ({
+            id: it.id,
+            name: it.def?.name ?? it.id,
+            count: it.count,
+          })),
+      },
+    });
+    await this.objectExamineManager.loadIndex();
     if (this.tearDownComplete) return;
 
     this.interactionCoordinator = new InteractionCoordinator(this.eventBus, {
@@ -1578,6 +1623,53 @@ export class Game {
         sniff: () => this.smellSystem.sniff(),
         getForm: () => this.hud?.getSmellForm() ?? null,
         setFormParam: (key, value) => this.hud?.setSmellFormParam(key, value),
+      },
+      objectExamineDebug: {
+        getStatusText: () => this.objectExamineManager.getDebugStatusText(),
+        getInstanceList: () => this.objectExamineManager.getInstanceList(),
+        start: (id) => { void this.objectExamineManager.start(id); },
+        abort: () => this.objectExamineManager.abortActiveSession(),
+        isActive: () => this.objectExamineManager.isActive,
+        getOverrides: () => {
+          const o = this.objectExamineManager.getDebugOverrides();
+          return {
+            backgroundPreset: o.backgroundPreset,
+            upright: o.upright,
+            showHotspotDebug: o.showHotspotDebug,
+          };
+        },
+        setBackgroundPreset: (preset) => this.objectExamineManager.setDebugBackgroundPreset(preset),
+        setUpright: (upright) => this.objectExamineManager.setDebugUpright(upright),
+        resetPresentationOverrides: () => this.objectExamineManager.resetDebugPresentationOverrides(),
+        setShowHotspotDebug: (show) => this.objectExamineManager.setDebugShowHotspotDebug(show),
+        setDistanceIndex: (index) => this.objectExamineManager.setDebugDistanceIndex(index),
+        getLiveDistanceIndex: () => {
+          const s = this.objectExamineManager.getDebugVisualState();
+          return typeof s?.distanceIndex === 'number' ? s.distanceIndex : null;
+        },
+        getLiveBackgroundBrightness: () => {
+          const s = this.objectExamineManager.getDebugVisualState();
+          return typeof s?.backgroundBrightness === 'number' ? s.backgroundBrightness : 1;
+        },
+        getLiveBackgroundScale: () => {
+          const s = this.objectExamineManager.getDebugVisualState();
+          return typeof s?.backgroundScale === 'number' ? s.backgroundScale : 1;
+        },
+        setBackgroundBrightness: (v) => this.objectExamineManager.setDebugBackgroundBrightness(v),
+        setBackgroundScale: (v) => this.objectExamineManager.setDebugBackgroundScale(v),
+        getLiveContactAoIntensity: () => {
+          const s = this.objectExamineManager.getDebugVisualState();
+          return typeof s?.contactAoIntensity === 'number' ? s.contactAoIntensity : 1;
+        },
+        getLiveContactAoScale: () => {
+          const s = this.objectExamineManager.getDebugVisualState();
+          return typeof s?.contactAoScale === 'number' ? s.contactAoScale : 1;
+        },
+        setContactAoIntensity: (v) => this.objectExamineManager.setDebugContactAoIntensity(v),
+        setContactAoScale: (v) => this.objectExamineManager.setDebugContactAoScale(v),
+        getResolvedAmbience: () => this.objectExamineManager.getResolvedAmbience(),
+        setAmbiencePatch: (patch) => this.objectExamineManager.setDebugAmbiencePatch(patch),
+        resetAmbienceOverrides: () => this.objectExamineManager.resetDebugAmbienceOverrides(),
       },
     });
     this.debugTools?.init();
@@ -3444,6 +3536,10 @@ export class Game {
           ...e,
           kind: 'paperCraft' as const,
         })),
+        ...this.objectExamineManager.getInstanceList().map((e) => ({
+          ...e,
+          kind: 'objectExamine' as const,
+        })),
       ],
       launchMinigame: (entry) => {
         this.devModeUI?.close();
@@ -3451,6 +3547,8 @@ export class Game {
           void this.sugarWheelMinigameManager.start(entry.id);
         } else if (entry.kind === 'paperCraft') {
           void this.paperCraftMinigameManager.start(entry.id);
+        } else if (entry.kind === 'objectExamine') {
+          void this.objectExamineManager.start(entry.id);
         } else {
           void this.waterMinigameManager.start(entry.id);
         }
@@ -3471,6 +3569,11 @@ export class Game {
       if (sid === 'dev_room') this.devModeUI?.open();
     });
     this.paperCraftMinigameManager.setOnSessionEnd(() => {
+      if (!this.isDevMode) return;
+      const sid = this.sceneManager.currentSceneData?.id;
+      if (sid === 'dev_room') this.devModeUI?.open();
+    });
+    this.objectExamineManager.setOnSessionEnd(() => {
       if (!this.isDevMode) return;
       const sid = this.sceneManager.currentSceneData?.id;
       if (sid === 'dev_room') this.devModeUI?.open();
@@ -3502,6 +3605,7 @@ export class Game {
         if (kind === 'water') await this.waterMinigameManager.start(id);
         else if (kind === 'sugarWheel') await this.sugarWheelMinigameManager.start(id);
         else if (kind === 'paperCraft') await this.paperCraftMinigameManager.start(id);
+        else if (kind === 'objectExamine') await this.objectExamineManager.start(id);
         else {
           const request = this.pressureHoldManager.getDebugPreviewRequest(id);
           if (!request) return false;
@@ -3513,13 +3617,16 @@ export class Game {
             ? this.sugarWheelMinigameManager.isActive
             : kind === 'paperCraft'
               ? this.paperCraftMinigameManager.isActive
-              : this.pressureHoldUI.isActive();
+              : kind === 'objectExamine'
+                ? this.objectExamineManager.isActive
+                : this.pressureHoldUI.isActive();
       },
       stepFixedTicks: (ticks, dtMs) => this.debugStepTicks(ticks, dtMs),
       getMinigameDebugState: () => ({
         water: this.waterMinigameManager.getDebugVisualState(),
         sugarWheel: this.sugarWheelMinigameManager.getDebugVisualState(),
         paperCraft: this.paperCraftMinigameManager.getDebugVisualState(),
+        objectExamine: this.objectExamineManager.getDebugVisualState(),
         pressureHold: this.pressureHoldUI.getDebugVisualState(),
       }),
       playAudioProbe: (id, fadeMs) => this.audioManager.playBgm(id, fadeMs),
@@ -4265,6 +4372,7 @@ export class Game {
         waterMinigame: this.waterMinigameManager.isActive,
         sugarWheelMinigame: this.sugarWheelMinigameManager.isActive,
         paperCraftMinigame: this.paperCraftMinigameManager.isActive,
+        objectExamine: this.objectExamineManager.isActive,
         pressureHold: this.pressureHoldUI.isActive(),
       },
       // serialize() 已收敛为恒 {active:false}（对话不入档），快照改用只读调试 getter
@@ -4274,6 +4382,7 @@ export class Game {
         water: this.waterMinigameManager.getDebugVisualState(),
         sugarWheel: this.sugarWheelMinigameManager.getDebugVisualState(),
         paperCraft: this.paperCraftMinigameManager.getDebugVisualState(),
+        objectExamine: this.objectExamineManager.getDebugVisualState(),
         pressureHold: this.pressureHoldUI.getDebugVisualState(),
       },
       player: { x: this.player.x, y: this.player.y, facing: this.player.facingDirection },
@@ -4858,6 +4967,7 @@ export class Game {
       this.waterMinigameManager.update(dt);
       this.sugarWheelMinigameManager.update(dt);
       this.paperCraftMinigameManager.update(dt);
+      this.objectExamineManager.update(dt);
       this.player.cutsceneUpdate(dt);
       for (const npc of this.sceneManager.getCurrentNpcs()) {
         npc.cutsceneUpdate(dt);
@@ -4904,13 +5014,18 @@ export class Game {
       //（standard zone 的位面过滤在 shouldRegisterZoneWithZoneSystem）。
       // exclusive（独立世界型）激活时缺省 zone 也不存在，须无条件走过滤。
       const zonesRaw = this.sceneManager.currentSceneData?.zones;
-      const zones = zonesRaw?.some((z) => z.planes?.length)
+      const zonesInPlane = zonesRaw?.some((z) => z.planes?.length)
           || this.planeReconciler.getActivePlaneMembership() === 'exclusive'
         ? zonesRaw?.filter((z) => this.sceneManager.isEntityInActivePlane(z))
         : zonesRaw;
+      const zones = zonesInPlane?.filter(
+        (z) => this.sceneManager.isCurrentSceneGroupEnabled(z.group),
+      );
       /** F2 性能：深度 floor 偏移的条件上下文每帧建一次，玩家/NPC/热点三处循环共享；
        *  统一走中央工厂（律5），plane/@scene/@owner 叶子与其它条件入口口径一致。 */
       const floorCondCtx = this.buildConditionEvalContext();
+      const floorGroupConditions = (groupId: string) =>
+        this.sceneManager.getCurrentSceneGroupConditions(groupId);
       if (this.playerDepthFilter) {
         const ex = resolveDepthFloorOffsetBoost(
           zones,
@@ -4918,6 +5033,7 @@ export class Game {
           this.player.y,
           this.flagStore,
           floorCondCtx,
+          floorGroupConditions,
         );
         this.sceneDepthSystem.updateEntityDepthOcclusion(
           this.playerDepthFilter,
@@ -4948,7 +5064,9 @@ export class Game {
         if (c.filters) {
           for (const f of c.filters) {
             if (f._isDepthOcclusion && f !== this.playerDepthFilter) {
-              const ex = resolveDepthFloorOffsetBoost(zones, c.x, c.y, this.flagStore, floorCondCtx);
+              const ex = resolveDepthFloorOffsetBoost(
+                zones, c.x, c.y, this.flagStore, floorCondCtx, floorGroupConditions,
+              );
               this.sceneDepthSystem.updateEntityDepthOcclusion(
                 f as unknown as IEntityShadingFilter,
                 c.x,
@@ -4976,7 +5094,9 @@ export class Game {
         const hf = h.getDepthOcclusionFilter();
         if (!hf) continue;
         const footY = h.depthOcclusionFootWorldY();
-        const ex = resolveDepthFloorOffsetBoost(zones, h.container.x, footY, this.flagStore, floorCondCtx);
+        const ex = resolveDepthFloorOffsetBoost(
+          zones, h.container.x, footY, this.flagStore, floorCondCtx, floorGroupConditions,
+        );
         this.sceneDepthSystem.updateEntityDepthOcclusion(hf, h.container.x, footY, ex);
         // 烘焙场景:热点也走 CHAR_FS,逐帧喂脚点/尺寸/法线(单张静图 → 整帧 rect)。
         // 展示图翻转经 sprite.scale.x(滤镜外),法线图集为未翻转原图 → flipX 传当前朝向。

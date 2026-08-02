@@ -170,6 +170,10 @@ class NarrativePackagesEditor(QWidget):
         self._f_when.set_flag_pattern_context(self._model, None)
         self._f_done.set_flag_pattern_context(self._model, None)
 
+    def reload_refs_from_model(self) -> None:
+        """主窗切页钩子：仅更新候选目录，保留当前行、未提交值、悬垂值和脏态。"""
+        self._update_selectors()
+
     def _clear_form(self) -> None:
         self._loading = True
         self._f_id.clear()

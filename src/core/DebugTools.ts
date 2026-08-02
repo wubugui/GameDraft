@@ -5,10 +5,12 @@ import type { EventBus } from './EventBus';
 import type { Player } from '../entities/Player';
 import type { InventoryManager } from '../systems/InventoryManager';
 import type { DebugPanelUI } from '../ui/DebugPanelUI';
-import { NARRATIVE_DEBUG_SECTION_ID } from '../ui/DebugPanelUI';
+import { NARRATIVE_DEBUG_SECTION_ID, OBJECT_EXAMINE_AMBIENCE_DEBUG_SECTION_ID, OBJECT_EXAMINE_DEBUG_SECTION_ID } from '../ui/DebugPanelUI';
 import type { DepthDebugVisualizer, BgDebugMode } from '../debug/DepthDebugVisualizer';
 import type { CharShadingParams } from '../rendering/CharacterShadingFilter';
 import type { SmellFormParams } from '../ui/smell/SmellIndicatorRenderer';
+import type { ObjectExamineAmbience, ObjectExamineBackgroundPreset } from '../systems/objectExamine/types';
+import { OBJECT_EXAMINE_BACKGROUND_PRESETS } from '../systems/objectExamine/types';
 
 /** F2 气味指示器调试：驱动味种 + 实时调烟形参数（只影响显示，不写盘/不动存档）。 */
 export interface SmellDebugController {
@@ -121,6 +123,86 @@ export interface DebugToolsDeps {
   scenarioDebugResetIncomplete: (scenarioId: string) => void;
   /** F2 气味指示器调试：驱动味种 + 实时调烟形（只影响显示）。 */
   smellDebug: SmellDebugController;
+  /** F2「检视」Tab：物件检视 presentation / 会话调试。 */
+  objectExamineDebug: {
+    getStatusText: () => string;
+    getInstanceList: () => { id: string; label: string }[];
+    start: (id: string) => void;
+    abort: () => void;
+    isActive: () => boolean;
+    getOverrides: () => {
+      backgroundPreset: ObjectExamineBackgroundPreset | null;
+      upright: boolean | null;
+      showHotspotDebug: boolean;
+    };
+    setBackgroundPreset: (preset: ObjectExamineBackgroundPreset) => void;
+    setUpright: (upright: boolean) => void;
+    resetPresentationOverrides: () => void;
+    setShowHotspotDebug: (show: boolean) => void;
+    setDistanceIndex: (index: number) => void;
+    getLiveDistanceIndex: () => number | null;
+    getLiveBackgroundBrightness: () => number;
+    getLiveBackgroundScale: () => number;
+    setBackgroundBrightness: (v: number) => void;
+    setBackgroundScale: (v: number) => void;
+    getLiveContactAoIntensity: () => number;
+    getLiveContactAoScale: () => number;
+    setContactAoIntensity: (v: number) => void;
+    setContactAoScale: (v: number) => void;
+    getResolvedAmbience: () => {
+      headSway: { enabled: boolean; amplitude: number };
+      breathing: { enabled: boolean; strength: number };
+      candlelight: { enabled: boolean; strength: number; periodSec: number };
+      moonlight: { enabled: boolean; strength: number; periodSec: number };
+      cloudShadow: { enabled: boolean; strength: number; speed: number };
+      dust: { enabled: boolean; density: number; intensity: number; radius: number };
+      flyingFlies: {
+        enabled: boolean;
+        x: number | null;
+        y: number | null;
+        count: number;
+        speed: number;
+        orbitRadius: number;
+        returnSec: number;
+        size: number;
+      };
+      crawlers: {
+        enabled: boolean;
+        parentEnabled: boolean;
+        hasStructuredConfig: boolean;
+        contactShadow: { enabled: boolean; intensity: number; size: number };
+        maggots: {
+          enabled: boolean;
+          clusters: Array<{
+            x: number | null;
+            y: number | null;
+            count: number;
+            radius: number;
+            size: number;
+          }>;
+        };
+        centipede: {
+          enabled: boolean;
+          hasStructuredConfig: boolean;
+          intervalSec: number;
+          speed: number;
+          size: number;
+        };
+        beetles: {
+          enabled: boolean;
+          x: number | null;
+          y: number | null;
+          count: number;
+          radius: number;
+          size: number;
+          regroupSec: number;
+        };
+      };
+      flies: { enabled: boolean; intervalSec: number };
+    };
+    setAmbiencePatch: (patch: Partial<ObjectExamineAmbience>) => void;
+    resetAmbienceOverrides: () => void;
+  };
 }
 
 export class DebugTools {
@@ -434,6 +516,778 @@ export class DebugTools {
     }
   }
 
+  /** F2「检视」Tab：托底 / 竖放 / 热区 / 探入档 / 启停实例。会话中可热切，不写盘。 */
+  private buildObjectExamineDebugSection(): {
+    text: string;
+    extra?: HTMLElement;
+    actions?: { label: string; fn: () => void; noRefresh?: boolean }[];
+  } {
+    const oe = this.deps.objectExamineDebug;
+    const { debugPanelUI } = this.deps;
+    const ov = oe.getOverrides();
+    const PRESET_LABELS: Record<ObjectExamineBackgroundPreset, string> = {
+      mud: '泥地',
+      straw: '草席',
+      wood: '木板',
+      stone: '石阶',
+      softGlow: '微光',
+    };
+
+    const wrap = document.createElement('div');
+    wrap.className = 'debug-dock__section-extra';
+
+    const markActive = (btn: HTMLButtonElement, on: boolean) => {
+      btn.style.outline = on ? '2px solid #c9a24a' : '';
+    };
+
+    const bgHint = document.createElement('div');
+    bgHint.className = 'debug-dock__pre';
+    bgHint.textContent = '托底 preset（会话中热切；覆盖实例 backgroundImage）：';
+    wrap.appendChild(bgHint);
+    const bgRow = document.createElement('div');
+    bgRow.className = 'debug-dock__actions';
+    for (const preset of Object.keys(OBJECT_EXAMINE_BACKGROUND_PRESETS) as ObjectExamineBackgroundPreset[]) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'debug-dock__btn';
+      btn.textContent = PRESET_LABELS[preset];
+      markActive(btn, ov.backgroundPreset === preset);
+      btn.addEventListener('click', () => {
+        oe.setBackgroundPreset(preset);
+        debugPanelUI.log(`[检视] 托底 → ${PRESET_LABELS[preset]} (${preset})`);
+        debugPanelUI.refresh();
+      });
+      bgRow.appendChild(btn);
+    }
+    wrap.appendChild(bgRow);
+
+    const orientHint = document.createElement('div');
+    orientHint.className = 'debug-dock__pre';
+    orientHint.textContent = '姿态 upright：';
+    wrap.appendChild(orientHint);
+    const orientRow = document.createElement('div');
+    orientRow.className = 'debug-dock__actions';
+    const uprightBtn = document.createElement('button');
+    uprightBtn.type = 'button';
+    uprightBtn.className = 'debug-dock__btn';
+    uprightBtn.textContent = '竖放';
+    markActive(uprightBtn, ov.upright === true);
+    uprightBtn.addEventListener('click', () => {
+      oe.setUpright(true);
+      debugPanelUI.log('[检视] upright → true');
+      debugPanelUI.refresh();
+    });
+    const flatBtn = document.createElement('button');
+    flatBtn.type = 'button';
+    flatBtn.className = 'debug-dock__btn';
+    flatBtn.textContent = '横放';
+    markActive(flatBtn, ov.upright === false);
+    flatBtn.addEventListener('click', () => {
+      oe.setUpright(false);
+      debugPanelUI.log('[检视] upright → false');
+      debugPanelUI.refresh();
+    });
+    orientRow.appendChild(uprightBtn);
+    orientRow.appendChild(flatBtn);
+    wrap.appendChild(orientRow);
+
+    const distHint = document.createElement('div');
+    distHint.className = 'debug-dock__pre';
+    distHint.textContent = '探入档（仅会话中）：';
+    wrap.appendChild(distHint);
+    const distRow = document.createElement('div');
+    distRow.className = 'debug-dock__actions';
+    const liveDist = oe.getLiveDistanceIndex();
+    for (let i = 0; i < 4; i++) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'debug-dock__btn';
+      btn.textContent = i === 0 ? '沿外' : `档${i}`;
+      btn.disabled = !oe.isActive();
+      markActive(btn, liveDist === i);
+      btn.addEventListener('click', () => {
+        oe.setDistanceIndex(i);
+        debugPanelUI.log(`[检视] 探入档 → ${i}`);
+        debugPanelUI.refresh();
+      });
+      distRow.appendChild(btn);
+    }
+    wrap.appendChild(distRow);
+
+    const brightHint = document.createElement('div');
+    brightHint.className = 'debug-dock__pre';
+    brightHint.textContent = `托底亮度 ${oe.getLiveBackgroundBrightness().toFixed(2)}（写入实例字段 backgroundBrightness）：`;
+    wrap.appendChild(brightHint);
+    const brightRow = document.createElement('div');
+    brightRow.className = 'debug-dock__actions';
+    for (const [label, delta] of [['-0.1', -0.1], ['+0.1', 0.1], ['1.0', null]] as const) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'debug-dock__btn';
+      btn.textContent = label;
+      btn.addEventListener('click', () => {
+        const next = delta == null ? 1 : oe.getLiveBackgroundBrightness() + delta;
+        oe.setBackgroundBrightness(next);
+        debugPanelUI.log(`[检视] 亮度 → ${oe.getLiveBackgroundBrightness().toFixed(2)}`);
+        debugPanelUI.refresh();
+      });
+      brightRow.appendChild(btn);
+    }
+    wrap.appendChild(brightRow);
+
+    const scaleHint = document.createElement('div');
+    scaleHint.className = 'debug-dock__pre';
+    scaleHint.textContent = `托底铺开 ${oe.getLiveBackgroundScale().toFixed(2)}（越大纹理越近；字段 backgroundScale）：`;
+    wrap.appendChild(scaleHint);
+    const scaleRow = document.createElement('div');
+    scaleRow.className = 'debug-dock__actions';
+    for (const [label, delta] of [['-0.1', -0.1], ['+0.1', 0.1], ['1.0', null]] as const) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'debug-dock__btn';
+      btn.textContent = label;
+      btn.addEventListener('click', () => {
+        const next = delta == null ? 1 : oe.getLiveBackgroundScale() + delta;
+        oe.setBackgroundScale(next);
+        debugPanelUI.log(`[检视] 铺开 → ${oe.getLiveBackgroundScale().toFixed(2)}`);
+        debugPanelUI.refresh();
+      });
+      scaleRow.appendChild(btn);
+    }
+    wrap.appendChild(scaleRow);
+
+    const aoIHint = document.createElement('div');
+    aoIHint.className = 'debug-dock__pre';
+    aoIHint.textContent = `物体 AO 黑区强度 ${oe.getLiveContactAoIntensity().toFixed(2)}（0=关；字段 contactAoIntensity）：`;
+    wrap.appendChild(aoIHint);
+    const aoIRow = document.createElement('div');
+    aoIRow.className = 'debug-dock__actions';
+    for (const [label, delta] of [['-0.2', -0.2], ['+0.2', 0.2], ['1.0', null], ['关', 'off']] as const) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'debug-dock__btn';
+      btn.textContent = label;
+      btn.addEventListener('click', () => {
+        const next =
+          delta === 'off' ? 0 : delta == null ? 1 : oe.getLiveContactAoIntensity() + delta;
+        oe.setContactAoIntensity(next);
+        debugPanelUI.log(`[检视] 物体AO黑区强度 → ${oe.getLiveContactAoIntensity().toFixed(2)}`);
+        debugPanelUI.refresh();
+      });
+      aoIRow.appendChild(btn);
+    }
+    wrap.appendChild(aoIRow);
+
+    const aoSHint = document.createElement('div');
+    aoSHint.className = 'debug-dock__pre';
+    aoSHint.textContent = `物体 AO 模糊半径 ${oe.getLiveContactAoScale().toFixed(2)}（字段 contactAoScale）：`;
+    wrap.appendChild(aoSHint);
+    const aoSRow = document.createElement('div');
+    aoSRow.className = 'debug-dock__actions';
+    for (const [label, delta] of [['-0.1', -0.1], ['+0.1', 0.1], ['1.0', null]] as const) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'debug-dock__btn';
+      btn.textContent = label;
+      btn.addEventListener('click', () => {
+        const next = delta == null ? 1 : oe.getLiveContactAoScale() + delta;
+        oe.setContactAoScale(next);
+        debugPanelUI.log(`[检视] 物体AO模糊半径 → ${oe.getLiveContactAoScale().toFixed(2)}`);
+        debugPanelUI.refresh();
+      });
+      aoSRow.appendChild(btn);
+    }
+    wrap.appendChild(aoSRow);
+
+    const launchHint = document.createElement('div');
+    launchHint.className = 'debug-dock__pre';
+    launchHint.textContent = '启动检视实例：';
+    wrap.appendChild(launchHint);
+    const launchRow = document.createElement('div');
+    launchRow.className = 'debug-dock__actions';
+    const list = oe.getInstanceList();
+    if (list.length === 0) {
+      const empty = document.createElement('span');
+      empty.className = 'debug-dock__pre';
+      empty.textContent = '（index 空）';
+      launchRow.appendChild(empty);
+    } else {
+      for (const entry of list) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'debug-dock__btn';
+        btn.textContent = entry.label || entry.id;
+        btn.title = entry.id;
+        btn.addEventListener('click', () => {
+          oe.start(entry.id);
+          debugPanelUI.log(`[检视] start ${entry.id}`);
+          debugPanelUI.refresh();
+        });
+        launchRow.appendChild(btn);
+      }
+    }
+    wrap.appendChild(launchRow);
+
+    const bagHint = document.createElement('div');
+    bagHint.className = 'debug-dock__pre';
+    bagHint.textContent = '摸囊演示道具（落水尸：糯米可撒脚跟；艾草试「使不上」）：';
+    wrap.appendChild(bagHint);
+    const bagRow = document.createElement('div');
+    bagRow.className = 'debug-dock__actions';
+    const giveDemo = (itemId: string, label: string) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'debug-dock__btn';
+      btn.textContent = `给${label}`;
+      btn.title = itemId;
+      btn.addEventListener('click', () => {
+        const ok = this.deps.inventoryManager.addItem(itemId, 1, { bypassSlotLimit: true });
+        debugPanelUI.log(ok ? `[检视] 已给予 ${label}（${itemId}）` : `[检视] 给予 ${label} 失败`);
+        debugPanelUI.refresh();
+      });
+      bagRow.appendChild(btn);
+    };
+    giveDemo('nuomi', '糯米');
+    giveDemo('mugwort', '艾草');
+    const giveBoth = document.createElement('button');
+    giveBoth.type = 'button';
+    giveBoth.className = 'debug-dock__btn';
+    giveBoth.textContent = '两个都给';
+    giveBoth.addEventListener('click', () => {
+      const a = this.deps.inventoryManager.addItem('nuomi', 1, { bypassSlotLimit: true });
+      const b = this.deps.inventoryManager.addItem('mugwort', 1, { bypassSlotLimit: true });
+      debugPanelUI.log(`[检视] 演示道具：糯米${a ? 'ok' : '失败'} 艾草${b ? 'ok' : '失败'}`);
+      debugPanelUI.refresh();
+    });
+    bagRow.appendChild(giveBoth);
+    wrap.appendChild(bagRow);
+
+    return {
+      text: oe.getStatusText(),
+      extra: wrap,
+      actions: [
+        {
+          label: ov.showHotspotDebug ? '热区描边：开' : '热区描边：关',
+          fn: () => {
+            oe.setShowHotspotDebug(!ov.showHotspotDebug);
+            debugPanelUI.log(`[检视] 热区描边 → ${!ov.showHotspotDebug ? '开' : '关'}`);
+          },
+        },
+        {
+          label: '恢复实例配置',
+          fn: () => {
+            oe.resetPresentationOverrides();
+            debugPanelUI.log('[检视] 已清除 presentation 覆盖');
+          },
+        },
+        {
+          label: oe.isActive() ? '结束当前检视' : '结束当前检视（空闲）',
+          fn: () => {
+            if (!oe.isActive()) {
+              debugPanelUI.log('[检视] 当前无会话');
+              return;
+            }
+            oe.abort();
+            debugPanelUI.log('[检视] 已 abort 当前会话');
+          },
+        },
+        {
+          label: '刷新',
+          fn: () => {
+            debugPanelUI.log('检视调试：已刷新');
+          },
+        },
+      ],
+    };
+  }
+
+  /** F2「检视氛围」Tab：会话内热调 ambience（不写盘）。 */
+  private buildObjectExamineAmbienceDebugSection(): {
+    text: string;
+    extra?: HTMLElement;
+    actions?: { label: string; fn: () => void; noRefresh?: boolean }[];
+  } {
+    const oe = this.deps.objectExamineDebug;
+    const { debugPanelUI } = this.deps;
+    const amb = oe.getResolvedAmbience();
+    const wrap = document.createElement('div');
+    wrap.className = 'debug-dock__section-extra';
+
+    const addToggle = (label: string, on: boolean, patchOn: Partial<ObjectExamineAmbience>, patchOff: Partial<ObjectExamineAmbience>) => {
+      const row = document.createElement('div');
+      row.className = 'debug-dock__actions';
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'debug-dock__btn';
+      btn.textContent = `${label}：${on ? '开' : '关'}`;
+      btn.style.outline = on ? '2px solid #c9a24a' : '';
+      btn.addEventListener('click', () => {
+        oe.setAmbiencePatch(on ? patchOff : patchOn);
+        debugPanelUI.log(`[检视氛围] ${label} → ${on ? '关' : '开'}`);
+        debugPanelUI.refresh();
+      });
+      row.appendChild(btn);
+      wrap.appendChild(row);
+    };
+
+    addToggle(
+      '镜头微晃',
+      amb.headSway.enabled,
+      { headSway: { amplitude: amb.headSway.amplitude || 1 } },
+      { headSway: false },
+    );
+    addToggle(
+      '呼吸感',
+      amb.breathing.enabled,
+      { breathing: { strength: amb.breathing.strength || 1 } },
+      { breathing: false },
+    );
+    addToggle('烛光', amb.candlelight.enabled, { candlelight: true }, { candlelight: false });
+    addToggle('月光', amb.moonlight.enabled, { moonlight: true }, { moonlight: false });
+    addToggle('云影', amb.cloudShadow.enabled, { cloudShadow: true }, { cloudShadow: false });
+    addToggle(
+      '尘埃',
+      amb.dust.enabled,
+      {
+        dust: {
+          density: amb.dust.density || 1,
+          intensity: Math.max(0.8, amb.dust.intensity || 1),
+          radius: amb.dust.radius || 1,
+        },
+      },
+      { dust: false },
+    );
+    addToggle(
+      '苍蝇飞舞',
+      amb.flyingFlies.enabled,
+      {
+        flyingFlies: {
+          x: amb.flyingFlies.x ?? undefined,
+          y: amb.flyingFlies.y ?? undefined,
+          count: amb.flyingFlies.count,
+          speed: amb.flyingFlies.speed,
+          orbitRadius: amb.flyingFlies.orbitRadius,
+          returnSec: amb.flyingFlies.returnSec,
+          size: amb.flyingFlies.size,
+        },
+      },
+      { flyingFlies: false },
+    );
+    const crawlerToggleConfig = (enabled: boolean): ObjectExamineAmbience['crawlers'] => {
+      if (enabled && !amb.crawlers.hasStructuredConfig) return true;
+      return {
+        enabled,
+        contactShadow: amb.crawlers.contactShadow.enabled
+          ? {
+              intensity: amb.crawlers.contactShadow.intensity,
+              size: amb.crawlers.contactShadow.size,
+            }
+          : false,
+        maggots: amb.crawlers.maggots.enabled
+          ? {
+              clusters: amb.crawlers.maggots.clusters.map((c) => ({
+                x: c.x ?? undefined,
+                y: c.y ?? undefined,
+                count: c.count,
+                radius: c.radius,
+                size: c.size,
+              })),
+            }
+          : false,
+        centipede:
+          amb.crawlers.centipede.enabled || amb.crawlers.centipede.hasStructuredConfig
+          ? {
+              intervalSec: amb.crawlers.centipede.intervalSec,
+              speed: amb.crawlers.centipede.speed,
+              size: amb.crawlers.centipede.size,
+            }
+          : false,
+        beetles: amb.crawlers.beetles.enabled
+          ? {
+              x: amb.crawlers.beetles.x ?? undefined,
+              y: amb.crawlers.beetles.y ?? undefined,
+              count: amb.crawlers.beetles.count,
+              radius: amb.crawlers.beetles.radius,
+              size: amb.crawlers.beetles.size,
+              regroupSec: amb.crawlers.beetles.regroupSec,
+            }
+          : false,
+      };
+    };
+    addToggle(
+      '爬虫',
+      amb.crawlers.parentEnabled,
+      { crawlers: crawlerToggleConfig(true) },
+      { crawlers: crawlerToggleConfig(false) },
+    );
+
+    const swayHint = document.createElement('div');
+    swayHint.className = 'debug-dock__pre';
+    swayHint.textContent = `镜头微晃幅度 ${amb.headSway.amplitude.toFixed(2)}（乘数，1=默认）`;
+    wrap.appendChild(swayHint);
+    const swayRow = document.createElement('div');
+    swayRow.className = 'debug-dock__actions';
+    for (const [label, delta] of [
+      ['晃-0.2', -0.2],
+      ['晃+0.2', 0.2],
+      ['晃=1.0', null],
+    ] as const) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'debug-dock__btn';
+      btn.textContent = label;
+      btn.addEventListener('click', () => {
+        const next =
+          delta == null ? 1 : Math.max(0, Math.min(3, amb.headSway.amplitude + delta));
+        oe.setAmbiencePatch({ headSway: { amplitude: next } });
+        debugPanelUI.log(`[检视氛围] 镜头微晃幅度 → ${next.toFixed(2)}`);
+        debugPanelUI.refresh();
+      });
+      swayRow.appendChild(btn);
+    }
+    wrap.appendChild(swayRow);
+
+    const breathHint = document.createElement('div');
+    breathHint.className = 'debug-dock__pre';
+    breathHint.textContent =
+      `呼吸强弱 ${amb.breathing.strength.toFixed(2)}（1=平静，越高越急促）`;
+    wrap.appendChild(breathHint);
+    const breathRow = document.createElement('div');
+    breathRow.className = 'debug-dock__actions';
+    for (const [label, mode, amount] of [
+      ['呼-0.2', 'delta', -0.2],
+      ['呼+0.2', 'delta', 0.2],
+      ['平静1', 'set', 1],
+      ['急促2.5', 'set', 2.5],
+    ] as const) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'debug-dock__btn';
+      btn.textContent = label;
+      btn.addEventListener('click', () => {
+        const value =
+          mode === 'set'
+            ? amount
+            : Math.max(0, Math.min(3, amb.breathing.strength + amount));
+        oe.setAmbiencePatch({ breathing: { strength: value } });
+        debugPanelUI.log(`[检视氛围] 呼吸强弱 → ${value.toFixed(2)}`);
+        debugPanelUI.refresh();
+      });
+      breathRow.appendChild(btn);
+    }
+    wrap.appendChild(breathRow);
+
+    const dustHint = document.createElement('div');
+    dustHint.className = 'debug-dock__pre';
+    dustHint.textContent =
+      `尘埃 密度 ${amb.dust.density.toFixed(2)} · 强度 ${amb.dust.intensity.toFixed(2)} · 半径 ${amb.dust.radius.toFixed(2)}`;
+    wrap.appendChild(dustHint);
+    const dustCur = {
+      density: amb.dust.density,
+      intensity: amb.dust.intensity,
+      radius: amb.dust.radius,
+    };
+    const dustRow = document.createElement('div');
+    dustRow.className = 'debug-dock__actions';
+    for (const [label, patch] of [
+      ['密-0.2', { ...dustCur, density: Math.max(0.2, dustCur.density - 0.2) }],
+      ['密+0.2', { ...dustCur, density: Math.min(3, dustCur.density + 0.2) }],
+      ['强-0.2', { ...dustCur, intensity: Math.max(0, dustCur.intensity - 0.2) }],
+      ['强+0.2', { ...dustCur, intensity: Math.min(3, dustCur.intensity + 0.2) }],
+      ['径-0.2', { ...dustCur, radius: Math.max(0.2, dustCur.radius - 0.2) }],
+      ['径+0.2', { ...dustCur, radius: Math.min(4, dustCur.radius + 0.2) }],
+      ['尘默认', { density: 1, intensity: 1.2, radius: 1 }],
+    ] as const) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'debug-dock__btn';
+      btn.textContent = label;
+      btn.addEventListener('click', () => {
+        oe.setAmbiencePatch({ dust: { ...patch } });
+        debugPanelUI.log(
+          `[检视氛围] 尘埃 密=${patch.density.toFixed(2)} 强=${patch.intensity.toFixed(2)} 径=${patch.radius.toFixed(2)}`,
+        );
+        debugPanelUI.refresh();
+      });
+      dustRow.appendChild(btn);
+    }
+    wrap.appendChild(dustRow);
+
+    const flyHint = document.createElement('div');
+    flyHint.className = 'debug-dock__pre';
+    flyHint.textContent =
+      `苍蝇 数 ${amb.flyingFlies.count} · 速 ${amb.flyingFlies.speed.toFixed(2)} · 域 ${amb.flyingFlies.orbitRadius.toFixed(2)} · 归 ${amb.flyingFlies.returnSec.toFixed(0)}s · 尺 ${amb.flyingFlies.size.toFixed(2)}（高速乱飞，可点击惊赶）`;
+    wrap.appendChild(flyHint);
+    const flyRow = document.createElement('div');
+    flyRow.className = 'debug-dock__actions';
+    const flyCur = {
+      x: amb.flyingFlies.x ?? undefined,
+      y: amb.flyingFlies.y ?? undefined,
+      count: amb.flyingFlies.count,
+      speed: amb.flyingFlies.speed,
+      orbitRadius: amb.flyingFlies.orbitRadius,
+      returnSec: amb.flyingFlies.returnSec,
+      size: amb.flyingFlies.size,
+    };
+    for (const [label, patch] of [
+      ['蝇-1', { ...flyCur, count: Math.max(1, flyCur.count - 1) }],
+      ['蝇+1', { ...flyCur, count: Math.min(16, flyCur.count + 1) }],
+      ['速-0.2', { ...flyCur, speed: Math.max(0.3, flyCur.speed - 0.2) }],
+      ['速+0.2', { ...flyCur, speed: Math.min(2.5, flyCur.speed + 0.2) }],
+      ['域-0.2', { ...flyCur, orbitRadius: Math.max(0.3, flyCur.orbitRadius - 0.2) }],
+      ['域+0.2', { ...flyCur, orbitRadius: Math.min(3, flyCur.orbitRadius + 0.2) }],
+      ['归-4s', { ...flyCur, returnSec: Math.max(0, flyCur.returnSec - 4) }],
+      ['归+4s', { ...flyCur, returnSec: Math.min(60, flyCur.returnSec + 4) }],
+      ['尺-0.2', { ...flyCur, size: Math.max(0.2, Math.round((flyCur.size - 0.2) * 10) / 10) }],
+      ['尺+0.2', { ...flyCur, size: Math.min(4, Math.round((flyCur.size + 0.2) * 10) / 10) }],
+    ] as const) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'debug-dock__btn';
+      btn.textContent = label;
+      btn.addEventListener('click', () => {
+        oe.setAmbiencePatch({ flyingFlies: { ...patch } });
+        debugPanelUI.log(
+          `[检视氛围] 苍蝇 数=${patch.count} 速=${patch.speed.toFixed(2)} 域=${patch.orbitRadius.toFixed(2)} 归=${patch.returnSec.toFixed(0)}s 尺=${patch.size.toFixed(2)}`,
+        );
+        debugPanelUI.refresh();
+      });
+      flyRow.appendChild(btn);
+    }
+    wrap.appendChild(flyRow);
+
+    const crawlHint = document.createElement('div');
+    crawlHint.className = 'debug-dock__pre';
+    const maggotN = amb.crawlers.maggots.clusters.reduce((n, c) => n + c.count, 0);
+    const maggotSize = amb.crawlers.maggots.clusters[0]?.size ?? 1;
+    const centiTxt = amb.crawlers.centipede.enabled
+      ? `蜈蚣 ${amb.crawlers.centipede.intervalSec.toFixed(0)}s/次 尺${amb.crawlers.centipede.size.toFixed(2)}`
+      : '蜈蚣 无';
+    crawlHint.textContent = amb.crawlers.enabled
+      ? `爬虫 蛆×${maggotN} 尺${maggotSize.toFixed(2)}（原地蠕） · ${centiTxt} · 甲虫×${amb.crawlers.beetles.count} 尺${amb.crawlers.beetles.size.toFixed(2)}（点击惊散） · 虫AO黑区强度${amb.crawlers.contactShadow.intensity.toFixed(2)}/模糊半径${amb.crawlers.contactShadow.size.toFixed(2)}`
+      : '爬虫 关';
+    wrap.appendChild(crawlHint);
+
+    if (amb.crawlers.enabled) {
+      type CrawlersPanelPatch = {
+        contactShadow: false | { intensity: number; size: number };
+        maggots: false | {
+          clusters: Array<{ x?: number; y?: number; count: number; radius: number; size: number }>;
+        };
+        centipede: false | { intervalSec: number; speed: number; size: number };
+        beetles: false | {
+          x?: number;
+          y?: number;
+          count: number;
+          radius: number;
+          size: number;
+          regroupSec: number;
+        };
+      };
+      const crawlRow = document.createElement('div');
+      crawlRow.className = 'debug-dock__actions';
+      const crawlSizeBtn = (
+        label: string,
+        apply: (c: CrawlersPanelPatch) => void,
+      ) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'debug-dock__btn';
+        btn.textContent = label;
+        btn.addEventListener('click', () => {
+          const cur: CrawlersPanelPatch = {
+            contactShadow: amb.crawlers.contactShadow.enabled
+              ? {
+                  intensity: amb.crawlers.contactShadow.intensity,
+                  size: amb.crawlers.contactShadow.size,
+                }
+              : false,
+            maggots: amb.crawlers.maggots.enabled
+              ? {
+                  clusters: amb.crawlers.maggots.clusters.map((c) => ({
+                    x: c.x ?? undefined,
+                    y: c.y ?? undefined,
+                    count: c.count,
+                    radius: c.radius,
+                    size: c.size,
+                  })),
+                }
+              : false,
+            centipede:
+              amb.crawlers.centipede.enabled || amb.crawlers.centipede.hasStructuredConfig
+              ? {
+                  intervalSec: amb.crawlers.centipede.intervalSec,
+                  speed: amb.crawlers.centipede.speed,
+                  size: amb.crawlers.centipede.size,
+                }
+              : false,
+            beetles: amb.crawlers.beetles.enabled
+              ? {
+                  x: amb.crawlers.beetles.x ?? undefined,
+                  y: amb.crawlers.beetles.y ?? undefined,
+                  count: amb.crawlers.beetles.count,
+                  radius: amb.crawlers.beetles.radius,
+                  size: amb.crawlers.beetles.size,
+                  regroupSec: amb.crawlers.beetles.regroupSec,
+                }
+              : false,
+          };
+          apply(cur);
+          oe.setAmbiencePatch({ crawlers: cur });
+          debugPanelUI.log(`[检视氛围] 爬虫尺寸调节 → ${label}`);
+          debugPanelUI.refresh();
+        });
+        return btn;
+      };
+      const stepSize = (v: number, d: number) =>
+        Math.max(0.2, Math.min(4, Math.round((v + d) * 10) / 10));
+      const stepShadow = (v: number, d: number, lo: number, hi: number) =>
+        Math.max(lo, Math.min(hi, Math.round((v + d) * 10) / 10));
+      const editShadow = (
+        c: CrawlersPanelPatch,
+        edit: (shadow: { intensity: number; size: number }) => void,
+      ) => {
+        const shadow =
+          c.contactShadow === false
+            ? { intensity: 0, size: amb.crawlers.contactShadow.size }
+            : c.contactShadow;
+        edit(shadow);
+        c.contactShadow = shadow;
+      };
+      crawlRow.appendChild(
+        crawlSizeBtn('虫AO强-0.2', (c) => {
+          editShadow(c, (shadow) => {
+            shadow.intensity = stepShadow(shadow.intensity, -0.2, 0, 2);
+          });
+        }),
+      );
+      crawlRow.appendChild(
+        crawlSizeBtn('虫AO强+0.2', (c) => {
+          editShadow(c, (shadow) => {
+            shadow.intensity = stepShadow(shadow.intensity, 0.2, 0, 2);
+          });
+        }),
+      );
+      crawlRow.appendChild(
+        crawlSizeBtn('虫AO径-0.2', (c) => {
+          editShadow(c, (shadow) => {
+            shadow.size = stepShadow(shadow.size, -0.2, 0.5, 1.8);
+          });
+        }),
+      );
+      crawlRow.appendChild(
+        crawlSizeBtn('虫AO径+0.2', (c) => {
+          editShadow(c, (shadow) => {
+            shadow.size = stepShadow(shadow.size, 0.2, 0.5, 1.8);
+          });
+        }),
+      );
+      crawlRow.appendChild(
+        crawlSizeBtn('蛆尺-0.2', (c) => {
+          if (c.maggots === false) return;
+          for (const cl of c.maggots.clusters) cl.size = stepSize(cl.size, -0.2);
+        }),
+      );
+      crawlRow.appendChild(
+        crawlSizeBtn('蛆尺+0.2', (c) => {
+          if (c.maggots === false) return;
+          for (const cl of c.maggots.clusters) cl.size = stepSize(cl.size, 0.2);
+        }),
+      );
+      crawlRow.appendChild(
+        crawlSizeBtn('蜈尺-0.2', (c) => {
+          if (c.centipede === false) return;
+          c.centipede.size = stepSize(c.centipede.size, -0.2);
+        }),
+      );
+      crawlRow.appendChild(
+        crawlSizeBtn('蜈尺+0.2', (c) => {
+          if (c.centipede === false) return;
+          c.centipede.size = stepSize(c.centipede.size, 0.2);
+        }),
+      );
+      crawlRow.appendChild(
+        crawlSizeBtn('甲尺-0.2', (c) => {
+          if (c.beetles === false) return;
+          c.beetles.size = stepSize(c.beetles.size, -0.2);
+        }),
+      );
+      crawlRow.appendChild(
+        crawlSizeBtn('甲尺+0.2', (c) => {
+          if (c.beetles === false) return;
+          c.beetles.size = stepSize(c.beetles.size, 0.2);
+        }),
+      );
+      wrap.appendChild(crawlRow);
+    }
+
+    const strengthHint = document.createElement('div');
+    strengthHint.className = 'debug-dock__pre';
+    strengthHint.textContent =
+      `烛光强度 ${amb.candlelight.strength.toFixed(2)} · 月光 ${amb.moonlight.strength.toFixed(2)} · 云影 ${amb.cloudShadow.strength.toFixed(2)}`;
+    wrap.appendChild(strengthHint);
+
+    const nudge = (label: string, delta: number, key: 'candlelight' | 'moonlight' | 'cloudShadow') => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'debug-dock__btn';
+      btn.textContent = label;
+      btn.addEventListener('click', () => {
+        if (key === 'cloudShadow') {
+          oe.setAmbiencePatch({
+            cloudShadow: {
+              strength: Math.max(0, Math.min(1, amb.cloudShadow.strength + delta)),
+              speed: amb.cloudShadow.speed,
+            },
+          });
+        } else {
+          const cur = amb[key];
+          oe.setAmbiencePatch({
+            [key]: {
+              strength: Math.max(0, Math.min(1.5, cur.strength + delta)),
+              periodSec: cur.periodSec,
+            },
+          });
+        }
+        debugPanelUI.refresh();
+      });
+      return btn;
+    };
+    const strengthRow = document.createElement('div');
+    strengthRow.className = 'debug-dock__actions';
+    strengthRow.appendChild(nudge('烛-0.05', -0.05, 'candlelight'));
+    strengthRow.appendChild(nudge('烛+0.05', 0.05, 'candlelight'));
+    strengthRow.appendChild(nudge('月-0.05', -0.05, 'moonlight'));
+    strengthRow.appendChild(nudge('月+0.05', 0.05, 'moonlight'));
+    strengthRow.appendChild(nudge('云-0.05', -0.05, 'cloudShadow'));
+    strengthRow.appendChild(nudge('云+0.05', 0.05, 'cloudShadow'));
+    wrap.appendChild(strengthRow);
+
+    return {
+      text:
+        `镜头微晃 ${amb.headSway.enabled ? `开 ×${amb.headSway.amplitude.toFixed(2)}` : '关'} · 呼吸 ${amb.breathing.enabled ? `开 ×${amb.breathing.strength.toFixed(2)}` : '关'} · 烛 ${amb.candlelight.enabled ? '开' : '关'}\n` +
+        `月 ${amb.moonlight.enabled ? '开' : '关'} · 云影 ${amb.cloudShadow.enabled ? '开' : '关'} · 尘 ${amb.dust.enabled ? `开 密${amb.dust.density.toFixed(1)}/强${amb.dust.intensity.toFixed(1)}/径${amb.dust.radius.toFixed(1)}` : '关'}\n` +
+        `苍蝇 ${amb.flyingFlies.enabled ? `开×${amb.flyingFlies.count}` : '关'} · 爬虫 ${amb.crawlers.enabled ? '开' : '关'}\n` +
+        '（覆盖仅会话内生效，不写盘；点「恢复实例氛围」可清覆盖）',
+      extra: wrap,
+      actions: [
+        {
+          label: '恢复实例氛围',
+          fn: () => {
+            oe.resetAmbienceOverrides();
+            debugPanelUI.log('[检视氛围] 已清除氛围覆盖');
+          },
+        },
+        {
+          label: '刷新',
+          fn: () => {
+            debugPanelUI.log('检视氛围：已刷新');
+          },
+        },
+      ],
+    };
+  }
+
   /** F2「气味指示器（调试）」：左边驱动味种/浓度看效果，右边实时调所有味共用的烟形，底部读数可抄回 smell_profiles.json 的 form 块。 */
   private buildSmellDebugSection(): { text: string; extra?: HTMLElement; actions?: { label: string; fn: () => void; noRefresh?: boolean }[] } {
     const sd = this.deps.smellDebug;
@@ -670,6 +1524,9 @@ export class DebugTools {
         extra: this.buildScenarioDebugListExtra(rows),
       };
     });
+
+    debugPanelUI.addSection(OBJECT_EXAMINE_DEBUG_SECTION_ID, () => this.buildObjectExamineDebugSection());
+    debugPanelUI.addSection(OBJECT_EXAMINE_AMBIENCE_DEBUG_SECTION_ID, () => this.buildObjectExamineAmbienceDebugSection());
 
     debugPanelUI.addSection('Quick Actions', () => {
       const actions: { label: string; fn: () => void }[] = [

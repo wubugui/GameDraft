@@ -6,6 +6,7 @@ confirm_close（关闭/切项目提示）。本测试逐个编辑器验证三条
 """
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -22,7 +23,10 @@ from tools.editor.editors.pressure_signal_editor import (
     PressureHoldEditor,
     SignalCueEditor,
 )
-from tools.editor.editors.narrative_data_editors import ScenariosCatalogEditor
+from tools.editor.editors.narrative_data_editors import (
+    DocumentRevealsEditor,
+    ScenariosCatalogEditor,
+)
 from tools.editor.editors.quest_editor import QuestEditor
 from tools.editor.editors.rule_editor import RuleEditor
 from tools.editor.editors.shop_editor import ShopEditor
@@ -104,6 +108,54 @@ class EncounterEditorPersistenceTests(unittest.TestCase):
             self.assertTrue(ed.flush_to_model())
             # 未编辑时 flush 不应改变数据
             self.assertEqual(model.encounters[0]["narrative"], "old")
+
+    def test_reload_refs_refreshes_open_item_rule_catalog_without_touching_draft(self) -> None:
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            write_minimal_loadable_project(root)
+            model = ProjectModel()
+            model.load_project(root)
+            model.items = [{"id": "i_old", "name": "旧物"}]
+            model.rules_data = {"rules": [{"id": "r_old", "name": "旧规矩"}]}
+            model.encounters = [{
+                "id": "enc0",
+                "narrative": "old",
+                "options": [{
+                    "text": "选",
+                    "type": "rule",
+                    "requiredRuleId": "r_old",
+                    "consumeItems": [{"id": "i_old", "count": 2}],
+                    "conditions": [],
+                    "resultActions": [],
+                }],
+            }]
+            ed = EncounterEditor(model)
+            model.items.append({"id": "i_added", "name": "新增物"})
+            model.rules_data["rules"].append({"id": "r_added", "name": "新增规矩"})
+            model._dirty.clear()
+            ed.reload_refs_from_model()
+            self.assertFalse(ed._is_dirty(), "干净表单刷新候选后不得凭空变脏")
+            self.assertEqual(model._dirty, set())
+
+            ed._e_narr.setPlainText("尚未 Apply 的正文")
+            option = ed._opt_widgets[0]
+            item_row = option._consume._rows[0]
+            self.assertTrue(ed._is_dirty())
+
+            # 模拟其它页删掉旧目标、添加新目标；当前旧引用必须转为孤儿保值。
+            model.items = [{"id": "i_new", "name": "新物"}]
+            model.rules_data = {"rules": [{"id": "r_new", "name": "新规矩"}]}
+            model._dirty.clear()
+            ed.reload_refs_from_model()
+
+            self.assertIs(ed._opt_widgets[0], option, "刷新目录不得重建已打开 Option 表单")
+            self.assertEqual(ed._e_narr.toPlainText(), "尚未 Apply 的正文")
+            self.assertEqual(option._rule.current_id(), "r_old")
+            self.assertIn("r_new", option._rule._ids)
+            self.assertEqual(item_row._item_sel.current_id(), "i_old")
+            self.assertIn("i_new", item_row._item_sel._ids)
+            self.assertTrue(ed._is_dirty(), "刷新不得吞掉原有未提交脏态")
+            self.assertEqual(model._dirty, set(), "候选目录刷新本身不得标工程脏")
 
 
 class ShopEditorPersistenceTests(unittest.TestCase):
@@ -315,6 +367,44 @@ class QuestEditorPersistenceTests(unittest.TestCase):
             ed._q_title.setText("任务B改")
             self.assertTrue(ed.flush_to_model())
             self.assertEqual(self._q(model, "qB")["title"], "任务B改")
+
+    def test_reload_refs_preserves_open_group_run_archetype_and_draft(self) -> None:
+        with TemporaryDirectory() as td:
+            ed, model = self._editor(Path(td) / "p")
+            run_ids = ["run_old"]
+            model.narrative_instanced_graph_ids_ordered = lambda: list(run_ids)  # type: ignore[method-assign]
+            q = self._q(model, "qA")
+            q["type"] = "repeatable"
+            q["runArchetype"] = "run_old"
+            root = ed._tree.invisibleRootItem()
+            ed._tree.setCurrentItem(ed._find_tree_item(root, "quest", "qA"))
+            model.quest_groups.append({"id": "g_added", "name": "新增组", "type": "main"})
+            run_ids.append("run_added")
+            model._dirty.clear()
+            ed.reload_refs_from_model()
+            self.assertFalse(ed._is_dirty(), "干净任务表单刷新候选后不得凭空变脏")
+            self.assertEqual(model._dirty, set())
+
+            ed._q_title.setText("尚未应用的标题")
+            group_selector = ed._q_group
+            run_selector = ed._q_run_arch
+            self.assertTrue(ed._is_dirty())
+
+            # 其它页替换分组/活计图目录；当前值虽悬垂仍必须保留，并看得到新候选。
+            model.quest_groups = [{"id": "g_new", "name": "新组", "type": "main"}]
+            run_ids[:] = ["run_new"]
+            model._dirty.clear()
+            ed.reload_refs_from_model()
+
+            self.assertIs(ed._q_group, group_selector)
+            self.assertIs(ed._q_run_arch, run_selector)
+            self.assertEqual(ed._q_group.current_id(), "g0")
+            self.assertIn("g_new", ed._q_group._ids)
+            self.assertEqual(ed._q_run_arch.current_id(), "run_old")
+            self.assertIn("run_new", ed._q_run_arch._ids)
+            self.assertEqual(ed._q_title.text(), "尚未应用的标题")
+            self.assertTrue(ed._is_dirty(), "刷新不得提交或清除已有未应用编辑")
+            self.assertEqual(model._dirty, set(), "候选目录刷新本身不得标工程脏")
 
 
 class RuleEditorPersistenceTests(unittest.TestCase):
@@ -545,6 +635,64 @@ class ScenariosCatalogEditorPersistenceTests(unittest.TestCase):
             err = ed._validate()
             self.assertIsNotNone(err, "配了 exposes 却无 exposeAfterPhase 应被校验拦下")
             self.assertIn("exposeAfterPhase", err or "")
+
+
+class DocumentRevealsEditorReferenceSafetyTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._qt_app = QApplication.instance() or QApplication(sys.argv)
+
+    def test_dangling_scenario_phase_survive_reload_unrelated_edit_and_save_all(self) -> None:
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            write_minimal_loadable_project(root)
+            model = ProjectModel()
+            model.load_project(root)
+            model.scenarios_catalog = {
+                "scenarios": [{"id": "known_line", "phases": {"current": {}}}],
+            }
+            original_condition = {
+                "scenario": "known_line",
+                "phase": "removed_phase",
+                "status": "done",
+                "futureField": {"keep": 1},
+            }
+            model.document_reveals = [{
+                "id": "doc_safe",
+                "blurredImagePath": "/assets/blur.png",
+                "clearImagePath": "/assets/clear.png",
+                "revealCondition": original_condition,
+                "animation": {"durationMs": 2000, "delayMs": 0},
+                "xPercent": 50,
+                "yPercent": 50,
+                "widthPercent": 40,
+            }]
+            ed = DocumentRevealsEditor(model)
+
+            # 初始填表与显式重载都必须把清单外 phase 注入孤儿项，而非落到空项。
+            self.assertEqual(ed._dr_sc_scen.current_id(), "known_line")
+            self.assertEqual(ed._dr_sc_phase.current_id(), "removed_phase")
+            self.assertIn("[缺失]", ed._dr_sc_phase.currentText())
+            ed.reload_from_model()
+            self.assertEqual(ed._dr_sc_phase.current_id(), "removed_phase")
+
+            # scenario 随后也被其它页删除；轻量目录刷新必须同时保留两级悬垂值。
+            model.scenarios_catalog = {"scenarios": [{"id": "other", "phases": {"p": {}}}]}
+            ed.reload_refs_from_model()
+            self.assertEqual(ed._dr_sc_scen.current_id(), "known_line")
+            self.assertEqual(ed._dr_sc_phase.current_id(), "removed_phase")
+            self.assertIn("[缺失]", ed._dr_sc_scen.currentText())
+
+            # 只改位置并走 Save All；引用及同一条件内未来字段不得被结构化回写抹掉。
+            ed._dr_x.setValue(51)
+            ed.flush_to_model()
+            self.assertEqual(model.document_reveals[0]["revealCondition"], original_condition)
+            model.save_all()
+            saved = json.loads(
+                (root / "public/assets/data/document_reveals.json").read_text(encoding="utf-8"),
+            )
+            self.assertEqual(saved[0]["revealCondition"], original_condition)
+            self.assertEqual(saved[0]["xPercent"], 51)
 
 
 if __name__ == "__main__":

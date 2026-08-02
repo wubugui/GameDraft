@@ -93,6 +93,7 @@ export const emptyCatalog: AuthoringCatalogDef = {
   sceneNpcRefs: [],
   sceneHotspotRefs: [],
   zoneRefs: [],
+  sceneGroupRefs: [],
   minigameIds: [],
   cutsceneIds: [],
   graphIds: [],

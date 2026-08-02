@@ -117,6 +117,56 @@ class TestNarrativePackagesEditor(unittest.TestCase):
         finally:
             ed.deleteLater()
 
+    def test_reload_refs_preserves_open_scene_package_draft_and_dirty_state(self) -> None:
+        m = self._model()
+        scene_ids = ["scene_old"]
+        package_ids = ["package_old"]
+        m.all_scene_ids = lambda: list(scene_ids)  # type: ignore[method-assign]
+        m.narrative_package_ids_ordered = lambda: list(package_ids)  # type: ignore[method-assign]
+        m.narrative_packages = {
+            "packages": [{
+                "id": "row_old",
+                "scene": "scene_old",
+                "package": "package_old",
+            }],
+        }
+        ed = NarrativePackagesEditor(m)
+        try:
+            scene_selector = ed._f_scene
+            package_selector = ed._f_package
+            ed._f_id.setText("尚未应用的新行名")
+            ed._on_edit()
+            self.assertTrue(ed._dirty)
+
+            scene_ids[:] = ["scene_new"]
+            package_ids[:] = ["package_new"]
+            m._dirty.clear()
+            ed.reload_refs_from_model()
+
+            self.assertIs(ed._f_scene, scene_selector, "刷新不得重建当前表单")
+            self.assertIs(ed._f_package, package_selector)
+            self.assertEqual(ed._f_scene.current_id(), "scene_old")
+            self.assertIn("scene_new", ed._f_scene._ids)
+            self.assertEqual(ed._f_package.current_id(), "package_old")
+            self.assertIn("package_new", ed._f_package._ids)
+            self.assertEqual(ed._f_id.text(), "尚未应用的新行名")
+            self.assertTrue(ed._dirty, "刷新不得提交或清除已有未应用编辑")
+            self.assertEqual(m._dirty, set(), "候选目录刷新本身不得标工程脏")
+        finally:
+            ed.deleteLater()
+
+    def test_reload_refs_does_not_create_dirty_state_when_form_is_clean(self) -> None:
+        m = self._model()
+        ed = NarrativePackagesEditor(m)
+        try:
+            self.assertFalse(ed._dirty)
+            m._dirty.clear()
+            ed.reload_refs_from_model()
+            self.assertFalse(ed._dirty)
+            self.assertEqual(m._dirty, set())
+        finally:
+            ed.deleteLater()
+
 
 if __name__ == "__main__":
     unittest.main()

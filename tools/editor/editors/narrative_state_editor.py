@@ -1127,6 +1127,10 @@ class NarrativeEditorBridge(QObject):
                 win._on_navigate_to_source("quest", ref_id, "")
             elif route == "scene":
                 win._on_navigate_to_source("scene", ref_id, "")
+            elif route == "sceneGroup":
+                scene_id, _group_id = _split_scene_ref(ref_id)
+                if scene_id:
+                    win._on_navigate_to_source("scene", scene_id, "")
             elif route in _SCENE_OWNER_SOURCE_TYPES:
                 scene_id, source_id = _split_scene_ref(ref_id)
                 source_type = _SCENE_OWNER_SOURCE_TYPES[route]
@@ -1222,6 +1226,11 @@ class NarrativeStateEditor(QWidget):
         self._channel = None
         self._view = None
         self._last_flush_error: str | None = None
+        # Initial/rebase page loads are projections of the already-authoritative
+        # ProjectModel. Until loadFinished, stale/default Web JSON must never be
+        # flushed back over that model (Task apply can be followed by Save All
+        # in the same event-loop turn).
+        self._model_projection_reload_pending = True
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -1402,6 +1411,7 @@ class NarrativeStateEditor(QWidget):
 
     def _on_web_load_finished(self, ok: bool) -> None:
         if ok:
+            self._model_projection_reload_pending = False
             self._apply_web_font_tokens()
 
     def on_editor_theme_changed(self, _theme_id: str) -> None:
@@ -1563,6 +1573,8 @@ class NarrativeStateEditor(QWidget):
         self._last_flush_error = None
         if self._view is None:
             return True
+        if getattr(self, "_model_projection_reload_pending", False):
+            return True
         state = self._read_editor_state()
         payload = state.get("json") if isinstance(state, dict) else None
         if not isinstance(payload, str) or not payload.strip():
@@ -1666,7 +1678,27 @@ class NarrativeStateEditor(QWidget):
 
     def reload_from_model(self) -> None:
         if self._view is not None:
+            self._model_projection_reload_pending = True
             self._view.reload()
+
+    def reload_refs_from_model(self) -> None:
+        """Refresh cross-file candidates without replacing or saving the Web draft.
+
+        MainWindow invokes this duck-typed hook on page activation. The web API
+        only updates its catalog state, so the active composition, selection,
+        undo history and unsaved narrative data remain untouched.
+        """
+        if self._view is None:
+            return
+        self._run_editor_js_result(
+            "(() => {"
+            "const api=window.__narrativeEditor;"
+            "if(!api || typeof api.refreshCatalog!=='function') return false;"
+            "Promise.resolve(api.refreshCatalog()).catch((err)=>console.error('catalog refresh failed',err));"
+            "return true;"
+            "})()",
+            timeout_ms=800,
+        )
 
     def _load_web_editor(self) -> None:
         assert self._view is not None
@@ -1882,6 +1914,10 @@ def authoring_catalog(model: ProjectModel) -> dict[str, Any]:
             "emitNarrativeSignal": [["signal", "str"], ["sourceType", "str"], ["sourceId", "str"]],
         }
         action_persistence = {"emitNarrativeSignal": "save"}
+    from ..shared.dialogue_graph_refs import dialogue_graph_reference_rows
+
+    dialogue_rows = dialogue_graph_reference_rows(model)
+    dialogue_ids = [row[0] for row in dialogue_rows]
     minigame_ids = [
         *[x[0] for x in model.all_water_minigame_ids()],
         *[x[0] for x in model.all_sugar_wheel_minigame_ids()],
@@ -1891,9 +1927,41 @@ def authoring_catalog(model: ProjectModel) -> dict[str, Any]:
     scene_npc_refs: list[str] = []
     scene_hotspot_refs: list[str] = []
     zone_refs: list[str] = []
+    scene_group_refs: list[str] = []
+    reference_entries: list[dict[str, Any]] = []
+    reference_seen: set[tuple[str, str]] = set()
+
+    def add_reference(
+        kind: str,
+        ref_id: object,
+        label: object = "",
+        *,
+        qualified_id: object = "",
+        aliases: list[str] | None = None,
+    ) -> None:
+        rid = str(ref_id or "").strip()
+        k = str(kind or "").strip()
+        if not rid or not k or (k, rid) in reference_seen:
+            return
+        reference_seen.add((k, rid))
+        entry: dict[str, Any] = {
+            "kind": k,
+            "id": rid,
+            "qualifiedId": str(qualified_id or rid).strip() or rid,
+            "label": str(label or rid).strip() or rid,
+        }
+        clean_aliases = sorted({str(x).strip() for x in (aliases or []) if str(x).strip() and str(x).strip() != rid})
+        if clean_aliases:
+            entry["aliases"] = clean_aliases
+        reference_entries.append(entry)
+
+    for gid, title, _context in dialogue_rows:
+        add_reference("dialogue", gid, title)
+
     for sid, scene in sorted(model.scenes.items()):
         if not isinstance(scene, dict):
             continue
+        add_reference("scene", sid, scene.get("label") or scene.get("name") or sid)
         for key in ("npcs", "hotspots", "zones"):
             arr = scene.get(key)
             if not isinstance(arr, list):
@@ -1910,15 +1978,82 @@ def authoring_catalog(model: ProjectModel) -> dict[str, Any]:
                 if key == "npcs":
                     scene_npc_refs.append(ref)
                     scene_npc_refs.append(eid)
+                    # 运行时 InteractionCoordinator 以裸 npc.def.id 查询 wrapper owner；
+                    # qualifiedId 仅用于展示/筛选和导航，选择后必须写裸 id。
+                    add_reference(
+                        "npc", eid, e.get("label") or e.get("name") or eid,
+                        qualified_id=ref,
+                    )
                 elif key == "hotspots":
                     scene_hotspot_refs.append(ref)
                     scene_hotspot_refs.append(eid)
+                    add_reference(
+                        "hotspot", eid, e.get("label") or e.get("name") or eid,
+                        qualified_id=ref,
+                    )
                 elif key == "zones":
                     zone_refs.append(ref)
                     zone_refs.append(eid)
+                    add_reference(
+                        "zone", eid, e.get("label") or e.get("name") or eid,
+                        qualified_id=ref,
+                    )
+
+        groups = scene.get("entityGroups")
+        if isinstance(groups, dict):
+            group_rows = [
+                (str(raw_id), value if isinstance(value, dict) else {})
+                for raw_id, value in groups.items()
+            ]
+        elif isinstance(groups, list):
+            group_rows = [
+                (str(value.get("id", "")), value)
+                for value in groups if isinstance(value, dict)
+            ]
+        else:
+            group_rows = []
+        for raw_group_id, group in group_rows:
+            group_id = raw_group_id.strip()
+            if not group_id:
+                continue
+            ref = f"{sid}:{group_id}"
+            scene_group_refs.append(ref)
+            add_reference(
+                "sceneGroup",
+                ref,
+                group.get("label") or group.get("name") or group_id,
+                aliases=[group_id],
+            )
+
+    scenario_rows = model.scenarios_catalog.get("scenarios") if isinstance(model.scenarios_catalog, dict) else []
+    scenario_labels = {
+        str(row.get("id", "")).strip(): str(row.get("label") or row.get("name") or row.get("title") or row.get("id") or "").strip()
+        for row in (scenario_rows or []) if isinstance(row, dict)
+    }
+    for scenario_id in model.scenario_ids_ordered():
+        add_reference("scenario", scenario_id, scenario_labels.get(scenario_id, scenario_id))
+    for quest_id, title in model.all_quest_ids():
+        add_reference("quest", quest_id, title)
+    for minigame_id in minigame_ids:
+        instance = (
+            model.water_minigames_instances.get(minigame_id)
+            or model.sugar_wheel_instances.get(minigame_id)
+            or model.paper_craft_instances.get(minigame_id)
+            or {}
+        )
+        label = instance.get("label") or instance.get("name") or instance.get("title") or minigame_id if isinstance(instance, dict) else minigame_id
+        add_reference("minigame", minigame_id, label)
+    cutscene_labels = {
+        str(row.get("id", "")).strip(): str(row.get("label") or row.get("name") or row.get("title") or row.get("id") or "").strip()
+        for row in model.cutscenes if isinstance(row, dict)
+    }
+    cutscene_ids = [x[0] for x in model.all_cutscene_ids()]
+    for cutscene_id in cutscene_ids:
+        add_reference("cutscene", cutscene_id, cutscene_labels.get(cutscene_id, cutscene_id))
+
     from ..shared.narrative_catalog import emitted_signal_ids, plane_membership_counts
     return {
-        "dialogueGraphIds": model.all_dialogue_graph_ids(),
+        "dialogueGraphIds": dialogue_ids,
         "scenarioIds": model.scenario_ids_ordered(),
         "sceneIds": model.all_scene_ids(),
         "questIds": [x[0] for x in model.all_quest_ids()],
@@ -1926,8 +2061,9 @@ def authoring_catalog(model: ProjectModel) -> dict[str, Any]:
         "sceneNpcRefs": sorted(set(scene_npc_refs)),
         "sceneHotspotRefs": sorted(set(scene_hotspot_refs)),
         "zoneRefs": sorted(set(zone_refs)),
+        "sceneGroupRefs": sorted(set(scene_group_refs)),
         "minigameIds": sorted(set(minigame_ids)),
-        "cutsceneIds": [x[0] for x in model.all_cutscene_ids()],
+        "cutsceneIds": cutscene_ids,
         # 状态节点 activePlane 下拉候选（planes.json；文件缺失时为空列表）
         "planeIds": [pid for pid, _ in model.all_plane_ids()],
         "graphIds": model.narrative_graph_ids_ordered(),
@@ -1945,6 +2081,7 @@ def authoring_catalog(model: ProjectModel) -> dict[str, Any]:
             if model.plane_membership(pid) == "exclusive"
         ],
         "emittedSignals": emitted_signal_ids(model),
+        "referenceEntries": reference_entries,
     }
 
 
@@ -2251,6 +2388,7 @@ WRAPPER_OWNER_CATALOG_KEYS = {
     "npc": "sceneNpcRefs",
     "hotspot": "sceneHotspotRefs",
     "zone": "zoneRefs",
+    "sceneGroup": "sceneGroupRefs",
     "quest": "questIds",
     "dialogue": "dialogueGraphIds",
     "minigame": "minigameIds",
@@ -2262,6 +2400,7 @@ WRAPPER_OWNER_NAVIGATION = {
     "npc": "npc",
     "hotspot": "hotspot",
     "zone": "zone",
+    "sceneGroup": "sceneGroup",
     "quest": "quest",
     "dialogue": "dialogue",
     "minigame": "minigame",

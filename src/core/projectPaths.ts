@@ -46,6 +46,7 @@ export const TEXT_URLS = {
   waterMinigamesIndex: '/assets/data/water_minigames/index.json',
   sugarWheelIndex: '/assets/data/sugar_wheel/index.json',
   paperCraftIndex: '/assets/data/paper_craft/index.json',
+  objectExamineIndex: '/assets/data/object_examine/index.json',
   narrativeGraphs: '/assets/data/narrative_graphs.json',
   planes: '/assets/data/planes.json',
   pressureHolds: '/assets/data/pressure_holds.json',

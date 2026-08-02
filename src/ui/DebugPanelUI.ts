@@ -30,11 +30,25 @@ const TAB_QUICK = 'quick';
 const TAB_SYSTEM = 'system';
 const TAB_TOOLS = 'tools';
 const TAB_NARRATIVE = 'narrative';
+const TAB_EXAMINE = 'examine';
+const TAB_EXAMINE_AMBIENCE = 'examineAmbience';
 const TAB_FLAGS = 'flags';
 const TAB_LOG = 'log';
 
 /** 与 DebugTools.setupDebugPanelSections 注册的区块 id 一致 */
 export const NARRATIVE_DEBUG_SECTION_ID = '叙事调试';
+/** 物件检视专用 Tab；不进「工具」页 */
+export const OBJECT_EXAMINE_DEBUG_SECTION_ID = '物件检视';
+/** 物件检视氛围 Tab */
+export const OBJECT_EXAMINE_AMBIENCE_DEBUG_SECTION_ID = '检视氛围';
+
+function isDedicatedTabSection(id: string): boolean {
+  return (
+    id === NARRATIVE_DEBUG_SECTION_ID ||
+    id === OBJECT_EXAMINE_DEBUG_SECTION_ID ||
+    id === OBJECT_EXAMINE_AMBIENCE_DEBUG_SECTION_ID
+  );
+}
 
 /** pin 持久化：与 Flag 收藏一致，只走工程文件（dev 服 API 写
  * resources/editor_projects/editor_data/debug_dock_pins.json）——退出游戏/重启机器/换端口换浏览器都在。
@@ -49,11 +63,13 @@ type TabId =
   | typeof TAB_SYSTEM
   | typeof TAB_TOOLS
   | typeof TAB_NARRATIVE
+  | typeof TAB_EXAMINE
+  | typeof TAB_EXAMINE_AMBIENCE
   | typeof TAB_FLAGS
   | typeof TAB_LOG;
 
 /** 区块渲染上下文：tools / screen 默认折叠；其余默认展开。screen=游戏画面常驻卡（只有 ✕ 取消常驻） */
-type SectionContext = 'tools' | 'narrative' | 'quick' | 'screen';
+type SectionContext = 'tools' | 'narrative' | 'examine' | 'examineAmbience' | 'quick' | 'screen';
 
 function normalizePinList(data: unknown): string[] {
   if (!Array.isArray(data)) return [];
@@ -100,6 +116,8 @@ export class DebugPanelUI implements IDebugPanelAPI {
   private panelSystem: HTMLElement;
   private panelTools: HTMLElement;
   private panelNarrative: HTMLElement;
+  private panelExamine: HTMLElement;
+  private panelExamineAmbience: HTMLElement;
   private panelFlags: HTMLElement;
   private panelLog: HTMLElement;
   private logPre: HTMLElement;
@@ -172,6 +190,8 @@ export class DebugPanelUI implements IDebugPanelAPI {
     mkTab(TAB_SYSTEM, '系统');
     mkTab(TAB_TOOLS, '工具');
     mkTab(TAB_NARRATIVE, '叙事调试');
+    mkTab(TAB_EXAMINE, '检视');
+    mkTab(TAB_EXAMINE_AMBIENCE, '检视氛围');
     mkTab(TAB_FLAGS, 'Flag');
     mkTab(TAB_LOG, '日志');
 
@@ -182,6 +202,8 @@ export class DebugPanelUI implements IDebugPanelAPI {
     this.panelSystem = this.mkPanel('system-panel');
     this.panelTools = this.mkPanel('tools-panel');
     this.panelNarrative = this.mkPanel('narrative-panel');
+    this.panelExamine = this.mkPanel('examine-panel');
+    this.panelExamineAmbience = this.mkPanel('examine-ambience-panel');
     this.panelFlags = this.mkPanel('flags-panel');
     this.panelLog = this.mkPanel('log-panel');
 
@@ -207,6 +229,8 @@ export class DebugPanelUI implements IDebugPanelAPI {
     panels.appendChild(this.panelSystem);
     panels.appendChild(this.panelTools);
     panels.appendChild(this.panelNarrative);
+    panels.appendChild(this.panelExamine);
+    panels.appendChild(this.panelExamineAmbience);
     panels.appendChild(this.panelFlags);
     panels.appendChild(this.panelLog);
 
@@ -255,6 +279,8 @@ export class DebugPanelUI implements IDebugPanelAPI {
     this.panelSystem.classList.toggle('is-active', id === TAB_SYSTEM);
     this.panelTools.classList.toggle('is-active', id === TAB_TOOLS);
     this.panelNarrative.classList.toggle('is-active', id === TAB_NARRATIVE);
+    this.panelExamine.classList.toggle('is-active', id === TAB_EXAMINE);
+    this.panelExamineAmbience.classList.toggle('is-active', id === TAB_EXAMINE_AMBIENCE);
     this.panelFlags.classList.toggle('is-active', id === TAB_FLAGS);
     this.panelLog.classList.toggle('is-active', id === TAB_LOG);
     this.updateSystemLiveLoop();
@@ -360,6 +386,8 @@ export class DebugPanelUI implements IDebugPanelAPI {
     this.panelSystem.replaceChildren();
     this.panelTools.replaceChildren();
     this.panelNarrative.replaceChildren();
+    this.panelExamine.replaceChildren();
+    this.panelExamineAmbience.replaceChildren();
     this.panelFlags.replaceChildren();
     this.logPre.textContent = '';
   }
@@ -368,13 +396,63 @@ export class DebugPanelUI implements IDebugPanelAPI {
     this.logPre.textContent = this.logLines.slice(-80).join('\n') || '(empty)';
   }
 
+  /**
+   * refresh 会重建各 Tab 的 DOM；重建前后按 panel id + scroll 序号恢复滚动位置，
+   * 避免调一个参数就把当前页弹回顶部。
+   */
+  private capturePanelScrollState(): Map<string, number[]> {
+    const state = new Map<string, number[]>();
+    for (const panel of [
+      this.panelQuick,
+      this.panelSystem,
+      this.panelTools,
+      this.panelNarrative,
+      this.panelExamine,
+      this.panelExamineAmbience,
+      this.panelFlags,
+      this.panelLog,
+    ]) {
+      state.set(
+        panel.id,
+        [...panel.querySelectorAll<HTMLElement>('.debug-dock__scroll')].map(
+          (scroll) => scroll.scrollTop,
+        ),
+      );
+    }
+    return state;
+  }
+
+  private restorePanelScrollState(state: ReadonlyMap<string, readonly number[]>): void {
+    for (const panel of [
+      this.panelQuick,
+      this.panelSystem,
+      this.panelTools,
+      this.panelNarrative,
+      this.panelExamine,
+      this.panelExamineAmbience,
+      this.panelFlags,
+      this.panelLog,
+    ]) {
+      const positions = state.get(panel.id);
+      if (!positions) continue;
+      const scrolls = panel.querySelectorAll<HTMLElement>('.debug-dock__scroll');
+      for (let i = 0; i < Math.min(positions.length, scrolls.length); i++) {
+        scrolls[i].scrollTop = positions[i] ?? 0;
+      }
+    }
+  }
+
   private render(): void {
+    const scrollState = this.capturePanelScrollState();
     this.renderQuick();
     this.renderSystem();
     this.renderTools();
     this.renderNarrative();
+    this.renderExamine();
+    this.renderExamineAmbience();
     this.renderFlags();
     this.renderLogOnly();
+    this.restorePanelScrollState(scrollState);
   }
 
   private renderSystem(): void {
@@ -634,9 +712,9 @@ export class DebugPanelUI implements IDebugPanelAPI {
     if (this.sections.size === 0) {
       scroll.appendChild(this.p('未注册调试区块。'));
     } else {
-      const n = this.appendSectionBlocks(scroll, (id) => id !== NARRATIVE_DEBUG_SECTION_ID, 'tools');
+      const n = this.appendSectionBlocks(scroll, (id) => !isDedicatedTabSection(id), 'tools');
       if (n === 0) {
-        scroll.appendChild(this.p('（此页暂无工具项；叙事调试与 Flag 已单独分页。）'));
+        scroll.appendChild(this.p('（此页暂无工具项；叙事/检视与 Flag 已单独分页。）'));
       }
     }
     column.appendChild(scroll);
@@ -652,6 +730,32 @@ export class DebugPanelUI implements IDebugPanelAPI {
       scroll.appendChild(this.p('（未注册叙事调试区块）'));
     }
     this.panelNarrative.appendChild(scroll);
+  }
+
+  private renderExamine(): void {
+    this.panelExamine.replaceChildren();
+    const scroll = document.createElement('div');
+    scroll.className = 'debug-dock__scroll';
+    const n = this.appendSectionBlocks(scroll, (id) => id === OBJECT_EXAMINE_DEBUG_SECTION_ID, 'examine');
+    if (n === 0) {
+      scroll.appendChild(this.p('（未注册物件检视调试区块）'));
+    }
+    this.panelExamine.appendChild(scroll);
+  }
+
+  private renderExamineAmbience(): void {
+    this.panelExamineAmbience.replaceChildren();
+    const scroll = document.createElement('div');
+    scroll.className = 'debug-dock__scroll';
+    const n = this.appendSectionBlocks(
+      scroll,
+      (id) => id === OBJECT_EXAMINE_AMBIENCE_DEBUG_SECTION_ID,
+      'examineAmbience',
+    );
+    if (n === 0) {
+      scroll.appendChild(this.p('（未注册检视氛围调试区块）'));
+    }
+    this.panelExamineAmbience.appendChild(scroll);
   }
 
   private renderFlags(): void {

@@ -231,6 +231,13 @@ class _NextQuestsEditor(QWidget):
             result.append(edge)
         return result
 
+    def reload_refs_from_model(self) -> None:
+        """刷新已打开后继边的任务/条件目录，不重建行、不改变实时表单。"""
+        candidates = self._model.quest_status_target_ids()
+        for rw in self._row_widgets:
+            rw["selector"].set_items(candidates)
+            rw["cond_editor"].set_flag_pattern_context(self._model, None)
+
     def _rebuild(self) -> None:
         while self._rows_container.count():
             item = self._rows_container.takeAt(0)
@@ -661,6 +668,46 @@ class QuestEditor(QWidget):
         self._q_group.set_items(self._model.all_quest_group_ids())
         self._q_run_arch.set_items(self._model.narrative_instanced_graph_ids_ordered())
         self._q_next_editor._model = self._model
+
+    def reload_refs_from_model(self) -> None:
+        """主窗切页钩子：只刷新引用目录，绝不重建树/图/表单或提交编辑。"""
+        if self._selection_type == "group" and self._current_selection:
+            excluded = self._collect_descendant_groups(self._current_selection)
+            excluded.add(self._current_selection)
+            parent_items = [
+                (g["id"], g.get("name", g["id"]))
+                for g in self._model.quest_groups
+                if g["id"] not in excluded
+            ]
+        else:
+            parent_items = self._model.all_quest_group_ids()
+        self._g_parent.set_items(parent_items)
+        self._q_group.set_items(self._model.all_quest_group_ids())
+        self._q_run_arch.set_items(self._model.narrative_instanced_graph_ids_ordered())
+        self._q_pre.set_flag_pattern_context(self._model, None)
+        self._q_comp.set_flag_pattern_context(self._model, None)
+        self._q_accept.reload_refs_from_model()
+        self._q_rewards.reload_refs_from_model()
+        self._q_next_editor.reload_refs_from_model()
+
+    def reload_from_model(self) -> None:
+        """Rebuild tree, graph and active form from the live quest domains."""
+        selection_type = self._selection_type
+        selection_id = self._current_selection
+        self._refresh()
+        if selection_type == "quest" and any(
+            str(row.get("id") or "") == selection_id for row in self._model.quests
+        ):
+            self._show_quest_props(selection_id)
+        elif selection_type == "group" and any(
+            str(row.get("id") or "") == selection_id for row in self._model.quest_groups
+        ):
+            self._show_group_props(selection_id)
+        else:
+            self._selection_type = ""
+            self._current_selection = ""
+            self._quest_frame.hide()
+            self._grp_frame.hide()
 
     def _on_quest_type_changed(self, qtype: str) -> None:
         """repeatable 任务无状态机：条件/动作/后继编辑区整体禁用，runArchetype 反向启用。"""

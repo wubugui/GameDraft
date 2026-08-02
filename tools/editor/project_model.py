@@ -1,6 +1,7 @@
 """Central data model that holds every JSON asset in memory."""
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -8,7 +9,7 @@ from typing import Any
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QUndoStack, QUndoCommand
 
-from .file_io import StagedJsonWriter, read_json, write_json, list_json_files
+from .file_io import JsonFileError, StagedJsonWriter, read_json, write_json, list_json_files
 from .shared.project_paths import ProjectPaths
 
 
@@ -52,11 +53,11 @@ class ProjectModel(QObject):
         # 不修盘，只记录；validator 把它们作为 warning 冒出来，避免问题从此不可见。
         self.load_anomalies: list[str] = []
 
-        # 外部修改防护（审查 P1-19）：受管文件的 (st_mtime_ns, st_size) 基线。
+        # 外部修改防护（审查 P1-19）：受管文件的 SHA-256 内容基线。
         # 键 = 相对工程根的 posix 路径；值 = 载入/上次成功保存时的盘面状态，
         # _BASELINE_ABSENT 表示「彼时文件不存在」。detect_external_changes() 用它
         # 找出「基线之后被外部改动、且本次 Save All 将要覆写」的文件。
-        self._file_baselines: dict[str, tuple[int, int]] = {}
+        self._file_baselines: dict[str, str | None] = {}
 
         self.game_config: dict = {}
         self.items: list[dict] = []
@@ -111,6 +112,9 @@ class ProjectModel(QObject):
         # 覆写原文件（脏键 dialogue_graph_edits）。与 dialogue_stubs 同为零磁盘写入的暂存面，
         # 放弃/崩溃即消失，磁盘不动。见 shared/signal_refactor.py。
         self.pending_dialogue_graph_edits: dict[str, dict] = {}
+        # 对话图安全删除/改名的延迟删除面：只存文件 stem，Save All
+        # 与新图及所有入站引用改写同一两阶段提交，成功前不 unlink。
+        self.pending_dialogue_graph_deletes: set[str] = set()
         # 叙事重构（信号/状态/图 id 改名、信号删除）的共享撤销日志：web 桥与 PyQt
         # 信号管理器同一份（同一引擎、同一撤销栈），换工程即清空。
         self.narrative_refactor_journal: list[dict] = []
@@ -121,6 +125,8 @@ class ProjectModel(QObject):
         self.sugar_wheel_instances: dict[str, dict] = {}
         self.paper_craft_index: list[dict] = []
         self.paper_craft_instances: dict[str, dict] = {}
+        self.object_examine_index: list[dict] = []
+        self.object_examine_instances: dict[str, dict] = {}
 
         self._dirty: set[str] = set()
         self._dirty_scene_ids: set[str] = set()
@@ -305,6 +311,7 @@ class ProjectModel(QObject):
         )
         self.pending_dialogue_stubs = {}
         self.pending_dialogue_graph_edits = {}
+        self.pending_dialogue_graph_deletes = set()
         self.narrative_refactor_journal = []
 
         self.animations = {}
@@ -399,6 +406,8 @@ class ProjectModel(QObject):
             self._load_minigame_family(dp, "sugar_wheel")
         self.paper_craft_index, self.paper_craft_instances = \
             self._load_minigame_family(dp, "paper_craft")
+        self.object_examine_index, self.object_examine_instances = \
+            self._load_minigame_family(dp, "object_examine")
 
         self._dirty.clear()
         self._dirty_scene_ids.clear()
@@ -465,7 +474,7 @@ class ProjectModel(QObject):
     def _load_minigame_family(
         self, dp: Path, family: str,
     ) -> tuple[list[dict], dict[str, dict]]:
-        """载入 water_minigames / sugar_wheel / paper_craft 三个同构小游戏族。
+        """载入 water_minigames / sugar_wheel / paper_craft / object_examine 等同构小游戏族。
 
         统一了三处以前重复的载入逻辑，并把过去静默的清洗一律记 load_anomalies
         （审查 P2）：
@@ -521,10 +530,14 @@ class ProjectModel(QObject):
         return index, instances
 
     def _load(self, path: Path, default: Any) -> Any:
-        """读一个受管 JSON；顺带记录外部修改基线（文件缺失记「彼时不存在」）。"""
+        """Read managed JSON and hash the exact bytes that were parsed."""
         if path.exists():
-            data = read_json(path)
-            self._record_file_baseline(path)
+            blob = path.read_bytes()
+            try:
+                data = json.loads(blob)
+            except json.JSONDecodeError as error:
+                raise JsonFileError(path, error) from error
+            self._file_baselines[self._baseline_key(path)] = hashlib.sha256(blob).hexdigest()
             return data
         self._file_baselines[self._baseline_key(path)] = self._BASELINE_ABSENT
         return default
@@ -532,7 +545,7 @@ class ProjectModel(QObject):
     # ---- external-change detection (审查 P1-19) ----------------------------
 
     #: 「基线采集时文件不存在」的哨兵值（区别于"未跟踪"= 键不存在）。
-    _BASELINE_ABSENT: tuple[int, int] = (-1, -1)
+    _BASELINE_ABSENT: None = None
 
     def _baseline_key(self, path: Path) -> str:
         """基线字典键：相对工程根的 posix 路径（工程外/未设根时退化为绝对路径）。"""
@@ -547,11 +560,23 @@ class ProjectModel(QObject):
     def _record_file_baseline(self, path: Path) -> None:
         """把 path 当前盘面状态记为基线（= 内存与磁盘同步的时刻）。"""
         try:
-            st = Path(path).stat()
+            blob = Path(path).read_bytes()
         except OSError:
             self._file_baselines[self._baseline_key(path)] = self._BASELINE_ABSENT
             return
-        self._file_baselines[self._baseline_key(path)] = (st.st_mtime_ns, st.st_size)
+        self._file_baselines[self._baseline_key(path)] = hashlib.sha256(blob).hexdigest()
+
+    def accept_external_change_baselines(self, relative_paths: list[str]) -> None:
+        """Accept the exact current bytes after an explicit overwrite choice.
+
+        Commit-time guards still compare against this refreshed hash, so a
+        second external write after the confirmation remains blocked.
+        """
+        if self.project_path is None:
+            return
+        root = Path(self.project_path)
+        for relative in relative_paths:
+            self._record_file_baseline(root / relative)
 
     def detect_external_changes(self) -> list[str]:
         """返回「自基线（载入或上次成功 Save All）后被外部改动、且本次 Save All 将要
@@ -562,19 +587,18 @@ class ProjectModel(QObject):
         - 基线不存在（未跟踪文件，如从未读过的对话图）→ 不报告；
         - 基线为「彼时不存在」而现在盘上有文件 → 报告（外部新建，将被覆写）；
         - 基线存在而文件已被删除 → 报告（外部删除，保存会凭空复活旧内容）；
-        - (mtime_ns, size) 与基线不一致 → 报告。
+        - SHA-256 内容摘要与基线不一致 → 报告（即便大小和 mtime 被恢复也能检出）。
         """
         if self.project_path is None or not self.is_dirty:
             return []
         out: list[str] = []
         for path in self._planned_write_paths():
             key = self._baseline_key(path)
-            baseline = self._file_baselines.get(key)
-            if baseline is None:
+            if key not in self._file_baselines:
                 continue  # 未跟踪：无从判断，不误报
+            baseline = self._file_baselines[key]
             try:
-                st = Path(path).stat()
-                current: tuple[int, int] | None = (st.st_mtime_ns, st.st_size)
+                current: str | None = hashlib.sha256(Path(path).read_bytes()).hexdigest()
             except OSError:
                 current = None
             if baseline == self._BASELINE_ABSENT:
@@ -666,6 +690,12 @@ class ProjectModel(QObject):
                 if not gid_s or _dialogue_id_error(gid_s) or not isinstance(graph, dict):
                     continue
                 out.append(graphs_dir / f"{gid_s}.json")
+        if "dialogue_graph_deletes" in dty:
+            graphs_dir = self.dialogues_path / "graphs"
+            for gid in sorted(self.pending_dialogue_graph_deletes):
+                gid_s = str(gid).strip()
+                if gid_s:
+                    out.append(graphs_dir / f"{gid_s}.json")
         if "water_minigames" in dty:
             wm_dir = dp / "water_minigames"
             out.append(wm_dir / "index.json")
@@ -722,6 +752,21 @@ class ProjectModel(QObject):
         from .shared.ref_validator import validate_refs_for_save
 
         with perf_span("model.save_all.presave_validators"):
+            if "dialogue_graph_deletes" in dty:
+                # 删除操作暂存后，用户可能又在其它面板新建了指向旧 id
+                # 的引用。提交前必须再扫一次，不能只信任点「删除」当刻的快照。
+                from .shared.dialogue_graph_refactor import (
+                    format_dialogue_graph_usages,
+                    scan_dialogue_graph_usages,
+                )
+                for gid in sorted(self.pending_dialogue_graph_deletes):
+                    usages = scan_dialogue_graph_usages(self, gid)
+                    if usages:
+                        raise ValueError(
+                            f"对话图 {gid!r} 删除被拒绝：Save All 前又出现 "
+                            f"{len(usages)} 处入站引用。\n"
+                            + format_dialogue_graph_usages(usages)
+                        )
             # 按脏桶收口（审查 P2-③）：只校验本次将写盘的域，盘上无关域的历史坏
             # 数据不再锁死保存。
             ref_err = validate_refs_for_save(self, dirty=set(dty))
@@ -872,8 +917,9 @@ class ProjectModel(QObject):
                     if not gid_s or _dialogue_id_error(gid_s) or not isinstance(graph, dict):
                         continue
                     target = stubs_dir / f"{gid_s}.json"
-                    if not target.exists():
-                        w.add(target, graph)
+                    # 必须把“只允许新建”带到原子提交点；stage 前 exists
+                    # 检查存在 TOCTOU 窗口，会跳过副本却保存其叙事引用。
+                    w.add_new(target, graph)
                 maybe_stamp(clk, "dialogue_stubs 已暂存")
             if "dialogue_graph_edits" in dty:
                 # 信号重构等跨文件操作对既有对话图的暂存修改：覆写原文件（区别于
@@ -884,8 +930,21 @@ class ProjectModel(QObject):
                     gid_s = str(gid).strip()
                     if not gid_s or _dialogue_id_error(gid_s) or not isinstance(graph, dict):
                         continue
+                    if gid_s in self.pending_dialogue_graph_deletes:
+                        continue
                     w.add(graphs_dir / f"{gid_s}.json", graph)
                 maybe_stamp(clk, "dialogue_graph_edits 已暂存")
+            if "dialogue_graph_deletes" in dty:
+                # 删除也必须是两阶段交易的一部分：不在 UI/重构引擎里
+                # 立即 unlink，否则其它引用文件尚未 Save All 时已经无法恢复。
+                from .shared.narrative_templates import _dialogue_id_error
+                graphs_dir = self.dialogues_path / "graphs"
+                for gid in sorted(self.pending_dialogue_graph_deletes):
+                    gid_s = str(gid).strip()
+                    if not gid_s or _dialogue_id_error(gid_s):
+                        continue
+                    w.add_delete(graphs_dir / f"{gid_s}.json")
+                maybe_stamp(clk, "dialogue_graph_deletes 已暂存")
             if "water_minigames" in dty:
                 wm_dir = dp / "water_minigames"
                 w.add(wm_dir / "index.json", self.water_minigames_index)
@@ -935,7 +994,14 @@ class ProjectModel(QObject):
                 for stem, data in sorted(self.filter_defs.items()):
                     w.add(filters_dir / f"{stem}.json", data)
                 maybe_stamp(clk, "filters 已暂存")
-            maybe_stamp(clk, "全部暂存完成，开始提交（os.replace 序列）")
+            # MainWindow 的外部修改预检与真正 commit 之间仍有竞态窗口。
+            # 把每个将覆盖/删除目标的内容基线带进 writer；writer 会在原子挪走
+            # 旧文件后复核摘要，并用 fail-if-exists 安装，阻断提交瞬间的外部写入。
+            for path in self._planned_write_paths():
+                key = self._baseline_key(path)
+                if key in self._file_baselines:
+                    w.expect_unchanged(path, self._file_baselines[key])
+            maybe_stamp(clk, "全部暂存完成，开始带内容基线提交")
             w.commit()
         finally:
             w.abort()  # commit 成功后为 no-op；中途失败时清理 .tmp，磁盘零变化
@@ -957,6 +1023,8 @@ class ProjectModel(QObject):
             self.pending_dialogue_stubs = {}
         if "dialogue_graph_edits" in dty:
             self.pending_dialogue_graph_edits = {}
+        if "dialogue_graph_deletes" in dty:
+            self.pending_dialogue_graph_deletes = set()
 
         self._dirty.clear()
         self._dirty_scene_ids.clear()
@@ -994,7 +1062,8 @@ class ProjectModel(QObject):
         "flag_registry", "overlay_images", "scenarios", "narrative_graphs", "narrative_packages",
         "document_reveals", "smell_profiles", "pressure_holds", "signal_cues",
         "planes", "narrative_templates", "narrative_categories", "dialogue_stubs",
-        "dialogue_graph_edits", "water_minigames", "sugar_wheel", "paper_craft", "filter",
+        "dialogue_graph_edits", "dialogue_graph_deletes",
+        "water_minigames", "sugar_wheel", "paper_craft", "filter",
     })
 
     def mark_dirty(self, data_type: str, item_id: str = "") -> None:
@@ -1216,6 +1285,77 @@ class ProjectModel(QObject):
             out.append((zid, zid))
         return out
 
+    def scene_group_ids_for_scene(self, scene_id: str | None) -> list[tuple[str, str]]:
+        """当前场景分组 ``(groupId, label)`` 的只读目录。
+
+        显式 ``scene.entityGroups`` 优先并保序；旧场景仅在成员上保存 ``group`` 字符串时，
+        将这些标签追加为兼容分组。只读派生，绝不因查询向场景注入 ``entityGroups``。
+        """
+        if not scene_id:
+            return []
+        sc = self.scenes.get(scene_id) or {}
+        out: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        rows = sc.get("entityGroups")
+        if isinstance(rows, list):
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                gid = str(row.get("id") or "").strip()
+                if not gid or gid in seen:
+                    continue
+                seen.add(gid)
+                label = str(row.get("label") or gid).strip() or gid
+                out.append((gid, label))
+        for coll in ("npcs", "hotspots", "zones"):
+            members = sc.get(coll)
+            if not isinstance(members, list):
+                continue
+            for member in members:
+                if not isinstance(member, dict):
+                    continue
+                gid = str(member.get("group") or "").strip()
+                if not gid or gid in seen:
+                    continue
+                seen.add(gid)
+                out.append((gid, gid))
+        return out
+
+    def all_scene_group_ids(self) -> list[tuple[str, str]]:
+        """全工程限定分组引用 ``(sceneId:groupId, label)``，供跨文件选择器消费。"""
+        out: list[tuple[str, str]] = []
+        for scene_id in self.scenes:
+            for group_id, label in self.scene_group_ids_for_scene(scene_id):
+                qid = f"{scene_id}:{group_id}"
+                shown = label if label == group_id else f"{label}（{group_id}）"
+                out.append((qid, f"{shown} · {scene_id}"))
+        return out
+
+    def all_unqualified_scene_group_ids(self) -> list[tuple[str, str]]:
+        """全工程动作分组目录，值保持运行时所需的裸 ``groupId``。
+
+        Quest/Encounter 等 Action 没有固定场景上下文；运行时会对当时的当前场景
+        执行 group action。因此候选按裸 id 聚合，同名分组只列一次，并在标签中
+        展示出现的场景，避免为了消歧而把 ``sceneId:groupId`` 错写进 Action。
+        """
+        by_id: dict[str, dict[str, list[str]]] = {}
+        for scene_id in self.scenes:
+            for group_id, label in self.scene_group_ids_for_scene(scene_id):
+                row = by_id.setdefault(group_id, {"labels": [], "scenes": []})
+                if label not in row["labels"]:
+                    row["labels"].append(label)
+                row["scenes"].append(str(scene_id))
+        out: list[tuple[str, str]] = []
+        for group_id in sorted(by_id, key=lambda value: (value.casefold(), value)):
+            row = by_id[group_id]
+            labels = [label for label in row["labels"] if label != group_id]
+            shown = labels[0] if len(labels) == 1 else group_id
+            scenes = "、".join(row["scenes"][:4])
+            if len(row["scenes"]) > 4:
+                scenes += f" 等 {len(row['scenes'])} 个场景"
+            out.append((group_id, f"{shown} · {scenes}"))
+        return out
+
     def entity_ids_for_scene(self, scene_id: str | None, kind: str) -> list[tuple[str, str]]:
         if kind == "npc":
             return self.npc_ids_for_scene(scene_id)
@@ -1372,6 +1512,19 @@ class ProjectModel(QObject):
             out.append((iid, label or iid))
         return out
 
+    def all_object_examine_ids(self) -> list[tuple[str, str]]:
+        """`(id, label)`：`object_examine/index.json` 登记项。"""
+        out: list[tuple[str, str]] = []
+        for row in self.object_examine_index:
+            if not isinstance(row, dict):
+                continue
+            iid = str(row.get("id") or "").strip()
+            if not iid:
+                continue
+            label = str(row.get("label") or "").strip()
+            out.append((iid, label or iid))
+        return out
+
     def all_plane_ids(self) -> list[tuple[str, str]]:
         """`(id, label)`：planes.json（PlaneDef[]）登记项。文件缺失时为空列表；按 id 去重（保留首条）。"""
         out: list[tuple[str, str]] = []
@@ -1452,13 +1605,15 @@ class ProjectModel(QObject):
         return list(self.animations.keys())
 
     def all_dialogue_graph_ids(self) -> list[str]:
-        """`dialogues/graphs/<id>.json` 的 id（不含扩展名）。"""
+        """`dialogues/graphs/<id>.json` 的实时 id（包含暂存新图，排除暂存删除）。"""
         if self.project_path is None:
             return []
         gp = self.dialogues_path / "graphs"
-        if not gp.is_dir():
-            return []
-        return sorted(p.stem for p in gp.glob("*.json"))
+        ids = {p.stem for p in gp.glob("*.json")} if gp.is_dir() else set()
+        ids.update(str(k).strip() for k in self.pending_dialogue_stubs if str(k).strip())
+        ids.update(str(k).strip() for k in self.pending_dialogue_graph_edits if str(k).strip())
+        ids.difference_update(str(k).strip() for k in self.pending_dialogue_graph_deletes)
+        return sorted(ids)
 
     def scenario_ids_ordered(self) -> list[str]:
         """scenarios.json 中 ``scenarios[].id``，按文件内数组顺序。"""
@@ -1913,8 +2068,14 @@ class ProjectModel(QObject):
         gid = (graph_id or "").strip()
         if not gid:
             return []
-        p = self.dialogues_path / "graphs" / f"{gid}.json"
-        data = self._load(p, {})
+        if gid in self.pending_dialogue_graph_deletes:
+            return []
+        data = self.pending_dialogue_graph_edits.get(gid)
+        if not isinstance(data, dict):
+            data = self.pending_dialogue_stubs.get(gid)
+        if not isinstance(data, dict):
+            p = self.dialogues_path / "graphs" / f"{gid}.json"
+            data = self._load(p, {})
         if not isinstance(data, dict):
             return []
         nodes = data.get("nodes")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import unittest
 from unittest.mock import patch
 from pathlib import Path
@@ -37,6 +38,20 @@ class TestNarrativeStateEditor(unittest.TestCase):
             _VALID_WRAPPER_OWNER_TYPES,
         )
         self.assertEqual(set(WRAPPER_OWNER_NAVIGATION), set(WRAPPER_OWNER_CATALOG_KEYS))
+        self.assertIn("sceneGroup", _VALID_WRAPPER_OWNER_TYPES)
+
+    def test_python_wrapper_owner_registry_matches_runtime_typescript_registry(self) -> None:
+        source = (
+            Path(__file__).parents[3] / "src" / "core" / "narrativeGraphValidation.ts"
+        ).read_text(encoding="utf-8")
+        match = re.search(
+            r"VALID_NARRATIVE_WRAPPER_OWNER_TYPES\s*=\s*\[(.*?)\]\s*as const",
+            source,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(match, "runtime wrapper owner registry must remain exported")
+        runtime_types = set(re.findall(r"['\"]([^'\"]+)['\"]", match.group(1)))
+        self.assertEqual(runtime_types, _VALID_WRAPPER_OWNER_TYPES)
 
     def test_authoring_catalog_exposes_registered_owner_lists(self) -> None:
         with TemporaryDirectory() as td:
@@ -48,6 +63,61 @@ class TestNarrativeStateEditor(unittest.TestCase):
             for owner_type, catalog_key in WRAPPER_OWNER_CATALOG_KEYS.items():
                 self.assertIn(catalog_key, catalog, owner_type)
                 self.assertIsInstance(catalog[catalog_key], list, owner_type)
+
+    def test_authoring_catalog_exposes_staged_dialogues_and_scene_groups_as_rich_refs(self) -> None:
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            write_minimal_loadable_project(root)
+            m = ProjectModel()
+            m.load_project(root)
+            m.pending_dialogue_stubs["new_dialogue"] = {
+                "id": "new_dialogue",
+                "meta": {"title": "新加的图对话"},
+                "nodes": {},
+            }
+            m.scenes = {
+                "dock": {
+                    "label": "码头",
+                    "npcs": [{"id": "npc_guard", "name": "守门官差"}],
+                    "hotspots": [{"id": "notice", "label": "告示"}],
+                    "zones": [{"id": "gate", "label": "城门"}],
+                    "entityGroups": [
+                        {"id": "guards", "label": "官差组", "conditions": []},
+                    ],
+                },
+            }
+
+            catalog = authoring_catalog(m)
+            self.assertIn("new_dialogue", catalog["dialogueGraphIds"])
+            self.assertEqual(catalog["sceneGroupRefs"], ["dock:guards"])
+            rich = {(row["kind"], row["id"]): row for row in catalog["referenceEntries"]}
+            self.assertEqual(rich[("dialogue", "new_dialogue")]["label"], "新加的图对话")
+            self.assertEqual(rich[("sceneGroup", "dock:guards")]["label"], "官差组")
+            self.assertEqual(rich[("sceneGroup", "dock:guards")]["aliases"], ["guards"])
+            # wrapper owner 运行时按裸 entity id exact-match；限定 id 只负责展示/搜索。
+            self.assertEqual(rich[("npc", "npc_guard")]["qualifiedId"], "dock:npc_guard")
+            self.assertEqual(rich[("hotspot", "notice")]["qualifiedId"], "dock:notice")
+            self.assertEqual(rich[("zone", "gate")]["qualifiedId"], "dock:gate")
+
+    def test_reload_refs_calls_catalog_only_api_without_reloading_draft(self) -> None:
+        class FakeEditor:
+            def __init__(self) -> None:
+                self._view = object()
+                self.calls: list[tuple[str, int]] = []
+
+            def _run_editor_js_result(self, code: str, timeout_ms: int = 5000):  # noqa: ANN001
+                self.calls.append((code, timeout_ms))
+                return True
+
+        fake = FakeEditor()
+        NarrativeStateEditor.reload_refs_from_model(fake)  # type: ignore[arg-type]
+        self.assertEqual(len(fake.calls), 1)
+        code, timeout = fake.calls[0]
+        self.assertIn("refreshCatalog", code)
+        self.assertNotIn("location.reload", code)
+        self.assertNotIn("getData", code)
+        self.assertNotIn("saveData", code)
+        self.assertEqual(timeout, 800)
 
     def test_missing_narrative_graphs_loads_empty_without_dirty(self) -> None:
         with TemporaryDirectory() as td:

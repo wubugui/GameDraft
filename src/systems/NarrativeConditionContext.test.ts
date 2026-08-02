@@ -76,6 +76,24 @@ function graphDialogue(active = true, graph: any, multiOwner = false) {
 }
 
 describe('narrative condition context injection', () => {
+  it('does not borrow npcId when an explicit ownerType has no ownerId', async () => {
+    const runtime = graphDialogue(true, {
+      id: 'explicit_owner_pair',
+      entry: 'line',
+      nodes: {
+        line: { type: 'line', speaker: { kind: 'npc' }, text: 'wait' },
+      },
+    });
+    await runtime.manager.startDialogueGraph({
+      graphId: 'explicit_owner_pair',
+      npcName: 'NPC',
+      npcId: 'npc_ringboy',
+      ownerType: 'sceneGroup',
+    });
+    expect((runtime.manager as any).ownerType).toBe('sceneGroup');
+    expect((runtime.manager as any).ownerId).toBe('');
+  });
+
   it('evaluates reached-state leaves via hasReachedState (with isStateActive fallback)', async () => {
     const { evaluateConditionExprList } = await import('./graphDialogue/conditionEvalBridge');
     const { ctx } = baseContext(false);

@@ -13,6 +13,8 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
   private actionExecutor: ActionExecutor;
   private ruleOfferRegistry: RuleOfferRegistry;
   private conditionCtxFactory: (() => ConditionEvalContext) | null = null;
+  /** 当前场景分组 conditions 只读口；旧 group 标签没有定义时返回 undefined=无额外条件。 */
+  private groupConditions: ((groupId: string) => ConditionExpr[] | undefined) | null = null;
 
   private zones: ZoneDef[] = [];
   private activeZoneIds: Set<string> = new Set();
@@ -40,6 +42,12 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
 
   setConditionEvalContextFactory(factory: (() => ConditionEvalContext) | null): void {
     this.conditionCtxFactory = factory;
+  }
+
+  setEntityGroupConditionReader(
+    reader: ((groupId: string) => ConditionExpr[] | undefined) | null,
+  ): void {
+    this.groupConditions = reader;
   }
 
   private evalZoneConditions(conds: ConditionExpr[] | undefined, ctx: ConditionEvalContext | null): boolean {
@@ -139,7 +147,11 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
       if (zone.zoneKind === 'depth_floor') {
         continue;
       }
-      if (zone.conditions && zone.conditions.length > 0 && !this.evalZoneConditions(zone.conditions, ctx)) {
+      const groupId = zone.group?.trim() ?? '';
+      const groupConds = groupId ? this.groupConditions?.(groupId) : undefined;
+      const groupOk = this.evalZoneConditions(groupConds, ctx);
+      const zoneOk = this.evalZoneConditions(zone.conditions, ctx);
+      if (!groupOk || !zoneOk) {
         if (this.activeZoneIds.has(zone.id)) this.exitZone(zone);
         continue;
       }

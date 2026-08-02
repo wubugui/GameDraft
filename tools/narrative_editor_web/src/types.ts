@@ -206,6 +206,8 @@ export interface AuthoringCatalogDef {
   sceneNpcRefs: string[];
   sceneHotspotRefs: string[];
   zoneRefs: string[];
+  /** Canonical scene-group owner refs, always qualified as sceneId:groupId. */
+  sceneGroupRefs: string[];
   minigameIds: string[];
   cutsceneIds: string[];
   graphIds: string[];
@@ -220,6 +222,20 @@ export interface AuthoringCatalogDef {
   planeExclusive?: string[];
   /** 全项目实际发出的信号 id 去重集（对话图 + 内容资产 emitNarrativeSignal ∪ broadcastOnEnter 派生广播）；缺失=旧 host。 */
   emittedSignals?: string[];
+  /**
+   * Rich rows for popup reference pickers. `id` is the value written on an
+   * intentional selection; aliases only recognise legacy values and are never
+   * written automatically.
+   */
+  referenceEntries?: ReferenceCatalogEntryDef[];
+}
+
+export interface ReferenceCatalogEntryDef {
+  kind: string;
+  id: string;
+  qualifiedId: string;
+  label: string;
+  aliases?: string[];
 }
 
 /** 任务问题：按当前 composition 实时计算的编排健康问题（信号断链 / 空位面 / 坏引用）。 */

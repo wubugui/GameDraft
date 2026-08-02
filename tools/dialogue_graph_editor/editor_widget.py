@@ -47,7 +47,6 @@ from .flow_layout_store import (
     load_editor_groups_for_graph,
     load_group_frames_for_graph,
     migrate_layout_map_key,
-    remove_layout_entry_for_graph,
 )
 from .editor_group_geometry import (
     migrate_legacy_frames_from_assignments,
@@ -186,6 +185,8 @@ class DialogueGraphEditorWidget(QWidget):
 
     title_changed = Signal(str)
     dirty_changed = Signal(bool)
+    catalog_changed = Signal()
+    """A graph file was created, renamed, saved-as, or deleted successfully."""
 
     def __init__(
         self,
@@ -614,6 +615,19 @@ class DialogueGraphEditorWidget(QWidget):
         self._sync_ui_enabled(False)
         self._emit_title()
         self._on_undo_index_changed()
+
+    def _emit_catalog_changed(self) -> None:
+        model = self._injected_project_model
+        if model is not None:
+            try:
+                from tools.editor.shared.dialogue_graph_refs import (
+                    clear_dialogue_graph_reference_cache,
+                )
+
+                clear_dialogue_graph_reference_cache(model)
+            except Exception:
+                pass
+        self.catalog_changed.emit()
 
     @staticmethod
     def _hex_to_rgba(h: str, default: tuple[int, int, int, int] = (52, 52, 58, 255)) -> tuple[int, int, int, int]:
@@ -1175,6 +1189,15 @@ class DialogueGraphEditorWidget(QWidget):
             )
             return
         path = Path(str(raw))
+        pm_del = self._injected_project_model
+        if pm_del is None:
+            QMessageBox.information(
+                self,
+                "删除图文件",
+                "为保证全项目入站引用扫描完整，对话图删除必须在主编辑器中执行。\n"
+                "主编辑器会先暂存删除，等「保存全部」与其它数据一次提交。",
+            )
+            return
         try:
             path = path.resolve()
             gdir = self._graphs_dir.resolve()
@@ -1184,7 +1207,7 @@ class DialogueGraphEditorWidget(QWidget):
         if path.parent.resolve() != gdir:
             QMessageBox.warning(self, "删除", "只能删除项目 graphs 目录下的 .json 文件。")
             return
-        if not path.is_file():
+        if not path.is_file() and path.stem not in set(pm_del.all_dialogue_graph_ids()):
             self._toast("文件不存在，已刷新列表", 3000)
             self._refresh_file_list()
             if self._current_path:
@@ -1194,9 +1217,27 @@ class DialogueGraphEditorWidget(QWidget):
             self._current_path is not None
             and path.resolve() == self._current_path.resolve()
         )
+        from tools.editor.shared.dialogue_graph_refactor import (
+            DialogueGraphRefactorError,
+            delete_dialogue_graph,
+            format_dialogue_graph_usages,
+            scan_dialogue_graph_usages,
+        )
+        del_gid = path.stem
+        usages = scan_dialogue_graph_usages(pm_del, del_gid)
+        if usages:
+            QMessageBox.warning(
+                self,
+                "无法删除：仍有入站引用",
+                f"对话图「{del_gid}」仍有 {len(usages)} 处入站引用。\n"
+                "已安全阻止删除，模型与磁盘均未修改。\n\n"
+                + format_dialogue_graph_usages(usages),
+            )
+            return
         msg = (
-            f"永久删除磁盘上的 {path.name}？\n"
-            f"将从 resources/editor_projects/editor_data/dialogue_flow_layout.json 中移除该图的布局数据。"
+            f"暂存删除 {path.name}？\n"
+            "目前扫描未发现任何入站引用。本次操作不会立即删磁盘文件；\n"
+            "点「保存全部」后才会与其它工程数据一次提交。"
         )
         if was_open and self._model.is_dirty:
             msg += "\n\n当前该图有未保存修改，删除后这些修改将一并丢失。"
@@ -1210,23 +1251,21 @@ class DialogueGraphEditorWidget(QWidget):
         if r != QMessageBox.StandardButton.Yes:
             return
         try:
-            raw_del = load_json(path)
-        except Exception:
-            raw_del = {}
-        del_gid = path.stem
-        if isinstance(raw_del, dict):
-            del_gid = str(raw_del.get("id", path.stem)).strip() or path.stem
-        pm_del = self._injected_project_model
-        if pm_del is not None and del_gid:
-            pm_del.relink_dialogue_graph_to_scenarios(del_gid, None)
-        try:
-            path.unlink()
-        except OSError as e:
-            QMessageBox.critical(self, "删除失败", str(e))
+            delete_dialogue_graph(pm_del, del_gid)
+        except DialogueGraphRefactorError as e:
+            detail = format_dialogue_graph_usages(e.usages) if e.usages else ""
+            QMessageBox.critical(
+                self,
+                "删除失败",
+                str(e) + (("\n\n" + detail) if detail else ""),
+            )
             return
-        remove_layout_entry_for_graph(self._project, path)
         if was_open:
-            rest = list_graph_files(self._project)
+            rest = [
+                self._graphs_dir / f"{gid}.json"
+                for gid in pm_del.all_dialogue_graph_ids()
+                if gid != del_gid
+            ]
             if rest:
                 self._load_path(rest[0])
             else:
@@ -1237,6 +1276,8 @@ class DialogueGraphEditorWidget(QWidget):
             self._refresh_file_list(select_unsaved=has_draft and self._current_path is None)
             if self._current_path:
                 self._sync_file_list_selection(self._current_path)
+        self._toast(f"已暂存删除 {del_gid}；请点「保存全部」提交", 6000)
+        self._emit_catalog_changed()
 
     def has_unsaved_changes(self) -> bool:
         return self._model.is_dirty
@@ -1340,7 +1381,7 @@ class DialogueGraphEditorWidget(QWidget):
         if self._current_path:
             return self._write_to_path(self._current_path)
         try:
-            self._widgets_to_data_meta(relink_catalog=True)
+            self._widgets_to_data_meta(relink_catalog=False)
         except json.JSONDecodeError as e:
             self._last_save_failure = f"preconditions 条件解析失败：{e}"
             QMessageBox.critical(
@@ -1379,7 +1420,7 @@ class DialogueGraphEditorWidget(QWidget):
         return self._write_to_path(p)
 
     def _rename_graph_file_dialog(self) -> None:
-        """将当前已保存的 graphs/*.json 改名，并迁移 editor_data 中的流程布局键。"""
+        """在 ProjectModel 中暂存改名+全项目引用改写，Save All 原子落盘。"""
         if self._current_path is None:
             QMessageBox.information(
                 self,
@@ -1389,8 +1430,17 @@ class DialogueGraphEditorWidget(QWidget):
                 "之后可用本功能改文件名。",
             )
             return
+        pm_rn = self._injected_project_model
+        if pm_rn is None:
+            QMessageBox.information(
+                self,
+                "重命名图",
+                "为保证场景、动作、叙事黑盒和其它对话图的引用不断裂，\n"
+                "对话图改名必须在主编辑器中执行（改名后点「保存全部」）。",
+            )
+            return
         try:
-            self._widgets_to_data_meta(relink_catalog=True)
+            self._widgets_to_data_meta(relink_catalog=False)
             self._flush_current_inspector_to_data()
         except json.JSONDecodeError as e:
             QMessageBox.critical(
@@ -1430,7 +1480,7 @@ class DialogueGraphEditorWidget(QWidget):
         if old_path.parent.resolve() != gdir:
             QMessageBox.warning(self, "重命名图", "当前文件不在项目 graphs 目录下，无法重命名。")
             return
-        if not old_path.is_file():
+        if not old_path.is_file() and old_path.stem not in set(pm_rn.all_dialogue_graph_ids()):
             QMessageBox.warning(self, "重命名图", "当前路径不是有效文件，已取消。")
             self._refresh_file_list()
             return
@@ -1439,7 +1489,8 @@ class DialogueGraphEditorWidget(QWidget):
             self,
             "重命名图文件",
             "新的图 id（将保存为 graphs/<id>.json，不含扩展名）：\n\n"
-            "注意：场景、NPC、动作等里若引用了旧图名，需自行改为新名。",
+            "所有可证明的入站引用会同步改写；改名先暂存在工程模型，"
+            "点「保存全部」后一次生效。",
             text=cur_stem,
         )
         if not ok:
@@ -1455,40 +1506,39 @@ class DialogueGraphEditorWidget(QWidget):
                 f"已存在文件：{new_path.name}\n请改用其它名称，或先处理冲突文件。",
             )
             return
-        old_graph_id = str(self._data.get("id", "")).strip()
-        self._model.apply_meta_patch({"id": new_stem})
+        old_graph_id = old_path.stem
         try:
-            save_json(new_path, self._model.to_dict())
-        except OSError as e:
-            self._model.apply_meta_patch({"id": old_graph_id})
-            QMessageBox.critical(self, "重命名图", f"写入新文件失败：{e}")
-            return
-        try:
-            old_path.unlink()
-        except OSError as e:
-            QMessageBox.warning(
-                self,
-                "重命名图",
-                f"新文件已写入 {new_path.name}，但未能删除旧文件 {old_path.name}：{e}\n"
-                "请手动删除重复的旧文件。",
+            from tools.editor.shared.dialogue_graph_refactor import (
+                DialogueGraphRefactorError,
+                rename_dialogue_graph,
             )
-        migrate_layout_map_key(self._project, old_path, new_path)
+            result = rename_dialogue_graph(
+                pm_rn,
+                old_graph_id,
+                new_stem,
+                source_document=self._model.to_dict(),
+            )
+        except DialogueGraphRefactorError as e:
+            QMessageBox.critical(self, "重命名图", str(e))
+            return
+        self._model.apply_meta_patch({"id": new_stem})
+        self._data = self._model.mutable_data
         self._current_path = new_path
         self._draft_layout_basename = None
-        pm_rn = self._injected_project_model
-        if pm_rn is not None:
-            if old_graph_id and old_graph_id != new_stem:
-                pm_rn.rename_dialogue_graph_in_scenarios_catalog(old_graph_id, new_stem)
-            meta_rn = self._data.get("meta") if isinstance(self._data.get("meta"), dict) else {}
-            sc_rn = str(meta_rn.get("scenarioId", "")).strip()
-            pm_rn.relink_dialogue_graph_to_scenarios(new_stem, sc_rn or None)
+        self._loaded_disk_bytes = None
+        self._loaded_disk_data = copy.deepcopy(self._model.to_dict())
         self._apply_data_to_widgets()
         self._set_dirty(False)
         self._flush_flow_layout_to_disk()
         self._emit_title()
-        self._toast(f"已重命名为 {new_path.name}", 4000)
+        self._toast(
+            f"改名已暂存：{old_graph_id} → {new_stem}，"
+            f"同步改写 {len(result.get('usages') or [])} 处引用；请保存全部",
+            6500,
+        )
         self._refresh_file_list()
         self._sync_file_list_selection(new_path)
+        self._emit_catalog_changed()
 
     def run_validate(self) -> None:
         if not self._data.get("nodes"):
@@ -2067,6 +2117,14 @@ class DialogueGraphEditorWidget(QWidget):
         return pkg if pkg else "__resident__"
 
     def _derive_chapter_key_for_path(self, path: Path) -> str:
+        pm = self._injected_project_model
+        if pm is not None:
+            gid = path.stem
+            for attr in ("pending_dialogue_graph_edits", "pending_dialogue_stubs"):
+                bag = getattr(pm, attr, None)
+                data = bag.get(gid) if isinstance(bag, dict) else None
+                if isinstance(data, dict):
+                    return self._derive_chapter_key_for_data(data)
         try:
             data = load_json(path)
         except Exception:
@@ -2143,7 +2201,26 @@ class DialogueGraphEditorWidget(QWidget):
                 bucket[gk] = (gt, [])
             bucket[gk][1].append((draft_label, self._unsaved_list_token))
 
-        for p in list_graph_files(self._project):
+        deleted = {
+            str(gid).strip()
+            for gid in getattr(pm, "pending_dialogue_graph_deletes", set())
+            if str(gid).strip()
+        } if pm is not None else set()
+        staged_ids: set[str] = set()
+        if pm is not None:
+            for attr in ("pending_dialogue_graph_edits", "pending_dialogue_stubs"):
+                bag = getattr(pm, attr, None)
+                if isinstance(bag, dict):
+                    staged_ids.update(str(gid).strip() for gid in bag if str(gid).strip())
+        visible_paths: list[Path] = [
+            p for p in list_graph_files(self._project) if p.stem not in deleted
+        ]
+        disk_ids = {p.stem for p in visible_paths}
+        visible_paths.extend(
+            self._graphs_dir / f"{gid}.json"
+            for gid in sorted(staged_ids - deleted - disk_ids)
+        )
+        for p in visible_paths:
             sid = self._derive_chapter_key_for_path(p)
             gk, gt = gkey_title(sid)
             if gk not in bucket:
@@ -2299,12 +2376,33 @@ class DialogueGraphEditorWidget(QWidget):
         self._graph_prop_toggle.setArrowType(Qt.ArrowType.RightArrow)
 
     def _load_path(self, path: Path):
-        try:
-            disk_bytes = path.read_bytes()
-            raw = json.loads(disk_bytes.decode("utf-8"))
-        except (OSError, ValueError, json.JSONDecodeError) as e:
-            QMessageBox.critical(self, "打开失败", str(e))
+        pm = self._injected_project_model
+        gid = path.stem
+        if pm is not None and gid in getattr(pm, "pending_dialogue_graph_deletes", set()):
+            QMessageBox.information(self, "打开失败", f"对话图 {gid!r} 已暂存删除，保存全部后生效。")
             return
+        staged_raw: dict | None = None
+        if pm is not None:
+            for attr in ("pending_dialogue_graph_edits", "pending_dialogue_stubs"):
+                bag = getattr(pm, attr, None)
+                candidate = bag.get(gid) if isinstance(bag, dict) else None
+                if isinstance(candidate, dict):
+                    staged_raw = copy.deepcopy(candidate)
+                    break
+        disk_bytes: bytes | None = None
+        if staged_raw is not None:
+            raw = staged_raw
+            try:
+                disk_bytes = path.read_bytes()
+            except OSError:
+                disk_bytes = None
+        else:
+            try:
+                disk_bytes = path.read_bytes()
+                raw = json.loads(disk_bytes.decode("utf-8"))
+            except (OSError, ValueError, json.JSONDecodeError) as e:
+                QMessageBox.critical(self, "打开失败", str(e))
+                return
         if not isinstance(raw, dict):
             # 顶层文档畸形（agent/手写成 list/str/数字等，而非 { id, entry, nodes }）：
             # 降级为空图，避免整条 load 链上 self._data.get(...) 抛 AttributeError 崩溃。
@@ -3141,8 +3239,19 @@ class DialogueGraphEditorWidget(QWidget):
             if path.resolve() != self._current_path.resolve():
                 return True  # 另存为：写新文件，无覆盖风险
             now = path.read_bytes()
-        except OSError:
-            return True  # 文件被外部删除等：照常写出（等价于重建）
+        except OSError as e:
+            # fail closed：文件被外部删除/权限变更/设备异常时，旧实现
+            # 直接返回 True 并重建，会把「外部有意删除」静默反向覆盖。
+            r = QMessageBox.question(
+                self,
+                "磁盘文件已不可读",
+                f"无法读取 {path.name}：{e}\n\n"
+                "该文件可能已被外部删除、移动，或权限/设备已变化。\n"
+                "继续会用当前编辑器内容重建该路径。确定要重建吗？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            return r == QMessageBox.StandardButton.Yes
         if now == disk_bytes:
             return True
         r = QMessageBox.question(
@@ -3156,12 +3265,30 @@ class DialogueGraphEditorWidget(QWidget):
         )
         return r == QMessageBox.StandardButton.Yes
 
+    def _ensure_project_model_graph_baseline(self, path: Path) -> None:
+        """把内嵌图的目标纳入 MainWindow Save All 外部修改检测。"""
+        pm = self._injected_project_model
+        if pm is None:
+            return
+        baselines = getattr(pm, "_file_baselines", None)
+        key_fn = getattr(pm, "_baseline_key", None)
+        record = getattr(pm, "_record_file_baseline", None)
+        if not isinstance(baselines, dict) or not callable(key_fn):
+            return
+        key = key_fn(path)
+        if key in baselines:
+            return
+        if path.exists() and callable(record):
+            record(path)
+        else:
+            baselines[key] = getattr(pm, "_BASELINE_ABSENT", (-1, -1))
+
     def _write_to_path(self, path: Path) -> bool:
         self._last_save_failure = ""
         old_draft = self._draft_layout_basename
         draft_lp = (self._graphs_dir / old_draft) if old_draft else None
         try:
-            self._widgets_to_data_meta(relink_catalog=True)
+            self._widgets_to_data_meta(relink_catalog=False)
             self._flush_current_inspector_to_data()
         except json.JSONDecodeError as e:
             self._last_save_failure = f"preconditions 条件解析失败：{e}"
@@ -3206,12 +3333,55 @@ class DialogueGraphEditorWidget(QWidget):
         # 外部并发写检查：磁盘自载入后被别处（内嵌/独立图编辑器、外部工具）改过时，
         # 直接写盘就是 last-writer-wins 静默覆盖，必须让用户明确选择。
         if not self._confirm_overwrite_external_changes(path):
-            self._last_save_failure = "磁盘文件已被外部修改，未确认覆盖"
+            self._last_save_failure = "磁盘文件已被外部修改或不可读，未确认覆盖/重建"
             return False
 
         id_before_disk = str(self._data.get("id", "")).strip()
         final_gid = path.stem
         self._model.apply_meta_patch({"id": final_gid})
+        pm_sv = self._injected_project_model
+        staged_edits = getattr(pm_sv, "pending_dialogue_graph_edits", {}) if pm_sv is not None else {}
+        staged_stubs = getattr(pm_sv, "pending_dialogue_stubs", {}) if pm_sv is not None else {}
+        # 事务边界：只要是主编辑器注入的 ProjectModel，任何图保存
+        # 都只进 pending；真实写盘由紧随其后的 model.save_all 与 item/scene/
+        # narrative 等脏桶同一交易提交。独立图编辑器（无注入模型）
+        # 仍走下方原子单文件直存。
+        if pm_sv is not None:
+            if final_gid in getattr(pm_sv, "pending_dialogue_graph_deletes", set()):
+                self._model.apply_meta_patch({"id": id_before_disk})
+                self._last_save_failure = f"对话图 {final_gid!r} 已暂存删除"
+                QMessageBox.critical(self, "保存失败", self._last_save_failure)
+                return False
+            self._ensure_project_model_graph_baseline(path)
+            graph_doc = self._model.to_dict()
+            if final_gid in staged_stubs and not path.is_file():
+                staged_stubs[final_gid] = graph_doc
+                pm_sv.mark_dirty("dialogue_stubs")
+            else:
+                # 普通既有图、显式新建/另存为图都纳入可覆写暂存面。
+                # 新目标的 baseline=不存在，Save All 前若外部同名新建，
+                # MainWindow 会报外部冲突，不会像 dialogue_stubs 旧路径那样跳过后清暂存。
+                staged_edits[final_gid] = graph_doc
+                pm_sv.mark_dirty("dialogue_graph_edits")
+            meta_sv = graph_doc.get("meta") if isinstance(graph_doc.get("meta"), dict) else {}
+            sc_sv = str(meta_sv.get("scenarioId", "")).strip()
+            pm_sv.relink_dialogue_graph_to_scenarios(final_gid, sc_sv or None)
+            if draft_lp is not None and old_draft:
+                migrate_layout_map_key(self._project, draft_lp, path)
+            self._current_path = path
+            self._draft_layout_basename = None
+            self._new_draft_pristine = None
+            self._loaded_disk_bytes = None
+            self._loaded_disk_data = copy.deepcopy(graph_doc)
+            self._apply_data_to_widgets()
+            self._flush_flow_layout_to_disk()
+            self._set_dirty(False)
+            self._emit_title()
+            self._toast("已更新 ProjectModel 暂存；请保存全部", 4000)
+            self._refresh_file_list()
+            self._sync_file_list_selection(path)
+            self._emit_catalog_changed()
+            return True
         try:
             if self._can_write_loaded_bytes_verbatim(path):
                 # 内容相对磁盘零实质变化：原样写回原始字节，保证导出格式与磁盘完全一致。
@@ -3234,13 +3404,6 @@ class DialogueGraphEditorWidget(QWidget):
         self._current_path = path
         self._draft_layout_basename = None
         self._new_draft_pristine = None  # 已落盘：不再是全新草稿
-        pm_sv = self._injected_project_model
-        if pm_sv is not None:
-            if id_before_disk and id_before_disk != final_gid:
-                pm_sv.rename_dialogue_graph_in_scenarios_catalog(id_before_disk, final_gid)
-            meta_sv = self._data.get("meta") if isinstance(self._data.get("meta"), dict) else {}
-            sc_sv = str(meta_sv.get("scenarioId", "")).strip()
-            pm_sv.relink_dialogue_graph_to_scenarios(final_gid, sc_sv or None)
         self._apply_data_to_widgets()
         self._flush_flow_layout_to_disk()
         self._set_dirty(False)
@@ -3248,4 +3411,5 @@ class DialogueGraphEditorWidget(QWidget):
         self._toast("已保存", 3000)
         self._refresh_file_list()
         self._sync_file_list_selection(path)
+        self._emit_catalog_changed()
         return True

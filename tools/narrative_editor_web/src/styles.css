@@ -951,6 +951,194 @@ select {
   font-weight: 700;
 }
 
+.reference-picker-field-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px;
+}
+
+.reference-picker-field-row input {
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.reference-picker-field-row input.unknown-reference {
+  border-color: #d9a441;
+  background: rgba(217, 164, 65, 0.08);
+}
+
+.reference-picker-label {
+  color: #9facb8;
+  font-size: var(--editor-host-font-12, 12px);
+  overflow-wrap: anywhere;
+}
+
+.reference-unknown {
+  color: #d9a441;
+  font-size: var(--editor-host-font-12, 12px);
+  margin-left: 7px;
+}
+
+.reference-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(4, 6, 8, 0.78);
+}
+
+.reference-modal {
+  width: min(920px, 94vw);
+  height: min(680px, 88vh);
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  border: 1px solid #495663;
+  border-radius: 10px;
+  background: #11161b;
+  box-shadow: 0 20px 70px rgba(0, 0, 0, 0.55);
+}
+
+.reference-modal-header,
+.reference-modal-toolbar,
+.reference-modal-current,
+.reference-modal-footer {
+  padding: 12px 15px;
+  border-bottom: 1px solid #303a44;
+}
+
+.reference-modal-custom {
+  display: flex;
+  flex: 1 1 320px;
+  gap: 6px;
+  align-items: center;
+}
+
+.reference-modal-custom input {
+  min-width: 150px;
+  flex: 1 1 220px;
+}
+
+.reference-modal-header,
+.reference-modal-toolbar,
+.reference-modal-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.reference-modal-header {
+  justify-content: space-between;
+}
+
+.reference-modal-header h3,
+.reference-modal-header p {
+  margin: 0;
+}
+
+.reference-modal-header p {
+  margin-top: 4px;
+}
+
+.reference-modal-toolbar input {
+  min-width: 0;
+}
+
+.reference-modal-toolbar span {
+  flex: 0 0 auto;
+  color: #8f9da8;
+  font-variant-numeric: tabular-nums;
+}
+
+.reference-modal-current {
+  color: #9facb8;
+  font-size: var(--editor-host-font-12, 12px);
+}
+
+.reference-modal-current code {
+  color: #dce5ec;
+}
+
+.reference-modal-list {
+  min-height: 0;
+  overflow: auto;
+  padding: 8px;
+}
+
+.reference-modal-empty {
+  padding: 18px;
+  text-align: center;
+}
+
+.reference-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 100px minmax(180px, 1.3fr) minmax(160px, 1fr);
+  gap: 12px;
+  align-items: center;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #dce5ec;
+  text-align: left;
+}
+
+.reference-row:hover {
+  background: #192129;
+}
+
+.reference-row.active {
+  border-color: #4f91cf;
+  background: rgba(79, 145, 207, 0.15);
+}
+
+.reference-row-kind {
+  color: #8eb8df;
+  font-size: var(--editor-host-font-12, 12px);
+  font-weight: 700;
+}
+
+.reference-row-id,
+.reference-row-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.reference-row-label {
+  color: #aebbc6;
+}
+
+.reference-modal-footer {
+  justify-content: flex-end;
+  border-top: 1px solid #303a44;
+  border-bottom: 0;
+}
+
+.reference-modal-selection {
+  min-width: 0;
+  flex: 1;
+  color: #9facb8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .reference-modal-backdrop {
+    padding: 10px;
+  }
+
+  .reference-row {
+    grid-template-columns: 76px minmax(0, 1fr);
+  }
+
+  .reference-row-label {
+    grid-column: 2;
+  }
+}
+
 .small-textarea {
   height: 74px;
   min-height: 74px;
@@ -2238,6 +2426,23 @@ button.secondary {
   font-size: var(--editor-host-font-10-5, 10.5px);
   margin-top: 2px;
 }
+.template-reference-param,
+.template-dialogue-stub-flow {
+  display: grid;
+  gap: 5px;
+}
+.template-dialogue-stub-flow > .link-btn {
+  justify-self: start;
+}
+.template-dialogue-stub-create {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) auto auto;
+  gap: 6px;
+  align-items: center;
+}
+.template-dialogue-stub-create .template-preview-error {
+  grid-column: 1 / -1;
+}
 .template-preview {
   border: 1px solid #303a44;
   border-radius: 6px;
@@ -2324,6 +2529,10 @@ button.secondary {
 .template-param-row input,
 .template-param-row select {
   padding: 4px 6px;
+}
+.template-param-row > .template-reference-param {
+  flex: 1 1 300px;
+  min-width: 240px;
 }
 .template-param-name { width: 92px; }
 .template-param-label { width: 84px; }

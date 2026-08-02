@@ -252,5 +252,16 @@
     "confirmYes": "关闭",
     "confirmNo": "取消",
     "resultBanner": "抽中了：{label}"
+  },
+  "objectExamine": {
+    "hint": "凑近些……再近些。有什么不对劲，便会自己露出来。",
+    "observe": "仔细看看",
+    "exit": "放下",
+    "allFound": "这上面能看出的蹊跷，似乎都翻过了。",
+    "continue": "……看够了，退开一步。",
+    "bag": "摸摸囊",
+    "holding": "手里捏着：{item}",
+    "noUse": "使不上……",
+    "shadeTitle": "隐约觉着不对"
   }
 }

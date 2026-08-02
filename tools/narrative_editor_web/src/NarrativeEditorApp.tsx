@@ -68,6 +68,7 @@ import { ToolbarPopover } from './components/ToolbarPopover';
 import { ConditionBuilder } from './components/ConditionBuilder';
 import { SignalChipsField } from './components/SignalChipsField';
 import { SignalPickerModal } from './components/SignalPickerModal';
+import { ReferencePickerField } from './components/ReferencePickerModal';
 import { DEFAULT_DRAFT_SIGNAL } from './signalConstants';
 import { applySignalDisplayToEdges, buildSignalLabelMap } from './signalDisplay';
 import { SignalRefactorModal, type NarrativeRefactorRequest } from './components/SignalRefactorModal';
@@ -78,8 +79,9 @@ import {
   findProjectionEdge,
   isSelectionDeletable,
   navigationForElement,
-  ownerChoicesFor,
-  ownerChoicesForGraph,
+  referenceEntriesForElement,
+  referenceEntriesForType,
+  referenceKindForElement,
   WRAPPER_OWNER_TYPES,
   removeTransitionsReferencingState,
   transitionIn,
@@ -307,6 +309,15 @@ function NarrativeEditorInner() {
     setDirty(true);
   }, [wrapUpdater]);
 
+  /** Refresh only cross-file reference candidates. Canvas data, history, dirty
+   * state, active composition and selection deliberately stay untouched. */
+  const refreshCatalog = useCallback(async (): Promise<boolean> => {
+    const next = await loadAuthoringCatalog();
+    setCatalog(next);
+    setKnownPlaneIdsForValidation(next.planeIds ?? null);
+    return true;
+  }, []);
+
   // 整理分组提交：即刻入模型（saveCategories → mark_dirty），由主编辑器 Save All / 关窗询问兜底
   // ——不与 narrative_graphs 的 flush 草稿路径耦合。顺手 prune 掉悬垂 id（对当前内存数据），保持整洁。
   const persistCategories = useCallback((next: NarrativeCategoriesFileDef) => {
@@ -337,15 +348,12 @@ function NarrativeEditorInner() {
     setSavedDataHash(stableHash(JSON.stringify(normalizeFile(narrative))));
     setDirty(false);
     setCompositionId(summary.compositionId);
-    void loadAuthoringCatalog().then((c) => {
-      setCatalog(c);
-      setKnownPlaneIdsForValidation(c.planeIds ?? null);
-    });
+    void refreshCatalog();
     const bits = [`作曲 ${summary.compositionId}`];
     if (summary.questStaged) bits.push(`任务 ${summary.questId}`);
     if (summary.stubsStaged.length) bits.push(`对话桩 ${summary.stubsStaged.length} 个`);
     setStatus(`已盖章暂存：${bits.join('，')}——主编辑器 Save All 一次性落盘全部（放弃则全都不写盘）。`);
-  }, [resetHistory, updateData]);
+  }, [refreshCatalog, resetHistory, updateData]);
 
   // ---- 叙事重构（信号/状态/图id）：宿主引擎全项目级联，采纳返回数据并清画布撤销栈 ----
   const [signalRefactor, setSignalRefactor] = useState<NarrativeRefactorRequest | null>(null);
@@ -362,11 +370,8 @@ function NarrativeEditorInner() {
     setDirty(false);
     setRefactorJournalSize(journalSize);
     setStatus(message);
-    void loadAuthoringCatalog().then((c) => {
-      setCatalog(c);
-      setKnownPlaneIdsForValidation(c.planeIds ?? null);
-    });
-  }, [resetHistory, scheduleRemoteSync]);
+    void refreshCatalog();
+  }, [refreshCatalog, resetHistory, scheduleRemoteSync]);
 
   const handleSignalRefactored = useCallback((result: SignalRefactorResultDef, description: string) => {
     if (!result.narrative) return;
@@ -613,7 +618,11 @@ function NarrativeEditorInner() {
         setSavedDataHash(currentDataHash);
         setDirty(false);
       },
-      refresh: () => { void refreshProjectionAndValidation(data); },
+      refresh: () => {
+        void refreshProjectionAndValidation(data);
+        void refreshCatalog();
+      },
+      refreshCatalog,
       // 宿主跳转定位（PySide 位面面板 Tab2 双击）：切编排 + 聚焦状态。
       // focusIssue 声明在本 effect 之后，经 ref 转接（依赖数组直接引用会踩 TDZ）。
       focusState: (graphId: string, stateId: string): boolean => {
@@ -645,7 +654,7 @@ function NarrativeEditorInner() {
         delete window.__narrativeEditor;
       }
     };
-  }, [currentDataHash, currentDataJson, editorDirty, data, refreshProjectionAndValidation]);
+  }, [currentDataHash, currentDataJson, editorDirty, data, refreshCatalog, refreshProjectionAndValidation]);
 
   useEffect(() => {
     void flushRemoteSync(data);
@@ -2539,8 +2548,13 @@ function GraphInspector(props: {
   onRequestSignalRefactor?: (req: NarrativeRefactorRequest) => void;
 }) {
   const { graph, updateCurrentGraph, catalog, composition, graphRef } = props;
-  const ownerChoices = ownerChoicesForGraph(graph, catalog);
   const parentElement = graphRef !== 'main' ? getElementByGraphRef(composition, graphRef) : undefined;
+  const effectiveOwnerType = parentElement?.ownerType ?? graph.ownerType;
+  const effectiveOwnerId = parentElement?.ownerId ?? graph.ownerId ?? '';
+  const ownerEntries = referenceEntriesForType(effectiveOwnerType, catalog);
+  const wrapperOwnerTypeValues = effectiveOwnerType && !WRAPPER_OWNER_TYPES.includes(effectiveOwnerType)
+    ? [...WRAPPER_OWNER_TYPES, effectiveOwnerType]
+    : WRAPPER_OWNER_TYPES;
   const parentMeta = parentElement?.meta;
   return (
     <div className="form-grid">
@@ -2691,17 +2705,63 @@ function GraphInspector(props: {
       )}
       <PropertySummary rows={[['状态', String(Object.keys(graph.states).length)], ['迁移', String(graph.transitions.length)]]} />
       <AdvancedInspectorSection title="高级">
-        <TextField label="Owner Type" value={graph.ownerType} onChange={(value) => updateCurrentGraph((g) => { g.ownerType = value; })} />
-        <TextField
-          label="Owner ID"
-          value={graph.ownerId ?? ''}
-          datalistValues={ownerChoices}
-          flagUnknown
-          readOnlyNote={graph.ownerType?.trim() === 'flow'
-            ? 'flow 主图的 ownerId 无任何机制消费（运行时/目录/校验都不读它），历史值仅当注释保留——2026-07-13 拍板判死，不再邀请填写'
-            : undefined}
-          onChange={(value) => updateCurrentGraph((g) => { g.ownerId = value; })}
-        />
+        {parentElement?.kind === 'wrapperGraph' ? (
+          <>
+            <SelectField
+              label="Owner Type"
+              value={effectiveOwnerType}
+              values={wrapperOwnerTypeValues}
+              onChange={(value) => updateCurrentGraph((g, next) => {
+                g.ownerType = value;
+                const comp = composition ? getComposition(next, composition.id) : undefined;
+                const el = comp?.elements?.find((item) => item.id === parentElement.id);
+                if (el) el.ownerType = value;
+              })}
+            />
+            <ReferencePickerField
+              label="Owner ID"
+              value={effectiveOwnerId}
+              entries={ownerEntries}
+              allowCustom={effectiveOwnerType === 'system'}
+              onChange={(value) => updateCurrentGraph((g, next) => {
+                g.ownerId = value;
+                const comp = composition ? getComposition(next, composition.id) : undefined;
+                const el = comp?.elements?.find((item) => item.id === parentElement.id);
+                if (el) el.ownerId = value;
+              })}
+            />
+          </>
+        ) : parentElement?.kind === 'scenarioSubgraph' ? (
+          <>
+            <ReadOnlyField label="Owner Type（由元素类型派生）" value="scenario" />
+            <ReferencePickerField
+              label="Owner ID"
+              value={parentElement.refId || effectiveOwnerId}
+              entries={referenceEntriesForType('scenario', catalog)}
+              onChange={(value) => updateCurrentGraph((g, next) => {
+                g.ownerType = 'scenario';
+                g.ownerId = value;
+                const comp = composition ? getComposition(next, composition.id) : undefined;
+                const el = comp?.elements?.find((item) => item.id === parentElement.id);
+                if (el) {
+                  el.ownerType = 'scenario';
+                  el.ownerId = value;
+                  el.refId = value;
+                }
+              })}
+            />
+          </>
+        ) : (
+          <>
+            <ReadOnlyField label="Owner Type" value={graph.ownerType} />
+            <ReadOnlyField label="Owner ID" value={graph.ownerId ?? ''} />
+            {graph.ownerType?.trim() === 'flow' && (
+              <div className="property-line note">
+                flow 主图的 ownerId 无任何机制消费；历史值仅作注释原样保留。
+              </div>
+            )}
+          </>
+        )}
         {(graph.ownerType === 'scenario' || graph.entryState || graph.exitStates?.length) && (
           <div className="property-line note">Scenario 只有入口/出口状态可以和外部图直接连线；内部状态在展开后编辑。</div>
         )}
@@ -2962,7 +3022,12 @@ function ElementInspector(props: {
   onSetSubgraphCategory?: (compId: string, elId: string, name: string) => void;
 }) {
   const { composition, element, catalog, updateData } = props;
-  const ownerChoices = ownerChoicesFor(element, catalog);
+  const referenceKind = referenceKindForElement(element);
+  const referenceEntries = referenceEntriesForElement(element, catalog);
+  const wrapperOwnerType = (element.ownerType ?? 'npc').trim() || 'npc';
+  const wrapperOwnerTypeValues = WRAPPER_OWNER_TYPES.includes(wrapperOwnerType)
+    ? WRAPPER_OWNER_TYPES
+    : [...WRAPPER_OWNER_TYPES, wrapperOwnerType];
   const isSubgraph = isSubgraphElement(element);
   // 子图元素的信号接口从内容自动推导（只读展示）；黑盒元素才保留手工登记。
   const derivedInterface = useMemo(() => deriveGraphInterface(element.graph), [element.graph]);
@@ -3003,8 +3068,8 @@ function ElementInspector(props: {
       )}
       {element.kind === 'wrapperGraph' ? (
         <>
-          <SelectField label="绑定类型" value={element.ownerType ?? 'npc'} values={WRAPPER_OWNER_TYPES} onChange={(value) => updateElement(updateData, composition, element.id, (el) => { el.ownerType = value; if (el.graph) el.graph.ownerType = value; })} />
-          <TextField label="绑定对象" value={element.ownerId ?? ''} datalistValues={ownerChoices} flagUnknown onChange={(value) => updateElement(updateData, composition, element.id, (el) => {
+          <SelectField label="绑定类型" value={wrapperOwnerType} values={wrapperOwnerTypeValues} onChange={(value) => updateElement(updateData, composition, element.id, (el) => { el.ownerType = value; if (el.graph) el.graph.ownerType = value; })} />
+          <ReferencePickerField label="绑定对象" value={element.ownerId ?? ''} entries={referenceEntries} allowCustom={wrapperOwnerType === 'system'} onChange={(value) => updateElement(updateData, composition, element.id, (el) => {
             el.ownerId = value;
             if (el.graph) el.graph.ownerId = value;
           })} />
@@ -3018,7 +3083,8 @@ function ElementInspector(props: {
         </>
       ) : element.kind === 'scenarioSubgraph' ? (
         <>
-          <TextField label="Scenario" value={element.refId || element.ownerId || ''} datalistValues={ownerChoices} flagUnknown onChange={(value) => updateElement(updateData, composition, element.id, (el) => {
+          <ReadOnlyField label="来源类型（由元素类型派生）" value="scenario" />
+          <ReferencePickerField label="Scenario" value={element.refId || element.ownerId || ''} entries={referenceEntries} onChange={(value) => updateElement(updateData, composition, element.id, (el) => {
             el.refId = value;
             el.ownerId = value;
             el.ownerType = 'scenario';
@@ -3036,8 +3102,8 @@ function ElementInspector(props: {
         </>
       ) : (
         <>
-          <TextField label="来源类型" value={element.ownerType ?? ''} onChange={(value) => updateElement(updateData, composition, element.id, (el) => { el.ownerType = value; })} />
-          <TextField label="引用对象" value={element.refId ?? ''} datalistValues={ownerChoices} flagUnknown onChange={(value) => updateElement(updateData, composition, element.id, (el) => {
+          <ReadOnlyField label="来源类型（由元素类型派生）" value={referenceKind} />
+          <ReferencePickerField label="引用对象" value={element.refId ?? ''} entries={referenceEntries} onChange={(value) => updateElement(updateData, composition, element.id, (el) => {
             el.refId = value;
           })} />
         </>
@@ -3185,7 +3251,7 @@ type EntityNarrativeIndex = {
   owners: EntityNarrativeOwnerSummary[];
 };
 
-function EntityNarrativeInspector(props: {
+export function EntityNarrativeInspector(props: {
   index: EntityNarrativeIndex;
   selectedOwnerKey: string;
   onSelectOwnerKey: (key: string) => void;
@@ -3201,6 +3267,13 @@ function EntityNarrativeInspector(props: {
     return <div className="muted">当前没有绑定实体的 wrapperGraph。</div>;
   }
   const owner = props.index.owners.find((item) => item.ownerKey === props.selectedOwnerKey) ?? props.index.owners[0]!;
+  const ownerEntries = props.index.owners.map((item) => ({
+    kind: item.ownerType,
+    id: item.ownerKey,
+    qualifiedId: item.ownerKey,
+    label: `${item.ownerType}:${item.ownerId} (${item.wrappers.length} wrapper)`,
+    aliases: [item.ownerId],
+  }));
   const q = search.trim().toLowerCase();
   const wrappers = owner.wrappers.filter((wrapper) => {
     if (!q) return true;
@@ -3212,16 +3285,12 @@ function EntityNarrativeInspector(props: {
   });
   return (
     <div className="entity-view">
-      <div className="field">
-        <label>实体</label>
-        <select value={owner.ownerKey} onChange={(e) => props.onSelectOwnerKey(e.target.value)}>
-          {props.index.owners.map((item) => (
-            <option key={item.ownerKey} value={item.ownerKey}>
-              {item.ownerType}:{item.ownerId} ({item.wrappers.length})
-            </option>
-          ))}
-        </select>
-      </div>
+      <ReferencePickerField
+        label="实体"
+        value={owner.ownerKey}
+        entries={ownerEntries}
+        onChange={props.onSelectOwnerKey}
+      />
       <div className="property-summary">
         <b>{owner.ownerType}:{owner.ownerId}</b>
         <div className="property-summary-grid">

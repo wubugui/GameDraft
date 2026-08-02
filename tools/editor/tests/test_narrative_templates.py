@@ -5,6 +5,8 @@ import copy
 import json
 from pathlib import Path
 
+import pytest
+
 from tools.editor.file_io import _json_text
 from tools.editor.project_model import ProjectModel
 from tools.editor.shared.narrative_templates import (
@@ -469,10 +471,12 @@ def test_pending_stub_never_overwrites_existing(tmp_path):
     model.pending_dialogue_stubs["已有图"] = {"id": "已有图", "nodes": {}}
     model.pending_dialogue_stubs["../越界"] = {"id": "x"}  # 防御：坏 id 直接跳过
     model.mark_dirty("dialogue_stubs")
-    model.save_all()
+    with pytest.raises(OSError):
+        model.save_all()
     assert target.read_text(encoding="utf-8") == before
     assert not (root / "public/assets/dialogues/越界.json").exists()
-    assert model.pending_dialogue_stubs == {}
+    assert "已有图" in model.pending_dialogue_stubs
+    assert model.is_dirty
 
 
 def test_save_all_template_roundtrip_byte_identical(tmp_path):

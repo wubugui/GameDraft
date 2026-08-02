@@ -19,6 +19,8 @@ from PySide6.QtWidgets import QApplication
 
 from tools.editor.project_model import ProjectModel
 from tools.editor.shared.condition_editor import ConditionEditor
+from tools.editor.shared.condition_expr_tree import ConditionExprTreeRootWidget
+from tools.editor.shared.reference_picker import ReferencePickerField
 from tools.editor.tests.save_test_utils import write_minimal_loadable_project
 
 _SCENARIO_ID = "码头水鬼"
@@ -166,6 +168,30 @@ class ConditionExprRoundtripTests(unittest.TestCase):
                 m, {"scenarioLine": "ghost_line", "lineStatus": "completed"},
             )
 
+    def test_nested_dangling_references_survive_catalog_refresh_deep_equal(self) -> None:
+        """Programmatic catalog refresh must preserve every orphan and stay clean."""
+        with TemporaryDirectory() as td:
+            m = self._model(Path(td) / "p")
+            expr = {
+                "all": [
+                    {"scenarioLine": "ghost_line", "lineStatus": "completed", "future": {"keep": 1}},
+                    {"narrative": "ghost_graph", "state": "ghost_state", "reached": False},
+                    {"narrativeCount": "ghost_job", "exitState": "ghost_exit", "value": 4},
+                ],
+            }
+            tree = ConditionExprTreeRootWidget(model_getter=lambda: m)
+            tree.set_expr(expr)
+            changed: list[int] = []
+            tree.changed.connect(lambda: changed.append(1))
+
+            # Simulate a cross-panel catalog replacement before the refresh hook.
+            m.scenarios_catalog = {"scenarios": []}
+            m.narrative_graphs = {"compositions": []}
+            tree.set_model_refresh()
+
+            self.assertEqual(tree.get_expr(), expr)
+            self.assertEqual(changed, [], "programmatic refresh must not dirty the draft")
+
     # ---- quest / narrative (回归护栏:本就保留未知 id) ----------------------
 
     def test_quest_roundtrips(self) -> None:
@@ -182,6 +208,28 @@ class ConditionExprRoundtripTests(unittest.TestCase):
         with TemporaryDirectory() as td:
             m = self._model(Path(td) / "p")
             self._assert_roundtrip(m, {"narrative": "ng_main", "state": "st_intro"})
+
+    def test_narrative_references_use_live_searchable_fields(self) -> None:
+        with TemporaryDirectory() as td:
+            m = self._model(Path(td) / "p")
+            tree = ConditionExprTreeRootWidget(model_getter=lambda: m)
+            tree.set_expr({"narrative": "ng_main", "state": "st_intro"})
+            root = tree._root
+            self.assertIsInstance(root._nv_graph, ReferencePickerField)
+            self.assertIsInstance(root._nv_state, ReferencePickerField)
+
+            m.narrative_graphs["compositions"].append({
+                "mainGraph": {
+                    "id": "ng_added_after_construct",
+                    "label": "后来新建的图",
+                    "states": {"fresh": {"label": "新状态"}},
+                },
+            })
+            graph_values = {row[0] for row in root._nv_graph._safe_rows()}
+            self.assertIn("ng_added_after_construct", graph_values)
+            root._nv_graph.set_value("ng_added_after_construct")
+            state_values = {row[0] for row in root._nv_state._safe_rows()}
+            self.assertIn("fresh", state_values)
 
     # ---- flag (回归护栏:已登记 / 未登记键均须保真) -------------------------
 

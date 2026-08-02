@@ -59,6 +59,14 @@ AUTHORITY_FILES = (
 )
 
 
+def _file_matches_text(path: Path, text: str) -> bool:
+    """内容等价才 True;缺失/非 UTF-8/读失败一律 False(触发原子重写)。"""
+    try:
+        return path.is_file() and path.read_text(encoding="utf-8") == text
+    except (OSError, UnicodeError):
+        return False
+
+
 def _rebuild(root: Path) -> dict:
     """一次全量重算;内容没变不重写(避免语言服务缓存空转),写盘走原子替换。"""
     spec = extract_language_spec(root)
@@ -68,7 +76,8 @@ def _rebuild(root: Path) -> dict:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     out_path = OUT_DIR / SCHEMA_NAME
     text = json.dumps(schema, ensure_ascii=False, indent=2) + "\n"
-    if not (out_path.exists() and out_path.read_text(encoding="utf-8") == text):
+    # 旧 out 可能被并发/半写污染成非 UTF-8；读失败一律当「需要重写」
+    if not _file_matches_text(out_path, text):
         tmp = out_path.with_suffix(".tmp")
         tmp.write_text(text, encoding="utf-8")
         os.replace(tmp, out_path)

@@ -87,6 +87,27 @@ def reveal_sting(t: float, _i: int) -> float:
     return (low + dissonance + high + rumble) * envelope
 
 
+def fly_buzz(t: float, _i: int) -> float:
+    """苍蝇嗡鸣（无缝循环占位）：190Hz 锯齿感基音 + 23Hz 振翅调幅 + 少量泛音噪声。
+
+    所有频率在 2.0s 内均为整数周期，保证 loop 无咔哒声。
+    """
+    f = 190.0
+    sawish = (
+        math.sin(2 * math.pi * f * t)
+        + 0.5 * math.sin(2 * math.pi * 2 * f * t)
+        + 0.3 * math.sin(2 * math.pi * 3 * f * t)
+        + 0.15 * math.sin(2 * math.pi * 4 * f * t)
+    )
+    wing = 0.72 + 0.28 * math.sin(2 * math.pi * 23 * t)
+    air = (
+        math.sin(2 * math.pi * 241 * t) * 0.05
+        + math.sin(2 * math.pi * 349 * t) * 0.04
+        + math.sin(2 * math.pi * 477 * t) * 0.03
+    )
+    return (sawish * 0.16 + air) * wing
+
+
 teahouse_noise = smooth_noise(11)
 alley_noise = smooth_noise(22)
 temple_noise = smooth_noise(33)
@@ -100,6 +121,7 @@ def main() -> None:
     write_wav("story_intro.wav", 1.8, story_intro)
     write_wav("iron_box_chime.wav", 1.1, iron_box_chime)
     write_wav("reveal_sting.wav", 2.1, reveal_sting)
+    write_wav("fly_buzz.wav", 2.0, fly_buzz)
     print("demo audio generated")
 
 

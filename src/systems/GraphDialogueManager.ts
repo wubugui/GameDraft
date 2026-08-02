@@ -428,7 +428,9 @@ export class GraphDialogueManager implements IGameSystem {
         npcName: params.npcName,
         npcId: params.npcId?.trim() || undefined,
         ownerType: params.ownerType?.trim() || undefined,
-        ownerId: params.ownerId?.trim() || params.npcId?.trim() || undefined,
+        ownerId: params.ownerType?.trim()
+          ? (params.ownerId?.trim() || undefined)
+          : (params.ownerId?.trim() || params.npcId?.trim() || undefined),
         preferGraphMetaTitle: params.preferGraphMetaTitle === true,
         dimBackground: params.dimBackground === true,
       });
@@ -489,8 +491,11 @@ export class GraphDialogueManager implements IGameSystem {
       const useMeta = params.preferGraphMetaTitle === true && metaTitle.length > 0;
       this.npcName = useMeta ? metaTitle : params.npcName;
       this.npcId = params.npcId?.trim() ?? '';
-      this.ownerType = params.ownerType?.trim() || (this.npcId ? 'npc' : '');
-      this.ownerId = params.ownerId?.trim() || this.npcId;
+      const explicitOwnerType = params.ownerType?.trim() || '';
+      this.ownerType = explicitOwnerType || (this.npcId ? 'npc' : '');
+      this.ownerId = explicitOwnerType
+        ? (params.ownerId?.trim() || '')
+        : (params.ownerId?.trim() || this.npcId);
       this.dimBackground = params.dimBackground === true;
       this.currentNodeId = (params.entry?.trim() && raw.nodes[params.entry.trim()])
         ? params.entry.trim()

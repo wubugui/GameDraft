@@ -35,6 +35,10 @@
     "night_alley_wind": {
       "src": "/resources/runtime/audio/night_alley_wind.wav"
     },
+    "fly_buzz": {
+      "src": "/resources/runtime/audio/fly_buzz.wav",
+      "volume": 0.55
+    },
     "temple_rumble": {
       "src": "/resources/runtime/audio/temple_rumble.wav"
     },

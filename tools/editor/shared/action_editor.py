@@ -117,6 +117,11 @@ from .cutscene_dialogue_speaker_row import (
 from .scripted_lines_editor import ScriptedLinesEditor
 from .runtime_field_schema import entity_kind_choices, field_meta
 from .numeric_roundtrip import preserve_numeric_repr
+from .reference_picker import ReferencePickerDialog, ReferencePickerField
+from .dialogue_graph_refs import (
+    dialogue_graph_node_ids,
+    dialogue_graph_reference_rows,
+)
 
 # 这些参数在 schema 里恒会被写出，但语义上"缺省即未设"。当某键原本不在数据里、且当前值
 # 等于其中性默认时，剔除它——避免编辑器"打开即保存"凭空添加 direction:""/anchorOffset:0。
@@ -222,6 +227,7 @@ ACTION_TYPES = [
     "giveRule", "grantRuleLayer", "giveFragment", "updateQuest", "startEncounter",
     "playBgm", "stopBgm", "playSfx", "stopSceneAmbient", "endDay", "addDelayedEvent",
     "addArchiveEntry", "startCutscene", "startWaterMinigame", "startSugarWheelMinigame", "startPaperCraftMinigame",
+    "startObjectExamine",
     "startPressureHold", "playSignalCue", "addFlagValue",
     "damagePlayer", "healPlayer", "resetHealth", "setHealth", "incHealth", "decHealth", "triggerDeathTether",
     "setSmell", "clearSmell", "sniff",
@@ -278,6 +284,7 @@ _SELECTOR_KIND_UNIVERSE: dict[str, str] = {
     "water_minigame": "water_minigames",
     "sugar_wheel_minigame": "sugar_wheel_minigames",
     "paper_craft_minigame": "paper_craft_minigames",
+    "object_examine": "object_examines",
     "pressure_hold": "pressure_holds",
     "signal_cue": "signal_cues",
     # 叙事活计生命周期（S1）：候选=声明 run 的活计图，宇宙沿用 narrative 条件叶的图 id 集合
@@ -350,6 +357,7 @@ ACTION_PERSISTENCE: dict[str, str] = {
     "startWaterMinigame": "memory",
     "startSugarWheelMinigame": "memory",
     "startPaperCraftMinigame": "memory",
+    "startObjectExamine": "memory",
     "sugarWheelShowSpeech": "memory",
     "sugarWheelDismissSpeech": "memory",
     "sugarWheelDismissAllSpeech": "memory",
@@ -498,6 +506,7 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "startWaterMinigame": [("id", "str")],
     "startSugarWheelMinigame": [("id", "str")],
     "startPaperCraftMinigame": [("id", "str")],
+    "startObjectExamine": [("id", "str")],
     "sugarWheelShowSpeech": [("role", "str"), ("text", "str"), ("durationMs", "int")],
     "sugarWheelDismissSpeech": [("role", "str")],
     "sugarWheelDismissAllSpeech": [],
@@ -605,8 +614,8 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
         ("bubbleAnchorY", "bubble_anchor"),
         ("bubbleScale", "bubble_scale"),
     ],
-    # 分组批量：group 是纯标签（非实体 id 引用，勿登记 ENTITY_REF_PARAMS）；
-    # 组存在性 validator 检查暂缺（已知限制，见设计稿第八节 4），主创作路径是实体树指派。
+    # 分组批量：运行时按当前场景解析 group（非跨场景实体引用，勿登记 ENTITY_REF_PARAMS）；
+    # 编辑器从 ProjectModel.scene_group_ids_for_scene 选择，validator 同源检查存在性。
     "setGroupEnabled": [("group", "str"), ("enabled", "bool")],
     "moveGroupBy": [
         ("group", "str"),
@@ -1434,6 +1443,29 @@ class FilterableTypeCombo(QComboBox):
 
     def wheelEvent(self, ev: QWheelEvent) -> None:
         ev.ignore()
+
+    def showPopup(self) -> None:  # noqa: N802 — Qt API
+        """Large closed catalogs use the shared independent searchable picker."""
+        if self._select_only and len(self._entries) >= 16:
+            rows = [
+                (value, display, "")
+                for display, value in self._entries_with_orphan(self._committed)
+                if value
+            ]
+            dialog = ReferencePickerDialog(
+                rows,
+                current=self._committed,
+                title="选择引用",
+                parent=self,
+                geometry_key="filterable_type_reference_picker",
+                allow_empty=any(not value for _display, value in self._entries),
+            )
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                value = dialog.selected_value()
+                if value != self._committed:
+                    self._apply_committed(value)
+            return
+        super().showPopup()
 
     @staticmethod
     def _matches(text: str, q: str) -> bool:
@@ -2502,6 +2534,22 @@ class ActionRow(QWidget):
             return
         w.set_entries(self._compose_wheel_speech_role_rows())
 
+    def reload_refs_from_model(self) -> None:
+        """Refresh live reference-field display without rebuilding action data."""
+        for widget in self._param_widgets.values():
+            if isinstance(widget, ReferencePickerField):
+                widget.refresh_display()
+        for nested in (
+            self._delayed_editor,
+            self._run_actions_editor,
+            self._choice_options_editor,
+            self._random_above_editor,
+            self._random_below_editor,
+        ):
+            reload_refs = getattr(nested, "reload_refs_from_model", None)
+            if callable(reload_refs):
+                reload_refs()
+
     def _compose_wheel_speech_role_rows(self) -> list[tuple[str, str]]:
         if self._wheel_speech_role_rows_getter is not None:
             try:
@@ -3191,8 +3239,12 @@ class ActionRow(QWidget):
         m = self._ctx_model
         committed = str(val if val is not None else "").strip()
         strict_pick = kind in (
-            "actor", "emote_target", "npc_only",
+            "scene", "narrative_run_archetype", "narrative_package",
+            "item", "quest", "encounter", "rule", "fragment", "cutscene", "shop",
+            "spawn",
+            "actor", "emote_target", "npc_only", "scene_group",
             "water_minigame", "sugar_wheel_minigame", "paper_craft_minigame",
+            "object_examine",
             "smell", "plane", "pressure_hold", "signal_cue",
         )
 
@@ -3240,12 +3292,23 @@ class ActionRow(QWidget):
             pairs = m.actor_id_items_for_scene(self._ctx_scene_id) if m else []
         elif kind == "npc_only":
             pairs = m.npc_actor_items_for_scene(self._ctx_scene_id) if m else []
+        elif kind == "scene_group":
+            if m is None:
+                pairs = []
+            elif self._ctx_scene_id:
+                pairs = m.scene_group_ids_for_scene(self._ctx_scene_id)
+            else:
+                # Quest/Encounter/注册动作等没有静态场景上下文；运行时作用于
+                # 当时的当前场景，所以列全工程裸 group id（标签注明来源场景）。
+                pairs = m.all_unqualified_scene_group_ids()
         elif kind == "water_minigame":
             pairs = m.all_water_minigame_ids() if m else []
         elif kind == "sugar_wheel_minigame":
             pairs = m.all_sugar_wheel_minigame_ids() if m else []
         elif kind == "paper_craft_minigame":
             pairs = m.all_paper_craft_minigame_ids() if m else []
+        elif kind == "object_examine":
+            pairs = m.all_object_examine_ids() if m else []
         elif kind == "smell":
             pairs = m.all_smell_profile_ids() if m else []
         elif kind == "plane":
@@ -3302,9 +3365,15 @@ class ActionRow(QWidget):
             "actor": "仅下拉选择；无场景上下文时列表可能不全，请先设置过场 targetScene。",
             "emote_target": "仅下拉选择；列表为当前场景 NPC + 热点 + player。",
             "npc_only": "仅下拉选择；列表为当前场景 NPC。",
+            "scene_group": (
+                "有场景上下文时选择该场景 entityGroups；无静态场景上下文时列出"
+                "全工程裸 group id 并标注来源场景。运行时始终作用于当前场景；"
+                "历史悬垂值会保留。"
+            ),
             "water_minigame": "仅下拉选择；列表来自 water_minigames/index.json。",
             "sugar_wheel_minigame": "仅下拉选择；列表来自 sugar_wheel/index.json。",
             "paper_craft_minigame": "仅下拉选择；列表来自 paper_craft/index.json。",
+            "object_examine": "仅下拉选择；列表来自 object_examine/index.json。",
             "smell": "仅下拉选择；列表来自 smell_profiles.json 的 profiles（香火/阴腥/尸臭/血腥/霉/香粉…）。留空=回落正常态。",
             "plane": "仅下拉选择；列表来自 planes.json（位面面板维护）。\n"
                      "activatePlane 作用域：过场内激活随过场结束自动清除；"
@@ -4266,72 +4335,151 @@ class ActionRow(QWidget):
             )
             self._params_layout.addRow(tip)
             m = self._ctx_model
-            gids = m.all_dialogue_graph_ids() if m else []
-            g_entries = [(g, g) for g in gids] or [("（请添加对话图 JSON）", "")]
-            gid_combo = FilterableTypeCombo(g_entries, self, select_only=True)
             cur_gid = str(params.get("graphId", "") or "").strip()
-            if cur_gid:
-                gid_combo.set_committed_type(cur_gid)
-            elif gids:
-                gid_combo.set_committed_type(gids[0])
-            gid_combo.typeCommitted.connect(lambda _t: self.changed.emit())
-            _tag_content_universe(gid_combo, "dialogue_graphs")
-            self._param_widgets["graphId"] = gid_combo
-            self._params_layout.addRow("graphId", gid_combo)
-
-            ent_combo = FilterableTypeCombo([], self, select_only=True)
-            ent_combo.setToolTip("选图中 nodes 的键；留「（默认图 entry）」不写 params.entry。")
-
-            def refill_entry_nodes(*, keep_saved: bool) -> None:
-                gid = gid_combo.committed_type()
-                nodes = m.dialogue_graph_node_ids(gid) if m and gid else []
-                saved = str(params.get("entry", "") or "").strip()
-                prev = ent_combo.committed_type()
-                prefer = saved if keep_saved else prev
-                rows: list[tuple[str, str]] = [("（默认图 entry）", "")]
-                for nid in nodes:
-                    rows.append((nid, nid))
-                ent_combo.set_entries(rows)
-                if prefer and prefer in nodes:
-                    ent_combo.set_committed_type(prefer)
-                elif prefer:
-                    ent_combo.set_entries(
-                        [(f"(数据) {prefer}", prefer)] + [x for x in rows if x[1] != prefer],
-                    )
-                    ent_combo.set_committed_type(prefer)
-                else:
-                    ent_combo.set_committed_type("")
-
-            refill_entry_nodes(keep_saved=True)
-            gid_combo.typeCommitted.connect(
-                lambda _t: (refill_entry_nodes(keep_saved=False), self.changed.emit()),
+            gid_field = ReferencePickerField(
+                lambda: dialogue_graph_reference_rows(m) if m else [],
+                self,
+                allow_empty=True,
+                title="选择图对话",
+                geometry_key="dialogue_graph_reference_picker",
             )
-            ent_combo.typeCommitted.connect(lambda _t: self.changed.emit())
-            self._param_widgets["entry"] = ent_combo
-            self._params_layout.addRow("entry", ent_combo)
+            gid_field.set_value(cur_gid)
+            gid_field.value_changed.connect(lambda _t: self.changed.emit())
+            _tag_content_universe(gid_field, "dialogue_graphs")
+            self._param_widgets["graphId"] = gid_field
+            self._params_layout.addRow("graphId", gid_field)
 
-            nid = IdRefSelector(self, allow_empty=True, editable=True)
-            nid.setMinimumWidth(160)
-            nid.set_items(npc_items_for_dialogue_picker(self._ctx_model, self._ctx_scene_id))
-            nid.set_current(str(params.get("npcId", "") or ""))
-            nid.value_changed.connect(self.changed)
+            entry_field = ReferencePickerField(
+                lambda: (
+                    dialogue_graph_node_ids(m, gid_field.current_value()) if m else []
+                ),
+                self,
+                allow_empty=True,
+                title="选择图对话入口节点",
+                geometry_key="dialogue_graph_entry_reference_picker",
+            )
+            entry_field.setToolTip(
+                "从当前 graphId 的 nodes 中搜索选择；留空时使用图 JSON 的默认 entry。",
+            )
+            entry_field.set_value(str(params.get("entry", "") or ""))
+            entry_field.value_changed.connect(lambda _t: self.changed.emit())
+            gid_field.value_changed.connect(lambda _t: entry_field.refresh_display())
+            self._param_widgets["entry"] = entry_field
+            self._params_layout.addRow("entry", entry_field)
+
+            nid = ReferencePickerField(
+                lambda: npc_items_for_dialogue_picker(
+                    self._ctx_model, self._ctx_scene_id,
+                ),
+                self,
+                allow_empty=True,
+                title="选择说话 NPC",
+                geometry_key="dialogue_npc_reference_picker",
+            )
+            nid.set_value(str(params.get("npcId", "") or ""))
+            nid.value_changed.connect(lambda _t: self.changed.emit())
             nid.setToolTip(
                 "解析 {{npc}} 显示名用；有场景上下文时优先场景 NPC，否则列出全局 NPC。",
             )
             self._param_widgets["npcId"] = nid
             self._params_layout.addRow("npcId（可选）", nid)
 
-            owner_type = QLineEdit(str(params.get("ownerType", "") or ""), self)
-            owner_type.setPlaceholderText("npc / hotspot / zone …")
-            owner_type.textChanged.connect(self.changed)
+            owner_type_rows = [
+                ("自动（跟随 npcId / 场景上下文）", ""),
+                ("NPC", "npc"),
+                ("Hotspot", "hotspot"),
+                ("Zone", "zone"),
+                ("Scene Group", "sceneGroup"),
+                ("Scene", "scene"),
+                ("Quest", "quest"),
+                ("Dialogue", "dialogue"),
+                ("Minigame", "minigame"),
+                ("Cutscene", "cutscene"),
+                ("Scenario", "scenario"),
+                ("System", "system"),
+            ]
+            owner_type = FilterableTypeCombo(owner_type_rows, self, select_only=True)
+            owner_type.set_committed_type(str(params.get("ownerType", "") or ""))
+            owner_type.setToolTip(
+                "短枚举；自动=运行时优先跟随 npcId，否则继承场景 onEnter 上下文。"
+                "历史未知值会以「(数据)」保留，不会改写。",
+            )
+            owner_type.typeCommitted.connect(lambda _t: self.changed.emit())
             self._param_widgets["ownerType"] = owner_type
             self._params_layout.addRow("ownerType（可选）", owner_type)
 
-            owner_id = QLineEdit(str(params.get("ownerId", "") or ""), self)
-            owner_id.setPlaceholderText("实体 id；缺省同 npcId")
-            owner_id.textChanged.connect(self.changed)
+            def owner_reference_rows():
+                if m is None:
+                    return []
+                owner_kind = owner_type.committed_type().strip()
+                if owner_kind == "npc":
+                    return npc_items_for_dialogue_picker(m, self._ctx_scene_id)
+                if owner_kind == "hotspot":
+                    return (
+                        m.hotspot_ids_for_scene(self._ctx_scene_id)
+                        if self._ctx_scene_id else m.all_hotspot_ids()
+                    )
+                if owner_kind == "zone":
+                    return m.standard_zone_ids_for_scene(self._ctx_scene_id)
+                if owner_kind == "sceneGroup":
+                    return m.all_scene_group_ids()
+                if owner_kind == "scene":
+                    return [(scene_id, scene_id) for scene_id in m.all_scene_ids()]
+                if owner_kind == "quest":
+                    return m.all_quest_ids()
+                if owner_kind == "dialogue":
+                    return dialogue_graph_reference_rows(m)
+                if owner_kind == "minigame":
+                    rows = []
+                    for provider_name in (
+                        "all_water_minigame_ids",
+                        "all_sugar_wheel_minigame_ids",
+                        "all_paper_craft_minigame_ids",
+                        "all_object_examine_ids",
+                    ):
+                        provider = getattr(m, provider_name, None)
+                        if callable(provider):
+                            rows.extend(provider() or [])
+                    return rows
+                if owner_kind == "cutscene":
+                    return m.all_cutscene_ids()
+                if owner_kind == "scenario":
+                    return [(sid, sid) for sid in m.scenario_ids_ordered()]
+                return []
+
+            owner_id = ReferencePickerField(
+                owner_reference_rows,
+                self,
+                allow_empty=True,
+                title="选择叙事归属对象",
+                geometry_key="dialogue_owner_reference_picker",
+            )
+            owner_id.set_value(str(params.get("ownerId", "") or ""))
+            owner_id.value_changed.connect(lambda _t: self.changed.emit())
             self._param_widgets["ownerId"] = owner_id
-            self._params_layout.addRow("ownerId（可选）", owner_id)
+            self._params_layout.addRow("ownerId（自动时可选）", owner_id)
+
+            def sync_owner_reference_mode(_value: str = "") -> None:
+                explicit_type = owner_type.committed_type().strip()
+                owner_id.set_custom_allowed(explicit_type == "system")
+                label = self._params_layout.labelForField(owner_id)
+                if isinstance(label, QLabel):
+                    label.setText(
+                        "ownerId（显式 ownerType 时必填）"
+                        if explicit_type else "ownerId（自动时可选）"
+                    )
+                owner_id.setToolTip(
+                    (
+                        "已显式选择 ownerType，ownerId 必填且不会从 npcId / 场景上下文回退。"
+                        if explicit_type else
+                        "ownerType 为自动；ownerId 留空时会跟随 npcId / 场景上下文。"
+                    )
+                    + "候选由 ownerType 与当前场景决定；悬垂或历史未知值始终保值。"
+                )
+                owner_id.refresh_display()
+
+            owner_type.typeCommitted.connect(sync_owner_reference_mode)
+            sync_owner_reference_mode()
 
             dim_cb = QCheckBox("对话期间压暗场景背景", self)
             dim_cb.setChecked(params.get("dimBackground") is True)
@@ -4838,6 +4986,10 @@ class ActionRow(QWidget):
             elif act_type in ("loadNarrativePackage", "unloadNarrativePackage") and pname == "packageId":
                 # 章节包引用（选择器铁律；候选=编排 package 标并集）
                 w = self._make_selector("narrative_package", str(val) if val is not None else "")
+            elif act_type in ("setGroupEnabled", "moveGroupBy") and pname == "group":
+                w = self._make_selector(
+                    "scene_group", str(val) if val is not None else "",
+                )
             elif act_type == "startPressureHold" and pname == "id":
                 w = self._make_selector("pressure_hold", str(val) if val is not None else "")
             elif act_type == "playSignalCue" and pname == "id":
@@ -4893,6 +5045,10 @@ class ActionRow(QWidget):
                 w = self._make_selector(
                     "paper_craft_minigame", str(val) if val is not None else "",
                 )
+            elif act_type == "startObjectExamine" and pname == "id":
+                w = self._make_selector(
+                    "object_examine", str(val) if val is not None else "",
+                )
             elif act_type == "openShop" and pname == "shopId":
                 w = self._make_selector("shop", str(val) if val is not None else "")
             elif act_type == "shopPurchase" and pname == "itemId":
@@ -4945,6 +5101,96 @@ class ActionRow(QWidget):
                 )
                 w.valueChanged.connect(lambda _t: self.changed.emit())
                 _tag_content_universe(w, "narrative_signals")
+            elif act_type == "emitNarrativeSignal" and pname == "sourceType":
+                rows = [
+                    ("自动（不限定来源）", ""),
+                    ("Dialogue", "dialogue"),
+                    ("Zone", "zone"),
+                    ("Scene", "scene"),
+                    ("Scenario", "scenario"),
+                    ("Minigame", "minigame"),
+                    ("Cutscene", "cutscene"),
+                    ("Quest", "quest"),
+                    ("Entity", "entity"),
+                    ("Action", "action"),
+                    ("State", "state"),
+                    ("System", "system"),
+                ]
+                w = FilterableTypeCombo(rows, self, select_only=True)
+                w.set_committed_type(str(val) if val is not None else "")
+                w.setToolTip(
+                    "来源类型是短枚举；留空表示信号不限定来源。历史未知类型会以"
+                    "「(数据)」保留，不会被自动改写。",
+                )
+                w.typeCommitted.connect(lambda _t: self.changed.emit())
+            elif act_type == "emitNarrativeSignal" and pname == "sourceId":
+                source_type_w = self._param_widgets.get("sourceType")
+
+                def _signal_source_rows():
+                    m = self._ctx_model
+                    if m is None or not isinstance(source_type_w, FilterableTypeCombo):
+                        return []
+                    source_type = source_type_w.committed_type().strip()
+                    sid = (self._ctx_scene_id or "").strip()
+                    if source_type == "dialogue":
+                        return dialogue_graph_reference_rows(m)
+                    if source_type == "zone":
+                        return [
+                            (zone_id, label, f"Zone · {sid}")
+                            for zone_id, label in m.standard_zone_ids_for_scene(sid)
+                        ]
+                    if source_type == "scene":
+                        return [(scene_id, scene_id) for scene_id in m.all_scene_ids()]
+                    if source_type == "scenario":
+                        return [(scenario_id, scenario_id) for scenario_id in m.scenario_ids_ordered()]
+                    if source_type == "minigame":
+                        rows_out: list[tuple[str, str]] = []
+                        for provider_name in (
+                            "all_water_minigame_ids",
+                            "all_sugar_wheel_minigame_ids",
+                            "all_paper_craft_minigame_ids",
+                            "all_object_examine_ids",
+                        ):
+                            provider = getattr(m, provider_name, None)
+                            if callable(provider):
+                                rows_out.extend(provider() or [])
+                        return rows_out
+                    if source_type == "cutscene":
+                        return m.all_cutscene_ids()
+                    if source_type == "quest":
+                        return m.all_quest_ids()
+                    if source_type == "entity":
+                        return [
+                            *m.npc_ids_for_scene(sid),
+                            *m.hotspot_ids_for_scene(sid),
+                        ]
+                    if source_type == "state":
+                        return [(graph_id, graph_id) for graph_id in m.narrative_graph_ids_ordered()]
+                    # action/system 是开放命名空间；没有可靠目录时不猜候选。
+                    return []
+
+                w = ReferencePickerField(
+                    _signal_source_rows,
+                    self,
+                    allow_empty=True,
+                    title="选择信号来源对象",
+                    geometry_key="narrative_signal_source_reference_picker",
+                )
+                w.set_value(str(val) if val is not None else "")
+                w.setToolTip(
+                    "候选随 sourceType 与当前场景联动；留空时不限定来源。"
+                    "旧值或开放命名空间值会保留为缺失显示，除非明确重选/清空。",
+                )
+                w.value_changed.connect(lambda _t: self.changed.emit())
+                if isinstance(source_type_w, FilterableTypeCombo):
+                    def sync_source_reference_mode(_value: str = "") -> None:
+                        w.set_custom_allowed(
+                            source_type_w.committed_type().strip() in ("action", "system"),
+                        )
+                        w.refresh_display()
+
+                    source_type_w.typeCommitted.connect(sync_source_reference_mode)
+                    sync_source_reference_mode()
             elif act_type == "showEmote" and pname == "target":
                 w = self._make_selector("emote_target", str(val) if val is not None else "")
                 w.setToolTip(
@@ -5403,34 +5649,44 @@ class ActionRow(QWidget):
         ent_w = self._param_widgets.get("entry")
         nid_w = self._param_widgets.get("npcId")
         graph_id = (
-            gid_w.committed_type().strip()
-            if isinstance(gid_w, FilterableTypeCombo)
+            gid_w.current_value().strip()
+            if isinstance(gid_w, ReferencePickerField)
             else ""
         )
         prm: dict = {"graphId": graph_id}
         ent = (
-            ent_w.committed_type().strip()
-            if isinstance(ent_w, FilterableTypeCombo)
+            ent_w.current_value().strip()
+            if isinstance(ent_w, ReferencePickerField)
             else ""
         )
         if ent:
             prm["entry"] = ent
-        nid = nid_w.current_id().strip() if isinstance(nid_w, IdRefSelector) else ""
+        nid = (
+            nid_w.current_value().strip()
+            if isinstance(nid_w, ReferencePickerField)
+            else ""
+        )
         if nid:
             prm["npcId"] = nid
         ot_w = self._param_widgets.get("ownerType")
         oi_w = self._param_widgets.get("ownerId")
-        if isinstance(ot_w, QLineEdit):
-            ot = ot_w.text().strip()
+        if isinstance(ot_w, FilterableTypeCombo):
+            ot = ot_w.committed_type().strip()
             if ot:
                 prm["ownerType"] = ot
-        if isinstance(oi_w, QLineEdit):
-            oi = oi_w.text().strip()
+        if isinstance(oi_w, ReferencePickerField):
+            oi = oi_w.current_value().strip()
             if oi:
                 prm["ownerId"] = oi
         dim_w = self._param_widgets.get("dimBackground")
         if isinstance(dim_w, QCheckBox) and dim_w.isChecked():
             prm["dimBackground"] = True
+        managed = {
+            "graphId", "entry", "npcId", "ownerType", "ownerId", "dimBackground",
+        }
+        for key, value in (self._original_params or {}).items():
+            if key not in managed and key not in prm:
+                prm[key] = deepcopy(value)
         return {"type": "startDialogueGraph", "params": prm}
 
     def _to_dict_play_scripted_dialogue(self) -> dict:
@@ -5719,6 +5975,8 @@ class ActionRow(QWidget):
                 params[pname] = w.current_id()
             elif isinstance(w, IdRefSelector):
                 params[pname] = w.current_id()
+            elif isinstance(w, ReferencePickerField):
+                params[pname] = w.current_value()
             elif isinstance(w, QComboBox):
                 # userData 优先：'(非枚举) xxx' 等展示文案不得写回 JSON
                 _d = w.currentData()
@@ -5856,6 +6114,11 @@ class ActionEditor(QWidget):
                     nested = row.get("ae")
                     if isinstance(nested, ActionEditor):
                         nested.refresh_wheel_speech_role_combos()
+
+    def reload_refs_from_model(self) -> None:
+        """Duck hook used by parent editors after another asset catalog changes."""
+        for row in self._rows:
+            row.reload_refs_from_model()
 
     def set_flag_completions(self, _keys: list[str]) -> None:
         """Deprecated: pass set_project_context instead."""

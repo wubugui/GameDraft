@@ -22,6 +22,8 @@ import type {
   CutsceneBindableEntityDef,
   HotspotDef,
   NpcDef,
+  ConditionExpr,
+  SceneEntityGroupDef,
 } from '../data/types';
 import { isCutsceneOnlyEntity, isEntityBoundToCutscene } from '../data/types';
 import { applyCharacterDefaults, type CharacterRegistry } from '../data/characterRegistry';
@@ -82,6 +84,9 @@ export class SceneManager implements IGameSystem {
    * 持久显隐仍走 sceneMemory.entityOverrides.enabled（persist* Action），语义不变。
    */
   private entitySessionOverrides: Map<string, { npcs: Set<string>; hotspots: Set<string> }> = new Map();
+
+  /** 场景分组的会话级禁用桶（按 sceneId 分桶，不写档）；与成员自己的覆盖通道正交。 */
+  private groupSessionDisabled: Map<string, Set<string>> = new Map();
 
   /** 场景世代号：unloadScene 自增。跨 await 持有实体/场景引用的流程以此判废，防并发卸载竞态产生孤儿容器 */
   private sceneEpoch = 0;
@@ -239,6 +244,27 @@ export class SceneManager implements IGameSystem {
     return this.currentHotspots;
   }
 
+  /** 当前场景显式分组定义；旧数据仅有成员 group 标签时返回 undefined（按无条件组兼容）。 */
+  getCurrentSceneGroup(groupId: string): SceneEntityGroupDef | undefined {
+    const gid = groupId.trim();
+    if (!gid) return undefined;
+    const groups = this.currentScene?.entityGroups;
+    if (!Array.isArray(groups)) return undefined;
+    return groups.find((g) => g && typeof g.id === 'string' && g.id.trim() === gid);
+  }
+
+  /** 供 InteractionSystem / ZoneSystem 读取分组条件；返回定义本身的只读视图，不改写场景。 */
+  getCurrentSceneGroupConditions(groupId: string): ConditionExpr[] | undefined {
+    return this.getCurrentSceneGroup(groupId)?.conditions;
+  }
+
+  /** 分组会话覆盖的统一读取口；空/旧标签缺定义均视为启用。 */
+  isCurrentSceneGroupEnabled(groupId: string | undefined): boolean {
+    const gid = groupId?.trim() ?? '';
+    const sid = this.currentScene?.id?.trim() ?? '';
+    return !gid || !sid || !this.groupSessionDisabled.get(sid)?.has(gid);
+  }
+
   /**
    * 未播放过场时为 null；由 Game 在 cutscene:start / cutscene:end 调用。
    */
@@ -368,6 +394,7 @@ export class SceneManager implements IGameSystem {
    */
   getHotspotBaseEnabledForInteraction(hotspot: Hotspot): boolean {
     if (!this.entityInPlane(hotspot.def)) return false;
+    if (!this.isCurrentSceneGroupEnabled(hotspot.def.group)) return false;
     const active = this.activeCutsceneBindingId?.trim() || null;
     const sceneId = this.currentScene?.id ?? '';
     if (isCutsceneOnlyEntity(hotspot.def)) {
@@ -383,6 +410,7 @@ export class SceneManager implements IGameSystem {
   /** 与 {@link getHotspotBaseEnabledForInteraction} 对偶，用于 NPC container.visible 基底。 */
   getNpcBaseVisibleForInteraction(npc: Npc): boolean {
     if (!this.entityInPlane(npc.def)) return false;
+    if (!this.isCurrentSceneGroupEnabled(npc.def.group)) return false;
     const active = this.activeCutsceneBindingId?.trim() || null;
     const sceneId = this.currentScene?.id ?? '';
     if (isCutsceneOnlyEntity(npc.def)) {
@@ -420,6 +448,79 @@ export class SceneManager implements IGameSystem {
       bucket.add(zid);
     }
     this.refreshZonesAfterRuntimeChange(sid);
+  }
+
+  /**
+   * 场景分组会话开关：统一作用于 NPC / Hotspot 的派生基底与 Zone 的注册通道。
+   * 返回当前场景中命中的成员数，供 Action 在空组时给出诊断。
+   */
+  setGroupSessionEnabled(groupId: string, enabled: boolean): number {
+    const sid = this.currentScene?.id?.trim() ?? '';
+    const gid = groupId.trim();
+    if (!sid || !gid) return 0;
+    let bucket = this.groupSessionDisabled.get(sid);
+    if (enabled) {
+      bucket?.delete(gid);
+      if (bucket && bucket.size === 0) this.groupSessionDisabled.delete(sid);
+    } else {
+      if (!bucket) {
+        bucket = new Set();
+        this.groupSessionDisabled.set(sid, bucket);
+      }
+      bucket.add(gid);
+    }
+    this.refreshCutsceneBoundEntityVisibility();
+    this.refreshZonesAfterRuntimeChange(sid);
+    return this.countCurrentSceneGroupMembers(gid);
+  }
+
+  /**
+   * 场景组位移统一入口。NPC 可按 speed 异步移动；Hotspot 与 Zone 多边形即时平移。
+   * 与既有动作一致属于会话内演出位移，不写 sceneMemory。
+   */
+  async moveCurrentSceneGroupBy(groupId: string, dx: number, dy: number, speed: number): Promise<number> {
+    const gid = groupId.trim();
+    if (!gid) return 0;
+    const moves: Promise<void>[] = [];
+    let hit = 0;
+    for (const npc of this.currentNpcs) {
+      if (String(npc.def.group ?? '').trim() !== gid) continue;
+      hit++;
+      if (Number.isFinite(speed) && speed > 0) {
+        moves.push(npc.moveTo(npc.x + dx, npc.y + dy, speed));
+      } else {
+        npc.x += dx;
+        npc.y += dy;
+      }
+    }
+    for (const hotspot of this.currentHotspots) {
+      if (String(hotspot.def.group ?? '').trim() !== gid) continue;
+      hit++;
+      hotspot.setPosition(hotspot.centerX + dx, hotspot.centerY + dy);
+    }
+    for (const zone of this.currentScene?.zones ?? []) {
+      if (String(zone.group ?? '').trim() !== gid) continue;
+      hit++;
+      zone.polygon = zone.polygon.map((p) => ({ x: p.x + dx, y: p.y + dy }));
+    }
+    if (moves.length > 0) await Promise.all(moves);
+    return hit;
+  }
+
+  private countCurrentSceneGroupMembers(groupId: string): number {
+    const gid = groupId.trim();
+    if (!gid) return 0;
+    let hit = 0;
+    for (const npc of this.currentNpcs) {
+      if (String(npc.def.group ?? '').trim() === gid) hit++;
+    }
+    for (const hotspot of this.currentHotspots) {
+      if (String(hotspot.def.group ?? '').trim() === gid) hit++;
+    }
+    for (const zone of this.currentScene?.zones ?? []) {
+      if (String(zone.group ?? '').trim() === gid) hit++;
+    }
+    return hit;
   }
 
   /**
@@ -486,6 +587,7 @@ export class SceneManager implements IGameSystem {
 
   private shouldRegisterZoneWithZoneSystem(sceneId: string, z: ZoneDef): boolean {
     if (!this.entityInPlane(z)) return false;
+    if (!this.isCurrentSceneGroupEnabled(z.group)) return false;
     if (z.zoneKind === 'depth_floor') return true;
     const sid = sceneId.trim();
     const zid = z.id.trim();
@@ -1846,6 +1948,7 @@ export class SceneManager implements IGameSystem {
     // 读档=新时间线：会话级（不入档）的 zone 禁用与实体隐藏覆盖全部作废
     this.zoneSessionDisabled.clear();
     this.entitySessionOverrides.clear();
+    this.groupSessionDisabled.clear();
     for (const [sceneId, mem] of Object.entries(data.memory)) {
       const base = mem.entityOverrides ?? this.emptyEntityOverrides();
       const entityOverrides: SceneEntityRuntimeOverrides = {
@@ -1877,6 +1980,7 @@ export class SceneManager implements IGameSystem {
     this.animRafId = 0;
     this.zoneSessionDisabled.clear();
     this.entitySessionOverrides.clear();
+    this.groupSessionDisabled.clear();
     this.pendingReentrantSwitch = null;
     this.eventBus.off('hotspot:pickup:done', this.onHotspotPickup);
     this.eventBus.off('hotspot:inspected', this.onHotspotInspected);

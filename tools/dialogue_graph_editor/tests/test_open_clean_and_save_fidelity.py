@@ -13,6 +13,8 @@ import json
 import os
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -102,6 +104,52 @@ class OpenCleanAndSaveFidelityTests(unittest.TestCase):
                 changed.append(p.name)
             w.deleteLater()
         self.assertEqual(changed, [], f"打开→保存字节发生变化：{changed[:20]}")
+
+    def test_standalone_external_unlink_defaults_no_and_does_not_recreate(self) -> None:
+        """外部删除/不可读必须 fail closed，独立编辑器不得静默复活文件。"""
+        from PySide6.QtWidgets import QMessageBox
+        from tools.editor.tests.save_test_utils import write_minimal_loadable_project
+
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            write_minimal_loadable_project(root)
+            gd = root / "public" / "assets" / "dialogues" / "graphs"
+            gd.mkdir(parents=True, exist_ok=True)
+            path = gd / "external_delete.json"
+            path.write_text(json.dumps({
+                "schemaVersion": 1,
+                "id": "external_delete",
+                "entry": "end",
+                "meta": {"title": "before"},
+                "nodes": {"end": {"type": "end"}},
+            }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            w = DialogueGraphEditorWidget(root)  # 无 injected ProjectModel：独立直存路径
+            try:
+                w.load_path(path)
+                w._edit_title.setText("unsaved")
+                self._pump()
+                self.assertTrue(w.has_unsaved_changes())
+                path.unlink()
+                w._validate_current_graph = lambda: ([], [])  # type: ignore[method-assign]
+                with patch(
+                    "tools.dialogue_graph_editor.editor_widget.QMessageBox.question",
+                    return_value=QMessageBox.StandardButton.No,
+                ) as question:
+                    self.assertFalse(w.save())
+                self.assertFalse(path.exists())
+                self.assertTrue(w.has_unsaved_changes())
+                self.assertIn("未确认覆盖/重建", w.last_save_failure_reason())
+                unreadable_calls = [
+                    call for call in question.call_args_list
+                    if len(call.args) >= 2 and call.args[1] == "磁盘文件已不可读"
+                ]
+                self.assertEqual(len(unreadable_calls), 1)
+                self.assertEqual(
+                    unreadable_calls[0].args[4], QMessageBox.StandardButton.No,
+                    "重建确认的默认按钮必须是 No",
+                )
+            finally:
+                w.deleteLater()
 
 
 if __name__ == "__main__":

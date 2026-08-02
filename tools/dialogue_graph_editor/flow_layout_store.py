@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from tools.editor.shared.project_paths import ProjectPaths
+from tools.editor.file_io import write_json
 
 
 def layout_file_path(project_root: Path) -> Path:
@@ -26,10 +27,9 @@ def load_layout_map(project_root: Path) -> dict[str, Any]:
 
 def save_layout_map(project_root: Path, data: dict[str, Any]) -> None:
     p = layout_file_path(project_root)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    with p.open("w", encoding="utf-8", newline="\n") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-        f.write("\n")
+    # 编辑器 sidecar 允许独立写盘，但仍必须单文件原子：旧的 open("w")
+    # 在崩溃/磁盘写失败时会把整份对话布局截断为空或半个 JSON。
+    write_json(p, data)
 
 
 def graph_layout_key(graph_json_path: Path) -> str:

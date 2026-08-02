@@ -15,8 +15,8 @@
     }
   ],
   "spawnPoint": {
-    "x": 208.5,
-    "y": 463.1
+    "x": 586.2,
+    "y": 631.3
   },
   "spawnPoints": {
     "from_a": {
@@ -222,6 +222,32 @@
           }
         }
       ]
+    },
+    {
+      "id": "new_zone_0",
+      "polygon": [
+        {
+          "x": 939.7,
+          "y": 229.0
+        },
+        {
+          "x": 1200.0,
+          "y": 338.8
+        },
+        {
+          "x": 1150.9,
+          "y": 461.7
+        },
+        {
+          "x": 1004.2,
+          "y": 374.2
+        },
+        {
+          "x": 857.5,
+          "y": 286.7
+        }
+      ],
+      "group": "官差神秘人-崖墓尸"
     }
   ],
   "depthConfig": {
@@ -267,5 +293,21 @@
     },
     "depth_tolerance": 0.05,
     "floor_offset": 0.0
-  }
+  },
+  "npcs": [
+    {
+      "id": "崖墓任务发布者",
+      "name": "神秘官差",
+      "x": 916.4,
+      "y": 308.8,
+      "interactionRange": 50,
+      "animFile": "/resources/runtime/animation/官差刀_anim/anim.json",
+      "initialAnimState": "crouch",
+      "initialAnimPlayback": {
+        "holdFrame": 8
+      },
+      "group": "官差神秘人-崖墓尸",
+      "dialogueGraphId": "寻狗_崖墓任务发布"
+    }
+  ]
 }

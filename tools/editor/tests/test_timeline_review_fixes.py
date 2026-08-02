@@ -310,5 +310,145 @@ class TestParallelChildSignalWiring(_Base):
         self.assertTrue(ed._overlay_id_selectors_debounce.isActive())
 
 
+class TestCutsceneAssetSplitCombine(_Base):
+    """资产级拆分/组合必须非破坏、保真，并同步 cutsceneOnly 实体绑定。"""
+
+    def test_split_keeps_source_and_unknown_fields_and_copies_bindings(self) -> None:
+        source = {
+            "id": "source",
+            "targetScene": "scene_a",
+            "extension": {"cameraRig": "rig-a", "gain": 1.0},
+            "steps": [
+                {"kind": "present", "type": "waitTime", "duration": 100},
+                {"kind": "present", "type": "waitTime", "duration": 250.5},
+                {"kind": "action", "type": "playSfx", "params": {"id": "bell"}},
+            ],
+        }
+        self.model.cutscenes = [source, {"id": "other", "steps": []}]
+        self.model.scenes = {
+            "scene_a": {
+                "npcs": [{
+                    "id": "actor",
+                    "cutsceneOnly": True,
+                    "cutsceneIds": ["legacy", "source"],
+                }],
+                "hotspots": [],
+            },
+        }
+        before = deepcopy(source)
+        ed = TimelineEditor(self.model)
+        ed._on_select(0)
+        first, second = ed._create_split_assets(
+            0, 0, "source__part1", "source__part2",
+            keep_continuity=True, copy_bindings=True,
+        )
+
+        self.assertEqual(self.model.cutscenes[0], before, "来源过场必须逐字段不变")
+        self.assertEqual([c["id"] for c in self.model.cutscenes[:4]], [
+            "source", "source__part1", "source__part2", "other",
+        ])
+        self.assertEqual(first["steps"], before["steps"][:1])
+        self.assertEqual(second["steps"], before["steps"][1:])
+        self.assertIs(type(second["steps"][0]["duration"]), float)
+        self.assertEqual(first["extension"], before["extension"])
+        self.assertIsNot(first["extension"], source["extension"])
+        self.assertFalse(first["restoreState"], "连续播放时前段不得中途恢复现场")
+        self.assertNotIn("restoreState", second, "后段继承原资产的缺省 restoreState 语义")
+        self.assertEqual(
+            self.model.scenes["scene_a"]["npcs"][0]["cutsceneIds"],
+            ["legacy", "source", "source__part1", "source__part2"],
+        )
+        self.assertIn("scene_a", self.model._dirty_scene_ids)
+
+    def test_split_rejects_conflict_before_any_mutation(self) -> None:
+        self.model.cutscenes = [{
+            "id": "source",
+            "steps": [{"kind": "present"}, {"kind": "action"}],
+        }, {"id": "taken", "steps": []}]
+        before = deepcopy(self.model.cutscenes)
+        ed = TimelineEditor(self.model)
+        with self.assertRaises(ValueError):
+            ed._create_split_assets(
+                0, 0, "taken", "new", keep_continuity=True, copy_bindings=False,
+            )
+        self.assertEqual(self.model.cutscenes, before)
+
+    def test_combine_keeps_sources_step_order_and_common_bindings(self) -> None:
+        first = {
+            "id": "a",
+            "targetScene": "scene_a",
+            "extension": {"rig": "same"},
+            "restoreState": False,
+            "steps": [{"kind": "present", "type": "waitTime", "duration": 1}],
+        }
+        second = {
+            "id": "b",
+            "targetScene": "scene_a",
+            "extension": {"rig": "same"},
+            "steps": [{"kind": "present", "type": "waitTime", "duration": 2.5}],
+        }
+        self.model.cutscenes = [first, second]
+        self.model.scenes = {
+            "scene_a": {
+                "npcs": [],
+                "hotspots": [{
+                    "id": "prop",
+                    "cutsceneOnly": True,
+                    "cutsceneIds": ["a", "b"],
+                }],
+            },
+        }
+        sources_before = deepcopy(self.model.cutscenes)
+        ed = TimelineEditor(self.model)
+        combined = ed._create_combined_asset(["a", "b"], "ab")
+
+        self.assertEqual(self.model.cutscenes[:2], sources_before)
+        self.assertEqual(combined["id"], "ab")
+        self.assertEqual(
+            [s["duration"] for s in combined["steps"]], [1, 2.5],
+        )
+        self.assertIs(type(combined["steps"][0]["duration"]), int)
+        self.assertIs(type(combined["steps"][1]["duration"]), float)
+        self.assertEqual(combined["extension"], {"rig": "same"})
+        self.assertNotIn("restoreState", combined, "组合结果继承末段结束语义")
+        self.assertEqual(
+            self.model.scenes["scene_a"]["hotspots"][0]["cutsceneIds"],
+            ["a", "b", "ab"],
+        )
+
+    def test_combine_blocks_root_or_actor_semantic_mismatch(self) -> None:
+        self.model.cutscenes = [
+            {"id": "a", "targetScene": "s", "steps": [{"kind": "present"}]},
+            {"id": "b", "targetScene": "other", "steps": [{"kind": "action"}]},
+        ]
+        ed = TimelineEditor(self.model)
+        before = deepcopy(self.model.cutscenes)
+        with self.assertRaises(ValueError):
+            ed._create_combined_asset(["a", "b"], "ab")
+        self.assertEqual(self.model.cutscenes, before)
+
+    def test_combine_never_reuses_an_already_duplicated_dirty_id(self) -> None:
+        self.model.cutscenes = [
+            {"id": "a", "steps": [{"kind": "present"}]},
+            {"id": "b", "steps": [{"kind": "action"}]},
+            {"id": "taken", "steps": []},
+            {"id": "taken", "steps": []},
+        ]
+        before = deepcopy(self.model.cutscenes)
+        ed = TimelineEditor(self.model)
+        with self.assertRaises(ValueError):
+            ed._create_combined_asset(["a", "b"], "taken")
+        self.assertEqual(self.model.cutscenes, before)
+
+        self.model.cutscenes[1]["targetScene"] = "s"
+        self.model.scenes = {
+            "s": {"npcs": [{"id": "only_a", "cutsceneIds": ["a"]}]},
+        }
+        before = deepcopy(self.model.cutscenes)
+        with self.assertRaises(ValueError):
+            ed._create_combined_asset(["a", "b"], "ab")
+        self.assertEqual(self.model.cutscenes, before)
+
+
 if __name__ == "__main__":
     unittest.main()

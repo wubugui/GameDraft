@@ -14,16 +14,18 @@ from __future__ import annotations
 
 import os
 import unittest
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QDialog
 
 from tools.editor.project_model import ProjectModel
-from tools.editor.shared.action_editor import ActionEditor
+from tools.editor.shared.action_editor import ActionEditor, FilterableTypeCombo
 from tools.editor.shared.condition_editor import ConditionEditor
 from tools.editor.shared.condition_expr_tree import ConditionExprTreeRootWidget
 from tools.editor.shared.id_ref_selector import IdRefSelector
+from tools.editor.shared.reference_picker import ReferencePickerField
 from tools.editor.tests.save_test_utils import repo_root_from_tests
 
 
@@ -53,6 +55,26 @@ class ActionDataSafetyTests(unittest.TestCase):
         self._assert_roundtrip(
             {"type": "persistNpcAt", "params": {"target": "storyteller_zhang", "x": 1200, "y": 860}},
         )
+
+    def test_start_dialogue_explicit_owner_type_requires_owner_id(self) -> None:
+        from tools.editor.validator import _append_action_param_ref_issues
+
+        issues = []
+        _append_action_param_ref_issues(
+            self.model,
+            issues,
+            {
+                "type": "startDialogueGraph",
+                "params": {"graphId": "missing", "ownerType": "sceneGroup"},
+            },
+            "scene",
+            self.scene_id or "test",
+            self.scene_id,
+        )
+        self.assertTrue(any(
+            issue.severity == "error" and "必须同时填写 ownerId" in issue.message
+            for issue in issues
+        ))
 
     def test_add_flag_value_large_delta_not_clamped(self) -> None:
         self._assert_roundtrip(
@@ -159,6 +181,63 @@ class ActionDataSafetyTests(unittest.TestCase):
         self.assertEqual(out["params"].get("entityId"), "ghost_npc_不存在")
         self.assertEqual(out["params"].get("x"), 123.45)
         self.assertEqual(out["params"].get("y"), 67.89)
+
+    def test_scene_group_actions_use_current_scene_selector_and_keep_orphan(self) -> None:
+        sid = "__action_group_selector_scene__"
+        self.model.scenes[sid] = {
+            "id": sid,
+            "entityGroups": [{"id": "crowd", "label": "围观人群"}],
+            "npcs": [{"id": "legacy_actor", "group": "legacy_group"}],
+        }
+        try:
+            editor = ActionEditor("test")
+            editor.set_project_context(self.model, sid)
+            action = {
+                "type": "setGroupEnabled",
+                "params": {"group": "missing_old_group", "enabled": False},
+            }
+            editor.set_data([action])
+            row = editor._rows[0]
+            group = row._param_widgets["group"]
+            self.assertIsInstance(group, IdRefSelector)
+            self.assertFalse(group.isEditable(), "group 不应继续纯手打")
+            self.assertIn("crowd", group._ids)
+            self.assertIn("legacy_group", group._ids)
+            self.assertEqual(editor.to_list(), [action], "悬垂旧 group 必须原样往返")
+            editor.deleteLater()
+        finally:
+            self.model.scenes.pop(sid, None)
+
+    def test_emit_signal_source_uses_linked_pickers_and_preserves_future_values(self) -> None:
+        action = {
+            "type": "emitNarrativeSignal",
+            "params": {
+                "signal": "some_future_signal",
+                "sourceType": "future_source_kind",
+                "sourceId": "future_source_id",
+            },
+        }
+        editor = ActionEditor("test")
+        editor.set_project_context(self.model, self.scene_id)
+        editor.set_data([action])
+        row = editor._rows[0]
+        self.assertIsInstance(row._param_widgets["sourceType"], FilterableTypeCombo)
+        self.assertIsInstance(row._param_widgets["sourceId"], ReferencePickerField)
+        self.assertEqual(editor.to_list(), [action])
+        editor.deleteLater()
+
+    def test_emit_signal_open_source_namespace_has_define_flow(self) -> None:
+        editor = ActionEditor("test")
+        editor.set_project_context(self.model, self.scene_id)
+        editor.set_data([{
+            "type": "emitNarrativeSignal",
+            "params": {"signal": "future_signal", "sourceType": "action"},
+        }])
+        source = editor._rows[0]._param_widgets["sourceId"]
+        self.assertIsInstance(source, ReferencePickerField)
+        self.assertTrue(source._allow_custom)
+        self.assertFalse(source._define.isHidden())
+        editor.deleteLater()
 
 
 class ConditionDataSafetyTests(unittest.TestCase):
@@ -269,6 +348,101 @@ class IdRefSelectorSafetyTests(unittest.TestCase):
         le.setText("zz_uncommitted")
         w.set_items(items)  # 相同清单：缓存跳过路径不得抹掉手打中的文本
         self.assertEqual(w.current_id(), "zz_uncommitted")
+
+    def test_long_readonly_catalog_uses_independent_search_picker(self) -> None:
+        w = IdRefSelector(allow_empty=True, editable=False)
+        w.set_items([(f"id_{i}", f"Name {i}") for i in range(20)])
+        w.set_current("id_3")
+        self.assertTrue(w._uses_search_picker())
+
+        class _AcceptedPicker:
+            def __init__(self, *_args, **_kwargs) -> None:
+                pass
+
+            def exec(self):
+                return QDialog.DialogCode.Accepted
+
+            def selected_value(self) -> str:
+                return "id_17"
+
+        got: list[str] = []
+        w.value_changed.connect(got.append)
+        with patch(
+            "tools.editor.shared.reference_picker.ReferencePickerDialog",
+            _AcceptedPicker,
+        ):
+            w._open_search_picker()
+        self.assertEqual(w.current_id(), "id_17")
+        self.assertEqual(got, ["id_17"])
+
+    def test_search_picker_cancel_keeps_orphan_value(self) -> None:
+        w = IdRefSelector(allow_empty=True, editable=False)
+        w.set_items([(f"id_{i}", f"Name {i}") for i in range(20)])
+        w.set_current("dangling_old")
+
+        class _CancelledPicker:
+            def __init__(self, *_args, **_kwargs) -> None:
+                pass
+
+            def exec(self):
+                return QDialog.DialogCode.Rejected
+
+            def selected_value(self) -> str:
+                raise AssertionError("cancelled picker must not read a selection")
+
+        with patch(
+            "tools.editor.shared.reference_picker.ReferencePickerDialog",
+            _CancelledPicker,
+        ):
+            w._open_search_picker()
+        self.assertEqual(w.current_id(), "dangling_old")
+
+    def test_contextless_group_action_can_choose_project_group_but_writes_bare_id(self) -> None:
+        model = ProjectModel()
+        model.scenes = {
+            "scene_a": {
+                "entityGroups": [{"id": "guards", "label": "守卫"}],
+                "npcs": [], "hotspots": [], "zones": [],
+            },
+            "scene_b": {
+                "entityGroups": [{"id": "guards"}, {"id": "crowd"}],
+                "npcs": [], "hotspots": [], "zones": [],
+            },
+        }
+        ed = ActionEditor("test")
+        ed.set_project_context(model, None)
+        ed.set_data([{"type": "setGroupEnabled", "params": {"group": "guards", "enabled": True}}])
+        row = ed._rows[0]
+        selector = row._param_widgets["group"]
+        self.assertIsInstance(selector, IdRefSelector)
+        self.assertIn("guards", selector._ids)
+        self.assertIn("crowd", selector._ids)
+        self.assertEqual(ed.to_list()[0]["params"]["group"], "guards")
+        ed.deleteLater()
+
+    def test_long_select_only_type_catalog_uses_search_dialog(self) -> None:
+        combo = FilterableTypeCombo(
+            [(f"Scene {i}", f"scene_{i}") for i in range(30)],
+            select_only=True,
+        )
+        combo.set_committed_type("scene_2")
+
+        class _AcceptedPicker:
+            def __init__(self, *_args, **_kwargs) -> None:
+                pass
+
+            def exec(self):
+                return QDialog.DialogCode.Accepted
+
+            def selected_value(self) -> str:
+                return "scene_27"
+
+        with patch(
+            "tools.editor.shared.action_editor.ReferencePickerDialog",
+            _AcceptedPicker,
+        ):
+            combo.showPopup()
+        self.assertEqual(combo.committed_type(), "scene_27")
 
 
 if __name__ == "__main__":

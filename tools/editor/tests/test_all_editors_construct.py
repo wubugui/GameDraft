@@ -48,6 +48,7 @@ def _editor_classes() -> list:
     from tools.editor.editors.game_config_editor import GameConfigEditor
     from tools.editor.editors.plane_editor import PlaneEditor
     from tools.editor.editors.character_registry_editor import CharacterRegistryEditor
+    from tools.task_orchestration_editor.editor import TaskOrchestrationEditor
 
     return [
         SceneEditor, MapEditor, TimelineEditor, EncounterEditor,
@@ -57,7 +58,7 @@ def _editor_classes() -> list:
         ItemEditor, FilterEditor, FlagRegistryEditor, ArchiveEditor,
         StringEditor, AudioEditor, AnimEditor, PlayerAvatarEditor,
         OverlayImagesEditor, GameConfigEditor, PlaneEditor,
-        CharacterRegistryEditor,
+        CharacterRegistryEditor, TaskOrchestrationEditor,
     ]
 
 

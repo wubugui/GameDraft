@@ -1,0 +1,178 @@
+{
+  "id": "demo_waterlogged_corpse",
+  "label": "检视：落水尸（演示）",
+  "title": "这具尸身……",
+  "allFoundHint": "这具尸身上能看出的蹊跷，似乎都翻过了。",
+  "bagLabel": "摸摸囊",
+  "presentation": {
+    "kind": "still",
+    "image": "/resources/runtime/images/corpses/back_carry/waterlogged_corpse.png",
+    "backgroundPreset": "mud",
+    "backgroundBrightness": 1.05,
+    "contactAoIntensity": 1.2
+  },
+  "ambience": {
+    "headSway": {
+      "amplitude": 1
+    },
+    "breathing": {
+      "strength": 1
+    },
+    "candlelight": {
+      "strength": 0.1,
+      "periodSec": 3.4
+    },
+    "dust": {
+      "density": 1.2,
+      "intensity": 1.4,
+      "radius": 1.2
+    },
+    "flyingFlies": {
+      "count": 6,
+      "speed": 1,
+      "orbitRadius": 1.1,
+      "returnSec": 14
+    },
+    "crawlers": {
+      "maggots": {
+        "clusters": [
+          { "x": 0.16, "y": 0.44, "count": 7, "radius": 0.03 },
+          { "x": 0.5, "y": 0.47, "count": 6, "radius": 0.032 }
+        ]
+      },
+      "centipede": { "intervalSec": 20, "speed": 1 },
+      "beetles": { "x": 0.62, "y": 0.68, "count": 4, "radius": 0.038, "regroupSec": 30 }
+    }
+  },
+  "smell": {
+    "scent": "corpse",
+    "intensity": 0.72,
+    "flicker": true
+  },
+  "audio": {
+    "ambient": "night_alley_wind",
+    "hoverSfx": "sfx_corpse_cloth_creak",
+    "clickSfx": "sfx_corpse_cloth_creak"
+  },
+  "hotspots": [
+    {
+      "id": "hs_wet_cloth",
+      "label": "湿衣角",
+      "anomalyShade": "有一角还在滴……",
+      "anomalyRevealed": "衣角还在滴水",
+      "shadeUiX": 0.78,
+      "shadeUiY": 0.26,
+      "x": 1040,
+      "y": 360,
+      "width": 410,
+      "height": 280,
+      "narration": "衣角还在滴水，落水不久。",
+      "onFound": [
+        {
+          "type": "showNotification",
+          "params": {
+            "text": "衣角的水……还没干透。",
+            "type": "info"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hs_pale_heel",
+      "label": "发白的脚跟",
+      "anomalyShade": "脚边像有什么不对",
+      "anomalyRevealed": "脚跟泡得发白",
+      "shadeUiX": 0.14,
+      "shadeUiY": 0.58,
+      "x": 1280,
+      "y": 280,
+      "width": 220,
+      "height": 160,
+      "operations": [
+        {
+          "id": "op_look",
+          "label": "凑近看",
+          "narration": "脚跟泡得发白，像在水里浸过一阵。"
+        },
+        {
+          "id": "op_touch",
+          "label": "用手按按",
+          "narration": "皮肉松软，没有僵硬的意思。"
+        },
+        {
+          "id": "op_nuomi",
+          "label": "撒一把糯米试试",
+          "requiresItem": "nuomi",
+          "narration": "糯米沾上湿泥，并无异样变色。"
+        }
+      ],
+      "itemUses": [
+        {
+          "itemId": "nuomi",
+          "label": "撒糯米",
+          "narration": "糯米滚进泥缝，一时看不出讲究。",
+          "actions": [
+            {
+              "type": "showNotification",
+              "params": {
+                "text": "糯米滚进泥缝，一时看不出讲究。",
+                "type": "info"
+              }
+            }
+          ]
+        }
+      ],
+      "onFound": [
+        {
+          "type": "showNotification",
+          "params": {
+            "text": "这脚跟……泡得发白。",
+            "type": "info"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hs_chest_cloth",
+      "label": "胸口衣褶",
+      "anomalyShade": "胸口衣褶里像夹着什么",
+      "anomalyRevealed": "衣褶里蹭上泥沙",
+      "shadeUiX": 0.68,
+      "shadeUiY": 0.7,
+      "x": 620,
+      "y": 280,
+      "width": 280,
+      "height": 200,
+      "narration": "胸口衣褶里夹着泥沙，像被人拖上岸时蹭上去的。",
+      "onFound": [
+        {
+          "type": "showNotification",
+          "params": {
+            "text": "衣褶里蹭上的泥沙，像是拖上来时蹭的。",
+            "type": "info"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hs_decoy_shadow",
+      "label": "影",
+      "decoy": true,
+      "x": 420,
+      "y": 520,
+      "width": 160,
+      "height": 120,
+      "narration": "只是泥洼里的影子，看岔了。"
+    },
+    {
+      "id": "hs_decoy_mud",
+      "label": "泥块",
+      "decoy": true,
+      "x": 900,
+      "y": 640,
+      "width": 140,
+      "height": 100,
+      "narration": "一把湿泥，没什么门道。"
+    }
+  ]
+}

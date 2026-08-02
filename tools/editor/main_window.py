@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtCore import (
-    Qt, QProcess, QProcessEnvironment, QTimer, QSize, QSettings, Signal,
+    Qt, QEvent, QProcess, QProcessEnvironment, QTimer, QSize, QSettings, Signal,
 )
 
 from . import theme
@@ -269,6 +269,13 @@ class MainWindow(QMainWindow):
             QSizePolicy.Policy.Expanding,
         )
         self._stack = QStackedWidget()
+        self._restoring_stack_after_task_flush_failure = False
+        self._task_prepared_editor_ids: set[int] = set()
+        self._activated_editor_ids: set[int] = set()
+        # Task 编译会原位替换 Scene/Quest/Narrative/Dialogue 原生数据。旧页若重拉
+        # 失败，其表单投影已经不可信；仅 disable 仍会被 Save All 的鸭子 flush
+        # 遍历到并覆盖新数据。因此锁必须参与所有保存/关闭/换工程门闸。
+        self._stale_editor_locks: dict[int, str] = {}
         # 切页时让激活的编辑器重拉跨域引用候选(别处新增的 item/encounter/filter 等)。
         self._stack.currentChanged.connect(self._on_stack_page_changed)
         self._splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -289,6 +296,14 @@ class MainWindow(QMainWindow):
         self._stack_index_to_item: dict[int, QTreeWidgetItem] = {}
         self._editor_instances: list = []
         self._editor_labels: list[str] = []
+        # 外置图对话编辑器与主进程不共享 model/signals。保留进程句柄并在窗口
+        # 回到前台或子进程退出时重拉目录，避免新建图只能重开工程才看得到。
+        self._dialogue_external_processes: list[subprocess.Popen] = []
+        self._dialogue_process_watch_timer = QTimer(self)
+        self._dialogue_process_watch_timer.setInterval(700)
+        self._dialogue_process_watch_timer.timeout.connect(
+            self._poll_dialogue_external_processes,
+        )
         # 过场缩略条播放头：轮询游戏「现在播到哪一步」并推给过场编辑器
         self._timeline_editor = None
         self._cutscene_playback_timer: QTimer | None = None
@@ -1059,6 +1074,8 @@ class MainWindow(QMainWindow):
     def _confirm_pending_editor_changes(self) -> bool:
         from .editors.timeline_editor import TimelineEditor
 
+        if not self._guard_stale_editors("关闭或切换工程"):
+            return False
         for ed in self._editor_instances:
             if isinstance(ed, TimelineEditor) and ed.has_pending_changes():
                 if ed.confirm_apply_or_discard(self) == "cancel":
@@ -1122,19 +1139,20 @@ class MainWindow(QMainWindow):
         label: str,
         *,
         root: Path | None = None,
-    ) -> None:
+    ) -> subprocess.Popen | None:
         """另起独立本地 Python 进程运行模块，不与主编辑器共享进程。"""
         r = root if root is not None else self._ensure_valid_tool_root()
         if r is None:
-            return
+            return None
         cwd = str(r.resolve())
         cmd = [sys.executable, "-m", module, *extra_args]
         try:
-            subprocess.Popen(cmd, cwd=cwd)
+            proc = subprocess.Popen(cmd, cwd=cwd)
         except OSError as e:
             QMessageBox.critical(self, "External tools", f"Failed to start {label}:\n{e}")
-            return
+            return None
         self._status.showMessage(f"Started in new process: {label}", 4000)
+        return proc
 
     def _launch_graph_editor_external(self) -> None:
         root = self._ensure_valid_tool_root()
@@ -1151,12 +1169,35 @@ class MainWindow(QMainWindow):
         root = self._ensure_valid_tool_root()
         if root is None:
             return
-        self._launch_external_tool(
+        proc = self._launch_external_tool(
             "tools.dialogue_graph_editor",
             ["--project", str(root.resolve())],
             "Dialogue Graph Editor",
             root=root,
         )
+        if proc is not None:
+            self._dialogue_external_processes.append(proc)
+            self._dialogue_process_watch_timer.start()
+
+    def _poll_dialogue_external_processes(self) -> None:
+        """Refresh live reference providers after any external graph editor exits."""
+        before = list(self._dialogue_external_processes)
+        self._dialogue_external_processes = [p for p in before if p.poll() is None]
+        if len(before) != len(self._dialogue_external_processes):
+            self._reload_all_reference_catalogs()
+        if not self._dialogue_external_processes:
+            self._dialogue_process_watch_timer.stop()
+
+    def changeEvent(self, event: QEvent) -> None:  # noqa: N802 — Qt API
+        super().changeEvent(event)
+        if (
+            event.type() == QEvent.Type.ActivationChange
+            and self.isActiveWindow()
+            and getattr(self, "_dialogue_external_processes", None)
+        ):
+            # 外置编辑器可能仍开着且刚保存：主窗口重新获得焦点就是最可靠的
+            # 跨进程刷新边界。目录刷新只读且逐面板异常隔离。
+            QTimer.singleShot(0, self, self._reload_all_reference_catalogs)
 
     def _launch_filter_tool_external(self) -> None:
         self._launch_external_tool("tools.filter_tool", [], "Filter Tool")
@@ -1262,11 +1303,16 @@ class MainWindow(QMainWindow):
         if not isinstance(idx, int):
             return
         self._stack.setCurrentIndex(idx)
+        if self._stack.currentIndex() != idx:
+            # 页面激活门闸可能拒绝切换（例如 Scene 暂存校验失败）。
+            return
         # 手动点左侧导航树切页也入历史（程序化跳转经 _show_stack_page 屏蔽了本信号，不会重复记录）。
         self._record_nav(_NavLocation("page", (idx,)))
 
     def _show_stack_page(self, index: int) -> None:
         self._stack.setCurrentIndex(index)
+        if self._stack.currentIndex() != index:
+            return
         item = self._stack_index_to_item.get(index)
         if item is None:
             return
@@ -1276,6 +1322,76 @@ class MainWindow(QMainWindow):
         finally:
             self._nav_tree.blockSignals(False)
 
+    def _prepare_task_native_mutation(self) -> bool:
+        """Commit/resolve every old editor that Task may replace, synchronously."""
+        from .editors.dialogue_graph_editor_tab import DialogueGraphEditorTab
+        from .editors.narrative_state_editor import NarrativeStateEditor
+        from .editors.quest_editor import QuestEditor
+        from .editors.scene_editor import SceneEditor
+
+        affected_types = (
+            SceneEditor,
+            QuestEditor,
+            NarrativeStateEditor,
+            DialogueGraphEditorTab,
+        )
+        if not self._guard_stale_editors("继续应用任务编排"):
+            return False
+        prepared: set[int] = set()
+        for affected_index, affected_editor in enumerate(self._editor_instances):
+            if not isinstance(affected_editor, affected_types):
+                continue
+            try:
+                if (
+                    isinstance(affected_editor, DialogueGraphEditorTab)
+                    and affected_editor.is_dirty_now()
+                ):
+                    # 图对话没有普通表单的 commit-on-leave 语义；进入
+                    # Task 前必须让用户明确 Save / Discard / Cancel。
+                    flush_ok = affected_editor.confirm_close(self)
+                elif (
+                    isinstance(affected_editor, NarrativeStateEditor)
+                    and id(affected_editor) not in self._activated_editor_ids
+                ):
+                    # Web 页从未激活时不可能承载用户草稿；构造后的首帧仍在
+                    # loading/unknown 不应锁死 Task。Task Apply 后会强制 reload。
+                    flush_ok = True
+                else:
+                    flush_ok = affected_editor.flush_to_model()
+            except Exception as error:  # noqa: BLE001 — retain staging and show source page
+                flush_ok = False
+                detail = str(error)
+            else:
+                pop_error = getattr(affected_editor, "pop_flush_error", None)
+                detail = (
+                    str(pop_error() or "")
+                    if not flush_ok and callable(pop_error)
+                    else ""
+                )
+            if flush_ok:
+                prepared.add(id(affected_editor))
+                continue
+            self._task_prepared_editor_ids.clear()
+            label = (
+                self._editor_labels[affected_index]
+                if affected_index < len(self._editor_labels)
+                else type(affected_editor).__name__
+            )
+            QMessageBox.warning(
+                self,
+                "不能进入任务编排",
+                (detail or f"{label} 仍有未通过校验或无法读取的修改。")
+                + f"\n\n已返回 {label} 页；修改仍保留。",
+            )
+            self._restoring_stack_after_task_flush_failure = True
+            try:
+                self._show_stack_page(affected_index)
+            finally:
+                self._restoring_stack_after_task_flush_failure = False
+            return False
+        self._task_prepared_editor_ids = prepared
+        return True
+
     def _on_stack_page_changed(self, index: int) -> None:
         """切到某编辑器页时,让它重拉跨域引用候选(保留各自当前选中值)。
 
@@ -1283,11 +1399,31 @@ class MainWindow(QMainWindow):
         故按 index 取实例;hook 缺省时跳过。重拉走各编辑器 reload_refs_from_model,
         只刷新引用下拉,不重置表单字段。
         """
+        if self._restoring_stack_after_task_flush_failure:
+            return
         if 0 <= index < len(self._editor_instances):
             inst = self._editor_instances[index]
+            self._activated_editor_ids.add(id(inst))
+            from tools.task_orchestration_editor.editor import TaskOrchestrationEditor
+
+            if isinstance(inst, TaskOrchestrationEditor):
+                if not self._prepare_task_native_mutation():
+                    return
             fn = getattr(inst, "reload_refs_from_model", None)
             if callable(fn):
-                fn()
+                try:
+                    fn()
+                except Exception as e:  # noqa: BLE001 — 一个坏页不能阻断切页
+                    print(
+                        f"[reference-refresh] 当前页目录刷新失败 "
+                        f"({type(inst).__name__}): {e!r}",
+                        flush=True,
+                    )
+                    if hasattr(self, "_status"):
+                        self._status.showMessage(
+                            "当前页引用目录刷新失败；原编辑值已保留，请查看终端日志。",
+                            7000,
+                        )
 
     def _populate_tabs(self) -> None:
         self._clear_editor_stack()
@@ -1296,6 +1432,9 @@ class MainWindow(QMainWindow):
         self._editor_instances.clear()
         self._editor_labels.clear()
         self._panel_dirty_labels.clear()
+        self._task_prepared_editor_ids.clear()
+        self._activated_editor_ids.clear()
+        self._stale_editor_locks.clear()
         # 换工程/重建页面栈 → 旧导航历史失效，清空重开。
         self._nav_history.clear()
         self._nav_cursor = -1
@@ -1332,11 +1471,13 @@ class MainWindow(QMainWindow):
         from .editors.pressure_signal_editor import PressureHoldEditor, SignalCueEditor
         from .editors.smell_profile_editor import SmellProfileEditor
         from .editors.plane_editor import PlaneEditor
+        from tools.task_orchestration_editor.editor import TaskOrchestrationEditor
 
         rows: list[tuple[list[str], str, Any]] = [
             (["物理世界"], "Scene", SceneEditor),
             (["物理世界"], "角色", CharacterRegistryEditor),
             (["物理世界"], "Map", MapEditor),
+            (["数据编辑", "叙事编排"], "任务编排", TaskOrchestrationEditor),
             (["数据编辑", "叙事编排"], "过场", TimelineEditor),
             (["数据编辑", "叙事编排"], "图对话", DialogueGraphEditorTab),
             (["数据编辑", "叙事编排"], "叙事状态机", NarrativeStateEditor),
@@ -1393,6 +1534,16 @@ class MainWindow(QMainWindow):
                 if isinstance(ed, TimelineEditor):
                     ed.play_requested.connect(self._on_cutscene_play_requested)
                     self._timeline_editor = ed
+                if isinstance(ed, TaskOrchestrationEditor):
+                    ed.set_host_prepare_native_mutation(self._prepare_task_native_mutation)
+                    ed.set_host_native_publish_failure(
+                        self._on_task_native_publish_failed,
+                    )
+                    ed.scene_layout_requested.connect(self._on_task_scene_layout_requested)
+                    ed.native_domains_changed.connect(self._on_task_native_domains_changed)
+                    ed.status_message.connect(
+                        lambda message: self._status.showMessage(message, 6000),
+                    )
                 preview_sig = getattr(ed, "preview_requested", None)
                 if preview_sig is not None:
                     if isinstance(ed, SugarWheelEditor):
@@ -1412,6 +1563,9 @@ class MainWindow(QMainWindow):
                             self._on_panel_dirty_state(_i, _lbl, bool(dirty)))
                     except Exception as e:
                         print(f"[panel-dirty] 连接 {label} 脏态信号失败: {e!r}", flush=True)
+                catalog_sig = getattr(ed, "dialogue_catalog_changed", None)
+                if catalog_sig is not None and hasattr(catalog_sig, "connect"):
+                    catalog_sig.connect(self._reload_all_reference_catalogs)
 
             self._stack.addWidget(_StackPageHost(widget, self))
             parent_item = self._ensure_nav_path(self._nav_tree, path)
@@ -1441,6 +1595,173 @@ class MainWindow(QMainWindow):
         if self._timeline_editor is not None:
             self._ensure_cutscene_playback_timer()
         QTimer.singleShot(0, self, self._apply_nav_tree_width_from_content)
+
+    def _reload_all_reference_catalogs(self) -> None:
+        """A disk graph catalog mutation must be visible in every open editor now."""
+        from .shared.action_editor import ActionEditor
+        from .shared.dialogue_graph_refs import clear_dialogue_graph_reference_cache
+        from .shared.reference_picker import ReferencePickerField
+
+        # 外置编辑器可能只改了标题/场景归属而没改变文件名；仅靠 id 签名无法
+        # 识别这种跨进程变化，刷新边界上必须先清目录缓存。
+        clear_dialogue_graph_reference_cache(self._model)
+        failures: list[str] = []
+        for inst in self._editor_instances:
+            reload_refs = getattr(inst, "reload_refs_from_model", None)
+            if callable(reload_refs):
+                try:
+                    reload_refs()
+                except Exception as e:  # noqa: BLE001 — isolate every editor
+                    failures.append(f"{type(inst).__name__}.reload_refs_from_model: {e!r}")
+            # Some older top-level editors have no duck hook.  Their nested
+            # ActionEditors/reference fields still participate in the same
+            # immediate refresh contract without rebuilding or serializing UI.
+            for action_editor in inst.findChildren(ActionEditor):
+                try:
+                    action_editor.reload_refs_from_model()
+                except Exception as e:  # noqa: BLE001 — isolate every child
+                    failures.append(f"ActionEditor.reload_refs_from_model: {e!r}")
+            for picker in inst.findChildren(ReferencePickerField):
+                try:
+                    picker.refresh_display()
+                except Exception as e:  # noqa: BLE001 — isolate every child
+                    failures.append(f"ReferencePickerField.refresh_display: {e!r}")
+        if failures:
+            print(
+                "[reference-refresh] 部分目录刷新失败；其余编辑器已继续刷新:\n  - "
+                + "\n  - ".join(failures),
+                flush=True,
+            )
+            if hasattr(self, "_status"):
+                self._status.showMessage(
+                    f"引用目录刷新完成，但 {len(failures)} 个控件失败；原值均已保留。",
+                    7000,
+                )
+
+    def _on_task_native_domains_changed(self, raw_domains: object) -> None:
+        """Rebase old editor projections after task compilation swaps domains."""
+        domains = {
+            str(domain) for domain in (raw_domains if isinstance(raw_domains, (set, list, tuple)) else [])
+        }
+        if not domains:
+            return
+        from .editors.dialogue_graph_editor_tab import DialogueGraphEditorTab
+        from .editors.narrative_state_editor import NarrativeStateEditor
+        from .editors.quest_editor import QuestEditor
+        from .editors.scene_editor import SceneEditor
+
+        mappings = (
+            (SceneEditor, {"scene"}),
+            (QuestEditor, {"quest"}),
+            (NarrativeStateEditor, {"narrative_graphs"}),
+            (DialogueGraphEditorTab, {"dialogue_stubs", "dialogue_graph_edits"}),
+        )
+        failures: list[str] = []
+        for editor in self._editor_instances:
+            if not any(isinstance(editor, cls) and domains & owned for cls, owned in mappings):
+                continue
+            if id(editor) not in self._task_prepared_editor_ids:
+                reason = f"{type(editor).__name__}: Task 修改前未取得该页的 clean/flush 令牌"
+                failures.append(reason)
+                self._stale_editor_locks[id(editor)] = reason
+                editor.setEnabled(False)
+                continue
+            reload_from_model = getattr(editor, "reload_from_model", None)
+            if not callable(reload_from_model):
+                reason = f"{type(editor).__name__}: 缺少 reload_from_model"
+                failures.append(reason)
+                self._stale_editor_locks[id(editor)] = reason
+                editor.setEnabled(False)
+                continue
+            try:
+                reload_from_model()
+            except Exception as error:  # noqa: BLE001 — stale full-form UI must be locked
+                reason = f"{type(editor).__name__}: {error}"
+                failures.append(reason)
+                self._stale_editor_locks[id(editor)] = reason
+                editor.setEnabled(False)
+            else:
+                self._stale_editor_locks.pop(id(editor), None)
+                editor.setEnabled(True)
+        if failures:
+            QMessageBox.critical(
+                self,
+                "任务已应用，但旧编辑页重载失败",
+                "为避免旧表单覆盖刚生成的原生接线，失败页面和所有保存/关闭/换工程"
+                "操作均已锁定。请保留当前窗口并先修复重载错误：\n\n"
+                + "\n".join(failures),
+            )
+
+    def _on_task_native_publish_failed(
+        self,
+        raw_domains: object,
+        error: Exception,
+    ) -> None:
+        """Immediately lock old projections when post-commit publish fails."""
+        domains = {
+            str(domain)
+            for domain in (
+                raw_domains if isinstance(raw_domains, (set, list, tuple)) else []
+            )
+        }
+        from .editors.dialogue_graph_editor_tab import DialogueGraphEditorTab
+        from .editors.narrative_state_editor import NarrativeStateEditor
+        from .editors.quest_editor import QuestEditor
+        from .editors.scene_editor import SceneEditor
+
+        mappings = (
+            (SceneEditor, {"scene"}),
+            (QuestEditor, {"quest"}),
+            (NarrativeStateEditor, {"narrative_graphs"}),
+            (DialogueGraphEditorTab, {"dialogue_stubs", "dialogue_graph_edits"}),
+        )
+        for editor in self._editor_instances:
+            if not any(
+                isinstance(editor, cls) and domains & owned
+                for cls, owned in mappings
+            ):
+                continue
+            reason = (
+                f"{type(editor).__name__}: Task 提交后重载通知失败：{error}"
+            )
+            self._stale_editor_locks[id(editor)] = reason
+            editor.setEnabled(False)
+
+    def _guard_stale_editors(self, action: str) -> bool:
+        """Fail closed while an old editor projection can overwrite Task output."""
+        publish_failures: list[str] = []
+        try:
+            from tools.task_orchestration_editor.editor import TaskOrchestrationEditor
+
+            for editor in self._editor_instances:
+                if not isinstance(editor, TaskOrchestrationEditor):
+                    continue
+                domains = editor.native_publish_failure_domains()
+                if domains:
+                    publish_failures.append(
+                        "TaskOrchestrationEditor: "
+                        + "、".join(sorted(domains))
+                        + " 发布失败："
+                        + editor.native_publish_failure_reason()
+                    )
+        except Exception as error:  # fail closed if the guard itself cannot inspect Task
+            publish_failures.append(f"无法读取 Task 发布安全状态：{error}")
+        if not self._stale_editor_locks and not publish_failures:
+            return True
+        reasons = "\n".join(
+            f"· {reason}"
+            for reason in (
+                list(self._stale_editor_locks.values()) + publish_failures
+            )
+        )
+        QMessageBox.critical(
+            self,
+            f"{action}已阻断：编辑页数据投影失效",
+            "任务编排已更新内存中的原生数据，但以下旧编辑页重载失败。"
+            "继续操作可能用旧表单覆盖新接线，因此当前窗口已进入只保留现场的安全锁：\n\n"
+            f"{reasons}\n\n请先修复重载错误；不要关闭窗口或切换工程。",
+        )
+        return False
 
     def _apply_nav_tree_width_from_content(self) -> None:
         """左侧导航宽度按最长条目略留边距，避免大块留白。"""
@@ -1500,6 +1821,8 @@ class MainWindow(QMainWindow):
         self._model.undo_stack.redo()
 
     def _save_current_editor(self) -> None:
+        if not self._guard_stale_editors("保存"):
+            return
         idx = self._stack.currentIndex()
         if 0 <= idx < len(self._editor_instances):
             inst = self._editor_instances[idx]
@@ -1519,6 +1842,9 @@ class MainWindow(QMainWindow):
         (保存后弹警告 / 关闭前问是否丢弃)。仅 Timeline 前置确认选「取消」时返回
         (False, []),整个操作中止(保留既有语义)。
         """
+        if not self._guard_stale_editors("提交编辑内容"):
+            return False, []
+
         from .editors.timeline_editor import TimelineEditor
 
         for inst in self._editor_instances:
@@ -1578,20 +1904,60 @@ class MainWindow(QMainWindow):
         clk = PerfClock(label="MainWindow.SaveAll")
 
         try:
+            if not self._guard_stale_editors("保存"):
+                return False
+            from tools.task_orchestration_editor.editor import TaskOrchestrationEditor
+
+            for editor in self._editor_instances:
+                if not isinstance(editor, TaskOrchestrationEditor):
+                    continue
+                unsafe_dirty = editor.unsafe_native_dirty_buckets()
+                if unsafe_dirty:
+                    QMessageBox.critical(
+                        self,
+                        "保存已阻断：任务原生数据载入异常",
+                        editor.unsafe_load_block_reason()
+                        + "\n\n当前涉及任务编排的数据桶："
+                        + "、".join(sorted(unsafe_dirty))
+                        + "\n本次没有写盘；内存改动仍保留。",
+                    )
+                    return False
             maybe_stamp(clk, "开始 flush 编辑器")
             ok, skipped = self._flush_editors_to_model()
             if not ok:
                 return False
+            from tools.task_orchestration_editor.compiler import (
+                pending_dialogue_stub_conflicts,
+            )
+            stub_conflicts = pending_dialogue_stub_conflicts(self._model)
+            if stub_conflicts:
+                QMessageBox.critical(
+                    self,
+                    "保存已阻断：对话副本 ID 被外部占用",
+                    "以下待创建的原生图对话文件已经出现在磁盘上。为避免保存引用却跳过副本，"
+                    "本次没有写盘；内存和表单改动仍保留：\n\n"
+                    + "\n".join(stub_conflicts[:20])
+                    + "\n\n请更换副本 ID，或重载后核对外部文件。",
+                )
+                return False
             # 外部修改检测(跨组预留,getattr 防御式):数据组将提供
             # ProjectModel.detect_external_changes()——磁盘比打开时新的文件清单。
-            # 接口缺席/异常时行为不变(维持既有 last-writer-wins)。
+            # 接口缺席仅兼容旧 model；接口存在却检测失败时必须 fail-closed，
+            # 否则“状态未知”会被误当“无冲突”并覆盖外部修改。
             detect = getattr(self._model, "detect_external_changes", None)
             if callable(detect):
                 try:
                     changed = list(detect() or [])
                 except Exception as e:
-                    print(f"[SaveAll] 外部修改检测失败(按无变化继续): {e!r}", flush=True)
-                    changed = []
+                    print(f"[SaveAll] 外部修改检测失败(已阻断保存): {e!r}", flush=True)
+                    QMessageBox.critical(
+                        self,
+                        "保存已阻断",
+                        "无法确认磁盘文件是否被外部修改。为避免覆盖未知的新内容，"
+                        "本次没有写盘；编辑器内修改仍保留。\n\n"
+                        f"检测错误：{e}",
+                    )
+                    return False
                 if changed:
                     names = "\n".join(str(c) for c in changed[:20])
                     more = f"\n…共 {len(changed)} 个文件" if len(changed) > 20 else ""
@@ -1603,6 +1969,15 @@ class MainWindow(QMainWindow):
                     )
                     if r != QMessageBox.StandardButton.Yes:
                         return False
+                    # 用户明确允许覆盖当前外部版本；把“这一刻”的内容作为新
+                    # commit 基线。之后到原子提交之间若再发生变化，writer 仍会阻断。
+                    accept = getattr(
+                        self._model,
+                        "accept_external_change_baselines",
+                        None,
+                    )
+                    if callable(accept):
+                        accept(changed)
             maybe_stamp(clk, "全部 flush 完成，调用 model.save_all")
             _saved_types = sorted(getattr(self._model, "_dirty", set()))
             self._model.save_all()
@@ -2338,6 +2713,12 @@ class MainWindow(QMainWindow):
                 if callable(select):
                     select((entity_id or "").strip(), (scene_id or "").strip())
                 return
+
+    def _on_task_scene_layout_requested(
+        self, scene_id: str, entity_kind: str, entity_id: str,
+    ) -> None:
+        """Adapt task-page signal order to the main Scene navigation API."""
+        self.navigate_to_scene_entity(entity_kind, entity_id, scene_id)
 
     def navigate_to_plane(self, plane_id: str) -> None:
         """切换到「位面」页并选中指定 planeId（叙事状态 state.activePlane 跳转落点）。"""

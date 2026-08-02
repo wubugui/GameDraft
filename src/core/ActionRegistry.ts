@@ -31,6 +31,7 @@ import type { DocumentRevealManager } from '../systems/DocumentRevealManager';
 import type { WaterMinigameManager } from '../systems/waterMinigame/WaterMinigameManager';
 import type { SugarWheelMinigameManager } from '../systems/sugarWheel/SugarWheelMinigameManager';
 import type { PaperCraftMinigameManager } from '../systems/paperCraft/PaperCraftMinigameManager';
+import type { ObjectExamineManager } from '../systems/objectExamine/ObjectExamineManager';
 import type { PressureHoldManager } from '../systems/pressureHold/PressureHoldManager';
 import type { SignalCueManager } from '../systems/SignalCueManager';
 import type { HealthSystem } from '../systems/HealthSystem';
@@ -309,6 +310,7 @@ export interface ActionRegistryDeps {
   waterMinigameManager: WaterMinigameManager;
   sugarWheelMinigameManager: SugarWheelMinigameManager;
   paperCraftMinigameManager: PaperCraftMinigameManager;
+  objectExamineManager: ObjectExamineManager;
   pressureHoldManager: PressureHoldManager;
   signalCueManager: SignalCueManager;
   healthSystem: HealthSystem;
@@ -777,6 +779,15 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       return;
     }
     await d.paperCraftMinigameManager.runUntilDone(id);
+  }, ['id']);
+
+  executor.register('startObjectExamine', async (p) => {
+    const id = String(p.id ?? '').trim();
+    if (!id) {
+      d.debugPanelLog?.('[物件检视] startObjectExamine: 需要 params.id');
+      return;
+    }
+    await d.objectExamineManager.runUntilDone(id);
   }, ['id']);
 
   executor.register('sugarWheelShowSpeech', (p) => {
@@ -1524,7 +1535,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
   }, ['durationMs']);
 
   // ----------------------------------------------------------------
-  // 分组批量（group 纯标签寻址；P4，设计见 场景编辑器Unity对齐 设计稿 B2）
+  // 场景分组批量：group 引用当前 SceneData.entityGroups；旧纯标签成员仍兼容。
   // ----------------------------------------------------------------
 
   executor.register('setGroupEnabled', (p) => {
@@ -1534,21 +1545,8 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       console.warn(`setGroupEnabled: 需要 group 与合法 enabled（收到 ${String(p.enabled)}）`);
       return;
     }
-    // 与 setEntityEnabled 同通道：走 SceneManager 会话桶（重进场景/过场重建
-    // 同会话内保持），不直调实体级 override（那会在实例重建时静默弹回）。
-    let hit = 0;
-    for (const npc of d.sceneManager.getCurrentNpcs()) {
-      if (String(npc.def.group ?? '').trim() === group) {
-        d.sceneManager.setEntitySessionEnabled('npc', npc.def.id, enabled);
-        hit++;
-      }
-    }
-    for (const h of d.sceneManager.getCurrentHotspots()) {
-      if (String(h.def.group ?? '').trim() === group) {
-        d.sceneManager.setEntitySessionEnabled('hotspot', h.def.id, enabled);
-        hit++;
-      }
-    }
+    // 统一落到组会话通道：实体基底与 Zone 注册同拍刷新，成员自己的会话覆盖不被冲掉。
+    const hit = d.sceneManager.setGroupSessionEnabled(group, enabled);
     if (hit === 0) console.warn(`setGroupEnabled: 当前场景没有分组 "${group}" 的实体`);
   }, ['group', 'enabled']);
 
@@ -1563,28 +1561,9 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       console.warn('moveGroupBy: 需要 group、有限数值 dx/dy');
       return;
     }
-    // 成员各自 世界坐标+delta；带 speed 的 NPC 走 moveTo（返回覆盖真实完成时间的
-    // Promise，Promise.all 封口）；热点/无 speed 即时落位。x/y 语义与 moveEntityTo
-    // 一致（非持久化演出位移）。
-    const moves: Promise<void>[] = [];
-    let hit = 0;
-    for (const npc of d.sceneManager.getCurrentNpcs()) {
-      if (String(npc.def.group ?? '').trim() !== group) continue;
-      hit++;
-      if (Number.isFinite(speed) && speed > 0) {
-        moves.push(npc.moveTo(npc.x + dx, npc.y + dy, speed));
-      } else {
-        npc.x = npc.x + dx;
-        npc.y = npc.y + dy;
-      }
-    }
-    for (const h of d.sceneManager.getCurrentHotspots()) {
-      if (String(h.def.group ?? '').trim() !== group) continue;
-      hit++;
-      h.setPosition(h.def.x + dx, h.def.y + dy);
-    }
+    // SceneManager 统一覆盖 NPC / Hotspot / Zone；带 speed 的 NPC Promise 在内部封口。
+    const hit = await d.sceneManager.moveCurrentSceneGroupBy(group, dx, dy, speed);
     if (hit === 0) console.warn(`moveGroupBy: 当前场景没有分组 "${group}" 的实体`);
-    if (moves.length > 0) await Promise.all(moves);
   }, ['group', 'dx', 'dy', 'speed']);
 
   // ----------------------------------------------------------------

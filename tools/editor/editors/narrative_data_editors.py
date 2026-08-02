@@ -1402,12 +1402,14 @@ class DocumentRevealsEditor(QWidget):
         self._dr_cond_stack = QStackedWidget()
         w0 = QWidget()
         w0l = compact_form(QFormLayout(w0))
-        self._dr_sc_scen = QComboBox()
-        self._dr_sc_scen.setEditable(False)
+        self._dr_sc_scen = IdRefSelector(
+            allow_empty=True, editable=False, click_opens_popup=True,
+        )
         self._dr_sc_scen.setToolTip("哪条剧情线（scenario）——选定后下面 phase 会自动列出它的阶段")
-        self._dr_sc_scen.currentIndexChanged.connect(self._dr_scenario_changed)
-        self._dr_sc_phase = QComboBox()
-        self._dr_sc_phase.setEditable(False)
+        self._dr_sc_scen.value_changed.connect(self._dr_scenario_changed)
+        self._dr_sc_phase = IdRefSelector(
+            allow_empty=True, editable=False, click_opens_popup=True,
+        )
         self._dr_sc_phase.setToolTip("该剧情线的哪个阶段（phase）")
         self._dr_sc_st = QComboBox()
         for s in SCENARIO_PHASE_STATUSES:
@@ -1416,8 +1418,8 @@ class DocumentRevealsEditor(QWidget):
         self._dr_sc_out = QLineEdit()
         self._dr_sc_out.setPlaceholderText("可选 outcome（字符串/数字，与运行时一致）")
         self._dr_sc_out.setToolTip("可选：要求该阶段是某个具体结局值时才揭示；不需要就留空")
-        for w in (self._dr_sc_phase, self._dr_sc_st):
-            w.currentIndexChanged.connect(self._dr_on_edit)
+        self._dr_sc_phase.value_changed.connect(self._dr_on_edit)
+        self._dr_sc_st.currentIndexChanged.connect(self._dr_on_edit)
         self._dr_sc_out.textChanged.connect(self._dr_on_edit)
         w0l.addRow("scenario", self._dr_sc_scen)
         w0l.addRow("phase", self._dr_sc_phase)
@@ -1721,31 +1723,62 @@ class DocumentRevealsEditor(QWidget):
             self._dr_cond_stack.setCurrentIndex(k)
         self._dr_on_edit()
 
-    def _dr_scenario_changed(self, _i: int) -> None:
+    def _dr_scenario_changed(self, _value: str) -> None:
         if self._loading_ui:
             return
-        self._dr_fill_phase_combo()
+        # 这是用户主动改父级 scenario：旧 phase 不应跟到另一条线；程序性目录刷新则
+        # 走 reload_refs_from_model()，会显式传入当前 phase 以保留悬垂值。
+        self._dr_fill_phase_combo(current_value="")
         self._dr_on_edit()
 
-    def _dr_fill_scenario_combo(self) -> None:
-        self._dr_sc_scen.blockSignals(True)
-        self._dr_sc_scen.clear()
-        self._dr_sc_scen.addItem("（选择）", "")
-        for sid in self._model.scenario_ids_ordered():
-            self._dr_sc_scen.addItem(sid, sid)
-        self._dr_sc_scen.blockSignals(False)
+    def _dr_fill_scenario_combo(self, current_value: str | None = None) -> None:
+        if current_value is None:
+            current_value = self._dr_sc_scen.current_id()
+        self._dr_sc_scen.set_items([
+            (sid, sid) for sid in self._model.scenario_ids_ordered()
+        ])
+        self._dr_sc_scen.set_current(current_value)
 
-    def _dr_fill_phase_combo(self) -> None:
-        sid = self._dr_sc_scen.currentData()
-        if not isinstance(sid, str):
-            sid = ""
-        sid = sid.strip()
-        self._dr_sc_phase.blockSignals(True)
-        self._dr_sc_phase.clear()
-        self._dr_sc_phase.addItem("（选择）", "")
-        for ph in self._model.phases_for_scenario(sid):
-            self._dr_sc_phase.addItem(ph, ph)
-        self._dr_sc_phase.blockSignals(False)
+    def _dr_fill_phase_combo(
+        self,
+        current_value: str | None = None,
+        *,
+        scenario_id: str | None = None,
+    ) -> None:
+        if current_value is None:
+            current_value = self._dr_sc_phase.current_id()
+        sid = (
+            str(scenario_id).strip()
+            if scenario_id is not None
+            else self._dr_sc_scen.current_id().strip()
+        )
+        self._dr_sc_phase.set_items([
+            (phase, phase) for phase in self._model.phases_for_scenario(sid)
+        ])
+        self._dr_sc_phase.set_current(current_value)
+
+    def reload_refs_from_model(self) -> None:
+        """只重拉跨域候选目录；当前表单、未提交编辑与悬垂引用均原样保留。"""
+        row = self._dr_list.currentRow()
+        if row < 0 or row >= len(self._reveals):
+            return
+        scenario = self._dr_sc_scen.current_id()
+        phase = self._dr_sc_phase.current_id()
+        quest_id = self._dr_q_id.current_id()
+        reveal_id = self._dr_id_sel.current_id()
+        self._loading_ui = True
+        try:
+            scenario_s = scenario if isinstance(scenario, str) else ""
+            phase_s = phase if isinstance(phase, str) else ""
+            self._dr_fill_scenario_combo(scenario_s)
+            self._dr_fill_phase_combo(phase_s, scenario_id=scenario_s)
+            self._dr_q_id.set_items(self._model.quest_status_target_ids())
+            self._dr_q_id.set_current(quest_id)
+            self._dr_id_sel.set_items(self._dr_document_id_choice_tuples(row))
+            self._dr_id_sel.set_current(reveal_id)
+            self._dr_cond_tree.set_model_refresh()
+        finally:
+            self._loading_ui = False
 
     def _dr_on_row_changed(self, row: int) -> None:
         if self._loading_ui:
@@ -1803,7 +1836,6 @@ class DocumentRevealsEditor(QWidget):
         self._loading_ui = True
         self._dr_cond_json_status.setText("")
         try:
-            self._dr_fill_scenario_combo()
             self._dr_cond_tree.set_model_refresh()
             self._dr_q_id.blockSignals(True)
             self._dr_q_id.set_items(self._model.quest_status_target_ids())
@@ -1835,12 +1867,9 @@ class DocumentRevealsEditor(QWidget):
 
             if kind == 0 and isinstance(expr, dict):
                 sc = str(expr.get("scenario", "")).strip()
-                idx = self._dr_sc_scen.findData(sc)
-                self._dr_sc_scen.setCurrentIndex(idx if idx >= 0 else 0)
-                self._dr_fill_phase_combo()
                 ph = str(expr.get("phase", "")).strip()
-                idx2 = self._dr_sc_phase.findData(ph)
-                self._dr_sc_phase.setCurrentIndex(idx2 if idx2 >= 0 else 0)
+                self._dr_fill_scenario_combo(sc)
+                self._dr_fill_phase_combo(ph, scenario_id=sc)
                 st = str(expr.get("status", "done"))
                 idx3 = self._dr_sc_st.findData(st)
                 if idx3 < 0:
@@ -1855,6 +1884,8 @@ class DocumentRevealsEditor(QWidget):
                 else:
                     self._dr_sc_out.setText(json.dumps(oc, ensure_ascii=False))
             elif kind == 1 and isinstance(expr, dict):
+                self._dr_fill_scenario_combo("")
+                self._dr_fill_phase_combo("", scenario_id="")
                 self._dr_fl_key.blockSignals(True)
                 self._dr_fl_key.set_key(str(expr.get("flag", "")))
                 self._dr_fl_key.blockSignals(False)
@@ -1864,6 +1895,8 @@ class DocumentRevealsEditor(QWidget):
                 self._dr_fl_op.setCurrentIndex(max(0, iop))
                 self._dr_fl_val.set_value(expr.get("value", True))
             elif kind == 2 and isinstance(expr, dict):
+                self._dr_fill_scenario_combo("")
+                self._dr_fill_phase_combo("", scenario_id="")
                 self._dr_q_id.blockSignals(True)
                 self._dr_q_id.set_items(self._model.quest_status_target_ids())
                 self._dr_q_id.set_current(str(expr.get("quest", "")).strip())
@@ -1876,8 +1909,12 @@ class DocumentRevealsEditor(QWidget):
                     iqs = self._dr_q_st.findData("Completed")
                 self._dr_q_st.setCurrentIndex(iqs if iqs >= 0 else 0)
             elif kind == 4 and isinstance(expr, dict):
+                self._dr_fill_scenario_combo("")
+                self._dr_fill_phase_combo("", scenario_id="")
                 self._dr_cond_tree.set_expr(expr)
             else:
+                self._dr_fill_scenario_combo("")
+                self._dr_fill_phase_combo("", scenario_id="")
                 try:
                     self._dr_cond_json.setPlainText(
                         json.dumps(expr, ensure_ascii=False, indent=2) if expr else "{}",
@@ -1951,15 +1988,17 @@ class DocumentRevealsEditor(QWidget):
         if not isinstance(kind, int):
             kind = 0
         if kind == 0:
-            sc = self._dr_sc_scen.currentData()
-            if not isinstance(sc, str):
-                sc = ""
-            sc = sc.strip()
-            phd = self._dr_sc_phase.currentData()
-            ph = phd.strip() if isinstance(phd, str) else ""
+            sc = self._dr_sc_scen.current_id().strip()
+            ph = self._dr_sc_phase.current_id().strip()
             st_d = self._dr_sc_st.currentData()
             st = str(st_d) if st_d is not None else self._dr_sc_st.currentText()
-            cond = {"scenario": sc, "phase": ph, "status": st}
+            previous = d.get("revealCondition")
+            cond = (
+                json.loads(json.dumps(previous, ensure_ascii=False))
+                if isinstance(previous, dict) and self._dr_infer_cond_kind(previous) == 0
+                else {}
+            )
+            cond.update({"scenario": sc, "phase": ph, "status": st})
             ot = self._dr_sc_out.text().strip()
             if ot:
                 try:
@@ -1972,6 +2011,8 @@ class DocumentRevealsEditor(QWidget):
                             cond["outcome"] = int(ot)
                         except ValueError:
                             cond["outcome"] = ot
+            else:
+                cond.pop("outcome", None)
             d["revealCondition"] = cond
         elif kind == 1:
             fk = self._dr_fl_key.key().strip()
@@ -2089,11 +2130,8 @@ class DocumentRevealsEditor(QWidget):
             sid = str(rc.get("scenario", "")).strip()
             if not sid:
                 return f"{rid!r}：scenario 阶段条件未选场景"
-            ph = str(rc.get("phase", "")).strip()
-            if ph:
-                valid_ph = set(self._model.phases_for_scenario(sid))
-                if valid_ph and ph not in valid_ph:
-                    return f"{rid!r}：phase {ph!r} 不在 scenario {sid!r} 的清单中"
+            # 已有数据可能在 scenario/phase 改名后形成悬垂引用。编辑器须保值并允许
+            # 无关字段继续保存；项目 Validator 仍会把该引用作为诊断问题明确列出。
         elif "flag" in rc:
             if not str(rc.get("flag", "")).strip():
                 return f"{rid!r}：flag 条件未填 flag 键"

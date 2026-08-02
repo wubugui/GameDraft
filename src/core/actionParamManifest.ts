@@ -96,6 +96,7 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
   startWaterMinigame: { required: ['id'], nonEmpty: ['id'] },
   startSugarWheelMinigame: { required: ['id'], nonEmpty: ['id'] },
   startPaperCraftMinigame: { required: ['id'], nonEmpty: ['id'] },
+  startObjectExamine: { required: ['id'], nonEmpty: ['id'] },
   startPressureHold: { required: ['id'], nonEmpty: ['id'] },
   playSignalCue: { required: ['id'], nonEmpty: ['id'] },
   sugarWheelShowSpeech: { required: ['role', 'text'], nonEmpty: ['role', 'text'], optional: ['durationMs'] },

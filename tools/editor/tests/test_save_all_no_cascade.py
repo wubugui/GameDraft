@@ -84,6 +84,53 @@ class _Base(unittest.TestCase):
 
 
 class TestSaveAllNoCascade(_Base):
+    def test_pending_dialogue_stub_collision_blocks_main_editor_save(self) -> None:
+        with TemporaryDirectory() as td:
+            win = self._window(Path(td) / "p")
+            graph_id = "occupied_task_dialogue"
+            target = Path(win._model.dialogues_path) / "graphs" / f"{graph_id}.json"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("{}\n", encoding="utf-8")
+            win._model.pending_dialogue_stubs[graph_id] = {"id": graph_id, "nodes": {}}
+            win._model.mark_dirty("dialogue_stubs")
+            win._editor_instances = [_StubGoodPanel()]
+            win._editor_labels = ["任务编排"]
+            save_calls: list[bool] = []
+            with patch.object(
+                win._model,
+                "save_all",
+                side_effect=lambda: save_calls.append(True),
+            ), patch.object(QMessageBox, "critical") as critical:
+                self.assertFalse(win._save_all())
+            self.assertEqual(save_calls, [])
+            self.assertTrue(win._model.is_dirty)
+            self.assertIn(graph_id, win._model.pending_dialogue_stubs)
+            self.assertIn("没有写盘", str(critical.call_args))
+
+    def test_external_change_detection_failure_blocks_all_disk_writes(self) -> None:
+        with TemporaryDirectory() as td:
+            win = self._window(Path(td) / "p")
+            win._editor_instances = [_StubGoodPanel()]
+            win._editor_labels = ["Item"]
+            win._model.items.append({"id": "pending", "name": "Pending"})
+            win._model.mark_dirty("item")
+            save_calls: list[bool] = []
+            with patch.object(
+                win._model,
+                "detect_external_changes",
+                side_effect=OSError("stat failed"),
+            ), patch.object(
+                win._model,
+                "save_all",
+                side_effect=lambda: save_calls.append(True),
+            ), patch.object(QMessageBox, "critical") as critical:
+                ok = win._save_all()
+            self.assertFalse(ok)
+            self.assertEqual(save_calls, [])
+            self.assertTrue(win._model.is_dirty)
+            self.assertTrue(critical.called)
+            self.assertIn("没有写盘", str(critical.call_args))
+
     def test_bad_panel_does_not_block_other_buckets(self) -> None:
         with TemporaryDirectory() as td:
             win = self._window(Path(td) / "p")

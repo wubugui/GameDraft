@@ -67,6 +67,8 @@ declare global {
       isDirty: () => boolean;
       markSaved: () => void;
       refresh?: () => void;
+      /** Reload cross-file reference candidates without replacing the canvas draft. */
+      refreshCatalog?: () => Promise<boolean>;
       /** 宿主（PySide 位面面板等）跳转定位：切到含该图的编排并聚焦该状态。返回是否命中。 */
       focusState?: (graphId: string, stateId: string) => boolean;
     };

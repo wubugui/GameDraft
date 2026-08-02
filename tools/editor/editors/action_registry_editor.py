@@ -43,6 +43,7 @@ class ActionRecord:
             "water_minigame": "捞尸",
             "sugar_wheel": "糖画",
             "paper_craft": "扎纸",
+            "object_examine": "物件检视",
             "archive": "档案",
             "dialogueGraph": "图对话",
             "cutscene": "过场",
@@ -200,6 +201,38 @@ def _scan_actions(model: ProjectModel) -> list[ActionRecord]:
                       source_id=f"{iid}:{oid}", scene_id="", field=hook,
                       navigable=False)
 
+    # 物件检视：热区 actions / operations[].actions
+    for iid, doc in (getattr(model, "object_examine_instances", None) or {}).items():
+        if not isinstance(doc, dict):
+            continue
+        for hs in doc.get("hotspots") or []:
+            if not isinstance(hs, dict):
+                continue
+            hid = str(hs.get("id") or "?")
+            _emit(records, hs.get("actions"), source_type="object_examine",
+                  source_id=f"{iid}:{hid}", scene_id="", field="actions",
+                  navigable=False)
+            _emit(records, hs.get("onFound"), source_type="object_examine",
+                  source_id=f"{iid}:{hid}", scene_id="", field="onFound",
+                  navigable=False)
+            for use in hs.get("itemUses") or []:
+                if not isinstance(use, dict):
+                    continue
+                uid = str(use.get("itemId") or "?")
+                _emit(records, use.get("actions"), source_type="object_examine",
+                      source_id=f"{iid}:{hid}:item:{uid}", scene_id="",
+                      field="itemUses.actions", navigable=False)
+            for op in hs.get("operations") or []:
+                if not isinstance(op, dict):
+                    continue
+                oid = str(op.get("id") or "?")
+                _emit(records, op.get("actions"), source_type="object_examine",
+                      source_id=f"{iid}:{hid}:{oid}", scene_id="", field="operations.actions",
+                      navigable=False)
+        _emit(records, doc.get("onAllFound"), source_type="object_examine",
+              source_id=str(iid), scene_id="", field="onAllFound",
+              navigable=False)
+
     # 档案 firstViewActions：人物 / 传说 / 文档 / 书页与书页子条目
     for ch in getattr(model, "archive_characters", None) or []:
         if isinstance(ch, dict):
@@ -281,7 +314,7 @@ def _iter_cutscene_step_actions(steps, prefix: str):
 
 _SOURCE_TYPES = [
     "全部", "Quest", "Encounter", "Scene", "Hotspot", "Zone", "ZoneRule",
-    "长按", "信号Cue", "捞尸", "糖画", "扎纸", "档案", "图对话", "过场",
+    "长按", "信号Cue", "捞尸", "糖画", "扎纸", "物件检视", "档案", "图对话", "过场",
 ]
 _SOURCE_MAP = {
     "Quest": "quest", "Encounter": "encounter", "Scene": "scene",
@@ -289,13 +322,14 @@ _SOURCE_MAP = {
     "ZoneRule": "scene_zone_rule",
     "长按": "pressure_hold", "信号Cue": "signal_cue",
     "捞尸": "water_minigame", "糖画": "sugar_wheel", "扎纸": "paper_craft",
+    "物件检视": "object_examine",
     "档案": "archive", "图对话": "dialogueGraph", "过场": "cutscene",
 }
 
 # 覆盖这些脏桶变更时标记需重扫（扩大自 scene/quest/encounter，含新纳入的动作站点）。
 _ACTION_REGISTRY_DIRTY_TYPES = frozenset({
     "scene", "quest", "encounter", "pressure_holds", "signal_cues",
-    "water_minigames", "sugar_wheel", "paper_craft", "archive",
+    "water_minigames", "sugar_wheel", "paper_craft", "object_examine", "archive",
     "cutscene", "dialogue_graph_edits",
 })
 

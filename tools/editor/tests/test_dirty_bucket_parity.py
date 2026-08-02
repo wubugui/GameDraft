@@ -10,8 +10,10 @@
 from __future__ import annotations
 
 import re
+import hashlib
 import sys
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -100,6 +102,284 @@ class TestStagedSaveAtomicity(unittest.TestCase):
             self.assertTrue(m.is_dirty, "失败后 dirty 必须保留，修好可重存")
             stray = [p.name for p in dp.rglob("*.tmp")]
             self.assertEqual(stray, [], f"失败路径必须清理暂存 .tmp：{stray}")
+
+    def test_commit_replace_failure_rolls_back_writes_and_delete(self) -> None:
+        """提交阶段第二个 replace 失败：已就位新文件与暂存删除都必须恢复。"""
+        from tools.editor.file_io import StagedJsonWriter
+        import os
+
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            changed = root / "changed.json"
+            deleted = root / "deleted.json"
+            changed.write_text('{"version":"old"}\n', encoding="utf-8")
+            deleted.write_text('{"keep":true}\n', encoding="utf-8")
+            before_changed = changed.read_bytes()
+            before_deleted = deleted.read_bytes()
+
+            writer = StagedJsonWriter()
+            writer.add(changed, {"version": "new"})
+            writer.add_delete(deleted)
+            real_replace = os.replace
+            injected = {"done": False}
+
+            def flaky_replace(src, dst):
+                # 旧文件入 rollback 备份允许成功；在新文件就位时失败。
+                if not injected["done"] and Path(dst) == changed and str(src).endswith(".tmp"):
+                    injected["done"] = True
+                    raise OSError("注入的 replace 失败")
+                return real_replace(src, dst)
+
+            try:
+                with patch("tools.editor.file_io.os.replace", side_effect=flaky_replace):
+                    with self.assertRaises(OSError):
+                        writer.commit()
+            finally:
+                writer.abort()
+
+            self.assertEqual(changed.read_bytes(), before_changed)
+            self.assertEqual(deleted.read_bytes(), before_deleted)
+            leftovers = [p.name for p in root.iterdir() if p.name.startswith(".")]
+            self.assertEqual(leftovers, [], f"失败回滚不得留临时文件：{leftovers}")
+
+    def test_expected_absent_target_created_at_install_is_never_overwritten(self) -> None:
+        from tools.editor.file_io import StagedJsonWriter
+        import os
+
+        with TemporaryDirectory() as td:
+            target = Path(td) / "new.json"
+            external = b'{"external":true}\n'
+            writer = StagedJsonWriter()
+            writer.add(target, {"task": True})
+            writer.expect_unchanged(target, None)
+            real_link = os.link
+            injected = False
+
+            def collide(src, dst, *args, **kwargs):
+                nonlocal injected
+                if not injected and Path(dst) == target:
+                    injected = True
+                    target.write_bytes(external)
+                return real_link(src, dst, *args, **kwargs)
+
+            try:
+                with patch("tools.editor.file_io.os.link", side_effect=collide):
+                    with self.assertRaises(OSError):
+                        writer.commit()
+            finally:
+                writer.abort()
+
+            self.assertTrue(injected)
+            self.assertEqual(target.read_bytes(), external)
+            leftovers = [p.name for p in target.parent.iterdir() if p.name.startswith(".")]
+            self.assertEqual(leftovers, [])
+
+    def test_rollback_never_deletes_external_replace_after_install(self) -> None:
+        from tools.editor.file_io import StagedJsonWriter
+        import os
+
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            first = root / "a.json"
+            second = root / "b.json"
+            first.write_bytes(b'{"old":"a"}\n')
+            second.write_bytes(b'{"old":"b"}\n')
+            second_before = second.read_bytes()
+            external = b'{"external":"after-link"}\n'
+            writer = StagedJsonWriter()
+            writer.add(first, {"task": "a"})
+            writer.add(second, {"task": "b"})
+            writer.expect_unchanged(first, hashlib.sha256(first.read_bytes()).hexdigest())
+            writer.expect_unchanged(second, hashlib.sha256(second.read_bytes()).hexdigest())
+            real_link = os.link
+
+            def race_link(src, dst, *args, **kwargs):
+                target = Path(dst)
+                if target == first:
+                    result = real_link(src, dst, *args, **kwargs)
+                    external_tmp = root / "external.tmp"
+                    external_tmp.write_bytes(external)
+                    os.replace(external_tmp, first)
+                    return result
+                if target == second and str(src).endswith(".tmp"):
+                    raise OSError("injected later install failure")
+                return real_link(src, dst, *args, **kwargs)
+
+            try:
+                with patch("tools.editor.file_io.os.link", side_effect=race_link):
+                    with self.assertRaises(OSError):
+                        writer.commit()
+            finally:
+                writer.abort()
+
+            self.assertEqual(first.read_bytes(), external)
+            self.assertEqual(second.read_bytes(), second_before)
+            rollback_files = list(root.glob(".*.rollback"))
+            self.assertTrue(
+                rollback_files,
+                "外部文件占住原路径时应保留旧版 rollback 供人工恢复，不能覆盖外部文件",
+            )
+
+    def test_rollback_never_deletes_external_inplace_edit_after_install(self) -> None:
+        from tools.editor.file_io import StagedJsonWriter
+        import os
+
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            first = root / "a.json"
+            second = root / "b.json"
+            first.write_bytes(b'{"old":"a"}\n')
+            second.write_bytes(b'{"old":"b"}\n')
+            second_before = second.read_bytes()
+            external = b'{"external":"in-place"}\n'
+            writer = StagedJsonWriter()
+            writer.add(first, {"task": "a"})
+            writer.add(second, {"task": "b"})
+            writer.expect_unchanged(first, hashlib.sha256(first.read_bytes()).hexdigest())
+            writer.expect_unchanged(second, hashlib.sha256(second.read_bytes()).hexdigest())
+            real_link = os.link
+
+            def race_link(src, dst, *args, **kwargs):
+                target = Path(dst)
+                if target == first:
+                    result = real_link(src, dst, *args, **kwargs)
+                    first.write_bytes(external)
+                    return result
+                if target == second and str(src).endswith(".tmp"):
+                    raise OSError("injected later install failure")
+                return real_link(src, dst, *args, **kwargs)
+
+            try:
+                with patch("tools.editor.file_io.os.link", side_effect=race_link):
+                    with self.assertRaises(OSError):
+                        writer.commit()
+            finally:
+                writer.abort()
+
+            self.assertEqual(first.read_bytes(), external)
+            self.assertEqual(second.read_bytes(), second_before)
+            self.assertTrue(list(root.glob(".*.rollback")))
+
+    def test_success_boundary_detects_external_replace_after_install(self) -> None:
+        from tools.editor.file_io import StagedJsonWriter
+        import os
+
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            first = root / "a.json"
+            second = root / "b.json"
+            first.write_bytes(b'{"old":"a"}\n')
+            second.write_bytes(b'{"old":"b"}\n')
+            second_before = second.read_bytes()
+            external = b'{"external":"replace"}\n'
+            writer = StagedJsonWriter()
+            writer.add(first, {"task": "a"})
+            writer.add(second, {"task": "b"})
+            writer.expect_unchanged(first, hashlib.sha256(first.read_bytes()).hexdigest())
+            writer.expect_unchanged(second, hashlib.sha256(second.read_bytes()).hexdigest())
+            real_link = os.link
+            replaced = False
+
+            def race_link(src, dst, *args, **kwargs):
+                nonlocal replaced
+                result = real_link(src, dst, *args, **kwargs)
+                if Path(dst) == first and not replaced:
+                    replaced = True
+                    temp = root / "external.tmp"
+                    temp.write_bytes(external)
+                    os.replace(temp, first)
+                return result
+
+            try:
+                with patch("tools.editor.file_io.os.link", side_effect=race_link):
+                    with self.assertRaises(OSError):
+                        writer.commit()
+            finally:
+                writer.abort()
+
+            self.assertTrue(replaced)
+            self.assertEqual(first.read_bytes(), external)
+            self.assertEqual(second.read_bytes(), second_before)
+            self.assertTrue(list(root.glob(".*.rollback")))
+
+    def test_success_boundary_detects_external_inplace_edit_after_install(self) -> None:
+        from tools.editor.file_io import StagedJsonWriter
+        import os
+
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            first = root / "a.json"
+            second = root / "b.json"
+            first.write_bytes(b'{"old":"a"}\n')
+            second.write_bytes(b'{"old":"b"}\n')
+            second_before = second.read_bytes()
+            external = b'{"external":"in-place-success"}\n'
+            writer = StagedJsonWriter()
+            writer.add(first, {"task": "a"})
+            writer.add(second, {"task": "b"})
+            writer.expect_unchanged(first, hashlib.sha256(first.read_bytes()).hexdigest())
+            writer.expect_unchanged(second, hashlib.sha256(second.read_bytes()).hexdigest())
+            real_link = os.link
+            edited = False
+
+            def race_link(src, dst, *args, **kwargs):
+                nonlocal edited
+                result = real_link(src, dst, *args, **kwargs)
+                if Path(dst) == first and not edited:
+                    edited = True
+                    first.write_bytes(external)
+                return result
+
+            try:
+                with patch("tools.editor.file_io.os.link", side_effect=race_link):
+                    with self.assertRaises(OSError):
+                        writer.commit()
+            finally:
+                writer.abort()
+
+            self.assertTrue(edited)
+            self.assertEqual(first.read_bytes(), external)
+            self.assertEqual(second.read_bytes(), second_before)
+            self.assertTrue(list(root.glob(".*.rollback")))
+
+    def test_success_boundary_preserves_external_delete_after_install(self) -> None:
+        from tools.editor.file_io import StagedJsonWriter
+        import os
+
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            first = root / "a.json"
+            second = root / "b.json"
+            first.write_bytes(b'{"old":"a"}\n')
+            second.write_bytes(b'{"old":"b"}\n')
+            second_before = second.read_bytes()
+            writer = StagedJsonWriter()
+            writer.add(first, {"task": "a"})
+            writer.add(second, {"task": "b"})
+            writer.expect_unchanged(first, hashlib.sha256(first.read_bytes()).hexdigest())
+            writer.expect_unchanged(second, hashlib.sha256(second.read_bytes()).hexdigest())
+            real_link = os.link
+            deleted = False
+
+            def race_link(src, dst, *args, **kwargs):
+                nonlocal deleted
+                result = real_link(src, dst, *args, **kwargs)
+                if Path(dst) == first and not deleted:
+                    deleted = True
+                    first.unlink()
+                return result
+
+            try:
+                with patch("tools.editor.file_io.os.link", side_effect=race_link):
+                    with self.assertRaises(OSError):
+                        writer.commit()
+            finally:
+                writer.abort()
+
+            self.assertTrue(deleted)
+            self.assertFalse(first.exists())
+            self.assertEqual(second.read_bytes(), second_before)
+            self.assertTrue(list(root.glob(".*.rollback")))
 
 
 if __name__ == "__main__":

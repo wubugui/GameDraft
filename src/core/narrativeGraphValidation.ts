@@ -444,7 +444,22 @@ function validateGraph(
   }
 }
 
-const validWrapperOwnerTypes = new Set(['npc', 'hotspot', 'zone', 'quest', 'dialogue', 'minigame', 'cutscene', 'scenario', 'scene', 'system']);
+/** Runtime-backed wrapper owner types. Tooling mirrors this with a semantic parity test. */
+export const VALID_NARRATIVE_WRAPPER_OWNER_TYPES = [
+  'npc',
+  'hotspot',
+  'zone',
+  'sceneGroup',
+  'quest',
+  'dialogue',
+  'minigame',
+  'cutscene',
+  'scenario',
+  'scene',
+  'system',
+] as const;
+
+const validWrapperOwnerTypes = new Set<string>(VALID_NARRATIVE_WRAPPER_OWNER_TYPES);
 
 /**
  * 作者信号 id + 全部 broadcastOnEnter 状态的派生 `state:<graphId>:<stateId>` 信号。

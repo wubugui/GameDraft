@@ -14,6 +14,7 @@ export function resolveDepthFloorOffsetBoost(
   footWorldY: number,
   flagStore: FlagStore,
   conditionCtx?: ConditionEvalContext,
+  groupConditions?: (groupId: string) => ZoneDef['conditions'],
 ): number {
   if (!zones?.length) return 0;
   let best: number | null = null;
@@ -28,6 +29,14 @@ export function resolveDepthFloorOffsetBoost(
       const ok = conditionCtx
         ? evaluateConditionExprList(z.conditions, conditionCtx)
         : flagStore.checkConditions(z.conditions as Condition[]);
+      if (!ok) continue;
+    }
+    const gid = z.group?.trim() ?? '';
+    const groupConds = gid ? groupConditions?.(gid) : undefined;
+    if (groupConds && groupConds.length > 0) {
+      const ok = conditionCtx
+        ? evaluateConditionExprList(groupConds, conditionCtx)
+        : flagStore.checkConditions(groupConds as Condition[]);
       if (!ok) continue;
     }
     if (!isValidZonePolygon(z.polygon) || !isPointInPolygon(z.polygon, footWorldX, footWorldY)) {

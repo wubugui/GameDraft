@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 from .flag_key_field import FlagKeyPickField
 from .flag_value_edit import FlagValueEdit
 from .id_ref_selector import IdRefSelector
+from .reference_picker import ReferencePickerField
 from .rich_text_field import RichTextLineEdit
 from .form_layout import compact_form
 
@@ -122,19 +123,19 @@ class ConditionExprNodeEditor(QWidget):
         self._flag_free_value: QWidget | None = None
         self._q_id: QLineEdit | None = None
         self._q_st: QComboBox | None = None
-        self._sc_id: QComboBox | None = None
+        self._sc_id: ReferencePickerField | None = None
         self._sc_ph: QComboBox | None = None
         self._sc_st: QComboBox | None = None
         self._sc_out: QLineEdit | None = None
-        self._sl_id: QComboBox | None = None
+        self._sl_id: ReferencePickerField | None = None
         self._sl_st: QComboBox | None = None
         self._nv_wrap: QWidget | None = None
-        self._nv_graph: QComboBox | None = None
-        self._nv_state: QComboBox | None = None
+        self._nv_graph: ReferencePickerField | None = None
+        self._nv_state: ReferencePickerField | None = None
         self._nv_reached: QCheckBox | None = None
         self._nc_wrap: QWidget | None = None
-        self._nc_graph: QComboBox | None = None
-        self._nc_exit: QComboBox | None = None
+        self._nc_graph: ReferencePickerField | None = None
+        self._nc_exit: ReferencePickerField | None = None
         self._nc_op: QComboBox | None = None
         self._nc_value: QSpinBox | None = None
         self._pl_wrap: QWidget | None = None
@@ -180,6 +181,9 @@ class ConditionExprNodeEditor(QWidget):
             d = cb.currentData()
             return isinstance(d, str) and bool(d.strip())
 
+        def _picker_has(field: ReferencePickerField | None) -> bool:
+            return bool(field and field.current_value().strip())
+
         if k in ("all", "any"):
             return any(c._has_content() for c in self._child_editors)
         if k == "not":
@@ -189,13 +193,13 @@ class ConditionExprNodeEditor(QWidget):
         if k == "quest":
             return bool(self._q_id and self._q_id.current_id().strip())
         if k == "scenario":
-            return _combo_has(self._sc_id)
+            return _picker_has(self._sc_id)
         if k == "scenarioLine":
-            return _combo_has(self._sl_id)
+            return _picker_has(self._sl_id)
         if k == "narrative":
-            return _combo_has(self._nv_graph)
+            return _picker_has(self._nv_graph)
         if k == "narrativeCount":
-            return _combo_has(self._nc_graph)
+            return _picker_has(self._nc_graph)
         if k == "plane":
             return bool(self._pl_id and self._pl_id.current_id().strip())
         return False
@@ -378,9 +382,14 @@ class ConditionExprNodeEditor(QWidget):
         elif kind == "scenario":
             sw = QWidget()
             sf = compact_form(QFormLayout(sw))
-            self._sc_id = QComboBox()
-            self._sc_id.setEditable(False)
-            self._sc_id.currentIndexChanged.connect(self._on_scenario_combo)
+            self._sc_id = ReferencePickerField(
+                lambda: self._scenario_reference_rows(),
+                sw,
+                allow_empty=True,
+                title="选择 Scenario",
+                geometry_key="condition_scenario_picker",
+            )
+            self._sc_id.value_changed.connect(self._on_scenario_reference_changed)
             self._sc_ph = QComboBox()
             self._sc_ph.setEditable(False)
             self._sc_ph.currentIndexChanged.connect(lambda _i: self._emit_changed())
@@ -401,9 +410,14 @@ class ConditionExprNodeEditor(QWidget):
         elif kind == "scenarioLine":
             lw = QWidget()
             lf = compact_form(QFormLayout(lw))
-            self._sl_id = QComboBox()
-            self._sl_id.setEditable(False)
-            self._sl_id.currentIndexChanged.connect(lambda _i: self._emit_changed())
+            self._sl_id = ReferencePickerField(
+                lambda: self._scenario_reference_rows(),
+                lw,
+                allow_empty=True,
+                title="选择 Scenario 线",
+                geometry_key="condition_scenario_line_picker",
+            )
+            self._sl_id.value_changed.connect(lambda _value: self._emit_changed())
             self._sl_st = QComboBox()
             for s in _SCENARIO_LINE_STATUSES:
                 self._sl_st.addItem(s, s)
@@ -416,12 +430,22 @@ class ConditionExprNodeEditor(QWidget):
         elif kind == "narrative":
             nw = QWidget()
             nf = compact_form(QFormLayout(nw))
-            self._nv_graph = QComboBox()
-            self._nv_graph.setEditable(False)
-            self._nv_graph.currentIndexChanged.connect(self._on_narrative_graph_combo)
-            self._nv_state = QComboBox()
-            self._nv_state.setEditable(False)
-            self._nv_state.currentIndexChanged.connect(lambda _i: self._emit_changed())
+            self._nv_graph = ReferencePickerField(
+                lambda: self._narrative_graph_reference_rows(),
+                nw,
+                allow_empty=True,
+                title="选择叙事图",
+                geometry_key="condition_narrative_graph_picker",
+            )
+            self._nv_graph.value_changed.connect(self._on_narrative_graph_reference_changed)
+            self._nv_state = ReferencePickerField(
+                lambda: self._narrative_state_reference_rows(),
+                nw,
+                allow_empty=True,
+                title="选择叙事状态",
+                geometry_key="condition_narrative_state_picker",
+            )
+            self._nv_state.value_changed.connect(lambda _value: self._emit_changed())
             self._nv_reached = QCheckBox("曾到达过（含当前；用于「X 之后」类门控）")
             self._nv_reached.stateChanged.connect(lambda _s: self._emit_changed())
             nf.addRow("叙事图", self._nv_graph)
@@ -433,16 +457,26 @@ class ConditionExprNodeEditor(QWidget):
         elif kind == "narrativeCount":
             cw = QWidget()
             cf = compact_form(QFormLayout(cw))
-            self._nc_graph = QComboBox()
-            self._nc_graph.setEditable(False)
+            self._nc_graph = ReferencePickerField(
+                lambda: self._narrative_graph_reference_rows(run_only=True),
+                cw,
+                allow_empty=True,
+                title="选择活计图",
+                geometry_key="condition_narrative_count_graph_picker",
+            )
             self._nc_graph.setToolTip(
                 "活计图（声明了 run 的叙事图）。计数=该活计历史累计结算次数，跨轮持久、入存档。"
             )
-            self._nc_graph.currentIndexChanged.connect(self._on_narrative_count_graph_combo)
-            self._nc_exit = QComboBox()
-            self._nc_exit.setEditable(False)
+            self._nc_graph.value_changed.connect(self._on_narrative_count_graph_reference_changed)
+            self._nc_exit = ReferencePickerField(
+                lambda: self._narrative_count_exit_reference_rows(),
+                cw,
+                allow_empty=True,
+                title="选择活计出口",
+                geometry_key="condition_narrative_count_exit_picker",
+            )
             self._nc_exit.setToolTip("按哪个出口计数；「全部出口合计」= 不区分交付/失败等出口")
-            self._nc_exit.currentIndexChanged.connect(lambda _i: self._emit_changed())
+            self._nc_exit.value_changed.connect(lambda _value: self._emit_changed())
             self._nc_op = QComboBox()
             for _op in (">=", "==", "!=", ">", "<", "<="):
                 self._nc_op.addItem(_op, _op)
@@ -500,100 +534,124 @@ class ConditionExprNodeEditor(QWidget):
                     out.append((f"{label} ({g['id']})", str(g["id"]), g))
         return out
 
+    def _scenario_reference_rows(self) -> list[tuple[str, str, str]]:
+        """Live Scenario catalog rows, including labels when the host has them."""
+        model = self._model()
+        if model is None or not hasattr(model, "scenario_ids_ordered"):
+            return []
+        raw_rows = (
+            model.scenarios_catalog.get("scenarios")
+            if isinstance(getattr(model, "scenarios_catalog", None), dict)
+            else []
+        )
+        labels = {
+            str(row.get("id", "")).strip(): str(
+                row.get("label") or row.get("name") or row.get("title") or row.get("id") or "",
+            ).strip()
+            for row in (raw_rows or [])
+            if isinstance(row, dict)
+        }
+        return [
+            (str(sid), labels.get(str(sid), str(sid)), "Scenario")
+            for sid in model.scenario_ids_ordered()
+            if str(sid).strip()
+        ]
+
+    def _narrative_graph_reference_rows(
+        self,
+        *,
+        run_only: bool = False,
+    ) -> list[tuple[str, str, str]]:
+        """Live picker rows. The model is queried when the popup is opened."""
+        rows: list[tuple[str, str, str]] = []
+        for label, gid, graph in self._narrative_graph_entries():
+            if run_only and not isinstance(graph.get("run"), dict):
+                continue
+            detail = "活计图" if isinstance(graph.get("run"), dict) else "叙事图"
+            rows.append((gid, label, detail))
+        return rows
+
+    def _narrative_state_reference_rows(self) -> list[tuple[str, str, str]]:
+        gid = self._nv_graph.current_value().strip() if self._nv_graph else ""
+        if not gid:
+            return []
+        for _label, graph_id, graph in self._narrative_graph_entries():
+            if graph_id != gid:
+                continue
+            rows: list[tuple[str, str, str]] = []
+            for state_id, state in (graph.get("states") or {}).items():
+                sid = str(state_id)
+                label = str((state or {}).get("label") or sid) if isinstance(state, dict) else sid
+                rows.append((sid, label, f"叙事图 {gid}"))
+            return rows
+        return []
+
+    def _narrative_count_exit_reference_rows(self) -> list[tuple[str, str, str]]:
+        gid = self._nc_graph.current_value().strip() if self._nc_graph else ""
+        if not gid:
+            return []
+        for _label, graph_id, graph in self._narrative_graph_entries():
+            if graph_id != gid:
+                continue
+            states = graph.get("states") or {}
+            rows: list[tuple[str, str, str]] = []
+            for state_id in graph.get("exitStates") or []:
+                sid = str(state_id)
+                state = states.get(sid)
+                label = str((state or {}).get("label") or sid) if isinstance(state, dict) else sid
+                rows.append((sid, label, f"活计图 {gid} 的出口"))
+            return rows
+        return []
+
     def _fill_narrative_combos(self) -> None:
         if not self._nv_graph:
             return
-        self._nv_graph.blockSignals(True)
-        self._nv_graph.clear()
-        self._nv_graph.addItem("（选择）", "")
-        for label, gid, _g in self._narrative_graph_entries():
-            self._nv_graph.addItem(label, gid)
-        self._nv_graph.blockSignals(False)
+        self._nv_graph.refresh_display()
         self._fill_narrative_state_combo()
 
-    def _on_narrative_graph_combo(self, _i: int) -> None:
+    def _on_narrative_graph_reference_changed(self, _value: str) -> None:
+        # A user-selected parent invalidates the dependent state. Programmatic
+        # refresh/set never calls this handler, so stale catalogs cannot clear a
+        # draft or mark the editor dirty.
+        if self._nv_state:
+            self._nv_state.set_value("")
         self._fill_narrative_state_combo()
         self._emit_changed()
 
     def _fill_narrative_count_combos(self) -> None:
         if not self._nc_graph:
             return
-        self._nc_graph.blockSignals(True)
-        self._nc_graph.clear()
-        self._nc_graph.addItem("（选择活计图）", "")
-        for label, gid, g in self._narrative_graph_entries():
-            if isinstance(g.get("run"), dict):
-                self._nc_graph.addItem(label, gid)
-        self._nc_graph.blockSignals(False)
+        self._nc_graph.refresh_display()
         self._fill_narrative_count_exit_combo()
 
-    def _on_narrative_count_graph_combo(self, _i: int) -> None:
+    def _on_narrative_count_graph_reference_changed(self, _value: str) -> None:
+        if self._nc_exit:
+            self._nc_exit.set_value("")
         self._fill_narrative_count_exit_combo()
         self._emit_changed()
 
     def _fill_narrative_count_exit_combo(self) -> None:
         if not self._nc_exit or not self._nc_graph:
             return
-        gid = self._nc_graph.currentData()
-        gid = gid.strip() if isinstance(gid, str) else ""
-        self._nc_exit.blockSignals(True)
-        self._nc_exit.clear()
-        self._nc_exit.addItem("（全部出口合计）", "")
-        if gid:
-            for _label, g_id, g in self._narrative_graph_entries():
-                if g_id != gid:
-                    continue
-                states = g.get("states") or {}
-                for sid in (g.get("exitStates") or []):
-                    sid = str(sid)
-                    st = states.get(sid)
-                    lab = str((st or {}).get("label") or sid) if isinstance(st, dict) else sid
-                    self._nc_exit.addItem(f"{lab} ({sid})" if lab != sid else sid, sid)
-                break
-        self._nc_exit.blockSignals(False)
+        self._nc_exit.refresh_display()
 
     def _fill_narrative_state_combo(self) -> None:
         if not self._nv_state or not self._nv_graph:
             return
-        gid = self._nv_graph.currentData()
-        gid = gid.strip() if isinstance(gid, str) else ""
-        self._nv_state.blockSignals(True)
-        self._nv_state.clear()
-        self._nv_state.addItem("（选择）", "")
-        if gid:
-            for _label, g_id, g in self._narrative_graph_entries():
-                if g_id != gid:
-                    continue
-                for sid, st in (g.get("states") or {}).items():
-                    lab = str((st or {}).get("label") or sid) if isinstance(st, dict) else str(sid)
-                    self._nv_state.addItem(f"{lab} ({sid})" if lab != sid else str(sid), str(sid))
-                break
-        self._nv_state.blockSignals(False)
+        self._nv_state.refresh_display()
 
     def _fill_scenario_combos(self) -> None:
         if not self._sc_id or not self._sc_ph:
             return
-        m = self._model()
-        # 刷新保值：clear 前记住当前 scenario，重建后还原；未知值以「（数据）」注入保留，
-        # 绝不静默清成「（选择）」——否则一次清单刷新即静默丢掉整条 scenario 条件。
-        cur = self._sc_id.currentData()
-        cur = cur.strip() if isinstance(cur, str) else ""
-        self._sc_id.blockSignals(True)
-        self._sc_id.clear()
-        self._sc_id.addItem("（选择）", "")
-        if m:
-            for sid in m.scenario_ids_ordered():
-                self._sc_id.addItem(sid, sid)
-        if cur:
-            idx = self._sc_id.findData(cur)
-            if idx < 0:
-                self._sc_id.addItem(f"（数据）{cur}", cur)
-                idx = self._sc_id.count() - 1
-            self._sc_id.setCurrentIndex(idx)
-        self._sc_id.blockSignals(False)
+        self._sc_id.refresh_display()
         self._fill_phase_combo()
 
-    def _on_scenario_combo(self, _i: int) -> None:
+    def _on_scenario_reference_changed(self, _value: str) -> None:
+        if self._sc_ph:
+            self._sc_ph.blockSignals(True)
+            self._sc_ph.clear()
+            self._sc_ph.addItem("（选择）", "")
+            self._sc_ph.blockSignals(False)
         self._fill_phase_combo()
         self._emit_changed()
 
@@ -601,8 +659,7 @@ class ConditionExprNodeEditor(QWidget):
         if not self._sc_ph or not self._sc_id:
             return
         m = self._model()
-        sid = self._sc_id.currentData()
-        sid = sid.strip() if isinstance(sid, str) else ""
+        sid = self._sc_id.current_value().strip()
         # 刷新保值：记住当前 phase，重建后还原；未知值以「（数据）」注入保留。
         cur_ph = self._sc_ph.currentData()
         cur_ph = cur_ph.strip() if isinstance(cur_ph, str) else ""
@@ -623,22 +680,7 @@ class ConditionExprNodeEditor(QWidget):
     def _fill_scenario_line_combo(self) -> None:
         if not self._sl_id:
             return
-        m = self._model()
-        cur = self._sl_id.currentData()
-        cur = cur.strip() if isinstance(cur, str) else ""
-        self._sl_id.blockSignals(True)
-        self._sl_id.clear()
-        self._sl_id.addItem("（选择）", "")
-        if m:
-            for sid in m.scenario_ids_ordered():
-                self._sl_id.addItem(sid, sid)
-        self._sl_id.blockSignals(False)
-        if cur:
-            idx = self._sl_id.findData(cur)
-            if idx >= 0:
-                self._sl_id.blockSignals(True)
-                self._sl_id.setCurrentIndex(idx)
-                self._sl_id.blockSignals(False)
+        self._sl_id.refresh_display()
 
     def refresh_scenario_dropdowns(self) -> None:
         if self._sc_id:
@@ -649,6 +691,23 @@ class ConditionExprNodeEditor(QWidget):
             c.refresh_scenario_dropdowns()
         if self._not_child:
             self._not_child.refresh_scenario_dropdowns()
+
+    def refresh_live_reference_fields(self) -> None:
+        """Refresh labels only; providers stay live and values/signals stay untouched."""
+        for field in (
+            self._sc_id,
+            self._sl_id,
+            self._nv_graph,
+            self._nv_state,
+            self._nc_graph,
+            self._nc_exit,
+        ):
+            if field is not None:
+                field.refresh_display()
+        for child in self._child_editors:
+            child.refresh_live_reference_fields()
+        if self._not_child:
+            self._not_child.refresh_live_reference_fields()
 
     def _on_flag_field_value_changed(self) -> None:
         if self._flag_val_reg and self._flag_field:
@@ -804,12 +863,7 @@ class ConditionExprNodeEditor(QWidget):
         elif k == "scenarioLine" and self._sl_id and self._sl_st:
             self._fill_scenario_line_combo()
             slid = str(data.get("scenarioLine", "")).strip()
-            idx = self._sl_id.findData(slid)
-            if idx < 0 and slid:
-                # 保留指向已删/未知 scenario 的既有值，不静默丢失（与 quest/narrative 一致）
-                self._sl_id.addItem(f"（数据）{slid}", slid)
-                idx = self._sl_id.count() - 1
-            self._sl_id.setCurrentIndex(idx if idx >= 0 else 0)
+            self._sl_id.set_value(slid)
             lst = str(data.get("lineStatus", "inactive")).strip()
             i2 = self._sl_st.findData(lst)
             if i2 < 0:
@@ -819,12 +873,7 @@ class ConditionExprNodeEditor(QWidget):
         elif k == "scenario" and self._sc_id and self._sc_ph and self._sc_st and self._sc_out:
             self._fill_scenario_combos()
             sc = str(data.get("scenario", "")).strip()
-            idx = self._sc_id.findData(sc)
-            if idx < 0 and sc:
-                # 保留指向已删/未知 scenario 的既有值，不静默丢失（与 quest/narrative 一致）
-                self._sc_id.addItem(f"（数据）{sc}", sc)
-                idx = self._sc_id.count() - 1
-            self._sc_id.setCurrentIndex(idx if idx >= 0 else 0)
+            self._sc_id.set_value(sc)
             self._fill_phase_combo()
             ph = str(data.get("phase", "")).strip()
             idx2 = self._sc_ph.findData(ph)
@@ -851,41 +900,17 @@ class ConditionExprNodeEditor(QWidget):
                     self._sc_out.setText(str(oc))
         elif k == "narrative" and self._nv_graph and self._nv_state and self._nv_reached:
             gid = str(data.get("narrative", "")).strip()
-            idx = self._nv_graph.findData(gid)
-            if idx < 0 and gid:
-                self._nv_graph.addItem(f"（数据）{gid}", gid)
-                idx = self._nv_graph.count() - 1
-            self._nv_graph.blockSignals(True)
-            self._nv_graph.setCurrentIndex(max(0, idx))
-            self._nv_graph.blockSignals(False)
+            self._nv_graph.set_value(gid)
             self._fill_narrative_state_combo()
             sid = str(data.get("state", "")).strip()
-            i2 = self._nv_state.findData(sid)
-            if i2 < 0 and sid:
-                self._nv_state.addItem(f"（数据）{sid}", sid)
-                i2 = self._nv_state.count() - 1
-            self._nv_state.blockSignals(True)
-            self._nv_state.setCurrentIndex(max(0, i2))
-            self._nv_state.blockSignals(False)
+            self._nv_state.set_value(sid)
             self._nv_reached.setChecked(data.get("reached") is True)
         elif k == "narrativeCount" and self._nc_graph and self._nc_exit and self._nc_op and self._nc_value:
             gid = str(data.get("narrativeCount", "")).strip()
-            idx = self._nc_graph.findData(gid)
-            if idx < 0 and gid:
-                self._nc_graph.addItem(f"（数据）{gid}", gid)  # 指向已删/改名活计的既有值不静默丢
-                idx = self._nc_graph.count() - 1
-            self._nc_graph.blockSignals(True)
-            self._nc_graph.setCurrentIndex(max(0, idx))
-            self._nc_graph.blockSignals(False)
+            self._nc_graph.set_value(gid)
             self._fill_narrative_count_exit_combo()
             exit_id = str(data.get("exitState", "")).strip()
-            i2 = self._nc_exit.findData(exit_id)
-            if i2 < 0 and exit_id:
-                self._nc_exit.addItem(f"（数据）{exit_id}", exit_id)
-                i2 = self._nc_exit.count() - 1
-            self._nc_exit.blockSignals(True)
-            self._nc_exit.setCurrentIndex(max(0, i2))
-            self._nc_exit.blockSignals(False)
+            self._nc_exit.set_value(exit_id)
             op = str(data.get("op", ">="))
             iop = self._nc_op.findData(op)
             self._nc_op.blockSignals(True)
@@ -965,16 +990,14 @@ class ConditionExprNodeEditor(QWidget):
             qs = self._q_st.currentData()
             return {"quest": qid, "questStatus": str(qs) if qs is not None else "Completed"}
         if k == "scenarioLine" and self._sl_id and self._sl_st:
-            slid = self._sl_id.currentData()
-            slid = slid.strip() if isinstance(slid, str) else ""
+            slid = self._sl_id.current_value().strip()
             st_d = self._sl_st.currentData()
             st = str(st_d) if st_d is not None else self._sl_st.currentText()
             if not slid:
                 return {}
             return {"scenarioLine": slid, "lineStatus": st}
         if k == "scenario" and self._sc_id and self._sc_ph and self._sc_st and self._sc_out:
-            sid = self._sc_id.currentData()
-            sid = sid.strip() if isinstance(sid, str) else ""
+            sid = self._sc_id.current_value().strip()
             phd = self._sc_ph.currentData()
             ph = phd.strip() if isinstance(phd, str) else ""
             st_d = self._sc_st.currentData()
@@ -1005,10 +1028,8 @@ class ConditionExprNodeEditor(QWidget):
                             out["outcome"] = ot
             return out
         if k == "narrative" and self._nv_graph and self._nv_state and self._nv_reached:
-            gid = self._nv_graph.currentData()
-            gid = gid.strip() if isinstance(gid, str) else ""
-            sid = self._nv_state.currentData()
-            sid = sid.strip() if isinstance(sid, str) else ""
+            gid = self._nv_graph.current_value().strip()
+            sid = self._nv_state.current_value().strip()
             if not gid or not sid:
                 return {}
             leaf: dict[str, Any] = {"narrative": gid, "state": sid}
@@ -1016,13 +1037,11 @@ class ConditionExprNodeEditor(QWidget):
                 leaf["reached"] = True
             return leaf
         if k == "narrativeCount" and self._nc_graph and self._nc_exit and self._nc_op and self._nc_value:
-            gid = self._nc_graph.currentData()
-            gid = gid.strip() if isinstance(gid, str) else ""
+            gid = self._nc_graph.current_value().strip()
             if not gid:
                 return {}
             leaf: dict[str, Any] = {"narrativeCount": gid}
-            exit_id = self._nc_exit.currentData()
-            exit_id = exit_id.strip() if isinstance(exit_id, str) else ""
+            exit_id = self._nc_exit.current_value().strip()
             if exit_id:
                 leaf["exitState"] = exit_id
             op_d = self._nc_op.currentData()
@@ -1081,8 +1100,9 @@ class ConditionExprTreeRootWidget(QWidget):
         lay.addWidget(scroll, stretch=1)
 
     def set_model_refresh(self) -> None:
-        """清单（scenarios 等）变更后刷新 scenario 下拉。"""
+        """清单变更后安全刷新；程序刷新不改值、不外发 changed。"""
         self._root.refresh_scenario_dropdowns()
+        self._root.refresh_live_reference_fields()
 
     def set_expr(self, expr: dict[str, Any] | None) -> None:
         if expr is None:

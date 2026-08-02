@@ -106,6 +106,10 @@ class _ConsumeItemRow(QWidget):
     def to_dict(self) -> dict:
         return {"id": self._item_sel.current_id(), "count": self._count.value()}
 
+    def reload_refs_from_model(self, model: ProjectModel) -> None:
+        """刷新物品目录；IdRefSelector 会保留当前/悬垂值且不发变更信号。"""
+        self._item_sel.set_items(model.all_item_ids())
+
 
 class ConsumeItemsEditor(QGroupBox):
     def __init__(self, title: str = "Consume Items",
@@ -139,6 +143,12 @@ class ConsumeItemsEditor(QGroupBox):
             if d["id"]:
                 out.append(d)
         return out
+
+    def reload_refs_from_model(self) -> None:
+        if self._model is None:
+            return
+        for row in self._rows:
+            row.reload_refs_from_model(self._model)
 
     def _add_row(self, data: dict | None = None) -> None:
         if self._model is None:
@@ -181,6 +191,7 @@ class OptionWidget(QFrame):
         self.customContextMenuRequested.connect(self._ctx_menu)
         self._data = data
         self._idx = idx
+        self._model = model
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(6, 6, 6, 6)
@@ -342,6 +353,13 @@ class OptionWidget(QFrame):
         if ci:
             d["consumeItems"] = ci
         return d
+
+    def reload_refs_from_model(self) -> None:
+        """只刷新已打开选项中的引用候选，不重建控件或改动表单值。"""
+        self._rule.set_items(self._model.all_rule_ids())
+        self._consume.reload_refs_from_model()
+        self._conds.set_flag_pattern_context(self._model, None)
+        self._actions.reload_refs_from_model()
 
 
 # ---------------------------------------------------------------------------
@@ -659,6 +677,14 @@ class EncounterEditor(QWidget):
         self._on_search_changed(self._search.text())
         self._update_empty_hint()
         self._load_row(row)
+
+    def reload_refs_from_model(self) -> None:
+        """主窗切页钩子：仅重拉当前表单候选，保留未 Apply/悬垂值与脏态。"""
+        if self._current_idx >= 0:
+            # 自身 id 选择器是可编辑命名框；set_items 会保留尚未提交的手打文本。
+            self._e_id_sel.set_items(self._encounter_id_choice_list(self._current_idx))
+        for option in self._opt_widgets:
+            option.reload_refs_from_model()
 
     def _rebuild_options(self, options: list[dict]) -> None:
         for w in self._opt_widgets:

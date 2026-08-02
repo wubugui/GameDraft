@@ -296,11 +296,12 @@ OVERLAY_SPECIAL_BUCKETS: frozenset = frozenset({"flag_registry", "scene", "chara
 #: 显式豁免清单:这些桶不做 overlay 镜像,查询以磁盘为准(安全降级)。
 #: - map:保存时经 map_config_document() 现算文档形状且带写盘副作用,不做内存镜像
 #: - narrative_templates / narrative_categories:编辑器侧整理数据,保存时经 normalize
-#: - dialogue_stubs / dialogue_graph_edits:多文件暂存桶(搜索对话框 tip 已注明以磁盘为准)
+#: - dialogue_stubs / dialogue_graph_edits / dialogue_graph_deletes:多文件暂存桶
+#:   (搜索对话框 tip 已注明以磁盘为准)
 #: - water_minigames / sugar_wheel / paper_craft / filter:多文件暂存桶,同上
 OVERLAY_EXEMPT_BUCKETS: frozenset = frozenset({
     "map", "narrative_templates", "narrative_categories",
-    "dialogue_stubs", "dialogue_graph_edits",
+    "dialogue_stubs", "dialogue_graph_edits", "dialogue_graph_deletes",
     "water_minigames", "sugar_wheel", "paper_craft", "filter",
 })
 

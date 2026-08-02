@@ -114,6 +114,52 @@ def validate(model: ProjectModel) -> list[Issue]:
                     f"背景图文件名必须是 background.png，实际为 {bg0_img!r}；"
                     f"请在场景编辑器重新导入背景图。",
                 ))
+        # 场景实体分组：显式定义是一等实体；旧数据仅有成员 group 标签仍兼容。
+        _groups_raw = sc.get("entityGroups")
+        _declared_groups: set[str] = set()
+        if _groups_raw is not None and not isinstance(_groups_raw, list):
+            issues.append(Issue(
+                "error", "scene", sid,
+                f"entityGroups 须为数组（当前 {type(_groups_raw).__name__}）",
+            ))
+        elif isinstance(_groups_raw, list):
+            for _gi, _group in enumerate(_groups_raw):
+                if not isinstance(_group, dict):
+                    issues.append(Issue(
+                        "error", "scene", sid,
+                        f"entityGroups[{_gi}] 须为对象",
+                    ))
+                    continue
+                _gid = str(_group.get("id") or "").strip()
+                if not _gid:
+                    issues.append(Issue(
+                        "error", "scene", sid,
+                        f"entityGroups[{_gi}] 缺少非空 id",
+                    ))
+                    continue
+                if ":" in _gid:
+                    issues.append(Issue(
+                        "error", "scene", sid,
+                        f"场景分组 id {_gid!r} 不得包含 ':'（限定引用使用 sceneId:groupId）",
+                    ))
+                if _gid in _declared_groups:
+                    issues.append(Issue(
+                        "error", "scene", sid,
+                        f"场景分组 id 重复: {_gid!r}",
+                    ))
+                _declared_groups.add(_gid)
+                _label = _group.get("label")
+                if _label is not None and not isinstance(_label, str):
+                    issues.append(Issue(
+                        "warning", "scene", sid,
+                        f"场景分组 {_gid!r} label 须为字符串（当前 {_label!r}）",
+                    ))
+                _conds = _group.get("conditions")
+                if _conds is not None and not isinstance(_conds, list):
+                    issues.append(Issue(
+                        "error", "scene", sid,
+                        f"场景分组 {_gid!r} conditions 须为数组",
+                    ))
         # 场景内实体 id 重复：编辑器画布图元按 "kind:id" 建键互相覆盖、属性/删除按
         # id 首匹配串台（P1-26 风险面）；npc 与 hotspot 互为 emote 目标命名空间
         # （重构引擎撞名互拒同口径），跨类同 id 一并拦。zone 独立命名空间单查。
@@ -273,6 +319,20 @@ def validate(model: ProjectModel) -> list[Issue]:
                     "warning", "scene", sid,
                     f"zone '{_zid2}' group 须为非空字符串标签（当前 {_gvz!r}）",
                 ))
+        # 一旦场景声明了 entityGroups，未声明成员引用给 warning；旧场景完全没该键不制造迁移噪声。
+        if isinstance(_groups_raw, list):
+            for _coll, _kind in (("npcs", "npc"), ("hotspots", "hotspot"), ("zones", "zone")):
+                for _member in sc.get(_coll, []) or []:
+                    if not isinstance(_member, dict):
+                        continue
+                    _mg = str(_member.get("group") or "").strip()
+                    if _mg and _mg not in _declared_groups:
+                        _mid = str(_member.get("id") or "?")
+                        issues.append(Issue(
+                            "warning", "scene", sid,
+                            f"{_kind} {_mid!r} 引用了未在 entityGroups 声明的分组 {_mg!r}"
+                            "（运行时按无条件兼容组处理）",
+                        ))
         for hs in sc.get("hotspots", []):
             hid = str(hs.get("id", "")) or "?"
             di = hs.get("displayImage")
@@ -993,6 +1053,7 @@ def validate(model: ProjectModel) -> list[Issue]:
     _validate_signal_cues(model, issues)
     _validate_water_minigames(model, issues)
     _validate_paper_craft(model, issues)
+    _validate_object_examine(model, issues)
     _validate_narrative(model, issues)
     _validate_narrative_packages(model, issues)
     _validate_planes(model, issues)
@@ -1202,6 +1263,32 @@ def _validate_narrative(model: ProjectModel, issues: list[Issue]) -> None:
         return
     registered = _narrative_registered_signal_ids(model)
     graphs = _narrative_graph_index(model)
+
+    # sceneGroup 是限定引用（sceneId:groupId）。运行时按 ownerId 绑定实体分组；
+    # 目标缺失时状态机黑盒仍会加载但永远没有合法宿主，必须在保存前显式报错。
+    known_scene_groups = {value for value, _label in model.all_scene_group_ids()}
+
+    def _scan_scene_group_owners(obj: Any, path: str) -> None:
+        if isinstance(obj, dict):
+            if str(obj.get("ownerType") or "").strip() == "sceneGroup":
+                owner_id = str(obj.get("ownerId") or "").strip()
+                if not owner_id:
+                    issues.append(Issue(
+                        "error", "narrative", path,
+                        "ownerType=sceneGroup 时 ownerId 必须为 sceneId:groupId",
+                    ))
+                elif ":" not in owner_id or owner_id not in known_scene_groups:
+                    issues.append(Issue(
+                        "error", "narrative", path,
+                        f"sceneGroup ownerId {owner_id!r} 不存在（须引用现有 sceneId:groupId）",
+                    ))
+            for key, value in obj.items():
+                _scan_scene_group_owners(value, f"{path}.{key}")
+        elif isinstance(obj, list):
+            for index, value in enumerate(obj):
+                _scan_scene_group_owners(value, f"{path}[{index}]")
+
+    _scan_scene_group_owners(data.get("compositions") or [], "compositions")
 
     # 0. 叙事图状态动作树里的 updateQuest.id 必须存在于 quests.json（承接审查新增）：
     # 运行时对未知任务 id 无声跳过，画布上「盖章推进任务」实际不生效。
@@ -1877,6 +1964,222 @@ def _validate_paper_craft(model: ProjectModel, issues: list[Issue]) -> None:
                     _walk_action_defs(model, issues, acts, "paper_craft", ctx, None)
 
 
+def _object_examine_item_exists(model: ProjectModel, item_id: str) -> bool:
+    iid = str(item_id or "").strip()
+    if not iid:
+        return False
+    for it in getattr(model, "items", None) or []:
+        if isinstance(it, dict) and str(it.get("id") or "").strip() == iid:
+            return True
+    return False
+
+
+def _validate_object_examine(model: ProjectModel, issues: list[Issue]) -> None:
+    """object_examine：静帧呈现 + 热区动作链校验。"""
+    bag = getattr(model, "object_examine_instances", None)
+    if not isinstance(bag, dict):
+        return
+    for iid, doc in bag.items():
+        if not isinstance(doc, dict):
+            continue
+        ctx = str(iid)
+        pres = doc.get("presentation")
+        if not isinstance(pres, dict) or str(pres.get("kind") or "").strip() != "still":
+            issues.append(Issue(
+                "error", "object_examine", ctx,
+                "presentation.kind 须为 still（一期）",
+            ))
+        elif not str(pres.get("image") or "").strip():
+            issues.append(Issue(
+                "error", "object_examine", ctx,
+                "presentation.image 不能为空",
+            ))
+        else:
+            bp = pres.get("backgroundPreset")
+            if bp is not None and str(bp).strip() not in {
+                "mud", "straw", "wood", "stone", "softGlow", "",
+            }:
+                issues.append(Issue(
+                    "error", "object_examine", ctx,
+                    f"presentation.backgroundPreset 非法：{bp!r}（允许 mud/straw/wood/stone/softGlow）",
+                ))
+            bb = pres.get("backgroundBrightness")
+            if bb is not None and not isinstance(bb, (int, float)):
+                issues.append(Issue(
+                    "error", "object_examine", ctx,
+                    f"presentation.backgroundBrightness 须为数值，当前 {bb!r}",
+                ))
+            elif isinstance(bb, (int, float)) and not (0.2 <= float(bb) <= 2.5):
+                issues.append(Issue(
+                    "warning", "object_examine", ctx,
+                    f"presentation.backgroundBrightness={bb} 建议落在 0.2～2.5",
+                ))
+            bs = pres.get("backgroundScale")
+            if bs is not None and not isinstance(bs, (int, float)):
+                issues.append(Issue(
+                    "error", "object_examine", ctx,
+                    f"presentation.backgroundScale 须为数值，当前 {bs!r}",
+                ))
+            elif isinstance(bs, (int, float)) and not (0.5 <= float(bs) <= 2.5):
+                issues.append(Issue(
+                    "warning", "object_examine", ctx,
+                    f"presentation.backgroundScale={bs} 建议落在 0.5～2.5",
+                ))
+            cai = pres.get("contactAoIntensity")
+            if cai is not None and not isinstance(cai, (int, float)):
+                issues.append(Issue(
+                    "error", "object_examine", ctx,
+                    f"presentation.contactAoIntensity 须为数值，当前 {cai!r}",
+                ))
+            elif isinstance(cai, (int, float)) and not (0 <= float(cai) <= 3):
+                issues.append(Issue(
+                    "warning", "object_examine", ctx,
+                    f"presentation.contactAoIntensity={cai} 建议落在 0～3",
+                ))
+            cas = pres.get("contactAoScale")
+            if cas is not None and not isinstance(cas, (int, float)):
+                issues.append(Issue(
+                    "error", "object_examine", ctx,
+                    f"presentation.contactAoScale 须为数值，当前 {cas!r}",
+                ))
+            elif isinstance(cas, (int, float)) and not (0.3 <= float(cas) <= 2.5):
+                issues.append(Issue(
+                    "warning", "object_examine", ctx,
+                    f"presentation.contactAoScale={cas} 建议落在 0.3～2.5",
+                ))
+        hotspots = doc.get("hotspots")
+        if not isinstance(hotspots, list):
+            issues.append(Issue(
+                "error", "object_examine", ctx,
+                "hotspots 须为数组",
+            ))
+            continue
+        seen: set[str] = set()
+        for hs in hotspots:
+            if not isinstance(hs, dict):
+                continue
+            hid = str(hs.get("id") or "").strip()
+            if not hid:
+                issues.append(Issue(
+                    "error", "object_examine", ctx,
+                    "存在缺少 id 的热区",
+                ))
+                continue
+            if hid in seen:
+                issues.append(Issue(
+                    "error", "object_examine", ctx,
+                    f"热区 id 重复：{hid!r}",
+                ))
+            seen.add(hid)
+            for key in ("x", "y", "width", "height"):
+                if not isinstance(hs.get(key), (int, float)):
+                    issues.append(Issue(
+                        "warning", "object_examine", f"{ctx}:{hid}",
+                        f"热区缺少数值字段 {key}",
+                    ))
+            decoy = hs.get("decoy")
+            if decoy is not None and not isinstance(decoy, bool):
+                issues.append(Issue(
+                    "error", "object_examine", f"{ctx}:{hid}",
+                    f"hotspot.decoy 须为布尔，当前 {decoy!r}",
+                ))
+            for shade_k in ("shadeUiX", "shadeUiY"):
+                sv = hs.get(shade_k)
+                if sv is None:
+                    continue
+                if not isinstance(sv, (int, float)) or isinstance(sv, bool):
+                    issues.append(Issue(
+                        "error", "object_examine", f"{ctx}:{hid}",
+                        f"hotspot.{shade_k} 须为数值，当前 {sv!r}",
+                    ))
+                elif not (0.0 <= float(sv) <= 1.0):
+                    issues.append(Issue(
+                        "warning", "object_examine", f"{ctx}:{hid}",
+                        f"hotspot.{shade_k}={sv} 建议落在 0～1（屏幕归一化）",
+                    ))
+            acts = hs.get("actions")
+            if isinstance(acts, list):
+                _walk_action_defs(model, issues, acts, "object_examine", f"{ctx}:{hid}", None)
+            on_found = hs.get("onFound")
+            if isinstance(on_found, list):
+                _walk_action_defs(
+                    model, issues, on_found, "object_examine", f"{ctx}:{hid}:onFound", None,
+                )
+            for use in hs.get("itemUses") or []:
+                if not isinstance(use, dict):
+                    continue
+                item_id = str(use.get("itemId") or "").strip()
+                if not item_id:
+                    issues.append(Issue(
+                        "error", "object_examine", f"{ctx}:{hid}",
+                        "itemUses 条目缺少 itemId",
+                    ))
+                elif not _object_examine_item_exists(model, item_id):
+                    issues.append(Issue(
+                        "warning", "object_examine", f"{ctx}:{hid}",
+                        f"itemUses.itemId 未在物品表找到：{item_id!r}",
+                    ))
+                use_acts = use.get("actions")
+                if isinstance(use_acts, list):
+                    _walk_action_defs(
+                        model, issues, use_acts, "object_examine",
+                        f"{ctx}:{hid}:item:{item_id or '?'}", None,
+                    )
+            for op in hs.get("operations") or []:
+                if not isinstance(op, dict):
+                    continue
+                oid = str(op.get("id") or "").strip() or "?"
+                req = op.get("requiresItem")
+                if req is not None:
+                    req_s = str(req).strip()
+                    if not req_s:
+                        issues.append(Issue(
+                            "error", "object_examine", f"{ctx}:{hid}:{oid}",
+                            "operations.requiresItem 不能为空字符串",
+                        ))
+                    elif not _object_examine_item_exists(model, req_s):
+                        issues.append(Issue(
+                            "warning", "object_examine", f"{ctx}:{hid}:{oid}",
+                            f"requiresItem 未在物品表找到：{req_s!r}",
+                        ))
+                op_acts = op.get("actions")
+                if isinstance(op_acts, list):
+                    _walk_action_defs(
+                        model, issues, op_acts, "object_examine", f"{ctx}:{hid}:{oid}", None,
+                    )
+        on_all = doc.get("onAllFound")
+        if isinstance(on_all, list):
+            _walk_action_defs(model, issues, on_all, "object_examine", f"{ctx}:onAllFound", None)
+        smell = doc.get("smell")
+        if smell is not None:
+            if not isinstance(smell, dict) or not str(smell.get("scent") or "").strip():
+                issues.append(Issue(
+                    "error", "object_examine", ctx,
+                    "smell 须为含 scent 的对象",
+                ))
+            else:
+                scent = str(smell.get("scent")).strip()
+                profiles = getattr(model, "smell_profiles", None) or {}
+                bag = profiles.get("profiles") if isinstance(profiles, dict) else None
+                if isinstance(bag, dict) and scent not in bag:
+                    issues.append(Issue(
+                        "warning", "object_examine", ctx,
+                        f"smell.scent 未在 smell_profiles 登记：{scent!r}",
+                    ))
+        audio = doc.get("audio")
+        if audio is not None and not isinstance(audio, dict):
+            issues.append(Issue(
+                "error", "object_examine", ctx,
+                "audio 须为对象",
+            ))
+        amb = doc.get("ambience")
+        if amb is not None and not isinstance(amb, dict):
+            issues.append(Issue(
+                "error", "object_examine", ctx,
+                "ambience 须为对象",
+            ))
+
+
 def _validate_overlay_images(model: ProjectModel, issues: list[Issue]) -> None:
     ov = getattr(model, "overlay_images", None)
     if not isinstance(ov, dict):
@@ -2408,6 +2711,22 @@ def _append_action_param_ref_issues(
                 "warning", data_type, item_id,
                 f"startDialogueGraph npcId {nid!r} 在当前上下文下无法解析为实体",
             ))
+        owner_type = str(p.get("ownerType") or "").strip()
+        owner_id = str(p.get("ownerId") or "").strip()
+        if owner_type and not owner_id:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                "startDialogueGraph 显式 ownerType 时必须同时填写 ownerId；"
+                "只有 ownerType=自动/空时才会继承 NPC 或场景上下文",
+            ))
+        elif owner_type == "sceneGroup":
+            known_groups = {gid for gid, _label in model.all_scene_group_ids()}
+            if owner_id not in known_groups:
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    f"startDialogueGraph sceneGroup ownerId {owner_id!r} 不存在"
+                    "（须选择 sceneId:groupId）",
+                ))
 
     if t in ("switchScene", "changeScene"):
         ts = str(p.get("targetScene") or "").strip()
@@ -2605,6 +2924,21 @@ def _append_action_param_ref_issues(
                     f"{t} 的 enabled 字符串须为 true/false/1/0",
                 ))
 
+    if t in ("setGroupEnabled", "moveGroupBy"):
+        gid_g = str(p.get("group") or "").strip()
+        if not gid_g:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"{t} 缺少非空 group",
+            ))
+        elif scene_id:
+            known_groups = {gid for gid, _label in model.scene_group_ids_for_scene(scene_id)}
+            if known_groups and gid_g not in known_groups:
+                issues.append(Issue(
+                    "warning", data_type, item_id,
+                    f"{t} group {gid_g!r} 不在场景 {scene_id!r} 的 entityGroups/兼容标签中",
+                ))
+
     if t == "setEntityField":
         sid = str(p.get("sceneId") or "").strip()
         kind = str(p.get("entityKind") or "").strip()
@@ -2751,6 +3085,15 @@ def _append_action_param_ref_issues(
             issues.append(Issue(
                 "warning", data_type, item_id,
                 f"startPaperCraftMinigame id {pid!r} 不在 paper_craft/index.json 登记中",
+            ))
+
+    if t == "startObjectExamine":
+        eid = str(p.get("id") or "").strip()
+        oe_ids = {x[0] for x in model.all_object_examine_ids()}
+        if eid and oe_ids and eid not in oe_ids:
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                f"startObjectExamine id {eid!r} 不在 object_examine/index.json 登记中",
             ))
 
     if t in ("showEmote", "showEmoteAndWait", "showSpeechBubble", "showSpeechBubbleAndWait"):
@@ -3615,6 +3958,11 @@ def _validate_flags(model: ProjectModel, issues: list[Issue]) -> None:
             ))
 
     for sid, sc in model.scenes.items():
+        for group in sc.get("entityGroups", []) or []:
+            if not isinstance(group, dict):
+                continue
+            gid = str(group.get("id", ""))
+            _walk_conditions(model, issues, group.get("conditions"), "sceneGroup", gid, sid)
         for hs in sc.get("hotspots", []) or []:
             hid = str(hs.get("id", ""))
             _walk_conditions(model, issues, hs.get("conditions"), "scene", hid, sid)

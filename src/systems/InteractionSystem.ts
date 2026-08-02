@@ -14,6 +14,19 @@ interface InteractableTarget {
   npc?: Npc;
 }
 
+/** 成员条件与整体分组条件的唯一合成口径（供运行时与语义级测试共用）。 */
+export function composeSceneEntityConditionState(
+  memberConditionOk: boolean,
+  memberConditionHidesEntity: boolean,
+  groupConditionOk: boolean,
+): { visibleByConditions: boolean; interactableByConditions: boolean } {
+  return {
+    visibleByConditions:
+      groupConditionOk && (memberConditionHidesEntity ? memberConditionOk : true),
+    interactableByConditions: groupConditionOk && memberConditionOk,
+  };
+}
+
 /**
  * 位面交互门闸（由 PlaneReconciler 注入 getter，见 setPlaneInteractionPolicy）：
  * false 的通道对应目标不出提示、不可触发（选目标循环直接跳过）。
@@ -43,6 +56,8 @@ export class InteractionSystem implements IGameSystem {
   /** 与 SceneManager.refreshCutsceneBoundEntityVisibility 一致的基础显隐，不含触发条件图层 */
   private hotspotBaseEnabled: ((h: Hotspot) => boolean) | null = null;
   private npcBaseVisible: ((n: Npc) => boolean) | null = null;
+  /** 当前场景分组 conditions 只读口；旧 group 标签没有定义时返回 undefined=无额外条件。 */
+  private groupConditions: ((groupId: string) => ConditionExpr[] | undefined) | null = null;
   /** 位面交互门闸 getter；null = 不限制（现状行为） */
   private planePolicy: (() => PlaneInteractionPolicy) | null = null;
 
@@ -71,6 +86,18 @@ export class InteractionSystem implements IGameSystem {
   ): void {
     this.hotspotBaseEnabled = hotspotBase;
     this.npcBaseVisible = npcBase;
+  }
+
+  setEntityGroupConditionReader(
+    reader: ((groupId: string) => ConditionExpr[] | undefined) | null,
+  ): void {
+    this.groupConditions = reader;
+  }
+
+  private evalEntityGroupConditions(groupId: string | undefined, ctx: ConditionEvalContext | null): boolean {
+    const gid = groupId?.trim() ?? '';
+    if (!gid) return true;
+    return this.evalWith(this.groupConditions?.(gid), ctx);
   }
 
   private evalConditionsList(conds: ConditionExpr[] | undefined): boolean {
@@ -130,22 +157,27 @@ export class InteractionSystem implements IGameSystem {
   private applyHotspotVisibilityAndBase(hotspot: Hotspot, ctx: ConditionEvalContext | null): boolean {
     const conds = hotspot.def.conditions;
     const condOk = this.evalWith(conds, ctx);
+    const groupOk = this.evalEntityGroupConditions(hotspot.def.group, ctx);
     const base = this.hotspotBaseEnabled?.(hotspot) ?? true;
     const hideWhenFail = hotspot.def.conditionHidesEntity === true && !!conds?.length;
     hotspot.setDerivedBaseEnabled(base);
-    hotspot.setConditionEnabled(hideWhenFail ? condOk : true);
-    return condOk;
+    const state = composeSceneEntityConditionState(condOk, hideWhenFail, groupOk);
+    // 分组是整体显影实体：组条件失败始终隐藏；成员条件仍保留 conditionHidesEntity 契约。
+    hotspot.setConditionEnabled(state.visibleByConditions);
+    return state.interactableByConditions;
   }
 
   /** 返回该 NPC 的条件是否满足（供同帧的交互判定复用，避免二次求值）。写通道语义同上。 */
   private applyNpcVisibilityAndBase(npc: Npc, ctx: ConditionEvalContext | null): boolean {
     const conds = npc.def.conditions;
     const condOk = this.evalWith(conds, ctx);
+    const groupOk = this.evalEntityGroupConditions(npc.def.group, ctx);
     const base = this.npcBaseVisible?.(npc) ?? true;
     const hideWhenFail = npc.def.conditionHidesEntity === true && !!conds?.length;
     npc.setDerivedBaseVisible(base);
-    npc.setConditionVisible(hideWhenFail ? condOk : true);
-    return condOk;
+    const state = composeSceneEntityConditionState(condOk, hideWhenFail, groupOk);
+    npc.setConditionVisible(state.visibleByConditions);
+    return state.interactableByConditions;
   }
 
   update(_dt: number): void {

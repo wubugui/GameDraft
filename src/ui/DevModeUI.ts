@@ -14,8 +14,8 @@ export interface DevModeCallbacks {
   loadScene(id: string): void;
   reload(): void;
   /** Minigames 列表 */
-  getMinigameEntries(): Array<{ id: string; label: string; kind: 'water' | 'sugarWheel' | 'paperCraft' }>;
-  launchMinigame(entry: { id: string; label: string; kind: 'water' | 'sugarWheel' | 'paperCraft' }): void;
+  getMinigameEntries(): Array<{ id: string; label: string; kind: 'water' | 'sugarWheel' | 'paperCraft' | 'objectExamine' }>;
+  launchMinigame(entry: { id: string; label: string; kind: 'water' | 'sugarWheel' | 'paperCraft' | 'objectExamine' }): void;
   /** 叙事编排跳转：列出所有可直接进入的叙事，点击后自动满足前置状态并进入对应场景 */
   getNarrativeWarps(): Array<{ id: string; label: string }>;
   enterNarrativeWarp(id: string): void;
@@ -254,7 +254,11 @@ export class DevModeUI {
     }
 
     for (const entry of entries) {
-      const prefix = entry.kind === 'sugarWheel' ? '[转盘] ' : '[水域] ';
+      const prefix =
+        entry.kind === 'sugarWheel' ? '[转盘] '
+        : entry.kind === 'paperCraft' ? '[扎纸] '
+        : entry.kind === 'objectExamine' ? '[检视] '
+        : '[水域] ';
       const row = this.makeListItem(`${prefix}${entry.label}`, x + pad, y + cy, w - pad * 2, ITEM_HEIGHT, () => {
         this.callbacks.launchMinigame(entry);
       });

@@ -11,6 +11,7 @@ from tools.dialogue_graph_editor.graph_document import graphs_dir
 
 class DialogueGraphEditorTab(QWidget):
     dirty_state_changed = Signal(bool)
+    dialogue_catalog_changed = Signal()
     """内嵌图对话面板脏态变化（True=有未保存修改）。
 
     主窗口可接到脏芯片/页签标题上——图对话不走 ProjectModel 脏桶，
@@ -31,6 +32,7 @@ class DialogueGraphEditorTab(QWidget):
             model.project_path, self, project_model=model
         )
         self._panel.dirty_changed.connect(self.dirty_state_changed)
+        self._panel.catalog_changed.connect(self.dialogue_catalog_changed)
         layout.addWidget(self._panel)
 
     def is_dirty_now(self) -> bool:
@@ -60,10 +62,18 @@ class DialogueGraphEditorTab(QWidget):
         gid = graph_id.strip()
         if gid.endswith(".json"):
             name = gid
+            graph_id = gid[:-5]
         else:
             name = f"{gid}.json"
+            graph_id = gid
         path = graphs_dir(self._model.project_path) / name
-        if not path.is_file():
+        # rename/create may be staged in ProjectModel until Save All; the embedded
+        # panel knows how to load that in-memory document even before the target
+        # path exists.  Treat the live catalog, not disk alone, as source of truth.
+        if (
+            not path.is_file()
+            and graph_id not in set(self._model.all_dialogue_graph_ids())
+        ):
             QMessageBox.information(self, "图对话", f"找不到图文件：{name}")
             return
         current_path = self._panel.current_path()
@@ -88,6 +98,34 @@ class DialogueGraphEditorTab(QWidget):
             elif r == QMessageBox.StandardButton.Cancel:
                 return
         self._panel.load_path(path)
+
+    def reload_refs_from_model(self) -> None:
+        """Refresh the live graph tree without disturbing the open graph.
+
+        Task orchestration can add a pending native graph to the shared
+        ProjectModel before it exists on disk.  The embedded editor's tree is
+        therefore a live catalog projection, not a construction-time snapshot.
+        ``_refresh_file_list`` preserves the current selection and unsaved
+        document while adding/removing staged catalog rows.
+        """
+        if self._panel is not None:
+            self._panel._refresh_file_list()
+
+    def reload_from_model(self) -> None:
+        """Reload a staged replacement of the open graph after a task apply."""
+        if self._panel is None:
+            return
+        current = self._panel.current_path()
+        self._panel._refresh_file_list()
+        if current is None:
+            return
+        gid = current.stem
+        staged = any(
+            gid in (getattr(self._model, attr, {}) or {})
+            for attr in ("pending_dialogue_stubs", "pending_dialogue_graph_edits")
+        )
+        if staged:
+            self._panel.load_path(current)
 
     def flush_to_model(self, *, for_save_all: bool = False) -> bool:
         self._flush_error = ""

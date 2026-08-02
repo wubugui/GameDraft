@@ -10,11 +10,12 @@
 """
 from __future__ import annotations
 
-from PySide6.QtWidgets import QComboBox, QWidget
+from PySide6.QtWidgets import QComboBox, QDialog, QWidget
 from PySide6.QtCore import Signal, QEvent, QTimer
 
 _MISSING_SUFFIX = "  [缺失]"
 _PLACEHOLDER_TEXT = "（未选择）"
+_SEARCH_PICKER_MIN_ITEMS = 16
 
 
 class IdRefSelector(QComboBox):
@@ -224,6 +225,48 @@ class IdRefSelector(QComboBox):
     def _on_text_edited(self, _text: str) -> None:
         self.value_changed.emit(self.current_id())
 
+    def _uses_search_picker(self) -> bool:
+        """Long, closed vocabularies use an independent searchable window."""
+        rows = getattr(self, "_items_normalized_cache", ())
+        return not self.isEditable() and len(rows) >= _SEARCH_PICKER_MIN_ITEMS
+
+    def showPopup(self) -> None:  # noqa: N802 — Qt API
+        if self._uses_search_picker():
+            self._open_search_picker()
+            return
+        super().showPopup()
+
+    def _open_search_picker(self) -> None:
+        """Pick without mutating the committed value until explicit acceptance."""
+        from .reference_picker import ReferencePickerDialog
+
+        current = self.current_id()
+        rows: list[tuple[str, str, str]] = [
+            (rid, name, "")
+            for rid, name in getattr(self, "_items_normalized_cache", ())
+        ]
+        if current and all(rid != current for rid, _name, _detail in rows):
+            rows.append((
+                current,
+                f"{current} [缺失]",
+                "引用目标当前不在候选目录中；原值已保留，不会被自动改写。",
+            ))
+        dialog = ReferencePickerDialog(
+            rows,
+            current=current,
+            title="选择引用",
+            parent=self,
+            geometry_key="id_ref_selector",
+            allow_empty=self._allow_empty,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        selected = dialog.selected_value()
+        if selected == current:
+            return
+        self.set_current(selected)
+        self.value_changed.emit(selected)
+
     def eventFilter(self, obj, event):  # noqa: ANN001
         if (
             self._click_opens_popup
@@ -233,5 +276,8 @@ class IdRefSelector(QComboBox):
                 not self.isEditable() and obj is self
             )
             if ok:
+                if self._uses_search_picker():
+                    QTimer.singleShot(0, self, self._open_search_picker)
+                    return True
                 QTimer.singleShot(0, self, self.showPopup)
         return super().eventFilter(obj, event)

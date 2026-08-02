@@ -523,8 +523,8 @@
             "label": "开局·茶馆门外的人",
             "meta": {
               "editor": {
-                "x": 30,
-                "y": 17
+                "x": -85,
+                "y": 68
               }
             }
           },
@@ -533,8 +533,8 @@
             "label": "听书完成",
             "meta": {
               "editor": {
-                "x": 284,
-                "y": 24
+                "x": 185,
+                "y": 85
               }
             }
           },
@@ -543,8 +543,8 @@
             "label": "背崖墓尸完成",
             "meta": {
               "editor": {
-                "x": 544,
-                "y": 24
+                "x": 536,
+                "y": 198
               }
             }
           },
@@ -553,8 +553,8 @@
             "label": "梦·待死之礼完成（①.5）",
             "meta": {
               "editor": {
-                "x": 647,
-                "y": 169
+                "x": 757,
+                "y": 185
               }
             }
           },
@@ -642,8 +642,8 @@
             "id": "state_1",
             "meta": {
               "editor": {
-                "x": -185,
-                "y": 23
+                "x": -458,
+                "y": 4
               }
             },
             "label": "未开始"
@@ -1231,8 +1231,8 @@
           "label": "读人·婆子",
           "ownerType": "npc",
           "ownerId": "npc_院中婆子",
-          "x": 24,
-          "y": 320,
+          "x": 211,
+          "y": 562,
           "graph": {
             "id": "wrap_读人_婆子",
             "ownerType": "npc",
@@ -4239,7 +4239,7 @@
           "kind": "dialogueBlackbox",
           "label": "寻狗_婆子",
           "refId": "寻狗_婆子",
-          "x": 24,
+          "x": 25,
           "y": -450,
           "meta": {
             "emits": [
@@ -4273,8 +4273,8 @@
           "kind": "dialogueBlackbox",
           "label": "寻狗_听书开场",
           "refId": "寻狗_听书开场",
-          "x": 120,
-          "y": -320,
+          "x": -157,
+          "y": -221,
           "meta": {
             "emits": [
               "tingshu_kicked"
@@ -4857,6 +4857,87 @@
             "emits": [],
             "reads": [],
             "commands": []
+          }
+        },
+        {
+          "id": "zone_1",
+          "kind": "zoneBlackbox",
+          "label": "Zone Blackbox",
+          "refId": "test_room_b:new_zone_0",
+          "x": -281,
+          "y": 196,
+          "meta": {
+            "emits": [],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "wrapper_1",
+          "kind": "wrapperGraph",
+          "label": "Wrapper Graph",
+          "refId": "",
+          "x": -350,
+          "y": 318,
+          "meta": {
+            "emits": [],
+            "reads": [],
+            "commands": []
+          },
+          "ownerType": "npc",
+          "ownerId": "崖墓任务发布者",
+          "graph": {
+            "id": "wrapper_graph_1",
+            "label": "Wrapper Graph",
+            "ownerType": "npc",
+            "initialState": "initial",
+            "states": {
+              "initial": {
+                "id": "initial",
+                "meta": {
+                  "editor": {
+                    "x": -5,
+                    "y": 175
+                  }
+                },
+                "label": "未开始"
+              },
+              "state_1": {
+                "id": "state_1",
+                "meta": {
+                  "editor": {
+                    "x": 198,
+                    "y": 114
+                  }
+                },
+                "label": "准备发布任务"
+              },
+              "state_2": {
+                "id": "state_2",
+                "meta": {
+                  "editor": {
+                    "x": 347,
+                    "y": 254
+                  }
+                },
+                "label": "离开"
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_1",
+                "from": "initial",
+                "to": "state_1",
+                "signal": "主线_第一阶段闲逛完成"
+              },
+              {
+                "id": "t_2",
+                "from": "state_1",
+                "to": "state_2",
+                "signal": "崖墓任务_发布完成"
+              }
+            ],
+            "ownerId": "崖墓任务发布者"
           }
         }
       ]

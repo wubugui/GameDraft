@@ -10,11 +10,13 @@ import type {
   NarrativeCompositionDef,
   NarrativeGraphsFileDef,
   NarrativeTemplateDef,
+  ReferenceCatalogEntryDef,
   StampResponseDef,
   StampSummaryDef,
   TemplateParamDef,
   TemplateParamType,
 } from './types';
+import { ReferencePickerField } from './components/ReferencePickerModal';
 
 /** 危险操作两步确认按钮：第一次点变成红色「确认xx?」，再点才执行；失焦/超时自动复原。 */
 function ConfirmButton(props: { label: string; confirmLabel: string; className?: string; disabled?: boolean; title?: string; onConfirm: () => void }) {
@@ -61,10 +63,18 @@ const PARAM_TYPE_LABELS: Record<TemplateParamType, string> = {
 
 const PARAM_TYPES = Object.keys(PARAM_TYPE_LABELS) as TemplateParamType[];
 
-// 强制走严格 <select>（引用他者必须存在）；dialogueRef 例外——允许输入新 id 以生成空白桩。
-const STRICT_SELECT_TYPES = new Set<TemplateParamType>([
-  'planeRef', 'minigameRef', 'sceneRef', 'npcRef', 'hotspotRef', 'zoneRef', 'questRef', 'cutsceneRef', 'scenarioRef',
-]);
+const REFERENCE_PARAM_KINDS: Partial<Record<TemplateParamType, string>> = {
+  planeRef: 'plane',
+  dialogueRef: 'dialogue',
+  minigameRef: 'minigame',
+  sceneRef: 'scene',
+  npcRef: 'npc',
+  hotspotRef: 'hotspot',
+  zoneRef: 'zone',
+  questRef: 'quest',
+  cutsceneRef: 'cutscene',
+  scenarioRef: 'scenario',
+};
 
 function catalogOptionsFor(type: TemplateParamType, catalog: AuthoringCatalogDef): string[] {
   switch (type) {
@@ -82,6 +92,47 @@ function catalogOptionsFor(type: TemplateParamType, catalog: AuthoringCatalogDef
   }
 }
 
+/** Popup rows preserve every exact legacy catalog value (qualified and bare
+ * entity ids can both be meaningful template samples) while borrowing richer
+ * labels from the host catalog when available. */
+export function templateReferenceEntries(
+  type: TemplateParamType,
+  catalog: AuthoringCatalogDef,
+): ReferenceCatalogEntryDef[] {
+  const kind = REFERENCE_PARAM_KINDS[type];
+  if (!kind) return [];
+  const rich = (catalog.referenceEntries ?? []).filter((entry) => entry.kind === kind);
+  const seen = new Set<string>();
+  const rows: ReferenceCatalogEntryDef[] = [];
+  for (const raw of catalogOptionsFor(type, catalog)) {
+    const value = String(raw ?? '').trim();
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    const match = rich.find((entry) => (
+      entry.id === value
+      || entry.qualifiedId === value
+      || (entry.aliases ?? []).includes(value)
+    ));
+    rows.push({
+      kind,
+      id: value,
+      qualifiedId: value,
+      label: match?.label || value,
+      aliases: match?.aliases,
+    });
+  }
+  return rows;
+}
+
+export function dialogueStubIdError(value: string): string {
+  const id = value.trim();
+  if (!id) return '请输入新对话图 id';
+  if (id.startsWith('.') || id.includes('..') || /[\\/]/.test(id)) {
+    return 'id 不能含 /、\\、..，也不能以 . 开头';
+  }
+  return '';
+}
+
 function defaultValueFor(param: TemplateParamDef): unknown {
   if (param.default !== undefined && param.default !== null && param.default !== '') return param.default;
   if (param.type === 'boolean') return false;
@@ -90,15 +141,70 @@ function defaultValueFor(param: TemplateParamDef): unknown {
 }
 
 /** 一个盖章输入控件：按参数类型渲染带类型的选择器 / 输入框（禁裸手打引用）。 */
-function ParamField(props: {
+export function ParamField(props: {
   param: TemplateParamDef;
   value: unknown;
   catalog: AuthoringCatalogDef;
   onChange: (v: unknown) => void;
 }) {
   const { param, value, catalog, onChange } = props;
-  const listId = `tpl-opts-${param.name}`;
   const label = param.label || param.name;
+  const [creatingDialogueStub, setCreatingDialogueStub] = useState(false);
+  const [newDialogueId, setNewDialogueId] = useState('');
+  const dialogueIdError = dialogueStubIdError(newDialogueId);
+
+  if (REFERENCE_PARAM_KINDS[param.type]) {
+    const entries = templateReferenceEntries(param.type, catalog);
+    return (
+      <div className="template-reference-param">
+        <ReferencePickerField
+          label={`${label}${param.required ? ' *' : ''} · ${PARAM_TYPE_LABELS[param.type]}`}
+          value={String(value ?? '')}
+          entries={entries}
+          onChange={onChange}
+        />
+        {param.type === 'dialogueRef' ? (
+          <div className="template-dialogue-stub-flow">
+            {!creatingDialogueStub ? (
+              <button
+                type="button"
+                className="link-btn"
+                onClick={() => {
+                  setNewDialogueId('');
+                  setCreatingDialogueStub(true);
+                }}
+              >
+                + 新建对话桩引用…
+              </button>
+            ) : (
+              <div className="template-dialogue-stub-create" role="group" aria-label="新建对话桩引用">
+                <input
+                  autoFocus
+                  value={newDialogueId}
+                  onChange={(event) => setNewDialogueId(event.target.value)}
+                  placeholder="新对话图 id（定义新资源）"
+                />
+                <button
+                  type="button"
+                  disabled={Boolean(dialogueIdError)}
+                  onClick={() => {
+                    onChange(newDialogueId.trim());
+                    setCreatingDialogueStub(false);
+                  }}
+                >
+                  使用此新 ID
+                </button>
+                <button type="button" className="secondary" onClick={() => setCreatingDialogueStub(false)}>取消</button>
+                {dialogueIdError && newDialogueId ? <span className="template-preview-error">{dialogueIdError}</span> : null}
+              </div>
+            )}
+            <span className="muted">这里只定义新资源 id；盖章时勾选“生成空白桩”才会一并暂存。</span>
+          </div>
+        ) : null}
+        {param.note && <div className="muted template-param-note">{param.note}</div>}
+      </div>
+    );
+  }
 
   let control: ReactNode;
   if (param.type === 'boolean') {
@@ -112,27 +218,6 @@ function ParamField(props: {
         value={value === '' || value === undefined ? '' : Number(value)}
         onChange={(e) => onChange(e.target.value === '' ? '' : Number(e.target.value))}
       />
-    );
-  } else if (STRICT_SELECT_TYPES.has(param.type)) {
-    const opts = catalogOptionsFor(param.type, catalog);
-    control = (
-      <select value={String(value ?? '')} onChange={(e) => onChange(e.target.value)}>
-        <option value="">（未选择）</option>
-        {opts.map((o) => (
-          <option key={o} value={o}>{o}</option>
-        ))}
-      </select>
-    );
-  } else if (param.type === 'dialogueRef') {
-    // combo：可挑现有对话图，也可键入新 id（缺失时可生成空白桩）。
-    const opts = catalogOptionsFor(param.type, catalog);
-    control = (
-      <>
-        <input list={listId} value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} placeholder="选现有 / 键入新对话图 id" />
-        <datalist id={listId}>
-          {opts.map((o) => <option key={o} value={o} />)}
-        </datalist>
-      </>
     );
   } else {
     control = (
@@ -300,12 +385,13 @@ function StampForm(props: {
 /** 单个模板的元数据 + 参数编辑（增删改），以及「用当前作曲重建骨架」。 */
 function TemplateEditor(props: {
   template: NarrativeTemplateDef;
+  catalog: AuthoringCatalogDef;
   currentComposition?: NarrativeCompositionDef;
   onChange: (next: NarrativeTemplateDef) => void;
   onDelete: () => void;
   onRebuildFromComposition: () => void;
 }) {
-  const { template, currentComposition, onChange, onDelete, onRebuildFromComposition } = props;
+  const { template, catalog, currentComposition, onChange, onDelete, onRebuildFromComposition } = props;
 
   const setParam = (i: number, patch: Partial<TemplateParamDef>) => {
     const params = template.params.map((p, idx) => (idx === i ? { ...p, ...patch } : p));
@@ -359,6 +445,13 @@ function TemplateEditor(props: {
                 value={param.default === undefined || param.default === '' ? '' : Number(param.default)}
                 placeholder="默认"
                 onChange={(e) => setParam(i, { default: e.target.value === '' ? undefined : Number(e.target.value) })}
+              />
+            ) : REFERENCE_PARAM_KINDS[param.type] ? (
+              <ParamField
+                param={{ ...param, label: '默认引用', required: false, note: undefined }}
+                value={param.default ?? ''}
+                catalog={catalog}
+                onChange={(value) => setParam(i, { default: value === '' ? undefined : value })}
               />
             ) : (
               <input className="template-param-default" value={param.default === undefined ? '' : String(param.default)} placeholder="默认" onChange={(e) => setParam(i, { default: e.target.value })} />
@@ -483,7 +576,16 @@ function CreateFromCompositionForm(props: {
             <select value={param.type} onChange={(e) => setParam(i, { type: e.target.value as TemplateParamType })}>
               {PARAM_TYPES.map((t) => <option key={t} value={t}>{PARAM_TYPE_LABELS[t]}</option>)}
             </select>
-            <input className="template-param-sample" value={param.sample ?? ''} placeholder="样值（作曲里的真值）" onChange={(e) => setParam(i, { sample: e.target.value })} />
+            {REFERENCE_PARAM_KINDS[param.type] ? (
+              <ParamField
+                param={{ ...param, label: '样值（作曲里的真值）', required: false, note: undefined }}
+                value={param.sample ?? ''}
+                catalog={catalog}
+                onChange={(value) => setParam(i, { sample: String(value ?? '') })}
+              />
+            ) : (
+              <input className="template-param-sample" value={param.sample ?? ''} placeholder="样值（作曲里的真值）" onChange={(e) => setParam(i, { sample: e.target.value })} />
+            )}
             <label className="toggle compact-toggle" title="必填"><input type="checkbox" checked={Boolean(param.required)} onChange={(e) => setParam(i, { required: e.target.checked })} />必</label>
             <button type="button" className="icon-btn danger" title="删除" onClick={() => setParams((p) => p.filter((_, idx) => idx !== i))}>✕</button>
           </div>
@@ -491,11 +593,12 @@ function CreateFromCompositionForm(props: {
       </div>
 
       <div className="field">
-        <label>一并参数化的镜像任务（可选）</label>
-        <select value={includeQuestId} onChange={(e) => setIncludeQuestId(e.target.value)}>
-          <option value="">（不带 quest）</option>
-          {(catalog.questIds ?? []).map((q) => <option key={q} value={q}>{q}</option>)}
-        </select>
+        <ReferencePickerField
+          label="一并参数化的镜像任务（可选）"
+          value={includeQuestId}
+          entries={templateReferenceEntries('questRef', catalog)}
+          onChange={setIncludeQuestId}
+        />
       </div>
 
       <div className="template-stamp-actions">
@@ -577,6 +680,7 @@ export function TemplatesPanel(props: {
         </div>
         <TemplateEditor
           template={active}
+          catalog={catalog}
           currentComposition={currentComposition}
           onChange={upsertTemplate}
           onDelete={() => deleteTemplate(active.id)}

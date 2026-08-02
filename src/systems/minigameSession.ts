@@ -31,6 +31,8 @@ export interface MinigameSessionScene {
   abort(): void;
   destroy(): void;
   isActionsPlaybackLocked?(): boolean;
+  /** 返回 true 则 Esc 被场景消费（如关囊屉），不 abort 会话。 */
+  tryConsumeEscape?(): boolean;
 }
 
 /**
@@ -309,6 +311,7 @@ export abstract class MinigameSessionManagerBase<
     if (this.scene?.isActionsPlaybackLocked?.()) return;
     if (e.code === 'Escape') {
       e.preventDefault();
+      if (this.scene?.tryConsumeEscape?.()) return;
       this.scene?.abort();
       return;
     }

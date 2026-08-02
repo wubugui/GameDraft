@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -165,6 +166,29 @@ class TestDetectExternalChanges(_QtBase):
             changed = m.detect_external_changes()
             self.assertIn("public/assets/data/items.json", changed)
 
+    def test_same_size_same_mtime_external_edit_is_detected_by_content(self) -> None:
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            write_minimal_loadable_project(root)
+            m = ProjectModel()
+            m.load_project(root)
+            path = root / "public/assets/data/items.json"
+            before = path.read_bytes()
+            stat = path.stat()
+            marker = b'i_ok'
+            replacement = b'i_xx'
+            self.assertIn(marker, before)
+            external = before.replace(marker, replacement, 1)
+            self.assertEqual(len(external), len(before))
+            path.write_bytes(external)
+            os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+            m.items[0]["name"] = "memory"
+            m.mark_dirty("item")
+            self.assertIn(
+                "public/assets/data/items.json",
+                m.detect_external_changes(),
+            )
+
     def test_unrelated_external_edit_not_reported(self) -> None:
         with TemporaryDirectory() as td:
             root = Path(td) / "p"
@@ -302,6 +326,239 @@ class TestPresaveDirtyGating(_QtBase):
             m.mark_dirty("dialogue_graph_edits")
             m.save_all()  # 不抛
             self.assertTrue((root / "public" / "assets" / "dialogues" / "graphs" / "g_ok.json").is_file())
+
+
+# ---------------------------------------------------------------------------
+# 对话图改名/删除：全项目入站扫描 + ProjectModel 交易暂存
+# ---------------------------------------------------------------------------
+
+class TestDialogueGraphRefactorSafety(_QtBase):
+    @staticmethod
+    def _project(root: Path) -> tuple[ProjectModel, Path]:
+        write_minimal_loadable_project(root)
+        gd = root / "public" / "assets" / "dialogues" / "graphs"
+        gd.mkdir(parents=True, exist_ok=True)
+        _dump(gd / "old.json", {
+            "schemaVersion": 1,
+            "id": "old",
+            "entry": "end",
+            "meta": {"scenarioId": "s1"},
+            "nodes": {"end": {"type": "end"}},
+        })
+        _dump(gd / "chain.json", {
+            "schemaVersion": 1,
+            "id": "chain",
+            "entry": "go",
+            "nodes": {"go": {
+                "type": "runActions",
+                "actions": [{
+                    "type": "startDialogueGraph",
+                    "params": {"graphId": "old", "entry": "end"},
+                }],
+            }},
+        })
+        sp = root / "public" / "assets" / "scenes" / "sc_a.json"
+        scene = json.loads(sp.read_text(encoding="utf-8"))
+        scene.update({
+            "npcs": [{
+                "id": "npc_a", "dialogueGraphId": "old", "dialogueGraphEntry": "end",
+            }],
+            "hotspots": [{
+                "id": "hs_a", "type": "inspect",
+                "data": {"graphId": "old", "entry": "end"},
+            }],
+            "onEnter": [{
+                "type": "startDialogueGraph",
+                "params": {"graphId": "old", "entry": "end"},
+            }],
+        })
+        _dump(sp, scene)
+        dp = root / "public" / "assets" / "data"
+        _dump(dp / "quests.json", [{
+            "id": "q1",
+            "onStart": [{
+                "type": "startDialogueGraph",
+                "params": {"graphId": "old", "entry": "end"},
+            }],
+        }])
+        _dump(dp / "scenarios.json", {
+            "scenarios": [{"id": "s1", "phases": {}, "dialogueGraphIds": ["old"]}],
+        })
+        _dump(dp / "narrative_graphs.json", {
+            "schemaVersion": 2,
+            "signals": [],
+            "compositions": [{
+                "id": "comp",
+                "mainGraph": {
+                    "id": "main", "initialState": "idle",
+                    "states": {"idle": {"id": "idle"}}, "transitions": [],
+                },
+                "elements": [{
+                    "id": "dialogue_box", "kind": "dialogueBlackbox", "refId": "old",
+                }],
+            }],
+        })
+        model = ProjectModel()
+        model.load_project(root)
+        return model, gd
+
+    def test_outer_scan_covers_every_inbound_channel_and_delete_is_zero_mutation(self) -> None:
+        from tools.editor.shared.dialogue_graph_refactor import (
+            DialogueGraphRefactorError,
+            delete_dialogue_graph,
+            scan_dialogue_graph_usages,
+        )
+        import copy
+
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            m, gd = self._project(root)
+            usages = scan_dialogue_graph_usages(m, "old")
+            kinds = {hit["kind"] for hit in usages}
+            self.assertTrue(
+                {"npc", "hotspot", "action", "scenario", "narrative", "dialogue"} <= kinds,
+                usages,
+            )
+            self.assertTrue(any(hit.get("entry") == "end" for hit in usages))
+            memory_before = copy.deepcopy({
+                "scenes": m.scenes,
+                "quests": m.quests,
+                "scenarios": m.scenarios_catalog,
+                "narrative": m.narrative_graphs,
+                "edits": m.pending_dialogue_graph_edits,
+                "deletes": m.pending_dialogue_graph_deletes,
+                "dirty": m._dirty,
+            })
+            disk_before = {p.name: p.read_bytes() for p in gd.glob("*.json")}
+            with self.assertRaises(DialogueGraphRefactorError) as cm:
+                delete_dialogue_graph(m, "old")
+            self.assertEqual(len(cm.exception.usages), len(usages))
+            self.assertEqual(memory_before, {
+                "scenes": m.scenes,
+                "quests": m.quests,
+                "scenarios": m.scenarios_catalog,
+                "narrative": m.narrative_graphs,
+                "edits": m.pending_dialogue_graph_edits,
+                "deletes": m.pending_dialogue_graph_deletes,
+                "dirty": m._dirty,
+            })
+            self.assertEqual(disk_before, {p.name: p.read_bytes() for p in gd.glob("*.json")})
+
+    def test_rename_stages_all_rewrites_then_save_commits_new_and_removes_old(self) -> None:
+        from tools.editor.shared.dialogue_graph_refactor import rename_dialogue_graph
+
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            m, gd = self._project(root)
+            old_bytes = (gd / "old.json").read_bytes()
+            result = rename_dialogue_graph(m, "old", "new")
+
+            # 重构只暂存内存：Save All 前旧文件仍可恢复，新文件尚不存在。
+            self.assertEqual((gd / "old.json").read_bytes(), old_bytes)
+            self.assertFalse((gd / "new.json").exists())
+            self.assertIn("old", m.pending_dialogue_graph_deletes)
+            self.assertEqual(m.pending_dialogue_graph_edits["new"]["id"], "new")
+            self.assertEqual(m.scenes["sc_a"]["npcs"][0]["dialogueGraphId"], "new")
+            self.assertEqual(m.scenes["sc_a"]["hotspots"][0]["data"]["graphId"], "new")
+            self.assertEqual(m.quests[0]["onStart"][0]["params"]["graphId"], "new")
+            self.assertEqual(
+                m.narrative_graphs["compositions"][0]["elements"][0]["refId"], "new",
+            )
+            self.assertEqual(
+                m.pending_dialogue_graph_edits["chain"]["nodes"]["go"]["actions"][0]["params"]["graphId"],
+                "new",
+            )
+            self.assertGreaterEqual(len(result["usages"]), 6)
+
+            m.save_all()
+            self.assertFalse((gd / "old.json").exists())
+            self.assertTrue((gd / "new.json").exists())
+            self.assertEqual(json.loads((gd / "new.json").read_text(encoding="utf-8"))["id"], "new")
+            self.assertEqual(
+                json.loads((gd / "chain.json").read_text(encoding="utf-8"))
+                ["nodes"]["go"]["actions"][0]["params"]["graphId"],
+                "new",
+            )
+            self.assertFalse(m.is_dirty)
+
+    def test_save_all_rechecks_references_created_after_delete_was_staged(self) -> None:
+        from tools.editor.shared.dialogue_graph_refactor import delete_dialogue_graph
+
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            write_minimal_loadable_project(root)
+            gd = root / "public" / "assets" / "dialogues" / "graphs"
+            gd.mkdir(parents=True, exist_ok=True)
+            graph = gd / "orphan.json"
+            _dump(graph, {
+                "schemaVersion": 1, "id": "orphan", "entry": "end",
+                "nodes": {"end": {"type": "end"}},
+            })
+            m = ProjectModel()
+            m.load_project(root)
+            delete_dialogue_graph(m, "orphan")
+
+            # 删除暂存之后又有面板引入旧 id；Save All 必须二次扫描并拒绝。
+            m.scenes["sc_a"]["npcs"] = [{"id": "late", "dialogueGraphId": "orphan"}]
+            m.mark_dirty("scene", "sc_a")
+            with self.assertRaisesRegex(ValueError, "Save All 前又出现"):
+                m.save_all()
+            self.assertTrue(graph.exists())
+            self.assertIn("orphan", m.pending_dialogue_graph_deletes)
+            self.assertTrue(m.is_dirty)
+
+    def test_unregistered_object_examine_action_blocks_rename_and_delete(self) -> None:
+        from tools.editor.shared.dialogue_graph_refactor import (
+            DialogueGraphRefactorError,
+            delete_dialogue_graph,
+            rename_dialogue_graph,
+            scan_dialogue_graph_usages,
+        )
+        import copy
+
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            write_minimal_loadable_project(root)
+            gd = root / "public" / "assets" / "dialogues" / "graphs"
+            gd.mkdir(parents=True, exist_ok=True)
+            _dump(gd / "target.json", {
+                "schemaVersion": 1, "id": "target", "entry": "end",
+                "nodes": {"end": {"type": "end"}},
+            })
+            dp = root / "public" / "assets" / "data" / "object_examine"
+            _dump(dp / "index.json", [{"id": "obj", "file": "obj.json"}])
+            _dump(dp / "obj.json", {
+                "id": "obj",
+                "onCompleteActions": [{
+                    "type": "startDialogueGraph",
+                    "params": {"graphId": "target", "entry": "end"},
+                }],
+            })
+            m = ProjectModel()
+            m.load_project(root)
+            # 若后续 object_examine 已正式登记脏桶，引擎可安全改写；本护栏
+            # 针对当前「可读但无保存出口」的危险阶段。
+            self.assertNotIn("object_examine", m.KNOWN_DIRTY_BUCKETS)
+            hits = scan_dialogue_graph_usages(m, "target")
+            self.assertTrue(any(h["kind"] == "action-unwritable" for h in hits), hits)
+            before = copy.deepcopy({
+                "obj": m.object_examine_instances,
+                "edits": m.pending_dialogue_graph_edits,
+                "deletes": m.pending_dialogue_graph_deletes,
+                "dirty": m._dirty,
+            })
+            with self.assertRaises(DialogueGraphRefactorError):
+                rename_dialogue_graph(m, "target", "renamed")
+            with self.assertRaises(DialogueGraphRefactorError):
+                delete_dialogue_graph(m, "target")
+            self.assertEqual(before, {
+                "obj": m.object_examine_instances,
+                "edits": m.pending_dialogue_graph_edits,
+                "deletes": m.pending_dialogue_graph_deletes,
+                "dirty": m._dirty,
+            })
+            self.assertTrue((gd / "target.json").exists())
+            self.assertFalse((gd / "renamed.json").exists())
 
 
 # ---------------------------------------------------------------------------

@@ -191,11 +191,14 @@ def _dialogue_graph_ids(model: Any) -> list[str]:
             ids.update(p.stem for p in graphs_dir.glob("*.json"))
     ids.update(getattr(model, "pending_dialogue_graph_edits", {}).keys())
     ids.update(getattr(model, "pending_dialogue_stubs", {}).keys())
+    ids.difference_update(getattr(model, "pending_dialogue_graph_deletes", set()))
     return sorted(ids)
 
 
 def _load_dialogue_doc(model: Any, gid: str) -> dict[str, Any] | None:
     """按暂存优先级取对话图文档：既有文件的暂存编辑 > 模板盖章的新桩 > 磁盘。"""
+    if gid in getattr(model, "pending_dialogue_graph_deletes", set()):
+        return None
     pending_edits = getattr(model, "pending_dialogue_graph_edits", {})
     if gid in pending_edits and isinstance(pending_edits[gid], dict):
         return pending_edits[gid]

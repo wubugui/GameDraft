@@ -70,6 +70,11 @@ from ..shared.condition_editor import ConditionEditor
 from ..shared.action_editor import ActionEditor, FilterableTypeCombo
 from ..shared.audio_preview_selector import AudioIdPreviewSelector, AudioPreviewControls
 from ..shared.id_ref_selector import IdRefSelector
+from ..shared.reference_picker import ReferencePickerDialog, ReferencePickerField
+from ..shared.dialogue_graph_refs import (
+    dialogue_graph_node_ids,
+    dialogue_graph_reference_rows,
+)
 from ..shared.image_path_picker import CutsceneImagePathRow, disk_path_for_runtime_url
 from ..shared.move_entity_map_picker import WorldPointPickView, resolve_world_size_for_scene_json
 from ..shared.collapsible_section import CollapsibleSection
@@ -3635,6 +3640,8 @@ class ScenePropertyPanel(QScrollArea):
     pending_dirty_changed = Signal(bool)
     # 背景图已导入/更换（已落盘 + 写入场景数据）→ 请求画布重载背景
     scene_background_changed = Signal()
+    # 分组成员列表双击：由 SceneEditor 负责在实体树/画布中导航。
+    group_member_activated = Signal(str, str)
 
     def reload_refs_from_model(self) -> None:
         """重拉跨域引用候选(filter/item/encounter/bgm,均为别处可新增的全局列表),
@@ -3648,6 +3655,26 @@ class ScenePropertyPanel(QScrollArea):
             sel = getattr(self, attr, None)
             if isinstance(sel, (IdRefSelector, AudioIdPreviewSelector)):
                 sel.set_items(provider())
+        for attr in (
+            "_npc_dialogue_graph",
+            "_npc_dialogue_graph_entry",
+            "_hs_inspect_graph_combo",
+            "_hs_inspect_entry",
+        ):
+            picker = getattr(self, attr, None)
+            if isinstance(picker, ReferencePickerField):
+                picker.refresh_display()
+        for attr in (
+            "_sc_on_enter",
+            "_hs_inspect_actions",
+            "_zn_enter",
+            "_zn_stay",
+            "_zn_exit",
+        ):
+            editor = getattr(self, attr, None)
+            reload_refs = getattr(editor, "reload_refs_from_model", None)
+            if callable(reload_refs):
+                reload_refs()
 
     def __init__(self, model: ProjectModel, parent: QWidget | None = None):
         super().__init__(parent)
@@ -3704,6 +3731,9 @@ class ScenePropertyPanel(QScrollArea):
         self._zone_panel = self._build_zone_panel()
         self._stack.addWidget(self._zone_panel)
 
+        self._group_panel = self._build_group_panel()
+        self._stack.addWidget(self._group_panel)
+
         self._spawn_panel = self._build_spawn_panel()
         self._stack.addWidget(self._spawn_panel)
 
@@ -3725,6 +3755,13 @@ class ScenePropertyPanel(QScrollArea):
         self._staging_npc: dict | None = None
         self._source_zone: dict | None = None
         self._staging_zone: dict | None = None
+        self._source_group: dict | None = None
+        self._staging_group: dict | None = None
+        self._pending_group: dict | None = None
+        self._group_scene: dict | None = None
+        self._group_original_id: str = ""
+        self._group_pending_changed: bool = False
+        self._group_commit_blocked: bool = False
         self._source_scene: dict | None = None
         self._staging_scene: dict | None = None
         self._hs_cutscene_ids_pending: list[str] = []
@@ -3747,6 +3784,15 @@ class ScenePropertyPanel(QScrollArea):
         # auto-discard 语义下的"未应用 staging"标记：任何用户编辑路径置 True，
         # _apply_props 完成 / load_*_props 切换实体后置 False；驱动 toolbar 红色提示。
         self._pending_dirty: bool = False
+
+    def _show_panel(self, panel: QWidget) -> None:
+        """切换属性页时回到页首。
+
+        QScrollArea 只有一根滚动条，QStackedWidget 各页若直接 setCurrentWidget 会共享上一页
+        的 scroll value；长 NPC 页切到 Zone 时因此会从「动作」区开场，误以为基本属性消失。
+        """
+        self._stack.setCurrentWidget(panel)
+        self.verticalScrollBar().setValue(0)
 
     @contextmanager
     def _suppress_props_changed_emits(self) -> Iterator[None]:
@@ -3808,10 +3854,10 @@ class ScenePropertyPanel(QScrollArea):
         self._set_pending_dirty(False)
 
     def rebind_scene_after_commit(self, sc: dict) -> None:
-        """场景 staging 同样 rebind；hotspots/npcs/zones 仍共享 model 引用。"""
+        """场景 staging 同样 rebind；实体列表与 entityGroups 仍共享 model 引用。"""
         self._source_scene = sc
         st = copy.deepcopy(sc)
-        for lk in ("hotspots", "npcs", "zones"):
+        for lk in ("hotspots", "npcs", "zones", "entityGroups"):
             if lk in sc:
                 st[lk] = sc[lk]
         sp_dict = sc.get("spawnPoints")
@@ -3941,13 +3987,13 @@ class ScenePropertyPanel(QScrollArea):
         return extra[0] if extra else ""
 
     def show_empty(self) -> None:
-        self._stack.setCurrentWidget(self._empty)
+        self._show_panel(self._empty)
 
     def show_multi_selection(self, count: int) -> None:
         """画布/树多选（≥2 实体）时的右侧状态页；不装载任何单实体表单。
         调用方（SceneEditor）负责先把未应用编辑提交为撤销命令。"""
         self._multi_label.setText(f"已选 {int(count)} 个实体")
-        self._stack.setCurrentWidget(self._multi_panel)
+        self._show_panel(self._multi_panel)
 
     # ---- scene props ------------------------------------------------------
 
@@ -4329,9 +4375,9 @@ class ScenePropertyPanel(QScrollArea):
             self._set_pending_dirty(False)
             self._source_scene = sc
             st = copy.deepcopy(sc)
-            # NOTE: hotspots/npcs/zones 故意共享 model 引用，保持画布右键添加/删除直写
+            # NOTE: 实体列表/entityGroups 故意共享 model 引用，保持场景树操作直写
             # model 的旧契约；逐实体 _source_*/_staging_* 通路负责字段级 staging commit。
-            for lk in ("hotspots", "npcs", "zones"):
+            for lk in ("hotspots", "npcs", "zones", "entityGroups"):
                 if lk in sc:
                     st[lk] = sc[lk]
             sp_dict = sc.get("spawnPoints")
@@ -4356,9 +4402,16 @@ class ScenePropertyPanel(QScrollArea):
                 self._staging_npc = None
                 self._source_zone = None
                 self._staging_zone = None
+                self._source_group = None
+                self._staging_group = None
+                self._pending_group = None
+                self._group_scene = None
+                self._group_original_id = ""
+                self._group_pending_changed = False
+                self._group_commit_blocked = False
                 self._spawn_flush_scene = None
                 self._spawn_scene = None
-            self._stack.setCurrentWidget(self._scene_panel)
+            self._show_panel(self._scene_panel)
             self._editing_scene_id = str(st.get("id", ""))
             self._sc_id.setText(st.get("id", ""))
             self._sc_name.setText(st.get("name", ""))
@@ -4820,6 +4873,8 @@ class ScenePropertyPanel(QScrollArea):
             self._write_npc_widgets_to_dict(self._staging_npc)
         elif w == self._zone_panel and self._staging_zone is not None:
             self._write_zone_widgets_to_dict(self._staging_zone)
+        elif w == self._group_panel and self._staging_group is not None:
+            self._write_group_widgets_to_dict(self._staging_group)
 
     # ---- canvas → widget sync (画布拖动后回写右侧面板) -----------------
 
@@ -5117,7 +5172,7 @@ class ScenePropertyPanel(QScrollArea):
         st = self._staging_scene
         if src is None or st is None:
             return
-        skip = {"hotspots", "npcs", "zones"}
+        skip = {"hotspots", "npcs", "zones", "entityGroups"}
         for key, val in list(st.items()):
             if key in skip:
                 continue
@@ -5685,12 +5740,24 @@ class ScenePropertyPanel(QScrollArea):
         mode_row.addStretch()
         il.addLayout(mode_row)
         graph_row = compact_form(QFormLayout())
-        gcombo = FilterableTypeCombo([], self, select_only=True)
-        gcombo.setMinimumWidth(160)
+        gcombo = ReferencePickerField(
+            lambda: dialogue_graph_reference_rows(self._model),
+            self,
+            allow_empty=True,
+            title="选择热点图对话",
+            geometry_key="dialogue_graph_reference_picker",
+        )
         self._hs_inspect_graph_combo = gcombo
         graph_row.addRow("graphId", gcombo)
-        self._hs_inspect_entry = FilterableTypeCombo([("（留空）", "")], self, select_only=True)
-        self._hs_inspect_entry.setMinimumWidth(160)
+        self._hs_inspect_entry = ReferencePickerField(
+            lambda: dialogue_graph_node_ids(
+                self._model, self._hs_inspect_graph_combo.current_value(),
+            ),
+            self,
+            allow_empty=True,
+            title="选择热点图对话入口节点",
+            geometry_key="dialogue_graph_entry_reference_picker",
+        )
         self._hs_inspect_entry.setToolTip(
             "可选 entry 节点 id：从所选 graphId 的图节点中选（留空=图默认入口）。"
             "已存的未知值以「(数据)」前缀保留可选。",
@@ -5717,8 +5784,8 @@ class ScenePropertyPanel(QScrollArea):
 
         self._hs_inspect_mode_group.buttonClicked.connect(_on_inspect_mode_clicked)
         for sig_widget in (gcombo, self._hs_inspect_entry):
-            sig_widget.typeCommitted.connect(lambda *_: self._emit_props_changed())
-        gcombo.typeCommitted.connect(lambda *_: self._refresh_inspect_entry_choices())
+            sig_widget.value_changed.connect(lambda *_: self._emit_props_changed())
+        gcombo.value_changed.connect(lambda *_: self._refresh_inspect_entry_choices())
         _sync_inspect_mode_ui()
 
         # pickup data
@@ -6147,7 +6214,7 @@ class ScenePropertyPanel(QScrollArea):
             self._staging_hotspot = st
             self._pending_hotspot = st
             self._current_data = st
-            self._stack.setCurrentWidget(self._hotspot_panel)
+            self._show_panel(self._hotspot_panel)
             self._hs_id.setText(st.get("id", ""))
             self._hs_type.setCurrentText(st.get("type", "inspect"))
             self._hs_label.setText(st.get("label", ""))
@@ -6269,26 +6336,19 @@ class ScenePropertyPanel(QScrollArea):
             ht = st.get("type", "inspect")
             self._on_hs_type_changed(ht)
             if ht == "inspect":
-                gids = self._model.all_dialogue_graph_ids()
-                self._hs_inspect_graph_combo.set_entries([(g, g) for g in gids])
                 gid = str(data.get("graphId") or "").strip()
-                self._hs_inspect_graph_combo.blockSignals(True)
                 self._hs_inspect_mode_actions.blockSignals(True)
                 self._hs_inspect_mode_graph.blockSignals(True)
                 try:
                     if gid:
                         self._hs_inspect_mode_graph.setChecked(True)
-                        self._hs_inspect_graph_combo.set_committed_type(gid)
+                        self._hs_inspect_graph_combo.set_value(gid)
                         self._set_inspect_entry_choices(gid, str(data.get("entry") or ""))
                     else:
                         self._hs_inspect_mode_actions.setChecked(True)
                         self._set_inspect_entry_choices("", "")
-                        if gids:
-                            self._hs_inspect_graph_combo.set_committed_type(gids[0])
-                        else:
-                            self._hs_inspect_graph_combo.set_committed_type("")
+                        self._hs_inspect_graph_combo.set_value("")
                 finally:
-                    self._hs_inspect_graph_combo.blockSignals(False)
                     self._hs_inspect_mode_actions.blockSignals(False)
                     self._hs_inspect_mode_graph.blockSignals(False)
                 graph_on = self._hs_inspect_mode_graph.isChecked()
@@ -6700,11 +6760,11 @@ class ScenePropertyPanel(QScrollArea):
         if ht == "inspect":
             acts = self._hs_inspect_actions.to_list()
             if self._hs_inspect_mode_graph.isChecked():
-                gid = self._hs_inspect_graph_combo.committed_type().strip()
+                gid = self._hs_inspect_graph_combo.current_value().strip()
                 new_data: dict = {}
                 if gid:
                     new_data["graphId"] = gid
-                ent = self._hs_inspect_entry.committed_type().strip()
+                ent = self._hs_inspect_entry.current_value().strip()
                 if ent:
                     new_data["entry"] = ent
                 if acts:
@@ -6783,18 +6843,31 @@ class ScenePropertyPanel(QScrollArea):
         self._npc_facing.setToolTip("进入场景时的左右朝向（与游戏中 setFacing 一致）")
         self._npc_facing.currentIndexChanged.connect(self._on_npc_facing_changed)
         form.addRow("initialFacing", self._npc_facing)
-        self._npc_dialogue_graph = IdRefSelector(allow_empty=True, editable=True)
-        self._npc_dialogue_graph.setMinimumWidth(160)
+        self._npc_dialogue_graph = ReferencePickerField(
+            lambda: dialogue_graph_reference_rows(self._model),
+            self,
+            allow_empty=True,
+            title="选择 NPC 图对话",
+            geometry_key="dialogue_graph_reference_picker",
+        )
         self._npc_dialogue_graph.setToolTip("对应 public/assets/dialogues/graphs/<id>.json")
         self._npc_dialogue_graph.value_changed.connect(lambda _x: self._emit_props_changed())
         self._npc_dialogue_graph.value_changed.connect(
             lambda _x: self._refresh_npc_dialogue_entry_choices())
         form.addRow("dialogueGraphId", self._npc_dialogue_graph)
-        self._npc_dialogue_graph_entry = FilterableTypeCombo([], self, select_only=False)
-        self._npc_dialogue_graph_entry.setMinimumWidth(160)
-        self._npc_dialogue_graph_entry.lineEdit().setPlaceholderText(
-            "可选，覆盖图 JSON 的 entry 节点 id")
-        self._npc_dialogue_graph_entry.typeCommitted.connect(
+        self._npc_dialogue_graph_entry = ReferencePickerField(
+            lambda: dialogue_graph_node_ids(
+                self._model, self._npc_dialogue_graph.current_value(),
+            ),
+            self,
+            allow_empty=True,
+            title="选择 NPC 图对话入口节点",
+            geometry_key="dialogue_graph_entry_reference_picker",
+        )
+        self._npc_dialogue_graph_entry.setToolTip(
+            "可选：从当前 dialogueGraphId 的 nodes 中搜索选择；留空使用图默认 entry。",
+        )
+        self._npc_dialogue_graph_entry.value_changed.connect(
             lambda *_: self._emit_props_changed())
         form.addRow("dialogueGraphEntry", self._npc_dialogue_graph_entry)
         self._npc_dialogue_zoom = QDoubleSpinBox()
@@ -7622,40 +7695,22 @@ class ScenePropertyPanel(QScrollArea):
 
     # --- entry / 动画 state 节点选择器（候选取自模型，保留已存值） -------------
     def _set_inspect_entry_choices(self, graph_id: str, entry_value: str) -> None:
-        gid = (graph_id or "").strip()
-        node_ids = self._model.dialogue_graph_node_ids(gid) if gid else []
-        rows = [("（留空）", "")] + [(n, n) for n in node_ids]
-        ev = (entry_value or "").strip()
-        # select_only 选择器：已存的未知 entry 注入保留（IdRefSelector 悬垂保值同款范式）。
-        if ev and all(x[1] != ev for x in rows):
-            rows = [(f"(数据) {ev}", ev)] + rows
-        self._hs_inspect_entry.blockSignals(True)
-        try:
-            self._hs_inspect_entry.set_entries(rows)
-            self._hs_inspect_entry.set_committed_type(ev)
-        finally:
-            self._hs_inspect_entry.blockSignals(False)
+        self._hs_inspect_entry.set_value((entry_value or "").strip())
+        self._hs_inspect_entry.refresh_display()
 
     def _refresh_inspect_entry_choices(self) -> None:
         self._set_inspect_entry_choices(
-            self._hs_inspect_graph_combo.committed_type().strip(),
-            self._hs_inspect_entry.committed_type())
+            self._hs_inspect_graph_combo.current_value().strip(),
+            self._hs_inspect_entry.current_value())
 
     def _set_npc_dialogue_entry_choices(self, graph_id: str, entry_value: str) -> None:
-        gid = (graph_id or "").strip()
-        node_ids = self._model.dialogue_graph_node_ids(gid) if gid else []
-        self._npc_dialogue_graph_entry.blockSignals(True)
-        try:
-            self._npc_dialogue_graph_entry.set_entries(
-                [("（留空）", "")] + [(n, n) for n in node_ids])
-            self._npc_dialogue_graph_entry.set_committed_type(entry_value or "")
-        finally:
-            self._npc_dialogue_graph_entry.blockSignals(False)
+        self._npc_dialogue_graph_entry.set_value(entry_value or "")
+        self._npc_dialogue_graph_entry.refresh_display()
 
     def _refresh_npc_dialogue_entry_choices(self) -> None:
         self._set_npc_dialogue_entry_choices(
-            self._npc_dialogue_graph.current_id().strip(),
-            self._npc_dialogue_graph_entry.committed_type())
+            self._npc_dialogue_graph.current_value().strip(),
+            self._npc_dialogue_graph_entry.current_value())
 
     def _fill_npc_patrol_move_anim_combo(self) -> None:
         """填巡逻移动动画状态下拉：留空 + 该 NPC animFile 的 states；保留已存值。"""
@@ -7698,7 +7753,7 @@ class ScenePropertyPanel(QScrollArea):
             self._staging_npc = st
             self._pending_npc = st
             self._current_data = st
-            self._stack.setCurrentWidget(self._npc_panel)
+            self._show_panel(self._npc_panel)
             self._npc_id.setText(st.get("id", ""))
             self._npc_name.setText(st.get("name", ""))
             self._npc_x.blockSignals(True)
@@ -7709,12 +7764,8 @@ class ScenePropertyPanel(QScrollArea):
             finally:
                 self._npc_x.blockSignals(False)
                 self._npc_y.blockSignals(False)
-            g_items = [(gid, gid) for gid in self._model.all_dialogue_graph_ids()]
             cur_g = str(st.get("dialogueGraphId", "") or "").strip()
-            if cur_g and all(x[0] != cur_g for x in g_items):
-                g_items = [(cur_g, cur_g)] + g_items
-            self._npc_dialogue_graph.set_items(g_items)
-            self._npc_dialogue_graph.set_current(cur_g)
+            self._npc_dialogue_graph.set_value(cur_g)
             self._set_npc_dialogue_entry_choices(
                 cur_g, str(st.get("dialogueGraphEntry", "") or ""))
             self._npc_dialogue_zoom.blockSignals(True)
@@ -7850,12 +7901,12 @@ class ScenePropertyPanel(QScrollArea):
         for k in ("dialogueFile", "dialogueKnot"):
             if k in npc:
                 del npc[k]
-        dg = self._npc_dialogue_graph.current_id().strip()
+        dg = self._npc_dialogue_graph.current_value().strip()
         if dg:
             npc["dialogueGraphId"] = dg
         elif "dialogueGraphId" in npc:
             del npc["dialogueGraphId"]
-        dge = self._npc_dialogue_graph_entry.committed_type().strip()
+        dge = self._npc_dialogue_graph_entry.current_value().strip()
         if dge:
             npc["dialogueGraphEntry"] = dge
         elif "dialogueGraphEntry" in npc:
@@ -8336,7 +8387,7 @@ class ScenePropertyPanel(QScrollArea):
             self._staging_zone = st
             self._pending_zone = st
             self._current_data = st
-            self._stack.setCurrentWidget(self._zone_panel)
+            self._show_panel(self._zone_panel)
             self._zn_id.setText(st.get("id", ""))
             self._zn_plane_ids_pending = self._entity_plane_ids_from_data(st)
             self._zn_plane_ids_label.setText(
@@ -8468,6 +8519,173 @@ class ScenePropertyPanel(QScrollArea):
         self._write_zone_widgets_to_dict(zone)
         return zone
 
+    # ---- scene entity group props ---------------------------------------
+
+    def _build_group_panel(self) -> QWidget:
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        basic = self._section("场景分组", start_open=True)
+        inner = QWidget()
+        form = compact_form(QFormLayout(inner))
+        self._grp_id = QLineEdit()
+        self._grp_id.setMaximumWidth(260)
+        self._grp_id.setToolTip("分组自身 id；成员的 group 字段引用它。限定引用格式为 sceneId:groupId。")
+        self._grp_id.textChanged.connect(self._on_group_props_changed)
+        self._grp_id.editingFinished.connect(self._validate_group_id_edit)
+        form.addRow("id", self._grp_id)
+        self._grp_label = QLineEdit()
+        self._grp_label.setMaximumWidth(320)
+        self._grp_label.setPlaceholderText("可选显示名")
+        self._grp_label.textChanged.connect(self._on_group_props_changed)
+        form.addRow("label", self._grp_label)
+        self._grp_legacy_note = QLabel()
+        self._grp_legacy_note.setWordWrap(True)
+        self._grp_legacy_note.setToolTip(
+            "旧场景可能只有成员上的 group 字符串。仅查看不会写入 entityGroups；"
+            "编辑并应用后才把它升级为显式分组实体。")
+        form.addRow("状态", self._grp_legacy_note)
+        basic.add_body(inner)
+        lay.addWidget(basic)
+
+        cond = self._section("整体显影条件 conditions", start_open=False)
+        self._grp_cond_fold = cond
+        cond_inner = QWidget()
+        cond_lay = QVBoxLayout(cond_inner)
+        self._grp_cond = ConditionEditor("Group Conditions")
+        self._grp_cond.changed.connect(self._on_group_props_changed)
+        cond_lay.addWidget(self._grp_cond)
+        cond.add_body(cond_inner)
+        lay.addWidget(cond)
+
+        members = self._section("成员（只读）", start_open=True)
+        members_inner = QWidget()
+        members_lay = QVBoxLayout(members_inner)
+        self._grp_members = QListWidget()
+        self._grp_members.setMinimumHeight(130)
+        self._grp_members.setToolTip("成员由 NPC / Hotspot / Zone 的 group 引用派生；双击成员可在树中定位。")
+        self._grp_members.itemDoubleClicked.connect(
+            lambda item: self.group_member_activated.emit(
+                str((item.data(Qt.ItemDataRole.UserRole) or ("", ""))[0]),
+                str((item.data(Qt.ItemDataRole.UserRole) or ("", ""))[1]),
+            )
+        )
+        members_lay.addWidget(self._grp_members)
+        members.add_body(members_inner)
+        lay.addWidget(members)
+        lay.addStretch(1)
+        self._append_entity_delete_footer(lay)
+        return w
+
+    def _on_group_props_changed(self, *_args) -> None:
+        if self._props_changed_suppressed:
+            return
+        self._group_pending_changed = True
+        self._emit_props_changed()
+
+    def _validate_group_id_edit(self) -> None:
+        if self._stack.currentWidget() != self._group_panel:
+            return
+        old_id = self._group_original_id
+        new_id = self._grp_id.text().strip()
+        existing = {
+            gid for gid, _label in self._model.scene_group_ids_for_scene(self._editing_scene_id)
+            if gid != old_id
+        }
+        reason = ""
+        if not new_id:
+            reason = "分组 id 不能为空。"
+        elif ":" in new_id:
+            reason = "分组 id 不能包含 ':'（限定引用使用 sceneId:groupId）。"
+        elif new_id in existing:
+            reason = f"当前场景已经存在分组「{new_id}」。"
+        if not reason:
+            return
+        QMessageBox.warning(self, "场景分组 id", reason)
+        self._grp_id.blockSignals(True)
+        try:
+            self._grp_id.setText(old_id)
+        finally:
+            self._grp_id.blockSignals(False)
+
+    def load_group_props(self, sc: dict, group_id: str) -> None:
+        gid = str(group_id or "").strip()
+        with self._suppress_props_changed_emits():
+            self.flush_active_panel_widgets_to_staging(only_shared_scene_staging=True)
+            self._set_pending_dirty(False)
+            self._ensure_source_scene_for_editing()
+            groups = sc.get("entityGroups")
+            source = None
+            if isinstance(groups, list):
+                source = next(
+                    (g for g in groups if isinstance(g, dict) and str(g.get("id") or "").strip() == gid),
+                    None,
+                )
+            st = copy.deepcopy(source) if source is not None else {"id": gid}
+            self._source_group = source
+            self._staging_group = st
+            self._pending_group = st
+            self._group_scene = sc
+            self._group_original_id = gid
+            self._group_pending_changed = False
+            self._group_commit_blocked = False
+            self._current_data = st
+            self._show_panel(self._group_panel)
+            self._grp_id.setText(gid)
+            self._grp_label.setText(str(st.get("label") or ""))
+            self._grp_legacy_note.setText(
+                "显式 entityGroups 实体" if source is not None
+                else "兼容旧标签（仅查看不迁移；编辑并应用才升级）"
+            )
+            self._grp_cond.set_flag_pattern_context(self._model, self._editing_scene_id or None)
+            conds = st.get("conditions")
+            self._grp_cond.set_data(conds if isinstance(conds, list) else [])
+            self._grp_cond_fold.set_expanded(bool(isinstance(conds, list) and conds))
+            self._grp_members.clear()
+            for coll, kind, ref_kind in (
+                ("npcs", "NPC", "npc"),
+                ("hotspots", "Hotspot", "hotspot"),
+                ("zones", "Zone", "zone"),
+            ):
+                for member in sc.get(coll, []) or []:
+                    if not isinstance(member, dict):
+                        continue
+                    if str(member.get("group") or "").strip() != gid:
+                        continue
+                    member_id = str(member.get("id") or "")
+                    item = QListWidgetItem(f"{kind}: {member_id or '?'}")
+                    item.setData(
+                        Qt.ItemDataRole.UserRole, (ref_kind, member_id),
+                    )
+                    self._grp_members.addItem(item)
+
+    def _write_group_widgets_to_dict(self, group: dict) -> None:
+        group["id"] = self._grp_id.text().strip()
+        label = self._grp_label.text().strip()
+        if label:
+            group["label"] = label
+        else:
+            group.pop("label", None)
+        conds = self._grp_cond.to_list()
+        if conds:
+            group["conditions"] = conds
+        else:
+            group.pop("conditions", None)
+
+    def rebind_group_after_commit(self, group: dict) -> None:
+        self._source_group = group
+        st = copy.deepcopy(group)
+        self._staging_group = st
+        self._pending_group = st
+        self._group_original_id = str(group.get("id") or "").strip()
+        self._group_pending_changed = False
+        self._group_commit_blocked = False
+        if self._stack.currentWidget() == self._group_panel:
+            self._current_data = st
+            self._grp_legacy_note.setText("显式 entityGroups 实体")
+        self._set_pending_dirty(False)
+
     # ---- spawn point props ------------------------------------------------
 
     def _build_spawn_panel(self) -> QWidget:
@@ -8514,7 +8732,7 @@ class ScenePropertyPanel(QScrollArea):
             self._spawn_scene = scene_use
             self._spawn_flush_scene = scene_use
             self._spawn_name_original = spawn_name
-            self._stack.setCurrentWidget(self._spawn_panel)
+            self._show_panel(self._spawn_panel)
             if spawn_name == "default":
                 pos = scene_use.get("spawnPoint")
                 if not isinstance(pos, dict):
@@ -8595,6 +8813,7 @@ class SceneEditor(QWidget):
         # （clear_scene 阶段 selectionChanged 会命中正在析构的图元——地图编辑器旧坑同族）。
         self._loading_scene = False
         self._syncing_tree_selection = False
+        self._restoring_blocked_navigation = False
         self._last_canvas_world: tuple[float, float] | None = None
         self._scene_npc_runtimes: dict[str, _SceneNpcAnimRuntime] = {}
         self._scene_npc_anim_timer = QTimer(self)
@@ -8829,13 +9048,17 @@ class SceneEditor(QWidget):
             lambda *_: self._apply_entity_tree_filter())
         tree_row.addWidget(self._tree_mode)
         tree_row.addWidget(self._tree_filter, 1)
+        self._btn_add_group = QPushButton("新增组")
+        self._btn_add_group.setToolTip("在当前场景新建一个显式 entityGroups 分组实体。")
+        self._btn_add_group.clicked.connect(self._add_scene_group)
+        tree_row.addWidget(self._btn_add_group)
         self._entity_tree = QTreeWidget()
         self._entity_tree.setHeaderHidden(True)
         self._entity_tree.setSelectionMode(
             QAbstractItemView.SelectionMode.ExtendedSelection)
         self._entity_tree.setToolTip(
             "当前场景全部实体。点选=画布定位选中；Ctrl/Shift 多选；"
-            "右键：指派分组 / 复制 / 删除。")
+            "分组节点可直接编辑整体显影条件；右键可指派分组 / 复制 / 删除。")
         self._entity_tree.itemSelectionChanged.connect(
             self._on_tree_selection_changed)
         self._entity_tree.setContextMenuPolicy(
@@ -8907,6 +9130,8 @@ class SceneEditor(QWidget):
         self._props._multi_del_btn.clicked.connect(self._delete_selected)
         self._props.scene_directly_written.connect(
             self._undo.notice_external_scene_write)
+        self._props.group_member_activated.connect(
+            self._on_group_member_activated)
         # QueuedConnection：避免在按钮 click 槽里同步触发 toolbar setVisible
         # 引起 layout 重排与画布 paintEvent 重入。可用 EDITOR_DISABLE_DIRTY_LABEL=1
         # 完全跳过这条通路用于二分定位。
@@ -9072,11 +9297,17 @@ class SceneEditor(QWidget):
     def _on_lightcurve_committed(self, points: object) -> None:
         # apply_lightcurve_committed 只写面板 pending；capture 出口的统一提交把它
         # 落进模型并成为一条命令（光曲线画布手势因此可撤销）。
+        if not self._undo_flush_pending_as_command():
+            self._restore_editing_selection_after_block()
+            return
         with self._undo.capture("编辑光环境曲线"):
             self._props.apply_lightcurve_committed(points)
 
     def _on_persp_axis_committed(self, which: str, x: float, y: float) -> None:
         # 与光曲线同门：画布手势 → 面板 staging（走统一 dirty/预览），一条撤销命令
+        if not self._undo_flush_pending_as_command():
+            self._restore_editing_selection_after_block()
+            return
         with self._undo.capture("拖动透视深度轴"):
             self._props.apply_persp_axis_endpoint(str(which), float(x), float(y))
 
@@ -9138,6 +9369,9 @@ class SceneEditor(QWidget):
     def _on_npc_patrol_route_committed(
         self, npc_id: str, route: object,
     ) -> None:
+        if not self._undo_flush_pending_as_command():
+            self._restore_editing_selection_after_block()
+            return
         with self._undo.capture("编辑巡逻路线"):
             self._on_npc_patrol_route_committed_impl(npc_id, route)
 
@@ -9504,6 +9738,9 @@ class SceneEditor(QWidget):
             self._canvas.viewport().update()
 
     def _new_scene(self) -> None:
+        if not self._undo_flush_pending_as_command():
+            self._restore_editing_selection_after_block()
+            return
         sid, ok = QInputDialog.getText(
             self, "新建场景", "场景 id（仅字母 / 数字 / 下划线 / 连字符）：")
         if not ok:
@@ -9565,10 +9802,28 @@ class SceneEditor(QWidget):
             self._scene_list.setCurrentRow(0)
 
     def _on_scene_selected(self, current: QListWidgetItem | None, _prev) -> None:
-        if current is None:
+        if current is None or self._restoring_blocked_navigation:
             return
         sid = current.data(Qt.ItemDataRole.UserRole)
-        self._load_scene(sid)
+        previous_sid = self._current_scene_id or ""
+        if not self._load_scene(sid):
+            self._restore_scene_list_selection(previous_sid)
+
+    def _restore_scene_list_selection(self, scene_id: str) -> None:
+        """提交被拒时把 QListWidget 的视觉选中恢复到仍在编辑的场景。"""
+        if not scene_id:
+            return
+        self._restoring_blocked_navigation = True
+        self._scene_list.blockSignals(True)
+        try:
+            for i in range(self._scene_list.count()):
+                item = self._scene_list.item(i)
+                if item is not None and item.data(Qt.ItemDataRole.UserRole) == scene_id:
+                    self._scene_list.setCurrentItem(item)
+                    break
+        finally:
+            self._scene_list.blockSignals(False)
+            self._restoring_blocked_navigation = False
 
     def eventFilter(self, obj, event) -> bool:
         # 场景列表 press 快照：itemClicked 时对比判定「点的是否已当前场景」
@@ -9602,16 +9857,18 @@ class SceneEditor(QWidget):
             fm.elidedText(full, Qt.TextElideMode.ElideMiddle, 180))
         self._current_scene_lab.setToolTip(f"当前场景：{full}")
 
-    def _load_scene(self, scene_id: str, *, reset_view: bool = True) -> None:
+    def _load_scene(self, scene_id: str, *, reset_view: bool = True) -> bool:
         # 离开当前场景前先提交未应用的画布/面板编辑，避免切场景静默丢弃。
         # （提交本身记为可撤销命令；命令回放期间该入口自动短路。）
-        self._undo_flush_pending_as_command()
+        if not self._undo_flush_pending_as_command():
+            return False
         self._drag_undo_before = None
         self._loading_scene = True
         try:
             self._load_scene_body(scene_id, reset_view=reset_view)
         finally:
             self._loading_scene = False
+        return True
 
     def _load_scene_body(self, scene_id: str, *, reset_view: bool = True) -> None:
         self._current_scene_id = scene_id
@@ -9710,7 +9967,7 @@ class SceneEditor(QWidget):
     # ---- 实体树 / 多选 / 分组（P2；与画布选中双向同步） ----------------------
 
     def _refresh_entity_tree(self) -> None:
-        """左栏实体树：当前场景全部实体，按类型或分组组织。"""
+        """左栏实体树：当前场景实体 + 一等分组，按类型或分组组织。"""
         if not hasattr(self, "_entity_tree"):
             return
         sc = self._model.scenes.get(self._current_scene_id or "")
@@ -9742,6 +9999,7 @@ class SceneEditor(QWidget):
                 spawn_entries.append(("spawn", "default", "default", ""))
             for name in (sc.get("spawnPoints") or {}):
                 spawn_entries.append(("spawn", str(name), str(name), ""))
+            group_rows = self._model.scene_group_ids_for_scene(self._current_scene_id)
 
             def _leaf(parent: QTreeWidgetItem, kind: str, eid: str,
                       label: str, group: str) -> None:
@@ -9751,10 +10009,14 @@ class SceneEditor(QWidget):
                 it.setToolTip(
                     0, f"{kind}: {eid}" + (f"（分组 {group}）" if group else ""))
 
-            def _section(title: str) -> QTreeWidgetItem:
+            def _section(title: str, group_id: str = "") -> QTreeWidgetItem:
                 top = QTreeWidgetItem(self._entity_tree)
                 top.setText(0, title)
-                top.setFlags(top.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+                if group_id:
+                    top.setData(0, Qt.ItemDataRole.UserRole, ("group", group_id))
+                    top.setToolTip(0, f"sceneGroup: {self._current_scene_id}:{group_id}")
+                else:
+                    top.setFlags(top.flags() & ~Qt.ItemFlag.ItemIsSelectable)
                 return top
 
             if self._tree_mode.currentIndex() == 0:  # 按类型
@@ -9769,6 +10031,11 @@ class SceneEditor(QWidget):
                     top = _section(f"{title}（{len(rows)}）")
                     for kind, eid, label, group in rows:
                         _leaf(top, kind, eid, label, group)
+                if group_rows:
+                    top = _section(f"场景分组（{len(group_rows)}）")
+                    for gid, label in group_rows:
+                        shown = gid if label == gid else f"{gid}（{label}）"
+                        _leaf(top, "group", gid, shown, "")
             else:  # 按分组
                 by_group: dict[str, list] = {}
                 ungrouped: list = []
@@ -9777,9 +10044,16 @@ class SceneEditor(QWidget):
                         by_group.setdefault(e[3], []).append(e)
                     else:
                         ungrouped.append(e)
-                for gname in sorted(by_group):
-                    top = _section(f"组 {gname}（{len(by_group[gname])}）")
-                    for kind, eid, label, _g in by_group[gname]:
+                labels = {gid: label for gid, label in group_rows}
+                ordered_groups = [gid for gid, _label in group_rows]
+                for gname in ordered_groups:
+                    members = by_group.get(gname, [])
+                    glabel = labels.get(gname, gname)
+                    title = f"组 {gname}（{len(members)}）"
+                    if glabel and glabel != gname:
+                        title = f"组 {gname} · {glabel}（{len(members)}）"
+                    top = _section(title, gname)
+                    for kind, eid, label, _g in members:
                         _leaf(top, kind, eid, f"{kind}:{label}", "")
                 rest = ungrouped + spawn_entries
                 if rest:
@@ -9798,14 +10072,24 @@ class SceneEditor(QWidget):
         root = self._entity_tree.invisibleRootItem()
         for i in range(root.childCount()):
             top = root.child(i)
-            visible_any = False
+            own_hay = (top.text(0) + " " + str(top.toolTip(0))).lower()
+            own_hit = (not needle) or (needle in own_hay)
+            visible_any = own_hit and top.data(0, Qt.ItemDataRole.UserRole) is not None
             for j in range(top.childCount()):
                 leaf = top.child(j)
                 hay = (leaf.text(0) + " " + str(leaf.toolTip(0))).lower()
-                hit = (not needle) or (needle in hay)
+                hit = own_hit or (not needle) or (needle in hay)
                 leaf.setHidden(not hit)
                 visible_any = visible_any or hit
             top.setHidden(not visible_any)
+
+    def _iter_entity_tree_items(self):
+        root = self._entity_tree.invisibleRootItem()
+        stack = [root.child(i) for i in range(root.childCount())]
+        while stack:
+            item = stack.pop(0)
+            yield item
+            stack[0:0] = [item.child(i) for i in range(item.childCount())]
 
     def _tree_selected_refs(self) -> list[tuple[str, str]]:
         refs: list[tuple[str, str]] = []
@@ -9855,7 +10139,12 @@ class SceneEditor(QWidget):
         return [(kind, single[1])]
 
     def _on_canvas_selection_changed(self) -> None:
-        if self._loading_scene or self._undo.restoring or self._syncing_tree_selection:
+        if (
+            self._loading_scene
+            or self._undo.restoring
+            or self._syncing_tree_selection
+            or self._restoring_blocked_navigation
+        ):
             return
         try:
             refs = self._canvas_selected_entity_refs()
@@ -9863,7 +10152,9 @@ class SceneEditor(QWidget):
             return  # 场景析构期的迟到 selectionChanged（图元已删）
         self._sync_tree_from_canvas(refs)
         if len(refs) > 1:
-            self._undo_flush_pending_as_command()
+            if not self._undo_flush_pending_as_command():
+                self._restore_editing_selection_after_block()
+                return
             self._props.show_multi_selection(len(refs))
         self._sync_transform_gizmo()
 
@@ -9873,28 +10164,34 @@ class SceneEditor(QWidget):
         want = {tuple(r) for r in refs}
         self._syncing_tree_selection = True
         try:
-            root = self._entity_tree.invisibleRootItem()
             first_hit: QTreeWidgetItem | None = None
-            for i in range(root.childCount()):
-                top = root.child(i)
-                for j in range(top.childCount()):
-                    leaf = top.child(j)
-                    data = leaf.data(0, Qt.ItemDataRole.UserRole)
-                    hit = bool(data) and tuple(data) in want
-                    leaf.setSelected(hit)
-                    if hit and first_hit is None:
-                        first_hit = leaf
+            for item in self._iter_entity_tree_items():
+                data = item.data(0, Qt.ItemDataRole.UserRole)
+                hit = bool(data) and tuple(data) in want
+                item.setSelected(hit)
+                if hit and first_hit is None:
+                    first_hit = item
             if first_hit is not None:
                 self._entity_tree.scrollToItem(first_hit)
         finally:
             self._syncing_tree_selection = False
 
     def _on_tree_selection_changed(self) -> None:
-        if self._syncing_tree_selection or self._loading_scene or self._undo.restoring:
+        if (
+            self._syncing_tree_selection
+            or self._loading_scene
+            or self._undo.restoring
+            or self._restoring_blocked_navigation
+        ):
             return
         refs = self._tree_selected_refs()
         if not refs:
             return
+        editing_ref = self._editing_property_ref()
+        if refs != ([editing_ref] if editing_ref is not None else []):
+            if not self._undo_flush_pending_as_command():
+                self._restore_editing_selection_after_block()
+                return
         self._syncing_tree_selection = True
         try:
             self._canvas._gfx.clearSelection()
@@ -9908,12 +10205,80 @@ class SceneEditor(QWidget):
             kind, eid = refs[0]
             if kind == "spawn":
                 self._restore_canvas_selection("spawn", eid)
+            elif kind == "group":
+                sc = self._model.scenes.get(self._current_scene_id or "")
+                if isinstance(sc, dict):
+                    self._props.load_group_props(sc, eid)
             else:
                 self._on_item_selected(kind, eid)
-            self._focus_canvas_on_entity(kind, eid)
+                self._focus_canvas_on_entity(kind, eid)
         else:
-            self._undo_flush_pending_as_command()
             self._props.show_multi_selection(len(refs))
+
+    def _editing_property_ref(self) -> tuple[str, str] | None:
+        """右侧 staging 正在编辑的对象；不读已被用户新点中的画布选择。"""
+        props = self._props
+        panel = props._stack.currentWidget()
+        if panel == props._hotspot_panel and props._pending_hotspot is not None:
+            return "hotspot", str(props._pending_hotspot.get("id") or "")
+        if panel == props._npc_panel and props._pending_npc is not None:
+            return "npc", str(props._pending_npc.get("id") or "")
+        if panel == props._zone_panel and props._pending_zone is not None:
+            return "zone", str(props._pending_zone.get("id") or "")
+        if panel == props._group_panel and props._pending_group is not None:
+            return "group", str(props._group_original_id or props._pending_group.get("id") or "")
+        if panel == props._spawn_panel and props._spawn_scene is not None:
+            return "spawn", str(props._spawn_name_original or "")
+        return None
+
+    def _restore_editing_selection_after_block(self) -> None:
+        """fail-safe 导航回滚：保留 staging，并把树/画布选中恢复到原编辑对象。"""
+        ref = self._editing_property_ref()
+        self._restoring_blocked_navigation = True
+        self._syncing_tree_selection = True
+        try:
+            self._canvas._gfx.clearSelection()
+            for item in self._iter_entity_tree_items():
+                item.setSelected(False)
+            if ref is None:
+                return
+            kind, entity_id = ref
+            tree_hit = None
+            for item in self._iter_entity_tree_items():
+                data = item.data(0, Qt.ItemDataRole.UserRole)
+                if data and tuple(data) == (kind, entity_id):
+                    item.setSelected(True)
+                    self._entity_tree.setCurrentItem(item)
+                    tree_hit = item
+                    break
+            if tree_hit is not None:
+                self._entity_tree.scrollToItem(tree_hit)
+            if kind != "group":
+                canvas_item = self._canvas._entity_items.get(f"{kind}:{entity_id}")
+                if canvas_item is not None:
+                    canvas_item.setSelected(True)
+        finally:
+            self._syncing_tree_selection = False
+            self._restoring_blocked_navigation = False
+
+    def _on_group_member_activated(self, kind: str, entity_id: str) -> None:
+        """成员列表双击真正定位实体树/画布，而非只显示一行文本。"""
+        if kind not in ("npc", "hotspot", "zone") or not entity_id:
+            return
+        item = next(
+            (
+                row for row in self._iter_entity_tree_items()
+                if (row.data(0, Qt.ItemDataRole.UserRole) or ()) == (kind, entity_id)
+            ),
+            None,
+        )
+        if item is None:
+            return
+        self._left_tabs.setCurrentIndex(1)
+        self._entity_tree.clearSelection()
+        self._entity_tree.setCurrentItem(item)
+        item.setSelected(True)
+        self._entity_tree.scrollToItem(item)
 
     def _on_tree_context_menu(self, pos) -> None:
         refs = self._tree_selected_refs()
@@ -9925,6 +10290,7 @@ class SceneEditor(QWidget):
         act_group.setEnabled(
             any(r[0] in ("npc", "hotspot", "zone") for r in refs))
         act_dup = menu.addAction("复制")
+        act_dup.setEnabled(any(r[0] in ("npc", "hotspot", "zone", "spawn") for r in refs))
         act_del = menu.addAction("删除")
         chosen = menu.exec(self._entity_tree.viewport().mapToGlobal(pos))
         if chosen is act_group:
@@ -9934,8 +10300,39 @@ class SceneEditor(QWidget):
         elif chosen is act_del:
             self._delete_selected()
 
+    def _add_scene_group(self) -> None:
+        sc = self._require_scene()
+        if sc is None:
+            return
+        if not self._undo_flush_pending_as_command():
+            self._restore_editing_selection_after_block()
+            return
+        with self._undo.capture("新增场景分组"):
+            raw = sc.get("entityGroups")
+            if raw is not None and not isinstance(raw, list):
+                QMessageBox.warning(
+                    self, "新增场景分组",
+                    "当前 entityGroups 不是数组；为保护原数据，编辑器不会覆盖它。请先修复校验错误。",
+                )
+                return
+            groups = raw if isinstance(raw, list) else []
+            existing = {gid for gid, _label in self._model.scene_group_ids_for_scene(
+                self._current_scene_id)}
+            gid = self._unique_entity_id("new_group", existing)
+            if raw is None:
+                sc["entityGroups"] = groups
+            groups.append({"id": gid})
+            self._model.mark_dirty("scene", self._current_scene_id or "")
+            self._refresh_entity_tree()
+            for item in self._iter_entity_tree_items():
+                data = item.data(0, Qt.ItemDataRole.UserRole)
+                if data and tuple(data) == ("group", gid):
+                    self._entity_tree.setCurrentItem(item)
+                    item.setSelected(True)
+                    break
+
     def _assign_group_to_selection(self) -> None:
-        """给选中实体指派 group 标签（纯标签、非 id 引用；空=移出分组）。"""
+        """给选中实体指派场景分组引用；空=移出分组。"""
         refs = [r for r in self._selected_entity_refs_plural()
                 if r[0] in ("npc", "hotspot", "zone")]
         if not refs:
@@ -9945,19 +10342,36 @@ class SceneEditor(QWidget):
         sc = self._model.scenes.get(self._current_scene_id or "")
         if sc is None:
             return
-        existing = sorted({
-            str(e.get("group", "") or "")
-            for coll in ("npcs", "hotspots", "zones")
-            for e in sc.get(coll, []) if isinstance(e, dict) and e.get("group")
-        })
-        name, ok = QInputDialog.getItem(
-            self, "指派分组",
-            f"给选中的 {len(refs)} 个实体指派分组\n"
-            "（选择已有分组或输入新名；留空 = 移出分组）：",
-            [""] + existing, 0, True)
-        if not ok:
+        rows = [
+            ("__remove_group__", "（移出分组）", "清除选中实体的 group 引用"),
+        ]
+        rows.extend(
+            (gid, label, f"当前场景分组 {gid}")
+            for gid, label in self._model.scene_group_ids_for_scene(
+                self._current_scene_id,
+            )
+        )
+        current_groups = {
+            str(e.get("group") or "").strip()
+            for kind, eid in refs
+            for e in sc.get({"npc": "npcs", "hotspot": "hotspots", "zone": "zones"}[kind], [])
+            if isinstance(e, dict) and str(e.get("id") or "") == eid
+        }
+        current = next(iter(current_groups)) if len(current_groups) == 1 else ""
+        dialog = ReferencePickerDialog(
+            rows,
+            current=current,
+            title=f"给 {len(refs)} 个实体指派分组",
+            parent=self,
+            geometry_key="scene_group_assignment_picker",
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        name = (name or "").strip()
+        picked = dialog.selected_value()
+        name = "" if picked == "__remove_group__" else str(picked or "").strip()
+        if not self._undo_flush_pending_as_command():
+            self._restore_editing_selection_after_block()
+            return
         coll_key = {"npc": "npcs", "hotspot": "hotspots", "zone": "zones"}
         with self._undo.capture(f"指派分组 {name}" if name else "移出分组"):
             changed = False
@@ -10096,9 +10510,13 @@ class SceneEditor(QWidget):
         self._canvas.fit_all()
 
     def _on_item_selected(self, kind: str, eid: str) -> None:
+        if self._restoring_blocked_navigation:
+            return
         # 多选（≥2 实体）时不装载单实体面板：右侧转多选页做批量操作。
         if len(self._canvas_selected_entity_refs()) > 1:
-            self._undo_flush_pending_as_command()
+            if not self._undo_flush_pending_as_command():
+                self._restore_editing_selection_after_block()
+                return
             self._props.show_multi_selection(
                 len(self._canvas_selected_entity_refs()))
             return
@@ -10122,7 +10540,9 @@ class SceneEditor(QWidget):
                         and str(sh.get("id", "")) == str(eid)
                     ):
                         return
-                    self._undo_flush_pending_as_command()
+                    if not self._undo_flush_pending_as_command():
+                        self._restore_editing_selection_after_block()
+                        return
                     props.load_hotspot_props(hs)
                     return
         elif kind in ("npc", "npc_collision"):
@@ -10135,7 +10555,9 @@ class SceneEditor(QWidget):
                         and str(sn.get("id", "")) == str(eid)
                     ):
                         return
-                    self._undo_flush_pending_as_command()
+                    if not self._undo_flush_pending_as_command():
+                        self._restore_editing_selection_after_block()
+                        return
                     props.load_npc_props(npc)
                     return
         elif kind == "zone":
@@ -10148,7 +10570,9 @@ class SceneEditor(QWidget):
                         and str(sz.get("id", "")) == str(eid)
                     ):
                         return
-                    self._undo_flush_pending_as_command()
+                    if not self._undo_flush_pending_as_command():
+                        self._restore_editing_selection_after_block()
+                        return
                     props.load_zone_props(zone)
                     return
         elif kind == "spawn":
@@ -10157,19 +10581,25 @@ class SceneEditor(QWidget):
                 and str(props._spawn_name_original or "") == str(eid)
             ):
                 return
-            self._undo_flush_pending_as_command()
+            if not self._undo_flush_pending_as_command():
+                self._restore_editing_selection_after_block()
+                return
             scene_use = props._staging_scene
             if scene_use is None or scene_use.get("id") != sc.get("id"):
                 scene_use = sc
             props.load_spawn_props(scene_use, eid)
 
     def _on_item_deselected(self) -> None:
+        if self._restoring_blocked_navigation or self._syncing_tree_selection:
+            return
         if self._current_scene_id:
             sc = self._model.scenes.get(self._current_scene_id)
             if sc:
                 # 点画布空白=离开当前实体，与切实体路径一致：先提交未应用编辑再回场景面板。
                 # 旧实现直接重建 staging，把编辑连同 pending 标志一起静默丢弃（审查 P0-3）。
-                self._undo_flush_pending_as_command()
+                if not self._undo_flush_pending_as_command():
+                    self._restore_editing_selection_after_block()
+                    return
                 sc = self._model.scenes.get(self._current_scene_id) or sc
                 self._props.load_scene_props(sc, clear_pending_edits=False)
         self._refresh_npc_patrol_overlay()
@@ -10204,6 +10634,9 @@ class SceneEditor(QWidget):
         eid: str,
         polygon: object,
     ) -> None:
+        if not self._undo_flush_pending_as_command():
+            self._restore_editing_selection_after_block()
+            return
         with self._undo.capture("编辑 Zone 多边形"):
             self._on_item_zone_polygon_committed_impl(kind, eid, polygon)
 
@@ -10238,6 +10671,9 @@ class SceneEditor(QWidget):
         self._canvas.item_selected.emit(kind, eid)
 
     def _on_item_hotspot_collision_polygon_committed(self, eid: str, polygon: object) -> None:
+        if not self._undo_flush_pending_as_command():
+            self._restore_editing_selection_after_block()
+            return
         with self._undo.capture("编辑热区碰撞多边形"):
             self._on_item_hotspot_collision_polygon_committed_impl(eid, polygon)
 
@@ -10278,6 +10714,9 @@ class SceneEditor(QWidget):
         self._canvas.update_hotspot_collision_polygon(eid, poly_list)
 
     def _on_item_npc_collision_polygon_committed(self, eid: str, polygon: object) -> None:
+        if not self._undo_flush_pending_as_command():
+            self._restore_editing_selection_after_block()
+            return
         with self._undo.capture("编辑 NPC 碰撞多边形"):
             self._on_item_npc_collision_polygon_committed_impl(eid, polygon)
 
@@ -10473,26 +10912,64 @@ class SceneEditor(QWidget):
             self._props.sync_spawn_xy_widgets(eid, rx, ry)
             self._mark_canvas_edit()
 
-    def flush_to_model(self) -> None:
+    def flush_to_model(self) -> bool:
         """Save All / 关闭前 flush：仅在确有未应用编辑时才提交 staging。
 
         与 ``confirm_close`` / ``_commit_pending_scene_edits`` 一致走 ``is_pending_dirty``
         门控。此前无条件 ``_apply_props()`` 会在末尾 ``mark_dirty("scene")``，于是"打开
         编辑器啥都没改直接关闭"也被伪标脏、弹出保存提示（关窗时对所有面板逐个 flush）。"""
         if self._props.is_pending_dirty():
-            self._apply_props()
+            return self._apply_props()
+        return True
+
+    def reload_from_model(self) -> None:
+        """Reproject the current scene after another editor replaced its domain.
+
+        Callers must flush this editor first.  Task orchestration swaps the
+        native ``model.scenes`` document transactionally, so property-panel
+        source dict identities from the previous projection must not remain
+        live or a later Apply could overwrite the new task conditions/actions.
+        """
+        scene_id = self._current_scene_id or ""
+        selected = self._selected_entity_ref()
+        if selected is not None:
+            selected = (
+                {
+                    "npc_collision": "npc",
+                    "hotspot_collision": "hotspot",
+                }.get(selected[0], selected[0]),
+                selected[1],
+            )
+        self._refresh_scene_list()
+        if scene_id and scene_id in self._model.scenes:
+            self._load_scene(scene_id, reset_view=False)
+            if selected is not None and selected[0] in {"npc", "hotspot", "zone"}:
+                # _load_scene intentionally clears old source/staging dicts.
+                # Re-select against the replacement model so the still-visible
+                # property form can never become an editable no-op detached
+                # from live data. If the entity disappeared, _load_scene's
+                # scene panel remains active and old entity fields stay hidden.
+                self._select_scene_entity_by_kind(
+                    selected[0],
+                    selected[1],
+                    scene_id,
+                )
 
     def confirm_close(self, parent: QWidget | None = None) -> bool:
         """关闭 / 切项目门控钩子（被 MainWindow._confirm_pending_editor_changes 调用）。
 
         把未应用的画布/面板编辑提交进模型，让随后的 is_dirty 检查能感知并弹出保存
-        提示，修复"拖拽/改名后关闭或切项目静默丢弃"（HIGH-11/12）。本身不弹窗、
-        始终返回 True 不阻塞——保存与否由主窗口统一的 Unsaved Changes 提示决定；
-        若用户选择放弃，内存模型随之丢弃，本次提交不会落盘。
+        提示，修复"拖拽/改名后关闭或切项目静默丢弃"（HIGH-11/12）。正常提交后由
+        主窗口统一询问是否保存；若保护性校验拒绝提交（如畸形 entityGroups），则返回
+        False 阻断关闭，不能让只存在于表单 staging 的修改绕过 model dirty 门闸而丢失。
         """
         if self._props.is_pending_dirty():
-            self._apply_props()
-        return True
+            if not self._apply_props():
+                return False
+        return not (
+            self._props.is_pending_dirty()
+            or getattr(self._props, "_group_commit_blocked", False)
+        )
 
     def _mark_canvas_edit(self) -> None:
         """任何画布编辑（拖实体/出生点/多边形顶点）统一入口：
@@ -10507,7 +10984,7 @@ class SceneEditor(QWidget):
             self._model.mark_dirty("scene", sid)
         self._props._set_pending_dirty(True)
 
-    def _commit_pending_scene_edits(self) -> None:
+    def _commit_pending_scene_edits(self) -> bool:
         """commit-on-leave：离开当前实体/场景前，把未应用的 staging 编辑提交回模型。
 
         消除"切实体/切场景静默丢弃拖拽"的丢数据簇（HIGH-5/7/14）。只在确有未应用
@@ -10516,25 +10993,33 @@ class SceneEditor(QWidget):
         """
         props = self._props
         if not props.is_pending_dirty():
-            return
+            return True
         sc_id = self._current_scene_id or ""
         if not sc_id or self._model.scenes.get(sc_id) is None or props._source_scene is None:
             props._set_pending_dirty(False)
-            return
+            return True
         props.flush_pending_to_model()          # 可见面板 widgets -> staging
+        if not self._preflight_group_commit(self._model.scenes[sc_id]):
+            props._set_pending_dirty(True)
+            return False
         props.commit_scene_staging_to_source()  # 场景级非列表字段（含 spawnPoint/spawnPoints）
         self._commit_staging_dict_into(props._source_hotspot, props._staging_hotspot)
         self._commit_staging_dict_into(props._source_npc, props._staging_npc)
         self._commit_staging_dict_into(props._source_zone, props._staging_zone)
+        self._commit_group_staging(self._model.scenes[sc_id])
+        if props._group_commit_blocked:
+            props._set_pending_dirty(True)
+            return False
         self._model.mark_dirty("scene", sc_id)
         props._set_pending_dirty(False)
+        return True
 
     # ---- 撤销 / 重做（快照命令；机制见 scene_undo.py 模块注释） -------------
 
-    def _undo_flush_pending_as_command(self) -> None:
+    def _undo_flush_pending_as_command(self) -> bool:
         """离开路径（切实体/切场景/点空白）的 commit-on-leave：语义同
         `_commit_pending_scene_edits`，额外把这次提交记为可撤销命令。"""
-        self._undo.flush_pending_as_command()
+        return self._undo.flush_pending_as_command()
 
     def _on_canvas_drag_press(self) -> None:
         """画布左键按到可拖图元：先把未应用编辑提交为独立命令，再捕获
@@ -10546,7 +11031,10 @@ class SceneEditor(QWidget):
         if not sid or sc is None:
             self._drag_undo_before = None
             return
-        self._undo.flush_pending_as_command()
+        if not self._undo.flush_pending_as_command():
+            self._drag_undo_before = None
+            self._restore_editing_selection_after_block()
+            return
         self._drag_undo_before = (sid, copy.deepcopy(sc))
 
     @staticmethod
@@ -10567,7 +11055,9 @@ class SceneEditor(QWidget):
             return
         # 未应用的 staging 编辑先提交为命令，再撤销——保证 Ctrl+Z 第一步撤的
         # 是屏幕上最新的改动，而不是跳过它撤更早的历史（零丢失范式）。
-        self._undo.flush_pending_as_command()
+        if not self._undo.flush_pending_as_command():
+            self._restore_editing_selection_after_block()
+            return
         if self._undo.stack.canUndo():
             self._undo.stack.undo()
 
@@ -10578,7 +11068,9 @@ class SceneEditor(QWidget):
             return
         # pending 提交作为新命令入栈会按 Qt 语义截断 redo 分支（新编辑使旧
         # redo 失效）——比静默丢弃 pending 或让 redo 覆盖它都安全。
-        self._undo.flush_pending_as_command()
+        if not self._undo.flush_pending_as_command():
+            self._restore_editing_selection_after_block()
+            return
         if self._undo.stack.canRedo():
             self._undo.stack.redo()
 
@@ -10681,6 +11173,160 @@ class SceneEditor(QWidget):
             return
         source.clear()
         source.update(copy.deepcopy(staging))
+
+    def _scene_group_inbound_references(
+        self, scene_id: str, group_id: str,
+    ) -> list[str]:
+        """扫描会因分组改名/删除而悬垂的、可明确归属到该场景的引用。
+
+        成员 ``entity.group`` 属于本场景内受控引用，会随改名级联/删除清除，不列为
+        外部入站。叙事 sceneGroup owner 与同场景（或 params 显式 sceneId /
+        targetScene）的批量 group action 无法由单场景撤销栈事务级联，故列出并阻断。
+        """
+        sid = str(scene_id or "").strip()
+        gid = str(group_id or "").strip()
+        qualified = f"{sid}:{gid}"
+        hits: list[str] = []
+        seen_objects: set[int] = set()
+
+        def walk(obj: object, path: str, context_scene: str | None) -> None:
+            if isinstance(obj, (dict, list)):
+                oid = id(obj)
+                if oid in seen_objects:
+                    return
+                seen_objects.add(oid)
+            if isinstance(obj, dict):
+                owner_scene = context_scene
+                if str(obj.get("ownerType") or "").strip() == "sceneGroup":
+                    owner_id = str(obj.get("ownerId") or "").strip()
+                    if owner_id == qualified:
+                        hits.append(f"{path}: narrative ownerId={qualified}")
+                    if ":" in owner_id:
+                        owner_scene = owner_id.split(":", 1)[0]
+                if str(obj.get("type") or "") in ("setGroupEnabled", "moveGroupBy"):
+                    params = obj.get("params") if isinstance(obj.get("params"), dict) else {}
+                    action_group = str(params.get("group") or "").strip()
+                    explicit_scene = str(
+                        params.get("targetScene")
+                        or params.get("sceneId")
+                        or obj.get("targetScene")
+                        or obj.get("sceneId")
+                        or ""
+                    ).strip()
+                    if action_group == gid and (
+                        owner_scene == sid or explicit_scene == sid
+                    ):
+                        action_type = str(obj.get("type") or "group action")
+                        hits.append(f"{path}: {action_type}.params.group={gid}")
+                for key, value in obj.items():
+                    walk(value, f"{path}.{key}", owner_scene)
+            elif isinstance(obj, list):
+                for index, value in enumerate(obj):
+                    walk(value, f"{path}[{index}]", context_scene)
+
+        target_scene = self._model.scenes.get(sid)
+        if isinstance(target_scene, dict):
+            walk(target_scene, f"scene[{sid}]", sid)
+        narrative = getattr(self._model, "narrative_graphs", None)
+        if isinstance(narrative, (dict, list)):
+            walk(narrative, "narrative_graphs", None)
+        # 其它业务桶只有在 action 自带明确场景上下文时才算命中，避免把运行时
+        # "当前场景"的裸 group 猜成任一场景并误拦合法数据。
+        for attr, value in vars(self._model).items():
+            if attr.startswith("_") or attr in ("scenes", "narrative_graphs"):
+                continue
+            if isinstance(value, (dict, list)):
+                walk(value, attr, None)
+        return list(dict.fromkeys(hits))
+
+    def _block_group_commit(self, title: str, message: str) -> bool:
+        props = self._props
+        props._group_commit_blocked = True
+        props._set_pending_dirty(True)
+        QMessageBox.warning(self, title, message)
+        return False
+
+    def _preflight_group_commit(self, sc: dict) -> bool:
+        """在任何 source 写入前验证 group staging，失败时完整保留草稿。"""
+        props = self._props
+        if not props._group_pending_changed or props._staging_group is None:
+            props._group_commit_blocked = False
+            return True
+        staging = props._staging_group
+        old_id = str(props._group_original_id or "").strip()
+        new_id = str(staging.get("id") or "").strip()
+        if not new_id:
+            return self._block_group_commit(
+                "场景分组无法提交", "分组 id 不能为空；草稿已保留，请修正后再离开。",
+            )
+        if ":" in new_id:
+            return self._block_group_commit(
+                "场景分组无法提交",
+                "分组 id 不能包含 ':'；草稿已保留，请修正后再离开。",
+            )
+        groups = sc.get("entityGroups")
+        if groups is not None and not isinstance(groups, list):
+            return self._block_group_commit(
+                "场景分组无法提交",
+                "当前 entityGroups 不是数组。为保护原数据，本次分组编辑未提交、原字段未覆盖；"
+                "请先根据 Validate Data 修复该字段。草稿与当前选择均会保留。",
+            )
+        if isinstance(groups, list) and any(
+            group is not props._source_group
+            and isinstance(group, dict)
+            and str(group.get("id") or "").strip() == new_id
+            for group in groups
+        ):
+            return self._block_group_commit(
+                "场景分组无法提交",
+                f"当前场景已经存在分组「{new_id}」；草稿已保留，请换一个 id。",
+            )
+        if old_id and new_id != old_id:
+            refs = self._scene_group_inbound_references(
+                self._current_scene_id or "", old_id,
+            )
+            if refs:
+                preview = "\n".join(f"• {row}" for row in refs[:12])
+                suffix = f"\n…另有 {len(refs) - 12} 处" if len(refs) > 12 else ""
+                return self._block_group_commit(
+                    "分组改名已阻断",
+                    "该分组仍有无法由单场景撤销事务安全级联的入站引用。"
+                    "请先在对应编辑器改掉这些引用，再重试；本次改名草稿未丢失：\n"
+                    f"{preview}{suffix}",
+                )
+        props._group_commit_blocked = False
+        return True
+
+    def _commit_group_staging(self, sc: dict) -> dict | None:
+        """提交分组表单并级联成员引用；仅真实编辑时才物化旧标签。"""
+        props = self._props
+        if not props._group_pending_changed or props._staging_group is None:
+            return props._source_group
+        if not self._preflight_group_commit(sc):
+            return props._source_group
+        staging = copy.deepcopy(props._staging_group)
+        old_id = str(props._group_original_id or "").strip()
+        new_id = str(staging.get("id") or "").strip()
+        groups = sc.get("entityGroups")
+        if not isinstance(groups, list):
+            groups = []
+            sc["entityGroups"] = groups
+        source = props._source_group
+        if source is None:
+            source = staging
+            groups.append(source)
+        else:
+            source.clear()
+            source.update(staging)
+        if old_id and new_id != old_id:
+            for coll in ("npcs", "hotspots", "zones"):
+                for member in sc.get(coll, []) or []:
+                    if isinstance(member, dict) and str(member.get("group") or "").strip() == old_id:
+                        member["group"] = new_id
+        props._source_group = source
+        props._group_original_id = new_id
+        props._group_pending_changed = False
+        return source
 
     def _sync_hotspot_canvas_after_commit(self, old_id: str, hs: dict) -> None:
         new_id = str(hs.get("id", "") or "").strip()
@@ -10878,18 +11524,36 @@ class SceneEditor(QWidget):
             pass
         it.setSelected(True)
 
-    def _apply_props(self) -> None:
+    def _apply_props(self) -> bool:
         # Apply 的载荷就是未应用的 staging 编辑本身，故 commit_before=False：
         # before 快照取在提交之前，命令 diff 即本次 Apply 的全部内容。
+        applied = False
         with self._undo.capture("应用属性", commit_before=False):
-            self._apply_props_impl()
+            applied = self._apply_props_impl()
+        if not applied:
+            self._restore_editing_selection_after_block()
+            return False
         self._sync_transform_gizmo()
         # Apply 可能改了 id/name/group：树是模型投影，跟着刷（审查 P2-C）；
         # 重建清掉的树高亮按画布选中补回
         self._refresh_entity_tree()
-        self._sync_tree_from_canvas(self._canvas_selected_entity_refs())
+        if self._props._stack.currentWidget() == self._props._group_panel:
+            gid = str(self._props._group_original_id or "").strip()
+            for item in self._iter_entity_tree_items():
+                data = item.data(0, Qt.ItemDataRole.UserRole)
+                if data and tuple(data) == ("group", gid):
+                    self._syncing_tree_selection = True
+                    try:
+                        item.setSelected(True)
+                        self._entity_tree.scrollToItem(item)
+                    finally:
+                        self._syncing_tree_selection = False
+                    break
+        else:
+            self._sync_tree_from_canvas(self._canvas_selected_entity_refs())
+        return True
 
-    def _apply_props_impl(self) -> None:
+    def _apply_props_impl(self) -> bool:
         props = self._props
 
         active_panel = props._stack.currentWidget()
@@ -10898,7 +11562,11 @@ class SceneEditor(QWidget):
         sc_id = self._current_scene_id or ""
         sc_model = self._model.scenes.get(sc_id)
         if sc_model is None:
-            return
+            return False
+
+        # 保护性校验必须先于任何 source 写入，避免 group 失败时其它 staging 半提交。
+        if not self._preflight_group_commit(sc_model):
+            return False
 
         old_hs_id = (
             str(props._source_hotspot.get("id", "") or "").strip()
@@ -10921,6 +11589,10 @@ class SceneEditor(QWidget):
         self._commit_staging_dict_into(props._source_hotspot, props._staging_hotspot)
         self._commit_staging_dict_into(props._source_npc, props._staging_npc)
         self._commit_staging_dict_into(props._source_zone, props._staging_zone)
+        committed_group = self._commit_group_staging(sc_model)
+        if props._group_commit_blocked:
+            props._set_pending_dirty(True)
+            return False
 
         self._refresh_scene_canvas_viewport_after_commit(sc_model, sc_id)
         self._canvas.reload_spawn_items_from_scene(sc_model)
@@ -10952,6 +11624,8 @@ class SceneEditor(QWidget):
             props.rebind_zone_after_commit()
             if eid:
                 self._try_select_canvas_item("zone", eid)
+        elif active_panel == props._group_panel and committed_group is not None:
+            props.rebind_group_after_commit(committed_group)
         elif active_panel == props._spawn_panel:
             sk = str(props._spawn_name_original or "").strip() or "default"
             self._try_select_canvas_item("spawn", sk)
@@ -10962,6 +11636,7 @@ class SceneEditor(QWidget):
             self.window().statusBar().showMessage("已应用到内存（尚未 Save All）", 3000)
         except (AttributeError, RuntimeError):
             pass
+        return True
 
     def _require_scene(self) -> dict | None:
         sid = self._current_scene_id
@@ -10996,6 +11671,9 @@ class SceneEditor(QWidget):
             self._add_spawn_at(wx, wy)
 
     def _add_hotspot_at(self, wx: float, wy: float) -> None:
+        if not self._undo_flush_pending_as_command():
+            self._restore_editing_selection_after_block()
+            return
         with self._undo.capture("新增热区"):
             self._add_hotspot_at_impl(wx, wy)
 
@@ -11019,6 +11697,9 @@ class SceneEditor(QWidget):
         self._add_hotspot_at(100, 100)
 
     def _add_npc_at(self, wx: float, wy: float) -> None:
+        if not self._undo_flush_pending_as_command():
+            self._restore_editing_selection_after_block()
+            return
         with self._undo.capture("新增 NPC"):
             self._add_npc_at_impl(wx, wy)
 
@@ -11042,6 +11723,9 @@ class SceneEditor(QWidget):
         self._add_npc_at(150, 150)
 
     def _add_zone_at(self, wx: float, wy: float) -> None:
+        if not self._undo_flush_pending_as_command():
+            self._restore_editing_selection_after_block()
+            return
         with self._undo.capture("新增 Zone"):
             self._add_zone_at_impl(wx, wy)
 
@@ -11070,6 +11754,9 @@ class SceneEditor(QWidget):
         self._add_zone_at(50, 50)
 
     def _add_spawn_at(self, wx: float, wy: float) -> None:
+        if not self._undo_flush_pending_as_command():
+            self._restore_editing_selection_after_block()
+            return
         with self._undo.capture("新增出生点"):
             self._add_spawn_at_impl(wx, wy)
 
@@ -11123,6 +11810,8 @@ class SceneEditor(QWidget):
             return "hotspot", str(self._props._pending_hotspot.get("id", "") or "")
         if w == self._props._zone_panel and self._props._pending_zone:
             return "zone", str(self._props._pending_zone.get("id", "") or "")
+        if w == self._props._group_panel and self._props._pending_group:
+            return "group", str(self._props._pending_group.get("id", "") or "")
         if w == self._props._spawn_panel and self._props._spawn_scene is not None:
             return "spawn", str(self._props._spawn_name_original or "")
         return None
@@ -11151,7 +11840,9 @@ class SceneEditor(QWidget):
             return
         # commit-on-leave：把属性面板/画布 staging 先落进模型，重构基于已提交数据
         # （记为可撤销命令——用户取消重构对话框时这次提交仍可 Ctrl+Z）。
-        self._undo_flush_pending_as_command()
+        if not self._undo_flush_pending_as_command():
+            self._restore_editing_selection_after_block()
+            return
         from ..shared.entity_refactor_dialog import (
             MoveEntityDialog,
             RenameEntityDialog,
@@ -11198,6 +11889,9 @@ class SceneEditor(QWidget):
         成功路径静默（副本被选中即反馈），仅剥离过场绑定时弹一次提示；
         复制是纯场景内变更，撤销走 Ctrl+Z 快照栈（不再进重构 journal——
         双栈同管一个操作会在一边撤销后让另一边的记录悬垂）。"""
+        if not self._undo_flush_pending_as_command():
+            self._restore_editing_selection_after_block()
+            return
         with self._undo.capture("复制实体"):
             self._duplicate_selected_impl()
 
@@ -11262,7 +11956,9 @@ class SceneEditor(QWidget):
         # commit-on-leave：先把未应用的画布/面板 staging 落进模型，否则迟到的
         # commit-on-leave 会用旧 id 的 staging 覆盖引擎撤销后的实体 def，引用网静默
         # 劈叉且不可再撤销（审查 P1-02，对照 _refactor_selected 正确样板）。
-        self._undo_flush_pending_as_command()
+        if not self._undo_flush_pending_as_command():
+            self._restore_editing_selection_after_block()
+            return
         from ..shared import entity_refactor as er
         result = er.undo_last(self._model)
         if result.get("ok"):
@@ -11273,6 +11969,9 @@ class SceneEditor(QWidget):
             self, "实体重构", str(result.get("description") or result.get("reason") or ""))
 
     def _delete_selected(self) -> None:
+        if not self._undo_flush_pending_as_command():
+            self._restore_editing_selection_after_block()
+            return
         with self._undo.capture("删除实体"):
             self._delete_selected_impl()
 
@@ -11281,6 +11980,14 @@ class SceneEditor(QWidget):
         if sc is None:
             return
         refs = self._selected_entity_refs_plural()
+        group_refs = [r for r in refs if r[0] == "group"]
+        if group_refs:
+            if len(refs) != 1:
+                QMessageBox.information(
+                    self, "删除场景分组", "场景分组一次只删除一个，请取消其它选中项。")
+                return
+            self._delete_scene_group(sc, group_refs[0][1])
+            return
         deletable = [r for r in refs
                      if not (r[0] == "spawn" and r[1] == "default")]
         if not deletable:
@@ -11321,6 +12028,56 @@ class SceneEditor(QWidget):
         self._model.mark_dirty("scene", self._current_scene_id or "")
         self._load_scene(self._current_scene_id, reset_view=False)
 
+    def _delete_scene_group(self, sc: dict, group_id: str) -> None:
+        gid = str(group_id or "").strip()
+        if not gid:
+            return
+        if not self._undo_flush_pending_as_command():
+            self._restore_editing_selection_after_block()
+            return
+        inbound = self._scene_group_inbound_references(
+            self._current_scene_id or "", gid,
+        )
+        if inbound:
+            preview = "\n".join(f"• {row}" for row in inbound[:12])
+            suffix = f"\n…另有 {len(inbound) - 12} 处" if len(inbound) > 12 else ""
+            QMessageBox.warning(
+                self,
+                "分组删除已阻断",
+                "该分组仍有入站引用；删除会制造悬垂，已安全阻断。"
+                "请先在对应编辑器移除这些引用：\n"
+                f"{preview}{suffix}",
+            )
+            return
+        member_count = sum(
+            1
+            for coll in ("npcs", "hotspots", "zones")
+            for member in sc.get(coll, []) or []
+            if isinstance(member, dict) and str(member.get("group") or "").strip() == gid
+        )
+        answer = QMessageBox.question(
+            self,
+            "删除场景分组",
+            f"删除分组「{gid}」，并将 {member_count} 个成员移出该组（清除成员 group 引用）？\n"
+            "实体本身不会被删除。此操作可用 Ctrl+Z 撤销。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        groups = sc.get("entityGroups")
+        if isinstance(groups, list):
+            sc["entityGroups"] = [
+                group for group in groups
+                if not (isinstance(group, dict) and str(group.get("id") or "").strip() == gid)
+            ]
+        for coll in ("npcs", "hotspots", "zones"):
+            for member in sc.get(coll, []) or []:
+                if isinstance(member, dict) and str(member.get("group") or "").strip() == gid:
+                    member.pop("group", None)
+        self._model.mark_dirty("scene", self._current_scene_id or "")
+        self._load_scene(self._current_scene_id, reset_view=False)
+
     def _scene_id_for_entity(self, kind: str, item_id: str) -> str:
         item_id = (item_id or "").strip()
         if not item_id:
@@ -11344,6 +12101,10 @@ class SceneEditor(QWidget):
                 if it and it.data(Qt.ItemDataRole.UserRole) == scene_id:
                     self._scene_list.setCurrentItem(it)
                     break
+            # currentItemChanged 的 commit-on-leave 可能因保护性校验拒绝切场景。
+            # 此时绝不能继续在旧场景里按同名 id 误选另一个实体。
+            if (self._current_scene_id or "") != scene_id:
+                return False
         if not item_id:
             return False
         sc = self._model.scenes.get(self._current_scene_id or "")

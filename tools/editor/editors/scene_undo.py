@@ -74,7 +74,7 @@ class SceneUndoController:
         sc = self._editor._model.scenes.get(sid)
         return copy.deepcopy(sc) if isinstance(sc, dict) else None
 
-    def flush_pending_as_command(self, label: str = "应用属性编辑") -> None:
+    def flush_pending_as_command(self, label: str = "应用属性编辑") -> bool:
         """把未应用的 staging 编辑提交进模型，并作为独立命令入栈。
 
         替代离开路径上的裸 `_commit_pending_scene_edits()`：语义相同（提交），
@@ -82,19 +82,20 @@ class SceneUndoController:
         """
         ed = self._editor
         if self.restoring:
-            return
+            return True
         props = getattr(ed, "_props", None)
         if props is None or not props.is_pending_dirty():
-            return
+            return True
         sid = ed._current_scene_id or ""
         if not sid or ed._model.scenes.get(sid) is None or self._depth > 0:
-            ed._commit_pending_scene_edits()
-            return
+            return bool(ed._commit_pending_scene_edits())
         before = self._scene_snapshot(sid)
-        ed._commit_pending_scene_edits()
+        if not ed._commit_pending_scene_edits():
+            return False
         after = self._scene_snapshot(sid)
         if before != after:
             self.stack.push(SceneSnapshotCommand(ed, sid, label, before, after))
+        return True
 
     @contextmanager
     def capture(self, label: str, *, commit_before: bool = True):
@@ -106,7 +107,11 @@ class SceneUndoController:
             yield
             return
         if commit_before:
-            self.flush_pending_as_command()
+            # 调用方若要在失败时完全跳过 body，应在进入 capture 前显式调用并检查
+            # flush_pending_as_command。这里仍 fail-safe：提交被拒时不制造错误快照。
+            if not self.flush_pending_as_command():
+                yield
+                return
         before = self._scene_snapshot(sid)
         self._depth += 1
         try:
@@ -114,8 +119,13 @@ class SceneUndoController:
         finally:
             self._depth -= 1
             if not self.restoring:
-                ed._commit_pending_scene_edits()
-                if self._depth == 0:
+                props = getattr(ed, "_props", None)
+                blocked = bool(
+                    props is not None
+                    and getattr(props, "_group_commit_blocked", False)
+                )
+                committed = False if blocked else bool(ed._commit_pending_scene_edits())
+                if committed and self._depth == 0:
                     after = self._scene_snapshot(sid)
                     if before != after:
                         self.stack.push(
@@ -138,7 +148,8 @@ class SceneUndoController:
             # 理论防御：手势 release 落在某个 capture 内时只低层提交，折叠进外层命令
             ed._commit_pending_scene_edits()
             return
-        ed._commit_pending_scene_edits()
+        if not ed._commit_pending_scene_edits():
+            return
         after = self._scene_snapshot(sid)
         if before != after:
             self.stack.push(SceneSnapshotCommand(ed, sid, label, before, after))

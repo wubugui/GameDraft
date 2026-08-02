@@ -226,6 +226,11 @@ export interface SceneData {
   hotspots?: HotspotDef[];
   npcs?: NpcDef[];
   zones?: ZoneDef[];
+  /**
+   * 场景内一等实体分组。成员仍以 npc/hotspot/zone.group 引用本表 id；省略本表时，
+   * 旧场景里的 group 字符串继续按无条件分组工作（读取兼容，不要求运行时迁移）。
+   */
+  entityGroups?: SceneEntityGroupDef[];
   bgm?: string;
   ambientSounds?: string[];
   /** 氛围滤镜 ID，对应 assets/data/filters/{filterId}.json，未写则不应用滤镜 */
@@ -251,6 +256,13 @@ export interface SceneData {
    * 因此这里发起的成段演出（过场/对话）落在**可见**场景之上，不会被加载遮罩盖住，长演出也不阻塞揭幕。
    */
   onEnter?: ActionDef[];
+}
+
+/** 场景内实体分组；conditions 与成员自身条件按 AND 合成。 */
+export interface SceneEntityGroupDef {
+  id: string;
+  label?: string;
+  conditions?: ConditionExpr[];
 }
 
 /** 场景相机配置 */
@@ -340,7 +352,7 @@ export interface HotspotDef {
    * 贴背景绘制，缩放反而破坏对位）；地面道具（displayImage、可能被移动）可显式开启。
    */
   perspectiveScaleEnabled?: boolean;
-  /** 分组标签（纯标签、非 id 引用）：供组动作（setGroupEnabled/moveGroupBy）批量寻址。 */
+  /** 场景内实体分组 id；旧数据的纯字符串标签继续兼容。 */
   group?: string;
 }
 
@@ -775,7 +787,7 @@ export interface NpcDef {
    * 地面，脚底 y 即深度）；贴墙/悬空装饰实体可显式关闭。
    */
   perspectiveScaleEnabled?: boolean;
-  /** 分组标签（纯标签、非 id 引用）：供组动作（setGroupEnabled/moveGroupBy）批量寻址。 */
+  /** 场景内实体分组 id；旧数据的纯字符串标签继续兼容。 */
   group?: string;
 }
 
@@ -1648,7 +1660,7 @@ export interface ZoneSmellConfig {
 
 export interface ZoneDef {
   id: string;
-  /** 分组标签（纯标签、非 id 引用）：编辑器可指派；组动作首期不消费 zone（预留）。 */
+  /** 场景内实体分组 id；旧数据的纯字符串标签继续兼容。 */
   group?: string;
   /**
    * 位面归属（见 `systems/plane/types.ts` PlaneDef）：缺省 = zone 存在于**所有**位面；
