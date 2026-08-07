@@ -527,15 +527,15 @@
         "id": "flow_xungou_main",
         "ownerType": "flow",
         "ownerId": "寻狗Demo主线",
-        "initialState": "initial",
+        "initialState": "state_1",
         "states": {
           "initial": {
             "id": "initial",
             "label": "开局·茶馆门外的人",
             "meta": {
               "editor": {
-                "x": -191,
-                "y": 105
+                "x": -326,
+                "y": 78
               }
             }
           },
@@ -544,8 +544,8 @@
             "label": "听书完成",
             "meta": {
               "editor": {
-                "x": -12,
-                "y": 216
+                "x": -39,
+                "y": 78
               }
             }
           },
@@ -653,8 +653,8 @@
             "id": "state_1",
             "meta": {
               "editor": {
-                "x": -458,
-                "y": 4
+                "x": -660,
+                "y": 74
               }
             },
             "label": "未开始"
@@ -663,8 +663,8 @@
             "id": "state_2",
             "meta": {
               "editor": {
-                "x": 248,
-                "y": 280
+                "x": 206,
+                "y": 224
               }
             },
             "label": "主线开局闲逛A"
@@ -745,7 +745,7 @@
             "id": "t_1",
             "from": "state_1",
             "to": "initial",
-            "signal": "__draft__"
+            "signal": "Demo主线开始"
           },
           {
             "id": "t_3",
@@ -6487,6 +6487,9 @@
     },
     {
       "id": "主线_开局被赶出茶馆"
+    },
+    {
+      "id": "Demo主线开始"
     }
   ]
 }
