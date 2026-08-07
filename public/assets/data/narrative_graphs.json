@@ -745,7 +745,14 @@
             "id": "t_1",
             "from": "state_1",
             "to": "initial",
-            "signal": "Demo主线开始"
+            "signal": "Demo主线开始",
+            "trigger": "reactive",
+            "conditions": [
+              {
+                "flag": "GameConfig_Demo主线剧情",
+                "value": true
+              }
+            ]
           },
           {
             "id": "t_3",

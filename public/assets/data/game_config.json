@@ -3,7 +3,8 @@
   "initialQuest": "xg01_tingshu",
   "fallbackScene": "teahouse",
   "startupFlags": {
-    "archive_book_book_erta_guide": true
+    "archive_book_book_erta_guide": true,
+    "GameConfig_Demo主线剧情": true
   },
   "viewport": {
     "width": 1024,

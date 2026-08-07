@@ -1,55 +1,15 @@
 {
   "static": [
     {
-      "key": "player_health",
-      "valueType": "float"
-    },
-    {
-      "key": "player_max_health",
-      "valueType": "float"
-    },
-    {
-      "key": "player_display_name",
-      "valueType": "string"
-    },
-    {
-      "key": "current_smell",
-      "valueType": "string"
-    },
-    {
-      "key": "current_smell_source",
-      "valueType": "string"
-    },
-    {
-      "key": "smell_intensity",
-      "valueType": "float"
-    },
-    {
-      "key": "current_smell_dir",
-      "valueType": "float"
-    },
-    {
-      "key": "current_smell_flicker",
-      "valueType": "bool"
-    },
-    {
-      "key": "got_xingtou_daopao",
-      "valueType": "bool"
-    },
-    {
-      "key": "got_xingtou_luopan",
-      "valueType": "bool"
-    },
-    {
-      "key": "got_xingtou_taomu",
-      "valueType": "bool"
-    },
-    {
-      "key": "零工背尸_done",
+      "key": "GameConfig_Demo主线剧情",
       "valueType": "bool"
     },
     {
       "key": "Q抓水猴子_禁止离开码头",
+      "valueType": "bool"
+    },
+    {
+      "key": "beishi_carrying",
       "valueType": "bool"
     },
     {
@@ -71,6 +31,22 @@
     {
       "key": "current_day",
       "valueType": "float"
+    },
+    {
+      "key": "current_smell",
+      "valueType": "string"
+    },
+    {
+      "key": "current_smell_dir",
+      "valueType": "float"
+    },
+    {
+      "key": "current_smell_flicker",
+      "valueType": "bool"
+    },
+    {
+      "key": "current_smell_source",
+      "valueType": "string"
     },
     {
       "key": "day_1_done",
@@ -97,6 +73,10 @@
       "valueType": "bool"
     },
     {
+      "key": "forest.tether_suppressed",
+      "valueType": "bool"
+    },
+    {
       "key": "ghost_approach_direct",
       "valueType": "bool"
     },
@@ -115,6 +95,70 @@
     {
       "key": "got_iron_box",
       "valueType": "bool"
+    },
+    {
+      "key": "got_xingtou_daopao",
+      "valueType": "bool"
+    },
+    {
+      "key": "got_xingtou_luopan",
+      "valueType": "bool"
+    },
+    {
+      "key": "got_xingtou_taomu",
+      "valueType": "bool"
+    },
+    {
+      "key": "guaihua_heard_bai_matou",
+      "valueType": "bool"
+    },
+    {
+      "key": "guaihua_heard_baoqi",
+      "valueType": "bool"
+    },
+    {
+      "key": "guaihua_heard_beishi",
+      "valueType": "bool"
+    },
+    {
+      "key": "guaihua_heard_chuoguolou",
+      "valueType": "bool"
+    },
+    {
+      "key": "guaihua_heard_dianshui",
+      "valueType": "bool"
+    },
+    {
+      "key": "guaihua_heard_guanggun",
+      "valueType": "bool"
+    },
+    {
+      "key": "guaihua_heard_laxi_baidai",
+      "valueType": "bool"
+    },
+    {
+      "key": "guaihua_heard_litiangou_yimai",
+      "valueType": "bool"
+    },
+    {
+      "key": "guaihua_heard_luojiao",
+      "valueType": "bool"
+    },
+    {
+      "key": "guaihua_heard_ming_zai_zishou",
+      "valueType": "bool"
+    },
+    {
+      "key": "guaihua_heard_shuo_liaozhai",
+      "valueType": "bool"
+    },
+    {
+      "key": "guaihua_heard_tongyuanmen",
+      "valueType": "bool"
+    },
+    {
+      "key": "guidaoqiang_loops",
+      "valueType": "float"
     },
     {
       "key": "heard_city_news",
@@ -153,11 +197,11 @@
       "valueType": "bool"
     },
     {
-      "key": "met_blind_li",
+      "key": "legacy_iron_box_flow",
       "valueType": "bool"
     },
     {
-      "key": "met_paoge_leader",
+      "key": "met_blind_li",
       "valueType": "bool"
     },
     {
@@ -165,7 +209,15 @@
       "valueType": "bool"
     },
     {
+      "key": "met_litiangou",
+      "valueType": "bool"
+    },
+    {
       "key": "met_mysterious_visitor",
+      "valueType": "bool"
+    },
+    {
+      "key": "met_paoge_leader",
       "valueType": "bool"
     },
     {
@@ -183,6 +235,18 @@
     {
       "key": "peddler_story_heard",
       "valueType": "bool"
+    },
+    {
+      "key": "player_display_name",
+      "valueType": "string"
+    },
+    {
+      "key": "player_health",
+      "valueType": "float"
+    },
+    {
+      "key": "player_max_health",
+      "valueType": "float"
     },
     {
       "key": "prologue_demo_complete",
@@ -221,6 +285,10 @@
       "valueType": "bool"
     },
     {
+      "key": "smell_intensity",
+      "valueType": "float"
+    },
+    {
       "key": "strangers_entered_temple",
       "valueType": "bool"
     },
@@ -249,6 +317,10 @@
       "valueType": "bool"
     },
     {
+      "key": "xg_prologue_started",
+      "valueType": "bool"
+    },
+    {
       "key": "书籍_风物志_铁环标注",
       "valueType": "string"
     },
@@ -265,6 +337,18 @@
       "valueType": "bool"
     },
     {
+      "key": "淹尸_动了死人的东西",
+      "valueType": "bool"
+    },
+    {
+      "key": "淹尸_烤过火",
+      "valueType": "bool"
+    },
+    {
+      "key": "淹尸_看过油布包",
+      "valueType": "bool"
+    },
+    {
       "key": "码头水鬼真相已揭示",
       "valueType": "bool"
     },
@@ -277,87 +361,7 @@
       "valueType": "bool"
     },
     {
-      "key": "legacy_iron_box_flow",
-      "valueType": "bool"
-    },
-    {
-      "key": "xg_prologue_started",
-      "valueType": "bool"
-    },
-    {
-      "key": "met_litiangou",
-      "valueType": "bool"
-    },
-    {
-      "key": "beishi_carrying",
-      "valueType": "bool"
-    },
-    {
-      "key": "guidaoqiang_loops",
-      "valueType": "float"
-    },
-    {
-      "key": "forest.tether_suppressed",
-      "valueType": "bool"
-    },
-    {
-      "key": "淹尸_看过油布包",
-      "valueType": "bool"
-    },
-    {
-      "key": "淹尸_动了死人的东西",
-      "valueType": "bool"
-    },
-    {
-      "key": "淹尸_烤过火",
-      "valueType": "bool"
-    },
-    {
-      "key": "guaihua_heard_baoqi",
-      "valueType": "bool"
-    },
-    {
-      "key": "guaihua_heard_chuoguolou",
-      "valueType": "bool"
-    },
-    {
-      "key": "guaihua_heard_beishi",
-      "valueType": "bool"
-    },
-    {
-      "key": "guaihua_heard_bai_matou",
-      "valueType": "bool"
-    },
-    {
-      "key": "guaihua_heard_laxi_baidai",
-      "valueType": "bool"
-    },
-    {
-      "key": "guaihua_heard_luojiao",
-      "valueType": "bool"
-    },
-    {
-      "key": "guaihua_heard_dianshui",
-      "valueType": "bool"
-    },
-    {
-      "key": "guaihua_heard_guanggun",
-      "valueType": "bool"
-    },
-    {
-      "key": "guaihua_heard_litiangou_yimai",
-      "valueType": "bool"
-    },
-    {
-      "key": "guaihua_heard_ming_zai_zishou",
-      "valueType": "bool"
-    },
-    {
-      "key": "guaihua_heard_shuo_liaozhai",
-      "valueType": "bool"
-    },
-    {
-      "key": "guaihua_heard_tongyuanmen",
+      "key": "零工背尸_done",
       "valueType": "bool"
     }
   ],

@@ -2371,9 +2371,22 @@ export class Game {
       if (cfg.initialCutsceneDoneFlag !== undefined) {
         this.gameConfig.initialCutsceneDoneFlag = cfg.initialCutsceneDoneFlag;
       }
+      // startupFlags = **发行版新开一局**的初始世界状态，只喂正式开局。
+      // dev 外壳（mode=dev / 直达场景 / warp / 各预览）刻意不吃：开发时要能从"一张白纸"
+      // 起步验某条 flag 到底是谁点亮的，config 预置进来会把这类验证全污染掉。
+      // 需要某条 flag 时用调试面板现场写，或去掉 mode=dev 正常开局。
       if (cfg.startupFlags) {
-        for (const [k, v] of Object.entries(cfg.startupFlags)) {
-          this.flagStore.set(k, v as boolean | number);
+        const entries = Object.entries(cfg.startupFlags);
+        if (this.isDevMode) {
+          if (entries.length > 0) {
+            console.info(
+              `[Game] dev 模式：跳过 startupFlags（${entries.length} 条：${entries.map(([k]) => k).join(', ')}），如需请用调试面板写入`,
+            );
+          }
+        } else {
+          for (const [k, v] of entries) {
+            this.flagStore.set(k, v as boolean | number);
+          }
         }
       }
       if (cfg.viewport) this.gameConfig.viewport = cfg.viewport;
