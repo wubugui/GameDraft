@@ -48,13 +48,25 @@ class Emitter:
     channel: str
     container_kind: str = ""      # dialogue / scene / quest / cutscene / narrativeGraph …
     container_id: str = ""
-    container_label: str = ""     # 中文名；没有就等于 id
-    where: str = ""               # 人话位置：'节点 c_jie · actions[0]'
+    container_label: str = ""     # 具体条目的显示名；没有就等于 id
+    kind_label: str = ""          # 类别中文名（'对话图' / '场景' / '任务'…），界面不甩字段名
+    where: str = ""               # 人话位置：'节点「c_jie」· 动作 第 1 个'
     context: str = ""             # 附近台词 / 状态名，帮策划认出是哪一句
     note: str = ""                # 附注：调试专用、初始状态…
     file: str = ""                # 仓库相对路径（跳转用）
     pointer: str = ""             # JSON pointer（跳转用）
     anchors: list[list[str]] = field(default_factory=list)
+    # 主编辑器只加载不保存的数据面（物件检视）：目录要看得见它发的信号，但**跳不过去**。
+    # 界面据此提前说明，而不是给人一颗按下去必然失败的按钮。
+    readonly: bool = False
+    # 叙事图内的坐标（广播状态 / 状态动作 / 上游转移才有）。这类行的正确跳法是
+    # **画布定位**：narrative_graphs.json 的文件级跳转只认 states/<id>，转移落不到点，
+    # 会退化成"打开了叙事状态机页"——而你本来就在那一页，画面纹丝不动。
+    composition_id: str = ""
+    element_id: str = ""
+    graph_id: str = ""
+    state_id: str = ""
+    transition_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -63,12 +75,19 @@ class Emitter:
             "containerKind": self.container_kind,
             "containerId": self.container_id,
             "containerLabel": self.container_label,
+            "kindLabel": self.kind_label,
             "where": self.where,
             "context": self.context,
             "note": self.note,
             "file": self.file,
             "pointer": self.pointer,
             "anchors": [list(a) for a in self.anchors],
+            "readonly": self.readonly,
+            "compositionId": self.composition_id,
+            "elementId": self.element_id,
+            "graphId": self.graph_id,
+            "stateId": self.state_id,
+            "transitionId": self.transition_id,
         }
 
 
@@ -117,6 +136,10 @@ class Listener:
     to_state: str = ""
     to_label: str = ""
     conditions: list[str] = field(default_factory=list)
+    # 活计图（有 run 声明）只有在它是"当前激活的那一个"时才吃信号
+    # （运行时 NarrativeStateManager.listScannableGraphEntries）。挂起的活计图看着
+    # 停在起点，实际一个信号都不接——调试器据此把圆点降级，绝不报"正等着"。
+    run_graph: bool = False
     priority: int = 0
     trigger: str = ""             # reactive / reactiveAll / reactiveAny（正常信号转移为空）
     file: str = ""
@@ -136,6 +159,7 @@ class Listener:
             "to": self.to_state,
             "toLabel": self.to_label,
             "conditions": list(self.conditions),
+            "runGraph": self.run_graph,
             "priority": self.priority,
             "trigger": self.trigger,
             "file": self.file,
@@ -156,9 +180,12 @@ class StateRead:
     state_id: str = ""
     container_kind: str = ""
     container_id: str = ""
+    kind_label: str = ""
     where: str = ""
     file: str = ""
     pointer: str = ""
+    readonly: bool = False
+    anchors: list[list[str]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -166,9 +193,12 @@ class StateRead:
             "stateId": self.state_id,
             "containerKind": self.container_kind,
             "containerId": self.container_id,
+            "kindLabel": self.kind_label,
             "where": self.where,
             "file": self.file,
             "pointer": self.pointer,
+            "readonly": self.readonly,
+            "anchors": [list(a) for a in self.anchors],
         }
 
 

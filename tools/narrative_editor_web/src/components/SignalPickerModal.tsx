@@ -25,6 +25,8 @@ export function SignalPickerModal(props: {
   onDataChange: (updater: (data: NarrativeGraphsFileDef) => void) => void;
   /** 信号重构入口（改 id / 删除走全项目级联重构）。仅 Qt 宿主内可用；未传则不显示重构按钮。 */
   onRequestRefactor?: (mode: 'rename' | 'delete', signalId: string) => void;
+  /** 打开「信号关系」看这条信号谁发谁听。本弹窗只数得清监听侧，发射侧要那边才有。 */
+  onInspectSignal?: (signalId: string) => void;
 }) {
   const [query, setQuery] = useState('');
   const [kindFilter, setKindFilter] = useState<SignalKindFilter>('all');
@@ -160,6 +162,16 @@ export function SignalPickerModal(props: {
                     onClick={() => props.onDataChange((data) => { createAuthorSignal(data, entry.id); })}
                   >
                     补登记
+                  </button>
+                ) : null}
+                {props.onInspectSignal ? (
+                  <button
+                    type="button"
+                    className="signal-row-note-edit"
+                    title="看这条信号谁发、谁听（本弹窗只数得清监听侧，发射侧要去信号关系面板）"
+                    onClick={() => props.onInspectSignal!(entry.id)}
+                  >
+                    看关系
                   </button>
                 ) : null}
                 {entry.editable ? (

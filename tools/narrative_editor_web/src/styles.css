@@ -2595,3 +2595,248 @@ button.secondary {
   background: #2a1518;
   text-decoration: none;
 }
+
+/* ---------------------------------------------------------------- 信号关系面板
+ * 左边挑信号、右边看两侧。只读面板，不承载任何编辑动作（除跳转与重构入口）。
+ */
+.signal-xref-dock {
+  /* 两栏（清单 + 详情）+ 长 id + 中文位置串，760 挤得详情只剩半行 */
+  width: min(880px, calc(100% - 24px));
+}
+
+.signal-xref-title {
+  font-size: var(--editor-host-font-14, 14px);
+  font-weight: 700;
+  word-break: break-all;
+  /* 信号 id 大小写敏感：绝不 text-transform（照抄出去就是个不存在的 id） */
+}
+
+.signal-xref-head-text {
+  min-width: 0;
+}
+
+.signal-xref-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  gap: 8px;
+}
+
+.signal-xref-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.signal-xref-toolbar input[type='search'] {
+  flex: 1;
+  min-width: 160px;
+}
+
+.signal-xref-filters {
+  display: flex;
+  gap: 4px;
+}
+
+.signal-xref-filters button {
+  padding: 4px 8px;
+  font-size: var(--editor-host-font-12, 12px);
+}
+
+.signal-xref-filters button.active {
+  border-color: #6f8aa5;
+  background: #2b3946;
+}
+
+.signal-xref-scope,
+.signal-xref-stale {
+  margin: 0;
+  font-size: var(--editor-host-font-11, 11px);
+  line-height: 1.4;
+}
+
+.signal-xref-stale {
+  color: #d8bf85;
+}
+
+.signal-xref-jump-note {
+  margin: 0;
+  padding-top: 6px;
+  border-top: 1px solid #2a323a;
+  font-size: var(--editor-host-font-11, 11px);
+  color: #9fb3c4;
+}
+
+.signal-xref-body {
+  display: flex;
+  gap: 10px;
+  min-height: 0;
+  flex: 1;
+}
+
+.signal-xref-list {
+  width: 262px;
+  flex: none;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-right: 4px;
+  border-right: 1px solid #2a323a;
+}
+
+.signal-xref-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  padding: 5px 6px;
+}
+
+.signal-xref-row:hover {
+  background: #1d242b;
+}
+
+.signal-xref-row.active {
+  background: #243240;
+  border-color: #4d6a86;
+}
+
+.signal-xref-row-id {
+  font-size: var(--editor-host-font-12, 12px);
+  word-break: break-all;
+}
+
+.signal-xref-row-meta {
+  font-size: var(--editor-host-font-10, 10px);
+  color: #8b98a4;
+}
+
+.signal-xref-mark {
+  margin-right: 4px;
+}
+
+.signal-xref-mark.sev-error,
+.signal-xref-diag.sev-error {
+  color: #f0a8a8;
+}
+
+.signal-xref-mark.sev-warning,
+.signal-xref-diag.sev-warning {
+  color: #e0c08a;
+}
+
+.signal-xref-mark.sev-info,
+.signal-xref-diag.sev-info {
+  color: #8fb4cc;
+}
+
+.signal-xref-detail {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.signal-xref-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.signal-xref-head-actions {
+  display: flex;
+  gap: 6px;
+  flex: none;
+}
+
+.signal-xref-head-actions button {
+  white-space: nowrap;
+}
+
+.signal-xref-notes {
+  margin: 6px 0;
+  font-size: var(--editor-host-font-12, 12px);
+  color: #c7b58a;
+}
+
+.signal-xref-diag {
+  margin: 4px 0;
+  font-size: var(--editor-host-font-12, 12px);
+  line-height: 1.45;
+}
+
+.signal-xref-section {
+  margin-top: 12px;
+}
+
+.signal-xref-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  border-bottom: 1px solid #2a323a;
+  padding-bottom: 3px;
+}
+
+.signal-xref-section-title {
+  font-size: var(--editor-host-font-13, 13px);
+  font-weight: 600;
+}
+
+.signal-xref-section-count {
+  font-size: var(--editor-host-font-11, 11px);
+  color: #8b98a4;
+}
+
+.signal-xref-section-hint {
+  font-size: var(--editor-host-font-10, 10px);
+  margin: 3px 0 0;
+  line-height: 1.4;
+}
+
+.signal-xref-empty {
+  font-size: var(--editor-host-font-12, 12px);
+  color: #8b98a4;
+  padding: 6px 0;
+}
+
+.signal-xref-item {
+  padding: 6px 0;
+  border-bottom: 1px solid #22292f;
+}
+
+.signal-xref-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.signal-xref-item-title {
+  font-size: var(--editor-host-font-12, 12px);
+  word-break: break-all;
+}
+
+.signal-xref-goto {
+  flex: none;
+  padding: 2px 8px;
+  font-size: var(--editor-host-font-11, 11px);
+}
+
+.signal-xref-item-where {
+  font-size: var(--editor-host-font-11, 11px);
+  color: #9fb3c4;
+  line-height: 1.45;
+}
+
+.signal-xref-item-context {
+  font-size: var(--editor-host-font-11, 11px);
+  color: #c7b58a;
+  line-height: 1.45;
+}

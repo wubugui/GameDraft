@@ -32,10 +32,10 @@ from PySide6.QtWidgets import (
     QRadioButton, QButtonGroup, QCompleter, QTabWidget,
 )
 from PySide6.QtGui import (
-    QPixmap, QImage, QPen, QBrush, QColor, QFontMetricsF, QPainter, QWheelEvent,
+    QPixmap, QImage, QPen, QBrush, QColor, QFont, QFontMetricsF, QPainter, QWheelEvent,
     QImageReader,
     QMouseEvent, QContextMenuEvent, QAction, QTransform, QPolygonF,
-    QShortcut, QKeySequence, QPainterPath,
+    QShortcut, QKeySequence, QPainterPath, QPainterPathStroker,
 )
 from PySide6.QtCore import (
     Qt,
@@ -1880,6 +1880,440 @@ class _PerspAxisItem(QGraphicsObject):
         self._canvas.persp_axis_committed.emit(which, float(handle.x()), float(handle.y()))
         event.accept()
 
+
+_GROUP_BOX_COLOR = QColor(120, 230, 200, 150)        # 常态：淡青虚线
+_GROUP_BOX_COLOR_SELECTED = QColor(120, 255, 210, 255)
+_GROUP_BOX_PAD = 10.0                                 # 世界单位，框离成员的留白
+# 命中尺寸一律按**屏幕像素**给：世界单位在真实场景（4000 宽、fit 后 0.21 倍）下
+# 会缩成 3px 的可点带，用户根本按不中（审查实测）。世界值 = 屏幕值 ÷ 视图缩放。
+_GROUP_EDGE_PICK_PX = 9.0                             # 框边可点带半宽（屏幕像素）
+_GROUP_HANDLE_PX = 11.0                               # 把手半径（屏幕像素）
+# 命中带内沿与成员之间的净空（屏幕像素）。留白只给到"恰好等于带宽"是不够的：
+# 那样带子内沿与成员包围盒相切，定义极值的那个成员永远压线，1 像素取整就把
+# 点击吃进带子。净空也按屏幕像素兜底，否则缩得越小越薄。
+_GROUP_CLEARANCE_PX = 4.0
+
+
+class _SceneGroupBox(QGraphicsObject):
+    """场景分组在画布上的可见可拖形体（分组是一等实体，但它自己没有坐标）。
+
+    几何全部是**派生**的：框 = 成员几何并集包围盒，把手 = ``editor.anchor`` 或框心。
+    整组位移 = 把偏移烘进每个成员自己的坐标（与运行时 moveGroupBy 同语义，作者态版）。
+
+    刻意的设计约束（改动前先读，全是踩过的坑）：
+
+    1. **不进 Qt 选择系统**（``ItemIsSelectable=False``）：橡皮筋框选、批量删除/复制、
+       多选页计数的目标集合永远只有真实体，杜绝"框选顺手把组一起删了"。组的选中态
+       由编辑器显式经 :meth:`set_selected` 驱动。
+    2. **shape() 只含框边描边 + 把手 + 标题**：框内是空的，鼠标穿透到成员，点选
+       实体零影响（与 :class:`_TransformGizmo` 环体同法）。
+    3. **命中尺寸按屏幕像素算**，不是世界单位：真实场景 4000 宽、fit 后 0.21 倍，
+       世界单位的 7px 带宽会缩成 3 个屏幕像素，用户按不中；标题同理要
+       ``ItemIgnoresTransformations``，否则缩成 2.5px 的糊线，且它的命中矩形必须
+       按当前缩放现算（`mapRectFromItem` 拿到的是未缩放逻辑矩形，对不上文字）。
+    4. **把手在框内左上、标题在框上边线之上**：把手不放包围盒中心（那是人群最密
+       处，会压住实体，而叠放循环点选够不着组框，挡住就救不回来）；标题不放框内
+       ——它是屏幕恒定尺寸，缩小的视图里换算成的世界矩形能罩死好几个成员（实测
+       默认 fit 下 120×22px 变成 564×103 世界单位，压掉 4 个 NPC）。框外上方没人。
+    5. **两段式选中**：没选中的组，边线按下只选中不拖动；否则用户想从这里起手拉
+       橡皮筋，实际把整组悄悄挪走了。Ctrl 手势整个让给实体多选。
+    6. **拖动 live 写"成员的当前真相份"**（staging 在就写 staging），并同步右侧
+       数值框/顶点表/巡逻表——否则 commit 前的 flush 会拿控件旧值反向覆盖。
+    """
+
+    def __init__(self, view: "SceneCanvas", gid: str):
+        super().__init__()
+        self._view = view
+        self.entity_kind = "group"
+        self.entity_id = str(gid)
+        self.gid = str(gid)
+        self._w = 0.0
+        self._h = 0.0
+        self._anchor_local = QPointF(0.0, 0.0)
+        self._title = str(gid)
+        self._selected = False
+        self._empty = True
+        self._mode: str | None = None          # None | 'move' | 'anchor'
+        self._acc_dx = 0.0                     # 本次手势累计 Δ（Esc 回滚用）
+        self._acc_dy = 0.0
+        self._press_scene = QPointF(0.0, 0.0)
+        self._anchor_press = QPointF(0.0, 0.0)
+        self.setZValue(6_000)                  # 在实体之上、gizmo(9000) 之下
+        self.setAcceptedMouseButtons(Qt.MouseButton.LeftButton)
+        self.setAcceptHoverEvents(True)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
+        # 标题：恒定屏幕字号（同实体标签的做法），随视图缩放的文字在 4000 宽的
+        # 真实场景里只有 2.5px 高，肉眼看不见。
+        self._title_item = QGraphicsTextItem(self._title, self)
+        theme.set_graphics_text_font(
+            self._title_item, theme.FONT_ROLE_CANVAS_SECONDARY,
+            family=MONO_FONT_FAMILY)
+        self._title_item.setFlag(
+            QGraphicsTextItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
+        self._title_item.setFlag(
+            QGraphicsTextItem.GraphicsItemFlag.ItemIsSelectable, False)
+        self._title_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        self._apply_title_style()
+
+    # ---- 几何 ---------------------------------------------------------------
+
+    def set_geometry(
+        self, rect: QRectF | None, anchor: QPointF, title: str,
+    ) -> None:
+        """rect=None（空组/成员无几何）时只留把手，框不画。"""
+        self.prepareGeometryChange()
+        self._title = str(title)
+        if rect is None or rect.width() <= 0 or rect.height() <= 0:
+            self._empty = True
+            self._w = 0.0
+            self._h = 0.0
+            self.setPos(anchor)
+            self._anchor_local = QPointF(0.0, 0.0)
+        else:
+            self._empty = False
+            self._w = float(rect.width())
+            self._h = float(rect.height())
+            self.setPos(rect.topLeft())
+            self._anchor_local = QPointF(
+                float(anchor.x()) - rect.left(), float(anchor.y()) - rect.top())
+        self.setToolTip(
+            f"分组 {self.gid}\n"
+            "点框边或标题选中；选中后拖框边/标题/把手 = 整组挪位"
+            "（偏移写进每个成员自己的坐标）\n"
+            "方向键微移（Shift ×10）· Alt+拖把手 = 只挪把手 · Esc 取消本次拖动\n"
+            "框内区域不吃鼠标，成员照常点选；Ctrl+点让给实体多选")
+        self._apply_title_style()
+        self.update()
+
+    def anchor_scene_pos(self) -> QPointF:
+        return QPointF(self.pos().x() + self._anchor_local.x(),
+                       self.pos().y() + self._anchor_local.y())
+
+    def _world_per_px(self) -> float:
+        """当前视图下 1 个屏幕像素等于多少世界单位（缩放为 0 时退回 1）。"""
+        try:
+            m = float(self._view.transform().m11())
+        except (AttributeError, RuntimeError):
+            return 1.0
+        return 1.0 / m if m else 1.0
+
+    def _handle_r(self) -> float:
+        return _GROUP_HANDLE_PX * self._world_per_px()
+
+    def _edge_pad(self) -> float:
+        return _GROUP_EDGE_PICK_PX * self._world_per_px()
+
+    def _on_handle(self, local: QPointF) -> bool:
+        r = self._handle_r()
+        return math.hypot(
+            local.x() - self._anchor_local.x(),
+            local.y() - self._anchor_local.y()) <= r
+
+    def hoverMoveEvent(self, event: QGraphicsSceneHoverEvent) -> None:
+        """可发现性：框边/把手上换光标，用户不点也知道这里能拖。"""
+        if self._empty:
+            self.setCursor(Qt.CursorShape.SizeAllCursor)
+        elif self._selected and self._on_handle(event.pos()):
+            self.setCursor(Qt.CursorShape.CrossCursor)
+        else:
+            self.setCursor(Qt.CursorShape.SizeAllCursor)
+        super().hoverMoveEvent(event)
+
+    def hoverLeaveEvent(self, event: QGraphicsSceneHoverEvent) -> None:
+        self.unsetCursor()
+        super().hoverLeaveEvent(event)
+
+    def _apply_title_style(self) -> None:
+        col = _GROUP_BOX_COLOR_SELECTED if self._selected else _GROUP_BOX_COLOR
+        self._title_item.setDefaultTextColor(col)
+        self._title_item.setPlainText(self._title)
+        # 与把手并排摆在框**上边线之上**的空白里（Figma frame 标签的位置）。
+        # 标题是屏幕恒定尺寸（约 120×22px），放框内的话，缩小的视图里换算成世界
+        # 矩形就是 564×103 —— 实测把 4 个 NPC（3 个还是本组成员）罩死点不中，
+        # 正是当初逼着把把手挪出人群的那条坑经由标题原样复活。
+        # 高度取**图元自己的** boundingRect（含内边距），不是字体行高——命中矩形
+        # 用的就是它，两者不同源的话标题底边会探进框里，又开始挡成员。
+        wpp = self._world_per_px()
+        r = self._handle_r()
+        h = self._title_item.boundingRect().height() * wpp
+        y = self._anchor_local.y() - h / 2.0          # 与把手垂直居中对齐
+        if self._anchor_local.y() <= 0.0:
+            # 把手在框外（常态）：标题再高也不许探进框内——文字比把手高，光按
+            # 把手对齐会让它下缘伸进成员区，那正是 N7 那条坑。
+            y = min(y, -h - 2.0 * wpp)
+        self._title_item.setPos(self._anchor_local.x() + r * 1.3, y)
+
+    def set_selected(self, on: bool) -> None:
+        if self._selected == bool(on):
+            return
+        self._selected = bool(on)
+        self._apply_title_style()
+        self.update()
+
+    def is_selected(self) -> bool:
+        return self._selected
+
+    def _label_font(self) -> QFont:
+        return theme.make_editor_font(
+            theme.FONT_ROLE_CANVAS_SECONDARY, family=MONO_FONT_FAMILY)
+
+    def refresh_editor_font(self) -> None:
+        """全局字号变化钩子（theme.refresh_graphics_scene_fonts 鸭子调用）。
+
+        标题子图元的字体由同一次遍历直接刷（它自带角色标记），这里重算它的
+        摆放位置——行高变了不重摆的话，标题会压到把手上。
+        """
+        self.prepareGeometryChange()
+        self._apply_title_style()
+        self.update()
+
+    def _title_hit_rect(self) -> QRectF:
+        """标题在本图元坐标系里占的矩形。
+
+        **不能用 `mapRectFromItem`**：标题是 `ItemIgnoresTransformations` 子项，
+        那条路拿到的是未缩放的逻辑矩形，命中区因此与画出来的文字对不上——缩小时
+        画出来 120×22px 而可点的只有 26×5px（实测只有 19% 的文字响应），放大时
+        反过来盖住框左上一带的成员。宽高必须按当前缩放现算，与把手同源。
+        """
+        try:
+            br = self._title_item.boundingRect()
+            pos = self._title_item.pos()
+        except (RuntimeError, AttributeError):
+            return QRectF()
+        wpp = self._world_per_px()
+        return QRectF(pos.x(), pos.y(), br.width() * wpp, br.height() * wpp)
+
+    def refresh_screen_metrics(self) -> None:
+        """视图缩放变了：标题位置与命中矩形都按屏幕像素换算，得重算一遍。
+
+        不重算的话，缩放后标题相对把手会在下一次任意刷新时"跳"一下，命中区也
+        停在旧缩放的尺寸上。"""
+        self.prepareGeometryChange()
+        self._apply_title_style()
+        self.update()
+
+    def boundingRect(self) -> QRectF:
+        m = self._edge_pad() + self._handle_r() * 2
+        rect = QRectF(-m, -m, self._w + m * 2, self._h + m * 2)
+        rect = rect.adjusted(-self._handle_r() * 3, -self._handle_r() * 3, 0, 0)
+        title = self._title_hit_rect()
+        return rect.united(title) if title.isValid() else rect
+
+    def shape(self) -> QPainterPath:
+        """只有框边描边 +（选中时的）把手吃鼠标；框内区域留给成员点选。
+
+        两处细节都踩过：
+        - **必须 WindingFill**：默认的 OddEvenFill 会让把手椭圆与边框描边的重叠
+          区互相抵消，框角上出现约 9 像素的命中缺口——那儿恰好是选中态画角标、
+          用户最想点的地方，表现为"点了没反应"。
+        - **把手只在选中时吃鼠标**：把手是屏幕恒定尺寸，在缩小的视图里换算成
+          世界单位会很大，落在成员身上就把它们挡死了（组框又被叠放循环点选
+          跳过，救不回来）。未选中的组从框边选，选中之后把手才接管。
+        """
+        path = QPainterPath()
+        path.setFillRule(Qt.FillRule.WindingFill)
+        if self._selected or self._empty:
+            path.addEllipse(self._anchor_local, self._handle_r(), self._handle_r())
+        # 标题也吃鼠标：未选中态它是除发丝虚线框外唯一常驻的组标识，而且恒 22px
+        # 高，是全画布最好按的靶子——不让它可点，"点标签选中这个组"这个几乎人人
+        # 会试的动作就落空了（Figma frame 标签正是这么用的）。
+        title = self._title_hit_rect()
+        if title.isValid():
+            path.addRect(title)
+        if not self._empty:
+            stroker = QPainterPathStroker()
+            stroker.setWidth(self._edge_pad() * 2)
+            edge = QPainterPath()
+            edge.addRect(QRectF(0.0, 0.0, self._w, self._h))
+            path.addPath(stroker.createStroke(edge))
+        return path
+
+    # ---- 绘制 ---------------------------------------------------------------
+
+    def paint(self, painter: QPainter, _opt, _widget=None) -> None:
+        col = _GROUP_BOX_COLOR_SELECTED if self._selected else _GROUP_BOX_COLOR
+        if not self._empty:
+            # 选中态用 2px cosmetic 描边 + 角标：缩小视图下 1px 虚线几乎看不见，
+            # 选中/未选中一眼分不出。**刻意不填充**——组框往往很大，一层色蒙在
+            # 背景图上会干扰美术对位判断（编辑器的活就是对着背景摆位置）。
+            pen = QPen(col, 2.0 if self._selected else 0.0, Qt.PenStyle.DashLine)
+            pen.setCosmetic(True)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(QRectF(0.0, 0.0, self._w, self._h))
+            if self._selected:
+                # 四角实线角标：与虚线框一眼可分，缩小时也不会糊成一片
+                seg = max(6.0, min(self._w, self._h) * 0.12)
+                corner = QPen(col, 3.0, Qt.PenStyle.SolidLine)
+                corner.setCosmetic(True)
+                painter.setPen(corner)
+                for cx, cy, sx, sy in (
+                    (0.0, 0.0, 1.0, 1.0), (self._w, 0.0, -1.0, 1.0),
+                    (0.0, self._h, 1.0, -1.0), (self._w, self._h, -1.0, -1.0),
+                ):
+                    painter.drawLine(QPointF(cx, cy), QPointF(cx + seg * sx, cy))
+                    painter.drawLine(QPointF(cx, cy), QPointF(cx, cy + seg * sy))
+        # 把手：**只在它真能点的时候才画**（与 shape() 的门控严格同步）。
+        # 画了却点不动，就是画面上最像按钮的东西点下去毫无反应——未选中态恰恰
+        # 是用户第一眼看到的状态，这种虚假承诺比不画更糟。组的存在由虚线框 +
+        # 标题表达，信息不丢。
+        # 半径用 painter 自己的世界变换（不是 view 的）——离屏渲染/导出到别的
+        # 设备时 view 变换并不适用，照抄会画出一颗巨大的豆。
+        if self._selected or self._empty:
+            ap = self._anchor_local
+            wm = painter.worldTransform().m11()
+            r = _GROUP_HANDLE_PX / (wm if wm else 1.0)
+            painter.setPen(QPen(QColor(20, 70, 60, 230), 0))
+            painter.setBrush(QBrush(col))
+            painter.drawEllipse(ap, r, r)
+            painter.drawLine(QPointF(ap.x() - r * 0.55, ap.y()),
+                             QPointF(ap.x() + r * 0.55, ap.y()))
+            painter.drawLine(QPointF(ap.x(), ap.y() - r * 0.55),
+                             QPointF(ap.x(), ap.y() + r * 0.55))
+        # 标题由 _title_item（ItemIgnoresTransformations）画，不在这里 drawText——
+        # 随视图缩放的文字在真实场景里只有 2.5 个屏幕像素高，等于没有。
+
+    # ---- 交互 ---------------------------------------------------------------
+
+    def mousePressEvent(self, event: QGraphicsSceneMouseEvent) -> None:
+        lp = event.pos()
+        # Ctrl = 实体多选手势，不归组框管：组框边线在默认缩放下只有几个屏幕像素宽，
+        # 用户眼里那就是"空白处"，吃掉这一下会把辛苦 Ctrl 加选的一串实体全清掉。
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            event.ignore()
+            return
+        on_handle_hit = self._on_handle(lp)
+        # 两段式：没选中的组，第一下**只选中**，不进拖动模式。否则用户想从这里
+        # 起手拉橡皮筋框选，实际把整组悄悄挪走了（框边细，起点压上去太容易）。
+        if not self._selected and not on_handle_hit:
+            self._view.note_group_press()
+            self._view._gfx.clearSelection()
+            self._view.group_clicked.emit(self.gid)
+            self._view.group_gesture_finished.emit(self.gid)
+            self._mode = None
+            event.accept()
+            return
+        # 选组 = 取消实体选择：否则 release 时 view 会拿残留的实体选中 emit
+        # item_selected，把刚装载的分组面板顶掉（同一手势里两个面板打架）。
+        self._view.note_group_press()
+        self._view._gfx.clearSelection()
+        # press 阶段**只做画布内的事**（高亮该组），不碰属性面板、不弹窗。
+        # 装载面板会切 QStackedWidget → 布局重排 → 画布 resize → 若此刻 fit_all 的
+        # 自动适配窗口还开着，resizeEvent 里的 resetTransform() 就会在 Qt 的鼠标
+        # 事件派发栈中间重置视图矩阵，直接段错误（实测 SIGSEGV）。面板/树的同步
+        # 一律等手势结束（group_gesture_finished）。
+        self._view.clear_group_gesture_veto()
+        self._view.group_clicked.emit(self.gid)
+        # Alt+拖把手 = 只挪把手（改 editor.anchor），不动任何成员；
+        # 空组没有成员可挪，拖动一律降级为挪把手（否则手势看着动、松手弹回）。
+        # 判据用 on_handle_hit（与 shape() 同源的屏幕像素换算）——早先这里留了个
+        # 世界单位常量，缩小的视图下把手可点区远大于它，用户在把手上 Alt+拖会
+        # 错判成整组位移。
+        alt = bool(event.modifiers() & Qt.KeyboardModifier.AltModifier)
+        if (on_handle_hit and alt) or self._empty:
+            self._mode = "anchor"
+            self._anchor_press = self.anchor_scene_pos()
+            self._press_scene = event.scenePos()
+            event.accept()
+            return
+        self._mode = "move"
+        self._acc_dx = 0.0
+        self._acc_dy = 0.0
+        self._press_scene = event.scenePos()
+        # 撤销：手势起点捕获 before 快照（与实体拖拽同一通道）
+        self._view.item_drag_press.emit()
+        if self._view.group_gesture_vetoed():
+            # 快照没抓成（未应用编辑被保护性校验挡下）：这次拖动不能放行，
+            # 否则成员坐标照改、release 又因提交失败不入栈 = 改了撤不回。
+            # 同时必须交还鼠标并清掉 press 标记——那次模态提示会吃掉本次 release，
+            # 组框留成 scene 的 mouseGrabber 的话，用户下一次点击是完全没反应的死点。
+            self._mode = None
+            self.ungrabMouse()
+            self._view.clear_group_press()
+            event.ignore()
+            return
+        event.accept()
+
+    def mouseMoveEvent(self, event: QGraphicsSceneMouseEvent) -> None:
+        if self._mode is None:
+            event.ignore()
+            return
+        sp = event.scenePos()
+        ddx = round(sp.x() - self._press_scene.x(), 1)
+        ddy = round(sp.y() - self._press_scene.y(), 1)
+        if ddx == 0.0 and ddy == 0.0:
+            event.accept()
+            return
+        self._press_scene = QPointF(
+            self._press_scene.x() + ddx, self._press_scene.y() + ddy)
+        if self._mode == "anchor":
+            self.prepareGeometryChange()
+            self._anchor_local = QPointF(
+                self._anchor_local.x() + ddx, self._anchor_local.y() + ddy)
+            self.update()
+            event.accept()
+            return
+        self._acc_dx = round(self._acc_dx + ddx, 1)
+        self._acc_dy = round(self._acc_dy + ddy, 1)
+        self.moveBy(ddx, ddy)
+        self._view.group_translate_live.emit(self.gid, float(ddx), float(ddy))
+        event.accept()
+
+    def mouseReleaseEvent(self, event: QGraphicsSceneMouseEvent) -> None:
+        if self._mode is None:
+            event.ignore()
+            return
+        mode = self._mode
+        self._mode = None
+        if mode == "anchor":
+            ap = self.anchor_scene_pos()
+            if (round(ap.x(), 1), round(ap.y(), 1)) != (
+                round(self._anchor_press.x(), 1), round(self._anchor_press.y(), 1)
+            ):
+                self._view.group_anchor_committed.emit(
+                    self.gid, round(float(ap.x()), 1), round(float(ap.y()), 1))
+            self._view.group_gesture_finished.emit(self.gid)
+            event.accept()
+            return
+        dx, dy = self._acc_dx, self._acc_dy
+        self._acc_dx = 0.0
+        self._acc_dy = 0.0
+        # 零位移点击（点一下选中）不提交：防伪脏，与实体拖拽同门
+        if dx == 0.0 and dy == 0.0:
+            self._view.group_translate_abandoned.emit(self.gid)
+        else:
+            self._view.group_translate_committed.emit(self.gid, float(dx), float(dy))
+        # 手势收尾（面板/树同步等一切会改布局的事都排在这之后，不在 press/move 里）
+        self._view.group_gesture_finished.emit(self.gid)
+        event.accept()
+
+    def gesture_active(self) -> bool:
+        return self._mode is not None
+
+    def cancel_gesture(self) -> None:
+        """Esc 取消：把本次手势累计的 Δ 原路退回（成员坐标 + 框位置一起退）。"""
+        mode = self._mode
+        if mode is None:
+            return
+        self._mode = None
+        if mode == "anchor":
+            self.prepareGeometryChange()
+            ap = self._anchor_press
+            self._anchor_local = QPointF(ap.x() - self.pos().x(), ap.y() - self.pos().y())
+            self.update()
+            return
+        dx, dy = self._acc_dx, self._acc_dy
+        self._acc_dx = 0.0
+        self._acc_dy = 0.0
+        if dx == 0.0 and dy == 0.0:
+            self._view.group_translate_abandoned.emit(self.gid)
+            return
+        self.moveBy(-dx, -dy)
+        self._view.group_translate_live.emit(self.gid, float(-dx), float(-dy))
+        self._view.group_translate_abandoned.emit(self.gid)
+
+
 class SceneCanvas(QGraphicsView):
     item_selected = Signal(str, str)   # (entity_kind, entity_id)
     item_deselected = Signal()
@@ -1913,6 +2347,30 @@ class SceneCanvas(QGraphicsView):
     persp_axis_committed = Signal(str, float, float)
     # 深度轴端点拖动 live：画布已就地更新 cfg 端点，通知编辑器刷新实体预览（不入 model）
     persp_axis_live_refresh = Signal()
+    # ---- 场景分组（_SceneGroupBox；组不进 Qt 选择系统，选中态由编辑器驱动） ----
+    # 点中组框（框边或把手）：press 阶段发，编辑器**只**做画布内高亮
+    group_clicked = Signal(str)
+    # 手势结束（release / Esc 之后）：此时才允许装载属性面板、同步实体树等会
+    # 改布局的操作——在鼠标事件派发栈中间改布局会触发画布 resize→resetTransform，
+    # 实测直接段错误。
+    group_gesture_finished = Signal(str)
+    # 整组拖动 live：(gid, 增量 dx, 增量 dy) —— 编辑器就地把增量烘进成员坐标
+    group_translate_live = Signal(str, float, float)
+    # 整组拖动 release：(gid, 本次手势累计 dx, dy) —— 编辑器标脏 + 收敛为一条撤销命令
+    group_translate_committed = Signal(str, float, float)
+    # 手势作废（零位移点击 / Esc 已原路回滚）：编辑器丢弃按下时捕获的撤销快照
+    group_translate_abandoned = Signal(str)
+    # Alt+拖把手：只改 editor.anchor（不动成员）(gid, x, y)
+    group_anchor_committed = Signal(str, float, float)
+    # 选中组时方向键微移：(gid, dx, dy, is_autorepeat)。一次按键 = 一条撤销命令；
+    # 按住不放（autorepeat）的连发合并进同一条，免得 Ctrl+Z 要按几十次。
+    group_nudge = Signal(str, float, float, bool)
+    # 视图缩放变了：组框的留白/把手位置按屏幕像素定尺，需要编辑器重新派生几何
+    view_scale_changed = Signal()
+    # 画布上右键分组框的菜单项（与右侧面板同名按钮走同一批槽）
+    group_select_members_requested = Signal(str)
+    group_anchor_reset_requested = Signal(str)
+    group_delete_requested = Signal(str)
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -1963,6 +2421,15 @@ class SceneCanvas(QGraphicsView):
         # 实体预览统一经 persp_factor 求系数（与运行时同口径，防预览撒谎）。
         self._persp_cfg: dict | None = None
         self._persp_axis_item: "_PerspAxisItem | None" = None
+        # 场景分组框：gid -> _SceneGroupBox（同时登记进 _entity_items["group:<gid>"]
+        # 供 _focus_canvas_on_entity 定位；组框不参与 Qt 选择系统，见类注释）
+        self._group_boxes: dict[str, "_SceneGroupBox"] = {}
+        self._group_boxes_visible: bool = True
+        self._selected_group: str | None = None
+        # 本次鼠标手势落在组框上：release 时跳过实体选中/取消派发
+        self._group_press_active: bool = False
+        # 编辑器否决了本次组手势（commit-on-leave 被保护性校验挡下）
+        self._group_gesture_vetoed: bool = False
 
     def set_single_gesture_only(self) -> None:
         self._single_gesture_only = True
@@ -1992,6 +2459,7 @@ class SceneCanvas(QGraphicsView):
         self._gfx.clear()
         self._bg_item = None
         self._entity_items.clear()
+        self._group_boxes.clear()  # 图元已随 _gfx.clear() 析构；选中组由调用方重设
         self._entity_planes.clear()  # _plane_filter 保留：切场景后按同一位面视图重贴
         self._patrol_overlays.clear()
         self._lightcurve_overlay = None
@@ -2115,6 +2583,9 @@ class SceneCanvas(QGraphicsView):
         skip_z = self._zone_pick_frozen
         for it in self._gfx.items(scene_pos):
             if not hasattr(it, "entity_kind"):
+                continue
+            # 分组框不是实体图元：不参与叠放循环点选、不抬 z、不进选中集合
+            if isinstance(it, _SceneGroupBox):
                 continue
             if skip_z:
                 ek = getattr(it, "entity_kind", None)
@@ -2390,6 +2861,97 @@ class SceneCanvas(QGraphicsView):
         self._record_entity_planes(f"zone:{zone.get('id', '')}", zone.get("planes"))
         if self._zone_pick_frozen:
             item.set_zone_pick_frozen(True)
+
+    # ---- 场景分组框（派生几何；组本身无坐标） -------------------------------
+
+    def sync_group_boxes(self, rows: list[dict]) -> None:
+        """全量同步分组框。rows: [{"id","title","rect": QRectF|None,"anchor": QPointF}]
+
+        就地更新优先、多余的移除——加载/提交路径每次都调它，remove+create 会在
+        高频路径上反复析构图元（与 patrol overlay 同一教训）。
+        """
+        wanted: set[str] = set()
+        for row in rows:
+            gid = str(row.get("id") or "").strip()
+            if not gid:
+                continue
+            wanted.add(gid)
+            item = self._group_boxes.get(gid)
+            if item is None or item.scene() is not self._gfx:
+                item = _SceneGroupBox(self, gid)
+                self._gfx.addItem(item)
+                self._group_boxes[gid] = item
+            rect = row.get("rect")
+            anchor = row.get("anchor")
+            item.set_geometry(
+                rect if isinstance(rect, QRectF) else None,
+                anchor if isinstance(anchor, QPointF) else QPointF(0.0, 0.0),
+                str(row.get("title") or gid),
+            )
+            # 小框压在大框之上：两个组重叠时，点重叠处拿到的是更"具体"的那个，
+            # 否则大框会把套在它里面的小组彻底挡住、永远点不中。
+            # 面积相同的组再按登记顺序拉开一点，避免 z 相等时命中不确定。
+            area = (rect.width() * rect.height()) if isinstance(rect, QRectF) else 0.0
+            item.setZValue(
+                6_000.0 + 1.0 / (1.0 + area / 1_000_000.0) + len(wanted) * 1e-4)
+            item.setVisible(self._group_boxes_visible)
+            self._entity_items[f"group:{gid}"] = item
+        for gid in [g for g in self._group_boxes if g not in wanted]:
+            self.remove_group_box(gid)
+        self.set_selected_group(self._selected_group)
+
+    def remove_group_box(self, gid: str) -> None:
+        item = self._group_boxes.pop(str(gid), None)
+        self._entity_items.pop(f"group:{gid}", None)
+        if item is not None and item.scene() is self._gfx:
+            self._gfx.removeItem(item)
+        if self._selected_group == str(gid):
+            self._selected_group = None
+
+    def set_group_boxes_visible(self, visible: bool) -> None:
+        self._group_boxes_visible = bool(visible)
+        for item in self._group_boxes.values():
+            item.setVisible(self._group_boxes_visible)
+
+    def group_boxes_visible(self) -> bool:
+        return self._group_boxes_visible
+
+    def set_selected_group(self, gid: str | None) -> None:
+        """组的选中态：显式驱动（组不进 Qt 选择系统）。None = 全部取消。"""
+        want = str(gid) if gid else None
+        self._selected_group = want if (want in self._group_boxes) else None
+        for key, item in self._group_boxes.items():
+            item.set_selected(key == self._selected_group)
+
+    def selected_group(self) -> str | None:
+        return self._selected_group
+
+    def group_box(self, gid: str) -> "_SceneGroupBox | None":
+        return self._group_boxes.get(str(gid))
+
+    def active_group_gesture(self) -> "_SceneGroupBox | None":
+        for item in self._group_boxes.values():
+            if item.gesture_active():
+                return item
+        return None
+
+    def note_group_press(self) -> None:
+        """组框吃下本次左键手势：release 时 view 不再派发实体选中/取消。"""
+        self._group_press_active = True
+
+    def clear_group_press(self) -> None:
+        """手势被作废：立刻交还给正常派发，别让下一次点击变成死点。"""
+        self._group_press_active = False
+
+    def clear_group_gesture_veto(self) -> None:
+        self._group_gesture_vetoed = False
+
+    def veto_group_gesture(self) -> None:
+        """编辑器在 group_clicked 处理里拒绝本次手势（提交被保护性校验挡下）。"""
+        self._group_gesture_vetoed = True
+
+    def group_gesture_vetoed(self) -> bool:
+        return self._group_gesture_vetoed
 
     def update_zone_polygon(
         self, entity_id: str, polygon: list,
@@ -2793,7 +3355,19 @@ class SceneCanvas(QGraphicsView):
             return False
         self.resetTransform()
         self.fitInView(sr, Qt.AspectRatioMode.KeepAspectRatio)
+        self.sync_group_box_screen_metrics()
         return True
+
+    def sync_group_box_screen_metrics(self) -> None:
+        """缩放变化后重算各组框里按屏幕像素定尺的部分。
+
+        标题位置/命中矩形能就地刷；但**框的留白与把手位置也依赖缩放**（留白要
+        ≥ 边线带宽、把手要抬出框外），那两样是编辑器从模型派生的，只能请它重算
+        ——否则会出现"框按旧缩放算、把手按新缩放算"的错配。
+        """
+        for item in self._group_boxes.values():
+            item.refresh_screen_metrics()
+        self.view_scale_changed.emit()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -2828,6 +3402,7 @@ class SceneCanvas(QGraphicsView):
         if new < 0.1 or new > 10.0:
             return
         self.scale(factor, factor)
+        self.sync_group_box_screen_metrics()
 
     def _vertex_menu_item_at(self, scene_pt: QPointF) -> QGraphicsItem | None:
         """落点是否命中某个可删顶点的折线/多边形顶点（Zone/巡逻/光曲线）。
@@ -2841,6 +3416,37 @@ class SceneCanvas(QGraphicsView):
                     return it
         return None
 
+    def _group_box_at(self, scene_pt: QPointF) -> "_SceneGroupBox | None":
+        """落点是否命中某个分组框的可点区（边线/把手）。"""
+        if not self._group_boxes_visible:
+            return None
+        for it in self._gfx.items(scene_pt):
+            if isinstance(it, _SceneGroupBox):
+                return it
+        return None
+
+    def build_group_context_menu(self, gid: str) -> QMenu:
+        """构造分组右键菜单（与 exec 分离：`QMenu.exec` 在 PySide 里打桩不掉，
+        离屏跑测试会永久挂在模态循环里——护栏只能测这一半）。"""
+        menu = QMenu(self)
+        rows = (
+            ("选中该组全部成员", self.group_select_members_requested),
+            ("把手回到默认位置", self.group_anchor_reset_requested),
+            ("删除该分组…", self.group_delete_requested),
+        )
+        for label, sig in rows:
+            act = QAction(label, menu)
+            act.triggered.connect(lambda *_, s=sig, g=gid: s.emit(g))
+            menu.addAction(act)
+        return menu
+
+    def _exec_group_context_menu(self, gid: str, global_pos: QPoint) -> None:
+        # 只点亮组框（纯画布操作）：**不**发 group_gesture_finished——那条路会经
+        # singleShot 装载属性面板，而 menu.exec() 的模态循环恰好会把它跑起来，
+        # 又变成"菜单开着的时候布局在重排"。各菜单动作的槽自己会处理面板。
+        self.group_clicked.emit(gid)
+        self.build_group_context_menu(gid).exec(global_pos)
+
     def contextMenuEvent(self, event: QContextMenuEvent) -> None:
         scene_pt = self.mapToScene(event.pos())
         # 命中折线/多边形顶点时：把右键转发给场景，让 item 弹「删除此顶点」并处理；
@@ -2848,6 +3454,12 @@ class SceneCanvas(QGraphicsView):
         # 「添加实体」甚至误加野实体（审查 P2 ①）。仅空白/非顶点处才弹添加菜单。
         if self._vertex_menu_item_at(scene_pt) is not None:
             super().contextMenuEvent(event)
+            return
+        # 右键命中分组框（边线/把手）：给分组自己的菜单，而不是"在此添加实体"
+        box = self._group_box_at(scene_pt)
+        if box is not None:
+            self._exec_group_context_menu(box.gid, event.globalPos())
+            event.accept()
             return
         r = self._gfx.sceneRect()
         wx = float(max(r.left(), min(r.right(), scene_pt.x())))
@@ -2963,6 +3575,34 @@ class SceneCanvas(QGraphicsView):
             self._press_item_pos = {}
             event.accept()
             return
+        # Esc 取消整组拖动：组框把累计 Δ 原路退回（成员坐标 + 框位置），同 gizmo 语义
+        gesture_box = self.active_group_gesture()
+        if event.key() == Qt.Key.Key_Escape and gesture_box is not None:
+            gesture_box.cancel_gesture()
+            self._drag_cancelled = True
+            self._press_item_pos = {}
+            event.accept()
+            return
+        # 选中分组时方向键微移（Shift = ×10）；组不进 Qt 选择系统，故在此单点处理
+        if (
+            self._selected_group
+            and self._selected_group in self._group_boxes
+            and self._group_boxes_visible
+            and event.key() in (
+                Qt.Key.Key_Left, Qt.Key.Key_Right, Qt.Key.Key_Up, Qt.Key.Key_Down,
+            )
+        ):
+            step = 10.0 if (event.modifiers() & Qt.KeyboardModifier.ShiftModifier) else 1.0
+            dx, dy = {
+                Qt.Key.Key_Left: (-step, 0.0), Qt.Key.Key_Right: (step, 0.0),
+                Qt.Key.Key_Up: (0.0, -step), Qt.Key.Key_Down: (0.0, step),
+            }[event.key()]
+            # autoRepeat（按住不放）合并进同一条撤销命令：一秒 30 次按键 = 30 条
+            # 命令的话，用户要按 30 次 Ctrl+Z 才退得回去。
+            self.group_nudge.emit(
+                self._selected_group, dx, dy, bool(event.isAutoRepeat()))
+            event.accept()
+            return
         if event.key() == Qt.Key.Key_Escape and self._press_item_pos:
             flag = QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges
             for it in list(self._gfx.selectedItems()):
@@ -2995,6 +3635,13 @@ class SceneCanvas(QGraphicsView):
             return
         super().mouseReleaseEvent(event)
         self._restore_pick_z_order()
+        if self._group_press_active:
+            # 本次手势是操作分组框（选中/整组拖动/挪把手）：组框自己已提交，
+            # 这里不能再走实体选中派发，否则会顶掉分组属性面板。
+            self._group_press_active = False
+            self._drag_cancelled = False
+            self._press_item_pos = {}
+            return
         if self._drag_cancelled:
             # 本次拖拽已被 Esc 取消：吞掉 release，不发 item_moved（否则把恢复位当新位写回）。
             self._drag_cancelled = False
@@ -3011,7 +3658,9 @@ class SceneCanvas(QGraphicsView):
         for m_it in sel:
             if not (hasattr(m_it, "entity_kind") and hasattr(m_it, "entity_id")):
                 continue
-            if m_it.entity_kind in ("zone", "hotspot_collision", "npc_collision"):
+            if m_it.entity_kind in (
+                "zone", "hotspot_collision", "npc_collision", "group",
+            ):
                 continue
             m_p0 = press_pos.get(id(m_it))
             m_cur = (m_it.pos().x(), m_it.pos().y())
@@ -3034,7 +3683,7 @@ class SceneCanvas(QGraphicsView):
                 # 纯点选（release 位置 == press 位置）不发 item_moved：否则「点一下看
                 # 属性」就写坐标+标脏，且 int 坐标漂成 float（审查 P1-09）。
                 emit_move = it.entity_kind not in (
-                    "zone", "hotspot_collision", "npc_collision",
+                    "zone", "hotspot_collision", "npc_collision", "group",
                 )
                 if emit_move:
                     p0 = press_pos.get(id(it))
@@ -3650,6 +4299,12 @@ class ScenePropertyPanel(QScrollArea):
     scene_background_changed = Signal()
     # 分组成员列表双击：由 SceneEditor 负责在实体树/画布中导航。
     group_member_activated = Signal(str, str)
+    # 分组面板 →（gid, dx, dy）精确整组位移；与画布拖组框同一条写入通道
+    group_translate_requested = Signal(str, float, float)
+    # 分组面板 → gid：在画布/树上选中该组全部成员
+    group_select_members_requested = Signal(str)
+    # 分组面板 → gid：清除自定义把手（editor.anchor）
+    group_anchor_reset_requested = Signal(str)
 
     def reload_refs_from_model(self) -> None:
         """重拉跨域引用候选(filter/item/encounter/bgm/animFile/立绘,均为别处可新增的全局列表),
@@ -8897,9 +9552,93 @@ class ScenePropertyPanel(QScrollArea):
         members_lay.addWidget(self._grp_members)
         members.add_body(members_inner)
         lay.addWidget(members)
+
+        lay.addWidget(self._build_group_transform_section())
         lay.addStretch(1)
         self._append_entity_delete_footer(lay)
         return w
+
+    def _build_group_transform_section(self) -> QWidget:
+        """整组位移区：画布拖动的键盘/精确输入对等物（同一条写入通道）。"""
+        sect = self._section("位置与整体位移", start_open=True)
+        inner = QWidget()
+        v = QVBoxLayout(inner)
+        v.setContentsMargins(0, 0, 0, 0)
+
+        self._grp_bounds_note = QLabel("—")
+        self._grp_bounds_note.setWordWrap(True)
+        self._grp_bounds_note.setToolTip(
+            "分组自身没有坐标：框是成员几何算出来的包围盒，整组位移会把偏移写进每个成员自己的坐标。")
+        v.addWidget(self._grp_bounds_note)
+
+        move_row = QWidget()
+        form = compact_form(QFormLayout(move_row))
+        self._grp_move_dx = QDoubleSpinBox()
+        self._grp_move_dy = QDoubleSpinBox()
+        for sb, tip in (
+            (self._grp_move_dx, "向右为正（世界单位）"),
+            (self._grp_move_dy, "向下为正（世界单位）"),
+        ):
+            sb.setRange(-100000.0, 100000.0)
+            sb.setDecimals(1)
+            sb.setSingleStep(1.0)
+            sb.setValue(0.0)
+            sb.setMaximumWidth(110)
+            sb.setToolTip(tip)
+        form.addRow("Δx", self._grp_move_dx)
+        form.addRow("Δy", self._grp_move_dy)
+        v.addWidget(move_row)
+
+        self._grp_move_btn = QPushButton("应用位移")
+        self._grp_move_btn.setToolTip(
+            "把 Δx/Δy 加到全部成员坐标上（含画布上看不到的成员）。可 Ctrl+Z 撤销。\n"
+            "画布上也可以直接拖组框，或选中分组后用方向键微移（Shift = ×10）。")
+        self._grp_move_btn.clicked.connect(self._on_group_move_clicked)
+        v.addWidget(self._grp_move_btn)
+
+        self._grp_move_patrol = QCheckBox("位移带上 NPC 巡逻路线")
+        self._grp_move_patrol.setChecked(True)
+        self._grp_move_patrol.setToolTip(
+            "勾选（默认）：整组挪窝时 NPC 的 patrol.route 路点一起挪，巡逻路线跟着走。\n"
+            "取消：只挪 NPC 当前位置，路线留在原地（NPC 会被巡逻立刻拉回原路线）。\n"
+            "该开关是编辑器工作态（写 entityGroups[].editor.movePatrol），运行时不读。")
+        self._grp_move_patrol.toggled.connect(self._on_group_props_changed)
+        v.addWidget(self._grp_move_patrol)
+
+        btn_row = QWidget()
+        h = QHBoxLayout(btn_row)
+        h.setContentsMargins(0, 0, 0, 0)
+        self._grp_select_members_btn = QPushButton("在画布选中全部成员")
+        self._grp_select_members_btn.setToolTip(
+            "把该组的成员实体全部选中（画布上不可见的成员经实体树参与批量操作）。")
+        self._grp_select_members_btn.clicked.connect(
+            lambda: self.group_select_members_requested.emit(
+                str(self._group_original_id or "")))
+        h.addWidget(self._grp_select_members_btn)
+        self._grp_anchor_reset_btn = QPushButton("把手回到中心")
+        self._grp_anchor_reset_btn.setToolTip(
+            "清除自定义把手位置（editor.anchor），回到按成员包围盒中心派生。\n"
+            "画布上 Alt+拖动把手可以自定义位置。")
+        self._grp_anchor_reset_btn.clicked.connect(
+            lambda: self.group_anchor_reset_requested.emit(
+                str(self._group_original_id or "")))
+        h.addWidget(self._grp_anchor_reset_btn)
+        v.addWidget(btn_row)
+
+        sect.add_body(inner)
+        return sect
+
+    def _on_group_move_clicked(self) -> None:
+        dx = round(float(self._grp_move_dx.value()), 1)
+        dy = round(float(self._grp_move_dy.value()), 1)
+        if dx == 0.0 and dy == 0.0:
+            QMessageBox.information(self, "整组位移", "Δx / Δy 都是 0，没有可应用的位移。")
+            return
+        self.group_translate_requested.emit(
+            str(self._group_original_id or ""), dx, dy)
+
+    def set_group_bounds_note(self, text: str) -> None:
+        self._grp_bounds_note.setText(text)
 
     def _on_group_props_changed(self, *_args) -> None:
         if self._props_changed_suppressed:
@@ -8965,6 +9704,11 @@ class ScenePropertyPanel(QScrollArea):
             conds = st.get("conditions")
             self._grp_cond.set_data(conds if isinstance(conds, list) else [])
             self._grp_cond_fold.set_expanded(bool(isinstance(conds, list) and conds))
+            # 编辑器工作态：movePatrol 缺省 true（不写键 = 带路线走）
+            ed_state = st.get("editor") if isinstance(st.get("editor"), dict) else {}
+            self._grp_move_patrol.setChecked(ed_state.get("movePatrol") is not False)
+            self._grp_move_dx.setValue(0.0)
+            self._grp_move_dy.setValue(0.0)
             self._grp_members.clear()
             for coll, kind, ref_kind in (
                 ("npcs", "NPC", "npc"),
@@ -8995,6 +9739,18 @@ class ScenePropertyPanel(QScrollArea):
             group["conditions"] = conds
         else:
             group.pop("conditions", None)
+        # editor 子对象：只接管 movePatrol，anchor 与任何未知键原样透传
+        # （anchor 由画布把手写模型层；写完那边会 rebind staging，这里不能反向清掉）。
+        old_ed = group.get("editor")
+        ed = dict(old_ed) if isinstance(old_ed, dict) else {}
+        if self._grp_move_patrol.isChecked():
+            ed.pop("movePatrol", None)   # 缺省即 true，不写键（存量零变化）
+        else:
+            ed["movePatrol"] = False
+        if ed:
+            group["editor"] = ed
+        else:
+            group.pop("editor", None)
 
     def rebind_group_after_commit(self, group: dict) -> None:
         self._source_group = group
@@ -9132,6 +9888,16 @@ class SceneEditor(QWidget):
         self._undo = SceneUndoController(self)
         # 拖拽手势的「按下时」场景快照：(scene_id, deepcopy)；release/取消时消费。
         self._drag_undo_before: tuple[str, dict] | None = None
+        # 本次整组拖动手势里真正改到成员的次数（0 = release 不标脏，防伪脏）
+        self._group_live_changed: int = 0
+        # 缩放联动重算组框几何的重入哨兵（见 _on_view_scale_changed）
+        self._syncing_view_scale: bool = False
+        # 方向键微移的"连发会话"：按住不放的一串合并成一条撤销命令
+        self._nudge_session: str = ""
+        self._nudge_before: dict | None = None
+        self._nudge_idle_timer = QTimer(self)
+        self._nudge_idle_timer.setSingleShot(True)
+        self._nudge_idle_timer.timeout.connect(self._finish_nudge_session)
         # 实体树 ↔ 画布选中双向同步的重入保护 + 场景装载期间选择事件静默
         # （clear_scene 阶段 selectionChanged 会命中正在析构的图元——地图编辑器旧坑同族）。
         self._loading_scene = False
@@ -9289,6 +10055,17 @@ class SceneEditor(QWidget):
         self._chk_block_zone_pick.toggled.connect(self._on_block_zone_pick_toggled)
         ll.addWidget(self._chk_block_zone_pick)
 
+        self._chk_group_boxes = QCheckBox("显示场景分组框")
+        self._chk_group_boxes.setChecked(True)
+        self._chk_group_boxes.setToolTip(
+            "每个场景分组在画布上画一个虚线框 + 中心把手：点框边/把手=选中该组，"
+            "拖动=整组挪位（偏移写进每个成员自己的坐标），方向键微移（Shift ×10），"
+            "Alt+拖把手=只挪把手。框内区域不吃鼠标，成员照常点选。\n"
+            "取消勾选=只是不画框，分组数据与实体树不受影响。"
+        )
+        self._chk_group_boxes.toggled.connect(self._on_group_boxes_toggled)
+        ll.addWidget(self._chk_group_boxes)
+
         self._scene_edit_cutscene_id = ""
         _ctx_lab = QLabel("过场编辑视图")
         _ctx_lab.setToolTip(
@@ -9426,6 +10203,24 @@ class SceneEditor(QWidget):
         self._canvas._gfx.selectionChanged.connect(self._on_canvas_selection_changed)
         self._canvas.transform_gizmo_live.connect(self._on_gizmo_transform_live)
         self._canvas.transform_gizmo_committed.connect(self._on_gizmo_transform_committed)
+        # 全部直连：数据写入必须发生在手势里（撤销快照/提交时序都挂在上面）。
+        # 会改**布局**的两件事（装载分组面板、改只读几何行文案）在槽内部经
+        # QTimer.singleShot(0, self, ...) 延后——布局重排会让画布 resize，而
+        # fit 的 resetTransform() 落在 Qt 鼠标事件派发栈中间就是段错误。
+        self._canvas.group_translate_live.connect(self._on_group_translate_live)
+        self._canvas.group_clicked.connect(self._on_group_box_clicked)
+        self._canvas.group_gesture_finished.connect(self._on_group_gesture_finished)
+        self._canvas.group_translate_committed.connect(self._on_group_translate_committed)
+        self._canvas.group_translate_abandoned.connect(self._on_group_translate_abandoned)
+        self._canvas.group_anchor_committed.connect(self._on_group_anchor_committed)
+        self._canvas.group_nudge.connect(self._on_group_nudge)
+        # 画布右键菜单与右侧面板按钮共用同一批槽（同一入口，避免两套语义漂移）
+        self._canvas.group_select_members_requested.connect(
+            self._on_group_select_members_requested)
+        self._canvas.group_anchor_reset_requested.connect(
+            self._on_group_anchor_reset_requested)
+        self._canvas.group_delete_requested.connect(self._on_group_delete_requested)
+        self._canvas.view_scale_changed.connect(self._on_view_scale_changed)
 
         # right: property panel
         self._props = ScenePropertyPanel(model)
@@ -9456,6 +10251,12 @@ class SceneEditor(QWidget):
             self._undo.notice_external_scene_write)
         self._props.group_member_activated.connect(
             self._on_group_member_activated)
+        self._props.group_translate_requested.connect(
+            self._on_group_translate_requested)
+        self._props.group_select_members_requested.connect(
+            self._on_group_select_members_requested)
+        self._props.group_anchor_reset_requested.connect(
+            self._on_group_anchor_reset_requested)
         # QueuedConnection：避免在按钮 click 槽里同步触发 toolbar setVisible
         # 引起 layout 重排与画布 paintEvent 重入。可用 EDITOR_DISABLE_DIRTY_LABEL=1
         # 完全跳过这条通路用于二分定位。
@@ -9561,6 +10362,8 @@ class SceneEditor(QWidget):
         pid = w.committed_type().strip() if isinstance(w, FilterableTypeCombo) else ""
         self._canvas.set_plane_filter(
             pid or None, exclusive=self._plane_view_exclusive(pid))
+        # 位面过滤只改可见性、不改数据：框大小不变，但"画布不可见成员数"要跟着更新
+        self._refresh_group_bounds_note()
 
     def _refill_scene_cutscene_ctx_combo(self, *, init: bool = False) -> None:
         w = getattr(self, "_combo_cutscene_ctx", None)
@@ -9666,6 +10469,8 @@ class SceneEditor(QWidget):
             # 命中面幽灵轮廓随配置变化重派生（多边形本体 authored 空间不动）
             self._canvas.refresh_npc_collision_visuals(npc)
         # NPC 精灵预览由动画 tick 每拍拉取 persp（无需在此显式刷）
+        # 透视系数变了 = 成员画布占位变了：分组框跟着重算，否则框对不上眼见的图形
+        self._refresh_group_boxes()
 
     def _refresh_npc_patrol_overlay(self) -> None:
         self._patrol_overlay_refresh_timer.start(0)
@@ -10249,6 +11054,9 @@ class SceneEditor(QWidget):
         self._canvas.set_zone_pick_frozen(self._chk_block_zone_pick.isChecked())
         self._refresh_entity_find_completer(sc)
         self._refresh_entity_tree()
+        # 分组框在 NPC 精灵运行时就绪后重建（包围盒要用精灵真实世界尺寸）
+        self._canvas.set_group_boxes_visible(self._chk_group_boxes.isChecked())
+        self._refresh_group_boxes()
 
     def _refresh_entity_find_completer(self, sc: dict) -> None:
         """按当前场景实体刷新「实体查找」下拉候选（类型:id）。"""
@@ -10474,6 +11282,10 @@ class SceneEditor(QWidget):
             refs = self._canvas_selected_entity_refs()
         except RuntimeError:
             return  # 场景析构期的迟到 selectionChanged（图元已删）
+        if refs:
+            # 选中了真实体 = 离开分组：组框熄灯（组框 press 自己会先清空实体选择，
+            # 走的是 refs 为空的分支，不会误灭刚点亮的组）。
+            self._canvas.set_selected_group(None)
         self._sync_tree_from_canvas(refs)
         if len(refs) > 1:
             if not self._undo_flush_pending_as_command():
@@ -10528,15 +11340,23 @@ class SceneEditor(QWidget):
         if len(refs) == 1:
             kind, eid = refs[0]
             if kind == "spawn":
+                self._canvas.set_selected_group(None)
                 self._restore_canvas_selection("spawn", eid)
             elif kind == "group":
                 sc = self._model.scenes.get(self._current_scene_id or "")
                 if isinstance(sc, dict):
                     self._props.load_group_props(sc, eid)
+                # 树选中分组 = 画布上把该组的框点亮并拉进视口（组不进 Qt 选择系统）
+                self._canvas.set_selected_group(eid)
+                self._canvas.hide_transform_gizmo()
+                self._refresh_group_bounds_note()
+                self._focus_canvas_on_entity("group", eid)
             else:
+                self._canvas.set_selected_group(None)
                 self._on_item_selected(kind, eid)
                 self._focus_canvas_on_entity(kind, eid)
         else:
+            self._canvas.set_selected_group(None)
             self._props.show_multi_selection(len(refs))
 
     def _editing_property_ref(self) -> tuple[str, str] | None:
@@ -10604,6 +11424,886 @@ class SceneEditor(QWidget):
         item.setSelected(True)
         self._entity_tree.scrollToItem(item)
 
+    # ---- 场景分组：画布代理框 / 整组位移（分组是一等实体，但自己没有坐标） ------
+    #
+    # 位移的唯一真相是**模型层成员名册**，不是画布选中集：cutsceneOnly 实体、被位面
+    # 过滤隐藏的成员在画布上根本没有图元，按选中集平移会留下"半份移动"的坏数据
+    # （与批量删除/复制的 P1-B 同一个坑）。所有入口（拖框 / 方向键 / 面板 Δ）都汇到
+    # `_translate_group_members`。
+
+    _GROUP_MEMBER_COLLS = (("npcs", "npc"), ("hotspots", "hotspot"), ("zones", "zone"))
+
+    def _group_members(self, sc: dict, gid: str) -> list[tuple[str, dict]]:
+        """成员名册（含画布上看不到的成员），按 npc→hotspot→zone 保序。
+
+        名册**按模型枚举**（谁属于这个组是模型说了算），但每条返回的 dict 已按
+        身份解析成"该写哪一份"——见 :meth:`_group_member_write_dict`。
+        """
+        gid = str(gid or "").strip()
+        out: list[tuple[str, dict]] = []
+        if not gid or not isinstance(sc, dict):
+            return out
+        for coll, kind in self._GROUP_MEMBER_COLLS:
+            for ent in sc.get(coll, []) or []:
+                if not isinstance(ent, dict):
+                    continue
+                # 归属与写入都按同一份真相判断：某成员正被面板改 group（还没点
+                # 应用）时，屏幕上它已经不在这个组了，位移就不该带上它。
+                target = self._group_member_write_dict(kind, ent)
+                if str(target.get("group") or "").strip() == gid:
+                    out.append((kind, target))
+        return out
+
+    def _group_member_write_dict(self, kind: str, ent: dict) -> dict:
+        """成员的"当前真相"份：属性面板正编辑它就返回 staging，否则返回模型 dict。
+
+        与单实体拖拽的 `_staging_*_for_canvas_drag` 同口径，**必须**如此：
+        整组位移若直写模型，release 的 `_mark_canvas_edit()` 会点亮 pending，
+        随后的 commit-on-leave 就用**按下之前**的 staging 深拷贝把这个成员整份拍
+        回旧坐标——组里少一个人跟上，画布还照新位置画，肉眼看不出来的坏数据。
+        触发条件低到只要"拖组之前点过组里任何一个实体"。
+        """
+        eid = str(ent.get("id") or "")
+        if not eid:
+            return ent
+        props = self._props
+        staging = {
+            "npc": props._staging_npc,
+            "hotspot": props._staging_hotspot,
+            "zone": props._staging_zone,
+        }.get(kind)
+        if staging is not None and str(staging.get("id") or "") == eid:
+            return staging
+        return ent
+
+    def _group_def(self, sc: dict, gid: str) -> dict | None:
+        """显式 entityGroups 条目；旧标签组返回 None（合法：位移不要求先升格）。"""
+        gid = str(gid or "").strip()
+        groups = sc.get("entityGroups") if isinstance(sc, dict) else None
+        if not gid or not isinstance(groups, list):
+            return None
+        for g in groups:
+            if isinstance(g, dict) and str(g.get("id") or "").strip() == gid:
+                return g
+        return None
+
+    def _group_editor_state(self, sc: dict, gid: str) -> dict:
+        """分组的编辑器工作态（只读副本口径；缺省 = 空 dict）。
+
+        面板未应用的 staging 优先——勾了「不带巡逻路线」还没点应用就拖框时，
+        必须按屏幕上的选择走，否则用户看到的开关是假的。
+        """
+        props = self._props
+        if (
+            props._staging_group is not None
+            and str(props._group_original_id or "").strip() == str(gid or "").strip()
+        ):
+            st = props._staging_group.get("editor")
+            if isinstance(st, dict):
+                return st
+        g = self._group_def(sc, gid)
+        ed = g.get("editor") if isinstance(g, dict) else None
+        return ed if isinstance(ed, dict) else {}
+
+    def _group_move_patrol(self, sc: dict, gid: str) -> bool:
+        return self._group_editor_state(sc, gid).get("movePatrol") is not False
+
+    def _entity_canvas_bbox(self, kind: str, ent: dict) -> QRectF | None:
+        """单个成员在画布上的占位矩形（世界单位）。
+
+        与画布预览同口径（× 实例 scale × 透视系数），这样组框不会对不上眼见的图形。
+        巡逻路点**刻意不计入**：movePatrol=false 时路线不动，把它算进去会让框在
+        位移后变形，"框整体平移 = Δ" 这条直觉就断了。
+        """
+        if not isinstance(ent, dict):
+            return None
+        if kind == "zone":
+            pts = _zone_polygon_points_for_editor(ent)
+            if len(pts) < 2:
+                return None
+            xs = [p[0] for p in pts]
+            ys = [p[1] for p in pts]
+            return QRectF(min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
+        try:
+            x = float(ent.get("x", 0) or 0)
+            y = float(ent.get("y", 0) or 0)
+        except (TypeError, ValueError):
+            return None
+        s = entity_scale_of(ent) * self._canvas.persp_factor(ent, kind)
+        w = h = 0.0
+        if kind == "hotspot":
+            di = ent.get("displayImage")
+            if isinstance(di, dict):
+                try:
+                    w = float(di.get("worldWidth", 0) or 0) * s
+                    h = float(di.get("worldHeight", 0) or 0) * s
+                except (TypeError, ValueError):
+                    w = h = 0.0
+        else:  # npc：优先用场景精灵的真实世界尺寸
+            rt = self._scene_npc_runtimes.get(str(ent.get("id") or ""))
+            if rt is not None:
+                w = float(getattr(rt, "world_w", 0) or 0) * s
+                h = float(getattr(rt, "world_h", 0) or 0) * s
+        if w > 0 and h > 0:
+            # 展示图/精灵是底中锚点对齐 (x, y)
+            return QRectF(x - w / 2.0, y - h, w, h)
+        r = max(self._canvas.handle_radius, 8.0)
+        return QRectF(x - r, y - r, r * 2, r * 2)
+
+    def _group_geometry(
+        self, sc: dict, gid: str,
+    ) -> tuple[QRectF | None, QPointF, int, int]:
+        """(包围盒 | None, 把手世界坐标, 成员总数, 画布上不可见的成员数)。"""
+        members = self._group_members(sc, gid)
+        rect: QRectF | None = None
+        for kind, ent in members:
+            r = self._entity_canvas_bbox(kind, ent)
+            if r is None:
+                continue
+            rect = r if rect is None else rect.united(r)
+        if rect is not None:
+            # 留白 = 命中带宽 + 净空。带宽按屏幕像素恒定（9px），缩小的视图里
+            # 换算成的世界宽度会远超写死的 10——实测 0.213 倍下带子往框内探进 32
+            # 世界单位，把紧贴框线的成员压得点不中。
+            # **不能只取 max**：那样带子内沿与成员包围盒恰好相切，定义极值的那个
+            # 成员（一定存在）永远压线，1 像素取整就把点击吃进带子里。
+            wpp = self._canvas_world_per_px()
+            pad = (_GROUP_EDGE_PICK_PX * wpp
+                   + max(_GROUP_BOX_PAD, _GROUP_CLEARANCE_PX * wpp))
+            rect = rect.adjusted(-pad, -pad, pad, pad)
+        hidden = 0
+        for kind, ent in members:
+            key = f"{kind}:{str(ent.get('id') or '')}"
+            item = self._canvas._entity_items.get(key)
+            if item is None or not item.isVisible():
+                hidden += 1
+        anchor = self._group_anchor_point(sc, gid, rect)
+        return rect, anchor, len(members), hidden
+
+    def _group_anchor_point(
+        self, sc: dict, gid: str, rect: QRectF | None,
+    ) -> QPointF:
+        """把手位置：自定义 editor.anchor 优先，否则框**上边线正上方**的左端。
+
+        三轮才收敛到这儿，前两个位置各自的死法记下来免得再绕：
+        - **包围盒中心**：成员最密的地方，把手把实体挡死，而叠放循环点选又刻意
+          跳过组框（`_entity_stack_at`），挡住就救不回来。
+        - **框左上角的斜外侧**：上下相邻两组时（街上两排 NPC 各一组很常见），
+          下组把手落进上组框里盖住它的框角。
+        - **框内左上角**：把手是屏幕恒定尺寸，缩小的视图里换算成的世界半径很大
+          （0.2 倍下 55 世界单位），选中态会挡住靠近左上角的本组成员。
+        框上边线正上方是框外空白——框本身是成员包围盒外扩出来的，那儿不会有成员，
+        与标题并排构成一块真正的抓手区（Figma frame 标签 + 手柄）。
+
+        **已知限制**（两条同源：屏幕像素定尺的东西换算进世界坐标后会压住别的东西，
+        这条线索前后改了五次，动组框几何之前先读
+        `agent_docs/_meta/inbox/2026-08-07-screen-sized-hit-areas-must-stay-off-members.md`）：
+
+        1. 框顶贴着世界上边界时，把手会被钳回可见区（否则标题连同组名一起跑到视口
+           外），此时它可能落回框边命中带甚至框内，选中态下会挡住最上排成员。
+           当前工程数据不触发（最靠上的分组框顶也在 140 以上）。
+        2. 缩得很远时（0.2 倍以下），框的留白按屏幕像素长大，相邻两组的命中带会
+           互相盖——净空只保证"我的带子不碰我自己的成员"，管不了邻组。触发条件是
+           两组成员包围盒相距 < 2×pad 且视图缩得很远；当前工程每个场景只有一个组，
+           不触发。真要收：给屏幕像素那份留白设上限（别让它无限跟着缩放长）。
+
+        两条的现成出路都是放大视图，或取消勾选「显示场景分组框」。
+        """
+        ed = self._group_editor_state(sc, gid)
+        a = ed.get("anchor")
+        if isinstance(a, dict):
+            try:
+                return QPointF(float(a.get("x", 0) or 0), float(a.get("y", 0) or 0))
+            except (TypeError, ValueError):
+                pass
+        if rect is not None:
+            wpp = self._canvas_world_per_px()
+            # 竖直方向抬出框外（2.2 倍留出把手半径 + 标题高度的余量），水平方向
+            # 保持在框宽以内——甩到框左边之外就又会去压左邻组。
+            # 再钳进世界上边界：框顶贴着世界顶时抬出去就跑到视口外了，标题（组名 +
+            # 成员数这个唯一辨识信息）看不见、把手也够不着。
+            y = rect.top() - _GROUP_HANDLE_PX * 2.2 * wpp
+            try:
+                scene_top = self._canvas._gfx.sceneRect().top()
+            except (AttributeError, RuntimeError):
+                scene_top = 0.0
+            return QPointF(
+                min(rect.left() + _GROUP_HANDLE_PX * 1.4 * wpp, rect.center().x()),
+                max(scene_top + _GROUP_HANDLE_PX * wpp, y))
+        ww, wh = self._last_canvas_world or (800.0, 600.0)
+        return QPointF(float(ww) / 2.0, float(wh) / 2.0)
+
+    def _canvas_world_per_px(self) -> float:
+        try:
+            m = float(self._canvas.transform().m11())
+        except (AttributeError, RuntimeError):
+            return 1.0
+        return 1.0 / m if m else 1.0
+
+    def _refresh_group_boxes(self) -> None:
+        """按当前模型重建全部分组框（加载 / 提交 / 撤销回放后统一走这里）。"""
+        if not hasattr(self, "_canvas") or not hasattr(self, "_chk_group_boxes"):
+            return
+        sc = self._model.scenes.get(self._current_scene_id or "")
+        if not isinstance(sc, dict):
+            self._canvas.sync_group_boxes([])
+            self._refresh_group_bounds_note()
+            return
+        rows: list[dict] = []
+        for gid, label in self._model.scene_group_ids_for_scene(self._current_scene_id):
+            rect, anchor, total, hidden = self._group_geometry(sc, gid)
+            title = gid if (not label or label == gid) else f"{gid}（{label}）"
+            suffix = f" ×{total}" if total else " ×0"
+            rows.append({
+                "id": gid,
+                # 纯文字前缀：等宽字体缺 emoji 字形时会画成豆腐块（实测 ⛶ 即如此）
+                "title": f"[组] {title}{suffix}",
+                "rect": rect,
+                "anchor": anchor,
+            })
+        self._canvas.sync_group_boxes(rows)
+        self._refresh_group_bounds_note()
+
+    def _refresh_group_bounds_note(self) -> None:
+        """分组面板上的只读几何行：框在哪、几个成员、几个在画布上看不见。"""
+        props = self._props
+        if props._stack.currentWidget() != props._group_panel:
+            return
+        gid = str(props._group_original_id or "").strip()
+        sc = self._model.scenes.get(self._current_scene_id or "")
+        if not gid or not isinstance(sc, dict):
+            props.set_group_bounds_note("—")
+            return
+        rect, anchor, total, hidden = self._group_geometry(sc, gid)
+        if total == 0:
+            props.set_group_bounds_note(
+                "该组暂无成员：画布上只画把手，位移无对象。\n"
+                "给实体指派分组后，框会自动出现（右键实体树 → 指派分组…）。")
+            return
+        if rect is None:
+            bounds = "成员没有可用几何（坐标缺失？）"
+        else:
+            bounds = (
+                f"包围盒 x {rect.left():.0f} → {rect.right():.0f}，"
+                f"y {rect.top():.0f} → {rect.bottom():.0f}"
+                f"（{rect.width():.0f} × {rect.height():.0f}）"
+            )
+        hidden_note = (
+            f"，其中 {hidden} 个在画布上不可见（位面视图/过场视图过滤），位移同样生效"
+            if hidden else ""
+        )
+        props.set_group_bounds_note(
+            f"{bounds}\n把手 ({anchor.x():.0f}, {anchor.y():.0f}) · 成员 {total} 个{hidden_note}")
+
+    def _on_view_scale_changed(self) -> None:
+        """缩放变了：组框的留白（≥ 边线带宽）与把手位置（抬出框外）都按屏幕像素
+        定尺，必须重新派生，否则框按旧缩放、把手按新缩放，两者错配。
+
+        重入哨兵是防御性的：这条回路理论上能经「刷新 → 面板 QLabel.setText →
+        布局重排 → 画布 resize → fit」绕回来，实测三条入口（滚轮/fit/resize）都
+        不递归（`wheelEvent` 先关掉 `_auto_fit_after_layout`，而 `resizeEvent` 只在
+        该标志为真时重 fit，两者互斥），但这种互斥是别处代码的性质，不该赌。
+        """
+        if self._loading_scene or self._undo.restoring or self._syncing_view_scale:
+            return
+        self._syncing_view_scale = True
+        try:
+            self._refresh_group_boxes()
+        finally:
+            self._syncing_view_scale = False
+
+    def _on_group_boxes_toggled(self, checked: bool) -> None:
+        self._canvas.set_group_boxes_visible(bool(checked))
+        if checked:
+            return
+        # 框藏了 = 画布上的选中与方向键微移也没了。树/面板仍停在该组是刻意的
+        # （用户还在编辑它的条件），但必须说一声，否则就是"方向键悄悄失灵"。
+        had = self._canvas.selected_group()
+        self._canvas.set_selected_group(None)
+        if had:
+            try:
+                self.window().statusBar().showMessage(
+                    "分组框已隐藏：画布上的整组拖动/方向键微移暂停，"
+                    "整组位移改用右侧面板的 Δx/Δy。", 5000)
+            except (AttributeError, RuntimeError):
+                pass
+
+    @staticmethod
+    def _decimals_of(v: object) -> int:
+        """一个数值写在 JSON 里带几位小数（int / 非法值算 0）。"""
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            return 0
+        if isinstance(v, int):
+            return 0
+        text = repr(float(v))
+        if "e" in text or "E" in text:
+            return 6  # 科学计数法：给个够用的上限，别把精度砍没
+        _, _, frac = text.partition(".")
+        return len(frac.rstrip("0"))
+
+    @classmethod
+    def _shift_point_dict(cls, p: object, dx: float, dy: float, keep) -> bool:
+        """平移一个 {"x","y"} 点；返回是否真的改了。
+
+        量化精度取**原值自己的小数位**（至少 1 位），不是一律 round 到 0.1：
+        真实场景里有几十个 2 位小数坐标，一律砍到 0.1 会让"挪过去再挪回来"
+        回不到原处，而这份截断既不显眼也没法从数据上看出是谁干的。
+        """
+        if not isinstance(p, dict):
+            return False
+        ox, oy = p.get("x", 0), p.get("y", 0)
+        try:
+            px = max(1, cls._decimals_of(ox), cls._decimals_of(dx))
+            py = max(1, cls._decimals_of(oy), cls._decimals_of(dy))
+            nx = round(float(ox or 0) + dx, px)
+            ny = round(float(oy or 0) + dy, py)
+        except (TypeError, ValueError):
+            return False
+        p["x"] = keep(nx, ox)
+        p["y"] = keep(ny, oy)
+        return True
+
+    def _translate_group_members(
+        self, sc: dict, gid: str, dx: float, dy: float,
+    ) -> int:
+        """把 (dx, dy) 烘进该组每个成员自己的坐标；返回被改动的成员数。
+
+        逐类规则（与运行时 moveGroupBy 的作者态对应物）：
+        - npc：x/y；`movePatrol` 时连 patrol.route 全部路点；
+        - npc / hotspot：`collisionPolygon` **仅当不是局部坐标**——局部多边形挂在
+          锚点上会自动跟随，旧世界坐标数据则必须一起平移，否则碰撞面与本体脱节。
+          （hotspot 的世界坐标多边形在场景加载时已被迁成局部，NPC 的没有迁移路径，
+          所以这条分支对 NPC 是活的；两类都判，不赌某一类"不会出现"。）
+        - zone：polygon 全部顶点。
+        """
+        if not isinstance(sc, dict):
+            return 0
+        dx = float(dx)
+        dy = float(dy)
+        if dx == 0.0 and dy == 0.0:
+            return 0
+        keep = self._props._keep_num
+        move_patrol = self._group_move_patrol(sc, gid)
+        changed = 0
+        for kind, ent in self._group_members(sc, gid):
+            hit = False
+            if kind in ("npc", "hotspot"):
+                if self._shift_point_dict(ent, dx, dy, keep):
+                    hit = True
+            if kind == "npc" and move_patrol:
+                patrol = ent.get("patrol")
+                if isinstance(patrol, dict):
+                    for pt in patrol.get("route") or []:
+                        if self._shift_point_dict(pt, dx, dy, keep):
+                            hit = True
+            if (
+                kind in ("npc", "hotspot")
+                and ent.get("collisionPolygonLocal") is not True
+            ):
+                for pt in ent.get("collisionPolygon") or []:
+                    if self._shift_point_dict(pt, dx, dy, keep):
+                        hit = True
+            if kind == "zone":
+                poly = ent.get("polygon")
+                if isinstance(poly, list) and len(poly) >= 3:
+                    for pt in poly:
+                        if self._shift_point_dict(pt, dx, dy, keep):
+                            hit = True
+                # 遗留矩形字段（x/y/width/height）：没有 polygon 时画布就按它画，
+                # 不挪就是"框动它不动"的半份移动；与 polygon 并存时（惰性残留）
+                # 也一起挪，免得两套几何各说各话。宽高一律不碰。
+                if isinstance(ent.get("x"), (int, float)) and not isinstance(
+                    ent.get("x"), bool
+                ):
+                    if self._shift_point_dict(ent, dx, dy, keep):
+                        hit = True
+            if hit:
+                changed += 1
+        return changed
+
+    def _refresh_group_member_visuals(self, sc: dict, gid: str) -> None:
+        """整组位移后刷新画布上成员的图元（拖动 live 每步都走，故只做轻量同步）。
+
+        顺带把右侧数值框/顶点表同步过去——不是为了好看：`_commit_pending_scene_edits`
+        会先 `flush_pending_to_model()`（widgets → staging），控件里留着旧坐标的话，
+        它会把刚写进 staging 的位移**反向覆盖**掉，那个成员就永远挪不动。
+        单实体拖拽路径（`_on_item_moved_impl`）同样是写 staging + sync 控件。
+        """
+        for kind, ent in self._group_members(sc, gid):
+            eid = str(ent.get("id") or "")
+            if not eid:
+                continue
+            if kind == "zone":
+                self._props.refresh_zone_polygon_table(eid, ent.get("polygon") or [])
+            else:
+                x = float(ent.get("x", 0) or 0)
+                y = float(ent.get("y", 0) or 0)
+                if kind == "hotspot":
+                    self._props.sync_hotspot_xy_widgets(eid, x, y)
+                else:
+                    self._props.sync_npc_xy_widgets(eid, x, y)
+                    patrol = ent.get("patrol")
+                    route = patrol.get("route") if isinstance(patrol, dict) else None
+                    if isinstance(route, list) and route:
+                        # 巡逻路点表同理：不同步的话 flush 会拿表里的旧路点覆盖回去
+                        self._props.refresh_npc_patrol_table(eid, route)
+            if kind == "hotspot":
+                self._canvas.move_entity_handle(
+                    "hotspot", eid, float(ent.get("x", 0) or 0), float(ent.get("y", 0) or 0))
+                self._canvas.refresh_hotspot_visuals(ent)
+            elif kind == "npc":
+                x = float(ent.get("x", 0) or 0)
+                y = float(ent.get("y", 0) or 0)
+                self._canvas.move_entity_handle("npc", eid, x, y)
+                self._patrol_preview_state.pop(eid, None)
+                rt = self._scene_npc_runtimes.get(eid)
+                if rt is not None:
+                    rt.draw_at(x, y)
+                self._canvas.refresh_npc_collision_visuals(ent)
+                overlay = self._canvas._patrol_overlays.get(eid)
+                if overlay is not None:
+                    patrol = ent.get("patrol")
+                    route = patrol.get("route") if isinstance(patrol, dict) else None
+                    self._canvas.update_npc_patrol_overlay_points(eid, route or [])
+            else:
+                self._canvas.update_zone_polygon(eid, ent.get("polygon") or [])
+        self._canvas.viewport().update()
+
+    def _group_write_target_scene(self, gid: str) -> dict | None:
+        """整组位移的写入对象：模型层场景 dict。
+
+        成员三列表与 model 共享引用（见 load_scene_props 注释），直写模型即可；
+        但若面板正拿着某个成员的 staging，提交时会用旧坐标覆盖——所以所有入口
+        进来之前都必须先 flush pending（`_undo_flush_pending_as_command`）。
+        """
+        sc = self._model.scenes.get(self._current_scene_id or "")
+        return sc if isinstance(sc, dict) else None
+
+    def _on_group_box_clicked(self, gid: str) -> None:
+        """press 阶段：**只**点亮组框 + 让画布拿到键盘焦点。
+
+        刻意不装载属性面板、不同步实体树、不弹任何窗——那些都会改布局，而这里
+        跑在 Qt 的鼠标事件派发栈中间，画布一 resize 就会触发 fit 的 resetTransform，
+        实测直接段错误。收尾统一放 `_on_group_gesture_finished`。
+        """
+        gid = str(gid or "").strip()
+        if not gid:
+            return
+        self._canvas.set_selected_group(gid)
+        self._canvas.hide_transform_gizmo()
+        # 画布要能吃方向键微移：把焦点交给画布本体
+        self._canvas.setFocus(Qt.FocusReason.MouseFocusReason)
+
+    def _on_group_gesture_finished(self, gid: str) -> None:
+        """手势结束：把「会改布局」的收尾排到下一拍再做。
+
+        我们此刻仍在 release 的事件派发栈里，装载面板 = 切 QStackedWidget =
+        布局重排 → 画布 resize → fit 的 resetTransform() 在 Qt 鼠标事件处理
+        中间执行 → 段错误（实测）。singleShot 必须用带 context 对象的 3 参版，
+        否则编辑器销毁后回调照样触发、碰到已析构的 C++ 对象（库内硬规矩）。
+        """
+        gid = str(gid or "").strip()
+        if not gid:
+            return
+        QTimer.singleShot(
+            0, self, lambda g=gid: self._apply_group_gesture_finished(g))
+
+    def _apply_group_gesture_finished(self, gid: str) -> None:
+        """手势收尾的实际内容：装载分组面板、同步实体树、刷新只读几何行。
+
+        位移本身写的是「成员的当前真相份」（staging 在就写 staging，见
+        `_group_member_write_dict`），所以这里的 commit-on-leave 只会把已含新
+        坐标的 staging 写回 source，不存在拿旧副本覆盖的问题。
+        """
+        gid = str(gid or "").strip()
+        if not gid or self._undo.restoring:
+            return
+        if self._canvas.group_box(gid) is None:
+            return  # 组已在本次手势中消失（改名/删除），下一拍的刷新会收拾干净
+        sc = self._model.scenes.get(self._current_scene_id or "")
+        if not isinstance(sc, dict):
+            return
+        props = self._props
+        already = (
+            props._stack.currentWidget() == props._group_panel
+            and str(props._group_original_id or "").strip() == gid
+        )
+        if not already:
+            if not self._undo_flush_pending_as_command():
+                self._restore_editing_selection_after_block()
+                return
+            sc = self._model.scenes.get(self._current_scene_id or "") or sc
+            if not any(g == gid for g, _lbl
+                       in self._model.scene_group_ids_for_scene(self._current_scene_id)):
+                # 刚提交的编辑把这个组改没了（改名）：刷新组框，不装载幽灵面板
+                self._refresh_group_boxes()
+                return
+            props.load_group_props(sc, gid)
+        self._canvas.set_selected_group(gid)
+        self._sync_tree_from_canvas([("group", gid)])
+        self._refresh_group_bounds_note()
+
+    def _on_group_translate_live(self, gid: str, dx: float, dy: float) -> None:
+        """拖动过程中的增量位移：写入 + 刷新成员图元，不标脏（release 才标）。"""
+        if self._undo.restoring:
+            return
+        sc = self._group_write_target_scene(gid)
+        if sc is None:
+            return
+        if self._translate_group_members(sc, gid, dx, dy) == 0:
+            return
+        # release 据此判断"这次手势到底改没改到东西"，没改到就不标脏（防伪脏）
+        self._group_live_changed += 1
+        self._refresh_group_member_visuals(sc, gid)
+
+    def _on_group_translate_committed(self, gid: str, dx: float, dy: float) -> None:
+        """整组拖动 release：标脏 + 收敛为一条撤销命令（before 取自按下时快照）。"""
+        before_info = self._drag_undo_before
+        self._drag_undo_before = None
+        changed = self._group_live_changed
+        self._group_live_changed = 0
+        sc = self._group_write_target_scene(gid)
+        if sc is None:
+            return
+        if changed == 0:
+            # 手势有位移但一个成员也没改到（成员几何全缺失/坏元素）：
+            # 标脏就是伪脏——脏了却既无变更也无可撤销的命令。
+            self._refresh_group_boxes()
+            self._canvas.set_selected_group(str(gid or "") or None)
+            return
+        self._mark_canvas_edit()
+        self._after_group_translate(sc, gid, dx, dy)
+        if before_info is not None:
+            total = len(self._group_members(sc, gid))
+            self._undo.complete_deferred(
+                before_info[0], f"整组位移 {gid}（{total} 个成员）", before_info[1])
+
+    def _on_group_translate_abandoned(self, gid: str) -> None:
+        """零位移点击 / Esc：按下时快照精确回灌，丢掉撤销快照，不留空命令。
+
+        **不能**靠反向 Δ 退回：每一步位移都 round 到 0.1，原坐标带 2 位小数
+        （真实场景里有 30+ 个）时反算退不回去，结果是"取消了但数据被截断改过"，
+        而且既不标脏也进不了撤销栈——用户因别的编辑触发保存时静默落盘。
+        """
+        gid = str(gid or "").strip()
+        before_info = self._drag_undo_before
+        self._drag_undo_before = None
+        self._group_live_changed = 0
+        sc = self._model.scenes.get(self._current_scene_id or "")
+        if isinstance(sc, dict) and before_info is not None and before_info[0] == (
+            self._current_scene_id or ""
+        ):
+            self._restore_group_members_from_snapshot(sc, gid, before_info[1])
+        if isinstance(sc, dict):
+            self._refresh_group_member_visuals(sc, gid)
+        self._refresh_group_boxes()
+        self._canvas.set_selected_group(gid or None)
+
+    _GROUP_GEOMETRY_KEYS = (
+        "x", "y", "patrol", "polygon", "collisionPolygon", "collisionPolygonLocal",
+        "width", "height",
+    )
+
+    def _restore_group_members_from_snapshot(
+        self, sc: dict, gid: str, snapshot: dict,
+    ) -> None:
+        """把该组成员的几何字段按快照逐字段回灌（原表示原样，不经任何 round）。"""
+        if not isinstance(snapshot, dict):
+            return
+        for coll, kind in self._GROUP_MEMBER_COLLS:
+            snap_by_id = {
+                str(e.get("id") or ""): e
+                for e in snapshot.get(coll, []) or [] if isinstance(e, dict)
+            }
+            for ent in sc.get(coll, []) or []:
+                if not isinstance(ent, dict):
+                    continue
+                if str(ent.get("group") or "").strip() != gid:
+                    continue
+                old = snap_by_id.get(str(ent.get("id") or ""))
+                if not isinstance(old, dict):
+                    continue
+                # staging 在就写 staging：与位移写入的是同一份，否则退不回屏幕上那份
+                target = self._group_member_write_dict(kind, ent)
+                for key in self._GROUP_GEOMETRY_KEYS:
+                    if key in old:
+                        target[key] = copy.deepcopy(old[key])
+                    else:
+                        target.pop(key, None)
+
+    def _report_group_move(self, sc: dict, gid: str, dx: float, dy: float) -> None:
+        """状态栏回报本次整组位移的真实影响面。
+
+        画布上看不见的成员（位面视图/过场视图过滤掉的）也被移动了——不说出来的话，
+        用户以为只动了眼前这几个，事后才发现别的位面里的实体跟着跑了。
+        """
+        members = self._group_members(sc, gid)
+        hidden = sum(
+            1 for kind, ent in members
+            if (lambda it: it is None or not it.isVisible())(
+                self._canvas._entity_items.get(f"{kind}:{str(ent.get('id') or '')}"))
+        )
+        tail = f"，其中 {hidden} 个画布上不可见" if hidden else ""
+        try:
+            self.window().statusBar().showMessage(
+                f"分组「{gid}」整体位移 ({dx:+.1f}, {dy:+.1f})："
+                f"{len(members)} 个成员已移动{tail}（Ctrl+Z 可撤销）", 4000)
+        except (AttributeError, RuntimeError):
+            pass  # 无状态栏的宿主（测试/独立窗口）不该因为提示失败而中断位移
+
+    def _after_group_translate(
+        self, sc: dict, gid: str, dx: float = 0.0, dy: float = 0.0,
+    ) -> None:
+        """位移落定后的统一收尾：面板/画布/组框全部重新对齐模型。
+
+        状态栏回报与只读几何行会改布局（可能引发画布 resize→fit→resetTransform），
+        位移可能发生在鼠标 release 的事件栈里，所以这两件排到下一拍再做。
+        """
+        props = self._props
+        if dx or dy:
+            QTimer.singleShot(
+                0, self,
+                lambda g=gid, ddx=float(dx), ddy=float(dy): self._report_group_move(
+                    self._model.scenes.get(self._current_scene_id or "") or {},
+                    g, ddx, ddy))
+        if (
+            props._stack.currentWidget() == props._group_panel
+            and str(props._group_original_id or "").strip() == str(gid or "").strip()
+        ):
+            # 只读几何行是 QLabel.setText，同样会重排布局，一并排到下一拍。
+            QTimer.singleShot(0, self, self._refresh_group_bounds_note)
+        self._refresh_group_member_visuals(sc, gid)
+        self._refresh_npc_patrol_overlay()
+        self._refresh_group_boxes()
+        self._canvas.set_selected_group(str(gid or "") or None)
+
+    def _on_group_nudge(
+        self, gid: str, dx: float, dy: float, autorepeat: bool = False,
+    ) -> None:
+        """方向键微移：一次按键 = 一条撤销命令；按住不放的连发合并成一条。"""
+        gid = str(gid or "").strip()
+        if not gid:
+            return
+        if autorepeat and self._nudge_session == gid:
+            # 连发：直接改数据，不新开命令，也不重复走离开路径的 flush
+            # （连发期间不会产生新的未应用编辑）。收口在 _finish_nudge_session。
+            sc = self._group_write_target_scene(gid)
+            if sc is None:
+                return
+            if self._translate_group_members(sc, gid, dx, dy) == 0:
+                return
+            # 必须走 _mark_canvas_edit（不能只 mark_dirty 模型）：位移写的是
+            # 「成员的当前真相份」，可能是 staging；不点亮 pending 的话，出口的
+            # commit-on-leave 被 is_pending_dirty 门控挡掉，staging 永远回灌不到
+            # source——模型少了那几个成员的位移，用户回头点它还会被旧值抹掉。
+            self._mark_canvas_edit()
+            self._after_group_translate(sc, gid, dx, dy)
+            self._nudge_idle_timer.start(400)
+            return
+        # 非连发：先收口上一串（flush 入口里也会收口，这里是显式表达意图）
+        if not self._undo_flush_pending_as_command():
+            self._restore_editing_selection_after_block()
+            return
+        sc = self._group_write_target_scene(gid)
+        if sc is None:
+            return
+        before = copy.deepcopy(sc)
+        if self._translate_group_members(sc, gid, dx, dy) == 0:
+            return
+        self._mark_canvas_edit()  # 同上：位移可能落在 staging，必须点亮 pending
+        self._after_group_translate(sc, gid, dx, dy)
+        # 命令等这一串连发结束再入栈：before 已在此刻抓好
+        self._nudge_session = gid
+        self._nudge_before = before
+        self._nudge_idle_timer.start(400)
+
+    def _finish_nudge_session(self) -> None:
+        """把一串方向键微移收口成一条撤销命令（幂等；无会话时空转）。"""
+        gid = self._nudge_session
+        before = self._nudge_before
+        self._nudge_session = ""
+        self._nudge_before = None
+        self._nudge_idle_timer.stop()
+        if not gid or before is None or self._undo.restoring:
+            return
+        sid = self._current_scene_id or ""
+        if not sid:
+            return
+        self._undo.complete_deferred(sid, f"微移分组 {gid}", before)
+
+    def _resolved_group_id_after_flush(self, gid: str) -> str:
+        """flush 之后该用哪个 gid。
+
+        面板的「应用位移」「把手回到中心」都要先提交未应用编辑，而那次提交
+        可能就把组改名了——继续用按钮按下时的旧 id 查，会查到空成员/空条目，
+        于是按钮什么都不做也不吭声（死按钮）。提交后以面板持有的 id 为准。
+        """
+        props = self._props
+        if props._stack.currentWidget() == props._group_panel:
+            current = str(props._group_original_id or "").strip()
+            if current:
+                return current
+        return str(gid or "").strip()
+
+    def _on_group_translate_requested(self, gid: str, dx: float, dy: float) -> None:
+        """分组面板「应用位移」：与拖动同一条写入通道，一次 = 一条撤销命令。"""
+        gid = str(gid or "").strip()
+        if not gid:
+            return
+        if not self._undo_flush_pending_as_command():
+            self._restore_editing_selection_after_block()
+            return
+        gid = self._resolved_group_id_after_flush(gid)
+        sc = self._group_write_target_scene(gid)
+        if sc is None:
+            return
+        members = self._group_members(sc, gid)
+        if not members:
+            QMessageBox.information(
+                self, "整组位移", f"分组「{gid}」当前没有成员，没有可位移的对象。")
+            return
+        with self._undo.capture(f"整组位移 {gid}"):
+            changed = self._translate_group_members(sc, gid, dx, dy)
+            if changed == 0:
+                return
+            # 同拖动/微移：位移可能落在 staging，必须点亮 pending，capture 出口的
+            # commit-on-leave 才会把它回灌 source（只 mark_dirty 模型是半份移动）。
+            self._mark_canvas_edit()
+            self._after_group_translate(sc, gid, dx, dy)
+
+    def _on_group_anchor_committed(self, gid: str, x: float, y: float) -> None:
+        """Alt+拖把手：写 editor.anchor（把兼容标签组升级为显式分组实体）。"""
+        gid = str(gid or "").strip()
+        if not gid:
+            return
+        if not self._undo_flush_pending_as_command():
+            self._restore_editing_selection_after_block()
+            return
+        sc = self._group_write_target_scene(gid)
+        if sc is None:
+            return
+        with self._undo.capture(f"移动分组把手 {gid}"):
+            g = self._ensure_group_def(sc, gid)
+            if g is None:
+                return
+            ed = g.get("editor")
+            ed = ed if isinstance(ed, dict) else {}
+            ed["anchor"] = {"x": round(float(x), 1), "y": round(float(y), 1)}
+            g["editor"] = ed
+            self._model.mark_dirty("scene", self._current_scene_id or "")
+            self._resync_group_staging(g)
+            self._refresh_group_boxes()
+            self._canvas.set_selected_group(gid)
+
+    def _on_group_anchor_reset_requested(self, gid: str) -> None:
+        """把手回到中心：删掉 editor.anchor（editor 空了就整个删，不留空壳键）。"""
+        gid = str(gid or "").strip()
+        if not gid:
+            return
+        # 先提交再判断：提交可能改名，用旧 id 判"有没有 anchor"会判到另一个组
+        # （或判不到），按钮就成了点了没反应的死按钮。
+        if not self._undo_flush_pending_as_command():
+            self._restore_editing_selection_after_block()
+            return
+        gid = self._resolved_group_id_after_flush(gid)
+        sc = self._group_write_target_scene(gid)
+        if sc is None:
+            return
+        g = self._group_def(sc, gid)
+        ed = g.get("editor") if isinstance(g, dict) else None
+        if not isinstance(ed, dict) or "anchor" not in ed:
+            QMessageBox.information(
+                self, "分组把手", "该分组没有自定义把手位置，本来就在包围盒中心。")
+            return
+        with self._undo.capture(f"重置分组把手 {gid}"):
+            g = self._group_def(sc, gid)
+            if not isinstance(g, dict):
+                return
+            ed = g.get("editor")
+            if not isinstance(ed, dict):
+                return
+            ed.pop("anchor", None)
+            if ed:
+                g["editor"] = ed
+            else:
+                g.pop("editor", None)
+            self._model.mark_dirty("scene", self._current_scene_id or "")
+            self._resync_group_staging(g)
+            self._refresh_group_boxes()
+            self._canvas.set_selected_group(gid)
+
+    def _ensure_group_def(self, sc: dict, gid: str) -> dict | None:
+        """取显式分组条目；旧标签组按需升格（保护性拒绝畸形 entityGroups）。"""
+        g = self._group_def(sc, gid)
+        if g is not None:
+            return g
+        raw = sc.get("entityGroups")
+        if raw is not None and not isinstance(raw, list):
+            QMessageBox.warning(
+                self, "场景分组",
+                "当前 entityGroups 不是数组；为保护原数据，编辑器不会覆盖它。请先修复校验错误。")
+            return None
+        groups = raw if isinstance(raw, list) else []
+        if raw is None:
+            sc["entityGroups"] = groups
+        g = {"id": gid}
+        groups.append(g)
+        return g
+
+    def _resync_group_staging(self, group: dict) -> None:
+        """模型层直写分组后重绑 staging：否则面板手里的旧副本会在下次提交时覆盖回去
+        （画布/表单零丢失范式的 commit-on-leave 同族坑）。"""
+        props = self._props
+        if (
+            props._stack.currentWidget() == props._group_panel
+            and str(props._group_original_id or "").strip()
+            == str(group.get("id") or "").strip()
+        ):
+            props.rebind_group_after_commit(group)
+
+    def _on_group_delete_requested(self, gid: str) -> None:
+        """画布右键「删除该分组」：与实体树右键删除同一条路径（带入站引用阻断）。"""
+        gid = str(gid or "").strip()
+        sc = self._model.scenes.get(self._current_scene_id or "")
+        if not gid or not isinstance(sc, dict):
+            return
+        self._delete_scene_group(sc, gid)
+
+    def _on_group_select_members_requested(self, gid: str) -> None:
+        """在画布/树上选中该组全部成员（画布无图元的成员靠树参与批量操作）。"""
+        gid = str(gid or "").strip()
+        sc = self._model.scenes.get(self._current_scene_id or "")
+        if not gid or not isinstance(sc, dict):
+            return
+        refs = [(kind, str(ent.get("id") or ""))
+                for kind, ent in self._group_members(sc, gid)
+                if str(ent.get("id") or "")]
+        if not refs:
+            QMessageBox.information(
+                self, "选中成员", f"分组「{gid}」当前没有成员。")
+            return
+        if not self._undo_flush_pending_as_command():
+            self._restore_editing_selection_after_block()
+            return
+        self._canvas.set_selected_group(None)
+        self._syncing_tree_selection = True
+        try:
+            self._canvas._gfx.clearSelection()
+            for item in self._iter_entity_tree_items():
+                data = item.data(0, Qt.ItemDataRole.UserRole)
+                item.setSelected(bool(data) and tuple(data) in set(refs))
+            for kind, eid in refs:
+                canvas_item = self._canvas._entity_items.get(f"{kind}:{eid}")
+                if canvas_item is not None:
+                    canvas_item.setSelected(True)
+        finally:
+            self._syncing_tree_selection = False
+        if len(refs) == 1:
+            self._on_item_selected(refs[0][0], refs[0][1])
+        else:
+            self._props.show_multi_selection(len(refs))
+        self._sync_transform_gizmo()
+
     def _on_tree_context_menu(self, pos) -> None:
         refs = self._tree_selected_refs()
         if not refs:
@@ -10648,6 +12348,9 @@ class SceneEditor(QWidget):
             groups.append({"id": gid})
             self._model.mark_dirty("scene", self._current_scene_id or "")
             self._refresh_entity_tree()
+            # 新组的画布框要立刻出现：否则要等下一次场景重载才看得见（下面
+            # setCurrentItem 触发的 set_selected_group 也会因为框不存在而落空）。
+            self._refresh_group_boxes()
             for item in self._iter_entity_tree_items():
                 data = item.data(0, Qt.ItemDataRole.UserRole)
                 if data and tuple(data) == ("group", gid):
@@ -10728,6 +12431,8 @@ class SceneEditor(QWidget):
             self._undo.complete_deferred(
                 before_info[0], f"移动 {len(items)} 个实体", before_info[1])
         self._sync_transform_gizmo()
+        if items:
+            self._refresh_group_boxes()  # 成员挪了 = 组包围盒变了
 
     # ---- 实例 transform gizmo（P3；quad 级真变换，与运行时同口径） ----------
 
@@ -10805,6 +12510,7 @@ class SceneEditor(QWidget):
         if before_info is not None:
             self._undo.complete_deferred(before_info[0], "调整实例变换", before_info[1])
         self._sync_transform_gizmo()
+        self._refresh_group_boxes()  # scale/rotation 改了成员画布占位
 
     def _on_npc_ref_toggled(self, checked: bool) -> None:
         self._canvas.set_npc_reference_visible(checked)
@@ -10916,6 +12622,8 @@ class SceneEditor(QWidget):
     def _on_item_deselected(self) -> None:
         if self._restoring_blocked_navigation or self._syncing_tree_selection:
             return
+        # 组框熄灯必须等提交成功之后：保护性校验挡下这次"点空白"时，树/面板还
+        # 停在该组，先熄灯就成了"面板显示着组、方向键却不动"的三方脱节。
         if self._current_scene_id:
             sc = self._model.scenes.get(self._current_scene_id)
             if sc:
@@ -10926,6 +12634,7 @@ class SceneEditor(QWidget):
                     return
                 sc = self._model.scenes.get(self._current_scene_id) or sc
                 self._props.load_scene_props(sc, clear_pending_edits=False)
+        self._canvas.set_selected_group(None)
         self._refresh_npc_patrol_overlay()
 
     def _on_props_interaction_range_changed(self, kind: str, eid: str, r: float) -> None:
@@ -10993,6 +12702,7 @@ class SceneEditor(QWidget):
         self._mark_canvas_edit()
         self._props.refresh_zone_polygon_table(eid, poly_list)
         self._canvas.item_selected.emit(kind, eid)
+        self._refresh_group_boxes()  # zone 是组成员时，多边形改动会改组包围盒
 
     def _on_item_hotspot_collision_polygon_committed(self, eid: str, polygon: object) -> None:
         if not self._undo_flush_pending_as_command():
@@ -11179,6 +12889,8 @@ class SceneEditor(QWidget):
                 kind, f"拖动 {kind}")
             self._undo.complete_deferred(before_info[0], label, before_info[1])
         self._sync_transform_gizmo()
+        if kind in ("hotspot", "npc"):
+            self._refresh_group_boxes()  # 成员挪了 = 组包围盒变了
 
     def _on_item_moved_impl(self, kind: str, eid: str, x: float, y: float) -> None:
         rx = round(x, 1)
@@ -11359,7 +13071,11 @@ class SceneEditor(QWidget):
 
     def _undo_flush_pending_as_command(self) -> bool:
         """离开路径（切实体/切场景/点空白）的 commit-on-leave：语义同
-        `_commit_pending_scene_edits`，额外把这次提交记为可撤销命令。"""
+        `_commit_pending_scene_edits`，额外把这次提交记为可撤销命令。
+
+        进来先收口未结束的方向键微移会话——否则那一串连发的 before 快照会跨过
+        本次提交，撤销时把别的编辑一起回滚。"""
+        self._finish_nudge_session()
         return self._undo.flush_pending_as_command()
 
     def _on_canvas_drag_press(self) -> None:
@@ -11374,6 +13090,8 @@ class SceneEditor(QWidget):
             return
         if not self._undo.flush_pending_as_command():
             self._drag_undo_before = None
+            # 整组拖动据此在 press 阶段就作废本次手势（实体拖拽维持既有行为）
+            self._canvas.veto_group_gesture()
             self._restore_editing_selection_after_block()
             return
         self._drag_undo_before = (sid, copy.deepcopy(sc))
@@ -11396,7 +13114,9 @@ class SceneEditor(QWidget):
             return
         # 未应用的 staging 编辑先提交为命令，再撤销——保证 Ctrl+Z 第一步撤的
         # 是屏幕上最新的改动，而不是跳过它撤更早的历史（零丢失范式）。
-        if not self._undo.flush_pending_as_command():
+        # 走 self._undo_flush_pending_as_command（不是 controller 裸方法）：它还负责
+        # 收口未结束的方向键微移会话，否则刚微移完按 Ctrl+Z 会跳过它撤更早的命令。
+        if not self._undo_flush_pending_as_command():
             self._restore_editing_selection_after_block()
             return
         if self._undo.stack.canUndo():
@@ -11409,7 +13129,7 @@ class SceneEditor(QWidget):
             return
         # pending 提交作为新命令入栈会按 Qt 语义截断 redo 分支（新编辑使旧
         # redo 失效）——比静默丢弃 pending 或让 redo 覆盖它都安全。
-        if not self._undo.flush_pending_as_command():
+        if not self._undo_flush_pending_as_command():
             self._restore_editing_selection_after_block()
             return
         if self._undo.stack.canRedo():
@@ -11438,12 +13158,24 @@ class SceneEditor(QWidget):
             self._model.mark_dirty("scene", sid)
             if (self._current_scene_id or "") == sid:
                 sel = self._capture_canvas_primary_selection()
+                # 分组不进 Qt 选择系统，选中态得单独记；否则撤销一次整组位移后
+                # 组框就熄灯、面板跳回场景页，用户得重新找回刚才那个组。
+                sel_group = self._canvas.selected_group()
                 # 先清 pending：_load_scene 顶部的 commit-on-leave 才不会用
                 # 回放前的旧 staging 覆盖刚灌入的快照。
                 self._props._set_pending_dirty(False)
                 self._load_scene(sid, reset_view=False)
                 if sel is not None:
                     self._restore_canvas_selection(sel[0], sel[1])
+                if sel_group:
+                    sc_now = self._model.scenes.get(sid)
+                    if isinstance(sc_now, dict) and any(
+                        gid == sel_group
+                        for gid, _lbl in self._model.scene_group_ids_for_scene(sid)
+                    ):
+                        self._props.load_group_props(sc_now, sel_group)
+                        self._canvas.set_selected_group(sel_group)
+                        self._refresh_group_bounds_note()
                 # restoring 短路了 selectionChanged 联动：树高亮与 gizmo 手动补同步
                 # （数据已正确，纯呈现陈旧；审查 P2-C）。
                 self._sync_tree_from_canvas(self._canvas_selected_entity_refs())
@@ -11941,8 +13673,12 @@ class SceneEditor(QWidget):
         # Apply 可能改了 id/name/group：树是模型投影，跟着刷（审查 P2-C）；
         # 重建清掉的树高亮按画布选中补回
         self._refresh_entity_tree()
+        # 分组框同理是模型投影：成员坐标/尺寸、group 归属、组改名、把手都可能变
+        self._refresh_group_boxes()
         if self._props._stack.currentWidget() == self._props._group_panel:
             gid = str(self._props._group_original_id or "").strip()
+            self._canvas.set_selected_group(gid or None)
+            self._refresh_group_bounds_note()
             for item in self._iter_entity_tree_items():
                 data = item.data(0, Qt.ItemDataRole.UserRole)
                 if data and tuple(data) == ("group", gid):

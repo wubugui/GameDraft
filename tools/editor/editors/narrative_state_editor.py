@@ -637,6 +637,82 @@ class NarrativeEditorBridge(QObject):
         except Exception as exc:  # noqa: BLE001 - 桥边界统一转 JSON 错误
             return json.dumps({"ok": False, "reason": str(exc)}, ensure_ascii=False)
 
+    # --------------------------------------------------------------------- #
+    # 信号关系（只读）：这条信号谁发、谁听。与调试器共用 tools/narrative_xref 扫描口径。
+    # --------------------------------------------------------------------- #
+    @Slot(str, result=str)
+    def scanSignalXref(self, payload: str) -> str:  # noqa: N802 - Qt slot name
+        """全工程「信号谁发谁听」索引，**只读**：不写模型、不标脏、不落盘。
+
+        入参 JSON `{data}`（data=当前画布草稿）时在临时代理上扫，草稿一并计入——
+        面板给的必须是"我现在改成这样之后"的关系，不是上次存盘时的关系。
+
+        一次返回**全部信号**：面板要列全表（谁没人发、谁发了没人听），逐条问宿主会把
+        一次扫描放大成 N 次；全量一次约 0.1 秒，换来切换信号零延迟。
+        """
+        from tools.narrative_xref import build_index, from_project_model
+
+        try:
+            model, _req = self._scan_model_with_optional_draft(payload)
+            # 网页文档是**加载期快照**：加载之后由原生「信号管理器」注册的作者信号不在里面，
+            # 不补回来的话面板会把它们一律标成"没登记"——假警报。这里只补进**临时扫描副本**
+            # （草稿代理持有的那份），刻意不走 bridge 的 merge_host_signals_into：那个会推进
+            # 保存基线，而扫描是只读的，绝不能碰保存状态机。
+            narrative = getattr(model, "narrative_graphs", None)
+            if model is not self._model and isinstance(narrative, dict):
+                merge_host_only_author_signals(
+                    narrative, self._model.narrative_graphs, self._loaded_signal_ids,
+                )
+            index = build_index(from_project_model(model))
+            return json.dumps({"ok": True, "xref": index.to_dict()}, ensure_ascii=False)
+        except Exception as exc:  # noqa: BLE001 - 桥边界统一转 JSON 错误
+            return json.dumps({"ok": False, "reason": str(exc)}, ensure_ascii=False)
+
+    @Slot(str, result=str)
+    def revealXrefRef(self, payload: str) -> str:  # noqa: N802 - Qt slot name
+        """把一条定位（file + pointer + anchors）交给主编辑器既有的跳转引擎。
+
+        复用 `navigate_to_search_hit`（全局搜索/查引用同一条路）：对话图落到节点、场景落到
+        实体、过场落到步骤全都现成。**注意它是三态**：True=精确定位，None=只打开了页面
+        没能逐条定位，False=没跳成——原样透传，不许把 None 谎报成成功。
+        """
+        try:
+            req = json.loads(payload or "{}")
+        except Exception as exc:  # noqa: BLE001
+            return json.dumps({"ok": False, "reason": f"invalid json: {exc}"}, ensure_ascii=False)
+        if not isinstance(req, dict):
+            return json.dumps({"ok": False, "reason": "payload must be an object"}, ensure_ascii=False)
+        file = str(req.get("file") or "").strip()
+        pointer = str(req.get("pointer") or "")
+        if not file:
+            return json.dumps({"ok": False, "reason": "缺少文件路径，无法定位"}, ensure_ascii=False)
+        anchors = [
+            [str(a[0]), str(a[1])] for a in (req.get("anchors") or [])
+            if isinstance(a, (list, tuple)) and len(a) == 2
+        ]
+        win = self.parent()
+        while win is not None and not hasattr(win, "navigate_to_search_hit"):
+            win = win.parent()
+        if win is None:
+            return json.dumps({"ok": False, "reason": "跳转不可用（宿主窗口没接跳转引擎）"}, ensure_ascii=False)
+        try:
+            ok, note = win.navigate_to_search_hit(
+                file, pointer, anchors,
+                str(req.get("matchedText") or ""), str(req.get("contextText") or ""),
+            )
+        except Exception as exc:  # noqa: BLE001 - 跳转失败不许把面板带崩
+            return json.dumps({"ok": False, "reason": f"跳转失败：{exc}"}, ensure_ascii=False)
+        # 回执也丢一份到主窗状态栏：跳转会切走编辑页，写在叙事页上的那行字当场就看不见了。
+        status = getattr(win, "_status", None)
+        if status is not None and note:
+            try:
+                status.showMessage(str(note), 6000)
+            except Exception:  # noqa: BLE001 - 状态栏只是锦上添花，失败不影响跳转本身
+                pass
+        return json.dumps(
+            {"ok": ok is not False, "exact": ok is True, "note": str(note or "")}, ensure_ascii=False,
+        )
+
     @Slot(str, result=str)
     def applySignalRefactor(self, payload: str) -> str:  # noqa: N802 - Qt slot name
         """执行叙事重构。payload.op ∈ {rename, delete, renameState, renameGraph} + 各自参数 + data。

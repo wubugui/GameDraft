@@ -1,6 +1,7 @@
 """叙事因果图索引：把 narrative_graphs.json + 对话图/zone 摊平成"状态节点 + 因果边"。
 
 这里刻意不 import 任何编辑器模块——本工具与 tools/editor 完全解耦，只认数据格式。
+（`tools.narrative_xref` 不算编辑器模块：它是编辑器与调试器共用的纯 stdlib 扫描基建。）
 
 三层数据事实（读代码得来，勿凭记忆改）：
 - 信号 key 是**全局裸名**（NarrativeStateManager.normalizeSignal 只取 signal 字段，
@@ -18,7 +19,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
+from tools.narrative_xref.phrases import condition_parts as xref_condition_parts
+from tools.narrative_xref.phrases import describe_condition as xref_describe_condition
+from tools.narrative_xref.phrases import describe_conditions as xref_describe_conditions
+
 BROADCAST_PREFIX = "state:"
+# 反应式触发：不吃信号，靠条件自动评估。这类转移的 signal 字段是编辑器占位，
+# **恒为 __draft__ 且理应如此**——接线在 conditions 上。
+REACTIVE_TRIGGERS = frozenset({"reactive", "reactiveAll", "reactiveAny"})
 # 编辑器占位信号（与 NarrativeStateManager.DEFAULT_DRAFT_SIGNAL 对齐）：
 # 它连出来的边不是真路，图上不画、清单里不排。
 DRAFT_PLACEHOLDER = "__draft__"
@@ -61,6 +69,20 @@ class Transition:
     @property
     def has_conditions(self) -> bool:
         return bool(self.conditions)
+
+    @property
+    def is_reactive(self) -> bool:
+        return self.trigger in REACTIVE_TRIGGERS
+
+    @property
+    def is_unwired(self) -> bool:
+        """真的没接线吗。
+
+        ⚠ 只看 `signal == __draft__` 会把**反应式转移**一并冤枉掉：它压根不吃信号，
+        signal 字段恒是占位，线接在 conditions 上。踩过：主线「闲逛A→闲逛B」明明写了
+        条件，因果图上不画、「在等」框还写"这条路还没接线"，条件就打印在下一行。
+        """
+        return self.signal == DRAFT_PLACEHOLDER and not self.is_reactive
 
     @property
     def from_key(self) -> str:
@@ -611,9 +633,11 @@ class NarrativeIndex:
         """(目标节点 key, 边标签, 是否跨图派生)。"""
         out: list[tuple[str, str, bool]] = []
         for t in self.by_from.get(key, []):
-            if t.signal == DRAFT_PLACEHOLDER:
+            if t.is_unwired:
                 continue
-            out.append((t.to_key, t.signal, False))
+            # 反应式没有信号可标，标条件——边上写 __draft__ 等于告诉人"这没接"
+            label = "条件满足自动走" if t.is_reactive else t.signal
+            out.append((t.to_key, label, False))
         node = self.states.get(key)
         if node is not None and node.broadcasts:
             derived = broadcast_key(node.graph_id, node.state_id)
@@ -628,10 +652,11 @@ class NarrativeIndex:
     def predecessors(self, key: str) -> list[tuple[str, str, bool]]:
         out: list[tuple[str, str, bool]] = []
         for t in self.by_to.get(key, []):
-            # 编辑器占位不是真路：画出来只会让人以为"开局前面还有一拍"
-            if t.signal == DRAFT_PLACEHOLDER:
+            # 编辑器占位不是真路：画出来只会让人以为"开局前面还有一拍"。
+            # 但**反应式转移不算占位**（见 Transition.is_unwired）。
+            if t.is_unwired:
                 continue
-            out.append((t.from_key, t.signal, False))
+            out.append((t.from_key, "条件满足自动走" if t.is_reactive else t.signal, False))
             if t.signal.startswith(BROADCAST_PREFIX):
                 body = t.signal[len(BROADCAST_PREFIX):]
                 src_graph, _, src_state = body.rpartition(":")
@@ -691,46 +716,19 @@ class NarrativeIndex:
 
     # ---- 条件翻译（索引建完后按需算，才能把 id 换成人话 label） ----------
 
+    # 条件的人话渲染在 tools/narrative_xref/phrases.py（编辑器面板与调试器共用一份）——
+    # 各写一遍的话，同一条条件在两个工具里读着不一样，策划就得学两套话。
     def describe_conditions(self, conditions: Iterable[Any]) -> str:
-        parts = [self.describe_condition(c) for c in conditions or []]
-        return " 且 ".join(p for p in parts if p)
+        return xref_describe_conditions(conditions, self._state_phrase)
 
     def condition_parts(self, conditions: Iterable[Any]) -> list[str]:
-        return [self.describe_condition(c) for c in conditions or []]
+        return xref_condition_parts(conditions, self._state_phrase)
 
     def describe_condition(self, cond: Any) -> str:
-        if not isinstance(cond, dict):
-            return ""
-        if "all" in cond:
-            inner = [self.describe_condition(c) for c in cond.get("all") or []]
-            inner = [p for p in inner if p]
-            return "（" + " 且 ".join(inner) + "）" if len(inner) > 1 else "".join(inner)
-        if "any" in cond:
-            inner = [self.describe_condition(c) for c in cond.get("any") or []]
-            inner = [p for p in inner if p]
-            if len(inner) > 3:
-                return f"（{inner[0]} 等 {len(inner)} 种组合里的任意一种）"
-            return "（" + " 或 ".join(inner) + "）" if len(inner) > 1 else "".join(inner)
-        if "not" in cond:
-            inner = self.describe_condition(cond.get("not"))
-            return f"不满足{inner}" if inner else ""
-        if "narrative" in cond:
-            graph = str(cond.get("narrative") or "")
-            state = str(cond.get("state") or "")
-            verb = "到过" if cond.get("reached") is not None else "正停在"
-            return _state_phrase(self, graph, state, verb)
-        if "flag" in cond:
-            return f"标记「{cond.get('flag')}」成立"
-        if "quest" in cond:
-            return f"任务「{cond.get('quest')}」是 {cond.get('status', '')}"
-        if "item" in cond:
-            return f"身上有「{cond.get('item')}」"
-        if "plane" in cond:
-            return f"位面「{cond.get('plane')}」开着"
-        if "narrativeCount" in cond:
-            return f"活计「{cond.get('narrativeCount')}」的次数达标"
-        keys = [k for k in cond.keys()]
-        return "、".join(f"{k}={cond[k]}" for k in keys[:2])
+        return xref_describe_condition(cond, self._state_phrase)
+
+    def _state_phrase(self, graph_id: str, state_id: str, verb: str) -> str:
+        return _state_phrase(self, graph_id, state_id, verb)
 
     def neighborhood(self, focus: str, hops: int = 2) -> Neighborhood:
         """焦点 ±hops 跳的因果邻域。节点数天然被跳数限制在几十以内。"""

@@ -203,6 +203,123 @@ export interface ValidationIssueDef {
   target?: ValidationTargetDef;
 }
 
+/* ------------------------------------------------------------------ 信号关系
+ * 宿主 tools/narrative_xref 扫出来的「谁发谁听」。字段名与 Python 侧 to_dict()
+ * 一一对应，别在这边改名——两边对不上就是整张面板空白。
+ */
+
+/** 发送方的通道：戏里发的 / 内容资产发的 / 叙事图动作 / 进入即广播 / 派生信号的上游因果 */
+export type XrefChannel = 'dialogue' | 'asset' | 'narrativeAction' | 'broadcast' | 'upstream';
+
+export interface XrefEmitterDef {
+  signal: string;
+  channel: XrefChannel;
+  containerKind: string;
+  containerId: string;
+  containerLabel: string;
+  kindLabel: string;
+  where: string;
+  context: string;
+  note: string;
+  file: string;
+  pointer: string;
+  anchors: string[][];
+  /** 主编辑器只加载不保存的数据面（物件检视）：跳不过去，界面要提前说明而不是让人白点 */
+  readonly: boolean;
+  /* 叙事图内的坐标（广播状态 / 状态动作 / 上游转移才有）：这类行走**画布定位**，
+     不走文件跳转——narrative_graphs.json 的文件跳转只认 states/<id>，转移落不到点。 */
+  compositionId: string;
+  elementId: string;
+  graphId: string;
+  stateId: string;
+  transitionId: string;
+}
+
+export interface XrefListenerDef {
+  signal: string;
+  compositionId: string;
+  compositionLabel: string;
+  graphId: string;
+  graphLabel: string;
+  elementId: string;
+  transitionId: string;
+  from: string;
+  fromLabel: string;
+  to: string;
+  toLabel: string;
+  conditions: string[];
+  /** 活计图：运行时只有「当前激活的那一个」才吃信号，挂起的一条都不接 */
+  runGraph: boolean;
+  priority: number;
+  trigger: string;
+  file: string;
+  pointer: string;
+}
+
+export interface XrefDeclarationDef {
+  signal: string;
+  compositionId: string;
+  compositionLabel: string;
+  elementId: string;
+  elementLabel: string;
+  elementKind: string;
+  refId: string;
+  file: string;
+  pointer: string;
+}
+
+export interface XrefStateReadDef {
+  graphId: string;
+  stateId: string;
+  containerKind: string;
+  containerId: string;
+  kindLabel: string;
+  where: string;
+  file: string;
+  pointer: string;
+  readonly: boolean;
+  /** 与发射行同款：跳转要靠它定位到具体条目，缺了就只能打开页面 */
+  anchors: string[][];
+}
+
+export interface XrefDiagnosticDef {
+  code: string;
+  severity: 'error' | 'warning' | 'info';
+  message: string;
+}
+
+export interface SignalXrefCardDef {
+  signal: string;
+  kind: 'author' | 'derived' | 'draft' | 'unknown';
+  label: string;
+  notes: string;
+  registered: boolean;
+  emitters: XrefEmitterDef[];
+  declarations: XrefDeclarationDef[];
+  listeners: XrefListenerDef[];
+  stateReads: XrefStateReadDef[];
+  diagnostics: XrefDiagnosticDef[];
+  sourceGraphId: string;
+  sourceStateId: string;
+  sourceStateLabel: string;
+  /** 真发射数：不含派生信号的上游因果 */
+  emitterCount: number;
+  listenerCount: number;
+  declarationCount: number;
+}
+
+export interface SignalXrefIndexDef {
+  origin: string;
+  stats: {
+    dialogues: number;
+    assets: number;
+    graphs: number;
+    transitions: number;
+    signals: number;
+  };
+  signals: SignalXrefCardDef[];
+}
+
 export interface AuthoringCatalogDef {
   dialogueGraphIds: string[];
   scenarioIds: string[];

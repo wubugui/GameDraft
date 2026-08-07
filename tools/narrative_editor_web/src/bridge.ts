@@ -8,6 +8,7 @@ import type {
   ProjectionResult,
   RuntimeDebugSnapshotDef,
   RuntimeSignalRequestDef,
+  SignalXrefIndexDef,
   StampResponseDef,
   TaskIndex,
   ValidationIssueDef,
@@ -46,6 +47,8 @@ type QtBridge = {
   saveEditorPreferences?: (payload: string, cb: (result: string) => void) => void;
   getCanvasGroups?: (cb: (result: string) => void) => void;
   saveCanvasGroups?: (payload: string, cb: (result: string) => void) => void;
+  scanSignalXref?: (payload: string, cb: (result: string) => void) => void;
+  revealXrefRef?: (payload: string, cb: (result: string) => void) => void;
   scanSignalUsages?: (signalId: string, cb: (result: string) => void) => void;
   scanStateUsages?: (graphId: string, stateId: string, cb: (result: string) => void) => void;
   scanGraphUsages?: (graphId: string, cb: (result: string) => void) => void;
@@ -622,6 +625,53 @@ export type SignalRefactorResultDef = {
 };
 
 const REFACTOR_HOST_ONLY = '重构需要工程文件后端，只在主编辑器（Qt 宿主）内可用；独立网页开发模式没有工程数据可级联';
+
+const XREF_HOST_ONLY = '信号关系要读全工程的对话图与内容资产，只在主编辑器（Qt 宿主）内可用；独立网页开发模式读不到这些文件';
+
+/**
+ * 全工程「信号谁发谁听」索引。**只读**：宿主不写模型、不标脏。
+ *
+ * 一次要回全部信号（而不是查一条问一次）：面板要列全表，逐条问会把一次扫描放大成
+ * N 次盘 IO；全量一次约 0.1 秒，之后切换信号纯内存。
+ */
+export async function scanSignalXrefRemote(
+  draft?: NarrativeGraphsFileDef,
+): Promise<{ ok: boolean; xref?: SignalXrefIndexDef; reason?: string }> {
+  const bridge = await waitForBridge();
+  if (!bridge?.scanSignalXref) return { ok: false, reason: XREF_HOST_ONLY };
+  // 带上画布草稿：面板要回答的是"我现在改成这样之后"的关系，不是上次存盘时的关系。
+  const arg = JSON.stringify(draft ? { data: draft } : {});
+  return new Promise((resolve) => {
+    bridge.scanSignalXref!(arg, (payload) => {
+      try {
+        resolve(JSON.parse(payload) as { ok: boolean; xref?: SignalXrefIndexDef; reason?: string });
+      } catch (e) {
+        resolve({ ok: false, reason: `无法解析扫描响应：${String(e)}` });
+      }
+    });
+  });
+}
+
+/** 跳到某条定位。三态透传：exact=精确定位，ok&&!exact=只打开了页面，!ok=没跳成。 */
+export async function revealXrefRefRemote(ref: {
+  file: string;
+  pointer: string;
+  anchors?: string[][];
+  matchedText?: string;
+  contextText?: string;
+}): Promise<{ ok: boolean; exact?: boolean; note?: string; reason?: string }> {
+  const bridge = await waitForBridge();
+  if (!bridge?.revealXrefRef) return { ok: false, reason: XREF_HOST_ONLY };
+  return new Promise((resolve) => {
+    bridge.revealXrefRef!(JSON.stringify(ref), (payload) => {
+      try {
+        resolve(JSON.parse(payload) as { ok: boolean; exact?: boolean; note?: string; reason?: string });
+      } catch (e) {
+        resolve({ ok: false, reason: `无法解析跳转响应：${String(e)}` });
+      }
+    });
+  });
+}
 
 export async function scanSignalUsagesRemote(
   signalId: string,

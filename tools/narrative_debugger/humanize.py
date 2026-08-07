@@ -223,8 +223,14 @@ def waiting_items(index: NarrativeIndex, graph_id: str, state_id: str) -> list[W
     """当前状态在等什么。空列表 = 这是末态（或没接出口）。"""
     items: list[WaitingItem] = []
     for t in index.exits(graph_id, state_id):
-        what, where = signal_phrase(index, t.signal)
-        action, action_where = player_action_for(index, t.signal)
+        if t.is_reactive:
+            # 反应式不吃信号：问 signal 只会得到"这条路还没接线"，而线明明接在条件上。
+            # 要答的是"玩家做什么能让条件成立"——顺着条件里那个状态往上游钻。
+            what, where = "条件一满足就自动往下走（不用再点什么）", ""
+            action, action_where = _reactive_action(index, t)
+        else:
+            what, where = signal_phrase(index, t.signal)
+            action, action_where = player_action_for(index, t.signal)
         target = index.state(t.graph_id, t.to_state)
         items.append(
             WaitingItem(
@@ -238,6 +244,31 @@ def waiting_items(index: NarrativeIndex, graph_id: str, state_id: str) -> list[W
             )
         )
     return items
+
+
+def _reactive_action(index: NarrativeIndex, t: Transition) -> tuple[str, str]:
+    """反应式转移在等条件成立；顺着条件里的 (图, 状态) 往上游钻到玩家真动手那一下。"""
+    for cond in _narrative_leaves(t.conditions):
+        graph_id, state_id = cond
+        found = player_action_for(index, f"{BROADCAST_PREFIX}{graph_id}:{state_id}")
+        if found[0]:
+            return found
+    return ("", "")
+
+
+def _narrative_leaves(node: Any) -> list[tuple[str, str]]:
+    """条件树里的 {narrative, state} 叶子（含 all/any/not 嵌套）。"""
+    out: list[tuple[str, str]] = []
+    if isinstance(node, dict):
+        graph_id = node.get("narrative")
+        if isinstance(graph_id, str) and isinstance(node.get("state"), str):
+            out.append((graph_id.strip(), str(node["state"]).strip()))
+        for value in node.values():
+            out.extend(_narrative_leaves(value))
+    elif isinstance(node, (list, tuple)):
+        for item in node:
+            out.extend(_narrative_leaves(item))
+    return out
 
 
 def transition_phrase(index: NarrativeIndex, t: Transition) -> str:

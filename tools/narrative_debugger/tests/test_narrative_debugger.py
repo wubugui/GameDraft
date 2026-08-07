@@ -313,3 +313,54 @@ def test_signal_choices_are_distinguishable(index: NarrativeIndex) -> None:
         seen[key] = seen.get(key, 0) + 1
     duplicates = sum(count - 1 for count in seen.values() if count > 1)
     assert duplicates < 8, f"还有 {duplicates} 行是重样的，挑不出想要的那条"
+
+
+# --------------------------------------------------------------------------- #
+# 反应式转移不是"没接线"（2026-08-07）
+#
+# 只看 signal == __draft__ 就判"没接"，会把**反应式转移**一并冤枉掉：它压根不吃信号，
+# signal 字段恒是占位，线接在 conditions 上。踩过：主线「闲逛A→闲逛B」写了条件，
+# 因果图上不画、「在等」框还写"这条路还没接线"，而条件就打印在下一行。
+# --------------------------------------------------------------------------- #
+
+def _tiny_project(root: Path, transition: dict) -> NarrativeIndex:
+    data_dir = root / "public" / "assets" / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    (data_dir / "narrative_graphs.json").write_text(json.dumps({
+        "schemaVersion": 2,
+        "signals": [],
+        "compositions": [{
+            "id": "comp", "label": "测试编排",
+            "mainGraph": {
+                "id": "flow_t", "label": "测试线", "ownerType": "flow",
+                "initialState": "a",
+                "states": {"a": {"id": "a", "label": "前一拍"}, "b": {"id": "b", "label": "后一拍"}},
+                "transitions": [transition],
+            },
+            "elements": [],
+        }],
+    }, ensure_ascii=False), encoding="utf-8")
+    index = NarrativeIndex(root)
+    index.load()
+    return index
+
+
+def test_reactive_transition_is_not_treated_as_unwired(tmp_path: Path) -> None:
+    index = _tiny_project(tmp_path, {
+        "id": "t_r", "from": "a", "to": "b", "signal": DRAFT_SIGNAL, "trigger": "reactive",
+        "conditions": [{"narrative": "flow_t", "state": "a"}],
+    })
+    assert index.predecessors("flow_t.b"), "接了条件的反应式转移必须画在因果图上"
+    assert index.successors("flow_t.a"), "同上，正向也要有"
+    item = waiting_items(index, "flow_t", "a")[0]
+    assert "还没接线" not in item.what, item.what
+    assert "自动" in item.what
+    assert item.blocked_by, "条件要写出来（那才是这条路真正在等的东西）"
+
+
+def test_plain_draft_transition_is_still_treated_as_unwired(tmp_path: Path) -> None:
+    """真没接的（纯信号触发 + 占位信号）照旧不画、照旧说没接线——别把闸门一起拆了。"""
+    index = _tiny_project(tmp_path, {"id": "t_d", "from": "a", "to": "b", "signal": DRAFT_SIGNAL})
+    assert index.predecessors("flow_t.b") == []
+    assert index.successors("flow_t.a") == []
+    assert "还没接线" in waiting_items(index, "flow_t", "a")[0].what

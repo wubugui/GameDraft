@@ -18,6 +18,7 @@ from typing import Any
 
 from tools.narrative_debugger.humanize import player_action_for, waiting_items
 from tools.narrative_debugger.model import NarrativeIndex
+from tools.narrative_xref import CHANNEL_UPSTREAM
 
 PROTOCOL_VERSION = "2024-11-05"
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -88,7 +89,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "narrative_signal_info",
-        "description": "查一个信号：谁发它、谁听它、是不是悬垂。",
+        "description": "查一个信号：谁发它、谁听它、黑盒声明、两侧对不齐的诊断、是不是悬垂。",
         "inputSchema": {
             "type": "object",
             "properties": {"signal": {"type": "string"}},
@@ -219,6 +220,8 @@ class NarrativeMcpServer:
         self.index = NarrativeIndex(root)
         self.index.load()
         self.link = DebuggerLink(port)
+        self._xref_index = None  # 懒建：只有真问信号关系时才扫全工程
+        self._xref_stamp: tuple = ()
 
     # ---- JSON-RPC 壳 ---------------------------------------------------
 
@@ -345,23 +348,95 @@ class NarrativeMcpServer:
         return self.link.request({"command": "debuggerGoto", "beat": beat, "force": force})
 
     def _signal_info(self, signal: str) -> dict[str, Any]:
+        """一条信号的两侧。口径走共享扫描 `tools.narrative_xref`——**必须**与策划屏幕上
+        那个「信号关系」窗、以及主编辑器那块面板说同一件事。
+
+        （旧实现用调试器自己的索引，把黑盒 `meta.emits` 的**声明**也算成 emitters，
+        agent 于是会看到一个界面上不存在的"发射端"。声明现在单列 declarations。）
+        """
         if not signal:
             return {"ok": False, "detail": "缺 signal"}
-        emitters = self.index.emitters_for(signal)
-        listeners = self.index.listeners.get(signal, [])
+        card = self._xref().card(signal)
         action, where = player_action_for(self.index, signal)
         return {
             "ok": True,
             "signal": signal,
-            "dangling": not listeners,
-            "emitters": [{"kind": e.kind, "source": e.source_id, "detail": e.detail} for e in emitters],
-            "listeners": [
-                {"graph": t.graph_id, "from": t.from_state, "to": t.to_state, "transition": t.transition_id}
-                for t in listeners
+            "kind": card.kind,
+            "label": card.label,
+            "registered": card.registered,
+            # dangling 保持原义：没人听。发射侧另有 emitters 为空这一情况，看 diagnostics。
+            "dangling": not card.listeners,
+            # **只列真发射**：派生信号的"上游因果"是"谁让那一拍发生"，不是"谁发出信号"。
+            # 混进来会让 agent 数出 2 而策划屏幕上写「发 1」，当场对不上。
+            "emitterCount": card.real_emitter_count,
+            "emitters": [
+                {
+                    "kind": e.container_kind,
+                    "source": e.container_id,
+                    "detail": " · ".join(p for p in (e.kind_label, e.where, e.context) if p),
+                    "channel": e.channel,
+                    "file": e.file,
+                    "pointer": e.pointer,
+                }
+                for e in card.emitters if e.channel != CHANNEL_UPSTREAM
             ],
+            # 派生信号专属：能让那一拍发生的路（上游转移 / 强制设状态）
+            "upstream": [
+                {
+                    "kind": e.kind_label,
+                    "source": e.container_id,
+                    "detail": " · ".join(p for p in (e.where, e.context) if p),
+                }
+                for e in card.emitters if e.channel == CHANNEL_UPSTREAM
+            ],
+            "listeners": [
+                {"graph": l.graph_id, "from": l.from_state, "to": l.to_state, "transition": l.transition_id,
+                 "conditions": l.conditions}
+                for l in card.listeners
+            ],
+            "declarations": [
+                {"composition": d.composition_id, "element": d.element_id, "refId": d.ref_id}
+                for d in card.declarations
+            ],
+            "diagnostics": [d.to_dict() for d in card.diagnostics],
             "playerAction": action,
             "where": where,
         }
+
+    def _xref(self):
+        """扫描一次就缓存；但**数据变了要重扫**——agent 会话动辄几小时，
+        缓存永不失效等于对着一份旧关系回答（策划那边早就改过并存盘了）。
+        指纹取叙事文件与对话图目录的 mtime，代价可忽略。
+        """
+        from tools.narrative_xref import build_index, from_disk
+
+        stamp = self._data_stamp()
+        if getattr(self, "_xref_index", None) is None or self._xref_stamp != stamp:
+            self._xref_index = build_index(from_disk(self.root))
+            self._xref_stamp = stamp
+        return self._xref_index
+
+    def _data_stamp(self) -> tuple:
+        """扫描面的整体新鲜度指纹。
+
+        **必须覆盖全部扫描面**：发射端有三成在场景/任务/过场/压力条/小游戏里，只盯
+        narrative + 对话图的话，改了那些文件 agent 照旧拿旧关系（docstring 承诺了会重扫，
+        覆盖面对不上就是假承诺）。几百次 stat 的代价可忽略，且只在问信号关系时才算。
+        """
+        newest = 0.0
+        for pattern in (
+            "public/assets/data/narrative_graphs.json",
+            "public/assets/dialogues/graphs/*.json",
+            "public/assets/scenes/*.json",
+            "public/assets/data/*.json",
+            "public/assets/data/*/*.json",
+        ):
+            for child in self.root.glob(pattern):
+                try:
+                    newest = max(newest, child.stat().st_mtime)
+                except OSError:
+                    continue
+        return (newest,)
 
 
 def main(argv: list[str] | None = None) -> int:

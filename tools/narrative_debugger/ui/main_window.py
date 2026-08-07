@@ -70,6 +70,9 @@ ROLE_BASE = Qt.ItemDataRole.UserRole + 1
 ROLE_HAY = Qt.ItemDataRole.UserRole + 2
 ROLE_HEADER = Qt.ItemDataRole.UserRole + 3
 ROLE_TIP = Qt.ItemDataRole.UserRole + 4
+# 时间线那一行对应的信号（双击 → 看这条信号谁发谁听）。UserRole+1 在时间线里是
+# merge_key，不能复用。
+ROLE_TIMELINE_SIGNAL = Qt.ItemDataRole.UserRole + 5
 
 # 半透明才行：底下还压着隔行底色和「当前这拍」的绿字，不透明色块会把它们全盖掉
 SEARCH_HIT = QColor(255, 209, 102, 76)
@@ -92,6 +95,9 @@ class MainWindow(QMainWindow):
         self._paused_at: dict | None = None
         self._step_armed = False
         self._default_fg = self.palette().text().color()
+        # 「信号关系」窗（非模态，懒建）：不开就一分钱不花，开着就跟着运行时刷新。
+        self._xref_window = None
+        self._xref_stale = False  # 关着时重读过数据 → 下次打开先重扫
 
         self.setWindowTitle("叙事调试器 · GameDraft")
         self.resize(1360, 820)
@@ -202,6 +208,13 @@ class MainWindow(QMainWindow):
         self._refresh_savepoint_marks()
         self.graph.render_focus(self.graph.focus_key, force=True)
         self._refresh_now_panel()
+        # 信号关系窗开着就一起换新（不然它还照着旧数据说"谁发谁听"，比不开更误导）；
+        # 关着的先记一笔，等真打开时再扫——没人看的窗不值得扫一遍全工程。
+        if self._xref_window is not None and self._xref_window.isVisible():
+            self._xref_window.set_indexes(self._build_xref_index(), fresh)
+            self._xref_stale = False
+        else:
+            self._xref_stale = True
         changed = old_fingerprint != fresh.fingerprint
         self._set_hint("数据换新了" if changed else "数据没变，已重读")
 
@@ -673,6 +686,14 @@ class MainWindow(QMainWindow):
         self.signal_btn.clicked.connect(self._open_signal_dialog)
         layout.addWidget(self.signal_btn)
 
+        self.xref_btn = QPushButton("信号关系…")
+        self.xref_btn.setToolTip(
+            "一条信号：谁把它打出去、谁在等它，外加此刻谁真在等。\n"
+            "「我刚才那下怎么没反应」先来这儿看一眼。"
+        )
+        self.xref_btn.clicked.connect(lambda: self._open_signal_xref())
+        layout.addWidget(self.xref_btn)
+
         layout.addStretch(1)
 
         self.savepoint_label = QLabel("")
@@ -712,6 +733,8 @@ class MainWindow(QMainWindow):
         self.timeline_list.setWordWrap(True)
         self.timeline_list.setAlternatingRowColors(True)
         self.timeline_list.itemClicked.connect(self._on_timeline_clicked)
+        self.timeline_list.itemDoubleClicked.connect(self._on_timeline_double_clicked)
+        self.timeline_list.setToolTip("单击：镜头挪到那一拍；双击：看那条信号谁发谁听")
         box.addWidget(self.timeline_list, 1)
 
         self.timeline_empty = QLabel("在游戏里走两步、点个人，这里就会有反应")
@@ -734,6 +757,8 @@ class MainWindow(QMainWindow):
         self._sync_bp_buttons()
         self.dot.setStyleSheet("color:#3f8c3f;" if connected else "color:#c0392b;")
         self._update_status()
+        # 连上/断开都要让信号关系窗跟着变（「就当这件事发生了」按钮的可用性看连接）
+        self._refresh_xref_runtime()
         if connected and self.auto_save.isChecked():
             self.hub.send_command(
                 {"command": "setAutoSavepoints", "enabled": True, "graphs": self._savepoint_graph_ids()}
@@ -753,6 +778,12 @@ class MainWindow(QMainWindow):
                 self.graph.render_focus(focus)
         self._refresh_now_panel()
         self._update_status()
+        self._refresh_xref_runtime()
+
+    def _refresh_xref_runtime(self) -> None:
+        """信号关系窗只在**开着**时才刷：关着的时候一分钱不花。"""
+        if self._xref_window is not None and self._xref_window.isVisible():
+            self._xref_window.refresh_runtime()
 
     def _update_status(self) -> None:
         state = self.hub.state
@@ -1346,6 +1377,9 @@ class MainWindow(QMainWindow):
         return not (self.only_problems.isChecked() and entry.verdict in {VERDICT_OK, "info"})
 
     def _on_timeline(self, entry: TimelineEntry) -> None:
+        # 「本次会话」那一栏跟着走：不过滤掉的行也要算（被过滤只是不显示在时间线里）
+        if self._xref_window is not None and self._xref_window.isVisible():
+            self._xref_window.refresh_history()
         if not self._passes_filter(entry):
             return
         self._append_timeline_item(entry)
@@ -1353,6 +1387,8 @@ class MainWindow(QMainWindow):
 
     def _on_timeline_replaced(self, _index: int, entry: TimelineEntry) -> None:
         """同一动作的后续结果并进原来那一行；找不到（被过滤掉过）就补一条。"""
+        if self._xref_window is not None and self._xref_window.isVisible():
+            self._xref_window.refresh_history()
         if entry.merge_key:
             start = self.timeline_list.count() - 1
             for i in range(start, max(-1, start - 12), -1):
@@ -1389,6 +1425,8 @@ class MainWindow(QMainWindow):
         item.setToolTip("\n".join(p for p in tip_parts if p and p != "……"))
         if entry.graph_id and entry.state_id:
             item.setData(Qt.ItemDataRole.UserRole, f"{entry.graph_id}.{entry.state_id}")
+        # 这一行是哪条信号：双击就去看它的两侧（"这下怎么没反应"的入口）
+        item.setData(ROLE_TIMELINE_SIGNAL, entry.signal)
 
     def _append_timeline_item(self, entry: TimelineEntry) -> None:
         item = QListWidgetItem()
@@ -1415,6 +1453,15 @@ class MainWindow(QMainWindow):
         if key and key in self.index.states:
             self.follow_btn.setChecked(False)
             self._on_focus_requested(key)
+
+    def _on_timeline_double_clicked(self, item: QListWidgetItem) -> None:
+        """双击时间线那一行 → 看这条信号谁发谁听。"""
+        signal = str(item.data(ROLE_TIMELINE_SIGNAL) or "")
+        if not signal:
+            self._set_hint("这一行不是信号（没有可看的两侧）")
+            return
+        if not self._open_signal_xref(signal):
+            self._set_hint(f"「{signal}」不在当前这份扫描里——点「重新读一遍数据」再试")
 
     # ---- 弹窗：存档点 / 假装做了那一下 ----------------------------------
 
@@ -1488,6 +1535,47 @@ class MainWindow(QMainWindow):
                 listing.takeItem(i)
         self._refresh_savepoint_marks()
         self._set_hint(f"清掉了 {len(removed)} 个旧的点")
+
+    # ---- 弹窗：信号关系（谁发谁听 + 此刻状态）---------------------------
+
+    def _build_xref_index(self):
+        """建/重建共享扫描索引（与编辑器面板同一套口径，见 tools/narrative_xref）。"""
+        from tools.narrative_xref import build_index, from_disk
+
+        return build_index(from_disk(self.project_root))
+
+    def _open_signal_xref(self, signal: str = "") -> bool:
+        """打开「信号关系」窗。非模态：策划要一边在游戏里走一边盯着圆点变。
+
+        返回**有没有真的选中那条信号**——找不到时主窗要如实说一句，绝不让窗口弹出来
+        却停在别的信号上。
+        """
+        from tools.narrative_debugger.ui.signal_xref_window import SignalXrefWindow
+
+        if self._xref_window is None:
+            self._xref_window = SignalXrefWindow(
+                self._build_xref_index(), self.index, self.hub,
+                parent=self, on_focus=self._focus_from_xref,
+            )
+        elif self._xref_stale:
+            # 关着的时候重读过数据：这时才重扫，省得没人看的窗白扫一遍全工程
+            self._xref_window.set_indexes(self._build_xref_index(), self.index)
+        self._xref_stale = False
+        self._xref_window.show()
+        self._xref_window.raise_()
+        self._xref_window.activateWindow()
+        if signal:
+            return self._xref_window.show_signal(signal)
+        return True
+
+    def _focus_from_xref(self, key: str) -> None:
+        """信号关系窗里点某条转移 → 中间那张图挪过去（只挪镜头，不动游戏）。"""
+        if key not in self.index.states:
+            self._set_hint("那一拍在当前数据里找不到（图可能改过，试试「重新读一遍数据」）")
+            return
+        self.follow_btn.setChecked(False)
+        self._on_focus_requested(key)
+        self._set_hint("镜头挪过去了（游戏没动）")
 
     def _open_signal_dialog(self) -> None:
         """按人话挑一件事，直接标成已发生——不用真跑一遍去验后面的路。"""

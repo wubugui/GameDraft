@@ -263,6 +263,20 @@ export interface SceneEntityGroupDef {
   id: string;
   label?: string;
   conditions?: ConditionExpr[];
+  /**
+   * 编辑器工作态：**运行时完全忽略**（与 parallaxScene 的 camera/depth 同语义）。
+   * 分组本身没有坐标——整组位移由编辑器把偏移烘进每个成员自己的坐标，
+   * 这里只保存"怎么在编辑器里摆弄这个组"的作者态偏好。
+   */
+  editor?: SceneEntityGroupEditorState;
+}
+
+/** 分组的编辑器工作态（运行时不消费；缺省即默认行为，不写键 = 零存量影响）。 */
+export interface SceneEntityGroupEditorState {
+  /** 画布上组把手的世界坐标；不写 = 按成员包围盒中心派生。 */
+  anchor?: Position;
+  /** 整组位移是否连 NPC 的 patrol.route 一起挪；不写 = 挪（true）。 */
+  movePatrol?: boolean;
 }
 
 /** 场景相机配置 */
