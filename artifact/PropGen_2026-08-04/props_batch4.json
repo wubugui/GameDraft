@@ -1,0 +1,54 @@
+{
+  "note": "第四批：裸祭品。香/蜡/纸/烛/挂清/招魂幡/燃烧纸钱堆/单件供品/纸人/纸马。全部不带桌台架座，供场景里自由组合摆放。",
+  "_style_note_bare": "【本件特殊要求】这是一件裸道具：画面里绝对不能出现桌子、供桌、架子、托盘、插座、底座、台子、垫板、地面——只画物件本身，完全悬空在纯绿背景上。",
+  "_style_note_figure": "【本件特殊要求】这是一件裸道具：画面里绝对不能出现桌子、架子、托盘、底座、台子、地面——只画物件本身悬空在纯绿背景上。注意：本件是民间丧仪用的纸糊人偶（纸扎），它是一件纸做的道具、不是真人，前面「不要人物」的限制在这一件上不适用，请正常画出这个纸人偶。它必须明显是纸糊的：竹篾骨架撑起、外面糊纸、五官是简笔画上去的、脸颊两团圆红，绝对不要画成真人、不要画成写实人体、不要画成肉身。",
+  "props": [
+    { "id": "bare_incense_three_burning", "name_cn": "三炷燃香",     "cat": "bare_offering", "scenes": ["义庄", "城隍庙夜"], "subject": "三炷并排的线香，香脚一端是染成暗褐的红色，另一端已经烧掉一截、顶着一小段弯垂的白灰，正冒出一缕极细的青烟。香枝细长、微微歪斜。" },
+    { "id": "bare_incense_bundle",       "name_cn": "线香捆",       "cat": "bare_offering", "scenes": ["义庄", "城隍庙夜"], "subject": "一大捆用纸腰条箍住的粗线香，香枝根根平行、末端染红的部分褪成暗褐，捆口的纸条起皱破损，几根香从捆里滑出来歪在一边。" },
+    { "id": "bare_incense_scattered",    "name_cn": "散落线香",     "cat": "bare_offering", "scenes": ["义庄", "野道"],     "subject": "五六支散开的线香随意交叠，长短不一，有两支断成两截，香身有受潮的斑点，末端红色褪成暗褐。" },
+    { "id": "bare_incense_coil",         "name_cn": "盘香",         "cat": "bare_offering", "scenes": ["城隍庙夜", "temple"], "subject": "一圈螺旋形的塔状盘香，香体是暗褐色、表面粗糙有颗粒感，外圈已经烧掉一段、断口处结着白灰，中心一小截铁签。" },
+    { "id": "bare_incense_stub_pile",    "name_cn": "烧剩香脚堆",   "cat": "bare_offering", "scenes": ["义庄", "城隍庙夜"], "subject": "一小堆烧剩的香脚，长短不齐地插叠在一起，露出的红色香脚褪成暗褐，上端全是焦黑断口，堆里混着松散的灰白香灰。" },
+    { "id": "bare_incense_pillar_pair",  "name_cn": "一对粗柱香",   "cat": "bare_offering", "scenes": ["城隍庙夜", "temple"], "subject": "两支手臂粗的柱香并排躺着，香体是压实的暗褐香粉、外面裹着一层已褪色的暗红纸皮，纸皮起翘剥落，一支的顶端烧出一个黑洞。" },
+
+    { "id": "bare_candle_white_pair",    "name_cn": "一对白蜡烛",   "cat": "bare_offering", "scenes": ["义庄"],             "subject": "两支未点过的素白蜡烛并排，蜡体是发黄的旧白色、表面有细微的模具接缝和指印，烛芯是干净的白棉线，底端切口平整。" },
+    { "id": "bare_candle_red_pair",      "name_cn": "一对暗红喜烛", "cat": "bare_offering", "scenes": ["义庄", "破屋"],     "subject": "两支旧喜烛并排，蜡体是脏污的深棕红、几乎看不出原来的鲜红，表面蒙着灰、有磕碰缺口，烛芯是黑色的焦头。蜡烛是熄灭的。" },
+    { "id": "bare_candle_burnt_stub",    "name_cn": "残烛头",       "cat": "bare_offering", "scenes": ["义庄", "崖墓"],     "subject": "三个烧到只剩一两寸的蜡烛残头，蜡体歪塌变形、颜色是脏灰白和暗褐，顶端是烧黑的焦芯，周围凝着流下来的蜡瘤。都是熄灭的。" },
+    { "id": "bare_candle_lit_single",    "name_cn": "点燃的蜡烛",   "cat": "bare_offering", "scenes": ["义庄", "梦_夜路"],  "subject": "一支烧了一半的白蜡烛，顶端有一朵小小的橙黄火苗，火苗周围有一圈很淡的暖光，烛口积着一小洼融化的蜡液，蜡体侧面挂着凝固的蜡泪。" },
+    { "id": "bare_wax_puddle",           "name_cn": "蜡油凝块",     "cat": "bare_offering", "scenes": ["义庄", "城隍庙夜"], "subject": "一摊凝固的蜡油块，形状像不规则的薄饼、边缘起伏，颜色是脏灰白混着暗褐，里面嵌着两三截烧黑的断烛芯和一些灰渣。" },
+    { "id": "bare_candle_bundle",        "name_cn": "新蜡烛一捆",   "cat": "bare_offering", "scenes": ["雾津街头"],         "subject": "一捆用草绳扎住的新蜡烛，十几支长短一致地并在一起，蜡体是发黄的旧白色，捆绳粗糙起毛，外侧两支表面有磕痕。" },
+
+    { "id": "bare_joss_paper_stack",     "name_cn": "纸钱一摞",     "cat": "bare_offering", "scenes": ["义庄", "河边"],     "subject": "一摞粗黄纸钱，每张都凿着方孔钱印的圆形凹痕，纸张毛边、边角卷起，整摞被潮气压得粘连、颜色深浅不一。绝对不要有文字。" },
+    { "id": "bare_joss_paper_scattered", "name_cn": "散落飞纸钱",   "cat": "bare_offering", "scenes": ["义庄", "野道"],     "subject": "十几张粗黄纸钱散开着，有的平躺有的卷曲有的立起，像刚被风吹散，纸面有凿孔的圆印和受潮的黄斑，边缘毛糙撕裂。绝对不要有文字。" },
+    { "id": "bare_joss_burning_pile",    "name_cn": "燃烧的纸钱堆", "cat": "bare_offering", "scenes": ["义庄", "河边", "阎王岭山口"], "subject": "一堆正在燃烧的纸钱：底部是发红的余烬和黑色纸灰，中层的纸边缘卷曲发黑、正窜起橙黄色的火苗，顶上还有几张没烧到的完整黄纸，火苗上方飘着零星的黑色纸灰片。" },
+    { "id": "bare_joss_ash_pile",        "name_cn": "纸灰堆",       "cat": "bare_offering", "scenes": ["义庄", "河边"],     "subject": "一堆烧尽的纸灰，主体是层叠的黑色薄片灰烬、还保留着纸张的褶皱形状，边缘散着灰白的细灰，堆里露出两三片没烧透的焦黄纸角。没有火。" },
+    { "id": "bare_paper_ingot_pile",     "name_cn": "纸元宝一堆",   "cat": "bare_offering", "scenes": ["义庄", "城隍庙夜"], "subject": "一堆折好的纸元宝，每只是两头翘起的船形，糊着已经氧化发暗的金箔纸和银箔纸，箔面剥落卷边露出底纸，堆得高低错落。" },
+    { "id": "bare_paper_ingot_string",   "name_cn": "纸元宝串",     "cat": "bare_offering", "scenes": ["义庄"],             "subject": "一串用麻绳穿起的纸元宝，十几只沿绳排开、彼此挤压变形，金银箔纸褪成暗黄暗灰、大片剥落，绳头散开起毛。" },
+    { "id": "bare_spirit_money_bundle",  "name_cn": "冥币刀",       "cat": "bare_offering", "scenes": ["义庄", "雾津街头"], "subject": "一捆压得紧实的冥币，像一摞刀切的纸砖，四周用草绳十字捆扎，纸张边缘参差、颜色是发暗的灰黄，捆绳勒进纸垛里。纸面完全空白，绝对不要有文字。" },
+    { "id": "bare_white_paper_strips",   "name_cn": "挂清白纸条",   "cat": "bare_offering", "scenes": ["阎王岭山口", "崖墓"], "subject": "川渝清明挂清用的白纸条串：一根细竹签上部扎着一大束剪成长条的素白纸，纸条层层叠叠垂下、长短不齐，纸质薄脆、被风吹得散开，末端有剪出的锯齿花口。" },
+    { "id": "bare_hanging_qing_streamer","name_cn": "挂清幡串",     "cat": "bare_offering", "scenes": ["阎王岭山口", "野道"], "subject": "一长串挂清幡：一根麻绳上间隔串着七八簇剪花的白纸幡，每簇是一叠剪出连续花纹和长穗的薄白纸，被雨打得发皱、下缘泡烂，整串松垮垂挂。" },
+    { "id": "bare_paper_clothes_set",    "name_cn": "纸衣裤",       "cat": "bare_offering", "scenes": ["义庄"],             "subject": "一套剪纸做的寒衣：一件对襟纸上衣和一条纸裤子平铺叠放，用薄彩纸剪成、颜色褪成灰蓝灰褐，边缘剪口毛糙，纸面有折痕和受潮的斑点。" },
+
+    { "id": "bare_soul_banner_cloth",    "name_cn": "招魂幡（无杆）", "cat": "bare_offering", "scenes": ["义庄", "河边"],   "subject": "一条竖长的白麻招魂幡，上端有穿绳的布环，幡身下半截被撕成一条条长穗垂着，布面被雨水泡出大片黄斑和霉点，布纹粗糙起毛。绝对不要有文字，不要画杆子。" },
+    { "id": "bare_soul_banner_pole_set", "name_cn": "招魂幡带竹竿",   "cat": "bare_offering", "scenes": ["义庄", "野道"],   "subject": "一根细长竹竿斜着，顶端横木上挂着一条白麻招魂幡，幡布撕成长穗垂下、泡出黄斑，竹竿上缠着几圈黑麻绳，竿身有虫蛀孔。绝对不要有文字，竿子下端不要有底座。" },
+    { "id": "bare_mourning_streamer",    "name_cn": "孝幡布条束",     "cat": "bare_offering", "scenes": ["义庄"],           "subject": "一束粗白麻布条扎在一起，二十来条长短不一垂着，布条边缘全是撕裂的毛边，布面有洗不掉的灰渍和折痕，扎口用麻绳缠了几圈。" },
+    { "id": "bare_paper_flag_string",    "name_cn": "纸三角小幡串",   "cat": "bare_offering", "scenes": ["城隍庙夜", "义庄"], "subject": "一根细麻绳上串着十来面小三角纸幡，纸色是褪成灰的白、黄、暗红，幡面完全空白，纸边卷曲破损，几面被撕掉半角，整串松垮下垂。" },
+
+    { "id": "bare_paper_effigy_boy",     "name_cn": "纸扎童男",       "cat": "paper_effigy", "scenes": ["义庄"],            "subject": "民间丧仪用的纸扎童男人偶，站立姿态，竹篾骨架外面糊纸做出圆头、身子和四肢，穿着糊出来的对襟纸衣，五官是用墨简单画上去的两点眼睛一道嘴，脸颊各点一团圆红，纸面褪成灰白泛黄、有破洞露出里面的竹条，脚下没有底座。" },
+    { "id": "bare_paper_effigy_girl",    "name_cn": "纸扎童女",       "cat": "paper_effigy", "scenes": ["义庄"],            "subject": "民间丧仪用的纸扎童女人偶，站立姿态，竹篾骨架外面糊纸，头上糊出两个丫髻、身上是糊出来的纸裙，五官是用墨简单画上去的两点眼睛一道嘴，脸颊各点一团圆红，纸面褪成灰白泛黄、裙摆破口露出竹条，脚下没有底座。" },
+    { "id": "bare_paper_servant_pair",   "name_cn": "纸扎侍者一对",   "cat": "paper_effigy", "scenes": ["义庄"],            "subject": "一对并排站立的纸扎侍者人偶，比童男童女略高，竹篾骨糊纸做成，穿糊出来的长袍、手臂僵直前伸，五官是墨笔简画的点眼一嘴，脸颊两团圆红，纸面泛黄、一个的肩部塌陷破洞露出竹骨，脚下没有底座。" },
+    { "id": "bare_paper_horse_single",   "name_cn": "纸马",           "cat": "paper_effigy", "scenes": ["义庄", "野道"],    "subject": "一匹单独的纸扎马，四腿站立，竹篾骨架外糊白纸，鬃毛和尾巴是剪成条的纸穗，眼睛是墨点的，马身糊纸褪成灰白泛黄、腹侧破了个洞露出竹条，脚下没有木托板也没有底座。" },
+    { "id": "bare_paper_ox_single",      "name_cn": "纸牛",           "cat": "paper_effigy", "scenes": ["义庄"],            "subject": "一头单独的纸扎水牛，竹篾骨架外糊纸，牛角是弯曲的纸卷，身体糊纸褪成灰白发黄、背脊处的纸开裂翘起露出竹骨，眼睛是墨点的，脚下没有底座。" },
+    { "id": "bare_paper_sedan_single",   "name_cn": "纸轿",           "cat": "paper_effigy", "scenes": ["义庄"],            "subject": "一顶单独的纸扎小轿，竹篾骨架糊纸做出轿顶、轿身和两根轿杠，轿帘是垂下的彩纸、已经撕裂，糊纸褪成灰白泛黄、贴的花纹剥落，轿内是空的，下面没有底座。" },
+    { "id": "bare_paper_house_small",    "name_cn": "纸小屋",         "cat": "paper_effigy", "scenes": ["义庄"],            "subject": "一座单独的纸扎小屋，竹篾骨架糊纸做出屋顶、门窗和飞檐，糊纸褪成灰白泛黄、屋顶塌了一角露出竹条，门窗是剪出来的空洞，下面没有木托板。" },
+    { "id": "bare_paper_trunk_single",   "name_cn": "纸箱笼",         "cat": "paper_effigy", "scenes": ["义庄"],            "subject": "一只单独的纸扎箱笼，方形带盖，竹篾骨外糊彩纸，纸面画着简单的方格纹、颜色褪成灰黄，箱角破洞露出竹条，箱盖虚掩着一条缝，下面没有底座。" },
+
+    { "id": "bare_offering_rice_bowl",   "name_cn": "供饭一碗",       "cat": "bare_offering", "scenes": ["义庄", "城隍庙夜"], "subject": "一只粗瓷碗盛着堆尖的白米饭，饭粒已经发干开裂，碗沿有两处磕缺、釉面开片发黄，碗身沾着一点饭粒。碗直接悬空，下面没有托盘和桌面。" },
+    { "id": "bare_offering_wine_cups",   "name_cn": "供酒三杯",       "cat": "bare_offering", "scenes": ["义庄", "阎王岭山口"], "subject": "三只小粗瓷酒杯并排，杯里各剩浅浅一层浑黄的酒，杯沿磕缺、外壁挂着干涸的酒渍，一只杯子微微歪倒。下面没有托盘和桌面。" },
+    { "id": "bare_offering_bun_stack",   "name_cn": "供馍一摞",       "cat": "bare_offering", "scenes": ["义庄", "阎王岭山口"], "subject": "五个白面馒头摞成小塔，表面已经发干开裂、底部发黄，最上面一个的顶心点着一个褪色的暗红圆点，馒头之间有挤压变形。下面没有盘子。" },
+    { "id": "bare_offering_egg_plate",   "name_cn": "供蛋",           "cat": "bare_offering", "scenes": ["义庄"],             "subject": "五个白煮蛋堆在一起，蛋壳是发暗的米白色、有裂纹和斑点，其中一个剥了一半露出发灰的蛋白，旁边散着几片碎蛋壳。下面没有盘子。" },
+    { "id": "bare_offering_fruit_pile",  "name_cn": "供果",           "cat": "bare_offering", "scenes": ["城隍庙夜", "temple"], "subject": "一小堆干瘪的供果：两个桔子、一个梨、两个柿饼和几颗红枣，果皮全部起皱发暗、有霉斑，柿饼表面结着白霜，桔子瘪塌变形。下面没有盘子。" },
+    { "id": "bare_offering_whole_chicken","name_cn": "供鸡",          "cat": "bare_offering", "scenes": ["城隍庙夜", "义庄"], "subject": "一只白煮的整鸡，去毛后的皮肤是冷掉的灰白黄色，头颈弯折搭在身侧，双腿蜷起，鸡嘴里衔着一小截褪色的暗红纸条。这是煮熟的供品熟食。下面没有盘子。" },
+    { "id": "bare_offering_whole_fish",  "name_cn": "供鱼",           "cat": "bare_offering", "scenes": ["城隍庙夜", "河边"], "subject": "一条蒸熟的整鱼，鱼身弯曲、鱼鳞发暗失去光泽、眼睛浑浊发白，鱼身上撒着几根干姜丝，尾鳍干裂。这是煮熟的供品熟食。下面没有盘子。" },
+    { "id": "bare_offering_pork_slab",   "name_cn": "刀头肉",         "cat": "bare_offering", "scenes": ["城隍庙夜", "阎王岭山口"], "subject": "一块方形的白煮刀头肉，肥瘦分层、外皮是煮过的灰白色带毛孔，肉块表面凝着一层白色的冷油，一角切下的缺口露出粉灰色的瘦肉。这是煮熟的供品熟食。下面没有盘子。" }
+  ]
+}

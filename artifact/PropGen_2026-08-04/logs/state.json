@@ -1,0 +1,5828 @@
+{
+  "yizhuang_corpse_plank_stand": {
+    "name_cn": "义庄停尸板架",
+    "cat": "yizhuang",
+    "scenes": [
+      "义庄"
+    ],
+    "size": [
+      1994,
+      2012
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4721,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "street_water_carrying_pole": {
+    "name_cn": "挑水扁担水桶",
+    "cat": "street",
+    "scenes": [
+      "雾津街头"
+    ],
+    "attempt": 2,
+    "size": [
+      1762,
+      1150
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.3385,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "street_peddler_carry_rack": {
+    "name_cn": "货郎担挑子",
+    "cat": "street",
+    "scenes": [
+      "雾津街头"
+    ],
+    "attempt": 1,
+    "size": [
+      1841,
+      1462
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4797,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "street_pickle_vat_stall": {
+    "name_cn": "酱菜缸摊",
+    "cat": "street",
+    "scenes": [
+      "雾津街头"
+    ],
+    "attempt": 3,
+    "size": [
+      1875,
+      1261
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5832,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "street_bamboo_basket_pile": {
+    "name_cn": "竹编箩筐堆",
+    "cat": "street",
+    "scenes": [
+      "雾津街头",
+      "码头白天"
+    ],
+    "attempt": 2,
+    "size": [
+      1892,
+      1558
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5766,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "street_firewood_stack": {
+    "name_cn": "柴火垛",
+    "cat": "street",
+    "scenes": [
+      "雾津街头",
+      "破屋"
+    ],
+    "attempt": 1,
+    "size": [
+      1858,
+      1298
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5443,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "street_stone_mill": {
+    "name_cn": "石磨盘",
+    "cat": "street",
+    "scenes": [
+      "雾津街头",
+      "婆子家院"
+    ],
+    "attempt": 1,
+    "size": [
+      1596,
+      1829
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6007,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "street_hitching_post": {
+    "name_cn": "拴马石桩",
+    "cat": "street",
+    "scenes": [
+      "雾津街头",
+      "城门口"
+    ],
+    "attempt": 2,
+    "size": [
+      901,
+      1912
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6744,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "street_notice_board": {
+    "name_cn": "告示木牌墙板",
+    "cat": "street",
+    "scenes": [
+      "雾津街头",
+      "城门口"
+    ],
+    "attempt": 1,
+    "size": [
+      611,
+      875
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5755,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7004,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "street_lantern_pole": {
+    "name_cn": "幌子灯笼杆",
+    "cat": "street",
+    "scenes": [
+      "雾津街头"
+    ],
+    "attempt": 1,
+    "size": [
+      1460,
+      1896
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.2036,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "street_stone_water_trough": {
+    "name_cn": "青石饮水槽",
+    "cat": "street",
+    "scenes": [
+      "雾津街头",
+      "野道"
+    ],
+    "attempt": 1,
+    "size": [
+      1823,
+      1587
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.573,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "street_broken_straw_mat_roll": {
+    "name_cn": "破草席卷",
+    "cat": "street",
+    "scenes": [
+      "雾津街头",
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      1990,
+      1390
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.3987,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "teahouse_square_table_set": {
+    "name_cn": "茶馆方桌条凳",
+    "cat": "teahouse",
+    "scenes": [
+      "teahouse",
+      "dev_teahouse_alive"
+    ],
+    "attempt": 2,
+    "size": [
+      1940,
+      1773
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4393,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "teahouse_tea_stove_kettle": {
+    "name_cn": "茶炉铜壶",
+    "cat": "teahouse",
+    "scenes": [
+      "teahouse"
+    ],
+    "attempt": 1,
+    "size": [
+      817,
+      778
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4526,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7007,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "teahouse_cup_tray_rack": {
+    "name_cn": "盖碗托盘架",
+    "cat": "teahouse",
+    "scenes": [
+      "teahouse"
+    ],
+    "attempt": 1,
+    "size": [
+      1535,
+      1242
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4618,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "teahouse_storyteller_desk": {
+    "name_cn": "说书桌醒木",
+    "cat": "teahouse",
+    "scenes": [
+      "teahouse"
+    ],
+    "attempt": 1,
+    "size": [
+      1726,
+      1685
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.3752,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "teahouse_bamboo_recliner": {
+    "name_cn": "竹躺椅",
+    "cat": "teahouse",
+    "scenes": [
+      "teahouse"
+    ],
+    "attempt": 1,
+    "size": [
+      691,
+      883
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4708,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6825,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "teahouse_counter_desk": {
+    "name_cn": "茶馆柜台账桌",
+    "cat": "teahouse",
+    "scenes": [
+      "teahouse"
+    ],
+    "attempt": 1,
+    "size": [
+      872,
+      749
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5794,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7754,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "teahouse_tea_jar_cabinet": {
+    "name_cn": "茶叶罐柜",
+    "cat": "teahouse",
+    "scenes": [
+      "teahouse"
+    ],
+    "attempt": 1,
+    "size": [
+      696,
+      850
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.79,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.8781,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "teahouse_spittoon_set": {
+    "name_cn": "痰盂水烟具",
+    "cat": "teahouse",
+    "scenes": [
+      "teahouse"
+    ],
+    "attempt": 1,
+    "size": [
+      2005,
+      1894
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5721,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "teahouse_kerosene_lamp": {
+    "name_cn": "煤油罩灯",
+    "cat": "teahouse",
+    "scenes": [
+      "teahouse",
+      "破屋"
+    ],
+    "attempt": 1,
+    "size": [
+      430,
+      913
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5848,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.5351,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "yizhuang_thin_coffin": {
+    "name_cn": "薄皮棺材",
+    "cat": "yizhuang",
+    "scenes": [
+      "义庄",
+      "崖墓"
+    ],
+    "attempt": 1,
+    "size": [
+      1751,
+      1321
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.548,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "yizhuang_offering_altar": {
+    "name_cn": "香案供桌",
+    "cat": "yizhuang",
+    "scenes": [
+      "义庄",
+      "城隍庙夜"
+    ],
+    "attempt": 2,
+    "size": [
+      1795,
+      1917
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.3507,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "yizhuang_paper_effigy_horse": {
+    "name_cn": "纸扎马与纸箱笼",
+    "cat": "yizhuang",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      1856,
+      1950
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5209,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "yizhuang_soul_banner_pole": {
+    "name_cn": "招魂幡杆",
+    "cat": "yizhuang",
+    "scenes": [
+      "义庄",
+      "河边"
+    ],
+    "attempt": 1,
+    "size": [
+      804,
+      1830
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.3421,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "yizhuang_shroud_cloth_roll": {
+    "name_cn": "裹尸白布卷",
+    "cat": "yizhuang",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      2013,
+      1696
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.55,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "yizhuang_joss_burn_basin": {
+    "name_cn": "烧纸瓦盆",
+    "cat": "yizhuang",
+    "scenes": [
+      "义庄",
+      "河边",
+      "城隍庙夜"
+    ],
+    "attempt": 3,
+    "size": [
+      1732,
+      1473
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5922,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "yizhuang_registry_desk": {
+    "name_cn": "义庄登记桌",
+    "cat": "yizhuang",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      2023,
+      1884
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.439,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "yizhuang_rope_hook_bundle": {
+    "name_cn": "麻绳铁钩捆",
+    "cat": "yizhuang",
+    "scenes": [
+      "义庄",
+      "码头白天"
+    ],
+    "attempt": 2,
+    "size": [
+      1842,
+      1556
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6466,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "yizhuang_lime_jar_set": {
+    "name_cn": "石灰罐草药筐",
+    "cat": "yizhuang",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      745,
+      676
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5785,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7818,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "temple_incense_burner": {
+    "name_cn": "大铜香炉",
+    "cat": "temple",
+    "scenes": [
+      "城隍庙夜",
+      "temple",
+      "枯井土地庙"
+    ],
+    "attempt": 2,
+    "size": [
+      1607,
+      1822
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6267,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "temple_eternal_lamp": {
+    "name_cn": "长明灯座",
+    "cat": "temple",
+    "scenes": [
+      "城隍庙夜",
+      "temple"
+    ],
+    "attempt": 1,
+    "size": [
+      1850,
+      1865
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4274,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "temple_prayer_cushion": {
+    "name_cn": "旧蒲团",
+    "cat": "temple",
+    "scenes": [
+      "城隍庙夜",
+      "temple"
+    ],
+    "attempt": 1,
+    "size": [
+      1812,
+      1213
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.553,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "temple_merit_box": {
+    "name_cn": "功德箱",
+    "cat": "temple",
+    "scenes": [
+      "城隍庙夜",
+      "temple"
+    ],
+    "attempt": 1,
+    "size": [
+      849,
+      759
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6156,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7698,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "temple_broken_drum": {
+    "name_cn": "破法鼓架",
+    "cat": "temple",
+    "scenes": [
+      "城隍庙夜",
+      "temple"
+    ],
+    "attempt": 1,
+    "size": [
+      632,
+      819
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6159,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6919,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "temple_bell_frame": {
+    "name_cn": "铜钟木架",
+    "cat": "temple",
+    "scenes": [
+      "城隍庙夜",
+      "temple_exterior"
+    ],
+    "attempt": 3,
+    "size": [
+      1915,
+      2009
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.3287,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "temple_ruined_shrine_niche": {
+    "name_cn": "残破神龛",
+    "cat": "temple",
+    "scenes": [
+      "枯井土地庙",
+      "temple"
+    ],
+    "attempt": 1,
+    "size": [
+      1515,
+      1754
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5383,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "temple_candle_stand_pair": {
+    "name_cn": "残烛铁烛台",
+    "cat": "temple",
+    "scenes": [
+      "城隍庙夜",
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      525,
+      857
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.374,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.4619,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "temple_prayer_flag_bundle": {
+    "name_cn": "经幡布条堆",
+    "cat": "temple",
+    "scenes": [
+      "阎王岭山口",
+      "temple_exterior"
+    ],
+    "attempt": 1,
+    "size": [
+      852,
+      728
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4993,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6876,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "dock_sack_pile": {
+    "name_cn": "麻袋货堆",
+    "cat": "dock",
+    "scenes": [
+      "码头白天"
+    ],
+    "attempt": 1,
+    "size": [
+      1910,
+      1193
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5751,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "dock_mooring_bollard": {
+    "name_cn": "系缆石桩",
+    "cat": "dock",
+    "scenes": [
+      "码头白天"
+    ],
+    "attempt": 2,
+    "size": [
+      1542,
+      1233
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5452,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "dock_oars_and_pole": {
+    "name_cn": "船桨竹篙",
+    "cat": "dock",
+    "scenes": [
+      "码头白天",
+      "河边"
+    ],
+    "attempt": 1,
+    "size": [
+      1891,
+      1929
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.2156,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "dock_fish_basket_net": {
+    "name_cn": "鱼篓渔网架",
+    "cat": "dock",
+    "scenes": [
+      "码头白天",
+      "河边"
+    ],
+    "attempt": 1,
+    "size": [
+      1969,
+      2005
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.2894,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "dock_tung_oil_barrels": {
+    "name_cn": "桐油木桶堆",
+    "cat": "dock",
+    "scenes": [
+      "码头白天"
+    ],
+    "attempt": 2,
+    "size": [
+      1870,
+      1308
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5791,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "dock_gangplank_board": {
+    "name_cn": "跳板木梯",
+    "cat": "dock",
+    "scenes": [
+      "码头白天"
+    ],
+    "attempt": 1,
+    "size": [
+      1755,
+      1408
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.3295,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "dock_steelyard_scale": {
+    "name_cn": "杆秤秤砣",
+    "cat": "dock",
+    "scenes": [
+      "码头白天",
+      "雾津街头"
+    ],
+    "attempt": 1,
+    "size": [
+      1816,
+      1859
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5694,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "house_well_windlass": {
+    "name_cn": "辘轳枯井",
+    "cat": "house",
+    "scenes": [
+      "枯井土地庙",
+      "婆子家院"
+    ],
+    "attempt": 1,
+    "size": [
+      1511,
+      1725
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6268,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "house_water_vat_ladle": {
+    "name_cn": "粗陶大水缸",
+    "cat": "house",
+    "scenes": [
+      "婆子家院",
+      "破屋",
+      "梦_农家院"
+    ],
+    "attempt": 1,
+    "size": [
+      1854,
+      1926
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.7753,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "house_earth_stove": {
+    "name_cn": "土灶台",
+    "cat": "house",
+    "scenes": [
+      "破屋",
+      "梦_饭屋",
+      "婆子家院"
+    ],
+    "attempt": 1,
+    "size": [
+      1842,
+      1659
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6945,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "house_chicken_coop": {
+    "name_cn": "竹编鸡笼",
+    "cat": "house",
+    "scenes": [
+      "婆子家院",
+      "梦_农家院"
+    ],
+    "attempt": 1,
+    "size": [
+      1844,
+      1532
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4691,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "house_loom_and_wheel": {
+    "name_cn": "老织机纺车",
+    "cat": "house",
+    "scenes": [
+      "破屋",
+      "婆子家院"
+    ],
+    "attempt": 1,
+    "size": [
+      1817,
+      1752
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4293,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "house_pig_trough": {
+    "name_cn": "石猪食槽",
+    "cat": "house",
+    "scenes": [
+      "婆子家院",
+      "梦_农家院"
+    ],
+    "attempt": 1,
+    "size": [
+      1817,
+      1560
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5505,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "house_laundry_pole_rack": {
+    "name_cn": "晾衣竹竿架",
+    "cat": "house",
+    "scenes": [
+      "婆子家院",
+      "雾津街头"
+    ],
+    "attempt": 2,
+    "size": [
+      1812,
+      1885
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.2505,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "house_broken_door_panels": {
+    "name_cn": "拆下的旧门板",
+    "cat": "house",
+    "scenes": [
+      "破屋",
+      "梦_里屋"
+    ],
+    "attempt": 1,
+    "size": [
+      1745,
+      1682
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5521,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "house_rubble_tile_heap": {
+    "name_cn": "瓦砾碎砖堆",
+    "cat": "house",
+    "scenes": [
+      "破屋",
+      "崖墓"
+    ],
+    "attempt": 1,
+    "size": [
+      1801,
+      1254
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4457,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "house_camphor_chest": {
+    "name_cn": "旧樟木箱",
+    "cat": "house",
+    "scenes": [
+      "破屋",
+      "婆子家院"
+    ],
+    "attempt": 1,
+    "size": [
+      1735,
+      1505
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6623,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "house_rattan_chair": {
+    "name_cn": "破藤椅",
+    "cat": "house",
+    "scenes": [
+      "破屋",
+      "teahouse"
+    ],
+    "attempt": 1,
+    "size": [
+      1601,
+      1785
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4153,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "wild_stone_road_marker": {
+    "name_cn": "路边残碑",
+    "cat": "wild",
+    "scenes": [
+      "野道",
+      "阎王岭山口"
+    ],
+    "attempt": 3,
+    "size": [
+      1508,
+      1723
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6069,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "wild_grave_mound_stones": {
+    "name_cn": "乱葬坟包石堆",
+    "cat": "wild",
+    "scenes": [
+      "阎王岭山口",
+      "崖墓"
+    ],
+    "attempt": 1,
+    "size": [
+      1930,
+      1224
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5938,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "wild_mountain_shrine": {
+    "name_cn": "山神小石龛",
+    "cat": "wild",
+    "scenes": [
+      "野道",
+      "阎王岭山口"
+    ],
+    "attempt": 1,
+    "size": [
+      1589,
+      1668
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5272,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "wild_dead_tree_stump": {
+    "name_cn": "枯树桩",
+    "cat": "wild",
+    "scenes": [
+      "野道",
+      "阎王岭山口",
+      "河边"
+    ],
+    "attempt": 1,
+    "size": [
+      1785,
+      1704
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5557,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "wild_bamboo_back_basket": {
+    "name_cn": "竹背篓斗笠",
+    "cat": "wild",
+    "scenes": [
+      "野道",
+      "阎王岭山口"
+    ],
+    "attempt": 1,
+    "size": [
+      1920,
+      2004
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6158,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "wild_torch_bracket": {
+    "name_cn": "火把石插座",
+    "cat": "wild",
+    "scenes": [
+      "崖墓",
+      "临江崖墓挂壁小道"
+    ],
+    "attempt": 2,
+    "size": [
+      1792,
+      1771
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5212,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "wild_cliff_rope_ladder": {
+    "name_cn": "崖壁绳梯木桩",
+    "cat": "wild",
+    "scenes": [
+      "临江崖墓挂壁小道",
+      "崖墓"
+    ],
+    "attempt": 1,
+    "size": [
+      1866,
+      1405
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.3328,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "wild_coffin_planks_scattered": {
+    "name_cn": "散落棺板",
+    "cat": "wild",
+    "scenes": [
+      "崖墓",
+      "阎王岭山口"
+    ],
+    "attempt": 2,
+    "size": [
+      1793,
+      1517
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5731,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "job_corpse_carry_rack": {
+    "name_cn": "背尸架",
+    "cat": "job",
+    "scenes": [
+      "义庄",
+      "野道",
+      "阎王岭山口"
+    ],
+    "attempt": 1,
+    "size": [
+      1888,
+      1879
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.2996,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "job_oil_paper_umbrella": {
+    "name_cn": "桐油纸伞",
+    "cat": "job",
+    "scenes": [
+      "雾津街头",
+      "野道"
+    ],
+    "attempt": 1,
+    "size": [
+      827,
+      730
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4889,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6428,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "job_storm_lantern": {
+    "name_cn": "防风马灯",
+    "cat": "job",
+    "scenes": [
+      "野道",
+      "阎王岭山口",
+      "码头白天"
+    ],
+    "attempt": 1,
+    "size": [
+      493,
+      907
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6528,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7124,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "job_corpse_bell_staff": {
+    "name_cn": "赶尸铃杖",
+    "cat": "job",
+    "scenes": [
+      "野道",
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      894,
+      1925
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.2761,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "job_joss_money_basket": {
+    "name_cn": "纸钱竹篮",
+    "cat": "job",
+    "scenes": [
+      "义庄",
+      "河边",
+      "城隍庙夜"
+    ],
+    "attempt": 2,
+    "size": [
+      781,
+      777
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6675,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.8111,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "job_funeral_horn_stand": {
+    "name_cn": "丧仪唢呐锣架",
+    "cat": "job",
+    "scenes": [
+      "义庄",
+      "雾津街头"
+    ],
+    "attempt": 1,
+    "size": [
+      1395,
+      1743
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5145,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "dream_meal_table_set": {
+    "name_cn": "梦境饭桌碗筷",
+    "cat": "dream",
+    "scenes": [
+      "梦_饭屋"
+    ],
+    "attempt": 1,
+    "size": [
+      1863,
+      1629
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6087,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "dream_night_road_marker": {
+    "name_cn": "夜路灯杆",
+    "cat": "dream",
+    "scenes": [
+      "梦_夜路",
+      "梦_醒来土路"
+    ],
+    "attempt": 1,
+    "size": [
+      424,
+      907
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4593,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.4232,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "ritual_inkline_reel": {
+    "name_cn": "墨斗弹线盘",
+    "cat": "ritual",
+    "scenes": [
+      "义庄",
+      "崖墓"
+    ],
+    "attempt": 1,
+    "size": [
+      1689,
+      1248
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.3985,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "ritual_peach_wood_sword": {
+    "name_cn": "桃木剑",
+    "cat": "ritual",
+    "scenes": [
+      "义庄",
+      "城隍庙夜"
+    ],
+    "attempt": 1,
+    "size": [
+      840,
+      687
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.2614,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.2742,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "ritual_seven_star_stones": {
+    "name_cn": "七星石子阵",
+    "cat": "ritual",
+    "scenes": [
+      "义庄",
+      "枯井土地庙"
+    ],
+    "attempt": 1,
+    "size": [
+      832,
+      659
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.3818,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.4816,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "ritual_glutinous_rice_tray": {
+    "name_cn": "糯米簸箕",
+    "cat": "ritual",
+    "scenes": [
+      "义庄",
+      "崖墓"
+    ],
+    "attempt": 1,
+    "size": [
+      903,
+      813
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5636,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.774,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "ritual_black_dog_blood_jar": {
+    "name_cn": "黑狗血陶罐",
+    "cat": "ritual",
+    "scenes": [
+      "义庄",
+      "破屋"
+    ],
+    "attempt": 1,
+    "size": [
+      746,
+      762
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5074,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6351,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "ritual_bronze_mirror_stand": {
+    "name_cn": "照妖铜镜架",
+    "cat": "ritual",
+    "scenes": [
+      "义庄",
+      "破屋"
+    ],
+    "attempt": 1,
+    "size": [
+      601,
+      867
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6649,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6699,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "ritual_broken_compass": {
+    "name_cn": "残破风水罗盘",
+    "cat": "ritual",
+    "scenes": [
+      "义庄",
+      "阎王岭山口"
+    ],
+    "attempt": 1,
+    "size": [
+      809,
+      712
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6159,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7623,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "ritual_talisman_brick_stack": {
+    "name_cn": "符纸压尸砖",
+    "cat": "ritual",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      861,
+      686
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6158,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7762,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "ritual_realgar_wine_jar": {
+    "name_cn": "雄黄酒坛",
+    "cat": "ritual",
+    "scenes": [
+      "义庄",
+      "teahouse"
+    ],
+    "attempt": 1,
+    "size": [
+      741,
+      768
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4497,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.5087,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "ritual_coffin_nail_set": {
+    "name_cn": "镇棺铁钉木槌",
+    "cat": "ritual",
+    "scenes": [
+      "义庄",
+      "崖墓"
+    ],
+    "attempt": 1,
+    "size": [
+      964,
+      724
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4858,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7383,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "ritual_mugwort_smoker": {
+    "name_cn": "艾草熏笼",
+    "cat": "ritual",
+    "scenes": [
+      "义庄",
+      "破屋"
+    ],
+    "attempt": 1,
+    "size": [
+      622,
+      811
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.7014,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7359,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "ritual_cinnabar_mortar": {
+    "name_cn": "朱砂研钵",
+    "cat": "ritual",
+    "scenes": [
+      "义庄",
+      "城隍庙夜"
+    ],
+    "attempt": 1,
+    "size": [
+      794,
+      726
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5517,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6948,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "ritual_geomancer_case": {
+    "name_cn": "阴阳先生行箱",
+    "cat": "ritual",
+    "scenes": [
+      "义庄",
+      "野道"
+    ],
+    "attempt": 1,
+    "size": [
+      792,
+      888
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6465,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.8013,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "ritual_rooster_cage_feather": {
+    "name_cn": "空公鸡笼",
+    "cat": "ritual",
+    "scenes": [
+      "义庄",
+      "婆子家院"
+    ],
+    "attempt": 3,
+    "size": [
+      1689,
+      1441
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6491,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "ritual_five_grain_bowls": {
+    "name_cn": "五谷镇宅碗阵",
+    "cat": "ritual",
+    "scenes": [
+      "破屋",
+      "婆子家院"
+    ],
+    "attempt": 1,
+    "size": [
+      919,
+      806
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.538,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.5486,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "corpse_bell_string_pole": {
+    "name_cn": "赶尸铃铛串杆",
+    "cat": "corpse_trade",
+    "scenes": [
+      "野道",
+      "阎王岭山口"
+    ],
+    "attempt": 1,
+    "size": [
+      407,
+      964
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4115,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.4399,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "corpse_binding_rope_frame": {
+    "name_cn": "捆尸绳架",
+    "cat": "corpse_trade",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      2048,
+      1885
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.82,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "corpse_name_tag_bundle": {
+    "name_cn": "无字尸牌串",
+    "cat": "corpse_trade",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      942,
+      894
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5887,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7781,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "corpse_shoulder_pad_roll": {
+    "name_cn": "背尸垫肩布卷",
+    "cat": "corpse_trade",
+    "scenes": [
+      "义庄",
+      "野道"
+    ],
+    "attempt": 1,
+    "size": [
+      1850,
+      1581
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5401,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "corpse_oil_lamp_dish": {
+    "name_cn": "尸油陶碟灯",
+    "cat": "corpse_trade",
+    "scenes": [
+      "义庄",
+      "崖墓"
+    ],
+    "attempt": 1,
+    "size": [
+      1944,
+      805
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5168,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "corpse_guiding_lantern": {
+    "name_cn": "引路白纸灯笼",
+    "cat": "corpse_trade",
+    "scenes": [
+      "野道",
+      "梦_夜路"
+    ],
+    "attempt": 1,
+    "size": [
+      1769,
+      1935
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4258,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "corpse_door_plank_bier": {
+    "name_cn": "停尸门板担架",
+    "cat": "corpse_trade",
+    "scenes": [
+      "义庄",
+      "破屋"
+    ],
+    "attempt": 1,
+    "size": [
+      1879,
+      1235
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.3619,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "corpse_cloth_drying_rack": {
+    "name_cn": "尸布晾架",
+    "cat": "corpse_trade",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 2,
+    "size": [
+      1824,
+      1917
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.3924,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "corpse_coffin_carry_poles": {
+    "name_cn": "抬棺杠子",
+    "cat": "corpse_trade",
+    "scenes": [
+      "义庄",
+      "野道"
+    ],
+    "attempt": 1,
+    "size": [
+      1751,
+      1615
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.3801,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "corpse_last_breath_coin_jar": {
+    "name_cn": "落气钱陶罐",
+    "cat": "corpse_trade",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      1578,
+      1379
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4294,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "wed_ghost_sedan_chair": {
+    "name_cn": "阴婚小花轿",
+    "cat": "wedding",
+    "scenes": [
+      "义庄",
+      "破屋"
+    ],
+    "attempt": 2,
+    "size": [
+      1998,
+      1864
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4739,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "wed_marriage_contract_box": {
+    "name_cn": "合婚帖木匣",
+    "cat": "wedding",
+    "scenes": [
+      "破屋",
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      1679,
+      1388
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5419,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "wed_bridal_dress_rack": {
+    "name_cn": "红盖头嫁衣架",
+    "cat": "wedding",
+    "scenes": [
+      "破屋",
+      "婆子家院"
+    ],
+    "attempt": 1,
+    "size": [
+      1499,
+      2010
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5539,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "wed_spirit_money_strings": {
+    "name_cn": "冥币钱串挂",
+    "cat": "wedding",
+    "scenes": [
+      "义庄",
+      "城隍庙夜"
+    ],
+    "attempt": 1,
+    "size": [
+      2035,
+      1951
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.3402,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "wed_paper_mansion_effigy": {
+    "name_cn": "纸扎宅院",
+    "cat": "wedding",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      1261,
+      1691
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.626,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "wed_mourning_staff_sash": {
+    "name_cn": "哭丧棒孝带堆",
+    "cat": "wedding",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      1897,
+      1584
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4354,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "wed_spirit_tablet_shrine": {
+    "name_cn": "空灵位牌龛",
+    "cat": "wedding",
+    "scenes": [
+      "破屋",
+      "义庄"
+    ],
+    "attempt": 2,
+    "size": [
+      1842,
+      1866
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4937,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "pass": true
+  },
+  "wed_offering_meal_set": {
+    "name_cn": "供饭七件碗筷",
+    "cat": "wedding",
+    "scenes": [
+      "义庄",
+      "梦_饭屋"
+    ],
+    "attempt": 1,
+    "size": [
+      1900,
+      1560
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4245,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.566,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "wed_smash_bowl_shards": {
+    "name_cn": "摔盆瓦罐碎片",
+    "cat": "wedding",
+    "scenes": [
+      "义庄",
+      "野道"
+    ],
+    "attempt": 2,
+    "size": [
+      1603,
+      1357
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5003,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.592,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "wed_funeral_canopy_umbrella": {
+    "name_cn": "出殡罗伞",
+    "cat": "wedding",
+    "scenes": [
+      "义庄",
+      "雾津街头"
+    ],
+    "attempt": 1,
+    "size": [
+      1881,
+      1885
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4503,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.4699,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "wed_grave_goods_urn": {
+    "name_cn": "陪葬陶瓮",
+    "cat": "wedding",
+    "scenes": [
+      "崖墓",
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      1598,
+      1391
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5894,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6117,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "wed_white_lantern_pair": {
+    "name_cn": "白事灯笼一对",
+    "cat": "wedding",
+    "scenes": [
+      "义庄",
+      "雾津街头"
+    ],
+    "attempt": 1,
+    "size": [
+      1490,
+      1508
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4903,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.4196,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "paoge_tea_bowl_array": {
+    "name_cn": "袍哥摆茶碗阵",
+    "cat": "paoge",
+    "scenes": [
+      "teahouse"
+    ],
+    "attempt": 1,
+    "size": [
+      1859,
+      1594
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4614,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.5257,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "paoge_hall_altar": {
+    "name_cn": "香堂供桌",
+    "cat": "paoge",
+    "scenes": [
+      "teahouse",
+      "破屋"
+    ],
+    "attempt": 1,
+    "size": [
+      1613,
+      1835
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.494,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7378,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "paoge_rule_plaque": {
+    "name_cn": "帮规木牌",
+    "cat": "paoge",
+    "scenes": [
+      "teahouse"
+    ],
+    "attempt": 1,
+    "size": [
+      762,
+      972
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.611,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7184,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "paoge_opium_tray_set": {
+    "name_cn": "烟枪烟灯托盘",
+    "cat": "paoge",
+    "scenes": [
+      "teahouse",
+      "破屋"
+    ],
+    "attempt": 1,
+    "size": [
+      986,
+      814
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5316,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7078,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "paoge_gambling_set": {
+    "name_cn": "骰盅牌九赌具",
+    "cat": "paoge",
+    "scenes": [
+      "teahouse",
+      "破屋"
+    ],
+    "attempt": 1,
+    "size": [
+      1024,
+      889
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5667,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7192,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "paoge_pawn_counter": {
+    "name_cn": "当票柜与算盘",
+    "cat": "paoge",
+    "scenes": [
+      "雾津街头"
+    ],
+    "attempt": 1,
+    "size": [
+      911,
+      957
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6441,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.838,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "paoge_punishment_bench": {
+    "name_cn": "私刑板凳藤条",
+    "cat": "paoge",
+    "scenes": [
+      "破屋",
+      "码头白天"
+    ],
+    "attempt": 1,
+    "size": [
+      944,
+      912
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4642,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.5841,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "paoge_porter_tally_tags": {
+    "name_cn": "脚夫号牌堆",
+    "cat": "paoge",
+    "scenes": [
+      "码头白天"
+    ],
+    "attempt": 1,
+    "size": [
+      985,
+      826
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6128,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.726,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "paoge_quack_doctor_chest": {
+    "name_cn": "江湖郎中药箱",
+    "cat": "paoge",
+    "scenes": [
+      "雾津街头",
+      "野道"
+    ],
+    "attempt": 1,
+    "size": [
+      964,
+      1013
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5404,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6657,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "paoge_street_banner_frame": {
+    "name_cn": "走江湖幌幡架",
+    "cat": "paoge",
+    "scenes": [
+      "雾津街头"
+    ],
+    "attempt": 1,
+    "size": [
+      816,
+      976
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.3527,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.504,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "market_hotpot_stove": {
+    "name_cn": "火锅铜锅炉子",
+    "cat": "market",
+    "scenes": [
+      "teahouse",
+      "雾津街头"
+    ],
+    "attempt": 1,
+    "size": [
+      733,
+      946
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.639,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.8353,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "market_bamboo_mat_bed": {
+    "name_cn": "竹编凉席床",
+    "cat": "market",
+    "scenes": [
+      "破屋",
+      "婆子家院"
+    ],
+    "attempt": 1,
+    "size": [
+      984,
+      862
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4588,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.5887,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "market_tiger_stove_boiler": {
+    "name_cn": "老虎灶烧水台",
+    "cat": "market",
+    "scenes": [
+      "雾津街头",
+      "teahouse"
+    ],
+    "attempt": 1,
+    "size": [
+      998,
+      808
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5885,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7619,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "market_pickle_jar_array": {
+    "name_cn": "泡菜坛阵",
+    "cat": "market",
+    "scenes": [
+      "婆子家院",
+      "破屋"
+    ],
+    "attempt": 1,
+    "size": [
+      909,
+      968
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6638,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7999,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "market_rain_gear_pole": {
+    "name_cn": "蓑衣斗笠挑",
+    "cat": "market",
+    "scenes": [
+      "野道",
+      "码头白天"
+    ],
+    "attempt": 1,
+    "size": [
+      959,
+      845
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.298,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.5029,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "market_opera_trunk": {
+    "name_cn": "川剧戏箱",
+    "cat": "market",
+    "scenes": [
+      "雾津街头",
+      "teahouse"
+    ],
+    "attempt": 1,
+    "size": [
+      930,
+      987
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6404,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.8453,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "market_medicine_scale_set": {
+    "name_cn": "药戥子小秤",
+    "cat": "market",
+    "scenes": [
+      "雾津街头"
+    ],
+    "attempt": 1,
+    "size": [
+      914,
+      956
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5894,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7541,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "market_night_watch_clapper": {
+    "name_cn": "打更梆子灯笼",
+    "cat": "market",
+    "scenes": [
+      "雾津街头",
+      "梦_夜路"
+    ],
+    "attempt": 1,
+    "size": [
+      914,
+      870
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6569,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7524,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "market_barber_carry_stand": {
+    "name_cn": "剃头挑子",
+    "cat": "market",
+    "scenes": [
+      "雾津街头"
+    ],
+    "attempt": 1,
+    "size": [
+      905,
+      789
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4974,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6831,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "market_cobbler_stall": {
+    "name_cn": "补鞋修脚摊",
+    "cat": "market",
+    "scenes": [
+      "雾津街头"
+    ],
+    "attempt": 1,
+    "size": [
+      989,
+      922
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6077,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7175,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "market_blacksmith_anvil": {
+    "name_cn": "铁匠砧子风箱",
+    "cat": "market",
+    "scenes": [
+      "雾津街头",
+      "城门口"
+    ],
+    "attempt": 1,
+    "size": [
+      910,
+      872
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5811,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7359,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "market_whetstone_rack": {
+    "name_cn": "磨刀石架",
+    "cat": "market",
+    "scenes": [
+      "雾津街头",
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      889,
+      858
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6454,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.8065,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "market_wheelbarrow_cart": {
+    "name_cn": "鸡公车独轮车",
+    "cat": "market",
+    "scenes": [
+      "野道",
+      "码头白天"
+    ],
+    "attempt": 1,
+    "size": [
+      990,
+      810
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4953,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.626,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "market_bamboo_sedan": {
+    "name_cn": "滑竿竹轿",
+    "cat": "market",
+    "scenes": [
+      "野道",
+      "阎王岭山口"
+    ],
+    "attempt": 1,
+    "size": [
+      1004,
+      920
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.3266,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.4401,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "market_stone_roller": {
+    "name_cn": "石碾子",
+    "cat": "market",
+    "scenes": [
+      "婆子家院",
+      "雾津街头"
+    ],
+    "attempt": 1,
+    "size": [
+      917,
+      869
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.7011,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7589,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "market_grain_drying_trays": {
+    "name_cn": "晒谷竹匾架",
+    "cat": "market",
+    "scenes": [
+      "婆子家院",
+      "梦_农家院"
+    ],
+    "attempt": 1,
+    "size": [
+      932,
+      766
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6088,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7127,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "market_rice_pounding_mortar": {
+    "name_cn": "舂米石臼",
+    "cat": "market",
+    "scenes": [
+      "婆子家院",
+      "梦_农家院"
+    ],
+    "attempt": 1,
+    "size": [
+      809,
+      899
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6409,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6821,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "market_kitchen_god_niche": {
+    "name_cn": "灶王神龛",
+    "cat": "market",
+    "scenes": [
+      "破屋",
+      "梦_饭屋"
+    ],
+    "attempt": 1,
+    "size": [
+      788,
+      949
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.7511,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7985,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "water_river_god_altar": {
+    "name_cn": "河神祭台石",
+    "cat": "water",
+    "scenes": [
+      "河边",
+      "码头白天"
+    ],
+    "attempt": 1,
+    "size": [
+      853,
+      915
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.7126,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.874,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "water_wrecked_boat_planks": {
+    "name_cn": "沉船木板残骸",
+    "cat": "water",
+    "scenes": [
+      "河边",
+      "深潭绝地"
+    ],
+    "attempt": 1,
+    "size": [
+      937,
+      851
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6554,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7368,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "water_corpse_hook_pole": {
+    "name_cn": "捞尸钩长杆",
+    "cat": "water",
+    "scenes": [
+      "河边",
+      "深潭绝地"
+    ],
+    "attempt": 1,
+    "size": [
+      652,
+      938
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.1832,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.2414,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "water_fishing_boat_lamp": {
+    "name_cn": "渔火船灯",
+    "cat": "water",
+    "scenes": [
+      "河边",
+      "码头白天"
+    ],
+    "attempt": 1,
+    "size": [
+      698,
+      966
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5822,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7161,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "water_paper_boat_pile": {
+    "name_cn": "河祭纸船堆",
+    "cat": "water",
+    "scenes": [
+      "河边"
+    ],
+    "attempt": 1,
+    "size": [
+      976,
+      849
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6407,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7431,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "water_body_marker_pole": {
+    "name_cn": "浮尸标记竹竿",
+    "cat": "water",
+    "scenes": [
+      "河边"
+    ],
+    "attempt": 1,
+    "size": [
+      812,
+      931
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.484,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.5543,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "water_sluice_winch": {
+    "name_cn": "水闸绞盘",
+    "cat": "water",
+    "scenes": [
+      "码头白天",
+      "河边"
+    ],
+    "attempt": 1,
+    "size": [
+      815,
+      1006
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5623,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7352,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "water_laundry_beating_stone": {
+    "name_cn": "洗衣捶布石",
+    "cat": "water",
+    "scenes": [
+      "河边",
+      "婆子家院"
+    ],
+    "attempt": 1,
+    "size": [
+      942,
+      797
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6386,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.752,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "water_monkey_trap_cage": {
+    "name_cn": "水猴子诱笼",
+    "cat": "water",
+    "scenes": [
+      "河边",
+      "深潭绝地"
+    ],
+    "attempt": 1,
+    "size": [
+      943,
+      670
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5642,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6187,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "mtn_cliff_coffin_pegs": {
+    "name_cn": "悬棺崖钉木桩",
+    "cat": "mountain",
+    "scenes": [
+      "崖墓",
+      "临江崖墓挂壁小道"
+    ],
+    "attempt": 1,
+    "size": [
+      956,
+      881
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4582,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6432,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "mtn_sacred_tree_cloth": {
+    "name_cn": "山神树红布祭",
+    "cat": "mountain",
+    "scenes": [
+      "野道",
+      "阎王岭山口"
+    ],
+    "attempt": 1,
+    "size": [
+      845,
+      908
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6224,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6734,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "mtn_hunter_trap_pile": {
+    "name_cn": "猎户兽夹堆",
+    "cat": "mountain",
+    "scenes": [
+      "野道",
+      "阎王岭山口"
+    ],
+    "attempt": 1,
+    "size": [
+      931,
+      905
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5197,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7472,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "mtn_herb_gatherer_kit": {
+    "name_cn": "采药人竹篓药锄",
+    "cat": "mountain",
+    "scenes": [
+      "野道",
+      "阎王岭山口"
+    ],
+    "attempt": 1,
+    "size": [
+      707,
+      957
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4701,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6287,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "mtn_boundary_stone": {
+    "name_cn": "土地界石",
+    "cat": "mountain",
+    "scenes": [
+      "野道",
+      "城门口"
+    ],
+    "attempt": 1,
+    "size": [
+      805,
+      841
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5901,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6537,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "mtn_animal_bone_heap": {
+    "name_cn": "兽骨堆",
+    "cat": "mountain",
+    "scenes": [
+      "阎王岭山口",
+      "崖墓"
+    ],
+    "attempt": 1,
+    "size": [
+      947,
+      866
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6305,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.8097,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "mtn_cremation_pyre": {
+    "name_cn": "火葬柴堆架",
+    "cat": "mountain",
+    "scenes": [
+      "阎王岭山口",
+      "野道"
+    ],
+    "attempt": 1,
+    "size": [
+      962,
+      951
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5658,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.792,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "mtn_cave_burial_urns": {
+    "name_cn": "洞葬陶瓮排",
+    "cat": "mountain",
+    "scenes": [
+      "崖墓",
+      "深潭绝地"
+    ],
+    "attempt": 1,
+    "size": [
+      977,
+      703
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5205,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6723,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "mtn_rattan_bridge_ruin": {
+    "name_cn": "藤桥残索",
+    "cat": "mountain",
+    "scenes": [
+      "临江崖墓挂壁小道",
+      "阎王岭山口"
+    ],
+    "attempt": 1,
+    "size": [
+      920,
+      862
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4123,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.5536,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "mtn_pass_toll_bar": {
+    "name_cn": "山口卡子拦木",
+    "cat": "mountain",
+    "scenes": [
+      "阎王岭山口",
+      "城门口"
+    ],
+    "attempt": 1,
+    "size": [
+      940,
+      777
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4803,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.5086,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "yamen_case_file_crate": {
+    "name_cn": "案卷木箱",
+    "cat": "yamen",
+    "scenes": [
+      "城门口",
+      "破屋"
+    ],
+    "attempt": 1,
+    "size": [
+      841,
+      991
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6055,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7967,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "yamen_cangue_rack": {
+    "name_cn": "枷锁刑具架",
+    "cat": "yamen",
+    "scenes": [
+      "城门口",
+      "破屋"
+    ],
+    "attempt": 1,
+    "size": [
+      914,
+      957
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4247,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.5378,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "yamen_edict_scroll_tube": {
+    "name_cn": "黄榜卷轴筒",
+    "cat": "yamen",
+    "scenes": [
+      "城门口",
+      "雾津街头"
+    ],
+    "attempt": 1,
+    "size": [
+      958,
+      825
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5867,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7801,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "yamen_seal_box_wax": {
+    "name_cn": "印章匣火漆",
+    "cat": "yamen",
+    "scenes": [
+      "城门口"
+    ],
+    "attempt": 1,
+    "size": [
+      822,
+      968
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5261,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.691,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "yamen_census_cabinet": {
+    "name_cn": "户籍册柜",
+    "cat": "yamen",
+    "scenes": [
+      "城门口",
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      806,
+      1005
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.7314,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.8448,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "yamen_watchman_desk": {
+    "name_cn": "更夫值房桌",
+    "cat": "yamen",
+    "scenes": [
+      "城门口",
+      "雾津街头"
+    ],
+    "attempt": 1,
+    "size": [
+      864,
+      855
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5788,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7154,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "shop_opium_couch": {
+    "name_cn": "烟榻烟具",
+    "cat": "shop",
+    "scenes": [
+      "破屋",
+      "teahouse"
+    ],
+    "attempt": 1,
+    "size": [
+      985,
+      822
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4884,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6898,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "shop_pawnshop_counter": {
+    "name_cn": "当铺高柜铁栅",
+    "cat": "shop",
+    "scenes": [
+      "雾津街头"
+    ],
+    "attempt": 1,
+    "size": [
+      847,
+      968
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5833,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6748,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "shop_herb_cabinet": {
+    "name_cn": "药铺百子柜",
+    "cat": "shop",
+    "scenes": [
+      "雾津街头"
+    ],
+    "attempt": 1,
+    "size": [
+      841,
+      1005
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.7294,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.8706,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "shop_cloth_bolt_rack": {
+    "name_cn": "布庄布匹架",
+    "cat": "shop",
+    "scenes": [
+      "雾津街头"
+    ],
+    "attempt": 1,
+    "size": [
+      935,
+      758
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6558,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.8814,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "shop_grain_measure_set": {
+    "name_cn": "米行斗与量升",
+    "cat": "shop",
+    "scenes": [
+      "雾津街头",
+      "码头白天"
+    ],
+    "attempt": 1,
+    "size": [
+      959,
+      891
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5344,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6781,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "shop_coffin_plank_rack": {
+    "name_cn": "棺材铺料板架",
+    "cat": "shop",
+    "scenes": [
+      "义庄",
+      "雾津街头"
+    ],
+    "attempt": 1,
+    "size": [
+      912,
+      936
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5975,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7871,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "craft_paper_workbench": {
+    "name_cn": "扎纸工作台",
+    "cat": "craft",
+    "scenes": [
+      "义庄",
+      "破屋"
+    ],
+    "attempt": 1,
+    "size": [
+      999,
+      781
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5135,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7002,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "craft_sugar_painting_slab": {
+    "name_cn": "糖画铜勺石板台",
+    "cat": "craft",
+    "scenes": [
+      "雾津街头"
+    ],
+    "attempt": 1,
+    "size": [
+      893,
+      838
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4992,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6813,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "craft_fortune_teller_stall": {
+    "name_cn": "算命卦摊",
+    "cat": "craft",
+    "scenes": [
+      "雾津街头",
+      "城隍庙夜"
+    ],
+    "attempt": 1,
+    "size": [
+      865,
+      996
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4397,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6591,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "craft_shadow_puppet_case": {
+    "name_cn": "皮影戏箱灯架",
+    "cat": "craft",
+    "scenes": [
+      "雾津街头",
+      "teahouse"
+    ],
+    "attempt": 1,
+    "size": [
+      949,
+      922
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5816,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6841,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "fun_five_offerings_set": {
+    "name_cn": "五供全套",
+    "cat": "funeral_hall",
+    "scenes": [
+      "义庄",
+      "城隍庙夜"
+    ],
+    "attempt": 1,
+    "size": [
+      973,
+      535
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4056,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.4663,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "fun_mourning_drapery": {
+    "name_cn": "灵堂白幔帷帐架",
+    "cat": "funeral_hall",
+    "scenes": [
+      "义庄",
+      "破屋"
+    ],
+    "attempt": 1,
+    "size": [
+      625,
+      942
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6522,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6905,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "fun_kneeling_mat_pair": {
+    "name_cn": "孝子跪垫",
+    "cat": "funeral_hall",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      948,
+      613
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5201,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6945,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "fun_wooden_fish_chime": {
+    "name_cn": "木鱼铜磬",
+    "cat": "funeral_hall",
+    "scenes": [
+      "义庄",
+      "城隍庙夜"
+    ],
+    "attempt": 1,
+    "size": [
+      904,
+      791
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5123,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7068,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "fun_soul_banner_umbrella": {
+    "name_cn": "灵幡伞",
+    "cat": "funeral_hall",
+    "scenes": [
+      "义庄",
+      "野道"
+    ],
+    "attempt": 1,
+    "size": [
+      792,
+      840
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.3658,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.3982,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "fun_couplet_frame": {
+    "name_cn": "挽联木架",
+    "cat": "funeral_hall",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      656,
+      869
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5027,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.5256,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "fun_paper_gold_silver_hill": {
+    "name_cn": "纸扎金山银山",
+    "cat": "funeral_hall",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      894,
+      663
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5788,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.731,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "fun_paper_money_tree": {
+    "name_cn": "纸扎摇钱树",
+    "cat": "funeral_hall",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      754,
+      958
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5359,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6836,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "fun_upside_down_rice": {
+    "name_cn": "倒头饭",
+    "cat": "funeral_hall",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      834,
+      827
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4166,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.596,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "fun_eternal_lamp_bowl": {
+    "name_cn": "长明灯油碗",
+    "cat": "funeral_hall",
+    "scenes": [
+      "义庄",
+      "崖墓"
+    ],
+    "attempt": 1,
+    "size": [
+      746,
+      634
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6618,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7258,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "fun_condolence_gift_tray": {
+    "name_cn": "奠仪礼盘",
+    "cat": "funeral_hall",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      913,
+      636
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6193,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7519,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "fun_incense_bundle_holder": {
+    "name_cn": "线香捆与香插",
+    "cat": "funeral_hall",
+    "scenes": [
+      "义庄",
+      "城隍庙夜"
+    ],
+    "attempt": 1,
+    "size": [
+      688,
+      794
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.3899,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.5534,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "enc_shroud_tray": {
+    "name_cn": "寿衣托盘",
+    "cat": "encoffin",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      935,
+      649
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5749,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7565,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "enc_quilt_pillow": {
+    "name_cn": "寿被寿枕",
+    "cat": "encoffin",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      936,
+      658
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5499,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6834,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "enc_mouth_coin_jade": {
+    "name_cn": "含口钱含玉盒",
+    "cat": "encoffin",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      785,
+      828
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.571,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7782,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "enc_seven_star_board": {
+    "name_cn": "七星板",
+    "cat": "encoffin",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      926,
+      595
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4457,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.4924,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "enc_back_padding_coins": {
+    "name_cn": "垫背钱",
+    "cat": "encoffin",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      964,
+      613
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5504,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7385,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "enc_face_cover_cloth": {
+    "name_cn": "殓巾脸盖布",
+    "cat": "encoffin",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      917,
+      695
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5772,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7216,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "enc_wash_basin_set": {
+    "name_cn": "净身铜盆布巾",
+    "cat": "encoffin",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      816,
+      781
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5456,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7306,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "enc_scissors_comb_tray": {
+    "name_cn": "剪刀梳篦盘",
+    "cat": "encoffin",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      950,
+      676
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5421,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7272,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "enc_foot_binding_rope": {
+    "name_cn": "绊脚绳",
+    "cat": "encoffin",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      814,
+      545
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.3488,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6077,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "enc_dog_cake_pouch": {
+    "name_cn": "打狗饼干粮袋",
+    "cat": "encoffin",
+    "scenes": [
+      "义庄",
+      "野道"
+    ],
+    "attempt": 1,
+    "size": [
+      774,
+      648
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5456,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6021,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "pro_road_buying_money": {
+    "name_cn": "买路钱纸包堆",
+    "cat": "procession",
+    "scenes": [
+      "野道",
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      932,
+      790
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5447,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.713,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "pro_coffin_cover": {
+    "name_cn": "棺罩棺衣",
+    "cat": "procession",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      838,
+      833
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4886,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6966,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "pro_dragon_bar_frame": {
+    "name_cn": "抬棺龙杠架",
+    "cat": "procession",
+    "scenes": [
+      "义庄",
+      "野道"
+    ],
+    "attempt": 1,
+    "size": [
+      934,
+      682
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4062,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.4489,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "pro_rope_net": {
+    "name_cn": "棺绳网",
+    "cat": "procession",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      984,
+      675
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.3759,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.652,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "pro_paper_horse_sedan": {
+    "name_cn": "纸马纸轿",
+    "cat": "procession",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      838,
+      743
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5609,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6885,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "pro_gong_drum_carry": {
+    "name_cn": "送葬锣鼓担",
+    "cat": "procession",
+    "scenes": [
+      "义庄",
+      "雾津街头"
+    ],
+    "attempt": 1,
+    "size": [
+      805,
+      804
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.3843,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.4866,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "pro_roadside_altar": {
+    "name_cn": "路祭方桌",
+    "cat": "procession",
+    "scenes": [
+      "野道",
+      "雾津街头"
+    ],
+    "attempt": 1,
+    "size": [
+      866,
+      738
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4729,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6287,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "pro_banner_pole_rack": {
+    "name_cn": "幡杆架",
+    "cat": "procession",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      767,
+      913
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4626,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6714,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "pro_mourning_stick_bundle": {
+    "name_cn": "孝棒竹捆",
+    "cat": "procession",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      814,
+      791
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5787,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6692,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "pro_paper_chest_carry": {
+    "name_cn": "纸扎箱笼担",
+    "cat": "procession",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      812,
+      778
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4992,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.5948,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "grv_blank_tombstone": {
+    "name_cn": "无字墓碑",
+    "cat": "grave",
+    "scenes": [
+      "阎王岭山口",
+      "崖墓"
+    ],
+    "attempt": 1,
+    "size": [
+      612,
+      815
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.645,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6414,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "grv_earth_god_stele": {
+    "name_cn": "后土小碑",
+    "cat": "grave",
+    "scenes": [
+      "阎王岭山口",
+      "野道"
+    ],
+    "attempt": 1,
+    "size": [
+      687,
+      711
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6026,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7395,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "grv_stone_offering_table": {
+    "name_cn": "坟前石供桌",
+    "cat": "grave",
+    "scenes": [
+      "阎王岭山口",
+      "崖墓"
+    ],
+    "attempt": 1,
+    "size": [
+      842,
+      746
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5215,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6003,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "grv_iron_burning_basin": {
+    "name_cn": "烧纸铁盆",
+    "cat": "grave",
+    "scenes": [
+      "阎王岭山口",
+      "河边"
+    ],
+    "attempt": 1,
+    "size": [
+      792,
+      686
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.563,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7075,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "grv_paper_weight_stones": {
+    "name_cn": "坟头压纸石",
+    "cat": "grave",
+    "scenes": [
+      "阎王岭山口"
+    ],
+    "attempt": 1,
+    "size": [
+      775,
+      655
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5765,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7298,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "grv_digging_tools": {
+    "name_cn": "开山锄镐",
+    "cat": "grave",
+    "scenes": [
+      "阎王岭山口",
+      "崖墓"
+    ],
+    "attempt": 1,
+    "size": [
+      853,
+      786
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.3406,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.5086,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "grv_soil_baskets": {
+    "name_cn": "培土竹筐扁担",
+    "cat": "grave",
+    "scenes": [
+      "阎王岭山口"
+    ],
+    "attempt": 1,
+    "size": [
+      883,
+      713
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5269,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7782,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "grv_sealing_cinnabar_jar": {
+    "name_cn": "封棺糯米朱砂罐",
+    "cat": "grave",
+    "scenes": [
+      "义庄",
+      "崖墓"
+    ],
+    "attempt": 1,
+    "size": [
+      766,
+      681
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5475,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.658,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "grv_libation_wine_set": {
+    "name_cn": "奠酒三杯壶",
+    "cat": "grave",
+    "scenes": [
+      "阎王岭山口",
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      929,
+      669
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.498,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6879,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "grv_clearing_sickle": {
+    "name_cn": "除草镰刀",
+    "cat": "grave",
+    "scenes": [
+      "阎王岭山口",
+      "野道"
+    ],
+    "attempt": 1,
+    "size": [
+      819,
+      733
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4097,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6502,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "rit_qingming_basket": {
+    "name_cn": "清明祭篮",
+    "cat": "rite",
+    "scenes": [
+      "阎王岭山口",
+      "野道"
+    ],
+    "attempt": 1,
+    "size": [
+      832,
+      810
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5738,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7283,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "rit_zhongyuan_river_lamp": {
+    "name_cn": "中元河灯",
+    "cat": "rite",
+    "scenes": [
+      "河边"
+    ],
+    "attempt": 1,
+    "size": [
+      939,
+      685
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5629,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.8004,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "rit_winter_clothes_packet": {
+    "name_cn": "寒衣纸包",
+    "cat": "rite",
+    "scenes": [
+      "义庄",
+      "野道"
+    ],
+    "attempt": 1,
+    "size": [
+      780,
+      803
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6981,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.8074,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "rit_three_sacrifice": {
+    "name_cn": "三牲供",
+    "cat": "rite",
+    "scenes": [
+      "城隍庙夜",
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      965,
+      752
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.55,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.751,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "rit_five_fruit_platter": {
+    "name_cn": "五果供盘",
+    "cat": "rite",
+    "scenes": [
+      "城隍庙夜",
+      "temple"
+    ],
+    "attempt": 1,
+    "size": [
+      840,
+      713
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.7218,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.807,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "rit_incense_paper_stall": {
+    "name_cn": "香烛纸马摊",
+    "cat": "rite",
+    "scenes": [
+      "城隍庙夜",
+      "雾津街头"
+    ],
+    "attempt": 1,
+    "size": [
+      824,
+      774
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5198,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6831,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "rit_peace_water_vat": {
+    "name_cn": "太平缸",
+    "cat": "rite",
+    "scenes": [
+      "城隍庙夜",
+      "temple_exterior"
+    ],
+    "attempt": 1,
+    "size": [
+      724,
+      779
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.7587,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.8208,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "rit_votive_plaque_blank": {
+    "name_cn": "还愿空匾",
+    "cat": "rite",
+    "scenes": [
+      "城隍庙夜",
+      "temple"
+    ],
+    "attempt": 1,
+    "size": [
+      867,
+      764
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5984,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7047,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "rit_shehuo_deity_banner": {
+    "name_cn": "社火神幡",
+    "cat": "rite",
+    "scenes": [
+      "城隍庙夜",
+      "雾津街头"
+    ],
+    "attempt": 1,
+    "size": [
+      392,
+      990
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5683,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.668,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "rit_altar_table": {
+    "name_cn": "法坛桌",
+    "cat": "rite",
+    "scenes": [
+      "义庄",
+      "城隍庙夜"
+    ],
+    "attempt": 1,
+    "size": [
+      871,
+      789
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5393,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7326,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "rit_five_direction_flags": {
+    "name_cn": "五方旗",
+    "cat": "rite",
+    "scenes": [
+      "义庄",
+      "城隍庙夜"
+    ],
+    "attempt": 1,
+    "size": [
+      878,
+      892
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.3904,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.613,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "rit_command_tablet_ruler": {
+    "name_cn": "令牌法尺",
+    "cat": "rite",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      971,
+      671
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4919,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7135,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "rit_bell_cymbals": {
+    "name_cn": "法铃铙钹",
+    "cat": "rite",
+    "scenes": [
+      "义庄",
+      "城隍庙夜"
+    ],
+    "attempt": 1,
+    "size": [
+      821,
+      697
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5154,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.574,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "rit_purification_bowls": {
+    "name_cn": "净水碗阵",
+    "cat": "rite",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      940,
+      627
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5076,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7012,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "rit_scripture_chest": {
+    "name_cn": "经卷书箱",
+    "cat": "rite",
+    "scenes": [
+      "义庄",
+      "城隍庙夜"
+    ],
+    "attempt": 1,
+    "size": [
+      733,
+      849
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6472,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.8088,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "rit_taoist_robe_rack": {
+    "name_cn": "道袍架",
+    "cat": "rite",
+    "scenes": [
+      "义庄",
+      "破屋"
+    ],
+    "attempt": 1,
+    "size": [
+      579,
+      939
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4699,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6388,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "rit_seven_star_lamp_array": {
+    "name_cn": "七星灯阵",
+    "cat": "rite",
+    "scenes": [
+      "义庄",
+      "崖墓"
+    ],
+    "attempt": 1,
+    "size": [
+      970,
+      684
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5261,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7552,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "rit_hell_breaking_lamp": {
+    "name_cn": "破狱灯架",
+    "cat": "rite",
+    "scenes": [
+      "义庄",
+      "崖墓"
+    ],
+    "attempt": 1,
+    "size": [
+      487,
+      925
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4085,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.503,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_paper_effigy_boy": {
+    "name_cn": "纸扎童男",
+    "cat": "paper_effigy",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      572,
+      863
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5271,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6088,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_incense_three_burning": {
+    "name_cn": "三炷燃香",
+    "cat": "bare_offering",
+    "scenes": [
+      "义庄",
+      "城隍庙夜"
+    ],
+    "attempt": 1,
+    "size": [
+      842,
+      517
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.1716,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.3666,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_incense_bundle": {
+    "name_cn": "线香捆",
+    "cat": "bare_offering",
+    "scenes": [
+      "义庄",
+      "城隍庙夜"
+    ],
+    "attempt": 1,
+    "size": [
+      828,
+      606
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5092,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.5981,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_incense_scattered": {
+    "name_cn": "散落线香",
+    "cat": "bare_offering",
+    "scenes": [
+      "义庄",
+      "野道"
+    ],
+    "attempt": 1,
+    "size": [
+      841,
+      541
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.2134,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.3968,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_incense_coil": {
+    "name_cn": "盘香",
+    "cat": "bare_offering",
+    "scenes": [
+      "城隍庙夜",
+      "temple"
+    ],
+    "attempt": 1,
+    "size": [
+      693,
+      671
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5824,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6705,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_incense_stub_pile": {
+    "name_cn": "烧剩香脚堆",
+    "cat": "bare_offering",
+    "scenes": [
+      "义庄",
+      "城隍庙夜"
+    ],
+    "attempt": 1,
+    "size": [
+      760,
+      535
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5895,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7618,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_incense_pillar_pair": {
+    "name_cn": "一对粗柱香",
+    "cat": "bare_offering",
+    "scenes": [
+      "城隍庙夜",
+      "temple"
+    ],
+    "attempt": 1,
+    "size": [
+      815,
+      566
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4965,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6098,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_candle_white_pair": {
+    "name_cn": "一对白蜡烛",
+    "cat": "bare_offering",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      347,
+      654
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6819,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.3376,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_candle_red_pair": {
+    "name_cn": "一对暗红喜烛",
+    "cat": "bare_offering",
+    "scenes": [
+      "义庄",
+      "破屋"
+    ],
+    "attempt": 1,
+    "size": [
+      427,
+      730
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.7444,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.8351,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_candle_burnt_stub": {
+    "name_cn": "残烛头",
+    "cat": "bare_offering",
+    "scenes": [
+      "义庄",
+      "崖墓"
+    ],
+    "attempt": 1,
+    "size": [
+      554,
+      607
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5406,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6426,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_candle_lit_single": {
+    "name_cn": "点燃的蜡烛",
+    "cat": "bare_offering",
+    "scenes": [
+      "义庄",
+      "梦_夜路"
+    ],
+    "attempt": 1,
+    "size": [
+      447,
+      646
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.7989,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7654,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_wax_puddle": {
+    "name_cn": "蜡油凝块",
+    "cat": "bare_offering",
+    "scenes": [
+      "义庄",
+      "城隍庙夜"
+    ],
+    "attempt": 1,
+    "size": [
+      855,
+      576
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.7003,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7744,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_candle_bundle": {
+    "name_cn": "新蜡烛一捆",
+    "cat": "bare_offering",
+    "scenes": [
+      "雾津街头"
+    ],
+    "attempt": 1,
+    "size": [
+      800,
+      631
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5563,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.5602,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_joss_paper_stack": {
+    "name_cn": "纸钱一摞",
+    "cat": "bare_offering",
+    "scenes": [
+      "义庄",
+      "河边"
+    ],
+    "attempt": 1,
+    "size": [
+      838,
+      722
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.611,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7294,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_joss_paper_scattered": {
+    "name_cn": "散落飞纸钱",
+    "cat": "bare_offering",
+    "scenes": [
+      "义庄",
+      "野道"
+    ],
+    "attempt": 1,
+    "size": [
+      869,
+      831
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5566,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6045,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_joss_burning_pile": {
+    "name_cn": "燃烧的纸钱堆",
+    "cat": "bare_offering",
+    "scenes": [
+      "义庄",
+      "河边",
+      "阎王岭山口"
+    ],
+    "attempt": 1,
+    "size": [
+      800,
+      646
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5676,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7179,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_joss_ash_pile": {
+    "name_cn": "纸灰堆",
+    "cat": "bare_offering",
+    "scenes": [
+      "义庄",
+      "河边"
+    ],
+    "attempt": 1,
+    "size": [
+      830,
+      617
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6528,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.8305,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_paper_ingot_pile": {
+    "name_cn": "纸元宝一堆",
+    "cat": "bare_offering",
+    "scenes": [
+      "义庄",
+      "城隍庙夜"
+    ],
+    "attempt": 1,
+    "size": [
+      835,
+      745
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5819,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7792,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_paper_ingot_string": {
+    "name_cn": "纸元宝串",
+    "cat": "bare_offering",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      746,
+      623
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5477,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6975,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_spirit_money_bundle": {
+    "name_cn": "冥币刀",
+    "cat": "bare_offering",
+    "scenes": [
+      "义庄",
+      "雾津街头"
+    ],
+    "attempt": 1,
+    "size": [
+      841,
+      708
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6177,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7713,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_white_paper_strips": {
+    "name_cn": "挂清白纸条",
+    "cat": "bare_offering",
+    "scenes": [
+      "阎王岭山口",
+      "崖墓"
+    ],
+    "attempt": 1,
+    "size": [
+      859,
+      866
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.3739,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.4126,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_hanging_qing_streamer": {
+    "name_cn": "挂清幡串",
+    "cat": "bare_offering",
+    "scenes": [
+      "阎王岭山口",
+      "野道"
+    ],
+    "attempt": 1,
+    "size": [
+      1024,
+      858
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.2623,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.4487,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_paper_clothes_set": {
+    "name_cn": "纸衣裤",
+    "cat": "bare_offering",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      876,
+      705
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.591,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6796,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_soul_banner_cloth": {
+    "name_cn": "招魂幡（无杆）",
+    "cat": "bare_offering",
+    "scenes": [
+      "义庄",
+      "河边"
+    ],
+    "attempt": 1,
+    "size": [
+      481,
+      953
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.556,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.4971,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_soul_banner_pole_set": {
+    "name_cn": "招魂幡带竹竿",
+    "cat": "bare_offering",
+    "scenes": [
+      "义庄",
+      "野道"
+    ],
+    "attempt": 1,
+    "size": [
+      849,
+      903
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.2082,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.2621,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_mourning_streamer": {
+    "name_cn": "孝幡布条束",
+    "cat": "bare_offering",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      587,
+      813
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5713,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7194,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_paper_flag_string": {
+    "name_cn": "纸三角小幡串",
+    "cat": "bare_offering",
+    "scenes": [
+      "城隍庙夜",
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      822,
+      736
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.3458,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.5121,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_paper_effigy_girl": {
+    "name_cn": "纸扎童女",
+    "cat": "paper_effigy",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      772,
+      825
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4294,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.5069,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_paper_servant_pair": {
+    "name_cn": "纸扎侍者一对",
+    "cat": "paper_effigy",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      633,
+      915
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5274,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6423,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_paper_horse_single": {
+    "name_cn": "纸马",
+    "cat": "paper_effigy",
+    "scenes": [
+      "义庄",
+      "野道"
+    ],
+    "attempt": 1,
+    "size": [
+      796,
+      775
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4129,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.4971,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_paper_ox_single": {
+    "name_cn": "纸牛",
+    "cat": "paper_effigy",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      841,
+      747
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.4725,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.5327,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_paper_sedan_single": {
+    "name_cn": "纸轿",
+    "cat": "paper_effigy",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      854,
+      804
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5626,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6712,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_paper_house_small": {
+    "name_cn": "纸小屋",
+    "cat": "paper_effigy",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      939,
+      771
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5816,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.674,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_paper_trunk_single": {
+    "name_cn": "纸箱笼",
+    "cat": "paper_effigy",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      785,
+      883
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.7132,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7912,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_offering_rice_bowl": {
+    "name_cn": "供饭一碗",
+    "cat": "bare_offering",
+    "scenes": [
+      "义庄",
+      "城隍庙夜"
+    ],
+    "attempt": 1,
+    "size": [
+      790,
+      616
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.7173,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7122,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_offering_wine_cups": {
+    "name_cn": "供酒三杯",
+    "cat": "bare_offering",
+    "scenes": [
+      "义庄",
+      "阎王岭山口"
+    ],
+    "attempt": 1,
+    "size": [
+      779,
+      606
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.5129,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.5991,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_offering_bun_stack": {
+    "name_cn": "供馍一摞",
+    "cat": "bare_offering",
+    "scenes": [
+      "义庄",
+      "阎王岭山口"
+    ],
+    "attempt": 1,
+    "size": [
+      486,
+      651
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.7375,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.66,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_offering_egg_plate": {
+    "name_cn": "供蛋",
+    "cat": "bare_offering",
+    "scenes": [
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      640,
+      612
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6006,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7371,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_offering_fruit_pile": {
+    "name_cn": "供果",
+    "cat": "bare_offering",
+    "scenes": [
+      "城隍庙夜",
+      "temple"
+    ],
+    "attempt": 1,
+    "size": [
+      828,
+      562
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6157,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7556,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_offering_whole_chicken": {
+    "name_cn": "供鸡",
+    "cat": "bare_offering",
+    "scenes": [
+      "城隍庙夜",
+      "义庄"
+    ],
+    "attempt": 1,
+    "size": [
+      735,
+      635
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6345,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.6534,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_offering_whole_fish": {
+    "name_cn": "供鱼",
+    "cat": "bare_offering",
+    "scenes": [
+      "城隍庙夜",
+      "河边"
+    ],
+    "attempt": 1,
+    "size": [
+      901,
+      635
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.3959,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.257,
+    "not_ref_copy": true,
+    "pass": true
+  },
+  "bare_offering_pork_slab": {
+    "name_cn": "刀头肉",
+    "cat": "bare_offering",
+    "scenes": [
+      "城隍庙夜",
+      "阎王岭山口"
+    ],
+    "attempt": 1,
+    "size": [
+      798,
+      650
+    ],
+    "max_edge_ok": true,
+    "corners_transparent": true,
+    "coverage": 0.6292,
+    "coverage_ok": true,
+    "green_residue": 0.0,
+    "green_ok": true,
+    "ref_corr": 0.7323,
+    "not_ref_copy": true,
+    "pass": true
+  }
+}
