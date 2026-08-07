@@ -9,12 +9,13 @@ triggers:
   paths: ["tools/animation_pipeline/**", "tools/anim_preview/**", "public/resources/**", "public/assets/animations/**"]
   topics: [素材, 抠图, 动画, 图集, 音频, 视差, 原始素材, 归档, 素材同步]
   tasks: [产素材, 抠图, 做动画, 处理音频, 视差分层, 环境动效, 归档原始素材]
-last_governed: 2026-07-11
+last_governed: 2026-08-05
 ---
 
 # 素材管线规范
 
-适用:美术/音频素材生产与再处理(抠图、动画图集、视差分层、环境动效、立绘、配音、音效)。
+适用:美术/美术衍生与音频素材的生产与再处理(抠图、动画图集、场景烘焙、视差分层、
+环境动效、立绘、配音、音效)。
 
 ## 不变量
 
@@ -28,15 +29,13 @@ last_governed: 2026-07-11
    anim.json 帧号 0 基;音频不入 ogg(Safari 不支持)。细则见
    [mechanisms/sprite-atlas-anim-contract.md](mechanisms/sprite-atlas-anim-contract.md)。
 5. **许可有据**:外采素材必须核许可并记录出处;CC-BY 须在 ATTRIBUTION.md 署名。
-6. **原始素材归档与同步**:每个角色的定稿原始源按「一角色一文件夹」归档到
-   `tmp/原始素材/<中文角色名>/`(gitignore 忽略、本地留存;文件夹**用中文角色名**,如 `土狗`/`画皮`):
-   **只放定稿**——`setup.png`(原始设定图)+ 各 `<状态>.mp4`(全部定稿动画视频);
-   中间版/候选/审查图/测试件一律不进。根目录 `README.md` 维护 中文文件夹 ↔ 英文 key ↔
-   `<key>_anim` bundle 的对应,供同步核对。此归档是不变量①「源一致性」的落地载体——
-   重扣/重生成从这里取权威源,故**必须与 `public/resources/runtime/animation/<key>_anim/`
-   的上线动画长期同步**:换设定图 / 改动画 / 加动作,归档同步更新;尚未动画化的角色只放 `setup.png`。
-   `animation-workbench/` 是唯一受管例外:它由动画资源工作台维护,用于保存不可变 revision、
-   内容寻址对象、人工审查和检查点,不算归档根目录杂物;禁止手工改写其中的账本或产物。
+6. **原始素材归档与同步**:定稿原始源按「一角色一文件夹」归档到 `tmp/原始素材/<中文角色名>/`
+   (gitignore、本地留存),根 `README.md` 维护 中文文件夹 ↔ 英文 key ↔ `<key>_anim` bundle 的
+   对应。**归档根只放定稿**——`setup.png` + 各 `<状态>.mp4`,中间版/候选/审查图/测试件一律
+   不进;`animation-workbench/`(动画资源工作台维护的不可变 revision 与内容寻址对象)是**唯一
+   受管例外**,其中的账本与产物禁止手工改写。此归档是不变量①的落地载体,故**必须与
+   `public/resources/runtime/animation/<key>_anim/` 的上线动画长期同步**(换设定图/改动画/
+   加动作都同步更新);尚未动画化的角色只放 `setup.png`。
 
 ## 过程义务
 

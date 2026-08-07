@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "id": "生态_看_码头_缆绳",
+  "entry": "root",
+  "meta": {
+    "title": "盘着的缆绳（眼力分叉；一拍：货堆猫弓背）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "narrative": "eco_眼力",
+              "state": "眼尖",
+              "reached": true
+            }
+          ],
+          "next": "yan1"
+        }
+      ],
+      "defaultNext": "ri1"
+    },
+    "ri1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "缆绳盘得规规矩矩，绳心还是干的——这条船靠岸没好久。",
+      "next": "act_ri"
+    },
+    "yan1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "盘绳这手法是外江的打法，不是本地脚帮的。这条船不是雾津的船。",
+      "next": "act_ri"
+    },
+    "act_ri": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "playNpcAnimation",
+          "params": {
+            "target": "eco_dk_货堆猫",
+            "state": "arch_alert",
+            "loop": false,
+            "thenState": "idle"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "end": {
+      "type": "end"
+    }
+  }
+}

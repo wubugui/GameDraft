@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "id": "生态_看_雾津_布篷底下",
+  "entry": "root",
+  "meta": {
+    "title": "端详 · 雾津纸扎铺白布篷（眼尖 / 夜 / 常态 三态）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "narrative": "eco_眼力",
+              "state": "眼尖",
+              "reached": true
+            }
+          ],
+          "next": "deep"
+        },
+        {
+          "conditions": [
+            {
+              "narrative": "eco_时辰",
+              "state": "夜"
+            }
+          ],
+          "next": "night"
+        }
+      ],
+      "defaultNext": "first"
+    },
+    "first": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "一张白布篷绷在四根竹竿上，底下堆着没编完的竹篾。篾条上留得有手汗印，一道一道。",
+      "next": "act_first"
+    },
+    "night": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "布篷让夜风兜得鼓起来，一鼓一鼓，像底下有啥子东西在喘气。",
+      "next": "end"
+    },
+    "deep": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "篾条的长短是量过的，一根根都是三尺二。这个尺寸不编筐——编的是纸人的骨架。",
+      "next": "end"
+    },
+    "act_first": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "faceEntity",
+          "params": {
+            "target": "eco_wj_拴驴",
+            "direction": "left"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "end": {
+      "type": "end"
+    }
+  }
+}

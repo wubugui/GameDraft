@@ -62,6 +62,7 @@ export function buildSignalCatalog(
       listeners: listeners.get(id)?.length ?? 0,
       emitters: emitterRefsById?.get(id)?.length ?? 0,
       editable: true,
+      registered: true,
     });
   }
 
@@ -79,6 +80,7 @@ export function buildSignalCatalog(
         listeners: listeners.get(id)?.length ?? 0,
         emitters: 0,
         editable: false,
+        registered: true, // 派生广播由状态自动产生，本就不需要注册行
       });
     }
   }
@@ -102,6 +104,7 @@ export function buildSignalCatalog(
           listeners: listeners.get(id)?.length ?? 0,
           emitters: emitterRefsById?.get(id)?.length ?? 0,
           editable: false,
+          registered: isDerivedStateSignal(id),
         });
       }
     }
@@ -115,6 +118,9 @@ export function buildSignalCatalog(
       listeners: refs.length,
       emitters: emitterRefsById?.get(id)?.length ?? 0,
       editable: !isDerivedStateSignal(id) && !isReservedAuthorSignalId(id),
+      // 只被监听、没有注册行 = 影子条目。派生形态的 state:… 若指向已删状态则不算"作者未登记"，
+      // 由 state.broadcast.missing 另行报，故这里按派生放行不标未登记。
+      registered: isDerivedStateSignal(id),
     });
   }
 
@@ -125,6 +131,7 @@ export function buildSignalCatalog(
     listeners: listeners.get(DEFAULT_DRAFT_SIGNAL)?.length ?? 0,
     emitters: 0,
     editable: false,
+    registered: true, // 保留占位符，不需要也不允许注册行
   });
 
   return [...entries.values()].sort((a, b) => {
@@ -140,6 +147,19 @@ export function collectKnownSignals(data: NarrativeGraphsFileDef): string[] {
   return buildSignalCatalog(data)
     .filter((e) => e.kind !== 'draft')
     .map((e) => e.id);
+}
+
+/**
+ * 「这条信号缺一行 signals 注册行、而且补得上」——目录弹窗的「补登记」按钮与迁移检查器的
+ * 未登记提示**共用这一个判据**，别各写各的（两处镜像迟早漂移：曾经弹窗用 `entry.editable`
+ * gate，于是 blackbox 声明来的信号在检查器里报警告、在弹窗里却没有补登记按钮）。
+ *
+ * 派生 `state:…`、草稿 `__draft__`、空 id 本来就不该有注册行，一律 false。
+ */
+export function isUnregisteredAuthorSignal(data: NarrativeGraphsFileDef, id: string): boolean {
+  const target = String(id ?? '').trim();
+  if (!target || isReservedAuthorSignalId(target)) return false;
+  return !(data.signals ?? []).some((s) => s.id === target);
 }
 
 export function createAuthorSignal(data: NarrativeGraphsFileDef, id: string, label?: string, notes?: string): void {

@@ -2,10 +2,20 @@ import type { EventBus } from '../core/EventBus';
 import type { FlagStore } from '../core/FlagStore';
 import type { ActionExecutor } from '../core/ActionExecutor';
 import type { RuleOfferRegistry } from '../core/RuleOfferRegistry';
-import type { Condition, ConditionExpr, ZoneDef, ZoneRuleSlot, IGameSystem, GameContext, IZoneDataProvider } from '../data/types';
+import type { Condition, ConditionExpr, PlayerVerb, ZoneDef, ZoneRuleSlot, IGameSystem, GameContext, IZoneDataProvider } from '../data/types';
 import { isPointInPolygon, isValidZonePolygon } from '../utils/zoneGeometry';
 import type { ConditionEvalContext } from './graphDialogue/evaluateGraphCondition';
 import { evaluateConditionExprList } from './graphDialogue/conditionEvalBridge';
+import type { ActionOriginContext } from '../data/types';
+
+/**
+ * zone 触发批的来源上下文：zoneId 供规矩 offers 等按 zone 注册的动作使用，
+ * 同时把 zone 本身登记为叙事 owner（`zone` 是合法的 wrapper owner 类型）——
+ * 这样"走进某片区域自动开的对话"也有 owner，图里的 ownerState 才读得到状态机。
+ */
+function zoneOrigin(zoneId: string): ActionOriginContext {
+  return { zoneId, ownerType: 'zone', ownerId: zoneId };
+}
 
 export class ZoneSystem implements IGameSystem, IZoneDataProvider {
   private eventBus: EventBus;
@@ -169,12 +179,63 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
           if (now >= next) {
             this.zoneStayNextAt.set(zone.id, now + ZoneSystem.STAY_INTERVAL_SEC);
             this.enqueueZoneActions(zone.id, () =>
-              this.actionExecutor.executeBatchInZoneContext(stay, { zoneId: zone.id }),
+              this.actionExecutor.executeBatchInZoneContext(stay, zoneOrigin(zone.id)),
             );
           }
         }
       }
     }
+  }
+
+  /**
+   * 玩家在活跃 zone 内做了身体动词：按 zone 声明顺序找第一个接住该动词的活跃 zone 并执行。
+   * 事件驱动，不走 onStay 的 0.25s 节流；与 onEnter/onExit 同一条 zone 串行队列，
+   * 保证同 zone 的动作批不重叠。返回是否有 zone 接住（供上层决定要不要回落全局兜底）。
+   */
+  dispatchPlayerAct(verb: PlayerVerb): boolean {
+    for (const zone of this.zones) {
+      if (!this.activeZoneIds.has(zone.id)) continue;
+      const batch = zone.onPlayerAct?.[verb];
+      if (!batch || batch.length === 0) continue;
+      this.enqueueZoneActions(zone.id, () =>
+        this.actionExecutor.executeBatchInZoneContext(batch, zoneOrigin(zone.id)),
+      );
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * 当前该出「按 E」提示的活跃 zone（按 zone 声明顺序取第一个配了 onInteract 的）。
+   * 只报事实，不判优先级——「有没有更近的 hotspot/NPC 接住 E」「位面允不允许交互」
+   * 由持有 E 输入的 InteractionSystem 决定（与身体动词同一套：目标级 → 区域级）。
+   */
+  getInteractableZone(): { zoneId: string; label: string } | null {
+    for (const zone of this.zones) {
+      if (!this.activeZoneIds.has(zone.id)) continue;
+      if (zone.zoneKind === 'depth_floor') continue;
+      if (!zone.onInteract || zone.onInteract.length === 0) continue;
+      return { zoneId: zone.id, label: (zone.interactLabel ?? '').trim() };
+    }
+    return null;
+  }
+
+  /**
+   * 玩家在活跃 zone 内按了 E：执行该 zone 的 onInteract。
+   * 与 onEnter/onExit/onPlayerAct 同一条 zone 串行队列、同一套 zone 上下文线程化。
+   * zone 已不活跃 / 已无 onInteract（条件变了、区被禁了）时返回 false，不执行——
+   * 提示是上一帧的快照，按键这一刻必须以当下事实为准。
+   */
+  dispatchZoneInteract(zoneId: string): boolean {
+    if (!this.activeZoneIds.has(zoneId)) return false;
+    const zone = this.zones.find((z) => z.id === zoneId);
+    if (!zone || zone.zoneKind === 'depth_floor') return false;
+    const batch = zone.onInteract;
+    if (!batch || batch.length === 0) return false;
+    this.enqueueZoneActions(zone.id, () =>
+      this.actionExecutor.executeBatchInZoneContext(batch, zoneOrigin(zone.id)),
+    );
+    return true;
   }
 
   private enqueueZoneActions(zoneId: string, task: () => Promise<void>): void {
@@ -191,7 +252,7 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
     const enter = zone.onEnter;
     if (enter && enter.length > 0) {
       this.enqueueZoneActions(zone.id, () =>
-        this.actionExecutor.executeBatchInZoneContext(enter, { zoneId: zone.id }),
+        this.actionExecutor.executeBatchInZoneContext(enter, zoneOrigin(zone.id)),
       );
     }
     this.eventBus.emit('zone:enter', { zoneId: zone.id, zone });
@@ -204,7 +265,7 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
     const exit = zone.onExit;
     if (exit && exit.length > 0) {
       this.enqueueZoneActions(zone.id, () =>
-        this.actionExecutor.executeBatchInZoneContext(exit, { zoneId: zone.id }),
+        this.actionExecutor.executeBatchInZoneContext(exit, zoneOrigin(zone.id)),
       );
     }
     this.eventBus.emit('zone:exit', { zoneId: zone.id, zone });

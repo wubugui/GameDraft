@@ -342,7 +342,8 @@
               "target": "_cut_cloaked_figure",
               "x": 700,
               "y": 500,
-              "speed": 80
+              "speed": 80,
+              "faceTowardMovement": true
             }
           },
           {
@@ -407,7 +408,8 @@
               "target": "_cut_cloaked_figure",
               "x": 1100,
               "y": 500,
-              "speed": 120
+              "speed": 120,
+              "faceTowardMovement": true
             }
           },
           {
@@ -417,7 +419,8 @@
               "target": "player",
               "x": 500,
               "y": 500,
-              "speed": 100
+              "speed": 100,
+              "faceTowardMovement": true
             }
           }
         ]
@@ -526,7 +529,8 @@
               "target": "_cut_temple_woman",
               "x": 580,
               "y": 720,
-              "speed": 80
+              "speed": 80,
+              "faceTowardMovement": true
             }
           },
           {
@@ -536,7 +540,8 @@
               "target": "_cut_temple_tall_man",
               "x": 500,
               "y": 750,
-              "speed": 90
+              "speed": 90,
+              "faceTowardMovement": true
             }
           },
           {
@@ -546,7 +551,8 @@
               "target": "_cut_temple_short_man",
               "x": 660,
               "y": 750,
-              "speed": 85
+              "speed": 85,
+              "faceTowardMovement": true
             }
           }
         ]
@@ -2315,7 +2321,8 @@
           "durationMs": 300,
           "arcHeight": 50,
           "jumpAnimState": "jump",
-          "landAnimState": "idle"
+          "landAnimState": "idle",
+          "faceTowardMovement": true
         }
       },
       {
@@ -2586,7 +2593,8 @@
           "x": 223.83,
           "y": 193.36,
           "moveAnimState": "slow_walk",
-          "arriveAnimState": "idle"
+          "arriveAnimState": "idle",
+          "faceTowardMovement": true
         }
       },
       {
@@ -2972,7 +2980,8 @@
           "durationMs": 300,
           "arcHeight": 50,
           "jumpAnimState": "jump",
-          "landAnimState": "idle"
+          "landAnimState": "idle",
+          "faceTowardMovement": true
         }
       },
       {
@@ -3243,7 +3252,8 @@
           "x": 223.83,
           "y": 193.36,
           "moveAnimState": "slow_walk",
-          "arriveAnimState": "idle"
+          "arriveAnimState": "idle",
+          "faceTowardMovement": true
         }
       },
       {
@@ -3842,6 +3852,15 @@
     "id": "崖墓尸任务发布",
     "steps": [
       {
+        "kind": "action",
+        "type": "playNpcAnimation",
+        "params": {
+          "target": "player",
+          "state": "idle",
+          "loop": "true"
+        }
+      },
+      {
         "kind": "parallel",
         "tracks": [
           {
@@ -3865,6 +3884,15 @@
         "text": "嘿！[tag:string:角色:关二狗]。",
         "speaker": "？？？",
         "scriptedNpcId": "崖墓任务发布者"
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "text": "咦？",
+        "scriptedNpcId": "player",
+        "portrait": {
+          "emotion": "calm"
+        }
       },
       {
         "kind": "action",
@@ -3949,7 +3977,7 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "text": "哪个喊老子？",
+        "text": "龟儿哪个背时的喊老子？",
         "scriptedNpcId": "player",
         "portrait": {
           "emotion": "calm"
@@ -3990,7 +4018,7 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "text": "……你哪个？躲到卡卡黑老子。",
+        "text": "……你是哪个？躲到卡卡黑老子。",
         "scriptedNpcId": "player",
         "portrait": {
           "emotion": "angry"
@@ -4020,7 +4048,7 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "text": "嘿嘿，官爷嗦，黑我一跳。",
+        "text": "嘿嘿，官爷嗦，黑我一跳。我还说哪个哟。",
         "scriptedNpcId": "player",
         "portrait": {
           "emotion": "smirk"
@@ -4029,13 +4057,13 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "text": "听说你啥子活路都敢接。",
+        "text": "嘿，听说你啥子活路都敢接迈？",
         "scriptedNpcId": "崖墓任务发布者"
       },
       {
         "kind": "present",
         "type": "showDialogue",
-        "text": "那也要看啥子活路撒。",
+        "text": "嘿~那也要看啥子活路撒。",
         "scriptedNpcId": "player",
         "portrait": {
           "emotion": "smirk"
@@ -4044,13 +4072,13 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "text": "今黑了三更，去崖墓背个死人去义庄。",
+        "text": "今黑了三更，去牛头梁梁上背个死人去义庄。",
         "scriptedNpcId": "崖墓任务发布者"
       },
       {
         "kind": "present",
         "type": "showDialogue",
-        "text": "……哪个嘛屋的嘛？为啥子不白天去出殡耶？",
+        "text": "啊？……哪个嘛屋的嘛？大晚上的板啥子，天亮不能弄迈？",
         "scriptedNpcId": "player",
         "portrait": {
           "emotion": "calm"
@@ -4065,7 +4093,7 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "text": "哎呀，不是不敢撒。这个晚上出殡嘛，价钱和白天不一样哦。",
+        "text": "哎呀，不是不敢撒。这个晚上背人，价钱和白天不一样哦。",
         "scriptedNpcId": "player",
         "portrait": {
           "emotion": "smirk"
@@ -4074,7 +4102,7 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "text": "五十文。",
+        "text": "五百文。",
         "scriptedNpcId": "崖墓任务发布者"
       },
       {
@@ -4089,7 +4117,7 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "text": "五十文。得行马上给你一半。",
+        "text": "五百文。得行马上给你一半。",
         "scriptedNpcId": "崖墓任务发布者"
       },
       {
@@ -4104,7 +4132,7 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "text": "在崖上哪个凼？",
+        "text": "在梁梁上哪个凼？",
         "scriptedNpcId": "player",
         "portrait": {
           "emotion": "smirk"
@@ -4125,19 +4153,19 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "text": "背起来就走，途中莫回头，莫灭灯，有人喊你莫答应。",
+        "text": "背起来就走，途中莫回头，莫灭灯，有人喊你莫张视。",
         "scriptedNpcId": "崖墓任务发布者"
       },
       {
         "kind": "present",
         "type": "showDialogue",
-        "text": "对头，你今年好多岁？",
+        "text": "对头，你今年好多岁也？",
         "scriptedNpcId": "崖墓任务发布者"
       },
       {
         "kind": "present",
         "type": "showDialogue",
-        "text": "应该二十几岁。",
+        "text": "嗯……应该二十几岁。",
         "scriptedNpcId": "player",
         "portrait": {
           "emotion": "smirk"
@@ -4152,7 +4180,7 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "text": "你属啥子你晓得不？",
+        "text": "那你属啥子你晓得嘛？",
         "scriptedNpcId": "崖墓任务发布者"
       },
       {
@@ -4188,13 +4216,13 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "text": "反正你上了梁梁莫回头，一口气背到义庄。",
+        "text": "反正你上了梁梁莫回头，一口气背到义庄就得行老。",
         "scriptedNpcId": "崖墓任务发布者"
       },
       {
         "kind": "present",
         "type": "showDialogue",
-        "text": "这儿一半定金。",
+        "text": "这包钱先拿到。",
         "scriptedNpcId": "崖墓任务发布者"
       },
       {
@@ -4246,7 +4274,7 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "text": "嘿，另外一半我找哪个要诶？",
+        "text": "喂——那另外一半我找哪个要诶？",
         "scriptedNpcId": "player",
         "portrait": {
           "emotion": "smirk"
@@ -4261,21 +4289,30 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "text": "记到：莫回头，莫灭灯，有人喊你莫答应。",
+        "text": "个人记到：莫回头，莫灭灯，有人喊你莫张视。",
         "scriptedNpcId": "崖墓任务发布者"
       },
       {
         "kind": "present",
         "type": "waitTime",
-        "duration": 1000.0
+        "duration": 800.0
       },
       {
         "kind": "present",
         "type": "showDialogue",
-        "text": "神戳戳的不晓得装啥子洋怪……半夜三更的跑到那坟圈子头去，老子还没得那么哈也。",
+        "text": "龟儿神戳戳的不晓得装啥子洋怪……",
         "scriptedNpcId": "player",
         "portrait": {
           "emotion": "calm"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "text": "半夜三更的跑到坟圈子去，老子才没得那么哈也。",
+        "scriptedNpcId": "player",
+        "portrait": {
+          "emotion": "smirk"
         }
       },
       {
@@ -4315,7 +4352,25 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "text": "1文，2文，3文……",
+        "text": "一……二……三……",
+        "scriptedNpcId": "player",
+        "portrait": {
+          "emotion": "laugh"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "text": "……龟儿这个是私铸的嘛？",
+        "scriptedNpcId": "player",
+        "portrait": {
+          "emotion": "laugh"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "text": "……算了算了，算你一个。",
         "scriptedNpcId": "player",
         "portrait": {
           "emotion": "laugh"
@@ -4336,6 +4391,24 @@
         "kind": "present",
         "type": "fadeIn",
         "duration": 1000
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "text": "……二百二十九，二百三十。",
+        "scriptedNpcId": "player",
+        "portrait": {
+          "emotion": "laugh"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "text": "个狗日的还毛老子二十文，呸！",
+        "scriptedNpcId": "player",
+        "portrait": {
+          "emotion": "smirk"
+        }
       },
       {
         "kind": "action",
@@ -4365,8 +4438,16 @@
       }
     ],
     "targetScene": "test_room_b",
-    "restoreState": false,
-    "targetX": 1033,
-    "targetY": 291
+    "restoreState": false
+  },
+  {
+    "id": "主线_赌场输钱",
+    "steps": [
+      {
+        "kind": "present",
+        "type": "waitClick"
+      }
+    ],
+    "restoreState": false
   }
 ]

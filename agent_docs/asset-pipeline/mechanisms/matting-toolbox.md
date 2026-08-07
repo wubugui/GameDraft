@@ -13,7 +13,7 @@ triggers:
   paths: ["tools/animation_pipeline/matting.py", "tools/animation_pipeline/matte_illustration.py", "tools/dialogue_portrait_pipeline.py"]
   topics: [抠图, matting, halo, despill, 色键, 镂空]
   tasks: [抠图, 换底, 修halo, 审查抠图质量]
-last_governed: 2026-07-11
+last_governed: 2026-08-05
 ---
 
 ## 是什么(一句话)

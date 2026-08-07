@@ -7,10 +7,22 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from tools.dialogue_graph_editor.dialogue_condition_text import (
+    ALWAYS as _COND_ALWAYS,
+    NEVER as _COND_NEVER,
+    case_verdict as _dialogue_case_verdict,
+)
+
 from .file_io import read_json
+from .shared.character_dialogue import resolve_npc_dialogue_graph
+from .shared.dialogue_entry_overrides import (
+    collect_dialogue_graph_entry_overrides,
+    graph_entry_roots,
+)
 from .shared.cutscene_action_allowlist_io import cutscene_action_allowlist_frozenset
 from .shared.move_entity_map_picker import normalize_move_entity_waypoints
 from .shared.narrative_catalog import emitted_signal_ids
+from .shared.project_paths import URL_KIND_MEDIA
 from .shared.runtime_field_schema import field_meta, is_valid_field, value_matches_field
 
 if TYPE_CHECKING:
@@ -498,6 +510,8 @@ def validate(model: ProjectModel) -> list[Issue]:
                 if iid and iid not in item_ids:
                     issues.append(Issue("warning", "scene", sid,
                                         f"Hotspot '{hs.get('id')}' 的 itemId '{iid}' 不存在"))
+            if hs.get("type") == "act_spot":
+                _check_act_spot_data(issues, sid, hid, data, sc)
         for npc in sc.get("npcs", []):
             nid = str(npc.get("id", "") or "?")
             bindings = _entity_cutscene_bindings(npc)
@@ -527,6 +541,12 @@ def validate(model: ProjectModel) -> list[Issue]:
                 issues.append(Issue(
                     "error", "scene", sid,
                     f"NPC '{npc.get('id')}' initialFacing 须为 'left' 或 'right'",
+                ))
+            nsort = npc.get("spriteSort")
+            if nsort is not None and nsort not in ("back", "front"):
+                issues.append(Issue(
+                    "error", "scene", sid,
+                    f"NPC '{nid}' spriteSort 须为 back 或 front",
                 ))
             anim_bundle = _anim_bundle_id_from_ref(npc.get("animFile"))
             if anim_bundle and anim_bundle not in model.animations:
@@ -760,6 +780,7 @@ def validate(model: ProjectModel) -> list[Issue]:
                     ("onEnter", "onEnter"),
                     ("onStay", "onStay"),
                     ("onExit", "onExit"),
+                    ("onInteract", "onInteract"),
                 ):
                     if zone.get(ev):
                         issues.append(Issue(
@@ -770,6 +791,19 @@ def validate(model: ProjectModel) -> list[Issue]:
                 issues.append(Issue(
                     "warning", "scene", sid,
                     f"Zone '{zid}' 为 standard，floorOffsetBoost 无效，可删除",
+                ))
+
+            oi = zone.get("onInteract")
+            if oi is not None and not isinstance(oi, list):
+                issues.append(Issue(
+                    "error", "scene", sid,
+                    f"Zone '{zid}' onInteract 须为动作数组（或删除该字段）",
+                ))
+            if str(zone.get("interactLabel") or "").strip() and not oi:
+                issues.append(Issue(
+                    "warning", "scene", sid,
+                    f"Zone '{zid}' 配了 interactLabel 却没有 onInteract："
+                    "提示条只在有 onInteract 时才出，这行文案永不显示",
                 ))
 
             smell = zone.get("smell")
@@ -1042,6 +1076,11 @@ def validate(model: ProjectModel) -> list[Issue]:
         issues.append(Issue("error", "config", "game_config",
                             f"fallbackScene '{cfg['fallbackScene']}' 不存在"))
 
+    _validate_player_acts(model, issues)
+    _validate_character_avatars(model, issues)
+    _validate_animation_sockets(model, issues)
+
+    _validate_items(model, issues)
     _validate_overlay_images(model, issues)
     _validate_parallax_scenes(model, issues)
 
@@ -1051,6 +1090,7 @@ def validate(model: ProjectModel) -> list[Issue]:
 
     _validate_pressure_holds(model, issues)
     _validate_signal_cues(model, issues)
+    _validate_bubble_lines(model, issues)
     _validate_water_minigames(model, issues)
     _validate_paper_craft(model, issues)
     _validate_object_examine(model, issues)
@@ -1289,6 +1329,54 @@ def _validate_narrative(model: ProjectModel, issues: list[Issue]) -> None:
                 _scan_scene_group_owners(value, f"{path}[{index}]")
 
     _scan_scene_group_owners(data.get("compositions") or [], "compositions")
+
+    # npc / hotspot / zone 的 wrapper：运行时以**裸**实体 id 建 owner 索引
+    # （InteractionCoordinator 传 npc.def.id / hotspot.def.id，ZoneSystem 传 zone.id），
+    # 写成 `场景:实体id` 的限定形式会索引不上——wrapper 照常加载、状态照常推进，
+    # 但按 owner 的查询永远落空，图里的 ownerState 静默走 missingWrapperNext。
+    # 这是"编辑器看着绑好了、跑起来什么都没发生"的一类死绑，必须构建期报死。
+    _scene_entity_ids: dict[str, set[str]] = {"npc": set(), "hotspot": set(), "zone": set()}
+    _qualified_to_bare: dict[str, dict[str, str]] = {"npc": {}, "hotspot": {}, "zone": {}}
+    for _sid, _scene in (model.scenes or {}).items():
+        if not isinstance(_scene, dict):
+            continue
+        for _key, _kind in (("npcs", "npc"), ("hotspots", "hotspot"), ("zones", "zone")):
+            for _e in _scene.get(_key) or []:
+                if not isinstance(_e, dict):
+                    continue
+                _eid = str(_e.get("id", "")).strip()
+                if not _eid:
+                    continue
+                _scene_entity_ids[_kind].add(_eid)
+                _qualified_to_bare[_kind][f"{_sid}:{_eid}"] = _eid
+
+    def _scan_entity_wrapper_owners(obj: Any, path: str) -> None:
+        if isinstance(obj, dict):
+            owner_type = str(obj.get("ownerType") or "").strip()
+            owner_id = str(obj.get("ownerId") or "").strip()
+            if owner_type in _scene_entity_ids and owner_id:
+                if owner_id not in _scene_entity_ids[owner_type]:
+                    bare = _qualified_to_bare[owner_type].get(owner_id)
+                    if bare:
+                        issues.append(Issue(
+                            "error", "narrative", path,
+                            f"{owner_type} wrapper 的 ownerId {owner_id!r} 用了「场景:实体id」限定形式，"
+                            f"运行时按裸 id 建 owner 索引、永远匹配不上（ownerState 会静默走 "
+                            f"missingWrapperNext）。改成 {bare!r}。",
+                        ))
+                    else:
+                        issues.append(Issue(
+                            "warning", "narrative", path,
+                            f"{owner_type} wrapper 的 ownerId {owner_id!r} 在场景数据里找不到对应实体，"
+                            f"该 wrapper 按 owner 的查询永远落空",
+                        ))
+            for key, value in obj.items():
+                _scan_entity_wrapper_owners(value, f"{path}.{key}")
+        elif isinstance(obj, list):
+            for index, value in enumerate(obj):
+                _scan_entity_wrapper_owners(value, f"{path}[{index}]")
+
+    _scan_entity_wrapper_owners(data.get("compositions") or [], "compositions")
 
     # 0. 叙事图状态动作树里的 updateQuest.id 必须存在于 quests.json（承接审查新增）：
     # 运行时对未知任务 id 无声跳过，画布上「盖章推进任务」实际不生效。
@@ -1880,6 +1968,75 @@ def _validate_signal_cues(model: ProjectModel, issues: list[Issue]) -> None:
         _walk_action_defs(model, issues, actions, "signal_cue", cid, None)
 
 
+
+def _validate_bubble_lines(model: ProjectModel, issues: list[Issue]) -> None:
+    """bubble_lines.json：id 唯一、说话人可解析、场景存在、至少一句台词、条件可求值。
+
+    说话人漏配是这张表最容易犯的错——运行时解析不到就**整组静默不说话**，
+    策划只会看到"配了没反应"，所以这里按 error 拦。
+    """
+    data = getattr(model, "bubble_lines", None)
+    if not isinstance(data, dict):
+        if data not in (None, {}, []):
+            issues.append(Issue("error", "bubble_lines", "?", "bubble_lines.json 顶层须为对象 {tuning, lineSets}"))
+        return
+    sets = data.get("lineSets")
+    if sets is None:
+        return
+    if not isinstance(sets, list):
+        issues.append(Issue("error", "bubble_lines", "?", "lineSets 须为数组"))
+        return
+
+    # ⚠ 排除 zone：`all_scene_entity_ids()` 把 zone 也算实体，但运行时 resolveEmoteTarget
+    # 只认「过场演员 / NPC / player / 当前场景热点」。把 zone 算进合法集，就等于放行了
+    # 一种"配了完全没反应"的写法——正是这条 error 本来要拦的那类。
+    known_entities = {
+        eid for eid, label in model.all_scene_entity_ids() if not label.startswith("zone:")
+    }
+    known_scenes = set(model.all_scene_ids())
+    seen: set[str] = set()
+    for c in sets:
+        if not isinstance(c, dict):
+            issues.append(Issue("error", "bubble_lines", "?", "条目须为对象"))
+            continue
+        cid = str(c.get("id") or "").strip()
+        if not cid:
+            issues.append(Issue("error", "bubble_lines", "?", "缺少 id"))
+            continue
+        if cid in seen:
+            issues.append(Issue("error", "bubble_lines", cid, f"id 重复: {cid!r}"))
+        seen.add(cid)
+
+        sp = c.get("speaker")
+        if not isinstance(sp, dict) or sp.get("kind") not in ("player", "entity"):
+            issues.append(Issue("error", "bubble_lines", cid, "speaker 须为 {kind:'player'} 或 {kind:'entity', id}"))
+        elif sp.get("kind") == "entity":
+            eid = str(sp.get("id") or "").strip()
+            if not eid:
+                issues.append(Issue("error", "bubble_lines", cid, "speaker.kind=entity 时必须填 id"))
+            elif eid not in known_entities:
+                issues.append(Issue(
+                    "error", "bubble_lines", cid,
+                    f"speaker.id {eid!r} 不是任何场景里的实体（运行时解析不到＝整组不说话）",
+                ))
+
+        for sc in c.get("scenes") or []:
+            if str(sc) not in known_scenes:
+                issues.append(Issue("error", "bubble_lines", cid, f"scenes 里的场景 {sc!r} 不存在"))
+
+        lines = c.get("lines")
+        if not isinstance(lines, list) or not [
+            ln for ln in lines if isinstance(ln, dict) and str(ln.get("text") or "").strip()
+        ]:
+            issues.append(Issue("error", "bubble_lines", cid, "至少要有一句非空台词"))
+
+        trig = c.get("trigger")
+        if trig is not None and trig not in ("ambient", "approach"):
+            issues.append(Issue("error", "bubble_lines", cid, f"trigger 只能是 ambient / approach，得到 {trig!r}"))
+        pick = c.get("pickMode")
+        if pick is not None and pick not in ("random", "sequence"):
+            issues.append(Issue("error", "bubble_lines", cid, f"pickMode 只能是 random / sequence，得到 {pick!r}"))
+
 def _validate_water_minigames(model: ProjectModel, issues: list[Issue]) -> None:
     """water_minigames 各实例的实体动作一致性（对齐其它数据类型的 _walk_action_defs）。
 
@@ -2036,17 +2193,133 @@ def _validate_object_examine(model: ProjectModel, issues: list[Issue]) -> None:
                     "warning", "object_examine", ctx,
                     f"presentation.contactAoIntensity={cai} 建议落在 0～3",
                 ))
-            cas = pres.get("contactAoScale")
-            if cas is not None and not isinstance(cas, (int, float)):
+            if "contactAoScale" in pres:
                 issues.append(Issue(
                     "error", "object_examine", ctx,
-                    f"presentation.contactAoScale 须为数值，当前 {cas!r}",
+                    "presentation.contactAoScale 已废弃（那是贴图像素倍率，换分辨率就变味）；"
+                    "改写 contactAoRadiusCm（真实半径，厘米），并补 physicalWidthCm",
                 ))
-            elif isinstance(cas, (int, float)) and not (0.3 <= float(cas) <= 2.5):
+            pw = pres.get("physicalWidthCm")
+            if pw is not None and not isinstance(pw, (int, float)):
+                issues.append(Issue(
+                    "error", "object_examine", ctx,
+                    f"presentation.physicalWidthCm 须为数值，当前 {pw!r}",
+                ))
+            elif isinstance(pw, (int, float)) and not (0.5 <= float(pw) <= 2000):
                 issues.append(Issue(
                     "warning", "object_examine", ctx,
-                    f"presentation.contactAoScale={cas} 建议落在 0.3～2.5",
+                    f"presentation.physicalWidthCm={pw} 建议落在 0.5～2000（厘米）",
                 ))
+            car = pres.get("contactAoRadiusCm")
+            if car is not None and not isinstance(car, (int, float)):
+                issues.append(Issue(
+                    "error", "object_examine", ctx,
+                    f"presentation.contactAoRadiusCm 须为数值，当前 {car!r}",
+                ))
+            elif isinstance(car, (int, float)) and not (0 <= float(car) <= 8):
+                issues.append(Issue(
+                    "warning", "object_examine", ctx,
+                    f"presentation.contactAoRadiusCm={car} 建议落在 0～8（厘米）",
+                ))
+            # AO 是按真实长度算的：没有标尺就只能吃兜底值，观感会跟物件实际大小脱节。
+            ao_on = not (isinstance(cai, (int, float)) and float(cai) <= 0)
+            if pw is None and ao_on:
+                issues.append(Issue(
+                    "warning", "object_examine", ctx,
+                    "presentation 未声明 physicalWidthCm（静帧横向真实宽度，厘米）；"
+                    "接触 AO 半径按真实长度换算，缺标尺会退回 100cm 兜底",
+                ))
+            # ---- 氛围里的物理量：长度/速度一律厘米制，旧的比例/倍率字段一律报错 ----
+            amb_doc = doc.get("ambience") or {}
+            LEGACY_AMBIENCE_FIELDS = [
+                (("dust",), "radius", "radiusCm", "颗粒半径倍率"),
+                (("flyingFlies",), "orbitRadius", "roamRadiusCm", "活动域倍率"),
+                (("flyingFlies",), "speed", "speedCmPerSec", "速度倍率"),
+                (("flyingFlies",), "size", "lengthCm", "尺寸倍率"),
+                (("cloudShadow",), "speed", "speedCmPerSec", "设计像素/秒"),
+                (("crawlers", "centipede"), "speed", "speedCmPerSec", "速度倍率"),
+                (("crawlers", "centipede"), "size", "lengthCm", "尺寸倍率"),
+                (("crawlers", "beetles"), "radius", "radiusCm", "长边比例"),
+                (("crawlers", "beetles"), "size", "lengthCm", "尺寸倍率"),
+            ]
+            for path, old_key, new_key, what in LEGACY_AMBIENCE_FIELDS:
+                node = amb_doc
+                for seg in path:
+                    node = node.get(seg) if isinstance(node, dict) else None
+                    if node is None:
+                        break
+                if isinstance(node, dict) and old_key in node:
+                    issues.append(Issue(
+                        "error", "object_examine", ctx,
+                        f"ambience.{'.'.join(path)}.{old_key} 已废弃（{what}，换张分辨率不同的图就变味）；"
+                        f"改写 {new_key}（真实单位）",
+                    ))
+            maggots_doc = (amb_doc.get("crawlers") or {}).get("maggots")
+            if isinstance(maggots_doc, dict):
+                for cl in (maggots_doc.get("clusters") or []):
+                    if not isinstance(cl, dict):
+                        continue
+                    for old_key, new_key in (("radius", "radiusCm"), ("size", "lengthCm")):
+                        if old_key in cl:
+                            issues.append(Issue(
+                                "error", "object_examine", ctx,
+                                f"ambience.crawlers.maggots.clusters[].{old_key} 已废弃；"
+                                f"改写 {new_key}（厘米）",
+                            ))
+            for path, key, lo, hi in [
+                (("crawlers", "terrain"), "reliefCm", 0, 200),
+                (("crawlers", "terrain"), "grooveFollow", 0, 1),
+                (("crawlers", "terrain"), "climbSlowdown", 0, 2),
+                (("dust",), "radiusCm", 0.02, 8),
+                (("flyingFlies",), "roamRadiusCm", 1, 200),
+                (("flyingFlies",), "speedCmPerSec", 1, 200),
+                (("flyingFlies",), "lengthCm", 0.2, 40),
+                (("cloudShadow",), "speedCmPerSec", 0.1, 10),
+                (("crawlers", "centipede"), "speedCmPerSec", 1, 200),
+                (("crawlers", "centipede"), "lengthCm", 0.5, 150),
+                (("crawlers", "beetles"), "radiusCm", 0.2, 100),
+                (("crawlers", "beetles"), "lengthCm", 0.1, 40),
+            ]:
+                node = amb_doc
+                for seg in path:
+                    node = node.get(seg) if isinstance(node, dict) else None
+                    if node is None:
+                        break
+                if not isinstance(node, dict):
+                    continue
+                v = node.get(key)
+                if v is None:
+                    continue
+                label = f"ambience.{'.'.join(path)}.{key}"
+                if not isinstance(v, (int, float)):
+                    issues.append(Issue(
+                        "error", "object_examine", ctx, f"{label} 须为数值，当前 {v!r}"))
+                elif not (lo <= float(v) <= hi):
+                    issues.append(Issue(
+                        "warning", "object_examine", ctx,
+                        f"{label}={v} 建议落在 {lo}～{hi}"))
+
+            crawlers = (doc.get("ambience") or {}).get("crawlers")
+            if isinstance(crawlers, dict):
+                cshadow = crawlers.get("contactShadow")
+                if isinstance(cshadow, dict):
+                    if "size" in cshadow:
+                        issues.append(Issue(
+                            "error", "object_examine", ctx,
+                            "ambience.crawlers.contactShadow.size 已废弃（尺寸倍率）；"
+                            "改写 radiusCm（真实半径，厘米）",
+                        ))
+                    csr = cshadow.get("radiusCm")
+                    if csr is not None and not isinstance(csr, (int, float)):
+                        issues.append(Issue(
+                            "error", "object_examine", ctx,
+                            f"ambience.crawlers.contactShadow.radiusCm 须为数值，当前 {csr!r}",
+                        ))
+                    elif isinstance(csr, (int, float)) and not (0 <= float(csr) <= 8):
+                        issues.append(Issue(
+                            "warning", "object_examine", ctx,
+                            f"ambience.crawlers.contactShadow.radiusCm={csr} 建议落在 0～8（厘米）",
+                        ))
         hotspots = doc.get("hotspots")
         if not isinstance(hotspots, list):
             issues.append(Issue(
@@ -2177,6 +2450,41 @@ def _validate_object_examine(model: ProjectModel, issues: list[Issue]) -> None:
             issues.append(Issue(
                 "error", "object_examine", ctx,
                 "ambience 须为对象",
+            ))
+
+
+def _validate_items(model: ProjectModel, issues: list[Issue]) -> None:
+    """物品：背包图标 icon 指向的媒体文件必须存在。
+
+    留空是合法的（背包格子退回物品名文字显示），但**填了却指不到文件**运行时就是
+    一个静默画不出来的空格子——只报到不存在/越界这两种，不强制所有物品都配图。
+    """
+    for it in model.items:
+        if not isinstance(it, dict):
+            continue
+        iid = str(it.get("id", "") or "?")
+        raw = it.get("icon")
+        if raw is None:
+            continue
+        if not isinstance(raw, str) or not raw.strip():
+            issues.append(Issue(
+                "error", "item", iid,
+                "icon 必须是非空字符串；不配图请直接删掉该字段（背包会退回名称文字）",
+            ))
+            continue
+        ref = raw.strip()
+        if ref.startswith("http://") or ref.startswith("https://"):
+            continue  # 远端资源不验证（与素材审计同口径）
+        disk = model.paths.url_to_disk(ref, kind=URL_KIND_MEDIA)
+        if disk is None:
+            issues.append(Issue(
+                "error", "item", iid,
+                f"icon 不可解析为媒体路径（媒体必须落在 public/resources/runtime 下）：{ref!r}",
+            ))
+        elif not disk.is_file():
+            issues.append(Issue(
+                "error", "item", iid,
+                f"icon 指向的图片文件不存在：{disk}",
             ))
 
 
@@ -2676,6 +2984,38 @@ def _append_action_param_ref_issues(
                 f"playSignalCue id {cid!r} 不在 signal_cues.json 中",
             ))
 
+    if t == "setBubbleLineSet":
+        sid = str(p.get("lineSetId") or "").strip()
+        bl = getattr(model, "bubble_lines", None)
+        sets = (bl or {}).get("lineSets") if isinstance(bl, dict) else []
+        known = {str(c.get("id") or "") for c in (sets or []) if isinstance(c, dict)}
+        if not sid:
+            issues.append(Issue("error", data_type, item_id, "setBubbleLineSet 缺少 lineSetId"))
+        elif sid not in known:
+            # 运行时找不到就直接拒绝套用（只打 warn），编辑期必须拦住
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"setBubbleLineSet lineSetId {sid!r} 不在 bubble_lines.json 中（运行时会拒绝套用）",
+            ))
+        else:
+            # 台词本自带 speaker，与 target 对不上时运行时**静默拒绝**（只有一行 console.warn，
+            # 策划只会看到"配了没反应"）。这是这一族数据里最容易犯、最难自查的错，必须编辑期拦。
+            target = str(p.get("target") or "").strip()
+            want = next(
+                (c.get("speaker") for c in (sets or [])
+                 if isinstance(c, dict) and str(c.get("id") or "") == sid),
+                None,
+            )
+            if isinstance(want, dict) and target:
+                want_key = "player" if want.get("kind") == "player" else str(want.get("id") or "")
+                have_key = "player" if target == "player" else target
+                if want_key and want_key != have_key:
+                    issues.append(Issue(
+                        "error", data_type, item_id,
+                        f"setBubbleLineSet target {target!r} 与台词本 {sid!r} 的 speaker "
+                        f"{want_key!r} 不一致（运行时会拒绝套用，且只在控制台留一行警告）",
+                    ))
+
     if t == "activatePlane":
         pid = str(p.get("id") or "").strip()
         known = _plane_id_set(model)
@@ -3052,12 +3392,56 @@ def _append_action_param_ref_issues(
                     f"{t} 的 {ip} {iv!r} 不在 overlay_images.json 的键中",
                 ))
 
+    if t == "attachToSocket":
+        prop_table = getattr(model, "prop_presets", None)
+        prop_keys = set(prop_table.keys()) if isinstance(prop_table, dict) else set()
+        prop_id = str(p.get("prop") or "").strip()
+        if prop_id and prop_id not in prop_keys:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"attachToSocket 的 prop {prop_id!r} 不在 prop_presets.json 中"
+                "（挂件预设缺席＝运行时挂不出东西，只 warn 一行）",
+            ))
+        # 贴图可以由 prop 预设提供，所以只在两者都没有时才是硬错
+        has_img = bool(str(p.get("image") or "").strip()) or bool(
+            [x for x in (p.get("images") or []) if isinstance(x, str) and x.strip()])
+        if not prop_id and not has_img:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                "attachToSocket 既没给 prop 也没给 image/images——挂不出任何东西",
+            ))
+        for key in ("anchorX", "anchorY"):
+            if key in p:
+                try:
+                    v = float(p[key])
+                except (TypeError, ValueError):
+                    issues.append(Issue(
+                        "error", data_type, item_id,
+                        f"attachToSocket 的 {key} 不是数字：{p[key]!r}"))
+                    continue
+                if not (0.0 <= v <= 1.0):
+                    issues.append(Issue(
+                        "warning", data_type, item_id,
+                        f"attachToSocket 的 {key}={v} 超出 0..1（贴图内归一化坐标，运行时会夹取）"))
+        if "scale" in p:
+            try:
+                sv = float(p["scale"])
+            except (TypeError, ValueError):
+                sv = -1.0
+            if sv <= 0:
+                issues.append(Issue(
+                    "warning", data_type, item_id,
+                    f"attachToSocket 的 scale={p['scale']!r} 非正数——运行时按未设处理"))
+
     if t == "faceEntity":
         d = str(p.get("direction") or "").strip()
-        if d and d not in ("left", "right", "up", "down"):
+        # 朝向只有左右镜像（SpriteEntity.setDirection 丢弃 dy）：up/down 运行时是空操作，
+        # 曾经被编辑器下拉与本校验一起放行 → fail-closed 收掉（构建期严于运行时）。
+        if d and d not in ("left", "right"):
             issues.append(Issue(
-                "warning", data_type, item_id,
-                f"faceEntity direction {d!r} 非 left/right/up/down",
+                "error", data_type, item_id,
+                f"faceEntity direction {d!r} 无效：朝向只有 left/right"
+                "（无上下朝向，up/down 运行时不生效）",
             ))
 
     if t == "startWaterMinigame":
@@ -3375,6 +3759,11 @@ def _validate_scenarios_catalog(model: ProjectModel, issues: list[Issue]) -> Non
         issues.append(Issue("error", "scenarios", "", err))
 
 
+# 与 src/data/types.ts 的 PLAYER_VERBS / PLAYER_POSTURES 对齐（parity 测试锁定）
+PLAYER_VERBS: frozenset[str] = frozenset({"crouch", "gaze", "kick", "jump", "lie"})
+PLAYER_POSTURES: frozenset[str] = frozenset({"crouch", "gaze", "lie"})
+
+
 def _scan_condition_expr(
     model: ProjectModel,
     issues: list[Issue],
@@ -3575,39 +3964,18 @@ def _scan_condition_expr(
                 f"narrativeCount 的 op {op!r} 不合法（== != > >= < <=）",
             ))
         return
+    if isinstance(expr.get("posture"), str):
+        want = str(expr.get("posture")).strip()
+        if want not in PLAYER_POSTURES:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"posture 条件 {want!r} 非法（可用：{'、'.join(sorted(PLAYER_POSTURES))}）",
+            ))
+        return
     issues.append(Issue(
         "warning", data_type, item_id,
         f"无法识别的条件叶子（键: {sorted(expr.keys())!s}）",
     ))
-
-
-def _collect_dialogue_graph_entry_overrides(model: ProjectModel) -> dict[str, set[str]]:
-    """图 id → 该图被 NPC 用 dialogueGraphEntry 指定的备用入口节点集合。
-
-    多入口共享图（如市井闲谈被十几个 NPC 各自从不同节点进入）的可达性必须把这些
-    override 入口也当根，否则会误报「流程孤儿」（审查 P1-33；运行时
-    GraphDialogueManager 明确支持 params.entry 覆盖入口）。"""
-    overrides: dict[str, set[str]] = {}
-    for sc in (getattr(model, "scenes", {}) or {}).values():
-        if not isinstance(sc, dict):
-            continue
-        for npc in sc.get("npcs") or []:
-            if not isinstance(npc, dict):
-                continue
-            gid = str(npc.get("dialogueGraphId", "") or "").strip()
-            dge = str(npc.get("dialogueGraphEntry", "") or "").strip()
-            if gid and dge:
-                overrides.setdefault(gid, set()).add(dge)
-        # 热区也可能带 dialogueGraphId/Entry
-        for hs in sc.get("hotspots") or []:
-            if not isinstance(hs, dict):
-                continue
-            data = hs.get("data") if isinstance(hs.get("data"), dict) else {}
-            gid = str(data.get("dialogueGraphId", "") or "").strip()
-            dge = str(data.get("dialogueGraphEntry", "") or "").strip()
-            if gid and dge:
-                overrides.setdefault(gid, set()).add(dge)
-    return overrides
 
 
 def _validate_dialogue_graphs(model: ProjectModel, issues: list[Issue]) -> None:
@@ -3616,7 +3984,7 @@ def _validate_dialogue_graphs(model: ProjectModel, issues: list[Issue]) -> None:
         return
     scen = _scenario_definitions(model)
     quest_ids = {str(q.get("id", "")) for q in model.quests if q.get("id")}
-    entry_overrides = _collect_dialogue_graph_entry_overrides(model)
+    entry_overrides = collect_dialogue_graph_entry_overrides(model)
     for path in sorted(gd.glob("*.json")):
         stem = path.stem
         try:
@@ -3657,10 +4025,32 @@ def _validate_dialogue_graphs(model: ProjectModel, issues: list[Issue]) -> None:
                             "dialogueGraph", octx, 0,
                         )
             if node.get("type") == "switch":
-                for ci, case in enumerate(node.get("cases") or []):
+                _switch_cases = node.get("cases") or []
+                for ci, case in enumerate(_switch_cases):
                     if not isinstance(case, dict):
                         continue
-                    cctx = f"{ctx} case[{ci}]"
+                    cctx = f"{ctx} 分支 {ci}"
+                    # 与游戏状态无关的分支：恒命中会让其后分支与 defaultNext 成死路，
+                    # 恒不命中则这条分支自己是死路。判定收口到图对话编辑器的同一个函数，
+                    # 两处不会各写一套（norms 不变量 8）。
+                    _verdict = _dialogue_case_verdict(case)
+                    if _verdict == _COND_ALWAYS:
+                        issues.append(Issue(
+                            "error", "dialogueGraph", cctx,
+                            "switch 分支条件与游戏状态无关、永远命中，"
+                            "其后所有分支与 defaultNext 永远走不到",
+                        ))
+                        if ci < len(_switch_cases) - 1:
+                            issues.append(Issue(
+                                "warning", "dialogueGraph", cctx,
+                                f"其后还有 {len(_switch_cases) - 1 - ci} 条分支永远轮不到",
+                            ))
+                    elif _verdict == _COND_NEVER:
+                        issues.append(Issue(
+                            "error", "dialogueGraph", cctx,
+                            "switch 分支条件运行时永远为假（写法认不出或是空的），"
+                            "这条分支永远走不到",
+                        ))
                     cond = case.get("condition")
                     legacy_conds = case.get("conditions") or []
                     if cond is not None and legacy_conds:
@@ -3730,13 +4120,11 @@ def _validate_dialogue_graphs(model: ProjectModel, issues: list[Issue]) -> None:
                     f"连线 {label!r} 指向不存在的节点 {tgt!r}",
                 ))
         if entry and entry in nodes:
-            # 备用入口（NPC/热区的 dialogueGraphEntry 覆盖）也算根，避免多入口共享图误报
-            roots = {entry} | {e for e in entry_overrides.get(stem, set()) if e in nodes}
+            # 备用入口（NPC/角色注册表/热区/startDialogueGraph 动作）也算根，避免多入口图误报。
+            # 键名清单只在 shared/dialogue_entry_overrides 一处维护，别在这里重写。
             gid_meta = str((meta or {}).get("id") or "").strip() if isinstance(meta, dict) else ""
             gid_self = str(gdata.get("id") or "").strip()
-            for alt_key in (gid_meta, gid_self):
-                if alt_key:
-                    roots |= {e for e in entry_overrides.get(alt_key, set()) if e in nodes}
+            roots = graph_entry_roots(nodes, entry, (stem, gid_meta, gid_self), entry_overrides)
             reachable: set[str] = set()
             for r in roots:
                 reachable |= nodes_reachable_from_entry(nodes, r)
@@ -3749,6 +4137,399 @@ def _validate_dialogue_graphs(model: ProjectModel, issues: list[Issue]) -> None:
                     f"{len(orphans)} 个节点无法从 entry={entry!r}（含备用入口）沿连线到达"
                     f"（流程孤儿）: {preview}{more}",
                 ))
+
+
+_PLAYER_VERB_LOGICAL_STATES: dict[str, str] = {
+    "crouch": "crouch", "gaze": "gaze", "kick": "kick", "jump": "jump", "lie": "lie",
+}
+
+
+def _player_avatar_states(model: ProjectModel) -> tuple[set[str], str] | None:
+    """当前玩家化身动画包的 states 键集合与包名；解析不到返回 None（不误报）。"""
+    cfg = model.game_config.get("playerAvatar")
+    if not isinstance(cfg, dict):
+        return None
+    man = str(cfg.get("animManifest") or "").strip()
+    m = re.match(r"^/resources/runtime/animation/([^/]+)/anim\.json$", man)
+    bundle = m.group(1) if m else "player_anim"
+    anim = model.animations.get(bundle)
+    if not isinstance(anim, dict):
+        return None
+    states = anim.get("states")
+    if not isinstance(states, dict):
+        return None
+    return {str(k) for k in states}, bundle
+
+
+def _validate_animation_sockets(model: ProjectModel, issues: list[Issue]) -> None:
+    """挂点 sidecar：指纹对不上 = 游戏侧整份忽略，必须报出来。
+
+    只在**已经存在** sockets.json 的包上报——绝大多数包没有挂点，那是常态不是问题。
+    """
+    from .shared.animation_sockets import (
+        fingerprint_matches,
+        fingerprint_of_anim,
+        load_socket_set,
+        sockets_path_for_bundle,
+    )
+    if model.project_path is None:
+        return
+    for bundle, anim in sorted(model.animations.items()):
+        if not isinstance(anim, dict):
+            continue
+        path = sockets_path_for_bundle(model.animation_bundles_path, bundle)
+        raw = load_socket_set(path)
+        if raw is None:
+            continue
+        sockets = raw.get("sockets")
+        if not isinstance(sockets, dict) or not sockets:
+            issues.append(Issue(
+                "warning", "animation", bundle,
+                "sockets.json 里一个挂点都没有——空壳文件，删掉即可",
+            ))
+            continue
+        if not fingerprint_matches(raw.get("atlas"), fingerprint_of_anim(anim)):
+            issues.append(Issue(
+                "error", "animation", bundle,
+                "sockets.json 的图集指纹与 anim.json 对不上（重导出过图集？）——"
+                "游戏里会整份忽略这些挂点，请在动画编辑器的「挂点」区重标后保存",
+            ))
+            continue
+        slot_count = len(anim.get("atlasFrames") or [])
+        for name, sock in sockets.items():
+            poses = sock.get("poses") if isinstance(sock, dict) else None
+            if not isinstance(poses, dict) or not poses:
+                issues.append(Issue(
+                    "warning", "animation", bundle,
+                    f"挂点 {name!r} 一帧都没标——运行时永远挂不上东西",
+                ))
+                continue
+            for slot in poses:
+                if not str(slot).isdigit() or (slot_count and int(slot) >= slot_count):
+                    issues.append(Issue(
+                        "error", "animation", bundle,
+                        f"挂点 {name!r} 标在了不存在的图集槽位 {slot!r}（共 {slot_count} 个槽位）",
+                    ))
+
+
+def _bundle_states(model: ProjectModel, anim_file: str) -> tuple[set[str], str] | None:
+    """animFile URL -> (states 键集合, 包名)；解析不到返回 None（不误报）。"""
+    m = re.match(r"^/resources/runtime/animation/([^/]+)/anim\.json$", (anim_file or "").strip())
+    if not m:
+        return None
+    bundle = m.group(1)
+    anim = model.animations.get(bundle)
+    if not isinstance(anim, dict):
+        return None
+    states = anim.get("states")
+    if not isinstance(states, dict):
+        return None
+    return {str(k) for k in states}, bundle
+
+
+def _validate_character_avatars(model: ProjectModel, issues: list[Issue]) -> None:
+    """character_registry.json 里**可控角色**（带 avatar 段）的化身一致性闸。
+
+    与 playerAvatar 同口径：stateMap 的值必须是动画包里真实存在的 state，否则运行时
+    该逻辑名解析不到片段 —— 表现为"该动词在该角色下自动禁用"，是最难查的静默失败
+    （策划只会看到"这个角色走路没反应"）。playerAvatar 一侧早有这道闸，可控角色一侧
+    不加就是同样的笔误一边报 error 一边放行（运行时不变量 9「登记面同步」）。
+    """
+    registry = getattr(model, "character_registry", {}) or {}
+    known_logical = (
+        {"idle", "walk", "run", "crouchWalk"}
+        | set(_PLAYER_VERB_LOGICAL_STATES.values())
+    )
+
+    # —— 角色级对话图绑定（与 NpcDef 侧同口径，缺了就是"角色配了图、进游戏没反应"）——
+    for cid, cdef in sorted(registry.items()):
+        if not isinstance(cdef, dict):
+            continue
+        dg = str(cdef.get("dialogueGraphId") or "").strip()
+        dge = str(cdef.get("dialogueGraphEntry") or "").strip()
+        if dg:
+            gpath = model.dialogues_path / "graphs" / f"{dg}.json"
+            if not gpath.is_file():
+                issues.append(Issue(
+                    "error", "character", cid,
+                    f"角色 {cid!r} dialogueGraphId '{dg}' 缺少文件 dialogues/graphs/{dg}.json",
+                ))
+            elif dge:
+                try:
+                    gdata = read_json(gpath)
+                except (OSError, ValueError, json.JSONDecodeError):
+                    gdata = None
+                nodes = (gdata or {}).get("nodes") if isinstance(gdata, dict) else None
+                if isinstance(nodes, dict) and dge not in nodes:
+                    issues.append(Issue(
+                        "error", "character", cid,
+                        f"角色 {cid!r} dialogueGraphEntry '{dge}' 不是图 '{dg}' 里的节点",
+                    ))
+        elif dge:
+            # entry 是"某张图内部的节点名"，没有图就无从解析——运行时会整条忽略
+            issues.append(Issue(
+                "error", "character", cid,
+                f"角色 {cid!r} 只写了 dialogueGraphEntry 没写 dialogueGraphId，该入口不会生效",
+            ))
+
+    for cid, cdef in sorted(registry.items()):
+        if not isinstance(cdef, dict):
+            continue
+        avatar = cdef.get("avatar")
+        if not isinstance(avatar, dict):
+            continue  # 不可控角色，本闸不管
+
+        own_anim = str(cdef.get("animFile") or "").strip()
+        if not own_anim:
+            # 运行时刻意不兜底到主角的包（否则漏填会静默套上关二狗的动画与立绘），
+            # 于是这里必须拦：可控角色没有动画包 = 上不了场。
+            issues.append(Issue(
+                "error", "character", cid,
+                f"角色 {cid!r} 带 avatar 段（可被接管）但没有 animFile —— 受控时无动画可播",
+            ))
+
+        # 常态 + 每套装扮各查一遍：装扮换了包就按新包的 states 查
+        variants: list[tuple[str, str, dict]] = [("avatar", own_anim, avatar)]
+        outfits = avatar.get("outfits")
+        if isinstance(outfits, dict):
+            for oname, odef in sorted(outfits.items()):
+                if not isinstance(odef, dict):
+                    issues.append(Issue(
+                        "error", "character", cid,
+                        f"角色 {cid!r} 的装扮 {oname!r} 须为对象",
+                    ))
+                    continue
+                variants.append((
+                    f"avatar.outfits[{oname}]",
+                    str(odef.get("animFile") or "").strip() or own_anim,
+                    odef,
+                ))
+
+        for label, anim_file, holder in variants:
+            state_map = holder.get("stateMap")
+            if state_map is not None and not isinstance(state_map, dict):
+                issues.append(Issue(
+                    "error", "character", cid,
+                    f"角色 {cid!r} 的 {label}.stateMap 须为对象",
+                ))
+                continue
+            pack = _bundle_states(model, anim_file) if anim_file else None
+            if pack is None:
+                continue  # 包解析不到（外部包/尚未导出）：不误报，由素材审计另行兜底
+            states, bundle = pack
+            for logical, clip in (state_map or {}).items():
+                if logical not in known_logical:
+                    issues.append(Issue(
+                        "warning", "character", cid,
+                        f"角色 {cid!r} 的 {label}.stateMap 逻辑名 {logical!r} 不在自动解析清单里"
+                        f"（{'、'.join(sorted(known_logical))}）；确认不是笔误",
+                    ))
+                    continue
+                if not isinstance(clip, str) or not clip.strip():
+                    issues.append(Issue(
+                        "error", "character", cid,
+                        f"角色 {cid!r} 的 {label}.stateMap['{logical}'] 须为非空字符串",
+                    ))
+                    continue
+                if clip not in states:
+                    issues.append(Issue(
+                        "error", "character", cid,
+                        f"角色 {cid!r} 的 {label}.stateMap['{logical}'] -> '{clip}' "
+                        f"不在动画包 {bundle} 的 states 里",
+                    ))
+
+        # 待机节目的动画状态：解析不到运行时**静默跳过**那条节目，与 playerAvatar 侧对称按 error 拦
+        idle_cfg = avatar.get("idle")
+        pack = _bundle_states(model, own_anim) if own_anim else None
+        if isinstance(idle_cfg, dict) and pack is not None:
+            states, bundle = pack
+            for i, entry in enumerate(idle_cfg.get("entries") or []):
+                if not isinstance(entry, dict):
+                    continue
+                st = str(entry.get("animState") or "").strip()
+                if st and st not in states:
+                    issues.append(Issue(
+                        "error", "character", cid,
+                        f"角色 {cid!r} 的 avatar.idle.entries[{i}].animState -> '{st}' "
+                        f"不在动画包 {bundle} 的 states 里",
+                    ))
+
+
+def _validate_player_acts(model: ProjectModel, issues: list[Issue]) -> None:
+    """playerAvatar.stateMap 与 playerActs 的一致性闸。
+
+    - stateMap 的值必须是动画包里真实存在的 state（否则运行时该逻辑名播不出来）。
+    - 某动词解析不到片段 = 该动词在本装扮下自动禁用（合法状态，不报——
+      编辑器「玩家化身」页的动词折叠区已当面说明这条规则）。
+    - 场景里配了某动词的 acts，但该动词被 playerActs 显式关掉 → warning（死配置）。
+    """
+    cfg = model.game_config
+    avatar = cfg.get("playerAvatar")
+    state_map = avatar.get("stateMap") if isinstance(avatar, dict) else None
+    state_map = state_map if isinstance(state_map, dict) else {}
+    pack = _player_avatar_states(model)
+
+    if pack is not None:
+        states, bundle = pack
+        known_logical = (
+            {"idle", "walk", "run", "crouchWalk"}
+            | set(_PLAYER_VERB_LOGICAL_STATES.values())
+        )
+        for logical, clip in state_map.items():
+            if logical not in known_logical:
+                # stateMap 是 SpriteEntity.resolveClip 的**通用别名表**——过场里
+                # playNpcAnimation target=player state=<别名> 同样走它，所以未知逻辑名
+                # 不一定是错的，只是没有任何自动系统会去解析它。报 warning 提醒笔误。
+                issues.append(Issue(
+                    "warning", "config", "game_config",
+                    f"playerAvatar.stateMap 的逻辑名 {logical!r} 不在自动解析清单里"
+                    f"（{'、'.join(sorted(known_logical))}）；"
+                    "只有脚本显式 playAnimation 该名字时才会用到，确认不是笔误",
+                ))
+                continue
+            if not isinstance(clip, str) or not clip.strip():
+                issues.append(Issue(
+                    "error", "config", "game_config",
+                    f"playerAvatar.stateMap['{logical}'] 须为非空字符串",
+                ))
+                continue
+            if clip not in states:
+                issues.append(Issue(
+                    "error", "config", "game_config",
+                    f"playerAvatar.stateMap['{logical}'] -> '{clip}' 不在动画包 {bundle} 的 states 里",
+                ))
+
+        # 待机节目的动画状态同理：解析不到的话运行时**静默跳过**那条纯动画节目
+        # （策划只会看到"配了没反应"）。与 stateMap 对称，按 error 拦。
+        idle_cfg = avatar.get("idle") if isinstance(avatar, dict) else None
+        if isinstance(idle_cfg, dict):
+            for i, entry in enumerate(idle_cfg.get("entries") or []):
+                if not isinstance(entry, dict):
+                    continue
+                st = str(entry.get("animState") or "").strip()
+                if st and st not in states:
+                    issues.append(Issue(
+                        "error", "config", "game_config",
+                        f"playerAvatar.idle.entries[{i}].animState '{st}' 不在动画包 {bundle} 的 states 里"
+                        "（运行时会静默跳过这条待机节目）",
+                    ))
+                if not st and not str(entry.get("bubbleText") or "").strip():
+                    issues.append(Issue(
+                        "warning", "config", "game_config",
+                        f"playerAvatar.idle.entries[{i}] 既没有动画也没有台词，永远不会演",
+                    ))
+
+    acts_cfg = cfg.get("playerActs")
+    if acts_cfg is not None and not isinstance(acts_cfg, dict):
+        issues.append(Issue("error", "config", "game_config", "playerActs 须为对象"))
+        acts_cfg = None
+    disabled: set[str] = set()
+    if isinstance(acts_cfg, dict):
+        for verb, slot in acts_cfg.items():
+            if verb not in PLAYER_VERBS:
+                issues.append(Issue(
+                    "error", "config", "game_config",
+                    f"playerActs 含未知身体动词 {verb!r}",
+                ))
+                continue
+            if not isinstance(slot, dict):
+                issues.append(Issue(
+                    "error", "config", "game_config", f"playerActs.{verb} 须为对象"))
+                continue
+            if slot.get("enabled") is False:
+                disabled.add(verb)
+
+    # 设计 §8 #9：踢得出来却没有落空反馈 = 哑键。只在 kick **真能播**（映射到了片段）
+    # 时才报——没有 kick 动画时这个动词整个是禁用的，提醒它毫无意义。
+    if pack is not None:
+        states, _bundle = pack
+        kick_clip = state_map.get("kick", "kick")
+        kick_slot = acts_cfg.get("kick") if isinstance(acts_cfg, dict) else None
+        kick_enabled = not (isinstance(kick_slot, dict) and kick_slot.get("enabled") is False)
+        miss = kick_slot.get("missActions") if isinstance(kick_slot, dict) else None
+        if kick_clip in states and kick_enabled and not miss:
+            issues.append(Issue(
+                "warning", "config", "game_config",
+                "playerActs.kick.missActions 为空：踢空时只播动画、没有任何反馈"
+                "（扬尘 / 踢空音 / 一句 showEmote 至少给一个，否则是哑键）",
+            ))
+
+    if not disabled:
+        return
+    for sid, sc in model.scenes.items():
+        for zone in sc.get("zones", []) or []:
+            opa = zone.get("onPlayerAct")
+            if not isinstance(opa, dict):
+                continue
+            for verb in opa:
+                if verb in disabled:
+                    issues.append(Issue(
+                        "warning", "scene", sid,
+                        f"Zone '{zone.get('id', '?')}' 配了 onPlayerAct.{verb}，"
+                        f"但 playerActs.{verb}.enabled=false（这段配置永不会触发）",
+                    ))
+
+
+def _check_act_spot_data(
+    issues: list[Issue], sid: str, hid: str, data: dict, scene: dict | None = None,
+) -> None:
+    """act_spot（躺点 / 跨点）的结构闸：verbs 白名单、跳必须有落点、坐标须为数字。"""
+    verbs = data.get("verbs")
+    if not isinstance(verbs, list) or not verbs:
+        issues.append(Issue(
+            "error", "scene", sid,
+            f"Hotspot '{hid}' 是 act_spot，data.verbs 必须是非空数组",
+        ))
+        verbs = []
+    for v in verbs:
+        if v not in PLAYER_VERBS:
+            issues.append(Issue(
+                "error", "scene", sid,
+                f"Hotspot '{hid}' act_spot verbs 含未知动词 {v!r}",
+            ))
+    for key in ("align", "landing"):
+        pt = data.get(key)
+        if pt is None:
+            continue
+        if (not isinstance(pt, dict)
+                or not isinstance(pt.get("x"), (int, float))
+                or not isinstance(pt.get("y"), (int, float))
+                or isinstance(pt.get("x"), bool) or isinstance(pt.get("y"), bool)):
+            issues.append(Issue(
+                "error", "scene", sid,
+                f"Hotspot '{hid}' act_spot data.{key} 须为 {{x, y}} 数字对象",
+            ))
+    if "jump" in verbs and not isinstance(data.get("landing"), dict):
+        issues.append(Issue(
+            "error", "scene", sid,
+            f"Hotspot '{hid}' act_spot 支持 jump 时必须设 data.landing（跨点跳的落点）",
+        ))
+    # 落点/对齐点必须落在世界内（真正的"可走性"另由 audit-walkable 探针把关，
+    # 校验器不做几何——但跑到世界外一定是错的，这条能便宜地拦住）
+    ww = scene.get("worldWidth") if isinstance(scene, dict) else None
+    wh = scene.get("worldHeight") if isinstance(scene, dict) else None
+    if isinstance(ww, (int, float)) and isinstance(wh, (int, float)) and ww > 0 and wh > 0:
+        for key in ("align", "landing"):
+            pt = data.get(key)
+            if not isinstance(pt, dict):
+                continue
+            px, py = pt.get("x"), pt.get("y")
+            if not isinstance(px, (int, float)) or not isinstance(py, (int, float)):
+                continue
+            if not (0 <= px <= ww and 0 <= py <= wh):
+                issues.append(Issue(
+                    "error", "scene", sid,
+                    f"Hotspot '{hid}' act_spot data.{key} ({px}, {py}) 落在世界之外"
+                    f"（worldWidth={ww} worldHeight={wh}）",
+                ))
+    facing = data.get("facing")
+    if facing is not None and facing not in ("left", "right"):
+        issues.append(Issue(
+            "error", "scene", sid,
+            f"Hotspot '{hid}' act_spot data.facing 只能是 left / right",
+        ))
+
+
 
 
 def _walk_action_defs(
@@ -3968,6 +4749,8 @@ def _validate_flags(model: ProjectModel, issues: list[Issue]) -> None:
             _walk_conditions(model, issues, hs.get("conditions"), "scene", hid, sid)
             data = hs.get("data") or {}
             _walk_action_defs(model, issues, data.get("actions"), "scene", hid, sid)
+            # act_spot 的起身动作批同样要过条件/动作遍历
+            _walk_action_defs(model, issues, data.get("exitActions"), "scene", hid, sid)
         for npc in sc.get("npcs", []) or []:
             nid = str(npc.get("id", ""))
             _walk_conditions(model, issues, npc.get("conditions"), "scene", nid, sid)
@@ -3975,8 +4758,12 @@ def _validate_flags(model: ProjectModel, issues: list[Issue]) -> None:
         for zone in sc.get("zones", []) or []:
             zid = str(zone.get("id", ""))
             _walk_conditions(model, issues, zone.get("conditions"), "scene", zid, sid)
-            for ev in ("onEnter", "onStay", "onExit"):
+            for ev in ("onEnter", "onStay", "onExit", "onInteract"):
                 _walk_action_defs(model, issues, zone.get(ev), "scene", zid, sid)
+            opa = zone.get("onPlayerAct")
+            if isinstance(opa, dict):
+                for _verb, batch in opa.items():
+                    _walk_action_defs(model, issues, batch, "scene", zid, sid)
 
     for q in model.quests:
         qid = str(q.get("id", ""))
@@ -4024,6 +4811,40 @@ def _validate_flags(model: ProjectModel, issues: list[Issue]) -> None:
         lid = str(le.get("id", ""))
         _walk_conditions(model, issues, le.get("unlockConditions"), "archive", lid, None)
         _walk_action_defs(model, issues, le.get("firstViewActions"), "archive", lid, None)
+
+    slang_root = model.archive_slang
+    slang_entries = slang_root.get("entries", []) if isinstance(slang_root, dict) else []
+    slang_cat_keys = set()
+    if isinstance(slang_root, dict) and isinstance(slang_root.get("categories"), dict):
+        slang_cat_keys = set(slang_root["categories"].keys())
+    for se in slang_entries or []:
+        if not isinstance(se, dict):
+            continue
+        sid = str(se.get("id", ""))
+        _walk_conditions(model, issues, se.get("unlockConditions"), "archive", sid, None)
+        _walk_action_defs(model, issues, se.get("firstViewActions"), "archive", sid, None)
+        # 词条正文/词条本身为空 → 运行时是个点得开的空壳
+        if not str(se.get("title", "")).strip():
+            issues.append(Issue("warning", "archive", sid, "怪话词条缺 title（词条本身），运行时列表显示为空行"))
+        if not str(se.get("content", "")).strip():
+            issues.append(Issue("warning", "archive", sid, "怪话词条缺 content（考据正文），点开是空白"))
+        cat = str(se.get("category", "")).strip()
+        if not cat:
+            issues.append(Issue("warning", "archive", sid, "怪话词条缺 category，将落入兜底分组"))
+        elif slang_cat_keys and cat not in slang_cat_keys:
+            issues.append(Issue(
+                "warning", "archive", sid,
+                f"怪话词条 category {cat!r} 不在 categories 映射中，分类标题会显示裸键",
+            ))
+    if isinstance(slang_root, dict):
+        done_map = slang_root.get("categoryCompleteText")
+        if isinstance(done_map, dict):
+            for k in done_map:
+                if slang_cat_keys and k not in slang_cat_keys:
+                    issues.append(Issue(
+                        "warning", "archive", "slang",
+                        f"categoryCompleteText 含未登记分类键 {k!r}，该评语永不显示",
+                    ))
 
     for doc in model.archive_documents:
         did = str(doc.get("id", ""))
@@ -4080,6 +4901,10 @@ def _validate_flags(model: ProjectModel, issues: list[Issue]) -> None:
     if isinstance(_lore_dup, dict):
         _lore_dup = _lore_dup.get("entries", [])
     _check_archive_dup_ids(_lore_dup, "传说条目")
+    _slang_dup = model.archive_slang
+    if isinstance(_slang_dup, dict):
+        _slang_dup = _slang_dup.get("entries", [])
+    _check_archive_dup_ids(_slang_dup, "怪话词条")
     _check_archive_dup_ids(model.archive_documents, "文档档案")
     _check_archive_dup_ids(model.archive_books, "书籍")
 

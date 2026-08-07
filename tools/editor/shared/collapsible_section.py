@@ -8,11 +8,17 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSizePolicy,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 
 
 class CollapsibleSection(QWidget):
     """点击标题行展开或折叠内容，不使用标题旁方框勾选。"""
+
+    #: 展开状态变化（含首次展开）。供**重块懒建**用：默认折叠的区块把真正的控件树
+    #: 推迟到第一次展开时才造。全套编辑器测试的耗时对存活控件数是 O(N²)
+    #: （`app.setStyleSheet()` 全应用重刷，见 tests/qt_teardown.py 的实测记录），
+    #: 一个面板多挂十几棵 ActionEditor 子树就会把测试从分钟级推到超时。
+    expanded_changed = Signal(bool)
 
     def __init__(
         self,
@@ -79,6 +85,7 @@ class CollapsibleSection(QWidget):
         self._expanded = on
         self._content.setVisible(on)
         self._sync_header_text()
+        self.expanded_changed.emit(on)
 
     def is_expanded(self) -> bool:
         return self._expanded

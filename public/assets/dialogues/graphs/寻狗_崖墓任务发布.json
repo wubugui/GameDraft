@@ -7,23 +7,12 @@
   },
   "preconditions": [],
   "nodes": {
-    "n_start": {
-      "type": "line",
-      "speaker": {
-        "kind": "npc"
-      },
-      "next": "n_4",
-      "text": "嘿！关二狗。",
-      "portrait": {
-        "emotion": "calm"
-      }
-    },
     "n_1": {
       "type": "ownerState",
       "cases": [
         {
           "state": "state_1",
-          "next": "n_start"
+          "next": "n_4"
         },
         {
           "state": "initial",
@@ -36,7 +25,7 @@
       ],
       "defaultNext": "n_2",
       "missingWrapperNext": "n_2",
-      "wrapperGraphId": "wrapper_graph_1"
+      "wrapperGraphId": "wrapper_主线_崖墓任务发布"
     },
     "n_2": {
       "type": "end"
@@ -47,7 +36,7 @@
         {
           "type": "emitNarrativeSignal",
           "params": {
-            "signal": ""
+            "signal": "崖墓任务_发布完成"
           }
         }
       ],

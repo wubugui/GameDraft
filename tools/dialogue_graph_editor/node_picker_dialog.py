@@ -21,6 +21,7 @@ class NodePickerDialog(QDialog):
         node_ids: list[str],
         *,
         type_by_id: dict[str, str] | None = None,
+        summary_by_id: dict[str, str] | None = None,
         title: str = "选择节点",
         initial: str = "",
         parent=None,
@@ -31,6 +32,7 @@ class NodePickerDialog(QDialog):
         self.setModal(True)
         self._ids_sorted = sorted(node_ids, key=lambda x: (x.lower(), x))
         self._type_by_id = type_by_id or {}
+        self._summary_by_id = summary_by_id or {}
         self._selected = (initial or "").strip()
 
         root = QVBoxLayout(self)
@@ -63,8 +65,18 @@ class NodePickerDialog(QDialog):
         return self._selected
 
     def _label_for(self, nid: str) -> str:
+        """`id （中文类型） 摘要`。
+
+        只给 `id (line)` 等于零上下文：18 行里 11 行都是 `(line)`，策划选"这条分支
+        通向哪"时只能取消 → 回主窗翻节点列表 → 记住 id → 再打开弹窗，每接一条线来回三趟。
+        节点列表早就在用 `node_summary`，这里接上同一个来源。
+        """
+        from .graph_document import node_type_label_zh
+
         t = self._type_by_id.get(nid, "")
-        return f"{nid}  ({t})" if t else nid
+        head = f"{nid}  （{node_type_label_zh(t)}）" if t else nid
+        summ = self._summary_by_id.get(nid, "")
+        return f"{head}  {summ}" if summ else head
 
     def _populate_list(self, filt: str) -> None:
         self._list.clear()
@@ -79,11 +91,17 @@ class NodePickerDialog(QDialog):
 
     def _apply_filter(self, text: str) -> None:
         self._populate_list(text)
-        if self._list.count() == 1:
+        if self._list.count():
             self._list.setCurrentRow(0)
 
     def _accept_current(self) -> None:
         it = self._list.currentItem()
+        if it is None:
+            # 筛出多条时旧实现直接 reject()：弹窗关掉、字段不变、零提示，
+            # 策划以为"点了没反应"。改成默认选中第一条再确认。
+            if self._list.count():
+                self._list.setCurrentRow(0)
+                it = self._list.currentItem()
         if it is None:
             self.reject()
             return

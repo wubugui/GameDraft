@@ -245,19 +245,28 @@ class SceneEntityTreeMultiselectTests(unittest.TestCase):
     # ---- 分组指派 -----------------------------------------------------------
 
     def test_assign_group_write_and_undo(self) -> None:
-        from PySide6.QtWidgets import QInputDialog
+        # ⚠ 指派分组早已从 QInputDialog 改成 ReferencePickerDialog（2026-07-11「下拉 vs 弹窗」
+        # 拍板）。本测试一度还在 patch QInputDialog.getItem —— patch 打空 → 真弹窗
+        # dialog.exec() 在无人应答的离屏环境里**永久阻塞**，整条编辑器测试门跟着挂死
+        # （表现是"跑到 78% 不动了"，不是失败）。stub 必须跟着实现走。
+        from PySide6.QtWidgets import QDialog
+
+        from tools.editor.shared.reference_picker import ReferencePickerDialog
 
         with TemporaryDirectory() as td:
             ed, model = self._editor(Path(td) / "p")
             ed._canvas._entity_items["npc:npc1"].setSelected(True)
             ed._canvas._entity_items["hotspot:h1"].setSelected(True)
             QApplication.processEvents()
-            orig_get_item = QInputDialog.getItem
-            QInputDialog.getItem = staticmethod(lambda *a, **k: ("夜巡", True))
+            real_exec = ReferencePickerDialog.exec
+            real_selected = ReferencePickerDialog.selected_value
+            ReferencePickerDialog.exec = lambda _d: QDialog.DialogCode.Accepted
+            ReferencePickerDialog.selected_value = lambda _d: "夜巡"
             try:
                 ed._assign_group_to_selection()
             finally:
-                QInputDialog.getItem = orig_get_item
+                ReferencePickerDialog.exec = real_exec
+                ReferencePickerDialog.selected_value = real_selected
             self.assertEqual(self._npc(model, "sc_a", "npc1").get("group"), "夜巡")
             hs = model.scenes["sc_a"]["hotspots"][0]
             self.assertEqual(hs.get("group"), "夜巡")

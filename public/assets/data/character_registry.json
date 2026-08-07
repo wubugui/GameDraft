@@ -21,6 +21,11 @@
       "id": "dream_old_woman",
       "name": "老妇人",
       "animFile": "/resources/runtime/animation/npc_dream_old_woman_anim/anim.json"
+    },
+    {
+      "id": "癞子",
+      "name": "癞子",
+      "animFile": "/resources/runtime/animation/npc_funeral_bearer_b_anim/anim.json"
     }
   ]
 }

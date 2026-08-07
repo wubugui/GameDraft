@@ -1,9 +1,10 @@
-import type { ActionDef, ZoneActionContext } from '../data/types';
+import type { ActionDef, ActionOriginContext } from '../data/types';
 import { GameState } from '../data/types';
 import type { EventBus } from './EventBus';
 import type { FlagStore, FlagValue } from './FlagStore';
 import type { GameStateController } from './GameStateController';
 import { reportDevError } from './devErrorOverlay';
+import { makeOwnerOrigin } from './actionOrigin';
 
 /**
  * 所有 action 统一走 executeAwait：顺序 await handler 返回的 Promise。
@@ -11,7 +12,7 @@ import { reportDevError } from './devErrorOverlay';
  */
 export type ActionHandler = (
   params: Record<string, unknown>,
-  zoneContext: ZoneActionContext | null,
+  originContext: ActionOriginContext | null,
 ) => void | Promise<void>;
 
 /**
@@ -36,6 +37,11 @@ export class ActionExecutor {
   /** destroy() 后置 true；ZoneSystem 等 Promise 链仍可能异步回调，需在入口短路避免误报 unknown */
   private destroyed = false;
   private warnedAfterDestroy = false;
+  /**
+   * dev 叙事调试器的动作挂点（见 src/dev/narrativeDebugBridge.ts）。
+   * 默认 null——生产环境无任何设置方，行为与从前一致。
+   */
+  static actionObserver: ((type: string, params: Record<string, unknown>) => void) | null = null;
 
   private static normalizeActionTypeKey(raw: unknown): string {
     if (raw === null || raw === undefined) return '';
@@ -148,13 +154,13 @@ export class ActionExecutor {
 
   /**
    * 单条动作：await handler 返回的 Promise。所有需要顺序执行的路径共用此入口。
-   * zoneContext 按参数显式线程化（executeBatchInZoneContext 为唯一注入起点）——
-   * 不用共享栈：不同 zone 的批可在微任务粒度交错（同帧进/出多个重叠 zone），
-   * 栈顶现取会把 A 批的动作配上 B 批的上下文、finally 弹栈也会弹到别人的。
+   * originContext 按参数显式线程化（executeBatchInZoneContext / executeBatchFromOwner
+   * 是注入起点）——不用共享栈：不同来源的批可在微任务粒度交错（同帧进/出多个重叠 zone、
+   * 对话里再开对话），栈顶现取会把 A 批的动作配上 B 批的上下文、finally 弹栈也会弹到别人的。
    * 嵌套容器动作（runActions / chooseAction / randomBranch）由各自 handler 转发
-   * 上下文；signal cue / 延迟事件等独立子系统的批不属于任何 zone，天然为 null。
+   * 上下文；signal cue / 延迟事件等独立子系统的批不属于任何来源，天然为 null。
    */
-  async executeAwait(action: ActionDef, zoneContext: ZoneActionContext | null = null): Promise<void> {
+  async executeAwait(action: ActionDef, originContext: ActionOriginContext | null = null): Promise<void> {
     if (this.destroyed) {
       if (!this.warnedAfterDestroy) {
         this.warnedAfterDestroy = true;
@@ -177,6 +183,16 @@ export class ActionExecutor {
       );
       return;
     }
+    // dev 叙事调试器的唯一动作挂点：未接调试器时是一次静态属性读，不分配、不抛。
+    // 有了它，"按住那个条""进了小游戏"这些没有专属事件的玩家动作才在调试器上可见。
+    const observer = ActionExecutor.actionObserver;
+    if (observer) {
+      try {
+        observer(typeKey, action.params);
+      } catch {
+        /* 调试通道故障绝不影响动作执行 */
+      }
+    }
     await this.runWithExploreActionLock(async () => {
       const handler = this.handlers.get(typeKey);
       if (!handler) {
@@ -188,20 +204,34 @@ export class ActionExecutor {
         );
         return;
       }
-      await Promise.resolve(handler(action.params, zoneContext));
+      await Promise.resolve(handler(action.params, originContext));
     });
   }
 
-  /** 顺序执行批量动作并 await 每一条；zoneContext 原样传给批内每条动作。 */
-  async executeBatchAwait(actions: ActionDef[], zoneContext: ZoneActionContext | null = null): Promise<void> {
+  /** 顺序执行批量动作并 await 每一条；originContext 原样传给批内每条动作。 */
+  async executeBatchAwait(actions: ActionDef[], originContext: ActionOriginContext | null = null): Promise<void> {
     for (const action of actions) {
-      await this.executeAwait(action, zoneContext);
+      await this.executeAwait(action, originContext);
     }
   }
 
   /** ZoneSystem 专用：批内 handler 第二参数为非空 zone 上下文（显式线程化，见 executeAwait 注释）。 */
-  async executeBatchInZoneContext(actions: ActionDef[], context: ZoneActionContext): Promise<void> {
+  async executeBatchInZoneContext(actions: ActionDef[], context: ActionOriginContext): Promise<void> {
     await this.executeBatchAwait(actions, context);
+  }
+
+  /**
+   * 归属实体持有的动作批（热区 inspect actions、叙事图状态动作、任务奖励、过场步骤、
+   * 对话 runActions…）：把该实体的叙事 owner 线程化下去，批里的 `startDialogueGraph`
+   * 未显式给 owner 时即以此为准，被开的图里 ownerState 节点才读得到状态机。
+   * ownerType/ownerId 任一为空即视为无来源（传 null），不制造半个 owner。
+   */
+  async executeBatchFromOwner(
+    actions: ActionDef[],
+    ownerType: string | undefined,
+    ownerId: string | undefined,
+  ): Promise<void> {
+    await this.executeBatchAwait(actions, makeOwnerOrigin(ownerType, ownerId));
   }
 
   destroy(): void {

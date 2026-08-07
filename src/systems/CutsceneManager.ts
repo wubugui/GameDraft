@@ -95,6 +95,9 @@ function parsePresentBubbleOpts(step: Record<string, unknown>): EmoteBubbleOffse
 /** 过场发出的表情气泡归属标记：cleanup 定向清理用（EmoteBubbleManager.cleanupByOwner） */
 const CUTSCENE_EMOTE_OWNER = 'cutscene';
 
+/** 「上一步已上屏」屏障的兜底超时（见 awaitPresentedFrame）：页面隐藏时 rAF 停摆的逃生口。 */
+const CUTSCENE_PRESENTED_FRAME_TIMEOUT_MS = 300;
+
 /**
  * showImg.id / parallaxScene.handle / hideImg.id 的句柄解析：
  * 显式非空 → 手动管理；缺省/空白 → 匿名镜头位（CUTSCENE_ANON_SHOT_ID，自动托管）。
@@ -882,10 +885,66 @@ export class CutsceneManager implements IGameSystem {
     });
   }
 
+  /**
+   * 「上一步已上屏」屏障：等到渲染器**确实画过一帧**才归来。
+   * 单 rAF 不够——本回调与 Pixi ticker 同挂 rAF，注册顺序决定谁先跑，我们可能抢在这一帧的
+   * 渲染之前；第二拍才保证「写入 → 渲染」这一对已经完整发生过一次（与 waitForClick /
+   * showDialogueText 的双 rAF arming 同一理由）。
+   * skip / 读档 / 拆除后立即落地，不把已作废的步链多吊两帧。
+   *
+   * 兜底超时：页面隐藏时 rAF 完全停摆（无头验证、后台标签页），此时"已上屏"这个保证
+   * 本就无从谈起，不能让它把整段演出吊死——超时即放行。300ms 在任何正常刷新率下都跑不到
+   * （要低于 ~7fps 才会触发），所以可见状态下等价于纯双 rAF。
+   */
+  private awaitPresentedFrame(epoch: number): Promise<void> {
+    return new Promise<void>(resolve => {
+      let done = false;
+      const finish = (): void => {
+        if (done) return;
+        done = true;
+        clearTimeout(timeoutId);
+        resolve();
+      };
+      const timeoutId = setTimeout(finish, CUTSCENE_PRESENTED_FRAME_TIMEOUT_MS);
+      requestAnimationFrame(() => {
+        if (this.isStepStale(epoch) || this.skipping) {
+          finish();
+          return;
+        }
+        requestAnimationFrame(finish);
+      });
+    });
+  }
+
   private async executeOneStep(step: CutsceneStep, path: string, epoch: number): Promise<void> {
     if (this.isStepStale(epoch)) return;
     /** 快进期不发步进事件：调试 HUD / 编辑器播放头只关心真正开演后的位置，不该被瞬时刷屏。 */
     if (!this.fastForwarding) this.emitPlaybackStep(path, step);
+    /**
+     * 串行 step 的可见性契约：非 parallel 的步一次一个，**上一步的画面结果必须先上屏**，
+     * 下一步才开始。同步 handler（faceEntity / playNpcAnimation / setEntityEnabled / hideImg…）
+     * 在微任务里就返回，整串瞬时步会挤在同一帧、只有最后一个被渲染——前面几步等于没发生过
+     * （实测：连续两条 faceEntity 落在同一帧同一毫秒，第一条的朝向永远不上屏）。
+     * 故此处探一帧：步骤执行期间一帧都没过去，就补一个「已上屏」屏障。
+     * 本来就跨帧的步（moveEntityTo / waitTime / 对白 / 补间）探针已 fire，零额外开销。
+     * parallel 由 fork-join 自身收在帧边界上，且其子轨各自走本路径，故排除。
+     * 快进期不补：那是 dev「从第 N 步开播」的建场阶段，本就要求瞬时到位。
+     */
+    const needBarrier = step.kind !== 'parallel' && !this.fastForwarding;
+    let framePassed = false;
+    let probeRafId = 0;
+    if (needBarrier) probeRafId = requestAnimationFrame(() => { framePassed = true; });
+    try {
+      await this.executeOneStepBody(step, path, epoch);
+    } finally {
+      if (needBarrier) cancelAnimationFrame(probeRafId);
+    }
+    if (needBarrier && !framePassed && !this.isStepStale(epoch)) {
+      await this.awaitPresentedFrame(epoch);
+    }
+  }
+
+  private async executeOneStepBody(step: CutsceneStep, path: string, epoch: number): Promise<void> {
     switch (step.kind) {
       case 'action':
         if (CUTSCENE_GLOBAL_SAVE_ACTION_BLOCKLIST.has(step.type)) {

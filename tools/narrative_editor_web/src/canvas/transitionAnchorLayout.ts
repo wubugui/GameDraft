@@ -1,7 +1,15 @@
-import { getBezierPath, Position, type Node } from '@xyflow/react';
+import { type Node } from '@xyflow/react';
 import { parseTransitionAnchorId } from '../anchorCodec';
 import type { CanvasEdge, CanvasNode, NarrativeGraphDef, NarrativeStateNodeDef } from '../types';
 import { stateEditorPosition } from '../editorModel';
+import {
+  chooseRouteSides,
+  computeEdgeRoutes,
+  nodeTypeHasFourWayPorts,
+  routedLabelPoint,
+  type EdgeRoute,
+  type RoutingNodeRect,
+} from './edgeRouting';
 
 /** Matches `.node { min-width: 150px }` used by state nodes. */
 export const STATE_NODE_LAYOUT_WIDTH = 150;
@@ -69,7 +77,10 @@ export function nodeLayoutSize(node: Pick<CanvasNode, 'type' | 'measured' | 'wid
   if (node.type === 'transitionAnchor') {
     return { width: TRANSITION_ANCHOR_SIZE, height: TRANSITION_ANCHOR_SIZE };
   }
-  if (node.type === 'subgraphGroup') {
+  // 框类节点的尺寸以 style 为准：折叠瞬间 style 已改成紧凑尺寸，而 measured 还留着展开时的
+  // 旧值（要等下一次 dimensions 变更才追上）。读 measured 会让边接在 200 宽的框上、
+  // 触发点却按 467 宽算，差出几十像素。
+  if (node.type === 'subgraphGroup' || node.type === 'editorGroupFrame') {
     return {
       width: Number(node.style?.width ?? node.measured?.width ?? node.width ?? 280),
       height: Number(node.style?.height ?? node.measured?.height ?? node.height ?? 200),
@@ -87,9 +98,50 @@ export function nodeLayoutSize(node: Pick<CanvasNode, 'type' | 'measured' | 'wid
   };
 }
 
+/** 节点在画布绝对坐标下的矩形 + 是否四向端口（路由几何的唯一输入）。 */
+export function routingRectOfNode(
+  node: CanvasNode,
+  nodeById: Map<string, CanvasNode>,
+): RoutingNodeRect {
+  const abs = flowAbsolutePosition(node, nodeById);
+  const size = nodeLayoutSize(node);
+  return {
+    x: abs.x,
+    y: abs.y,
+    width: size.width,
+    height: size.height,
+    fourWay: nodeTypeHasFourWayPorts(node.type),
+  };
+}
+
+/** 供画布 display 层与吸附共用的矩形索引（同一份几何 → 边与触发点永远对得上）。 */
+export function buildRoutingRects(nodes: readonly Node[]): Map<string, RoutingNodeRect> {
+  const nodeById = new Map(nodes.map((node) => [node.id, node as CanvasNode]));
+  const out = new Map<string, RoutingNodeRect>();
+  for (const node of nodeById.values()) {
+    out.set(node.id, routingRectOfNode(node, nodeById));
+  }
+  return out;
+}
+
+function anchorTopLeftForRects(
+  source: RoutingNodeRect,
+  target: RoutingNodeRect,
+  route?: EdgeRoute,
+): { x: number; y: number } {
+  const resolved: EdgeRoute = route ?? {
+    ...chooseRouteSides(source, target, false),
+    offset: 0,
+    selfLoop: false,
+  };
+  const point = routedLabelPoint(source, target, resolved);
+  const half = TRANSITION_ANCHOR_SIZE / 2;
+  return { x: point.x - half, y: point.y - half };
+}
+
 /**
- * Top-left for a 24px anchor so its center sits on the same bezier label point as migration edges.
- * Handle geometry matches state nodes: source Right, target Left, vertical midline.
+ * Top-left for a 24px anchor so its center sits on the same label point as its transition edge.
+ * 路由（进出侧 + 平行错开量）与边渲染共用 canvas/edgeRouting，缺省按几何选侧、零错开。
  */
 export function transitionAnchorPositionOnEdge(
   from: { x: number; y: number },
@@ -98,21 +150,13 @@ export function transitionAnchorPositionOnEdge(
   fromHeight = STATE_NODE_LAYOUT_HEIGHT,
   toWidth = STATE_NODE_LAYOUT_WIDTH,
   toHeight = STATE_NODE_LAYOUT_HEIGHT,
+  route?: EdgeRoute,
 ): { x: number; y: number } {
-  const sourceX = from.x + fromWidth;
-  const sourceY = from.y + fromHeight / 2;
-  const targetX = to.x;
-  const targetY = to.y + toHeight / 2;
-  const [, labelX, labelY] = getBezierPath({
-    sourceX,
-    sourceY,
-    sourcePosition: Position.Right,
-    targetX,
-    targetY,
-    targetPosition: Position.Left,
-  });
-  const half = TRANSITION_ANCHOR_SIZE / 2;
-  return { x: labelX - half, y: labelY - half };
+  return anchorTopLeftForRects(
+    { x: from.x, y: from.y, width: fromWidth, height: fromHeight, fourWay: true },
+    { x: to.x, y: to.y, width: toWidth, height: toHeight, fourWay: true },
+    route,
+  );
 }
 
 /** Compute anchor top-left from resolved source/target canvas nodes (mixed parent coords OK). */
@@ -121,18 +165,12 @@ export function transitionAnchorPositionFromNodes(
   target: CanvasNode,
   nodeById: Map<string, CanvasNode>,
   anchorParentId?: string,
+  route?: EdgeRoute,
 ): { x: number; y: number } {
-  const fromAbs = flowAbsolutePosition(source, nodeById);
-  const toAbs = flowAbsolutePosition(target, nodeById);
-  const fromSize = nodeLayoutSize(source);
-  const toSize = nodeLayoutSize(target);
-  const absTopLeft = transitionAnchorPositionOnEdge(
-    fromAbs,
-    toAbs,
-    fromSize.width,
-    fromSize.height,
-    toSize.width,
-    toSize.height,
+  const absTopLeft = anchorTopLeftForRects(
+    routingRectOfNode(source, nodeById),
+    routingRectOfNode(target, nodeById),
+    route,
   );
   if (!anchorParentId) return absTopLeft;
   const parent = nodeById.get(anchorParentId);
@@ -154,17 +192,46 @@ export function measuredStateNodeSize(
   };
 }
 
-/** Re-align transition anchors after React Flow measures node bounds or nodes move. */
-export function snapTransitionAnchorsToEdges(nodes: Node[], edges: CanvasEdge[]): CanvasNode[] | null {
+/** transition 边按 `graphId.transitionId` 建索引（触发点 id 里带的就是这一对）。 */
+function transitionEdgeIndex(edges: readonly CanvasEdge[]): Map<string, CanvasEdge> {
+  const out = new Map<string, CanvasEdge>();
+  for (const edge of edges) {
+    if (edge.data?.edgeKind !== 'transition') continue;
+    const detail = edge.data?.detail;
+    if (typeof detail === 'string' && detail && !out.has(detail)) out.set(detail, edge);
+  }
+  return out;
+}
+
+/**
+ * 触发点重定位的公共核：吃一份「节点 + 边」，把每个触发点摆到它那条边的实际曲线中点上。
+ * 两个调用面喂的是**不同的两份**：
+ * - `snapTransitionAnchorsToEdges` 喂模型态（写回节点 state，参与子图框尺寸计算）；
+ * - `alignTransitionAnchorsToDisplayEdges` 喂折叠变换后的 display 态（只影响这一帧的呈现）。
+ */
+function relocateAnchors(
+  nodes: readonly Node[],
+  edges: readonly CanvasEdge[],
+  hideWhenEdgeGone: boolean,
+): CanvasNode[] | null {
   const nodeById = new Map(nodes.map((node) => [node.id, node as CanvasNode]));
+  // 与画布渲染同源的路由：触发点必须吸附到**实际画出来的那条曲线**上，
+  // 否则平行边一错开、回连边一换侧，触发点就浮在半空。
+  const rects = buildRoutingRects(nodes);
+  const routes = computeEdgeRoutes(edges, (id) => rects.get(id) ?? null);
+  const edgeByDetail = transitionEdgeIndex(edges);
   let changed = false;
   const next = nodes.map((node) => {
     if (node.type !== 'transitionAnchor') return node as CanvasNode;
     const parsed = parseTransitionAnchorId(node.id);
     if (!parsed) return node as CanvasNode;
-    const detail = `${parsed.graphId}.${parsed.transitionId}`;
-    const edge = edges.find((item) => item.data?.edgeKind === 'transition' && item.data?.detail === detail);
-    if (!edge) return node as CanvasNode;
+    const edge = edgeByDetail.get(`${parsed.graphId}.${parsed.transitionId}`);
+    if (!edge || edge.hidden) {
+      // 边被折叠组吃掉（两端同在一个折叠组内）→ 触发点跟着藏，别留一颗孤零零的点
+      if (!hideWhenEdgeGone || node.hidden) return node as CanvasNode;
+      changed = true;
+      return { ...(node as CanvasNode), hidden: true };
+    }
     const source = nodeById.get(edge.source);
     const target = nodeById.get(edge.target);
     if (!source?.position || !target?.position) return node as CanvasNode;
@@ -173,6 +240,7 @@ export function snapTransitionAnchorsToEdges(nodes: Node[], edges: CanvasEdge[])
       target,
       nodeById,
       (node as CanvasNode).parentId,
+      routes.get(edge.id),
     );
     if (
       Math.abs(position.x - node.position.x) < 0.5
@@ -184,6 +252,23 @@ export function snapTransitionAnchorsToEdges(nodes: Node[], edges: CanvasEdge[])
     return { ...(node as CanvasNode), position };
   });
   return changed ? next : null;
+}
+
+/** Re-align transition anchors after React Flow measures node bounds or nodes move. */
+export function snapTransitionAnchorsToEdges(nodes: Node[], edges: CanvasEdge[]): CanvasNode[] | null {
+  return relocateAnchors(nodes, edges, false);
+}
+
+/**
+ * display 层收尾：分组折叠会把跨组边**改接到分组框**、把组内边整条隐藏，而触发点位置是按
+ * 原始端点算的——不跟着重算就会飘在半空 / 留下没有边的孤点。只作用于 display 拷贝，
+ * 模型态的触发点位置（参与子图框尺寸）不动。
+ */
+export function alignTransitionAnchorsToDisplayEdges(
+  nodes: CanvasNode[],
+  edges: CanvasEdge[],
+): CanvasNode[] {
+  return relocateAnchors(nodes, edges, true) ?? nodes;
 }
 
 export function shouldSnapTransitionAnchors(changes: { type: string; id?: string }[]): boolean {

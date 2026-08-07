@@ -1489,5 +1489,234 @@ class TestReview20260717Regressions(unittest.TestCase):
         self.assertFalse(any(i.get("code") == "wrapper.ownerType.unsupported" for i in issues))
 
 
+class TestHostSignalRegistryNotClobberedByWebSnapshot(unittest.TestCase):
+    """网页文档是加载期快照；原样回写会抹掉加载后由原生「叙事信号管理器」注册的作者信号。
+
+    根因与判据见 merge_host_only_author_signals 的 docstring：只补「不在加载基线里的宿主行」，
+    基线里有而网页文档没有的 = 网页显式删除，必须尊重不复活。
+    """
+
+    @staticmethod
+    def _doc(signals: list[dict], graph_id: str = "flow") -> dict:
+        return {
+            "schemaVersion": 3,
+            "signals": signals,
+            "compositions": [{
+                "id": "comp",
+                "mainGraph": {
+                    "id": graph_id,
+                    "ownerType": "flow",
+                    "initialState": "initial",
+                    "states": {"initial": {"id": "initial"}},
+                    "transitions": [],
+                },
+                "elements": [],
+            }],
+        }
+
+    def _bridge_with_loaded_page(self, root: Path):
+        write_minimal_loadable_project(root)
+        m = ProjectModel()
+        m.load_project(root)
+        m.narrative_graphs = self._doc([{"id": "已有信号"}])
+        bridge = NarrativeEditorBridge(m)
+        json.loads(bridge.getData())  # 模拟网页加载：记下作者信号基线
+        return m, bridge
+
+    def test_signal_registered_in_host_after_page_load_survives_web_save(self) -> None:
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            m, bridge = self._bridge_with_loaded_page(root)
+            # 加载之后，用户在别处（原生信号管理器）注册了一条新信号
+            m.narrative_graphs = self._doc([{"id": "已有信号"}, {"id": "管理器新建", "label": "新"}])
+            # 网页拿着加载期快照保存
+            self.assertIn("saved", bridge.saveData(json.dumps(self._doc([{"id": "已有信号"}]))))
+            ids = [s["id"] for s in m.narrative_graphs["signals"]]
+            self.assertEqual(ids, ["已有信号", "管理器新建"])
+            # label 等字段一并保留，不是只补一个空壳 id
+            self.assertEqual(m.narrative_graphs["signals"][1].get("label"), "新")
+
+    def test_web_side_deletion_of_a_loaded_signal_is_respected(self) -> None:
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            m, bridge = self._bridge_with_loaded_page(root)
+            # 网页把加载时就存在的信号删掉（高级 JSON 页手删）：不得复活
+            self.assertIn("saved", bridge.saveData(json.dumps(self._doc([]))))
+            self.assertEqual(m.narrative_graphs["signals"], [])
+
+    def test_web_created_signal_is_kept_and_baseline_advances(self) -> None:
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            m, bridge = self._bridge_with_loaded_page(root)
+            payload = self._doc([{"id": "已有信号"}, {"id": "网页新建"}])
+            self.assertIn("saved", bridge.saveData(json.dumps(payload)))
+            self.assertEqual([s["id"] for s in m.narrative_graphs["signals"]], ["已有信号", "网页新建"])
+            # 基线已推进：紧接着再删掉它应当生效（不被自己上一轮的暂存复活）
+            self.assertIn("saved", bridge.saveData(json.dumps(self._doc([{"id": "已有信号"}]))))
+            self.assertEqual([s["id"] for s in m.narrative_graphs["signals"]], ["已有信号"])
+
+    def test_no_getdata_means_fail_safe_merge_all_host_rows(self) -> None:
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            write_minimal_loadable_project(root)
+            m = ProjectModel()
+            m.load_project(root)
+            m.narrative_graphs = self._doc([{"id": "宿主信号"}])
+            bridge = NarrativeEditorBridge(m)  # 从未 getData：基线未知
+            self.assertIn("saved", bridge.saveData(json.dumps(self._doc([]))))
+            self.assertEqual([s["id"] for s in m.narrative_graphs["signals"]], ["宿主信号"])
+
+    def test_host_signal_survives_repeated_saves_not_just_the_first(self) -> None:
+        """基线只能记"网页自己知道的"，不能记合并后的集合。
+
+        合并补回来的 id 网页并不知道（React state 没变），它下一次交上来的 payload 里照样
+        没有；若把它们写进基线，第二次保存就会被判成"网页删过"而不再补——原 bug 只是被
+        推迟了一次保存。
+        """
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            m, bridge = self._bridge_with_loaded_page(root)
+            m.narrative_graphs = self._doc([{"id": "已有信号"}, {"id": "管理器新建"}])
+            stale_payload = json.dumps(self._doc([{"id": "已有信号"}]))  # 网页永远是这一份
+            for attempt in range(3):
+                self.assertIn("saved", bridge.saveData(stale_payload))
+                self.assertEqual(
+                    [s["id"] for s in m.narrative_graphs["signals"]],
+                    ["已有信号", "管理器新建"],
+                    f"第 {attempt + 1} 次保存也不能把宿主注册的信号丢掉",
+                )
+
+    def test_web_deletion_still_wins_after_the_web_itself_created_it(self) -> None:
+        """网页建的信号，网页也能删掉——基线是纯替换而不是并集，删除不被复活。"""
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            m, bridge = self._bridge_with_loaded_page(root)
+            self.assertIn("saved", bridge.saveData(
+                json.dumps(self._doc([{"id": "已有信号"}, {"id": "网页新建"}]))))
+            self.assertIn("saved", bridge.saveData(json.dumps(self._doc([{"id": "已有信号"}]))))
+            self.assertEqual([s["id"] for s in m.narrative_graphs["signals"]], ["已有信号"])
+            # 删掉之后宿主又重新注册同名信号：必须补得回来（并集基线会永久挡住它）
+            m.narrative_graphs = self._doc([{"id": "已有信号"}, {"id": "网页新建"}])
+            self.assertIn("saved", bridge.saveData(json.dumps(self._doc([{"id": "已有信号"}]))))
+            self.assertEqual(
+                [s["id"] for s in m.narrative_graphs["signals"]], ["已有信号", "网页新建"])
+
+    def test_merge_is_noop_when_nothing_new_on_host(self) -> None:
+        """零变化时不得改动文档（落盘字节级幂等契约不能被本补丁破坏）。"""
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            m, bridge = self._bridge_with_loaded_page(root)
+            payload = self._doc([{"id": "已有信号"}])
+            before = json.loads(json.dumps(payload))
+            self.assertIn("saved", bridge.saveData(json.dumps(payload)))
+            self.assertEqual(m.narrative_graphs["signals"], before["signals"])
+
+
+class TestRefactorBridgeEndToEnd(unittest.TestCase):
+    """重构桥的端到端流程探针（2026-08-05 全盘审查 P0-1 / P0-2）。
+
+    从**网页真正调用的最外层入口**（``applySignalRefactor`` 桥槽）进：改图 id → 断言
+    图对话里的 ownerState.wrapperGraphId 跟着改了、且返回的 postCheck 自检为空。
+    引擎级单测（test_signal_refactor.py）证明不了桥这一段接没接通。
+    """
+
+    WRAPPER_GRAPH_ID = "wrap_崖墓发布者"
+    DIALOGUE_ID = "对话_崖墓"
+
+    def _project(self, root: Path) -> ProjectModel:
+        write_minimal_loadable_project(root)
+        graphs = root / "public" / "assets" / "dialogues" / "graphs"
+        graphs.mkdir(parents=True, exist_ok=True)
+        (graphs / f"{self.DIALOGUE_ID}.json").write_text(
+            json.dumps({
+                "schemaVersion": 1, "id": self.DIALOGUE_ID, "entry": "n1",
+                "nodes": {
+                    "n1": {
+                        "type": "ownerState", "wrapperGraphId": self.WRAPPER_GRAPH_ID,
+                        "cases": [{"state": "w1", "next": "n2"}],
+                        "defaultNext": "n2", "missingWrapperNext": "n2",
+                    },
+                    "n2": {"type": "end"},
+                },
+            }, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        m = ProjectModel()
+        m.load_project(root)
+        return m
+
+    def _narrative_doc(self, wrapper_graph_id: str) -> dict:
+        return {
+            "schemaVersion": 3,
+            "signals": [{"id": "go_w"}],
+            "compositions": [{
+                "id": "comp",
+                "mainGraph": {
+                    "id": "M", "ownerType": "flow", "initialState": "m0",
+                    "states": {"m0": {"id": "m0"}}, "transitions": [],
+                },
+                "elements": [{
+                    "id": "el_w", "kind": "wrapperGraph", "ownerType": "npc", "ownerId": "npc_1",
+                    "graph": {
+                        "id": wrapper_graph_id, "ownerType": "npc", "ownerId": "npc_1",
+                        "initialState": "w0",
+                        "states": {"w0": {"id": "w0"}, "w1": {"id": "w1"}},
+                        "transitions": [{"id": "t", "from": "w0", "to": "w1", "signal": "go_w"}],
+                    },
+                }],
+            }],
+        }
+
+    def test_rename_graph_cascades_dialogue_owner_state_and_selfchecks(self) -> None:
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            m = self._project(root)
+            bridge = NarrativeEditorBridge(m)
+            new_id = "wrap_主线_崖墓任务发布"
+
+            scan = json.loads(bridge.scanGraphUsages(json.dumps({
+                "graphId": self.WRAPPER_GRAPH_ID,
+                "data": self._narrative_doc(self.WRAPPER_GRAPH_ID),
+            })))
+            self.assertTrue(scan["ok"], scan)
+            # 预览必须看得见对话图那处引用——此前这里是 0，界面显示"无引用，可安全操作"
+            self.assertEqual(scan["usages"]["totalRefs"], 1, scan["usages"])
+
+            result = json.loads(bridge.applySignalRefactor(json.dumps({
+                "op": "renameGraph",
+                "oldGraphId": self.WRAPPER_GRAPH_ID,
+                "newGraphId": new_id,
+                "data": self._narrative_doc(self.WRAPPER_GRAPH_ID),
+            })))
+            self.assertTrue(result["ok"], result)
+
+            staged = m.pending_dialogue_graph_edits[self.DIALOGUE_ID]
+            self.assertEqual(staged["nodes"]["n1"]["wrapperGraphId"], new_id)
+            self.assertEqual(result["postCheck"]["dangling"], [], "级联后自检不该有悬垂")
+            # 零磁盘写入契约：落盘只经 Save All
+            disk = json.loads(
+                (root / "public" / "assets" / "dialogues" / "graphs"
+                 / f"{self.DIALOGUE_ID}.json").read_text(encoding="utf-8"))
+            self.assertEqual(disk["nodes"]["n1"]["wrapperGraphId"], self.WRAPPER_GRAPH_ID)
+
+    def test_postcheck_surfaces_preexisting_dangling(self) -> None:
+        """自检要能把断链报出来（含重构前就存在的），否则收尾闸形同虚设。"""
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            m = self._project(root)
+            bridge = NarrativeEditorBridge(m)
+            # 叙事侧的 wrapper 用另一个 id：对话图那条 ownerState 于是天生悬垂
+            result = json.loads(bridge.applySignalRefactor(json.dumps({
+                "op": "renameGraph", "oldGraphId": "别的图", "newGraphId": "别的图2",
+                "data": self._narrative_doc("别的图"),
+            })))
+            self.assertTrue(result["ok"], result)
+            dangling = result["postCheck"]["dangling"]
+            self.assertEqual(
+                [(d["dialogueGraphId"], d["nodeId"], d["reason"]) for d in dangling],
+                [(self.DIALOGUE_ID, "n1", "missingGraph")],
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

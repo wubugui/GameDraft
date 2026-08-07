@@ -1,0 +1,102 @@
+{
+  "schemaVersion": 1,
+  "id": "生态_看_码头_江面",
+  "entry": "root",
+  "meta": {
+    "title": "桥桩底下的江水（位面/夜/白日 三态；一拍：栈桥狗对着水吠）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "plane": "背尸"
+            }
+          ],
+          "next": "bs1"
+        },
+        {
+          "conditions": [
+            {
+              "narrative": "eco_时辰",
+              "state": "夜"
+            }
+          ],
+          "next": "ye1"
+        }
+      ],
+      "defaultNext": "ri1"
+    },
+    "ri1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "水是浑的，打起旋往下走。旋里翻上来一只烂草鞋，转两转又沉下去咯。",
+      "next": "act_ri"
+    },
+    "act_ri": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "faceEntity",
+          "params": {
+            "target": "eco_dk_栈桥狗",
+            "faceTarget": "player"
+          }
+        },
+        {
+          "type": "playNpcAnimation",
+          "params": {
+            "target": "eco_dk_栈桥狗",
+            "state": "bark",
+            "loop": false,
+            "thenState": "idle",
+            "speed": 1.25
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "ye1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "夜里的水看不出深浅，只听得到桩子底下咕咚咕咚，像有人蹲在下头拍板板。",
+      "next": "act_ye"
+    },
+    "act_ye": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "playNpcAnimation",
+          "params": {
+            "target": "eco_dk_栈桥狗",
+            "state": "bark",
+            "loop": false,
+            "thenState": "idle",
+            "speed": 1.45
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "bs1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "背起这个东西看水。水面上照出来的影子，多咯一个脑壳。",
+      "next": "end"
+    },
+    "end": {
+      "type": "end"
+    }
+  }
+}

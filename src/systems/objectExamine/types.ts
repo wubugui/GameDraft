@@ -43,17 +43,76 @@ export interface ObjectExamineStillPresentation {
    */
   backgroundScale?: number;
   /**
-   * 接触 AO 浓淡。0 = 关；1 = 默认；可到 3（饱和）。缺省 1。
+   * 静帧横向跨越的真实宽度（厘米）——本物件唯一的物理标尺。
+   * 一切以长度为单位的表现量（接触 AO 半径等）都经 texW / physicalWidthCm
+   * 换算成设计像素，因此换更高分辨率的图不会改变观感。
+   * 缺省 OBJECT_EXAMINE_DEFAULT_PHYSICAL_WIDTH_CM；校验器会提醒补上真值。
+   * 合法范围 0.5～2000（运行时夹取）。
+   */
+  physicalWidthCm?: number;
+  /**
+   * 接触 AO 浓淡（无量纲）。0 = 关；1 = 默认；可到 3（饱和）。缺省 1。
    * 算法：最终 layer alpha 提取接触边缘黑白 mask → 高斯模糊 →
    * 以黑 alpha 乘回接收面（见 contactAo.ts），对任意透明物件通用。
    */
   contactAoIntensity?: number;
   /**
-   * 接触 AO 衰减半径倍率。1 = 默认；越大影子铺得越开。缺省 1。
-   * 合法范围 0.3～2.5（运行时夹取）。
+   * 接触 AO 衰减半径，**单位厘米**（真实长度，不是贴图像素也不是倍率）。
+   * 缺省 OBJECT_EXAMINE_DEFAULT_CONTACT_AO_RADIUS_CM。
+   * 合法范围 0～OBJECT_EXAMINE_MAX_CONTACT_AO_RADIUS_CM（运行时夹取）。
    */
-  contactAoScale?: number;
+  contactAoRadiusCm?: number;
 }
+
+/**
+ * 氛围表现的物理默认值（厘米 / 厘米每秒）。
+ *
+ * 全部由旧的「物件长边比例 / 倍率」换算而来（旧值 × 175cm = 演示尸体的长边真实长度），
+ * 所以换算前后演示实例逐项等值；区别是这些数从此描述的是**虫子和尘埃本身多大多快**，
+ * 不再随静帧长边浮动——同一只苍蝇落在 20cm 的物件上不会缩成一个点。
+ */
+/** 尘埃颗粒半径上限（厘米）；实际半径 29%～100% 随机。 */
+export const OBJECT_EXAMINE_DEFAULT_DUST_RADIUS_CM = 0.7535;
+/** 苍蝇体长（厘米）。 */
+export const OBJECT_EXAMINE_DEFAULT_FLY_LENGTH_CM = 3.675;
+/** 苍蝇活动域半径（厘米）。 */
+export const OBJECT_EXAMINE_DEFAULT_FLY_ROAM_RADIUS_CM = 13.125;
+/** 苍蝇巡飞速度（厘米/秒）。 */
+export const OBJECT_EXAMINE_DEFAULT_FLY_SPEED_CM_S = 18.375;
+/** 蛆体长（厘米）。 */
+export const OBJECT_EXAMINE_DEFAULT_MAGGOT_LENGTH_CM = 2.8;
+/** 蛆簇半径（厘米）。 */
+export const OBJECT_EXAMINE_DEFAULT_MAGGOT_CLUSTER_RADIUS_CM = 4.9;
+/** 甲虫体长（厘米）。 */
+export const OBJECT_EXAMINE_DEFAULT_BEETLE_LENGTH_CM = 4.025;
+/** 甲虫簇半径（厘米）。 */
+export const OBJECT_EXAMINE_DEFAULT_BEETLE_CLUSTER_RADIUS_CM = 7;
+/** 蜈蚣体长（厘米）。 */
+export const OBJECT_EXAMINE_DEFAULT_CENTIPEDE_LENGTH_CM = 13.3;
+/** 蜈蚣爬行速度（厘米/秒）。 */
+export const OBJECT_EXAMINE_DEFAULT_CENTIPEDE_SPEED_CM_S = 18.375;
+/** 云影漂移速度（厘米/秒）。 */
+export const OBJECT_EXAMINE_DEFAULT_CLOUD_SPEED_CM_S = 2.05;
+/** 体表起伏落差（厘米）：躺姿人形躯干高出地面的量级。 */
+export const OBJECT_EXAMINE_DEFAULT_RELIEF_CM = 18;
+/** 沿沟壑走的倾向（无量纲 0~1）。 */
+export const OBJECT_EXAMINE_DEFAULT_GROOVE_FOLLOW = 0.55;
+/** 上坡减速强度（无量纲 0~2）。 */
+export const OBJECT_EXAMINE_DEFAULT_CLIMB_SLOWDOWN = 0.9;
+
+/** 未声明 physicalWidthCm 时的兜底标尺（厘米）。 */
+export const OBJECT_EXAMINE_DEFAULT_PHYSICAL_WIDTH_CM = 100;
+/** 物件接触 AO 缺省半径（厘米）。 */
+export const OBJECT_EXAMINE_DEFAULT_CONTACT_AO_RADIUS_CM = 2;
+/** 爬虫接触影缺省半径（厘米）——虫子贴在表面上，影子就那么点大。 */
+export const OBJECT_EXAMINE_DEFAULT_CRITTER_AO_RADIUS_CM = 0.3;
+/** 物件接触 AO 半径上限（厘米）。 */
+export const OBJECT_EXAMINE_MAX_CONTACT_AO_RADIUS_CM = 8;
+/**
+ * 爬虫接触影半径上限（厘米）。虫子影子按定义就很小，压得比物件低是有意的：
+ * cast 外扩留边按这个上限静态预留，才能让每帧平滑跟随的爬虫半径不触发 mask RT 重建。
+ */
+export const OBJECT_EXAMINE_MAX_CRITTER_AO_RADIUS_CM = 2;
 
 /** 烛光/月光等可开关 + 强度块。 */
 export type ObjectExamineAmbienceToggle =
@@ -66,31 +125,27 @@ export type ObjectExamineAmbienceToggle =
 export type ObjectExamineCloudShadowToggle =
   | boolean
   | {
+      /** 浓淡（无量纲）。 */
       strength?: number;
-      speed?: number;
+      /** 云影漂移速度，**厘米/秒**。缺省 OBJECT_EXAMINE_DEFAULT_CLOUD_SPEED_CM_S。 */
+      speedCmPerSec?: number;
     };
 
 export type ObjectExamineDustToggle =
   | boolean
   | {
-      /** 粒子数量乘数。1 = 默认；建议 0.2～3。 */
+      /** 粒子数量乘数（无量纲）。1 = 默认；建议 0.2～3。 */
       density?: number;
-      /** 不透明度乘数。1 = 默认；建议 0～3。 */
+      /** 不透明度乘数（无量纲）。1 = 默认；建议 0～3。 */
       intensity?: number;
-      /** 颗粒半径乘数。1 = 默认；建议 0.2～4。 */
-      radius?: number;
+      /**
+       * 颗粒半径上限，**单位厘米**；实际半径在 29%～100% 之间随机。
+       * 缺省 OBJECT_EXAMINE_DEFAULT_DUST_RADIUS_CM。
+       */
+      radiusCm?: number;
     };
 
 export type ObjectExamineCrawlerSpecies = 'maggot' | 'centipede' | 'beetle';
-
-/** @deprecated 旧掠过蝇；新内容请写 flyingFlies。仍可读，映射为飞舞默认。 */
-export type ObjectExamineFliesToggle =
-  | boolean
-  | {
-      intervalSec?: number;
-      /** 若写 count 则直接当 flyingFlies.count */
-      count?: number;
-    };
 
 /** 苍蝇飞舞（活动域内高速乱飞，可点击惊赶；赶走会躲一会儿再飞回来）。 */
 export type ObjectExamineFlyingFliesToggle =
@@ -99,28 +154,28 @@ export type ObjectExamineFlyingFliesToggle =
       /** 活动域中心（归一化坐标，相对物件图宽高 0~1）；x/y 缺省时使用整块空域。 */
       x?: number;
       y?: number;
-      /** 同时存在的苍蝇数。缺省 5；建议 1～16。 */
+      /** 同时存在的苍蝇数（无量纲）。缺省 5；建议 1～16。 */
       count?: number;
-      /** 速度乘数。1 = 默认；建议 0.3～2.5。 */
-      speed?: number;
-      /** 活动范围乘数（兼容字段名 orbitRadius）。1 = 默认；建议 0.3～3。 */
-      orbitRadius?: number;
+      /** 巡飞速度，**厘米/秒**。缺省 OBJECT_EXAMINE_DEFAULT_FLY_SPEED_CM_S。 */
+      speedCmPerSec?: number;
+      /** 活动域半径，**厘米**。缺省 OBJECT_EXAMINE_DEFAULT_FLY_ROAM_RADIUS_CM。 */
+      roamRadiusCm?: number;
       /** 被赶走后多久开始绕回（秒）。0 = 不再回来；缺省 12；建议 4～60。 */
       returnSec?: number;
-      /** 尺寸乘数。1 = 默认；建议 0.2～4。 */
-      size?: number;
+      /** 虫体长度，**厘米**。缺省 OBJECT_EXAMINE_DEFAULT_FLY_LENGTH_CM。 */
+      lengthCm?: number;
     };
 
 /** 虫簇落点（归一化坐标，相对物件图宽高 0~1；x/y 缺省时运行时自动挑点）。 */
 export type ObjectExamineCritterClusterDef = {
   x?: number;
   y?: number;
-  /** 个体数。蛆缺省 6，爬虫缺省 4。 */
+  /** 个体数（无量纲）。蛆缺省 6，爬虫缺省 4。 */
   count?: number;
-  /** 簇半径（相对物件长边，1 = 长边长度）。缺省蛆 0.028 / 爬虫 0.04。 */
-  radius?: number;
-  /** 个体尺寸乘数。1 = 默认；建议 0.2～4。 */
-  size?: number;
+  /** 簇半径，**厘米**。缺省蛆 4.9 / 甲虫 7。 */
+  radiusCm?: number;
+  /** 单只虫体长度，**厘米**。缺省蛆 2.8 / 甲虫 4.025。 */
+  lengthCm?: number;
 };
 
 /**
@@ -134,12 +189,30 @@ export type ObjectExamineCrawlersToggle =
   | {
       /** 父级开关；false 时保留全部子配置但暂停爬虫表现。 */
       enabled?: boolean;
-      /** 非飞行虫接触影；intensity 为强度，size 为尺寸乘数。 */
-      contactShadow?: boolean | { intensity?: number; size?: number };
+      /** 非飞行虫接触影；intensity 为无量纲强度，radiusCm 为半径（厘米）。 */
+      contactShadow?: boolean | { intensity?: number; radiusCm?: number };
+      /**
+       * 体表地形：虫子是否感知物件的起伏（衣褶、躯干隆起）。
+       * `false` = 当平面爬（旧行为）。高度场由静帧烘焙，见 crawlField.ts。
+       */
+      terrain?: boolean | {
+        /** 体表最高处相对地面的真实落差，**厘米**。0 = 等同关闭。 */
+        reliefCm?: number;
+        /** 沿沟壑走的倾向（无量纲 0~1）：越大越爱顺着凹处走。 */
+        grooveFollow?: number;
+        /** 上坡减速强度（无量纲 0~2）。 */
+        climbSlowdown?: number;
+      };
       /** 蛆簇。true = 自动两簇；对象可给 clusters（x/y 缺省自动挑当前物体表面点）。 */
       maggots?: boolean | { clusters?: ObjectExamineCritterClusterDef[] };
-      /** 蜈蚣过场。intervalSec 平均出场间隔（秒），0 = 没有蜈蚣；speed/size 为乘数。 */
-      centipede?: boolean | { intervalSec?: number; speed?: number; size?: number };
+      /** 蜈蚣过场。intervalSec 平均出场间隔（秒），0 = 没有蜈蚣；速度/体长走物理单位。 */
+      centipede?: boolean | {
+        intervalSec?: number;
+        /** 爬行速度，**厘米/秒**。缺省 OBJECT_EXAMINE_DEFAULT_CENTIPEDE_SPEED_CM_S。 */
+        speedCmPerSec?: number;
+        /** 虫体长度，**厘米**。缺省 OBJECT_EXAMINE_DEFAULT_CENTIPEDE_LENGTH_CM。 */
+        lengthCm?: number;
+      };
       /** 爬虫簇。regroupSec 惊散后多久重新聚回（秒），0 = 不再回来。 */
       beetles?: boolean | (ObjectExamineCritterClusterDef & { regroupSec?: number });
     };
@@ -187,10 +260,6 @@ export interface ObjectExamineAmbience {
    * `strength` 越大越急促（幅度+频率一起升）。
    */
   breathing?: ObjectExamineBreathingToggle;
-  /**
-   * @deprecated 旧字段，等同 headSway 开关；新内容请写 headSway。
-   */
-  parallax?: boolean;
   candlelight?: ObjectExamineAmbienceToggle;
   moonlight?: ObjectExamineAmbienceToggle;
   cloudShadow?: ObjectExamineCloudShadowToggle;
@@ -199,10 +268,6 @@ export interface ObjectExamineAmbience {
   flyingFlies?: ObjectExamineFlyingFliesToggle;
   /** 爬虫三类：蛆簇（原地蠕动）/ 蜈蚣过场 / 爬虫簇（点击惊散）。 */
   crawlers?: ObjectExamineCrawlersToggle;
-  /**
-   * @deprecated 旧「两点圆掠过」；若未写 flyingFlies 则映射为飞舞开关。
-   */
-  flies?: ObjectExamineFliesToggle;
 }
 
 /** 会话进退施加的气味（接 SmellSystem action 层）。 */
@@ -254,13 +319,26 @@ export function resolveObjectExamineContactAoIntensity(
   return Math.max(0, Math.min(3, v));
 }
 
-/** 解析接触 AO 尺寸倍率（夹取）。 */
-export function resolveObjectExamineContactAoScale(
+/** 解析物理标尺：静帧横向真实宽度（厘米，夹取）。 */
+export function resolveObjectExaminePhysicalWidthCm(
   presentation: ObjectExamineStillPresentation,
 ): number {
-  const v = presentation.contactAoScale;
-  if (typeof v !== 'number' || !Number.isFinite(v)) return 1;
-  return Math.max(0.3, Math.min(2.5, v));
+  const v = presentation.physicalWidthCm;
+  if (typeof v !== 'number' || !Number.isFinite(v)) {
+    return OBJECT_EXAMINE_DEFAULT_PHYSICAL_WIDTH_CM;
+  }
+  return Math.max(0.5, Math.min(2000, v));
+}
+
+/** 解析接触 AO 半径（厘米，夹取）。 */
+export function resolveObjectExamineContactAoRadiusCm(
+  presentation: ObjectExamineStillPresentation,
+): number {
+  const v = presentation.contactAoRadiusCm;
+  if (typeof v !== 'number' || !Number.isFinite(v)) {
+    return OBJECT_EXAMINE_DEFAULT_CONTACT_AO_RADIUS_CM;
+  }
+  return Math.max(0, Math.min(OBJECT_EXAMINE_MAX_CONTACT_AO_RADIUS_CM, v));
 }
 
 export type ObjectExaminePresentation = ObjectExamineStillPresentation;
@@ -368,17 +446,17 @@ export interface ResolvedObjectExamineAmbience {
   breathing: { enabled: boolean; strength: number };
   candlelight: { enabled: boolean; strength: number; periodSec: number };
   moonlight: { enabled: boolean; strength: number; periodSec: number };
-  cloudShadow: { enabled: boolean; strength: number; speed: number };
-  dust: { enabled: boolean; density: number; intensity: number; radius: number };
+  cloudShadow: { enabled: boolean; strength: number; speedCmPerSec: number };
+  dust: { enabled: boolean; density: number; intensity: number; radiusCm: number };
   flyingFlies: {
     enabled: boolean;
     x: number | null;
     y: number | null;
     count: number;
-    speed: number;
-    orbitRadius: number;
+    speedCmPerSec: number;
+    roamRadiusCm: number;
     returnSec: number;
-    size: number;
+    lengthCm: number;
   };
   crawlers: {
     enabled: boolean;
@@ -386,7 +464,13 @@ export interface ResolvedObjectExamineAmbience {
     parentEnabled: boolean;
     /** 原始值是否为结构化对象；供 F2 保真切换，区别于旧布尔 false/true。 */
     hasStructuredConfig: boolean;
-    contactShadow: { enabled: boolean; intensity: number; size: number };
+    contactShadow: { enabled: boolean; intensity: number; radiusCm: number };
+    terrain: {
+      enabled: boolean;
+      reliefCm: number;
+      grooveFollow: number;
+      climbSlowdown: number;
+    };
     /** 蛆簇（原地蠕动，不受触发）。x/y 为 null 时运行时自动挑点。 */
     maggots: {
       enabled: boolean;
@@ -394,18 +478,18 @@ export interface ResolvedObjectExamineAmbience {
         x: number | null;
         y: number | null;
         count: number;
-        radius: number;
-        size: number;
+        radiusCm: number;
+        lengthCm: number;
       }>;
     };
     /** 蜈蚣过场。intervalSec = 0 即没有蜈蚣。 */
     centipede: {
       enabled: boolean;
-      /** 原始子项是否为结构化对象；intervalSec=0 时仍需保留 speed/size。 */
+      /** 原始子项是否为结构化对象；intervalSec=0 时仍需保留速度/体长。 */
       hasStructuredConfig: boolean;
       intervalSec: number;
-      speed: number;
-      size: number;
+      speedCmPerSec: number;
+      lengthCm: number;
     };
     /** 爬虫簇（点击惊散）。x/y 为 null 时运行时自动挑点。 */
     beetles: {
@@ -413,13 +497,11 @@ export interface ResolvedObjectExamineAmbience {
       x: number | null;
       y: number | null;
       count: number;
-      radius: number;
-      size: number;
+      radiusCm: number;
+      lengthCm: number;
       regroupSec: number;
     };
   };
-  /** @deprecated 兼容旧 F2 文案；等同 flyingFlies 的粗摘要。 */
-  flies: { enabled: boolean; intervalSec: number };
 }
 
 function clamp(n: number, lo: number, hi: number): number {
@@ -463,9 +545,11 @@ export function resolveObjectExamineAmbience(
   override?: Partial<ObjectExamineAmbience> | null,
 ): ResolvedObjectExamineAmbience {
   const a: ObjectExamineAmbience = { ...(ambience ?? {}), ...(override ?? {}) };
+  const CLOUD_SPEED = OBJECT_EXAMINE_DEFAULT_CLOUD_SPEED_CM_S;
+  const DUST_R = OBJECT_EXAMINE_DEFAULT_DUST_RADIUS_CM;
   const cloud =
     a.cloudShadow === true
-      ? { enabled: true, strength: 0.22, speed: 18 }
+      ? { enabled: true, strength: 0.22, speedCmPerSec: CLOUD_SPEED }
       : a.cloudShadow && typeof a.cloudShadow === 'object'
         ? {
             enabled: true,
@@ -474,16 +558,16 @@ export function resolveObjectExamineAmbience(
               0,
               1,
             ),
-            speed: clamp(
-              typeof a.cloudShadow.speed === 'number' ? a.cloudShadow.speed : 18,
-              1,
-              80,
+            speedCmPerSec: clamp(
+              finiteNumber(a.cloudShadow.speedCmPerSec, CLOUD_SPEED),
+              0.1,
+              10,
             ),
           }
-        : { enabled: false, strength: 0.22, speed: 18 };
+        : { enabled: false, strength: 0.22, speedCmPerSec: CLOUD_SPEED };
   const dust =
     a.dust === true
-      ? { enabled: true, density: 1, intensity: 1, radius: 1 }
+      ? { enabled: true, density: 1, intensity: 1, radiusCm: DUST_R }
       : a.dust && typeof a.dust === 'object'
         ? {
             enabled: true,
@@ -493,18 +577,12 @@ export function resolveObjectExamineAmbience(
               0,
               3,
             ),
-            radius: clamp(typeof a.dust.radius === 'number' ? a.dust.radius : 1, 0.2, 4),
+            radiusCm: clamp(finiteNumber(a.dust.radiusCm, DUST_R), 0.02, 8),
           }
-        : { enabled: false, density: 1, intensity: 1, radius: 1 };
-  const flyingFlies = resolveFlyingFlies(a.flyingFlies, a.flies);
+        : { enabled: false, density: 1, intensity: 1, radiusCm: DUST_R };
+  const flyingFlies = resolveFlyingFlies(a.flyingFlies);
   const crawlers = resolveCrawlers(a.crawlers);
-  /** 兼容旧字段展示：interval 无实际用途，enabled 跟飞舞走。 */
-  const flies = {
-    enabled: flyingFlies.enabled,
-    intervalSec: 7,
-  };
-
-  const headSway = resolveHeadSway(a.headSway, a.parallax);
+  const headSway = resolveHeadSway(a.headSway);
   const breathing = resolveBreathing(a.breathing);
 
   return {
@@ -516,7 +594,6 @@ export function resolveObjectExamineAmbience(
     dust,
     flyingFlies,
     crawlers,
-    flies,
   };
 }
 
@@ -525,16 +602,15 @@ export type ResolvedObjectExamineCrawlers = ResolvedObjectExamineAmbience['crawl
 
 function resolveFlyingFlies(
   v: ObjectExamineFlyingFliesToggle | undefined,
-  legacy: ObjectExamineFliesToggle | undefined,
 ): ResolvedObjectExamineFlyingFlies {
   const defaults = {
     x: null,
     y: null,
     count: 5,
-    speed: 1,
-    orbitRadius: 1,
+    speedCmPerSec: OBJECT_EXAMINE_DEFAULT_FLY_SPEED_CM_S,
+    roamRadiusCm: OBJECT_EXAMINE_DEFAULT_FLY_ROAM_RADIUS_CM,
     returnSec: 12,
-    size: 1,
+    lengthCm: OBJECT_EXAMINE_DEFAULT_FLY_LENGTH_CM,
   };
   if (v === false) return { enabled: false, ...defaults };
   if (v === true) return { enabled: true, ...defaults };
@@ -544,34 +620,22 @@ function resolveFlyingFlies(
       x: normPoint(v.x),
       y: normPoint(v.y),
       count: Math.round(clamp(finiteNumber(v.count, defaults.count), 1, 16)),
-      speed: clamp(finiteNumber(v.speed, defaults.speed), 0.3, 2.5),
-      orbitRadius: clamp(
-        finiteNumber(v.orbitRadius, defaults.orbitRadius),
-        0.3,
-        3,
+      speedCmPerSec: clamp(
+        finiteNumber(v.speedCmPerSec, defaults.speedCmPerSec),
+        1,
+        200,
+      ),
+      roamRadiusCm: clamp(
+        finiteNumber(v.roamRadiusCm, defaults.roamRadiusCm),
+        1,
+        200,
       ),
       returnSec: clamp(
         finiteNumber(v.returnSec, defaults.returnSec),
         0,
         60,
       ),
-      size: clamp(finiteNumber(v.size, defaults.size), 0.2, 4),
-    };
-  }
-  // 旧 flies → 飞舞
-  if (legacy === true) return { enabled: true, ...defaults };
-  if (legacy && typeof legacy === 'object') {
-    return {
-      enabled: true,
-      x: defaults.x,
-      y: defaults.y,
-      count: Math.round(
-        clamp(finiteNumber(legacy.count, defaults.count), 1, 16),
-      ),
-      speed: defaults.speed,
-      orbitRadius: defaults.orbitRadius,
-      returnSec: defaults.returnSec,
-      size: defaults.size,
+      lengthCm: clamp(finiteNumber(v.lengthCm, defaults.lengthCm), 0.2, 40),
     };
   }
   return { enabled: false, ...defaults };
@@ -588,25 +652,57 @@ function resolveCrawlers(
     enabled: false,
     parentEnabled: false,
     hasStructuredConfig: false,
-    contactShadow: { enabled: false, intensity: 1, size: 1 },
+    contactShadow: {
+      enabled: false,
+      intensity: 1,
+      radiusCm: OBJECT_EXAMINE_DEFAULT_CRITTER_AO_RADIUS_CM,
+    },
+    terrain: {
+      enabled: false,
+      reliefCm: OBJECT_EXAMINE_DEFAULT_RELIEF_CM,
+      grooveFollow: OBJECT_EXAMINE_DEFAULT_GROOVE_FOLLOW,
+      climbSlowdown: OBJECT_EXAMINE_DEFAULT_CLIMB_SLOWDOWN,
+    },
     maggots: { enabled: false, clusters: [] },
-    centipede: { enabled: false, hasStructuredConfig: false, intervalSec: 0, speed: 1, size: 1 },
-    beetles: { enabled: false, x: null, y: null, count: 4, radius: 0.04, size: 1, regroupSec: 30 },
+    centipede: {
+      enabled: false,
+      hasStructuredConfig: false,
+      intervalSec: 0,
+      speedCmPerSec: OBJECT_EXAMINE_DEFAULT_CENTIPEDE_SPEED_CM_S,
+      lengthCm: OBJECT_EXAMINE_DEFAULT_CENTIPEDE_LENGTH_CM,
+    },
+    beetles: {
+      enabled: false,
+      x: null,
+      y: null,
+      count: 4,
+      radiusCm: OBJECT_EXAMINE_DEFAULT_BEETLE_CLUSTER_RADIUS_CM,
+      lengthCm: OBJECT_EXAMINE_DEFAULT_BEETLE_LENGTH_CM,
+      regroupSec: 30,
+    },
   };
   if (v === false || v === undefined) return off;
 
+  let terrain: ResolvedObjectExamineCrawlers['terrain'] = {
+    enabled: true,
+    reliefCm: OBJECT_EXAMINE_DEFAULT_RELIEF_CM,
+    grooveFollow: OBJECT_EXAMINE_DEFAULT_GROOVE_FOLLOW,
+    climbSlowdown: OBJECT_EXAMINE_DEFAULT_CLIMB_SLOWDOWN,
+  };
+  const MAGGOT_R = OBJECT_EXAMINE_DEFAULT_MAGGOT_CLUSTER_RADIUS_CM;
+  const MAGGOT_LEN = OBJECT_EXAMINE_DEFAULT_MAGGOT_LENGTH_CM;
   let contactShadow: ResolvedObjectExamineCrawlers['contactShadow'] = {
     enabled: true,
     intensity: 1,
-    size: 1,
+    radiusCm: OBJECT_EXAMINE_DEFAULT_CRITTER_AO_RADIUS_CM,
   };
 
   // 蛆：默认自动两簇
   let maggots: ResolvedObjectExamineCrawlers['maggots'] = {
     enabled: true,
     clusters: [
-      { x: null, y: null, count: 6, radius: 0.028, size: 1 },
-      { x: null, y: null, count: 6, radius: 0.028, size: 1 },
+      { x: null, y: null, count: 6, radiusCm: MAGGOT_R, lengthCm: MAGGOT_LEN },
+      { x: null, y: null, count: 6, radiusCm: MAGGOT_R, lengthCm: MAGGOT_LEN },
     ],
   };
   // 蜈蚣：默认 24s 一次过场
@@ -614,8 +710,8 @@ function resolveCrawlers(
     enabled: true,
     hasStructuredConfig: false,
     intervalSec: 24,
-    speed: 1,
-    size: 1,
+    speedCmPerSec: OBJECT_EXAMINE_DEFAULT_CENTIPEDE_SPEED_CM_S,
+    lengthCm: OBJECT_EXAMINE_DEFAULT_CENTIPEDE_LENGTH_CM,
   };
   // 爬虫簇：默认自动一簇
   let beetles: ResolvedObjectExamineCrawlers['beetles'] = {
@@ -623,8 +719,8 @@ function resolveCrawlers(
     x: null,
     y: null,
     count: 4,
-    radius: 0.04,
-    size: 1,
+    radiusCm: OBJECT_EXAMINE_DEFAULT_BEETLE_CLUSTER_RADIUS_CM,
+    lengthCm: OBJECT_EXAMINE_DEFAULT_BEETLE_LENGTH_CM,
     regroupSec: 30,
   };
 
@@ -635,7 +731,37 @@ function resolveCrawlers(
       contactShadow = {
         enabled: true,
         intensity: clamp(finiteNumber(v.contactShadow.intensity, 1), 0, 2),
-        size: clamp(finiteNumber(v.contactShadow.size, 1), 0.5, 1.8),
+        radiusCm: clamp(
+          finiteNumber(
+            v.contactShadow.radiusCm,
+            OBJECT_EXAMINE_DEFAULT_CRITTER_AO_RADIUS_CM,
+          ),
+          0,
+          OBJECT_EXAMINE_MAX_CRITTER_AO_RADIUS_CM,
+        ),
+      };
+    }
+    if (v.terrain === false) {
+      terrain = { ...terrain, enabled: false };
+    } else if (v.terrain && typeof v.terrain === 'object') {
+      const reliefCm = clamp(
+        finiteNumber(v.terrain.reliefCm, OBJECT_EXAMINE_DEFAULT_RELIEF_CM),
+        0,
+        200,
+      );
+      terrain = {
+        enabled: reliefCm > 0,
+        reliefCm,
+        grooveFollow: clamp(
+          finiteNumber(v.terrain.grooveFollow, OBJECT_EXAMINE_DEFAULT_GROOVE_FOLLOW),
+          0,
+          1,
+        ),
+        climbSlowdown: clamp(
+          finiteNumber(v.terrain.climbSlowdown, OBJECT_EXAMINE_DEFAULT_CLIMB_SLOWDOWN),
+          0,
+          2,
+        ),
       };
     }
     if (v.maggots === false) {
@@ -648,8 +774,8 @@ function resolveCrawlers(
           x: normPoint(c.x),
           y: normPoint(c.y),
           count: Math.round(clamp(finiteNumber(c.count, 6), 1, 24)),
-          radius: clamp(finiteNumber(c.radius, 0.028), 0.005, 0.2),
-          size: clamp(finiteNumber(c.size, 1), 0.2, 4),
+          radiusCm: clamp(finiteNumber(c.radiusCm, MAGGOT_R), 0.2, 100),
+          lengthCm: clamp(finiteNumber(c.lengthCm, MAGGOT_LEN), 0.1, 40),
         }));
       maggots = {
         enabled: clusters.length > 0,
@@ -662,8 +788,8 @@ function resolveCrawlers(
         enabled: false,
         hasStructuredConfig: false,
         intervalSec: 0,
-        speed: 1,
-        size: 1,
+        speedCmPerSec: OBJECT_EXAMINE_DEFAULT_CENTIPEDE_SPEED_CM_S,
+        lengthCm: OBJECT_EXAMINE_DEFAULT_CENTIPEDE_LENGTH_CM,
       };
     } else if (v.centipede && typeof v.centipede === 'object') {
       const intervalSec = clamp(
@@ -675,8 +801,19 @@ function resolveCrawlers(
         enabled: intervalSec > 0,
         hasStructuredConfig: true,
         intervalSec,
-        speed: clamp(finiteNumber(v.centipede.speed, 1), 0.3, 3),
-        size: clamp(finiteNumber(v.centipede.size, 1), 0.2, 4),
+        speedCmPerSec: clamp(
+          finiteNumber(
+            v.centipede.speedCmPerSec,
+            OBJECT_EXAMINE_DEFAULT_CENTIPEDE_SPEED_CM_S,
+          ),
+          1,
+          200,
+        ),
+        lengthCm: clamp(
+          finiteNumber(v.centipede.lengthCm, OBJECT_EXAMINE_DEFAULT_CENTIPEDE_LENGTH_CM),
+          0.5,
+          150,
+        ),
       };
     }
     if (v.beetles === false) {
@@ -687,8 +824,16 @@ function resolveCrawlers(
         x: normPoint(v.beetles.x),
         y: normPoint(v.beetles.y),
         count: Math.round(clamp(finiteNumber(v.beetles.count, 4), 1, 16)),
-        radius: clamp(finiteNumber(v.beetles.radius, 0.04), 0.005, 0.2),
-        size: clamp(finiteNumber(v.beetles.size, 1), 0.2, 4),
+        radiusCm: clamp(
+          finiteNumber(v.beetles.radiusCm, OBJECT_EXAMINE_DEFAULT_BEETLE_CLUSTER_RADIUS_CM),
+          0.2,
+          100,
+        ),
+        lengthCm: clamp(
+          finiteNumber(v.beetles.lengthCm, OBJECT_EXAMINE_DEFAULT_BEETLE_LENGTH_CM),
+          0.1,
+          40,
+        ),
         regroupSec: clamp(
           finiteNumber(v.beetles.regroupSec, 30),
           0,
@@ -704,6 +849,7 @@ function resolveCrawlers(
     parentEnabled,
     hasStructuredConfig: !!v && typeof v === 'object',
     contactShadow,
+    terrain,
     maggots,
     centipede,
     beetles,
@@ -712,7 +858,6 @@ function resolveCrawlers(
 
 function resolveHeadSway(
   v: ObjectExamineHeadSwayToggle | undefined,
-  legacyParallax: boolean | undefined,
 ): { enabled: boolean; amplitude: number } {
   const defaultAmp = 1;
   if (v === false) return { enabled: false, amplitude: defaultAmp };
@@ -726,9 +871,6 @@ function resolveHeadSway(
         3,
       ),
     };
-  }
-  if (legacyParallax !== undefined) {
-    return { enabled: legacyParallax !== false, amplitude: defaultAmp };
   }
   return { enabled: true, amplitude: defaultAmp };
 }

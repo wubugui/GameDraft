@@ -3,6 +3,7 @@
     "id": "copper_coins",
     "name": "铜钱",
     "type": "consumable",
+    "icon": "/resources/runtime/images/icons/copper_coins.png",
     "description": "几文铜钱，在[tag:string:place:wujin]能买碗面。",
     "maxStack": 99
   },
@@ -18,6 +19,7 @@
     "id": "nuomi",
     "name": "糯米",
     "type": "consumable",
+    "icon": "/resources/runtime/images/icons/nuomi.png",
     "description": "一把糯米，粘乎乎的。听说洒在不干净的东西上有奇效。",
     "buyPrice": 2,
     "maxStack": 10
@@ -66,6 +68,7 @@
     "id": "talisman",
     "name": "黄纸符",
     "type": "consumable",
+    "icon": "/resources/runtime/images/icons/talisman.png",
     "description": "城东道士画的符，歪歪扭扭的，也不知道灵不灵。",
     "buyPrice": 8,
     "maxStack": 5
@@ -74,6 +77,7 @@
     "id": "temple_notes",
     "name": "庙祝手札",
     "type": "key",
+    "icon": "/resources/runtime/images/icons/temple_notes.png",
     "description": "城隍庙庙祝留下的手札，上面记载着一些庙里的旧事和禁忌。字迹工整，看得出庙祝是个有学问的人。",
     "dynamicDescriptions": [
       {
@@ -98,6 +102,7 @@
     "id": "joss_paper",
     "name": "纸钱",
     "type": "consumable",
+    "icon": "/resources/runtime/images/icons/joss_paper.png",
     "description": "河滩上那只手递来的纸钱，黄的、软的。用剩下这几张，扔也不是，留也不是。",
     "maxStack": 10
   },
@@ -105,6 +110,7 @@
     "id": "heavy_bundle",
     "name": "沉甸甸的包袱",
     "type": "key",
+    "icon": "/resources/runtime/images/icons/heavy_bundle.png",
     "description": "雇主交代送到阎王岭山口歇脚棚的包袱。死沉，棱角硌背。别问里头是啥——一问，工钱就没了。",
     "maxStack": 1
   },
@@ -112,6 +118,7 @@
     "id": "daopao",
     "name": "旧道袍",
     "type": "key",
+    "icon": "/resources/runtime/images/icons/daopao.png",
     "description": "当铺角落赊来的一件旧道袍，洗得发白，掌柜的懒得收。穿身上空荡荡的——可远看，有那么点意思。",
     "maxStack": 1
   },
@@ -127,6 +134,7 @@
     "id": "taomu_sword",
     "name": "桃木剑",
     "type": "key",
+    "icon": "/resources/runtime/images/icons/taomu_sword.png",
     "description": "从城东先生那里顺来的桃木剑，轻得像烧火棍；外搭两张讹来的歪符——歪是歪，红是红，唬人够了。",
     "maxStack": 1
   },
@@ -134,6 +142,7 @@
     "id": "taoist_outfit",
     "name": "凑合的行头",
     "type": "key",
+    "icon": "/resources/runtime/images/icons/taoist_outfit.png",
     "description": "用零活攒的钱置办的一身「道士皮」：旧道袍、歪符、桃木剑。不全、不正经，但远看……还行。",
     "maxStack": 1
   },
@@ -141,6 +150,7 @@
     "id": "silver_dimes",
     "name": "银角子",
     "type": "key",
+    "icon": "/resources/runtime/images/icons/silver_dimes.png",
     "description": "埃德加塞过来的两枚银角子。说好的十块大洋呢？洋人的账，比僵尸还邪门。",
     "maxStack": 2
   },
@@ -148,6 +158,7 @@
     "id": "old_cloth_pouch",
     "name": "旧帕子包",
     "type": "key",
+    "icon": "/resources/runtime/images/icons/old_cloth_pouch.png",
     "description": "逃命路上贪财捡的一个旧帕子包，破帕子裹着几样没用的小物——铜亮纽子、半张洋烟盒纸、一个空香粉盒、几缕零线。对世人是垃圾，没舍得扔。揣上它，总有一缕散不掉的廉价香粉味跟着；夜里隐隐还有半句跑调的小调。每回他快没命，那味就陡然浓起来，像有什么盲目地不让他撒手。",
     "maxStack": 1
   },

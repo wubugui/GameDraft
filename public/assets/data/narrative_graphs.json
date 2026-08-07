@@ -1,6 +1,17 @@
 {
   "schemaVersion": 3,
-  "migrations": {},
+  "migrations": {
+    "graphs": {
+      "flow_1": "主线_交互点",
+      "雾津_主线_交互点": "主线_交互点",
+      "主线_藏钱交互点": "主线_交互点"
+    },
+    "states": {
+      "癞子NPC": {
+        "state_1": "在捡钱"
+      }
+    }
+  },
   "compositions": [
     {
       "id": "dock_water_monkey_ring_flow",
@@ -523,8 +534,8 @@
             "label": "开局·茶馆门外的人",
             "meta": {
               "editor": {
-                "x": -85,
-                "y": 68
+                "x": -191,
+                "y": 105
               }
             }
           },
@@ -533,8 +544,8 @@
             "label": "听书完成",
             "meta": {
               "editor": {
-                "x": 185,
-                "y": 85
+                "x": -12,
+                "y": 216
               }
             }
           },
@@ -543,8 +554,8 @@
             "label": "背崖墓尸完成",
             "meta": {
               "editor": {
-                "x": 536,
-                "y": 198
+                "x": 544,
+                "y": 238
               }
             }
           },
@@ -647,6 +658,26 @@
               }
             },
             "label": "未开始"
+          },
+          "state_2": {
+            "id": "state_2",
+            "meta": {
+              "editor": {
+                "x": 248,
+                "y": 280
+              }
+            },
+            "label": "主线开局闲逛A"
+          },
+          "state_3": {
+            "id": "state_3",
+            "meta": {
+              "editor": {
+                "x": 330,
+                "y": 88
+              }
+            },
+            "label": "主线开局闲逛B"
           }
         },
         "transitions": [
@@ -655,12 +686,6 @@
             "from": "initial",
             "to": "s01_tingshu",
             "signal": "state:scenario_听书:kicked_out"
-          },
-          {
-            "id": "t_s02_beishi",
-            "from": "s01_tingshu",
-            "to": "s02_beishi",
-            "signal": "state:scenario_背尸:fled"
           },
           {
             "id": "t_s02b_meng",
@@ -721,6 +746,31 @@
             "from": "state_1",
             "to": "initial",
             "signal": "__draft__"
+          },
+          {
+            "id": "t_3",
+            "from": "state_2",
+            "to": "state_3",
+            "signal": "__draft__",
+            "trigger": "reactive",
+            "conditions": [
+              {
+                "narrative": "wrapper_主线_崖墓任务发布",
+                "state": "state_2"
+              }
+            ]
+          },
+          {
+            "id": "t_4",
+            "from": "state_3",
+            "to": "s02_beishi",
+            "signal": "__draft__"
+          },
+          {
+            "id": "t_2",
+            "from": "s01_tingshu",
+            "to": "state_2",
+            "signal": "主线_开局被赶出茶馆"
           }
         ],
         "label": "寻狗Demo主线"
@@ -1283,8 +1333,8 @@
           "label": "读人·儿子",
           "ownerType": "npc",
           "ownerId": "npc_她儿子",
-          "x": 264,
-          "y": 320,
+          "x": 12,
+          "y": 331,
           "graph": {
             "id": "wrap_读人_儿子",
             "ownerType": "npc",
@@ -1419,8 +1469,8 @@
           "label": "城隍庙守半夜（场景⑪）",
           "ownerType": "scenario",
           "ownerId": "寻狗_守夜",
-          "x": 264,
-          "y": 420,
+          "x": 1,
+          "y": 428,
           "graph": {
             "id": "wrap_守夜",
             "ownerType": "scenario",
@@ -1559,13 +1609,13 @@
           "kind": "wrapperGraph",
           "label": "镇尸·撒米",
           "ownerType": "hotspot",
-          "ownerId": "义庄:hs_镇尸_撒米",
+          "ownerId": "hs_镇尸_撒米",
           "x": 744,
           "y": 420,
           "graph": {
             "id": "wrap_镇尸_撒米",
             "ownerType": "hotspot",
-            "ownerId": "义庄:hs_镇尸_撒米",
+            "ownerId": "hs_镇尸_撒米",
             "initialState": "undone",
             "states": {
               "undone": {
@@ -1611,13 +1661,13 @@
           "kind": "wrapperGraph",
           "label": "镇尸·墨斗线",
           "ownerType": "hotspot",
-          "ownerId": "义庄:hs_镇尸_墨斗",
+          "ownerId": "hs_镇尸_墨斗",
           "x": 984,
           "y": 420,
           "graph": {
             "id": "wrap_镇尸_墨斗",
             "ownerType": "hotspot",
-            "ownerId": "义庄:hs_镇尸_墨斗",
+            "ownerId": "hs_镇尸_墨斗",
             "initialState": "undone",
             "states": {
               "undone": {
@@ -1663,13 +1713,13 @@
           "kind": "wrapperGraph",
           "label": "镇尸·七颗石子",
           "ownerType": "hotspot",
-          "ownerId": "义庄:hs_镇尸_石子",
+          "ownerId": "hs_镇尸_石子",
           "x": 744,
           "y": 520,
           "graph": {
             "id": "wrap_镇尸_石子",
             "ownerType": "hotspot",
-            "ownerId": "义庄:hs_镇尸_石子",
+            "ownerId": "hs_镇尸_石子",
             "initialState": "undone",
             "states": {
               "undone": {
@@ -1715,13 +1765,13 @@
           "kind": "wrapperGraph",
           "label": "镇尸·横剪子",
           "ownerType": "hotspot",
-          "ownerId": "义庄:hs_镇尸_剪子",
+          "ownerId": "hs_镇尸_剪子",
           "x": 984,
           "y": 520,
           "graph": {
             "id": "wrap_镇尸_剪子",
             "ownerType": "hotspot",
-            "ownerId": "义庄:hs_镇尸_剪子",
+            "ownerId": "hs_镇尸_剪子",
             "initialState": "undone",
             "states": {
               "undone": {
@@ -4340,14 +4390,14 @@
           "id": "el_wrap_踩铜板",
           "kind": "wrapperGraph",
           "label": "①.5地上踩铜板（一次性）",
-          "ownerType": "flow",
-          "ownerId": "寻狗_踩铜板线",
+          "ownerType": "npc",
+          "ownerId": "fx_steam_2",
           "x": 120,
           "y": -560,
           "graph": {
             "id": "wrap_踩铜板",
-            "ownerType": "flow",
-            "ownerId": "寻狗_踩铜板线",
+            "ownerType": "npc",
+            "ownerId": "fx_steam_2",
             "initialState": "available",
             "states": {
               "available": {
@@ -4875,7 +4925,7 @@
         {
           "id": "wrapper_1",
           "kind": "wrapperGraph",
-          "label": "Wrapper Graph",
+          "label": "主线_崖墓任务发布",
           "refId": "",
           "x": -350,
           "y": 318,
@@ -4887,8 +4937,8 @@
           "ownerType": "npc",
           "ownerId": "崖墓任务发布者",
           "graph": {
-            "id": "wrapper_graph_1",
-            "label": "Wrapper Graph",
+            "id": "wrapper_主线_崖墓任务发布",
+            "label": "主线_崖墓任务发布",
             "ownerType": "npc",
             "initialState": "initial",
             "states": {
@@ -5740,6 +5790,223 @@
           }
         }
       ]
+    },
+    {
+      "id": "composition_1",
+      "mainGraph": {
+        "id": "癞子NPC",
+        "ownerType": "flow",
+        "initialState": "initial",
+        "states": {
+          "initial": {
+            "id": "initial",
+            "meta": {
+              "editor": {
+                "x": -398,
+                "y": 53
+              }
+            }
+          },
+          "在捡钱": {
+            "id": "在捡钱",
+            "meta": {
+              "editor": {
+                "x": 52,
+                "y": 49
+              }
+            }
+          }
+        },
+        "transitions": [
+          {
+            "id": "t_1",
+            "from": "initial",
+            "to": "在捡钱",
+            "signal": "崖墓任务_发布完成"
+          },
+          {
+            "id": "t_2",
+            "from": "在捡钱",
+            "to": "initial",
+            "signal": "__draft__"
+          }
+        ],
+        "label": "癞子NPC"
+      },
+      "elements": []
+    },
+    {
+      "id": "composition_2",
+      "mainGraph": {
+        "id": "后巷_交互点",
+        "ownerType": "flow",
+        "initialState": "initial",
+        "states": {
+          "initial": {
+            "id": "initial",
+            "meta": {
+              "editor": {
+                "x": -941,
+                "y": 31
+              }
+            }
+          }
+        },
+        "transitions": [],
+        "label": "后巷_交互点"
+      },
+      "elements": [
+        {
+          "id": "wrapper_1",
+          "kind": "wrapperGraph",
+          "label": "棺材铺门口",
+          "refId": "",
+          "x": -769,
+          "y": 176,
+          "meta": {
+            "emits": [],
+            "reads": [],
+            "commands": []
+          },
+          "ownerType": "zone",
+          "ownerId": "棺材铺交互",
+          "graph": {
+            "id": "wrapper_graph_1",
+            "label": "棺材铺门口",
+            "ownerType": "zone",
+            "initialState": "initial",
+            "states": {
+              "initial": {
+                "id": "initial",
+                "meta": {
+                  "editor": {
+                    "x": -100,
+                    "y": 139
+                  }
+                }
+              },
+              "state_1": {
+                "id": "state_1",
+                "meta": {
+                  "editor": {
+                    "x": 321,
+                    "y": 140
+                  }
+                }
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_1",
+                "from": "initial",
+                "to": "state_1",
+                "signal": "__draft__"
+              }
+            ],
+            "ownerId": "棺材铺交互"
+          }
+        }
+      ]
+    },
+    {
+      "id": "composition_3",
+      "mainGraph": {
+        "id": "主线_交互点",
+        "ownerType": "flow",
+        "initialState": "initial",
+        "states": {
+          "initial": {
+            "id": "initial",
+            "meta": {
+              "editor": {
+                "x": -630,
+                "y": 97
+              }
+            }
+          }
+        },
+        "transitions": [],
+        "label": "主线_交互点"
+      },
+      "elements": [
+        {
+          "id": "scenario_1",
+          "kind": "scenarioSubgraph",
+          "refId": "",
+          "x": -372,
+          "y": 99,
+          "meta": {
+            "emits": [],
+            "reads": [],
+            "commands": []
+          },
+          "ownerType": "scenario",
+          "ownerId": "",
+          "graph": {
+            "id": "scenario_graph_1",
+            "ownerType": "scenario",
+            "initialState": "inactive",
+            "entryState": "inactive",
+            "exitStates": [
+              "exit"
+            ],
+            "states": {
+              "inactive": {
+                "id": "inactive",
+                "meta": {
+                  "editor": {
+                    "x": 45,
+                    "y": 219
+                  }
+                }
+              },
+              "entry": {
+                "id": "entry",
+                "meta": {
+                  "editor": {
+                    "x": 359,
+                    "y": 198
+                  }
+                }
+              },
+              "exit": {
+                "id": "exit",
+                "meta": {
+                  "editor": {
+                    "x": 739,
+                    "y": 246
+                  }
+                }
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_1",
+                "from": "inactive",
+                "to": "entry",
+                "signal": "崖墓任务_发布完成"
+              },
+              {
+                "id": "t_2",
+                "from": "entry",
+                "to": "exit",
+                "signal": "__draft__",
+                "trigger": "reactive",
+                "conditions": [
+                  {
+                    "not": {
+                      "narrative": "flow_xungou_main",
+                      "state": "initial"
+                    }
+                  }
+                ]
+              }
+            ],
+            "label": "主线_藏钱"
+          },
+          "label": "主线_藏钱"
+        }
+      ]
     }
   ],
   "signals": [
@@ -6211,6 +6478,15 @@
     {
       "id": "yedao_chalu_done",
       "label": "yedao_chalu_done"
+    },
+    {
+      "id": "崖墓任务_发布完成"
+    },
+    {
+      "id": "主线_第一阶段闲逛完成"
+    },
+    {
+      "id": "主线_开局被赶出茶馆"
     }
   ]
 }

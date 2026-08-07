@@ -36,6 +36,9 @@ validator——本表把口径收拢一处，validator 与重构引擎共同消�
 from __future__ import annotations
 
 import copy
+import json
+import math
+from pathlib import Path
 import re
 from typing import Any, Callable, Iterator
 
@@ -68,7 +71,11 @@ _COLLISION_KINDS: dict[str, tuple[str, ...]] = {
 #   scene_zone    zone id，由同 action 的 sceneId 限定
 ENTITY_REF_PARAMS: dict[str, dict[str, str]] = {
     "playNpcAnimation": {"target": "actor"},
+    "attachToSocket": {"target": "actor"},
+    "detachFromSocket": {"target": "actor"},
     "setEntityEnabled": {"target": "actor"},
+    "setBubbleLineSet": {"target": "actor"},
+    "clearBubbleLineSet": {"target": "actor"},
     "moveEntityTo": {"target": "actor", "sceneId": "scene_hint"},
     "jumpEntityTo": {"target": "actor", "sceneId": "scene_hint"},
     "faceEntity": {"target": "actor", "faceTarget": "actor"},
@@ -489,6 +496,39 @@ def _rewrite_source_ids_project(model: Any, old: str, new: str, *, count_only: b
     return total
 
 
+
+def _rewrite_bubble_line_speakers(
+    model: Any, kind: str, old: str, new: str, *, count_only: bool = False,
+) -> int:
+    """改写 `bubble_lines.json` 里 `lineSets[].speaker.id` 的裸实体引用。
+
+    这是**数据文件自身**的实体引用，`ENTITY_REF_PARAMS`（action 参数登记面）够不到。
+    不跟改的后果：改完名那组台词的说话人解析不到，运行时整组静默不说话
+    （validate-data 会报 error，但要等到下次跑校验才发现，且重构撤销也回滚不了它）。
+    与「全局裸面」同口径：只在 id 全局唯一时改写，其余交人工。
+    """
+    if kind not in ("npc", "hotspot"):
+        return 0
+    bl = getattr(model, "bubble_lines", None)
+    sets = bl.get("lineSets") if isinstance(bl, dict) else None
+    if not isinstance(sets, list):
+        return 0
+    total = 0
+    for c in sets:
+        if not isinstance(c, dict):
+            continue
+        sp = c.get("speaker")
+        if not isinstance(sp, dict) or sp.get("kind") != "entity":
+            continue
+        if str(sp.get("id") or "").strip() != old:
+            continue
+        total += 1
+        if not count_only:
+            sp["id"] = new
+    if total and not count_only:
+        model.mark_dirty("bubble_lines")
+    return total
+
 def _count_tag_refs(node: Any, entity_id: str) -> int:
     pattern = re.compile(_TAG_NPC_RE_TMPL.format(re.escape(entity_id)))
     count = 0
@@ -530,13 +570,38 @@ def _collect_tag_refs(model: Any, entity_id: str) -> list[dict[str, Any]]:
     return tag_hits
 
 
+def _iter_narrative_owner_bindings(narrative: Any) -> Iterator[tuple[str, str, dict[str, Any]]]:
+    """叙事数据里承载 ownerType/ownerId 绑定的**两层**容器，产出 (where, label, obj)。
+
+    - ``graph`` 层：运行时唯一真值（NarrativeStateManager 只加载 ``element.graph``）；
+    - ``element`` 层：wrapper 元素上的镜像字段，叙事编辑器的「实体总览 / 绑定」优先读它
+      （web 侧 ``element.ownerType ?? element.graph.ownerType``）。
+
+    两层必须一起跟随改名——只改 graph 层会让编辑器改名后仍按旧 id 分组
+    （2026-08-05 重构引擎全盘审查 P1-3）。
+    """
+    if not isinstance(narrative, dict):
+        return
+    for comp in narrative.get("compositions") or []:
+        if not isinstance(comp, dict):
+            continue
+        for el in comp.get("elements") or []:
+            if isinstance(el, dict) and ("ownerType" in el or "ownerId" in el):
+                yield "element", str(el.get("id") or ""), el
+    for graph in _sig._iter_graphs(narrative):
+        yield "graph", str(graph.get("id") or ""), graph
+
+
 def _owner_binding_hits(model: Any, kind: str, entity_id: str) -> list[dict[str, str]]:
-    """叙事图 graph 级 ownerType/ownerId 绑定（@owner wrapper 解析用）。"""
+    """叙事图 ownerType/ownerId 绑定（@owner wrapper 解析用）：图层 + 元素层镜像。"""
     hits: list[dict[str, str]] = []
-    for graph in _sig._iter_graphs(getattr(model, "narrative_graphs", None) or {}):
-        if str(graph.get("ownerType") or "").strip() == kind \
-                and str(graph.get("ownerId") or "").strip() == entity_id:
-            hits.append({"graphId": str(graph.get("id") or "")})
+    narrative = getattr(model, "narrative_graphs", None) or {}
+    for where, label, obj in _iter_narrative_owner_bindings(narrative):
+        if str(obj.get("ownerType") or "").strip() == kind \
+                and str(obj.get("ownerId") or "").strip() == entity_id:
+            # graphId 键名是对话框既有契约（entity_refactor_dialog 直接读），保持不变；
+            # 元素层用 where 区分，避免两条同名行看起来像重复报告。
+            hits.append({"graphId": label, "where": where})
     return hits
 
 
@@ -665,6 +730,11 @@ def scan_entity_usages(model: Any, scene_id: str, kind: str, entity_id: str) -> 
 
     # emitNarrativeSignal 溯源复合串 "场景:实体"（trace-only,不进 totalRefs）
     report["traceRefs"] = _rewrite_source_ids_project(model, f"{sid}:{eid}", "", count_only=True)
+
+    # 头顶闲聊台词本的 speaker.id（裸引用，与 globalRefs 同歧义规则）
+    report["bubbleLineSpeakers"] = _rewrite_bubble_line_speakers(
+        model, kind, eid, "", count_only=True,
+    )
 
     # 迁移时需人工重定位/复核的实体自带字段
     if found is not None:
@@ -998,18 +1068,22 @@ def rename_entity(
         narrative = getattr(model, "narrative_graphs", None) or {}
         count = _rewrite_bare_in_tree(narrative, sid, kind, old, new, include_soft=True)
         owner_count = 0
-        for graph in _sig._iter_graphs(narrative):
-            if str(graph.get("ownerType") or "").strip() == kind \
-                    and str(graph.get("ownerId") or "").strip() == old:
-                graph["ownerId"] = new
+        # 图层 + 元素层镜像一起跟随：只改图层会让叙事编辑器「实体总览/绑定」仍按旧 id
+        # 分组（它优先读 element.ownerId），2026-08-05 审查 P1-3。
+        for _where, _label, obj in _iter_narrative_owner_bindings(narrative):
+            if str(obj.get("ownerType") or "").strip() == kind \
+                    and str(obj.get("ownerId") or "").strip() == old:
+                obj["ownerId"] = new
                 owner_count += 1
         if count or owner_count:
             global_hits.append({"bucket": "narrative_graphs", "itemId": "",
                                 "count": count + owner_count})
             model.mark_dirty("narrative_graphs")
         counts["global"] = global_hits
+        counts["bubbleLineSpeakers"] = _rewrite_bubble_line_speakers(model, kind, old, new)
     else:
         counts["global"] = []
+        counts["bubbleLineSpeakers"] = 0
 
     # [tag:npc:old] 文本引用（全局解析）：全局唯一时安全跟随；非唯一但调用方确认
     # 跟随（tagFollowForced，见上）时也改写——撤销按 scope 反向回放同一作用域。
@@ -1426,6 +1500,363 @@ def _duplicate_spawn(
 
 
 # --------------------------------------------------------------------------- #
+# 换种类（convert）：纯展示热点 → NPC，id 不变
+# --------------------------------------------------------------------------- #
+
+# 只对热点成立的动作：转成 NPC 后这些引用必然失效（NPC 没有 displayImage 通道）。
+_HOTSPOT_ONLY_ACTION_PARAMS: dict[str, str] = {
+    "setHotspotDisplayImage": "hotspotId",
+    "tempSetHotspotDisplayFacing": "hotspotId",
+    "persistHotspotEnabled": "hotspotId",
+}
+
+# 热点转 NPC 时逐字搬走的字段（两个 def 上同名同义）。
+_HOTSPOT_TO_NPC_CARRY = (
+    "planes", "cutsceneIds", "cutsceneOnly", "conditions", "conditionHidesEntity",
+    "collisionPolygon", "collisionPolygonLocal", "castShadow", "rotation",
+    "occlusionBlendFactor", "perspectiveScaleEnabled", "group",
+)
+
+# 转换后不再有对应语义、必须丢弃的热点字段（逐项进报告，不静默吞）。
+_HOTSPOT_TO_NPC_DROP = ("type", "data", "label", "autoTrigger", "displayImage")
+
+
+def _classify_hotspot_payload(hotspot: dict[str, Any]) -> tuple[str, dict[str, str]]:
+    """判定热点的交互载荷能不能无损搬到 NPC 上。
+
+    口径镜像 ``src/utils/hotspotInteraction.ts#hotspotOffersPlayerInteraction``：
+      - ``display``  inspect 且 data 为空 → 纯展示，转过去就是装饰 NPC；
+      - ``graph``    inspect 且 **只有** graphId → NPC 的交互出口正是图对话，
+                     graphId/entry 平移成 dialogueGraphId/dialogueGraphEntry，零损失；
+      - ``blocked``  其它一切（正文浮层、inline actions、pickup/transition/encounter…）
+                     → NPC 没有对应通道，转过去会**静默丢功能**，拒绝。
+    """
+    htype = str(hotspot.get("type") or "").strip()
+    data = hotspot.get("data")
+    data = data if isinstance(data, dict) else {}
+    if htype != "inspect":
+        return "blocked", {}
+    text = str(data.get("text") or "").strip()
+    graph = str(data.get("graphId") or "").strip()
+    actions = data.get("actions")
+    has_actions = isinstance(actions, list) and bool(actions)
+    if text or has_actions:
+        return "blocked", {}
+    if graph:
+        out = {"graphId": graph}
+        entry = str(data.get("entry") or "").strip()
+        if entry:
+            out["entry"] = entry
+        return "graph", out
+    return "display", {}
+
+
+def _hotspot_only_action_hits(model: Any, entity_id: str) -> list[dict[str, str]]:
+    """全工程扫「转 NPC 后会死」的热点专用动作引用（走访面与 scan_entity_usages 同口径）。"""
+    hits: list[dict[str, str]] = []
+
+    def scan(bucket: str, item_id: str, node: Any) -> None:
+        def visit(atype: str, params: dict[str, Any]) -> None:
+            param = _HOTSPOT_ONLY_ACTION_PARAMS.get(atype)
+            if param and str(params.get(param) or "").strip() == entity_id:
+                hits.append({"bucket": bucket, "itemId": item_id, "action": atype})
+
+        _walk_ref_actions(node, visit)
+
+    for sid, scene in (getattr(model, "scenes", None) or {}).items():
+        if isinstance(scene, dict):
+            scan("scene", str(sid), scene)
+    for attr, (bucket, _per_item) in _sig.CONDITION_SOURCES.items():
+        if attr == "scenes":
+            continue
+        root = getattr(model, attr, None)
+        if root is None:
+            continue
+        for item_id, node in _sig._iter_collection(root):
+            scan(bucket, str(item_id), node)
+    scan("narrative_graphs", "", getattr(model, "narrative_graphs", None) or {})
+    for gid in _sig._dialogue_graph_ids(model):
+        doc = _sig._load_dialogue_doc(model, gid)
+        if doc is not None:
+            scan("dialogueGraph", str(gid), doc)
+    return hits
+
+
+def _anim_bundle_world_aspect(model: Any, bundle_id: str) -> float | None:
+    """动画包的世界宽高比（格像素比即世界比——静态包只写 worldHeight，宽由运行时推）。"""
+    anim = (getattr(model, "animations", None) or {}).get(bundle_id)
+    if not isinstance(anim, dict):
+        return None
+    try:
+        cw = float(anim.get("cellWidth") or 0)
+        ch = float(anim.get("cellHeight") or 0)
+    except (TypeError, ValueError):
+        return None
+    if cw > 0 and ch > 0:
+        return cw / ch
+    return None
+
+
+def _static_bundle_source_geometry(model: Any, bundle_id: str) -> dict[str, Any] | None:
+    """读单帧静态包的 ``atlas.meta.json``，取源画布尺寸与内容框。
+
+    只有静态包（``packMode == static_single_frame``）才有这两个数，它们是把
+    「热点把整幅矩形拉伸到 worldWidth×worldHeight」换算成「NPC 按内容紧裁」的唯一依据。
+    取不到就返回 None，调用方回落成按整幅矩形估算并告警——**不许悄悄按矩形算当成精确值**。
+    """
+    root = getattr(model, "animation_bundles_path", None)
+    if root is None:
+        return None
+    try:
+        meta_path = Path(root) / bundle_id / "atlas.meta.json"
+        if not meta_path.is_file():
+            return None
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError):
+        return None
+    if not isinstance(meta, dict) or meta.get("packMode") != "static_single_frame":
+        return None
+    canvas = meta.get("sourceCanvas")
+    box = meta.get("sourceContentBox")
+    if not isinstance(canvas, dict) or not isinstance(box, dict):
+        return None
+    try:
+        out = {
+            "width": float(canvas["width"]), "height": float(canvas["height"]),
+            "x0": float(box["x0"]), "y0": float(box["y0"]),
+            "x1": float(box["x1"]), "y1": float(box["y1"]),
+        }
+    except (KeyError, TypeError, ValueError):
+        return None
+    if out["width"] <= 0 or out["height"] <= 0 or out["x1"] <= out["x0"] or out["y1"] <= out["y0"]:
+        return None
+    return out
+
+
+def _anim_bundle_world_height(model: Any, bundle_id: str) -> float | None:
+    anim = (getattr(model, "animations", None) or {}).get(bundle_id)
+    if not isinstance(anim, dict):
+        return None
+    try:
+        h = float(anim.get("worldHeight") or 0)
+    except (TypeError, ValueError):
+        return None
+    return h if h > 0 else None
+
+
+def convert_hotspot_to_npc(
+    model: Any, scene_id: str, hotspot_id: str, *,
+    anim_file: str,
+    name: str | None = None,
+    interaction_range: float = 0.0,
+    render_raw: bool | None = None,
+    force: bool = False,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """把一个**纯展示**热点原地换成 NPC（id / 坐标 / 位面 / 条件 / 过场绑定全部保留）。
+
+    为什么 id 必须不变：实体引用有裸 id 一路（``actor`` 只认 npc、``emote_subject``
+    认 npc+hotspot），id 不变时——
+      - 原来能命中的 ``emote_subject`` 引用继续命中（种类范围本来就含 npc）；
+      - 原来命不中的 ``actor`` 引用反而开始命中（范围放宽，不会变坏）；
+      - 场景限定引用（``setEntityField`` 的 sceneId+entityId）寻址不变。
+    所以这个 op **不改写任何引用**，只把两处必然失效的东西拦在前面：
+      1. 热点专用动作（``setHotspotDisplayImage`` 等）——NPC 没有 displayImage 通道；
+      2. 带交互载荷的热点——NPC 的交互出口只有图对话，转过去会静默丢功能。
+
+    尺寸换算：热点展示图是"把图拉伸到 worldWidth×worldHeight"（可非等比），NPC 是
+    "按动画包 worldHeight 等比缩放，再乘实例 scale"。故 scale = 热点世界高 ÷ 包世界高，
+    并把两者的宽高比差额报进 ``summary["warnings"]`` 交人目验——**这道差额程序不替人拍板**。
+
+    返回 (summary, reverse_ops)；与其它 op 一样只改内存 + mark_dirty，零磁盘写。
+    """
+    sid = str(scene_id or "").strip()
+    eid = str(hotspot_id or "").strip()
+    scenes = getattr(model, "scenes", None) or {}
+    scene = scenes.get(sid)
+    if not isinstance(scene, dict):
+        raise EntityRefactorError(f"场景 {sid!r} 不存在")
+    found = _find_entity(scene, "hotspot", eid)
+    if found is None:
+        raise EntityRefactorError(f"场景 {sid!r} 里没有 hotspot {eid!r}")
+    if _find_entity(scene, "npc", eid) is not None:
+        raise EntityRefactorError(f"场景 {sid!r} 已有同 id 的 NPC {eid!r}（数据本就冲突，先处理重名）")
+
+    idx, row = found
+    display = row.get("displayImage")
+    if not isinstance(display, dict) or not str(display.get("image") or "").strip():
+        raise EntityRefactorError(
+            f"hotspot {eid!r} 没有展示图；没有可视形体的热点转成 NPC 只会得到一个占位圆点")
+    payload_kind, payload = _classify_hotspot_payload(row)
+    if payload_kind == "blocked":
+        raise EntityRefactorError(
+            f"hotspot {eid!r} 带 NPC 接不住的交互载荷（type={row.get('type')!r}）；"
+            "NPC 的交互出口只有图对话，转换会静默丢掉这份交互。"
+            "请先把正文/inline actions 搬进一张图对话，或保留热点。")
+
+    manifest = str(anim_file or "").strip()
+    bundle = _anim_bundle_id_from_animfile(manifest)
+    if not bundle:
+        raise EntityRefactorError(f"animFile {anim_file!r} 不是合法动画包清单路径")
+    animations = getattr(model, "animations", None) or {}
+    if bundle not in animations:
+        raise EntityRefactorError(
+            f"动画包 {bundle!r} 不存在（public/resources/runtime/animation/{bundle}/anim.json）")
+
+    dead_hits = _hotspot_only_action_hits(model, eid)
+    if dead_hits and not force:
+        spots = ", ".join(f"{h['bucket']}:{h['itemId']}({h['action']})" for h in dead_hits[:5])
+        raise EntityRefactorError(
+            f"仍有 {len(dead_hits)} 处热点专用动作指向 {eid!r}（{spots} 等），转成 NPC 后必然失效。"
+            "先改掉这些动作，或走强制转换（force）并自行清理。")
+
+    warnings: list[str] = []
+    # ---- 尺寸/形变换算 -------------------------------------------------------
+    def _num(value: Any, fallback: float) -> float:
+        try:
+            out = float(value)
+        except (TypeError, ValueError):
+            return fallback
+        return out if math.isfinite(out) else fallback
+
+    hs_scale = _num(row.get("scale"), 1.0)
+    hs_w = _num(display.get("worldWidth"), 0.0)
+    hs_h = _num(display.get("worldHeight"), 0.0)
+    bundle_h = _anim_bundle_world_height(model, bundle)
+    geometry = _static_bundle_source_geometry(model, bundle)
+    faces_left = str(display.get("facing") or "").strip().lower() == "left"
+
+    # 两套摆位口径不同，必须补偿：
+    #   热点 = 把**整幅图**（含透明留白）拉伸到 worldWidth×worldHeight，锚点是这个矩形的底中；
+    #   NPC  = 图已紧裁成格，锚点是**内容**的底中。
+    # 源图底部若有 N% 透明留白，直接换过去角色会整体下沉 N%×worldHeight（实测码头人群
+    # 留白 17% → 沉 68 个世界单位）。有 sourceCanvas/sourceContentBox 就精确补，没有就
+    # 按整幅矩形估并告警——不许把估算当精确值。
+    shown_height = hs_h * hs_scale
+    shown_width = hs_w * hs_scale
+    dx = dy = 0.0
+    if geometry and hs_h > 0:
+        img_w, img_h = geometry["width"], geometry["height"]
+        x0, y0, x1, y1 = geometry["x0"], geometry["y0"], geometry["x1"], geometry["y1"]
+        shown_height = (y1 - y0) / img_h * hs_h * hs_scale
+        shown_width = (x1 - x0) / img_w * hs_w * hs_scale
+        dy = -((img_h - y1) / img_h) * hs_h * hs_scale
+        dx = (((x0 + x1) / 2 - img_w / 2) / img_w) * hs_w * hs_scale
+        if faces_left:
+            # 镜像是绕矩形中线做的，内容偏移随之反号
+            dx = -dx
+    elif hs_h > 0:
+        warnings.append(
+            f"动画包 {bundle} 不是单帧静态包（或缺 sourceCanvas/sourceContentBox），"
+            "位置与大小按整幅矩形估算；源图若有透明留白，请在画布上重新对位")
+
+    npc_scale: float | None = None
+    if shown_height > 0 and bundle_h:
+        npc_scale = round(shown_height / bundle_h, 4)
+    elif shown_height > 0:
+        warnings.append(
+            f"动画包 {bundle} 的 anim.json 没有可用 worldHeight，无法换算实例 scale；请手工核对大小")
+
+    bundle_aspect = _anim_bundle_world_aspect(model, bundle)
+    if shown_width > 0 and shown_height > 0 and bundle_aspect:
+        shown_aspect = shown_width / shown_height
+        if abs(shown_aspect - bundle_aspect) / bundle_aspect > 0.02:
+            warnings.append(
+                f"热点展示图当前被拉成宽高比 {shown_aspect:.3f}，动画包是 {bundle_aspect:.3f}（等比）；"
+                "转换后形体会回到等比，请在场景里目验")
+
+    # ---- 组装 NPC def --------------------------------------------------------
+    npc: dict[str, Any] = {"id": eid}
+    npc_name = str(name if name is not None else (row.get("name") or "")).strip() or eid
+    npc["name"] = npc_name
+    npc["x"] = _offset_num(row.get("x"), dx) if dx else row.get("x")
+    npc["y"] = _offset_num(row.get("y"), dy) if dy else row.get("y")
+    npc["animFile"] = manifest
+    if payload_kind == "graph":
+        # inspect 图对话 → NPC 图对话：同一张图、同一个入口，只是触发方从热点变成 NPC。
+        npc["dialogueGraphId"] = payload["graphId"]
+        if payload.get("entry"):
+            npc["dialogueGraphEntry"] = payload["entry"]
+        if interaction_range <= 0:
+            # 还能对话却把半径设成 0 = 玩家永远够不着，等于删了这段交互
+            interaction_range = _num(row.get("interactionRange"), 50.0) or 50.0
+    npc["interactionRange"] = (
+        int(interaction_range) if float(interaction_range).is_integer() else float(interaction_range)
+    )
+    facing = str(display.get("facing") or "").strip().lower()
+    if facing == "left":
+        npc["initialFacing"] = "left"
+    sort_band = str(display.get("spriteSort") or "").strip().lower()
+    if sort_band in ("back", "front"):
+        npc["spriteSort"] = sort_band
+    if render_raw is not None:
+        npc["renderRaw"] = bool(render_raw)
+    if npc_scale is not None and npc_scale != 1.0:
+        npc["scale"] = npc_scale
+    for key in _HOTSPOT_TO_NPC_CARRY:
+        if key in row:
+            npc[key] = copy.deepcopy(row[key])
+    # 透视缩放的**缺省值两边相反**（热点缺省不参与、NPC 缺省参与），不显式写死就会
+    # 在转换那一刻悄悄开始跟着深度缩放。迁移的职责是保持现状，要开由人后面自己开。
+    if "perspectiveScaleEnabled" not in row:
+        npc["perspectiveScaleEnabled"] = False
+        warnings.append(
+            "已显式写入 perspectiveScaleEnabled=false 保持热点原行为（NPC 缺省是参与透视缩放）；"
+            "这是个站在街上的角色的话，可以改成 true")
+    dropped = [key for key in _HOTSPOT_TO_NPC_DROP
+               if key in row and not (key == "data" and payload_kind == "graph")]
+    unknown = [
+        key for key in row
+        if key not in _HOTSPOT_TO_NPC_CARRY
+        and key not in _HOTSPOT_TO_NPC_DROP
+        and key not in ("id", "name", "x", "y", "scale", "interactionRange")
+    ]
+    if unknown:
+        warnings.append(
+            "以下热点字段没有 NPC 对应语义、已丢弃：" + "、".join(sorted(unknown)))
+
+    # ---- 落数据 --------------------------------------------------------------
+    hotspots = scene.setdefault("hotspots", [])
+    hotspots.pop(idx)
+    npcs = scene.setdefault("npcs", [])
+    npc_index = len(npcs)
+    npcs.append(npc)
+    model.mark_dirty("scene", sid)
+
+    summary = {
+        "op": "convertHotspotToNpc",
+        "sceneId": sid,
+        "entityId": eid,
+        "animFile": manifest,
+        "bundleId": bundle,
+        "npcIndex": npc_index,
+        "hotspotIndex": idx,
+        "payloadKind": payload_kind,
+        "scale": npc_scale,
+        "positionDelta": {"dx": round(dx, 2), "dy": round(dy, 2)},
+        "droppedFields": dropped,
+        "deadHotspotActionRefs": dead_hits,
+        "warnings": warnings,
+    }
+    reverse_ops = [
+        {"kind": "npcRemove", "sceneId": sid, "entityId": eid},
+        {"kind": "entityInsert", "sceneId": sid, "entityKind": "hotspot",
+         "index": idx, "row": copy.deepcopy(row)},
+    ]
+    return summary, reverse_ops
+
+
+def _anim_bundle_id_from_animfile(ref: str) -> str:
+    """``/resources/runtime/animation/<id>/anim.json`` → ``<id>``；裸 id 原样返回。"""
+    text = str(ref or "").strip()
+    if not text:
+        return ""
+    match = re.search(r"/animation/([^/]+)/", text.replace("\\", "/"))
+    if match:
+        return match.group(1)
+    return text if "/" not in text else ""
+
+
+# --------------------------------------------------------------------------- #
 # 撤销日志（独立于信号重构日志）
 # --------------------------------------------------------------------------- #
 
@@ -1445,6 +1876,23 @@ def push_journal(model: Any, entry: dict[str, Any]) -> int:
 
 def journal_size(model: Any) -> int:
     return len(getattr(model, JOURNAL_ATTR, None) or [])
+
+
+def _apply_reverse_op(model: Any, scene: dict[str, Any], rec: dict[str, Any]) -> None:
+    """执行一条 reverse op（delete / convert 共用；未知 kind 静默跳过，与旧行为一致）。"""
+    kind = rec.get("kind")
+    if kind == "entityInsert":
+        rows = scene.setdefault(_entity_list_key(rec["entityKind"]), [])
+        rows.insert(min(int(rec["index"]), len(rows)), copy.deepcopy(rec["row"]))
+    elif kind == "spawnInsert":
+        _dict_insert_at(scene.setdefault("spawnPoints", {}),
+                        rec["key"], copy.deepcopy(rec["value"]), int(rec["index"]))
+    elif kind == "npcRemove":
+        found = _find_entity(scene, "npc", str(rec["entityId"]))
+        if found is None:
+            raise EntityRefactorError(
+                f"场景 {rec.get('sceneId')!r} 里已找不到 NPC {rec['entityId']!r}，无法撤销")
+        scene["npcs"].pop(found[0])
 
 
 def undo_last(model: Any) -> dict[str, Any]:
@@ -1471,16 +1919,17 @@ def undo_last(model: Any) -> dict[str, Any]:
                 scene = model.scenes.get(rec.get("sceneId"))
                 if not isinstance(scene, dict):
                     raise EntityRefactorError(f"场景 {rec.get('sceneId')!r} 不存在")
-                if rec.get("kind") == "entityInsert":
-                    rows = scene.setdefault(_entity_list_key(rec["entityKind"]), [])
-                    rows.insert(min(int(rec["index"]), len(rows)), copy.deepcopy(rec["row"]))
-                elif rec.get("kind") == "spawnInsert":
-                    _dict_insert_at(scene.setdefault("spawnPoints", {}),
-                                    rec["key"], copy.deepcopy(rec["value"]), int(rec["index"]))
-                else:
-                    continue
+                _apply_reverse_op(model, scene, rec)
                 model.mark_dirty("scene", rec["sceneId"])
             desc = f"已撤销删除 {entry['entityId']}"
+        elif op == "convertHotspotToNpc":
+            for rec in reversed(entry.get("reverseOps") or []):
+                scene = model.scenes.get(rec.get("sceneId"))
+                if not isinstance(scene, dict):
+                    raise EntityRefactorError(f"场景 {rec.get('sceneId')!r} 不存在")
+                _apply_reverse_op(model, scene, rec)
+                model.mark_dirty("scene", rec["sceneId"])
+            desc = f"已撤销「热点转 NPC」：{entry['entityId']} 变回热点"
         elif op == "duplicateEntity":
             scene = model.scenes.get(entry["sceneId"])
             if not isinstance(scene, dict):

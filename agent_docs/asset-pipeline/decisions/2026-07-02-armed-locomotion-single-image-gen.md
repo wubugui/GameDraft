@@ -7,7 +7,7 @@ summary: 持械+位移(走/跑)state 生成必须单图生视频(Seedance);动�
 status: active
 triggers:
   topics: [生成动画, 动作迁移, 持械, Seedance]
-last_governed: 2026-07-11
+last_governed: 2026-08-05
 ---
 
 ## 背景(一段)

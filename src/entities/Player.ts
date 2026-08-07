@@ -24,6 +24,15 @@ export interface PlayerMovementModifier {
   allowRun: boolean;
 }
 
+/**
+ * 身体姿态对自由移动的修饰（由 PlayerActionSystem 注入；与位面修饰**相乘**叠加）。
+ * 只影响速度与奔跑掩蔽——姿态的动画由动作系统自行接管（见 setAnimationOwnedByAction）。
+ */
+export interface PlayerPostureMovement {
+  speedScale: number;
+  allowRun: boolean;
+}
+
 export class Player implements ICutsceneActor {
   public sprite: SpriteEntity;
   private inputManager: InputManager;
@@ -59,6 +68,20 @@ export class Player implements ICutsceneActor {
     resolve: () => void;
   } | null = null;
 
+  /** 身体姿态的移动修饰（PlayerActionSystem 注入）；null = 无姿态 */
+  private postureMovement: PlayerPostureMovement | null = null;
+  /** true 时 update() 不再自行切 idle/walk/run —— 动画归动作系统所有（姿态与一次性动作期间） */
+  private animationOwnedByAction = false;
+  /**
+   * 待机节目占用。**必须与动作系统分成两个独立的位**：
+   * `PlayerActionSystem.syncPostureAnimation()` 每帧在"当前无姿态"时无条件写
+   * `setAnimationOwnedByAction(false)`——两边共用一个布尔的话，待机动画刚接管就会被那句
+   * 每帧的"我没在用"清掉，下一行 update 立刻切回 idle，待机动画一帧都放不出来（踩过）。
+   */
+  private animationOwnedByIdle = false;
+  /** true 时忽略玩家移动输入（动作播放期间锁腿）；位面漂移不受影响，站着仍会被拽走 */
+  private inputLocked = false;
+
   private collisionsEnabled = true;
   private walkSpeed = DEFAULT_PLAYER_WALK_SPEED;
   private runSpeed = DEFAULT_PLAYER_RUN_SPEED;
@@ -79,6 +102,80 @@ export class Player implements ICutsceneActor {
   /** 注入/清除自由移动修饰（漂移/速度系数/禁跑）。仅影响 update() 自由移动分支。 */
   setMovementModifier(fn: (() => PlayerMovementModifier) | null): void {
     this.movementModifier = fn;
+  }
+
+  /** 注入/清除身体姿态的移动修饰（与位面修饰相乘）。 */
+  setPostureMovement(mod: PlayerPostureMovement | null): void {
+    this.postureMovement = mod;
+  }
+
+  /**
+   * 交出/收回动画所有权。为 true 时 update() 只做位移、朝向与步速匹配，不切片段——
+   * 否则每帧的 idle/walk/run 会把姿态定格帧与一次性动作片段冲掉。
+   */
+  setAnimationOwnedByAction(owned: boolean): void {
+    this.animationOwnedByAction = owned;
+  }
+
+  /** 待机节目交出/收回动画所有权（与动作系统各占一位，互不覆盖）。 */
+  setAnimationOwnedByIdle(owned: boolean): void {
+    this.animationOwnedByIdle = owned;
+  }
+
+  /** 动画是否被任何一方接管（update 只认这个合成结果）。 */
+  private get animationOwned(): boolean {
+    return this.animationOwnedByAction || this.animationOwnedByIdle;
+  }
+
+  /** 锁/解玩家移动输入（动作播放期间）。 */
+  setInputLocked(locked: boolean): void {
+    this.inputLocked = locked;
+  }
+
+  /** 是否正被位移/跳跃演出接管（moveEntityTo / jumpTo 在途）。 */
+  hasActiveMotion(): boolean {
+    return this.moveTarget !== null || this.jumpTarget !== null;
+  }
+
+  /**
+   * 取消在途的位移/跳跃演出并 resolve 其 Promise（旧时间线不写新状态）。
+   * 切场景 / 读档 / 姿态复位时必须调——否则跳跃弧线会在新场景里继续用旧坐标
+   * 覆写 sprite.x/y，把玩家从出生点拽回旧场景的落点。
+   */
+  /**
+   * 只取消在途的**跳跃**（不碰别人建立的 moveTarget）。
+   * 动作系统在"离开探索态"这条软路径上用它——那一刻玩家很可能正被别的
+   * moveEntityTo 接管，清掉那条会让它瞬间"到达"。
+   */
+  cancelJump(): void {
+    const j = this.jumpTarget;
+    if (!j) return;
+    this.jumpTarget = null;
+    this.sprite.setVisualLiftY(0);
+    j.resolve();
+  }
+
+  cancelMotion(): void {
+    const m = this.moveTarget;
+    const j = this.jumpTarget;
+    this.moveTarget = null;
+    this.jumpTarget = null;
+    if (j) this.sprite.setVisualLiftY(0);
+    m?.resolve();
+    j?.resolve();
+  }
+
+  /** 当前装扮能否播出该逻辑状态（动词可用性判定的唯一口径）。 */
+  hasAnimationState(logicalName: string): boolean {
+    return this.sprite.hasLogicalState(logicalName);
+  }
+
+  /** 当前正在播的片段：帧数与整段时长（秒），供动作系统把回调对齐到某一帧。 */
+  getCurrentClipTiming(): { frameCount: number; durationSec: number } {
+    return {
+      frameCount: this.sprite.getFrameCount(),
+      durationSec: this.sprite.getCurrentClipDurationSec(),
+    };
   }
 
   /** 注入/清除场景透视缩放（近大远小）；立即按当前脚底点施加，之后每帧移动前刷新。 */
@@ -172,12 +269,12 @@ export class Player implements ICutsceneActor {
         faceTowardMovement: toward,
         arriveAnimState,
       };
-      const dx = targetX - this.sprite.x;
-      const dy = targetY - this.sprite.y;
+      /** faceTowardMovement=false 表示「完全不碰朝向」：编排者说了不改就是一下都不改
+       *  （曾在起点偷偷 setDirection 一次，把紧邻的 faceEntity 抹掉——勿回退）。
+       *  需要"走向哪就朝哪"的内部调用（巡逻 / 场景组位移）显式传 true；直线段里
+       *  逐帧朝向与只在起点朝向结果相同，故无行为差异。 */
       if (toward) {
-        this.setFacing(dx, dy);
-      } else {
-        this.sprite.setDirection(dx, 0);
+        this.setFacing(targetX - this.sprite.x, targetY - this.sprite.y);
       }
       if (anim) {
         this.sprite.playAnimation(anim);
@@ -185,8 +282,13 @@ export class Player implements ICutsceneActor {
     });
   }
 
-  playAnimation(name: string, playback?: AnimationPlaybackParams): void {
-    this.sprite.playAnimation(name, undefined, playback);
+  /**
+   * `onComplete` 只对非循环片段有意义（待机节目靠它归还动画所有权）。
+   * ⚠ 状态在当前装扮里不存在时 `SpriteEntity.playAnimation` 直接 return，**回调永不触发**——
+   * 依赖它做收尾的调用方必须自带超时兜底。
+   */
+  playAnimation(name: string, playback?: AnimationPlaybackParams, onComplete?: () => void): void {
+    this.sprite.playAnimation(name, onComplete, playback);
   }
 
   jumpTo(
@@ -211,7 +313,10 @@ export class Player implements ICutsceneActor {
     const durationSec = Math.max(1, Number.isFinite(durationMs) ? durationMs : 600) / 1000;
     const arcH = Math.max(0, Number.isFinite(arcHeight) ? arcHeight : 0);
     const jumpAnim = jumpAnimState?.trim() || undefined;
-    this.setFacing(targetX - startX, targetY - startY);
+    // 朝向落点（faceTowardMovement 时后续每帧再更新）；不勾选＝完全不碰朝向，同 moveTo。
+    if (faceTowardMovement === true) {
+      this.setFacing(targetX - startX, targetY - startY);
+    }
     // 载入起跳片段并冻结帧推进——帧由 _advanceJump 按移动进度插值（只播一次，不走自走时钟）。
     let frameCount = 1;
     if (jumpAnim) {
@@ -319,13 +424,18 @@ export class Player implements ICutsceneActor {
       this.cutsceneUpdate(dt);
       return;
     }
-    const dir = this.inputManager.getMovementDirection();
+    // inputLocked：动作播放期间腿被锁（drift 仍生效——世界规则不因动作暂停）
+    const dir = this.inputLocked ? { x: 0, y: 0 } : this.inputManager.getMovementDirection();
     const isMoving = dir.x !== 0 || dir.y !== 0;
     const mod = this.movementModifier?.() ?? null;
+    const posture = this.postureMovement;
     // allowRun 掩蔽奔跑；speedScale 乘速度；drift 恒生效（不并入 isMoving——站着被拖走
     // 时动画保持 idle 正是要的效果）。位移积分处向量加，X/Y 分轴走既有碰撞/边界钳制。
-    const isRunning = this.inputManager.isRunning() && (mod?.allowRun ?? true);
-    const speed = (isRunning ? this.runSpeed : this.walkSpeed) * (mod?.speedScale ?? 1);
+    // 姿态与位面两层修饰相乘：任一禁跑即禁跑。
+    const isRunning =
+      this.inputManager.isRunning() && (mod?.allowRun ?? true) && (posture?.allowRun ?? true) && !this.inputLocked;
+    const speed =
+      (isRunning ? this.runSpeed : this.walkSpeed) * (mod?.speedScale ?? 1) * (posture?.speedScale ?? 1);
     // 透视步长补偿整体乘在位移上（含 drift：世界坐标即屏幕空间，远处一切位移等比变小）
     const pf = this.refreshPerspectiveScale();
     const stepX = (dir.x * speed + (mod?.driftX ?? 0)) * pf * dt;
@@ -346,14 +456,17 @@ export class Player implements ICutsceneActor {
     if (isMoving) {
       this.sprite.setDirection(dir.x, dir.y);
 
-      if (isRunning) {
-        this.sprite.playAnimation(ANIM_RUN);
-      } else {
-        this.sprite.playAnimation(ANIM_WALK);
+      // 动画归动作系统时只做朝向与步速匹配，片段由它按姿态自行切换
+      if (!this.animationOwned) {
+        if (isRunning) {
+          this.sprite.playAnimation(ANIM_RUN);
+        } else {
+          this.sprite.playAnimation(ANIM_WALK);
+        }
       }
       // 步速匹配：状态未声明 referenceSpeed 时内部回落 1 倍速（现状全部包如此，行为不变）
       this.sprite.applyLocomotionSpeed(speed);
-    } else {
+    } else if (!this.animationOwned) {
       this.sprite.playAnimation(ANIM_IDLE);
     }
 

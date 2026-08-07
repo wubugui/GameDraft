@@ -28,11 +28,13 @@ TOOL_MODULES: dict[str, tuple[str, list[str]]] = {
     "anim-preview": ("tools.anim_preview", []),
     "parallax-editor": ("tools.parallax_editor", []),
     "skill-governance": ("tools.skill_workflow_governance.console", []),
+    "narrative-debugger": ("tools.narrative_debugger", []),
     "validate-data": ("tools.editor.validate", []),
     "audit-depth": ("tools.character_lighting_lab.audit_depth", []),
     "audit-walkable": ("tools.character_lighting_lab.audit_walkable", []),
     "json-lang": ("tools.json_lang.build", []),
     "bake-normals": ("tools.animation_pipeline.bake_normal_atlas", []),
+    "placeholder-audit": ("tools.animation_pipeline.placeholder_audit", []),
 }
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import copy
 import re
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QPushButton, QMessageBox, QFileDialog, QLabel, QLineEdit,
     QFormLayout, QScrollArea, QGroupBox, QInputDialog, QColorDialog,
     QMenu, QCompleter, QDialog, QSizePolicy, QComboBox, QApplication,
+    QPlainTextEdit,
 )
 from PySide6.QtCore import Qt, Signal, QTimer, QStringListModel, QSettings
 from PySide6.QtGui import QUndoStack, QUndoCommand, QAction, QCursor, QKeySequence, QShortcut, QColor
@@ -21,6 +23,7 @@ from PySide6.QtGui import QUndoStack, QUndoCommand, QAction, QCursor, QKeySequen
 from tools.editor import theme as app_theme
 
 from .graph_document import (
+    node_type_label_zh,
     graphs_dir,
     list_graph_files,
     load_json,
@@ -90,16 +93,33 @@ def _graph_form_label(text: str, tip: str | None = None, *, max_w: int = 100) ->
     return lb
 
 class _NodeDataChangedCmd(QUndoCommand):
-    """Snapshot-based undo for inspector edits. Merges consecutive edits to the same node."""
+    """检查器编辑的快照撤销；同一节点的**连续**编辑合并成一条。
+
+    合并必须有边界。旧实现只按节点 id 合并、既不看时间也不看控件，于是只要不切节点
+    就一直并下去——策划在一个节点上改二十分钟，误按一次 Ctrl+Z 就全回到「刚点开这个
+    节点」的样子（审查 2026-08-06 P2-1）。现在两条边界任一成立就断开：
+    换了输入控件，或距上一次编辑超过 `_MERGE_WINDOW_S`（连续打字仍并成一条）。
+    """
 
     _COALESCE_ID = 9001
+    _MERGE_WINDOW_S = 0.9
 
-    def __init__(self, model: GraphDocumentModel, nid: str, old_data: dict, new_data: dict):
+    def __init__(
+        self,
+        model: GraphDocumentModel,
+        nid: str,
+        old_data: dict,
+        new_data: dict,
+        *,
+        focus_key: str = "",
+    ):
         super().__init__(f"edit {nid}")
         self._model = model
         self._nid = nid
         self._old = old_data
         self._new = new_data
+        self._focus_key = focus_key
+        self._stamp = time.monotonic()
 
     def id(self) -> int:
         return self._COALESCE_ID
@@ -109,7 +129,12 @@ class _NodeDataChangedCmd(QUndoCommand):
             return False
         if other._nid != self._nid:
             return False
+        if other._focus_key != self._focus_key:
+            return False
+        if other._stamp - self._stamp > self._MERGE_WINDOW_S:
+            return False
         self._new = other._new
+        self._stamp = other._stamp
         return True
 
     def redo(self) -> None:
@@ -214,6 +239,9 @@ class DialogueGraphEditorWidget(QWidget):
         self._layout_save_timer = QTimer(self)
         self._layout_save_timer.setSingleShot(True)
         self._layout_save_timer.timeout.connect(self._flush_flow_layout_to_disk)
+        #: 由检查器的增删/移动行操作置位：下一次 _on_inspector_changed 断开撤销合并链。
+        self._structural_edit_pending = False
+        self._structural_edit_seq = 0
         self._inspector_scene_timer = QTimer(self)
         self._inspector_scene_timer.setSingleShot(True)
         self._inspector_scene_timer.timeout.connect(self._rebuild_flow_scene)
@@ -256,39 +284,53 @@ class DialogueGraphEditorWidget(QWidget):
         from PySide6.QtWidgets import QToolBar
         tb = QToolBar("图对话工具栏")
         tb.setMovable(False)
-        for text, slot in (
-            ("打开…", self.open_file_dialog),
-            ("保存", self.save),
-            ("另存为…", self.save_as),
-            ("重命名图…", self._rename_graph_file_dialog),
+        # 9 个等权文本按钮里，「保存」和「重命名图…」长得一模一样——而后者会改磁盘
+        # 文件名并改写全项目引用。给保存绑 Ctrl+S、危险项用分隔符拉开、逐个补 tooltip。
+        for text, slot, tip, shortcut in (
+            ("打开…", self.open_file_dialog, "打开另一张图对话", "Ctrl+O"),
+            ("保存", self.save, "保存当前图（Ctrl+S）", "Ctrl+S"),
+            ("另存为…", self.save_as, "存成新文件", ""),
         ):
-            tb.addAction(text, slot)
+            act = tb.addAction(text, slot)
+            act.setToolTip(tip)
+            if shortcut:
+                act.setShortcut(QKeySequence(shortcut))
         tb.addSeparator()
-        for text, slot in (
-            ("校验当前图", self.run_validate),
-            ("自动布局", self._flow_auto_layout),
-            ("适应画布", self._flow_fit_view),
-        ):
-            tb.addAction(text, slot)
+        _rn = tb.addAction("重命名图…", self._rename_graph_file_dialog)
+        _rn.setToolTip("改这张图的文件名，并同步改写全项目对它的引用（影响面大，会先确认）")
         tb.addSeparator()
-        for text, slot in (
-            ("重命名节点…", self._rename_node_dialog),
-            ("复制子树", self._copy_subtree),
+        for text, slot, tip in (
+            ("校验当前图", self.run_validate, "重新跑一遍校验，结果显示在底部面板"),
+            ("自动布局", self._flow_auto_layout, "按算法重排所有节点位置（会覆盖手工摆位，有确认）"),
+            ("适应画布", self._flow_fit_view, "缩放到能看见整张图（快捷键 F）"),
         ):
-            tb.addAction(text, slot)
+            tb.addAction(text, slot).setToolTip(tip)
+        tb.addSeparator()
+        for text, slot, tip in (
+            ("重命名节点…", self._rename_node_dialog, "改节点 id，并同步改写图内所有指向它的连线"),
+            ("复制子树", self._copy_subtree, "从当前节点起把整条分支复制一份"),
+        ):
+            tb.addAction(text, slot).setToolTip(tip)
         tb.addSeparator()
         _undo_scope_tip = (
             "覆盖范围：节点内容编辑、画布移动/连线、节点新增/删除/重命名/复制、"
             "复制子树、清除幽灵连线。\n"
             "图属性（id / entry / 标题 / preconditions / 叙事归属）的修改不入撤销栈。"
         )
+        _save_act = tb.actions()[0] if tb.actions() else None
         self._btn_undo = QPushButton("撤销")
-        self._btn_undo.setToolTip("撤销上一步操作。\n" + _undo_scope_tip)
-        self._btn_undo.clicked.connect(self._undo_stack.undo)
+        self._btn_undo.setToolTip(
+            "撤销上一步操作（Ctrl+Z）。\n" + _undo_scope_tip
+        )
+        self._btn_undo.setShortcut(QKeySequence.StandardKey.Undo)
+        self._btn_undo.clicked.connect(self.undo)
         tb.addWidget(self._btn_undo)
         self._btn_redo = QPushButton("重做")
-        self._btn_redo.setToolTip("重做刚撤销的操作。\n" + _undo_scope_tip)
-        self._btn_redo.clicked.connect(self._undo_stack.redo)
+        self._btn_redo.setToolTip(
+            "重做刚撤销的操作（Ctrl+Shift+Z）。\n" + _undo_scope_tip
+        )
+        self._btn_redo.setShortcut(QKeySequence.StandardKey.Redo)
+        self._btn_redo.clicked.connect(self.redo)
         tb.addWidget(self._btn_redo)
         self._search_edit = QLineEdit()
         self._search_edit.setPlaceholderText("搜索节点 id 或内容… Enter 定位（再按 Enter 下一条）")
@@ -342,7 +384,7 @@ class DialogueGraphEditorWidget(QWidget):
         refs_head = QHBoxLayout()
         refs_head.addWidget(QLabel("<b>被引用</b>"))
         self._refs_count = QLabel("")
-        self._refs_count.setStyleSheet("color: #888;")
+        self._refs_count.setStyleSheet(app_theme.semantic_text_css("muted"))
         refs_head.addWidget(self._refs_count, 1)
         self._refs_toggle = QPushButton("收起")
         self._refs_toggle.setFixedWidth(56)
@@ -428,7 +470,7 @@ class DialogueGraphEditorWidget(QWidget):
         )
         flow_hint = QLabel("流程图：端口拖线连节点 · 滚轮缩放 · 中键平移 · F 适应 · A 自动布局（详见悬停提示）")
         flow_hint.setWordWrap(True)
-        flow_hint.setStyleSheet("color: #888;")
+        flow_hint.setStyleSheet(app_theme.semantic_text_css("muted"))
         app_theme.set_editor_font_role(flow_hint, app_theme.FONT_ROLE_HINT)
         fallback_font = flow_hint.font()
         fallback_font.setPixelSize(app_theme.font_px_for_role(app_theme.FONT_ROLE_HINT))
@@ -445,7 +487,7 @@ class DialogueGraphEditorWidget(QWidget):
         mid_split = QSplitter(Qt.Orientation.Vertical)
         mid_split.addWidget(flow_top)
         mid_split.addWidget(node_box)
-        mid_split.setSizes([520, 220])
+        mid_split.setSizes([430, 310])
 
         splitter.addWidget(mid_split)
 
@@ -547,6 +589,8 @@ class DialogueGraphEditorWidget(QWidget):
             dialogue_graph_id_getter=lambda: str(self._data.get("id", "") or "").strip(),
         )
         self._inspector.set_change_callback(self._on_inspector_changed)
+        self._inspector.set_node_summaries_getter(self._node_summaries_for_picker)
+        self._inspector.set_structural_hint_callback(self._mark_structural_edit)
         # 分组一律由画布分组框几何决定，检查器只读展示所属分组（不再提供会误导的
         # 下拉「指派分组」入口——那两个回调过去只是弹 toast 让人去画布操作）。
         self._inspector.set_editor_group_geometry_mode(True)
@@ -585,7 +629,7 @@ class DialogueGraphEditorWidget(QWidget):
         val_head = QHBoxLayout()
         val_head.addWidget(QLabel("<b>校验</b>"))
         self._validation_counts = QLabel("无加载图")
-        self._validation_counts.setStyleSheet("color: #888;")
+        self._validation_counts.setStyleSheet(app_theme.semantic_text_css("muted"))
         val_head.addWidget(self._validation_counts, 1)
         self._validation_toggle = QPushButton("收起")
         self._validation_toggle.setFixedWidth(56)
@@ -597,9 +641,14 @@ class DialogueGraphEditorWidget(QWidget):
         val_body_layout = QVBoxLayout(self._validation_body)
         val_body_layout.setContentsMargins(0, 0, 0, 0)
         self._validation_list = QListWidget()
-        self._validation_list.setMinimumHeight(72)
-        self._validation_list.setMaximumHeight(160)
+        # 高度跟条目数走：只有一行「无问题」时不该恒占窗口 21%，条目多时也不该
+        # 卡在 160px 只露 7 条还拖不动（面板本身没有拖拽手柄）。
+        self._validation_list.setMinimumHeight(28)
+        self._validation_list.setMaximumHeight(320)
         self._validation_list.setAlternatingRowColors(True)
+        self._validation_list.itemDoubleClicked.connect(
+            self._on_validation_item_double_clicked
+        )
         val_body_layout.addWidget(self._validation_list)
         val_layout.addWidget(self._validation_body)
 
@@ -854,13 +903,13 @@ class DialogueGraphEditorWidget(QWidget):
             menu.addAction(act_nf)
             menu.addSeparator()
             for nt, label in (
-                ("line", "line"),
-                ("runActions", "runActions"),
-                ("choice", "choice"),
-                ("switch", "switch"),
-                ("ownerState", "ownerState（所属实体状态）"),
-                ("contextState", "contextState（上下文状态）"),
-                ("end", "end"),
+                ("line", "对白 line"),
+                ("runActions", "动作 runActions"),
+                ("choice", "选项 choice"),
+                ("switch", "分支 switch"),
+                ("ownerState", "所属实体状态 ownerState"),
+                ("contextState", "上下文状态 contextState"),
+                ("end", "结束 end"),
             ):
                 act = QAction(f"在此处添加 {label}", self)
                 act.triggered.connect(
@@ -988,7 +1037,7 @@ class DialogueGraphEditorWidget(QWidget):
         if not isinstance(nodes, dict) or not nodes:
             self._last_validation = ([], [])
             self._validation_counts.setText("无加载图")
-            self._validation_counts.setStyleSheet("color: #888;")
+            self._validation_counts.setStyleSheet(app_theme.semantic_text_css("muted"))
             return
         if flush_inspector:
             self._sync_data_for_validation()
@@ -1000,10 +1049,11 @@ class DialogueGraphEditorWidget(QWidget):
         self._last_validation = (err, warn)
         if not err and not warn:
             self._validation_counts.setText("无问题")
-            self._validation_counts.setStyleSheet("color: #4a8;")
+            self._validation_counts.setStyleSheet(app_theme.semantic_text_css("ok"))
             item = QListWidgetItem("未发现校验问题")
             item.setFlags(Qt.ItemFlag.NoItemFlags)
             self._validation_list.addItem(item)
+            self._sync_validation_height()
             return
         parts: list[str] = []
         if err:
@@ -1011,15 +1061,18 @@ class DialogueGraphEditorWidget(QWidget):
         if warn:
             parts.append(f"警告 {len(warn)}")
         self._validation_counts.setText(" · ".join(parts))
-        self._validation_counts.setStyleSheet("color: #c44;" if err else "color: #a80;")
+        self._validation_counts.setStyleSheet(app_theme.semantic_text_css("error" if err else "warn"))
         for msg in err:
             item = QListWidgetItem(f"错误：{msg}")
-            item.setForeground(QColor("#e05050"))
+            item.setForeground(QColor(app_theme.semantic_text_color("error")))
+            self._tag_validation_item_target(item, msg)
             self._validation_list.addItem(item)
         for msg in warn:
             item = QListWidgetItem(f"警告：{msg}")
-            item.setForeground(QColor("#d0a020"))
+            item.setForeground(QColor(app_theme.semantic_text_color("warn")))
+            self._tag_validation_item_target(item, msg)
             self._validation_list.addItem(item)
+        self._sync_validation_height()
 
     def _set_validation_dock_collapsed(self, collapsed: bool) -> None:
         self._validation_dock_collapsed = collapsed
@@ -1030,14 +1083,28 @@ class DialogueGraphEditorWidget(QWidget):
         self._set_validation_dock_collapsed(not self._validation_dock_collapsed)
         self._save_validation_dock_state()
 
+    #: 校验面板高度区间。下限只够一行（「未发现校验问题」时不该恒占窗口 21%），
+    #: 上限够看十来条（旧值 160 只露 7 条，而且面板没有拖拽手柄、用户改不了）。
+    _VALIDATION_MIN_H = 28
+    _VALIDATION_MAX_H = 320
+
     def _restore_validation_dock_state(self) -> None:
         s = QSettings("GameDraft", "DialogueGraphEditor")
         collapsed = bool(s.value("validation_dock_collapsed", False))
         self._set_validation_dock_collapsed(collapsed)
-        height = s.value("validation_dock_height")
-        if isinstance(height, int) and 72 <= height <= 240:
-            self._validation_list.setMaximumHeight(height)
-            self._validation_list.setMinimumHeight(min(height, 120))
+        # 刻意不再从 QSettings 还原固定高度：旧版存进去的 160 会永久粘住，
+        # 于是"零问题"和"九条问题"都恒占 194px。高度改成按条目数算。
+        self._sync_validation_height()
+
+    def _sync_validation_height(self) -> None:
+        """高度跟条目数走：一行占一行的位置，条目多了长到上限再滚。"""
+        lst = self._validation_list
+        n = max(1, lst.count())
+        row_h = lst.sizeHintForRow(0) if lst.count() else 20
+        need = n * max(16, row_h) + 8
+        h = max(self._VALIDATION_MIN_H, min(need, self._VALIDATION_MAX_H))
+        lst.setMinimumHeight(h)
+        lst.setMaximumHeight(h)
 
     def _save_validation_dock_state(self) -> None:
         s = QSettings("GameDraft", "DialogueGraphEditor")
@@ -1060,15 +1127,25 @@ class DialogueGraphEditorWidget(QWidget):
         return True, str(info.get("message") or "")
 
     def _guard_owner_state_node_creation(self) -> bool:
+        """解不出 owner 时**提示但不拦**。
+
+        原实现是硬拦：解不出就弹框拒绝建节点。可 owner 解算只是静态推断——
+        显式 ownerType/ownerId、还没接线的新图、先建节点后接线的正常编排顺序，
+        都会解不出，于是"明明配好了却建不了节点"。现在改成告知 + 允许继续，
+        真正的错误由保存前的分层校验与 validate-data 负责（构建期仍 fail-closed）。
+        """
         ok, msg = self._owner_state_wrapper_available()
         if ok:
             return True
-        QMessageBox.warning(
+        choice = QMessageBox.warning(
             self,
-            "无法创建 OwnerStateNode",
-            f"{msg}\n\n请先在叙事编辑器为引用该对话图的 NPC/Hotspot 绑定 wrapperGraph。",
+            "暂时解不出所属实体 wrapper",
+            f"{msg}\n\n仍可继续创建：节点建好后在右侧手选 wrapperGraph，"
+            f"或去叙事编辑器给该实体绑一个 wrapperGraph。",
+            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Ok,
         )
-        return False
+        return choice == QMessageBox.StandardButton.Ok
 
     def _spawn_node_at_canvas(self, node_type: str, scene_x: float, scene_y: float) -> None:
         if node_type == "ownerState" and not self._guard_owner_state_node_creation():
@@ -1278,6 +1355,26 @@ class DialogueGraphEditorWidget(QWidget):
                 self._sync_file_list_selection(self._current_path)
         self._toast(f"已暂存删除 {del_gid}；请点「保存全部」提交", 6000)
         self._emit_catalog_changed()
+
+    def undo(self) -> None:
+        """本面板的局部撤销（主窗 Edit→撤销 经 tab 的 editor_undo 钩子转到这里）。
+
+        焦点在输入框里时先让输入框自己撤销——否则"刚打错一个字"要靠回退整个节点快照来救。
+        """
+        fw = QApplication.focusWidget()
+        if isinstance(fw, (QLineEdit, QPlainTextEdit)) and self.isAncestorOf(fw):
+            if fw.isUndoAvailable():
+                fw.undo()
+                return
+        self._undo_stack.undo()
+
+    def redo(self) -> None:
+        fw = QApplication.focusWidget()
+        if isinstance(fw, (QLineEdit, QPlainTextEdit)) and self.isAncestorOf(fw):
+            if fw.isRedoAvailable():
+                fw.redo()
+                return
+        self._undo_stack.redo()
 
     def has_unsaved_changes(self) -> bool:
         return self._model.is_dirty
@@ -1627,7 +1724,7 @@ class DialogueGraphEditorWidget(QWidget):
         self._edit_graph_id.setReadOnly(saved)
         if saved:
             self._edit_graph_id.setToolTip("保存后由文件名决定，用工具栏「重命名图...」修改")
-            self._edit_graph_id.setStyleSheet("color: #888;")
+            self._edit_graph_id.setStyleSheet(app_theme.semantic_text_css("muted"))
         else:
             self._edit_graph_id.setToolTip("")
             self._edit_graph_id.setStyleSheet("")
@@ -2530,7 +2627,7 @@ class DialogueGraphEditorWidget(QWidget):
             other_dialogues=other_dialogues,
         )
         if not referrers:
-            self._refs_count.setText("0")
+            self._refs_count.setText("0 处")
             self._refs_hint.setText(f"没有实体引用「{graph_id}」")
             return
         self._refs_count.setText(f"{len(referrers)} 处")
@@ -2563,6 +2660,37 @@ class DialogueGraphEditorWidget(QWidget):
         leaf.setToolTip(0, f"{ref.label} — {ref.detail}（双击导航）")
         leaf.setData(0, Qt.ItemDataRole.UserRole, ref.nav)
         parent.addChild(leaf)
+
+    _VALIDATION_NODE_RE = re.compile(r"节点\s+([^\s:：]+)")
+    _VALIDATION_BRANCH_RE = re.compile(r"(?:分支|case)\s*\[?(\d+)\]?")
+
+    def _tag_validation_item_target(self, item: QListWidgetItem, msg: str) -> None:
+        """给校验条目挂上「跳哪个节点、第几条分支」，供双击定位。
+
+        校验消息形如「节点 root 分支 1: …」/「节点 root case[3] 不是对象」。
+        不挂的话条目就是一行死文本：策划拿到「分支 1 恒命中」，只能回右栏
+        一条条展开数——数错了就改错分支。
+        """
+        m = self._VALIDATION_NODE_RE.search(msg)
+        if not m:
+            return
+        nid = m.group(1).strip().strip("'\"")
+        if nid not in (self._data.get("nodes") or {}):
+            return
+        b = self._VALIDATION_BRANCH_RE.search(msg)
+        item.setData(Qt.ItemDataRole.UserRole, nid)
+        item.setData(Qt.ItemDataRole.UserRole + 1, int(b.group(1)) if b else -1)
+        item.setToolTip(f"{msg}\n\n双击跳到节点 {nid}")
+
+    def _on_validation_item_double_clicked(self, item: QListWidgetItem) -> None:
+        nid = item.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(nid, str) or not nid:
+            return
+        if not self.focus_node_by_id(nid):
+            return
+        branch = item.data(Qt.ItemDataRole.UserRole + 1)
+        if isinstance(branch, int) and branch >= 0:
+            self._inspector.expand_branch_by_data_index(branch)
 
     def _on_referrer_double_clicked(self, item: QTreeWidgetItem, _col: int) -> None:
         nav = item.data(0, Qt.ItemDataRole.UserRole)
@@ -2749,14 +2877,15 @@ class DialogueGraphEditorWidget(QWidget):
                 if not isinstance(n, dict):
                     label = f"{nid}  (畸形节点：非对象)"
                     it = QListWidgetItem(label)
-                    it.setForeground(QColor("#e05050"))
+                    it.setForeground(QColor(app_theme.semantic_text_color("error")))
                     it.setData(Qt.ItemDataRole.UserRole, nid)
                     if not (q and q not in nid.lower() and q not in label.lower()):
                         self._node_list.addItem(it)
                     continue
                 t = n.get("type", "?")
                 summ = node_summary(nid, n)
-                label = f"{nid}  ({t})  {summ}" if summ else f"{nid}  ({t})"
+                _tz = node_type_label_zh(t)
+                label = f"{nid}  （{_tz}）  {summ}" if summ else f"{nid}  （{_tz}）"
                 if q and q not in nid.lower() and q not in label.lower():
                     continue
                 it = QListWidgetItem(label)
@@ -2895,6 +3024,20 @@ class DialogueGraphEditorWidget(QWidget):
             editor_group_for_node=self._node_to_group.get(nid, ""),
         )
 
+    def _mark_structural_edit(self) -> None:
+        """检查器做了增删/移动行：下一次变更别与打字合并成一条撤销。"""
+        self._structural_edit_pending = True
+
+    def _node_summaries_for_picker(self) -> dict[str, str]:
+        """节点 id → 一行摘要，供「选择目标节点」弹窗显示上下文（与左侧列表同源）。"""
+        out: dict[str, str] = {}
+        for nid, raw in (self._data.get("nodes") or {}).items():
+            try:
+                out[nid] = node_summary(nid, raw)
+            except Exception:
+                out[nid] = ""
+        return out
+
     def _on_inspector_changed(self):
         if "nodes" not in self._data:
             return
@@ -2907,8 +3050,24 @@ class DialogueGraphEditorWidget(QWidget):
             self._toast(str(e), 5000)
             return
         old_node = copy.deepcopy(self._model.nodes.get(nid, {}))
+        # 表单回报「变了」但内容其实一模一样（点开下拉看一眼、控件重建回填等）→ 直接不算
+        # 一次编辑：不标脏、不进撤销栈、不重建画布。否则就是「什么都没干却提示保存」。
+        if new_node == old_node:
+            return
         self._model.set_node(nid, new_node)
-        cmd = _NodeDataChangedCmd(self._model, nid, old_node, copy.deepcopy(new_node))
+        fw = QApplication.focusWidget()
+        # 只作合并分段的标识键，不解引用（控件销毁后也只是变成一个不再相等的键）。
+        focus_key = f"{type(fw).__name__}#{id(fw)}" if fw is not None else ""
+        # 增删/移动行这类**离散结构操作**不许与打字合并成一条撤销：删除按钮是 NoFocus、
+        # 不换 focus_key，又常发生在打字后 0.9s 内，于是"刚打的一句台词"会跟着删除
+        # 一起被一次 Ctrl+Z 吃掉。给它一个一次性的键，断开与前后的合并链。
+        if self._structural_edit_pending:
+            self._structural_edit_pending = False
+            focus_key = f"structural#{self._structural_edit_seq}"
+            self._structural_edit_seq += 1
+        cmd = _NodeDataChangedCmd(
+            self._model, nid, old_node, copy.deepcopy(new_node), focus_key=focus_key
+        )
         self._suppress_inspector_resync_from_undo = True
         try:
             self._undo_stack.push(cmd)
@@ -2922,7 +3081,10 @@ class DialogueGraphEditorWidget(QWidget):
         # 可达性诊断着色（reachability 只随拓扑变化，纯视觉编辑不影响，故无残留色）。
         topo_changed = self._node_output_targets(old_node) != self._node_output_targets(new_node)
         if topo_changed or not self._update_canvas_node_in_place(nid):
-            self._inspector_scene_timer.start(0)
+            # 防抖 180ms：next / defaultNext 是可手打的文本框，逐字符都会改连线目标，
+            # start(0) 等于「每敲一个键整图删-建一次」（实测敲 6 个字符 = 6 次 rebuild）。
+            # 连线手势走的是另一条路径（_on_oden_topology_changed），不受这里影响。
+            self._inspector_scene_timer.start(180)
         self._schedule_validation_refresh()
 
     @staticmethod
@@ -2956,7 +3118,8 @@ class DialogueGraphEditorWidget(QWidget):
                 n = (self._data.get("nodes") or {}).get(nid, {})
                 t = n.get("type", "?")
                 summ = node_summary(nid, n)
-                it.setText(f"{nid}  ({t})  {summ}" if summ else f"{nid}  ({t})")
+                _tz = node_type_label_zh(t)
+                it.setText(f"{nid}  （{_tz}）  {summ}" if summ else f"{nid}  （{_tz}）")
                 break
 
     def _on_pick_entry_clicked(self):
@@ -2984,13 +3147,13 @@ class DialogueGraphEditorWidget(QWidget):
         id_edit = QLineEdit(suggest_next_id(nodes))
         type_cb = QComboBox()
         for t, label in (
-            ("line", "line"),
-            ("runActions", "runActions"),
-            ("choice", "choice"),
-            ("switch", "switch"),
-            ("ownerState", "ownerState（所属实体状态）"),
-            ("contextState", "contextState（上下文状态）"),
-            ("end", "end"),
+            ("line", "对白 line"),
+            ("runActions", "动作 runActions"),
+            ("choice", "选项 choice"),
+            ("switch", "分支 switch"),
+            ("ownerState", "所属实体状态 ownerState"),
+            ("contextState", "上下文状态 contextState"),
+            ("end", "结束 end"),
         ):
             type_cb.addItem(label, t)
         fl.addRow("节点 id", id_edit)

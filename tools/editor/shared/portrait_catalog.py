@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from .character_dialogue import load_character_registry, npc_uses_graph
+
 # 与生产管线约定的 9 表情（meta 缺失时的回落顺序与中文名）
 PORTRAIT_EMOTIONS_FALLBACK: list[tuple[str, str]] = [
     ("calm", "平静"),
@@ -67,12 +69,27 @@ def portrait_image_path(project_root: Path, slug: str, emotion: str) -> Path:
     return portrait_sets_root(project_root) / slug / f"{slug}_{emotion}.png"
 
 
+def _npc_portrait_slug(npc: dict, registry: dict[str, dict]) -> str:
+    """NPC 生效立绘集：就地字段优先，缺省从 characterId 引用的角色继承（同运行时 own-first）。
+
+    只读就地键会把走注册表的 NPC（克拉拉/埃德加等，就地不写 portraitSlug）整个漏掉。
+    """
+    slug = str(npc.get("portraitSlug") or "").strip()
+    if slug:
+        return slug
+    cid = str(npc.get("characterId") or "").strip()
+    ch = registry.get(cid) if cid else None
+    return str((ch or {}).get("portraitSlug") or "").strip()
+
+
 def npc_portrait_slug_index(project_root: Path) -> dict[str, str]:
-    """npcId → portraitSlug：扫描全部场景 JSON 的 npcs[]；同 id 多场景先见非空者优先。"""
+    """npcId → portraitSlug：扫描全部场景 JSON 的 npcs[]；同 id 多场景先见非空者优先。
+    经角色注册表解引用（走 characterId 的 NPC 就地不写 slug，只读原始键会全部漏掉）。"""
     out: dict[str, str] = {}
     scenes = project_root / "public" / "assets" / "scenes"
     if not scenes.is_dir():
         return out
+    registry = load_character_registry(project_root)
     for p in sorted(scenes.glob("*.json")):
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
@@ -82,18 +99,23 @@ def npc_portrait_slug_index(project_root: Path) -> dict[str, str]:
             if not isinstance(npc, dict):
                 continue
             nid = str(npc.get("id") or "").strip()
-            slug = str(npc.get("portraitSlug") or "").strip()
+            slug = _npc_portrait_slug(npc, registry)
             if nid and slug and nid not in out:
                 out[nid] = slug
     return out
 
 
 def graph_context_portrait_slug(project_root: Path, graph_id: str) -> str:
-    """「跟随说话NPC」在编辑器里的预览解析：找 dialogueGraphId == graph_id 的场景 NPC，
-    唯一确定 portraitSlug 时返回之；找不到或多 NPC 歧义（不同 slug）返回空串。"""
+    """「跟随说话NPC」在编辑器里的预览解析：找挂着 graph_id 的场景 NPC，
+    唯一确定 portraitSlug 时返回之；找不到或多 NPC 歧义（不同 slug）返回空串。
+
+    图与立绘**都要经角色注册表解引用**：走 characterId 的 NPC 两者都可能不在就地字段上，
+    只读原始键会把这类 NPC 整个漏掉（预览静默空白）。
+    """
     gid = (graph_id or "").strip()
     if not gid:
         return ""
+    registry = load_character_registry(project_root)
     slugs: set[str] = set()
     scenes = project_root / "public" / "assets" / "scenes"
     if not scenes.is_dir():
@@ -106,9 +128,9 @@ def graph_context_portrait_slug(project_root: Path, graph_id: str) -> str:
         for npc in data.get("npcs") or []:
             if not isinstance(npc, dict):
                 continue
-            if str(npc.get("dialogueGraphId") or "").strip() != gid:
+            if not npc_uses_graph(npc, gid, registry):
                 continue
-            slug = str(npc.get("portraitSlug") or "").strip()
+            slug = _npc_portrait_slug(npc, registry)
             if slug:
                 slugs.add(slug)
     return slugs.pop() if len(slugs) == 1 else ""

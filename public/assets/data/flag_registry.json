@@ -311,6 +311,54 @@
     {
       "key": "淹尸_烤过火",
       "valueType": "bool"
+    },
+    {
+      "key": "guaihua_heard_baoqi",
+      "valueType": "bool"
+    },
+    {
+      "key": "guaihua_heard_chuoguolou",
+      "valueType": "bool"
+    },
+    {
+      "key": "guaihua_heard_beishi",
+      "valueType": "bool"
+    },
+    {
+      "key": "guaihua_heard_bai_matou",
+      "valueType": "bool"
+    },
+    {
+      "key": "guaihua_heard_laxi_baidai",
+      "valueType": "bool"
+    },
+    {
+      "key": "guaihua_heard_luojiao",
+      "valueType": "bool"
+    },
+    {
+      "key": "guaihua_heard_dianshui",
+      "valueType": "bool"
+    },
+    {
+      "key": "guaihua_heard_guanggun",
+      "valueType": "bool"
+    },
+    {
+      "key": "guaihua_heard_litiangou_yimai",
+      "valueType": "bool"
+    },
+    {
+      "key": "guaihua_heard_ming_zai_zishou",
+      "valueType": "bool"
+    },
+    {
+      "key": "guaihua_heard_shuo_liaozhai",
+      "valueType": "bool"
+    },
+    {
+      "key": "guaihua_heard_tongyuanmen",
+      "valueType": "bool"
     }
   ],
   "patterns": [
@@ -429,6 +477,12 @@
       "id": "archive_book_entry",
       "prefix": "archive_book_entry_",
       "idSource": "archive_book_entry",
+      "valueType": "bool"
+    },
+    {
+      "id": "archive_slang",
+      "prefix": "archive_slang_",
+      "idSource": "archive_slang",
       "valueType": "bool"
     }
   ],

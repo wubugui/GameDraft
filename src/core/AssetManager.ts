@@ -327,6 +327,38 @@ export class AssetManager {
     return this.getFromBucket<T>('json', resolveAssetPath(path));
   }
 
+  /**
+   * 载可选的旁挂 JSON：**文件不存在是正常情况**，返回 null 而不是抛，且不产生任何噪声。
+   * 动画挂点 sidecar（`<包>/sockets.json`）用它——绝大多数动画包不会有挂点。
+   *
+   * ⚠ 判据是 **content-type，不是状态码**。Vite dev server 的 SPA fallback 对任何
+   * 匹配不到的路径回 **200 + index.html**，所以"文件不存在"在这里根本不是 404
+   * （实测：GET 缺失的 sockets.json → `200 text/html`）。只看 `res.ok` 会放行，
+   * 随后 `response.json()` 撞上 `<!DOCTYPE` 抛错，落进 `loadIntoBucket` 的
+   * `reportDevError` → DEV 红条每进一个场景刷一屏。这条注释是 2026-08-03 踩实的。
+   *
+   * 确认是 JSON 之后才转交 `loadJson`，为的是走它的缓存与统计；多一次 HEAD 的代价
+   * 只落在真有 sidecar 的包上。
+   */
+  async loadOptionalJson<T = unknown>(path: string): Promise<T | null> {
+    const cached = this.getJson<T>(path);
+    if (cached !== null) return cached;
+    const resolved = resolveAssetPath(path);
+    try {
+      const probe = await fetch(resolved, { method: 'HEAD' });
+      if (!probe.ok) return null;
+      const contentType = probe.headers.get('content-type') ?? '';
+      if (!contentType.toLowerCase().includes('json')) return null;
+    } catch {
+      return null;   // 网络层失败也当"没有这个可选文件"，不打扰玩家
+    }
+    try {
+      return await this.loadJson<T>(path);
+    } catch {
+      return null;
+    }
+  }
+
   async loadText(path: string): Promise<string> {
     const resolved = resolveAssetPath(path);
     return this.loadIntoBucket<string>(

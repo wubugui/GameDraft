@@ -196,9 +196,11 @@ export function validateNarrativeGraphData(
         }
         if (!el.graph) addIssue(issues, 'error', 'wrapper.graph.missing', `${el.id}: wrapperGraph requires an inner graph`, path, el.id, elTarget);
       }
-      if (el.kind === 'scenarioSubgraph' && !String(el.refId || el.ownerId || '').trim()) {
-        addIssue(issues, 'warning', 'scenario.id.empty', `${el.id}: scenarioId is empty`, path, el.id, elTarget);
-      }
+      // scenarioSubgraph 的 scenarioId 必填规则已废除（2026-08-07）：scenarios.json 长期为
+      // `{"scenarios": []}`，全项目再无任何数据引用 scenarioId/scenarioLine，选择器拉出来是
+      // 空列表——这个字段永远填不上，规则只能永久亮着。scenarioSubgraph 现按「不绑实体的
+      // 通用子图」对待（想装纯子图也只有这一个壳可用，wrapperGraph 缺 ownerId 会直接报 error）。
+      // 若日后 scenario 系统复活，连同 Python 兜底（narrative_state_editor._validate_composition）一起恢复。
       if (el.kind !== 'wrapperGraph' && el.kind !== 'scenarioSubgraph' && !String(el.refId ?? '').trim()) {
         addIssue(issues, 'warning', 'blackbox.ref.empty', `${el.id}: blackbox refId is empty`, path, el.id, elTarget ? { ...elTarget, field: 'refId' } : undefined);
       }

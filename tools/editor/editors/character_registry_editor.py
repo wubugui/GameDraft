@@ -25,7 +25,14 @@ from PySide6.QtWidgets import (
 from ..project_model import ProjectModel
 from ..shared.form_layout import compact_form
 from ..shared.id_ref_selector import IdRefSelector
+from ..shared.dialogue_graph_refs import (
+    DIALOGUE_GRAPH_OPEN_TOOLTIP,
+    dialogue_graph_node_ids,
+    dialogue_graph_reference_rows,
+    open_dialogue_graph_from_widget,
+)
 from ..shared.portrait_catalog import load_portrait_sets
+from ..shared.reference_picker import ReferencePickerField
 
 _ROLE = Qt.ItemDataRole.UserRole
 
@@ -75,6 +82,34 @@ class CharacterRegistryEditor(QWidget):
         self._anim.setMinimumWidth(200)
         self._anim.setToolTip("动画包 anim.json（工程内已导出的包）。")
         form.addRow("animFile（动画包）", self._anim)
+        self._graph = ReferencePickerField(
+            lambda: dialogue_graph_reference_rows(self._model),
+            self,
+            allow_empty=True,
+            title="选择角色默认图对话",
+            geometry_key="dialogue_graph_reference_picker",
+            on_open=lambda gid: open_dialogue_graph_from_widget(self, gid),
+            open_tooltip=DIALOGUE_GRAPH_OPEN_TOOLTIP,
+        )
+        self._graph.setToolTip(
+            "「跟这个人说话默认走哪张图」。场景摆放就地写 dialogueGraphId 即覆盖本默认"
+            "（同一个人在不同场次演不同的戏是常态）。",
+        )
+        self._graph.value_changed.connect(lambda _x: self._refresh_entry_choices())
+        form.addRow("dialogueGraphId（默认对话图）", self._graph)
+        self._graph_entry = ReferencePickerField(
+            lambda: dialogue_graph_node_ids(self._model, self._graph.current_value()),
+            self,
+            allow_empty=True,
+            title="选择角色默认对话入口节点",
+            geometry_key="dialogue_graph_entry_reference_picker",
+        )
+        self._graph_entry.setToolTip(
+            "可选：从上面那张图的 nodes 里选；留空=用图自带的 entry。\n"
+            "⚠ 摆放一旦就地写了 dialogueGraphId，本入口**不会**跟着继承过去"
+            "（入口名只在它所属那张图里有意义）。",
+        )
+        form.addRow("dialogueGraphEntry（默认入口）", self._graph_entry)
         self._portrait = QComboBox()
         self._portrait.setMinimumWidth(200)
         self._portrait.setToolTip("对话头像立绘集；留空=按动画包目录名同名推导。")
@@ -158,6 +193,15 @@ class CharacterRegistryEditor(QWidget):
         self._anim.set_items(a_items)
         self._anim.set_current(af)
         self._anim.blockSignals(False)
+        # 载入路径**刻意不调 _refresh_entry_choices**：磁盘上的悬垂 entry 必须原样展示，
+        # 不能静默清掉（零丢失往返 + 共享控件保值契约；悬垂由 validator 报 error）。
+        # 清理只发生在用户主动改图那一刻。
+        self._graph.blockSignals(True)
+        self._graph.set_value(str(ch.get("dialogueGraphId") or ""))
+        self._graph.blockSignals(False)
+        self._graph_entry.blockSignals(True)
+        self._graph_entry.set_value(str(ch.get("dialogueGraphEntry") or ""))
+        self._graph_entry.blockSignals(False)
         self._portrait.blockSignals(True)
         self._portrait.clear()
         self._portrait.addItem("（按动画包名推导）", "")
@@ -169,6 +213,17 @@ class CharacterRegistryEditor(QWidget):
             self._portrait.addItem(f"{ps}（缺集）", ps)
         self._portrait.setCurrentIndex(max(0, self._portrait.findData(ps)))
         self._portrait.blockSignals(False)
+
+    def _refresh_entry_choices(self) -> None:
+        """图变了就清掉不属于新图的入口——留着会写出一个新图里根本没有的节点名。"""
+        gid = self._graph.current_value().strip()
+        cur = self._graph_entry.current_value().strip()
+        if not gid:
+            if cur:
+                self._graph_entry.set_value("")
+            return
+        if cur and cur not in dialogue_graph_node_ids(self._model, gid):
+            self._graph_entry.set_value("")
 
     def _write_entry_into(self, entry: dict) -> None:
         """把当前表单值就地写入 entry（保留未知键、不 mark_dirty）。_apply 与脏判断共用。"""
@@ -188,6 +243,17 @@ class CharacterRegistryEditor(QWidget):
             entry["portraitSlug"] = ps
         else:
             entry.pop("portraitSlug", None)
+        dg = self._graph.current_value().strip()
+        if dg:
+            entry["dialogueGraphId"] = dg
+        else:
+            entry.pop("dialogueGraphId", None)
+        # 入口没有图就无意义（validator 也按 error 拦）：图空则连带清掉，别留孤儿键
+        dge = self._graph_entry.current_value().strip() if dg else ""
+        if dge:
+            entry["dialogueGraphEntry"] = dge
+        else:
+            entry.pop("dialogueGraphEntry", None)
 
     def _is_dirty(self) -> bool:
         """当前表单是否与模型里的该角色有差异（切换/保存/关闭时判断是否需提交）。"""

@@ -7,7 +7,7 @@ summary: 第一单(路倒)=自由空挡→打哈欠找活→义庄门口被拦�
 status: active
 triggers:
   topics: [背尸, 第一单, 路倒, 义庄, 找活, 零工, 淹尸]
-last_governed: 2026-07-13
+last_governed: 2026-08-05
 ---
 
 ## 背景(一段)

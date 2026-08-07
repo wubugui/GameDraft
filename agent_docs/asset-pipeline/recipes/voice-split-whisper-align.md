@@ -11,7 +11,7 @@ authority:
 triggers:
   topics: [配音, 拆音频, whisper, 对齐字幕]
   tasks: [拆配音, 配音对齐字幕]
-last_governed: 2026-07-11
+last_governed: 2026-08-05
 ---
 
 **实测环境与日期**:2026-07-02,说书过场配音拆分(faster-whisper,CPU int8,small 模型,

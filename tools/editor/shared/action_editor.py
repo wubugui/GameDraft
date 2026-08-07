@@ -110,6 +110,10 @@ from .collapsible_section import CollapsibleSection
 from .dialog_geometry import remember_dialog_geometry
 from .form_layout import compact_form
 from .image_path_picker import CutsceneImagePathRow
+from .socket_image_list import SocketImageListField
+
+#: 历史私有名，保留给既有引用（控件本体已提到 socket_image_list 供挂件预设页复用）
+_SocketImageListField = SocketImageListField
 from .cutscene_dialogue_speaker_row import (
     npc_items_for_dialogue_picker,
     scripted_speaker_items,
@@ -119,8 +123,10 @@ from .runtime_field_schema import entity_kind_choices, field_meta
 from .numeric_roundtrip import preserve_numeric_repr
 from .reference_picker import ReferencePickerDialog, ReferencePickerField
 from .dialogue_graph_refs import (
+    DIALOGUE_GRAPH_OPEN_TOOLTIP,
     dialogue_graph_node_ids,
     dialogue_graph_reference_rows,
+    open_dialogue_graph_from_widget,
 )
 
 # 这些参数在 schema 里恒会被写出，但语义上"缺省即未设"。当某键原本不在数据里、且当前值
@@ -164,6 +170,35 @@ _OMIT_WHEN_ABSENT_AND_DEFAULT: dict[str, object] = {
     "options": [],
 }
 
+# 同上，但**按 (action, param) 限定作用域**。用于参数名在多个 action 间复用、
+# 而"缺省即未设"只对其中一个成立的情况：`image` 在 attachToSocket 里可选
+# （贴图可由 prop 预设提供），在 showOverlayImage / setHotspotDisplayImage 里却是
+# required+nonEmpty——放进上面那张按名的全局表会误伤后两者。
+_ACTION_SCOPED_OMIT_WHEN_ABSENT_AND_DEFAULT: dict[tuple[str, str], object] = {
+    # silence 缺省 false＝不闭嘴；不登记的话「打开→不改→保存」会凭空多出 silence:false
+    ("clearBubbleLineSet", "silence"): False,
+    # 挂件预设 id、单张贴图、三态 mirror/lit 的"未设"都是空串。
+    # 不剔的后果不只是格式漂移，更会**改行为**——打开一个过场再保存，
+    # 全项目挂件会被写上 mirror:false / lit:false（不镜像、不吃光）。
+    ("attachToSocket", "prop"): "",
+    ("attachToSocket", "image"): "",
+    ("attachToSocket", "mirror"): "",
+    ("attachToSocket", "lit"): "",
+}
+
+# 运行时默认为 true 的可选 bool：控件用三态（""/"true"/"false"）表达"未设"，
+# 落库时把非空的两态还原成真 bool。参数名不能用 bool schema——复选框的中性态
+# 就是 false，"没设"与"设成 false"分不开，等于配不出 false。
+_TRISTATE_BOOL_PARAMS: dict[str, tuple[str, ...]] = {
+    "attachToSocket": ("mirror", "lit"),
+    # playNpcAnimation.loop 同属三态（""=沿用状态定义 / true / false），schema 里也声明成
+    # "str"。没登记的后果：数据里写 `loop: false`（真 bool）的图，打开再切走就被改写成
+    # `loop: "false"`（字符串）。运行时 parseLooseBooleanParam 两种都认、行为不变，但
+    # JSON 里混类型会让人以为是两种语义，也直接违反「往返类型保真」。
+    # 由 test_inspector_roundtrip 逐图守着（生态_* 那批新图就是这么暴露出来的）。
+    "playNpcAnimation": ("loop",),
+}
+
 def _coerce_bool_param(val: object) -> bool:
     """bool 参数控件初始化：字符串 "false"/"0"/"no"/"off"（大小写不敏感）解析为 False，
     与运行时字符串语义一致；绝不能 bool("false")→True 造成保存后行为静默翻转。"""
@@ -178,7 +213,9 @@ def _coerce_bool_param(val: object) -> bool:
 # 修法（与 present 默认值一致）：按运行时默认 seed 控件 + 原本缺该键且仍为该默认时不回写。
 # 键为 (action_type, param)，因同名 fadeMs 在不同 action 默认值不同（1000 vs 500）。
 # 注：blendOverlayImage.durationMs 由其专属构造器自行 seed 600，这里仅登记以便往返剔除。
-_ACTION_PARAM_RUNTIME_DEFAULTS: dict[tuple[str, str], int] = {
+# float 参数同理（attachToSocket 的支点/缩放）：控件默认 0 会把支点顶到贴图左上角、
+# 把挂件缩成看不见，同样是"打开即保存就改行为"。
+_ACTION_PARAM_RUNTIME_DEFAULTS: dict[tuple[str, str], float] = {
     ("giveItem", "count"): 1,
     ("removeItem", "count"): 1,
     ("pickup", "count"): 1,
@@ -203,6 +240,12 @@ _ACTION_PARAM_RUNTIME_DEFAULTS: dict[tuple[str, str], int] = {
     # jumpEntityTo durationMs ?? 600 / arcHeight ?? 120（ActionRegistry.ts）：缺键且仍为默认时不回写。
     ("jumpEntityTo", "durationMs"): 600,
     ("jumpEntityTo", "arcHeight"): 120,
+    # attachToSocket 支点缺省图心、缩放缺省 1、自转缺省 0（SpriteEntity.syncAttachments）。
+    # 按真值 seed 控件还有一层好处：打开就看得见"支点现在在图心"，不用猜 0 是什么意思。
+    ("attachToSocket", "anchorX"): 0.5,
+    ("attachToSocket", "anchorY"): 0.5,
+    ("attachToSocket", "scale"): 1.0,
+    ("attachToSocket", "rotation"): 0.0,
     # moveGroupBy speed 缺省=0（瞬移分支）；登记后"未填 speed"打开保存不注入键（审查 P1-1）
     ("moveGroupBy", "speed"): 0,
     # sugarWheelShowSpeech durationMs 缺省=实例 speechDurationMs（兜底 3000）：
@@ -229,6 +272,7 @@ ACTION_TYPES = [
     "addArchiveEntry", "startCutscene", "startWaterMinigame", "startSugarWheelMinigame", "startPaperCraftMinigame",
     "startObjectExamine",
     "startPressureHold", "playSignalCue", "addFlagValue",
+    "setBubbleLineSet", "clearBubbleLineSet",
     "damagePlayer", "healPlayer", "resetHealth", "setHealth", "incHealth", "decHealth", "triggerDeathTether",
     "setSmell", "clearSmell", "sniff",
     "activatePlane", "deactivatePlane",
@@ -241,6 +285,7 @@ ACTION_TYPES = [
     "persistHotspotEnabled", "setZoneEnabled", "persistZoneEnabled", "persistNpcAt", "persistNpcAnimState", "persistPlayNpcAnimation",
     "shopPurchase", "inventoryDiscard",
     "setPlayerAvatar", "resetPlayerAvatar",
+    "attachToSocket", "detachFromSocket",
     "setSceneDepthFloorOffset", "resetSceneDepthFloorOffset",
     "setCameraZoom", "restoreSceneCameraZoom",
     "fadingZoom", "fadingRestoreSceneCameraZoom",
@@ -287,6 +332,7 @@ _SELECTOR_KIND_UNIVERSE: dict[str, str] = {
     "object_examine": "object_examines",
     "pressure_hold": "pressure_holds",
     "signal_cue": "signal_cues",
+    "prop_preset": "prop_presets",
     # 叙事活计生命周期（S1）：候选=声明 run 的活计图，宇宙沿用 narrative 条件叶的图 id 集合
     "narrative_run_archetype": "narrative_graph_ids",
     # 叙事章节包（C2）：候选=编排 package 标并集
@@ -341,6 +387,8 @@ ACTION_PERSISTENCE: dict[str, str] = {
     "addFlagValue": "save",
     "startPressureHold": "memory",
     "playSignalCue": "memory",
+    "setBubbleLineSet": "memory",
+    "clearBubbleLineSet": "memory",
     "damagePlayer": "save",
     "healPlayer": "save",
     "resetHealth": "save",
@@ -386,6 +434,8 @@ ACTION_PERSISTENCE: dict[str, str] = {
     "inventoryDiscard": "save",
     "setPlayerAvatar": "save",
     "resetPlayerAvatar": "save",
+    "attachToSocket": "memory",
+    "detachFromSocket": "memory",
     "setSceneDepthFloorOffset": "save",
     "resetSceneDepthFloorOffset": "save",
     "setCameraZoom": "memory",
@@ -475,6 +525,8 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "addFlagValue": [("key", "str"), ("delta", "float")],
     "startPressureHold": [("id", "str")],
     "playSignalCue": [("id", "str")],
+    "setBubbleLineSet": [("target", "str"), ("lineSetId", "str")],
+    "clearBubbleLineSet": [("target", "str"), ("silence", "bool")],
     "damagePlayer": [("amount", "int")],
     "healPlayer": [("amount", "int")],
     "resetHealth": [],
@@ -557,6 +609,17 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "addDelayedEvent": [("targetDay", "int")],
     "disableRuleOffers": [],
     "resetPlayerAvatar": [],
+    # 挂点：prop 选挂件预设（支点/自转/缩放/贴图一次配好）；下面几项留作"这一次不一样"的覆盖。
+    # image 单张=静态图；images 多张=挂点驱动帧号（用标注里的 frame 选第几张）
+    "attachToSocket": [
+        ("target", "str"), ("socket", "str"), ("prop", "str"),
+        ("image", "str"), ("images", "list"),
+        ("scale", "float"), ("anchorX", "float"), ("anchorY", "float"),
+        # mirror/lit 运行时默认 true，而复选框的中性态是 false——用 bool 控件就配不出
+        # "不镜像/不吃光"（一律当没设剔除）。照 playNpcAnimation.loop 的三态惯例走 str。
+        ("rotation", "float"), ("mirror", "str"), ("lit", "str"),
+    ],
+    "detachFromSocket": [("target", "str"), ("socket", "str")],
     "setSceneDepthFloorOffset": [("floor_offset", "float")],
     "resetSceneDepthFloorOffset": [],
     "setCameraZoom": [("zoom", "float")],
@@ -626,9 +689,11 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
 }
 
 _NOTIFICATION_TYPES = ("info", "warning", "quest", "rule", "item")
-_ARCHIVE_BOOK_TYPES = ("character", "lore", "document", "book", "bookEntry")
+_ARCHIVE_BOOK_TYPES = ("character", "lore", "slang", "document", "book", "bookEntry")
 
-_FACE_DIRECTIONS = ("left", "right", "up", "down")
+# 朝向只有左右镜像：SpriteEntity.setDirection 丢弃 dy、动画包也没有上下朝向，
+# 曾经列过的 up/down 运行时是静默空操作（现已 warn），故不再给出这两个选项。
+_FACE_DIRECTIONS = ("left", "right")
 
 # showEmote / showEmoteAndWait / showSpeechBubble*：运行时仅为气泡 Text；编辑器侧对白类用 text 字段与快捷占位。
 _EMOTE_QUICK_PRESETS = ("?", "!", "!!", "...", "…")
@@ -1339,6 +1404,11 @@ class NarrativeSignalPickerField(QWidget):
 
     def _refresh_line(self) -> None:
         self._line.setText(self._display_for_value(self._value))
+        # 只读框放不下时 QLineEdit 默认停在**末尾**，于是 showOverlayImage 与
+        # hideOverlayImage 都显示成 "rlayImage" —— 一对反义动作在界面上一模一样，
+        # 折叠状态下根本分不出谁是谁，删错行的代价很实在。光标归零 = 从头显示。
+        self._line.setCursorPosition(0)
+        self._line.setToolTip(self._display_for_value(self._value))
 
     def _open_manager(self) -> None:
         if self._model is None:
@@ -1950,6 +2020,9 @@ class ActionTypePickerField(QWidget):
 
     def _refill_line(self) -> None:
         self._line.setText(self._display_for_value(self._committed))
+        # 同上：从头显示，别把 show/hide 这类前缀差异截掉。
+        self._line.setCursorPosition(0)
+        self._line.setToolTip(self._display_for_value(self._committed))
         if hasattr(self, "_save_dot") and self._save_dot is not None:
             self._save_dot.setVisible(
                 bool(self._committed) and action_type_writes_save(self._committed),
@@ -2347,6 +2420,10 @@ class ActionRow(QWidget):
         self._random_above_editor = None
         self._random_below_editor = None
         self._collapsed = True
+        # 折叠钮是否由策略启用（单行时恒展开且隐藏折叠钮）。用显式标志而不是
+        # `_fold_toggle.isVisible()`：Qt 的 isVisible 还取决于祖先是否已显示，
+        # 离屏/未挂载时恒 False，会让"重建后恢复展开态"静默失效。
+        self._fold_available = False
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -2378,6 +2455,7 @@ class ActionRow(QWidget):
         self._btn_down.setVisible(show_reorder_buttons)
         self.del_btn = QPushButton("\u2212", self)
         self.del_btn.setFixedWidth(24)
+        self.del_btn.setToolTip("删除这条动作")  # 同排的 ↑↓ 都有 tooltip，就它没有
         self.del_btn.clicked.connect(lambda: self.removed.emit(self))
         self.del_btn.setVisible(show_delete_button)
         top.addWidget(self.type_combo, stretch=1)
@@ -2455,6 +2533,7 @@ class ActionRow(QWidget):
 
     def apply_fold_policy(self, single_row: bool) -> None:
         """仅一行时展开并隐藏折叠钮；多行时默认折叠参数区。"""
+        self._fold_available = not single_row
         if single_row:
             self._fold_toggle.setVisible(False)
             self._collapsed = False
@@ -2465,6 +2544,23 @@ class ActionRow(QWidget):
             self._collapsed = True
             self._foldable_body.setVisible(False)
             self._fold_toggle.setArrowType(Qt.ArrowType.RightArrow)
+
+    def restore_fold_state(self, collapsed: bool) -> None:
+        """刷新跨域候选导致的整行重建后，恢复用户原本的展开/折叠。
+
+        重建是内部实现细节（候选是构造期快照，不重建看不见别处的新增），不该让"切个页
+        回来，展开着看的那几行全折上了"。单行策略下折叠钮隐藏、恒展开，此时不接受恢复。
+        """
+        if not self._fold_available:
+            return
+        self._collapsed = bool(collapsed)
+        self._foldable_body.setVisible(not self._collapsed)
+        self._fold_toggle.setArrowType(
+            Qt.ArrowType.RightArrow if self._collapsed else Qt.ArrowType.DownArrow
+        )
+
+    def fold_state(self) -> bool:
+        return bool(self._collapsed)
 
     def set_reorder_enabled(self, up: bool, down: bool) -> None:
         self._btn_up.setEnabled(up)
@@ -2937,6 +3033,10 @@ class ActionRow(QWidget):
         self._params_layout.addRow("arriveAnimState", aa_combo)
 
         face_cb = QCheckBox("自动调节朝向（沿路运动方向更新朝向）", self)
+        face_cb.setToolTip(
+            "勾选＝位移全程朝行进方向（走路/跑动一般都要勾）。\n"
+            "不勾选＝完全不改变朝向，保持位移前的朝向不动"
+            "（想让角色背对着走、或位移前刚用 faceEntity 摆好朝向时才不勾）。")
         face_raw = params.get("faceTowardMovement")
         face_cb.setChecked(face_raw is True or str(face_raw).strip().lower() in ("true", "1", "yes"))
         face_cb.toggled.connect(lambda _c: self.changed.emit())
@@ -3136,6 +3236,9 @@ class ActionRow(QWidget):
 
         # faceTowardMovement (bool)
         face_cb = QCheckBox("自动调节朝向（朝落点方向）", self)
+        face_cb.setToolTip(
+            "勾选＝起跳时朝向落点。\n"
+            "不勾选＝完全不改变朝向，保持起跳前的朝向不动。")
         face_raw = params.get("faceTowardMovement")
         face_cb.setChecked(face_raw is True or str(face_raw).strip().lower() in ("true", "1", "yes"))
         face_cb.toggled.connect(lambda _c: self.changed.emit())
@@ -3245,7 +3348,7 @@ class ActionRow(QWidget):
             "actor", "emote_target", "npc_only", "scene_group",
             "water_minigame", "sugar_wheel_minigame", "paper_craft_minigame",
             "object_examine",
-            "smell", "plane", "pressure_hold", "signal_cue",
+            "smell", "plane", "pressure_hold", "signal_cue", "prop_preset",
         )
 
         pairs: list[tuple[str, str]] = []
@@ -3270,6 +3373,8 @@ class ActionRow(QWidget):
             pairs = m.all_cutscene_ids() if m else []
         elif kind == "shop":
             pairs = m.all_shop_ids() if m else []
+        elif kind == "prop_preset":
+            pairs = m.all_prop_preset_ids() if m else []
         elif kind == "audio_bgm":
             pairs = [(a, a) for a in (m.all_audio_ids("bgm") if m else [])]
         elif kind == "audio_sfx":
@@ -3381,6 +3486,11 @@ class ActionRow(QWidget):
             "spawn": "选目标场景的出生点；(none) = 不指定（进场用默认出生点）。",
             "pressure_hold": "仅下拉选择；列表来自 pressure_holds.json（按压蓄力配置）。",
             "signal_cue": "仅下拉选择；列表来自 signal_cues.json（信号演出配置）。",
+            "prop_preset": (
+                "仅下拉选择；列表来自 prop_presets.json（「挂件预设」页维护）。\n"
+                "预设带着这件挂件的贴图 + 支点 + 自转 + 缩放——选了它下面几项就不用填；\n"
+                "下面填了的会覆盖预设（留给「这一次歪着拿」）。"
+            ),
         }.get(kind)
         if tip:
             w.setToolTip(tip)
@@ -4342,6 +4452,8 @@ class ActionRow(QWidget):
                 allow_empty=True,
                 title="选择图对话",
                 geometry_key="dialogue_graph_reference_picker",
+                on_open=lambda gid: open_dialogue_graph_from_widget(self, gid),
+                open_tooltip=DIALOGUE_GRAPH_OPEN_TOOLTIP,
             )
             gid_field.set_value(cur_gid)
             gid_field.value_changed.connect(lambda _t: self.changed.emit())
@@ -4462,6 +4574,13 @@ class ActionRow(QWidget):
             def sync_owner_reference_mode(_value: str = "") -> None:
                 explicit_type = owner_type.committed_type().strip()
                 owner_id.set_custom_allowed(explicit_type == "system")
+                # ownerType=dialogue 时 ownerId 就是一张图对话：给正向跳转入口。
+                # 其它 owner 类型没有统一的"打开"落点，按钩子缺省隐藏按钮。
+                owner_id.set_open_handler(
+                    (lambda gid: open_dialogue_graph_from_widget(self, gid))
+                    if explicit_type == "dialogue" else None,
+                    tooltip=DIALOGUE_GRAPH_OPEN_TOOLTIP,
+                )
                 label = self._params_layout.labelForField(owner_id)
                 if isinstance(label, QLabel):
                     label.setText(
@@ -4942,6 +5061,32 @@ class ActionRow(QWidget):
                         "播放速度倍率（乘在该状态 frameRate 上）：1=原速、2=两倍速、0.5=半速。\n"
                         "保持 1 不写键（沿用运行时默认）。",
                     )
+                elif act_type == "attachToSocket" and pname in (
+                    "anchorX", "anchorY", "scale", "rotation",
+                ):
+                    fseed = float(_ACTION_PARAM_RUNTIME_DEFAULTS.get((act_type, pname), 0.0))
+                    if pname in ("anchorX", "anchorY"):
+                        w.setRange(0.0, 1.0)
+                        w.setSingleStep(0.01)
+                        w.setToolTip(
+                            "贴图上的支点（0..1）：0=左/上边缘，1=右/下边缘，0.5=图心。\n"
+                            "刀剑给刀柄、灯笼给提环——挂点对准的就是这一点。\n"
+                            "选了 prop 预设时留空即用预设值；这里改动会覆盖预设。")
+                    elif pname == "scale":
+                        w.setRange(0.0, 1000.0)
+                        w.setSingleStep(0.05)
+                        w.setToolTip("挂件相对角色的大小；1=贴图原始世界尺寸。0 或留默认=沿用预设/运行时缺省。")
+                    else:
+                        w.setRange(-360.0, 360.0)
+                        w.setSingleStep(5.0)
+                        w.setToolTip(
+                            "挂件自身旋转偏置（度），补贴图画的时候的朝向；\n"
+                            "叠加在挂点逐帧标注的角度之上，镜像时与之一起取反。")
+                    w.setDecimals(4)
+                    try:
+                        w.setValue(float(val) if val != "" else fseed)
+                    except (TypeError, ValueError):
+                        w.setValue(fseed)
                 else:
                     # 泛型 float 量程必须容纳世界坐标/大数值（persistNpcAt x/y、addFlagValue delta、
                     # setSceneDepthFloorOffset 等曾被旧 ±50 量程 clamp 毁值）——一律给足量程。
@@ -5184,8 +5329,13 @@ class ActionRow(QWidget):
                 w.value_changed.connect(lambda _t: self.changed.emit())
                 if isinstance(source_type_w, FilterableTypeCombo):
                     def sync_source_reference_mode(_value: str = "") -> None:
-                        w.set_custom_allowed(
-                            source_type_w.committed_type().strip() in ("action", "system"),
+                        source_kind = source_type_w.committed_type().strip()
+                        w.set_custom_allowed(source_kind in ("action", "system"))
+                        # sourceType=dialogue 时 sourceId 就是一张图对话：给正向跳转入口。
+                        w.set_open_handler(
+                            (lambda gid: open_dialogue_graph_from_widget(self, gid))
+                            if source_kind == "dialogue" else None,
+                            tooltip=DIALOGUE_GRAPH_OPEN_TOOLTIP,
                         )
                         w.refresh_display()
 
@@ -5290,12 +5440,60 @@ class ActionRow(QWidget):
                 w.typeCommitted.connect(lambda _t: self.changed.emit())
             elif act_type == "hideOverlayImage" and pname == "id":
                 w = self._build_overlay_id_combo(str(val) if val is not None else "")
+            elif act_type in ("attachToSocket", "detachFromSocket") and pname == "target":
+                w = self._make_selector("actor", str(val) if val is not None else "")
+                w.setToolTip("挂点宿主：player 或场景 NPC id（挂点住在它的动画包里）")
+            elif act_type in ("attachToSocket", "detachFromSocket") and pname == "socket":
+                w = FilterableTypeCombo(
+                    [("（挂点名，如 right_hand）", "")], self, select_only=False)
+                w.set_committed_type(str(val) if val is not None else "")
+                w.setToolTip(
+                    "挂点名，与目标动画包 sockets.json 里的键一致（在动画编辑器的「挂点」区建）。\n"
+                    "名字跨动画包通用：同一个 right_hand 换个角色也能挂。")
+                w.typeCommitted.connect(lambda _t: self.changed.emit())
+            elif act_type == "attachToSocket" and pname == "prop":
+                w = self._make_selector("prop_preset", str(val) if val is not None else "")
+            elif act_type == "attachToSocket" and pname in ("mirror", "lit"):
+                # 运行时默认 true，所以"不设"必须与"设成 false"可区分——照 loop 的三态惯例
+                rows = {
+                    "mirror": [
+                        ("（跟随预设/默认：跟角色翻面）", ""),
+                        ("跟角色翻面", "true"),
+                        ("不翻面（图自带方向）", "false"),
+                    ],
+                    "lit": [
+                        ("（跟随预设/默认：吃场景光照）", ""),
+                        ("吃场景光照", "true"),
+                        ("不吃光（自发光，如灯笼火苗）", "false"),
+                    ],
+                }[pname]
+                cur = str(val).strip().lower() if val is not None else ""
+                w = FilterableTypeCombo(rows, self, select_only=True)
+                if cur in ("", "true", "false"):
+                    w.set_committed_type(cur)
+                else:
+                    w.set_entries([(f"(数据) {cur}", cur)] + rows)
+                    w.set_committed_type(cur)
+                w.typeCommitted.connect(lambda _t: self.changed.emit())
+            elif act_type == "attachToSocket" and pname == "images":
+                w = _SocketImageListField(self._ctx_model, val, self)
+                w.changed.connect(self.changed)
+                w.setToolTip(
+                    "多帧挂件的贴图列表（第二档）：挂点标注里的 frame 选第几张。\n"
+                    "留空＝纯静态图，用上面的 image。不引入第二个时钟，所以没有锁相问题。")
+            elif act_type == "attachToSocket" and pname == "image":
+                w = CutsceneImagePathRow(self._ctx_model, str(val or ""), self)
+                w.changed.connect(self.changed)
+                w.setToolTip("挂件贴图（单张＝静态图）。多帧挂件用 images 列表。")
             elif act_type == "faceEntity" and pname == "target":
                 w = self._make_selector("actor", str(val) if val is not None else "")
             elif act_type == "faceEntity" and pname == "direction":
                 dir_rows = [("（用 faceTarget）", "")] + [(d, d) for d in _FACE_DIRECTIONS]
                 curd = str(val) if val is not None else ""
                 w = FilterableTypeCombo(dir_rows, self, select_only=True)
+                w.setToolTip(
+                    "朝向只有左右两种（角色是左右镜像，没有上下朝向）。\n"
+                    "留空则改用下面的 faceTarget：朝向该实体所在的一侧。")
                 if curd in _FACE_DIRECTIONS:
                     w.set_committed_type(curd)
                 elif curd:
@@ -5896,6 +6094,28 @@ class ActionRow(QWidget):
                 if at == act_type and pk in params and pk not in self._original_params \
                         and not isinstance(params[pk], bool) and params[pk] == dv:
                     del params[pk]
+            # 4) 同 2)，但只对指定 action 生效（同名参数在别处是必填的情况）。
+            for (at, pk), dv in _ACTION_SCOPED_OMIT_WHEN_ABSENT_AND_DEFAULT.items():
+                if at == act_type and pk in params and pk not in self._original_params \
+                        and isinstance(params[pk], bool) == isinstance(dv, bool) \
+                        and params[pk] == dv:
+                    del params[pk]
+            # 5) 三态可选 bool 的表示保真。控件是三态字符串（""/"true"/"false"），
+            #    但磁盘上两种写法都真实存在：过场数据里是字符串 "false"，新的生态对话图里
+            #    是真 bool false。**无脑归一化任何一边都会把另一边改写**（实测：一律转 bool
+            #    会让 15 处过场往返漂移；不转则新图的 bool 被写成字符串）。
+            #    所以照 preserve_numeric_repr 那套：语义没变就写回磁盘原表示，
+            #    用户真改了才落成规范的真 bool。
+            for pk in _TRISTATE_BOOL_PARAMS.get(act_type, ()):
+                v = params.get(pk)
+                if not (isinstance(v, str) and v.strip().lower() in ("true", "false")):
+                    continue
+                want = v.strip().lower() == "true"
+                orig = self._original_params.get(pk)
+                if isinstance(orig, str) and orig.strip().lower() == ("true" if want else "false"):
+                    params[pk] = orig  # 语义未变 → 原样保留磁盘上的字符串写法
+                else:
+                    params[pk] = want
         return result
 
     def _to_dict_raw(self) -> dict:
@@ -5960,6 +6180,11 @@ class ActionRow(QWidget):
                 params[pname] = float(w.value())
             elif ptype == "bool":
                 params[pname] = w.isChecked()
+            elif ptype == "list":
+                # 目前只有挂点的 images：空列表不写键（纯静态图不该留个空数组）
+                items = w.to_list() if hasattr(w, "to_list") else []
+                if items:
+                    params[pname] = items
             elif ptype == "flag_val" and isinstance(w, FlagValueEdit):
                 # 不做 float() 强转：FlagValueEdit 原值保留（int 保 int、raw 保原类型）
                 params[pname] = w.get_value()
@@ -5981,6 +6206,8 @@ class ActionRow(QWidget):
                 # userData 优先：'(非枚举) xxx' 等展示文案不得写回 JSON
                 _d = w.currentData()
                 params[pname] = _d if isinstance(_d, str) else w.currentText()
+            elif isinstance(w, CutsceneImagePathRow):
+                params[pname] = w.path()
             elif isinstance(w, RichTextLineEdit):
                 params[pname] = w.text()
             else:
@@ -6029,6 +6256,71 @@ class ActionRow(QWidget):
         return {"type": act_type, "params": params}
 
 
+_REFERENCE_REFRESH_EPOCH = 0
+
+
+def bump_reference_refresh_epoch() -> int:
+    """开启新一轮跨域候选刷新（主窗一次切页 / 一次目录变更调一次）。
+
+    同一轮里顶层编辑器自己的 reload 钩子与主窗的子控件兜底扫描会打到同一个
+    ActionEditor；靠这个单调代号去重，避免重建两遍（大过场页重建一次就不便宜）。
+    """
+    global _REFERENCE_REFRESH_EPOCH
+    _REFERENCE_REFRESH_EPOCH += 1
+    return _REFERENCE_REFRESH_EPOCH
+
+
+def _reference_refresh_epoch() -> int:
+    return _REFERENCE_REFRESH_EPOCH
+
+
+def reference_rebuild_is_safe_now() -> bool:
+    """有模态框/弹出层开着时，**绝不能**重建动作行。
+
+    重建会 deleteLater 掉 ActionRow，而 Qt 的静态便捷函数
+    ``QMessageBox.question/warning(self, …)`` 是**栈上对象 + parent=该行**——行析构时
+    ``QObjectPrivate::deleteChildren()`` 会对栈地址调 free，直接
+    ``pointer being freed was not allocated`` → 整个编辑器进程 abort（不是崩一个控件）。
+    ActionRow 自己就有多处这种确认框（切换 Action 类型、坐标点选提示…）。
+
+    刷新入口里有定时器（外置图对话编辑器退出轮询 700ms、窗口激活 singleShot），
+    **定时器不受模态阻塞**，会在弹窗 exec() 的嵌套事件循环里照常触发；所以这道闸必须
+    在重建自身这一层，光靠"当前有没有键盘焦点"挡不住（应用一失活 focusWidget 就是 None）。
+    顺带也保护 ``ReferencePickerDialog``：它 parent=行，被销毁会直接 Rejected，
+    用户刚选好的引用凭空消失。
+
+    返回 False 时调用方**不要记刷新水位**——下一轮/下次切页自然补刷。
+    """
+    from PySide6.QtWidgets import QApplication
+
+    if QApplication.instance() is None:
+        return True
+    return (
+        QApplication.activeModalWidget() is None
+        and QApplication.activePopupWidget() is None
+    )
+
+
+def outermost_action_editors(root: QWidget) -> list["ActionEditor"]:
+    """root 下最外层的 ActionEditor（跳过嵌套子编辑器）。
+
+    重建外层会销毁它的嵌套子编辑器（delayed / runActions / choice / random 分支），
+    对已销毁的 C++ 对象再调方法直接 RuntimeError——所以兜底扫描只能碰最外层。
+    """
+    out: list[ActionEditor] = []
+    for editor in root.findChildren(ActionEditor):
+        parent = editor.parentWidget()
+        nested = False
+        while parent is not None:
+            if isinstance(parent, ActionEditor):
+                nested = True
+                break
+            parent = parent.parentWidget()
+        if not nested:
+            out.append(editor)
+    return out
+
+
 class ActionEditor(QWidget):
     changed = Signal()
 
@@ -6046,6 +6338,7 @@ class ActionEditor(QWidget):
         self._ctx_cutscene_id: str | None = None
         self._wheel_speech_role_rows_getter: Callable[[], list[tuple[str, str]]] | None = None
         self._show_reorder_buttons = show_reorder_buttons
+        self._last_reference_refresh_epoch = 0
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.addWidget(QLabel(f"<b>{label}</b>"))
@@ -6116,9 +6409,29 @@ class ActionEditor(QWidget):
                         nested.refresh_wheel_speech_role_combos()
 
     def reload_refs_from_model(self) -> None:
-        """Duck hook used by parent editors after another asset catalog changes."""
-        for row in self._rows:
-            row.reload_refs_from_model()
+        """跨域候选真刷新（主窗切页 / 目录变更后由父编辑器或主窗兜底扫描调用）。
+
+        为什么必须重建行：``ActionRow`` 的 ``IdRefSelector`` 候选是 ``_rebuild_params()``
+        那一刻的**静态快照**，而 ``set_project_context`` 在 model/scene 未变时短路——于是
+        别处新增的 item / flag / quest / 场景实体不重启编辑器就看不见（正是"配置了在别的
+        编辑器里看不到"的第二层根因）。用原值 ``set_data(to_list())`` 重建：内容逐字不变、
+        set_data 静默不发 changed、不动其它表单字段。
+        ``ReferencePickerField`` 是开时懒查 provider 的，重建后自然新鲜。
+
+        同一轮刷新内幂等：顶层编辑器自己的钩子与主窗的子控件兜底扫描会双双打到同一个
+        ActionEditor，靠刷新代号去重，避免一次切页重建两遍。
+        """
+        if not reference_rebuild_is_safe_now():
+            return
+        epoch = _reference_refresh_epoch()
+        if epoch and self._last_reference_refresh_epoch == epoch:
+            return
+        self._last_reference_refresh_epoch = epoch
+        folds = [r.fold_state() for r in self._rows]
+        self.set_data(self.to_list())
+        # 展开/折叠是用户的阅读状态，不能被"内部重建"顺手清掉（切页回来一片折上很难受）。
+        for row, collapsed in zip(self._rows, folds):
+            row.restore_fold_state(collapsed)
 
     def set_flag_completions(self, _keys: list[str]) -> None:
         """Deprecated: pass set_project_context instead."""
@@ -6139,6 +6452,10 @@ class ActionEditor(QWidget):
         for r in self._rows:
             _hide_combo_popups_under(r)
             self._rows_layout.removeWidget(r)
+            # setParent(None) 先摘子关系再排删除：deleteLater 是延后的，只 removeWidget
+            # 的话旧行在事件循环回来之前仍是本控件的 child，findChildren 类兜底扫描会
+            # 扫到"正在等死"的控件（切页刷新走这条路）。
+            r.setParent(None)
             r.deleteLater()
         self._rows.clear()
         # 禁止主动 _dismiss_active_popup_stack / processEvents / sendPostedEvents：

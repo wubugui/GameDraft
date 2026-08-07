@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 1,
+  "id": "生态_翻_雾津_板车轮",
+  "entry": "root",
+  "meta": {
+    "title": "翻检 · 雾津东街板车轮（眼尖 / 夜 / 常态 三态）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "narrative": "eco_眼力",
+              "state": "眼尖",
+              "reached": true
+            }
+          ],
+          "next": "deep"
+        },
+        {
+          "conditions": [
+            {
+              "narrative": "eco_时辰",
+              "state": "夜"
+            }
+          ],
+          "next": "night"
+        }
+      ],
+      "defaultNext": "first"
+    },
+    "first": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "一只板车轮靠在墙上，辐条断了两根，轮箍磨得只剩下薄薄一层铁。",
+      "next": "end"
+    },
+    "night": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "轮子的影子摊在墙上，比轮子本身大一圈。",
+      "next": "act_night"
+    },
+    "deep": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "轮心的油还是新上的。断辐条的茬口是斜的——不是压断的，是拿斧头劈的。哪个会把自家的车轮劈咯？",
+      "next": "end"
+    },
+    "act_night": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "faceEntity",
+          "params": {
+            "target": "eco_wj_官差刀",
+            "faceTarget": "player"
+          }
+        },
+        {
+          "type": "showEmote",
+          "params": {
+            "target": "eco_wj_官差刀",
+            "emote": "?",
+            "duration": 1100
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "end": {
+      "type": "end"
+    }
+  }
+}

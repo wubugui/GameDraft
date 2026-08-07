@@ -147,6 +147,48 @@ def test_detection_anchored_on_anim_editor() -> None:
     )
 
 
+def test_confirm_close_accepts_parent_argument() -> None:
+    """confirm_close 签名 parity（2026-08-07 挂件预设实锤）。
+
+    主窗两处关闭门控都按 confirm_close(parent) 传主窗做弹窗 parent
+    （main_window.py:_confirm_pending_editor_changes 与外部改动接管路径）。
+    PropPresetEditor 曾写成 confirm_close(self)，于是 closeEvent 第一行即
+    TypeError：event 既未 accept 也未 ignore（默认放行关窗），后续 flush、
+    "未保存改动"询问、几何保存、_stop_game 全部被跳过——脏数据静默丢失，
+    且 npm 子进程漏杀（QProcess: Destroyed while process is still running）。
+    """
+    offenders: list[str] = []
+    for label, cls in _registered_editor_classes():
+        fn = getattr(cls, "confirm_close", None)
+        if not callable(fn):
+            continue
+        try:
+            inspect.signature(fn).bind(object(), object())
+        except TypeError as e:
+            offenders.append(
+                f"「{label}」{cls.__name__}.confirm_close"
+                f"{inspect.signature(fn)}：{e}"
+            )
+    assert not offenders, (
+        "以下编辑器的 confirm_close 无法按 confirm_close(parent) 调用——关闭路径"
+        "（main_window._confirm_pending_editor_changes）会在 closeEvent 首行抛 "
+        "TypeError，窗口照常关闭但 flush 与未保存询问全被跳过。补上 parent 形参"
+        "（弹窗用 parent or self）：\n" + "\n".join(offenders)
+    )
+
+
+def test_confirm_close_parity_anchored_on_call_site() -> None:
+    """防空转：主窗确实以 confirm_close(<单实参>) 调用，本护栏才有意义。"""
+    main_src = MAIN_WINDOW.read_text(encoding="utf-8")
+    assert re.search(r"confirm\(self\)", main_src), (
+        "main_window._confirm_pending_editor_changes 不再以 confirm(self) 调用 "
+        "confirm_close——签名 parity 判据需跟进调用点"
+    )
+    assert re.search(r"\.confirm_close\(self\)", main_src), (
+        "main_window 不再有 confirm_close(self) 调用点——签名 parity 判据需跟进"
+    )
+
+
 def test_exemptions_are_current() -> None:
     """豁免清单保鲜：条目必须仍注册、仍命中脏态、仍无 flush、锚点仍在。"""
     by_name = {cls.__name__: cls for _, cls in _registered_editor_classes()}

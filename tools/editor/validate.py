@@ -103,10 +103,14 @@ def _lighting_payload_issues(project_root: Path) -> list[Issue]:
         vol = payload.get("vol") or {}
         vol_bytes = (int(vol.get("tiles_x", 0)) * int(vol.get("nx", 0))
                      * int(vol.get("tiles_y", 0)) * int(vol.get("ny", 0)) * 4 * 2)
-        # atlas 布局 = 查看器 atlas4():每 probe 一行,列块 [base+cov|amb|emit|nee]
-        expect = {"atlas_l1.bin": pn * 4 * 4 * 4 * 2,
-                  "atlas_l2.bin": pn * 9 * 4 * 4 * 2,
-                  "atlas_bin.bin": pn * 64 * 4 * 4 * 2,
+        # atlas 布局以**运行时消费端**为准(src/core/CharacterLightingSystem.ts):
+        # probeCfg 固化 L1=4列 / L2=9列 / BIN=64列,每 probe 一行,纹理 rgba16float
+        # ⇒ 字节 = pn(行) × col(列) × 4(RGBA) × 2(16bit)。
+        # 旧公式按查看器 atlas4() 的「4 列块」多乘了一个 4,导致 28 个场景全量误报
+        # (实测三张图磁盘尺寸与本公式逐字节相符;2026-08-06 修)。
+        expect = {"atlas_l1.bin": pn * 4 * 4 * 2,
+                  "atlas_l2.bin": pn * 9 * 4 * 2,
+                  "atlas_bin.bin": pn * 64 * 4 * 2,
                   "probes_valid.bin": pn,
                   "vol_rad.bin": vol_bytes,
                   "vol_emit.bin": vol_bytes}

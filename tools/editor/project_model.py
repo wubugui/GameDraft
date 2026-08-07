@@ -79,6 +79,7 @@ class ProjectModel(QObject):
         self.character_registry: dict[str, dict] = {}
         self.archive_characters: list[dict] = []
         self.archive_lore: dict = {}
+        self.archive_slang: dict = {}
         self.archive_books: list[dict] = []
         self.archive_documents: list[dict] = []
         self.animations: dict[str, dict] = {}
@@ -86,6 +87,8 @@ class ProjectModel(QObject):
         self.filter_defs: dict[str, dict] = {}
         self.flag_registry: dict = {}
         self.overlay_images: dict[str, str] = {}
+        #: 挂件预设：id → {label,image/images,anchorX,anchorY,rotation,scale,lit}
+        self.prop_presets: dict[str, dict] = {}
         self.scenarios_catalog: dict = {}
         self.narrative_graphs: dict = {}
         #: 章节导演清单（C2 电影摄制模型）：行={id,package?,scene?,when,autoPlay,done}
@@ -94,6 +97,8 @@ class ProjectModel(QObject):
         self.smell_profiles: dict = {}
         self.pressure_holds: list[dict] = []
         self.signal_cues: list[dict] = []
+        # 头顶闲聊台词本：{tuning, lineSets}；缺文件时按空表处理（整个特性可以一条都不配）
+        self.bubble_lines: dict = {}
         # planes.json：位面注册表（PlaneDef[]，TS 权威类型 src/systems/plane/types.ts）。
         # 文件可能尚未创建（由运行时/内容侧初始化），缺失时容错为空数组。
         self.planes: list[dict] = []
@@ -279,10 +284,12 @@ class ProjectModel(QObject):
         self.strings = self._load(dp / "strings.json", {})
         self.archive_characters = self._load(dp / "archive" / "characters.json", [])
         self.archive_lore = self._load(dp / "archive" / "lore.json", {})
+        self.archive_slang = self._load(dp / "archive" / "slang.json", {})
         self.archive_books = self._load(dp / "archive" / "books.json", [])
         self.archive_documents = self._load(dp / "archive" / "documents.json", [])
         self.pressure_holds = self._load(dp / "pressure_holds.json", [])
         self.signal_cues = self._load(dp / "signal_cues.json", [])
+        self.bubble_lines = self._load(dp / "bubble_lines.json", {})
         self.smell_profiles = self._load(dp / "smell_profiles.json", {})
         raw_planes = self._load(dp / "planes.json", [])
         if isinstance(raw_planes, list):
@@ -365,6 +372,7 @@ class ProjectModel(QObject):
         self.flag_registry = load_flag_registry(flag_registry_path(self.assets_path))
 
         self.overlay_images = self._load(dp / "overlay_images.json", {})
+        self.prop_presets = self._load(dp / "prop_presets.json", {})
         # scenarios.json 缺失 → 默认 {"scenarios": []}（审查 P2）：旧默认 {} 会让
         # presave 校验「缺少 scenarios 字段」把无 scenarios.json 的工程整体锁死。
         raw_sc = self._load(dp / "scenarios.json", {"scenarios": []})
@@ -448,6 +456,36 @@ class ProjectModel(QObject):
                     if aj.is_file():
                         self.animations[sub.name] = self._load(aj, {})
         self.data_changed.emit("animation", "")
+
+    def discover_new_animation_bundles(self) -> list[str]:
+        """把磁盘上**新出现**的动画包补进内存，返回新增的包 id。
+
+        与 :meth:`reload_animations_from_disk` 的区别是关键的：那个会清空重读，
+        把动画面板里没保存的 anim.json 编辑一起冲掉；这个**只加不改**，
+        已在内存里的包一个字节都不碰，所以可以放心挂在切页刷新这种高频路径上。
+
+        产线刚出完一批包（`static_bundle_batch publish` / `video_to_atlas` 导出）时，
+        编辑器不重启也能在动画面板和场景 NPC 的 animFile 候选里看到它们。
+        """
+        if self.project_path is None:
+            return []
+        anim_root = self.animation_bundles_path
+        if not anim_root.is_dir():
+            return []
+        added: list[str] = []
+        for sub in sorted(anim_root.iterdir()):
+            if not sub.is_dir() or sub.name in self.animations:
+                continue
+            manifest = sub / "anim.json"
+            if not manifest.is_file():
+                continue
+            data = self._load(manifest, {})
+            if isinstance(data, dict) and data:
+                self.animations[sub.name] = data
+                added.append(sub.name)
+        if added:
+            self.data_changed.emit("animation", "")
+        return added
 
     def save_animation_bundle(self, bundle_id: str, anim: dict) -> Path:
         """把单个动画包的 anim.json 写回磁盘并同步内存。
@@ -648,6 +686,7 @@ class ProjectModel(QObject):
             out.extend([
                 dp / "archive" / "characters.json",
                 dp / "archive" / "lore.json",
+                dp / "archive" / "slang.json",
                 dp / "archive" / "books.json",
                 dp / "archive" / "documents.json",
             ])
@@ -662,6 +701,8 @@ class ProjectModel(QObject):
             out.append(flag_registry_path(self.assets_path))
         if "overlay_images" in dty:
             out.append(dp / "overlay_images.json")
+        if "prop_presets" in dty:
+            out.append(dp / "prop_presets.json")
         if "scenarios" in dty:
             out.append(dp / "scenarios.json")
         if "narrative_graphs" in dty:
@@ -676,6 +717,8 @@ class ProjectModel(QObject):
             out.append(dp / "pressure_holds.json")
         if "signal_cues" in dty:
             out.append(dp / "signal_cues.json")
+        if "bubble_lines" in dty:
+            out.append(dp / "bubble_lines.json")
         if "planes" in dty:
             out.append(dp / "planes.json")
         if "narrative_templates" in dty:
@@ -862,6 +905,7 @@ class ProjectModel(QObject):
             if "archive" in dty:
                 w.add(dp / "archive" / "characters.json", self.archive_characters)
                 w.add(dp / "archive" / "lore.json", self.archive_lore)
+                w.add(dp / "archive" / "slang.json", self.archive_slang)
                 w.add(dp / "archive" / "books.json", self.archive_books)
                 w.add(dp / "archive" / "documents.json", self.archive_documents)
             maybe_stamp(clk, "已暂存 data 下聚合 JSON（按 dirty）")
@@ -881,6 +925,8 @@ class ProjectModel(QObject):
                 w.add(flag_registry_path(self.assets_path), self.flag_registry)
             if "overlay_images" in dty:
                 w.add(dp / "overlay_images.json", self.overlay_images)
+            if "prop_presets" in dty:
+                w.add(dp / "prop_presets.json", self.prop_presets)
             if "scenarios" in dty:
                 w.add(dp / "scenarios.json", self.scenarios_catalog)
             if "narrative_graphs" in dty:
@@ -896,6 +942,8 @@ class ProjectModel(QObject):
                 w.add(dp / "pressure_holds.json", self.pressure_holds)
             if "signal_cues" in dty:
                 w.add(dp / "signal_cues.json", self.signal_cues)
+            if "bubble_lines" in dty:
+                w.add(dp / "bubble_lines.json", self.bubble_lines)
             if "planes" in dty:
                 w.add(dp / "planes.json", self.planes)
             if "narrative_templates" in dty:
@@ -1059,8 +1107,9 @@ class ProjectModel(QObject):
     KNOWN_DIRTY_BUCKETS: frozenset = frozenset({
         "config", "characterRegistry", "item", "quest", "questGroup", "encounter",
         "rules", "shop", "map", "cutscene", "audio", "strings", "archive", "scene",
-        "flag_registry", "overlay_images", "scenarios", "narrative_graphs", "narrative_packages",
-        "document_reveals", "smell_profiles", "pressure_holds", "signal_cues",
+        "flag_registry", "overlay_images", "prop_presets",
+        "scenarios", "narrative_graphs", "narrative_packages",
+        "document_reveals", "smell_profiles", "pressure_holds", "signal_cues", "bubble_lines",
         "planes", "narrative_templates", "narrative_categories", "dialogue_stubs",
         "dialogue_graph_edits", "dialogue_graph_deletes",
         "water_minigames", "sugar_wheel", "paper_craft", "filter",
@@ -1147,6 +1196,15 @@ class ProjectModel(QObject):
             return [(ch["id"], ch.get("name", ch["id"])) for ch in self.archive_characters]
         if book_type == "lore":
             entries = self.archive_lore
+            if isinstance(entries, dict):
+                entries = entries.get("entries", [])
+            return [
+                (e["id"], (e.get("title") or e["id"])[:40])
+                for e in entries
+                if isinstance(e, dict) and e.get("id")
+            ]
+        if book_type == "slang":
+            entries = self.archive_slang
             if isinstance(entries, dict):
                 entries = entries.get("entries", [])
             return [
@@ -1956,6 +2014,22 @@ class ProjectModel(QObject):
             ks = str(k).strip()
             if ks:
                 out.append((ks, ks))
+        return out
+
+    def all_prop_preset_ids(self) -> list[tuple[str, str]]:
+        """prop_presets.json 的挂件 id，供 attachToSocket.prop 下拉。显示「id — label」。"""
+        if not isinstance(self.prop_presets, dict):
+            return []
+        out: list[tuple[str, str]] = []
+        for k in sorted(self.prop_presets.keys(), key=lambda x: (str(x).lower(), str(x))):
+            ks = str(k).strip()
+            if not ks:
+                continue
+            entry = self.prop_presets.get(k)
+            label = ""
+            if isinstance(entry, dict) and isinstance(entry.get("label"), str):
+                label = entry["label"].strip()
+            out.append((ks, label or ks))
         return out
 
     def actor_id_items_for_scene(self, scene_id: str | None) -> list[tuple[str, str]]:

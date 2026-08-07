@@ -3,18 +3,68 @@ from __future__ import annotations
 
 import copy
 
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QPushButton, QLabel,
+    QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QPushButton, QLabel, QLineEdit,
     QTableWidget, QHeaderView, QSpinBox, QDoubleSpinBox, QCheckBox, QMessageBox,
-    QScrollArea, QGroupBox,
+    QScrollArea, QGroupBox, QColorDialog, QTableWidgetItem,
 )
 
 from ..project_model import ProjectModel
+from ..shared.action_editor import ActionEditor
 from ..shared.id_ref_selector import IdRefSelector
 from ..shared.flag_key_field import FlagKeyPickField
 from ..shared.flag_value_edit import FlagValueEdit
 from ..shared.form_layout import compact_form
 from ..shared.collapsible_section import CollapsibleSection
+from ..shared.text_palette import (
+    DEFAULT_TEXT_PALETTE,
+    ID_RE,
+    count_palette_id_uses,
+    load_text_palette,
+)
+
+
+# 玩家身体动词参数表：(verb, 分组标题, [(键, 标签, 类型, 下限, 上限, tooltip)])
+# 与 src/data/types.ts 的 PlayerPostureConfig / PlayerActConfig 对齐。
+_PLAYER_ACT_FIELDS: tuple[tuple[str, str, tuple[tuple[str, str, str, float, float, str], ...]], ...] = (
+    ("crouch", "蹲（按住 C）", (
+        ("allowRun", "蹲着仍可奔跑", "bool", 0, 1, "缺省关：蹲下就不许跑"),
+        ("speedScale", "移速系数", "float", 0.0, 4.0, "蹲着移动的速度倍率，乘在场景速度上"),
+        ("enterMs", "下蹲耗时(ms)", "int", 0, 5000, "下蹲动画时长，期间站定"),
+        ("exitMs", "起身耗时(ms)", "int", 0, 5000, "起身动画时长（下蹲片段倒放）"),
+    )),
+    ("gaze", "驻足注视（按住 X）", (
+        ("speedScale", "移速系数", "float", 0.0, 4.0, "注视时通常为 0＝站定不动"),
+        ("holdMsToTrigger", "触发前按住(ms)", "int", 0, 10000,
+         "0＝进入注视即触发目标的 gaze 回调；>0＝盯够这么久才触发"),
+        ("enterMs", "起手耗时(ms)", "int", 0, 5000, "进入注视的过渡时长"),
+        ("exitMs", "收回耗时(ms)", "int", 0, 5000, "松键回站姿的过渡时长"),
+    )),
+    ("lie", "躺（躺点上按 C）", (
+        ("freeAnywhere", "任意地面都能躺", "bool", 0, 1,
+         "缺省关：只有 act_spot 躺点能躺（满街乱躺美术上必翻车）"),
+        ("enterMs", "躺下耗时(ms)", "int", 0, 8000, "躺下动画时长"),
+        ("exitMs", "起身耗时(ms)", "int", 0, 8000, "起身时长，期间不可打断——这是躺的代价"),
+    )),
+    ("kick", "上脚 / 踢（按 F）", (
+        ("callbackFrame", "回调帧", "int", -1, 64,
+         "回调落在动画第几帧（表演对齐，不影响成败）；-1＝片段中点"),
+    )),
+    ("jump", "跳（按空格）", (
+        ("durationMs", "抛物线时长(ms)", "int", 50, 5000, "原地跳与跨点跳共用；act_spot 可单独覆盖"),
+        ("arcHeight", "抬升高度", "int", 0, 400, "抛物线视觉抬升像素；act_spot 可单独覆盖"),
+    )),
+)
+
+# 缺省值（与运行时 PlayerActionSystem 的常量一致）；载入时用于填空缺键。
+_PLAYER_ACT_DEFAULTS: dict[str, dict[str, float]] = {
+    "crouch": {"allowRun": False, "speedScale": 0.45, "enterMs": 250, "exitMs": 300},
+    "gaze": {"speedScale": 0.0, "holdMsToTrigger": 0, "enterMs": 200, "exitMs": 200},
+    "lie": {"freeAnywhere": False, "enterMs": 700, "exitMs": 900},
+    "kick": {"callbackFrame": -1},
+    "jump": {"durationMs": 480, "arcHeight": 46},
+}
 
 
 def _make_size_row(label: str) -> tuple[QHBoxLayout, QCheckBox, QSpinBox, QSpinBox]:
@@ -160,6 +210,9 @@ class GameConfigEditor(QWidget):
         flag_btns.addStretch(1)
         flags_box_lay.addLayout(flag_btns)
         lay.addWidget(flags_box)
+        lay.addWidget(self._build_text_palette_section())
+
+        lay.addWidget(self._build_player_acts_section())
 
         apply_btn = QPushButton("Apply")
         apply_btn.setToolTip("把当前配置写入 game_config 并标脏；保存工程后写入磁盘。")
@@ -167,6 +220,133 @@ class GameConfigEditor(QWidget):
         lay.addWidget(apply_btn)
         lay.addStretch()
         self._load()
+
+    # ———————————————— 玩家身体动词（playerActs） ————————————————
+
+    def _build_player_acts_section(self) -> CollapsibleSection:
+        """蹲/注视/躺/上脚/跳 的全局参数。重块 → 默认折叠。"""
+        sec = CollapsibleSection("玩家身体动词（蹲 / 注视 / 躺 / 上脚 / 跳）", start_open=False)
+        sec.set_header_tool_tip(
+            "键位：C 蹲（躺点上按 C 即躺）· X 驻足注视 · F 上脚 · 空格 跳。\n"
+            "动画映射在「玩家化身」页；某动词没有映射到片段时自动禁用。\n"
+            "整块缺省不写 = 五个动词全按缺省开启。"
+        )
+        body = QWidget()
+        body_lay = QVBoxLayout(body)
+        body_lay.setContentsMargins(0, 0, 0, 0)
+        self._act_widgets: dict[str, dict[str, QWidget]] = {}
+
+        for verb, title, fields in _PLAYER_ACT_FIELDS:
+            box = QGroupBox(title)
+            form = compact_form(QFormLayout(box))
+            widgets: dict[str, QWidget] = {}
+            chk = QCheckBox("启用")
+            chk.setToolTip("取消勾选 = 该动词彻底关闭（按键无反应、触屏按钮不出）")
+            form.addRow(chk)
+            widgets["enabled"] = chk
+            for key, label, kind, lo, hi, tip in fields:
+                if kind == "bool":
+                    bw = QCheckBox()
+                    bw.setToolTip(tip)
+                    form.addRow(label, bw)
+                    widgets[key] = bw
+                    continue
+                if kind == "int":
+                    sp: QWidget = QSpinBox()
+                    sp.setRange(int(lo), int(hi))  # type: ignore[attr-defined]
+                else:
+                    sp = QDoubleSpinBox()
+                    sp.setRange(float(lo), float(hi))  # type: ignore[attr-defined]
+                    sp.setSingleStep(0.05)  # type: ignore[attr-defined]
+                    sp.setDecimals(2)  # type: ignore[attr-defined]
+                sp.setMaximumWidth(120)
+                sp.setToolTip(tip)
+                form.addRow(label, sp)
+                widgets[key] = sp
+            if verb == "kick":
+                miss = ActionEditor("落空时（missActions）")
+                miss.setToolTip("没踢到任何东西时执行；可以留空（此时按 F 只播动画）")
+                miss.set_project_context(self._model)
+                form.addRow(miss)
+                widgets["missActions"] = miss
+            self._act_widgets[verb] = widgets
+            body_lay.addWidget(box)
+
+        sec.add_body(body)
+        return sec
+
+    def _default_player_acts(self) -> dict:
+        """与运行时缺省完全一致的整块（用于判断「用户什么都没改」）。"""
+        out: dict = {}
+        for verb, _title, fields in _PLAYER_ACT_FIELDS:
+            slot: dict = {"enabled": True}
+            for key, _label, kind, _lo, _hi, _tip in fields:
+                d = _PLAYER_ACT_DEFAULTS[verb][key]
+                if kind == "bool":
+                    slot[key] = bool(d)
+                    continue
+                if key == "callbackFrame" and d < 0:
+                    continue  # 哨兵不写键
+                slot[key] = int(d) if float(d).is_integer() else d
+            if verb == "kick":
+                slot["missActions"] = []
+            out[verb] = slot
+        return out
+
+    def _read_player_acts_ui(self) -> dict:
+        """把动词区 UI 读成 dict（保留磁盘上本面板不管的未知子键）。"""
+        old = self._model.game_config.get("playerActs")
+        out: dict = copy.deepcopy(old) if isinstance(old, dict) else {}
+        for verb, _title, fields in _PLAYER_ACT_FIELDS:
+            widgets = self._act_widgets[verb]
+            slot = out.get(verb)
+            slot = dict(slot) if isinstance(slot, dict) else {}
+            chk = widgets["enabled"]
+            slot["enabled"] = bool(chk.isChecked())  # type: ignore[attr-defined]
+            for key, _label, kind, _lo, _hi, _tip in fields:
+                w = widgets[key]
+                if kind == "bool":
+                    slot[key] = bool(w.isChecked())  # type: ignore[attr-defined]
+                    continue
+                if key == "callbackFrame" and int(w.value()) < 0:  # type: ignore[attr-defined]
+                    # -1 是编辑器的「不指定」哨兵：不写键 = 运行时取片段中点
+                    slot.pop(key, None)
+                    continue
+                if kind == "int":
+                    slot[key] = int(w.value())  # type: ignore[attr-defined]
+                else:
+                    v = float(w.value())  # type: ignore[attr-defined]
+                    # 数值往返保真：整数值写成 int，别让 0.45→0.45、1→1.0 漂移
+                    slot[key] = int(v) if float(v).is_integer() else v
+            mw = widgets.get("missActions")
+            if isinstance(mw, ActionEditor):
+                slot["missActions"] = mw.to_list()
+            out[verb] = slot
+        return out
+
+    def _load_player_acts(self) -> None:
+        cfg = self._model.game_config.get("playerActs")
+        cfg = cfg if isinstance(cfg, dict) else {}
+        for verb, _title, fields in _PLAYER_ACT_FIELDS:
+            slot = cfg.get(verb)
+            slot = slot if isinstance(slot, dict) else {}
+            widgets = self._act_widgets[verb]
+            widgets["enabled"].setChecked(slot.get("enabled") is not False)  # type: ignore[attr-defined]
+            for key, _label, kind, _lo, _hi, _tip in fields:
+                w = widgets[key]
+                raw = slot.get(key, _PLAYER_ACT_DEFAULTS[verb][key])
+                if kind == "bool":
+                    w.setChecked(bool(raw))  # type: ignore[attr-defined]
+                    continue
+                num = raw if isinstance(raw, (int, float)) and not isinstance(raw, bool) else 0
+                if kind == "int":
+                    w.setValue(int(num))  # type: ignore[attr-defined]
+                else:
+                    w.setValue(float(num))  # type: ignore[attr-defined]
+            mw = widgets.get("missActions")
+            if isinstance(mw, ActionEditor):
+                raw_actions = slot.get("missActions")
+                mw.set_data(raw_actions if isinstance(raw_actions, list) else [])
 
     def reload_refs_from_model(self) -> None:
         """主窗口切页后调用：重拉引用候选（本会话新建的场景/任务/演出 id 才可见），
@@ -182,6 +362,146 @@ class GameConfigEditor(QWidget):
             cur = sel.current_id()
             sel.set_items(items)
             sel.set_current(cur)
+
+    def _build_text_palette_section(self) -> CollapsibleSection:
+        """语义色板：内容里写 `[c:<id>]…[/c]` 给某几个字上色，这里定义有哪些档位。
+
+        刻意只给具名档位、不在正文里填色号——这套木框/纸纹观感下逐处自由取色一定走形，
+        且改一次这里全局生效。运行时读的就是这份 `game_config.textPalette`（无第二份色表）。
+        """
+        sec = CollapsibleSection("文本语义色板（[c:…] 上色档位）", start_open=False)
+        inner = QWidget()
+        lay = QVBoxLayout(inner)
+        lay.setContentsMargins(0, 0, 0, 0)
+
+        hint = QLabel(
+            "内容里写 [c:id]要上色的字[/c]；策划不用手打——对白/文本框上的「染色」按钮会插。\n"
+            "留空整张表＝不写这个键，运行时回落到内置六档。"
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color:#888;")
+        lay.addWidget(hint)
+
+        #: 行号 → 磁盘上的原始条目（保值往返用；UI 新建的行为 None）
+        self._palette_originals: dict[int, object] = {}
+        #: 哪些行是"无法用表单表达、只读透传"的坏元素（含 JSON null）
+        self._palette_raw_rows: set[int] = set()
+        self._palette_key_present = False
+        self._palette_ids_at_load: list[str] = []
+        self._palette_table = QTableWidget(0, 3)
+        self._palette_table.setHorizontalHeaderLabels(["id（内容里写的）", "中文名", "颜色"])
+        ph = self._palette_table.horizontalHeader()
+        ph.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        ph.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        ph.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self._palette_table.setMinimumHeight(90)
+        self._palette_table.setMaximumHeight(220)
+        lay.addWidget(self._palette_table)
+
+        row = QHBoxLayout()
+        add = QPushButton("+ 档位")
+        add.setMaximumWidth(90)
+        add.clicked.connect(lambda: self._add_palette_row("", "", "#ffcc66"))
+        row.addWidget(add)
+        rm = QPushButton("- 删除选中")
+        rm.setMaximumWidth(110)
+        rm.clicked.connect(self._remove_palette_row)
+        row.addWidget(rm)
+        reset = QPushButton("恢复内置六档")
+        reset.setMaximumWidth(130)
+        reset.clicked.connect(self._reset_palette_rows)
+        row.addWidget(reset)
+        row.addStretch(1)
+        lay.addLayout(row)
+
+        sec.add_body(inner)
+        return sec
+
+    def _add_palette_row(self, pid: str, label: str, color: str, original=None, raw: bool = False) -> None:
+        t = self._palette_table
+        r = t.rowCount()
+        t.insertRow(r)
+        self._palette_originals[r] = original
+        self._palette_raw_rows.add(r) if raw else self._palette_raw_rows.discard(r)
+        # id 是「自身新 id」，属选择器铁律的唯一例外，允许自由文本
+        ide = QLineEdit(pid)
+        ide.setPlaceholderText("emphasis")
+        ide.setToolTip("内容里写 [c:<这个 id>]；只允许字母/数字/下划线/连字符")
+        t.setCellWidget(r, 0, ide)
+        lab = QLineEdit(label)
+        lab.setPlaceholderText("强调")
+        lab.setToolTip("只给人看（染色菜单里显示这个名字）")
+        t.setCellWidget(r, 1, lab)
+        btn = QPushButton(color or "#ffcc66")
+        btn.setMaximumWidth(96)
+        btn.setToolTip("点开取色")
+        # 原样回显盘上的色值（大小写不动），只有用户真去取色时才改
+        self._paint_palette_button(btn, color or "#ffcc66")
+        btn.clicked.connect(lambda _=False, b=btn: self._pick_palette_color(b))
+        t.setCellWidget(r, 2, btn)
+
+    @staticmethod
+    def _paint_palette_button(btn: QPushButton, color: str) -> None:
+        btn.setText(color)
+        c = QColor(color)
+        fg = "#000" if c.isValid() and c.lightness() > 140 else "#fff"
+        btn.setStyleSheet(f"background:{color}; color:{fg};")
+
+    def _pick_palette_color(self, btn: QPushButton) -> None:
+        cur = QColor(btn.text())
+        c = QColorDialog.getColor(cur if cur.isValid() else QColor("#ffcc66"), self, "选择颜色")
+        if c.isValid():
+            self._paint_palette_button(btn, c.name())
+
+    def _remove_palette_row(self) -> None:
+        r = self._palette_table.currentRow()
+        if r < 0:
+            return
+        self._palette_table.removeRow(r)
+        # 行号是 originals 的键，删行后整体前移
+        self._palette_originals = {
+            (i if i < r else i - 1): v
+            for i, v in self._palette_originals.items() if i != r
+        }
+        self._palette_raw_rows = {(i if i < r else i - 1) for i in self._palette_raw_rows if i != r}
+
+    def _reset_palette_rows(self) -> None:
+        self._palette_table.setRowCount(0)
+        self._palette_originals.clear()
+        self._palette_raw_rows.clear()
+        self._palette_key_present = True
+        for e in DEFAULT_TEXT_PALETTE:
+            self._add_palette_row(e["id"], e["label"], e["color"])
+
+    def _read_palette_ui(self) -> list:
+        """读表。**保值优先**：非 dict 的坏元素原样透传；dict 从原件复制后只覆盖三个可编辑键，
+        额外键与键序都不动；label 空就不写这个键（不替策划编默认名）。"""
+        out: list = []
+        t = self._palette_table
+        for i in range(t.rowCount()):
+            if i in self._palette_raw_rows:
+                out.append(self._palette_originals.get(i))   # 坏元素只读透传（含 null）
+                continue
+            original = self._palette_originals.get(i)
+            ide = t.cellWidget(i, 0)
+            lab = t.cellWidget(i, 1)
+            btn = t.cellWidget(i, 2)
+            pid = ide.text().strip() if isinstance(ide, QLineEdit) else ""
+            color = btn.text().strip() if isinstance(btn, QPushButton) else ""
+            name = lab.text().strip() if isinstance(lab, QLineEdit) else ""
+            entry = dict(original) if isinstance(original, dict) else {}
+            if pid or "id" in entry:
+                entry["id"] = pid
+            if name:
+                entry["label"] = name
+            elif "label" in entry and not str(entry.get("label") or ""):
+                pass                          # 盘上本来就是空 label：保持原样
+            elif not name:
+                entry.pop("label", None)
+            if color or "color" in entry:
+                entry["color"] = color
+            out.append(entry)
+        return out
 
     def _load(self) -> None:
         cfg = self._model.game_config
@@ -215,6 +535,8 @@ class GameConfigEditor(QWidget):
             self._bubble_scale_chk.setChecked(False)
             self._bubble_scale.setValue(1.0)
 
+        self._load_player_acts()
+
         sf = cfg.get("startupFlags", {})
         self._flags_table.setRowCount(0)
         for k, v in sf.items():
@@ -228,6 +550,30 @@ class GameConfigEditor(QWidget):
             vf.set_flag_key(pf.key())
             vf.set_value(v)
         self._update_flags_empty_hint()
+
+        # 色板：**逐字保值**——不走 load_text_palette（那会过滤非法项并补默认），
+        # 否则"打开→不动→保存"会把 #FFCC66 改成小写、给缺 label 的补默认、丢掉额外键、
+        # 甚至把空数组换成内置六档（真丢数据）。
+        self._palette_table.setRowCount(0)
+        self._palette_originals.clear()
+        self._palette_raw_rows.clear()
+        raw = cfg.get("textPalette")
+        self._palette_key_present = isinstance(raw, list)
+        if self._palette_key_present:
+            for e in raw:
+                if isinstance(e, dict):
+                    self._add_palette_row(
+                        str(e.get("id") or ""), str(e.get("label") or ""), str(e.get("color") or ""),
+                        original=e,
+                    )
+                else:
+                    # 坏元素只读透传（norms：空集合与数组坏元素一律不改写）。
+                    # 含 JSON `null`——靠 `original is not None` 判会把它当成正常行，
+                    # 结果凭空写出一个 {"color": "#ffcc66"} 的坏档位。
+                    self._add_palette_row("", "", "", original=e, raw=True)
+        self._palette_ids_at_load = [
+            str(e.get("id") or "") for e in (raw or []) if isinstance(e, dict)
+        ]
 
     def _update_flags_empty_hint(self) -> None:
         """startupFlags 表为空时显示引导提示，否则隐藏（纯视图）。"""
@@ -317,6 +663,17 @@ class GameConfigEditor(QWidget):
         elif "emoteBubbleScale" in cfg:
             del cfg["emoteBubbleScale"]
 
+        # 玩家动词块：整块与缺省一致且磁盘上本就没有这个键时不写（防「打开即注入」）
+        acts = self._read_player_acts_ui()
+        if "playerActs" in cfg or acts != self._default_player_acts():
+            cfg["playerActs"] = acts
+
+        pal = self._read_palette_ui()
+        if pal or getattr(self, "_palette_key_present", False):
+            cfg["textPalette"] = pal      # 盘上本来是 [] 就保持 []，不凭空注入内置六档
+        elif "textPalette" in cfg:
+            del cfg["textPalette"]
+
         sf: dict = {}
         for i in range(self._flags_table.rowCount()):
             cw = self._flags_table.cellWidget(i, 0)
@@ -336,6 +693,42 @@ class GameConfigEditor(QWidget):
         elif "startupFlags" in cfg:
             del cfg["startupFlags"]
 
+    def _confirm_palette_id_drops(self) -> bool:
+        """有色板档位被改名/删掉时，先扫全工程引用并让策划确认。返回 False=取消本次 Apply。"""
+        now = {
+            str(e.get("id") or "")
+            for e in self._read_palette_ui() if isinstance(e, dict)
+        }
+        dropped = [pid for pid in getattr(self, "_palette_ids_at_load", []) if pid and pid not in now]
+        if not dropped:
+            return True
+        lines: list[str] = []
+        for pid in dropped:
+            uses = count_palette_id_uses(self._model.project_path, pid)
+            total = sum(uses.values())
+            if total == 0:
+                continue
+            where = "、".join(list(uses)[:3]) + ("…" if len(uses) > 3 else "")
+            lines.append(f"「{pid}」还有 {total} 处引用（{where}）")
+        if not lines:
+            return True
+        r = QMessageBox.warning(
+            self, "色板档位还在被引用",
+            "以下档位被改名或删除，但内容里还写着它：\n\n"
+            + "\n".join(lines)
+            + "\n\n继续的话，这些 [c:…] 会变成「未知语义色板」——运行时按无色显示，"
+              "但那些数据桶从此存不下去，只能逐条手改。\n\n仍要继续？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        return r == QMessageBox.StandardButton.Yes
+
     def _apply(self) -> None:
+        if not self._confirm_palette_id_drops():
+            return
         self._write_config_into(self._model.game_config)
         self._model.mark_dirty("config")
+        self._palette_ids_at_load = [
+            str(e.get("id") or "")
+            for e in (self._model.game_config.get("textPalette") or []) if isinstance(e, dict)
+        ]

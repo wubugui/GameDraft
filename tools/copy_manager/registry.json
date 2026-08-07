@@ -1182,7 +1182,7 @@
     },
     {
       "uid": "json_strings:public/assets/data/strings.json:strings.hud.ruleUseHint",
-      "source_text": "[F] 使用规矩",
+      "source_text": "[G] 使用规矩",
       "file_path": "public/assets/data/strings.json",
       "field_path": "strings.hud.ruleUseHint",
       "file_type": "json_strings",
@@ -1197,7 +1197,7 @@
       "status": "pending",
       "translations": {},
       "scanned_at": 1778256146.8627772,
-      "original_source_text": "[F] 使用规矩"
+      "original_source_text": "[G] 使用规矩"
     },
     {
       "uid": "json_strings:public/assets/data/strings.json:strings.hud.current",

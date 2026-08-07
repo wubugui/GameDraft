@@ -14,7 +14,7 @@ triggers:
 verified_by:
   - tools/editor/tests/test_canvas_roundtrip_safety.py
   - tools/editor/tests/test_form_editor_persistence.py
-last_governed: 2026-07-11
+last_governed: 2026-08-05
 ---
 
 ## 是什么(一句话)
@@ -38,9 +38,10 @@ last_governed: 2026-07-11
 
 - commit-on-leave 若以 `_pending_dirty` 为唯一门控:不置脏的控件、清脏的路径(deselect、"+新增"、点画布空白)= 静默丢编辑——加新离开路径时必须先过提交。
 - 以表单为真相源做 commit-on-leave:表单与模型脱节(拖拽后/残留旧值)时会反向污染模型。
+- **画布 live 手势就地 mutate 的 cfg/几何 dict 必须与模型隔离**(深拷贝或每次重建):持 model 子对象引用做 live mutate = 撤销基线被拖动本身污染(踩过:拖深度轴后撤销回不去)+ 脏态失真;提交仍走正规 flush。契约 4"原地更新"说的是**画布图元**,不是共用模型 dict。
 - 新建 id 用 `len(列表)` 命名的家族:删中间项后再新建必撞 id。
 
 ## 怎么验证
 
-- 黄金往返 `test_canvas_roundtrip_safety.py`(真实工程全 JSON 加载→save_all→重载语义零变化)+ `test_form_editor_persistence.py`(编辑→切条目/Save All 不丢)。
+- 黄金往返 `test_canvas_roundtrip_safety.py` + `test_form_editor_persistence.py`(编辑→切条目/Save All 不丢)。
 - 盲区与流程探针见 [验证门配方](../recipes/editor-change-verification-gate.md)。

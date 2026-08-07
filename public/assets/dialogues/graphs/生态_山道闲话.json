@@ -1,0 +1,149 @@
+{
+  "schemaVersion": 1,
+  "id": "生态_山道闲话",
+  "entry": "root",
+  "meta": {
+    "title": "山道闲话 · 阎王岭歇脚棚（赶脚人：按身体/时辰四选一；零阻塞、零信号）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "flag": "player_health",
+              "op": "<=",
+              "value": 30
+            }
+          ],
+          "next": "shang1"
+        },
+        {
+          "conditions": [
+            {
+              "narrative": "eco_时辰",
+              "state": "夜"
+            }
+          ],
+          "next": "ye1"
+        },
+        {
+          "conditions": [
+            {
+              "narrative": "eco_时辰",
+              "state": "暮"
+            }
+          ],
+          "next": "mu1"
+        }
+      ],
+      "defaultNext": "ri1"
+    },
+    "ri1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "赶脚的"
+      },
+      "text": "这坡上到顶还有三里。莫赶，赶不出好脚力，只赶得出闪失。",
+      "next": "ri2"
+    },
+    "ri2": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "他没起身，手在驴颈子上一下一下顺毛。",
+      "next": "act_ri"
+    },
+    "act_ri": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "playNpcAnimation",
+          "params": {
+            "target": "eco_ywl_队狗",
+            "state": "bark",
+            "loop": false,
+            "thenState": "slow_walk",
+            "speed": 1.1
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "mu1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "赶脚的"
+      },
+      "text": "日头落了坡就走不得咯。这段路，白天叫阎王岭，夜头不止叫这个名字。",
+      "next": "mu2"
+    },
+    "mu2": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "他把缰绳往手上又绕了一圈，绕得很紧。",
+      "next": "end"
+    },
+    "ye1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "赶脚的"
+      },
+      "text": "夜头过岭的，要么是赶命，要么是躲命。你是哪样？",
+      "next": "ye2"
+    },
+    "ye2": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "他没等你答，自己先笑了一声，笑得很短。",
+      "next": "act_ye"
+    },
+    "act_ye": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "showEmote",
+          "params": {
+            "target": "eco_ywl_驮驴",
+            "emote": "!",
+            "duration": 900
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "shang1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "赶脚的"
+      },
+      "text": "你这个脸色……坐嘛。灶头还有半罐子热水，不要钱。",
+      "next": "shang2"
+    },
+    "shang2": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "他往边上挪了挪，把靠火那头的位置让出来。",
+      "next": "end"
+    },
+    "end": {
+      "type": "end"
+    }
+  }
+}

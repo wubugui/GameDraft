@@ -7,7 +7,7 @@ summary: 定稿=原画底+局部擦人+多边形保留抠图+只向上呼吸;被
 status: active
 triggers:
   topics: [茶客活化, 擦人, 呼吸动画, 多边形保留]
-last_governed: 2026-07-11
+last_governed: 2026-08-05
 ---
 
 ## 背景(一段)

@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "id": "后巷_棺材铺交互",
+  "entry": "n_1",
+  "meta": {
+    "title": "后巷_棺材铺交互"
+  },
+  "preconditions": [],
+  "nodes": {
+    "n_start": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "",
+      "next": "n_2"
+    },
+    "n_1": {
+      "type": "contextState",
+      "cases": [
+        {
+          "state": "initial",
+          "next": "n_start"
+        },
+        {
+          "state": "initial",
+          "next": "n_2"
+        }
+      ],
+      "defaultNext": "n_2",
+      "graphId": "后巷_街边店铺"
+    },
+    "n_2": {
+      "type": "end"
+    }
+  }
+}

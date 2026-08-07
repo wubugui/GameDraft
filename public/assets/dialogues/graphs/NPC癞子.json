@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "NPC癞子",
+  "entry": "n_start",
+  "meta": {
+    "title": "NPC癞子"
+  },
+  "preconditions": [],
+  "nodes": {
+    "n_start": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "",
+      "next": ""
+    }
+  }
+}

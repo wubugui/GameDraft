@@ -42,6 +42,11 @@ export class SaveManager implements ISaveDataProvider {
     this.canSave = fn;
   }
 
+  /** 当前是否可存档。调试器用它把"现在存不了档"说成人话，而不是静默失败。 */
+  canSaveNow(): boolean {
+    return this.canSave ? this.canSave() : true;
+  }
+
   /** 返回是否真正写盘成功（配额满 / 沙箱禁 localStorage / 非可存档态均为 false），供 UI 区分提示 */
   save(slot: number): boolean {
     if (slot < 0 || slot >= MAX_SLOTS) return false;
@@ -68,6 +73,30 @@ export class SaveManager implements ISaveDataProvider {
     }
   }
 
+  /**
+   * 调试用：不经 localStorage 直接拍一份全量存档 payload。
+   * 与 save() 同一条 collector 路径与同一道 canSave 闸门，只是不落槽——
+   * 调试器的"拍子档案库"用它，不占玩家的三个槽。
+   */
+  capturePayload(): string | null {
+    if (this.canSave && !this.canSave()) return null;
+    try {
+      return JSON.stringify({
+        version: SAVE_VERSION,
+        timestamp: Date.now(),
+        systems: this.collector(),
+      });
+    } catch (e) {
+      console.error('SaveManager: failed to capture payload', e);
+      return null;
+    }
+  }
+
+  /** 调试用：从 payload 字符串读档，与 load(slot) 同一条校验/回滚路径。 */
+  async loadPayload(raw: string): Promise<boolean> {
+    return this.loadFromRaw(raw);
+  }
+
   async load(slot: number): Promise<boolean> {
     if (slot < 0 || slot >= MAX_SLOTS) return false;
 
@@ -79,7 +108,10 @@ export class SaveManager implements ISaveDataProvider {
       return false;
     }
     if (!raw) return false;
+    return this.loadFromRaw(raw);
+  }
 
+  private async loadFromRaw(raw: string): Promise<boolean> {
     // 先解析并校验结构：坏档在覆盖任何系统状态之前拒绝，不进回滚路径
     type SavePayload = { version: number; timestamp: number; systems: Record<string, object> };
     let payload: SavePayload;

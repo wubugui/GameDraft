@@ -609,13 +609,13 @@ class WaterMinigameEditor(QWidget):
     def reload_refs_from_model(self) -> None:
         """主窗切页激活 / 跨域数据变更时：强制重建三个动作编辑器的行以重拉引用候选
         （item/flag/quest/scene 等在别处新增后，ActionRow 的 IdRefSelector 是构造时
-        的静态快照，不重建看不见）。ActionEditor.set_project_context 因 model 相同会
-        early-return，故用 set_data(to_list()) 原值重建：内容不变、不触发 changed。"""
+        的静态快照，不重建看不见）。重建逻辑收敛在 ``ActionEditor.reload_refs_from_model``
+        （同一轮刷新内幂等）：内容不变、不触发 changed。"""
         prev = self._loading
         self._loading = True
         try:
             for ae in (self._ae_pick, self._ae_ok, self._ae_fail):
-                ae.set_data(ae.to_list())
+                ae.reload_refs_from_model()
         finally:
             self._loading = prev
 

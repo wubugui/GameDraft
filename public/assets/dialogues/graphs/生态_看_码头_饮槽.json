@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "id": "生态_看_码头_饮槽",
+  "entry": "ri1",
+  "meta": {
+    "title": "石槽（单态；一拍：拴驴以为要牵它去饮水）"
+  },
+  "nodes": {
+    "ri1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "石槽里半槽水，水面浮起一层草屑。槽沿被牲口啃出一溜豁口。",
+      "next": "act_ri"
+    },
+    "act_ri": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "faceEntity",
+          "params": {
+            "target": "eco_dk_拴驴",
+            "faceTarget": "player"
+          }
+        },
+        {
+          "type": "showEmote",
+          "params": {
+            "target": "eco_dk_拴驴",
+            "emote": "?",
+            "duration": 1300
+          }
+        },
+        {
+          "type": "playNpcAnimation",
+          "params": {
+            "target": "eco_dk_拴驴",
+            "state": "kick",
+            "loop": false,
+            "thenState": "idle"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "end": {
+      "type": "end"
+    }
+  }
+}

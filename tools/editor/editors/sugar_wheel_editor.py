@@ -1614,8 +1614,8 @@ class SugarWheelEditor(QWidget):
 
     def reload_refs_from_model(self) -> None:
         """主窗切页激活时重拉动作/条件/氛围编辑器候选（item/flag/quest/scene 等在别处
-        新增后不切页看不见）。ActionEditor.set_project_context 因 model 相同会 early-return，
-        故用 set_data(to_list()) 原值重建；氛围指令编辑器走 refresh_choices。内容不变、
+        新增后不切页看不见）。重建逻辑收敛在 ``ActionEditor.reload_refs_from_model``
+        （同一轮刷新内幂等）；氛围指令编辑器走 refresh_choices。内容不变、
         不触发 changed（set_data 静默）、不重置其它表单字段。"""
         prev = self._loading
         self._loading = True
@@ -1626,7 +1626,7 @@ class SugarWheelEditor(QWidget):
                 self._ae_before_charge_pass,
                 self._ae_before_charge_fail,
             ):
-                ae.set_data(ae.to_list())
+                ae.reload_refs_from_model()
             self._before_charge_cond.set_model_refresh()
             for ed in self._atmos_phase_editors.values():
                 ed.refresh_choices()

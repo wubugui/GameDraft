@@ -1,0 +1,215 @@
+{
+  "categories": {
+    "curse": "骂法",
+    "argot": "隐语",
+    "daoxing": "道行",
+    "diangu": "典故"
+  },
+  "categoryCompleteText": {
+    "curse": "骂法一门圆满。关二狗这辈子认得的字，还没学会的骂人话多。",
+    "argot": "隐语一门圆满。江湖话他句句会说，江湖他一步没敢真踏进去。",
+    "daoxing": "道行一门圆满。全是他自己封的。",
+    "diangu": "典故一门圆满。没有一条是记对的。"
+  },
+  "allCompleteText": "怪话册记满了。关二狗一个字不识，倒是写满了一本书。",
+  "entries": [
+    {
+      "id": "slang_chuizi",
+      "title": "锤子",
+      "content": "重庆一带表强烈否定与蔑视的标志性粗口，义近「屁」「才怪」。同为西南官话，重庆用得比成都更凶、更随口，几乎可缀于任何句尾以推翻前言。语源已不可考，一说取器物之形为讳。",
+      "example": "「帮你？锤子哦！」",
+      "source": "码头上人人都这么说",
+      "category": "curse",
+      "note": "关二狗一日之内可说三十遍，其中二十九遍是在推翻自己刚吹过的牛。",
+      "unlockConditions": []
+    },
+    {
+      "id": "slang_haer",
+      "title": "哈儿",
+      "content": "骂人愚钝之词，重庆首选。成都一带偏用「瓜娃子」，两地分野明显。可作形容词用，「哈得很」即蠢得厉害；加「批」字则更冲，作「哈批」「哈麻批」。",
+      "example": "「你个哈儿，连这都看不出来。」",
+      "source": "码头上人人都这么说",
+      "category": "curse",
+      "note": "他骂别人哈儿的次数，与他自己看不出来的次数，大体相当。",
+      "unlockConditions": []
+    },
+    {
+      "id": "slang_guier",
+      "title": "龟儿",
+      "content": "川渝通用脏话，义近「王八蛋」，亦作「龟儿子」「个龟儿」。码头口头禅，常与第二人称连用作「你龟儿」。语气可怒可亲，全看嗓门与眉眼。",
+      "example": "「龟儿子，落了老子的钱还想跑！」",
+      "source": "码头上人人都这么说",
+      "category": "curse",
+      "note": "他挨骂时也是这个词，骂人时还是这个词，一辈子只这一件趁手家什。",
+      "unlockConditions": []
+    },
+    {
+      "id": "slang_baoqi",
+      "title": "宝器",
+      "content": "重庆高频贬词，谓人爱出洋相又无真本事，兼有「傻冒」「活宝」之意。当面呼之极易翻脸。另有「宝批龙」一说，程度更甚。需与「宝气」区分，后者按语境亦可指娇气、小气。",
+      "example": "「你个宝器，死人子身上的东西也敢拿？」",
+      "source": "脚帮的人骂他的原话",
+      "category": "curse",
+      "note": "他把这句记进来，是当成夸奖记的。",
+      "unlockConditions": [
+        {
+          "flag": "guaihua_heard_baoqi"
+        }
+      ]
+    },
+    {
+      "id": "slang_chuoguolou",
+      "title": "戳锅漏",
+      "content": "年代市井贬人语，谓成事不足、败事有余者。取铁锅本已见漏、此人偏又去戳一下之象，愈帮愈坏。多用于劝人莫找某某搭手。",
+      "example": "「莫喊那个戳锅漏来搭手，越帮越乱。」",
+      "source": "脚帮头人劝人时说的",
+      "category": "curse",
+      "note": "他记下这条时，并未听出脚帮头人当时看的是谁。",
+      "unlockConditions": [
+        {
+          "flag": "guaihua_heard_chuoguolou"
+        }
+      ]
+    },
+    {
+      "id": "slang_beishi",
+      "title": "背时",
+      "content": "谓倒霉、走背运，字面为「背离时运」。市井中亦作轻骂，义近「该死的」，语气远轻于正经脏话，妇孺皆可出口。",
+      "example": "「背时哦，又遇到他！」",
+      "source": "街坊闲话里听来的",
+      "category": "curse",
+      "note": "此词在关二狗身上出现的频率，具有相当的统计学意义。",
+      "unlockConditions": [
+        {
+          "flag": "guaihua_heard_beishi"
+        }
+      ]
+    },
+    {
+      "id": "slang_bai_matou",
+      "title": "拜码头",
+      "content": "江湖规矩语。「码头」在袍哥话中非指江边埠头，而指堂口、公口。凡外来者欲在本地讨生活，须先拜会当地袍哥大爷或同行尊长，谓之拜码头。不拜而径自开张者，谓之不懂规矩，多半要吃亏。",
+      "example": "「在朝天门讨生活，不拜码头要遭整。」",
+      "source": "说书人张叨叨的书场",
+      "category": "argot",
+      "note": "关二狗至今没拜过任何码头，理由是「老子又不是外来的」。",
+      "unlockConditions": [
+        {
+          "flag": "guaihua_heard_bai_matou"
+        }
+      ]
+    },
+    {
+      "id": "slang_laxi_baidai",
+      "title": "拉稀摆带",
+      "content": "川渝江湖名句，谓办事拖泥带水、不干脆、关键时刻掉链子。常以否定式出现，用以自明心迹：「袍哥人家，绝不拉稀摆带」，为立耿直人设之定式。",
+      "example": "「袍哥人家，绝不拉稀摆带！」",
+      "source": "说书人张叨叨的书场",
+      "category": "argot",
+      "note": "他很爱说这句。说完通常就开始拉稀摆带。",
+      "unlockConditions": [
+        {
+          "flag": "guaihua_heard_laxi_baidai"
+        }
+      ]
+    },
+    {
+      "id": "slang_luojiao",
+      "title": "落教",
+      "content": "袍哥行话，谓人讲义气、守规矩、办事仗义、晓得分寸，反义作「不落教」。为江湖中对人品的核心评断，与「规矩」一事同源：落教者可托事，不落教者连话都少说两句。",
+      "example": "「这个崽儿落教，晓得分寸。」",
+      "source": "脚帮的人评价旁人时说的",
+      "category": "argot",
+      "note": "至今尚无人用此词评价过关二狗。",
+      "unlockConditions": [
+        {
+          "flag": "guaihua_heard_luojiao"
+        }
+      ]
+    },
+    {
+      "id": "slang_dianshui",
+      "title": "点水",
+      "content": "江湖告密黑话，谓出卖同伙、向对头或官面透露消息。取水滴入油锅、立时炸开之象。江湖诸罪之中，点水与卖码头同列最重，犯者为众所弃。",
+      "example": "「哪个龟儿点的水？」",
+      "source": "码头上吵架时听来的",
+      "category": "argot",
+      "note": "他打听消息的本事，与此词的界限一向模糊。",
+      "unlockConditions": [
+        {
+          "flag": "guaihua_heard_dianshui"
+        }
+      ]
+    },
+    {
+      "id": "slang_guanggun",
+      "title": "光棍",
+      "content": "清末民初老言子，为袍哥自称，谓好汉、有种之人，与婚配与否无涉。老话云「光棍不怕出身底，只要长大有气力」，取的是不问来路、只论本事之意。",
+      "example": "「老子也是个光棍，怕啥子。」",
+      "source": "说书人张叨叨的书场",
+      "category": "daoxing",
+      "note": "此条由关二狗本人认领，无第三方佐证。",
+      "unlockConditions": [
+        {
+          "flag": "guaihua_heard_guanggun"
+        }
+      ]
+    },
+    {
+      "id": "slang_litiangou_yimai",
+      "title": "李天狗一脉",
+      "content": "查无此脉。李天狗为游方道士，师承不详，亦从未收徒。所谓「一脉」者，系关二狗于茶馆、码头、酒桌等处对外自述之身份，用以抬价、赊账、以及在旁人面前把话说圆。",
+      "example": "「莫慌，老子是李天狗一脉的，这点子东西还镇不住？」",
+      "source": "他自己封的",
+      "category": "daoxing",
+      "note": "李天狗本人对此尚不知情。",
+      "unlockConditions": [
+        {
+          "flag": "guaihua_heard_litiangou_yimai"
+        }
+      ]
+    },
+    {
+      "id": "slang_ming_zai_zishou",
+      "title": "命在你自己手上",
+      "content": "游方道士李天狗的本色口头禅，全句作「命在你自己手上，莫叫人替你拿了去」。语出何处不详，观其意，似谓凡事各人自担，不可将生死交托于人。",
+      "example": "「命在你自己手上——这话是老子教他的。」",
+      "source": "李天狗训他的原话",
+      "category": "daoxing",
+      "note": "关二狗把这句记成了自己教给李天狗的。收录时保留其原述。",
+      "unlockConditions": [
+        {
+          "flag": "guaihua_heard_ming_zai_zishou"
+        }
+      ]
+    },
+    {
+      "id": "slang_shuo_liaozhai",
+      "title": "说聊斋",
+      "content": "《聊斋志异》，清蒲松龄著，多记狐鬼仙怪之事。市井借其名作「扯没影的话」「说瞎话」解，谓人所言不足凭信。",
+      "example": "「莫跟我说聊斋，钱货两清。」",
+      "source": "跟茶馆里的人学的",
+      "category": "diangu",
+      "note": "关二狗不识字。据其自称，此书乃「专门说鬼话的」。就本条用法而言，倒也不算全错。",
+      "unlockConditions": [
+        {
+          "flag": "guaihua_heard_shuo_liaozhai"
+        }
+      ]
+    },
+    {
+      "id": "slang_tongyuanmen",
+      "title": "通远门看埋死人",
+      "content": "《重庆歌》十七门民谣中的一句。通远门为老城陆路唯一城门，门外即乱葬岗，凡出殡必经此门，故民谣以此句状其景。全句多作「出了通远门，锣鼓一响，又是埋死人咯」。",
+      "example": "「通远门看埋死人——老子天天看，看腻了。」",
+      "source": "说书人张叨叨的书场",
+      "category": "diangu",
+      "note": "他把这句当成了行业广告。",
+      "unlockConditions": [
+        {
+          "flag": "guaihua_heard_tongyuanmen"
+        }
+      ]
+    }
+  ]
+}

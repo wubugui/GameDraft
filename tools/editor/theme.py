@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Final
 
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QLibraryInfo, QSettings, QTranslator
 from PySide6.QtGui import QColor, QFont, QPalette
 from PySide6.QtWidgets import QApplication, QGraphicsView, QWidget
 
@@ -1019,9 +1019,67 @@ def current_theme_id() -> str:
     return THEME_MODERN
 
 
+def install_chinese_translations(app: QApplication) -> bool:
+    """给 Qt 内置控件装中文翻译（标准按钮、右键菜单、文件对话框…）。
+
+    不装的后果不是"洋气一点"，是**会丢数据的按钮全是英文**：策划看到
+    正文中文的"确定删除这条分支？"，按钮却是 `OK` / `Cancel`；保存对话框是
+    `Save` / `Cancel` / `Discard` —— `Discard` 就是丢弃全部未保存改动，
+    不读英文的人只能猜，猜错就是一下午的编辑没了。
+
+    `qtbase_zh_CN.qm` 随 PySide6 一起装好，不需要额外依赖。返回是否装上。
+    翻译器必须挂在 app 上（否则被 GC 掉就静默失效）。
+    """
+    if getattr(app, "_gamedraft_zh_translators", None):
+        return True
+    base = QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)
+    loaded: list[QTranslator] = []
+    for name in ("qtbase_zh_CN", "qt_zh_CN"):
+        tr = QTranslator(app)
+        if tr.load(name, base) and app.installTranslator(tr):
+            loaded.append(tr)
+    # 挂到 app 上保命：局部变量出作用域即析构，翻译会静默失效。
+    app._gamedraft_zh_translators = loaded  # type: ignore[attr-defined]
+    return bool(loaded)
+
+
+# --- 语义文字色（跟随当前主题） ---------------------------------------------
+#
+# 面板里写死 `color: #ccc` 这类十六进制的老做法，只在**当时那一套主题**下能看：
+# `#ccc` 落在浅色主题的 `#ececec` 背景上几乎隐形——而摘要行、提示行恰恰是
+# 「不展开就能看懂」的关键信息。颜色和字号同理，只在 theme.py 里定义一次。
+
+_SEMANTIC_TEXT = {
+    # (深色主题取值, 浅色主题取值)
+    "muted": ("#b9b9b9", "#5a5a5a"),   # 次要说明、摘要
+    "faint": ("#8d8d8d", "#767676"),   # 更弱的辅助文字
+    "warn": ("#e2894f", "#b4530a"),    # 需要注意但不是错误
+    "error": ("#ff6b6b", "#c62828"),   # 错误
+    "info": ("#9fb0bf", "#41586b"),    # 中性信息
+    "ok": ("#6fcf97", "#1e7a45"),      # 通过 / 无问题
+}
+
+
+def semantic_text_color(kind: str) -> str:
+    """按当前主题取语义文字色（十六进制串，可直接进 setStyleSheet）。
+
+    kind ∈ muted / faint / warn / error / info。未知 kind 回退 muted。
+    """
+    dark, light = _SEMANTIC_TEXT.get(kind, _SEMANTIC_TEXT["muted"])
+    return dark if is_dark_theme(current_theme_id()) else light
+
+
+def semantic_text_css(kind: str) -> str:
+    """`semantic_text_color` 的 `color: …;` 形式，供 setStyleSheet 直接用。"""
+    return f"color: {semantic_text_color(kind)};"
+
+
 def apply_application_theme(
     app: QApplication, theme_id: str, font_px: int | None = None
 ) -> None:
+    # 中文翻译挂在这里：所有入口（主编辑器 / 独立图对话编辑器 / 各工具）都会调本函数，
+    # 不必逐个入口去记得装，也就不会有哪个入口漏掉、弹窗按钮又变回英文。
+    install_chinese_translations(app)
     if theme_id not in ALL_THEME_IDS:
         theme_id = THEME_MODERN
     base_px = _clamp_font_px(settings_load_font_px() if font_px is None else font_px)

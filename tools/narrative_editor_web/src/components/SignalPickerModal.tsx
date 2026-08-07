@@ -1,5 +1,10 @@
 import { useMemo, useState } from 'react';
-import { buildSignalCatalog, createAuthorSignal, setAuthorSignalNotes } from '../signalCatalog';
+import {
+  buildSignalCatalog,
+  createAuthorSignal,
+  isUnregisteredAuthorSignal,
+  setAuthorSignalNotes,
+} from '../signalCatalog';
 import { DEFAULT_DRAFT_SIGNAL } from '../signalConstants';
 import type { NarrativeGraphsFileDef, SignalCatalogEntryDef } from '../types';
 
@@ -136,6 +141,7 @@ export function SignalPickerModal(props: {
                   <span className="signal-row-id">{entry.id}</span>
                   <span className="signal-row-meta">
                     {entry.kind === 'author' ? '作者' : entry.kind === 'derived' ? '派生' : '草稿'}
+                    {entry.registered ? '' : ' · ⚠未登记'}
                     {entry.label ? ` · ${entry.label}` : ''}
                     {/* 本弹窗按 props.data 构建目录、未传 emitterRefsById，故发射数恒为 0、会误导；
                         只展示准确的「监听」数（发射源跨对话/场景/运行时，无法在此可靠统计）。 */}
@@ -143,6 +149,19 @@ export function SignalPickerModal(props: {
                   </span>
                   {entry.notes ? <span className="signal-row-notes">📝 {entry.notes}</span> : null}
                 </button>
+                {isUnregisteredAuthorSignal(props.data, entry.id) ? (
+                  <button
+                    type="button"
+                    className="signal-row-note-edit signal-row-register"
+                    title={
+                      '该信号只被引用、没有注册行，校验会一直报「未在信号注册表登记」。'
+                      + '点此补一条注册行（可 Ctrl+Z 撤销）。'
+                    }
+                    onClick={() => props.onDataChange((data) => { createAuthorSignal(data, entry.id); })}
+                  >
+                    补登记
+                  </button>
+                ) : null}
                 {entry.editable ? (
                   <button
                     type="button"

@@ -227,6 +227,8 @@ const NODE_SEMANTICS: Record<string, string> = {
   B: '正侧面朝右的静态 Idle 源；既可进入静态抠图，也可作为动画视频生成输入。',
   C: '静态素材抠图结果；只处理透明背景，不改变已确认的角色构图。',
   H_STATIC: '静态 Sprite 的项目导出候选。发布动作仍由独立步骤完成。',
+  H_STATIC_BUNDLE: '把静态 Sprite 打成单帧动画包（一格图集 + 一个 idle state），让它能当 NPC 用；'
+    + '与 H 写同一个 bundle 目录，正式动画包上线即取代它。',
   D: '单动作动画视频结果。工作台只记录与审查，Agent 在外部主动产出。',
   E: '按动作语义抽出的完整画面帧序列；循环动作需验证首尾无缝。',
   F: '使用所有帧 bbox 的 union 固定裁剪全部帧，不做逐帧重定位。',
@@ -247,6 +249,7 @@ const STAGE_PRESENTATIONS: StagePresentation[] = [
   { code: 'B', title: 'Idle 基准', stages: ['B'], hint: '确认正侧面朝右的静态基准图' },
   { code: 'C', title: '静态抠图', stages: ['C'], hint: '得到可直接使用的透明静态 Sprite' },
   { code: 'Hₛ', title: '静态导出', stages: ['H_STATIC'], hint: '把已通过的静态 Sprite 导出到明确的项目位置' },
+  { code: 'Hₚ', title: '单帧动画包', stages: ['H_STATIC_BUNDLE'], hint: '把已通过的静态 Sprite 打成能当 NPC 用的单帧动画包' },
   { code: 'D', title: '动画视频', stages: ['D'], hint: '每个动作各自产出原始动画视频' },
   { code: 'E', title: '挑选帧', stages: ['E'], hint: '按动作语义抽帧，并检查循环首尾' },
   { code: 'F', title: '统一裁剪', stages: ['F'], hint: '所有帧共用同一个 union bbox' },
@@ -1243,7 +1246,7 @@ function renderGraph(): void {
   if (!currentView) return;
   const byId = new Map(currentView.states.map((state) => [state.id, state]));
   const fragment = document.createDocumentFragment();
-  const staticIds = ['A', 'B', 'C', 'H_STATIC'];
+  const staticIds = ['A', 'B', 'C', 'H_STATIC', 'H_STATIC_BUNDLE'];
   fragment.append(buildLane('静态 Sprite 分支', staticIds, byId));
   const actions = currentView.workspace.actions.filter((action) => action.enabled !== false);
   for (const action of actions) {

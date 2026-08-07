@@ -39,6 +39,12 @@ export interface PlaneInteractionConfig {
   canInteractHotspots?: boolean;
   /** false 时禁止与 NPC 对话；缺省 true */
   canTalkNpcs?: boolean;
+  /**
+   * 本位面允许的身体动词白名单（`crouch`/`gaze`/`kick`/`jump`/`lie`）；
+   * 缺省（不写键）= 全部允许。写空数组 = 一个都不许（如背尸位面只留 `["gaze"]`）。
+   * 切位面时若当前姿态被新位面禁用，姿态立即复位。
+   */
+  allowedVerbs?: string[];
 }
 
 export interface PlaneCameraConfig {

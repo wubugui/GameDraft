@@ -75,6 +75,8 @@ export type RuntimeCommand =
   | { id?: unknown; type: 'playerChoose'; index?: unknown; reason?: unknown }
   | { id?: unknown; type: 'playerMoveTo'; x?: unknown; y?: unknown; reason?: unknown }
   | { id?: unknown; type: 'playerTap'; reason?: unknown }
+  | { id?: unknown; type: 'playerAct'; verb?: unknown; reason?: unknown }
+  | { id?: unknown; type: 'playerPosture'; posture?: unknown; held?: unknown; reason?: unknown }
   | { id?: unknown; type: 'setPlayerCollisions'; enabled?: unknown; reason?: unknown }
   | { id?: unknown; type: 'activatePlane'; planeId?: unknown; reason?: unknown }
   | { id?: unknown; type: 'deactivatePlane'; reason?: unknown };
@@ -135,6 +137,10 @@ export type RuntimeCommandDeps = {
   playerChoose(index: number): void;
   playerMoveTo(x: number, y: number): void;
   playerTap(): void;
+  /** 身体动词一次性动作（kick/jump）：注入对应按键，与玩家真按一次等价 */
+  playerAct(verb: string): void;
+  /** 身体姿态（crouch/gaze）：按住/松开对应键；躺走 crouch 键 + 站在躺点上 */
+  playerPosture(posture: string, held: boolean): void;
   // 测试用环境开关：关碰撞让玩家直线走到任意 NPC（不推任何叙事状态，非作弊）
   setPlayerCollisions(enabled: boolean): void;
   // 位面（PlaneReconciler）：手动覆盖激活位面 / 清覆盖回叙事点名（与同名 action 同语义）。
@@ -421,6 +427,19 @@ export async function applyDevRuntimeCommand(
         deps.playerTap();
         await deps.captureSnapshot('runtime-command:playerTap');
         return ok(id, type, 'player tap (click/continue) injected');
+      }
+      case 'playerAct': {
+        const verb = requiredString(command.verb, 'verb');
+        deps.playerAct(verb);
+        await deps.captureSnapshot('runtime-command:playerAct');
+        return ok(id, type, `player act "${verb}" injected`);
+      }
+      case 'playerPosture': {
+        const posture = requiredString(command.posture, 'posture');
+        const held = command.held !== false; // 默认按住；显式 false 松开
+        deps.playerPosture(posture, held);
+        await deps.captureSnapshot('runtime-command:playerPosture');
+        return ok(id, type, `player posture "${posture}" ${held ? 'held' : 'released'}`);
       }
       case 'setPlayerCollisions': {
         const enabled = command.enabled !== false; // 默认开；显式 false 关碰撞（noclip，测试用）

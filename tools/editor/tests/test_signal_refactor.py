@@ -18,6 +18,7 @@ from tools.editor.shared.signal_refactor import (
     rename_graph,
     rename_signal,
     rename_state,
+    scan_dialogue_narrative_dangling,
     scan_graph_usages,
     scan_signal_usages,
     scan_state_usages,
@@ -305,6 +306,138 @@ def test_rename_run_graph_cascades_lifecycle_count_and_run_archetype(disk_model:
     assert disk_model.narrative_graphs["compositions"][0]["mainGraph"]["exitStates"] == ["delivered"]
 
 
+# --------------------------------------------------------------------------- #
+# 图对话 ownerState / contextState 引用面（2026-08-05 全盘审查 P0-1）
+# --------------------------------------------------------------------------- #
+
+def _wire_dialogue_state_nodes(m: FakeModel) -> None:
+    """补上图对话里直接读叙事状态的两类节点，外加 rules.json 条件（P1-1 回归）。
+
+    ownerState 三种形态各一，因为它们的处置口径**不同**：
+    - 显式写死 wrapperGraphId → 图 id 与 cases[].state 都机械跟随；
+    - 留空（运行时按对话 owner 解算）/ `@owner` 相对 token → 归属图静态不可知，
+      只能报疑点（relativeTokenSuspects），绝不自动改写。
+    """
+    p = Path(m.dialogues_path) / "graphs" / "对话甲.json"
+    doc = json.loads(p.read_text(encoding="utf-8"))
+    doc["nodes"]["n_owner"] = {
+        "type": "ownerState", "wrapperGraphId": "flow_main",
+        "cases": [{"state": "s1", "next": "n1"}, {"state": "s0", "next": "n1"}],
+        "defaultNext": "n1", "missingWrapperNext": "n1",
+    }
+    doc["nodes"]["n_owner_implicit"] = {
+        "type": "ownerState",
+        "cases": [{"state": "s1", "next": "n1"}], "defaultNext": "n1",
+    }
+    doc["nodes"]["n_owner_token"] = {
+        "type": "ownerState", "wrapperGraphId": "@owner",
+        "cases": [{"state": "s1", "next": "n1"}], "defaultNext": "n1",
+    }
+    doc["nodes"]["n_ctx"] = {
+        "type": "contextState", "graphId": "flow_main",
+        "cases": [{"state": "s1", "next": "n1"}], "defaultNext": "n1",
+    }
+    p.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    m.rules_data = {"rules": [{"id": "r1", "unlockConditions": [_leaf("flow_main", "s1")]}]}
+
+
+def test_rename_graph_cascades_dialogue_state_nodes(disk_model: FakeModel) -> None:
+    """图改名必须跟随 ownerState.wrapperGraphId / contextState.graphId。
+
+    回归 2026-08-05 事故：走访器不认这两类节点 → 预览报"0 处引用，可安全操作"、级联
+    静默漏改，改完对话图直接指向不存在的图，直到 Save All 后 validate-data 才报。
+    """
+    _wire_dialogue_state_nodes(disk_model)
+    scan = scan_graph_usages(disk_model, "flow_main")
+    dlg = next(h for h in scan["external"] if h["itemId"] == "对话甲")
+    assert dlg["count"] == 2, "显式 ownerState 1 + contextState 1（@owner/留空不是图引用）"
+
+    rename_graph(disk_model, "flow_main", "flow_v2")
+    nodes = disk_model.pending_dialogue_graph_edits["对话甲"]["nodes"]
+    assert nodes["n_owner"]["wrapperGraphId"] == "flow_v2"
+    assert nodes["n_ctx"]["graphId"] == "flow_v2"
+    assert nodes["n_owner_token"]["wrapperGraphId"] == "@owner", "相对 token 不许被改写"
+    assert "wrapperGraphId" not in nodes["n_owner_implicit"], "留空的节点不许被塞出一个字段"
+
+
+def test_rename_state_cascades_dialogue_state_node_cases(disk_model: FakeModel) -> None:
+    """状态改名必须跟随两类节点的 cases[].state；归属图不可知的只报疑点不改写。"""
+    _wire_dialogue_state_nodes(disk_model)
+    scan = scan_state_usages(disk_model, "flow_main", "s1")
+    dlg = next(h for h in scan["external"] if h["itemId"] == "对话甲")
+    assert dlg["count"] == 2, "n_owner.cases[0] + n_ctx.cases[0]"
+    assert scan["relativeTokenSuspects"]["total"] == 2, "留空 + @owner 各 1 处疑点"
+
+    rename_state(disk_model, "flow_main", "s1", "s1_done")
+    nodes = disk_model.pending_dialogue_graph_edits["对话甲"]["nodes"]
+    assert [c["state"] for c in nodes["n_owner"]["cases"]] == ["s1_done", "s0"]
+    assert nodes["n_ctx"]["cases"][0]["state"] == "s1_done"
+    assert nodes["n_owner_implicit"]["cases"][0]["state"] == "s1", "归属图不可知：只报不改"
+    assert nodes["n_owner_token"]["cases"][0]["state"] == "s1"
+
+
+def test_rules_json_is_reachable_by_refactor(disk_model: FakeModel) -> None:
+    """rules.json 必须在扫描与级联的可达面内（P1-1：表键曾写成 rules，真名 rules_data）。"""
+    _wire_dialogue_state_nodes(disk_model)
+    scan = scan_state_usages(disk_model, "flow_main", "s1")
+    assert any(h["bucket"] == "rules" for h in scan["external"]), \
+        f"rules.json 未进扫描面（表键写错会静默跳过）：{scan['external']}"
+
+    rename_state(disk_model, "flow_main", "s1", "s1_done")
+    assert disk_model.rules_data["rules"][0]["unlockConditions"][0]["state"] == "s1_done"
+    assert ("rules", "") in disk_model.dirty
+
+
+def test_readonly_source_blocks_every_refactor(disk_model: FakeModel) -> None:
+    """只读数据面（ProjectModel 加载但 save_all 不认领）有引用 → 四种重构一律拒绝。
+
+    静默跳过会留悬垂引用，改内存则改动落不了盘凭空消失——两者都不可接受，故 fail-safe 拒绝。
+    """
+    disk_model.object_examine_instances = {
+        "corpse": {"steps": [
+            {"type": "emitNarrativeSignal", "params": {"signal": "sig_a"}},
+            {"type": "setNarrativeState", "params": {"graphId": "flow_main", "stateId": "s1"}},
+        ]},
+    }
+    assert scan_signal_usages(disk_model, "sig_a")["readonlyBlockers"] == [
+        {"bucket": "object_examine", "itemId": "corpse", "count": 1},
+    ]
+    for call in (
+        lambda: rename_signal(disk_model, "sig_a", "sig_x"),
+        lambda: rename_graph(disk_model, "flow_main", "flow_v2"),
+        lambda: rename_state(disk_model, "flow_main", "s1", "s1x"),
+        lambda: delete_signal(disk_model, "sig_a", force=True),
+    ):
+        with pytest.raises(SignalRefactorError, match="只读数据面"):
+            call()
+    # 拒绝 = 零改动（含只读面自身与可写面）
+    assert disk_model.object_examine_instances["corpse"]["steps"][0]["params"]["signal"] == "sig_a"
+    assert scan_signal_usages(disk_model, "sig_a")["registryIndex"] == 0
+    assert disk_model.narrative_graphs["compositions"][0]["mainGraph"]["id"] == "flow_main"
+
+
+def test_refactor_leaves_no_dangling_dialogue_refs(disk_model: FakeModel) -> None:
+    """收尾自检：级联跑完，图对话侧不许剩下悬垂的 ownerState/contextState 引用。"""
+    _wire_dialogue_state_nodes(disk_model)
+    assert scan_dialogue_narrative_dangling(disk_model) == []
+    rename_graph(disk_model, "flow_main", "flow_v2")
+    rename_state(disk_model, "flow_v2", "s1", "s1_done")
+    assert scan_dialogue_narrative_dangling(disk_model) == []
+
+
+def test_scan_dialogue_narrative_dangling_detects_broken_refs(disk_model: FakeModel) -> None:
+    """断链要能被自检抓到（否则收尾闸形同虚设）；相对 token / 留空节点不臆断。"""
+    _wire_dialogue_state_nodes(disk_model)
+    path = Path(disk_model.dialogues_path) / "graphs" / "对话甲.json"
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    doc["nodes"]["n_owner"]["wrapperGraphId"] = "没这张图"
+    doc["nodes"]["n_ctx"]["cases"][0]["state"] = "没这个态"
+    disk_model.pending_dialogue_graph_edits["对话甲"] = doc
+
+    found = {(d["nodeId"], d["reason"]) for d in scan_dialogue_narrative_dangling(disk_model)}
+    assert found == {("n_owner", "missingGraph"), ("n_ctx", "missingState")}
+
+
 def test_rename_state_and_graph_validation_gates(disk_model: FakeModel) -> None:
     with pytest.raises(SignalRefactorError):
         rename_state(disk_model, "flow_main", "s0", "s1")  # 撞既有状态
@@ -359,19 +492,83 @@ def test_save_all_writes_dialogue_graph_edits(tmp_path: Path, monkeypatch: pytes
 # --------------------------------------------------------------------------- #
 
 def test_emit_source_buckets_parity_with_catalog() -> None:
-    """signal_refactor.EMIT_SOURCE_BUCKETS 与 narrative_catalog._EMIT_SOURCE_ATTRS 同源。
+    """signal_refactor 的发射面（可写 ∪ 只读）与 narrative_catalog._EMIT_SOURCE_ATTRS 同源。
 
     注释宣称"有 parity 测试锁定"却一直不存在（审查 P2）：两表今天一致但零护栏，
     正是历史整族镜像清单 bug 的前兆。此测试把宣称变成真护栏——发射源集合任一处漂移即失败。
+
+    并集口径（2026-08-05）：目录要看得见**全部**实发面；重构只改可写面，只读面命中即拒绝
+    （READONLY_SOURCES）。少了并集这一步，只读发射面就会像 object_examine 那样两头落空。
     """
-    from tools.editor.shared.signal_refactor import EMIT_SOURCE_BUCKETS
+    from tools.editor.shared.signal_refactor import EMIT_SOURCE_BUCKETS, READONLY_SOURCES
     from tools.editor.shared.narrative_catalog import _EMIT_SOURCE_ATTRS
 
-    assert set(EMIT_SOURCE_BUCKETS.keys()) == set(_EMIT_SOURCE_ATTRS), (
-        "EMIT_SOURCE_BUCKETS 与 narrative_catalog._EMIT_SOURCE_ATTRS 的发射源集合漂移："
-        f"仅在重构表 {set(EMIT_SOURCE_BUCKETS) - set(_EMIT_SOURCE_ATTRS)}，"
-        f"仅在目录表 {set(_EMIT_SOURCE_ATTRS) - set(EMIT_SOURCE_BUCKETS)}"
+    engine = set(EMIT_SOURCE_BUCKETS) | set(READONLY_SOURCES)
+    assert engine == set(_EMIT_SOURCE_ATTRS), (
+        "重构发射面（EMIT_SOURCE_BUCKETS ∪ READONLY_SOURCES）与 narrative_catalog."
+        f"_EMIT_SOURCE_ATTRS 漂移：仅在重构表 {engine - set(_EMIT_SOURCE_ATTRS)}，"
+        f"仅在目录表 {set(_EMIT_SOURCE_ATTRS) - engine}"
     )
+
+
+def test_dialogue_graph_refactor_source_table_resolves() -> None:
+    """对话图重构引擎的数据面登记表同样逐键校验（与叙事引擎同族的写错-静默跳过风险）。
+
+    该表用 ``KNOWN_DIRTY_BUCKETS`` 做可写性门控（不可写的只扫不改），所以这里只断言
+    属性名解析得到——桶不可写是它的合法状态。
+    """
+    from tools.editor.project_model import ProjectModel
+    from tools.editor.shared.dialogue_graph_refactor import _ACTION_SOURCE_BUCKETS
+
+    model = ProjectModel()
+    for attr, bucket in _ACTION_SOURCE_BUCKETS:
+        assert hasattr(model, attr), (
+            f"_ACTION_SOURCE_BUCKETS 的 {attr!r} 不是 ProjectModel 的属性——"
+            f"该域（桶 {bucket!r}）会被对话图重构静默跳过"
+        )
+
+
+def test_refactor_source_tables_resolve_on_project_model() -> None:
+    """三张数据面登记表的键必须是 ProjectModel 上真实存在的属性、桶必须可落盘。
+
+    历史教训（2026-08-05 全盘审查 P1-1）：``CONDITION_EXTRA_SOURCES`` 把 rules.json 的
+    属性名写成 ``rules``（真名 ``rules_data``），``getattr(model, attr, None)`` 兜 None
+    直接 continue——**写错表键零报错**，rules.json 对叙事重构与实体重构同时不可见。
+    表键写错是这类漏洞的固定形状，只能靠逐键断言堵。
+    """
+    from tools.editor.project_model import ProjectModel
+    from tools.editor.shared.signal_refactor import (
+        CONDITION_SOURCES,
+        EMIT_SOURCE_BUCKETS,
+        READONLY_SOURCES,
+    )
+
+    model = ProjectModel()
+    known = set(ProjectModel.KNOWN_DIRTY_BUCKETS)
+
+    for table_name, table in (
+        ("EMIT_SOURCE_BUCKETS", EMIT_SOURCE_BUCKETS),
+        ("CONDITION_SOURCES", CONDITION_SOURCES),
+    ):
+        for attr, (bucket, _per_item) in table.items():
+            assert hasattr(model, attr), (
+                f"{table_name}['{attr}'] 不是 ProjectModel 的属性——getattr 会兜 None，"
+                "该数据域将被重构静默跳过（零报错）"
+            )
+            assert bucket in known, (
+                f"{table_name}['{attr}'] 的脏桶 {bucket!r} 不在 KNOWN_DIRTY_BUCKETS："
+                "mark_dirty 会抛 ValueError，重构一命中即整体失败"
+            )
+
+    for attr, label in READONLY_SOURCES.items():
+        assert hasattr(model, attr), f"READONLY_SOURCES['{attr}'] 不是 ProjectModel 的属性"
+        assert attr not in CONDITION_SOURCES, (
+            f"{attr} 同时登记在可写面与只读面：口径矛盾（要么能落盘要么拒绝重构）"
+        )
+        assert label not in known, (
+            f"READONLY_SOURCES['{attr}'] 的 {label!r} 已是可落盘脏桶——"
+            "该数据域已能保存，应改登记进 EMIT_SOURCE_BUCKETS/CONDITION_SOURCES 参与改写"
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -487,3 +684,39 @@ def test_archive_lore_is_registered_emit_source(disk_model: FakeModel) -> None:
     assert {"bucket": "archive", "attr": "archive_lore", "itemId": "lore_1", "count": 1} in scan["assets"]
     rename_signal(disk_model, "sig_a", "sig_a2")
     assert disk_model.archive_lore[0]["firstViewActions"][0]["params"]["signal"] == "sig_a2"
+
+
+def test_rename_graph_cascades_into_dialogue_owner_and_context_state_nodes(
+    disk_model: FakeModel,
+) -> None:
+    """改叙事图 id 必须级联到图对话的 ownerState.wrapperGraphId / contextState.graphId。
+
+    这两个字段的字段名与条件叶（`narrative`）不同，靠 `_DIALOGUE_STATE_NODE_GRAPH_KEY`
+    派发；既有 rename 用例只覆盖了条件叶与 setNarrativeState，这两类**节点字段**没护栏。
+    漏掉的后果是策划一改图名，图对话里的 ownerState/contextState 立刻悬垂，
+    运行时静默走 missingWrapperNext——正是「编辑器上看着好好的、跑起来什么都不发生」。
+    """
+    p = Path(disk_model.dialogues_path) / "graphs" / "对话甲.json"
+    doc = json.loads(p.read_text(encoding="utf-8"))
+    doc["nodes"]["n_owner"] = {
+        "id": "n_owner", "type": "ownerState", "wrapperGraphId": "flow_main",
+        "cases": [{"state": "s1", "next": "n1"}], "defaultNext": "n1", "missingWrapperNext": "n1",
+    }
+    doc["nodes"]["n_ctx"] = {
+        "id": "n_ctx", "type": "contextState", "graphId": "flow_main",
+        "cases": [{"state": "s1", "next": "n1"}], "defaultNext": "n1",
+    }
+    p.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    scan = scan_graph_usages(disk_model, "flow_main")
+    assert scan["totalRefs"] >= 2
+
+    rename_graph(disk_model, "flow_main", "flow_main_v2")
+    dlg = disk_model.pending_dialogue_graph_edits["对话甲"]
+    assert dlg["nodes"]["n_owner"]["wrapperGraphId"] == "flow_main_v2"
+    assert dlg["nodes"]["n_ctx"]["graphId"] == "flow_main_v2"
+    # 改名后不得残留任何指向旧 id 的引用（悬垂扫描是策划的收尾闸）
+    assert not [
+        h for h in scan_dialogue_narrative_dangling(disk_model)
+        if "flow_main" == str(h.get("graphId") or "").strip()
+    ]

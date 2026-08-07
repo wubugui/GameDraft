@@ -156,37 +156,28 @@
       "cutsceneIds": [
         "洋人第一次出场"
       ]
-    }
-  ],
-  "hotspots": [
-    {
-      "id": "hotspot_码头告示板",
-      "type": "inspect",
-      "label": "码头告示板",
-      "x": 1174.5,
-      "y": 1197.2,
-      "interactionRange": 60.0,
-      "data": {
-        "graphId": "码头看板"
-      }
     },
     {
       "id": "new_hotspot_人群",
-      "type": "inspect",
-      "label": "",
-      "x": 1725.6,
-      "y": 1230.3,
-      "interactionRange": 50.0,
-      "data": {
-        "text": ""
-      },
-      "displayImage": {
-        "image": "/resources/runtime/images/illustrations/码头人群1.png",
-        "worldWidth": 400.0,
-        "worldHeight": 400.0,
-        "facing": "left",
-        "spriteSort": "back"
-      },
+      "name": "码头人群",
+      "x": 1727.9,
+      "y": 1161.9,
+      "animFile": "/resources/runtime/animation/dock_crowd_anim/anim.json",
+      "interactionRange": 0,
+      "initialFacing": "left",
+      "spriteSort": "back",
+      "renderRaw": true,
+      "cutsceneIds": [
+        "洋人第一次出场"
+      ],
+      "cutsceneOnly": false,
+      "conditions": [
+        {
+          "narrative": "scenario_外国人捞箱子",
+          "state": "active"
+        }
+      ],
+      "conditionHidesEntity": true,
       "collisionPolygon": [
         {
           "x": -188.5,
@@ -222,44 +213,15 @@
         }
       ],
       "collisionPolygonLocal": true,
-      "cutsceneIds": [
-        "洋人第一次出场"
-      ],
-      "cutsceneOnly": false,
-      "conditions": [
-        {
-          "narrative": "scenario_外国人捞箱子",
-          "state": "active"
-        }
-      ],
-      "conditionHidesEntity": true
-    },
-    {
-      "id": "new_hotspot_3",
-      "type": "inspect",
-      "label": "",
-      "x": 1471.1,
-      "y": 1417.8,
-      "interactionRange": 50.0,
-      "data": {
-        "text": ""
-      }
+      "perspectiveScaleEnabled": false
     },
     {
       "id": "new_hotspot_4",
-      "type": "inspect",
-      "label": "洋人女性",
-      "x": 1614.4,
-      "y": 839.6,
-      "interactionRange": 50.0,
-      "data": {
-        "text": ""
-      },
-      "displayImage": {
-        "image": "/resources/runtime/images/illustrations/洋人女性.png",
-        "worldWidth": 90.0,
-        "worldHeight": 161.2
-      },
+      "name": "洋人女性",
+      "x": 1614.7,
+      "y": 835.3,
+      "animFile": "/resources/runtime/animation/npc_western_lady_anim/anim.json",
+      "interactionRange": 0,
       "collisionPolygon": [
         {
           "x": -20.0,
@@ -274,7 +236,61 @@
           "y": 20.0
         }
       ],
-      "collisionPolygonLocal": true
+      "collisionPolygonLocal": true,
+      "perspectiveScaleEnabled": false
+    },
+    {
+      "id": "new_hotspot_6",
+      "name": "搬运工",
+      "x": 1729,
+      "y": 1224.4,
+      "animFile": "/resources/runtime/animation/npc_dock_porter_anim/anim.json",
+      "interactionRange": 0,
+      "initialFacing": "left",
+      "spriteSort": "front",
+      "cutsceneIds": [
+        "洋人第一次出场"
+      ],
+      "collisionPolygon": [
+        {
+          "x": -40.0,
+          "y": -30.0
+        },
+        {
+          "x": 40.0,
+          "y": -30.0
+        },
+        {
+          "x": 0.0,
+          "y": 29.4
+        }
+      ],
+      "collisionPolygonLocal": true,
+      "perspectiveScaleEnabled": false
+    }
+  ],
+  "hotspots": [
+    {
+      "id": "hotspot_码头告示板",
+      "type": "inspect",
+      "label": "码头告示板",
+      "x": 1174.5,
+      "y": 1197.2,
+      "interactionRange": 60.0,
+      "data": {
+        "graphId": "码头看板"
+      }
+    },
+    {
+      "id": "new_hotspot_3",
+      "type": "inspect",
+      "label": "",
+      "x": 1471.1,
+      "y": 1417.8,
+      "interactionRange": 50.0,
+      "data": {
+        "text": ""
+      }
     },
     {
       "id": "new_hotspot_箱子堆",
@@ -329,42 +345,6 @@
         }
       ],
       "conditionHidesEntity": true
-    },
-    {
-      "id": "new_hotspot_6",
-      "type": "inspect",
-      "label": "搬箱子的力工",
-      "x": 1727.9,
-      "y": 1229.2,
-      "interactionRange": 50.0,
-      "data": {
-        "text": ""
-      },
-      "displayImage": {
-        "image": "/resources/runtime/images/illustrations/搬运工.png",
-        "worldWidth": 100.0,
-        "worldHeight": 179.2,
-        "facing": "left",
-        "spriteSort": "front"
-      },
-      "collisionPolygon": [
-        {
-          "x": -40.0,
-          "y": -30.0
-        },
-        {
-          "x": 40.0,
-          "y": -30.0
-        },
-        {
-          "x": 0.0,
-          "y": 29.4
-        }
-      ],
-      "collisionPolygonLocal": true,
-      "cutsceneIds": [
-        "洋人第一次出场"
-      ]
     },
     {
       "id": "T码头到街巷",
@@ -559,6 +539,26 @@
         }
       ],
       "conditionHidesEntity": true
+    },
+    {
+      "id": "主线s1藏钱点B",
+      "type": "inspect",
+      "label": "",
+      "x": 2156.7,
+      "y": 436.3,
+      "interactionRange": 50,
+      "data": {
+        "graphId": "主线_藏钱",
+        "entry": "n_2",
+        "text": ""
+      },
+      "conditionHidesEntity": true,
+      "conditions": [
+        {
+          "narrative": "scenario_graph_1",
+          "state": "entry"
+        }
+      ]
     }
   ],
   "zones": [

@@ -12,7 +12,7 @@ triggers:
   paths: ["tools/editor/shared/id_ref_selector.py", "tools/editor/shared/action_editor.py", "tools/editor/shared/qt_combo_wheel_guard.py"]
   topics: [IdRefSelector, 悬垂引用, select_only, 保值, 滚轮误改]
   tasks: [改共享选择器控件, 把裸输入框换成选择器]
-last_governed: 2026-07-11
+last_governed: 2026-08-05
 ---
 
 ## 是什么(一句话)
@@ -21,15 +21,13 @@ last_governed: 2026-07-11
 
 ## 权威源(读代码从哪进)
 
-- `tools/editor/shared/id_ref_selector.py`(id 引用选择器)
-- `tools/editor/shared/action_editor.py`(`FilterableTypeCombo(select_only)` 的未知值注入)
-- `tools/editor/shared/qt_combo_wheel_guard.py`(全局滚轮误改防护,`__main__.py` 安装)
+`id_ref_selector.py`(id 引用选择器)/ `action_editor.py`(`FilterableTypeCombo(select_only)` 的未知值注入)/ `qt_combo_wheel_guard.py`(全局滚轮误改防护,`__main__.py` 安装)。控件选型对照表见 `.cursor/skills/editor-tools-iteration/SKILL.md`。
 
 ## 硬契约
 
-1. **未知值保值**:候选清单里找不到当前值时,必须保留原值展示(标记为未知即可),**禁止**静默顶替成第一候选或清空——这曾是 P0(悬垂引用一开面板即被改写,约 40 调用点受影响);在控件层修一次覆盖全部调用点,是最高杠杆位。
-2. **select_only 组合框接旧数据**:把裸输入换成 `FilterableTypeCombo(select_only=True)` 时,未知旧值以「(数据) 」前缀条目注入候选,保证旧值不因换控件而丢。
-3. **候选一律取自 ProjectModel 的 id-provider**(all_scene_ids 等),不自建清单;选定父项后刷新子候选(选 scene 刷 spawn、选 actor 刷动画 state)。控件目录见 `.cursor/skills/editor-tools-iteration/SKILL.md` §2.1。
+1. **未知值保值**:候选清单里找不到当前值时必须保留原值展示(标记为未知即可),**禁止**静默顶替成第一候选或清空——这曾是 P0(悬垂引用一开面板即被改写,约 40 调用点受影响);在控件层修一次覆盖全部调用点,是最高杠杆位。
+2. **select_only 组合框接旧数据**:换成只读组合框时,未知旧值以带前缀的条目注入候选,保证旧值不因换控件而丢。
+3. **候选一律取自 ProjectModel 的 id-provider**,不自建清单;选定父项后刷新子候选(选 scene 刷 spawn、选 actor 刷动画 state)。
 
 ## 已知坑
 
@@ -38,4 +36,4 @@ last_governed: 2026-07-11
 
 ## 怎么验证
 
-- `tools/editor/tests/test_action_condition_data_safety.py`(悬垂/未知值保值场景);改控件后跑黄金往返 + [验证门配方](../recipes/editor-change-verification-gate.md)。
+`tools/editor/tests/test_action_condition_data_safety.py`(悬垂/未知值保值场景);改控件后跑黄金往返 + [验证门配方](../recipes/editor-change-verification-gate.md)。

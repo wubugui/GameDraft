@@ -7,7 +7,7 @@ summary: 位面=全局一等资产+实体归属+叙事只点名+对账器重派�
 status: active
 triggers:
   topics: [位面, plane, v3]
-last_governed: 2026-07-11
+last_governed: 2026-08-05
 ---
 
 ## 背景(一段)

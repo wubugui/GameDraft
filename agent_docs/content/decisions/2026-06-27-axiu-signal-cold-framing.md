@@ -7,7 +7,7 @@ summary: 香粉味+跑调小调=阿秀死时盲目"不撒手"念气,只认物(�
 status: active
 triggers:
   topics: [阿秀, 香粉味, 信号, 死亡系绳, 女鬼]
-last_governed: 2026-07-11
+last_governed: 2026-08-05
 ---
 
 ## 背景

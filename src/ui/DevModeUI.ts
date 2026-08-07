@@ -2,6 +2,7 @@ import { Container, Graphics, Text } from 'pixi.js';
 import type { Renderer } from '../rendering/Renderer';
 import { UITheme } from './UITheme';
 import { drawPanelBase, SKINS } from './PanelSkin';
+import { createStyledText } from '../core/styledText';
 
 export interface DevModeCallbacks {
   getCutsceneIds(): string[];
@@ -111,7 +112,7 @@ export class DevModeUI {
     drawPanelBase(panel, panelX, panelY, panelW, panelH, SKINS.panel);
     this.container.addChild(panel);
 
-    const title = new Text({
+    const title = createStyledText({
       text: 'Dev Mode',
       style: {
         fontSize: 20,
@@ -202,7 +203,7 @@ export class DevModeUI {
     let cy = 0;
 
     if (ids.length === 0) {
-      const empty = new Text({
+      const empty = createStyledText({
         text: 'No cutscenes defined.',
         style: { fontSize: 14, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui },
       });
@@ -242,7 +243,7 @@ export class DevModeUI {
     let cy = 0;
 
     if (entries.length === 0) {
-      const empty = new Text({
+      const empty = createStyledText({
         text: '未加载 water_minigames/index.json 或无条目。',
         style: { fontSize: 14, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui },
       });
@@ -287,7 +288,7 @@ export class DevModeUI {
     let cy = 0;
 
     if (entries.length === 0) {
-      const empty = new Text({
+      const empty = createStyledText({
         text: '无叙事编排（缺 data/dev_narrative_warps.json）。',
         style: { fontSize: 14, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui },
       });
@@ -322,7 +323,7 @@ export class DevModeUI {
     this.container.addChild(this.contentContainer);
 
     const pad = 8;
-    const loading = new Text({
+    const loading = createStyledText({
       text: '加载场景列表…',
       style: { fontSize: 14, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui },
     });
@@ -345,7 +346,7 @@ export class DevModeUI {
       let cy = 0;
 
       if (entries.length === 0) {
-        const empty = new Text({
+        const empty = createStyledText({
           text: 'No scenes in list (check map_config / game_config).',
           style: { fontSize: 14, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui },
         });
@@ -380,7 +381,7 @@ export class DevModeUI {
     bg.fill({ color: UITheme.colors.rowBg, alpha: UITheme.alpha.rowBgLight });
     item.addChild(bg);
 
-    const label = new Text({
+    const label = createStyledText({
       text,
       style: { fontSize: 14, fill: UITheme.colors.body, fontFamily: UITheme.fonts.ui },
     });
@@ -388,7 +389,7 @@ export class DevModeUI {
     label.y = (h - label.height) / 2;
     item.addChild(label);
 
-    const playIcon = new Text({
+    const playIcon = createStyledText({
       text: '>>',
       style: { fontSize: 12, fill: UITheme.colors.subtle, fontFamily: UITheme.fonts.ui },
     });
@@ -433,7 +434,7 @@ export class DevModeUI {
     bg.fill({ color: UITheme.colors.borderMid, alpha: 0.8 });
     btn.addChild(bg);
 
-    const label = new Text({
+    const label = createStyledText({
       text,
       style: { fontSize: 13, fill: UITheme.colors.buttonText, fontFamily: UITheme.fonts.ui },
     });
@@ -470,7 +471,7 @@ export class DevModeUI {
     bg.fill({ color: active ? UITheme.colors.panelBg : UITheme.colors.panelBgAlt, alpha: active ? 1 : 0.5 });
     c.addChild(bg);
 
-    const label = new Text({
+    const label = createStyledText({
       text,
       style: {
         fontSize: 14,

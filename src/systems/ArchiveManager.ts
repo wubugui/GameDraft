@@ -5,6 +5,9 @@ import type {
   ActionDef,
   CharacterEntry,
   LoreEntry,
+  SlangEntry,
+  SlangCategoryView,
+  SlangProgress,
   DocumentEntry,
   BookDef,
   BookPageEntry,
@@ -21,7 +24,7 @@ import { evaluateConditionExprList } from './graphDialogue/conditionEvalBridge';
 import { FlagKeys } from '../core/FlagKeys';
 import { mediaUrlFromShortPath, TEXT_URLS } from '../core/projectPaths';
 
-type BookType = 'character' | 'lore' | 'document' | 'book' | 'bookEntry';
+type BookType = 'character' | 'lore' | 'slang' | 'document' | 'book' | 'bookEntry';
 
 export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
   private eventBus: EventBus;
@@ -29,6 +32,7 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
 
   private characterDefs: Map<string, CharacterEntry> = new Map();
   private loreDefs: Map<string, LoreEntry> = new Map();
+  private slangDefs: Map<string, SlangEntry> = new Map();
   private documentDefs: Map<string, DocumentEntry> = new Map();
   private bookDefs: Map<string, BookDef> = new Map();
   private bookEntryIds: Set<string> = new Set();
@@ -36,6 +40,7 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
 
   private unlockedCharacters: Set<string> = new Set();
   private unlockedLore: Set<string> = new Set();
+  private unlockedSlang: Set<string> = new Set();
   private unlockedDocuments: Set<string> = new Set();
   private unlockedBooks: Set<string> = new Set();
 
@@ -43,6 +48,9 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
   /** 已执行过「首次阅览」动作的 stable key（与 markRead 的 key 独立） */
   private firstViewFired: Set<string> = new Set();
   private loreCategoryNames: Record<string, string> = {};
+  private slangCategoryNames: Record<string, string> = {};
+  private slangCategoryCompleteText: Record<string, string> = {};
+  private slangAllCompleteText = '';
   private strings: { get(cat: string, key: string, vars?: Record<string, string | number>): string } = { get: (_c, k) => k };
   private assetManager!: AssetManager;
   private conditionCtxFactory: (() => ConditionEvalContext) | null = null;
@@ -151,6 +159,7 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
     await Promise.all([
       this.loadCharacters(),
       this.loadLore(),
+      this.loadSlang(),
       this.loadDocuments(),
       this.loadBooks(),
       this.loadItemDisplayNames(),
@@ -228,6 +237,9 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
     for (const entry of this.loreDefs.values()) {
       for (const m of entry.content.matchAll(imgRe)) addMedia(m[1]);
     }
+    for (const entry of this.slangDefs.values()) {
+      for (const m of entry.content.matchAll(imgRe)) addMedia(m[1]);
+    }
     for (const doc of this.documentDefs.values()) {
       for (const m of doc.content.matchAll(imgRe)) addMedia(m[1]);
     }
@@ -272,6 +284,21 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
       if (!Array.isArray(data) && data.categories) {
         this.loreCategoryNames = data.categories;
       }
+    } catch { /* no data yet */ }
+  }
+
+  private async loadSlang(): Promise<void> {
+    try {
+      const data = await this.assetManager.loadJson<{
+        entries?: SlangEntry[];
+        categories?: Record<string, string>;
+        categoryCompleteText?: Record<string, string>;
+        allCompleteText?: string;
+      }>(`${TEXT_URLS.archiveDir}/slang.json`);
+      for (const e of data.entries ?? []) this.slangDefs.set(e.id, e);
+      this.slangCategoryNames = data.categories ?? {};
+      this.slangCategoryCompleteText = data.categoryCompleteText ?? {};
+      this.slangAllCompleteText = data.allCompleteText ?? '';
     } catch { /* no data yet */ }
   }
 
@@ -321,6 +348,13 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
           this.unlockedLore.add(entryId);
           this.flagStore.set(`archive_lore_${entryId}`, true);
           this.emitUpdate('lore', entryId);
+        }
+        break;
+      case 'slang':
+        if (this.slangDefs.has(entryId) && !this.unlockedSlang.has(entryId)) {
+          this.unlockedSlang.add(entryId);
+          this.flagStore.set(`archive_slang_${entryId}`, true);
+          this.emitUpdate('slang', entryId);
         }
         break;
       case 'document':
@@ -404,6 +438,11 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
           if (!this.readEntries.has(`lore_${id}`)) return true;
         }
         return false;
+      case 'slang':
+        for (const id of this.unlockedSlang) {
+          if (!this.readEntries.has(`slang_${id}`)) return true;
+        }
+        return false;
       case 'document':
         for (const id of this.unlockedDocuments) {
           if (!this.readEntries.has(`doc_${id}`)) return true;
@@ -423,6 +462,14 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
         this.unlockedLore.add(id);
         this.flagStore.set(`archive_lore_${id}`, true);
         if (!silent) this.emitUpdate('lore', id);
+      }
+    });
+
+    this.slangDefs.forEach((def, id) => {
+      if (!this.unlockedSlang.has(id) && this.checkConditions(def.unlockConditions)) {
+        this.unlockedSlang.add(id);
+        this.flagStore.set(`archive_slang_${id}`, true);
+        if (!silent) this.emitUpdate('slang', id);
       }
     });
 
@@ -478,6 +525,49 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
     return Array.from(this.unlockedLore)
       .map(id => this.loreDefs.get(id))
       .filter((e): e is LoreEntry => !!e);
+  }
+
+  /**
+   * 怪话册按分类分组。**刻意返回全部条目（含未解锁）**：这本是成就式搜集册，灰槽是驱动力。
+   * 与规矩本"未掌握零像素"的红线不冲突——那条红线保护的是案件知识不许剧透，怪话是纯 flavor。
+   */
+  getSlangCategories(): SlangCategoryView[] {
+    // 分类顺序以 JSON 的 categories 为准，数据里出现的未登记分类兜底追加在后面
+    const order = Object.keys(this.slangCategoryNames);
+    for (const def of this.slangDefs.values()) {
+      if (!order.includes(def.category)) order.push(def.category);
+    }
+    const views: SlangCategoryView[] = [];
+    for (const key of order) {
+      const entries = Array.from(this.slangDefs.values())
+        .filter(e => e.category === key)
+        .map(entry => ({ entry, unlocked: this.unlockedSlang.has(entry.id) }));
+      if (entries.length === 0) continue;
+      const collected = entries.filter(e => e.unlocked).length;
+      const complete = collected === entries.length;
+      views.push({
+        key,
+        name: this.slangCategoryNames[key] ?? key,
+        total: entries.length,
+        collected,
+        complete,
+        completeText: complete ? this.rd(this.slangCategoryCompleteText[key] ?? '') : '',
+        entries,
+      });
+    }
+    return views;
+  }
+
+  getSlangProgress(): SlangProgress {
+    const total = this.slangDefs.size;
+    const collected = this.unlockedSlang.size;
+    const allComplete = total > 0 && collected >= total;
+    return {
+      collected,
+      total,
+      allComplete,
+      allCompleteText: allComplete ? this.rd(this.slangAllCompleteText) : '',
+    };
   }
 
   getUnlockedDocuments(): DocumentEntry[] {
@@ -560,6 +650,7 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
     return {
       characters: Array.from(this.unlockedCharacters),
       lore: Array.from(this.unlockedLore),
+      slang: Array.from(this.unlockedSlang),
       documents: Array.from(this.unlockedDocuments),
       books: Array.from(this.unlockedBooks),
       read: Array.from(this.readEntries),
@@ -570,6 +661,7 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
   deserialize(data: {
     characters?: string[];
     lore?: string[];
+    slang?: string[];
     documents?: string[];
     books?: string[];
     read?: string[];
@@ -577,6 +669,7 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
   }): void {
     this.unlockedCharacters = new Set(data.characters ?? []);
     this.unlockedLore = new Set(data.lore ?? []);
+    this.unlockedSlang = new Set(data.slang ?? []);
     this.unlockedDocuments = new Set(data.documents ?? []);
     this.unlockedBooks = new Set(data.books ?? []);
     this.readEntries = new Set(data.read ?? []);
@@ -603,14 +696,19 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
     this.seeding = false;
     this.unlockEvalRunning = false;
     this.unlockEvalDirty = false;
+    this.slangCategoryNames = {};
+    this.slangCategoryCompleteText = {};
+    this.slangAllCompleteText = '';
     this.characterDefs.clear();
     this.loreDefs.clear();
+    this.slangDefs.clear();
     this.documentDefs.clear();
     this.bookDefs.clear();
     this.bookEntryIds.clear();
     this.itemDisplayNames.clear();
     this.unlockedCharacters.clear();
     this.unlockedLore.clear();
+    this.unlockedSlang.clear();
     this.unlockedDocuments.clear();
     this.unlockedBooks.clear();
     this.readEntries.clear();

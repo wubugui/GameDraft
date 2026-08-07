@@ -7,8 +7,19 @@ from collections import defaultdict, deque
 from pathlib import Path
 from typing import Any
 
+from tools.editor.shared.dialogue_entry_overrides import (
+    collect_dialogue_graph_entry_overrides,
+    graph_entry_roots,
+)
 from tools.editor.shared.project_paths import ProjectPaths
 
+from .dialogue_condition_text import (
+    ALWAYS,
+    NEVER,
+    case_condition_text,
+    case_verdict,
+    shorten,
+)
 from .dialogue_topology import iter_output_slots
 
 
@@ -342,6 +353,20 @@ def _bfs_layered_layout(
     return pos
 
 
+def _as_list(v: Any) -> list:
+    """cases/options 这类容器被手改成标量时返回空列表。
+
+    不加守卫的后果不是"报错不准"，而是**校验整块哑火**：校验在定时器里跑，
+    `enumerate(5)` 抛 TypeError 之后面板不再刷新，策划看到的是"一条错误都没有"。
+    """
+    return v if isinstance(v, list) else []
+
+
+def _cases_shape_error(v: Any) -> bool:
+    """cases 存在但不是数组 → 形状错误（`{}`/`5`/`"x"` 都算，None/缺键不算）。"""
+    return v is not None and not isinstance(v, list)
+
+
 def _validate_line_beats(nid: str, raw: dict[str, Any], errors: list[str]) -> None:
     lines = raw.get("lines")
     if lines is None:
@@ -482,13 +507,13 @@ def _validate_owner_context_state_nodes(
                 else:
                     known = {str(s).strip() for s in (wrapper_info.get("stateIds") or []) if str(s).strip()}
 
-            for i, case in enumerate(raw.get("cases") or []):
+            for i, case in enumerate(_as_list(raw.get("cases"))):
                 if not isinstance(case, dict):
                     continue
                 sid = str(case.get("state", "") or "").strip()
                 if validate_case_states and sid and sid not in known:
                     graph_id = target_graph or str((wrappers[0] or {}).get("graphId", "?"))
-                    errors.append(f"节点 {nid} ownerState case {i}: state {sid!r} 不存在于 wrapper {graph_id}")
+                    errors.append(f"节点 {nid} 分支 {i}: state {sid!r} 不存在于 wrapper {graph_id}")
         elif t == "contextState":
             gid = str(raw.get("graphId", "") or "").strip()
             if gid.startswith("@"):
@@ -503,12 +528,12 @@ def _validate_owner_context_state_nodes(
             if gid and not is_context_graph_allowed(project_root, gid):
                 errors.append(f"节点 {nid}: contextState graphId {gid!r} 不允许读取（不能选择 npc/hotspot wrapper）")
             known = {str(s).strip() for s in graph_states(project_root, gid) if str(s).strip()}
-            for i, case in enumerate(raw.get("cases") or []):
+            for i, case in enumerate(_as_list(raw.get("cases"))):
                 if not isinstance(case, dict):
                     continue
                 sid = str(case.get("state", "") or "").strip()
                 if sid and known and sid not in known:
-                    errors.append(f"节点 {nid} contextState case {i}: state {sid!r} 不存在于图 {gid}")
+                    errors.append(f"节点 {nid} 分支 {i}: state {sid!r} 不存在于图 {gid}")
 
 
 def validate_owner_context_state(
@@ -605,6 +630,29 @@ def scan_graph_embedded_tag_refs(data: dict[str, Any], project_model: Any) -> li
     return errs
 
 
+def _reachability_roots(
+    data: dict[str, Any],
+    nodes: dict[str, Any],
+    entry: str,
+    project_model: Any | None,
+) -> set[str]:
+    """可达性根＝图自己的 entry ＋ 全工程指向本图的备用入口。
+
+    没有 project_model（纯文档态校验）时只剩 entry——此时宁可多报也不少报。
+    收集失败同样退回只用 entry：校验跑在定时器里，异常会让整块校验面板从此哑火。
+    """
+    roots = {entry}
+    if project_model is None:
+        return roots
+    try:
+        overrides = collect_dialogue_graph_entry_overrides(project_model)
+    except Exception:
+        return roots
+    meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
+    keys = (str(data.get("id") or ""), str(meta.get("id") or ""))
+    return roots | graph_entry_roots(nodes, entry, keys, overrides)
+
+
 def validate_graph_tiered(
     data: dict[str, Any],
     *,
@@ -660,43 +708,100 @@ def validate_graph_tiered(
                 seen_opt: set[str] = set()
                 for i, opt in enumerate(opts):
                     if not isinstance(opt, dict):
-                        errors.append(f"节点 {nid} 选项 {i} 不是对象")
+                        errors.append(f"节点 {nid} 选项 {i}: 不是对象")
                         continue
                     on = opt.get("next", "")
                     if on and on not in nodes:
-                        errors.append(f"节点 {nid} 选项 {i} next 指向不存在: {on!r}")
+                        errors.append(f"节点 {nid} 选项 {i}: next 指向不存在: {on!r}")
                     oid = str(opt.get("id", "") or "")
+                    if not oid.strip():
+                        # 以前由检查器 getter 抛 ValueError 拦，代价是整个节点的编辑
+                        # 都进不了模型（审查 P0-1）。改成这里如实报错，编辑照常入模型。
+                        errors.append(f"节点 {nid} 选项 {i}: 未填 id")
                     if oid and oid in seen_opt:
                         warnings.append(f"节点 {nid}: 选项 id 重复 {oid!r}")
                     if oid:
                         seen_opt.add(oid)
         elif t == "switch":
             cases = raw.get("cases") or []
+            if _cases_shape_error(raw.get("cases")):
+                # 手改坏的 JSON（cases 写成标量/对象）会让下面的 enumerate 抛 TypeError，
+                # 而校验是在定时器里跑的——异常一抛，**校验面板从此不再刷新**，
+                # 策划看到的是"一条错误都没有"。如实报一条，别让整块哑火。
+                errors.append(f"节点 {nid}: cases 必须是数组")
+            if not isinstance(cases, list):
+                cases = []
             if isinstance(cases, list) and len(cases) == 0:
                 warnings.append(f"节点 {nid}: switch 无分支 cases，将始终走 defaultNext")
+            unconditional_at = -1
             for i, c in enumerate(cases):
                 if not isinstance(c, dict):
-                    errors.append(f"节点 {nid} case {i} 不是对象")
+                    errors.append(f"节点 {nid} 分支 {i}: 不是对象")
                     continue
                 cn = c.get("next", "")
                 if cn and cn not in nodes:
-                    errors.append(f"节点 {nid} case {i} next 指向不存在: {cn!r}")
+                    errors.append(f"节点 {nid} 分支 {i}: next 指向不存在: {cn!r}")
+                if not str(cn or "").strip():
+                    warnings.append(
+                        f"节点 {nid} 分支 {i}: next 为空——命中本分支时对话会直接断掉"
+                    )
+                verdict = case_verdict(c)
+                if verdict == ALWAYS:
+                    # 运行时 all([]) 走 Array.every → 恒真 → 恒命中，静默语义翻转。
+                    errors.append(
+                        f"节点 {nid} 分支 {i}: 条件与游戏状态无关、永远命中，"
+                        f"其后所有分支与 defaultNext 永远走不到；请补条件或删掉这条分支"
+                    )
+                    if unconditional_at < 0:
+                        unconditional_at = i
+                elif verdict == NEVER:
+                    # {} / {any:[]} / 认不出的形状运行时返回 false → 这条分支自己是死路。
+                    errors.append(
+                        f"节点 {nid} 分支 {i}: 条件运行时永远为假（写法认不出或是空的），"
+                        f"这条分支永远走不到；请修条件或删掉这条分支"
+                    )
+                for leaf in c.get("conditions") or []:
+                    if isinstance(leaf, dict) and "flag" in leaf and not str(
+                        leaf.get("flag", "") or ""
+                    ).strip():
+                        warnings.append(
+                            f"节点 {nid} 分支 {i}: 有一条 flag 条件没填标志名，运行时恒为假"
+                        )
+            if 0 <= unconditional_at < len(cases) - 1:
+                warnings.append(
+                    f"节点 {nid}: 分支 {unconditional_at} 之后还有 "
+                    f"{len(cases) - 1 - unconditional_at} 条分支，它们永远轮不到"
+                )
             dn = raw.get("defaultNext", "")
             if dn and dn not in nodes:
                 errors.append(f"节点 {nid}: defaultNext 指向不存在: {dn!r}")
+            if not str(dn or "").strip():
+                warnings.append(
+                    f"节点 {nid}: defaultNext 为空——所有分支都不命中时对话会直接断掉"
+                )
         elif t == "ownerState":
             cases = raw.get("cases") or []
+            if _cases_shape_error(raw.get("cases")):
+                # 手改坏的 JSON（cases 写成标量/对象）会让下面的 enumerate 抛 TypeError，
+                # 而校验是在定时器里跑的——异常一抛，**校验面板从此不再刷新**，
+                # 策划看到的是"一条错误都没有"。如实报一条，别让整块哑火。
+                errors.append(f"节点 {nid}: cases 必须是数组")
+            if not isinstance(cases, list):
+                cases = []
+            # 与 switch 同款提示：允许删空，但不能静默——空了就始终走 defaultNext。
+            if isinstance(cases, list) and len(cases) == 0:
+                warnings.append(f"节点 {nid}: 没有状态分支，将始终走「都不满足走这里」")
             if not str(raw.get("defaultNext", "") or "").strip():
                 errors.append(f"节点 {nid}: ownerState 必须设置 defaultNext")
             for i, c in enumerate(cases):
                 if not isinstance(c, dict):
-                    errors.append(f"节点 {nid} ownerState case {i} 不是对象")
+                    errors.append(f"节点 {nid} 分支 {i}: 不是对象")
                     continue
                 if not str(c.get("state", "") or "").strip():
-                    warnings.append(f"节点 {nid}: ownerState case {i} 的 state 为空")
+                    warnings.append(f"节点 {nid} 分支 {i}: state 为空")
                 cn = str(c.get("next", "") or "")
                 if cn and cn not in nodes:
-                    errors.append(f"节点 {nid} ownerState case {i} next 指向不存在: {cn!r}")
+                    errors.append(f"节点 {nid} 分支 {i}: next 指向不存在: {cn!r}")
             dn = str(raw.get("defaultNext", "") or "")
             if dn and dn not in nodes:
                 errors.append(f"节点 {nid}: ownerState defaultNext 指向不存在: {dn!r}")
@@ -704,19 +809,26 @@ def validate_graph_tiered(
             if mn and mn not in nodes:
                 errors.append(f"节点 {nid}: ownerState missingWrapperNext 指向不存在: {mn!r}")
         elif t == "contextState":
+            _cs_cases = raw.get("cases") or []
+            if _cases_shape_error(raw.get("cases")):
+                errors.append(f"节点 {nid}: cases 必须是数组")
+            if not isinstance(_cs_cases, list):
+                _cs_cases = []
+            if isinstance(_cs_cases, list) and len(_cs_cases) == 0:
+                warnings.append(f"节点 {nid}: 没有状态分支，将始终走「都不满足走这里」")
             if not str(raw.get("graphId", "") or "").strip():
                 errors.append(f"节点 {nid}: contextState 必须设置 graphId")
             if not str(raw.get("defaultNext", "") or "").strip():
                 errors.append(f"节点 {nid}: contextState 必须设置 defaultNext")
-            for i, c in enumerate(raw.get("cases") or []):
+            for i, c in enumerate(_as_list(raw.get("cases"))):
                 if not isinstance(c, dict):
-                    errors.append(f"节点 {nid} contextState case {i} 不是对象")
+                    errors.append(f"节点 {nid} 分支 {i}: 不是对象")
                     continue
                 if not str(c.get("state", "") or "").strip():
-                    warnings.append(f"节点 {nid}: contextState case {i} 的 state 为空")
+                    warnings.append(f"节点 {nid} 分支 {i}: state 为空")
                 cn = str(c.get("next", "") or "")
                 if cn and cn not in nodes:
-                    errors.append(f"节点 {nid} contextState case {i} next 指向不存在: {cn!r}")
+                    errors.append(f"节点 {nid} 分支 {i}: next 指向不存在: {cn!r}")
             dn = str(raw.get("defaultNext", "") or "")
             if dn and dn not in nodes:
                 errors.append(f"节点 {nid}: contextState defaultNext 指向不存在: {dn!r}")
@@ -738,7 +850,14 @@ def validate_graph_tiered(
     warnings.extend(scan_graph_embedded_tag_refs(data, project_model))
 
     if ent in nodes:
-        reachable = nodes_reachable_from_entry(nodes, ent)
+        # 图自己的 entry 只是**默认入口**：热区 data.entry / NPC dialogueGraphEntry /
+        # startDialogueGraph 动作都能从别的节点开演，那些节点不是孤儿。
+        # 键名清单只在 shared/dialogue_entry_overrides 一处维护（2026-08-07：这里过去
+        # 一个备用入口都不看，把「另一个藏钱点的入口」报成孤儿）。
+        roots = _reachability_roots(data, nodes, ent, project_model)
+        reachable: set[str] = set()
+        for root in roots:
+            reachable |= nodes_reachable_from_entry(nodes, root)
         unreachable = sorted(
             (nid for nid in nodes if nid not in reachable),
             key=lambda x: (x.lower(), x),
@@ -747,13 +866,14 @@ def validate_graph_tiered(
             if len(unreachable) <= 15:
                 for u in unreachable:
                     warnings.append(
-                        f"节点 {u!r} 无法从入口 entry={ent!r} 沿连线到达（流程孤儿；请调整 entry 或拓扑）"
+                        f"节点 {u!r} 无法从入口 entry={ent!r}（含备用入口）沿连线到达"
+                        f"（流程孤儿；请调整 entry 或拓扑）"
                     )
             else:
                 sample = ", ".join(repr(x) for x in unreachable[:12])
                 warnings.append(
-                    f"共 {len(unreachable)} 个节点无法从入口 entry={ent!r} 到达（流程孤儿）。"
-                    f"示例: {sample}…"
+                    f"共 {len(unreachable)} 个节点无法从入口 entry={ent!r}（含备用入口）到达"
+                    f"（流程孤儿）。示例: {sample}…"
                 )
 
     return (errors, warnings)
@@ -925,39 +1045,16 @@ def _action_param_hint(action: dict) -> str:
 
 
 def _switch_case_hint(case: dict) -> str:
-    """从 switch 的第一个 case 提取条件关键字。"""
-    conds = case.get("conditions")
-    if isinstance(conds, list) and conds and isinstance(conds[0], dict):
-        c0 = conds[0]
-        if "flag" in c0:
-            f = str(c0.get("flag", "")).strip()
-            if not f:
-                return "flag?"
-            return f"flag {f[:18]}..." if len(f) > 18 else f"flag {f}"
-        if "scenario" in c0:
-            s = str(c0.get("scenario", "")).strip()
-            ph = str(c0.get("phase", "")).strip()
-            label = f"{s}/{ph}" if ph else s
-            return label[:22] + "..." if len(label) > 22 else label
-        if "quest" in c0:
-            return f"quest {str(c0.get('quest', '')).strip()}"
-        if "questId" in c0:
-            qid = str(c0.get("questId", "")).strip()
-            return f"quest {qid}" if qid else "quest?"
-    cond = case.get("condition")
-    if isinstance(cond, dict) and cond:
-        if any(k in cond for k in ("any", "all", "not")):
-            return "条件表达式"
-        if "flag" in cond:
-            f = str(cond.get("flag", "")).strip()
-            return f"flag {f[:18]}..." if len(f) > 18 else f"flag {f}" if f else "flag?"
-        if "scenario" in cond:
-            s = str(cond.get("scenario", "")).strip()
-            ph = str(cond.get("phase", "")).strip()
-            label = f"{s}/{ph}" if ph else s
-            return label[:22] + "..." if len(label) > 22 else label
-        return "条件表达式"
-    return ""
+    """switch 单分支的条件关键字。
+
+    实现收口到 `dialogue_condition_text`（画布端口标签 / 检查器分支标题同源），
+    此前这里手写的一套只认 conditions[0] 的 flag/scenario/quest，对 narrative
+    （真实数据里占 70%）与 plane / narrativeCount 全部退化成空串或「条件表达式」。
+    """
+    text = case_condition_text(case)
+    if text:
+        return shorten(text, 24)
+    return {ALWAYS: "⚠恒命中", NEVER: "⚠恒不命中"}.get(case_verdict(case), "")
 
 
 _SAFE_ID_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
@@ -993,9 +1090,11 @@ def default_node(node_type: str, nodes: dict[str, Any]) -> dict[str, Any]:
             ],
         }
     if node_type == "switch":
+        # 必须自带一条分支：cases 为空时画布只画得出 else 端口，而检查器（旧实现）
+        # 会凭空补一条 some_flag 假分支——两边不一致，且随手一改就把假分支写进 JSON。
         return {
             "type": "switch",
-            "cases": [],
+            "cases": [{"conditions": [{"flag": "", "value": True}], "next": ""}],
             "defaultNext": "",
         }
     if node_type == "ownerState":

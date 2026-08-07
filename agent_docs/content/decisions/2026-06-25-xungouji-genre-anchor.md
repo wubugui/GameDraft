@@ -7,7 +7,7 @@ summary: 寻狗记=45°冒险RPG骨架+民俗志怪血肉的有意合体;五喜�
 status: active
 triggers:
   topics: [题材, 调性, 竞品, 规矩系统, 关二狗声口, 寻狗记定位]
-last_governed: 2026-07-11
+last_governed: 2026-08-05
 ---
 
 ## 背景

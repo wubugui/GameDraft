@@ -13,7 +13,7 @@ triggers:
   tasks: [改编辑器关闭或保存流程, 给编辑器加确认弹窗]
 verified_by:
   - tools/editor/tests/test_close_path_flow.py
-last_governed: 2026-07-11
+last_governed: 2026-08-05
 ---
 
 ## 是什么(一句话)
@@ -27,9 +27,9 @@ last_governed: 2026-07-11
 
 ## 硬契约
 
-1. **Discard 必须中和**:`confirm_close` 的 Discard 分支必须把 UI 回滚到模型值(调本编辑器的重填方法:`_on_select(当前项)` / `_load()` / `_refresh()` 之类)。因为 Discard 之后还会统一 flush,flush 按「UI≠模型」判脏——不中和就把被放弃的编辑重新提交。
-2. **flush 必须门控真实变更**:`flush_to_model` 要么门控在本编辑器自己的 pending/dirty 信号上,要么做写回前后内容 diff;**绝不能无条件 `mark_dirty`**,否则「打开啥都没动直接关」也弹保存。
-3. **flush 语义特殊的面板别照抄通用中和**:图对话 tab 的 Discard 走 `discard_unsaved_changes()`(它的 flush 语义是直接写盘);叙事状态机编辑器 Discard 走整页 reload(markSaved 只清标志,内容 diff 仍会重提交);rule 编辑器重填须包 `_suppress_commit`(其碎片选择槽会在重填中先提交)。
+1. **Discard 必须中和**:Discard 分支必须把 UI 回滚到模型值(调本编辑器的重填方法)。因为 Discard 之后还会统一 flush,而 flush 按「UI≠模型」判脏——不中和就把被放弃的编辑重新提交。
+2. **flush 必须门控真实变更**:要么门控在本编辑器的 pending/dirty 信号上,要么做写回前后内容 diff;**绝不能无条件 `mark_dirty`**,否则「打开啥都没动直接关」也弹保存。
+3. **flush 语义特殊的面板别照抄通用中和**:图对话的 flush 语义是直接写盘,Discard 走它自己的 `discard_unsaved_changes()`;叙事状态机 Discard 走整页 reload(只清标志没用,内容 diff 仍会重提交);rule 编辑器重填须抑制提交(其碎片选择槽会在重填中先提交)。
 
 ## 已知坑
 

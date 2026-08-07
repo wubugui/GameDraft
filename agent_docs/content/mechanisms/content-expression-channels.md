@@ -14,7 +14,7 @@ triggers:
   paths: ["public/assets/data/**", "public/assets/scenes/*.json", "public/assets/dialogues/graphs/*.json"]
   topics: [command, action, cutscene, 条件, 对话图, ACTION_TYPES]
   tasks: [做内容, 写动作, 写条件, 编演出]
-last_governed: 2026-07-11
+last_governed: 2026-08-05
 ---
 
 ## 是什么(一句话)
@@ -23,30 +23,28 @@ last_governed: 2026-07-11
 
 ## 权威源(读代码从哪进)
 
-清单一律以代码为准,架构文档的表会漂移:
+**清单只以代码为准,本卡与架构文档都不复制表**(条件叶子已两度扩容,任何旧表都是错的):
 
-- **command 清单**:`tools/editor/shared/action_editor.py` 的 `ACTION_TYPES`(参数权威在 TS 侧 `actionParamManifest.ts`)。
-- **条件叶子清单**:`src/systems/graphDialogue/evaluateGraphCondition.ts`(曾是 5 叶,后加 `plane` 成 6 叶——别抄任何旧表)。
+- **command 清单**:`action_editor.py` 的 `ACTION_TYPES`;参数权威在 TS 侧 `actionParamManifest.ts`。
+- **条件叶子清单**:`evaluateGraphCondition.ts`。
 - **cutscene 可用 action**:`src/data/cutscene_action_allowlist.json`。
 
 ## 硬契约
 
-1. **一切游戏行为走 command** `{ "type": ..., "params": ... }`,唯一执行链是 ActionExecutor。
-   未注册的 type 运行时不执行、校验器报 error。
-2. **成段演出走 cutscene**(有时序/相机/淡入淡出/并行)。cutscene 内**禁改存档**
-   (setFlag/giveItem 等副作用放 `startCutscene` 外层),且只能用白名单 action。
-   *例外*:单发反馈(showEmote / playScriptedDialogue / playNpcAnimation)可作普通 command。
-3. **一切条件走统一条件表达式**:6 类叶子(flag / quest / scenario / scenarioLine /
-   narrative / plane)+ `all/any/not` 组合;运行时布尔/数值状态以 FlagStore 为唯一存储。
-4. **对话分支走图对话 graph JSON**(line/choice/switch/runActions/end;选项可
-   requireFlag / requireCondition / costCoins 门控),不另造分支结构。
+1. **一切游戏行为走 command** `{ type, params }`,唯一执行链是 ActionExecutor;未注册的
+   type 运行时不执行、校验器报 error。
+2. **成段演出走 cutscene**(有时序/相机/淡入淡出/并行):内**禁改存档**(setFlag/giveItem
+   等副作用放 `startCutscene` 外层),且只能用白名单 action。*例外*:单发反馈
+   (showEmote 类)可作普通 command。
+3. **一切条件走统一条件表达式**:已登记叶子 + `all/any/not` 组合,不另造运算符;
+   运行时布尔/数值状态以 FlagStore 为唯一存储。
+4. **对话分支走图对话 graph JSON**,不另造分支结构。
 5. **玩家可见文本走 `[tag:…]` 引用**(见 [text-ref-tag-system](text-ref-tag-system.md))。
 
 ## 已知坑
 
-- command 常见挂载点:任务 `acceptActions`/`rewards`、遭遇 `options[].resultActions`/`rewards`、
-  热区 `data.actions`、区域 `onEnter/onStay/onExit`、图对话 `runActions`、`addDelayedEvent.params.actions`。
-  挂错位置不报错但不生效。
+- **command 挂错位置不报错、也不生效**:必须挂在引擎真会执行的字段上(任务/遭遇/热区/
+  区域/图对话/延迟事件各有其位),换个结构照抄挂点前先确认它会被执行。
 - 缺通道能力时不要硬塞,那是 L2/L3 升级信号(见 [production-mode-workflow](../methods/production-mode-workflow.md))。
 
 ## 怎么验证

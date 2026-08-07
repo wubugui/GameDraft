@@ -44,6 +44,7 @@ from .anim_atlas_preview import (
     resolved_anim_world_pair,
     spritesheet_public_path,
 )
+from .character_dialogue import npc_uses_graph
 from .form_layout import compact_form
 
 STAGE_W = 260
@@ -257,11 +258,13 @@ def _graph_context_npc_anim(model, graph_id: str) -> tuple[str, dict | None, str
     if not gid:
         return "", None, "本图未指定说话 NPC，且拿不到图 id，无法预览"
     found: list[tuple[str, dict]] = []
+    registry = getattr(model, "character_registry", {}) or {}
     for sc in (getattr(model, "scenes", {}) or {}).values():
         for npc in (sc or {}).get("npcs") or []:
             if not isinstance(npc, dict):
                 continue
-            if str(npc.get("dialogueGraphId") or "").strip() != gid:
+            # 图也要经注册表解引用：角色级绑定的图不在就地字段上，只读原始键会漏掉整类 NPC
+            if not npc_uses_graph(npc, gid, registry):
                 continue
             af = model.character_field(npc, "animFile")
             if af.strip():

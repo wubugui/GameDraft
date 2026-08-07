@@ -160,3 +160,44 @@ def clear_dialogue_graph_reference_cache(model: Any) -> None:
         delattr(model, "_dialogue_reference_rows_cache")
     except (AttributeError, TypeError):
         pass
+
+
+DIALOGUE_GRAPH_OPEN_TOOLTIP = "切到「图对话」页并打开这张图（当前页的编辑保持不变）"
+
+
+
+
+def open_dialogue_graph_from_widget(widget: Any, graph_id: str) -> bool:
+    """正向跳转：从任何引用了 graphId 的字段跳到「图对话」页并打开那张图。
+
+    主窗早就有 ``navigate_to_dialogue_graph``（全局搜索、Action 注册表「跳转到来源」、
+    图对话页「被引用」树都在用），但**引用侧字段一个入口都没接**——选完一张图对话想去看/改，
+    只能自己回导航树找。这里做统一转接：沿 parent 链找到实现了该方法的宿主窗口。
+
+    找不到宿主（独立小工具、离屏测试）返回 False，绝不抛——跳转是锦上添花，不能因为
+    没有宿主就把编辑器打挂。
+    """
+    # 在模态弹窗里点 ↗ 也放行（叙事状态机的 actions 弹窗是常规用法）。曾评估过"先关弹窗
+    # 再跳"的拦法，逐条查证后否掉：①离开页的 commit-on-leave 只有场景编辑器实现，而场景页
+    # 的所有 graphId ↗ 与 ActionEditor 都是内联控件、没有一个在模态里，组合不可达；
+    # ②图对话页的「未保存」询问会叠在最上层、可交互，落盘只在用户显式点保存后发生；
+    # ③引用刷新那条真危险的路已由 reference_rebuild_is_safe_now 在模态时整轮让路。
+    # 剩下的"背后切了页"正是按钮 tooltip 承诺的行为——拦住反而挡了正常干活。
+    gid = str(graph_id or "").strip()
+    if not gid:
+        return False
+    node = widget
+    seen: set[int] = set()
+    while node is not None and id(node) not in seen:
+        seen.add(id(node))
+        navigate = getattr(node, "navigate_to_dialogue_graph", None)
+        if callable(navigate):
+            try:
+                navigate(gid)
+                return True
+            except Exception as exc:  # noqa: BLE001 — 跳转失败不得打断编辑
+                print(f"[dialogue-nav] 跳转到图对话 {gid!r} 失败: {exc!r}", flush=True)
+                return False
+        parent = getattr(node, "parentWidget", None)
+        node = parent() if callable(parent) else None
+    return False

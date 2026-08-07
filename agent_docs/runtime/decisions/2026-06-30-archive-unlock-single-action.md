@@ -7,7 +7,7 @@ summary: 人物档案解锁唯一通道=addArchiveEntry;名字匹配、条件自
 status: active
 triggers:
   topics: [档案, 人物解锁, addArchiveEntry]
-last_governed: 2026-07-11
+last_governed: 2026-08-05
 ---
 
 ## 背景(一段)

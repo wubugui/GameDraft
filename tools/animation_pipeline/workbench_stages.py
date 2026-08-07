@@ -10,6 +10,7 @@ G  precise matte -> same geometry and ordering, with actual fallback provenance
 R  human calibration -> uniform per-action transform into one common cell
 H  common cells -> row-major atlas + GameDraft anim.json staging package
 H_STATIC  accepted C PNG -> byte-identical, explicitly named static staging package
+H_STATIC_BUNDLE  accepted C PNG -> one-cell atlas + anim.json staging bundle (one state)
 
 The array-level functions are intentionally independent of the workbench
 database so they can be tested and reused by an Agent that has read the IDE's
@@ -1124,6 +1125,284 @@ def write_h_static_stage(
         raise
 
 
+# 出货动画包的「格像素 / 世界单位」密度中位数(实测 player 1.36 / storyteller 1.34 /
+# popo 1.51 / 克拉拉 1.51 / lifu 1.18)。静态包按同一密度定标:更高的分辨率会被
+# EntityPixelDensityMatch 的低通滤掉,纯浪费显存与磁盘。
+SHIPPED_TEXELS_PER_WORLD = 1.4
+STATIC_BUNDLE_STATE = "idle"
+
+
+def _trim_to_alpha_content(
+    rgba: np.ndarray, *, threshold: int = 8
+) -> tuple[np.ndarray, tuple[int, int, int, int]]:
+    """紧裁到 alpha 内容框。
+
+    静态包必须紧裁:格底=内容底才等于「脚踩在锚点上」(运行时锚点恒为格底中),
+    留白会让角色整体浮起来;且只有内容填满格子,worldHeight 才等于角色本体身高。
+    """
+
+    x0, y0, x1, y1 = _alpha_bbox(rgba, threshold)
+    return np.ascontiguousarray(rgba[y0:y1, x0:x1]), (x0, y0, x1, y1)
+
+
+def _content_size(rgba: np.ndarray) -> tuple[int, int]:
+    x0, y0, x1, y1 = _alpha_bbox(rgba)
+    return max(0, x1 - x0), max(0, y1 - y0)
+
+
+def _center_on_foot_anchor(rgba: np.ndarray, foot_anchor_x: float) -> np.ndarray:
+    """左右补透明边,使 ``foot_anchor_x``(裁后宽度的归一化位置)落在格中线。
+
+    运行时锚点是格底**中**点,而内容 bbox 的中线未必是双脚中线(伸手、扛担、拖影都会
+    把 bbox 拉偏)。给人一个显式旋钮比事后在场景里挪 x 靠谱——挪 x 会连碰撞多边形/
+    交互半径一起挪歪。
+    """
+
+    height, width = rgba.shape[:2]
+    anchor_px = foot_anchor_x * width
+    final_width = int(math.ceil(max(anchor_px, width - anchor_px) * 2))
+    if final_width <= width:
+        return rgba
+    pad_left = max(0, min(int(round(final_width / 2 - anchor_px)), final_width - width))
+    out = np.zeros((height, final_width, 4), dtype=np.uint8)
+    out[:, pad_left : pad_left + width] = rgba
+    return out
+
+
+def _downscale_uniform(rgba: np.ndarray, scale: float) -> np.ndarray:
+    """一次等比降采样(只缩不放:放大不会凭空长出细节,只会撑大图集与显存)。"""
+
+    height, width = rgba.shape[:2]
+    new_height = max(1, int(round(height * scale)))
+    new_width = max(1, int(round(width * scale)))
+    resized = cv2.resize(rgba, (new_width, new_height), interpolation=cv2.INTER_AREA)
+    return np.ascontiguousarray(resized)
+
+
+def pack_static_single_frame(
+    rgba: np.ndarray,
+    *,
+    body_height: float,
+    state_name: str = STATIC_BUNDLE_STATE,
+    aliases: Sequence[str] = (),
+    frame_rate: float = 8.0,
+    loop: bool = True,
+    texels_per_world: float = SHIPPED_TEXELS_PER_WORLD,
+    foot_anchor_x: float | None = None,
+    max_side: int = 2048,
+) -> tuple[Image.Image, dict[str, Any], dict[str, Any]]:
+    """把一张透明 PNG 打成「1 格图集 + 单 state」的动画包。
+
+    与 H 的关系:H 打的是人工 R 标定过的多动作共同格,这里没有 R——单帧不存在跨动作
+    对位问题,几何只有「紧裁 + 可选锚点补边 + 一次等比降采样」三步,全部记进
+    ``geometryOperations``。
+
+    ``body_height`` 是**角色本体的世界身高**,不是格子的世界高。紧裁后两者相等,所以
+    anim.json 只写 ``worldHeight``(运行时按格长宽比推 worldWidth,见
+    ``src/data/resolveAnimationSet.ts``),不会引入非等比缩放。
+    """
+
+    frame = _rgba(rgba, label="static frame")
+    body = _positive(body_height, "bodyHeight")
+    density = _positive(texels_per_world, "texelsPerWorld")
+    rate = _positive(frame_rate, "frameRate")
+    if not isinstance(state_name, str) or not state_name.strip():
+        raise ValueError("state name must be a non-empty string")
+    state = state_name.strip()
+    if max_side <= 0 or max_side > 2048:
+        raise ValueError("max_side must be in 1..2048")
+
+    # 顺序是有讲究的:降采样会让抗锯齿边缘掉到 alpha 阈值以下,所以缩完要再紧裁一次,
+    # 「内容高 == 格高」这个不变量才精确成立(运行时按它反推格内留白);而锚点补边必须
+    # 放在最后——它是**故意**加的透明列,先补后裁会被裁掉。
+    operations: list[str] = []
+    trimmed, content_box = _trim_to_alpha_content(frame)
+    operations.append("alpha_trim")
+
+    # 三条约束一次算成同一个等比系数,避免二次重采样把边缘糊两遍:
+    # ①按出货密度定标 ②两边都 ≤ max_side ③只缩不放。
+    source_height, source_width = trimmed.shape[:2]
+    scale = min(
+        1.0,
+        (body * density) / source_height,
+        max_side / source_height,
+        max_side / source_width,
+    )
+    cell = trimmed
+    if scale < 1.0:
+        cell = _downscale_uniform(cell, scale)
+        cell, _ = _trim_to_alpha_content(cell)
+        operations.append("uniform_downscale")
+    else:
+        scale = 1.0
+
+    if foot_anchor_x is not None:
+        anchor = float(foot_anchor_x)
+        if not math.isfinite(anchor) or not (0.0 <= anchor <= 1.0):
+            raise ValueError("footAnchorX must be within [0, 1]")
+        padded = _center_on_foot_anchor(cell, anchor)
+        if padded.shape != cell.shape:
+            operations.append("foot_anchor_pad")
+        cell = padded
+
+    cell_height, cell_width = cell.shape[:2]
+    if cell_width > max_side or cell_height > max_side:
+        raise ValueError(
+            f"static cell {cell_width}x{cell_height} exceeds {max_side}; "
+            "lower bodyHeight/texelsPerWorld or re-anchor the source"
+        )
+
+    content_width, content_height = _content_size(cell)
+    states: dict[str, dict[str, Any]] = {
+        state: {"frames": [0], "frameRate": rate, "loop": bool(loop)}
+    }
+    for alias in aliases:
+        name = str(alias).strip()
+        if not name:
+            raise ValueError("alias state names must be non-empty")
+        if name in states:
+            raise ValueError(f"duplicate state name: {name}")
+        # 别名指向同一帧:运行时完全合法(出货包 npc_popo_anim 的 stand/walk 就是别名),
+        # H 的「每帧恰好被引用一次」是打包工艺约束,不适用于单帧静态包。
+        states[name] = {"frames": [0], "frameRate": rate, "loop": bool(loop)}
+
+    meta: dict[str, Any] = {
+        "version": 2,
+        "packMode": "static_single_frame",
+        "frameIndexBase": 0,
+        "frameCount": 1,
+        "cols": 1,
+        "rows": 1,
+        "cellWidth": cell_width,
+        "cellHeight": cell_height,
+        "maxTextureSide": max_side,
+        "anchor": "bottom_center_after_alpha_trim",
+        "rowMajorOrder": "col=index%cols, row=index//cols",
+        "geometryOperations": operations,
+        "authoredBodyHeight": body,
+        "texelsPerWorld": density,
+        # 源画布尺寸 + 内容框：把「热点把整幅矩形拉伸到 worldWidth×worldHeight」换算成
+        # 「NPC 按内容紧裁 + 实例 scale」时，位置与大小的补偿全靠这两个数
+        # （见 entity_refactor.convert_hotspot_to_npc）。少了它就只能按整幅矩形估，
+        # 源图有透明留白时角色会整体下沉。
+        "sourceCanvas": {"width": int(frame.shape[1]), "height": int(frame.shape[0])},
+        "sourceContentBox": {
+            "x0": content_box[0],
+            "y0": content_box[1],
+            "x1": content_box[2],
+            "y1": content_box[3],
+        },
+        "uniformScale": scale,
+        "footAnchorX": foot_anchor_x,
+        "frames": [
+            {
+                "logicalIndex": 0,
+                "atlasIndex": 0,
+                "cellWidth": cell_width,
+                "cellHeight": cell_height,
+                "contentWidth": content_width,
+                "contentHeight": content_height,
+            }
+        ],
+    }
+
+    atlas = Image.fromarray(cell, mode="RGBA")
+    anim = atlas_core.export_gamedraft_anim_multi(meta, "atlas.png", None, body, states)
+    # 只留 worldHeight:写死两维会在降采样取整后引入非等比缩放(格宽是像素取整的结果,
+    # 与世界宽不再严格同比)。helper 会把值四舍五入成整数,这里恢复作者给的精确值;
+    # 整数身高仍写成 int,与既有 anim.json 的书写惯例一致(编辑器数值往返按原表示回写)。
+    anim.pop("worldWidth", None)
+    anim["worldHeight"] = int(body) if float(body).is_integer() else body
+    return atlas, anim, meta
+
+
+def write_h_static_bundle_stage(
+    out_dir: str | Path,
+    atlas: Image.Image,
+    anim: Mapping[str, Any],
+    atlas_meta: Mapping[str, Any],
+    *,
+    source_c_png: str | Path,
+    bundle_id: str,
+    placeholder: bool,
+) -> dict[str, Any]:
+    """写一个 staging-only 的单帧动画包;与 H 一样拒绝任何 runtime 目标。"""
+
+    out = Path(out_dir).resolve()
+    if out == RUNTIME_ROOT or RUNTIME_ROOT in out.parents:
+        raise ValueError(
+            "H_STATIC_BUNDLE adapter is staging-only and refuses public/resources/runtime"
+        )
+    bid = safe_bundle_id(bundle_id)
+    source = Path(source_c_png).resolve()
+    temp = _new_output_temp(out)
+    try:
+        atlas_path = temp / "atlas.png"
+        anim_path = temp / "anim.json"
+        meta_path = temp / "atlas.meta.json"
+        atlas.convert("RGBA").save(atlas_path, format="PNG")
+        anim_path.write_text(atlas_core._dump_json_text(dict(anim)), encoding="utf-8")
+        meta = dict(atlas_meta)
+        meta["bundleId"] = bid
+        meta["sourceC"] = str(source)
+        meta["placeholder"] = bool(placeholder)
+        meta_path.write_text(atlas_core._dump_json_text(meta), encoding="utf-8")
+        artifacts = []
+        for path in (atlas_path, anim_path, meta_path):
+            artifacts.append(
+                {
+                    "file": path.name,
+                    "sha256": _sha256(path),
+                    "byteSize": path.stat().st_size,
+                }
+            )
+        manifest: dict[str, Any] = {
+            "schemaVersion": SCHEMA_VERSION,
+            "stage": "H_STATIC_BUNDLE",
+            "stagingOnly": True,
+            "published": False,
+            "bundleId": bid,
+            "placeholder": bool(placeholder),
+            "sourceC": str(source),
+            "artifacts": artifacts,
+            "atlas": {
+                "width": atlas.width,
+                "height": atlas.height,
+                "cols": atlas_meta["cols"],
+                "rows": atlas_meta["rows"],
+                "cellWidth": atlas_meta["cellWidth"],
+                "cellHeight": atlas_meta["cellHeight"],
+            },
+            "authoredBodyHeight": atlas_meta["authoredBodyHeight"],
+            "states": sorted((anim.get("states") or {}).keys()),
+            "geometryOperations": atlas_meta["geometryOperations"],
+        }
+        (temp / "manifest.json").write_text(
+            atlas_core._dump_json_text(manifest), encoding="utf-8"
+        )
+        _commit_output_temp(temp, out)
+        return manifest
+    except Exception:
+        if temp.exists():
+            shutil.rmtree(temp)
+        raise
+
+
+def safe_bundle_id(value: str) -> str:
+    """动画包目录名:一个路径段,不含分隔符/空字节/首尾空白。"""
+
+    text = str(value or "").strip()
+    if (
+        not text
+        or text in {".", ".."}
+        or Path(text).name != text
+        or "\\" in text
+        or "\x00" in text
+    ):
+        raise ValueError(f"bundleId must be one path segment: {value!r}")
+    return text
+
+
 def _source_record(record: Mapping[str, Any]) -> dict[str, Any]:
     keep = ("sequenceIndex", "file", "sha256", "sourceFrameIndex", "timeSec")
     return {key: record[key] for key in keep if key in record}
@@ -1273,9 +1552,57 @@ def _cmd_h_static(args: argparse.Namespace) -> dict[str, Any]:
     )
 
 
+def load_transparent_png(path: str | Path) -> np.ndarray:
+    """读一张带 alpha 的 PNG 为 RGBA uint8;不接受不透明图(静态包必须已抠图)。"""
+
+    source = Path(path)
+    if source.is_symlink():
+        raise FileNotFoundError(f"accepted C PNG cannot be a symlink: {source}")
+    if not source.is_file():
+        raise FileNotFoundError(f"accepted C PNG does not exist as a regular file: {source}")
+    try:
+        with Image.open(source) as image:
+            if image.format != "PNG":
+                raise ValueError("static bundle input must be a PNG")
+            if "A" not in image.getbands() and "transparency" not in image.info:
+                raise ValueError("static bundle input must preserve a transparent channel")
+            rgba = np.asarray(image.convert("RGBA"), dtype=np.uint8)
+    except (OSError, SyntaxError) as exc:
+        raise ValueError(f"static bundle input is not a valid PNG: {source}") from exc
+    return np.ascontiguousarray(rgba)
+
+
+def _cmd_h_static_bundle(args: argparse.Namespace) -> dict[str, Any]:
+    rgba = load_transparent_png(args.input)
+    aliases = [chunk.strip() for chunk in str(args.aliases or "").split(",") if chunk.strip()]
+    atlas, anim, meta = pack_static_single_frame(
+        rgba,
+        body_height=args.body_height,
+        state_name=args.state,
+        aliases=aliases,
+        frame_rate=args.frame_rate,
+        loop=not args.non_loop,
+        texels_per_world=args.texels_per_world,
+        foot_anchor_x=args.foot_anchor_x,
+        max_side=args.max_side,
+    )
+    return write_h_static_bundle_stage(
+        args.out,
+        atlas,
+        anim,
+        meta,
+        source_c_png=args.input,
+        bundle_id=args.bundle_id,
+        placeholder=bool(args.placeholder),
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Animation workbench E/F/G/R/H/H_STATIC staging adapters (never publishes)"
+        description=(
+            "Animation workbench E/F/G/R/H/H_STATIC/H_STATIC_BUNDLE staging adapters "
+            "(never publishes)"
+        )
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -1327,6 +1654,37 @@ def build_parser() -> argparse.ArgumentParser:
     h_static.add_argument("--world-height", type=float)
     h_static.add_argument("--out", required=True)
     h_static.set_defaults(handler=_cmd_h_static)
+
+    h_bundle = sub.add_parser(
+        "h-static-bundle",
+        help="pack one accepted C PNG into a staging-only single-frame animation bundle",
+    )
+    h_bundle.add_argument("--input", required=True, help="accepted C-stage transparent PNG")
+    h_bundle.add_argument("--bundle-id", required=True, help="animation bundle directory name")
+    h_bundle.add_argument(
+        "--body-height",
+        type=float,
+        required=True,
+        help="character body height in world units (NOT the cell height)",
+    )
+    h_bundle.add_argument("--state", default=STATIC_BUNDLE_STATE)
+    h_bundle.add_argument("--aliases", help="comma-separated extra state names on the same frame")
+    h_bundle.add_argument("--frame-rate", type=float, default=8.0)
+    h_bundle.add_argument("--non-loop", action="store_true")
+    h_bundle.add_argument("--texels-per-world", type=float, default=SHIPPED_TEXELS_PER_WORLD)
+    h_bundle.add_argument(
+        "--foot-anchor-x",
+        type=float,
+        help="0..1 within the trimmed content; pads so this x lands on the cell centre line",
+    )
+    h_bundle.add_argument("--max-side", type=int, default=2048)
+    h_bundle.add_argument(
+        "--placeholder",
+        action="store_true",
+        help="mark the bundle as占位 (awaiting real animation) in atlas.meta.json",
+    )
+    h_bundle.add_argument("--out", required=True)
+    h_bundle.set_defaults(handler=_cmd_h_static_bundle)
     return parser
 
 

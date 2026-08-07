@@ -39,6 +39,7 @@ from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
 from PySide6.QtCore import Qt, QRect, QElapsedTimer, QTimer
 
 from ..shared.collapsible_section import CollapsibleSection
+from ..shared.socket_panel import SocketPanel
 
 # 与游戏 tick、FrameSequencePlayer 一致：累加 dt，每 1/frameRate 秒换帧；限制 dt 避免卡死后一次跳多格
 _PREVIEW_MAX_DT_SEC = 0.1
@@ -364,6 +365,16 @@ class AnimEditor(QWidget):
         dl.addLayout(f)
 
         # 保存/放弃改动（仅写 anim.json 的 states 与世界尺寸；图集不动）
+        socket_sec = CollapsibleSection("挂点（逐帧标注 · 写 sockets.json）", start_open=False)
+        socket_sec.set_header_tool_tip(
+            "给这个动画包标命名挂点（右手/头顶/腰…），运行时可以往上挂任意东西。\n"
+            "数据写同目录的 sockets.json sidecar，**不进 anim.json**——重导出图集不会带走它，\n"
+            "但槽位会漂移：指纹对不上时游戏整份忽略并在此提示重标。")
+        self._socket_panel = SocketPanel(self._model)
+        self._socket_panel.dirtyChanged.connect(self._on_socket_dirty)
+        socket_sec.add_body(self._socket_panel)
+        dl.addWidget(socket_sec)
+
         save_row = QHBoxLayout()
         self._btn_save = QPushButton("保存改动到 anim.json")
         self._btn_save.setToolTip(
@@ -617,9 +628,20 @@ class AnimEditor(QWidget):
         else:
             self._clear_detail()
 
+    def reload_refs_from_model(self) -> None:
+        """切页激活钩子：先把磁盘上新出现的动画包补进内存，再刷列表。
+
+        产线（`static_bundle_batch publish` / video_to_atlas 导出）刚发布的包，编辑器不重启
+        也要能在这里看见（2026-08-06 批量上线静态占位包时发现这条断着）。走的是**只加不改**
+        的 discover，不是清空重读——否则本面板里没保存的 anim.json 编辑会被冲掉。
+        """
+        if self._model.discover_new_animation_bundles():
+            self._anim_list_reload_deferred = True
+        self._flush_anim_list_from_model()
+
     def showEvent(self, event) -> None:  # type: ignore[override]
         super().showEvent(event)
-        self._flush_anim_list_from_model()
+        self.reload_refs_from_model()
         # 面板重新可见：恢复预览播放（离开时被 hideEvent 停掉，避免后台空转，P3）。
         self._restart_preview_animation()
         self._calib_elapsed.start()
@@ -792,6 +814,7 @@ class AnimEditor(QWidget):
             self._a_cell_w.setValue(cw0 if cw0 > 0 else 0)
             self._a_cell_h.setValue(ch0 if ch0 > 0 else 0)
             self._capture_world_snapshot(a)
+            self._sync_socket_panel(key, a)
             ww = self._world_seed.get("worldWidth", 0)
             wh = self._world_seed.get("worldHeight", 0)
             if ww > 0 and wh > 0:
@@ -903,7 +926,11 @@ class AnimEditor(QWidget):
 
     def confirm_close(self, parent=None) -> bool:
         """主窗口关闭/换工程门控：anim 编辑不进 ProjectModel dirty（直写 anim.json），
-        必须自带此钩子，否则未保存的帧序/世界尺寸改动会被无提示丢弃（审查 P1-6）。"""
+        必须自带此钩子，否则未保存的帧序/世界尺寸改动会被无提示丢弃（审查 P1-6）。
+        挂点面板同样直写 sidecar，其脏态经 _on_socket_dirty 并进 self._dirty，走同一条门。"""
+        panel = getattr(self, "_socket_panel", None)
+        if panel is not None and panel.is_dirty():
+            self._dirty = True
         if not self._dirty or not self._current_key:
             return True
         box = QMessageBox(self)
@@ -926,6 +953,21 @@ class AnimEditor(QWidget):
             return
         self._dirty = True
         self._update_dirty_ui()
+
+    def _on_socket_dirty(self, dirty: bool) -> None:
+        """挂点面板的脏态并进本编辑器：保存/放弃/关闭门控走同一条路。"""
+        if self._loading:
+            return
+        if dirty:
+            self._dirty = True
+        self._update_dirty_ui()
+
+    def _sync_socket_panel(self, key: str, anim: dict) -> None:
+        """切包时把挂点面板指到新包（图集像素由本编辑器已加载的 sheet pixmap 提供）。"""
+        panel = getattr(self, "_socket_panel", None)
+        if panel is None:
+            return
+        panel.set_bundle(key, anim, self._sheet_pixmap)
 
     def _clear_dirty(self) -> None:
         self._dirty = False
@@ -1260,6 +1302,13 @@ class AnimEditor(QWidget):
         self._original_anim = copy.deepcopy(
             self._model.animations.get(self._current_key, new_dict))
         # 保存后以盘面新值为基线重建种子，防止"改回种子值"误还原成保存前的旧字面值
+        panel = getattr(self, "_socket_panel", None)
+        # 只在挂点真被改过时才写：无条件写会把 sanitize 刷新的新指纹盖上去，
+        # 等于「改个 worldWidth 顺手把一份已失效的挂点认证为有效」（审查 #4）。
+        if panel is not None and panel.is_dirty():
+            sock_err = panel.save()
+            if sock_err:
+                return f"挂点保存失败：{sock_err}"
         self._capture_world_snapshot(self._original_anim)
         self._clear_dirty()
         self._refresh_preview()
@@ -1323,6 +1372,9 @@ class AnimEditor(QWidget):
             return
         if not self._confirm_discard_dirty("将从磁盘重新载入该包。"):
             return
+        panel = getattr(self, "_socket_panel", None)
+        if panel is not None:
+            panel.discard()
         self._clear_dirty()
         self._on_select(self._current_key)
 
@@ -1378,6 +1430,10 @@ class AnimEditor(QWidget):
             if not pm.isNull():
                 self._sheet_pixmap = pm
                 self._sheet_cache_key = sheet_path
+                panel = getattr(self, "_socket_panel", None)
+                if panel is not None and self._current_key:
+                    # 只补图集像素：走 set_bundle 会从磁盘重读，把没保存的标注静默丢掉
+                    panel.set_atlas(pm)
                 self._update_atlas_full_label()
                 self._restart_preview_animation()
                 return

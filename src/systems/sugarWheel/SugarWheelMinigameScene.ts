@@ -3,7 +3,8 @@ import type { ActionExecutor } from '../../core/ActionExecutor';
 import type { Renderer } from '../../rendering/Renderer';
 import type { ActionDef, ConditionExpr } from '../../data/types';
 import { UITheme } from '../../ui/UITheme';
-import { drawPanelBase, SKINS } from '../../ui/PanelSkin';
+import { createPanel, drawPanelBase, SKINS, WOOD_CHIP, WOOD_PANEL } from '../../ui/PanelSkin';
+import { createKeyCap, createRule, drawSelectedRow } from '../../ui/components/UIDecor';
 import type {
   SugarWheelAtmospherePhaseName,
   SugarWheelInstance,
@@ -32,9 +33,12 @@ import {
   FederatedPointerEvent,
   Graphics,
   Circle,
+  Rectangle,
   Sprite,
   Text,
 } from 'pixi.js';
+import { createStyledText, setStyledText } from '../../core/styledText';
+import { plainTextLength, sliceStyledMarkup } from '../../core/textStyle';
 
 type Phase = 'idle' | 'charging' | 'launching' | 'spinning' | 'landing' | 'result';
 
@@ -49,6 +53,16 @@ const SPEECH_DEBUG_ROLE_ORDER = [
 ] as const;
 
 const DEBUG_ALERT_ACTION_PARAMS = 'debugAlertActionParams';
+
+/** 确认框按钮尺寸：bodyLarge 档的字要坐得下，旧的 132×40 是给 16px 字排的。 */
+const CONFIRM_BTN_W = 150;
+const CONFIRM_BTN_H = 52;
+/** 右上角关闭牌边长（木边 chip + × 字形） */
+const CLOSE_CHIP_SIZE = 42;
+/** D 键调试面板里的窄条按钮（DEV only） */
+const DEBUG_BTN_W = 176;
+const DEBUG_BTN_H = 34;
+const DEBUG_ROW_STRIDE = DEBUG_BTN_H + UITheme.spacing.xs;
 
 /**
  * 转盘指针：数据扇区仅占角、顺序由 JSON 决定（须与贴图顺时针一致）；松手后欧拉积分 θ、ω、α，线性阻力减速；
@@ -76,9 +90,13 @@ export class SugarWheelMinigameScene {
   /** 转盘外沿蓄力圆弧（charging 时绘制） */
   private arcPowerRing: Graphics;
   private resultBanner: Container;
-  private resultBannerBg: Graphics;
+  /** 结算牌的木框 + 横线：`createPanel` 出的是容器且尺寸随文案变，只能整块重建（不是 Graphics.clear） */
+  private resultBannerChrome: Container;
   private resultBannerText: Text;
   private resultBannerAnim: { phase: 'pop' | 'hold' | 'fade' | null; t0: number } | null = null;
+  /** 底部居中的操作提示小牌（木边 chip + 文案 + DEV 键帽），替代原先左下角一行小灰字 */
+  private hintBar: Container;
+  private hintChrome: Container;
   private hintText: Text;
   /** 浮动圆形蓄力钮（按住蓄力） */
   private chargeButton: Container;
@@ -100,8 +118,10 @@ export class SugarWheelMinigameScene {
   /** 关闭确认面板（Esc / 关闭按钮 都走这个） */
   private confirmLayer: Container;
   private confirmShade: Graphics;
-  private confirmPanel: Graphics;
+  /** 确认框的木框面板（同上：容器件，重建而非重画） */
+  private confirmChrome: Container;
   private confirmText: Text;
+  private confirmEscCap: Container & { totalWidth: number };
   private confirmYesButton: Container;
   private confirmNoButton: Container;
   private confirmVisible = false;
@@ -179,7 +199,9 @@ export class SugarWheelMinigameScene {
     this.atmosphereScheduler = new SugarWheelAtmosphereScheduler(atmosHost);
 
     this.actionGate = new MinigameActionPlaybackGate(
-      (acts) => this.actionExecutor.executeBatchAwait(acts),
+      // 小游戏结算动作批的来源 = 该小游戏实例（`minigame` 是合法 wrapper owner 类型），
+      // 批里开的对话即归属它的状态机。
+      (acts) => this.actionExecutor.executeBatchFromOwner(acts, 'minigame', this.instance?.id),
       {
         onLockChanged: (locked) => this.onActionsLockChanged(locked),
         restoreMinigameState: restoreMinigameStateAfterAction,
@@ -193,23 +215,23 @@ export class SugarWheelMinigameScene {
     this.geomDebugRimContainer.eventMode = 'none';
     this.geomDebugRimContainer.visible = false;
     const rimStyle = {
-      fontSize: 11,
-      fill: 0xfff8e8,
+      fontSize: UITheme.fontSize.micro,
+      fill: UITheme.colors.title,
       fontFamily: UITheme.fonts.ui,
       fontWeight: 'bold' as const,
     };
     for (let i = 0; i < 12; i++) {
-      const t = new Text({ text: this.resolveText(`${i * 30}°`), style: rimStyle });
+      const t = createStyledText({ text: this.resolveText(`${i * 30}°`), style: rimStyle });
       t.anchor.set(0.5, 0.5);
       t.eventMode = 'none';
       this.geomDebugRimContainer.addChild(t);
     }
 
-    this.geomDebugHud = new Text({
+    this.geomDebugHud = createStyledText({
       text: '',
       style: {
-        fontSize: 12,
-        fill: 0xccffee,
+        fontSize: UITheme.fontSize.micro,
+        fill: UITheme.colors.bodyDim,
         fontFamily: UITheme.fonts.ui,
         align: 'center',
       },
@@ -237,34 +259,43 @@ export class SugarWheelMinigameScene {
     this.resultBanner = new Container();
     this.resultBanner.visible = false;
     this.resultBanner.eventMode = 'none';
-    this.resultBannerBg = new Graphics();
-    this.resultBannerText = new Text({
+    this.resultBannerChrome = new Container();
+    this.resultBannerChrome.eventMode = 'none';
+    // 结算是这局唯一的「大标题」：display 档 + 楷体 + 拉字距，和主菜单/面板标题同一套排法
+    this.resultBannerText = createStyledText({
       text: '',
       style: {
-        fontSize: 22,
-        fill: UITheme.colors.gold,
-        fontFamily: UITheme.fonts.ui,
+        fontSize: UITheme.fontSize.display,
+        fill: UITheme.colors.title,
+        fontFamily: UITheme.fonts.display,
         fontWeight: 'bold',
+        letterSpacing: UITheme.letterSpacing.title,
+        align: 'center',
         wordWrap: true,
         breakWords: true,
-        wordWrapWidth: 360,
+        wordWrapWidth: 420,
       },
     });
     this.resultBannerText.anchor.set(0.5, 0.5);
-    this.resultBanner.addChild(this.resultBannerBg);
+    this.resultBanner.addChild(this.resultBannerChrome);
     this.resultBanner.addChild(this.resultBannerText);
 
-    // 生产 hint 不提调试键；开发构建才附加 D 键引导（与 Manager 侧 KeyD 的 DEV 门控对应）
-    this.hintText = new Text({
-      text:
-        this.resolveText('[tag:string:sugarWheel:hint]')
-        + (import.meta.env.DEV ? ' · D 调试(几何+气泡测试)' : ''),
+    // 操作提示：文案仍全取 strings，DEV 的调试键改由 `createKeyCap` 承担（不再往文案里拼字符串）
+    this.hintText = createStyledText({
+      text: this.resolveText('[tag:string:sugarWheel:hint]'),
       style: {
-        fontSize: 13,
-        fill: UITheme.colors.subtle,
+        fontSize: UITheme.fontSize.small,
+        fill: UITheme.colors.bodyMuted,
         fontFamily: UITheme.fonts.ui,
       },
     });
+    this.hintText.eventMode = 'none';
+    this.hintBar = new Container();
+    this.hintBar.eventMode = 'none';
+    this.hintChrome = new Container();
+    this.hintChrome.eventMode = 'none';
+    this.hintBar.addChild(this.hintChrome);
+    this.hintBar.addChild(this.hintText);
 
     const ch = this.makeCircularChargeButton();
     this.chargeButton = ch.container;
@@ -281,11 +312,12 @@ export class SugarWheelMinigameScene {
     this.confirmShade = new Graphics();
     this.confirmShade.eventMode = 'static';
     this.confirmShade.on('pointertap', (ev: FederatedPointerEvent) => ev.stopPropagation());
-    this.confirmPanel = new Graphics();
-    this.confirmText = new Text({
+    this.confirmChrome = new Container();
+    this.confirmChrome.eventMode = 'none';
+    this.confirmText = createStyledText({
       text: this.resolveText('[tag:string:sugarWheel:confirmClose]'),
       style: {
-        fontSize: 18,
+        fontSize: UITheme.fontSize.bodyLarge,
         fill: UITheme.colors.body,
         fontFamily: UITheme.fonts.ui,
         fontWeight: 'bold',
@@ -293,22 +325,25 @@ export class SugarWheelMinigameScene {
       },
     });
     this.confirmText.anchor.set(0.5, 0.5);
-    this.confirmYesButton = this.makeButton(this.resolveText('[tag:string:sugarWheel:confirmYes]'), () => this.acceptClose(), 132, 40);
-    this.confirmNoButton = this.makeButton(this.resolveText('[tag:string:sugarWheel:confirmNo]'), () => this.dismissClose(), 132, 40);
+    this.confirmYesButton = this.makeButton(this.resolveText('[tag:string:sugarWheel:confirmYes]'), () => this.acceptClose(), CONFIRM_BTN_W, CONFIRM_BTN_H);
+    this.confirmNoButton = this.makeButton(this.resolveText('[tag:string:sugarWheel:confirmNo]'), () => this.dismissClose(), CONFIRM_BTN_W, CONFIRM_BTN_H);
+    // Esc 在确认框上等于「取消」，用键帽说清楚，不再让玩家猜
+    this.confirmEscCap = createKeyCap('Esc', this.resolveText('[tag:string:sugarWheel:confirmNo]'));
     this.confirmLayer.addChild(this.confirmShade);
-    this.confirmLayer.addChild(this.confirmPanel);
+    this.confirmLayer.addChild(this.confirmChrome);
     this.confirmLayer.addChild(this.confirmText);
     this.confirmLayer.addChild(this.confirmYesButton);
     this.confirmLayer.addChild(this.confirmNoButton);
+    this.confirmLayer.addChild(this.confirmEscCap);
 
     this.speechDebugLayer = new Container();
     this.speechDebugLayer.visible = false;
     this.speechDebugLayer.eventMode = 'static';
     this.speechDebugBg = new Graphics();
-    this.speechDebugTitle = new Text({
+    this.speechDebugTitle = createStyledText({
       text: this.resolveText('调试 · 气泡测试 (再按 D 关闭)'),
       style: {
-        fontSize: 13,
+        fontSize: UITheme.fontSize.small,
         fill: UITheme.colors.title,
         fontFamily: UITheme.fonts.ui,
         fontWeight: 'bold',
@@ -327,7 +362,7 @@ export class SugarWheelMinigameScene {
     this.uiLayer.addChild(this.resultBanner);
     this.uiLayer.addChild(this.chargeButton);
     this.uiLayer.addChild(this.closeIconButton);
-    this.uiLayer.addChild(this.hintText);
+    this.uiLayer.addChild(this.hintBar);
     this.uiLayer.addChild(this.speechLayer);
     this.uiLayer.addChild(this.speechDebugLayer);
     this.uiLayer.addChild(this.confirmLayer);
@@ -401,7 +436,8 @@ export class SugarWheelMinigameScene {
     const sh = this.renderer.screenHeight;
     this.actionInputShield.clear();
     this.actionInputShield.rect(0, 0, sw, sh);
-    this.actionInputShield.fill({ color: 0x000000, alpha: 0.008 });
+    // 透明到看不见的吞指针层：alpha 是功能值（要能被拾取），只把色号换成主题的黑
+    this.actionInputShield.fill({ color: UITheme.colors.overlay, alpha: 0.008 });
   }
 
   private refreshWheelLayerInteractivity(): void {
@@ -503,36 +539,53 @@ export class SugarWheelMinigameScene {
     this.unsubResize = this.renderer.subscribeAfterResize(() => this.layout());
   }
 
+  /**
+   * 确认框上的主按钮：设计稿里的选项是**带细木边的近方正按钮**，所以底走 `SKINS.choice`
+   * 的真木框（`createPanel`），悬停只在木框内侧铺一层 `drawSelectedRow` 的琥珀光 + 金描边。
+   * 旧写法是 borderMid/borderActive 两块纯色圆角，木框、金线、选中语汇一样都没有。
+   */
   private makeButton(
     labelText: string,
     onTap: () => void,
-    width = 148,
-    height = 40,
+    width = CONFIRM_BTN_W,
+    height = CONFIRM_BTN_H,
   ): Container {
     const c = new Container();
-    const bg = new Graphics();
-    const label = new Text({
+    c.addChild(createPanel(0, 0, width, height, SKINS.choice));
+    const hi = new Graphics();
+    hi.eventMode = 'none';
+    c.addChild(hi);
+    const label = createStyledText({
       text: labelText,
       style: {
-        fontSize: 16,
+        fontSize: UITheme.fontSize.bodyLarge,
         fill: UITheme.colors.buttonText,
         fontFamily: UITheme.fonts.ui,
         fontWeight: 'bold',
       },
     });
-    c.addChild(bg);
+    label.eventMode = 'none';
     c.addChild(label);
     c.eventMode = 'static';
     c.cursor = 'pointer';
+    c.hitArea = new Rectangle(0, 0, width, height);
     c.on('pointertap', (ev: FederatedPointerEvent) => {
       ev.stopPropagation();
       onTap();
     });
-    c.on('pointerover', () => this.paintButton(bg, width, height, true));
-    c.on('pointerout', () => this.paintButton(bg, width, height, false));
-    this.paintButton(bg, width, height, false);
-    label.x = (width - label.width) / 2;
-    label.y = (height - label.height) / 2;
+    const paint = (hover: boolean) => {
+      hi.clear();
+      if (hover) {
+        const i = WOOD_CHIP;
+        drawSelectedRow(hi, i, i, width - i * 2, height - i * 2);
+      }
+      label.style.fill = hover ? UITheme.colors.title : UITheme.colors.buttonText;
+    };
+    c.on('pointerover', () => paint(true));
+    c.on('pointerout', () => paint(false));
+    paint(false);
+    label.x = Math.round((width - label.width) / 2);
+    label.y = Math.round((height - label.height) / 2);
     return c;
   }
 
@@ -540,12 +593,12 @@ export class SugarWheelMinigameScene {
   private makeCircularChargeButton(): { container: Container; disk: Graphics; glyph: Text } {
     const c = new Container();
     const bg = new Graphics();
-    const label = new Text({
+    const label = createStyledText({
       text: this.resolveText('[tag:string:sugarWheel:chargeGlyph]'),
       style: {
-        fontSize: 17,
-        fill: UITheme.colors.buttonText,
-        fontFamily: UITheme.fonts.ui,
+        fontSize: UITheme.fontSize.bodyLarge,
+        fill: UITheme.colors.title,
+        fontFamily: UITheme.fonts.display,
         fontWeight: 'bold',
       },
     });
@@ -584,51 +637,72 @@ export class SugarWheelMinigameScene {
     return clamp(d, 28, 160);
   }
 
+  /**
+   * 蓄力钮：圆的形状不动（它压在盘沿上，方牌会挡盘面），但配色并入木纽 + 内金线一套——
+   * 暗木底 + 一圈木边 + 内侧一道金细线，悬停整枚点亮一档（同 `drawSelectedRow` 的语汇）。
+   */
   private paintChargeButtonDisk(): void {
     const d = this.chargeButtonDiameter();
+    const hover = this.chargeButtonHover;
     const g = this.chargeButtonDisk;
     g.clear();
     g.circle(d / 2, d / 2, d / 2 - 1);
     g.fill({
-      color: this.chargeButtonHover ? UITheme.colors.borderActive : UITheme.colors.borderMid,
-      alpha: 0.88,
+      color: hover ? UITheme.colors.selectedFill : UITheme.colors.rowBg,
+      alpha: 0.94,
     });
-    g.stroke({ color: UITheme.colors.panelBorder, width: 1 });
-    const fs = clamp(Math.round(17 * (d / 52)), 12, 30);
+    g.stroke({ color: hover ? UITheme.colors.borderSelected : UITheme.colors.panelBorder, width: 2 });
+    // 内金细线：和面板内圈同一条线，只是绕成了圆
+    g.circle(d / 2, d / 2, Math.max(2, d / 2 - 5));
+    g.stroke({
+      color: UITheme.colors.hairline,
+      width: 1,
+      alpha: UITheme.alpha.hairline * (hover ? 2 : 1.5),
+    });
+    const fs = clamp(
+      Math.round(UITheme.fontSize.bodyLarge * (d / 52)),
+      UITheme.fontSize.micro,
+      UITheme.fontSize.title,
+    );
     this.chargeButtonGlyph.style.fontSize = fs;
+    this.chargeButtonGlyph.style.fill = hover ? UITheme.colors.speakerSelf : UITheme.colors.title;
     this.chargeButtonGlyph.position.set(d / 2, d / 2);
   }
 
+  /**
+   * \u53f3\u4e0a\u89d2\u5173\u95ed\uff1a\u539f\u6765\u662f\u4e00\u679a\u51b7\u77f3\u677f\u84dd\u7684\u5c0f\u5706\uff080x222233 / \u60ac\u505c 0x553333\uff09\uff0c\u5728\u4e00\u5c4f\u6696\u6728\u91cc
+   * \u662f\u6700\u5148\u88ab\u773c\u775b\u6311\u51fa\u6765\u7684\u4e00\u5757\u300c\u7f51\u9875\u63a7\u4ef6\u300d\u3002\u6539\u6210\u4e0e\u5168\u7ad9 \u2715 \u4e00\u81f4\u7684\u6728\u8fb9\u5c0f\u724c\u3002
+   */
   private makeCloseIconButton(): Container {
-    const s = 32;
+    const s = CLOSE_CHIP_SIZE;
     const c = new Container();
-    const bg = new Graphics();
-    const label = new Text({
+    c.addChild(createPanel(0, 0, s, s, SKINS.chip));
+    const hi = new Graphics();
+    hi.eventMode = 'none';
+    c.addChild(hi);
+    const label = createStyledText({
       text: this.resolveText('\u00d7'),
       style: {
-        fontSize: 22,
-        fill: UITheme.colors.buttonText,
+        fontSize: UITheme.fontSize.bodyLarge,
+        fill: UITheme.colors.bodyMuted,
         fontFamily: UITheme.fonts.ui,
         fontWeight: 'bold',
       },
     });
     label.anchor.set(0.5, 0.5);
-    c.addChild(bg);
+    label.eventMode = 'none';
     c.addChild(label);
     c.eventMode = 'static';
     c.cursor = 'pointer';
+    c.hitArea = new Rectangle(0, 0, s, s);
     c.on('pointertap', (ev: FederatedPointerEvent) => {
       ev.stopPropagation();
       this.requestClose();
     });
     const paint = (hover: boolean) => {
-      bg.clear();
-      bg.circle(s / 2, s / 2, s / 2 - 1);
-      bg.fill({
-        color: hover ? 0x553333 : 0x222233,
-        alpha: 0.72,
-      });
-      bg.stroke({ color: UITheme.colors.panelBorder, width: 1 });
+      hi.clear();
+      if (hover) drawSelectedRow(hi, WOOD_CHIP, WOOD_CHIP, s - WOOD_CHIP * 2, s - WOOD_CHIP * 2);
+      label.style.fill = hover ? UITheme.colors.title : UITheme.colors.bodyMuted;
     };
     paint(false);
     label.position.set(s / 2, s / 2);
@@ -637,34 +711,36 @@ export class SugarWheelMinigameScene {
     return c;
   }
 
-  /** 左侧调试面板上用的窄条按钮 */
+  /** 左侧调试面板上用的窄条按钮（DEV only，走行皮肤 + 选中铺光，不另立一套配色） */
   private makeDebugSpeechTestButton(labelText: string, onTap: () => void): Container {
-    const w = 164;
-    const h = 30;
+    const w = DEBUG_BTN_W;
+    const h = DEBUG_BTN_H;
     const c = new Container();
     const bg = new Graphics();
-    const label = new Text({
+    const label = createStyledText({
       text: labelText,
       style: {
-        fontSize: 11,
+        fontSize: UITheme.fontSize.micro,
         fill: UITheme.colors.buttonText,
         fontFamily: UITheme.fonts.ui,
         fontWeight: 'bold',
       },
     });
+    label.eventMode = 'none';
     c.addChild(bg);
     c.addChild(label);
     c.eventMode = 'static';
     c.cursor = 'pointer';
+    c.hitArea = new Rectangle(0, 0, w, h);
     c.on('pointertap', (ev: FederatedPointerEvent) => {
       ev.stopPropagation();
       onTap();
     });
-    c.on('pointerover', () => this.paintButton(bg, w, h, true));
-    c.on('pointerout', () => this.paintButton(bg, w, h, false));
-    this.paintButton(bg, w, h, false);
-    label.x = Math.max(4, (w - label.width) / 2);
-    label.y = (h - label.height) / 2;
+    c.on('pointerover', () => this.paintButton(bg, label, w, h, true));
+    c.on('pointerout', () => this.paintButton(bg, label, w, h, false));
+    this.paintButton(bg, label, w, h, false);
+    label.x = Math.max(UITheme.spacing.xs, Math.round((w - label.width) / 2));
+    label.y = Math.round((h - label.height) / 2);
     return c;
   }
 
@@ -699,12 +775,12 @@ export class SugarWheelMinigameScene {
     this.speechDebugButtonArea.removeChildren();
     if (!this.instance) return;
     const roles = this.collectSpeechDebugRoles();
-    const rowStride = 34;
+    const rowStride = DEBUG_ROW_STRIDE;
     let y = 0;
     for (const role of roles) {
       const resolvedRole = this.resolveText(role);
       const display =
-        resolvedRole.length > 24 ? `${resolvedRole.slice(0, 22)}…` : resolvedRole;
+        plainTextLength(resolvedRole) > 24 ? `${sliceStyledMarkup(resolvedRole, 22)}…` : resolvedRole;
       const btn = this.makeDebugSpeechTestButton(display, () => {
         this.showSpeech(role, `[调试] ${role}`);
       });
@@ -712,7 +788,7 @@ export class SugarWheelMinigameScene {
       y += rowStride;
       this.speechDebugButtonArea.addChild(btn);
     }
-    y += 4;
+    y += UITheme.spacing.xs;
     const clearBtn = this.makeDebugSpeechTestButton(this.resolveText('清除全部气泡'), () => this.dismissAllSpeech());
     clearBtn.y = y;
     this.speechDebugButtonArea.addChild(clearBtn);
@@ -723,18 +799,18 @@ export class SugarWheelMinigameScene {
     this.speechDebugLayer.visible = this.geomDebugVisible;
     if (!this.geomDebugVisible) return;
 
-    const pad = 8;
-    const panelX = 12;
-    const panelY = 52;
-    const panelW = 184;
-    const titleH = 22;
+    const pad = UITheme.spacing.md;
+    const panelX = UITheme.spacing.md;
+    const panelY = CLOSE_CHIP_SIZE + UITheme.spacing.xl;
+    const panelW = DEBUG_BTN_W + pad * 2;
+    const titleH = Math.round(this.speechDebugTitle.height);
 
     let contentBottom = 0;
     for (const ch of this.speechDebugButtonArea.children) {
       const row = ch as Container;
-      contentBottom = Math.max(contentBottom, row.y + 30);
+      contentBottom = Math.max(contentBottom, row.y + DEBUG_BTN_H);
     }
-    const innerH = titleH + 6 + contentBottom;
+    const innerH = titleH + UITheme.spacing.sm + contentBottom;
     const panelH = Math.min(Math.max(pad * 2 + innerH, 72), Math.floor(sh * 0.72));
 
     this.speechDebugLayer.position.set(panelX, panelY);
@@ -742,14 +818,14 @@ export class SugarWheelMinigameScene {
     drawPanelBase(this.speechDebugBg, 0, 0, panelW, panelH, SKINS.panelAlt);
 
     this.speechDebugTitle.position.set(pad, pad);
-    this.speechDebugButtonArea.position.set(pad, pad + titleH + 4);
+    this.speechDebugButtonArea.position.set(pad, pad + titleH + UITheme.spacing.sm);
   }
 
-  private paintButton(bg: Graphics, w: number, h: number, hover: boolean): void {
+  private paintButton(bg: Graphics, label: Text | null, w: number, h: number, hover: boolean): void {
     bg.clear();
-    bg.roundRect(0, 0, w, h, UITheme.panel.borderRadiusMed);
-    bg.fill({ color: hover ? UITheme.colors.borderActive : UITheme.colors.borderMid, alpha: 0.92 });
-    bg.stroke({ color: UITheme.colors.panelBorder, width: 1 });
+    drawPanelBase(bg, 0, 0, w, h, SKINS.row, hover ? { border: UITheme.colors.borderSelected } : undefined);
+    if (hover) drawSelectedRow(bg, 0, 0, w, h);
+    if (label) label.style.fill = hover ? UITheme.colors.title : UITheme.colors.buttonText;
   }
 
   private layout(): void {
@@ -757,9 +833,10 @@ export class SugarWheelMinigameScene {
     const sh = this.renderer.screenHeight;
     this.root.position.set(0, 0);
 
+    // 兜底底色：原来是 0x050509（带蓝的石板黑），背景图 contain 时露出的边条会整块发冷。
     this.bg.clear();
     this.bg.rect(0, 0, sw, sh);
-    this.bg.fill({ color: 0x050509, alpha: 1 });
+    this.bg.fill({ color: UITheme.colors.mainMenuBg, alpha: 1 });
 
     if (this.backgroundSprite) {
       const texW = this.backgroundSprite.texture.width;
@@ -817,8 +894,8 @@ export class SugarWheelMinigameScene {
     this.paintArcChargeRing();
     this.layoutResultBanner(sw, sh, cx + wx, cy + wy);
 
-    const margin = 14;
-    this.closeIconButton.position.set(sw - margin - 32, margin);
+    const margin = UITheme.spacing.lg;
+    this.closeIconButton.position.set(sw - margin - CLOSE_CHIP_SIZE, margin);
 
     const R = this.wheelGeomRadiusPx;
     const ox = finiteOr(this.instance.chargeButtonWheelOffsetXPx, R * 0.72);
@@ -827,42 +904,113 @@ export class SugarWheelMinigameScene {
     this.paintChargeButtonDisk();
     this.chargeButton.position.set(cx + wx + ox - cd / 2, cy + wy + oy - cd / 2);
 
-    this.hintText.x = 18;
-    this.hintText.y = sh - this.hintText.height - 14;
-
+    this.layoutHintBar(sw, sh);
     this.layoutSpeechDebugPanel(sw, sh);
     this.layoutConfirm(sw, sh);
     this.refreshGeomDebugLayer();
   }
 
+  /**
+   * 蓄力环＝这局的力度条，只是绕着盘沿走（它必须贴着转盘，横条会跑到画面别处去）。
+   * 配色改用进度条那一对：暗木空槽 + 琥珀实心，跟规矩本的收集进度是同一句话。
+   */
   private paintArcChargeRing(): void {
     const g = this.arcPowerRing;
     g.clear();
     if (this.phase !== 'charging' || this.wheelGeomRadiusPx <= 0) return;
     const power = this.currentPower();
-    if (power <= 1e-4) return;
     const R = this.wheelGeomRadiusPx * 1.12;
     const start = -Math.PI / 2;
+    const w = 7;
+
+    // 空槽三层，和 `createProgressBar` 的「暗槽 + 琥珀实心 + 细边」是同一句话，只是弯成了圆。
+    // ⚠ 最外那圈黑不是装饰：规矩本的进度条画在暗面板上、天生有底衬，这条弧却直接浮在
+    // 摊子的木纹照片上——不压这一层，progressBg 那个近黑色号在花哨背景上等于没画
+    // （实拍确认：整圈空槽完全不可见，玩家看不出这条弧还能涨多少）。
+    g.circle(0, 0, R);
+    g.stroke({ width: w + 5, color: UITheme.colors.overlay, alpha: UITheme.alpha.overlayDark });
+    g.circle(0, 0, R);
+    g.stroke({ width: w + 2, color: UITheme.colors.borderSubtle, alpha: 0.95 });
+    g.circle(0, 0, R);
+    g.stroke({ width: w, color: UITheme.colors.progressBg, alpha: 0.95 });
+
+    if (power <= 1e-4) return;
     const end = start + power * TAU;
+    // ⚠ `arc` 之前必须 `moveTo` 到弧起点：Pixi 会把这段弧接到当前子路径的末端，
+    // 于是空槽整圆的收笔点被一条直线连到 12 点方向的弧起点——实拍里那道从盘顶
+    // 直插进盘面的琥珀竖线就是它，不是蓄力条的一部分。
+    g.moveTo(R * Math.cos(start), R * Math.sin(start));
     g.arc(0, 0, R, start, end, false);
-    g.stroke({ width: 6, color: UITheme.colors.gold, alpha: 0.88 });
+    g.stroke({ width: w, color: UITheme.colors.progressFill, alpha: 1 });
   }
 
+  /**
+   * 底部提示牌。原来是左下角一行 13px 小灰字（正是这轮要清掉的写法），
+   * 改成贴底居中的木边小牌；DEV 的调试键不再往文案里拼字符串，交给一枚 `createKeyCap`。
+   */
+  private layoutHintBar(sw: number, sh: number): void {
+    // `createPanel` 出的是容器、宽高随文案变，只能整块重建
+    for (const ch of this.hintChrome.removeChildren()) ch.destroy({ children: true });
+
+    const cap = import.meta.env.DEV
+      ? createKeyCap('D', this.resolveText('几何 / 气泡调试'))
+      : null;
+    const padX = WOOD_CHIP + UITheme.spacing.lg;
+    const padY = WOOD_CHIP + UITheme.spacing.sm;
+    const gap = cap ? UITheme.spacing.lg : 0;
+    const innerW = this.hintText.width + gap + (cap?.totalWidth ?? 0);
+    const innerH = Math.max(this.hintText.height, cap?.height ?? 0);
+    const w = Math.round(innerW) + padX * 2;
+    const h = Math.round(innerH) + padY * 2;
+
+    this.hintChrome.addChild(createPanel(0, 0, w, h, SKINS.toast));
+    this.hintText.position.set(padX, padY + Math.round((innerH - this.hintText.height) / 2));
+    if (cap) {
+      cap.position.set(
+        padX + Math.round(this.hintText.width) + gap,
+        padY + Math.round((innerH - cap.height) / 2),
+      );
+      this.hintChrome.addChild(cap);
+    }
+    this.hintBar.position.set(
+      Math.round((sw - w) / 2),
+      Math.round(sh - h - UITheme.spacing.lg),
+    );
+  }
+
+  /**
+   * 结算牌：原来是 `drawPanelBase` 画的一块金描边暗底——**木框在这条路上是画不出来的**
+   * （木框是九宫格 Sprite，塞不进 Graphics），所以整块换 `createPanel(SKINS.panel)`，
+   * 并在标题下压一条两端渐隐的横线，跟全站面板的标题排法对齐。
+   */
   private layoutResultBanner(sw: number, sh: number, _wheelCx: number, _wheelCy: number): void {
     void _wheelCx;
     void _wheelCy;
     this.resultBanner.position.set(sw / 2, sh / 2);
+    for (const ch of this.resultBannerChrome.removeChildren()) ch.destroy({ children: true });
     if (!this.resultBanner.visible || !this.resultBannerText.text) return;
-    const padX = 28;
-    const padY = 18;
-    const bw = Math.min(sw * 0.55, 400);
-    this.resultBannerText.style.wordWrapWidth = bw - padX * 2;
+
+    const padX = WOOD_PANEL + UITheme.spacing.xxl;
+    const padY = WOOD_PANEL + UITheme.spacing.xl;
+    const wingW = 64;
+    const wingGap = UITheme.spacing.lg;
+    const side = wingW + wingGap;
+    const bw = Math.min(sw * 0.78, 660);
+    this.resultBannerText.style.wordWrapWidth = bw - padX * 2 - side * 2;
     const textH = this.resultBannerText.height;
-    const bh = Math.max(70, textH + padY * 2);
-    const tw = Math.min(bw - padX * 2, Math.max(this.resultBannerText.width, 1));
-    const rw = Math.min(bw, tw + padX * 2);
-    this.resultBannerBg.clear();
-    drawPanelBase(this.resultBannerBg, -rw / 2, -bh / 2, rw, bh, SKINS.panelAlt, { border: UITheme.colors.gold });
+    const bh = textH + padY * 2;
+    const tw = Math.min(bw - padX * 2 - side * 2, Math.max(this.resultBannerText.width, 1));
+    const rw = Math.min(bw, tw + side * 2 + padX * 2);
+
+    this.resultBannerChrome.addChild(createPanel(-rw / 2, -bh / 2, rw, bh, SKINS.panel));
+    // 两翼渐隐横线：与全站面板标题（createTitleRow 的居中式）同一句排版话
+    const left = createRule(wingW);
+    left.position.set(-rw / 2 + padX, 0);
+    this.resultBannerChrome.addChild(left);
+    const right = createRule(wingW);
+    right.position.set(rw / 2 - padX - wingW, 0);
+    this.resultBannerChrome.addChild(right);
+    this.resultBannerText.position.set(0, 0);
   }
 
   private clearResultBannerImmediate(): void {
@@ -872,11 +1020,11 @@ export class SugarWheelMinigameScene {
   }
 
   private startResultBannerAnim(label: string): void {
-    this.resultBannerText.text = fillToken(
+    setStyledText(this.resultBannerText, fillToken(
       this.resolveText('[tag:string:sugarWheel:resultBanner]'),
       '{label}',
       this.resolveText(label),
-    );
+    ));
     this.resultBanner.visible = true;
     this.resultBannerAnim = { phase: 'pop', t0: performance.now() };
     const sw = this.renderer.screenWidth;
@@ -925,25 +1073,50 @@ export class SugarWheelMinigameScene {
     this.confirmShade.rect(0, 0, sw, sh);
     this.confirmShade.fill({ color: UITheme.colors.overlay, alpha: UITheme.alpha.overlayDark });
 
-    const dlgW = 360;
-    const dlgH = 180;
-    const dlgX = (sw - dlgW) / 2;
-    const dlgY = (sh - dlgH) / 2;
-    this.confirmPanel.clear();
-    drawPanelBase(this.confirmPanel, dlgX, dlgY, dlgW, dlgH, SKINS.panelAlt);
+    const btnW = CONFIRM_BTN_W;
+    const btnH = CONFIRM_BTN_H;
+    const gap = UITheme.spacing.xl;
+    const inset = WOOD_PANEL + UITheme.spacing.xl;
+    const dlgW = 460;
+    const dlgH = Math.round(
+      inset * 2
+        + this.confirmText.height
+        + UITheme.spacing.xl
+        + 1
+        + UITheme.spacing.xl
+        + btnH
+        + UITheme.spacing.md
+        + this.confirmEscCap.height,
+    );
+    const dlgX = Math.round((sw - dlgW) / 2);
+    const dlgY = Math.round((sh - dlgH) / 2);
 
-    this.confirmText.position.set(dlgX + dlgW / 2, dlgY + 60);
+    for (const ch of this.confirmChrome.removeChildren()) ch.destroy({ children: true });
+    this.confirmChrome.addChild(createPanel(dlgX, dlgY, dlgW, dlgH, SKINS.panel));
 
-    const btnW = 132;
-    const btnH = 40;
-    const gap = 24;
+    const textTop = dlgY + inset;
+    this.confirmText.position.set(dlgX + dlgW / 2, textTop + this.confirmText.height / 2);
+
+    const ruleW = dlgW - inset * 2;
+    const ruleY = textTop + this.confirmText.height + UITheme.spacing.xl;
+    if (ruleW > 24) {
+      const rule = createRule(ruleW);
+      rule.position.set(dlgX + inset, ruleY);
+      this.confirmChrome.addChild(rule);
+    }
+
     const totalW = btnW * 2 + gap;
-    const btnY = dlgY + dlgH - btnH - 22;
-    const leftX = dlgX + (dlgW - totalW) / 2;
+    const btnY = ruleY + 1 + UITheme.spacing.xl;
+    const leftX = Math.round(dlgX + (dlgW - totalW) / 2);
     this.confirmNoButton.x = leftX;
     this.confirmNoButton.y = btnY;
     this.confirmYesButton.x = leftX + btnW + gap;
     this.confirmYesButton.y = btnY;
+
+    this.confirmEscCap.position.set(
+      Math.round(dlgX + (dlgW - this.confirmEscCap.totalWidth) / 2),
+      Math.round(btnY + btnH + UITheme.spacing.md),
+    );
   }
 
   private beforeChargePassed(): boolean {
@@ -1294,7 +1467,21 @@ export class SugarWheelMinigameScene {
     const xr = finiteOr(anchor.xRatio, 0.5);
     const yr = finiteOr(anchor.yRatio, 0.85);
 
-    bubble.position.set(sw * xr, sh * yr);
+    // 贴边的锚点（主角在 x=0.077、摊主在 y=0）会让牌子有一半在屏外——文案越长切得越狠。
+    // 按牌子自身包围盒把落点收回屏内，锚点在屏中间的（几个小孩）一点不受影响。
+    const m = UITheme.spacing.lg;
+    const bwPx = bubble.width;
+    const bhPx = bubble.height;
+    const px = bubble.pivot.x;
+    const py = bubble.pivot.y;
+    const minX = m + px;
+    const maxX = sw - m - (bwPx - px);
+    const minY = m + py;
+    const maxY = sh - m - (bhPx - py);
+    bubble.position.set(
+      maxX > minX ? clamp(sw * xr, minX, maxX) : sw * xr,
+      maxY > minY ? clamp(sh * yr, minY, maxY) : sh * yr,
+    );
     this.speechLayer.addChild(bubble);
     this.speechEntries.push({ role, container: bubble, parent: this.speechLayer, t0: performance.now(), holdMs: hold });
 
@@ -1371,19 +1558,24 @@ export class SugarWheelMinigameScene {
     };
   }
 
+  /**
+   * 围观气泡。原来非主角那一支的底是 0x111122——一块**蓝紫**板子飘在暖木摊子上，
+   * 是这局最扎眼的一处。两支都并进面板底色：主角用 panelBgAlt（亮一档 + 金描边），
+   * 旁人用 dialogueBg（暗一档 + 内金线色的细描边），层级靠明度和边色分，不靠色相。
+   */
   private buildSpeechBubbleNode(role: string, text: string, anchor: SugarWheelSpeechAnchor): Container {
-    const wrap = role === 'protagonist' ? 240 : 160;
     const isProta = role === 'protagonist';
-    const fontBody = isProta ? 15 : 13;
-    const fontName = 11;
+    // 换到 body/small 两档后每行装的字变少，行宽同步放宽，免得整句被折出一个孤零零的句号
+    const wrap = isProta ? 360 : 240;
+    const fontBody = isProta ? UITheme.fontSize.body : UITheme.fontSize.small;
     const tail = anchor.tailDirection ?? 'none';
     const showName = Boolean(anchor.label) && !isProta;
 
     const nameNode = showName
-      ? new Text({
+      ? createStyledText({
           text: this.resolveText(anchor.label ?? ''),
           style: {
-            fontSize: fontName,
+            fontSize: UITheme.fontSize.micro,
             fill: UITheme.colors.title,
             fontFamily: UITheme.fonts.ui,
             fontWeight: 'bold',
@@ -1391,11 +1583,11 @@ export class SugarWheelMinigameScene {
         })
       : null;
 
-    const bodyNode = new Text({
+    const bodyNode = createStyledText({
       text,
       style: {
         fontSize: fontBody,
-        fill: UITheme.colors.body,
+        fill: isProta ? UITheme.colors.body : UITheme.colors.bodyMuted,
         fontFamily: UITheme.fonts.ui,
         wordWrap: true,
         breakWords: true,
@@ -1403,49 +1595,50 @@ export class SugarWheelMinigameScene {
       },
     });
 
-    const padX = 10;
-    const padY = 8;
-    const tailH = tail === 'none' ? 0 : 10;
-    const nameH = nameNode ? nameNode.height + 4 : 0;
+    const padX = UITheme.spacing.md;
+    const padY = UITheme.spacing.sm;
+    const tailH = tail === 'none' ? 0 : 12;
+    const nameH = nameNode ? nameNode.height + UITheme.spacing.xs : 0;
     const bw = Math.max(
       nameNode ? nameNode.width + padX * 2 : 0,
       bodyNode.width + padX * 2,
-      isProta ? 80 : 72,
+      isProta ? 120 : 96,
     );
     const bodyBoxH = nameH + bodyNode.height + padY * 2;
     const c = new Container();
     const g = new Graphics();
-    const fillColor = isProta ? 0x1a1408 : 0x111122;
-    const fillAlpha = isProta ? 0.85 : 0.82;
-    const borderW = isProta ? 2 : 1;
+    const fillColor = isProta ? UITheme.colors.panelBgAlt : UITheme.colors.dialogueBg;
+    const fillAlpha = isProta ? 0.94 : 0.9;
+    const borderColor = isProta ? UITheme.colors.borderSelected : UITheme.colors.hairline;
+    const borderW = isProta ? 2 : 1.25;
 
-    const rx = 8;
+    // 近方正：设计稿里的牌子都只倒一点角，8px 圆角在这套里已经算「网页卡片」了
+    const rx = UITheme.panel.borderRadiusSmall;
+    const tw = 14;
     if (tail === 'up') {
-      const tw = 12;
       g.moveTo(bw / 2 - tw / 2, tailH);
       g.lineTo(bw / 2, 0);
       g.lineTo(bw / 2 + tw / 2, tailH);
       g.closePath();
       g.fill({ color: fillColor, alpha: fillAlpha });
-      g.stroke({ color: UITheme.colors.gold, width: borderW });
+      g.stroke({ color: borderColor, width: borderW });
       g.roundRect(0, tailH, bw, bodyBoxH, rx);
       g.fill({ color: fillColor, alpha: fillAlpha });
-      g.stroke({ color: UITheme.colors.gold, width: borderW });
+      g.stroke({ color: borderColor, width: borderW });
     } else if (tail === 'down') {
       g.roundRect(0, 0, bw, bodyBoxH, rx);
       g.fill({ color: fillColor, alpha: fillAlpha });
-      g.stroke({ color: UITheme.colors.gold, width: borderW });
-      const tw = 12;
+      g.stroke({ color: borderColor, width: borderW });
       g.moveTo(bw / 2 - tw / 2, bodyBoxH);
       g.lineTo(bw / 2, bodyBoxH + tailH);
       g.lineTo(bw / 2 + tw / 2, bodyBoxH);
       g.closePath();
       g.fill({ color: fillColor, alpha: fillAlpha });
-      g.stroke({ color: UITheme.colors.gold, width: borderW });
+      g.stroke({ color: borderColor, width: borderW });
     } else {
       g.roundRect(0, 0, bw, bodyBoxH, rx);
       g.fill({ color: fillColor, alpha: fillAlpha });
-      g.stroke({ color: UITheme.colors.gold, width: borderW });
+      g.stroke({ color: borderColor, width: borderW });
     }
 
     c.addChild(g);
@@ -1453,7 +1646,7 @@ export class SugarWheelMinigameScene {
     if (nameNode) {
       nameNode.position.set(padX, ty);
       c.addChild(nameNode);
-      ty += nameNode.height + 4;
+      ty += nameNode.height + UITheme.spacing.xs;
     }
     bodyNode.position.set(padX, ty);
     c.addChild(bodyNode);
@@ -1619,7 +1812,8 @@ export class SugarWheelMinigameScene {
     for (let i = 0; i < n; i++) {
       const a0 = left0 + i * step;
       const a1 = left0 + (i + 1) * step;
-      const fillHue = i % 2 === 0 ? 0x3366cc : 0xcc8833;
+      // 奇偶格靠明度分（旧写法是钴蓝 vs 橙，一块 web 调试色摆在暖木上）
+      const fillHue = i % 2 === 0 ? UITheme.colors.hairline : UITheme.colors.borderActive;
       g.moveTo(0, 0);
       const pStart = this.geomPointOnWheel(R, a0);
       g.lineTo(pStart.x, pStart.y);
@@ -1645,7 +1839,7 @@ export class SugarWheelMinigameScene {
       g.moveTo(p0.x, p0.y);
       g.lineTo(p1.x, p1.y);
       g.stroke({
-        color: major ? 0xd0d0d0 : 0x707070,
+        color: major ? UITheme.colors.bodyDim : UITheme.colors.hint,
         alpha: major ? 0.9 : 0.55,
         width: major ? 2 : 1,
       });
@@ -1683,7 +1877,8 @@ export class SugarWheelMinigameScene {
         const pClose = this.geomPointOnWheel(rClose, 0);
         g.lineTo(pClose.x, pClose.y);
       }
-      g.stroke({ color: 0x66ffdd, alpha: 0.88, width: 2.75 });
+      // HUD 文案里管它叫「青线」，所以留住青，但换成脱了饱和的支线青（0x66ffdd 是荧光薄荷）
+      g.stroke({ color: UITheme.colors.questSide, alpha: 0.95, width: 2.75 });
     }
 
     const curIdx =
@@ -1696,8 +1891,8 @@ export class SugarWheelMinigameScene {
       g.moveTo(0, 0);
       g.lineTo(p.x, p.y);
       g.stroke({
-        color: highlight ? 0xffff66 : 0xffffff,
-        alpha: highlight ? 0.9 : 0.38,
+        color: highlight ? UITheme.colors.borderSelected : UITheme.colors.subtle,
+        alpha: highlight ? 0.95 : 0.38,
         width: highlight ? 2.5 : 1,
       });
     }
@@ -1707,7 +1902,8 @@ export class SugarWheelMinigameScene {
       const q = this.geomPointOnWheel(R * 1.12, phi);
       g.moveTo(0, 0);
       g.lineTo(q.x, q.y);
-      g.stroke({ color: 0x00ff99, width: 3, alpha: 0.95 });
+      // 指针射线是这层里最要紧的一根，用最亮的暖色（原 0x00ff99 荧光绿）
+      g.stroke({ color: UITheme.colors.orange, width: 3, alpha: 0.95 });
     }
 
     const rLabel = R * 1.2;

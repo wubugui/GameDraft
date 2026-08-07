@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Background,
+  ConnectionMode,
   Controls,
   MiniMap,
   ReactFlow,
@@ -40,9 +41,12 @@ import {
   computeGraphLayout,
 } from './canvas/autoLayout';
 import {
+  alignTransitionAnchorsToDisplayEdges,
+  buildRoutingRects,
   shouldSnapTransitionAnchors,
   snapTransitionAnchorsToEdges,
 } from './canvas/transitionAnchorLayout';
+import { applyEdgeRouting } from './canvas/edgeRouting';
 import { parseTransitionAnchorId, transitionAnchorId } from './anchorCodec';
 import {
   applyEditorGroupDisplay,
@@ -70,6 +74,8 @@ import { SignalChipsField } from './components/SignalChipsField';
 import { SignalPickerModal } from './components/SignalPickerModal';
 import { ReferencePickerField } from './components/ReferencePickerModal';
 import { DEFAULT_DRAFT_SIGNAL } from './signalConstants';
+import { transitionEdgeLabel } from './edgeLabels';
+import { createAuthorSignal, isUnregisteredAuthorSignal } from './signalCatalog';
 import { applySignalDisplayToEdges, buildSignalLabelMap } from './signalDisplay';
 import { SignalRefactorModal, type NarrativeRefactorRequest } from './components/SignalRefactorModal';
 import {
@@ -300,7 +306,7 @@ function NarrativeEditorInner() {
   const [dataSource, setDataSource] = useState('');
   const [dialogueRelations, setDialogueRelations] = useState<DialogueRelationIndex>(emptyDialogueRelationIndex);
 
-  const { wrapUpdater, undo, redo, resetHistory } = useEditorHistory(data, setDataInternal, (next) => {
+  const { wrapUpdater, undo, redo, resetHistory, syncExternalData } = useEditorHistory(data, setDataInternal, (next) => {
     scheduleRemoteSync(next);
   });
 
@@ -364,6 +370,9 @@ function NarrativeEditorInner() {
     // 不走 updateData/history：跨文件重构不允许被画布 Ctrl+Z「半撤销」（叙事回退而对话图/场景
     // 不回退 = 数据劈叉）；整体回退一律走「撤销重构」（宿主反向操作，全项目一体）。
     setDataInternal(normalized);
+    // 同 tick 追平撤销核基线：只靠 useEffect 兜底的话，同一个事件里紧跟着的编辑会拿
+    // 重构前的旧基线覆盖回去（跨文件重构被局部编辑抹平 = 数据劈叉）。
+    syncExternalData(normalized);
     resetHistory();
     scheduleRemoteSync(normalized);
     setSavedDataHash(stableHash(JSON.stringify(normalized)));
@@ -371,7 +380,7 @@ function NarrativeEditorInner() {
     setRefactorJournalSize(journalSize);
     setStatus(message);
     void refreshCatalog();
-  }, [refreshCatalog, resetHistory, scheduleRemoteSync]);
+  }, [refreshCatalog, resetHistory, scheduleRemoteSync, syncExternalData]);
 
   const handleSignalRefactored = useCallback((result: SignalRefactorResultDef, description: string) => {
     if (!result.narrative) return;
@@ -404,10 +413,18 @@ function NarrativeEditorInner() {
         setStatus(`撤销重构失败：${result.reason ?? '未知错误'}`);
         return;
       }
+      // 撤销同样是跨文件改写：宿主的收尾自检若报出图对话侧悬垂引用，必须当场说出来，
+      // 不能等 Save All 后跑 validate-data 才发现（2026-08-05 审查 P0-2）。
+      const dangling = result.postCheck?.dangling ?? [];
+      const warn = dangling.length > 0
+        ? `　⚠ 图对话侧仍有 ${dangling.length} 处悬垂引用：`
+          + dangling.slice(0, 3).map((d) => `${d.dialogueGraphId}·${d.nodeId}`).join('、')
+          + (dangling.length > 3 ? ' 等' : '')
+        : '';
       adoptRefactoredNarrative(
         result.narrative,
         result.journalSize ?? 0,
-        `${result.description ?? '已撤销重构'}（全项目一体回退，仍未落盘）。`,
+        `${result.description ?? '已撤销重构'}（全项目一体回退，仍未落盘）。${warn}`,
       );
     });
   }, [adoptRefactoredNarrative, editorDirty]);
@@ -577,6 +594,7 @@ function NarrativeEditorInner() {
     void loadNarrativeDataWithSource().then(async (loaded) => {
       const next = normalizeFile(loaded.data);
       setDataInternal(next);
+      syncExternalData(next);
       setCompositionId(next.compositions?.[0]?.id ?? '');
       setSignalKey(collectKnownSignals(next)[0] ?? '');
       const loadedCatalog = await loadAuthoringCatalog();
@@ -773,9 +791,15 @@ function NarrativeEditorInner() {
     const selected = applyCanvasSelection(nodes, edges, selectedId);
     // 折叠呈现变换：成员隐藏、跨组连线改接分组框——只作用于 display 拷贝
     const grouped = applyEditorGroupDisplay(selected.nodes, selected.edges, currentGroups);
-    // 信号显示模式（默认中文名，勾「信号id」回原始 id）：同样只作用于 display 拷贝
-    if (preferences.canvasSignalDisplay === 'id') return grouped;
-    return { nodes: grouped.nodes, edges: applySignalDisplayToEdges(grouped.edges, signalLabelMap) };
+    const labeled = preferences.canvasSignalDisplay === 'id'
+      ? grouped.edges
+      : applySignalDisplayToEdges(grouped.edges, signalLabelMap);
+    // 路由必须是最后一步：端点在折叠变换里可能被改接到分组框，选侧要按最终端点算。
+    // 放在 display 层（而非建图时）是为了节点拖动过程中曲线实时跟手换侧。
+    const rects = buildRoutingRects(grouped.nodes);
+    const routedEdges = applyEdgeRouting(labeled, (id) => rects.get(id) ?? null);
+    // 触发点按 display 边（折叠改接/隐藏之后的那份）再对一次，别停在原始端点算出的老位置
+    return { nodes: alignTransitionAnchorsToDisplayEdges(grouped.nodes, routedEdges), edges: routedEdges };
   }, [nodes, edges, selectedId, currentGroups, preferences.canvasSignalDisplay, signalLabelMap]);
 
   const updateCurrentGraph = useCallback((updater: (g: NarrativeGraphDef, next: NarrativeGraphsFileDef) => void) => {
@@ -2136,7 +2160,15 @@ function NarrativeEditorInner() {
         {inspectorTab === 'transitions' && graph && (
           <div className="transition-table">
             {transitionsForInspector.map((tr) => {
-              const trSignalNote = (data.signals ?? []).find((s) => s.id === tr.signal)?.notes?.trim();
+              // reactive* 迁移不吃 signal（占位恒为 __draft__）：注释与副标题都按 trigger 走，
+              // 否则列表里「条件已填」和「真没接线」都显示成「(草稿)」。
+              const trReactive = tr.trigger === 'reactive' || tr.trigger === 'reactiveAll' || tr.trigger === 'reactiveAny';
+              const trSignalNote = trReactive
+                ? undefined
+                : (data.signals ?? []).find((s) => s.id === tr.signal)?.notes?.trim();
+              const trSubtitle = trReactive
+                ? transitionEdgeLabel(tr)
+                : (tr.signal && tr.signal !== DEFAULT_DRAFT_SIGNAL ? tr.signal : '(草稿)');
               return (
               <button
                 key={tr.id}
@@ -2154,7 +2186,7 @@ function NarrativeEditorInner() {
                 }}
               >
                 <span>{String(tr.from)} → {String(tr.to)}</span>
-                <small>{tr.signal === DEFAULT_DRAFT_SIGNAL ? '(草稿)' : (tr.signal || '(草稿)')}{trSignalNote ? ' 📝' : ''}</small>
+                <small>{trSubtitle}{trSignalNote ? ' 📝' : ''}</small>
               </button>
               );
             })}
@@ -2304,6 +2336,10 @@ function NarrativeFlowCanvas(props: {
       nodeTypes={flowNodeTypes}
       edgeTypes={flowEdgeTypes}
       defaultEdgeOptions={{ zIndex: 25 }}
+      // 四向端口：每侧 source 压在 target 之上（见 flowNodes 的 NodePorts）。
+      // Loose 是配套硬要求——落点命中的是上层的 source 口，Strict 下 source→source 会被判无效，
+      // 连线直接连不上。方向仍由「从哪个节点拉出」决定，与 onConnect 的语义一致。
+      connectionMode={ConnectionMode.Loose}
       onNodesChange={props.onNodesChange}
       onEdgesChange={props.onEdgesChange}
       onConnect={props.onConnect}
@@ -2734,22 +2770,29 @@ function GraphInspector(props: {
         ) : parentElement?.kind === 'scenarioSubgraph' ? (
           <>
             <ReadOnlyField label="Owner Type（由元素类型派生）" value="scenario" />
-            <ReferencePickerField
-              label="Owner ID"
-              value={parentElement.refId || effectiveOwnerId}
-              entries={referenceEntriesForType('scenario', catalog)}
-              onChange={(value) => updateCurrentGraph((g, next) => {
-                g.ownerType = 'scenario';
-                g.ownerId = value;
-                const comp = composition ? getComposition(next, composition.id) : undefined;
-                const el = comp?.elements?.find((item) => item.id === parentElement.id);
-                if (el) {
-                  el.ownerType = 'scenario';
-                  el.ownerId = value;
-                  el.refId = value;
-                }
-              })}
-            />
+            {/* 目录为空 = scenario 系统当前无数据：给个说明，别摆一个永远选不出东西的选择器。 */}
+            {referenceEntriesForType('scenario', catalog).length === 0 ? (
+              <div className="property-line note">
+                scenario 目录为空（scenarios.json 无数据），此子图不需要绑定 scenarioId，按「不挂实体的通用子图」使用即可。
+              </div>
+            ) : (
+              <ReferencePickerField
+                label="Owner ID"
+                value={parentElement.refId || effectiveOwnerId}
+                entries={referenceEntriesForType('scenario', catalog)}
+                onChange={(value) => updateCurrentGraph((g, next) => {
+                  g.ownerType = 'scenario';
+                  g.ownerId = value;
+                  const comp = composition ? getComposition(next, composition.id) : undefined;
+                  const el = comp?.elements?.find((item) => item.id === parentElement.id);
+                  if (el) {
+                    el.ownerType = 'scenario';
+                    el.ownerId = value;
+                    el.refId = value;
+                  }
+                })}
+              />
+            )}
           </>
         ) : (
           <>
@@ -2912,6 +2955,10 @@ function TransitionInspector(props: {
   const stateChoices = Object.keys(graph.states);
   // 被引用处显示信号注释：让人看着这条迁移就知道它监听的信号是干嘛的（注释在信号注册处编写）。
   const signalNote = (props.data.signals ?? []).find((s) => s.id === transition.signal)?.notes?.trim();
+  // 未登记提示：监听着一个没有注册行的作者信号 = 校验持续报"未在信号注册表登记"。
+  // 就地给一键补登记，别让人只看见 warning 却找不到在哪补。判据与信号弹窗的「补登记」
+  // 按钮**共用同一个函数**，两处不许各写各的。
+  const signalUnregistered = isUnregisteredAuthorSignal(props.data, transition.signal ?? '');
   const legacyEndpoint = typeof transition.from !== 'string' || typeof transition.to !== 'string';
   const triggerMode = transition.trigger ?? 'signal';
   const isReactive = triggerMode === 'reactive' || triggerMode === 'reactiveAll' || triggerMode === 'reactiveAny';
@@ -2966,6 +3013,21 @@ function TransitionInspector(props: {
               )}
             </div>
             {signalNote ? <div className="signal-note-display">📝 {signalNote}</div> : null}
+            {signalUnregistered ? (
+              <div className="property-line warn signal-unregistered-row">
+                <span>
+                  ⚠ 信号「{transition.signal}」没有注册行（校验会一直报"未在信号注册表登记"；
+                  运行时仍按名字触发，但没有可维护的名称/注释）。
+                </span>
+                <button
+                  type="button"
+                  title="把该信号补进 narrative_graphs.signals 注册表（可 Ctrl+Z 撤销）"
+                  onClick={() => props.updateData((next) => { createAuthorSignal(next, transition.signal); })}
+                >
+                  补登记
+                </button>
+              </div>
+            ) : null}
           </div>
           <SignalPickerModal
             open={pickerOpen}
@@ -3084,15 +3146,22 @@ function ElementInspector(props: {
       ) : element.kind === 'scenarioSubgraph' ? (
         <>
           <ReadOnlyField label="来源类型（由元素类型派生）" value="scenario" />
-          <ReferencePickerField label="Scenario" value={element.refId || element.ownerId || ''} entries={referenceEntries} onChange={(value) => updateElement(updateData, composition, element.id, (el) => {
-            el.refId = value;
-            el.ownerId = value;
-            el.ownerType = 'scenario';
-            if (el.graph) {
-              el.graph.ownerType = 'scenario';
-              el.graph.ownerId = value;
-            }
-          })} />
+          {/* 目录为空 = scenario 系统当前无数据：说明取代空选择器（校验也已不再要求 scenarioId）。 */}
+          {referenceEntries.length === 0 ? (
+            <div className="property-line note">
+              scenario 目录为空（scenarios.json 无数据），此子图不需要绑定 scenarioId，按「不挂实体的通用子图」使用即可。
+            </div>
+          ) : (
+            <ReferencePickerField label="Scenario" value={element.refId || element.ownerId || ''} entries={referenceEntries} onChange={(value) => updateElement(updateData, composition, element.id, (el) => {
+              el.refId = value;
+              el.ownerId = value;
+              el.ownerType = 'scenario';
+              if (el.graph) {
+                el.graph.ownerType = 'scenario';
+                el.graph.ownerId = value;
+              }
+            })} />
+          )}
           {element.graph && (
             <>
               <SelectField label="入口状态" value={element.graph.entryState ?? ''} values={Object.keys(element.graph.states)} onChange={(value) => updateElement(updateData, composition, element.id, (el) => { if (el.graph) el.graph.entryState = value; })} />

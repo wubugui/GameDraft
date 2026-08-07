@@ -342,6 +342,251 @@ class WorkbenchStageTests(unittest.TestCase):
             )
         self.assertFalse(forbidden.exists())
 
+    # ---- H_STATIC_BUNDLE：单图 → 单帧动画包 -------------------------------
+
+    @staticmethod
+    def static_source(
+        canvas=(400, 300), box=(50, 350, 80, 220)
+    ) -> np.ndarray:
+        """一张带透明留白的立姿抠图：canvas=(h,w)，box=(y0,y1,x0,x1)。"""
+
+        height, width = canvas
+        frame = np.zeros((height, width, 4), dtype=np.uint8)
+        y0, y1, x0, x1 = box
+        frame[y0:y1, x0:x1] = (200, 100, 50, 255)
+        return frame
+
+    def test_static_bundle_packs_one_cell_with_zero_based_single_frame(self) -> None:
+        atlas, anim, meta = stages.pack_static_single_frame(
+            self.static_source(), body_height=150.0
+        )
+
+        self.assertEqual((anim["cols"], anim["rows"]), (1, 1))
+        self.assertEqual(list(anim["states"]), ["idle"])
+        self.assertEqual(anim["states"]["idle"]["frames"], [0])
+        self.assertTrue(anim["states"]["idle"]["loop"])
+        self.assertEqual(meta["frameIndexBase"], 0)
+        self.assertEqual(meta["frameCount"], 1)
+        self.assertEqual(atlas.size, (meta["cellWidth"], meta["cellHeight"]))
+        self.assertEqual(anim["cellWidth"], atlas.size[0])
+        self.assertEqual(anim["cellHeight"], atlas.size[1])
+        self.assertEqual(len(anim["atlasFrames"]), 1)
+
+    def test_static_bundle_writes_only_world_height_so_scale_stays_uniform(self) -> None:
+        _, anim, meta = stages.pack_static_single_frame(
+            self.static_source(), body_height=150.0
+        )
+        # 写死两维会让世界长宽比与像素取整后的格长宽比不一致 → 运行时非等比缩放。
+        self.assertNotIn("worldWidth", anim)
+        self.assertEqual(anim["worldHeight"], 150)
+        self.assertEqual(meta["authoredBodyHeight"], 150.0)
+
+        _, fractional, _ = stages.pack_static_single_frame(
+            self.static_source(), body_height=96.5
+        )
+        self.assertEqual(fractional["worldHeight"], 96.5)
+
+    def test_static_bundle_trims_so_content_fills_the_cell(self) -> None:
+        """内容高 == 格高，否则脚不在锚点上、角色会整体浮起来。"""
+
+        _, _, meta = stages.pack_static_single_frame(
+            self.static_source(), body_height=150.0
+        )
+        frame = meta["frames"][0]
+        self.assertEqual(frame["contentHeight"], meta["cellHeight"])
+        self.assertEqual(frame["contentWidth"], meta["cellWidth"])
+        self.assertEqual(meta["sourceContentBox"], {"x0": 80, "y0": 50, "x1": 220, "y1": 350})
+        self.assertIn("alpha_trim", meta["geometryOperations"])
+
+    def test_static_bundle_scales_to_shipped_texel_density(self) -> None:
+        _, _, meta = stages.pack_static_single_frame(
+            self.static_source(), body_height=150.0
+        )
+        self.assertEqual(meta["cellHeight"], round(150.0 * stages.SHIPPED_TEXELS_PER_WORLD))
+        self.assertIn("uniform_downscale", meta["geometryOperations"])
+
+        # 只缩不放：源比目标密度还小时保持原尺寸。
+        _, _, small = stages.pack_static_single_frame(
+            self.static_source(canvas=(60, 40), box=(5, 55, 10, 30)), body_height=150.0
+        )
+        self.assertEqual(small["cellHeight"], 50)
+        self.assertEqual(small["uniformScale"], 1.0)
+        self.assertNotIn("uniform_downscale", small["geometryOperations"])
+
+    def test_static_bundle_clamps_both_sides_to_max_side(self) -> None:
+        wide = np.zeros((300, 4000, 4), dtype=np.uint8)
+        wide[:, :] = (10, 20, 30, 255)
+        _, _, meta = stages.pack_static_single_frame(
+            wide, body_height=4000.0, texels_per_world=1.0
+        )
+        self.assertLessEqual(meta["cellWidth"], 2048)
+        self.assertLessEqual(meta["cellHeight"], 2048)
+
+    def test_static_bundle_foot_anchor_pads_without_dropping_content(self) -> None:
+        source = self.static_source()
+        source[100:120, 220:290] = (200, 100, 50, 255)  # 伸出去的手臂把 bbox 拉偏
+
+        _, _, centred = stages.pack_static_single_frame(source, body_height=150.0)
+        _, _, anchored = stages.pack_static_single_frame(
+            source, body_height=150.0, foot_anchor_x=0.33
+        )
+
+        self.assertIn("foot_anchor_pad", anchored["geometryOperations"])
+        self.assertGreater(anchored["cellWidth"], centred["cellWidth"])
+        # 补的是透明列，像素内容一列不少；高度方向不受影响。
+        self.assertEqual(
+            anchored["frames"][0]["contentWidth"], centred["frames"][0]["contentWidth"]
+        )
+        self.assertEqual(anchored["cellHeight"], centred["cellHeight"])
+        self.assertEqual(anchored["frames"][0]["contentHeight"], anchored["cellHeight"])
+
+        with self.assertRaisesRegex(ValueError, "footAnchorX"):
+            stages.pack_static_single_frame(
+                source, body_height=150.0, foot_anchor_x=1.5
+            )
+
+    def test_static_bundle_alias_states_share_the_single_frame(self) -> None:
+        """H 的「每帧恰好被引用一次」是打包工艺约束，对单帧静态包不适用。"""
+
+        _, anim, _ = stages.pack_static_single_frame(
+            self.static_source(), body_height=150.0, aliases=("stand", "walk")
+        )
+        self.assertEqual(sorted(anim["states"]), ["idle", "stand", "walk"])
+        for spec in anim["states"].values():
+            self.assertEqual(spec["frames"], [0])
+
+        with self.assertRaisesRegex(ValueError, "duplicate state name"):
+            stages.pack_static_single_frame(
+                self.static_source(), body_height=150.0, aliases=("idle",)
+            )
+
+    def test_static_bundle_writer_emits_three_artifacts_and_marks_placeholder(self) -> None:
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "accepted-c.png"
+            Image.fromarray(self.static_source(), mode="RGBA").save(source, format="PNG")
+            atlas, anim, meta = stages.pack_static_single_frame(
+                self.static_source(), body_height=150.0
+            )
+            out = root / "H_STATIC_BUNDLE"
+            manifest = stages.write_h_static_bundle_stage(
+                out,
+                atlas,
+                anim,
+                meta,
+                source_c_png=source,
+                bundle_id="demo_placeholder_anim",
+                placeholder=True,
+            )
+
+            self.assertEqual(manifest["stage"], "H_STATIC_BUNDLE")
+            self.assertTrue(manifest["stagingOnly"])
+            self.assertFalse(manifest["published"])
+            self.assertTrue(manifest["placeholder"])
+            self.assertEqual(
+                sorted(path.name for path in out.iterdir()),
+                ["anim.json", "atlas.meta.json", "atlas.png", "manifest.json"],
+            )
+            on_disk = json.loads((out / "atlas.meta.json").read_text(encoding="utf-8"))
+            self.assertTrue(on_disk["placeholder"])
+            self.assertEqual(on_disk["bundleId"], "demo_placeholder_anim")
+            self.assertEqual(on_disk["packMode"], "static_single_frame")
+
+            with self.assertRaises(FileExistsError):
+                stages.write_h_static_bundle_stage(
+                    out,
+                    atlas,
+                    anim,
+                    meta,
+                    source_c_png=source,
+                    bundle_id="demo_placeholder_anim",
+                    placeholder=True,
+                )
+
+    def test_static_bundle_writer_refuses_runtime_tree_and_bad_bundle_id(self) -> None:
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "accepted-c.png"
+            Image.fromarray(self.static_source(), mode="RGBA").save(source, format="PNG")
+            atlas, anim, meta = stages.pack_static_single_frame(
+                self.static_source(), body_height=150.0
+            )
+
+            forbidden = stages.RUNTIME_ROOT / "__static_bundle_test_must_not_exist__"
+            self.assertFalse(forbidden.exists())
+            with self.assertRaisesRegex(ValueError, "staging-only"):
+                stages.write_h_static_bundle_stage(
+                    forbidden,
+                    atlas,
+                    anim,
+                    meta,
+                    source_c_png=source,
+                    bundle_id="x_anim",
+                    placeholder=False,
+                )
+            self.assertFalse(forbidden.exists())
+
+            for bad in ("../escape", "a/b", "", "."):
+                with self.assertRaisesRegex(ValueError, "one path segment"):
+                    stages.write_h_static_bundle_stage(
+                        root / f"out-{abs(hash(bad))}",
+                        atlas,
+                        anim,
+                        meta,
+                        source_c_png=source,
+                        bundle_id=bad,
+                        placeholder=False,
+                    )
+
+    def test_static_bundle_input_must_be_a_transparent_png(self) -> None:
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as tmp:
+            opaque = Path(tmp) / "opaque.png"
+            Image.new("RGB", (3, 4), (10, 20, 30)).save(opaque, format="PNG")
+            with self.assertRaisesRegex(ValueError, "transparent channel"):
+                stages.load_transparent_png(opaque)
+            with self.assertRaises(FileNotFoundError):
+                stages.load_transparent_png(Path(tmp) / "missing.png")
+
+    def test_static_bundle_cli_handler_writes_a_loadable_bundle(self) -> None:
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "c.png"
+            Image.fromarray(self.static_source(), mode="RGBA").save(source, format="PNG")
+            out = root / "bundle"
+            args = stages.build_parser().parse_args(
+                [
+                    "h-static-bundle",
+                    "--input",
+                    str(source),
+                    "--bundle-id",
+                    "cli_placeholder_anim",
+                    "--body-height",
+                    "150",
+                    "--aliases",
+                    "stand, walk",
+                    "--placeholder",
+                    "--out",
+                    str(out),
+                ]
+            )
+            manifest = args.handler(args)
+
+            self.assertEqual(manifest["bundleId"], "cli_placeholder_anim")
+            self.assertEqual(manifest["states"], ["idle", "stand", "walk"])
+            anim = json.loads((out / "anim.json").read_text(encoding="utf-8"))
+            self.assertEqual(anim["worldHeight"], 150)
+            self.assertEqual(anim["states"]["idle"]["frames"], [0])
+            with Image.open(out / "atlas.png") as image:
+                self.assertEqual(image.size, (anim["cellWidth"], anim["cellHeight"]))
+
     def test_cli_calibration_wrapper_shape_is_accepted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "calibration.json"

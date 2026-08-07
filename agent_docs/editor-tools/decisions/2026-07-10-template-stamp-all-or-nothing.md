@@ -7,7 +7,7 @@ summary: 盖章三产物(合并叙事图+镜像quest+对话桩)一并暂存 Proj
 status: active
 triggers:
   topics: [叙事模板, 盖章持久化, 全有全无]
-last_governed: 2026-07-11
+last_governed: 2026-08-05
 ---
 
 ## 背景(一段)

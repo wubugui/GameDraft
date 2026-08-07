@@ -1,5 +1,63 @@
 import { BlurFilter, Container, Sprite, Texture, Rectangle, type Shader, type TextureSource } from 'pixi.js';
-import type { AnimationPlaybackParams, AnimationSetDef, AnimationStateDef } from '../data/types';
+import type {
+  AnimationPlaybackParams,
+  AnimationSetDef,
+  AnimationStateDef,
+  SocketAtlasFingerprint,
+  SocketFramePose,
+  SocketSetDef,
+} from '../data/types';
+import {
+  fingerprintOfAnim,
+  socketPoseToLocal,
+  type ResolvedSockets,
+  type SocketLocalPose,
+} from '../data/animationSockets';
+
+/**
+ * 挂在某个挂点上的东西。**资源加载与销毁归调用方**，SpriteEntity 只负责逐帧摆位。
+ *
+ * 两档用法（与 2026-08-03 拍板一致）：
+ * - **静态图**：`view` 是一张 Sprite，位置/角度/前后全由挂点标注驱动——刀随手挥、
+ *   灯笼随身晃，这一档不需要任何额外时钟。
+ * - **挂点驱动帧号**：再给 `frameTextures`，挂点标注里的 `frame` 选第几张。
+ *   火苗能烧，但**不引入第二个时钟**，因此没有与角色动画锁相的问题。
+ */
+export interface SocketAttachment {
+  /** 显示对象；带 frameTextures 时必须是 Sprite */
+  view: Container;
+  /** 挂点驱动帧号用的纹理表；不给就是纯静态图 */
+  frameTextures?: Texture[];
+  /** 是否随角色镜像左右翻（缺省 true）。带文字的挂件应显式给 false */
+  mirrorWithHost?: boolean;
+  /** 挂件自身基础缩放，乘在透视系数上；缺省 1 */
+  scale?: number;
+  /**
+   * 挂件贴图上的**支点**（0..1，图片左上为原点），挂点对准的就是这一点。
+   * 缺省 0.5/0.5＝图心。刀剑要给刀柄（如 0.5/0.92），否则会绕图心转、看着像在半空打旋。
+   * 镜像时支点跟着一起翻（scale.x 取负），所以刀柄还是刀柄。
+   */
+  anchorX?: number;
+  anchorY?: number;
+  /**
+   * 挂件自身的旋转偏置（度），加在挂点标注的角度之上。
+   * 用来补图片本身的朝向——比如剑在 PNG 里是竖着画的，挂到横握的手上就得偏 -90。
+   * 与挂点角度同样在镜像时取反。
+   */
+  rotationOffsetDeg?: number;
+  /**
+   * 是否吃角色同一套逐像素光照（缺省 true）。
+   * 挂件没有法线图集，走 `nrm=null` 的平面法线兜底——光色/光向/环境照常吃，只是没有形体明暗。
+   * 自发光的东西（灯笼火苗、符纸微光）应显式给 false，否则会被环境压暗。
+   */
+  lit?: boolean;
+  /** 内部：上一帧的前后档，仅在翻转时才重排子节点 */
+  lastFront?: boolean;
+  /** 内部：挂件的光照 mesh（与 view 同变换的兄弟节点；view 此时只当变换载体） */
+  litQuad?: LitSpriteQuad | null;
+  litShader?: Shader | null;
+  litSrc?: TextureSource | null;
+}
 import { LitSpriteQuad } from './CharacterLitSprite';
 
 /**
@@ -12,13 +70,22 @@ export interface LitShaderProvider {
   release(shader: Shader): void;
 }
 
+/** 归一化夹取（挂件支点等 0..1 参数） */
+function clamp01(v: unknown): number {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 0.5;
+  return Math.min(1, Math.max(0, n));
+}
+
 /** 步速匹配倍率夹取范围：帧动画循环被拉出此区间会明显难看（步频与素材脱节） */
 export const LOCOMOTION_RATE_MIN = 0.5;
 export const LOCOMOTION_RATE_MAX = 2;
 
-/** 显式播放倍率的合法区间（防 0/负数/极端值把 update 帧步进循环拖垮） */
-const PLAYBACK_SPEED_MIN = 0.1;
-const PLAYBACK_SPEED_MAX = 10;
+/** 显式播放倍率的合法区间（防 0/负数/极端值把 update 帧步进循环拖垮）。
+ *  导出给需要**反算实际播放时长**的调用方（PlayerActionSystem 的变速姿态片段）——
+ *  手抄一份会在这两个数改动时静默算错时长。 */
+export const PLAYBACK_SPEED_MIN = 0.1;
+export const PLAYBACK_SPEED_MAX = 10;
 
 function normalizePlaybackSpeed(raw: unknown): number {
   const v = Number(raw);
@@ -142,6 +209,11 @@ export class SpriteEntity {
   /** 模糊滤镜当前是否挂在 sprite.filters 上：Pixi 8 的 filters setter 每次赋值都 slice+freeze+重建 FilterEffect，只允许在启用/禁用边界切换时增删 */
   private pixelDensityBlurMounted = false;
 
+  /** 挂点集（stale 时置 null，等于没有挂点） */
+  private socketSet: SocketSetDef | null = null;
+  /** 已挂载的东西：挂点名 → 挂件；每帧按当前帧的位姿重摆 */
+  private attachments: Map<string, SocketAttachment> = new Map();
+
   constructor() {
     this.container = new Container();
     this.sprite = new Sprite();
@@ -149,8 +221,13 @@ export class SpriteEntity {
     this.container.addChild(this.sprite);
   }
 
-  loadFromDef(texture: Texture, animDef: AnimationSetDef): void {
+  /**
+   * 装载动画包。`sockets` 是可选的挂点 sidecar（`resolveSockets` 的结果）——
+   * 指纹对不上（stale）时按"没有挂点"处理：宁可不挂，也不照漂移的槽位号挂错位置。
+   */
+  loadFromDef(texture: Texture, animDef: AnimationSetDef, sockets?: ResolvedSockets | null): void {
     this.disposeFrameTextures();
+    this.setSockets(sockets ?? null);
     this.baseTexture = texture;
     this.animDef = animDef;
     this.worldWidth = animDef.worldWidth;
@@ -213,6 +290,8 @@ export class SpriteEntity {
 
   /** 释放帧子纹理与 Pixi 子节点（不销毁传入 loadFromDef 的图集基纹理） */
   destroy(): void {
+    this.detachAllSockets();
+    this.socketSet = null;
     this.disableBakedShading();
     this.clearPixelDensityBlur();
     this.disposeFrameTextures();
@@ -235,9 +314,16 @@ export class SpriteEntity {
   enableBakedShading(provider: LitShaderProvider): void {
     this.litProvider = provider;
     this.refreshLitQuad();
+    // 挂件跟着一起进光照管线，否则会出现"角色被照亮、手里的刀是平光"
+    for (const at of this.attachments.values()) this.refreshAttachmentLit(at);
+    this.syncAttachments();
   }
 
   disableBakedShading(): void {
+    for (const at of this.attachments.values()) {
+      this.disposeAttachmentLit(at);
+      at.view.renderable = true;
+    }
     if (this.litQuad) { this.litQuad.destroy(); this.litQuad = null; }
     if (this.litShader && this.litProvider) this.litProvider.release(this.litShader);
     this.litShader = null;
@@ -261,6 +347,8 @@ export class SpriteEntity {
       // shader 挂 sprite 下零像素、挂 Container 下立刻显示)。sprite 的变换(scale 含
       // facingX 镜像、视觉抬升 y)由 syncLitQuad 复制 —— 同步点都在换帧/换向路径上。
       this.container.addChild(this.litQuad.mesh);
+      // mesh 是追加到末尾的：已挂着的 front 挂件会被它盖住，重排一次纠正回来
+      this.reorderAttachments();
       this.sprite.renderable = false;      // color 由 mesh 画(同 quad 同 UV),原精灵只当变换载体
     } else if (this.litColorSrc !== src) { // 运行时换图集(背尸/道士/setEntityField)
       provider.swapTextures(this.litShader, src, this.animDef.resolvedSheetUrl ?? null);
@@ -294,6 +382,29 @@ export class SpriteEntity {
 
   private resolveClip(stateName: string): string {
     return this.logicalToClip.get(stateName) ?? stateName;
+  }
+
+  /** 当前片段按有效帧率播完一遍的时长（秒）；无片段或帧率非法时回落 0。 */
+  getCurrentClipDurationSec(): number {
+    const n = this.currentFrames.length;
+    if (n <= 0 || !this.currentFrameDef) return 0;
+    const fpsRaw = Number(this.currentFrameDef.frameRate);
+    const fps = Number.isFinite(fpsRaw) && fpsRaw > 0 ? fpsRaw : 8;
+    const speed = this.playbackSpeed > 0 ? this.playbackSpeed : 1;
+    return n / (fps * speed);
+  }
+
+  /**
+   * 该逻辑状态名当前能否播出实际片段（经 stateMap 解析后在图集里存在且有帧）。
+   * 玩家身体动词据此判定「本装扮下这个动词可不可用」——解析不到 = 该动词禁用。
+   */
+  hasLogicalState(stateName: string): boolean {
+    const name = stateName.trim();
+    if (!name) return false;
+    const clip = this.resolveClip(name);
+    if (!this.animDef?.states?.[clip]) return false;
+    const frames = this.frames.get(clip);
+    return !!frames && frames.length > 0;
   }
 
   /**
@@ -470,6 +581,7 @@ export class SpriteEntity {
   setVisualLiftY(px: number): void {
     this.sprite.y = Number.isFinite(px) ? px : 0;
     this.syncLitQuad();   // mesh 跟随视觉抬升(跳跃弧线)
+    this.syncAttachments();   // 挂件同抬:跳跃时刀不能留在地面高度
   }
 
   /** 暂停 / 恢复帧推进（供预览工具）。恢复时若已到非循环终点帧则回到起点帧（反向播放的终点是首帧）。 */
@@ -538,6 +650,239 @@ export class SpriteEntity {
     };
   }
 
+  // ———————————————————————— 挂点（sockets）————————————————————————
+
+  /** 换包时替换挂点集；stale（图集指纹对不上）一律按"没有挂点"处理。 */
+  setSockets(resolved: ResolvedSockets | null): void {
+    if (resolved?.stale) {
+      console.warn(
+        'SpriteEntity: sockets.json 与当前图集指纹不符（重导出过？），本包挂点全部忽略——请回编辑器重标',
+      );
+    }
+    this.socketSet = resolved && !resolved.stale ? resolved.set : null;
+    // 换包后旧挂点大概率不存在了：先藏起来，下一次 syncAttachments 再决定去留
+    for (const at of this.attachments.values()) at.view.visible = false;
+  }
+
+  /** 只读：本包有哪些挂点（编辑器/调试用）。 */
+  listSocketNames(): string[] {
+    return this.socketSet ? Object.keys(this.socketSet.sockets) : [];
+  }
+
+  /** 调试用：当前挂点集（F2 注入临时挂点时要在它之上叠加，不能整份替换）。 */
+  debugSocketSet(): SocketSetDef | null {
+    return this.socketSet;
+  }
+
+  /** 调试用：当前显示帧对应的图集槽位。 */
+  debugCurrentAtlasSlot(): number | null {
+    return this.currentAtlasSlot();
+  }
+
+  /** 调试用：本图集的槽位总数（F2 临时挂点要覆盖全部槽位）。 */
+  debugAtlasSlotCount(): number {
+    return this.animDef?.atlasFrames?.length ?? 0;
+  }
+
+  /** 调试用：本图集的挂点指纹（F2 注入临时挂点时用，保证 stale 判定必然通过）。 */
+  debugAtlasFingerprint(): SocketAtlasFingerprint {
+    return this.animDef
+      ? fingerprintOfAnim(this.animDef)
+      : { cols: 0, rows: 0, slotCount: 0 };
+  }
+
+  /** 当前显示帧对应的图集槽位（挂点表按槽位索引）。无状态时 null。 */
+  private currentAtlasSlot(): number | null {
+    const seq = this.currentFrameDef?.frames;
+    if (!seq || seq.length === 0) return null;
+    return seq[this.frameIndex % seq.length] ?? null;
+  }
+
+  /** 当前帧上该挂点的原始标注（格内归一化）；没标返回 null。 */
+  getSocketPoseRaw(name: string): SocketFramePose | null {
+    const sock = this.socketSet?.sockets[name];
+    if (!sock) return null;
+    const slot = this.currentAtlasSlot();
+    if (slot === null) return null;
+    return sock.poses[String(slot)] ?? null;
+  }
+
+  /**
+   * 当前帧上该挂点的**容器局部**位姿：
+   * - `x/y` 已穿过 帧格归一化 → 世界尺寸 → 透视系数 → 镜像 → 跳跃视觉抬升；
+   * - `angleDeg` 朝左时取反（镜像后顺时针变逆时针）；
+   * - `scale` 是透视系数（挂件应随远近一起缩）；
+   * - `facing` 供挂件决定自己要不要跟着翻。
+   *
+   * 与 `getAuthoredBubbleAnchorLocalY` 同一套换算口径（那条是本方法的一维特例）。
+   */
+  getSocketPose(name: string): SocketLocalPose | null {
+    const raw = this.getSocketPoseRaw(name);
+    if (!raw) return null;
+    // 换算走 data/animationSockets 的共用实现：编辑器画布用同一处，
+    // 免得"编辑器里对齐了、游戏里差半个身位"。
+    return socketPoseToLocal(raw, {
+      worldWidth: this.worldWidth,
+      worldHeight: this.worldHeight,
+      depthScale: this.depthScaleFactor,
+      facing: this.facingX,
+      visualLiftY: this.sprite.y,
+    });
+  }
+
+  /**
+   * 往挂点上挂东西。挂件作为**容器子节点**，因此天然继承实体位置、跟角色一起被
+   * 场景深度遮挡（滤镜挂在容器上）；前后由子节点顺序决定（见 reorderAttachments）。
+   * 同名挂点重复挂 = 先卸旧的。挂件的资源加载与销毁归调用方，本类只管摆位。
+   */
+  attachToSocket(name: string, attachment: SocketAttachment): void {
+    this.detachFromSocket(name);
+    this.attachments.set(name, attachment);
+    this.container.addChild(attachment.view);
+    this.refreshAttachmentLit(attachment);
+    this.syncAttachments();
+  }
+
+  /**
+   * 给挂件建（或拆）它自己的光照 mesh，让它和角色吃同一套逐像素着色。
+   * 不这么做的话挂件就是一张平光贴图，在压暗的场景里明显"贴上去"。
+   *
+   * 挂件没有法线图集 → `create(src, null)` 走 `nrm=null` 的平面法线兜底：
+   * 光色/光向/环境全都照吃，只是少了形体明暗——对道具这个量级够用。
+   */
+  private refreshAttachmentLit(at: SocketAttachment): void {
+    const wantLit = at.lit !== false && this.litProvider !== null;
+    const tex = (at.view as Sprite).texture as Texture | undefined;
+    if (!wantLit || !tex?.source) {
+      this.disposeAttachmentLit(at);
+      at.view.renderable = true;
+      return;
+    }
+    if (at.litQuad && at.litSrc === tex.source) return;   // 同源短路
+    this.disposeAttachmentLit(at);
+    const sh = this.litProvider!.create(tex.source, null);
+    if (!sh) { at.view.renderable = true; return; }       // 场景无载荷：保持平光
+    at.litShader = sh;
+    at.litSrc = tex.source;
+    at.litQuad = new LitSpriteQuad(sh);
+    this.container.addChild(at.litQuad.mesh);
+    at.view.renderable = false;   // 与角色同构：view 只当变换载体，mesh 出图
+    // addChild 是**追加到末尾**＝跳到最前。而本函数是换纹理源时才走到（多帧挂件的
+    // images 来自不同 PNG），那条路上 front 没变、syncAttachments 不会置 needSort，
+    // 于是身后的挂件会就此永久卡在身前。宿主自己的 refreshLitQuad 早有这道纠正，
+    // 挂件这条当初漏了。
+    this.reorderAttachments();
+  }
+
+  private disposeAttachmentLit(at: SocketAttachment): void {
+    if (at.litQuad) { at.litQuad.destroy(); at.litQuad = null; }
+    if (at.litShader && this.litProvider) this.litProvider.release(at.litShader);
+    at.litShader = null;
+    at.litSrc = null;
+  }
+
+  /** 卸下挂件并从容器摘除（**不** destroy——挂件的生命周期归调用方）。 */
+  detachFromSocket(name: string): void {
+    const at = this.attachments.get(name);
+    if (!at) return;
+    this.attachments.delete(name);
+    this.disposeAttachmentLit(at);
+    at.view.renderable = true;
+    if (at.view.parent === this.container) this.container.removeChild(at.view);
+  }
+
+  /** 卸下全部挂件（换场景/销毁前）。 */
+  detachAllSockets(): void {
+    for (const name of [...this.attachments.keys()]) this.detachFromSocket(name);
+  }
+
+  /** 只读：当前挂了哪些挂点（调试快照用）。 */
+  listAttachedSockets(): string[] {
+    return [...this.attachments.keys()];
+  }
+
+  /**
+   * 每帧把挂件摆到当前帧的挂点位姿上。由 `update` 与所有换帧路径调用。
+   *
+   * 挂点在当前帧没有标注 → 挂件**隐藏**（既不乱摆也不卸下）：像"刀在鞘里那几帧
+   * 手上没东西"，标注缺席就是它该消失的意思，玩家不会看到道具跳到原点。
+   */
+  private syncAttachments(): void {
+    if (this.attachments.size === 0) return;
+    let needSort = false;
+    for (const [name, at] of this.attachments) {
+      const pose = this.getSocketPose(name);
+      if (!pose) {
+        at.view.visible = false;
+        if (at.litQuad) at.litQuad.mesh.visible = false;
+        continue;
+      }
+      at.view.visible = true;
+      at.view.x = pose.x;
+      at.view.y = pose.y;
+      // 支点：挂点对准贴图上的这一点（刀柄而不是图心）
+      const ax = clamp01(at.anchorX ?? 0.5);
+      const ay = clamp01(at.anchorY ?? 0.5);
+      const sprite = at.view as Sprite;
+      if (sprite.anchor && (sprite.anchor.x !== ax || sprite.anchor.y !== ay)) {
+        sprite.anchor.set(ax, ay);
+      }
+      const base = at.scale ?? 1;
+      const mirror = at.mirrorWithHost === false ? 1 : pose.facing;
+      at.view.scale.set(base * pose.scale * mirror, base * pose.scale);
+      // 旋转 = 挂点标注角度 + 挂件自身偏置；偏置同样跟着镜像取反，否则朝左时道具会反着歪
+      const offset = (at.rotationOffsetDeg ?? 0) * pose.facing;
+      at.view.rotation = ((pose.angleDeg + offset) * Math.PI) / 180;
+      // 第二档：挂点驱动帧号——挂件是一张小序列图时用标注里的帧号选纹理，
+      // 不引入第二个时钟（所以也没有锁相问题）。
+      if (at.frameTextures && at.frameTextures.length > 0 && pose.frame !== null) {
+        const n = at.frameTextures.length;
+        const idx = ((pose.frame % n) + n) % n;
+        const tex = at.frameTextures[idx];
+        const target = at.view as Sprite;
+        if (tex && target.texture !== tex) target.texture = tex;
+      }
+      // 换了纹理就要换 shader（shader 绑的是那张 color 贴图）
+      this.refreshAttachmentLit(at);
+      this.syncAttachmentLit(at);
+      if (at.lastFront !== pose.front) {
+        at.lastFront = pose.front;
+        needSort = true;
+      }
+    }
+    if (needSort) this.reorderAttachments();
+  }
+
+  /** 把挂件 view 的变换逐项复制给它的光照 mesh（两者是兄弟，见 refreshAttachmentLit）。 */
+  private syncAttachmentLit(at: SocketAttachment): void {
+    const q = at.litQuad;
+    if (!q) return;
+    const view = at.view as Sprite;
+    const tex = view.texture;
+    if (!tex) return;
+    q.sync(tex, tex.frame.width, tex.frame.height, view.anchor.x, view.anchor.y);
+    const m = q.mesh;
+    m.visible = view.visible;
+    m.position.set(view.x, view.y);
+    m.scale.set(view.scale.x, view.scale.y);
+    m.rotation = view.rotation;
+  }
+
+  /**
+   * 前后：`front` 的挂件排到最后（画在身前），其余插到最前（画在身后）。
+   * 角色本体是 `sprite` 与 `litQuad.mesh` 两个兄弟（启用光照时 sprite 只当变换载体、
+   * mesh 出图），所以"身后"必须插在**两者之前**，不能夹在中间。
+   */
+  private reorderAttachments(): void {
+    for (const at of this.attachments.values()) {
+      // view 与它的光照 mesh 是一对，前后要一起挪（view 不出图但顺序仍要一致）
+      for (const node of [at.view, at.litQuad?.mesh]) {
+        if (!node || node.parent !== this.container) continue;
+        if (at.lastFront) this.container.setChildIndex(node, this.container.children.length - 1);
+        else this.container.setChildIndex(node, 0);
+      }
+    }
+  }
   /**
    * 当前状态**授权**的头顶锚（容器局部 y，脚点 0、向上为负；已含透视系数与视觉抬升）。
    * 来自 anim.json `states[*].bubbleAnchor`（格高归一化比例）；没授权返回 null，调用方走内容框自动档。
@@ -690,5 +1035,6 @@ export class SpriteEntity {
       (this.worldHeight * this.depthScaleFactor) / frameH,
     );
     this.syncLitQuad();   // 所有换帧/换向/透视缩放路径的必经点:mesh 顶点+UV 跟随
+    this.syncAttachments();   // 挂点位姿同源:换帧/换向/透视一变,挂件当场跟上
   }
 }

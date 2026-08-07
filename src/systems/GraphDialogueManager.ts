@@ -10,6 +10,7 @@ import type { InventoryManager } from './InventoryManager';
 import type { StringsProvider } from '../core/StringsProvider';
 import type { ScenarioStateManager } from '../core/ScenarioStateManager';
 import { dialogueGraphJsonUrl } from '../core/projectPaths';
+import { makeOwnerOrigin } from '../core/actionOrigin';
 import { isSpeakerSide } from '../utils/dialogueSpeakerSide';
 import type {
   ActionDef,
@@ -763,8 +764,11 @@ export class GraphDialogueManager implements IGameSystem {
       if (node.type === 'runActions') {
         this.eventBus.emit('dialogue:hidePanel', {});
         try {
+          // 对话内动作批的来源 = 本段对话的 owner：链式再开一张图时 owner 顺延，
+          // 下一张图里的 ownerState 仍读同一个实体的状态机（否则链一断 owner 就没了）。
+          const origin = makeOwnerOrigin(this.ownerType, this.ownerId);
           for (const a of node.actions) {
-            await this.actionExecutor.executeAwait(a as ActionDef);
+            await this.actionExecutor.executeAwait(a as ActionDef, origin);
           }
         } catch (e) {
           console.warn('GraphDialogueManager: runActions 执行失败，结束对话', e);

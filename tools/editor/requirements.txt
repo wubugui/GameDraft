@@ -14,3 +14,7 @@ grandalf>=0.8  # 对话图自动布局 Sugiyama 分层算法
 # "unrecognized arguments"，所以它是硬依赖不是可选项）
 pytest>=8
 pytest-xdist>=3.6
+# 静态护栏 test_no_undefined_names.py 用（缺它该护栏自动 skip，不会误红）：
+# 拦「引用了不存在的名字」的死代码路径——踩过一个 100% 抛 NameError 的
+# 「删除本条件」按钮，从抽方法起就一直是死的，全套交互测试都没抓到。
+pyflakes>=3.1

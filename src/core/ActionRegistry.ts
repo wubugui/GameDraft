@@ -25,6 +25,7 @@ import type { ArchiveManager } from '../systems/ArchiveManager';
 import type { CutsceneManager } from '../systems/CutsceneManager';
 import type { SceneManager } from '../systems/SceneManager';
 import type { EmoteBubbleManager } from '../systems/EmoteBubbleManager';
+import type { BubbleChatterSystem } from '../systems/BubbleChatterSystem';
 import type { ScenarioStateManager } from './ScenarioStateManager';
 import type { NarrativeStateManager } from './NarrativeStateManager';
 import type { DocumentRevealManager } from '../systems/DocumentRevealManager';
@@ -37,7 +38,7 @@ import type { SignalCueManager } from '../systems/SignalCueManager';
 import type { HealthSystem } from '../systems/HealthSystem';
 import type { SmellSystem } from '../systems/SmellSystem';
 import type { PlaneReconciler } from '../systems/PlaneReconciler';
-import type { ActionDef, AnimationPlaybackParams, DialogueLine, DialoguePortraitRef, EmoteBubbleOffsetOpts, ICutsceneActor, IEmoteBubbleAnchor, ZoneRuleSlot, RuleLayerKey } from '../data/types';
+import type { ActionDef, ActionOriginContext, AnimationPlaybackParams, DialogueLine, DialoguePortraitRef, EmoteBubbleOffsetOpts, ICutsceneActor, IEmoteBubbleAnchor, ZoneRuleSlot, RuleLayerKey } from '../data/types';
 import { GameState } from '../data/types';
 import type { SceneEntityKind, RuntimeFieldValue } from '../data/EntityRuntimeFieldSchema';
 import { applyDialogueColonSpeakerFromResolvedText } from './resolveText';
@@ -180,6 +181,7 @@ export interface ActionRegistryDeps {
   cutsceneManager: CutsceneManager;
   sceneManager: SceneManager;
   emoteBubbleManager: EmoteBubbleManager;
+  bubbleChatterSystem: BubbleChatterSystem;
   stateController: GameStateController;
   stringsProvider: StringsProvider;
   eventBus: EventBus;
@@ -200,6 +202,31 @@ export interface ActionRegistryDeps {
   ) => Promise<void>;
   /** 按 game_config.playerAvatar 恢复玩家化身 */
   resetPlayerAvatar: () => Promise<void>;
+  /**
+   * 往实体的动画挂点上挂一张图（挂点由动画包的 sockets.json 逐帧标注）。
+   * `images` 多于一张时走"挂点驱动帧号"：用标注里的 frame 选第几张，不引入第二个时钟。
+   * 该帧没标注 = 挂件自动隐藏（刀在鞘里那几帧手上就是空的）。
+   */
+  attachToSocket: (
+    targetId: string,
+    socket: string,
+    images: string[],
+    opts: {
+      /** 挂件预设 id（prop_presets.json）：支点/自转/缩放/贴图的缺省来源 */
+      prop?: string;
+      scale?: number;
+      mirror?: boolean;
+      /** 贴图上的支点（0..1）；刀剑给刀柄，缺省图心 */
+      anchorX?: number;
+      anchorY?: number;
+      /** 挂件自身旋转偏置（度），补图片本身的朝向 */
+      rotation?: number;
+      /** 是否吃角色同一套光照；自发光的东西给 false */
+      lit?: boolean;
+    },
+  ) => Promise<void>;
+  /** 卸下某挂点上的东西（连同销毁它的显示对象） */
+  detachFromSocket: (targetId: string, socket: string) => void;
   /** 运行时覆盖场景深度遮挡的 floor_offset（脚底衬底偏移，与 depthConfig 同语义） */
   setSceneDepthFloorOffset: (floorOffset: number) => void;
   /** 恢复为当前场景已加载的 depthConfig.floor_offset */
@@ -252,6 +279,8 @@ export interface ActionRegistryDeps {
     ownerType?: string,
     ownerId?: string,
     dimBackground?: boolean,
+    /** 放这条动作的实体（热区 / zone / 叙事图状态 / 任务 / 过场 / 上一张对话图）；owner 兜底档 */
+    origin?: ActionOriginContext | null,
   ) => Promise<void>;
   /** 按序播放预置台词（至 dialogue:end） */
   playScriptedDialogue: (lines: DialogueLine[]) => Promise<void>;
@@ -259,6 +288,8 @@ export interface ActionRegistryDeps {
   waitClickContinue: (hintOverride?: string) => Promise<void>;
   /** 统一解析 JSON 字符串中的 [tag:…] */
   resolveDisplayText: (raw: string) => string;
+  /** 与 resolveDisplayText 同解析但**保留** `[c:…]` 样式标记；只给用 createStyledText 渲染的展示点 */
+  resolveRichText: (raw: string) => string;
   /** Action 专用选项 UI：返回所选 options 下标；取消返回 null。 */
   chooseAction: (
     prompt: string,
@@ -268,7 +299,7 @@ export interface ActionRegistryDeps {
   /**
    * `playScriptedDialogue`：`[tag:npc:@context]` 在无图对白时用 scriptedNpcId 补全上下文。
    */
-  resolveDisplayTextForPlayScripted: (raw: string | undefined, scriptedNpcId?: string) => string;
+  resolveRichTextForPlayScripted: (raw: string | undefined, scriptedNpcId?: string) => string;
   scenarioStateManager: ScenarioStateManager;
   narrativeStateManager: NarrativeStateManager;
   documentRevealManager: DocumentRevealManager;
@@ -422,7 +453,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     const options = rawOptions
       .filter((x): x is Record<string, unknown> => isParamObject(x))
       .map((x) => ({
-        text: d.resolveDisplayText(String(x.text ?? '')).trim(),
+        text: d.resolveRichText(String(x.text ?? '')).trim(),
         actions: actionListFromParam(x.actions),
       }))
       .filter((x) => x.text.length > 0);
@@ -435,7 +466,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     let picked: number | null = null;
     try {
       picked = await d.chooseAction(
-        d.resolveDisplayText(String(p.prompt ?? '')),
+        d.resolveRichText(String(p.prompt ?? '')),
         options.map((x) => ({ text: x.text })),
         p.allowCancel === true,
       );
@@ -643,7 +674,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
 
   executor.register('addArchiveEntry', (p) => {
     d.archiveManager.addEntry(
-      p.bookType as 'character' | 'lore' | 'document' | 'book' | 'bookEntry',
+      p.bookType as 'character' | 'lore' | 'slang' | 'document' | 'book' | 'bookEntry',
       p.entryId as string,
     );
   }, ['bookType', 'entryId']);
@@ -692,6 +723,38 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     }
     await d.signalCueManager.play(id);
   }, ['id']);
+
+  /**
+   * 把某个说话人的头顶闲聊切到另一本台词（`bubble_lines.json` 里的 lineSetId）。
+   *
+   * **只换引用，不改文本**：存档里存的是 id，台词正文永远来自 JSON，所以策划改词
+   * 老存档也跟着变。台词本自带 speaker，与 target 对不上会被拒绝（否则台词会从错的人嘴里冒出来）。
+   */
+  executor.register('setBubbleLineSet', (p) => {
+    const target = String(p.target ?? '').trim();
+    const lineSetId = String(p.lineSetId ?? '').trim();
+    if (!target || !lineSetId) {
+      console.warn('setBubbleLineSet: 需要 target 与 lineSetId');
+      return;
+    }
+    d.bubbleChatterSystem.setLineSetFor(
+      target === 'player' ? { kind: 'player' } : { kind: 'entity', id: target },
+      lineSetId,
+    );
+  }, ['target', 'lineSetId']);
+
+  /** 清掉 setBubbleLineSet 的覆盖；`silence=true` 则这人彻底不再自动说话。 */
+  executor.register('clearBubbleLineSet', (p) => {
+    const target = String(p.target ?? '').trim();
+    if (!target) {
+      console.warn('clearBubbleLineSet: 需要 target');
+      return;
+    }
+    d.bubbleChatterSystem.clearLineSetFor(
+      target === 'player' ? { kind: 'player' } : { kind: 'entity', id: target },
+      p.silence === true,
+    );
+  }, ['target', 'silence']);
 
   // 【legacy】damagePlayer/healPlayer：旧扣血/回血。新内容统一用 decHealth/incHealth（编排控值）
   //  + triggerDeathTether（系绳）；这两个仍注册以兼容历史，已从编辑器内容下拉移除（见 LEGACY_ACTION_TYPES）。
@@ -878,7 +941,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       console.warn('showSpeechBubble: 需要 target 与 text');
       return;
     }
-    const text = d.resolveDisplayText(raw).trim();
+    const text = d.resolveRichText(raw).trim();
     if (!text) {
       console.warn('showSpeechBubble: 解析后文案为空');
       return;
@@ -944,6 +1007,61 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     }
     actor.setVisible(enabled);
   }, ['target', 'enabled']);
+
+  /**
+   * 往挂点上挂东西。`image` 单张 = 静态图；`images` 多张 = 挂点驱动帧号（第二档）。
+   * 挂件的显示/隐藏由挂点标注决定，不需要额外动作去藏它。
+   */
+  executor.register('attachToSocket', (p) => {
+    const target = String(p.target ?? '').trim();
+    const socket = String(p.socket ?? '').trim();
+    if (!target || !socket) {
+      console.warn('attachToSocket: 缺 target 或 socket');
+      return;
+    }
+    const list: string[] = [];
+    const single = typeof p.image === 'string' ? p.image.trim() : '';
+    if (single) list.push(single);
+    if (Array.isArray(p.images)) {
+      for (const it of p.images) {
+        const u = typeof it === 'string' ? it.trim() : '';
+        if (u) list.push(u);
+      }
+    }
+    const prop = String(p.prop ?? '').trim();
+    // 贴图可以由挂件预设提供，所以这里只在「既没 prop 也没图」时才拦
+    if (list.length === 0 && !prop) {
+      console.warn(`attachToSocket: ${target}.${socket} 没给 prop 或 image/images`);
+      return;
+    }
+    const num = (v: unknown): number | undefined => {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : undefined;
+    };
+    const scaleRaw = Number(p.scale);
+    const mirror = parseLooseBooleanParam(p.mirror);
+    const lit = parseLooseBooleanParam(p.lit);
+    return d.attachToSocket(target, socket, list, {
+      prop: prop || undefined,
+      scale: Number.isFinite(scaleRaw) && scaleRaw > 0 ? scaleRaw : undefined,
+      mirror: mirror === null ? undefined : mirror,
+      anchorX: num(p.anchorX),
+      anchorY: num(p.anchorY),
+      rotation: num(p.rotation),
+      lit: lit === null ? undefined : lit,
+    }).catch((e) => console.warn('attachToSocket', e));
+  }, ['target', 'socket', 'image', 'images', 'scale', 'mirror',
+      'anchorX', 'anchorY', 'rotation', 'lit']);
+
+  executor.register('detachFromSocket', (p) => {
+    const target = String(p.target ?? '').trim();
+    const socket = String(p.socket ?? '').trim();
+    if (!target || !socket) {
+      console.warn('detachFromSocket: 缺 target 或 socket');
+      return;
+    }
+    d.detachFromSocket(target, socket);
+  }, ['target', 'socket']);
 
   executor.register('openShop', (p) => {
     d.stateController.setState(GameState.UIOverlay);
@@ -1442,7 +1560,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     });
   }, ['id', 'fromImage', 'toImage', 'durationMs', 'delayMs', 'xPercent', 'yPercent', 'widthPercent']);
 
-  executor.register('startDialogueGraph', (p) => {
+  executor.register('startDialogueGraph', (p, zctx) => {
     const graphId = String(p.graphId ?? '').trim();
     if (!graphId) {
       console.warn('startDialogueGraph: 需要 graphId');
@@ -1465,13 +1583,16 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       ownerType || undefined,
       ownerId || undefined,
       dimBackground || undefined,
+      // 未显式给 owner 时由来源实体兜底（热区 / zone / 叙事图状态 / 任务 / 过场 / 上一张对话图），
+      // 否则图里的 ownerState 节点会因为"没有 owner 上下文"静默走 fallback 分支。
+      zctx,
     );
   }, ['graphId', 'entry', 'npcId', 'ownerType', 'ownerId', 'dimBackground']);
 
   executor.register('waitClickContinue', (p) => {
     const raw = p.text;
     const hint = raw !== undefined && raw !== null ? String(raw).trim() : '';
-    return d.waitClickContinue(hint ? d.resolveDisplayText(hint) : undefined);
+    return d.waitClickContinue(hint ? d.resolveRichText(hint) : undefined);
   }, ['text']);
 
   executor.register('playScriptedDialogue', (p) => {
@@ -1484,7 +1605,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     const dim = p.dimBackground === true;
     const narrKey = d.stringsProvider.get('dialogue', 'narratorLabel');
     const narratorFallback = narrKey && narrKey !== 'narratorLabel' ? narrKey : '旁白';
-    const narratorBaselineResolved = d.resolveDisplayTextForPlayScripted(narratorFallback, scriptedNpcId);
+    const narratorBaselineResolved = d.resolveRichTextForPlayScripted(narratorFallback, scriptedNpcId);
     const lines: DialogueLine[] = [];
     for (const item of raw) {
       if (!item || typeof item !== 'object') continue;
@@ -1496,11 +1617,11 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
         : d.scriptedSpeakerDisplayFallback(scriptedNpcId);
       const text = String(o.text ?? '').trim();
       if (!text) continue;
-      const speakerResolvedDisplay = d.resolveDisplayTextForPlayScripted(
+      const speakerResolvedDisplay = d.resolveRichTextForPlayScripted(
         speakerResolved || narratorFallback,
         scriptedNpcId,
       );
-      const textResolvedDisplay = d.resolveDisplayTextForPlayScripted(text, scriptedNpcId);
+      const textResolvedDisplay = d.resolveRichTextForPlayScripted(text, scriptedNpcId);
       const { speaker: lineSpeaker, text: lineText } = applyDialogueColonSpeakerFromResolvedText(
         speakerResolvedDisplay,
         textResolvedDisplay,
@@ -1660,11 +1781,17 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
         actor.setFacing(other.x - actor.x, other.y - actor.y);
       }
     } else if (direction) {
+      /** 朝向只有左右镜像（SpriteEntity.setDirection 丢弃 dy，动画包也没有上下朝向）：
+       *  up/down 无法兑现，必须响——静默无操作会让编排者以为写了就生效。 */
       const dirMap: Record<string, [number, number]> = {
-        left: [-1, 0], right: [1, 0], up: [0, -1], down: [0, 1],
+        left: [-1, 0], right: [1, 0],
       };
       const dd = dirMap[direction];
-      if (dd) actor.setFacing(dd[0], dd[1]);
+      if (dd) {
+        actor.setFacing(dd[0], dd[1]);
+      } else {
+        console.warn(`faceEntity: direction "${direction}" 不支持（朝向只有 left/right，无上下朝向），已跳过`);
+      }
     }
   }, ['target', 'direction', 'faceTarget']);
 
@@ -1733,7 +1860,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       console.warn('showSpeechBubbleAndWait: 需要 target 与 text');
       return;
     }
-    const text = d.resolveDisplayText(raw).trim();
+    const text = d.resolveRichText(raw).trim();
     if (!text) {
       console.warn('showSpeechBubbleAndWait: 解析后文案为空');
       return;

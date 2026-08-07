@@ -7,7 +7,7 @@ summary: 气味做成常驻可学习的值驱动感官机制;铁律=系统常驻
 status: active
 triggers:
   topics: [气味, 嗅, 香粉味, 感官机制]
-last_governed: 2026-07-11
+last_governed: 2026-08-05
 ---
 
 ## 背景

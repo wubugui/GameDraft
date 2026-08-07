@@ -11,11 +11,13 @@ from PySide6.QtWidgets import (
     QPlainTextEdit, QComboBox, QTableWidget, QTableWidgetItem, QPushButton,
     QHeaderView, QMessageBox, QCheckBox, QGroupBox,
     QSizePolicy, QSpinBox, QDoubleSpinBox, QStackedWidget, QToolButton, QDialog,
+    QAbstractSpinBox, QBoxLayout, QLayout,
     QStyle,
 )
 from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QFontMetrics, QPixmap
+from PySide6.QtGui import QFontMetrics, QPainter, QPixmap
 
+from tools.editor import theme as app_theme
 from tools.editor.shared.condition_expr_tree import ConditionExprTreeRootWidget
 from tools.editor.shared.action_editor import (
     _hide_combo_popups_under,
@@ -37,12 +39,27 @@ from tools.editor.shared.bubble_anchor_field import (
     actor_for_dialogue_speaker,
 )
 from tools.editor.shared.collapsible_section import CollapsibleSection
+from .dialogue_condition_text import (
+    ALWAYS as _COND_ALWAYS,
+    NEVER as _COND_NEVER,
+    case_verdict as _case_verdict,
+    condition_expr_text,
+    shorten,
+)
 from .editor_asset_catalog import load_rule_id_name_pairs
 from .node_picker_dialog import NodePickerDialog
 from .npc_picker_dialog import NpcPickerDialog
 
 
 SpeakerKinds = ("player", "npc", "literal", "sceneNpc")
+#: 说话人四态的中文短名——画布与节点列表早就在用中文（graph_document.node_summary），
+#: 检查器下拉却直接印 `literal` 这种原文，同一个东西左中右三栏三个名字。
+SPEAKER_KIND_LABELS_ZH = {
+    "player": "玩家",
+    "npc": "NPC",
+    "literal": "旁白",
+    "sceneNpc": "场景 NPC",
+}
 
 # 与 GraphDialogueManager.resolveSpeaker（sceneNpc）约定一致
 PROMPT_LINE_SCENE_NPC_CONTEXT_TOKEN = "@contextNpc"
@@ -78,10 +95,340 @@ def _form_wrap_rows(fl: QFormLayout) -> None:
     fl.setVerticalSpacing(6)
 
 
+class _ElidingLabel(QLabel):
+    """一行摘要标签：宽度不够时打省略号，而不是把整行顶出面板。
+
+    检查器面板默认只有 280px 宽（主窗 `setSizes([200, 820, 280])`）。普通 QLabel
+    在 `wordWrap=False` 时最小宽度 = 整段文本宽度，于是「分支标题 + 右侧五个操作按钮」
+    这种行的最小宽度直接 400px 打底 —— 结果是**整个检查器横向滚动，删除/上移/下移
+    按钮被挤出可视区，策划够都够不着**。摘要天生该省略：完整内容进 tooltip。
+    """
+
+    def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._full = ""
+        self._elide_mode = Qt.TextElideMode.ElideMiddle
+        self.setTextFormat(Qt.TextFormat.PlainText)
+        self.setText(text)
+
+    def setText(self, text: str) -> None:  # noqa: N802 - Qt 命名
+        self._full = text or ""
+        self.setToolTip(self._full)
+        super().setText(self._full)
+        self.updateGeometry()
+
+    def fullText(self) -> str:  # noqa: N802 - 与 Qt 风格一致
+        return self._full
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802
+        # 只要求能放下几个字，其余交给省略号——这正是不顶爆面板的关键。
+        h = super().minimumSizeHint().height()
+        return QSize(48, h)
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        painter = QPainter(self)
+        metrics = QFontMetrics(self.font())
+        # 用 ElideMiddle 而不是 ElideRight：摘要是「条件 → 去哪」，同一个 switch 里
+        # 七条分支常共享长前缀（flow_背尸_零工活:… / flow_背尸_淹尸活:…），差异在尾部，
+        # 而「去哪」也在尾部——右截等于把最有辨识度的两半一起吃掉。
+        elided = metrics.elidedText(
+            self._full, self._elide_mode, self.contentsRect().width()
+        )
+        painter.drawText(
+            self.contentsRect(),
+            int(self.alignment()),
+            elided,
+        )
+
+
+# ---- 数组里混进非 dict 元素时的统一口径（元素级只读透传） --------------------
+#
+# 节点级早就定好了规矩：畸形数据降级为只读展示 + 原样透传 + 交给校验报错，不崩不丢
+#（`set_node` 对非 dict 节点值、`_build_choice` 对非数组 options 都照办）。但**数组元素级**
+# 一直是 `if not isinstance(x, dict): continue` —— 跳过之后再也不还原，于是
+# 「打开图 → 点一下这个节点 → 点走」就把那一条从磁盘上抹掉了，而且校验证据同时消失
+#（内存里已经没有它了），保存门自然放行。CLAUDE.md 的 production-mode 下 agent 直接写
+# JSON，数组里混个字符串/null 是现实可能。下面两个函数把这一层补齐，五处容器共用。
+
+
+def _dict_items(raw: Any) -> list[dict[str, Any]]:
+    """数组里能进表单的那些元素（顺序不变）。
+
+    表单行就是按它建的，所以任何「行 ↔ 数据元素」的配对都必须过这一层，
+    否则坏元素之后的行会整体错位。
+    """
+    if not isinstance(raw, list):
+        return []
+    return [x for x in raw if isinstance(x, dict)]
+
+
+def _split_dict_items(raw: Any) -> tuple[list[dict[str, Any]], list[tuple[int, Any]]]:
+    """拆成「能进表单的 dict 元素」与「原位置 + 原值 的非 dict 元素」。"""
+    if not isinstance(raw, list):
+        return [], []
+    junk = [(i, copy.deepcopy(x)) for i, x in enumerate(raw) if not isinstance(x, dict)]
+    return _dict_items(raw), junk
+
+
+def _reinsert_junk(items: list[Any], junk: list[tuple[int, Any]]) -> list[Any]:
+    """把非 dict 元素按原下标塞回去（下标越界就贴到末尾）。
+
+    用户增删/重排过表单行时原下标不一定还对得上，此时「位置尽量靠近、内容一个不少」
+    就是能给的最好保证——总好过静默删除。
+    """
+    if not junk:
+        return items
+    out = list(items)
+    for index, value in junk:
+        out.insert(min(index, len(out)), copy.deepcopy(value))
+    return out
+
+
+def _row_data_indices(row_count: int, junk: list[tuple[int, Any]]) -> list[int]:
+    """每个表单行在**最终写盘数组**里的下标。
+
+    必须与 `_reinsert_junk` 用同一套规则跑一遍，不能拿"加载时记的 junk 原下标"去推：
+    行被删掉之后行数少于 junk 原下标，`min(index, len(out))` 会把 junk 贴到末尾，
+    两边规则就打架了——实测删一行后检查器标着 `2.` 的分支，校验说的「分支 2」
+    其实是另一条。**编号看着权威却在骗人，比没有编号更坏。**
+    """
+    marks: list[Any] = list(range(row_count))
+    out: list[Any] = list(marks)
+    for index, _v in junk:
+        out.insert(min(index, len(out)), None)
+    return [out.index(i) for i in marks]
+
+
+def _junk_notice(junk: list[tuple[int, Any]], what: str) -> QLabel | None:
+    """把「有几条看不懂的元素被原样保留着」明明白白告诉策划，而不是悄悄留着。"""
+    if not junk:
+        return None
+    try:
+        preview = "；".join(
+            f"第 {i} 条：{json.dumps(v, ensure_ascii=False)}" for i, v in junk[:3]
+        )
+    except (TypeError, ValueError):
+        preview = "；".join(f"第 {i} 条：{v!r}" for i, v in junk[:3])
+    more = f"（共 {len(junk)} 条）" if len(junk) > 3 else ""
+    lbl = QLabel(
+        f"⚠ 这里有 {len(junk)} 条{what}不是对象、表单显示不了，已原样保留不会被改写{more}：\n"
+        f"{preview}\n请在数据文件里修好；校验面板也会把它们列为错误。"
+    )
+    lbl.setWordWrap(True)
+    lbl.setStyleSheet(app_theme.semantic_text_css("warn"))
+    return lbl
+
+
+#: 检查器面板的默认宽度（主窗 `setSizes([200, 820, 280])`）。表单必须能压进这个宽度，
+#: 否则整个面板横向滚动，行尾的删除/上移/下移按钮被挤出可视区、策划够都够不着。
+INSPECTOR_PANEL_WIDTH = 280
+
+#: 纯「打开选择器」的窄按钮：文案本身就短，不该按 Qt 默认的 ~80px 最小宽占位。
+#: 一行里并排两三个就是 240px，光按钮就把面板顶爆了。
+#: 统一成「选…」（原来「选…」9 处 / 「选择…」5 处混用，同一屏内两种写法并存）。
+_PICK_BUTTON_TEXTS = frozenset({"选…", "选择…", "编辑…", "next…", "引用", "清除", "…"})
+
+
+def _cap_combos_per_row(root: QWidget) -> None:
+    """给每个下拉封顶：同一横排里的下拉平分面板预算，而不是各自封同一个死值。
+
+    只封顶、不设最小宽——下拉在宽面板上仍会随布局撑开到分到的上限，
+    窄面板上则被夹住不顶爆。没跟别人挤一行的下拉拿满预算。
+    """
+    # 留 44px 给外边距 + 滚动条 + **多层嵌套各自的边距**：条件行位于
+    # 分支 → 内容 → AND 块 → 条件列表 → 条件行 → 叶子容器 六层之内，每层几 px
+    # 累起来就是十几 px，正好卡在超不超 280 的分界上。
+    budget = INSPECTOR_PANEL_WIDTH - 44
+    # 基线：任何下拉单独占一行也不许超过预算（长 id 列表能把最小宽顶到 330px+）。
+    # 下面再按「同一横排有几个」往下收——横排之外的（QFormLayout 行里那种）就吃这条基线。
+    for cb in root.findChildren(QComboBox):
+        cb.setMaximumWidth(budget)
+    for lay in root.findChildren(QBoxLayout):
+        if lay.direction() not in (
+            QBoxLayout.Direction.LeftToRight,
+            QBoxLayout.Direction.RightToLeft,
+        ):
+            continue
+        combos: list[QComboBox] = []
+        fixed = 0
+        for i in range(lay.count()):
+            w = lay.itemAt(i).widget()
+            if w is None or w.isHidden():
+                continue
+            if isinstance(w, QComboBox):
+                combos.append(w)
+            else:
+                fixed += min(w.minimumSizeHint().width(), 120)
+        if not combos:
+            continue
+        share = max(90, (budget - fixed - 8 * lay.count()) // len(combos))
+        for cb in combos:
+            cur = cb.maximumWidth()
+            cb.setMaximumWidth(min(cur, share) if cur < 16777215 else share)
+
+
+def _fit_panel_width(root: QWidget) -> None:
+    """把整棵表单压进窄面板。
+
+    只做三件事，都是「让控件愿意变窄」，不改变任何数据语义：
+    1. 选择器窄按钮按文字实宽封顶（Qt 默认最小宽 ~80px，并排几个就顶爆面板）；
+    2. 下拉不再按最长选项要宽度（长 id 列表会把 QComboBox 的最小宽拉到 400px+）；
+    3. 长的静态说明标签允许折行（QLabel 不折行时最小宽 = 整段文字宽）。
+
+    放在 `set_node` 末尾统一跑一遍，而不是逐个控件设——新加的控件天然被覆盖，
+    不会因为「这一处忘了设」再把面板顶出横向滚动条。
+    """
+    for btn in root.findChildren(QPushButton):
+        if btn.text() in _PICK_BUTTON_TEXTS:
+            fm = QFontMetrics(btn.font())
+            btn.setMaximumWidth(fm.horizontalAdvance(btn.text()) + 30)
+    for cb in root.findChildren(QComboBox):
+        cb.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        # 按**自身选项**的长度要宽度，最多 6 个字：`==` 这种两字下拉不该跟
+        # 长 id 列表一样占 100px（一行三个下拉就 300px，直接顶爆面板）。
+        longest = max((len(cb.itemText(i)) for i in range(cb.count())), default=2)
+        cb.setMinimumContentsLength(max(2, min(5, longest)))
+    # QComboBox 的 minimumSizeHint 并不吃 minimumContentsLength（长 id 列表能把它顶到
+    # 290px），只有 maximumWidth 夹得住。但封顶必须**按行分配**而不是每个都给同一个
+    # 固定值：每个都封 240 的话，同排两个下拉就是 480px —— choice 的立绘行
+    #（「立绘」标签 + 立绘集下拉 + 表情下拉）正是这么顶到 502px 的。
+    _cap_combos_per_row(root)
+    for sp in root.findChildren(QAbstractSpinBox):
+        # 8 位小数的 QDoubleSpinBox 最小宽能到 160px；数值框够填就行，不必按最大位数占位。
+        sp.setMaximumWidth(90)
+    for lbl in root.findChildren(QLabel):
+        if isinstance(lbl, _ElidingLabel):
+            continue
+        if not lbl.wordWrap() and len(lbl.text()) > 14:
+            lbl.setWordWrap(True)
+    # 嵌套容器的**左右**边距清零：条件行位于「分支→内容→AND块→条件列表→条件行→叶子」
+    # 六层之内，Qt 默认每层左右各 9px，累起来 100px+ 全是白占的缩进——在 280px 面板里
+    # 这是压不压得进的分水岭。纵向边距保留（行与行之间还是要透气）。
+    for lay in root.findChildren(QLayout):
+        m = lay.contentsMargins()
+        if m.left() or m.right():
+            lay.setContentsMargins(0, m.top(), 0, m.bottom())
+    # 上面的封顶/折行都发生在布局已经建好并算过一轮之后，而 Qt 会**缓存**每层布局的
+    # 最小尺寸——不显式失效的话，外层拿到的还是收窄前的旧值（实测 choice+promptLine
+    # 停在 502px，invalidate 之后才降到 359px）。所以必须自下而上失效一遍。
+    for lay in root.findChildren(QLayout):
+        lay.invalidate()
+    for w in root.findChildren(QWidget):
+        w.updateGeometry()
+    root.updateGeometry()
+
+
+class _RowHeaderBar(QWidget):
+    """列表行标题：宽度够就一行（摘要 + 按钮），不够就把按钮折到第二行。
+
+    固定两行的代价实测是：7 条折叠分支共 413px，其中按钮行占 168px = **40%**；
+    面板拉到 900px 也不合并，宽屏用户白白多滚一倍。固定一行的代价则是 280px 面板下
+    摘要只剩 ~90px、条件全被省略号吃掉。所以按可用宽度自适应。
+    """
+
+    #: 一行放得下的判据：摘要至少要留这么宽才值得跟按钮挤一行。
+    _SUMMARY_MIN_INLINE = 150
+
+    def __init__(
+        self,
+        parent: QWidget,
+        toggle: QToolButton,
+        summary: QWidget,
+        buttons: tuple[QWidget, ...],
+    ) -> None:
+        super().__init__(parent)
+        self._toggle = toggle
+        self._summary = summary
+        self._buttons = buttons
+        self._two_rows: bool | None = None
+        self._outer = QVBoxLayout(self)
+        self._outer.setContentsMargins(0, 0, 0, 0)
+        self._outer.setSpacing(1)
+        self._row1 = QHBoxLayout()
+        self._row1.setContentsMargins(0, 0, 0, 0)
+        self._row2 = QHBoxLayout()
+        self._row2.setContentsMargins(0, 0, 0, 0)
+        self._outer.addLayout(self._row1)
+        self._outer.addLayout(self._row2)
+        # 前两个是「在此之前/之后插入」：24px 的方按钮里放不下能区分二者的图标或文字，
+        # 而它们又是低频操作 —— 挪进右键菜单，行内只留高频的 上移/下移/删除。
+        self._menu_only = set(buttons[:2]) if len(buttons) >= 5 else set()
+        self._buttons_width = sum(
+            b.sizeHint().width() + 4 for b in buttons if b not in self._menu_only
+        )
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._show_row_menu)
+        self._apply(two_rows=True)
+
+    #: 菜单项短标签（按钮 tooltip 是整句说明，直接当菜单项太长）。
+    _MENU_LABELS = ("在此之前插入", "在此之后插入", "上移", "下移", "删除")
+
+    def _show_row_menu(self, pos) -> None:
+        from PySide6.QtWidgets import QMenu
+
+        menu = QMenu(self)
+        for i, b in enumerate(self._buttons):
+            label = self._MENU_LABELS[i] if i < len(self._MENU_LABELS) else (b.toolTip() or "操作")
+            act = menu.addAction(label)
+            act.setToolTip(b.toolTip())
+            # 继承按钮的禁用态：第一行的「上移」按钮本来是灰的，菜单里却可点，
+            # 点了直接 return——静默无反应最招人烦。
+            act.setEnabled(b.isEnabled())
+            act.triggered.connect(b.click)
+        menu.exec(self.mapToGlobal(pos))
+
+    def _apply(self, *, two_rows: bool) -> None:
+        if self._two_rows is two_rows:
+            return
+        self._two_rows = two_rows
+        for lay in (self._row1, self._row2):
+            while lay.count():
+                it = lay.takeAt(0)
+                w = it.widget()
+                if w is not None:
+                    w.setParent(self)
+        self._row1.addWidget(self._toggle)
+        self._row1.addWidget(self._summary, 1)
+        target = self._row2 if two_rows else self._row1
+        if two_rows:
+            target.addStretch(1)
+        for b in self._buttons:
+            if b in self._menu_only:
+                b.setVisible(False)
+                continue
+            target.addWidget(b)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        avail = self.width() - self._toggle.sizeHint().width() - self._buttons_width
+        self._apply(two_rows=avail < self._SUMMARY_MIN_INLINE)
+
+
+def _fill_stacked_row_header(
+    header: QVBoxLayout,
+    toggle: QToolButton,
+    summary: QWidget,
+    buttons: tuple[QWidget, ...],
+) -> None:
+    """列表行标题排两行：上行「折叠箭头 + 摘要（整宽）」，下行「操作按钮（右对齐）」。
+
+    挤成一行时右侧五个按钮就吃掉 110px，280px 面板里留给摘要只剩 ~90px——
+    「当 flow_xungou_main:等看进山路 → 已接活」被省略成「当 flow_xungou…」，
+    条件和去向全看不见。而"一眼看出每条是什么"正是这个折叠列表存在的意义，
+    所以让摘要独占整行、按钮另起一行右对齐；两行加起来仍远比展开一条短。
+    """
+    header.setContentsMargins(0, 0, 0, 0)
+    header.setSpacing(0)
+    # 交给 _RowHeaderBar：窄面板两行（摘要整宽）、宽面板一行（省掉 40% 的行高）。
+    header.addWidget(_RowHeaderBar(toggle.parentWidget(), toggle, summary, buttons))
+
+
 def _help_marker(text: str, parent: QWidget | None = None) -> QLabel:
     """紧凑的「ⓘ 说明」标记：把大段说明收进 tooltip，避免常驻界面占高（与布局铁律一致）。"""
     lbl = QLabel("ⓘ 说明", parent)
-    lbl.setStyleSheet("color: #888;")
+    lbl.setStyleSheet(app_theme.semantic_text_css("faint"))
     lbl.setToolTip(text)
     lbl.setCursor(Qt.CursorShape.WhatsThisCursor)
     return lbl
@@ -116,9 +463,20 @@ def _compact_row_nav_buttons(
         b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         return b
 
+    # 插入用「+」而不是左右箭头：四个同族箭头里 ◀▶ 会被读成「上一条/下一条」或
+    # 「左移/右移」，误点就凭空多一条空分支——而空分支在运行时是恒命中的。
+    def mk_text(label: str, tip: str) -> QToolButton:
+        b = QToolButton(parent)
+        b.setText(label)
+        b.setFixedSize(side, side)
+        b.setToolTip(tip)
+        b.setAutoRaise(True)
+        b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        return b
+
     return (
-        mk(QStyle.StandardPixmap.SP_ArrowLeft, tip_before),
-        mk(QStyle.StandardPixmap.SP_ArrowRight, tip_after),
+        mk_text("+↑", tip_before),
+        mk_text("+↓", tip_after),
         mk(QStyle.StandardPixmap.SP_ArrowUp, tip_up),
         mk(QStyle.StandardPixmap.SP_ArrowDown, tip_down),
         mk(del_pix, tip_del),
@@ -162,6 +520,8 @@ class NodeInspector(QWidget):
         self._project_root = project_root
         self._project_model_getter = project_model_getter
         self._node_types_getter = node_types_getter
+        #: 宿主注入「节点 id → 一行摘要」，供选择目标节点的弹窗显示上下文。
+        self._node_summaries_getter: Optional[Callable[[], dict[str, str]]] = None
         self._dialogue_graph_id_getter = dialogue_graph_id_getter
         self._node_id = ""
         self._suppress_change_emit = False
@@ -171,6 +531,8 @@ class NodeInspector(QWidget):
         self._create_editor_group: Callable[[], str | None] | None = None
         self._editor_group_geometry_mode = False
         self._root_layout = QVBoxLayout(self)
+        # 面板本身只有 280px，别再被自己的外边距吃掉 22px——那正好是压不压得进的差额。
+        self._root_layout.setContentsMargins(2, 2, 2, 2)
 
         self._type_label = QLabel(self)
         self._type_label.setWordWrap(True)
@@ -205,12 +567,25 @@ class NodeInspector(QWidget):
         self._root_layout.insertWidget(idx, self._body)
         old_body.deleteLater()
 
+    def _emit_structural_changed(self) -> None:
+        """增删/移动行等**离散结构操作**的变更出口：额外告诉宿主别把它与打字合并撤销。"""
+        cb = getattr(self, "_structural_hint_cb", None)
+        if callable(cb):
+            cb()
+        self._emit_changed()
+
+    def set_structural_hint_callback(self, cb) -> None:
+        self._structural_hint_cb = cb
+
     def _emit_changed(self):
         # Parent connects to slot that reads get_node()
         if self._suppress_change_emit:
             return
         if hasattr(self, "_change_cb") and self._change_cb:
             self._change_cb()
+
+    def set_node_summaries_getter(self, getter: Callable[[], dict[str, str]]) -> None:
+        self._node_summaries_getter = getter
 
     def set_change_callback(self, cb):
         self._change_cb = cb
@@ -262,7 +637,13 @@ class NodeInspector(QWidget):
                 self._getter = lambda s=snap: copy.deepcopy(s)
                 return
             t = data.get("type", "?")
-            self._type_label.setText(f"节点 id：<b>{node_id}</b>　　类型：<b>{t}</b>")
+            # 类型用中文短名：画布写「分支 · root」、节点列表写 `(switch)`、这里写
+            # 「类型：switch」——同一个节点左中右三栏三个名字，交流时对不上号。
+            # 映射复用 graph_document.node_type_label_zh（画布/布局估算的同一来源）。
+            from .graph_document import node_type_label_zh
+            self._type_label.setText(
+                f"节点 id：<b>{node_id}</b>　　类型：<b>{node_type_label_zh(t)}</b>"
+            )
 
             # 几何模式只读展示所属分组（画布分组框决定），无需 assign 回调；
             # 非几何模式才需要 assign 回调驱动可编辑下拉。
@@ -296,6 +677,8 @@ class NodeInspector(QWidget):
         finally:
             self._body_valid = True
             self._suppress_change_emit = False
+            # 统一压进面板宽度：放在这里而不是逐个控件设，新加的控件天然被覆盖。
+            _fit_panel_width(self._body)
             _hide_combo_popups_under(self._body)
             if _win is not None:
                 _win.setUpdatesEnabled(True)
@@ -320,6 +703,27 @@ class NodeInspector(QWidget):
         """表单是否已构建完成且处于有效状态。"""
         return self._body_valid
 
+    def expand_branch_by_data_index(self, data_index: int) -> bool:
+        """按**数据下标**展开对应的分支/选项行（校验面板双击定位用）。
+
+        校验消息说的是数据下标（「分支 1」「case[3]」），而表单行序在有坏元素时
+        与下标不同——这里按各行自报的 `data_index()` 找，两边口径一致。
+        """
+        refs = self._topology_refs
+        rows = refs.get("case_rows") or refs.get("option_rows") or []
+        for row in rows:
+            fn = row.get("data_index")
+            if not callable(fn) or fn() != data_index:
+                continue
+            toggle = row.get("toggle")
+            if row.get("collapsed") and toggle is not None:
+                toggle.click()
+            content = row.get("content")
+            if content is not None:
+                content.setVisible(True)
+            return True
+        return False
+
     def update_topology_from_data(self, node_data: dict[str, Any]) -> None:
         """Update connection fields from fresh data without rebuilding the entire form.
 
@@ -337,36 +741,37 @@ class NodeInspector(QWidget):
                 ne = refs.get("next_edit")
                 if isinstance(ne, QLineEdit):
                     ne.setText(str(node_data.get("next", "")))
+            # 表单行只由「能进表单的 dict 元素」构成（非 dict 的坏元素走只读透传、
+            # 不占行），所以这里配对前必须先按同一口径过滤，再按顺序 zip —— 直接拿
+            # 行号当数据下标会在坏元素之后整体错位：画布上拉的线同步不到检查器，
+            # 随后任意一次编辑还会把那条连线静默打回（审查 2026-08-06 P1-1）。
             elif t == "choice":
-                opts = node_data.get("options") or []
+                opts = _dict_items(node_data.get("options"))
                 rows = refs.get("option_rows") or []
-                for i, row in enumerate(rows):
-                    if i < len(opts) and isinstance(opts[i], dict):
-                        nx = row.get("nx")
-                        if isinstance(nx, QLineEdit):
-                            nx.setText(str(opts[i].get("next", "")))
+                for row, opt in zip(rows, opts):
+                    nx = row.get("nx")
+                    if isinstance(nx, QLineEdit):
+                        nx.setText(str(opt.get("next", "")))
             elif t == "switch":
-                cases = node_data.get("cases") or []
+                cases = _dict_items(node_data.get("cases"))
                 rows = refs.get("case_rows") or []
-                for i, row in enumerate(rows):
-                    if i < len(cases) and isinstance(cases[i], dict):
-                        nx = row.get("next_edit")
-                        if isinstance(nx, QLineEdit):
-                            nx.setText(str(cases[i].get("next", "")))
+                for row, case in zip(rows, cases):
+                    nx = row.get("next_edit")
+                    if isinstance(nx, QLineEdit):
+                        nx.setText(str(case.get("next", "")))
                 dn = refs.get("default_next")
                 if isinstance(dn, QLineEdit):
                     dn.setText(str(node_data.get("defaultNext", "")))
             elif t in ("ownerState", "contextState"):
-                cases = node_data.get("cases") or []
+                cases = _dict_items(node_data.get("cases"))
                 rows = refs.get("case_rows") or []
-                for i, row in enumerate(rows):
-                    if i < len(cases) and isinstance(cases[i], dict):
-                        nx = row.get("next_edit")
-                        if isinstance(nx, QLineEdit):
-                            nx.setText(str(cases[i].get("next", "")))
-                        st = row.get("state_edit")
-                        if isinstance(st, QComboBox):
-                            st.setCurrentText(str(cases[i].get("state", "")))
+                for row, case in zip(rows, cases):
+                    nx = row.get("next_edit")
+                    if isinstance(nx, QLineEdit):
+                        nx.setText(str(case.get("next", "")))
+                    st = row.get("state_edit")
+                    if isinstance(st, QComboBox):
+                        st.setCurrentText(str(case.get("state", "")))
                 dn = refs.get("default_next")
                 if isinstance(dn, QLineEdit):
                     dn.setText(str(node_data.get("defaultNext", "")))
@@ -556,7 +961,7 @@ class NodeInspector(QWidget):
         def _validate(_t: str = "") -> None:
             tid = edit.text().strip()
             if tid and tid not in set(self._list_node_ids()):
-                edit.setStyleSheet("QLineEdit { border: 1px solid #d9534f; }")
+                edit.setStyleSheet(f"QLineEdit {{ border: 1px solid {app_theme.semantic_text_color('error')}; }}")
                 edit.setToolTip(f"指向不存在的节点 id：{tid!r}（笔误，或目标尚未创建）")
             else:
                 edit.setStyleSheet("")
@@ -572,7 +977,7 @@ class NodeInspector(QWidget):
         def _validate(_t: str = "") -> None:
             gid = edit.text().strip()
             if gid and not gid.startswith("@") and gid not in self._known_narrative_graph_ids():
-                edit.setStyleSheet("QLineEdit { border: 1px solid #d9534f; }")
+                edit.setStyleSheet(f"QLineEdit {{ border: 1px solid {app_theme.semantic_text_color('error')}; }}")
                 edit.setToolTip(f"未知叙事图 id：{gid!r}（应为 wrapper/scenario 图 id 或 @owner/@scene）")
             else:
                 edit.setStyleSheet("")
@@ -586,7 +991,9 @@ class NodeInspector(QWidget):
     def _build_line(self, data: dict[str, Any]):
         lines_raw = data.get("lines")
         use_multi = isinstance(lines_raw, list) and len(lines_raw) > 0
-        cb_multi = QCheckBox("多拍连续对白（每句点击继续；存为 lines 数组）", self._body)
+        _lines_good, _lines_junk = _split_dict_items(lines_raw)
+        cb_multi = QCheckBox("多拍连续对白", self._body)
+        cb_multi.setToolTip("勾上以后这个节点可以连着说好几句，每句仍需玩家点一下继续；存为 lines 数组。")
         cb_multi.setChecked(use_multi)
 
         beats_wrap = QWidget(self._body)
@@ -605,22 +1012,20 @@ class NodeInspector(QWidget):
                 r["btn_down"].setEnabled(i < n - 1)
 
         def refresh_beat_fold_policy() -> None:
-            single = len(beat_rows) <= 1
+            """按各拍**自己**的折叠状态刷新（与 switch 分支 / choice 选项同一套规矩）。"""
+            if len(beat_rows) == 1:
+                beat_rows[0]["collapsed"] = False
             for r in beat_rows:
                 t = r.get("toggle")
                 c = r.get("content")
                 if t is None or c is None:
                     continue
-                if single:
-                    t.setVisible(False)
-                    r["collapsed"] = False
-                    c.setVisible(True)
-                    t.setArrowType(Qt.ArrowType.DownArrow)
-                else:
-                    t.setVisible(True)
-                    r["collapsed"] = True
-                    c.setVisible(False)
-                    t.setArrowType(Qt.ArrowType.RightArrow)
+                collapsed = bool(r.get("collapsed"))
+                t.setVisible(True)
+                c.setVisible(not collapsed)
+                t.setArrowType(
+                    Qt.ArrowType.RightArrow if collapsed else Qt.ArrowType.DownArrow
+                )
 
         def rebuild_beats_rows_layout() -> None:
             while rows_layout.count():
@@ -638,14 +1043,15 @@ class NodeInspector(QWidget):
             ov.setContentsMargins(0, 0, 0, 0)
             ov.setSpacing(4)
 
-            header = QHBoxLayout()
+            header = QVBoxLayout()
             toggle = QToolButton(outer)
             toggle.setAutoRaise(True)
             toggle.setArrowType(Qt.ArrowType.RightArrow)
             toggle.setToolTip("折叠 / 展开本句详细表单")
-            summary = QLabel(outer)
-            summary.setWordWrap(False)
-            summary.setStyleSheet("color: #ccc;")
+            # 摘要必须可省略：普通 QLabel 的最小宽度 = 整段文本宽度，会把这一行连同
+            # 右侧的操作按钮一起顶出 280px 面板（见 _ElidingLabel 注释）。
+            summary = _ElidingLabel("", outer)
+            summary.setStyleSheet(app_theme.semantic_text_css("muted"))
 
             btn_ins_before, btn_ins_after, btn_up, btn_down, btn_del = (
                 _compact_row_nav_buttons(
@@ -658,13 +1064,12 @@ class NodeInspector(QWidget):
                 )
             )
 
-            header.addWidget(toggle)
-            header.addWidget(summary, 1)
-            header.addWidget(btn_ins_before)
-            header.addWidget(btn_ins_after)
-            header.addWidget(btn_up)
-            header.addWidget(btn_down)
-            header.addWidget(btn_del)
+            _fill_stacked_row_header(
+                header,
+                toggle,
+                summary,
+                (btn_ins_before, btn_ins_after, btn_up, btn_down, btn_del),
+            )
 
             content = QWidget(outer)
             o_fl = QFormLayout(content)
@@ -676,7 +1081,7 @@ class NodeInspector(QWidget):
             bk, bex = _speaker_to_ui(spb)
             kcb = QComboBox(content)
             for sk in SpeakerKinds:
-                kcb.addItem(sk, sk)
+                kcb.addItem(SPEAKER_KIND_LABELS_ZH.get(sk, sk), sk)
             kcb.setCurrentIndex(max(0, kcb.findData(bk)))
             exed = QLineEdit(bex, content)
             exed_npc_btn = self._make_npc_pick_button(exed, "选择说话人 · sceneNpc")
@@ -721,10 +1126,14 @@ class NodeInspector(QWidget):
             tked.textChanged.connect(self._emit_changed)
             upd_ex()
 
-            o_fl.addRow("说话人 kind", kcb)
+            _lbl_sk = QLabel("说话人", content)
+            _lbl_sk.setToolTip("JSON 字段 speaker.kind：玩家 / NPC / 旁白 / 场景 NPC")
+            o_fl.addRow(_lbl_sk, kcb)
             o_fl.addRow("名字 / npcId", exed_row)
-            o_fl.addRow("text", tx_plain)
-            o_fl.addRow("textKey（可选）", tked)
+            _lb_t = QLabel("台词", content); _lb_t.setToolTip("JSON 字段 text")
+            o_fl.addRow(_lb_t, tx_plain)
+            _lb_tk = QLabel("文本键（可选）", content); _lb_tk.setToolTip("JSON 字段 textKey：走 strings 表时填")
+            o_fl.addRow(_lb_tk, tked)
 
             def flip_collapse() -> None:
                 row["collapsed"] = not row["collapsed"]
@@ -753,7 +1162,7 @@ class NodeInspector(QWidget):
                 beat_rows[i - 1], beat_rows[i] = beat_rows[i], beat_rows[i - 1]
                 rebuild_beats_rows_layout()
                 refresh_beat_nav_buttons()
-                self._emit_changed()
+                self._emit_structural_changed()
 
             def do_move_down() -> None:
                 i = row_index()
@@ -762,19 +1171,33 @@ class NodeInspector(QWidget):
                 beat_rows[i + 1], beat_rows[i] = beat_rows[i], beat_rows[i + 1]
                 rebuild_beats_rows_layout()
                 refresh_beat_nav_buttons()
-                self._emit_changed()
+                self._emit_structural_changed()
 
             def do_delete() -> None:
                 if len(beat_rows) <= 1:
                     QMessageBox.information(self, "多拍对白", "至少保留一句台词。")
                     return
                 i = row_index()
+                # 与其余五类同一套手感：有内容才二次确认。
+                # 少了它，写满字的一句台词被 24px 图标误点一下就没了（Ctrl+Z 能救，
+                # 但策划不一定知道、也不一定当场发现）。
+                _txt = tx_plain.toPlainText().strip()
+                if _txt:
+                    r = QMessageBox.question(
+                        self,
+                        "删除台词",
+                        f"确定删除第 {i} 句？\n\n{shorten(_txt, 40)}",
+                        QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+                        QMessageBox.StandardButton.Cancel,
+                    )
+                    if r != QMessageBox.StandardButton.Ok:
+                        return
                 beat_rows.pop(i)
                 rows_layout.removeWidget(outer)
                 outer.deleteLater()
                 refresh_beat_nav_buttons()
                 refresh_beat_fold_policy()
-                self._emit_changed()
+                self._emit_structural_changed()
 
             btn_ins_before.clicked.connect(do_insert_before)
             btn_ins_after.clicked.connect(do_insert_after)
@@ -797,6 +1220,14 @@ class NodeInspector(QWidget):
                     "tked": tked,
                     "btn_up": btn_up,
                     "btn_down": btn_down,
+                    # 四个操作按钮都登记：护栏必须从按钮本身 click() 进（踩过一个 100% 抛异常的死按钮）
+                    "btn_before": btn_ins_before,
+                    "btn_after": btn_ins_after,
+                    "btn_del": btn_del,
+                    # 供「新拍继承上一拍说话人」读取，与 getter 用同一个 _ui_to_speaker
+                    "speaker_getter": lambda: _ui_to_speaker(
+                        kcb.currentData(), exed.text().strip()
+                    ),
                     # 拍级头像 / 气泡锚无 UI（节点级选择器作各拍默认），但既有数据必须随行保真回写
                     "portrait": copy.deepcopy((beat or {}).get("portrait"))
                     if isinstance(beat, dict)
@@ -811,21 +1242,41 @@ class NodeInspector(QWidget):
             )
             return row
 
+        def _speaker_for_new_beat(pos: int) -> dict[str, Any]:
+            """新拍继承前一拍（没有前一拍就用节点顶层）的说话人。
+
+            旧实现写死 player：策划连着写一段 NPC 的话，每加一句都得手动改回 NPC，
+            忘了改就是运行时说话人错、头像也跟着错。
+            """
+            ref = beat_rows[pos - 1] if 0 < pos <= len(beat_rows) else (
+                beat_rows[0] if beat_rows else None
+            )
+            if ref is not None:
+                sp = ref["speaker_getter"]() if callable(ref.get("speaker_getter")) else None
+                if isinstance(sp, dict) and sp:
+                    return copy.deepcopy(sp)
+            base = data.get("speaker")
+            return copy.deepcopy(base) if isinstance(base, dict) and base else {"kind": "player"}
+
         def insert_blank_beat_at(pos: int) -> None:
             nb = make_beat_block(
-                {"speaker": {"kind": "player"}, "text": "", "textKey": ""}
+                {"speaker": _speaker_for_new_beat(pos), "text": "", "textKey": ""}
             )
+            nb["collapsed"] = False  # 新加的这句直接展开，点完就能写
             pos = max(0, min(pos, len(beat_rows)))
             beat_rows.insert(pos, nb)
             rebuild_beats_rows_layout()
             refresh_beat_nav_buttons()
             refresh_beat_fold_policy()
-            self._emit_changed()
+            self._emit_structural_changed()
 
         if use_multi:
-            for b in lines_raw:
-                if isinstance(b, dict):
-                    beat_rows.append(make_beat_block(b))
+            for b in _lines_good:
+                beat_rows.append(make_beat_block(b))
+            _junk_lbl = _junk_notice(_lines_junk, "台词")
+            if _junk_lbl is not None:
+                _junk_lbl.setParent(self._body)
+                self._body_layout.addWidget(_junk_lbl)
         else:
             beat_rows.append(
                 make_beat_block(
@@ -861,7 +1312,7 @@ class NodeInspector(QWidget):
         legacy_wrap = QWidget(self._body)
         kind_cb = QComboBox(legacy_wrap)
         for k in SpeakerKinds:
-            kind_cb.addItem(k, k)
+            kind_cb.addItem(SPEAKER_KIND_LABELS_ZH.get(k, k), k)
         idx = kind_cb.findData(kind)
         kind_cb.setCurrentIndex(max(0, idx))
         extra_edit = QLineEdit(extra, legacy_wrap)
@@ -878,10 +1329,14 @@ class NodeInspector(QWidget):
         text_key.setPlaceholderText("可选：strings 键")
         leg_l = QFormLayout(legacy_wrap)
         _form_wrap_rows(leg_l)
-        leg_l.addRow("说话人 kind", kind_cb)
+        _lbl_sk2 = QLabel("说话人", self._body)
+        _lbl_sk2.setToolTip("JSON 字段 speaker.kind：玩家 / NPC / 旁白 / 场景 NPC")
+        leg_l.addRow(_lbl_sk2, kind_cb)
         leg_l.addRow("名字 / npcId", extra_row)
-        leg_l.addRow("text", text_edit)
-        leg_l.addRow("textKey（可选）", text_key)
+        _lb_t2 = QLabel("台词", self._body); _lb_t2.setToolTip("JSON 字段 text")
+        leg_l.addRow(_lb_t2, text_edit)
+        _lb_tk2 = QLabel("文本键（可选）", self._body); _lb_tk2.setToolTip("JSON 字段 textKey")
+        leg_l.addRow(_lb_tk2, text_key)
 
         def upd_extra_label():
             k = kind_cb.currentData()
@@ -942,8 +1397,9 @@ class NodeInspector(QWidget):
             por_slug0 = FOLLOW_NPC  # 数据里 emotion-only = 跟随说话NPC
 
         por_wrap = QWidget(self._body)
-        por_lo = QHBoxLayout(por_wrap)
+        por_lo = QVBoxLayout(por_wrap)
         por_lo.setContentsMargins(0, 0, 0, 0)
+        por_lo.setSpacing(3)
         slug_cb = QComboBox(por_wrap)
         slug_cb.addItem("（无头像）", "")
         slug_cb.addItem("跟随说话人", FOLLOW_NPC)
@@ -967,7 +1423,10 @@ class NodeInspector(QWidget):
         )
         emo_cb = QComboBox(por_wrap)
         emo_cb.setToolTip("表情；运行时按 <slug>_<emotion>.png 加载")
+        # 注意：这个标签既显示立绘缩略图（setPixmap）又显示状态文字，**不能**换成
+        # _ElidingLabel —— 那个重写了 paintEvent 只画文字，图会消失。文字靠折行收窄。
         por_preview = QLabel(por_wrap)
+        por_preview.setWordWrap(True)
         por_preview.setFixedHeight(72)
         por_preview.setMinimumWidth(72)
 
@@ -1018,7 +1477,7 @@ class NodeInspector(QWidget):
             eff = _por_effective_slug()
             emo = str(emo_cb.currentData() or "")
             if picked == POR_RAW:
-                por_preview.setStyleSheet("color: #999;")
+                por_preview.setStyleSheet(app_theme.semantic_text_css("faint"))
                 por_preview.setText("(数据) 透传")
                 por_preview.setToolTip(
                     "该头像数据缺 emotion 等字段、表单无法编辑，已原样保留。\n"
@@ -1031,7 +1490,7 @@ class NodeInspector(QWidget):
                 return
             if not eff:
                 # 跟随NPC但当前上下文解析不到：运行时按实际挂载 NPC 解析，编辑器仅提示
-                por_preview.setStyleSheet("color: #999;")
+                por_preview.setStyleSheet(app_theme.semantic_text_css("faint"))
                 por_preview.setText("运行时按NPC解析")
                 por_preview.setToolTip("说话 NPC 的 portraitSlug 在场景里配置")
                 return
@@ -1044,7 +1503,7 @@ class NodeInspector(QWidget):
                     pm.scaledToHeight(72, Qt.TransformationMode.SmoothTransformation)
                 )
             else:
-                por_preview.setStyleSheet("color: #e66;")
+                por_preview.setStyleSheet(app_theme.semantic_text_css("error"))
                 por_preview.setText("缺图")
 
         slug_cb.currentIndexChanged.connect(
@@ -1071,10 +1530,18 @@ class NodeInspector(QWidget):
         _por_refresh_emotions()
         _por_refresh_preview()
 
-        por_lo.addWidget(slug_cb, 2)
-        por_lo.addWidget(emo_cb, 1)
-        por_lo.addWidget(por_preview)
-        por_lo.addStretch(1)
+        # 两个下拉一行、缩略图另起一行：三样挤一行的最小宽是 300px+，
+        # 而检查器面板默认只有 280px（挤爆之后整块横向滚动）。
+        _por_row1 = QHBoxLayout()
+        _por_row1.setContentsMargins(0, 0, 0, 0)
+        _por_row1.addWidget(slug_cb, 2)
+        _por_row1.addWidget(emo_cb, 1)
+        _por_row2 = QHBoxLayout()
+        _por_row2.setContentsMargins(0, 0, 0, 0)
+        _por_row2.addWidget(por_preview)
+        _por_row2.addStretch(1)
+        por_lo.addLayout(_por_row1)
+        por_lo.addLayout(_por_row2)
         flp = QFormLayout()
         _form_wrap_rows(flp)
         flp.addRow("头像（可选）", por_wrap)
@@ -1126,14 +1593,22 @@ class NodeInspector(QWidget):
         row_n.addWidget(pick)
         fln = QFormLayout()
         _form_wrap_rows(fln)
-        fln.addRow("next", row_n)
+        _lbl_n2 = QLabel("去哪", self._body)
+        _lbl_n2.setToolTip("JSON 字段 next：这一步演完之后跳到哪个节点")
+        fln.addRow(_lbl_n2, row_n)
 
         self._body_layout.addWidget(cb_multi)
         self._body_layout.addWidget(legacy_wrap)
         self._body_layout.addWidget(beats_wrap)
         self._body_layout.addLayout(flp)
         self._body_layout.addLayout(fln)
-        self._topology_refs = {"type": "line", "next_edit": next_edit}
+        # 多拍的行也登记进来：护栏要从按钮本身 click() 进，
+        # 不暴露就等于这条路径从来没被自动化测过（这次就是这么漏掉确认框的）。
+        self._topology_refs = {
+            "type": "line",
+            "next_edit": next_edit,
+            "beat_rows": beat_rows,
+        }
 
         def collect_beats() -> list[dict[str, Any]]:
             out_beats: list[dict[str, Any]] = []
@@ -1175,19 +1650,23 @@ class NodeInspector(QWidget):
         _orig_text_key = data.get("textKey")
         _orig_has_speaker = "speaker" in data
         _orig_speaker = copy.deepcopy(data.get("speaker"))
+        _orig_empty_lines = isinstance(data.get("lines"), list) and not data.get("lines")
 
         def getter():
             nxt = next_edit.text().strip()
             if cb_multi.isChecked():
                 beats = collect_beats()
-                if not beats:
-                    raise ValueError("多拍模式至少保留一句台词")
-                first = beats[0]
+                # getter 绝不抛异常：它一抛，本节点的编辑就整段进不了模型且不标脏，
+                # 关窗口都不提示（审查 2026-08-06 P0-1 同源）。空 lines 由
+                # graph_document._validate_line_beats 报 error。
+                first = beats[0] if beats else {}
                 out: dict[str, Any] = {
                     "type": "line",
-                    "speaker": copy.deepcopy(_orig_speaker) if _orig_has_speaker else first["speaker"],
+                    "speaker": copy.deepcopy(_orig_speaker)
+                    if _orig_has_speaker
+                    else (first.get("speaker") or {"kind": "player"}),
                     "next": nxt,
-                    "lines": beats,
+                    "lines": _reinsert_junk(beats, _lines_junk),
                 }
                 if _orig_has_text:
                     out["text"] = _orig_text
@@ -1218,6 +1697,10 @@ class NodeInspector(QWidget):
             tk = text_key.text().strip()
             if tk:
                 out["textKey"] = tk
+            # 磁盘上原本就有 lines:[]（空数组）时忠实回写这个键——表单形状保真，
+            # 不因「单拍模式」顺手删键（校验器会另行报 error，那是它的事）。
+            if _orig_empty_lines:
+                out["lines"] = []
             por = collect_portrait()
             if por is not None:
                 out["portrait"] = por
@@ -1235,9 +1718,7 @@ class NodeInspector(QWidget):
     def _build_run_actions(self, data: dict[str, Any]):
         from tools.editor.shared.action_editor import ActionEditor
 
-        acts = data.get("actions")
-        if not isinstance(acts, list):
-            acts = []
+        acts, acts_junk = _split_dict_items(data.get("actions"))
         next_edit = QLineEdit(str(data.get("next", "")), self._body)
         pick = QPushButton("选…", self._body)
         pick.clicked.connect(lambda: self._pick_target(next_edit))
@@ -1249,34 +1730,35 @@ class NodeInspector(QWidget):
         row = QHBoxLayout()
         row.addWidget(next_edit)
         row.addWidget(pick)
-        fl.addRow("next", row)
+        _lbl_next = QLabel("去哪", self._body)
+        _lbl_next.setToolTip("JSON 字段 next：这一步演完之后跳到哪个节点")
+        fl.addRow(_lbl_next, row)
         self._body_layout.addLayout(fl)
 
         pm = self._project_model_getter() if self._project_model_getter else None
         # parent=self._body：让 ae 的 parent 链一开始就落在 inspector 的可见子树内；
         # 先 addWidget 再 set_data，避免 row 构造时父 widget 还未挂到布局里短暂成为 orphan。
         ae = ActionEditor(
-            "动作（与主编辑器 Action列表同源）",
+            "动作",
             self._body,
             show_reorder_buttons=True,
         )
         ae.set_project_context(pm, None)
         self._body_layout.addWidget(ae)
-        to_load: list[dict[str, Any]] = []
-        if acts:
-            for a in acts:
-                if isinstance(a, dict):
-                    to_load.append(a)
         # 不再为空 actions 注入占位 setFlag——否则「空 runActions」打开即被改写成 1 条动作。
         # 空列表交给 ActionEditor 展示「+ 添加」入口，getter 原样回写 []。
-        ae.set_data(to_load)
+        ae.set_data(list(acts))
+        _junk_lbl = _junk_notice(acts_junk, "动作")
+        if _junk_lbl is not None:
+            _junk_lbl.setParent(self._body)
+            self._body_layout.addWidget(_junk_lbl)
         ae.changed.connect(self._emit_changed)
         self._topology_refs = {"type": "runActions", "next_edit": next_edit}
 
         def getter():
             return {
                 "type": "runActions",
-                "actions": ae.to_list(),
+                "actions": _reinsert_junk(ae.to_list(), acts_junk),
                 "next": next_edit.text().strip(),
             }
 
@@ -1325,12 +1807,30 @@ class NodeInspector(QWidget):
 
     # --- choice ---
     def _build_choice(self, data: dict[str, Any]):
+        # options 不是数组（null / 字符串 / 对象等被写坏的值）→ 走只读原样透传，
+        # 与「节点值不是对象」「未知 type」两处同一口径：编辑器不当场把坏值抹成 []，
+        # 否则磁盘上的原始证据被吃掉、之后再也查不出原来写的是什么。由校验层报 error。
+        if "options" in data and not isinstance(data.get("options"), list):
+            bad = data.get("options")
+            self._body_layout.addWidget(
+                QLabel(
+                    f"该 choice 节点的 options 不是数组（实际为 {type(bad).__name__}），"
+                    "无法用表单编辑。\n"
+                    "内容已原样保留、不会被改写；校验面板会把它列为错误，"
+                    "请在数据文件里改成数组后再回来编辑。",
+                    self._body,
+                )
+            )
+            snap = copy.deepcopy(data)
+            self._getter = lambda s=snap: copy.deepcopy(s)
+            return
         # promptLine optional
         pl = data.get("promptLine")
         has_pl = isinstance(pl, dict) and bool(pl)
-        cb_pl = QCheckBox("有 promptLine（选项前多播一行）", self._body)
+        cb_pl = QCheckBox("选项前先播一行", self._body)
+        cb_pl.setToolTip("勾上以后，弹选项之前先播一句话（存为 promptLine）。")
         cb_pl.setChecked(bool(has_pl))
-        prompt_box = QGroupBox("promptLine", self._body)
+        prompt_box = QGroupBox("选项前先播的一行", self._body)
 
         sp = (pl or {}).get("speaker") if has_pl else {"kind": "player"}
         if not isinstance(sp, dict):
@@ -1338,7 +1838,7 @@ class NodeInspector(QWidget):
         kind, extra = _speaker_to_ui(sp)
         pl_kind = QComboBox(prompt_box)
         for k in SpeakerKinds:
-            pl_kind.addItem(k, k)
+            pl_kind.addItem(SPEAKER_KIND_LABELS_ZH.get(k, k), k)
         pl_kind.setCurrentIndex(max(0, pl_kind.findData(kind)))
         pl_extra_stack = QStackedWidget(prompt_box)
         pl_extra_line = QLineEdit(prompt_box)
@@ -1402,10 +1902,13 @@ class NodeInspector(QWidget):
 
         pfl = QFormLayout()
         _form_wrap_rows(pfl)
-        pfl.addRow("kind", pl_kind)
+        _lb_k = QLabel("说话人", prompt_box); _lb_k.setToolTip("JSON 字段 speaker.kind")
+        pfl.addRow(_lb_k, pl_kind)
         pfl.addRow(pl_extra_lbl, pl_extra_stack)
-        pfl.addRow("text", pl_text)
-        pfl.addRow("textKey（可选）", pl_text_key)
+        _lb_pt = QLabel("台词", prompt_box); _lb_pt.setToolTip("JSON 字段 text")
+        pfl.addRow(_lb_pt, pl_text)
+        _lb_ptk = QLabel("文本键（可选）", prompt_box); _lb_ptk.setToolTip("JSON 字段 textKey")
+        pfl.addRow(_lb_ptk, pl_text_key)
         pfl.addRow("立绘（可选）", pl_portrait)
         prompt_box.setLayout(pfl)
         prompt_box.setVisible(has_pl)
@@ -1441,9 +1944,7 @@ class NodeInspector(QWidget):
         self._body_layout.addWidget(cb_pl)
         self._body_layout.addWidget(prompt_box)
 
-        opts = data.get("options")
-        if not isinstance(opts, list):
-            opts = []
+        opts, opts_junk = _split_dict_items(data.get("options"))
         rows_wrap = QWidget(self._body)
         rows_layout = QVBoxLayout(rows_wrap)
         rows_layout.setContentsMargins(0, 0, 0, 0)
@@ -1457,22 +1958,28 @@ class NodeInspector(QWidget):
                 r["btn_down"].setEnabled(i < n - 1)
 
         def refresh_choice_fold_policy() -> None:
-            single = len(option_rows) <= 1
+            """按各选项**自己**的折叠状态刷新（与 switch 分支同一套规矩）。
+
+            旧实现每次增删选项都把所有选项强制折回去：策划展开第 2 个选项改到一半、
+            点一下「添加选项」，正在编辑的那条被折上、滚动位置没了，新加的那条也是
+            折叠的——视觉上「点了没反应」。
+            """
+            if len(option_rows) == 1:
+                option_rows[0]["collapsed"] = False
             for r in option_rows:
                 t = r.get("toggle")
                 c = r.get("content")
                 if t is None or c is None:
                     continue
-                if single:
-                    t.setVisible(False)
-                    r["collapsed"] = False
-                    c.setVisible(True)
-                    t.setArrowType(Qt.ArrowType.DownArrow)
-                else:
-                    t.setVisible(True)
-                    r["collapsed"] = True
-                    c.setVisible(False)
-                    t.setArrowType(Qt.ArrowType.RightArrow)
+                collapsed = bool(r.get("collapsed"))
+                t.setVisible(True)
+                c.setVisible(not collapsed)
+                t.setArrowType(
+                    Qt.ArrowType.RightArrow if collapsed else Qt.ArrowType.DownArrow
+                )
+
+        # 空选项提示控件在下面 make_option_block 之后才建得出来，这里先留个占位引用。
+        _choice_hint_ref: dict[str, Any] = {"w": None}
 
         def rebuild_choice_rows_layout() -> None:
             while rows_layout.count():
@@ -1482,6 +1989,14 @@ class NodeInspector(QWidget):
                     w.setParent(None)
             for r in option_rows:
                 rows_layout.addWidget(r["outer"])
+            hint = _choice_hint_ref.get("w")
+            if hint is not None:
+                rows_layout.addWidget(hint)
+                hint.setVisible(not option_rows)
+            for r in option_rows:  # 序号依赖行位置，结构变了要重刷标题
+                fn = r.get("refresh_summary")
+                if callable(fn):
+                    fn()
 
         def make_option_block(od: dict[str, Any]) -> dict[str, Any]:
             row: dict[str, Any] = {"collapsed": True}
@@ -1490,14 +2005,15 @@ class NodeInspector(QWidget):
             ov.setContentsMargins(0, 0, 0, 0)
             ov.setSpacing(4)
 
-            header = QHBoxLayout()
+            header = QVBoxLayout()
             toggle = QToolButton(outer)
             toggle.setAutoRaise(True)
             toggle.setArrowType(Qt.ArrowType.RightArrow)
-            toggle.setToolTip("折叠 / 展开本条详细表单")
-            summary = QLabel(outer)
-            summary.setWordWrap(False)
-            summary.setStyleSheet("color: #ccc;")
+            toggle.setToolTip("折叠 / 展开本条详细表单（在本行右键可插入 / 移动 / 删除）")
+            # 摘要必须可省略：普通 QLabel 的最小宽度 = 整段文本宽度，会把这一行连同
+            # 右侧的操作按钮一起顶出 280px 面板（见 _ElidingLabel 注释）。
+            summary = _ElidingLabel("", outer)
+            summary.setStyleSheet(app_theme.semantic_text_css("muted"))
 
             btn_ins_before, btn_ins_after, btn_up, btn_down, btn_del = (
                 _compact_row_nav_buttons(
@@ -1506,17 +2022,16 @@ class NodeInspector(QWidget):
                     tip_after="在此选项之后插入一条空白选项",
                     tip_up="整条选项上移",
                     tip_down="整条选项下移",
-                    tip_del="删除此选项（至少保留一项）",
+                    tip_del="删除此选项（可以删空，校验面板会提醒）",
                 )
             )
 
-            header.addWidget(toggle)
-            header.addWidget(summary, 1)
-            header.addWidget(btn_ins_before)
-            header.addWidget(btn_ins_after)
-            header.addWidget(btn_up)
-            header.addWidget(btn_down)
-            header.addWidget(btn_del)
+            _fill_stacked_row_header(
+                header,
+                toggle,
+                summary,
+                (btn_ins_before, btn_ins_after, btn_up, btn_down, btn_del),
+            )
 
             content = QWidget(outer)
             o_fl = QFormLayout(content)
@@ -1542,7 +2057,7 @@ class NodeInspector(QWidget):
                 "（无）点「选择…」打开登记表（与主编辑器 Flag 选择器相同）"
             )
             rf_edit.setToolTip("仅当 flagStore 中该键为真时选项可选；须从登记表选取以保证键名一致。")
-            rf_pick = QPushButton("选择…", rf_wrap)
+            rf_pick = QPushButton("选…", rf_wrap)
             rf_clear = QPushButton("清除", rf_wrap)
 
             def do_pick_rf() -> None:
@@ -1619,15 +2134,24 @@ class NodeInspector(QWidget):
             o_fl.addRow("选项文案", text_e)
             wnx = QWidget(content)
             wnx.setLayout(nx_lo)
-            o_fl.addRow("连线至 next", wnx)
-            o_fl.addRow("前提标志 requireFlag", rf_wrap)
-            o_fl.addRow("花费铜钱 costCoins", cost_sp)
-            o_fl.addRow("关联规矩 ruleHintId", rh_cb)
-            o_fl.addRow("灰显时点击提示 disabledClickHint", hint_plain)
+            _lbl_on = QLabel("去哪", content)
+            _lbl_on.setToolTip("JSON 字段 next：选这条之后跳到哪个节点")
+            o_fl.addRow(_lbl_on, wnx)
+            _lbl_rf = QLabel("前提标志", content); _lbl_rf.setToolTip("JSON 字段 requireFlag：这个标志为真时本选项才可选")
+            o_fl.addRow(_lbl_rf, rf_wrap)
+            _lbl_cost = QLabel("花费铜钱", content); _lbl_cost.setToolTip("JSON 字段 costCoins：选这条要扣的铜钱")
+            o_fl.addRow(_lbl_cost, cost_sp)
+            _lbl_rh = QLabel("关联规矩", content); _lbl_rh.setToolTip("JSON 字段 ruleHintId：给这条选项标上规矩样式")
+            o_fl.addRow(_lbl_rh, rh_cb)
+            _lbl_hint = QLabel("灰显点击提示", content); _lbl_hint.setToolTip("JSON 字段 disabledClickHint：选项不可选时，玩家点它弹出的说明")
+            o_fl.addRow(_lbl_hint, hint_plain)
 
-            req_g = QGroupBox(
-                "可选：requireCondition（ConditionExpr；与 requireFlag 同时存在则均须满足）",
-                content,
+            # 标题只留名字：QGroupBox 的最小宽度含标题全宽，一句说明写在标题里
+            # 就把整块顶到 470px+，直接顶爆 280px 面板（说明进 tooltip，norms 布局纪律）。
+            req_g = QGroupBox("附加条件（可选）", content)
+            req_g.setToolTip(
+                "JSON 字段 requireCondition：比「前提标志」更复杂的条件（任一 / 否定 / 嵌套）。\n"
+                "与「前提标志」同时填时，两个都满足才可选。"
             )
             rg_l = QVBoxLayout(req_g)
 
@@ -1644,14 +2168,32 @@ class NodeInspector(QWidget):
             rg_l.addWidget(req_tree)
             o_fl.addRow(req_g)
 
+            def _opt_data_index() -> int:
+                """本行在数据数组里的下标（坏元素不占行但占下标，口径同 switch）。"""
+                try:
+                    row_i = option_rows.index(row)
+                except ValueError:
+                    return -1
+                mapping = _row_data_indices(len(option_rows), opts_junk)
+                return mapping[row_i] if row_i < len(mapping) else -1
+
             def update_summary() -> None:
-                oid = id_e.text().strip() or "(未填 id)"
+                # 摘要给「文案 → 去哪」而不是「id · 文案」：折叠列表是用来一眼看出
+                # 每条选项通向哪的，而 id 是技术字段、策划不关心（降级进 tooltip）。
                 tx = text_e.toPlainText().strip().replace("\n", " ")
-                if len(tx) > 36:
-                    tx = tx[:33] + "…"
+                if len(tx) > 30:
+                    tx = tx[:27] + "…"
                 if not tx:
-                    tx = "—"
-                summary.setText(f"{oid}  ·  {tx}")
+                    tx = "（未填文案）"
+                nx_v = nx.text().strip() or "（未填 next）"
+                idx = _opt_data_index()
+                prefix = f"{idx}. " if idx >= 0 else ""
+                summary.setText(f"{prefix}{tx}  →  {nx_v}")
+                summary.setToolTip(
+                    f"选项 id：{id_e.text().strip() or '(未填)'}\n"
+                    f"文案：{text_e.toPlainText().strip() or '(未填)'}\n"
+                    f"去哪：{nx.text().strip() or '(未填)'}"
+                )
 
             def flip_collapse() -> None:
                 row["collapsed"] = not row["collapsed"]
@@ -1663,6 +2205,9 @@ class NodeInspector(QWidget):
             toggle.clicked.connect(flip_collapse)
             id_e.textChanged.connect(update_summary)
             text_e.textChanged.connect(update_summary)
+            # 摘要里现在有「去哪」，next 变了标题必须跟着变（否则画布拉完线，
+            # 折叠列表还显示旧目标）。
+            nx.textChanged.connect(lambda _t: update_summary())
             id_e.textChanged.connect(self._emit_changed)
             nx.textChanged.connect(self._emit_changed)
             text_e.textChanged.connect(self._emit_changed)
@@ -1684,7 +2229,7 @@ class NodeInspector(QWidget):
                 option_rows[i - 1], option_rows[i] = option_rows[i], option_rows[i - 1]
                 rebuild_choice_rows_layout()
                 refresh_choice_nav_buttons()
-                self._emit_changed()
+                self._emit_structural_changed()
 
             def do_move_down() -> None:
                 i = row_index()
@@ -1693,19 +2238,31 @@ class NodeInspector(QWidget):
                 option_rows[i + 1], option_rows[i] = option_rows[i], option_rows[i + 1]
                 rebuild_choice_rows_layout()
                 refresh_choice_nav_buttons()
-                self._emit_changed()
+                self._emit_structural_changed()
 
             def do_delete() -> None:
-                if len(option_rows) <= 1:
-                    QMessageBox.information(self, "选项", "至少保留一个选项。")
-                    return
+                # 与 switch 分支删除同一套手感：有内容才二次确认，且允许删空
+                # （空 choice 由校验面板报 error，不用在这里硬拦）。
                 i = row_index()
+                label = text_e.toPlainText().strip() or id_e.text().strip()
+                if label:
+                    r = QMessageBox.question(
+                        self,
+                        "删除选项",
+                        # 与 switch 分支同口径：带上数据下标，与摘要/画布/校验一致。
+                        f"确定删除选项 {_opt_data_index()}？\n\n{shorten(label, 40)}",
+                        QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+                        QMessageBox.StandardButton.Cancel,
+                    )
+                    if r != QMessageBox.StandardButton.Ok:
+                        return
                 option_rows.pop(i)
-                rows_layout.removeWidget(outer)
+                outer.setParent(None)
                 outer.deleteLater()
+                rebuild_choice_rows_layout()  # 同 switch：空状态提示 + 序号都靠它刷新
                 refresh_choice_nav_buttons()
                 refresh_choice_fold_policy()
-                self._emit_changed()
+                self._emit_structural_changed()
 
             btn_ins_before.clicked.connect(do_insert_before)
             btn_ins_after.clicked.connect(do_insert_after)
@@ -1723,6 +2280,12 @@ class NodeInspector(QWidget):
                     "toggle": toggle,
                     "content": content,
                     "id_e": id_e,
+                    # 原本有没有 id 键：没有且用户也没填就不注入 `"id": ""`
+                    # （凭空注入会顺带凭空多出一条校验 error，还把文件标脏）。
+                    "orig_has_id": isinstance(od, dict) and "id" in od,
+                    "data_index": _opt_data_index,
+                    "summary_label": summary,
+                    "refresh_summary": update_summary,
                     "text_e": text_e,
                     "nx": nx,
                     "rf_edit": rf_edit,
@@ -1732,28 +2295,48 @@ class NodeInspector(QWidget):
                     "hint_plain": hint_plain,
                     "btn_up": btn_up,
                     "btn_down": btn_down,
+                    # 四个操作按钮都登记：护栏必须从按钮本身 click() 进（踩过一个 100% 抛异常的死按钮）
+                    "btn_before": btn_ins_before,
+                    "btn_after": btn_ins_after,
+                    "btn_del": btn_del,
                 }
             )
             return row
 
+        def _suggest_option_id() -> str:
+            """给新选项一个当前节点内不冲突的 id：新选项出厂就得是合法的。"""
+            used = {r["id_e"].text().strip() for r in option_rows}
+            for n in range(1, 200):
+                cand = f"opt{n}"
+                if cand not in used:
+                    return cand
+            return ""
+
         def insert_blank_option_at(pos: int) -> None:
-            blank = {"id": "", "text": "", "next": ""}
-            nb = make_option_block(blank)
+            nb = make_option_block({"id": _suggest_option_id(), "text": "", "next": ""})
+            nb["collapsed"] = False  # 新选项直接展开，点完就能填
             pos = max(0, min(pos, len(option_rows)))
             option_rows.insert(pos, nb)
             rebuild_choice_rows_layout()
             refresh_choice_nav_buttons()
             refresh_choice_fold_policy()
-            self._emit_changed()
+            self._emit_structural_changed()
 
-        if opts:
-            for od in opts:
-                if isinstance(od, dict):
-                    option_rows.append(make_option_block(od))
-        else:
-            option_rows.append(
-                make_option_block({"id": "a", "text": "选项甲", "next": ""})
-            )
+        # options 为空/非列表时**不再**凭空补一条「选项甲」（与 switch 侧同源问题）：
+        # 那是用户没填的内容，打开+切走就会被写进 JSON。空就如实显示空 + 一句引导。
+        for od in opts:
+            option_rows.append(make_option_block(od))
+        _junk_lbl = _junk_notice(opts_junk, "选项")
+        if _junk_lbl is not None:
+            _junk_lbl.setParent(self._body)
+            self._body_layout.addWidget(_junk_lbl)
+        choice_empty_hint = QLabel(
+            "本节点当前没有选项，运行时会卡住无处可去。点下方「在末尾添加选项」新增。",
+            rows_wrap,
+        )
+        choice_empty_hint.setWordWrap(True)
+        choice_empty_hint.setStyleSheet(app_theme.semantic_text_css("warn"))
+        _choice_hint_ref["w"] = choice_empty_hint
         rebuild_choice_rows_layout()
         refresh_choice_nav_buttons()
         refresh_choice_fold_policy()
@@ -1780,15 +2363,17 @@ class NodeInspector(QWidget):
 
         def getter():
             options: list[dict[str, Any]] = []
-            for idx_r, r in enumerate(option_rows):
+            for _idx_r, r in enumerate(option_rows):
+                # getter **绝不抛异常**：它是本节点数据进模型的唯一出口，一抛就把整条
+                # 通道断掉——表单上敲的字全在、模型里一个字没进、is_dirty 还是 False，
+                # 于是关窗口不提示、整段编辑无声蒸发（审查 2026-08-06 P0-1）。
+                # 「未填 id」改由校验面板与保存门拦（graph_document.validate_graph_tiered）。
                 oid = r["id_e"].text().strip()
-                if not oid:
-                    raise ValueError(f"选项 {idx_r + 1} 未填 id，请补全后再保存")
-                out_opt: dict[str, Any] = {
-                    "id": oid,
-                    "text": r["text_e"].toPlainText(),
-                    "next": r["nx"].text().strip(),
-                }
+                out_opt: dict[str, Any] = {}
+                if oid or r.get("orig_has_id"):
+                    out_opt["id"] = oid
+                out_opt["text"] = r["text_e"].toPlainText()
+                out_opt["next"] = r["nx"].text().strip()
                 rf_s = r["rf_edit"].text().strip()
                 if rf_s:
                     out_opt["requireFlag"] = rf_s
@@ -1804,7 +2389,10 @@ class NodeInspector(QWidget):
                 if hint_s:
                     out_opt["disabledClickHint"] = hint_s
                 options.append(out_opt)
-            out: dict[str, Any] = {"type": "choice", "options": options}
+            out: dict[str, Any] = {
+                "type": "choice",
+                "options": _reinsert_junk(options, opts_junk),
+            }
             if cb_pl.isChecked():
                 k = pl_kind.currentData()
                 if k == "literal":
@@ -1831,29 +2419,24 @@ class NodeInspector(QWidget):
 
     # --- switch ---
     def _build_switch(self, data: dict[str, Any]):
-        cases_raw = data.get("cases")
-        if not isinstance(cases_raw, list):
-            cases_raw = []
+        cases_raw, cases_junk = _split_dict_items(data.get("cases"))
 
         pm_switch = self._project_model_getter() if self._project_model_getter else None
 
+        # defaultNext（else）建在这里但**排到分支列表下面**：它是「以上都不满足才走」，
+        # 画在分支之前会让人以为它先生效。
         dn = QLineEdit(str(data.get("defaultNext", "")), self._body)
         pickd = QPushButton("选…", self._body)
         pickd.clicked.connect(lambda: self._pick_target(dn))
         dn.textChanged.connect(self._emit_changed)
         self._install_target_validation(dn)
-        fl = QFormLayout()
-        _form_wrap_rows(fl)
-        rowd = QHBoxLayout()
-        rowd.addWidget(dn)
-        rowd.addWidget(pickd)
-        fl.addRow("defaultNext", rowd)
-        self._body_layout.addLayout(fl)
+
         self._body_layout.addWidget(
             _help_marker(
-                "分支：自上而下命中第一条。"
-                "每条可选用「多条条件 AND」或「单条结构化 ConditionExpr（与运行时 evaluateConditionExpr 一致）」；"
-                "后者保存时写入 condition字段并优先于 conditions。",
+                "分支自上而下判定，命中第一条就走，后面的不再看。"
+                "都不命中才走最底下的「以上都不满足」。"
+                "每条分支的条件可以写成「多条条件 AND」清单，也可以切成「结构化」写"
+                "任一/否定/嵌套；两种写法之间来回切不会丢条件。",
                 self._body,
             ),
         )
@@ -1863,6 +2446,15 @@ class NodeInspector(QWidget):
         cases_outer.setContentsMargins(0, 0, 0, 0)
         cases_outer.setSpacing(4)
         switch_case_rows: list[dict[str, Any]] = []
+        # cases 为空时**不再**凭空补一条 some_flag 假分支：那条分支画布上根本不存在
+        # （画布只按 JSON 里的 cases 画端口），策划随手改一下 defaultNext 就会把这条
+        # 没人要的假分支写进 JSON。空就如实显示空 + 一句引导。
+        empty_hint = QLabel(
+            "本节点当前没有分支，运行时会直接走 defaultNext。点下方「在末尾添加分支」新增。",
+            cases_wrap,
+        )
+        empty_hint.setWordWrap(True)
+        empty_hint.setStyleSheet(app_theme.semantic_text_css("warn"))
 
         def refresh_case_nav() -> None:
             n = len(switch_case_rows)
@@ -1871,22 +2463,32 @@ class NodeInspector(QWidget):
                 c["btn_down"].setEnabled(i < n - 1)
 
         def refresh_case_fold_policy() -> None:
-            single = len(switch_case_rows) <= 1
+            """按各分支**自己**的折叠状态刷新可见性。
+
+            旧实现每次增删分支都把所有分支强制折回去——策划展开第 3 条改到一半、
+            点一下「添加分支」，正在编辑的那条就被折上、滚动位置也没了。
+            这里只保留「只剩一条时没得折，强制展开」这一条规则，其余一律尊重现状。
+            """
+            if len(switch_case_rows) == 1:
+                switch_case_rows[0]["collapsed"] = False
             for c in switch_case_rows:
                 t = c.get("toggle")
                 ct = c.get("content")
                 if t is None or ct is None:
                     continue
-                if single:
-                    t.setVisible(False)
-                    c["collapsed"] = False
-                    ct.setVisible(True)
-                    t.setArrowType(Qt.ArrowType.DownArrow)
-                else:
-                    t.setVisible(True)
-                    c["collapsed"] = True
-                    ct.setVisible(False)
-                    t.setArrowType(Qt.ArrowType.RightArrow)
+                collapsed = bool(c.get("collapsed"))
+                t.setVisible(True)
+                ct.setVisible(not collapsed)
+                t.setArrowType(
+                    Qt.ArrowType.RightArrow if collapsed else Qt.ArrowType.DownArrow
+                )
+
+        def refresh_case_summaries() -> None:
+            """行序变了就重刷所有分支标题——标题里的序号依赖本行在列表中的位置。"""
+            for c in switch_case_rows:
+                fn = c.get("refresh_summary")
+                if callable(fn):
+                    fn()
 
         def rebuild_cases_layout() -> None:
             while cases_outer.count():
@@ -1896,24 +2498,42 @@ class NodeInspector(QWidget):
                     w.setParent(None)
             for c in switch_case_rows:
                 cases_outer.addWidget(c["outer"])
+            cases_outer.addWidget(empty_hint)
+            empty_hint.setVisible(not switch_case_rows)
+            refresh_case_summaries()
 
         def make_case_block(case: dict[str, Any] | None) -> dict[str, Any]:
             case_rec: dict[str, Any] = {"collapsed": True}
+            _mode_switch_busy = {"v": False}
             # 原本是否带 conditions 键（含空数组）——getter 据此保真回写，不注入 conditions:[]。
             _orig_conditions_present = isinstance(case, dict) and "conditions" in case
+            # 磁盘上这条分支原本是哪种写法。只是切下拉「看一眼」不应该把
+            # conditions 改写成 condition（会在 diff 里留下与内容无关的形状变化）；
+            # 只有在新写法里**真的改了东西**，才按新写法回写（审查 2026-08-06 P2-3）。
+            _orig_shape = (
+                "condition"
+                if isinstance(case, dict) and case.get("condition") is not None
+                else ("conditions" if _orig_conditions_present else "")
+            )
+            # 「有没有在这种写法里真改过东西」不靠给每个按钮挂回调判定——那样每加一个
+            # 操作入口都得记得挂一次，漏一个就是一整类编辑被静默丢弃（上移/下移/删除
+            # 条件就这么漏过）。改成拿**当前序列化结果**跟「进入这种写法时的基线」比：
+            # 不依赖任何回调挂全，新增按钮天然被覆盖。
+            mode_baseline: dict[str, Any] = {"and": None, "expr": None}
             outer = QWidget(cases_wrap)
             ov = QVBoxLayout(outer)
             ov.setContentsMargins(0, 0, 0, 0)
             ov.setSpacing(4)
 
-            header = QHBoxLayout()
+            header = QVBoxLayout()
             toggle = QToolButton(outer)
             toggle.setAutoRaise(True)
             toggle.setArrowType(Qt.ArrowType.RightArrow)
-            toggle.setToolTip("折叠 / 展开本分支")
-            summary = QLabel(outer)
-            summary.setWordWrap(False)
-            summary.setStyleSheet("color: #ccc;")
+            toggle.setToolTip("折叠 / 展开本分支（在本行右键可插入 / 移动 / 删除）")
+            # 摘要必须可省略：普通 QLabel 的最小宽度 = 整段文本宽度，会把这一行连同
+            # 右侧的操作按钮一起顶出 280px 面板（见 _ElidingLabel 注释）。
+            summary = _ElidingLabel("", outer)
+            summary.setStyleSheet(app_theme.semantic_text_css("muted"))
             btn_ins_before, btn_ins_after, btn_up, btn_down, btn_del = (
                 _compact_row_nav_buttons(
                     outer,
@@ -1921,16 +2541,15 @@ class NodeInspector(QWidget):
                     tip_after="在此分支之后插入空分支",
                     tip_up="整条分支上移",
                     tip_down="整条分支下移",
-                    tip_del="删除本分支（至少保留一个分支）",
+                    tip_del="删除本分支（可以删空，校验面板会提醒）",
                 )
             )
-            header.addWidget(toggle)
-            header.addWidget(summary, 1)
-            header.addWidget(btn_ins_before)
-            header.addWidget(btn_ins_after)
-            header.addWidget(btn_up)
-            header.addWidget(btn_down)
-            header.addWidget(btn_del)
+            _fill_stacked_row_header(
+                header,
+                toggle,
+                summary,
+                (btn_ins_before, btn_ins_after, btn_up, btn_down, btn_del),
+            )
 
             content = QWidget(outer)
             cv = QVBoxLayout(content)
@@ -1941,14 +2560,21 @@ class NodeInspector(QWidget):
             nx.textChanged.connect(self._emit_changed)
             self._install_target_validation(nx)
             hr = QHBoxLayout()
-            hr.addWidget(QLabel("next", content))
+            _lbl_cn = QLabel("去哪", content)
+            _lbl_cn.setToolTip("JSON 字段 next：命中本分支后跳到哪个节点")
+            hr.addWidget(_lbl_cn)
             hr.addWidget(nx, 1)
             hr.addWidget(pk)
             cv.addLayout(hr)
 
             case_mode = QComboBox(content)
-            case_mode.addItem("多条条件（AND）", "and")
-            case_mode.addItem("ConditionExpr（结构化）", "expr")
+            case_mode.addItem("全部满足", "and")
+            case_mode.addItem("任一·否定·嵌套", "expr")
+            case_mode.setToolTip(
+                "两种写法随便切，条件不会丢。\n"
+                "「多条条件」= 列一串条件，全部满足才命中；\n"
+                "「结构化」= 能写 任一满足 / 否定 / 多层嵌套。"
+            )
             cm_row = QHBoxLayout()
             cm_row.addWidget(QLabel("本分支条件", content))
             cm_row.addWidget(case_mode, 1)
@@ -1961,10 +2587,9 @@ class NodeInspector(QWidget):
             expr_tree.changed.connect(self._emit_changed)
             cv.addWidget(expr_tree)
 
-            btn_and_to_json = QPushButton(
-                "将当前 AND 条件转成结构化 ConditionExpr", content
-            )
-            cv.addWidget(btn_and_to_json)
+            # 原「将当前 AND 条件转成结构化 ConditionExpr」按钮已删：切模式本身就会
+            # 双向无损转换（见 on_case_mode_changed），再留一个同义按钮只会让策划
+            # 以为「不点这个就会丢」。
 
             cond_rows_layout = QVBoxLayout()
             cond_rows_layout.setSpacing(4)
@@ -1988,22 +2613,20 @@ class NodeInspector(QWidget):
                     cond_rows_layout.addWidget(cr["outer"])
 
             def refresh_cond_fold_policy() -> None:
-                single_c = len(cond_rows) <= 1
+                """同 refresh_case_fold_policy：尊重每条条件自己的折叠状态，不批量重置。"""
+                if len(cond_rows) == 1:
+                    cond_rows[0]["collapsed"] = False
                 for cr in cond_rows:
                     t = cr.get("toggle")
                     b = cr.get("body")
                     if t is None or b is None:
                         continue
-                    if single_c:
-                        t.setVisible(False)
-                        cr["collapsed"] = False
-                        b.setVisible(True)
-                        t.setArrowType(Qt.ArrowType.DownArrow)
-                    else:
-                        t.setVisible(True)
-                        cr["collapsed"] = True
-                        b.setVisible(False)
-                        t.setArrowType(Qt.ArrowType.RightArrow)
+                    collapsed = bool(cr.get("collapsed"))
+                    t.setVisible(True)
+                    b.setVisible(not collapsed)
+                    t.setArrowType(
+                        Qt.ArrowType.RightArrow if collapsed else Qt.ArrowType.DownArrow
+                    )
 
             def make_cond_block(cd: dict[str, Any] | None) -> dict[str, Any]:
                 return self._build_switch_and_cond_row(
@@ -2018,12 +2641,76 @@ class NodeInspector(QWidget):
                     update_case_summary=update_case_summary,
                 )
 
+            def and_rows_snapshot() -> list[dict[str, Any]]:
+                return [
+                    r["serialize"]() for r in cond_rows if callable(r.get("serialize"))
+                ]
+
+            def mode_content_edited() -> bool:
+                """当前写法里的内容，跟「进入这种写法时」相比变了没有。"""
+                if case_mode.currentData() == "expr":
+                    return expr_tree.get_expr() != mode_baseline["expr"]
+                return and_rows_snapshot() != mode_baseline["and"]
+
+            def _case_data_index() -> int:
+                """本行在**数据数组**里的下标（与画布端口号、校验消息同一套口径）。
+
+                行序 ≠ 数据下标：非 dict 的坏元素不占行但占下标。用 `_row_data_indices`
+                按 getter 的实际落位算，保证三个面说的「分支 N」永远是同一条。
+                """
+                try:
+                    row_i = switch_case_rows.index(case_rec)
+                except ValueError:
+                    return -1
+                mapping = _row_data_indices(len(switch_case_rows), cases_junk)
+                return mapping[row_i] if row_i < len(mapping) else -1
+
+            def current_case_condition_text() -> str:
+                """本分支当前条件的一行人话（与画布端口标签同源）。"""
+                if case_mode.currentData() == "expr":
+                    obj = expr_tree.get_expr()
+                    return condition_expr_text(obj) if isinstance(obj, dict) else ""
+                parts = [
+                    condition_expr_text(r["serialize"]())
+                    for r in cond_rows
+                    if callable(r.get("serialize"))
+                ]
+                return " 且 ".join(p for p in parts if p)
+
+            def current_case_snapshot() -> dict[str, Any]:
+                """本分支当前状态下会写出的 case（供判定恒真/恒假，与 getter 同口径）。"""
+                if case_mode.currentData() == "expr":
+                    obj = expr_tree.get_expr()
+                    return {"condition": obj} if isinstance(obj, dict) and obj else {}
+                conds = [
+                    r["serialize"]() for r in cond_rows if callable(r.get("serialize"))
+                ]
+                return {"conditions": conds}
+
             def update_case_summary() -> None:
                 nn = nx.text().strip() or "（未填 next）"
-                if case_mode.currentData() == "expr":
-                    summary.setText(f"{nn}  ·  ConditionExpr")
+                cond_text = current_case_condition_text()
+                verdict = _case_verdict(current_case_snapshot())
+                # 带上序号：画布端口写 `0. …/1. …/else`、校验消息说「分支 1」，
+                # 而检查器这边一个数字都没有——策划拿到「分支 1 恒命中」只能回来
+                # 一条条展开数，数错就改错分支。三个面统一用**数据下标**。
+                idx = _case_data_index()
+                prefix = f"{idx}. " if idx >= 0 else ""
+                if verdict == _COND_ALWAYS:
+                    # 运行时 all([]) 恒真 → 恒命中；必须在标题上就喊出来。
+                    summary.setText(
+                        f"{prefix}⚠ 条件为空，恒命中（其后分支与 else 全走不到）  →  {nn}"
+                    )
+                    summary.setStyleSheet(app_theme.semantic_text_css("warn"))
+                elif verdict == _COND_NEVER:
+                    summary.setText(
+                        f"{prefix}⚠ 条件恒为假，这条分支永远走不到  →  {nn}"
+                        + (f"  【{shorten(cond_text, 30)}】" if cond_text else "")
+                    )
+                    summary.setStyleSheet(app_theme.semantic_text_css("warn"))
                 else:
-                    summary.setText(f"{nn}  ·  {len(cond_rows)} 条条件")
+                    summary.setText(f"{prefix}{shorten(cond_text, 44)}  →  {nn}")
+                    summary.setStyleSheet(app_theme.semantic_text_css("muted"))
 
             def insert_cond_at(pos: int, data_d: dict[str, Any] | None = None) -> None:
                 nb = make_cond_block(
@@ -2031,13 +2718,15 @@ class NodeInspector(QWidget):
                     if isinstance(data_d, dict)
                     else {"flag": "", "op": "==", "value": True}
                 )
+                # 新加的这条一定要展开——策划点「添加条件」就是要马上填它。
+                nb["collapsed"] = False
                 pos = max(0, min(pos, len(cond_rows)))
                 cond_rows.insert(pos, nb)
                 rebuild_cond_layout()
                 refresh_cond_nav()
                 refresh_cond_fold_policy()
                 update_case_summary()
-                self._emit_changed()
+                self._emit_structural_changed()
 
             cond_expr_init = (
                 (case or {}).get("condition") if isinstance(case, dict) else None
@@ -2060,7 +2749,9 @@ class NodeInspector(QWidget):
             and_block = QWidget(content)
             and_lay = QVBoxLayout(and_block)
             and_lay.setContentsMargins(0, 0, 0, 0)
-            and_lay.addWidget(QLabel("条件（AND，全部满足）", and_block))
+            _and_lbl = QLabel("条件（全部满足）", and_block)
+            _and_lbl.setToolTip("下面每条都满足，这个分支才命中。")
+            and_lay.addWidget(_and_lbl)
             and_lay.addWidget(cond_rows_wrap)
             and_lay.addWidget(b_cond_end)
             cv.addWidget(and_block)
@@ -2069,25 +2760,98 @@ class NodeInspector(QWidget):
                 ex = case_mode.currentData() == "expr"
                 expr_tree.setVisible(ex)
                 and_block.setVisible(not ex)
-                btn_and_to_json.setVisible(not ex)
+
+            def _and_rows_to_expr() -> dict[str, Any] | None:
+                parts = [
+                    r["serialize"]() for r in cond_rows if callable(r.get("serialize"))
+                ]
+                parts = [p for p in parts if isinstance(p, dict) and p]
+                if not parts:
+                    return None
+                if len(parts) == 1:
+                    return copy.deepcopy(parts[0])
+                return {"all": copy.deepcopy(parts)}
+
+            def _clear_cond_rows() -> None:
+                while cond_rows_layout.count():
+                    it = cond_rows_layout.takeAt(0)
+                    w = it.widget()
+                    if w is not None:
+                        w.setParent(None)
+                        w.deleteLater()
+                cond_rows.clear()
+
+            def _expr_to_and_rows(expr: dict[str, Any]) -> bool:
+                """把结构化表达式摊平成 AND 列表；顶层是 any/not 就摊不平，返回 False。
+
+                摊得平的每一项即便表单画不出来（plane / 嵌套 / 未来新叶），也会落进
+                只读透传行原样保留——所以「摊平」永远不丢数据。
+                """
+                if not isinstance(expr, dict) or not expr:
+                    return False
+                if isinstance(expr.get("all"), list):
+                    items = [e for e in expr["all"] if isinstance(e, dict) and e]
+                    if not items:
+                        return False
+                elif isinstance(expr.get("any"), list) or isinstance(expr.get("not"), dict):
+                    return False
+                else:
+                    items = [expr]
+                prev = self._suppress_change_emit
+                self._suppress_change_emit = True
+                try:
+                    _clear_cond_rows()
+                    for item in items:
+                        insert_cond_at(len(cond_rows), copy.deepcopy(item))
+                finally:
+                    self._suppress_change_emit = prev
+                return True
 
             def on_case_mode_changed(_i: int = 0) -> None:
+                """两种条件写法之间**双向无损**切换。
+
+                旧实现只切显隐：AND→结构化 后结构化树是空的 → 保存时 condition/conditions
+                双双丢失，写出一条「无条件分支」（运行时恒命中）；结构化→AND 则把整棵
+                condition 静默丢掉。策划只是想点开下拉看看，数据就没了。
+                """
+                if _mode_switch_busy["v"]:
+                    return
+                _mode_switch_busy["v"] = True
+                try:
+                    if case_mode.currentData() == "expr":
+                        # AND → 结构化：把现有 AND 列表原样搬进表达式树
+                        seeded = _and_rows_to_expr()
+                        if seeded is not None:
+                            expr_tree.set_expr(seeded)
+                    else:
+                        # 结构化 → AND：摊得平才切；摊不平就退回去并说清原因，绝不清空
+                        obj = expr_tree.get_expr()
+                        if isinstance(obj, dict) and obj and not _expr_to_and_rows(obj):
+                            case_mode.blockSignals(True)
+                            case_mode.setCurrentIndex(
+                                max(0, case_mode.findData("expr"))
+                            )
+                            case_mode.blockSignals(False)
+                            QMessageBox.information(
+                                self,
+                                "条件写法",
+                                "这条分支的条件用到了「任一满足(any)」或「否定(not)」，"
+                                "拆不成一串「全部满足」的清单。\n\n"
+                                "已保持在「结构化」写法，条件原样保留——请直接在下面的"
+                                "结构化编辑器里改。",
+                            )
+                            return
+                finally:
+                    _mode_switch_busy["v"] = False
+                # 记下「刚进这种写法时长什么样」，之后与它比对来判断用户改没改。
+                mode_baseline[str(case_mode.currentData())] = (
+                    copy.deepcopy(expr_tree.get_expr())
+                    if case_mode.currentData() == "expr"
+                    else copy.deepcopy(and_rows_snapshot())
+                )
                 _sync_case_mode_ui()
                 update_case_summary()
                 self._emit_changed()
-
-            case_mode.currentIndexChanged.connect(on_case_mode_changed)
-
-            def on_export_and() -> None:
-                conds_part = [r["serialize"]() for r in cond_rows]
-                wrap: dict[str, Any] = {"all": conds_part} if conds_part else {}
-                expr_tree.set_expr(wrap)
-                case_mode.setCurrentIndex(1)
-                _sync_case_mode_ui()
-                update_case_summary()
-                self._emit_changed()
-
-            btn_and_to_json.clicked.connect(on_export_and)
 
             if isinstance(cond_expr_init, dict) and cond_expr_init:
                 case_mode.setCurrentIndex(1)
@@ -2095,6 +2859,15 @@ class NodeInspector(QWidget):
             else:
                 expr_tree.set_expr(None)
 
+            # 两种写法各自的「载入基线」：getter 拿当前内容与之比对，判断用户到底
+            # 在哪种写法里动过手（见 mode_content_edited）。
+            mode_baseline["and"] = copy.deepcopy(and_rows_snapshot())
+            mode_baseline["expr"] = copy.deepcopy(expr_tree.get_expr())
+
+            # 连信号必须在上面的「按磁盘数据摆初值」之后：否则初始化时的 setCurrentIndex
+            # 会当成用户切模式，跑一遍转换、把还没 set_expr 的空树当真值。
+            case_mode.currentIndexChanged.connect(on_case_mode_changed)
+            expr_tree.changed.connect(update_case_summary)
             _sync_case_mode_ui()
 
             def flip_case() -> None:
@@ -2118,12 +2891,13 @@ class NodeInspector(QWidget):
                     if isinstance(data_c, dict)
                     else {"next": "", "conditions": [{"flag": "", "op": "==", "value": True}]}
                 )
+                nb["collapsed"] = False  # 新分支直接展开，点完就能填
                 pos = max(0, min(pos, len(switch_case_rows)))
                 switch_case_rows.insert(pos, nb)
                 rebuild_cases_layout()
                 refresh_case_nav()
                 refresh_case_fold_policy()
-                self._emit_changed()
+                self._emit_structural_changed()
 
             btn_ins_before.clicked.connect(lambda: insert_case_at(case_index()))
             btn_ins_after.clicked.connect(lambda: insert_case_at(case_index() + 1))
@@ -2138,7 +2912,7 @@ class NodeInspector(QWidget):
                 )
                 rebuild_cases_layout()
                 refresh_case_nav()
-                self._emit_changed()
+                self._emit_structural_changed()
 
             def do_case_down() -> None:
                 i = case_index()
@@ -2150,19 +2924,36 @@ class NodeInspector(QWidget):
                 )
                 rebuild_cases_layout()
                 refresh_case_nav()
-                self._emit_changed()
+                self._emit_structural_changed()
 
             def do_case_del() -> None:
-                if len(switch_case_rows) <= 1:
-                    QMessageBox.information(self, "switch", "至少保留一个分支。")
-                    return
                 i = case_index()
+                cond_text = current_case_condition_text()
+                # 分支里有条件 = 有真内容，删之前问一声（撤销栈虽然兜得住，但策划不一定知道）。
+                if cond_text or nx.text().strip():
+                    r = QMessageBox.question(
+                        self,
+                        "删除分支",
+                        # 现在序号已按数据下标算（_case_data_index），与画布端口、
+                        # 校验消息同一套口径，弹窗也带上它，和摘要行对得上。
+                        f"确定删除分支 {_case_data_index()}？\n\n"
+                        f"当 {shorten(cond_text, 40) or '（无条件）'} → "
+                        f"{nx.text().strip() or '（未填 next）'}",
+                        QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+                        QMessageBox.StandardButton.Cancel,
+                    )
+                    if r != QMessageBox.StandardButton.Ok:
+                        return
                 switch_case_rows.pop(i)
-                cases_outer.removeWidget(outer)
+                outer.setParent(None)
                 outer.deleteLater()
+                # 必须重排：空状态提示的可见性、以及各行标题里的序号，都只在
+                # rebuild 里刷新。少了它，删完最后一条不提示"这是死开关"，
+                # 删中间一条则剩下各行的序号与数据下标对不上。
+                rebuild_cases_layout()
                 refresh_case_nav()
                 refresh_case_fold_policy()
-                self._emit_changed()
+                self._emit_structural_changed()
 
             btn_up.clicked.connect(do_case_up)
             btn_down.clicked.connect(do_case_down)
@@ -2180,28 +2971,32 @@ class NodeInspector(QWidget):
                     "cond_rows": cond_rows,
                     "case_mode": case_mode,
                     "expr_tree": expr_tree,
+                    "orig_shape": _orig_shape,
+                    "data_index": _case_data_index,
+                    "refresh_summary": update_case_summary,
+                    "mode_content_edited": mode_content_edited,
                     "btn_up": btn_up,
                     "btn_down": btn_down,
+                    # 前插/后插也登记：六类里只有这里漏了，于是这两个按钮处于
+                    # 「测试够不着」的状态——「删除本条件」100% 抛 NameError、
+                    # `KeyError: 'beat_rows'` 都是同一个成因。而插出来的空分支
+                    # 在运行时是恒命中的，出事代价不低。
+                    "btn_before": btn_ins_before,
+                    "btn_after": btn_ins_after,
+                    "btn_del": btn_del,
+                    "summary_label": summary,
                     "orig_conditions_present": _orig_conditions_present,
                 }
             )
             return case_rec
 
-        if cases_raw:
-            for c in cases_raw:
-                if isinstance(c, dict):
-                    switch_case_rows.append(make_case_block(c))
-        else:
-            switch_case_rows.append(
-                make_case_block(
-                    {
-                        "next": "",
-                        "conditions": [
-                            {"flag": "some_flag", "op": "==", "value": True}
-                        ],
-                    }
-                )
-            )
+        for c in cases_raw:
+            if isinstance(c, dict):
+                switch_case_rows.append(make_case_block(c))
+        _junk_lbl = _junk_notice(cases_junk, "分支")
+        if _junk_lbl is not None:
+            _junk_lbl.setParent(self._body)
+            self._body_layout.addWidget(_junk_lbl)
         rebuild_cases_layout()
         refresh_case_nav()
         refresh_case_fold_policy()
@@ -2210,23 +3005,33 @@ class NodeInspector(QWidget):
         bc_add = QPushButton("在末尾添加分支", self._body)
 
         def do_add_case_end() -> None:
-            switch_case_rows.append(
-                make_case_block(
-                    {
-                        "next": "",
-                        "conditions": [{"flag": "", "op": "==", "value": True}],
-                    }
-                )
+            nb = make_case_block(
+                {
+                    "next": "",
+                    "conditions": [{"flag": "", "op": "==", "value": True}],
+                }
             )
+            nb["collapsed"] = False  # 新分支直接展开，点完就能填
+            switch_case_rows.append(nb)
             rebuild_cases_layout()
             refresh_case_nav()
             refresh_case_fold_policy()
-            self._emit_changed()
+            self._emit_structural_changed()
 
         bc_add.clicked.connect(do_add_case_end)
         cbar.addWidget(bc_add)
         self._body_layout.addWidget(cases_wrap)
         self._body_layout.addLayout(cbar)
+
+        fl = QFormLayout()
+        _form_wrap_rows(fl)
+        rowd = QHBoxLayout()
+        rowd.addWidget(dn)
+        rowd.addWidget(pickd)
+        _dn_lbl = QLabel("都不满足走这里", self._body)
+        _dn_lbl.setToolTip("以上分支自上而下都不命中时走的节点（JSON 字段 defaultNext）。")
+        fl.addRow(_dn_lbl, rowd)
+        self._body_layout.addLayout(fl)
 
         self._topology_refs = {"type": "switch", "case_rows": switch_case_rows, "default_next": dn}
 
@@ -2235,7 +3040,13 @@ class NodeInspector(QWidget):
             for cb in switch_case_rows:
                 next_s = cb["next_edit"].text().strip()
                 case_out: dict[str, Any] = {"next": next_s}
-                if cb["case_mode"].currentData() == "expr":
+                # 用哪种写法回写：默认跟当前模式；但「切了下拉却什么都没改」时保持
+                # 磁盘原写法，免得一次误点在 diff 里留下与内容无关的形状变化。
+                # 两种模式的数据都是全的（切模式是双向搬运、不清空），所以回退安全。
+                shape = "condition" if cb["case_mode"].currentData() == "expr" else "conditions"
+                if cb.get("orig_shape") and not cb["mode_content_edited"]():
+                    shape = cb["orig_shape"]
+                if shape == "condition":
                     obj = cb["expr_tree"].get_expr()
                     if isinstance(obj, dict) and obj:
                         case_out["condition"] = obj
@@ -2250,7 +3061,11 @@ class NodeInspector(QWidget):
                         case_out["conditions"] = []
                     # 否则裸 next，不注入 conditions:[]
                 cs.append(case_out)
-            return {"type": "switch", "cases": cs, "defaultNext": dn.text().strip()}
+            return {
+                "type": "switch",
+                "cases": _reinsert_junk(cs, cases_junk),
+                "defaultNext": dn.text().strip(),
+            }
 
         self._getter = getter
 
@@ -2278,14 +3093,13 @@ class NodeInspector(QWidget):
         col = QVBoxLayout(cow)
         col.setContentsMargins(0, 0, 0, 0)
         col.setSpacing(4)
-        ch = QHBoxLayout()
+        ch = QVBoxLayout()
         ctog = QToolButton(cow)
         ctog.setAutoRaise(True)
         ctog.setArrowType(Qt.ArrowType.RightArrow)
-        ctog.setToolTip("折叠 / 展开本条件")
-        csum = QLabel(cow)
-        csum.setWordWrap(False)
-        csum.setStyleSheet("color: #aaa;")
+        ctog.setToolTip("折叠 / 展开本条件（在本行右键可插入 / 移动 / 删除）")
+        csum = _ElidingLabel("", cow)  # 同上：条件行标题也必须可省略
+        csum.setStyleSheet(app_theme.semantic_text_css("muted"))
         c_before, c_after, c_up, c_down, c_del = _compact_row_nav_buttons(
             cow,
             tip_before="在此条件之前插入一条条件",
@@ -2295,17 +3109,12 @@ class NodeInspector(QWidget):
             tip_del="删除本条件（本分支至少保留一条）",
             side=22,
         )
-        ch.addWidget(ctog)
-        ch.addWidget(csum, 1)
-        ch.addWidget(c_before)
-        ch.addWidget(c_after)
-        ch.addWidget(c_up)
-        ch.addWidget(c_down)
-        ch.addWidget(c_del)
+        _fill_stacked_row_header(ch, ctog, csum, (c_before, c_after, c_up, c_down, c_del))
 
         body = QWidget(cow)
-        h = QHBoxLayout(body)
+        h = QVBoxLayout(body)
         h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(3)
         # 不能在结构化模式表达的叶子（scenarioLine / not / all / any / 未知形）
         # 原样保留，不被改写；需编辑时切到本分支的「结构化」模式。
         raw_passthrough: dict[str, Any] = {"v": None}
@@ -2324,18 +3133,32 @@ class NodeInspector(QWidget):
         mode = QComboBox(body)
         mode.addItem("标志 flag", "flag")
         mode.addItem("任务 quest", "quest")
-        mode.addItem("scenario", "scenario")
+        mode.addItem("剧情线 scenario", "scenario")
         mode.addItem("叙事 narrative", "narrative")
         op_cb = QComboBox(body)
         for o in ("==", "!=", ">", "<", ">=", "<="):
             op_cb.addItem(o, o)
         qid_e = QLineEdit(body)
         st_cb = QComboBox(body)
-        for s in ("Inactive", "Active", "Completed"):
-            st_cb.addItem(s, s)
+        # 显示中文、itemData 保留原值：取值一律走 currentData()，不会写坏数据
+        #（与说话人四态同款写法）。
+        for _s, _zh in (("Inactive", "未接"), ("Active", "进行中"), ("Completed", "已完成")):
+            st_cb.addItem(f"{_zh}（{_s}）", _s)
+        # flag 条件排两行：一行放「标志键 + 选择器」，一行放「比较符 + 值」。
+        # 挤成一行会撑破检查器宽度（实测 560px 下值下拉和删除按钮被切掉、出横向滚动条），
+        # 违反 norms 布局纪律「短字段设宽度上限、不许地板堆叠顶爆小屏」。
         flag_w = QWidget(body)
-        fh = QHBoxLayout(flag_w)
+        flag_v = QVBoxLayout(flag_w)
+        flag_v.setContentsMargins(0, 0, 0, 0)
+        flag_v.setSpacing(3)
+        flag_row1 = QWidget(flag_w)
+        fh = QHBoxLayout(flag_row1)
         fh.setContentsMargins(0, 0, 0, 0)
+        flag_row2 = QWidget(flag_w)
+        fh2 = QHBoxLayout(flag_row2)
+        fh2.setContentsMargins(0, 0, 0, 0)
+        flag_v.addWidget(flag_row1)
+        flag_v.addWidget(flag_row2)
         fh.addWidget(QLabel("flag", flag_w))
         if pm_switch is not None:
             from tools.editor.shared.flag_key_field import FlagKeyPickField
@@ -2361,7 +3184,7 @@ class NodeInspector(QWidget):
                 flag_ctrl.setText(s)
 
         fh.addWidget(flag_ctrl, 1)
-        fh.addWidget(op_cb)
+        fh2.addWidget(op_cb)
         val_kind = QComboBox(body)
         val_kind.addItem("布尔", "bool")
         val_kind.addItem("整数", "int")
@@ -2381,13 +3204,22 @@ class NodeInspector(QWidget):
         val_stack.addWidget(val_int)
         val_stack.addWidget(val_float)
         val_stack.addWidget(val_str)
-        fh.addWidget(QLabel("值", flag_w))
-        fh.addWidget(val_kind)
-        fh.addWidget(val_stack, 1)
+        fh2.addWidget(val_kind)
+        fh2.addWidget(val_stack, 1)
 
+        # quest 同理排两行，避免「questId + 选择器 + 状态」挤爆一行。
         quest_w = QWidget(body)
-        qh = QHBoxLayout(quest_w)
+        quest_v = QVBoxLayout(quest_w)
+        quest_v.setContentsMargins(0, 0, 0, 0)
+        quest_v.setSpacing(3)
+        quest_row1 = QWidget(quest_w)
+        qh = QHBoxLayout(quest_row1)
         qh.setContentsMargins(0, 0, 0, 0)
+        quest_row2 = QWidget(quest_w)
+        qh2 = QHBoxLayout(quest_row2)
+        qh2.setContentsMargins(0, 0, 0, 0)
+        quest_v.addWidget(quest_row1)
+        quest_v.addWidget(quest_row2)
         qh.addWidget(QLabel("questId", quest_w))
         qh.addWidget(qid_e, 1)
         qh.addWidget(
@@ -2398,11 +3230,15 @@ class NodeInspector(QWidget):
                 tip="打开可搜索的任务列表",
             )
         )
-        qh.addWidget(QLabel("状态", quest_w))
-        qh.addWidget(st_cb)
+        qh2.addWidget(QLabel("状态", quest_w))
+        qh2.addWidget(st_cb)
+        qh2.addStretch(1)
 
         scenario_w = QWidget(body)
         sc_form = QFormLayout(scenario_w)
+        # 标签排到字段上方：中文标签比原来的英文字段名宽，并排会把这一行顶出面板
+        #（改成中文是为了看得懂，不能因此又挤爆——两者靠换行兼得）。
+        _form_wrap_rows(sc_form)
         sc_form.setContentsMargins(0, 0, 0, 0)
         scen_ids: list[str] = []
         if pm_switch is not None:
@@ -2421,10 +3257,73 @@ class NodeInspector(QWidget):
         phase_combo.setEditable(False)
         scen_status = QComboBox(scenario_w)
         scen_status.setEditable(False)
-        for s in ("pending", "active", "done", "locked"):
-            scen_status.addItem(s, s)
+        for _s, _zh in (
+            ("pending", "未开始"), ("active", "进行中"),
+            ("done", "已完成"), ("locked", "已锁定"),
+        ):
+            scen_status.addItem(f"{_zh}（{_s}）", _s)
+        # outcome 的类型必须保真：运行时 evalScenarioLeaf 用 `=== expr.outcome` 严格比较，
+        # 把 3 写成 "3"、把 true 写成 "True" 这条件就永远不命中（审查 2026-08-06 P1-4）。
+        # 故与 flag 值一样给「类型 + 值」两件套，不做字符串猜测。
+        scen_outcome_kind = QComboBox(scenario_w)
+        for _lab, _val in (("（不填）", "none"), ("文本", "str"), ("整数", "int"),
+                           ("小数", "float"), ("布尔", "bool")):
+            scen_outcome_kind.addItem(_lab, _val)
+        scen_outcome_stack = QStackedWidget(scenario_w)
         scen_outcome = QLineEdit(scenario_w)
         scen_outcome.setPlaceholderText("可选，与 scenario phase 的 outcome 比较")
+        scen_outcome_int = QSpinBox(scenario_w)
+        scen_outcome_int.setRange(-2_147_483_648, 2_147_483_647)
+        scen_outcome_float = QDoubleSpinBox(scenario_w)
+        scen_outcome_float.setRange(-1e12, 1e12)
+        scen_outcome_float.setDecimals(8)
+        scen_outcome_bool = QComboBox(scenario_w)
+        scen_outcome_bool.addItem("false", False)
+        scen_outcome_bool.addItem("true", True)
+        scen_outcome_stack.addWidget(QWidget(scenario_w))  # none
+        scen_outcome_stack.addWidget(scen_outcome)
+        scen_outcome_stack.addWidget(scen_outcome_int)
+        scen_outcome_stack.addWidget(scen_outcome_float)
+        scen_outcome_stack.addWidget(scen_outcome_bool)
+
+        def _sync_outcome_kind() -> None:
+            idx = {"none": 0, "str": 1, "int": 2, "float": 3, "bool": 4}.get(
+                str(scen_outcome_kind.currentData()), 0
+            )
+            scen_outcome_stack.setCurrentIndex(idx)
+
+        def _outcome_value() -> Any:
+            kind = str(scen_outcome_kind.currentData())
+            if kind == "str":
+                return scen_outcome.text().strip()
+            if kind == "int":
+                return scen_outcome_int.value()
+            if kind == "float":
+                return float(scen_outcome_float.value())
+            if kind == "bool":
+                return scen_outcome_bool.currentData()
+            return None
+
+        def _set_outcome_value(v: Any) -> None:
+            scen_outcome_kind.blockSignals(True)
+            try:
+                if v is None:
+                    scen_outcome_kind.setCurrentIndex(0)
+                elif isinstance(v, bool):
+                    scen_outcome_kind.setCurrentIndex(4)
+                    scen_outcome_bool.setCurrentIndex(1 if v else 0)
+                elif type(v) is int:
+                    scen_outcome_kind.setCurrentIndex(2)
+                    scen_outcome_int.setValue(int(v))
+                elif isinstance(v, float):
+                    scen_outcome_kind.setCurrentIndex(3)
+                    scen_outcome_float.setValue(float(v))
+                else:
+                    scen_outcome_kind.setCurrentIndex(1)
+                    scen_outcome.setText(str(v))
+            finally:
+                scen_outcome_kind.blockSignals(False)
+            _sync_outcome_kind()
 
         def resolved_scenario_id() -> str:
             dv = scen_id_combo.currentData()
@@ -2465,15 +3364,46 @@ class NodeInspector(QWidget):
         scen_outcome.textChanged.connect(
             lambda _t: (update_csum(), self._emit_changed()),
         )
-        sc_form.addRow("scenarioId", scen_id_combo)
-        sc_form.addRow("phase", phase_combo)
-        sc_form.addRow("status", scen_status)
-        sc_form.addRow("outcome", scen_outcome)
+        scen_outcome_kind.currentIndexChanged.connect(
+            lambda _i: (_sync_outcome_kind(), update_csum(), self._emit_changed()),
+        )
+        scen_outcome_int.valueChanged.connect(
+            lambda _v: (update_csum(), self._emit_changed()),
+        )
+        scen_outcome_float.valueChanged.connect(
+            lambda _v: (update_csum(), self._emit_changed()),
+        )
+        scen_outcome_bool.currentIndexChanged.connect(
+            lambda _i: (update_csum(), self._emit_changed()),
+        )
+        # 排两行：类型下拉一行、值一行。挤一行的最小宽是 291px，加上外层就超 280 面板，
+        # 展开 scenario 条件叶时行尾删除按钮被切、出横向滚动条。
+        _outcome_row = QWidget(scenario_w)
+        _outcome_h = QVBoxLayout(_outcome_row)
+        _outcome_h.setContentsMargins(0, 0, 0, 0)
+        _outcome_h.setSpacing(2)
+        _outcome_h.addWidget(scen_outcome_kind)
+        _outcome_h.addWidget(scen_outcome_stack)
+        sc_form.addRow("剧情线", scen_id_combo)
+        sc_form.addRow("阶段", phase_combo)
+        sc_form.addRow("状态", scen_status)
+        sc_form.addRow("结果值（可选）", _outcome_row)
 
+        # narrative 是真实数据里最常用的条件叶（占 70%），一行塞不下
+        # 「图 id + 选择器 + 状态 + 选择器 + reached 勾选」，同样排两行。
         narrative_w = QWidget(body)
-        nh = QHBoxLayout(narrative_w)
+        narr_v = QVBoxLayout(narrative_w)
+        narr_v.setContentsMargins(0, 0, 0, 0)
+        narr_v.setSpacing(3)
+        narr_row1 = QWidget(narrative_w)
+        nh = QHBoxLayout(narr_row1)
         nh.setContentsMargins(0, 0, 0, 0)
-        nh.addWidget(QLabel("narrative", narrative_w))
+        narr_row2 = QWidget(narrative_w)
+        nh2 = QHBoxLayout(narr_row2)
+        nh2.setContentsMargins(0, 0, 0, 0)
+        narr_v.addWidget(narr_row1)
+        narr_v.addWidget(narr_row2)
+        nh.addWidget(QLabel("叙事图", narrative_w))
         narr_id_e = QLineEdit(narrative_w)
         narr_id_e.setPlaceholderText("wrapper/scenario 图 id 或 @owner/@scene")
         nh.addWidget(narr_id_e, 1)
@@ -2486,9 +3416,9 @@ class NodeInspector(QWidget):
             )
         )
         self._install_narrative_id_validation(narr_id_e)
-        nh.addWidget(QLabel("state", narrative_w))
+        nh2.addWidget(QLabel("状态", narrative_w))
         narr_state_e = QLineEdit(narrative_w)
-        nh.addWidget(narr_state_e, 1)
+        nh2.addWidget(narr_state_e, 1)
 
         def _narr_state_entries() -> list[tuple[str, str]]:
             gid = narr_id_e.text().strip()
@@ -2506,7 +3436,7 @@ class NodeInspector(QWidget):
             except Exception:
                 return []
 
-        nh.addWidget(
+        nh2.addWidget(
             self._make_id_pick_button(
                 narr_state_e,
                 _narr_state_entries,
@@ -2514,30 +3444,37 @@ class NodeInspector(QWidget):
                 tip="按上方选定的叙事图列出其状态 id",
             )
         )
-        narr_reached = QCheckBox("到达过(reached)", narrative_w)
+        narr_reached = QCheckBox("到过", narrative_w)
         narr_reached.setToolTip("勾选=到达过该状态（含曾经）；不勾=仅当前处于该状态")
-        nh.addWidget(narr_reached)
+        nh2.addWidget(narr_reached)
 
-        # 复杂/未支持条件的原样只读展示
+        # 逐行表单画不出来的条件（plane / not / 嵌套 / 未来新叶）：原样保留 + 单独的
+        # 结构化编辑弹窗。此前这里只有一块只读文字，策划面对真实数据里的
+        # plane / not 叶子完全无路可走（改不了也删不掉，只能找程序）。
         raw_w = QWidget(body)
         rh = QHBoxLayout(raw_w)
         rh.setContentsMargins(0, 0, 0, 0)
         raw_lbl = QLabel(raw_w)
         raw_lbl.setWordWrap(True)
-        raw_lbl.setStyleSheet("color: #ccc;")
+        raw_lbl.setStyleSheet(app_theme.semantic_text_css("muted"))
         raw_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         raw_lbl.setToolTip(
-            "scenarioLine / not / 嵌套 等结构化叶子原样保留，不会被改写；"
-            "需要编辑请把本分支切到「结构化」模式。"
+            "本条件用的是逐行表单画不出来的写法（位面 / 否定 / 嵌套 等），"
+            "原样保留不会被改写；点右侧「编辑…」用结构化条件编辑器修改。"
         )
         rh.addWidget(raw_lbl, 1)
+        btn_raw_edit = QPushButton("编辑…", raw_w)
+        btn_raw_edit.setToolTip("用结构化条件编辑器修改这条条件")
+        rh.addWidget(btn_raw_edit)
 
+        # 叶子类型下拉**独占一行**：和右边的字段挤在一行时，行最小宽 = 下拉 + 字段区，
+        # 光这一行就 360px+，顶爆 280px 面板（改成竖排后各段各自占一行、互不叠加）。
         h.addWidget(mode)
-        h.addWidget(flag_w, 1)
-        h.addWidget(quest_w, 1)
-        h.addWidget(scenario_w, 1)
-        h.addWidget(narrative_w, 1)
-        h.addWidget(raw_w, 1)
+        h.addWidget(flag_w)
+        h.addWidget(quest_w)
+        h.addWidget(scenario_w)
+        h.addWidget(narrative_w)
+        h.addWidget(raw_w)
 
         def _apply_val_kind(which: str) -> None:
             idx = {"bool": 0, "int": 1, "float": 2, "str": 3}.get(which, 0)
@@ -2565,6 +3502,58 @@ class NodeInspector(QWidget):
             finally:
                 val_kind.blockSignals(False)
 
+        # serialize 定义必须早于 update_csum 的首次调用——标题文本就是
+        # `condition_expr_text(serialize())`，两者同源才不会漂。
+        def serialize() -> dict[str, Any]:
+            if raw_passthrough["v"] is not None:
+                return copy.deepcopy(raw_passthrough["v"])
+            if mode.currentData() == "scenario":
+                ph_d = phase_combo.currentData()
+                st_d = scen_status.currentData()
+                out_s: dict[str, Any] = {
+                    "scenario": resolved_scenario_id(),
+                    "phase": str(ph_d).strip() if isinstance(ph_d, str) else "",
+                    "status": str(st_d).strip() if isinstance(st_d, str) else "",
+                }
+                oo = _outcome_value()
+                # 空串按「不填」处理（与旧行为一致）；其余按选定类型原样写出。
+                if oo is not None and oo != "":
+                    out_s["outcome"] = oo
+                return out_s
+            if mode.currentData() == "quest":
+                out_q: dict[str, Any] = {"quest": qid_e.text().strip()}
+                # 原本带 status/questStatus → 忠实写回；原本没有但用户把下拉从载入默认
+                # 改走了 → 也写出（主动编辑不丢）；从未动过 → 保持缺省不注入。
+                if _had_quest_status or st_cb.currentData() != _quest_status_loaded["v"]:
+                    out_q[_quest_status_key] = st_cb.currentData()
+                return out_q
+            if mode.currentData() == "narrative":
+                out_n: dict[str, Any] = {
+                    "narrative": narr_id_e.text().strip(),
+                    "state": narr_state_e.text().strip(),
+                }
+                if narr_reached.isChecked():
+                    out_n["reached"] = True
+                return out_n
+            outf: dict[str, Any] = {"flag": _get_flag()}
+            op = op_cb.currentData() or "=="
+            # 仅在原子原本带 op、或 op 非默认时才写出，避免给 {flag,value} 注入多余 op
+            if op != "==" or _had_op:
+                outf["op"] = op
+            kd = val_kind.currentData()
+            if kd == "bool":
+                outf["value"] = val_bool.currentData()
+            elif kd == "int":
+                outf["value"] = val_int.value()
+            elif kd == "float":
+                outf["value"] = float(val_float.value())
+            else:
+                s = val_str.text().strip()
+                # 原本带 value（即便空串）就忠实写回，不因 falsy 丢键。
+                if s or _had_value:
+                    outf["value"] = s
+            return outf
+
         def upd_mode() -> None:
             if raw_passthrough["v"] is not None:
                 mode.setVisible(False)
@@ -2585,46 +3574,18 @@ class NodeInspector(QWidget):
                 refill_scen_phases()
 
         def update_csum() -> None:
+            """条件行标题。
+
+            文本由 `condition_expr_text(serialize())` 生成——与画布端口标签、
+            节点列表摘要、分支标题**同一个实现**，杜绝四处各写一套的漂移
+            （旧实现这里写 `flag a == True`、画布写 `case0`、列表写 `flag a`）。
+            """
+            text = condition_expr_text(serialize())
             if raw_passthrough["v"] is not None:
-                try:
-                    compact = json.dumps(raw_passthrough["v"], ensure_ascii=False)
-                except (TypeError, ValueError):
-                    compact = str(raw_passthrough["v"])
-                if len(compact) > 48:
-                    compact = compact[:47] + "…"
-                csum.setText(f"复杂条件（只读）: {compact}")
-                return
-            if mode.currentData() == "narrative":
-                nid = narr_id_e.text().strip() or "…"
-                nst = narr_state_e.text().strip() or "…"
-                suffix = " · reached" if narr_reached.isChecked() else ""
-                csum.setText(f"narrative {nid} · {nst}{suffix}")
-                return
-            if mode.currentData() == "scenario":
-                sid_disp = resolved_scenario_id() or "…"
-                ph_d = phase_combo.currentData()
-                ph_s = str(ph_d).strip() if isinstance(ph_d, str) and ph_d else "…"
-                st_d = scen_status.currentData()
-                st_s = str(st_d).strip() if isinstance(st_d, str) and st_d else "…"
-                csum.setText(f"scen {sid_disp} · {ph_s} · {st_s}")
-                return
-            if mode.currentData() == "quest":
-                csum.setText(
-                    f"quest {qid_e.text().strip() or '…'} · {st_cb.currentText()}"
-                )
-                return
-            flg = _get_flag() or "…"
-            op = str(op_cb.currentData() or "==")
-            kd = val_kind.currentData()
-            if kd == "bool":
-                vv = val_bool.currentData()
-            elif kd == "int":
-                vv = val_int.value()
-            elif kd == "float":
-                vv = val_float.value()
+                csum.setText(f"{shorten(text, 44)}（表单画不出，点「编辑…」改）")
             else:
-                vv = val_str.text().strip() or "…"
-            csum.setText(f"flag {flg} {op} {vv!s}")
+                csum.setText(shorten(text, 44) or "（未填）")
+            update_case_summary()
 
         raw_c = cd if isinstance(cd, dict) else {"flag": "", "op": "=="}
         if isinstance(raw_c.get("scenario"), str):
@@ -2653,8 +3614,7 @@ class NodeInspector(QWidget):
                 scen_status.addItem(f"(非枚举) {st0}", st0)
                 ix2 = scen_status.count() - 1
             scen_status.setCurrentIndex(ix2)
-            o0 = raw_c.get("outcome")
-            scen_outcome.setText("" if o0 is None else str(o0))
+            _set_outcome_value(raw_c.get("outcome"))
         elif isinstance(raw_c.get("quest"), str):
             mode.setCurrentIndex(1)
             qid_e.setText(str(raw_c.get("quest", "")))
@@ -2732,6 +3692,59 @@ class NodeInspector(QWidget):
         val_float.valueChanged.connect(
             lambda _v: (update_csum(), self._emit_changed())
         )
+        def on_raw_edit() -> None:
+            """用结构化条件编辑器改这条「表单画不出来」的条件。"""
+            dlg = QDialog(self)
+            dlg.setWindowTitle("编辑条件")
+            dlg.setMinimumSize(560, 420)
+            lay = QVBoxLayout(dlg)
+            tip = QLabel(
+                "本条件用了逐行表单画不出来的写法。这里改完点「确定」原样写回；"
+                "点「取消」则一个字都不动。",
+                dlg,
+            )
+            tip.setWordWrap(True)
+            lay.addWidget(tip)
+            tree = ConditionExprTreeRootWidget(
+                dlg,
+                model_getter=lambda: (
+                    self._project_model_getter() if self._project_model_getter else None
+                ),
+            )
+            tree.set_expr(copy.deepcopy(raw_passthrough["v"]))
+            lay.addWidget(tree, 1)
+            btns = QHBoxLayout()
+            ok_b = QPushButton("确定", dlg)
+            cancel_b = QPushButton("取消", dlg)
+            ok_b.clicked.connect(dlg.accept)
+            cancel_b.clicked.connect(dlg.reject)
+            btns.addStretch(1)
+            btns.addWidget(ok_b)
+            btns.addWidget(cancel_b)
+            lay.addLayout(btns)
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+            new_expr = tree.get_expr()
+            if not isinstance(new_expr, dict) or not new_expr:
+                # 清空会让本分支变成「无条件」= 运行时恒命中；宁可不动也不放行。
+                QMessageBox.warning(
+                    self,
+                    "编辑条件",
+                    "条件被清空了。空条件在运行时等于「无条件命中」，"
+                    "会让本分支之后的所有分支和 else 都走不到。\n\n"
+                    "已保留原条件不变；要去掉这条请用条件行右侧的删除按钮。",
+                )
+                return
+            raw_passthrough["v"] = copy.deepcopy(new_expr)
+            try:
+                raw_lbl.setText(json.dumps(new_expr, ensure_ascii=False, indent=2))
+            except (TypeError, ValueError):
+                raw_lbl.setText(str(new_expr))
+            update_csum()
+            self._emit_changed()
+
+        btn_raw_edit.clicked.connect(on_raw_edit)
+
         upd_mode()
         update_csum()
 
@@ -2759,7 +3772,7 @@ class NodeInspector(QWidget):
             cond_rows[i - 1], cond_rows[i] = cond_rows[i], cond_rows[i - 1]
             rebuild_cond_layout()
             refresh_cond_nav()
-            self._emit_changed()
+            self._emit_structural_changed()
 
         def do_c_down() -> None:
             i = cond_row_index()
@@ -2768,75 +3781,50 @@ class NodeInspector(QWidget):
             cond_rows[i + 1], cond_rows[i] = cond_rows[i], cond_rows[i + 1]
             rebuild_cond_layout()
             refresh_cond_nav()
-            self._emit_changed()
+            self._emit_structural_changed()
 
         def do_c_del() -> None:
             if len(cond_rows) <= 1:
                 QMessageBox.information(
-                    self, "switch 条件", "每个分支至少保留一条条件。"
+                    self,
+                    "switch 条件",
+                    "每个分支至少保留一条条件。\n\n"
+                    "一条条件都没有的分支，运行时会「无条件命中」——"
+                    "它后面的所有分支和 else 就永远走不到了。\n"
+                    "要去掉这条分支，请用分支标题栏最右边的删除按钮。",
                 )
                 return
             i = cond_row_index()
+            # 同上：写好的一条条件不该被误点一下就没。
+            _cond_txt = condition_expr_text(serialize())
+            if _cond_txt:
+                r = QMessageBox.question(
+                    self,
+                    "删除条件",
+                    f"确定删除第 {i} 条条件？\n\n{shorten(_cond_txt, 40)}",
+                    QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+                    QMessageBox.StandardButton.Cancel,
+                )
+                if r != QMessageBox.StandardButton.Ok:
+                    return
             cond_rows.pop(i)
-            cond_rows_layout.removeWidget(cow)
+            # 这里曾写 `cond_rows_layout.removeWidget(cow)` —— 那个名字是 _build_switch
+            # 闭包里的局部变量，本方法被抽出去之后从没传进来，于是「删除本条件」按钮
+            # **每次都抛 NameError**：行已从 cond_rows 里 pop 掉，但控件没移除、界面不刷新、
+            # 模型不变、也不标脏；策划看着像「按钮坏了」，直到他改点别的触发一次
+            # get_node()，这次删除才延迟生效——删除动作与生效时刻错位，最难查的一类。
+            # 用已传入的 rebuild_cond_layout 重排，控件由它 setParent(None) 后再销毁。
+            cow.setParent(None)
             cow.deleteLater()
+            rebuild_cond_layout()
             refresh_cond_nav()
             refresh_cond_fold_policy()
             update_case_summary()
-            self._emit_changed()
+            self._emit_structural_changed()
 
         c_up.clicked.connect(do_c_up)
         c_down.clicked.connect(do_c_down)
         c_del.clicked.connect(do_c_del)
-
-        def serialize() -> dict[str, Any]:
-            if raw_passthrough["v"] is not None:
-                return copy.deepcopy(raw_passthrough["v"])
-            if mode.currentData() == "scenario":
-                ph_d = phase_combo.currentData()
-                st_d = scen_status.currentData()
-                out_s: dict[str, Any] = {
-                    "scenario": resolved_scenario_id(),
-                    "phase": str(ph_d).strip() if isinstance(ph_d, str) else "",
-                    "status": str(st_d).strip() if isinstance(st_d, str) else "",
-                }
-                oo = scen_outcome.text().strip()
-                if oo:
-                    out_s["outcome"] = oo
-                return out_s
-            if mode.currentData() == "quest":
-                out_q: dict[str, Any] = {"quest": qid_e.text().strip()}
-                # 原本带 status/questStatus → 忠实写回；原本没有但用户把下拉从载入默认
-                # 改走了 → 也写出（主动编辑不丢）；从未动过 → 保持缺省不注入。
-                if _had_quest_status or st_cb.currentData() != _quest_status_loaded["v"]:
-                    out_q[_quest_status_key] = st_cb.currentData()
-                return out_q
-            if mode.currentData() == "narrative":
-                out_n: dict[str, Any] = {
-                    "narrative": narr_id_e.text().strip(),
-                    "state": narr_state_e.text().strip(),
-                }
-                if narr_reached.isChecked():
-                    out_n["reached"] = True
-                return out_n
-            outf: dict[str, Any] = {"flag": _get_flag()}
-            op = op_cb.currentData() or "=="
-            # 仅在原子原本带 op、或 op 非默认时才写出，避免给 {flag,value} 注入多余 op
-            if op != "==" or _had_op:
-                outf["op"] = op
-            kd = val_kind.currentData()
-            if kd == "bool":
-                outf["value"] = val_bool.currentData()
-            elif kd == "int":
-                outf["value"] = val_int.value()
-            elif kd == "float":
-                outf["value"] = float(val_float.value())
-            else:
-                s = val_str.text().strip()
-                # 原本带 value（即便空串）就忠实写回，不因 falsy 丢键。
-                if s or _had_value:
-                    outf["value"] = s
-            return outf
 
         col.addLayout(ch)
         col.addWidget(body)
@@ -2847,8 +3835,13 @@ class NodeInspector(QWidget):
                 "toggle": ctog,
                 "body": body,
                 "serialize": serialize,
+                # 四个操作按钮都登记进 record：护栏必须从按钮本身 click() 进，
+                # 否则「删除本条件」那种 100% 抛异常的死按钮再多测试也抓不到。
+                "btn_before": c_before,
+                "btn_after": c_after,
                 "btn_up": c_up,
                 "btn_down": c_down,
+                "btn_del": c_del,
             }
         )
         return crow
@@ -2877,6 +3870,8 @@ class NodeInspector(QWidget):
         cases_outer.setContentsMargins(0, 0, 0, 0)
         case_rows: list[dict[str, Any]] = []
 
+        _state_hint_ref: dict[str, Any] = {"w": None}
+
         def rebuild_cases_layout() -> None:
             while cases_outer.count():
                 it = cases_outer.takeAt(0)
@@ -2885,7 +3880,15 @@ class NodeInspector(QWidget):
                     w.setParent(None)
             for c in case_rows:
                 cases_outer.addWidget(c["outer"])
+            _hint = _state_hint_ref.get("w")
+            if _hint is not None:
+                cases_outer.addWidget(_hint)
+                _hint.setVisible(not case_rows)
             cases_outer.addWidget(btn_add)
+            for c in case_rows:  # 序号依赖行位置，结构变了要重刷标题
+                fn = c.get("refresh_summary")
+                if callable(fn):
+                    fn()
 
         def refresh_state_nav() -> None:
             n = len(case_rows)
@@ -2906,33 +3909,106 @@ class NodeInspector(QWidget):
                 if sid and state_cb.findText(sid) < 0:
                     state_cb.addItem(sid)
             state_cb.setCurrentText(str((case or {}).get("state", "") or ""))
-            row.addWidget(QLabel("state", outer))
+            # 排两行：一行「状态 + 五个操作按钮」，一行「去哪 + 选择器」。
+            # 挤成一行的最小宽度是 360px+，而检查器面板默认只有 280px——结果是整个面板
+            # 横向滚动，右端的删除/上移/下移按钮被挤出可视区、根本点不到。
+            row2 = QHBoxLayout()
+            row.addWidget(QLabel("状态", outer))
             row.addWidget(state_cb, 1)
             nx = QLineEdit(str((case or {}).get("next", "")), outer)
-            btn = QPushButton("next…", outer)
+            btn = QPushButton("选…", outer)
+            btn.setToolTip("从本图节点里挑一个作为这条分支的去处")
             btn.clicked.connect(lambda _c=False, le=nx: self._pick_target(le))
             self._install_target_validation(nx)
-            row.addWidget(nx, 1)
-            row.addWidget(btn)
+            row2.addWidget(QLabel("去哪", outer))
+            row2.addWidget(nx, 1)
+            row2.addWidget(btn)
             b_before, b_after, b_up, b_down, b_del = _compact_row_nav_buttons(
                 outer,
                 tip_before="在此分支之前插入空分支",
                 tip_after="在此分支之后插入空分支",
                 tip_up="本分支上移",
                 tip_down="本分支下移",
-                tip_del="删除本分支（至少保留一个）",
+                tip_del="删除本分支（可以删空，校验面板会提醒）",
             )
-            row.addWidget(b_before)
-            row.addWidget(b_after)
-            row.addWidget(b_up)
-            row.addWidget(b_down)
-            row.addWidget(b_del)
+            # 接与 switch 分支 / choice 选项 / 条件行同一个自适应行头：
+            # 窄面板按钮另起一行、宽面板并回摘要行，且带右键菜单。
+            # 不接的话这两种节点还是老手感——两个方形按钮上印着谁也认不出的 `…`
+            #（那其实是"插入空分支"，而空分支在运行时是恒命中的）。
+            _hdr = QVBoxLayout()
+            _state_summary = _ElidingLabel("", outer)
+            _state_summary.setStyleSheet(app_theme.semantic_text_css("muted"))
+
+            def _state_row_is_written(cb: dict[str, Any]) -> bool:
+                """这一行会不会真的写进 JSON —— 必须与 getter 的丢弃判据**逐字一致**。
+
+                getter 刻意丢弃「新加但从未填写」的空行（见 build_getter），而序号若按
+                表单行位置算，这条空行就占了一个数据里根本不存在的号，其后每行顺移。
+                这与 `_row_data_indices` 必须复刻 `_reinsert_junk` 是同一条规律：
+                **凡是显示给人的下标，都只能由写盘那条唯一路径反算，不能由行位置推。**
+                """
+                st = cb["state_edit"].currentText().strip()
+                nx_v = cb["next_edit"].text().strip()
+                return bool(st or nx_v or cb.get("orig_present"))
+
+            def _state_data_index() -> int:
+                """本行在写盘数组里的下标；本行不会写盘时返回 -1（不给序号）。"""
+                try:
+                    row_i = case_rows.index(rec)
+                except (ValueError, NameError):
+                    return -1
+                if not _state_row_is_written(rec):
+                    return -1
+                kept_before = sum(1 for c in case_rows[:row_i] if _state_row_is_written(c))
+                kept_total = sum(1 for c in case_rows if _state_row_is_written(c))
+                mapping = _row_data_indices(kept_total, state_cases_junk)
+                return mapping[kept_before] if kept_before < len(mapping) else -1
+
+            def _sync_state_summary() -> None:
+                st = state_cb.currentText().strip() or "（未选状态）"
+                tgt = nx.text().strip() or "（未填去哪）"
+                # 带序号：校验消息说「分支 N」，这两类节点原来一个数字都没有，
+                # 策划只能 1-based / 0-based 猜着数，坏元素还占一个号。
+                idx = _state_data_index()
+                if idx >= 0:
+                    _state_summary.setText(f"{idx}. {st}  →  {tgt}")
+                else:
+                    # 没填完的新行不会写进 JSON，也就没有数据下标——明说，
+                    # 免得它顶着一个假号混在正常分支里。
+                    _state_summary.setText(f"（未填完，暂不写入）{st}  →  {tgt}")
+
+            _fill_stacked_row_header(
+                _hdr, QToolButton(outer), _state_summary,
+                (b_before, b_after, b_up, b_down, b_del),
+            )
+            lay.setContentsMargins(0, 0, 0, 0)
+            lay.setSpacing(2)
+            lay.addLayout(_hdr)
             lay.addLayout(row)
+            lay.addLayout(row2)
+            def _refresh_all_state_summaries() -> None:
+                # 某行从"未填"变成"填了"会让**其后所有行**的数据下标整体后移，
+                # 所以任何一行变化都得全体重刷，不能只刷自己。
+                for c in case_rows:
+                    fn = c.get("refresh_summary")
+                    if callable(fn):
+                        fn()
+
+            state_cb.currentTextChanged.connect(lambda _t: _refresh_all_state_summaries())
+            nx.textChanged.connect(lambda _t: _refresh_all_state_summaries())
+            _sync_state_summary()
 
             rec = {
                 "outer": outer,
                 "state_edit": state_cb,
                 "next_edit": nx,
+                # 四个操作按钮都登记：护栏必须从按钮本身 click() 进
+                "btn_before": b_before,
+                "btn_after": b_after,
+                "btn_del": b_del,
+                "summary_label": _state_summary,
+                "data_index": _state_data_index,
+                "refresh_summary": _sync_state_summary,
                 "btn_up": b_up,
                 "btn_down": b_down,
                 "orig_present": orig_present,
@@ -2942,14 +4018,29 @@ class NodeInspector(QWidget):
                 return case_rows.index(rec)
 
             def do_del() -> None:
-                if len(case_rows) <= 1:
-                    QMessageBox.information(self, "分支", "至少保留一个 state 分支。")
-                    return
+                # 与 switch 分支 / choice 选项同一套手感：有内容才二次确认、**允许删空**。
+                # 原来是硬拦「至少保留一条状态分支」——那是用「让编辑进不去」来拦非法数据，
+                # 与机制卡硬契约 §7 的取向相反（非法数据交给校验层报，不挡编辑）；
+                # 而且策划想清空重来时只能留一条没用的占位分支。
+                # 删空后由校验提示「没有状态分支，将始终走…」，不会静默。
+                label = state_cb.currentText().strip() or nx.text().strip()
+                if label:
+                    r = QMessageBox.question(
+                        self,
+                        "删除分支",
+                        f"确定删除分支 {_state_data_index()}？\n\n{state_cb.currentText().strip() or '（未选状态）'}"
+                        f"  →  {nx.text().strip() or '（未填去哪）'}",
+                        QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+                        QMessageBox.StandardButton.Cancel,
+                    )
+                    if r != QMessageBox.StandardButton.Ok:
+                        return
                 case_rows.remove(rec)
+                outer.setParent(None)
                 outer.deleteLater()
                 rebuild_cases_layout()
                 refresh_state_nav()
-                self._emit_changed()
+                self._emit_structural_changed()
 
             def insert_at(pos: int) -> None:
                 nb = make_case_block({"state": "", "next": ""})
@@ -2957,7 +4048,7 @@ class NodeInspector(QWidget):
                 case_rows.insert(pos, nb)
                 rebuild_cases_layout()
                 refresh_state_nav()
-                self._emit_changed()
+                self._emit_structural_changed()
 
             def do_up() -> None:
                 i = row_index()
@@ -2986,16 +4077,26 @@ class NodeInspector(QWidget):
             nx.textChanged.connect(lambda _t: self._emit_changed())
             return rec
 
-        cases_raw = data.get("cases")
-        if not isinstance(cases_raw, list):
-            cases_raw = []
-        if cases_raw:
-            for c in cases_raw:
-                if isinstance(c, dict):
-                    case_rows.append(make_case_block(c, orig_present=True))
-        else:
-            case_rows.append(make_case_block({"state": "", "next": ""}))
-        btn_add = QPushButton("添加 state 分支", cases_wrap)
+        cases_raw, state_cases_junk = _split_dict_items(data.get("cases"))
+        # 空就如实显示空——不再凭空补一行空分支。switch/choice 早就移除了这个模式
+        # （见 §8「空集合不许替用户造内容」）；放开删空之后，"空"变成了正常编辑
+        # 就能到的常态，再补假行就会天天见到「（未填完，暂不写入）」那种半成品行。
+        for c in cases_raw:
+            case_rows.append(make_case_block(c, orig_present=True))
+        state_empty_hint = QLabel(
+            "本节点当前没有状态分支，运行时会直接走「都不满足走这里」。"
+            "点下方「在末尾添加分支」新增。",
+            cases_wrap,
+        )
+        state_empty_hint.setWordWrap(True)
+        state_empty_hint.setStyleSheet(app_theme.semantic_text_css("warn"))
+        _state_hint_ref["w"] = state_empty_hint
+        _junk_lbl = _junk_notice(state_cases_junk, "分支")
+        if _junk_lbl is not None:
+            _junk_lbl.setParent(self._body)
+            self._body_layout.addWidget(_junk_lbl)
+        btn_add = QPushButton("在末尾添加分支", cases_wrap)
+        btn_add.setToolTip("按 wrapper 状态多加一条分支")
         def do_add() -> None:
             case_rows.append(make_case_block({"state": "", "next": ""}))
             rebuild_cases_layout()
@@ -3009,9 +4110,11 @@ class NodeInspector(QWidget):
 
         dn = QLineEdit(str(data.get("defaultNext", "") or ""), self._body)
         row_dn = QHBoxLayout()
-        row_dn.addWidget(QLabel("defaultNext", self._body))
+        _lbl_dn2 = QLabel("都不满足走这里", self._body)
+        _lbl_dn2.setToolTip("JSON 字段 defaultNext：以上分支都不命中时跳到哪个节点")
+        row_dn.addWidget(_lbl_dn2)
         row_dn.addWidget(dn, 1)
-        btn_dn = QPushButton("选择…", self._body)
+        btn_dn = QPushButton("选…", self._body)
         btn_dn.clicked.connect(lambda: self._pick_target(dn))
         row_dn.addWidget(btn_dn)
         self._body_layout.addLayout(row_dn)
@@ -3021,9 +4124,11 @@ class NodeInspector(QWidget):
         if include_missing:
             missing_next = QLineEdit(str(data.get("missingWrapperNext", "") or ""), self._body)
             row_mn = QHBoxLayout()
-            row_mn.addWidget(QLabel("missingWrapperNext", self._body))
+            _lbl_mw = QLabel("找不到实体时", self._body)
+            _lbl_mw.setToolTip("JSON 字段 missingWrapperNext：解析不到所属实体的 wrapper 图时走这里")
+            row_mn.addWidget(_lbl_mw)
             row_mn.addWidget(missing_next, 1)
-            btn_mn = QPushButton("选择…", self._body)
+            btn_mn = QPushButton("选…", self._body)
             btn_mn.clicked.connect(lambda: self._pick_target(missing_next))
             row_mn.addWidget(btn_mn)
             self._body_layout.addLayout(row_mn)
@@ -3043,11 +4148,14 @@ class NodeInspector(QWidget):
                         cs.append({"state": st, "next": nx_v})
                 out: dict[str, Any] = {
                     "type": node_type,
-                    "cases": cs,
+                    "cases": _reinsert_junk(cs, state_cases_junk),
                     "defaultNext": dn.text().strip(),
                 }
                 if include_missing and missing_next is not None:
-                    out["missingWrapperNext"] = missing_next.text().strip()
+                    mn_v = missing_next.text().strip()
+                    # 原本没这个键、用户也没填 → 不注入空串（表单形状保真回写）。
+                    if mn_v or "missingWrapperNext" in data:
+                        out["missingWrapperNext"] = mn_v
                 if graph_id:
                     out["graphId"] = graph_id
                 return out
@@ -3068,8 +4176,25 @@ class NodeInspector(QWidget):
         if info.get("ambiguous"):
             warn = QLabel("警告：多个 NPC/Hotspot 共用本对话图，state 列表为并集，运行时按当前交互实体解析。", self._body)
             warn.setWordWrap(True)
-            warn.setStyleSheet("color: #b45309;")
+            warn.setStyleSheet(app_theme.semantic_text_css("warn"))
             self._body_layout.addWidget(warn)
+
+        # 解不出 owner 时把「这张图从哪儿被打开、哪几处没 owner」直接摆出来：
+        # 以前只给一句"未找到引用"，策划无从下手；现在照着调用点去补就行。
+        if not (info.get("wrappers") or []):
+            sites = [s for s in (info.get("sites") or []) if isinstance(s, dict)]
+            if sites:
+                lines = []
+                for s in sites[:6]:
+                    owner = f"{s.get('ownerType', '')}:{s.get('ownerId', '')}".strip(":")
+                    lines.append(f"· {s.get('detail', '?')} → {owner or '解不出 owner'}")
+                more = f"\n…共 {len(sites)} 处" if len(sites) > 6 else ""
+                tip = QLabel("这张对话图的调用点：\n" + "\n".join(lines) + more, self._body)
+            else:
+                tip = QLabel("全工程还没有任何地方打开这张对话图——接上线之后 owner 才解得出来。", self._body)
+            tip.setWordWrap(True)
+            tip.setStyleSheet(app_theme.semantic_text_css("warn"))
+            self._body_layout.addWidget(tip)
 
         wrappers = [w for w in (info.get("wrappers") or []) if isinstance(w, dict)]
         wrapper_map: dict[str, dict[str, Any]] = {}
@@ -3081,22 +4206,34 @@ class NodeInspector(QWidget):
             wrapper_map[gid] = wrapper
             wrapper_order.append(gid)
 
+        # 磁盘上有没有 wrapperGraphId 这个键，语义完全不同：
+        #   有 → 硬绑定到这张 wrapper 图；
+        #   无 → 运行时按当前 owner 动态解算（同一张对话图给多个 NPC/hotspot 复用）。
+        # 所以「本实体恰好只有一张 wrapper」时的自动选中只能作 UI 展示，绝不能顺手
+        # 写进 JSON——否则「点开这个节点看一眼再点别的」就把复用型节点焊死了
+        #（审查 2026-08-06 P1-1）。
+        _orig_has_wrapper_key = "wrapperGraphId" in data
         selected_wrapper_id = str(data.get("wrapperGraphId", "") or "").strip()
+        _auto_filled_wrapper = ""
         if not selected_wrapper_id and len(wrapper_order) == 1:
             selected_wrapper_id = wrapper_order[0]
+            _auto_filled_wrapper = selected_wrapper_id
 
         row_wid = QHBoxLayout()
-        row_wid.addWidget(QLabel("wrapperGraphId", self._body))
+        _lbl_wg = QLabel("绑定叙事图", self._body)
+        _lbl_wg.setToolTip("JSON 字段 wrapperGraphId：留空=运行时按当前实体动态解算（同一张对话图可给多个实体复用）")
+        row_wid.addWidget(_lbl_wg)
         wrapper_edit = QLineEdit(selected_wrapper_id, self._body)
         wrapper_edit.setPlaceholderText("选择或输入 wrapper graphId")
         row_wid.addWidget(wrapper_edit, 1)
-        btn_pick_wrapper = QPushButton("选择 wrapper…", self._body)
+        btn_pick_wrapper = QPushButton("选…", self._body)
+        btn_pick_wrapper.setToolTip("从本对话图所属实体的 wrapper 叙事图里挑一张")
         row_wid.addWidget(btn_pick_wrapper)
         self._body_layout.addLayout(row_wid)
 
         wrapper_detail = QLabel(self._body)
         wrapper_detail.setWordWrap(True)
-        wrapper_detail.setStyleSheet("color: #9fb0bf;")
+        wrapper_detail.setStyleSheet(app_theme.semantic_text_css("info"))
         self._body_layout.addWidget(wrapper_detail)
 
         def _current_wrapper_graph_id() -> str:
@@ -3105,7 +4242,7 @@ class NodeInspector(QWidget):
         def _wrapper_detail_text(gid: str) -> str:
             wrapper = wrapper_map.get(gid)
             if not wrapper:
-                return "未选择 wrapperGraph；多 wrapper 实体下运行时会走 missingWrapperNext/defaultNext。"
+                return "没绑叙事图：这个实体有多张 wrapper 图时，运行时会走「找不到实体时」或「都不满足走这里」。"
             owner_type = str(wrapper.get("ownerType", "") or "").strip()
             owner_id = str(wrapper.get("ownerId", "") or "").strip()
             category = str(wrapper.get("category", "") or "").strip()
@@ -3130,10 +4267,26 @@ class NodeInspector(QWidget):
                 hit = wrapper_map.get(g)
                 if isinstance(hit, dict):
                     return [str(x) for x in (hit.get("stateIds") or []) if str(x).strip()]
+                # 手选/手输了一张不在 owner 解算结果里的 wrapper（owner 静态解不出、
+                # 或显式绑到别的实体）：直接去叙事目录读它的状态，不能让状态下拉空着
+                # ——状态选不了就等于 ownerState 节点编不下去。
+                if not g.startswith("@"):
+                    try:
+                        from tools.editor.shared.narrative_catalog import graph_info
+
+                        detail = graph_info(self._project_root, g)
+                    except Exception:
+                        detail = None
+                    if isinstance(detail, dict):
+                        ids = [str(x) for x in (detail.get("stateIds") or []) if str(x).strip()]
+                        if ids:
+                            wrapper_map.setdefault(g, detail)
+                            return ids
             return [str(x) for x in (info.get("stateIds") or []) if str(x).strip()]
 
         state_ids = _state_ids_for_wrapper(selected_wrapper_id)
-        btn_refresh = QPushButton("刷新 wrapper 状态列表", self._body)
+        btn_refresh = QPushButton("刷新状态", self._body)
+        btn_refresh.setToolTip("重新从 wrapper 叙事图读取状态列表")
         self._body_layout.addWidget(btn_refresh)
 
         case_rows, dn, missing_next, build_getter = self._make_state_branch_rows(
@@ -3203,8 +4356,18 @@ class NodeInspector(QWidget):
         def pick_wrapper() -> None:
             from .wrapper_graph_picker_dialog import WrapperGraphPickerDialog
 
+            choices = [wrapper_map[gid] for gid in wrapper_order if gid in wrapper_map]
+            # owner 解出来时优先只列本实体的 wrapper（选错的概率最低）；解不出时
+            # 退到全工程实体 wrapper 清单——否则弹窗是空的，节点根本编不下去。
+            if not choices:
+                try:
+                    from tools.editor.shared.narrative_catalog import list_entity_wrapper_graphs
+
+                    choices = list_entity_wrapper_graphs(self._project_root)
+                except Exception:
+                    choices = []
             dlg = WrapperGraphPickerDialog(
-                [wrapper_map[gid] for gid in wrapper_order if gid in wrapper_map],
+                choices,
                 initial_id=_current_wrapper_graph_id(),
                 parent=self,
             )
@@ -3226,7 +4389,13 @@ class NodeInspector(QWidget):
 
         def getter() -> dict[str, Any]:
             base = build_getter("ownerState")()
-            base["wrapperGraphId"] = _current_wrapper_graph_id()
+            cur = _current_wrapper_graph_id()
+            # 原本没这个键、而且框里的值只是我们自动填上去展示的 → 保持不写，
+            # 让运行时继续按当前 owner 动态解算。用户真选过（值变了）才写出。
+            if not _orig_has_wrapper_key and cur == _auto_filled_wrapper:
+                base.pop("wrapperGraphId", None)
+            else:
+                base["wrapperGraphId"] = cur
             return base
 
         self._getter = getter
@@ -3266,7 +4435,9 @@ class NodeInspector(QWidget):
         else:
             gid_cb.setCurrentText(saved_gid)
         row_gid = QHBoxLayout()
-        row_gid.addWidget(QLabel("graphId", self._body))
+        _lbl_gid = QLabel("读哪张叙事图", self._body)
+        _lbl_gid.setToolTip("JSON 字段 graphId：按这张叙事图的当前状态分支")
+        row_gid.addWidget(_lbl_gid)
         row_gid.addWidget(gid_cb, 1)
         self._body_layout.addLayout(row_gid)
 
@@ -3315,9 +4486,9 @@ class NodeInspector(QWidget):
                 finally:
                     cb.blockSignals(False)
             if gid and not gid.startswith("@") and not is_context_graph_allowed(self._project_root, gid):
-                hint.setStyleSheet("color: #c62828;")
+                hint.setStyleSheet(app_theme.semantic_text_css("error"))
             else:
-                hint.setStyleSheet("color: #888;")
+                hint.setStyleSheet(app_theme.semantic_text_css("faint"))
             self._emit_changed()
 
         gid_cb.currentTextChanged.connect(on_graph_changed)
@@ -3336,6 +4507,16 @@ class NodeInspector(QWidget):
 
         self._getter = getter
 
+    def _node_summaries_for_picker(self) -> dict[str, str]:
+        """节点 id → 一行摘要（与左侧节点列表同源）。取不到就退化成空。"""
+        getter = getattr(self, "_node_summaries_getter", None)
+        if callable(getter):
+            try:
+                return getter() or {}
+            except Exception:
+                return {}
+        return {}
+
     def _pick_target(self, line_edit: QLineEdit):
         ids = self._list_node_ids()
         if not ids:
@@ -3345,6 +4526,7 @@ class NodeInspector(QWidget):
         dlg = NodePickerDialog(
             ids,
             type_by_id=types,
+            summary_by_id=self._node_summaries_for_picker(),
             title="选择目标节点",
             initial=line_edit.text().strip(),
             parent=self,

@@ -1,5 +1,6 @@
 import { MarkerType } from '@xyflow/react';
 import { transitionAnchorId } from '../anchorCodec';
+import { transitionEdgeLabel } from '../edgeLabels';
 import { graphDisplayName, stateDisplayName, stateEditorPosition } from '../editorModel';
 import type { CanvasMode } from '../types/canvas';
 import type {
@@ -58,16 +59,18 @@ export function buildGraphStateNodes(input: GraphLayerInput): CanvasNode[] {
 export function buildGraphTransitionEdges(input: GraphLayerInput): CanvasEdge[] {
   const { graph, scope, endpointCtx } = input;
   return (graph.transitions ?? []).map((t) => {
+    // reactive* 迁移的 signal 恒为 __draft__ 占位，标签必须按 trigger 说话（见 edgeLabels）。
+    const label = transitionEdgeLabel(t);
     const base: CanvasEdge = {
       id: scope.transitionEdgeId(t.id),
       source: resolveCanvasEndpoint(t.from, graph.id, endpointCtx),
       target: resolveCanvasEndpoint(t.to, graph.id, endpointCtx),
       type: 'transition',
-      label: t.signal,
+      label,
       interactionWidth: 24,
       zIndex: 25,
       markerEnd: { type: MarkerType.ArrowClosed },
-      data: { edgeKind: 'transition', label: t.signal, detail: `${graph.id}.${t.id}` },
+      data: { edgeKind: 'transition', label, detail: `${graph.id}.${t.id}` },
     };
     // Style reactive transitions distinctly
     if (t.trigger === 'reactive') {
@@ -113,10 +116,10 @@ export function buildGraphTransitionAnchorNodes(
       deletable: false,
       selectable: true,
       data: {
-        label: transition.signal || transition.id,
+        label: transitionEdgeLabel(transition) || transition.id,
         subtitle: '触发点',
         kind: 'transitionAnchor',
-        detail: transition.signal,
+        detail: transitionEdgeLabel(transition),
       },
     };
     if (parentId) {

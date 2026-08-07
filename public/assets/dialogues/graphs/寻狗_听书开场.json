@@ -66,9 +66,15 @@
           "params": {
             "id": "说书-景别复位__part2"
           }
+        },
+        {
+          "type": "setFlag",
+          "params": {
+            "value": true
+          }
         }
       ],
-      "next": "done"
+      "next": "n_2"
     },
     "n_1": {
       "type": "contextState",
@@ -84,6 +90,18 @@
       ],
       "defaultNext": "done",
       "graphId": "flow_xungou_main"
+    },
+    "n_2": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "主线_开局被赶出茶馆"
+          }
+        }
+      ],
+      "next": "done"
     }
   }
 }

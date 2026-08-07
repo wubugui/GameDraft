@@ -56,6 +56,10 @@ _MEDIA_KEY_NAMES = {
     "toImage",
     # 档案条目插画（ArchiveManager 会预载，审查 P2-36）
     "illustration",
+    # 物品背包图标（items.json 的 ItemDef.icon；InventoryUI 按格子画）
+    "icon",
+    # 挂点动作的多帧挂件贴图列表（attachToSocket.images；列表元素走 _walk_json 的父键继承）
+    "images",
 }
 
 # 富文本里 [img:...] 也按媒体短名解析
@@ -96,22 +100,27 @@ class AuditReport:
         self.issues.append(issue)
 
 
-def _walk_json(value: Any, path: str = "") -> Iterator[tuple[str, str, Any]]:
-    """yield (field_path, key_name, value)，遇到非容器节点返回 (path, leaf_key, value)。"""
+def _walk_json(value: Any, path: str = "", inherited_key: str = "") -> Iterator[tuple[str, str, Any]]:
+    """yield (field_path, key_name, value)，遇到非容器节点返回 (path, leaf_key, value)。
+
+    ``inherited_key``：列表元素本身没有键名，但"一个媒体键下面挂一串路径"是合法形状
+    （如挂点动作的 ``images``）。把父键传下去，列表里的每个字符串才进得了媒体存在性门——
+    否则写错一个路径，收尾校验全绿、运行时只有一句"贴图加载失败"。
+    """
     if isinstance(value, dict):
         for k, v in value.items():
             child_path = f"{path}.{k}" if path else k
             if isinstance(v, (dict, list)):
-                yield from _walk_json(v, child_path)
+                yield from _walk_json(v, child_path, k)
             else:
                 yield child_path, k, v
     elif isinstance(value, list):
         for i, v in enumerate(value):
             child_path = f"{path}[{i}]"
             if isinstance(v, (dict, list)):
-                yield from _walk_json(v, child_path)
+                yield from _walk_json(v, child_path, inherited_key)
             else:
-                yield child_path, "", v
+                yield child_path, inherited_key, v
 
 
 def _is_media_key(name: str) -> bool:

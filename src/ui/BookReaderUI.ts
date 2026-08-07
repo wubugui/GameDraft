@@ -1,62 +1,80 @@
 import { Container, Graphics, Text } from 'pixi.js';
-import { UITheme, fadeIn } from './UITheme';
+import { UITheme } from './UITheme';
 import { drawPanelBase, SKINS } from './PanelSkin';
 import { buildRichContent } from './RichContent';
-import { canvasPointFromEvent } from './uiPointerCoords';
+import { markPointerConsumed } from './uiPointerCoords';
+import { createRule, drawSelectedRow } from './components/UIDecor';
+import { UIFocus, type FocusItem } from './components/UIFocus';
+import { UIWindow, WINDOW_SIZES } from './components/UIWindow';
+import { UIScrollView } from './components/UIScrollView';
 import type { Renderer } from '../rendering/Renderer';
 import type { BookDef, BookReaderSlice, BookTocChapter, IArchiveDataProvider } from '../data/types';
 import type { StringsProvider } from '../core/StringsProvider';
 import type { AssetManager } from '../core/AssetManager';
+import { createStyledText } from '../core/styledText';
 
-const PANEL_W = 820;
-const PANEL_H = 560;
-const PADDING = 20;
-const BOTTOM_BAR = 36;
-const TOC_W = 208;
-const TOC_GAP = 14;
+/**
+ * 翻页式书本阅读器：左目录 + 右正文，由书架当**子面板**拉起。
+ *
+ * 与四本档案册（走 {@link ArchiveBookView}）的差别在于：目录是两级（章 → 轶闻）、
+ * 正文是章节切片（含插图 `[img:…]` 与按语），且未解锁的章/条要占位而不是藏起来——
+ * 所以没并进那套通用视图，但外壳（遮罩/底框/标题/✕/滚动/滚动条）一律走组件层。
+ */
 
-type PanelWheelLayout = {
-  px: number;
-  py: number;
-  tocLeft: number;
-  tocRight: number;
-  contentLeft: number;
-  contentRight: number;
-  scrollTop: number;
-  scrollBottom: number;
-};
+/** 目录列宽上限；窄画布下再按内容区比例收一道 */
+const TOC_W = 232;
+const TOC_W_RATIO = 0.34;
+/**
+ * 目录两级各自的字号与行距。
+ *
+ * 目录是**扫的**不是读的，但两级得分得出来：章名是这本书的骨架（body 档），
+ * 轶闻是挂在章下的条目（small 档 + `·`/`○` 前缀 + 缩进）。
+ * 旧实现两级同为 small、行距写死 18（比字面还矮），于是既没层级也没呼吸。
+ */
+const TOC_CHAPTER = { size: UITheme.fontSize.body, lineH: 26, minH: 32 } as const;
+const TOC_ENTRY = { size: UITheme.fontSize.small, lineH: 21, minH: 26 } as const;
+/** 正文行距：整章正文是拿来读的，1.6 倍才有呼吸（20px 配 22 会连成一堵墙） */
+const BODY_LINE_H = 32;
+/** 按语行距：small 档的短段落，1.6 倍 */
+const ANNOTATION_LINE_H = 26;
+/** 目录列与正文列的最小可用高度（画布被压扁时兜底，沿用旧实现的下限） */
+const MIN_COL_H = 80;
 
 export class BookReaderUI {
   private renderer: Renderer;
   private archiveData: IArchiveDataProvider;
   private assetManager: AssetManager;
-  private container: Container | null = null;
+  private strings: StringsProvider;
   private currentBook: BookDef | null = null;
   /** 当前选中的章节页码 */
   private navPageNum = 1;
   /** null 表示阅读该章正文；非 null 表示该章下某条 entry */
   private navEntryId: string | null = null;
   private onCloseCb: (() => void) | null = null;
-  private onWheelBound: (e: WheelEvent) => void;
-  private strings: StringsProvider;
-  private contentContainer: Container | null = null;
-  private contentScrollOffset = 0;
-  private contentTotalH = 0;
-  private scrollAnchorY = 0;
-  private contentViewportH = 0;
-  private tocContainer: Container | null = null;
-  private tocScrollOffset = 0;
-  private tocTotalH = 0;
-  private tocViewportH = 0;
-  private tocAnchorY = 0;
-  private wheelLayout: PanelWheelLayout | null = null;
+  private win: UIWindow | null = null;
+  private toc: UIScrollView | null = null;
+  private content: UIScrollView | null = null;
+  /** 目录滚动位置跨重绘保留（点目录重建面板不该把目录跳回顶部） */
+  private tocScrollKeep = 0;
+  /**
+   * 键盘/手柄焦点。两组：左栏目录（章 + 轶闻）一组，右栏「返回本章正文」一组——
+   * 不分组的话上下键会在目录与右栏那条链接之间乱跳。
+   * 窗体的 ✕ / 关闭提示归 `UIWindow` 自己（见文件末注）。
+   */
+  private focus = new UIFocus();
+  private focusItems: FocusItem[] = [];
+  /** 默认焦点只在开一本书时指定；翻章引起的重建靠 setItems 按 id 复位 */
+  private focusInit = false;
+  /** 目录列在内容区里的纵向起点：焦点矩形按内容区坐标登记，滚动换算要减掉它 */
+  private tocTop = 0;
+  private onKeyBound: (e: KeyboardEvent) => void;
 
   constructor(renderer: Renderer, archiveData: IArchiveDataProvider, strings: StringsProvider, assetManager: AssetManager) {
     this.renderer = renderer;
     this.archiveData = archiveData;
     this.assetManager = assetManager;
-    this.onWheelBound = this.onWheel.bind(this);
     this.strings = strings;
+    this.onKeyBound = (e) => this.onKey(e);
   }
 
   openBook(book: BookDef, onClose: () => void): void {
@@ -66,7 +84,9 @@ export class BookReaderUI {
     this.navPageNum = first?.pageNum ?? 1;
     this.navEntryId = null;
     this.onCloseCb = onClose;
-    window.addEventListener('wheel', this.onWheelBound, { passive: false });
+    this.tocScrollKeep = 0;
+    this.focusInit = false;
+    window.addEventListener('keydown', this.onKeyBound);
     this.fireSliceFirstView();
     this.build(true);
   }
@@ -92,14 +112,83 @@ export class BookReaderUI {
   }
 
   close(): void {
-    window.removeEventListener('wheel', this.onWheelBound);
-    this.destroyUI();
+    window.removeEventListener('keydown', this.onKeyBound);
+    this.teardown();
     this.currentBook = null;
     this.onCloseCb = null;
+    this.tocScrollKeep = 0;
+    this.focus.destroy();
+    this.focusItems = [];
+    this.focusInit = false;
   }
 
   destroy(): void {
     this.close();
+  }
+
+  /**
+   * ✕ /「[返回书架]」的关闭入口。
+   *
+   * 本面板**不是** `GameStateController` 的注册面板，而是书架（`BookshelfUI`）用
+   * `onOpenBook(book, onClose)` 拉起的子面板句柄——所以关闭不能走 `closePanel`，
+   * 必须回调书架给的 `onClose`（它负责 `closeSubPanel()` + 重建书架）。
+   * 直接 `this.close()` 会把书本关掉却留下空白的 UIOverlay，玩家回不到书架。
+   */
+  private requestBack(): void {
+    this.onCloseCb?.();
+  }
+
+  private teardown(): void {
+    this.toc?.destroy();
+    this.content?.destroy();
+    this.win?.destroy();
+    this.toc = null;
+    this.content = null;
+    this.win = null;
+  }
+
+  /**
+   * 方向键挪焦点、回车/空格跳章；**焦点优先、滚动兜底**——
+   * 目录走到底时 `focus.handleKey` 让回按键，才轮到 `UIScrollView` 滚正文
+   * （PageUp/PageDown 焦点从不接管，长正文照旧整页翻）。滚不动时不吞按键，避免抢全局快捷键。
+   */
+  private onKey(e: KeyboardEvent): void {
+    if (this.focus.handleKey(e.code)) {
+      this.scrollFocusIntoView();
+      e.preventDefault();
+      return;
+    }
+    const sv = this.content ?? this.toc;
+    if (!sv) return;
+    const before = sv.scrollOffset;
+    if (!sv.handleKey(e.code)) return;
+    if (sv.scrollOffset !== before) e.preventDefault();
+  }
+
+  /**
+   * 焦点挪到目录视口外时把它滚进来。焦点矩形按**内容区坐标**登记
+   * （目录与右栏链接要在同一坐标系里才谈得上空间导航），换算回目录内容坐标要减 `tocTop`。
+   * 右栏那条链接不在滚动区里，跳过。
+   */
+  private scrollFocusIntoView(): void {
+    const toc = this.toc;
+    const cur = this.focus.current;
+    if (!toc || !cur || cur.group !== 'toc') return;
+    const top = cur.y - this.tocTop;
+    const bottom = top + cur.h;
+    if (top < toc.scrollOffset) toc.scrollOffset = top;
+    else if (bottom > toc.scrollOffset + toc.viewportHeight) {
+      toc.scrollOffset = bottom - toc.viewportHeight;
+    }
+  }
+
+  /** 预设 xl（820×560）在小画布（调试侧栏挤压 #game-mount）下要收边 */
+  private windowSize(): { width: number; height: number } {
+    const margin = UITheme.spacing.xl * 2;
+    return {
+      width: Math.min(WINDOW_SIZES.xl.width, this.renderer.screenWidth - margin),
+      height: Math.min(WINDOW_SIZES.xl.height, this.renderer.screenHeight - margin),
+    };
   }
 
   private resolveSlice(book: BookDef): {
@@ -119,366 +208,415 @@ export class BookReaderUI {
   }
 
   /**
-   * @param animateOpen 仅首次打开书本时为 true（淡入）；目录切换时不做 alpha 动画，避免整面板闪一下。
+   * @param animateOpen 仅首次打开书本时为 true。目录切换的重绘必须走 `win.attach()`——
+   * 走 `open()` 会让每次翻页都重放一遍开场淡入上浮；而**忘了挂载**会让整本书从画面消失。
    */
   private build(animateOpen = false): void {
-    const prevTocScroll = animateOpen ? 0 : this.tocScrollOffset;
-    this.destroyUI();
-    if (!this.currentBook) return;
+    this.tocScrollKeep = animateOpen ? 0 : (this.toc?.scrollOffset ?? this.tocScrollKeep);
+    this.teardown();
+    const book = this.currentBook;
+    if (!book) return;
 
-    this.contentScrollOffset = 0;
-    this.container = new Container();
-    const sw = this.renderer.screenWidth;
-    const sh = this.renderer.screenHeight;
-    const px = (sw - PANEL_W) / 2;
-    const py = (sh - PANEL_H) / 2;
-
-    const overlay = new Graphics();
-    overlay.rect(0, 0, sw, sh);
-    overlay.fill({ color: UITheme.colors.overlay, alpha: UITheme.alpha.overlay });
-    this.container.addChild(overlay);
-
-    const bg = new Graphics();
-    drawPanelBase(bg, px, py, PANEL_W, PANEL_H, SKINS.book);
-    this.container.addChild(bg);
-
-    const title = new Text({
-      text: this.archiveData.resolveLine(this.currentBook.title),
-      style: {
-        fontSize: 18,
-        fill: UITheme.colors.title,
-        fontFamily: UITheme.fonts.display,
-        fontWeight: 'bold',
-        wordWrap: true,
-        breakWords: true,
-        wordWrapWidth: PANEL_W - PADDING * 2,
-      },
+    const win = new UIWindow(this.renderer, {
+      size: this.windowSize(),
+      title: this.archiveData.resolveLine(book.title),
+      skin: SKINS.book,
+      closeHint: this.strings.get('bookReader', 'back'),
+      onClose: () => this.requestBack(),
     });
-    title.x = px + PADDING;
-    title.y = py + 14;
-    this.container.addChild(title);
+    this.win = win;
 
-    const backBtn = new Text({
-      text: this.strings.get('bookReader', 'back'),
+    const chapters = this.archiveData.getBookTocChapters(book);
+
+    // 底栏面包屑：先量高，两列的可用高按它扣
+    const pageInfo = createStyledText({
+      text: this.breadcrumbText(chapters),
       style: {
-        fontSize: 13,
-        fill: UITheme.colors.link,
-        fontFamily: UITheme.fonts.ui,
-        wordWrap: true,
-        breakWords: true,
-        wordWrapWidth: 100,
-      },
-    });
-    backBtn.x = px + PANEL_W - 100;
-    backBtn.y = py + 14;
-    backBtn.eventMode = 'static';
-    backBtn.cursor = 'pointer';
-    backBtn.on('pointerdown', () => { if (this.onCloseCb) this.onCloseCb(); });
-    this.container.addChild(backBtn);
-
-    const tocChapters = this.archiveData.getBookTocChapters(this.currentBook);
-    const tocTitle = new Text({
-      text: this.strings.get('bookReader', 'tocTitle'),
-      style: {
-        fontSize: 12,
-        fill: UITheme.colors.section,
-        fontFamily: UITheme.fonts.ui,
-        fontWeight: 'bold',
-        wordWrap: true,
-        breakWords: true,
-        wordWrapWidth: TOC_W,
-      },
-    });
-    tocTitle.x = px + PADDING;
-    tocTitle.y = py + 44;
-    this.container.addChild(tocTitle);
-
-    this.tocAnchorY = py + 62;
-    this.tocViewportH = Math.max(80, py + PANEL_H - BOTTOM_BAR - this.tocAnchorY);
-
-    const tocInner = new Container();
-    let tocY = 0;
-    const tocLineW = TOC_W - 4;
-    const makeTocLine = (
-      label: string,
-      pageNum: number,
-      entryId: string | null,
-      indent: number,
-      opts: { muted: boolean; selected: boolean },
-    ): void => {
-      const fill = opts.selected
-        ? UITheme.colors.gold
-        : opts.muted
-          ? UITheme.colors.disabled
-          : UITheme.colors.bodyDim;
-      const t = new Text({
-        text: label,
-        style: {
-          fontSize: 12,
-          fill,
-          fontFamily: UITheme.fonts.ui,
-          wordWrap: true,
-          breakWords: true,
-          wordWrapWidth: tocLineW - indent,
-          lineHeight: 18,
-        },
-      });
-      t.x = indent;
-      t.y = tocY;
-      t.eventMode = 'static';
-      t.cursor = 'pointer';
-      t.on('pointerdown', () => {
-        this.navigate(pageNum, entryId);
-      });
-      tocInner.addChild(t);
-      tocY += Math.max(20, t.height + 4);
-    };
-
-    for (const ch of tocChapters) {
-      const chLabel = ch.title?.trim()
-        || this.strings.get('bookReader', 'chapterFallback', { n: String(ch.pageNum) });
-      const chSel = this.navPageNum === ch.pageNum && this.navEntryId === null;
-      makeTocLine(chLabel, ch.pageNum, null, 0, { muted: !ch.unlocked, selected: chSel });
-      for (const ent of ch.entries) {
-        const entSel = this.navPageNum === ch.pageNum && this.navEntryId === ent.id;
-        const prefix = ent.unlocked ? '· ' : '○ ';
-        makeTocLine(prefix + ent.title, ch.pageNum, ent.id, 14, { muted: !ent.unlocked, selected: entSel });
-      }
-    }
-
-    this.tocTotalH = tocY;
-    tocInner.x = px + PADDING;
-    const maxTocScroll = Math.max(0, this.tocTotalH - this.tocViewportH);
-    this.tocScrollOffset = Math.min(Math.max(0, prevTocScroll), maxTocScroll);
-    tocInner.y = this.tocAnchorY - this.tocScrollOffset;
-    this.tocContainer = tocInner;
-
-    const tocMaskG = new Graphics();
-    tocMaskG.rect(px + PADDING, this.tocAnchorY, TOC_W, this.tocViewportH);
-    tocMaskG.fill({ color: 0xffffff });
-    tocMaskG.eventMode = 'none';
-    this.container.addChild(tocMaskG);
-    tocInner.mask = tocMaskG;
-
-    const tocColBg = new Graphics();
-    drawPanelBase(tocColBg, px + PADDING - 4, this.tocAnchorY - 4, TOC_W + 8, this.tocViewportH + 8, SKINS.row);
-    this.container.addChild(tocColBg);
-
-    const divider = new Graphics();
-    const divX = px + PADDING + TOC_W + TOC_GAP / 2;
-    divider.moveTo(divX, this.tocAnchorY - 4);
-    divider.lineTo(divX, this.tocAnchorY + this.tocViewportH + 4);
-    divider.stroke({ width: 1, color: UITheme.colors.borderSubtle, alpha: 0.9 });
-    this.container.addChild(divider);
-
-    this.container.addChild(tocInner);
-
-    const contentLeft = px + PADDING + TOC_W + TOC_GAP;
-    const contentW = PANEL_W - PADDING * 2 - TOC_W - TOC_GAP;
-    const { slice, entryLocked } = this.resolveSlice(this.currentBook);
-
-    let titleBlockEndY = this.tocAnchorY;
-
-    if (entryLocked) {
-      const locked = new Text({
-        text: this.strings.get('bookReader', 'entryLocked'),
-        style: {
-          fontSize: 15,
-          fill: UITheme.colors.disabledDark,
-          fontFamily: UITheme.fonts.display,
-          fontStyle: 'italic',
-          wordWrap: true,
-          breakWords: true,
-          wordWrapWidth: contentW,
-        },
-      });
-      locked.x = contentLeft;
-      locked.y = this.tocAnchorY;
-      this.container.addChild(locked);
-      titleBlockEndY = this.tocAnchorY + locked.height + 16;
-    } else if (slice) {
-      if (slice.unlocked) {
-        if (slice.kind === 'page') {
-          if (slice.title) {
-            const pt = new Text({
-              text: slice.title,
-              style: {
-                fontSize: 15,
-                fill: UITheme.colors.ruleName,
-                fontFamily: UITheme.fonts.display,
-                fontWeight: 'bold',
-                wordWrap: true,
-                breakWords: true,
-                wordWrapWidth: contentW,
-              },
-            });
-            pt.x = contentLeft;
-            pt.y = this.tocAnchorY;
-            this.container.addChild(pt);
-            titleBlockEndY = this.tocAnchorY + pt.height + 10;
-          } else {
-            titleBlockEndY = this.tocAnchorY;
-          }
-        } else {
-          const chapter = slice.chapterTitle?.trim();
-          if (chapter) {
-            const ch = new Text({
-              text: this.strings.get('bookReader', 'entryFromChapter', { chapter }),
-              style: {
-                fontSize: 12,
-                fill: UITheme.colors.pageInfo,
-                fontFamily: UITheme.fonts.ui,
-                wordWrap: true,
-                breakWords: true,
-                wordWrapWidth: contentW,
-              },
-            });
-            ch.x = contentLeft;
-            ch.y = this.tocAnchorY;
-            this.container.addChild(ch);
-            titleBlockEndY = this.tocAnchorY + ch.height + 4;
-          }
-          const et = new Text({
-            text: slice.title,
-            style: {
-              fontSize: 15,
-              fill: UITheme.colors.ruleName,
-              fontFamily: UITheme.fonts.display,
-              fontWeight: 'bold',
-              wordWrap: true,
-              breakWords: true,
-              wordWrapWidth: contentW,
-            },
-          });
-          et.x = contentLeft;
-          et.y = titleBlockEndY;
-          this.container.addChild(et);
-          titleBlockEndY = titleBlockEndY + et.height + 10;
-
-          const backCh = new Text({
-            text: this.strings.get('bookReader', 'backToChapter'),
-            style: {
-              fontSize: 11,
-              fill: UITheme.colors.link,
-              fontFamily: UITheme.fonts.ui,
-              wordWrap: true,
-              breakWords: true,
-              wordWrapWidth: contentW,
-            },
-          });
-          backCh.x = contentLeft;
-          backCh.y = titleBlockEndY;
-          backCh.eventMode = 'static';
-          backCh.cursor = 'pointer';
-          backCh.on('pointerdown', () => {
-            this.navigate(this.navPageNum, null);
-          });
-          this.container.addChild(backCh);
-          titleBlockEndY = titleBlockEndY + backCh.height + 8;
-        }
-
-        let raw = slice.content;
-        if (slice.illustration?.trim()) {
-          raw = `[img:${slice.illustration.trim()}]\n${raw}`;
-        }
-
-        const { container: rc, totalHeight: mainH } = buildRichContent(raw, {
-          width: contentW,
-          fontSize: 13,
-          fill: UITheme.colors.bodyDim,
-          fontFamily: UITheme.fonts.display,
-          lineHeight: 22,
-        }, this.assetManager);
-
-        const scrollInner = new Container();
-        scrollInner.addChild(rc);
-        let innerH = mainH;
-        if (slice.kind === 'entry' && slice.annotation?.trim()) {
-          const ann = new Text({
-            text: `${this.strings.get('bookReader', 'annotationHeading')}：${slice.annotation.trim()}`,
-            style: {
-              fontSize: 12,
-              fill: UITheme.colors.bodyMuted,
-              fontFamily: UITheme.fonts.display,
-              fontStyle: 'italic',
-              wordWrap: true,
-              breakWords: true,
-              wordWrapWidth: contentW,
-              lineHeight: 20,
-            },
-          });
-          ann.y = mainH + 14;
-          scrollInner.addChild(ann);
-          innerH = ann.y + ann.height;
-        }
-
-        this.scrollAnchorY = titleBlockEndY;
-        this.contentViewportH = Math.max(80, py + PANEL_H - BOTTOM_BAR - this.scrollAnchorY);
-
-        scrollInner.x = contentLeft;
-        scrollInner.y = this.scrollAnchorY;
-        this.contentContainer = scrollInner;
-        this.contentTotalH = innerH;
-
-        const contentMask = new Graphics();
-        contentMask.rect(contentLeft, this.scrollAnchorY, contentW, this.contentViewportH);
-        contentMask.fill({ color: 0xffffff });
-        this.container.addChild(contentMask);
-        scrollInner.mask = contentMask;
-
-        this.container.addChild(scrollInner);
-      } else {
-        const missing = new Text({
-          text: this.strings.get('bookReader', 'pageMissing'),
-          style: {
-            fontSize: 16,
-            fill: UITheme.colors.disabledDark,
-            fontFamily: UITheme.fonts.display,
-            fontStyle: 'italic',
-            wordWrap: true,
-            breakWords: true,
-            wordWrapWidth: contentW,
-          },
-        });
-        missing.x = contentLeft + (contentW - missing.width) / 2;
-        missing.y = py + PANEL_H / 2 - 20;
-        this.container.addChild(missing);
-      }
-    }
-
-    const breadcrumb = this.breadcrumbText(tocChapters);
-    const pageInfo = new Text({
-      text: breadcrumb,
-      style: {
-        fontSize: 11,
+        fontSize: UITheme.fontSize.micro,
         fill: UITheme.colors.pageInfo,
         fontFamily: UITheme.fonts.ui,
         wordWrap: true,
         breakWords: true,
-        wordWrapWidth: PANEL_W - PADDING * 2,
+        wordWrapWidth: win.bodyWidth,
       },
     });
-    pageInfo.x = px + PADDING;
-    pageInfo.y = py + PANEL_H - 26;
-    this.container.addChild(pageInfo);
+    pageInfo.y = Math.max(0, win.bodyHeight - pageInfo.height);
+    win.body.addChild(pageInfo);
 
-    this.wheelLayout = {
-      px,
-      py,
-      tocLeft: px + PADDING,
-      tocRight: px + PADDING + TOC_W,
-      contentLeft,
-      contentRight: px + PANEL_W - PADDING,
-      scrollTop: this.tocAnchorY,
-      scrollBottom: py + PANEL_H - BOTTOM_BAR,
+    const tocTitle = createStyledText({
+      text: this.strings.get('bookReader', 'tocTitle'),
+      style: {
+        fontSize: UITheme.fontSize.small,
+        fill: UITheme.colors.section,
+        fontFamily: UITheme.fonts.display,
+        fontWeight: 'bold',
+        letterSpacing: UITheme.letterSpacing.title,
+      },
+    });
+    win.body.addChild(tocTitle);
+
+    const tocW = Math.min(TOC_W, Math.round(win.bodyWidth * TOC_W_RATIO));
+    const listTop = tocTitle.height + UITheme.spacing.xs;
+    const colH = Math.max(MIN_COL_H, win.bodyHeight - pageInfo.height - UITheme.spacing.sm - listTop);
+    const contentX = tocW + UITheme.spacing.lg;
+    const contentW = Math.max(1, win.bodyWidth - contentX);
+
+    // 两栏之间一条极淡竖线（设计稿里书页中缝就是这么一条）。
+    // 旧实现还在目录列整块铺了一层 SKINS.row 的底板——那让左栏变成"面板里的面板"，
+    // 与"一张摊开的书页"的观感相反，且行牌自己的选中态在它上面提不起来。
+    const divider = new Graphics();
+    const divX = tocW + UITheme.spacing.sm;
+    divider.moveTo(divX, listTop - UITheme.spacing.xs);
+    divider.lineTo(divX, listTop + colH + UITheme.spacing.xs);
+    divider.stroke({ width: 1, color: UITheme.colors.hairline, alpha: UITheme.alpha.hairline });
+    divider.eventMode = 'none';
+    win.body.addChild(divider);
+
+    // 滚轮分栏：鼠标在左栏滚目录、在右栏滚正文。
+    // 边界**每次现读** win.body.x —— 窗口 resize 会重算居中位移，捕获成常量会让判据错位。
+    const splitX = (): number => (this.win?.body.x ?? 0) + tocW;
+
+    const toc = new UIScrollView(this.renderer, {
+      width: tocW,
+      height: colH,
+      hitTest: (x) => x < splitX(),
+    });
+    toc.container.position.set(0, listTop);
+    win.body.addChild(toc.container);
+    this.toc = toc;
+    this.tocTop = listTop;
+    this.focusItems = [];
+    this.fillToc(chapters, tocW);
+    toc.refresh();
+    toc.scrollOffset = this.tocScrollKeep;
+
+    this.buildContentColumn(book, contentX, listTop, contentW, colH, splitX);
+
+    // 目录在前、右栏链接在后（setItems 无历史焦点时落到第一项，先排目录就不会开在链接上）
+    this.focus.setItems(this.focusItems);
+    if (!this.focusInit) {
+      // 默认焦点落**当前正在读的那一条**，不是目录第一行
+      this.focus.focusDefault(this.tocLineId(this.navPageNum, this.navEntryId));
+      this.focusInit = true;
+    }
+    // setItems 按同 id 复位时不会重放 onFocus（currentId 没变），新一批行牌拿不到高亮 → 补一次
+    this.focus.current?.onFocus(true);
+    this.scrollFocusIntoView();
+
+    if (animateOpen) win.open();
+    else win.attach();
+  }
+
+  /** 目录行的稳定焦点键：翻章重建后靠它把焦点放回原处。 */
+  private tocLineId(pageNum: number, entryId: string | null): string {
+    return `toc:${pageNum}:${entryId ?? ''}`;
+  }
+
+  /** 两级目录：章（可点）→ 轶闻（可点，未解锁以 ○ 占位且置灰但仍可点开看提示）。 */
+  private fillToc(chapters: BookTocChapter[], tocW: number): void {
+    const toc = this.toc;
+    if (!toc) return;
+    const lineW = Math.max(1, tocW - UITheme.spacing.sm);
+    let cy = 0;
+
+    const makeLine = (
+      label: string,
+      pageNum: number,
+      entryId: string | null,
+      indent: number,
+      opts: { muted: boolean; selected: boolean; level: typeof TOC_CHAPTER | typeof TOC_ENTRY },
+    ): void => {
+      const fill = opts.selected
+        ? UITheme.colors.title
+        : opts.muted
+          ? UITheme.colors.disabled
+          : UITheme.colors.bodyMuted;
+      const t = createStyledText({
+        text: label,
+        style: {
+          fontSize: opts.level.size,
+          fill,
+          fontFamily: UITheme.fonts.ui,
+          wordWrap: true,
+          breakWords: true,
+          wordWrapWidth: Math.max(1, lineW - indent - UITheme.spacing.sm),
+          lineHeight: opts.level.lineH,
+        },
+      });
+      const rowH = Math.max(opts.level.minH, t.height + UITheme.spacing.sm);
+
+      // 选中 = 整条铺琥珀 + 金描边（不是把字换个颜色）；平常是极暗行底 + 一条极淡的边
+      const plate = new Graphics();
+      if (opts.selected) drawSelectedRow(plate, 0, cy, lineW, rowH);
+      else {
+        drawPanelBase(plate, 0, cy, lineW, rowH, SKINS.row,
+          opts.muted ? { fillAlpha: UITheme.alpha.rowBgLight } : undefined);
+      }
+      plate.eventMode = 'none';
+      toc.content.addChild(plate);
+
+      // 焦点高亮 = 这一行原本的选中画法（琥珀铺光 + 金描边），不另发明一种焦点框。
+      // **正在读的那一行不再叠一层**：它的 `plate` 已经是同一张铺光，叠上去只会亮一档。
+      const focusGlow = opts.selected ? null : new Graphics();
+      if (focusGlow) {
+        drawSelectedRow(focusGlow, 0, cy, lineW, rowH);
+        focusGlow.alpha = 0;
+        focusGlow.eventMode = 'none';
+        toc.content.addChild(focusGlow);
+      }
+
+      t.x = indent + UITheme.spacing.xs;
+      t.y = cy + Math.round((rowH - t.height) / 2);
+      // 整行命中：Pixi 是逐子元素命中测试，只给 Text 会让行内空白成死区
+      const hit = new Graphics();
+      hit.rect(0, cy, lineW, rowH);
+      hit.fill({ color: 0xffffff, alpha: UITheme.alpha.hitArea });
+      hit.eventMode = 'static';
+      hit.cursor = 'pointer';
+      hit.on('pointerdown', (e) => {
+        markPointerConsumed((e as { nativeEvent?: unknown }).nativeEvent);
+        this.navigate(pageNum, entryId);
+      });
+      const focusId = this.tocLineId(pageNum, entryId);
+      // 悬停即移焦：鼠标与手柄共用同一个"当前项"
+      hit.on('pointerover', () => this.focus.syncHover(focusId));
+      toc.content.addChild(hit);
+      toc.content.addChild(t);
+
+      // 未解锁的章/条也登记：它们**点得开**（会给一句「尚未解锁」的提示），
+      // 按键到不了才是死角。焦点矩形按内容区坐标登记，好与右栏链接同台比位置。
+      this.focusItems.push({
+        id: focusId,
+        x: 0, y: this.tocTop + cy, w: lineW, h: rowH,
+        group: 'toc',
+        onFocus: (on) => {
+          if (focusGlow && !focusGlow.destroyed) focusGlow.alpha = on ? 0.85 : 0;
+          if (!t.destroyed && !opts.selected) t.style.fill = on ? UITheme.colors.title : fill;
+        },
+        onActivate: () => this.navigate(pageNum, entryId),
+      });
+
+      cy += rowH + UITheme.spacing.xs;
     };
 
-    this.renderer.uiLayer.addChild(this.container);
-    if (animateOpen) {
-      fadeIn(this.container);
-    } else {
-      this.container.alpha = 1;
+    for (const ch of chapters) {
+      const chLabel = ch.title?.trim()
+        || this.strings.get('bookReader', 'chapterFallback', { n: String(ch.pageNum) });
+      const chSel = this.navPageNum === ch.pageNum && this.navEntryId === null;
+      makeLine(chLabel, ch.pageNum, null, 0, {
+        muted: !ch.unlocked,
+        selected: chSel,
+        level: TOC_CHAPTER,
+      });
+      for (const ent of ch.entries) {
+        const entSel = this.navPageNum === ch.pageNum && this.navEntryId === ent.id;
+        const prefix = ent.unlocked ? '· ' : '○ ';
+        makeLine(prefix + ent.title, ch.pageNum, ent.id, UITheme.spacing.md, {
+          muted: !ent.unlocked,
+          selected: entSel,
+          level: TOC_ENTRY,
+        });
+      }
     }
+  }
+
+  /**
+   * 右栏：固定的标题块（页题 / 出处 + 轶闻名 + 返回本章）+ 可滚的正文块。
+   * 标题块**刻意留在滚动区外**——旧实现即如此，滚正文时定位信息不该跟着滚掉。
+   */
+  private buildContentColumn(
+    book: BookDef,
+    x: number,
+    top: number,
+    w: number,
+    h: number,
+    splitX: () => number,
+  ): void {
+    const win = this.win;
+    if (!win) return;
+    const { slice, entryLocked } = this.resolveSlice(book);
+
+    const head = new Container();
+    head.position.set(x, top);
+    win.body.addChild(head);
+    let hy = 0;
+
+    if (entryLocked) {
+      head.addChild(this.placeholderText(this.strings.get('bookReader', 'entryLocked'), w));
+      return;
+    }
+    if (!slice) return;
+
+    if (!slice.unlocked) {
+      const missing = this.placeholderText(this.strings.get('bookReader', 'pageMissing'), w);
+      missing.x = Math.max(0, (w - missing.width) / 2);
+      missing.y = Math.max(0, (h - missing.height) / 2);
+      head.addChild(missing);
+      return;
+    }
+
+    if (slice.kind === 'page') {
+      if (slice.title) {
+        const pt = this.headingText(slice.title, w);
+        pt.y = hy;
+        head.addChild(pt);
+        hy += pt.height + UITheme.spacing.sm;
+      }
+    } else {
+      const chapter = slice.chapterTitle?.trim();
+      if (chapter) {
+        const ch = createStyledText({
+          text: this.strings.get('bookReader', 'entryFromChapter', { chapter }),
+          style: {
+            fontSize: UITheme.fontSize.small,
+            fill: UITheme.colors.pageInfo,
+            fontFamily: UITheme.fonts.ui,
+            wordWrap: true,
+            breakWords: true,
+            wordWrapWidth: w,
+          },
+        });
+        ch.y = hy;
+        head.addChild(ch);
+        hy += ch.height + UITheme.spacing.xs;
+      }
+
+      const et = this.headingText(slice.title, w);
+      et.y = hy;
+      head.addChild(et);
+      hy += et.height + UITheme.spacing.sm;
+
+      // 「返回本章正文」：与 UIWindow 的关闭提示同一种链接式写法（文字本身即命中区，
+      // 带 hover 变色）；短链接不适用「整行 Graphics 靶子」那条——那是给整行条目用的。
+      // 这是一条**可点的导航链接**，不是页码角标：micro 档点它都得瞄准。
+      // 说明/键位一档（small）足够克制，又不至于比它上面那句「出自…」还小。
+      const backCh = createStyledText({
+        text: this.strings.get('bookReader', 'backToChapter'),
+        style: {
+          fontSize: UITheme.fontSize.small,
+          fill: UITheme.colors.link,
+          fontFamily: UITheme.fonts.ui,
+          wordWrap: true,
+          breakWords: true,
+          wordWrapWidth: w,
+        },
+      });
+      backCh.y = hy;
+      backCh.eventMode = 'static';
+      backCh.cursor = 'pointer';
+      // 悬停即移焦：变色统一由 onFocus 画（就是原来的悬停画法）。
+      // 原先的 pointerout 复位去掉了——移开鼠标不该把唯一的焦点擦掉，焦点恒有一个可见。
+      backCh.on('pointerover', () => this.focus.syncHover('backToChapter'));
+      backCh.on('pointerdown', (e) => {
+        markPointerConsumed((e as { nativeEvent?: unknown }).nativeEvent);
+        this.navigate(this.navPageNum, null);
+      });
+      head.addChild(backCh);
+      // 右栏唯一的可交互件，自成一组：与目录同组的话上下键会在两栏之间乱跳
+      this.focusItems.push({
+        id: 'backToChapter',
+        x: x, y: top + hy, w: backCh.width, h: backCh.height,
+        group: 'content',
+        onFocus: (on) => {
+          if (!backCh.destroyed) backCh.style.fill = on ? UITheme.colors.title : UITheme.colors.link;
+        },
+        onActivate: () => this.navigate(this.navPageNum, null),
+      });
+      // 固定标题块与可滚正文之间留 md：正文行距 32，隔 sm(8) 的话首行会像是标题块的一部分
+      hy += backCh.height + UITheme.spacing.md;
+    }
+
+    const scroll = new UIScrollView(this.renderer, {
+      width: w,
+      height: Math.max(MIN_COL_H, h - hy),
+      hitTest: (px) => px >= splitX(),
+    });
+    scroll.container.position.set(x, top + hy);
+    win.body.addChild(scroll.container);
+    this.content = scroll;
+
+    // 插图走 rich content 的 [img:…]（与档案册同一条通道），插在正文最前
+    let raw = slice.content;
+    if (slice.illustration?.trim()) {
+      raw = `[img:${slice.illustration.trim()}]\n${raw}`;
+    }
+    // 插图是现装的（书里的 `[img:…]` 不在任何预载清单里），到位后整页重画。
+    // 守卫：书可能已经关了、也可能已经翻到别页——那就别把旧页画回去。
+    const atPage = this.navPageNum;
+    const atEntry = this.navEntryId;
+    const { container: rc, totalHeight: mainH } = buildRichContent(raw, {
+      width: w,
+      fontSize: UITheme.fontSize.body,
+      fill: UITheme.colors.bodyDim,
+      fontFamily: UITheme.fonts.display,
+      lineHeight: BODY_LINE_H,
+      onImageLoaded: () => {
+        if (!this.win || !this.currentBook) return;
+        if (this.navPageNum !== atPage || this.navEntryId !== atEntry) return;
+        this.build(false);
+      },
+    }, this.assetManager);
+    scroll.content.addChild(rc);
+
+    if (slice.kind === 'entry' && slice.annotation?.trim()) {
+      const ann = createStyledText({
+        text: `${this.strings.get('bookReader', 'annotationHeading')}：${slice.annotation.trim()}`,
+        style: {
+          fontSize: UITheme.fontSize.small,
+          fill: UITheme.colors.bodyMuted,
+          fontFamily: UITheme.fonts.display,
+          fontStyle: 'italic',
+          wordWrap: true,
+          breakWords: true,
+          wordWrapWidth: w,
+          lineHeight: ANNOTATION_LINE_H,
+        },
+      });
+      ann.y = mainH + UITheme.spacing.md;
+      scroll.content.addChild(ann);
+    }
+
+    scroll.refresh();
+  }
+
+  /** 页题 / 轶闻名：琥珀大字 + 一条渐隐横线（设计稿右页的开头就这两笔）。 */
+  private headingText(text: string, w: number): Container {
+    const c = new Container();
+    const t = createStyledText({
+      text,
+      style: {
+        fontSize: UITheme.fontSize.title,
+        fill: UITheme.colors.title,
+        fontFamily: UITheme.fonts.display,
+        fontWeight: 'bold',
+        letterSpacing: UITheme.letterSpacing.title,
+        wordWrap: true,
+        breakWords: true,
+        wordWrapWidth: w,
+      },
+    });
+    t.eventMode = 'none';
+    c.addChild(t);
+    const rule = createRule(w);
+    rule.y = t.height + UITheme.spacing.xs;
+    c.addChild(rule);
+    return c;
+  }
+
+  /** 未解锁 / 缺页的占位话 */
+  private placeholderText(text: string, w: number): Text {
+    return createStyledText({
+      text,
+      style: {
+        fontSize: UITheme.fontSize.bodyLarge,
+        fill: UITheme.colors.disabledDark,
+        fontFamily: UITheme.fonts.display,
+        fontStyle: 'italic',
+        wordWrap: true,
+        breakWords: true,
+        wordWrapWidth: w,
+      },
+    });
   }
 
   private breadcrumbText(tocChapters: BookTocChapter[]): string {
@@ -491,41 +629,5 @@ export class BookReaderUI {
     const ent = ch?.entries.find((e) => e.id === this.navEntryId);
     const entTitle = ent?.title ?? '';
     return `${chName} / ${entTitle}  ·  ${this.strings.get('bookReader', 'pageHint')}`;
-  }
-
-  private onWheel(e: WheelEvent): void {
-    const layout = this.wheelLayout;
-    if (!layout) return;
-    const pt = canvasPointFromEvent(this.renderer, e);
-    if (!pt) return;
-    const mx = pt.x;
-    const my = pt.y;
-    if (my < layout.scrollTop || my > layout.scrollBottom) return;
-    if (mx >= layout.tocLeft && mx <= layout.tocRight && this.tocContainer) {
-      const maxToc = Math.max(0, this.tocTotalH - this.tocViewportH);
-      if (maxToc <= 0) return;
-      e.preventDefault();
-      this.tocScrollOffset = Math.max(0, Math.min(this.tocScrollOffset + e.deltaY, maxToc));
-      this.tocContainer.y = this.tocAnchorY - this.tocScrollOffset;
-      return;
-    }
-    if (mx >= layout.contentLeft && mx <= layout.contentRight && this.contentContainer) {
-      const maxScroll = Math.max(0, this.contentTotalH - this.contentViewportH);
-      if (maxScroll <= 0) return;
-      e.preventDefault();
-      this.contentScrollOffset = Math.max(0, Math.min(this.contentScrollOffset + e.deltaY, maxScroll));
-      this.contentContainer.y = this.scrollAnchorY - this.contentScrollOffset;
-    }
-  }
-
-  private destroyUI(): void {
-    this.contentContainer = null;
-    this.tocContainer = null;
-    this.wheelLayout = null;
-    if (this.container) {
-      if (this.container.parent) this.container.parent.removeChild(this.container);
-      this.container.destroy({ children: true });
-      this.container = null;
-    }
   }
 }

@@ -9,6 +9,7 @@ import { Renderer } from '../rendering/Renderer';
 import { Camera } from '../rendering/Camera';
 import { Player, ANIM_IDLE, ANIM_WALK, ANIM_RUN } from '../entities/Player';
 import { InteractionSystem } from '../systems/InteractionSystem';
+import { PlayerActionSystem, VERB_KEYS } from '../systems/PlayerActionSystem';
 import { SceneManager } from '../systems/SceneManager';
 import { DialogueManager } from '../systems/DialogueManager';
 import { GraphDialogueManager } from '../systems/GraphDialogueManager';
@@ -27,8 +28,11 @@ import { ZoneSystem } from '../systems/ZoneSystem';
 import { InspectBox } from '../ui/InspectBox';
 import { PickupNotification } from '../ui/PickupNotification';
 import { DialogueUI } from '../ui/DialogueUI';
-import { drawPanelBase, SKINS } from '../ui/PanelSkin';
+import { createPanel, drawPanelBase, SKINS } from '../ui/PanelSkin';
 import { UITheme } from '../ui/UITheme';
+import { preloadUITextures } from '../ui/UITextures';
+import { preloadUIIcons } from '../ui/UIIcons';
+import { ContinueIndicator } from '../ui/components/ContinueIndicator';
 import { EncounterUI } from '../ui/EncounterUI';
 import { ActionChoiceUI } from '../ui/ActionChoiceUI';
 import { PressureHoldUI } from '../ui/PressureHoldUI';
@@ -48,6 +52,7 @@ import { BookshelfUI } from '../ui/BookshelfUI';
 import { BookReaderUI } from '../ui/BookReaderUI';
 import { CharacterBookUI } from '../ui/CharacterBookUI';
 import { LoreBookUI } from '../ui/LoreBookUI';
+import { SlangBookUI } from '../ui/SlangBookUI';
 import { DocumentBoxUI } from '../ui/DocumentBoxUI';
 import { ShopUI } from '../ui/ShopUI';
 import { MapUI } from '../ui/MapUI';
@@ -75,10 +80,18 @@ import type {
   HotspotDisplayImage,
   IEmoteBubbleAnchor,
   CharacterRegistryFile,
+  PlayerVerb,
+  ISaveDataProvider,
 } from '../data/types';
 import { buildCharacterRegistry } from '../data/characterRegistry';
 import { DEFAULT_ENTITY_PIXEL_DENSITY_BLUR_SCALE } from '../rendering/EntityPixelDensityMatch';
 import type { AnimationSetDefInput } from '../data/resolveAnimationSet';
+import { loadSocketsForAnim, type ResolvedSockets } from '../data/animationSockets';
+import {
+  parsePropPresets,
+  resolvePropAttach,
+  type PropPresetTable,
+} from '../data/propPresets';
 import { normalizeAnimationSetDef } from '../data/resolveAnimationSet';
 import { resolvePathRelativeToAnimManifest } from './assetPath';
 import { createPlaceholderPlayerTextures } from '../rendering/PlaceholderFactory';
@@ -89,6 +102,11 @@ import { collectRecentPageErrors, installPageErrorTrap } from './pageErrorTrap';
 import { DeterministicRandom } from '../utils/deterministicRandom';
 import { ScenarioStateManager } from './ScenarioStateManager';
 import { NarrativeStateManager, type NarrativeSignal } from './NarrativeStateManager';
+import {
+  installNarrativeDebugBridge,
+  isNarrativeDebugEnabled,
+  type NarrativeDebugBridgeHandle,
+} from '../dev/narrativeDebugBridge';
 import { DocumentRevealManager } from '../systems/DocumentRevealManager';
 import { RuleOfferRegistry } from './RuleOfferRegistry';
 import { InteractionCoordinator } from './InteractionCoordinator';
@@ -102,7 +120,7 @@ import {
 } from './CharacterLightingSystem';
 import { CharacterShadingFilter } from '../rendering/CharacterShadingFilter';
 import { getNormalAtlasSource, normalAtlasUrlFor } from '../rendering/spriteNormalAtlas';
-import type { LitShaderProvider } from '../rendering/SpriteEntity';
+import type { LitShaderProvider, SpriteEntity } from '../rendering/SpriteEntity';
 import { WaterMinigameManager } from '../systems/waterMinigame/WaterMinigameManager';
 import { SugarWheelMinigameManager } from '../systems/sugarWheel/SugarWheelMinigameManager';
 import { PaperCraftMinigameManager } from '../systems/paperCraft/PaperCraftMinigameManager';
@@ -133,7 +151,17 @@ import { hotspotCollisionPolygonToWorld, npcCollisionPolygonToWorld } from '../u
 import { depthLog, depthError } from './depthLog';
 import { DevModeUI } from '../ui/DevModeUI';
 import { resolveText, type ResolveContext } from './resolveText';
+import { BubbleChatterSystem, type BubbleSpeakerRef } from '../systems/BubbleChatterSystem';
+import { PlayerIdleBehaviorSystem } from '../systems/PlayerIdleBehaviorSystem';
+import { setTextPalette, stripStyleMarkup } from './textStyle';
 import { waitClickContinueWithHint } from '../ui/ClickContinuePrompt';
+
+/**
+ * 屏底对白框占掉的高度（BOX_MARGIN 20 + BOX_HEIGHT 230）。
+ * 供「点击继续」这类贴屏底的提示语让开——不让就会横穿对白框的底部木框。
+ * ⚠ DialogueUI / CutsceneRenderer 的框高改了，这里要跟。
+ */
+const DIALOGUE_BOX_BOTTOM_BAND = 250;
 import { TouchMobileControls } from '../ui/TouchMobileControls';
 import {
   resolveScriptedSpeakerDisplay,
@@ -142,8 +170,9 @@ import {
   type ScriptedSpeakerEntity,
 } from '../utils/scriptedDialogueSpeaker';
 import { resolveSpeakerSide } from '../utils/dialogueSpeakerSide';
-import { Culler, Graphics, RenderTexture, Texture, UPDATE_PRIORITY } from 'pixi.js';
-import { sceneJsonUrl, TEXT_URLS } from './projectPaths';
+import { Culler, Graphics, RenderTexture, Sprite, Texture, UPDATE_PRIORITY } from 'pixi.js';
+import { dialogueGraphJsonUrl, sceneJsonUrl, TEXT_URLS } from './projectPaths';
+import { makeOwnerOrigin, resolveDialogueOwner } from './actionOrigin';
 import {
   coerceRuntimeFieldValue,
   getRuntimeFieldDescriptor,
@@ -178,6 +207,13 @@ export interface GameStartOptions {
   paperCraftPreview?: string;
   /** 自动视觉基准模式：保留 dev 直达能力，但不打开 DevMode 遮罩。 */
   visualCapture?: boolean;
+  /**
+   * 停在标题界面启动，**不装载世界**（URL `screen_title`，由「返回主菜单」整页重启带入）。
+   * 标题界面因此是真正的"已退出这一局"：没有场景在跑、没有 HUD、子面板底下也没有东西可漏。
+   */
+  startAtTitle?: boolean;
+  /** 启动即读这个存档槽（URL `load_slot`，标题界面点「继续」走的路） */
+  loadSlot?: number;
 }
 
 declare global {
@@ -269,6 +305,7 @@ export class Game {
   private camera: Camera;
   private player: Player;
   private interactionSystem: InteractionSystem;
+  private playerActionSystem: PlayerActionSystem;
   private sceneManager: SceneManager;
   private dialogueManager: DialogueManager;
   private graphDialogueManager: GraphDialogueManager;
@@ -316,6 +353,9 @@ export class Game {
   private menuUI!: MenuUI;
   private ruleUseUI!: RuleUseUI;
   private debugPanelUI!: DebugPanelUI;
+  /** 叙事调试器桥（dev + ?ndbg=1 才装；见 src/dev/narrativeDebugBridge.ts） */
+  private narrativeDebugBridge: NarrativeDebugBridgeHandle | null = null;
+  private narrativeDebugListeners: [string, (payload: unknown) => void][] = [];
   /** 过场当前 step 调试浮层（dev / ?cutsceneDebug） */
   private cutsceneStepHudEl: HTMLElement | null = null;
 
@@ -324,6 +364,12 @@ export class Game {
   private lastFps: number = 0;
   private playTimeMs: number = 0;
   private readonly runtimeRandom = new DeterministicRandom('gamedraft-runtime-v1');
+  /**
+   * 纯表现系统（头顶闲聊 / 主角待机）专用随机。**不能共用 runtimeRandom**——那条的
+   * state 进存档、且 randomBranch 从同一条取值，让表现层去消耗它会使"玩家有没有从
+   * NPC 旁边走过"改变后续 randomBranch 的结果（实测掷到的数确实不同）。
+   */
+  private readonly presentationRandom = new DeterministicRandom('gamedraft-presentation-v1');
   private playerAnimDef: AnimationSetDef | null = null;
 
   private interactionCoordinator!: InteractionCoordinator;
@@ -339,6 +385,8 @@ export class Game {
   private objectExamineManager: ObjectExamineManager;
   private pressureHoldManager: PressureHoldManager;
   private signalCueManager: SignalCueManager;
+  private bubbleChatterSystem: BubbleChatterSystem;
+  private playerIdleBehaviorSystem: PlayerIdleBehaviorSystem;
   private healthSystem: HealthSystem;
   private smellSystem: SmellSystem;
   private planeReconciler: PlaneReconciler;
@@ -421,6 +469,10 @@ export class Game {
   private runtimeDebugSnapshotErrorLogged = false;
   private runtimeDebugSnapshotOversizeLogged = false;
   private fixedTickMode = false;
+  /** 叙事断点命中期间为 true：主 tick 整个跳过（画面停在那一帧，玩家动不了）。 */
+  private narrativeBreakFrozen = false;
+  /** 冻结前 stage 的交互模式；解冻时原样还回去（不是写死 'static'）。 */
+  private stageEventModeBeforeFreeze: import('pixi.js').EventMode | null = null;
   /** 主 ticker 与启动直达路由均已落地后才开放自动化命令，防启动场景覆盖测试场景。 */
   private runtimeReady = false;
   private runtimeCommandPollErrorLogged = false;
@@ -439,6 +491,8 @@ export class Game {
   private touchMobileControls: TouchMobileControls | null = null;
   /** `overlay_images.json`：可写短 id，避免 action 参数里塞长路径 */
   private overlayImageRegistry: Record<string, string> = {};
+  /** `prop_presets.json`：挂件的支点/自转/缩放登记一次，attachToSocket 用 prop 引用 */
+  private propPresetRegistry: PropPresetTable = {};
 
   private gameConfig: GameConfig = {
     initialScene: '',
@@ -467,7 +521,19 @@ export class Game {
     this.camera = new Camera(this.renderer.worldContainer);
     this.player = new Player(this.inputManager);
     this.interactionSystem = new InteractionSystem(this.eventBus, this.flagStore, this.inputManager);
+    this.playerActionSystem = new PlayerActionSystem(
+      this.eventBus,
+      this.inputManager,
+      this.actionExecutor,
+      this.player,
+    );
     this.sceneManager = new SceneManager(this.assetManager, this.eventBus, this.renderer);
+    // 切场进度条要跟全站 UI 一套色；systems 层不能反向 import ui，所以由装配层灌进去
+    this.sceneManager.setTransitionPalette({
+      track: UITheme.colors.sliderTrack,
+      trackBorder: UITheme.colors.borderSubtle,
+      fill: UITheme.colors.progressFill,
+    });
     this.inventoryManager = new InventoryManager(this.eventBus, this.flagStore);
     this.rulesManager = new RulesManager(this.eventBus, this.flagStore);
     this.dialogueManager = new DialogueManager(this.eventBus);
@@ -508,6 +574,52 @@ export class Game {
     this.planeReconciler = new PlaneReconciler(this.eventBus);
     this.archiveManager = new ArchiveManager(this.eventBus, this.flagStore);
     this.emoteBubbleManager = new EmoteBubbleManager();
+    this.bubbleChatterSystem = new BubbleChatterSystem({
+      emoteBubbleManager: this.emoteBubbleManager,
+      resolveEmoteTarget: (id) => this.resolveEmoteTarget(id),
+      resolveSpeakerPosition: (ref) => {
+        if (ref.kind === 'player') return { x: this.player.x, y: this.player.y };
+        const actor = this.resolveActorFn(ref.id);
+        if (actor) return { x: actor.x, y: actor.y };
+        const hs = this.sceneManager.getCurrentHotspots().find((h) => h.def.id === ref.id);
+        return hs ? { x: hs.def.x, y: hs.def.y } : null;
+      },
+      playerPosition: () => ({ x: this.player.x, y: this.player.y }),
+      currentSceneId: () => this.sceneManager.currentSceneData?.id ?? '',
+      isExploring: () => this.stateController.currentState === GameState.Exploring,
+      resolveRichText: (raw) => this.resolveRichText(raw),
+      random: this.presentationRandom,
+    });
+    this.playerIdleBehaviorSystem = new PlayerIdleBehaviorSystem({
+      emoteBubbleManager: this.emoteBubbleManager,
+      playerAnchor: () => this.player,
+      playPlayerAnimation: (state, onDone) => {
+        this.player.playAnimation(state, { loop: false }, onDone);
+        // 片段真实时长交给待机系统推算看门狗（固定上限会把长动画砍断）
+        return this.player.getCurrentClipTiming().durationSec;
+      },
+      maxConcurrentBubbles: () => this.bubbleChatterSystem.getMaxConcurrent(),
+      hasPlayerAnimationState: (state) => this.player.hasAnimationState(state),
+      setPlayerAnimationOwned: (owned) => this.player.setAnimationOwnedByIdle(owned),
+      isExploring: () => this.stateController.currentState === GameState.Exploring,
+      /**
+       * 「玩家正被别人开着」的单一口径：有移动输入 / 点地导航在途 / 演出位移 /
+       * 身体姿态或一次性动作在跑。任何一项为真都不算待机，也不许抢动画所有权。
+       */
+      isPlayerBusy: () => {
+        const dir = this.inputManager.getMovementDirection();
+        if (dir.x !== 0 || dir.y !== 0) return true;
+        if (this.playerNavTarget !== null) return true;
+        if (this.player.hasActiveMotion()) return true;
+        // ⚠ 不用 getDebugState()：那是**调试快照**用的 getter，每次新建对象 + 跑一遍
+        // 五个动词的可用性判定；这里是每帧热路径，用两个精准 getter。
+        return this.playerActionSystem.getPosture() !== null
+          || this.playerActionSystem.hasPendingAct();
+      },
+      subscribeAnyInput: (cb) => this.inputManager.subscribeAnyInput(cb),
+      resolveRichText: (raw) => this.resolveRichText(raw),
+      random: this.presentationRandom,
+    });
     this.zoneSystem = new ZoneSystem(this.eventBus, this.flagStore, this.actionExecutor, this.ruleOfferRegistry);
     this.sceneDepthSystem = new SceneDepthSystem();
     this.characterLighting = new CharacterLightingSystem();
@@ -538,6 +650,7 @@ export class Game {
     this.registeredSystems = [
       { name: 'sceneManager', system: this.sceneManager },
       { name: 'interactionSystem', system: this.interactionSystem },
+      { name: 'playerActionSystem', system: this.playerActionSystem },
       { name: 'dialogueManager', system: this.dialogueManager },
       { name: 'graphDialogueManager', system: this.graphDialogueManager },
       { name: 'inventoryManager', system: this.inventoryManager },
@@ -564,6 +677,8 @@ export class Game {
       { name: 'archiveManager', system: this.archiveManager },
       { name: 'zoneSystem', system: this.zoneSystem },
       { name: 'emoteBubbleManager', system: this.emoteBubbleManager },
+      { name: 'bubbleChatterSystem', system: this.bubbleChatterSystem },
+      { name: 'playerIdleBehaviorSystem', system: this.playerIdleBehaviorSystem },
       { name: 'sceneDepthSystem', system: this.sceneDepthSystem },
     ];
     for (const entry of this.registeredSystems) {
@@ -600,8 +715,23 @@ export class Game {
     };
   }
 
-  /** 统一解析 JSON / strings 模板中的 [tag:…]（供 Action、UI、档案等共用） */
+  /**
+   * 统一解析 JSON / strings 模板中的 [tag:…]（供 Action、UI、档案等共用）。
+   *
+   * **默认去掉 `[c:…]` 样式标记**：这是全项目唯一的兜底——任何没走 `createStyledText`
+   * 的显示点、以及把文本当数据用的地方（数量解析、存档、日志、比较）都经过这里，
+   * 于是"内容里写了色标记但那个面板还没迁移"最多是没颜色，绝不会把标记原样糊到玩家脸上。
+   * 需要上色的显示点走 {@link resolveRichText}，并且**必须**配 `createStyledText` 渲染。
+   */
   resolveDisplayText(raw: string | undefined): string {
+    return stripStyleMarkup(resolveText(raw, this.buildResolveContext()));
+  }
+
+  /**
+   * 与 {@link resolveDisplayText} 同解析，但**保留** `[c:…]` 样式标记。
+   * 只给用 `createStyledText` / `setStyledText` 渲染的显示点用；配错了会让玩家看见裸标记。
+   */
+  resolveRichText(raw: string | undefined): string {
     return resolveText(raw, this.buildResolveContext());
   }
 
@@ -609,7 +739,7 @@ export class Game {
    * `playScriptedDialogue` 专用：`[tag:npc:@context]` 在无图对白上下文时使用 `params.scriptedNpcId`，
    * 若在图对话 `runActions` 内则仍优先当前图的 npcId。
    */
-  resolveDisplayTextForPlayScripted(raw: string | undefined, scriptedNpcId?: string): string {
+  resolveRichTextForPlayScripted(raw: string | undefined, scriptedNpcId?: string): string {
     const base = this.buildResolveContext();
     const graphNpc = base.contextNpcId?.trim();
     const scripted = scriptedNpcId?.trim();
@@ -787,13 +917,18 @@ export class Game {
   }
 
   private wireTextResolve(): void {
-    const fn = (s: string) => this.resolveDisplayText(s);
+    /**
+     * 展示通道一律**保留** `[c:…]` 样式标记：全部展示点已走 `createStyledText`（Pixi tagged text），
+     * 标记在那里变成颜色。**唯一例外**是下面 `setResolveConditionLiteral`——那是拿来比较的字面量，
+     * 不是给人看的，必须走剥标记的 `resolveDisplayText`，否则「档案条件字面量」会被色标记带偏。
+     */
+    const fn = (s: string) => this.resolveRichText(s);
     this.stringsProvider.setResolveDisplay(fn);
     this.actionExecutor.setResolveNotificationText(fn);
     this.graphDialogueManager.setResolveDisplay(fn);
-    this.documentRevealManager.setResolveConditionLiteral(fn);
+    this.documentRevealManager.setResolveConditionLiteral((s) => this.resolveDisplayText(s));
     this.encounterManager.setResolveDisplay(fn);
-    this.archiveManager.setResolveForDisplay((raw) => this.resolveDisplayText(raw));
+    this.archiveManager.setResolveForDisplay((raw) => this.resolveRichText(raw));
     this.inspectBox.setResolveDisplay(fn);
     this.shopUI.setResolveDisplay(fn);
     this.mapUI.setResolveDisplay(fn);
@@ -803,7 +938,7 @@ export class Game {
     this.cutsceneRenderer.setResolveDisplay(fn);
     const narrKey = this.stringsProvider.get('dialogue', 'narratorLabel');
     const narratorFallback = narrKey && narrKey !== 'narratorLabel' ? narrKey : '旁白';
-    this.cutsceneManager.setColonSpeakerNarratorBaselineResolved(this.resolveDisplayText(narratorFallback));
+    this.cutsceneManager.setColonSpeakerNarratorBaselineResolved(this.resolveRichText(narratorFallback));
     this.cutsceneManager.setDisplayTextResolver(fn);
     this.hud.setResolveDisplay(fn);
     this.ruleUseUI.setResolveDisplay(fn);
@@ -815,11 +950,19 @@ export class Game {
      *  不经共享快照通道）。prod 构建不挂。 */
     if (import.meta.env.DEV && typeof window !== 'undefined') {
       (window as unknown as Record<string, unknown>).__game = this;
+      // UI 取景台（__uiPose / __uiShot / __uiShotAll）：观感改造的审查循环靠它出全分辨率对照图
+      void import('../dev/uiShotHarness').then(m => m.installUIShotHarness(this));
     }
     await this.renderer.init(options.visualCapture ? { resolution: 1 } : undefined);
     /** P3：start 期间被 destroy（HMR / 秒关页）后不再继续装配，各主要 await 后同样早退 */
     if (this.tearDownComplete) return;
     this.emoteBubbleManager.setEntityAttachLayer(this.renderer.entityLayer);
+
+    // UI 皮肤素材（做旧木框九宫格 + 纸纹）必须赶在任何面板首次构建之前到位，
+    // 否则那一次会画成纯色降级版、且不会自动重画。单张失败只降级该张，不阻断启动。
+    await preloadUITextures();
+    // 图标晚到一帧只是这一帧没图标，不卡启动，所以不 await
+    void preloadUIIcons();
 
     await this.stringsProvider.load(this.assetManager);
 
@@ -831,6 +974,10 @@ export class Game {
     if (this.gameConfig.viewport) {
       this.renderer.setViewportSize(this.gameConfig.viewport.width, this.gameConfig.viewport.height);
     }
+    // 文本语义色板（缺省回落到内置档位）。必须排在任何 UI 建 Text 之前——
+    // tagStyles 是建 Text 时快照进样式的，色板晚到的话先建出来的文字永远不上色。
+    setTextPalette(this.gameConfig.textPalette);
+    this.playerIdleBehaviorSystem.setConfig(this.gameConfig.playerAvatar?.idle);
     // 头顶气泡全局缩放（缺省 1）；单处仍可用 action / 对话行的 bubbleScale 覆盖
     this.emoteBubbleManager.setDefaultScale(
       normalizeEmoteBubbleScale(this.gameConfig.emoteBubbleScale, 1),
@@ -879,6 +1026,9 @@ export class Game {
     this.pressureHoldUI = new PressureHoldUI(this.renderer, this.stringsProvider);
     this.hud = new HUD(this.renderer, this.eventBus, this.stringsProvider);
     this.notificationUI = new NotificationUI(this.renderer, this.eventBus);
+    // 全屏面板开着时压住提示条出队：它挂在最上层，一叠就糊住面板标题与右栏正文。
+    // 只压出队，面板一关攒下的会照常冒出来。
+    this.notificationUI.setSuppressed(() => this.stateController?.currentState === 'UIOverlay');
     this.questPanelUI = new QuestPanelUI(this.renderer, this.questManager, this.stringsProvider);
     this.inventoryUI = new InventoryUI(this.renderer, this.eventBus, this.inventoryManager, this.stringsProvider);
     this.rulesPanelUI = new RulesPanelUI(this.renderer, this.rulesManager, this.stringsProvider);
@@ -898,6 +1048,7 @@ export class Game {
       (onClose) => { const s = new CharacterBookUI(this.renderer, this.archiveManager, onClose, this.stringsProvider, this.assetManager); s.open(); return s; },
       (onClose) => { const s = new LoreBookUI(this.renderer, this.archiveManager, onClose, this.stringsProvider, this.assetManager); s.open(); return s; },
       (onClose) => { const s = new DocumentBoxUI(this.renderer, this.archiveManager, onClose, this.stringsProvider, this.assetManager); s.open(); return s; },
+      (onClose) => { const s = new SlangBookUI(this.renderer, this.archiveManager, onClose, this.stringsProvider, this.assetManager); s.open(); return s; },
       this.stringsProvider,
     );
     this.shopUI = new ShopUI(this.renderer, this.eventBus, this.inventoryManager, this.stringsProvider, this.assetManager);
@@ -907,13 +1058,23 @@ export class Game {
     // 过场对白框复用全站面板皮肤 + 主题色，与常规对话框(DialogueUI)对齐观感。
     // 皮肤/主题属 UI 层，渲染层不反向依赖——在组装层绑好绘制器与颜色再注入。
     this.cutsceneRenderer.setDialoguePanelStyle({
-      drawBox: (g, x, y, w, h) => drawPanelBase(g, x, y, w, h, SKINS.dialogue),
-      drawSpeakerPlate: (g, x, y, w, h) => drawPanelBase(g, x, y, w, h, SKINS.panelAlt),
-      drawSelfSpeakerPlate: (g, x, y, w, h) => drawPanelBase(g, x, y, w, h, SKINS.speakerSelf),
+      // 走 createPanel（返回容器）而不是 drawPanelBase：皮肤里的做旧木框是九宫格 Sprite，
+      // 画不进 Graphics——用旧钩子的话过场对白框只有平底，跟同一段戏里的常规对话框材质对不上。
+      buildBox: (x, y, w, h) => createPanel(x, y, w, h, SKINS.dialogue),
+      buildSpeakerPlate: (x, y, w, h) => createPanel(x, y, w, h, SKINS.nameplate),
+      buildSelfSpeakerPlate: (x, y, w, h) => createPanel(x, y, w, h, SKINS.speakerSelf),
       speakerColor: UITheme.colors.title,
       selfSpeakerColor: UITheme.colors.speakerSelf,
       bodyColor: UITheme.colors.body,
       fontFamily: UITheme.fonts.ui,
+      displayFontFamily: UITheme.fonts.display,
+      // 「继续」点捺与常规对话框同一个件；渲染层不 import ui，故走注入
+      buildContinueMark: (x, y) => {
+        const mark = new ContinueIndicator();
+        mark.setPosition(x, y);
+        mark.setVisible(true);
+        return { view: mark.container, update: (dt: number) => mark.update(dt) };
+      },
     });
     this.cutsceneManager = new CutsceneManager(
       this.eventBus, this.flagStore, this.actionExecutor,
@@ -1025,7 +1186,9 @@ export class Game {
       if (s !== GameState.Exploring && s !== GameState.UIOverlay) return false;
       return this.narrativeStateManager.isIdle();
     });
-    this.menuUI = new MenuUI(this.renderer, this.eventBus, this.saveManager, this.audioManager, this.stringsProvider);
+    this.menuUI = new MenuUI(
+      this.renderer, this.eventBus, this.saveDataForMenu(options), this.audioManager, this.stringsProvider,
+    );
     this.ruleUseUI = new RuleUseUI(this.renderer, this.eventBus, this.zoneSystem, this.rulesManager, this.stringsProvider);
     this.debugPanelUI = new DebugPanelUI(
       () => ({
@@ -1093,6 +1256,8 @@ export class Game {
       await this.narrativeStateManager.activateNarrativeRun(gid);
     });
     this.zoneSystem.setConditionEvalContextFactory(mkCondCtx);
+    this.bubbleChatterSystem.setConditionEvalContextFactory(mkCondCtx);
+    this.playerIdleBehaviorSystem.setConditionEvalContextFactory(mkCondCtx);
     this.zoneSystem.setEntityGroupConditionReader(
       (groupId) => this.sceneManager.getCurrentSceneGroupConditions(groupId),
     );
@@ -1104,6 +1269,30 @@ export class Game {
     this.interactionSystem.setEntityGroupConditionReader(
       (groupId) => this.sceneManager.getCurrentSceneGroupConditions(groupId),
     );
+    // 身体动词：目标/zone 派发/受理闸一律由组装层给闭包，PlayerActionSystem 不持任何同层 system
+    this.interactionSystem.setGraphEntryProbe((gid, entry) => this.graphHasEntry(gid, entry));
+    // 区域级 E 交互（ZoneDef.onInteract）：优先级判定留在 InteractionSystem（目标级 → 区域级），
+    // 这里只把 ZoneSystem 的两个只读/派发口以闭包递过去——两个同层 system 仍不互持引用。
+    this.interactionSystem.setZoneInteractBinding({
+      peek: () => this.zoneSystem.getInteractableZone(),
+      dispatch: (zoneId) => this.zoneSystem.dispatchZoneInteract(zoneId),
+    });
+    this.playerActionSystem.setConfig(this.gameConfig.playerActs);
+    this.playerActionSystem.setBinding({
+      findVerbGraphTarget: (verb) => this.interactionSystem.findNearestVerbGraphTarget(verb),
+      startGraphAtEntry: (target, entry) => {
+        void this.graphDialogueManager.startDialogueGraph({
+          graphId: target.graphId,
+          entry,
+          npcName: target.name,
+          npcId: target.kind === 'npc' ? target.id : undefined,
+        }).catch((e: unknown) => console.warn('动词开图失败', e));
+      },
+      findActSpot: (verb) => this.interactionSystem.findNearestActSpot(verb),
+      dispatchZoneAct: (verb) => this.zoneSystem.dispatchPlayerAct(verb),
+      canAcceptInput: () => this.stateController.currentState === GameState.Exploring,
+      setActSpotPrompt: (hotspotId, keyLabel) => this.applyActSpotPrompt(hotspotId, keyLabel),
+    });
     this.encounterManager.setConditionEvalContextFactory(mkCondCtx);
     this.mapUI.setConditionEvalContextFactory(mkCondCtx);
     this.archiveManager.setConditionEvalContextFactory(mkCondCtx);
@@ -1121,7 +1310,11 @@ export class Game {
         getActiveState: (graphId) => this.narrativeStateManager.getActiveState(graphId),
       },
       setPlayerMovementModifier: (fn) => this.player.setMovementModifier(fn),
-      setPlaneInteractionPolicy: (fn) => this.interactionSystem.setPlaneInteractionPolicy(fn),
+      setPlaneInteractionPolicy: (fn) => {
+        this.interactionSystem.setPlaneInteractionPolicy(fn);
+        // 同一份策略同时喂给动词系统（allowedVerbs 槽）：被禁的姿态会当场复位
+        this.playerActionSystem.setPlaneInteractionPolicy(fn);
+      },
       refreshEntitiesForPlaneChange: () => {
         const sid = this.sceneManager.currentSceneData?.id;
         if (sid) this.sceneManager.refreshEntitiesForPlaneChange(sid);
@@ -1192,6 +1385,9 @@ export class Game {
       shopUI: this.shopUI,
       applyPlayerAvatar: (path, sm, ps) => this.applyPlayerAvatarFromAction(path, sm, ps),
       resetPlayerAvatar: () => this.resetPlayerAvatarFromAction(),
+      attachToSocket: (targetId, socket, images, opts) =>
+        this.attachToSocketFromAction(targetId, socket, images, opts),
+      detachFromSocket: (targetId, socket) => this.detachFromSocketFromAction(targetId, socket),
       setSceneDepthFloorOffset: (v) => { this.sceneDepthSystem.floorOffset = v; },
       resetSceneDepthFloorOffset: () => {
         const cfg = this.sceneDepthSystem.currentConfig;
@@ -1226,7 +1422,7 @@ export class Game {
       },
       blendOverlayImage: (id, fromPath, toPath, xPct, yPct, wPct, durationMs, delayMs) =>
         this.cutsceneManager.blendOverlayImage(id, fromPath, toPath, xPct, yPct, wPct, durationMs, delayMs),
-      startDialogueGraph: async (graphId, entry, npcId, ownerType, ownerId, dimBackground) => {
+      startDialogueGraph: async (graphId, entry, npcId, ownerType, ownerId, dimBackground, origin) => {
         this.stateController.setState(GameState.Dialogue);
         try {
           let npcName = '';
@@ -1235,23 +1431,27 @@ export class Game {
             const npc = this.sceneManager.getNpcById(npcIdTrim);
             if (npc) npcName = npc.def.name;
           }
-          // owner 优先级：显式参数 > npcId（NPC 上下文）> onEnter 期间的隐式场景 owner。
+          /**
+           * owner 四档优先级（唯一判定源见 core/actionOrigin.ts，编辑器静态解算镜像同一套）：
+           * 显式参数 > npcId > 动作来源实体（热区/zone/叙事图/任务/过场/上一张图） > 场景 onEnter 隐式 owner。
+           */
           const ambient = this.ambientNarrativeOwner;
-          const explicitOwnerType = ownerType?.trim() || '';
-          const ownerTypeTrim =
-            explicitOwnerType || (npcIdTrim ? 'npc' : '') || (ambient?.ownerType ?? '');
-          // 显式 ownerType 与 ownerId 必须成对；类型已显式时绝不能把 npc/scene
-          // 的 id 偷换到另一种 owner 命名空间。无显式类型才继承上下文。
-          const ownerIdTrim = explicitOwnerType
-            ? (ownerId?.trim() || '')
-            : (ownerId?.trim() || npcIdTrim || (ambient?.ownerId ?? ''));
+          const resolved = resolveDialogueOwner({
+            paramOwnerType: ownerType,
+            paramOwnerId: ownerId,
+            paramNpcId: npcIdTrim,
+            originOwnerType: origin?.ownerType,
+            originOwnerId: origin?.ownerId,
+            ambientOwnerType: ambient?.ownerType,
+            ambientOwnerId: ambient?.ownerId,
+          });
           await this.graphDialogueManager.startDialogueGraph({
             graphId,
             entry,
             npcName,
             npcId: npcIdTrim || undefined,
-            ownerType: ownerTypeTrim || undefined,
-            ownerId: ownerIdTrim || undefined,
+            ownerType: resolved.ownerType || undefined,
+            ownerId: resolved.ownerId || undefined,
             dimBackground: dimBackground === true,
           });
           /** R6：图同步完结但 deferred 链式接续图正在启动时（hasPendingChainContinuation）
@@ -1291,7 +1491,13 @@ export class Game {
         const label = hintOverride?.trim()
           ? hintOverride.trim()
           : this.stringsProvider.get('actions', 'clickToContinue');
-        return waitClickContinueWithHint(this.renderer, this.inputManager, label);
+        // 屏底若正被对白框占着（过场 showDialogue / 常规对话框），提示语要让开那一条，
+        // 否则会横穿它的底部木框。两种框同尺（BOX_MARGIN 20 + BOX_HEIGHT 230）。
+        const boxOccupied = this.cutsceneRenderer.hasDialogueBox() || this.dialogueUI.isVisible;
+        return waitClickContinueWithHint(
+          this.renderer, this.inputManager, label,
+          boxOccupied ? DIALOGUE_BOX_BOTTOM_BAND : 0,
+        );
       },
       scenarioStateManager: this.scenarioStateManager,
       narrativeStateManager: this.narrativeStateManager,
@@ -1316,16 +1522,18 @@ export class Game {
       tempSetHotspotDisplayFacing: (sceneId, hotspotId, facing) =>
         this.tempSetHotspotDisplayFacingFromAction(sceneId, hotspotId, facing),
       resolveDisplayText: (raw) => this.resolveDisplayText(raw),
+      resolveRichText: (raw) => this.resolveRichText(raw),
       chooseAction: (prompt, options, allowCancel) =>
         this.actionChoiceUI.choose(prompt, options, allowCancel),
-      resolveDisplayTextForPlayScripted: (raw, sid) =>
-        this.resolveDisplayTextForPlayScripted(raw, sid),
+      resolveRichTextForPlayScripted: (raw, sid) =>
+        this.resolveRichTextForPlayScripted(raw, sid),
       waterMinigameManager: this.waterMinigameManager,
       sugarWheelMinigameManager: this.sugarWheelMinigameManager,
       paperCraftMinigameManager: this.paperCraftMinigameManager,
       objectExamineManager: this.objectExamineManager,
       pressureHoldManager: this.pressureHoldManager,
       signalCueManager: this.signalCueManager,
+      bubbleChatterSystem: this.bubbleChatterSystem,
       healthSystem: this.healthSystem,
       smellSystem: this.smellSystem,
       planeReconciler: this.planeReconciler,
@@ -1339,7 +1547,8 @@ export class Game {
     }
 
     this.pressureHoldManager.bindRuntime({
-      resolveDisplayText: (s) => this.resolveDisplayText(s),
+      // 小游戏/压力条面板的文案也是策划写的内容，一样吃语义色板（面板文字已走 createStyledText）
+      resolveDisplayText: (s) => this.resolveRichText(s),
       runSegment: async (req) => {
         const prevState = this.stateController.currentState;
         this.stateController.setState(GameState.UIOverlay);
@@ -1359,7 +1568,8 @@ export class Game {
       stateController: this.stateController,
       actionExecutor: this.actionExecutor,
       dayManager: this.dayManager,
-      resolveDisplayText: (s) => this.resolveDisplayText(s),
+      // 小游戏/压力条面板的文案也是策划写的内容，一样吃语义色板（面板文字已走 createStyledText）
+      resolveDisplayText: (s) => this.resolveRichText(s),
     });
     await this.waterMinigameManager.loadIndex();
 
@@ -1369,7 +1579,8 @@ export class Game {
       stateController: this.stateController,
       actionExecutor: this.actionExecutor,
       playSfx: (id) => this.audioManager.playSfx(id),
-      resolveDisplayText: (s) => this.resolveDisplayText(s),
+      // 小游戏/压力条面板的文案也是策划写的内容，一样吃语义色板（面板文字已走 createStyledText）
+      resolveDisplayText: (s) => this.resolveRichText(s),
       debugPanelLog: (msg) => this.debugPanelUI?.log(msg),
       evaluateBeforeChargeCondition: (expr) => {
         if (expr === undefined || expr === null) return true;
@@ -1385,7 +1596,8 @@ export class Game {
       inputManager: this.inputManager,
       stateController: this.stateController,
       actionExecutor: this.actionExecutor,
-      resolveDisplayText: (s) => this.resolveDisplayText(s),
+      // 小游戏/压力条面板的文案也是策划写的内容，一样吃语义色板（面板文字已走 createStyledText）
+      resolveDisplayText: (s) => this.resolveRichText(s),
     });
     await this.paperCraftMinigameManager.loadIndex();
 
@@ -1394,7 +1606,8 @@ export class Game {
       inputManager: this.inputManager,
       stateController: this.stateController,
       actionExecutor: this.actionExecutor,
-      resolveDisplayText: (s) => this.resolveDisplayText(s),
+      // 小游戏/压力条面板的文案也是策划写的内容，一样吃语义色板（面板文字已走 createStyledText）
+      resolveDisplayText: (s) => this.resolveRichText(s),
       getString: (ns, key) => this.stringsProvider.get(ns, key),
       audio: {
         playSfx: (id, volume) => this.audioManager.playSfx(id, volume),
@@ -1481,6 +1694,8 @@ export class Game {
      *  TouchMobileControls 的「调试」chip 一致），生产玩家无任何调试入口。 */
     if (import.meta.env.DEV) this.debugTools = new DebugTools({
       renderer: this.renderer,
+      assetManager: this.assetManager,
+      getPropPresets: () => this.propPresetRegistry,
       camera: this.camera,
       eventBus: this.eventBus,
       player: this.player,
@@ -1500,6 +1715,8 @@ export class Game {
       isDevMode: () => this.isDevMode,
       getFrustumCulling: () => this.frustumCullingEnabled,
       toggleFrustumCulling: () => { this.frustumCullingEnabled = !this.frustumCullingEnabled; },
+      getAuthoringMarkersVisible: () => this.sceneManager.getAuthoringMarkersVisible(),
+      setAuthoringMarkersVisible: (v) => this.sceneManager.setAuthoringMarkersVisible(v),
       goToDevScene: () => {
         void this.devLoadScene('dev_room');
       },
@@ -1661,12 +1878,16 @@ export class Game {
           const s = this.objectExamineManager.getDebugVisualState();
           return typeof s?.contactAoIntensity === 'number' ? s.contactAoIntensity : 1;
         },
-        getLiveContactAoScale: () => {
+        getLiveContactAoRadiusCm: () => {
           const s = this.objectExamineManager.getDebugVisualState();
-          return typeof s?.contactAoScale === 'number' ? s.contactAoScale : 1;
+          return typeof s?.contactAoRadiusCm === 'number' ? s.contactAoRadiusCm : 0;
+        },
+        getLivePixelsPerCm: () => {
+          const s = this.objectExamineManager.getDebugVisualState();
+          return typeof s?.pixelsPerCm === 'number' ? s.pixelsPerCm : 1;
         },
         setContactAoIntensity: (v) => this.objectExamineManager.setDebugContactAoIntensity(v),
-        setContactAoScale: (v) => this.objectExamineManager.setDebugContactAoScale(v),
+        setContactAoRadiusCm: (v) => this.objectExamineManager.setDebugContactAoRadiusCm(v),
         getResolvedAmbience: () => this.objectExamineManager.getResolvedAmbience(),
         setAmbiencePatch: (patch) => this.objectExamineManager.setDebugAmbiencePatch(patch),
         resetAmbienceOverrides: () => this.objectExamineManager.resetDebugAmbienceOverrides(),
@@ -1686,6 +1907,7 @@ export class Game {
       this.pressureHoldManager.loadDefs(),
       this.planeReconciler.loadDefs(),
       this.signalCueManager.loadDefs(),
+      this.bubbleChatterSystem.loadDefs(),
       this.audioManager.loadConfig(),
       this.cutsceneManager.loadDefs(),
       this.archiveManager.loadDefs(),
@@ -1775,6 +1997,16 @@ export class Game {
       const now = performance.now();
       const dt = Math.min((now - this.lastTime) / 1000, 0.1);
       this.lastTime = now;
+      if (this.narrativeBreakFrozen) {
+        /**
+         * 断点冻结期间仍要**每帧清一次输入沿**。`endFrame()` 原本是 tick 的最后一句，
+         * tick 被整个跳过的话 `keyJustPressed` / `mouseJustClicked` 会一直攒着——
+         * 策划以为游戏卡了，按了 Q、E、空格，「继续」之后这些会在同一帧全部判定成
+         * "刚按下"同时生效（闻一下 + 触发身边热点 + 换姿势）。
+         */
+        this.inputManager.endFrame();
+        return;
+      }
       if (!this.fixedTickMode) this.tick(dt);
     };
     ticker.add(this.mainTick);
@@ -1786,7 +2018,21 @@ export class Game {
     };
     ticker.add(this.charLitFrameSync, undefined, UPDATE_PRIORITY.LOW + 1);
 
-    if (this.isDevMode) {
+    // ⚠ 分支顺序有讲究：**标题态 / 按槽启动排在 dev 之前**。
+    // 这两条是"玩家在菜单里刚刚做出的选择"经整页重启带回来的，`mode=dev` 只是开发外壳；
+    // 反过来判的话，开发模式下点「返回主菜单」会被 dev 直达路由抢走，标题永远出不来。
+    if (options.startAtTitle) {
+      // 标题态启动：**世界一律不装**（没有场景、没有玩家落地、没有开场演出）。
+      // 这是「返回主菜单＝彻底退出这一局」的兑现处——标题界面底下真的什么都没有，
+      // 所以子面板的遮罩不可能再漏出游戏画面。
+      // 之后点「新游戏 / 继续」都会再整页重启一次，由那一次走正常引导（见 EventBridge）。
+      this.eventBridge.markSessionStarted();
+      this.hud.setHidden(true);
+      this.stateController.setState(GameState.MainMenu);
+      this.menuUI.openMainMenu();
+    } else if (await this.tryBootFromSaveSlot(options.loadSlot)) {
+      /* 存档已读进来（场景也由 SaveManager 装好），不再走任何开局引导 */
+    } else if (this.isDevMode) {
       /** 走字段而非再加一个位置参数：startDevMode 的形参已过长，且此值只在直达路由用一次。 */
       const rawFrom = Number(options.playCutsceneFrom);
       this.devPlayCutsceneFromStep = Number.isFinite(rawFrom) && rawFrom > 0 ? Math.floor(rawFrom) : 0;
@@ -1814,6 +2060,11 @@ export class Game {
     }
     this.setupWebGlPanelDiagnostics();
 
+    // 调试器桥要抢在直达路由**之前**装：warp 直达会 await 一长串状态推进与演出，
+    // 装在后面的话，策划用 ?narrative_warp= 直奔某一拍时调试器根本连不上
+    // （实测过），而且 warp 推了哪些状态本身就是他想看的。
+    this.setupNarrativeDebugBridge();
+
     // dev 启动直达路由：主 tick 已挂载（过场位移/小游戏 update 有驱动），此刻才安全执行
     if (this.devStartupRoute) {
       const route = this.devStartupRoute;
@@ -1828,6 +2079,82 @@ export class Game {
     this.runtimeReady = true;
     this.setupRuntimeCommandPolling();
     await this.publishRuntimeDebugSnapshot('runtime-ready');
+  }
+
+  /**
+   * 叙事调试器桥（dev-only，默认关，需 URL `?ndbg=1`）。
+   * import.meta.env.DEV 让整块在 prod build 里被静态剔除；未开启时连挂点都不装。
+   */
+  private setupNarrativeDebugBridge(): void {
+    if (!import.meta.env.DEV) return;
+    if (this.narrativeDebugBridge) return;
+    if (!isNarrativeDebugEnabled()) return;
+    console.log('[叙事调试器] 已装载探针，正在找调试器（./dev.sh narrative-debugger）…');
+    const bridge = installNarrativeDebugBridge({
+      getSnapshot: () => this.buildRuntimeDebugSnapshot('narrative-debugger'),
+      getSceneId: () => this.sceneManager.currentSceneData?.id ?? '',
+      canSave: () => this.saveManager.canSaveNow(),
+      exportSave: () => this.saveManager.capturePayload(),
+      importSave: (payload) => this.saveManager.loadPayload(payload),
+      emitSignal: (signal) => this.narrativeStateManager.emitNarrativeSignal({
+        sourceType: signal.sourceType as NarrativeSignal['sourceType'],
+        sourceId: signal.sourceId,
+        signal: signal.signal,
+      }),
+      setState: (graphId, stateId) => this.narrativeStateManager.debugSetNarrativeState(graphId, stateId),
+      reloadScene: (sceneId) => this.devLoadScene(sceneId || (this.sceneManager.currentSceneData?.id ?? '')),
+      /** 断点期间冻主 tick（只冻游戏逻辑；Pixi 照渲、WebSocket 照收，所以「继续」送得进来） */
+      setLogicFrozen: (frozen) => {
+        this.narrativeBreakFrozen = frozen;
+        /**
+         * UI 层的点击走 Pixi 的 DOM 事件，与主 tick 无关——不挡的话断在"对话选项还亮着"
+         * 那一拍时，鼠标点选项照样执行动作、照样发信号，"断下来是干净现场"就不成立了。
+         * 世界热点/NPC 交互是 tick 里轮询按键的，本来就冻住了，只有 UI 层需要额外挡。
+         */
+        const stage = this.renderer?.app?.stage;
+        if (!stage) return;
+        if (frozen) {
+          // ⚠ 记住原值再改：stage 的缺省是 'passive'（只有子节点可交互），
+          // 解冻时写死 'static' 会把它改成"容器自己也可交互"——那是另一种行为。
+          if (this.stageEventModeBeforeFreeze === null) {
+            this.stageEventModeBeforeFreeze = stage.eventMode ?? 'passive';
+          }
+          stage.eventMode = 'none';
+        } else if (this.stageEventModeBeforeFreeze !== null) {
+          stage.eventMode = this.stageEventModeBeforeFreeze;
+          this.stageEventModeBeforeFreeze = null;
+        }
+      },
+    });
+    this.narrativeDebugBridge = bridge;
+    NarrativeStateManager.traceObserver = bridge.onTrace;
+    ActionExecutor.actionObserver = bridge.noteAction;
+
+    // 玩家动手的三个入口，只订阅既有事件，不碰发事件的那几个系统。
+    // 这样"我点了但什么都没发生"在调试器上有痕迹，而不是一片空白。
+    const listeners: [string, (payload: unknown) => void][] = [
+      ['hotspot:triggered', (payload) => {
+        const def = (payload as { def?: { label?: string; id?: string } })?.def;
+        bridge.notePlayerAction('hotspot', String(def?.label || def?.id || '一个物件'));
+      }],
+      ['npc:interact', (payload) => {
+        const def = (payload as { npc?: { def?: { name?: string; id?: string } } })?.npc?.def;
+        bridge.notePlayerAction('npc', String(def?.name || def?.id || '一个人'));
+      }],
+      ['dialogue:start', (payload) => {
+        const p = payload as { graphId?: string; npcName?: string } | undefined;
+        bridge.notePlayerAction('dialogue', String(p?.graphId || p?.npcName || ''));
+      }],
+      // 走位也是策划的主力操作：进区域没反应时，时间线不能是空的
+      ['zone:enter', (payload) => {
+        const zoneId = (payload as { zoneId?: string })?.zoneId;
+        bridge.notePlayerAction('zone', String(zoneId || ''));
+      }],
+      // 换场景不产生叙事 trace，不推快照的话调试器顶栏会一直报上一个场景
+      ['scene:enter', () => bridge.noteWorldChanged('scene.enter')],
+    ];
+    for (const [event, callback] of listeners) this.eventBus.on(event, callback);
+    this.narrativeDebugListeners = listeners;
   }
 
   /** F2「日志」页：WebGL getError、深度 GPU 纹理、shader 预热与上下文丢失；JS/Pixi 运行时错误镜像 */
@@ -1984,6 +2311,56 @@ export class Game {
     }
   }
 
+  /**
+   * 菜单拿到的存档数据源。
+   *
+   * 平时就是 `SaveManager` 本体；**标题态启动时只把 `load` 换成"整页重启去读这个槽"**——
+   * 那会儿世界压根没装载（没有场景、没有玩家），就地 `SaveManager.load` 等于往空世界里灌状态。
+   * 其余方法（列槽位/存/导入导出）照常直通，不做多余包装。
+   */
+  private saveDataForMenu(options: GameStartOptions): ISaveDataProvider {
+    if (!options.startAtTitle) return this.saveManager;
+    const sm = this.saveManager;
+    return {
+      save: (slot) => sm.save(slot),
+      // 重启后不会再回到这个 Promise，故恒 pending：resolve(false) 会让菜单弹一条"读档失败"
+      load: (slot) => {
+        this.eventBridge.restartPageToLoadSlot(slot);
+        return new Promise<boolean>(() => { /* 页面正在重启，不会有结果 */ });
+      },
+      getSlotMeta: (slot) => sm.getSlotMeta(slot),
+      hasSave: (slot) => sm.hasSave(slot),
+      hasAnySave: () => sm.hasAnySave(),
+      exportSlotPayload: (slot) => sm.exportSlotPayload(slot),
+      importSlotPayload: (slot, raw) => sm.importSlotPayload(slot, raw),
+    };
+  }
+
+  /**
+   * 按存档槽启动（标题界面点「继续」经整页重启带回来的 `load_slot`）。
+   *
+   * **跳过首场景直接读档**：存档里带着 `sceneManager.currentSceneId`，SaveManager 自己会把
+   * 对的场景装上，先装一遍首场景纯属白装一次（还会白跑一遍开场演出）。
+   * 读失败（没传槽位/槽空/档坏）返回 false，由调用方退回正常引导。
+   */
+  private async tryBootFromSaveSlot(slot: number | undefined): Promise<boolean> {
+    if (typeof slot !== 'number') return false;
+    // 内存里已经是别人的一局了：此后点「新游戏」必须整页重启（R20）
+    this.eventBridge.markSessionStarted();
+    let loaded = false;
+    try {
+      loaded = await this.saveManager.load(slot);
+    } catch (e) {
+      console.warn('Game: 启动读档抛错，退回正常开局', e);
+    }
+    if (!loaded) {
+      console.warn(`Game: 存档槽 ${slot} 读取失败，按正常开局启动`);
+      return false;
+    }
+    this.stateController.setState(GameState.Exploring);
+    return true;
+  }
+
   private async loadGameConfig(): Promise<void> {
     try {
       const cfg = await this.assetManager.loadJson<Partial<GameConfig>>(TEXT_URLS.gameConfig);
@@ -2006,7 +2383,19 @@ export class Game {
         this.gameConfig.playerAvatar = {
           animManifest: pa.animManifest ?? this.gameConfig.playerAvatar?.animManifest,
           stateMap: pa.stateMap ? { ...pa.stateMap } : this.gameConfig.playerAvatar?.stateMap,
+          // portraitSlug 此前漏拷：JSON 里配了主角立绘集也永远读不到，
+          // 运行时只能靠 animFile 包名推导（applyPlayerAvatarFromAction 的兜底），
+          // 于是「主角换了装扮立绘集」这条配置一直是死的。
+          portraitSlug: pa.portraitSlug ?? this.gameConfig.playerAvatar?.portraitSlug,
         };
+      }
+      // playerActs / emoteBubbleScale 同为漏拷：两处消费端（PlayerActionSystem.setConfig、
+      // EmoteBubbleManager.setDefaultScale）读的一直是 undefined，配了等于没配。
+      if (cfg.playerActs && typeof cfg.playerActs === 'object') {
+        this.gameConfig.playerActs = { ...cfg.playerActs };
+      }
+      if (typeof cfg.emoteBubbleScale === 'number' && Number.isFinite(cfg.emoteBubbleScale)) {
+        this.gameConfig.emoteBubbleScale = cfg.emoteBubbleScale;
       }
       if (typeof cfg.entityPixelDensityMatch === 'boolean') {
         this.gameConfig.entityPixelDensityMatch = cfg.entityPixelDensityMatch;
@@ -2024,6 +2413,11 @@ export class Game {
       if (cfg.health && typeof cfg.health === 'object') {
         this.gameConfig.health = { ...cfg.health };
       }
+      // ⚠ 本函数是**白名单**拷贝，不是整包赋值：新加的 game_config 键不在这里登记一行，
+      // 运行时读到的永远是 undefined（页面里 gameConfig 少了这个键，排查时极易误判成"没写进 JSON"）。
+      if (Array.isArray(cfg.textPalette)) {
+        this.gameConfig.textPalette = cfg.textPalette.map((e) => ({ ...e }));
+      }
     } catch {
       console.warn('Game: game_config.json not found, using defaults');
     }
@@ -2032,6 +2426,13 @@ export class Game {
       this.overlayImageRegistry = ov && typeof ov === 'object' ? { ...ov } : {};
     } catch {
       this.overlayImageRegistry = {};
+    }
+    // 挂件预设是可选表：整个项目可以一条都没有，缺文件不该刷错
+    try {
+      const raw = await this.assetManager.loadOptionalJson<unknown>(TEXT_URLS.propPresets);
+      this.propPresetRegistry = parsePropPresets(raw);
+    } catch {
+      this.propPresetRegistry = {};
     }
   }
 
@@ -2070,19 +2471,20 @@ export class Game {
 
   private async loadPlayerAvatarResources(
     playerAnimPath: string,
-  ): Promise<{ texture: any; animDef: AnimationSetDef } | null> {
+  ): Promise<{ texture: any; animDef: AnimationSetDef; sockets: ResolvedSockets | null } | null> {
     try {
       const animRaw = await this.assetManager.loadJson<AnimationSetDefInput>(playerAnimPath);
       if (animRaw.spritesheet) {
         const sheetPath = resolvePathRelativeToAnimManifest(playerAnimPath, animRaw.spritesheet);
         const texture = await this.assetManager.loadTexture(sheetPath);
         const animDef = normalizeAnimationSetDef(animRaw, texture.width, texture.height, sheetPath);
-        return { texture, animDef };
+        const sockets = await loadSocketsForAnim(this.assetManager, playerAnimPath, animDef);
+        return { texture, animDef, sockets };
       }
       const placeholder = createPlaceholderPlayerTextures(this.renderer.app);
       const texture = placeholder.texture;
       const animDef = normalizeAnimationSetDef(animRaw, texture.width, texture.height);
-      return { texture, animDef };
+      return { texture, animDef, sockets: null };
     } catch {
       return null;
     }
@@ -2123,11 +2525,12 @@ export class Game {
     sourcePathForLog: string,
     applyStateMap: boolean,
     portraitSlug?: string | null,
+    sockets?: ResolvedSockets | null,
   ): void {
     this.currentPlayerPortraitSlug =
       portraitSlug?.trim() || Game.portraitSlugFromManifest(sourcePathForLog);
     this.playerAnimDef = animDef;
-    this.player.sprite.loadFromDef(texture, animDef);
+    this.player.sprite.loadFromDef(texture, animDef, sockets ?? null);
     const sm = applyStateMap ? stateMap : undefined;
     this.player.sprite.setLogicalStateMap(sm);
     if (sm && animDef.states) {
@@ -2140,6 +2543,101 @@ export class Game {
       }
     }
     this.player.sprite.playAnimation(ANIM_IDLE);
+  }
+
+  /** 目标 id → 它的 SpriteEntity（挂点住在精灵上）；找不到返回 null。 */
+  private spriteEntityOf(targetId: string): SpriteEntity | null {
+    const id = targetId.trim();
+    if (!id) return null;
+    if (id === 'player') return this.player.sprite;
+    const npc = this.sceneManager.getNpcById(id);
+    return npc?.spriteEntity ?? null;
+  }
+
+  /** 已挂上去的挂件：`<实体id>::<挂点>` → Sprite（卸载时要 destroy，纹理归 AssetManager 缓存管） */
+  private socketAttachViews = new Map<string, Sprite>();
+
+  /**
+   * Action 入口：往挂点挂一张（或一列）图。
+   * 多张 = 挂点驱动帧号——用标注里的 `frame` 选第几张，**不引入第二个时钟**。
+   * 挂件的显隐由挂点标注决定（该帧没标注就自动隐藏），不需要另外的动作去藏它。
+   */
+  private async attachToSocketFromAction(
+    targetId: string,
+    socket: string,
+    images: string[],
+    opts: {
+      prop?: string;
+      scale?: number; mirror?: boolean;
+      anchorX?: number; anchorY?: number; rotation?: number; lit?: boolean;
+    },
+  ): Promise<void> {
+    const sprite = this.spriteEntityOf(targetId);
+    if (!sprite) {
+      console.warn(`attachToSocket: 找不到实体 "${targetId}"`);
+      return;
+    }
+    // 挂件预设给缺省（支点/自转/缩放/贴图），动作里显式写的覆盖它
+    const propId = (opts.prop ?? '').trim();
+    const preset = propId ? this.propPresetRegistry[propId] : undefined;
+    if (propId && !preset) {
+      console.warn(`attachToSocket: 挂件预设「${propId}」未在 prop_presets.json 中登记`);
+    }
+    const resolved = resolvePropAttach(preset, { ...opts, images });
+    const textures: Texture[] = [];
+    for (const url of resolved.images) {
+      try {
+        textures.push(await this.assetManager.loadTexture(url));
+      } catch (e) {
+        console.warn(`attachToSocket: 贴图加载失败 ${url}`, e);
+      }
+    }
+    if (textures.length === 0) return;
+    // 加载是异步的：期间可能已切场景/卸实体，落地前再确认一次目标还在
+    if (this.spriteEntityOf(targetId) !== sprite) return;
+
+    const key = `${targetId}::${socket}`;
+    this.destroySocketView(key);
+    const view = new Sprite(textures[0]);
+    // 支点缺省图心，由 anchorX/anchorY 覆盖（刀剑给刀柄）——每帧由 syncAttachments 施加
+    view.anchor.set(0.5, 0.5);
+    this.socketAttachViews.set(key, view);
+    sprite.attachToSocket(socket, {
+      view,
+      frameTextures: textures.length > 1 ? textures : undefined,
+      scale: resolved.scale,
+      mirrorWithHost: resolved.mirror,
+      anchorX: resolved.anchorX,
+      anchorY: resolved.anchorY,
+      rotationOffsetDeg: resolved.rotation,
+      lit: resolved.lit,
+    });
+  }
+
+  /** Action 入口：卸下挂件并销毁它的显示对象（纹理留在 AssetManager 缓存里复用）。 */
+  private detachFromSocketFromAction(targetId: string, socket: string): void {
+    this.spriteEntityOf(targetId)?.detachFromSocket(socket);
+    this.destroySocketView(`${targetId}::${socket}`);
+  }
+
+  private destroySocketView(key: string): void {
+    const old = this.socketAttachViews.get(key);
+    if (!old) return;
+    this.socketAttachViews.delete(key);
+    old.destroy({ children: true });
+  }
+
+  /** 切场景/销毁：挂件的显示对象归 Game 所有，必须自己收（SpriteEntity 只摘不毁）。 */
+  private destroyAllSocketViews(): void {
+    for (const key of [...this.socketAttachViews.keys()]) this.destroySocketView(key);
+  }
+
+  /** 切场景：只收场景实体（NPC）身上的挂件；玩家跨场景存活，它的挂件留着。 */
+  private destroySceneSocketViews(): void {
+    for (const key of [...this.socketAttachViews.keys()]) {
+      if (key.startsWith('player::')) continue;
+      this.destroySocketView(key);
+    }
   }
 
   /** 事件 / Action：切换动画包与映射；加载失败则不打断当前化身。 */
@@ -2157,7 +2655,7 @@ export class Game {
     }
     const sm =
       stateMap && Object.keys(stateMap).length > 0 ? stateMap : undefined;
-    this.mountPlayerAvatar(loaded.texture, loaded.animDef, sm, path, true, portraitSlug);
+    this.mountPlayerAvatar(loaded.texture, loaded.animDef, sm, path, true, portraitSlug, loaded.sockets);
   }
 
   /** 按 game_config.playerAvatar 恢复（与开局 setupPlayer 数据源一致）。 */
@@ -2183,7 +2681,10 @@ export class Game {
         }, { mode: 'runtime', tolerateErrors: true });
         const loaded = await this.loadPlayerAvatarResources(playerAnimPath);
         if (!loaded || this.tearDownComplete || !this.renderer.isInitialized()) return;
-        this.mountPlayerAvatar(loaded.texture, loaded.animDef, avatar?.stateMap, playerAnimPath, true, avatar?.portraitSlug);
+        this.mountPlayerAvatar(
+          loaded.texture, loaded.animDef, avatar?.stateMap, playerAnimPath, true,
+          avatar?.portraitSlug, loaded.sockets,
+        );
       })();
     } else {
       await this.assetManager.preloadManifest({
@@ -2192,7 +2693,10 @@ export class Game {
       }, { mode: 'stage', tolerateErrors: true });
       const loaded = await this.loadPlayerAvatarResources(playerAnimPath);
       if (loaded) {
-        this.mountPlayerAvatar(loaded.texture, loaded.animDef, avatar?.stateMap, playerAnimPath, true, avatar?.portraitSlug);
+        this.mountPlayerAvatar(
+          loaded.texture, loaded.animDef, avatar?.stateMap, playerAnimPath, true,
+          avatar?.portraitSlug, loaded.sockets,
+        );
       } else {
         const { texture, animDef } = this.placeholderPlayerAvatar();
         this.mountPlayerAvatar(texture, animDef, undefined, playerAnimPath, false, avatar?.portraitSlug);
@@ -2263,7 +2767,8 @@ export class Game {
     }
     if (pts.length <= 1) {
       if (pts.length === 1) {
-        void npc.moveTo(pts[0].x, pts[0].y, speed, moveAnimState);
+        // 巡逻要转身走：显式 faceTowardMovement（moveTo 不勾选＝完全不碰朝向）
+        void npc.moveTo(pts[0].x, pts[0].y, speed, moveAnimState, true);
       }
       return;
     }
@@ -2281,7 +2786,7 @@ export class Game {
           break;
         }
         if (patrolStoppedByAction()) break;
-        await npc.moveTo(pts[i].x, pts[i].y, speed, moveAnimState);
+        await npc.moveTo(pts[i].x, pts[i].y, speed, moveAnimState, true);
         if (this.patrolGeneration !== gen || !this.sceneManager.getCurrentNpcs().includes(npc)) {
           break;
         }
@@ -2415,9 +2920,12 @@ export class Game {
 
     this.sceneManager.setSceneEnterRunner(async (actions) => {
       const sceneId = this.sceneManager.currentSceneData?.id ?? '';
+      // 线程化的 scene owner 是权威通道（批内动作按参数拿到，不受交错影响）；
+      // ambientNarrativeOwner 只留给 onEnter 期间条件里的 `@owner`/`@scene` token
+      // ——条件上下文工厂是零参共享的，够不到线程化上下文。两者取值刻意保持一致。
       this.ambientNarrativeOwner = sceneId ? { ownerType: 'scene', ownerId: sceneId } : null;
       try {
-        await this.actionExecutor.executeBatchAwait(actions);
+        await this.actionExecutor.executeBatchAwait(actions, makeOwnerOrigin('scene', sceneId));
       } finally {
         this.ambientNarrativeOwner = null;
       }
@@ -3064,6 +3572,8 @@ export class Game {
       currentOwner: this.ambientNarrativeOwner ?? undefined,
       // plane 叶子：当前激活位面（含 manual override）；全部条件消费方经此工厂自动可用
       getActivePlaneId: () => this.planeReconciler.getActivePlaneId(),
+      // 身体姿态与位面同构：都是「世界此刻的样子」，走同一条条件通道
+      getPlayerPosture: () => this.playerActionSystem.getPosture(),
     };
   }
 
@@ -3076,7 +3586,30 @@ export class Game {
     return false;
   }
 
+  /**
+   * 把「关闭本面板」的通道注入给带 ✕ 的注册面板。
+   *
+   * 组件层的 `UIWindow` 恒画 ✕，但面板自己 `close()` 会绕过 `GameStateController` 的弹栈恢复，
+   * 状态滞留 UIOverlay = 不可恢复软锁。面板拿不到 stateController（构造签名不改），
+   * 故与 `setResolveDisplay` 同一范式注入。
+   *
+   * ⚠ 早期两版都靠「在 window 上补发按键」绕过，**均已被审查证伪**，勿回退：
+   * 补发 Esc → F2 调试坞开着时会去关调试坞；状态漂到 Exploring 时会弹出暂停菜单压在面板上。
+   * 补发面板自己的快捷键 → 调试坞开着时 handleKeyDown 吞掉所有其它按键，✕ 变死按钮；
+   * 且要求每个面板把快捷键码抄一份，是会漂移的手工镜像。
+   */
+  private injectPanelCloseRequesters(): void {
+    this.questPanelUI.setCloseRequester(() => this.stateController.closePanel('quest'));
+    this.inventoryUI.setCloseRequester(() => this.stateController.closePanel('inventory'));
+    this.rulesPanelUI.setCloseRequester(() => this.stateController.closePanel('rules'));
+    this.dialogueLogUI.setCloseRequester(() => this.stateController.closePanel('dialogueLog'));
+    this.ruleUseUI.setCloseRequester(() => this.stateController.closePanel('ruleUse'));
+    this.bookshelfUI.setCloseRequester(() => this.stateController.closePanel('bookshelf'));
+    this.mapUI.setCloseRequester(() => this.stateController.closePanel('map'));
+  }
+
   private registerUIPanels(): void {
+    this.injectPanelCloseRequesters();
     this.stateController.registerPanel('quest', this.questPanelUI, 'Tab');
     this.stateController.registerPanel('inventory', this.inventoryUI, 'KeyI');
     this.stateController.registerPanel('rules', this.rulesPanelUI, 'KeyR');
@@ -3085,7 +3618,9 @@ export class Game {
     this.stateController.registerPanel('map', this.mapUI, 'KeyM', {
       openGuard: () => this.guardMapTravel(),
     });
-    this.stateController.registerPanel('ruleUse', this.ruleUseUI, 'KeyF');
+    // 「用规矩」面板键位 F→G（2026-08-03）：F 让给身体动词「上脚」，面板键与
+    // Tab/I/R/L/B/M 一族归位。改此处须同步 TouchMobileControls 与 strings 的按键说明。
+    this.stateController.registerPanel('ruleUse', this.ruleUseUI, 'KeyG');
     this.stateController.registerPanel('shop', this.shopUI);
     this.stateController.registerPanel('menu', this.menuUI);
     /** T1：F2 调试坞仅 DEV 注册（门控判据与 TouchMobileControls 的「调试」chip 一致）；
@@ -3111,6 +3646,10 @@ export class Game {
         () => this.stateController.currentState,
         touchMount,
         this.stringsProvider,
+      );
+      // 动词按钮按真实可用性隐藏（缺片段 / 被位面禁 / 全局关）——不给玩家死按钮
+      this.touchMobileControls.setVerbAvailabilityReader(
+        (verb) => this.playerActionSystem.isVerbUsable(verb as PlayerVerb),
       );
     }
   }
@@ -3179,6 +3718,13 @@ export class Game {
     });
     this.listenEvent('scene:ready', () => {
       this.player.syncMovementFromScene(this.sceneManager.currentSceneData);
+      // 换场景 = 姿态复位（姿态不跨场景、不入存档）
+      this.playerActionSystem.onSceneChanged();
+      // 旧场景的 NPC 连同它们身上的挂件一起没了：挂件显示对象归 Game 所有，自己收。
+      // 玩家身上的挂件例外——玩家跨场景存活，重挂由内容侧决定。
+      this.destroySceneSocketViews();
+      // 动词提示要同步答"这张图有没有 kick 入口"，先把本场景的图拉进缓存
+      this.preloadSceneDialogueGraphs();
       // 透视缩放注入须在光照滤镜/阴影创建之前：probe 采样高度按**有效**尺寸烘焙
       this.perspectiveScaleResolver = createPerspectiveScaleResolver(
         this.sceneManager.currentSceneData?.perspectiveScale,
@@ -4083,7 +4629,8 @@ export class Game {
       const sheetPath = resolvePathRelativeToAnimManifest(animFile, animRaw.spritesheet);
       const tex = await this.assetManager.loadTexture(sheetPath);
       const animDef = normalizeAnimationSetDef(animRaw, tex.width, tex.height, sheetPath);
-      npc.loadSprite(tex, animDef, npc.def.initialAnimState);
+      const sockets = await loadSocketsForAnim(this.assetManager, animFile, animDef);
+      npc.loadSprite(tex, animDef, npc.def.initialAnimState, sockets);
     } catch (e) {
       console.warn('setEntityField: reload NPC animation failed', npc.id, animFile, e);
     }
@@ -4269,6 +4816,65 @@ export class Game {
 
   /** 每帧把玩家朝导航目标推进（用与触屏一致的移动轴，走真实移动/碰撞），到达或超时即停。非阻塞。
    *  卡住时改为只沿单轴走、并在 x/y 间交替，以滑动绕过简单障碍（非完整寻路）。 */
+  /**
+   * act_spot 的动词提示：act_spot 不出 E 提示（hotspotOffersPlayerInteraction 对它返 false），
+   * 玩家全靠这行键名知道「这儿能躺/能跳过去」。只在 PlayerActionSystem 判定变化时调。
+   */
+  private actSpotPromptId: string | null = null;
+
+  private applyActSpotPrompt(hotspotId: string | null, keyLabel: string): void {
+    if (this.actSpotPromptId && this.actSpotPromptId !== hotspotId) {
+      const prev = this.sceneManager
+        .getCurrentHotspots()
+        .find((h) => h.def.id === this.actSpotPromptId);
+      prev?.hidePrompt();
+    }
+    this.actSpotPromptId = hotspotId;
+    if (!hotspotId) return;
+    const hs = this.sceneManager.getCurrentHotspots().find((h) => h.def.id === hotspotId);
+    // 提示词是玩家可见文本，可能含 [tag:…]（编辑器给 promptKey 用的就是 RichTextLineEdit）
+    hs?.showPrompt(this.resolveDisplayText(keyLabel) || 'C');
+  }
+
+  /**
+   * 图入口探针（同步）：该图有没有叫这个名字的节点。
+   * 只查 AssetManager 已缓存的 JSON——`preloadSceneDialogueGraphs` 在 scene:ready
+   * 把本场景实体引用的图拉进缓存，所以提示不必等异步。没缓存到就当"没这个入口"，
+   * 顶多是这一帧不出提示，不会误开图。
+   */
+  private graphHasEntry(graphId: string, entry: string): boolean {
+    const gid = graphId.trim();
+    const key = entry.trim();
+    if (!gid || !key) return false;
+    const raw = this.assetManager.getJson<{ nodes?: Record<string, unknown> }>(
+      dialogueGraphJsonUrl(gid),
+    );
+    return !!raw?.nodes && Object.prototype.hasOwnProperty.call(raw.nodes, key);
+  }
+
+  /**
+   * 把本场景实体引用到的对话图拉进 JSON 缓存，供 graphHasEntry 同步作答。
+   * 容错：单张图加载失败只是它不出动词提示，不影响场景。
+   */
+  private preloadSceneDialogueGraphs(): void {
+    const ids = new Set<string>();
+    for (const npc of this.sceneManager.getCurrentNpcs()) {
+      const gid = (npc.def.dialogueGraphId || '').trim();
+      if (gid) ids.add(gid);
+    }
+    for (const h of this.sceneManager.getCurrentHotspots()) {
+      if (h.def.type !== 'inspect') continue;
+      const d = h.def.data as { graphId?: unknown };
+      const gid = typeof d.graphId === 'string' ? d.graphId.trim() : '';
+      if (gid) ids.add(gid);
+    }
+    for (const gid of ids) {
+      void this.assetManager
+        .loadJson(dialogueGraphJsonUrl(gid))
+        .catch(() => { /* 该图不出动词提示即可，不打断场景 */ });
+    }
+  }
+
   private updatePlayerNav(): void {
     const t = this.playerNavTarget;
     if (!t) return;
@@ -4311,7 +4917,13 @@ export class Game {
     return {
       mode: modeMap[gs] ?? gs,
       scene: this.sceneManager.currentSceneData?.name ?? this.sceneManager.currentSceneData?.id ?? null,
-      player: { x: this.player.x, y: this.player.y, facing: this.player.facingDirection },
+      player: {
+        x: this.player.x,
+        y: this.player.y,
+        facing: this.player.facingDirection,
+        // 姿态是玩家自己看得见的身体状态，属 playerView 合法内容（不是 flag/节点 id）
+        posture: this.playerActionSystem.getPosture(),
+      },
       entities: this.interactionSystem.getPlayerVisibleEntities(),
       interactionPrompt: this.interactionSystem.getNearestPrompt(),
       dialogue: this.graphDialogueManager.getPlayerDialogue(),
@@ -4340,6 +4952,8 @@ export class Game {
       saveData: this.collectSaveData(),
       runtimeRandomState: this.runtimeRandom.getState(),
       activeZones: [...this.zoneSystem.getActiveZoneIds()].sort(),
+      /** 当前出「按 E」提示的 zone（ZoneDef.onInteract）；null = 没有。无头验证据此断言。 */
+      zoneInteractPrompt: this.interactionSystem.getPromptedZoneId(),
       uiState: this.stateController.getDebugState(),
       hudVisualState: this.fixedTickMode ? this.hud.getDebugVisualState() : null,
       renderState: {
@@ -4386,6 +5000,7 @@ export class Game {
         pressureHold: this.pressureHoldUI.getDebugVisualState(),
       },
       player: { x: this.player.x, y: this.player.y, facing: this.player.facingDirection },
+      playerActs: this.playerActionSystem.getDebugState(),
       planes: this.planeReconciler.getDebugState(),
       inventory: this.inventoryManager.serialize(),
       interactables: this.interactionSystem.debugListInteractables(this.player.x, this.player.y),
@@ -4609,6 +5224,15 @@ export class Game {
       playerChoose: (index) => this.eventBus.emit('dialogue:choiceSelected', { index }),
       playerMoveTo: (x, y) => this.setPlayerNavTarget(x, y),
       playerTap: () => this.inputManager.injectPointerDown(),
+      // 身体动词：一次性动作按键注入（走真实输入路径）；姿态用 playerPosture 按住/松开
+      playerAct: (verb) => {
+        const key = VERB_KEYS[verb as PlayerVerb];
+        if (key) this.inputManager.injectKeyJustPressed(key);
+      },
+      playerPosture: (posture, held) => {
+        const key = posture === 'gaze' ? VERB_KEYS.gaze : VERB_KEYS.crouch;
+        this.inputManager.setTouchKeyHeld(key, held !== false);
+      },
       setPlayerCollisions: (enabled) => this.player.setCollisionsEnabled(enabled),
       activatePlane: (planeId) => this.planeReconciler.activatePlaneManually(planeId),
       deactivatePlane: () => this.planeReconciler.deactivateManualPlane(),
@@ -4782,6 +5406,22 @@ export class Game {
     this.npcPatrolEpoch.clear();
     this.characterLighting.destroy();
 
+    // 生命周期对称：先摘挂点再关连接，HMR 重建时不留悬挂 observer/socket。
+    for (const [event, callback] of this.narrativeDebugListeners) {
+      this.eventBus.off(event, callback);
+    }
+    this.narrativeDebugListeners = [];
+    if (this.narrativeDebugBridge) {
+      if (NarrativeStateManager.traceObserver === this.narrativeDebugBridge.onTrace) {
+        NarrativeStateManager.traceObserver = null;
+      }
+      if (ActionExecutor.actionObserver === this.narrativeDebugBridge.noteAction) {
+        ActionExecutor.actionObserver = null;
+      }
+      this.narrativeDebugBridge.dispose();
+      this.narrativeDebugBridge = null;
+    }
+
     if (this.mainTick && this.renderer?.app?.ticker) {
       try {
         this.renderer.app.ticker.remove(this.mainTick);
@@ -4895,6 +5535,7 @@ export class Game {
     // CutsceneRenderer 不在 registeredSystems 里（渲染层），显式释放 resize 订阅与演出内容
     this.cutsceneRenderer?.destroy();
 
+    this.destroyAllSocketViews();
     this.actionExecutor.destroy();
     this.flagStore.destroy();
     this.inputManager.destroy();
@@ -4922,6 +5563,16 @@ export class Game {
       this.cameraFollowTargetId = null;
     }
 
+    // 身体动词每帧都跑（不只 Exploring）：它自己按 canAcceptInput 门控，
+    // 非探索态负责把姿态复位——否则进对话时蹲着不起来、动画所有权还卡在它手里。
+    // 位置在 Exploring 分支之前：本帧设的锁腿/姿态要赶在 player.update 之前生效。
+    this.playerActionSystem.update(dt);
+    // ⚠ 下面两个必须**无条件**跑（不能只挂 Exploring 分支）：
+    //  - 待机：演到一半切进对话时要靠这一帧归还动画所有权，否则主角站着不动；
+    //  - 闲聊：进对话的那一下要靠这一帧把在飞的气泡撤掉，否则和对白的「……」气泡重叠。
+    this.playerIdleBehaviorSystem.update(dt);
+    this.bubbleChatterSystem.update(dt);
+
     if (this.stateController.currentState === GameState.Exploring) {
       this.updatePlayerNav();
       this.player.update(dt);
@@ -4946,6 +5597,10 @@ export class Game {
       // 过场态相机跟随（cameraFollowActor）：无跟随目标时不动镜头，交由 cameraMove 摆布。
       this.applyCameraFollow(false);
     }
+
+    // 过场对白框上的「继续」点捺：**不能挂在任何状态分支里**——过场态、对话态、
+    // 甚至状态刚切换的那一帧它都可能在屏上，挂进分支就会时动时停。
+    this.cutsceneRenderer.tickDialogueMarks(dt);
 
     if (this.stateController.currentState === GameState.Dialogue) {
       this.dialogueUI.update(dt);

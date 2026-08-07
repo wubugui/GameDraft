@@ -1,10 +1,60 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import { SmellIndicatorRenderer, type SmellProfilesRaw, type SmellRenderState, type SmellFormParams } from './smell/SmellIndicatorRenderer';
 import { UITheme } from './UITheme';
-import { drawPanelBase, SKINS } from './PanelSkin';
+import { createPanel, SKINS, WOOD_CHIP } from './PanelSkin';
+import { createIcon, createKeyCap } from './components/UIDecor';
+import { uiIcon, type UIIconName } from './UIIcons';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
 import type { StringsProvider } from '../core/StringsProvider';
+import { createStyledText, setStyledText } from '../core/styledText';
+
+// ---------------------------------------------------------------------------
+// 版式常量（对齐 tmp/ui_mockups_2026-08-03 的 07 / 08 稿）
+//   左上角竖排小木框芯片，底部中央一条木框提示带。芯片宽度贴合内容，
+//   不做通栏长条——设计稿里空着的半条 HUD 是最显廉价的一处。
+// ---------------------------------------------------------------------------
+//
+// **键盘/手柄导航（`UIFocus`）不接**：本层是**只读常驻显示**，没有任何可交互元素。
+// 铜钱芯片 / 追踪活计芯片 / 底部提示带 / 场景名 / 三把阳火 / 气味指示器全是展示件——
+// `createPanel` / `createIcon` / `createKeyCap` 造出来的节点本身就是 `eventMode: 'none'`，
+// 本类自己一个 pointer 监听都没挂。底部那条 `[G] 使用规矩` 是**键位说明**不是按钮，
+// 真正的入口是按 G 起 `RuleUseUI`。焦点导航的前提是"有可激活的元素"，这里没有，
+// 硬塞一个恒空的 UIFocus 只会多一份死代码。HUD 长出可点的件时再回来接。
+// ---------------------------------------------------------------------------
+/**
+ * 芯片文字档位：**small，不是 body**。
+ * 铜钱 / 追踪活计是屏幕上唯一**常驻**的两条读数——玩家扫一眼就走，不是拿来读的，
+ * 放到 body 就变成一直挂在画面左上角跟场景抢戏的两条大字。
+ * 芯片高度由它反推（见 {@link CHIP_H}），字一收，整条木牌跟着瘦。
+ */
+const CHIP_FONT = UITheme.fontSize.small;
+/** 芯片高度：文字高 + 上下木边（各 5px）+ 各 2px 呼吸。别写死数值，字号一改这里自己跟。 */
+const CHIP_H = CHIP_FONT + WOOD_CHIP * 2 + UITheme.spacing.xs;
+/** 芯片左右内边距：木边 5px 之外再留一口气 */
+const CHIP_PAD = UITheme.spacing.md;
+/** 芯片里的木刻剪影边长：压在文字高之下半档，图标不该比它标注的那行字还壮 */
+const CHIP_ICON = CHIP_FONT - 2;
+/** 竖排芯片之间的缝 */
+const CHIP_GAP = UITheme.spacing.sm;
+/** 芯片列左上角锚点 */
+const CHIP_ORIGIN = UITheme.spacing.md;
+
+/**
+ * 底部提示带高度：键帽（{@link createKeyCap} 的方框 = 字高 + 4）+ 上下木边 + 各 2px 呼吸。
+ * 提示带是**配角中的配角**（键位说明），高度跟着键帽走，不另外撑一条厚带子。
+ */
+const HINT_BAR_H = UITheme.fontSize.small + UITheme.spacing.xs + WOOD_CHIP * 2 + UITheme.spacing.xs;
+const HINT_BAR_PAD = UITheme.spacing.lg;
+/** 提示带离屏幕下沿的净空 */
+const HINT_BAR_BOTTOM = UITheme.spacing.xxl;
+
+/** 三把阳火的锚点：让到芯片列下方（芯片列最深两条 = 12 + 30 + 8 + 30 = 80，再留 32 净空） */
+const FLAME_ORIGIN_X = 16;
+const FLAME_ORIGIN_Y = 112;
+/** 气味丝锚点：仍是三把火正下方、组中心同列（与旧版保持 90px 的相对落差） */
+const SMELL_ORIGIN_X = 34;
+const SMELL_ORIGIN_Y = 202;
 
 /** 0xRRGGBB 线性插值（油灯琥珀↔冷灰青的阳火调色用）。 */
 function lerpColor(a: number, b: number, t: number): number {
@@ -23,10 +73,15 @@ export class HUD {
   private strings: StringsProvider;
   private container: Container;
 
-  private coinBg: Graphics;
-  private coinText: Text;
-  private questText: Text;
-  private questBg: Graphics;
+  /** 左上角竖排芯片的宿主：内容变了就整条重建（木框是 Sprite，塞不进 Graphics 原地 clear 重画） */
+  private chipLayer: Container;
+  private coinChip: Container | null = null;
+  private questChip: Container | null = null;
+  /** 芯片上的成品文字：Text 会随重建销毁，玩家视角读这两个字段 */
+  private coinsLabel: string = '';
+  private questLabel: string = '';
+  /** 图标是异步预载的（Game 里 `void preloadUIIcons()`），到位后补一次重建 */
+  private chipIconsApplied = false;
 
   // 离死之距：HUD 层"三把阳火"（元信息，替掉旧血条）
   private flameLayer: Container;
@@ -46,13 +101,49 @@ export class HUD {
   private smellCb: (p: { scent?: string; intensity?: number; dir?: number; flicker?: boolean }) => void;
   private sniffCb: () => void;
 
-  private ruleHintBg: Graphics;
-  private ruleHintText: Text;
+  /** 底部中央提示带：内容取自 strings，建一次、resize 只重定位 */
+  private ruleHintChip: Container;
+  private ruleHintWidth: number = 0;
   private hasRuleSlots: boolean = false;
+
+  /**
+   * 区域级 E 交互提示带（ZoneDef.onInteract）：与规矩提示同款木条，叠在它上面一格。
+   * 文案随 zone 走（每个区可以自己写「[E] 掀开草席」），所以是**按文案重建**的，
+   * 不像规矩那条建一次就固定——但只在文案真的变了时重建，不每帧造节点。
+   */
+  private zoneHintChip: Container | null = null;
+  private zoneHintWidth: number = 0;
+  private zoneHintText: string = '';
+  private zoneInteractCb: (p: { label?: string }) => void;
+  private zoneInteractOffCb: () => void;
 
   private mapNameText: Text;
   private onResizeBound: () => void;
   private sceneEnterCb: (p: { sceneId: string; sceneName?: string }) => void;
+  /** 过场期间整层 HUD 淡出：电影化镜头上不该压着铜钱/三把火/场景名/任务条 */
+  private cutsceneStartCb: () => void;
+  private cutsceneEndCb: () => void;
+  private hudFadeRaf = 0;
+
+  /**
+   * 整层 HUD 淡入淡出。用 alpha 不用 visible——过场结束要淡回来，
+   * 硬切会在电影化镜头收尾时"啪"地弹出一堆读数。
+   */
+  private fadeHudTo(target: number): void {
+    if (this.hudFadeRaf) cancelAnimationFrame(this.hudFadeRaf);
+    const from = this.container.alpha;
+    if (from === target) return;
+    const start = performance.now();
+    const dur = UITheme.motion.normal;
+    const tick = (): void => {
+      if (this.container.destroyed) { this.hudFadeRaf = 0; return; }
+      const raw = Math.min((performance.now() - start) / dur, 1);
+      this.container.alpha = from + (target - from) * UITheme.motion.easeOut(raw);
+      if (raw < 1) this.hudFadeRaf = requestAnimationFrame(tick);
+      else this.hudFadeRaf = 0;
+    };
+    this.hudFadeRaf = requestAnimationFrame(tick);
+  }
   private resolveDisplay: ((s: string) => string) | null = null;
 
   private currencyCb: (p: { newTotal: number }) => void;
@@ -79,26 +170,19 @@ export class HUD {
 
     this.container = new Container();
 
-    this.coinBg = new Graphics();
-    drawPanelBase(this.coinBg, 0, 0, 120, 28, SKINS.chip);
-    this.coinBg.x = 10;
-    this.coinBg.y = 10;
-    this.container.addChild(this.coinBg);
-
-    this.coinText = new Text({
-      text: `${this.strings.get('hud', 'coins')} 0`,
-      style: { fontSize: 13, fill: UITheme.colors.gold, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 200 },
-    });
-    this.coinText.x = 20;
-    this.coinText.y = 15;
-    this.container.addChild(this.coinText);
+    this.chipLayer = new Container();
+    this.chipLayer.x = CHIP_ORIGIN;
+    this.chipLayer.y = CHIP_ORIGIN;
+    this.container.addChild(this.chipLayer);
+    this.coinsLabel = `${this.strings.get('hud', 'coins')} 0`;
+    this.rebuildChips();
 
     // 离死之距 = HUD 层"三把阳火"（替掉旧血条；铜钱下方常驻）。
     // 它不是血量，是关二狗离死多近：活的特效，旺时暖稳、近死时青冷明灭挣扎；
     // 关二狗自己看不见、玩家看得见（冥冥之中，不进 world、不上全屏、不喊注意）。
     this.flameLayer = new Container();
-    this.flameLayer.x = 16;
-    this.flameLayer.y = 70;
+    this.flameLayer.x = FLAME_ORIGIN_X;
+    this.flameLayer.y = FLAME_ORIGIN_Y;
     this.container.addChild(this.flameLayer);
     for (let i = 0; i < 3; i++) {
       const g = new Graphics();
@@ -110,40 +194,21 @@ export class HUD {
 
     this.startFlameLoop();
 
-    this.questBg = new Graphics();
-    drawPanelBase(this.questBg, 0, 0, 220, 28, SKINS.chip);
-    this.questBg.x = this.renderer.screenWidth - 230;
-    this.questBg.y = 10;
-    this.questBg.visible = false;
-    this.container.addChild(this.questBg);
+    const ruleHint = this.buildHintBar(this.strings.get('hud', 'ruleUseHint'));
+    this.ruleHintChip = ruleHint.chip;
+    this.ruleHintWidth = ruleHint.width;
+    this.ruleHintChip.visible = false;
+    this.container.addChild(this.ruleHintChip);
 
-    this.questText = new Text({
+    this.mapNameText = createStyledText({
       text: '',
-      style: { fontSize: 12, fill: UITheme.colors.subtle, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 210 },
-    });
-    this.questText.x = this.renderer.screenWidth - 220;
-    this.questText.y = 15;
-    this.container.addChild(this.questText);
-
-    this.ruleHintBg = new Graphics();
-    drawPanelBase(this.ruleHintBg, 0, 0, 160, 28, SKINS.chip, { fill: UITheme.colors.hudRuleHint, fillAlpha: UITheme.alpha.hudBgDark });
-    this.ruleHintBg.x = (this.renderer.screenWidth - 160) / 2;
-    this.ruleHintBg.y = this.renderer.screenHeight - 50;
-    this.ruleHintBg.visible = false;
-    this.container.addChild(this.ruleHintBg);
-
-    this.ruleHintText = new Text({
-      text: this.strings.get('hud', 'ruleUseHint'),
-      style: { fontSize: 13, fill: UITheme.colors.orange, fontFamily: UITheme.fonts.ui, fontWeight: 'bold', wordWrap: true, breakWords: true, wordWrapWidth: 150 },
-    });
-    this.ruleHintText.x = (this.renderer.screenWidth - this.ruleHintText.width) / 2;
-    this.ruleHintText.y = this.renderer.screenHeight - 45;
-    this.ruleHintText.visible = false;
-    this.container.addChild(this.ruleHintText);
-
-    this.mapNameText = new Text({
-      text: '',
-      style: { fontSize: 12, fill: UITheme.colors.link, fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true, wordWrapWidth: 400 },
+      style: {
+        fontSize: UITheme.fontSize.small,
+        fill: UITheme.colors.bodyMuted,
+        fontFamily: UITheme.fonts.display,
+        letterSpacing: UITheme.letterSpacing.title,
+        wordWrap: true, breakWords: true, wordWrapWidth: 400,
+      },
     });
     this.mapNameText.x = (this.renderer.screenWidth - this.mapNameText.width) / 2;
     this.mapNameText.y = 10;
@@ -155,17 +220,18 @@ export class HUD {
     this.onResizeBound = () => this.layout();
     window.addEventListener('resize', this.onResizeBound);
 
+    this.cutsceneStartCb = () => this.fadeHudTo(0);
+    this.cutsceneEndCb = () => this.fadeHudTo(1);
+
     this.sceneEnterCb = (p) => {
       const raw = p.sceneName ?? p.sceneId ?? '';
-      this.mapNameText.text = this.r(raw);
+      setStyledText(this.mapNameText, this.r(raw));
       this.mapNameText.x = (this.renderer.screenWidth - this.mapNameText.width) / 2;
+      // 上一张场景的区域提示不许跟着过来：切场景先收，新场景由 InteractionSystem 下一帧重发。
+      this.setZoneInteractHint(null);
     };
 
-    this.currencyCb = (p) => {
-      this.coinText.text = `${this.strings.get('hud', 'coins')} ${p.newTotal}`;
-      this.coinBg.clear();
-      drawPanelBase(this.coinBg, 0, 0, this.coinText.width + 20, 28, SKINS.chip);
-    };
+    this.currencyCb = (p) => { this.setCoins(p.newTotal); };
     this.questAcceptedCb = (p) => {
       this.trackedQuests = this.trackedQuests.filter((q) => q.id !== p.questId);
       this.trackedQuests.push({ id: p.questId, title: p.title });
@@ -185,9 +251,12 @@ export class HUD {
     this.saveRestoringCb = () => {
       this.trackedQuests = [];
       this.setQuestHint('');
+      this.setZoneInteractHint(null);
     };
     this.zoneEnterCb = () => { this.updateRuleHint(true); };
     this.zoneExitCb = () => { this.updateRuleHint(false); };
+    this.zoneInteractCb = (p) => { this.setZoneInteractHint(p?.label ?? ''); };
+    this.zoneInteractOffCb = () => { this.setZoneInteractHint(null); };
     this.healthCb = (p) => {
       this.healthCurrent = p.current;
       this.healthMax = p.max;
@@ -208,6 +277,8 @@ export class HUD {
     };
     this.sniffCb = () => { this.smellRenderer?.pulseBoost(); };
 
+    this.eventBus.on('cutscene:start', this.cutsceneStartCb);
+    this.eventBus.on('cutscene:end', this.cutsceneEndCb);
     this.eventBus.on('scene:enter', this.sceneEnterCb);
     this.eventBus.on('currency:changed', this.currencyCb);
     this.eventBus.on('quest:accepted', this.questAcceptedCb);
@@ -216,6 +287,8 @@ export class HUD {
     this.eventBus.on('save:restoring', this.saveRestoringCb);
     this.eventBus.on('zone:ruleAvailable', this.zoneEnterCb);
     this.eventBus.on('zone:ruleUnavailable', this.zoneExitCb);
+    this.eventBus.on('zone:interactAvailable', this.zoneInteractCb);
+    this.eventBus.on('zone:interactUnavailable', this.zoneInteractOffCb);
     this.eventBus.on('player:healthChanged', this.healthCb);
     this.eventBus.on('debug:hudHealthOverrideChanged', this.healthDebugOverrideCb);
     this.eventBus.on('player:smellChanged', this.smellCb);
@@ -230,46 +303,177 @@ export class HUD {
     return this.resolveDisplay ? this.resolveDisplay(s) : s;
   }
 
+  /**
+   * 一枚芯片：小木框条（`SKINS.chip` 自带 5px 木边）+ 左侧木刻剪影 + 右侧文字，宽度贴合内容。
+   * 图标素材没到位（`createIcon` 返回 null）时自动退成纯文字条，位置照样对齐。
+   */
+  private buildChip(icon: UIIconName, text: string, color: number): Container {
+    const c = new Container();
+
+    const label = createStyledText({
+      text,
+      style: { fontSize: CHIP_FONT, fill: color, fontFamily: UITheme.fonts.ui },
+    });
+    const sprite = createIcon(icon, CHIP_ICON);
+    const textX = CHIP_PAD + (sprite ? CHIP_ICON + UITheme.spacing.sm : 0);
+    const w = Math.ceil(textX + label.width + CHIP_PAD);
+
+    c.addChild(createPanel(0, 0, w, CHIP_H, SKINS.chip));
+    if (sprite) {
+      sprite.position.set(CHIP_PAD, Math.round((CHIP_H - CHIP_ICON) / 2));
+      c.addChild(sprite);
+    }
+    label.position.set(textX, Math.round((CHIP_H - label.height) / 2));
+    c.addChild(label);
+    return c;
+  }
+
+  /**
+   * 重建左上角芯片列。木框是九宫格 Sprite，画不进 Graphics，所以数值一变就整条重建
+   * （旧实现是 `clear()` + `drawPanelBase` 原地重画，那条路径出不了木框）。
+   * 重建只换 `chipLayer` 的子节点，HUD 其余层级与 resize 时序不受影响。
+   */
+  private rebuildChips(): void {
+    if (this.coinChip) {
+      this.chipLayer.removeChild(this.coinChip);
+      this.coinChip.destroy({ children: true });
+      this.coinChip = null;
+    }
+    if (this.questChip) {
+      this.chipLayer.removeChild(this.questChip);
+      this.questChip.destroy({ children: true });
+      this.questChip = null;
+    }
+
+    this.coinChip = this.buildChip('coin', this.coinsLabel, UITheme.colors.body);
+    this.chipLayer.addChild(this.coinChip);
+
+    if (this.questLabel) {
+      this.questChip = this.buildChip('hat', this.questLabel, UITheme.colors.bodyMuted);
+      this.questChip.y = CHIP_H + CHIP_GAP;
+      this.chipLayer.addChild(this.questChip);
+    }
+    this.chipIconsApplied = uiIcon('coin') !== null;
+  }
+
+  /**
+   * 底部中央提示带：木框长条 + 「[键] 说明」，键名包在方框键帽里（设计稿 08 底部那条）。
+   * 文案仍取 strings（`[G] 使用规矩`），只是把方括号里的键拆出来交给 `createKeyCap`；
+   * 拆不出来就整句当说明文字，绝不吞内容。
+   */
+  private buildHintBar(raw: string): { chip: Container; width: number } {
+    const c = new Container();
+    const m = /^\s*\[\s*([^\]]+?)\s*\]\s*(.*)$/.exec(raw);
+
+    // ⚠ 这里刻意**只取键帽本身**、说明文字自己排：`createKeyCap(key, label)` 内建的说明是
+    // body 档，而这条带子常年挂在屏幕下沿，body 会让「使用规矩」四个字跟对白一样大、
+    // 抢走本该给场景的注意力。键位说明是配角，一律 small。
+    const cap = m ? createKeyCap(m[1]) : null;
+    // 拆不出方括号就整句当说明文字，绝不吞内容
+    const labelText = m ? (m[2] ?? '') : raw;
+    const label = labelText
+      ? createStyledText({
+          text: labelText,
+          style: { fontSize: UITheme.fontSize.small, fill: UITheme.colors.bodyMuted, fontFamily: UITheme.fonts.ui },
+        })
+      : null;
+
+    const capW = cap ? cap.totalWidth : 0;
+    const gap = cap && label ? UITheme.spacing.sm : 0;
+    const w = Math.ceil(capW + gap + (label ? label.width : 0) + HINT_BAR_PAD * 2);
+
+    c.addChild(createPanel(0, 0, w, HINT_BAR_H, SKINS.chip, {
+      fill: UITheme.colors.hudRuleHint,
+      fillAlpha: UITheme.alpha.hudBgDark,
+    }));
+    if (cap) {
+      cap.position.set(HINT_BAR_PAD, Math.round((HINT_BAR_H - cap.height) / 2));
+      c.addChild(cap);
+    }
+    if (label) {
+      label.position.set(HINT_BAR_PAD + capW + gap, Math.round((HINT_BAR_H - label.height) / 2));
+      c.addChild(label);
+    }
+
+    return { chip: c, width: w };
+  }
+
   setCoins(amount: number): void {
-    this.coinText.text = `${this.strings.get('hud', 'coins')} ${amount}`;
-    this.coinBg.clear();
-    drawPanelBase(this.coinBg, 0, 0, this.coinText.width + 20, 28, SKINS.chip);
+    this.coinsLabel = `${this.strings.get('hud', 'coins')} ${amount}`;
+    this.rebuildChips();
   }
 
   setQuestHint(title: string): void {
-    if (title) {
-      this.questText.text = `${this.strings.get('hud', 'current')}${this.r(title)}`;
-      this.questBg.clear();
-      drawPanelBase(this.questBg, 0, 0, this.questText.width + 20, 28, SKINS.chip);
-      this.questBg.visible = true;
-    } else {
-      this.questText.text = '';
-      this.questBg.visible = false;
-    }
+    this.questLabel = title ? `${this.strings.get('hud', 'current')}${this.r(title)}` : '';
+    this.rebuildChips();
   }
 
   /** 玩家视角：HUD 当前显示的任务追踪文字（玩家可见），供 getPlayerView。 */
   getQuestHintText(): string {
-    return this.questText.text;
+    return this.questLabel;
+  }
+
+  /**
+   * 整层硬隐藏（用 `visible`，不是 alpha）。**只给"这一局根本不存在"的场合**——
+   * 标题态启动时世界没装载，铜钱/活计/体力读数不该挂在标题画面上。
+   * 过场里那种"暂时收起来、待会儿要淡回来"仍走 {@link fadeHudTo}，别混用。
+   */
+  setHidden(hidden: boolean): void {
+    this.container.visible = !hidden;
   }
 
   setRuleHintVisible(visible: boolean): void {
     this.hasRuleSlots = visible;
-    this.ruleHintBg.visible = visible;
-    this.ruleHintText.visible = visible;
+    this.ruleHintChip.visible = visible;
+    // 规矩提示的显隐会改区域提示的落位（两条同时在时要错开）
+    this.layout();
   }
 
   private updateRuleHint(hasSlots: boolean): void {
     this.setRuleHintVisible(hasSlots);
   }
 
+  /**
+   * 区域级 E 交互提示：`label` 为 null 收起；空串取 strings 默认文案（`[E] 察看`）。
+   * 文案没变就只切可见性——不重建节点（进出同一个区来回走时别每次造木框）。
+   */
+  setZoneInteractHint(label: string | null): void {
+    if (label === null) {
+      if (this.zoneHintChip) this.zoneHintChip.visible = false;
+      this.zoneHintText = '';
+      this.layout();
+      return;
+    }
+    const raw = this.r(label.trim() || this.strings.get('hud', 'zoneInteractHint'));
+    if (this.zoneHintChip && this.zoneHintText === raw) {
+      this.zoneHintChip.visible = true;
+      this.layout();
+      return;
+    }
+    if (this.zoneHintChip) {
+      this.container.removeChild(this.zoneHintChip);
+      this.zoneHintChip.destroy({ children: true });
+      this.zoneHintChip = null;
+    }
+    const built = this.buildHintBar(raw);
+    this.zoneHintChip = built.chip;
+    this.zoneHintWidth = built.width;
+    this.zoneHintText = raw;
+    this.container.addChild(this.zoneHintChip);
+    this.layout();
+  }
+
   private layout(): void {
-    this.questBg.x = this.renderer.screenWidth - 230;
-    this.questText.x = this.renderer.screenWidth - 220;
-    this.ruleHintBg.x = (this.renderer.screenWidth - 160) / 2;
-    this.ruleHintBg.y = this.renderer.screenHeight - 50;
-    this.ruleHintText.x = (this.renderer.screenWidth - this.ruleHintText.width) / 2;
-    this.ruleHintText.y = this.renderer.screenHeight - 45;
+    const bottomY = this.renderer.screenHeight - HINT_BAR_H - HINT_BAR_BOTTOM;
+    this.ruleHintChip.x = Math.round((this.renderer.screenWidth - this.ruleHintWidth) / 2);
+    this.ruleHintChip.y = bottomY;
+    if (this.zoneHintChip) {
+      this.zoneHintChip.x = Math.round((this.renderer.screenWidth - this.zoneHintWidth) / 2);
+      // 两条同时在时区域提示让到规矩提示上方一格，不叠成一坨看不清
+      this.zoneHintChip.y = this.ruleHintChip.visible
+        ? bottomY - HINT_BAR_H - UITheme.spacing.sm
+        : bottomY;
+    }
     this.mapNameText.x = (this.renderer.screenWidth - this.mapNameText.width) / 2;
   }
 
@@ -289,6 +493,8 @@ export class HUD {
   }
 
   private stepFlames(dt: number): void {
+    // 图标是 fire-and-forget 预载的：晚到就补一次芯片重建，否则常驻的铜钱条会一直没图标
+    if (!this.chipIconsApplied && uiIcon('coin') !== null) this.rebuildChips();
     const healthRatio = this.healthMax > 0 ? Math.max(0, Math.min(1, this.healthCurrent / this.healthMax)) : 0;
     this.flameTargetRatio = this.healthDebugOverrideEnabled ? this.healthDebugOverrideRatio : healthRatio;
     const ratioDelta = this.flameTargetRatio - this.flameDisplayRatio;
@@ -440,10 +646,10 @@ export class HUD {
   }
 
   /** 由 Game 异步加载 smell_profiles.json 后调用：建/重建气味指示器渲染器（方案 E·双层·基线+浮现）。
-   *  位置：三把火（16,70 起、组中心约 x:34）**正下方**、居中同宽；方案 E 是竖向（高>>宽），气缕从基线往上升。 */
+   *  位置：三把火（FLAME_ORIGIN 起、组中心约 x:34）**正下方**、居中同宽；方案 E 是竖向（高>>宽），气缕从基线往上升。 */
   setSmellProfiles(data: SmellProfilesRaw): void {
     if (this.smellRenderer) this.smellRenderer.destroy();
-    this.smellRenderer = new SmellIndicatorRenderer(this.container, data, { x: 34, y: 160 });
+    this.smellRenderer = new SmellIndicatorRenderer(this.container, data, { x: SMELL_ORIGIN_X, y: SMELL_ORIGIN_Y });
     this.smellRenderer.setState(this.smellLast);
   }
 
@@ -460,6 +666,9 @@ export class HUD {
   destroy(): void {
     if (this.flameRafId !== null && typeof cancelAnimationFrame !== 'undefined') cancelAnimationFrame(this.flameRafId);
     window.removeEventListener('resize', this.onResizeBound);
+    if (this.hudFadeRaf) { cancelAnimationFrame(this.hudFadeRaf); this.hudFadeRaf = 0; }
+    this.eventBus.off('cutscene:start', this.cutsceneStartCb);
+    this.eventBus.off('cutscene:end', this.cutsceneEndCb);
     this.eventBus.off('scene:enter', this.sceneEnterCb);
     this.eventBus.off('currency:changed', this.currencyCb);
     this.eventBus.off('quest:accepted', this.questAcceptedCb);
@@ -468,6 +677,8 @@ export class HUD {
     this.eventBus.off('save:restoring', this.saveRestoringCb);
     this.eventBus.off('zone:ruleAvailable', this.zoneEnterCb);
     this.eventBus.off('zone:ruleUnavailable', this.zoneExitCb);
+    this.eventBus.off('zone:interactAvailable', this.zoneInteractCb);
+    this.eventBus.off('zone:interactUnavailable', this.zoneInteractOffCb);
     this.eventBus.off('player:healthChanged', this.healthCb);
     this.eventBus.off('debug:hudHealthOverrideChanged', this.healthDebugOverrideCb);
     this.eventBus.off('player:smellChanged', this.smellCb);

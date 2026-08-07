@@ -72,11 +72,18 @@ from ..shared.audio_preview_selector import AudioIdPreviewSelector, AudioPreview
 from ..shared.id_ref_selector import IdRefSelector
 from ..shared.reference_picker import ReferencePickerDialog, ReferencePickerField
 from ..shared.dialogue_graph_refs import (
+    DIALOGUE_GRAPH_OPEN_TOOLTIP,
     dialogue_graph_node_ids,
     dialogue_graph_reference_rows,
+    open_dialogue_graph_from_widget,
 )
 from ..shared.image_path_picker import CutsceneImagePathRow, disk_path_for_runtime_url
-from ..shared.move_entity_map_picker import WorldPointPickView, resolve_world_size_for_scene_json
+from ..shared.move_entity_map_picker import (
+    MoveEntityToMapPickerDialog,
+    WorldPointPickView,
+    resolve_world_size_for_scene_json,
+)
+from ..shared.player_acts_editor import ZoneActsEditor
 from ..shared.collapsible_section import CollapsibleSection
 from ..shared.form_layout import compact_form
 from ..shared.hex_color_pick_row import HexColorPickRow
@@ -118,6 +125,7 @@ def _scene_background_disk_path(model: ProjectModel, scene_id: str, sc: dict) ->
 
 _HOTSPOT_COLORS = {
     "inspect": QColor(60, 140, 255, 160),
+    "act_spot": QColor(190, 120, 255, 160),
     "pickup": QColor(60, 200, 80, 160),
     "transition": QColor(255, 160, 40, 160),
     "npc": QColor(200, 100, 255, 160),
@@ -3644,13 +3652,23 @@ class ScenePropertyPanel(QScrollArea):
     group_member_activated = Signal(str, str)
 
     def reload_refs_from_model(self) -> None:
-        """重拉跨域引用候选(filter/item/encounter/bgm,均为别处可新增的全局列表),
-        保留各选择器当前选中值。供切页激活时调用。"""
+        """重拉跨域引用候选(filter/item/encounter/bgm/animFile/立绘,均为别处可新增的全局列表),
+        保留各选择器当前选中值。供切页激活时调用。
+
+        animFile 的候选面还要**先把磁盘上新出现的动画包补进内存**:产线刚发布一批包时,
+        编辑器不重启也得能在这里选到它们(2026-08-06:静态占位包批量上线时发现这条断着,
+        新包只有整个重开工程才看得见)。只加不改,不会冲掉动画面板未保存的编辑。
+        """
+        self._model.discover_new_animation_bundles()
         for attr, provider in (
             ("_sc_filter", self._model.all_filter_ids),
             ("_hs_pickup_item", self._model.all_item_ids),
             ("_hs_enc_id", self._model.all_encounter_ids),
             ("_sc_bgm", lambda: [(a, a) for a in self._model.all_audio_ids("bgm")]),
+            ("_npc_anim", self._model.anim_asset_path_choices),
+            ("_npc_portrait", lambda: [
+                (s, s) for s in load_portrait_sets(self._model.project_path)
+            ] if self._model.project_path is not None else []),
         ):
             sel = getattr(self, attr, None)
             if isinstance(sel, (IdRefSelector, AudioIdPreviewSelector)):
@@ -3670,6 +3688,7 @@ class ScenePropertyPanel(QScrollArea):
             "_zn_enter",
             "_zn_stay",
             "_zn_exit",
+            "_zn_interact",
         ):
             editor = getattr(self, attr, None)
             reload_refs = getattr(editor, "reload_refs_from_model", None)
@@ -3817,6 +3836,38 @@ class ScenePropertyPanel(QScrollArea):
 
     def is_pending_dirty(self) -> bool:
         return self._pending_dirty
+
+    def revert_entity_id(self, kind: str, original: str) -> None:
+        """撞名闸拒绝改名后回滚：staging 与可见输入框一起退回原 id。
+
+        只回滚 id 一个字段——本轮其它编辑照常提交，不能因为一个 id 冲突把整批编辑卡掉。
+        """
+        staging = {
+            "hotspot": self._staging_hotspot,
+            "npc": self._staging_npc,
+            "zone": self._staging_zone,
+        }.get(kind)
+        if isinstance(staging, dict):
+            staging["id"] = original
+        edit = {
+            "hotspot": self._hs_id,
+            "npc": self._npc_id,
+            "zone": self._zn_id,
+        }.get(kind)
+        if edit is not None:
+            edit.blockSignals(True)
+            try:
+                edit.setText(original)
+            finally:
+                edit.blockSignals(False)
+
+    def entity_staging_pairs(self) -> tuple[tuple[str, dict | None, dict | None], ...]:
+        """(kind, source, staging) 三元组，供提交前的 id 撞名闸遍历。"""
+        return (
+            ("hotspot", self._source_hotspot, self._staging_hotspot),
+            ("npc", self._source_npc, self._staging_npc),
+            ("zone", self._source_zone, self._staging_zone),
+        )
 
     # ---- 轻量 rebind：Apply 完成后让 staging 重新指向 source 的新副本 -----
     # 不重置 widgets（widgets 已与 source 一致），消除完整 load_* 重装带来的
@@ -5467,7 +5518,10 @@ class ScenePropertyPanel(QScrollArea):
         self._hs_id.editingFinished.connect(
             lambda: self._warn_bare_id_change("hotspot", self._hs_id, self._source_hotspot))
         self._hs_type = QComboBox()
-        self._hs_type.addItems(["inspect", "pickup", "transition", "npc", "encounter"])
+        self._hs_type.addItems(
+            ["inspect", "pickup", "transition", "npc", "encounter", "act_spot"])
+        self._hs_type.setToolTip(
+            "act_spot＝身体动词的语境点（躺点 / 跨点）：不出 E 提示，出的是动词提示。")
         self._hs_type.currentIndexChanged.connect(lambda _i: self._emit_props_changed())
         form.addRow("type", self._hs_type)
         self._hs_label = RichTextLineEdit(self._model); form.addRow("label", self._hs_label)
@@ -5746,6 +5800,8 @@ class ScenePropertyPanel(QScrollArea):
             allow_empty=True,
             title="选择热点图对话",
             geometry_key="dialogue_graph_reference_picker",
+            on_open=lambda gid: open_dialogue_graph_from_widget(self, gid),
+            open_tooltip=DIALOGUE_GRAPH_OPEN_TOOLTIP,
         )
         self._hs_inspect_graph_combo = gcombo
         graph_row.addRow("graphId", gcombo)
@@ -5843,12 +5899,181 @@ class ScenePropertyPanel(QScrollArea):
         ef.addRow("encounterId", self._hs_enc_id)
         self._hs_data_stack.addWidget(ep)
 
+        self._hs_data_stack.addWidget(self._build_act_spot_page())
+
         self._hs_type.currentTextChanged.connect(self._on_hs_type_changed)
+
         lay.addStretch(1)
         self._append_entity_delete_footer(lay)
         return root
 
-    _TYPE_TO_DATA_IDX = {"inspect": 0, "pickup": 1, "transition": 2, "npc": 3, "encounter": 4}
+    _TYPE_TO_DATA_IDX = {
+        "inspect": 0, "pickup": 1, "transition": 2, "npc": 3, "encounter": 4,
+        "act_spot": 5,
+    }
+
+    # ---- act_spot（躺点 / 跨点）------------------------------------------
+
+    def _build_act_spot_page(self) -> QWidget:
+        """身体动词的语境点：躺点 / 跨点。坐标一律地图点选，禁手输。"""
+        page = QWidget()
+        f = compact_form(QFormLayout(page))
+
+        verbs_row = QWidget()
+        vl = QHBoxLayout(verbs_row)
+        vl.setContentsMargins(0, 0, 0, 0)
+        self._hs_spot_verbs: dict[str, QCheckBox] = {}
+        for verb, label in (("lie", "躺（躺点）"), ("jump", "跳（跨点）")):
+            cb = QCheckBox(label)
+            cb.stateChanged.connect(lambda _s: self._emit_props_changed())
+            vl.addWidget(cb)
+            self._hs_spot_verbs[verb] = cb
+        vl.addStretch(1)
+        verbs_row.setToolTip("本点支持哪些动词；勾「跳」时必须设落点。")
+        f.addRow("verbs", verbs_row)
+
+        self._hs_spot_prompt = RichTextLineEdit(self._model)
+        self._hs_spot_prompt.setToolTip("玩家看到的提示词（可含 [tag:…]）；留空则用上面的 label。")
+        self._hs_spot_prompt.textChanged.connect(lambda *_: self._emit_props_changed())
+        f.addRow("promptKey（提示词）", self._hs_spot_prompt)
+
+        self._hs_spot_facing = QComboBox()
+        self._hs_spot_facing.addItem("（保持当前朝向）", "")
+        self._hs_spot_facing.addItem("朝左", "left")
+        self._hs_spot_facing.addItem("朝右", "right")
+        self._hs_spot_facing.setMaximumWidth(180)
+        self._hs_spot_facing.currentIndexChanged.connect(lambda _i: self._emit_props_changed())
+        f.addRow("facing（起手朝向）", self._hs_spot_facing)
+
+        self._hs_spot_align_xy: dict[str, float] | None = None
+        f.addRow("align（对齐点）", self._make_spot_point_row("align"))
+        self._hs_spot_landing_xy: dict[str, float] | None = None
+        f.addRow("landing（跳跃落点）", self._make_spot_point_row("landing"))
+
+        self._hs_spot_duration = QSpinBox()
+        self._hs_spot_duration.setRange(0, 5000)
+        self._hs_spot_duration.setMaximumWidth(120)
+        self._hs_spot_duration.setToolTip("跨点跳的抛物线时长（ms）；0 = 用 game_config 缺省")
+        self._hs_spot_duration.valueChanged.connect(lambda _v: self._emit_props_changed())
+        f.addRow("durationMs（跨点跳）", self._hs_spot_duration)
+
+        self._hs_spot_arc = QSpinBox()
+        self._hs_spot_arc.setRange(0, 400)
+        self._hs_spot_arc.setMaximumWidth(120)
+        self._hs_spot_arc.setToolTip("跨点跳的抬升高度；0 = 用 game_config 缺省")
+        self._hs_spot_arc.valueChanged.connect(lambda _v: self._emit_props_changed())
+        f.addRow("arcHeight（跨点跳）", self._hs_spot_arc)
+
+        self._hs_spot_actions = ActionEditor("actions（动词生效时）")
+        self._hs_spot_actions.changed.connect(self._emit_props_changed)
+        f.addRow(self._hs_spot_actions)
+        self._hs_spot_exit_actions = ActionEditor("exitActions（起身时·仅躺点）")
+        self._hs_spot_exit_actions.changed.connect(self._emit_props_changed)
+        f.addRow(self._hs_spot_exit_actions)
+        return page
+
+    def _make_spot_point_row(self, which: str) -> QWidget:
+        """只读坐标显示 + 「在地图上选…」按钮 + 清除（坐标禁手输，走场景点选）。"""
+        row = QWidget()
+        rl = QHBoxLayout(row)
+        rl.setContentsMargins(0, 0, 0, 0)
+        lab = QLabel("（未设置）")
+        lab.setStyleSheet("color:#888;")
+        rl.addWidget(lab, 1)
+        pick = QPushButton("在地图上选…")
+        pick.setToolTip("在场景预览里点选坐标（禁止手输，避免落到不可走的地方）")
+        pick.clicked.connect(lambda: self._pick_spot_point(which))
+        rl.addWidget(pick)
+        clear = QPushButton("清除")
+        clear.clicked.connect(lambda: self._clear_spot_point(which))
+        rl.addWidget(clear)
+        setattr(self, f"_hs_spot_{which}_label", lab)
+        return row
+
+    def _spot_point_get(self, which: str) -> dict[str, float] | None:
+        return getattr(self, f"_hs_spot_{which}_xy", None)
+
+    def _spot_point_set(self, which: str, pt: dict[str, float] | None) -> None:
+        setattr(self, f"_hs_spot_{which}_xy", pt)
+        lab = getattr(self, f"_hs_spot_{which}_label", None)
+        if lab is not None:
+            lab.setText("（未设置）" if not pt else f"x={pt['x']:.1f}  y={pt['y']:.1f}")
+
+    def _pick_spot_point(self, which: str) -> None:
+        sid = self._editing_scene_id or ""
+        if not sid:
+            QMessageBox.information(self, "提示", "请先打开一个场景。")
+            return
+        cur = self._spot_point_get(which) or {}
+        hs = self._current_data if isinstance(self._current_data, dict) else {}
+        dlg = MoveEntityToMapPickerDialog(
+            self._model, sid,
+            float(cur.get("x", hs.get("x", 0) or 0)),
+            float(cur.get("y", hs.get("y", 0) or 0)),
+            None, self,
+        )
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        x, y = dlg.result_destination()
+        self._spot_point_set(which, {"x": round(float(x), 1), "y": round(float(y), 1)})
+        self._emit_props_changed()
+
+    def _clear_spot_point(self, which: str) -> None:
+        self._spot_point_set(which, None)
+        self._emit_props_changed()
+
+    def _load_act_spot_data(self, data: dict) -> None:
+        verbs = data.get("verbs") if isinstance(data.get("verbs"), list) else []
+        for verb, cb in self._hs_spot_verbs.items():
+            cb.blockSignals(True)
+            cb.setChecked(verb in verbs)
+            cb.blockSignals(False)
+        self._hs_spot_prompt.setText(str(data.get("promptKey") or ""))
+        facing = str(data.get("facing") or "")
+        idx = self._hs_spot_facing.findData(facing)
+        self._hs_spot_facing.setCurrentIndex(idx if idx >= 0 else 0)
+        for which in ("align", "landing"):
+            raw = data.get(which)
+            if isinstance(raw, dict) and isinstance(raw.get("x"), (int, float)):
+                self._spot_point_set(
+                    which, {"x": float(raw.get("x", 0)), "y": float(raw.get("y", 0))})
+            else:
+                self._spot_point_set(which, None)
+        dm = data.get("durationMs")
+        self._hs_spot_duration.setValue(int(dm) if isinstance(dm, (int, float)) else 0)
+        ah = data.get("arcHeight")
+        self._hs_spot_arc.setValue(int(ah) if isinstance(ah, (int, float)) else 0)
+        self._hs_spot_actions.set_project_context(self._model, self._editing_scene_id or None)
+        self._hs_spot_exit_actions.set_project_context(
+            self._model, self._editing_scene_id or None)
+        raw_a = data.get("actions")
+        self._hs_spot_actions.set_data(raw_a if isinstance(raw_a, list) else [])
+        raw_e = data.get("exitActions")
+        self._hs_spot_exit_actions.set_data(raw_e if isinstance(raw_e, list) else [])
+
+    def _compose_act_spot_data(self) -> dict:
+        out: dict = {"verbs": [v for v, cb in self._hs_spot_verbs.items() if cb.isChecked()]}
+        prompt = self._hs_spot_prompt.text().strip()
+        if prompt:
+            out["promptKey"] = prompt
+        facing = str(self._hs_spot_facing.currentData() or "")
+        if facing:
+            out["facing"] = facing
+        for which in ("align", "landing"):
+            pt = self._spot_point_get(which)
+            if pt:
+                out[which] = {"x": pt["x"], "y": pt["y"]}
+        if self._hs_spot_duration.value() > 0:
+            out["durationMs"] = int(self._hs_spot_duration.value())
+        if self._hs_spot_arc.value() > 0:
+            out["arcHeight"] = int(self._hs_spot_arc.value())
+        acts = self._hs_spot_actions.to_list()
+        if acts:
+            out["actions"] = acts
+        ex = self._hs_spot_exit_actions.to_list()
+        if ex:
+            out["exitActions"] = ex
+        return out
 
     def _on_hs_type_changed(self, t: str) -> None:
         self._hs_data_stack.setCurrentIndex(self._TYPE_TO_DATA_IDX.get(t, 0))
@@ -6381,6 +6606,8 @@ class ScenePropertyPanel(QScrollArea):
             elif ht == "encounter":
                 self._hs_enc_id.set_items(self._model.all_encounter_ids())
                 self._hs_enc_id.set_current(data.get("encounterId", ""))
+            elif ht == "act_spot":
+                self._load_act_spot_data(data)
 
     def _on_hotspot_interaction_range_live(self, value: float) -> None:
         hs = self._pending_hotspot
@@ -6470,6 +6697,17 @@ class ScenePropertyPanel(QScrollArea):
             self.npc_xy_live_changed.emit(eid)
             self.interaction_range_changed.emit(
                 "npc", eid, float(npc.get("interactionRange", 50) or 0))
+
+    def _on_npc_sprite_sort_changed(self, _i: int) -> None:
+        npc = self._pending_npc
+        if npc is None or self._stack.currentWidget() != self._npc_panel:
+            return
+        v = self._npc_sprite_sort.currentData()
+        if v in ("back", "front"):
+            npc["spriteSort"] = v
+        else:
+            npc.pop("spriteSort", None)
+        self._emit_props_changed()
 
     def _on_npc_transform_live(self, _v: float) -> None:
         npc = self._pending_npc
@@ -6755,6 +6993,9 @@ class ScenePropertyPanel(QScrollArea):
             "graphId", "entry", "actions",
             "itemId", "itemName", "count", "isCurrency",
             "targetScene", "targetSpawnPoint", "npcId", "encounterId",
+            # act_spot
+            "verbs", "align", "facing", "landing", "promptKey", "exitActions",
+            "durationMs", "arcHeight",
         }
         old_data = hs.get("data")
         if ht == "inspect":
@@ -6797,6 +7038,9 @@ class ScenePropertyPanel(QScrollArea):
         elif ht == "encounter":
             hs["data"] = merge_preserving_unknown(
                 old_data, {"encounterId": self._hs_enc_id.current_id()}, _managed_data_keys)
+        elif ht == "act_spot":
+            hs["data"] = merge_preserving_unknown(
+                old_data, self._compose_act_spot_data(), _managed_data_keys)
         self._emit_props_changed()
 
     def save_hotspot_props(self) -> dict | None:
@@ -6849,6 +7093,8 @@ class ScenePropertyPanel(QScrollArea):
             allow_empty=True,
             title="选择 NPC 图对话",
             geometry_key="dialogue_graph_reference_picker",
+            on_open=lambda gid: open_dialogue_graph_from_widget(self, gid),
+            open_tooltip=DIALOGUE_GRAPH_OPEN_TOOLTIP,
         )
         self._npc_dialogue_graph.setToolTip("对应 public/assets/dialogues/graphs/<id>.json")
         self._npc_dialogue_graph.value_changed.connect(lambda _x: self._emit_props_changed())
@@ -6933,6 +7179,17 @@ class ScenePropertyPanel(QScrollArea):
             "场景未启用透视缩放时本项无效果。")
         self._npc_persp.currentIndexChanged.connect(self._on_npc_persp_changed)
         form.addRow("透视缩放", self._npc_persp)
+        self._npc_sprite_sort = QComboBox()
+        self._npc_sprite_sort.addItem("与角色/NPC 同层（按 Y）", "default")
+        self._npc_sprite_sort.addItem("永远画在最底层", "back")
+        self._npc_sprite_sort.addItem("永远画在最顶层", "front")
+        self._npc_sprite_sort.setToolTip(
+            "仅运行时有效：同一 entityLayer 内与玩家、其它 NPC、热点展示图的叠放；"
+            "最底/最顶仍会在同档实体之间按 Y 细分。与热点展示图的「精灵排序」同语义。"
+            "贴背景的群像/前景路人需要它——它们与背景的前后关系是画出来的，按 Y 排会穿帮。"
+        )
+        self._npc_sprite_sort.currentIndexChanged.connect(self._on_npc_sprite_sort_changed)
+        form.addRow("精灵排序", self._npc_sprite_sort)
         self._npc_cutscene_only = QCheckBox("仅过场实体（普通场景不生成）")
         self._npc_cutscene_only.setToolTip(
             "默认开启：实体只在关联过场中从场景文件初始化，不读 committed sceneMemory。"
@@ -7797,6 +8054,11 @@ class ScenePropertyPanel(QScrollArea):
             self._npc_persp.setCurrentIndex(
                 0 if not isinstance(_pv, bool) else (1 if _pv else 2))
             self._npc_persp.blockSignals(False)
+            _nss = str(st.get("spriteSort", "") or "default").strip().lower()
+            self._npc_sprite_sort.blockSignals(True)
+            self._npc_sprite_sort.setCurrentIndex(
+                1 if _nss == "back" else (2 if _nss == "front" else 0))
+            self._npc_sprite_sort.blockSignals(False)
             self._npc_cutscene_ids_pending = self._entity_cutscene_ids_from_data(st)
             self._npc_cutscene_ids_label.setText(
                 self._format_cutscene_ids_label(self._npc_cutscene_ids_pending),
@@ -8138,6 +8400,37 @@ class ScenePropertyPanel(QScrollArea):
         self._zn_act_fold = act_g
         lay.addWidget(act_g)
 
+        it_g = self._section("按 E 交互（onInteract）", start_open=False)
+        it_g.set_header_tool_tip(
+            "走进来什么都不发生，玩家在本区内按 E 才执行（与 onEnter 相反）。\n"
+            "配了动作就会在 HUD 底部出提示条。\n"
+            "优先级：附近有可交互的热点 / NPC 时它们先接住 E，本区既不出提示也不触发。")
+        it_inner = QWidget()
+        it_l = QVBoxLayout(it_inner)
+        it_form = compact_form(QFormLayout())
+        self._zn_interact_label = RichTextLineEdit(self._model)
+        self._zn_interact_label.setPlaceholderText("留空 = [E] 察看")
+        self._zn_interact_label.setToolTip(
+            "提示条文案，方括号里是键帽，如「[E] 掀开草席」。留空取默认文案。")
+        self._zn_interact_label.setMaximumWidth(320)
+        self._zn_interact_label.textChanged.connect(lambda *_: self._emit_props_changed())
+        it_form.addRow("提示文案", self._zn_interact_label)
+        it_l.addLayout(it_form)
+        self._zn_interact = ActionEditor("onInteract")
+        self._zn_interact.changed.connect(self._emit_props_changed)
+        it_l.addWidget(self._zn_interact)
+        it_g.add_body(it_inner)
+        self._zn_interact_fold = it_g
+        lay.addWidget(it_g)
+
+        pa_g = self._section("玩家身体动词（onPlayerAct）", start_open=False)
+        pa_g.set_header_tool_tip(
+            "玩家在本区内蹲 / 注视 / 踢 / 跳 / 躺 时执行；事件驱动，不受 onStay 的 0.25s 节流影响。")
+        self._zn_player_act = ZoneActsEditor()
+        self._zn_player_act.changed.connect(self._emit_props_changed)
+        pa_g.add_body(self._zn_player_act)
+        lay.addWidget(pa_g)
+
         smell_g = self._section("区域气味（进入本区呈现·zone 层）", start_open=False)
         self._zn_smell_fold = smell_g
         smell_inner = QWidget()
@@ -8175,9 +8468,10 @@ class ScenePropertyPanel(QScrollArea):
         kind = self._zn_kind.currentData()
         is_depth = kind == "depth_floor"
         self._zn_boost.setEnabled(is_depth)
-        for ae in (self._zn_enter, self._zn_stay, self._zn_exit):
+        for ae in (self._zn_enter, self._zn_stay, self._zn_exit, self._zn_interact):
             ae.setEnabled(not is_depth)
-        # depth_floor 仅参与遮挡、无进出触发，气味无意义 → 禁用气味区
+        # depth_floor 仅参与遮挡、无进出触发，按 E 交互与气味同样无意义 → 一并禁用
+        self._zn_interact_fold.setEnabled(not is_depth)
         self._zn_smell_fold.setEnabled(not is_depth)
 
     def _on_zone_kind_changed(self, _idx: int) -> None:
@@ -8206,14 +8500,17 @@ class ScenePropertyPanel(QScrollArea):
         """切换区域类型会丢字段时先确认（审查 P3）。
         → depth_floor：清空 onEnter/onStay/onExit/smell；← depth_floor：丢 floorOffsetBoost。"""
         if new_kind == "depth_floor":
+            # onPlayerAct 也算（确认文案里本来就写了它会丢，判据却漏了 → 只配了动词的区
+            # 切类型时会静默丢数据）
             has_actions = bool(
-                self._zn_enter.to_list() or self._zn_stay.to_list() or self._zn_exit.to_list())
+                self._zn_enter.to_list() or self._zn_stay.to_list() or self._zn_exit.to_list()
+                or self._zn_interact.to_list() or self._zn_player_act.to_dict())
             has_smell = bool(self._zn_smell_scent.committed_type().strip())
             if not (has_actions or has_smell):
                 return True
             lost = []
             if has_actions:
-                lost.append("onEnter / onStay / onExit 动作")
+                lost.append("onEnter / onStay / onExit / onInteract / onPlayerAct 动作")
             if has_smell:
                 lost.append("区域气味 smell")
             return QMessageBox.question(
@@ -8404,8 +8701,14 @@ class ScenePropertyPanel(QScrollArea):
             self._zn_enter.set_project_context(self._model, self._editing_scene_id or None)
             self._zn_stay.set_project_context(self._model, self._editing_scene_id or None)
             self._zn_exit.set_project_context(self._model, self._editing_scene_id or None)
+            self._zn_interact.set_project_context(self._model, self._editing_scene_id or None)
             self._zn_enter.set_data(st.get("onEnter", []))
             self._zn_stay.set_data(st.get("onStay", []))
+            self._zn_interact.set_data(st.get("onInteract", []))
+            self._zn_interact_label.setText(str(st.get("interactLabel", "") or ""))
+            self._zn_player_act.set_project_context(
+                self._model, self._editing_scene_id or None)
+            self._zn_player_act.set_data(st.get("onPlayerAct"))
             self._zn_exit.set_data(st.get("onExit", []))
             idx = self._zn_kind.findData(st.get("zoneKind") or "standard")
             self._zn_kind.setCurrentIndex(idx if idx >= 0 else 0)
@@ -8441,6 +8744,9 @@ class ScenePropertyPanel(QScrollArea):
                 or (isinstance(ox, list) and len(ox) > 0)
             )
             self._zn_act_fold.set_expanded(has_act)
+            oi = st.get("onInteract") or []
+            self._zn_interact_fold.set_expanded(
+                bool(isinstance(oi, list) and len(oi) > 0))
             _zn_conds = st.get("conditions")
             self._zn_cond_fold.set_expanded(
                 bool(isinstance(_zn_conds, list) and len(_zn_conds) > 0))
@@ -8461,7 +8767,8 @@ class ScenePropertyPanel(QScrollArea):
         if kind == "depth_floor":
             zone["zoneKind"] = "depth_floor"
             zone["floorOffsetBoost"] = self._zn_boost.value()
-            for k in ("onEnter", "onStay", "onExit", "smell"):
+            for k in ("onEnter", "onStay", "onExit", "smell", "onPlayerAct",
+                      "onInteract", "interactLabel"):
                 zone.pop(k, None)
         else:
             zone.pop("zoneKind", None)
@@ -8481,6 +8788,22 @@ class ScenePropertyPanel(QScrollArea):
                 zone["onExit"] = ox
             elif "onExit" in zone:
                 del zone["onExit"]
+            oi = self._zn_interact.to_list()
+            if oi:
+                zone["onInteract"] = oi
+            elif "onInteract" in zone:
+                del zone["onInteract"]
+            # 文案只在真有 onInteract 时才有意义：动作清空则文案一并清，不留孤字段
+            il = self._zn_interact_label.text().strip()
+            if il and oi:
+                zone["interactLabel"] = il
+            elif "interactLabel" in zone:
+                del zone["interactLabel"]
+            opa = self._zn_player_act.to_dict()
+            if opa:
+                zone["onPlayerAct"] = opa
+            elif "onPlayerAct" in zone:
+                del zone["onPlayerAct"]
             scent = self._zn_smell_scent.committed_type().strip()
             if scent:
                 old_sm = zone.get("smell") if isinstance(zone.get("smell"), dict) else {}
@@ -8895,6 +9218,7 @@ class SceneEditor(QWidget):
         refactor_menu.addAction("迁移到场景…", lambda: self._refactor_selected("move"))
         refactor_menu.addAction("重命名 id…", lambda: self._refactor_selected("rename"))
         refactor_menu.addAction("安全删除（引用报告）…", lambda: self._refactor_selected("delete"))
+        refactor_menu.addAction("转为 NPC（纯展示热点）…", lambda: self._refactor_selected("convert"))
         refactor_menu.addSeparator()
         refactor_menu.addAction("撤销上次重构", self._undo_entity_refactor)
         refactor_btn = QToolButton()
@@ -10922,6 +11246,22 @@ class SceneEditor(QWidget):
             return self._apply_props()
         return True
 
+    def commit_pending_on_leave(self) -> bool:
+        """主窗切到别的编辑器页之前提交未应用的属性编辑（鸭子协议钩子）。
+
+        必须走 ``_undo_flush_pending_as_command``——**不能**裸调
+        ``_commit_pending_scene_edits``。编辑器内部的每一条离开路径（切实体 / 切场景 /
+        点空白 / 新增实体 / 拖拽前）都把这次提交记成独立撤销命令，「应用」按钮也进栈；
+        只有这里裸提交的话，同一个"离开当前编辑"动作会因为离开的是实体还是编辑器页而有
+        两套撤销语义，且因为写入不在栈里，一次 撤销+重做 会把这次配置静默还原掉。
+
+        没有这个钩子的话，改完场景实体不点「应用」直接切页 = 模型里没有这次配置，
+        其它编辑器的候选/引用当然看不到——正是"要重启编辑器才看得到"的第一层根因。
+
+        返回 False = 有闸拦住没提交（草稿仍完整保留在本页），主窗只提示不阻断切页。
+        """
+        return self._undo_flush_pending_as_command()
+
     def reload_from_model(self) -> None:
         """Reproject the current scene after another editor replaced its domain.
 
@@ -11002,6 +11342,7 @@ class SceneEditor(QWidget):
         if not self._preflight_group_commit(self._model.scenes[sc_id]):
             props._set_pending_dirty(True)
             return False
+        self._preflight_entity_id_commit(self._model.scenes[sc_id])
         props.commit_scene_staging_to_source()  # 场景级非列表字段（含 spawnPoint/spawnPoints）
         self._commit_staging_dict_into(props._source_hotspot, props._staging_hotspot)
         self._commit_staging_dict_into(props._source_npc, props._staging_npc)
@@ -11245,6 +11586,69 @@ class SceneEditor(QWidget):
         props._set_pending_dirty(True)
         QMessageBox.warning(self, title, message)
         return False
+
+    # npc 与 hotspot 互为 emote / 实体寻址目标，共用一个命名空间（与 validator 的
+    # "实体 id 重复" 检查、entity_refactor 的撞名互拒完全同口径）；zone 独立命名空间。
+    _ENTITY_ID_NAMESPACES: dict[str, tuple[str, ...]] = {
+        "hotspot": ("hotspots", "npcs"),
+        "npc": ("hotspots", "npcs"),
+        "zone": ("zones",),
+    }
+    _ENTITY_KIND_LABELS: dict[str, str] = {"hotspot": "热区", "npc": "NPC", "zone": "Zone"}
+
+    @staticmethod
+    def _entity_id_conflict(
+        sc: dict, kind: str, source: dict, new_id: str,
+    ) -> str | None:
+        """返回冲突方的描述；无冲突返回 None。按对象身份排除自己，不按 id 比对。"""
+        for list_key in SceneEditor._ENTITY_ID_NAMESPACES.get(kind, ()):
+            for ent in sc.get(list_key) or []:
+                if not isinstance(ent, dict) or ent is source:
+                    continue
+                if str(ent.get("id", "") or "").strip() == new_id:
+                    other = {"hotspots": "热区", "npcs": "NPC", "zones": "Zone"}[list_key]
+                    return f"同场景已有一个{other}叫这个 id"
+        return None
+
+    def _preflight_entity_id_commit(self, sc: dict) -> None:
+        """提交前的实体 id 闸：空 id / 同命名空间撞名一律退回原 id 并提示。
+
+        为什么必须有：id 输入框此前是裸写入（``ent["id"] = 输入框文本``），撞名只有事后
+        ``validate-data`` 报 error 才能发现，而运行时 ``getNpcById`` 是 first-wins、画布图元
+        按 ``kind:id`` 建键会互相覆盖、属性/删除按 id 首匹配——已经串台了才知道。口径与
+        出生点改名的撞名闸一致：**只退回 id 这一个字段**，本轮其它编辑照常提交，不把用户
+        整批编辑卡住。
+
+        裸改 id 同样绕过重构引擎的入站引用改写，故提示里指向「重构 → 重命名 id」。
+        """
+        props = self._props
+        for kind, source, staging in props.entity_staging_pairs():
+            if not isinstance(source, dict) or not isinstance(staging, dict):
+                continue
+            old_id = str(source.get("id", "") or "").strip()
+            new_id = str(staging.get("id", "") or "").strip()
+            if new_id == old_id:
+                continue
+            label = self._ENTITY_KIND_LABELS.get(kind, kind)
+            if not new_id:
+                reason = "id 不能为空"
+            else:
+                conflict = self._entity_id_conflict(sc, kind, source, new_id)
+                if conflict is None:
+                    continue
+                reason = f"「{new_id}」已被占用（{conflict}）"
+            # 弹窗可能在"切页 / 点跳转"的半途出现，此时用户已经落到别的页面——
+            # 标题与正文必须自带定位（哪个场景的哪个实体），不能只说"id 已被占用"。
+            scene_id = self._current_scene_id or "?"
+            QMessageBox.warning(
+                self, f"{label} id 未改名 —— 场景「{scene_id}」",
+                f"场景「{scene_id}」里的{label}「{old_id}」：{reason}。\n"
+                "改名会让画布图元、属性面板与动作引用按 id 串台。\n"
+                f"已退回原 id「{old_id}」，本次其它修改照常保存。\n\n"
+                "如需改名并让全项目引用（动作参数 / 叙事 owner / 对话图）跟随，"
+                "请回到「场景」页用工具栏「重构 → 重命名 id」。",
+            )
+            props.revert_entity_id(kind, old_id)
 
     def _preflight_group_commit(self, sc: dict) -> bool:
         """在任何 source 写入前验证 group staging，失败时完整保留草稿。"""
@@ -11568,6 +11972,8 @@ class SceneEditor(QWidget):
         if not self._preflight_group_commit(sc_model):
             return False
 
+        self._preflight_entity_id_commit(sc_model)
+
         old_hs_id = (
             str(props._source_hotspot.get("id", "") or "").strip()
             if props._source_hotspot
@@ -11651,6 +12057,14 @@ class SceneEditor(QWidget):
         return sc
 
     @staticmethod
+    def _namespace_entity_ids(sc: dict, kind: str):
+        """某实体种类所在命名空间里已占用的全部 id（npc 与 hotspot 共用一个）。"""
+        for list_key in SceneEditor._ENTITY_ID_NAMESPACES.get(kind, ()):
+            for ent in sc.get(list_key) or []:
+                if isinstance(ent, dict):
+                    yield str(ent.get("id", "") or "")
+
+    @staticmethod
     def _unique_entity_id(prefix: str, existing_ids) -> str:
         """new_xxx_N 探测式取号：len() 命名在删过中间项后会撞既存 id（审查 P1-26），
         撞车会让画布图元键覆盖、属性/删除按 id 首匹配串台。"""
@@ -11684,8 +12098,10 @@ class SceneEditor(QWidget):
         wx = round(float(wx), 1)
         wy = round(float(wy), 1)
         hs_list = sc.setdefault("hotspots", [])
+        # 取号查整个命名空间（含 npcs）：与 validator / 重构引擎口径一致，
+        # 别只查自家列表——否则自动取的号可能一出生就跟同场景 NPC 撞名。
         new_id = self._unique_entity_id(
-            "new_hotspot", (h.get("id", "") for h in hs_list if isinstance(h, dict)))
+            "new_hotspot", self._namespace_entity_ids(sc, "hotspot"))
         hs_list.append({
             "id": new_id, "type": "inspect", "label": "", "x": wx, "y": wy,
             "interactionRange": 50, "data": {"text": ""},
@@ -11711,7 +12127,7 @@ class SceneEditor(QWidget):
         wy = round(float(wy), 1)
         npc_list = sc.setdefault("npcs", [])
         new_id = self._unique_entity_id(
-            "new_npc", (n.get("id", "") for n in npc_list if isinstance(n, dict)))
+            "new_npc", self._namespace_entity_ids(sc, "npc"))
         npc_list.append({
             "id": new_id, "name": "New NPC", "x": wx, "y": wy,
             "interactionRange": 50,
@@ -11737,7 +12153,7 @@ class SceneEditor(QWidget):
         wy = round(float(wy), 1)
         z_list = sc.setdefault("zones", [])
         new_id = self._unique_entity_id(
-            "new_zone", (z.get("id", "") for z in z_list if isinstance(z, dict)))
+            "new_zone", self._namespace_entity_ids(sc, "zone"))
         z_list.append({
             "id": new_id,
             "polygon": [
@@ -11838,12 +12254,17 @@ class SceneEditor(QWidget):
         if kind == "spawn" and eid == "default":
             QMessageBox.information(self, "实体重构", "默认出生点不参与重构。")
             return
+        if op == "convert" and kind != "hotspot":
+            QMessageBox.information(
+                self, "转为 NPC", "只有带展示图的纯展示热区能转成 NPC，请先选中这样一个热区。")
+            return
         # commit-on-leave：把属性面板/画布 staging 先落进模型，重构基于已提交数据
         # （记为可撤销命令——用户取消重构对话框时这次提交仍可 Ctrl+Z）。
         if not self._undo_flush_pending_as_command():
             self._restore_editing_selection_after_block()
             return
         from ..shared.entity_refactor_dialog import (
+            ConvertHotspotToNpcDialog,
             MoveEntityDialog,
             RenameEntityDialog,
             SafeDeleteEntityDialog,
@@ -11852,6 +12273,7 @@ class SceneEditor(QWidget):
             "move": MoveEntityDialog,
             "rename": RenameEntityDialog,
             "delete": SafeDeleteEntityDialog,
+            "convert": ConvertHotspotToNpcDialog,
         }[op]
         try:
             dlg = dialog_cls(self._model, self._current_scene_id or "", kind, eid, self)
@@ -11878,6 +12300,20 @@ class SceneEditor(QWidget):
                 self._select_scene_entity_by_kind(kind, summary["newId"], self._current_scene_id or "")
             msg = (f"已改名为「{summary['newId']}」。"
                    + (f"\n未自动改写（指向歧义）的对话图：{'、'.join(skipped)}" if skipped else ""))
+        elif summary.get("op") == "convertHotspotToNpc":
+            self._select_scene_entity_by_kind("npc", eid, self._current_scene_id or "")
+            lines = [f"热区「{eid}」已转成 NPC（id 不变，引用无需改写）。"]
+            if summary.get("scale") is not None:
+                lines.append(f"实例 scale = {summary['scale']}（按动画包世界身高换算）。")
+            if summary.get("droppedFields"):
+                lines.append("已丢弃的热点字段：" + "、".join(summary["droppedFields"]))
+            for warn in summary.get("warnings") or []:
+                lines.append("⚠ " + warn)
+            if summary.get("deadHotspotActionRefs"):
+                lines.append(
+                    f"⚠ {len(summary['deadHotspotActionRefs'])} 处热点专用动作已失效，请自行清理。")
+            lines.append("请在画布上目验大小与前后关系。")
+            msg = "\n".join(lines)
         else:
             msg = (f"已删除「{eid}」；"
                    f"{summary.get('danglingRefs', 0)} 处引用悬垂（跑 Validate Data 查看）。")

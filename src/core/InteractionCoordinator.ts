@@ -208,7 +208,9 @@ export class InteractionCoordinator {
     eventBus.emit('hotspot:inspected', { hotspotId: hotspot.def.id });
     if (data.actions) {
       try {
-        await actionExecutor.executeBatchAwait(data.actions);
+        // 热区自己持有的动作批：owner 记在热区上，批里 startDialogueGraph 未显式给 owner 时
+        // 就以 `hotspot:<id>` 落定（与 graphId 模式的热区对话同一命名空间）。
+        await actionExecutor.executeBatchFromOwner(data.actions, 'hotspot', hotspot.def.id);
       } catch (e) {
         console.warn('InteractionCoordinator: inspect actions failed', e);
       }
@@ -240,7 +242,7 @@ export class InteractionCoordinator {
       void (async () => {
         if (data.actions?.length) {
           try {
-            await actionExecutor.executeBatchAwait(data.actions);
+            await actionExecutor.executeBatchFromOwner(data.actions, 'hotspot', hotspot.def.id);
           } catch (e) {
             console.warn('InteractionCoordinator: inspect graph actions failed', e);
           }

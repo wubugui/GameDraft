@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "id": "生态_翻_雾津_茶馆门槛",
+  "entry": "root",
+  "meta": {
+    "title": "翻检 · 雾津茶馆青石门槛（眼尖 / 夜 / 常态 三态）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "narrative": "eco_眼力",
+              "state": "眼尖",
+              "reached": true
+            }
+          ],
+          "next": "deep"
+        },
+        {
+          "conditions": [
+            {
+              "narrative": "eco_时辰",
+              "state": "夜"
+            }
+          ],
+          "next": "night"
+        }
+      ],
+      "defaultNext": "first"
+    },
+    "first": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "门槛是整块青石，当中让人踩出一个凹。凹里积着水，映得到房檐，也映得到你。",
+      "next": "act_first"
+    },
+    "night": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "门槛还是凉的。里头没得声气，倒是闻得到刚熄的灶灰味。",
+      "next": "end"
+    },
+    "deep": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "凹底的水里躺着一枚铜钱，绿得跟石头一个色。进出的人天天从它上头跨过去，没得哪个弯过腰。",
+      "next": "end"
+    },
+    "act_first": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "playNpcAnimation",
+          "params": {
+            "target": "eco_wj_面摊_陈嬢嬢",
+            "state": "crouch",
+            "loop": false,
+            "thenState": "crouch",
+            "speed": 0.9
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "end": {
+      "type": "end"
+    }
+  }
+}

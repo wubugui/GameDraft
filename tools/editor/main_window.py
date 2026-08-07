@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtWidgets import (
-    QMainWindow, QStatusBar, QFileDialog,
+    QApplication, QMainWindow, QStatusBar, QFileDialog,
     QMessageBox, QTextEdit, QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     QSizePolicy, QWidget, QStyle, QSplitter, QTreeWidget,
     QTreeWidgetItem, QStackedWidget, QToolButton, QMenu,
@@ -272,6 +272,10 @@ class MainWindow(QMainWindow):
         self._restoring_stack_after_task_flush_failure = False
         self._task_prepared_editor_ids: set[int] = set()
         self._activated_editor_ids: set[int] = set()
+        # 切页时"离开的是哪一页"：currentChanged 只给新 index，旧 index 得自己记。
+        self._last_stack_page_index = -1
+        # 拆栈期间屏蔽 currentChanged 的副作用（提交 staging / 记刷新水位）。
+        self._tearing_down_stack = False
         # Task 编译会原位替换 Scene/Quest/Narrative/Dialogue 原生数据。旧页若重拉
         # 失败，其表单投影已经不可信；仅 disable 仍会被 Save All 的鸭子 flush
         # 遍历到并覆盖新数据。因此锁必须参与所有保存/关闭/换工程门闸。
@@ -328,6 +332,12 @@ class MainWindow(QMainWindow):
         self._lsp_overlay_timer.setSingleShot(True)
         self._lsp_overlay_timer.timeout.connect(self._flush_lsp_overlays)
         self._model.data_changed.connect(self._on_lsp_overlay_dirty)
+        # 跨页引用候选的"数据改过没"水位：任何 mark_dirty 都推进它。切页时若某页上次
+        # 刷新后数据一次都没动过，整轮重建可以整体跳过（ActionEditor 重建不便宜，
+        # 别让"来回切页看看"变卡）。
+        self._model_revision = 0
+        self._page_refresh_revisions: dict[int, int] = {}
+        self._model.data_changed.connect(self._bump_model_revision)
         self._lsp_state_signal.connect(self._on_lsp_state_changed)
         self._lsp_info_signal.connect(self._on_lsp_info_fetched)
         self._global_search_dialog = None
@@ -1251,10 +1261,20 @@ class MainWindow(QMainWindow):
         )
 
     def _clear_editor_stack(self) -> None:
-        while self._stack.count():
-            w = self._stack.widget(0)
-            self._stack.removeWidget(w)
-            w.deleteLater()
+        # removeWidget 自己会发 currentChanged → _on_stack_page_changed，于是拆到一半的
+        # 栈会触发"给正在销毁的页提交 staging / 记刷新水位"。整个拆除过程挂 guard 屏蔽它，
+        # 拆完再清水位（换工程会整栈重建，而 id(inst) 会被回收复用——留着旧水位会让新编辑器
+        # 第一次切页被误判"数据没变"而跳过刷新）。
+        self._tearing_down_stack = True
+        try:
+            while self._stack.count():
+                w = self._stack.widget(0)
+                self._stack.removeWidget(w)
+                w.deleteLater()
+        finally:
+            self._tearing_down_stack = False
+        self._page_refresh_revisions = {}
+        self._last_stack_page_index = -1
 
     @staticmethod
     def _ensure_nav_path(tree: QTreeWidget, segments: list[str]) -> QTreeWidgetItem:
@@ -1392,15 +1412,134 @@ class MainWindow(QMainWindow):
         self._task_prepared_editor_ids = prepared
         return True
 
+    def _commit_leaving_page(self, index: int) -> None:
+        """离开某编辑器页前提交它的未应用 staging（commit-on-leave 的跨页版）。
+
+        鸭子协议 ``commit_pending_on_leave()``——**只有显式实现它的编辑器才提交**。
+        不能在这里无差别调 ``flush_to_model``：图对话页的 flush 语义是直接写盘、叙事页
+        的 flush 会走 JS 往返并弹校验窗，切个页触发这些是灾难。
+
+        没有这一步的后果：场景编辑器属性面板是 staging + 「应用」模式，commit-on-leave
+        只在**编辑器内部**切实体/切场景时触发；改完实体不点「应用」直接切到别的编辑器页，
+        模型里根本没有这次配置，别处当然看不到（"要重启才能看到"的第一层根因）。
+        """
+        if not (0 <= index < len(self._editor_instances)):
+            return
+        inst = self._editor_instances[index]
+        # 被 Task 编译标记为陈旧的页：它的表单投影已经不可信，绝不能靠切页把陈旧值写回模型
+        # （该锁参与所有保存/关闭/换工程门闸，这里必须同口径）。
+        if id(inst) in getattr(self, "_stale_editor_locks", {}):
+            return
+        commit = getattr(inst, "commit_pending_on_leave", None)
+        if not callable(commit):
+            return
+        try:
+            if commit() is False and hasattr(self, "_status"):
+                self._status.showMessage(
+                    f"「{self._editor_labels[index]}」有未应用的修改无法自动提交；"
+                    "编辑仍保留在该页，请回去处理提示后再切走。",
+                    7000,
+                )
+        except Exception as e:  # noqa: BLE001 — 一个坏页不能阻断切页
+            print(
+                f"[leave-commit] 离开页提交失败 ({type(inst).__name__}): {e!r}",
+                flush=True,
+            )
+
+    def _bump_model_revision(self, *_args) -> None:
+        self._model_revision = getattr(self, "_model_revision", 0) + 1
+
+    def _refresh_page_reference_candidates(self, inst, *, force: bool = False) -> None:
+        """让某一页把跨域引用候选重拉一遍：顶层钩子 + 子控件兜底扫描。
+
+        兜底扫描是**必要**的而非冗余：约 12 个编辑页（过场/档案/物品/规矩/地图/字符串/
+        flag 注册表/叠图/Action 注册表/滤镜/玩家立绘…）根本没有顶层
+        ``reload_refs_from_model`` 钩子——鸭子协议缺钩子不报错、静默跳过，它们内嵌的
+        ActionEditor 候选就只能靠重启编辑器才更新。扫描只碰**最外层** ActionEditor
+        （重建外层会销毁其嵌套子编辑器），ActionEditor 侧按刷新代号去重，
+        与顶层钩子重叠也只重建一次。
+
+        ``force=False`` 时按模型水位跳过：这一页上次刷新之后模型一次都没改过 = 候选不可能
+        过期，整轮免做。磁盘侧变化（外置图对话编辑器改文件、不经 mark_dirty）必须传
+        ``force=True``，否则会被水位挡掉。
+        """
+        from .shared.action_editor import (
+            outermost_action_editors,
+            reference_rebuild_is_safe_now,
+        )
+        from .shared.reference_picker import ReferencePickerField
+
+        # 有模态框/弹出层开着就整轮让路（不记水位，下轮补刷）：重建会销毁 ActionRow，
+        # 而挂在行上的 QMessageBox 便捷函数是栈上对象，行析构会 free 栈地址 → 进程 abort。
+        # 刷新入口里有不受模态阻塞的定时器，所以这道闸必须在最外层也拦一道。
+        if not reference_rebuild_is_safe_now():
+            return
+
+        revision = getattr(self, "_model_revision", 0)
+        marks = getattr(self, "_page_refresh_revisions", None)
+        if marks is None:
+            marks = {}
+            self._page_refresh_revisions = marks
+        if not force and marks.get(id(inst)) == revision:
+            return
+
+        failures: list[str] = []
+        deferred = False
+        fn = getattr(inst, "reload_refs_from_model", None)
+        if callable(fn):
+            try:
+                fn()
+            except Exception as e:  # noqa: BLE001 — 一个坏页不能阻断切页
+                failures.append(f"{type(inst).__name__}.reload_refs_from_model: {e!r}")
+        focused = QApplication.focusWidget()
+        for action_editor in outermost_action_editors(inst):
+            # 正在被键盘操作的动作编辑器不重建：重建会重置焦点与光标位置（用户正打字时
+            # 从外置图对话编辑器切回主窗就会撞上）。这一页因此不记水位，下一轮重来。
+            if focused is not None and action_editor.isAncestorOf(focused):
+                deferred = True
+                continue
+            try:
+                action_editor.reload_refs_from_model()
+            except Exception as e:  # noqa: BLE001 — isolate every child
+                failures.append(f"ActionEditor.reload_refs_from_model: {e!r}")
+        # 顺序要紧：先重建 ActionEditor 再枚举 picker，枚举到的才是重建后的活控件。
+        for picker in inst.findChildren(ReferencePickerField):
+            try:
+                picker.refresh_display()
+            except Exception as e:  # noqa: BLE001 — isolate every child
+                failures.append(f"ReferencePickerField.refresh_display: {e!r}")
+        # 只有整页真的刷全了才记水位：因焦点/异常跳过的部分必须留给下一轮，
+        # 否则"跳过一次"会被水位固化成永久陈旧。
+        if not deferred and not failures:
+            marks[id(inst)] = revision
+        if failures:
+            print(
+                "[reference-refresh] 当前页目录刷新部分失败；其余控件已继续刷新:\n  - "
+                + "\n  - ".join(failures),
+                flush=True,
+            )
+            if hasattr(self, "_status"):
+                self._status.showMessage(
+                    "当前页引用目录刷新部分失败；原编辑值已保留，请查看终端日志。",
+                    7000,
+                )
+
     def _on_stack_page_changed(self, index: int) -> None:
-        """切到某编辑器页时,让它重拉跨域引用候选(保留各自当前选中值)。
+        """切页：先提交离开页的未应用编辑,再让新页重拉跨域引用候选(保留各自当前选中值)。
 
         _editor_instances 与 stack 前缀对齐(Game 浏览页在末尾且不入该列表),
-        故按 index 取实例;hook 缺省时跳过。重拉走各编辑器 reload_refs_from_model,
-        只刷新引用下拉,不重置表单字段。
+        故按 index 取实例;hook 缺省时跳过。重拉只刷新引用候选,不重置表单字段。
         """
-        if self._restoring_stack_after_task_flush_failure:
+        if getattr(self, "_tearing_down_stack", False):
+            # 拆栈过程中 removeWidget 自己发的信号：页正在销毁，既不该提交也不该记水位。
             return
+        if self._restoring_stack_after_task_flush_failure:
+            self._last_stack_page_index = index
+            return
+        leaving = self._last_stack_page_index
+        self._last_stack_page_index = index
+        if leaving != index:
+            self._commit_leaving_page(leaving)
         if 0 <= index < len(self._editor_instances):
             inst = self._editor_instances[index]
             self._activated_editor_ids.add(id(inst))
@@ -1409,21 +1548,10 @@ class MainWindow(QMainWindow):
             if isinstance(inst, TaskOrchestrationEditor):
                 if not self._prepare_task_native_mutation():
                     return
-            fn = getattr(inst, "reload_refs_from_model", None)
-            if callable(fn):
-                try:
-                    fn()
-                except Exception as e:  # noqa: BLE001 — 一个坏页不能阻断切页
-                    print(
-                        f"[reference-refresh] 当前页目录刷新失败 "
-                        f"({type(inst).__name__}): {e!r}",
-                        flush=True,
-                    )
-                    if hasattr(self, "_status"):
-                        self._status.showMessage(
-                            "当前页引用目录刷新失败；原编辑值已保留，请查看终端日志。",
-                            7000,
-                        )
+            from .shared.action_editor import bump_reference_refresh_epoch
+
+            bump_reference_refresh_epoch()
+            self._refresh_page_reference_candidates(inst)
 
     def _populate_tabs(self) -> None:
         self._clear_editor_stack()
@@ -1458,6 +1586,7 @@ class MainWindow(QMainWindow):
         from .editors.filter_editor import FilterEditor
         from .editors.action_registry_editor import ActionRegistryEditor
         from .editors.overlay_images_editor import OverlayImagesEditor
+        from .editors.prop_preset_editor import PropPresetEditor
         from .editors.narrative_data_editors import (
             ScenariosCatalogEditor,
             DocumentRevealsEditor,
@@ -1469,6 +1598,7 @@ class MainWindow(QMainWindow):
         from .editors.sugar_wheel_editor import SugarWheelEditor
         from .editors.paper_craft_editor import PaperCraftEditor
         from .editors.pressure_signal_editor import PressureHoldEditor, SignalCueEditor
+        from .editors.bubble_lines_editor import BubbleLinesEditor
         from .editors.smell_profile_editor import SmellProfileEditor
         from .editors.plane_editor import PlaneEditor
         from tools.task_orchestration_editor.editor import TaskOrchestrationEditor
@@ -1486,6 +1616,7 @@ class MainWindow(QMainWindow):
             (["数据编辑", "叙事编排"], "Encounter", EncounterEditor),
             (["数据编辑", "叙事编排"], "临场长按", PressureHoldEditor),
             (["数据编辑", "叙事编排"], "信号Cue", SignalCueEditor),
+            (["数据编辑", "叙事编排"], "头顶闲聊", BubbleLinesEditor),
             (["数据编辑", "叙事编排"], "水域小游戏", WaterMinigameEditor),
             (["数据编辑", "叙事编排"], "转盘小游戏", SugarWheelEditor),
             (["数据编辑", "叙事编排"], "扎纸小游戏", PaperCraftEditor),
@@ -1503,6 +1634,7 @@ class MainWindow(QMainWindow):
             (["数据编辑", "资源与本地化"], "动画浏览", AnimEditor),
             (["数据编辑", "资源与本地化"], "玩家化身", PlayerAvatarEditor),
             (["数据编辑", "资源与本地化"], "叠图 ID", OverlayImagesEditor),
+            (["数据编辑", "资源与本地化"], "挂件预设", PropPresetEditor),
             (["数据编辑", "资源与本地化"], "文档揭示", DocumentRevealsEditor),
             (["数据编辑", "资源与本地化"], "气味Profile", SmellProfileEditor),
             (["数据编辑", "工程与全局"], "Config", GameConfigEditor),
@@ -1598,45 +1730,29 @@ class MainWindow(QMainWindow):
 
     def _reload_all_reference_catalogs(self) -> None:
         """A disk graph catalog mutation must be visible in every open editor now."""
-        from .shared.action_editor import ActionEditor
+        from .shared.action_editor import bump_reference_refresh_epoch
         from .shared.dialogue_graph_refs import clear_dialogue_graph_reference_cache
-        from .shared.reference_picker import ReferencePickerField
 
         # 外置编辑器可能只改了标题/场景归属而没改变文件名；仅靠 id 签名无法
         # 识别这种跨进程变化，刷新边界上必须先清目录缓存。
         clear_dialogue_graph_reference_cache(self._model)
-        failures: list[str] = []
-        for inst in self._editor_instances:
-            reload_refs = getattr(inst, "reload_refs_from_model", None)
-            if callable(reload_refs):
-                try:
-                    reload_refs()
-                except Exception as e:  # noqa: BLE001 — isolate every editor
-                    failures.append(f"{type(inst).__name__}.reload_refs_from_model: {e!r}")
-            # Some older top-level editors have no duck hook.  Their nested
-            # ActionEditors/reference fields still participate in the same
-            # immediate refresh contract without rebuilding or serializing UI.
-            for action_editor in inst.findChildren(ActionEditor):
-                try:
-                    action_editor.reload_refs_from_model()
-                except Exception as e:  # noqa: BLE001 — isolate every child
-                    failures.append(f"ActionEditor.reload_refs_from_model: {e!r}")
-            for picker in inst.findChildren(ReferencePickerField):
-                try:
-                    picker.refresh_display()
-                except Exception as e:  # noqa: BLE001 — isolate every child
-                    failures.append(f"ReferencePickerField.refresh_display: {e!r}")
-        if failures:
-            print(
-                "[reference-refresh] 部分目录刷新失败；其余编辑器已继续刷新:\n  - "
-                + "\n  - ".join(failures),
-                flush=True,
-            )
-            if hasattr(self, "_status"):
-                self._status.showMessage(
-                    f"引用目录刷新完成，但 {len(failures)} 个控件失败；原值均已保留。",
-                    7000,
-                )
+        # 一次目录变更 = 一轮刷新代号：同一页里顶层钩子与子控件兜底扫描重叠时只重建一次。
+        bump_reference_refresh_epoch()
+        # 目录变了 = 所有页的候选都过期。但一次把十几页的动作行全重建会明显卡顿
+        # （本方法挂在窗口激活 / 外置编辑器退出上，一激活就冻一下很难受）：
+        # 清空全部刷新水位让每页在**下次切过去时**必刷，只对当前可见页立刻强刷。
+        self._page_refresh_revisions = {}
+        stack = getattr(self, "_stack", None)
+        idx = stack.currentIndex() if stack is not None else -1
+        targets = (
+            [self._editor_instances[idx]]
+            if 0 <= idx < len(self._editor_instances)
+            else list(self._editor_instances)  # 拿不到当前页时退回全刷：宁可慢，不可陈旧
+        )
+        for inst in targets:
+            # 顶层钩子 + 子控件兜底（缺钩子的老编辑页靠兜底才不掉队），与切页走同一条路。
+            # force：磁盘侧变化不经 mark_dirty，模型水位察觉不到，必须强制刷。
+            self._refresh_page_reference_candidates(inst, force=True)
 
     def _on_task_native_domains_changed(self, raw_domains: object) -> None:
         """Rebase old editor projections after task compilation swaps domains."""

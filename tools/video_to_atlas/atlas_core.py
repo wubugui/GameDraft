@@ -806,19 +806,52 @@ def _dump_json_text(data: dict[str, Any]) -> str:
 #: 重导出必须原样保留，否则"更新一次角色动画"就把手调值全抹了。
 PRESERVED_STATE_FIELDS = ("referenceSpeed", "bubbleAnchor")
 
+#: 导出器**自己算得出来**的顶层键——重导出时必须以新导出结果为准。
+#: 这张表之外的顶层键一律视为人工/旁路工具写的，原样并回（见 merge_preserved_anim_fields）。
+#: 加新的导出产物字段时必须同步加进来，否则它会被上一次的旧值盖住。
+EXPORTER_OWNED_TOP_LEVEL_KEYS = frozenset({
+    "spritesheet",
+    "cols",
+    "rows",
+    "states",
+    "worldWidth",
+    "worldHeight",
+    "cellWidth",
+    "cellHeight",
+    "atlasFrames",
+})
+
 
 def merge_preserved_anim_fields(
     new_anim: dict[str, Any],
     existing_anim: Optional[dict[str, Any]],
 ) -> dict[str, Any]:
-    """把旧 anim.json 里的人工 per-state 字段并回新导出结果（按 state 名对齐）。
+    """把旧 anim.json 里**导出器算不出来的**内容并回新导出结果。
 
-    导出器是"从零拼 dict"，重导出会整份覆盖 anim.json；``referenceSpeed``（步速匹配基准）
-    与 ``bubbleAnchor``（授权头顶锚）都是人在 anim 编辑器里调出来、导出器无从推算的值，
-    不并回去就等于每次更新素材都白调一次。同名 state 才并；新导出已显式给值的不覆盖。
+    导出器是"从零拼 dict"，重导出会整份覆盖 anim.json，所以人工调出来的值必须自己捞回来：
+
+    - **per-state**（按 state 名对齐，白名单 ``PRESERVED_STATE_FIELDS``）：
+      ``referenceSpeed``（步速匹配基准）与 ``bubbleAnchor``（授权头顶锚）。
+      states 本身是导出产物（frames/frameRate/loop 全由导出决定），所以这里用白名单，
+      不能整个 state dict 并回来。
+    - **顶层**（黑名单 ``EXPORTER_OWNED_TOP_LEVEL_KEYS`` 取反）：导出器不产的顶层键
+      一律原样带回。今天的实例是 ``normalBake``（法线烘焙配置，人工填、
+      ``bake_normal_atlas`` 读）——它在 2026-08-03 之前每次重导出都被静默抹掉。
+      用取反而不是再列一张白名单，是因为白名单漏登记的后果是**静默丢数据**，
+      而黑名单漏登记的后果是"旧值盖新值"，会在导出结果里当场看得见。
+
+    两侧都遵守同一条规则：**新导出已显式给值的不覆盖**。
     """
     if not isinstance(existing_anim, dict):
         return new_anim
+
+    # 顶层：导出器不产的键原样带回（键序追加在导出产物之后，不打乱既有顺序）
+    for key, value in existing_anim.items():
+        if key in EXPORTER_OWNED_TOP_LEVEL_KEYS:
+            continue
+        if key not in new_anim:
+            new_anim[key] = value
+
     old_states = existing_anim.get("states")
     new_states = new_anim.get("states")
     if not isinstance(old_states, dict) or not isinstance(new_states, dict):

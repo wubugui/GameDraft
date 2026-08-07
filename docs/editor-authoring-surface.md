@@ -108,10 +108,10 @@
 | **任务** `quest_editor` | quests.json + questGroups.json | 任务:id/group/type/sideType/title/description/preconditions/completionConditions/acceptActions/rewards/nextQuests(边:目标+bypassPreconditions+条件);分组:id/name/type/parentGroup | 增删、拖拽改父子(带环检测)、无复制;**删 nextQuestId(deprecated)** |
 | **遭遇** `encounter_editor` | encounters.json | id/narrative/options(text/type/requiredRuleId/requiredRuleLayers 象理术/conditions/consumeItems/resultActions/resultText) | 增删、选项上下移、生成唯一 id |
 | **规矩** `rule_editor` | rules.json | 规矩:id/name/incompleteName/category/三层(text/lockedHint/verified);碎片:id/text/ruleId(只读)/layer/source | 增删;**删旧 verified/description/source...**;空层回填 |
-| **物品** `item_editor` | items.json | id/name/type/description/maxStack/buyPrice/dynamicDescriptions(conditions+text) | 增删;dynamicDesc **只能加不能删单条** |
+| **物品** `item_editor` | items.json | id/name/type/description/maxStack/buyPrice/**icon**(资源路径选择器,自动入 runtime/images/icons)/dynamicDescriptions(conditions+text) | 增删;dynamicDesc **只能加不能删单条**;icon 留空即删字段,背包退回文字显示 |
 | **商店** `shop_editor` | shops.json | id/name/items(itemId+price 表) | 增删行;price 总会写出 |
 | **地图** `map_editor` | map_config.json | sceneId/name/x/y/unlockConditions | 增删、**画布拖坐标** |
-| **档案** `archive_editor` | archive/{characters,lore,documents,books}.json | 人物:name/title/unlock/firstViewActions/impressions+knownInfo(条件+文);见闻/文档:title/content(可插图)/source/category;书籍:三级 Book→Page→Entry | 增删条目;**book page 不能删、impressions 只能加不能删;切换未 Apply 会丢** |
+| **档案** `archive_editor` | archive/{characters,lore,slang,documents,books}.json | 人物:name/title/unlock/firstViewActions/impressions+knownInfo(条件+文);见闻/文档:title/content(可插图)/source/category;**怪话册:title/content/example/source/note/category+分类与集齐评语**;书籍:三级 Book→Page→Entry | 增删条目;**book page 不能删、impressions 只能加不能删;切换未 Apply 会丢** |
 
 - 条件统一 `ConditionEditor`,动作统一 `ActionEditor`,玩家可见文本统一 RichText。
 

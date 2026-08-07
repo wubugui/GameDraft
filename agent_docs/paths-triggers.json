@@ -2,6 +2,24 @@
   "_comment": "生成文件,禁止手写。glob→必读文档id;查询:改动文件命中 glob 即应先读对应卡。",
   "map": [
     {
+      "glob": ".claude/**",
+      "docs": [
+        "agent-surface-map"
+      ]
+    },
+    {
+      "glob": ".cursor/skills/**",
+      "docs": [
+        "agent-surface-map"
+      ]
+    },
+    {
+      "glob": "agent_docs/_meta/cli.py",
+      "docs": [
+        "agent-surface-map"
+      ]
+    },
+    {
       "glob": "public/assets/animations/**",
       "docs": [
         "asset-pipeline-norms"
@@ -72,6 +90,12 @@
       "glob": "public/assets/data/narrative_templates.json",
       "docs": [
         "narrative-template-system"
+      ]
+    },
+    {
+      "glob": "public/assets/data/object_examine/**",
+      "docs": [
+        "object-examine-scene"
       ]
     },
     {
@@ -177,7 +201,8 @@
       "glob": "public/resources/runtime/animation/**",
       "docs": [
         "character-animation-production",
-        "sprite-atlas-anim-contract"
+        "sprite-atlas-anim-contract",
+        "static-single-frame-bundle"
       ]
     },
     {
@@ -200,6 +225,12 @@
       ]
     },
     {
+      "glob": "public/resources/runtime/scenes/**",
+      "docs": [
+        "scene-bake-downstream"
+      ]
+    },
+    {
       "glob": "src/**",
       "docs": [
         "runtime-norms"
@@ -215,7 +246,28 @@
       "glob": "src/core/ActionRegistry.ts",
       "docs": [
         "action-registration-quadruple",
+        "entity-move-facing",
         "l2-action-primitive-registration"
+      ]
+    },
+    {
+      "glob": "src/core/AssetManager.ts",
+      "docs": [
+        "optional-asset-probe",
+        "pixi-v8-traps"
+      ]
+    },
+    {
+      "glob": "src/core/CharacterLightingSystem.ts",
+      "docs": [
+        "character-lighting"
+      ]
+    },
+    {
+      "glob": "src/core/Game.ts",
+      "docs": [
+        "entity-visibility-channels",
+        "scene-onenter-reveal-timing"
       ]
     },
     {
@@ -241,6 +293,12 @@
       "glob": "src/core/ScenarioStateManager.ts",
       "docs": [
         "scenario-catalog-semantics"
+      ]
+    },
+    {
+      "glob": "src/core/SceneDepthSystem.ts",
+      "docs": [
+        "entity-lighting"
       ]
     },
     {
@@ -277,7 +335,14 @@
     {
       "glob": "src/entities/Npc.ts",
       "docs": [
+        "entity-move-facing",
         "entity-visibility-channels"
+      ]
+    },
+    {
+      "glob": "src/entities/Player.ts",
+      "docs": [
+        "entity-move-facing"
       ]
     },
     {
@@ -287,9 +352,27 @@
       ]
     },
     {
+      "glob": "src/rendering/**",
+      "docs": [
+        "pixi-v8-traps"
+      ]
+    },
+    {
       "glob": "src/rendering/*Shadow*",
       "docs": [
         "entity-lighting"
+      ]
+    },
+    {
+      "glob": "src/rendering/CharacterLitSprite.ts",
+      "docs": [
+        "character-lighting"
+      ]
+    },
+    {
+      "glob": "src/rendering/CharacterShadingFilter.ts",
+      "docs": [
+        "character-lighting"
       ]
     },
     {
@@ -297,6 +380,12 @@
       "docs": [
         "cutscene-step-semantics",
         "parallax-scene-runtime"
+      ]
+    },
+    {
+      "glob": "src/rendering/DepthOcclusionFilter.ts",
+      "docs": [
+        "entity-lighting"
       ]
     },
     {
@@ -312,9 +401,21 @@
       ]
     },
     {
+      "glob": "src/rendering/charShadeCore.glsl",
+      "docs": [
+        "character-lighting"
+      ]
+    },
+    {
       "glob": "src/rendering/lightEnv*",
       "docs": [
         "entity-lighting"
+      ]
+    },
+    {
+      "glob": "src/rendering/spriteNormalAtlas.ts",
+      "docs": [
+        "character-lighting"
       ]
     },
     {
@@ -400,6 +501,13 @@
       ]
     },
     {
+      "glob": "src/systems/objectExamine/**",
+      "docs": [
+        "object-examine-scene",
+        "pixi-v8-traps"
+      ]
+    },
+    {
       "glob": "src/systems/plane/**",
       "docs": [
         "plane-system"
@@ -408,12 +516,14 @@
     {
       "glob": "src/ui/**",
       "docs": [
-        "debug-ui-persistence"
+        "debug-ui-persistence",
+        "pixi-v8-traps"
       ]
     },
     {
       "glob": "src/ui/*UI.ts",
       "docs": [
+        "ui-component-layer",
         "ui-panel-skin"
       ]
     },
@@ -436,8 +546,27 @@
       ]
     },
     {
+      "glob": "src/ui/UIIcons.ts",
+      "docs": [
+        "ui-panel-skin"
+      ]
+    },
+    {
+      "glob": "src/ui/UITextures.ts",
+      "docs": [
+        "ui-panel-skin"
+      ]
+    },
+    {
       "glob": "src/ui/UITheme.ts",
       "docs": [
+        "ui-panel-skin"
+      ]
+    },
+    {
+      "glob": "src/ui/components/*.ts",
+      "docs": [
+        "ui-component-layer",
         "ui-panel-skin"
       ]
     },
@@ -445,6 +574,18 @@
       "glob": "src/ui/smell/**",
       "docs": [
         "smell-system"
+      ]
+    },
+    {
+      "glob": "src/ui/uiPointerCoords.ts",
+      "docs": [
+        "ui-component-layer"
+      ]
+    },
+    {
+      "glob": "src/utils/scriptedDialogueSpeaker.ts",
+      "docs": [
+        "dialogue-portrait-runtime"
       ]
     },
     {
@@ -460,7 +601,8 @@
         "animation-pipeline",
         "asset-pipeline-norms",
         "character-animation-production",
-        "sprite-atlas-anim-contract"
+        "sprite-atlas-anim-contract",
+        "static-single-frame-bundle"
       ]
     },
     {
@@ -468,6 +610,12 @@
       "docs": [
         "ambient-fx-production",
         "baked-figure-activation"
+      ]
+    },
+    {
+      "glob": "tools/animation_pipeline/bake_normal_atlas.py",
+      "docs": [
+        "character-lighting"
       ]
     },
     {
@@ -480,6 +628,13 @@
       "glob": "tools/animation_pipeline/matting.py",
       "docs": [
         "matting-toolbox"
+      ]
+    },
+    {
+      "glob": "tools/character_lighting_lab/**",
+      "docs": [
+        "character-lighting",
+        "scene-bake-downstream"
       ]
     },
     {
@@ -699,6 +854,7 @@
       "glob": "vite.config.ts",
       "docs": [
         "debug-ui-persistence",
+        "optional-asset-probe",
         "runtime-command-channel"
       ]
     }

@@ -1,4 +1,5 @@
 import { MarkerType } from '@xyflow/react';
+import { transitionEdgeLabel } from '../edgeLabels';
 import { graphDisplayName, isSubgraphElement, stateDisplayName } from '../editorModel';
 import type { CanvasMode } from '../types/canvas';
 import type {
@@ -339,15 +340,17 @@ function buildInlineTransitionEdges(
   for (const el of comp.elements ?? []) {
     if (!expandedElementIds.includes(el.id) || !isSubgraphElement(el) || !el.graph) continue;
     for (const t of el.graph.transitions ?? []) {
+      // 与 buildGraphLayer 同口径：reactive* 的 signal 是占位，标签按 trigger 出。
+      const label = transitionEdgeLabel(t);
       out.push({
         id: inlineSubgraphTransitionId(el.id, t.id),
         source: resolveCanvasEndpoint(t.from, el.graph.id, endpointCtx),
         target: resolveCanvasEndpoint(t.to, el.graph.id, endpointCtx),
         type: 'transition',
-        label: t.signal,
+        label,
         interactionWidth: 24,
         markerEnd: { type: MarkerType.ArrowClosed },
-        data: { edgeKind: 'transition', label: t.signal, detail: `${el.graph.id}.${t.id}` },
+        data: { edgeKind: 'transition', label, detail: `${el.graph.id}.${t.id}` },
       });
     }
   }

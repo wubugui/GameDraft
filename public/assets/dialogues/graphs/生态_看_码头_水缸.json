@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 1,
+  "id": "生态_看_码头_水缸",
+  "entry": "root",
+  "meta": {
+    "title": "客店墙根的大水缸（白日/暮/夜 三态；一拍：鸡以为你喂食）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "narrative": "eco_时辰",
+              "state": "夜"
+            }
+          ],
+          "next": "ye1"
+        },
+        {
+          "conditions": [
+            {
+              "narrative": "eco_时辰",
+              "state": "暮"
+            }
+          ],
+          "next": "mu1"
+        }
+      ],
+      "defaultNext": "ri1"
+    },
+    "ri1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "一口大水缸，缸沿结起一圈白碱。葫芦瓢浮在上头，瓢里还剩半瓢水。",
+      "next": "act_ri"
+    },
+    "act_ri": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "faceEntity",
+          "params": {
+            "target": "eco_dk_客店鸡",
+            "faceTarget": "player"
+          }
+        },
+        {
+          "type": "playNpcAnimation",
+          "params": {
+            "target": "eco_dk_客店鸡",
+            "state": "run",
+            "loop": false,
+            "thenState": "peck"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "mu1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "水面上浮起一层今天的灰。瓢底朝天，扣在缸沿上。",
+      "next": "end"
+    },
+    "ye1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "缸里的水黑得像块铁。你的影子在上头晃，晃得比你慢半拍。",
+      "next": "end"
+    },
+    "end": {
+      "type": "end"
+    }
+  }
+}

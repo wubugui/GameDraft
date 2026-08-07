@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "id": "生态_翻_雾津_东口箩筐",
+  "entry": "root",
+  "meta": {
+    "title": "翻检 · 雾津东街口箩筐（眼尖 / 夜 / 常态 三态）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "narrative": "eco_眼力",
+              "state": "眼尖",
+              "reached": true
+            }
+          ],
+          "next": "deep"
+        },
+        {
+          "conditions": [
+            {
+              "narrative": "eco_时辰",
+              "state": "夜"
+            }
+          ],
+          "next": "night"
+        }
+      ],
+      "defaultNext": "first"
+    },
+    "first": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "东街口码着几只箩筐，筐里是没卖脱的红苕，皮上起了霉点。",
+      "next": "end"
+    },
+    "night": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "箩筐照旧摆在这儿。这条街上，没得人偷卖不脱的东西。",
+      "next": "end"
+    },
+    "deep": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "底下压着一只空筐，筐底垫的报纸是上个月的。这摊子摆咯一个月，一筐都没卖脱。",
+      "next": "end"
+    },
+    "end": {
+      "type": "end"
+    }
+  }
+}

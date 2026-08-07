@@ -18,6 +18,7 @@ export type ConditionTrace =
   | { kind: 'narrative'; result: boolean; label: string }
   | { kind: 'narrativeCount'; result: boolean; label: string }
   | { kind: 'plane'; result: boolean; label: string }
+  | { kind: 'posture'; result: boolean; label: string }
   | { kind: 'unknown'; result: boolean; label: string };
 
 const questStatusMap: Record<string, QuestStatus> = {
@@ -59,6 +60,11 @@ export interface ConditionEvalContext {
   currentSceneId?: string;
   /** 当前激活位面 id（PlaneReconciler 派生，含 manual override）。未注入时 plane 叶子按 'normal' 比较。 */
   getActivePlaneId?: () => string;
+  /**
+   * 当前玩家身体姿态（crouch / gaze / lie；站姿为 null）。未注入时 posture 叶子恒为假
+   * ——姿态是瞬时表现态，取不到就当"没在那个姿态"，是安全侧。
+   */
+  getPlayerPosture?: () => string | null;
 }
 
 /**
@@ -116,6 +122,23 @@ function isScenarioLineLeaf(x: ConditionExpr): x is ScenarioLineConditionLeaf {
     return false;
   }
   return SCENARIO_LINE_STATUSES.has(m.lineStatus as ScenarioLineConditionLeaf['lineStatus']);
+}
+
+function isPostureLeaf(x: ConditionExpr): x is { posture: string } {
+  const m = x as { posture?: unknown; flag?: unknown; quest?: unknown; scenario?: unknown; narrative?: unknown };
+  return (
+    typeof m.posture === 'string' &&
+    typeof m.flag !== 'string' &&
+    m.quest === undefined &&
+    m.scenario === undefined &&
+    m.narrative === undefined
+  );
+}
+
+function evalPostureLeaf(expr: { posture: string }, ctx: ConditionEvalContext): boolean {
+  const want = expr.posture.trim();
+  if (!want) return false;
+  return (ctx.getPlayerPosture?.() ?? null) === want;
 }
 
 function isPlaneLeaf(x: ConditionExpr): x is { plane: string } {
@@ -333,6 +356,10 @@ export function evaluateConditionExpr(
     return evalPlaneLeaf(expr, ctx);
   }
 
+  if (isPostureLeaf(expr)) {
+    return evalPostureLeaf(expr, ctx);
+  }
+
   if (isQuestLeaf(expr)) {
     const m = expr as { quest: string; questStatus?: string; status?: string };
     return evalQuestLeaf(m.quest, m.questStatus ?? m.status, ctx);
@@ -442,6 +469,13 @@ export function evaluateConditionExprWithTrace(
     const active = ctx.getActivePlaneId ? ctx.getActivePlaneId() : 'normal';
     const label = `plane 期望=${expr.plane.trim() || '—'}实际=${active}`;
     return { result: ok, trace: { kind: 'plane', result: ok, label } };
+  }
+
+  if (isPostureLeaf(expr)) {
+    const ok = evalPostureLeaf(expr, ctx);
+    const now = ctx.getPlayerPosture?.() ?? null;
+    const label = `posture 期望=${expr.posture.trim() || '—'} 实际=${now ?? '站姿'}`;
+    return { result: ok, trace: { kind: 'posture', result: ok, label } };
   }
 
   if (isQuestLeaf(expr)) {

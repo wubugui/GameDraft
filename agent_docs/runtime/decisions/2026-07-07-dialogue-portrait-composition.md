@@ -7,7 +7,7 @@ summary: VN 式小半身像(240px)压面板前景、底边伸出画面外、暗�
 status: active
 triggers:
   topics: [立绘, 头像, 对话UI 构图]
-last_governed: 2026-07-11
+last_governed: 2026-08-05
 ---
 
 ## 背景(一段)

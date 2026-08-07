@@ -1,4 +1,4 @@
-"""递归 ConditionExpr 树形编辑器（all / any / not / flag / quest / scenario / scenarioLine / narrative / plane）。"""
+"""递归 ConditionExpr 树形编辑器（all / any / not / flag / quest / scenario / scenarioLine / narrative / plane / posture）。"""
 from __future__ import annotations
 
 import copy
@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QSpinBox,
 )
 
+from tools.editor import theme as _theme
 from .flag_key_field import FlagKeyPickField
 from .flag_value_edit import FlagValueEdit
 from .id_ref_selector import IdRefSelector
@@ -93,13 +94,17 @@ class ConditionExprNodeEditor(QWidget):
             ("叙事状态", "narrative"),
             ("活计计数 (做过几单)", "narrativeCount"),
             ("激活位面", "plane"),
+            ("玩家姿态", "posture"),
         ):
             self._kind.addItem(lab, val)
         self._kind.currentIndexChanged.connect(self._on_kind_changed)
         head.addWidget(QLabel("类型"), 0)
         head.addWidget(self._kind, 1)
         if depth > 0:
-            self._btn_remove = QPushButton("移除此节点")
+            # 文案只留「移除」：这颗按钮在每层嵌套里都出现一次，写全称会把
+            # 每一行的最小宽顶高，宿主面板（280px）里就横向滚动了。
+            self._btn_remove = QPushButton("移除")
+            self._btn_remove.setToolTip("移除此条件节点")
             self._btn_remove.clicked.connect(lambda: self._request_remove())
             head.addWidget(self._btn_remove)
         root.addLayout(head)
@@ -139,6 +144,8 @@ class ConditionExprNodeEditor(QWidget):
         self._nc_op: QComboBox | None = None
         self._nc_value: QSpinBox | None = None
         self._pl_wrap: QWidget | None = None
+        self._po_wrap: QWidget | None = None
+        self._po_kind: QComboBox | None = None
         self._pl_id: IdRefSelector | None = None
 
         self._remove_callback: Callable[[ConditionExprNodeEditor], None] | None = None
@@ -202,6 +209,8 @@ class ConditionExprNodeEditor(QWidget):
             return _picker_has(self._nc_graph)
         if k == "plane":
             return bool(self._pl_id and self._pl_id.current_id().strip())
+        if k == "posture":
+            return bool(self._po_kind and str(self._po_kind.currentData() or "").strip())
         return False
 
     def _confirm_destructive_discard(self, action_label: str) -> bool:
@@ -274,6 +283,8 @@ class ConditionExprNodeEditor(QWidget):
         self._nc_op = None
         self._nc_value = None
         self._pl_wrap = None
+        self._po_wrap = None
+        self._po_kind = None
         self._pl_id = None
 
     def _rebuild_body(self, kind: str) -> None:
@@ -301,7 +312,7 @@ class ConditionExprNodeEditor(QWidget):
             # 行内红字提示（validator 侧另由数据组补）。
             self._not_empty_hint = QLabel("not 未配置内层 = 恒为假（该条件永不满足）")
             self._not_empty_hint.setWordWrap(True)
-            self._not_empty_hint.setStyleSheet("color:#c0392b;")
+            self._not_empty_hint.setStyleSheet(_theme.semantic_text_css("error"))
             nl.addWidget(self._not_empty_hint)
             if self._depth >= _MAX_DEPTH - 1:
                 tip = QLabel(f"嵌套已达上限（{_MAX_DEPTH}），无法添加 not 子节点")
@@ -510,6 +521,22 @@ class ConditionExprNodeEditor(QWidget):
             pf.addRow("plane", self._pl_id)
             self._pl_wrap = pw
             self._body.addWidget(pw)
+        elif kind == "posture":
+            ow = QWidget()
+            of = compact_form(QFormLayout(ow))
+            self._po_kind = QComboBox()
+            self._po_kind.setMaximumWidth(220)
+            for _lab, _val in (("蹲下 (crouch)", "crouch"), ("驻足注视 (gaze)", "gaze"), ("躺 (lie)", "lie")):
+                self._po_kind.addItem(_lab, _val)
+            self._po_kind.setToolTip(
+                "玩家此刻的身体姿态 === 该值。姿态是瞬时表现态（不入存档）。\n"
+                "挂在实体 conditions 上＝「蹲下才翻得动」（条件默认只锁交互不隐藏）；\n"
+                "「站着」写法：否定(not) + 本叶子任选一个姿态。",
+            )
+            self._po_kind.currentIndexChanged.connect(lambda *_: self._emit_changed())
+            of.addRow("posture", self._po_kind)
+            self._po_wrap = ow
+            self._body.addWidget(ow)
 
     def _narrative_graph_entries(self) -> list[tuple[str, str, dict[str, Any]]]:
         """(显示名, graphId, graph dict)：主图 + wrapper 子图，与 narrative_graphs.json 一致。"""
@@ -526,7 +553,9 @@ class ConditionExprNodeEditor(QWidget):
                 label = str(main.get("label") or comp.get("label") or main["id"])
                 out.append((f"{label} ({main['id']})", str(main["id"]), main))
             for el in comp.get("elements") or []:
-                if not isinstance(el, dict) or el.get("kind") != "wrapperGraph":
+                # 与运行时/ProjectModel 同口径：带内嵌 graph 的两种 kind 都算（只认
+                # wrapperGraph 会漏掉 scenarioSubgraph，条件里就点不到事件子图的状态）。
+                if not isinstance(el, dict) or el.get("kind") not in ("wrapperGraph", "scenarioSubgraph"):
                     continue
                 g = el.get("graph")
                 if isinstance(g, dict) and g.get("id"):
@@ -799,6 +828,8 @@ class ConditionExprNodeEditor(QWidget):
             self._kind.setCurrentIndex(self._kind.findData("narrativeCount"))
         elif isinstance(data.get("plane"), str) and str(data.get("plane", "")).strip():
             self._kind.setCurrentIndex(self._kind.findData("plane"))
+        elif isinstance(data.get("posture"), str) and str(data.get("posture", "")).strip():
+            self._kind.setCurrentIndex(self._kind.findData("posture"))
         else:
             self._kind.setCurrentIndex(3)
         k = self._kind.currentData()
@@ -920,6 +951,12 @@ class ConditionExprNodeEditor(QWidget):
             self._nc_value.blockSignals(True)
             self._nc_value.setValue(int(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else 1)
             self._nc_value.blockSignals(False)
+        elif k == "posture" and self._po_kind:
+            want = str(data.get("posture", "")).strip()
+            idx = self._po_kind.findData(want)
+            self._po_kind.blockSignals(True)
+            self._po_kind.setCurrentIndex(idx if idx >= 0 else 0)
+            self._po_kind.blockSignals(False)
         elif k == "plane" and self._pl_id:
             pid = str(data.get("plane", "")).strip()
             _pm = self._model()
@@ -1053,6 +1090,11 @@ class ConditionExprNodeEditor(QWidget):
             if not pid:
                 return {}
             return {"plane": pid}
+        if k == "posture" and self._po_kind:
+            want = str(self._po_kind.currentData() or "").strip()
+            if not want:
+                return {}
+            return {"posture": want}
         return {}
 
 
@@ -1077,7 +1119,12 @@ class ConditionExprTreeRootWidget(QWidget):
         )
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # 横向按需滚动 + 不把内部树的最小宽度往外传：条件树天生会随嵌套变宽，
+        # 若让它对外要宽度，宿主面板（图对话检查器默认只有 280px）就整块横向滚动，
+        # 行尾的删除/上下移按钮被挤出可视区。宁可让这一块自己滚，也不能顶爆整个面板。
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setMinimumWidth(0)
+        scroll.setSizeAdjustPolicy(QScrollArea.SizeAdjustPolicy.AdjustIgnored)
         scroll.setMinimumHeight(_CONDITION_EXPR_TREE_SCROLL_MIN_HEIGHT)
         scroll.setMaximumHeight(_CONDITION_EXPR_TREE_SCROLL_MAX_HEIGHT)
         scroll.setSizePolicy(
@@ -1092,12 +1139,30 @@ class ConditionExprTreeRootWidget(QWidget):
         hl.addWidget(self._root)
         hl.addStretch()
         scroll.setWidget(host)
+        self._scroll = scroll
+        # 高度跟着内容长，别锁死 180px。锁死的后果实测是：三个子条件的表达式内容
+        # 有 766px 高，却只开一个 162px 的猫眼，一次看到 21%，而且**把面板拉多高多宽
+        # 都不变**——外面还套着检查器自己的滚动条，滚动条里套滚动条。
+        # 宿主（图对话检查器）本身就在 QScrollArea 里，让它去滚才是对的。
+        self._root.changed.connect(self._sync_height_to_content)
         # 说明改入 tooltip，不在界面长期堆大段文字（没人会逐字读）。
         scroll.setToolTip(
             "与运行时 evaluateConditionExpr 一致；嵌套最深 32 层。"
             "根节点可为任意类型；留空必填项（flag / scenario / scenarioLine / quest）导出时省略该分支。",
         )
         lay.addWidget(scroll, stretch=1)
+
+    def _sync_height_to_content(self) -> None:
+        """把可视高度顶到内容实际高度（封顶 MAX），由宿主那层滚动条接管。"""
+        need = self._root.sizeHint().height() + 12
+        self._scroll.setMinimumHeight(
+            max(
+                _CONDITION_EXPR_TREE_SCROLL_MIN_HEIGHT,
+                min(need, _CONDITION_EXPR_TREE_SCROLL_MAX_HEIGHT),
+            )
+        )
+        self._scroll.updateGeometry()
+        self.updateGeometry()
 
     def set_model_refresh(self) -> None:
         """清单变更后安全刷新；程序刷新不改值、不外发 changed。"""
@@ -1107,8 +1172,10 @@ class ConditionExprTreeRootWidget(QWidget):
     def set_expr(self, expr: dict[str, Any] | None) -> None:
         if expr is None:
             self._root.set_dict({"flag": ""})
-            return
-        self._root.set_dict(expr)
+        else:
+            self._root.set_dict(expr)
+        # set_dict 是程序化回填、刻意不发 changed，所以高度要在这里自己同步一次。
+        self._sync_height_to_content()
 
     def get_expr(self) -> dict[str, Any] | None:
         d = self._root.to_dict()

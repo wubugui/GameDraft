@@ -165,6 +165,9 @@ class ReferencePickerField(QWidget):
         geometry_key: str = "reference_picker",
         allow_custom: bool = False,
         custom_prompt: str = "定义新的引用 ID：",
+        on_open: Callable[[str], None] | None = None,
+        open_label: str = "↗",
+        open_tooltip: str = "打开被引用的对象",
     ) -> None:
         super().__init__(parent)
         self._provider: ReferenceProvider = provider or (lambda: [])
@@ -173,6 +176,7 @@ class ReferencePickerField(QWidget):
         self._geometry_key = geometry_key
         self._allow_custom = bool(allow_custom)
         self._custom_prompt = custom_prompt
+        self._on_open = on_open
         self._value = ""
 
         layout = QHBoxLayout(self)
@@ -194,11 +198,37 @@ class ReferencePickerField(QWidget):
         self._clear.setToolTip("清除当前引用")
         self._clear.clicked.connect(self.clear_value)
         self._clear.setVisible(self._allow_empty)
+        # 「打开」是可选的正向跳转（选了一张图对话就能直接跳过去编辑它）。短标签 + tooltip，
+        # 不铺满整行；无值时禁用而不是隐藏，免得按钮排布随取值跳来跳去。
+        self._open = QPushButton(open_label, self)
+        self._open.setToolTip(open_tooltip)
+        self._open.clicked.connect(self._open_target)
+        self._open.setVisible(self._on_open is not None)
+        self._open.setMaximumWidth(32)
         layout.addWidget(self._line, 1)
         layout.addWidget(self._choose)
+        layout.addWidget(self._open)
         layout.addWidget(self._define)
         layout.addWidget(self._clear)
         self.refresh_display()
+
+    def set_open_handler(
+        self,
+        on_open: Callable[[str], None] | None,
+        *,
+        tooltip: str | None = None,
+    ) -> None:
+        """挂/摘正向跳转回调（宿主在构造后才知道能不能跳时用）。"""
+        self._on_open = on_open
+        if tooltip is not None:
+            self._open.setToolTip(tooltip)
+        self._open.setVisible(self._on_open is not None)
+        self.refresh_display()
+
+    def _open_target(self) -> None:
+        if self._on_open is None or not self._value:
+            return
+        self._on_open(self._value)
 
     def set_provider(self, provider: ReferenceProvider | None) -> None:
         self._provider = provider or (lambda: [])
@@ -247,6 +277,7 @@ class ReferencePickerField(QWidget):
                 "引用目标当前不在候选目录中；原值已保留，不会被自动改写。",
             )
         self._clear.setEnabled(bool(self._value))
+        self._open.setEnabled(bool(self._value) and self._on_open is not None)
 
     def _safe_rows(self) -> list[tuple[str, str, str]]:
         try:

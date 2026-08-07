@@ -11,7 +11,7 @@ authority:
 triggers:
   topics: [色键, 洋红底, colorkey, chroma key]
   tasks: [抠纯色底图, 分层抠图]
-last_governed: 2026-07-11
+last_governed: 2026-08-05
 ---
 
 **实测环境与日期**:2026-07-05,寻狗记神仙岭 11 张插画 27 个分层,可见洋红像素全 0

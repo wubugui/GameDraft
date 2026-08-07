@@ -28,6 +28,7 @@ import type {
 import { isCutsceneOnlyEntity, isEntityBoundToCutscene } from '../data/types';
 import { applyCharacterDefaults, type CharacterRegistry } from '../data/characterRegistry';
 import type { AnimationSetDefInput } from '../data/resolveAnimationSet';
+import { loadSocketsForAnim } from '../data/animationSockets';
 import { normalizeAnimationSetDef } from '../data/resolveAnimationSet';
 import { normalAtlasUrlFor } from '../rendering/spriteNormalAtlas';
 import { resolvePathRelativeToAnimManifest } from '../core/assetPath';
@@ -39,6 +40,7 @@ import {
   type SceneEntityKind,
 } from '../data/EntityRuntimeFieldSchema';
 import type { ActivePlaneSnapshot } from './plane/types';
+import { createStyledText } from '../core/styledText';
 
 /** applyDebugWorldSize 成功时的返回值，供深度系统与碰撞比例同步 */
 export type ApplyDebugWorldSizeResult =
@@ -65,6 +67,12 @@ export class SceneManager implements IGameSystem {
   private currentScene: SceneData | null = null;
   private currentHotspots: Hotspot[] = [];
   private currentNpcs: Npc[] = [];
+  /**
+   * 编辑期标记（NPC 名字标签/朝向块、热点占位圆点）是否可见。**默认关**——玩家侧不做任何
+   * "这个能交互"的标注（沉浸优先，2026-08-03 拍板）；策划摆位时经 F2 调试面板打开。
+   * 与实体四通道显隐正交：那套写 container.visible，这里只压标记子节点的 alpha。
+   */
+  private authoringMarkersVisible = false;
   private sceneContainerBg: Container | null = null;
   private sceneMemory: Map<string, SceneMemory> = new Map();
   private cutsceneStaging: CutsceneStaging | null = null;
@@ -103,6 +111,8 @@ export class SceneManager implements IGameSystem {
 
   /** 切场景淡入淡出根节点（黑底 + 可选加载进度条） */
   private transitionOverlay: Container | null = null;
+  /** 切场进度条配色（缺省 = UITheme 同色号的一份拷贝，见 setTransitionPalette） */
+  private transitionPalette = { track: 0x2a2118, trackBorder: 0x342a1c, fill: 0xccaa44 };
   private transitionBarFill: Graphics | null = null;
   private transitionBarW = 0;
   private transitionBarH = 8;
@@ -158,6 +168,15 @@ export class SceneManager implements IGameSystem {
 
     this.onHotspotPickup = (payload) => this.markHotspotPickedUp(payload.hotspotId);
     this.onHotspotInspected = (payload) => this.markHotspotInspected(payload.hotspotId);
+  }
+
+  /**
+   * 切场进度条的配色。**由 Game 注入而不是直接 import UITheme**——systems 层不能反向依赖
+   * ui 层（架构铁律一），但这条进度条又是玩家每次换场都看得见的界面元素，必须跟全站一套色。
+   * 不注入就用这里的保守缺省（与主题同色号，只是拷了一份），观感不会退回蓝调 debug 样式。
+   */
+  setTransitionPalette(p: { track: number; trackBorder: number; fill: number }): void {
+    this.transitionPalette = p;
   }
 
   init(_ctx: GameContext): void {
@@ -242,6 +261,21 @@ export class SceneManager implements IGameSystem {
 
   getCurrentHotspots(): readonly Hotspot[] {
     return this.currentHotspots;
+  }
+
+  /** 编辑期标记是否可见（F2 调试面板读它显示当前状态）。 */
+  getAuthoringMarkersVisible(): boolean {
+    return this.authoringMarkersVisible;
+  }
+
+  /**
+   * 切换编辑期标记可见性：立即作用于场上实体，并记住状态供后续实例化的实体继承
+   * （切场景后仍保持）。仅调试用途，不入存档。
+   */
+  setAuthoringMarkersVisible(visible: boolean): void {
+    this.authoringMarkersVisible = visible;
+    for (const npc of this.currentNpcs) npc.setAuthoringMarkersVisible(visible);
+    for (const hotspot of this.currentHotspots) hotspot.setAuthoringMarkersVisible(visible);
   }
 
   /** 当前场景显式分组定义；旧数据仅有成员 group 标签时返回 undefined（按无条件组兼容）。 */
@@ -487,7 +521,8 @@ export class SceneManager implements IGameSystem {
       if (String(npc.def.group ?? '').trim() !== gid) continue;
       hit++;
       if (Number.isFinite(speed) && speed > 0) {
-        moves.push(npc.moveTo(npc.x + dx, npc.y + dy, speed));
+        // 组位移沿用"走向哪就朝哪"：显式 faceTowardMovement（moveTo 不勾选＝完全不碰朝向）
+        moves.push(npc.moveTo(npc.x + dx, npc.y + dy, speed, undefined, true));
       } else {
         npc.x += dx;
         npc.y += dy;
@@ -1083,6 +1118,7 @@ export class SceneManager implements IGameSystem {
   private async instantiateHotspot(def: HotspotDef, overrides: HotspotRuntimeOverride | undefined): Promise<Hotspot> {
     const defToUse = applyHotspotRuntimeOverride(def, overrides as Record<string, SceneEntityRuntimeValue> | undefined);
     const hotspot = new Hotspot(defToUse);
+    hotspot.setAuthoringMarkersVisible(this.authoringMarkersVisible);
     this.applySessionOverrideOnInstantiate('hotspot', hotspot);
     this.renderer.entityLayer.addChild(hotspot.container);
     const di = defToUse.displayImage;
@@ -1102,6 +1138,7 @@ export class SceneManager implements IGameSystem {
     const withChar = applyCharacterDefaults(npcDef, this.characterRegistry);
     const defToUse = applyNpcRuntimeOverride(withChar, overrides as Record<string, SceneEntityRuntimeValue> | undefined);
     const npc = new Npc(defToUse);
+    npc.setAuthoringMarkersVisible(this.authoringMarkersVisible);
     this.applySessionOverrideOnInstantiate('npc', npc);
     if (defToUse.animFile) {
       try {
@@ -1109,7 +1146,8 @@ export class SceneManager implements IGameSystem {
         const sheetPath = resolvePathRelativeToAnimManifest(defToUse.animFile, animRaw.spritesheet);
         const tex = await this.assetManager.loadTexture(sheetPath);
         const animDef = normalizeAnimationSetDef(animRaw, tex.width, tex.height, sheetPath);
-        npc.loadSprite(tex, animDef, defToUse.initialAnimState);
+        const sockets = await loadSocketsForAnim(this.assetManager, defToUse.animFile, animDef);
+        npc.loadSprite(tex, animDef, defToUse.initialAnimState, sockets);
       } catch (_e) {
         // 加载失败时保留占位外观
       }
@@ -1740,12 +1778,12 @@ export class SceneManager implements IGameSystem {
     // 切场进度上的资源级调试文案只在 DEV 构建可见（T4）；生产不建该 Text，
     // setTransitionOverlayProgress 对 null 标签自然跳过
     if (import.meta.env.DEV) {
-      const debugLabel = new Text({
+      const debugLabel = createStyledText({
         text: '',
         style: {
           fontFamily: 'system-ui, Segoe UI, sans-serif',
           fontSize: 10,
-          fill: 0xa8b8cf,
+          fill: 0x8a7a5c,
           wordWrap: true,
           wordWrapWidth: barW,
           lineHeight: 12,
@@ -1759,10 +1797,12 @@ export class SceneManager implements IGameSystem {
     }
 
     const rad = Math.min(5, barH / 2);
+    // 切场进度条是**玩家每次换场都看得见**的东西，配色必须跟 UI 一套：
+    // 原本是一整条亮蓝（0x38bdf8/0x1e293b/0x64748b），在暖木黑底的游戏里格外扎眼。
     const track = new Graphics();
-    track.roundRect(bx, by, barW, barH, rad);
-    track.fill({ color: 0x1e293b, alpha: 0.92 });
-    track.stroke({ color: 0x64748b, width: 1, alpha: 0.55 });
+    track.rect(bx, by, barW, barH);
+    track.fill({ color: this.transitionPalette.track, alpha: 0.92 });
+    track.stroke({ color: this.transitionPalette.trackBorder, width: 1, alpha: 0.7 });
     root.addChild(track);
 
     const fill = new Graphics();
@@ -1788,9 +1828,8 @@ export class SceneManager implements IGameSystem {
       const rad = Math.min(5, h / 2);
       fill.clear();
       if (pw >= 0.5) {
-        fill.roundRect(0, 0, pw, h, Math.min(rad, pw / 2));
-        fill.fill(0x38bdf8);
-        fill.stroke({ color: 0xbae6fd, width: 1, alpha: 0.55 });
+        fill.rect(0, 0, pw, h);
+        fill.fill(this.transitionPalette.fill);
       }
     }
     const lbl = this.transitionDebugLabel;
@@ -1982,6 +2021,8 @@ export class SceneManager implements IGameSystem {
     this.entitySessionOverrides.clear();
     this.groupSessionDisabled.clear();
     this.pendingReentrantSwitch = null;
+    // 铁律 8：重 init() 行为须与首次一致——调试开关不得跨销毁残留
+    this.authoringMarkersVisible = false;
     this.eventBus.off('hotspot:pickup:done', this.onHotspotPickup);
     this.eventBus.off('hotspot:inspected', this.onHotspotInspected);
     this.unloadScene();

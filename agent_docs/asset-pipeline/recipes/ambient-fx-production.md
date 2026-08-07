@@ -13,7 +13,7 @@ triggers:
   paths: ["tools/animation_pipeline/ambient_fx/**"]
   topics: [环境动效, 热气, 灯笼, 窗帘, 装饰NPC, ambient fx]
   tasks: [给场景加动效, 做氛围动画素材]
-last_governed: 2026-07-11
+last_governed: 2026-08-05
 ---
 
 **实测环境与日期**:2026-07-04,dev_teahouse_alive 场景落地(3 热气 + 2 灯笼暖光 +
@@ -38,6 +38,8 @@ last_governed: 2026-07-11
    [动画产物契约](../mechanisms/sprite-atlas-anim-contract.md)。
 5. **放场景(装饰 NPC 范式)**:NpcDef 只给 animFile + `interactionRange:0` +
    `castShadow:false` + 无 dialogueGraphId → 自动循环 idle、不可交互、参与 Y 排序。
+   与背景的前后关系是**画出来的**(群像、前景路人)时,再给 `spriteSort:'back'|'front'`
+   强制叠放档位——按 Y 排会穿帮,且穿帮不报错只是看着别扭。
    贴图取自已烤光照的背景时必须 `renderRaw:true`(不再吃逐 entity 光照/深度遮挡/像素密度
    滤镜,否则色调与背景不符、露方框接缝;仍受全局场景色彩滤镜)。锚点 = 底中脚,
    (x,y) 是脚底世界坐标。

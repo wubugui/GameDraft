@@ -124,6 +124,8 @@ function deps() {
       playerChoose: (index: number) => { calls.push(`playerChoose:${index}`); },
       playerMoveTo: (x: number, y: number) => { calls.push(`playerMoveTo:${x},${y}`); },
       playerTap: () => { calls.push('playerTap'); },
+      playerAct: (verb: string) => { calls.push(`playerAct:${verb}`); },
+      playerPosture: (posture: string, held: boolean) => { calls.push(`playerPosture:${posture}:${held}`); },
       setPlayerCollisions: (enabled: boolean) => { calls.push(`setPlayerCollisions:${enabled}`); },
       activatePlane: (planeId: string) => { calls.push(`activatePlane:${planeId}`); return true; },
       deactivatePlane: () => { calls.push('deactivatePlane'); },

@@ -1177,6 +1177,30 @@ select {
   font-size: var(--editor-host-font-12, 12px);
 }
 
+.property-line.warn {
+  border-color: #b8892f;
+  background: #1c1810;
+  color: #e8cf9a;
+  font-size: var(--editor-host-font-12, 12px);
+}
+
+/* 未登记信号提示：说明文字占宽、按钮不被拉伸（编辑器布局纪律：短按钮不铺满整行）。 */
+.signal-unregistered-row {
+  margin-top: 4px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.signal-unregistered-row > span {
+  flex: 1 1 auto;
+  overflow-wrap: anywhere;
+}
+
+.signal-unregistered-row > button {
+  flex: 0 0 auto;
+}
+
 .property-summary {
   display: grid;
   gap: 7px;
@@ -2080,6 +2104,12 @@ select {
 .signal-row-note-edit:hover {
   border-color: #d9a441;
   color: #e6c67a;
+}
+
+/* 「补登记」是修复动作，比普通注释按钮显眼一档，好在长列表里一眼找到未登记项。 */
+.signal-row-register {
+  border-color: #b8892f;
+  color: #e8cf9a;
 }
 
 .signal-notes-editor {

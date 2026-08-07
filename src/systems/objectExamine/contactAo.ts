@@ -13,6 +13,10 @@ import {
   type FilterSystem,
   type Renderer as PixiRenderer,
 } from 'pixi.js';
+import {
+  OBJECT_EXAMINE_MAX_CONTACT_AO_RADIUS_CM,
+  OBJECT_EXAMINE_MAX_CRITTER_AO_RADIUS_CM,
+} from './types';
 
 /**
  * 接触 AO（SSAO 式单管线）：caster 轮廓 mask → 半分辨率高斯 → 一次合成。
@@ -20,12 +24,16 @@ import {
  * 老实现给物件 / ground crawler / body crawler 各挂一条「mask + 8 次模糊 + 合成」
  * 的 filter 链（每帧 ≈30 个全分辨率 draw）。现在合并为一条管线：
  *
+ * **尺寸一律用物理长度（厘米）表达**，绝不用贴图像素：物件声明
+ * `presentation.physicalWidthCm`，据此得到 pixelsPerCm；AO 半径、mask 采样密度、
+ * cast 留边都从厘米换算。换一张更高分辨率的静帧，观感不变。
+ *
  * 1. bake（Scene.update 中，每帧一次）：把 caster 容器（物件精灵 + 爬虫层）直接
- *    render 进两张半分辨率 RT（rtBody / rtCrit），alpha 即实心轮廓覆盖度。
+ *    render 进两张降采样 RT（rtBody / rtCrit），alpha 即实心轮廓覆盖度。
  *    物件是 receiver 也是 caster，必须独立通道，否则「爬虫落在尸体上的影」会被
  *    尸体自身的覆盖抑制掉；
  * 2. apply（filter 挂在 objectRoot 上）：两张 RT 各自做一次 Pixi 双向高斯
- *    （半分辨率，像素量是全分辨率的 1/4），半径两通道独立；
+ *    （降采样域内，像素量远小于全分辨率），半径两通道独立；
  * 3. 一个合成 pass 采样物件颜色 + 4 张 mask（两 raw 两 blur）：
  *    - 物件影只写透明区黑 alpha（压暗背景板），并被自身 raw 轮廓抑制；
  *    - 爬虫影对不透明区直接乘暗（落在尸体上），透明区同样写黑 alpha，
@@ -39,19 +47,28 @@ import {
  * filter / 模糊次数。
  */
 
-/** mask RT 相对设计空间的分辨率（降采样比例）。 */
-const MASK_RES = 0.5;
-/** 物件通道模糊半径系数（沿用旧观感）。 */
-const BODY_BLUR_SCALE = 3.2;
-/** 爬虫通道模糊半径系数（沿用旧观感）。 */
-const CRITTER_BLUR_SCALE = 2.4;
+/**
+ * mask 采样密度：每厘米几个 texel。**这是全套尺寸的唯一分辨率锚点**——
+ * mask RT 大小、模糊半径都由它和「厘米」推出来，与静帧贴图的导出分辨率无关。
+ * 调大 = 影子边缘更细腻但 RT 更大。
+ */
+const MASK_TEXELS_PER_CM = 4;
+/** mask 相对设计空间的缩放上下限（texel / 设计像素）：不超采样源图，也不过分粗糙。 */
+const MASK_SCALE_MAX = 0.5;
+const MASK_SCALE_MIN = 0.05;
+/** 高斯外溢按 3σ 估，用于 filter padding 与 cast 留边。 */
+const BLUR_SPILL_SIGMAS = 3;
 /** 物件影不透明度系数（指数映射里的整体乘数）。 */
 const BODY_OPACITY = 1.15;
 /** 爬虫影不透明度系数。 */
 const CRITTER_OPACITY = 1.5;
-/** cast 区域外扩比例（给轮廓外阴影与爬虫走位留边）。 */
+/**
+ * cast 区域外扩：给爬虫走出剪影的活动余量（相对物件尺寸）与影子外溢留边。
+ * 留边取「比例余量」与「AO 半径上限的 3σ 外溢」的较大者，且不含实时半径——
+ * 否则 F2 拖半径或爬虫影平滑跟随会让 mask RT 每帧重建。
+ */
 const CAST_PAD_RATIO = 0.18;
-const CAST_PAD_MIN = 32;
+const CAST_PAD_MIN_CM = 4;
 
 const GL_VERTEX = /* glsl */ `
 in vec2 aPosition;
@@ -245,16 +262,24 @@ export class ObjectExamineContactAoFilter extends Filter {
   private rtBodyBlur: RenderTexture | null = null;
   private rtCrit: RenderTexture | null = null;
   private rtCritBlur: RenderTexture | null = null;
+  /** caster 活动范围（objectRoot 本地设计空间，未外扩）。 */
+  private rawRect: CastRect = { x: 0, y: 0, w: 1, h: 1 };
+  /** 外扩后的 mask 覆盖范围。 */
   private castRect: CastRect = { x: 0, y: 0, w: 1, h: 1 };
+  /** 物理标尺：一厘米等于多少设计像素。 */
+  private pixelsPerCm = 1;
+  /** mask texel / 设计像素。 */
+  private maskScale = MASK_SCALE_MAX;
   private strengthValue: number;
-  private radiusValue: number;
+  private radiusCmValue: number;
   private critterStrengthValue = 0;
-  private critterRadiusValue = 1;
+  private critterRadiusCmValue = 0;
   private failed = false;
   private warned = false;
   // bake 矩阵复用，避免每帧分配。
   private readonly tmpInvRoot = new Matrix();
   private readonly tmpCaster = new Matrix();
+  private readonly tmpLocal = new Matrix();
   private readonly tmpShader = new Matrix();
   private readonly tmpTranslate = new Matrix();
   private readonly tmpScale = new Matrix();
@@ -269,7 +294,7 @@ export class ObjectExamineContactAoFilter extends Filter {
       padding: 24,
     });
     this.strengthValue = 1;
-    this.radiusValue = 1;
+    this.radiusCmValue = 0;
     // legacy 模式把目标半径均匀分给各 pass；不会像单 pass 那样把 9 个 tap
     // 随半径稀疏拉开，因而大半径下也不会出现偏移轮廓副本。半分辨率下
     // quality 2 已足够平滑。
@@ -289,8 +314,8 @@ export class ObjectExamineContactAoFilter extends Filter {
     });
     this.compositePass = new ContactCompositePass();
     this.setStrength(1);
-    this.setRadius(1);
-    this.setCritterShadow(0, 1);
+    this.setRadiusCm(0);
+    this.setCritterShadow(0, 0);
   }
 
   /** 指定 caster：物件本体 + 参与接触影的爬虫层（ground/body；苍蝇层不要传）。 */
@@ -299,17 +324,44 @@ export class ObjectExamineContactAoFilter extends Filter {
     this.critterCasters = critters.filter(Boolean);
   }
 
+  /**
+   * 物理标尺：一厘米等于多少设计像素（= texW / 物件真实宽度）。
+   * 半径类参数一律以厘米表达，靠它换算，因此换更高分辨率的静帧观感不变。
+   */
+  setPixelsPerCm(value: number): void {
+    const next = Number.isFinite(value) && value > 0 ? value : 1;
+    if (next === this.pixelsPerCm) return;
+    this.pixelsPerCm = next;
+    this.rebuildTargets();
+    this.syncBlur();
+  }
+
   /** caster 在 objectRoot 本地设计空间的活动范围（内部自动外扩）。 */
   setCastArea(x: number, y: number, w: number, h: number): void {
-    const pad = Math.max(CAST_PAD_MIN, Math.ceil(Math.max(w, h) * CAST_PAD_RATIO));
+    this.rawRect = { x, y, w, h };
+    this.rebuildTargets();
+    this.syncBlur();
+  }
+
+  /** 依 rawRect + 物理标尺重算外扩范围与 mask RT 尺寸；尺寸没变则不动 RT。 */
+  private rebuildTargets(): void {
+    const { x, y, w, h } = this.rawRect;
+    // 物件半径用实配值（离散，改动才重建）；爬虫半径每帧平滑跟随，用静态上限
+    // 预留，否则 castRect 会逐帧微动、mask RT 每帧重建。
+    const spillCm = Math.max(this.radiusCmValue, OBJECT_EXAMINE_MAX_CRITTER_AO_RADIUS_CM);
+    const spillPx = spillCm * BLUR_SPILL_SIGMAS * this.pixelsPerCm;
+    const pad = Math.ceil(
+      Math.max(CAST_PAD_MIN_CM * this.pixelsPerCm, Math.max(w, h) * CAST_PAD_RATIO, spillPx),
+    );
     this.castRect = { x: x - pad, y: y - pad, w: w + pad * 2, h: h + pad * 2 };
-    const tw = Math.max(8, Math.ceil(this.castRect.w * MASK_RES));
-    const th = Math.max(8, Math.ceil(this.castRect.h * MASK_RES));
-    if (
-      this.rtBody &&
-      this.rtBody.width === tw &&
-      this.rtBody.height === th
-    ) {
+    // mask 分辨率由「每厘米几个 texel」定，不是由源图像素定。
+    this.maskScale = Math.max(
+      MASK_SCALE_MIN,
+      Math.min(MASK_SCALE_MAX, MASK_TEXELS_PER_CM / this.pixelsPerCm),
+    );
+    const tw = Math.max(8, Math.ceil(this.castRect.w * this.maskScale));
+    const th = Math.max(8, Math.ceil(this.castRect.h * this.maskScale));
+    if (this.rtBody && this.rtBody.width === tw && this.rtBody.height === th) {
       return;
     }
     this.destroyTargets();
@@ -317,6 +369,18 @@ export class ObjectExamineContactAoFilter extends Filter {
     this.rtBodyBlur = RenderTexture.create({ width: tw, height: th });
     this.rtCrit = RenderTexture.create({ width: tw, height: th });
     this.rtCritBlur = RenderTexture.create({ width: tw, height: th });
+  }
+
+  /** 厘米 → mask texel（BlurFilter.strength 的单位）。 */
+  private cmToMaskTexels(cm: number): number {
+    return Math.max(0, cm) * this.pixelsPerCm * this.maskScale;
+  }
+
+  private syncBlur(): void {
+    // 半径 0 时也给个下限：BlurFilter 双向路径要求两轴 strength 非 0，
+    // 且合成里 blur≈raw 会让 shadow 自然归零，不会凭空冒出硬边。
+    this.blurBody.strength = Math.max(0.5, this.cmToMaskTexels(this.radiusCmValue));
+    this.blurCrit.strength = Math.max(0.5, this.cmToMaskTexels(this.critterRadiusCmValue));
   }
 
   /**
@@ -327,7 +391,8 @@ export class ObjectExamineContactAoFilter extends Filter {
   bake(renderer: PixiRenderer, objectRoot: Container): void {
     if (!this.enabled || !this.rtBody || !this.rtCrit || !this.bodyCaster) return;
     const r = this.castRect;
-    this.tmpInvRoot.copyFrom(objectRoot.worldTransform).invert();
+    const rootWorld = objectRoot.worldTransform;
+    this.tmpInvRoot.copyFrom(rootWorld).invert();
     // 合成采样矩阵：uv = S(1/w,1/h) · T(-x,-y) · invWorld · global
     // Pixi append 是右乘；要用 prepend 才能得到注释里的左乘顺序。
     this.tmpTranslate.set(1, 0, 0, 1, -r.x, -r.y);
@@ -339,12 +404,20 @@ export class ObjectExamineContactAoFilter extends Filter {
     const m = this.tmpShader;
     this.compositePass.uniforms.uniforms.uMaskX = new Float32Array([m.a, m.c, m.tx, 0]);
     this.compositePass.uniforms.uniforms.uMaskY = new Float32Array([m.b, m.d, m.ty, 0]);
-    // caster 烘焙变换：texel = S(MASK_RES) · T(-x,-y) · invWorld · casterWorld
-    this.tmpScale.set(MASK_RES, 0, 0, MASK_RES, 0, 0);
+    // filter padding 是屏幕像素，模糊外溢是设计像素——差一个 objectRoot 世界缩放。
+    // 探近（distanceIndex 拉大）时缩放会 >1，不跟着放大就会把影子外圈裁掉。
+    this.syncPadding(Math.hypot(rootWorld.a, rootWorld.b) || 1);
+    // caster 烘焙变换：texel = S(maskScale) · T(-x,-y) · casterLocal(相对 objectRoot)
+    this.tmpScale.set(this.maskScale, 0, 0, this.maskScale, 0, 0);
     try {
-      renderer.clear({ target: this.rtBody, clearColor: [0, 0, 0, 0] });
+      // 必须 bind(target, clear) 而不是 renderer.clear({target})：WebGL 的
+      // GlRenderTargetAdaptor.clear 忽略 target 参数，只对「当前已绑定的 FBO」
+      // 发 gl.clear。用 renderer.clear({target: rtCrit}) 会把上一步刚烘好的
+      // rtBody 抹成全 0（物件 AO 整条通道失效），而 rtCrit 自己从不被清空
+      // （爬虫轮廓逐帧累积成拖影）。bind 会先绑 FBO+viewport 再清。
+      renderer.renderTarget.bind(this.rtBody, true, [0, 0, 0, 0]);
       if (this.bodyCaster.visible) {
-        this.casterTransform(this.bodyCaster);
+        this.casterTransform(this.bodyCaster, objectRoot);
         renderer.render({
           container: this.bodyCaster,
           target: this.rtBody,
@@ -352,10 +425,10 @@ export class ObjectExamineContactAoFilter extends Filter {
           transform: this.tmpCaster,
         });
       }
-      renderer.clear({ target: this.rtCrit, clearColor: [0, 0, 0, 0] });
+      renderer.renderTarget.bind(this.rtCrit, true, [0, 0, 0, 0]);
       for (const caster of this.critterCasters) {
         if (!caster.visible) continue;
-        this.casterTransform(caster);
+        this.casterTransform(caster, objectRoot);
         renderer.render({
           container: caster,
           target: this.rtCrit,
@@ -373,12 +446,29 @@ export class ObjectExamineContactAoFilter extends Filter {
     }
   }
 
-  private casterTransform(caster: Container): void {
-    this.tmpCaster
-      .copyFrom(caster.worldTransform)
-      .prepend(this.tmpInvRoot)
-      .prepend(this.tmpTranslate)
-      .prepend(this.tmpScale);
+  /**
+   * caster → objectRoot 的相对变换，**只走 localTransform 逐级相乘**。
+   *
+   * 不能用 `caster.worldTransform`：`renderer.render({ transform })` 会先
+   * `enableRenderGroup()` 把 caster 提成 render group，再把它的 worldTransform
+   * 写成本次烘焙矩阵且不还原。正常帧序里主渲染会重算回来，但只要出现一帧
+   * 「bake 之后没有完整主渲染」（物件不可见、会话被面板挡住等），下一帧就会拿
+   * 污染值再乘一遍，逐帧自乘缩小直到 mask 塌成空——AO 会毫无征兆地静默消失。
+   * localTransform 由 position/scale/rotation/pivot 推出，不参与渲染簿记，安全。
+   */
+  private casterTransform(caster: Container, objectRoot: Container): void {
+    this.tmpCaster.identity();
+    let node: Container | null = caster;
+    while (node && node !== objectRoot) {
+      node.updateLocalTransform();
+      this.tmpCaster.prepend(node.localTransform);
+      node = node.parent;
+    }
+    if (!node) {
+      // caster 不在 objectRoot 子树里：退回世界变换，至少不静默画错位置。
+      this.tmpCaster.copyFrom(caster.worldTransform).prepend(this.tmpInvRoot);
+    }
+    this.tmpCaster.prepend(this.tmpTranslate).prepend(this.tmpScale);
   }
 
   override apply(
@@ -421,25 +511,33 @@ export class ObjectExamineContactAoFilter extends Filter {
     this.syncEnabled();
   }
 
-  /** 物件接触影半径（设计空间乘数）。 */
-  setRadius(value: number): void {
-    this.radiusValue = Math.max(0.3, Math.min(2.5, value));
-    this.blurBody.strength = Math.max(0.5, this.radiusValue * BODY_BLUR_SCALE * MASK_RES);
-    this.syncPadding();
+  /** 物件接触影半径，单位厘米。 */
+  setRadiusCm(cm: number): void {
+    const next = Math.max(
+      0,
+      Math.min(OBJECT_EXAMINE_MAX_CONTACT_AO_RADIUS_CM, Number.isFinite(cm) ? cm : 0),
+    );
+    if (next === this.radiusCmValue) return;
+    this.radiusCmValue = next;
+    // 半径参与 cast 留边，改了要重算 mask 覆盖范围（离散改动，不会每帧触发）。
+    this.rebuildTargets();
+    this.syncBlur();
   }
 
-  /** 爬虫接触影：strength 强度、radius 半径（设计空间乘数）。 */
-  setCritterShadow(strength: number, radius: number): void {
+  /** 爬虫接触影：strength 无量纲强度、radiusCm 半径（厘米）。 */
+  setCritterShadow(strength: number, radiusCm: number): void {
     this.critterStrengthValue = Math.max(0, Math.min(3, strength));
-    this.critterRadiusValue = Math.max(0.3, Math.min(2.5, radius));
+    this.critterRadiusCmValue = Math.max(
+      0,
+      Math.min(
+        OBJECT_EXAMINE_MAX_CRITTER_AO_RADIUS_CM,
+        Number.isFinite(radiusCm) ? radiusCm : 0,
+      ),
+    );
     this.compositePass.uniforms.uniforms.uCritStrength =
       this.critterStrengthValue * CRITTER_OPACITY;
-    this.blurCrit.strength = Math.max(
-      0.5,
-      this.critterRadiusValue * CRITTER_BLUR_SCALE * MASK_RES,
-    );
+    this.syncBlur();
     this.syncEnabled();
-    this.syncPadding();
   }
 
   private syncEnabled(): void {
@@ -447,14 +545,15 @@ export class ObjectExamineContactAoFilter extends Filter {
       !this.failed && (this.strengthValue > 0.001 || this.critterStrengthValue > 0.001);
   }
 
-  private syncPadding(): void {
-    const bodySpill = (this.blurBody.strength / MASK_RES) * 2;
-    const critSpill = (this.blurCrit.strength / MASK_RES) * 2;
-    this.padding = Math.ceil(Math.max(bodySpill, critSpill) + 4);
+  /** @param worldScale objectRoot 的世界缩放（设计像素 → 屏幕像素）。 */
+  private syncPadding(worldScale: number): void {
+    const spillTexels = Math.max(this.blurBody.strength, this.blurCrit.strength);
+    const spillDesignPx = (spillTexels / this.maskScale) * BLUR_SPILL_SIGMAS;
+    this.padding = Math.ceil(spillDesignPx * worldScale + 4);
   }
 
   get strength(): number { return this.strengthValue; }
-  get radius(): number { return this.radiusValue; }
+  get radiusCm(): number { return this.radiusCmValue; }
 
   private destroyTargets(): void {
     this.rtBody?.destroy();

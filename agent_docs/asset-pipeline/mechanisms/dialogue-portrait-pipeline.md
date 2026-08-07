@@ -13,7 +13,7 @@ triggers:
   paths: ["tools/dialogue_portrait_pipeline.py", "public/resources/runtime/images/dialogue_portraits/**"]
   topics: [立绘, 头像, portrait, 表情图]
   tasks: [重生成立绘, 修立绘抠图, 加新角色立绘]
-last_governed: 2026-07-11
+last_governed: 2026-08-05
 ---
 
 ## 是什么(一句话)
@@ -24,14 +24,15 @@ last_governed: 2026-07-11
 
 ## 权威源(读代码从哪进)
 
-`tools/dialogue_portrait_pipeline.py`:`_flood_bg`/`gray_key_to_rgba` 是抠图本体,
-`dehalo` 在 `process_sheet` resize 后无条件调用。源 3×3 大图在
-`tmp/dialogue_portraits_work/generated_sheets/`。
+`tools/dialogue_portrait_pipeline.py`:`_flood_bg`/`gray_key_to_rgba` 是抠图本体,`dehalo` 在
+`process_sheet` resize 后无条件调用。源 3×3 大图在 `tmp/dialogue_portraits_work/generated_sheets/`。
 
 ## 硬契约(违反即 bug)
 
-- **抠图 = 边缘 flood-fill 灰底**,结构上不会掏内部洞;它的失败模式是"背景灰被当主体留成灰块",不是镂空——排查方向别搞反。
-- **dehalo 已内建(2026-07-07 根治)**:相对**局部前景**判定、只压"比邻域更亮且低彩"的边缘污染;对白发/灰头巾角色实测安全。重跑管线不应再产 halo,若再现先查是否绕过了 `process_sheet`。
+- **抠图 = 边缘 flood-fill 灰底**,结构上不会掏内部洞;失败模式是"背景灰被当主体留成灰块",
+  不是镂空——排查方向别搞反。
+- **dehalo 已内建**(相对**局部前景**判定、只压"比邻域更亮且低彩"的边缘污染,不动 alpha):
+  对白发/灰头巾角色实测安全;若重跑后仍见整圈 halo,先查是否绕过了 `process_sheet`。
 - 就地修单张 PNG 时 **alpha 必须逐字节不变**(轮廓与 meta.alphaBboxes 依赖它),只动 RGB。
 - **立绘 PNG 是 gitignored 生成物**:改前必须自行备份,git 救不回来。
 
@@ -39,6 +40,10 @@ last_governed: 2026-07-11
 
 - 量化 gray_rim 指标会把白发/灰头巾(合法内容)误报成 halo——必目视复核,判读铁律见
   [抠图路线与判读铁律](matting-toolbox.md)。
+- **1K 源图重扣时内建 dehalo 收不干净"凸出轮廓的灰底疙瘩"**(6–9px、自成局部前景,所以过不了
+  "比局部前景更亮"这一关)与飞离小岛;腐蚀边带再来两遍也无效。收干净要靠三步后处理:小岛按
+  面积删、距离变换边带压暗、孤岛**按颜色甄别**(近灰底=残渣清除,暗色/暖色=合法布屑保留)。
+  这三步目前是一次性脚本、未并入管线。
 - 死资源 `player_taoist_anim_v1/`(无引用、坏得最凶)用户拍板**留着别动**。
 
 ## 怎么验证

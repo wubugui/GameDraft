@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "id": "生态_翻_雾津_铺外水桶",
+  "entry": "root",
+  "meta": {
+    "title": "翻检 · 雾津纸扎铺门口水桶（眼尖 / 夜 / 常态 三态）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "narrative": "eco_眼力",
+              "state": "眼尖",
+              "reached": true
+            }
+          ],
+          "next": "deep"
+        },
+        {
+          "conditions": [
+            {
+              "narrative": "eco_时辰",
+              "state": "夜"
+            }
+          ],
+          "next": "night"
+        }
+      ],
+      "defaultNext": "first"
+    },
+    "first": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "纸扎铺门口一只水桶，桶里泡着浆糊刷子。刷毛上的纸浆干成了壳，捏一下就碎。",
+      "next": "act_first"
+    },
+    "night": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "桶里的水结了层膜。膜上浮着几片没剪完的白纸，边缘齐整得很。",
+      "next": "end"
+    },
+    "deep": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "桶底沉着几张剪坏的纸钱，边上都燎黄了。糊纸人的舍不得烧现成的，只烧废的——这一桶，废得有点多。",
+      "next": "end"
+    },
+    "act_first": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "playNpcAnimation",
+          "params": {
+            "target": "eco_wj_拴驴",
+            "state": "kick",
+            "loop": false,
+            "thenState": "idle",
+            "speed": 0.85
+          }
+        },
+        {
+          "type": "showEmote",
+          "params": {
+            "target": "eco_wj_拴驴",
+            "emote": "!",
+            "duration": 900
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "end": {
+      "type": "end"
+    }
+  }
+}

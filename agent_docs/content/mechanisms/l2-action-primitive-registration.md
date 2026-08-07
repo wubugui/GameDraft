@@ -14,7 +14,7 @@ triggers:
   paths: ["src/core/ActionRegistry.ts", "tools/editor/shared/action_editor.py"]
   topics: [新增action, 新command, L2升级, 三件套, ActionRegistry]
   tasks: [加动作, 加命令, L2升级]
-last_governed: 2026-07-13
+last_governed: 2026-08-05
 ---
 
 ## 是什么(一句话)
@@ -23,36 +23,34 @@ last_governed: 2026-07-13
 
 ## 权威源(读代码从哪进)
 
-1. **运行时注册**:`src/core/ActionRegistry.ts` 的 `executor.register('类型名', handler, [参数…])`。
-2. **编辑器可配**:`tools/editor/shared/action_editor.py` 的 `ACTION_TYPES`(下拉可选)+
-   `_PARAM_SCHEMAS`(参数字段与类型);复杂参数在 `_rebuild_params`/`to_dict` 加专属分支。
-3. **校验认可**:新 type 必须过 `validator.validate`(它拿数据中的 `action.type` 与
-   `ACTION_TYPES` 比对,未登记报 error)。
+1. **运行时注册**:`src/core/ActionRegistry.ts`(`executor.register`)。
+2. **编辑器可配**:`action_editor.py` 的 `ACTION_TYPES`(下拉可选)+ `_PARAM_SCHEMAS`(参数形状)。
+3. **校验认可**:`validator.validate` 拿数据里的 `action.type` 与 `ACTION_TYPES` 比对,未登记报 error。
 
-对等机制的登记面:新 cutscene present 类型改 CutsceneManager/renderer;新条件叶子改
-`evaluateGraphCondition.ts`;新图节点改 DialogueGraphNodeDef + GraphDialogueManager——同样要求"运行时+编辑器+校验"三面齐。
+对等机制(新 cutscene present 类型 / 新条件叶子 / 新图节点)同样要求"运行时 + 编辑器 + 校验"三面齐;
+**新图节点的运行时那一面 = `DialogueGraphNodeDef` + `GraphDialogueManager`**(编辑器侧另在
+[dialogue-graph-editor](../../editor-tools/mechanisms/dialogue-graph-editor.md))。
 
 ## 硬契约
 
-- **params 内含 `ActionDef[]`(子动作)时**,必须在 `tools/editor/validator.py` 的
-  `_walk_action_defs` 增加递归,否则子动作不参与"类型已登记"校验。
+- **params 内含 `ActionDef[]`(子动作)时**,必须在 `validator.py` 的 `_walk_action_defs`
+  加递归,否则子动作不参与"类型已登记"校验。
 - **要进 cutscene 用**,同步 `src/data/cutscene_action_allowlist.json`。
-- **参数含实体/场景/出生点引用时**,同步登记 `tools/editor/shared/entity_refactor.py`
-  的 `ENTITY_REF_PARAMS`(实体迁移/改名/安全删除与 validator 可达性检查共同消费;
-  漏登记该引用对重构与校验双双隐形,parity 测试 `test_entity_refactor.py` 拦
-  `_PARAM_SCHEMAS` 内的漏网,自定义分支 action 由其钉单测试锁定)。
-- **async handler**:在 register 内 `void promise.catch(...)`,不许把 `ActionExecutor.execute`
+- **参数含实体/场景/出生点引用时**,同步登记 `entity_refactor.py` 的 `ENTITY_REF_PARAMS`
+  ——漏登记会让该引用对重构与校验**双双隐形**(parity 测试只拦 `_PARAM_SCHEMAS` 内的漏网,
+  自定义分支 action 得自己钉单测试)。
+- **async handler**:在 register 内 `void promise.catch(...)`;**不许**把 `ActionExecutor.execute`
   改成 async(影响全链路)。
 - **最小新增**:不顺手重构、不改既有 command 语义、handler 只做本动作逻辑。
-- **审批边界**(以下须用户确认再做):扩 `ActionRegistryDeps`(牵动 Game 与多系统耦合)、
-  改既有 action 语义/参数约定、动 `_walk_action_defs` 以外的全局校验策略、以及任何会
-  实质改变玩法结果(奖励/进度/规矩/遭遇结局)的动作——后者先对照玩法文档。
+- **审批边界**(须用户确认再做):扩 `ActionRegistryDeps`(牵动 Game 与多系统耦合)、改既有
+  action 语义/参数约定、动 `_walk_action_defs` 以外的全局校验策略、任何会实质改变玩法结果
+  (奖励/进度/规矩/遭遇结局)的动作——后者先对照玩法文档。
 
 ## 已知坑
 
-- **可选参数会被 Python 兜底当必填**:叙事侧兜底校验把 `_PARAM_SCHEMAS` 全部参数视为必填、
-  拦住保存;可选参数须按 `emitNarrativeSignal` 范式覆盖 required——TS 侧
-  `actionParamManifest.ts` 才是参数权威(实例:`stopSceneAmbient` 为此不在 schema 放可选 id)。
+- **可选参数会被 Python 兜底当必填**、拦住保存:兜底校验把 `_PARAM_SCHEMAS` 的参数一律视为
+  必填,可选参数须按 `emitNarrativeSignal` 范式覆盖 required;TS 侧 `actionParamManifest.ts`
+  才是参数权威。
 - 只改 TS 不更新 action_editor:策划选不到、校验报 error,等于没加。
 
 ## 怎么验证

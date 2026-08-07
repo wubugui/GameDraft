@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 1,
+  "id": "生态_看_码头_黄包车歇",
+  "entry": "root",
+  "meta": {
+    "title": "歇着的黄包车（风评分叉；一拍：蹲着的散工挪身子）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "narrative": "eco_风评",
+              "state": "沾晦气",
+              "reached": true
+            }
+          ],
+          "next": "hui1"
+        }
+      ],
+      "defaultNext": "ri1"
+    },
+    "ri1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "坐垫塌了一个坑，坐过的人不轻。脚踏板上一层干泥巴，是从山上下来的。",
+      "next": "act_ri"
+    },
+    "act_ri": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "faceEntity",
+          "params": {
+            "target": "eco_dk_候工甲",
+            "direction": "left"
+          }
+        },
+        {
+          "type": "showEmote",
+          "params": {
+            "target": "eco_dk_候工甲",
+            "emote": "…",
+            "duration": 1600
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "hui1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "你手才搭到车杠上，蹲在旁边那个就把身子挪开咯半尺。",
+      "next": "act_hui"
+    },
+    "act_hui": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "faceEntity",
+          "params": {
+            "target": "eco_dk_候工甲",
+            "direction": "left"
+          }
+        },
+        {
+          "type": "playNpcAnimation",
+          "params": {
+            "target": "eco_dk_候工甲",
+            "state": "crouch",
+            "holdFrame": 7
+          }
+        },
+        {
+          "type": "showEmote",
+          "params": {
+            "target": "eco_dk_候工甲",
+            "emote": "…",
+            "duration": 2200
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "end": {
+      "type": "end"
+    }
+  }
+}

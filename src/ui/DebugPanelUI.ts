@@ -32,6 +32,7 @@ const TAB_TOOLS = 'tools';
 const TAB_NARRATIVE = 'narrative';
 const TAB_EXAMINE = 'examine';
 const TAB_EXAMINE_AMBIENCE = 'examineAmbience';
+const TAB_SOCKET = 'socket';
 const TAB_FLAGS = 'flags';
 const TAB_LOG = 'log';
 
@@ -41,12 +42,15 @@ export const NARRATIVE_DEBUG_SECTION_ID = '叙事调试';
 export const OBJECT_EXAMINE_DEBUG_SECTION_ID = '物件检视';
 /** 物件检视氛围 Tab */
 export const OBJECT_EXAMINE_AMBIENCE_DEBUG_SECTION_ID = '检视氛围';
+/** 动画挂点 Tab（试挂道具、看位姿读数）；不进「工具」页 */
+export const SOCKET_DEBUG_SECTION_ID = '挂点';
 
 function isDedicatedTabSection(id: string): boolean {
   return (
     id === NARRATIVE_DEBUG_SECTION_ID ||
     id === OBJECT_EXAMINE_DEBUG_SECTION_ID ||
-    id === OBJECT_EXAMINE_AMBIENCE_DEBUG_SECTION_ID
+    id === OBJECT_EXAMINE_AMBIENCE_DEBUG_SECTION_ID ||
+    id === SOCKET_DEBUG_SECTION_ID
   );
 }
 
@@ -65,11 +69,12 @@ type TabId =
   | typeof TAB_NARRATIVE
   | typeof TAB_EXAMINE
   | typeof TAB_EXAMINE_AMBIENCE
+  | typeof TAB_SOCKET
   | typeof TAB_FLAGS
   | typeof TAB_LOG;
 
 /** 区块渲染上下文：tools / screen 默认折叠；其余默认展开。screen=游戏画面常驻卡（只有 ✕ 取消常驻） */
-type SectionContext = 'tools' | 'narrative' | 'examine' | 'examineAmbience' | 'quick' | 'screen';
+type SectionContext = 'tools' | 'narrative' | 'examine' | 'examineAmbience' | 'socket' | 'quick' | 'screen';
 
 function normalizePinList(data: unknown): string[] {
   if (!Array.isArray(data)) return [];
@@ -118,6 +123,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
   private panelNarrative: HTMLElement;
   private panelExamine: HTMLElement;
   private panelExamineAmbience: HTMLElement;
+  private panelSocket: HTMLElement;
   private panelFlags: HTMLElement;
   private panelLog: HTMLElement;
   private logPre: HTMLElement;
@@ -192,6 +198,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
     mkTab(TAB_NARRATIVE, '叙事调试');
     mkTab(TAB_EXAMINE, '检视');
     mkTab(TAB_EXAMINE_AMBIENCE, '检视氛围');
+    mkTab(TAB_SOCKET, '挂点');
     mkTab(TAB_FLAGS, 'Flag');
     mkTab(TAB_LOG, '日志');
 
@@ -204,6 +211,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
     this.panelNarrative = this.mkPanel('narrative-panel');
     this.panelExamine = this.mkPanel('examine-panel');
     this.panelExamineAmbience = this.mkPanel('examine-ambience-panel');
+    this.panelSocket = this.mkPanel('socket-panel');
     this.panelFlags = this.mkPanel('flags-panel');
     this.panelLog = this.mkPanel('log-panel');
 
@@ -231,6 +239,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
     panels.appendChild(this.panelNarrative);
     panels.appendChild(this.panelExamine);
     panels.appendChild(this.panelExamineAmbience);
+    panels.appendChild(this.panelSocket);
     panels.appendChild(this.panelFlags);
     panels.appendChild(this.panelLog);
 
@@ -281,6 +290,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
     this.panelNarrative.classList.toggle('is-active', id === TAB_NARRATIVE);
     this.panelExamine.classList.toggle('is-active', id === TAB_EXAMINE);
     this.panelExamineAmbience.classList.toggle('is-active', id === TAB_EXAMINE_AMBIENCE);
+    this.panelSocket.classList.toggle('is-active', id === TAB_SOCKET);
     this.panelFlags.classList.toggle('is-active', id === TAB_FLAGS);
     this.panelLog.classList.toggle('is-active', id === TAB_LOG);
     this.updateSystemLiveLoop();
@@ -388,6 +398,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
     this.panelNarrative.replaceChildren();
     this.panelExamine.replaceChildren();
     this.panelExamineAmbience.replaceChildren();
+    this.panelSocket.replaceChildren();
     this.panelFlags.replaceChildren();
     this.logPre.textContent = '';
   }
@@ -409,6 +420,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
       this.panelNarrative,
       this.panelExamine,
       this.panelExamineAmbience,
+      this.panelSocket,
       this.panelFlags,
       this.panelLog,
     ]) {
@@ -430,6 +442,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
       this.panelNarrative,
       this.panelExamine,
       this.panelExamineAmbience,
+      this.panelSocket,
       this.panelFlags,
       this.panelLog,
     ]) {
@@ -450,6 +463,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
     this.renderNarrative();
     this.renderExamine();
     this.renderExamineAmbience();
+    this.renderSocket();
     this.renderFlags();
     this.renderLogOnly();
     this.restorePanelScrollState(scrollState);
@@ -756,6 +770,21 @@ export class DebugPanelUI implements IDebugPanelAPI {
       scroll.appendChild(this.p('（未注册检视氛围调试区块）'));
     }
     this.panelExamineAmbience.appendChild(scroll);
+  }
+
+  private renderSocket(): void {
+    this.panelSocket.replaceChildren();
+    const scroll = document.createElement('div');
+    scroll.className = 'debug-dock__scroll';
+    const n = this.appendSectionBlocks(
+      scroll,
+      (id) => id === SOCKET_DEBUG_SECTION_ID,
+      'socket',
+    );
+    if (n === 0) {
+      scroll.appendChild(this.p('（未注册挂点调试区块）'));
+    }
+    this.panelSocket.appendChild(scroll);
   }
 
   private renderFlags(): void {

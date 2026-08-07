@@ -35,6 +35,21 @@ class DialogueGraphEditorTab(QWidget):
         self._panel.catalog_changed.connect(self.dialogue_catalog_changed)
         layout.addWidget(self._panel)
 
+    # --- Edit→撤销/重做 的鸭子钩子（主窗 `_dispatch_undo` 按名查找） ---
+    #
+    # 没有这两个钩子的后果不是「Ctrl+Z 没反应」，而是**更糟**：主窗找不到钩子会回落
+    # `self._model.undo_stack.undo()` —— 图对话面板用的是自己那个 QUndoStack，
+    # 于是策划在图对话里按 Ctrl+Z，图纹丝不动（他会连按好几次），而每按一次都在
+    # 悄悄回退**场景/任务编辑器**里的改动。场景编辑器早就实现了这对钩子，图对话漏了。
+
+    def editor_undo(self) -> None:
+        if self._panel is not None:
+            self._panel.undo()
+
+    def editor_redo(self) -> None:
+        if self._panel is not None:
+            self._panel.redo()
+
     def is_dirty_now(self) -> bool:
         """当前是否有未保存的图对话修改（信号之外的即时查询口）。"""
         return bool(self._panel is not None and self._panel.has_unsaved_changes())

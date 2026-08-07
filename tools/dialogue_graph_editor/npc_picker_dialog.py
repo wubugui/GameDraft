@@ -77,11 +77,17 @@ class NpcPickerDialog(QDialog):
 
     def _apply_filter(self, text: str) -> None:
         self._populate_list(text)
-        if self._list.count() == 1:
+        if self._list.count():
             self._list.setCurrentRow(0)
 
     def _accept_current(self) -> None:
         it = self._list.currentItem()
+        if it is None:
+            # 筛出多条时旧实现直接 reject()：弹窗关掉、字段不变、零提示，
+            # 策划以为"点了没反应"。改成默认选中第一条再确认。
+            if self._list.count():
+                self._list.setCurrentRow(0)
+                it = self._list.currentItem()
         if it is None:
             self.reject()
             return

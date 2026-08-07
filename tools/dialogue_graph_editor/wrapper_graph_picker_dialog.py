@@ -44,7 +44,7 @@ class WrapperGraphPickerDialog(QDialog):
         self._table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.doubleClicked.connect(self._accept_current)
-        self._table.setHorizontalHeaderLabels(["显示名 (id)", "Owner", "Category", "Composition", "Element", "States"])
+        self._table.setHorizontalHeaderLabels(["显示名 (id)", "所属实体", "分类", "装扮组合", "元素", "状态"])
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)

@@ -7,7 +7,7 @@ summary: 2026-07-13 拍板退役一等公民 scenario 系统;stage-1 数据侧�
 status: active
 triggers:
   topics: [scenario 退役, 一等公民, scenarios.json, scenarioLine, 条件叶]
-last_governed: 2026-07-15
+last_governed: 2026-08-05
 ---
 
 ## 背景(一段)

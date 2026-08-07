@@ -94,6 +94,12 @@ TOOLS: tuple[ToolAction, ...] = (
     ToolAction("主编辑器", "editor", "内容、场景、资源索引"),
     ToolAction("生产工作台", "workbench", "每日检查、剧情单元、素材任务"),
     ToolAction("对话图", "dialogue-graph", "Graph 对话和节点关系"),
+    ToolAction(
+        "叙事调试器",
+        "narrative-debugger",
+        "边玩边看：戏走到哪、这一拍在等你做什么、刚才那一下系统认没认；可回到任意一拍重看"
+        "（开完在游戏地址后面加 ?ndbg=1）",
+    ),
     ToolAction("资源浏览器", "asset-browser", "浏览、拖拽、入库记录"),
     ToolAction("资源入库", "asset-ingest", "导入素材到工程结构"),
     ToolAction("图片缩放", "image-resizer", "等比缩放、水平/垂直对称、导出副本"),
@@ -299,6 +305,7 @@ class ConsoleState:
             return self._open_dev_entry(
                 str(payload.get("kind") or ""),
                 str(payload.get("value") or payload.get("id") or ""),
+                with_debugger=bool(payload.get("debugger")),
             )
         if action == "build":
             return self._run_exclusive("Build", [npm_command(), "run", "build"], env=env_with_node_path())
@@ -806,13 +813,17 @@ class ConsoleState:
             return False, "Failed to stop game server."
         return True, "started"
 
-    def _open_dev_entry(self, kind: str, value: str) -> tuple[bool, str]:
+    def _open_dev_entry(self, kind: str, value: str, *, with_debugger: bool = False) -> tuple[bool, str]:
         entry_kind = kind.strip()
         entry_value = value.strip()
-        if entry_kind not in {"scene", "narrative"}:
+        if entry_kind not in {"scene", "narrative", "debug"}:
             return False, f"Unknown dev entry kind: {kind}"
         if not entry_value:
             return False, "Missing dev entry value."
+
+        # 叙事调试器要先起来监听，游戏那边才连得上（连不上会退避重连，但先起省得等）
+        if with_debugger or entry_kind == "debug":
+            self._launch_narrative_debugger()
 
         ok, message = self._start_game()
         if not ok:
@@ -821,12 +832,27 @@ class ConsoleState:
         params = {"mode": "dev"}
         if entry_kind == "narrative":
             params["narrativeWarp"] = entry_value
-        else:
+        elif entry_kind == "scene":
             params["devScene"] = entry_value
+        # 策划不该记得往地址后面加参数——勾了就自动带上
+        if with_debugger or entry_kind == "debug":
+            params["ndbg"] = "1"
 
-        self.add_log(f"Opening dev {entry_kind}: {entry_value}", "cmd")
+        label = entry_value if entry_kind != "debug" else "边玩边调"
+        self.add_log(f"Opening dev {entry_kind}: {label}", "cmd")
         threading.Thread(target=self._open_game_url_when_ready, args=(params,), daemon=True).start()
         return True, "opening"
+
+    def _launch_narrative_debugger(self) -> None:
+        """起叙事调试器窗口。走与其它工具同一条 launch 路径（非独占，不挡别的任务）。
+
+        已经开着再点一次也无妨：端口被占时它自己会弹提示让人换端口。
+        """
+        ok, message = self.launch_tool("narrative-debugger")
+        if ok:
+            self.add_log("叙事调试器已启动（游戏连上后顶栏那个点会变绿）", "cmd")
+        else:
+            self.add_log(f"叙事调试器启动失败：{message}", "err")
 
     def _cancel_active(self) -> tuple[bool, str]:
         with self.lock:
@@ -1282,6 +1308,9 @@ input{min-height:36px;border:1px solid #9ca3af;border-radius:5px;padding:0 10px;
 .note{font-size:12px;color:#6b7280}
 .wide{margin-top:12px}
 .shortcut-row{display:grid;grid-template-columns:52px minmax(0,1fr) 76px;gap:8px;align-items:center;margin-bottom:8px}
+.debug-row{grid-template-columns:52px auto minmax(0,1fr)}
+.inline-check{display:flex;align-items:center;gap:6px;font-size:12px;opacity:.75;white-space:nowrap}
+.hint{font-size:12px;opacity:.6;margin:2px 0 0}
 label{font-size:13px;font-weight:700;color:#374151}
 select{min-height:38px;border:1px solid #9ca3af;border-radius:5px;background:#f9fafb;color:#111827;font-size:14px;padding:0 10px;min-width:0}
 .bar{display:flex;justify-content:space-between;align-items:center;margin:14px 0 6px}
@@ -1337,6 +1366,12 @@ select{min-height:38px;border:1px solid #9ca3af;border-radius:5px;background:#f9
 <select id="devNarrativeSelect"></select>
 <button id="openDevNarrative">打开</button>
 </div>
+<div class="shortcut-row debug-row">
+<label>边玩边调</label>
+<button id="openPlayWithDebugger">开调试器 + 开游戏</button>
+<label class="inline-check"><input type="checkbox" id="devWithDebugger"> 上面两个入口也带上调试器</label>
+</div>
+<p class="hint">叙事调试器＝边玩边看：戏走到哪、这一拍在等你做什么、刚才那一下系统认没认；可回到任意一拍重看。</p>
 </section>
 <div class="bar"><strong>日志</strong><span id="mcpState"></span><span id="state"></span><button id="clearLog">清空</button></div>
 <div id="log"></div>
@@ -1439,11 +1474,17 @@ fillDevSelect(devSceneSelect, devShortcuts.scenes || []);
 fillDevSelect(devNarrativeSelect, devShortcuts.narrative || []);
 document.querySelector("#openDevScene").disabled = devSceneSelect.options.length === 0;
 document.querySelector("#openDevNarrative").disabled = devNarrativeSelect.options.length === 0;
+const devWithDebugger = document.querySelector("#devWithDebugger");
 document.querySelector("#openDevScene").addEventListener("click",()=>{
-  post("/api/action",{action:"open_dev_entry",kind:"scene",value:devSceneSelect.value});
+  post("/api/action",{action:"open_dev_entry",kind:"scene",value:devSceneSelect.value,
+                      debugger:devWithDebugger.checked?"1":""});
 });
 document.querySelector("#openDevNarrative").addEventListener("click",()=>{
-  post("/api/action",{action:"open_dev_entry",kind:"narrative",value:devNarrativeSelect.value});
+  post("/api/action",{action:"open_dev_entry",kind:"narrative",value:devNarrativeSelect.value,
+                      debugger:devWithDebugger.checked?"1":""});
+});
+document.querySelector("#openPlayWithDebugger").addEventListener("click",()=>{
+  post("/api/action",{action:"open_dev_entry",kind:"debug",value:"1",debugger:"1"});
 });
 setInterval(poll, 800);
 poll();

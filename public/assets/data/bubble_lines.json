@@ -1,0 +1,35 @@
+{
+  "tuning": {
+    "globalMinIntervalMs": 4000,
+    "perSpeakerMinIntervalMs": 12000,
+    "maxConcurrent": 2,
+    "audibleRange": 900
+  },
+  "lineSets": [
+    {
+      "id": "关二狗_普通状态_通用",
+      "speaker": {
+        "kind": "player"
+      },
+      "lines": [
+        {
+          "text": "二分法"
+        }
+      ],
+      "when": {
+        "all": [
+          {
+            "narrative": "wrapper_主线_崖墓任务发布",
+            "state": "state_2",
+            "reached": true
+          },
+          {
+            "not": {
+              "all": []
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

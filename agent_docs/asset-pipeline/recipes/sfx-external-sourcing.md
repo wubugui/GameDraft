@@ -12,7 +12,7 @@ triggers:
   paths: ["public/resources/runtime/audio/**", "public/assets/data/audio_config.json"]
   topics: [音效, 外采, sfx, 音频素材, 署名]
   tasks: [找音效, 下载音效, 音频入库]
-last_governed: 2026-07-11
+last_governed: 2026-08-05
 ---
 
 **实测环境与日期**:2026-07-02~03,说书过场音效外采(sfx_jingju_luogu 等,curl 直下)。

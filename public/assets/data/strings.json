@@ -14,7 +14,7 @@
   },
   "menu": {
     "gameTitle": "七日惊魂",
-    "gameSubtitle": "",
+    "gameSubtitle": "寻狗记 · 试玩",
     "newGame": "新游戏",
     "continueGame": "继续游戏",
     "settings": "设置",
@@ -36,6 +36,7 @@
     "loadFailed": "读档失败，进度未改变"
   },
   "encounter": {
+    "panelTitle": "遭遇",
     "unknownRule": "未知规矩",
     "fragmentInsufficient": "碎片不足 {collected}/{total}",
     "layerInsufficient": "规矩要义不足（需要：{layers}）",
@@ -49,7 +50,8 @@
     "rules": "规矩本",
     "characters": "人物簿",
     "lore": "见闻录",
-    "documents": "杂书匣"
+    "documents": "杂书匣",
+    "slang": "怪话册"
   },
   "characterBook": {
     "title": "人物簿",
@@ -63,6 +65,16 @@
     "back": "[返回书架]",
     "empty": "(暂无见闻)",
     "source": "-- 来源:"
+  },
+  "slangBook": {
+    "title": "怪话册",
+    "back": "[返回书架]",
+    "empty": "(还没记下一句)",
+    "progress": "已记 {collected} / {total}",
+    "lockedSlot": "——还没听人说过",
+    "example": "他的用法：",
+    "source": "-- 来源：",
+    "note": "备注："
   },
   "documentBox": {
     "title": "杂书匣",
@@ -84,7 +96,8 @@
   },
   "hud": {
     "coins": "铜钱:",
-    "ruleUseHint": "[F] 使用规矩",
+    "ruleUseHint": "[G] 使用规矩",
+    "zoneInteractHint": "[E] 察看",
     "current": "当前："
   },
   "inspectBox": {
@@ -113,7 +126,7 @@
     "sideline": "-- 支线 ({count}) --",
     "repeatable": "-- 零活 ({count}) --",
     "completed": "-- 已完成 ({count}) --",
-    "done": "[Done]",
+    "done": "[已了]",
     "empty": "(暂无)",
     "closeHint": "按 Tab 关闭",
     "runOrdinal": "第{n}单",
@@ -151,7 +164,8 @@
   "dialogueLog": {
     "title": "对话记录",
     "empty": "(暂无对话记录)",
-    "closeHint": "按 L 关闭"
+    "closeHint": "按 L 关闭",
+    "total": "共 {count} 条"
   },
   "dialogue": {
     "ruleTag": "[规]",
@@ -177,7 +191,8 @@
   "角色": {
     "埃德加": "埃德加",
     "克拉拉": "克拉拉",
-    "关二狗": "关二狗"
+    "关二狗": "关二狗",
+    "关二狗的同伙A": "癞子"
   },
   "waterMinigame": {
     "exit": "退出",
@@ -230,7 +245,11 @@
     "right": "右",
     "run": "跑",
     "interact": "互动",
-    "back": "返回"
+    "back": "返回",
+    "crouch": "蹲",
+    "gaze": "看",
+    "kick": "上脚",
+    "jump": "跳"
   },
   "paperCraft": {
     "orderDescDefault": "按活计单子选纸、搭骨、糊面。部件可换，但分数和忌讳不一样。",

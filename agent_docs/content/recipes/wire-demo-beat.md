@@ -15,12 +15,13 @@ triggers:
   paths: ["public/assets/data/narrative_graphs.json", "public/assets/data/quests.json", "public/assets/data/scenarios.json"]
   topics: [拍子, beat, 叙事编排, 信号驱动, flow_xungou_main, scenario子图]
   tasks: [加主线拍, 加支线, 接叙事流程, 配任务]
-last_governed: 2026-07-11
+last_governed: 2026-08-05
 ---
 
 **实测环境与日期**:2026-07-02 由 3 个 agent 交叉核对 + 运行时亲验(demo 编排盘点);2026-07-11 复核关键锚点(flow_xungou_main / xungou_demo_main / 集成测试)仍在。
 
-运行时 5 层脊椎模型(世界→对话→scenario 子图→主线主图→quest 镜像)见 **runtime 域**的叙事编排机制卡,此处只给内容侧操作面。
+运行时 5 层脊椎模型(世界→对话→scenario 子图→主线主图→quest 镜像)见
+[narrative-signal-spine](../../runtime/mechanisms/narrative-signal-spine.md),此处只给内容侧操作面。
 
 ## 5 处改动(4 文件 / 4 编辑器面板)
 

@@ -3,6 +3,7 @@ import {
   buildSignalCatalog,
   collectKnownSignals,
   createAuthorSignal,
+  isUnregisteredAuthorSignal,
   renameAuthorSignal,
   setAuthorSignalNotes,
 } from './signalCatalog';
@@ -144,5 +145,85 @@ describe('signal notes', () => {
     setAuthorSignalNotes(data, 'state:flow:s0', '派生信号不接受作者注释');
     setAuthorSignalNotes(data, 'brand_new', '   '); // 空注释 + 未注册 → 不建空行
     expect(data.signals).toEqual([]);
+  });
+});
+
+describe('catalog registered 标记（影子条目可辨认 + 可一键补登记）', () => {
+  const dataWithGhost = (): NarrativeGraphsFileDef => ({
+    schemaVersion: 3,
+    signals: [{ id: 'real' }],
+    compositions: [{
+      id: 'comp',
+      mainGraph: {
+        id: 'flow',
+        ownerType: 'flow',
+        initialState: 'a',
+        states: { a: { id: 'a' }, b: { id: 'b', broadcastOnEnter: true } },
+        transitions: [
+          { id: 't1', from: 'a', to: 'b', signal: 'real' },
+          { id: 't2', from: 'b', to: 'a', signal: 'ghost' },
+          { id: 't3', from: 'a', to: 'b', signal: 'state:flow:b' },
+        ],
+      },
+      elements: [],
+    }],
+  } as unknown as NarrativeGraphsFileDef);
+
+  it('有注册行 → registered:true；只被监听 → registered:false', () => {
+    const catalog = buildSignalCatalog(dataWithGhost());
+    expect(catalog.find((e) => e.id === 'real')?.registered).toBe(true);
+    expect(catalog.find((e) => e.id === 'ghost')?.registered).toBe(false);
+  });
+
+  it('派生广播与草稿占位不算未登记（它们本就没有注册行）', () => {
+    const catalog = buildSignalCatalog(dataWithGhost());
+    expect(catalog.find((e) => e.id === 'state:flow:b')?.registered).toBe(true);
+    expect(catalog.find((e) => e.kind === 'draft')?.registered).toBe(true);
+  });
+
+  it('对影子条目调 createAuthorSignal 即可补登记，之后 registered 翻真', () => {
+    const data = dataWithGhost();
+    createAuthorSignal(data, 'ghost');
+    expect(data.signals).toEqual([{ id: 'real' }, { id: 'ghost' }]);
+    expect(buildSignalCatalog(data).find((e) => e.id === 'ghost')?.registered).toBe(true);
+  });
+
+  it('未登记判据在弹窗与检查器之间是同一个函数（blackbox 声明也必须能补登记）', () => {
+    const data = {
+      schemaVersion: 3,
+      signals: [{ id: 'real' }],
+      compositions: [{
+        id: 'comp',
+        mainGraph: {
+          id: 'flow', ownerType: 'flow', initialState: 'a',
+          states: { a: { id: 'a' }, b: { id: 'b', broadcastOnEnter: true } },
+          transitions: [{ id: 't', from: 'a', to: 'b', signal: 'ghost' }],
+        },
+        elements: [{ id: 'bb', kind: 'blackbox', label: '黑盒', meta: { emits: ['declared_only'] } }],
+      }],
+    } as unknown as NarrativeGraphsFileDef;
+    // blackbox 声明来的条目 editable:false（没有可改名/删除的行），但**补登记必须能点**——
+    // 否则检查器报警告、弹窗里却修不了（历史 bug：按钮曾用 editable gate）。
+    expect(buildSignalCatalog(data).find((e) => e.id === 'declared_only')?.editable).toBe(false);
+    expect(isUnregisteredAuthorSignal(data, 'declared_only')).toBe(true);
+    expect(isUnregisteredAuthorSignal(data, 'ghost')).toBe(true);
+    expect(isUnregisteredAuthorSignal(data, 'real')).toBe(false);
+    // 派生 / 草稿 / 空 id 本就不该有注册行
+    expect(isUnregisteredAuthorSignal(data, 'state:flow:b')).toBe(false);
+    expect(isUnregisteredAuthorSignal(data, '__draft__')).toBe(false);
+    expect(isUnregisteredAuthorSignal(data, '   ')).toBe(false);
+  });
+
+  it('blackbox 只声明未注册的 emits 同样标为未登记', () => {
+    const data = {
+      schemaVersion: 3,
+      signals: [],
+      compositions: [{
+        id: 'comp',
+        mainGraph: { id: 'flow', ownerType: 'flow', initialState: 'a', states: { a: { id: 'a' } }, transitions: [] },
+        elements: [{ id: 'bb', kind: 'blackbox', label: '黑盒', meta: { emits: ['declared_only'] } }],
+      }],
+    } as unknown as NarrativeGraphsFileDef;
+    expect(buildSignalCatalog(data).find((e) => e.id === 'declared_only')?.registered).toBe(false);
   });
 });

@@ -7,7 +7,7 @@ summary: 只有很短的枚举列表才允许下拉;其它引用/大候选集/�
 status: active
 triggers:
   topics: [选择器, 下拉, 弹窗, 立绘]
-last_governed: 2026-07-11
+last_governed: 2026-08-05
 ---
 
 ## 背景(一段)

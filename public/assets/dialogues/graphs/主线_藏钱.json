@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "主线_藏钱",
+  "entry": "n_start",
+  "meta": {
+    "title": "主线_藏钱"
+  },
+  "preconditions": [],
+  "nodes": {
+    "n_start": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "n_1",
+      "text": "雾津藏钱！"
+    },
+    "n_1": {
+      "type": "end"
+    },
+    "n_2": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "n_1",
+      "text": "渡口藏钱"
+    }
+  }
+}

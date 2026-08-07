@@ -7,7 +7,7 @@ summary: 产线主入口是确定性程序;agent 只做 QA 语义裁决/异常/�
 status: active
 triggers:
   topics: [管线架构, 程序驱动, QA裁决, 分工]
-last_governed: 2026-07-11
+last_governed: 2026-08-05
 ---
 
 ## 背景(一段)

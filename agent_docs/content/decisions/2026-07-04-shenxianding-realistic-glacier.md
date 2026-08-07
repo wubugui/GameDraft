@@ -7,7 +7,7 @@ summary: 神仙顶=真实雪山+真实冰川+远看只一点点的裂缝,严禁�
 status: active
 triggers:
   topics: [神仙顶, 冰川, 美术调性, 写实, 阴石]
-last_governed: 2026-07-11
+last_governed: 2026-08-05
 ---
 
 ## 背景

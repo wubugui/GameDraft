@@ -3,6 +3,43 @@ import type { MouseEvent } from 'react';
 import type { CanvasNode } from '../types';
 import { elementIdFromCanvasNodeId, useNarrativeCanvasActions } from './canvasActionsContext';
 import { parseGroupFrameNodeId } from './editorGroups';
+import { nodeTypeHasFourWayPorts, sideToPosition, type RouteSide } from './edgeRouting';
+
+/**
+ * 四向端口：每一侧都同时放 target 与 source 两个 handle（同点重叠）。
+ *
+ * 两条硬约束，别乱动顺序：
+ * 1. **source 必须渲染在 target 之后**。拖线时 React Flow 用 `elementFromPoint` 认端口，取的是
+ *    最上层那个；而从 target 口起拖会把「拖出的那一端认成 target」（system 层
+ *    `source: isTarget ? handleNodeId : fromNodeId`）——方向会跟手势相反。source 压在上层，
+ *    才能保证「从哪一侧拉出来都是出边」。配套要求画布开 `ConnectionMode.Loose`，
+ *    否则落点落在 source 口上会被判无效。
+ * 2. **每个数组的首项即无 handle id 时的兜底**（system `getHandle$1` 取 `bounds[0]`）。
+ *    source 首项 'r'、target 首项 'l' = 改造前的固定几何，任何没写 handle 的边行为不变。
+ */
+const SOURCE_PORT_ORDER: RouteSide[] = ['r', 'l', 't', 'b'];
+const TARGET_PORT_ORDER: RouteSide[] = ['l', 'r', 't', 'b'];
+
+function NodePorts({ type }: { type?: string }) {
+  if (!nodeTypeHasFourWayPorts(type)) {
+    return (
+      <>
+        <Handle type="target" position={Position.Left} />
+        <Handle type="source" position={Position.Right} />
+      </>
+    );
+  }
+  return (
+    <>
+      {TARGET_PORT_ORDER.map((side) => (
+        <Handle key={`t-${side}`} id={side} type="target" position={sideToPosition(side)} />
+      ))}
+      {SOURCE_PORT_ORDER.map((side) => (
+        <Handle key={`s-${side}`} id={side} type="source" position={sideToPosition(side)} />
+      ))}
+    </>
+  );
+}
 
 function isInlineSubgraphKind(kind: CanvasNode['data']['kind']): boolean {
   return kind === 'wrapperGraph' || kind === 'scenarioSubgraph';
@@ -109,14 +146,13 @@ function EditorGroupFrameNode({ id, data, selected }: NodeProps<CanvasNode>) {
   );
 }
 
-function StateNode({ data, selected }: NodeProps<CanvasNode>) {
+function StateNode({ data, selected, type }: NodeProps<CanvasNode>) {
   const boundaryClass = data.boundary ? ` boundary-${data.boundary}` : '';
   return (
     <div className={`node state-node${boundaryClass} ${selected ? 'selected' : ''} ${data.active ? 'runtime-active' : ''}`}>
-      <Handle type="target" position={Position.Left} />
       <div className="node-title">{data.label}</div>
       <div className="node-subtitle">{data.subtitle}</div>
-      <Handle type="source" position={Position.Right} />
+      <NodePorts type={type} />
     </div>
   );
 }
@@ -141,7 +177,7 @@ function SubgraphGroupNode({ id, data, selected }: NodeProps<CanvasNode>) {
   );
 }
 
-function ElementNode({ id, data, selected }: NodeProps<CanvasNode>) {
+function ElementNode({ id, data, selected, type }: NodeProps<CanvasNode>) {
   const onSubgraphDoubleClick = useSubgraphDoubleClickToggle(id, data.kind);
   return (
     <div
@@ -149,23 +185,21 @@ function ElementNode({ id, data, selected }: NodeProps<CanvasNode>) {
       onDoubleClick={onSubgraphDoubleClick}
       title={onSubgraphDoubleClick ? '双击展开子图' : undefined}
     >
-      <Handle type="target" position={Position.Left} />
       <div className="node-title">{data.label}</div>
       <div className="node-subtitle">{data.subtitle}</div>
       {data.detail ? <div className="node-detail">{data.detail}</div> : null}
-      <Handle type="source" position={Position.Right} />
+      <NodePorts type={type} />
     </div>
   );
 }
 
-function AnchorNode({ data, selected }: NodeProps<CanvasNode>) {
+function AnchorNode({ data, selected, type }: NodeProps<CanvasNode>) {
   return (
     <div className={`node anchor-node ${data.kind} ${selected ? 'selected' : ''} ${data.active ? 'runtime-active' : ''}`}>
-      <Handle type="target" position={Position.Left} />
       <div className="node-title">{data.label}</div>
       <div className="node-subtitle">{data.subtitle}</div>
       {data.detail ? <div className="node-detail">{data.detail}</div> : null}
-      <Handle type="source" position={Position.Right} />
+      <NodePorts type={type} />
     </div>
   );
 }

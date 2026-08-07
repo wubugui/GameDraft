@@ -1,0 +1,121 @@
+{
+  "schemaVersion": 1,
+  "id": "生态_翻_雾津_檐下柴架",
+  "entry": "root",
+  "meta": {
+    "title": "翻检 · 雾津东街檐下柴架（眼尖 / 夜 / 常态 三态）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "narrative": "eco_眼力",
+              "state": "眼尖",
+              "reached": true
+            }
+          ],
+          "next": "deep"
+        },
+        {
+          "conditions": [
+            {
+              "narrative": "eco_时辰",
+              "state": "夜"
+            }
+          ],
+          "next": "night"
+        }
+      ],
+      "defaultNext": "first"
+    },
+    "first": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "檐下支着个柴架，柴码得齐整，最上头一层是新劈的，白茬还没吃上灰。",
+      "next": "act_first"
+    },
+    "night": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "柴架挡了半边风。狗就爱歇在这后头。",
+      "next": "act_night"
+    },
+    "deep": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "柴堆里夹着两根不是柴的——是拆下来的棺材料，榫槽都还在。这一行的规矩，是不烧这个的。",
+      "next": "act_deep"
+    },
+    "act_first": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "playNpcAnimation",
+          "params": {
+            "target": "eco_wj_东段狗",
+            "state": "stretch",
+            "loop": false,
+            "thenState": "idle",
+            "speed": 0.9
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "act_night": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "playNpcAnimation",
+          "params": {
+            "target": "eco_wj_东段狗",
+            "state": "idle",
+            "loop": false,
+            "thenState": "idle",
+            "speed": 0.8
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "act_deep": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "playNpcAnimation",
+          "params": {
+            "target": "eco_wj_东段狗",
+            "state": "bark",
+            "loop": false,
+            "thenState": "idle",
+            "speed": 1.2
+          }
+        },
+        {
+          "type": "showEmote",
+          "params": {
+            "target": "eco_wj_东段狗",
+            "emote": "!",
+            "duration": 900
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "end": {
+      "type": "end"
+    }
+  }
+}

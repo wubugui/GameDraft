@@ -1,5 +1,6 @@
 import { installResizeObserverQuiet } from './utils/resizeObserverQuiet';
 import { Game } from './core/Game';
+import { LOAD_SLOT_PARAM, TITLE_BOOT_PARAM } from './core/EventBridge';
 
 installResizeObserverQuiet();
 
@@ -15,6 +16,15 @@ const waterPreview = urlParams.get('waterPreview') ?? undefined;
 const sugarWheelPreview = urlParams.get('sugarWheelPreview') ?? undefined;
 const paperCraftPreview = urlParams.get('paperCraftPreview') ?? undefined;
 const visualCapture = urlParams.has('visualCapture');
+/**
+ * 引导态标记（由 EventBridge 在整页重启时写入，见 TITLE_BOOT_PARAM / LOAD_SLOT_PARAM）：
+ * - `startAtTitle`：停在标题界面，**不装载世界**（「回主菜单」＝彻底退出这一局）；
+ * - `loadSlot`：正常启动，但开局直接读这个存档槽（标题界面上点「继续」走的路）。
+ */
+const startAtTitle = urlParams.has(TITLE_BOOT_PARAM);
+const loadSlotRaw = urlParams.get(LOAD_SLOT_PARAM);
+const loadSlotParsed = loadSlotRaw === null ? Number.NaN : Number.parseInt(loadSlotRaw, 10);
+const loadSlot = Number.isInteger(loadSlotParsed) && loadSlotParsed >= 0 ? loadSlotParsed : undefined;
 
 let game: Game | null = null;
 
@@ -30,6 +40,8 @@ function startGame(): void {
     sugarWheelPreview,
     paperCraftPreview,
     visualCapture,
+    startAtTitle,
+    loadSlot,
   }).catch((e) => {
     console.error(e);
     // 先拆掉半初始化实例：Game 构造期就已挂全局输入监听、各系统已 init（EventBus 订阅已建立），
@@ -103,7 +115,10 @@ function showStartGateThenStart(): void {
 
 const skipStartGate = Boolean(
   devMode || playCutscene || devScene || narrativeWarp
-  || waterPreview || sugarWheelPreview || paperCraftPreview,
+  || waterPreview || sugarWheelPreview || paperCraftPreview
+  // 标题态启动不需要这道门：标题界面本身没有要出声的东西，而玩家点「新游戏 / 继续」
+  // 都会整页重启一次、那一次照常有门。多加一道只是让"回主菜单"多点一下。
+  || startAtTitle,
 );
 if (skipStartGate) {
   startGame();

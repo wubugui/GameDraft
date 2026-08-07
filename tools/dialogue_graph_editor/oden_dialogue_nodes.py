@@ -217,7 +217,10 @@ class DialogueGhostNode(BaseNode):
         self.missing_id = gid
         self.set_property("color", (55, 55, 72, 255), push_undo=False)
         self.set_property("border_color", (120, 95, 140, 255), push_undo=False)
-        self.set_name(f"? {gid}", push_undo=False)
+        # 必须走 set_property("name", ...)：OdenGraphQt 的 set_name(name) 不收 push_undo，
+        # 传了会 TypeError 打断整次 rebuild，画布停在半成品——而幽灵节点恰恰是
+        # 「连线指向还没建的节点」这种最常见的策划操作产生的（审查 2026-08-06）。
+        self.set_property("name", f"? {gid}", push_undo=False)
         self.view.draw_node()
         self.view.setToolTip(
             f"缺失目标节点<br/>连线指向的 id「{gid}」不在本图 nodes 中。<br/>保存前请补节点或改连线。"

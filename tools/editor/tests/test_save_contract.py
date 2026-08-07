@@ -433,7 +433,7 @@ class TestSaveContract(unittest.TestCase):
             self.assertEqual(touched, [dp / "document_reveals.json"])
             self.assertFalse(m.is_dirty)
 
-    def test_dirty_archive_writes_four_archive_aggregates(self) -> None:
+    def test_dirty_archive_writes_all_archive_aggregates(self) -> None:
         with TemporaryDirectory() as td:
             root = Path(td) / "p"
             write_minimal_loadable_project(root)
@@ -460,6 +460,7 @@ class TestSaveContract(unittest.TestCase):
             want = sorted([
                 ap / "characters.json",
                 ap / "lore.json",
+                ap / "slang.json",
                 ap / "books.json",
                 ap / "documents.json",
             ])

@@ -19,6 +19,7 @@ from tools.editor.shared.entity_refactor import (
     EntityRefactorError,
     delete_entity,
     dialogue_graph_scene_reach,
+    convert_hotspot_to_npc,
     duplicate_entity,
     move_entity,
     push_journal,
@@ -149,7 +150,9 @@ class FakeModel:
                 "mainGraph": {"id": "flow_main", "initialState": "s0",
                               "states": {"s0": {"id": "s0"}}, "transitions": []},
                 "elements": [{
-                    "id": "w1", "kind": "wrapperGraph",
+                    # 真实数据里 wrapper 元素同时带元素层 ownerType/ownerId 镜像
+                    # （叙事编辑器「实体总览/绑定」优先读它），改名必须两层一起跟随。
+                    "id": "w1", "kind": "wrapperGraph", "ownerType": "npc", "ownerId": "npc_张三",
                     "graph": {"id": "wrap_张三", "ownerType": "npc", "ownerId": "npc_张三",
                               "initialState": "u",
                               "states": {"u": {"id": "u", "onEnterActions": [
@@ -238,7 +241,11 @@ def test_scan_groups(model: FakeModel) -> None:
     hs_rep = scan_entity_usages(model, "甲村", "hotspot", "hs_摊位")
     assert hs_rep["qualified"] == [{"bucket": "quest", "itemId": "q1", "count": 1}]
     assert {d["graphId"] for d in rep["dialogues"]} == {"对话_张三", "对话_链尾"}
-    assert rep["ownerBindings"] == [{"graphId": "wrap_张三"}]
+    # owner 绑定两层都要报：graph 层是运行时真值，element 层是叙事编辑器读的镜像
+    assert rep["ownerBindings"] == [
+        {"graphId": "w1", "where": "element"},
+        {"graphId": "wrap_张三", "where": "graph"},
+    ]
     assert rep["tagRefs"] == [{"bucket": "quest", "itemId": "", "count": 1}]
     # 裸引用全局面：过场 moveEntityTo.target + 叙事图动作树 persistNpcAnimState
     assert {h["bucket"] for h in rep["globalRefs"]} == {"cutscene", "narrative_graphs"}
@@ -312,8 +319,11 @@ def test_rename_unique_rewrites_all_surfaces(model: FakeModel) -> None:
     assert model.scenes["甲村"]["zones"][0]["onEnter"][0]["params"]["target"] == "npc_张三丰"
     assert model.cutscenes[0]["steps"][0]["params"]["entityId"] == "npc_张三丰"
     assert model.cutscenes[0]["steps"][1]["params"]["target"] == "npc_张三丰"
-    wrap = model.narrative_graphs["compositions"][0]["elements"][0]["graph"]
+    element = model.narrative_graphs["compositions"][0]["elements"][0]
+    wrap = element["graph"]
     assert wrap["ownerId"] == "npc_张三丰"
+    # 元素层镜像必须同步：只改图层会让叙事编辑器改名后仍按旧 id 分组（审查 P1-3）
+    assert element["ownerId"] == "npc_张三丰"
     assert wrap["states"]["u"]["onEnterActions"][0]["params"]["target"] == "npc_张三丰"
     assert model.quests[0]["title"] == "找[tag:npc:npc_张三丰]问话"
     staged = model.pending_dialogue_graph_edits
@@ -729,3 +739,238 @@ def test_validator_flags_duplicate_entity_ids_in_scene() -> None:
         assert any("撞" in msg for msg in dup_msgs.splitlines()), dup_msgs
         assert any("跨类" in msg for msg in dup_msgs.splitlines()), dup_msgs
         assert any("z重" in msg for msg in dup_msgs.splitlines()), dup_msgs
+
+
+# --------------------------------------------------------------------------- #
+# 换种类：纯展示热点 → NPC（id 不变，故引用网零改写）
+# --------------------------------------------------------------------------- #
+
+class ConvertModel:
+    """换种类 op 的最小模型：一场景 + 动画包目录 + 各类入站引用。"""
+
+    def __init__(self) -> None:
+        self.scenes = {
+            "码头": {
+                "npcs": [{"id": "npc_已有", "name": "已有", "x": 0, "y": 0}],
+                "hotspots": [
+                    {
+                        "id": "hs_搬运工", "type": "inspect", "x": 300, "y": 400,
+                        "interactionRange": 50, "data": {},
+                        "displayImage": {
+                            "image": "/resources/runtime/images/illustrations/搬运工.png",
+                            "worldWidth": 100.0, "worldHeight": 179.2,
+                            "facing": "left", "spriteSort": "front",
+                        },
+                        "planes": ["normal"], "castShadow": False, "group": "码头人群",
+                        "conditions": [{"kind": "flag", "key": "f1"}],
+                        "conditionHidesEntity": True,
+                        "label": "搬运工", "autoTrigger": False,
+                    },
+                    {
+                        "id": "hs_带交互", "type": "inspect", "x": 10, "y": 20,
+                        "interactionRange": 50, "data": {"text": "看一眼"},
+                        "displayImage": {"image": "/x.png", "worldWidth": 10, "worldHeight": 20},
+                    },
+                    {
+                        "id": "hs_无图", "type": "inspect", "x": 1, "y": 2,
+                        "interactionRange": 50, "data": {},
+                    },
+                ],
+                "zones": [],
+                "spawnPoints": {},
+            },
+        }
+        # 转换后必然失效的热点专用动作引用
+        self.quests = [
+            {"id": "q1", "onComplete": [
+                _act("persistHotspotEnabled", sceneId="码头",
+                     hotspotId="hs_搬运工", enabled=False),
+            ]},
+        ]
+        self.narrative_graphs = {}
+        self.animations = {
+            "coolie_anim": {
+                "spritesheet": "atlas.png", "cols": 1, "rows": 1,
+                "worldHeight": 150, "cellWidth": 84, "cellHeight": 210,
+                "states": {"idle": {"frames": [0], "frameRate": 8, "loop": True}},
+            },
+        }
+        self.pending_dialogue_stubs: dict[str, dict] = {}
+        self.pending_dialogue_graph_edits: dict[str, dict] = {}
+        self.dialogues_path = None
+        self.dirty: list[tuple[str, str]] = []
+
+    def mark_dirty(self, bucket: str, item: str = "") -> None:
+        self.dirty.append((bucket, item))
+
+
+ANIM = "/resources/runtime/animation/coolie_anim/anim.json"
+
+
+@pytest.fixture()
+def cmodel() -> ConvertModel:
+    return ConvertModel()
+
+
+def test_convert_refuses_interactive_and_imageless_hotspots(cmodel: ConvertModel) -> None:
+    with pytest.raises(EntityRefactorError, match="接不住的交互载荷"):
+        convert_hotspot_to_npc(cmodel, "码头", "hs_带交互", anim_file=ANIM)
+    with pytest.raises(EntityRefactorError, match="没有展示图"):
+        convert_hotspot_to_npc(cmodel, "码头", "hs_无图", anim_file=ANIM)
+    # 拒绝路径不留半改状态
+    assert [h["id"] for h in cmodel.scenes["码头"]["hotspots"]] == [
+        "hs_搬运工", "hs_带交互", "hs_无图"]
+    assert cmodel.dirty == []
+
+
+def test_convert_refuses_unknown_bundle(cmodel: ConvertModel) -> None:
+    with pytest.raises(EntityRefactorError, match="不存在"):
+        convert_hotspot_to_npc(
+            cmodel, "码头", "hs_搬运工",
+            anim_file="/resources/runtime/animation/查无此包_anim/anim.json")
+    assert cmodel.dirty == []
+
+
+def test_convert_blocks_on_hotspot_only_action_refs_until_forced(cmodel: ConvertModel) -> None:
+    with pytest.raises(EntityRefactorError, match="热点专用动作"):
+        convert_hotspot_to_npc(cmodel, "码头", "hs_搬运工", anim_file=ANIM)
+    summary, _reverse = convert_hotspot_to_npc(
+        cmodel, "码头", "hs_搬运工", anim_file=ANIM, force=True)
+    assert [h["action"] for h in summary["deadHotspotActionRefs"]] == ["persistHotspotEnabled"]
+
+
+def test_convert_maps_fields_and_scales_by_bundle_world_height(cmodel: ConvertModel) -> None:
+    cmodel.quests = []          # 去掉热点专用动作引用，走正常路径
+    summary, reverse = convert_hotspot_to_npc(
+        cmodel, "码头", "hs_搬运工", anim_file=ANIM, name="搬运工", render_raw=True)
+
+    scene = cmodel.scenes["码头"]
+    assert [h["id"] for h in scene["hotspots"]] == ["hs_带交互", "hs_无图"]
+    npc = next(n for n in scene["npcs"] if n["id"] == "hs_搬运工")
+    assert npc["name"] == "搬运工"
+    assert (npc["x"], npc["y"]) == (300, 400)
+    assert npc["animFile"] == ANIM
+    assert npc["interactionRange"] == 0          # 装饰 NPC 范式：不可交互
+    assert npc["initialFacing"] == "left"        # displayImage.facing → initialFacing
+    assert npc["spriteSort"] == "front"          # 叠放档位必须跟过来，否则前后关系会错
+    assert npc["renderRaw"] is True
+    # 179.2 世界高 ÷ 包 150 世界高
+    assert npc["scale"] == pytest.approx(1.1947, abs=1e-4)
+    # 同名同义字段逐字搬走
+    assert npc["planes"] == ["normal"]
+    assert npc["castShadow"] is False
+    assert npc["group"] == "码头人群"
+    assert npc["conditions"] == [{"kind": "flag", "key": "f1"}]
+    assert npc["conditionHidesEntity"] is True
+    # 没有 NPC 语义的热点字段一个不留，并且如实进报告
+    for gone in ("type", "data", "label", "autoTrigger", "displayImage"):
+        assert gone not in npc
+    assert set(summary["droppedFields"]) == {"type", "data", "label", "autoTrigger", "displayImage"}
+    # 拉伸形变（100/179.2=0.558 vs 包 84/210=0.4）必须报出来交人目验
+    assert any("宽高比" in w for w in summary["warnings"])
+    assert ("scene", "码头") in cmodel.dirty
+    assert [r["kind"] for r in reverse] == ["npcRemove", "entityInsert"]
+
+
+def test_convert_is_undoable_back_to_the_original_hotspot(cmodel: ConvertModel) -> None:
+    cmodel.quests = []
+    before = copy.deepcopy(cmodel.scenes["码头"])
+    summary, reverse = convert_hotspot_to_npc(cmodel, "码头", "hs_搬运工", anim_file=ANIM)
+    push_journal(cmodel, {**summary, "reverseOps": reverse})
+
+    result = undo_last(cmodel)
+    assert result["ok"], result
+    assert cmodel.scenes["码头"] == before
+
+
+def test_convert_refuses_when_an_npc_already_owns_the_id(cmodel: ConvertModel) -> None:
+    cmodel.quests = []
+    cmodel.scenes["码头"]["npcs"].append({"id": "hs_搬运工", "name": "撞", "x": 0, "y": 0})
+    with pytest.raises(EntityRefactorError, match="已有同 id"):
+        convert_hotspot_to_npc(cmodel, "码头", "hs_搬运工", anim_file=ANIM)
+
+
+def _write_static_meta(root: Path, bundle: str, canvas: tuple[int, int],
+                       box: tuple[int, int, int, int]) -> None:
+    d = root / bundle
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "atlas.meta.json").write_text(json.dumps({
+        "packMode": "static_single_frame",
+        "sourceCanvas": {"width": canvas[0], "height": canvas[1]},
+        "sourceContentBox": {"x0": box[0], "y0": box[1], "x1": box[2], "y1": box[3]},
+    }, ensure_ascii=False), encoding="utf-8")
+
+
+def test_convert_compensates_transparent_margin_in_the_source_image(
+    cmodel: ConvertModel, tmp_path: Path,
+) -> None:
+    """源图底部有透明留白时，直接换过去角色会整体下沉——必须按内容框补偿。"""
+    cmodel.quests = []
+    cmodel.animation_bundles_path = tmp_path
+    # 1024×1024 的图，内容只占 y∈[0,806)、x∈[26,998)：底部 218px(21.3%) 是透明留白
+    _write_static_meta(tmp_path, "coolie_anim", (1024, 1024), (26, 0, 998, 806))
+    scene = cmodel.scenes["码头"]
+    hs = next(h for h in scene["hotspots"] if h["id"] == "hs_搬运工")
+    hs["displayImage"].update({"worldWidth": 400.0, "worldHeight": 400.0})
+    hs["displayImage"].pop("facing", None)
+    hs["x"], hs["y"] = 1000, 1000
+
+    summary, _ = convert_hotspot_to_npc(cmodel, "码头", "hs_搬运工", anim_file=ANIM)
+    npc = next(n for n in scene["npcs"] if n["id"] == "hs_搬运工")
+
+    # 内容底距矩形底 218/1024 → 上移 0.2129×400 ≈ 85.2 个世界单位
+    assert npc["y"] == pytest.approx(1000 - 85.2, abs=0.2)
+    assert summary["positionDelta"]["dy"] == pytest.approx(-85.2, abs=0.2)
+    # 实际显示高 = 806/1024×400 = 314.8 → scale = 314.8/150
+    assert npc["scale"] == pytest.approx(314.84 / 150, abs=1e-3)
+
+
+def test_convert_mirrors_the_x_compensation_when_facing_left(
+    cmodel: ConvertModel, tmp_path: Path,
+) -> None:
+    """镜像是绕矩形中线做的，内容不居中时 x 补偿必须反号。"""
+    cmodel.quests = []
+    cmodel.animation_bundles_path = tmp_path
+    _write_static_meta(tmp_path, "coolie_anim", (1000, 1000), (600, 0, 1000, 1000))
+    scene = cmodel.scenes["码头"]
+    hs = next(h for h in scene["hotspots"] if h["id"] == "hs_搬运工")
+    hs["displayImage"].update({"worldWidth": 100.0, "worldHeight": 100.0})
+    hs["x"], hs["y"] = 0, 0
+
+    convert_hotspot_to_npc(cmodel, "码头", "hs_搬运工", anim_file=ANIM)
+    npc = next(n for n in scene["npcs"] if n["id"] == "hs_搬运工")
+    # 内容中线在图右侧 +30%；朝左镜像后显示在左侧 → x 补偿为 -30
+    assert npc["x"] == pytest.approx(-30.0, abs=0.2)
+
+
+def test_convert_without_static_meta_falls_back_and_says_so(cmodel: ConvertModel) -> None:
+    cmodel.quests = []
+    summary, _ = convert_hotspot_to_npc(cmodel, "码头", "hs_搬运工", anim_file=ANIM)
+    assert summary["positionDelta"] == {"dx": 0.0, "dy": 0.0}
+    assert any("按整幅矩形估算" in w for w in summary["warnings"])
+
+
+def test_convert_moves_an_inspect_dialogue_graph_onto_the_npc(cmodel: ConvertModel) -> None:
+    """inspect 图对话 = NPC 的交互出口，平移过去零损失；半径不能归零。"""
+    cmodel.quests = []
+    scene = cmodel.scenes["码头"]
+    hs = next(h for h in scene["hotspots"] if h["id"] == "hs_搬运工")
+    hs["data"] = {"graphId": "寻狗_围观竞争", "entry": "start"}
+    hs["interactionRange"] = 70.0
+
+    summary, _ = convert_hotspot_to_npc(cmodel, "码头", "hs_搬运工", anim_file=ANIM)
+    npc = next(n for n in scene["npcs"] if n["id"] == "hs_搬运工")
+    assert summary["payloadKind"] == "graph"
+    assert npc["dialogueGraphId"] == "寻狗_围观竞争"
+    assert npc["dialogueGraphEntry"] == "start"
+    assert npc["interactionRange"] == 70.0     # 归零 = 玩家永远够不着 = 等于删了这段交互
+    assert "data" not in summary["droppedFields"]
+
+
+def test_convert_pins_perspective_scale_to_the_hotspot_default(cmodel: ConvertModel) -> None:
+    """热点缺省不参与透视缩放、NPC 缺省参与——不显式写死会在转换那刻悄悄变行为。"""
+    cmodel.quests = []
+    summary, _ = convert_hotspot_to_npc(cmodel, "码头", "hs_搬运工", anim_file=ANIM)
+    npc = next(n for n in cmodel.scenes["码头"]["npcs"] if n["id"] == "hs_搬运工")
+    assert npc["perspectiveScaleEnabled"] is False
+    assert any("perspectiveScaleEnabled" in w for w in summary["warnings"])

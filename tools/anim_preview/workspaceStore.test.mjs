@@ -860,6 +860,83 @@ test('H_STATIC publishes exactly one configured PNG copy and detects drift', () 
   }
 });
 
+test('H_STATIC_BUNDLE hangs off C, needs bundleId, and is superseded by a real H bundle', () => {
+  const fx = fixture();
+  try {
+    // 只依赖静态支线：不需要任何动作、R 或 H。
+    let view = getWorkspaceView(fx.repoRoot, fx.folderName);
+    const bundleNode = () => getWorkspaceView(fx.repoRoot, fx.folderName)
+      .states.find((state) => state.id === 'H_STATIC_BUNDLE');
+    assert.equal(bundleNode().status, 'blocked');
+
+    updateExportTargets(fx.repoRoot, fx.folderName, { bundleId: '' }, 'human-ui');
+    assert.match(bundleNode().reason, /bundleId/);
+    updateExportTargets(fx.repoRoot, fx.folderName, { bundleId: 'test_actor_anim' }, 'human-ui');
+
+    submitAndAccept(fx, 'A');
+    submitAndAccept(fx, 'B');
+    submitAndAccept(fx, 'C');
+    assert.equal(bundleNode().status, 'runnable');
+
+    const outputRoot = path.join(fx.repoRoot, 'static-bundle-output');
+    fs.mkdirSync(outputRoot, { recursive: true });
+    const files = ['atlas.png', 'anim.json', 'atlas.meta.json'];
+    for (const name of files) fs.writeFileSync(path.join(outputRoot, name), `placeholder-${name}`, 'utf8');
+    const revisionId = submitRevision(fx.repoRoot, fx.folderName, {
+      nodeId: 'H_STATIC_BUNDLE',
+      sources: files.map((name) => path.join(outputRoot, name)),
+      producer: { kind: 'agent', name: 'test-agent' },
+    }).revision.id;
+    accept(fx, revisionId);
+    assert.equal(bundleNode().status, 'accepted');
+    assert.equal(
+      bundleNode().expectedParents['EXPORT_TARGET/H_STATIC_BUNDLE'],
+      'public/resources/runtime/animation/test_actor_anim',
+    );
+
+    const target = path.join(fx.repoRoot, 'public', 'resources', 'runtime', 'animation', 'test_actor_anim');
+    fs.mkdirSync(target, { recursive: true });
+    for (const name of files) fs.copyFileSync(path.join(outputRoot, name), path.join(target, name));
+
+    // 三件套缺一不可：占位包没有 atlas.meta.json 就无从盘点"哪些还欠资源"。
+    assert.throws(() => recordPublication(fx.repoRoot, fx.folderName, {
+      revisionId,
+      authority: 'agent-cli',
+      targetRoot: path.relative(fx.repoRoot, target),
+      files: [{ path: 'atlas.png' }, { path: 'anim.json' }],
+    }), /atlas\.meta\.json/);
+
+    const recorded = recordPublication(fx.repoRoot, fx.folderName, {
+      revisionId,
+      authority: 'agent-cli',
+      targetRoot: path.relative(fx.repoRoot, target),
+      files: files.map((name) => ({ path: name })),
+    });
+    assert.equal(
+      recorded.view.states.find((state) => state.id === 'H_STATIC_BUNDLE').status,
+      'published',
+    );
+
+    // 正式动画包写同一个目录 → 占位回执立刻不再是 current（去重域按目录算）。
+    const real = prepareAcceptedH(fx, '-real');
+    fs.copyFileSync(real.atlas, path.join(target, 'atlas.png'));
+    fs.copyFileSync(real.manifest, path.join(target, 'anim.json'));
+    recordPublication(fx.repoRoot, fx.folderName, {
+      revisionId: real.hRevision,
+      authority: 'agent-cli',
+      targetRoot: path.relative(fx.repoRoot, target),
+      files: [{ path: 'atlas.png' }, { path: 'anim.json' }],
+    });
+    view = getWorkspaceView(fx.repoRoot, fx.folderName);
+    assert.equal(view.states.find((state) => state.id === 'H').status, 'published');
+    const placeholder = view.states.find((state) => state.id === 'H_STATIC_BUNDLE');
+    assert.equal(placeholder.status, 'accepted');
+    assert.match(placeholder.publication.reason, /更新的发布回执/);
+  } finally {
+    fx.cleanup();
+  }
+});
+
 test('changing or clearing bundleId invalidates or blocks H', () => {
   const fx = fixture();
   try {

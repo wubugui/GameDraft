@@ -13,6 +13,7 @@ from ..shared import confirm
 from ..shared.list_affordances import wire_list_affordances
 from ..shared.condition_editor import ConditionEditor
 from ..shared.rich_text_field import RichTextLineEdit, RichTextTextEdit
+from ..shared.image_path_picker import CutsceneImagePathRow
 from ..shared.qt_icon_buttons import outline_row_tool_button, delete_standard_pixmap
 from ..shared.form_layout import compact_form
 from ..shared.collapsible_section import CollapsibleSection
@@ -102,6 +103,15 @@ class ItemEditor(QWidget):
         self._i_type = QComboBox(); self._i_type.addItems(["consumable", "key"])
         self._i_type.setToolTip("consumable=可消耗品；key=关键道具（通常不可丢弃/堆叠固定）")
         f.addRow("type", self._i_type)
+        # 资源路径一律走图片选择器（禁裸 QLineEdit 手打路径）；工程外的图会自动复制进
+        # resources/runtime/images/icons/。留空是合法的——背包格子会退回物品名文字显示。
+        self._i_icon = CutsceneImagePathRow(
+            self._model, "", external_copy_subdir="icons",
+            external_copy_hint="项目外图片会复制到 resources/runtime/images/icons/；"
+                               "建议 128 见方以内的透明底 PNG（背包格子 64px）",
+        )
+        self._i_icon.setToolTip("背包格子图标；留空则该物品在背包里显示名称文字")
+        f.addRow("icon", self._i_icon)
         self._i_desc = RichTextTextEdit(self._model)
         self._i_desc.setMinimumHeight(72)
         self._i_desc.setMaximumHeight(180)
@@ -176,6 +186,8 @@ class ItemEditor(QWidget):
             return True
         if self._i_type.currentText() != it.get("type", "consumable"):
             return True
+        if self._i_icon.path() != str(it.get("icon", "") or ""):
+            return True
         if self._i_desc.toPlainText() != it.get("description", ""):
             return True
         if self._i_stack.value() != it.get("maxStack", 1):
@@ -226,6 +238,7 @@ class ItemEditor(QWidget):
         self._i_id.setText(it.get("id", ""))
         self._i_name.setText(it.get("name", ""))
         self._i_type.setCurrentText(it.get("type", "consumable"))
+        self._i_icon.set_path(str(it.get("icon", "") or ""))
         self._i_desc.setPlainText(it.get("description", ""))
         self._i_stack.setValue(it.get("maxStack", 1))
         self._i_price.setValue(it.get("buyPrice", 0))
@@ -340,6 +353,11 @@ class ItemEditor(QWidget):
                             self._model.mark_dirty("encounter")
         it["name"] = self._i_name.text()
         it["type"] = self._i_type.currentText()
+        icon = self._i_icon.path()
+        if icon:
+            it["icon"] = icon
+        elif "icon" in it:
+            del it["icon"]
         it["description"] = self._i_desc.toPlainText()
         it["maxStack"] = self._i_stack.value()
         bp = self._i_price.value()

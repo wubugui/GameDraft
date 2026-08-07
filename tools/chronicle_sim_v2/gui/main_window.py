@@ -66,19 +66,19 @@ class MainWindow(QMainWindow):
         self.log_panel.setMinimumHeight(80)
         self.log_panel.setStyleSheet("QPlainTextEdit { font-family: monospace; font-size: 11px; }")
 
-        # 垂直分割器
-        splitter = QSplitter(Qt.Vertical)
-        splitter.addWidget(self.tabs)
-        splitter.addWidget(self.log_panel)
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 0)
+        # 垂直分割器（closeEvent 要存状态，必须挂在 self 上）
+        self._splitter = QSplitter(Qt.Vertical)
+        self._splitter.addWidget(self.tabs)
+        self._splitter.addWidget(self.log_panel)
+        self._splitter.setStretchFactor(0, 1)
+        self._splitter.setStretchFactor(1, 0)
         # 初始比例：日志占约 25% 高度
-        splitter.setSizes([600, 200])
+        self._splitter.setSizes([600, 200])
 
         central = QWidget()
         layout = QVBoxLayout(central)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(splitter)
+        layout.addWidget(self._splitter)
         self.setCentralWidget(central)
 
         # 顶部 Run 选择栏
@@ -105,7 +105,7 @@ class MainWindow(QMainWindow):
         # 恢复上次窗口分割比例
         saved = load_main_splitter_state()
         if saved:
-            splitter.restoreState(saved)
+            self._splitter.restoreState(saved)
 
         self._append_log("ChronicleSim v2 启动 — 请先选择或新建一个 Run")
 
@@ -272,9 +272,9 @@ class MainWindow(QMainWindow):
             if ret != QMessageBox.Yes:
                 event.ignore()
                 return
-        save_main_window_geometry(self)
+        save_main_window_geometry(self.saveGeometry())
         save_main_tab_index(self.tabs.currentIndex())
-        save_main_splitter_state(splitter.saveState())
+        save_main_splitter_state(self._splitter.saveState())
         from tools.chronicle_sim_v2.core.world.chroma import release_all_clients
         release_all_clients()
         super().closeEvent(event)

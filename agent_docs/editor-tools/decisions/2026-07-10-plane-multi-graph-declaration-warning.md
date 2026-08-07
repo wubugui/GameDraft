@@ -7,7 +7,7 @@ summary: 同一位面被多张叙事图点名完全合法不报;仅多图点名�
 status: active
 triggers:
   topics: [位面校验, 多图点名, validate-data]
-last_governed: 2026-07-11
+last_governed: 2026-08-05
 ---
 
 ## 背景(一段)

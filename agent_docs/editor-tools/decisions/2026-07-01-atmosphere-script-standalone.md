@@ -7,7 +7,7 @@ summary: 转盘氛围脚本用递归指令列表独立编辑器;复用 ActionEdi
 status: active
 triggers:
   topics: [氛围脚本, ActionEditor 复用, 糖画转盘]
-last_governed: 2026-07-11
+last_governed: 2026-08-05
 ---
 
 ## 背景(一段)

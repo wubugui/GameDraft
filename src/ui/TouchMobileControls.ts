@@ -3,6 +3,7 @@ import type { InputManager } from '../core/InputManager';
 import type { GameStateController } from '../core/GameStateController';
 import type { StringsProvider } from '../core/StringsProvider';
 import { GameState } from '../data/types';
+import { stripStyleMarkup } from '../core/textStyle';
 
 type Dir = 'u' | 'd' | 'l' | 'r';
 
@@ -45,6 +46,12 @@ export class TouchMobileControls {
   private activeDirs = new Set<Dir>();
   private runHeld = false;
   private destroyed = false;
+  /** 姿态 toggle 按钮（离开探索态时统一松开并去高亮） */
+  private readonly verbToggleBtns: HTMLButtonElement[] = [];
+  /** 动词按钮 → 动词名：按可用性隐藏死按钮（缺动画片段 / 被位面禁 / 全局关） */
+  private readonly verbBtns: { btn: HTMLButtonElement; verb: string }[] = [];
+  /** 由 Game 注入的动词可用性只读口；未注入时按"全可用"（与旧行为一致） */
+  private isVerbUsable: ((verb: string) => boolean) | null = null;
 
   constructor(
     inputManager: InputManager,
@@ -152,6 +159,22 @@ export class TouchMobileControls {
 
     actions.appendChild(runBtn);
     actions.appendChild(useBtn);
+    // 身体动词：姿态键在触屏上做 toggle（触屏没有可靠的「按住」手感），
+    // 一次性动作点按一次注入一次按键。状态只存在 InputManager 一处，按钮只回读。
+    const crouchBtn = this.makeVerbToggleBtn('KeyC', strings.get('touchControls', 'crouch'));
+    const gazeBtn = this.makeVerbToggleBtn('KeyX', strings.get('touchControls', 'gaze'));
+    const kickBtn = this.makeVerbTapBtn('KeyF', strings.get('touchControls', 'kick'));
+    const jumpBtn = this.makeVerbTapBtn('Space', strings.get('touchControls', 'jump'));
+    actions.appendChild(crouchBtn);
+    actions.appendChild(gazeBtn);
+    actions.appendChild(kickBtn);
+    actions.appendChild(jumpBtn);
+    this.verbBtns.push(
+      { btn: crouchBtn, verb: 'crouch' },
+      { btn: gazeBtn, verb: 'gaze' },
+      { btn: kickBtn, verb: 'kick' },
+      { btn: jumpBtn, verb: 'jump' },
+    );
 
     const overlayBar = document.createElement('div');
     overlayBar.className = 'touch-mc-overlay-bar touch-mc-overlay-only';
@@ -176,10 +199,45 @@ export class TouchMobileControls {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'touch-mc-btn touch-mc-menu-tight';
-    btn.textContent = label;
+    btn.textContent = stripStyleMarkup(label);
     btn.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       this.stateController.togglePanel(panelName);
+    });
+    return btn;
+  }
+
+  /** 注入动词可用性只读口（Game 组装层给 PlayerActionSystem 的闭包）。 */
+  setVerbAvailabilityReader(fn: ((verb: string) => boolean) | null): void {
+    this.isVerbUsable = fn;
+  }
+
+  /** 姿态键：点一下按住、再点一下松开（按钮高亮态从 InputManager 回读，不另存一份）。 */
+  private makeVerbToggleBtn(code: string, label: string): HTMLButtonElement {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'touch-mc-btn touch-mc-wide';
+    btn.textContent = stripStyleMarkup(label);
+    btn.dataset.verbKey = code;
+    btn.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      const next = !this.inputManager.isTouchKeyHeld(code);
+      this.inputManager.setTouchKeyHeld(code, next);
+      btn.classList.toggle('is-active', next);
+    });
+    this.verbToggleBtns.push(btn);
+    return btn;
+  }
+
+  /** 一次性动作键：点一次 = 注入一次按键（与键盘按一下等价）。 */
+  private makeVerbTapBtn(code: string, label: string): HTMLButtonElement {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'touch-mc-btn touch-mc-wide';
+    btn.textContent = stripStyleMarkup(label);
+    btn.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      this.inputManager.injectKeyJustPressed(code);
     });
     return btn;
   }
@@ -188,7 +246,7 @@ export class TouchMobileControls {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'touch-mc-btn';
-    btn.textContent = label;
+    btn.textContent = stripStyleMarkup(label);
     btn.dataset.dir = dir;
 
     const onDown = (e: PointerEvent) => {
@@ -242,6 +300,13 @@ export class TouchMobileControls {
       this.runHeld = false;
       this.inputManager.setTouchRunHeld(false);
     }
+    // 离开探索态（进对话/面板/过场）时姿态键一并松开，否则回来还按着
+    for (const btn of this.verbToggleBtns) {
+      const code = btn.dataset.verbKey;
+      if (!code) continue;
+      this.inputManager.setTouchKeyHeld(code, false);
+      btn.classList.remove('is-active');
+    }
   }
 
   update(): void {
@@ -253,6 +318,20 @@ export class TouchMobileControls {
     if (mobile) {
       if (st === GameState.Exploring) explore = true;
       else if (st === GameState.UIOverlay) overlay = true;
+    }
+
+    // 死按钮不给玩家：缺动画片段（如背尸包没有 kick）、被位面禁、全局关 → 直接隐藏
+    for (const { btn, verb } of this.verbBtns) {
+      const usable = this.isVerbUsable ? this.isVerbUsable(verb) : true;
+      btn.style.display = usable ? '' : 'none';
+      // 隐藏时把按住态一起松开：否则按钮没了、键还按着，可用性一恢复就自动进姿态
+      if (!usable) {
+        const code = btn.dataset.verbKey;
+        if (code) {
+          this.inputManager.setTouchKeyHeld(code, false);
+          btn.classList.remove('is-active');
+        }
+      }
     }
 
     this.root.classList.toggle('is-explore', explore);

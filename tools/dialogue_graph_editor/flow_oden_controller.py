@@ -330,6 +330,9 @@ class DialogueFlowOdenController(QObject):
         self._doc_model: GraphDocumentModel | None = None
 
         vw = self._graph.viewer()
+        # 画布背景跟主题走：不接的话 light 主题下整个界面正中央挖一个黑洞
+        # （theme.py 早就为 light 备了 #f0f0f0，只是全工程没有一个调用点）。
+        self.apply_theme_background()
         vw.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         vw.customContextMenuRequested.connect(self._viewer_context_menu)
         # F/A 都限定在画布 subtree 内响应（旧实现默认 WindowShortcut，焦点在节点列表/
@@ -341,6 +344,17 @@ class DialogueFlowOdenController(QObject):
         sc_del = QShortcut(QKeySequence(Qt.Key.Key_Delete), vw, activated=self._emit_delete_key)
         # 仅当焦点在画布（含 viewport） subtree 内时响应，避免与窗口内其它控件的 Delete 冲突
         sc_del.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+
+    def apply_theme_background(self) -> None:
+        """把画布底色刷成当前主题的底色（切主题后由宿主再调一次）。"""
+        from tools.editor import theme as app_theme
+
+        try:
+            app_theme.apply_graphics_view_background(
+                self._graph.viewer(), app_theme.current_theme_id()
+            )
+        except Exception:
+            pass
 
     def _viewer_context_menu(self, local_pos: QPoint) -> None:
         v = self._graph.viewer()
@@ -441,15 +455,28 @@ class DialogueFlowOdenController(QObject):
         if rect.isNull():
             return
         pad = 80.0
-        v.fitInView(
-            QRectF(
-                rect.x() - pad,
-                rect.y() - pad,
-                rect.width() + 2 * pad,
-                rect.height() + 2 * pad,
-            ),
-            Qt.AspectRatioMode.KeepAspectRatio,
+        target = QRectF(
+            rect.x() - pad,
+            rect.y() - pad,
+            rect.width() + 2 * pad,
+            rect.height() + 2 * pad,
         )
+        # **必须走框架自己的账本**：OdenGraphQt 的 NodeViewer 用内部 `_scene_range`
+        # 记录"当前要显示哪块世界矩形"，`_update_scene()` 据此 setSceneRect + fitInView。
+        # 直接对 viewer 调 QGraphicsView 的 fitInView / scale 都是绕过这套账本：
+        #  · 直接 fitInView：框架下一次 _update_scene 就把它覆盖掉，视野对不上；
+        #  · 事后 v.scale(...) 修正：NodeViewer **重写了 scale()**、按 _scene_range 累乘，
+        #    与 fitInView 直写 transform 不在同一坐标系 —— 每点一次「适应画布」就在上一次
+        #    基础上再乘一遍，缩放指数爆炸（实测连点 6 次 1.16→2.60→…→149.18）。
+        #
+        # 也**不设缩放下限**：曾加过「低于 0.55 就只居中不缩」，方向是错的——「适应画布」
+        # 的语义就是把整张图放进视野，加下限之后大图根本装不下，命令名在骗人。
+        # 想看清字本来就该放大，而看全局只有这一个入口。
+        try:
+            v._scene_range = target
+            v._update_scene()
+        except AttributeError:  # 框架 API 漂移时退回原生实现，至少还能适配一次
+            v.fitInView(target, Qt.AspectRatioMode.KeepAspectRatio)
 
     def select_dialogue_node(self, nid: str | None) -> None:
         if not nid:

@@ -138,7 +138,7 @@ describe('PlaneReconciler', () => {
     const mod = state.movementFn?.();
     expect(mod).toEqual({ driftX: -28, driftY: 0, speedScale: 0.62, allowRun: false });
     const policy = state.policyFn?.();
-    expect(policy).toEqual({ canPickup: false, canInteractHotspots: true, canTalkNpcs: true });
+    expect(policy).toEqual({ canPickup: false, canInteractHotspots: true, canTalkNpcs: true, allowedVerbs: null });
 
     // 离开点名状态 → normal 兜底：槽全清、相机恢复场景默认
     narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 't', signal: 'drop' });
@@ -165,7 +165,7 @@ describe('PlaneReconciler', () => {
     // movement 整槽覆写为子定义（未写的键回落槽内缺省，不与父合并）
     expect(state.movementFn?.()).toEqual({ driftX: 10, driftY: 0, speedScale: 1, allowRun: true });
     // interaction / camera / healthDrainPerSec 继承父（背尸）
-    expect(state.policyFn?.()).toEqual({ canPickup: false, canInteractHotspots: true, canTalkNpcs: true });
+    expect(state.policyFn?.()).toEqual({ canPickup: false, canInteractHotspots: true, canTalkNpcs: true, allowedVerbs: null });
     expect(reconciler.getActiveCameraZoom()).toBe(1.25);
 
     narrative.emitNarrativeSignal({ sourceType: 'system', sourceId: 't', signal: 'call_end' });

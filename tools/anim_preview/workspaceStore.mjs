@@ -11,6 +11,7 @@ const STATIC_NODES = [
   { id: 'B', label: 'B · 右向 Idle 静态源', owner: 'agent', deps: ['A'] },
   { id: 'C', label: 'C · 静态 Sprite 抠图', owner: 'agent', deps: ['B'] },
   { id: 'H_STATIC', label: 'H-static · 静态资源导出', owner: 'agent', deps: ['C'] },
+  { id: 'H_STATIC_BUNDLE', label: 'H-static-bundle · 单帧动画包导出', owner: 'agent', deps: ['C'] },
 ];
 
 const ACTION_STAGE_DEFS = [
@@ -55,6 +56,17 @@ const NODE_CONTRACTS = Object.freeze({
     inputs: ['accepted C'],
     outputs: ['staged static runtime asset'],
     acceptance: ['必须发布到 IDE 明确配置的 staticTargetPath，禁止猜测路径', '回执只包含该目标 PNG', '发布动作与 staging revision 分离'],
+  },
+  H_STATIC_BUNDLE: {
+    purpose: '把静态 sprite 打成单帧动画包，让它能当 NPC 用（占位或永不动画的角色）',
+    inputs: ['accepted C'],
+    outputs: ['atlas.png', 'anim.json', 'atlas.meta.json', 'validation manifest'],
+    acceptance: [
+      '一格图集、单帧 state（默认 idle），帧号 0 基',
+      '紧裁到内容框：格底=脚，worldHeight=角色本体世界身高',
+      '只发布到 IDE 明确配置的 bundleId，与 H 同一目标目录（正式包上线即取代占位）',
+      '占位包必须在 atlas.meta.json 标 placeholder，否则无从盘点',
+    ],
   },
   D: {
     purpose: '单动作动画视频结果',
@@ -778,13 +790,15 @@ function latestPublication(ws, revisionId) {
 
 function expectedPublicationSpec(repoRoot, ws, nodeId) {
   const repo = path.resolve(repoRoot);
-  if (nodeId === 'H') {
+  if (nodeId === 'H' || nodeId === 'H_STATIC_BUNDLE') {
     const bundleId = safeSegment(ws.bundleId, 'bundleId');
     return {
       nodeId,
       targetRoot: path.join(repo, 'public', 'resources', 'runtime', 'animation', bundleId),
       targetLabel: `public/resources/runtime/animation/${bundleId}`,
-      requiredFiles: ['atlas.png', 'anim.json'],
+      requiredFiles: nodeId === 'H'
+        ? ['atlas.png', 'anim.json']
+        : ['atlas.png', 'anim.json', 'atlas.meta.json'],
     };
   }
   if (nodeId === 'H_STATIC') {
@@ -819,6 +833,11 @@ function publicationTargetKey(event) {
   const targetRoot = path.resolve(String(event?.targetRoot || ''));
   if (event?.nodeId === 'H_STATIC' && Array.isArray(event.files) && event.files.length === 1) {
     return `H_STATIC:${path.resolve(targetRoot, String(event.files[0].path || ''))}`;
+  }
+  // H 与 H_STATIC_BUNDLE 写的是同一个 bundle 目录（占位包先落、正式包后来取代），
+  // 所以去重域按目录算而不是按节点算：正式包一登记，占位回执立刻变成"已被更新的回执取代"。
+  if (event?.nodeId === 'H' || event?.nodeId === 'H_STATIC_BUNDLE') {
+    return `BUNDLE:${targetRoot}`;
   }
   return `${event?.nodeId || 'unknown'}:${targetRoot}`;
 }
@@ -885,8 +904,8 @@ function expectedParents(ws, node) {
     const action = (ws.actions || []).find((item) => item.id === node.actionId);
     parents[`ACTION_SPEC/${node.actionId}`] = actionSpecDependencyToken(action);
   }
-  if (node.id === 'H') {
-    parents['EXPORT_TARGET/H'] = ws.bundleId ? `public/resources/runtime/animation/${ws.bundleId}` : null;
+  if (node.id === 'H' || node.id === 'H_STATIC_BUNDLE') {
+    parents[`EXPORT_TARGET/${node.id}`] = ws.bundleId ? `public/resources/runtime/animation/${ws.bundleId}` : null;
   } else if (node.id === 'H_STATIC') {
     parents['EXPORT_TARGET/H_STATIC'] = ws.staticTargetPath || null;
   }
@@ -929,6 +948,9 @@ function nodeConfigurationBlockReason(ws, node) {
   }
   if (node.id === 'H_STATIC' && !ws.staticTargetPath) {
     return '尚未配置 staticTargetPath，不能生成或发布 H_STATIC 静态资源';
+  }
+  if (node.id === 'H_STATIC_BUNDLE' && !ws.bundleId) {
+    return '尚未配置 bundleId，不能生成或发布 H_STATIC_BUNDLE 单帧动画包';
   }
   return '';
 }
@@ -1314,7 +1336,7 @@ export function recordReview(repoRoot, folderName, input) {
 export function registerLegacyBaseline(repoRoot, folderName, nodeId, revisionId, authority = '') {
   if (authority !== 'migration-trusted') throw new Error('legacy baseline 只能由迁移器登记');
   const ws = loadWorkspace(repoRoot, folderName);
-  if (nodeId !== 'H' && nodeId !== 'H_STATIC') throw new Error('legacy baseline 只允许最终已发布节点');
+  if (!['H', 'H_STATIC', 'H_STATIC_BUNDLE'].includes(nodeId)) throw new Error('legacy baseline 只允许最终已发布节点');
   const summary = ws.revisions?.[revisionId];
   if (!summary || summary.nodeId !== nodeId) throw new Error(`revision ${revisionId} 不属于 ${nodeId}`);
   const revision = loadRevision(repoRoot, folderName, ws, revisionId);
@@ -1334,9 +1356,12 @@ export function recordPublication(repoRoot, folderName, input) {
   const ws = loadWorkspace(repoRoot, folderName);
   const revisionId = String(input.revisionId || '');
   const summary = ws.revisions?.[revisionId];
-  if (!summary || !['H', 'H_STATIC'].includes(summary.nodeId)) throw new Error('发布回执只接受 H/H_STATIC revision');
+  const PUBLISHABLE_NODES = ['H', 'H_STATIC', 'H_STATIC_BUNDLE'];
+  if (!summary || !PUBLISHABLE_NODES.includes(summary.nodeId)) {
+    throw new Error(`发布回执只接受 ${PUBLISHABLE_NODES.join('/')} revision`);
+  }
   if (ws.heads?.[summary.nodeId] !== revisionId || reviewDecision(ws, revisionId) !== 'accepted') {
-    throw new Error('只有当前已人工通过的 H/H_STATIC head 才能登记发布');
+    throw new Error(`只有当前已人工通过的 ${summary.nodeId} head 才能登记发布`);
   }
   const publicationSpec = expectedPublicationSpec(repoRoot, ws, summary.nodeId);
   const targetValue = String(input.targetRoot || '');

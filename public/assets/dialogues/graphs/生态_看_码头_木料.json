@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "id": "生态_看_码头_木料",
+  "entry": "root",
+  "meta": {
+    "title": "码在墙根的杉木（眼力分叉；一拍：客店门口的鸡扑棱）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "narrative": "eco_眼力",
+              "state": "眼尖",
+              "reached": true
+            }
+          ],
+          "next": "yan1"
+        }
+      ],
+      "defaultNext": "ri1"
+    },
+    "ri1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "新锯的杉木，断面还渗起松脂。码得齐齐整整，一根都没上号。",
+      "next": "act_ri"
+    },
+    "yan1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "一根都没上号——要过账的木头都得烙戳子。这批不打算过账。",
+      "next": "act_ri"
+    },
+    "act_ri": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "playNpcAnimation",
+          "params": {
+            "target": "eco_dk_客店鸡",
+            "state": "wing_flap",
+            "loop": false,
+            "thenState": "peck"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "end": {
+      "type": "end"
+    }
+  }
+}

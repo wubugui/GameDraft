@@ -227,6 +227,7 @@ export interface NarrativeRuntimeIssue {
 export type NarrativeTraceEventType =
   | 'signal.received'
   | 'signal.ignored'
+  | 'transition.blocked'
   | 'signal.broadcast'
   | 'signal.processed'
   | 'trigger.enqueued'
@@ -259,6 +260,15 @@ export interface NarrativeTraceEvent {
 }
 
 export type NarrativeRuntimeValidationMode = 'off' | 'warn' | 'throw';
+
+/** 断点命中现场（传给调试器；只读，不含任何可写句柄） */
+export interface NarrativeBreakpointHit {
+  graphId: string;
+  stateId: string;
+  fromStateId: string;
+  triggerKey: string;
+  transitionId: string;
+}
 
 export class NarrativeStateManager implements IGameSystem {
   private eventBus: EventBus;
@@ -323,6 +333,25 @@ export class NarrativeStateManager implements IGameSystem {
   private validationMode: NarrativeRuntimeValidationMode = this.defaultRuntimeValidationMode();
   private static readonly MAX_DRAIN_STEPS = 128;
   private static readonly MAX_TRACE_EVENTS = 160;
+  /**
+   * dev 叙事调试器的唯一挂点（见 src/dev/narrativeDebugBridge.ts）。
+   * 默认 null——没人设它时，recordTrace 里只多一次静态属性读，且 transition.blocked
+   * 那条埋点完全不执行。生产环境无任何设置方，行为与从前一致。
+   */
+  static traceObserver: ((event: NarrativeTraceEvent) => void) | null = null;
+
+  /**
+   * dev 叙事**断点**挂点（见 src/dev/narrativeDebugBridge.ts）。
+   *
+   * 在「状态已置位、`narrative:stateChanged` 已发、但 onEnter 动作**尚未跑**」的那一刻调用；
+   * 返回的 promise 不 resolve，整条叙事队列就停在这里——效果与语言调试器的断点一致
+   * （演出还没开始，所以断下来看到的是"刚进这个状态"的干净现场）。
+   *
+   * 与 traceObserver 同款约束：默认 null，没人设时只多一次静态属性读；
+   * 它抛异常或永挂**不能**把叙事搞坏，故调用方包 try/catch，且 gate 之后必须复核代际
+   * （断住期间玩家可能在调试器里读档/跳拍，那是另一条时间线）。
+   */
+  static breakpointGate: ((hit: NarrativeBreakpointHit) => Promise<void>) | null = null;
 
   constructor(eventBus: EventBus, flagStore: FlagStore, actionExecutor: ActionExecutor) {
     this.eventBus = eventBus;
@@ -1543,8 +1572,23 @@ export class NarrativeStateManager implements IGameSystem {
             this.recordUnsupportedEndpoint(instanceId, t.id);
             return false;
           }
-          return t.from === active &&
-            this.conditionsMet(t.conditions);
+          if (t.from !== active) return false;
+          if (!this.conditionsMet(t.conditions)) {
+            // 条件挡住是策划最常撞、系统过去唯一沉默的失败模式。仅在调试器接上
+            // （traceObserver 非空）时才留痕：热路径常态零对象分配。
+            if (NarrativeStateManager.traceObserver) {
+              this.recordTrace('transition.blocked', {
+                graphId: instanceId,
+                transitionId: t.id,
+                triggerKey,
+                from: t.from,
+                to: t.to,
+                payload: { failing: this.failingConditionIndexes(t.conditions) },
+              });
+            }
+            return false;
+          }
+          return true;
         })
         .map((t, index) => ({ t, index }))
         .sort((a, b) => {
@@ -1632,6 +1676,30 @@ export class NarrativeStateManager implements IGameSystem {
       return false;
     }
     return evaluateConditionExprList(conditions, ctx);
+  }
+
+  /**
+   * 逐叶复算，挑出没过的那几条。只在 transition.blocked 埋点里调用（即只在调试器
+   * 接上时），常态零开销。求值本身是纯读，与 conditionsMet 同一个上下文工厂。
+   */
+  private failingConditionIndexes(conditions: ConditionExpr[] | undefined): number[] {
+    if (!conditions?.length) return [];
+    let ctx: ConditionEvalContext | undefined;
+    try {
+      ctx = this.conditionCtxFactory?.();
+    } catch {
+      return [];
+    }
+    if (!ctx) return [];
+    const failing: number[] = [];
+    conditions.forEach((cond, index) => {
+      try {
+        if (!evaluateConditionExprList([cond], ctx!)) failing.push(index);
+      } catch {
+        failing.push(index);
+      }
+    });
+    return failing;
   }
 
   /**
@@ -1792,7 +1860,7 @@ export class NarrativeStateManager implements IGameSystem {
     const runGraph = isRunGraph(graph);
     const fromState = graph.states[fromStateId];
     const toState = graph.states[toStateId];
-    await this.runActions(fromState?.onExitActions, `${instanceId}.${fromStateId}.onExit`);
+    await this.runActions(fromState?.onExitActions, `${instanceId}.${fromStateId}.onExit`, graph);
     // onExit 动作 await 期间可能发生读档/换册（代际切换）：旧时间线的迁移不得再写
     // 恢复后的状态（置态/事件/广播全部放弃）。动作自身的副作用无法撤销，属已知边界。
     // 实例还可能在 await 期间被结算/弃单（消亡）——同样放弃。
@@ -1831,7 +1899,35 @@ export class NarrativeStateManager implements IGameSystem {
       transitionId,
       cause: 'transition',
     });
-    await this.runActions(toState?.onEnterActions, `${instanceId}.${toStateId}.onEnter`);
+    /**
+     * 断点闸：停在"状态刚激活、演出还没开始"这一刻。
+     * gate 之后必须与 onExit/onEnter 的 await 一样复核代际与实例现状——断住期间
+     * 调试器可能读档或跳拍，旧时间线不得再往下写（norms 不变量 4）。
+     */
+    const gate = NarrativeStateManager.breakpointGate;
+    if (gate) {
+      try {
+        await gate({
+          graphId: instanceId,
+          stateId: toStateId,
+          fromStateId,
+          triggerKey: String(triggerKey),
+          transitionId,
+        });
+      } catch {
+        /* 调试通道故障绝不影响叙事推进 */
+      }
+      if (gen !== this.generation || this.activeStates.get(instanceId) !== toStateId) {
+        this.recordTrace('signal.ignored', {
+          graphId: instanceId,
+          stateId: toStateId,
+          triggerKey,
+          message: `stale timeline: state restored or instance changed while paused at ${instanceId}.${toStateId}; onEnter skipped`,
+        });
+        return;
+      }
+    }
+    await this.runActions(toState?.onEnterActions, `${instanceId}.${toStateId}.onEnter`, graph);
     // onEnter 动作 await 期间发生读档/换册：本次置态已被恢复流程覆盖，广播属旧时间线，放弃。
     // 实例被并发结算/弃单或状态被顶替（active 复核）同样放弃广播与结算（审查遗留实现注记）。
     if (gen !== this.generation || this.activeStates.get(instanceId) !== toStateId) {
@@ -1880,7 +1976,16 @@ export class NarrativeStateManager implements IGameSystem {
     console.warn(message);
   }
 
-  private async runActions(actions: ActionDef[] | undefined, label: string): Promise<void> {
+  /**
+   * 状态生命周期动作批。`owner` 传该图自己的 ownerType/ownerId：wrapper 图的状态动作里
+   * 开的对话，天然归属这张 wrapper 绑的那个实体——被开的图里 ownerState 读到的
+   * 正是刚刚推进它的这台状态机（flow/scenario 等无 owner 的图传空，即无来源）。
+   */
+  private async runActions(
+    actions: ActionDef[] | undefined,
+    label: string,
+    owner?: { ownerType?: string; ownerId?: string },
+  ): Promise<void> {
     if (!actions?.length) return;
     try {
       this.recordTrace('actions.start', {
@@ -1888,7 +1993,7 @@ export class NarrativeStateManager implements IGameSystem {
         payload: { count: actions.length, types: actions.map((action) => action.type) },
       });
       this.runningActionsDepth += 1;
-      await this.actionExecutor.executeBatchAwait(actions);
+      await this.actionExecutor.executeBatchFromOwner(actions, owner?.ownerType, owner?.ownerId);
       this.recordTrace('actions.end', {
         label,
         payload: { count: actions.length },
@@ -1941,6 +2046,15 @@ export class NarrativeStateManager implements IGameSystem {
     this.recentTrace.push(event);
     if (this.recentTrace.length > NarrativeStateManager.MAX_TRACE_EVENTS) {
       this.recentTrace.splice(0, this.recentTrace.length - NarrativeStateManager.MAX_TRACE_EVENTS);
+    }
+    // 唯一的 trace 出口 = 唯一的调试挂点。未接调试器时是一次静态属性读，不分配、不抛。
+    const observer = NarrativeStateManager.traceObserver;
+    if (observer) {
+      try {
+        observer(event);
+      } catch {
+        /* 调试通道故障绝不影响叙事推进 */
+      }
     }
   }
 

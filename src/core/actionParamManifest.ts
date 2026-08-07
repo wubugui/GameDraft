@@ -99,6 +99,8 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
   startObjectExamine: { required: ['id'], nonEmpty: ['id'] },
   startPressureHold: { required: ['id'], nonEmpty: ['id'] },
   playSignalCue: { required: ['id'], nonEmpty: ['id'] },
+  setBubbleLineSet: { required: ['target', 'lineSetId'], nonEmpty: ['target', 'lineSetId'] },
+  clearBubbleLineSet: { required: ['target'], nonEmpty: ['target'], optional: ['silence'] },
   sugarWheelShowSpeech: { required: ['role', 'text'], nonEmpty: ['role', 'text'], optional: ['durationMs'] },
   sugarWheelDismissSpeech: { required: ['role'], nonEmpty: ['role'] },
   sugarWheelDismissAllSpeech: { required: [] },
@@ -159,6 +161,14 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
   },
   setPlayerAvatar: { required: [], optional: ['animManifest', 'bundleId', 'stateMap', 'portraitSlug'] },
   resetPlayerAvatar: { required: [] },
+  attachToSocket: {
+    required: ['target', 'socket'],
+    optional: [
+      'prop', 'image', 'images', 'scale', 'mirror',
+      'anchorX', 'anchorY', 'rotation', 'lit',
+    ],
+  },
+  detachFromSocket: { required: ['target', 'socket'] },
   setSceneDepthFloorOffset: { required: ['floor_offset'] },
   resetSceneDepthFloorOffset: { required: [] },
   setCameraZoom: { required: ['zoom'] },

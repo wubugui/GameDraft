@@ -7,7 +7,7 @@ summary: 重扣/重生成已上线素材,源以 shipped atlas.meta.json 的 pack
 status: active
 triggers:
   topics: [重扣, 素材源, videos_stabilized, packMode]
-last_governed: 2026-07-11
+last_governed: 2026-08-05
 ---
 
 ## 背景(一段)

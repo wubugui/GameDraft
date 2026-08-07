@@ -8,6 +8,13 @@ import type { ActionDef, DialogueEndPayload } from '../data/types';
 import { GameState } from '../data/types';
 import { FlagKeys } from './FlagKeys';
 
+/**
+ * 启动引导参数。**唯一定义处**——main.ts 解析它们、EventBridge 写入它们，
+ * 两边必须同源，否则会出现"重启了但没停在标题"这种查半天的错位。
+ */
+export const TITLE_BOOT_PARAM = 'screen_title';
+export const LOAD_SLOT_PARAM = 'load_slot';
+
 export interface EventBridgeDeps {
   dialogueManager: DialogueManager;
   graphDialogueManager: GraphDialogueManager;
@@ -132,10 +139,13 @@ export class EventBridge {
       stateController.setState(GameState.Exploring);
     });
     this.listen('menu:returnToMain', () => {
-      // 能从游戏内回主菜单，说明本页已开过局：之后再点「新游戏」必须整页重启
-      this.hasStartedSession = true;
-      stateController.setState(GameState.MainMenu);
-      menuUI.openMainMenu();
+      // **回标题＝彻底退出这一局**，不是"拿一张大图盖住还在跑的游戏"。
+      //
+      // 旧做法只 setState(MainMenu) + 开菜单：场景、玩家、HUD、音频全都还活着，于是
+      // 标题界面上点「设置」时子面板的半透明遮罩底下透出游戏画面（用户报的"漏出场景"），
+      // 世界也仍在 update。与「新游戏」同一把锤子（R20 零残留）：整页重启，
+      // 带上标题标记，重启后停在标题界面、**不装载世界**。
+      this.restartPage({ [TITLE_BOOT_PARAM]: '1' });
     });
     // 保留手工恢复（特殊时序，不可换成 closePanel('menu')）：暂停菜单经 escapeFallback →
     // stateController.togglePanel('menu') 打开（η2a/η2b 收敛后有压栈），但「继续」按钮先自
@@ -173,6 +183,18 @@ export class EventBridge {
   /** R20：整页重启前净化一次性引导参数（过场直启/场景传送/各小游戏预览），
    *  否则 reload 会再次进这些调试入口而不是正常开局；`mode=dev` 是会话级模式，保留。 */
   private restartPageForNewGame(): void {
+    // 新游戏＝干净地重走一遍启动引导：既不带标题标记（否则重启后又停在标题），
+    // 也不带读档标记（那会读回旧局）。
+    this.restartPage();
+  }
+
+  /**
+   * 整页重启到指定引导态。**这是本项目唯一"零残留"的换局手段**（R20：开过局后内存里
+   * flag/背包/任务/叙事全是旧局残留，原地重置无法证明完备）。
+   *
+   * @param params 重启后要带上的引导参数；不传就是"干净重启进游戏"。
+   */
+  private restartPage(params?: Record<string, string>): void {
     try {
       const url = new URL(window.location.href);
       const oneShotParams = [
@@ -184,13 +206,38 @@ export class EventBridge {
         'waterPreview',
         'sugarWheelPreview',
         'paperCraftPreview',
+        // 引导标记本身也是一次性的：不清掉的话，从标题进游戏后刷新页面又会弹回标题
+        TITLE_BOOT_PARAM,
+        LOAD_SLOT_PARAM,
       ];
       for (const key of oneShotParams) url.searchParams.delete(key);
+      for (const [k, v] of Object.entries(params ?? {})) url.searchParams.set(k, v);
       window.history.replaceState(null, '', url.toString());
     } catch (e) {
-      console.warn('EventBridge: 新游戏重启前清理 URL 参数失败，按原 URL 重启', e);
+      console.warn('EventBridge: 重启前清理 URL 参数失败，按原 URL 重启', e);
+      if (params && Object.keys(params).length > 0) {
+        // 参数没写进去就重启，等于"以为回了标题、其实又进了游戏"——宁可不重启也别静默走错路
+        console.error('EventBridge: 引导参数未能写入 URL，取消重启');
+        return;
+      }
     }
     window.location.reload();
+  }
+
+  /**
+   * 从标题界面读档：同样走整页重启（重启后由启动引导直接把这个槽位读进来）。
+   * 标题态下世界压根没装载，就地 `SaveManager.load` 等于往一个空世界里灌状态。
+   */
+  restartPageToLoadSlot(slot: number): void {
+    this.restartPage({ [LOAD_SLOT_PARAM]: String(slot) });
+  }
+
+  /**
+   * 标记"本页已不是干净的首次引导"（标题态启动、或按存档槽启动时由 Game 调用）：
+   * 此后点「新游戏」一律走整页重启，不会误走"世界已在启动引导中就绪"那条快路。
+   */
+  markSessionStarted(): void {
+    this.hasStartedSession = true;
   }
 
   private listen(event: string, fn: (...args: any[]) => void): void {

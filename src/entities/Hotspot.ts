@@ -17,6 +17,7 @@ import {
 import { hotspotCollisionPolygonToWorld } from '../utils/hotspotCollision';
 import { isValidZonePolygon } from '../utils/zoneGeometry';
 import type { PerspectiveScaleResolver } from '../utils/perspectiveScale';
+import { createStyledText } from '../core/styledText';
 
 const TYPE_COLORS: Record<string, number> = {
   inspect: 0x44aaff,
@@ -54,6 +55,8 @@ export class Hotspot {
   /** 展示图专用；与 DepthOcclusionFilter 组合为 [density, depth]，深度实例引用不变 */
   private pixelDensityBlur: BlurFilter | null = null;
   private promptIcon: Container | null = null;
+  /** 当前提示的键名（'E' / 'C' / 'Space'…）：换键名要重建图标 */
+  private promptLabel = 'E';
   private showingPrompt: boolean = false;
 
   /** 场景透视缩放句柄（Game 注入；热点缺省不参与，perspectiveScaleEnabled===true 才存） */
@@ -70,6 +73,10 @@ export class Hotspot {
     this.marker.circle(0, 0, 8).fill({ color, alpha: 0.6 });
     this.marker.circle(0, 0, 12).stroke({ color, width: 1, alpha: 0.3 });
     this.container.addChild(this.marker);
+    // 占位圆点是「这个能交互」的标注，正式构建恒不可见（见 setAuthoringMarkersVisible）。
+    // 这里只压 alpha，不动 marker.visible —— 后者由「有无展示图」独占，
+    // 两条通道相乘：只有「无展示图」且「dev 开关打开」时才画得出来。
+    this.marker.alpha = 0;
 
     this._syncContainerPosition();
     this._syncEntitySortBand();
@@ -420,6 +427,17 @@ export class Hotspot {
     this.applyEffectiveActive();
   }
 
+  /**
+   * 编辑期标记（无展示图时的占位圆点）的可见性。**正式构建恒不可见**——玩家不该看到
+   * 任何"这个能交互"的标注（沉浸优先，2026-08-03 拍板）；策划摆位时经 F2 调试面板打开。
+   *
+   * 用 alpha 而非 visible：`marker.visible` 已被「有无展示图」这条通道独占
+   * （清展示图时置 true、装展示图时置 false），alpha 是唯一空闲通道，两条相乘。
+   */
+  setAuthoringMarkersVisible(visible: boolean): void {
+    this.marker.alpha = visible ? 1 : 0;
+  }
+
   /** showEmote 取包围盒：有展示 sprite 则只量sprite（世界四边形）；否则量整容器（含占位圆点）。 */
   getEmoteBoundsProbe(): Container {
     return this.displaySprite ?? this.container;
@@ -472,21 +490,25 @@ export class Hotspot {
     return -16 - headGap;
   }
 
-  showPrompt(): void {
-    if (this.showingPrompt) return;
+  /** `label` 缺省 'E'；act_spot 等动词点传自己的键名（如 'C'）。 */
+  showPrompt(label: string = 'E'): void {
+    if (this.showingPrompt && this.promptLabel === label) return;
+    if (this.showingPrompt) this.hidePrompt();
     this.showingPrompt = true;
+    this.promptLabel = label;
 
     this.promptIcon = new Container();
     const bg = new Graphics();
-    bg.roundRect(-14, -28, 28, 22, 4).fill({ color: 0x000000, alpha: 0.7 });
-    this.promptIcon.addChild(bg);
-
-    const text = new Text({
-      text: 'E',
+    const text = createStyledText({
+      text: label,
       style: { fontSize: 14, fill: 0xffffff, fontFamily: 'monospace' },
     });
     text.anchor.set(0.5, 0.5);
     text.y = -17;
+    // 底框按**实际**排版宽度算（中文一个字≈一个全角宽，按 length 估会压边）
+    const bgW = Math.max(28, Math.ceil(text.width) + 14);
+    bg.roundRect(-bgW / 2, -28, bgW, 22, 4).fill({ color: 0x000000, alpha: 0.7 });
+    this.promptIcon.addChild(bg);
     this.promptIcon.addChild(text);
 
     this.container.addChild(this.promptIcon);

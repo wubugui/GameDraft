@@ -258,6 +258,16 @@ def collect_id_universes(root: Path, read_text=None) -> UniverseData:
     else:
         u["smells"] = []
 
+    prop_doc = _load(data / "prop_presets.json", read)
+    if isinstance(prop_doc, dict):
+        u["prop_presets"] = sorted(k for k in prop_doc if isinstance(k, str))
+        labels["prop_presets"] = {
+            k: _trunc(v["label"]) for k, v in prop_doc.items()
+            if isinstance(v, dict) and isinstance(v.get("label"), str)
+        }
+    else:
+        u["prop_presets"] = []
+
     audio = _load(data / "audio_config.json", read)
     if isinstance(audio, dict):
         u["bgm"] = sorted(k for k in (audio.get("bgm") or {}) if isinstance(k, str))
@@ -356,6 +366,7 @@ def collect_id_universes(root: Path, read_text=None) -> UniverseData:
 
     characters = _archive(data / "archive/characters.json")
     lore = _archive(data / "archive/lore.json")
+    slang = _archive(data / "archive/slang.json")
     documents = _archive(data / "archive/documents.json")
     books_doc = _load(data / "archive/books.json", read)
     book_labels: dict[str, str] = {}
@@ -371,12 +382,13 @@ def collect_id_universes(root: Path, read_text=None) -> UniverseData:
                 if isinstance(pg, dict):
                     _deep_entries(pg.get("entries"), book_entry_labels)
 
-    all_archive = {**characters, **lore, **documents, **book_labels, **book_entry_labels}
+    all_archive = {**characters, **lore, **slang, **documents, **book_labels, **book_entry_labels}
     u["archive_entries"] = sorted(all_archive)
     labels["archive_entries"] = {k: v for k, v in all_archive.items() if v}
     scoped["archive_by_booktype"] = {
         "character": sorted(characters),
         "lore": sorted(lore),
+        "slang": sorted(slang),
         "document": sorted(documents),
         "book": sorted(book_labels),
         "bookEntry": sorted(book_entry_labels),

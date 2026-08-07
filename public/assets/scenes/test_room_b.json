@@ -37,19 +37,6 @@
       }
     },
     {
-      "id": "herb_bundle",
-      "type": "pickup",
-      "label": "艾草",
-      "x": 198.2,
-      "y": 458.1,
-      "interactionRange": 350,
-      "data": {
-        "itemId": "mugwort",
-        "itemName": "艾草",
-        "count": 2
-      }
-    },
-    {
       "id": "exit_to_a",
       "type": "transition",
       "label": "回到街巷",
@@ -117,113 +104,6 @@
   ],
   "zones": [
     {
-      "id": "dark_alley",
-      "polygon": [
-        {
-          "x": 226.1,
-          "y": 392.1
-        },
-        {
-          "x": 291.5,
-          "y": 438.8
-        },
-        {
-          "x": 335.8,
-          "y": 490.9
-        },
-        {
-          "x": 232.2,
-          "y": 511.8
-        },
-        {
-          "x": 131.5,
-          "y": 408.9
-        },
-        {
-          "x": 114.7,
-          "y": 376.4
-        },
-        {
-          "x": 195.3,
-          "y": 362.9
-        }
-      ],
-      "onEnter": [
-        {
-          "type": "setFlag",
-          "params": {
-            "key": "entered_dark_alley",
-            "value": true
-          }
-        },
-        {
-          "type": "enableRuleOffers",
-          "params": {
-            "slots": [
-              {
-                "ruleId": "rule_no_go_night",
-                "resultText": "你默念着\"三更勿去\"，小心翼翼地环顾四周。果然，墙角处有一缕若有若无的白烟正在消散。你停下脚步，那白烟便没了踪影。看来王大爷的话不是随便说说的。",
-                "resultActions": [
-                  {
-                    "type": "setFlag",
-                    "params": {
-                      "key": "used_rule_dark_alley",
-                      "value": true
-                    }
-                  },
-                  {
-                    "type": "giveRule",
-                    "params": {
-                      "id": "rule_ghost_verified"
-                    }
-                  }
-                ]
-              },
-              {
-                "ruleId": "rule_zombie_fire",
-                "resultText": "你掏出桃木片在角落里点燃，火光照亮了阴暗的巷道。你注意到墙壁上有些奇怪的刮痕，像是什么东西挣扎留下的。火光闪烁间，刮痕处渗出了一丝暗红色的液体……",
-                "resultActions": [
-                  {
-                    "type": "setFlag",
-                    "params": {
-                      "key": "used_fire_dark_alley",
-                      "value": true
-                    }
-                  }
-                ]
-              },
-              {
-                "ruleId": "rule_ghost_origin",
-                "resultText": "你想起那些关于柳家戏班的传闻——\"她不是在害人，她是在找人。\"你轻声说道。风停了。四周忽然安静得出奇，仿佛有什么东西在听你说话。",
-                "resultActions": [
-                  {
-                    "type": "setFlag",
-                    "params": {
-                      "key": "used_origin_dark_alley",
-                      "value": true
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        }
-      ],
-      "onExit": [
-        {
-          "type": "disableRuleOffers",
-          "params": {}
-        },
-        {
-          "type": "setFlag",
-          "params": {
-            "key": "entered_dark_alley",
-            "value": false
-          }
-        }
-      ]
-    },
-    {
       "id": "new_zone_0",
       "polygon": [
         {
@@ -247,7 +127,45 @@
           "y": 286.7
         }
       ],
-      "group": "官差神秘人-崖墓尸"
+      "group": "官差神秘人-崖墓尸",
+      "onEnter": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "寻狗_崖墓任务发布",
+            "npcId": "崖墓任务发布者"
+          }
+        }
+      ]
+    },
+    {
+      "id": "棺材铺交互",
+      "polygon": [
+        {
+          "x": 1162.8,
+          "y": 572.9
+        },
+        {
+          "x": 1307.5,
+          "y": 653.0
+        },
+        {
+          "x": 1262.4,
+          "y": 745.1
+        },
+        {
+          "x": 1129.0,
+          "y": 672.9
+        }
+      ],
+      "onInteract": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "后巷_棺材铺交互"
+          }
+        }
+      ]
     }
   ],
   "depthConfig": {
@@ -306,8 +224,18 @@
       "initialAnimPlayback": {
         "holdFrame": 8
       },
-      "group": "官差神秘人-崖墓尸",
-      "dialogueGraphId": "寻狗_崖墓任务发布"
+      "group": "官差神秘人-崖墓尸"
+    }
+  ],
+  "entityGroups": [
+    {
+      "id": "官差神秘人-崖墓尸",
+      "conditions": [
+        {
+          "narrative": "wrapper_主线_崖墓任务发布",
+          "state": "state_1"
+        }
+      ]
     }
   ]
 }

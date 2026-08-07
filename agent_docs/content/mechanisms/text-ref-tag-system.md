@@ -14,7 +14,7 @@ triggers:
   paths: ["src/core/resolveText.ts", "tools/editor/shared/rich_text_field.py"]
   topics: [tag引用, resolveText, RichTextField, 文本引用, 富文本]
   tasks: [写文案, 加引用类型, 加展示位置]
-last_governed: 2026-07-11
+last_governed: 2026-08-05
 ---
 
 ## 是什么(一句话)
@@ -24,8 +24,8 @@ last_governed: 2026-07-11
 ## 权威源(读代码从哪进)
 
 - 运行时解析:`src/core/resolveText.ts`(未知 kind 保持原样并 warn)。
-- 编辑器三件套:`tag_catalog.py`(kind 清单/存在性校验)+ `rich_text_field.py`
-  (RichTextLineEdit/TextEdit + 插入引用对话框)+ `ref_validator.py`(正则扫描 + save 前校验)。
+- 编辑器三件套:`tag_catalog.py`(kind 清单/存在性)+ `rich_text_field.py`(富文本控件与
+  插入对话框)+ `ref_validator.py`(save 前校验)。
 
 ## 硬契约
 

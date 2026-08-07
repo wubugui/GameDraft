@@ -277,10 +277,108 @@ export interface SceneCameraConfig {
 // 热区数据
 // ============================================================
 
-export type HotspotType = 'inspect' | 'pickup' | 'transition' | 'npc' | 'encounter';
+export type HotspotType = 'inspect' | 'pickup' | 'transition' | 'npc' | 'encounter' | 'act_spot';
 
-/** 有展示图时强制与 Player/NPC 的叠放档位；缺省字段则与其它实体一样仅按 Y 排序 */
-export type HotspotDisplaySpriteSort = 'back' | 'front';
+// ============================================================
+// 玩家身体动词（姿态 + 一次性动作）
+// ============================================================
+
+/**
+ * 玩家身体动词。两类语义：
+ * - 姿态（`crouch` / `gaze` / `lie`）：持续态，单槽互斥，进/出各一次回调，**不入存档**。
+ * - 一次性动作（`kick` / `jump`）：播一段动画 → 到 `callbackFrame` 触发回调 → 回 idle。
+ *   **没有命中判定、没有前后摇分段、没有冷却**（本作是冒险解谜，不是 ARPG）。
+ */
+export const PLAYER_VERBS = ['crouch', 'gaze', 'kick', 'jump', 'lie'] as const;
+export type PlayerVerb = (typeof PLAYER_VERBS)[number];
+
+/** 姿态槽（`stand` 为无姿态的缺省态，不属于动词） */
+export const PLAYER_POSTURES = ['crouch', 'gaze', 'lie'] as const;
+export type PlayerPosture = (typeof PLAYER_POSTURES)[number];
+
+/**
+ * 动词 -> 必需的**逻辑**状态名（经 `playerAvatar.stateMap` 解析到实际片段）。
+ * 解析不到 = 该动词在当前装扮下禁用，无隐式回落（显式优于隐式：想让注视复用站姿，
+ * 就在 stateMap 里写 `"gaze": "stand"`）。
+ */
+export const PLAYER_VERB_LOGICAL_STATES: Record<PlayerVerb, string> = {
+  crouch: 'crouch',
+  gaze: 'gaze',
+  lie: 'lie',
+  kick: 'kick',
+  jump: 'jump',
+};
+
+/** 蹲行专用可选逻辑名：缺失时蹲着移动沿用 `crouch` 片段（不影响蹲的可用性）。 */
+export const PLAYER_CROUCH_WALK_LOGICAL_STATE = 'crouchWalk';
+
+export function isPlayerVerb(v: unknown): v is PlayerVerb {
+  return typeof v === 'string' && (PLAYER_VERBS as readonly string[]).includes(v);
+}
+
+export function isPlayerPosture(v: unknown): v is PlayerPosture {
+  return typeof v === 'string' && (PLAYER_POSTURES as readonly string[]).includes(v);
+}
+
+/**
+ * zone 的动词响应表（与 onEnter/onStay/onExit 同级、同执行口）。
+ *
+ * **实体级没有对应字段**：某个具体目标要对动词有反应，走它**已有的对话图**——
+ * 动词名即图的 entry（踢狗 = 打开狗的图、entry 走 `kick`）。图里没有该 entry
+ * 就等于这个目标不吃这个动词。这样实体上零新增字段，分支逻辑留在唯一能分支的地方
+ * （图的 switch），策划也不必学新面板。
+ */
+export type ZoneActMap = Partial<Record<PlayerVerb, ActionDef[]>>;
+
+/** 姿态动词的全局参数 */
+export interface PlayerPostureConfig {
+  enabled?: boolean;
+  /** 姿态期间移速系数（乘在场景速度上）；缺省 1 */
+  speedScale?: number;
+  /** false 时姿态期间屏蔽奔跑；缺省沿用姿态默认 */
+  allowRun?: boolean;
+  /** 进入姿态的动画时长（毫秒，仅用于锁输入窗口）；缺省 250 */
+  enterMs?: number;
+  /** 退出姿态（起身）的动画时长（毫秒），期间不可打断；缺省 300 */
+  exitMs?: number;
+  /** gaze 专用：按住多久才触发目标 acts.gaze；缺省 0 = 进入注视即触发 */
+  holdMsToTrigger?: number;
+  /** lie 专用：为 true 时允许在任意地面躺下（缺省 false，只允许在 act_spot 躺点） */
+  freeAnywhere?: boolean;
+}
+
+/** 一次性动作动词的全局参数 */
+export interface PlayerActConfig {
+  enabled?: boolean;
+  /** 回调落在动画第几帧（0 基，越界取模）；缺省片段中点。仅为表演对齐，不影响成败 */
+  callbackFrame?: number;
+  /** 锁移动时长（毫秒）；缺省 = 片段自己播完一遍。jump 由 durationMs 接管 */
+  lockMs?: number;
+  /** kick 专用：无目标时的空挥回调（可不配，此时按下只播动画） */
+  missActions?: ActionDef[];
+  /** jump 专用：抛物线时长（毫秒）；缺省 480 */
+  durationMs?: number;
+  /** jump 专用：抛物线视觉抬升高度；缺省 46 */
+  arcHeight?: number;
+}
+
+/** `game_config.playerActs`：整块缺省 = 五个动词全按缺省开启 */
+export interface PlayerActsConfig {
+  crouch?: PlayerPostureConfig;
+  gaze?: PlayerPostureConfig;
+  lie?: PlayerPostureConfig;
+  kick?: PlayerActConfig;
+  jump?: PlayerActConfig;
+}
+
+/**
+ * 强制与其它实体的叠放档位；缺省字段则与众人一样仅按 Y 排序。
+ * 热区展示图与 NPC 共用同一套语义（Renderer 认的是容器上的 `entitySortBand`，与实体种类无关）。
+ */
+export type EntitySpriteSort = 'back' | 'front';
+
+/** @deprecated 用 {@link EntitySpriteSort}；保留别名仅为不打断既有 import。 */
+export type HotspotDisplaySpriteSort = EntitySpriteSort;
 
 /** 热区展示图：底边中点对齐热区 (x,y)，向上延伸 worldHeight、水平居中 worldWidth（与角色脚底锚点一致） */
 export interface HotspotDisplayImage {
@@ -293,7 +391,7 @@ export interface HotspotDisplayImage {
    */
   facing?: 'left' | 'right';
   /** 有图时与角色/NPC 的叠放层级；不设则与众人同规则按 Y */
-  spriteSort?: HotspotDisplaySpriteSort;
+  spriteSort?: EntitySpriteSort;
 }
 
 export interface HotspotDef {
@@ -322,7 +420,7 @@ export interface HotspotDef {
   conditionHidesEntity?: boolean;
   label?: string;
   autoTrigger?: boolean;
-  data: InspectData | PickupData | TransitionData | NpcHotspotData | EncounterTriggerData;
+  data: InspectData | PickupData | TransitionData | NpcHotspotData | EncounterTriggerData | ActSpotData;
   /** 可选：展示用贴图，底中锚点对齐 (x,y) */
   displayImage?: HotspotDisplayImage;
   /**
@@ -388,6 +486,30 @@ export interface TransitionData {
 
 export interface NpcHotspotData {
   npcId: string;
+}
+
+/**
+ * `act_spot` 热点：身体动词的语境点（躺点 / 跨点）。**不出 E 提示**，出的是动词提示。
+ * - `verbs: ['lie']` = 躺点：玩家在范围内按蹲键改为躺下。
+ * - `verbs: ['jump']` = 跨点：玩家在范围内按跳键跳到 `landing`（无视沿途阻挡）。
+ */
+export interface ActSpotData {
+  verbs: PlayerVerb[];
+  /** 起手前先走到的对齐点（缺省 = 不对齐，就地做） */
+  align?: { x: number; y: number };
+  /** 起手朝向（缺省 = 保持当前朝向） */
+  facing?: 'left' | 'right';
+  /** jump 必填：落点世界坐标 */
+  landing?: { x: number; y: number };
+  /** 玩家可见提示词（可含 `[tag:…]`）；缺省用热点 label */
+  promptKey?: string;
+  /** 动词生效时执行 */
+  actions?: ActionDef[];
+  /** 姿态型动词（lie）退出时执行 */
+  exitActions?: ActionDef[];
+  /** jump 专用覆盖：抛物线时长/弧高（缺省用 game_config.playerActs.jump） */
+  durationMs?: number;
+  arcHeight?: number;
 }
 
 // ============================================================
@@ -475,6 +597,17 @@ export type PlaneConditionLeaf = {
   plane: string;
 };
 
+/**
+ * 玩家身体姿态条件叶：`{ posture: 'crouch' }`。
+ * 姿态是**瞬时表现态**（不入存档），但它和位面一样是"世界此刻的样子"的一部分，
+ * 所以走同一条条件通道：热点/NPC 的 `conditions`（默认只锁交互不隐藏，正好是
+ * 「蹲下才翻得动柴堆」要的语义）、图对话 switch、zone、叙事图都能读。
+ * 值须为 PLAYER_POSTURES 之一；`{not:{posture:…}}` 表示"不在该姿态"。
+ */
+export type PostureConditionLeaf = {
+  posture: string;
+};
+
 /** 图对话原子条件（无逻辑组合） */
 export type GraphConditionLeaf =
   | Condition
@@ -483,7 +616,8 @@ export type GraphConditionLeaf =
   | ScenarioLineConditionLeaf
   | NarrativeStateConditionLeaf
   | NarrativeRunCountConditionLeaf
-  | PlaneConditionLeaf;
+  | PlaneConditionLeaf
+  | PostureConditionLeaf;
 
 /**
  * 递归条件：叶子或 all / any / not（与叙事文档 ConditionExpr 一致）。
@@ -684,6 +818,82 @@ export interface CharacterDef {
   animFile?: string;
   /** 对话头像立绘集目录名；缺省按 animFile 包名同名推导 */
   portraitSlug?: string;
+  /**
+   * 这个角色**默认**的图对话（`public/assets/dialogues/graphs/<id>.json` 的资源 id）：
+   * 「跟这个人说话走哪张图」。摆放侧 `NpcDef.dialogueGraphId` 就地写即覆盖本默认
+   * （同一个人在不同场次演不同的戏是常态，如克拉拉在城门/街头是两张图）。
+   *
+   * ⚠ 与 `dialogueGraphEntry` **成对继承**：摆放一旦自带 `dialogueGraphId`，
+   * 本角色的 entry 也不再继承——理由见 `applyCharacterDefaults`。
+   */
+  dialogueGraphId?: string;
+  /**
+   * 配合 `dialogueGraphId` 的图内入口（覆盖图 JSON 自带的 `entry`）；
+   * 用于多个角色共用一张图、各走各入口的写法。单独写本字段而不写
+   * `dialogueGraphId` 无意义，校验器会报。
+   */
+  dialogueGraphEntry?: string;
+  /**
+   * 化身配置：**有这段 = 该角色可被玩家接管**（受控），缺省 = 只能当 NPC。
+   *
+   * 与 `game_config.playerAvatar` 是同一套语义（移动三态映射 + 身体动词 + 待机节目单），
+   * 差别只在 `animFile` / `portraitSlug` 不在这里重复——它们是 CharacterDef 自己的字段。
+   */
+  avatar?: CharacterAvatarConfig;
+}
+
+/**
+ * 可接管角色的化身配置。字段语义与 {@link PlayerAvatarConfig} 逐条一致，
+ * 唯一区别是不含 `animManifest` / `portraitSlug`（由所属 CharacterDef 的
+ * `animFile` / `portraitSlug` 承担），避免同一事实两处可写。
+ */
+export interface CharacterAvatarConfig {
+  /**
+   * 逻辑状态名 -> anim.json 里 states 的键。未写的键视为「与逻辑名同名」。
+   * 移动三态固定 idle / walk / run；身体动词见 `PLAYER_VERB_LOGICAL_STATES`。
+   * **某逻辑名在本角色下解析不到实际片段 = 该动词在本角色下自动禁用**——
+   * 配角不需要补齐六个动词的片段才能上场。
+   */
+  stateMap?: Record<string, string>;
+  /** 长时间不操作时该角色自己演的小节目；整块缺省=不演。语义同 PlayerAvatarConfig.idle */
+  idle?: PlayerIdleConfig;
+  /**
+   * 命名装扮：一次换装要改的东西（动画包 + 状态映射）在此登记一份，
+   * 动作侧只填 `outfit` 名即可，不必每个调用点重抄整份 stateMap。
+   */
+  outfits?: Record<string, CharacterOutfitDef>;
+}
+
+/**
+ * `resolveAvatar` 的输出：某角色在某装扮下**实际生效**的化身。
+ * 消费侧（挂载精灵 / 解析立绘 / 判断动词可用）一律读这个，不要各自去合并 outfit。
+ */
+export interface ResolvedAvatar {
+  /**
+   * 实际要加载的 anim.json URL。
+   * **可能为 undefined**（角色漏填 animFile 且装扮也没给）——刻意不兜底到玩家默认包，
+   * 否则漏填会静默套上主角的动画与立绘。构建期由 validator 拦，运行时消费侧告警。
+   */
+  animFile?: string;
+  /** 实际生效的逻辑状态映射；undefined = 全部逻辑名与片段名同名 */
+  stateMap?: Record<string, string>;
+  /**
+   * 实际生效的立绘集；**undefined = 由消费侧按动画包目录名推导**（不是"没有立绘"）。
+   * 装扮换了动画包又没显式指定 slug 时必然为 undefined——立绘要跟着装扮走。
+   */
+  portraitSlug?: string;
+  /** 待机节目单（跟角色走，不随装扮变） */
+  idle?: PlayerIdleConfig;
+}
+
+/** 一套命名装扮：换上它 = 换动画包 + 换状态映射。 */
+export interface CharacterOutfitDef {
+  /** anim.json 的 URL；缺省=沿用角色本体的 animFile（只换 stateMap 的纯状态换装） */
+  animFile?: string;
+  /** 该装扮下的逻辑状态映射；语义同 CharacterAvatarConfig.stateMap */
+  stateMap?: Record<string, string>;
+  /** 该装扮的对话立绘集；缺省=沿用角色本体的 portraitSlug */
+  portraitSlug?: string;
 }
 
 export interface CharacterRegistryFile {
@@ -769,6 +979,12 @@ export interface NpcDef {
    * 再叠一层逐 entity 光照会与背景色调不符、露出方框接缝。缺省视为 false（正常受光）。
    */
   renderRaw?: boolean;
+  /**
+   * 强制叠放档位（与 `HotspotDisplayImage.spriteSort` 同语义、同实现）：`back` 恒在众人之后、
+   * `front` 恒在众人之前；缺省=与众人一样只按脚底 Y 排序。
+   * 给「贴背景的群像/前景路人」这类摆位用——它们与背景的前后关系是画出来的，按 Y 排会穿帮。
+   */
+  spriteSort?: EntitySpriteSort;
   /**
    * 实例级等比缩放（quad 级真变换，绕脚底锚点）：渲染/碰撞多边形/交互半径/
    * 阴影尺寸/气泡/深度接地线随动；缺省 1。可经 setEntityField 运行时改并入档。
@@ -980,6 +1196,12 @@ export interface ItemDef {
   id: string;
   name: string;
   type: 'consumable' | 'key';
+  /**
+   * 背包格子图标。走 `mediaUrlFromShortPath` 解析：既接受
+   * `/resources/runtime/images/icons/x.png` 完整媒体 URL（编辑器 Browse 写出的形态），
+   * 也接受 `images/icons/x.png` 这类短名。**留空是合法的**——运行时退回物品名文字显示。
+   */
+  icon?: string;
   description: string;
   dynamicDescriptions?: { conditions: ConditionExpr[]; text: string }[];
   buyPrice?: number;
@@ -1054,6 +1276,56 @@ export interface AnimationSetDef {
   /** 世界单位：精灵在世界中的高度（JSON 可与 worldWidth 二选一） */
   worldHeight: number;
   states: Record<string, AnimationStateDef>;
+}
+
+/**
+ * 一个挂点在**某个图集槽位**上的位姿（人工逐帧标注，存 sockets.json sidecar）。
+ *
+ * 坐标是**格内归一化**：`x` 0=格左边、1=格右边；`y` 0=格顶边、1=格底边（＝脚线）。
+ * 与 `states[*].bubbleAnchor` 同一套归一化口径，运行时按 worldWidth/worldHeight
+ * 与透视系数换算成容器局部坐标。
+ */
+export interface SocketFramePose {
+  x: number;
+  y: number;
+  /** 角度（度，顺时针为正，屏幕坐标系）；角色朝左时运行时取反 */
+  angle?: number;
+  /** true = 挂件画在角色**身前**；缺省 false = 身后 */
+  front?: boolean;
+  /**
+   * 挂点驱动的帧号（第二档）：挂件自己是一张小序列图时，用这个数选它的第几帧。
+   * **不引入第二个时钟**——帧号完全由角色当前这一帧的标注给定。
+   */
+  frame?: number;
+}
+
+/** 一个命名挂点：逐图集槽位的位姿表（键为槽位索引的十进制字符串） */
+export interface SocketDef {
+  /** 人可读名（编辑器列表显示用）；缺省用挂点 id */
+  label?: string;
+  poses: Record<string, SocketFramePose>;
+}
+
+/**
+ * 图集指纹：sockets.json 是按**图集槽位**索引的，重导出后槽位会漂移。
+ * 加载时与 anim.json 对不上就把整份挂点判为失效（stale），拒绝使用并提示重标——
+ * 盲用漂移后的槽位号会静默挂错位置，比不挂更坏。
+ *
+ * ⚠ 只是几何指纹：重抠图但网格没变（同 cols/rows/cell/槽位数）**检测不出来**。
+ * 那种情况得靠人重看一遍，这是本机制已知且刻意的边界。
+ */
+export interface SocketAtlasFingerprint {
+  cols: number;
+  rows: number;
+  /** atlasFrames 的长度（＝本图集实际占用的槽位数） */
+  slotCount: number;
+}
+
+/** `<动画包目录>/sockets.json` 的整体形状 */
+export interface SocketSetDef {
+  schemaVersion: number;
+  atlas: SocketAtlasFingerprint;
+  sockets: Record<string, SocketDef>;
 }
 
 export interface AnimationStateDef {
@@ -1517,6 +1789,49 @@ export interface LoreEntry {
   firstViewActions?: ActionDef[];
 }
 
+/**
+ * 怪话册词条。成就式搜集册，纯 flavor：只能被读、不能被用（不解锁能力、不作任何检定前置）。
+ * 正文走考据体、note 负责把它砸掉——「系统越正经，内容越不成器」是这本册子的笑点引擎。
+ */
+export interface SlangEntry {
+  id: string;
+  /** 词条本身，如「锤子」 */
+  title: string;
+  /** 考据体释义（语源 / 市井用法 / 成渝分野） */
+  content: string;
+  /** 关二狗声口的实际用法示范 */
+  example: string;
+  /** 跟谁学的 */
+  source: string;
+  /** 末尾那句拆台备注（笑点落点，可空） */
+  note?: string;
+  category: string;
+  unlockConditions: ConditionExpr[];
+  /** 玩家第一次在档案中点开该条目时执行（仅一次） */
+  firstViewActions?: ActionDef[];
+}
+
+/** 怪话册单个分类的展示视图：含未解锁灰槽与集齐状态（空槽是本册的驱动力，刻意不隐藏） */
+export interface SlangCategoryView {
+  key: string;
+  name: string;
+  total: number;
+  collected: number;
+  complete: boolean;
+  /** 该分类集齐时显示的嘲讽评语（未集齐为空串） */
+  completeText: string;
+  entries: { entry: SlangEntry; unlocked: boolean }[];
+}
+
+/** 怪话册总进度 */
+export interface SlangProgress {
+  collected: number;
+  total: number;
+  allComplete: boolean;
+  /** 全册集齐时显示的评语（未集齐为空串） */
+  allCompleteText: string;
+}
+
 export interface DocumentEntry {
   id: string;
   name: string;
@@ -1638,10 +1953,24 @@ export interface MapConfigFile {
 // 区域数据
 // ============================================================
 
-/** ActionExecutor 在 zone 内执行 batch 时注入的上下文。 */
-export interface ZoneActionContext {
-  zoneId: string;
+/**
+ * 动作批的**来源上下文**：谁在放这批动作。按参数显式线程化（禁全局"当前 X"栈——
+ * 见 agent_docs/runtime/mechanisms/zone-lifecycle-contracts.md；同帧交错的批会互相串味）。
+ *
+ * - `zoneId`：zone 触发批才有，规矩 offers 等按 zone 注册的动作依赖它。
+ * - `ownerType`/`ownerId`：这批动作的**叙事归属实体**，与 wrapperGraph 的 owner 同命名空间
+ *   （见 VALID_NARRATIVE_WRAPPER_OWNER_TYPES）。`startDialogueGraph` 未显式给 owner 时由它兜底，
+ *   于是"热区动作里开的对话""zone 里开的对话""叙事图状态里开的对话"都能解出 owner，
+ *   图里的 ownerState 节点才有得读。两者必须成对，缺一即视为无 owner。
+ */
+export interface ActionOriginContext {
+  zoneId?: string;
+  ownerType?: string;
+  ownerId?: string;
 }
+
+/** @deprecated 历史名；zone 只是来源之一，新代码用 {@link ActionOriginContext}。 */
+export type ZoneActionContext = ActionOriginContext;
 
 /** standard：进出停留与规矩等；depth_floor：仅参与深度遮挡，脚底在区内时叠加 floorOffsetBoost */
 export type ZoneKind = 'standard' | 'depth_floor';
@@ -1681,6 +2010,23 @@ export interface ZoneDef {
   /** 玩家在区域内时每帧执行的 Action（慎用非幂等 action）。 */
   onStay?: ActionDef[];
   onExit?: ActionDef[];
+  /**
+   * 玩家在本区内做某身体动词时执行（事件驱动，不受 onStay 的 0.25s 节流影响）。
+   * 只有当动词没被目标级 `acts` 接住时才轮到本表（派发优先级：目标级 → 区域级 → 全局兜底）。
+   */
+  onPlayerAct?: ZoneActMap;
+  /**
+   * 玩家在本区内**按 E 才执行**（走进来什么都不发生，与 onEnter 相反）。
+   * 有值即在 HUD 底部出提示条，提示文案取 {@link ZoneDef.interactLabel}。
+   * 派发优先级同身体动词：目标级（hotspot / NPC 的 E）→ 区域级——被更近的可交互目标
+   * 接住时本区既不出提示也不触发；位面禁交互（canInteractHotspots=false）时一并禁。
+   */
+  onInteract?: ActionDef[];
+  /**
+   * `onInteract` 提示条的文案，形如 `[E] 察看`（方括号里是键帽）。
+   * 留空取 strings 的 `hud.zoneInteractHint` 默认值；仅在 `onInteract` 非空时有意义。
+   */
+  interactLabel?: string;
   /** 进入本区自动呈现的环境气味（zone 层；离开自动撤回；被 action 层 setSmell 压过）。 */
   smell?: ZoneSmellConfig;
 }
@@ -1703,7 +2049,10 @@ export interface PlayerAvatarConfig {
   animManifest?: string;
   /**
    * 逻辑状态名 -> anim.json 里 states 的键。未写的键视为「与逻辑名同名」。
-   * 游戏内 Player 固定使用 idle / walk / run 三种逻辑名。
+   * 移动三态固定使用 idle / walk / run；身体动词另用
+   * crouch / crouchWalk / gaze / kick / jump / lie（见 PLAYER_VERB_LOGICAL_STATES）。
+   * **某逻辑名在本装扮下解析不到实际片段 = 该动词在本装扮下自动禁用**
+   *（如背尸包没有 kick，扛着尸体就踢不了；不需要额外开关）。
    */
   stateMap?: Record<string, string>;
   /**
@@ -1712,6 +2061,48 @@ export interface PlayerAvatarConfig {
    * setPlayerAvatar 切装扮时可用同名参数携带新配置的立绘集。
    */
   portraitSlug?: string;
+  /** 长时间不操作时主角自己演的小节目（待机动画 / 头顶自言自语）。整块缺省=不演。 */
+  idle?: PlayerIdleConfig;
+}
+
+/** 主角待机节目单。间隔与内容全部在编辑器里配，代码不硬编码任何一条。 */
+export interface PlayerIdleConfig {
+  /** 总开关，缺省 true（但 entries 为空时本来就不会演） */
+  enabled?: boolean;
+  /** 停手多久后演第一个节目（ms），缺省 12000 */
+  firstDelayMs?: number;
+  /** 之后每隔多久再演一个（ms），缺省 18000 */
+  repeatIntervalMs?: number;
+  /** 间隔随机抖动上限（ms），缺省 6000——固定间隔会让待机看起来像机器 */
+  jitterMs?: number;
+  /**
+   * 看门狗兜底（ms），缺省 6000。
+   *
+   * ⚠ **正常路径用不到它**：待机系统按片段真实时长算窗口（时长×1.5+1s），
+   * 所以 8 秒的躺姿能演完、单帧姿势约 1.2 秒就收。只有"拿不到片段时长"这种
+   * 不该发生的情况才回落到这个值——它是最后一道防线，不是动画时长上限。
+   */
+  animWatchdogMs?: number;
+  entries?: PlayerIdleEntry[];
+}
+
+/** 一个待机节目：动画、气泡，或两者一起。两者都空的条目会被跳过。 */
+export interface PlayerIdleEntry {
+  /** 随机权重，缺省 1 */
+  weight?: number;
+  /**
+   * anim.json 里 states 的键（**不是** stateMap 的逻辑名）——策划往角色动画包里补一个
+   * 新状态，编辑器下拉现场扫 manifest 就能选到，不需要改代码。
+   */
+  animState?: string;
+  /** 头顶自言自语；支持 `[tag:…]` 引用与 `[c:…]` 语义色板 */
+  bubbleText?: string;
+  /** 气泡停留（ms），缺省 2600 */
+  bubbleDurationMs?: number;
+  /** 本条目自身冷却（ms），缺省 0＝不限 */
+  cooldownMs?: number;
+  /** 演这条的前置条件；留空＝不限 */
+  when?: ConditionExpr;
 }
 
 export interface GameConfig {
@@ -1728,8 +2119,26 @@ export interface GameConfig {
   viewport?: { width: number; height: number };
   /** 游戏窗口大小（容器 CSS 尺寸），不影响视口逻辑分辨率 */
   windowSize?: { width: number; height: number };
-  /** 玩家化身：动画资源与状态映射（见 PlayerAvatarConfig） */
+  /**
+   * 玩家化身：动画资源与状态映射（见 PlayerAvatarConfig）。
+   *
+   * **兼容读法**：`initialControlledCharacter` 缺省时，由本字段就地合成一条匿名角色
+   * （id 固定 `LEGACY_PLAYER_CHARACTER_ID`），行为与多角色出现之前逐帧一致。
+   * 迁移到角色注册表不是硬门槛，两种写法长期并存。
+   */
   playerAvatar?: PlayerAvatarConfig;
+  /**
+   * 开局受控角色的 `characterId`（须在 character_registry.json 中且带 `avatar` 段）。
+   * 缺省=走 `playerAvatar` 兼容路径。
+   */
+  initialControlledCharacter?: string;
+  /**
+   * 开局队伍成员（有序，characterId 列表）。缺省=只有受控者一人。
+   * 不含 `initialControlledCharacter` 时受控者会被自动补进队首——队伍恒包含受控者。
+   */
+  initialParty?: string[];
+  /** 玩家身体动词参数（蹲/踢/驻足注视/跳/躺）；整块缺省 = 全部按缺省开启 */
+  playerActs?: PlayerActsConfig;
   /** 为 true 时按背景像素密度对实体展示做自动低通（纯渲染，默认开启；可在 game_config 设为 false 关闭） */
   entityPixelDensityMatch?: boolean;
   /**
@@ -1755,6 +2164,19 @@ export interface GameConfig {
     tetherCueId?: string;
     tetherSuppressFlagKey?: string;
   };
+  /**
+   * 玩家可见文本的**语义色板**：内容里写 `[c:<id>]…[/c]` 给某几个字上色。
+   * 刻意只给具名档位、不给自由 hex——这套暖木/纸纹观感下，逐处填色号一定会走形，
+   * 且改一次全局生效。缺省（不写此键）时用 `textStyle.DEFAULT_TEXT_PALETTE`。
+   */
+  textPalette?: TextPaletteEntry[];
+}
+
+/** 语义色板一档：`id` 是内容里写的标记名，`label` 只给编辑器/人看，`color` 为 `#RRGGBB` */
+export interface TextPaletteEntry {
+  id: string;
+  label: string;
+  color: string;
 }
 
 /** 逐 entity 光照全局配置 */
@@ -1828,12 +2250,15 @@ export interface IRulesDataProvider {
 export interface IArchiveDataProvider {
   /** 将档案/书籍等 JSON 正文中的 [tag:…] 展开为当前展示文案 */
   resolveLine(raw: string | undefined): string;
-  hasUnread(bookType: 'character' | 'lore' | 'document' | 'book'): boolean;
+  hasUnread(bookType: 'character' | 'lore' | 'document' | 'book' | 'slang'): boolean;
   getUnlockedCharacters(): CharacterEntry[];
   getCharacterVisibleImpressions(entry: CharacterEntry): string[];
   getCharacterVisibleInfo(entry: CharacterEntry): string[];
   getUnlockedLore(): LoreEntry[];
   getUnlockedDocuments(): DocumentEntry[];
+  /** 怪话册：按分类分组，含未解锁灰槽（刻意返回全部条目，不做已解锁过滤） */
+  getSlangCategories(): SlangCategoryView[];
+  getSlangProgress(): SlangProgress;
   getBooks(): BookDef[];
   getUnlockedBooks(): BookDef[];
   /** 左侧树：章节 → 子条目（含解锁状态） */

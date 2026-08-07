@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "id": "生态_看_雾津_墙上告示",
+  "entry": "root",
+  "meta": {
+    "title": "端详 · 雾津东街墙上告示（眼尖 / 夜 / 常态 三态）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "narrative": "eco_眼力",
+              "state": "眼尖",
+              "reached": true
+            }
+          ],
+          "next": "deep"
+        },
+        {
+          "conditions": [
+            {
+              "narrative": "eco_时辰",
+              "state": "夜"
+            }
+          ],
+          "next": "night"
+        }
+      ],
+      "defaultNext": "first"
+    },
+    "first": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "粉墙上贴过告示，让人一层一层撕掉咯，只剩下浆糊印和几块红纸角。",
+      "next": "end"
+    },
+    "night": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "红纸角在夜里发暗，看起来像溅上去的。",
+      "next": "end"
+    },
+    "deep": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "最底下那层没撕干净：一个「缉」字的半边，一个数目字「捌」。撕的人是从上往下撕的，撕到这层就住手咯。",
+      "next": "end"
+    },
+    "end": {
+      "type": "end"
+    }
+  }
+}

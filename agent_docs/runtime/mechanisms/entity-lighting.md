@@ -1,49 +1,59 @@
 ---
 id: entity-lighting
-title: 逐 entity 光照/投影阴影/AO
+title: 场景光环境 / 实体阴影 / 深度遮挡
 domain: runtime
 type: mechanism
-summary: 阴影三模式 real/planar/off + 独立色调开关 + 位置驱动光照曲线;方位角双约定与"脚点锚必须与深度图同源"是最大的坑
+summary: 行走面深度场是遮挡·阴影·碰撞的唯一脚点锚(没场就整体关,不回落拟合直线);阴影一律 planar 剪影;色调与阴影解耦
 status: active
 authority:
-  - src/rendering/DeferredEntityShadow.ts
-  - src/rendering/EntityShadow.ts
+  - src/rendering/EntityShadow.ts#PlanarEntityShadow
   - src/rendering/EntityLightingFilter.ts
+  - src/rendering/DepthOcclusionFilter.ts
   - src/rendering/lightEnv.ts
   - src/rendering/lightEnvCurve.ts
-  - src/rendering/entityShadowTypes.ts
+  - src/core/SceneDepthSystem.ts#setGroundDepthField
+  - src/core/Game.ts#createShadowImpl
 triggers:
-  paths: ["src/rendering/*Shadow*", "src/rendering/lightEnv*", "src/rendering/EntityLightingFilter.ts"]
-  topics: [光照, 阴影, AO, lightEnv, 色调]
-last_governed: 2026-07-11
+  paths: ["src/rendering/*Shadow*", "src/rendering/lightEnv*", "src/rendering/EntityLightingFilter.ts", "src/rendering/DepthOcclusionFilter.ts", "src/core/SceneDepthSystem.ts"]
+  topics: [光照, 阴影, AO, lightEnv, 色调, 遮挡, 行走面深度, ground_d]
+last_governed: 2026-08-05
 ---
 
 ## 是什么(一句话)
 
-给玩家/NPC 挂逐实体投影阴影(`real` 深度图射线求交 / `planar` 平面铺贴 / `off`)+ 接触/形体 AO + 场景色调融入的渲染子系统;总开关 `game_config.json` 的 `entityLighting.enabled`,关掉完全回旧管线。
+场景侧的实体受光表现:投影阴影 + 场景色调融入 / AO + 深度遮挡(角色被场景前景挡住);
+角色本体的逐像素受光是另一套,见 [character-lighting](character-lighting.md)。
+总开关 `game_config.json` 的 `entityLighting.enabled`。
 
 ## 权威源(读代码从哪进)
 
-- 模式解析与合并:`lightEnv.ts` 的 `resolveLightEnv`(场景 `lightEnv` < config `shadowMode` < 基线 real)
-- 两种阴影实现:`DeferredEntityShadow.ts`(real)/ `EntityShadow.ts`(planar);接口与工厂 `entityShadowTypes.ts`
-- 色调/AO 滤镜:`EntityLightingFilter.ts`;接线在 Game.ts(rebuildEntityShadows / applyShadowAndAO)
-- 位置驱动光照:`lightEnvCurve.ts`(纯模块可测);深度上下文:SceneDepthSystem.getShadowSceneContext
+阴影工厂 `Game.createShadowImpl` → `EntityShadow.ts`;滤镜两支(遮挡 / 光照)共用
+`EntityLightingFilter.ts` 顶部的 `IEntityShadingFilter` 驱动接口;光环境解析与位置驱动曲线
+在 `lightEnv*.ts`;地面/深度上下文在 `SceneDepthSystem.ts`。
 
 ## 硬契约(违反即 bug)
 
-- **方位角双约定**:real 用世界约定(az=0=+X东,绕Y逆时针),planar 用屏幕约定(影朝 az+180 铺地)。同一 `azimuthDeg` 两模式视觉方向不同,调参/写工具都要分清。
-- **脚点锚与表面点必须同源**:deferred 阴影的脚点 F 必须用深度图采样(与 P 同源);用线性 floor 模型会产生系统性标定偏移 → 阴影退化成远处无面积细片(2026-06-17 修过,勿回退)。
-- **色调独立于阴影**:`toneEnabled` 与 `shadowMode` 解耦,off 模式不连带关色调。
-- **lightEnvCurve 必须原地写回 `currentLightEnv`**:shadowField 与各阴影实例持引用逐帧读,换对象引用会静默失联。
-- 深度上下文的 `enabled`(深度图加载成功)≠ `lightingEnabled`,是两个标志;无深度的场景 real 自动退化为 planar。
-- real 的 billboard 默认 `'light'`(法线⊥光,不退化);`'camera'` 某些角度会变窄。
+- **行走面深度场(`lighting/ground_d.png`)是脚点的唯一来源**,遮挡 / 阴影落地面 /
+  `isCollision` 反投影三处并列适用。传 null = 本场景没烘 → **三者一律关闭**,
+  绝不悄悄退回旧的 `floor_depth_A/B` 拟合直线(多层街巷可偏出 200+ 行地面,
+  站在可见地面上的站位整块被吞)。
+- **遮挡与着色是两个代理,禁止合并**:遮挡用脚深度处的代理体、着色用直立 quad;
+  合成一个必回上半身 pop-through。
+- 阴影实现**一律 planar 剪影**(角色 mask 剪影 + 剪影上模糊)。`shadowMode` 的
+  `real`/`planar` 现已同义,`DeferredEntityShadow.ts` 是待清理死码;
+  planar 的方位角是**屏幕约定**(影朝 `az+180` 铺地),调参按这个读。
+- **色调独立于阴影**:`toneEnabled` 与 `shadowMode` 解耦,`off` 不连带关色调。
+- **`lightEnvCurve` 必须原地写回 `currentLightEnv`**:阴影实例与 shadowField 持引用逐帧读,
+  换对象引用会静默失联。
 
 ## 已知坑
 
-- F2 面板滑块必须 `noRefresh:true` + 就地 sync,否则按按钮/切模式滑块复位。F2 只改 `currentLightEnv`,不动存档。
-- 热区 displayImage 仍走旧 depth-only 滤镜(无 tone/AO);场景中途动态 spawn 的 NPC 暂无光照/阴影。
-- 未做(勿当缺陷重报):灯光方向场(接口 `shadowField.ts` 已留)、点光、多角色阴影 RT 并集。
+- F2 滑块必须 `noRefresh` + 就地 sync,否则点按钮 / 切模式滑块复位;F2 只改
+  `currentLightEnv`,不进存档。
+- 未做,勿当缺陷重报:灯光方向场(`shadowField.ts` 只留了接口)、点光、多角色阴影 RT 并集。
 
 ## 怎么验证
 
-画面对错肉眼难判且 headless 有 rAF 障碍,用 [headless-visual-verification](../recipes/headless-visual-verification.md):跳不同地图/点/光向各截一张;看形状退化用 darkness=1.0+关 AO+低 elevation。
+`./dev.sh audit-depth`(场景 JSON depthConfig / 运行时深度+碰撞图 / 资产尺寸三处落点一致性);
+画面对错肉眼难判,取证走 [headless-visual-verification](../recipes/headless-visual-verification.md);
+看形状退化用 darkness=1.0 + 关 AO + 低 elevation。

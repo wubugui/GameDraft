@@ -18,21 +18,28 @@ import {
   OBJECT_EXAMINE_BG_COVER_BASE,
   OBJECT_EXAMINE_CINNABAR_MARK_URL,
   OBJECT_EXAMINE_FLY_BUZZ_AMBIENT_ID,
+  OBJECT_EXAMINE_MAX_CONTACT_AO_RADIUS_CM,
   isObjectExamineRealHotspot,
   resolveObjectExamineAmbience,
   resolveObjectExamineBackgroundBrightness,
   resolveObjectExamineBackgroundScale,
   resolveObjectExamineContactAoIntensity,
-  resolveObjectExamineContactAoScale,
+  resolveObjectExamineContactAoRadiusCm,
+  resolveObjectExaminePhysicalWidthCm,
   resolveObjectExamineBackgroundUrl,
 } from './types';
 import { ObjectExamineContactAoFilter } from './contactAo';
 import { ObjectExamineCritterSim } from './critterSim';
+import { UITheme } from '../../ui/UITheme';
+import { createPanel, createWoodFrame, SKINS, WOOD_PANEL, type PanelSkin } from '../../ui/PanelSkin';
+import { createChip, createIcon, createKeyCap, createTitleRow } from '../../ui/components/UIDecor';
+import type { UIIconName } from '../../ui/UIIcons';
 import {
   BlurFilter,
   ColorMatrixFilter,
   Container,
   FederatedPointerEvent,
+  FillGradient,
   Filter,
   Graphics,
   Point,
@@ -40,12 +47,26 @@ import {
   Sprite,
   Text,
 } from 'pixi.js';
+import { createStyledText, setStyledText } from '../../core/styledText';
 
-const CHROME_TOP = 56;
-const CHROME_BOTTOM = 52;
+/**
+ * 上下横栏（标题 / 底部按钮）占高。
+ *
+ * ⚠ 顶栏必须让开游戏 HUD：检视会话期间 HUD 仍画在这一层之上（左上铜钱牌、
+ * 正中场景名）。旧版标题钉在 (24,16)，实拍里被铜钱牌整块盖住、只露出末尾两个点。
+ * 标题下沉到 `TITLE_ROW_Y` 才躲得开，顶栏高度是跟着它算出来的，别单独调其中一个。
+ */
+const TITLE_ROW_Y = 40;
+const CHROME_TOP = 84;
+const CHROME_BOTTOM = 64;
 const MARGIN = 24;
-const OP_BTN_H = 32;
-const OP_BTN_GAP = 6;
+/** 芯片按钮高：正文档字号(20) + 上下木条(5×2) + 呼吸，低于这个数字会把木框压在字上。 */
+const OP_BTN_H = 40;
+const OP_BTN_GAP = UITheme.spacing.sm;
+const EXIT_BTN_W = 108;
+const BAG_BTN_W = 148;
+const OP_MENU_BTN_W = 240;
+const BAG_ITEM_BTN_W = 300;
 const DISTANCE_STEPS = [1, 1.55, 2.25, 3.2] as const;
 const DRAG_THRESHOLD_PX = 8;
 const GAZE_RANGE_FRACTION = 0.72;
@@ -66,12 +87,14 @@ const CINNABAR_SIZE = 56;
 /** 镜头微晃（屏幕像素，叠在 cameraRoot；非层间视差）。 */
 const HEAD_SWAY_AMP_X = 2.4;
 const HEAD_SWAY_AMP_Y = 1.9;
-const INK_FILL = 0xf5efe3;
-const INK_MUTED = 0x9c8f7a;
-const INK_SHADE = 0x8a7f70;
-const INK_REVEAL = 0xf0e0c0;
+/**
+ * 异常影子（线索条目）的两态色：未揭示＝暗暖灰的"影"，已揭示＝琥珀点亮一档。
+ * 与全站「选中/生效＝琥珀」同一套语汇，不再另起 INK_* 私有色板。
+ */
+const SHADE_COLOR_HIDDEN = UITheme.colors.section;
+const SHADE_COLOR_REVEALED = UITheme.colors.title;
 /** 右下异常影子：大字悬浮感 */
-const SHADE_LINE_SIZE = 26;
+const SHADE_LINE_SIZE = UITheme.fontSize.bodyLarge;
 const SHADE_WRAP_W = 260;
 /** 未配置 shadeUi 时的散开落点（屏幕归一化），避免默认全挤右下 */
 const SHADE_DEFAULT_SLOTS: Array<{ x: number; y: number }> = [
@@ -82,6 +105,9 @@ const SHADE_DEFAULT_SLOTS: Array<{ x: number; y: number }> = [
   { x: 0.55, y: 0.22 },
   { x: 0.42, y: 0.74 },
 ];
+
+/** 芯片按钮句柄：换字时要找回自己的 Text（图标另找，不混在这里）。 */
+type ChipButton = Container & { __chipLabel?: Text };
 
 type ShadeFloatEntry = {
   root: Container;
@@ -167,6 +193,15 @@ type PointerGesture = {
 
 type HotspotBounds = { cx: number; cy: number; w: number; h: number };
 
+/** 尘埃横向漂移速度半幅（厘米/秒）。 */
+const DUST_DRIFT_CM_S = 1.702;
+/** 尘埃纵向抖动半幅（厘米/秒）。 */
+const DUST_FLUTTER_CM_S = 1.216;
+/** 尘埃整体上浮速度（厘米/秒）。 */
+const DUST_RISE_CM_S = 0.729;
+/** 颗粒半径下限相对上限的比（无量纲，沿用旧的 0.9:3.1 散布）。 */
+const DUST_RADIUS_MIN_RATIO = 0.9 / 3.1;
+
 type DustParticle = { x: number; y: number; vx: number; vy: number; a: number; r: number };
 
 /**
@@ -209,42 +244,49 @@ export class ObjectExamineScene {
   private backgroundBrightness = 1;
   private backgroundScaleMul = 1;
   private contactAoIntensity = 1;
-  private contactAoScaleMul = 1;
-  private titleText = new Text({
-    text: '',
-    style: { fontFamily: 'sans-serif', fontSize: 18, fill: INK_FILL },
-  });
-  private hintText = new Text({
+  /** 接触 AO 半径，单位厘米。 */
+  private contactAoRadiusCm = 0;
+  /** 物理标尺：一厘米几个设计像素（texW / 物件真实宽度）。 */
+  private pixelsPerCm = 1;
+  /** 视窗木框（做旧木条 + 内金细线）。只是外壳，绝不吃指针，也绝不盖住物件本身。 */
+  private viewFrame = new Container();
+  /** 标题行（居中拉字距 + 两翼渐隐横线），随窗口尺寸重建。 */
+  private titleRow = new Container();
+  private titleLabel = '';
+  private hintText = createStyledText({
     text: '',
     style: {
-      fontFamily: 'sans-serif',
-      fontSize: 14,
-      fill: 0xcbbfa8,
+      fontFamily: UITheme.fonts.ui,
+      fontSize: UITheme.fontSize.small,
+      fill: UITheme.colors.bodyMuted,
       wordWrap: true,
       wordWrapWidth: 640,
     },
   });
-  private holdingText = new Text({
-    text: '',
-    style: { fontFamily: 'sans-serif', fontSize: 14, fill: 0xd4a574 },
-  });
+  /** 「手里捏着：X」读数，走公共小标签块。 */
+  private holdingChip = new Container();
   private exitBtn!: Container;
   private bagBtn!: Container;
   private narrationPanel = new Container();
-  private narrationHaze = new Graphics();
-  private narrationText = new Text({
+  /** 旁白面板底：纸纹 + 木框 + 内金线，随文字高度重建。 */
+  private narrationBg = new Container();
+  private narrationText = createStyledText({
     text: '',
     style: {
-      fontFamily: 'sans-serif',
-      fontSize: 16,
-      fill: INK_FILL,
+      fontFamily: UITheme.fonts.ui,
+      fontSize: UITheme.fontSize.body,
+      fill: UITheme.colors.body,
       wordWrap: true,
       wordWrapWidth: 520,
     },
   });
-  private narrationHintText = new Text({
+  private narrationHintText = createStyledText({
     text: '',
-    style: { fontFamily: 'sans-serif', fontSize: 12, fill: INK_MUTED },
+    style: {
+      fontFamily: UITheme.fonts.ui,
+      fontSize: UITheme.fontSize.small,
+      fill: UITheme.colors.subtle,
+    },
   });
 
   private viewRect = { x: 0, y: 0, w: 0, h: 0 };
@@ -319,7 +361,9 @@ export class ObjectExamineScene {
     this.onClose = onClose;
 
     this.actionGate = new MinigameActionPlaybackGate(
-      (acts) => this.actionExecutor.executeBatchAwait(acts),
+      // 小游戏结算动作批的来源 = 该小游戏实例（`minigame` 是合法 wrapper owner 类型），
+      // 批里开的对话即归属它的状态机。
+      (acts) => this.actionExecutor.executeBatchFromOwner(acts, 'minigame', this.instance?.id),
       {
         onLockChanged: (locked) => this.setInputLocked(locked),
         restoreMinigameState: restoreMinigameStateAfterAction,
@@ -354,15 +398,34 @@ export class ObjectExamineScene {
     this.viewLayer.mask = this.viewMask;
     this.root.addChild(this.viewMask);
 
-    this.holdingText.visible = false;
-    this.uiLayer.addChild(this.titleText, this.hintText, this.holdingText, this.shadeLayer);
-    this.exitBtn = this.makeInkButton(this.resolveText(this.labels.exit), () => this.abort(), 88);
-    this.bagBtn = this.makeInkButton(this.resolveText(this.labels.bag), () => this.openBag(), 100);
+    this.holdingChip.visible = false;
+    this.viewFrame.eventMode = 'none';
+    this.titleRow.eventMode = 'none';
+    this.hintText.eventMode = 'none';
+    this.holdingChip.eventMode = 'none';
+    this.uiLayer.addChild(
+      this.viewFrame,
+      this.titleRow,
+      this.hintText,
+      this.holdingChip,
+      this.shadeLayer,
+    );
+    this.exitBtn = this.makeChipButton(
+      this.resolveText(this.labels.exit),
+      () => this.abort(),
+      EXIT_BTN_W,
+    );
+    this.bagBtn = this.makeChipButton(
+      this.resolveText(this.labels.bag),
+      () => this.openBag(),
+      BAG_BTN_W,
+      'pouch',
+    );
     this.uiLayer.addChild(this.exitBtn, this.bagBtn);
-    this.narrationHintText.text = this.resolveText(this.labels.continue);
+    setStyledText(this.narrationHintText, this.resolveText(this.labels.continue));
     this.narrationPanel.eventMode = 'none';
     this.narrationPanel.visible = false;
-    this.narrationPanel.addChild(this.narrationHaze, this.narrationText, this.narrationHintText);
+    this.narrationPanel.addChild(this.narrationBg, this.narrationText, this.narrationHintText);
     this.uiLayer.addChild(this.narrationPanel);
     this.bagLayer.visible = false;
     this.bagLayer.eventMode = 'static';
@@ -433,7 +496,9 @@ export class ObjectExamineScene {
       backgroundBrightness: this.backgroundBrightness,
       backgroundScale: this.backgroundScaleMul,
       contactAoIntensity: this.contactAoIntensity,
-      contactAoScale: this.contactAoScaleMul,
+      contactAoRadiusCm: this.contactAoRadiusCm,
+      physicalWidthCm: this.texW / (this.pixelsPerCm || 1),
+      pixelsPerCm: this.pixelsPerCm,
       bgDofBlur: this.bgBlur?.strength ?? 0,
       distanceIndex: this.distanceIndex,
       distanceSteps: DISTANCE_STEPS.length,
@@ -474,8 +539,11 @@ export class ObjectExamineScene {
     this.refreshContactAo();
   }
 
-  setContactAoScaleForDebug(v: number): void {
-    this.contactAoScaleMul = Math.max(0.3, Math.min(2.5, v));
+  setContactAoRadiusCmForDebug(cm: number): void {
+    this.contactAoRadiusCm = Math.max(
+      0,
+      Math.min(OBJECT_EXAMINE_MAX_CONTACT_AO_RADIUS_CM, cm),
+    );
     this.refreshContactAo();
   }
 
@@ -544,7 +612,9 @@ export class ObjectExamineScene {
     this.backgroundBrightness = resolveObjectExamineBackgroundBrightness(instance.presentation);
     this.backgroundScaleMul = resolveObjectExamineBackgroundScale(instance.presentation);
     this.contactAoIntensity = resolveObjectExamineContactAoIntensity(instance.presentation);
-    this.contactAoScaleMul = resolveObjectExamineContactAoScale(instance.presentation);
+    this.contactAoRadiusCm = resolveObjectExamineContactAoRadiusCm(instance.presentation);
+    // 物理标尺必须在 texW 已知之后算：一切厘米量都经它换算成设计像素。
+    this.pixelsPerCm = this.texW / resolveObjectExaminePhysicalWidthCm(instance.presentation);
     this.distanceIndex = 0;
     this.gazeX = this.gazeTX = this.texW / 2;
     this.gazeY = this.gazeTY = this.texH / 2;
@@ -610,6 +680,7 @@ export class ObjectExamineScene {
     this.restackObjectLayers();
     this.applyObjectOrientation();
     this.refreshContactAo();
+    this.critters?.setPixelsPerCm(this.pixelsPerCm);
     void this.critters
       ?.prepare(
         instance.presentation.image,
@@ -626,12 +697,12 @@ export class ObjectExamineScene {
     this.rebuildAmbience();
     this.ensureDustPool();
 
-    this.titleText.text = this.resolveText(instance.title ?? instance.label);
-    this.hintText.text = this.resolveText(this.labels.hint);
+    this.titleLabel = this.resolveText(instance.title ?? instance.label);
+    setStyledText(this.hintText, this.resolveText(this.labels.hint));
     const bagLabel = instance.bagLabel?.trim()
       ? this.resolveText(instance.bagLabel)
       : this.resolveText(this.labels.bag);
-    this.rebuildInkButtonLabel(this.bagBtn, bagLabel);
+    this.rebuildChipButtonLabel(this.bagBtn, bagLabel);
     this.rebuildShadeList();
     this.layout();
     this.updateBackgroundDof(true);
@@ -738,19 +809,22 @@ export class ObjectExamineScene {
       this.dust = [];
       return;
     }
-    // 数量随 density；半径随静帧尺寸缩放，避免 fit 到屏幕后亚像素不可见
+    // 数量随 density（无量纲）；半径与速度全部按厘米经物理标尺换算——
+    // 旧写法乘 max(texW,texH)/720 这个魔数来「假装」分辨率无关，实际是把
+    // 尘埃大小绑在了贴图导出尺寸上，换张图颗粒就变大变小。
     const n = Math.max(8, Math.round(28 * this.ambience.dust.density));
-    const texScale = Math.max(1, Math.max(this.texW, this.texH) / 720);
+    const ppc = this.pixelsPerCm;
+    const rMax = this.ambience.dust.radiusCm * ppc;
     // 热调密度/强度会走 rebuild，整池重建以免残留旧半径
     this.dust = [];
     for (let i = 0; i < n; i++) {
       this.dust.push({
         x: Math.random() * this.texW,
         y: Math.random() * this.texH,
-        vx: (Math.random() - 0.5) * 14 * texScale,
-        vy: ((Math.random() - 0.5) * 10 - 3) * texScale,
+        vx: (Math.random() - 0.5) * 2 * DUST_DRIFT_CM_S * ppc,
+        vy: ((Math.random() - 0.5) * 2 * DUST_FLUTTER_CM_S - DUST_RISE_CM_S) * ppc,
         a: 0.07 + Math.random() * 0.14,
-        r: (0.9 + Math.random() * 2.2) * texScale,
+        r: rMax * (DUST_RADIUS_MIN_RATIO + Math.random() * (1 - DUST_RADIUS_MIN_RATIO)),
       });
     }
   }
@@ -781,7 +855,7 @@ export class ObjectExamineScene {
     this.fxLayer.clear();
     if (amb.cloudShadow.enabled) {
       const s = amb.cloudShadow.strength;
-      const spd = amb.cloudShadow.speed;
+      const spd = amb.cloudShadow.speedCmPerSec * this.pixelsPerCm;
       const ox = ((this.elapsed * spd) % (this.texW + 200)) - 100;
       for (let i = 0; i < 3; i++) {
         const cx = ox + i * this.texW * 0.38;
@@ -792,7 +866,6 @@ export class ObjectExamineScene {
     }
 
     if (amb.dust.enabled && amb.dust.intensity > 0.001) {
-      const sizeMul = amb.dust.radius;
       const alphaMul = Math.min(1.15, 0.45 + amb.dust.intensity * 0.45);
       for (const p of this.dust) {
         p.x += p.vx * dt;
@@ -801,9 +874,9 @@ export class ObjectExamineScene {
         if (p.x > this.texW + 4) p.x = -4;
         if (p.y < -4) p.y = this.texH + 4;
         if (p.y > this.texH + 4) p.y = -4;
-        this.fxLayer.circle(p.x, p.y, p.r * sizeMul);
+        this.fxLayer.circle(p.x, p.y, p.r);
         this.fxLayer.fill({ color: 0xd8c9a9, alpha: Math.min(0.24, p.a * alphaMul) });
-        this.fxLayer.circle(p.x, p.y, p.r * sizeMul * 0.32);
+        this.fxLayer.circle(p.x, p.y, p.r * 0.32);
         this.fxLayer.fill({ color: 0xeee3ca, alpha: Math.min(0.3, p.a * alphaMul * 1.15) });
       }
     }
@@ -906,9 +979,10 @@ export class ObjectExamineScene {
         this.critters.groundLayer,
         this.critters.bodyLayer,
       ]);
+      this.contactAoFilter.setPixelsPerCm(this.pixelsPerCm);
       this.contactAoFilter.setCastArea(0, 0, this.texW, this.texH);
       this.contactAoFilter.setStrength(this.contactAoIntensity);
-      this.contactAoFilter.setRadius(this.contactAoScaleMul);
+      this.contactAoFilter.setRadiusCm(this.contactAoRadiusCm);
       this.critters.contactAoSink = this.contactAoFilter;
       if (this.objectRoot.filters?.[0] !== this.contactAoFilter) {
         this.objectRoot.filters = [this.contactAoFilter];
@@ -985,7 +1059,9 @@ export class ObjectExamineScene {
 
     this.bg.clear();
     this.bg.rect(0, 0, sw, sh);
-    this.bg.fill({ color: 0x070605, alpha: 0.94 });
+    // 全屏底幕：与对话框同一档暖近黑，别用纯黑——纯黑与旧木框之间没有色温关系，
+    // 一屏下来会把木框衬成"贴在黑纸上的贴纸"。
+    this.bg.fill({ color: UITheme.colors.dialogueBg, alpha: UITheme.alpha.panelBg });
 
     const vx = MARGIN;
     const vy = CHROME_TOP + MARGIN;
@@ -1017,19 +1093,85 @@ export class ObjectExamineScene {
       this.applyCamera();
     }
 
-    this.titleText.position.set(MARGIN, 16);
-    this.hintText.position.set(MARGIN, sh - CHROME_BOTTOM + 14);
+    this.rebuildViewFrame();
+    this.rebuildTitleRow(sw);
     // 右侧留给摸囊/放下与异常影子，底栏提示只占左半
-    this.hintText.style.wordWrapWidth = Math.max(160, Math.min(420, sw - MARGIN * 2 - 240));
-    const chromeY = sh - CHROME_BOTTOM + 8;
-    this.exitBtn.position.set(sw - MARGIN - 88, chromeY);
-    this.bagBtn.position.set(sw - MARGIN - 200, chromeY);
-    this.holdingText.position.set(MARGIN, 42);
+    this.hintText.style.wordWrapWidth = Math.max(
+      160,
+      Math.min(420, sw - MARGIN * 2 - EXIT_BTN_W - BAG_BTN_W - UITheme.spacing.xl),
+    );
+    const chromeY = sh - CHROME_BOTTOM + UITheme.spacing.md;
+    // 提示与两枚按钮共一条中线：底栏三件各算各的 y，一眼就能看出是三行歪的
+    this.hintText.position.set(
+      MARGIN,
+      chromeY + Math.round((OP_BTN_H - this.hintText.height) / 2),
+    );
+    this.exitBtn.position.set(sw - MARGIN - EXIT_BTN_W, chromeY);
+    this.bagBtn.position.set(sw - MARGIN - EXIT_BTN_W - UITheme.spacing.md - BAG_BTN_W, chromeY);
+    // 与标题同一条基线：左上角是 HUD 铜钱牌的地盘，贴上去必被盖住
+    this.holdingChip.position.set(MARGIN, TITLE_ROW_Y + UITheme.spacing.xs);
     this.layoutShadeList();
     this.redrawHotspotDebug();
     if (this.menuHotspot) this.rebuildMenu(this.menuHotspot);
     if (this.narrationPanel.visible) this.layoutNarration();
     if (this.bagOpen) this.rebuildBagOverlay();
+  }
+
+  /** 清空一个重建型容器并真的销毁旧件（每次 resize 都重建，只 remove 会留一地弃儿）。 */
+  private resetHolder(holder: Container): void {
+    for (const child of holder.removeChildren()) child.destroy({ children: true });
+  }
+
+  /**
+   * 视窗木框：做旧木条**摆在视窗外沿**（不覆盖物件），内侧压一条暗金细线。
+   *
+   * ⚠ 木条必须外扩 `WOOD_PANEL` 再画，不能直接铺在 viewRect 上——九宫格的木条画在
+   * 精灵最外一圈，铺在 viewRect 上就等于啃掉物件四边一圈 15px。
+   */
+  private rebuildViewFrame(): void {
+    this.resetHolder(this.viewFrame);
+    const { x, y, w, h } = this.viewRect;
+    const b = WOOD_PANEL;
+    const frame = createWoodFrame(w + b * 2, h + b * 2, b);
+    if (frame) {
+      frame.position.set(x - b, y - b);
+      this.viewFrame.addChild(frame);
+    }
+    const line = new Graphics();
+    line.rect(x, y, w, h);
+    if (frame) {
+      line.stroke({ color: UITheme.colors.hairline, width: 1, alpha: UITheme.alpha.hairline });
+    } else {
+      // 木料贴图没到位：退成一圈素净木边，别让视窗变成没有边界的裸底
+      line.stroke({ color: UITheme.colors.panelBorder, width: 1.5 });
+    }
+    line.eventMode = 'none';
+    this.viewFrame.addChild(line);
+  }
+
+  /** 顶栏标题：居中拉字距 + 两翼渐隐横线（与行囊/规矩本同一块标题件）。 */
+  private rebuildTitleRow(sw: number): void {
+    this.resetHolder(this.titleRow);
+    if (!this.titleLabel) return;
+    // 上限收在 560：两翼横线再长就会横穿左上角的「手里捏着」标签
+    const w = Math.min(560, Math.max(200, sw - MARGIN * 2));
+    const row = createTitleRow(this.titleLabel, {
+      width: w,
+      fontSize: UITheme.fontSize.title,
+    });
+    row.position.set(Math.round((sw - w) / 2), TITLE_ROW_Y);
+    this.titleRow.addChild(row);
+  }
+
+  /** 「手里捏着：X」：走公共小标签块；传 null 收起来。 */
+  private setHoldingLabel(text: string | null): void {
+    this.resetHolder(this.holdingChip);
+    if (!text) {
+      this.holdingChip.visible = false;
+      return;
+    }
+    this.holdingChip.addChild(createChip(text, UITheme.colors.title));
+    this.holdingChip.visible = true;
   }
 
   private applyCamera(): void {
@@ -1161,7 +1303,12 @@ export class ObjectExamineScene {
     for (const hs of this.instance.hotspots) {
       const found = this.foundIds.has(hs.id);
       const decoy = hs.decoy === true;
-      const color = decoy ? 0x94a3b8 : found ? 0x4ade80 : 0xfbbf24;
+      // 三态沿用规矩本那套状态色（生效苔绿 / 未证实土黄 / 次要暖灰），不再是 debug 三原色
+      const color = decoy
+        ? UITheme.colors.subtle
+        : found
+          ? UITheme.colors.ruleEffective
+          : UITheme.colors.ruleUnverified;
       if (hs.polygon && hs.polygon.length >= 3) {
         this.hotspotDebug.poly(hs.polygon.flatMap((p) => [p.x, p.y]));
         this.hotspotDebug.stroke({ width: strokeW, color, alpha: 0.85 });
@@ -1340,25 +1487,30 @@ export class ObjectExamineScene {
     if (ops.length === 0) return;
 
     const panel = new Container();
-    const btnW = 220;
+    const btnW = OP_MENU_BTN_W;
     ops.forEach((op, i) => {
-      const btn = this.makeInkButton(
+      // 操作项用「选项」皮肤（不透明）：芯片皮肤是半透的，浮在蛆虫堆上时字被底噬掉
+      const btn = this.makeChipButton(
         this.resolveText(op.label),
         () => void this.onPickOperation(hs, op),
         btnW,
+        undefined,
+        SKINS.choice,
       );
       btn.position.set(0, i * (OP_BTN_H + OP_BTN_GAP));
       panel.addChild(btn);
     });
 
-    const sw = this.renderer.screenWidth;
-    const sh = this.renderer.screenHeight;
     const h = ops.length * OP_BTN_H + (ops.length - 1) * OP_BTN_GAP;
     const c = this.viewCenter();
     let px = anchorX ?? c.x;
     let py = anchorY ?? c.y;
-    px = Math.min(Math.max(8, px), sw - btnW - 8);
-    py = Math.min(Math.max(8, py), sh - h - 8);
+    // 夹在**视窗内**而不是屏幕内：贴着屏幕边算，靠边的热区会把菜单顶到木框上、
+    // 甚至越过木框落在外侧黑边里，读起来像一块从画框漏出去的板子。
+    const gap = UITheme.spacing.sm;
+    const { x: vx, y: vy, w: vw, h: vh } = this.viewRect;
+    px = Math.min(Math.max(vx + gap, px), Math.max(vx + gap, vx + vw - btnW - gap));
+    py = Math.min(Math.max(vy + gap, py), Math.max(vy + gap, vy + vh - h - gap));
     panel.position.set(px, py);
     this.menuLayer.addChild(panel);
   }
@@ -1481,7 +1633,7 @@ export class ObjectExamineScene {
     // 特写中隐藏朱砂，避免挡住凑近观察
     this.marksLayer.visible = false;
     const text = narration?.trim() ? this.resolveText(narration) : '';
-    this.narrationText.text = text;
+    setStyledText(this.narrationText, text);
     this.narrationPanel.visible = !!text;
     if (text) this.layoutNarration();
   }
@@ -1503,21 +1655,24 @@ export class ObjectExamineScene {
 
   private layoutNarration(): void {
     const { x, y, w, h } = this.viewRect;
-    const pad = 12;
-    const nw = Math.min(560, Math.max(200, w - MARGIN * 2));
+    // 内边距要吃得下木条（WOOD_PANEL=15）再留呼吸，否则第一个字压在木框上
+    const pad = UITheme.spacing.xxl;
+    const nw = Math.min(640, Math.max(240, w - MARGIN * 2));
     this.narrationText.style.wordWrapWidth = nw - pad * 2;
     this.narrationHintText.visible = this.focusReady;
-    const hintH = this.focusReady ? 18 : 0;
+    const hintH = this.focusReady
+      ? this.narrationHintText.height + UITheme.spacing.md
+      : 0;
     const ph = pad * 2 + this.narrationText.height + hintH;
-    this.narrationHaze.clear();
-    this.narrationHaze.ellipse(nw / 2, ph / 2, nw * 0.55, ph * 0.7);
-    this.narrationHaze.fill({ color: 0x0a0806, alpha: 0.35 });
+    this.resetHolder(this.narrationBg);
+    this.narrationBg.addChild(createPanel(0, 0, nw, ph, SKINS.dialogue));
     this.narrationText.position.set(pad, pad);
+    // 「退开一步」这类收束提示居中：贴右下角时它读起来像页脚，不像可以点的出口
     this.narrationHintText.position.set(
-      nw - pad - this.narrationHintText.width,
-      ph - pad - this.narrationHintText.height,
+      Math.round((nw - this.narrationHintText.width) / 2),
+      pad + this.narrationText.height + UITheme.spacing.md,
     );
-    this.narrationPanel.position.set(x + (w - nw) / 2, y + h - ph - 16);
+    this.narrationPanel.position.set(x + (w - nw) / 2, y + h - ph - UITheme.spacing.xl);
   }
 
   private clearMarks(): void {
@@ -1576,7 +1731,7 @@ export class ObjectExamineScene {
       const row = this.makeFloatingShadeText(
         this.resolveText(raw),
         SHADE_LINE_SIZE,
-        found ? INK_REVEAL : INK_SHADE,
+        found ? SHADE_COLOR_REVEALED : SHADE_COLOR_HIDDEN,
         found ? 0.95 : 0.62,
       );
       this.shadeLayer.addChild(row);
@@ -1630,24 +1785,40 @@ export class ObjectExamineScene {
     const c = new Container();
     c.eventMode = 'none';
     const style = {
-      fontFamily: 'sans-serif',
+      // 线索条目是"心里嘀咕的一句"，走标题楷体，与面板大标题同族
+      fontFamily: UITheme.fonts.display,
       fontSize,
       fill,
       wordWrap: true,
       wordWrapWidth: SHADE_WRAP_W,
+      letterSpacing: UITheme.letterSpacing.title / 2,
       dropShadow: true,
-      dropShadowColor: 0x000000,
+      dropShadowColor: UITheme.colors.overlay,
       dropShadowAlpha: 0.55,
       dropShadowBlur: 6,
       dropShadowDistance: 2,
     } as const;
-    const t = new Text({ text, style });
+    const t = createStyledText({ text, style });
     t.alpha = alpha;
+    // 软晕必须是渐变：实心椭圆在亮托底上会露出一圈硬边，读起来像糊了块脏，
+    // 而不是"字自己带着一点阴影浮在半空"。
     const haze = new Graphics();
-    const padX = 18;
-    const padY = 10;
-    haze.ellipse(t.width / 2, t.height / 2, t.width * 0.55 + padX, t.height * 0.55 + padY);
-    haze.fill({ color: 0x0a0806, alpha: 0.22 });
+    const padX = UITheme.spacing.lg;
+    const padY = UITheme.spacing.md;
+    const hw = t.width * 0.55 + padX;
+    const hh = t.height * 0.55 + padY;
+    haze.ellipse(t.width / 2, t.height / 2, hw, hh);
+    haze.fill(new FillGradient({
+      type: 'radial',
+      center: { x: 0.5, y: 0.5 }, innerRadius: 0,
+      outerCenter: { x: 0.5, y: 0.5 }, outerRadius: 0.5,
+      colorStops: [
+        { offset: 0, color: 'rgba(0,0,0,0.34)' },
+        { offset: 0.55, color: 'rgba(0,0,0,0.24)' },
+        { offset: 1, color: 'rgba(0,0,0,0)' },
+      ],
+      textureSpace: 'local',
+    }));
     c.addChild(haze, t);
     return c;
   }
@@ -1706,7 +1877,7 @@ export class ObjectExamineScene {
     const sh = this.renderer.screenHeight;
     const dim = new Graphics();
     dim.rect(0, 0, sw, sh);
-    dim.fill({ color: 0x050403, alpha: 0.55 });
+    dim.fill({ color: UITheme.colors.overlay, alpha: UITheme.alpha.overlayDark });
     dim.eventMode = 'static';
     dim.cursor = 'pointer';
     dim.on('pointertap', (e: FederatedPointerEvent) => {
@@ -1716,63 +1887,113 @@ export class ObjectExamineScene {
     this.bagLayer.addChild(dim);
 
     const items = this.runtime.listBagItems?.() ?? [];
-    const title = new Text({
-      text: this.resolveText(this.labels.bag),
-      style: { fontFamily: 'sans-serif', fontSize: 18, fill: INK_FILL },
+    const pad = UITheme.spacing.xxl;
+    const btnW = BAG_ITEM_BTN_W;
+    const panelW = btnW + pad * 2;
+    const innerW = panelW - pad * 2;
+
+    const title = createTitleRow(this.resolveText(this.labels.bag), {
+      width: innerW,
+      fontSize: UITheme.fontSize.display,
     });
-    title.position.set(sw / 2 - title.width / 2, sh * 0.22);
+    const listH = items.length > 0
+      ? items.length * OP_BTN_H + (items.length - 1) * OP_BTN_GAP
+      : UITheme.fontSize.body + UITheme.spacing.md;
+    const closeCap = createKeyCap('Esc', this.resolveText(this.labels.exit));
+    const panelH =
+      pad * 2 +
+      title.rowHeight +
+      UITheme.spacing.xl +
+      listH +
+      UITheme.spacing.xl +
+      closeCap.height;
+    const px = Math.round((sw - panelW) / 2);
+    const py = Math.round(Math.max(MARGIN, (sh - panelH) / 2));
+
+    this.bagLayer.addChild(createPanel(px, py, panelW, panelH, SKINS.panel));
+    title.position.set(px + pad, py + pad);
     this.bagLayer.addChild(title);
 
+    let y = py + pad + title.rowHeight + UITheme.spacing.xl;
     if (items.length === 0) {
-      const empty = new Text({
+      const empty = createStyledText({
         text: '囊中空空……',
-        style: { fontFamily: 'sans-serif', fontSize: 14, fill: INK_MUTED },
+        style: {
+          fontFamily: UITheme.fonts.ui,
+          fontSize: UITheme.fontSize.body,
+          fill: UITheme.colors.subtle,
+        },
       });
-      empty.position.set(sw / 2 - empty.width / 2, sh * 0.32);
+      empty.position.set(Math.round(sw / 2 - empty.width / 2), y);
       this.bagLayer.addChild(empty);
-      return;
+    } else {
+      for (const it of items) {
+        const label = `${it.name}${it.count > 1 ? ` ×${it.count}` : ''}`;
+        const btn = this.makeChipButton(label, () => {
+          this.holdingItemId = it.id;
+          this.setHoldingLabel(
+            this.resolveText(this.labels.holding.replace('{item}', it.name)),
+          );
+          this.closeBag();
+        }, btnW, undefined, SKINS.choice);
+        btn.position.set(px + pad, y);
+        this.bagLayer.addChild(btn);
+        y += OP_BTN_H + OP_BTN_GAP;
+      }
     }
 
-    let y = sh * 0.3;
-    for (const it of items) {
-      const label = `${it.name}${it.count > 1 ? ` ×${it.count}` : ''}`;
-      const btn = this.makeInkButton(label, () => {
-        this.holdingItemId = it.id;
-        this.holdingText.text = this.resolveText(
-          this.labels.holding.replace('{item}', it.name),
-        );
-        this.holdingText.visible = true;
-        this.closeBag();
-      }, 280);
-      btn.position.set(sw / 2 - 140, y);
-      this.bagLayer.addChild(btn);
-      y += OP_BTN_H + 10;
-    }
+    // 出口：一枚居中键帽，不是角落一行小灰字
+    closeCap.position.set(
+      Math.round(px + (panelW - closeCap.totalWidth) / 2),
+      py + panelH - pad - closeCap.height,
+    );
+    this.bagLayer.addChild(closeCap);
   }
 
   private clearHolding(): void {
     this.holdingItemId = null;
-    this.holdingText.visible = false;
-    this.holdingText.text = '';
+    this.setHoldingLabel(null);
   }
 
-  private makeInkButton(label: string, onClick: () => void, w: number): Container {
+  /**
+   * 芯片按钮：细木边 + 纸纹底 + 正文档字。全站按钮的同一副面孔，
+   * 此前这里是「一团椭圆墨晕 + 14px sans-serif」，在木框画面里像另一个游戏的控件。
+   */
+  private makeChipButton(
+    label: string,
+    onClick: () => void,
+    w: number,
+    icon?: UIIconName,
+    skin: PanelSkin = SKINS.chip,
+  ): Container {
     const c = new Container();
     c.eventMode = 'static';
     c.cursor = 'pointer';
     const h = OP_BTN_H;
-    const haze = new Graphics();
-    haze.ellipse(w / 2, h / 2, w * 0.48, h * 0.55);
-    haze.fill({ color: 0x0a0806, alpha: 0.28 });
-    const t = new Text({
+    c.addChild(createPanel(0, 0, w, h, skin));
+
+    const t = createStyledText({
       text: label,
-      style: { fontFamily: 'sans-serif', fontSize: 14, fill: INK_FILL },
+      style: {
+        fontFamily: UITheme.fonts.ui,
+        fontSize: UITheme.fontSize.body,
+        fill: UITheme.colors.buttonText,
+      },
     });
-    t.anchor.set(0.5);
-    t.position.set(w / 2, h / 2);
-    c.addChild(haze, t);
+    t.eventMode = 'none';
+    const glyph = icon ? createIcon(icon, UITheme.fontSize.body, UITheme.colors.title) : null;
+    const gap = glyph ? UITheme.spacing.sm : 0;
+    const contentW = t.width + (glyph ? glyph.width + gap : 0);
+    const left = Math.round((w - contentW) / 2);
+    if (glyph) {
+      glyph.position.set(left, Math.round((h - glyph.height) / 2));
+      c.addChild(glyph);
+    }
+    t.position.set(left + (glyph ? glyph.width + gap : 0), Math.round((h - t.height) / 2));
+    c.addChild(t);
+
     c.hitArea = new Rectangle(0, 0, w, h);
-    (c as Container & { __inkLabel?: Text }).__inkLabel = t;
+    (c as ChipButton).__chipLabel = t;
     c.on('pointertap', (e: FederatedPointerEvent) => {
       e.stopPropagation();
       onClick();
@@ -1780,8 +2001,17 @@ export class ObjectExamineScene {
     return c;
   }
 
-  private rebuildInkButtonLabel(btn: Container, label: string): void {
-    const t = (btn as Container & { __inkLabel?: Text }).__inkLabel;
-    if (t) t.text = label;
+  /** 只换字：按钮内容居中，换字后要重新对一次中线，否则长短一变就偏。 */
+  private rebuildChipButtonLabel(btn: Container, label: string): void {
+    const t = (btn as ChipButton).__chipLabel;
+    if (!t) return;
+    setStyledText(t, label);
+    const w = (btn.hitArea as Rectangle | null)?.width ?? btn.width;
+    const glyph = btn.children.find((ch) => ch instanceof Sprite) as Sprite | undefined;
+    const gap = glyph ? UITheme.spacing.sm : 0;
+    const contentW = t.width + (glyph ? glyph.width + gap : 0);
+    const left = Math.round((w - contentW) / 2);
+    if (glyph) glyph.position.set(left, Math.round((OP_BTN_H - glyph.height) / 2));
+    t.position.set(left + (glyph ? glyph.width + gap : 0), Math.round((OP_BTN_H - t.height) / 2));
   }
 }

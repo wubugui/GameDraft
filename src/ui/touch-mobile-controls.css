@@ -51,13 +51,19 @@
   gap: 6px;
 }
 
+/* 动作键从 2 个涨到 6 个（跑/互动/蹲/看/上脚/跳）：改 2 列网格，避免竖着排满整屏高 */
 .touch-mc-actions {
   right: max(10px, env(safe-area-inset-right, 0px));
   bottom: max(12px, env(safe-area-inset-bottom, 0px));
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: repeat(2, auto);
+  gap: 8px;
   align-items: stretch;
+  justify-items: stretch;
+}
+
+.touch-mc-actions .touch-mc-btn.touch-mc-wide {
+  min-width: 72px;
 }
 
 .touch-mc-overlay-bar {
@@ -78,21 +84,30 @@
   min-width: 48px;
   min-height: 48px;
   padding: 6px 10px;
-  border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  background: rgba(24, 28, 36, 0.78);
-  color: rgba(230, 235, 245, 0.95);
+  /* 配色跟 UITheme 一套：原来是冷蓝灰塑料按钮（24/28/36 底 + 纯白边），
+     在暖近黑 + 旧木的画面里像贴了一排系统控件。改成暗木底 + 木色边 + 纸灰字。 */
+  border-radius: 3px;
+  border: 1px solid rgba(107, 90, 62, 0.75);
+  background: rgba(19, 15, 10, 0.82);
+  color: rgba(214, 206, 192, 0.95);
   font-size: 13px;
   font-weight: 600;
-  font-family: system-ui, sans-serif;
+  font-family: "Kaiti SC", STKaiti, "Songti SC", system-ui, sans-serif;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
 }
 
 .touch-mc-btn:active {
-  background: rgba(48, 56, 72, 0.9);
+  background: rgba(58, 44, 20, 0.9);
+}
+
+/* 姿态键的按住态（触屏 toggle）：高亮告诉玩家「你还蹲着 / 还在看」——点亮一档琥珀 */
+.touch-mc-btn.is-active {
+  background: rgba(89, 66, 29, 0.95);
+  border-color: rgba(201, 160, 90, 0.85);
+  color: #ffcc88;
 }
 
 .touch-mc-btn.touch-mc-wide {

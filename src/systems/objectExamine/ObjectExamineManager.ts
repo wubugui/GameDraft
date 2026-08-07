@@ -302,17 +302,17 @@ export class ObjectExamineManager extends MinigameSessionManagerBase<
     this.scene?.setContactAoIntensityForDebug(intensity);
   }
 
-  setDebugContactAoScale(scale: number): void {
+  setDebugContactAoRadiusCm(cm: number): void {
     if (this.sessionBaseInstance?.presentation?.kind === 'still') {
       this.sessionBaseInstance = {
         ...this.sessionBaseInstance,
         presentation: {
           ...this.sessionBaseInstance.presentation,
-          contactAoScale: scale,
+          contactAoRadiusCm: cm,
         },
       };
     }
-    this.scene?.setContactAoScaleForDebug(scale);
+    this.scene?.setContactAoRadiusCmForDebug(cm);
   }
 
   abortActiveSession(): void {
@@ -434,14 +434,15 @@ export class ObjectExamineManager extends MinigameSessionManagerBase<
       `托底覆盖: ${ov.backgroundPreset ?? '（跟随实例）'}${ov.ignoreBackgroundImage ? ' · 忽略自定义图' : ''}`,
       `竖放覆盖: ${ov.upright == null ? '（跟随实例）' : ov.upright ? '竖放' : '横放'}`,
       `热区描边: ${ov.showHotspotDebug ? '开' : '关'}`,
-      `氛围: 微晃${amb.headSway.enabled ? `开×${amb.headSway.amplitude.toFixed(2)}` : '关'} 呼吸${amb.breathing.enabled ? `开×${amb.breathing.strength.toFixed(2)}` : '关'} 烛${amb.candlelight.enabled ? '开' : '关'} 月${amb.moonlight.enabled ? '开' : '关'} 云${amb.cloudShadow.enabled ? '开' : '关'} 尘${amb.dust.enabled ? `开 密${amb.dust.density.toFixed(2)}/强${amb.dust.intensity.toFixed(2)}/径${amb.dust.radius.toFixed(2)}` : '关'} 蝇${amb.flyingFlies.enabled ? `开×${amb.flyingFlies.count}` : '关'} 爬${amb.crawlers.enabled ? '开' : '关'}`,
+      `氛围: 微晃${amb.headSway.enabled ? `开×${amb.headSway.amplitude.toFixed(2)}` : '关'} 呼吸${amb.breathing.enabled ? `开×${amb.breathing.strength.toFixed(2)}` : '关'} 烛${amb.candlelight.enabled ? '开' : '关'} 月${amb.moonlight.enabled ? '开' : '关'} 云${amb.cloudShadow.enabled ? '开' : '关'} 尘${amb.dust.enabled ? `开 密${amb.dust.density.toFixed(2)}/强${amb.dust.intensity.toFixed(2)}/径${amb.dust.radiusCm.toFixed(2)}cm` : '关'} 蝇${amb.flyingFlies.enabled ? `开×${amb.flyingFlies.count}` : '关'} 爬${amb.crawlers.enabled ? '开' : '关'}`,
     ];
     if (live) {
       lines.push(
         `实例: ${String(live.instanceId || '—')}`,
         `生效 upright: ${live.upright ? '是' : '否'} · 托底: ${String(live.backgroundPreset || '—')}`,
         `亮度: ${Number(live.backgroundBrightness ?? 1).toFixed(2)} · 铺开: ${Number(live.backgroundScale ?? 1).toFixed(2)}`,
-        `物体AO黑区: 强度 ${Number(live.contactAoIntensity ?? 1).toFixed(2)} · 模糊半径 ${Number(live.contactAoScale ?? 1).toFixed(2)}`,
+        `物体AO黑区: 强度 ${Number(live.contactAoIntensity ?? 1).toFixed(2)} · 半径 ${Number(live.contactAoRadiusCm ?? 0).toFixed(2)}cm`,
+        `物理标尺: 图宽 ${Number(live.physicalWidthCm ?? 0).toFixed(1)}cm · ${Number(live.pixelsPerCm ?? 1).toFixed(2)} px/cm`,
         `DOF blur: ${Number(live.bgDofBlur ?? 0).toFixed(1)}`,
         `探入档: ${String(live.distanceIndex)} / ${Number(live.distanceSteps) - 1}`,
         `已发现(真): ${Array.isArray(live.foundHotspotIds) ? live.foundHotspotIds.length : 0}`,

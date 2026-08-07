@@ -2,10 +2,17 @@ import { Container, Graphics, Text } from 'pixi.js';
 import type { EmoteBubbleOffsetOpts, IEmoteBubbleAnchor, IGameSystem, GameContext } from '../data/types';
 import { normalizeEmoteBubbleScale } from '../data/types';
 import { Hotspot } from '../entities/Hotspot';
+import { createStyledText } from '../core/styledText';
 
 interface ActiveBubble {
   bubble: Container;
   parent: Container;
+  /**
+   * 这个气泡挂在谁头上。**必须与 follow 分开记**：热点气泡走的是"挂载时定位一次"分支、
+   * 根本不建 follow，只看 follow.anchor 的话 `hasBubbleFor(热点)` 恒为 false，
+   * 闲聊调度就会往已经有气泡的热点上再叠一个。
+   */
+  anchor: IEmoteBubbleAnchor;
   remainingMs: number;
   /** true：仅能通过返回的 dismiss 或 cleanup 移除（不参与 update 倒计时） */
   noAutoExpire?: boolean;
@@ -132,7 +139,7 @@ export class EmoteBubbleManager implements IGameSystem {
     // **按新字号重排**而不是把 20px 的字拉大——Text 是纹理，container.scale 放大会糊。
     const k = normalizeEmoteBubbleScale(opts?.scale, this.defaultScale);
 
-    const txt = new Text({
+    const txt = createStyledText({
       text: emote,
       style: {
         fontSize: BUBBLE_FONT_SIZE * k,
@@ -210,6 +217,21 @@ export class EmoteBubbleManager implements IGameSystem {
     return { bubble, parent: attachParent, bw, bh, follow };
   }
 
+  /** 当前挂着的气泡数（含 sticky）。闲聊调度用它做同屏并发上限。 */
+  activeBubbleCount(): number {
+    return this.activeBubbles.length;
+  }
+
+  /**
+   * 这个锚点头上是否已经有气泡。
+   *
+   * 闲聊调度靠它给「导演式 action 发的气泡」让路——同一个人头上叠两个气泡是纯粹的 bug 观感，
+   * 而 action 那条路（showEmote / showSpeechBubble / 过场字幕）在时序上永远优先。
+   */
+  hasBubbleFor(anchor: IEmoteBubbleAnchor): boolean {
+    return this.activeBubbles.some((b) => b.anchor === anchor);
+  }
+
   show(
     anchor: IEmoteBubbleAnchor,
     emote: string,
@@ -222,6 +244,7 @@ export class EmoteBubbleManager implements IGameSystem {
     this.activeBubbles.push({
       bubble,
       parent,
+      anchor,
       remainingMs: durationMs,
       noAutoExpire: false,
       owner,
@@ -244,6 +267,7 @@ export class EmoteBubbleManager implements IGameSystem {
     const entry: ActiveBubble = {
       bubble,
       parent,
+      anchor,
       remainingMs: 0,
       noAutoExpire: true,
       owner,

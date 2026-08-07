@@ -140,7 +140,9 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
     if (onAccept.length > 0) {
       this.enqueueQuestActions(async () => {
         try {
-          await this.actionExecutor.executeBatchAwait(onAccept);
+          // 任务自己持有的动作批：owner 记在任务上（`quest` 是合法 wrapper owner 类型），
+          // 接任务时开的对话即归属该任务的状态机。
+          await this.actionExecutor.executeBatchFromOwner(onAccept, 'quest', questId);
         } catch (e) {
           console.warn('QuestManager: acceptActions failed', e);
         }
@@ -200,7 +202,7 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
     if (def.rewards.length > 0) {
       this.enqueueQuestActions(async () => {
         try {
-          await this.actionExecutor.executeBatchAwait(def.rewards);
+          await this.actionExecutor.executeBatchFromOwner(def.rewards, 'quest', def.id);
         } catch (e) {
           console.warn('QuestManager: rewards failed', e);
         }

@@ -2,7 +2,7 @@ import type { EventBus } from '../core/EventBus';
 import type { AssetManager } from '../core/AssetManager';
 import type { NarrativeGraph, NarrativeStateNode } from '../core/NarrativeStateManager';
 import type { GameContext, IGameSystem, SceneLightEnv } from '../data/types';
-import { GameState } from '../data/types';
+import { GameState, isPlayerVerb } from '../data/types';
 import { TEXT_URLS } from '../core/projectPaths';
 import type { PlaneDef } from './plane/types';
 import type { PlayerMovementModifier } from '../entities/Player';
@@ -563,6 +563,8 @@ export class PlaneReconciler implements IGameSystem {
       canPickup: i.canPickup !== false,
       canInteractHotspots: i.canInteractHotspots !== false,
       canTalkNpcs: i.canTalkNpcs !== false,
+      // 未写键 = 不限制；写了（含空数组）= 白名单，只列出的动词可用
+      allowedVerbs: Array.isArray(i.allowedVerbs) ? [...i.allowedVerbs] : null,
     };
     b.setPlaneInteractionPolicy(() => policy);
   }
@@ -614,6 +616,17 @@ export class PlaneReconciler implements IGameSystem {
       }
       if (m.allowRun !== undefined && typeof m.allowRun !== 'boolean') {
         throw new Error('movement.allowRun 须为布尔');
+      }
+    }
+    const inter = def.interaction;
+    if (inter?.allowedVerbs !== undefined) {
+      if (!Array.isArray(inter.allowedVerbs)) {
+        throw new Error('interaction.allowedVerbs 须为字符串数组');
+      }
+      for (const v of inter.allowedVerbs) {
+        if (!isPlayerVerb(v)) {
+          throw new Error(`interaction.allowedVerbs 含未知动词「${String(v)}」`);
+        }
       }
     }
     const zoom = def.camera?.zoom;

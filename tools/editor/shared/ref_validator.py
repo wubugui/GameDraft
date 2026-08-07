@@ -7,6 +7,7 @@ from typing import Any
 from ..file_io import read_json
 from ..project_model import ProjectModel
 from .tag_catalog import TagCatalog
+from .text_palette import has_style_markup, inspect_style_markup, palette_ids
 
 STRING_TAG_RE: re.Pattern[str] = re.compile(
     r"\[tag:string:([^:]+):([^\]]+)\]",
@@ -24,14 +25,44 @@ _TAG_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 ]
 
 
+def scan_style_markup(text: Any, where: str, model: ProjectModel) -> list[str]:
+    """检查语义色板标记 `[c:<id>]…[/c]`：未知档位 / 多余闭合 / 未闭合。
+
+    挂在 `scan_refs` 里而不是另开一趟遍历——`scan_refs` 已经是"每一处策划写的文本"
+    的必经之路，色标记的覆盖面天然与 `[tag:…]` 完全一致，不会漏掉某个字段。
+    """
+    if text is None:
+        return []
+    s = text if isinstance(text, str) else str(text)
+    if not has_style_markup(s):
+        return []
+    info = inspect_style_markup(s, palette_ids(model))
+    errs: list[str] = []
+    for bad in info.get("malformed") or []:
+        errs.append(
+            f'{where}: 色板标记 [c:{bad}] 的 id 不合法（只允许字母/数字/下划线/连字符）'
+            "——这种写法运行时剥不掉，会原样显示给玩家"
+        )
+    for bad in info["unknown_ids"]:
+        errs.append(f'{where}: 未知语义色板 [c:{bad}]（见 game_config.textPalette）')
+    if info["stray_closes"]:
+        errs.append(f'{where}: 多出 {info["stray_closes"]} 个没有对应 [c:…] 的 [/c]')
+    if info["unclosed"]:
+        errs.append(f'{where}: 有 {info["unclosed"]} 个 [c:…] 没有闭合的 [/c]')
+    return errs
+
+
 def scan_refs(text: Any, where: str, model: ProjectModel) -> list[str]:
     if text is None:
         return []
     s = text if isinstance(text, str) else str(text)
-    if not s or "[tag:" not in s:
+    if not s:
         return []
+    style_errs = scan_style_markup(s, where, model)
+    if "[tag:" not in s:
+        return style_errs
     cat = TagCatalog(model)
-    errs: list[str] = []
+    errs: list[str] = list(style_errs)
     for kind, rx in _TAG_PATTERNS:
         for m in rx.finditer(s):
             if kind == "string":
@@ -301,6 +332,28 @@ def validate_all_embedded_refs(
         return dirty is None or bucket in dirty
 
     errs: list[str] = []
+    if want("bubble_lines"):
+        # 气泡台词与对白同等待遇（`[tag:…]` + `[c:…]`），校验面必须跟上——
+        # 否则 `[tag:item:打错的id]` 一路漏到运行时，玩家看到的是兜底串而不是道具名。
+        bl = getattr(model, "bubble_lines", None)
+        sets = (bl or {}).get("lineSets") if isinstance(bl, dict) else None
+        for si, c in enumerate(sets or []):
+            if not isinstance(c, dict):
+                continue
+            cid = c.get("id", si)
+            for li, ln in enumerate(c.get("lines") or []):
+                if isinstance(ln, dict):
+                    errs.extend(scan_refs(ln.get("text"), f"bubbleLines[{cid}].lines[{li}].text", model))
+    if want("config"):
+        # 主角待机节目的气泡台词同理（挂在 game_config.playerAvatar.idle）
+        cfg = getattr(model, "game_config", None)
+        idle = ((cfg or {}).get("playerAvatar") or {}).get("idle") if isinstance(cfg, dict) else None
+        if isinstance(idle, dict):
+            for ei, e in enumerate(idle.get("entries") or []):
+                if isinstance(e, dict):
+                    errs.extend(scan_refs(
+                        e.get("bubbleText"), f"playerAvatar.idle.entries[{ei}].bubbleText", model,
+                    ))
     if want("item"):
         for i, it in enumerate(model.items):
             iid = it.get("id", i)

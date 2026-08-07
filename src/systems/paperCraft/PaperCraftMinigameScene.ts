@@ -3,7 +3,15 @@ import type { ActionExecutor } from '../../core/ActionExecutor';
 import type { Renderer } from '../../rendering/Renderer';
 import { MinigameActionPlaybackGate } from '../minigameSession';
 import { fillToken, fillTemplate } from '../../utils/fillTemplate';
-import { drawPanelBase, SKINS } from '../../ui/PanelSkin';
+import { createPanel, drawPanelBase, SKINS, WOOD_CHIP } from '../../ui/PanelSkin';
+import { UITheme } from '../../ui/UITheme';
+import {
+  createIconBadge,
+  createKeyCap,
+  createProgressBar,
+  createTitleRow,
+  drawSelectedRow,
+} from '../../ui/components/UIDecor';
 import type {
   PaperCraftFinishOption,
   PaperCraftInstance,
@@ -22,8 +30,57 @@ import {
   Text,
   Texture,
 } from 'pixi.js';
+import { createStyledText, setStyledText } from '../../core/styledText';
 
 const DEFAULT_PART_IMAGE_ROOT = '/resources/runtime/images/minigames/paper_craft/parts/';
+
+/**
+ * UI 外壳一律走全站视觉系统（做旧木框 + 纸纹底 + 内金细线 + 拉字距琥珀标题 + 琥珀选中）：
+ * 颜色只取 `UITheme.colors`、字号只取七档、间距只取六档，面板底框只经 `PanelSkin`。
+ *
+ * **玩法画面不在此列**：纸色色片（白纸/黄表/青纸/红纸）与部件贴图缺位时的纸色替身
+ * 是内容本身，仍按数据上色——那几处裸色号是刻意保留的。
+ */
+
+/** 屏边距 */
+const M = UITheme.spacing.lg;
+
+/**
+ * 工作台设计空间。槽位坐标由订单数据声明在 **560×410** 这套坐标系里（**不可改**），
+ * 但槽位实占的只是 x 141~484 / y 84~398 这一块——按 560 宽画面板，左边会空出
+ * 一条一百多像素的黑带，整块看着像没做完。所以面板只贴着内容画：
+ *   x 100~520（左右各留出木条 15 + 呼吸位），y 0~440（底下多留 30 给木框，
+ *   不让就把最底下的「腿脚」槽压在框上）。
+ */
+const WORK_W = 560;
+const WORK_H = 440;
+const WORK_PANEL_X = 100;
+const WORK_PANEL_W = 420;
+/**
+ * 槽位从 y=84 起，上面这一带原本空着，正好摆完成度条。
+ * 8px 高的条在这块近黑台面上零进度时只剩一道污痕——抬到 10 才读得出"这是一条进度"。
+ */
+const WORK_BAR_Y = 44;
+const WORK_BAR_H = 10;
+const WORK_BAR_W = 200;
+
+/** 部件盘：三列（此前两列，15 个部件排成 8 行，面板高得留不下木框） */
+const PALETTE_COLS = 3;
+const ITEM_W = 100;
+const ITEM_H = 72;
+const ITEM_PITCH_X = 112;
+const ITEM_PITCH_Y = 82;
+const PALETTE_PAD = 18;
+const PALETTE_W = PALETTE_PAD * 2 + (PALETTE_COLS - 1) * ITEM_PITCH_X + ITEM_W;
+
+/** 按钮高度：容得下 body(20) 的中文 + 上下呼吸位 */
+const BTN_H = 34;
+/** 提示条：高度、最大宽度、左端图标徽章半径 */
+const HINT_H = 44;
+const HINT_MAX_W = 760;
+const HINT_BADGE_R = 14;
+/** 纸色色片半径 */
+const SWATCH_R = 7;
 
 type DragState = {
   part: PaperCraftPartDef;
@@ -31,6 +88,14 @@ type DragState = {
   dx: number;
   dy: number;
 };
+
+/** 一枚选项按钮的展示描述（纸色带色片，收尾不带） */
+interface OptionButtonSpec {
+  label: string;
+  tint?: string;
+  active: boolean;
+  pick: () => void;
+}
 
 export class PaperCraftMinigameScene {
   readonly root: Container;
@@ -48,9 +113,16 @@ export class PaperCraftMinigameScene {
   private uiLayer = new Container();
   private workLayer = new Container();
   private paletteLayer = new Container();
-  private feedback = new Text({
+  private feedback = createStyledText({
     text: '',
-    style: { fontFamily: 'sans-serif', fontSize: 15, fill: 0xf8fafc, wordWrap: true, wordWrapWidth: 420 },
+    style: {
+      fontFamily: UITheme.fonts.ui,
+      fontSize: UITheme.fontSize.body,
+      fill: UITheme.colors.bodyMuted,
+      wordWrap: true,
+      wordWrapWidth: 640,
+      align: 'center',
+    },
   });
   private selectedPart: PaperCraftPartDef | null = null;
   private selectedPaper: PaperCraftPaperOption | null = null;
@@ -63,7 +135,13 @@ export class PaperCraftMinigameScene {
   private destroyed = false;
   private orderIndex = 0;
   private finishing = false;
-  private paletteContentH = 410;
+  private paletteContentH = 441;
+  /** 提示条左端徽章与条宽：`setFeedback` 改文字后要靠它们把「徽章 + 文字」重新居中。 */
+  private hintBadge: Container | null = null;
+  private hintBandW = 0;
+  /** 顶部 chrome（标题/说明/提示条/选择条）与底栏之间那段留给工作台+部件盘 */
+  private contentTop = 0;
+  private contentBottom = 0;
   /** 交活结算 Action 批播放通道：锁输入 + 批后恢复 Minigame 状态（B13，公共实现见 minigameSession）。 */
   private readonly actionGate: MinigameActionPlaybackGate;
 
@@ -84,7 +162,9 @@ export class PaperCraftMinigameScene {
     this.onClose = onClose;
 
     this.actionGate = new MinigameActionPlaybackGate(
-      (acts) => this.actionExecutor.executeBatchAwait(acts),
+      // 小游戏结算动作批的来源 = 该小游戏实例（`minigame` 是合法 wrapper owner 类型），
+      // 批里开的对话即归属它的状态机。
+      (acts) => this.actionExecutor.executeBatchFromOwner(acts, 'minigame', this.instance?.id),
       {
         onLockChanged: (locked) => this.setInputLocked(locked),
         restoreMinigameState: restoreMinigameStateAfterAction,
@@ -188,6 +268,9 @@ export class PaperCraftMinigameScene {
     this.destroyed = true;
     this.unsubResize?.();
     this.unsubResize = null;
+    // 徽章随整棵树一起销毁，句柄同步清掉，免得留一个指向已销毁 Pixi 对象的引用。
+    this.hintBadge = null;
+    this.hintBandW = 0;
     this.root.destroy({ children: true });
   }
 
@@ -209,8 +292,6 @@ export class PaperCraftMinigameScene {
     this.uiLayer.addChild(this.feedback);
     this.buildSlots();
     this.buildPalette();
-    this.buildPaperButtons();
-    this.buildFinishButtons();
     this.buildTopChrome();
     this.updateFeedback();
     this.layout();
@@ -222,9 +303,9 @@ export class PaperCraftMinigameScene {
     this.root.hitArea = new Rectangle(0, 0, sw, sh);
     this.bg.clear();
     this.bg.rect(0, 0, sw, sh);
-    this.bg.fill({ color: 0x15100b, alpha: 0.94 });
-    this.bg.rect(0, 0, sw, sh);
-    this.bg.stroke({ color: 0x3b2c1f, width: 2 });
+    // 底幕只铺色不描边：沿着视口四边画一圈线在全屏接管态里不表达任何东西，
+    // 只在画面最底下留一道贴边的横杠（实拍抓到），是 debug 期的残留。
+    this.bg.fill({ color: UITheme.colors.mainMenuBg, alpha: UITheme.alpha.panelBg });
 
     if (this.backgroundSprite) {
       const tex = this.backgroundSprite.texture;
@@ -234,59 +315,84 @@ export class PaperCraftMinigameScene {
       this.backgroundSprite.alpha = 0.35;
     }
 
-    // 顶部留给纸色/收尾/交活·退出工具条，底部留给提示行；中间是内容区。
-    const topStrip = 80;
-    const bottomStrip = 46;
-    const margin = 24;
-    const gap = 24;
+    // 顶部 chrome 与底栏由 buildTopChrome 量出来，中间这段是内容区。
+    const gap = UITheme.spacing.xl;
     const maxScale = 1.4;
-    const regionH = Math.max(160, sh - topStrip - bottomStrip);
-    const innerW = Math.max(240, sw - margin * 2 - gap);
+    const top = this.contentTop > 0 ? this.contentTop : M;
+    const bottom = this.contentBottom > top ? this.contentBottom : sh - M;
+    const regionH = Math.max(160, bottom - top);
+    const innerW = Math.max(240, sw - M * 2 - gap);
 
-    // 工作台占主宽、调色板占右侧窄列；两者各自按"统一缩放"(等比不拉伸)适配，再整体居中。
-    const paletteRegionW = Math.min(innerW * 0.34, 250 * maxScale);
-    const workRegionW = innerW - paletteRegionW;
-    const workScale = Math.min(workRegionW / 560, regionH / 410, maxScale);
-    const palScale = Math.min(paletteRegionW / 250, regionH / this.paletteContentH, maxScale);
+    // 两块面板各自"统一缩放"(等比不拉伸)：先各自吃满内容区高度，横向放不下时**一起**
+    // 按同一系数收——按固定宽度比例分栏会让其中一块凭空缩水（旧写法给部件盘钉死 0.34）。
+    let workScale = Math.min(regionH / WORK_H, maxScale);
+    let palScale = Math.min(regionH / this.paletteContentH, maxScale);
+    const needed = WORK_PANEL_W * workScale + gap + PALETTE_W * palScale;
+    if (needed > innerW) {
+      const k = innerW / needed;
+      workScale *= k;
+      palScale *= k;
+    }
 
-    const workW = 560 * workScale;
-    const workH = 410 * workScale;
-    const palW = 250 * palScale;
+    const workW = WORK_PANEL_W * workScale;
+    const workH = WORK_H * workScale;
+    const palW = PALETTE_W * palScale;
     const palH = this.paletteContentH * palScale;
 
     const totalW = workW + gap + palW;
-    const startX = Math.max(margin, (sw - totalW) / 2);
-    const midY = topStrip + regionH / 2;
+    const startX = Math.max(M, (sw - totalW) / 2);
+    const midY = top + regionH / 2;
 
+    // 工作层的原点仍是 560×410 那套槽位坐标系，面板从 WORK_PANEL_X 起——整层左移一格，
+    // 使面板外沿而不是坐标原点对齐到 startX。
     this.workLayer.scale.set(workScale);
-    this.workLayer.position.set(startX, midY - workH / 2);
+    this.workLayer.position.set(startX - WORK_PANEL_X * workScale, midY - workH / 2);
     this.paletteLayer.scale.set(palScale);
     this.paletteLayer.position.set(startX + workW + gap, midY - palH / 2);
-    this.feedback.position.set(margin, sh - 30);
   }
 
   private buildSlots(): void {
-    const table = new Graphics();
-    drawPanelBase(table, 0, 0, 560, 410, SKINS.panel);
-    this.workLayer.addChild(table);
-
-    const title = new Text({
-      text: this.resolveText(this.order.title),
-      style: { fontFamily: 'sans-serif', fontSize: 20, fill: 0xf8e7c0, fontWeight: '700' },
-    });
-    title.position.set(18, 12);
-    this.workLayer.addChild(title);
-
-    const desc = new Text({
-      text: this.resolveText(this.order.description ?? '[tag:string:paperCraft:orderDescDefault]'),
-      style: { fontFamily: 'sans-serif', fontSize: 12, fill: 0xd8c4a4, wordWrap: true, wordWrapWidth: 510 },
-    });
-    desc.position.set(18, 43);
-    this.workLayer.addChild(desc);
+    this.workLayer.addChild(createPanel(WORK_PANEL_X, 0, WORK_PANEL_W, WORK_H, SKINS.panel));
+    this.workLayer.addChild(this.buildCompletionBar());
 
     for (const slot of this.order.slots) {
       this.workLayer.addChild(this.makeSlot(slot));
     }
+  }
+
+  /**
+   * 完成度条：必填槽已摆件数 / 必填槽总数，摆在工作台顶栏那条空带里。
+   *
+   * 只是把"抬眼就能数出来"的现状读成一条方正琥珀条——分数、忌讳、成败一个字不透，
+   * 那些仍旧只由交活后的动作说（见 `updateFeedback` 的注释）。
+   */
+  private buildCompletionBar(): Container {
+    const c = new Container();
+    const required = this.order.slots.filter((s) => !s.optional);
+    const done = required.filter((s) => this.placed.has(s.id)).length;
+    const total = Math.max(1, required.length);
+
+    const count = createStyledText({
+      text: `${done} / ${required.length}`,
+      style: {
+        fontFamily: UITheme.fonts.ui,
+        fontSize: UITheme.fontSize.micro,
+        fill: UITheme.colors.subtle,
+      },
+    });
+    count.anchor.set(0, 0.5);
+    count.eventMode = 'none';
+
+    // 条 + 读数整组在面板顶栏居中——拉成通栏一条会读成"分隔线"而不是"进度"。
+    const groupW = WORK_BAR_W + UITheme.spacing.md + Math.ceil(count.width);
+    const x0 = WORK_PANEL_X + Math.round((WORK_PANEL_W - groupW) / 2);
+    const bar = createProgressBar(WORK_BAR_W, WORK_BAR_H, done / total);
+    bar.position.set(x0, WORK_BAR_Y);
+    count.position.set(x0 + WORK_BAR_W + UITheme.spacing.md, WORK_BAR_Y + WORK_BAR_H / 2);
+
+    c.addChild(bar, count);
+    c.eventMode = 'none';
+    return c;
   }
 
   private makeSlot(slot: PaperCraftSlotDef): Container {
@@ -296,24 +402,41 @@ export class PaperCraftMinigameScene {
     wrap.cursor = 'pointer';
     wrap.hitArea = new Rectangle(0, 0, slot.width, slot.height);
 
+    // 槽位＝物品格：比台面抬一档的垫位 + 一条细线。必填走内金线（读得出"这儿得放东西"），
+    // 可空的退到暗木线。**底必须抬**：slot 皮肤的原底（rowBgInactive@0.7）与工作台底几乎同色，
+    // 实拍下只剩一圈金线浮在纯黑上，整个纸人读成一张线框图、还被右边填满格子的部件盘压过去。
+    // 必填槽抬到 rowHover 那一档：几块暖底摆在一起，纸人的轮廓才由"面"而不是"线"读出来。
+    // 可空槽刻意留在暗一档 —— 连同暗木线一起，一眼分得出"这格可以空着"。
     const g = new Graphics();
-    drawPanelBase(g, 0, 0, slot.width, slot.height, SKINS.row, { border: slot.optional ? 0x806744 : 0xc4a35a });
+    drawPanelBase(g, 0, 0, slot.width, slot.height, SKINS.slot, {
+      fill: slot.optional ? UITheme.colors.rowBgDark : UITheme.colors.rowHover,
+      fillAlpha: slot.optional ? UITheme.alpha.rowBg : UITheme.alpha.rowHover,
+      border: slot.optional ? UITheme.colors.borderActive : UITheme.colors.hairline,
+    });
     wrap.addChild(g);
 
     const placed = this.placed.get(slot.id);
+
+    // 槽名先画、部件后画：摆上之后让纸件盖过标签，同时把标签压到最暗一档。
+    // 标签的职责是"这儿该放什么"，件一摆上就该退场——不退就正压在纸人的胳膊上。
+    const t = createStyledText({
+      text: `${slot.label}${slot.optional ? this.resolveText('[tag:string:paperCraft:slotOptionalSuffix]') : ''}`,
+      style: {
+        fontFamily: UITheme.fonts.ui,
+        fontSize: UITheme.fontSize.micro,
+        fill: placed ? UITheme.colors.hint : UITheme.colors.bodyMuted,
+      },
+    });
+    t.anchor.set(0.5, 0);
+    t.position.set(slot.width / 2, 5);
+    t.eventMode = 'none';
+    wrap.addChild(t);
+
     if (placed) {
       const art = this.makePartVisual(placed, Math.min(slot.width * 0.84, 88), Math.min(slot.height * 0.78, 96));
       art.position.set(slot.width / 2, slot.height / 2 + 6);
       wrap.addChild(art);
     }
-
-    const t = new Text({
-      text: `${slot.label}${slot.optional ? this.resolveText('[tag:string:paperCraft:slotOptionalSuffix]') : ''}`,
-      style: { fontFamily: 'sans-serif', fontSize: 11, fill: 0xf1d99c },
-    });
-    t.anchor.set(0.5, 0);
-    t.position.set(slot.width / 2, 5);
-    wrap.addChild(t);
 
     wrap.on('pointertap', () => {
       if (!this.selectedPart) {
@@ -325,7 +448,7 @@ export class PaperCraftMinigameScene {
         return;
       }
       if (!slot.accepts.includes(this.selectedPart.id)) {
-        this.feedback.text = this.slotRejectsText(slot.label, this.selectedPart.label);
+        this.setFeedback(this.slotRejectsText(slot.label, this.selectedPart.label), true);
         return;
       }
       this.placed.set(slot.id, this.selectedPart);
@@ -336,28 +459,28 @@ export class PaperCraftMinigameScene {
   }
 
   private buildPalette(): void {
-    const cols = 2;
-    const rows = Math.max(1, Math.ceil(this.order.parts.length / cols));
-    // 背板高度随部件数自适应，避免部件溢出固定高度的面板（此前 15 个部件会漏到面板外）。
-    const bgH = 46 + rows * 74 + 10;
+    const rows = Math.max(1, Math.ceil(this.order.parts.length / PALETTE_COLS));
+
+    const title = createTitleRow(this.resolveText('[tag:string:paperCraft:paletteTitle]'), {
+      width: PALETTE_W - PALETTE_PAD * 2,
+      align: 'center',
+      fontSize: UITheme.fontSize.title,
+    });
+    const itemsY = PALETTE_PAD + title.rowHeight + UITheme.spacing.md;
+    // 背板高度随部件数自适应，避免部件溢出固定高度的面板。
+    const bgH = itemsY + (rows - 1) * ITEM_PITCH_Y + ITEM_H + PALETTE_PAD;
     this.paletteContentH = bgH;
 
-    const bg = new Graphics();
-    drawPanelBase(bg, 0, 0, 250, bgH, SKINS.panelAlt);
-    this.paletteLayer.addChild(bg);
-
-    const title = new Text({
-      text: this.resolveText('[tag:string:paperCraft:paletteTitle]'),
-      style: { fontFamily: 'sans-serif', fontSize: 17, fill: 0xf8e7c0, fontWeight: '700' },
-    });
-    title.position.set(14, 12);
+    this.paletteLayer.addChild(createPanel(0, 0, PALETTE_W, bgH, SKINS.panelAlt));
+    title.position.set(PALETTE_PAD, PALETTE_PAD);
     this.paletteLayer.addChild(title);
 
     this.order.parts.forEach((part, i) => {
-      const x = 14 + (i % cols) * 112;
-      const y = 46 + Math.floor(i / cols) * 74;
       const item = this.makePaletteItem(part);
-      item.position.set(x, y);
+      item.position.set(
+        PALETTE_PAD + (i % PALETTE_COLS) * ITEM_PITCH_X,
+        itemsY + Math.floor(i / PALETTE_COLS) * ITEM_PITCH_Y,
+      );
       this.paletteLayer.addChild(item);
     });
   }
@@ -366,23 +489,38 @@ export class PaperCraftMinigameScene {
     const wrap = new Container();
     wrap.eventMode = 'static';
     wrap.cursor = 'grab';
-    wrap.hitArea = new Rectangle(0, 0, 100, 64);
+    wrap.hitArea = new Rectangle(0, 0, ITEM_W, ITEM_H);
 
+    // 选中＝琥珀点亮一档 + 金描边 + 外圈柔光（与行囊物品格同一套说法），不是换个深色。
+    const selected = this.selectedPart?.id === part.id;
     const bg = new Graphics();
-    bg.roundRect(0, 0, 100, 64, 6);
-    bg.fill({ color: this.selectedPart?.id === part.id ? 0x573b1b : 0x31251a, alpha: 0.98 });
-    bg.stroke({ color: this.selectedPart?.id === part.id ? 0xffd166 : 0x765b38, width: 1.5 });
+    drawPanelBase(
+      bg, 0, 0, ITEM_W, ITEM_H, SKINS.slot,
+      selected ? { border: UITheme.colors.borderSelected } : undefined,
+    );
+    if (selected) {
+      drawSelectedRow(bg, 1, 1, ITEM_W - 2, ITEM_H - 2);
+      bg.roundRect(-2, -2, ITEM_W + 4, ITEM_H + 4, SKINS.slot.radius + 2);
+      bg.stroke({ color: UITheme.colors.borderSelected, width: 1, alpha: 0.25 });
+    }
     wrap.addChild(bg);
 
     const art = this.makePartVisual(part, 44, 36);
-    art.position.set(50, 24);
+    art.position.set(ITEM_W / 2, 24);
     wrap.addChild(art);
-    const label = new Text({
+    const label = createStyledText({
       text: part.label,
-      style: { fontFamily: 'sans-serif', fontSize: 10, fill: 0xf3dfba, wordWrap: true, wordWrapWidth: 90, align: 'center' },
+      style: {
+        fontFamily: UITheme.fonts.ui,
+        fontSize: UITheme.fontSize.small,
+        fill: selected ? UITheme.colors.title : UITheme.colors.bodyMuted,
+        wordWrap: true,
+        wordWrapWidth: ITEM_W - 10,
+        align: 'center',
+      },
     });
     label.anchor.set(0.5, 0);
-    label.position.set(50, 43);
+    label.position.set(ITEM_W / 2, 44);
     wrap.addChild(label);
 
     wrap.on('pointertap', () => {
@@ -419,7 +557,7 @@ export class PaperCraftMinigameScene {
       // 放好后清空选择，使"空手点已放槽位即取下"的手势一致可用。
       this.selectedPart = null;
     } else if (slot) {
-      this.feedback.text = this.slotRejectsText(slot.label, this.drag.part.label);
+      this.setFeedback(this.slotRejectsText(slot.label, this.drag.part.label), true);
     }
     this.drag.sprite.destroy({ children: true });
     this.drag = null;
@@ -429,72 +567,265 @@ export class PaperCraftMinigameScene {
     this.rebuild();
   }
 
-  private buildPaperButtons(): void {
-    const opts = this.getPaperOptions();
-    const title = new Text({
-      text: this.resolveText('[tag:string:paperCraft:paperTitle]'),
-      style: { fontFamily: 'sans-serif', fontSize: 13, fill: 0xe7d5b6, fontWeight: '700' },
-    });
-    title.position.set(28, 18);
-    this.uiLayer.addChild(title);
-    opts.forEach((opt, i) => {
-      const b = this.makeSmallButton(opt.label, 72, opt.id === this.selectedPaper?.id, () => {
-        this.selectedPaper = opt;
-        this.rebuild();
-      });
-      b.position.set(78 + i * 82, 14);
-      const swatch = new Graphics();
-      swatch.circle(12, 13, 6);
-      swatch.fill({ color: this.parseColor(opt.tint, 0xf4ecd8), alpha: 1 });
-      b.addChild(swatch);
-      this.uiLayer.addChild(b);
-    });
-  }
-
-  private buildFinishButtons(): void {
-    const opts = this.getFinishOptions();
-    const title = new Text({
-      text: this.resolveText(this.order.finishQuestion ?? '[tag:string:paperCraft:finishTitleDefault]'),
-      style: { fontFamily: 'sans-serif', fontSize: 13, fill: 0xe7d5b6, fontWeight: '700' },
-    });
-    title.position.set(28, 48);
-    this.uiLayer.addChild(title);
-    opts.forEach((opt, i) => {
-      const b = this.makeSmallButton(opt.label, 108, opt.id === this.selectedFinish?.id, () => {
-        this.selectedFinish = opt;
-        this.rebuild();
-      });
-      b.position.set(108 + i * 120, 44);
-      this.uiLayer.addChild(b);
-    });
-  }
-
+  /**
+   * 屏幕层外壳：大标题 → 说明 → 提示条 → 纸色/收尾选择条 →（内容区）→ 底栏。
+   *
+   * ⚠ 左上角是常驻 HUD（铜钱牌）的地盘——旧版把纸色标题与第一枚按钮压在那儿，
+   * 「纸色」二字直接被钱袋盖住。所以第一行只放居中的标题，工具条整体往下让。
+   */
   private buildTopChrome(): void {
-    const finish = this.makeSmallButton(this.resolveText('[tag:string:paperCraft:submit]'), 86, true, () => void this.finish());
-    finish.position.set(this.renderer.screenWidth - 190, 18);
-    this.uiLayer.addChild(finish);
-    const close = this.makeSmallButton(this.resolveText('[tag:string:paperCraft:exit]'), 74, false, () => this.abort());
-    close.position.set(this.renderer.screenWidth - 94, 18);
-    this.uiLayer.addChild(close);
+    const sw = this.renderer.screenWidth;
+    const sh = this.renderer.screenHeight;
+    const innerW = Math.max(320, sw - M * 2);
+    let y = M;
+
+    const title = createTitleRow(this.resolveText(this.order.title), {
+      width: innerW,
+      align: 'center',
+      fontSize: UITheme.fontSize.display,
+      letterSpacing: UITheme.letterSpacing.display,
+    });
+    title.position.set(M, y);
+    this.uiLayer.addChild(title);
+    y += title.rowHeight + UITheme.spacing.sm;
+
+    const desc = createStyledText({
+      text: this.resolveText(this.order.description ?? '[tag:string:paperCraft:orderDescDefault]'),
+      style: {
+        fontFamily: UITheme.fonts.ui,
+        fontSize: UITheme.fontSize.small,
+        fill: UITheme.colors.subtle,
+        wordWrap: true,
+        wordWrapWidth: innerW - UITheme.spacing.xxl * 2,
+        align: 'center',
+      },
+    });
+    desc.anchor.set(0.5, 0);
+    desc.position.set(sw / 2, y);
+    desc.eventMode = 'none';
+    this.uiLayer.addChild(desc);
+    y += desc.height + UITheme.spacing.md;
+
+    y = this.buildHintBand(y, innerW) + UITheme.spacing.md;
+    y = this.buildSelectorTray(y, innerW) + UITheme.spacing.lg;
+    this.contentTop = y;
+
+    // 底栏：居中键位提示（可直接点）+ 右侧「交活」。左侧留白给 HUD 不冲突。
+    const footerTop = sh - M - BTN_H;
+    this.contentBottom = footerTop - UITheme.spacing.md;
+
+    const submit = this.makeButton(
+      this.resolveText('[tag:string:paperCraft:submit]'),
+      true,
+      () => void this.finish(),
+    );
+    submit.position.set(sw - M - submit.totalWidth, footerTop);
+    this.uiLayer.addChild(submit);
+
+    const cap = createKeyCap('Esc', this.resolveText('[tag:string:paperCraft:exit]'));
+    const capH = cap.height;
+    cap.position.set(Math.round((sw - cap.totalWidth) / 2), Math.round(footerTop + (BTN_H - capH) / 2));
+    cap.eventMode = 'static';
+    cap.cursor = 'pointer';
+    cap.hitArea = new Rectangle(0, 0, cap.totalWidth, capH);
+    cap.on('pointertap', () => this.abort());
+    this.uiLayer.addChild(cap);
   }
 
-  private makeSmallButton(label: string, width: number, active: boolean, cb: () => void): Container {
-    const wrap = new Container();
+  /**
+   * 提示条：图标徽章 + 居中的目标提示 / 即时反馈。
+   *
+   * **条本身宽高固定**——"这槽放不下那件"这类反馈是直接改文字、不重建界面的，
+   * 随文字缩放的条会当场对不上。条里的「徽章 + 文字」则作为一组一起居中
+   * （`layoutHintRow`，改文字时同步重排）：徽章钉死在最左、文字自己居中，
+   * 中间会空出一大截、右边又贴不到头，实拍下这份不对称一眼就看得见。
+   */
+  private buildHintBand(y: number, innerW: number): number {
+    // 提示牌比通栏窄：通栏一条压在下面那条工具托盘正上方是两根一样长的横杠，读着堵。
+    const bandW = Math.min(innerW, HINT_MAX_W);
+    const band = createPanel(0, 0, bandW, HINT_H, SKINS.toast);
+    band.position.set(Math.round((this.renderer.screenWidth - bandW) / 2), y);
+    this.uiLayer.addChild(band);
+
+    this.hintBandW = bandW;
+    this.hintBadge = createIconBadge('scroll', HINT_BADGE_R);
+    const reserved = this.hintBadge ? HINT_BADGE_R * 2 + UITheme.spacing.md : 0;
+    if (this.hintBadge) band.addChild(this.hintBadge);
+
+    this.feedback.anchor.set(0.5);
+    // 换行宽度按"整组还能居中"来算：两侧各留一个 xl 的呼吸位，再扣掉徽章占的那一段。
+    this.feedback.style.wordWrapWidth = Math.max(120, bandW - UITheme.spacing.xl * 2 - reserved);
+    this.feedback.eventMode = 'none';
+    band.addChild(this.feedback);
+    this.layoutHintRow();
+
+    return y + HINT_H;
+  }
+
+  /** 把「徽章 + 文字」当一组横向居中于提示条。建条时与每次改文字后都要调。 */
+  private layoutHintRow(): void {
+    const bandW = this.hintBandW;
+    if (bandW <= 0) return;
+    const lead = this.hintBadge ? HINT_BADGE_R * 2 + UITheme.spacing.md : 0;
+    const textW = Math.min(this.feedback.width, bandW - UITheme.spacing.xl * 2 - lead);
+    const x0 = Math.round((bandW - (lead + textW)) / 2);
+    if (this.hintBadge) this.hintBadge.position.set(x0 + HINT_BADGE_R, HINT_H / 2);
+    this.feedback.position.set(x0 + lead + textW / 2, HINT_H / 2);
+  }
+
+  /**
+   * 纸色 / 收尾选择条：一条木边小托盘装两组按钮。
+   * 选项由数据声明、长度不可控，所以一行放不下就换行，托盘高度跟着走。
+   */
+  private buildSelectorTray(y: number, innerW: number): number {
+    const groups: (Container & { totalWidth: number })[] = [
+      this.buildOptionGroup(
+        this.resolveText('[tag:string:paperCraft:paperTitle]'),
+        this.getPaperOptions().map((opt) => ({
+          label: opt.label,
+          tint: opt.tint,
+          active: opt.id === this.selectedPaper?.id,
+          pick: () => {
+            this.selectedPaper = opt;
+            this.rebuild();
+          },
+        })),
+      ),
+      this.buildOptionGroup(
+        this.resolveText(this.order.finishQuestion ?? '[tag:string:paperCraft:finishTitleDefault]'),
+        this.getFinishOptions().map((opt) => ({
+          label: opt.label,
+          active: opt.id === this.selectedFinish?.id,
+          pick: () => {
+            this.selectedFinish = opt;
+            this.rebuild();
+          },
+        })),
+      ),
+    ];
+
+    const padX = UITheme.spacing.lg;
+    const padY = UITheme.spacing.md;
+    const groupGap = UITheme.spacing.xxl;
+    const rowGap = UITheme.spacing.sm;
+    const avail = innerW - padX * 2;
+
+    const rows: (Container & { totalWidth: number })[][] = [];
+    let cur: (Container & { totalWidth: number })[] = [];
+    let curW = 0;
+    for (const g of groups) {
+      const add = cur.length === 0 ? g.totalWidth : groupGap + g.totalWidth;
+      if (cur.length > 0 && curW + add > avail) {
+        rows.push(cur);
+        cur = [g];
+        curW = g.totalWidth;
+      } else {
+        cur.push(g);
+        curW += add;
+      }
+    }
+    if (cur.length > 0) rows.push(cur);
+
+    const trayH = padY * 2 + rows.length * BTN_H + (rows.length - 1) * rowGap;
+    // 托盘**贴着内容宽度**而不是通栏：这一摞 chrome 里标题、提示条、下面两块面板都是居中收口的，
+    // 只有托盘拉满两边，于是左右各露出一大截空木条，读起来像"这条没做完"。
+    // 量出最宽的一行，两边各留一个 padX，再整条居中——通栏只在选项真排到那么宽时才发生。
+    const rowWidths = rows.map((r) => r.reduce((s, g) => s + g.totalWidth, 0) + (r.length - 1) * groupGap);
+    const trayW = Math.min(innerW, Math.max(...rowWidths, 0) + padX * 2);
+    const tray = createPanel(0, 0, trayW, trayH, SKINS.chip);
+    tray.position.set(Math.round((this.renderer.screenWidth - trayW) / 2), y);
+    this.uiLayer.addChild(tray);
+
+    let ry = padY;
+    for (const row of rows) {
+      // 每行整体居中：靠左排会在托盘右端留一截空木条，看着像少画了东西。
+      const rowW = row.reduce((s, g) => s + g.totalWidth, 0) + (row.length - 1) * groupGap;
+      let rx = Math.max(padX, Math.round((trayW - rowW) / 2));
+      for (const g of row) {
+        g.position.set(rx, ry);
+        tray.addChild(g);
+        rx += g.totalWidth + groupGap;
+      }
+      ry += BTN_H + rowGap;
+    }
+    return y + trayH;
+  }
+
+  /** 一组「小标 + 若干按钮」，横排，自量总宽供托盘排版。 */
+  private buildOptionGroup(label: string, opts: OptionButtonSpec[]): Container & { totalWidth: number } {
+    const c = new Container() as Container & { totalWidth: number };
+    const t = createStyledText({
+      text: label,
+      style: {
+        fontFamily: UITheme.fonts.ui,
+        fontSize: UITheme.fontSize.small,
+        fill: UITheme.colors.section,
+      },
+    });
+    t.position.set(0, Math.round((BTN_H - t.height) / 2));
+    t.eventMode = 'none';
+    c.addChild(t);
+
+    let x = Math.round(t.width) + UITheme.spacing.md;
+    for (const o of opts) {
+      const b = this.makeButton(o.label, o.active, o.pick, o.tint);
+      b.position.set(x, 0);
+      c.addChild(b);
+      x += b.totalWidth + UITheme.spacing.sm;
+    }
+    c.totalWidth = Math.max(0, x - UITheme.spacing.sm);
+    return c;
+  }
+
+  /** 按钮：细木边近方正按钮；选中态铺一层琥珀暖光并把字提到标题金。 */
+  private makeButton(
+    label: string,
+    active: boolean,
+    cb: () => void,
+    swatchTint?: string,
+  ): Container & { totalWidth: number } {
+    const t = createStyledText({
+      text: label,
+      style: {
+        fontFamily: UITheme.fonts.ui,
+        fontSize: UITheme.fontSize.body,
+        fill: active ? UITheme.colors.title : UITheme.colors.buttonText,
+      },
+    });
+    const swatchW = swatchTint === undefined ? 0 : SWATCH_R * 2 + UITheme.spacing.sm;
+    const w = Math.round(t.width) + swatchW + UITheme.spacing.lg * 2;
+
+    const wrap = createPanel(0, 0, w, BTN_H, SKINS.choice) as Container & { totalWidth: number };
+    if (active) {
+      const hl = new Graphics();
+      drawSelectedRow(hl, WOOD_CHIP, WOOD_CHIP, w - WOOD_CHIP * 2, BTN_H - WOOD_CHIP * 2);
+      hl.eventMode = 'none';
+      wrap.addChild(hl);
+    }
+
+    let cx = UITheme.spacing.lg;
+    if (swatchTint !== undefined) {
+      // 色片就是纸色本身（白纸 / 黄表 / 青纸 / 红纸）——玩法画面，按订单数据上色，
+      // 不套主题令牌；只在外面加一圈内金细线让它读起来像"这套 UI 里的一枚色片"。
+      const swatch = new Graphics();
+      swatch.circle(cx + SWATCH_R, BTN_H / 2, SWATCH_R);
+      swatch.fill({ color: this.parseColor(swatchTint, 0xf4ecd8) });
+      swatch.circle(cx + SWATCH_R, BTN_H / 2, SWATCH_R);
+      swatch.stroke({ color: UITheme.colors.hairline, width: 1, alpha: 0.7 });
+      swatch.eventMode = 'none';
+      wrap.addChild(swatch);
+      cx += SWATCH_R * 2 + UITheme.spacing.sm;
+    }
+
+    t.position.set(cx, Math.round((BTN_H - t.height) / 2));
+    t.eventMode = 'none';
+    wrap.addChild(t);
+
     wrap.eventMode = 'static';
     wrap.cursor = 'pointer';
-    wrap.hitArea = new Rectangle(0, 0, width, 26);
-    const g = new Graphics();
-    g.roundRect(0, 0, width, 26, 6);
-    g.fill({ color: active ? 0x805b24 : 0x2d241b, alpha: 0.98 });
-    g.stroke({ color: active ? 0xffd166 : 0x6b5436, width: 1 });
-    const t = new Text({
-      text: label,
-      style: { fontFamily: 'sans-serif', fontSize: 12, fill: 0xfff4d6 },
-    });
-    t.anchor.set(0.5);
-    t.position.set(width / 2, 13);
-    wrap.addChild(g, t);
+    wrap.hitArea = new Rectangle(0, 0, w, BTN_H);
     wrap.on('pointertap', cb);
+    wrap.totalWidth = w;
     return wrap;
   }
 
@@ -502,10 +833,13 @@ export class PaperCraftMinigameScene {
     if (this.finishing) return;
     const missing = this.order.slots.filter((slot) => !slot.optional && !this.placed.has(slot.id));
     if (missing.length > 0) {
-      this.feedback.text = fillToken(
-        this.resolveText('[tag:string:paperCraft:missingParts]'),
-        '{parts}',
-        missing.map((s) => s.label).join('、'),
+      this.setFeedback(
+        fillToken(
+          this.resolveText('[tag:string:paperCraft:missingParts]'),
+          '{parts}',
+          missing.map((s) => s.label).join('、'),
+        ),
+        true,
       );
       return;
     }
@@ -588,6 +922,17 @@ export class PaperCraftMinigameScene {
     });
   }
 
+  /**
+   * 写提示条。`warn` 只改字色（常驻提示走正文暖灰、"放不上/还缺"走琥珀橙），
+   * **不碰时机也不碰内容**——什么时候说什么话仍旧由原来那几处决定。
+   */
+  private setFeedback(text: string, warn = false): void {
+    this.feedback.style.fill = warn ? UITheme.colors.orange : UITheme.colors.bodyMuted;
+    setStyledText(this.feedback, text);
+    // 文字宽度变了，「徽章 + 文字」这一组要重新居中（条本身不动）。
+    this.layoutHintRow();
+  }
+
   private updateFeedback(): void {
     // 不再实时回显分数/档位/忌讳标签——那会把"是否懂规矩忌讳"的考查降成照着提示反复试。
     // 改为常驻显示该订单的目标提示（targetHint），多订单时附带进度。成败反馈交给交活后的动作。
@@ -601,7 +946,7 @@ export class PaperCraftMinigameScene {
     const hint = this.order.targetHint?.trim()
       ? this.resolveText(this.order.targetHint)
       : this.resolveText('[tag:string:paperCraft:targetHintDefault]');
-    this.feedback.text = `${progress}${hint}`;
+    this.setFeedback(`${progress}${hint}`);
   }
 
   private makePartVisual(part: PaperCraftPartDef, maxW: number, maxH: number): Container {
@@ -615,13 +960,22 @@ export class PaperCraftMinigameScene {
       wrap.addChild(sprite);
       return wrap;
     }
+    // 贴图缺位时的替身＝一张纸片，是玩法画面（部件本身）不是 UI 外壳：
+    // 纸色/竹篾色按材质走，不套主题令牌。
     const g = new Graphics();
     g.roundRect(-maxW / 2, -maxH / 2, maxW, maxH, 8);
     g.fill({ color: 0xe9ddc3, alpha: 0.95 });
     g.stroke({ color: 0x5e4630, width: 2 });
-    const t = new Text({
+    const t = createStyledText({
       text: part.label,
-      style: { fontFamily: 'sans-serif', fontSize: 10, fill: 0x2b2118, wordWrap: true, wordWrapWidth: maxW - 8, align: 'center' },
+      style: {
+        fontFamily: UITheme.fonts.ui,
+        fontSize: UITheme.fontSize.micro,
+        fill: 0x2b2118,
+        wordWrap: true,
+        wordWrapWidth: maxW - 8,
+        align: 'center',
+      },
     });
     t.anchor.set(0.5);
     wrap.addChild(g, t);

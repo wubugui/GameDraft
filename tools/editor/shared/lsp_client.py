@@ -273,10 +273,12 @@ _SIMPLE_OVERLAY_FILES: dict[str, list[tuple[str, str]]] = {
     "archive": [
         ("archive/characters.json", "archive_characters"),
         ("archive/lore.json", "archive_lore"),
+        ("archive/slang.json", "archive_slang"),
         ("archive/books.json", "archive_books"),
         ("archive/documents.json", "archive_documents"),
     ],
     "overlay_images": [("overlay_images.json", "overlay_images")],
+    "prop_presets": [("prop_presets.json", "prop_presets")],
     "scenarios": [("scenarios.json", "scenarios_catalog")],
     "narrative_graphs": [("narrative_graphs.json", "narrative_graphs")],
     "narrative_packages": [("narrative_packages.json", "narrative_packages")],
@@ -284,6 +286,7 @@ _SIMPLE_OVERLAY_FILES: dict[str, list[tuple[str, str]]] = {
     "smell_profiles": [("smell_profiles.json", "smell_profiles")],
     "pressure_holds": [("pressure_holds.json", "pressure_holds")],
     "signal_cues": [("signal_cues.json", "signal_cues")],
+    "bubble_lines": [("bubble_lines.json", "bubble_lines")],
     "planes": [("planes.json", "planes")],
 }
 

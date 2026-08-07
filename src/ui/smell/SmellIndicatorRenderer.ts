@@ -1,4 +1,5 @@
 import { Container, Sprite, Text, Texture } from 'pixi.js';
+import { createStyledText, setStyledText } from '../../core/styledText';
 
 /**
  * 气味指示器渲染器（方案 E·双层·基线+浮现）—— 纯程序化、零美术、单一真相源。
@@ -141,7 +142,7 @@ export class SmellIndicatorRenderer {
     for (let i = 0; i < REACH_N; i++) this.reachSprites.push(mk());
 
     // 气味名：底盘正下方的小字，颜色随味（白底 + tint 着色，避免每帧改 fill）。
-    this.label = new Text({
+    this.label = createStyledText({
       text: '',
       style: { fontFamily: 'sans-serif', fontSize: 11, fontWeight: '600', fill: 0xffffff, align: 'center' },
     });
@@ -283,7 +284,7 @@ export class SmellIndicatorRenderer {
       return;
     }
     if (this.labelScent !== this.renderScent) {
-      this.label.text = prof.name;
+      setStyledText(this.label, prof.name);
       this.labelScent = this.renderScent;
     }
     this.label.visible = true;

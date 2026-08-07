@@ -5,9 +5,11 @@ import type { Renderer } from '../../rendering/Renderer';
 import type { WaterMinigameInstance, WaterEntityDef, WaterShoreBankDef } from './types';
 import { MinigameActionPlaybackGate } from '../minigameSession';
 import { WaterEntity, loadEntityTexture, type WaterAmbient } from './WaterEntity';
-import { WaterPullPanel, type PullPanelResult } from './WaterPullPanel';
+import { WaterPullPanel, type PullPanelResult, PULL_PANEL_WIDTH } from './WaterPullPanel';
 import { WaterShaderFilter } from './WaterShaderFilter';
-import { drawPanelBase, SKINS } from '../../ui/PanelSkin';
+import { createPanel, SKINS, WOOD_CHIP } from '../../ui/PanelSkin';
+import { UITheme } from '../../ui/UITheme';
+import { createKeyCap } from '../../ui/components/UIDecor';
 import { fillToken } from '../../utils/fillTemplate';
 import { createDeterministicRandom } from '../../utils/deterministicRandom';
 import type { Application } from 'pixi.js';
@@ -20,6 +22,7 @@ import {
   Sprite,
   Text,
 } from 'pixi.js';
+import { createStyledText } from '../../core/styledText';
 
 type Phase = 'search' | 'pull';
 
@@ -51,7 +54,8 @@ export class WaterMinigameScene {
   private entities: WaterEntity[] = [];
   private phase: Phase = 'search';
   private pullPanel: WaterPullPanel | null = null;
-  private feedback: Text | null = null;
+  /** 反馈条（做旧木边小牌 + 一行正文），文案变了整块重建 */
+  private feedback: Container | null = null;
   /** 右上角退出控件（点击或 Esc 均走 abort） */
   private exitChrome: Container | null = null;
   private time = 0;
@@ -90,7 +94,9 @@ export class WaterMinigameScene {
     this.onConsumed = onConsumed ?? null;
 
     this.actionGate = new MinigameActionPlaybackGate(
-      (acts) => this.actionExecutor.executeBatchAwait(acts),
+      // 小游戏结算动作批的来源 = 该小游戏实例（`minigame` 是合法 wrapper owner 类型），
+      // 批里开的对话即归属它的状态机。
+      (acts) => this.actionExecutor.executeBatchFromOwner(acts, 'minigame', this.instance?.id),
       {
         onLockChanged: (locked) => this.setInputLocked(locked),
         restoreMinigameState: restoreMinigameStateAfterAction,
@@ -286,7 +292,9 @@ export class WaterMinigameScene {
 
     this.bg.clear();
     this.bg.rect(0, 0, sw, sh);
-    this.bg.fill(0x0b1220);
+    // 画框外的衬底（水域矩形之外那圈）。原来是冷海军蓝 0x0b1220，在暖近黑 + 旧木的
+    // 画面里是除水面之外最大的一块冷色；收进主题最暗的暖底，水域才读得出"框住的一幅画"。
+    this.bg.fill(UITheme.colors.dialogueBg);
 
     const bw = this.instance.bounds.width;
     const bh = this.instance.bounds.height;
@@ -318,7 +326,8 @@ export class WaterMinigameScene {
     this.bottomMrtSprite.height = bh * scale;
 
     this.underwaterHitZone.clear();
-    this.underwaterHitZone.rect(0, 0, bw * scale, bh * scale).fill({ color: 0xffffff, alpha: 0.001 });
+    /* 不可见命中层：alpha 取主题的 hitArea 档（0.001），不是随手写的魔数 */
+    this.underwaterHitZone.rect(0, 0, bw * scale, bh * scale).fill({ color: 0xffffff, alpha: UITheme.alpha.hitArea });
     this.underwaterHitZone.position.set(ox, oy);
 
     this.surfaceLayer.scale.set(scale);
@@ -330,16 +339,27 @@ export class WaterMinigameScene {
 
     this.uiLayer.position.set(0, 0);
 
-    if (this.pullPanel) {
-      this.pullPanel.position.set(sw - 120, sh / 2 - 140);
+    // 三件 UI 外壳自下而上排：出口键帽贴底居中 → 反馈条压在它上面 → 拉扯面板靠右居中。
+    // （出口先摆，反馈条要按它的顶边往上让。）
+    const m = UITheme.spacing.xl;
+    if (this.exitChrome) {
+      this.exitChrome.position.set(
+        Math.round((sw - this.exitChrome.width) / 2),
+        Math.round(sh - m - this.exitChrome.height),
+      );
     }
     if (this.feedback) {
-      this.feedback.position.set(24, sh - 72);
+      const floor = this.exitChrome ? this.exitChrome.y : sh - m;
+      this.feedback.position.set(
+        Math.round((sw - this.feedback.width) / 2),
+        Math.round(floor - UITheme.spacing.md - this.feedback.height),
+      );
     }
-
-    if (this.exitChrome) {
-      const m = 12;
-      this.exitChrome.position.set(sw - this.exitChrome.width - m, m);
+    if (this.pullPanel) {
+      this.pullPanel.position.set(
+        Math.round(sw - this.pullPanel.panelWidth - m),
+        Math.round((sh - this.pullPanel.panelHeight) / 2),
+      );
     }
 
     /* 拉扯阶段大块水底命中层会与右侧条带重叠并抢走指针；关闭交互以免提拉无任何响应 */
@@ -461,59 +481,86 @@ export class WaterMinigameScene {
     await this.actionGate.run(actions);
   }
 
+  /**
+   * 反馈条：原来是屏幕左下角一行 15px 冷蓝裸字（0xdbeafe + sans-serif），既不是这套
+   * 观感里的东西，也没有任何"这是一条提示"的边界。改成居中的做旧木边小牌。
+   *
+   * 每次换文案整块重建（尺寸随文字变），而不是原地改 Text——木框是九宫格 Sprite，
+   * 尺寸变了必须重建。反馈只在捞取/拉扯结算时触发，重建频率极低。
+   */
   private showFeedback(msg: string): void {
-    if (!this.feedback) {
-      this.feedback = new Text({
-        text: '',
-        style: { fontSize: 15, fill: 0xdbeafe, fontFamily: 'sans-serif', wordWrap: true, wordWrapWidth: this.renderer.screenWidth - 48 },
-      });
-      this.uiLayer.addChild(this.feedback);
-    }
-    this.feedback.text = this.resolveText(msg);
+    this.clearFeedback();
+
+    // 折行宽刻意避开右侧拉扯面板：居中的提示条最宽也只到「屏宽 - 两侧各一块面板宽」，
+    // 于是拉扯进行中弹出的反馈永远不会压到力度条上。
+    const padX = WOOD_CHIP + UITheme.spacing.lg;
+    const padY = WOOD_CHIP + UITheme.spacing.sm;
+    const reserve = (PULL_PANEL_WIDTH + UITheme.spacing.xl * 2) * 2 + padX * 2;
+    const wrapW = Math.max(240, Math.min(600, this.renderer.screenWidth - reserve));
+    const label = createStyledText({
+      text: this.resolveText(msg),
+      style: {
+        fontSize: UITheme.fontSize.body,
+        fill: UITheme.colors.body,
+        fontFamily: UITheme.fonts.ui,
+        wordWrap: true,
+        wordWrapWidth: wrapW,
+        align: 'center',
+      },
+    });
+    label.eventMode = 'none';
+
+    const w = Math.round(label.width) + padX * 2;
+    const h = Math.round(label.height) + padY * 2;
+
+    const wrap = new Container();
+    wrap.eventMode = 'none';
+    wrap.addChild(createPanel(0, 0, w, h, SKINS.toast));
+    label.position.set(padX, padY);
+    wrap.addChild(label);
+
+    this.feedback = wrap;
+    this.uiLayer.addChild(wrap);
     this.layout();
   }
 
   private clearFeedback(): void {
     if (this.feedback) {
-      this.feedback.destroy();
+      this.feedback.destroy({ children: true });
       this.feedback = null;
     }
   }
 
   private clearExitUi(): void {
     if (this.exitChrome) {
-      this.exitChrome.destroy();
+      this.exitChrome.destroy({ children: true });
       this.exitChrome = null;
     }
   }
 
+  /**
+   * 出口：原来是右上角一枚两行小灰字的牌（「退出」+「Esc 也可退出」，冷灰蓝 sans-serif）——
+   * 正是这轮要清掉的「角落一行小灰字」。改成贴底居中的键帽小牌：
+   * 键名与说明合成一枚 `createKeyCap('Esc', 退出)`，两行文案的意思由键帽本身承担，
+   * 所以 `exitEscHint` 不再另起一行（键帽已经把"按 Esc"说清楚了）。
+   *
+   * 仍是**可点**的（原来的 pointertap → abort 一字未动），木边小牌把"这儿能按"表达出来。
+   */
   private buildExitUi(): void {
     this.clearExitUi();
-    const padX = 14;
-    const padY = 10;
-    const gap = 5;
-    const title = new Text({
-      text: this.resolveText('[tag:string:waterMinigame:exit]'),
-      style: { fontSize: 15, fill: 0xf1f5f9, fontFamily: 'sans-serif' },
-    });
-    const sub = new Text({
-      text: this.resolveText('[tag:string:waterMinigame:exitEscHint]'),
-      style: { fontSize: 11, fill: 0x94a3b8, fontFamily: 'sans-serif' },
-    });
-    const innerW = Math.max(title.width, sub.width);
-    const w = innerW + padX * 2;
-    const h = padY * 2 + title.height + gap + sub.height;
-    const bg = new Graphics();
-    drawPanelBase(bg, 0, 0, w, h, SKINS.chip);
-    title.position.set(padX, padY);
-    sub.position.set(padX, padY + title.height + gap);
+    const cap = createKeyCap('Esc', this.resolveText('[tag:string:waterMinigame:exit]'));
+    const padX = WOOD_CHIP + UITheme.spacing.md;
+    const padY = WOOD_CHIP + UITheme.spacing.sm;
+    const w = Math.round(cap.totalWidth) + padX * 2;
+    const h = Math.round(cap.height) + padY * 2;
+
     const wrap = new Container();
     wrap.eventMode = 'static';
     wrap.cursor = 'pointer';
     wrap.hitArea = new Rectangle(0, 0, w, h);
-    wrap.addChild(bg);
-    wrap.addChild(title);
-    wrap.addChild(sub);
+    wrap.addChild(createPanel(0, 0, w, h, SKINS.chip));
+    cap.position.set(padX, padY);
+    wrap.addChild(cap);
     wrap.on('pointertap', () => {
       this.abort();
     });
@@ -523,7 +570,8 @@ export class WaterMinigameScene {
 
   private clearPull(): void {
     if (this.pullPanel) {
-      this.pullPanel.destroy();
+      // 面板内含木框九宫格 Sprite / 标题 Text / 若干 Graphics，必须连子节点一起收
+      this.pullPanel.destroy({ children: true });
       this.pullPanel = null;
     }
   }

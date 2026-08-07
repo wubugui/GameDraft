@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "id": "生态_看_码头_石碑",
+  "entry": "root",
+  "meta": {
+    "title": "脚力钱价码碑（风评分叉；一拍：守告示的脚帮转过眼睛）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "narrative": "eco_风评",
+              "state": "面熟",
+              "reached": true
+            }
+          ],
+          "next": "shu1"
+        }
+      ],
+      "defaultNext": "ri1"
+    },
+    "ri1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "碑上刻的是脚力钱的价码，被人拿凿子改过两处。改小的那两个字，刻得比原来的深。",
+      "next": "act_ri"
+    },
+    "shu1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "价码你现在看得懂咯：改小的是刻给外码头的人看的，本地脚帮走的是碑背面那个数。",
+      "next": "act_ri"
+    },
+    "act_ri": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "faceEntity",
+          "params": {
+            "target": "npc_脚帮告示",
+            "faceTarget": "player"
+          }
+        },
+        {
+          "type": "showEmote",
+          "params": {
+            "target": "npc_脚帮告示",
+            "emote": "?",
+            "duration": 1400
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "end": {
+      "type": "end"
+    }
+  }
+}

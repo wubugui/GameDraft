@@ -127,6 +127,10 @@ def build_id_sets(model: ProjectModel) -> dict[str, set[str]]:
     if isinstance(lore_entries, dict):
         lore_entries = lore_entries.get("entries", [])
     lore_ids = {e["id"] for e in lore_entries if isinstance(e, dict) and "id" in e}
+    slang_entries = model.archive_slang
+    if isinstance(slang_entries, dict):
+        slang_entries = slang_entries.get("entries", [])
+    slang_ids = {e["id"] for e in slang_entries if isinstance(e, dict) and "id" in e}
     return {
         "rule": {r["id"] for r in rules if isinstance(r, dict) and "id" in r},
         "fragment": {f["id"] for f in fragments if isinstance(f, dict) and "id" in f},
@@ -139,6 +143,7 @@ def build_id_sets(model: ProjectModel) -> dict[str, set[str]]:
         "archive_document": {d["id"] for d in model.archive_documents if isinstance(d, dict) and "id" in d},
         "archive_book": {b["id"] for b in model.archive_books if isinstance(b, dict) and "id" in b},
         "archive_book_entry": _book_page_entry_ids(model),
+        "archive_slang": slang_ids,
     }
 
 

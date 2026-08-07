@@ -61,6 +61,14 @@ function normalizeEmbeddedTagsSyntax(s: string): string {
 /** 解引用完成后的「说话人：正文」里，第一个分隔符的字面量类型（仅 `:` / `：`）。 */
 export type SpeakerColonSeparator = ':' | '：';
 
+/** `s` 的 `i` 处若是一个样式标记（`[c:id]` / `[/c]`），返回它的长度，否则 0。 */
+function styleMarkupTokenLength(s: string, i: number): number {
+  if (s[i] !== '[') return 0;
+  if (s.startsWith('[/c]', i)) return 4;
+  const m = /^\[c:[A-Za-z0-9_-]+\]/.exec(s.slice(i));
+  return m ? m[0].length : 0;
+}
+
 export interface SplitSpeakerBodyResult {
   speaker: string;
   /** 第一个冒号之后的全文；其中可含更多 `:` / `：`，不再切分 */
@@ -80,6 +88,12 @@ export function splitSpeakerBodyAfterResolve(resolved: string): SplitSpeakerBody
   let sepAt = -1;
   let separator: SpeakerColonSeparator = '：';
   for (let i = 0; i < resolved.length; i++) {
+    // 样式标记 `[c:xxx]` 自己带冒号：不跳过它，说话人会被切成 "[c"（正文以色标记开头时必翻车）。
+    const skip = styleMarkupTokenLength(resolved, i);
+    if (skip > 0) {
+      i += skip - 1;
+      continue;
+    }
     const c = resolved[i];
     if (c === ':' || c === '：') {
       sepAt = i;

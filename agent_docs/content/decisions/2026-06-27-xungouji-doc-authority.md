@@ -7,7 +7,7 @@ summary: 主线权威=Demo完整流程_2026.06.05.md(显示编号≠实现s-id,�
 status: active
 triggers:
   topics: [文档权威, 死档, 主线流程, s-id, Demo制作资料]
-last_governed: 2026-07-11
+last_governed: 2026-08-05
 ---
 
 ## 背景

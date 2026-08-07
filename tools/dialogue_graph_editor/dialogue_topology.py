@@ -8,8 +8,9 @@ parallel switch statements.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
+from .dialogue_condition_text import ALWAYS, NEVER, case_condition_text, case_verdict
 from .dialogue_ports import (
     OUT_CHOICE,
     OUT_CONTEXT_STATE_CASE,
@@ -60,6 +61,8 @@ class ListOutputSpec:
     target_field: str = "next"
     label_fields: tuple[str, ...] = ()
     fallback_label: str = "{index}"
+    #: 优先于 label_fields 的标签生成器（switch 分支要把条件本身画到端口上）。
+    label_builder: Callable[[dict[str, Any], int], str] | None = None
 
     def slots(self, raw: dict[str, Any]) -> Iterable[DialogueOutputSlot]:
         collection = raw.get(self.collection_field)
@@ -77,6 +80,10 @@ class ListOutputSpec:
             )
 
     def _label_for(self, item: dict[str, Any], index: int) -> str:
+        if self.label_builder is not None:
+            label = str(self.label_builder(item, index) or "").strip()
+            if label:
+                return label
         for field in self.label_fields:
             label = str(item.get(field) or "").strip()
             if label:
@@ -98,6 +105,21 @@ class NodeOutputTopology:
 
 def _short_label(value: str) -> str:
     return value[:23] + "..." if len(value) > 26 else value
+
+
+def _switch_case_port_label(case: dict[str, Any], index: int) -> str:
+    """switch 分支端口标签：直接画条件本身。
+
+    旧标签是 `case0/case1/...`——策划看着画布完全说不出哪条边是什么条件，
+    必须逐条展开检查器才能对上号。无条件分支特别标注（运行时恒命中）。
+    """
+    text = case_condition_text(case)
+    if text:
+        return f"{index}. {text}"
+    return f"{index}. " + {
+        ALWAYS: "⚠恒命中",
+        NEVER: "⚠恒不命中",
+    }.get(case_verdict(case), "（条件为空）")
 
 
 LINEAR_TOPOLOGY = NodeOutputTopology(
@@ -123,6 +145,7 @@ TOPOLOGY_BY_NODE_TYPE: dict[str, NodeOutputTopology] = {
                 OUT_SWITCH_CASE,
                 "cases",
                 fallback_label="case{index}",
+                label_builder=_switch_case_port_label,
             ),
         ),
         fixed_outputs=(

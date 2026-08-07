@@ -550,6 +550,16 @@ export async function editConditionsNative(
 // 信号重构（改名/删除）：宿主引擎全项目级联，零磁盘写入，落盘只经主编辑器 Save All。
 // --------------------------------------------------------------------------- //
 
+/** 只读数据面（宿主只加载不保存）上的命中：重构会被拒绝而非静默跳过。 */
+export type ReadonlyBlockerDef = { bucket: string; itemId: string; count: number };
+
+/** 归属图静态不可知、但状态名相同的引用点：只报疑点，绝不自动改写。 */
+export type RelativeSuspectsDef = {
+  narrative: number;
+  external: Array<{ bucket: string; itemId: string; count: number }>;
+  total: number;
+};
+
 export type SignalUsagesDef = {
   signalId: string;
   registryIndex: number;
@@ -558,6 +568,7 @@ export type SignalUsagesDef = {
   metaEmits: Array<{ compositionId: string; elementId: string }>;
   dialogues: Array<{ graphId: string; count: number }>;
   assets: Array<{ bucket: string; attr: string; itemId: string; count: number }>;
+  readonlyBlockers?: ReadonlyBlockerDef[];
   totalRefs: number;
 };
 
@@ -568,6 +579,11 @@ export type StateUsagesDef = {
   derivedListeners: Array<{ graphId: string; transitionId: string }>;
   narrativeConditions: number;
   external: Array<{ bucket: string; itemId: string; count: number }>;
+  readonlyBlockers?: ReadonlyBlockerDef[];
+  /** @owner/@scene token 与 owner 解算的 ownerState：同名状态疑点，须人工确认 */
+  relativeTokenSuspects?: RelativeSuspectsDef;
+  metaCommands?: number;
+  metaEmits?: number;
   totalRefs: number;
 };
 
@@ -577,9 +593,22 @@ export type GraphUsagesDef = {
   metaReads: number;
   narrativeConditions: number;
   external: Array<{ bucket: string; itemId: string; count: number }>;
+  readonlyBlockers?: ReadonlyBlockerDef[];
   /** repeatable 任务的 runArchetype 硬绑定命中数（活计图改名跟随，S2 收尾） */
   runArchetypes?: number;
+  metaCommands?: number;
+  metaEmits?: number;
   totalRefs: number;
+};
+
+/** 重构收尾自检：图对话侧仍悬垂的 ownerState/contextState 引用 */
+export type DialogueDanglingDef = {
+  dialogueGraphId: string;
+  nodeId: string;
+  nodeType: string;
+  reason: 'missingGraph' | 'missingState';
+  graphId: string;
+  stateId: string;
 };
 
 export type SignalRefactorResultDef = {
@@ -589,6 +618,7 @@ export type SignalRefactorResultDef = {
   description?: string;
   narrative?: NarrativeGraphsFileDef;
   journalSize?: number;
+  postCheck?: { dangling?: DialogueDanglingDef[] };
 };
 
 const REFACTOR_HOST_ONLY = '重构需要工程文件后端，只在主编辑器（Qt 宿主）内可用；独立网页开发模式没有工程数据可级联';

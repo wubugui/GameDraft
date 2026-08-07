@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QEvent, QObject, Qt, Signal, QTimer
+from PySide6.QtGui import QAction, QColor, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -11,6 +12,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QMessageBox,
     QPushButton,
     QStackedWidget,
@@ -23,6 +25,7 @@ from ..project_model import ProjectModel
 from .. import theme
 from .ref_validator import scan_refs
 from .tag_catalog import TagCatalog, TagItem
+from .text_palette import load_text_palette, wrap_with_color
 
 
 _KIND_LABELS = [
@@ -35,6 +38,39 @@ _KIND_LABELS = [
     ("rule", "规矩"),
     ("scene", "场景"),
 ]
+
+
+def _color_swatch(hex_color: str) -> QIcon:
+    """色板菜单项左边那块颜色（策划靠它认色，不靠 id 认色）。"""
+    pix = QPixmap(14, 14)
+    pix.fill(QColor(hex_color))
+    return QIcon(pix)
+
+
+def build_color_button(
+    owner: QWidget,
+    model_getter,
+    apply_wrap,
+) -> QPushButton:
+    """「染色」按钮：点开列出 game_config.textPalette 的档位，选中即把选区裹上 ``[c:id]…[/c]``。
+
+    刻意不给自由取色：这套木框/纸纹观感下逐处填色号一定走形，且语义档位改一次全局生效
+    （与运行时同读 game_config.textPalette，不存在第二份色表）。
+    """
+    btn = QPushButton("染色")
+    btn.setMaximumWidth(44)
+    btn.setToolTip("给选中的文字上色（语义色板 [c:…]，勿手打）")
+
+    def popup() -> None:
+        menu = QMenu(owner)
+        for entry in load_text_palette(model_getter()):
+            act = QAction(_color_swatch(entry["color"]), f'{entry["label"]}（{entry["id"]}）', menu)
+            act.triggered.connect(lambda _=False, e=entry: apply_wrap(e["id"]))
+            menu.addAction(act)
+        menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
+
+    btn.clicked.connect(popup)
+    return btn
 
 
 class InsertRefDialog(QDialog):
@@ -137,9 +173,14 @@ class InsertRefDialog(QDialog):
         self.accept()
 
 
+def _needs_check(text: str) -> bool:
+    """要不要跑校验：有项目引用或有色标记才跑（无则不占一行提示）。"""
+    return "[tag:" in text or "[c:" in text or "[/c]" in text
+
+
 def _format_errs(errs: list[str]) -> str:
     if not errs:
-        return "（引用校验通过）"
+        return "（引用与色标记校验通过）"
     return "问题:\n" + "\n".join(errs[:5])
 
 
@@ -162,6 +203,7 @@ class RichTextTextEdit(QWidget):
         btn.setToolTip("插入项目引用 [tag:…]（勿手打）")
         btn.clicked.connect(self._insert_ref)
         row.addWidget(btn)
+        row.addWidget(build_color_button(self, lambda: self._model, self._wrap_color))
         lay.addLayout(row)
         self._hint = QLabel("")
         self._hint.setWordWrap(True)
@@ -191,16 +233,17 @@ class RichTextTextEdit(QWidget):
         return self._edit
 
     def _schedule_hint(self) -> None:
-        # 无 [tag:…] 引用时不显示提示行（避免常驻"（引用校验通过）"占位噪声）；
-        # 与 RichTextLineEdit 一致：有 tag 才校验，通过才提示、失败才标红。
-        if "[tag:" not in self._edit.toPlainText():
+        # 无引用也无色标记时不显示提示行（避免常驻"（校验通过）"占位噪声）。
+        # ⚠ 色标记必须一起进这道门：否则 [c:打错的id] / 漏 [/c] 在编辑时零反馈，
+        # 到「保存全部」才被 validate_refs_for_save 硬拦下整桶（两边口径反着）。
+        if not _needs_check(self._edit.toPlainText()):
             self._hint.setText("")
             return
         self._hint_timer.start()
 
     def _flush_hint(self) -> None:
         t = self._edit.toPlainText()
-        if "[tag:" not in t:
+        if not _needs_check(t):
             self._hint.setText("")
             return
         errs = scan_refs(t, "预览", self._model)
@@ -214,6 +257,19 @@ class RichTextTextEdit(QWidget):
         if not m:
             return
         self._edit.textCursor().insertText(m)
+        self._hint_timer.stop()
+        self._flush_hint()
+
+    def _wrap_color(self, palette_id: str) -> None:
+        cur = self._edit.textCursor()
+        sel = cur.selectedText()
+        # Qt 的 selectedText 用 U+2029 表示换行，直接回写会把段落分隔符写进 JSON
+        sel = sel.replace("\u2029", "\n")
+        cur.insertText(wrap_with_color(sel, palette_id))
+        if not sel:
+            # 空选区：把光标停到一对标记中间，接着打字就是带色的
+            cur.setPosition(cur.position() - len("[/c]"))
+            self._edit.setTextCursor(cur)
         self._hint_timer.stop()
         self._flush_hint()
 
@@ -255,6 +311,7 @@ class RichTextLineEdit(QWidget):
         btn.clicked.connect(self._insert_ref)
         row.addWidget(self._edit, 1)
         row.addWidget(btn)
+        row.addWidget(build_color_button(self, lambda: self._model, self._wrap_color))
         outer.addLayout(row)
         self._hint = QLabel("")
         self._hint.setWordWrap(True)
@@ -273,7 +330,7 @@ class RichTextLineEdit(QWidget):
         self._schedule_hint()
 
     def _schedule_hint(self) -> None:
-        if "[tag:" not in self._edit.text():
+        if not _needs_check(self._edit.text()):
             self._hint.setText("")
             return
         self._hint_timer.start()
@@ -284,7 +341,7 @@ class RichTextLineEdit(QWidget):
 
     def _flush_hint(self) -> None:
         t = self._edit.text()
-        if "[tag:" not in t:
+        if not _needs_check(t):
             self._hint.setText("")
             return
         errs = scan_refs(t, "单行预览", self._model)
@@ -302,6 +359,14 @@ class RichTextLineEdit(QWidget):
     def insert(self, text: str) -> None:
         """在光标处插入（供「插入 {{player}}」等菜单与其它控件复用）。"""
         self._edit.insert(text)
+        self._hint_timer.stop()
+        self._flush_hint()
+
+    def _wrap_color(self, palette_id: str) -> None:
+        sel = self._edit.selectedText().replace("\u2029", "\n")
+        self._edit.insert(wrap_with_color(sel, palette_id))
+        if not sel:
+            self._edit.setCursorPosition(self._edit.cursorPosition() - len("[/c]"))
         self._hint_timer.stop()
         self._flush_hint()
 

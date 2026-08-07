@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
     QDialogButtonBox,
+    QDoubleSpinBox,
     QFormLayout,
     QLabel,
     QLineEdit,
@@ -72,7 +73,8 @@ def _usage_tree(report: dict[str, Any], parent: QWidget | None = None) -> QTreeW
     )
     group(
         "叙事图 wrapper 绑定（ownerType/ownerId）",
-        [(b["graphId"], "graph.ownerId") for b in report["ownerBindings"]],
+        # where=graph 是运行时真值面，where=element 是叙事编辑器读的镜像面，两者都会跟随改名
+        [(b["graphId"], f"{b.get('where', 'graph')}.ownerId") for b in report["ownerBindings"]],
     )
     group(
         "玩家可见文本 [tag:npc:…]",
@@ -240,6 +242,94 @@ class RenameEntityDialog(_RefactorDialogBase):
             self._model, self._scene_id, self._kind,
             self._entity_id, new_id, follow_tag_refs=bool(follow))
         er.push_journal(self._model, summary)
+        return summary
+
+
+class ConvertHotspotToNpcDialog(_RefactorDialogBase):
+    """纯展示热点 → NPC：选动画包 + 定名字/交互半径，预览尺寸换算与丢弃项。
+
+    id 不变，所以引用网零改写（理由见 ``entity_refactor.convert_hotspot_to_npc``）；
+    这里只把两件事摆到人眼前：**会失效的热点专用动作**（必须勾强制才放行）与
+    **形变/丢弃字段**（转换后由 summary 回报，调用方弹出）。
+    """
+
+    def __init__(self, model: Any, scene_id: str, kind: str, entity_id: str,
+                 parent: QWidget | None = None) -> None:
+        super().__init__(model, scene_id, kind, entity_id, parent)
+        self.setWindowTitle("转为 NPC")
+        hotspot = self._hotspot_def()
+        display = (hotspot or {}).get("displayImage") or {}
+
+        self._anim = IdRefSelector(allow_empty=False, editable=True)
+        items = list(model.anim_asset_path_choices())
+        self._anim.set_items(items)
+        guess = self._guess_bundle(items, str(display.get("image") or ""))
+        if guess:
+            self._anim.set_current(guess)
+        self._form.addRow("animFile（单帧占位包也行）", self._anim)
+
+        self._name = QLineEdit(str((hotspot or {}).get("name") or entity_id))
+        self._form.addRow("NPC 名字", self._name)
+
+        self._range = QDoubleSpinBox()
+        self._range.setRange(0.0, 9999.0)
+        self._range.setDecimals(1)
+        self._range.setValue(0.0)
+        self._range.setMaximumWidth(110)
+        self._range.setToolTip(
+            "装饰 NPC 范式：交互半径 0 = 玩家够不着（原纯展示热点结构上就不提供交互，"
+            "保持一致）。要让它能说话，转完再配图对话并把半径调回 50 左右。")
+        self._form.addRow("interactionRange", self._range)
+
+        self._render_raw = QCheckBox("renderRaw（贴图取自已烤光照的背景）")
+        self._render_raw.setToolTip(
+            "从场景原画里抠出来、要贴回原位的图必须勾：否则再叠一层逐 entity 光照，"
+            "色调与背景不符、露出方框接缝。独立画的角色立绘不要勾。")
+        self._form.addRow(self._render_raw)
+
+        dead = er._hotspot_only_action_hits(model, entity_id)
+        self._force = QCheckBox(
+            f"强制转换（{len(dead)} 处热点专用动作将失效，需自行清理）")
+        self._force.setVisible(bool(dead))
+        if dead:
+            self._force.setToolTip("、".join(
+                f"{h['bucket']}:{h['itemId']}({h['action']})" for h in dead[:8]))
+            ok_btn = self._buttons.button(QDialogButtonBox.StandardButton.Ok)
+            ok_btn.setEnabled(False)
+            self._force.toggled.connect(ok_btn.setEnabled)
+        self._form.addRow(self._force)
+
+    def _hotspot_def(self) -> dict[str, Any] | None:
+        scene = (getattr(self._model, "scenes", None) or {}).get(self._scene_id)
+        if not isinstance(scene, dict):
+            return None
+        for row in scene.get("hotspots") or []:
+            if isinstance(row, dict) and str(row.get("id") or "") == self._entity_id:
+                return row
+        return None
+
+    @staticmethod
+    def _guess_bundle(items: list[tuple[str, str]], image_path: str) -> str:
+        """展示图文件名与包目录名同名时预选——只是省一次点击，选错由人改。"""
+        stem = image_path.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].strip()
+        if not stem:
+            return ""
+        for rid, _name in items:
+            bundle = er._anim_bundle_id_from_animfile(rid)
+            if bundle in (stem, f"{stem}_anim"):
+                return rid
+        return ""
+
+    def _do_refactor(self) -> dict[str, Any]:
+        summary, reverse_ops = er.convert_hotspot_to_npc(
+            self._model, self._scene_id, self._entity_id,
+            anim_file=self._anim.current_id().strip(),
+            name=self._name.text().strip() or None,
+            interaction_range=float(self._range.value()),
+            render_raw=True if self._render_raw.isChecked() else None,
+            force=self._force.isChecked(),
+        )
+        er.push_journal(self._model, {**summary, "reverseOps": reverse_ops})
         return summary
 
 

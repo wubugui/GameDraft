@@ -408,6 +408,59 @@ def _validate_active_plane_refs(data: dict[str, Any], model: ProjectModel) -> li
     return issues
 
 
+def _author_signal_ids(data: Any) -> set[str]:
+    if not isinstance(data, dict):
+        return set()
+    out: set[str] = set()
+    for row in data.get("signals") or []:
+        if isinstance(row, dict):
+            sid = str(row.get("id") or "").strip()
+            if sid:
+                out.add(sid)
+    return out
+
+
+def merge_host_only_author_signals(
+    incoming: dict[str, Any],
+    host: Any,
+    loaded_signal_ids: set[str] | None,
+) -> list[str]:
+    """把「网页加载之后才在宿主注册的作者信号」补回网页文档，返回被补回的 id 列表。
+
+    根因：网页的 narrative 文档是**页面加载那一刻**读到的快照（React 只在挂载时拉一次），
+    而原生「叙事信号管理器」（ActionEditor 里 emitNarrativeSignal 的 signal 字段）是直接
+    改 ``model.narrative_graphs`` 的。网页随后按 Ctrl+S / Save All 原样回写，就会把加载后
+    新注册的信号整行抹掉——表现成"信号新建了却没保存，而且一直报未在注册表登记"。
+
+    只补 **不在加载基线里** 的宿主行：基线里有、网页文档里没有 = 用户在网页侧显式删掉了它
+    （高级 JSON 页手删、宿主重构删除后采纳），删除必须被尊重，不能复活。基线未知
+    （从未调过 getData，如离屏测试直接 saveData）时按空集处理，即全部补回——fail-safe 向
+    "不丢数据"，因为没加载过页面就更谈不上"在页面上删过"。
+
+    ``incoming`` 就地修改（调用方传的已是 ``_normalize_file`` 的新副本）。
+    """
+    host_signals = host.get("signals") if isinstance(host, dict) else None
+    if not isinstance(host_signals, list):
+        return []
+    baseline = loaded_signal_ids if loaded_signal_ids is not None else set()
+    incoming_ids = _author_signal_ids(incoming)
+    rows = incoming.get("signals")
+    if not isinstance(rows, list):
+        rows = []
+        incoming["signals"] = rows
+    restored: list[str] = []
+    for row in host_signals:
+        if not isinstance(row, dict):
+            continue
+        sid = str(row.get("id") or "").strip()
+        if not sid or sid in incoming_ids or sid in baseline:
+            continue
+        rows.append(_clone(row))
+        incoming_ids.add(sid)
+        restored.append(sid)
+    return restored
+
+
 class _NarrativeDraftProxy:
     """只读扫描代理：narrative_graphs 用传入的画布草稿，其余属性委托真实模型。
 
@@ -430,10 +483,51 @@ class NarrativeEditorBridge(QObject):
     def __init__(self, model: ProjectModel, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._model = model
+        # 网页文档基线 = **网页自己当前认为的注册表**（最近一次 getData 交出去的，
+        # 或最近一次它交上来的原始 payload）。用于区分"网页显式删掉的信号"与
+        # "网页加载后宿主新注册的信号"，见 merge_host_only_author_signals。
+        self._loaded_signal_ids: set[str] | None = None
+        # merge 之前那一刻 payload 里的 id 集：暂存成功后基线要推进到**这个**，
+        # 而不是合并后的集合，理由见 note_staged_signal_ids。
+        self._pending_web_signal_ids: set[str] | None = None
 
     @Slot(result=str)
     def getData(self) -> str:  # noqa: N802 - Qt slot name
-        return json.dumps(_normalize_file(self._model.narrative_graphs), ensure_ascii=False)
+        normalized = _normalize_file(self._model.narrative_graphs)
+        self._loaded_signal_ids = _author_signal_ids(normalized)
+        return json.dumps(normalized, ensure_ascii=False)
+
+    def merge_host_signals_into(self, normalized: dict[str, Any]) -> list[str]:
+        """网页文档进模型前的统一补丁点：补回加载后宿主新注册的作者信号。"""
+        # 先记下合并前 payload 的 id 集——它才是"网页自己知道的注册表"，暂存成功后
+        # 基线要推进到它（合并补进去的那些网页并不知道，见 note_staged_signal_ids）。
+        self._pending_web_signal_ids = _author_signal_ids(normalized)
+        restored = merge_host_only_author_signals(
+            normalized, self._model.narrative_graphs, self._loaded_signal_ids,
+        )
+        if restored:
+            print(
+                "[narrative-signals] 网页文档缺少宿主新注册的作者信号，已补回："
+                + "、".join(restored),
+                flush=True,
+            )
+        return restored
+
+    def note_staged_signal_ids(self, normalized: dict[str, Any]) -> None:
+        """暂存成功后推进基线到**网页自己知道的那一份**（= 合并前的 payload）。
+
+        绝不能记成合并后的集合：补回来的那些 id 网页压根不知道（它的 React state 没变），
+        下一次保存 payload 里照样没有；若它们已经进了基线，就会被判成"网页删过"而不再补，
+        于是第二次保存原样把宿主注册的信号丢掉——原 bug 只是被推迟了一次保存。
+
+        也不能取并集：并集会让"网页删掉 X → 之后宿主又重新注册 X"里的 X 永远补不回来。
+        纯替换（基线 = 网页当前认为的注册表）在四种时序下都正确。
+        """
+        known = self._pending_web_signal_ids
+        self._loaded_signal_ids = (
+            set(known) if known is not None else _author_signal_ids(normalized)
+        )
+        self._pending_web_signal_ids = None
 
     @Slot(str, result=str)
     def saveData(self, payload: str) -> str:  # noqa: N802 - Qt slot name
@@ -445,6 +539,7 @@ class NarrativeEditorBridge(QObject):
             return "invalid narrative data: root must be an object"
         try:
             normalized = _normalize_file(parsed)
+            self.merge_host_signals_into(normalized)
             errors = _validation_errors_for_save(normalized, self._model)
         except Exception as exc:  # fail-safe 不 fail-open：Qt slot 抛异常会返回空串，
             # 而网页 `result || 'saved'` 会把空串当保存成功（实际模型未更新）。
@@ -453,6 +548,7 @@ class NarrativeEditorBridge(QObject):
             return f"save blocked: {len(errors)} validation error(s)"
         self._model.narrative_graphs = normalized
         self._model.mark_dirty("narrative_graphs")
+        self.note_staged_signal_ids(normalized)
         return "saved to ProjectModel"
 
     @Slot(str, result=str)
@@ -549,6 +645,10 @@ class NarrativeEditorBridge(QObject):
         再跑共享引擎级联全项目引用（状态/图改名自动登记存档 migrations）。全程只改
         ProjectModel 内存并标脏，落盘只经主编辑器 Save All；撤销见 undoSignalRefactor
         （撤销日志挂在 ProjectModel 上，与 PyQt 信号管理器共用一份）。
+
+        收尾自检（``postCheck.dangling``）：级联跑完立刻按内存叙事数据复查图对话侧的
+        ownerState/contextState 有无断链，随结果回给网页当场展示——此前这类断链要等
+        Save All 之后跑 validate-data 才暴露（2026-08-05 审查 P0-2）。
         """
         from ..shared.signal_refactor import (
             SignalRefactorError,
@@ -558,6 +658,7 @@ class NarrativeEditorBridge(QObject):
             rename_graph,
             rename_signal,
             rename_state,
+            scan_dialogue_narrative_dangling,
         )
 
         try:
@@ -570,6 +671,7 @@ class NarrativeEditorBridge(QObject):
         data = req.get("data")
         if isinstance(data, dict):
             normalized = _normalize_file(data)
+            self.merge_host_signals_into(normalized)
             errors = _validation_errors_for_save(normalized, self._model)
             if errors:
                 return json.dumps(
@@ -578,6 +680,7 @@ class NarrativeEditorBridge(QObject):
                 )
             self._model.narrative_graphs = normalized
             self._model.mark_dirty("narrative_graphs")
+            self.note_staged_signal_ids(normalized)
 
         op = str(req.get("op") or "").strip()
         try:
@@ -618,6 +721,10 @@ class NarrativeEditorBridge(QObject):
                 "summary": summary,
                 "narrative": _normalize_file(self._model.narrative_graphs),
                 "journalSize": size,
+                # 收尾自检：重构后图对话侧仍悬垂的 ownerState/contextState 引用（当场可见，
+                # 不必等 Save All 后的 validate-data）。非空 ≠ 本次重构失败：也可能是既有断链
+                # 或 owner 解算/@token 节点的人工确认项，故只报不回滚。
+                "postCheck": {"dangling": scan_dialogue_narrative_dangling(self._model)},
             },
             ensure_ascii=False,
         )
@@ -625,11 +732,13 @@ class NarrativeEditorBridge(QObject):
     @Slot(result=str)
     def undoSignalRefactor(self) -> str:  # noqa: N802 - Qt slot name
         """撤销最近一次叙事重构（共享日志：web 与 PyQt 信号管理器同一份）。"""
-        from ..shared.signal_refactor import undo_last
+        from ..shared.signal_refactor import scan_dialogue_narrative_dangling, undo_last
 
         result = undo_last(self._model)
         if result.get("ok"):
             result["narrative"] = _normalize_file(self._model.narrative_graphs)
+            # 撤销同样是跨文件改写，收尾自检口径与 applySignalRefactor 一致
+            result["postCheck"] = {"dangling": scan_dialogue_narrative_dangling(self._model)}
         return json.dumps(result, ensure_ascii=False)
 
     @Slot(result=str)
@@ -821,6 +930,11 @@ class NarrativeEditorBridge(QObject):
         current = parsed.get("currentNarrative")
         if not isinstance(current, dict):
             current = _normalize_file(self._model.narrative_graphs)
+        else:
+            # 网页递上来的是加载期快照：先补回宿主新注册的作者信号，否则①盖章合并回写
+            # 会抹掉它们，②下面的信号撞名检查看不见它们（两单任务共用一个信号）。
+            current = _normalize_file(current)
+            self.merge_host_signals_into(current)
 
         templates = normalize_templates_file(self._model.narrative_templates)["templates"]
         tpl = next((t for t in templates if t.get("id") == template_id), None)
@@ -907,6 +1021,7 @@ class NarrativeEditorBridge(QObject):
         # 暂存内容无声丢失（历史 bug，勿回退）。
         self._model.narrative_graphs = merged_norm
         self._model.mark_dirty("narrative_graphs")
+        self.note_staged_signal_ids(merged_norm)
 
         quest_staged = False
         quest_obj = result.get("quest")
@@ -1614,6 +1729,9 @@ class NarrativeStateEditor(QWidget):
                 QMessageBox.warning(self, "叙事保存", self._last_flush_error)
             return False
         normalized = _normalize_file(parsed)
+        # 与桥 saveData 同一补丁点：网页文档是加载期快照，原样回写会抹掉加载后
+        # 由原生「叙事信号管理器」注册的作者信号（Save All / 关窗路径同样中招）。
+        self._bridge.merge_host_signals_into(normalized)
         errors = _validation_errors_for_save(normalized, self._model)
         if errors:
             preview = "\n".join(str(e.get("message") or e.get("code")) for e in errors[:8])
@@ -1626,6 +1744,7 @@ class NarrativeStateEditor(QWidget):
         if normalized != _normalize_file(self._model.narrative_graphs):
             self._model.narrative_graphs = normalized
             self._model.mark_dirty("narrative_graphs")
+        self._bridge.note_staged_signal_ids(normalized)
         self._run_editor_js_result(
             "window.__narrativeEditor && window.__narrativeEditor.markSaved"
             " ? (window.__narrativeEditor.markSaved(), true) : false",
@@ -2154,8 +2273,8 @@ def validate_narrative_graphs(data: dict[str, Any]) -> list[dict[str, Any]]:
             _owner_type = str(el.get("ownerType", "")).strip()
             if kind == "wrapperGraph" and _owner_type and _owner_type not in _VALID_WRAPPER_OWNER_TYPES:
                 _issue(issues, "warning", "wrapper.ownerType.unsupported", f"{eid}: wrapper ownerType 不受运行时 owner 索引支持", f"compositions[{ci}].elements[{ei}].ownerType", eid, _with_field(el_target, "ownerType"))
-            if kind == "scenarioSubgraph" and not (str(el.get("refId", "")).strip() or str(el.get("ownerId", "")).strip()):
-                _issue(issues, "warning", "scenario.id.empty", f"{eid}: scenarioId 为空", f"compositions[{ci}].elements[{ei}]", eid, el_target)
+            # scenario.id.empty 已随 TS 权威一并废除（2026-08-07，见 narrativeGraphValidation.ts）：
+            # scenarios.json 为空、字段永远填不上；兜底不得比 TS 严，故这里也不能留。
             if kind not in ("wrapperGraph", "scenarioSubgraph") and not str(el.get("refId", "")).strip():
                 _issue(issues, "warning", "blackbox.ref.empty", f"{eid}: 黑盒 refId 为空", f"compositions[{ci}].elements[{ei}]", eid, _with_field(el_target, "refId"))
             if kind in ("wrapperGraph", "scenarioSubgraph"):
@@ -3161,46 +3280,15 @@ def _element_matches_asset_ref(element: dict[str, Any], kind: str, ref_id: str) 
 
 
 def _dialogue_owner_refs(model: ProjectModel) -> dict[str, list[dict[str, str]]]:
-    out: dict[str, list[dict[str, str]]] = {}
-    seen: set[tuple[str, str, str, str]] = set()
+    """对话图 owner 解算——**委托** shared/narrative_catalog 的全工程口径。
 
-    def add(dialogue_id: str, owner_type: str, owner_id: str, detail: str) -> None:
-        dialogue_id = str(dialogue_id or "").strip()
-        owner_type = str(owner_type or "").strip()
-        owner_id = str(owner_id or "").strip()
-        if not dialogue_id or not owner_type or not owner_id:
-            return
-        key = (dialogue_id, owner_type, owner_id, detail)
-        if key in seen:
-            return
-        seen.add(key)
-        out.setdefault(dialogue_id, []).append({
-            "ownerType": owner_type,
-            "ownerId": owner_id,
-            "detail": detail,
-        })
+    这里曾有一份只扫 NPC.dialogueGraphId + hotspot.data.graphId 的窄副本，
+    于是"zone 里开的图""叙事图状态动作里开的图"在网页叙事编辑器上被报成
+    `projection.ownerState.unresolved` 假警告（镜像必然漂移，宁可消灭镜像）。
+    """
+    from tools.editor.shared.narrative_catalog import dialogue_owner_refs
 
-    for scene_id, scene in model.scenes.items():
-        if not isinstance(scene, dict):
-            continue
-        for npc in scene.get("npcs", []) or []:
-            if not isinstance(npc, dict):
-                continue
-            dialogue_id = str(npc.get("dialogueGraphId", "")).strip()
-            npc_id = str(npc.get("id", "")).strip()
-            if dialogue_id and npc_id:
-                add(dialogue_id, "npc", npc_id, f"npc:{scene_id}:{npc_id}")
-                add(dialogue_id, "npc", f"{scene_id}:{npc_id}", f"npc:{scene_id}:{npc_id}")
-        for hotspot in scene.get("hotspots", []) or []:
-            if not isinstance(hotspot, dict):
-                continue
-            data = hotspot.get("data") if isinstance(hotspot.get("data"), dict) else {}
-            dialogue_id = str(data.get("graphId", "")).strip()
-            hotspot_id = str(hotspot.get("id", "")).strip()
-            if dialogue_id and hotspot_id:
-                add(dialogue_id, "hotspot", hotspot_id, f"hotspot:{scene_id}:{hotspot_id}")
-                add(dialogue_id, "hotspot", f"{scene_id}:{hotspot_id}", f"hotspot:{scene_id}:{hotspot_id}")
-    return out
+    return dialogue_owner_refs(model, getattr(model, "project_path", None))
 
 
 def _owner_state_wrapper_matches(

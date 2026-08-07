@@ -15,6 +15,13 @@ narrative_graphs（注册表 / transition 监听 / 图内 state 动作发射 / b
 + 对话图（磁盘文件，深度遍历 emitNarrativeSignal）+ 内容资产 action 树（scenes/quests/
 cutscenes/pressure_holds/…内存集合）。narrative_templates 刻意不扫：模板走
 ``{{taskId}}__`` 占位符命名空间，运行时永不加载。
+
+图 id / 状态名的引用面见 ``_walk_narrative_refs`` 的 kind 表（条件叶 / 计数叶 /
+graphId 参数动作 / 图对话 ownerState / 图对话 contextState）——**漏一种 kind 就是
+"预览说 0 处、级联静默漏改、Save All 后才炸"**，加新引用形状必须同时加 kind 并补
+``test_signal_refactor.py`` 的对应用例。
+
+只读数据面（``READONLY_SOURCES``）命中一律**拒绝重构**，不静默跳过、不改内存。
 """
 
 from __future__ import annotations
@@ -60,13 +67,25 @@ CONDITION_EXTRA_SOURCES: dict[str, tuple[str, bool]] = {
     "map_nodes": ("map", False),
     "quest_groups": ("questGroup", False),
     "items": ("item", False),
-    "rules": ("rules", False),
+    # ⚠ 属性名是 rules_data（rules.json 载入到该属性），不是 rules——2026-08-05 前这里
+    # 误写 "rules"，getattr 兜 None 静默跳过，rules.json 对全部重构引擎不可见。
+    # 表键写错零报错正是这类漏洞的温床，故有 test_refactor_source_tables_resolve 逐键断言。
+    "rules_data": ("rules", False),
     "shops": ("shop", False),
     "document_reveals": ("document_reveals", False),
     "smell_profiles": ("smell_profiles", False),
     "game_config": ("config", False),
 }
 CONDITION_SOURCES: dict[str, tuple[str, bool]] = {**EMIT_SOURCE_BUCKETS, **CONDITION_EXTRA_SOURCES}
+
+# 只读数据面：ProjectModel 载入但 save_all 不认领（无脏桶），改了也落不了盘。
+# 扫描必须看见它们（预览诚实），但**绝不能静默改写**——命中即拒绝重构并报出位置，
+# 由作者手工处理。静默跳过 = 悬垂引用；改内存 = 改动凭空消失，两者都不可接受。
+READONLY_SOURCES: dict[str, str] = {
+    # 物件检视实例的动作树由 ObjectExamineManager 经 ActionExecutor 真执行（发射面/条件面
+    # 都成立），但主编辑器至今只加载不保存；dialogue_graph_refactor 早已按同样口径处理它。
+    "object_examine_instances": "object_examine",
+}
 
 
 # --------------------------------------------------------------------------- #
@@ -349,12 +368,15 @@ def scan_signal_usages(model: Any, signal_id: str) -> dict[str, Any]:
             if count:
                 assets.append({"bucket": bucket, "attr": attr, "itemId": item_id, "count": count})
 
+    readonly = _count_emits_over_readonly_sources(model, sid)
+
     total = (
         len(listeners)
         + action_emits
         + len(meta_emits)
         + sum(d["count"] for d in dialogues)
         + sum(a["count"] for a in assets)
+        + sum(r["count"] for r in readonly)
     )
     return {
         "signalId": sid,
@@ -364,6 +386,8 @@ def scan_signal_usages(model: Any, signal_id: str) -> dict[str, Any]:
         "metaEmits": meta_emits,
         "dialogues": dialogues,
         "assets": assets,
+        # 只读数据面命中：算进总数（预览要诚实），但重构会被拒绝而非静默跳过
+        "readonlyBlockers": readonly,
         "totalRefs": total,
     }
 
@@ -394,6 +418,7 @@ def rename_signal(model: Any, old_id: str, new_id: str) -> dict[str, Any]:
     old = str(old_id or "").strip()
     new = str(new_id or "").strip()
     _validate_rename_ids(model, old, new)
+    _raise_if_readonly_hits(_count_emits_over_readonly_sources(model, old), f"信号 {old!r} 改名")
     with _transactional(model):  # 中途异常回滚 + 不留脏（复核 P2）
         return _rename_signal_impl(model, old, new)
 
@@ -481,6 +506,8 @@ def delete_signal(model: Any, signal_id: str, force: bool = False) -> tuple[dict
     refs = usages["totalRefs"]
     if refs and not force:
         raise SignalRefactorError(f"信号 {sid!r} 仍有 {refs} 处引用；确认走强制清理（force）才可删除")
+    # 只读面的引用清理不掉（落不了盘），force 也不能放行——否则删完留悬垂发射点
+    _raise_if_readonly_hits(usages.get("readonlyBlockers") or [], f"信号 {sid!r} 删除")
     with _transactional(model):  # 中途异常回滚 + 不留脏（复核 P2）
         return _delete_signal_impl(model, sid, usages, refs)
 
@@ -585,21 +612,48 @@ _GRAPH_PARAM_ACTION_TYPES = frozenset({
     "revertNarrativeRun", "activateNarrativeRun",
 })
 
+# 图对话里直接读叙事状态的两类节点 → walk 的 kind。节点**自身**带图引用（不在 params 里），
+# 且 cases[].state 是状态引用；权威形状见 src/data/types.ts 的 DialogueGraphNodeDef。
+_DIALOGUE_STATE_NODE_TYPES: dict[str, str] = {
+    "ownerState": "ownerStateNode",
+    "contextState": "contextStateNode",
+}
+# kind → 该节点上承载图 id 的字段名。
+_DIALOGUE_STATE_NODE_GRAPH_KEY: dict[str, str] = {
+    "ownerStateNode": "wrapperGraphId",
+    "contextStateNode": "graphId",
+}
+
 
 def _walk_narrative_refs(node: Any, visit) -> int:
-    """深度遍历任意结构，对 {narrative:str, state:str} / {narrativeCount:str} 条件叶子与
-    graphId 参数动作（setNarrativeState + 活计生命周期四件套）调用 visit(kind, obj)，
-    返回 visit 命中计数之和。visit 返回 1 表示命中（计数/已替换），0 表示不匹配。"""
+    """深度遍历任意结构，对**全部**叙事图/状态引用形状调用 visit(kind, obj)，
+    返回 visit 命中计数之和（visit 返回命中数，0 表示不匹配）。
+
+    五种 kind（这张表就是"引用面"本身，漏一种 = 重构静默漏改 + 预览少算）：
+
+    - ``leaf``            条件叶 ``{narrative, state}``
+    - ``countLeaf``       活计计数叶 ``{narrativeCount, exitState}``
+    - ``setState``        ``_GRAPH_PARAM_ACTION_TYPES`` 动作的 ``params``（graphId/stateId）
+    - ``ownerStateNode``  图对话 ``ownerState`` 节点（``wrapperGraphId`` + ``cases[].state``）
+    - ``contextStateNode``图对话 ``contextState`` 节点（``graphId`` + ``cases[].state``）
+
+    后两种 2026-08-05 补入：此前走访器只认前三种，图 id / 状态名改名对图对话里这两类
+    节点完全无感——扫描少算成"0 处引用，可安全操作"，级联漏改留下悬垂引用，直到
+    Save All 后跑 validate-data 才暴露（validator 的 validate_owner_context_state）。
+    """
     count = 0
     if isinstance(node, dict):
         if isinstance(node.get("narrative"), str) and isinstance(node.get("state"), str):
             count += visit("leaf", node)
         if isinstance(node.get("narrativeCount"), str):
             count += visit("countLeaf", node)
-        if str(node.get("type") or "").strip() in _GRAPH_PARAM_ACTION_TYPES:
+        node_type = str(node.get("type") or "").strip()
+        if node_type in _GRAPH_PARAM_ACTION_TYPES:
             params = node.get("params")
             if isinstance(params, dict):
                 count += visit("setState", params)
+        elif node_type in _DIALOGUE_STATE_NODE_TYPES:
+            count += visit(_DIALOGUE_STATE_NODE_TYPES[node_type], node)
         for value in node.values():
             count += _walk_narrative_refs(value, visit)
     elif isinstance(node, list):
@@ -608,10 +662,26 @@ def _walk_narrative_refs(node: Any, visit) -> int:
     return count
 
 
+def _rewrite_case_states(node: dict[str, Any], sid: str, new_sid: str | None) -> int:
+    """图对话 ownerState/contextState 的 ``cases[].state`` 计数/替换（可多处命中）。"""
+    hits = 0
+    for case in node.get("cases") or []:
+        if isinstance(case, dict) and str(case.get("state") or "").strip() == sid:
+            if new_sid is not None:
+                case["state"] = new_sid
+            hits += 1
+    return hits
+
+
 def _state_ref_visitor(gid: str, sid: str, new_sid: str | None):
     """sid 引用的计数/替换 visitor（new_sid=None 只计数）。narrative 字段必须精确等于
     图 id 才算命中；@owner/@scene 相对 token 静态解析不了，刻意不动（扫描单独报出）。
-    countLeaf 的 exitState / revertNarrativeRun 的 stateId 同样跟随（活计出口改名级联）。"""
+    countLeaf 的 exitState / revertNarrativeRun 的 stateId 同样跟随（活计出口改名级联）。
+
+    图对话 ownerState/contextState 的 ``cases[].state``：**只有节点显式写死了目标图**
+    （wrapperGraphId/graphId 精确等于 gid）才跟改。留空（按对话 owner 解算）或写
+    @owner/@scene 时归属图静态不可知，与相对 token 叶子同规矩——只报疑点不改写。
+    """
     def visit(kind: str, obj: dict[str, Any]) -> int:
         if kind == "leaf":
             if str(obj.get("narrative") or "").strip() == gid and str(obj.get("state") or "").strip() == sid:
@@ -623,6 +693,9 @@ def _state_ref_visitor(gid: str, sid: str, new_sid: str | None):
                 if new_sid is not None:
                     obj["exitState"] = new_sid
                 return 1
+        elif kind in _DIALOGUE_STATE_NODE_GRAPH_KEY:
+            if str(obj.get(_DIALOGUE_STATE_NODE_GRAPH_KEY[kind]) or "").strip() == gid:
+                return _rewrite_case_states(obj, sid, new_sid)
         else:  # setState / 活计生命周期动作 params（start/reset/activate 无 stateId，天然不命中）
             if str(obj.get("graphId") or "").strip() == gid and str(obj.get("stateId") or "").strip() == sid:
                 if new_sid is not None:
@@ -633,8 +706,11 @@ def _state_ref_visitor(gid: str, sid: str, new_sid: str | None):
 
 
 def _graph_ref_visitor(gid: str, new_gid: str | None):
+    """图 id 引用的计数/替换 visitor。图对话 ownerState/contextState 的图字段名与条件叶
+    不同（wrapperGraphId / graphId），由 _DIALOGUE_STATE_NODE_GRAPH_KEY 派发。"""
     def visit(kind: str, obj: dict[str, Any]) -> int:
-        key = {"leaf": "narrative", "countLeaf": "narrativeCount"}.get(kind, "graphId")
+        key = _DIALOGUE_STATE_NODE_GRAPH_KEY.get(kind) \
+            or {"leaf": "narrative", "countLeaf": "narrativeCount"}.get(kind, "graphId")
         if str(obj.get(key) or "").strip() == gid:
             if new_gid is not None:
                 obj[key] = new_gid
@@ -719,13 +795,23 @@ def _rewrite_meta_graph_refs(narrative: Any, old: str, new: str | None) -> tuple
 
 
 def _relative_state_leaf_counter(sid: str):
-    """@owner/@scene 相对 token 的 {narrative, state} 叶子且 state==sid：静态解析不了
-    归属图，只能报"疑点"请人工确认——绝不自动改写（改错=条件运行时永假且全链路无声）。"""
+    """归属图静态不可知、但 state 名恰好等于 sid 的引用点：只能报"疑点"请人工确认——
+    绝不自动改写（改错=条件运行时永假且全链路无声）。两类：
+
+    - ``{narrative: '@owner'|'@scene', state: sid}`` 条件叶；
+    - 图对话 ownerState/contextState 里图字段为空（按对话 owner 解算）或写 @token 的
+      节点，其 ``cases[].state == sid``。
+    """
     def visit(kind: str, obj: dict[str, Any]) -> int:
-        if kind != "leaf":
+        if kind == "leaf":
+            if str(obj.get("narrative") or "").strip().startswith("@") \
+                    and str(obj.get("state") or "").strip() == sid:
+                return 1
             return 0
-        if str(obj.get("narrative") or "").strip().startswith("@") and str(obj.get("state") or "").strip() == sid:
-            return 1
+        if kind in _DIALOGUE_STATE_NODE_GRAPH_KEY:
+            token = str(obj.get(_DIALOGUE_STATE_NODE_GRAPH_KEY[kind]) or "").strip()
+            if token == "" or token.startswith("@"):
+                return _rewrite_case_states(obj, sid, None)
         return 0
     return visit
 
@@ -783,6 +869,104 @@ def _count_over_sources(model: Any, visitor) -> list[dict[str, Any]]:
     return hits
 
 
+def _count_over_readonly_sources(model: Any, visitor) -> list[dict[str, Any]]:
+    """只读数据面上的命中：**只计数、绝不改写**（改了落不了盘 = 改动凭空消失）。"""
+    hits: list[dict[str, Any]] = []
+    for attr, label in READONLY_SOURCES.items():
+        root = getattr(model, attr, None)
+        if root is None:
+            continue
+        for item_id, node in _iter_collection(root):
+            count = _walk_narrative_refs(node, visitor)
+            if count:
+                hits.append({"bucket": label, "itemId": item_id, "count": count})
+    return hits
+
+
+def _count_emits_over_readonly_sources(model: Any, signal_id: str) -> list[dict[str, Any]]:
+    hits: list[dict[str, Any]] = []
+    for attr, label in READONLY_SOURCES.items():
+        root = getattr(model, attr, None)
+        if root is None:
+            continue
+        for item_id, node in _iter_collection(root):
+            count = _count_emit_refs(node, signal_id)
+            if count:
+                hits.append({"bucket": label, "itemId": item_id, "count": count})
+    return hits
+
+
+def _raise_if_readonly_hits(hits: list[dict[str, Any]], what: str) -> None:
+    """只读面有引用 = 拒绝重构（fail-safe）。静默跳过会留悬垂，改内存会丢改动。"""
+    if not hits:
+        return
+    where = "、".join(f"{h['bucket']}·{h['itemId']}（{h['count']} 处）" for h in hits[:6])
+    more = "…" if len(hits) > 6 else ""
+    raise SignalRefactorError(
+        f"{what}被只读数据面挡下：{where}{more}。这些数据域主编辑器只加载不保存"
+        "（无脏桶/无写盘分支），重构改了也落不了盘——请先手工修改这些文件，"
+        "或给该数据域补齐脏桶与保存分支后再重构。"
+    )
+
+
+def _narrative_state_index(model: Any) -> dict[str, set[str]]:
+    """当前**内存**叙事数据的 图 id → 状态 id 集合（重构后自检的判定基准）。"""
+    index: dict[str, set[str]] = {}
+    for graph in _iter_graphs(getattr(model, "narrative_graphs", None) or {}):
+        gid = str(graph.get("id") or "").strip()
+        if not gid:
+            continue
+        states = graph.get("states")
+        index[gid] = {str(k) for k in states} if isinstance(states, dict) else set()
+    return index
+
+
+def scan_dialogue_narrative_dangling(model: Any) -> list[dict[str, Any]]:
+    """图对话 ownerState/contextState 指向的图/状态是否悬垂（按内存叙事数据判定）。
+
+    重构收尾自检：级联跑完立刻回答"图对话侧还有没有断链"，不必等 Save All 之后
+    ``validate-data`` 才暴露（validator 的 validate_owner_context_state 同口径，
+    但那条读磁盘、重构期间叙事数据只在内存里，故此处独立实现）。
+
+    只判**显式写死目标图**的节点；图字段留空（按对话 owner 解算）或写 @owner/@scene 的
+    归属图静态不可知，不在此处臆断（它们由 relativeTokenSuspects 报疑点）。
+    """
+    index = _narrative_state_index(model)
+    out: list[dict[str, Any]] = []
+    for dlg_id in _dialogue_graph_ids(model):
+        doc = _load_dialogue_doc(model, dlg_id)
+        nodes = doc.get("nodes") if isinstance(doc, dict) else None
+        if not isinstance(nodes, dict):
+            continue
+        for node_id, node in nodes.items():
+            if not isinstance(node, dict):
+                continue
+            kind = _DIALOGUE_STATE_NODE_TYPES.get(str(node.get("type") or "").strip())
+            if kind is None:
+                continue
+            token = str(node.get(_DIALOGUE_STATE_NODE_GRAPH_KEY[kind]) or "").strip()
+            if not token or token.startswith("@"):
+                continue
+            if token not in index:
+                out.append({
+                    "dialogueGraphId": dlg_id, "nodeId": str(node_id),
+                    "nodeType": str(node.get("type") or ""), "reason": "missingGraph",
+                    "graphId": token, "stateId": "",
+                })
+                continue
+            for case in node.get("cases") or []:
+                if not isinstance(case, dict):
+                    continue
+                state_id = str(case.get("state") or "").strip()
+                if state_id and state_id not in index[token]:
+                    out.append({
+                        "dialogueGraphId": dlg_id, "nodeId": str(node_id),
+                        "nodeType": str(node.get("type") or ""), "reason": "missingState",
+                        "graphId": token, "stateId": state_id,
+                    })
+    return out
+
+
 def _migrations_snapshot(model: Any) -> Any:
     mig = (model.narrative_graphs or {}).get("migrations")
     return copy.deepcopy(mig) if mig is not None else None
@@ -822,11 +1006,13 @@ def scan_state_usages(model: Any, graph_id: str, state_id: str) -> dict[str, Any
                 internal += 1
     narrative_conditions = _walk_narrative_refs(narrative, _state_ref_visitor(gid, sid, None))
     external = _count_over_sources(model, _state_ref_visitor(gid, sid, None))
+    readonly = _count_over_readonly_sources(model, _state_ref_visitor(gid, sid, None))
     meta_commands, meta_emits = _rewrite_meta_state_refs(narrative, gid, sid, None)
     relative_suspects = _count_relative_state_suspects(model, narrative, sid)
     total = (
         internal + len(derived_listeners) + narrative_conditions
         + sum(h["count"] for h in external) + meta_commands + meta_emits
+        + sum(h["count"] for h in readonly)
     )
     return {
         "graphId": gid, "stateId": sid,
@@ -834,6 +1020,7 @@ def scan_state_usages(model: Any, graph_id: str, state_id: str) -> dict[str, Any
         "derivedListeners": derived_listeners,
         "narrativeConditions": narrative_conditions,
         "external": external,
+        "readonlyBlockers": readonly,
         "metaCommands": meta_commands,
         "metaEmits": meta_emits,
         # @owner/@scene 相对叶子疑点：state 同名但归属图静态不可知——只报不改，须人工确认
@@ -860,6 +1047,10 @@ def rename_state(
         raise SignalRefactorError("新状态名为空或与旧名相同")
     if new in states:
         raise SignalRefactorError(f"图 {gid!r} 已有状态 {new!r}")
+    _raise_if_readonly_hits(
+        _count_over_readonly_sources(model, _state_ref_visitor(gid, old, None)),
+        f"状态 {gid}.{old} 改名",
+    )
     with _transactional(model):  # 中途异常回滚 + 不留脏（复核 P2）
         return _rename_state_impl(model, narrative, target, gid, old, new, update_migrations)
 
@@ -954,16 +1145,18 @@ def scan_graph_usages(model: Any, graph_id: str) -> dict[str, Any]:
                 reads += sum(1 for r in meta["reads"] if str(r) == gid)
     narrative_conditions = _walk_narrative_refs(narrative, _graph_ref_visitor(gid, None))
     external = _count_over_sources(model, _graph_ref_visitor(gid, None))
+    readonly = _count_over_readonly_sources(model, _graph_ref_visitor(gid, None))
     meta_commands, meta_emits = _rewrite_meta_graph_refs(narrative, gid, None)
     run_archetypes = _rewrite_quest_run_archetypes(model, gid, None)
     total = (
         derived + reads + narrative_conditions
         + sum(h["count"] for h in external) + meta_commands + meta_emits
-        + run_archetypes
+        + run_archetypes + sum(h["count"] for h in readonly)
     )
     return {
         "graphId": gid, "derivedListeners": derived, "metaReads": reads,
         "narrativeConditions": narrative_conditions, "external": external,
+        "readonlyBlockers": readonly,
         "metaCommands": meta_commands, "metaEmits": meta_emits,
         "runArchetypes": run_archetypes, "totalRefs": total,
     }
@@ -981,6 +1174,10 @@ def rename_graph(model: Any, old_graph_id: str, new_graph_id: str, *, update_mig
         raise SignalRefactorError("新图 id 为空或与旧 id 相同")
     if any(str(g.get("id") or "").strip() == new for g in _iter_graphs(narrative)):
         raise SignalRefactorError(f"叙事图 id {new!r} 已存在")
+    _raise_if_readonly_hits(
+        _count_over_readonly_sources(model, _graph_ref_visitor(old, None)),
+        f"叙事图 {old!r} 改名",
+    )
     with _transactional(model):  # 中途异常回滚 + 不留脏（复核 P2）
         return _rename_graph_impl(model, narrative, targets, old, new, update_migrations)
 

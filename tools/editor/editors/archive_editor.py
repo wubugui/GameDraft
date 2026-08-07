@@ -232,6 +232,9 @@ class ArchiveEditor(QWidget):
         tabs.addTab(self._build_lore_tab(), "Lore")
         tabs.addTab(self._build_documents_tab(), "Documents")
         tabs.addTab(self._build_books_tab(), "Books")
+        # 追加在末尾（而非插在 Lore 之后）：select_entry 的页签索引表按位置硬编码，
+        # 末尾追加不打乱既有 characters/lore/documents/books 的 0~3。
+        tabs.addTab(self._build_slang_tab(), "怪话册")
 
     @staticmethod
     def _set_list_label(listw, idx: int, text: str) -> None:
@@ -255,6 +258,7 @@ class ArchiveEditor(QWidget):
                           lambda: self._model.archive_documents),
             "books": (3, self._book_list, self._book_search,
                       lambda: self._model.archive_books),
+            "slang": (4, self._slang_list, self._slang_search, self._slang_entries),
         }.get(book)
         if spec is None:
             return False
@@ -283,6 +287,9 @@ class ArchiveEditor(QWidget):
         self._refresh_books()
         if self._book_idx >= 0:
             self._on_book_select(self._book_idx)
+        self._refresh_slang()
+        if self._slang_idx >= 0:
+            self._on_slang_select(self._slang_idx)
 
     def confirm_close(self, parent=None) -> bool:
         """关闭/切工程门控：有未应用编辑则 Save/Discard/Cancel(对齐 item/shop 口径)。
@@ -295,6 +302,7 @@ class ArchiveEditor(QWidget):
         lore_b = copy.deepcopy(self._model.archive_lore)
         docs_b = copy.deepcopy(self._model.archive_documents)
         books_b = copy.deepcopy(self._model.archive_books)
+        slang_b = copy.deepcopy(self._model.archive_slang)
         dirty_before = "archive" in getattr(self._model, "_dirty", set())
 
         self.flush_to_model()
@@ -303,6 +311,7 @@ class ArchiveEditor(QWidget):
             or self._model.archive_lore != lore_b
             or self._model.archive_documents != docs_b
             or self._model.archive_books != books_b
+            or self._model.archive_slang != slang_b
         )
         if not changed:
             return True
@@ -320,6 +329,7 @@ class ArchiveEditor(QWidget):
         self._model.archive_documents[:] = docs_b
         self._model.archive_books[:] = books_b
         self._model.archive_lore = lore_b  # lore 读取处均即时读属性,重新赋值安全
+        self._model.archive_slang = slang_b  # 同 lore：_slang_root() 每次即时读属性
         if not dirty_before and hasattr(self._model, "_dirty"):
             self._model._dirty.discard("archive")
             if not self._model.is_dirty:
@@ -340,7 +350,9 @@ class ArchiveEditor(QWidget):
         self._apply_lore(refresh=False)
         self._apply_doc(refresh=False)
         self._apply_book(refresh=False)
+        self._apply_slang(refresh=False)
         self._apply_lore_categories()
+        self._apply_slang_categories()
         return True
 
     # ---- Characters -------------------------------------------------------
@@ -797,6 +809,277 @@ class ArchiveEditor(QWidget):
             self._lore_idx = -1
             self._model.mark_dirty("archive")
             self._refresh_lore()
+
+    # ---- Slang（怪话册）---------------------------------------------------
+
+    def _slang_root(self) -> dict:
+        """slang.json 根对象（categories + categoryCompleteText + allCompleteText + entries）。"""
+        d = self._model.archive_slang
+        if not isinstance(d, dict):
+            d = {}
+            self._model.archive_slang = d
+        return d
+
+    def _slang_entries(self) -> list[dict]:
+        return self._slang_root().setdefault("entries", [])
+
+    def _slang_category_keys(self) -> list[str]:
+        """分类键取自数据本身（不硬编码）——数据里出现但未登记的分类也一并列出，避免下拉选不到。"""
+        cats = self._slang_root().get("categories")
+        keys = list(cats.keys()) if isinstance(cats, dict) else []
+        for e in self._slang_entries():
+            if isinstance(e, dict):
+                c = str(e.get("category", "")).strip()
+                if c and c not in keys:
+                    keys.append(c)
+        return keys
+
+    def _build_slang_tab(self) -> QWidget:
+        w = QWidget()
+        lay = QHBoxLayout(w)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        left = QWidget()
+        ll = QVBoxLayout(left); ll.setContentsMargins(0, 0, 0, 0)
+        btn_row = QHBoxLayout()
+        btn_add = QPushButton("+ 怪话"); btn_add.clicked.connect(self._add_slang)
+        btn_del = QPushButton("Delete"); btn_del.clicked.connect(self._del_slang)
+        btn_row.addWidget(btn_add); btn_row.addWidget(btn_del)
+        ll.addLayout(btn_row)
+        self._slang_list = QListWidget()
+        self._slang_search = _make_list_search_box(self._slang_list)
+        ll.addWidget(self._slang_search)
+        self._slang_list.currentRowChanged.connect(self._on_slang_select)
+        _wire_list_affordances(self._slang_list, self._del_slang, delete_label="删除怪话词条")
+        ll.addWidget(self._slang_list)
+        self._slang_empty_hint = QLabel("暂无怪话词条，点击「+ 怪话」新增")
+        self._slang_empty_hint.setStyleSheet("color: #888;")
+        self._slang_empty_hint.setWordWrap(True)
+        ll.addWidget(self._slang_empty_hint)
+
+        scroll = QScrollArea(); scroll.setWidgetResizable(True)
+        detail = QWidget()
+        f = compact_form(QFormLayout(detail))
+        self._sl_id = QLineEdit(); f.addRow("id", self._sl_id)
+        self._sl_title = RichTextLineEdit(self._model)
+        self._sl_title.setMinimumWidth(240)
+        self._sl_title.setToolTip("词条本身，如「锤子」。")
+        f.addRow("title", self._sl_title)
+        self._sl_content = RichTextTextEdit(self._model)
+        self._sl_content.setMinimumWidth(240)
+        self._sl_content.setMinimumHeight(80)
+        self._sl_content.setMaximumHeight(200)
+        self._sl_content.setToolTip(
+            "考据体释义（语源／市井用法／成渝分野）。这本册子的笑点靠"
+            "「正文越正经、备注越拆台」的反差，正文别写俏皮话。")
+        sl_content_row = QHBoxLayout()
+        sl_content_row.addWidget(self._sl_content)
+        sl_content_row.addWidget(_make_insert_image_btn(self._sl_content, self._model))
+        f.addRow("content", sl_content_row)
+        self._sl_example = RichTextLineEdit(self._model)
+        self._sl_example.setMinimumWidth(240)
+        self._sl_example.setToolTip("关二狗声口的实际用法示范，取自 docs/重庆话语料库.md 的活范本。")
+        f.addRow("example", self._sl_example)
+        self._sl_source = RichTextLineEdit(self._model)
+        self._sl_source.setMinimumWidth(240)
+        self._sl_source.setToolTip("跟谁学的，如「码头脚帮」「李天狗骂他的原话」。")
+        f.addRow("source", self._sl_source)
+        self._sl_note = RichTextTextEdit(self._model)
+        self._sl_note.setMinimumWidth(240)
+        self._sl_note.setMinimumHeight(50)
+        self._sl_note.setMaximumHeight(110)
+        self._sl_note.setToolTip("末尾那句拆台备注——笑点落点。可空。")
+        f.addRow("note", self._sl_note)
+        self._sl_cat = QComboBox()
+        self._sl_cat.setMaximumWidth(160)
+        self._sl_cat.setToolTip(
+            "分类键，取自本文件的 categories 映射（中文显示名见下方「分类与集齐评语」）。")
+        f.addRow("category", self._sl_cat)
+        self._sl_cond = ConditionEditor("unlockConditions")
+        apply_btn = QPushButton("Apply"); apply_btn.clicked.connect(lambda *_: self._apply_slang(refresh=False))
+
+        right = QWidget()
+        rl = QVBoxLayout(right)
+        rl.addWidget(scroll)
+        scroll.setWidget(detail)
+        rl.addWidget(self._sl_cond)
+        rl.addWidget(QLabel("<b>首次阅览动作 firstViewActions</b>"))
+        self._sl_first_view = ActionEditor("firstViewActions")
+        rl.addWidget(self._sl_first_view)
+        rl.addWidget(apply_btn)
+        rl.addWidget(self._build_slang_categories_section())
+
+        splitter.addWidget(left)
+        splitter.addWidget(right)
+        splitter.setSizes([220, 550])
+        lay.addWidget(splitter)
+        self._slang_idx = -1
+        self._refresh_slang()
+        return w
+
+    def _build_slang_categories_section(self) -> QWidget:
+        """分类显示名 + 各分类集齐评语 + 全册集齐评语（全局，非按条目）。
+
+        集齐评语是这本册子唯一的「奖励」——只给文案、不给能力（红线见玩法文档 K5 书五）。
+        只就地改已存在的键，不向缺键的工程注入字段，保 JSON 往返。"""
+        root = self._slang_root()
+        cats = root.get("categories")
+        self._slang_cats_editable = isinstance(cats, dict)
+        self._slang_cat_name_edits: dict[str, QLineEdit] = {}
+        self._slang_cat_done_edits: dict[str, QLineEdit] = {}
+        body = QWidget()
+        form = compact_form(QFormLayout(body))
+        done_map = root.get("categoryCompleteText")
+        done_map = done_map if isinstance(done_map, dict) else {}
+        for key in (cats or {}):
+            name_le = QLineEdit()
+            name_le.setMaximumWidth(160)
+            name_le.setText(str((cats or {}).get(key, "")))
+            if not self._slang_cats_editable:
+                name_le.setReadOnly(True)
+            self._slang_cat_name_edits[key] = name_le
+            form.addRow(f"{key} · 显示名", name_le)
+            done_le = QLineEdit()
+            done_le.setText(str(done_map.get(key, "")))
+            done_le.setToolTip("该分类集齐时显示的嘲讽评语。只出文案，不解锁任何能力。")
+            if not self._slang_cats_editable:
+                done_le.setReadOnly(True)
+            self._slang_cat_done_edits[key] = done_le
+            form.addRow(f"{key} · 集齐评语", done_le)
+        self._slang_all_done = QLineEdit()
+        self._slang_all_done.setText(str(root.get("allCompleteText", "")))
+        self._slang_all_done.setToolTip("全册集齐时显示的评语。")
+        if not self._slang_cats_editable:
+            self._slang_all_done.setReadOnly(True)
+        form.addRow("全册集齐评语", self._slang_all_done)
+        if self._slang_cats_editable:
+            btn = QPushButton("应用分类与评语")
+            btn.setMaximumWidth(140)
+            btn.clicked.connect(self._apply_slang_categories)
+            form.addRow("", btn)
+        sec = CollapsibleSection("分类与集齐评语（全局）", start_open=False)
+        sec.set_header_tool_tip(
+            "编辑各分类的中文显示名与集齐嘲讽评语，以及全册集齐评语。"
+            "键取自数据本身，此处不增删分类。")
+        sec.add_body(body)
+        return sec
+
+    def _apply_slang_categories(self) -> None:
+        if not getattr(self, "_slang_cats_editable", False):
+            return
+        root = self._slang_root()
+        cats = root.get("categories")
+        if not isinstance(cats, dict):
+            return
+        changed = False
+        for key, le in self._slang_cat_name_edits.items():
+            if key in cats and cats[key] != le.text():
+                cats[key] = le.text()
+                changed = True
+        done_map = root.get("categoryCompleteText")
+        if isinstance(done_map, dict):
+            for key, le in self._slang_cat_done_edits.items():
+                if key in done_map and done_map[key] != le.text():
+                    done_map[key] = le.text()
+                    changed = True
+        if "allCompleteText" in root and root["allCompleteText"] != self._slang_all_done.text():
+            root["allCompleteText"] = self._slang_all_done.text()
+            changed = True
+        if changed:
+            self._model.mark_dirty("archive")
+
+    def _refresh_slang(self) -> None:
+        self._slang_list.clear()
+        for e in self._slang_entries():
+            self._slang_list.addItem(f"{e.get('id', '?')}  [{e.get('title', '')}]")
+        self._slang_empty_hint.setVisible(self._slang_list.count() == 0)
+
+    def _on_slang_select(self, row: int) -> None:
+        entries = self._slang_entries()
+        if row < 0 or row >= len(entries):
+            return
+        prev = self._slang_idx
+        if 0 <= prev < len(entries) and prev != row:
+            self._apply_slang(refresh=False)
+        self._slang_idx = row
+        e = entries[row]
+        self._sl_id.setText(e.get("id", ""))
+        self._sl_title.setText(e.get("title", ""))
+        self._sl_content.setPlainText(e.get("content", ""))
+        self._sl_example.setText(e.get("example", ""))
+        self._sl_source.setText(e.get("source", ""))
+        self._sl_note.setPlainText(e.get("note", ""))
+        # 下拉候选每次按当前数据重建：新增分类后不必重开编辑器
+        keys = self._slang_category_keys()
+        cur = e.get("category", "")
+        self._sl_cat.blockSignals(True)
+        self._sl_cat.clear()
+        self._sl_cat.addItems(keys)
+        if cur and cur not in keys:
+            self._sl_cat.addItem(cur)
+        self._sl_cat.setCurrentText(cur)
+        self._sl_cat.blockSignals(False)
+        self._sl_cond.set_flag_pattern_context(self._model, None)
+        self._sl_cond.set_data(e.get("unlockConditions", []))
+        self._sl_first_view.set_project_context(self._model, None)
+        self._sl_first_view.set_data(e.get("firstViewActions", []))
+        self._sl_id.setFocus()
+
+    def _apply_slang(self, refresh: bool = True) -> None:
+        entries = self._slang_entries()
+        if self._slang_idx < 0 or self._slang_idx >= len(entries):
+            return
+        e = entries[self._slang_idx]
+        _before = copy.deepcopy(e)
+        e["id"] = self._sl_id.text().strip()
+        e["title"] = self._sl_title.text()
+        e["content"] = self._sl_content.toPlainText()
+        e["example"] = self._sl_example.text()
+        e["source"] = self._sl_source.text()
+        e["category"] = self._sl_cat.currentText()
+        note = self._sl_note.toPlainText()
+        if note:
+            e["note"] = note
+        elif "note" in e:
+            del e["note"]
+        e["unlockConditions"] = self._sl_cond.to_list()
+        sl_fv = self._sl_first_view.to_list()
+        if sl_fv:
+            e["firstViewActions"] = sl_fv
+        elif "firstViewActions" in e:
+            del e["firstViewActions"]
+        if e == _before:
+            return  # 无实质变化：不标脏、不重建列表（保留选中）
+        self._model.mark_dirty("archive")
+        if refresh:
+            self._refresh_slang()
+        else:
+            self._set_list_label(
+                self._slang_list, self._slang_idx,
+                f"{e.get('id', '?')}  [{e.get('title', '')}]")
+
+    def _add_slang(self) -> None:
+        entries = self._slang_entries()
+        new_id = _next_unique_id("slang", (e.get("id", "") for e in entries))
+        keys = self._slang_category_keys()
+        entries.append({
+            "id": new_id, "title": "", "content": "", "example": "",
+            "source": "", "category": keys[0] if keys else "",
+            "unlockConditions": [],
+        })
+        self._model.mark_dirty("archive")
+        self._refresh_slang()
+        self._slang_list.setCurrentRow(len(entries) - 1)
+
+    def _del_slang(self) -> None:
+        entries = self._slang_entries()
+        if 0 <= self._slang_idx < len(entries):
+            if not confirm.confirm_delete(self, f"怪话词条「{entries[self._slang_idx].get('id', '')}」"):
+                return
+            entries.pop(self._slang_idx)
+            self._slang_idx = -1
+            self._model.mark_dirty("archive")
+            self._refresh_slang()
 
     # ---- Documents --------------------------------------------------------
 

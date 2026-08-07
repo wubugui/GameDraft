@@ -3,7 +3,16 @@ import type { Npc } from '../entities/Npc';
 import type { EventBus } from '../core/EventBus';
 import type { FlagStore } from '../core/FlagStore';
 import type { InputManager } from '../core/InputManager';
-import type { Condition, ConditionExpr, IGameSystem, GameContext } from '../data/types';
+import type {
+  ActSpotData,
+  Condition,
+  ConditionExpr,
+  HotspotDef,
+  IGameSystem,
+  GameContext,
+  InspectData,
+  PlayerVerb,
+} from '../data/types';
 import type { ConditionEvalContext } from './graphDialogue/evaluateGraphCondition';
 import { evaluateConditionExprList } from './graphDialogue/conditionEvalBridge';
 import { hotspotOffersPlayerInteraction } from '../utils/hotspotInteraction';
@@ -36,6 +45,17 @@ export interface PlaneInteractionPolicy {
   canInteractHotspots: boolean;
   canTalkNpcs: boolean;
   canPickup: boolean;
+  /** 允许的身体动词白名单；null = 不限制（缺省行为）。由 PlayerActionSystem 消费。 */
+  allowedVerbs: string[] | null;
+}
+
+/**
+ * 区域级 E 交互接线（由组装层给闭包，InteractionSystem 不持有 ZoneSystem 引用）。
+ * `peek` 只报「当前活跃区里有没有配 onInteract 的」，优先级判定留在本系统。
+ */
+export interface ZoneInteractBinding {
+  peek: () => { zoneId: string; label: string } | null;
+  dispatch: (zoneId: string) => boolean;
 }
 
 export class InteractionSystem implements IGameSystem {
@@ -60,6 +80,13 @@ export class InteractionSystem implements IGameSystem {
   private groupConditions: ((groupId: string) => ConditionExpr[] | undefined) | null = null;
   /** 位面交互门闸 getter；null = 不限制（现状行为） */
   private planePolicy: (() => PlaneInteractionPolicy) | null = null;
+  /** 图入口探针：某图有没有叫这个名字的节点（Game 用已缓存的图 JSON 同步作答）。 */
+  private graphHasEntry: ((graphId: string, entry: string) => boolean) | null = null;
+  /** 区域级 E 交互（ZoneDef.onInteract）；null = 未接线，行为与旧版完全一致。 */
+  private zoneInteract: ZoneInteractBinding | null = null;
+  /** 当前正出「按 E」提示的 zone id；null = 没出。只在变化时发事件，不每帧刷 UI。 */
+  private promptedZoneId: string | null = null;
+  private promptedZoneLabel = '';
 
   constructor(eventBus: EventBus, flagStore: FlagStore, inputManager: InputManager) {
     this.eventBus = eventBus;
@@ -119,6 +146,24 @@ export class InteractionSystem implements IGameSystem {
   /** 注入/清除位面交互门闸（由 PlaneReconciler 按激活位面设/清）。 */
   setPlaneInteractionPolicy(fn: (() => PlaneInteractionPolicy) | null): void {
     this.planePolicy = fn;
+  }
+
+  /** 注入图入口探针（Game 用 AssetManager 已缓存的图 JSON 同步作答）。 */
+  setGraphEntryProbe(fn: ((graphId: string, entry: string) => boolean) | null): void {
+    this.graphHasEntry = fn;
+  }
+
+  /** 注入/清除区域级 E 交互接线（组装层给 ZoneSystem 的闭包）。清除时收起在显提示。 */
+  setZoneInteractBinding(binding: ZoneInteractBinding | null): void {
+    this.zoneInteract = binding;
+    if (!binding) this.setPromptedZone(null);
+  }
+
+  /** 实体身上「按 E 会开哪张图」——动词路由与它共用同一张图。 */
+  private graphIdOfHotspot(def: HotspotDef): string {
+    if (def.type !== 'inspect') return '';
+    const d = def.data as InspectData;
+    return typeof d.graphId === 'string' ? d.graphId.trim() : '';
   }
 
   setHotspots(hotspots: Hotspot[]): void {
@@ -182,7 +227,8 @@ export class InteractionSystem implements IGameSystem {
 
   update(_dt: number): void {
     if (!this.playerPosGetter) return;
-    if (this.hotspots.length === 0 && this.npcs.length === 0) return;
+    // 场景里一个可交互实体都没有时仍要跑区域级 E 那条（zone 不是实体，不在这两个数组里）。
+    if (this.hotspots.length === 0 && this.npcs.length === 0 && !this.zoneInteract) return;
 
     const pos = this.playerPosGetter();
     let closestTarget: InteractableTarget | null = null;
@@ -243,12 +289,22 @@ export class InteractionSystem implements IGameSystem {
       this.showCurrentPrompt();
     }
 
+    // 区域级 E：目标级优先——有实体接住 E 时本区不出提示也不触发（与身体动词同一套优先级）。
+    // 位面总闸 canInteractHotspots 关掉时区域交互一并关（否则「这个位面不许碰东西」被绕过）。
+    const zoneCandidate =
+      closestTarget || (policy && !policy.canInteractHotspots) || !this.zoneInteract
+        ? null
+        : this.zoneInteract.peek();
+    this.setPromptedZone(zoneCandidate);
+
     if (closestTarget && this.inputManager.wasKeyJustPressed('KeyE')) {
       // 同帧 E 触发 autoTrigger 热点也写入已触发标记，防止下一帧 auto 路径双发
       if (closestTarget.kind === 'hotspot' && closestTarget.hotspot?.def.autoTrigger) {
         this.autoTriggeredInRange.add(closestTarget.hotspot);
       }
       this.triggerTarget(closestTarget);
+    } else if (this.promptedZoneId && this.inputManager.wasKeyJustPressed('KeyE')) {
+      this.zoneInteract?.dispatch(this.promptedZoneId);
     } else if (closestTarget?.kind === 'hotspot' && closestTarget.hotspot?.def.autoTrigger) {
       const h = closestTarget.hotspot;
       if (!this.autoTriggeredInRange.has(h)) {
@@ -256,6 +312,102 @@ export class InteractionSystem implements IGameSystem {
         this.triggerTarget(closestTarget);
       }
     }
+  }
+
+  /**
+   * 找当前最近的、**图里有以该动词命名的 entry** 的目标（供动词按下时路由）。
+   *
+   * 判定口径与按 E 完全一致：同一套目标集、同一个 interactionRange、同一个位面闸、
+   * 同一份 conditions——唯一的差别是"这个目标吃不吃这个动词"由**它自己那张图有没有
+   * 这个入口**回答，而不是靠实体上另开一张响应表。图里没有 `kick` 入口＝踢不动它。
+   */
+  findNearestVerbGraphTarget(verb: PlayerVerb): {
+    kind: 'hotspot' | 'npc';
+    id: string;
+    name: string;
+    graphId: string;
+    x: number;
+    y: number;
+  } | null {
+    if (!this.playerPosGetter || !this.graphHasEntry) return null;
+    const pos = this.playerPosGetter();
+    const policy = this.planePolicy?.() ?? null;
+    let best: { kind: 'hotspot' | 'npc'; id: string; name: string; graphId: string; x: number; y: number } | null = null;
+    let bestDist = Infinity;
+
+    const consider = (
+      kind: 'hotspot' | 'npc',
+      id: string,
+      name: string,
+      graphId: string,
+      x: number,
+      y: number,
+      range: number,
+    ): void => {
+      if (!graphId || !this.graphHasEntry?.(graphId, verb)) return;
+      const dx = pos.x - x;
+      const dy = pos.y - y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > range || dist >= bestDist) return;
+      best = { kind, id, name, graphId, x, y };
+      bestDist = dist;
+    };
+
+    for (const hotspot of this.hotspots) {
+      if (!hotspot.active) continue;
+      if (policy && !policy.canInteractHotspots) continue;
+      if (hotspot.def.conditions?.length && !this.evalConditionsList(hotspot.def.conditions)) continue;
+      consider(
+        'hotspot',
+        hotspot.def.id,
+        hotspot.def.label || hotspot.def.id,
+        this.graphIdOfHotspot(hotspot.def),
+        hotspot.centerX,
+        hotspot.centerY,
+        hotspot.effectiveInteractionRange,
+      );
+    }
+    for (const npc of this.npcs) {
+      if (!npc.container.visible) continue;
+      if (policy && !policy.canTalkNpcs) continue;
+      if (npc.def.conditions?.length && !this.evalConditionsList(npc.def.conditions)) continue;
+      consider(
+        'npc',
+        npc.entityId,
+        npc.def.name,
+        (npc.def.dialogueGraphId || '').trim(),
+        npc.x,
+        npc.y,
+        npc.effectiveInteractionRange,
+      );
+    }
+    return best;
+  }
+
+  /**
+   * 找当前最近的、支持该动词的 `act_spot`（躺点 / 跨点）。
+   * act_spot 不出 E 提示（`hotspotOffersPlayerInteraction` 对它返回 false），只出动词提示。
+   */
+  findNearestActSpot(verb: PlayerVerb): { id: string; data: ActSpotData; label: string } | null {
+    if (!this.playerPosGetter) return null;
+    const pos = this.playerPosGetter();
+    const policy = this.planePolicy?.() ?? null;
+    if (policy && !policy.canInteractHotspots) return null;
+    let best: { id: string; data: ActSpotData; label: string } | null = null;
+    let bestDist = Infinity;
+    for (const hotspot of this.hotspots) {
+      if (hotspot.def.type !== 'act_spot' || !hotspot.active) continue;
+      const data = hotspot.def.data as ActSpotData | undefined;
+      if (!data || !Array.isArray(data.verbs) || !data.verbs.includes(verb)) continue;
+      if (hotspot.def.conditions?.length && !this.evalConditionsList(hotspot.def.conditions)) continue;
+      const dx = pos.x - hotspot.centerX;
+      const dy = pos.y - hotspot.centerY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > hotspot.effectiveInteractionRange || dist >= bestDist) continue;
+      best = { id: hotspot.def.id, data, label: hotspot.def.label || hotspot.def.id };
+      bestDist = dist;
+    }
+    return best;
   }
 
   /** 玩家视角：当前能看到的实体（可见 NPC、active 热区/出口），只含玩家可感知字段。 */
@@ -355,6 +507,29 @@ export class InteractionSystem implements IGameSystem {
     return a.npc === b.npc;
   }
 
+  /**
+   * 区域级 E 提示的唯一写入口：只在「哪个 zone 在出提示」真的变了时发事件。
+   * 文案变化也算变（同 zone 换了 interactLabel 要重排提示条）。
+   */
+  private setPromptedZone(next: { zoneId: string; label: string } | null): void {
+    if (next === null) {
+      if (this.promptedZoneId === null) return;
+      this.promptedZoneId = null;
+      this.promptedZoneLabel = '';
+      this.eventBus.emit('zone:interactUnavailable', {});
+      return;
+    }
+    if (this.promptedZoneId === next.zoneId && this.promptedZoneLabel === next.label) return;
+    this.promptedZoneId = next.zoneId;
+    this.promptedZoneLabel = next.label;
+    this.eventBus.emit('zone:interactAvailable', { zoneId: next.zoneId, label: next.label });
+  }
+
+  /** 只读：当前出「按 E」提示的 zone id（调试快照 / 无头验证用）。 */
+  getPromptedZoneId(): string | null {
+    return this.promptedZoneId;
+  }
+
   private hideCurrentPrompt(): void {
     if (!this.nearestTarget) return;
     if (this.nearestTarget.kind === 'hotspot') this.nearestTarget.hotspot?.hidePrompt();
@@ -384,9 +559,13 @@ export class InteractionSystem implements IGameSystem {
     this.clearNpcs();
     this.nearestTarget = null;
     this.autoTriggeredInRange.clear();
+    // 提示条挂在 HUD 上，本系统销毁不会自动带走它：先收提示再断接线。
+    this.setPromptedZone(null);
+    this.zoneInteract = null;
     this.playerPosGetter = null;
     this.hotspotBaseEnabled = null;
     this.npcBaseVisible = null;
     this.planePolicy = null;
+    this.graphHasEntry = null;
   }
 }

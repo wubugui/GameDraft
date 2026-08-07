@@ -1,4 +1,4 @@
-import { BaseEdge, getBezierPath, type EdgeProps } from '@xyflow/react';
+import { BaseEdge, type EdgeProps } from '@xyflow/react';
 import {
   displayEdgeLabel,
   resolveStyledEdgeLabel,
@@ -6,6 +6,7 @@ import {
   styledEdgeLabelWidth,
 } from '../edgeLabels';
 import type { CanvasEdge } from '../types';
+import { routedEdgePath } from './edgeRouting';
 
 export function edgeColor(kind: string): string {
   if (kind === 'transition') return '#d9a441';
@@ -21,7 +22,13 @@ export const flowEdgeTypes = {
 };
 
 export function StyledEdge(props: EdgeProps<CanvasEdge>) {
-  const [path, labelX, labelY] = getBezierPath(props);
+  // 路由由 canvas/edgeRouting 统一算（进出侧写在 handle 上、错开量走 data.route）；
+  // offset=0 且非自环时内部仍走原生贝塞尔，既有单边逐点不变。
+  const [path, labelX, labelY] = routedEdgePath({
+    ...props,
+    offset: props.data?.route?.offset ?? 0,
+    selfLoop: props.data?.route?.selfLoop ?? props.source === props.target,
+  });
   const kind = props.data?.edgeKind ?? 'transition';
   const selected = props.selected === true;
   const fullLabel = resolveStyledEdgeLabel(props);

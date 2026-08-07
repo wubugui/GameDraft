@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "id": "生态_看_码头_木桶",
+  "entry": "root",
+  "meta": {
+    "title": "货栈门口的桐油桶（眼力分叉；一拍：船工侧目）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "narrative": "eco_眼力",
+              "state": "眼尖",
+              "reached": true
+            }
+          ],
+          "next": "yan1"
+        }
+      ],
+      "defaultNext": "ri1"
+    },
+    "ri1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "三只桶靠墙码起，箍是新换的。指拇抹一把桶壁——桐油，滑得很。",
+      "next": "act_ri"
+    },
+    "yan1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "桶底那圈印子比桶身宽——先前装的不是桐油，是更重的东西。搬空咯才换的箍。",
+      "next": "act_ri"
+    },
+    "act_ri": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "faceEntity",
+          "params": {
+            "target": "eco_dk_船工",
+            "faceTarget": "player"
+          }
+        },
+        {
+          "type": "showEmote",
+          "params": {
+            "target": "eco_dk_船工",
+            "emote": "?",
+            "duration": 1200
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "end": {
+      "type": "end"
+    }
+  }
+}

@@ -6,6 +6,7 @@ import type { AssetManager } from '../core/AssetManager';
 import type { CutsceneKenBurns, AnimationSetDef, ParallaxSceneDef, ParallaxLayerDef, ParallaxKeyframe } from '../data/types';
 import { CUTSCENE_ANON_SHOT_ID } from '../data/types';
 import { DEFAULT_SPEAKER_SIDE, type SpeakerSide } from '../utils/dialogueSpeakerSide';
+import { createStyledText } from '../core/styledText';
 
 /**
  * 过场对话框(present:showDialogue)的观感样式，由组装层(Game)注入，令其与常规对话框
@@ -14,17 +15,33 @@ import { DEFAULT_SPEAKER_SIDE, type SpeakerSide } from '../utils/dialogueSpeaker
  * 都在 Game 里绑好再传进来。未注入时 showDialogueBox 走朴素兜底底框(测试/未接线场景)。
  */
 export interface CutsceneDialoguePanelStyle {
-  /** 画对话框底：与常规对话框同皮(SKINS.dialogue) */
-  drawBox: (g: Graphics, x: number, y: number, w: number, h: number) => void;
-  /** 画说话人名牌底(SKINS.panelAlt) */
-  drawSpeakerPlate: (g: Graphics, x: number, y: number, w: number, h: number) => void;
-  /** 画主角说话人名牌底(SKINS.speakerSelf)——「这句是你说的」的标记，与右侧站位互为冗余 */
-  drawSelfSpeakerPlate: (g: Graphics, x: number, y: number, w: number, h: number) => void;
+  /**
+   * 建对话框底：与常规对话框同皮(SKINS.dialogue)。
+   *
+   * **返回容器而不是画进 Graphics**：皮肤里的做旧木框是九宫格 Sprite，塞不进 Graphics。
+   * 原来这三个钩子是 `(g,…)=>void`，于是过场对白框永远只有平底、没有木框和内金线，
+   * 跟常规对话框摆在同一段戏里材质对不上。
+   */
+  buildBox: (x: number, y: number, w: number, h: number) => Container;
+  /** 建说话人名牌底(SKINS.nameplate) */
+  buildSpeakerPlate: (x: number, y: number, w: number, h: number) => Container;
+  /** 建主角说话人名牌底(SKINS.speakerSelf)——「这句是你说的」的标记，与右侧站位互为冗余 */
+  buildSelfSpeakerPlate: (x: number, y: number, w: number, h: number) => Container;
   speakerColor: number;
   /** 主角说话人名字色（UITheme.colors.speakerSelf） */
   selfSpeakerColor: number;
   bodyColor: number;
   fontFamily: string;
+  /** 名字用的展示字族；不给就退回 fontFamily（与常规对话框名牌保持同一套字） */
+  displayFontFamily?: string;
+  /**
+   * 建「继续」点捺（等玩家推进的那枚小记号）。
+   *
+   * **走注入而不是 import**：件在 ui 层，渲染层不反向依赖（架构铁律一），
+   * 与上面三个 build* 钩子同一范式。返回值自带 `update(dt)`——过场对白框是静态一句、
+   * 没有打字机，所以由 CutsceneManager 的帧驱动喂它；不注入就不画（测试/未接线）。
+   */
+  buildContinueMark?: (x: number, y: number) => { view: Container; update: (dt: number) => void };
 }
 
 /** 字幕位置：top/center/bottom 或 0-1 表示距底部高度比例 */
@@ -113,6 +130,10 @@ export class CutsceneRenderer {
   /** 逐 id 的图片请求序号：同 id 并发时后发覆盖先发（晚 resolve 的旧请求丢弃） */
   private imageRequestSeq = new Map<string, number>();
   private unsubscribeResize: (() => void) | null = null;
+  /** 屏上还活着的过场对白框数量：供屏底提示语让开那一条（不让就横穿它的底部木框） */
+  private liveDialogueBoxes = 0;
+  /** 活着的「继续」点捺，逐帧驱动它们的浮动；对白框销毁时自行摘除 */
+  private dialogueMarks = new Set<{ view: Container; update: (dt: number) => void }>();
   constructor(renderer: Renderer, camera: Camera, assetManager: AssetManager) {
     this.renderer = renderer;
     this.camera = camera;
@@ -160,12 +181,13 @@ export class CutsceneRenderer {
   ): Text | HTMLText {
     const ww = Math.max(80, wrapW);
     if (typeof content === 'string') {
-      return new Text({
+      return createStyledText({
         text: content,
         style: {
           fontSize: 18,
           fill: 0xffffff,
-          fontFamily: 'sans-serif',
+          // 字族由组装层注入（UI 层的主题，渲染层不反向依赖）；缺注入时回落系统族。
+          fontFamily: this.dialoguePanelStyle?.fontFamily ?? 'sans-serif',
           wordWrap: true,
           wordWrapWidth: ww,
           align: pixiAlign,
@@ -177,7 +199,7 @@ export class CutsceneRenderer {
       style: {
         fontSize: 18,
         fill: '#ffffff',
-        fontFamily: 'sans-serif',
+        fontFamily: this.dialoguePanelStyle?.fontFamily ?? 'sans-serif',
         wordWrap: true,
         wordWrapWidth: ww,
         align: pixiAlign,
@@ -314,7 +336,7 @@ export class CutsceneRenderer {
     bg.fill({ color: 0x000000, alpha: 0.8 });
     tc.addChild(bg);
 
-    const t = new Text({
+    const t = createStyledText({
       text: this.r(text),
       style: { fontSize: 36, fill: 0xffeecc, fontFamily: 'serif', fontWeight: 'bold', align: 'center' },
     });
@@ -361,15 +383,29 @@ export class CutsceneRenderer {
     const sw = this.screenWidth;
     const sh = this.screenHeight;
 
-    // 与 DialogueUI 同几何常量
+    // 与 DialogueUI 同几何常量（⚠ 那边改了这里要跟）
     const BOX_MARGIN = 20;
-    const BOX_HEIGHT = 140;
-    const TEXT_PADDING = 20;
+    /** 框高 = 正文遮罩顶 26 + 4 行 × 40 + 下留白 20；与 DialogueUI 的 BOX_HEIGHT 同一算式 */
+    const BOX_HEIGHT = 206;
+    const TEXT_PADDING = 32;
+    /** 说话人名牌【骑在框上沿】：牌高 56、凸出框顶 34（余下压在木条上），与 DialogueUI 同口径 */
+    const PLATE_HEIGHT = 56;
+    const PLATE_RISE = 34;
+    const PLATE_PAD_X = 16;
+    const PLATE_INSET_X = 20;
+    /** 正文：首行顶距框顶 28、行距 40（1.6 × 字号），与 DialogueUI 同口径 */
+    const BODY_TOP = 28;
+    const BODY_LINE_HEIGHT = 40;
+    /** 说话人名 = UITheme.fontSize.title（30）；正文 = bodyLarge（25）。名字是标签、台词是正文，不同号 */
+    const SPEAKER_FONT_SIZE = 30;
+    const BODY_FONT_SIZE = 25;
     // 立绘构图【刻意复刻】DialogueUI 的锁定值（240px、锚点(0.5,1)、底边出画、让位 248），
     // 独立一份而非共享——确保过场外的 playScriptedDialogue/DialogueUI 路径零改动。
     // ⚠ 若 DialogueUI 的立绘构图改动，此处需同步。
-    const PORTRAIT_SIZE = 240;
+    const PORTRAIT_SIZE = 360;
     const PORTRAIT_INSET = 248;
+    /** 立绘上移量，与 DialogueUI 的 PORTRAIT_LIFT 同值（那边改了这里要跟） */
+    const PORTRAIT_LIFT = 0;
     const boxWidth = sw - BOX_MARGIN * 2;
     const boxY = sh - BOX_HEIGHT - BOX_MARGIN;
 
@@ -387,14 +423,14 @@ export class CutsceneRenderer {
 
     const box = new Container();
 
-    const bg = new Graphics();
     if (style) {
-      style.drawBox(bg, BOX_MARGIN, boxY, boxWidth, BOX_HEIGHT);
+      box.addChild(style.buildBox(BOX_MARGIN, boxY, boxWidth, BOX_HEIGHT));
     } else {
       // 未注入(测试/未接线)：朴素兜底底框，非皮肤系统的复制
+      const bg = new Graphics();
       bg.roundRect(BOX_MARGIN, boxY, boxWidth, BOX_HEIGHT, 4).fill({ color: 0x1a1526, alpha: 0.92 });
+      box.addChild(bg);
     }
-    box.addChild(bg);
 
     // 立绘压面板前景（底边伸出画面外，脸永不被框遮）；缺图静默收起，正文空间已让出。
     if (hasPortrait) {
@@ -413,7 +449,7 @@ export class CutsceneRenderer {
         sprite.x = side === 'right'
           ? sw - BOX_MARGIN - PORTRAIT_SIZE / 2
           : BOX_MARGIN + PORTRAIT_SIZE / 2;
-        sprite.y = sh + 4;
+        sprite.y = sh + 4 - PORTRAIT_LIFT;
         sprite.visible = true;
       };
       const cached = this.assetManager.getTexture(path);
@@ -426,47 +462,76 @@ export class CutsceneRenderer {
 
     const speakerR = speaker ? this.r(speaker) : '';
     if (speakerR) {
-      const spText = new Text({
+      const spText = createStyledText({
         text: speakerR,
-        style: { fontSize: 15, fill: speakerColor, fontFamily, fontWeight: 'bold' },
+        style: {
+          fontSize: SPEAKER_FONT_SIZE, fill: speakerColor, fontWeight: 'bold', letterSpacing: 4,
+          // 名字走展示字族，与常规对话框的骑边名牌同一套字（不给就退回正文字族）
+          fontFamily: style?.displayFontFamily ?? fontFamily,
+        },
       });
-      const plateY = boxY + 8;
-      const plateH = 26;
-      const maxW = sw - BOX_MARGIN * 2 - 24 - inset;
-      const plateW = Math.min(spText.width + 24, maxW);
+      // 骑边：牌子上沿抬到框顶之上，下沿压在木条里侧（与 DialogueUI 同口径）
+      const plateY = boxY - PLATE_RISE;
+      const maxW = sw - BOX_MARGIN * 2 - PLATE_INSET_X * 2 - inset;
+      const plateW = Math.min(spText.width + PLATE_PAD_X * 2, maxW);
       // 名牌恒定贴左（只让开左侧立绘）——与 DialogueUI 同口径，避免底栏名字左右跳
-      const plateX = BOX_MARGIN + 12 + insetLeft;
-      const plate = new Graphics();
+      const plateX = BOX_MARGIN + PLATE_INSET_X + insetLeft;
       if (style) {
-        const drawPlate = isSelf ? style.drawSelfSpeakerPlate : style.drawSpeakerPlate;
-        drawPlate(plate, plateX, plateY, plateW, plateH);
+        const buildPlate = isSelf ? style.buildSelfSpeakerPlate : style.buildSpeakerPlate;
+        box.addChild(buildPlate(plateX, plateY, plateW, PLATE_HEIGHT));
       } else {
-        plate.roundRect(plateX, plateY, plateW, plateH, 4).fill({ color: 0x000000, alpha: 0.35 });
+        const plate = new Graphics();
+        plate.roundRect(plateX, plateY, plateW, PLATE_HEIGHT, 4).fill({ color: 0x000000, alpha: 0.35 });
+        box.addChild(plate);
       }
-      box.addChild(plate);
-      spText.x = plateX + 12;
-      spText.y = plateY + 5;
+      spText.x = plateX + PLATE_PAD_X;
+      spText.y = plateY + Math.round((PLATE_HEIGHT - spText.height) / 2);
       box.addChild(spText);
     }
 
-    const bodyText = new Text({
+    const bodyText = createStyledText({
       text: this.r(text),
       style: {
-        fontSize: 15,
+        fontSize: BODY_FONT_SIZE,
         fill: bodyColor,
         fontFamily,
         wordWrap: true,
         breakWords: true,
         wordWrapWidth: boxWidth - TEXT_PADDING * 2 - inset,
-        lineHeight: 22,
+        lineHeight: BODY_LINE_HEIGHT,
       },
     });
     bodyText.x = BOX_MARGIN + TEXT_PADDING + insetLeft;
-    bodyText.y = boxY + 46;
+    bodyText.y = boxY + BODY_TOP;
     box.addChild(bodyText);
 
+    // 「继续」点捺：框底**居中**。两侧都可能站立绘（side 由数据决定），
+    // 钉在右下角必然被右侧立绘压住——与 DialogueUI 同一口径。
+    const mk = style?.buildContinueMark?.(
+      BOX_MARGIN + boxWidth / 2,
+      boxY + BOX_HEIGHT - TEXT_PADDING - 18,
+    );
+    if (mk) {
+      box.addChild(mk.view);
+      this.dialogueMarks.add(mk);
+      box.once('destroyed', () => this.dialogueMarks.delete(mk));
+    }
+
     this.renderer.uiLayer.addChild(box);
+    // 记账：生命周期归 CutsceneManager，这里只在它被销毁时把计数减回去
+    this.liveDialogueBoxes += 1;
+    box.once('destroyed', () => { this.liveDialogueBoxes = Math.max(0, this.liveDialogueBoxes - 1); });
     return box;
+  }
+
+  /** 屏底此刻是否有过场对白框占着。 */
+  hasDialogueBox(): boolean {
+    return this.liveDialogueBoxes > 0;
+  }
+
+  /** 每帧驱动过场对白框上那枚「继续」点捺的浮动（由组装层的主 tick 调）。 */
+  tickDialogueMarks(dt: number): void {
+    for (const m of this.dialogueMarks) m.update(dt);
   }
 
   dismissDialogueBox(box: Container): void {

@@ -1,19 +1,21 @@
 ---
 id: cutscene-step-semantics
-title: 过场步骤语义(parallel/镜头位/字幕推进)
+title: 过场步骤语义(parallel/镜头位/运镜/字幕推进)
 domain: runtime
 type: mechanism
-summary: parallel 是 fork-join 组内无时序;匿名镜头位自动顶掉;showImg 有 kenBurns/zIndex;subtitleAutoAdvance 三态——编排过场先认这套边界
+summary: parallel 是 fork-join 组内无时序;匿名镜头位自动顶掉;运镜受相机夹紧约束、跳过快进到编排终姿;subtitleAutoAdvance 三态
 status: active
 authority:
   - src/systems/CutsceneManager.ts
+  - src/systems/CutsceneManager.ts#applyFinalCameraPoseForSkip
   - src/rendering/CutsceneRenderer.ts
+  - src/rendering/Camera.ts#getSceneBaseZoom
   - src/data/types.ts#CUTSCENE_ANON_SHOT_ID
   - src/core/GameStateController.ts#handleEscape
 triggers:
   paths: ["src/systems/CutsceneManager.ts", "src/rendering/CutsceneRenderer.ts", "public/assets/data/cutscenes*"]
-  topics: [过场, cutscene, parallel, kenBurns, 字幕, showImg]
-last_governed: 2026-07-11
+  topics: [过场, cutscene, parallel, kenBurns, 字幕, showImg, 运镜, cameraMove, cameraZoom]
+last_governed: 2026-08-05
 ---
 
 ## 是什么(一句话)
@@ -22,23 +24,44 @@ cutscene 声画编排可用的原语边界:哪些时序纯数据做得到、哪�
 
 ## 权威源(读代码从哪进)
 
-`CutsceneManager.ts`(step 执行/parallel/字幕)、`CutsceneRenderer.ts`(showImg/kenBurns/图层)。present 类型清单三处必须一致:CutsceneManager.executePresent / validator / timeline_editor。
+`CutsceneManager.ts`(step 执行 / parallel / 字幕 / 跳过终姿)、`CutsceneRenderer.ts`(showImg/kenBurns/图层)、
+`Camera.ts`(夹紧与场景基线缩放)。present 类型清单三处必须一致:CutsceneManager.executePresent / validator / timeline_editor。
 
 ## 硬契约(违反即 bug)
 
-- **parallel 是 fork-join**:tracks 同时启动、全部完成才继续,组内**没有 sequence**,"先等 N 秒再做 X"纯数据做不到(是 L2 候选,不要硬凑)。可行替代:`parallel{flashWhite|showImg}` 白闪盖切图、`parallel{playSfx|showSubtitle}` 音效随字幕起。skip 用 race 放弃在途轨道,靠步代际终止,别绕过。
-- **匿名镜头位**:showImg 不写 `id` / parallaxScene 不写 `handle` → 共用内部槽 `CUTSCENE_ANON_SHOT_ID`,任何新镜头(含具名 parallaxScene)挂载时自动顶掉+杀在途加载;**具名 showImg 不顶匿名槽**(它可能是压在镜头上的 FX 叠层);`hideImg` 不写 id 也指匿名槽。语义=「不写句柄=自动销毁,写了=手动管理」。
-- **showImg**:`kenBurns`(缓推缓移,fire-and-forget 不阻塞,hideImg/换图/跳过即停)、`zIndex`(parallel 并发加载 z 序不定,多层合成**必须**显式 zIndex;电影黑边恒 10000)。渲染器只支持静态纹理+kenBurns,真动画 FX 走 present:animLayer。
-- **showSubtitle 的 `subtitleAutoAdvance`**:`"voice"`=配音自然播完自动推进(配音缺失/加载失败/手动停都退化为等点击)、正数=毫秒定时、缺省=等点击;点击始终可提前跳。
+- **parallel 是 fork-join**:tracks 同时启动、全部完成才继续,组内**没有 sequence**,
+  "先等 N 秒再做 X"纯数据做不到(L2 候选,不要硬凑)。可行替代:`parallel{flashWhite|showImg}`、
+  `parallel{playSfx|showSubtitle}`。skip 用 race 放弃在途轨道、靠步代际终止,别绕过。
+- **匿名镜头位**:showImg 不写 `id` / parallaxScene 不写 `handle` → 共用内部槽 `CUTSCENE_ANON_SHOT_ID`,
+  任何新镜头(含具名 parallaxScene)挂载时自动顶掉 + 杀在途加载;**具名 showImg 不顶匿名槽**
+  (它可能是压在镜头上的 FX 叠层);`hideImg` 不写 id 也指匿名槽。语义 =「不写句柄 = 自动销毁,写了 = 手动管理」。
+- **运镜受相机夹紧约束**:世界尺寸 ≤ 当前视口时相机中心被钉在世界中心,`cameraMove` 全程 no-op
+  ——必须**先 `cameraZoom` 收小视口再 move**,顺序反了照样不动。
+- **`cameraZoom` 的 scale 缺省/≤0 = 恢复场景配置基线**(`scene.camera.zoom`),
+  内容侧勿写基线字面量。
+- **`restoreState:false` 的过场被跳过时,引擎快进相机到编排终姿**(steps 里最后的
+  cameraMove/cameraZoom 目标值,先 zoom 后 snap 保证夹紧正确),与自然播完一致——编排者可依赖此语义。
+- **showImg**:`kenBurns`(缓推缓移,fire-and-forget 不阻塞,hideImg/换图/跳过即停)、`zIndex`
+  (parallel 并发加载 z 序不定,多层合成**必须**显式 zIndex;电影黑边恒 10000)。渲染器只支持
+  静态纹理 + kenBurns,真动画 FX 走 present:animLayer。
+- **`subtitleAutoAdvance`**:`"voice"` = 配音自然播完自动推进(配音缺失/加载失败/手动停都退化为
+  等点击)、正数 = 毫秒定时、缺省 = 等点击;点击始终可提前跳。
+- **串行 step 一次一个,上一步必须先上屏**:`executeOneStep` 的帧屏障是语义不是优化,
+  后人不得为省帧把连续同步步合并回同一帧(白名单里多数 action 是同步 handler,合并即静默丢步)。
 - playSfx 支持 action 级 `volume`(0–1,替换 entry 基础音量再乘全局)。
 
 ## 已知坑
 
+- **一帧 ≈16ms 人眼仍看不见**:帧屏障只保证"这一步真的发生过",要被看见的节拍必须用
+  `present:waitTime` 授权时长——别指望屏障替编排者决定停留多久。
 - 全屏插画下 `subtitleEmote` 气泡被 cutsceneOverlay 盖住不可见——别往全屏图字幕上挂 emote。
 - 分层视差的前景句柄要管完整生命周期:每个基帧要么 show 要么 hideImg,结尾也要 hide,否则残留到后帧。
 
 ## 怎么验证
 
-改完跑 validate-data+素材审计+过场往返测试;真跑用 [runtime-command-channel](../recipes/runtime-command-channel.md)(触发→playerTap 连点→查 console);带字幕过场无头会卡,见 [headless-visual-verification](../recipes/headless-visual-verification.md)。
+改完跑 validate-data + 素材审计 + 过场往返测试;真跑用 [runtime-command-channel](../recipes/runtime-command-channel.md)
+(触发 → playerTap 连点 → 查 console);带字幕过场无头会悬死,见 [headless-visual-verification](../recipes/headless-visual-verification.md)。
 
-**任何过场按 `Esc` 整段跳过**(`GameStateController.handleEscape` → `CutsceneManager.skip()`,race 放弃在途轨道)。验证长过场别干等——走命令通道跳到过场后状态断言;**注意 computer-use 的 key 事件未必送达游戏 canvas**(实测浏览器自动化按 Esc 不生效),这也是"测试走命令通道、不点像素"的又一佐证。
+**任何过场按 `Esc` 整段跳过**(`GameStateController.handleEscape` → `CutsceneManager.skip()`)。
+验证长过场别干等——走命令通道跳到过场后状态断言;**computer-use 的 key 事件未必送达游戏 canvas**
+(实测按 Esc 不生效),这也是"测试走命令通道、不点像素"的又一佐证。

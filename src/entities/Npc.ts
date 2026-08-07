@@ -6,6 +6,8 @@ import type {
   ICutsceneActor,
   NpcInitialAnimPlayback,
 } from '../data/types';
+import { createStyledText } from '../core/styledText';
+import { stepWithCollision } from '../utils/collisionStep';
 
 /**
  * 场景数据里的初始播放参数消毒：与动作层同口径——speed 须 >0，holdFrame/startFrame
@@ -32,6 +34,7 @@ function sanitizeInitialAnimPlayback(
 }
 import { portraitSlugFromAnimFile } from '../data/characterRegistry';
 import type { TexelsPerWorld } from '../rendering/EntityPixelDensityMatch';
+import type { ResolvedSockets } from '../data/animationSockets';
 import { SpriteEntity, type LitShaderProvider } from '../rendering/SpriteEntity';
 import {
   entityRotationRadOf,
@@ -49,6 +52,11 @@ export class Npc implements ICutsceneActor {
   public readonly def: NpcDef;
   public container: Container;
   private sprite: SpriteEntity | null = null;
+
+  /** 只读：本 NPC 的精灵（挂点住在它上面）；没装精灵时 null。 */
+  get spriteEntity(): SpriteEntity | null {
+    return this.sprite;
+  }
   private marker: Graphics | null = null;
   private nameLabel: Text;
   private promptIcon: Text | null = null;
@@ -61,7 +69,7 @@ export class Npc implements ICutsceneActor {
     y: number;
     speed: number;
     resolve: () => void;
-    /** false：仅在段起点 setFacing 一次（巡逻/旧演出）；true：段内每帧随运动方向更新左右镜像 */
+    /** false：完全不碰朝向（保持位移前的朝向）；true：段内每帧随运动方向更新左右镜像 */
     faceTowardMovement: boolean;
     /** 段末收尾动画：undefined=回 restAnimState；字符串=播该状态；null=不切（折线中途点） */
     arriveAnimState: string | null | undefined;
@@ -89,6 +97,15 @@ export class Npc implements ICutsceneActor {
   private patrolSkipWaypointAdvance = false;
   /** 与玩家开对话前记录的 `container.scale.x`（含左右镜像），结束时还原 */
   private facingScaleXBeforeDialogue: number | null = null;
+
+  /**
+   * 行走面碰撞判定（与 `Player.setDepthCollision` 同模式的注入 getter）。
+   *
+   * **缺省 null = 完全不参与碰撞**，即本仓库既有全部 NPC 的现状行为（巡逻 / 过场 moveTo
+   * 一律穿墙直达，且既有巡逻路线正是按"不挡"编排的）。只有明确需要沿地面自行走路的实体
+   * （同伴跟随）才由 Game 注入——**不要改成默认开**，否则贴墙编排的巡逻会当场卡住。
+   */
+  private depthCollision: ((worldX: number, worldY: number) => boolean) | null = null;
 
   /** 场景透视缩放句柄（Game 在 scene:ready / entitiesRebuilt 注入；不参与时为 null） */
   private perspectiveResolver: PerspectiveScaleResolver | null = null;
@@ -119,15 +136,47 @@ export class Npc implements ICutsceneActor {
     this.marker.fill({ color: 0x55aa55, alpha: 0.8 });
     this.container.addChild(this.marker);
 
-    this.nameLabel = new Text({
+    this.nameLabel = createStyledText({
       text: def.name,
       style: { fontSize: 11, fill: 0xaaddaa, fontFamily: 'sans-serif' },
     });
     this.nameLabel.anchor.set(0.5, 0);
     this.nameLabel.y = 6;
     this.container.addChild(this.nameLabel);
+    // 名字标签是编辑期标记，正式构建恒不可见（marker 不在此列，见 setAuthoringMarkersVisible）
+    this.setAuthoringMarkersVisible(false);
     this.applyInitialFacing();
     this.applyInstanceTransform();
+    this.applySpriteSortBand();
+  }
+
+  /**
+   * 强制叠放档位：与 Hotspot 展示图同一实现——Renderer.sortEntityLayer 认的是容器上的
+   * `entitySortBand`，与实体种类无关，这里只是把 def 的声明打到容器上。
+   * 缺省（未声明）时删掉标记，回落成"只按脚底 Y 排"。
+   */
+  applySpriteSortBand(): void {
+    const c = this.container as Container & { entitySortBand?: 'back' | 'front' };
+    const band = this.def.spriteSort;
+    if (band === 'back' || band === 'front') {
+      c.entitySortBand = band;
+    } else {
+      delete c.entitySortBand;
+    }
+  }
+
+  /**
+   * 编辑期标记（**仅名字标签**）的可见性。**正式构建恒不可见**——玩家不该看到
+   * 任何"这个能交互"的标注（沉浸优先，2026-08-03 拍板）；策划摆位时经 F2 调试面板打开。
+   *
+   * ⚠ **`marker` 刻意不在此列**：它不是标注，是「没有精灵时的占位替身」——
+   * `loadSprite()` 一旦装上精灵就把它置 null，所以有美术的 NPC 本就看不到它。
+   * 会看到它的只有两类：过场 `cutsceneSpawnActor` 生成的临时演员（不走角色注册表、
+   * 无 animFile），以及精灵加载失败的 NPC。把它一起关掉会让前者变成空气、
+   * 让后者的缺件告警静默消失（2026-08-03 审查抓到的回归，勿再合并这两件事）。
+   */
+  setAuthoringMarkersVisible(visible: boolean): void {
+    this.nameLabel.alpha = visible ? 1 : 0;
   }
 
   /**
@@ -183,7 +232,13 @@ export class Npc implements ICutsceneActor {
     }
   }
 
-  loadSprite(texture: Texture, animDef: AnimationSetDef, initialState?: string): void {
+  loadSprite(
+    texture: Texture,
+    animDef: AnimationSetDef,
+    initialState?: string,
+    /** 可选挂点 sidecar（resolveSockets 的结果）；stale 时 SpriteEntity 自会忽略 */
+    sockets?: ResolvedSockets | null,
+  ): void {
     if (this.sprite) {
       this.container.removeChild(this.sprite.container);
       this.sprite.destroy();
@@ -196,7 +251,7 @@ export class Npc implements ICutsceneActor {
     }
 
     this.sprite = new SpriteEntity();
-    this.sprite.loadFromDef(texture, animDef);
+    this.sprite.loadFromDef(texture, animDef, sockets ?? null);
     const want = initialState?.trim();
     const keys = Object.keys(animDef.states);
     const resolved =
@@ -226,6 +281,42 @@ export class Npc implements ICutsceneActor {
     const participates = this.def.perspectiveScaleEnabled ?? !this.def.renderRaw;
     this.perspectiveResolver = participates ? resolver : null;
     this._refreshDepthScale();
+  }
+
+  /**
+   * 注入/清除行走面碰撞（与 `Player.setDepthCollision` 同模式）。null=不参与碰撞（缺省，
+   * 既有全部 NPC 的现状行为）。
+   *
+   * **只被 `steerBy`（自行走位）消费。** `moveTo` / `jumpTo` / 直接写 `x`·`y` 的编排位移
+   * 与瞬移一律不受其约束——与 Player 完全同口径（2026-08-06 拍板）：
+   * 编排位移穿墙直达，只有"自己在走路"的那条路径才被地形挡住。
+   */
+  setDepthCollision(fn: ((worldX: number, worldY: number) => boolean) | null): void {
+    this.depthCollision = fn;
+  }
+
+  /** 当前是否参与行走面碰撞（供调试快照/跟随系统只读判断）。 */
+  get respectsWalkableFloor(): boolean {
+    return this.depthCollision !== null;
+  }
+
+  /**
+   * 自行走位一帧：把 (dx, dy) 的世界位移**逐轴按碰撞钳制**后落到脚点上。
+   * 这是 NPC 侧对应 `Player.update` 自由移动分支的那条路径（跟随系统每帧调它），
+   * 与编排位移 `moveTo` 是两回事——后者不吃碰撞。
+   *
+   * 刻意做成"给多少走多少"的无状态原语：转向、跟随距离、动画切换、朝向全归调用方，
+   * 实体只负责"这一步能不能落下去"。不碰 `moveTarget`，与在途编排位移互不干扰。
+   *
+   * @returns 是否真的挪动了（两轴都被挡时为 false，调用方据此做卡住处理/吸附）
+   */
+  steerBy(dx: number, dy: number): boolean {
+    if (this.container.destroyed) return false;
+    const stepped = stepWithCollision(this._x, this._y, dx, dy, this.depthCollision);
+    // 经 setter 写（同步 container 位置 / 排序脚点 / 透视系数），不要直接改 _x/_y
+    if (stepped.x !== this._x) this.x = stepped.x;
+    if (stepped.y !== this._y) this.y = stepped.y;
+    return stepped.moved;
   }
 
   /** 透视系数（供碰撞多边形换算/调试读取） */
@@ -555,7 +646,11 @@ export class Npc implements ICutsceneActor {
         faceTowardMovement: toward,
         arriveAnimState,
       };
-      this.setFacing(targetX - this._x, targetY - this._y);
+      /** faceTowardMovement=false 表示「完全不碰朝向」（同 Player.moveTo，勿回退成起点偷改一次）：
+       *  巡逻 / 场景组位移这类需要转身的内部调用显式传 true，直线段里逐帧与起点一次等价。 */
+      if (toward) {
+        this.setFacing(targetX - this._x, targetY - this._y);
+      }
       const anim = moveAnimState?.trim();
       if (anim) {
         this.playAnimation(anim);
@@ -588,8 +683,10 @@ export class Npc implements ICutsceneActor {
     const durationSec = Math.max(1, Number.isFinite(durationMs) ? durationMs : 600) / 1000;
     const arcH = Math.max(0, Number.isFinite(arcHeight) ? arcHeight : 0);
     const jumpAnim = jumpAnimState?.trim() || undefined;
-    // 起跳朝向落点一次（faceTowardMovement 时后续每帧再更新）。
-    this.setFacing(targetX - startX, targetY - startY);
+    // 朝向落点（faceTowardMovement 时后续每帧再更新）；不勾选＝完全不碰朝向，同 moveTo。
+    if (faceTowardMovement === true) {
+      this.setFacing(targetX - startX, targetY - startY);
+    }
     // 载入起跳片段并冻结帧推进——帧由 _advanceJump 按移动进度插值（只播一次，不走自走时钟）。
     let frameCount = 1;
     if (jumpAnim) {
@@ -684,6 +781,15 @@ export class Npc implements ICutsceneActor {
         if (t.faceTowardMovement) {
           this.setFacing(dx, dy);
         }
+        /**
+         * **编排位移不吃碰撞**（2026-08-06 拍板，与 Player 对齐）：`Player.moveTo` 一直
+         * 是直接积分、穿墙直达，只有输入驱动的 `Player.update` 吃碰撞。NPC 侧同口径——
+         * 否则 `'player'` 变成受控者别名之后，同一条 `moveEntityTo` 会因为"当前受控的是谁"
+         * 而表现不同。要沿地面自己走路的是 `steerBy`（跟随），不是这里。
+         *
+         * 附带保证：编排位移永远走得到，故 `moveTo` 的 Promise 不存在"被墙挡住而悬挂"
+         * 这一类失败，不需要放弃兜底。
+         */
         this.x += nx * step;
         this.y += ny * step;
         // 步速匹配传**未补偿**速度：精灵与步幅同被 f 缩放，步频对补偿后位移天然吻合
@@ -697,7 +803,7 @@ export class Npc implements ICutsceneActor {
     if (this.showingPrompt) return;
     this.showingPrompt = true;
 
-    this.promptIcon = new Text({
+    this.promptIcon = createStyledText({
       text: 'E',
       style: {
         fontSize: 14,

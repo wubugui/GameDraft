@@ -14,7 +14,7 @@ triggers:
   tasks: [改位面编辑器, 加位面槽字段]
 verified_by:
   - tools/editor/tests/test_plane_editor_inheritance.py
-last_governed: 2026-07-11
+last_governed: 2026-08-05
 ---
 
 ## 是什么(一句话)
@@ -28,16 +28,16 @@ last_governed: 2026-07-11
 
 ## 硬契约
 
-1. dict 槽(movement/interaction/travel 类)用「本位面显式配置此槽」闸门:不勾 = 不写键(继承),控件灰显沿 extends 链解析的生效值;勾 = 写槽。
+1. dict 槽用「本位面显式配置此槽」闸门:不勾 = 不写键(继承),控件灰显沿 extends 链解析的生效值;勾 = 写槽。
 2. **空 `{}` 是合法的"用缺省整槽覆盖父配置"原语**——保存路径不得 pop/丢弃显式空槽(修过的真 bug)。
-3. 标量/枚举槽同理:membership 用三态下拉(继承/显式值);数值槽用「显式写入」勾选——**写 0 也是显式值**,不能拿 falsy 判"未配置"。
+3. 标量/枚举槽同理:三态表达(继承/显式值);数值槽用「显式写入」勾选——**写 0 也是显式值**,不能拿 falsy 判"未配置"。
 4. `resolve_effective_slots` 与运行时 `expandExtends` 必须同口径;`INHERITED_SLOT_KEYS` 两侧 parity 测试锁定,加槽两边一起加。
-5. extends 缺父/成环在 save_all 的 presave 段拦截(与 validator 共享 `plane_extends_errors`)。
+5. extends 缺父/成环在 save_all 的 presave 段拦截(与 validator 共享同一实现)。
 
 ## 已知坑
 
-- 任何"顺手把空 dict 清理掉"的规范化都会破坏语义 2——继承语义下,键的有无本身就是数据。
+- 任何"顺手把空 dict 清理掉"的规范化都会破坏契约 2——继承语义下,键的有无本身就是数据。
 
 ## 怎么验证
 
-`tools/editor/tests/test_plane_editor_inheritance.py`(含 INHERITED_SLOT_KEYS parity);改后跑黄金往返。
+`tools/editor/tests/test_plane_editor_inheritance.py`(含 INHERITED_SLOT_KEYS parity);改后跑黄金往返。校验口径另见 [多图点名决策](../decisions/2026-07-10-plane-multi-graph-declaration-warning.md)。

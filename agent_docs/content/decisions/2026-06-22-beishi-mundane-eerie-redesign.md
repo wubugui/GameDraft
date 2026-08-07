@@ -7,7 +7,7 @@ summary: 开场背尸=先做混子糊口零活(零工背尸_done 闸门)铺日�
 status: active
 triggers:
   topics: [背尸, 开场, 零工, 阿秀反差, pressure hold]
-last_governed: 2026-07-13
+last_governed: 2026-08-05
 ---
 
 > **部分被取代(2026-07-12)**:第一单编排"先经零工工头顺序背两具普通尸(工头派活)"

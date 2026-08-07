@@ -1,0 +1,10 @@
+{
+  "taomu_jian": {
+    "label": "桃木剑（占位图标美术）",
+    "image": "/resources/runtime/images/icons/taomu_sword.png",
+    "anchorX": 0.79,
+    "anchorY": 0.16,
+    "rotation": 0,
+    "scale": 0.5
+  }
+}

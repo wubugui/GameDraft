@@ -4,12 +4,24 @@ import type { Camera } from '../rendering/Camera';
 import type { EventBus } from './EventBus';
 import type { Player } from '../entities/Player';
 import type { InventoryManager } from '../systems/InventoryManager';
+import type { AssetManager } from './AssetManager';
 import type { DebugPanelUI } from '../ui/DebugPanelUI';
-import { NARRATIVE_DEBUG_SECTION_ID, OBJECT_EXAMINE_AMBIENCE_DEBUG_SECTION_ID, OBJECT_EXAMINE_DEBUG_SECTION_ID } from '../ui/DebugPanelUI';
+import {
+  NARRATIVE_DEBUG_SECTION_ID,
+  OBJECT_EXAMINE_AMBIENCE_DEBUG_SECTION_ID,
+  OBJECT_EXAMINE_DEBUG_SECTION_ID,
+  SOCKET_DEBUG_SECTION_ID,
+} from '../ui/DebugPanelUI';
+import { createDebugSocketSection, type DebugSocketSectionHandle } from '../ui/debugSocketSection';
+import type { PropPresetTable } from '../data/propPresets';
 import type { DepthDebugVisualizer, BgDebugMode } from '../debug/DepthDebugVisualizer';
 import type { CharShadingParams } from '../rendering/CharacterShadingFilter';
 import type { SmellFormParams } from '../ui/smell/SmellIndicatorRenderer';
-import type { ObjectExamineAmbience, ObjectExamineBackgroundPreset } from '../systems/objectExamine/types';
+import type {
+  ObjectExamineAmbience,
+  ObjectExamineBackgroundPreset,
+  ResolvedObjectExamineAmbience,
+} from '../systems/objectExamine/types';
 import { OBJECT_EXAMINE_BACKGROUND_PRESETS } from '../systems/objectExamine/types';
 
 /** F2 气味指示器调试：驱动味种 + 实时调烟形参数（只影响显示，不写盘/不动存档）。 */
@@ -41,6 +53,10 @@ export interface ScenarioDebugPanelRow {
 
 export interface DebugToolsDeps {
   renderer: Renderer;
+  /** 挂点调试页要加载试挂的道具贴图 */
+  assetManager: AssetManager;
+  /** 挂点调试页按预设试挂（走内容侧真正那条路） */
+  getPropPresets: () => PropPresetTable;
   camera: Camera;
   eventBus: EventBus;
   player: Player;
@@ -59,6 +75,9 @@ export interface DebugToolsDeps {
   /** F2 视锥剔除性能开关：屏外实体不进 GPU 渲染 */
   getFrustumCulling: () => boolean;
   toggleFrustumCulling: () => void;
+  /** 编辑期标记（NPC 名牌/朝向块、热点占位圆点）显隐；玩家侧恒关，仅摆位时开 */
+  getAuthoringMarkersVisible: () => boolean;
+  setAuthoringMarkersVisible: (visible: boolean) => void;
   /** 切换到开发用 dev_room 场景 */
   goToDevScene: () => void;
   /** game_config 中 entityPixelDensityMatch */
@@ -146,60 +165,12 @@ export interface DebugToolsDeps {
     setBackgroundBrightness: (v: number) => void;
     setBackgroundScale: (v: number) => void;
     getLiveContactAoIntensity: () => number;
-    getLiveContactAoScale: () => number;
+    getLiveContactAoRadiusCm: () => number;
+    getLivePixelsPerCm: () => number;
     setContactAoIntensity: (v: number) => void;
-    setContactAoScale: (v: number) => void;
-    getResolvedAmbience: () => {
-      headSway: { enabled: boolean; amplitude: number };
-      breathing: { enabled: boolean; strength: number };
-      candlelight: { enabled: boolean; strength: number; periodSec: number };
-      moonlight: { enabled: boolean; strength: number; periodSec: number };
-      cloudShadow: { enabled: boolean; strength: number; speed: number };
-      dust: { enabled: boolean; density: number; intensity: number; radius: number };
-      flyingFlies: {
-        enabled: boolean;
-        x: number | null;
-        y: number | null;
-        count: number;
-        speed: number;
-        orbitRadius: number;
-        returnSec: number;
-        size: number;
-      };
-      crawlers: {
-        enabled: boolean;
-        parentEnabled: boolean;
-        hasStructuredConfig: boolean;
-        contactShadow: { enabled: boolean; intensity: number; size: number };
-        maggots: {
-          enabled: boolean;
-          clusters: Array<{
-            x: number | null;
-            y: number | null;
-            count: number;
-            radius: number;
-            size: number;
-          }>;
-        };
-        centipede: {
-          enabled: boolean;
-          hasStructuredConfig: boolean;
-          intervalSec: number;
-          speed: number;
-          size: number;
-        };
-        beetles: {
-          enabled: boolean;
-          x: number | null;
-          y: number | null;
-          count: number;
-          radius: number;
-          size: number;
-          regroupSec: number;
-        };
-      };
-      flies: { enabled: boolean; intervalSec: number };
-    };
+    setContactAoRadiusCm: (v: number) => void;
+    /** 直接用运行时权威类型，不再手抄一份镜像（抄一份就多一处漂移面）。 */
+    getResolvedAmbience: () => ResolvedObjectExamineAmbience;
     setAmbiencePatch: (patch: Partial<ObjectExamineAmbience>) => void;
     resetAmbienceOverrides: () => void;
   };
@@ -232,6 +203,8 @@ export class DebugTools {
   private smellDebugFlicker = false;
   // 驱动哪一层：action（优先级高）/ zone（优先级低，模拟站在区内）。用来验证 action 压 zone。
   private smellDebugLayer: 'action' | 'zone' = 'action';
+
+  private socketSection: DebugSocketSectionHandle | null = null;
 
   constructor(deps: DebugToolsDeps) {
     this.deps = deps;
@@ -680,19 +653,28 @@ export class DebugTools {
 
     const aoSHint = document.createElement('div');
     aoSHint.className = 'debug-dock__pre';
-    aoSHint.textContent = `物体 AO 模糊半径 ${oe.getLiveContactAoScale().toFixed(2)}（字段 contactAoScale）：`;
+    aoSHint.textContent =
+      `物体 AO 半径 ${oe.getLiveContactAoRadiusCm().toFixed(2)} cm` +
+      `（真实长度；标尺 ${oe.getLivePixelsPerCm().toFixed(2)} px/cm，` +
+      `由 physicalWidthCm 定；字段 contactAoRadiusCm）：`;
     wrap.appendChild(aoSHint);
     const aoSRow = document.createElement('div');
     aoSRow.className = 'debug-dock__actions';
-    for (const [label, delta] of [['-0.1', -0.1], ['+0.1', 0.1], ['1.0', null]] as const) {
+    for (const [label, delta] of [
+      ['-0.5cm', -0.5],
+      ['+0.5cm', 0.5],
+      ['2cm', null],
+    ] as const) {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'debug-dock__btn';
       btn.textContent = label;
       btn.addEventListener('click', () => {
-        const next = delta == null ? 1 : oe.getLiveContactAoScale() + delta;
-        oe.setContactAoScale(next);
-        debugPanelUI.log(`[检视] 物体AO模糊半径 → ${oe.getLiveContactAoScale().toFixed(2)}`);
+        const next = delta == null ? 2 : oe.getLiveContactAoRadiusCm() + delta;
+        oe.setContactAoRadiusCm(next);
+        debugPanelUI.log(
+          `[检视] 物体AO半径 → ${oe.getLiveContactAoRadiusCm().toFixed(2)}cm`,
+        );
         debugPanelUI.refresh();
       });
       aoSRow.appendChild(btn);
@@ -852,7 +834,7 @@ export class DebugTools {
         dust: {
           density: amb.dust.density || 1,
           intensity: Math.max(0.8, amb.dust.intensity || 1),
-          radius: amb.dust.radius || 1,
+          radiusCm: amb.dust.radiusCm,
         },
       },
       { dust: false },
@@ -865,10 +847,10 @@ export class DebugTools {
           x: amb.flyingFlies.x ?? undefined,
           y: amb.flyingFlies.y ?? undefined,
           count: amb.flyingFlies.count,
-          speed: amb.flyingFlies.speed,
-          orbitRadius: amb.flyingFlies.orbitRadius,
+          speedCmPerSec: amb.flyingFlies.speedCmPerSec,
+          roamRadiusCm: amb.flyingFlies.roamRadiusCm,
           returnSec: amb.flyingFlies.returnSec,
-          size: amb.flyingFlies.size,
+          lengthCm: amb.flyingFlies.lengthCm,
         },
       },
       { flyingFlies: false },
@@ -880,7 +862,14 @@ export class DebugTools {
         contactShadow: amb.crawlers.contactShadow.enabled
           ? {
               intensity: amb.crawlers.contactShadow.intensity,
-              size: amb.crawlers.contactShadow.size,
+              radiusCm: amb.crawlers.contactShadow.radiusCm,
+            }
+          : false,
+        terrain: amb.crawlers.terrain.enabled
+          ? {
+              reliefCm: amb.crawlers.terrain.reliefCm,
+              grooveFollow: amb.crawlers.terrain.grooveFollow,
+              climbSlowdown: amb.crawlers.terrain.climbSlowdown,
             }
           : false,
         maggots: amb.crawlers.maggots.enabled
@@ -889,8 +878,8 @@ export class DebugTools {
                 x: c.x ?? undefined,
                 y: c.y ?? undefined,
                 count: c.count,
-                radius: c.radius,
-                size: c.size,
+                radiusCm: c.radiusCm,
+                lengthCm: c.lengthCm,
               })),
             }
           : false,
@@ -898,8 +887,8 @@ export class DebugTools {
           amb.crawlers.centipede.enabled || amb.crawlers.centipede.hasStructuredConfig
           ? {
               intervalSec: amb.crawlers.centipede.intervalSec,
-              speed: amb.crawlers.centipede.speed,
-              size: amb.crawlers.centipede.size,
+              speedCmPerSec: amb.crawlers.centipede.speedCmPerSec,
+              lengthCm: amb.crawlers.centipede.lengthCm,
             }
           : false,
         beetles: amb.crawlers.beetles.enabled
@@ -907,8 +896,8 @@ export class DebugTools {
               x: amb.crawlers.beetles.x ?? undefined,
               y: amb.crawlers.beetles.y ?? undefined,
               count: amb.crawlers.beetles.count,
-              radius: amb.crawlers.beetles.radius,
-              size: amb.crawlers.beetles.size,
+              radiusCm: amb.crawlers.beetles.radiusCm,
+              lengthCm: amb.crawlers.beetles.lengthCm,
               regroupSec: amb.crawlers.beetles.regroupSec,
             }
           : false,
@@ -980,12 +969,12 @@ export class DebugTools {
     const dustHint = document.createElement('div');
     dustHint.className = 'debug-dock__pre';
     dustHint.textContent =
-      `尘埃 密度 ${amb.dust.density.toFixed(2)} · 强度 ${amb.dust.intensity.toFixed(2)} · 半径 ${amb.dust.radius.toFixed(2)}`;
+      `尘埃 密度 ${amb.dust.density.toFixed(2)} · 强度 ${amb.dust.intensity.toFixed(2)} · 半径 ${amb.dust.radiusCm.toFixed(2)}cm`;
     wrap.appendChild(dustHint);
     const dustCur = {
       density: amb.dust.density,
       intensity: amb.dust.intensity,
-      radius: amb.dust.radius,
+      radiusCm: amb.dust.radiusCm,
     };
     const dustRow = document.createElement('div');
     dustRow.className = 'debug-dock__actions';
@@ -994,9 +983,9 @@ export class DebugTools {
       ['密+0.2', { ...dustCur, density: Math.min(3, dustCur.density + 0.2) }],
       ['强-0.2', { ...dustCur, intensity: Math.max(0, dustCur.intensity - 0.2) }],
       ['强+0.2', { ...dustCur, intensity: Math.min(3, dustCur.intensity + 0.2) }],
-      ['径-0.2', { ...dustCur, radius: Math.max(0.2, dustCur.radius - 0.2) }],
-      ['径+0.2', { ...dustCur, radius: Math.min(4, dustCur.radius + 0.2) }],
-      ['尘默认', { density: 1, intensity: 1.2, radius: 1 }],
+      ['径-0.1cm', { ...dustCur, radiusCm: Math.max(0.02, dustCur.radiusCm - 0.1) }],
+      ['径+0.1cm', { ...dustCur, radiusCm: Math.min(8, dustCur.radiusCm + 0.1) }],
+      ['尘默认', { density: 1, intensity: 1.2, radiusCm: 0.7535 }],
     ] as const) {
       const btn = document.createElement('button');
       btn.type = 'button';
@@ -1005,7 +994,7 @@ export class DebugTools {
       btn.addEventListener('click', () => {
         oe.setAmbiencePatch({ dust: { ...patch } });
         debugPanelUI.log(
-          `[检视氛围] 尘埃 密=${patch.density.toFixed(2)} 强=${patch.intensity.toFixed(2)} 径=${patch.radius.toFixed(2)}`,
+          `[检视氛围] 尘埃 密=${patch.density.toFixed(2)} 强=${patch.intensity.toFixed(2)} 径=${patch.radiusCm.toFixed(2)}cm`,
         );
         debugPanelUI.refresh();
       });
@@ -1016,7 +1005,7 @@ export class DebugTools {
     const flyHint = document.createElement('div');
     flyHint.className = 'debug-dock__pre';
     flyHint.textContent =
-      `苍蝇 数 ${amb.flyingFlies.count} · 速 ${amb.flyingFlies.speed.toFixed(2)} · 域 ${amb.flyingFlies.orbitRadius.toFixed(2)} · 归 ${amb.flyingFlies.returnSec.toFixed(0)}s · 尺 ${amb.flyingFlies.size.toFixed(2)}（高速乱飞，可点击惊赶）`;
+      `苍蝇 数 ${amb.flyingFlies.count} · 速 ${amb.flyingFlies.speedCmPerSec.toFixed(1)}cm/s · 域 ${amb.flyingFlies.roamRadiusCm.toFixed(1)}cm · 归 ${amb.flyingFlies.returnSec.toFixed(0)}s · 体长 ${amb.flyingFlies.lengthCm.toFixed(2)}cm（高速乱飞，可点击惊赶）`;
     wrap.appendChild(flyHint);
     const flyRow = document.createElement('div');
     flyRow.className = 'debug-dock__actions';
@@ -1024,22 +1013,22 @@ export class DebugTools {
       x: amb.flyingFlies.x ?? undefined,
       y: amb.flyingFlies.y ?? undefined,
       count: amb.flyingFlies.count,
-      speed: amb.flyingFlies.speed,
-      orbitRadius: amb.flyingFlies.orbitRadius,
+      speedCmPerSec: amb.flyingFlies.speedCmPerSec,
+      roamRadiusCm: amb.flyingFlies.roamRadiusCm,
       returnSec: amb.flyingFlies.returnSec,
-      size: amb.flyingFlies.size,
+      lengthCm: amb.flyingFlies.lengthCm,
     };
     for (const [label, patch] of [
       ['蝇-1', { ...flyCur, count: Math.max(1, flyCur.count - 1) }],
       ['蝇+1', { ...flyCur, count: Math.min(16, flyCur.count + 1) }],
-      ['速-0.2', { ...flyCur, speed: Math.max(0.3, flyCur.speed - 0.2) }],
-      ['速+0.2', { ...flyCur, speed: Math.min(2.5, flyCur.speed + 0.2) }],
-      ['域-0.2', { ...flyCur, orbitRadius: Math.max(0.3, flyCur.orbitRadius - 0.2) }],
-      ['域+0.2', { ...flyCur, orbitRadius: Math.min(3, flyCur.orbitRadius + 0.2) }],
+      ['速-2cm/s', { ...flyCur, speedCmPerSec: Math.max(1, flyCur.speedCmPerSec - 2) }],
+      ['速+2cm/s', { ...flyCur, speedCmPerSec: Math.min(200, flyCur.speedCmPerSec + 2) }],
+      ['域-2cm', { ...flyCur, roamRadiusCm: Math.max(1, flyCur.roamRadiusCm - 2) }],
+      ['域+2cm', { ...flyCur, roamRadiusCm: Math.min(200, flyCur.roamRadiusCm + 2) }],
       ['归-4s', { ...flyCur, returnSec: Math.max(0, flyCur.returnSec - 4) }],
       ['归+4s', { ...flyCur, returnSec: Math.min(60, flyCur.returnSec + 4) }],
-      ['尺-0.2', { ...flyCur, size: Math.max(0.2, Math.round((flyCur.size - 0.2) * 10) / 10) }],
-      ['尺+0.2', { ...flyCur, size: Math.min(4, Math.round((flyCur.size + 0.2) * 10) / 10) }],
+      ['体长-0.5cm', { ...flyCur, lengthCm: Math.max(0.2, Math.round((flyCur.lengthCm - 0.5) * 100) / 100) }],
+      ['体长+0.5cm', { ...flyCur, lengthCm: Math.min(40, Math.round((flyCur.lengthCm + 0.5) * 100) / 100) }],
     ] as const) {
       const btn = document.createElement('button');
       btn.type = 'button';
@@ -1048,7 +1037,7 @@ export class DebugTools {
       btn.addEventListener('click', () => {
         oe.setAmbiencePatch({ flyingFlies: { ...patch } });
         debugPanelUI.log(
-          `[检视氛围] 苍蝇 数=${patch.count} 速=${patch.speed.toFixed(2)} 域=${patch.orbitRadius.toFixed(2)} 归=${patch.returnSec.toFixed(0)}s 尺=${patch.size.toFixed(2)}`,
+          `[检视氛围] 苍蝇 数=${patch.count} 速=${patch.speedCmPerSec.toFixed(1)}cm/s 域=${patch.roamRadiusCm.toFixed(1)}cm 归=${patch.returnSec.toFixed(0)}s 体长=${patch.lengthCm.toFixed(2)}cm`,
         );
         debugPanelUI.refresh();
       });
@@ -1059,28 +1048,29 @@ export class DebugTools {
     const crawlHint = document.createElement('div');
     crawlHint.className = 'debug-dock__pre';
     const maggotN = amb.crawlers.maggots.clusters.reduce((n, c) => n + c.count, 0);
-    const maggotSize = amb.crawlers.maggots.clusters[0]?.size ?? 1;
+    const maggotLenCm = amb.crawlers.maggots.clusters[0]?.lengthCm ?? 0;
     const centiTxt = amb.crawlers.centipede.enabled
-      ? `蜈蚣 ${amb.crawlers.centipede.intervalSec.toFixed(0)}s/次 尺${amb.crawlers.centipede.size.toFixed(2)}`
+      ? `蜈蚣 ${amb.crawlers.centipede.intervalSec.toFixed(0)}s/次 体长${amb.crawlers.centipede.lengthCm.toFixed(1)}cm`
       : '蜈蚣 无';
     crawlHint.textContent = amb.crawlers.enabled
-      ? `爬虫 蛆×${maggotN} 尺${maggotSize.toFixed(2)}（原地蠕） · ${centiTxt} · 甲虫×${amb.crawlers.beetles.count} 尺${amb.crawlers.beetles.size.toFixed(2)}（点击惊散） · 虫AO黑区强度${amb.crawlers.contactShadow.intensity.toFixed(2)}/模糊半径${amb.crawlers.contactShadow.size.toFixed(2)}`
+      ? `爬虫 蛆×${maggotN} 体长${maggotLenCm.toFixed(2)}cm（原地蠕） · ${centiTxt} · 甲虫×${amb.crawlers.beetles.count} 体长${amb.crawlers.beetles.lengthCm.toFixed(2)}cm（点击惊散） · 虫AO黑区强度${amb.crawlers.contactShadow.intensity.toFixed(2)}/半径${amb.crawlers.contactShadow.radiusCm.toFixed(2)}cm · 体表地形${amb.crawlers.terrain.enabled ? `起伏${amb.crawlers.terrain.reliefCm.toFixed(0)}cm/顺沟${amb.crawlers.terrain.grooveFollow.toFixed(2)}/爬坡${amb.crawlers.terrain.climbSlowdown.toFixed(2)}` : '关（当平面）'}`
       : '爬虫 关';
     wrap.appendChild(crawlHint);
 
     if (amb.crawlers.enabled) {
       type CrawlersPanelPatch = {
-        contactShadow: false | { intensity: number; size: number };
+        contactShadow: false | { intensity: number; radiusCm: number };
+        terrain: false | { reliefCm: number; grooveFollow: number; climbSlowdown: number };
         maggots: false | {
-          clusters: Array<{ x?: number; y?: number; count: number; radius: number; size: number }>;
+          clusters: Array<{ x?: number; y?: number; count: number; radiusCm: number; lengthCm: number }>;
         };
-        centipede: false | { intervalSec: number; speed: number; size: number };
+        centipede: false | { intervalSec: number; speedCmPerSec: number; lengthCm: number };
         beetles: false | {
           x?: number;
           y?: number;
           count: number;
-          radius: number;
-          size: number;
+          radiusCm: number;
+          lengthCm: number;
           regroupSec: number;
         };
       };
@@ -1099,7 +1089,14 @@ export class DebugTools {
             contactShadow: amb.crawlers.contactShadow.enabled
               ? {
                   intensity: amb.crawlers.contactShadow.intensity,
-                  size: amb.crawlers.contactShadow.size,
+                  radiusCm: amb.crawlers.contactShadow.radiusCm,
+                }
+              : false,
+            terrain: amb.crawlers.terrain.enabled
+              ? {
+                  reliefCm: amb.crawlers.terrain.reliefCm,
+                  grooveFollow: amb.crawlers.terrain.grooveFollow,
+                  climbSlowdown: amb.crawlers.terrain.climbSlowdown,
                 }
               : false,
             maggots: amb.crawlers.maggots.enabled
@@ -1108,8 +1105,8 @@ export class DebugTools {
                     x: c.x ?? undefined,
                     y: c.y ?? undefined,
                     count: c.count,
-                    radius: c.radius,
-                    size: c.size,
+                    radiusCm: c.radiusCm,
+                    lengthCm: c.lengthCm,
                   })),
                 }
               : false,
@@ -1117,8 +1114,8 @@ export class DebugTools {
               amb.crawlers.centipede.enabled || amb.crawlers.centipede.hasStructuredConfig
               ? {
                   intervalSec: amb.crawlers.centipede.intervalSec,
-                  speed: amb.crawlers.centipede.speed,
-                  size: amb.crawlers.centipede.size,
+                  speedCmPerSec: amb.crawlers.centipede.speedCmPerSec,
+                  lengthCm: amb.crawlers.centipede.lengthCm,
                 }
               : false,
             beetles: amb.crawlers.beetles.enabled
@@ -1126,8 +1123,8 @@ export class DebugTools {
                   x: amb.crawlers.beetles.x ?? undefined,
                   y: amb.crawlers.beetles.y ?? undefined,
                   count: amb.crawlers.beetles.count,
-                  radius: amb.crawlers.beetles.radius,
-                  size: amb.crawlers.beetles.size,
+                  radiusCm: amb.crawlers.beetles.radiusCm,
+                  lengthCm: amb.crawlers.beetles.lengthCm,
                   regroupSec: amb.crawlers.beetles.regroupSec,
                 }
               : false,
@@ -1139,17 +1136,18 @@ export class DebugTools {
         });
         return btn;
       };
-      const stepSize = (v: number, d: number) =>
-        Math.max(0.2, Math.min(4, Math.round((v + d) * 10) / 10));
+      /** 体长按厘米步进（真实长度，不是倍率）。 */
+      const stepLenCm = (v: number, d: number) =>
+        Math.max(0.1, Math.min(150, Math.round((v + d) * 100) / 100));
       const stepShadow = (v: number, d: number, lo: number, hi: number) =>
         Math.max(lo, Math.min(hi, Math.round((v + d) * 10) / 10));
       const editShadow = (
         c: CrawlersPanelPatch,
-        edit: (shadow: { intensity: number; size: number }) => void,
+        edit: (shadow: { intensity: number; radiusCm: number }) => void,
       ) => {
         const shadow =
           c.contactShadow === false
-            ? { intensity: 0, size: amb.crawlers.contactShadow.size }
+            ? { intensity: 0, radiusCm: amb.crawlers.contactShadow.radiusCm }
             : c.contactShadow;
         edit(shadow);
         c.contactShadow = shadow;
@@ -1169,55 +1167,85 @@ export class DebugTools {
         }),
       );
       crawlRow.appendChild(
-        crawlSizeBtn('虫AO径-0.2', (c) => {
+        crawlSizeBtn('虫AO径-0.1cm', (c) => {
           editShadow(c, (shadow) => {
-            shadow.size = stepShadow(shadow.size, -0.2, 0.5, 1.8);
+            shadow.radiusCm = stepShadow(shadow.radiusCm, -0.1, 0, 2);
           });
         }),
       );
       crawlRow.appendChild(
-        crawlSizeBtn('虫AO径+0.2', (c) => {
+        crawlSizeBtn('虫AO径+0.1cm', (c) => {
           editShadow(c, (shadow) => {
-            shadow.size = stepShadow(shadow.size, 0.2, 0.5, 1.8);
+            shadow.radiusCm = stepShadow(shadow.radiusCm, 0.1, 0, 2);
           });
         }),
       );
       crawlRow.appendChild(
-        crawlSizeBtn('蛆尺-0.2', (c) => {
+        crawlSizeBtn('蛆长-0.2cm', (c) => {
           if (c.maggots === false) return;
-          for (const cl of c.maggots.clusters) cl.size = stepSize(cl.size, -0.2);
+          for (const cl of c.maggots.clusters) cl.lengthCm = stepLenCm(cl.lengthCm, -0.2);
         }),
       );
       crawlRow.appendChild(
-        crawlSizeBtn('蛆尺+0.2', (c) => {
+        crawlSizeBtn('蛆长+0.2cm', (c) => {
           if (c.maggots === false) return;
-          for (const cl of c.maggots.clusters) cl.size = stepSize(cl.size, 0.2);
+          for (const cl of c.maggots.clusters) cl.lengthCm = stepLenCm(cl.lengthCm, 0.2);
         }),
       );
       crawlRow.appendChild(
-        crawlSizeBtn('蜈尺-0.2', (c) => {
+        crawlSizeBtn('蜈长-1cm', (c) => {
           if (c.centipede === false) return;
-          c.centipede.size = stepSize(c.centipede.size, -0.2);
+          c.centipede.lengthCm = stepLenCm(c.centipede.lengthCm, -1);
         }),
       );
       crawlRow.appendChild(
-        crawlSizeBtn('蜈尺+0.2', (c) => {
+        crawlSizeBtn('蜈长+1cm', (c) => {
           if (c.centipede === false) return;
-          c.centipede.size = stepSize(c.centipede.size, 0.2);
+          c.centipede.lengthCm = stepLenCm(c.centipede.lengthCm, 1);
         }),
       );
       crawlRow.appendChild(
-        crawlSizeBtn('甲尺-0.2', (c) => {
+        crawlSizeBtn('甲长-0.2cm', (c) => {
           if (c.beetles === false) return;
-          c.beetles.size = stepSize(c.beetles.size, -0.2);
+          c.beetles.lengthCm = stepLenCm(c.beetles.lengthCm, -0.2);
         }),
       );
       crawlRow.appendChild(
-        crawlSizeBtn('甲尺+0.2', (c) => {
+        crawlSizeBtn('甲长+0.2cm', (c) => {
           if (c.beetles === false) return;
-          c.beetles.size = stepSize(c.beetles.size, 0.2);
+          c.beetles.lengthCm = stepLenCm(c.beetles.lengthCm, 0.2);
         }),
       );
+      const editTerrain = (
+        c: CrawlersPanelPatch,
+        edit: (t: { reliefCm: number; grooveFollow: number; climbSlowdown: number }) => void,
+      ) => {
+        const cur =
+          c.terrain === false
+            ? { reliefCm: 0, grooveFollow: 0.55, climbSlowdown: 0.9 }
+            : c.terrain;
+        edit(cur);
+        c.terrain = cur;
+      };
+      for (const [label, edit] of [
+        ['起伏-2cm', (t: { reliefCm: number }) => { t.reliefCm = Math.max(0, t.reliefCm - 2); }],
+        ['起伏+2cm', (t: { reliefCm: number }) => { t.reliefCm = Math.min(200, t.reliefCm + 2); }],
+        ['顺沟-0.1', (t: { grooveFollow: number }) => { t.grooveFollow = Math.max(0, Math.round((t.grooveFollow - 0.1) * 100) / 100); }],
+        ['顺沟+0.1', (t: { grooveFollow: number }) => { t.grooveFollow = Math.min(1, Math.round((t.grooveFollow + 0.1) * 100) / 100); }],
+        ['爬坡-0.2', (t: { climbSlowdown: number }) => { t.climbSlowdown = Math.max(0, Math.round((t.climbSlowdown - 0.2) * 100) / 100); }],
+        ['爬坡+0.2', (t: { climbSlowdown: number }) => { t.climbSlowdown = Math.min(2, Math.round((t.climbSlowdown + 0.2) * 100) / 100); }],
+        ['地形关', null],
+      ] as const) {
+        crawlRow.appendChild(
+          crawlSizeBtn(label, (c) => {
+            if (edit === null) {
+              c.terrain = false;
+              return;
+            }
+            editTerrain(c, edit as (t: { reliefCm: number; grooveFollow: number; climbSlowdown: number }) => void);
+          }),
+        );
+      }
       wrap.appendChild(crawlRow);
     }
 
@@ -1237,7 +1265,7 @@ export class DebugTools {
           oe.setAmbiencePatch({
             cloudShadow: {
               strength: Math.max(0, Math.min(1, amb.cloudShadow.strength + delta)),
-              speed: amb.cloudShadow.speed,
+              speedCmPerSec: amb.cloudShadow.speedCmPerSec,
             },
           });
         } else {
@@ -1266,7 +1294,7 @@ export class DebugTools {
     return {
       text:
         `镜头微晃 ${amb.headSway.enabled ? `开 ×${amb.headSway.amplitude.toFixed(2)}` : '关'} · 呼吸 ${amb.breathing.enabled ? `开 ×${amb.breathing.strength.toFixed(2)}` : '关'} · 烛 ${amb.candlelight.enabled ? '开' : '关'}\n` +
-        `月 ${amb.moonlight.enabled ? '开' : '关'} · 云影 ${amb.cloudShadow.enabled ? '开' : '关'} · 尘 ${amb.dust.enabled ? `开 密${amb.dust.density.toFixed(1)}/强${amb.dust.intensity.toFixed(1)}/径${amb.dust.radius.toFixed(1)}` : '关'}\n` +
+        `月 ${amb.moonlight.enabled ? '开' : '关'} · 云影 ${amb.cloudShadow.enabled ? '开' : '关'} · 尘 ${amb.dust.enabled ? `开 密${amb.dust.density.toFixed(1)}/强${amb.dust.intensity.toFixed(1)}/径${amb.dust.radiusCm.toFixed(2)}cm` : '关'}\n` +
         `苍蝇 ${amb.flyingFlies.enabled ? `开×${amb.flyingFlies.count}` : '关'} · 爬虫 ${amb.crawlers.enabled ? '开' : '关'}\n` +
         '（覆盖仅会话内生效，不写盘；点「恢复实例氛围」可清覆盖）',
       extra: wrap,
@@ -1528,6 +1556,17 @@ export class DebugTools {
     debugPanelUI.addSection(OBJECT_EXAMINE_DEBUG_SECTION_ID, () => this.buildObjectExamineDebugSection());
     debugPanelUI.addSection(OBJECT_EXAMINE_AMBIENCE_DEBUG_SECTION_ID, () => this.buildObjectExamineAmbienceDebugSection());
 
+    // 挂点调试页：sockets.json 还一个包都没标，没有本页就没法"挂上去看一眼"
+    this.socketSection = createDebugSocketSection({
+      assetManager: this.deps.assetManager,
+      getTargetSprite: () => this.deps.player.sprite,
+      getTargetLabel: () => '玩家',
+      getPropPresets: () => this.deps.getPropPresets(),
+      refresh: () => debugPanelUI.refresh(),
+      log: (m) => debugPanelUI.log(m),
+    });
+    debugPanelUI.addSection(SOCKET_DEBUG_SECTION_ID, () => this.socketSection!.build());
+
     debugPanelUI.addSection('Quick Actions', () => {
       const actions: { label: string; fn: () => void }[] = [
         {
@@ -1666,6 +1705,22 @@ export class DebugTools {
     });
 
     debugPanelUI.addSection('气味指示器（调试）', () => this.buildSmellDebugSection());
+
+    debugPanelUI.addSection('编辑期标记（摆位用）', () => {
+      const on = this.deps.getAuthoringMarkersVisible();
+      return {
+        text: `当前：${on ? '显示' : '隐藏'}\nNPC 名字标签 / 朝向块、热点占位圆点。\n玩家侧恒隐藏——不标注可交互对象是拍板的沉浸红线，\n这里只为策划摆位临时打开。`,
+        actions: [
+          {
+            label: on ? '隐藏编辑期标记' : '显示编辑期标记',
+            fn: () => {
+              this.deps.setAuthoringMarkersVisible(!on);
+              debugPanelUI.log(`编辑期标记：${on ? '已隐藏' : '已显示'}`);
+            },
+          },
+        ],
+      };
+    });
 
     debugPanelUI.addSection('Collisions', () => {
       const enabled = player.collisionsEnabledState;
@@ -2200,6 +2255,9 @@ export class DebugTools {
   }
 
   destroy(): void {
+    // 挂点调试挂上去的道具归本模块所有（SpriteEntity 只摘不毁），自己收
+    this.socketSection?.dispose();
+    this.socketSection = null;
     window.removeEventListener('keydown', this.positionDebugKeyHandler);
     if (this.sceneUnloadCb) {
       this.deps.eventBus.off('scene:beforeUnload', this.sceneUnloadCb);

@@ -11,6 +11,11 @@ export class InputManager {
   private touchMoveY = 0;
   /** 触屏按住「跑」 */
   private touchRunHeld = false;
+  /**
+   * 触屏按住的按键码（身体动词的姿态键在触屏上是 toggle：按一下持续按住、再按一下松开）。
+   * 与键盘 keysDown 取并集；由 TouchMobileControls 自管，失焦不清（与触屏方向轴同口径）。
+   */
+  private touchHeldKeys: Set<string> = new Set();
 
   private onKeyDownBound: (e: KeyboardEvent) => void;
   private onKeyUpBound: (e: KeyboardEvent) => void;
@@ -92,12 +97,32 @@ export class InputManager {
 
   isKeyDown(code: string): boolean {
     if (this.gameKeyboardBlocked) return false;
-    return this.keysDown.has(code);
+    return this.keysDown.has(code) || this.touchHeldKeys.has(code);
+  }
+
+  /** 触屏「按住」某键（姿态键的 toggle 用）；held=false 松开。 */
+  setTouchKeyHeld(code: string, held: boolean): void {
+    if (held) this.touchHeldKeys.add(code);
+    else this.touchHeldKeys.delete(code);
+  }
+
+  /** 触屏当前按住的键（供 HUD 回读按钮态，避免 UI 与输入层各存一份）。 */
+  isTouchKeyHeld(code: string): boolean {
+    return this.touchHeldKeys.has(code);
   }
 
   wasKeyJustPressed(code: string): boolean {
     if (this.gameKeyboardBlocked) return false;
     return this.keyJustPressed.has(code);
+  }
+
+  /**
+   * 取用并消费一次「本帧刚按下」：返回是否按下，且本帧后续查询者看不到它。
+   * 用于同一个键被多个消费者按顺序读的场合（躺着按 E 起身**不该**同时触发身边的热点）。
+   */
+  consumeKeyJustPressed(code: string): boolean {
+    if (this.gameKeyboardBlocked) return false;
+    return this.keyJustPressed.delete(code);
   }
 
   isMouseDown(): boolean {
@@ -207,6 +232,7 @@ export class InputManager {
     window.removeEventListener('pointerup', this.onPointerUpBound);
     window.removeEventListener('blur', this.onWindowBlurBound);
     document.removeEventListener('visibilitychange', this.onVisibilityChangeBound);
+    this.touchHeldKeys.clear();
     this.keyDownSubscribers.length = 0;
     this.anyInputSubscribers.length = 0;
     this.pointerDownSubscribers.length = 0;

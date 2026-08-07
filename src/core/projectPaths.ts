@@ -32,6 +32,7 @@ export const TEXT_URLS = {
   flagRegistry: '/assets/data/flag_registry.json',
   smellProfiles: '/assets/data/smell_profiles.json',
   overlayImages: '/assets/data/overlay_images.json',
+  propPresets: '/assets/data/prop_presets.json',
   scenarios: '/assets/data/scenarios.json',
   narrativePackages: '/assets/data/narrative_packages.json',
   documentReveals: '/assets/data/document_reveals.json',
@@ -51,6 +52,7 @@ export const TEXT_URLS = {
   planes: '/assets/data/planes.json',
   pressureHolds: '/assets/data/pressure_holds.json',
   signalCues: '/assets/data/signal_cues.json',
+  bubbleLines: '/assets/data/bubble_lines.json',
 } as const;
 
 /** 媒体根 URL 子目录（不带尾斜杠）。 */

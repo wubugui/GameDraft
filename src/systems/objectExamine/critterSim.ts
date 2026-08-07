@@ -20,13 +20,17 @@ import {
   bakeObjectExamineCrawlField,
   pickWeightedContour,
   sampleCrawlField,
+  sampleCrawlHeight,
   type ObjectExamineCrawlField,
 } from './crawlField';
 import type {
   ResolvedObjectExamineCrawlers,
   ResolvedObjectExamineFlyingFlies,
 } from './types';
-import { OBJECT_EXAMINE_CRITTER_SPRITES } from './types';
+import {
+  OBJECT_EXAMINE_CRITTER_SPRITES,
+  OBJECT_EXAMINE_DEFAULT_CRITTER_AO_RADIUS_CM,
+} from './types';
 
 type FlyMode = 'orbit' | 'flee' | 'wait' | 'return';
 type BeetleMode = 'huddle' | 'scatter' | 'gone' | 'return';
@@ -65,7 +69,8 @@ interface MaggotAgent {
   seed: number;
   motionTimer: number;
   moving: boolean;
-  sizeMul: number;
+  /** 单只体长（厘米）。 */
+  lengthCm: number;
   surface: 'ground' | 'body';
   mesh: MeshPlane;
 }
@@ -83,7 +88,8 @@ interface BeetleAgent {
   moving: boolean;
   startleDelay: number;
   returnDelay: number;
-  sizeMul: number;
+  /** 单只体长（厘米）。 */
+  lengthCm: number;
   surface: 'ground' | 'body';
   mode: BeetleMode;
   vx: number;
@@ -104,6 +110,8 @@ interface CentipedeAgent {
   arcLen: number;
   rideTarget: number;
   rideBand: number;
+  /** cross 路线从入画到出画的总弧长（按方向实算，不再用长边比例）。 */
+  crossSpan: number;
   route: 'edge' | 'cross';
   exitX: number;
   exitY: number;
@@ -113,13 +121,34 @@ interface CentipedeAgent {
   sprs: Sprite[];
 }
 
-const FLY_SIZE_FRAC = 0.021;
+// 体长/速度常量一律厘米制（旧「长边比例 × 175cm」等值换算而来）。
 const MAGGOT_VERTICES_X = 7;
 const MAGGOT_VERTICES_Y = 3;
 const CENTIPEDE_SEGMENTS = 18;
-const MAGGOT_SIZE_FRAC = 0.016;
-const BEETLE_SIZE_FRAC = 0.023;
-const CENTIPEDE_SIZE_FRAC = 0.076;
+/** 苍蝇巡飞速度中，逃窜速度相对巡飞速度的比（无量纲）。 */
+const FLY_FLEE_SPEED_RATIO = 0.08 / 0.105;
+/** 苍蝇速度上限相对巡飞速度的比（无量纲）。 */
+const FLY_MAX_SPEED_RATIO = 0.48 / 0.105;
+/** 苍蝇初始散布半径相对活动域半径的比（无量纲）。 */
+const FLY_INIT_SCATTER_RATIO = 0.022 / 0.075;
+/** 蛆顺沟对齐的相对速率（比会爬的虫慢，它基本是被沟卡住的）。 */
+const MAGGOT_GROOVE_ALIGN = 0.45;
+/** 坡度夹取上限（rise/run）：剪影边是数值悬崖，不夹会把虫子弹飞。 */
+const TERRAIN_MAX_SLOPE = 1.6;
+/** 下坡最多加速到多少倍。 */
+const TERRAIN_MAX_DOWNHILL_BOOST = 1.5;
+/**
+ * 沟壑影响分两种量纲，别混：
+ * - 有「目标朝向」的（蜈蚣）：往 desired 上加**角度**偏置；
+ * - 直接积分 heading 的（甲虫/蛆）：按**角速度**乘 dt。
+ * 早先蜈蚣误用了角速度×dt 去偏一个绝对角，实际只有 ±0.02 rad，等于没生效。
+ */
+const TERRAIN_GROOVE_DESIRE_RAD = 0.55;
+const TERRAIN_GROOVE_TURN_RATE = 2.2;
+/** 体表高度带来的视觉近大远小幅度（高处离镜头更近）。 */
+const TERRAIN_SCALE_GAIN = 0.16;
+/** 苍蝇绕回速度相对巡飞速度的比（无量纲）。 */
+const FLY_RETURN_SPEED_RATIO = 0.115 / 0.105;
 let nextCritterScopeId = 1;
 
 /** 运动方向 theta → 精灵 rotation/竖直镜像（侧视贴图防肚皮朝天）。 */
@@ -154,6 +183,8 @@ export class ObjectExamineCritterSim {
   private t = 0;
   private texW = 1;
   private texH = 1;
+  /** 物理标尺：一厘米几个设计像素。虫子多大多快一律由厘米经它换算。 */
+  private pixelsPerCm = 1;
   private textures = new Map<string, Texture>();
   private sliceCache = new Map<string, Texture[]>();
   private flyWingTexture: Texture | null = null;
@@ -161,15 +192,17 @@ export class ObjectExamineCritterSim {
    * 接触影 uniform 接收方：Scene 持有的共享 AO filter（挂在 objectRoot）。
    * 本 sim 不再自带 filter，只每帧把平滑后的强度/半径推给它。
    */
-  contactAoSink: { setCritterShadow(strength: number, radius: number): void } | null = null;
-  private flySpeedMul = 1;
+  contactAoSink: { setCritterShadow(strength: number, radiusCm: number): void } | null = null;
+  /** 苍蝇巡飞速度（厘米/秒）。 */
+  private flySpeedCmPerSec = 0;
   private flySwarmX = 0;
   private flySwarmY = 0;
   private flySwarmTargetX = 0;
   private flySwarmTargetY = 0;
   private flySwarmTimer = 0;
   private crawlerShadowIntensity = 1;
-  private crawlerShadowSize = 1;
+  /** 爬虫接触影半径，单位厘米（不是倍率）。 */
+  private crawlerShadowRadiusCm = OBJECT_EXAMINE_DEFAULT_CRITTER_AO_RADIUS_CM;
   private requestId = 0;
   private configRevision = 0;
   private destroyed = false;
@@ -180,6 +213,16 @@ export class ObjectExamineCritterSim {
     this.groundLayer.eventMode = 'none';
     this.bodyLayer.eventMode = 'none';
     this.airLayer.eventMode = 'none';
+  }
+
+  /** 物理标尺（= texW / 物件真实宽度），load 时由 Scene 注入。 */
+  setPixelsPerCm(value: number): void {
+    this.pixelsPerCm = Number.isFinite(value) && value > 0 ? value : 1;
+  }
+
+  /** 物件空间长度：厘米 → 设计像素。 */
+  private cm(v: number): number {
+    return v * this.pixelsPerCm;
   }
 
   async prepare(
@@ -197,7 +240,7 @@ export class ObjectExamineCritterSim {
     this.crawlerShadowIntensity = crawlers.contactShadow.enabled
       ? crawlers.contactShadow.intensity
       : 0;
-    this.crawlerShadowSize = crawlers.contactShadow.size;
+    this.crawlerShadowRadiusCm = crawlers.contactShadow.radiusCm;
     this.syncSsaoUniforms();
     this.field = null;
     await this.ensureConfiguredTextures(flying, crawlers, req);
@@ -210,7 +253,7 @@ export class ObjectExamineCritterSim {
     flying: ResolvedObjectExamineFlyingFlies,
     crawlers: ResolvedObjectExamineCrawlers,
   ): void {
-    this.flySpeedMul = flying.speed;
+    this.flySpeedCmPerSec = flying.speedCmPerSec;
     const req = this.requestId;
     const revision = ++this.configRevision;
     void this.ensureConfiguredTextures(flying, crawlers, req).then(() => {
@@ -289,10 +332,10 @@ export class ObjectExamineCritterSim {
         : 0;
       this.crawlerShadowIntensity +=
         (shadowIntensityTarget - this.crawlerShadowIntensity) * shadowFollow;
-      this.crawlerShadowSize +=
-        (crawlers.contactShadow.size - this.crawlerShadowSize) * shadowFollow;
+      this.crawlerShadowRadiusCm +=
+        (crawlers.contactShadow.radiusCm - this.crawlerShadowRadiusCm) * shadowFollow;
       this.syncSsaoUniforms();
-      this.tickMaggots(dt);
+      this.tickMaggots(dt, crawlers);
       this.tickBeetles(dt, crawlers);
       this.tickCentipede(dt, crawlers);
     }
@@ -316,7 +359,7 @@ export class ObjectExamineCritterSim {
         const ang = Math.atan2(dy, dx) + (Math.random() - 0.5) * 0.36;
         f.fleeDirX = Math.cos(ang);
         f.fleeDirY = Math.sin(ang);
-        const spd = long * 0.08 * this.flySpeedMul;
+        const spd = this.cm(this.flySpeedCmPerSec) * FLY_FLEE_SPEED_RATIO;
         f.vx = f.fleeDirX * spd;
         f.vy = f.fleeDirY * spd;
         f.mode = 'flee';
@@ -395,7 +438,10 @@ export class ObjectExamineCritterSim {
   }
 
   private syncSsaoUniforms(): void {
-    this.contactAoSink?.setCritterShadow(this.crawlerShadowIntensity, this.crawlerShadowSize);
+    this.contactAoSink?.setCritterShadow(
+      this.crawlerShadowIntensity,
+      this.crawlerShadowRadiusCm,
+    );
   }
 
   private disposeSsao(): void {
@@ -472,14 +518,14 @@ export class ObjectExamineCritterSim {
     return out;
   }
 
-  private makeSprite(url: string, sizeFrac: number): Sprite | null {
+  /** @param lengthCm 虫体长边的真实长度（厘米）。 */
+  private makeSprite(url: string, lengthCm: number): Sprite | null {
     const tex = this.tex(url);
     if (!tex) return null;
     const spr = new Sprite(tex);
     spr.anchor.set(0.5);
     spr.eventMode = 'none';
-    const long = Math.max(this.texW, this.texH);
-    spr.scale.set((long * sizeFrac) / Math.max(tex.width, tex.height, 1));
+    spr.scale.set(this.cm(lengthCm) / Math.max(tex.width, tex.height, 1));
     return spr;
   }
 
@@ -501,6 +547,58 @@ export class ObjectExamineCritterSim {
 
   private layerFor(surface: 'ground' | 'body'): Container {
     return surface === 'body' ? this.bodyLayer : this.groundLayer;
+  }
+
+  /**
+   * 体表地形采样：把 0..1 的高度场换算成**真实坡度**（rise/run，无量纲）。
+   *
+   *   坡度 = reliefCm × pixelsPerCm × d(height)/d(px)
+   *
+   * 剪影边上高度骤降到 0，有限差分会给出悬崖级梯度；这里统一夹取，
+   * 免得虫子贴边时被一脚踢飞。
+   */
+  private terrainAt(
+    cfg: ResolvedObjectExamineCrawlers,
+    x: number,
+    y: number,
+  ): { h: number; sx: number; sy: number } | null {
+    if (!this.field || !cfg.terrain.enabled) return null;
+    const s = sampleCrawlHeight(this.field, x, y);
+    const k = cfg.terrain.reliefCm * this.pixelsPerCm;
+    const sx = Math.max(-TERRAIN_MAX_SLOPE, Math.min(TERRAIN_MAX_SLOPE, s.gx * k));
+    const sy = Math.max(-TERRAIN_MAX_SLOPE, Math.min(TERRAIN_MAX_SLOPE, s.gy * k));
+    return { h: s.h, sx, sy };
+  }
+
+  /** 上坡减速系数：沿前进方向的坡度越陡越慢，下坡略快。 */
+  private terrainSpeedMul(
+    cfg: ResolvedObjectExamineCrawlers,
+    t: { sx: number; sy: number } | null,
+    heading: number,
+  ): number {
+    if (!t) return 1;
+    const along = Math.cos(heading) * t.sx + Math.sin(heading) * t.sy;
+    const k = cfg.terrain.climbSlowdown;
+    return along >= 0
+      ? 1 / (1 + k * along)
+      : Math.min(TERRAIN_MAX_DOWNHILL_BOOST, 1 - k * along * 0.35);
+  }
+
+  /**
+   * 沿沟壑走：取「下坡方向」的**横向**分量，归一到 -1..1。
+   * 只取横向——纵向分量会让虫子掉头往回滑，而不是顺着沟走。
+   * 返回的是无量纲偏置，由各调用方按自己的量纲（角度 / 角速度）换算。
+   */
+  private terrainGrooveBias(
+    cfg: ResolvedObjectExamineCrawlers,
+    t: { sx: number; sy: number } | null,
+    heading: number,
+  ): number {
+    if (!t) return 0;
+    const px = -Math.sin(heading);
+    const py = Math.cos(heading);
+    const lateralDownhill = -(px * t.sx + py * t.sy);
+    return Math.max(-1, Math.min(1, lateralDownhill)) * cfg.terrain.grooveFollow;
   }
 
   private isOnSurface(surface: 'ground' | 'body', x: number, y: number): boolean {
@@ -525,7 +623,8 @@ export class ObjectExamineCritterSim {
       this.flySwarmTimer -= dt;
       if (this.flySwarmTimer <= 0) {
         const angle = Math.random() * Math.PI * 2;
-        const driftRadius = cfg.orbitRadius * long * 0.022 * Math.sqrt(Math.random());
+        const driftRadius =
+          this.cm(cfg.roamRadiusCm) * FLY_INIT_SCATTER_RATIO * Math.sqrt(Math.random());
         this.flySwarmTargetX = cfg.x * this.texW + Math.cos(angle) * driftRadius;
         this.flySwarmTargetY = cfg.y * this.texH + Math.sin(angle) * driftRadius * 0.7;
         this.flySwarmTargetX = Math.max(
@@ -562,7 +661,7 @@ export class ObjectExamineCritterSim {
     const wingTexture = this.flyWings();
     if (!this.tex(url) || !wingTexture) return;
     while (this.flies.length < cfg.count) {
-      const spr = this.makeSprite(url, FLY_SIZE_FRAC);
+      const spr = this.makeSprite(url, cfg.lengthCm);
       if (!spr) return;
       const wings = new Sprite(wingTexture);
       // 裁片锚点映射回整图中心，确保独立翅区与身体重合。
@@ -570,7 +669,7 @@ export class ObjectExamineCritterSim {
       wings.eventMode = 'none';
       wings.tint = 0xc8c0ad;
       this.airLayer.addChild(wings, spr);
-      const roam = cfg.orbitRadius * Math.max(this.texW, this.texH) * 0.075;
+      const roam = this.cm(cfg.roamRadiusCm);
       const spawnAngle = Math.random() * Math.PI * 2;
       const spawnRadius = roam * Math.sqrt(Math.random());
       const x = this.flySwarmX + Math.cos(spawnAngle) * spawnRadius;
@@ -640,7 +739,7 @@ export class ObjectExamineCritterSim {
     const dx = f.ax - f.x;
     const dy = f.ay - f.y;
     const d = Math.hypot(dx, dy) || 1;
-    const spd = Math.max(this.texW, this.texH) * 0.115 * this.flySpeedMul;
+    const spd = this.cm(this.flySpeedCmPerSec) * FLY_RETURN_SPEED_RATIO;
     f.vx = (dx / d) * spd;
     f.vy = (dy / d) * spd;
   }
@@ -648,8 +747,8 @@ export class ObjectExamineCritterSim {
   private tickFlies(dt: number, cfg: ResolvedObjectExamineFlyingFlies): void {
     const long = Math.max(this.texW, this.texH);
     this.tickFlySwarm(dt, cfg);
-    const roamRadius = cfg.orbitRadius * long * 0.075;
-    const spd = long * 0.105 * cfg.speed;
+    const roamRadius = this.cm(cfg.roamRadiusCm);
+    const spd = this.cm(cfg.speedCmPerSec);
     for (const f of this.flies) {
       f.phase += dt * f.wingRate;
       f.wanderPhase += dt * (0.7 + f.depth * 0.35);
@@ -660,7 +759,7 @@ export class ObjectExamineCritterSim {
           f.vx *= Math.max(0, 1 - dt * 9);
           f.vy *= Math.max(0, 1 - dt * 9);
         } else {
-          const target = long * 0.48 * cfg.speed;
+          const target = this.cm(cfg.speedCmPerSec) * FLY_MAX_SPEED_RATIO;
           const v = Math.hypot(f.vx, f.vy);
           const next = v + (target - v) * Math.min(1, dt * 6.5);
           const weave = Math.sin(f.wanderPhase * 5.2) * 0.13;
@@ -763,7 +862,7 @@ export class ObjectExamineCritterSim {
       f.wings.rotation = bank + Math.sin(f.phase) * 0.055;
       const depth = f.depth * (1 + Math.sin(f.wanderPhase * 0.8) * 0.035);
       const base =
-        (long * FLY_SIZE_FRAC * cfg.size) / Math.max(f.spr.texture.width, f.spr.texture.height, 1);
+        this.cm(cfg.lengthCm) / Math.max(f.spr.texture.width, f.spr.texture.height, 1);
       const wingPulse = 0.5 + Math.sin(f.phase) * 0.5;
       f.spr.scale.set(base * depth * facing, base * depth * (0.985 + wingPulse * 0.025));
       f.wings.scale.set(
@@ -815,7 +914,7 @@ export class ObjectExamineCritterSim {
           ? 'body'
           : 'ground';
         const layer = this.layerFor(surface);
-        const r = c.radius * long;
+        const r = this.cm(c.radiusCm);
         for (let i = 0; i < c.count; i++) {
           const ang = Math.random() * Math.PI * 2;
           const rr = r * Math.sqrt(Math.random());
@@ -844,7 +943,7 @@ export class ObjectExamineCritterSim {
             seed: Math.random() * Math.PI * 2,
             motionTimer: 0.25 + Math.random() * 1.4,
             moving: Math.random() < 0.55,
-            sizeMul: c.size,
+            lengthCm: c.lengthCm,
             surface,
             mesh,
           });
@@ -860,13 +959,13 @@ export class ObjectExamineCritterSim {
         ? 'body'
         : 'ground';
       const layer = this.layerFor(surface);
-      const r = cfg.beetles.radius * long;
+      const r = this.cm(cfg.beetles.radiusCm);
       for (let i = 0; i < cfg.beetles.count; i++) {
-        const spr = this.makeSprite(url, BEETLE_SIZE_FRAC);
+        const spr = this.makeSprite(url, cfg.beetles.lengthCm);
         if (!spr) break;
         let x = center.x;
         let y = center.y;
-        const minSep = long * BEETLE_SIZE_FRAC * cfg.beetles.size * 0.82;
+        const minSep = this.cm(cfg.beetles.lengthCm) * 0.82;
         for (let attempt = 0; attempt < 20; attempt++) {
           const ang = Math.random() * Math.PI * 2;
           const rr = r * Math.sqrt(Math.random());
@@ -893,7 +992,7 @@ export class ObjectExamineCritterSim {
           moving: false,
           startleDelay: 0,
           returnDelay: 0,
-          sizeMul: cfg.beetles.size,
+          lengthCm: cfg.beetles.lengthCm,
           surface,
           mode: 'huddle',
           vx: 0,
@@ -908,7 +1007,7 @@ export class ObjectExamineCritterSim {
 
   // ---------- 蛆（原地蠕动，不受触发） ----------
 
-  private tickMaggots(dt: number): void {
+  private tickMaggots(dt: number, cfg: ResolvedObjectExamineCrawlers): void {
     const long = Math.max(this.texW, this.texH);
     for (const m of this.maggots) {
       m.motionTimer -= dt;
@@ -921,8 +1020,16 @@ export class ObjectExamineCritterSim {
       m.pulse += dt * phaseSpeed;
       m.heading += Math.sin(this.t * 0.42 + m.seed) * 0.12 * dt;
 
+      const mt = this.terrainAt(cfg, m.x, m.y);
+      // 蛆常年卡在衣褶沟里：静止时也慢慢把朝向拧到顺沟方向
+      m.heading +=
+        this.terrainGrooveBias(cfg, mt, m.heading) *
+        TERRAIN_GROOVE_TURN_RATE *
+        MAGGOT_GROOVE_ALIGN *
+        dt;
       const push = m.moving ? Math.max(0, Math.sin(m.pulse)) : 0;
-      const drift = long * 0.0032 * (0.18 + push * 0.82);
+      const drift =
+        long * 0.0032 * (0.18 + push * 0.82) * this.terrainSpeedMul(cfg, mt, m.heading);
       let vx = Math.cos(m.heading) * drift;
       let vy = Math.sin(m.heading) * drift;
       const hx = m.homeX - m.x;
@@ -941,7 +1048,7 @@ export class ObjectExamineCritterSim {
         m.heading = Math.atan2(m.homeY - m.y, m.homeX - m.x) + (Math.random() - 0.5) * 0.35;
       }
 
-      const totalLen = long * MAGGOT_SIZE_FRAC * m.sizeMul;
+      const totalLen = this.cm(m.lengthCm);
       const texture = m.mesh.texture;
       const positionBuffer = m.mesh.geometry.getAttribute('aPosition').buffer;
       const positions = positionBuffer.data as Float32Array;
@@ -964,7 +1071,9 @@ export class ObjectExamineCritterSim {
       const pose = crawlPose(m.heading, Math.PI, false);
       m.mesh.position.set(m.x, m.y);
       m.mesh.rotation = pose.rotation;
-      const sc = totalLen / Math.max(texture.width, 1);
+      const sc =
+        (totalLen / Math.max(texture.width, 1)) *
+        (mt ? 1 + TERRAIN_SCALE_GAIN * (mt.h - 0.5) : 1);
       m.mesh.scale.set(sc, sc * pose.flipY);
     }
   }
@@ -995,8 +1104,9 @@ export class ObjectExamineCritterSim {
         if (b.startleDelay > 0) {
           b.startleDelay -= dt;
         } else {
+          const st = this.terrainAt(cfg, b.x, b.y);
           const current = Math.hypot(b.vx, b.vy);
-          const target = long * 0.22;
+          const target = long * 0.22 * this.terrainSpeedMul(cfg, st, b.heading);
           const speed = current + (target - current) * Math.min(1, dt * 5.5);
           b.heading += Math.sin(this.t * 6.2 + b.seed) * 0.32 * dt;
           b.vx = Math.cos(b.heading) * speed;
@@ -1065,8 +1175,13 @@ export class ObjectExamineCritterSim {
           if (b.moving) b.heading += (Math.random() - 0.5) * 1.25;
         }
         if (b.moving) {
+          const bt = this.terrainAt(cfg, b.x, b.y);
           b.heading += Math.sin(this.t * 1.7 + b.seed) * 0.18 * dt;
-          const spd = long * (0.0065 + (0.5 + Math.sin(b.seed) * 0.5) * 0.0035);
+          b.heading += this.terrainGrooveBias(cfg, bt, b.heading) * TERRAIN_GROOVE_TURN_RATE * dt;
+          const spd =
+            long *
+            (0.0065 + (0.5 + Math.sin(b.seed) * 0.5) * 0.0035) *
+            this.terrainSpeedMul(cfg, bt, b.heading);
           let vx = Math.cos(b.heading) * spd;
           let vy = Math.sin(b.heading) * spd;
           const hx = b.homeX - b.x;
@@ -1082,7 +1197,7 @@ export class ObjectExamineCritterSim {
             const ox = b.x - other.x;
             const oy = b.y - other.y;
             const od = Math.hypot(ox, oy);
-            const minSep = long * BEETLE_SIZE_FRAC * b.sizeMul * 0.72;
+            const minSep = this.cm(b.lengthCm) * 0.72;
             if (od > 0.001 && od < minSep) {
               vx += (ox / od) * spd * 1.35;
               vy += (oy / od) * spd * 1.35;
@@ -1106,11 +1221,14 @@ export class ObjectExamineCritterSim {
       const px = -Math.sin(b.heading);
       const py = Math.cos(b.heading);
       b.spr.position.set(b.x + px * lateral, b.y + py * lateral);
-      // 甲虫俯视贴图头朝上
-      b.spr.rotation = b.heading + Math.PI / 2 + gait * 0.018;
+      // 甲虫俯视贴图头朝上；站在坡上时随坡面侧倾、高处略大
+      const rt = this.terrainAt(cfg, b.x, b.y);
+      const bank = rt ? (px * rt.sx + py * rt.sy) * 0.2 : 0;
+      b.spr.rotation = b.heading + Math.PI / 2 + gait * 0.018 + bank;
       const base =
-        (long * BEETLE_SIZE_FRAC * b.sizeMul) /
-        Math.max(b.spr.texture.width, b.spr.texture.height, 1);
+        (this.cm(b.lengthCm) /
+          Math.max(b.spr.texture.width, b.spr.texture.height, 1)) *
+        (rt ? 1 + TERRAIN_SCALE_GAIN * (rt.h - 0.5) : 1);
       b.spr.scale.set(base, base);
     }
   }
@@ -1136,6 +1254,29 @@ export class ObjectExamineCritterSim {
     return chosen;
   }
 
+  /**
+   * 从 (px,py) 沿 (dx,dy) 走出画面所需的距离，外加一个余量。
+   *
+   * 旧写法出生/退场点一律取「长边 × 0.62」的固定偏移，而画面不是正方形：
+   * 1536×768 下横穿只需出边一点点就能入画，竖穿却被丢到画面下方数百像素外，
+   * 要先在看不见的地方爬好几秒——方向明明是均匀随机的，观众却只看得到左右。
+   */
+  private distanceOutOfView(
+    px: number,
+    py: number,
+    dx: number,
+    dy: number,
+    margin: number,
+  ): number {
+    let t = Infinity;
+    if (dx > 1e-6) t = Math.min(t, (this.texW - px) / dx);
+    else if (dx < -1e-6) t = Math.min(t, -px / dx);
+    if (dy > 1e-6) t = Math.min(t, (this.texH - py) / dy);
+    else if (dy < -1e-6) t = Math.min(t, -py / dy);
+    if (!Number.isFinite(t) || t < 0) t = Math.max(this.texW, this.texH);
+    return t + margin;
+  }
+
   private spawnCentipede(cfg: ResolvedObjectExamineCrawlers): void {
     const field = this.field;
     if (!field || !field.contour.length) return;
@@ -1154,10 +1295,18 @@ export class ObjectExamineCritterSim {
     const crossHeading = Math.random() * Math.PI * 2;
     const crossX = Math.cos(crossHeading);
     const crossY = Math.sin(crossHeading);
-    const x = interior ? interior.x - crossX * long * 0.62 : edgeTarget.x + outX * 58;
-    const y = interior ? interior.y - crossY * long * 0.62 : edgeTarget.y + outY * 58;
     const segmentLen =
-      (long * CENTIPEDE_SIZE_FRAC * cfg.centipede.size * 0.94) / CENTIPEDE_SEGMENTS;
+      (this.cm(cfg.centipede.lengthCm) * 0.94) / CENTIPEDE_SEGMENTS;
+    // 整条虫都藏到画外再入画，各方向的可见行程因此一致
+    const bodyLen = CENTIPEDE_SEGMENTS * segmentLen;
+    const leadIn = interior
+      ? this.distanceOutOfView(interior.x, interior.y, -crossX, -crossY, bodyLen)
+      : 0;
+    const leadOut = interior
+      ? this.distanceOutOfView(interior.x, interior.y, crossX, crossY, bodyLen)
+      : 0;
+    const x = interior ? interior.x - crossX * leadIn : edgeTarget.x + outX * 58;
+    const y = interior ? interior.y - crossY * leadIn : edgeTarget.y + outY * 58;
     const sprs: Sprite[] = [];
     for (let i = 0; i < CENTIPEDE_SEGMENTS; i++) {
       const spr = new Sprite(sliceTex[i]);
@@ -1170,10 +1319,8 @@ export class ObjectExamineCritterSim {
     const targetX = interior?.x ?? edgeTarget.x + outX * rideBand;
     const targetY = interior?.y ?? edgeTarget.y + outY * rideBand;
     const heading = Math.atan2(targetY - y, targetX - x);
-    const exitX =
-      route === 'cross' ? targetX + crossX * long * 0.62 : edgeTarget.x + outX * long;
-    const exitY =
-      route === 'cross' ? targetY + crossY * long * 0.62 : edgeTarget.y + outY * long;
+    const exitX = route === 'cross' ? targetX + crossX * leadOut : edgeTarget.x + outX * long;
+    const exitY = route === 'cross' ? targetY + crossY * leadOut : edgeTarget.y + outY * long;
     const trail: Array<{ x: number; y: number }> = [];
     const trailN = Math.max(8, Math.ceil((CENTIPEDE_SEGMENTS * segmentLen + 8) / 1.5) + 4);
     for (let i = 0; i < trailN; i++) {
@@ -1183,7 +1330,7 @@ export class ObjectExamineCritterSim {
       x,
       y,
       heading,
-      speed: long * 0.105 * cfg.centipede.speed,
+      speed: this.cm(cfg.centipede.speedCmPerSec),
       state: 'enter',
       targetX,
       targetY,
@@ -1192,6 +1339,7 @@ export class ObjectExamineCritterSim {
       arcLen: 0,
       rideTarget: long * (0.5 + Math.random() * 0.35),
       rideBand,
+      crossSpan: leadOut,
       route,
       exitX,
       exitY,
@@ -1228,6 +1376,7 @@ export class ObjectExamineCritterSim {
     }
     c.pulse += dt * 9;
     const s = sampleCrawlField(field, c.x, c.y);
+    const terrain = this.terrainAt(cfg, c.x, c.y);
     let desired = c.heading;
 
     if (c.state === 'enter') {
@@ -1250,8 +1399,12 @@ export class ObjectExamineCritterSim {
       if (c.route === 'cross') {
         const dx = c.targetX - c.x;
         const dy = c.targetY - c.y;
-        desired = Math.atan2(dy, dx) + Math.sin(c.pulse * 0.7) * 0.08;
-        if (Math.hypot(dx, dy) < long * 0.035 || c.arcLen > long * 0.62) c.state = 'exit';
+        // 目标朝向 + 蛇形 + 顺沟壑偏转：不再是一条笔直穿过贴纸的线
+        desired =
+          Math.atan2(dy, dx) +
+          Math.sin(c.pulse * 0.7) * 0.08 +
+          this.terrainGrooveBias(cfg, terrain, c.heading) * TERRAIN_GROOVE_DESIRE_RAD;
+        if (Math.hypot(dx, dy) < long * 0.035 || c.arcLen > c.crossSpan) c.state = 'exit';
       } else {
         const outside = !s.onBody;
         const gx = outside ? s.gradOutX : -s.gradInX;
@@ -1290,8 +1443,10 @@ export class ObjectExamineCritterSim {
     // 蛇形摆动叠加
     desired += Math.sin(c.pulse) * 0.16 * dt * 6;
     c.heading = turnToward(c.heading, desired, 6.5 * dt);
-    c.x += Math.cos(c.heading) * c.speed * dt;
-    c.y += Math.sin(c.heading) * c.speed * dt;
+    // 爬上躯干要费劲、下坡会溜——速度不再是 spawn 时定死的常数
+    const speedMul = this.terrainSpeedMul(cfg, terrain, c.heading);
+    c.x += Math.cos(c.heading) * c.speed * speedMul * dt;
+    c.y += Math.sin(c.heading) * c.speed * speedMul * dt;
 
     // trail
     const last = c.trail[0];
@@ -1314,8 +1469,12 @@ export class ObjectExamineCritterSim {
       const py = center.y + Math.cos(theta) * gait;
       spr.position.set(px, py);
       const pose = crawlPose(theta, Math.PI, false);
-      spr.rotation = pose.rotation;
-      const sc = (c.segmentLen * 1.34) / Math.max(spr.texture.width, 1);
+      // 逐段各自采地形：整条虫翻过隆起时会先头后尾依次抬起，而不是整条一起缩放
+      const segT = this.terrainAt(cfg, px, py);
+      const lift = segT ? 1 + TERRAIN_SCALE_GAIN * (segT.h - 0.5) : 1;
+      const bank = segT ? (-Math.sin(theta) * segT.sx + Math.cos(theta) * segT.sy) * 0.16 : 0;
+      spr.rotation = pose.rotation + bank;
+      const sc = ((c.segmentLen * 1.34) / Math.max(spr.texture.width, 1)) * lift;
       spr.scale.set(sc, sc * pose.flipY);
     }
   }

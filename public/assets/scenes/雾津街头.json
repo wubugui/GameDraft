@@ -152,41 +152,6 @@
       ]
     },
     {
-      "id": "hs_围观人群",
-      "type": "inspect",
-      "label": "围观的人堆",
-      "x": 1748.0,
-      "y": 1540.0,
-      "interactionRange": 70.0,
-      "conditions": [
-        {
-          "narrative": "scenario_向导",
-          "state": "noticed",
-          "reached": true
-        },
-        {
-          "not": {
-            "narrative": "scenario_向导",
-            "state": "outfitted",
-            "reached": true
-          }
-        }
-      ],
-      "conditionHidesEntity": true,
-      "displayImage": {
-        "image": "/resources/runtime/images/props/demo/crowd_sheet.png",
-        "worldWidth": 300.0,
-        "worldHeight": 130.0,
-        "spriteSort": "back"
-      },
-      "data": {
-        "graphId": "寻狗_围观竞争"
-      },
-      "planes": [
-        "normal"
-      ]
-    },
-    {
       "id": "hs_街头闲话",
       "type": "inspect",
       "label": "听街坊闲话",
@@ -424,8 +389,8 @@
       "id": "hs_城东桃木",
       "type": "inspect",
       "label": "城东先生处 · 顺把桃木剑",
-      "x": 3108.0,
-      "y": 1188.0,
+      "x": 3643.6,
+      "y": 1083.3,
       "interactionRange": 60.0,
       "conditions": [
         {
@@ -599,6 +564,26 @@
         "targetScene": "破屋",
         "targetSpawnPoint": "from_jie"
       }
+    },
+    {
+      "id": "主线s1藏钱点A",
+      "type": "inspect",
+      "label": "",
+      "x": 3883.4,
+      "y": 606.5,
+      "interactionRange": 50,
+      "data": {
+        "graphId": "主线_藏钱",
+        "entry": "n_start",
+        "text": ""
+      },
+      "conditionHidesEntity": true,
+      "conditions": [
+        {
+          "narrative": "scenario_graph_1",
+          "state": "entry"
+        }
+      ]
     }
   ],
   "npcs": [
@@ -874,6 +859,234 @@
           "narrative": "wrap_壮汉",
           "state": "chuang",
           "reached": true
+        }
+      ],
+      "conditionHidesEntity": true
+    },
+    {
+      "id": "街巷_赌坊门卫",
+      "name": "赌坊看场",
+      "x": 3194.6,
+      "y": 1302.2,
+      "interactionRange": 50,
+      "animFile": "/resources/runtime/animation/npc_coolie_a_anim/anim.json",
+      "initialAnimState": "idle",
+      "portraitSlug": "npc_coolie_a_anim",
+      "dialogueGraphId": "街巷_赌坊门卫"
+    },
+    {
+      "id": "npc_送葬_道士",
+      "name": "打幡道士",
+      "x": 2725.7,
+      "y": 1786.4,
+      "interactionRange": 0,
+      "animFile": "/resources/runtime/animation/npc_funeral_taoist_a_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "castShadow": false,
+      "group": "雾津送葬队伍"
+    },
+    {
+      "id": "npc_送葬_道士徒弟",
+      "name": "道士徒弟",
+      "x": 2761.8,
+      "y": 1751.0,
+      "interactionRange": 0,
+      "animFile": "/resources/runtime/animation/npc_funeral_taoist_c_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "castShadow": false,
+      "group": "雾津送葬队伍"
+    },
+    {
+      "id": "npc_送葬_唢呐甲",
+      "name": "吹唢呐的",
+      "x": 2853.4,
+      "y": 1714.6,
+      "interactionRange": 0,
+      "animFile": "/resources/runtime/animation/npc_funeral_suona_a_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "castShadow": false,
+      "group": "雾津送葬队伍"
+    },
+    {
+      "id": "npc_送葬_锣手",
+      "name": "打锣的",
+      "x": 2799.4,
+      "y": 1688.6,
+      "interactionRange": 0,
+      "animFile": "/resources/runtime/animation/npc_funeral_gong_a_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "castShadow": false,
+      "group": "雾津送葬队伍"
+    },
+    {
+      "id": "npc_送葬_唢呐乙",
+      "name": "吹唢呐的",
+      "x": 2913.4,
+      "y": 1669.6,
+      "interactionRange": 0,
+      "animFile": "/resources/runtime/animation/npc_funeral_suona_b_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "castShadow": false,
+      "group": "雾津送葬队伍"
+    },
+    {
+      "id": "npc_送葬_鼓手",
+      "name": "打鼓的",
+      "x": 2851.6,
+      "y": 1641.6,
+      "interactionRange": 0,
+      "animFile": "/resources/runtime/animation/npc_funeral_gong_b_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "castShadow": false,
+      "group": "雾津送葬队伍"
+    },
+    {
+      "id": "npc_送葬_孝子",
+      "name": "捧牌位的孝子",
+      "x": 2986.3,
+      "y": 1582.6,
+      "interactionRange": 0,
+      "animFile": "/resources/runtime/animation/npc_funeral_son_a_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "castShadow": false,
+      "group": "雾津送葬队伍"
+    },
+    {
+      "id": "npc_送葬_前肩土工",
+      "name": "前肩土工",
+      "x": 3055.8,
+      "y": 1544.1,
+      "interactionRange": 0,
+      "animFile": "/resources/runtime/animation/npc_funeral_bearer_a_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "castShadow": false,
+      "group": "雾津送葬队伍"
+    },
+    {
+      "id": "npc_送葬_棺",
+      "name": "棺",
+      "x": 3115.0,
+      "y": 1520.7,
+      "interactionRange": 0,
+      "animFile": "/resources/runtime/animation/prop_funeral_coffin_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "castShadow": false,
+      "group": "雾津送葬队伍"
+    },
+    {
+      "id": "npc_送葬_后肩土工",
+      "name": "后肩土工",
+      "x": 3162.5,
+      "y": 1421.3,
+      "interactionRange": 0,
+      "animFile": "/resources/runtime/animation/npc_funeral_bearer_c_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "castShadow": false,
+      "group": "雾津送葬队伍"
+    },
+    {
+      "id": "npc_送葬_孝眷甲",
+      "name": "披麻的妇人",
+      "x": 3227.0,
+      "y": 1391.7,
+      "interactionRange": 0,
+      "animFile": "/resources/runtime/animation/npc_funeral_kin_a_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "castShadow": false,
+      "perspectiveScaleEnabled": true,
+      "group": "雾津送葬队伍"
+    },
+    {
+      "id": "npc_送葬_孝眷乙",
+      "name": "拄拐的老妇",
+      "x": 3283.8,
+      "y": 1359.4,
+      "interactionRange": 0,
+      "animFile": "/resources/runtime/animation/npc_funeral_kin_b_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "castShadow": false,
+      "group": "雾津送葬队伍"
+    },
+    {
+      "id": "npc_送葬_孝孙",
+      "name": "穿孝衣的娃儿",
+      "x": 3340.5,
+      "y": 1330.0,
+      "interactionRange": 0,
+      "animFile": "/resources/runtime/animation/npc_funeral_son_c_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "castShadow": false,
+      "group": "雾津送葬队伍"
+    },
+    {
+      "id": "hs_围观人群",
+      "name": "围观的人堆",
+      "x": 1748.0,
+      "y": 1540.0,
+      "animFile": "/resources/runtime/animation/wujin_onlookers_anim/anim.json",
+      "dialogueGraphId": "寻狗_围观竞争",
+      "interactionRange": 70,
+      "spriteSort": "back",
+      "renderRaw": true,
+      "planes": [
+        "normal"
+      ],
+      "conditions": [
+        {
+          "narrative": "scenario_向导",
+          "state": "noticed",
+          "reached": true
+        },
+        {
+          "not": {
+            "narrative": "scenario_向导",
+            "state": "outfitted",
+            "reached": true
+          }
+        }
+      ],
+      "conditionHidesEntity": true,
+      "perspectiveScaleEnabled": false
+    },
+    {
+      "id": "new_npc_0",
+      "x": 990.8,
+      "y": 2171.1,
+      "interactionRange": 50,
+      "characterId": "癞子",
+      "initialAnimState": "idle",
+      "dialogueGraphId": "NPC癞子",
+      "patrol": {
+        "route": [
+          {
+            "x": 1082.2,
+            "y": 2211.6
+          },
+          {
+            "x": 1017.2,
+            "y": 2193.4
+          }
+        ],
+        "speed": 60,
+        "moveAnimState": "idle"
+      },
+      "conditions": [
+        {
+          "narrative": "癞子NPC",
+          "state": "在捡钱"
         }
       ],
       "conditionHidesEntity": true
@@ -1373,20 +1586,20 @@
       "id": "z_找活",
       "polygon": [
         {
-          "x": 1733.1999999999998,
-          "y": 1700.0
+          "x": 1771.7,
+          "y": 1865.8
         },
         {
-          "x": 2433.2,
-          "y": 1700.0
+          "x": 2471.7,
+          "y": 1865.8
         },
         {
-          "x": 2433.2,
-          "y": 2400.0
+          "x": 2471.7,
+          "y": 2565.8
         },
         {
-          "x": 1733.1999999999998,
-          "y": 2400.0
+          "x": 1771.7,
+          "y": 2565.8
         }
       ],
       "conditions": [
@@ -1453,5 +1666,23 @@
     "depth_tolerance": 0.0,
     "floor_offset": 0.0
   },
-  "filterId": "day"
+  "filterId": "day",
+  "perspectiveScale": {
+    "near": {
+      "x": 1534.9,
+      "y": 2025.0,
+      "scale": 1.0
+    },
+    "far": {
+      "x": 3563.5,
+      "y": 347.0,
+      "scale": 0.7
+    }
+  },
+  "entityGroups": [
+    {
+      "id": "雾津送葬队伍",
+      "label": "雾津送葬队伍"
+    }
+  ]
 }

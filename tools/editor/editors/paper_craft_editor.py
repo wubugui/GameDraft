@@ -440,14 +440,14 @@ class PaperCraftEditor(QWidget):
 
     def reload_refs_from_model(self) -> None:
         """主窗切页激活时：强制重建内部 ActionEditor 的行以重拉跨域引用候选
-        （item/flag/quest 等在别处新增后不切页看不见）。ActionEditor.set_project_context
-        在 model 相同（本编辑器恒相同）时短路，故用 set_data(to_list()) 原值重建，
-        内容不变、不触发 changed/_fb_dirty，不重置其它表单字段。"""
+        （item/flag/quest 等在别处新增后不切页看不见）。重建逻辑收敛在
+        ``ActionEditor.reload_refs_from_model``（同一轮刷新内幂等，避免与主窗的
+        子控件兜底扫描重复重建）；内容不变、不触发 changed/_fb_dirty。"""
         prev = self._syncing
         self._syncing = True
         try:
             for ae in (self.ae_success, self.ae_warn, self.ae_bad):
-                ae.set_data(ae.to_list())
+                ae.reload_refs_from_model()
         finally:
             self._syncing = prev
 

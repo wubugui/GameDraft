@@ -116,6 +116,12 @@ export interface SignalCatalogEntryDef {
   listeners: number;
   emitters: number;
   editable: boolean;
+  /**
+   * 是否真的有 `narrative_graphs.signals` 注册行。false = 目录从监听端/黑盒声明反推出来的
+   * 影子条目——运行时照跑（发射与监听只对字符串），但校验会一直报"未在信号注册表登记"，
+   * 且没有可编辑的 label/注释。派生信号恒为 true 语义（由状态自动产生，无需注册行）。
+   */
+  registered: boolean;
 }
 
 export interface SignalListenerRefDef {
@@ -425,4 +431,6 @@ export type CanvasEdge = Edge<{
   label?: string;
   edgeKind: 'transition' | 'trigger' | 'read' | 'stateCommand';
   detail?: string;
+  /** 画布路由（display 层派生，见 canvas/edgeRouting.ts）：平行边错开量与自环标记，不进数据。 */
+  route?: { offset: number; selfLoop: boolean };
 }>;

@@ -69,6 +69,7 @@ CONTENT_ID_PARAMS: dict[tuple[str, str], str] = {
     ("appendFlag", "key"): "__flag__",
     ("addFlagValue", "key"): "__flag__",
     ("setSmell", "scent"): "smells",
+    ("attachToSocket", "prop"): "prop_presets",
     ("revealDocument", "documentId"): "documents",
     ("playBgm", "id"): "bgm",
     ("playSfx", "id"): "sfx",

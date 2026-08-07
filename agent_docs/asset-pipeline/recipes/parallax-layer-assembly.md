@@ -13,7 +13,7 @@ triggers:
   paths: ["public/assets/data/parallax_scenes.json", "public/resources/runtime/images/parallax/**", "tools/parallax_editor/**"]
   topics: [视差, parallax, 分层, 过场插画]
   tasks: [做视差过场素材, 装配分层场景]
-last_governed: 2026-07-11
+last_governed: 2026-08-05
 ---
 
 **实测环境与日期**:2026-07-05,神仙岭 11 场景全部装配入库;素材审计 --strict 与
