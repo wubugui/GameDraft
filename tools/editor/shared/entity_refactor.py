@@ -529,6 +529,78 @@ def _rewrite_bubble_line_speakers(
         model.mark_dirty("bubble_lines")
     return total
 
+def _iter_quest_guidance(model: Any) -> Iterator[tuple[str, dict[str, Any]]]:
+    """产出 (任务 id, 引导条目)：任务级 `guidance[]` + 目标级 `objectives[].guidance[]`。"""
+    for q in (getattr(model, "quests", None) or []):
+        if not isinstance(q, dict):
+            continue
+        qid = str(q.get("id") or "?")
+        for g in (q.get("guidance") or []):
+            if isinstance(g, dict):
+                yield qid, g
+        for obj in (q.get("objectives") or []):
+            if not isinstance(obj, dict):
+                continue
+            for g in (obj.get("guidance") or []):
+                if isinstance(g, dict):
+                    yield qid, g
+
+
+def _quest_guidance_hits(model: Any, kind: str, scene_id: str, entity_id: str) -> list[dict[str, Any]]:
+    """扫描用：哪些任务的引导指着这个实体（按任务分组，带条数）。
+
+    ⚠ 必须给到**任务粒度**，不能只回一个总数：重构确认弹窗要能告诉用户
+    「是哪条任务的引导指着它」，否则删除/改名前根本没法判断风险。
+    """
+    hits: dict[str, int] = {}
+    for quest_id, g in _iter_quest_guidance(model):
+        if str(g.get("kind") or "") != "worldMarker":
+            continue
+        if str(g.get("entityKind") or "").strip() != kind:
+            continue
+        if str(g.get("entityId") or "").strip() != entity_id:
+            continue
+        if str(g.get("sceneId") or "").strip() != scene_id:
+            continue
+        hits[quest_id] = hits.get(quest_id, 0) + 1
+    return [{"bucket": "quest", "itemId": qid, "count": n} for qid, n in hits.items()]
+
+
+def _rewrite_quest_guidance_targets(
+    model: Any, kind: str, old_scene: str, old_id: str,
+    new_scene: str, new_id: str, *, count_only: bool = False,
+) -> int:
+    """改写任务引导（`quests.json` 的 worldMarker 目标）里的实体引用。
+
+    这是**数据文件自身**的实体引用，`ENTITY_REF_PARAMS`（action 参数登记面）够不到——
+    引导条目不是 action，没有 `type`/`params` 那层壳，`_walk_ref_actions` 看不见它。
+    好在这处引用是**场景限定的**（sceneId + entityKind + entityId，与 setEntityField 同形），
+    零歧义，可机械跟随，不必像 bubble_lines 的裸 speaker 那样只在全局唯一时才改。
+
+    不跟改的后果：改完名/迁完场景，那条引导的箭头指向一个不存在的实体——运行时不报错，
+    只是**引导默默不出现**（validate-data 会在下次跑时报 error，但重构撤销回滚不了它）。
+    """
+    if kind not in ALL_KINDS or kind == SPAWN_KIND:
+        return 0
+    total = 0
+    for _qid, g in _iter_quest_guidance(model):
+        if str(g.get("kind") or "") != "worldMarker":
+            continue
+        if str(g.get("entityKind") or "").strip() != kind:
+            continue
+        if str(g.get("entityId") or "").strip() != old_id:
+            continue
+        if str(g.get("sceneId") or "").strip() != old_scene:
+            continue
+        total += 1
+        if not count_only:
+            g["entityId"] = new_id
+            g["sceneId"] = new_scene
+    if total and not count_only:
+        model.mark_dirty("quest")
+    return total
+
+
 def _count_tag_refs(node: Any, entity_id: str) -> int:
     pattern = re.compile(_TAG_NPC_RE_TMPL.format(re.escape(entity_id)))
     count = 0
@@ -718,6 +790,10 @@ def scan_entity_usages(model: Any, scene_id: str, kind: str, entity_id: str) -> 
     report["tagRefs"] = _collect_tag_refs(model, eid) if kind == "npc" else []
     tag_hits = report["tagRefs"]
 
+    # 任务引导目标（quests.json 的 worldMarker）：场景限定引用，零歧义、可机械跟随。
+    # 按任务分组给出，重构弹窗要能显示「是哪条任务的引导指着它」。
+    report["questGuidance"] = _quest_guidance_hits(model, kind, sid, eid)
+
     report["totalRefs"] = (
         self_refs
         + sum(h["count"] for h in scene_local)
@@ -726,6 +802,7 @@ def scan_entity_usages(model: Any, scene_id: str, kind: str, entity_id: str) -> 
         + sum(h["count"] for h in dialogue_hits)
         + len(report["ownerBindings"])
         + sum(h["count"] for h in tag_hits)
+        + sum(h["count"] for h in report["questGuidance"])
     )
 
     # emitNarrativeSignal 溯源复合串 "场景:实体"（trace-only,不进 totalRefs）
@@ -845,11 +922,15 @@ def move_entity(
     model.mark_dirty("scene", dst)
 
     rewritten = _rewrite_qualified_scene_refs(model, kind, eid, src, dst)
+    guidance_moved = _rewrite_quest_guidance_targets(model, kind, src, eid, dst, eid)
 
     summary = {
         "op": "moveEntity", "kind": kind, "entityId": eid,
         "srcScene": src, "dstScene": dst, "srcIndex": src_index,
         "qualifiedRewritten": rewritten,
+        # ⚠ 键名与 scan 报告的 `questGuidance` **刻意不同名**：那边是按任务分组的明细 list，
+        # 这边是本次改写的条数 int。同名不同形状是下一个人照抄时必炸的陷阱。
+        "questGuidanceRewritten": guidance_moved,
         "danglingSceneLocal": report["sceneLocal"],
         "dialogues": report["dialogues"],
         "globalRefs": report["globalRefs"],
@@ -1084,6 +1165,11 @@ def rename_entity(
     else:
         counts["global"] = []
         counts["bubbleLineSpeakers"] = 0
+
+    # 任务引导目标：场景限定引用，与 qualified 同档（零歧义机械跟随），
+    # 不看 uniqueGlobal——它已经把场景写死了，不存在"指的是哪个同名实体"的歧义。
+    # 键名与 scan 报告的 `questGuidance`（按任务分组的 list）刻意区分开，见 move_entity 的注释。
+    counts["questGuidanceRewritten"] = _rewrite_quest_guidance_targets(model, kind, sid, old, sid, new)
 
     # [tag:npc:old] 文本引用（全局解析）：全局唯一时安全跟随；非唯一但调用方确认
     # 跟随（tagFollowForced，见上）时也改写——撤销按 scope 反向回放同一作用域。
@@ -1998,3 +2084,4 @@ def _undo_move(model: Any, entry: dict[str, Any]) -> None:
     model.mark_dirty("scene", src)
     model.mark_dirty("scene", dst)
     _rewrite_qualified_scene_refs(model, kind, eid, dst, src)
+    _rewrite_quest_guidance_targets(model, kind, dst, eid, src, eid)

@@ -35,6 +35,29 @@ CONTAINER_KEYS: dict[str, str] = {
     "quests": "任务",
     "encounters": "遭遇",
     "cutscenes": "过场",
+    "packages": "章节包",
+    "entities": "实体",
+}
+
+# 「条件面」的结构键。它们不是容器也不是动作面，但**必须译**：读状态那一栏的位置串
+# 里满屏 conditions / cases / not / any（2026-08-07 审查实测），等于把 JSON 字段名甩给
+# 策划，违反 editor-tools 图对话卡第 18 条。
+CONDITION_KEYS: dict[str, str] = {
+    "conditions": "条件",
+    "unlockConditions": "解锁条件",
+    "completionConditions": "完成条件",
+    "requires": "前置条件",
+    "when": "生效条件",
+    "done": "完成条件",
+    "cases": "分支",
+    "all": "同时满足",
+    "any": "任一满足",
+    "not": "不满足",
+    "preconditions": "前置",
+    "revealCondition": "揭示条件",
+    "impressions": "印象",
+    "knownInfo": "已知情报",
+    "entityGroups": "实体组",
 }
 
 # 「动作面键」：它下一段是下标，读作「进入时 第 1 个动作」。
@@ -61,10 +84,17 @@ ACTION_LIST_KEYS: dict[str, str] = {
     "onGive": "交付时",
     "onAccept": "接下时",
     "onRefuse": "拒绝时",
+    "onPullSuccess": "拉起成功时",
+    "onPullFail": "拉起失败时",
 }
 
 # 纯结构噪声，读出来只会碍事。
 SKIP_KEYS = frozenset({"params", "graph", "mainGraph", "meta"})
+
+
+def plain_label(key: str) -> str | None:
+    """这个键本身就该译成一个词（条件/分支/不满足…），下一层不是它的正主。"""
+    return CONDITION_KEYS.get(key)
 
 
 def pending_label(key: str) -> str | None:
@@ -104,7 +134,7 @@ def describe_condition(cond: Any, state_phrase: Callable[[str, str, str], str] |
         inner = describe_condition(cond.get("not"), state_phrase)
         return f"不满足{inner}" if inner else ""
     if "narrative" in cond:
-        verb = "到过" if cond.get("reached") is not None else "正停在"
+        verb = "到过" if cond.get("reached") is True else "正停在"
         return phrase(str(cond.get("narrative") or ""), str(cond.get("state") or ""), verb)
     if "flag" in cond:
         return f"标记「{cond.get('flag')}」成立"

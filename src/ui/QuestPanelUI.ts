@@ -1,12 +1,13 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import { UITheme } from './UITheme';
 import { drawPanelBase, SKINS } from './PanelSkin';
-import { createBadge, createKeyCap, createRule, createTitleRow, drawSelectedRow } from './components/UIDecor';
+import { createBadge, createChip, createKeyCap, createRule, createTitleRow, drawSelectedRow } from './components/UIDecor';
 import { markPointerConsumed } from './uiPointerCoords';
 import { UIWindow, WINDOW_SIZES } from './components/UIWindow';
 import { UIScrollView } from './components/UIScrollView';
 import { UIFocus, rectOf, type FocusItem } from './components/UIFocus';
 import type { Renderer } from '../rendering/Renderer';
+import type { EventBus } from '../core/EventBus';
 import type { StringsProvider } from '../core/StringsProvider';
 import type { IQuestDataProvider } from '../data/types';
 import { createStyledText, getStyledRaw, setStyledText } from '../core/styledText';
@@ -75,6 +76,8 @@ interface Objective {
 /** 一条列表行 = 一个任务/活计的展示投影（不持有 def，重建时整份重算） */
 interface QuestRow {
   key: string;
+  /** 任务 id：设为当前任务、查目标都按它走（key 带前缀，不能直接当 id 用） */
+  questId: string;
   badge: string;
   badgeColor: number;
   title: string;
@@ -84,15 +87,21 @@ interface QuestRow {
   /** 右栏正文 */
   body: string;
   objectives: Objective[];
-  /** 活计专有：追踪状态行 + 可点激活的图 id */
+  /** 是不是当前任务（全局唯一那条） */
+  focused: boolean;
+  /** 此刻能否被设为当前任务（已完成的不行、蛰伏的活计不行） */
+  canFocus: boolean;
+  /** 活计专有：第几单 / 追踪中 / 搁置 的状态行 */
   runMark?: string;
-  runGraphId?: string;
 }
 
 export class QuestPanelUI {
   private renderer: Renderer;
   private closeRequester: (() => void) | null = null;
   private questData: IQuestDataProvider;
+  private eventBus: EventBus;
+  /** 任务态变了就地重建（面板开着的时候）——面板是**状态镜像**，不是打开那一刻的快照 */
+  private questChangedCb: () => void;
   private strings: StringsProvider;
   private win: UIWindow | null = null;
   private list: UIScrollView | null = null;
@@ -100,8 +109,10 @@ export class QuestPanelUI {
   private _isOpen: boolean = false;
   private onKeyBound: (e: KeyboardEvent) => void;
   private resolveDisplay: ((s: string) => string) | null = null;
-  /** 面板"追踪"点击→激活活计（组装层注入 activateNarrativeRun；走队列，await 后重建面板） */
-  private activateRunHandler: ((graphId: string) => Promise<void>) | null = null;
+  /** 「设为当前任务」正在走叙事队列（活计激活是异步的）：期间不重复发请求 */
+  private focusPending = false;
+  /** 已排了一次重建（同一批任务态变化只重建一次） */
+  private rebuildScheduled = false;
   /** 视图态：当前页签 / 当前选中行（都不入档，与任务数据无关） */
   private tab: TabKey = 'active';
   private selectedKey: string | null = null;
@@ -124,15 +135,38 @@ export class QuestPanelUI {
   /** 左栏列表 + 右栏可点项共用的组名（见上：左右键跨栏靠"同组优先"才走得通） */
   private static readonly GROUP_BODY = 'body';
 
-  constructor(renderer: Renderer, questData: IQuestDataProvider, strings: StringsProvider) {
+  constructor(
+    renderer: Renderer,
+    questData: IQuestDataProvider,
+    strings: StringsProvider,
+    eventBus: EventBus,
+  ) {
     this.renderer = renderer;
     this.questData = questData;
     this.strings = strings;
+    this.eventBus = eventBus;
     this.onKeyBound = (e) => this.onKey(e);
+    // 面板关着时不重建（省下整份 Pixi 树），打开时的 build() 自己会读到最新状态
+    this.questChangedCb = () => { if (this._isOpen) this.scheduleRebuild(); };
+    this.eventBus.on('quest:changed', this.questChangedCb);
   }
 
-  setActivateRunHandler(fn: ((graphId: string) => Promise<void>) | null): void {
-    this.activateRunHandler = fn;
+  /**
+   * 攒一个微任务再重建，**不在事件回调里同步 teardown**。
+   *
+   * 两个理由，缺一条都会咬人：
+   * - 「设为当前任务」是行内 `pointerdown` 打进来的，而 `requestFocusQuest` 对一次性任务
+   *   是同步落槽 → 同步广播 → 若同步 `build()`，就等于**在 Pixi 正分发这枚 Graphics 的
+   *   指针事件时把它 destroy 掉**。
+   * - 一条动作批里连接几条任务会广播好几次，逐条重建整棵面板纯属白烧。
+   */
+  private scheduleRebuild(): void {
+    if (this.rebuildScheduled) return;
+    this.rebuildScheduled = true;
+    queueMicrotask(() => {
+      this.rebuildScheduled = false;
+      if (this._isOpen) this.build();
+    });
   }
 
   setResolveDisplay(fn: ((s: string) => string) | null): void {
@@ -165,6 +199,7 @@ export class QuestPanelUI {
 
   destroy(): void {
     this.close();
+    this.eventBus.off('quest:changed', this.questChangedCb);
   }
 
   private teardown(): void {
@@ -224,7 +259,8 @@ export class QuestPanelUI {
 
   private tabLabels(): { key: TabKey; label: string }[] {
     return [
-      { key: 'active', label: `${this.plainLabel('mainline')}·${this.plainLabel('sideline')}` },
+      // 「进行中」不再写成「主线·支线」：主线可以同时有好几条，两类混列才是这一页的真实内容
+      { key: 'active', label: this.plainLabel('inProgress') },
       { key: 'repeatable', label: this.plainLabel('repeatable') },
       { key: 'completed', label: this.plainLabel('completed') },
     ];
@@ -239,51 +275,64 @@ export class QuestPanelUI {
     return this.completedRows();
   }
 
+  /** 该任务配了目标就用真目标，没配就退回旧样子（不造假条目） */
+  private objectivesOf(questId: string): Objective[] {
+    return this.questData.getQuestObjectives(questId).map(o => ({
+      text: this.r(o.def.text),
+      done: o.done,
+    }));
+  }
+
+  /**
+   * 进行中：**全部** Active 任务，主线支线混列（主线在前）。
+   *
+   * ⚠ 旧实现是「getCurrentMainQuest() 取一条主线 + 过滤出 side」——主线链推进与条件自动
+   * 接取会让多条主线同时进行中，那样写第二条以后的主线在面板上**根本不存在**。
+   */
   private activeRows(): QuestRow[] {
-    const rows: QuestRow[] = [];
-    const mainQuest = this.questData.getCurrentMainQuest();
-    if (mainQuest) {
-      rows.push({
-        key: `main:${mainQuest.id}`,
-        badge: this.badgeChar('mainline'),
-        badgeColor: UITheme.colors.questMain,
-        title: this.r(mainQuest.title),
-        titleColor: UITheme.colors.title,
-        brief: this.r(mainQuest.description ?? ''),
-        body: this.r(mainQuest.description ?? ''),
-        objectives: [],
-      });
-    }
-    for (const q of this.questData.getActiveQuests().filter(q => q.def.type === 'side')) {
-      rows.push({
-        key: `side:${q.def.id}`,
-        badge: this.badgeChar('sideline'),
-        badgeColor: UITheme.colors.questSide,
+    const focusedId = this.questData.getFocusedQuestId();
+    const entries = this.questData.getActiveQuests();
+    const ordered = [
+      ...entries.filter(q => q.def.type === 'main'),
+      ...entries.filter(q => q.def.type !== 'main'),
+    ];
+    return ordered.map(q => {
+      const isMain = q.def.type === 'main';
+      return {
+        key: `${isMain ? 'main' : 'side'}:${q.def.id}`,
+        questId: q.def.id,
+        badge: this.badgeChar(isMain ? 'mainline' : 'sideline'),
+        badgeColor: isMain ? UITheme.colors.questMain : UITheme.colors.questSide,
         title: this.r(q.def.title),
-        titleColor: UITheme.colors.bodyMuted,
-        brief: this.r(q.def.description),
-        body: this.r(q.def.description),
-        objectives: [],
-      });
-    }
-    return rows;
+        titleColor: isMain ? UITheme.colors.title : UITheme.colors.bodyMuted,
+        brief: this.r(q.def.description ?? ''),
+        body: this.r(q.def.description ?? ''),
+        objectives: this.objectivesOf(q.def.id),
+        focused: q.def.id === focusedId,
+        canFocus: this.questData.canFocusQuest(q.def.id),
+      };
+    });
   }
 
   /** 零活：条目/完成/归档全由活计生命周期派生，settled 天然就是「已勾掉的目标」 */
   private repeatableRows(): QuestRow[] {
     const rows: QuestRow[] = [];
+    const focusedId = this.questData.getFocusedQuestId();
     for (const { def, run } of this.questData.getRepeatableQuestEntries()) {
-      const objectives: Objective[] = run.settled.map(s => ({
+      // 活计的"目标"有两个来源：配了 objectives 就用它，否则退回「按出口汇总的归档行」
+      const authored = this.objectivesOf(def.id);
+      const objectives: Objective[] = authored.length > 0 ? authored : run.settled.map(s => ({
         text: this.strings.get('quest', 'runArchive', { label: this.r(s.label), count: s.count }),
         done: true,
       }));
       let brief = '';
       if (run.active !== undefined) {
         brief = this.strings.get('quest', 'runCurrent', { state: this.r(run.activeLabel ?? '') });
-        objectives.push({ text: brief, done: false });
+        if (authored.length === 0) objectives.push({ text: brief, done: false });
       }
       rows.push({
         key: `run:${def.id}`,
+        questId: def.id,
         badge: this.badgeChar('repeatable'),
         badgeColor: run.activated ? UITheme.colors.questMain : UITheme.colors.questCompleted,
         title: run.active !== undefined
@@ -293,11 +342,11 @@ export class QuestPanelUI {
         brief,
         body: this.r(def.description),
         objectives,
+        focused: def.id === focusedId,
+        canFocus: this.questData.canFocusQuest(def.id),
         runMark: run.active === undefined
           ? undefined
           : this.strings.get('quest', run.activated ? 'runTracked' : 'runSuspended').trim(),
-        // 未激活的才给 id：激活入口在右栏那行标记上，行点击只负责选中
-        runGraphId: run.active !== undefined && !run.activated ? run.graphId : undefined,
       });
     }
     return rows;
@@ -306,13 +355,21 @@ export class QuestPanelUI {
   private completedRows(): QuestRow[] {
     return this.questData.getCompletedQuests().map(q => ({
       key: `done:${q.def.id}`,
+      questId: q.def.id,
       badge: this.badgeChar('completed'),
       badgeColor: UITheme.colors.questCompleted,
       title: this.r(q.def.title),
       titleColor: UITheme.colors.questCompleted,
       brief: this.r(q.def.description),
       body: this.r(q.def.description),
-      objectives: [{ text: this.strings.get('quest', 'done'), done: true }],
+      objectives: (() => {
+        const authored = this.objectivesOf(q.def.id);
+        return authored.length > 0
+          ? authored
+          : [{ text: this.strings.get('quest', 'done'), done: true }];
+      })(),
+      focused: false,
+      canFocus: false,
     }));
   }
 
@@ -324,6 +381,14 @@ export class QuestPanelUI {
    */
   private build(animate = false): void {
     const keep = this.list?.scrollOffset ?? 0;
+    // 右栏的滚动位也要留：面板现在会因为**别的**任务变了而重建，
+    // 玩家正读到长描述/目标清单的中段时被弹回顶部，纯属被无关变化打断。
+    //
+    // ⚠ 但**只在还是同一条**时还给它：`selectRow`/`switchTab` 都是先改 selectedKey 再 build()，
+    // 对这段代码而言三种重建路径没有区别——无条件还原会把上一条的滚动位带到新选中的
+    // 那条上（换行后右栏不从顶部开始读，超出新内容时还会被钳到底部）。
+    const keptForKey = this.selectedKey;
+    const keepDetail = this.detail?.scrollOffset ?? 0;
     this.teardown();
 
     const rows = this.rowsOf(this.tab);
@@ -393,6 +458,7 @@ export class QuestPanelUI {
     const selected = rows.find(r => r.key === this.selectedKey) ?? null;
     if (selected) {
       this.buildDetail(win, selected, detailX, detailW, tabsY, bodyH - tabsY, splitX, focusItems);
+      if (this.detail && this.selectedKey === keptForKey) this.detail.scrollOffset = keepDetail;
     }
 
     // 内容整份重建，焦点按 id 复位（`setItems` 自己保；id 没了就落到几何上最近的一项）。
@@ -622,8 +688,22 @@ export class QuestPanelUI {
       // 旧写法是"标题吃剩多少给简述"，长标题一来简述就只剩两三个字。
       // 现在给简述留一条保底列（BRIEF_RATIO），标题只能占到"剩下的那截"为止；
       // 标题没占满时富余仍旧还给简述，短标题的行照样能多显几个字。
+      // 当前任务那条挂一枚「当前」小牌，压在行的最右端；它占的宽从两列里先扣掉，
+      // 否则简述会从它底下穿过去（两段字叠在一起，比不显示还糟）。
+      let currentChip: (Container & { totalWidth: number }) | null = null;
+      if (row.focused) {
+        currentChip = createChip(this.strings.get('quest', 'currentMark'), UITheme.colors.questMain);
+        currentChip.position.set(
+          rowW - UITheme.spacing.md - currentChip.totalWidth,
+          y + Math.round((rowBodyH - currentChip.height) / 2),
+        );
+        currentChip.eventMode = 'none';
+        list.content.addChild(currentChip);
+      }
+      const chipW = currentChip ? currentChip.totalWidth + UITheme.spacing.sm : 0;
+
       const titleX = BADGE_X + BADGE_R + UITheme.spacing.md;
-      const colW = rowW - titleX - UITheme.spacing.md;
+      const colW = rowW - titleX - UITheme.spacing.md - chipW;
       const briefFloor = row.brief ? Math.round(colW * BRIEF_RATIO) : 0;
       const titleW = row.brief ? colW - briefFloor - UITheme.spacing.lg : colW;
 
@@ -655,7 +735,7 @@ export class QuestPanelUI {
         });
         this.ellipsize(brief, Math.max(briefFloor, colW - title.width - UITheme.spacing.lg));
         brief.position.set(
-          rowW - UITheme.spacing.md - brief.width,
+          rowW - UITheme.spacing.md - chipW - brief.width,
           y + Math.round((rowBodyH - brief.height) / 2),
         );
         brief.eventMode = 'none';
@@ -755,6 +835,20 @@ export class QuestPanelUI {
       view.content.addChild(rule);
       cy += UITheme.spacing.md;
 
+      const head = createStyledText({
+        text: this.strings.get('quest', 'objectives'),
+        style: {
+          fontSize: UITheme.fontSize.small,
+          fill: UITheme.colors.hintMid,
+          fontFamily: UITheme.fonts.ui,
+          letterSpacing: UITheme.letterSpacing.title,
+        },
+      });
+      head.position.set(0, cy);
+      head.eventMode = 'none';
+      view.content.addChild(head);
+      cy += head.height + UITheme.spacing.sm;
+
       for (const obj of row.objectives) {
         const box = this.checkbox(obj.done);
         // 方框与 body(20) 的首行视觉中线对齐（字框比方框高，往下让 3px）
@@ -779,68 +873,89 @@ export class QuestPanelUI {
       cy += UITheme.spacing.xs;
     }
 
-    // 活计的追踪状态：搁置态可点激活（激活仍走 activateRunHandler → 叙事队列）
+    // 活计的运行状态行（第几单 / 追踪中 / 搁置）：**只是状态词，不再是按钮**——
+    // 「设为当前任务」已经收敛成下面那一个入口，两处都能改同一个槽只会让人不知道点哪个。
     if (row.runMark) {
-      const canActivate = !!row.runGraphId && !!this.activateRunHandler;
       const mark = createStyledText({
         text: row.runMark,
         style: {
-          // 「▶ 追踪中」/「‖ 搁置·点击追踪」是**状态词**，停在 small：
-          // 它跟着正文一起放大就会比正文还抢眼，可它只是一行状态标记。
+          // 状态词停在 small：跟着正文一起放大就会比正文还抢眼，可它只是一行标记。
           fontSize: UITheme.fontSize.small,
-          fill: canActivate ? UITheme.colors.title : UITheme.colors.questMain,
+          fill: UITheme.colors.questMain,
           fontFamily: UITheme.fonts.ui,
           wordWrap: true, breakWords: true, wordWrapWidth: wrapW,
         },
       });
       mark.position.set(0, cy);
-      const markY = cy;
-      const markH = mark.height + 4;
+      mark.eventMode = 'none';
+      view.content.addChild(mark);
+      cy += mark.height + UITheme.spacing.sm;
+    }
+
+    // 「设为当前任务」：右栏唯一的可点项（当前任务槽全局唯一，见玩法文档 D6）。
+    // 已经是当前任务的显示成不可点的状态词，不给"再设一次"这种空操作。
+    const focusLabel = row.focused
+      ? this.strings.get('quest', 'isCurrent')
+      : (row.canFocus ? this.strings.get('quest', 'setCurrent') : '');
+    if (focusLabel) {
+      const clickable = !row.focused && row.canFocus;
+      const btnY = cy;
+      const label = createStyledText({
+        text: focusLabel,
+        style: {
+          fontSize: UITheme.fontSize.body,
+          fill: clickable ? UITheme.colors.title : UITheme.colors.questMain,
+          fontFamily: UITheme.fonts.ui,
+          wordWrap: true, breakWords: true, wordWrapWidth: wrapW,
+        },
+      });
+      const btnH = label.height + UITheme.spacing.sm;
 
       // 焦点高亮 = 全站那层「当前项」的琥珀铺光（`drawSelectedRow`），与列表行、页签同一种画法。
-      // **必须在 mark 之前加进去**：它是半透明铺光，排在文字之后会把状态词盖住。
-      // 只给可点的那一档备——「▶ 追踪中」不是按钮，不吃焦点也就不该有焦点框。
-      let markFocusG: Graphics | null = null;
-      if (canActivate) {
-        markFocusG = new Graphics();
-        drawSelectedRow(markFocusG, 0, markY - 2, wrapW, markH);
-        markFocusG.visible = false;
-        markFocusG.eventMode = 'none';
-        view.content.addChild(markFocusG);
+      // **必须在文字之前加进去**：它是半透明铺光，排在文字之后会把字盖住。
+      let btnFocusG: Graphics | null = null;
+      if (clickable) {
+        btnFocusG = new Graphics();
+        drawSelectedRow(btnFocusG, 0, btnY, wrapW, btnH);
+        btnFocusG.visible = false;
+        btnFocusG.eventMode = 'none';
+        view.content.addChild(btnFocusG);
       }
-      view.content.addChild(mark);
+      label.position.set(UITheme.spacing.sm, btnY + Math.round((btnH - label.height) / 2));
+      label.eventMode = 'none';
+      view.content.addChild(label);
 
-      if (canActivate) {
-        const gid = row.runGraphId!;
+      if (clickable) {
+        const qid = row.questId;
+        const act = (): void => { void this.onSetCurrent(qid); };
         const hit = new Graphics();
-        hit.rect(0, markY - 2, wrapW, markH);
+        hit.rect(0, btnY, wrapW, btnH);
         hit.fill({ color: 0xffffff, alpha: UITheme.alpha.hitArea });
         hit.eventMode = 'static';
         hit.cursor = 'pointer';
-        const activate = (): void => { void this.onActivateRun(gid); };
         hit.on('pointerdown', (e) => {
           markPointerConsumed((e as { nativeEvent?: unknown }).nativeEvent);
-          activate();
+          act();
         });
-        hit.on('pointerover', () => this.focus.syncHover('detail:track'));
+        hit.on('pointerover', () => this.focus.syncHover('detail:focus'));
         view.content.addChild(hit);
 
         // 右栏唯一的可点项。**与左栏列表同组**（GROUP_BODY）——左右键要跨得过去
         // 就得靠"同组优先"抢在跨组回退之前，否则会被正上方的页签条劫走（见 focus 字段注释）。
         // 上下键不会因此乱跳：同栏行的横向偏移是 0，打分永远赢过跨栏这一项。
         focusItems.push({
-          id: 'detail:track',
-          x, y: y + markY, w: wrapW, h: markH,
+          id: 'detail:focus',
+          x, y: y + btnY, w: wrapW, h: btnH,
           group: QuestPanelUI.GROUP_BODY,
           onFocus: (f) => {
-            if (markFocusG) markFocusG.visible = f;
+            if (btnFocusG) btnFocusG.visible = f;
             // 正文长的时候这行会被滚出视口，焦点落上来得把它滚回来
-            if (f) this.revealDetail(markY - 2, markH);
+            if (f) this.revealDetail(btnY, btnH);
           },
-          onActivate: activate,
+          onActivate: act,
         });
       }
-      cy += mark.height + UITheme.spacing.sm;
+      cy += btnH + UITheme.spacing.sm;
     }
 
     view.refresh();
@@ -876,19 +991,29 @@ export class QuestPanelUI {
     }
   }
 
-  /** 追踪点击：激活活计（走叙事队列）后原地重建，反映新的追踪/挂起标记 */
-  private async onActivateRun(graphId: string): Promise<void> {
-    if (!this.activateRunHandler) return;
+  /**
+   * 「设为当前任务」：交给 QuestManager（活计会顺带经叙事队列激活），成功与否都以它的状态为准。
+   *
+   * 重建由 `quest:changed` 触发，这里不自己 build()——否则槽真变了会重建两次。
+   * 但焦点得自己收：设完之后「设为当前任务」那一项就不存在了（已经是当前任务了），
+   * `setItems` 的兜底是"落到几何上最近的一项"——那正好是底部的关闭键帽，
+   * 等于把手柄玩家一脚踢到出口上。明确收回到刚操作的那条行上。
+   */
+  private async onSetCurrent(questId: string): Promise<void> {
+    if (this.focusPending) return;
+    this.focusPending = true;
     try {
-      await this.activateRunHandler(graphId);
+      await this.questData.requestFocusQuest(questId);
     } catch (e) {
-      console.warn('QuestPanelUI: activate run failed', e);
+      console.warn('QuestPanelUI: 设为当前任务失败', e);
+    } finally {
+      this.focusPending = false;
     }
     if (!this._isOpen) return;
-    this.build();
-    // 激活之后「点击追踪」那一项就不存在了（活计已在追踪中）。`setItems` 的兜底是
-    // "落到几何上最近的一项"——那正好是底部的关闭键帽，等于把手柄玩家一脚踢到出口上。
-    // 明确收回到刚操作的那条活计行上。
+    // 槽真的变了的话，`quest:changed` 已经排了一次重建（微任务，排在本延续之前入队、
+    // 因此已经跑完）。这里只负责把焦点从"刚消失的那一项"收回到操作过的行上：
+    // `setItems` 的兜底是"落到几何上最近的一项"——那正好是底部的关闭键帽，
+    // 等于把手柄玩家一脚踢到出口上。
     if (this.selectedKey) this.focus.focusDefault(rowFocusId(this.selectedKey));
   }
 

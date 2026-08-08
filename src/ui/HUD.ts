@@ -7,6 +7,7 @@ import { uiIcon, type UIIconName } from './UIIcons';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
 import type { StringsProvider } from '../core/StringsProvider';
+import type { IQuestDataProvider } from '../data/types';
 import { createStyledText, setStyledText } from '../core/styledText';
 
 // ---------------------------------------------------------------------------
@@ -39,6 +40,12 @@ const CHIP_ICON = CHIP_FONT - 2;
 const CHIP_GAP = UITheme.spacing.sm;
 /** 芯片列左上角锚点 */
 const CHIP_ORIGIN = UITheme.spacing.md;
+/**
+ * 当前任务芯片的文字换行宽上限。
+ * 任务名与目标文案都是策划自由填的，不封宽的话常驻 HUD 芯片会被一句长目标顶成横幅，
+ * 横穿整个左上角跟场景抢戏——这条是**上限**不是固定宽，短文案照旧按内容收窄。
+ */
+const QUEST_CHIP_MAX_TEXT_W = 260;
 
 /**
  * 底部提示带高度：键帽（{@link createKeyCap} 的方框 = 字高 + 4）+ 上下木边 + 各 2px 呼吸。
@@ -80,6 +87,8 @@ export class HUD {
   /** 芯片上的成品文字：Text 会随重建销毁，玩家视角读这两个字段 */
   private coinsLabel: string = '';
   private questLabel: string = '';
+  /** 当前任务的「当前目标」行；空串 = 该任务没配目标（芯片退回单行，与旧版一致） */
+  private questObjectiveLabel: string = '';
   /** 图标是异步预载的（Game 里 `void preloadUIIcons()`），到位后补一次重建 */
   private chipIconsApplied = false;
 
@@ -147,12 +156,19 @@ export class HUD {
   private resolveDisplay: ((s: string) => string) | null = null;
 
   private currencyCb: (p: { newTotal: number }) => void;
-  private questAcceptedCb: (p: { questId: string; title: string }) => void;
-  private questCompletedCb: (p: { questId: string; title: string }) => void;
-  private questUntrackedCb: (p: { questId: string }) => void;
-  /** 已接未完成的任务（按接取顺序）；追踪栏显示最近接取且仍激活的一个，完成时回退到上一个而非清空 */
-  private trackedQuests: { id: string; title: string }[] = [];
-  /** 读档开始：清上一局追踪残留（随后 QuestManager.deserialize 补发 quest:accepted{restored} 重建） */
+  /**
+   * 任务态变化：**只当"变了"的信号用**，随后回头查 `questData` 重建显示。
+   *
+   * 旧实现靠累积 `quest:accepted` / `quest:completed` 事件维护一份 `trackedQuests` 数组，
+   * 把"最后一条被接取的"当成当前任务——于是自动接取与主动接取（后者的事件要等接取动作批
+   * 跑完才发）表现不一致，读档还得靠 QuestManager 逐条补发事件才能重建。现在一律查询。
+   */
+  private questChangedCb: () => void;
+  /** 当前任务数据源（组装层注入 QuestManager；UI→系统 单向依赖） */
+  private questData: IQuestDataProvider | null = null;
+  /** 已排了一次芯片刷新（同一批任务态变化只重建一次） */
+  private questRefreshScheduled = false;
+  /** 读档开始：先清显示，恢复完成后那条 quest:changed 会重建 */
   private saveRestoringCb: () => void;
   private healthCb: (p: { current: number; max: number }) => void;
   private healthDebugOverrideCb: (p: { enabled?: boolean; value?: number; ratio?: number }) => void;
@@ -232,25 +248,18 @@ export class HUD {
     };
 
     this.currencyCb = (p) => { this.setCoins(p.newTotal); };
-    this.questAcceptedCb = (p) => {
-      this.trackedQuests = this.trackedQuests.filter((q) => q.id !== p.questId);
-      this.trackedQuests.push({ id: p.questId, title: p.title });
-      this.setQuestHint(p.title);
-    };
-    this.questCompletedCb = (p) => {
-      this.trackedQuests = this.trackedQuests.filter((q) => q.id !== p.questId);
-      const last = this.trackedQuests[this.trackedQuests.length - 1];
-      this.setQuestHint(last ? last.title : '');
-    };
-    // repeatable 活计被切走/弃置：摘除追踪但不算完成（quest:completed 语义留给真结算）
-    this.questUntrackedCb = (p) => {
-      this.trackedQuests = this.trackedQuests.filter((q) => q.id !== p.questId);
-      const last = this.trackedQuests[this.trackedQuests.length - 1];
-      this.setQuestHint(last ? last.title : '');
+    // 攒一个微任务再查：一条动作批里连接几条任务会广播好几次，
+    // 而每次 refresh 都要销毁重建整列木框芯片（九宫格 Sprite 画不进 Graphics）。
+    this.questChangedCb = () => {
+      if (this.questRefreshScheduled) return;
+      this.questRefreshScheduled = true;
+      queueMicrotask(() => {
+        this.questRefreshScheduled = false;
+        this.refreshQuestChip();
+      });
     };
     this.saveRestoringCb = () => {
-      this.trackedQuests = [];
-      this.setQuestHint('');
+      this.setQuestHint('', '');
       this.setZoneInteractHint(null);
     };
     this.zoneEnterCb = () => { this.updateRuleHint(true); };
@@ -281,9 +290,7 @@ export class HUD {
     this.eventBus.on('cutscene:end', this.cutsceneEndCb);
     this.eventBus.on('scene:enter', this.sceneEnterCb);
     this.eventBus.on('currency:changed', this.currencyCb);
-    this.eventBus.on('quest:accepted', this.questAcceptedCb);
-    this.eventBus.on('quest:completed', this.questCompletedCb);
-    this.eventBus.on('quest:untracked', this.questUntrackedCb);
+    this.eventBus.on('quest:changed', this.questChangedCb);
     this.eventBus.on('save:restoring', this.saveRestoringCb);
     this.eventBus.on('zone:ruleAvailable', this.zoneEnterCb);
     this.eventBus.on('zone:ruleUnavailable', this.zoneExitCb);
@@ -329,6 +336,54 @@ export class HUD {
   }
 
   /**
+   * 当前任务芯片的**两行**版：第一行任务名、第二行当前目标。
+   *
+   * 单独一个方法而不是给 {@link buildChip} 加参数，是因为两行的木框高度、图标垂直位置、
+   * 文字基线全要重算——塞进单行那套里只会让两条路互相牵制。没有目标时仍走单行那条。
+   */
+  private buildQuestChip(title: string, objective: string): Container {
+    const c = new Container();
+
+    const titleText = createStyledText({
+      text: title,
+      style: {
+        fontSize: CHIP_FONT, fill: UITheme.colors.bodyMuted, fontFamily: UITheme.fonts.ui,
+        wordWrap: true, breakWords: true, wordWrapWidth: QUEST_CHIP_MAX_TEXT_W,
+      },
+    });
+    const objText = createStyledText({
+      text: objective,
+      style: {
+        // 目标是任务名的从属行：比任务名再降一档（micro），否则两行一样重、读不出主次
+        fontSize: UITheme.fontSize.micro,
+        fill: UITheme.colors.hintMid,
+        fontFamily: UITheme.fonts.ui,
+        // 目标文案是策划自由填的：不封宽的话一句长目标能把常驻 HUD 芯片顶成一条横幅
+        wordWrap: true, breakWords: true, wordWrapWidth: QUEST_CHIP_MAX_TEXT_W,
+        lineHeight: Math.round(UITheme.fontSize.micro * 1.35),
+      },
+    });
+    const sprite = createIcon('hat', CHIP_ICON);
+    const textX = CHIP_PAD + (sprite ? CHIP_ICON + UITheme.spacing.sm : 0);
+    const w = Math.ceil(textX + Math.max(titleText.width, objText.width) + CHIP_PAD);
+    // 上下留白对称：两行之间那道缝（xs）不能被算进下边距，否则底部比顶部厚半档
+    const gap = UITheme.spacing.xs;
+    const h = Math.ceil(WOOD_CHIP * 2 + titleText.height + gap + objText.height);
+
+    c.addChild(createPanel(0, 0, w, h, SKINS.chip));
+    if (sprite) {
+      // 图标对齐第一行的视觉中线，不居中整块——两行时居中会让它飘在两行缝里
+      sprite.position.set(CHIP_PAD, WOOD_CHIP + Math.round((titleText.height - CHIP_ICON) / 2));
+      c.addChild(sprite);
+    }
+    titleText.position.set(textX, WOOD_CHIP);
+    objText.position.set(textX, WOOD_CHIP + titleText.height + gap);
+    c.addChild(titleText);
+    c.addChild(objText);
+    return c;
+  }
+
+  /**
    * 重建左上角芯片列。木框是九宫格 Sprite，画不进 Graphics，所以数值一变就整条重建
    * （旧实现是 `clear()` + `drawPanelBase` 原地重画，那条路径出不了木框）。
    * 重建只换 `chipLayer` 的子节点，HUD 其余层级与 resize 时序不受影响。
@@ -349,7 +404,9 @@ export class HUD {
     this.chipLayer.addChild(this.coinChip);
 
     if (this.questLabel) {
-      this.questChip = this.buildChip('hat', this.questLabel, UITheme.colors.bodyMuted);
+      this.questChip = this.questObjectiveLabel
+        ? this.buildQuestChip(this.questLabel, this.questObjectiveLabel)
+        : this.buildChip('hat', this.questLabel, UITheme.colors.bodyMuted);
       this.questChip.y = CHIP_H + CHIP_GAP;
       this.chipLayer.addChild(this.questChip);
     }
@@ -403,14 +460,34 @@ export class HUD {
     this.rebuildChips();
   }
 
-  setQuestHint(title: string): void {
+  /** 注入当前任务数据源（组装层接线）；注入即刷一次，避免开局那条 quest:changed 已经过去了 */
+  setQuestDataProvider(provider: IQuestDataProvider | null): void {
+    this.questData = provider;
+    this.refreshQuestChip();
+  }
+
+  /** 从 provider 现查当前任务 + 当前目标重建芯片（事件只负责喊"该查了"） */
+  private refreshQuestChip(): void {
+    const view = this.questData?.getFocusedQuestView() ?? null;
+    this.setQuestHint(view?.title ?? '', view?.objective ?? '');
+  }
+
+  setQuestHint(title: string, objective: string = ''): void {
     this.questLabel = title ? `${this.strings.get('hud', 'current')}${this.r(title)}` : '';
+    this.questObjectiveLabel = title && objective
+      ? this.strings.get('hud', 'objective', { text: this.r(objective) })
+      : '';
     this.rebuildChips();
   }
 
   /** 玩家视角：HUD 当前显示的任务追踪文字（玩家可见），供 getPlayerView。 */
   getQuestHintText(): string {
     return this.questLabel;
+  }
+
+  /** 玩家视角：HUD 当前显示的目标行（玩家可见）；没有当前目标时为空串。 */
+  getQuestObjectiveText(): string {
+    return this.questObjectiveLabel;
   }
 
   /**
@@ -671,9 +748,7 @@ export class HUD {
     this.eventBus.off('cutscene:end', this.cutsceneEndCb);
     this.eventBus.off('scene:enter', this.sceneEnterCb);
     this.eventBus.off('currency:changed', this.currencyCb);
-    this.eventBus.off('quest:accepted', this.questAcceptedCb);
-    this.eventBus.off('quest:completed', this.questCompletedCb);
-    this.eventBus.off('quest:untracked', this.questUntrackedCb);
+    this.eventBus.off('quest:changed', this.questChangedCb);
     this.eventBus.off('save:restoring', this.saveRestoringCb);
     this.eventBus.off('zone:ruleAvailable', this.zoneEnterCb);
     this.eventBus.off('zone:ruleUnavailable', this.zoneExitCb);

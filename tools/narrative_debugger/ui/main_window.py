@@ -97,6 +97,10 @@ class MainWindow(QMainWindow):
         self._default_fg = self.palette().text().color()
         # 「信号关系」窗（非模态，懒建）：不开就一分钱不花，开着就跟着运行时刷新。
         self._xref_window = None
+        # 上一次建索引是不是失败了。`_set_hint` 是单一广播位（谁最后写谁赢），
+        # 光靠它区分不了"扫描失败"和"信号不在索引里"——那会让人照错的提示白跑一趟。
+        self._xref_scan_failed = False
+        self._xref_scan_error = ""
         self._xref_stale = False  # 关着时重读过数据 → 下次打开先重扫
 
         self.setWindowTitle("叙事调试器 · GameDraft")
@@ -130,6 +134,9 @@ class MainWindow(QMainWindow):
         self.hub.savepointMissed.connect(self._on_savepoint_missed)
         self.hub.breakpointHit.connect(self._on_breakpoint_hit)
         self.hub.logged.connect(self._set_hint)
+        self.hub.targetsChanged.connect(self._refresh_targets)
+        self.hub.activeTargetChanged.connect(self._on_active_target_changed)
+        self._refresh_targets()
 
         self._refresh_beats()
         self._refresh_savepoint_marks()
@@ -155,6 +162,18 @@ class MainWindow(QMainWindow):
         self.dot = QLabel("●")
         self.dot.setStyleSheet("color:#c0392b;")
         row.addWidget(self.dot)
+
+        # 调试对象：同时开着几个游戏页签时（一个码头一个义庄）在这儿切。
+        # 只有一个页签也照样显示——不显示的话，人根本不会知道还能开第二个。
+        self.target_picker = QComboBox()
+        self.target_picker.setToolTip(
+            "同时开着几个游戏页签时，在这儿挑要调哪一个。\n"
+            "断点、跳拍、自动记点只作用于选中的那个；切走的那个会被立刻放行。"
+        )
+        # 240：装得下「游戏 2 · 义庄 · 直达 beishi_1」这种最长的一行；再窄就得靠省略号猜
+        self.target_picker.setMinimumWidth(240)
+        self.target_picker.activated.connect(self._on_target_picked)
+        row.addWidget(self.target_picker)
 
         self.status_label = QLabel("等游戏连上…")
         row.addWidget(self.status_label)
@@ -211,12 +230,18 @@ class MainWindow(QMainWindow):
         # 信号关系窗开着就一起换新（不然它还照着旧数据说"谁发谁听"，比不开更误导）；
         # 关着的先记一笔，等真打开时再扫——没人看的窗不值得扫一遍全工程。
         if self._xref_window is not None and self._xref_window.isVisible():
-            self._xref_window.set_indexes(self._build_xref_index(), fresh)
-            self._xref_stale = False
+            # 扫描失败时保留旧索引、并把 stale 留着：下次打开会再试一次，
+            # 而不是抱着一份 None 每次重画都抛 AttributeError。
+            self._xref_stale = not self._xref_window.set_indexes(self._build_xref_index(), fresh)
         else:
             self._xref_stale = True
         changed = old_fingerprint != fresh.fingerprint
-        self._set_hint("数据换新了" if changed else "数据没变，已重读")
+        hint = "数据换新了" if changed else "数据没变，已重读"
+        # 扫描失败的原因绝不能被这句成功文案顶掉（`_set_hint` 是单一广播位）：
+        # "已重读" + 窗里还是旧关系 = 看着正确的错答案，比崩溃更隐蔽。
+        if self._xref_scan_failed:
+            hint += "；但信号关系没扫出来，那个窗里还是上一份"
+        self._set_hint(hint)
 
     # ---- 左：拍子清单 --------------------------------------------------
 
@@ -745,6 +770,57 @@ class MainWindow(QMainWindow):
 
     # ---- 状态更新 -----------------------------------------------------
 
+    # ---- 调试对象 ------------------------------------------------------
+
+    def _refresh_targets(self) -> None:
+        """重画「调试对象」下拉。
+
+        ⚠ 必须 blockSignals：重填会触发 currentIndexChanged，那会把"重画"变成"切人"。
+        （用 activated 只认真人点击已经挡住大半，但下拉是外部状态的镜子，双保险。）
+        """
+        targets = self.hub.targets()
+        self.target_picker.blockSignals(True)
+        self.target_picker.clear()
+        if not targets:
+            self.target_picker.addItem("（没有游戏连上）", "")
+            self.target_picker.setEnabled(False)
+        else:
+            for entry in targets:
+                self.target_picker.addItem(entry["label"], entry["id"])
+            active = self.hub.active_target_id
+            idx = self.target_picker.findData(active)
+            if idx >= 0:
+                self.target_picker.setCurrentIndex(idx)
+            # 只有一个页签时也留着能点：点它不会出事，而灰掉的控件没人会去研究它干嘛用
+            self.target_picker.setEnabled(True)
+        self.target_picker.blockSignals(False)
+
+    def _on_target_picked(self, index: int) -> None:
+        client_id = str(self.target_picker.itemData(index) or "")
+        if not client_id:
+            return
+        if not self.hub.set_active_target(client_id):
+            # 已经是它了：把选中项拉回真值，别让下拉显示成另一个
+            self._refresh_targets()
+
+    def _on_active_target_changed(self) -> None:
+        """换人了：界面整块跟过去。
+
+        断点表必须重新下发——刚切过去的那个页签一个断点都没有（切走时被撤干净了），
+        不补发的话调试器列着断点、游戏那边却谁也不断。
+        """
+        self._paused_at = None
+        self._step_armed = False
+        self._sync_bp_buttons()
+        self._push_breakpoints()
+        if self.auto_save.isChecked():
+            self.hub.send_command(
+                {"command": "setAutoSavepoints", "enabled": True, "graphs": self._savepoint_graph_ids()}
+            )
+        self._rebuild_timeline()
+        self._refresh_targets()
+        self._on_state_changed()
+
     def _on_connection(self, connected: bool) -> None:
         if connected:
             # 游戏是新起的进程，断点表要重新下发一次，否则调试器列着断点、游戏侧一个都没有
@@ -788,13 +864,17 @@ class MainWindow(QMainWindow):
     def _update_status(self) -> None:
         state = self.hub.state
         if not state.connected:
+            # 三条路都写出来：改地址栏要重开页面（现场就没了），后两条是现场就能开的
             self.status_label.setText(
-                f"游戏没连上 · 在游戏地址后面加 ?ndbg=1 打开（端口 {self.hub.port}）"
+                f"游戏没连上（端口 {self.hub.port}）· 游戏里 F2 →「叙事调试」勾「连上叙事调试器」"
+                "，或控制台 __ndbg.on()，或地址后面加 ?ndbg=1"
             )
             return
         scene = self.index.scene_names.get(state.scene_id, state.scene_id) or "—"
         save_hint = "" if state.can_save else " · 演出中，记不了点"
-        self.status_label.setText(f"已连上 · 场景 {scene} · {state.last_update}{save_hint}")
+        others = max(0, len(self.hub.targets()) - 1)
+        more = f" · 另有 {others} 个页签连着" if others else ""
+        self.status_label.setText(f"已连上 · 场景 {scene} · {state.last_update}{save_hint}{more}")
         self.savepoint_label.setText(f"存了 {len(self.store.all())} 个点")
 
     def _set_hint(self, text: str) -> None:
@@ -1461,7 +1541,12 @@ class MainWindow(QMainWindow):
             self._set_hint("这一行不是信号（没有可看的两侧）")
             return
         if not self._open_signal_xref(signal):
-            self._set_hint(f"「{signal}」不在当前这份扫描里——点「重新读一遍数据」再试")
+            # 扫描本身就失败时，_build_xref_index 已经写了准确原因（半截数据…），
+            # 别用"信号不在索引里"盖掉它——照那条提示去点「重新读一遍数据」只会再撞一次。
+            # 扫描失败时 _build_xref_index 已经写了准确原因，别用"信号不在索引里"盖掉它
+            # （守卫不能只判窗口存不存在：走 stale 重扫那一支时窗口早就在了）。
+            if not self._xref_scan_failed:
+                self._set_hint(f"「{signal}」不在当前这份扫描里——点「重新读一遍数据」再试")
 
     # ---- 弹窗：存档点 / 假装做了那一下 ----------------------------------
 
@@ -1539,10 +1624,28 @@ class MainWindow(QMainWindow):
     # ---- 弹窗：信号关系（谁发谁听 + 此刻状态）---------------------------
 
     def _build_xref_index(self):
-        """建/重建共享扫描索引（与编辑器面板同一套口径，见 tools/narrative_xref）。"""
+        """建/重建共享扫描索引（与编辑器面板同一套口径，见 tools/narrative_xref）。
+
+        **失败返回 None，绝不往外抛**：半截数据下一句 traceback 会顺带打断「重新读一遍
+        数据」的后半段流程，人只看到按钮没反应（fail-safe 不 fail-open）。
+        """
         from tools.narrative_xref import build_index, from_disk
 
-        return build_index(from_disk(self.project_root))
+        try:
+            index = build_index(from_disk(self.project_root))
+            self._xref_scan_failed = False
+            return index
+        except Exception as exc:  # noqa: BLE001 - 工具窗不许被数据问题带崩
+            print(f"[signal-xref] 扫描失败: {exc!r}", flush=True)
+            self._xref_scan_failed = True
+            self._xref_scan_error = str(exc)
+            self._set_hint(f"信号关系扫描失败（数据可能是半截的）：{exc}")
+            if self._xref_window is not None:
+                self._xref_window.mark_stale(
+                    f"⚠ 这次没扫出来（{exc}）——下面显示的还是**上一份**关系，别照着它下判断。"
+                    .replace("**", "")
+                )
+            return None
 
     def _open_signal_xref(self, signal: str = "") -> bool:
         """打开「信号关系」窗。非模态：策划要一边在游戏里走一边盯着圆点变。
@@ -1553,13 +1656,23 @@ class MainWindow(QMainWindow):
         from tools.narrative_debugger.ui.signal_xref_window import SignalXrefWindow
 
         if self._xref_window is None:
+            xref = self._build_xref_index()
+            if xref is None:
+                # 扫描失败：_build_xref_index 已经把真正的原因写进提示条。
+                # 这里必须 return False（裸 return＝None＝falsy 也行，但签名是 bool，
+                # 而且调用方会拿它当"信号不在索引里"去覆盖那条准确提示）。
+                return False
             self._xref_window = SignalXrefWindow(
-                self._build_xref_index(), self.index, self.hub,
+                xref, self.index, self.hub,
                 parent=self, on_focus=self._focus_from_xref,
             )
         elif self._xref_stale:
-            # 关着的时候重读过数据：这时才重扫，省得没人看的窗白扫一遍全工程
-            self._xref_window.set_indexes(self._build_xref_index(), self.index)
+            # 关着的时候重读过数据：这时才重扫，省得没人看的窗白扫一遍全工程。
+            # 扫不出来就留着旧的（窗里会照旧显示上一份关系），stale 不清、下次再试。
+            if not self._xref_window.set_indexes(self._build_xref_index(), self.index):
+                self._xref_window.show()
+                self._xref_window.raise_()
+                return False
         self._xref_stale = False
         self._xref_window.show()
         self._xref_window.raise_()
@@ -1690,6 +1803,10 @@ class MainWindow(QMainWindow):
                 "activeStates": dict(state.active_states),
                 "runArchetypes": list(state.run_archetypes),
                 "savepointCount": len(self.store.all()),
+                # 同时挂着几个游戏页签时，agent 得知道自己在驱动哪一个——
+                # 不说的话，"我明明跳了一拍，画面没动"会被当成引擎的锅。
+                "target": self.hub.active_target_id,
+                "targets": self.hub.targets(),
             }
 
         if command == "debuggerTimeline":

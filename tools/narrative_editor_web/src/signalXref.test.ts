@@ -16,12 +16,22 @@ import {
   rowLabel,
   searchHaystack,
   signalDisplayName,
+  filterStates,
+  readerEffect,
+  readerFocusTarget,
+  readerHeadline,
+  relationFingerprint,
   signalFocusIdOf,
+  stateCountSummary,
+  stateFocusTarget,
+  stateHeadline,
+  stateKey,
   splitEmitters,
   worstSeverity,
 } from './signalXref';
 import type {
   SignalXrefCardDef,
+  StateXrefCardDef,
   XrefEmitterDef,
   XrefListenerDef,
   XrefStateReadDef,
@@ -47,6 +57,7 @@ function emitter(over: Partial<XrefEmitterDef> = {}): XrefEmitterDef {
     graphId: '',
     stateId: '',
     transitionId: '',
+    wired: true,
     ...over,
   };
 }
@@ -65,6 +76,7 @@ function listener(over: Partial<XrefListenerDef> = {}): XrefListenerDef {
     to: 's_b',
     toLabel: '已接活',
     conditions: [],
+    how: '收到信号「sig」时走',
     runGraph: false,
     priority: 0,
     trigger: '',
@@ -84,13 +96,16 @@ function card(over: Partial<SignalXrefCardDef> = {}): SignalXrefCardDef {
     notes: '',
     registered: true,
     declarations: [],
+    reactiveRefs: [],
     stateReads: [],
     diagnostics: [],
     sourceGraphId: '',
+    sourceGraphLabel: '',
     sourceStateId: '',
     sourceStateLabel: '',
     emitterCount: emitters.filter((e) => e.channel !== 'upstream').length,
     listenerCount: listeners.length,
+    reactiveRefCount: 0,
     declarationCount: 0,
     ...over,
     emitters,
@@ -102,9 +117,16 @@ function stateRead(over: Partial<XrefStateReadDef> = {}): XrefStateReadDef {
   return {
     graphId: 'flow_main',
     stateId: 's_b',
+    compositionId: '',
+    elementId: '',
+    hostGraphId: '',
+    hostTransitionId: '',
     containerKind: 'quest',
     containerId: 'q_1',
     kindLabel: '任务',
+    subjectKind: 'quest', subjectKindLabel: '任务', subjectName: '', subjectId: 'q_1',
+    subjectScene: '', subjectEffect: '任务算不算数', subjectDisplay: 'q_1',
+    reached: false, negated: false,
     where: '完成时 第 1 个',
     file: 'public/assets/data/quests.json',
     pointer: '/0/requires',
@@ -339,5 +361,136 @@ describe('搜索面', () => {
     expect(hay).toContain('婆子家那段');
     expect(hay).toContain('对话_接活');
     expect(hay).toContain('主线');
+  });
+});
+
+describe('审查打回的几条（2026-08-07）', () => {
+  it('「有问题」徽章跟着搜索走，不然徽章说 12、点进去只有 2 条', () => {
+    const cards = [
+      card({ signal: 'a_bad', diagnostics: [{ code: 'noEmitter', severity: 'warning', message: '' }] }),
+      card({ signal: 'b_bad', diagnostics: [{ code: 'noEmitter', severity: 'warning', message: '' }] }),
+    ];
+    expect(filterSignals(cards, 'problems', '').length).toBe(2);
+    expect(filterSignals(cards, 'problems', 'a_bad').length).toBe(1);
+  });
+
+  it('关系指纹忽略画布坐标：挪节点不该报「关系可能过期」', () => {
+    const base = {
+      schemaVersion: 2,
+      compositions: [{
+        id: 'c',
+        mainGraph: {
+          id: 'g', ownerType: 'flow', initialState: 'a',
+          states: { a: { id: 'a', meta: { editor: { x: 0, y: 0 } } } },
+          transitions: [],
+        },
+      }],
+    };
+    const moved = JSON.parse(JSON.stringify(base));
+    moved.compositions[0].mainGraph.states.a.meta.editor = { x: 999, y: 888 };
+    expect(relationFingerprint(moved)).toBe(relationFingerprint(base));
+
+    // 但接线一变，指纹必须变（不然过期提示就成了摆设）
+    const rewired = JSON.parse(JSON.stringify(base));
+    rewired.compositions[0].mainGraph.transitions.push({ id: 't', from: 'a', to: 'a', signal: 'sig' });
+    expect(relationFingerprint(rewired)).not.toBe(relationFingerprint(base));
+  });
+
+  it('上游因果里没接线的那条要标出来（占位信号运行时拒发）', () => {
+    const c = card({
+      emitters: [
+        emitter({ channel: 'broadcast' }),
+        emitter({ channel: 'upstream', wired: false, context: '这条路还没接线（占位信号，运行时不会发）' }),
+      ],
+    });
+    const { upstream } = splitEmitters(c);
+    expect(upstream[0].wired).toBe(false);
+    expect(upstream[0].context).toContain('还没接线');
+  });
+});
+
+describe('状态维度：这一拍谁在看着', () => {
+  function stateCard(over: Partial<StateXrefCardDef> = {}): StateXrefCardDef {
+    return {
+      graphId: 'flow_main', stateId: 's_b', graphLabel: '主线', stateLabel: '接了活',
+      compositionId: 'comp_1', compositionLabel: '第一单', elementId: '',
+      exists: true, isInitial: false, broadcasts: false, runGraph: false, broadcastSignal: '',
+      waysIn: [], waysOut: [], emits: [], readers: [], diagnostics: [],
+      wayInCount: 0, wayOutCount: 0, readerCount: 0, emitCount: 0,
+      ...over,
+    };
+  }
+
+  it('行文案说的是图名·拍名，不是裸 id', () => {
+    expect(stateHeadline(stateCard())).toBe('主线 · 接了活');
+    expect(stateKey(stateCard())).toBe('flow_main.s_b');
+  });
+
+  it('副行一眼看出牵连多大', () => {
+    expect(stateCountSummary(stateCard({ wayInCount: 2, wayOutCount: 1, readerCount: 12 })))
+      .toBe('进 2 · 出 1 · 12 处看着');
+    expect(stateCountSummary(stateCard({ broadcasts: true }))).toContain('会广播');
+  });
+
+  it('筛选：有问题 / 有人看着 / 会广播', () => {
+    const cards = [
+      stateCard({ stateId: 'ok' }),
+      stateCard({ stateId: 'bad', diagnostics: [{ code: 'stateNoWayIn', severity: 'warning', message: '' }] }),
+      stateCard({ stateId: 'watched', readerCount: 3 }),
+      stateCard({ stateId: 'cast', broadcasts: true }),
+    ];
+    expect(filterStates(cards, 'problems', '').map((c) => c.stateId)).toEqual(['bad']);
+    expect(filterStates(cards, 'watched', '').map((c) => c.stateId)).toEqual(['watched']);
+    expect(filterStates(cards, 'broadcast', '').map((c) => c.stateId)).toEqual(['cast']);
+    expect(filterStates(cards, 'all', '')).toHaveLength(4);
+  });
+
+  it('搜索面覆盖"谁在看着"——记不住拍名也能靠那个任务找到', () => {
+    const card = stateCard({ readers: [stateRead({ containerId: 'q_婆子家', kindLabel: '任务' })] });
+    expect(filterStates([card], 'all', 'q_婆子家')).toHaveLength(1);
+  });
+
+  it('定位这一拍本身：不存在的幽灵拍不给目标（宁可禁用也不跳空）', () => {
+    expect(stateFocusTarget(stateCard())).toEqual({
+      kind: 'state', compositionId: 'comp_1', graphId: 'flow_main', stateId: 's_b',
+    });
+    expect(stateFocusTarget(stateCard({ exists: false }))).toBeNull();
+    expect(stateFocusTarget(stateCard({ compositionId: '' }))).toBeNull();
+  });
+
+  it('读状态那行定位到它**长在哪**，不是它读的那张图', () => {
+    const r = stateRead({
+      graphId: 'flow_other', stateId: 's_x',      // 被读的
+      compositionId: 'comp_1', hostGraphId: 'flow_main', hostTransitionId: 't_c',
+    });
+    expect(readerFocusTarget(r)).toEqual({
+      kind: 'transition', compositionId: 'comp_1', graphId: 'flow_main', transitionId: 't_c',
+    });
+  });
+
+  it('长在文件里的读状态行不给画布目标（那类走文件跳转）', () => {
+    expect(readerFocusTarget(stateRead({ hostGraphId: '' }))).toBeNull();
+  });
+});
+
+describe('读状态那一行说的是世界里的东西，不是技术路径', () => {
+  it('NPC 说成「场景的NPC「名字」」', () => {
+    expect(readerHeadline(stateRead({
+      subjectKind: 'npc', subjectKindLabel: 'NPC', subjectDisplay: '庄家来人',
+      subjectScene: '雾津街头', kindLabel: '场景',
+    }))).toBe('雾津街头的NPC「庄家来人」');
+  });
+
+  it('没有主体时退回容器（宁可粗一点也不空着）', () => {
+    expect(readerHeadline(stateRead({
+      subjectKind: '', subjectKindLabel: '', subjectDisplay: '', containerId: 'q_1', kindLabel: '任务',
+    }))).toBe('任务「q_1」');
+  });
+
+  it('effect 一行讲清「决定它什么」＋要求到过还是正停在', () => {
+    expect(readerEffect(stateRead({ subjectEffect: '出不出现', reached: true })))
+      .toBe('出不出现 · 要求到过这一拍');
+    expect(readerEffect(stateRead({ subjectEffect: '出不出现', reached: false, negated: true })))
+      .toBe('出不出现 · 要求正停在这一拍 · 取反');
   });
 });

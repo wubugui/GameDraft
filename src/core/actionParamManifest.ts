@@ -76,6 +76,8 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
   grantRuleLayer: { required: ['ruleId', 'layer'], nonEmpty: ['ruleId', 'layer'] },
   giveFragment: { required: ['id'], nonEmpty: ['id'] },
   updateQuest: { required: ['id'], nonEmpty: ['id'] },
+  // 当前任务槽（D6）：id 允许空串（= 清空当前任务），故不进 nonEmpty；announce 为可选勾选
+  setFocusedQuest: { required: ['id'], optional: ['announce'] },
   pickup: { required: ['itemName', 'count'], nonEmpty: ['itemName'], optional: ['itemId', 'isCurrency'] },
   shopPurchase: { required: ['itemId', 'price'], nonEmpty: ['itemId'] },
   inventoryDiscard: { required: ['itemId'], nonEmpty: ['itemId'] },

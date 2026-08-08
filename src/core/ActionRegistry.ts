@@ -630,6 +630,19 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
   executor.register('giveFragment', (p) => { void d.rulesManager.giveFragment(p.id as string); }, ['id']);
   executor.register('updateQuest', (p) => { void d.questManager.acceptQuest(p.id as string); }, ['id']);
 
+  /**
+   * 设为「当前任务」（全局唯一追踪槽，玩法文档 D6）。id 留空 = 清空当前任务。
+   * announce 勾选时顺带播一次醒目提示（把玩家注意力拉到这条任务上）。
+   *
+   * 异步 handler 按 L2 契约在此 `void ... .catch(...)` 封口，不把 execute 改成 async。
+   */
+  executor.register('setFocusedQuest', (p) => {
+    const raw = String(p.id ?? '').trim();
+    void d.questManager
+      .requestFocusQuest(raw === '' ? null : raw, { announce: p.announce === true })
+      .catch((e) => console.warn('setFocusedQuest failed', e));
+  }, ['id', 'announce']);
+
   /** R13：先验证 def 存在再切状态（对齐 startCutscene 失败即恢复模式）——
    *  未知 id 时不进 Encounter，避免 encounter:end 永不到来的软锁。 */
   executor.register('startEncounter', (p) => {

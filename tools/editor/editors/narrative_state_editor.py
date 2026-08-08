@@ -1611,6 +1611,14 @@ class NarrativeStateEditor(QWidget):
     def showEvent(self, event) -> None:  # type: ignore[override]
         super().showEvent(event)
         self._refresh_staleness_banner()
+        # 从别的编辑页回来：那边可能刚改过发射端（"看关系 → 去看看 → 改 → 回来"是本
+        # 面板最主要的动线）。面板的过期判据只看画布指纹、看不见别的文件，所以这里
+        # 主动喊一声，让它亮过期条——不重扫，只提示。
+        if self._view is not None:
+            self._view.page().runJavaScript(
+                "window.__narrativeEditor && window.__narrativeEditor.markXrefStale"
+                " && window.__narrativeEditor.markXrefStale();"
+            )
         # 切到本页时顺手保鲜:dist 变新且无草稿 → 静默载入最新页面(有草稿只亮黄条)
         self._auto_reload_if_stale()
 

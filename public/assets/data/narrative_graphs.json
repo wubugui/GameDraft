@@ -531,21 +531,11 @@
         "states": {
           "initial": {
             "id": "initial",
-            "label": "开局·茶馆门外的人",
+            "label": "开局·听书斗嘴",
             "meta": {
               "editor": {
-                "x": -326,
-                "y": 78
-              }
-            }
-          },
-          "s01_tingshu": {
-            "id": "s01_tingshu",
-            "label": "听书完成",
-            "meta": {
-              "editor": {
-                "x": -39,
-                "y": 78
+                "x": -321,
+                "y": 43
               }
             }
           },
@@ -614,8 +604,8 @@
             "label": "决定装道士",
             "meta": {
               "editor": {
-                "x": 2104,
-                "y": 24
+                "x": 1752,
+                "y": 234
               }
             }
           },
@@ -624,8 +614,8 @@
             "label": "阎王岭送货完成",
             "meta": {
               "editor": {
-                "x": 2364,
-                "y": 24
+                "x": 1820,
+                "y": 462
               }
             }
           },
@@ -634,8 +624,8 @@
             "label": "克拉拉招募完成",
             "meta": {
               "editor": {
-                "x": 2884,
-                "y": 24
+                "x": 2046,
+                "y": 612
               }
             }
           },
@@ -644,8 +634,8 @@
             "label": "出发·Demo终",
             "meta": {
               "editor": {
-                "x": 3144,
-                "y": 24
+                "x": 1952,
+                "y": 798
               }
             }
           },
@@ -663,8 +653,8 @@
             "id": "state_2",
             "meta": {
               "editor": {
-                "x": 206,
-                "y": 224
+                "x": 22,
+                "y": 55
               }
             },
             "label": "主线开局闲逛A"
@@ -681,12 +671,6 @@
           }
         },
         "transitions": [
-          {
-            "id": "t_s01_tingshu",
-            "from": "initial",
-            "to": "s01_tingshu",
-            "signal": "state:scenario_听书:kicked_out"
-          },
           {
             "id": "t_s02b_meng",
             "from": "s02_beishi",
@@ -775,7 +759,7 @@
           },
           {
             "id": "t_2",
-            "from": "s01_tingshu",
+            "from": "initial",
             "to": "state_2",
             "signal": "主线_开局被赶出茶馆"
           }
@@ -5204,8 +5188,8 @@
             "label": "已接活",
             "meta": {
               "editor": {
-                "x": 1224,
-                "y": 113
+                "x": 1344,
+                "y": 399
               }
             }
           },

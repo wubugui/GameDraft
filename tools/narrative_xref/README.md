@@ -1,6 +1,13 @@
-# 叙事信号交叉引用（共享基建）
+# 叙事关系交叉引用（共享基建）
 
-回答一个问题：**这条信号，谁发的、谁听的。**
+回答两个问题：
+
+- **这条信号，谁发的、谁听的。**
+- **这一拍，怎么进来、从这儿去哪、谁在看着它。**
+
+第二个问题的重点在最后一栏：读状态的引用里 **346/370 是转移以外的消费者**（对话分支、
+场景实体显隐、章节包、任务、地图节点、档案）——它们在因果图上一条线都没有，改一拍
+最容易漏的就是它们。
 
 编辑器面板、调试器窗口、命令行三处共用这一份扫描与口径。界面各做各的（用途不同），
 口径只有一份（否则同一条信号在两个工具里显示不一样，人就没法信任何一个）。
@@ -37,11 +44,38 @@
 ## 命令行
 
 ```bash
-python3 -m tools.narrative_xref beishi_lg_accepted   # 一条信号的两侧
-python3 -m tools.narrative_xref --list               # 全部信号 + 发/听/声明计数
-python3 -m tools.narrative_xref --problems           # 只看两侧对不齐的
-python3 -m tools.narrative_xref <id> --json          # 给 agent / 脚本
+python3 -m tools.narrative_xref beishi_lg_accepted        # 一条信号的两侧
+python3 -m tools.narrative_xref --list                    # 全部信号 + 发/听/声明计数
+python3 -m tools.narrative_xref --problems                # 只看两侧对不齐的
+python3 -m tools.narrative_xref --state 图id.状态id        # 这一拍：怎么进来 · 去哪 · 谁在看着
+python3 -m tools.narrative_xref --states [--problems]     # 全部状态一览
+python3 -m tools.narrative_xref <id> --json               # 给 agent / 脚本
 ```
+
+## 引用要落到「世界里的那个东西」
+
+策划盯的是实体与流程。每条读状态的引用都带 `subject_*`：它管的是**谁**
+（`雾津街头的NPC「挑空担的汉子」`，名字取 name/label/title，取不到才退 id）、
+**决定它什么**（`出不出现` / `任务算不算数` / `这一章开不开` …），
+外加两个判定位：`reached`（要求"到过"还是"正停在"——差别决定调试器敢不敢下断言）与
+`negated`（被 `not` 包着，漏掉会把结论说反）。
+
+`场景实体` 的显隐语义读它自己的 `conditionHidesEntity`：true＝条件不满足就藏起来
+（"出不出现"），否则只是不能互动。真实工程 371 条引用**全部**落到了具体东西上
+（护栏 `test_every_reference_in_the_real_project_resolves_to_something`）。
+
+## 一拍的四栏
+
+`state_card(图, 态)` → 怎么进来（上游转移 / 强制设状态）· 从这儿去哪（出口转移）·
+进出会发什么信号 · **谁在看着**（条件叶、对话分支、章节包、任务、地图节点、档案…）。
+诊断盖四种：图里没有这个状态（被引用却不存在＝那些条件永远判不成立）、进不来、
+没有出口、没人读也不广播。
+
+## 反应式转移的 signal 字段
+
+反应式转移（`reactive*`）靠条件自动走，运行时**根本不看 signal 字段**。但策划确实会在
+那儿写名字（真实数据上就有：主线入口 `Demo主线开始`）。算成监听是骗人，只说"没人听"
+又会让人对着自己写的名字发懵——所以单列一栏 `reactive_refs` + 一条诊断说清楚。
 
 ## 代码里用
 
@@ -66,7 +100,12 @@ index.overview()                               # 全部信号（一次扫描，�
 
 派生信号 `state:<图>:<状态>` 额外给两样：
 
-- **能让它发生的路**：进入该状态的上游转移 + `setNarrativeState` 强制设状态。
+- **能让它发生的路**：进入该状态的上游转移 + `setNarrativeState` 强制设状态。每条都带
+  `wired`：**占位信号的转移运行时拒发**，那条路走不到，界面必须与真能走的路分开画
+  （全都没接线时另出一条 `unreachable` 诊断）。判据是共享的
+  `model.transition_is_unwired(signal, trigger)`——调试器 `Transition.is_unwired` 直接调它，
+  各写一份的后果就是同一份数据在两个工具里给出相反答案（2026-08-07 审查坐实过）。
+  ⚠ 反应式转移（`reactive*`）的 signal 恒是占位、线接在 conditions 上，**不算没接线**。
   只说"进入时自动发"等于没回答"谁让它发的"。
   ⚠ 初始状态**不算**一条路：注册图 / `startNarrativeRun` / `resetNarrativeRun` 都是直接
   set activeStates，不走 `enterState`、**不广播**——初始状态勾了「进入时广播」是白勾，

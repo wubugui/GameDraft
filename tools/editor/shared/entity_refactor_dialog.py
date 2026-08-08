@@ -82,6 +82,12 @@ def _usage_tree(report: dict[str, Any], parent: QWidget | None = None) -> QTreeW
         "全局解析；删除全项目最后一个同 id 实例会卡整工程保存。",
     )
     group(
+        "任务引导目标（quests.json 的场景内浮标）",
+        [(f"quest:{h['itemId']}", str(h["count"])) for h in report.get("questGuidance") or []],
+        "sceneId+entityKind+entityId 的场景限定引用，改名/迁移自动跟随；"
+        "**删除实体会让这些引导指空**（运行时不报错，只是引导默默不出现），需先改这些任务。",
+    )
+    group(
         "迁移后需人工复核的实体自带字段",
         [(item, "") for item in report.get("needsReview") or []],
     )

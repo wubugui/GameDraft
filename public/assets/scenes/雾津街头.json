@@ -584,6 +584,20 @@
           "state": "entry"
         }
       ]
+    },
+    {
+      "id": "主线_吃饭点A",
+      "type": "inspect",
+      "label": "",
+      "x": 2326.1,
+      "y": 871.4,
+      "interactionRange": 50,
+      "data": {
+        "graphId": "街巷_主线吃饭点",
+        "entry": "n_start",
+        "text": ""
+      },
+      "group": "主线_吃饭点"
     }
   ],
   "npcs": [
@@ -824,8 +838,8 @@
     {
       "id": "npc_街头壮汉",
       "name": "蛮横的壮汉",
-      "x": 2400.0,
-      "y": 1200.0,
+      "x": 3081.9,
+      "y": 884.2,
       "interactionRange": 64.0,
       "animFile": "/resources/runtime/animation/npc_employer_anim/anim.json",
       "initialAnimState": "idle",
@@ -1683,6 +1697,23 @@
     {
       "id": "雾津送葬队伍",
       "label": "雾津送葬队伍"
+    },
+    {
+      "id": "主线_吃饭点",
+      "conditions": [
+        {
+          "all": [
+            {
+              "narrative": "flow_xungou_main",
+              "state": "state_2"
+            },
+            {
+              "quest": "主线_闲逛阶段A",
+              "questStatus": "Active"
+            }
+          ]
+        }
+      ]
     }
   ]
 }

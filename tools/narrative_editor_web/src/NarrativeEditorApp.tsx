@@ -79,6 +79,7 @@ import { DEFAULT_DRAFT_SIGNAL } from './signalConstants';
 import { transitionEdgeLabel } from './edgeLabels';
 import { createAuthorSignal, isUnregisteredAuthorSignal } from './signalCatalog';
 import { applySignalDisplayToEdges, buildSignalLabelMap } from './signalDisplay';
+import { relationFingerprint } from './signalXref';
 import { SignalRefactorModal, type NarrativeRefactorRequest } from './components/SignalRefactorModal';
 import {
   elementSubtitle,
@@ -260,7 +261,16 @@ function NarrativeEditorInner() {
   // 「信号关系」面板：只读地看一条信号谁发谁听。选中的信号由这里持有，
   // 从信号弹窗/转移属性点「看关系」进来时直接换人，关掉再开还停在原处。
   const [signalXrefOpen, setSignalXrefOpen] = useState(false);
+  // 挂过一次就不再卸载（只隐藏）：卸载 = 扫描结果、筛选页签、搜索词全丢，
+  // 而收起面板看画布是这个功能最常见的一步。
+  const [signalXrefMounted, setSignalXrefMounted] = useState(false);
+  // 别的编辑页改过东西的计数（宿主切回本页时 +1）。它进指纹，于是面板会亮过期条。
+  const [xrefExternalEpoch, setXrefExternalEpoch] = useState(0);
   const [signalXrefSignal, setSignalXrefSignal] = useState('');
+  // 面板看哪一面 + 选中的那一拍。与选中的信号一样由 App 持有：关掉再开还停在原处，
+  // 从状态属性「看引用」点进来时直接换人。
+  const [signalXrefMode, setSignalXrefMode] = useState<'signal' | 'state'>('signal');
+  const [signalXrefState, setSignalXrefState] = useState('');
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [templates, setTemplates] = useState<NarrativeTemplateDef[]>([]);
   // 「整理分组」标签：编辑器专用，运行时永不加载，绝不进 narrative_graphs.json。
@@ -655,6 +665,12 @@ function NarrativeEditorInner() {
         void refreshCatalog();
       },
       refreshCatalog,
+      /**
+       * 切回叙事页时喊一声：别的编辑页（图对话、场景…）可能刚改过发射端。
+       * 面板的过期判据只看画布指纹，**看不见别的文件**——"看关系 → 去看看 → 改 → 回来"
+       * 恰恰是这个面板最主要的动线，不亮黄条就等于不声不响给旧答案。
+       */
+      markXrefStale: () => { setXrefExternalEpoch((n) => n + 1); },
       // 宿主跳转定位（PySide 位面面板 Tab2 双击）：切编排 + 聚焦状态。
       // focusIssue 声明在本 effect 之后，经 ref 转接（依赖数组直接引用会踩 TDZ）。
       focusState: (graphId: string, stateId: string): boolean => {
@@ -1581,13 +1597,44 @@ function NarrativeEditorInner() {
 
   /** 把只被引用、没有注册行的信号补进注册表（与信号弹窗那颗「补登记」同一个函数）。 */
   const registerSignal = useCallback((signalId: string) => {
-    updateData((next) => { createAuthorSignal(next, signalId); });
-    setStatus(`已把「${signalId}」补进信号注册表（可 Ctrl+Z 撤销）；点「重新扫描」刷新关系`);
+    // createAuthorSignal 撞名会 throw。抛在事件回调里没人接（没有 error boundary、
+    // 没有全局 handler），界面**什么都不发生**——第二次点「补登记」就是这个下场。
+    try {
+      updateData((next) => { createAuthorSignal(next, signalId); });
+      setStatus(`已把「${signalId}」补进信号注册表（可 Ctrl+Z 撤销）；点「重新扫描」刷新关系`);
+    } catch (e) {
+      setStatus(`没能补登记「${signalId}」：${e instanceof Error ? e.message : String(e)}`);
+    }
   }, [updateData]);
 
   /** 打开「信号关系」看某条信号（工具栏 / 信号弹窗 / 转移属性 / 校验面板四处进来）。 */
+  /**
+   * 「信号关系」面板的过期判据。**必须 memo**：面板常驻挂载后，拖一个节点的每个
+   * pointermove 都会重渲染 App，而这行是整份叙事文档的 JSON 序列化（实测 65KB/次、
+   * 拖十秒约 75MB 字符串垃圾）——而且面板关着照收。
+   */
+  const signalXrefFingerprint = useMemo(() => relationFingerprint(data), [data]);
+  const signalStillUnregistered = useCallback(
+    (signalId: string) => isUnregisteredAuthorSignal(data, signalId), [data]);
+  const requestSignalRefactorFromXref = useCallback((mode: 'rename' | 'delete', signalId: string) => {
+    setSignalRefactor(mode === 'rename' ? { kind: 'signal-rename', signalId } : { kind: 'signal-delete', signalId });
+  }, []);
+
   const openSignalXref = useCallback((signalId?: string) => {
     if (signalId) setSignalXrefSignal(signalId);
+    setSignalXrefMode('signal');
+    setSignalXrefMounted(true);
+    setSignalXrefOpen(true);
+  }, []);
+
+  /** 打开「关系」看某一拍：怎么进来、从这儿去哪、**谁在看着它**（状态属性里的「看引用」）。 */
+  const openStateXref = useCallback((graphId: string, stateId: string) => {
+    const gid = String(graphId ?? '').trim();
+    const sid = String(stateId ?? '').trim();
+    if (!gid || !sid) return;
+    setSignalXrefState(`${gid}.${sid}`);
+    setSignalXrefMode('state');
+    setSignalXrefMounted(true);
     setSignalXrefOpen(true);
   }, []);
   // focusIssue 声明在本函数之前，经 ref 转接（依赖数组直接引用会踩 TDZ，与 focusIssueRef 同款）。
@@ -1912,10 +1959,10 @@ function NarrativeEditorInner() {
               className="toolbar-btn"
               onClick={() => (signalXrefOpen ? setSignalXrefOpen(false) : openSignalXref())}
               title={signalXrefOpen
-                ? '关闭信号关系面板'
-                : '打开信号关系面板：一条信号谁发、谁听，全工程只读清单，能点着跳过去'}
+                ? '关闭关系面板'
+                : '打开关系面板：信号谁发谁听 / 一拍怎么进来·去哪·谁在看着，全工程只读清单，能点着跳过去'}
             >
-              {signalXrefOpen ? '信号关系−' : '信号关系+'}
+              {signalXrefOpen ? '关系−' : '关系+'}
             </button>
             <button type="button" className="toolbar-btn" onClick={() => setTemplatesOpen((v) => !v)} title={templatesOpen ? '关闭模板面板' : '打开叙事状态机模板面板（填 taskId 一键派生新任务）'}>
               {templatesOpen ? '模板−' : '模板+'}
@@ -2052,25 +2099,33 @@ function NarrativeEditorInner() {
             </aside>
           )}
 
-          {signalXrefOpen && (
-            <aside className="entity-global-panel signal-xref-dock">
+          {signalXrefMounted && (
+            <aside
+              className="entity-global-panel signal-xref-dock"
+              hidden={!signalXrefOpen}
+              style={signalXrefOpen ? undefined : { display: 'none' }}
+            >
               <div className="entity-global-head">
                 <div>
-                  <div className="section-title">信号关系</div>
-                  <div className="muted">一条信号：谁发 · 谁听（只读，改不了数据）</div>
+                  <div className="section-title">关系</div>
+                  <div className="muted">信号：谁发 · 谁听　｜　状态：怎么进来 · 去哪 · 谁在看着（只读）</div>
                 </div>
                 <button type="button" onClick={() => setSignalXrefOpen(false)}>关闭</button>
               </div>
               <SignalXrefPanel
                 data={data}
-                dataFingerprint={currentDataHash}
+                dataFingerprint={signalXrefFingerprint}
+                externalEpoch={xrefExternalEpoch}
+                mode={signalXrefMode}
+                onModeChange={setSignalXrefMode}
                 selectedSignal={signalXrefSignal}
                 onSelectSignal={setSignalXrefSignal}
+                selectedState={signalXrefState}
+                onSelectState={setSignalXrefState}
                 onFocusTarget={focusTarget}
                 onRegisterSignal={registerSignal}
-                onRequestRefactor={(mode, signalId) => setSignalRefactor(
-                  mode === 'rename' ? { kind: 'signal-rename', signalId } : { kind: 'signal-delete', signalId },
-                )}
+                stillUnregistered={signalStillUnregistered}
+                onRequestRefactor={requestSignalRefactorFromXref}
               />
             </aside>
           )}
@@ -2229,6 +2284,7 @@ function NarrativeEditorInner() {
               onSetSubgraphCategory={setSubgraphCategoryFor}
               onRequestSignalRefactor={(req) => setSignalRefactor(req)}
               onInspectSignal={openSignalXref}
+              onInspectState={openStateXref}
             />
             <div className="inspector-actions">
               <button type="button" onClick={deleteSelected} disabled={!isSelectionDeletable(selectedId, graphRef)}>删除</button>
@@ -2467,6 +2523,8 @@ function StructuredInspector(props: {
   onRequestSignalRefactor?: (req: NarrativeRefactorRequest) => void;
   /** 打开「信号关系」看某条信号谁发谁听（只读）。 */
   onInspectSignal?: (signalId: string) => void;
+  /** 打开「关系·状态」看某一拍谁在看着它（只读）。 */
+  onInspectState?: (graphId: string, stateId: string) => void;
 }) {
   const { composition, graph, graphRef, selectedId } = props;
   const statesByGraph = useMemo(() => {
@@ -2909,6 +2967,8 @@ function StateInspector(props: {
   setRuntimeSnapshot: (snapshot: RuntimeDebugSnapshotDef) => void;
   setStatus: (status: string) => void;
   onRequestSignalRefactor?: (req: NarrativeRefactorRequest) => void;
+  /** 看这一拍谁在看着（条件/对话分支/场景显隐/章节包/任务…全在因果图之外） */
+  onInspectState?: (graphId: string, stateId: string) => void;
 }) {
   const { graph, state, stateId, updateCurrentGraph } = props;
   const planeIds = props.catalog.planeIds ?? [];
@@ -2923,6 +2983,15 @@ function StateInspector(props: {
         <label>状态 ID</label>
         <div className="signal-field-row">
           <input readOnly value={state.id || stateId} />
+          {props.onInspectState && (
+            <button
+              type="button"
+              title="看这一拍：怎么进来、从这儿去哪、谁在看着它（条件、对话分支、场景实体显隐、章节包、任务…这些在画布上一条线都没有）"
+              onClick={() => props.onInspectState!(graph.id, stateId)}
+            >
+              看引用
+            </button>
+          )}
           {props.onRequestSignalRefactor && (
             <button
               type="button"

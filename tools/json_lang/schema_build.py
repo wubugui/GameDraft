@@ -55,6 +55,7 @@ CONTENT_ID_PARAMS: dict[tuple[str, str], str] = {
     ("grantRuleLayer", "ruleId"): "rules",
     ("giveFragment", "id"): "fragments",
     ("updateQuest", "id"): "quests",
+    ("setFocusedQuest", "id"): "quests",
     ("startEncounter", "id"): "encounters",
     ("startCutscene", "id"): "cutscenes",
     ("startWaterMinigame", "id"): "water_minigames",

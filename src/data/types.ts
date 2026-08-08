@@ -1140,6 +1140,55 @@ export interface QuestEdge {
   bypassPreconditions?: boolean;
 }
 
+/** 引导通道种类（玩法文档 D8）。新增通道 = 加一个 kind + 一个渲染实现，配置面不动。 */
+export type QuestGuidanceKind = 'mapMarker' | 'worldMarker' | 'sceneHint';
+
+/**
+ * 一条引导。**通道之间互不排斥**：同一个目标可以同时挂地图标记 + 场景浮标 + 场景提示，
+ * 由策划在任务编辑器里逐条配，运行时全部并行生效（只对「当前任务」生效，见 D6）。
+ *
+ * ⚠ `worldMarker` 的实体引用一律用**场景限定三件套**（`sceneId` + `entityKind` + `entityId`）：
+ * 这与 `setEntityField` 等动作的限定引用同形，重构引擎（`DATA_REF_PARAMS`）据此跟随
+ * 实体改名/迁场景。写成裸 id 会在实体改名后静默指空，这条踩过。
+ */
+export interface QuestGuidanceDef {
+  kind: QuestGuidanceKind;
+  /** 目标所在场景 id（三条通道都必填：地图标记标它、浮标只在同场景显示、提示只在进入它时出） */
+  sceneId: string;
+  /** worldMarker：指向实体时填（与 x/y 二选一，实体优先） */
+  entityKind?: 'npc' | 'hotspot' | 'zone';
+  entityId?: string;
+  /** worldMarker：指向固定坐标时填（实体没配才用） */
+  x?: number;
+  y?: number;
+  /** sceneHint 必填：进入该场景时 HUD 出的一行提示 */
+  text?: string;
+  /** 地图标记 / 浮标上的短标签；缺省用目标文字 */
+  label?: string;
+  /** worldMarker：目标不在视野内时是否贴屏幕边缘画指向箭头（缺省 true） */
+  offscreenArrow?: boolean;
+  /** worldMarker：是否在浮标下显示到目标的距离（缺省 false） */
+  showDistance?: boolean;
+}
+
+/**
+ * 任务目标（玩法文档 D7）。勾选状态**从条件派生、不入档**——与「任务清单是叙事状态的镜像」
+ * 同一口径（见 agent_docs `narrative-signal-spine` 第 5 层）。
+ */
+export interface QuestObjectiveDef {
+  id: string;
+  text: string;
+  /** 完成条件（与任务完成条件同一套表达式）；留空 = 不会自动勾掉，只随任务整体完成 */
+  completeWhen?: ConditionExpr[];
+  /** 本目标专属引导；不配则回落到任务级 `guidance` */
+  guidance?: QuestGuidanceDef[];
+  /** 可选目标：不参与「当前目标」选取，也不阻塞后面的目标 */
+  optional?: boolean;
+}
+
+/** 接取/设为当前任务时的提示档位（玩法文档 D9）。缺省按类型派生：main=banner，其余=toast。 */
+export type QuestAnnounceStyle = 'none' | 'toast' | 'banner';
+
 export interface QuestDef {
   id: string;
   group: string;
@@ -1160,6 +1209,19 @@ export interface QuestDef {
   nextQuests?: QuestEdge[];
   /** @deprecated use nextQuests */
   nextQuestId?: string;
+  /** 目标清单（D7）；不配 = 面板只显示描述，与旧行为一致 */
+  objectives?: QuestObjectiveDef[];
+  /** 任务级引导（D8）：当前目标没配自己的 guidance 时用这份 */
+  guidance?: QuestGuidanceDef[];
+  /** 接取提示档位（D9）；不配按类型派生 */
+  announce?: QuestAnnounceStyle;
+  /**
+   * 接取时是否抢占「当前任务」槽（D6/D9）。三态：
+   * - 不配：槽空才自动占位（缺省，也是活计一直以来的语义）
+   * - `true`：接取即抢过来
+   * - `false`：从不自动占位（连空槽也不占，玩家/动作显式设才当前）
+   */
+  autoFocus?: boolean;
 }
 
 export enum QuestStatus {
@@ -2226,12 +2288,41 @@ export interface NarrativeRunPanelInfo {
   settled: { exitId: string; label: string; count: number }[];
 }
 
+/** 一条目标的运行时投影：定义 + 是否已完成（勾选态由条件派生，不入档） */
+export interface QuestObjectiveView {
+  def: QuestObjectiveDef;
+  done: boolean;
+}
+
 export interface IQuestDataProvider {
+  /** @deprecated 只返回第一条进行中的主线；面板列表一律用 {@link getActiveQuests}（多条主线并行是常态） */
   getCurrentMainQuest(): QuestDef | null;
   getActiveQuests(): { def: QuestDef; status: QuestStatus }[];
   getCompletedQuests(): { def: QuestDef }[];
   /** repeatable 任务条目（含运行信息）；无实例且无结算历史的不返回 */
   getRepeatableQuestEntries(): { def: QuestDef; run: NarrativeRunPanelInfo }[];
+
+  // ---- 当前任务槽（D6）：全局唯一，跨主线/支线/活计共用 ----
+
+  /** 当前任务 id；无当前任务返回 null */
+  getFocusedQuestId(): string | null;
+  /** HUD 要的那一份：当前任务标题 + 当前目标一行（没有当前任务返回 null） */
+  getFocusedQuestView(): { questId: string; title: string; objective: string } | null;
+  /** 该任务此刻能否被设为当前任务（进行中的一次性任务 / 有在途实例的活计） */
+  canFocusQuest(questId: string): boolean;
+  /** 设为当前任务（活计会同步激活其活计图）；传 null 清空。announce=true 时顺带给一次醒目提示 */
+  requestFocusQuest(questId: string | null, opts?: { announce?: boolean }): Promise<void>;
+
+  // ---- 目标与引导（D7 / D8）----
+
+  /** 目标清单投影；没配目标返回空数组 */
+  getQuestObjectives(questId: string): QuestObjectiveView[];
+  /** 当前目标 = 第一条未完成的必做目标；没有返回 null */
+  getCurrentObjective(questId: string): QuestObjectiveDef | null;
+  /** 该任务此刻生效的引导（当前目标的 guidance，回落任务级）；不是当前任务也照查，由调用方决定用不用 */
+  getQuestGuidance(questId: string): QuestGuidanceDef[];
+  /** 此刻真正该出的引导 = 当前任务的引导；没有当前任务返回空数组（引导只跟当前任务走） */
+  getActiveGuidance(): QuestGuidanceDef[];
 }
 
 export interface IInventoryDataProvider {

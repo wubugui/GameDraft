@@ -19,6 +19,9 @@ from ..shared.id_ref_selector import IdRefSelector
 from ..shared.collapsible_section import CollapsibleSection
 from ..shared.form_layout import compact_form
 from ..shared.rich_text_field import RichTextLineEdit, RichTextTextEdit
+from ..shared.quest_guidance_editor import (
+    GuidanceEditor, ObjectivesEditor, normalize_guidance_list, normalize_objectives_list,
+)
 from .quest_graph_scene import QuestGraphScene
 from .quest_graph_layout_store import QuestGraphLayoutStore
 from .quest_graph_items import QuestGroupItem, QuestNodeItem
@@ -648,6 +651,49 @@ class QuestEditor(QWidget):
         sec_next.add_body(self._q_next_editor)
         ql.addWidget(sec_next)
 
+        # ---- 目标 / 引导 / 提示（玩法文档 D7–D9）：repeatable 也能配（都是展示层，
+        #      不碰状态机），所以**不进** _on_quest_type_changed 的禁用清单。
+        self._q_objectives = ObjectivesEditor(self._model)
+        sec_obj = CollapsibleSection("目标清单（面板复选框 + HUD 目标行）", start_open=False)
+        sec_obj.set_header_tool_tip(
+            "有序；「当前目标」= 第一条未完成的必做目标。\n"
+            "勾选由完成条件派生、不入存档；不配目标则面板只显示描述（与旧行为一致）。",
+        )
+        sec_obj.add_body(self._q_objectives)
+        ql.addWidget(sec_obj)
+
+        self._q_guidance = GuidanceEditor(self._model)
+        sec_guide = CollapsibleSection("任务级引导（当前目标没配自己的引导时用这份）", start_open=False)
+        sec_guide.set_header_tool_tip(
+            "引导只对「当前任务」生效；三条通道互不排斥，可同时挂多条。",
+        )
+        sec_guide.add_body(self._q_guidance)
+        ql.addWidget(sec_guide)
+
+        q_notice = QWidget()
+        nf = compact_form(QFormLayout(q_notice))
+        self._q_announce = QComboBox()
+        self._q_announce.addItems(["", "none", "toast", "banner"])
+        self._q_announce.setMaximumWidth(160)
+        self._q_announce.setToolTip(
+            "接取这条任务时给玩家的提示档位。\n"
+            "留空 = 按类型取缺省（主线 = 醒目横幅，支线/活计 = 右上角木条）。\n"
+            "none = 不提示；toast = 木条；banner = 屏幕中上的醒目横幅。\n"
+            "同一批里多条都要横幅时只出一条（主线优先），其余自动降级木条。",
+        )
+        nf.addRow("接取提示", self._q_announce)
+        self._q_auto_focus = QComboBox()
+        self._q_auto_focus.addItems(["", "true", "false"])
+        self._q_auto_focus.setMaximumWidth(160)
+        self._q_auto_focus.setToolTip(
+            "接取时是否抢占「当前任务」槽（全局唯一一条，跨主线/支线/活计共用）。\n"
+            "留空 = 槽空时才自动占位（缺省）；true = 接取即抢过来；false = 从不自动占位。",
+        )
+        nf.addRow("接取即设为当前", self._q_auto_focus)
+        sec_notice = CollapsibleSection("接取提示与当前任务（D9）", start_open=False)
+        sec_notice.add_body(q_notice)
+        ql.addWidget(sec_notice)
+
         self._q_apply = QPushButton("应用")
         self._q_apply.setToolTip("把当前任务表单的改动写回模型")
         self._q_apply.clicked.connect(self._apply_quest)
@@ -689,6 +735,8 @@ class QuestEditor(QWidget):
         self._q_accept.reload_refs_from_model()
         self._q_rewards.reload_refs_from_model()
         self._q_next_editor.reload_refs_from_model()
+        self._q_objectives.reload_refs_from_model()
+        self._q_guidance.reload_refs_from_model()
 
     def reload_from_model(self) -> None:
         """Rebuild tree, graph and active form from the live quest domains."""
@@ -935,6 +983,21 @@ class QuestEditor(QWidget):
             if self._q_rewards.to_list() != (q.get("rewards") or []):
                 return True
             if self._q_next_editor.to_list() != (q.get("nextQuests") or []):
+                return True
+            # ⚠ 判脏必须**两边过同一道归一化**：控件的 to_list() 会把"未配"的可选键剔掉
+            #（optional:false / completeWhen:[] / guidance:[] / showDistance:false），
+            # 拿它直接怼磁盘原始 dict 的话，凡是手写 JSON 显式写了这些默认值的任务
+            # **一打开就判脏** → 只是点开看一眼再切走，commit-on-leave 就把它悄悄改写、
+            # 整个工程标脏，Save All 还会把这些键抹掉（用户什么都没编辑）。
+            if self._q_objectives.to_list() != normalize_objectives_list(q.get("objectives")):
+                return True
+            if self._q_guidance.to_list() != normalize_guidance_list(q.get("guidance")):
+                return True
+            if self._q_announce.currentText() != str(q.get("announce") or ""):
+                return True
+            _af = q.get("autoFocus")
+            _af_text = "" if _af is None else ("true" if _af else "false")
+            if self._q_auto_focus.currentText() != _af_text:
                 return True
             return False
         return False
@@ -1305,6 +1368,12 @@ class QuestEditor(QWidget):
         self._q_rewards.set_project_context(self._model, None)
         self._q_rewards.set_data(q.get("rewards", []))
         self._q_next_editor.set_data(q.get("nextQuests", []))
+        self._q_objectives.set_data(q.get("objectives") or [])
+        self._q_guidance.set_data(q.get("guidance") or [])
+        ann = str(q.get("announce") or "")
+        self._q_announce.setCurrentText(ann if ann in ("none", "toast", "banner") else "")
+        af = q.get("autoFocus")
+        self._q_auto_focus.setCurrentText("" if af is None else ("true" if af else "false"))
 
     # ======== apply ========
 
@@ -1425,6 +1494,34 @@ class QuestEditor(QWidget):
         q["nextQuests"] = [] if repeatable else self._q_next_editor.to_list()
         if "nextQuestId" in q:
             del q["nextQuestId"]
+        # 目标 / 引导 / 提示（D7–D9）：**没配就不写键**——凭空写出空数组或
+        # announce:"" 是往返漂移，且会让"未配置"和"显式配成空"分不开。
+        # ⚠ **没变就一个字节都不动**：控件输出的是"规范化形态"（未配的可选键剔掉），
+        # 而磁盘上手写 JSON 完全可以显式写 `optional:false`/`completeWhen:[]`。
+        # 无条件回写的话，用户只改了标题也会顺手把那几个显式默认值键抹掉——
+        # 语义虽等价，但那是一次没人要的 diff 噪音，而且看着像丢数据。
+        objectives = self._q_objectives.to_list()
+        if objectives != normalize_objectives_list(q.get("objectives")):
+            if objectives:
+                q["objectives"] = objectives
+            else:
+                q.pop("objectives", None)
+        guidance = self._q_guidance.to_list()
+        if guidance != normalize_guidance_list(q.get("guidance")):
+            if guidance:
+                q["guidance"] = guidance
+            else:
+                q.pop("guidance", None)
+        ann = self._q_announce.currentText()
+        if ann in ("none", "toast", "banner"):
+            q["announce"] = ann
+        else:
+            q.pop("announce", None)
+        af = self._q_auto_focus.currentText()
+        if af in ("true", "false"):
+            q["autoFocus"] = af == "true"
+        else:
+            q.pop("autoFocus", None)
         self._current_selection = new_id
         self._model.mark_dirty("quest")
         self._refresh()

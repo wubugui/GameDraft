@@ -80,10 +80,6 @@
       "type": "contextState",
       "cases": [
         {
-          "state": "s01_tingshu",
-          "next": ""
-        },
-        {
           "state": "initial",
           "next": "fire_cutscene"
         }
@@ -98,6 +94,13 @@
           "type": "emitNarrativeSignal",
           "params": {
             "signal": "主线_开局被赶出茶馆"
+          }
+        },
+        {
+          "type": "switchScene",
+          "params": {
+            "targetScene": "雾津街头",
+            "targetSpawnPoint": "from_teahouse"
           }
         }
       ],

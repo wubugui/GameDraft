@@ -5,11 +5,14 @@
  * 跟上游因果混在一起"这类问题，恰恰是纯函数能一秒验出来的。
  */
 import type {
+  NarrativeGraphsFileDef,
   SignalXrefCardDef,
   ValidationTargetDef,
   XrefDeclarationDef,
+  StateXrefCardDef,
   XrefEmitterDef,
   XrefListenerDef,
+  XrefStateReadDef,
 } from './types';
 
 export type XrefFilterKind = 'all' | 'problems' | 'author' | 'derived' | 'unregistered';
@@ -207,4 +210,127 @@ export function listenerFocusTarget(l: XrefListenerDef):
     transitionId: l.transitionId,
     ...(l.elementId ? { elementId: l.elementId } : {}),
   };
+}
+
+
+/**
+ * 「关系指纹」：只认会改变两侧关系的内容，**忽略画布坐标**。
+ *
+ * 整份 narrative 的哈希不行：节点坐标就存在 `states.<id>.meta.editor.x/y`，而挪节点是
+ * 画布上最高频的手势——面板会因此长期挂着"关系可能过期"，等真的改了接线时那条警告
+ * 已经没人看了（狼来了）。
+ */
+export function relationFingerprint(data: NarrativeGraphsFileDef): string {
+  return JSON.stringify(data, (key, value) => (key === 'editor' ? undefined : value));
+}
+
+/* ------------------------------------------------------------------ 状态维度
+ * 「这一拍怎么进来、去哪、**谁在看着**」。与信号维度共用同一份扫描，界面上是同一块
+ * 面板的两个页签——问的是同一件事的两面，分成两个面板只会让人两处找。
+ */
+
+export type StateFilterKind = 'all' | 'problems' | 'watched' | 'broadcast';
+
+export const STATE_FILTERS: Array<{ id: StateFilterKind; label: string; hint: string }> = [
+  { id: 'all', label: '全部', hint: '工程里出现过的所有状态（含被引用但不存在的）' },
+  { id: 'problems', label: '有问题', hint: '进不来 / 图里没有这个状态 / 路全没接线' },
+  { id: 'watched', label: '有人看着', hint: '被条件、对话分支、场景显隐…引用过的' },
+  { id: 'broadcast', label: '会广播', hint: '勾了「进入时广播」的' },
+];
+
+export function stateKey(card: { graphId: string; stateId: string }): string {
+  return `${card.graphId}.${card.stateId}`;
+}
+
+export function stateHeadline(card: StateXrefCardDef): string {
+  return `${card.graphLabel} · ${card.stateLabel}`;
+}
+
+/** 列表副行：一眼看出这一拍的牵连有多大 */
+export function stateCountSummary(card: StateXrefCardDef): string {
+  const bits = [`进 ${card.wayInCount}`, `出 ${card.wayOutCount}`, `${card.readerCount} 处看着`];
+  if (card.broadcasts) bits.push('会广播');
+  return bits.join(' · ');
+}
+
+export function stateWorstSeverity(card: StateXrefCardDef): 'error' | 'warning' | 'info' | '' {
+  if (card.diagnostics.some((d) => d.severity === 'error')) return 'error';
+  if (card.diagnostics.some((d) => d.severity === 'warning')) return 'warning';
+  if (card.diagnostics.length) return 'info';
+  return '';
+}
+
+export function stateHasProblem(card: StateXrefCardDef): boolean {
+  return card.diagnostics.some((d) => d.severity === 'error' || d.severity === 'warning');
+}
+
+export function stateSearchHaystack(card: StateXrefCardDef): string {
+  return [
+    stateKey(card), card.graphLabel, card.stateLabel, card.compositionLabel,
+    // 主体名必须进搜索面：placeholder 写着"谁在看着它"，而抬头显示的正是 subjectDisplay
+    // ——不收它的话，照着屏幕上的名字搜会零结果（审查坐实 98/120 个主体名搜不到）。
+    ...card.readers.map((r) => `${r.subjectKindLabel} ${r.subjectDisplay} ${r.subjectScene} ${r.subjectEffect} ${r.kindLabel} ${r.containerId} ${r.where}`),
+    ...card.waysIn.map((e) => `${e.containerLabel} ${e.where} ${e.context}`),
+    ...card.waysOut.map((l) => `${l.signal} ${l.toLabel}`),
+  ].join(' ').toLowerCase();
+}
+
+export function filterStates(
+  cards: StateXrefCardDef[],
+  kind: StateFilterKind,
+  query: string,
+): StateXrefCardDef[] {
+  const q = query.trim().toLowerCase();
+  return cards.filter((card) => {
+    if (kind === 'problems' && !stateHasProblem(card)) return false;
+    if (kind === 'watched' && card.readerCount === 0) return false;
+    if (kind === 'broadcast' && !card.broadcasts) return false;
+    if (!q) return true;
+    return stateSearchHaystack(card).includes(q);
+  });
+}
+
+/** 定位到这一拍本身（画布上选中那个状态节点） */
+export function stateFocusTarget(card: StateXrefCardDef): ValidationTargetDef | null {
+  if (!card.compositionId || !card.graphId || !card.exists) return null;
+  return {
+    kind: 'state',
+    compositionId: card.compositionId,
+    graphId: card.graphId,
+    stateId: card.stateId,
+    ...(card.elementId ? { elementId: card.elementId } : {}),
+  };
+}
+
+/**
+ * 读状态那一行**长在哪**——它自带 `graphId`（被读的那张图），不能拿它当"这行在哪"，
+ * 否则会定位到被读的图上去（而不是写着这条条件的那张图）。
+ */
+export function readerFocusTarget(r: XrefStateReadDef): ValidationTargetDef | null {
+  if (!r.compositionId || !r.hostGraphId) return null;
+  const scope = r.elementId ? { elementId: r.elementId } : {};
+  if (r.hostTransitionId) {
+    return { kind: 'transition', compositionId: r.compositionId, graphId: r.hostGraphId, transitionId: r.hostTransitionId, ...scope };
+  }
+  return { kind: 'graph', compositionId: r.compositionId, graphId: r.hostGraphId, ...scope };
+}
+
+/**
+ * 一行读状态说的是**世界里的那个东西**：雾津街头的 NPC「庄家来人」，
+ * 而不是 `npcs[3].conditions[0]`。策划盯的是实体与流程，技术路径退到副行。
+ */
+export function readerHeadline(r: XrefStateReadDef): string {
+  const who = r.subjectDisplay || r.containerId || r.kindLabel;
+  const kind = r.subjectKindLabel || r.kindLabel;
+  const where = r.subjectScene ? `${r.subjectScene}的` : '';
+  return kind && who ? `${where}${kind}「${who}」` : (who || kind);
+}
+
+/** 这一拍决定它什么（出不出现 / 算不算完成 / 开不开…）＋要求"到过"还是"正停在" */
+export function readerEffect(r: XrefStateReadDef): string {
+  const bits: string[] = [];
+  if (r.subjectEffect) bits.push(r.subjectEffect);
+  bits.push(r.reached ? '要求到过这一拍' : '要求正停在这一拍');
+  if (r.negated) bits.push('取反');
+  return bits.join(' · ');
 }

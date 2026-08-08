@@ -1,6 +1,6 @@
 import { defineConfig, type Plugin } from 'vite';
 import { resolve, dirname } from 'path';
-import { mkdir, readFile, unlink, writeFile } from 'fs/promises';
+import { mkdir, readdir, readFile, unlink, writeFile } from 'fs/promises';
 
 /** 开发服：读写 resources/editor_projects/editor_data/debug_flag_favorites.json，供 F2 Flag 收藏持久化（不使用 localStorage）。 */
 function debugFlagFavoritesApi(): Plugin {
@@ -104,6 +104,73 @@ function debugDockPinsApi(): Plugin {
           const payload = {
             quick: norm((parsed as { quick?: unknown }).quick),
             screen: norm((parsed as { screen?: unknown }).screen),
+          };
+          await mkdir(dirname(filePath), { recursive: true });
+          await writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf-8');
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify(payload));
+          return;
+        }
+        res.statusCode = 405;
+        res.end();
+      });
+    },
+  };
+}
+
+/**
+ * 开发服：读写 resources/editor_projects/editor_data/narrative_debugger_bridge.json，
+ * 供「叙事调试器开关」跨端口、跨页面、跨整页重启持久化。
+ *
+ * 为什么不能只用 localStorage：项目在 5173/5174/5175 与编辑器内嵌 WebEngine 里都开游戏，
+ * localStorage 按 origin 隔离——勾一次只在那一个端口算数，换个端口进游戏又是"没开"。
+ * localStorage 只当首帧种子（见 narrativeDebugBridge.ts 的 saveNarrativeDebugPref / seedPort）。
+ */
+function narrativeDebugBridgeApi(): Plugin {
+  return {
+    name: 'gamedraft-narrative-debug-bridge-api',
+    configureServer(server) {
+      server.middlewares.use(async (req, res, next) => {
+        const pathOnly = (req.url ?? '').split('?')[0] ?? '';
+        if (pathOnly !== '/__gamedraft-api/narrative-debug') {
+          next();
+          return;
+        }
+        const root = server.config.root;
+        const filePath = resolve(root, 'resources/editor_projects/editor_data/narrative_debugger_bridge.json');
+        const fallback = '{"enabled":false,"port":5211}';
+        if (req.method === 'GET') {
+          try {
+            const raw = (await readFile(filePath, 'utf-8')).trim();
+            res.setHeader('Content-Type', 'application/json');
+            res.end(raw || fallback);
+          } catch {
+            res.setHeader('Content-Type', 'application/json');
+            res.end(fallback);
+          }
+          return;
+        }
+        if (req.method === 'POST') {
+          const chunks: Buffer[] = [];
+          for await (const ch of req) chunks.push(ch as Buffer);
+          const body = Buffer.concat(chunks).toString('utf-8');
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(body);
+          } catch {
+            res.statusCode = 400;
+            res.end('invalid json');
+            return;
+          }
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            res.statusCode = 400;
+            res.end('not object');
+            return;
+          }
+          const rawPort = Number((parsed as { port?: unknown }).port);
+          const payload = {
+            enabled: (parsed as { enabled?: unknown }).enabled === true,
+            port: Number.isFinite(rawPort) && rawPort > 0 && rawPort < 65536 ? Math.floor(rawPort) : 5211,
           };
           await mkdir(dirname(filePath), { recursive: true });
           await writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf-8');
@@ -379,8 +446,70 @@ function runtimeCommandApi(): Plugin {
   };
 }
 
+/**
+ * 开发服：只读枚举 `public/assets/scenes/*.json`，供 F2「场景」页列出**全部**场景
+ * （不止地图节点：map_config 只登记玩家可走的节点，梦境/演出/测试场景都不在其中，
+ * 而调试跳转要的正是这些）。返回 id / name / spawnPoints，浏览器一次请求拿全，
+ * 不必逐个 fetch 场景 JSON。只读，不写盘。
+ */
+function sceneListApi(): Plugin {
+  return {
+    name: 'gamedraft-scene-list-api',
+    configureServer(server) {
+      server.middlewares.use(async (req, res, next) => {
+        const pathOnly = (req.url ?? '').split('?')[0] ?? '';
+        if (pathOnly !== '/__gamedraft-api/scene-list') {
+          next();
+          return;
+        }
+        if (req.method !== 'GET') {
+          res.statusCode = 405;
+          res.end();
+          return;
+        }
+        const dir = resolve(server.config.root, 'public/assets/scenes');
+        try {
+          const files = (await readdir(dir)).filter((f) => f.endsWith('.json'));
+          const scenes = await Promise.all(
+            files.map(async (file) => {
+              const id = file.slice(0, -'.json'.length);
+              try {
+                const raw = JSON.parse(await readFile(resolve(dir, file), 'utf-8')) as {
+                  id?: unknown; name?: unknown; spawnPoints?: unknown;
+                };
+                // 场景 id 以文件名为准：JSON 里的 id 与文件名不一致时，能加载的是文件名那个
+                const name = typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : id;
+                const sp = raw.spawnPoints;
+                const spawnPoints =
+                  sp && typeof sp === 'object' && !Array.isArray(sp) ? Object.keys(sp) : [];
+                return { id, name, spawnPoints };
+              } catch {
+                // 单个场景 JSON 坏了不该让整张清单消失——退化成只有 id 的条目
+                return { id, name: id, spawnPoints: [] as string[] };
+              }
+            }),
+          );
+          scenes.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'));
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ ok: true, scenes }));
+        } catch (e) {
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ ok: false, error: String(e), scenes: [] }));
+        }
+      });
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [debugFlagFavoritesApi(), debugDockPinsApi(), runtimeDebugSnapshotApi(), runtimeCommandApi()],
+  plugins: [
+    debugFlagFavoritesApi(),
+    debugDockPinsApi(),
+    narrativeDebugBridgeApi(),
+    runtimeDebugSnapshotApi(),
+    runtimeCommandApi(),
+    sceneListApi(),
+  ],
   base: './',
   test: {
     globals: true,

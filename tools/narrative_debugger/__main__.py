@@ -2,8 +2,12 @@
 
     ./dev.sh narrative-debugger
 
-然后在游戏地址后面加 ``?ndbg=1``（例如 http://localhost:5173/?ndbg=1&mode=dev），
-两边自动接上。调试器不开的时候，游戏侧探针整条链路休眠，运行时零负担。
+游戏那边四条路任选一条（都不用记参数，见 README）：游戏里 ``F2 →「叙事调试」``勾
+「连上叙事调试器」、控制台 ``__ndbg.on()``、标题界面右下角那行、或地址栏 ``?ndbg=1``。
+前三条的勾记在工程文件里，换端口换页面都还在。
+
+调试器不开的时候，游戏侧探针整条链路休眠，运行时零负担。
+可以同时挂多个游戏页签，顶栏「调试对象」切要调哪一个。
 """
 from __future__ import annotations
 
@@ -57,7 +61,8 @@ def main(argv: list[str] | None = None) -> int:
         QMessageBox.critical(
             None,
             f"端口 {args.port} 被占用了",
-            f"{hub.listen_error}\n\n换个端口：--port 5212\n游戏那边相应加 ?ndbg=1&ndbg_port=5212",
+            f"{hub.listen_error}\n\n换个端口：--port 5212\n"
+            f"游戏那边在 F2 →「叙事调试」把端口改成 5212（或地址加 ?ndbg=1&ndbg_port=5212）",
         )
         return 3
 

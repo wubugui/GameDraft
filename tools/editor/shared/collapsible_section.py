@@ -92,3 +92,10 @@ class CollapsibleSection(QWidget):
 
     def set_header_tool_tip(self, text: str) -> None:
         self._header.setToolTip(text)
+
+    def set_title(self, title: str) -> None:
+        """改标题（内容跟着数据走的块用：折起来时标题就是这条的辨识依据）。"""
+        if self._plain_title == title:
+            return
+        self._plain_title = title
+        self._sync_header_text()

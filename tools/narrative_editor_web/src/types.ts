@@ -233,6 +233,8 @@ export interface XrefEmitterDef {
   graphId: string;
   stateId: string;
   transitionId: string;
+  /** 这条路通不通：占位信号的上游转移运行时拒发，界面必须与真能走的路分开画 */
+  wired: boolean;
 }
 
 export interface XrefListenerDef {
@@ -248,6 +250,8 @@ export interface XrefListenerDef {
   to: string;
   toLabel: string;
   conditions: string[];
+  /** 这条转移怎么才会走（引擎算好的一句人话；三个界面共用，免得各拼各的说错） */
+  how: string;
   /** 活计图：运行时只有「当前激活的那一个」才吃信号，挂起的一条都不接 */
   runGraph: boolean;
   priority: number;
@@ -271,6 +275,23 @@ export interface XrefDeclarationDef {
 export interface XrefStateReadDef {
   graphId: string;
   stateId: string;
+  /* ---- 这条引用**管的是世界里的什么**（策划盯的是实体与流程，不是 conditions[0]）---- */
+  subjectKind: string;
+  subjectKindLabel: string;
+  subjectName: string;
+  subjectId: string;
+  subjectScene: string;
+  subjectEffect: string;
+  subjectDisplay: string;
+  /** 要的是「到过」还是「正停在」——差别很大，调试器据此决定敢不敢下断言 */
+  reached: boolean;
+  /** 被 not 包着（漏掉会把结论说反） */
+  negated: boolean;
+  /** 这一行**自己长在哪**（不是它读的那张图）：叙事文件内的行据此走画布定位 */
+  compositionId: string;
+  elementId: string;
+  hostGraphId: string;
+  hostTransitionId: string;
   containerKind: string;
   containerId: string;
   kindLabel: string;
@@ -297,15 +318,52 @@ export interface SignalXrefCardDef {
   emitters: XrefEmitterDef[];
   declarations: XrefDeclarationDef[];
   listeners: XrefListenerDef[];
+  /** 反应式转移在 signal 字段里填了这条信号名（运行时不看那个字段，故不算监听） */
+  reactiveRefs: XrefListenerDef[];
   stateReads: XrefStateReadDef[];
   diagnostics: XrefDiagnosticDef[];
   sourceGraphId: string;
+  /** 源图的中文名：同一张卡上别一处叫 id、一处叫中文名（会被当成两个东西） */
+  sourceGraphLabel: string;
   sourceStateId: string;
   sourceStateLabel: string;
   /** 真发射数：不含派生信号的上游因果 */
   emitterCount: number;
   listenerCount: number;
+  reactiveRefCount: number;
   declarationCount: number;
+}
+
+/**
+ * 一个**状态**（策划嘴里的"一拍"）的全貌。与信号卡是两个问题：
+ * 信号问"谁发谁听"，状态问"怎么进来、怎么出去、**谁在看着**"。
+ * 最后那栏是重点：读状态的引用里绝大多数是转移以外的消费者（对话分支、场景实体显隐、
+ * 章节包、任务、地图节点、档案），它们全在因果图之外，改一拍最容易漏的就是它们。
+ */
+export interface StateXrefCardDef {
+  graphId: string;
+  stateId: string;
+  graphLabel: string;
+  stateLabel: string;
+  compositionId: string;
+  compositionLabel: string;
+  elementId: string;
+  /** 图里真有这个状态吗（被引用但不存在的"幽灵拍"也会进清单，那正是要查的） */
+  exists: boolean;
+  isInitial: boolean;
+  broadcasts: boolean;
+  runGraph: boolean;
+  /** 勾了广播才有：state:<图>:<态> */
+  broadcastSignal: string;
+  waysIn: XrefEmitterDef[];
+  waysOut: XrefListenerDef[];
+  emits: XrefEmitterDef[];
+  readers: XrefStateReadDef[];
+  diagnostics: XrefDiagnosticDef[];
+  wayInCount: number;
+  wayOutCount: number;
+  readerCount: number;
+  emitCount: number;
 }
 
 export interface SignalXrefIndexDef {
@@ -316,8 +374,10 @@ export interface SignalXrefIndexDef {
     graphs: number;
     transitions: number;
     signals: number;
+    states: number;
   };
   signals: SignalXrefCardDef[];
+  states: StateXrefCardDef[];
 }
 
 export interface AuthoringCatalogDef {

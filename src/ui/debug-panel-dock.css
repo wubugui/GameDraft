@@ -506,6 +506,22 @@ details[open] > summary.debug-dock__section-title::before {
   font-size: 0.68rem;
 }
 
+/* F2「场景」页：跳到任意场景 */
+.debug-scene__section .debug-scene__select {
+  /* 场景名比 flag 键短，但中文名 + id 一行要放得下：不压字号 */
+  font-family: inherit;
+  font-size: 0.76rem;
+}
+
+.debug-scene__section .debug-scene__spawn {
+  font-family: ui-monospace, monospace;
+  padding: 0.25rem 0.3rem;
+}
+
+.debug-scene__section .debug-flag__btn-row {
+  margin: 0.15rem 0 0.35rem;
+}
+
 /* F2 叙事调试：scenario 列表 */
 .debug-dock__scenario-list-hint {
   margin: 0 0 0.35rem;

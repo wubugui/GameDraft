@@ -138,6 +138,23 @@ export class InputManager {
   }
 
   endFrame(): void {
+    this.clearInputEdges();
+  }
+
+  /**
+   * 丢掉尚未被消费的「刚按下 / 刚点击」沿。
+   *
+   * **一次按键只属于按下它那一刻的游戏状态**。UI 层（对话框、遭遇框、过场、点击继续、
+   * 面板焦点激活）都直接挂 window 监听，跑在 InputManager 记完沿之后；它们用同一个键
+   * 把游戏推回探索态时，这条沿仍躺在 `keyJustPressed` 里等着——下一 tick 探索态的消费者
+   * （跳 Space / 踢 F / 交互 E / 嗅 Q）就会把玩家「关对话框」的那一下当成一次游戏内输入
+   * （用户报的：对话里按空格继续 → 主角原地起跳）。
+   *
+   * 除每帧收尾（`endFrame`）外，只由 `GameStateController` 在状态**真的发生变化**时调用，
+   * 不要在别处零散调。清沿是安全的：沿的消费者都只在 Exploring 分支里跑，离开 Exploring
+   * 时它们本就不读；回到 Exploring 时那条沿本来就该归上一个状态。
+   */
+  clearInputEdges(): void {
     this.keyJustPressed.clear();
     this.mouseJustClicked = false;
   }

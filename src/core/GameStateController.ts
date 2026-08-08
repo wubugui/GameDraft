@@ -43,7 +43,10 @@ export class GameStateController {
   private escapeFallback: (() => void) | null = null;
   private unsubKeyDown: (() => void) | null = null;
 
-  constructor(inputManager: InputManager, private readonly eventBus?: EventBus) {
+  constructor(
+    private readonly inputManager: InputManager,
+    private readonly eventBus?: EventBus,
+  ) {
     this.unsubKeyDown = inputManager.subscribeKeyDown((e) => {
       this.handleKeyDown(e);
     });
@@ -51,6 +54,21 @@ export class GameStateController {
 
   get currentState(): GameState { return this._currentState; }
   get previousState(): GameState { return this._previousState; }
+
+  /**
+   * `_currentState` 的**唯一**写入口（setState / restorePreviousState / closePanel / togglePanel
+   * 全都经这里）：状态真的变了就把本帧未消费的输入沿丢掉。
+   *
+   * 为什么必须收在这一处：推进对话/遭遇/过场/点击继续的 Space、面板里按 Space 激活焦点按钮，
+   * 都是 UI 自己挂的 window 监听，跑在 InputManager 记完「刚按下」之后；它们同步把状态推回
+   * Exploring，那条沿就会被下一 tick 的探索态消费者（跳/踢/交互/嗅）再吃一次。
+   * 见 [InputManager.clearInputEdges]。
+   */
+  private applyCurrentState(next: GameState): void {
+    if (this._currentState === next) return;
+    this._currentState = next;
+    this.inputManager.clearInputEdges();
+  }
 
   getDebugState(): { overlayReturnStack: GameState[]; openPanels: string[] } {
     return {
@@ -64,12 +82,12 @@ export class GameStateController {
 
   setState(newState: GameState): void {
     this._previousState = this._currentState;
-    this._currentState = newState;
+    this.applyCurrentState(newState);
   }
 
   restorePreviousState(): void {
     const s = this.overlayReturnStack.pop();
-    this._currentState = s !== undefined ? s : this._previousState;
+    this.applyCurrentState(s !== undefined ? s : this._previousState);
   }
 
   registerPanel(
@@ -127,7 +145,7 @@ export class GameStateController {
     }
     if (entry.overlaysGameState) {
       const restored = this.overlayReturnStack.pop();
-      this._currentState = restored ?? GameState.Exploring;
+      this.applyCurrentState(restored ?? GameState.Exploring);
     }
   }
 
@@ -145,7 +163,7 @@ export class GameStateController {
     if (entry.openGuard && !entry.openGuard()) return;
     if (entry.overlaysGameState) {
       this.overlayReturnStack.push(this._currentState);
-      this._currentState = GameState.UIOverlay;
+      this.applyCurrentState(GameState.UIOverlay);
     }
     entry.panel.open();
     if (entry.panel.isOpen) {
@@ -154,7 +172,7 @@ export class GameStateController {
 
     if (!entry.panel.isOpen && entry.overlaysGameState) {
       const restored = this.overlayReturnStack.pop();
-      this._currentState = restored ?? GameState.Exploring;
+      this.applyCurrentState(restored ?? GameState.Exploring);
     }
   }
 

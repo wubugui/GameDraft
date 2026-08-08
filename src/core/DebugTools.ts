@@ -5,8 +5,9 @@ import type { EventBus } from './EventBus';
 import type { Player } from '../entities/Player';
 import type { InventoryManager } from '../systems/InventoryManager';
 import type { AssetManager } from './AssetManager';
-import type { DebugPanelUI } from '../ui/DebugPanelUI';
+import type { DebugPanelUI, DebugSectionContent } from '../ui/DebugPanelUI';
 import {
+  NARRATIVE_BRIDGE_SECTION_ID,
   NARRATIVE_DEBUG_SECTION_ID,
   OBJECT_EXAMINE_AMBIENCE_DEBUG_SECTION_ID,
   OBJECT_EXAMINE_DEBUG_SECTION_ID,
@@ -72,6 +73,10 @@ export interface DebugToolsDeps {
   applyDebugSceneWorldSize: (width: number, height: number) => void;
   /** `?mode=dev` 时为 true */
   isDevMode: () => boolean;
+  /** 叙事调试器桥：装了没 / 连上没 / 走哪个端口 / 还有多少没发出去 */
+  getNarrativeDebugStatus: () => { installed: boolean; connected: boolean; port: number; queued: number };
+  /** 现场开关叙事调试器（会记进工程文件，下次进游戏自动带上） */
+  setNarrativeDebugEnabled: (on: boolean, port?: number) => void;
   /** F2 视锥剔除性能开关：屏外实体不进 GPU 渲染 */
   getFrustumCulling: () => boolean;
   toggleFrustumCulling: () => void;
@@ -1494,8 +1499,110 @@ export class DebugTools {
     };
   }
 
+  /**
+   * F2「叙事调试」页顶上那块：一个勾连上叙事调试器。
+   *
+   * 为什么值得单开一块：过去开调试器要"改地址栏加 ?ndbg=1 → 整页重启 → 丢掉现在这一局"，
+   * 而想开调试器的时刻恰恰是**刚出问题的那一刻**——重启一次现场就没了。这里勾一下即时生效，
+   * 而且这个勾记进工程文件，下次从哪个入口进游戏都带着。
+   */
+  private buildNarrativeBridgeSection(): DebugSectionContent {
+    const { debugPanelUI } = this.deps;
+    const wrap = document.createElement('div');
+    wrap.className = 'debug-dock__section-extra';
+
+    const checkRow = document.createElement('label');
+    checkRow.className = 'debug-dock__check-row';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = this.deps.getNarrativeDebugStatus().installed;
+    const checkText = document.createElement('span');
+    checkText.textContent = '连上叙事调试器';
+    checkRow.appendChild(checkbox);
+    checkRow.appendChild(checkText);
+    wrap.appendChild(checkRow);
+
+    const portRow = document.createElement('div');
+    portRow.className = 'debug-dock__slider-row';
+    const portLabel = document.createElement('span');
+    portLabel.textContent = '端口';
+    const portInput = document.createElement('input');
+    portInput.type = 'number';
+    portInput.min = '1';
+    portInput.max = '65535';
+    portInput.value = String(this.deps.getNarrativeDebugStatus().port);
+    portInput.style.cssText = 'width:82px;';
+    portRow.appendChild(portLabel);
+    portRow.appendChild(portInput);
+    wrap.appendChild(portRow);
+
+    const status = document.createElement('div');
+    status.className = 'debug-dock__slider-hint';
+    wrap.appendChild(status);
+
+    const readPort = (): number | undefined => {
+      const parsed = Number(portInput.value);
+      return Number.isFinite(parsed) && parsed > 0 && parsed < 65536 ? Math.floor(parsed) : undefined;
+    };
+
+    const paint = (): void => {
+      const s = this.deps.getNarrativeDebugStatus();
+      // 勾的真值以运行时为准（控制台 `__ndbg.on()`、标题界面那个勾都可能刚改过）
+      if (checkbox.checked !== s.installed) checkbox.checked = s.installed;
+      if (document.activeElement !== portInput && portInput.value !== String(s.port)) {
+        portInput.value = String(s.port);
+      }
+      status.textContent = s.connected
+        ? `接上了 · 端口 ${s.port}${s.queued > 0 ? ` · 待发 ${s.queued}` : ''}`
+        : s.installed
+          ? `探针装好了，但没找到调试器（端口 ${s.port}）——去 dev 控制台点「叙事调试器」，或 ./dev.sh narrative-debugger`
+          : '没连 · 勾上即时生效，不用重开页面（这个勾会记住，下次进游戏自动带上）';
+    };
+    paint();
+
+    /**
+     * 状态自己刷：连没连上是**外部进程**决定的（调试器什么时候起来我们不知道），
+     * 只在重建时取一次读数的话，人勾完盯着一句"没找到调试器"，其实早就接上了。
+     * 用 isConnected 自清：这段 DOM 被面板重建换掉后，下一拍定时器自己停，不留残留。
+     */
+    const timer = window.setInterval(() => {
+      if (!wrap.isConnected) {
+        window.clearInterval(timer);
+        return;
+      }
+      paint();
+    }, 800);
+
+    checkbox.addEventListener('change', () => {
+      const on = checkbox.checked;
+      this.deps.setNarrativeDebugEnabled(on, readPort());
+      debugPanelUI.log(on ? '叙事调试器：已开（正在找调试器…）' : '叙事调试器：已关');
+      paint();
+    });
+    // 改端口＝换一个调试器进程：开着的话立刻按新端口重连，不然人改完还得手动关一次再开
+    portInput.addEventListener('change', () => {
+      const port = readPort();
+      if (port === undefined) {
+        portInput.value = String(this.deps.getNarrativeDebugStatus().port);
+        return;
+      }
+      if (checkbox.checked) this.deps.setNarrativeDebugEnabled(true, port);
+      paint();
+    });
+
+    return {
+      text:
+        '边玩边看戏走到哪、这一拍在等你做什么、刚才那一下系统认没认。\n' +
+        '控制台也能开：__ndbg.on() / __ndbg.off() / __ndbg.status()',
+      extra: wrap,
+    };
+  }
+
   private setupDebugPanelSections(): void {
     const { debugPanelUI, player, inventoryManager, renderer } = this.deps;
+
+    // 注册顺序即渲染顺序：连接开关必须排在解算摘要前面（没连上时下面那一大段没意义）
+    debugPanelUI.addSection(NARRATIVE_BRIDGE_SECTION_ID, () => this.buildNarrativeBridgeSection());
 
     debugPanelUI.addSection(NARRATIVE_DEBUG_SECTION_ID, () => {
       let narrativeBlock: string;

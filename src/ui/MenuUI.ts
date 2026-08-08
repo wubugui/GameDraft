@@ -172,6 +172,17 @@ interface MenuRowHandle {
   setActive(active: boolean): void;
 }
 
+/**
+ * dev 外壳挂在标题界面右下角的小开关（prod 不传，整行连建都不建）。
+ *
+ * 为什么非要在标题界面上：进游戏之前是唯一"还来得及决定这一局要不要调试"的时刻，
+ * 而从标题点「新游戏」是整页重启——进去以后再开就得再重启一次、这一局又没了。
+ */
+export interface MenuDevHooks {
+  isNarrativeDebugOn(): boolean;
+  setNarrativeDebugOn(on: boolean): void;
+}
+
 export class MenuUI {
   private renderer: Renderer;
   private eventBus: EventBus;
@@ -193,6 +204,10 @@ export class MenuUI {
   /** 滑条拖拽期间挂在 window 上的 pointermove/up 摘除器；面板关闭/销毁时必须清，否则监听泄漏且回调摸已销毁对象 */
   private sliderDragCleanups: Set<() => void> = new Set();
   private unsubscribeResize: (() => void) | null = null;
+  /** dev 外壳注入的小开关（prod 为 null，标题界面上什么都不多出来） */
+  private devHooks: MenuDevHooks | null = null;
+  /** 标题界面那行 dev 小开关的重画钩子（页面重建即失效，destroyUI 里清） */
+  private devToggleRepaint: (() => void) | null = null;
 
   constructor(
     renderer: Renderer,
@@ -200,12 +215,14 @@ export class MenuUI {
     saveData: ISaveDataProvider,
     audioSettings: IAudioSettingsProvider,
     strings: StringsProvider,
+    devHooks?: MenuDevHooks | null,
   ) {
     this.renderer = renderer;
     this.eventBus = eventBus;
     this.saveData = saveData;
     this.audioSettings = audioSettings;
     this.strings = strings;
+    this.devHooks = devHooks ?? null;
     // 主菜单是全屏页（不走 UIWindow），窗口尺寸变了得自己重排——满屏底色是按 build 时的
     // sw/sh 画死的，不重排就露边。子页的 resize 响应由 UIWindow 自带。
     //
@@ -362,6 +379,7 @@ export class MenuUI {
     );
 
     // 版权/版本：压右下角，小到不抢戏——现代标题界面这行都在角上
+    let footTop = sh - UITheme.spacing.xl;
     if (footerText) {
       const foot = createStyledText({
         text: footerText,
@@ -372,8 +390,12 @@ export class MenuUI {
       });
       foot.x = sw - foot.width - UITheme.spacing.xxl;
       foot.y = sh - foot.height - UITheme.spacing.xl;
+      footTop = foot.y;
       this.container.addChild(foot);
     }
+
+    // dev 外壳：版权行上面那一小行「[叙事调试：开/关]」。prod 传不进 devHooks，整行不存在。
+    this.addNarrativeDebugToggle(sw, footTop);
 
     this.renderer.uiLayer.addChild(this.container);
   }
@@ -589,6 +611,59 @@ export class MenuUI {
   }
 
   /** @param centerY 链接文字的垂直中心（行高随字号变，按中心摆才不会两行黏一起） */
+  /**
+   * 标题界面右下角的 dev 小开关：勾上就带叙事调试进这一局。
+   *
+   * 刻意做成"版权行上面一行小字"而不是菜单项：菜单那一列是玩家的东西
+   * （制作人定调标题界面是一张海报），这行只有 dev 外壳才看得见。
+   *
+   * 点了只改自己这行文案，**不重建整页**——重建会把主视觉、标题、菜单全部重画一遍。
+   */
+  private addNarrativeDebugToggle(sw: number, footTop: number): void {
+    const hooks = this.devHooks;
+    if (!hooks || !this.container) return;
+    const label = (on: boolean): string => `[叙事调试：${on ? '开' : '关'}]`;
+    const paint = (text: Text, on: boolean): void => {
+      text.text = label(on);
+      text.style.fill = on ? UITheme.colors.title : UITheme.colors.hintMid;
+      text.x = sw - text.width - UITheme.spacing.xxl;
+    };
+    const link = createStyledText({
+      text: label(hooks.isNarrativeDebugOn()),
+      style: {
+        fontSize: UITheme.fontSize.micro, fill: UITheme.colors.hintMid, fontFamily: UITheme.fonts.ui,
+        dropShadow: { ...ART_TEXT_SHADOW },
+      },
+    });
+    link.y = Math.round(footTop - link.height - UITheme.spacing.sm);
+    paint(link, hooks.isNarrativeDebugOn());
+    link.eventMode = 'static';
+    link.cursor = 'pointer';
+    link.on('pointerdown', (e) => {
+      // 与 addJsonLink 同理：不标记的话这一下会顺着原生事件继续推进到别的监听
+      markPointerConsumed((e as { nativeEvent?: unknown }).nativeEvent);
+      const next = !hooks.isNarrativeDebugOn();
+      hooks.setNarrativeDebugOn(next);
+      // 以运行时真值回读（开不起来时不能显示成"开"）
+      paint(link, hooks.isNarrativeDebugOn());
+    });
+    this.devToggleRepaint = () => {
+      if (link.destroyed) return;
+      paint(link, hooks.isNarrativeDebugOn());
+    };
+    this.container.addChild(link);
+  }
+
+  /**
+   * 让标题界面那行 dev 小开关重新读一次真值。
+   *
+   * 用在"开关不是从这行点出来的"那几路：工程文件里的勾是异步读回来的、控制台
+   * `__ndbg.on()` 也可能刚开过——不重画的话这行会一直写着「关」，而调试其实开着。
+   */
+  refreshDevToggle(): void {
+    this.devToggleRepaint?.();
+  }
+
   private addJsonLink(parent: Container, text: string, x: number, centerY: number, onPress: () => void): void {
     const link = createStyledText({
       text,
@@ -1227,6 +1302,8 @@ export class MenuUI {
   private destroyUI(): void {
     for (const cleanup of [...this.sliderDragCleanups]) cleanup();
     this.sliderDragCleanups.clear();
+    // 那行 dev 小开关随 container 一起没：留着钩子就会去摸已销毁的 Text
+    this.devToggleRepaint = null;
     // 顺序要紧：滚动区先摘（它自己挂着 window 级 wheel/pointermove），再拆窗体
     this.list?.destroy();
     this.list = null;

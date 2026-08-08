@@ -2840,3 +2840,26 @@ button.secondary {
   color: #c7b58a;
   line-height: 1.45;
 }
+
+/* 关系面板：两个页签（信号 / 状态）＋ 详情里可点的信号名 */
+.signal-xref-modes {
+  border-right: 1px solid #2a323a;
+  padding-right: 8px;
+  margin-right: 2px;
+}
+
+.signal-xref-modes button.active {
+  border-color: #6f8aa5;
+  background: #31404e;
+  font-weight: 600;
+}
+
+.signal-xref-link {
+  border: none;
+  background: none;
+  padding: 0;
+  color: #8fb4cc;
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
+}

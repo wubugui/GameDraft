@@ -152,6 +152,19 @@ export class Camera {
   }
 
   /**
+   * 世界坐标转屏幕像素（{@link screenToWorld} 的逆）。
+   * 供 UI 层把世界里的点（任务引导浮标等）画到屏幕空间——UI 不挂在 worldContainer 下，
+   * 不能直接用世界坐标摆位。
+   */
+  worldToScreen(worldX: number, worldY: number): { x: number; y: number } {
+    const S = this.getProjectionScale();
+    return {
+      x: worldX * S + this.worldContainer.x,
+      y: worldY * S + this.worldContainer.y,
+    };
+  }
+
+  /**
    * 将相机中心（世界空间）限制在场景矩形内，使视野不超出地图边界。
    * current/target/getX/getY 与此一致，避免「逻辑坐标在界外、仅绘制时钳制」的分裂。
    */

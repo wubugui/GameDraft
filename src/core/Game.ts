@@ -45,6 +45,8 @@ import { HUD } from '../ui/HUD';
 import type { SmellProfilesRaw } from '../ui/smell/SmellIndicatorRenderer';
 import { NotificationUI } from '../ui/NotificationUI';
 import { QuestPanelUI } from '../ui/QuestPanelUI';
+import { QuestBannerUI } from '../ui/QuestBannerUI';
+import { GuidanceLayerUI } from '../ui/GuidanceLayerUI';
 import { InventoryUI } from '../ui/InventoryUI';
 import { RulesPanelUI } from '../ui/RulesPanelUI';
 import { DialogueLogUI } from '../ui/DialogueLogUI';
@@ -103,8 +105,10 @@ import { DeterministicRandom } from '../utils/deterministicRandom';
 import { ScenarioStateManager } from './ScenarioStateManager';
 import { NarrativeStateManager, type NarrativeSignal } from './NarrativeStateManager';
 import {
+  fetchNarrativeDebugPref,
   installNarrativeDebugBridge,
-  isNarrativeDebugEnabled,
+  resolveNarrativeDebugStartup,
+  saveNarrativeDebugPref,
   type NarrativeDebugBridgeHandle,
 } from '../dev/narrativeDebugBridge';
 import { DocumentRevealManager } from '../systems/DocumentRevealManager';
@@ -343,6 +347,10 @@ export class Game {
   private hud!: HUD;
   private notificationUI!: NotificationUI;
   private questPanelUI!: QuestPanelUI;
+  /** 新任务醒目横幅（D9）；常驻展示件，不进面板栈 */
+  private questBannerUI!: QuestBannerUI;
+  /** 任务引导层（D8）：场景内浮标 / 出屏箭头 / 场景提示 */
+  private guidanceLayerUI!: GuidanceLayerUI;
   private inventoryUI!: InventoryUI;
   private rulesPanelUI!: RulesPanelUI;
   private dialogueLogUI!: DialogueLogUI;
@@ -353,8 +361,12 @@ export class Game {
   private menuUI!: MenuUI;
   private ruleUseUI!: RuleUseUI;
   private debugPanelUI!: DebugPanelUI;
-  /** 叙事调试器桥（dev + ?ndbg=1 才装；见 src/dev/narrativeDebugBridge.ts） */
+  /** 叙事调试器桥（dev 才装；开关见 setupNarrativeDebugBridge，可现场开关） */
   private narrativeDebugBridge: NarrativeDebugBridgeHandle | null = null;
+  /** `window.__ndbg` 是这一局挂的（destroy 要删，否则指着已销毁的实例） */
+  private narrativeDebugConsoleApiInstalled = false;
+  /** 人已经自己扳过叙事调试开关：工程文件那次异步读回来后不许再覆盖 */
+  private narrativeDebugUserDecided = false;
   private narrativeDebugListeners: [string, (payload: unknown) => void][] = [];
   /** 过场当前 step 调试浮层（dev / ?cutsceneDebug） */
   private cutsceneStepHudEl: HTMLElement | null = null;
@@ -933,6 +945,8 @@ export class Game {
     this.shopUI.setResolveDisplay(fn);
     this.mapUI.setResolveDisplay(fn);
     this.questPanelUI.setResolveDisplay(fn);
+    this.questBannerUI.setResolveDisplay(fn);
+    this.guidanceLayerUI.setResolveDisplay(fn);
     this.rulesPanelUI.setResolveDisplay(fn);
     this.inventoryUI.setResolveDisplay(fn);
     this.cutsceneRenderer.setResolveDisplay(fn);
@@ -996,6 +1010,22 @@ export class Game {
 
     this.inspectBox = new InspectBox(this.renderer, this.stringsProvider);
     this.pickupNotification = new PickupNotification(this.renderer, this.stringsProvider);
+    // 新任务醒目横幅（玩法文档 D9）与任务引导层（D8）：两者都是常驻展示件，
+    // 不进 stateController 的面板栈（没有可交互元素，也不该抢返回栈）。
+    this.questBannerUI = new QuestBannerUI(this.renderer, this.eventBus, this.stringsProvider);
+    // 只在探索态弹横幅：对话/过场/小游戏/全屏面板里压住，回到探索再出（D9 规则 3）
+    this.questBannerUI.setSuppressed(() => this.stateController?.currentState !== 'Exploring');
+    this.guidanceLayerUI = new GuidanceLayerUI(this.renderer, this.camera, this.eventBus);
+    this.guidanceLayerUI.setQuestDataProvider(this.questManager);
+    // 过场与全屏面板期间收起引导：它是给"在场景里走"的玩家看的
+    this.guidanceLayerUI.setHidden(() => {
+      const s = this.stateController?.currentState;
+      return s !== undefined && s !== 'Exploring';
+    });
+    this.guidanceLayerUI.setPointResolver((sceneId, kind, entityId) =>
+      this.resolveGuidanceWorldPoint(sceneId, kind, entityId));
+    this.guidanceLayerUI.setPlayerPointProvider(() =>
+      this.player ? { x: this.player.x, y: this.player.y } : null);
     this.dialogueUI = new DialogueUI(this.renderer, this.eventBus, this.stringsProvider, this.assetManager);
     // 说话中「…」气泡：当前行说话实体头顶挂常驻气泡（与对话大头像并存指示说话对象），
     // 换行随说话人移动、旁白无实体则收起、对话结束即撤。
@@ -1025,11 +1055,15 @@ export class Game {
     this.actionChoiceUI = new ActionChoiceUI(this.renderer, this.stringsProvider);
     this.pressureHoldUI = new PressureHoldUI(this.renderer, this.stringsProvider);
     this.hud = new HUD(this.renderer, this.eventBus, this.stringsProvider);
+    // HUD 的当前任务芯片是**查询式**的：quest:changed 只喊"该查了"，真相在 QuestManager
+    this.hud.setQuestDataProvider(this.questManager);
     this.notificationUI = new NotificationUI(this.renderer, this.eventBus);
     // 全屏面板开着时压住提示条出队：它挂在最上层，一叠就糊住面板标题与右栏正文。
     // 只压出队，面板一关攒下的会照常冒出来。
     this.notificationUI.setSuppressed(() => this.stateController?.currentState === 'UIOverlay');
-    this.questPanelUI = new QuestPanelUI(this.renderer, this.questManager, this.stringsProvider);
+    this.questPanelUI = new QuestPanelUI(
+      this.renderer, this.questManager, this.stringsProvider, this.eventBus,
+    );
     this.inventoryUI = new InventoryUI(this.renderer, this.eventBus, this.inventoryManager, this.stringsProvider);
     this.rulesPanelUI = new RulesPanelUI(this.renderer, this.rulesManager, this.stringsProvider);
     this.dialogueLogUI = new DialogueLogUI(this.renderer, this.eventBus, this.stringsProvider);
@@ -1053,6 +1087,7 @@ export class Game {
     );
     this.shopUI = new ShopUI(this.renderer, this.eventBus, this.inventoryManager, this.stringsProvider, this.assetManager);
     this.mapUI = new MapUI(this.renderer, this.eventBus, this.flagStore, this.stringsProvider, this.assetManager);
+    this.mapUI.setQuestDataProvider(this.questManager);
 
     this.cutsceneRenderer = new CutsceneRenderer(this.renderer, this.camera, this.assetManager);
     // 过场对白框复用全站面板皮肤 + 主题色，与常规对话框(DialogueUI)对齐观感。
@@ -1188,6 +1223,16 @@ export class Game {
     });
     this.menuUI = new MenuUI(
       this.renderer, this.eventBus, this.saveDataForMenu(options), this.audioManager, this.stringsProvider,
+      // 标题界面右下角那个 dev 小勾（prod build 里这个三元的另一支被静态剔除）
+      import.meta.env.DEV
+        ? {
+          isNarrativeDebugOn: () => this.getNarrativeDebugStatus().installed,
+          setNarrativeDebugOn: (on) => {
+            if (on) this.enableNarrativeDebugBridge({ persist: true });
+            else this.disableNarrativeDebugBridge({ persist: true });
+          },
+        }
+        : null,
     );
     this.ruleUseUI = new RuleUseUI(this.renderer, this.eventBus, this.zoneSystem, this.rulesManager, this.stringsProvider);
     this.debugPanelUI = new DebugPanelUI(
@@ -1252,7 +1297,9 @@ export class Game {
       setNarrativePackageLive: (pkg, live) => this.narrativeStateManager.setNarrativePackageLive(pkg, live),
       isNarrativePackageLive: (pkg) => this.narrativeStateManager.isNarrativePackageLive(pkg),
     });
-    this.questPanelUI.setActivateRunHandler(async (gid) => {
+    // 「设为当前任务」若指向活计，QuestManager 经这条通道去激活活计图（走叙事队列）。
+    // 面板不再自己持有激活口——当前任务槽是全局唯一的一个，只允许一个写入者。
+    this.questManager.setActivateRunHandler(async (gid: string) => {
       await this.narrativeStateManager.activateNarrativeRun(gid);
     });
     this.zoneSystem.setConditionEvalContextFactory(mkCondCtx);
@@ -1713,6 +1760,11 @@ export class Game {
       },
       applyDebugSceneWorldSize: (w, h) => this.applyDebugSceneWorldSize(w, h),
       isDevMode: () => this.isDevMode,
+      getNarrativeDebugStatus: () => this.getNarrativeDebugStatus(),
+      setNarrativeDebugEnabled: (on, port) => {
+        if (on) this.enableNarrativeDebugBridge({ port, persist: true });
+        else this.disableNarrativeDebugBridge({ persist: true });
+      },
       getFrustumCulling: () => this.frustumCullingEnabled,
       toggleFrustumCulling: () => { this.frustumCullingEnabled = !this.frustumCullingEnabled; },
       getAuthoringMarkersVisible: () => this.sceneManager.getAuthoringMarkersVisible(),
@@ -1921,6 +1973,21 @@ export class Game {
     this.wireTextResolve();
 
     this.debugPanelUI.attachFlagDebug(this.flagStore, this.eventBus);
+    /** F2「场景」页：与 DebugTools 同一条 DEV 门控——生产玩家没有任意跳场景的入口。 */
+    if (import.meta.env.DEV) {
+      this.debugPanelUI.attachSceneDebug({
+        getCurrentSceneId: () => this.sceneManager.currentSceneData?.id,
+        jump: (sceneId, spawnPoint) => {
+          void this.devLoadScene(sceneId, spawnPoint);
+        },
+        listFallback: () => this.getDevSceneEntries(),
+        onSceneChanged: (cb) => {
+          this.eventBus.on('scene:enter', cb);
+          return () => this.eventBus.off('scene:enter', cb);
+        },
+        log: (m) => this.debugPanelUI.log(m),
+      });
+    }
     this.setupCutsceneStepHud();
     this.setupPlaneDebugSection();
 
@@ -2082,14 +2149,138 @@ export class Game {
   }
 
   /**
-   * 叙事调试器桥（dev-only，默认关，需 URL `?ndbg=1`）。
-   * import.meta.env.DEV 让整块在 prod build 里被静态剔除；未开启时连挂点都不装。
+   * 叙事调试器桥（dev-only，默认关）。开它有三个入口，走的是同一个开关：
+   *
+   * 1. 地址栏 `?ndbg=1`（`?ndbg=0` 是显式关，压过下面那个勾——排干扰用）；
+   * 2. 标题界面右下角那个勾 / F2「叙事调试器」区块里那个勾（记进工程文件，跨端口跨重启都在）；
+   * 3. 控制台 `__ndbg.on()`（临时开一次，不改那个勾）。
+   *
+   * `import.meta.env.DEV` 让整块在 prod build 里被静态剔除；没开启时连挂点都不装。
    */
   private setupNarrativeDebugBridge(): void {
     if (!import.meta.env.DEV) return;
-    if (this.narrativeDebugBridge) return;
-    if (!isNarrativeDebugEnabled()) return;
-    console.log('[叙事调试器] 已装载探针，正在找调试器（./dev.sh narrative-debugger）…');
+    this.installNarrativeDebugConsoleApi();
+    const startup = resolveNarrativeDebugStartup();
+    // 地址栏明写了 ?ndbg=0：这一页就是不要，连工程文件都不去问
+    if (startup.mode === 'off') return;
+    if (startup.mode === 'on') {
+      this.enableNarrativeDebugBridge({ port: startup.port, persist: false });
+      return;
+    }
+    /**
+     * 地址栏没说话 → 问工程文件里那个勾（异步，期间游戏照常跑）。
+     * ⚠ 回来时这一局可能已经拆了（HMR / 整页重启前的 destroy）：必须再判一次，
+     * 否则会往已销毁的实例上装探针，观察者与 socket 都无人回收。
+     */
+    void fetchNarrativeDebugPref().then((pref) => {
+      if (!pref?.enabled || this.tearDownComplete || this.narrativeDebugBridge) return;
+      // 人在这几毫秒里已经自己扳过开关了（标题界面那行/控制台）：以人为准。
+      // 读回来的是**发起 fetch 那一刻**的旧值，拿它去覆盖等于把刚关掉的又打开。
+      if (this.narrativeDebugUserDecided) return;
+      this.enableNarrativeDebugBridge({ port: pref.port, persist: false });
+    });
+  }
+
+  /** 桥装上了没 + 连上调试器没（F2 面板、标题界面那个勾、控制台三处共用这一份读数）。 */
+  getNarrativeDebugStatus(): {
+    installed: boolean;
+    connected: boolean;
+    port: number;
+    queued: number;
+  } {
+    const bridge = this.narrativeDebugBridge;
+    return {
+      installed: bridge !== null,
+      connected: bridge?.isConnected() === true,
+      port: bridge?.port ?? resolveNarrativeDebugStartup().port,
+      queued: bridge?.queued() ?? 0,
+    };
+  }
+
+  /**
+   * 现场开：装探针并去连调试器。已经装着就只是换端口重装（端口被占时策划会换）。
+   *
+   * @param options.persist 默认 true＝把这次的勾记进工程文件，下次进游戏自动带上。
+   *   地址栏来的那次传 false：URL 是一次性的意思，不该把人永久留在调试态。
+   */
+  enableNarrativeDebugBridge(options?: { port?: number; persist?: boolean }): boolean {
+    if (!import.meta.env.DEV) return false;
+    if (this.tearDownComplete) return false;
+    if (options?.persist !== false) this.narrativeDebugUserDecided = true;
+    const port = options?.port && options.port > 0
+      ? Math.floor(options.port)
+      : this.getNarrativeDebugStatus().port;
+    if (this.narrativeDebugBridge) {
+      if (this.narrativeDebugBridge.port === port) {
+        if (options?.persist !== false) saveNarrativeDebugPref({ enabled: true, port });
+        return true;
+      }
+      // 换端口＝换一个调试器进程，旧连接必须先干净拆掉（断点闸/观察者都是单槽）
+      this.teardownNarrativeDebugBridge();
+    }
+    console.log(`[叙事调试器] 已装载探针，正在找调试器（端口 ${port}；没开就 ./dev.sh narrative-debugger）…`);
+    this.attachNarrativeDebugBridge(port);
+    if (options?.persist !== false) saveNarrativeDebugPref({ enabled: true, port });
+    // 开关可能是从别处扳的（控制台 / 工程文件异步读回）：标题界面那行要跟着改字
+    this.menuUI?.refreshDevToggle();
+    return true;
+  }
+
+  /** 现场关：拆探针、断连接。默认同时把工程文件里那个勾取消。 */
+  disableNarrativeDebugBridge(options?: { persist?: boolean }): void {
+    if (!import.meta.env.DEV) return;
+    const port = this.getNarrativeDebugStatus().port;
+    this.teardownNarrativeDebugBridge();
+    if (options?.persist !== false) saveNarrativeDebugPref({ enabled: false, port });
+    this.menuUI?.refreshDevToggle();
+  }
+
+  /**
+   * 控制台入口：`__ndbg.on()` / `__ndbg.off()` / `__ndbg.status()`。
+   *
+   * **不管桥装没装都挂**——接不上的时候最需要的正是"一句话看出是没装还是装了连不上"，
+   * 那时候如果连 `__ndbg` 都没有，人只能去翻 URL 参数。
+   */
+  private installNarrativeDebugConsoleApi(): void {
+    if (!import.meta.env.DEV || typeof window === 'undefined') return;
+    const api = {
+      /** 开（可指定端口）：`__ndbg.on()` / `__ndbg.on(5212)` */
+      on: (port?: number) => {
+        const ok = this.enableNarrativeDebugBridge({ port, persist: true });
+        console.log(ok ? '[叙事调试器] 开了' : '[叙事调试器] 开不了（这一局已经拆了）');
+        return this.getNarrativeDebugStatus();
+      },
+      /** 关：`__ndbg.off()` */
+      off: () => {
+        this.disableNarrativeDebugBridge({ persist: true });
+        console.log('[叙事调试器] 关了');
+        return this.getNarrativeDebugStatus();
+      },
+      toggle: () => (this.narrativeDebugBridge ? api.off() : api.on()),
+      /** 只开这一次，不改工程文件里那个勾 */
+      once: (port?: number) => {
+        this.enableNarrativeDebugBridge({ port, persist: false });
+        return this.getNarrativeDebugStatus();
+      },
+      status: () => {
+        const s = this.getNarrativeDebugStatus();
+        console.log(
+          s.connected
+            ? `[叙事调试器] 接上了（端口 ${s.port}，待发 ${s.queued}）`
+            : s.installed
+              ? `[叙事调试器] 探针装了，但没找到调试器（端口 ${s.port}）——./dev.sh narrative-debugger`
+              : '[叙事调试器] 没装（__ndbg.on() 现在就能开）',
+        );
+        return s;
+      },
+      help: '__ndbg.on() 开 / .off() 关 / .once(5212) 只开这次 / .status() 看状态',
+    };
+    (window as unknown as Record<string, unknown>).__ndbg = api;
+    this.narrativeDebugConsoleApiInstalled = true;
+  }
+
+  /** 真正把探针挂上去（连接、观察者、五个玩家动作事件）。只由 enable 路径调用。 */
+  private attachNarrativeDebugBridge(port: number): void {
     const bridge = installNarrativeDebugBridge({
       getSnapshot: () => this.buildRuntimeDebugSnapshot('narrative-debugger'),
       getSceneId: () => this.sceneManager.currentSceneData?.id ?? '',
@@ -2125,7 +2316,7 @@ export class Game {
           this.stageEventModeBeforeFreeze = null;
         }
       },
-    });
+    }, { port });
     this.narrativeDebugBridge = bridge;
     NarrativeStateManager.traceObserver = bridge.onTrace;
     ActionExecutor.actionObserver = bridge.noteAction;
@@ -2155,6 +2346,30 @@ export class Game {
     ];
     for (const [event, callback] of listeners) this.eventBus.on(event, callback);
     this.narrativeDebugListeners = listeners;
+  }
+
+  /**
+   * 拆桥：摘事件、摘观察者、断连接。**destroy 与"现场关掉"走同一条路**——
+   * 两份拆法迟早会漂，而漏摘的那一份就是 HMR 之后"点一下上报两条"的根因。
+   *
+   * 幂等：没装过时是空操作。
+   */
+  private teardownNarrativeDebugBridge(): void {
+    for (const [event, callback] of this.narrativeDebugListeners) {
+      this.eventBus.off(event, callback);
+    }
+    this.narrativeDebugListeners = [];
+    const bridge = this.narrativeDebugBridge;
+    if (!bridge) return;
+    if (NarrativeStateManager.traceObserver === bridge.onTrace) {
+      NarrativeStateManager.traceObserver = null;
+    }
+    if (ActionExecutor.actionObserver === bridge.noteAction) {
+      ActionExecutor.actionObserver = null;
+    }
+    // dispose 内部会先放行断点闸再断线：断在某一拍时关掉调试，玩家必须能继续动
+    bridge.dispose();
+    this.narrativeDebugBridge = null;
   }
 
   /** F2「日志」页：WebGL getError、深度 GPU 纹理、shader 预热与上下文丢失；JS/Pixi 运行时错误镜像 */
@@ -4290,8 +4505,13 @@ export class Game {
     return Array.from(ids).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
   }
 
-  /** 开发模式列表展示名取自各场景 JSON 的 name，缺省或加载失败时用 id */
-  private async getDevSceneEntries(): Promise<Array<{ id: string; name: string }>> {
+  /**
+   * 开发模式列表展示名取自各场景 JSON 的 name，缺省或加载失败时用 id；
+   * 同时带出 spawnPoints 键（F2「场景」页的出生点下拉用；Dev 面板忽略该字段）。
+   */
+  private async getDevSceneEntries(): Promise<
+    Array<{ id: string; name: string; spawnPoints: string[] }>
+  > {
     const ids = this.getDevSceneIds();
     return Promise.all(
       ids.map(async (id) => {
@@ -4299,19 +4519,19 @@ export class Game {
           const raw = await this.assetManager.loadJson<SceneDataRaw>(sceneJsonUrl(id));
           const n = raw.name;
           const name = typeof n === 'string' && n.trim() ? n.trim() : id;
-          return { id, name };
+          return { id, name, spawnPoints: Object.keys(raw.spawnPoints ?? {}) };
         } catch {
-          return { id, name: id };
+          return { id, name: id, spawnPoints: [] };
         }
       }),
     );
   }
 
-  private async devLoadScene(sceneId: string): Promise<void> {
+  private async devLoadScene(sceneId: string, spawnPoint?: string): Promise<void> {
     if (!sceneId || this.sceneManager.switching) return;
     this.devModeUI?.close();
     try {
-      await this.sceneManager.switchScene(sceneId);
+      await this.sceneManager.switchScene(sceneId, spawnPoint);
       this.mapUI.setCurrentScene(sceneId);
       // dev_room 是开发模式枢纽：回到此处时再打开 Dev 面板；其它场景保持关闭以免挡画面
       if (this.isDevMode && sceneId === 'dev_room') {
@@ -5296,6 +5516,42 @@ export class Game {
    * 无跟随目标时：fallbackToPlayer=true 锚玩家（动作链态镜头默认跟玩家），false 不动镜头
    * （过场态交由 cameraMove 摆布）。回到 Exploring 态的自动解除在主循环清除守卫处。
    */
+  /**
+   * 任务引导浮标的目标世界坐标（玩法文档 D8）。
+   *
+   * NPC 取**实时**坐标（会走动，读 def 会把箭头钉在出生点上）；热点/区域没有运行时位移，
+   * 读场景定义即可（区域取多边形顶点的包围盒中心）。
+   * 目标不在当前场景、或实体已被删/改名时返回 null——引导层会整枚收起，
+   * 绝不画一个指向 (0,0) 的箭头（校验器另有 error 在构建期拦这类悬垂引用）。
+   */
+  private resolveGuidanceWorldPoint(
+    sceneId: string, kind: 'npc' | 'hotspot' | 'zone', entityId: string,
+  ): { x: number; y: number } | null {
+    const scene = this.sceneManager.currentSceneData;
+    if (!scene || scene.id !== sceneId) return null;
+    if (kind === 'npc') {
+      const npc = this.sceneManager.getNpcById(entityId);
+      return npc ? { x: npc.x, y: npc.y } : null;
+    }
+    if (kind === 'hotspot') {
+      // 取**活实例**而不是场景 JSON：热点可被 setSceneEntityPosition 移动，
+      // 且移动持久化后重进场景拿到的是克隆对象，读原始 def 会指向搬家前的老位置
+      const live = this.sceneManager.getCurrentHotspots().find((h) => h.def.id === entityId);
+      return live ? { x: live.def.x, y: live.def.y } : null;
+    }
+    const zone = (scene.zones ?? []).find((z) => z.id === entityId);
+    const poly = zone?.polygon ?? [];
+    if (poly.length === 0) return null;
+    let minX = poly[0].x, maxX = poly[0].x, minY = poly[0].y, maxY = poly[0].y;
+    for (const p of poly) {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    }
+    return { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
+  }
+
   private applyCameraFollow(fallbackToPlayer: boolean): void {
     if (this.cameraFollowTargetId !== null) {
       const followed = this.resolveActorFn(this.cameraFollowTargetId);
@@ -5420,19 +5676,16 @@ export class Game {
     this.characterLighting.destroy();
 
     // 生命周期对称：先摘挂点再关连接，HMR 重建时不留悬挂 observer/socket。
-    for (const [event, callback] of this.narrativeDebugListeners) {
-      this.eventBus.off(event, callback);
-    }
-    this.narrativeDebugListeners = [];
-    if (this.narrativeDebugBridge) {
-      if (NarrativeStateManager.traceObserver === this.narrativeDebugBridge.onTrace) {
-        NarrativeStateManager.traceObserver = null;
+    this.teardownNarrativeDebugBridge();
+    if (this.narrativeDebugConsoleApiInstalled) {
+      // 控制台入口指着这一局的 this：不删的话，HMR 之后 `__ndbg.on()` 会往已销毁的
+      // 实例上装探针（看着"开了"，其实一条都上报不了）。
+      try {
+        delete (window as unknown as Record<string, unknown>).__ndbg;
+      } catch {
+        /* ignore */
       }
-      if (ActionExecutor.actionObserver === this.narrativeDebugBridge.noteAction) {
-        ActionExecutor.actionObserver = null;
-      }
-      this.narrativeDebugBridge.dispose();
-      this.narrativeDebugBridge = null;
+      this.narrativeDebugConsoleApiInstalled = false;
     }
 
     if (this.mainTick && this.renderer?.app?.ticker) {
@@ -5513,6 +5766,8 @@ export class Game {
     this.pressureHoldUI?.destroy();
     this.hud?.destroy();
     this.notificationUI?.destroy();
+    this.questBannerUI?.destroy();
+    this.guidanceLayerUI?.destroy();
     this.bookReaderUI?.destroy();
     if (!import.meta.env.DEV) this.debugPanelUI?.destroy();
     this.devModeUI?.destroy();
@@ -5662,6 +5917,10 @@ export class Game {
 
     this.emoteBubbleManager.update(dt);
     this.notificationUI.update(dt);
+    // 横幅与引导层跟着游戏时钟走（不自转 rAF）：暂停/开面板时它们也该停，
+    // 否则关掉面板会发现横幅已经在背后播完了
+    this.questBannerUI.update(dt);
+    this.guidanceLayerUI.update(dt);
     this.camera.update(dt);
     this.debugTools?.update(dt);
     this.depthDebugVisualizer?.update();

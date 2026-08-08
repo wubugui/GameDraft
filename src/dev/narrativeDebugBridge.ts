@@ -6,7 +6,8 @@
  *
  * 「绝对不影响运行时」的四道闸（改动此文件必须逐条守住）：
  *  1. 编译期——调用点在 Game 里包 `import.meta.env.DEV`，prod build 静态剔除。
- *  2. 启动开关——dev 下也默认关，要 URL `?ndbg=1`（或 localStorage `gamedraft.ndbg=1`）。
+ *  2. 启动开关——dev 下也默认关，要 URL `?ndbg=1` 或工程文件里那个勾
+ *     （见 {@link resolveNarrativeDebugStartup}；随时可在游戏里现开现关）。
  *  3. 热路径——引擎侧挂点一律 `NarrativeStateManager.traceObserver?.(...)`，
  *     未连接时是一次静态属性读，不分配对象。
  *  4. 异步——所有发送 fire-and-forget 进本地队列，定时 flush；send 失败静默丢弃，
@@ -80,6 +81,10 @@ export interface NarrativeDebugBridgeHandle {
    */
   noteAction: (type: string, params: Record<string, unknown>) => void;
   dispose: () => void;
+  /** 诊断用（F2 面板 / 控制台 `__ndbg.status()`）：接上没、还有多少没发出去。 */
+  readonly port: number;
+  isConnected: () => boolean;
+  queued: () => number;
 }
 
 /** 动作类型 → 说人话时的口径。不在表里的动作直接丢。 */
@@ -91,33 +96,121 @@ const PLAYER_ACTION_TYPES: Record<string, string> = {
   startObjectExamine: 'minigame',
 };
 
-/** dev 开关：URL `?ndbg=1` 或 localStorage `gamedraft.ndbg=1`。默认关。 */
-export function isNarrativeDebugEnabled(): boolean {
-  try {
-    const params = new URLSearchParams(window.location.search);
-    const flag = params.get('ndbg');
-    if (flag !== null) return flag !== '0' && flag !== 'false';
-    return window.localStorage.getItem('gamedraft.ndbg') === '1';
-  } catch {
-    return false;
-  }
+// ————————————————————— 开关：URL / 工程文件 / 现场热切 —————————————————————
+//
+// 三个入口共用这一层：地址栏 `?ndbg=1`、标题界面那个勾、F2 面板与控制台的
+// `__ndbg.on()`。**持久化落工程文件**（dev 服 API 写
+// resources/editor_projects/editor_data/narrative_debugger_bridge.json），
+// 不能只靠 localStorage：项目在多个端口和编辑器内嵌 WebEngine 里开游戏，
+// localStorage 按 origin 隔离，勾一次只在那个端口算数（见 debug-ui-persistence 卡）。
+
+/** 工程文件读写口（dev 服中间件，见 vite.config.ts 的 narrativeDebugBridgeApi） */
+export const NARRATIVE_DEBUG_PREF_API = '/__gamedraft-api/narrative-debug';
+const LS_ENABLED_KEY = 'gamedraft.ndbg';
+const LS_PORT_KEY = 'gamedraft.ndbg_port';
+
+export interface NarrativeDebugPref {
+  enabled: boolean;
+  port: number;
 }
 
-function debugPort(): number {
+/**
+ * 启动时怎么办。
+ *
+ * - `on`：地址栏明写了 `?ndbg=1`，同步装，不用等网络（`?narrative_warp=` 直达那条路
+ *   一装完就开始推状态，慢一拍就漏掉最想看的那几步）。
+ * - `off`：地址栏明写了 `?ndbg=0`——**显式关压过工程文件里那个勾**，一次性排除干扰用。
+ * - `pref`：地址栏没说话，去问工程文件（异步）。
+ */
+export function resolveNarrativeDebugStartup(): { mode: 'on' | 'off' | 'pref'; port: number } {
+  const port = urlPort();
+  try {
+    const flag = new URLSearchParams(window.location.search).get('ndbg');
+    if (flag !== null) {
+      return { mode: flag !== '0' && flag !== 'false' ? 'on' : 'off', port };
+    }
+  } catch {
+    /* 取不到地址栏就按"没说话"走 */
+  }
+  return { mode: 'pref', port };
+}
+
+function urlPort(): number {
   try {
     const raw = new URLSearchParams(window.location.search).get('ndbg_port');
     const parsed = Number(raw);
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_PORT;
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
   } catch {
-    return DEFAULT_PORT;
+    /* ignore */
   }
+  return seedPort();
+}
+
+/** 首帧种子：localStorage 只用来省掉"等一次 fetch"的空窗，权威永远是工程文件。 */
+function seedPort(): number {
+  try {
+    const parsed = Number(window.localStorage.getItem(LS_PORT_KEY));
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  } catch {
+    /* ignore */
+  }
+  return DEFAULT_PORT;
+}
+
+/** 工程文件里那个勾（权威）。取不到（非 dev 服 / 中间件没起）返回 null，由调用方决定降级。 */
+export async function fetchNarrativeDebugPref(): Promise<NarrativeDebugPref | null> {
+  try {
+    const res = await fetch(NARRATIVE_DEBUG_PREF_API, { cache: 'no-store' });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { enabled?: unknown; port?: unknown };
+    const port = Number(data?.port);
+    return {
+      enabled: data?.enabled === true,
+      port: Number.isFinite(port) && port > 0 ? Math.floor(port) : DEFAULT_PORT,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 记住这次的勾。先写 localStorage 种子（同步，重启后首帧就有），再写工程文件（权威）。
+ * 写盘失败只警告不抛：调试开关写不进去不该把游戏带崩。
+ */
+export function saveNarrativeDebugPref(pref: NarrativeDebugPref): void {
+  try {
+    window.localStorage.setItem(LS_ENABLED_KEY, pref.enabled ? '1' : '0');
+    window.localStorage.setItem(LS_PORT_KEY, String(pref.port));
+  } catch {
+    /* 无痕模式 / 存储满：种子没了就多等一次 fetch，不影响正确性 */
+  }
+  void fetch(NARRATIVE_DEBUG_PREF_API, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(pref),
+  }).catch(() => {
+    console.warn('[叙事调试器] 开关没能写进工程文件（dev 服没起？），这次只在本页有效');
+  });
+}
+
+/** 一次装载 = 一个页签身份。重连沿用它，调试器那边就不会多冒出一个"新页签"。 */
+function newClientId(): string {
+  try {
+    const uuid = (window.crypto as { randomUUID?: () => string } | undefined)?.randomUUID?.();
+    if (uuid) return uuid;
+  } catch {
+    /* ignore */
+  }
+  return `ndbg-${Math.floor(Math.random() * 1e9).toString(36)}`;
 }
 
 export function installNarrativeDebugBridge(
   deps: NarrativeDebugBridgeDeps,
+  options?: { port?: number },
 ): NarrativeDebugBridgeHandle {
-  const port = debugPort();
+  const port = options?.port && options.port > 0 ? Math.floor(options.port) : urlPort();
   const url = `ws://127.0.0.1:${port}`;
+  const clientId = newClientId();
   let socket: WebSocket | null = null;
   let disposed = false;
   let reconnectDelay = RECONNECT_MIN_MS;
@@ -496,6 +589,10 @@ export function installNarrativeDebugBridge(
           type: 'hello',
           role: 'game',
           href: window.location.href,
+          // 页签身份：调试器同时挂多个游戏页签时靠它区分谁是谁（重连沿用同一个，
+          // 这样掉线重连不会在「调试对象」清单里冒出个新页签）。
+          clientId,
+          title: document.title,
         }));
       } catch {
         /* ignore */
@@ -551,14 +648,6 @@ export function installNarrativeDebugBridge(
 
   connect();
 
-  // dev 诊断挂点：接不上的时候，得能一句话看出是"没装"还是"装了连不上"。
-  (window as unknown as Record<string, unknown>).__ndbg = {
-    url,
-    isConnected: () => connected(),
-    queued: () => queue.length,
-    reconnectDelay: () => reconnectDelay,
-  };
-
   /**
    * 引擎断点闸只装一次（不放进 connect——每次重连重装会把正断着的那次挤掉）。
    * 未连调试器 / 没命中断点时立刻 return，热路径代价 = 一次 Map 查。
@@ -581,6 +670,9 @@ export function installNarrativeDebugBridge(
   };
 
   return {
+    port,
+    isConnected: () => connected(),
+    queued: () => queue.length,
     onTrace: (event) => {
       if (!connected()) return;
       queue.push({ kind: 'trace', event });

@@ -20,6 +20,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 DRAFT_SIGNAL = "__draft__"
+
+# 反应式触发：不吃信号、靠条件自动评估，signal 字段**恒为占位且理应如此**。
+# 真相源是 src/core/NarrativeStateManager.ts 的 `trigger?: 'signal' | 'reactive' | ...`，
+# 本表是全 Python 侧唯一副本（调试器从这里 import，别再各写一份），parity 测试对着 TS 锁。
+REACTIVE_TRIGGERS = frozenset({"reactive", "reactiveAll", "reactiveAny"})
 DERIVED_PREFIX = "state:"
 
 # 发送方通道。UI 分组按它走，别按 container_kind——策划先问"这是戏里发的还是系统发的"。
@@ -67,6 +72,9 @@ class Emitter:
     graph_id: str = ""
     state_id: str = ""
     transition_id: str = ""
+    # 这条路**通不通**。只对派生信号的上游因果有意义：占位信号的转移运行时拒发，
+    # 那条路根本走不到，界面必须把它跟真能走的路分开画，否则等于告诉人"有路可走"。
+    wired: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -88,6 +96,7 @@ class Emitter:
             "graphId": self.graph_id,
             "stateId": self.state_id,
             "transitionId": self.transition_id,
+            "wired": self.wired,
         }
 
 
@@ -136,6 +145,9 @@ class Listener:
     to_state: str = ""
     to_label: str = ""
     conditions: list[str] = field(default_factory=list)
+    # 这条转移**怎么才会走**（一句人话，三个界面共用）。各拼各的就会出现
+    # 「收到「__draft__」时走」这种把走不通的路说成能走的文案。
+    how: str = ""
     # 活计图（有 run 声明）只有在它是"当前激活的那一个"时才吃信号
     # （运行时 NarrativeStateManager.listScannableGraphEntries）。挂起的活计图看着
     # 停在起点，实际一个信号都不接——调试器据此把圆点降级，绝不报"正等着"。
@@ -159,6 +171,7 @@ class Listener:
             "to": self.to_state,
             "toLabel": self.to_label,
             "conditions": list(self.conditions),
+            "how": self.how,
             "runGraph": self.run_graph,
             "priority": self.priority,
             "trigger": self.trigger,
@@ -186,11 +199,51 @@ class StateRead:
     pointer: str = ""
     readonly: bool = False
     anchors: list[list[str]] = field(default_factory=list)
+    # 这一行**自己长在哪**（不是它读的那张图）。读状态的引用有相当一部分就写在
+    # narrative_graphs.json 里（转移条件、活计计数叶…），那类行必须走画布定位：
+    # 文件级跳转对 narrative_graphs.json 只认 states/<id>，条件指针落不到点，
+    # 会退化成"打开了叙事状态机页"——而人本来就在那一页，等于按钮没反应。
+    composition_id: str = ""
+    element_id: str = ""
+    host_graph_id: str = ""
+    host_transition_id: str = ""
+    # ---- 这条引用**管的是世界里的什么** ----
+    # 策划盯的是实体和流程，不是"条件叶·第 1 项"。列一串技术路径等于没回答问题：
+    # 要说清楚"雾津街头那个挑空担的汉子出不出现"，而不是 npcs[3].conditions[0]。
+    subject_kind: str = ""     # npc | hotspot | zone | quest | package | mapNode | dialogue | archive | …
+    subject_name: str = ""     # 人看的名字（NPC 的 name / 热点的 label / 任务的 title…）
+    subject_id: str = ""       # 它自己的 id（名字缺席时退到它）
+    subject_scene: str = ""    # 在哪个场景里（场景实体才有）
+    subject_effect: str = ""   # 这一拍决定它什么：出不出现 / 算不算完成 / 开不开…
+
+    subject_kind_label: str = ""   # 主体类别的中文名（NPC / 热点 / 区域 / 任务…）
+    # 这一项要的是「到过」还是「正停在」。差别很大：正停在＝此刻就能判死；到过＝要看历史。
+    # 调试器据此决定敢不敢下断言（判不出来就照实说，绝不编）。
+    reached: bool = False
+    # 这一项被 not 包着（"不满足才成立"）。漏掉它会把结论说反。
+    negated: bool = False
+
+    @property
+    def subject_display(self) -> str:
+        return self.subject_name or self.subject_id or self.container_id
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "graphId": self.graph_id,
             "stateId": self.state_id,
+            "subjectKind": self.subject_kind,
+            "subjectKindLabel": self.subject_kind_label,
+            "reached": self.reached,
+            "negated": self.negated,
+            "subjectName": self.subject_name,
+            "subjectId": self.subject_id,
+            "subjectScene": self.subject_scene,
+            "subjectEffect": self.subject_effect,
+            "subjectDisplay": self.subject_display,
+            "compositionId": self.composition_id,
+            "elementId": self.element_id,
+            "hostGraphId": self.host_graph_id,
+            "hostTransitionId": self.host_transition_id,
             "containerKind": self.container_kind,
             "containerId": self.container_id,
             "kindLabel": self.kind_label,
@@ -210,6 +263,8 @@ DIAG_UNREGISTERED = "unregistered"       # 用到了但没在注册表登记
 DIAG_DRAFT = "draft"                     # __draft__ 占位（运行时拒发）
 DIAG_ORPHAN = "orphan"                   # 登记了但两侧都空
 DIAG_BROADCAST_OFF = "broadcastOff"      # 派生信号的源状态没开 broadcastOnEnter / 不存在
+DIAG_REACTIVE_ONLY = "reactiveOnly"       # 只有反应式转移在 signal 字段里填了它（运行时不看那字段）
+DIAG_UNREACHABLE = "unreachable"         # 进这一拍的路全是占位（运行时拒发）= 这条广播发不出来
 
 
 @dataclass
@@ -234,10 +289,14 @@ class SignalCard:
     emitters: list[Emitter] = field(default_factory=list)
     declarations: list[Declaration] = field(default_factory=list)
     listeners: list[Listener] = field(default_factory=list)
+    # 反应式转移的 signal 字段里填了这条信号名的（运行时不看那个字段，故不算监听）。
+    # 单列一栏是为了不让人对着"没人听"发懵——名字确实写在那儿，只是运行时不认。
+    reactive_refs: list[Listener] = field(default_factory=list)
     state_reads: list[StateRead] = field(default_factory=list)
     diagnostics: list[Diagnostic] = field(default_factory=list)
     # 派生信号专属：源状态在哪张图、叫什么
     source_graph_id: str = ""
+    source_graph_label: str = ""   # 同一张卡上别一处叫 id、一处叫中文名（会被当成两个东西）
     source_state_id: str = ""
     source_state_label: str = ""
 
@@ -256,15 +315,100 @@ class SignalCard:
             "emitters": [e.to_dict() for e in self.emitters],
             "declarations": [d.to_dict() for d in self.declarations],
             "listeners": [l.to_dict() for l in self.listeners],
+            "reactiveRefs": [l.to_dict() for l in self.reactive_refs],
             "stateReads": [s.to_dict() for s in self.state_reads],
             "diagnostics": [d.to_dict() for d in self.diagnostics],
             "sourceGraphId": self.source_graph_id,
+            "sourceGraphLabel": self.source_graph_label,
             "sourceStateId": self.source_state_id,
             "sourceStateLabel": self.source_state_label,
             "emitterCount": self.real_emitter_count,
             "listenerCount": len(self.listeners),
+            "reactiveRefCount": len(self.reactive_refs),
             "declarationCount": len(self.declarations),
         }
+
+
+@dataclass
+class StateCard:
+    """一个**状态**（策划嘴里的"一拍"）的全貌。
+
+    与信号卡是两个问题：信号问"谁发谁听"，状态问"**怎么进来、怎么出去、谁在看着**"。
+    最后那一栏是重点——读状态的引用里 346/370 是转移以外的消费者（对话分支、场景实体
+    显隐、章节包、任务、地图节点、档案），它们全在因果图之外，改一拍最容易漏的就是它们。
+    """
+
+    graph_id: str
+    state_id: str
+    graph_label: str = ""
+    state_label: str = ""
+    composition_id: str = ""
+    composition_label: str = ""
+    element_id: str = ""
+    exists: bool = True
+    is_initial: bool = False
+    broadcasts: bool = False       # 勾了「进入时广播」
+    run_graph: bool = False        # 活计图（可重复运行的委托机器）
+    broadcast_signal: str = ""     # 勾了广播才有：state:<图>:<态>
+    ways_in: list[Emitter] = field(default_factory=list)      # 怎么进来（上游转移 / 强制设状态）
+    ways_out: list[Listener] = field(default_factory=list)    # 从这儿能去哪
+    emits: list[Emitter] = field(default_factory=list)        # 进/出这一拍会发什么信号
+    readers: list[StateRead] = field(default_factory=list)    # 谁在看着这一拍
+    diagnostics: list[Diagnostic] = field(default_factory=list)
+
+    @property
+    def key(self) -> str:
+        return f"{self.graph_id}.{self.state_id}"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "graphId": self.graph_id,
+            "stateId": self.state_id,
+            "graphLabel": self.graph_label,
+            "stateLabel": self.state_label,
+            "compositionId": self.composition_id,
+            "compositionLabel": self.composition_label,
+            "elementId": self.element_id,
+            "exists": self.exists,
+            "isInitial": self.is_initial,
+            "broadcasts": self.broadcasts,
+            "runGraph": self.run_graph,
+            "broadcastSignal": self.broadcast_signal,
+            "waysIn": [e.to_dict() for e in self.ways_in],
+            "waysOut": [l.to_dict() for l in self.ways_out],
+            "emits": [e.to_dict() for e in self.emits],
+            "readers": [r.to_dict() for r in self.readers],
+            "diagnostics": [d.to_dict() for d in self.diagnostics],
+            "wayInCount": len(self.ways_in),
+            "wayOutCount": len(self.ways_out),
+            "readerCount": len(self.readers),
+            "emitCount": len(self.emits),
+        }
+
+
+# 状态诊断码
+DIAG_STATE_MISSING = "stateMissing"        # 被引用，但图里根本没有这个状态
+DIAG_STATE_NO_WAY_IN = "stateNoWayIn"      # 进不来（非初始态且零上游）
+DIAG_STATE_DEAD_END = "stateDeadEnd"       # 出不去（没有出口转移）
+DIAG_STATE_UNUSED = "stateUnused"          # 没人读、也不广播：改它不牵连任何人
+
+
+def is_reactive(trigger: str) -> bool:
+    return _clean(trigger) in REACTIVE_TRIGGERS
+
+
+def transition_is_unwired(signal: str, trigger: str) -> bool:
+    """这条转移是不是**真的还没接线**。
+
+    ⚠ 只看 `signal == __draft__` 会把反应式转移一并冤枉掉：它压根不吃信号，线接在
+    conditions 上（踩过：主线「闲逛A→闲逛B」写了条件，因果图不画、还写"没接线"）。
+    反过来，纯信号触发 + 占位信号 = 运行时明确拒发（NarrativeStateManager 拒发
+    `__draft__`），那条路**走不通**，说成"收到信号 __draft__ 时走"就是骗人。
+
+    调试器与本引擎共用这一条判据（调试器的 `Transition.is_unwired` 直接调它），
+    两处各写一份的后果就是同一份数据在两个工具里给出相反答案。
+    """
+    return _clean(signal) == DRAFT_SIGNAL and not is_reactive(trigger)
 
 
 def is_derived(signal: str) -> bool:

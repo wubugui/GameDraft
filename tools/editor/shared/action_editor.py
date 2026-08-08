@@ -184,6 +184,9 @@ _ACTION_SCOPED_OMIT_WHEN_ABSENT_AND_DEFAULT: dict[tuple[str, str], object] = {
     ("attachToSocket", "image"): "",
     ("attachToSocket", "mirror"): "",
     ("attachToSocket", "lit"): "",
+    # setFocusedQuest.announce 缺省 false＝不额外给醒目提示；不登记的话
+    # 「打开→不改→保存」会给全项目的 setFocusedQuest 凭空写上 announce:false
+    ("setFocusedQuest", "announce"): False,
 }
 
 # 运行时默认为 true 的可选 bool：控件用三态（""/"true"/"false"）表达"未设"，
@@ -267,7 +270,7 @@ ACTION_TYPES = [
     "startNarrativeRun", "resetNarrativeRun", "revertNarrativeRun", "activateNarrativeRun",
     "loadNarrativePackage", "unloadNarrativePackage",
     "appendFlag", "giveItem", "removeItem", "giveCurrency", "removeCurrency",
-    "giveRule", "grantRuleLayer", "giveFragment", "updateQuest", "startEncounter",
+    "giveRule", "grantRuleLayer", "giveFragment", "updateQuest", "setFocusedQuest", "startEncounter",
     "playBgm", "stopBgm", "playSfx", "stopSceneAmbient", "endDay", "addDelayedEvent",
     "addArchiveEntry", "startCutscene", "startWaterMinigame", "startSugarWheelMinigame", "startPaperCraftMinigame",
     "startObjectExamine",
@@ -318,6 +321,8 @@ _SELECTOR_KIND_UNIVERSE: dict[str, str] = {
     "rule": "rules",
     "fragment": "fragments",
     "quest": "quests",
+    # 当前任务槽的候选比 updateQuest 宽：活计（repeatable）也能当当前任务，故另立一 kind
+    "quest_any": "quests",
     "encounter": "encounters",
     "cutscene": "cutscenes",
     "shop": "shops",
@@ -375,6 +380,7 @@ ACTION_PERSISTENCE: dict[str, str] = {
     "grantRuleLayer": "save",
     "giveFragment": "save",
     "updateQuest": "save",
+    "setFocusedQuest": "save",
     "startEncounter": "save",
     "playBgm": "memory",
     "stopBgm": "memory",
@@ -547,6 +553,7 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "grantRuleLayer": [("ruleId", "str"), ("layer", "str")],
     "giveFragment": [("id", "str")],
     "updateQuest": [("id", "str")],
+    "setFocusedQuest": [("id", "str"), ("announce", "bool")],
     "startEncounter": [("id", "str")],
     "playBgm": [("id", "str"), ("fadeMs", "int")],
     "stopBgm": [("fadeMs", "int")],
@@ -3343,7 +3350,7 @@ class ActionRow(QWidget):
         committed = str(val if val is not None else "").strip()
         strict_pick = kind in (
             "scene", "narrative_run_archetype", "narrative_package",
-            "item", "quest", "encounter", "rule", "fragment", "cutscene", "shop",
+            "item", "quest", "quest_any", "encounter", "rule", "fragment", "cutscene", "shop",
             "spawn",
             "actor", "emote_target", "npc_only", "scene_group",
             "water_minigame", "sugar_wheel_minigame", "paper_craft_minigame",
@@ -3363,6 +3370,9 @@ class ActionRow(QWidget):
         elif kind == "quest":
             # updateQuest 等状态机目标：排除 repeatable（无状态机可推）
             pairs = m.quest_status_target_ids() if m else []
+        elif kind == "quest_any":
+            # setFocusedQuest 目标：含 repeatable（活计也能设为当前任务）
+            pairs = m.all_quest_ids() if m else []
         elif kind == "encounter":
             pairs = m.all_encounter_ids() if m else []
         elif kind == "rule":
@@ -5112,6 +5122,12 @@ class ActionRow(QWidget):
                         "倒放：从末帧向首帧播放；非循环片段在首帧完成（停在首帧）。\n"
                         "可把开门/起身等动画当关门/坐下复用。缺省不写键。"
                     )
+                if act_type == "setFocusedQuest" and pname == "announce":
+                    w.setToolTip(
+                        "切过去的同时在屏幕中上弹一块木牌横幅，把玩家注意力拉到这条任务上。\n"
+                        "⚠ 与任务表单里的「接取提示」是两回事：那个管的是**任务被接取时**的提示档位，\n"
+                        "这个只管**这一次切换**。缺省不写键。"
+                    )
                 w.stateChanged.connect(self.changed)
             elif ptype == "flag_val":
                 w = FlagValueEdit(self, self._ctx_model.flag_registry if self._ctx_model else {})
@@ -5166,6 +5182,13 @@ class ActionRow(QWidget):
                 w = self._make_selector("fragment", str(val) if val is not None else "")
             elif act_type == "updateQuest" and pname == "id":
                 w = self._make_selector("quest", str(val) if val is not None else "")
+            elif act_type == "setFocusedQuest" and pname == "id":
+                w = self._make_selector("quest_any", str(val) if val is not None else "")
+                w.setToolTip(
+                    "设为「当前任务」（全局唯一，跨主线/支线/活计共用一条）。\n"
+                    "留空 = 清空当前任务。\n"
+                    "目标是活计时会同时激活它的活计图；目标是主线/支线时不动在途活计。",
+                )
             elif act_type == "startEncounter" and pname == "id":
                 w = self._make_selector("encounter", str(val) if val is not None else "")
             elif act_type == "playBgm" and pname == "id":

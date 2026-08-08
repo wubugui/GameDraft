@@ -6,6 +6,7 @@
     "archiveUpdated": "档案更新",
     "inventoryFull": "包袱满了！",
     "questAccepted": "新任务：{title}",
+    "questFocused": "当前任务：{title}",
     "questCompleted": "任务完成：{title}",
     "jobDiscarded": "撂下了活计：{title}",
     "currencyInsufficient": "铜钱不足!",
@@ -98,7 +99,8 @@
     "coins": "铜钱:",
     "ruleUseHint": "[G] 使用规矩",
     "zoneInteractHint": "[E] 察看",
-    "current": "当前："
+    "current": "当前：",
+    "objective": "▸ {text}"
   },
   "inspectBox": {
     "closeHint": "[ 点击或按任意键关闭 ]"
@@ -133,7 +135,15 @@
     "runTracked": " ▶ 追踪中",
     "runSuspended": " ‖ 搁置·点击追踪",
     "runCurrent": "当前：{state}",
-    "runArchive": "{label} ×{count}"
+    "runArchive": "{label} ×{count}",
+    "inProgress": "-- 进行中 ({count}) --",
+    "currentMark": "当前",
+    "isCurrent": "▶ 当前任务",
+    "setCurrent": "设为当前任务",
+    "objectives": "目标",
+    "bannerNewQuest": "新任务",
+    "bannerNewJob": "新活计",
+    "bannerFocus": "当前任务"
   },
   "rulesPanel": {
     "title": "规矩本",

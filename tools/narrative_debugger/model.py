@@ -19,14 +19,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
+from tools.narrative_xref.model import REACTIVE_TRIGGERS, transition_is_unwired
 from tools.narrative_xref.phrases import condition_parts as xref_condition_parts
 from tools.narrative_xref.phrases import describe_condition as xref_describe_condition
 from tools.narrative_xref.phrases import describe_conditions as xref_describe_conditions
 
 BROADCAST_PREFIX = "state:"
-# 反应式触发：不吃信号，靠条件自动评估。这类转移的 signal 字段是编辑器占位，
-# **恒为 __draft__ 且理应如此**——接线在 conditions 上。
-REACTIVE_TRIGGERS = frozenset({"reactive", "reactiveAll", "reactiveAny"})
 # 编辑器占位信号（与 NarrativeStateManager.DEFAULT_DRAFT_SIGNAL 对齐）：
 # 它连出来的边不是真路，图上不画、清单里不排。
 DRAFT_PLACEHOLDER = "__draft__"
@@ -82,7 +80,7 @@ class Transition:
         signal 字段恒是占位，线接在 conditions 上。踩过：主线「闲逛A→闲逛B」明明写了
         条件，因果图上不画、「在等」框还写"这条路还没接线"，条件就打印在下一行。
         """
-        return self.signal == DRAFT_PLACEHOLDER and not self.is_reactive
+        return transition_is_unwired(self.signal, self.trigger)
 
     @property
     def from_key(self) -> str:

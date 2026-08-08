@@ -13,6 +13,10 @@ import pytest
 
 from tools.narrative_xref import (
     CHANNEL_BROADCAST,
+    DIAG_REACTIVE_ONLY,
+    DIAG_STATE_MISSING,
+    DIAG_STATE_NO_WAY_IN,
+    DIAG_UNREACHABLE,
     CHANNEL_UPSTREAM,
     DIAG_BROADCAST_OFF,
     DIAG_DECLARED_ONLY,
@@ -138,7 +142,7 @@ def test_reference_shapes_mirror_the_refactor_engine():
     commands: list[tuple[str, str]] = []
     reads: list[tuple[str, str]] = []
     scan_mod._walk(
-        payload, "", [], "", None, [],
+        payload, "", [], [], [], "", None, [],
         lambda *_a: None,
         lambda gid, sid, _hit: commands.append((gid, sid)),
         lambda gid, sid, _hit: reads.append((gid, sid)),
@@ -561,12 +565,53 @@ def test_scan_is_deterministic():
     assert [l["transitionId"] for l in first["listeners"]] == ["t1", "t2"]
 
 
-@pytest.mark.parametrize("junk", [None, [], "", 0, {"compositions": "nope"}, {"compositions": [None, 3]}])
+# 坏数据不许把面板炸掉——编辑器里半截数据是常态（手改坏的、老格式、别的工具写坏的）。
+# ⚠ 这组参数**必须原样进扫描**：早先版本写成 `junk if isinstance(junk, dict) else {}`，
+# 把 None/[]/""/0 四个全塌缩成同一个空 dict，6 个 case 实际只测了 3 种形状；
+# 加上一条恒真断言（all_signal_ids 按构造必返 list），整条测试是空的——
+# 而真正会抛的 `{"compositions": 5}` 那族当时全都没盖到（2026-08-07 独立审查坐实）。
+@pytest.mark.parametrize("junk", [
+    None, [], "", 0, 3.5, True,
+    {"compositions": "nope"},
+    {"compositions": [None, 3]},
+    {"compositions": 5},                                    # 非可迭代：曾 TypeError
+    {"graphs": 7},
+    {"signals": "nope"},
+    {"compositions": [{"id": "c", "mainGraph": {"id": "g", "states": {}, "transitions": 3}}]},
+    {"compositions": [{"id": "c", "mainGraph": {"id": "g", "states": {}}, "elements": 9}]},
+    {"compositions": [{"id": "c", "mainGraph": {"id": "g", "states": "nope"}}]},
+    {"compositions": [{"id": "c", "mainGraph": {"id": "g", "states": {},
+                                                "transitions": [{"id": "t", "priority": "高"}]}}]},
+])
 def test_broken_shapes_never_raise(junk):
-    """坏数据不许把面板炸掉——编辑器里半截数据是常态。"""
-    index = build_index(make_source(narrative=junk if isinstance(junk, dict) else {}))
+    index = build_index(make_source(narrative=junk))
     assert index.card("whatever").signal == "whatever"
-    assert index.all_signal_ids() == [] or isinstance(index.all_signal_ids(), list)
+    assert index.overview() == [] or all(c.signal for c in index.overview())
+    # 真扫过一遍才算数：坏结构下 all_signal_ids 至少得是可用的空集，而不是抛出来
+    assert isinstance(index.all_signal_ids(), list)
+
+
+def test_self_referencing_and_very_deep_data_never_raise():
+    """内存里的结构可能自引用（编辑器里手滑就能造出来）；递归兜底闸要接住。"""
+    cyclic: dict = {"nodes": {}}
+    cyclic["nodes"]["self"] = cyclic
+    deep: dict = {}
+    cursor = deep
+    for _ in range(2000):
+        cursor["n"] = {}
+        cursor = cursor["n"]
+    for doc in (cyclic, deep):
+        index = build_index(make_source(dialogues=[DialogueDoc("d", "d.json", doc)]))
+        assert index.all_signal_ids() == []
+
+
+def test_a_hit_below_the_depth_gate_still_gets_found():
+    """闸是兜底不是省事：正常深度（十几层）的发射必须照常扫得到。"""
+    node: dict = {"type": "runActions", "actions": [emit("sig_deep")]}
+    for _ in range(20):
+        node = {"wrap": node}
+    index = build_index(make_source(dialogues=[DialogueDoc("d", "d.json", {"nodes": {"n": node}})]))
+    assert index.card("sig_deep").real_emitter_count == 1
 
 
 def test_signal_id_with_slash_keeps_pointer_escaped():
@@ -713,3 +758,382 @@ def test_real_project_scan_is_fast_enough_for_a_panel(real_index):
     start = time.perf_counter()
     build_index(from_disk(REPO_ROOT))
     assert time.perf_counter() - start < 3.0
+
+
+# --------------------------------------------------------------------------- #
+# 审查打回的口径问题（2026-08-07 独立审查）
+# --------------------------------------------------------------------------- #
+
+def test_unwired_upstream_is_marked_not_dressed_up_as_a_path():
+    """占位信号的上游转移运行时拒发。说成「收到信号 __draft__ 时走」＝给一条走不通的路。"""
+    narrative = narrative_with(
+        states={"s_a": {"label": "开局"}, "s_b": {"label": "接了活", "broadcastOnEnter": True}},
+        transitions=[{"id": "t_draft", "from": "s_a", "to": "s_b", "signal": "__draft__"}],
+    )
+    card = build_index(make_source(narrative=narrative)).card("state:flow_main:s_b")
+    ups = [e for e in card.emitters if e.channel == CHANNEL_UPSTREAM]
+    assert len(ups) == 1
+    assert ups[0].wired is False
+    assert "还没接线" in ups[0].context
+    assert "__draft__" not in ups[0].context, "别把占位信号名当成「要收到的信号」报出去"
+    codes = [d.code for d in card.diagnostics]
+    assert DIAG_UNREACHABLE in codes, "唯一进得来的路没接线时要明说这一拍到不了"
+
+
+def test_reactive_upstream_is_still_a_real_path():
+    """反过来：反应式转移的 signal 恒是占位，但线接在条件上——不许一并冤枉。"""
+    narrative = narrative_with(
+        states={"s_a": {"label": "开局"}, "s_b": {"label": "接了活", "broadcastOnEnter": True}},
+        transitions=[{"id": "t_r", "from": "s_a", "to": "s_b", "signal": "__draft__",
+                      "trigger": "reactive", "conditions": [{"flag": "f", "value": True}]}],
+    )
+    card = build_index(make_source(narrative=narrative)).card("state:flow_main:s_b")
+    ups = [e for e in card.emitters if e.channel == CHANNEL_UPSTREAM]
+    assert ups[0].wired is True
+    assert "条件满足就自动走" in ups[0].context
+    assert DIAG_UNREACHABLE not in [d.code for d in card.diagnostics]
+
+
+def test_wiring_predicate_is_shared_with_the_debugger():
+    """两个工具必须用同一条判据——各写一份的后果是同一份数据给出相反答案。"""
+    from tools.narrative_debugger.model import Transition
+    from tools.narrative_xref.model import transition_is_unwired
+
+    for signal, trigger in (("__draft__", ""), ("__draft__", "reactive"), ("sig", ""), ("", "")):
+        engine = transition_is_unwired(signal, trigger)
+        debugger = Transition("g", "t", "a", "b", signal, trigger or "signal").is_unwired
+        assert engine == debugger, f"{signal!r}/{trigger!r}: 引擎 {engine} vs 调试器 {debugger}"
+
+
+def test_reactive_trigger_table_matches_the_runtime_typescript():
+    """反应式触发表的真相源在 TS。Python 侧只留这一份（调试器 import 它），对着 TS 锁。"""
+    import re
+
+    source = (REPO_ROOT / "src" / "core" / "NarrativeStateManager.ts").read_text(encoding="utf-8")
+    match = re.search(r"trigger\?:\s*((?:'[a-zA-Z]+'\s*\|\s*)+'[a-zA-Z]+')\s*;", source)
+    assert match, "运行时的 trigger 联合类型必须保持可解析"
+    runtime = {t.strip("' ") for t in match.group(1).split("|")} - {"signal"}
+    from tools.narrative_xref.model import REACTIVE_TRIGGERS
+
+    assert runtime == set(REACTIVE_TRIGGERS), f"TS {runtime} vs Python {set(REACTIVE_TRIGGERS)}"
+
+
+def test_state_reads_inside_the_narrative_file_carry_canvas_coordinates():
+    """读状态的引用有一半就写在 narrative_graphs.json 里（转移条件）。这类行必须能画布定位，
+    否则「去看看」只会打开叙事状态机页——而人本来就在那一页。"""
+    narrative = narrative_with(
+        states={"s_a": {"label": "开局"}, "s_b": {"label": "接了活", "broadcastOnEnter": True}},
+        transitions=[{"id": "t_c", "from": "s_a", "to": "s_a", "trigger": "reactive",
+                      "signal": "__draft__",
+                      "conditions": [{"narrative": "flow_main", "state": "s_b"}]}],
+    )
+    card = build_index(make_source(narrative=narrative)).card("state:flow_main:s_b")
+    assert card.state_reads, "条件里读了它，必须列出来"
+    read = card.state_reads[0]
+    assert read.composition_id == "comp_1"
+    assert read.host_graph_id == "flow_main"
+    assert read.host_transition_id == "t_c"
+    assert read.graph_id == "flow_main" and read.state_id == "s_b", "被读的那张图/态不许被覆盖"
+
+
+def test_nameless_entries_fall_back_to_a_readable_name():
+    """map_config 的节点没有 id：只认 id 的话标题是「地图节点「」」，等于让人自己猜。"""
+    nodes = {"nodes": [{"name": "城门口", "unlockConditions": [{"narrative": "flow_main", "state": "s_a"}]}]}
+    index = build_index(make_source(
+        narrative=narrative_with(),
+        assets=[AssetDoc("map_nodes", "mapNode", "", "地图节点",
+                         "public/assets/data/map_config.json", nodes, scan_emits=False)],
+    ))
+    read = index.state_reads[("flow_main", "s_a")][0]
+    assert read.container_id == "城门口"
+    assert "解锁条件" in read.where and "unlockConditions" not in read.where
+
+
+def test_transition_index_survives_junk_elements_and_same_id_graphs():
+    """读状态行的画布定位靠"指针下标 → 转移 id"。压缩列表会错位一格——
+    那不是"跳不过去"，是**跳到别的转移上**（2026-08-07 复审坐实）。"""
+    narrative = narrative_with(
+        states={"s_a": {"label": "甲"}, "s_b": {"label": "乙", "broadcastOnEnter": True}},
+        transitions=[
+            None,                                                     # 坏元素也要占号
+            {"id": "t1", "from": "s_a", "to": "s_a", "trigger": "reactive", "signal": "__draft__",
+             "conditions": [{"narrative": "flow_main", "state": "s_b"}]},
+            {"id": "t2", "from": "s_a", "to": "s_b", "signal": "sig"},
+        ],
+    )
+    card = build_index(make_source(narrative=narrative)).card("state:flow_main:s_b")
+    assert card.state_reads[0].host_transition_id == "t1", "错位一格就会定位到 t2"
+
+
+def test_broadcast_state_with_no_way_in_is_reported():
+    """1 条占位路会 warning，0 条路反而清白——那是诊断面的盲区。"""
+    narrative = narrative_with(
+        states={"s_a": {"label": "甲"}, "s_b": {"label": "乙", "broadcastOnEnter": True}},
+        transitions=[{"id": "t", "from": "s_a", "to": "s_a", "signal": "state:flow_main:s_b"}],
+    )
+    card = build_index(make_source(narrative=narrative)).card("state:flow_main:s_b")
+    assert DIAG_UNREACHABLE in [d.code for d in card.diagnostics]
+    assert "没有任何路能进到这一拍" in " ".join(d.message for d in card.diagnostics)
+
+
+def test_initial_state_is_not_reported_as_unreachable():
+    """初始状态没有上游转移是正常的（图一激活就停在那儿），别误报。"""
+    narrative = narrative_with(
+        states={"s_a": {"label": "甲", "broadcastOnEnter": True}}, initial="s_a",
+    )
+    card = build_index(make_source(narrative=narrative)).card("state:flow_main:s_a")
+    assert DIAG_UNREACHABLE not in [d.code for d in card.diagnostics]
+
+
+# --------------------------------------------------------------------------- #
+# 状态维度：这一拍怎么进来、去哪、谁在看着
+# --------------------------------------------------------------------------- #
+
+def test_state_card_answers_all_four_questions():
+    narrative = narrative_with(
+        states={"s_a": {"label": "开局"}, "s_b": {"label": "接了活", "broadcastOnEnter": True,
+                                                 "onEnterActions": [emit("sig_enter")]}},
+        transitions=[{"id": "t_in", "from": "s_a", "to": "s_b", "signal": "sig_go"},
+                     {"id": "t_out", "from": "s_b", "to": "s_a", "signal": "sig_back"}],
+        signals=[{"id": "sig_go"}, {"id": "sig_back"}, {"id": "sig_enter"}],
+    )
+    quests = [{"id": "q_1", "requires": {"narrative": "flow_main", "state": "s_b"}}]
+    index = build_index(make_source(
+        narrative=narrative,
+        assets=[AssetDoc("quests", "quest", "", "任务", "public/assets/data/quests.json", quests)],
+    ))
+    card = index.state_card("flow_main", "s_b")
+    assert card.exists and card.broadcasts and not card.is_initial
+    assert card.graph_label == "主线" and card.state_label == "接了活"
+    assert [e.transition_id for e in card.ways_in] == ["t_in"]
+    assert [l.transition_id for l in card.ways_out] == ["t_out"]
+    assert {e.signal for e in card.emits} == {"sig_enter", "state:flow_main:s_b"}
+    assert [r.container_id for r in card.readers] == ["q_1"]
+    assert card.broadcast_signal == "state:flow_main:s_b"
+
+
+def test_state_card_flags_a_beat_you_can_never_reach():
+    narrative = narrative_with(states={"s_a": {"label": "开局"}, "s_b": {"label": "到不了"}})
+    card = build_index(make_source(narrative=narrative)).state_card("flow_main", "s_b")
+    assert DIAG_STATE_NO_WAY_IN in [d.code for d in card.diagnostics]
+    assert DIAG_STATE_MISSING not in [d.code for d in card.diagnostics]
+
+
+def test_state_card_flags_a_ghost_beat_that_is_referenced_but_absent():
+    """被引用、图里却没有——引用它的条件会永远判不成立，这是最值钱的一条诊断。"""
+    quests = [{"id": "q_1", "requires": {"narrative": "flow_main", "state": "根本没有这个态"}}]
+    index = build_index(make_source(
+        narrative=narrative_with(),
+        assets=[AssetDoc("quests", "quest", "", "任务", "public/assets/data/quests.json", quests)],
+    ))
+    card = index.state_card("flow_main", "根本没有这个态")
+    assert not card.exists
+    assert [d.code for d in card.diagnostics] == [DIAG_STATE_MISSING]
+    assert card.readers, "幽灵拍也要能看到是谁在引用它"
+    assert ("flow_main", "根本没有这个态") in index.all_state_keys()
+
+
+def test_initial_beat_is_not_flagged_for_having_no_way_in():
+    card = build_index(make_source(narrative=narrative_with(initial="s_a"))).state_card("flow_main", "s_a")
+    assert DIAG_STATE_NO_WAY_IN not in [d.code for d in card.diagnostics]
+
+
+def test_state_readers_carry_where_they_live_not_where_they_point():
+    """读状态那一行自带 graph_id（被读的那张图）。定位必须用 host_*，
+    否则会跳到被读的图上去，而不是写着这条条件的那张图。"""
+    narrative = narrative_with(
+        states={"s_a": {"label": "开局"}, "s_b": {"label": "乙"}},
+        transitions=[{"id": "t_c", "from": "s_a", "to": "s_a", "trigger": "reactive",
+                      "signal": "__draft__",
+                      "conditions": [{"narrative": "flow_main", "state": "s_b"}]}],
+    )
+    card = build_index(make_source(narrative=narrative)).state_card("flow_main", "s_b")
+    read = card.readers[0]
+    assert read.graph_id == "flow_main" and read.state_id == "s_b"     # 被读的
+    assert read.host_graph_id == "flow_main" and read.host_transition_id == "t_c"  # 长在哪
+
+
+def test_real_project_state_overview_is_complete_and_fast():
+    import time
+
+    index = build_index(from_disk(REPO_ROOT))
+    start = time.perf_counter()
+    cards = index.state_overview()
+    assert time.perf_counter() - start < 1.0
+    assert len(cards) > 150, "真实工程状态不止这么点"
+    watched = [c for c in cards if c.readers]
+    assert len(watched) > 50
+    # 每张卡的定位都要能解析（跳不动的行 = 死按钮）
+    for card in watched[:40]:
+        for r in card.readers:
+            assert r.file and (REPO_ROOT / r.file).is_file()
+
+
+def test_reactive_transition_that_names_a_signal_is_shown_but_not_counted():
+    """反应式转移不吃信号，但策划确实在 signal 字段里写了名字。
+
+    只说"没人听"会让人对着自己写的名字发懵（真实数据上就撞到了：主线入口
+    `Demo主线开始` 挂在一条 reactive 转移上）；算成监听又是骗人。单列一栏 + 一条诊断。
+    """
+    narrative = narrative_with(
+        signals=[{"id": "sig_x"}],
+        transitions=[{"id": "t_r", "from": "s_a", "to": "s_b", "signal": "sig_x",
+                      "trigger": "reactive", "conditions": [{"flag": "f", "value": True}]}],
+    )
+    card = build_index(make_source(narrative=narrative)).card("sig_x")
+    assert card.listeners == [], "反应式不算接收方"
+    assert [l.transition_id for l in card.reactive_refs] == ["t_r"]
+    codes = [d.code for d in card.diagnostics]
+    assert DIAG_REACTIVE_ONLY in codes
+    assert "反应式不吃信号" in " ".join(d.message for d in card.diagnostics)
+
+
+def test_draft_signal_on_a_reactive_transition_is_not_listed_as_a_reference():
+    """占位信号是反应式转移的**正常**写法，别把它列进"填了它"那一栏刷屏。"""
+    narrative = narrative_with(
+        transitions=[{"id": "t_r", "from": "s_a", "to": "s_b", "signal": "__draft__",
+                      "trigger": "reactive", "conditions": [{"flag": "f", "value": True}]}],
+    )
+    card = build_index(make_source(narrative=narrative)).card("__draft__")
+    assert card.reactive_refs == []
+
+
+# --------------------------------------------------------------------------- #
+# 引用要落到「世界里的那个东西」——策划盯的是实体与流程，不是 conditions[0]
+# --------------------------------------------------------------------------- #
+
+def test_scene_entity_reference_resolves_to_the_thing_in_the_world():
+    scene = {
+        "id": "雾津街头",
+        "npcs": [{
+            "id": "npc_零工工头", "name": "挑空担的汉子",
+            "conditions": [{"narrative": "flow_main", "state": "s_b", "reached": True}],
+            "conditionHidesEntity": True,
+        }],
+        "hotspots": [{
+            "id": "T_出城", "label": "出城（河滩方向）",
+            "conditions": [{"narrative": "flow_main", "state": "s_b"}],
+        }],
+        "zones": [{"id": "z_找活", "conditions": [{"not": {"narrative": "flow_main", "state": "s_b"}}]}],
+    }
+    index = build_index(make_source(
+        narrative=narrative_with(),
+        assets=[AssetDoc("scenes", "scene", "雾津街头", "场景",
+                         "public/assets/scenes/雾津街头.json", scene)],
+    ))
+    rows = {r.subject_kind: r for r in index.state_reads[("flow_main", "s_b")]}
+    assert rows["npc"].subject_name == "挑空担的汉子"          # 名字，不是 id
+    assert rows["npc"].subject_kind_label == "NPC"            # 类别说"NPC"，不是"场景"
+    assert rows["npc"].subject_scene == "雾津街头"
+    assert rows["npc"].subject_effect == "出不出现"            # conditionHidesEntity=true
+    assert rows["npc"].reached is True
+
+    assert rows["hotspot"].subject_name == "出城（河滩方向）"
+    assert rows["hotspot"].subject_effect == "能不能互动"       # 没有 conditionHidesEntity
+    assert rows["hotspot"].reached is False
+
+    assert rows["zone"].subject_id == "z_找活"                 # 区域没名字，退回 id
+    assert rows["zone"].negated is True, "被 not 包着——漏掉会把结论说反"
+
+
+def test_every_reference_in_the_real_project_resolves_to_something():
+    """一条都不许剩"没认出是什么"——那种行对策划等于没有。"""
+    index = build_index(from_disk(REPO_ROOT))
+    unresolved = [
+        (r.container_kind, r.file, r.pointer)
+        for rows in index.state_reads.values() for r in rows
+        if not r.subject_kind or not r.subject_display
+    ]
+    assert not unresolved, f"这些引用落不到具体东西上：{unresolved[:5]}"
+
+
+# --------------------------------------------------------------------------- #
+# 状态维度审查打回的（2026-08-08）
+# --------------------------------------------------------------------------- #
+
+def test_broadcast_beat_lists_its_signal_once():
+    """广播行由 _scan_graphs 造并自带坐标，推导式已经收了——再 extend 一次就整行重复。"""
+    narrative = narrative_with(states={"s_b": {"label": "乙", "broadcastOnEnter": True}})
+    card = build_index(make_source(narrative=narrative)).state_card("flow_main", "s_b")
+    assert len(card.emits) == 1
+    assert card.emits[0].signal == "state:flow_main:s_b"
+
+
+def test_ways_out_never_dresses_up_an_unwired_placeholder():
+    """出口那栏以前直接打 signal，把走不通的占位路说成「收到「__draft__」」。"""
+    narrative = narrative_with(
+        transitions=[{"id": "t", "from": "s_a", "to": "s_b", "signal": "__draft__"}])
+    card = build_index(make_source(narrative=narrative)).state_card("flow_main", "s_a")
+    assert card.ways_out[0].how == "这条路还没接线（占位信号，运行时不会发）"
+    assert "__draft__" not in card.ways_out[0].how
+
+
+def test_transition_how_is_computed_once_for_all_three_uis():
+    narrative = narrative_with(transitions=[
+        {"id": "t1", "from": "s_a", "to": "s_b", "signal": "sig"},
+        {"id": "t2", "from": "s_a", "to": "s_b", "signal": "__draft__", "trigger": "reactive"},
+        {"id": "t3", "from": "s_a", "to": "s_b", "signal": ""},
+    ])
+    hows = [l.how for l in build_index(make_source(narrative=narrative)).state_card("flow_main", "s_a").ways_out]
+    assert hows == ["收到信号「sig」时走", "条件满足就自动走", "没接触发条件"]
+
+
+def test_narrative_internal_reference_names_the_graph_not_the_transition():
+    """转移是容器不是"东西"：标成「叙事图「t_2」」既没说是哪张图，t_2 也不是图。"""
+    narrative = narrative_with(
+        states={"s_a": {"label": "甲"}, "s_b": {"label": "乙"}},
+        transitions=[{"id": "t_2", "from": "s_a", "to": "s_a", "trigger": "reactive",
+                      "signal": "__draft__",
+                      "conditions": [{"narrative": "flow_main", "state": "s_b"}]}])
+    read = build_index(make_source(narrative=narrative)).state_card("flow_main", "s_b").readers[0]
+    assert read.subject_display == "主线", "主体是那张图"
+    assert read.subject_id == "flow_main"
+    assert "转移「t_2」" in read.where, "转移号退到位置那一行"
+
+
+def test_run_lifecycle_actions_do_not_invent_a_ghost_beat():
+    """活计四件套没有 stateId：登记成状态引用会造出空 id 的幽灵拍 + 一条假 error。"""
+    quests = [{"id": "q_1", "onComplete": [
+        {"type": "startNarrativeRun", "params": {"graphId": "flow_main"}}]}]
+    index = build_index(make_source(
+        narrative=narrative_with(),
+        assets=[AssetDoc("quests", "quest", "", "任务", "public/assets/data/quests.json", quests)]))
+    assert all(sid for _gid, sid in index.all_state_keys()), "不许有空态 id 的幽灵拍"
+
+
+def test_double_negation_is_not_reported_as_negated():
+    """双重否定等于没否定。判成取反会把结论**说反**——最严重的错法。"""
+    quests = [{"id": "q_1", "requires": {"not": {"not": {"narrative": "flow_main", "state": "s_b"}}}}]
+    index = build_index(make_source(
+        narrative=narrative_with(),
+        assets=[AssetDoc("quests", "quest", "", "任务", "public/assets/data/quests.json", quests)]))
+    assert index.state_reads[("flow_main", "s_b")][0].negated is False
+
+
+def test_reached_false_is_not_read_as_reached():
+    """`"reached": false` 是合法数据；用 `is not None` 会把它说成「到过」，
+    调试器还会把本可判定的降级成「判不出来」。判据对齐运行时的 `=== true`。"""
+    quests = [{"id": "q_1", "requires": {"narrative": "flow_main", "state": "s_b", "reached": False}}]
+    index = build_index(make_source(
+        narrative=narrative_with(),
+        assets=[AssetDoc("quests", "quest", "", "任务", "public/assets/data/quests.json", quests)]))
+    assert index.state_reads[("flow_main", "s_b")][0].reached is False
+
+
+def test_every_reference_resolves_to_a_nameable_thing():
+    """比旧护栏严：不只要求非空，还要求**不是靠兜底填出来的容器 id**。
+
+    旧断言 `subject_kind and subject_display` 因为 `subject_id = container_id or …` 的兜底
+    恒真，证明不了"落到了具体东西上"（审查坐实：转移 id 被当成主体时它照样绿）。
+    """
+    index = build_index(from_disk(REPO_ROOT))
+    bad: list[str] = []
+    for rows in index.state_reads.values():
+        for r in rows:
+            if not r.subject_kind_label:
+                bad.append(f"{r.file}#{r.pointer} 没有类别")
+            elif r.subject_kind == "narrative" and not r.subject_name:
+                bad.append(f"{r.file}#{r.pointer} 叙事图引用没解析到图名")
+            elif r.subject_kind in ("npc", "hotspot") and not (r.subject_name or r.subject_id):
+                bad.append(f"{r.file}#{r.pointer} 场景实体既无名字也无 id")
+    assert not bad, bad[:5]

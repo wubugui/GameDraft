@@ -8,6 +8,12 @@
     },
     "bgm_placeholder_low_tension": {
       "src": "/resources/runtime/audio/demo/bgm_placeholder_low_tension.mp3"
+    },
+    "bgm_01_street_day_loop": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/bgm_01_street_day_loop.mp3"
+    },
+    "bgm_02_teahouse_loop": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/bgm_02_teahouse_loop.mp3"
     }
   },
   "ambient": {
@@ -97,6 +103,42 @@
     },
     "sfx_axiu_tiny_signal": {
       "src": "/resources/runtime/audio/demo/sfx_axiu_tiny_signal.wav"
+    },
+    "sfx_06_name_call_far": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/sfx_06_name_call_far.mp3"
+    },
+    "sfx_07_name_call_multi_a": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/sfx_07_name_call_multi_a.mp3"
+    },
+    "sfx_07_name_call_multi_b": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/sfx_07_name_call_multi_b.mp3"
+    },
+    "sfx_07_name_call_multi_c": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/sfx_07_name_call_multi_c.mp3"
+    },
+    "sfx_08_name_call_near": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/sfx_08_name_call_near.mp3"
+    },
+    "sfx_09_wrong_name_a": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/sfx_09_wrong_name_a.mp3"
+    },
+    "sfx_09_wrong_name_b": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/sfx_09_wrong_name_b.mp3"
+    },
+    "sfx_call_soul_return": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/sfx_call_soul_return.mp3"
+    },
+    "sfx_call_soul_chorus": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/sfx_call_soul_chorus.mp3"
+    },
+    "sfx_litiangou_shout": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/sfx_litiangou_shout.mp3"
+    },
+    "sfx_axiu_tune_hum": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/sfx_axiu_tune_hum.mp3"
+    },
+    "sfx_axiu_tune_far": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/sfx_axiu_tune_far.mp3"
     },
     "sfx_lamp_oil_flame": {
       "src": "/resources/runtime/audio/demo/sfx_lamp_oil_flame.wav"

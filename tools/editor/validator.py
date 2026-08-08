@@ -925,6 +925,15 @@ def validate(model: ProjectModel) -> list[Issue]:
         elif arch:
             issues.append(Issue("error", "quest", qid,
                                 "runArchetype 仅 repeatable 任务可配（type 改 repeatable，或删掉该字段）"))
+        _append_quest_objective_issues(model, issues, q, qid)
+        _append_quest_guidance_issues(model, issues, q.get("guidance"), qid, "guidance")
+        ann = q.get("announce")
+        if ann is not None and ann not in ("none", "toast", "banner"):
+            issues.append(Issue("error", "quest", qid,
+                                f"announce {ann!r} 须为 none|toast|banner（不填=按类型取缺省：主线横幅、其余木条）"))
+        if q.get("autoFocus") is not None and not isinstance(q.get("autoFocus"), bool):
+            issues.append(Issue("error", "quest", qid,
+                                "autoFocus 须为布尔（不填=当前任务槽空时才自动占位）"))
     for q in model.quests:
         grp = q.get("group", "")
         if grp and grp not in quest_group_ids:
@@ -1225,6 +1234,110 @@ def _narrative_run_graph_ids(model: ProjectModel) -> set[str]:
         if isinstance(g.get("run"), dict):
             out.add(str(g.get("id") or "").strip())
     return out
+
+
+def _all_quest_ids(model: ProjectModel) -> set[str]:
+    """全部任务 id（含 repeatable）：setFocusedQuest 的目标集比 updateQuest 宽——活计也能当当前任务。"""
+    return {
+        str(q.get("id", ""))
+        for q in model.quests
+        if isinstance(q, dict) and q.get("id")
+    }
+
+
+def _append_quest_objective_issues(
+    model: ProjectModel, issues: list[Issue], quest: dict, qid: str,
+) -> None:
+    """任务目标（玩法文档 D7）：id 唯一非空、文案非空、逐条引导可解析。
+
+    目标勾选是条件派生的，配错的后果是"面板上永远勾不掉的一条"——策划看不出是数据问题，
+    所以一律按 error 拦在构建期（runtime-norms 不变量 7：构建期严于运行时）。
+    """
+    objectives = quest.get("objectives")
+    if objectives is None:
+        return
+    if not isinstance(objectives, list):
+        issues.append(Issue("error", "quest", qid, "objectives 须为数组"))
+        return
+    seen: set[str] = set()
+    for index, obj in enumerate(objectives):
+        if not isinstance(obj, dict):
+            issues.append(Issue("error", "quest", qid, f"objectives[{index}] 须为对象"))
+            continue
+        oid = str(obj.get("id") or "").strip()
+        if not oid:
+            issues.append(Issue("error", "quest", qid, f"objectives[{index}] 缺少 id"))
+        elif oid in seen:
+            issues.append(Issue("error", "quest", qid, f"objectives id 重复: {oid!r}"))
+        else:
+            seen.add(oid)
+        if not str(obj.get("text") or "").strip():
+            issues.append(Issue("error", "quest", qid,
+                                f"objectives[{index}] 的 text 为空（面板与 HUD 会显示一条空目标）"))
+        if obj.get("optional") is not None and not isinstance(obj.get("optional"), bool):
+            issues.append(Issue("error", "quest", qid, f"objectives[{index}].optional 须为布尔"))
+        _append_quest_guidance_issues(
+            model, issues, obj.get("guidance"), qid, f"objectives[{index}].guidance",
+        )
+
+
+def _append_quest_guidance_issues(
+    model: ProjectModel, issues: list[Issue], guidance: object, qid: str, where: str,
+) -> None:
+    """引导通道（玩法文档 D8）：场景/实体必须解析得到，否则运行时是一条"指不到地方的箭头"。"""
+    if guidance is None:
+        return
+    if not isinstance(guidance, list):
+        issues.append(Issue("error", "quest", qid, f"{where} 须为数组"))
+        return
+    known_scenes = set(model.all_scene_ids())
+    for index, g in enumerate(guidance):
+        tag = f"{where}[{index}]"
+        if not isinstance(g, dict):
+            issues.append(Issue("error", "quest", qid, f"{tag} 须为对象"))
+            continue
+        kind = str(g.get("kind") or "").strip()
+        if kind not in ("mapMarker", "worldMarker", "sceneHint"):
+            issues.append(Issue("error", "quest", qid,
+                                f"{tag}.kind {kind!r} 须为 mapMarker|worldMarker|sceneHint"))
+            continue
+        sid = str(g.get("sceneId") or "").strip()
+        if not sid:
+            issues.append(Issue("error", "quest", qid, f"{tag} 缺少 sceneId"))
+        elif sid not in known_scenes:
+            issues.append(Issue("error", "quest", qid, f"{tag} 的 sceneId {sid!r} 不存在"))
+        if kind == "sceneHint":
+            if not str(g.get("text") or "").strip():
+                issues.append(Issue("error", "quest", qid, f"{tag} 是 sceneHint，text 不可为空"))
+            continue
+        if kind == "mapMarker":
+            continue
+        # worldMarker：实体优先，没实体就必须给坐标
+        ekind = str(g.get("entityKind") or "").strip()
+        eid = str(g.get("entityId") or "").strip()
+        has_point = isinstance(g.get("x"), (int, float)) and isinstance(g.get("y"), (int, float))
+        if not eid and not has_point:
+            issues.append(Issue("error", "quest", qid,
+                                f"{tag} 是 worldMarker，须指向实体（entityKind+entityId）或坐标（x/y）"))
+            continue
+        if not eid:
+            continue
+        if ekind not in ("npc", "hotspot", "zone"):
+            issues.append(Issue("error", "quest", qid,
+                                f"{tag}.entityKind {ekind!r} 须为 npc|hotspot|zone"))
+            continue
+        if not sid or sid not in known_scenes:
+            continue  # 场景本身已报错，不重复报实体
+        if ekind == "npc":
+            pool = _npc_ids_in_scene(model, sid)
+        elif ekind == "hotspot":
+            pool = _hotspot_ids_in_scene(model, sid)
+        else:
+            pool = _zone_ids_in_scene(model, sid)
+        if eid not in pool:
+            issues.append(Issue("error", "quest", qid,
+                                f"{tag} 指向的 {ekind} {eid!r} 不在场景 {sid!r} 中"
+                                "（实体改名/迁场景后引导会静默指空）"))
 
 
 def _repeatable_quest_ids(model: ProjectModel) -> set[str]:
@@ -2835,6 +2948,20 @@ def _hotspot_ids_in_scene(model: ProjectModel, scene_id: str | None) -> set[str]
     if not scene_id:
         return set()
     return {p[0] for p in model.hotspot_ids_for_scene(scene_id)}
+
+
+def _zone_ids_in_scene(model: ProjectModel, scene_id: str | None) -> set[str]:
+    """场景内全部 zone id（含 depth_floor：引导指向纯遮挡区没意义但不构成"引用不存在"）。"""
+    if not scene_id:
+        return set()
+    sc = model.scenes.get(scene_id) or {}
+    out: set[str] = set()
+    for z in sc.get("zones") or []:
+        if isinstance(z, dict):
+            zid = str(z.get("id", "") or "").strip()
+            if zid:
+                out.add(zid)
+    return out
 
 
 def _all_hotspot_ids_global_set(model: ProjectModel) -> set[str]:
@@ -4577,6 +4704,14 @@ def _walk_action_defs(
                     f"appendFlag 的 key {fk!r} 在登记表中须为 string 类型"
                     + (f"（当前为 {rvt!r}）" if rvt else "（未命中 static/pattern）"),
                 ))
+        elif t == "setFocusedQuest":
+            # 空 id = 清空当前任务（合法）；非空但不存在 = 运行时 warn 后什么也不做
+            qref = str(p.get("id") or "").strip()
+            if qref and qref not in _all_quest_ids(model):
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    f"setFocusedQuest 目标任务 {qref!r} 不在 quests.json（运行时跳过，当前任务不会变）",
+                ))
         elif t == "enableRuleOffers":
             for slot in (p.get("slots") or []):
                 if isinstance(slot, dict):
@@ -4773,6 +4908,9 @@ def _validate_flags(model: ProjectModel, issues: list[Issue]) -> None:
             _walk_conditions(model, issues, edge.get("conditions"), "quest", qid, None)
         _walk_action_defs(model, issues, q.get("acceptActions"), "quest", qid, None)
         _walk_action_defs(model, issues, q.get("rewards"), "quest", qid, None)
+        for obj in q.get("objectives") or []:
+            if isinstance(obj, dict):
+                _walk_conditions(model, issues, obj.get("completeWhen"), "quest", qid, None)
 
     for enc in model.encounters:
         eid = str(enc.get("id", ""))

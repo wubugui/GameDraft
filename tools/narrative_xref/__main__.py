@@ -72,6 +72,10 @@ def _print_card(card, verbose: bool = True) -> None:
     if not card.listeners:
         print("    （没有任何转移在等它）")
 
+    if card.reactive_refs:
+        print(f"  反应式转移填了它（{len(card.reactive_refs)} 处，运行时不看这个字段）：")
+        for l in card.reactive_refs:
+            print(f"    · {l.composition_label} / {l.graph_label} · 转移「{l.transition_id}」：{l.from_label} → {l.to_label}")
     if card.declarations:
         print(f"  黑盒声明 {len(card.declarations)} 处（只是画布标注，运行时不执行）：")
         for d in card.declarations:
@@ -83,17 +87,92 @@ def _print_card(card, verbose: bool = True) -> None:
             print(f"    · {who} — {s.where}")
 
 
+def _print_state_card(card, verbose: bool = True) -> None:
+    head = f"「{card.graph_label} · {card.state_label}」（{card.key}）"
+    marks = [m for m, on in (("初始拍", card.is_initial), ("进入时广播", card.broadcasts),
+                             ("活计图", card.run_graph)) if on]
+    if marks:
+        head += "  " + " / ".join(marks)
+    print(head)
+    for diag in card.diagnostics:
+        mark = {"error": "✗", "warning": "⚠"}.get(diag.severity, "·")
+        print(f"  {mark} {diag.message}")
+
+    print(f"  怎么进来（{len(card.ways_in)}）：")
+    for e in card.ways_in or []:
+        print(f"    · {e.kind_label}「{e.container_label or e.container_id}」 {e.where}  {e.context}")
+    if not card.ways_in:
+        print("    （没有任何路能进来）" if not card.is_initial else "    （图的初始拍，一开局就停在这儿）")
+
+    print(f"  从这儿去哪（{len(card.ways_out)}）：")
+    for l in card.ways_out:
+        how = l.how or ("条件满足自动走" if l.trigger else "没接触发条件")
+        line = f"    · → {l.to_label}  {how}"
+        if l.conditions:
+            line += f"；还要满足：{' 且 '.join(l.conditions)}"
+        print(line)
+    if not card.ways_out:
+        print("    （末态，没有出口）")
+
+    if card.emits:
+        print(f"  进出这一拍会发（{len(card.emits)}）：")
+        for e in card.emits:
+            print(f"    · {e.signal}  {e.where}")
+
+    print(f"  谁在看着这一拍（{len(card.readers)}）：")
+    for r in card.readers:
+        who = f"{r.subject_scene}的" if r.subject_scene else ""
+        kind = r.subject_kind_label or r.kind_label
+        tail = f"（{r.subject_effect}）" if r.subject_effect else ""
+        print(f"    · {who}{kind}「{r.subject_display}」{tail} — {r.where}")
+        if verbose:
+            print(f"        {r.file}#{r.pointer}")
+    if not card.readers:
+        print("    （没人读它）")
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("signal", nargs="?", default="", help="信号 id（省略则配合 --list/--problems）")
     ap.add_argument("--root", type=Path, default=REPO_ROOT)
+    ap.add_argument("--state", default="", metavar="图.态",
+                    help="换个问法：这一拍怎么进来、去哪、谁在看着")
+    ap.add_argument("--states", action="store_true", help="列出全部状态与引用计数")
     ap.add_argument("--list", action="store_true", help="列出全部信号与两侧计数")
     ap.add_argument("--problems", action="store_true", help="只列两侧对不齐的信号")
     ap.add_argument("--json", action="store_true", help="结构化输出")
     ap.add_argument("--quiet", action="store_true", help="不打印文件/指针")
     args = ap.parse_args(argv)
 
-    index = build_index(from_disk(args.root))
+    try:
+        index = build_index(from_disk(args.root))
+    except Exception as exc:  # noqa: BLE001 - 命令行如实报错，不甩 traceback
+        print(f"扫描失败（工程数据可能是半截的）：{exc}", file=sys.stderr)
+        return 2
+
+    if args.state:
+        gid, _, sid = args.state.rpartition(".")
+        if not gid or not sid:
+            ap.error("状态要写成 图id.状态id")
+        card = index.state_card(gid, sid)
+        if args.json:
+            print(json.dumps(card.to_dict(), ensure_ascii=False, indent=2))
+            return 0
+        _print_state_card(card, verbose=not args.quiet)
+        return 0
+
+    if args.states:
+        cards = index.state_overview()
+        if args.problems:
+            cards = [c for c in cards if any(d.severity in ("error", "warning") for d in c.diagnostics)]
+        if args.json:
+            print(json.dumps({"states": [c.to_dict() for c in cards]}, ensure_ascii=False, indent=2))
+            return 0
+        print(f"共 {len(cards)} 个状态")
+        for c in cards:
+            flags = "".join({"error": "✗", "warning": "⚠", "info": "·"}.get(d.severity, "") for d in c.diagnostics)
+            print(f"  {flags:2s} {c.key:<52s} 进 {len(c.ways_in):<2d} 出 {len(c.ways_out):<2d} 被看 {len(c.readers)}")
+        return 0
 
     if args.list or args.problems:
         cards = index.overview()

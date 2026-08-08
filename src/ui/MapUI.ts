@@ -6,7 +6,7 @@ import { UIWindow } from './components/UIWindow';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
 import type { FlagStore } from '../core/FlagStore';
-import type { Condition, ConditionExpr, MapConfigFile, MapNodeDef } from '../data/types';
+import type { Condition, ConditionExpr, IQuestDataProvider, MapConfigFile, MapNodeDef } from '../data/types';
 import type { AssetManager } from '../core/AssetManager';
 import type { StringsProvider } from '../core/StringsProvider';
 import type { ConditionEvalContext } from '../systems/graphDialogue/evaluateGraphCondition';
@@ -116,6 +116,10 @@ export class MapUI {
   private mapBackgroundImage = '';
   private mapBackgroundTexture: Texture | null = null;
   private currentSceneId: string = '';
+  /** 当前任务的地图标记目标场景集（玩法文档 D8 的地图通道）；build 时现查 */
+  private guidanceScenes: Set<string> = new Set();
+  /** 当前任务数据源（组装层注入 QuestManager）；未注入时地图上就是没有任务标记 */
+  private questData: IQuestDataProvider | null = null;
   private resolveDisplay: ((s: string) => string) | null = null;
   /**
    * 键盘/手柄焦点。地点是**二维散布**的点，空间导航正好按几何位置走，
@@ -136,6 +140,11 @@ export class MapUI {
 
   setResolveDisplay(fn: ((s: string) => string) | null): void {
     this.resolveDisplay = fn;
+  }
+
+  /** 注入当前任务数据源（组装层接线）：地图上的任务标记按它现查 */
+  setQuestDataProvider(provider: IQuestDataProvider | null): void {
+    this.questData = provider;
   }
 
   setConditionEvalContextFactory(factory: (() => ConditionEvalContext) | null): void {
@@ -298,6 +307,13 @@ export class MapUI {
 
   private build(): void {
     this.teardown();
+    // 每次打开/重建都现查一次当前任务的引导（面板是状态镜像，不是打开那刻的快照）
+    this.guidanceScenes = new Set(
+      (this.questData?.getActiveGuidance() ?? [])
+        .filter(g => g.kind === 'mapMarker')
+        .map(g => g.sceneId)
+        .filter(Boolean),
+    );
 
     const win = new UIWindow(this.renderer, {
       size: this.windowSize(),
@@ -535,6 +551,24 @@ export class MapUI {
       alpha: isCurrent ? 0.9 : 0.68,
       width: 1.5,
     });
+    // 任务引导标记（玩法文档 D8 的地图通道）：当前任务指向这处地点时，在标记外面
+    // 再套一圈琥珀虚环 —— 与「当前所在地」那套（盘心琥珀 + 亮边）**画法不同**，
+    // 两者可以同时出现在同一枚标记上而不打架（人就站在目标地点是很常见的情形）。
+    if (this.guidanceScenes.has(node.sceneId)) {
+      const ring = new Graphics();
+      const rr = radius + 9;
+      // 八段虚环：整圈实线会读成"又一个底盘"，虚的才像"标在图上的记号"
+      for (let i = 0; i < 8; i++) {
+        const a0 = (i / 8) * Math.PI * 2;
+        const a1 = a0 + Math.PI / 8;
+        ring.moveTo(nx + Math.cos(a0) * rr, ny + Math.sin(a0) * rr);
+        ring.arc(nx, ny, rr, a0, a1);
+      }
+      ring.stroke({ color: UITheme.colors.questMain, alpha: 0.95, width: 2 });
+      ring.eventMode = 'none';
+      body.addChild(ring);
+    }
+
     // 焦点键：地点没有 id 字段，用「场景 + 序号」保稳（同一场景可以摆两处标记）。
     // 当前所在地单开前缀，`build` 靠它认出默认焦点。
     const focusId = `${isCurrent ? 'here' : 'node'}:${node.sceneId || '-'}:${index}`;

@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "id": "街巷_主线吃饭点",
+  "entry": "n_start",
+  "meta": {
+    "title": "街巷_主线吃饭点"
+  },
+  "preconditions": [],
+  "nodes": {
+    "n_start": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "n_2",
+      "text": "你吃了一包方便面，屙了一泡尿……"
+    },
+    "n_1": {
+      "type": "end"
+    },
+    "n_2": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "主线_第一阶段闲逛完成"
+          }
+        }
+      ],
+      "next": "n_1"
+    }
+  }
+}

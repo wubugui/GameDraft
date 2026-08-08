@@ -17,6 +17,7 @@ from tools.narrative_debugger.breakpoints import BreakpointStore
 from tools.narrative_debugger.hub import DebugHub
 from tools.narrative_debugger.model import NarrativeIndex
 from tools.narrative_debugger.savepoints import SavepointStore
+from tools.narrative_debugger.tests.fake_game import connect_game, send_batch
 from tools.narrative_debugger.ui.main_window import ROLE_KEY, MainWindow
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -97,9 +98,10 @@ def test_hub_ingests_paused(app: QApplication, tmp_path: Path) -> None:
     hub = DebugHub(index, port=5297)
     got: list[dict] = []
     hub.breakpointHit.connect(got.append)
-    hub._ingest({"kind": "paused", "hit": {"graphId": "g", "stateId": "s"}})
+    game = connect_game(hub)
+    send_batch(hub, game, {"kind": "paused", "hit": {"graphId": "g", "stateId": "s"}})
     assert got == [{"graphId": "g", "stateId": "s"}]
-    hub._ingest({"kind": "paused"})            # 缺 hit 不该抛
+    send_batch(hub, game, {"kind": "paused"})   # 缺 hit 不该抛
     assert len(got) == 1
 
 

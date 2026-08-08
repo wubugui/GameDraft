@@ -490,5 +490,46 @@
     "completionConditions": [],
     "rewards": [],
     "nextQuests": []
+  },
+  {
+    "id": "主线_闲逛阶段A",
+    "group": "xungou",
+    "type": "main",
+    "title": "闲逛找点吃的",
+    "description": "听了半天书，是时候[c:emphasis]找点吃的[/c]填饱肚子了。",
+    "preconditions": [
+      {
+        "narrative": "flow_xungou_main",
+        "state": "state_2"
+      }
+    ],
+    "completionConditions": [
+      {
+        "narrative": "flow_xungou_main",
+        "state": "state_3"
+      }
+    ],
+    "acceptActions": [],
+    "rewards": [],
+    "nextQuests": [],
+    "objectives": [
+      {
+        "id": "obj1",
+        "text": "包子铺看看",
+        "guidance": [
+          {
+            "kind": "worldMarker",
+            "sceneId": "雾津街头",
+            "label": "目标",
+            "entityKind": "hotspot",
+            "entityId": "主线_吃饭点A",
+            "offscreenArrow": true,
+            "showDistance": true
+          }
+        ]
+      }
+    ],
+    "announce": "banner",
+    "autoFocus": true
   }
 ]
