@@ -1104,6 +1104,7 @@ def validate(model: ProjectModel) -> list[Issue]:
     _validate_paper_craft(model, issues)
     _validate_object_examine(model, issues)
     _validate_narrative(model, issues)
+    _validate_entity_machine_bindings(model, issues)
     _validate_narrative_packages(model, issues)
     _validate_planes(model, issues)
     _validate_plane_action_pairing(model, issues)
@@ -1234,6 +1235,42 @@ def _narrative_run_graph_ids(model: ProjectModel) -> set[str]:
         if isinstance(g.get("run"), dict):
             out.add(str(g.get("id") or "").strip())
     return out
+
+
+#: 局部机变量声明的合法类型（镜像 NarrativeLocalVarDef.type）
+_LOCAL_VAR_TYPES = ("bool", "float", "string")
+
+
+def _is_local_machine_graph(g: dict) -> bool:
+    """局部机原型：与运行时 `isLocalMachineGraph`（`Boolean(graph.local)`）同口径。
+
+    ⚠ 不能写成 `bool(g.get("local"))`：JS 里空对象/空数组是**真值**，Python 里是假值——
+    `"local": {}` 的图在运行时是局部机，Python 若判成普通图，整套私有性校验会对它全体失效。
+    """
+    v = g.get("local")
+    if isinstance(v, (dict, list)):
+        return True
+    return bool(v)
+
+
+def _narrative_local_machine_ids(model: ProjectModel) -> set[str]:
+    """局部机原型（声明了 local）的图 id 集合（实体局部状态机 S1）。"""
+    return {
+        str(g.get("id") or "").strip()
+        for g in _iter_narrative_graphs(model)
+        if _is_local_machine_graph(g) and str(g.get("id") or "").strip()
+    }
+
+
+def _local_var_default_matches(vtype: str, value: object) -> bool:
+    """局部机变量 default 与声明类型是否相符（bool/float/string 三型）。"""
+    if vtype == "bool":
+        return isinstance(value, bool)
+    if vtype == "float":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if vtype == "string":
+        return isinstance(value, str)
+    return False
 
 
 def _all_quest_ids(model: ProjectModel) -> set[str]:
@@ -1404,6 +1441,75 @@ def _validate_narrative_packages(model: ProjectModel, issues: list[Issue]) -> No
                 issues.append(Issue("error", "narrative_packages", rid, f"{cond_key} 须为条件数组"))
                 continue
             _walk_conditions(model, issues, conds, "narrative_packages", rid, None)
+
+
+def _scan_narrative_local_leaves(
+    expr: object,
+    issues: list[Issue],
+    gid: str,
+    tid: str,
+    *,
+    is_local: bool,
+    declared_var_keys: set[str],
+    local_machine_ids: set[str],
+    depth: int = 0,
+) -> None:
+    """叙事图 transition 条件里的三条局部机边界（设计 §6 的③④⑤）。
+
+    validator 平时不走叙事图 transition 的条件树（那是 TS 权威 + 编辑器兜底的地盘），
+    这里只补这三条与「实例私有性」直接相关的：漏了它们的后果不是报错，而是**恒假的死分支**
+    ——条件永远不成立，图看着接好了、跑起来什么都不发生。
+    """
+    if depth > 32 or not isinstance(expr, dict):
+        return
+    for key in ("all", "any"):
+        if isinstance(expr.get(key), list):
+            for sub in expr[key]:
+                _scan_narrative_local_leaves(
+                    sub, issues, gid, tid, is_local=is_local,
+                    declared_var_keys=declared_var_keys,
+                    local_machine_ids=local_machine_ids, depth=depth + 1,
+                )
+            return
+    if "not" in expr:
+        _scan_narrative_local_leaves(
+            expr.get("not"), issues, gid, tid, is_local=is_local,
+            declared_var_keys=declared_var_keys,
+            local_machine_ids=local_machine_ids, depth=depth + 1,
+        )
+        return
+    if isinstance(expr.get("localVar"), str):
+        key = expr["localVar"].strip()
+        if not is_local:
+            issues.append(Issue(
+                "error", "narrative", gid,
+                f"Transition {tid!r} 的 localVar 叶只在局部机（声明了 local 的图）里合法，此处运行时恒假",
+            ))
+        elif key and key not in declared_var_keys:
+            issues.append(Issue(
+                "error", "narrative", gid,
+                f"Transition {tid!r} 的 localVar 变量 {key!r} 未在本机 local.vars 声明"
+                "（拼错的 key 运行时恒读默认值）",
+            ))
+        return
+    for leaf in ("selfState", "selfVar"):
+        if isinstance(expr.get(leaf), str):
+            issues.append(Issue(
+                "error", "narrative", gid,
+                f"Transition {tid!r} 的 {leaf} 叶只在实体 def 的 conditions 里合法"
+                "（叙事图无宿主上下文，运行时恒假）",
+            ))
+            return
+    for leaf in ("narrative", "narrativeCount"):
+        if isinstance(expr.get(leaf), str):
+            ref = expr[leaf].strip()
+            if ref in local_machine_ids:
+                issues.append(Issue(
+                    "error", "narrative", gid,
+                    f"Transition {tid!r} 的 {leaf} 叶指向局部机原型 {ref!r}"
+                    "（实例状态对外不可见/不可寻址；宿主自读用 selfState，外部只能收信号）",
+                ))
+            return
 
 
 def _validate_narrative(model: ProjectModel, issues: list[Issue]) -> None:
@@ -1605,6 +1711,130 @@ def _validate_narrative(model: ProjectModel, issues: list[Issue]) -> None:
                     f"也无画布黑盒声明（悬垂监听，永远不会触发）",
                 ))
 
+    # 2.5 实体局部状态机（S1）：TS 权威 narrativeGraphValidation 的 Python 子集
+    #     （设计 artifact/Design/实体局部状态机-技术设计-2026-08-08.md §6）。
+    #     红线：这里只准与 TS 同码同级或更松，绝不得更严——更严会拦住 TS/运行时都认可的数据。
+    _local_machine_ids = _narrative_local_machine_ids(model)
+    for g in _iter_narrative_graphs(model):
+        gid = str(g.get("id") or "?")
+        is_local = _is_local_machine_graph(g)
+        declared_var_keys: set[str] = set()
+        if is_local:
+            local = g.get("local")
+            if not isinstance(local, dict):
+                issues.append(Issue(
+                    "error", "narrative", gid,
+                    "local 必须是对象 { vars?, listens?, emits? }",
+                ))
+                local = {}
+            # ① 变量表：key 唯一非空、type ∈ bool/float/string、default 与 type 相符
+            vars_raw = local.get("vars")
+            if vars_raw is not None and not isinstance(vars_raw, list):
+                issues.append(Issue("error", "narrative", gid, "local.vars 必须是数组"))
+                vars_raw = []
+            for i, v in enumerate(vars_raw or []):
+                if not isinstance(v, dict):
+                    issues.append(Issue(
+                        "error", "narrative", gid,
+                        f"local.vars[{i}] 必须是对象 {{ key, type, default? }}",
+                    ))
+                    continue
+                key = str(v.get("key") or "").strip()
+                if not key:
+                    issues.append(Issue("error", "narrative", gid, f"local.vars[{i}] 缺少非空 key"))
+                elif key in declared_var_keys:
+                    issues.append(Issue("error", "narrative", gid, f"local.vars 变量 key 重复: {key!r}"))
+                else:
+                    declared_var_keys.add(key)
+                vtype = str(v.get("type") or "").strip()
+                if vtype not in _LOCAL_VAR_TYPES:
+                    issues.append(Issue(
+                        "error", "narrative", gid,
+                        f"local.vars[{i}] 的 type 必须是 bool / float / string，实际 {vtype!r}",
+                    ))
+                elif "default" in v and not _local_var_default_matches(vtype, v.get("default")):
+                    issues.append(Issue(
+                        "error", "narrative", gid,
+                        f"local.vars[{i}] 的 default 与 type={vtype} 不符: {v.get('default')!r}",
+                    ))
+            for field in ("listens", "emits"):
+                raw = local.get(field)
+                if raw is not None and (
+                    not isinstance(raw, list) or any(not isinstance(x, str) for x in raw)
+                ):
+                    issues.append(Issue("error", "narrative", gid, f"local.{field} 必须是字符串数组"))
+            # ② 私有性硬边界：广播 / reactive / 位面点名 / owner 绑定；local 与 run 互斥
+            if g.get("run") is not None:
+                issues.append(Issue(
+                    "error", "narrative", gid,
+                    "local 与 run 互斥（局部机绑定即实例化，活计图是全局单激活槽）",
+                ))
+            if str(g.get("ownerId") or "").strip():
+                issues.append(Issue(
+                    "error", "narrative", gid,
+                    "局部机不进 owner 索引，不可声明 ownerId（宿主由实体 def 的 machine 绑定决定）",
+                ))
+            _states_l = g.get("states") if isinstance(g.get("states"), dict) else {}
+            for sid_l, st in _states_l.items():
+                if not isinstance(st, dict):
+                    continue
+                if st.get("broadcastOnEnter") is True:
+                    issues.append(Issue(
+                        "error", "narrative", gid,
+                        f"局部机状态 {sid_l!r} 不可开 broadcastOnEnter"
+                        "（实例状态不对外派生广播；要对外说话请用 emitNarrativeSignal 显式导出）",
+                    ))
+                if st.get("activePlane") is not None:
+                    issues.append(Issue(
+                        "error", "narrative", gid,
+                        f"局部机状态 {sid_l!r} 不可点名位面（位面派生只认全局图的激活态）",
+                    ))
+            actual_listens: set[str] = set()
+            for t in g.get("transitions") or []:
+                if not isinstance(t, dict):
+                    continue
+                trig = str(t.get("trigger") or "signal").strip()
+                if trig in ("reactive", "reactiveAll", "reactiveAny"):
+                    issues.append(Issue(
+                        "error", "narrative", gid,
+                        f"Transition {str(t.get('id') or '?')!r} 在局部机上使用了 reactive 触发"
+                        "（局部层是命令式的，要转移直接 localGoto）",
+                    ))
+                    continue
+                sig_l = str(t.get("signal") or "").strip()
+                if sig_l and sig_l != "__draft__":
+                    actual_listens.add(sig_l)
+            # ⑦ 声明漂移：listens 只是索引/校验用的声明面（运行时索引按 transitions 建），故 warning
+            listens_raw = local.get("listens")
+            declared_listens = (
+                {str(x).strip() for x in listens_raw if str(x).strip()}
+                if isinstance(listens_raw, list) else set()
+            )
+            _miss = sorted(actual_listens - declared_listens)
+            _extra = sorted(declared_listens - actual_listens)
+            if _miss:
+                issues.append(Issue(
+                    "warning", "narrative", gid,
+                    f"transition 实际监听但 local.listens 未声明: {'、'.join(_miss)}",
+                ))
+            if _extra:
+                issues.append(Issue(
+                    "warning", "narrative", gid,
+                    f"local.listens 声明了没有任何 transition 监听的信号: {'、'.join(_extra)}",
+                ))
+        # ③④⑤ 条件叶：局部机 id 不可被 narrative/narrativeCount 问；localVar 只在局部机内且
+        #        key 须声明过；selfState/selfVar 只在实体 def 的 conditions 里合法。
+        for t in g.get("transitions") or []:
+            if not isinstance(t, dict):
+                continue
+            for cond in t.get("conditions") or []:
+                _scan_narrative_local_leaves(
+                    cond, issues, gid, str(t.get("id") or "?"),
+                    is_local=is_local,
+                    declared_var_keys=declared_var_keys,
+                    local_machine_ids=_local_machine_ids,
+                )
+
     # 3. dialogueBlackbox meta.emits 与对话图实际 emitNarrativeSignal 的漂移（画布不可说谎）
     gd = model.dialogues_path / "graphs"
     for comp in data.get("compositions") or []:
@@ -1651,6 +1881,58 @@ def _validate_narrative(model: ProjectModel, issues: list[Issue]) -> None:
                     "warning", "narrative", str(comp.get("id") or "?"),
                     f"对话图 {ref!r} 实际发出 {undeclared!r}，但画布黑盒未声明（画布与真值漂移）",
                 ))
+
+
+def _validate_entity_machine_bindings(model: ProjectModel, issues: list[Issue]) -> None:
+    """实体 def 的 `machine` 绑定（实体局部状态机设计 §2.2、§6 的⑥⑨）。
+
+    这两条只能在这里做——TS 权威 narrativeGraphValidation 只吃 narrative_graphs.json，
+    看不到场景文件。
+
+    ⑥ machine 指向不存在 / 非局部机原型 = error：绑错的后果是这台机器**根本不实例化**，
+      实体上的 localGoto / selfState 全部落空，而画面上什么都不会提示。
+    ⑨ 宿主场景 id 禁含 `/`：实例键是 `<machineId>@<sceneId>/<kind>:<id>`，
+      场景名里再带一个 `/` 会让 parseNarrativeLocalInstanceKey 把键切错，读档时静默丢实例。
+      只对**真的挂了机器**的场景报（没有绑定就没有实例键，不必平白拦住历史命名）。
+    """
+    machines = _narrative_local_machine_ids(model)
+    known_graphs = {str(g.get("id") or "").strip() for g in _iter_narrative_graphs(model)}
+    for sid, sc in (model.scenes or {}).items():
+        if not isinstance(sc, dict):
+            continue
+        scene_has_binding = False
+        for key, kind in (("npcs", "npc"), ("hotspots", "hotspot"), ("zones", "zone")):
+            for ent in sc.get(key) or []:
+                if not isinstance(ent, dict):
+                    continue
+                raw = ent.get("machine")
+                if raw is None:
+                    continue
+                eid = str(ent.get("id") or "?").strip() or "?"
+                mid = str(raw).strip() if isinstance(raw, str) else ""
+                if not mid:
+                    issues.append(Issue(
+                        "error", "scene", sid,
+                        f"{kind} {eid!r} 的 machine 须为非空局部机原型 id（当前 {raw!r}）",
+                    ))
+                    continue
+                scene_has_binding = True
+                if mid not in known_graphs:
+                    issues.append(Issue(
+                        "error", "scene", sid,
+                        f"{kind} {eid!r} 绑定的局部机 {mid!r} 不在 narrative_graphs.json",
+                    ))
+                elif mid not in machines:
+                    issues.append(Issue(
+                        "error", "scene", sid,
+                        f"{kind} {eid!r} 绑定的 {mid!r} 不是局部机原型（未声明 local，绑定不会实例化）",
+                    ))
+        if scene_has_binding and "/" in str(sid):
+            issues.append(Issue(
+                "error", "scene", sid,
+                f"场景 id {sid!r} 含 '/'，与局部机实例键 '<机器>@<场景>/<种类>:<实体>' 的分隔符冲突"
+                "（读档解析会切错键、静默丢实例）；请改名该场景或去掉本场景的 machine 绑定",
+            ))
 
 
 _PLANE_KNOWN_TOP_KEYS = frozenset((
@@ -2890,8 +3172,10 @@ def _flag_issue(model: ProjectModel, issues: list[Issue], key: str,
 
 def _walk_conditions(
     model: ProjectModel, issues: list[Issue], conds: list, data_type: str,
-    item_id: str, scene_id: str | None,
+    item_id: str, scene_id: str | None, *, self_scope: bool = False,
 ) -> None:
+    """`self_scope=True` 仅用于**实体 def 自己的 conditions**（NpcDef/HotspotDef/ZoneDef）
+    ——那是 selfState / selfVar 叶唯一有宿主上下文、因而唯一合法的地方。"""
     scen = _scenario_definitions(model)
     quest_ids = {str(q.get("id", "")) for q in model.quests if q.get("id")}
     for cond in conds or []:
@@ -2904,7 +3188,7 @@ def _walk_conditions(
             else:
                 _scan_condition_expr(
                     model, issues, cond, scen, quest_ids, data_type, item_id, 0,
-                    scene_id_flag=scene_id,
+                    scene_id_flag=scene_id, self_scope=self_scope,
                 )
 
 
@@ -3902,8 +4186,12 @@ def _scan_condition_expr(
     depth: int,
     *,
     scene_id_flag: str | None = None,
+    self_scope: bool = False,
 ) -> None:
-    """switch.condition / 文档揭示等：结构 + flag / scenario / quest / scenarioLine 引用粗校验。"""
+    """switch.condition / 文档揭示等：结构 + flag / scenario / quest / scenarioLine 引用粗校验。
+
+    `self_scope` 见 `_walk_conditions`：只有实体 def 自己的 conditions 允许 selfState / selfVar。
+    """
     if depth > 32:
         issues.append(Issue(
             "error", data_type, item_id,
@@ -3921,7 +4209,7 @@ def _scan_condition_expr(
         for e in ch:
             _scan_condition_expr(
                 model, issues, e, scen, quest_ids, data_type, item_id, depth + 1,
-                scene_id_flag=scene_id_flag,
+                scene_id_flag=scene_id_flag, self_scope=self_scope,
             )
         return
     if "any" in expr:
@@ -3932,7 +4220,7 @@ def _scan_condition_expr(
         for e in ch:
             _scan_condition_expr(
                 model, issues, e, scen, quest_ids, data_type, item_id, depth + 1,
-                scene_id_flag=scene_id_flag,
+                scene_id_flag=scene_id_flag, self_scope=self_scope,
             )
         return
     if "not" in expr:
@@ -3951,7 +4239,7 @@ def _scan_condition_expr(
             ))
         _scan_condition_expr(
             model, issues, inner, scen, quest_ids, data_type, item_id, depth + 1,
-            scene_id_flag=scene_id_flag,
+            scene_id_flag=scene_id_flag, self_scope=self_scope,
         )
         return
     if isinstance(expr.get("scenarioLine"), str):
@@ -3974,6 +4262,28 @@ def _scan_condition_expr(
                 f"scenarioLine lineStatus {lst!r} 须为 inactive|active|completed",
             ))
         return
+    # 实体局部状态机（S1）三条作用域叶：不认它们的话只会掉进末尾那条「无法识别的条件叶子」
+    # warning，而真正的问题（运行时恒假的死分支）看不出来。
+    if isinstance(expr.get("localVar"), str):
+        issues.append(Issue(
+            "error", data_type, item_id,
+            "localVar 叶只在局部机（声明了 local 的叙事图）的 transition 条件里合法，此处运行时恒假",
+        ))
+        return
+    for _self_leaf in ("selfState", "selfVar"):
+        if isinstance(expr.get(_self_leaf), str):
+            if not self_scope:
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    f"{_self_leaf} 叶只在实体 def（npc/hotspot/zone）自己的 conditions 里合法"
+                    "——别处没有宿主上下文，运行时恒假",
+                ))
+            elif not str(expr.get(_self_leaf) or "").strip():
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    f"{_self_leaf} 条件需要非空目标（状态名 / 变量名）",
+                ))
+            return
     if expr.get("flag") is not None:
         _flag_issue(model, issues, str(expr["flag"]), data_type, item_id, scene_id_flag)
         return

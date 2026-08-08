@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { ActionExecutor } from '../core/ActionExecutor';
 import { EventBus } from '../core/EventBus';
 import { FlagStore } from '../core/FlagStore';
+import { NarrativeStateManager } from '../core/NarrativeStateManager';
 import { DocumentRevealManager } from './DocumentRevealManager';
 import { GraphDialogueManager } from './GraphDialogueManager';
+import { InteractionSystem } from './InteractionSystem';
 import type { ConditionEvalContext } from './graphDialogue/evaluateGraphCondition';
 
 function baseContext(active = true, multiOwner = false): { eventBus: EventBus; flagStore: FlagStore; ctx: ConditionEvalContext } {
@@ -444,5 +446,68 @@ describe('narrative condition context injection', () => {
     await manager.checkAndReveal('doc');
     expect(blend).toHaveBeenCalledOnce();
     expect(manager.isRevealed('doc')).toBe(true);
+  });
+
+  /**
+   * 局部机读侧的接线证明（装配面：Game 的工厂给 selfLocal 后端，InteractionSystem 逐实体给
+   * selfHost）。少任何一半，`selfState` 叶都恒判假——"机器推到 active → 箱子现身"这条链
+   * 在玩家侧完全看不见，而运行时不会报任何错，是最难发现的那类静默失效。
+   */
+  it('每帧派生显隐时逐实体注入 selfHost，selfState 叶读到「自己绑的那台局部机」', async () => {
+    const eventBus = new EventBus();
+    const flagStore = new FlagStore(eventBus);
+    const actionExecutor = new ActionExecutor(eventBus, flagStore);
+    const narrative = new NarrativeStateManager(eventBus, flagStore, actionExecutor);
+    // 与 Game.buildConditionEvalContext 同形：工厂只给 selfLocal 后端与 currentSceneId，
+    // 「宿主是谁」由 InteractionSystem 当场补。
+    const mkCtx = (): ConditionEvalContext => ({
+      flagStore,
+      questManager: { getStatus: () => 0 } as any,
+      scenarioState: {} as any,
+      narrativeState: narrative,
+      currentSceneId: '雾津街头',
+      selfLocal: {
+        getState: (h) => narrative.getLocalStateForHost(h),
+        getVar: (h, k) => narrative.getLocalVarForHost(h, k),
+      },
+    });
+    narrative.setConditionEvalContextFactory(mkCtx);
+    narrative.registerGraphs([{
+      id: 'lm_箱子',
+      ownerType: 'system',
+      local: {},
+      initialState: 'inactive',
+      states: { inactive: { id: 'inactive' }, active: { id: 'active' } },
+      transitions: [],
+    }]);
+    const boxHost = { sceneId: '雾津街头', entityKind: 'hotspot', entityId: 'hs_铁箱' };
+    // SceneManager 装载期做的事（这里手工模拟一次绑定即实例化）
+    narrative.ensureLocalInstance('lm_箱子', boxHost);
+
+    const sys = new InteractionSystem(eventBus, flagStore, { wasKeyJustPressed: () => false } as any);
+    sys.setConditionEvalContextFactory(mkCtx);
+    sys.setPlayerPositionGetter(() => ({ x: 0, y: 0 }));
+    const visible: boolean[] = [];
+    // active 恒 false：只验条件派生这一段，不进选目标/提示那半边
+    const hotspot = {
+      active: false,
+      centerX: 0, centerY: 0, effectiveInteractionRange: 1,
+      def: {
+        id: 'hs_铁箱', type: 'inspect', x: 0, y: 0, interactionRange: 1, data: {},
+        machine: 'lm_箱子',
+        conditions: [{ selfState: 'active' }],
+        conditionHidesEntity: true,
+      },
+      setDerivedBaseEnabled: () => {},
+      setConditionEnabled: (v: boolean) => visible.push(v),
+      hidePrompt: () => {},
+    };
+    sys.setHotspots([hotspot as any]);
+
+    sys.update(0);
+    expect(visible[visible.length - 1]).toBe(false);   // 机器还在 inactive
+    await narrative.localGoto(boxHost, 'active');
+    sys.update(0);
+    expect(visible[visible.length - 1]).toBe(true);    // selfHost 没接通的话这里永远是 false
   });
 });

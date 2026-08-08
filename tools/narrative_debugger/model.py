@@ -156,6 +156,10 @@ class NarrativeIndex:
         self.graphs: dict[str, dict[str, Any]] = {}
         self.graph_labels: dict[str, str] = {}
         self.graph_composition: dict[str, str] = {}
+        # 局部机原型（有 `local` 声明）的 id 集。它们**不是拍子**：一台原型对应 0..N 个
+        # 私有实例，"回到那一拍"对它没有意义，所以要从拍子清单/场景清单里排掉。
+        # 状态本身仍留在 self.states 里——调试器的实例面板要靠它把 state id 译成人话。
+        self.local_machine_ids: set[str] = set()
         self.states: dict[str, StateNode] = {}
         self.transitions: list[Transition] = []
         self.by_from: dict[str, list[Transition]] = {}
@@ -169,6 +173,9 @@ class NarrativeIndex:
         self.load_errors: list[str] = []
         self.dialogue_triggers: dict[str, list[TriggerPoint]] = {}
         self.scene_names: dict[str, str] = {}
+        # `<场景 id>/<实体类型>:<实体 id>` → 实体显示名。局部机实例的宿主坐标就是这个形状
+        # （见 local_machines.instance_key），有它才能把 `hs_铁箱` 说成「铁箱」。
+        self.entity_labels: dict[str, str] = {}
         self.zone_scenes: dict[str, str] = {}
         self.pressure_hold_scenes: dict[str, str] = {}
         self.graph_fingerprints: dict[str, str] = {}
@@ -222,7 +229,9 @@ class NarrativeIndex:
             if not isinstance(data, dict):
                 continue
             scene_name = str(data.get("name") or data.get("id") or path.stem)
-            self.scene_names[str(data.get("id") or path.stem)] = scene_name
+            scene_id = str(data.get("id") or path.stem)
+            self.scene_names[scene_id] = scene_name
+            self._index_entity_labels(scene_id, data)
 
             # 场景 onEnter 是主线大头：进了这个场景那段戏就自己演
             # （见 agent_docs「进场演哪场戏＝场景 onEnter 拍板」）。
@@ -273,6 +282,24 @@ class NarrativeIndex:
                             detail=f"走进「{scene_name}」的「{label}」区域",
                         )
                     )
+
+    def _index_entity_labels(self, scene_id: str, data: dict[str, Any]) -> None:
+        """场景里三类实体的显示名。局部机实例挂在它们身上，面板要按名字认人。
+
+        键的形状与运行时实例键里的宿主段一致（`<场景>/<类型>:<实体>`），
+        这样实例面板拿到一个实例键就能直接查名，不用再猜类型怎么拼。
+        """
+        for npc in data.get("npcs") or []:
+            if isinstance(npc, dict) and npc.get("id"):
+                self.entity_labels[f"{scene_id}/npc:{npc['id']}"] = _actor_name(npc)
+        for hotspot in data.get("hotspots") or []:
+            if isinstance(hotspot, dict) and hotspot.get("id"):
+                label = str(hotspot.get("label") or "").strip()
+                self.entity_labels[f"{scene_id}/hotspot:{hotspot['id']}"] = label or str(hotspot["id"])
+        for zone in data.get("zones") or []:
+            if isinstance(zone, dict) and zone.get("id"):
+                label = str(zone.get("label") or "").strip()
+                self.entity_labels[f"{scene_id}/zone:{zone['id']}"] = label or str(zone["id"])
 
     def _scan_pressure_holds(self) -> None:
         """按住不放的压力条——背尸这条线上干活的核心动作，必须能说出在哪儿按。
@@ -402,6 +429,8 @@ class NarrativeIndex:
         self.graphs[gid] = graph
         self.graph_labels[gid] = str(graph.get("label") or gid)
         self.graph_composition[gid] = comp_id
+        if isinstance(graph.get("local"), dict):
+            self.local_machine_ids.add(gid)
         # 逐图指纹：改一个错别字不该让所有存档点集体变灰。
         # 只有这张图自己变了，它的档才可能对不上。
         self.graph_fingerprints[gid] = hashlib.sha256(
@@ -687,6 +716,11 @@ class NarrativeIndex:
         graph_ids: set[str] = set()
         for signal in self.scene_signals(scene):
             for t in self.listeners.get(signal, []):
+                # 局部机原型也监听全局信号，但它不是"这个场景里的一条戏"——
+                # 它是 0..N 台私有机器的模板，混进来会让人以为主线上多了一条线。
+                # 它的实况在「局部机实例…」窗里看。
+                if t.graph_id in self.local_machine_ids:
+                    continue
                 graph_ids.add(t.graph_id)
         out: list[tuple[str, list[StateNode]]] = []
         for graph_id in sorted(graph_ids, key=lambda g: self.graph_labels.get(g, g)):
@@ -708,8 +742,11 @@ class NarrativeIndex:
         ]
 
     def graphs_in_composition(self, composition_id: str) -> list[str]:
-        """一条线下面挂的全部图（主图 + 它的子图），按标签排。"""
-        ids = [g for g, comp in self.graph_composition.items() if comp == composition_id]
+        """一条线下面挂的全部图（主图 + 它的子图），按标签排。**不含局部机原型**。"""
+        ids = [
+            g for g, comp in self.graph_composition.items()
+            if comp == composition_id and g not in self.local_machine_ids
+        ]
         return sorted(ids, key=lambda g: self.graph_labels.get(g, g))
 
     # ---- 条件翻译（索引建完后按需算，才能把 id 换成人话 label） ----------

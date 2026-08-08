@@ -48,7 +48,14 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
   randomBranch: { required: [], optional: ['probability', 'aboveActions', 'belowActions'] },
 
   // ---- 叙事 / scenario ----
-  emitNarrativeSignal: { required: ['signal'], nonEmpty: ['signal'], optional: ['sourceType', 'sourceId'] },
+  // bindSource（实体局部状态机 §4）：true=用宿主实体身份发（sourceType:'entity'、
+  // sourceId:'<场景>/<实体>'）；显式给了 sourceType+sourceId 时以显式为准。缺省不写键。
+  emitNarrativeSignal: { required: ['signal'], nonEmpty: ['signal'], optional: ['sourceType', 'sourceId', 'bindSource'] },
+  // 实体局部状态机（S1）：宿主由动作来源 owner + 当前场景推出，作者不写实例 id。
+  // localGoto.state = 宿主所绑机器内的状态 id；setLocalVar.value 为 bool/float/string
+  //（allow false / 0 / ""，故 value 不进 nonEmpty）。
+  localGoto: { required: ['state'], nonEmpty: ['state'] },
+  setLocalVar: { required: ['key', 'value'], nonEmpty: ['key'] },
   // 叙事活计生命周期（S1）：graphId=活计图引用；activateNarrativeRun 的 graphId 允许空串（清激活槽）
   startNarrativeRun: { required: ['graphId'], nonEmpty: ['graphId'] },
   resetNarrativeRun: { required: ['graphId'], nonEmpty: ['graphId'] },

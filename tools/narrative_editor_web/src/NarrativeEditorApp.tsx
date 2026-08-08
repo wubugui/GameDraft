@@ -70,6 +70,8 @@ import { ToolbarMenuDropdown, type ToolbarMenuItem } from './components/ToolbarM
 import { SettingsMenu } from './components/SettingsMenu';
 import { ToolbarPopover } from './components/ToolbarPopover';
 import { ConditionBuilder } from './components/ConditionBuilder';
+import { LocalMachineSection } from './components/LocalMachineSection';
+import { declaredLocalEmits, isLocalMachineGraphDef, localVarsOf } from './localMachine';
 import { SignalChipsField } from './components/SignalChipsField';
 import { SignalPickerModal } from './components/SignalPickerModal';
 import { SignalXrefPanel } from './components/SignalXrefPanel';
@@ -205,6 +207,7 @@ import { TemplatesPanel } from './TemplatesPanel';
 const elementKinds: ElementKind[] = [
   'wrapperGraph',
   'scenarioSubgraph',
+  'localMachine',
   'dialogueBlackbox',
   'zoneBlackbox',
   'minigameBlackbox',
@@ -1284,7 +1287,7 @@ function NarrativeEditorInner() {
     });
     if (id) {
       setSelectedId(`element:${id}`);
-      if (kind === 'wrapperGraph' || kind === 'scenarioSubgraph') {
+      if (kind === 'wrapperGraph' || kind === 'scenarioSubgraph' || kind === 'localMachine') {
         setExpandedElementIds((ids) => (ids.includes(id) ? ids : [...ids, id]));
       }
     }
@@ -1661,6 +1664,10 @@ function NarrativeEditorInner() {
         if (s) declaredEmits.add(s);
       }
     }
+    // 局部机的导出声明同样算"有人会发"（全文件口径，不限本作曲——信号是全局总线，
+    // 别的章节里的箱子发的信号照样能推动这里的转移）。catalog.emittedSignals 由 Python
+    // 侧算、目前不含局部机，漏了它就会把整整一类容器发的信号全判成悬空断链。
+    for (const s of declaredLocalEmits(data)) declaredEmits.add(s);
 
     const emittedSignals = catalog.emittedSignals;
     const emittedSet = Array.isArray(emittedSignals) ? new Set(emittedSignals) : null;
@@ -2717,6 +2724,8 @@ function GraphInspector(props: {
   graph: NarrativeGraphDef;
   graphRef: GraphRef;
   catalog: AuthoringCatalogDef;
+  /** 局部机面板的信号候选（StructuredInspector 透传）。 */
+  knownSignals?: string[];
   updateCurrentGraph: (updater: (g: NarrativeGraphDef, next: NarrativeGraphsFileDef) => void) => void;
   setStatus?: (status: string) => void;
   categories?: NarrativeCategoriesFileDef;
@@ -2816,6 +2825,16 @@ function GraphInspector(props: {
           </datalist>
         </div>
       )}
+      {isLocalMachineGraphDef(graph) && (
+        <LocalMachineSection
+          graph={graph}
+          knownSignals={props.knownSignals ?? []}
+          updateGraph={(fn) => updateCurrentGraph((g) => fn(g))}
+        />
+      )}
+      {/* 局部机不是活计图，也永远不该变成活计图（两者互斥，校验拦）——整块开关不出现， */}
+      {/* 免得策划勾了再被拦。 */}
+      {!isLocalMachineGraphDef(graph) && (
       <label className="toggle single-line-toggle" title="活计=可重复接取的委托（背尸单等）：运行时不自动实例化，由 startNarrativeRun 接单开一轮，走到出口状态自动结算计数。常驻图（主线/一次性支线）不勾。">
         <input
           type="checkbox"
@@ -2828,6 +2847,7 @@ function GraphInspector(props: {
         />
         活计图（可重复运行的委托）
       </label>
+      )}
       {graph.run && (
         <>
           <label className="toggle single-line-toggle" title="做完一单（到出口状态结算）后可再次接单开新一轮。">
@@ -3115,6 +3135,12 @@ function TransitionInspector(props: {
   const legacyEndpoint = typeof transition.from !== 'string' || typeof transition.to !== 'string';
   const triggerMode = transition.trigger ?? 'signal';
   const isReactive = triggerMode === 'reactive' || triggerMode === 'reactiveAll' || triggerMode === 'reactiveAny';
+  // 局部机的转移只能听全局信号（设计稿 §3）：reactive* 在这里是校验 error，所以下拉里
+  // 直接不给这些选项——让人选完再报错是最差的一种交互（他已经改了数据、还得自己撤回）。
+  // 但**已经写在数据里的**非法值必须保值展示（选择器铁律 6：绝不静默顶替），
+  // 于是保留一条标注过的孤儿项，并就地给一键改回。
+  const localMachine = isLocalMachineGraphDef(graph);
+  const localVars = localVarsOf(graph);
   return (
     <div className="form-grid">
       <div className="transition-route" title="迁移起止状态请在画布连线中修改">
@@ -3139,10 +3165,22 @@ function TransitionInspector(props: {
           }}
         >
           <option value="signal">信号触发</option>
-          <option value="reactive">条件自动触发（原始条件）</option>
-          <option value="reactiveAll">等待全部满足（自动AND）</option>
-          <option value="reactiveAny">等待任一满足（自动OR）</option>
+          {localMachine ? (
+            isReactive && <option value={triggerMode}>{triggerMode}（局部机不支持，请改回信号触发）</option>
+          ) : (
+            <>
+              <option value="reactive">条件自动触发（原始条件）</option>
+              <option value="reactiveAll">等待全部满足（自动AND）</option>
+              <option value="reactiveAny">等待任一满足（自动OR）</option>
+            </>
+          )}
         </select>
+        {localMachine && (
+          <div className={isReactive ? 'property-line danger' : 'property-line note'}>
+            局部机只听全局信号：reactive 的存在理由是「条件何时满足不可预知」，而局部层作者是
+            对着整台机器写的——要转移就用 <code>localGoto</code> 动作直接点名目标态（同步、确定、不进队列）。
+          </div>
+        )}
       </div>
       {legacyEndpoint && <div className="property-line danger">旧跨图端点不支持直接编辑。请选择本图状态，并用信号或投影元数据表达跨图影响。</div>}
       {!isReactive && (
@@ -3218,6 +3256,7 @@ function TransitionInspector(props: {
         graphLabels={props.graphLabels}
         statesByGraph={props.statesByGraph}
         stateLabelsByGraph={props.stateLabelsByGraph}
+        localVars={localMachine ? localVars : undefined}
         onApply={(value) => updateCurrentGraph((g) => { transitionIn(g, transition.id).conditions = Array.isArray(value) ? value : value ? [value] : []; })}
       />
       <NumberField label="优先级" value={transition.priority ?? 0} onChange={(value) => updateCurrentGraph((g) => { const t = transitionIn(g, transition.id); if (value !== 0) t.priority = value; else delete t.priority; })} />
@@ -3306,6 +3345,21 @@ function ElementInspector(props: {
           <div className="property-line note">
             同一个绑定对象被多张实体包装图绑定时，给每张填不同分类以区分（如「白天线」「夜里线」）。会写入
             narrative_graphs.json、显示在实体视图、并参与校验。与上面「整理分组」（仅编辑器整理、不写数据）不同。
+          </div>
+        </>
+      ) : element.kind === 'localMachine' ? (
+        <>
+          <ReadOnlyField label="绑定类型（局部机不绑 owner）" value="system" />
+          {element.graph && (
+            <LocalMachineSection
+              graph={element.graph}
+              knownSignals={props.knownSignals}
+              updateGraph={(fn) => updateElement(updateData, composition, element.id, (el) => { if (el.graph) fn(el.graph); })}
+            />
+          )}
+          <div className="property-line note">
+            绑定写在<b>实体那一侧</b>（NpcDef / HotspotDef / ZoneDef 的 <code>machine</code> 字段，
+            在场景编辑器里填），不在这里选——一份图纸可以被任意多个实体绑，反过来登记会重复一千遍。
           </div>
         </>
       ) : element.kind === 'scenarioSubgraph' ? (
@@ -3410,6 +3464,13 @@ function ElementInspector(props: {
         )}
         {element.kind === 'scenarioSubgraph' && (
           <div className="property-line note">Scenario 是有边界的局部子图：外部只能连入口状态，只有出口状态能连回外部。</div>
+        )}
+        {element.kind === 'localMachine' && (
+          <div className="property-line note">
+            局部机不进 owner 索引（<code>@owner</code>/<code>@scene</code> 解析不到它）、不发
+            <code>state:图:态</code> 派生广播、也不能被 <code>narrative</code> 条件读——
+            实例状态完全私有是刻意的代价，换掉的是"1000 个箱子各起一个名字"那套命名膨胀。
+          </div>
         )}
       </AdvancedInspectorSection>
     </div>

@@ -13,6 +13,7 @@ import {
   stateEnteredSignalKey,
 } from './signalConstants';
 import { migrateNarrativeSignalsV3 } from './signalMigration';
+import { dropLocalMachineFalsePositives, validateLocalMachines } from './localMachine';
 import {
   blockingNarrativeValidationErrors,
   narrativeEndpointLabel,
@@ -84,6 +85,18 @@ export interface SimulationResult {
 
 export const defaultFile: NarrativeGraphsFileDef = { schemaVersion: NARRATIVE_SCHEMA_VERSION, signals: [], compositions: [] };
 
+/**
+ * 自带内嵌图、因而可在画布上编辑状态与转移的元素类型。
+ * 单一登记面：归一化 / 编译 / 子图判定共用它，新增带图元素只改这一处
+ * （曾经三处 `kind === 'wrapperGraph' || kind === 'scenarioSubgraph'` 各写各的，
+ * 新增 localMachine 时漏一处就是"图存在但校验/改名看不见它"）。
+ */
+export const ELEMENT_KINDS_WITH_GRAPH: ReadonlySet<ElementKind> = new Set<ElementKind>([
+  'wrapperGraph',
+  'scenarioSubgraph',
+  'localMachine',
+]);
+
 export const emptyCatalog: AuthoringCatalogDef = {
   dialogueGraphIds: [],
   scenarioIds: [],
@@ -120,7 +133,7 @@ export function normalizeFile(data: NarrativeGraphsFileDef | unknown): Narrative
     comp.mainGraph.transitions ??= [];
     normalizeGraph(comp.mainGraph);
     for (const el of comp.elements) {
-      if ((el.kind === 'wrapperGraph' || el.kind === 'scenarioSubgraph') && el.graph) {
+      if (ELEMENT_KINDS_WITH_GRAPH.has(el.kind) && el.graph) {
         normalizeGraph(el.graph);
         if (el.kind === 'scenarioSubgraph') normalizeScenarioGraph(el.graph);
       }
@@ -241,7 +254,7 @@ export function getElementByNodeId(comp: NarrativeCompositionDef | undefined, no
 }
 
 export function isSubgraphElement(el: CompositionElementDef | undefined): boolean {
-  return Boolean(el?.graph && (el.kind === 'wrapperGraph' || el.kind === 'scenarioSubgraph'));
+  return Boolean(el?.graph && ELEMENT_KINDS_WITH_GRAPH.has(el.kind));
 }
 
 export function stateEditorPosition(state: NarrativeStateNodeDef, index: number): { x: number; y: number } {
@@ -300,7 +313,11 @@ export function createComposition(data: NarrativeGraphsFileDef): NarrativeCompos
 
 export function createElement(comp: NarrativeCompositionDef, kind: ElementKind, data?: NarrativeGraphsFileDef): CompositionElementDef {
   const elements = comp.elements ??= [];
-  const base = kind === 'wrapperGraph' ? 'wrapper' : kind.replace('Blackbox', '').replace('Subgraph', '');
+  const base = kind === 'wrapperGraph'
+    ? 'wrapper'
+    : kind === 'localMachine'
+      ? 'machine'
+      : kind.replace('Blackbox', '').replace('Subgraph', '');
   const id = uniqueId(base, elements.map((e) => e.id));
   const element: CompositionElementDef = {
     id,
@@ -311,6 +328,25 @@ export function createElement(comp: NarrativeCompositionDef, kind: ElementKind, 
     y: 60,
     meta: { emits: [], reads: [] },
   };
+  if (kind === 'localMachine') {
+    // 局部机不绑 owner（恒 system）、不带 refId（原型定义就在内嵌图里）。
+    // `local: {}` 是"这是一张图纸"的判据本身，必须写；vars/listens/emits 空时不落键。
+    delete element.refId;
+    element.ownerType = 'system';
+    element.x = 320;
+    element.y = 560;
+    element.graph = {
+      id: data ? uniqueGraphId(data, 'lm') : uniqueId('lm', [comp.mainGraph.id, ...elements.map((e) => e.graph?.id ?? '')]),
+      label: element.label,
+      ownerType: 'system',
+      local: {},
+      initialState: 'inactive',
+      states: { inactive: { id: 'inactive', meta: { editor: { x: 120, y: 160 } } } },
+      transitions: [],
+    };
+    elements.push(element);
+    return element;
+  }
   if (kind === 'wrapperGraph' || kind === 'scenarioSubgraph') {
     const ownerType = kind === 'scenarioSubgraph' ? 'scenario' : 'npc';
     const graphPrefix = kind === 'scenarioSubgraph' ? 'scenario_graph' : 'wrapper_graph';
@@ -351,6 +387,7 @@ export function createElement(comp: NarrativeCompositionDef, kind: ElementKind, 
 function defaultElementLabel(kind: ElementKind): string {
   if (kind === 'wrapperGraph') return 'Wrapper Graph';
   if (kind === 'scenarioSubgraph') return 'Scenario Subgraph';
+  if (kind === 'localMachine') return 'Local Machine';
   if (kind === 'dialogueBlackbox') return 'Dialogue Blackbox';
   if (kind === 'zoneBlackbox') return 'Zone Blackbox';
   if (kind === 'minigameBlackbox') return 'Minigame Blackbox';
@@ -529,7 +566,7 @@ export function compileGraphs(data: NarrativeGraphsFileDef): CompiledGraphRef[] 
   for (const comp of data.compositions ?? []) {
     if (isGraph(comp.mainGraph)) out.push({ graph: comp.mainGraph, compositionId: comp.id });
     for (const el of comp.elements ?? []) {
-      if ((el.kind === 'wrapperGraph' || el.kind === 'scenarioSubgraph') && isGraph(el.graph)) {
+      if (ELEMENT_KINDS_WITH_GRAPH.has(el.kind) && isGraph(el.graph)) {
         out.push({ graph: el.graph, compositionId: comp.id, elementId: el.id });
       }
     }
@@ -911,9 +948,16 @@ export function setKnownPlaneIdsForValidation(ids: readonly string[] | null): vo
 }
 
 export function validateNarrativeData(dataRaw: NarrativeGraphsFileDef | unknown): ValidationIssueDef[] {
-  return validateNarrativeGraphData(normalizeFile(dataRaw), {
+  const normalized = normalizeFile(dataRaw);
+  const authority = validateNarrativeGraphData(normalized, {
     planeIds: knownPlaneIdsForValidation ?? undefined,
   }) as ValidationIssueDef[];
+  // 权威侧（src/core）暂时不认识 localMachine：既漏检其内嵌图、又对它误报 blackbox.ref.empty。
+  // 在权威补齐前，这里剔除那条误报、并叠加局部机专属校验（设计稿 §6）。见 localMachine.ts 抬头。
+  return [
+    ...dropLocalMachineFalsePositives(authority, normalized),
+    ...validateLocalMachines(normalized),
+  ];
 }
 
 export function blockingValidationErrors(issues: ValidationIssueDef[]): ValidationIssueDef[] {

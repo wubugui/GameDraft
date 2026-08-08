@@ -187,6 +187,9 @@ _ACTION_SCOPED_OMIT_WHEN_ABSENT_AND_DEFAULT: dict[tuple[str, str], object] = {
     # setFocusedQuest.announce 缺省 false＝不额外给醒目提示；不登记的话
     # 「打开→不改→保存」会给全项目的 setFocusedQuest 凭空写上 announce:false
     ("setFocusedQuest", "announce"): False,
+    # emitNarrativeSignal.bindSource 缺省 false＝匿名发；不登记的话「打开→不改→保存」
+    # 会给全项目每一条 emitNarrativeSignal 凭空写上 bindSource:false
+    ("emitNarrativeSignal", "bindSource"): False,
 }
 
 # 运行时默认为 true 的可选 bool：控件用三态（""/"true"/"false"）表达"未设"，
@@ -269,6 +272,7 @@ ACTION_TYPES = [
     "setFlag", "setScenarioPhase", "startScenario", "activateScenario", "completeScenario", "emitNarrativeSignal", "setNarrativeState",
     "startNarrativeRun", "resetNarrativeRun", "revertNarrativeRun", "activateNarrativeRun",
     "loadNarrativePackage", "unloadNarrativePackage",
+    "localGoto", "setLocalVar",
     "appendFlag", "giveItem", "removeItem", "giveCurrency", "removeCurrency",
     "giveRule", "grantRuleLayer", "giveFragment", "updateQuest", "setFocusedQuest", "startEncounter",
     "playBgm", "stopBgm", "playSfx", "stopSceneAmbient", "endDay", "addDelayedEvent",
@@ -371,6 +375,9 @@ ACTION_PERSISTENCE: dict[str, str] = {
     "activateNarrativeRun": "save",
     "loadNarrativePackage": "save",
     "unloadNarrativePackage": "save",
+    # 局部机实例的当前态与变量随存档持久化（narrative.locals），故归 save
+    "localGoto": "save",
+    "setLocalVar": "save",
     "appendFlag": "save",
     "giveItem": "save",
     "removeItem": "save",
@@ -517,7 +524,12 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "chooseAction": [("prompt", "str"), ("allowCancel", "bool")],
     "randomBranch": [],
     "setFlag": [("key", "str"), ("value", "flag_val")],
-    "emitNarrativeSignal": [("signal", "str"), ("sourceType", "str"), ("sourceId", "str")],
+    "emitNarrativeSignal": [("signal", "str"), ("sourceType", "str"), ("sourceId", "str"), ("bindSource", "bool")],
+    # 实体局部状态机（S1）：state/key 都是相对本实体所绑机器的引用，静态解不出是哪台机器
+    #（同一动作批可挂在任意绑定实体上），故先用手输 + 提示；S2 在已知宿主的容器里升级为选择器
+    #（同 revertNarrativeRun.stateId 的处置）。
+    "localGoto": [("state", "str")],
+    "setLocalVar": [("key", "str"), ("value", "flag_val")],
     "setNarrativeState": [("graphId", "str"), ("stateId", "str")],
     # 叙事活计生命周期（S1）：graphId=活计图；revert 的 stateId=回退目标状态（S2 升级为该图状态选择器）。
     "startNarrativeRun": [("graphId", "str")],
@@ -5128,7 +5140,25 @@ class ActionRow(QWidget):
                         "⚠ 与任务表单里的「接取提示」是两回事：那个管的是**任务被接取时**的提示档位，\n"
                         "这个只管**这一次切换**。缺省不写键。"
                     )
+                if act_type == "emitNarrativeSignal" and pname == "bindSource":
+                    w.setToolTip(
+                        "带上宿主实体的身份发（sourceType=entity、sourceId=「场景/实体」）。\n"
+                        "只是「谁发的」，不暴露它的状态与变量——局部机的封装不破。\n"
+                        "上面显式填了来源类型+来源 id 时以那两项为准。缺省不写键（匿名发）。"
+                    )
                 w.stateChanged.connect(self.changed)
+            elif act_type == "setLocalVar" and pname == "value":
+                # 局部机实例变量：类型由原型 local.vars 声明（bool/float/string），不在 flag
+                # 登记表里，所以不能按 flag key 推控件形态。空登记表 ⇒ FlagValueEdit 进 raw
+                #（JSON 字面量）模式：true / 3 / "文本" 三型都写得出，且未改动时原样保值。
+                w = FlagValueEdit(self, {})
+                w.set_registry({})
+                w.set_value(val if val != "" else False)
+                w.setToolTip(
+                    "写入本实体所绑局部机的实例变量，按 JSON 字面量填：true / false / 3 / \"文本\"。\n"
+                    "类型要与该机器 local.vars 里声明的一致；未声明的 key 运行时会被拒绝写入。"
+                )
+                w.valueChanged.connect(self.changed)
             elif ptype == "flag_val":
                 w = FlagValueEdit(self, self._ctx_model.flag_registry if self._ctx_model else {})
                 if act_type not in ("setFlag",):
@@ -5567,6 +5597,19 @@ class ActionRow(QWidget):
                 w.typeCommitted.connect(lambda _t: self.changed.emit())
             else:
                 w = QLineEdit(str(val), self)
+                if act_type == "localGoto" and pname == "state":
+                    w.setPlaceholderText("目标状态 id（本实体所绑机器内）")
+                    w.setToolTip(
+                        "把**当前实体**所绑的那台局部机转到该状态（命令式，不经信号总线）。\n"
+                        "状态属于这台机器自己，作者从不写实例 id；这条动作只能挂在绑了 machine 的\n"
+                        "npc/hotspot/zone 的动作批上，或该机器自己的 onEnter/onExit 里。"
+                    )
+                if act_type == "setLocalVar" and pname == "key":
+                    w.setPlaceholderText("变量名（须在该机器 local.vars 里声明过）")
+                    w.setToolTip(
+                        "本实体所绑局部机的实例变量名。未在原型 local.vars 声明的 key 会被运行时拒绝写入\n"
+                        "（拼错就静默生成一个永远读不到的变量，正是全局 flag 表最恶心的失败模式）。"
+                    )
                 w.textChanged.connect(self.changed)
             self._param_widgets[pname] = w
             self._params_layout.addRow(pname, w)

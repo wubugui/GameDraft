@@ -42,6 +42,22 @@ import {
 import type { ActivePlaneSnapshot } from './plane/types';
 import { createStyledText } from '../core/styledText';
 
+/**
+ * 局部机绑定通道（实体 def 的 `machine` 字段 → 叙事状态机的实例表）。
+ *
+ * **为什么是注入的闭包而不是直接持 NarrativeStateManager**：norms 不变量⑪ 禁止系统层跨模块
+ * 直接 import 其它系统实例，依赖只能经组装层（Game）注入——与 `zoneSetter` / `interactionSetter`
+ * 同一范式。未注入（null）时本文件行为与本功能出现前逐字节一致。
+ */
+export interface SceneLocalMachineBinding {
+  /** 绑定即实例化（幂等）：已有实例不重置，重进场景不会把玩家推进过的态抹回出厂。 */
+  ensureInstance(machineId: string, host: { sceneId: string; entityKind: string; entityId: string }): void;
+  /** 本场景实例标记为"在场"并补评错过的迁移（不重放演出）。 */
+  reconcile(sceneId: string): void;
+  /** 场景卸载：标记不在场（**不删实例**——态必须跨场景存活）。 */
+  markUnloaded(sceneId: string): void;
+}
+
 /** applyDebugWorldSize 成功时的返回值，供深度系统与碰撞比例同步 */
 export type ApplyDebugWorldSizeResult =
   | { ok: true; worldToPixelX: number; worldToPixelY: number }
@@ -152,6 +168,8 @@ export class SceneManager implements IGameSystem {
   private depthUnloader: (() => void) | null = null;
   /** 场景根 `onEnter` 动作：由 Game 注入 ActionExecutor.executeBatchAwait */
   private sceneEnterRunner: ((actions: ActionDef[]) => Promise<void>) | null = null;
+  /** 实体 def 的 `machine` 绑定 → 叙事实例表；由 Game 注入（见 {@link SceneLocalMachineBinding}）。 */
+  private localMachineBinding: SceneLocalMachineBinding | null = null;
   private currentSceneScopeId: string | null = null;
 
   private onHotspotPickup: (payload: { hotspotId: string }) => void;
@@ -247,6 +265,41 @@ export class SceneManager implements IGameSystem {
 
   setSceneEnterRunner(fn: ((actions: ActionDef[]) => Promise<void>) | null): void {
     this.sceneEnterRunner = fn;
+  }
+
+  setLocalMachineBinding(binding: SceneLocalMachineBinding | null): void {
+    this.localMachineBinding = binding;
+  }
+
+  /**
+   * 装载期把本场景所有声明了 `machine` 的实体绑上局部机实例，然后对账一次。
+   *
+   * **按 def 而不是按已实例化的运行时实体遍历**，这是本函数唯一容易做错的地方：
+   * 被条件隐藏 / 被位面过滤 / 已拾取 / cutsceneOnly 的实体统统不在 `currentHotspots` 里，
+   * 但它们的机器必须照跑——机器的态**正是**驱动显隐的那个输入，按运行时实体建实例会形成
+   * 「隐藏 ⇒ 机器不跑 ⇒ 永远不显示」的死结。实例存在性只由「绑定关系」决定。
+   *
+   * reconcile 放在最后一次性做：ensure 出来的新实例天然在场，需要补评的是**上次卸载后
+   * 在别处错过了信号**的老实例（见 NarrativeStateManager.reconcileLocalInstances 注释）。
+   */
+  private bindSceneLocalMachines(sceneId: string, sceneData: SceneData): void {
+    const binding = this.localMachineBinding;
+    if (!binding) return;
+    const bindAll = (
+      entityKind: 'hotspot' | 'npc' | 'zone',
+      defs: ReadonlyArray<{ id: string; machine?: string }> | undefined,
+    ): void => {
+      for (const def of defs ?? []) {
+        const machineId = def.machine?.trim();
+        const entityId = def.id?.trim();
+        if (!machineId || !entityId) continue;
+        binding.ensureInstance(machineId, { sceneId, entityKind, entityId });
+      }
+    };
+    bindAll('hotspot', sceneData.hotspots);
+    bindAll('npc', sceneData.npcs);
+    bindAll('zone', sceneData.zones);
+    binding.reconcile(sceneId);
   }
 
   get currentSceneData() { return this.currentScene; }
@@ -1447,6 +1500,10 @@ export class SceneManager implements IGameSystem {
     this.audioApplier?.(sceneData.bgm, sceneData.ambientSounds);
     this.zoneSetter?.(this.computeEffectiveZones(sceneId, sceneData.zones));
 
+    // 局部机绑定要赶在 scene:ready / 揭幕 / onEnter **之前**：实体首帧的条件派生
+    // （`selfState` 叶）就要读到机器的态，晚一步就是"进场景先闪一帧错误显隐"。
+    this.bindSceneLocalMachines(sceneId, sceneData);
+
     if (this.depthLoader) {
       report(`深度图 · ${sceneId}`);
       await this.depthLoader(sceneId, sceneData, worldToPixelX, worldToPixelY);
@@ -1565,6 +1622,8 @@ export class SceneManager implements IGameSystem {
 
   unloadScene(): void {
     this.sceneEpoch++;
+    // 卸载前先取本场景 id：函数尾部会把 currentScene 置 null，之后就无从知道离开的是谁。
+    const leavingSceneId = this.currentScene?.id?.trim() ?? '';
     this.eventBus.emit('scene:beforeUnload');
     this.interactionSetter?.([], []);
     if (this.currentSceneScopeId) {
@@ -1593,6 +1652,9 @@ export class SceneManager implements IGameSystem {
 
     this.depthUnloader?.();
     this.zoneSetter?.([]);
+    // 实例只标"不在场"、**绝不删**：局部机的态必须跨场景存活（玩家在 A 场景推进的箱子，
+    // 去 B 场景转一圈回来还得是那个态）。不在场期间信号照样迁移它，只是不跑生命周期演出。
+    if (leavingSceneId) this.localMachineBinding?.markUnloaded(leavingSceneId);
     this.currentScene = null;
   }
 
@@ -2038,5 +2100,7 @@ export class SceneManager implements IGameSystem {
     this.interactionSetter = null;
     this.depthLoader = null;
     this.depthUnloader = null;
+    // 生命周期对称（norms 不变量⑤）：注入口一并断开，destroy 后不留任何指向叙事层的引用。
+    this.localMachineBinding = null;
   }
 }

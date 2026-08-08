@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from tools.narrative_debugger import local_machines
 from tools.narrative_debugger.model import BROADCAST_PREFIX, Emitter, NarrativeIndex, Transition
 
 VERDICT_OK = "ok"
@@ -51,9 +52,11 @@ class TimelineEntry:
     merge_key: str = ""
     raw: str = ""
     """工程原文（英文报错等）。只进 tooltip，不摆在正文里。"""
+    instance_key: str = ""
+    """局部机实例键（只有 local.* 那三类事件有）。双击时靠它落到具体那台机器上。"""
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        out = {
             "at": self.at,
             "headline": self.headline,
             "detail": self.detail,
@@ -62,6 +65,11 @@ class TimelineEntry:
             "graphId": self.graph_id,
             "stateId": self.state_id,
         }
+        # 只有局部机那几行才多这一个键：普通行的形状与本功能出现前逐字节一致，
+        # agent 侧既有的读法不用改。
+        if self.instance_key:
+            out["instanceKey"] = self.instance_key
+        return out
 
 
 @dataclass(frozen=True)
@@ -291,6 +299,10 @@ class TraceTranslator:
     def __init__(self, index: NarrativeIndex) -> None:
         self.index = index
         self._blocked_notes: dict[str, list[str]] = {}
+        # 「宿主不在场，生命周期动作跳过了」这条预告与随后那条真变更是**两条** trace，
+        # 中间还可能夹着别的事件。攒在这儿，等真变更到达时并成一行说清楚
+        # （与 _blocked_notes 同一手法：技术上两条，策划眼里一件事）。
+        self._local_unloaded: set[str] = set()
 
     def _blocked_reason(self, event: dict[str, Any]) -> str:
         """把 transition.blocked 的 failing 索引翻回具体缺什么。"""
@@ -428,6 +440,38 @@ class TraceTranslator:
                 state_id=node.state_id,
             )
 
+        # ---- 局部机（实体身上的私有机器）三条 ----------------------------
+        # 这三条的 `graphId` 是**原型 id**，`label` 才是实例键——原型只是模板，
+        # 说"「可拾取物」变了"等于什么都没说，必须落到"雾津街头那个铁箱"。
+        if kind == "local.bound":
+            key = str(event.get("label") or "")
+            return TimelineEntry(
+                at=at,
+                headline=f"装上了一台机器：{local_machines.key_phrase(self.index, key)}",
+                detail=f"出厂态「{local_machines.state_label(self.index, graph_id, state_id)}」",
+                verdict=VERDICT_INFO,
+                graph_id=graph_id,
+                state_id=state_id,
+                instance_key=key,
+            )
+
+        if kind == "local.var":
+            key = str(event.get("label") or "")
+            payload = event.get("payload") or {}
+            var_key = str(payload.get("key") or "")
+            value = payload.get("value")
+            return TimelineEntry(
+                at=at,
+                headline=f"{local_machines.key_phrase(self.index, key)} 的「{var_key}」＝{_value_text(value)}",
+                detail="这是这台机器自己的变量，别的实例不受影响",
+                verdict=VERDICT_INFO,
+                graph_id=graph_id,
+                instance_key=key,
+            )
+
+        if kind == "local.state.changed":
+            return self._local_state_entry(event, at, graph_id)
+
         if kind == "state.command":
             message = str(event.get("message") or "")
             if "applying" not in message:
@@ -477,6 +521,66 @@ class TraceTranslator:
             )
 
         return None
+
+    def _local_state_entry(self, event: dict[str, Any], at: str, machine_id: str) -> TimelineEntry:
+        """局部机实例换态。运行时会为同一次转移发**两条**：
+
+        ① 宿主不在场时先发一条预告（`message` 里写明生命周期动作被跳过，无 `stateId`）；
+        ② 真正置位之后发一条变更（带 `stateId` / `transitionId`）。
+
+        两条共用同一个 merge_key，所以时间线上永远只占一行：正常情况直接是变更那一行，
+        转移半路被旧时间线作废时留下的就是预告那一行——都不撒谎。
+        """
+        key = str(event.get("label") or "")
+        from_state = str(event.get("from") or "")
+        to_state = str(event.get("to") or "")
+        trigger = str(event.get("triggerKey") or "")
+        message = str(event.get("message") or "")
+        merge = f"local:{key}:{from_state}>{to_state}"
+        who = local_machines.key_phrase(self.index, key)
+        path = (
+            f"「{local_machines.state_label(self.index, machine_id, from_state)}」"
+            f"→「{local_machines.state_label(self.index, machine_id, to_state)}」"
+        )
+
+        if "not loaded" in message:
+            self._local_unloaded.add(merge)
+            return TimelineEntry(
+                at=at,
+                headline=f"{who}：{path}",
+                detail="宿主不在场（那个场景没装载）：态照改，但这一拍的演出/给东西一律没跑",
+                verdict=VERDICT_INFO,
+                graph_id=machine_id,
+                state_id=to_state,
+                merge_key=merge,
+                instance_key=key,
+                raw=message,
+            )
+
+        skipped = merge in self._local_unloaded
+        self._local_unloaded.discard(merge)
+        detail = self._local_trigger_phrase(trigger)
+        if skipped:
+            detail += "；宿主不在场，这一拍的演出没跑"
+        return TimelineEntry(
+            at=at,
+            headline=f"{who}：{path}",
+            detail=detail,
+            verdict=VERDICT_OK,
+            graph_id=machine_id,
+            state_id=to_state,
+            merge_key=merge,
+            instance_key=key,
+        )
+
+    def _local_trigger_phrase(self, trigger: str) -> str:
+        """局部层只有两种推法：机器内部点名跳（命令式），或外面一条全局信号打进来。"""
+        if trigger.startswith("localGoto:"):
+            return "机器自己点名跳的（localGoto，不经信号）"
+        if not trigger:
+            return "不知道是什么推的"
+        what, where = signal_phrase(self.index, trigger)
+        return f"外面一条信号推的：{what}" + (f"（{where}）" if where else "")
 
     def player_action_entry(self, action: str, label: str, at: str) -> TimelineEntry | None:
         """玩家动手那一行。先记下"你做了什么"，结论等一会儿再补。"""
@@ -546,6 +650,15 @@ class TraceTranslator:
                 f"{self._graph_name(t.graph_id)} 要停在「{src.display if src else t.from_state}」才吃这一下"
             )
         return "；".join(parts)
+
+
+def _value_text(value: Any) -> str:
+    """变量值的显示。bool 说人话——`True/False` 对策划是两个英文单词，不是"开/关"。"""
+    if isinstance(value, bool):
+        return "真" if value else "假"
+    if value is None:
+        return "（空）"
+    return str(value)
 
 
 def _lead(what: str) -> str:

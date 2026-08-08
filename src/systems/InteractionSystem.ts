@@ -127,9 +127,34 @@ export class InteractionSystem implements IGameSystem {
     return this.evalWith(this.groupConditions?.(gid), ctx);
   }
 
-  private evalConditionsList(conds: ConditionExpr[] | undefined): boolean {
+  private evalConditionsList(
+    conds: ConditionExpr[] | undefined,
+    self?: { kind: 'hotspot' | 'npc'; id: string },
+  ): boolean {
     if (!conds?.length) return true;
-    return this.evalWith(conds, this.conditionCtxFactory?.() ?? null);
+    const ctx = this.conditionCtxFactory?.() ?? null;
+    return this.evalWith(conds, self ? this.withSelfHost(ctx, self.kind, self.id) : ctx);
+  }
+
+  /**
+   * 给「此刻正在被求值的这个实体」补上 `selfHost`，`selfState` / `selfVar` 叶据此读
+   * **它自己绑的那台局部机**（实体 def 的 `machine`）。局部机实例不可被外部按 id 寻址，
+   * 读它的唯一途径就是这条"我是谁"的上下文——不注入 = 叶子恒假，整条读侧是死的。
+   *
+   * 工厂那一份上下文（零参、全局共享，不变量⑧）本身给不出"当前实体是谁"，
+   * 所以在这里派生一份带 selfHost 的副本；场景 id 直接取工厂已填好的 `currentSceneId`，
+   * 不另开一条可能与之漂移的场景来源。**只为真有条件要判的实体复制**——
+   * 这些实体本来就要付一次完整条件求值，多一次浅拷贝可忽略；无条件实体继续零分配。
+   */
+  private withSelfHost(
+    ctx: ConditionEvalContext | null,
+    entityKind: 'hotspot' | 'npc',
+    entityId: string,
+  ): ConditionEvalContext | null {
+    if (!ctx) return null;
+    const sceneId = String(ctx.currentSceneId ?? '').trim();
+    if (!sceneId || !entityId) return ctx;
+    return { ...ctx, selfHost: { sceneId, entityKind, entityId } };
   }
 
   /** 用调用方预先构建的 ctx 求值，避免在同一帧内为同一实体重复 new 上下文。 */
@@ -201,8 +226,13 @@ export class InteractionSystem implements IGameSystem {
    */
   private applyHotspotVisibilityAndBase(hotspot: Hotspot, ctx: ConditionEvalContext | null): boolean {
     const conds = hotspot.def.conditions;
-    const condOk = this.evalWith(conds, ctx);
-    const groupOk = this.evalEntityGroupConditions(hotspot.def.group, ctx);
+    // 每帧派生显隐 = 局部机读侧的主路径：这里不逐实体注入 selfHost，`{selfState:'active'}`
+    // 就永远判假，"机器推到 active → 箱子现身"这条链在玩家侧完全看不见。
+    const selfCtx = conds?.length || hotspot.def.group
+      ? this.withSelfHost(ctx, 'hotspot', hotspot.def.id)
+      : ctx;
+    const condOk = this.evalWith(conds, selfCtx);
+    const groupOk = this.evalEntityGroupConditions(hotspot.def.group, selfCtx);
     const base = this.hotspotBaseEnabled?.(hotspot) ?? true;
     const hideWhenFail = hotspot.def.conditionHidesEntity === true && !!conds?.length;
     hotspot.setDerivedBaseEnabled(base);
@@ -215,8 +245,12 @@ export class InteractionSystem implements IGameSystem {
   /** 返回该 NPC 的条件是否满足（供同帧的交互判定复用，避免二次求值）。写通道语义同上。 */
   private applyNpcVisibilityAndBase(npc: Npc, ctx: ConditionEvalContext | null): boolean {
     const conds = npc.def.conditions;
-    const condOk = this.evalWith(conds, ctx);
-    const groupOk = this.evalEntityGroupConditions(npc.def.group, ctx);
+    // 逐实体 selfHost，理由同 applyHotspotVisibilityAndBase。
+    const selfCtx = conds?.length || npc.def.group
+      ? this.withSelfHost(ctx, 'npc', npc.entityId)
+      : ctx;
+    const condOk = this.evalWith(conds, selfCtx);
+    const groupOk = this.evalEntityGroupConditions(npc.def.group, selfCtx);
     const base = this.npcBaseVisible?.(npc) ?? true;
     const hideWhenFail = npc.def.conditionHidesEntity === true && !!conds?.length;
     npc.setDerivedBaseVisible(base);
@@ -356,7 +390,10 @@ export class InteractionSystem implements IGameSystem {
     for (const hotspot of this.hotspots) {
       if (!hotspot.active) continue;
       if (policy && !policy.canInteractHotspots) continue;
-      if (hotspot.def.conditions?.length && !this.evalConditionsList(hotspot.def.conditions)) continue;
+      // 与按 E 同口径：conditions 里若有 selfState/selfVar 叶，这里也必须带上宿主身份，
+      // 否则"E 能开、动词开不了"这种同一实体两套判定的漂移（不变量⑧）。
+      if (hotspot.def.conditions?.length
+        && !this.evalConditionsList(hotspot.def.conditions, { kind: 'hotspot', id: hotspot.def.id })) continue;
       consider(
         'hotspot',
         hotspot.def.id,
@@ -370,7 +407,8 @@ export class InteractionSystem implements IGameSystem {
     for (const npc of this.npcs) {
       if (!npc.container.visible) continue;
       if (policy && !policy.canTalkNpcs) continue;
-      if (npc.def.conditions?.length && !this.evalConditionsList(npc.def.conditions)) continue;
+      if (npc.def.conditions?.length
+        && !this.evalConditionsList(npc.def.conditions, { kind: 'npc', id: npc.entityId })) continue;
       consider(
         'npc',
         npc.entityId,
@@ -399,7 +437,8 @@ export class InteractionSystem implements IGameSystem {
       if (hotspot.def.type !== 'act_spot' || !hotspot.active) continue;
       const data = hotspot.def.data as ActSpotData | undefined;
       if (!data || !Array.isArray(data.verbs) || !data.verbs.includes(verb)) continue;
-      if (hotspot.def.conditions?.length && !this.evalConditionsList(hotspot.def.conditions)) continue;
+      if (hotspot.def.conditions?.length
+        && !this.evalConditionsList(hotspot.def.conditions, { kind: 'hotspot', id: hotspot.def.id })) continue;
       const dx = pos.x - hotspot.centerX;
       const dy = pos.y - hotspot.centerY;
       const dist = Math.sqrt(dx * dx + dy * dy);
@@ -469,7 +508,10 @@ export class InteractionSystem implements IGameSystem {
         hotspotOffersPlayerInteraction(hotspot.def) &&
         (!planePolicy || (planePolicy.canInteractHotspots &&
           (planePolicy.canPickup || hotspot.def.type !== 'pickup'))) &&
-        (!hotspot.def.conditions?.length || this.evalConditionsList(hotspot.def.conditions));
+        // 调试快照与真实判定不得漂移：同样带宿主身份求值（局部机绑定的实体在快照里
+        // 才不会恒显示 available=false）。
+        (!hotspot.def.conditions?.length
+          || this.evalConditionsList(hotspot.def.conditions, { kind: 'hotspot', id: hotspot.def.id }));
       const dx = px - hotspot.centerX;
       const dy = py - hotspot.centerY;
       const dist = Math.sqrt(dx * dx + dy * dy);
@@ -485,7 +527,8 @@ export class InteractionSystem implements IGameSystem {
       const available =
         npc.container.visible &&
         (!planePolicy || planePolicy.canTalkNpcs) &&
-        (!npc.def.conditions?.length || this.evalConditionsList(npc.def.conditions));
+        (!npc.def.conditions?.length
+          || this.evalConditionsList(npc.def.conditions, { kind: 'npc', id: npc.entityId }));
       const dx = px - npc.x;
       const dy = py - npc.y;
       const dist = Math.sqrt(dx * dx + dy * dy);

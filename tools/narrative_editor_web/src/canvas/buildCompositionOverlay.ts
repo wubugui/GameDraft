@@ -84,6 +84,8 @@ function elementSubtitle(el: CompositionElementDef): string {
       : `实体包装 / ${el.ownerType || 'entity'}`;
   }
   if (el.kind === 'scenarioSubgraph') return 'Scenario 子图';
+  // 与 editor/appHelpers.elementSubtitle 同口径（两处都要说清"原型不是机器"）。
+  if (el.kind === 'localMachine') return '局部机原型 · 绑定即实例化（自身不跑）';
   if (el.kind === 'dialogueBlackbox') return '对话黑盒';
   if (el.kind === 'zoneBlackbox') return '区域黑盒';
   if (el.kind === 'minigameBlackbox') return '小游戏黑盒';

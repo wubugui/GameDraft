@@ -1664,3 +1664,212 @@ describe('时间线隔离与存档一致性（R2/R3/W1/W2 回归）', () => {
     expect(narrative.getActiveState('M')).toBe('m0');
   });
 });
+
+// ------------------------------------------------------------------ //
+// 实体局部状态机（设计稿 artifact/Design/实体局部状态机-技术设计-2026-08-08.md）
+// ------------------------------------------------------------------ //
+
+const BOX_MACHINE: NarrativeGraph = {
+  id: 'lm_可拾取物',
+  ownerType: 'system',
+  local: {
+    vars: [
+      { key: 'peeked', type: 'bool', default: false },
+      { key: 'kicks', type: 'float', default: 0 },
+    ],
+    listens: ['第三章开始'],
+    emits: ['箱子_已取'],
+  },
+  initialState: 'inactive',
+  states: { inactive: { id: 'inactive' }, active: { id: 'active' }, done: { id: 'done' } },
+  transitions: [
+    { id: 't_on', from: 'inactive', to: 'active', signal: '第三章开始' },
+  ],
+};
+
+const host = (entityId: string, sceneId = '雾津街头') => ({ sceneId, entityKind: 'hotspot', entityId });
+
+describe('NarrativeStateManager · 实体局部状态机', () => {
+  it('原型不是机器：不进 activeStates、不被当全局单例跑', () => {
+    const { narrative } = makeRuntime();
+    narrative.registerGraphs([BOX_MACHINE]);
+    // 漏掉 listScannableGraphEntries 的排除 = 原型回退 initialState 当全局图跑，1000 个箱子共用一台机器
+    expect(narrative.getActiveState('lm_可拾取物')).toBeUndefined();
+    expect(narrative.debugSnapshot().activeStates).toEqual({});
+    expect(narrative.debugSnapshot().localMachineIds).toEqual(['lm_可拾取物']);
+  });
+
+  it('绑定即实例化，幂等；重复绑定不把已推进的实例抹回出厂态', async () => {
+    const { narrative } = makeRuntime();
+    narrative.registerGraphs([BOX_MACHINE]);
+    const key = narrative.ensureLocalInstance('lm_可拾取物', host('hs_箱子'));
+    expect(key).toBe('lm_可拾取物@雾津街头/hotspot:hs_箱子');
+    await narrative.localGoto(host('hs_箱子'), 'done');
+    expect(narrative.getLocalInstanceState('lm_可拾取物', host('hs_箱子'))).toBe('done');
+    narrative.ensureLocalInstance('lm_可拾取物', host('hs_箱子'));  // 重进场景
+    expect(narrative.getLocalInstanceState('lm_可拾取物', host('hs_箱子'))).toBe('done');
+  });
+
+  it('一条全局信号广播到 N 个实例，各自独立推进（命名成本 = 1，不是 N）', async () => {
+    const { narrative } = makeRuntime();
+    narrative.registerGraphs([BOX_MACHINE]);
+    for (let i = 0; i < 50; i += 1) narrative.ensureLocalInstance('lm_可拾取物', host(`hs_${i}`));
+    // 先让 7 号自己走掉，验证"已离开 from 态的实例不被广播带走"
+    await narrative.localGoto(host('hs_7'), 'done');
+    await narrative.emitNarrativeSignal({ signal: '第三章开始' });
+    await flush();
+    expect(narrative.getLocalInstanceState('lm_可拾取物', host('hs_0'))).toBe('active');
+    expect(narrative.getLocalInstanceState('lm_可拾取物', host('hs_49'))).toBe('active');
+    expect(narrative.getLocalInstanceState('lm_可拾取物', host('hs_7'))).toBe('done');
+  });
+
+  it('实例私有：转移发 narrative:localStateChanged，绝不发 narrative:stateChanged', async () => {
+    const { narrative, eventBus } = makeRuntime();
+    narrative.registerGraphs([BOX_MACHINE]);
+    narrative.ensureLocalInstance('lm_可拾取物', host('hs_箱子'));
+    const global = vi.fn();
+    const local = vi.fn();
+    eventBus.on('narrative:stateChanged', global);
+    eventBus.on('narrative:localStateChanged', local);
+    await narrative.localGoto(host('hs_箱子'), 'active');
+    // 全局事件的消费者（PlaneReconciler 全量重派生位面 / QuestManager 重评任务）
+    // 按"全局图变了"的语义写的；1000 个实例往那条事件上打是语义污染 + 性能灾难。
+    expect(global).not.toHaveBeenCalled();
+    expect(local).toHaveBeenCalledTimes(1);
+    expect(local.mock.calls[0][0]).toMatchObject({ machineId: 'lm_可拾取物', from: 'inactive', to: 'active' });
+  });
+
+  it('局部变量：已声明可写、未声明拒绝；条件叶按实例作用域求值，作用域外恒假', async () => {
+    const { narrative } = makeRuntime();
+    narrative.registerGraphs([{
+      ...BOX_MACHINE,
+      transitions: [
+        // 同一信号、同一 from：踢够 3 次才走 broke，否则走 active（priority 高者先选）
+        { id: 't_broke', from: 'inactive', to: 'done', signal: '第三章开始', priority: 10,
+          conditions: [{ localVar: 'kicks', op: '>=', value: 3 }] },
+        { id: 't_on', from: 'inactive', to: 'active', signal: '第三章开始' },
+      ],
+    }]);
+    narrative.ensureLocalInstance('lm_可拾取物', host('a'));
+    narrative.ensureLocalInstance('lm_可拾取物', host('b'));
+    expect(narrative.setLocalVar(host('a'), 'kicks', 5)).toBe(true);
+    expect(narrative.setLocalVar(host('a'), '打错的名字', 1)).toBe(false); // 未声明 = fail-loud 拒绝
+    await narrative.emitNarrativeSignal({ signal: '第三章开始' });
+    await flush();
+    expect(narrative.getLocalInstanceState('lm_可拾取物', host('a'))).toBe('done');   // kicks>=3
+    expect(narrative.getLocalInstanceState('lm_可拾取物', host('b'))).toBe('active');  // 默认 0
+  });
+
+  it('存档：出厂态不落盘（连键都不出），偏离态往返保真', async () => {
+    const { narrative } = makeRuntime();
+    narrative.registerGraphs([BOX_MACHINE]);
+    for (let i = 0; i < 3; i += 1) narrative.ensureLocalInstance('lm_可拾取物', host(`hs_${i}`));
+    // 三个实例全是出厂态 ⇒ 存档形状与本功能出现前逐字节一致
+    expect(narrative.serialize()).not.toHaveProperty('locals');
+    await narrative.localGoto(host('hs_1'), 'done');
+    narrative.setLocalVar(host('hs_2'), 'peeked', true);
+    const saved = narrative.serialize() as { locals: Record<string, unknown> };
+    expect(Object.keys(saved.locals)).toHaveLength(2); // hs_0 仍是出厂态，不占条目
+    const restored = makeRuntime();
+    restored.narrative.registerGraphs([BOX_MACHINE]);
+    restored.narrative.deserialize(saved);
+    expect(restored.narrative.getLocalInstanceState('lm_可拾取物', host('hs_1'))).toBe('done');
+    expect(restored.narrative.getLocalInstanceState('lm_可拾取物', host('hs_0'))).toBeUndefined();
+    restored.narrative.ensureLocalInstance('lm_可拾取物', host('hs_1')); // 重进场景不覆盖存档态
+    expect(restored.narrative.getLocalInstanceState('lm_可拾取物', host('hs_1'))).toBe('done');
+  });
+
+  it('递归守卫：onEnter 互相 goto 不无限递归（命令式层无队列兜底，必须自带闸）', async () => {
+    const { narrative } = makeRuntime();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    narrative.registerGraphs([{
+      id: 'lm_乒乓', ownerType: 'system', local: {}, initialState: 'a',
+      states: { a: { id: 'a' }, b: { id: 'b' } }, transitions: [],
+    }]);
+    narrative.ensureLocalInstance('lm_乒乓', host('h'));
+    await narrative.localGoto(host('h'), 'b');
+    expect(narrative.getLocalInstanceState('lm_乒乓', host('h'))).toBe('b');
+    await narrative.localGoto(host('h'), 'b'); // 幂等：已在目标态不重跑生命周期
+    expect(narrative.getLocalInstanceState('lm_乒乓', host('h'))).toBe('b');
+    warn.mockRestore();
+  });
+
+  it('宿主自读（验收 B3）：实体能读自己绑的机器，但没有任何叶子能按实例键寻址别人', async () => {
+    const { narrative } = makeRuntime();
+    narrative.registerGraphs([BOX_MACHINE]);
+    narrative.ensureLocalInstance('lm_可拾取物', host('hs_甲'));
+    narrative.ensureLocalInstance('lm_可拾取物', host('hs_乙'));
+    await narrative.localGoto(host('hs_甲'), 'active');
+    narrative.setLocalVar(host('hs_甲'), 'peeked', true);
+    // 自读通了——这是实体显隐能走每帧派生模型的前提，少了它就只能靠 setFlag 表达
+    expect(narrative.getLocalStateForHost(host('hs_甲'))).toBe('active');
+    expect(narrative.getLocalVarForHost(host('hs_甲'), 'peeked')).toBe(true);
+    // 甲的推进不污染乙：实例之间互不可见
+    expect(narrative.getLocalStateForHost(host('hs_乙'))).toBe('inactive');
+    expect(narrative.getLocalVarForHost(host('hs_乙'), 'peeked')).toBe(false);
+    // 未绑定实体 / 未声明变量都是 undefined（fail-closed，不编默认值）
+    expect(narrative.getLocalStateForHost(host('从未绑定'))).toBeUndefined();
+    expect(narrative.getLocalVarForHost(host('hs_甲'), '没声明的')).toBeUndefined();
+    // 私有性未破：局部机不进 owner 索引，@owner/@scene 解析不到它
+    expect(narrative.getGraphIdsByOwner('system', 'lm_可拾取物')).toEqual([]);
+  });
+
+  it('不在场实例（验收 B1）：状态照迁移，生命周期动作不跑', async () => {
+    const { narrative, eventBus } = makeRuntime();
+    const fired: string[] = [];
+    eventBus.on('flag:set' as never, (() => {}) as never);
+    narrative.registerGraphs([{
+      ...BOX_MACHINE,
+      states: {
+        inactive: { id: 'inactive' },
+        active: { id: 'active', onEnterActions: [{ type: 'setFlag', params: { key: 'box_opened', value: true } }] },
+        done: { id: 'done' },
+      },
+    }]);
+    narrative.ensureLocalInstance('lm_可拾取物', host('近', '本场景'));
+    narrative.ensureLocalInstance('lm_可拾取物', host('远', '别的场景'));
+    narrative.markLocalInstancesUnloaded('别的场景');
+    eventBus.on('narrative:localStateChanged', ((e: { host: { sceneId: string } }) => {
+      fired.push(e.host.sceneId);
+    }) as never);
+    await narrative.emitNarrativeSignal({ signal: '第三章开始' });
+    await flush();
+    // 两台都迁移了——不迁移就会永久漏投（局部机禁 reactive，没有补评通道自愈）
+    expect(narrative.getLocalStateForHost(host('近', '本场景'))).toBe('active');
+    expect(narrative.getLocalStateForHost(host('远', '别的场景'))).toBe('active');
+    expect(fired.sort()).toEqual(['别的场景', '本场景']);
+    // 玩家走到"别的场景"时看到的是已激活好的箱子，而那一刻本就不该放的演出确实没放
+    narrative.reconcileLocalInstances('别的场景');
+    expect(narrative.getLocalStateForHost(host('远', '别的场景'))).toBe('active');
+  });
+
+  it('孤儿清理（验收 H1）：装载时对不上现存绑定的存档条目被丢弃，不给绑定集则保守留着', async () => {
+    const { narrative } = makeRuntime();
+    narrative.registerGraphs([BOX_MACHINE]);
+    narrative.ensureLocalInstance('lm_可拾取物', host('还在'));
+    narrative.ensureLocalInstance('lm_可拾取物', host('已删除'));
+    await narrative.localGoto(host('还在'), 'done');
+    await narrative.localGoto(host('已删除'), 'done');
+    const saved = narrative.serialize();
+
+    const a = makeRuntime(); a.narrative.registerGraphs([BOX_MACHINE]); a.narrative.deserialize(saved);
+    a.narrative.reconcileLocalInstances('雾津街头');   // 不给绑定集 = 调用方不掌握绑定信息，保守全留
+    expect(a.narrative.getLocalStateForHost(host('已删除'))).toBe('done');
+
+    const b = makeRuntime(); b.narrative.registerGraphs([BOX_MACHINE]); b.narrative.deserialize(saved);
+    b.narrative.reconcileLocalInstances('雾津街头', new Set(['lm_可拾取物@雾津街头/hotspot:还在']));
+    expect(b.narrative.getLocalStateForHost(host('还在'))).toBe('done');
+    expect(b.narrative.getLocalStateForHost(host('已删除'))).toBeUndefined();   // 孤儿已丢弃
+    expect(b.narrative.serialize()).not.toHaveProperty('locals.lm_可拾取物@雾津街头/hotspot:已删除');
+  });
+
+  it('destroy 后实例层不留残留（norms 不变量⑤ 生命周期对称）', async () => {
+    const { narrative } = makeRuntime();
+    narrative.registerGraphs([BOX_MACHINE]);
+    narrative.ensureLocalInstance('lm_可拾取物', host('h'));
+    await narrative.localGoto(host('h'), 'active');
+    narrative.destroy();
+    expect(narrative.debugSnapshot().localInstances).toEqual({});
+    expect(narrative.getLocalInstanceState('lm_可拾取物', host('h'))).toBeUndefined();
+  });
+});

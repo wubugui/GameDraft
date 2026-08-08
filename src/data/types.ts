@@ -432,6 +432,18 @@ export interface HotspotDef {
    * 为 true 且配置了非空 conditions 时：条件不满足则热区不渲染、不参与交互（与过场绑定、sceneMemory.enabled 叠加：二者任一为 false 则仍不可见）。
    */
   conditionHidesEntity?: boolean;
+  /**
+   * 绑定的**局部机原型** id（narrative_graphs.json 里声明了 `local` 的那类图）。
+   *
+   * **绑定即实例化**：场景装载时按此字段在本实体上开一台私有状态机，实例键由
+   * 「原型 id + 宿主坐标(场景/类别/实体 id)」机械推导，作者从不书写；实例数 = 绑定点数，
+   * 100 个箱子共用一张图而不是写 100 张（设计稿 `artifact/Design/实体局部状态机-技术设计-2026-08-08.md`）。
+   *
+   * 实例的态与变量**完全私有**：外部不可按 id 寻址（`narrative` 叶不接受局部机 id），
+   * 只经全局信号进出；本实体自己用 `selfState` / `selfVar` 条件叶读它。
+   * 一实体至多一台（设计 §7 开放项①）。
+   */
+  machine?: string;
   label?: string;
   autoTrigger?: boolean;
   data: InspectData | PickupData | TransitionData | NpcHotspotData | EncounterTriggerData | ActSpotData;
@@ -622,6 +634,35 @@ export type PostureConditionLeaf = {
   posture: string;
 };
 
+/**
+ * 局部机实例变量叶（实体局部状态机，设计稿
+ * artifact/Design/实体局部状态机-技术设计-2026-08-08.md §3.2）。
+ *
+ * **只在局部机原型自己的 transition 条件里合法**——其它容器出现即校验 error。
+ * 运行时在实例作用域外恒假（fail-closed）：局部变量在局部之外本就没有意义，
+ * 且这条边界正是"实例状态对外不可见"这个私有性承诺的一部分。
+ */
+export type LocalVarConditionLeaf = {
+  localVar: string;
+  op?: '==' | '!=' | '>' | '>=' | '<' | '<=';
+  value: boolean | number | string;
+};
+
+/**
+ * 宿主自读叶（实体局部状态机）：**只在实体自己的 `def.conditions` 里有意义**。
+ * `selfState` 读"我绑的那台机器现在什么态"，`selfVar` 读它的实例变量。
+ *
+ * 这不破坏私有性：外部依然无法按 id 寻址任何实例（没有任何叶子接受实例键）；
+ * 能读的只有实体自己——正如 OOP 里对象读自己的私有字段，外人不行、`this` 天经地义。
+ * 少了这两条，实体显隐只能靠动作写全局 flag，本功能要消灭的命名膨胀会原样回来。
+ */
+export type SelfStateConditionLeaf = { selfState: string };
+export type SelfVarConditionLeaf = {
+  selfVar: string;
+  op?: '==' | '!=' | '>' | '>=' | '<' | '<=';
+  value: boolean | number | string;
+};
+
 /** 图对话原子条件（无逻辑组合） */
 export type GraphConditionLeaf =
   | Condition
@@ -631,7 +672,10 @@ export type GraphConditionLeaf =
   | NarrativeStateConditionLeaf
   | NarrativeRunCountConditionLeaf
   | PlaneConditionLeaf
-  | PostureConditionLeaf;
+  | PostureConditionLeaf
+  | LocalVarConditionLeaf
+  | SelfStateConditionLeaf
+  | SelfVarConditionLeaf;
 
 /**
  * 递归条件：叶子或 all / any / not（与叙事文档 ConditionExpr 一致）。
@@ -960,6 +1004,8 @@ export interface NpcDef {
    * 为 true 且配置了非空 conditions 时：条件不满足则 NPC 不渲染、不参与交互（与过场绑定、sceneMemory.enabled 叠加）。
    */
   conditionHidesEntity?: boolean;
+  /** 绑定的局部机原型 id——**绑定即实例化**，语义同 {@link HotspotDef.machine}。 */
+  machine?: string;
   /** 动画包清单路径，如 `/resources/runtime/animation/<包目录名>/anim.json`；图集由清单内 spritesheet 相对该目录解析 */
   animFile?: string;
   /**
@@ -2082,6 +2128,8 @@ export interface ZoneDef {
   /** 世界坐标闭合多边形顶点（顺序连接，首尾不重复同一点），至少 3 个。 */
   polygon: Array<{ x: number; y: number }>;
   conditions?: ConditionExpr[];
+  /** 绑定的局部机原型 id——**绑定即实例化**，语义同 {@link HotspotDef.machine}。 */
+  machine?: string;
   onEnter?: ActionDef[];
   /** 玩家在区域内时每帧执行的 Action（慎用非幂等 action）。 */
   onStay?: ActionDef[];

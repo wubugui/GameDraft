@@ -110,6 +110,30 @@ export function buildSignalCatalog(
     }
   }
 
+  // 局部机原型的 local.listens / local.emits：这是**唯一一类**信号面不在转移/动作树里的容器
+  // ——局部机对外只经全局信号进出，声明面就是 local 里这两行。不收它 = "谁在发谁在听"漏掉
+  // 整整一类容器：导出信号既进不了信号弹窗候选，监听它的转移还会被判成悬空断链。
+  // 与 blackbox meta.emits 同待遇：补影子条目、editable:false（没有 signals 注册行可改）。
+  for (const { graph } of collectGraphs(data)) {
+    if (!graph.local) continue;
+    const label = String(graph.label ?? '').trim() || graph.id;
+    for (const [field, note] of [['emits', '导出'], ['listens', '监听']] as const) {
+      for (const raw of graph.local[field] ?? []) {
+        const id = String(raw ?? '').trim();
+        if (!id || entries.has(id)) continue;
+        entries.set(id, {
+          id,
+          kind: isDerivedStateSignal(id) ? 'derived' : 'author',
+          label: `来自局部机「${label}」${note}声明`,
+          listeners: listeners.get(id)?.length ?? 0,
+          emitters: emitterRefsById?.get(id)?.length ?? 0,
+          editable: false,
+          registered: isDerivedStateSignal(id),
+        });
+      }
+    }
+  }
+
   for (const [id, refs] of listeners) {
     if (entries.has(id)) continue;
     entries.set(id, {
@@ -226,6 +250,14 @@ export function renameAuthorSignal(data: NarrativeGraphsFileDef, oldId: string, 
     for (const state of Object.values(graph.states ?? {})) {
       replaceEmitSignalInActions(state.onEnterActions, from, to);
       replaceEmitSignalInActions(state.onExitActions, from, to);
+    }
+    // 局部机的 local.listens / local.emits 是声明面（信号索引与漂移校验按它算），
+    // 不跟着改名就会留下指向旧名的声明：既报"声明了没人发"，又让索引漏投。
+    if (graph.local) {
+      for (const field of ['listens', 'emits'] as const) {
+        const list = graph.local[field];
+        if (Array.isArray(list)) graph.local[field] = list.map((s) => (String(s) === from ? to : s));
+      }
     }
   }
   for (const comp of data.compositions ?? []) {

@@ -12,7 +12,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlsplit
@@ -21,7 +21,9 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtNetwork import QHostAddress
 from PySide6.QtWebSockets import QWebSocket, QWebSocketServer
 
+from tools.narrative_debugger import local_machines
 from tools.narrative_debugger.humanize import TimelineEntry, TraceTranslator
+from tools.narrative_debugger.local_machines import LocalInstance
 from tools.narrative_debugger.model import NarrativeIndex
 
 DEFAULT_PORT = 5211
@@ -30,7 +32,16 @@ ROLE_GAME = "game"
 ROLE_TOOL = "tool"
 # 玩家动手之后等多久还没信号，就判定"这一下没往叙事里传"
 ACTION_SILENCE_MS = 1200
-_ACTION_ANSWERED_TYPES = {"signal.received", "signal.processed", "transition.blocked", "state.changed"}
+# 局部机那两条也算"系统听见了"：踢一脚箱子只动它自己那台私有机器时，全局图一动不动，
+# 漏掉的话时间线会把这一下判成"没往叙事里传"——恰恰说反。
+_ACTION_ANSWERED_TYPES = {
+    "signal.received", "signal.processed", "transition.blocked", "state.changed",
+    "local.state.changed", "local.var",
+}
+# 这三条 trace 带着实例键与增量，够本地把实例表推一格——引擎侧目前只在
+# `state.changed` 之后重发快照（见 narrativeDebugBridge.onTrace），
+# 干等快照的话，踢完箱子面板还写着旧状态。快照到了会覆盖回权威值。
+_LOCAL_TRACE_TYPES = {"local.bound", "local.state.changed", "local.var"}
 
 
 @dataclass
@@ -45,6 +56,17 @@ class RuntimeState:
     last_update: str = ""
     # 最近一次真正发生迁移的图——镜头跟着它走
     last_changed_graph: str = ""
+    # 局部机层。**与 active_states 严格分表**——后者是全局图的表，1000 台私有机器混进去
+    # 会把"戏走到哪"那一栏冲垮（运行时那边同理，见 NarrativeStateManager.localInstances）。
+    local_instances: dict[str, LocalInstance] = field(default_factory=dict)
+    local_machine_ids: list[str] = field(default_factory=list)
+
+    def locals_list(self) -> list[LocalInstance]:
+        """按实例键稳定排序：刷新之间行不跳动，人才盯得住某一行。"""
+        return sorted(
+            self.local_instances.values(),
+            key=lambda i: (i.machine_id, i.scene_id, i.entity_id),
+        )
 
     def primary_focus(self, index: NarrativeIndex) -> str:
         """镜头该对准哪儿。
@@ -117,6 +139,9 @@ class DebugHub(QObject):
     savepointCaptured = Signal(str, str, str, bool)  # key, label, payload, drifted
     savepointMissed = Signal(str, str)  # key, label
     breakpointHit = Signal(object)  # {graphId, stateId, fromStateId, triggerKey, transitionId}
+    # 局部机实例表变了。**单开一条**而不是复用 stateChanged：后者会带着左栏拍子清单、
+    # 焦点图、信号关系窗一起重画，而局部机一条信号能让 1000 台机器同时动。
+    localsChanged = Signal()
     replyReceived = Signal(object)
     logged = Signal(str)
     # 连上的游戏页签清单变了（新连 / 断开 / 换了场景 → 标签要重画）
@@ -432,9 +457,17 @@ class DebugHub(QObject):
             runs = narrative.get("runArchetypes")
             state.run_archetypes = [str(x) for x in runs] if isinstance(runs, list) else []
             state.activated_archetype = str(narrative.get("activatedArchetype") or "")
+            machines = narrative.get("localMachineIds")
+            state.local_machine_ids = [str(x) for x in machines] if isinstance(machines, list) else []
+            # 快照是权威：整表换掉，把此前按 trace 推的乐观值全部对齐回去
+            if "localInstances" in narrative:
+                state.local_instances = {
+                    inst.key: inst for inst in local_machines.read_instances(narrative, self.index)
+                }
         state.last_update = datetime.now().strftime("%H:%M:%S")
         if target is self._active:
             self.stateChanged.emit()
+            self.localsChanged.emit()
         if scene_before != state.scene_id:
             # 下拉里那一行认的是场景名，换场景就得重画（后台页签也一样）
             self.targetsChanged.emit()
@@ -476,6 +509,8 @@ class DebugHub(QObject):
             graph_id = str(event.get("graphId") or "")
             if graph_id:
                 self.state.last_changed_graph = graph_id
+        if str(event.get("type") or "") in _LOCAL_TRACE_TYPES:
+            self._apply_local_trace(event)
         entry = self.translator.translate(event, at)
         if entry is None:
             return
@@ -492,6 +527,65 @@ class DebugHub(QObject):
             del self.timeline[:trimmed]
             self.timelineTrimmed.emit(trimmed)
         self.timelineAppended.emit(entry)
+
+    def _apply_local_trace(self, event: dict[str, Any]) -> None:
+        """按 trace 把实例表推一格（乐观更新，下一份快照到达时会被覆盖成权威值）。
+
+        为什么要这么做：引擎侧只在 `state.changed` 之后重发快照，而局部机走的是
+        `local.state.changed`——干等的话，踢完箱子面板还写着上一态，"看着没生效"
+        与"真没生效"当场分不开，那正是这个面板存在的理由。
+        """
+        kind = str(event.get("type") or "")
+        key = str(event.get("label") or "")
+        if not key:
+            return
+        table = self.state.local_instances
+        inst = table.get(key)
+
+        if kind == "local.bound":
+            if inst is None:
+                parsed = local_machines.parse_instance_key(key)
+                if parsed is None:
+                    return
+                table[key] = LocalInstance(
+                    key=key,
+                    machine_id=parsed.machine_id,
+                    scene_id=parsed.scene_id,
+                    entity_kind=parsed.entity_kind,
+                    entity_id=parsed.entity_id,
+                    active=str(event.get("stateId") or ""),
+                    loaded=True,   # 绑定发生在场景装载时，天然在场
+                )
+        elif inst is None:
+            # 没见过这个键（快照还没到）：也建一条，宁可先显示出来再被快照修正，
+            # 也不要让面板对刚发生的事装聋
+            parsed = local_machines.parse_instance_key(key)
+            if parsed is None:
+                return
+            inst = LocalInstance(
+                key=key,
+                machine_id=parsed.machine_id,
+                scene_id=parsed.scene_id,
+                entity_kind=parsed.entity_kind,
+                entity_id=parsed.entity_id,
+                active="",
+            )
+            table[key] = inst
+
+        if kind == "local.state.changed":
+            # 预告那一条（宿主不在场）没有 stateId，只有 to；两者都认
+            to_state = str(event.get("to") or event.get("stateId") or "")
+            if to_state:
+                table[key] = replace(table[key], active=to_state)
+        elif kind == "local.var":
+            payload = event.get("payload") or {}
+            var_key = str(payload.get("key") or "")
+            if var_key:
+                merged = dict(table[key].overrides)
+                merged[var_key] = payload.get("value")
+                table[key] = replace(table[key], overrides=merged)
+
+        self.localsChanged.emit()
 
     # ---- 出站命令 -----------------------------------------------------
 

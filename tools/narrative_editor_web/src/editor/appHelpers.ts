@@ -193,6 +193,9 @@ export function elementSubtitle(el?: CompositionElementDef): string {
       : `实体包装 / ${el.ownerType || 'entity'}`;
   }
   if (el.kind === 'scenarioSubgraph') return 'Scenario 子图';
+  // 副标题上写死"原型·不自己跑"：局部机在画布上长得像一台机器，但它一份实例都没有——
+  // 策划最容易的误解就是以为这张图自己在运行（真正在跑的是绑了它的每个实体各一台）。
+  if (el.kind === 'localMachine') return '局部机原型 · 绑定即实例化（自身不跑）';
   if (el.kind === 'dialogueBlackbox') return '对话黑盒';
   if (el.kind === 'zoneBlackbox') return '区域黑盒';
   if (el.kind === 'minigameBlackbox') return '小游戏黑盒';

@@ -700,6 +700,42 @@ button:disabled {
   background: #4c6253;
 }
 
+/* 局部机原型：视觉上刻意不像"一台在跑的机器"——虚线蓝图边 + 冷青底 + 左侧图纸条，
+   与 wrapperGraph（暖棕实线，真绑在某个实体上）一眼分得开。 */
+.localMachine {
+  position: relative;
+  border-style: dashed;
+  border-color: #6fa8b8;
+  background: repeating-linear-gradient(
+    135deg,
+    #2b4750,
+    #2b4750 9px,
+    #2f4d57 9px,
+    #2f4d57 18px
+  );
+}
+
+.node.localMachine::before,
+.subgraph-group.localMachine::before {
+  content: '图纸';
+  position: absolute;
+  top: -9px;
+  left: 8px;
+  padding: 0 5px;
+  border: 1px dashed #6fa8b8;
+  border-radius: 6px;
+  background: #1c2a2f;
+  color: #9fd0dc;
+  font-size: var(--editor-host-font-10, 10px);
+  letter-spacing: 1px;
+  pointer-events: none;
+}
+
+.subgraph-group.localMachine {
+  border-color: #6fa8b8;
+  background: rgba(28, 42, 47, 0.72);
+}
+
 .dialogueBlackbox {
   background: #4f4a64;
 }
@@ -714,6 +750,37 @@ button:disabled {
 
 .cutsceneBlackbox {
   background: #574d63;
+}
+
+/* ---- 局部机原型检查器（实例变量表）---- */
+
+.local-machine-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.local-var-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.local-var-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 0.8fr) minmax(0, 1fr) auto;
+  gap: 4px;
+  align-items: center;
+}
+
+.local-var-row input.invalid {
+  border-color: #d9534f;
+  background: rgba(217, 83, 79, 0.12);
+}
+
+.local-var-error {
+  color: #d9534f;
+  font-weight: 600;
 }
 
 /* ---- 编辑器分组框（纯视觉整理层，见 canvas/editorGroups.ts）---- */

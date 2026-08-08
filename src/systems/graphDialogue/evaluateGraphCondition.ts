@@ -19,6 +19,9 @@ export type ConditionTrace =
   | { kind: 'narrativeCount'; result: boolean; label: string }
   | { kind: 'plane'; result: boolean; label: string }
   | { kind: 'posture'; result: boolean; label: string }
+  | { kind: 'localVar'; result: boolean; label: string }
+  | { kind: 'selfState'; result: boolean; label: string }
+  | { kind: 'selfVar'; result: boolean; label: string }
   | { kind: 'unknown'; result: boolean; label: string };
 
 const questStatusMap: Record<string, QuestStatus> = {
@@ -65,6 +68,23 @@ export interface ConditionEvalContext {
    * ——姿态是瞬时表现态，取不到就当"没在那个姿态"，是安全侧。
    */
   getPlayerPosture?: () => string | null;
+  /**
+   * 局部机实例作用域（仅由 NarrativeStateManager 在求值该实例自己的 transition 条件时注入）。
+   * 未注入 = 不在任何实例作用域内，`localVar` 叶恒为假（fail-closed：局部变量在局部之外
+   * 本就不该有意义；校验器把"局部机之外出现 localVar 叶"直接判 error）。
+   */
+  localVars?: { get(key: string): boolean | number | string };
+  /**
+   * 当前被求值的**宿主实体**（谁的 conditions 正在被判）。由 InteractionSystem/SceneManager
+   * 逐实体注入。`selfState`/`selfVar` 叶据此读"我绑的那台局部机"——外部依然无法按 id
+   * 寻址任何实例，能读的只有实体自己（OOP 的 `this`）。
+   */
+  selfHost?: { sceneId: string; entityKind: string; entityId: string };
+  /** 宿主自读后端（由 NarrativeStateManager 注入）。 */
+  selfLocal?: {
+    getState(host: { sceneId: string; entityKind: string; entityId: string }): string | undefined;
+    getVar(host: { sceneId: string; entityKind: string; entityId: string }, key: string): boolean | number | string | undefined;
+  };
 }
 
 /**
@@ -187,6 +207,90 @@ function evalNarrativeCountLeaf(
     case '<=': return count <= expr.value;
     default: return false;
   }
+}
+
+function isLocalVarLeaf(x: ConditionExpr): x is {
+  localVar: string; op?: '==' | '!=' | '>' | '>=' | '<' | '<='; value: boolean | number | string;
+} {
+  const m = x as { localVar?: unknown; value?: unknown };
+  return typeof m.localVar === 'string' && m.value !== undefined;
+}
+
+/**
+ * 局部机实例变量叶。作用域外（未注入 localVars）恒假——见 ConditionEvalContext.localVars。
+ * 比较口径与 flag 叶一致：数值支持全部比较运算符，布尔/字符串只认 ==/!=。
+ */
+function evalLocalVarLeaf(
+  expr: { localVar: string; op?: string; value: boolean | number | string },
+  ctx: ConditionEvalContext,
+): boolean {
+  if (!ctx.localVars) return false;
+  const key = expr.localVar.trim();
+  if (!key) return false;
+  const got = ctx.localVars.get(key);
+  const op = expr.op ?? '==';
+  if (typeof got === 'number' && typeof expr.value === 'number') {
+    switch (op) {
+      case '==': return got === expr.value;
+      case '!=': return got !== expr.value;
+      case '>': return got > expr.value;
+      case '>=': return got >= expr.value;
+      case '<': return got < expr.value;
+      case '<=': return got <= expr.value;
+      default: return false;
+    }
+  }
+  if (op === '==') return got === expr.value;
+  if (op === '!=') return got !== expr.value;
+  return false;
+}
+
+function isSelfStateLeaf(x: ConditionExpr): x is { selfState: string } {
+  return typeof (x as { selfState?: unknown }).selfState === 'string';
+}
+
+function isSelfVarLeaf(x: ConditionExpr): x is {
+  selfVar: string; op?: '==' | '!=' | '>' | '>=' | '<' | '<='; value: boolean | number | string;
+} {
+  const m = x as { selfVar?: unknown; value?: unknown };
+  return typeof m.selfVar === 'string' && m.value !== undefined;
+}
+
+/** 宿主自读：我绑的机器是否处于该态。无宿主上下文/无绑定 = 假（fail-closed）。 */
+function evalSelfStateLeaf(expr: { selfState: string }, ctx: ConditionEvalContext): boolean {
+  if (!ctx.selfHost || !ctx.selfLocal) return false;
+  const want = expr.selfState.trim();
+  return Boolean(want) && ctx.selfLocal.getState(ctx.selfHost) === want;
+}
+
+/** 宿主自读变量。比较口径同 localVar 叶。 */
+function evalSelfVarLeaf(
+  expr: { selfVar: string; op?: string; value: boolean | number | string },
+  ctx: ConditionEvalContext,
+): boolean {
+  if (!ctx.selfHost || !ctx.selfLocal) return false;
+  const key = expr.selfVar.trim();
+  if (!key) return false;
+  const got = ctx.selfLocal.getVar(ctx.selfHost, key);
+  if (got === undefined) return false;
+  return compareLocalValue(got, expr.op ?? '==', expr.value);
+}
+
+function compareLocalValue(got: boolean | number | string, op: string, want: boolean | number | string): boolean {
+  if (typeof got === 'number' && typeof want === 'number') {
+    switch (op) {
+      case '==': return got === want;
+      case '!=': return got !== want;
+      case '>': return got > want;
+      case '>=': return got >= want;
+      case '<': return got < want;
+      case '<=': return got <= want;
+      default: return false;
+    }
+  }
+  if (op === '==') return got === want;
+  if (op === '!=') return got !== want;
+  return false;
 }
 
 function isAllNode(x: ConditionExpr): x is { all: ConditionExpr[] } {
@@ -360,6 +464,18 @@ export function evaluateConditionExpr(
     return evalPostureLeaf(expr, ctx);
   }
 
+  if (isLocalVarLeaf(expr)) {
+    return evalLocalVarLeaf(expr, ctx);
+  }
+
+  if (isSelfStateLeaf(expr)) {
+    return evalSelfStateLeaf(expr, ctx);
+  }
+
+  if (isSelfVarLeaf(expr)) {
+    return evalSelfVarLeaf(expr, ctx);
+  }
+
   if (isQuestLeaf(expr)) {
     const m = expr as { quest: string; questStatus?: string; status?: string };
     return evalQuestLeaf(m.quest, m.questStatus ?? m.status, ctx);
@@ -491,6 +607,33 @@ export function evaluateConditionExprWithTrace(
       label += `：期望 ${qsRaw}，实际 ${QuestStatus[got]}`;
     }
     return { result: ok, trace: { kind: 'quest', result: ok, label } };
+  }
+
+  if (isLocalVarLeaf(expr)) {
+    const ok = evalLocalVarLeaf(expr, ctx);
+    const got = ctx.localVars ? ctx.localVars.get(expr.localVar.trim()) : undefined;
+    const label = ctx.localVars
+      ? `localVar「${expr.localVar}」${expr.op ?? '=='} ${JSON.stringify(expr.value)}，实际=${JSON.stringify(got)}`
+      : `localVar「${expr.localVar}」不在局部机实例作用域内（恒假）`;
+    return { result: ok, trace: { kind: 'localVar', result: ok, label } };
+  }
+
+  if (isSelfStateLeaf(expr)) {
+    const ok = evalSelfStateLeaf(expr, ctx);
+    const got = ctx.selfHost && ctx.selfLocal ? ctx.selfLocal.getState(ctx.selfHost) : undefined;
+    const label = ctx.selfHost
+      ? `selfState 期望=${expr.selfState} 实际=${got ?? '—(未绑定局部机)'}`
+      : 'selfState 不在宿主实体上下文内（恒假）';
+    return { result: ok, trace: { kind: 'selfState', result: ok, label } };
+  }
+
+  if (isSelfVarLeaf(expr)) {
+    const ok = evalSelfVarLeaf(expr, ctx);
+    const got = ctx.selfHost && ctx.selfLocal ? ctx.selfLocal.getVar(ctx.selfHost, expr.selfVar.trim()) : undefined;
+    const label = ctx.selfHost
+      ? `selfVar「${expr.selfVar}」${expr.op ?? '=='} ${JSON.stringify(expr.value)}，实际=${JSON.stringify(got)}`
+      : 'selfVar 不在宿主实体上下文内（恒假）';
+    return { result: ok, trace: { kind: 'selfVar', result: ok, label } };
   }
 
   if (isConditionLeaf(expr)) {

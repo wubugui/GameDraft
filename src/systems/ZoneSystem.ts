@@ -60,10 +60,27 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
     this.groupConditions = reader;
   }
 
-  private evalZoneConditions(conds: ConditionExpr[] | undefined, ctx: ConditionEvalContext | null): boolean {
+  private evalZoneConditions(
+    conds: ConditionExpr[] | undefined,
+    ctx: ConditionEvalContext | null,
+    zoneId?: string,
+  ): boolean {
     if (!conds?.length) return true;
-    if (ctx) return evaluateConditionExprList(conds, ctx);
+    if (ctx) return evaluateConditionExprList(conds, this.withSelfHost(ctx, zoneId));
     return this.flagStore.checkConditions(conds as Condition[]);
+  }
+
+  /**
+   * 逐 zone 补「我是谁」，供局部机自读叶（`selfState` / `selfVar`）解析成"这个 zone 绑的那台机器"。
+   * 与 InteractionSystem 的同名助手同口径：sceneId 取共享上下文里的 currentSceneId，
+   * 不另开可能漂移的场景来源。缺 zoneId 或缺场景时原样返回——自读叶随即 fail-closed 判假。
+   * 只在真有条件时浅拷贝（本帧共用那份上下文仍是单次构建）。
+   */
+  private withSelfHost(ctx: ConditionEvalContext, zoneId?: string): ConditionEvalContext {
+    const sceneId = String(ctx.currentSceneId ?? '').trim();
+    const id = String(zoneId ?? '').trim();
+    if (!sceneId || !id) return ctx;
+    return { ...ctx, selfHost: { sceneId, entityKind: 'zone', entityId: id } };
   }
 
   setPlayerPositionGetter(getter: () => { x: number; y: number }): void {
@@ -159,8 +176,9 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
       }
       const groupId = zone.group?.trim() ?? '';
       const groupConds = groupId ? this.groupConditions?.(groupId) : undefined;
-      const groupOk = this.evalZoneConditions(groupConds, ctx);
-      const zoneOk = this.evalZoneConditions(zone.conditions, ctx);
+      // group 条件是整组共享的语义，宿主仍按当前 zone 解析（组内各 zone 各读各的机器）
+      const groupOk = this.evalZoneConditions(groupConds, ctx, zone.id);
+      const zoneOk = this.evalZoneConditions(zone.conditions, ctx, zone.id);
       if (!groupOk || !zoneOk) {
         if (this.activeZoneIds.has(zone.id)) this.exitZone(zone);
         continue;

@@ -101,6 +101,102 @@ export interface NarrativeRunDef {
   resumable?: boolean;
 }
 
+/**
+ * 局部机变量声明（设计稿 artifact/Design/实体局部状态机-技术设计-2026-08-08.md §2.1）：
+ * 类型与默认值定义在**原型**上，实例只存当前值。
+ */
+export interface NarrativeLocalVarDef {
+  key: string;
+  type: 'bool' | 'float' | 'string';
+  default?: boolean | number | string;
+}
+
+/**
+ * 局部机声明：本图是「可被实体绑定、绑定即实例化」的私有状态机原型。
+ * 缺省（不写）= 全局图（常驻或活计），与历史行为逐字节一致。
+ *
+ * 私有性三条硬边界（校验器同口径拦，见 narrativeGraphValidation）：
+ * ① 不进 ownerIndex（`@owner`/`@scene` 解析不到）；
+ * ② 不发 `state:<id>:<态>` 派生广播（broadcastOnEnter = 校验 error）；
+ * ③ `narrative`/`narrativeCount` 条件叶不接受局部机 id（校验 error）。
+ */
+export interface NarrativeLocalDef {
+  /** 实例变量表：类型 + 默认值。实例只存偏离默认的项。 */
+  vars?: NarrativeLocalVarDef[];
+  /** 显式声明监听的全局信号（建索引 + 校验声明漂移用）。 */
+  listens?: string[];
+  /** 显式声明导出的全局信号（校验用；实发以动作树为准）。 */
+  emits?: string[];
+}
+
+/** 局部机实例的宿主实体坐标（键由系统机械生成，作者从不书写）。 */
+export interface NarrativeLocalHost {
+  sceneId: string;
+  entityKind: string;
+  entityId: string;
+}
+
+/** 局部机实例的运行时记录（active + 偏离默认的变量）。 */
+export interface NarrativeLocalInstance {
+  machineId: string;
+  host: NarrativeLocalHost;
+  active: string;
+  vars: Map<string, boolean | number | string>;
+  /**
+   * 宿主是否在场（所属场景当前已装载）。**不入存档**——派生自场景装载。
+   *
+   * 语义（验收 B1 的解法）：**状态迁移永远发生**（不在场也照走，否则批量激活会永久漏投，
+   * 而局部机禁 reactive、没有补评通道自愈）；但**生命周期动作只在在场时跑**
+   * （不在场时跑 onEnter 等于在玩家不在的场景里放过场/给道具）。
+   * 于是玩家走到时看到的是已经激活好的箱子，而那一刻本就不该有的演出也确实没放。
+   */
+  loaded: boolean;
+}
+
+/** 局部机原型（有 `local` 声明）——绑定即实例化，实例数 0..N。 */
+export function isLocalMachineGraph(graph: Pick<NarrativeGraph, 'local'> | null | undefined): boolean {
+  return Boolean(graph?.local);
+}
+
+/**
+ * 实例键：`<machineId>@<sceneId>/<entityKind>:<entityId>`。
+ * `@` 是图 id 的保留禁用字符（活计图设计 §5.6 定，现网 0 处），故可安全用作实例分隔符。
+ * 键由「绑定关系 + 宿主实体」推导 ⇒ 落在实体重构引擎视野内，改名/删实体时机械跟随。
+ */
+export function narrativeLocalInstanceKey(machineId: string, host: NarrativeLocalHost): string {
+  const m = String(machineId ?? '').trim();
+  const s = String(host?.sceneId ?? '').trim();
+  const k = String(host?.entityKind ?? '').trim();
+  const e = String(host?.entityId ?? '').trim();
+  return `${m}@${s}/${k}:${e}`;
+}
+
+/** 宿主坐标键（反查表用；与实例键的区别是不含 machineId——一实体至多一台机器）。 */
+export function narrativeLocalHostKey(host: NarrativeLocalHost): string {
+  return `${String(host?.sceneId ?? '').trim()}/${String(host?.entityKind ?? '').trim()}:${String(host?.entityId ?? '').trim()}`;
+}
+
+/** {@link narrativeLocalInstanceKey} 的逆运算（存档回灌用）。格式非法返回 null。 */
+export function parseNarrativeLocalInstanceKey(
+  key: string,
+): { machineId: string; host: NarrativeLocalHost } | null {
+  const raw = String(key ?? '');
+  const at = raw.indexOf('@');
+  if (at <= 0) return null;
+  const machineId = raw.slice(0, at);
+  const rest = raw.slice(at + 1);
+  const slash = rest.indexOf('/');
+  if (slash < 0) return null;
+  const sceneId = rest.slice(0, slash);
+  const tail = rest.slice(slash + 1);
+  const colon = tail.indexOf(':');
+  if (colon <= 0) return null;
+  const entityKind = tail.slice(0, colon);
+  const entityId = tail.slice(colon + 1);
+  if (!machineId || !sceneId || !entityKind || !entityId) return null;
+  return { machineId, host: { sceneId, entityKind, entityId } };
+}
+
 export interface NarrativeGraph {
   id: string;
   label?: string;
@@ -114,6 +210,8 @@ export interface NarrativeGraph {
    *  （包已降级，见 listScannableGraphEntries 注释）。 */
   packageId?: string;
   run?: NarrativeRunDef;
+  /** 局部机原型声明（见 {@link NarrativeLocalDef}）。与 `run` 互斥（校验器拦）。 */
+  local?: NarrativeLocalDef;
   initialState: string;
   entryState?: string;
   exitStates?: string[];
@@ -239,6 +337,9 @@ export type NarrativeTraceEventType =
   | 'reactive.queued'
   | 'run.lifecycle'
   | 'package.lifecycle'
+  | 'local.bound'
+  | 'local.state.changed'
+  | 'local.var'
   | 'actions.start'
   | 'actions.end'
   | 'actions.failed'
@@ -291,6 +392,22 @@ export class NarrativeStateManager implements IGameSystem {
   private livePackages: Set<string> = new Set();
   /** 原型累计计数器（started/reset/aborted/settled-by-exit；随存档持久化）。 */
   private runCounters: Map<string, NarrativeRunCounters> = new Map();
+  /**
+   * 局部机实例表（键见 {@link narrativeLocalInstanceKey}）。**与 activeStates 严格分表**——
+   * 后者是全局图的表，位面对账器等全量派生消费者按它取快照，混入实例会污染其口径。
+   */
+  private localInstances: Map<string, NarrativeLocalInstance> = new Map();
+  /**
+   * 全局信号键 → 监听该键的局部机原型 id 集。一条信号只访问声明监听它的原型的实例，
+   * 其余零成本（1000 个实例不能每信号全表扫）。registerGraphs 时失效、懒重建。
+   */
+  private localSignalIndexCache: Map<string, Set<string>> | null = null;
+  /**
+   * 宿主坐标 → 实例键 的反查表。`selfState`/`selfVar` 叶是**每帧 × 每个带条件实体**调用的，
+   * 线性扫 localInstances 到千实例量级就是每帧热点（验收 A-4）。与 localInstances 同生共死：
+   * 任何增删都必须同步两张表，否则自读会读到已删实例或读不到新实例。
+   */
+  private localHostIndex: Map<string, string> = new Map();
   private queue: QueuedItem[] = [];
   private completedQueueItems: QueuedItem[] = [];
   private draining = false;
@@ -333,6 +450,9 @@ export class NarrativeStateManager implements IGameSystem {
   private validationMode: NarrativeRuntimeValidationMode = this.defaultRuntimeValidationMode();
   private static readonly MAX_DRAIN_STEPS = 128;
   private static readonly MAX_TRACE_EVENTS = 160;
+  /** 局部命令式转移的递归深度（onEnter 里再 goto）。命令式层无队列守卫，必须自带闸。 */
+  private localGotoDepth = 0;
+  private static readonly MAX_LOCAL_GOTO_DEPTH = 16;
   /**
    * dev 叙事调试器的唯一挂点（见 src/dev/narrativeDebugBridge.ts）。
    * 默认 null——没人设它时，recordTrace 里只多一次静态属性读，且 transition.blocked
@@ -470,6 +590,9 @@ export class NarrativeStateManager implements IGameSystem {
     this.livePackages.clear();
     this.runCounters.clear();
     this.activatedArchetype = null;
+    this.localInstances.clear();
+    this.localHostIndex.clear();
+    this.localSignalIndexCache = null;
     this.primaryOwnerWarningKeys.clear();
     this.listenedSignalKeysCache = null;
     this.reportedUnlistenedSignalKeys.clear();
@@ -499,6 +622,12 @@ export class NarrativeStateManager implements IGameSystem {
       if (isRunGraph(graph)) {
         // 活计图：只登记形状，不种实例（实例由 startNarrativeRun 创建）；
         // 不进 owner 索引（@owner/主 wrapper 语义只属常驻图，校验器同口径拦）。
+        continue;
+      }
+      if (isLocalMachineGraph(graph)) {
+        // 局部机原型：只登记形状，不种实例（实例由 bindLocalMachine 创建）；
+        // **绝不进 activeStates**——否则原型自身会被当成一台全局单例机器跑起来；
+        // 也不进 owner 索引（私有性边界①）。
         continue;
       }
       this.activeStates.set(graph.id, graph.initialState);
@@ -581,6 +710,10 @@ export class NarrativeStateManager implements IGameSystem {
   private listScannableGraphEntries(): Array<[string, NarrativeGraph]> {
     const out: Array<[string, NarrativeGraph]> = [];
     for (const [gid, graph] of this.graphs) {
+      // 局部机原型永不进全局扫描集：它不是一台机器，是一份可被实体绑定的形状。
+      // （漏这一条 = 原型被 getInstanceActive 回退成 initialState 当全局单例跑，
+      //  1000 个箱子共用一台机器——本功能最致命的一脚。）
+      if (isLocalMachineGraph(graph)) continue;
       if (!isRunGraph(graph)) {
         out.push([gid, graph]);
       } else if (gid === this.activatedArchetype && this.activeStates.has(gid)) {
@@ -1014,7 +1147,371 @@ export class NarrativeStateManager implements IGameSystem {
     });
   }
 
+  // ------------------------------------------------------------------ //
+  // 局部机实例层（绑定即实例化；实例私有、不可被外部按 id 寻址）
+  // 设计稿：artifact/Design/实体局部状态机-技术设计-2026-08-08.md
+  // ------------------------------------------------------------------ //
+
+  /** 局部机原型（有 `local` 声明）。 */
+  private requireLocalMachine(machineId: string): NarrativeGraph | null {
+    const graph = this.graphs.get(String(machineId ?? '').trim());
+    if (!graph) return null;
+    return isLocalMachineGraph(graph) ? graph : null;
+  }
+
+  /** 原型声明的变量默认值（实例只存偏离默认的项）。 */
+  private localVarDefault(graph: NarrativeGraph, key: string): boolean | number | string {
+    const def = graph.local?.vars?.find((v) => v.key === key);
+    if (!def) return false;
+    if (def.default !== undefined) return def.default;
+    return def.type === 'float' ? 0 : def.type === 'string' ? '' : false;
+  }
+
+  /**
+   * 绑定即实例化（幂等）：已有实例直接返回，不重置其状态——场景反复进出时
+   * 必须保住实例已推进的态（重复建实例会把玩家进度抹回 initialState）。
+   */
+  ensureLocalInstance(machineId: string, host: NarrativeLocalHost): string | null {
+    const graph = this.requireLocalMachine(machineId);
+    if (!graph) {
+      const message = `NarrativeStateManager: 绑定目标 "${machineId}" 不是局部机原型（未声明 local）`;
+      this.recordIssue({ severity: 'warning', code: 'local.bind.notMachine', message, graphId: machineId });
+      console.warn(message);
+      return null;
+    }
+    const key = narrativeLocalInstanceKey(machineId, host);
+    if (this.localInstances.has(key)) return key;
+    this.putLocalInstance(key, {
+      machineId,
+      host: { ...host },
+      active: graph.initialState,
+      vars: new Map(),
+      loaded: true,   // 由绑定点（场景装载）创建，天然在场
+    });
+    this.recordTrace('local.bound', { graphId: machineId, stateId: graph.initialState, label: key });
+    return key;
+  }
+
+  /** 实例当前态（无实例=undefined）。**仅供调试器/宿主实体自身**，不对内容层开放寻址。 */
+  getLocalInstanceState(machineId: string, host: NarrativeLocalHost): string | undefined {
+    return this.localInstances.get(narrativeLocalInstanceKey(machineId, host))?.active;
+  }
+
+  /**
+   * 宿主自读：该实体绑的那台机器现在什么态（无绑定=undefined）。
+   *
+   * 这是 `selfState` / `selfVar` 条件叶的后端。私有性在此**不被破坏**——外部依然无法
+   * 按 id 寻址任何实例（键含 `@`，且没有任何叶子接受实例键）；能读的只有实体自己，
+   * 恰如 OOP 里对象读自己的私有字段：外人不行，`this` 天经地义。
+   *
+   * 少了这条，实体显隐就只能靠 onEnterActions 写全局 flag 表达，
+   * 本功能要消灭的 `箱子状态_<id>` 命名膨胀会原样回来（验收 B3）。
+   */
+  getLocalStateForHost(host: NarrativeLocalHost): string | undefined {
+    return this.findInstanceByHost(host)?.active;
+  }
+
+  /** 宿主自读变量（无绑定/未声明=undefined）。`selfVar` 条件叶后端。 */
+  getLocalVarForHost(host: NarrativeLocalHost, key: string): boolean | number | string | undefined {
+    const inst = this.findInstanceByHost(host);
+    if (!inst) return undefined;
+    const graph = this.graphs.get(inst.machineId);
+    if (!graph?.local?.vars?.some((v) => v.key === key)) return undefined;
+    return this.getLocalVar(inst, key);
+  }
+
+  /**
+   * 装载期对账（验收 B1）：把某场景内**当前已装载**的宿主实例按当前态对齐一次。
+   *
+   * 存在的理由：信号投递只发给"在场"的实例（避免玩家不在的场景里跑演出动作），
+   * 那么不在场时错过的批量激活必须有补评通道——局部机禁 reactive，没有排空尾重评自愈。
+   * 对账**只读不演**：只把错过的 signal 型迁移按当前世界状态补判，绝不重放 onEnter 演出。
+   */
+  reconcileLocalInstances(sceneId: string, boundHostKeys?: ReadonlySet<string>): number {
+    const scene = String(sceneId ?? '').trim();
+    if (!scene) return 0;
+    let n = 0;
+    const orphans: string[] = [];
+    for (const [key, inst] of this.localInstances.entries()) {
+      if (inst.host.sceneId !== scene) continue;
+      // 孤儿清理（验收 H1）：存档回灌的条目在本场景装载时若对不上任何现存绑定，
+      // 说明该实体已被删/改名/解绑——丢弃并记 issue，否则条目只增不减、
+      // 每次存档原样写回，永远攒着一堆没人认领的垃圾。
+      // 只在给了绑定集时清理：没给 = 调用方不掌握绑定信息，宁可留着也不误删玩家进度。
+      if (boundHostKeys && !boundHostKeys.has(key)) {
+        orphans.push(key);
+        continue;
+      }
+      inst.loaded = true;
+      n += 1;
+    }
+    for (const key of orphans) {
+      this.dropLocalInstance(key);
+      this.warnDroppedSaveEntry(
+        'local.instance.orphan',
+        `NarrativeStateManager: 局部实例 "${key}" 在场景 ${scene} 装载时对不上任何现存绑定（实体已删/改名/解绑），丢弃`,
+        key,
+      );
+    }
+    return n;
+  }
+
+  /** 场景卸载：把本场景实例标为不在场（**不删条目**——状态必须跨场景存活）。 */
+  markLocalInstancesUnloaded(sceneId: string): void {
+    const scene = String(sceneId ?? '').trim();
+    for (const inst of this.localInstances.values()) {
+      if (inst.host.sceneId === scene) inst.loaded = false;
+    }
+  }
+
+  /** 宿主实体上的实例（一实体至多一台，见设计 §7 开放项①）。 */
+  private findInstanceByHost(host: NarrativeLocalHost): NarrativeLocalInstance | undefined {
+    const key = this.localHostIndex.get(narrativeLocalHostKey(host));
+    return key ? this.localInstances.get(key) : undefined;
+  }
+
+  /** 增删实例的唯一出入口：两张表必须同步（散着写迟早漏一处）。 */
+  private putLocalInstance(key: string, inst: NarrativeLocalInstance): void {
+    this.localInstances.set(key, inst);
+    this.localHostIndex.set(narrativeLocalHostKey(inst.host), key);
+  }
+
+  private dropLocalInstance(key: string): void {
+    const inst = this.localInstances.get(key);
+    if (inst) this.localHostIndex.delete(narrativeLocalHostKey(inst.host));
+    this.localInstances.delete(key);
+  }
+
+  /** 实例变量读（未设置=原型默认值）。 */
+  getLocalVar(inst: NarrativeLocalInstance, key: string): boolean | number | string {
+    if (inst.vars.has(key)) return inst.vars.get(key)!;
+    const graph = this.graphs.get(inst.machineId);
+    return graph ? this.localVarDefault(graph, key) : false;
+  }
+
+  /**
+   * 实例变量写。未在原型 `vars` 声明的 key 拒绝（fail-loud）——否则拼写错静默生成
+   * 一个永远读不到的变量，正是全局 flag 表最恶心的那个失败模式。
+   */
+  setLocalVar(host: NarrativeLocalHost, key: string, value: boolean | number | string): boolean {
+    const inst = this.findInstanceByHost(host);
+    if (!inst) {
+      this.recordIssue({
+        severity: 'warning',
+        code: 'local.var.noInstance',
+        message: `NarrativeStateManager: setLocalVar 找不到宿主实例 ${host.sceneId}/${host.entityKind}:${host.entityId}`,
+      });
+      return false;
+    }
+    const graph = this.graphs.get(inst.machineId);
+    const declared = graph?.local?.vars?.some((v) => v.key === key);
+    if (!declared) {
+      const message = `NarrativeStateManager: 局部机 ${inst.machineId} 未声明变量 "${key}"（setLocalVar 拒绝）`;
+      this.recordIssue({ severity: 'error', code: 'local.var.undeclared', message, graphId: inst.machineId });
+      console.warn(message);
+      return false;
+    }
+    inst.vars.set(key, value);
+    this.recordTrace('local.var', {
+      graphId: inst.machineId,
+      label: narrativeLocalInstanceKey(inst.machineId, inst.host),
+      payload: { key, value },
+    });
+    // 局部变量可能是某条局部 transition 的守卫条件——但局部层是命令式的，
+    // 不存在"条件满足自动迁移"，故此处**不 kick reactive**（reactive 在局部机上是校验 error）。
+    return true;
+  }
+
+  /**
+   * 命令式局部转移：直接点名目标态，不进队列、不做信号匹配、不参与全局排空。
+   * 这是局部层与全局层的根本区别——局部层没有距离要跨，作者对着整台机器写。
+   *
+   * 仍需封口（norms 不变量③）与代际复核（不变量④）：onExit/onEnter 是异步动作批，
+   * 其 await 期间可能发生读档/换册，恢复后不得再写旧时间线的状态。
+   */
+  async localGoto(host: NarrativeLocalHost, stateId: string): Promise<boolean> {
+    const inst = this.findInstanceByHost(host);
+    if (!inst) {
+      this.recordIssue({
+        severity: 'warning',
+        code: 'local.goto.noInstance',
+        message: `NarrativeStateManager: localGoto 找不到宿主实例 ${host.sceneId}/${host.entityKind}:${host.entityId}`,
+      });
+      return false;
+    }
+    return this.applyLocalTransition(inst, String(stateId ?? '').trim(), `localGoto:${stateId}`, '');
+  }
+
+  /**
+   * 实例转移的唯一提交点（localGoto 与信号驱动共用）。
+   *
+   * 事件面用**独立的** `narrative:localStateChanged`，**绝不复用** `narrative:stateChanged`
+   * ——后者的消费者（PlaneReconciler 全量重派生位面、QuestManager 重评任务）按"全局图变了"
+   * 的语义写的；1000 个实例往那条事件上打，既污染语义又是性能灾难。私有状态走私有事件。
+   */
+  private async applyLocalTransition(
+    inst: NarrativeLocalInstance,
+    toStateId: string,
+    triggerKey: string,
+    transitionId: string,
+  ): Promise<boolean> {
+    const gen = this.generation;
+    const key = narrativeLocalInstanceKey(inst.machineId, inst.host);
+    const graph = this.graphs.get(inst.machineId);
+    if (!graph || !isLocalMachineGraph(graph)) return false;
+    if (!graph.states[toStateId]) {
+      const message = `NarrativeStateManager: 局部转移目标状态不存在 ${inst.machineId}.${toStateId}`;
+      this.recordIssue({ severity: 'warning', code: 'local.goto.stateMissing', message, graphId: inst.machineId, stateId: toStateId });
+      console.warn(message);
+      return false;
+    }
+    if (this.localGotoDepth >= NarrativeStateManager.MAX_LOCAL_GOTO_DEPTH) {
+      // 命令式层没有队列守卫兜底，必须自带深度闸：A.onEnter→goto B、B.onEnter→goto A 会无限递归。
+      const message = `NarrativeStateManager: 局部转移递归超过 ${NarrativeStateManager.MAX_LOCAL_GOTO_DEPTH} 层（${key}），疑似 onEnter 互相 goto`;
+      this.recordIssue({ severity: 'error', code: 'local.goto.depthGuard', message, graphId: inst.machineId, stateId: toStateId });
+      console.warn(message);
+      return false;
+    }
+    const fromStateId = inst.active;
+    if (fromStateId === toStateId) return true; // 幂等：已在目标态，不重跑生命周期动作
+    this.localGotoDepth += 1;
+    // 动作批的 owner 必须是**宿主实体**，不是原型图：原型是 ownerType:'system' 且无 ownerId，
+    // makeOwnerOrigin 对缺 ownerId 一律返回 null（"不制造半个 owner"），传原型等于无 owner
+    // ——机器自己状态里写的 localGoto/setLocalVar 会全部落进"拿不到 owner 即跳过"，命令式转移在机器内部是死的。
+    const hostOwner = { ownerType: inst.host.entityKind, ownerId: inst.host.entityId };
+    // 不在场 = 只迁移不演出（见 NarrativeLocalInstance.loaded）。
+    const live = inst.loaded;
+    if (!live) {
+      this.recordTrace('local.state.changed', {
+        graphId: inst.machineId, label: key, from: fromStateId, to: toStateId, triggerKey,
+        message: 'host not loaded: state applied, lifecycle actions skipped',
+      });
+    }
+    try {
+      if (live) await this.runActions(graph.states[fromStateId]?.onExitActions, `${key}.${fromStateId}.onExit`, hostOwner);
+      // 代际/实例现状复核（与 enterState 同口径）：await 期间可能读档、换图册、实例被清。
+      if (gen !== this.generation || this.localInstances.get(key) !== inst || inst.active !== fromStateId) {
+        this.recordTrace('signal.ignored', {
+          graphId: inst.machineId,
+          label: key,
+          message: `stale timeline: local instance changed during ${key}.${fromStateId}.onExit`,
+        });
+        return false;
+      }
+      inst.active = toStateId;
+      this.recordTrace('local.state.changed', {
+        graphId: inst.machineId,
+        stateId: toStateId,
+        transitionId,
+        triggerKey,
+        from: fromStateId,
+        to: toStateId,
+        label: key,
+      });
+      this.eventBus.emit('narrative:localStateChanged', {
+        instanceKey: key,
+        machineId: inst.machineId,
+        host: { ...inst.host },
+        from: fromStateId,
+        to: toStateId,
+        triggerKey,
+      });
+      if (live) await this.runActions(graph.states[toStateId]?.onEnterActions, `${key}.${toStateId}.onEnter`, hostOwner);
+      return true;
+    } finally {
+      this.localGotoDepth = Math.max(0, this.localGotoDepth - 1);
+    }
+  }
+
+  /** 信号键 → 监听它的局部机原型集（懒建，registerGraphs 失效）。 */
+  private getLocalSignalIndex(): Map<string, Set<string>> {
+    if (!this.localSignalIndexCache) {
+      const index = new Map<string, Set<string>>();
+      for (const graph of this.graphs.values()) {
+        if (!isLocalMachineGraph(graph)) continue;
+        for (const t of graph.transitions) {
+          if (t.trigger && t.trigger !== 'signal') continue;
+          const key = NarrativeStateManager.normalizeTriggerKey(t.signal);
+          if (!key || key === NarrativeStateManager.DEFAULT_DRAFT_SIGNAL) continue;
+          let set = index.get(key);
+          if (!set) { set = new Set(); index.set(key, set); }
+          set.add(graph.id);
+        }
+      }
+      this.localSignalIndexCache = index;
+    }
+    return this.localSignalIndexCache;
+  }
+
+  /**
+   * 把一条全局信号投递给监听它的局部机实例（一对多广播：一条信号，N 个实例各自响应）。
+   * 只访问声明监听该键的原型的实例，其余零成本。返回命中的实例数。
+   */
+  private async deliverSignalToLocalInstances(triggerKey: NarrativeTriggerKey): Promise<number> {
+    const machineIds = this.getLocalSignalIndex().get(triggerKey);
+    if (!machineIds || machineIds.size === 0) return 0;
+    const gen = this.generation;
+    let matched = 0;
+    // 快照迭代：投递途中实例表可能被增删（onEnter 动作可能绑新实体）。
+    for (const inst of [...this.localInstances.values()]) {
+      if (gen !== this.generation) break;
+      if (!machineIds.has(inst.machineId)) continue;
+      const graph = this.graphs.get(inst.machineId);
+      if (!graph) continue;
+      const selected = this.selectLocalTransition(graph, inst, triggerKey);
+      if (!selected) continue;
+      if (await this.applyLocalTransition(inst, selected.to, triggerKey, selected.id)) matched += 1;
+    }
+    return matched;
+  }
+
+  /** 实例内候选筛选：与全局同口径（from 匹配 + 条件 + priority 降序 / 声明序升序）。 */
+  private selectLocalTransition(
+    graph: NarrativeGraph,
+    inst: NarrativeLocalInstance,
+    triggerKey: NarrativeTriggerKey,
+  ): NarrativeTransition | undefined {
+    let selected: NarrativeTransition | undefined;
+    let selectedPriority = 0;
+    for (const t of graph.transitions) {
+      if (t.trigger && t.trigger !== 'signal') continue;
+      if (!NarrativeStateManager.triggerKeysEqual(t.signal, triggerKey)) continue;
+      if (t.from !== inst.active) continue;
+      if (!this.conditionsMetForLocal(t.conditions, inst)) continue;
+      const priority = t.priority ?? 0;
+      if (selected === undefined || priority > selectedPriority) {
+        selected = t;
+        selectedPriority = priority;
+      }
+    }
+    return selected;
+  }
+
+  /**
+   * 实例作用域下的条件求值：在统一上下文上注入 `localVars` 读取器，供 `localVar` 叶解析。
+   * 沿用 `currentOwner`/`@owner` 那条「相对 token 靠上下文解析」的现成范式，不新造机制
+   * （norms 不变量⑧：条件必须经统一求值器与唯一上下文工厂，禁止手工拼装缩水版上下文）。
+   */
+  private conditionsMetForLocal(conditions: ConditionExpr[] | undefined, inst: NarrativeLocalInstance): boolean {
+    if (!conditions?.length) return true;
+    let ctx: ConditionEvalContext | undefined;
+    try {
+      ctx = this.conditionCtxFactory?.();
+    } catch (e) {
+      const message = `NarrativeStateManager: condition context factory threw in local scope: ${e instanceof Error ? e.message : String(e)}`;
+      this.recordIssue({ severity: 'error', code: 'local.condition.ctxFactory.threw', message, graphId: inst.machineId });
+      return false;
+    }
+    if (!ctx) return false;
+    const scoped: ConditionEvalContext = {
+      ...ctx,
+      localVars: { get: (key: string) => this.getLocalVar(inst, key) },
+    };
+    return evaluateConditionExprList(conditions, scoped);
+  }
+
   serialize(): object {
+    const locals = this.serializeLocalInstances();
     const singletons: Record<string, string> = {};
     const singletonReached: Record<string, string[]> = {};
     const runs: Record<string, { active: string; reached: string[] }> = {};
@@ -1045,7 +1542,96 @@ export class NarrativeStateManager implements IGameSystem {
       // 章节包活跃标记集（纯组织追踪）：入档保存导演标过的活跃章节，供章节感知 UI 还原。
       // 不 gate 行为，图状态永存照旧走 activeStates/runs（与此集合无关）。
       livePackages: [...this.livePackages],
+      // 局部机实例：**只存偏离默认的**（active !== initialState 或有变量被写过）。
+      // 1000 个没被碰过的箱子 = 存档 0 条目——这是数据面不膨胀的正解：底层是全局表，
+      // 但只为真实发生过的事付费。缺席 = 该实例仍是出厂态（与"从未存在过"同义）。
+      //
+      // 全空时**连键都不输出**：没用这个功能的工程，存档形状与本功能出现前逐字节一致
+      // （norms「完全不破坏现有逻辑」的机械判据——既有存档形状测试零修改通过）。
+      ...(Object.keys(locals).length > 0 ? { locals } : {}),
     };
+  }
+
+  private serializeLocalInstances(): Record<string, { active?: string; vars?: Record<string, boolean | number | string> }> {
+    const out: Record<string, { active?: string; vars?: Record<string, boolean | number | string> }> = {};
+    for (const [key, inst] of this.localInstances.entries()) {
+      const graph = this.graphs.get(inst.machineId);
+      if (!graph) continue;
+      const activeDeviates = inst.active !== graph.initialState;
+      const vars: Record<string, boolean | number | string> = {};
+      for (const [k, v] of inst.vars.entries()) {
+        if (v !== this.localVarDefault(graph, k)) vars[k] = v;
+      }
+      const hasVars = Object.keys(vars).length > 0;
+      if (!activeDeviates && !hasVars) continue; // 出厂态不落盘
+      out[key] = {
+        ...(activeDeviates ? { active: inst.active } : {}),
+        ...(hasVars ? { vars } : {}),
+      };
+    }
+    return out;
+  }
+
+  /**
+   * 恢复局部机实例层。实例**不由存档创建**——实例的存在性由「当前绑定关系」决定
+   * （场景装载时 ensureLocalInstance）；存档只回灌偏离默认的态与变量。
+   * 因此这里对尚未绑定的键先建"待认领"记录：键里带着 machineId 与宿主坐标，
+   * 绑定发生时 ensureLocalInstance 命中已存在的键即自然接管，不会覆盖存档态。
+   */
+  private restoreLocalInstances(raw: unknown): void {
+    this.localInstances.clear();
+    this.localHostIndex.clear();
+    if (!raw || typeof raw !== 'object') return;
+    for (const [key, entryRaw] of Object.entries(raw as Record<string, unknown>)) {
+      const parsed = parseNarrativeLocalInstanceKey(key);
+      if (!parsed) {
+        this.warnDroppedSaveEntry('save.local.keyMalformed', `NarrativeStateManager: 存档局部实例键格式非法 "${key}"，丢弃`, key);
+        continue;
+      }
+      const machineId = this.migrateSaveGraphId(parsed.machineId);
+      const graph = this.graphs.get(machineId);
+      if (!graph || !isLocalMachineGraph(graph)) {
+        this.warnDroppedSaveEntry(
+          'save.local.machineMissing',
+          `NarrativeStateManager: 存档引用了不存在/非局部机的原型 "${parsed.machineId}"${this.migrationSuffix(parsed.machineId, machineId)}，丢弃该实例`,
+          machineId,
+        );
+        continue;
+      }
+      const entry = entryRaw as { active?: unknown; vars?: unknown } | null;
+      const rawState = String(entry?.active ?? '').trim();
+      const stateId = rawState ? this.migrateSaveStateId(machineId, rawState) : graph.initialState;
+      if (!graph.states[stateId]) {
+        this.warnDroppedSaveEntry(
+          'save.local.stateMissing',
+          `NarrativeStateManager: 局部实例 "${key}" 的状态 "${rawState}" 不存在于原型 ${machineId}，回落 initialState`,
+          machineId,
+          stateId,
+        );
+      }
+      const vars = new Map<string, boolean | number | string>();
+      if (entry?.vars && typeof entry.vars === 'object') {
+        for (const [vk, vv] of Object.entries(entry.vars as Record<string, unknown>)) {
+          const declared = graph.local?.vars?.some((v) => v.key === vk);
+          if (!declared) {
+            this.warnDroppedSaveEntry(
+              'save.local.varUndeclared',
+              `NarrativeStateManager: 局部实例 "${key}" 的变量 "${vk}" 未在原型声明，丢弃`,
+              machineId,
+            );
+            continue;
+          }
+          if (typeof vv === 'boolean' || typeof vv === 'number' || typeof vv === 'string') vars.set(vk, vv);
+        }
+      }
+      this.putLocalInstance(key, {
+        machineId,
+        host: parsed.host,
+        active: graph.states[stateId] ? stateId : graph.initialState,
+        vars,
+        loaded: false,   // 存档回灌的是待认领记录；场景装载时 reconcile 认领
+      });
+    }
   }
 
   deserialize(data: object): void {
@@ -1056,6 +1642,7 @@ export class NarrativeStateManager implements IGameSystem {
       counters?: Record<string, unknown>;
       activatedArchetype?: unknown;
       livePackages?: unknown;
+      locals?: unknown;
     };
     // 恢复前先失效旧时间线（审查 R2）：积压队列项 reject、在飞迁移放弃剩余写入——
     // 否则旧时间线的广播/信号会打进恢复后的世界（子图回到起点、主图却被幽灵广播推进）。
@@ -1071,6 +1658,7 @@ export class NarrativeStateManager implements IGameSystem {
     this.restoreRunCounters(raw?.counters);
     this.restoreActivatedArchetype(raw?.activatedArchetype);
     this.restoreLivePackages(raw?.livePackages);
+    this.restoreLocalInstances(raw?.locals);
     // 读档后的状态组合可能已满足某些 reactive 迁移条件（读档期间 FlagStore.deserialize
     // 不广播 flag:changed），此处统一补评一轮。
     this.kickReactiveEvaluation();
@@ -1084,8 +1672,11 @@ export class NarrativeStateManager implements IGameSystem {
     this.livePackages.clear();
     this.runCounters.clear();
     this.activatedArchetype = null;
+    // 局部实例层同样回基线（restoreLocalInstances 随后按存档重建；旧档无 locals 字段 = 全出厂态）。
+    this.localInstances.clear();
+    this.localHostIndex.clear();
     for (const graph of this.graphs.values()) {
-      if (isRunGraph(graph)) continue;
+      if (isRunGraph(graph) || isLocalMachineGraph(graph)) continue;
       this.activeStates.set(graph.id, graph.initialState);
       this.markStateReached(graph.id, graph.initialState);
     }
@@ -1203,6 +1794,18 @@ export class NarrativeStateManager implements IGameSystem {
         );
         continue;
       }
+      if (isLocalMachineGraph(graph)) {
+        // 同 becameRunGraph 口径：图曾是常驻图、现改声明为局部机原型。原型不是机器，
+        // 回灌会在 activeStates 里留下脏条目并被 serialize 原样写回（虽已被
+        // listScannableGraphEntries 排除、不会真的跑起来，但口径必须齐）。
+        this.warnDroppedSaveEntry(
+          'save.active.becameLocalMachine',
+          `NarrativeStateManager: 图 "${graphId}" 现为局部机原型，旧档常驻条目已丢弃（active "${rawStateId}"）；实例状态走 locals 字段`,
+          graphId,
+          stateId || undefined,
+        );
+        continue;
+      }
       if (isRunGraph(graph)) {
         // 旧档写入时该图还是常驻图、现已改声明为活计图：常驻条目不可回灌（会造幽灵实例），
         // 丢弃并点名（内容改声明属破档级变更，本告警即迁移提示；活计实例走 runs 字段恢复）。
@@ -1243,7 +1846,7 @@ export class NarrativeStateManager implements IGameSystem {
           );
           continue;
         }
-        if (isRunGraph(graph)) continue; // 同 save.active.becameRunGraph 口径（active 侧已点名；活计走 runs 字段）
+        if (isRunGraph(graph) || isLocalMachineGraph(graph)) continue; // 同 save.active.became* 口径（active 侧已点名；活计走 runs、局部机走 locals）
         for (const sRaw of listRaw) {
           const rawStateId = String(sRaw ?? '').trim();
           if (!rawStateId) continue;
@@ -1310,6 +1913,10 @@ export class NarrativeStateManager implements IGameSystem {
     this.livePackages.clear();
     this.runCounters.clear();
     this.activatedArchetype = null;
+    this.localInstances.clear();
+    this.localHostIndex.clear();
+    this.localSignalIndexCache = null;
+    this.localGotoDepth = 0;
     this.nestedDrainPromises.clear();
     this.saveMigrations = null;
     this.queue.length = 0;
@@ -1339,6 +1946,17 @@ export class NarrativeStateManager implements IGameSystem {
       recentTrace: this.recentTrace.slice(-80),
       traceLength: this.recentTrace.length,
       queued: this.queue.length,
+      // 局部机层（调试器直读）：原型清单 + 全部实例的私有态与变量。
+      // 调试器是唯一有权看见实例私有状态的消费者——内容层仍不可寻址。
+      localMachineIds: [...this.graphs.values()].filter(isLocalMachineGraph).map((g) => g.id),
+      localInstances: Object.fromEntries(
+        [...this.localInstances.entries()].map(([key, inst]) => [key, {
+          machineId: inst.machineId,
+          host: { ...inst.host },
+          active: inst.active,
+          vars: Object.fromEntries(inst.vars.entries()),
+        }]),
+      ),
     };
   }
 
@@ -1603,13 +2221,17 @@ export class NarrativeStateManager implements IGameSystem {
       migratedInstances.add(instanceId);
       matchedInstanceIds.push(instanceId);
     }
-    if (matchedInstanceIds.length === 0) {
+    // 局部机实例投递（一对多广播）。放在全局扫描之后：全局图是进度真相源，先推进它。
+    const localMatched = gen === this.generation ? await this.deliverSignalToLocalInstances(triggerKey) : 0;
+    if (matchedInstanceIds.length === 0 && localMatched === 0) {
       this.reportUnlistenedSignal(triggerKey);
     }
     this.recordTrace('signal.processed', {
       triggerKey,
-      payload: { matchedGraphIds: matchedInstanceIds },
-      message: matchedInstanceIds.length ? `matched ${matchedInstanceIds.length} instance(s)` : 'no matching transition',
+      payload: { matchedGraphIds: matchedInstanceIds, matchedLocalInstances: localMatched },
+      message: matchedInstanceIds.length || localMatched
+        ? `matched ${matchedInstanceIds.length} graph(s), ${localMatched} local instance(s)`
+        : 'no matching transition',
     });
   }
 

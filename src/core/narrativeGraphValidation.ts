@@ -50,6 +50,19 @@ interface NarrativeTransitionLike {
   priority?: unknown;
 }
 
+/** 局部机变量声明（实体局部状态机设计 §2.1），形状由 validateLocalMachines 逐条校验。 */
+interface NarrativeLocalVarDefLike {
+  key?: unknown;
+  type?: unknown;
+  default?: unknown;
+}
+
+interface NarrativeLocalDefLike {
+  vars?: unknown;
+  listens?: unknown;
+  emits?: unknown;
+}
+
 interface NarrativeGraphLike {
   id?: string;
   label?: string;
@@ -57,6 +70,8 @@ interface NarrativeGraphLike {
   ownerId?: string;
   category?: string;
   run?: { repeatable?: unknown; resumable?: unknown };
+  /** 局部机原型声明；形状故意宽松（运行时按 Boolean(local) 判类，非法形状也算局部机）。 */
+  local?: unknown;
   initialState?: string;
   entryState?: string;
   exitStates?: unknown;
@@ -68,6 +83,48 @@ interface NarrativeGraphLike {
 function isRunGraphLike(graph: NarrativeGraphLike | undefined): boolean {
   return Boolean(graph?.run);
 }
+
+/** 局部机原型（声明了 `local`）——与运行时 `isLocalMachineGraph` 同口径（含非法形状）。 */
+function isLocalMachineGraphLike(graph: NarrativeGraphLike | null | undefined): boolean {
+  return Boolean(graph?.local);
+}
+
+/** 局部机变量类型白名单（与 `NarrativeLocalVarDef.type` 同步）。 */
+const LOCAL_VAR_TYPES = new Set(['bool', 'float', 'string']);
+
+/**
+ * 原型声明的变量 key 集合（`localVar` 叶的可用域）。
+ * 形状非法时返回能解析出的那部分——形状本身另由 validateLocalMachines 报错，
+ * 这里再报一遍只会把同一个错刷两条。
+ */
+function localVarKeysOf(graph: NarrativeGraphLike | null | undefined): ReadonlySet<string> {
+  const out = new Set<string>();
+  const local = graph?.local;
+  if (!isPlainRecord(local)) return out;
+  const vars = (local as NarrativeLocalDefLike).vars;
+  if (!Array.isArray(vars)) return out;
+  for (const v of vars) {
+    if (!isPlainRecord(v)) continue;
+    const key = String((v as NarrativeLocalVarDefLike).key ?? '').trim();
+    if (key) out.add(key);
+  }
+  return out;
+}
+
+/**
+ * 条件求值的作用域上下文：`localVar` / `selfState` / `selfVar` 三个叶子的合法性
+ * 取决于「这条条件挂在谁身上」，不是叶子自身形状能判的。
+ */
+interface ConditionScope {
+  /** 承载这条条件的图是否局部机原型 */
+  isLocalMachine: boolean;
+  /** 该局部机声明的变量 key（非局部机为空集） */
+  localVarKeys: ReadonlySet<string>;
+}
+
+const EMPTY_CONDITION_SCOPE: ConditionScope = { isLocalMachine: false, localVarKeys: new Set<string>() };
+
+const COMPARISON_OPS = ['==', '!=', '>', '>=', '<', '<='];
 
 interface CompositionElementLike {
   id?: string;
@@ -242,6 +299,7 @@ export function validateNarrativeGraphData(
   validateStateCommandTargets(data, graphIndex, issues);
   validateBroadcastStateSignals(data, issues);
   validateActivePlanes(data, issues);
+  validateLocalMachines(graphIndex, issues);
   validateSaveMigrations(data, graphIndex, issues);
   return issues;
 }
@@ -336,7 +394,14 @@ function validateGraph(
 ): void {
   const graphTarget = graphTargetFromCtx(ctx);
   addDuplicateIssue(issues, graphIds, graph.id, `${path}.id`, 'graph id', graph.id, { ...graphTarget, field: 'id' });
+  // 图 id 禁含 `@`（活计实例 id 与局部机实例键 `<machineId>@<sceneId>/…` 的分隔符）——
+  // 局部机的第⑧条校验就是这条，不另立规则（见 validateIdDelimiter）。
   validateIdDelimiter(graph.id, `${path}.id`, 'graph.id.delimiter', issues, graph.id, { ...graphTarget, field: 'id' });
+  // 局部机作用域：`localVar` 叶只在这里合法，且 key 必须在 local.vars 里声明过。
+  const localScope: ConditionScope = {
+    isLocalMachine: isLocalMachineGraphLike(graph),
+    localVarKeys: localVarKeysOf(graph),
+  };
   if (!graph.initialState || !graph.states?.[graph.initialState]) {
     addIssue(issues, 'error', 'graph.initialState.invalid', `${graph.id}: initialState does not exist`, `${path}.initialState`, graph.id, { ...graphTarget, field: 'initialState' });
   }
@@ -442,7 +507,7 @@ function validateGraph(
     if (!graph.states?.[to.stateId]) addIssue(issues, 'error', 'transition.to.missing', `${graph.id}.${t.id}: to state is missing`, `${tPath}.to`, t.id, { ...transitionTarget, field: 'to' });
     validateTransitionSignal(graph.id ?? '', t, tPath, issues, knownSignals, { ...transitionTarget, field: 'signal' });
     validateReactiveTrigger(t, `${tPath}.trigger`, issues, { ...transitionTarget, field: 'trigger' });
-    validateConditions(t.conditions, `${tPath}.conditions`, issues, `${graph.id}.${t.id}`, graphIndex, { ...transitionTarget, field: 'conditions' });
+    validateConditions(t.conditions, `${tPath}.conditions`, issues, `${graph.id}.${t.id}`, graphIndex, { ...transitionTarget, field: 'conditions' }, localScope);
   }
 }
 
@@ -818,6 +883,116 @@ function validateActivePlanes(data: NarrativeGraphsFileLike, issues: NarrativeVa
   }
 }
 
+/** 局部机变量默认值与声明类型是否相符（bool/float/string 三型，见 NarrativeLocalVarDef）。 */
+function localVarDefaultMatchesType(type: string, value: unknown): boolean {
+  if (type === 'bool') return typeof value === 'boolean';
+  if (type === 'float') return typeof value === 'number' && Number.isFinite(value);
+  if (type === 'string') return typeof value === 'string';
+  return false;
+}
+
+/**
+ * 局部机原型的构建期校验（设计稿 artifact/Design/实体局部状态机-技术设计-2026-08-08.md §6 的
+ * ①②⑦条；③④⑤在条件叶子里、⑧由 validateIdDelimiter 兜、⑥⑨在 tools/editor/validator.py）。
+ *
+ * 遍历的是 graphIndex（**全部**图，含未被 compileGraphs 收编的元素内嵌图）而非 compileGraphs：
+ * 局部机是新增图类，不该因为将来换个 element kind 装它就整片失去校验。
+ *
+ * 私有性三条硬边界（设计 §1.2）之所以是 error 而非 warning：它们一旦破，破的不是这张图，
+ * 而是「实例状态对外不可见」这个整功能赖以成立的承诺——广播出去/被 narrative 叶读到之后，
+ * 命名膨胀与寻址问题会原样回来，而那正是本功能存在的理由。
+ */
+function validateLocalMachines(graphIndex: GraphIndex, issues: NarrativeValidationIssue[]): void {
+  for (const [graphId, graph] of graphIndex.graphs) {
+    if (graph.local === undefined) continue;
+    const ctx = graphIndex.ownersByGraphId.get(graphId) ?? { compositionId: '', graphId };
+    const graphTarget = graphTargetFromCtx(ctx, 'local');
+    const localObj = isPlainRecord(graph.local) ? (graph.local as NarrativeLocalDefLike) : null;
+
+    // ① 声明形状 + 变量表（key 唯一非空 / type ∈ bool|float|string / default 与 type 相符）
+    if (!localObj) {
+      addIssue(issues, 'error', 'local.shape.invalid', `${graphId}: local 必须是对象 { vars?, listens?, emits? }`, `${graphId}.local`, graphId, graphTarget);
+    } else {
+      const vars = localObj.vars;
+      if (vars !== undefined && !Array.isArray(vars)) {
+        addIssue(issues, 'error', 'local.vars.shape', `${graphId}: local.vars 必须是数组`, `${graphId}.local.vars`, graphId, graphTarget);
+      } else if (Array.isArray(vars)) {
+        const seenKeys = new Set<string>();
+        vars.forEach((raw, idx) => {
+          const varPath = `${graphId}.local.vars[${idx}]`;
+          if (!isPlainRecord(raw)) {
+            addIssue(issues, 'error', 'local.var.shape', `${graphId}: local.vars[${idx}] 必须是对象 { key, type, default? }`, varPath, graphId, graphTarget);
+            return;
+          }
+          const v = raw as NarrativeLocalVarDefLike;
+          const key = String(v.key ?? '').trim();
+          if (!key) {
+            addIssue(issues, 'error', 'local.var.key.empty', `${graphId}: local.vars[${idx}] 缺少非空 key`, `${varPath}.key`, graphId, graphTarget);
+          } else if (seenKeys.has(key)) {
+            addIssue(issues, 'error', 'local.var.key.duplicate', `${graphId}: local.vars 变量 key 重复: ${key}`, `${varPath}.key`, graphId, graphTarget);
+          } else {
+            seenKeys.add(key);
+          }
+          const type = String(v.type ?? '').trim();
+          if (!LOCAL_VAR_TYPES.has(type)) {
+            addIssue(issues, 'error', 'local.var.type.invalid', `${graphId}: local.vars[${idx}] 的 type 必须是 bool / float / string，实际 '${type}'`, `${varPath}.type`, graphId, graphTarget);
+          } else if (v.default !== undefined && !localVarDefaultMatchesType(type, v.default)) {
+            addIssue(issues, 'error', 'local.var.default.typeMismatch', `${graphId}: local.vars[${idx}] 的 default 与 type=${type} 不符: ${JSON.stringify(v.default)}`, `${varPath}.default`, graphId, graphTarget);
+          }
+        });
+      }
+      for (const field of ['listens', 'emits'] as const) {
+        const raw = localObj[field];
+        if (raw === undefined) continue;
+        if (!Array.isArray(raw) || raw.some((x) => typeof x !== 'string')) {
+          addIssue(issues, 'error', `local.${field}.shape`, `${graphId}: local.${field} 必须是字符串数组`, `${graphId}.local.${field}`, graphId, graphTarget);
+        }
+      }
+    }
+
+    // ② 私有性硬边界：广播 / reactive / 位面点名 / owner 绑定；以及 local 与 run 互斥
+    if (graph.run !== undefined) {
+      addIssue(issues, 'error', 'local.run.exclusive', `${graphId}: local 与 run 互斥（局部机是绑定即实例化，活计图是全局单激活槽）`, `${graphId}.local`, graphId, graphTarget);
+    }
+    if (String(graph.ownerId ?? '').trim()) {
+      addIssue(issues, 'error', 'local.ownerId.unsupported', `${graphId}: 局部机不进 owner 索引，不可声明 ownerId（宿主由实体 def 的 machine 绑定决定）`, `${graphId}.ownerId`, graphId, graphTargetFromCtx(ctx, 'ownerId'));
+    }
+    for (const [stateId, state] of Object.entries(graph.states ?? {})) {
+      const stateTarget = stateTargetFromCtx(ctx, stateId);
+      if (narrativeStateBroadcastOnEnter(state)) {
+        addIssue(issues, 'error', 'local.broadcastOnEnter.unsupported', `${graphId}.${stateId}: 局部机不发 state:<id>:<态> 派生广播（对外说话请用 emitNarrativeSignal 显式导出）`, `${graphId}.states.${stateId}.broadcastOnEnter`, stateId, { ...stateTarget, field: 'broadcastOnEnter' });
+      }
+      if (state.activePlane !== undefined) {
+        addIssue(issues, 'error', 'local.activePlane.unsupported', `${graphId}.${stateId}: 局部机状态不可点名位面（位面派生只认全局图的激活态）`, `${graphId}.states.${stateId}.activePlane`, stateId, { ...stateTarget, field: 'activePlane' });
+      }
+    }
+    const declaredListens = localObj ? new Set(stringList(localObj.listens)) : new Set<string>();
+    const actualListens = new Set<string>();
+    for (const t of graph.transitions ?? []) {
+      const transitionId = String(t.id ?? '').trim();
+      const trigger = String(t.trigger ?? 'signal').trim();
+      if (trigger === 'reactive' || trigger === 'reactiveAll' || trigger === 'reactiveAny') {
+        addIssue(issues, 'error', 'local.reactive.unsupported', `${graphId}.${transitionId}: 局部机不支持 reactive 触发（局部层是命令式的，要转移直接 localGoto）`, `${graphId}.transitions.${transitionId}.trigger`, transitionId, { ...transitionTargetFromCtx(ctx, transitionId), field: 'trigger' });
+        continue;
+      }
+      const sig = String(t.signal ?? '').trim();
+      if (sig && sig !== DEFAULT_NARRATIVE_DRAFT_SIGNAL) actualListens.add(sig);
+    }
+    // ⑦ 声明漂移：listens 只是索引/校验用的声明面，运行时索引按 transitions 建——
+    // 两边不一致不影响运行，但会让「这台机器听什么」的静态清单说谎，故 warning。
+    if (localObj) {
+      const missing = [...actualListens].filter((s) => !declaredListens.has(s)).sort();
+      const extra = [...declaredListens].filter((s) => !actualListens.has(s)).sort();
+      if (missing.length) {
+        addIssue(issues, 'warning', 'local.listens.missing', `${graphId}: transition 实际监听但 local.listens 未声明: ${missing.join(', ')}`, `${graphId}.local.listens`, graphId, graphTarget);
+      }
+      if (extra.length) {
+        addIssue(issues, 'warning', 'local.listens.extra', `${graphId}: local.listens 声明了没有任何 transition 监听的信号: ${extra.join(', ')}`, `${graphId}.local.listens`, graphId, graphTarget);
+      }
+    }
+  }
+}
+
 /**
  * 旧存档改名映射（顶层 migrations，运行时读者是 NarrativeStateManager.deserialize）：
  * 全部 warning 级——映射写错不拦保存，只是退回"存档条目丢弃 + 运行时点名告警"的兜底行为。
@@ -940,6 +1115,7 @@ function validateConditions(
   owner: string,
   graphIndex: GraphIndex,
   target?: NarrativeValidationTarget,
+  scope: ConditionScope = EMPTY_CONDITION_SCOPE,
 ): void {
   if (conditions === undefined) return;
   if (!Array.isArray(conditions)) {
@@ -947,7 +1123,7 @@ function validateConditions(
     return;
   }
   conditions.forEach((expr, idx) => {
-    validateConditionExpr(expr, `${path}[${idx}]`, issues, owner, graphIndex, target);
+    validateConditionExpr(expr, `${path}[${idx}]`, issues, owner, graphIndex, target, scope);
   });
 }
 
@@ -958,15 +1134,16 @@ function validateConditionExpr(
   owner: string,
   graphIndex: GraphIndex,
   target?: NarrativeValidationTarget,
+  scope: ConditionScope = EMPTY_CONDITION_SCOPE,
 ): boolean {
   if (!expr || typeof expr !== 'object' || Array.isArray(expr)) {
     addIssue(issues, 'error', 'condition.shape', `${owner}: condition has an unknown shape`, path, owner, target);
     return false;
   }
   const x = expr as Record<string, unknown>;
-  if (Array.isArray(x.all)) return x.all.map((e, i) => validateConditionExpr(e, `${path}.all[${i}]`, issues, owner, graphIndex, target)).every(Boolean);
-  if (Array.isArray(x.any)) return x.any.map((e, i) => validateConditionExpr(e, `${path}.any[${i}]`, issues, owner, graphIndex, target)).every(Boolean);
-  if (x.not !== undefined) return validateConditionExpr(x.not, `${path}.not`, issues, owner, graphIndex, target);
+  if (Array.isArray(x.all)) return x.all.map((e, i) => validateConditionExpr(e, `${path}.all[${i}]`, issues, owner, graphIndex, target, scope)).every(Boolean);
+  if (Array.isArray(x.any)) return x.any.map((e, i) => validateConditionExpr(e, `${path}.any[${i}]`, issues, owner, graphIndex, target, scope)).every(Boolean);
+  if (x.not !== undefined) return validateConditionExpr(x.not, `${path}.not`, issues, owner, graphIndex, target, scope);
   if (typeof x.narrative === 'string') {
     const graphId = x.narrative.trim();
     const stateId = typeof x.state === 'string' ? x.state.trim() : '';
@@ -979,6 +1156,12 @@ function validateConditionExpr(
     const graph = graphIndex.graphs.get(graphId);
     if (!graph) {
       addIssue(issues, 'error', 'condition.narrative.graphMissing', `${owner}: narrative graph does not exist: ${graphId}`, `${path}.narrative`, owner, target);
+      return false;
+    }
+    // 局部机实例对外**不可寻址**（设计 §1.2 边界③）：一个原型有 0..N 台实例，
+    // "那台机器什么态"根本没有唯一答案。宿主自读走 selfState 叶，外部只能收信号。
+    if (isLocalMachineGraphLike(graph)) {
+      addIssue(issues, 'error', 'condition.narrative.localMachine', `${owner}: narrative 叶不接受局部机原型 id（实例状态对外不可见/不可寻址）: ${graphId}`, `${path}.narrative`, owner, target);
       return false;
     }
     // 单活模型：narrative 叶可读活计图当前态（无活计实例=运行时 false），故活计图合法、不拦。
@@ -1006,6 +1189,11 @@ function validateConditionExpr(
       addIssue(issues, 'error', 'condition.narrativeCount.graphMissing', `${owner}: narrativeCount graph does not exist: ${graphId}`, `${path}.narrativeCount`, owner, target);
       return false;
     }
+    // 同 narrative 叶：局部机不可被外部按 id 问（这里先于 notRunGraph 判，报因不报果）。
+    if (isLocalMachineGraphLike(graph)) {
+      addIssue(issues, 'error', 'condition.narrativeCount.localMachine', `${owner}: narrativeCount 叶不接受局部机原型 id（实例状态对外不可见/不可寻址）: ${graphId}`, `${path}.narrativeCount`, owner, target);
+      return false;
+    }
     if (!isRunGraphLike(graph)) {
       addIssue(issues, 'error', 'condition.narrativeCount.notRunGraph', `${owner}: narrativeCount target ${graphId} is not a run graph`, `${path}.narrativeCount`, owner, target);
       return false;
@@ -1019,6 +1207,41 @@ function validateConditionExpr(
       }
     }
     return true;
+  }
+  // 局部机实例变量叶：只在局部机原型自己的 transition 条件里有意义——别处运行时恒假
+  // （ConditionEvalContext.localVars 未注入），静默恒假的条件是最难查的一类死分支。
+  if (typeof (x as { localVar?: unknown }).localVar === 'string') {
+    const key = String((x as { localVar: string }).localVar).trim();
+    if (!scope.isLocalMachine) {
+      addIssue(issues, 'error', 'condition.localVar.outsideLocalMachine', `${owner}: localVar 叶只在局部机（声明了 local 的图）的 transition 条件里合法，此处运行时恒假`, `${path}.localVar`, owner, target);
+      return false;
+    }
+    if (!key) {
+      addIssue(issues, 'error', 'condition.shape', `${owner}: localVar condition requires a non-empty key`, path, owner, target);
+      return false;
+    }
+    if ((x as { value?: unknown }).value === undefined) {
+      addIssue(issues, 'error', 'condition.shape', `${owner}: localVar condition requires value`, path, owner, target);
+      return false;
+    }
+    const op = (x as { op?: unknown }).op;
+    if (op !== undefined && !COMPARISON_OPS.includes(String(op))) {
+      addIssue(issues, 'error', 'condition.localVar.op', `${owner}: localVar op must be one of == != > >= < <=`, `${path}.op`, owner, target);
+      return false;
+    }
+    if (!scope.localVarKeys.has(key)) {
+      addIssue(issues, 'error', 'condition.localVar.undeclared', `${owner}: localVar 变量 "${key}" 未在本机 local.vars 声明（拼错的 key 运行时恒读默认值）`, `${path}.localVar`, owner, target);
+      return false;
+    }
+    return true;
+  }
+  // 宿主自读叶：只在**实体 def 的 conditions**（NpcDef/HotspotDef/ZoneDef）里合法——
+  // 那里才有 selfHost 上下文。叙事图/对话图里出现一律恒假，构建期直接拦。
+  for (const leaf of ['selfState', 'selfVar'] as const) {
+    if (typeof (x as Record<string, unknown>)[leaf] === 'string') {
+      addIssue(issues, 'error', `condition.${leaf}.unsupported`, `${owner}: ${leaf} 叶只在实体 def 的 conditions 里合法（叙事图/对话图无宿主上下文，运行时恒假）`, `${path}.${leaf}`, owner, target);
+      return false;
+    }
   }
   if (typeof x.flag === 'string') return true;
   if (typeof x.quest === 'string') return typeof x.questStatus === 'string' || typeof x.status === 'string';

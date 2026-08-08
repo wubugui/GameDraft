@@ -1,19 +1,34 @@
 import { useEffect, useMemo, useState } from 'react';
 import { editConditionsNative } from '../bridge';
+import {
+  coerceLocalVarValue,
+  defaultValueForLocalVarType,
+  isLocalVarLeaf,
+  LOCAL_VAR_OPS,
+  type LocalVarLeaf,
+  type LocalVarType,
+} from '../localMachine';
+import type { NarrativeLocalVarDef } from '../types';
 
 type NarrativeLeaf = { narrative: string; state: string };
+type SimpleLeaf = NarrativeLeaf | LocalVarLeaf;
 
 function isNarrativeLeaf(value: unknown): value is NarrativeLeaf {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value) && typeof (value as NarrativeLeaf).narrative === 'string');
 }
 
-// 简易叶子编辑器只能无损表达「空 / 单个 narrative 叶子 / 全为 narrative 叶子的数组」。
-// 一旦条件里含有非 narrative 叶子（flag/quest/scenario/scenarioLine）或 all/any/not 组合，
-// 简易编辑写回时会把这些部分丢掉，因此这种情况强制走原始 JSON 编辑，杜绝静默丢数据。
+function isSimpleLeaf(value: unknown): value is SimpleLeaf {
+  return isNarrativeLeaf(value) || isLocalVarLeaf(value);
+}
+
+// 简易叶子编辑器只能无损表达「空 / 单个简易叶子 / 全为简易叶子的数组」。
+// 简易叶子 = narrative 叶 + localVar 叶（局部机专属）。一旦条件里含有别的叶子
+// （flag/quest/scenario/scenarioLine）或 all/any/not 组合，简易编辑写回时会把这些部分丢掉，
+// 因此这种情况强制走原始 JSON 编辑，杜绝静默丢数据。
 function isSimpleEditable(value: unknown): boolean {
   if (value == null) return true;
-  if (isNarrativeLeaf(value)) return true;
-  if (Array.isArray(value)) return value.every(isNarrativeLeaf);
+  if (isSimpleLeaf(value)) return true;
+  if (Array.isArray(value)) return value.every(isSimpleLeaf);
   return false;
 }
 
@@ -23,6 +38,7 @@ export function ConditionBuilder({
   graphLabels,
   statesByGraph,
   stateLabelsByGraph,
+  localVars,
   onApply,
 }: {
   value: unknown;
@@ -30,6 +46,8 @@ export function ConditionBuilder({
   graphLabels?: Record<string, string>;
   statesByGraph: Record<string, string[]>;
   stateLabelsByGraph?: Record<string, Record<string, string>>;
+  /** 非空 = 本条转移长在局部机里，可以读实例变量（`localVar` 叶只在这种容器里合法）。 */
+  localVars?: NarrativeLocalVarDef[];
   onApply: (value: unknown) => void;
 }) {
   const simpleEditable = useMemo(() => isSimpleEditable(value), [value]);
@@ -41,17 +59,26 @@ export function ConditionBuilder({
   useEffect(() => {
     setJsonDraft(JSON.stringify(value ?? [], null, 2));
   }, [valueJson]);
-  const leaves = useMemo(() => extractNarrativeLeaves(value), [value]);
+  const leaves = useMemo(() => extractSimpleLeaves(value), [value]);
+  const varDefs = localVars ?? [];
+  const varTypeByKey = useMemo(() => {
+    const out: Record<string, LocalVarType> = {};
+    for (const v of varDefs) {
+      const key = String(v?.key ?? '').trim();
+      if (key) out[key] = (v.type ?? 'bool') as LocalVarType;
+    }
+    return out;
+  }, [varDefs]);
 
-  const updateLeaves = (next: NarrativeLeaf[]) => {
+  const updateLeaves = (next: SimpleLeaf[]) => {
     onApply(next.length === 1 ? next[0] : next);
   };
 
   const [nativeError, setNativeError] = useState('');
   // 打开主编辑器内置的原生 ConditionEditor（全 5 类叶子 + all/any/not + 各类选择器），
   // 让策划可视化编辑 flag/quest/scenario/scenarioLine，而不必手敲 JSON。
-  // 护栏：原生编辑器对「空 phase 的 scenario / 已删除的 scenarioLine」等不完整条目会静默丢弃，
-  // 因此回写前比对叶子；一旦发现丢失，放弃本次修改并提示改用 JSON，杜绝静默丢数据。
+  // 护栏：原生编辑器对「空 phase 的 scenario / 已删除的 scenarioLine / 它压根不认识的
+  // localVar 叶」会静默丢弃，因此回写前比对叶子；一旦发现丢失，放弃本次修改并提示改用 JSON。
   const openNativeEditor = async () => {
     const current = Array.isArray(value) ? value : value ? [value] : [];
     const result = await editConditionsNative('迁移条件', current as unknown[]);
@@ -108,31 +135,46 @@ export function ConditionBuilder({
       <label>conditions</label>
       <div className="condition-rows">
         {leaves.map((leaf, index) => (
-          <div className="condition-row" key={`${index}-${leaf.narrative}`}>
-            <select
-              value={leaf.narrative}
-              onChange={(e) => {
-                const next = [...leaves];
-                next[index] = { narrative: e.target.value, state: statesByGraph[e.target.value]?.[0] ?? '' };
-                updateLeaves(next);
+          isLocalVarLeaf(leaf) ? (
+            <LocalVarConditionRow
+              key={`${index}-lv-${leaf.localVar}`}
+              leaf={leaf}
+              varDefs={varDefs}
+              varTypeByKey={varTypeByKey}
+              onChange={(next) => {
+                const rows = [...leaves];
+                rows[index] = next;
+                updateLeaves(rows);
               }}
-            >
-              {graphIds.map((gid) => <option key={gid} value={gid}>{graphLabels?.[gid] ?? gid}</option>)}
-            </select>
-            <select
-              value={leaf.state}
-              onChange={(e) => {
-                const next = [...leaves];
-                next[index] = { ...leaf, state: e.target.value };
-                updateLeaves(next);
-              }}
-            >
-              {(statesByGraph[leaf.narrative] ?? []).map((sid) => (
-                <option key={sid} value={sid}>{stateLabelsByGraph?.[leaf.narrative]?.[sid] ?? sid}</option>
-              ))}
-            </select>
-            <button type="button" onClick={() => updateLeaves(leaves.filter((_, i) => i !== index))}>删</button>
-          </div>
+              onRemove={() => updateLeaves(leaves.filter((_, i) => i !== index))}
+            />
+          ) : (
+            <div className="condition-row" key={`${index}-${leaf.narrative}`}>
+              <select
+                value={leaf.narrative}
+                onChange={(e) => {
+                  const next = [...leaves];
+                  next[index] = { narrative: e.target.value, state: statesByGraph[e.target.value]?.[0] ?? '' };
+                  updateLeaves(next);
+                }}
+              >
+                {graphIds.map((gid) => <option key={gid} value={gid}>{graphLabels?.[gid] ?? gid}</option>)}
+              </select>
+              <select
+                value={leaf.state}
+                onChange={(e) => {
+                  const next = [...leaves];
+                  next[index] = { ...leaf, state: e.target.value };
+                  updateLeaves(next);
+                }}
+              >
+                {(statesByGraph[leaf.narrative] ?? []).map((sid) => (
+                  <option key={sid} value={sid}>{stateLabelsByGraph?.[leaf.narrative]?.[sid] ?? sid}</option>
+                ))}
+              </select>
+              <button type="button" onClick={() => updateLeaves(leaves.filter((_, i) => i !== index))}>删</button>
+            </div>
+          )
         ))}
       </div>
       <div className="inspector-actions">
@@ -142,6 +184,26 @@ export function ConditionBuilder({
         >
           添加 narrative 条件
         </button>
+        {localVars && (
+          <button
+            type="button"
+            title={varDefs.length
+              ? '读本实例的局部变量（只在局部机自己的转移里合法）'
+              : '本局部机还没有声明任何变量——先在上面的「实例变量表」加一个'}
+            disabled={varDefs.length === 0}
+            onClick={() => {
+              const first = varDefs[0];
+              const type = (first?.type ?? 'bool') as LocalVarType;
+              updateLeaves([...leaves, {
+                localVar: String(first?.key ?? '').trim(),
+                op: '==',
+                value: first?.default ?? defaultValueForLocalVarType(type),
+              }]);
+            }}
+          >
+            添加局部变量条件
+          </button>
+        )}
         <button type="button" onClick={openNativeEditor}>用条件编辑器…</button>
         <button type="button" onClick={() => { setJsonDraft(JSON.stringify(value ?? [], null, 2)); setShowJson(true); }}>
           编辑原始 JSON
@@ -152,9 +214,70 @@ export function ConditionBuilder({
   );
 }
 
-function extractNarrativeLeaves(value: unknown): NarrativeLeaf[] {
-  if (isNarrativeLeaf(value)) return [value];
-  if (Array.isArray(value)) return value.filter(isNarrativeLeaf);
+/** 局部变量条件行：变量（下拉，取自本机变量表）+ 比较符 + 按类型输入的值。 */
+function LocalVarConditionRow({
+  leaf,
+  varDefs,
+  varTypeByKey,
+  onChange,
+  onRemove,
+}: {
+  leaf: LocalVarLeaf;
+  varDefs: NarrativeLocalVarDef[];
+  varTypeByKey: Record<string, LocalVarType>;
+  onChange: (next: LocalVarLeaf) => void;
+  onRemove: () => void;
+}) {
+  const key = String(leaf.localVar ?? '').trim();
+  const type = varTypeByKey[key];
+  // 保值：指向已删/改名变量的叶子仍原样列出并标注，绝不静默顶替成"第一个变量"。
+  const orphan = !type;
+  const effectiveType: LocalVarType = type ?? 'string';
+  return (
+    <div className="condition-row">
+      <select
+        value={key}
+        onChange={(e) => {
+          const nextKey = e.target.value;
+          const nextType = varTypeByKey[nextKey] ?? 'string';
+          onChange({ ...leaf, localVar: nextKey, value: defaultValueForLocalVarType(nextType) });
+        }}
+      >
+        {varDefs.map((v) => {
+          const k = String(v?.key ?? '').trim();
+          return <option key={k} value={k}>{k}（{v.type}）</option>;
+        })}
+        {orphan && <option value={key}>{key || '(空)'}（变量已不存在）</option>}
+      </select>
+      <select
+        value={leaf.op ?? '=='}
+        onChange={(e) => onChange({ ...leaf, op: e.target.value as LocalVarLeaf['op'] })}
+      >
+        {LOCAL_VAR_OPS.map((op) => <option key={op} value={op}>{op}</option>)}
+      </select>
+      {effectiveType === 'bool' ? (
+        <select
+          value={leaf.value === true ? 'true' : 'false'}
+          onChange={(e) => onChange({ ...leaf, value: e.target.value === 'true' })}
+        >
+          <option value="true">true</option>
+          <option value="false">false</option>
+        </select>
+      ) : (
+        <input
+          type={effectiveType === 'float' ? 'number' : 'text'}
+          value={String(leaf.value ?? '')}
+          onChange={(e) => onChange({ ...leaf, value: coerceLocalVarValue(e.target.value, effectiveType) })}
+        />
+      )}
+      <button type="button" onClick={onRemove}>删</button>
+    </div>
+  );
+}
+
+function extractSimpleLeaves(value: unknown): SimpleLeaf[] {
+  if (isSimpleLeaf(value)) return [value];
+  if (Array.isArray(value)) return value.filter(isSimpleLeaf);
   return [];
 }
 
@@ -169,6 +292,9 @@ function conditionLeafSignatures(value: unknown): string[] {
     if (Array.isArray(o.any)) { o.any.forEach(visit); return; }
     if (o.not && typeof o.not === 'object') { visit(o.not); return; }
     if (typeof o.narrative === 'string') out.push(`narrative:${o.narrative}.${String(o.state ?? '')}`);
+    // localVar 必须进签名：原生 ConditionEditor 压根不认识这类叶子，往返一趟会把它整条丢掉，
+    // 而丢的正是局部机转移的全部判定依据——不收签名的话这次丢失完全静默。
+    else if (typeof o.localVar === 'string') out.push(`localVar:${o.localVar}`);
     else if (typeof o.flag === 'string') out.push(`flag:${o.flag}`);
     else if (typeof o.quest === 'string') out.push(`quest:${o.quest}`);
     else if (typeof o.scenario === 'string') out.push(`scenario:${o.scenario}`);
@@ -191,3 +317,5 @@ function droppedConditionLeaves(before: unknown, after: unknown): string[] {
   }
   return [...new Set(lost)];
 }
+
+export const __conditionBuilderInternals = { conditionLeafSignatures, droppedConditionLeaves, isSimpleEditable };

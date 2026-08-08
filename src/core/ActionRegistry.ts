@@ -27,7 +27,7 @@ import type { SceneManager } from '../systems/SceneManager';
 import type { EmoteBubbleManager } from '../systems/EmoteBubbleManager';
 import type { BubbleChatterSystem } from '../systems/BubbleChatterSystem';
 import type { ScenarioStateManager } from './ScenarioStateManager';
-import type { NarrativeStateManager } from './NarrativeStateManager';
+import type { NarrativeLocalHost, NarrativeStateManager } from './NarrativeStateManager';
 import type { DocumentRevealManager } from '../systems/DocumentRevealManager';
 import type { WaterMinigameManager } from '../systems/waterMinigame/WaterMinigameManager';
 import type { SugarWheelMinigameManager } from '../systems/sugarWheel/SugarWheelMinigameManager';
@@ -423,6 +423,40 @@ function dbg(deps: ActionRegistryDeps, tag: string, line: string): void {
   deps.debugPanelLog?.(`[${tag}] ${line}`);
 }
 
+/** 可承载局部机的实体种类（与 NarrativeLocalHost.entityKind 同命名空间：NpcDef/HotspotDef/ZoneDef）。 */
+const LOCAL_MACHINE_HOST_KINDS = new Set(['npc', 'hotspot', 'zone']);
+
+/**
+ * 从动作来源上下文推出局部机宿主坐标（实体局部状态机设计 §3.1「全走相对 self 解析」）。
+ *
+ * 来源判定唯一源是 `actionOrigin.ts`：`ActionExecutor.executeBatchFromOwner` 已把持有这批
+ * 动作的实体线程化成 ownerType/ownerId；局部机自己状态里的动作批，owner 也已被
+ * `applyLocalTransition` 换成**宿主实体**身份（不是 ownerType:'system' 的原型图），
+ * 所以这里拿到的就是宿主。
+ *
+ * 拿不到 owner / owner 不是实体种类 / 没有当前场景 → 返回 null，调用方 warn 后跳过。
+ * **不猜**：猜错的后果是把状态写到另一个箱子上，比什么都不做难查得多。
+ */
+function resolveLocalMachineHost(
+  d: ActionRegistryDeps,
+  origin: ActionOriginContext | null,
+): NarrativeLocalHost | null {
+  const entityKind = String(origin?.ownerType ?? '').trim();
+  const entityId = String(origin?.ownerId ?? '').trim();
+  if (!entityKind || !entityId || !LOCAL_MACHINE_HOST_KINDS.has(entityKind)) return null;
+  const sceneId = String(d.sceneManager.currentSceneData?.id ?? '').trim();
+  if (!sceneId) return null;
+  return { sceneId, entityKind, entityId };
+}
+
+/** 宿主解析失败的统一告警（含来源信息，便于定位是哪条动作批没带 owner）。 */
+function warnMissingLocalHost(actionType: string, origin: ActionOriginContext | null): void {
+  console.warn(
+    `${actionType}: 取不到局部机宿主（来源 owner=${String(origin?.ownerType ?? '-')}:${String(origin?.ownerId ?? '-')}），已跳过。`
+    + '该动作只能挂在绑定了 machine 的 npc/hotspot/zone 的动作批上（含该机器自己的 onEnter/onExit）。',
+  );
+}
+
 export function registerActionHandlers(executor: ActionExecutor, d: ActionRegistryDeps): void {
   executor.register('enableRuleOffers', (p, zctx) => {
     if (!zctx?.zoneId) {
@@ -526,7 +560,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     d.scenarioStateManager.completeScenarioLine(scenarioId);
   }, ['scenarioId']);
 
-  executor.register('emitNarrativeSignal', (p) => {
+  executor.register('emitNarrativeSignal', (p, origin) => {
     const signal = String(p.signal ?? '').trim();
     if (!signal) {
       console.warn('emitNarrativeSignal: missing signal (event id)', p);
@@ -534,11 +568,62 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     }
     const sourceType = String(p.sourceType ?? '').trim();
     const sourceId = String(p.sourceId ?? '').trim();
-    return d.narrativeStateManager.emitNarrativeSignal({
-      signal,
-      ...(sourceType && sourceId ? { sourceType: sourceType as any, sourceId } : {}),
-    });
+    if (sourceType && sourceId) {
+      return d.narrativeStateManager.emitNarrativeSignal({ signal, sourceType: sourceType as any, sourceId });
+    }
+    // bindSource（局部机导出信号用，设计 §4）：附带**宿主身份**，不附带状态——
+    // 外面知道"谁发的"，仍看不见它的态与变量，封装不破。显式写了 sourceType+sourceId 时
+    // 作者意图优先（同 resolveDialogueOwner 的 explicit 档），此处不覆盖。
+    if (p.bindSource === true) {
+      const host = resolveLocalMachineHost(d, origin);
+      if (host) {
+        return d.narrativeStateManager.emitNarrativeSignal({
+          signal,
+          sourceType: 'entity',
+          sourceId: `${host.sceneId}/${host.entityId}`,
+        });
+      }
+      warnMissingLocalHost('emitNarrativeSignal(bindSource)', origin);
+    }
+    return d.narrativeStateManager.emitNarrativeSignal({ signal });
   }, ['signal']);
+
+  // ---- 实体局部状态机（设计稿 artifact/Design/实体局部状态机-技术设计-2026-08-08.md §3.1）----
+  // 两条都走相对 self 解析：作者从不书写实例 id，宿主由动作来源 owner + 当前场景推出。
+  executor.register('localGoto', (p, origin) => {
+    const state = String(p.state ?? '').trim();
+    if (!state) {
+      console.warn('localGoto: 需要 state（目标状态 id）');
+      return;
+    }
+    const host = resolveLocalMachineHost(d, origin);
+    if (!host) {
+      warnMissingLocalHost('localGoto', origin);
+      return;
+    }
+    return d.narrativeStateManager.localGoto(host, state).then(() => undefined);
+  }, ['state']);
+
+  executor.register('setLocalVar', (p, origin) => {
+    const key = String(p.key ?? '').trim();
+    if (!key) {
+      console.warn('setLocalVar: 需要 key（局部机 local.vars 里声明过的变量名）');
+      return;
+    }
+    const raw = p.value;
+    // 只认 bool/float/string 三型（对齐 NarrativeLocalVarDef.type）；其余类型宁可不写——
+    // 写进去的对象/数组会原样进存档，读它的条件叶永远比不出结果。
+    if (typeof raw !== 'boolean' && typeof raw !== 'string' && !(typeof raw === 'number' && Number.isFinite(raw))) {
+      console.warn(`setLocalVar: value 必须是 bool / 有限数 / 字符串，实际 ${JSON.stringify(raw)}（已跳过）`);
+      return;
+    }
+    const host = resolveLocalMachineHost(d, origin);
+    if (!host) {
+      warnMissingLocalHost('setLocalVar', origin);
+      return;
+    }
+    d.narrativeStateManager.setLocalVar(host, key, raw);
+  }, ['key', 'value']);
 
   // ---- 叙事活计生命周期（S1）：开跑/重来/回退/切激活。结算不设动作（到达 exitStates 自动）。 ----
   executor.register('startNarrativeRun', (p) => {

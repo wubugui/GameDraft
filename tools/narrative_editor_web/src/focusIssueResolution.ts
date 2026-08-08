@@ -1,4 +1,5 @@
 import { transitionAnchorId } from './anchorCodec';
+import { ELEMENT_KINDS_WITH_GRAPH } from './editorModel';
 import type {
   CompositionElementDef,
   NarrativeCompositionDef,
@@ -27,8 +28,10 @@ export type FocusIssueResult = {
   collapseExpandedElementId?: string;
 };
 
+// 判据读单一登记面（editorModel.ELEMENT_KINDS_WITH_GRAPH），不再本地重抄一份 kind 列表
+// ——此前这里与 editorModel 各写各的，新增带图元素时漏改这边＝校验问题点不进子图。
 function isSubgraphElement(el: CompositionElementDef | undefined): boolean {
-  return Boolean(el?.graph && (el.kind === 'wrapperGraph' || el.kind === 'scenarioSubgraph'));
+  return Boolean(el?.graph && ELEMENT_KINDS_WITH_GRAPH.has(el.kind));
 }
 
 export function pickFocusFitNodeIds(nodeIds: string[]): string[] {

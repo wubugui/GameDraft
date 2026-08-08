@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from tools.narrative_debugger import local_machines
 from tools.narrative_debugger.breakpoints import BreakpointStore
 from tools.narrative_debugger.humanize import (
     DRAFT_SIGNAL,
@@ -73,6 +74,9 @@ ROLE_TIP = Qt.ItemDataRole.UserRole + 4
 # 时间线那一行对应的信号（双击 → 看这条信号谁发谁听）。UserRole+1 在时间线里是
 # merge_key，不能复用。
 ROLE_TIMELINE_SIGNAL = Qt.ItemDataRole.UserRole + 5
+# 断点行上的局部机实例键（空＝普通图断点 / 整原型断点）。不能塞进 ROLE_KEY：
+# 那一位是 `图.状态`，而实例键里本来就带 `.`，拼在一起就再也拆不开了。
+ROLE_BP_INSTANCE = Qt.ItemDataRole.UserRole + 6
 
 # 半透明才行：底下还压着隔行底色和「当前这拍」的绿字，不透明色块会把它们全盖掉
 SEARCH_HIT = QColor(255, 209, 102, 76)
@@ -97,6 +101,8 @@ class MainWindow(QMainWindow):
         self._default_fg = self.palette().text().color()
         # 「信号关系」窗（非模态，懒建）：不开就一分钱不花，开着就跟着运行时刷新。
         self._xref_window = None
+        # 「局部机实例」窗（同上）：1000 台机器的表不该跟着每份快照重画，关着就不画。
+        self._locals_window = None
         # 上一次建索引是不是失败了。`_set_hint` 是单一广播位（谁最后写谁赢），
         # 光靠它区分不了"扫描失败"和"信号不在索引里"——那会让人照错的提示白跑一趟。
         self._xref_scan_failed = False
@@ -136,7 +142,11 @@ class MainWindow(QMainWindow):
         self.hub.logged.connect(self._set_hint)
         self.hub.targetsChanged.connect(self._refresh_targets)
         self.hub.activeTargetChanged.connect(self._on_active_target_changed)
+        # 局部机层单独一条信号：一条信号能让 1000 台机器同时动，不该带着左栏拍子清单
+        # 和焦点图一起重画（那两栏跟局部机一点关系都没有）。
+        self.hub.localsChanged.connect(self._refresh_locals_button)
         self._refresh_targets()
+        self._refresh_locals_button()
 
         self._refresh_beats()
         self._refresh_savepoint_marks()
@@ -227,6 +237,10 @@ class MainWindow(QMainWindow):
         self._refresh_savepoint_marks()
         self.graph.render_focus(self.graph.focus_key, force=True)
         self._refresh_now_panel()
+        # 局部机窗拿的是原型的变量声明，改完 JSON 不换索引的话它会照着旧的说
+        # "出厂值是 0"，而实际已经改成 3——比不显示更糟。
+        if self._locals_window is not None:
+            self._locals_window.set_index(fresh)
         # 信号关系窗开着就一起换新（不然它还照着旧数据说"谁发谁听"，比不开更误导）；
         # 关着的先记一笔，等真打开时再扫——没人看的窗不值得扫一遍全工程。
         if self._xref_window is not None and self._xref_window.isVisible():
@@ -386,12 +400,22 @@ class MainWindow(QMainWindow):
             node = self.index.state(bp.graph_id, bp.state_id)
             label = node.display if node else bp.state_id
             suffix = f"  ·仅 {bp.trigger_contains}" if bp.trigger_contains else ""
+            # 局部机断点必须一眼看出是"只断那一台"还是"这个原型全断"——
+            # 两者的现场完全不同，标错了会让人对着一个永远不响的断点等半天
+            if bp.is_local:
+                suffix += f"  ·只这一台（{local_machines.entity_label_from_key(self.index, bp.instance_key)}）"
+            elif bp.graph_id in self.index.local_machine_ids:
+                suffix += "  ·所有实例"
             item = QListWidgetItem(f"〔{self._short_graph_label(bp.graph_id)}〕{label}{suffix}")
             item.setData(ROLE_KEY, f"{bp.graph_id}.{bp.state_id}")
+            item.setData(ROLE_BP_INSTANCE, bp.instance_key)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(
                 Qt.CheckState.Checked if bp.enabled else Qt.CheckState.Unchecked)
-            item.setToolTip(f"{label}\n图：{self._graph_label(bp.graph_id)}\nid：{bp.graph_id}.{bp.state_id}")
+            tip = f"{label}\n图：{self._graph_label(bp.graph_id)}\nid：{bp.graph_id}.{bp.state_id}"
+            if bp.instance_key:
+                tip += f"\n实例：{bp.instance_key}"
+            item.setToolTip(tip)
             self.bp_list.addItem(item)
         self.bp_list.blockSignals(False)
         self._sync_bp_buttons()
@@ -462,7 +486,9 @@ class MainWindow(QMainWindow):
                     key = str(item.data(ROLE_KEY) or "")
                     if "." in key:
                         graph_id, state_id = key.split(".", 1)
-                        self.breakpoints.remove(graph_id, state_id)
+                        self.breakpoints.remove(
+                            graph_id, state_id, str(item.data(ROLE_BP_INSTANCE) or "")
+                        )
                         self._refresh_breakpoints()
                 return True
         return super().eventFilter(obj, event)
@@ -718,6 +744,16 @@ class MainWindow(QMainWindow):
         )
         self.xref_btn.clicked.connect(lambda: self._open_signal_xref())
         layout.addWidget(self.xref_btn)
+
+        # 局部机实例是唯一"外面问不到"的那类状态（设计上不可寻址），
+        # 所以入口必须常驻在这一排，而不是藏进某个右键菜单里。
+        self.locals_btn = QPushButton("局部机实例…")
+        self.locals_btn.setToolTip(
+            "实体身上那台私有机器现在什么状态、变量是多少。\n"
+            "这类状态外面按 id 问不到（设计如此），只有这儿看得见。"
+        )
+        self.locals_btn.clicked.connect(self._open_local_machines)
+        layout.addWidget(self.locals_btn)
 
         layout.addStretch(1)
 
@@ -1680,6 +1716,42 @@ class MainWindow(QMainWindow):
         if signal:
             return self._xref_window.show_signal(signal)
         return True
+
+    # ---- 局部机实例 ----------------------------------------------------
+
+    def _open_local_machines(self) -> None:
+        """打开「局部机实例」窗（懒建、非模态）。
+
+        非模态是刚需：策划要一边在游戏里踢箱子一边盯着那台机器的态变不变。
+        """
+        from tools.narrative_debugger.ui.local_machines_window import LocalMachineWindow
+
+        if self._locals_window is None:
+            self._locals_window = LocalMachineWindow(
+                self.index, self.hub, self.breakpoints, parent=self
+            )
+            self._locals_window.breakpointToggled.connect(self._toggle_local_breakpoint)
+        self._locals_window.show()
+        self._locals_window.raise_()
+        self._locals_window.activateWindow()
+        self._locals_window.refresh()
+
+    def _toggle_local_breakpoint(self, machine_id: str, state_id: str, instance_key: str) -> None:
+        """局部机断点走**同一个** BreakpointStore 与同一条下发通道。
+
+        单开一套的话，「清空」只清得掉一半、切页签时也只撤得掉一半——留下的那一半
+        会在没人看的时候把游戏冻住，而「继续」按钮此刻指着另一个页签。
+        """
+        on = self.breakpoints.toggle(machine_id, state_id, instance_key)
+        self._refresh_breakpoints()
+        who = local_machines.key_phrase(self.index, instance_key) if instance_key else "这个原型的所有实例"
+        label = local_machines.state_label(self.index, machine_id, state_id)
+        self._set_hint(f"{'下了' if on else '取消了'}断点：{who} 进入「{label}」")
+
+    def _refresh_locals_button(self) -> None:
+        """按钮上带实例数：不带的话，没人会知道这一局到底有没有局部机。"""
+        count = len(self.hub.state.local_instances)
+        self.locals_btn.setText(f"局部机实例…（{count}）" if count else "局部机实例…")
 
     def _focus_from_xref(self, key: str) -> None:
         """信号关系窗里点某条转移 → 中间那张图挪过去（只挪镜头，不动游戏）。"""

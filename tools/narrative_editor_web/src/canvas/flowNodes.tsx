@@ -42,7 +42,7 @@ function NodePorts({ type }: { type?: string }) {
 }
 
 function isInlineSubgraphKind(kind: CanvasNode['data']['kind']): boolean {
-  return kind === 'wrapperGraph' || kind === 'scenarioSubgraph';
+  return kind === 'wrapperGraph' || kind === 'scenarioSubgraph' || kind === 'localMachine';
 }
 
 function useSubgraphDoubleClickToggle(nodeId: string | undefined, kind: CanvasNode['data']['kind']) {
@@ -66,6 +66,7 @@ export const flowNodeTypes = {
   editorGroupFrame: EditorGroupFrameNode,
   wrapperGraph: ElementNode,
   scenarioSubgraph: ElementNode,
+  localMachine: ElementNode,
   dialogueBlackbox: ElementNode,
   zoneBlackbox: ElementNode,
   minigameBlackbox: ElementNode,

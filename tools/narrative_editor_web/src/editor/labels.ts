@@ -3,6 +3,7 @@ import type { ElementKind } from '../types';
 export function kindLabel(kind: ElementKind): string {
   if (kind === 'wrapperGraph') return '实体包装';
   if (kind === 'scenarioSubgraph') return 'Scenario 子图';
+  if (kind === 'localMachine') return '局部机原型';
   if (kind === 'dialogueBlackbox') return '对话黑盒';
   if (kind === 'zoneBlackbox') return '区域黑盒';
   if (kind === 'minigameBlackbox') return '小游戏黑盒';

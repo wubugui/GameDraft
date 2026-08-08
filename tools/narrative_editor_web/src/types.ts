@@ -3,6 +3,10 @@ import type { Edge, Node } from '@xyflow/react';
 export type ElementKind =
   | 'wrapperGraph'
   | 'scenarioSubgraph'
+  // 局部机原型（实体绑定即实例化的私有状态机）：本身**不跑**，只是一份可复用的定义。
+  // 与 wrapperGraph 的差别是身份：wrapper 是"这个 NPC 的那台机器"，localMachine 是
+  // "任意实体都能绑的一张图纸"。见 artifact/Design/实体局部状态机-技术设计-2026-08-08.md。
+  | 'localMachine'
   | 'dialogueBlackbox'
   | 'zoneBlackbox'
   | 'minigameBlackbox'
@@ -56,6 +60,27 @@ export interface NarrativeTransitionDef {
   priority?: number;
 }
 
+/** 局部机变量声明（形状以 src/core/NarrativeStateManager.ts 的 NarrativeLocalVarDef 为权威）。 */
+export interface NarrativeLocalVarDef {
+  key: string;
+  type: 'bool' | 'float' | 'string';
+  default?: boolean | number | string;
+}
+
+/**
+ * 局部机原型声明：写了 `local` 的图 = 图纸，实体绑定它才产生实例。
+ * 三条私有边界（校验器同口径拦）：不进 owner 索引 / 不发 state:<图>:<态> 派生广播 /
+ * narrative 条件叶不接受它的 id。对外只经全局信号进出。
+ */
+export interface NarrativeLocalDef {
+  /** 实例变量表：类型 + 默认值；实例只存偏离默认的项。 */
+  vars?: NarrativeLocalVarDef[];
+  /** 显式声明监听的全局信号（建索引 + 校验声明漂移用）。 */
+  listens?: string[];
+  /** 显式声明导出的全局信号（校验用；实发以状态动作树为准）。 */
+  emits?: string[];
+}
+
 export interface NarrativeGraphDef {
   id: string;
   label?: string;
@@ -65,6 +90,8 @@ export interface NarrativeGraphDef {
   category?: string;
   /** 活计图声明（可重复运行的委托机器）；缺省=常驻图。见叙事运行实例化设计稿 v2。 */
   run?: { repeatable?: boolean; resumable?: boolean };
+  /** 局部机原型声明；缺省=全局图（常驻或活计）。与 run 互斥（校验拦）。 */
+  local?: NarrativeLocalDef;
   initialState: string;
   entryState?: string;
   exitStates?: string[];

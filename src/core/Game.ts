@@ -3073,6 +3073,20 @@ export class Game {
       this.interactionSystem.setNpcs(npcs);
     });
 
+    // 实体 def 的 `machine` 绑定 → 叙事实例表。SceneManager 不认识 NarrativeStateManager
+    // （不变量⑪：系统层不跨模块持有其它系统实例），只认这三个闭包；组装层在此把线接上。
+    this.sceneManager.setLocalMachineBinding({
+      ensureInstance: (machineId, host) => {
+        this.narrativeStateManager.ensureLocalInstance(machineId, host);
+      },
+      reconcile: (sceneId) => {
+        this.narrativeStateManager.reconcileLocalInstances(sceneId);
+      },
+      markUnloaded: (sceneId) => {
+        this.narrativeStateManager.markLocalInstancesUnloaded(sceneId);
+      },
+    });
+
     // 过场重建 / 卸载实体时，先把其滤镜从深度系统的每帧驱动列表摘除再销毁，
     // 否则已 destroy 的滤镜仍被 updatePerFrame 引用（且热点滤镜此前根本不销毁，造成 GPU 泄漏）。
     this.sceneManager.setEntityFilterReleaser((filters) => {
@@ -3802,6 +3816,14 @@ export class Game {
       getActivePlaneId: () => this.planeReconciler.getActivePlaneId(),
       // 身体姿态与位面同构：都是「世界此刻的样子」，走同一条条件通道
       getPlayerPosture: () => this.playerActionSystem.getPosture(),
+      // 局部机宿主自读后端（`selfState` / `selfVar` 叶）：**后端**在此统一给，
+      // **宿主是谁**（selfHost）由逐实体求值的调用方（InteractionSystem）当场补。
+      // 拆两半是刻意的：后端一份、宿主一实体一份；合在一起就得给工厂加参数，
+      // 而工厂是零参共享的唯一上下文源（不变量⑧，谁都不许自己拼缩水版）。
+      selfLocal: {
+        getState: (h) => this.narrativeStateManager.getLocalStateForHost(h),
+        getVar: (h, k) => this.narrativeStateManager.getLocalVarForHost(h, k),
+      },
     };
   }
 
