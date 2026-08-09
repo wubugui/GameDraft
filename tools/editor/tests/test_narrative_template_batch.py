@@ -435,9 +435,22 @@ class SceneEditorBatchStampEntryTests(unittest.TestCase):
     def test_entry_stages_one_graph_per_selected_entity(self) -> None:
         from tools.editor.shared import narrative_template_batch_dialog as dlg_mod
 
+        # 终审复审 G-1：此前这里没挂宿主——H6 哨兵（找不到主窗 = 按"有草稿"拦）会弹
+        # QMessageBox.warning，而用例只打桩了 information：离屏下模态 exec() 永不返回，
+        # 整跑挂死 15 分钟（不打桩必挂死、只打桩必被闸拦而失败）。happy path 必须挂一个
+        # **干净**叙事页的宿主（_web_editor_dirty_state 恰好返回 False——闸门判据是
+        # `is not False`），warning 仍打桩兜底：闸若误拦，失败信息里能看到拦的文案。
+        class _FakeHost:
+            def __init__(self, page): self._editor_instances = [page]
+            def parent(self): return None
+
+        class _FakeCleanNarrativePage:
+            def _web_editor_dirty_state(self): return False
+
         with TemporaryDirectory() as td:
             ed, model = self._editor(Path(td) / "p")
             self._select(ed, ["chest_1", "chest_2", "chest_3"])
+            ed.parent = lambda: _FakeHost(_FakeCleanNarrativePage())
             real_exec = dlg_mod.NarrativeTemplateBatchDialog.exec
             dlg_mod.NarrativeTemplateBatchDialog.exec = (
                 lambda d: (d._refresh_preview(), QDialog.DialogCode.Accepted)[1]
@@ -446,12 +459,15 @@ class SceneEditorBatchStampEntryTests(unittest.TestCase):
             from PySide6.QtWidgets import QMessageBox
 
             real_info = QMessageBox.information
+            real_warn = QMessageBox.warning
             QMessageBox.information = staticmethod(lambda *a, **k: boxes.append(str(a[2])))
+            QMessageBox.warning = staticmethod(lambda *a, **k: boxes.append(str(a[2])))
             try:
                 ed._apply_state_machine_template_to_selection()
             finally:
                 dlg_mod.NarrativeTemplateBatchDialog.exec = real_exec
                 QMessageBox.information = real_info
+                QMessageBox.warning = real_warn
             ids = [c["id"] for c in model.narrative_graphs["compositions"]]
             self.assertEqual(ids, ["chest_chest_1", "chest_chest_2", "chest_chest_3"], boxes)
             self.assertIn("narrative_graphs", model._dirty)

@@ -40,8 +40,15 @@ last_governed: 2026-08-09
    ——`getPrimaryGraphByOwner` 那条「多张即歧义」的规则只服务 `@owner` token,与投递无关。
 2. **缺 owner 上下文 = fail-loud 丢弃**(`signal.private.noOwner`,error)。**绝不回落成全局广播**
    ——回落会让那一条共用信号名一次推倒全部 100 个箱子,正是本机制要避免的事。
-3. **只有 owner 绑定的图能监听**。无 owner 的图(flow / scenario / 主线里程碑)监听私有信号 =
-   **校验 error**。既因为它永远收不到(死监听),更因为反过来会让主线的监听面被 N 个实体灌满。
+   owner 有但名下无任何图同样响(`signal.private.ownerNoGraph`,error + console.warn,
+   2026-08-09 从纯 trace 升级)——场景 onEnter 的 ambient owner 没 wrapper 是最常见的作者错误。
+3. **只有实体 owner(npc/hotspot/zone)绑定的图能监听**。白名单常量
+   `PRIVATE_SIGNAL_LISTENER_OWNER_TYPES`(narrativeGraphValidation.ts,与批量盖章
+   BATCH_ENTITY_KINDS 同口径,Python 两处兜底镜像+对账测试)。判据**不是"ownerType/ownerId
+   成对非空"**——现网 flow/scenario 图都带成对 owner,按成对判会全部放行(终审复审 G-2):
+   四档发射面产生不了 flow/scenario 发射方,那些监听永远不会触发(死监听);explicit 档还能
+   手写 owner 把 N 个实体共用的私有信号定向灌进主线监听面。白名单外监听 = **校验 error**
+   (`signal.private.listener.unbound`);白名单只设在校验面,运行时投递不重复设防。
 4. **与全局信号同一命名空间,不得重名**。同名两义会让 xref 与作者都要时刻分辨"这是哪个"。
 5. **零命中是常态,不报悬垂**。owner 的图不在 from 态时零命中很正常;
    "声明了私有却全项目无人监听"由校验器静态查(`signal.private.unlistened`,warning),比运行时准。

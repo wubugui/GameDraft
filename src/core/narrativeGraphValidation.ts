@@ -464,6 +464,18 @@ export const VALID_NARRATIVE_WRAPPER_OWNER_TYPES = [
 const validWrapperOwnerTypes = new Set<string>(VALID_NARRATIVE_WRAPPER_OWNER_TYPES);
 
 /**
+ * 私有信号允许的监听方 owner 类型 = 场景实体三类。
+ * 与批量盖章的 BATCH_ENTITY_KINDS（tools/editor/shared/narrative_template_batch.py）
+ * 及运行时四档 origin 真实产生的实体发射面同口径。flow/scenario/quest 等结构图
+ * 即使带成对 ownerType/ownerId 也不许监听：正常四档产生不了那些发射方（写了就是
+ * 死监听），explicit 档手写 owner 把私有信号灌进主线监听面的口子也一并封死
+ * （终审复审 G-2，2026-08-09）。Python 两处兜底镜像此表，有逐字对账测试。
+ */
+export const PRIVATE_SIGNAL_LISTENER_OWNER_TYPES = ['npc', 'hotspot', 'zone'] as const;
+
+const privateSignalListenerOwnerTypes = new Set<string>(PRIVATE_SIGNAL_LISTENER_OWNER_TYPES);
+
+/**
  * 作者信号 id + 全部 broadcastOnEnter 状态的派生 `state:<graphId>:<stateId>` 信号。
  * 实例化原型的派生键**不进目录**：运行时对 run 发的是实例形态（state:图@key:状态），
  * 活计图广播用普通形态 state:图:态（每原型一实例故 graphId 唯一），进目录；
@@ -924,12 +936,14 @@ function validateAuthorSignals(data: NarrativeGraphsFileLike, issues: NarrativeV
 }
 
 /**
- * 私有信号的监听面约束：**只有 owner 绑定的 wrapper 图能听**。
+ * 私有信号的监听面约束：**只有实体 owner（npc/hotspot/zone）绑定的 wrapper 图能听**。
  *
- * 私有信号按发射方 owner 定向投递（见 NarrativeStateManager.processTrigger），
- * 无 owner 的图（flow / scenario / 主线里程碑）永远收不到它——写了就是死监听。
- * 更要紧的是反过来：主线若能听 100 个箱子共用的那条私有信号，监听面会被灌满，
- * 这正是私有信号要避免的事，所以判 error 而不是 warning。
+ * 私有信号按发射方 owner 定向投递（见 NarrativeStateManager.processTrigger）。
+ * 判据是 ownerType 白名单而不是"成对非空"：现网 26 张 flow / 18 张 scenario 图
+ * 都带成对 ownerType/ownerId，按成对判会全部放行——而正常四档发射面产生不了
+ * flow/scenario 发射方，那些监听永远不会触发（死监听）；explicit 档还能手写
+ * owner 把 N 个实体共用的私有信号定向灌进主线监听面。两个动机都要求白名单收口，
+ * 所以判 error 而不是 warning（终审复审 G-2）。
  */
 function validatePrivateSignalListeners(data: NarrativeGraphsFileLike, issues: NarrativeValidationIssue[]): void {
   const privateIds = new Set(
@@ -942,7 +956,7 @@ function validatePrivateSignalListeners(data: NarrativeGraphsFileLike, issues: N
   const listened = new Set<string>();
   for (const { graph } of compileGraphs(data)) {
     const graphId = String(graph.id ?? '').trim();
-    const ownerBound = Boolean(String(graph.ownerType ?? '').trim() && String(graph.ownerId ?? '').trim());
+    const ownerBound = privateSignalListenerOwnerTypes.has(String(graph.ownerType ?? '').trim()) && Boolean(String(graph.ownerId ?? '').trim());
     for (const t of graph.transitions ?? []) {
       if (t?.trigger && t.trigger !== 'signal') continue;
       const key = String(t?.signal ?? '').trim();
@@ -953,7 +967,7 @@ function validatePrivateSignalListeners(data: NarrativeGraphsFileLike, issues: N
           issues,
           'error',
           'signal.private.listener.unbound',
-          `${graphId}: 无 owner 绑定的图不能监听私有信号 "${key}"（私有信号只投递给发射方 owner 的 wrapper 图，这条监听永远不会触发）`,
+          `${graphId}: 只有实体 owner（npc/hotspot/zone）绑定的 wrapper 图能监听私有信号 "${key}"（私有信号按发射方实体定向投递，flow/主线图听不到；要让剧情感知请另发一条全局信号）`,
           `${graphId}.transitions.${String(t?.id ?? '')}`,
           graphId,
         );

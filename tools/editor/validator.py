@@ -1432,13 +1432,19 @@ def _compiled_narrative_graph_refs(data: Any):
                 yield g, cid, str(el.get("id") or "").strip()
 
 
-def _validate_private_signal_listeners(data: Any, issues: list[Issue]) -> None:
-    """私有信号监听面：只有 owner 绑定的图能听（与 TS validatePrivateSignalListeners 同文案）。
+# 与 TS 权威 `PRIVATE_SIGNAL_LISTENER_OWNER_TYPES`（narrativeGraphValidation.ts）逐字镜像；
+# 对账测试在 test_narrative_private_signals，改任何一处先改 TS 再镜像过来。
+_PRIVATE_SIGNAL_LISTENER_OWNER_TYPES = ("npc", "hotspot", "zone")
 
-    私有信号按发射方 owner 定向投递（`NarrativeStateManager.processTrigger` 收窄
-    allowedGraphIds），无 owner 的图（flow / scenario / 主线）永远收不到 = 死监听；
-    反过来若主线能听 100 个箱子共用的那条信号，监听面会被灌满——正是私有信号要避免的事，
-    故判 error。无人监听则是 warning（先接线后写图是合法流程）。
+
+def _validate_private_signal_listeners(data: Any, issues: list[Issue]) -> None:
+    """私有信号监听面：只有实体 owner（npc/hotspot/zone）绑定的图能听（与 TS 同文案）。
+
+    判据是 ownerType 白名单而不是"成对非空"（终审复审 G-2）：现网 flow/scenario 图
+    都带成对 owner，按成对判会全部放行——正常四档发射面产生不了那些发射方（死监听），
+    explicit 档还能手写 owner 把共用私有信号灌进主线监听面，故判 error。
+    白名单镜像 TS `PRIVATE_SIGNAL_LISTENER_OWNER_TYPES`，对账测试在
+    test_narrative_private_signals。无人监听则是 warning（先接线后写图是合法流程）。
     """
     private_ids: list[str] = []
     for s in (data.get("signals") or []) if isinstance(data, dict) else []:
@@ -1453,9 +1459,9 @@ def _validate_private_signal_listeners(data: Any, issues: list[Issue]) -> None:
     listened: set[str] = set()
     for graph, _cid, _eid in _compiled_narrative_graph_refs(data):
         gid = str(graph.get("id") or "").strip()
-        owner_bound = bool(
-            str(graph.get("ownerType") or "").strip()
-            and str(graph.get("ownerId") or "").strip()
+        owner_bound = (
+            str(graph.get("ownerType") or "").strip() in _PRIVATE_SIGNAL_LISTENER_OWNER_TYPES
+            and bool(str(graph.get("ownerId") or "").strip())
         )
         for t in graph.get("transitions") or []:
             if not isinstance(t, dict):
@@ -1472,8 +1478,8 @@ def _validate_private_signal_listeners(data: Any, issues: list[Issue]) -> None:
                 continue
             issues.append(Issue(
                 "error", "narrative", gid,
-                f'{gid}: 无 owner 绑定的图不能监听私有信号 "{key}"'
-                f"（私有信号只投递给发射方 owner 的 wrapper 图，这条监听永远不会触发）",
+                f'{gid}: 只有实体 owner（npc/hotspot/zone）绑定的 wrapper 图能监听私有信号 "{key}"'
+                f"（私有信号按发射方实体定向投递，flow/主线图听不到；要让剧情感知请另发一条全局信号）",
             ))
     for sid in private_ids:
         if sid in listened:

@@ -2450,12 +2450,20 @@ def _private_signal_ids(data: dict[str, Any]) -> list[str]:
     return out
 
 
+# 与 TS 权威 `PRIVATE_SIGNAL_LISTENER_OWNER_TYPES`（narrativeGraphValidation.ts）逐字镜像；
+# 也与批量盖章 BATCH_ENTITY_KINDS（shared/narrative_template_batch.py）同口径。
+# 有对账测试（test_narrative_private_signals），改任何一处先改 TS 再镜像过来。
+_PRIVATE_SIGNAL_LISTENER_OWNER_TYPES = ("npc", "hotspot", "zone")
+
+
 def _validate_private_signal_listeners(data: dict[str, Any], issues: list[dict[str, Any]]) -> None:
-    """私有信号的监听面：只有 owner 绑定的图能听（与 TS validatePrivateSignalListeners 同码同文案）。
+    """私有信号的监听面：只有实体 owner（npc/hotspot/zone）绑定的图能听（与 TS 同码同文案）。
 
     私有信号按发射方 owner 定向投递（见 src/core/NarrativeStateManager.ts 的 processTrigger
-    收窄 allowedGraphIds），无 owner 绑定的图（flow / scenario / 主线）永远收不到——
-    写了就是死监听，而且会把「100 个箱子共用的那条信号」灌进主线监听面，正是私有要避免的事。
+    收窄 allowedGraphIds）。判据是 ownerType 白名单而不是"成对非空"（终审复审 G-2）：
+    现网 flow/scenario 图都带成对 owner，按成对判会全部放行——而正常四档发射面产生不了
+    那些发射方（死监听），explicit 档还能手写 owner 把共用私有信号灌进主线监听面。
+    白名单与 TS `PRIVATE_SIGNAL_LISTENER_OWNER_TYPES` 逐字对账（test_narrative_private_signals）。
     """
     private_ids = _private_signal_ids(data)
     if not private_ids:
@@ -2464,9 +2472,9 @@ def _validate_private_signal_listeners(data: dict[str, Any], issues: list[dict[s
     listened: set[str] = set()
     for graph, _cid, _element_id in _compiled_graph_refs(data):
         gid = str(graph.get("id", "")).strip()
-        owner_bound = bool(
-            str(graph.get("ownerType", "") or "").strip()
-            and str(graph.get("ownerId", "") or "").strip()
+        owner_bound = (
+            str(graph.get("ownerType", "") or "").strip() in _PRIVATE_SIGNAL_LISTENER_OWNER_TYPES
+            and bool(str(graph.get("ownerId", "") or "").strip())
         )
         for t in graph.get("transitions", []) or []:
             if not isinstance(t, dict):
@@ -2486,8 +2494,8 @@ def _validate_private_signal_listeners(data: dict[str, Any], issues: list[dict[s
             tid = str(t.get("id", "") or "")
             _issue(
                 issues, "error", "signal.private.listener.unbound",
-                f'{gid}: 无 owner 绑定的图不能监听私有信号 "{key}"'
-                f"（私有信号只投递给发射方 owner 的 wrapper 图，这条监听永远不会触发）",
+                f'{gid}: 只有实体 owner（npc/hotspot/zone）绑定的 wrapper 图能监听私有信号 "{key}"'
+                f"（私有信号按发射方实体定向投递，flow/主线图听不到；要让剧情感知请另发一条全局信号）",
                 f"{gid}.transitions.{tid}", gid,
             )
     for sid in private_ids:

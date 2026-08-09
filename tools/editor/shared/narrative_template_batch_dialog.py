@@ -43,6 +43,14 @@ from .reference_picker import ReferencePickerField
 
 _VALUE_ROLE = Qt.ItemDataRole.UserRole
 
+# 产物种类的策划可读名（终审复审·可用性③：列表/预览不许甩 composition、dialogueStubs
+# 这类 JSON 字段名——库内文案纪律）。键 = narrative_templates.PRODUCT_KINDS。
+_PRODUCT_LABELS = {
+    "composition": "状态机图",
+    "quest": "任务",
+    "dialogueStubs": "对话桩",
+}
+
 #: 引用型参数 → ProjectModel 的 id-provider。候选一律取自模型（禁手打引用），
 #: 与 ``narrative_templates.REF_PARAM_CATALOG_KEY``（web 侧数据源）同一批参数类型。
 _REF_PROVIDERS: dict[str, Callable[[Any], list]] = {
@@ -121,7 +129,7 @@ class NarrativeTemplateBatchDialog(QDialog):
         self._list = QListWidget(self)
         self._list.setToolTip("narrative_templates.json 里的状态机模板")
         for tpl in self._templates:
-            produces = "、".join(template_produces(tpl))
+            produces = "、".join(_PRODUCT_LABELS.get(k, k) for k in template_produces(tpl))
             item = QListWidgetItem(
                 f"{tpl.get('label') or tpl.get('id')}（{tpl.get('id')}）· 产出 {produces}",
             )
@@ -276,7 +284,7 @@ class NarrativeTemplateBatchDialog(QDialog):
         self._plan = plan if plan.get("ok") else None
         lines: list[str] = []
         if plan.get("ok"):
-            lines.append(f"将新增 {len(plan.get('items', []))} 份产物（产出：{'、'.join(plan.get('produces', []))}）")
+            lines.append(f"将新增 {len(plan.get('items', []))} 份产物（产出：{'、'.join(_PRODUCT_LABELS.get(k, k) for k in plan.get('produces', []))}）")
             for item in plan.get("items", [])[:6]:
                 target = item.get("target", {})
                 lines.append(

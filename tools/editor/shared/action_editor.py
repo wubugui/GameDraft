@@ -5358,7 +5358,14 @@ class ActionRow(QWidget):
                 )
                 w.value_changed.connect(lambda _t: self.changed.emit())
                 if isinstance(source_type_w, FilterableTypeCombo):
-                    def sync_source_reference_mode(_value: str = "") -> None:
+                    # ⚠ 必须用默认参默认绑定当前控件：`w` 是参数循环的复用变量，晚绑定闭包
+                    # 会在循环走到后面的参数（ownerType/ownerId 追加在 sourceId 之后）时
+                    # 指到别人的 QLineEdit 上——sourceId 恰好是最后一个参数时才侥幸能跑
+                    # （终审复审收尾门抓到的分支回归：切 sourceType 必抛 AttributeError，
+                    # 跳转开关全程不刷新）。
+                    def sync_source_reference_mode(
+                        _value: str = "", w=w, source_type_w=source_type_w,
+                    ) -> None:
                         source_kind = source_type_w.committed_type().strip()
                         w.set_custom_allowed(source_kind in ("action", "system"))
                         # sourceType=dialogue 时 sourceId 就是一张图对话：给正向跳转入口。

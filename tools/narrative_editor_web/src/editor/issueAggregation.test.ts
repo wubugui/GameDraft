@@ -39,7 +39,7 @@ function unboundIssue(graphId: string): ValidationIssueDef {
   return {
     severity: 'error',
     code: 'signal.private.listener.unbound',
-    message: `${graphId}: 无 owner 绑定的图不能监听私有信号 "box_open"`,
+    message: `${graphId}: 只有实体 owner（npc/hotspot/zone）绑定的 wrapper 图能监听私有信号 "box_open"`,
     path: `${graphId}.transitions.t_1`,
     target: { kind: 'transition', compositionId: 'comp', graphId, transitionId: 't_1' },
   };

@@ -114,8 +114,10 @@ index.overview()                               # 全部信号（一次扫描，�
   照单显示半对参数等于告诉作者"定向已经钉好了"。护栏
   `test_owner_binding_predicate_matches_the_runtime_typescript` 对着 TS 原文锁。
 
-> 运行时侧的另一半（谁能听）在校验器：无 owner 绑定的图监听私有信号 = error
-> （`signal.private.listener.unbound`），声明了没人听 = warning（`signal.private.unlistened`）。
+> 运行时侧的另一半（谁能听）在校验器：只有实体 owner（npc/hotspot/zone，白名单
+> `PRIVATE_SIGNAL_LISTENER_OWNER_TYPES`）绑定的 wrapper 图能监听私有信号，其余图——
+> 含带成对 owner 的 flow/scenario——监听 = error（`signal.private.listener.unbound`），
+> 声明了没人听 = warning（`signal.private.unlistened`）。
 > 本模块**刻意不复制**那两条判定——再造一份就是第二个会漂的口径。
 
 派生信号 `state:<图>:<状态>` 额外给两样：

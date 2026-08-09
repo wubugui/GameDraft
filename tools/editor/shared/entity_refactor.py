@@ -92,6 +92,9 @@ ENTITY_REF_PARAMS: dict[str, dict[str, str]] = {
     "persistNpcDisablePatrol": {"npcId": "npc"},
     "persistNpcEnablePatrol": {"npcId": "npc"},
     "startDialogueGraph": {"npcId": "npc_soft", "ownerId": "owner"},
+    # emitNarrativeSignal 的显式 owner 逃生口（终审 H1）：ownerId 与 startDialogueGraph
+    # 同款 "owner" 语义——按成对 ownerType 判实体类别后才级联改名/计数。
+    "emitNarrativeSignal": {"ownerId": "owner"},
     "switchScene": {"targetScene": "scene", "targetSpawnPoint": "spawn"},
     "changeScene": {"targetScene": "scene", "targetSpawnPoint": "spawn"},
     "playScriptedDialogue": {"scriptedNpcId": "npc_soft"},

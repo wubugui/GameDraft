@@ -515,6 +515,23 @@ def validate_templates_file(data: Any) -> list[dict[str, Any]]:
                             f"模板「{tid}」的 produces 里有未知产物「{name}」（已忽略；"
                             f"可选值：{'、'.join(PRODUCT_KINDS)}）", tid,
                         ))
+            # scope 拼写错只在原始输入里看得见：normalize 只认 'private'，别的值直接丢键
+            # 零报错 → 模板里想写私有的信号盖出来是**全局广播**，一箱被取全场推倒——
+            # 正是私有信号要防的串线事故形状，error 拦下（终审复审 Z-2；narrative_graphs
+            # 通道的对应校验是 signal.scope.invalid，模板通道此前没有）。
+            raw_signals = t.get("signals")
+            if isinstance(raw_signals, list):
+                for s in raw_signals:
+                    if not isinstance(s, dict) or s.get("scope") is None:
+                        continue  # 缺键/显式 null 都是合法的"全局"缺省写法
+                    scope = _as_str(s.get("scope"))
+                    if scope not in ("global", "private"):
+                        issues.append(_issue(
+                            "error", "template.signal.scope.invalid",
+                            f"模板「{tid}」信号「{_as_str(s.get('id'))}」的 scope「{scope}」不认识："
+                            "只能是 private（只发给拥有它的那个实体）或 global（全局广播，可不写）。"
+                            "写错不拦会被静默当成全局，正是私有信号要防的串线事故", tid,
+                        ))
     for tpl in normalize_templates_file(data)["templates"]:
         issues.extend(validate_template(tpl))
     return issues
@@ -828,9 +845,12 @@ def stamp_template(
     emit_sources.discard("")
     for sig in sorted(used_signals):
         if sig not in emit_sources:
+            # 文案面向盖章的策划（终审复审·可用性②）：不甩 blackbox/meta.emits 这类字段名，
+            # 直接给下一步动作——绝大多数场景缺的是那张共用的发射端对话图。
             warnings.append(_issue(
                 "warning", "stamp.signal.noemit",
-                f"信号「{sig}」在作曲里被监听，但没有 blackbox 声明 emit 它——检查模板 element.meta.emits", tid,
+                f"信号「{sig}」有人听、还没有人发（这一跳不会自己走）：给它接一张发射端对话图"
+                f"（对话里加「发出信号」动作）；模板作者也可在元件的「发出信号」声明里补上", tid,
             ))
 
     ok = not errors

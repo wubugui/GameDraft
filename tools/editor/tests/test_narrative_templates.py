@@ -499,6 +499,68 @@ def test_save_all_template_roundtrip_byte_identical(tmp_path):
     assert tpl_path.read_text(encoding="utf-8") == seed
 
 
+def test_signal_scope_survives_normalize_then_stamp():
+    """终审复审 G-3：B3 修复行（normalize 保 scope）此前零护栏——判据改坏 59 条测试全绿。
+
+    锁死真实链路：磁盘形状的模板文件 → normalize_templates_file → stamp_template，
+    private 全程存活；'global' 是缺省语义**不落键**（保模板文件字节级往返）。
+    """
+    raw = {"templates": [{
+        "id": "tpl_box", "label": "箱子壳",
+        "params": [{"name": "taskId"}],
+        "signals": [
+            {"id": "{{taskId}}__opened", "scope": "private"},
+            {"id": "{{taskId}}__done", "scope": "global"},
+            {"id": "{{taskId}}__plain"},
+        ],
+        "composition": {"id": "comp_{{taskId}}", "mainGraph": {
+            "id": "g_{{taskId}}", "initialState": "a", "states": {"a": {"id": "a"}},
+            "transitions": [],
+        }},
+    }]}
+    tpl = normalize_templates_file(raw)["templates"][0]
+    rows = {r["id"]: r for r in tpl["signals"]}
+    assert rows["{{taskId}}__opened"].get("scope") == "private", "normalize 丢了 private scope（B3 回归）"
+    assert "scope" not in rows["{{taskId}}__done"], "global 必须归缺省不落键（字节往返）"
+    assert "scope" not in rows["{{taskId}}__plain"]
+
+    res = stamp_template(tpl, {"taskId": "箱子1"})
+    assert res["ok"], res["errors"]
+    out = {r["id"]: r for r in res["signals"]}
+    assert out["箱子1__opened"].get("scope") == "private", "盖章产物丢了 private scope"
+    assert "scope" not in out["箱子1__done"]
+
+
+def test_template_signal_scope_typo_is_error_not_silent_fallopen():
+    """终审复审 Z-2：scope 拼写错（PRIVATE/priv/…）此前被 normalize 静默丢键成全局广播。
+
+    与 narrative_graphs 通道的 signal.scope.invalid 对齐：模板通道也必须 error 拦下；
+    缺键 / 显式 null / 合法两值不响。
+    """
+    def _file_with_scope(scope) -> dict:
+        row: dict = {"id": "{{taskId}}__opened"}
+        if scope is not ...:
+            row["scope"] = scope
+        return {"templates": [{
+            "id": "tpl_box", "params": [{"name": "taskId"}],
+            "signals": [row],
+            "composition": {"id": "comp_{{taskId}}", "mainGraph": {
+                "id": "g_{{taskId}}", "initialState": "a", "states": {"a": {"id": "a"}},
+                "transitions": [],
+            }},
+        }]}
+
+    for bad in ("PRIVATE", "Private", "priv", "local", ""):
+        issues = validate_templates_file(_file_with_scope(bad))
+        codes = [i["code"] for i in issues]
+        assert "template.signal.scope.invalid" in codes, f"scope={bad!r} 该 error 没响"
+        bad_rows = [i for i in issues if i["code"] == "template.signal.scope.invalid"]
+        assert bad_rows[0]["severity"] == "error"
+    for ok in ("private", "global", None, ...):
+        issues = validate_templates_file(_file_with_scope(ok))
+        assert "template.signal.scope.invalid" not in [i["code"] for i in issues], f"scope={ok!r} 误报"
+
+
 def test_extract_bundles_and_parameterizes_quest():
     comp = _mini_composition()
     quest = {"id": "背尸-淹尸活", "title": "拉个泡涨的", "completionConditions": [

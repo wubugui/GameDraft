@@ -1819,7 +1819,7 @@ describe('NarrativeStateManager · 私有信号', () => {
     warn.mockRestore();
   });
 
-  it('校验：无 owner 绑定的图监听私有信号 = error；无人监听 = warning', () => {
+  it('校验：非实体 owner 的图监听私有信号 = error；无人监听 = warning', () => {
     const issues = validateNarrativeGraphData({
       schemaVersion: 3,
       signals: [{ id: 'taken', scope: 'private' }, { id: '没人听的', scope: 'private' }],
@@ -1838,5 +1838,30 @@ describe('NarrativeStateManager · 私有信号', () => {
     });
     expect(issues.some((i) => i.code === 'signal.private.listener.unbound' && i.severity === 'error')).toBe(true);
     expect(issues.some((i) => i.code === 'signal.private.unlistened' && i.itemId === '没人听的')).toBe(true);
+  });
+
+  it('校验（终审复审 G-2）：带成对 owner 的 flow/scenario 图监听私有信号照样 error——判据是白名单不是"成对非空"', () => {
+    // 现网 26 张 flow + 18 张 scenario 图全部带成对 ownerType/ownerId（如 flow:码头水鬼）。
+    // 按"成对非空"判会全部放行：四档发射面产生不了 flow 发射方 → 死监听零告警；
+    // explicit 档还能手写 owner 把 N 个实体共用的私有信号定向灌进主线监听面。
+    const issues = validateNarrativeGraphData({
+      schemaVersion: 3,
+      signals: [{ id: 'taken', scope: 'private' }],
+      compositions: [{
+        id: 'c',
+        mainGraph: {
+          id: 'flow_dock', ownerType: 'flow', ownerId: '码头水鬼', initialState: 'a',
+          states: { a: { id: 'a' }, b: { id: 'b' } },
+          transitions: [{ id: 't', from: 'a', to: 'b', signal: 'taken' }],
+        },
+        elements: [{
+          id: 'el', kind: 'wrapperGraph', ownerType: 'hotspot', ownerId: 'hs_001',
+          graph: boxGraph('hs_001'),
+        }],
+      }],
+    });
+    expect(issues.filter((i) => i.code === 'signal.private.listener.unbound' && i.severity === 'error')).toHaveLength(1);
+    // 白名单三类（npc/hotspot/zone）不受影响：hs_001 的 wrapper 在听，没有第二条 unbound
+    expect(issues.some((i) => i.code === 'signal.private.unlistened')).toBe(false);
   });
 });
