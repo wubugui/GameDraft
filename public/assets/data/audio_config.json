@@ -14,9 +14,48 @@
     },
     "bgm_02_teahouse_loop": {
       "src": "/resources/runtime/audio/demo/generated_20260808/bgm_02_teahouse_loop.mp3"
+    },
+    "bgm_03_dock_loop": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/bgm_03_dock_loop.mp3"
+    },
+    "bgm_04_yizhuang_still_loop": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/bgm_04_yizhuang_still_loop.mp3"
+    },
+    "bgm_05_chenghuang_lamp_dread_loop": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/bgm_05_chenghuang_lamp_dread_loop.mp3"
+    },
+    "bgm_06_forest_hold_pressure_loop": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/bgm_06_forest_hold_pressure_loop.mp3"
+    },
+    "bgm_07_well_low_dread_loop": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/bgm_07_well_low_dread_loop.mp3"
+    },
+    "bgm_08_dream_warm_wrong_loop": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/bgm_08_dream_warm_wrong_loop.mp3"
+    },
+    "bgm_09_exit_gate_loop": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/bgm_09_exit_gate_loop.mp3"
     }
   },
   "ambient": {
+    "amb_01_street_murmur_loop": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/amb_01_street_murmur_loop.mp3"
+    },
+    "amb_02_teahouse_loop": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/amb_02_teahouse_loop.mp3"
+    },
+    "amb_03_fog_damp_loop": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/amb_03_fog_damp_loop.mp3"
+    },
+    "amb_04_temple_incense_loop": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/amb_04_temple_incense_loop.mp3"
+    },
+    "amb_05_underwater_muffle_loop": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/amb_05_underwater_muffle_loop.mp3"
+    },
+    "amb_06_hold_pressure_bed_loop": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/amb_06_hold_pressure_bed_loop.mp3"
+    },
     "amb_riverbank_loop": {
       "src": "/resources/runtime/audio/demo/amb_riverbank_loop.wav"
     },
