@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  aggregatePrivateListeners,
+  privatePatternHeadline,
+  privatePatternTitle,
   canReveal,
   countSummary,
   filterSignals,
@@ -30,6 +33,7 @@ import {
   worstSeverity,
 } from './signalXref';
 import type {
+  NarrativeGraphsFileDef,
   SignalXrefCardDef,
   StateXrefCardDef,
   XrefEmitterDef,
@@ -492,5 +496,103 @@ describe('读状态那一行说的是世界里的东西，不是技术路径', (
       .toBe('出不出现 · 要求到过这一拍');
     expect(readerEffect(stateRead({ subjectEffect: '出不出现', reached: false, negated: true })))
       .toBe('出不出现 · 要求正停在这一拍 · 取反');
+  });
+});
+
+describe('aggregatePrivateListeners（私有信号的「一条模式」）', () => {
+  /** N 张同款 wrapper 图 + 各自的 wrapper 元素；状态 id 带实例名，故意各不相同。 */
+  function boxFile(count: number): NarrativeGraphsFileDef {
+    return {
+      schemaVersion: 3,
+      signals: [{ id: 'box_open', scope: 'private' }],
+      compositions: [{
+        id: 'comp_1',
+        mainGraph: {
+          id: 'flow_main', ownerType: 'flow', initialState: 'a',
+          states: { a: { id: 'a' } }, transitions: [],
+        },
+        elements: Array.from({ length: count }, (_, i) => ({
+          id: `el_box_${i}`,
+          kind: 'wrapperGraph',
+          ownerType: 'hotspot',
+          ownerId: `box_${i}`,
+          graph: {
+            id: `wrap_box_${i}`,
+            ownerType: 'hotspot',
+            ownerId: `box_${i}`,
+            initialState: `box_${i}_closed`,
+            states: { [`box_${i}_closed`]: { id: `box_${i}_closed` }, [`box_${i}_opened`]: { id: `box_${i}_opened` } },
+            transitions: [{ id: 't_1', from: `box_${i}_closed`, to: `box_${i}_opened`, signal: 'box_open' }],
+          },
+        })),
+      }],
+    } as unknown as NarrativeGraphsFileDef;
+  }
+
+  function boxListener(i: number, over: Partial<XrefListenerDef> = {}): XrefListenerDef {
+    return listener({
+      signal: 'box_open',
+      graphId: `wrap_box_${i}`,
+      graphLabel: `箱子${i}`,
+      elementId: `el_box_${i}`,
+      transitionId: 't_1',
+      from: `box_${i}_closed`,
+      to: `box_${i}_opened`,
+      fromLabel: `box_${i}_closed`,
+      toLabel: `box_${i}_opened`,
+      ...over,
+    });
+  }
+
+  it('100 张同款 wrapper 收成一条模式（状态 id 各不相同也照样合上）', () => {
+    const listeners = Array.from({ length: 100 }, (_, i) => boxListener(i));
+    const patterns = aggregatePrivateListeners(listeners, boxFile(100));
+
+    expect(patterns).toHaveLength(1);
+    expect(patterns[0]!.count).toBe(100);
+    expect(patterns[0]!.sample).toBe(listeners[0]); // 代表行是原对象：画布定位仍落到真实转移
+    expect(privatePatternHeadline(patterns[0]!)).toContain('所有绑此类 wrapper 的实体（100 张图）');
+    expect(privatePatternTitle(patterns[0]!)).toContain('100 张同款 wrapper 图');
+  });
+
+  it('同一张图里长得不一样的两跳仍是两条模式（聚合不许把不同的跳合并）', () => {
+    const data = boxFile(2);
+    const wrap0 = data.compositions![0]!.elements![0]!.graph!;
+    wrap0.states.box_0_broken = { id: 'box_0_broken' };
+    wrap0.transitions.push({ id: 't_2', from: 'box_0_opened', to: 'box_0_broken', signal: 'box_open' });
+
+    const patterns = aggregatePrivateListeners(
+      [boxListener(0), boxListener(0, { transitionId: 't_2', from: 'box_0_opened', to: 'box_0_broken' })],
+      data,
+    );
+    expect(patterns).toHaveLength(2);
+  });
+
+  it('条件不同不合并（同一跳但门槛不同，说成一条就把规则说错了）', () => {
+    const patterns = aggregatePrivateListeners(
+      [boxListener(0), boxListener(1, { conditions: ['有钥匙'] })],
+      boxFile(2),
+    );
+    expect(patterns).toHaveLength(2);
+    expect(patterns.map((p) => p.count)).toEqual([1, 1]);
+  });
+
+  it('图不在当前文档里（宿主扫描面更宽）时退回按 id 分组，宁可多分也不合错', () => {
+    const patterns = aggregatePrivateListeners(
+      [boxListener(0), boxListener(1)],
+      { schemaVersion: 3, signals: [], compositions: [] } as unknown as NarrativeGraphsFileDef,
+    );
+    expect(patterns).toHaveLength(2);
+  });
+
+  it('只有一张图时抬头说图名，不说「所有绑此类 wrapper 的实体」', () => {
+    const patterns = aggregatePrivateListeners([boxListener(0)], boxFile(1));
+    expect(patterns).toHaveLength(1);
+    expect(privatePatternHeadline(patterns[0]!)).toBe('箱子0 · box_0_closed → box_0_opened');
+    expect(privatePatternTitle(patterns[0]!)).toBe(listenerSubline(patterns[0]!.sample));
+  });
+
+  it('空监听面返回空数组（没人听的私有信号不该凭空造一条模式）', () => {
+    expect(aggregatePrivateListeners([], boxFile(0))).toEqual([]);
   });
 });

@@ -4,17 +4,28 @@ import {
   createAuthorSignal,
   isUnregisteredAuthorSignal,
   setAuthorSignalNotes,
+  setAuthorSignalScope,
 } from '../signalCatalog';
 import { DEFAULT_DRAFT_SIGNAL } from '../signalConstants';
 import type { NarrativeGraphsFileDef, SignalCatalogEntryDef } from '../types';
 
-type SignalKindFilter = 'all' | 'author' | 'derived';
+type SignalKindFilter = 'all' | 'author' | 'derived' | 'private';
 
 const KIND_FILTER_OPTIONS: Array<{ id: SignalKindFilter; label: string }> = [
   { id: 'all', label: '全部' },
   { id: 'author', label: '作者信号' },
+  { id: 'private', label: '私有' },
   { id: 'derived', label: '派生信号' },
 ];
+
+/**
+ * 私有信号一句话说清（登记表勾选框、行内徽章、新建表单三处共用同一段话——
+ * 三处各写各的必然漂，而这条语义漂了就是「主线为什么听不到」的深夜排查）。
+ */
+export const PRIVATE_SIGNAL_HINT = '私有信号：只投递给「发射方 owner 所拥有的 wrapper 图」，'
+  + '主线 / flow / scenario 这些没有 owner 的图**永远收不到**（校验会直接报 error）。'
+  + '用途：100 个箱子共用一个信号名 + 一张发射端对话图，各推各的 wrapper。'
+  + '不勾 = 全局广播（缺省，JSON 里不写 scope 键）。';
 
 export function SignalPickerModal(props: {
   open: boolean;
@@ -33,6 +44,7 @@ export function SignalPickerModal(props: {
   const [newId, setNewId] = useState('');
   const [newLabel, setNewLabel] = useState('');
   const [newNotes, setNewNotes] = useState('');
+  const [newPrivate, setNewPrivate] = useState(false);
   const [error, setError] = useState('');
   const [editingNotesId, setEditingNotesId] = useState('');
   const [notesDraft, setNotesDraft] = useState('');
@@ -42,6 +54,7 @@ export function SignalPickerModal(props: {
   const counts = useMemo(() => ({
     all: catalog.filter((e) => e.kind !== 'draft').length,
     author: catalog.filter((e) => e.kind === 'author').length,
+    private: catalog.filter((e) => e.scope === 'private').length,
     derived: catalog.filter((e) => e.kind === 'derived').length,
   }), [catalog]);
 
@@ -50,6 +63,7 @@ export function SignalPickerModal(props: {
     return catalog.filter((e) => {
       if (e.kind === 'draft') return kindFilter === 'all' && !q;
       if (kindFilter === 'author' && e.kind !== 'author') return false;
+      if (kindFilter === 'private' && e.scope !== 'private') return false;
       if (kindFilter === 'derived' && e.kind !== 'derived') return false;
       if (!q) return true;
       return e.id.toLowerCase().includes(q)
@@ -68,17 +82,24 @@ export function SignalPickerModal(props: {
   const createAndPick = () => {
     try {
       props.onDataChange((data) => {
-        createAuthorSignal(data, newId, newLabel, newNotes);
+        createAuthorSignal(data, newId, newLabel, newNotes, newPrivate ? 'private' : undefined);
       });
       props.onSelect(newId.trim());
       setNewId('');
       setNewLabel('');
       setNewNotes('');
+      setNewPrivate(false);
       setError('');
       props.onClose();
     } catch (e) {
       setError(String(e));
     }
+  };
+
+  const togglePrivate = (entry: SignalCatalogEntryDef, next: boolean) => {
+    props.onDataChange((data) => {
+      setAuthorSignalScope(data, entry.id, next);
+    });
   };
 
   const startEditNotes = (entry: SignalCatalogEntryDef) => {
@@ -133,14 +154,22 @@ export function SignalPickerModal(props: {
             </p>
           ) : null}
           {filtered.map((entry) => (
-            <div key={entry.id} className={`signal-row-wrap${entry.id === props.currentSignal ? ' active' : ''}`}>
+            <div
+              key={entry.id}
+              className={`signal-row-wrap${entry.id === props.currentSignal ? ' active' : ''}${entry.scope === 'private' ? ' private' : ''}`}
+            >
               <div className="signal-row-line">
                 <button
                   type="button"
                   className="signal-row"
                   onClick={() => pick(entry)}
                 >
-                  <span className="signal-row-id">{entry.id}</span>
+                  <span className="signal-row-id">
+                    {entry.scope === 'private' ? (
+                      <span className="signal-scope-badge" title={PRIVATE_SIGNAL_HINT}>🔒私有</span>
+                    ) : null}
+                    {entry.id}
+                  </span>
                   <span className="signal-row-meta">
                     {entry.kind === 'author' ? '作者' : entry.kind === 'derived' ? '派生' : '草稿'}
                     {entry.registered ? '' : ' · ⚠未登记'}
@@ -148,9 +177,22 @@ export function SignalPickerModal(props: {
                     {/* 本弹窗按 props.data 构建目录、未传 emitterRefsById，故发射数恒为 0、会误导；
                         只展示准确的「监听」数（发射源跨对话/场景/运行时，无法在此可靠统计）。 */}
                     {` · 监听 ${entry.listeners}`}
+                    {entry.scope === 'private' ? ' · 只投给发射方 owner 的 wrapper' : ''}
                   </span>
                   {entry.notes ? <span className="signal-row-notes">📝 {entry.notes}</span> : null}
                 </button>
+                {/* 登记表就是 scope 的家：勾选直接改注册行（可 Ctrl+Z）。
+                    派生/草稿没有注册行，不给勾——它们由状态自动产生，谈不上投递面。 */}
+                {entry.kind === 'author' ? (
+                  <label className="signal-row-scope-toggle" title={PRIVATE_SIGNAL_HINT}>
+                    <input
+                      type="checkbox"
+                      checked={entry.scope === 'private'}
+                      onChange={(e) => togglePrivate(entry, e.target.checked)}
+                    />
+                    私有
+                  </label>
+                ) : null}
                 {isUnregisteredAuthorSignal(props.data, entry.id) ? (
                   <button
                     type="button"
@@ -240,6 +282,14 @@ export function SignalPickerModal(props: {
                   value={newNotes}
                   onChange={(e) => setNewNotes(e.target.value)}
                 />
+                <label className="signal-row-scope-toggle" title={PRIVATE_SIGNAL_HINT}>
+                  <input
+                    type="checkbox"
+                    checked={newPrivate}
+                    onChange={(e) => setNewPrivate(e.target.checked)}
+                  />
+                  私有信号（只投给发射方 owner 的 wrapper 图）
+                </label>
               </div>
               <button type="button" onClick={createAndPick} disabled={!newId.trim()}>新建并选用</button>
             </div>

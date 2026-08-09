@@ -992,7 +992,9 @@ class NarrativeEditorBridge(QObject):
                    generateDialogueStubs:bool, dryRun:bool}
         dryRun：只回 preview，不产生任何副作用。
         """
-        from ..shared.narrative_templates import normalize_templates_file, stamp_template
+        from ..shared.narrative_templates import (
+            attach_stamp_provenance, normalize_templates_file, stamp_template,
+        )
 
         try:
             parsed = json.loads(payload or "{}")
@@ -1053,6 +1055,7 @@ class NarrativeEditorBridge(QObject):
 
         preview = {
             "compositionId": result["compositionId"],
+            "produces": result.get("produces", []),
             "questId": result.get("questId", ""),
             "signals": [s.get("id") for s in result.get("signals", [])],
             "dialogueStubs": [
@@ -1070,7 +1073,11 @@ class NarrativeEditorBridge(QObject):
         merged.setdefault("compositions", [])
         if not isinstance(merged["compositions"], list):
             merged["compositions"] = []
-        merged["compositions"].append(result["composition"])
+        # 盖章产物记来源模板与版本（为将来的「模板改了要不要同步已盖的图」留钩子；本轮不同步）。
+        # 在这里打戳而不是 stamp_template 内部：抽取↔盖章往返无损是硬契约，产出体不能凭空多键。
+        merged["compositions"].append(
+            attach_stamp_provenance(result["composition"], result.get("provenance")),
+        )
         merged.setdefault("signals", [])
         if not isinstance(merged["signals"], list):
             merged["signals"] = []
@@ -2314,6 +2321,15 @@ def validate_narrative_graphs(data: dict[str, Any]) -> list[dict[str, Any]]:
         seen_signal_ids.add(sid)
         if sid == DEFAULT_DRAFT_SIGNAL or sid.startswith(DERIVED_STATE_SIGNAL_PREFIX):
             _issue(issues, "error", "signal.id.reserved", f"author signal id is reserved: {sid}", path, sid, target)
+        # 私有信号声明（scope）。TS 权威判的是 `scope !== undefined`；Python 侧把「缺键」
+        # 与「显式 null」一并当未声明跳过——兜底只许比权威松，不许更严。
+        scope = row.get("scope")
+        if scope is not None and scope not in ("global", "private"):
+            _issue(
+                issues, "error", "signal.scope.invalid",
+                f"{sid}: signal scope must be 'global' or 'private'",
+                f"signals[{si}].scope", sid, target,
+            )
     comp_ids: set[str] = set()
     graph_ids: set[str] = set()
     graph_index = _build_graph_index(data)
@@ -2393,7 +2409,95 @@ def validate_narrative_graphs(data: dict[str, Any]) -> list[dict[str, Any]]:
     _validate_owner_bindings(data, issues)
     _validate_state_command_targets(data, graph_index, issues)
     _validate_broadcast_state_signals(data, issues)
+    _validate_private_signal_listeners(data, issues)
     return issues
+
+
+def _compiled_graph_refs(data: dict[str, Any]) -> list[tuple[dict[str, Any], str, str]]:
+    """(graph, compositionId, elementId)：与 TS 权威 compileGraphs 同口径。
+
+    刻意只收 mainGraph 与 wrapperGraph / scenarioSubgraph 元素的内嵌图——放宽到「任何带
+    graph 的元素」会让兜底比权威多报，违反"兜底是子集"。
+    """
+    out: list[tuple[dict[str, Any], str, str]] = []
+    for comp in data.get("compositions", []) or []:
+        if not isinstance(comp, dict):
+            continue
+        cid = str(comp.get("id", "")).strip()
+        main = comp.get("mainGraph")
+        if isinstance(main, dict):
+            out.append((main, cid, ""))
+        for el in comp.get("elements", []) or []:
+            if not isinstance(el, dict):
+                continue
+            if str(el.get("kind", "")).strip() not in ("wrapperGraph", "scenarioSubgraph"):
+                continue
+            graph = el.get("graph")
+            if isinstance(graph, dict):
+                out.append((graph, cid, str(el.get("id", "")).strip()))
+    return out
+
+
+def _private_signal_ids(data: dict[str, Any]) -> list[str]:
+    """声明了 `scope: 'private'` 的作者信号 id（保序去重）。"""
+    out: list[str] = []
+    for row in data.get("signals", []) or []:
+        if not isinstance(row, dict) or row.get("scope") != "private":
+            continue
+        sid = str(row.get("id", "")).strip()
+        if sid and sid not in out:
+            out.append(sid)
+    return out
+
+
+def _validate_private_signal_listeners(data: dict[str, Any], issues: list[dict[str, Any]]) -> None:
+    """私有信号的监听面：只有 owner 绑定的图能听（与 TS validatePrivateSignalListeners 同码同文案）。
+
+    私有信号按发射方 owner 定向投递（见 src/core/NarrativeStateManager.ts 的 processTrigger
+    收窄 allowedGraphIds），无 owner 绑定的图（flow / scenario / 主线）永远收不到——
+    写了就是死监听，而且会把「100 个箱子共用的那条信号」灌进主线监听面，正是私有要避免的事。
+    """
+    private_ids = _private_signal_ids(data)
+    if not private_ids:
+        return
+    private_set = set(private_ids)
+    listened: set[str] = set()
+    for graph, _cid, _element_id in _compiled_graph_refs(data):
+        gid = str(graph.get("id", "")).strip()
+        owner_bound = bool(
+            str(graph.get("ownerType", "") or "").strip()
+            and str(graph.get("ownerId", "") or "").strip()
+        )
+        for t in graph.get("transitions", []) or []:
+            if not isinstance(t, dict):
+                continue
+            # 与 TS 权威逐字对齐（终审 H4）：TS 是 `t?.trigger && t.trigger !== 'signal'`，
+            # **不 trim**。strip 会让 `"signal "` 被当成非 signal 触发而跳过 → 该图被判
+            # "没在听" → unlistened 误报 + unbound 误报——兜底比权威严，红线。
+            trigger = t.get("trigger")
+            if trigger and trigger != "signal":
+                continue
+            key = str(t.get("signal", "") or "").strip()
+            if key not in private_set:
+                continue
+            listened.add(key)
+            if owner_bound:
+                continue
+            tid = str(t.get("id", "") or "")
+            _issue(
+                issues, "error", "signal.private.listener.unbound",
+                f'{gid}: 无 owner 绑定的图不能监听私有信号 "{key}"'
+                f"（私有信号只投递给发射方 owner 的 wrapper 图，这条监听永远不会触发）",
+                f"{gid}.transitions.{tid}", gid,
+            )
+    for sid in private_ids:
+        if sid in listened:
+            continue
+        _issue(
+            issues, "warning", "signal.private.unlistened",
+            f'私有信号 "{sid}" 没有任何 wrapper 图监听（发射它不会推动任何状态）',
+            "signals", sid,
+        )
 
 
 def _validate_broadcast_state_signals(data: dict[str, Any], issues: list[dict[str, Any]]) -> None:

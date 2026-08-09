@@ -12304,25 +12304,47 @@ class SceneEditor(QWidget):
             self._props.show_multi_selection(len(refs))
         self._sync_transform_gizmo()
 
+    def build_entity_tree_context_menu(self, refs: list[tuple[str, str]]) -> QMenu:
+        """构造实体树右键菜单（与 exec 分离，同 `build_group_context_menu`：
+        `QMenu.exec` 在 PySide 里打桩不掉，离屏测试一碰就永久阻塞）。
+        动作用 `setData(key)` 标身份，派发走 `_run_tree_context_action`——
+        测试据此从"菜单里真有这一项 + 这一项真接到那个函数"两侧进。"""
+        can_group = any(r[0] in ("npc", "hotspot", "zone") for r in refs)
+        menu = QMenu(self)
+        act_group = menu.addAction("指派分组…")
+        act_group.setData("group")
+        act_group.setToolTip("给选中实体指派/移出分组（group 标签）")
+        act_group.setEnabled(can_group)
+        act_tpl = menu.addAction("应用状态机模板…")
+        act_tpl.setData("template")
+        act_tpl.setToolTip(
+            "给选中的 NPC / 热点 / Zone 批量盖一份叙事状态机产物；"
+            "图 id 与 ownerId 由实体推导，暂存后由「全部保存」落盘")
+        act_tpl.setEnabled(can_group)
+        act_dup = menu.addAction("复制")
+        act_dup.setData("duplicate")
+        act_dup.setEnabled(any(r[0] in ("npc", "hotspot", "zone", "spawn") for r in refs))
+        act_del = menu.addAction("删除")
+        act_del.setData("delete")
+        return menu
+
+    def _run_tree_context_action(self, key: str) -> None:
+        if key == "group":
+            self._assign_group_to_selection()
+        elif key == "template":
+            self._apply_state_machine_template_to_selection()
+        elif key == "duplicate":
+            self._duplicate_selected()
+        elif key == "delete":
+            self._delete_selected()
+
     def _on_tree_context_menu(self, pos) -> None:
         refs = self._tree_selected_refs()
         if not refs:
             return
-        menu = QMenu(self)
-        act_group = menu.addAction("指派分组…")
-        act_group.setToolTip("给选中实体指派/移出分组（group 标签）")
-        act_group.setEnabled(
-            any(r[0] in ("npc", "hotspot", "zone") for r in refs))
-        act_dup = menu.addAction("复制")
-        act_dup.setEnabled(any(r[0] in ("npc", "hotspot", "zone", "spawn") for r in refs))
-        act_del = menu.addAction("删除")
+        menu = self.build_entity_tree_context_menu(refs)
         chosen = menu.exec(self._entity_tree.viewport().mapToGlobal(pos))
-        if chosen is act_group:
-            self._assign_group_to_selection()
-        elif chosen is act_dup:
-            self._duplicate_selected()
-        elif chosen is act_del:
-            self._delete_selected()
+        self._run_tree_context_action(str(chosen.data()) if chosen is not None else "")
 
     def _add_scene_group(self) -> None:
         sc = self._require_scene()
@@ -12357,6 +12379,94 @@ class SceneEditor(QWidget):
                     self._entity_tree.setCurrentItem(item)
                     item.setSelected(True)
                     break
+
+    def _narrative_page_with_unsaved_draft(self):
+        """叙事状态机页若开着**未保存的网页草稿**就返回它，否则 None。
+
+        批量盖章写的是 `model.narrative_graphs`；叙事页的 React 文档是加载期快照，
+        它下一次 Ctrl+S 会整份回写——信号有 merge_host_only_author_signals 兜底补回，
+        **作曲没有**，这一批 100 张图会被静默抹掉。所以有草稿时拦住，让用户自己决定
+        先保存还是先放弃（fail-safe：取不到脏态也按"有草稿"拦）。
+        """
+        win = self.parent()
+        while win is not None and not hasattr(win, "_editor_instances"):
+            win = win.parent()
+        if win is None:
+            # 沿 parent 链找不到主窗 = 完全不知道叙事页什么状态。fail-safe 必须按
+            # "有草稿"拦（返回哨兵真值），不能空转放行——docstring 承诺的正是这个，
+            # 早先的实现只对 dirty_state 为 None 做到了、对找不到主窗没做到（终审 H6）。
+            return object()
+        for editor in getattr(win, "_editor_instances", None) or []:
+            state_fn = getattr(editor, "_web_editor_dirty_state", None)
+            if not callable(state_fn):
+                continue
+            if state_fn() is not False:
+                return editor
+        return None
+
+    def _notify_narrative_projection_stale(self) -> None:
+        """批量盖章写完模型后，通知叙事状态机页「你的投影旧了」（reload_from_model 鸭子协议）。"""
+        win = self.parent()
+        while win is not None and not hasattr(win, "_editor_instances"):
+            win = win.parent()
+        for editor in getattr(win, "_editor_instances", None) or []:
+            reload_fn = getattr(editor, "reload_from_model", None)
+            if callable(reload_fn) and hasattr(editor, "_web_editor_dirty_state"):
+                reload_fn()
+
+    def _apply_state_machine_template_to_selection(self) -> None:
+        """选中实体批量盖状态机模板：全有全无暂存进 ProjectModel，零磁盘写。
+
+        入口放在这里而不是叙事编辑器：100 个箱子是**摆的时候**顺手绑的，
+        绕去叙事页手建 100 张 wrapper 图不是人干的事（见
+        artifact/Reviews/叙事状态机-存量债与实例化评估-2026-08-09.md 第三节）。
+        """
+        from ..shared.narrative_template_batch import (
+            apply_batch_stamp, scene_entity_targets,
+        )
+        from ..shared.narrative_template_batch_dialog import NarrativeTemplateBatchDialog
+
+        refs = self._selected_entity_refs_plural()
+        targets = scene_entity_targets(self._model, self._current_scene_id or "", refs)
+        if not targets:
+            QMessageBox.information(
+                self, "应用状态机模板",
+                "请先选中 NPC / 热点 / Zone（出生点与分组没有运行时 owner 索引，盖出来的图收不到信号）。")
+            return
+        dirty_page = self._narrative_page_with_unsaved_draft()
+        if dirty_page is not None:
+            QMessageBox.warning(
+                self, "应用状态机模板",
+                "「叙事状态机」页有未保存的草稿。批量盖章写进的是同一份 narrative_graphs，"
+                "那边下一次保存会把这一批作曲整份覆盖掉。\n\n请先去叙事页保存或放弃草稿，再回来盖章。")
+            return
+        skipped = len(refs) - len(targets)
+        dialog = NarrativeTemplateBatchDialog(self._model, targets, parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        plan = dialog.plan()
+        if plan is None or not plan.get("ok"):
+            QMessageBox.warning(
+                self, "应用状态机模板",
+                "盖章未执行：" + "；".join(str(m) for m in (plan or {}).get("errors", [])[:4]))
+            return
+        summary = apply_batch_stamp(self._model, plan)
+        # 关键（终审 B1）：叙事页的 React 文档是加载期快照，它下一次 flush 会整份回写
+        # compositions（signals 有 merge 兜底、作曲没有）——不通知重投影，这一批图会在
+        # 用户下次去叙事页随手改点什么并保存时被静默抹掉。宿主写模型后让网页重投影的
+        # 机制是现成的（Task apply 路径同款）：标脏 reload，下次进页自动重载。
+        # 上面的脏草稿闸仍保留（防"正在编辑中被盖章冲掉"的反向时序），两道一起才闭合。
+        self._notify_narrative_projection_stale()
+        lines = [f"已暂存 {len(summary.get('compositions', []))} 份作曲（尚未落盘，请用「全部保存」）。"]
+        if summary.get("quests"):
+            lines.append(f"镜像任务：{len(summary['quests'])} 条")
+        if summary.get("stubs"):
+            lines.append(f"对话桩：{len(summary['stubs'])} 份")
+        if skipped:
+            lines.append(f"已跳过 {skipped} 个不支持的选中项（出生点 / 分组）。")
+        if summary.get("warnings"):
+            lines.append("提示：" + "；".join(str(w) for w in summary["warnings"][:4]))
+        QMessageBox.information(self, "应用状态机模板", "\n".join(lines))
 
     def _assign_group_to_selection(self) -> None:
         """给选中实体指派场景分组引用；空=移出分组。"""

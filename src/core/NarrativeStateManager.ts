@@ -31,9 +31,28 @@ export type NarrativeOwnerType =
 
 export type NarrativeTriggerKey = string;
 
+/**
+ * 信号声明（narrative_graphs.json 的 `signals` 数组）。
+ *
+ * `scope: 'private'` = **私有信号**：只投递给「发射方 owner 所拥有的 wrapper 图」，
+ * 不进全局扫描面。用途是让 N 个同类实体（100 个箱子）共用**一个**信号名和**一张**发射端
+ * 对话图，各推各的 wrapper 图——否则每个实体都要一个全局信号名，命名面随实体数膨胀。
+ * 与全局信号同一命名空间，不得重名（同名两义是 xref 与作者的灾难）。
+ */
+export interface NarrativeSignalDef {
+  id: string;
+  label?: string;
+  scope?: 'global' | 'private';
+}
+
 export interface NarrativeSignal {
   /** Semantic event id used for transition matching. */
   signal: string;
+  /**
+   * 发射方的 owner（私有信号的定向依据）。由 ActionRegistry 从动作来源上下文取，
+   * 作者不书写。私有信号缺它 = fail-loud 丢弃，绝不回落成全局广播。
+   */
+  owner?: { ownerType: string; ownerId: string };
   sourceType?:
     | 'dialogue'
     | 'zone'
@@ -138,6 +157,8 @@ export interface NarrativeRunCounters {
 
 export interface NarrativeGraphsFile {
   schemaVersion?: number;
+  /** 信号登记表；私有信号在此声明 scope（见 {@link NarrativeSignalDef}）。 */
+  signals?: NarrativeSignalDef[];
   graphs?: NarrativeGraph[];
   compositions?: NarrativeComposition[];
   migrations?: NarrativeSaveMigrations;
@@ -195,7 +216,7 @@ export interface NarrativeComposition {
 export type NarrativeStateChangeCause = 'transition' | 'reset' | 'revert' | 'resume' | 'settle' | 'discard';
 
 type QueuedTrigger =
-  | { kind: 'external'; key: NarrativeTriggerKey; source?: NarrativeSignal }
+  | { kind: 'external'; key: NarrativeTriggerKey; source?: NarrativeSignal; owner?: { ownerType: string; ownerId: string } }
   | { kind: 'setState'; graphId: string; stateId: string }
   | { kind: 'reactive'; graphId: string; transitionId: string }
   | { kind: 'runLifecycle'; op: 'start' | 'reset' | 'revert' | 'activate'; graphId: string; stateId?: string }
@@ -323,6 +344,8 @@ export class NarrativeStateManager implements IGameSystem {
   private reachedStates: Map<string, Set<string>> = new Map();
   private recentIssues: NarrativeRuntimeIssue[] = [];
   private saveMigrations: NarrativeSaveMigrations | null = null;
+  /** 声明为 private 的信号 id 集（来自 narrative_graphs.json 的 signals）。 */
+  private privateSignalIds: Set<string> = new Set();
   /** 全部已注册图 signal 型 transition 的监听键缓存（registerGraphs 时失效，懒重建）。 */
   private listenedSignalKeysCache: Set<string> | null = null;
   /** 已上报过的悬垂信号键（同名只进一次错误面/issue，避免重复发射刷屏）。 */
@@ -437,6 +460,7 @@ export class NarrativeStateManager implements IGameSystem {
       const data = await assetManager.loadJson<NarrativeGraphsFile>(path);
       this.validateLoadedData(data, path);
       this.setSaveMigrations(data.migrations);
+      this.setSignalDefs(data.signals);
       this.registerGraphs(compileNarrativeGraphs(data));
     } catch (e) {
       const message = `NarrativeStateManager: narrative_graphs.json not found or invalid: ${String(e)}`;
@@ -446,6 +470,7 @@ export class NarrativeStateManager implements IGameSystem {
       }
       console.warn('NarrativeStateManager: narrative_graphs.json not found or invalid, running empty', e);
       this.setSaveMigrations(null);
+      this.setSignalDefs(undefined);
       this.registerGraphs([]);
     }
   }
@@ -456,6 +481,21 @@ export class NarrativeStateManager implements IGameSystem {
    */
   setSaveMigrations(migrations: NarrativeSaveMigrations | null | undefined): void {
     this.saveMigrations = migrations ?? null;
+  }
+
+  /** 注入信号登记表（loadFromAsset 自动接线；直接 registerGraphs 的装配方/测试可手动注入）。 */
+  setSignalDefs(defs: NarrativeSignalDef[] | null | undefined): void {
+    this.privateSignalIds = new Set(
+      (defs ?? [])
+        .filter((d) => d && d.scope === 'private' && typeof d.id === 'string')
+        .map((d) => d.id.trim())
+        .filter(Boolean),
+    );
+  }
+
+  /** 该信号是否声明为私有（投递面收窄到发射方 owner 的 wrapper 图）。 */
+  isPrivateSignal(key: NarrativeTriggerKey): boolean {
+    return this.privateSignalIds.has(NarrativeStateManager.normalizeTriggerKey(key));
   }
 
   registerGraphs(graphs: NarrativeGraph[]): void {
@@ -800,7 +840,7 @@ export class NarrativeStateManager implements IGameSystem {
       triggerKey: clean.key,
       payload: { source: clean.source },
     });
-    return this.enqueue({ kind: 'external', key: clean.key, source: clean.source });
+    return this.enqueue({ kind: 'external', key: clean.key, source: clean.source, owner: clean.owner });
   }
 
   enqueueTriggerKey(key: NarrativeTriggerKey): Promise<void> {
@@ -1378,7 +1418,7 @@ export class NarrativeStateManager implements IGameSystem {
     console.warn(message);
   }
 
-  private normalizeSignal(signal: NarrativeSignal): { key: NarrativeTriggerKey; source?: NarrativeSignal } | null {
+  private normalizeSignal(signal: NarrativeSignal): { key: NarrativeTriggerKey; source?: NarrativeSignal; owner?: { ownerType: string; ownerId: string } } | null {
     const sig = String(signal?.signal ?? '').trim();
     if (!sig) {
       console.warn('NarrativeStateManager: invalid signal (missing event id)', signal);
@@ -1387,7 +1427,9 @@ export class NarrativeStateManager implements IGameSystem {
     const sourceType = String(signal?.sourceType ?? '').trim() as NarrativeSignal['sourceType'] | undefined;
     const sourceId = String(signal?.sourceId ?? '').trim();
     const source = sourceType && sourceId ? { signal: sig, sourceType, sourceId } : { signal: sig };
-    return { key: sig, source };
+    const ot = String(signal?.owner?.ownerType ?? '').trim();
+    const oid = String(signal?.owner?.ownerId ?? '').trim();
+    return { key: sig, source, ...(ot && oid ? { owner: { ownerType: ot, ownerId: oid } } : {}) };
   }
 
   private enqueue(trigger: QueuedTrigger): Promise<void> {
@@ -1538,7 +1580,7 @@ export class NarrativeStateManager implements IGameSystem {
       } else if (trigger.kind === 'packageLifecycle') {
         this.applyPackageLifecycle(trigger.packageId, trigger.live);
       } else {
-        await this.processTrigger(NarrativeStateManager.normalizeTriggerKey(trigger.key));
+        await this.processTrigger(NarrativeStateManager.normalizeTriggerKey(trigger.key), trigger.owner);
       }
       this.recordTrace('trigger.end', this.tracePatchForTrigger(trigger));
       this.completedQueueItems.push(item);
@@ -1552,8 +1594,35 @@ export class NarrativeStateManager implements IGameSystem {
     }
   }
 
-  private async processTrigger(triggerKey: NarrativeTriggerKey): Promise<void> {
+  private async processTrigger(
+    triggerKey: NarrativeTriggerKey,
+    owner?: { ownerType: string; ownerId: string },
+  ): Promise<void> {
     const gen = this.generation;
+    // 私有信号：投递面收窄到「发射方 owner 拥有的 wrapper 图」。
+    // 缺 owner 上下文时 fail-loud 丢弃——绝不回落成全局广播，否则 100 个箱子共用的
+    // 那个信号名会一次推动所有箱子，而这正是私有信号要避免的事。
+    const scoped = this.isPrivateSignal(triggerKey);
+    let allowedGraphIds: Set<string> | null = null;
+    if (scoped) {
+      if (!owner) {
+        const message = `NarrativeStateManager: 私有信号 "${triggerKey}" 的发射点没有 owner 上下文，已丢弃（私有信号只投递给发射方 owner 的 wrapper 图）`;
+        this.recordIssue({ severity: 'error', code: 'signal.private.noOwner', message });
+        this.recordTrace('signal.ignored', { triggerKey, message: 'private signal without owner context' });
+        console.warn(message);
+        return;
+      }
+      allowedGraphIds = new Set(this.getGraphIdsByOwner(owner.ownerType, owner.ownerId));
+      if (allowedGraphIds.size === 0) {
+        // 这几乎总是作者错误（终审 H2）：场景 onEnter 这类地方有 ambient owner
+        // （scene:<id>），发私有信号会走到这里而不是 noOwner 分支——纯 trace 等于静默。
+        // 必须 dev 可见：issue + warn，同 noOwner 口径（recordIssue 自带 trace，不重复埋）。
+        const message = `NarrativeStateManager: 私有信号 "${triggerKey}" 的发射方 ${owner.ownerType}:${owner.ownerId} 没有任何 wrapper 图，已丢弃（该 owner 不该发这条私有信号）`;
+        this.recordIssue({ severity: 'error', code: 'signal.private.ownerNoGraph', message });
+        console.warn(message);
+        return;
+      }
+    }
     const migratedInstances = new Set<string>();
     // 迭代单位=常驻图 + 激活活计图（挂起活计冻结不扫）。快照迭代：
     // 处理途中被结算/弃置的活计经 getInstanceActive===undefined 与提交前复核自然跳过。
@@ -1563,6 +1632,7 @@ export class NarrativeStateManager implements IGameSystem {
       // 逐图 await 之间可能发生读档/换册：本信号属旧时间线，剩余图不再扫。
       if (gen !== this.generation) break;
       if (migratedInstances.has(instanceId)) continue;
+      if (allowedGraphIds && !allowedGraphIds.has(instanceId)) continue;
       const active = this.getInstanceActive(instanceId, graph);
       if (active === undefined) continue; // 活计实例已在本次扫描途中结算/移除
       const candidates = graph.transitions
@@ -1603,7 +1673,9 @@ export class NarrativeStateManager implements IGameSystem {
       migratedInstances.add(instanceId);
       matchedInstanceIds.push(instanceId);
     }
-    if (matchedInstanceIds.length === 0) {
+    // 私有信号零命中是常态（owner 的图不在 from 态），不进悬垂告警；
+    // 「声明了私有但全项目没有 wrapper 图监听」由校验器静态查，比运行时准。
+    if (matchedInstanceIds.length === 0 && !scoped) {
       this.reportUnlistenedSignal(triggerKey);
     }
     this.recordTrace('signal.processed', {

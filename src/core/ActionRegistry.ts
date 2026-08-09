@@ -526,7 +526,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     d.scenarioStateManager.completeScenarioLine(scenarioId);
   }, ['scenarioId']);
 
-  executor.register('emitNarrativeSignal', (p) => {
+  executor.register('emitNarrativeSignal', (p, origin) => {
     const signal = String(p.signal ?? '').trim();
     if (!signal) {
       console.warn('emitNarrativeSignal: missing signal (event id)', p);
@@ -534,9 +534,20 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     }
     const sourceType = String(p.sourceType ?? '').trim();
     const sourceId = String(p.sourceId ?? '').trim();
+    // 私有信号的定向依据：发射点所在容器的 owner（热点/NPC/zone）。
+    // 优先级（终审 H1 加的逃生口）：
+    //  ① 动作参数显式 ownerType/ownerId —— 对话 owner 四档解析里 npcId 档高于 origin 档，
+    //     热点动作批写 startDialogueGraph(npcId=某NPC)（历史写法量最大）时，图里发的私有
+    //     信号 owner 会是那个 NPC 而不是热点。作者在发射点必须有显式覆盖的手段。
+    //  ② 来源上下文（origin）。作者不书写，绝大多数情况走这档。
+    const paramOwnerType = String(p.ownerType ?? '').trim();
+    const paramOwnerId = String(p.ownerId ?? '').trim();
+    const ownerType = paramOwnerType && paramOwnerId ? paramOwnerType : String(origin?.ownerType ?? '').trim();
+    const ownerId = paramOwnerType && paramOwnerId ? paramOwnerId : String(origin?.ownerId ?? '').trim();
     return d.narrativeStateManager.emitNarrativeSignal({
       signal,
       ...(sourceType && sourceId ? { sourceType: sourceType as any, sourceId } : {}),
+      ...(ownerType && ownerId ? { owner: { ownerType, ownerId } } : {}),
     });
   }, ['signal']);
 

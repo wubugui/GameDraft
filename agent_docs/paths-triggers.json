@@ -83,6 +83,7 @@
         "narrative-flow-authoring",
         "narrative-signal-spine",
         "narrative-state-editor",
+        "private-narrative-signal",
         "wire-demo-beat"
       ]
     },
@@ -247,7 +248,8 @@
       "docs": [
         "action-registration-quadruple",
         "entity-move-facing",
-        "l2-action-primitive-registration"
+        "l2-action-primitive-registration",
+        "private-narrative-signal"
       ]
     },
     {
@@ -280,6 +282,7 @@
       "glob": "src/core/NarrativeStateManager.ts",
       "docs": [
         "narrative-signal-spine",
+        "private-narrative-signal",
         "save-restore-contracts"
       ]
     },
@@ -312,6 +315,12 @@
       "glob": "src/core/devRuntimeCommands.ts",
       "docs": [
         "runtime-command-channel"
+      ]
+    },
+    {
+      "glob": "src/core/narrativeGraphValidation.ts",
+      "docs": [
+        "private-narrative-signal"
       ]
     },
     {

@@ -1406,6 +1406,84 @@ def _validate_narrative_packages(model: ProjectModel, issues: list[Issue]) -> No
             _walk_conditions(model, issues, conds, "narrative_packages", rid, None)
 
 
+def _compiled_narrative_graph_refs(data: Any):
+    """(graph, compositionId, elementId)：与 TS 权威 `compileGraphs` 同口径。
+
+    只收 mainGraph 与 wrapperGraph / scenarioSubgraph 元素的内嵌图；本文件另一个
+    `_iter_narrative_graphs` 刻意放宽到「任何带 graph 的元素」（状态级校验要那份宽），
+    但私有信号监听面必须与权威一模一样，放宽即变成"兜底比 TS 严"。
+    """
+    if not isinstance(data, dict):
+        return
+    for comp in data.get("compositions") or []:
+        if not isinstance(comp, dict):
+            continue
+        cid = str(comp.get("id") or "").strip()
+        main = comp.get("mainGraph")
+        if isinstance(main, dict):
+            yield main, cid, ""
+        for el in comp.get("elements") or []:
+            if not isinstance(el, dict):
+                continue
+            if str(el.get("kind") or "").strip() not in ("wrapperGraph", "scenarioSubgraph"):
+                continue
+            g = el.get("graph")
+            if isinstance(g, dict):
+                yield g, cid, str(el.get("id") or "").strip()
+
+
+def _validate_private_signal_listeners(data: Any, issues: list[Issue]) -> None:
+    """私有信号监听面：只有 owner 绑定的图能听（与 TS validatePrivateSignalListeners 同文案）。
+
+    私有信号按发射方 owner 定向投递（`NarrativeStateManager.processTrigger` 收窄
+    allowedGraphIds），无 owner 的图（flow / scenario / 主线）永远收不到 = 死监听；
+    反过来若主线能听 100 个箱子共用的那条信号，监听面会被灌满——正是私有信号要避免的事，
+    故判 error。无人监听则是 warning（先接线后写图是合法流程）。
+    """
+    private_ids: list[str] = []
+    for s in (data.get("signals") or []) if isinstance(data, dict) else []:
+        if not isinstance(s, dict) or s.get("scope") != "private":
+            continue
+        sid = str(s.get("id") or "").strip()
+        if sid and sid not in private_ids:
+            private_ids.append(sid)
+    if not private_ids:
+        return
+    private_set = set(private_ids)
+    listened: set[str] = set()
+    for graph, _cid, _eid in _compiled_narrative_graph_refs(data):
+        gid = str(graph.get("id") or "").strip()
+        owner_bound = bool(
+            str(graph.get("ownerType") or "").strip()
+            and str(graph.get("ownerId") or "").strip()
+        )
+        for t in graph.get("transitions") or []:
+            if not isinstance(t, dict):
+                continue
+            # 与 TS 权威逐字对齐（终审 H4）：不 trim，见 narrative_state_editor 同款注释。
+            trigger = t.get("trigger")
+            if trigger and trigger != "signal":
+                continue
+            key = str(t.get("signal") or "").strip()
+            if key not in private_set:
+                continue
+            listened.add(key)
+            if owner_bound:
+                continue
+            issues.append(Issue(
+                "error", "narrative", gid,
+                f'{gid}: 无 owner 绑定的图不能监听私有信号 "{key}"'
+                f"（私有信号只投递给发射方 owner 的 wrapper 图，这条监听永远不会触发）",
+            ))
+    for sid in private_ids:
+        if sid in listened:
+            continue
+        issues.append(Issue(
+            "warning", "narrative", sid,
+            f'私有信号 "{sid}" 没有任何 wrapper 图监听（发射它不会推动任何状态）',
+        ))
+
+
 def _validate_narrative(model: ProjectModel, issues: list[Issue]) -> None:
     """叙事状态机数据一致性：信号注册表、Transition 信号引用、黑盒 emits 与对话图实际发信号的漂移。
 
@@ -1538,7 +1616,7 @@ def _validate_narrative(model: ProjectModel, issues: list[Issue]) -> None:
                 if s:
                     declared_emits.add(s)
 
-    # 1. 信号注册表：重复 id
+    # 1. 信号注册表：重复 id + scope 取值
     seen: set[str] = set()
     for s in data.get("signals") or []:
         if not isinstance(s, dict):
@@ -1550,6 +1628,16 @@ def _validate_narrative(model: ProjectModel, issues: list[Issue]) -> None:
         if sid in seen:
             issues.append(Issue("error", "narrative", "signals", f"信号 id 重复: {sid!r}"))
         seen.add(sid)
+        # 私有信号声明。TS 权威（narrativeGraphValidation.ts / signal.scope.invalid）判的是
+        # `scope !== undefined`；这里把「缺键」与「显式 null」一并当未声明跳过——兜底只许更松。
+        scope = s.get("scope")
+        if scope is not None and scope not in ("global", "private"):
+            issues.append(Issue(
+                "error", "narrative", sid,
+                f"{sid}: signal scope must be 'global' or 'private'",
+            ))
+
+    _validate_private_signal_listeners(data, issues)
 
     # 2. Transition.signal：须为已注册信号 / state:<图>:<状态> / __draft__（草稿告警）
     for g in _iter_narrative_graphs(model):

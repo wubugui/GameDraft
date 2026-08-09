@@ -47,6 +47,14 @@ import {
   snapTransitionAnchorsToEdges,
 } from './canvas/transitionAnchorLayout';
 import { applyEdgeRouting } from './canvas/edgeRouting';
+import {
+  applyWrapperGroupDisplay,
+  computeWrapperGroups,
+  countIssuesByElement,
+  WRAPPER_GROUP_MODE_OPTIONS,
+  type WrapperGroupMode,
+} from './canvas/wrapperAutoGroups';
+import { aggregateIsomorphicIssues, aggregatedIssueTitle } from './editor/issueAggregation';
 import { parseTransitionAnchorId, transitionAnchorId } from './anchorCodec';
 import {
   applyEditorGroupDisplay,
@@ -77,7 +85,12 @@ import { signalFocusIdOf } from './signalXref';
 import { ReferencePickerField } from './components/ReferencePickerModal';
 import { DEFAULT_DRAFT_SIGNAL } from './signalConstants';
 import { transitionEdgeLabel } from './edgeLabels';
-import { createAuthorSignal, isUnregisteredAuthorSignal } from './signalCatalog';
+import {
+  collectPrivateSignalIds,
+  createAuthorSignal,
+  isPrivateAuthorSignal,
+  isUnregisteredAuthorSignal,
+} from './signalCatalog';
 import { applySignalDisplayToEdges, buildSignalLabelMap } from './signalDisplay';
 import { relationFingerprint } from './signalXref';
 import { SignalRefactorModal, type NarrativeRefactorRequest } from './components/SignalRefactorModal';
@@ -298,6 +311,13 @@ function NarrativeEditorInner() {
     },
     [compositionId, graphRef, updateCanvasGroupsFile],
   );
+  // wrapper 自动分组：按数据现算的呈现层（owner 场景 / 同款模板），不落盘、不进 narrative_graphs.json。
+  // 与上面的手动分组框并存，见 canvas/wrapperAutoGroups.ts 顶部注释的分工。
+  const [wrapperGroupMode, setWrapperGroupMode] = useState<WrapperGroupMode>('off');
+  // **记展开而不是记折叠**：新盖章出来的组默认折叠，否则每盖一批就要重新收一遍。
+  // 集合只对「当前编排 + 当前口径」有意义，换编排/换口径一律清空回默认折叠——
+  // 两个编排里同款 wrapper 的 key 会撞（拓扑指纹一样），不清就会莫名以展开态出现。
+  const [expandedWrapperGroups, setExpandedWrapperGroups] = useState<Set<string>>(() => new Set());
   const [showMiniMap, setShowMiniMap] = useState(false);
   const [expandedElementIds, setExpandedElementIds] = useState<string[]>([]);
   // 侧栏整理分组的折叠态（临时 UI 态，不落盘）。key 带前缀防串：comp:<catKey> / sub:<compId>:<catKey>。
@@ -817,20 +837,47 @@ function NarrativeEditorInner() {
 
   const signalLabelMap = useMemo(() => buildSignalLabelMap(data), [data]);
 
+  /** 本编排的 wrapper 自动分组（只在主画布口径下成立：子图独占视图里没有 element 节点）。 */
+  const wrapperGroups = useMemo(
+    () => (graphRef === 'main' ? computeWrapperGroups(composition, wrapperGroupMode, catalog) : []),
+    [composition, wrapperGroupMode, catalog, graphRef],
+  );
+  const wrapperGroupIssueCounts = useMemo(
+    () => countIssuesByElement(composition, validationIssues),
+    [composition, validationIssues],
+  );
+  // 换编排即回到默认折叠（见上面 expandedWrapperGroups 的注释：key 会跨编排撞）
+  useEffect(() => {
+    setExpandedWrapperGroups((current) => (current.size ? new Set() : current));
+  }, [compositionId]);
+
   const { nodes: displayNodes, edges: displayEdges } = useMemo(() => {
     const selected = applyCanvasSelection(nodes, edges, selectedId);
     // 折叠呈现变换：成员隐藏、跨组连线改接分组框——只作用于 display 拷贝
     const grouped = applyEditorGroupDisplay(selected.nodes, selected.edges, currentGroups);
+    // 自动分组在手动分组之后：手动框是作者显式圈的，优先级更高；两层都只动 display 拷贝
+    const autoGrouped = applyWrapperGroupDisplay({
+      nodes: grouped.nodes,
+      edges: grouped.edges,
+      groups: wrapperGroups,
+      expandedKeys: expandedWrapperGroups,
+      issueCountByElementId: wrapperGroupIssueCounts,
+    });
     const labeled = preferences.canvasSignalDisplay === 'id'
-      ? grouped.edges
-      : applySignalDisplayToEdges(grouped.edges, signalLabelMap);
+      ? autoGrouped.edges
+      : applySignalDisplayToEdges(autoGrouped.edges, signalLabelMap);
     // 路由必须是最后一步：端点在折叠变换里可能被改接到分组框，选侧要按最终端点算。
     // 放在 display 层（而非建图时）是为了节点拖动过程中曲线实时跟手换侧。
-    const rects = buildRoutingRects(grouped.nodes);
+    // 矩形索引必须取**自动分组之后**那份节点：组框节点只存在于这一份里，
+    // 取上一层的话跨组连线两端查不到矩形，路由整条跳过、触发点飘在半空。
+    const rects = buildRoutingRects(autoGrouped.nodes);
     const routedEdges = applyEdgeRouting(labeled, (id) => rects.get(id) ?? null);
     // 触发点按 display 边（折叠改接/隐藏之后的那份）再对一次，别停在原始端点算出的老位置
-    return { nodes: alignTransitionAnchorsToDisplayEdges(grouped.nodes, routedEdges), edges: routedEdges };
-  }, [nodes, edges, selectedId, currentGroups, preferences.canvasSignalDisplay, signalLabelMap]);
+    return { nodes: alignTransitionAnchorsToDisplayEdges(autoGrouped.nodes, routedEdges), edges: routedEdges };
+  }, [
+    nodes, edges, selectedId, currentGroups, preferences.canvasSignalDisplay, signalLabelMap,
+    wrapperGroups, expandedWrapperGroups, wrapperGroupIssueCounts,
+  ]);
 
   const updateCurrentGraph = useCallback((updater: (g: NarrativeGraphDef, next: NarrativeGraphsFileDef) => void) => {
     updateData((next) => {
@@ -895,6 +942,18 @@ function NarrativeEditorInner() {
     },
   }), [updateCurrentGroups]);
 
+  const wrapperGroupActions = useMemo(() => ({
+    toggleExpanded: (key: string) => {
+      if (!key) return;
+      setExpandedWrapperGroups((current) => {
+        const next = new Set(current);
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
+        return next;
+      });
+    },
+  }), []);
+
   const canvasActions = useMemo(() => ({
     toggleSubgraphElement: (elementId: string) => {
       const el = composition?.elements?.find((item) => item.id === elementId);
@@ -902,7 +961,8 @@ function NarrativeEditorInner() {
       toggleExpandedElement(elementId);
     },
     groupActions,
-  }), [composition, toggleExpandedElement, groupActions]);
+    wrapperGroupActions,
+  }), [composition, toggleExpandedElement, groupActions, wrapperGroupActions]);
 
   const createGroupFrame = useCallback(() => {
     if (!compositionId) return;
@@ -1519,6 +1579,16 @@ function NarrativeEditorInner() {
     return true;
   }), [validationIssues, issueFilter, composition, graphRef, data]);
 
+  /**
+   * 面板显示单位是**聚合行**：100 张同构 wrapper 各报一遍同一条问题时收成一条 ×100。
+   * 上面的 errorCount/warningCount 仍然数**原始条数**——聚合只改「显示成几行」，
+   * 不改「工程里有多少个问题」，两个数字混起来会让人以为修了一条就少了 99 个。
+   */
+  const aggregatedIssues = useMemo(
+    () => aggregateIsomorphicIssues(filteredIssues, data),
+    [filteredIssues, data],
+  );
+
   const statesByGraph = useMemo(() => {
     const out: Record<string, string[]> = {};
     for (const { graph: g } of compileGraphs(data)) out[g.id] = Object.keys(g.states ?? {});
@@ -1817,6 +1887,22 @@ function NarrativeEditorInner() {
     { id: 'fit', label: '适应画布  F', onSelect: fitCanvas },
   ], [applyAutoLayout, composition, deleteSelected, fitCanvas, selectionDeletable]);
 
+  /**
+   * wrapper 自动分组口径菜单。切口径要顺手清空展开集：两套口径的 key 空间不同，
+   * 留着上一套的展开记录只会让新组莫名其妙以展开态出现。
+   */
+  const wrapperGroupMenuItems = useMemo((): ToolbarMenuItem[] => (
+    WRAPPER_GROUP_MODE_OPTIONS.map((opt) => ({
+      id: opt.id,
+      label: `${opt.label} — ${opt.hint}`,
+      disabled: opt.id !== 'off' && graphRef !== 'main',
+      onSelect: () => {
+        setWrapperGroupMode(opt.id);
+        setExpandedWrapperGroups(new Set());
+      },
+    }))
+  ), [graphRef]);
+
   const addMenuItems = useMemo((): ToolbarMenuItem[] => {
     const items: ToolbarMenuItem[] = [
       { id: 'state', label: '状态', disabled: !graph, onSelect: addState },
@@ -1975,6 +2061,13 @@ function NarrativeEditorInner() {
             >
               +分组框
             </button>
+            <ToolbarMenuDropdown
+              label={wrapperGroupMode === 'off'
+                ? '自动分组'
+                : `自动分组·${wrapperGroupMode === 'scene' ? '场景' : '同款'}(${wrapperGroups.length})`}
+              items={wrapperGroupMenuItems}
+              activeItemId={wrapperGroupMode}
+            />
             <label className="toggle compact-toggle" title="勾选后画布连线显示原始信号 id；不勾显示信号注册表里的中文名（无中文名的仍显示 id）。只影响显示，不改数据。">
               <input
                 type="checkbox"
@@ -2188,13 +2281,20 @@ function NarrativeEditorInner() {
                   ))}
                 </div>
                 <div className="issue-list issue-list-dock">
-                  {filteredIssues.length === 0 ? (
+                  {aggregatedIssues.length === 0 ? (
                     <div className="validation-dock-empty muted">无校验问题</div>
                   ) : (
-                    filteredIssues.map((issue, index) => (
-                      <button key={`${issue.code}-${issue.path}-${index}`} type="button" className={`issue ${issue.severity}`} title={issue.path || validationTargetSummary(issue)} onClick={() => focusIssue(issue)}>
-                        <b>{issue.severity === 'error' ? '错' : '警'}</b>
-                        <span>{issue.message}</span>
+                    aggregatedIssues.map((row, index) => (
+                      <button
+                        key={`${row.issue.code}-${row.issue.path}-${index}`}
+                        type="button"
+                        className={`issue ${row.issue.severity}`}
+                        title={aggregatedIssueTitle(row, row.issue.path || validationTargetSummary(row.issue))}
+                        onClick={() => focusIssue(row.issue)}
+                      >
+                        <b>{row.issue.severity === 'error' ? '错' : '警'}</b>
+                        <span>{row.issue.message}</span>
+                        {row.count > 1 ? <em className="issue-dup-count">×{row.count} 张同构图</em> : null}
                       </button>
                     ))
                   )}
@@ -3112,6 +3212,8 @@ function TransitionInspector(props: {
   // 就地给一键补登记，别让人只看见 warning 却找不到在哪补。判据与信号弹窗的「补登记」
   // 按钮**共用同一个函数**，两处不许各写各的。
   const signalUnregistered = isUnregisteredAuthorSignal(props.data, transition.signal ?? '');
+  const signalPrivate = isPrivateAuthorSignal(props.data, transition.signal ?? '');
+  const graphOwnerBound = Boolean((graph.ownerType ?? '').trim() && (graph.ownerId ?? '').trim());
   const legacyEndpoint = typeof transition.from !== 'string' || typeof transition.to !== 'string';
   const triggerMode = transition.trigger ?? 'signal';
   const isReactive = triggerMode === 'reactive' || triggerMode === 'reactiveAll' || triggerMode === 'reactiveAny';
@@ -3175,6 +3277,16 @@ function TransitionInspector(props: {
               )}
             </div>
             {signalNote ? <div className="signal-note-display">📝 {signalNote}</div> : null}
+            {/* 私有信号挂在**没有 owner 绑定**的图上 = 永远不触发（校验判 error）。
+                别只靠校验面板那一行——人正在这个属性面板里接线，就在这儿说。 */}
+            {signalPrivate ? (
+              <div className={`signal-note-display signal-scope-note${graphOwnerBound ? '' : ' danger'}`}>
+                🔒 私有信号：只投递给「发射方 owner 所拥有的 wrapper 图」。
+                {graphOwnerBound
+                  ? `本图绑定 ${graph.ownerType}:${graph.ownerId}，只有该 owner 发出的这条信号才推动它。`
+                  : '本图没有 owner 绑定（ownerType/ownerId 缺一），这条监听永远不会触发。'}
+              </div>
+            ) : null}
             {signalUnregistered ? (
               <div className="property-line warn signal-unregistered-row">
                 <span>

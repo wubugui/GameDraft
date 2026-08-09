@@ -11,6 +11,7 @@ import type {
   SignalCatalogEntryDef,
   SignalEmitterRefDef,
   SignalListenerRefDef,
+  SignalScope,
 } from './types';
 
 function collectGraphs(data: NarrativeGraphsFileDef) {
@@ -59,6 +60,8 @@ export function buildSignalCatalog(
       kind: 'author',
       label: s.label,
       notes: s.notes,
+      // 只在真是 private 时带这个字段：目录条目与磁盘行同口径，缺省一律不落 'global'
+      ...(s.scope === 'private' ? { scope: 'private' as const } : {}),
       listeners: listeners.get(id)?.length ?? 0,
       emitters: emitterRefsById?.get(id)?.length ?? 0,
       editable: true,
@@ -162,7 +165,13 @@ export function isUnregisteredAuthorSignal(data: NarrativeGraphsFileDef, id: str
   return !(data.signals ?? []).some((s) => s.id === target);
 }
 
-export function createAuthorSignal(data: NarrativeGraphsFileDef, id: string, label?: string, notes?: string): void {
+export function createAuthorSignal(
+  data: NarrativeGraphsFileDef,
+  id: string,
+  label?: string,
+  notes?: string,
+  scope?: SignalScope,
+): void {
   const trimmed = String(id ?? '').trim();
   if (isReservedAuthorSignalId(trimmed)) throw new Error(`Invalid signal id: ${trimmed}`);
   data.signals ??= [];
@@ -170,7 +179,47 @@ export function createAuthorSignal(data: NarrativeGraphsFileDef, id: string, lab
   const entry: NarrativeAuthorSignalDef = { id: trimmed };
   if (label?.trim()) entry.label = label.trim();
   if (notes?.trim()) entry.notes = notes.trim();
+  // 缺省 global **不写键**：往返要字节级幂等，默认值塞进 JSON 就是噪声（也会让既有 121 行全变脏）
+  if (scope === 'private') entry.scope = 'private';
   data.signals.push(entry);
+}
+
+/**
+ * 改一条作者信号的投递面。
+ *
+ * 写 private = 加 `scope: 'private'`；改回全局 = **删键**而不是写 `scope: 'global'`——
+ * 缺省语义就是 global，写出来只会让 JSON 多一行噪声、并让"没动过的信号"在 diff 里变脏。
+ * 派生/保留信号没有注册行，不接受 scope（与 setAuthorSignalNotes 同款守卫）。
+ * 只被引用、还没注册行的信号：勾私有即顺手补一条注册行（勾选即注册，与"注释即注册"同理）。
+ */
+export function setAuthorSignalScope(data: NarrativeGraphsFileDef, id: string, isPrivate: boolean): void {
+  const target = String(id ?? '').trim();
+  if (!target || isReservedAuthorSignalId(target) || isDerivedStateSignal(target)) return;
+  data.signals ??= [];
+  const row = data.signals.find((s) => s.id === target);
+  if (row) {
+    if (isPrivate) row.scope = 'private';
+    else delete row.scope;
+    return;
+  }
+  if (isPrivate) data.signals.push({ id: target, scope: 'private' });
+}
+
+/** 这条信号是不是私有（唯一判据：注册行的 `scope === 'private'`）。 */
+export function isPrivateAuthorSignal(data: NarrativeGraphsFileDef, id: string): boolean {
+  const target = String(id ?? '').trim();
+  if (!target) return false;
+  return (data.signals ?? []).some((s) => s.id === target && s.scope === 'private');
+}
+
+/** 全部私有信号 id（面板/画布判"这条边听的是私有信号"用同一个集合，别各扫各的）。 */
+export function collectPrivateSignalIds(data: NarrativeGraphsFileDef): Set<string> {
+  return new Set(
+    (data.signals ?? [])
+      .filter((s) => s?.scope === 'private')
+      .map((s) => String(s.id ?? '').trim())
+      .filter(Boolean),
+  );
 }
 
 /**

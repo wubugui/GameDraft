@@ -48,7 +48,7 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
   randomBranch: { required: [], optional: ['probability', 'aboveActions', 'belowActions'] },
 
   // ---- 叙事 / scenario ----
-  emitNarrativeSignal: { required: ['signal'], nonEmpty: ['signal'], optional: ['sourceType', 'sourceId'] },
+  emitNarrativeSignal: { required: ['signal'], nonEmpty: ['signal'], optional: ['sourceType', 'sourceId', 'ownerType', 'ownerId'] },
   // 叙事活计生命周期（S1）：graphId=活计图引用；activateNarrativeRun 的 graphId 允许空串（清激活槽）
   startNarrativeRun: { required: ['graphId'], nonEmpty: ['graphId'] },
   resetNarrativeRun: { required: ['graphId'], nonEmpty: ['graphId'] },

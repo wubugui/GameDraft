@@ -265,6 +265,98 @@
           "note": "义庄管事（交尸对话 {{deliverDialogue}}）+ 常态/背尸两版出口对（planes 路线锁）"
         }
       ]
+    },
+    {
+      "id": "pickable_object_archetype",
+      "label": "可拾取物模板（三态·私有信号）",
+      "description": "给场景实体挂一台三态状态机：未激活→出现→已取。适合「同一种物件摆很多个」——场景编辑器里多选实体一次盖出 N 张图，全部共用同一个私有信号名和同一张发射端对话图。显隐由实体自己的 conditions 读本图状态（配 conditionHidesEntity）；「已取」这一跳走私有信号，投递面按发射方 owner 定向，100 个实例互不惊动。",
+      "produces": [
+        "composition"
+      ],
+      "params": [
+        {
+          "name": "ownerId",
+          "type": "identifier",
+          "label": "宿主实体 id",
+          "required": true,
+          "note": "批量盖章时由选中的实体自动填，不用手写",
+          "from": "entity.id"
+        },
+        {
+          "name": "label",
+          "type": "text",
+          "label": "显示名",
+          "required": true,
+          "default": "可拾取物",
+          "from": "entity.label"
+        },
+        {
+          "name": "ownerType",
+          "type": "text",
+          "label": "宿主实体类型",
+          "required": true,
+          "default": "hotspot",
+          "note": "hotspot / npc / zone —— 决定 wrapper 图绑到哪一类实体",
+          "from": "entity.kind"
+        },
+        {
+          "name": "activateSignal",
+          "type": "text",
+          "label": "激活信号（全局）",
+          "required": true,
+          "default": "第三章开始",
+          "note": "全局信号，一条推动全部同类实体一起出现"
+        },
+        {
+          "name": "takenSignal",
+          "type": "text",
+          "label": "取走信号（私有）",
+          "required": true,
+          "default": "taken",
+          "note": "必须在信号登记表里勾「私有」：只投递给发射方 owner 的这张图，所以 N 个实体可以共用这一个名字和同一张对话图"
+        }
+      ],
+      "composition": {
+        "id": "wrap_{{ownerId}}",
+        "label": "{{label}}",
+        "description": "{{label}}（可拾取物三态）",
+        "mainGraph": {
+          "id": "wrap_{{ownerId}}",
+          "ownerType": "{{ownerType}}",
+          "ownerId": "{{ownerId}}",
+          "label": "{{label}}",
+          "initialState": "inactive",
+          "states": {
+            "inactive": {
+              "id": "inactive",
+              "label": "未激活"
+            },
+            "active": {
+              "id": "active",
+              "label": "已出现"
+            },
+            "taken": {
+              "id": "taken",
+              "label": "已取走"
+            }
+          },
+          "transitions": [
+            {
+              "id": "t_activate",
+              "from": "inactive",
+              "to": "active",
+              "signal": "{{activateSignal}}"
+            },
+            {
+              "id": "t_taken",
+              "from": "active",
+              "to": "taken",
+              "signal": "{{takenSignal}}"
+            }
+          ]
+        },
+        "elements": []
+      }
     }
   ]
 }

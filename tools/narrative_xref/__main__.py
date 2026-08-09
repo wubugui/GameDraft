@@ -34,9 +34,14 @@ def _print_card(card, verbose: bool = True) -> None:
     if card.label and card.label != card.signal:
         head += f"（{card.label}）"
     head += f"  {_KIND_TEXT.get(card.kind, card.kind)}"
+    if card.is_private:
+        head += "  【私有】"
     if card.kind == KIND_DERIVED and card.source_graph_id:
         head += f"  ← {card.source_graph_id}.{card.source_state_id}"
     print(head)
+    if card.is_private:
+        print("  私有：只投递给发射方 owner 拥有的 wrapper 图；缺 owner 上下文当场丢弃，"
+              "不回落成全局广播")
     if card.notes:
         print(f"  注释：{card.notes}")
     for diag in card.diagnostics:
@@ -52,6 +57,10 @@ def _print_card(card, verbose: bool = True) -> None:
         if e.context:
             line += f"  {e.context}"
         print(line)
+        if e.owner_bound:
+            # 私有信号按 owner 定向：这一行是数据里唯一写死的宿主身份，不打出来
+            # 就只能靠猜"这一发到底推的是哪个实体的 wrapper"。
+            print(f"        带宿主身份：{e.owner_type}:{e.owner_id}（发射点显式指定）")
         if verbose:
             print(f"        {e.file}#{e.pointer}")
     if not reals:
@@ -188,8 +197,9 @@ def main(argv: list[str] | None = None) -> int:
             flags = "".join(
                 {"error": "✗", "warning": "⚠", "info": "·"}.get(d.severity, "") for d in c.diagnostics
             )
+            scope_mark = " 私有" if c.is_private else ""
             print(f"  {flags:2s} {c.signal:<48s} 发 {c.real_emitter_count:<3d} 听 {len(c.listeners):<3d}"
-                  f" 声明 {len(c.declarations)}")
+                  f" 声明 {len(c.declarations)}{scope_mark}")
         return 0
 
     if not args.signal:

@@ -98,6 +98,26 @@ index.overview()                               # 全部信号（一次扫描，�
 **接收方只有转移这一种**：运行时把信号排进 `NarrativeStateManager` 队列，只有 transition 的
 `signal` 参与匹配；别的系统听的是 `narrative:stateChanged`（状态变了），不是信号本身。
 
+## 私有信号（`scope`）与宿主身份
+
+注册表标了 `scope: 'private'` 的信号**只投递给发射方 owner 拥有的 wrapper 图**，缺 owner
+上下文当场丢弃、**不回落成全局广播**（机制卡 `agent_docs/runtime/mechanisms/private-narrative-signal.md`）。
+所以卡上两样东西必须看得见，否则一条私有信号与全局信号在界面上一模一样：
+
+- **卡片的 `scope` / `private`**：从 `signals[].scope` 原样带出，**不替作者补默认值**——
+  未登记的信号根本没有这一栏，硬填 `global` 会让"没登记"和"登记了是全局"长成同一个样子。
+- **发射行的 `ownerType` / `ownerId`（`ownerBound`）**：私有信号按发射方 owner 定向，
+  而 owner 绝大多数是发射点上下文隐式带进来的（`actionOrigin` 四档，作者不书写、静态扫不出来）；
+  发射点上那对参数是**唯一写在数据里、静态看得见**的宿主身份，卡上标成「带宿主身份：<类型>:<id>」。
+  ⚠ 判据是"两个都填了"，与运行时逐字一致（`ActionRegistry` 的
+  `paramOwnerType && paramOwnerId ? … : origin…`）：只填一个运行时**整对丢弃**退回 origin 档，
+  照单显示半对参数等于告诉作者"定向已经钉好了"。护栏
+  `test_owner_binding_predicate_matches_the_runtime_typescript` 对着 TS 原文锁。
+
+> 运行时侧的另一半（谁能听）在校验器：无 owner 绑定的图监听私有信号 = error
+> （`signal.private.listener.unbound`），声明了没人听 = warning（`signal.private.unlistened`）。
+> 本模块**刻意不复制**那两条判定——再造一份就是第二个会漂的口径。
+
 派生信号 `state:<图>:<状态>` 额外给两样：
 
 - **能让它发生的路**：进入该状态的上游转移 + `setNarrativeState` 强制设状态。每条都带

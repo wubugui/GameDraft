@@ -123,6 +123,42 @@ def collect_emitted_signals(data: dict[str, Any]) -> set[str]:
     return signals
 
 
+# 私有信号（`signals[].scope == 'private'`）在发射端的一句话交代。
+# 发射端才是它唯一会出事的地方：私有信号按**发射方 owner** 定向投递，缺 owner 上下文
+# 是 fail-loud 丢弃（`signal.private.noOwner`，error），**绝不回落成全局广播**——
+# 回落会让一条共用信号名一次推倒全部同类实体，正是这个机制要避免的事。
+# 真相源：src/core/NarrativeStateManager.ts + agent_docs/runtime/mechanisms/private-narrative-signal.md
+PRIVATE_SIGNAL_SCOPE = "private"
+PRIVATE_SIGNAL_MARK = "🔒 私有"
+PRIVATE_SIGNAL_TOOLTIP = (
+    "私有：只投递给发射方实体自己的 wrapper 图；"
+    "本图若挂在无实体上下文的容器上，这条发射会被丢弃"
+)
+
+
+def collect_private_signal_ids(narrative_graphs: Any) -> set[str]:
+    """narrative_graphs.signals 里标了 `scope: 'private'` 的信号名。
+
+    只认注册表这一处（与运行时投递判据、校验器 `validatePrivateSignalListeners` 同源）：
+    私有与全局同一命名空间、不得重名，所以按名字查就够，不必也不该按用法反推。
+    """
+    out: set[str] = set()
+    if not isinstance(narrative_graphs, dict):
+        return out
+    rows = narrative_graphs.get("signals")
+    # fail-safe 不 fail-open：半截数据（`{"signals": 5}`）读不出来就当没有。
+    # `x or []` 只挡得住 None/空，遇到标量会当场 TypeError，整块检查器白屏。
+    if not isinstance(rows, list):
+        return out
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        sid = str(row.get("id") or "").strip()
+        if sid and str(row.get("scope") or "").strip() == PRIVATE_SIGNAL_SCOPE:
+            out.add(sid)
+    return out
+
+
 def build_narrative_signal_owners(narrative_graphs: Any) -> dict[str, str]:
     """signal 名 -> 监听它的叙事图 id（供对话图「叙事归属」按信号自动推导）。
 

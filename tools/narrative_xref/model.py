@@ -21,6 +21,15 @@ from typing import Any
 
 DRAFT_SIGNAL = "__draft__"
 
+# 信号作用域（`signals[].scope`，真相源 src/core/narrativeGraphValidation.ts 的
+# `signal.scope.invalid`：只认 'global' / 'private'，缺省即 global）。
+# **私有信号只投递给发射方 owner 拥有的 wrapper 图**，缺 owner 上下文是 fail-loud 丢弃、
+# 绝不回落成全局广播（见 agent_docs/runtime/mechanisms/private-narrative-signal.md）。
+# 两侧清单必须把它标出来：同一条私有信号名会被 N 个同类实体共用，不标就会被当成
+# "一发全推"，而那正是这个机制要避免的事。
+SCOPE_GLOBAL = "global"
+SCOPE_PRIVATE = "private"
+
 # 反应式触发：不吃信号、靠条件自动评估，signal 字段**恒为占位且理应如此**。
 # 真相源是 src/core/NarrativeStateManager.ts 的 `trigger?: 'signal' | 'reactive' | ...`，
 # 本表是全 Python 侧唯一副本（调试器从这里 import，别再各写一份），parity 测试对着 TS 锁。
@@ -75,6 +84,19 @@ class Emitter:
     # 这条路**通不通**。只对派生信号的上游因果有意义：占位信号的转移运行时拒发，
     # 那条路根本走不到，界面必须把它跟真能走的路分开画，否则等于告诉人"有路可走"。
     wired: bool = True
+    # 这一发**带不带宿主身份**（`emitNarrativeSignal` 的 ownerType/ownerId 参数）。
+    # 私有信号按发射方 owner 定向投递；owner 绝大多数情况由发射点上下文隐式带进来
+    # （ActionRegistry 的四档 origin 解析，作者不书写，静态扫不出来），但作者可以在
+    # 发射点用这对参数**显式覆盖**——那是唯一写在数据里、静态看得见的宿主身份。
+    # ⚠ 两个都填才生效（运行时 `paramOwnerType && paramOwnerId ? … : origin…`），
+    # 只填一个等于没填，界面若照单显示会让人以为定向已经接上。
+    owner_type: str = ""
+    owner_id: str = ""
+
+    @property
+    def owner_bound(self) -> bool:
+        """这一发是否在数据里显式钉死了宿主身份（两个参数都齐才算）。"""
+        return bool(_clean(self.owner_type) and _clean(self.owner_id))
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -97,6 +119,9 @@ class Emitter:
             "stateId": self.state_id,
             "transitionId": self.transition_id,
             "wired": self.wired,
+            "ownerType": self.owner_type,
+            "ownerId": self.owner_id,
+            "ownerBound": self.owner_bound,
         }
 
 
@@ -285,6 +310,9 @@ class SignalCard:
     kind: str
     label: str = ""
     notes: str = ""
+    # 注册表里写的 `scope`（原样带出来，不猜不补默认值：未登记信号根本没有这一栏，
+    # 硬填 'global' 会让"没登记"和"登记了是全局"在界面上长得一模一样）。
+    scope: str = ""
     registered: bool = False
     emitters: list[Emitter] = field(default_factory=list)
     declarations: list[Declaration] = field(default_factory=list)
@@ -305,12 +333,19 @@ class SignalCard:
         """真发射数：不含派生信号的上游因果（那是"谁让它发生"，不是"谁发出"）。"""
         return sum(1 for e in self.emitters if e.channel != CHANNEL_UPSTREAM)
 
+    @property
+    def is_private(self) -> bool:
+        """私有信号：只投递给发射方 owner 拥有的 wrapper 图，不进全局扫描面。"""
+        return _clean(self.scope) == SCOPE_PRIVATE
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "signal": self.signal,
             "kind": self.kind,
             "label": self.label,
             "notes": self.notes,
+            "scope": self.scope,
+            "private": self.is_private,
             "registered": self.registered,
             "emitters": [e.to_dict() for e in self.emitters],
             "declarations": [d.to_dict() for d in self.declarations],

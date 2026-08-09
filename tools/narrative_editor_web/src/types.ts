@@ -98,10 +98,18 @@ export interface NarrativeCompositionDef {
   elements?: CompositionElementDef[];
 }
 
+/**
+ * 信号投递面（与运行时 `NarrativeSignalDef.scope` 同名同义）。
+ * 缺省（不写这个键）= global；`private` = 只投递给发射方 owner 拥有的 wrapper 图。
+ */
+export type SignalScope = 'global' | 'private';
+
 export interface NarrativeAuthorSignalDef {
   id: string;
   label?: string;
   notes?: string;
+  /** 缺省不写键 = global。写 'private' 才收窄投递面（见 NarrativeStateManager.processTrigger）。 */
+  scope?: SignalScope;
 }
 
 export type SignalCatalogKind = 'author' | 'derived' | 'draft';
@@ -116,6 +124,11 @@ export interface SignalCatalogEntryDef {
   listeners: number;
   emitters: number;
   editable: boolean;
+  /**
+   * 私有信号（注册行写了 `scope: 'private'`）。缺省不带这个字段 = 全局。
+   * 只有作者信号有意义：派生/草稿/影子条目没有注册行，谈不上 scope。
+   */
+  scope?: SignalScope;
   /**
    * 是否真的有 `narrative_graphs.signals` 注册行。false = 目录从监听端/黑盒声明反推出来的
    * 影子条目——运行时照跑（发射与监听只对字符串），但校验会一直报"未在信号注册表登记"，
@@ -594,7 +607,8 @@ export interface RuntimeDebugSnapshotDef {
 export type CanvasNode = Node<{
   label: string;
   subtitle: string;
-  kind: 'state' | ElementKind | 'graphAnchor' | 'projectionAnchor' | 'transitionAnchor' | 'editorGroupFrame';
+  kind: 'state' | ElementKind | 'graphAnchor' | 'projectionAnchor' | 'transitionAnchor'
+    | 'editorGroupFrame' | 'wrapperGroupFrame';
   detail?: string;
   boundary?: 'entry' | 'exit' | 'entryExit';
   active?: boolean;
@@ -602,6 +616,9 @@ export type CanvasNode = Node<{
   groupColor?: string;
   groupCollapsed?: boolean;
   groupMemberCount?: number;
+  /** wrapper 自动分组框（kind === 'wrapperGroupFrame'）：组内成员的校验问题总数，
+   *  折叠态一眼看出「这一组里有没有事」，见 canvas/wrapperAutoGroups.ts */
+  groupIssueCount?: number;
 }>;
 
 export type CanvasEdge = Edge<{

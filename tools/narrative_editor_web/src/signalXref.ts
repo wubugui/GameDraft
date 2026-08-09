@@ -4,7 +4,9 @@
  * 与渲染分开是为了能测——面板本身要靠 QWebEngine 才跑得起来，而"筛选筛错了""发射方
  * 跟上游因果混在一起"这类问题，恰恰是纯函数能一秒验出来的。
  */
+import { graphTopologyFingerprint } from './canvas/wrapperAutoGroups';
 import type {
+  NarrativeGraphDef,
   NarrativeGraphsFileDef,
   SignalXrefCardDef,
   ValidationTargetDef,
@@ -196,6 +198,92 @@ export function focusTargetOfDeclaration(d: XrefDeclarationDef): ValidationTarge
 /** 列表行的显示名：有中文名就一起显示（真有中文名的那几条最难靠 id 认出来） */
 export function rowLabel(card: SignalXrefCardDef): string {
   return card.label && card.label !== card.signal ? `${card.signal}（${card.label}）` : card.signal;
+}
+
+/* ------------------------------------------------------- 私有信号的「一条模式」
+ * 私有信号的监听面天生是 N 份同一件事：100 个箱子各有一张 wrapper 图，各自听同一条
+ * 信号名、各推各的状态。逐条列出来是 100 行**没有信息量**的重复——真正要说的只有一句：
+ * 「所有绑此类 wrapper 的实体，都会在收到它时走这一跳」。
+ *
+ * 聚合按**转移在图里的结构位置**（状态插入序下标 + 触发方式 + 条件）+ 图的拓扑指纹，
+ * 而不是按 from/to 的 id 或中文名——盖章产物的 id 各不相同（`箱子07_opened`），
+ * 按名字聚合等于聚不上。同一张图里长得不一样的两跳仍然分成两条模式，不会被合并。
+ */
+
+export interface PrivateListenerPattern {
+  /** 代表行（第一条）：详情、跳转、条件文案全用它 */
+  sample: XrefListenerDef;
+  /** 这一模式覆盖多少张 wrapper 图 */
+  count: number;
+  /** 涉及的图 id（出现序、去重），tooltip 里列前几个 */
+  graphIds: string[];
+}
+
+function graphIndexOf(data: NarrativeGraphsFileDef): Map<string, NarrativeGraphDef> {
+  const out = new Map<string, NarrativeGraphDef>();
+  for (const comp of data.compositions ?? []) {
+    if (comp.mainGraph?.id) out.set(comp.mainGraph.id, comp.mainGraph);
+    for (const el of comp.elements ?? []) {
+      if (el.graph?.id) out.set(el.graph.id, el.graph);
+    }
+  }
+  return out;
+}
+
+/**
+ * 把私有信号的监听行收成若干「模式」。全局信号不该调它——全局信号的监听方各是各的，
+ * 合并会把「谁听」这个问题答错。
+ */
+export function aggregatePrivateListeners(
+  listeners: readonly XrefListenerDef[],
+  data: NarrativeGraphsFileDef,
+): PrivateListenerPattern[] {
+  const graphs = graphIndexOf(data);
+  const order: string[] = [];
+  const buckets = new Map<string, PrivateListenerPattern>();
+  for (const l of listeners) {
+    const graph = graphs.get(l.graphId);
+    const stateIds = Object.keys(graph?.states ?? {});
+    const fromIdx = stateIds.indexOf(l.from);
+    const toIdx = stateIds.indexOf(l.to);
+    // 图不在当前文档里（宿主扫描面比画布文档宽）：退回按 id 分组，宁可多分几条也不合错
+    const positional = graph && fromIdx >= 0 && toIdx >= 0 ? `${fromIdx}>${toIdx}` : `${l.from}>${l.to}`;
+    const key = [
+      // 与画布自动分组同口径：两处判「同款」必须是同一把尺子
+      graph ? graphTopologyFingerprint(graph) : '',
+      positional,
+      l.trigger ?? '',
+      String(l.priority ?? 0),
+      l.conditions.join('&&'),
+    ].join('␞');
+    const bucket = buckets.get(key);
+    if (bucket) {
+      bucket.count += 1;
+      if (!bucket.graphIds.includes(l.graphId)) bucket.graphIds.push(l.graphId);
+    } else {
+      order.push(key);
+      buckets.set(key, { sample: l, count: 1, graphIds: [l.graphId] });
+    }
+  }
+  return order.map((key) => buckets.get(key)!).filter(Boolean);
+}
+
+/** 模式行的抬头：说的是一类实体，不是某一张图。 */
+export function privatePatternHeadline(pattern: PrivateListenerPattern): string {
+  const { sample } = pattern;
+  const jump = `${sample.fromLabel} → ${sample.toLabel}`;
+  return pattern.count > 1
+    ? `所有绑此类 wrapper 的实体（${pattern.count} 张图）· ${jump}`
+    : `${sample.graphLabel} · ${jump}`;
+}
+
+/** 模式行的 tooltip：把被折叠掉的图列出来，别让人以为少扫了。 */
+export function privatePatternTitle(pattern: PrivateListenerPattern): string {
+  if (pattern.count <= 1) return listenerSubline(pattern.sample);
+  const shown = pattern.graphIds.slice(0, 8).join('、');
+  const rest = pattern.graphIds.length > 8 ? ` 等 ${pattern.graphIds.length} 张` : '';
+  return `这一跳在 ${pattern.count} 张同款 wrapper 图上各有一份：${shown}${rest}\n`
+    + '（私有信号只投给发射方 owner 的那一张，不会一次推动全部；点「画布定位」落到第一张）';
 }
 
 /** 目标转移的聚焦目标（复用校验面板那套 focus）；缺 compositionId 时不给，免得跳空 */

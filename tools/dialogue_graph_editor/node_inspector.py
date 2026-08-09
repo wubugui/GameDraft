@@ -22,6 +22,7 @@ from tools.editor.shared.condition_expr_tree import ConditionExprTreeRootWidget
 from tools.editor.shared.action_editor import (
     _hide_combo_popups_under,
     FilterableTypeCombo,
+    NarrativeSignalPickerField,
 )
 
 from tools.editor.shared.portrait_catalog import (
@@ -47,8 +48,72 @@ from .dialogue_condition_text import (
     shorten,
 )
 from .editor_asset_catalog import load_rule_id_name_pairs
+from .graph_analysis import (
+    PRIVATE_SIGNAL_MARK,
+    PRIVATE_SIGNAL_TOOLTIP,
+    collect_private_signal_ids,
+)
 from .node_picker_dialog import NodePickerDialog
 from .npc_picker_dialog import NpcPickerDialog
+
+
+#: 私有信号标记 QLabel 的 objectName——每轮刷新按它复用，不然每次 changed 都会
+#: 在那一行右边再挂一个「私有」。
+_PRIVATE_SIGNAL_MARK_OBJECT = "gdPrivateSignalMark"
+
+
+def _without_private_note(text: str) -> str:
+    """把上一轮加过的私有说明剥掉，拿回控件自己的提示（幂等的关键）。"""
+    if text.startswith(PRIVATE_SIGNAL_TOOLTIP):
+        return text[len(PRIVATE_SIGNAL_TOOLTIP):].lstrip("\n")
+    return text
+
+
+def mark_private_signal_fields(root: QWidget, private_ids: set[str]) -> None:
+    """给动作树里挑中私有信号的发射行挂上标记与提示（幂等，可反复调）。
+
+    为什么标在**发射端**：私有信号按发射方 owner 定向投递，缺 owner 上下文是当场丢弃
+    （fail-loud，**不回落成全局广播**）。对话图本身无状态、owner 是调用那一刻带进来的，
+    所以同一张图挂在有实体的热点上就正常推、挂在没有实体上下文的容器上就一声不响地
+    丢——策划在挑信号这一刻看不出区别，等跑起来才发现"怎么没反应"。
+
+    为什么每次都重扫而不是装一次：动作行是整行 ``deleteLater`` 重建的（换动作类型、
+    增删行都会），一次性装饰活不过一次编辑。
+    """
+    for field in root.findChildren(NarrativeSignalPickerField):
+        try:
+            is_private = field.current_signal() in private_ids
+        except RuntimeError:
+            # 行已经在重建途中被销毁：对已析构的 C++ 对象再调方法会抛，跳过这一枝就好
+            continue
+        mark = field.findChild(QLabel, _PRIVATE_SIGNAL_MARK_OBJECT)
+        if mark is None and is_private:
+            mark = QLabel(PRIVATE_SIGNAL_MARK, field)
+            mark.setObjectName(_PRIVATE_SIGNAL_MARK_OBJECT)
+            layout = field.layout()
+            if layout is None:      # 上游换了布局方式就安静退场，绝不把标记扔到窗口左上角
+                continue
+            layout.addWidget(mark)
+        if mark is not None:
+            mark.setVisible(is_private)
+            _apply_private_tooltip(mark, is_private)
+        _apply_private_tooltip(field, is_private)
+        for line in field.findChildren(QLineEdit):
+            # 只读框才是鼠标真正停留的地方；它的提示每次改值都会被自己重写，所以每轮补
+            _apply_private_tooltip(line, is_private)
+
+
+def _apply_private_tooltip(widget: QWidget, is_private: bool) -> None:
+    """私有说明置顶挂到控件提示上；不是私有就恢复原样。
+
+    每轮都按当前提示重算（而不是记一份"原始提示"）：信号框的提示会被它自己的
+    ``_refresh_line()`` 改写成当前显示名，缓存一份原始值只会把旧信号名贴回去。
+    """
+    base = _without_private_note(widget.toolTip())
+    if not is_private:
+        widget.setToolTip(base)
+        return
+    widget.setToolTip(f"{PRIVATE_SIGNAL_TOOLTIP}\n{base}" if base else PRIVATE_SIGNAL_TOOLTIP)
 
 
 SpeakerKinds = ("player", "npc", "literal", "sceneNpc")
@@ -1753,6 +1818,7 @@ class NodeInspector(QWidget):
             _junk_lbl.setParent(self._body)
             self._body_layout.addWidget(_junk_lbl)
         ae.changed.connect(self._emit_changed)
+        self._install_private_signal_marks(ae)
         self._topology_refs = {"type": "runActions", "next_edit": next_edit}
 
         def getter():
@@ -1763,6 +1829,21 @@ class NodeInspector(QWidget):
             }
 
         self._getter = getter
+
+    def _install_private_signal_marks(self, ae) -> None:
+        """让这棵动作树上的私有信号一直带着标记（含之后新加的行）。
+
+        私有作用域读的是 narrative_graphs.signals 的登记（与运行时投递判据、校验器
+        ``validatePrivateSignalListeners`` 同一处口径），所以每轮现取——工程改了登记，
+        下一次编辑动作就跟上，不留一份会漂的快照。
+        """
+        def refresh() -> None:
+            model = self._project_model_getter() if self._project_model_getter else None
+            private_ids = collect_private_signal_ids(getattr(model, "narrative_graphs", None))
+            mark_private_signal_fields(ae, private_ids)
+
+        ae.changed.connect(refresh)
+        refresh()
 
     @staticmethod
     def _set_combo_current_data(cb: QComboBox, value: str) -> None:

@@ -3,6 +3,7 @@ import type { MouseEvent } from 'react';
 import type { CanvasNode } from '../types';
 import { elementIdFromCanvasNodeId, useNarrativeCanvasActions } from './canvasActionsContext';
 import { parseGroupFrameNodeId } from './editorGroups';
+import { parseWrapperGroupNodeId } from './wrapperAutoGroups';
 import { nodeTypeHasFourWayPorts, sideToPosition, type RouteSide } from './edgeRouting';
 
 /**
@@ -64,6 +65,7 @@ export const flowNodeTypes = {
   transitionAnchor: TransitionAnchorNode,
   subgraphGroup: SubgraphGroupNode,
   editorGroupFrame: EditorGroupFrameNode,
+  wrapperGroupFrame: WrapperGroupFrameNode,
   wrapperGraph: ElementNode,
   scenarioSubgraph: ElementNode,
   dialogueBlackbox: ElementNode,
@@ -142,6 +144,48 @@ function EditorGroupFrameNode({ id, data, selected }: NodeProps<CanvasNode>) {
       {header}
       {!collapsed && <div className="editor-group-body" aria-hidden />}
       <Handle type="source" position={Position.Right} className="editor-group-port" />
+    </div>
+  );
+}
+
+/**
+ * wrapper 自动分组框（见 canvas/wrapperAutoGroups.ts）：成员按数据现算，不落盘、不可拖不可删。
+ *
+ * 折叠态是这个组件存在的理由——它必须在**不展开**的前提下把两件事说清：
+ * 组里有多少张图、组里有没有事（校验问题数）。看不出这两样，折叠就只是把问题藏起来。
+ */
+function WrapperGroupFrameNode({ id, data }: NodeProps<CanvasNode>) {
+  const actions = useNarrativeCanvasActions();
+  const key = parseWrapperGroupNodeId(id ?? '') ?? '';
+  const collapsed = data.groupCollapsed === true;
+  const count = data.groupMemberCount ?? 0;
+  const issues = data.groupIssueCount ?? 0;
+  const toggle = () => actions?.wrapperGroupActions?.toggleExpanded(key);
+
+  return (
+    <div className={`wrapper-group-frame${collapsed ? ' collapsed' : ''}${issues ? ' has-issues' : ''}`}>
+      <div
+        className="wrapper-group-header"
+        onDoubleClick={(event) => {
+          event.stopPropagation();
+          toggle();
+        }}
+        title={collapsed
+          ? `${count} 张同组 wrapper 图已折叠${issues ? `，其中 ${issues} 条校验问题` : ''}。双击展开。`
+          : '双击折叠这一组（纯画布呈现，编排数据不变）'}
+      >
+        <span className="wrapper-group-name">{data.label}</span>
+        <span className="wrapper-group-count">{count} 张图</span>
+        {issues ? <span className="wrapper-group-issues">⚠ {issues}</span> : null}
+        <span className="wrapper-group-tools nodrag nopan">
+          <button type="button" onClick={toggle} title={collapsed ? '展开这一组' : '折叠为一个节点'}>
+            {collapsed ? '⊞' : '⊟'}
+          </button>
+        </span>
+      </div>
+      {collapsed ? <div className="wrapper-group-sub">{data.subtitle}</div> : <div className="wrapper-group-body" aria-hidden />}
+      <Handle type="target" position={Position.Left} className="wrapper-group-port" />
+      <Handle type="source" position={Position.Right} className="wrapper-group-port" />
     </div>
   );
 }

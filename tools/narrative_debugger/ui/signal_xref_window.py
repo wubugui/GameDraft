@@ -33,8 +33,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from tools.narrative_debugger.humanize import DRAFT_SIGNAL, player_action_for, signal_phrase
-from tools.narrative_debugger.model import NarrativeIndex
+from tools.narrative_debugger.humanize import (
+    DRAFT_SIGNAL,
+    PRIVATE_MARK,
+    PRIVATE_NOTE,
+    player_action_for,
+    signal_phrase,
+)
+from tools.narrative_debugger.model import NarrativeIndex, PrivateListenerPattern
 from tools.narrative_xref import CHANNEL_UPSTREAM, SignalIndex, transition_is_unwired
 from tools.narrative_xref.model import SignalCard
 
@@ -67,6 +73,28 @@ def _esc(text: Any) -> str:
         .replace("<", "&lt;")
         .replace(">", "&gt;")
     )
+
+
+def _private_pattern_headline(pattern: PrivateListenerPattern) -> str:
+    """模式行的抬头：说的是一类实体，不是某一张图。
+
+    文案与 web 编辑器的 `signalXref.privatePatternHeadline` 对齐——同一件事在两个工具里
+    说两种话，人就得先分辨"这俩说的是不是一回事"。
+    """
+    sample = pattern.sample
+    jump = f"{sample.from_label} → {sample.to_label}"
+    if pattern.count > 1:
+        return f"所有绑此类 wrapper 的实体（{pattern.count} 张图）· {jump}"
+    return f"{sample.graph_label} · {jump}"
+
+
+def _private_pattern_detail(pattern: PrivateListenerPattern) -> str:
+    """把被折叠掉的图列出来，别让人以为少扫了。"""
+    if pattern.count <= 1:
+        return pattern.sample.composition_label or pattern.sample.graph_id
+    shown = "、".join(pattern.graph_ids[:8])
+    rest = f" 等 {len(pattern.graph_ids)} 张" if len(pattern.graph_ids) > 8 else ""
+    return f"这一跳在 {pattern.count} 张同款 wrapper 图上各有一份：{shown}{rest}"
 
 
 class SignalXrefWindow(QDialog):
@@ -572,9 +600,14 @@ class SignalXrefWindow(QDialog):
             mark = self._card_mark(card, active)
             # 有中文名就一起显示：真起过中文名的那几条，光看 id 认不出来是哪件事
             name = f"{card.signal}（{card.label}）" if card.label and card.label != card.signal else card.signal
-            label = f"{mark} {name}"
+            private = self.index.is_private_signal(card.signal)
+            label = f"{mark} {PRIVATE_MARK}{name}" if private else f"{mark} {name}"
+            listen_text = (
+                f"听 {len(self.index.aggregate_private_listeners(card.listeners))} 类实体"
+                if private else f"听 {len(card.listeners)}"
+            )
             item = QListWidgetItem(
-                f"{label}\n　　发 {card.real_emitter_count} · 听 {len(card.listeners)}"
+                f"{label}\n　　发 {card.real_emitter_count} · {listen_text}"
                 f"{'　⚠' if problem else ''}"
             )
             item.setData(ROLE_SIGNAL, card.signal)
@@ -668,6 +701,8 @@ class SignalXrefWindow(QDialog):
             lines.append(card.label)
         if what:
             lines.append(what + (f"（{where}）" if where else ""))
+        if self.index.is_private_signal(card.signal):
+            lines.append(PRIVATE_NOTE + "——发的时候得指明是哪个实体发的，不指就被丢弃")
         lines.append(f"现在有 {live} 条路在等这一下" if live else "现在没有路在等这一下")
         return "\n".join(lines)
 
@@ -711,7 +746,17 @@ class SignalXrefWindow(QDialog):
                 "<p style='color:#a5822c;margin:2px 0'>⚠ 游戏往前走了，这条已经不在左边的"
                 "筛选结果里了——下面说的还是它（按钮也还指着它）。</p>"
             )
-        parts.append(f"<p style='color:#7a756e;margin:2px 0 8px'>{_KIND_TEXT.get(card.kind, card.kind)}</p>")
+        kind_line = _KIND_TEXT.get(card.kind, card.kind)
+        private = self.index.is_private_signal(card.signal)
+        if private:
+            kind_line += f"　·　{PRIVATE_MARK}{PRIVATE_NOTE}"
+        parts.append(f"<p style='color:#7a756e;margin:2px 0 8px'>{_esc(kind_line)}</p>")
+        if private:
+            parts.append(
+                "<p style='color:#8a7f5f;margin:2px 0'>同一条信号名挂在一类实体上，"
+                "运行时只推<b>发射的那一个</b>的图——所以「就当这件事发生了」得先说清是谁发的"
+                "（在主窗「假装做了那一下」里挑）。</p>"
+            )
         if card.notes:
             parts.append(f"<p style='color:#8a7f5f'>📝 {_esc(card.notes)}</p>")
 
@@ -727,6 +772,15 @@ class SignalXrefWindow(QDialog):
         maybe_rows = [(r, st) for r, st in statuses if st in (STATUS_CONDITIONAL, STATUS_SUSPENDED)]
         if not self._connected():
             parts.append("<p><b>现在：</b>游戏没连上，看不到实时状态（下面是静态关系）。</p>")
+        elif live_rows and private:
+            # 私有信号绝不能报"有 100 条路正等着这一下"：真发出去只会推其中一个
+            # （发射方 owner 那张图），报总数等于承诺一次推倒全部——正是本机制要避免的事。
+            sample = live_rows[0]
+            parts.append(
+                f"<p><b>现在：</b>这一类实体里有 {len(live_rows)} 个停在起点上"
+                f"（如「{_esc(sample.graph_label)}」{_esc(sample.from_label)} → {_esc(sample.to_label)}）；"
+                "真发出去只会推<b>发射方那一个</b>，不是全部。</p>"
+            )
         elif live_rows:
             names = "；".join(
                 f"「{_esc(r.graph_label)}」{_esc(r.from_label)} → {_esc(r.to_label)}" for r in live_rows[:3]
@@ -796,10 +850,15 @@ class SignalXrefWindow(QDialog):
                     f"　　<span style='color:#8a7f5f'>{_esc(e.context)}</span></div>"
                 )
 
-        parts.append(f"<h4 style='margin:12px 0 4px'>谁在听（{len(card.listeners)}）</h4>")
-        if not card.listeners:
-            parts.append("<p style='color:#7a756e'>没有任何转移在等它。</p>")
-        for row in card.listeners:
+        if private and card.listeners:
+            self._append_private_listeners(parts, card, active)
+            rows_to_render: list[Any] = []
+        else:
+            parts.append(f"<h4 style='margin:12px 0 4px'>谁在听（{len(card.listeners)}）</h4>")
+            if not card.listeners:
+                parts.append("<p style='color:#7a756e'>没有任何转移在等它。</p>")
+            rows_to_render = list(card.listeners)
+        for row in rows_to_render:
             status = self._listener_status(row, active)
             if not self._connected():
                 mark, note = OFF_MARK, "（游戏没连上，看不出现在等不等）"
@@ -856,6 +915,44 @@ class SignalXrefWindow(QDialog):
         if bar is not None:
             bar.setValue(min(offset, bar.maximum()))
 
+    def _append_private_listeners(self, parts: list[str], card: SignalCard, active: dict[str, str]) -> None:
+        """私有信号的「谁在听」：一类实体一行，不是一张图一行。
+
+        逐条列 100 张同款 wrapper 图是 100 行没有信息量的重复；策划真正要知道的只有
+        「哪一类实体会在收到它时走哪一跳」，以及**此刻这一类里有几个正等着**——
+        因为运行时只会推其中一个（发射方那个），说"有 100 条路在等"是误导。
+        """
+        patterns = self.index.aggregate_private_listeners(card.listeners)
+        parts.append(f"<h4 style='margin:12px 0 4px'>谁在听（{len(patterns)} 类）</h4>")
+        for pattern in patterns:
+            sample = pattern.sample
+            statuses = [
+                self._listener_status(row, active)
+                for row in card.listeners if row.graph_id in pattern.graph_ids
+            ]
+            live = sum(1 for st in statuses if st == STATUS_LIVE)
+            if not self._connected():
+                mark, note = OFF_MARK, "（游戏没连上，看不出现在等不等）"
+            elif live:
+                mark = LIVE_MARK
+                note = f"这一类里有 {live} 个正停在起点上（真发的时候只推其中发射的那一个）"
+            elif STATUS_CONDITIONAL in statuses or STATUS_SUSPENDED in statuses:
+                mark, note = MAYBE_MARK, "有的起点对上了，但还挂着条件（或那条活计挂起着）"
+            elif all(st == STATUS_UNWIRED for st in statuses) and statuses:
+                mark, note = OFF_MARK, "这一跳还没接线（占位信号，运行时不会发）"
+            else:
+                mark, note = IDLE_MARK, "这一类现在都不在这一跳的起点上"
+            link = f"{sample.graph_id}.{sample.from_state}"
+            parts.append(
+                f"<div style='margin:3px 0'>{mark} <a href='focus:{_esc(link)}'>"
+                f"<b>{_esc(_private_pattern_headline(pattern))}</b></a>"
+                f"　<span style='color:#7a756e'>{_esc(note)}</span>"
+                f"<br/>　　<span style='color:#7a756e'>{_esc(_private_pattern_detail(pattern))}</span>"
+                + (f"<br/>　　<span style='color:#8a7f5f'>还要满足：{_esc(' 且 '.join(sample.conditions))}</span>"
+                   if sample.conditions else "")
+                + "</div>"
+            )
+
     def _state_label(self, graph_id: str, state_id: str) -> str:
         node = self.index.state(graph_id, state_id)
         return node.display if node is not None else state_id
@@ -894,6 +991,11 @@ class SignalXrefWindow(QDialog):
         # 保平安正是这个形状栽过三次的原因——判据留在自己手里。
         if self._mode == "state" or not self._current:
             return
+        # 私有信号不带 owner 发出去必被运行时丢弃（signal.private.noOwner），
+        # 而"按了什么都没发生"正是这个工具存在的理由。挑 owner 的面板在主窗，
+        # 这里不复制一份（两处挑法迟早会漂）——按钮已禁用，这里只是把判据留在手里。
+        if self.index.is_private_signal(self._current):
+            return
         self.hub.send_command({
             "command": "emitSignal",
             "signal": self._current,
@@ -915,11 +1017,17 @@ class SignalXrefWindow(QDialog):
         card = self.xref.card(self._current) if self._current else None
         connected = bool(getattr(getattr(self.hub, "state", None), "connected", False))
         draft = self._current == DRAFT_SIGNAL
-        self.fire_btn.setEnabled(bool(self._current) and connected and not draft)
+        private = bool(self._current) and self.index.is_private_signal(self._current)
+        self.fire_btn.setEnabled(bool(self._current) and connected and not draft and not private)
         if not self._current:
             self.fire_btn.setToolTip("先在左边挑一条信号")
         elif draft:
             self.fire_btn.setToolTip("草稿占位信号运行时拒绝发出——这条路还没接线")
+        elif private:
+            self.fire_btn.setToolTip(
+                "私有信号得先说清是哪个实体发的（不说会被运行时直接丢弃）——"
+                "去主窗「假装做了那一下」，那里能挑 owner"
+            )
         elif not connected:
             self.fire_btn.setToolTip("游戏没连上，发不出去")
         else:

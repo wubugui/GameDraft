@@ -11,6 +11,10 @@ export type NarrativeCanvasActions = {
     remove: (gid: string) => void;
     setFrameRect: (gid: string, rect: { x: number; y: number; width: number; height: number }) => void;
   };
+  /** wrapper 自动分组（按数据现算，不落盘）的展开/折叠；见 canvas/wrapperAutoGroups.ts。 */
+  wrapperGroupActions?: {
+    toggleExpanded: (key: string) => void;
+  };
 };
 
 const NarrativeCanvasActionsContext = createContext<NarrativeCanvasActions | null>(null);

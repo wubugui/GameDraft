@@ -12,8 +12,13 @@ narrative_graphs.json：运行时 ``compileNarrativeGraphs`` 会把 ``compositio
 信号命名铁律：模板内所有内部信号写成 ``{{taskId}}__accepted`` 形式；盖章后 emit 端（对话桩的
 emitNarrativeSignal 动作）与 listen 端（作曲 transition.signal）由同一次替换生成，**天然不可能对不上**。
 
+模板可用 ``produces`` **声明自己盖哪几样**产物（缺省按骨架里有什么推断，老模板零改动）：
+100 个箱子共用一条私有信号 + 一张发射端对话图，各自只要**一张 wrapper 图**，不要镜像 quest、
+更不要 100 份对话桩。参数可用 ``from`` 声明值来自被盖的实体（批量盖章时现推，不进表单）。
+
 核心函数：
 - ``normalize_templates_file`` —— 容错归一模板文件（编辑器往返保真的输入清洗）。
+- ``template_produces`` / ``attach_stamp_provenance`` —— 产物声明与「来源模板+版本」戳。
 - ``iter_placeholders`` / ``substitute`` —— 占位符扫描 / 深度替换（纯 JSON 变换）。
 - ``validate_template`` / ``validate_templates_file`` —— 占位符感知校验（声明/使用/未知）。
 - ``extract_template`` —— 从一张现成作曲反抽出模板（把 sample 值换成 ``{{name}}``）。
@@ -50,6 +55,23 @@ PARAM_TYPES: dict[str, str] = {
     "questRef": "任务引用",
     "cutsceneRef": "过场引用",
     "scenarioRef": "Scenario 引用",
+}
+
+# 盖章产物族。模板可用 ``produces`` **声明自己盖哪几样**；缺省按骨架里有什么推断
+# （老模板零改动照旧盖三样）。由来：100 个箱子只要一张 wrapper 图，不要镜像 quest、
+# 也不要 100 份对话桩——发射端是**共用的一张**对话图，桩会把它盖成 100 份垃圾。
+PRODUCT_COMPOSITION = "composition"
+PRODUCT_QUEST = "quest"
+PRODUCT_DIALOGUE_STUBS = "dialogueStubs"
+PRODUCT_KINDS: tuple[str, ...] = (PRODUCT_COMPOSITION, PRODUCT_QUEST, PRODUCT_DIALOGUE_STUBS)
+
+# 参数值的「来源绑定」：批量盖章时由被盖的实体现推，不进表单（策划填一次、盖 100 份）。
+# 权威语义在 tools/editor/shared/narrative_template_batch.py 的 entity_derived_values。
+PARAM_SOURCES: dict[str, str] = {
+    "entity.id": "实体自身 id（裸 id，与运行时 owner 索引同口径）",
+    "entity.kind": "实体类型（npc / hotspot / zone）",
+    "entity.label": "实体显示名（NPC name / 热点 label / zone id）",
+    "scene.id": "实体所在场景 id",
 }
 
 # 引用型参数 → authoring catalog 里的候选字段名（web 侧据此挑选择器数据源）。
@@ -96,6 +118,11 @@ def normalize_param(raw: Any) -> dict[str, Any] | None:
     note = _as_str(raw.get("note"))
     if note:
         out["note"] = note
+    # 来源绑定：批量盖章时该参数不进表单，由被盖实体现推（见 PARAM_SOURCES）。
+    # 未知来源不在这里丢弃——留着让 validate_template 报出来，别静默变回手填参数。
+    source = _as_str(raw.get("from"))
+    if source:
+        out["from"] = source
     return out
 
 
@@ -112,6 +139,27 @@ def normalize_template(raw: Any) -> dict[str, Any] | None:
     desc = _as_str(raw.get("description"))
     if desc:
         out["description"] = desc
+    # 模板版本：盖章产物记下它（stampedFrom.templateVersion），将来"模板改了要不要同步
+    # 已盖的 100 张图"才有判据。缺失即隐式 1（见 template_version）——**不代写这个键**，
+    # 否则 narrative_templates.json 的字节级往返立刻破（编辑器不代写数据，norms 不变量 1）。
+    if raw.get("version") is not None:
+        try:
+            version = int(raw.get("version"))
+        except (TypeError, ValueError):
+            version = 1
+        out["version"] = version if version >= 1 else 1
+    produces = raw.get("produces")
+    if isinstance(produces, list):
+        picked: list[str] = []
+        for item in produces:
+            name = _as_str(item)
+            if name in PRODUCT_KINDS and name not in picked:
+                picked.append(name)
+        if picked:
+            # 作曲恒产出：不盖作曲就什么都没盖，声明里漏了当写漏补上而不是盖出空气。
+            if PRODUCT_COMPOSITION not in picked:
+                picked.insert(0, PRODUCT_COMPOSITION)
+            out["produces"] = [k for k in PRODUCT_KINDS if k in picked]
     params: list[dict[str, Any]] = []
     seen: set[str] = set()
     for p in raw.get("params") or []:
@@ -136,6 +184,11 @@ def normalize_template(raw: Any) -> dict[str, Any] | None:
             snotes = _as_str(s.get("notes"))
             if snotes:
                 row["notes"] = snotes
+            # scope 必须保留（终审 B3）：丢掉它的后果是「模板里写的私有信号，盖出来是全局广播」
+            # ——零报错，症状是主线莫名被推动。取值口径与 TS 权威一致：只认 'private'
+            # （'global' 是缺省语义，不落键，保住模板文件的字节级往返）。
+            if _as_str(s.get("scope")) == "private":
+                row["scope"] = "private"
             norm_sigs.append(row)
         if norm_sigs:
             out["signals"] = norm_sigs
@@ -182,6 +235,57 @@ def normalize_template(raw: Any) -> dict[str, Any] | None:
         if norm_req:
             out["requiredEntities"] = norm_req
     return out
+
+
+def template_produces(tpl: Any) -> list[str]:
+    """模板这一次盖哪几样产物：显式 ``produces`` 优先，缺省按骨架里有什么推断。
+
+    推断是为了让**老模板零改动**继续盖三样；一旦显式声明就以声明为准（声明了 quest 却没有
+    quest 骨架 = 校验 error，不会盖出半个东西）。
+    """
+    if not isinstance(tpl, dict):
+        return [PRODUCT_COMPOSITION]
+    declared = tpl.get("produces")
+    if isinstance(declared, list) and declared:
+        names = {_as_str(x) for x in declared}
+        picked = [k for k in PRODUCT_KINDS if k in names]
+        if PRODUCT_COMPOSITION not in picked:
+            picked.insert(0, PRODUCT_COMPOSITION)
+        return picked
+    out = [PRODUCT_COMPOSITION]
+    quest = tpl.get("quest")
+    if isinstance(quest, dict) and quest:
+        out.append(PRODUCT_QUEST)
+    stubs = tpl.get("dialogueStubs")
+    if isinstance(stubs, list) and stubs:
+        out.append(PRODUCT_DIALOGUE_STUBS)
+    return out
+
+
+def template_version(tpl: Any) -> int:
+    if not isinstance(tpl, dict):
+        return 1
+    try:
+        version = int(tpl.get("version") or 1)
+    except (TypeError, ValueError):
+        return 1
+    return version if version >= 1 else 1
+
+
+def attach_stamp_provenance(composition: Any, provenance: Any) -> Any:
+    """把「来源模板 + 版本」写进盖章产出的作曲（为将来的模板同步留钩子；本轮不做同步）。
+
+    刻意**不在 stamp_template 内部写**：`stamp(extract(comp, samples)) == comp` 是硬契约
+    （抽取↔盖章往返无损），产出体不能凭空多出一个键。所以由「真正要进 ProjectModel 的那一步」
+    统一打戳——两条写模型的路（叙事页单张盖章 / 场景页批量盖章）都必须过这里。
+    """
+    if not isinstance(composition, dict) or not isinstance(provenance, dict):
+        return composition
+    composition["stampedFrom"] = {
+        "templateId": _as_str(provenance.get("templateId")),
+        "templateVersion": template_version({"version": provenance.get("templateVersion")}),
+    }
+    return composition
 
 
 def normalize_templates_file(value: Any) -> dict[str, Any]:
@@ -334,6 +438,45 @@ def validate_template(tpl: dict[str, Any]) -> list[dict[str, Any]]:
             f"模板「{tid}」声明了参数「{name}」但骨架里没用到", tid,
         ))
 
+    # 参数来源绑定：未知来源 = error 拦保存。留着不报 = 批量盖章时它会被当"没值的必填参数"
+    # 顶回来，而策划在表单里根本看不到这个参数，只能看到一句莫名其妙的缺参数。
+    for p in tpl.get("params") or []:
+        if not isinstance(p, dict):
+            continue
+        source = _as_str(p.get("from"))
+        if source and source not in PARAM_SOURCES:
+            issues.append(_issue(
+                "error", "template.param.from.unknown",
+                f"模板「{tid}」参数「{_as_str(p.get('name'))}」的来源「{source}」未知："
+                f"只能是 {'、'.join(PARAM_SOURCES)}", tid,
+            ))
+
+    # 产物声明与骨架对账：声明了却没骨架 = 盖出空气（error）；有骨架却没声明 = 静默不盖（warning）。
+    produces = template_produces(tpl)
+    produces_declared = isinstance(tpl.get("produces"), list) and bool(tpl.get("produces"))
+    has_quest = isinstance(tpl.get("quest"), dict) and bool(tpl.get("quest"))
+    has_stubs = isinstance(tpl.get("dialogueStubs"), list) and bool(tpl.get("dialogueStubs"))
+    if PRODUCT_QUEST in produces and not has_quest:
+        issues.append(_issue(
+            "error", "template.produces.missing",
+            f"模板「{tid}」声明产出 quest，但没有 quest 骨架", tid,
+        ))
+    if PRODUCT_DIALOGUE_STUBS in produces and not has_stubs:
+        issues.append(_issue(
+            "error", "template.produces.missing",
+            f"模板「{tid}」声明产出 dialogueStubs，但没有 dialogueStubs 骨架", tid,
+        ))
+    if produces_declared and has_quest and PRODUCT_QUEST not in produces:
+        issues.append(_issue(
+            "warning", "template.produces.unused",
+            f"模板「{tid}」有 quest 骨架但 produces 没声明它，盖章不会产出镜像任务", tid,
+        ))
+    if produces_declared and has_stubs and PRODUCT_DIALOGUE_STUBS not in produces:
+        issues.append(_issue(
+            "warning", "template.produces.unused",
+            f"模板「{tid}」有 dialogueStubs 骨架但 produces 没声明它，盖章不会产出对话桩", tid,
+        ))
+
     # taskId 约定：若声明了 taskId，建议信号都以它为前缀（不强制，warning）。
     if "taskId" in declared and isinstance(tpl.get("signals"), list):
         for s in tpl["signals"]:
@@ -360,6 +503,18 @@ def validate_templates_file(data: Any) -> list[dict[str, Any]]:
                 issues.append(_issue("error", "template.id.duplicate", f"模板 id「{tid}」重复（归一时会丢弃后者）", tid))
             if tid:
                 seen.add(tid)
+            # produces 里的无效项同样只在原始输入里看得见（normalize 会静默滤掉）——
+            # 不在这里报，作者写错一个字就变成"声明被整条忽略、悄悄退回按骨架推断"。
+            raw_produces = t.get("produces")
+            if isinstance(raw_produces, list):
+                for item in raw_produces:
+                    name = _as_str(item)
+                    if name and name not in PRODUCT_KINDS:
+                        issues.append(_issue(
+                            "warning", "template.produces.unknown",
+                            f"模板「{tid}」的 produces 里有未知产物「{name}」（已忽略；"
+                            f"可选值：{'、'.join(PRODUCT_KINDS)}）", tid,
+                        ))
     for tpl in normalize_templates_file(data)["templates"]:
         issues.extend(validate_template(tpl))
     return issues
@@ -392,6 +547,8 @@ def extract_template(
     signals: list[dict[str, Any]] | None = None,
     quest: dict[str, Any] | None = None,
     dialogue_stubs: list[dict[str, Any]] | None = None,
+    produces: list[str] | None = None,
+    version: int | None = None,
 ) -> dict[str, Any]:
     """从一张现成作曲反抽出模板：把每个 param 的 ``sample`` 值换成 ``{{name}}``。
 
@@ -440,6 +597,10 @@ def extract_template(
         tpl["quest"] = quest_copy
     if stubs_copy is not None:
         tpl["dialogueStubs"] = stubs_copy
+    if produces:
+        tpl["produces"] = list(produces)
+    if version is not None:
+        tpl["version"] = version
     return normalize_template(tpl)
 
 
@@ -527,6 +688,12 @@ def _dialogue_id_error(gid: str) -> str | None:
     return None
 
 
+def _signal_rows_equal(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """信号行语义等价判定（幂等注册用）：只比 normalize 会保留的键。"""
+    keys = ("id", "label", "notes", "scope")
+    return all(_as_str(a.get(k)) == _as_str(b.get(k)) for k in keys)
+
+
 def stamp_template(
     tpl: dict[str, Any],
     provided_values: dict[str, Any],
@@ -535,14 +702,20 @@ def stamp_template(
     existing_quest_ids: set[str] | None = None,
     existing_dialogue_ids: set[str] | None = None,
     existing_signal_ids: set[str] | None = None,
+    existing_signal_rows: dict[str, dict[str, Any]] | None = None,
     generate_dialogue_stubs: bool = False,
 ) -> dict[str, Any]:
     """盖章：占位符替换 → 撞名检测 → 产出真作曲 / 信号 / quest / 对话桩规格。
 
     返回 ``{ok, errors, warnings, compositionId, composition, signals, questId, quest,
-    dialogueStubs:[{id, graph, exists}], requiredEntities}``。撞名 = error（不覆盖已有内容）。
+    dialogueStubs:[{id, graph, exists}], requiredEntities, produces, provenance}``。
+    撞名 = error（不覆盖已有内容）。
     ``existing_signal_ids``：全项目已注册/已发出的信号集；模板**声明**的新信号与之重名
     = error（两单任务共用一个信号会互相串线推进）。
+
+    产出哪几样由 ``template_produces(tpl)`` 决定（模板可显式 ``produces`` 声明）；未声明的
+    产物**连替换都不做**，不会出现在返回值里。``provenance`` 只是数据，落进作曲要另外过
+    ``attach_stamp_provenance``——往返无损契约不许 stamp 自己往产出体里塞键。
     """
     existing_comp = existing_composition_ids or set()
     existing_quest = existing_quest_ids or set()
@@ -561,15 +734,16 @@ def stamp_template(
         errors.append(_issue("error", "stamp.composition.missing", f"模板「{tid}」没有作曲骨架", tid))
         return {"ok": False, "errors": errors, "warnings": warnings}
 
+    produces = template_produces(tpl)
     composition, unknown_c = substitute(comp_src, values)
     signals_src = tpl.get("signals") or []
     signals, unknown_s = substitute(signals_src, values)
-    quest_src = tpl.get("quest")
+    quest_src = tpl.get("quest") if PRODUCT_QUEST in produces else None
     quest = None
     unknown_q: set[str] = set()
     if isinstance(quest_src, dict) and quest_src:
         quest, unknown_q = substitute(quest_src, values)
-    stubs_src = tpl.get("dialogueStubs") or []
+    stubs_src = (tpl.get("dialogueStubs") or []) if PRODUCT_DIALOGUE_STUBS in produces else []
     stub_specs, unknown_d = substitute(stubs_src, values)
     req_src = tpl.get("requiredEntities") or []
     required_entities, _unknown_r = substitute(req_src, values)
@@ -590,14 +764,28 @@ def stamp_template(
 
     used_signals = _composition_signal_ids(composition) if isinstance(composition, dict) else set()
 
-    # 模板声明的新信号与既有信号重名 = error（禁止：会与别的任务串线互相触发）。
+    # 模板声明的信号与既有信号重名（终审 H5 定语义）：
+    #  ① 内容**逐键相同** = 幂等注册——共享/私有信号的正常形态（100 个箱子共用一条 `taken`，
+    #     模板每盖一份都声明同一行），跳过不报错、也不重复 append；
+    #  ② 内容不同 = 真冲突（比如既有是全局、模板声明私有），error。
+    # 只有调用方给了 rows 才能比内容；没给（老调用方 / taskId 前缀模板）保持原语义：重名即 error
+    # ——taskId 世界里 id 含前缀，重名几乎必是作者错误，且作曲撞名检查仍会兜底拦重复盖。
+    already_registered: set[str] = set()
     for sig_row in signals:
         sid = _as_str(sig_row.get("id")) if isinstance(sig_row, dict) else ""
-        if sid and sid in existing_sig:
-            errors.append(_issue(
-                "error", "stamp.collision.signal",
-                f"信号「{sid}」已存在于项目中，禁止重名（会与既有任务串线）；换个 taskId", tid,
-            ))
+        if not sid or sid not in existing_sig:
+            continue
+        existing_row = (existing_signal_rows or {}).get(sid)
+        if existing_row is not None and _signal_rows_equal(sig_row, existing_row):
+            already_registered.add(sid)
+            continue
+        errors.append(_issue(
+            "error", "stamp.collision.signal",
+            f"信号「{sid}」已存在于项目中且声明不一致，禁止重名（会与既有任务串线）；换个 taskId 或对齐 scope/label", tid,
+        ))
+    if already_registered:
+        signals = [s for s in signals
+                   if not (isinstance(s, dict) and _as_str(s.get("id")) in already_registered)]
 
     quest_id = ""
     if quest is not None:
@@ -658,6 +846,8 @@ def stamp_template(
         "quest": quest,
         "dialogueStubs": dialogue_stubs,
         "requiredEntities": required_entities,
+        "produces": produces,
+        "provenance": {"templateId": tid, "templateVersion": template_version(tpl)},
     }
 
 

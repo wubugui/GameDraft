@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -18,6 +19,21 @@ VERDICT_INFO = "info"
 
 # 编辑器占位信号（与 NarrativeStateManager.DEFAULT_DRAFT_SIGNAL 对齐）
 DRAFT_SIGNAL = "__draft__"
+
+# 私有信号在每一处露面时都跟着的那半句。收在一个常量里：这句话说不一致，
+# 策划就会以为界面上的「私有」和时间线上的「私有」是两回事。
+PRIVATE_NOTE = "私有信号：只推动发射方实体自己的图"
+# 列表里的记号。用汉字不用图标：两个窗的清单前面已经被运行时圆点占满，
+# 再加一种形状只会更难认。
+PRIVATE_MARK = "［私有］"
+
+# 运行时那两条 fail-loud 丢弃的原文里，信号名夹在半角引号中间
+# （NarrativeStateManager.processTrigger：`私有信号 "xxx" 的发射点没有 owner 上下文` /
+# `私有信号 "xxx" 的发射方 npc:yyy 没有任何 wrapper 图`）。
+# issue trace 只带 code + message，不带 triggerKey——名字只能从这句话里取，
+# 取不到就退回不点名的说法，绝不编一个信号名出来。
+_PRIVATE_SIGNAL_NAME_RE = re.compile(r'私有信号\s*"([^"]+)"')
+_PRIVATE_OWNER_RE = re.compile(r"的发射方\s*(\S+?)\s*没有")
 
 # "玩家真的动手那一下"的来源。broadcast / stateAction 是系统内部推的，不算。
 CONCRETE_EMITTER_KINDS = {"dialogue", "zone", "hotspot", "pressureHold", "minigame"}
@@ -111,11 +127,22 @@ def signal_phrase(index: NarrativeIndex, signal: str) -> tuple[str, str]:
     emitters = index.emitters_for(signal)
     if not emitters:
         # 查不到发射端就照实说，绝不编一个来源出来
-        return (f"有人打出了信号「{signal}」", "")
+        return (_with_private_note(index, signal, f"有人打出了信号「{signal}」"), "")
     # 同一信号常有多个发射端（两根压力条、多段梦境对话），挑答得出地点的那个：
     # 取第一个会把"在哪儿"白白丢掉，而那正是策划卡住时唯一想知道的。
     primary = next((e for e in emitters if e.scene), emitters[0])
-    return (_emitter_phrase(primary), primary.scene)
+    return (_with_private_note(index, signal, _emitter_phrase(primary)), primary.scene)
+
+
+def _with_private_note(index: NarrativeIndex, signal: str, phrase: str) -> str:
+    """私有信号必须当面说清投递面。
+
+    不说的话，同一条信号名挂在一百个箱子上，策划看到「点那个箱子」会以为随便哪个都行——
+    而运行时只推发射的那一个（`allowedGraphIds`）。这半句是本机制在界面上唯一的现身处。
+    """
+    if not index.is_private_signal(signal):
+        return phrase
+    return f"{phrase}（{PRIVATE_NOTE}）"
 
 
 def _emitter_phrase(emitter: Emitter) -> str:
@@ -396,6 +423,10 @@ class TraceTranslator:
 
         if kind == "signal.ignored":
             message = str(event.get("message") or "")
+            # 私有信号那两种丢弃：issue 那一条已经把「没有实体上下文」说成人话了
+            # （它先到），这里再来一行只是把同一件事说两遍。
+            if "private signal without owner context" in message:
+                return None
             if "stale transition" in message:
                 return TimelineEntry(
                     at=at,
@@ -462,6 +493,32 @@ class TraceTranslator:
             # 原文留给 raw，界面挂 tooltip 给需要贴给程序的人。
             where = self._where_phrase(graph_id, state_id)
             raw = str(payload.get("message") or event.get("message") or "")
+            if code in ("signal.private.noOwner", "signal.private.ownerNoGraph"):
+                # 私有信号仅有的两种丢弃，也是调试器要消灭的那个"静默没反应"：
+                # 必须当场点名是哪条信号、为什么被丢，而不是让人去 tooltip 里读英文 code。
+                # 名字只能从 raw 里取（issue trace 不带 triggerKey），取不到就不点名，不编。
+                hit = _PRIVATE_SIGNAL_NAME_RE.search(raw)
+                name = hit.group(1) if hit else ""
+                subject = f"私有信号「{name}」" if name else "这条私有信号"
+                if code == "signal.private.noOwner":
+                    headline = f"{subject}的发射点没有实体上下文，被丢弃了"
+                    detail = ("私有信号只推发射方 owner 自己的图；发射点（场景 onEnter 之类）"
+                              "答不出是哪个实体发的，运行时就直接丢——不会回落成全局广播。")
+                else:
+                    who = _owner_from_message(raw)
+                    headline = f"{subject}的发射方身上没有绑 wrapper 图，被丢弃了"
+                    detail = (f"发射方是 {who}，" if who else "") + \
+                        "它名下一张 wrapper 图都没有，这条信号谁都收不到——多半是这个实体本来就不该发它。"
+                return TimelineEntry(
+                    at=at,
+                    headline=headline,
+                    detail=detail,
+                    verdict=VERDICT_DANGLING,
+                    signal=name,
+                    graph_id=graph_id,
+                    state_id=state_id,
+                    raw=raw,
+                )
             known = code in _ISSUE_HEADLINE
             # 认识的错误说人话；不认识的**也要把原文摆出来**——
             # 只说"这儿有个接线问题"却把内容藏进 tooltip，那是把信息藏起来，不是人话化。
@@ -546,6 +603,12 @@ class TraceTranslator:
                 f"{self._graph_name(t.graph_id)} 要停在「{src.display if src else t.from_state}」才吃这一下"
             )
         return "；".join(parts)
+
+
+def _owner_from_message(message: str) -> str:
+    """`…的发射方 npc:npc_x 没有任何 wrapper 图` → `npc:npc_x`。取不到就空，不编。"""
+    hit = _PRIVATE_OWNER_RE.search(message)
+    return hit.group(1) if hit else ""
 
 
 def _lead(what: str) -> str:

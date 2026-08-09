@@ -291,6 +291,10 @@ class SignalIndex:
                 "index": i,
                 "label": _text(row.get("label")),
                 "notes": _text(row.get("notes")) or _text(row.get("description")),
+                # 作用域原样带出（'private' / 'global' / 空=缺省全局）。丢掉它，界面上
+                # 私有信号与全局信号长得一模一样，而两者的投递面差着天——私有那条只到
+                # 发射方 owner 自己的 wrapper 图，缺 owner 直接丢弃（不回落成广播）。
+                "scope": _text(row.get("scope")),
             }
 
     def _iter_graphs(self, narrative: Any) -> Iterator[tuple[dict[str, Any], str, dict[str, Any], str]]:
@@ -470,7 +474,10 @@ class SignalIndex:
                 # 条件面（地图/物品/规矩…）只扫引用：把它们算进发射会与
                 # narrative_catalog.emitted_signal_ids 的权威口径打架。
                 return
+            owner_type, owner_id = _owner_binding(hit.node)
             self.emitters.setdefault(signal, []).append(Emitter(
+                owner_type=owner_type,
+                owner_id=owner_id,
                 signal=signal,
                 channel=channel,
                 container_kind=container_kind,
@@ -576,6 +583,7 @@ class SignalIndex:
             kind=kind,
             label=row.get("label", ""),
             notes=row.get("notes", ""),
+            scope=row.get("scope", ""),
             registered=sid in self.registry,
             emitters=list(self.emitters.get(sid, [])),
             declarations=list(self.declarations.get(sid, [])),
@@ -904,16 +912,40 @@ def _trim_container_prefix(where: str, container_id: str) -> str:
     return where
 
 
+def _owner_binding(node: Any) -> tuple[str, str]:
+    """这一发**显式钉死**的宿主身份（`emitNarrativeSignal` 的 ownerType/ownerId）。
+
+    ⚠ 判据必须是"两个都填了"，与运行时逐字一致（ActionRegistry 的
+    ``paramOwnerType && paramOwnerId ? … : origin…``）：只填一个的时候运行时**整对丢弃**、
+    退回来源上下文那一档。界面照单显示半对参数，等于告诉作者"定向已经钉好了"，
+    而私有信号的投递面恰恰会因此落到另一个 owner 上（或缺 owner 直接被丢）。
+    """
+    params = node.get("params") if isinstance(node, dict) else None
+    if not isinstance(params, dict):
+        return "", ""
+    owner_type = _text(params.get("ownerType"))
+    owner_id = _text(params.get("ownerId"))
+    return (owner_type, owner_id) if (owner_type and owner_id) else ("", "")
+
+
 def _source_note(node: dict[str, Any]) -> str:
-    """emitNarrativeSignal 的 sourceType/sourceId 只是留痕参数，标一句省得被当成接线。"""
+    """发射行的附注：留痕来源（不是接线）+ 显式宿主身份（私有信号的定向依据）。"""
     params = node.get("params") if isinstance(node, dict) else None
     if not isinstance(params, dict):
         return ""
+    parts: list[str] = []
     source_id = _text(params.get("sourceId"))
     source_type = _text(params.get("sourceType"))
     if source_id and source_type:
-        return f"留痕来源：{source_type}:{source_id}"
-    return f"留痕来源：{source_type or source_id}" if (source_type or source_id) else ""
+        parts.append(f"留痕来源：{source_type}:{source_id}")
+    elif source_type or source_id:
+        parts.append(f"留痕来源：{source_type or source_id}")
+    owner_type, owner_id = _owner_binding(node)
+    if owner_type:
+        # 私有信号靠 owner 定向：这一句是全项目唯一**静态看得见**的宿主身份，
+        # 不标出来，xref 上一条私有发射与普通发射长得一模一样。
+        parts.append(f"带宿主身份：{owner_type}:{owner_id}（发射点显式指定，覆盖来源上下文）")
+    return "；".join(parts)
 
 
 def _context_for(channel: str, root: Any, hit: "_Hit") -> str:

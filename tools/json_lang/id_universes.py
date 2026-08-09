@@ -300,9 +300,25 @@ def collect_id_universes(root: Path, read_text=None) -> UniverseData:
     labels["dialogue_graphs"] = graph_labels
 
     ng = _load(data / "narrative_graphs.json", read)
-    u["narrative_signals"], labels["narrative_signals"] = (
+    u["narrative_signals"], signal_labels = (
         _ids_and_labels(ng.get("signals"), "label") if isinstance(ng, dict) else ([], {})
     )
+    # 私有信号(scope:private)在补全列表里必须一眼认得出:它**只投递给发射方 owner 拥有的
+    # wrapper 图**,挂在无实体上下文的容器上发就是当场丢弃(不回落成全局广播)。与全局信号
+    # 同一命名空间、同一个宇宙(id 面不动,分成两个宇宙会让 schema 侧的 enum 少掉一半),
+    # 差别只写在旁注里——这与 planes 的「常态(无位面)」、actors 的「玩家(运行时魔法名)」
+    # 是同一种做法:宇宙照旧,语义写进 enumDescriptions。
+    if isinstance(ng, dict):
+        for row in ng.get("signals") or []:
+            if not isinstance(row, dict):
+                continue
+            sid = row.get("id")
+            if not isinstance(sid, str) or not sid.strip() or str(row.get("scope") or "").strip() != "private":
+                continue
+            # 没写 label 的私有信号也得带上标记,否则它在补全列表里与全局信号一模一样
+            base = signal_labels.get(sid, "")
+            signal_labels[sid] = f"[私有] {base}" if base else "[私有] 只投给发射方 owner 的 wrapper 图"
+    labels["narrative_signals"] = signal_labels
 
     # 叙事图宇宙 + 图→states 收窄(定义处 = compositions[].mainGraph 与 elements[].graph)
     narrative_states: dict[str, list[str]] = {}

@@ -187,6 +187,13 @@ _ACTION_SCOPED_OMIT_WHEN_ABSENT_AND_DEFAULT: dict[tuple[str, str], object] = {
     # setFocusedQuest.announce 缺省 false＝不额外给醒目提示；不登记的话
     # 「打开→不改→保存」会给全项目的 setFocusedQuest 凭空写上 announce:false
     ("setFocusedQuest", "announce"): False,
+    # emitNarrativeSignal 的显式 owner 覆盖（私有信号逃生口，终审 H1 加）为可选。
+    # 不登记的后果实测：打开任何带 emitNarrativeSignal 的对话节点再保存，
+    # 凭空注入 ownerType:""/ownerId:""——影响 47 个已发布节点（外围面 agent 抓到的回归）。
+    # 不能进全局表：ownerType/ownerId 同时是 startDialogueGraph 的参数，那边有自己的
+    # 控件处理，全局剔除会跟它的保存路径打架。
+    ("emitNarrativeSignal", "ownerType"): "",
+    ("emitNarrativeSignal", "ownerId"): "",
 }
 
 # 运行时默认为 true 的可选 bool：控件用三态（""/"true"/"false"）表达"未设"，
@@ -517,7 +524,7 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "chooseAction": [("prompt", "str"), ("allowCancel", "bool")],
     "randomBranch": [],
     "setFlag": [("key", "str"), ("value", "flag_val")],
-    "emitNarrativeSignal": [("signal", "str"), ("sourceType", "str"), ("sourceId", "str")],
+    "emitNarrativeSignal": [("signal", "str"), ("sourceType", "str"), ("sourceId", "str"), ("ownerType", "str"), ("ownerId", "str")],
     "setNarrativeState": [("graphId", "str"), ("stateId", "str")],
     # 叙事活计生命周期（S1）：graphId=活计图；revert 的 stateId=回退目标状态（S2 升级为该图状态选择器）。
     "startNarrativeRun": [("graphId", "str")],

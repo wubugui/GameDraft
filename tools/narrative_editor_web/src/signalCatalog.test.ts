@@ -2,10 +2,13 @@ import { describe, expect, it } from 'vitest';
 import {
   buildSignalCatalog,
   collectKnownSignals,
+  collectPrivateSignalIds,
   createAuthorSignal,
+  isPrivateAuthorSignal,
   isUnregisteredAuthorSignal,
   renameAuthorSignal,
   setAuthorSignalNotes,
+  setAuthorSignalScope,
 } from './signalCatalog';
 import type { NarrativeGraphsFileDef } from './types';
 
@@ -225,5 +228,97 @@ describe('catalog registered 标记（影子条目可辨认 + 可一键补登记
       }],
     } as unknown as NarrativeGraphsFileDef;
     expect(buildSignalCatalog(data).find((e) => e.id === 'declared_only')?.registered).toBe(false);
+  });
+});
+
+describe('私有信号 scope', () => {
+  const baseData = (): NarrativeGraphsFileDef => ({
+    schemaVersion: 3,
+    signals: [{ id: 'box_open' }, { id: 'main_go' }],
+    compositions: [{
+      id: 'comp',
+      mainGraph: {
+        id: 'flow', ownerType: 'flow', initialState: 'a',
+        states: { a: { id: 'a' } }, transitions: [],
+      },
+      elements: [],
+    }],
+  } as unknown as NarrativeGraphsFileDef);
+
+  it('勾私有写 scope:private；取消勾选**删键**而不是写 global', () => {
+    const data = baseData();
+    setAuthorSignalScope(data, 'box_open', true);
+    expect(data.signals![0]).toEqual({ id: 'box_open', scope: 'private' });
+
+    setAuthorSignalScope(data, 'box_open', false);
+    // 关键：不是 scope:'global'。默认值塞进 JSON = 噪声 + 让没动过的行在 diff 里变脏
+    expect(Object.prototype.hasOwnProperty.call(data.signals![0]!, 'scope')).toBe(false);
+    expect(data.signals![0]).toEqual({ id: 'box_open' });
+  });
+
+  it('取消勾选后与从未勾过的行逐字节同形（往返幂等的最小单元）', () => {
+    const pristine = JSON.stringify(baseData());
+    const data = baseData();
+    setAuthorSignalScope(data, 'box_open', true);
+    setAuthorSignalScope(data, 'box_open', false);
+    expect(JSON.stringify(data)).toBe(pristine);
+  });
+
+  it('新建信号：不勾私有不写 scope 键，勾了才写', () => {
+    const plain = { schemaVersion: 3, signals: [], compositions: [] } as unknown as NarrativeGraphsFileDef;
+    createAuthorSignal(plain, 'a');
+    createAuthorSignal(plain, 'b', '乙', '备注', 'private');
+    expect(plain.signals![0]).toEqual({ id: 'a' });
+    expect(plain.signals![1]).toEqual({ id: 'b', label: '乙', notes: '备注', scope: 'private' });
+  });
+
+  it('勾私有即注册：只被引用、还没注册行的信号会顺手补一条', () => {
+    const data = { schemaVersion: 3, signals: [], compositions: [] } as unknown as NarrativeGraphsFileDef;
+    setAuthorSignalScope(data, 'ghost', true);
+    expect(data.signals).toEqual([{ id: 'ghost', scope: 'private' }]);
+    // 反过来：不存在的行取消勾选不该凭空造一行空注册
+    const empty = { schemaVersion: 3, signals: [], compositions: [] } as unknown as NarrativeGraphsFileDef;
+    setAuthorSignalScope(empty, 'ghost', false);
+    expect(empty.signals).toEqual([]);
+  });
+
+  it('派生 / 草稿信号不接受 scope（它们由状态自动产生，没有注册行）', () => {
+    const data = { schemaVersion: 3, signals: [], compositions: [] } as unknown as NarrativeGraphsFileDef;
+    setAuthorSignalScope(data, 'state:flow:a', true);
+    setAuthorSignalScope(data, '__draft__', true);
+    setAuthorSignalScope(data, '   ', true);
+    expect(data.signals).toEqual([]);
+  });
+
+  it('目录条目只在真是 private 时带 scope；全局行不带这个字段', () => {
+    const data = baseData();
+    setAuthorSignalScope(data, 'box_open', true);
+    const catalog = buildSignalCatalog(data);
+    expect(catalog.find((e) => e.id === 'box_open')?.scope).toBe('private');
+    const global = catalog.find((e) => e.id === 'main_go')!;
+    expect(Object.prototype.hasOwnProperty.call(global, 'scope')).toBe(false);
+  });
+
+  it('改名保留 scope（改个名字不该把私有悄悄变回全局）', () => {
+    const data = baseData();
+    setAuthorSignalScope(data, 'box_open', true);
+    renameAuthorSignal(data, 'box_open', 'crate_open');
+    expect(data.signals![0]).toEqual({ id: 'crate_open', scope: 'private' });
+    expect(isPrivateAuthorSignal(data, 'crate_open')).toBe(true);
+    expect(isPrivateAuthorSignal(data, 'box_open')).toBe(false);
+  });
+
+  it('collectPrivateSignalIds 只收注册行写了 private 的（空 id / 全局行不进集合）', () => {
+    const data = {
+      schemaVersion: 3,
+      signals: [
+        { id: 'p1', scope: 'private' },
+        { id: 'g1' },
+        { id: 'g2', scope: 'global' },
+        { id: '  ', scope: 'private' },
+      ],
+      compositions: [],
+    } as unknown as NarrativeGraphsFileDef;
+    expect([...collectPrivateSignalIds(data)]).toEqual(['p1']);
   });
 });

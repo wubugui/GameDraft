@@ -80,7 +80,7 @@ export function nodeLayoutSize(node: Pick<CanvasNode, 'type' | 'measured' | 'wid
   // 框类节点的尺寸以 style 为准：折叠瞬间 style 已改成紧凑尺寸，而 measured 还留着展开时的
   // 旧值（要等下一次 dimensions 变更才追上）。读 measured 会让边接在 200 宽的框上、
   // 触发点却按 467 宽算，差出几十像素。
-  if (node.type === 'subgraphGroup' || node.type === 'editorGroupFrame') {
+  if (node.type === 'subgraphGroup' || node.type === 'editorGroupFrame' || node.type === 'wrapperGroupFrame') {
     return {
       width: Number(node.style?.width ?? node.measured?.width ?? node.width ?? 280),
       height: Number(node.style?.height ?? node.measured?.height ?? node.height ?? 200),

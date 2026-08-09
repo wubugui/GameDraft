@@ -35,6 +35,8 @@ from PySide6.QtWidgets import (
 from tools.narrative_debugger.breakpoints import BreakpointStore
 from tools.narrative_debugger.humanize import (
     DRAFT_SIGNAL,
+    PRIVATE_MARK,
+    PRIVATE_NOTE,
     VERDICT_BLOCKED,
     VERDICT_DANGLING,
     VERDICT_OK,
@@ -97,6 +99,12 @@ class MainWindow(QMainWindow):
         self._default_fg = self.palette().text().color()
         # 「信号关系」窗（非模态，懒建）：不开就一分钱不花，开着就跟着运行时刷新。
         self._xref_window = None
+        # 「假装做了那一下」那个框里的几件东西（框是每次现搭的，关掉就作废）。
+        # 私有信号要在这里挑发射方 owner——不挑就发，运行时会当场丢弃。
+        self._signal_dialog_listing: QListWidget | None = None
+        self._signal_owner_picker: QComboBox | None = None
+        self._signal_owner_widgets: tuple = ()
+        self._signal_fire_btn: QPushButton | None = None
         # 上一次建索引是不是失败了。`_set_hint` 是单一广播位（谁最后写谁赢），
         # 光靠它区分不了"扫描失败"和"信号不在索引里"——那会让人照错的提示白跑一趟。
         self._xref_scan_failed = False
@@ -1695,9 +1703,17 @@ class MainWindow(QMainWindow):
         if not self.hub.state.connected:
             self._set_hint("游戏没连上")
             return
+        self._build_signal_dialog().exec()
+
+    def _build_signal_dialog(self) -> QDialog:
+        """搭「假装做了那一下」那个框。
+
+        与 exec() 分开是为了能从测试里进同一条路：这个框最贵的一脚（私有信号不挑 owner
+        就发出去，运行时静默丢弃）只有把框搭起来、真按那颗按钮才试得出来。
+        """
         dialog = QDialog(self)
         dialog.setWindowTitle("假装做了那一下")
-        dialog.resize(640, 460)
+        dialog.resize(640, 520)
         box = QVBoxLayout(dialog)
 
         tip = QLabel("挑一件事，直接标成「已发生」。搜得到的都是这条线上真会发生的事。")
@@ -1721,15 +1737,35 @@ class MainWindow(QMainWindow):
             # 把"这一下会让什么往前走"接在后面，才挑得出想要的那条。
             outcome = self._signal_outcome(signal)
             label = text + (f"　【{place}】" if place else "")
+            # 私有信号必须一眼认出来：它跟旁边那条全局信号长得一模一样，
+            # 但发法完全不同（不挑 owner 就等于没发）。
+            if self.index.is_private_signal(signal):
+                label = f"{PRIVATE_MARK}{label}"
             rows.append((signal, label, outcome))
         rows.sort(key=lambda r: (r[1], r[2]))
         for signal, label, outcome in rows:
             item = QListWidgetItem(f"{label}\n　　→ {outcome}" if outcome else label)
             item.setData(Qt.ItemDataRole.UserRole, signal)
-            item.setToolTip(signal)
+            item.setToolTip(
+                f"{signal}\n{PRIVATE_NOTE}——先在下面挑是哪个实体发的"
+                if self.index.is_private_signal(signal) else signal
+            )
             listing.addItem(item)
         listing.setWordWrap(True)
         box.addWidget(listing, 1)
+
+        # 私有信号那一行：发射方 owner。全局信号时整行藏起来，交互一字不变。
+        owner_row = QHBoxLayout()
+        owner_label = QLabel("谁发的：")
+        owner_row.addWidget(owner_label)
+        owner_picker = QComboBox()
+        owner_picker.setToolTip("私有信号只推这个实体自己的图——不挑的话运行时会直接把它丢掉")
+        owner_row.addWidget(owner_picker, 1)
+        box.addLayout(owner_row)
+        owner_hint = QLabel()
+        owner_hint.setStyleSheet("color:#a5822c;")
+        owner_hint.setWordWrap(True)
+        box.addWidget(owner_hint)
 
         def refilter(text: str) -> None:
             needle = text.strip()
@@ -1749,8 +1785,60 @@ class MainWindow(QMainWindow):
         cancel.clicked.connect(dialog.reject)
         buttons.addWidget(cancel)
         box.addLayout(buttons)
+
+        self._signal_dialog_listing = listing
+        self._signal_owner_picker = owner_picker
+        self._signal_owner_widgets = (owner_label, owner_picker, owner_hint)
+        self._signal_fire_btn = fire
+        listing.currentItemChanged.connect(lambda *_a: self._sync_signal_owner_picker())
+        self._sync_signal_owner_picker()
         search.setFocus()
-        dialog.exec()
+        return dialog
+
+    def _sync_signal_owner_picker(self) -> None:
+        """选中的信号换了：owner 那一行跟着换（全局信号整行藏起来）。
+
+        私有信号**没有可选 owner** 时不许放行：那种情况下发出去必被丢弃
+        （`signal.private.noOwner`），而"按了什么都没发生"正是这个工具要消灭的体验。
+        """
+        picker = self._signal_owner_picker
+        if picker is None:
+            return
+        label, _picker, hint = self._signal_owner_widgets
+        fire = self._signal_fire_btn
+        item = self._signal_dialog_listing.currentItem() if self._signal_dialog_listing else None
+        signal = str(item.data(Qt.ItemDataRole.UserRole) or "") if item else ""
+        private = bool(signal) and self.index.is_private_signal(signal)
+
+        for widget in (label, picker, hint):
+            widget.setVisible(private)
+        if not private:
+            picker.clear()
+            hint.setText("")
+            if fire is not None:
+                fire.setEnabled(True)
+                fire.setToolTip("")
+            return
+
+        owners = self.index.private_signal_owners(signal)
+        picker.clear()
+        for owner in owners:
+            picker.addItem(
+                f"{self.index.owner_display(owner.owner_type, owner.owner_id)}　·　{owner.graph_label}",
+                (owner.owner_type, owner.owner_id),
+            )
+        picker.setEnabled(bool(owners))
+        hint.setText(
+            "" if owners else
+            "这条私有信号没有任何绑了 owner 的图在听它——现在发出去一定会被丢掉。"
+            "（私有信号只能被 owner 绑定的 wrapper 图监听）"
+        )
+        if fire is not None:
+            fire.setEnabled(bool(owners))
+            fire.setToolTip(
+                "私有信号只推上面挑中的那个实体自己的图" if owners
+                else "没有 owner 可挑，发出去必被运行时丢弃"
+            )
 
     def _signal_outcome(self, signal: str) -> str:
         """这一下会让哪条线往前走到哪——用来把撞车的同名动作区分开。"""
@@ -1767,16 +1855,33 @@ class MainWindow(QMainWindow):
         signal = str(item.data(Qt.ItemDataRole.UserRole) or "") if item else ""
         if not signal:
             return
+        payload: dict = {
+            "command": "emitSignal",
+            "signal": signal,
+            "sourceType": "debug",
+            "sourceId": "narrative-debugger",
+        }
+        hint = "标成已发生了，看看时间线"
+        if self.index.is_private_signal(signal):
+            # 私有信号缺 owner = 运行时 fail-loud 丢弃，绝不回落全局广播。
+            # 这里宁可不发也不发一条注定被丢的——静默没反应正是这个工具要消灭的东西。
+            owner = self._selected_owner()
+            if owner is None:
+                self._set_hint("这条是私有信号，得先挑是哪个实体发的")
+                return
+            payload["ownerType"], payload["ownerId"] = owner
+            hint = f"发给了{self.index.owner_display(*owner)}，看看时间线"
         dialog.accept()
-        self.hub.send_command(
-            {
-                "command": "emitSignal",
-                "signal": signal,
-                "sourceType": "debug",
-                "sourceId": "narrative-debugger",
-            },
-            lambda reply: self._after_command(reply, "标成已发生了，看看时间线"),
-        )
+        self.hub.send_command(payload, lambda reply: self._after_command(reply, hint))
+
+    def _selected_owner(self) -> tuple[str, str] | None:
+        picker = self._signal_owner_picker
+        if picker is None or picker.currentIndex() < 0:
+            return None
+        data = picker.currentData()
+        if not isinstance(data, tuple) or len(data) != 2 or not all(data):
+            return None
+        return (str(data[0]), str(data[1]))
 
     # ---- MCP（agent 侧）------------------------------------------------
 
@@ -1845,11 +1950,28 @@ class MainWindow(QMainWindow):
             signal = str(payload.get("signal") or "")
             if not signal:
                 return {"ok": False, "detail": "缺 signal"}
+            owner_type = str(payload.get("ownerType") or "").strip()
+            owner_id = str(payload.get("ownerId") or "").strip()
+            # 私有信号缺 owner 会被运行时静默丢弃。agent 拿不到"什么都没发生"的反馈，
+            # 只会以为流程断在别处——所以这里当场退回，并把可选的 owner 列给它。
+            if self.index.is_private_signal(signal) and not (owner_type and owner_id):
+                owners = self.index.private_signal_owners(signal)
+                return {
+                    "ok": False,
+                    "detail": f"「{signal}」是私有信号，必须带 ownerType/ownerId（否则运行时丢弃）",
+                    "owners": [
+                        {"ownerType": o.owner_type, "ownerId": o.owner_id,
+                         "display": self.index.owner_display(o.owner_type, o.owner_id),
+                         "graphId": o.graph_id}
+                        for o in owners
+                    ],
+                }
             self.hub.send_command({
                 "command": "emitSignal",
                 "signal": signal,
                 "sourceType": "debug",
                 "sourceId": "narrative-debugger-mcp",
+                **({"ownerType": owner_type, "ownerId": owner_id} if owner_type and owner_id else {}),
             })
             self._set_hint(f"agent 发了信号 {signal}")
             return {"ok": True, "detail": "emitted", "signal": signal}

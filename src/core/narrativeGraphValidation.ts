@@ -86,7 +86,7 @@ interface NarrativeCompositionLike {
 }
 
 interface NarrativeGraphsFileLike {
-  signals?: Array<{ id?: unknown }>;
+  signals?: Array<{ id?: unknown; scope?: unknown }>;
   compositions?: NarrativeCompositionLike[];
   /** 旧存档改名映射（NarrativeSaveMigrations），形状/目标在 validateSaveMigrations 里校验。 */
   migrations?: unknown;
@@ -915,6 +915,61 @@ function validateAuthorSignals(data: NarrativeGraphsFileLike, issues: NarrativeV
     if (isReservedNarrativeAuthorSignalId(id)) {
       addIssue(issues, 'error', 'signal.id.reserved', `author signal id is reserved: ${id}`, path, id, target);
     }
+    const scope = row.scope;
+    if (scope !== undefined && scope !== 'global' && scope !== 'private') {
+      addIssue(issues, 'error', 'signal.scope.invalid', `${id}: signal scope must be 'global' or 'private'`, `signals[${idx}].scope`, id, target);
+    }
+  }
+  validatePrivateSignalListeners(data, issues);
+}
+
+/**
+ * 私有信号的监听面约束：**只有 owner 绑定的 wrapper 图能听**。
+ *
+ * 私有信号按发射方 owner 定向投递（见 NarrativeStateManager.processTrigger），
+ * 无 owner 的图（flow / scenario / 主线里程碑）永远收不到它——写了就是死监听。
+ * 更要紧的是反过来：主线若能听 100 个箱子共用的那条私有信号，监听面会被灌满，
+ * 这正是私有信号要避免的事，所以判 error 而不是 warning。
+ */
+function validatePrivateSignalListeners(data: NarrativeGraphsFileLike, issues: NarrativeValidationIssue[]): void {
+  const privateIds = new Set(
+    (data.signals ?? [])
+      .filter((row) => row?.scope === 'private')
+      .map((row) => String(row.id ?? '').trim())
+      .filter(Boolean),
+  );
+  if (privateIds.size === 0) return;
+  const listened = new Set<string>();
+  for (const { graph } of compileGraphs(data)) {
+    const graphId = String(graph.id ?? '').trim();
+    const ownerBound = Boolean(String(graph.ownerType ?? '').trim() && String(graph.ownerId ?? '').trim());
+    for (const t of graph.transitions ?? []) {
+      if (t?.trigger && t.trigger !== 'signal') continue;
+      const key = String(t?.signal ?? '').trim();
+      if (!privateIds.has(key)) continue;
+      listened.add(key);
+      if (!ownerBound) {
+        addIssue(
+          issues,
+          'error',
+          'signal.private.listener.unbound',
+          `${graphId}: 无 owner 绑定的图不能监听私有信号 "${key}"（私有信号只投递给发射方 owner 的 wrapper 图，这条监听永远不会触发）`,
+          `${graphId}.transitions.${String(t?.id ?? '')}`,
+          graphId,
+        );
+      }
+    }
+  }
+  for (const id of privateIds) {
+    if (listened.has(id)) continue;
+    addIssue(
+      issues,
+      'warning',
+      'signal.private.unlistened',
+      `私有信号 "${id}" 没有任何 wrapper 图监听（发射它不会推动任何状态）`,
+      'signals',
+      id,
+    );
   }
 }
 

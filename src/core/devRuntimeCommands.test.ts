@@ -33,8 +33,9 @@ function deps() {
       clearNarrativeTrace: () => {
         calls.push('clearTrace');
       },
-      emitNarrativeSignal: async (signal: { sourceType: string; sourceId: string; signal: string }) => {
-        calls.push(`signal:${signal.sourceType}:${signal.sourceId}:${signal.signal}`);
+      emitNarrativeSignal: async (signal: { sourceType: string; sourceId: string; signal: string; owner?: { ownerType: string; ownerId: string } }) => {
+        const owner = signal.owner ? `@${signal.owner.ownerType}:${signal.owner.ownerId}` : '';
+        calls.push(`signal:${signal.sourceType}:${signal.sourceId}:${signal.signal}${owner}`);
       },
       debugSetNarrativeState: async (graphId: string, stateId: string) => {
         calls.push(`state:${graphId}:${stateId}`);
@@ -195,6 +196,26 @@ describe('applyDevRuntimeCommand', () => {
     expect(result.ok).toBe(true);
     expect(ctx.calls).toContain('signal:debug:workbench:ringboy.met');
     expect(ctx.calls).toContain('snapshot:runtime-command:emitNarrativeSignal');
+  });
+
+  it('threads owner through for private-signal targeting (absent = unchanged)', async () => {
+    // 私有信号按发射方 owner 定向；命令通道是调试器「假装做了那一下」的腿，
+    // 掉了 owner 透传，调试器带 owner 发的私有信号会在运行时被当无主丢弃。
+    const ctx = deps();
+    const result = await applyDevRuntimeCommand(
+      {
+        id: 'cmd-owner',
+        type: 'emitNarrativeSignal',
+        sourceType: 'debug',
+        sourceId: 'workbench',
+        signal: 'taken',
+        ownerType: 'hotspot',
+        ownerId: 'hs_箱B',
+      },
+      ctx.deps,
+    );
+    expect(result.ok).toBe(true);
+    expect(ctx.calls).toContain('signal:debug:workbench:taken@hotspot:hs_箱B');
   });
 
   it('coerces setFlag by registry value kind', async () => {

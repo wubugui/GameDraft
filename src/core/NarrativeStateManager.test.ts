@@ -1664,3 +1664,179 @@ describe('时间线隔离与存档一致性（R2/R3/W1/W2 回归）', () => {
     expect(narrative.getActiveState('M')).toBe('m0');
   });
 });
+
+// ------------------------------------------------------------------ //
+// 私有信号：一个信号名 + 一张发射端对话图 + N 个同类实体，各推各的 wrapper 图
+// ------------------------------------------------------------------ //
+
+function boxGraph(entityId: string): NarrativeGraph {
+  return {
+    id: `wrap_箱子_${entityId}`,
+    ownerType: 'hotspot',
+    ownerId: entityId,
+    initialState: 'available',
+    states: { available: { id: 'available' }, destroyed: { id: 'destroyed' } },
+    transitions: [{ id: 't', from: 'available', to: 'destroyed', signal: 'taken' }],
+  };
+}
+
+describe('NarrativeStateManager · 私有信号', () => {
+  it('同一个信号名投递给发射方 owner 自己的图，不惊动同名监听的兄弟', async () => {
+    const { narrative } = makeRuntime();
+    narrative.setSignalDefs([{ id: 'taken', scope: 'private' }]);
+    narrative.registerGraphs([boxGraph('hs_001'), boxGraph('hs_002'), boxGraph('hs_003')]);
+    // 100 个箱子共用一张对话图、共用这一个信号名——owner 由发射点上下文带进来
+    await narrative.emitNarrativeSignal({ signal: 'taken', owner: { ownerType: 'hotspot', ownerId: 'hs_002' } });
+    await flush();
+    expect(narrative.getActiveState('wrap_箱子_hs_002')).toBe('destroyed');
+    expect(narrative.getActiveState('wrap_箱子_hs_001')).toBe('available');
+    expect(narrative.getActiveState('wrap_箱子_hs_003')).toBe('available');
+  });
+
+  it('缺 owner 上下文时 fail-loud 丢弃，绝不回落成全局广播', async () => {
+    const { narrative } = makeRuntime();
+    narrative.setSignalDefs([{ id: 'taken', scope: 'private' }]);
+    narrative.registerGraphs([boxGraph('hs_001'), boxGraph('hs_002')]);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await narrative.emitNarrativeSignal({ signal: 'taken' });   // 没有 owner
+    await flush();
+    // 回落成全局的话这里会一次推倒所有箱子——那正是私有信号要避免的事
+    expect(narrative.getActiveState('wrap_箱子_hs_001')).toBe('available');
+    expect(narrative.getActiveState('wrap_箱子_hs_002')).toBe('available');
+    const issues = (narrative.debugSnapshot().recentIssues ?? []) as Array<{ code: string }>;
+    expect(issues.some((i) => i.code === 'signal.private.noOwner')).toBe(true);
+    warn.mockRestore();
+  });
+
+  it('未声明 private 的信号照旧全局广播（既有行为一字不变）', async () => {
+    const { narrative } = makeRuntime();
+    narrative.setSignalDefs([{ id: 'taken' }]);   // 没标 private
+    narrative.registerGraphs([boxGraph('hs_001'), boxGraph('hs_002')]);
+    await narrative.emitNarrativeSignal({ signal: 'taken', owner: { ownerType: 'hotspot', ownerId: 'hs_001' } });
+    await flush();
+    expect(narrative.getActiveState('wrap_箱子_hs_001')).toBe('destroyed');
+    expect(narrative.getActiveState('wrap_箱子_hs_002')).toBe('destroyed');
+  });
+
+  it('端到端：编辑器模板盖出来的真实形状，全局激活一起来、私有取走各走各的', async () => {
+    // 下面三张图是 tools/editor 的 pickable_object_archetype 模板对三个实体实际盖出来的
+    // mainGraph（逐字段抄自盖章产物）。这条用例封的是「编辑器盖出的形状」与「运行时投递语义」
+    // 之间那道缝——两边各自有测试，缝上以前只有推理。
+    const stamped: NarrativeGraph[] = ['hs_箱A', 'hs_箱B', 'hs_箱C'].map((ownerId) => ({
+      id: `wrap_${ownerId}`,
+      ownerType: 'hotspot',
+      ownerId,
+      initialState: 'inactive',
+      states: { inactive: { id: 'inactive' }, active: { id: 'active' }, taken: { id: 'taken' } },
+      transitions: [
+        { id: 't_activate', from: 'inactive', to: 'active', signal: '第三章开始' },
+        { id: 't_taken', from: 'active', to: 'taken', signal: 'taken' },
+      ],
+    }));
+    const { narrative } = makeRuntime();
+    narrative.setSignalDefs([{ id: '第三章开始' }, { id: 'taken', scope: 'private' }]);
+    narrative.registerGraphs(stamped);
+
+    // 全局信号：一条推动全部同类实体一起出现（命名成本 1，不是 N）
+    await narrative.emitNarrativeSignal({ signal: '第三章开始' });
+    await flush();
+    expect(stamped.map((g) => narrative.getActiveState(g.id))).toEqual(['active', 'active', 'active']);
+
+    // 私有信号：同一个名字、同一张发射端对话图，只推动发射方自己那张
+    await narrative.emitNarrativeSignal({ signal: 'taken', owner: { ownerType: 'hotspot', ownerId: 'hs_箱B' } });
+    await flush();
+    expect(stamped.map((g) => narrative.getActiveState(g.id))).toEqual(['active', 'taken', 'active']);
+  });
+
+  it('M5 接线：loadFromAsset 必须把 signals 声明喂进 setSignalDefs（删那一行 = 私有退化全局）', async () => {
+    // 终审变异 M5 全绿暴露的洞：既有用例全部手工调 setSignalDefs，从没走过装载链。
+    // 这条走真 loadFromAsset——断掉接线，100 个箱子共用的私有信号会一次推倒全部。
+    const { narrative } = makeRuntime();
+    const fakeAssets = {
+      loadJson: async () => ({
+        schemaVersion: 3,
+        signals: [{ id: 'taken', scope: 'private' }],
+        compositions: [
+          { id: 'cA', mainGraph: boxGraph('hs_A') },
+          { id: 'cB', mainGraph: boxGraph('hs_B') },
+        ],
+      }),
+    };
+    await narrative.loadFromAsset(fakeAssets as never);
+    expect(narrative.isPrivateSignal('taken')).toBe(true);
+    await narrative.emitNarrativeSignal({ signal: 'taken', owner: { ownerType: 'hotspot', ownerId: 'hs_A' } });
+    await flush();
+    expect(narrative.getActiveState('wrap_箱子_hs_A')).toBe('destroyed');
+    expect(narrative.getActiveState('wrap_箱子_hs_B')).toBe('available');
+  });
+
+  it('M9 接线：ActionRegistry 的 emitNarrativeSignal 必须从 originContext 取 owner', async () => {
+    // 终审变异 M9 全绿暴露的洞：没有用例走过真 ActionRegistry。这条走真的注册链——
+    // 断掉取 owner 那两行，所有经动作发的私有信号都变成「无 owner 丢弃」。
+    const { registerActionHandlers } = await import('./ActionRegistry');
+    const { narrative, actionExecutor } = makeRuntime();
+    registerActionHandlers(actionExecutor, { narrativeStateManager: narrative } as never);
+    narrative.setSignalDefs([{ id: 'taken', scope: 'private' }]);
+    narrative.registerGraphs([boxGraph('hs_A'), boxGraph('hs_B')]);
+    await actionExecutor.executeBatchFromOwner(
+      [{ type: 'emitNarrativeSignal', params: { signal: 'taken' } }],
+      'hotspot', 'hs_B',
+    );
+    await flush();
+    expect(narrative.getActiveState('wrap_箱子_hs_B')).toBe('destroyed');
+    expect(narrative.getActiveState('wrap_箱子_hs_A')).toBe('available');
+  });
+
+  it('M11 契约：投递面 = owner 的全部 wrapper 图，不是主 wrapper（收窄到一张 = 违约）', async () => {
+    const { narrative } = makeRuntime();
+    narrative.setSignalDefs([{ id: 'poke', scope: 'private' }]);
+    // 同一个实体绑两张图（显隐图 + 计数图是真实会出现的形状），私有信号必须两张都收到
+    narrative.registerGraphs([
+      { id: 'wrap_甲_显隐', ownerType: 'hotspot', ownerId: 'hs_甲', initialState: 'a',
+        states: { a: { id: 'a' }, b: { id: 'b' } },
+        transitions: [{ id: 't', from: 'a', to: 'b', signal: 'poke' }] },
+      { id: 'wrap_甲_计数', ownerType: 'hotspot', ownerId: 'hs_甲', initialState: 'x',
+        states: { x: { id: 'x' }, y: { id: 'y' } },
+        transitions: [{ id: 't', from: 'x', to: 'y', signal: 'poke' }] },
+    ]);
+    await narrative.emitNarrativeSignal({ signal: 'poke', owner: { ownerType: 'hotspot', ownerId: 'hs_甲' } });
+    await flush();
+    expect(narrative.getActiveState('wrap_甲_显隐')).toBe('b');
+    expect(narrative.getActiveState('wrap_甲_计数')).toBe('y');
+  });
+
+  it('H2 诊断：owner 存在但没有任何 wrapper 图 = dev 可见 error，不是纯 trace', async () => {
+    const { narrative } = makeRuntime();
+    narrative.setSignalDefs([{ id: 'taken', scope: 'private' }]);
+    narrative.registerGraphs([boxGraph('hs_A')]);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // 场景 onEnter 的 ambient owner（scene:xx）没有 wrapper 图——最常见的作者错误
+    await narrative.emitNarrativeSignal({ signal: 'taken', owner: { ownerType: 'scene', ownerId: '雾津街头' } });
+    await flush();
+    const issues = (narrative.debugSnapshot().recentIssues ?? []) as Array<{ code: string }>;
+    expect(issues.some((i) => i.code === 'signal.private.ownerNoGraph')).toBe(true);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('校验：无 owner 绑定的图监听私有信号 = error；无人监听 = warning', () => {
+    const issues = validateNarrativeGraphData({
+      schemaVersion: 3,
+      signals: [{ id: 'taken', scope: 'private' }, { id: '没人听的', scope: 'private' }],
+      compositions: [{
+        id: 'c',
+        mainGraph: {
+          id: 'flow_主线', ownerType: 'flow', initialState: 'a',
+          states: { a: { id: 'a' }, b: { id: 'b' } },
+          transitions: [{ id: 't', from: 'a', to: 'b', signal: 'taken' }],   // 主线听私有信号
+        },
+        elements: [{
+          id: 'el', kind: 'wrapperGraph', ownerType: 'hotspot', ownerId: 'hs_001',
+          graph: boxGraph('hs_001'),
+        }],
+      }],
+    });
+    expect(issues.some((i) => i.code === 'signal.private.listener.unbound' && i.severity === 'error')).toBe(true);
+    expect(issues.some((i) => i.code === 'signal.private.unlistened' && i.itemId === '没人听的')).toBe(true);
+  });
+});

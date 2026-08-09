@@ -5,11 +5,16 @@
 
 三层数据事实（读代码得来，勿凭记忆改）：
 - 信号 key 是**全局裸名**（NarrativeStateManager.normalizeSignal 只取 signal 字段，
-  不拼 sourceType/sourceId）。
+  不拼 sourceType/sourceId）。**但裸名不等于投递面全局**：文件顶层 ``signals`` 登记表里
+  标了 ``scope: 'private'`` 的那些，运行时只投给**发射方 owner 拥有的 wrapper 图**
+  （NarrativeStateManager.processTrigger 的 allowedGraphIds），缺 owner 直接 fail-loud
+  丢弃，绝不回落全局——见 agent_docs/runtime/mechanisms/private-narrative-signal.md。
 - 跨图广播 key 恒为 ``state:<graphId>:<stateId>``（NarrativeStateManager.ts:346），
   只有 ``broadcastOnEnter === true`` 的状态会发。
 - composition.elements 里 wrapperGraph 带真图（``.graph``），dialogueBlackbox /
   zoneBlackbox 只是引用外部资产的占位，真实发射端要扫对话图 JSON。
+  元素身上的 ``ownerType``/``ownerId`` 是私有信号定向投递的唯一依据（运行时按裸实体 id
+  建 ownerIndex），本模块照原样收下，不做任何猜测式补全。
 """
 from __future__ import annotations
 
@@ -30,8 +35,48 @@ BROADCAST_PREFIX = "state:"
 DRAFT_PLACEHOLDER = "__draft__"
 
 
+# owner 类型 → 策划认得的说法。查不到就原样显示类型名，不编。
+_OWNER_KIND_TEXT = {
+    "npc": "人",
+    "hotspot": "物件",
+    "zone": "区域",
+    "scene": "场景",
+    "quest": "任务",
+    "scenario": "戏",
+    "flow": "线",
+}
+
+
 def broadcast_key(graph_id: str, state_id: str) -> str:
     return f"{BROADCAST_PREFIX}{graph_id}:{state_id}"
+
+
+def graph_topology_fingerprint(graph: dict[str, Any]) -> str:
+    """一张图的拓扑指纹：状态数 + 起点下标 + 全部转移的（起点序号, 终点序号, 触发方式）。
+
+    盖章出来的 N 张同款 wrapper 图 id/中文名各不相同，只有拓扑是一样的——判「同款」
+    必须按这个。与 web 侧 `canvas/wrapperAutoGroups.graphTopologyFingerprint` 同口径。
+    """
+    state_ids = list((graph.get("states") or {}).keys())
+    index_of = {sid: i for i, sid in enumerate(state_ids)}
+    transitions = sorted(
+        "|".join([
+            str(index_of.get(str((t or {}).get("from")), -1)),
+            str(index_of.get(str((t or {}).get("to")), -1)),
+            str((t or {}).get("trigger") or "signal"),
+        ])
+        for t in (graph.get("transitions") or [])
+        if isinstance(t, dict)
+    )
+    return json.dumps(
+        {
+            "n": len(state_ids),
+            "init": index_of.get(str(graph.get("initialState")), -1),
+            "transitions": transitions,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
 
 
 @dataclass(frozen=True)
@@ -121,6 +166,38 @@ class TriggerPoint:
 
 
 @dataclass(frozen=True)
+class GraphOwner:
+    """一张 wrapper 图挂在世界里的哪个东西上——私有信号定向投递的落点。
+
+    display 是给人看的那一行：能查到实体名就用实体名，查不到就退回 id，绝不编。
+    """
+
+    owner_type: str
+    owner_id: str
+    graph_id: str
+    graph_label: str
+    display: str = ""
+    scene: str = ""
+
+    @property
+    def key(self) -> tuple[str, str]:
+        return (self.owner_type, self.owner_id)
+
+
+@dataclass(frozen=True)
+class PrivateListenerPattern:
+    """私有信号的监听面收成的「一条模式」。
+
+    100 个箱子各有一张同款 wrapper 图、各听同一条信号名，逐条列出来是 100 行没有
+    信息量的重复；真正要说的只有一句「所有绑此类 wrapper 的实体都会走这一跳」。
+    """
+
+    sample: Any
+    count: int
+    graph_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class Beat:
     """主线/子图上的一"拍"——策划心智里的最小单位。"""
 
@@ -173,6 +250,14 @@ class NarrativeIndex:
         self.pressure_hold_scenes: dict[str, str] = {}
         self.graph_fingerprints: dict[str, str] = {}
         self._scene_signal_cache: dict[str, set[str]] = {}
+        # 私有信号名（顶层 signals 登记表里 scope=='private' 的那些）。
+        # 投递面收窄的判据只有这一处，界面与翻译层一律问 is_private_signal()。
+        self.private_signals: set[str] = set()
+        # 图 id → 它挂在谁身上（wrapperGraph 元素的 ownerType/ownerId）
+        self.graph_owners: dict[str, GraphOwner] = {}
+        # 「npc:npc_ringboy」→「滚铁环小孩」。只收场景数据里真写了的名字，查不到就没有这一条。
+        self.entity_names: dict[str, str] = {}
+        self.entity_scenes: dict[str, str] = {}
 
     # ---- 加载 ---------------------------------------------------------
 
@@ -198,10 +283,13 @@ class NarrativeIndex:
             return
         self.fingerprint = self._fingerprint()
         self.compositions = list(raw.get("compositions") or [])
+        self._ingest_signal_defs(raw.get("signals"))
         for comp in self.compositions:
             self._ingest_composition(comp)
         self._index_transitions()
         self._scan_scene_triggers()
+        # 实体名要等场景扫完才有，所以 owner 的显示名在这一步补齐（不是在 ingest 里）
+        self._resolve_graph_owners()
         self._scan_dialogue_emitters()
         self._scan_zone_emitters()
         self._scan_pressure_hold_sites()
@@ -234,6 +322,7 @@ class NarrativeIndex:
             for npc in data.get("npcs") or []:
                 if not isinstance(npc, dict):
                     continue
+                self._note_entity("npc", npc.get("id"), _actor_name(npc), scene_name)
                 graph_id = str(npc.get("dialogueGraphId") or "").strip()
                 if graph_id:
                     self.dialogue_triggers.setdefault(graph_id, []).append(
@@ -247,6 +336,7 @@ class NarrativeIndex:
                 if not isinstance(hotspot, dict):
                     continue
                 label = str(hotspot.get("label") or hotspot.get("id") or "")
+                self._note_entity("hotspot", hotspot.get("id"), hotspot.get("label"), scene_name)
                 # 热点挂对话有两种写法：动作树里 startDialogueGraph，或 data.graphId 直挂。
                 # 只认前一种会漏掉一大半（茶馆吹牛、婆子家宣布这些主线拍都是后一种）。
                 for graph_id in _collect_dialogue_graphs(hotspot) + _direct_graph_ids(hotspot):
@@ -257,6 +347,7 @@ class NarrativeIndex:
                 if not isinstance(zone, dict):
                     continue
                 label = str(zone.get("id") or "")
+                self._note_entity("zone", zone.get("id"), zone.get("label"), scene_name)
                 self.zone_scenes[f"{data.get('id') or path.stem}:{label}"] = scene_name
                 for graph_id in _collect_dialogue_graphs(zone):
                     self.dialogue_triggers.setdefault(graph_id, []).append(
@@ -273,6 +364,22 @@ class NarrativeIndex:
                             detail=f"走进「{scene_name}」的「{label}」区域",
                         )
                     )
+
+    def _note_entity(self, kind: str, entity_id: Any, name: Any, scene: str) -> None:
+        """记下「这个 id 在世界里叫什么、在哪个场景」。
+
+        owner 挑选面板上光给 `hs_箱007` 这种 id，策划认不出是哪个箱子；名字没写就不写，
+        绝不拿 id 拼一个假名字出来。
+        """
+        eid = str(entity_id or "").strip()
+        if not eid:
+            return
+        key = f"{kind}:{eid}"
+        label = str(name or "").strip()
+        if label and key not in self.entity_names:
+            self.entity_names[key] = label
+        if scene:
+            self.entity_scenes.setdefault(key, scene)
 
     def _scan_pressure_holds(self) -> None:
         """按住不放的压力条——背尸这条线上干活的核心动作，必须能说出在哪儿按。
@@ -383,6 +490,21 @@ class NarrativeIndex:
             self.load_errors.append(f"{path.name}: {exc}")
             return None
 
+    def _ingest_signal_defs(self, defs: Any) -> None:
+        """顶层 signals 登记表：这里只关心 scope。
+
+        与 NarrativeStateManager.setSignalDefs 同口径（trim 后取 scope=='private'），
+        两边判「这条是不是私有」必须是同一把尺子，否则界面说能推、运行时丢弃。
+        """
+        for entry in defs or []:
+            if not isinstance(entry, dict):
+                continue
+            if str(entry.get("scope") or "").strip() != "private":
+                continue
+            sid = str(entry.get("id") or "").strip()
+            if sid:
+                self.private_signals.add(sid)
+
     def _ingest_composition(self, comp: dict[str, Any]) -> None:
         comp_id = str(comp.get("id") or "")
         main = comp.get("mainGraph")
@@ -393,7 +515,34 @@ class NarrativeIndex:
                 continue
             graph = element.get("graph")
             if isinstance(graph, dict) and graph.get("id"):
+                gid = str(graph["id"])
                 self._ingest_graph(graph, comp_id, package=str(element.get("package") or ""))
+                # 图身上那份优先：运行时 indexGraphOwner 读的就是 `graph.ownerType/ownerId`，
+                # 元素上那份只是编辑器同步写的副本（真实数据里 47/47 两份一致）。
+                # 判据跟着运行时走，两份哪天漂了也不会说错。
+                owner_type = str(graph.get("ownerType") or element.get("ownerType") or "").strip()
+                owner_id = str(graph.get("ownerId") or element.get("ownerId") or "").strip()
+                # 两样都得有才算绑上了：只写一半的图运行时也建不进 ownerIndex，
+                # 这里认它等于给私有信号编一个收不到的候选。
+                if owner_type and owner_id and gid not in self.graph_owners:
+                    self.graph_owners[gid] = GraphOwner(
+                        owner_type=owner_type,
+                        owner_id=owner_id,
+                        graph_id=gid,
+                        graph_label=str(element.get("label") or self.graph_labels.get(gid) or gid),
+                    )
+
+    def _resolve_graph_owners(self) -> None:
+        for gid, owner in list(self.graph_owners.items()):
+            key = f"{owner.owner_type}:{owner.owner_id}"
+            self.graph_owners[gid] = GraphOwner(
+                owner_type=owner.owner_type,
+                owner_id=owner.owner_id,
+                graph_id=owner.graph_id,
+                graph_label=owner.graph_label,
+                display=self.entity_names.get(key, ""),
+                scene=self.entity_scenes.get(key, ""),
+            )
 
     def _ingest_graph(self, graph: dict[str, Any], comp_id: str, package: str) -> None:
         gid = str(graph.get("id") or "")
@@ -623,6 +772,86 @@ class NarrativeIndex:
 
     def emitters_for(self, signal: str) -> list[Emitter]:
         return list(self.emitters.get(signal, []))
+
+    def is_private_signal(self, signal: str) -> bool:
+        """这条信号是不是私有（投递面收窄到发射方 owner 的 wrapper 图）。"""
+        return str(signal or "").strip() in self.private_signals
+
+    def owner_of_graph(self, graph_id: str) -> GraphOwner | None:
+        return self.graph_owners.get(str(graph_id or "").strip())
+
+    def owner_display(self, owner_type: str, owner_id: str) -> str:
+        """(类型, id) → 一行人话。查不到实体名就退回 id，不编。"""
+        name = self.entity_names.get(f"{owner_type}:{owner_id}", "")
+        kind = _OWNER_KIND_TEXT.get(owner_type, owner_type)
+        head = f"{kind}「{name}」" if name else f"{kind} {owner_id}"
+        scene = self.entity_scenes.get(f"{owner_type}:{owner_id}", "")
+        return f"{head}　【{scene}】" if scene else head
+
+    def private_signal_owners(self, signal: str) -> list[GraphOwner]:
+        """能收到这条私有信号的 owner 候选：**听它的那些 wrapper 图**各自的 owner。
+
+        口径必须是「监听方」而不是「全部 wrapper」——运行时按 owner 取图再比对转移，
+        列一堆压根不听这条信号的实体，等于让人从一百个箱子里瞎挑一个。
+        无 owner 的图（flow / scenario / 主线）监听私有信号是校验 error（死监听），
+        这里自然不会出现在候选里。
+        """
+        out: list[GraphOwner] = []
+        seen: set[tuple[str, str]] = set()
+        for t in self.listeners.get(signal, []):
+            owner = self.graph_owners.get(t.graph_id)
+            if owner is None or owner.key in seen:
+                continue
+            seen.add(owner.key)
+            out.append(owner)
+        return out
+
+    def aggregate_private_listeners(self, rows: Iterable[Any]) -> list[PrivateListenerPattern]:
+        """把私有信号的监听行收成若干「模式」。全局信号不该调它。
+
+        聚合按**转移在图里的结构位置**（状态插入序下标 + 触发方式 + 优先级 + 条件）
+        加图的拓扑指纹，而不是按 from/to 的 id 或中文名——盖章产物的 id 各不相同
+        （`箱子07_opened`），按名字聚合等于聚不上。同一张图里长得不一样的两跳仍分两条。
+
+        口径与 web 编辑器的 `signalXref.aggregatePrivateListeners` 对齐（刻意各写一份：
+        本工具与 web 前端零耦合），改一边必须同时改另一边。
+        """
+        order: list[str] = []
+        buckets: dict[str, tuple[Any, int, list[str]]] = {}
+        for row in rows:
+            graph_id = str(getattr(row, "graph_id", "") or "")
+            graph = self.graphs.get(graph_id)
+            state_ids = list((graph.get("states") or {}).keys()) if isinstance(graph, dict) else []
+            from_state = str(getattr(row, "from_state", "") or "")
+            to_state = str(getattr(row, "to_state", "") or "")
+            from_idx = state_ids.index(from_state) if from_state in state_ids else -1
+            to_idx = state_ids.index(to_state) if to_state in state_ids else -1
+            # 图不在这份数据里：退回按 id 分组，宁可多分几条也不合错
+            positional = (
+                f"{from_idx}>{to_idx}" if graph is not None and from_idx >= 0 and to_idx >= 0
+                else f"{from_state}>{to_state}"
+            )
+            conditions = getattr(row, "conditions", ()) or ()
+            key = "\x1e".join([
+                graph_topology_fingerprint(graph) if isinstance(graph, dict) else "",
+                positional,
+                str(getattr(row, "trigger", "") or ""),
+                str(getattr(row, "priority", 0) or 0),
+                "&&".join(str(c) for c in conditions),
+            ])
+            bucket = buckets.get(key)
+            if bucket is None:
+                order.append(key)
+                buckets[key] = (row, 1, [graph_id])
+                continue
+            sample, count, graph_ids = bucket
+            if graph_id not in graph_ids:
+                graph_ids.append(graph_id)
+            buckets[key] = (sample, count + 1, graph_ids)
+        return [
+            PrivateListenerPattern(sample=s, count=c, graph_ids=tuple(g))
+            for s, c, g in (buckets[k] for k in order)
+        ]
 
     def is_dangling(self, signal: str) -> bool:
         return signal not in self.listeners

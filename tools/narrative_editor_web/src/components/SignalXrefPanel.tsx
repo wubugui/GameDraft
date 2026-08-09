@@ -17,9 +17,13 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { revealXrefRefRemote, scanSignalXrefRemote } from '../bridge';
+import { collectPrivateSignalIds } from '../signalCatalog';
 import {
   STATE_FILTERS,
   XREF_FILTERS,
+  aggregatePrivateListeners,
+  privatePatternHeadline,
+  privatePatternTitle,
   canReveal,
   countSummary,
   declarationHeadline,
@@ -46,6 +50,7 @@ import {
   stateKey,
   stateWorstSeverity,
   worstSeverity,
+  type PrivateListenerPattern,
   type StateFilterKind,
   type XrefFilterKind,
 } from '../signalXref';
@@ -172,6 +177,14 @@ export function SignalXrefPanel(props: {
   const selected = useMemo(
     () => cards.find((c) => c.signal === props.selectedSignal) ?? null,
     [cards, props.selectedSignal],
+  );
+  // 私有与否的判据只有**当前文档的注册行**：宿主扫描结果（SignalXrefCardDef）不带 scope，
+  // 而画布上刚勾的私有还没落盘、也还没重扫——按扫描结果判会慢一整拍。
+  const privateIds = useMemo(() => collectPrivateSignalIds(props.data), [props.data]);
+  const selectedIsPrivate = Boolean(selected && privateIds.has(selected.signal));
+  const selectedPrivatePatterns = useMemo(
+    () => (selected && selectedIsPrivate ? aggregatePrivateListeners(selected.listeners, props.data) : []),
+    [selected, selectedIsPrivate, props.data],
   );
   const stateCards = index?.states ?? [];
   const visibleStates = useMemo(
@@ -326,15 +339,17 @@ export function SignalXrefPanel(props: {
               ) : null}
               {visible.map((card) => {
                 const sev = worstSeverity(card);
+                const isPrivate = privateIds.has(card.signal);
                 return (
                   <button
                     key={card.signal}
                     type="button"
-                    className={`signal-xref-row${card.signal === props.selectedSignal ? ' active' : ''}`}
+                    className={`signal-xref-row${card.signal === props.selectedSignal ? ' active' : ''}${isPrivate ? ' private' : ''}`}
                     onClick={() => props.onSelectSignal(card.signal)}
                   >
                     <span className="signal-xref-row-id">
                       {sev ? <span className={`signal-xref-mark sev-${sev}`}>{SEVERITY_MARK[sev]}</span> : null}
+                      {isPrivate ? <span className="signal-scope-badge">🔒私有</span> : null}
                       {rowLabel(card)}
                     </span>
                     <span className="signal-xref-row-meta">
@@ -373,6 +388,8 @@ export function SignalXrefPanel(props: {
               onRequestRefactor={props.onRequestRefactor}
               onRegisterSignal={props.onRegisterSignal}
               stillUnregistered={props.stillUnregistered}
+              isPrivate={selectedIsPrivate}
+              privatePatterns={selectedPrivatePatterns}
             />
           ) : props.selectedSignal && scanning ? (
             <p className="muted">正在扫描全工程，马上就好…</p>
@@ -401,6 +418,10 @@ function SignalXrefDetail(props: {
   onRequestRefactor?: (mode: 'rename' | 'delete', signalId: string) => void;
   onRegisterSignal?: (signalId: string) => void;
   stillUnregistered: (signalId: string) => boolean;
+  /** 这条信号在注册表里写了 `scope: 'private'` 吗（宿主扫描结果不带 scope，判据只有当前文档） */
+  isPrivate: boolean;
+  /** 私有信号的监听模式（isPrivate 为假时是空数组，不参与渲染） */
+  privatePatterns: PrivateListenerPattern[];
 }) {
   const { card } = props;
   const { real, upstream } = splitEmitters(card);
@@ -410,9 +431,13 @@ function SignalXrefDetail(props: {
         <div className="signal-xref-head-text">
           {/* 刻意不用 .section-title：它带 text-transform:uppercase，信号 id 大小写敏感，
               显示成全大写会让人照抄出一个不存在的 id。 */}
-          <div className="signal-xref-title">{signalDisplayName(card)}</div>
+          <div className="signal-xref-title">
+            {props.isPrivate ? <span className="signal-scope-badge">🔒私有</span> : null}
+            {signalDisplayName(card)}
+          </div>
           <div className="muted">
             {KIND_BADGE[card.kind]}
+            {props.isPrivate ? ' · 只投给发射方 owner 的 wrapper 图（主线听不到）' : ''}
             {card.kind === 'derived' && card.sourceGraphId
               ? ` · 来自「${card.sourceGraphLabel || card.sourceGraphId}」的状态「${card.sourceStateLabel || card.sourceStateId}」`
               : ''}
@@ -483,33 +508,72 @@ function SignalXrefDetail(props: {
         </XrefSection>
       ) : null}
 
-      <XrefSection
-        title="谁在听"
-        count={card.listeners.length}
-        empty="没有任何转移在等它"
-        hint="信号的接收方只有转移这一种；别的系统听的是「状态变了」，不是信号本身"
-      >
-        {card.listeners.map((l) => {
-          const target = listenerFocusTarget(l);
-          return (
-            <div key={`${l.graphId}:${l.transitionId}`} className="signal-xref-item">
-              <div className="signal-xref-item-head">
-                <span className="signal-xref-item-title">{listenerHeadline(l)}</span>
-                <button
-                  type="button"
-                  className="signal-xref-goto"
-                  disabled={!target}
-                  title={target ? '在画布上定位这条转移' : '这条转移缺编排信息，定位不了'}
-                  onClick={() => target && props.onFocus(target as ValidationTargetDef, listenerHeadline(l))}
-                >
-                  画布定位
-                </button>
+      {/* 私有信号的监听面天生是 N 份同一件事（100 个箱子各一张 wrapper 图），
+          逐条列 100 行等于把面板冲垮：收成「一条模式」，数字说清覆盖面。 */}
+      {props.isPrivate ? (
+        <XrefSection
+          title="谁在听"
+          count={props.privatePatterns.length}
+          empty="没有任何 wrapper 图在等它（私有信号发出去也不会推动任何状态）"
+          hint="🔒 私有信号：只投递给「发射方 owner 所拥有的 wrapper 图」。下面按模式列——同一跳在 N 张同款图上各有一份，运行时只有发射方那一张会走。"
+        >
+          {props.privatePatterns.map((pattern) => {
+            const l = pattern.sample;
+            const target = listenerFocusTarget(l);
+            const headline = privatePatternHeadline(pattern);
+            return (
+              <div key={`private:${l.graphId}:${l.transitionId}`} className="signal-xref-item signal-xref-pattern">
+                <div className="signal-xref-item-head">
+                  <span className="signal-xref-item-title" title={privatePatternTitle(pattern)}>
+                    {headline}
+                    {pattern.count > 1 ? <em className="signal-xref-pattern-count">×{pattern.count}</em> : null}
+                  </span>
+                  <button
+                    type="button"
+                    className="signal-xref-goto"
+                    disabled={!target}
+                    title={target
+                      ? (pattern.count > 1 ? '在画布上定位这一模式的第一张图' : '在画布上定位这条转移')
+                      : '这条转移缺编排信息，定位不了'}
+                    onClick={() => target && props.onFocus(target as ValidationTargetDef, headline)}
+                  >
+                    画布定位
+                  </button>
+                </div>
+                <div className="signal-xref-item-where">{listenerSubline(l)}</div>
               </div>
-              <div className="signal-xref-item-where">{listenerSubline(l)}</div>
-            </div>
-          );
-        })}
-      </XrefSection>
+            );
+          })}
+        </XrefSection>
+      ) : (
+        <XrefSection
+          title="谁在听"
+          count={card.listeners.length}
+          empty="没有任何转移在等它"
+          hint="信号的接收方只有转移这一种；别的系统听的是「状态变了」，不是信号本身"
+        >
+          {card.listeners.map((l) => {
+            const target = listenerFocusTarget(l);
+            return (
+              <div key={`${l.graphId}:${l.transitionId}`} className="signal-xref-item">
+                <div className="signal-xref-item-head">
+                  <span className="signal-xref-item-title">{listenerHeadline(l)}</span>
+                  <button
+                    type="button"
+                    className="signal-xref-goto"
+                    disabled={!target}
+                    title={target ? '在画布上定位这条转移' : '这条转移缺编排信息，定位不了'}
+                    onClick={() => target && props.onFocus(target as ValidationTargetDef, listenerHeadline(l))}
+                  >
+                    画布定位
+                  </button>
+                </div>
+                <div className="signal-xref-item-where">{listenerSubline(l)}</div>
+              </div>
+            );
+          })}
+        </XrefSection>
+      )}
 
       {card.reactiveRefs.length ? (
         <XrefSection

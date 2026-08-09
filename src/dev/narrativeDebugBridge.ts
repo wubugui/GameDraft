@@ -39,7 +39,16 @@ export interface NarrativeDebugBridgeDeps {
   exportSave: () => string | null;
   /** 从 payload 读档（全量世界状态回溯）。 */
   importSave: (payload: string) => Promise<boolean>;
-  emitSignal: (signal: { sourceType: string; sourceId: string; signal: string }) => Promise<void>;
+  /**
+   * 补发一条叙事信号。`owner` 只对**私有信号**有意义（投递面收窄到该 owner 的
+   * wrapper 图）；不传 = 现行为一字不变，全局信号不读这个字段。
+   */
+  emitSignal: (signal: {
+    sourceType: string;
+    sourceId: string;
+    signal: string;
+    owner?: { ownerType: string; ownerId: string };
+  }) => Promise<void>;
   setState: (graphId: string, stateId: string) => Promise<void>;
   reloadScene: (sceneId: string) => Promise<void>;
   /**
@@ -495,10 +504,15 @@ export function installNarrativeDebugBridge(
           return;
         }
         case 'emitSignal': {
+          // 调试器挑了发射方实体时才带 owner（私有信号的定向依据）。两样缺一就整个不带——
+          // 半个 owner 在运行时同样进不了 ownerIndex，带上去只会把"没挑"伪装成"挑了"。
+          const ownerType = String(message.ownerType ?? '').trim();
+          const ownerId = String(message.ownerId ?? '').trim();
           await deps.emitSignal({
             sourceType: String(message.sourceType ?? 'debug'),
             sourceId: String(message.sourceId ?? 'narrative-debugger'),
             signal: String(message.signal ?? ''),
+            ...(ownerType && ownerId ? { owner: { ownerType, ownerId } } : {}),
           });
           reply(id, true, 'emitted');
           scheduleSnapshot('emit');

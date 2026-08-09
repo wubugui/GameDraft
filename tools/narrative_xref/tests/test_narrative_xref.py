@@ -45,10 +45,15 @@ from tools.narrative_xref.sources import (
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
-def emit(signal: str, source_id: str = "") -> dict:
+def emit(signal: str, source_id: str = "", owner_type: str = "", owner_id: str = "") -> dict:
     params = {"signal": signal}
     if source_id:
         params.update({"sourceType": "dialogue", "sourceId": source_id})
+    # 半对 owner 参数是真实会写出来的形状（作者填一半就跑去别处），测试要能造出来
+    if owner_type:
+        params["ownerType"] = owner_type
+    if owner_id:
+        params["ownerId"] = owner_id
     return {"type": "emitNarrativeSignal", "params": params}
 
 
@@ -545,6 +550,103 @@ def test_draft_signal_sorts_last_in_the_catalogue():
         signals=[{"id": "zz_last"}],
         transitions=[{"id": "t1", "from": "s_a", "to": "s_b", "signal": "__draft__"}])
     assert build_index(make_source(narrative=narrative)).all_signal_ids()[-1] == "__draft__"
+
+
+# --------------------------------------------------------------------------- #
+# 私有信号（scope）与宿主身份
+# --------------------------------------------------------------------------- #
+
+def test_private_scope_travels_from_the_registry_onto_the_card():
+    """注册表标了 private，卡上就必须看得出来。
+
+    丢掉 scope 的后果不是"少一个字段"：私有信号只投递给发射方 owner 拥有的 wrapper 图，
+    与全局信号的投递面差着天，而两者在界面上会长得一模一样。
+    """
+    narrative = narrative_with(signals=[
+        {"id": "sig_box_taken", "label": "箱子被拿了", "scope": "private"},
+    ])
+    card = build_index(make_source(narrative=narrative)).card("sig_box_taken")
+    assert card.scope == "private"
+    assert card.is_private is True
+    payload = card.to_dict()
+    assert payload["scope"] == "private" and payload["private"] is True
+
+
+def test_global_and_absent_scope_are_both_not_private():
+    """缺省 = 全局。`scope` 原样带出，**不替作者补默认值**。
+
+    未登记的信号根本没有这一栏；硬填 'global' 会让"没登记"与"登记了是全局"在界面上
+    长成同一个样子，而前者是校验会一直报的问题。
+    """
+    narrative = narrative_with(signals=[
+        {"id": "sig_global", "scope": "global"},
+        {"id": "sig_plain"},
+    ])
+    index = build_index(make_source(narrative=narrative))
+    assert index.card("sig_global").scope == "global"
+    assert index.card("sig_global").is_private is False
+    assert index.card("sig_plain").scope == ""
+    assert index.card("sig_plain").is_private is False
+    ghost = index.card("sig_never_heard_of")
+    assert ghost.scope == "" and ghost.is_private is False
+
+
+def test_emitter_shows_the_owner_binding_written_at_the_emit_point():
+    """`ownerType` + `ownerId` = 数据里唯一静态看得见的宿主身份，卡上必须标出来。
+
+    私有信号按发射方 owner 定向投递；owner 绝大多数由发射点上下文隐式带进来（扫不出来），
+    显式那对参数是作者能写、也是 xref 唯一能看见的一档。
+    """
+    doc = {"id": "d", "nodes": {"n": {"type": "runActions", "actions": [
+        emit("sig_box_taken", "d", owner_type="hotspot", owner_id="义庄:hs_箱子"),
+    ]}}}
+    index = build_index(make_source(
+        narrative=narrative_with(signals=[{"id": "sig_box_taken", "scope": "private"}]),
+        dialogues=[DialogueDoc("d", "d.json", doc)],
+    ))
+    e = index.card("sig_box_taken").emitters[0]
+    assert e.owner_bound is True
+    assert (e.owner_type, e.owner_id) == ("hotspot", "义庄:hs_箱子")
+    assert "带宿主身份：hotspot:义庄:hs_箱子" in e.note
+    assert "留痕来源" in e.note, "留痕来源与宿主身份是两回事，不许互相顶掉"
+    payload = e.to_dict()
+    assert payload["ownerBound"] is True
+    assert payload["ownerType"] == "hotspot" and payload["ownerId"] == "义庄:hs_箱子"
+
+
+def test_half_an_owner_binding_is_not_dressed_up_as_bound():
+    """只填一半 = 运行时**整对丢弃**、退回来源上下文那一档。
+
+    照单显示半对参数等于告诉作者"定向已经钉好了"，而实际那一发会落到别的 owner 上，
+    或者缺 owner 被当场丢掉。判据必须与 ActionRegistry 逐字一致。
+    """
+    doc = {"id": "d", "nodes": {"n": {"type": "runActions", "actions": [
+        emit("sig_half", owner_type="hotspot"),          # 只有类型
+        emit("sig_half_2", owner_id="义庄:hs_箱子"),      # 只有 id
+    ]}}}
+    index = build_index(make_source(
+        narrative=narrative_with(), dialogues=[DialogueDoc("d", "d.json", doc)],
+    ))
+    for sid in ("sig_half", "sig_half_2"):
+        e = index.card(sid).emitters[0]
+        assert e.owner_bound is False, sid
+        assert (e.owner_type, e.owner_id) == ("", ""), sid
+        assert "宿主身份" not in e.note, sid
+
+
+def test_owner_binding_predicate_matches_the_runtime_typescript():
+    """口径护栏：`ownerType && ownerId ? 参数 : origin` 这一条判据必须与运行时同源。
+
+    两处各写一份的后果就是同一份数据在 xref 与游戏里给出相反的投递面。
+    """
+    ts = (REPO_ROOT / "src/core/ActionRegistry.ts").read_text(encoding="utf-8")
+    assert "paramOwnerType && paramOwnerId ? paramOwnerType" in ts, (
+        "运行时的 owner 覆盖判据变了：scan._owner_binding 的「两个都填才算」必须跟着改"
+    )
+    assert scan_mod._owner_binding({"params": {"ownerType": "npc", "ownerId": "x"}}) == ("npc", "x")
+    assert scan_mod._owner_binding({"params": {"ownerType": "npc"}}) == ("", "")
+    assert scan_mod._owner_binding({"params": {}}) == ("", "")
+    assert scan_mod._owner_binding(None) == ("", "")
 
 
 # --------------------------------------------------------------------------- #

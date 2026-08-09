@@ -233,7 +233,7 @@ declare global {
       openDevPanel(): void;
       getNarrativeDebugSnapshot(): Record<string, unknown>;
       clearNarrativeDebugTrace(): void;
-      emitNarrativeSignal(signal: { sourceType: string; sourceId: string; signal: string }): Promise<void>;
+      emitNarrativeSignal(signal: { sourceType: string; sourceId: string; signal: string; ownerType?: string; ownerId?: string }): Promise<void>;
       debugSetNarrativeState(graphId: string, stateId: string): Promise<void>;
       setNarrativeState(graphId: string, stateId: string): Promise<void>;
       setDepthDebug(enabled: boolean): void;
@@ -2291,6 +2291,8 @@ export class Game {
         sourceType: signal.sourceType as NarrativeSignal['sourceType'],
         sourceId: signal.sourceId,
         signal: signal.signal,
+        // 私有信号的定向依据。调试器没挑实体时不带，行为与从前一字不差。
+        ...(signal.owner ? { owner: signal.owner } : {}),
       }),
       setState: (graphId, stateId) => this.narrativeStateManager.debugSetNarrativeState(graphId, stateId),
       reloadScene: (sceneId) => this.devLoadScene(sceneId || (this.sceneManager.currentSceneData?.id ?? '')),
@@ -4361,11 +4363,17 @@ export class Game {
       openDevPanel: () => this.devModeUI?.open(),
       getNarrativeDebugSnapshot: () => this.buildRuntimeDebugSnapshot('dev-api'),
       clearNarrativeDebugTrace: () => this.narrativeStateManager.clearDebugTrace(),
-      emitNarrativeSignal: (signal) => this.narrativeStateManager.emitNarrativeSignal({
-        sourceType: String(signal?.sourceType ?? '').trim() as any,
-        sourceId: String(signal?.sourceId ?? '').trim(),
-        signal: String(signal?.signal ?? '').trim(),
-      }),
+      emitNarrativeSignal: (signal) => {
+        // 私有信号需要 owner 才投得出去；控制台调试者可以带上（缺省不带＝行为不变）
+        const ot = String(signal?.ownerType ?? '').trim();
+        const oid = String(signal?.ownerId ?? '').trim();
+        return this.narrativeStateManager.emitNarrativeSignal({
+          sourceType: String(signal?.sourceType ?? '').trim() as any,
+          sourceId: String(signal?.sourceId ?? '').trim(),
+          signal: String(signal?.signal ?? '').trim(),
+          ...(ot && oid ? { owner: { ownerType: ot, ownerId: oid } } : {}),
+        });
+      },
       debugSetNarrativeState: (graphId, stateId) =>
         this.narrativeStateManager.debugSetNarrativeState(String(graphId ?? '').trim(), String(stateId ?? '').trim()),
       setNarrativeState: (graphId, stateId) =>

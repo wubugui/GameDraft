@@ -14,6 +14,9 @@ export type RuntimeCommand =
       sourceType?: unknown;
       sourceId?: unknown;
       signal?: unknown;
+      /** 私有信号专用：发射方 owner。缺它时私有信号会被运行时 fail-loud 丢弃。 */
+      ownerType?: unknown;
+      ownerId?: unknown;
       reason?: unknown;
     }
   | { id?: unknown; type: 'debugSetNarrativeState'; graphId?: unknown; stateId?: unknown; reason?: unknown }
@@ -95,7 +98,13 @@ export type RuntimeCommandDeps = {
   debugSetFixedTickMode(enabled: boolean): void;
   debugStepTicks(ticks: number, dtMs: number): void | Promise<void>;
   clearNarrativeTrace(): void;
-  emitNarrativeSignal(signal: { sourceType: string; sourceId: string; signal: string }): Promise<void>;
+  emitNarrativeSignal(signal: {
+    sourceType: string;
+    sourceId: string;
+    signal: string;
+    /** 私有信号的定向依据；全局信号不读它，不传 = 现行为不变。 */
+    owner?: { ownerType: string; ownerId: string };
+  }): Promise<void>;
   debugSetNarrativeState(graphId: string, stateId: string): Promise<void>;
   setFlag(key: string, value: FlagValue): void;
   isFlagAllowed(key: string): boolean;
@@ -201,10 +210,15 @@ export async function applyDevRuntimeCommand(
         return ok(id, type, 'narrative trace cleared');
       }
       case 'emitNarrativeSignal': {
+        // owner 两样缺一就整个不带：半个 owner 在运行时同样建不进 ownerIndex，
+        // 带上去只会把"没给"伪装成"给了"。
+        const ownerType = optionalString(command.ownerType);
+        const ownerId = optionalString(command.ownerId);
         await deps.emitNarrativeSignal({
           sourceType: requiredString(command.sourceType, 'sourceType'),
           sourceId: requiredString(command.sourceId, 'sourceId'),
           signal: requiredString(command.signal, 'signal'),
+          ...(ownerType && ownerId ? { owner: { ownerType, ownerId } } : {}),
         });
         await deps.captureSnapshot(optionalString(command.reason) || 'runtime-command:emitNarrativeSignal');
         return ok(id, type, 'signal emitted');

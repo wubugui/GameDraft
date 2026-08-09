@@ -72,10 +72,18 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "narrative_emit",
-        "description": "补发一个叙事信号，模拟「那件事已经发生」。",
+        "description": (
+            "补发一个叙事信号，模拟「那件事已经发生」。"
+            "私有信号（scope:private）必须带 ownerType/ownerId 指明是哪个实体发的，"
+            "否则运行时直接丢弃；不带时本工具会退回并列出可选的 owner。"
+        ),
         "inputSchema": {
             "type": "object",
-            "properties": {"signal": {"type": "string"}},
+            "properties": {
+                "signal": {"type": "string"},
+                "ownerType": {"type": "string", "description": "私有信号专用：发射方类型（npc/hotspot/zone…）"},
+                "ownerId": {"type": "string", "description": "私有信号专用：发射方实体 id"},
+            },
             "required": ["signal"],
         },
     },
@@ -286,7 +294,12 @@ class NarrativeMcpServer:
         if name == "narrative_goto":
             return self._goto(str(args.get("beat") or ""), args.get("forceSetState") is True)
         if name == "narrative_emit":
-            return self.link.request({"command": "emitNarrativeSignalByName", "signal": str(args.get("signal") or "")})
+            return self.link.request({
+                "command": "emitNarrativeSignalByName",
+                "signal": str(args.get("signal") or ""),
+                "ownerType": str(args.get("ownerType") or ""),
+                "ownerId": str(args.get("ownerId") or ""),
+            })
         if name == "narrative_capture":
             return self.link.request({"command": "captureSavepointNamed", "label": str(args.get("label") or "")})
         if name == "narrative_signal_info":

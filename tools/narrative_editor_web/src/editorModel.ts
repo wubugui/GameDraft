@@ -35,7 +35,13 @@ import type {
 } from './types';
 
 export { collectKnownSignals, createAuthorSignal, deleteAuthorSignal, renameAuthorSignal };
-export { buildSignalCatalog, collectListenerRefs } from './signalCatalog';
+export {
+  buildSignalCatalog,
+  collectListenerRefs,
+  collectPrivateSignalIds,
+  isPrivateAuthorSignal,
+  setAuthorSignalScope,
+} from './signalCatalog';
 export { DEFAULT_DRAFT_SIGNAL, stateEnteredSignalKey } from './signalConstants';
 export { migrateNarrativeSignalsV3 } from './signalMigration';
 /** @deprecated Use stateEnteredSignalKey */
