@@ -204,6 +204,24 @@ def collect_id_universes(root: Path, read_text=None) -> UniverseData:
     for name in ("actors", "emote_subjects", "scene_entities", "hotspots"):
         labels[name] = actor_labels
 
+    # 头顶闲聊说话人：emote_subjects（运行时 resolveEmoteTarget 认的那一套）再加上
+    # `character:<角色id>` 这一档。前缀口径见 BubbleChatterSystem.CHARACTER_TARGET_PREFIX。
+    char_doc = _load(data / "character_registry.json", read)
+    char_rows = char_doc.get("characters") if isinstance(char_doc, dict) else char_doc
+    char_ids, char_names = _ids_and_labels(char_rows, "name")
+    speaker_labels = dict(actor_labels)
+    bubble_targets = set(u["emote_subjects"])
+    for cid in char_ids:
+        key = f"character:{cid}"
+        bubble_targets.add(key)
+        speaker_labels[key] = f"角色 {char_names.get(cid) or cid}"
+    u["bubble_speakers"] = sorted(bubble_targets)
+    labels["bubble_speakers"] = speaker_labels
+
+    bubble_doc = _load(data / "bubble_lines.json", read)
+    bubble_sets = bubble_doc.get("lineSets") if isinstance(bubble_doc, dict) else bubble_doc
+    u["bubble_line_sets"], labels["bubble_line_sets"] = _ids_and_labels(bubble_sets, "description")
+
     scoped["scene_spawns"] = scene_spawns
     scoped["scene_zones"] = scene_zones
     scoped["scene_hotspots"] = scene_hotspots

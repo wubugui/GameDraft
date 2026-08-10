@@ -72,9 +72,16 @@ ROLE_BASE = Qt.ItemDataRole.UserRole + 1
 ROLE_HAY = Qt.ItemDataRole.UserRole + 2
 ROLE_HEADER = Qt.ItemDataRole.UserRole + 3
 ROLE_TIP = Qt.ItemDataRole.UserRole + 4
+# 搜索命中在**别处**（别的线 / 当前场景之外）时，那一行补挂它该跳去哪条线。
+# 有这个标记的行是搜索现加的，下一次筛之前要先摘干净。
+ROLE_ELSEWHERE = Qt.ItemDataRole.UserRole + 6
 # 时间线那一行对应的信号（双击 → 看这条信号谁发谁听）。UserRole+1 在时间线里是
 # merge_key，不能复用。
 ROLE_TIMELINE_SIGNAL = Qt.ItemDataRole.UserRole + 5
+
+# 搜索时最多补多少条"别处的命中"。打两个字就能撞上几百条，全塞进去等于把
+# 当前这一栏冲掉；截断了会在末尾明说还剩几条。
+ELSEWHERE_LIMIT = 60
 
 # 半透明才行：底下还压着隔行底色和「当前这拍」的绿字，不透明色块会把它们全盖掉
 SEARCH_HIT = QColor(255, 209, 102, 76)
@@ -294,9 +301,12 @@ class MainWindow(QMainWindow):
         # 一条线能拉出 178 行，其中 7 行都叫「未」、6 行都叫「未触发」——
         # 光靠滚是找不到的。图名和状态名一起搜，命中的留下并高亮。
         self.beat_search = QLineEdit()
-        self.beat_search.setPlaceholderText("搜图名或状态名，比如「偷鸡」「未触发」")
+        self.beat_search.setPlaceholderText("搜图名或状态名，比如「赌场」「偷鸡」「未触发」")
         self.beat_search.setClearButtonEnabled(True)
-        self.beat_search.setToolTip("图的名字和状态的名字一起匹配；搜图名会把那张图整组留下")
+        self.beat_search.setToolTip(
+            "全工程搜：图的名字和状态的名字一起匹配；搜图名会把那张图整组留下。\n"
+            "不在当前这一栏里的命中会接在列表末尾，点一下就切过去。"
+        )
         self.beat_search.textChanged.connect(lambda _: self._apply_beat_filter())
         box.addWidget(self.beat_search)
 
@@ -1041,8 +1051,15 @@ class MainWindow(QMainWindow):
 
         状态行的干草堆里含它自己的图名，所以搜一个图名＝那张图整组留下，
         不用为"搜到图名要连带它的状态"再写一层特殊逻辑。
+
+        左栏一次只列一条线（或一个场景），所以**筛完还要把别处的命中接在后面**：
+        不接的话，搜「赌场」在主线上就是干干净净的 0 条，而那张图明明躺在另一条线里——
+        这种"看着像没有、其实是没列出来"的空结果，比报错更容易让人以为自己没做过这件事。
         """
         needle = self.beat_search.text().strip().lower()
+        # 上一轮补进来的"别处"行先摘掉：留着的话筛子会把它们当本地行再算一遍，
+        # 越搜越长，命中数也会翻倍。
+        self._drop_elsewhere_rows()
         count = self.beat_list.count()
         if not needle:
             for i in range(count):
@@ -1079,48 +1096,102 @@ class MainWindow(QMainWindow):
             if head >= 0 and matched[i]:
                 keep_head = True
 
-        self.search_count.setText(f"命中 {hits} 条" if hits else self._miss_text(needle))
+        per_comp = self._append_elsewhere_rows(needle)
+        self.search_count.setText(self._count_text(hits, per_comp))
         self.search_count.setVisible(True)
 
-    def _miss_text(self, needle: str) -> str:
-        """这条线里没有，就说清楚别的线里有没有。
+    def _drop_elsewhere_rows(self) -> None:
+        for i in range(self.beat_list.count() - 1, -1, -1):
+            if self.beat_list.item(i).data(ROLE_ELSEWHERE) is not None:
+                self.beat_list.takeItem(i)
 
-        左栏一次只列一条线，光说"没搜到"会让人以为整个项目都没有这东西——
-        而 `水鬼` 明明在码头那条线里躺着。
+    def _append_elsewhere_rows(self, needle: str) -> dict[str, int]:
+        """把**没列在当前这一栏里**的命中接到列表末尾，按线分组，点一下能跳过去。
+
+        判据是"这个状态现在在不在列表里"，不是"是不是别的线"——按场景看的时候
+        列表装的是这个场景挂了什么，同样需要把场景外的命中兜出来。
+        返回 线 id → 命中条数（给计数文案用；截断了也按真实条数报）。
         """
-        if self._list_mode == "scene":
-            # 按场景看的时候列表装的是"这个场景挂了什么"，跟哪条线无关，
-            # 报"别的线里有 N 条"是答非所问
-            return "这个场景里没有"
-        elsewhere: dict[str, int] = {}
-        current = str(self.comp_picker.currentData() or "")
-        for key in self.index.states:
-            graph_id, _, state_id = key.rpartition(".")
-            comp = self.index.graph_composition.get(graph_id, "")
-            if not comp or comp == current:
+        shown = {
+            str(self.beat_list.item(i).data(ROLE_KEY) or "")
+            for i in range(self.beat_list.count())
+        }
+        per_comp: dict[str, int] = {}
+        groups: list[tuple[str, str, list]] = []
+        for comp_id, comp_label in self.index.composition_entries():
+            for graph_id in self.index.graphs_in_composition(comp_id):
+                full = self._graph_label(graph_id)
+                rows = []
+                for node in self.index.graph_states(graph_id):
+                    if node.key in shown:
+                        continue
+                    hay = f"{full} {node.display} {graph_id} {node.state_id}".lower()
+                    if needle in hay:
+                        rows.append(node)
+                if rows:
+                    per_comp[comp_id] = per_comp.get(comp_id, 0) + len(rows)
+                    groups.append((comp_id, f"{comp_label} › {full}", rows))
+        if not groups:
+            return per_comp
+
+        self.beat_list.addItem(self._make_elsewhere_header("── 别处还有 · 点一下跳过去 ──", ""))
+        budget = ELSEWHERE_LIMIT
+        dropped = 0
+        for comp_id, title, rows in groups:
+            if budget <= 0:
+                dropped += len(rows)
                 continue
-            node = self.index.state(graph_id, state_id)
-            label = node.display if node else state_id
-            hay = f"{self._graph_label(graph_id)} {label} {graph_id} {state_id}".lower()
-            if needle in hay:
-                elsewhere[comp] = elsewhere.get(comp, 0) + 1
-        if not elsewhere:
+            self.beat_list.addItem(self._make_elsewhere_header(f"— {title} —", comp_id))
+            for node in rows[:budget]:
+                item = self._make_state_item(node.graph_id, node.state_id)
+                item.setData(ROLE_ELSEWHERE, comp_id)
+                item.setBackground(QBrush(SEARCH_HIT))  # 这些行个个都是命中，跟本地命中一个待遇
+                self.beat_list.addItem(item)
+            dropped += max(0, len(rows) - budget)
+            budget -= len(rows)
+        if dropped:
+            # 截断必须说出来：默默少列几条，读起来跟"就这些"一模一样
+            self.beat_list.addItem(
+                self._make_elsewhere_header(f"（还有 {dropped} 条没列，再打几个字缩一缩）", "")
+            )
+        # 补进来的行也得走一遍标记：不然它们没有行首那两格占位，跟本地行错开半个字，
+        # 而且"这一拍现在是活的/存过档"这些信息在别处的行上同样要看得见
+        self._refresh_beats_marks()
+        return per_comp
+
+    def _make_elsewhere_header(self, text: str, comp_id: str) -> QListWidgetItem:
+        item = QListWidgetItem(text)
+        item.setForeground(QColor("#7a756e"))
+        font = item.font()
+        font.setBold(True)
+        item.setFont(font)
+        item.setFlags(Qt.ItemFlag.NoItemFlags)
+        item.setData(ROLE_HEADER, True)
+        # 空字符串也算"是别处的行"（摘行看的是 is not None），标题才跟着一起被摘掉
+        item.setData(ROLE_ELSEWHERE, comp_id)
+        return item
+
+    def _count_text(self, hits: int, per_comp: dict[str, int]) -> str:
+        """命中数一句话说清：这一栏有几条、别处还有几条、分别在哪条线。"""
+        total = sum(per_comp.values())
+        if hits and not total:
+            return f"命中 {hits} 条"
+        if hits and total:
+            return f"命中 {hits} 条；别处还有 {total} 条（已列在下面）"
+        here = "这个场景里没有" if self._list_mode == "scene" else "这条线里没有"
+        if not total:
             return "整个项目里都没有"
         parts = []
-        for comp, n in sorted(elsewhere.items(), key=lambda kv: -kv[1])[:2]:
-            idx = self.comp_picker.findData(comp)
-            parts.append(f"「{self.comp_picker.itemText(idx) if idx >= 0 else comp}」{n} 条")
-        return "这条线里没有；" + "、".join(parts)
+        for comp, n in sorted(per_comp.items(), key=lambda kv: -kv[1])[:2]:
+            parts.append(f"「{self.index.composition_label(comp)}」{n} 条")
+        return f"{here}；" + "、".join(parts) + " —— 已列在下面"
 
     def _refresh_beats(self) -> None:
         if self.comp_picker.count() == 0:
-            seen: list[tuple[str, str]] = []
-            for beat in self.index.beats:
-                pair = (beat.composition_id, beat.composition_label)
-                if pair not in seen:
-                    seen.append(pair)
+            # 口径是「文件里有几条线」，不是「有拍子的线」——按拍子建的话，
+            # 没有 mainGraph 的线连同它底下的子图会整条从界面上消失。
             self.comp_picker.blockSignals(True)
-            for comp_id, label in seen:
+            for comp_id, label in self.index.composition_entries():
                 self.comp_picker.addItem(label, comp_id)
             main_idx = self.comp_picker.findData("xungou_demo_main")
             if main_idx >= 0:
@@ -1201,15 +1272,44 @@ class MainWindow(QMainWindow):
             item.setForeground(QColor("#3f8c3f") if key in live else QColor(self._default_fg))
 
     def _on_beat_clicked(self, item: QListWidgetItem) -> None:
+        # ⚠ 先把要的东西读出来再动列表：切线会重填整栏，item 当场就被销毁了
         key = str(item.data(Qt.ItemDataRole.UserRole) or "")
-        if key:
-            self.follow_btn.setChecked(False)
-            self._on_focus_requested(key)
+        elsewhere = str(item.data(ROLE_ELSEWHERE) or "")
+        if not key:
+            return
+        self.follow_btn.setChecked(False)
+        if elsewhere:
+            self._go_to_line(elsewhere, key)
+        self._on_focus_requested(key)
 
     def _on_beat_double_clicked(self, item: QListWidgetItem) -> None:
         key = str(item.data(Qt.ItemDataRole.UserRole) or "")
-        if key:
-            self._jump_to(key)
+        elsewhere = str(item.data(ROLE_ELSEWHERE) or "")
+        if not key:
+            return
+        if elsewhere:
+            self._go_to_line(elsewhere, key)
+        self._jump_to(key)
+
+    def _go_to_line(self, comp_id: str, key: str = "") -> None:
+        """把左栏切到这条线上（必要时先从「按场景看」切回「按线看」），并选中那一行。
+
+        点了别处的命中却停在原地，等于告诉人"它在别的线里"然后不给路——
+        搜索结果必须能直接落到那一栏里的那一行。
+        """
+        if self._list_mode != "line":
+            self._set_list_mode("line")
+        idx = self.comp_picker.findData(comp_id)
+        if idx >= 0 and idx != self.comp_picker.currentIndex():
+            self.comp_picker.setCurrentIndex(idx)  # 会重填列表并重跑一遍筛子
+        if not key:
+            return
+        for i in range(self.beat_list.count()):
+            item = self.beat_list.item(i)
+            if str(item.data(ROLE_KEY) or "") == key and not item.isHidden():
+                self.beat_list.setCurrentItem(item)
+                self.beat_list.scrollToItem(item)
+                break
 
     # ---- 焦点与跳转 ---------------------------------------------------
 

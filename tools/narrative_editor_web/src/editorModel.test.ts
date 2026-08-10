@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   blockingValidationErrors,
   createTransition,
+  liftSubgraphForTemplate,
   mergeValidationIssues,
   normalizeFile,
   renameGraph,
@@ -12,7 +13,7 @@ import {
 } from './editorModel';
 import { focusValidationIssue, issueBelongsToActiveGraph, resolveValidationIssueFocus } from './focusIssueResolution';
 import { parseTransitionAnchorId, transitionAnchorId } from './anchorCodec';
-import type { NarrativeGraphsFileDef } from './types';
+import type { NarrativeCompositionDef, NarrativeGraphsFileDef } from './types';
 
 function sample(): NarrativeGraphsFileDef {
   return {
@@ -1045,5 +1046,76 @@ describe('editorModel', () => {
       'main',
       data,
     )).toBe(false);
+  });
+});
+
+describe('liftSubgraphForTemplate', () => {
+  const comp = (): NarrativeCompositionDef => ({
+    id: 'composition_3',
+    mainGraph: {
+      id: '主线_交互点',
+      ownerType: 'flow',
+      initialState: 'initial',
+      states: { initial: { id: 'initial' } },
+      transitions: [],
+    },
+    elements: [
+      {
+        id: 'wrapper_1',
+        kind: 'wrapperGraph',
+        label: '藏钱',
+        ownerType: 'hotspot',
+        ownerId: '主线s1藏钱点A',
+        graph: {
+          id: 'wrapper_graph_2',
+          ownerType: 'hotspot',
+          ownerId: '主线s1藏钱点A',
+          initialState: 'initial',
+          states: { initial: { id: 'initial' }, state_1: { id: 'state_1' } },
+          transitions: [
+            { id: 't_1', from: 'initial', to: 'state_1', signal: '崖墓任务_发布完成' },
+          ],
+        },
+      },
+      { id: 'blackbox_1', kind: 'dialogueBlackbox', refId: '主线_藏钱' },
+    ],
+  });
+
+  it('main 视图原样返回母作曲', () => {
+    const c = comp();
+    expect(liftSubgraphForTemplate(c, 'main')).toBe(c);
+  });
+
+  it('人在 wrapper 子图里：抬成独立作曲，自动名图按 wrap_<ownerId> 定名，owner 取元素绑定', () => {
+    const lifted = liftSubgraphForTemplate(comp(), 'element:wrapper_1')!;
+    expect(lifted.id).toBe('wrap_主线s1藏钱点A');
+    expect(lifted.mainGraph.id).toBe('wrap_主线s1藏钱点A');
+    expect(lifted.mainGraph.ownerType).toBe('hotspot');
+    expect(lifted.mainGraph.ownerId).toBe('主线s1藏钱点A');
+    expect(lifted.label).toBe('藏钱');
+    expect(lifted.elements).toEqual([]);
+    // 内容照搬
+    expect(Object.keys(lifted.mainGraph.states)).toEqual(['initial', 'state_1']);
+    expect(lifted.mainGraph.transitions[0]?.signal).toBe('崖墓任务_发布完成');
+  });
+
+  it('作者起的名字里带 ownerId 就照留（id 里有洞，盖 N 份不撞名）', () => {
+    const c = comp();
+    c.elements![0].graph!.id = '藏钱机器_主线s1藏钱点A';
+    const lifted = liftSubgraphForTemplate(c, 'element:wrapper_1')!;
+    expect(lifted.mainGraph.id).toBe('藏钱机器_主线s1藏钱点A');
+  });
+
+  it('作者起的名字里没有 ownerId 则改成 wrap_<ownerId>（否则骨架 id 是常量：第一份静默绑到样本实体、第二份撞名）', () => {
+    const c = comp();
+    c.elements![0].graph!.id = '藏钱机器';
+    const lifted = liftSubgraphForTemplate(c, 'element:wrapper_1')!;
+    expect(lifted.mainGraph.id).toBe('wrap_主线s1藏钱点A');
+    expect(lifted.label).toBe('藏钱'); // 人起的名字留在 label 里，不丢
+  });
+
+  it('非子图元素（blackbox）回落母作曲', () => {
+    const c = comp();
+    expect(liftSubgraphForTemplate(c, 'element:blackbox_1')).toBe(c);
   });
 });

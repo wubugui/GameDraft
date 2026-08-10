@@ -16,7 +16,13 @@ from PySide6.QtWidgets import QApplication, QSpacerItem
 from tools.narrative_debugger.hub import DebugHub
 from tools.narrative_debugger.model import NarrativeIndex
 from tools.narrative_debugger.savepoints import SavepointStore
-from tools.narrative_debugger.ui.main_window import ROLE_HEADER, ROLE_KEY, MainWindow
+from tools.narrative_debugger.ui import main_window as main_window_module
+from tools.narrative_debugger.ui.main_window import (
+    ROLE_ELSEWHERE,
+    ROLE_HEADER,
+    ROLE_KEY,
+    MainWindow,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -48,6 +54,16 @@ def _visible_rows(win: MainWindow) -> list[str]:
         win.beat_list.item(i).text()
         for i in range(win.beat_list.count())
         if not win.beat_list.item(i).isHidden()
+    ]
+
+
+def _local_rows(win: MainWindow) -> list[str]:
+    """当前这一栏自己的可见行（不含搜索补进来的"别处的命中"）。"""
+    return [
+        win.beat_list.item(i).text()
+        for i in range(win.beat_list.count())
+        if not win.beat_list.item(i).isHidden()
+        and win.beat_list.item(i).data(ROLE_ELSEWHERE) is None
     ]
 
 
@@ -145,17 +161,93 @@ def test_search_matches_state_name_across_graphs(window: MainWindow) -> None:
 def test_search_says_where_it_actually_lives(window: MainWindow) -> None:
     """左栏一次只列一条线。光说"没搜到"会让人以为整个项目都没有。"""
     window.beat_search.setText("水鬼")
-    assert _visible_rows(window) == []
+    assert _local_rows(window) == [], "本线没有「水鬼」，却有本线的行留下来了"
     assert "码头" in window.search_count.text(), window.search_count.text()
 
     window.beat_search.setText("zzz压根不存在")
+    assert _visible_rows(window) == []
     assert "整个项目里都没有" in window.search_count.text()
+
+
+def test_search_lists_hits_from_other_lines_and_can_jump_there(window: MainWindow) -> None:
+    """搜索必须是全工程的：别的线里的命中要列出来，点一下还得真能过去。
+
+    这是"赌场交互点根本搜不到"那一发：图就在数据里，只是躺在另一条线上，
+    而搜索只筛当前这一栏——0 条结果读起来跟"这东西不存在"一模一样。
+    """
+    current = str(window.comp_picker.currentData() or "")
+    other, graph_id = next(
+        (cid, gid)
+        for cid, _ in window.index.composition_entries()
+        if cid != current
+        for gid in window.index.graphs_in_composition(cid)
+        if window.index.graph_states(gid)
+    )
+    needle = window.index.graph_labels[graph_id]
+
+    window.beat_search.setText(needle)
+    foreign = [
+        window.beat_list.item(i)
+        for i in range(window.beat_list.count())
+        if window.beat_list.item(i).data(ROLE_KEY)
+        and window.beat_list.item(i).data(ROLE_ELSEWHERE)
+    ]
+    assert foreign, f"「{needle}」在「{other}」线里，却一条都没兜出来"
+    assert str(foreign[0].data(ROLE_ELSEWHERE)) == other
+
+    key = str(foreign[0].data(ROLE_KEY))
+    window._on_beat_clicked(foreign[0])
+    assert str(window.comp_picker.currentData()) == other, "点了别处的命中却没切过去"
+    assert window.graph.focus_key == key
+
+
+def test_elsewhere_rows_do_not_pile_up(window: MainWindow) -> None:
+    """补进来的行下一轮要先摘干净，否则越搜越长、命中数还会翻倍。"""
+    window.beat_search.setText("水鬼")
+    first = window.beat_list.count()
+    window._apply_beat_filter()
+    window._apply_beat_filter()
+    assert window.beat_list.count() == first
+
+    window.beat_search.setText("")
+    assert all(
+        window.beat_list.item(i).data(ROLE_ELSEWHERE) is None
+        for i in range(window.beat_list.count())
+    ), "清空搜索之后还留着别处的行"
+
+
+def test_truncated_elsewhere_hits_say_how_many_were_dropped(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """截断必须明说：默默少列几条，读起来跟"就这些"一模一样。"""
+    monkeypatch.setattr(main_window_module, "ELSEWHERE_LIMIT", 3)
+    window.beat_search.setText("_")
+    rows = [
+        window.beat_list.item(i)
+        for i in range(window.beat_list.count())
+        if window.beat_list.item(i).data(ROLE_ELSEWHERE) is not None
+        and window.beat_list.item(i).data(ROLE_KEY)
+    ]
+    assert len(rows) <= 3
+    tail = window.beat_list.item(window.beat_list.count() - 1).text()
+    assert "没列" in tail, f"截断了却没说，末行是：{tail}"
+
+
+def test_every_line_in_the_file_is_in_the_picker(window: MainWindow) -> None:
+    """下拉框按"文件里有几条线"建，不按"有拍子的线"——后者会让整条线连同子图消失。"""
+    picked = {str(window.comp_picker.itemData(i)) for i in range(window.comp_picker.count())}
+    assert picked == {cid for cid, _ in window.index.composition_entries()}
+    for i in range(window.comp_picker.count()):
+        text = window.comp_picker.itemText(i)
+        assert not text.startswith("composition_"), (
+            f"下拉框里摆着原始 id「{text}」，策划认不出这条线装着什么"
+        )
 
 
 def test_clearing_search_restores_everything(window: MainWindow) -> None:
     total = window.beat_list.count()
     window.beat_search.setText("偷鸡")
-    assert len(_visible_rows(window)) < total
+    assert len(_local_rows(window)) < total
     window.beat_search.setText("")
     assert len(_visible_rows(window)) == total
     assert _highlighted(window) == []
@@ -168,7 +260,7 @@ def test_switching_line_reruns_the_filter(window: MainWindow) -> None:
     idx = window.comp_picker.findData("beishi_lingong_flow")
     assert idx >= 0
     window.comp_picker.setCurrentIndex(idx)
-    assert _visible_rows(window) == [], "换线之后筛子没重跑"
+    assert _local_rows(window) == [], "换线之后筛子没重跑"
 
 
 # ---- 4. 缩放粘得住 --------------------------------------------------------

@@ -116,6 +116,7 @@ import { RuleOfferRegistry } from './RuleOfferRegistry';
 import { InteractionCoordinator } from './InteractionCoordinator';
 import { EventBridge } from './EventBridge';
 import { DebugTools, type ScenarioDebugPanelRow } from './DebugTools';
+import { reportDevError } from './devErrorOverlay';
 import { SceneDepthSystem } from './SceneDepthSystem';
 import {
   CharacterLightingSystem,
@@ -589,11 +590,12 @@ export class Game {
     this.bubbleChatterSystem = new BubbleChatterSystem({
       emoteBubbleManager: this.emoteBubbleManager,
       resolveEmoteTarget: (id) => this.resolveEmoteTarget(id),
-      resolveSpeakerPosition: (ref) => {
-        if (ref.kind === 'player') return { x: this.player.x, y: this.player.y };
-        const actor = this.resolveActorFn(ref.id);
+      resolveCharacterEntityId: (cid) => this.resolveCharacterEntityId(cid),
+      // 与 resolveEmoteTarget 同一条解析路：先演员（含 player），再当前场景热点
+      resolveSpeakerPosition: (targetId) => {
+        const actor = this.resolveActorFn(targetId);
         if (actor) return { x: actor.x, y: actor.y };
-        const hs = this.sceneManager.getCurrentHotspots().find((h) => h.def.id === ref.id);
+        const hs = this.sceneManager.getCurrentHotspots().find((h) => h.def.id === targetId);
         return hs ? { x: hs.def.x, y: hs.def.y } : null;
       },
       playerPosition: () => ({ x: this.player.x, y: this.player.y }),
@@ -892,6 +894,31 @@ export class Game {
       `parent=${h.container.parent ? 'yes' : 'no'} y=${Math.round(h.container.y)}`,
     );
     return h;
+  }
+
+  /**
+   * 角色（`character_registry.json` 的 id）→ 当前场景里引用了它的那个摆放的实体 id。
+   *
+   * 头顶闲聊的「角色档」说话人用：角色是跨场景的身份，具体由哪个摆放来说，只有站到
+   * 当前场景才知道。**只认当前场景的 NPC**——与 `resolveEmoteTarget` 的场景相对口径一致。
+   *
+   * 同一角色在本场有多个摆放时的取法：**优先可见的那个**，一个可见的都没有才回落到
+   * 第一个（都按场景声明序，确定性可复现；校验器对多摆放另报 warning）。
+   *
+   * ⚠ 可见性只当**平手时的拉票**，不当准入门槛：实体档走 `resolveEmoteTarget`，它压根
+   * 不看可见性；角色档要是把"不可见＝不在场"升成硬条件，同一个被条件藏起来的 NPC
+   * 就会"配成角色档闭嘴、配成实体档照说"——两档口径分裂比气泡飘在隐身人头上更难查。
+   */
+  private resolveCharacterEntityId(characterId: string): string | null {
+    const want = String(characterId ?? '').trim();
+    if (!want) return null;
+    let fallback: string | null = null;
+    for (const npc of this.sceneManager.getCurrentNpcs()) {
+      if (String(npc.def.characterId ?? '').trim() !== want) continue;
+      if (npc.container.visible) return npc.def.id;
+      if (fallback === null) fallback = npc.def.id;
+    }
+    return fallback;
   }
 
   private async refreshTextResolveLookups(): Promise<void> {
@@ -4225,57 +4252,88 @@ export class Game {
     }
   }
 
-  /** dev 跳转：把主流程图推进到 flowState（逐个 setState 使前置 reached、任务链推进），
-   *  再按 set 设各状态，最后进入对应场景。BFS 求 initial→flowState 迁移路径——
-   *  分支图取最短路径，线性图与旧实现一致；不可达时明确报错并跳过主线推进。 */
+  /**
+   * dev 跳转：把主流程图与各 beat 子图补到目标进度，再进对应场景。
+   *
+   * 主线图与 scenario 子图**走同一条路**——都用 {@link NarrativeStateManager.planRemoteAdvance}
+   * 求逐跳合法路径再一跳跳推进，沿路 onEnterActions（发钱/发物/演出/派生信号）全部照常执行。
+   * 一发跳到中段是错的：既跳过前序铺垫，也会被 scenario 边界守卫挡下。
+   * 活计图无实例时先 startNarrativeRun 开一轮再沿链走。
+   *
+   * 每步都做落地复核，任何一项没到位都在收尾汇总里点名——warp 只做了半截却装作成功，
+   * 是这套工具最贵的失败模式（数据漂移能潜伏到没人敢信这个菜单为止）。
+   */
   private async enterNarrativeWarp(id: string): Promise<void> {
     const warp = this.narrativeWarps.find((w) => w.id === id);
-    if (!warp) return;
+    if (!warp) {
+      console.warn(`enterNarrativeWarp: 找不到跳转点 "${id}"`);
+      return;
+    }
+    const issues: string[] = [];
     if (warp.flowGraph && warp.flowState) {
-      const graph = this.narrativeStateManager.getGraph(warp.flowGraph);
-      if (!graph) {
-        console.warn(`enterNarrativeWarp: 找不到流程图 "${warp.flowGraph}"`);
-      } else {
-        const adjacency = new Map<string, string[]>();
-        for (const t of graph.transitions ?? []) {
-          const arr = adjacency.get(t.from);
-          if (arr) arr.push(t.to);
-          else adjacency.set(t.from, [t.to]);
-        }
-        const start = graph.initialState;
-        const cameFrom = new Map<string, string>();
-        const seen = new Set<string>([start]);
-        const queue: string[] = [start];
-        while (queue.length > 0) {
-          const cur = queue.shift()!;
-          if (cur === warp.flowState) break;
-          for (const next of adjacency.get(cur) ?? []) {
-            if (seen.has(next)) continue;
-            seen.add(next);
-            cameFrom.set(next, cur);
-            queue.push(next);
-          }
-        }
-        if (!seen.has(warp.flowState)) {
-          console.warn(
-            `enterNarrativeWarp: 流程图 "${warp.flowGraph}" 从 "${start}" 无迁移路径可达 "${warp.flowState}"，已跳过主线推进`,
-          );
-        } else {
-          const path: string[] = [];
-          for (let s: string | undefined = warp.flowState; s !== undefined; s = cameFrom.get(s)) {
-            path.unshift(s);
-            if (s === start) break;
-          }
-          for (const s of path) {
-            await this.narrativeStateManager.debugSetNarrativeState(warp.flowGraph, s);
-          }
-        }
-      }
+      await this.advanceNarrativeForWarp(warp.flowGraph, warp.flowState, issues);
     }
     for (const st of warp.set ?? []) {
-      await this.narrativeStateManager.debugSetNarrativeState(st.graph, st.state);
+      await this.advanceNarrativeForWarp(st.graph, st.state, issues);
+    }
+    if (issues.length > 0) {
+      // dev 下问题必须"响"在画面上（runtime 不变量七）：只写 console 的失败等于没报。
+      reportDevError(
+        `叙事跳转「${warp.label}」铺垫未完全到位（${issues.length} 项，场景仍会进入）：\n`
+          + issues.map((s) => `  · ${s}`).join('\n'),
+        '[narrative-warp]',
+      );
+    } else {
+      console.info(`enterNarrativeWarp「${warp.label}」铺垫全部到位`);
     }
     await this.devLoadScene(warp.scene);
+  }
+
+  /** warp 单张图的推进 + 落地复核；失败/降级写进 issues 供收尾汇总。 */
+  private async advanceNarrativeForWarp(graphId: string, stateId: string, issues: string[]): Promise<void> {
+    const plan = this.narrativeStateManager.planRemoteAdvance(graphId, stateId);
+    if (!plan.ok) {
+      issues.push(`${graphId}.${stateId} —— ${plan.reason}`);
+      return;
+    }
+    if (plan.needsRun) {
+      await this.narrativeStateManager.startNarrativeRun(graphId);
+    }
+    // 途经跳按"已经过去的历史"处理：只落结果，不重播过场/对话/等点击，否则一次跳转要手点几十下。
+    // 最后一跳 = 策划要测的那一拍，完整执行（开场演出该看还得看）。
+    for (let i = 0; i < plan.path.length; i += 1) {
+      await this.narrativeStateManager.debugSetNarrativeState(graphId, plan.path[i], {
+        silencePerformance: i < plan.path.length - 1,
+      });
+    }
+    if (plan.direct) {
+      issues.push(`${graphId}.${stateId} —— 无迁移路径，按 entry/exit 接口一发直达，中间状态的 onEnter 未执行`);
+    }
+    // 落地复核：置态走队列串行，守卫拒绝/代际失效都只留日志不抛，必须回读确认。
+    // 停在别处但目标已 reached = 沿路 reactive 继续推进（正常语义），不算问题。
+    const landed = this.narrativeStateManager.getActiveState(graphId);
+    if (landed !== stateId && !this.narrativeStateManager.hasReachedState(graphId, stateId)) {
+      issues.push(`${graphId}.${stateId} —— 推进后实际停在 "${landed ?? '(无实例)'}"`);
+    }
+  }
+
+  /**
+   * 菜单预检：按**冷启动起点**（各图 initialState）推演每条 warp 能不能把铺垫做全。
+   * 纯查询不改状态，让坏掉的跳转点在菜单里就显形，而不是等策划点进去发现戏没铺到。
+   */
+  private inspectNarrativeWarp(warp: DevNarrativeWarp): string[] {
+    const problems: string[] = [];
+    const check = (graphId: string, stateId: string): void => {
+      const graph = this.narrativeStateManager.getGraph(graphId);
+      const plan = this.narrativeStateManager.planRemoteAdvance(graphId, stateId, {
+        from: graph?.initialState,
+      });
+      if (!plan.ok) problems.push(`${graphId}.${stateId} —— ${plan.reason}`);
+      else if (plan.direct) problems.push(`${graphId}.${stateId} —— 只能一发直达，中间 onEnter 不跑`);
+    };
+    if (warp.flowGraph && warp.flowState) check(warp.flowGraph, warp.flowState);
+    for (const st of warp.set ?? []) check(st.graph, st.state);
+    return problems;
   }
 
   private async startDevMode(
@@ -4329,8 +4387,21 @@ export class Game {
           void this.waterMinigameManager.start(entry.id);
         }
       },
-      getNarrativeWarps: () => this.narrativeWarps.map((w) => ({ id: w.id, label: w.label })),
-      enterNarrativeWarp: (id: string) => { void this.enterNarrativeWarp(id); },
+      getNarrativeWarps: () => this.narrativeWarps.map((w) => ({
+        id: w.id,
+        label: w.label,
+        issues: this.inspectNarrativeWarp(w),
+      })),
+      enterNarrativeWarp: (id: string) => {
+        // 同实例连续跳转会残留上一次的 reached/flag/任务/背包（叙事层能复位，其它系统不能），
+        // 残留的 reached 会让门闸条件恒真、演出走错。按存档硬契约「新游戏 = 净化 URL 整页
+        // reload、不做进程内软重置」，点击一律走冷启动直达，起点绝对干净。
+        const url = new URL(window.location.href);
+        url.search = '';
+        url.searchParams.set('mode', 'dev');
+        url.searchParams.set('narrativeWarp', id);
+        window.location.assign(url.toString());
+      },
     });
     if (!visualCapture) this.devModeUI.open();
 

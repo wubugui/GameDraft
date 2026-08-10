@@ -418,6 +418,8 @@ export interface AuthoringCatalogDef {
   planeExclusive?: string[];
   /** 全项目实际发出的信号 id 去重集（对话图 + 内容资产 emitNarrativeSignal ∪ broadcastOnEnter 派生广播）；缺失=旧 host。 */
   emittedSignals?: string[];
+  /** 模板参数来源绑定候选（权威 = shared/narrative_templates.PARAM_SOURCES）；缺失=旧 host，前端用内置兜底。 */
+  paramSources?: Array<{ id: string; label: string }>;
   /**
    * Rich rows for popup reference pickers. `id` is the value written on an
    * intentional selection; aliases only recognise legacy values and are never
@@ -516,6 +518,8 @@ export interface TemplateParamDef {
   note?: string;
   /** 仅「从现成作曲创建模板」时用：这个值出现在源作曲里，抽取时被替换成 {{name}}。 */
   sample?: string;
+  /** 来源绑定：批量盖章时该参数不进表单，由被盖实体现推（候选见 catalog.paramSources）。 */
+  from?: string;
 }
 
 export interface TemplateSignalDef {

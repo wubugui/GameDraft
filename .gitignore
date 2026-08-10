@@ -24,6 +24,9 @@ artifact/Experiments/
 .DS_Store
 Thumbs.db
 
+# workbuddy 本地状态
+.workbuddy/
+
 # Cursor 项目级配置需托管，勿忽略 .cursor/
 
 # Python (tools)

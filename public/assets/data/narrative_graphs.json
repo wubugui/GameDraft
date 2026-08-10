@@ -4,11 +4,16 @@
     "graphs": {
       "flow_1": "主线_交互点",
       "雾津_主线_交互点": "主线_交互点",
-      "主线_藏钱交互点": "主线_交互点"
+      "主线_藏钱交互点": "主线_交互点",
+      "wrapper_graph_3": "街巷_赌坊"
     },
     "states": {
       "癞子NPC": {
         "state_1": "在捡钱"
+      },
+      "街巷_赌坊": {
+        "initial": "赌场正常状态",
+        "state_1": "初始状态"
       }
     }
   },
@@ -326,8 +331,8 @@
           "label": "码头·官差套近乎（可被骂重置）",
           "ownerType": "scenario",
           "ownerId": "码头_官差套近乎",
-          "x": 24,
-          "y": 310,
+          "x": -157,
+          "y": 183,
           "meta": {
             "emits": [],
             "reads": [],
@@ -653,8 +658,8 @@
             "id": "state_2",
             "meta": {
               "editor": {
-                "x": 22,
-                "y": 55
+                "x": 27,
+                "y": 118
               }
             },
             "label": "主线开局闲逛A"
@@ -663,11 +668,21 @@
             "id": "state_3",
             "meta": {
               "editor": {
-                "x": 330,
-                "y": 88
+                "x": 272,
+                "y": 117
               }
             },
             "label": "主线开局闲逛B"
+          },
+          "state_4": {
+            "id": "state_4",
+            "meta": {
+              "editor": {
+                "x": 500,
+                "y": 96
+              }
+            },
+            "label": "去赌坊"
           }
         },
         "transitions": [
@@ -752,16 +767,22 @@
             ]
           },
           {
-            "id": "t_4",
-            "from": "state_3",
-            "to": "s02_beishi",
-            "signal": "__draft__"
-          },
-          {
             "id": "t_2",
             "from": "initial",
             "to": "state_2",
             "signal": "主线_开局被赶出茶馆"
+          },
+          {
+            "id": "t_5",
+            "from": "state_3",
+            "to": "state_4",
+            "signal": "__draft__"
+          },
+          {
+            "id": "t_6",
+            "from": "state_4",
+            "to": "s02_beishi",
+            "signal": "__draft__"
           }
         ],
         "label": "寻狗Demo主线"
@@ -5910,62 +5931,76 @@
             "id": "initial",
             "meta": {
               "editor": {
-                "x": -630,
-                "y": 97
+                "x": -622,
+                "y": 60
+              }
+            }
+          },
+          "state_1": {
+            "id": "state_1",
+            "meta": {
+              "editor": {
+                "x": -373,
+                "y": 61
               }
             }
           }
         },
-        "transitions": [],
+        "transitions": [
+          {
+            "id": "t_1",
+            "from": "initial",
+            "to": "state_1",
+            "signal": "__draft__"
+          }
+        ],
         "label": "主线_交互点"
       },
       "elements": [
         {
-          "id": "scenario_1",
-          "kind": "scenarioSubgraph",
+          "id": "wrapper_1",
+          "kind": "wrapperGraph",
+          "label": "藏钱",
           "refId": "",
-          "x": -372,
-          "y": 99,
+          "x": -9,
+          "y": 39,
           "meta": {
             "emits": [],
             "reads": [],
             "commands": []
           },
-          "ownerType": "scenario",
-          "ownerId": "",
+          "ownerType": "hotspot",
+          "ownerId": "主线s1藏钱点A",
           "graph": {
-            "id": "scenario_graph_1",
-            "ownerType": "scenario",
-            "initialState": "inactive",
-            "entryState": "inactive",
-            "exitStates": [
-              "exit"
-            ],
+            "id": "wrapper_graph_2",
+            "label": "藏钱",
+            "ownerType": "hotspot",
+            "initialState": "initial",
             "states": {
-              "inactive": {
-                "id": "inactive",
+              "initial": {
+                "id": "initial",
                 "meta": {
                   "editor": {
-                    "x": 45,
-                    "y": 219
+                    "x": -156,
+                    "y": 189
                   }
                 }
               },
-              "entry": {
-                "id": "entry",
+              "state_1": {
+                "id": "state_1",
                 "meta": {
                   "editor": {
-                    "x": 359,
-                    "y": 198
+                    "x": 132,
+                    "y": 187
                   }
                 }
               },
-              "exit": {
-                "id": "exit",
+              "state_2": {
+                "id": "state_2",
                 "meta": {
                   "editor": {
-                    "x": 739,
-                    "y": 246
+                    "x": 461,
+                    "y": 183
                   }
                 }
               }
@@ -5973,29 +6008,96 @@
             "transitions": [
               {
                 "id": "t_1",
-                "from": "inactive",
-                "to": "entry",
+                "from": "initial",
+                "to": "state_1",
                 "signal": "崖墓任务_发布完成"
               },
               {
                 "id": "t_2",
-                "from": "entry",
-                "to": "exit",
+                "from": "state_1",
+                "to": "state_2",
+                "signal": "私有事件完结"
+              }
+            ],
+            "ownerId": "主线s1藏钱点A"
+          }
+        },
+        {
+          "id": "wrapper_2",
+          "kind": "wrapperGraph",
+          "label": "赌场交互点",
+          "refId": "",
+          "x": -349,
+          "y": 215,
+          "meta": {
+            "emits": [],
+            "reads": [],
+            "commands": []
+          },
+          "ownerType": "npc",
+          "ownerId": "街巷_赌坊门卫",
+          "graph": {
+            "id": "街巷_赌坊",
+            "label": "赌场交互点",
+            "ownerType": "npc",
+            "initialState": "初始状态",
+            "states": {
+              "赌场正常状态": {
+                "id": "赌场正常状态",
+                "meta": {
+                  "editor": {
+                    "x": -151,
+                    "y": 82
+                  }
+                },
+                "label": "正常状态"
+              },
+              "主线剧情状态": {
+                "id": "主线剧情状态",
+                "meta": {
+                  "editor": {
+                    "x": 250,
+                    "y": 79
+                  }
+                },
+                "label": "主线剧情状态",
+                "description": "主线，关二狗拿了钱最后去了赌场挥霍，引发接下来的剧情。"
+              },
+              "初始状态": {
+                "id": "初始状态",
+                "meta": {
+                  "editor": {
+                    "x": -58,
+                    "y": 244
+                  }
+                },
+                "label": "初始状态"
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_2",
+                "from": "初始状态",
+                "to": "主线剧情状态",
                 "signal": "__draft__",
                 "trigger": "reactive",
                 "conditions": [
                   {
-                    "not": {
-                      "narrative": "flow_xungou_main",
-                      "state": "initial"
-                    }
+                    "narrative": "flow_xungou_main",
+                    "state": "state_4"
                   }
                 ]
+              },
+              {
+                "id": "t_1",
+                "from": "主线剧情状态",
+                "to": "赌场正常状态",
+                "signal": "主线_序章完结"
               }
             ],
-            "label": "主线_藏钱"
+            "ownerId": "街巷_赌坊门卫"
           },
-          "label": "主线_藏钱"
+          "package": "章节_听书"
         }
       ]
     }
@@ -6481,6 +6583,15 @@
     },
     {
       "id": "Demo主线开始"
+    },
+    {
+      "id": "私有事件完结",
+      "label": "私有事件完结通用信号",
+      "notes": "私有事件完结通用信号",
+      "scope": "private"
+    },
+    {
+      "id": "主线_序章完结"
     }
   ]
 }

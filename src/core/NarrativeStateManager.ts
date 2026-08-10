@@ -155,6 +155,63 @@ export interface NarrativeRunCounters {
   settled: Record<string, number>;
 }
 
+/**
+ * 远程推进方案（{@link NarrativeStateManager.planRemoteAdvance} 的产物）。
+ * dev warp / 调试器要把某张图"补"到一个从未真实发生过的进度时，拿它换取一条**逐跳合法**的路径：
+ * 沿路每一跳都是图内已声明的迁移边，onExit/onEnter/广播与信号驱动走到那里等价，
+ * 因而铺垫（发钱/发物/演出/派生信号）不会缺斤少两——这正是一发跳级置态做不到的。
+ */
+export type NarrativeAdvancePlan =
+  | {
+      ok: true;
+      /** 从起点到目标的逐跳状态序列（不含起点、含目标）；已在位时为空数组。 */
+      path: string[];
+      /** 起点状态（活计图无实例时为该图 initialState，配合 needsRun 使用）。 */
+      from: string;
+      /** true = 目标是活计图且当前无实例，调用方须先 startNarrativeRun 再按 path 推进。 */
+      needsRun: boolean;
+      /** true = 无迁移路径，靠 entryState/exitStates 接口一发直达（中间状态的 onEnter 不会跑）。 */
+      direct: boolean;
+    }
+  | { ok: false; code: 'graphMissing' | 'stateMissing' | 'unreachable'; reason: string };
+
+/**
+ * 沿链重放**途经的中间状态**要跳过的阻塞式动作。
+ *
+ * 补历史要的是结果（钱/物/规矩层/派生信号），不是重播过程——正如读档从不重播演出。
+ * 这几类要么等玩家点击、要么长时间占屏：一次 warp 途经十几跳，逐个真播会把"跳到那儿"
+ * 拖成几十次点击，功能等于不可用。**目标状态（最后一跳）不在此列，照常完整执行**——
+ * 那正是策划要测的那一拍，开场演出该看还得看。
+ *
+ * 刻意收**黑名单**而非白名单：漏登记一个新演出动作，症状是 warp 卡住（一眼可见）；
+ * 白名单漏登记一个状态类动作，症状是铺垫静默缺失——那是贵得多的失败模式。
+ * 拼写漂移由 NarrativeStateManager.test.ts 的对账用例挡（每一项都必须是已知动作类型）。
+ */
+export const REPLAY_SILENCED_ACTION_TYPES: ReadonlySet<string> = new Set([
+  // 长演出 / 占屏
+  'startCutscene',
+  'showOverlayImage',
+  'blendOverlayImage',
+  // 需要玩家逐句点或做选择
+  'playScriptedDialogue',
+  'startDialogueGraph',
+  // ⚠ chooseAction 连同它嵌套的分支动作一起跳过：重放无从得知当初玩家选了哪支，
+  //   与其猜一支落错副作用，不如整条不落（warp 表本就只声明线性目标状态）。
+  'chooseAction',
+  'waitClickContinue',
+  'showEmoteAndWait',
+  'showSpeechBubbleAndWait',
+  // 纯耗时
+  'waitMs',
+  // 玩法会话：非玩不能过
+  'startPressureHold',
+  'startEncounter',
+  'startWaterMinigame',
+  'startSugarWheelMinigame',
+  'startPaperCraftMinigame',
+  'startObjectExamine',
+]);
+
 export interface NarrativeGraphsFile {
   schemaVersion?: number;
   /** 信号登记表；私有信号在此声明 scope（见 {@link NarrativeSignalDef}）。 */
@@ -217,7 +274,7 @@ export type NarrativeStateChangeCause = 'transition' | 'reset' | 'revert' | 'res
 
 type QueuedTrigger =
   | { kind: 'external'; key: NarrativeTriggerKey; source?: NarrativeSignal; owner?: { ownerType: string; ownerId: string } }
-  | { kind: 'setState'; graphId: string; stateId: string }
+  | { kind: 'setState'; graphId: string; stateId: string; silencePerformance?: boolean }
   | { kind: 'reactive'; graphId: string; transitionId: string }
   | { kind: 'runLifecycle'; op: 'start' | 'reset' | 'revert' | 'activate'; graphId: string; stateId?: string }
   | { kind: 'packageLifecycle'; packageId: string; live: boolean };
@@ -849,7 +906,16 @@ export class NarrativeStateManager implements IGameSystem {
     return this.enqueue({ kind: 'external', key: k });
   }
 
-  debugSetNarrativeState(graphId: string, stateId: string): Promise<void> {
+  /**
+   * @param options.silencePerformance true = 本跳按"重放途经的历史"处理，跳过
+   *        {@link REPLAY_SILENCED_ACTION_TYPES} 里的阻塞式演出，只落状态与资源类副作用。
+   *        沿链推进时给**除最后一跳外**的每一跳传 true（见 planRemoteAdvance）。
+   */
+  debugSetNarrativeState(
+    graphId: string,
+    stateId: string,
+    options: { silencePerformance?: boolean } = {},
+  ): Promise<void> {
     const gid = String(graphId ?? '').trim();
     const sid = String(stateId ?? '').trim();
     if (!gid || !sid) return Promise.resolve();
@@ -861,12 +927,95 @@ export class NarrativeStateManager implements IGameSystem {
       message: 'debugSetNarrativeState requested',
     });
     console.warn(message);
-    return this.enqueue({ kind: 'setState', graphId: gid, stateId: sid });
+    return this.enqueue({
+      kind: 'setState',
+      graphId: gid,
+      stateId: sid,
+      silencePerformance: options.silencePerformance === true,
+    });
   }
 
   /** @deprecated Content must use signals/transitions. Use debugSetNarrativeState for tooling repair only. */
   setNarrativeState(graphId: string, stateId: string): Promise<void> {
     return this.debugSetNarrativeState(graphId, stateId);
+  }
+
+  /**
+   * 求一条把 graphId 推到 targetStateId 的**逐跳合法**路径（dev warp / 调试器专用，纯查询不改状态）。
+   *
+   * 为什么不能一发置态：scenario 图的中段状态从外部直接进入会跳过前序状态的 onEnterActions，
+   * 铺垫（发钱/发物/演出/派生信号）全部缺席，还会被 {@link canRemoteEnterState} 挡下。
+   * 沿 BFS 最短路逐跳走则每步都等价于信号驱动，副作用完整。
+   *
+   * 回退：图内无路可达、但目标恰是 entryState/exitStates（对外合法接口）时给 `direct` 方案一发直达。
+   *
+   * @param options.from 显式起点，缺省取当前 active（活计图取实例 active）。菜单预检传 initialState
+   *        即可在不改动状态的前提下推演"冷启动后能不能到"。
+   */
+  planRemoteAdvance(
+    graphId: string,
+    targetStateId: string,
+    options: { from?: string } = {},
+  ): NarrativeAdvancePlan {
+    const gid = String(graphId ?? '').trim();
+    const target = String(targetStateId ?? '').trim();
+    const graph = this.graphs.get(gid);
+    if (!graph) {
+      return { ok: false, code: 'graphMissing', reason: `叙事图 "${gid}" 不存在` };
+    }
+    if (!target || !graph.states[target]) {
+      return { ok: false, code: 'stateMissing', reason: `图 "${gid}" 没有状态 "${target}"` };
+    }
+    const runGraph = isRunGraph(graph);
+    const current = runGraph ? this.getInstanceActive(gid, graph) : (this.activeStates.get(gid) ?? graph.initialState);
+    const needsRun = runGraph && current === undefined;
+    const from = options.from ?? current ?? graph.initialState;
+    if (!graph.states[from]) {
+      return { ok: false, code: 'stateMissing', reason: `图 "${gid}" 没有起点状态 "${from}"` };
+    }
+    if (from === target) {
+      return { ok: true, path: [], from, needsRun, direct: false };
+    }
+    // BFS 最短路：只借拓扑，不问 trigger——重放不等信号。
+    const adjacency = new Map<string, string[]>();
+    for (const t of graph.transitions ?? []) {
+      if (!this.isLocalEndpoint(t.from) || !this.isLocalEndpoint(t.to)) continue;
+      if (!graph.states[t.to]) continue;
+      const arr = adjacency.get(t.from);
+      if (arr) arr.push(t.to);
+      else adjacency.set(t.from, [t.to]);
+    }
+    const cameFrom = new Map<string, string>();
+    const seen = new Set<string>([from]);
+    const queue: string[] = [from];
+    while (queue.length > 0) {
+      const cur = queue.shift()!;
+      if (cur === target) break;
+      for (const next of adjacency.get(cur) ?? []) {
+        if (seen.has(next)) continue;
+        seen.add(next);
+        cameFrom.set(next, cur);
+        queue.push(next);
+      }
+    }
+    if (seen.has(target)) {
+      const path: string[] = [];
+      for (let s: string | undefined = target; s !== undefined && s !== from; s = cameFrom.get(s)) {
+        path.unshift(s);
+      }
+      return { ok: true, path, from, needsRun, direct: false };
+    }
+    // 无路可达时的一发直达**只对 scenario 图开**：entry/exit 是它显式声明的对外接口。
+    // 非 scenario 图（主线里程碑图这类）没有这种接口，孤立状态一律报错——直达会跳过整条
+    // reached 链，而 quests 的门控恰恰读 reached:true，静默直达比不推进更糟。
+    if (this.isScenarioGraph(graph) && this.canRemoteEnterState(graph, target, from)) {
+      return { ok: true, path: [target], from, needsRun, direct: true };
+    }
+    return {
+      ok: false,
+      code: 'unreachable',
+      reason: `图 "${gid}" 从 "${from}" 无迁移路径可达 "${target}"，且它不是 entryState/exitStates`,
+    };
   }
 
   // ------------------------------------------------------------------ //
@@ -1572,7 +1721,7 @@ export class NarrativeStateManager implements IGameSystem {
     try {
       this.recordTrace('trigger.start', this.tracePatchForTrigger(trigger));
       if (trigger.kind === 'setState') {
-        await this.applyStateCommand(trigger.graphId, trigger.stateId);
+        await this.applyStateCommand(trigger.graphId, trigger.stateId, trigger.silencePerformance === true);
       } else if (trigger.kind === 'reactive') {
         await this.processReactiveTrigger(trigger.graphId, trigger.transitionId);
       } else if (trigger.kind === 'runLifecycle') {
@@ -1852,15 +2001,12 @@ export class NarrativeStateManager implements IGameSystem {
     }
   }
 
-  private async applyStateCommand(graphId: string, stateId: string): Promise<void> {
+  private async applyStateCommand(
+    graphId: string,
+    stateId: string,
+    silencePerformance = false,
+  ): Promise<void> {
     const graph = this.graphs.get(graphId);
-    if (graph && isRunGraph(graph)) {
-      // setState/warp 不支持活计图（会凭空造出幽灵实例条目）；进活计走 start+信号，修复走 reset/revert。
-      const message = `NarrativeStateManager: setState 不支持活计图 ${graphId}（用 startNarrativeRun+信号，或 reset/revert）`;
-      this.recordIssue({ severity: 'warning', code: 'setState.runGraph.unsupported', message, graphId, stateId });
-      console.warn(message);
-      return;
-    }
     if (!graph || !graph.states[stateId]) {
       const message = `NarrativeStateManager: setState target missing ${graphId}.${stateId}`;
       this.recordIssue({ severity: 'warning', code: 'setState.target.missing', message, graphId, stateId });
@@ -1868,16 +2014,27 @@ export class NarrativeStateManager implements IGameSystem {
       console.warn(message);
       return;
     }
-    if (!this.canRemoteEnterState(graph, stateId)) {
-      const message = `NarrativeStateManager: setState target violates scenario boundary ${graphId}.${stateId}`;
+    // 活计图**无实例**时置态会凭空造出幽灵实例条目 —— 仍然拒绝（开活计走 startNarrativeRun）。
+    // 已有实例则与常驻图同待遇：沿图内合法边可逐跳推进（dev 重放/修复），跳级仍被下面的守卫拦。
+    const from = isRunGraph(graph)
+      ? this.getInstanceActive(graphId, graph)
+      : (this.activeStates.get(graphId) ?? graph.initialState);
+    if (from === undefined) {
+      const message = `NarrativeStateManager: setState 不支持无实例的活计图 ${graphId}（先 startNarrativeRun，或用 reset/revert 修复）`;
+      this.recordIssue({ severity: 'warning', code: 'setState.runGraph.unsupported', message, graphId, stateId });
+      console.warn(message);
+      return;
+    }
+    if (!this.canRemoteEnterState(graph, stateId, from)) {
+      const message = `NarrativeStateManager: setState target violates scenario boundary ${graphId}.${stateId}`
+        + `（当前 "${from}" 到它没有已声明的迁移边；中段状态请沿链逐跳推进，见 planRemoteAdvance）`;
       this.recordIssue({ severity: 'error', code: 'scenario.boundary.stateCommand', message, graphId, stateId });
       this.recordTrace('state.command', { graphId, stateId, message: 'scenario boundary rejected' });
       console.warn(message);
       return;
     }
-    const from = this.activeStates.get(graphId) ?? graph.initialState;
     this.recordTrace('state.command', { graphId, stateId, from, to: stateId, message: 'applying debug state command' });
-    await this.enterState(graph, graphId, from, stateId, `setState:${graphId}:${stateId}`);
+    await this.enterState(graph, graphId, from, stateId, `setState:${graphId}:${stateId}`, '', silencePerformance);
   }
 
   private async applyTransition(
@@ -1927,12 +2084,14 @@ export class NarrativeStateManager implements IGameSystem {
     toStateId: string,
     triggerKey: NarrativeTriggerKey,
     transitionId = '',
+    /** dev 沿链重放的途经跳：跳过阻塞式演出，只落状态/资源副作用（见 REPLAY_SILENCED_ACTION_TYPES）。 */
+    silencePerformance = false,
   ): Promise<void> {
     const gen = this.generation;
     const runGraph = isRunGraph(graph);
     const fromState = graph.states[fromStateId];
     const toState = graph.states[toStateId];
-    await this.runActions(fromState?.onExitActions, `${instanceId}.${fromStateId}.onExit`, graph);
+    await this.runActions(fromState?.onExitActions, `${instanceId}.${fromStateId}.onExit`, graph, silencePerformance);
     // onExit 动作 await 期间可能发生读档/换册（代际切换）：旧时间线的迁移不得再写
     // 恢复后的状态（置态/事件/广播全部放弃）。动作自身的副作用无法撤销，属已知边界。
     // 实例还可能在 await 期间被结算/弃单（消亡）——同样放弃。
@@ -1999,7 +2158,7 @@ export class NarrativeStateManager implements IGameSystem {
         return;
       }
     }
-    await this.runActions(toState?.onEnterActions, `${instanceId}.${toStateId}.onEnter`, graph);
+    await this.runActions(toState?.onEnterActions, `${instanceId}.${toStateId}.onEnter`, graph, silencePerformance);
     // onEnter 动作 await 期间发生读档/换册：本次置态已被恢复流程覆盖，广播属旧时间线，放弃。
     // 实例被并发结算/弃单或状态被顶替（active 复核）同样放弃广播与结算（审查遗留实现注记）。
     if (gen !== this.generation || this.activeStates.get(instanceId) !== toStateId) {
@@ -2057,25 +2216,45 @@ export class NarrativeStateManager implements IGameSystem {
     actions: ActionDef[] | undefined,
     label: string,
     owner?: { ownerType?: string; ownerId?: string },
+    silencePerformance = false,
   ): Promise<void> {
     if (!actions?.length) return;
+    // 重放途经跳：滤掉阻塞式演出，保留发钱/发物/给规矩/发信号等真正构成"历史结果"的部分。
+    let list = actions;
+    if (silencePerformance) {
+      const kept: ActionDef[] = [];
+      const dropped: string[] = [];
+      for (const action of actions) {
+        if (REPLAY_SILENCED_ACTION_TYPES.has(String(action.type))) dropped.push(String(action.type));
+        else kept.push(action);
+      }
+      if (dropped.length > 0) {
+        this.recordTrace('actions.start', {
+          label,
+          message: `replay silenced ${dropped.length} performance action(s)`,
+          payload: { silencedTypes: dropped },
+        });
+      }
+      list = kept;
+    }
+    if (!list.length) return;
     try {
       this.recordTrace('actions.start', {
         label,
-        payload: { count: actions.length, types: actions.map((action) => action.type) },
+        payload: { count: list.length, types: list.map((action) => action.type) },
       });
       this.runningActionsDepth += 1;
-      await this.actionExecutor.executeBatchFromOwner(actions, owner?.ownerType, owner?.ownerId);
+      await this.actionExecutor.executeBatchFromOwner(list, owner?.ownerType, owner?.ownerId);
       this.recordTrace('actions.end', {
         label,
-        payload: { count: actions.length },
+        payload: { count: list.length },
       });
     } catch (e) {
       console.warn(`NarrativeStateManager: lifecycle actions failed at ${label}`, e);
       this.recordTrace('actions.failed', {
         label,
         message: e instanceof Error ? e.message : String(e),
-        payload: { count: actions.length },
+        payload: { count: list.length },
       });
     } finally {
       this.runningActionsDepth = Math.max(0, this.runningActionsDepth - 1);
@@ -2086,9 +2265,28 @@ export class NarrativeStateManager implements IGameSystem {
     return graph.ownerType === 'scenario' || Boolean(graph.entryState || graph.exitStates?.length);
   }
 
-  private canRemoteEnterState(graph: NarrativeGraph, stateId: string): boolean {
+  /**
+   * 远程置态（dev warp / 调试器 setState）能否**进入** toStateId。
+   *
+   * scenario 图对外只暴露 entryState / exitStates 两个接口，但这道限制针对的是**跳级**——
+   * 凭空落到中段会跳过前序状态的 onEnter，铺垫做半截还带副作用。从当前 active 沿图内
+   * 已声明的迁移边走**一跳**不是跳级：该跳的 onExit/onEnter/广播与信号驱动走到那里完全等价，
+   * 故放行。dev「沿链重放」(见 {@link planRemoteAdvance}) 靠此成立——逐跳合法即整链合法，
+   * 而一发跳到中段仍被拦。
+   */
+  private canRemoteEnterState(graph: NarrativeGraph, stateId: string, fromStateId?: string): boolean {
     if (!this.isScenarioGraph(graph)) return true;
-    return stateId === graph.entryState || Boolean(graph.exitStates?.includes(stateId));
+    if (stateId === graph.entryState || Boolean(graph.exitStates?.includes(stateId))) return true;
+    return fromStateId !== undefined && this.hasTransitionEdge(graph, fromStateId, stateId);
+  }
+
+  /** 图内是否存在 from→to 的已声明迁移边（不问 trigger 类型：重放只借拓扑，不等信号）。 */
+  private hasTransitionEdge(graph: NarrativeGraph, from: string, to: string): boolean {
+    for (const t of graph.transitions ?? []) {
+      if (!this.isLocalEndpoint(t.from) || !this.isLocalEndpoint(t.to)) continue;
+      if (t.from === from && t.to === to) return true;
+    }
+    return false;
   }
 
   private canLeaveGraphRemotely(graph: NarrativeGraph, stateId: string): boolean {

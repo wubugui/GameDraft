@@ -241,6 +241,317 @@ def test_batch_stamp_derives_id_and_owner_from_each_entity() -> None:
         assert {t["signal"] for g in graphs for t in g["transitions"]} == {"chest_opened"}
 
 
+def test_visibility_wiring_points_each_entity_at_its_own_graph() -> None:
+    """盖章顺带接显隐：N 个实体各自指向**自己**那张图，不是同一张。
+
+    不接的话，策划盖完 20 张图还要回场景编辑器手填 20 次 conditions——模板省下的活原样赔回去。
+    """
+    with TemporaryDirectory() as td:
+        model = _project(Path(td) / "p", chests=3)
+        targets = scene_entity_targets(model, "sc_a", [("hotspot", f"chest_{i}") for i in (1, 2, 3)])
+        plan = plan_batch_stamp(model, "chest_archetype", targets, {}, visible_state="closed")
+        assert plan["ok"], plan["errors"]
+        assert [p["entityId"] for p in plan["entityPatches"]] == ["chest_1", "chest_2", "chest_3"]
+        assert [p["conditions"][0]["narrative"] for p in plan["entityPatches"]] == [
+            "chest_chest_1", "chest_chest_2", "chest_chest_3",
+        ]
+        # plan 期零副作用
+        assert "conditions" not in model.scenes["sc_a"]["hotspots"][0]
+
+        summary = apply_batch_stamp(model, plan)
+        assert len(summary["visibilityWired"]) == 3
+        rows = model.scenes["sc_a"]["hotspots"]
+        assert rows[0]["conditions"] == [{"narrative": "chest_chest_1", "state": "closed"}]
+        assert rows[0]["conditionHidesEntity"] is True
+        assert rows[2]["conditions"][0]["narrative"] == "chest_chest_3"
+        assert ("scene", "sc_a") in model._dirty or "scene" in {
+            d[0] if isinstance(d, tuple) else d for d in model._dirty
+        }
+
+
+def test_already_stamped_entities_are_named_with_an_actionable_hint() -> None:
+    """补盖时撞名要指名道姓 + 给能执行的动作。
+
+    引擎那句「换个 ownerId」在批量里是死路：ownerId 由实体推导、改不了。
+    正确动作是把已盖过的实体取消勾选。
+    """
+    with TemporaryDirectory() as td:
+        model = _project(Path(td) / "p", chests=3)
+        first = scene_entity_targets(model, "sc_a", [("hotspot", "chest_1")])
+        apply_batch_stamp(model, plan_batch_stamp(model, "chest_archetype", first, {}))
+
+        again = scene_entity_targets(model, "sc_a", [("hotspot", f"chest_{i}") for i in (1, 2, 3)])
+        plan = plan_batch_stamp(model, "chest_archetype", again, {})
+        assert not plan["ok"]
+        assert plan["alreadyStamped"] == ["hotspot:chest_1"]
+        head = plan["errors"][0]
+        assert "chest_1" in head and "取消勾选" in head, head
+        assert "换个" not in head, head
+
+
+def test_visibility_wiring_rechecks_conditions_at_apply_time() -> None:
+    """plan 算完之后作者刚写上条件 → 落地这一刻必须重判，绝不按 plan 期的判断盲写覆盖。"""
+    with TemporaryDirectory() as td:
+        model = _project(Path(td) / "p", chests=2)
+        targets = scene_entity_targets(model, "sc_a", [("hotspot", "chest_1"), ("hotspot", "chest_2")])
+        plan = plan_batch_stamp(model, "chest_archetype", targets, {}, visible_state="closed")
+        assert plan["ok"], plan["errors"]
+        assert len(plan["entityPatches"]) == 2
+
+        authored = [{"narrative": "作者刚写的图", "state": "某状态"}]
+        model.scenes["sc_a"]["hotspots"][0]["conditions"] = list(authored)
+
+        summary = apply_batch_stamp(model, plan)
+        assert model.scenes["sc_a"]["hotspots"][0]["conditions"] == authored, "把作者刚写的覆盖了"
+        assert summary["visibilityWired"] == ["hotspot:chest_2"]
+        assert summary["visibilityMissed"] == ["hotspot:chest_1"]
+        # 两种落空原因分开说（"实体不在了" vs "期间已被写入"），不混在一句里自相矛盾
+        assert any("已被写入条件" in w for w in summary["warnings"]), summary["warnings"]
+        assert not any("已不在场景里" in w for w in summary["warnings"]), summary["warnings"]
+
+
+def test_visibility_wiring_treats_malformed_conditions_as_authored() -> None:
+    """conditions 是坏值（dict / 字符串）也算「有条件」：照 list 判会把坏值当空、覆盖掉作者的东西。
+
+    编辑器对空集合与数组坏元素一律只读透传、绝不改写。
+    """
+    with TemporaryDirectory() as td:
+        model = _project(Path(td) / "p", chests=3)
+        model.scenes["sc_a"]["hotspots"][0]["conditions"] = {"narrative": "手写坏了的 dict"}
+        model.scenes["sc_a"]["hotspots"][1]["conditions"] = "手写成了字符串"
+        targets = scene_entity_targets(model, "sc_a", [("hotspot", f"chest_{i}") for i in (1, 2, 3)])
+        plan = plan_batch_stamp(model, "chest_archetype", targets, {}, visible_state="closed")
+        assert plan["ok"], plan["errors"]
+        assert [p["entityId"] for p in plan["entityPatches"]] == ["chest_3"]
+        apply_batch_stamp(model, plan)
+        assert model.scenes["sc_a"]["hotspots"][0]["conditions"] == {"narrative": "手写坏了的 dict"}
+        assert model.scenes["sc_a"]["hotspots"][1]["conditions"] == "手写成了字符串"
+
+
+def test_zone_never_gets_the_hotspot_only_hide_flag() -> None:
+    """conditionHidesEntity 只有 HotspotDef / NpcDef 有；写给 zone 是运行时不认的垃圾键。"""
+    with TemporaryDirectory() as td:
+        model = _project(Path(td) / "p", chests=1)
+        model.scenes["sc_a"]["zones"] = [{"id": "z_雾", "polygon": []}]
+        targets = scene_entity_targets(model, "sc_a", [("zone", "z_雾")])
+        plan = plan_batch_stamp(model, "chest_archetype", targets, {}, visible_state="closed")
+        assert plan["ok"], plan["errors"]
+        assert "conditionHidesEntity" not in plan["entityPatches"][0]
+        apply_batch_stamp(model, plan)
+        zone_row = model.scenes["sc_a"]["zones"][0]
+        assert zone_row["conditions"] == [{"narrative": "chest_z_雾", "state": "closed"}]
+        assert "conditionHidesEntity" not in zone_row
+
+
+def test_apply_aborts_when_narrative_drifted_between_plan_and_apply() -> None:
+    """plan 之后别处新加了图/信号 → 整批不写。
+
+    plan 产出的是**整份** narrative 快照，直接盖回模型会把这中间别人加的东西一起抹掉。
+    实体侧有 vanished 闸，作曲/信号侧必须对称。
+    """
+    with TemporaryDirectory() as td:
+        model = _project(Path(td) / "p", chests=2)
+        targets = scene_entity_targets(model, "sc_a", [("hotspot", "chest_1")])
+        plan = plan_batch_stamp(model, "chest_archetype", targets, {})
+        assert plan["ok"], plan["errors"]
+
+        # 另一头刚加了一张图 + 注册了一条信号
+        model.narrative_graphs["compositions"].append({
+            "id": "别人刚加的图",
+            "mainGraph": {"id": "别人刚加的图", "ownerType": "flow", "ownerId": "x",
+                          "initialState": "s", "states": {"s": {"id": "s"}}, "transitions": []},
+        })
+        model.narrative_graphs["signals"].append({"id": "别人刚注册的信号"})
+
+        summary = apply_batch_stamp(model, plan)
+        assert not summary["ok"], summary
+        assert any("被改过了" in e for e in summary["errors"]), summary
+        ids = [c["id"] for c in model.narrative_graphs["compositions"]]
+        assert "别人刚加的图" in ids, "把别人的图抹了"
+        assert not any(i.startswith("chest_") for i in ids), "整批不写却写进去了"
+
+
+def test_stamped_states_colliding_after_substitution_is_an_error() -> None:
+    """参数化状态名与写死的状态名代入后重名 → 拦下。
+
+    dict 后写覆盖先写，状态凭空少一个、转移变自环，而盖章 ok=True 零警告。
+    """
+    tpl = {
+        "id": "collide_archetype",
+        "produces": ["composition"],
+        "params": [
+            {"name": "ownerId", "type": "identifier", "from": "entity.id", "required": True},
+        ],
+        "composition": {
+            "id": "c_{{ownerId}}",
+            "mainGraph": {
+                "id": "c_{{ownerId}}", "ownerType": "hotspot", "ownerId": "{{ownerId}}",
+                "initialState": "{{ownerId}}_出现",
+                "states": {"{{ownerId}}_出现": {"id": "{{ownerId}}_出现"},
+                           "chest_2_出现": {"id": "chest_2_出现"}},
+                "transitions": [],
+            },
+            "elements": [],
+        },
+    }
+    with TemporaryDirectory() as td:
+        model = _project(Path(td) / "p", chests=2, template=tpl)
+        targets = scene_entity_targets(model, "sc_a", [("hotspot", "chest_2")])
+        plan = plan_batch_stamp(model, "collide_archetype", targets, {})
+        assert not plan["ok"], plan
+        assert any("重名被合并" in e for e in plan["errors"]), plan["errors"]
+
+
+def test_state_collision_inside_a_nested_subgraph_is_also_caught() -> None:
+    """内嵌子图里的状态互撞同样要拦——只数主图会漏掉 wrapper 元素里的同型塌陷。"""
+    tpl = {
+        "id": "nested_collide",
+        "produces": ["composition"],
+        "params": [
+            {"name": "ownerId", "type": "identifier", "from": "entity.id", "required": True},
+        ],
+        "composition": {
+            "id": "nc_{{ownerId}}",
+            "mainGraph": {
+                "id": "nc_{{ownerId}}", "ownerType": "flow", "ownerId": "{{ownerId}}",
+                "initialState": "m", "states": {"m": {"id": "m"}}, "transitions": [],
+            },
+            "elements": [{
+                "id": "w1", "kind": "wrapperGraph", "ownerType": "hotspot", "ownerId": "{{ownerId}}",
+                "graph": {
+                    "id": "wrap_{{ownerId}}", "ownerType": "hotspot", "ownerId": "{{ownerId}}",
+                    "initialState": "{{ownerId}}_出现",
+                    # 参数化键与写死键并存：代入 chest_2 后两者重名，dict 后写覆盖先写
+                    "states": {"{{ownerId}}_出现": {"id": "{{ownerId}}_出现"},
+                               "chest_2_出现": {"id": "chest_2_出现"}},
+                    "transitions": [],
+                },
+            }],
+        },
+    }
+    with TemporaryDirectory() as td:
+        model = _project(Path(td) / "p", chests=2, template=tpl)
+        targets = scene_entity_targets(model, "sc_a", [("hotspot", "chest_2")])
+        plan = plan_batch_stamp(model, "nested_collide", targets, {})
+        assert not plan["ok"], plan
+        assert any("重名被合并" in e for e in plan["errors"]), plan["errors"]
+
+        # 对照：换个不撞的实体照常通过
+        ok_targets = scene_entity_targets(model, "sc_a", [("hotspot", "chest_1")])
+        assert plan_batch_stamp(model, "nested_collide", ok_targets, {})["ok"]
+
+
+def test_apply_aborts_entirely_when_a_target_vanished() -> None:
+    """确认时实体已不在 = 什么都不写：否则会给一个不存在的实体暂存无主 wrapper，弹窗还报成功。"""
+    with TemporaryDirectory() as td:
+        model = _project(Path(td) / "p", chests=2)
+        targets = scene_entity_targets(model, "sc_a", [("hotspot", "chest_1"), ("hotspot", "chest_2")])
+        plan = plan_batch_stamp(model, "chest_archetype", targets, {})
+        assert plan["ok"], plan["errors"]
+        del model.scenes["sc_a"]["hotspots"][1]  # chest_2 被删
+
+        summary = apply_batch_stamp(model, plan)
+        assert not summary["ok"]
+        assert any("chest_2" in e for e in summary["errors"]), summary
+        assert model.narrative_graphs["compositions"] == [], "整批不写却写进去了"
+
+
+def test_apply_aborts_when_an_entity_was_renamed_between_plan_and_apply() -> None:
+    """实体在 plan 与 apply 之间被改名 = 整批不写（改名等同"这个实体不在了"）。
+
+    绝不按位置写到别人身上，也不半批落地——半批产物无人认领，重跑还会在已盖那几份上撞名。
+    """
+    with TemporaryDirectory() as td:
+        model = _project(Path(td) / "p", chests=2)
+        targets = scene_entity_targets(model, "sc_a", [("hotspot", "chest_1"), ("hotspot", "chest_2")])
+        plan = plan_batch_stamp(model, "chest_archetype", targets, {}, visible_state="closed")
+        assert plan["ok"], plan["errors"]
+        model.scenes["sc_a"]["hotspots"][0]["id"] = "chest_1_改名了"
+
+        summary = apply_batch_stamp(model, plan)
+        assert not summary["ok"]
+        assert any("chest_1" in e for e in summary["errors"]), summary
+        assert model.narrative_graphs["compositions"] == []
+        assert "conditions" not in model.scenes["sc_a"]["hotspots"][0]
+        assert "conditions" not in model.scenes["sc_a"]["hotspots"][1]
+
+
+def test_visibility_wiring_never_overwrites_authored_conditions() -> None:
+    """实体已有条件 = 作者手写的编排，只报提示、绝不覆盖（改坏了作者根本不会发现）。"""
+    with TemporaryDirectory() as td:
+        model = _project(Path(td) / "p", chests=2)
+        authored = [{"narrative": "flow_xungou_main", "state": "state_2"}]
+        model.scenes["sc_a"]["hotspots"][0]["conditions"] = authored
+        targets = scene_entity_targets(model, "sc_a", [("hotspot", "chest_1"), ("hotspot", "chest_2")])
+        plan = plan_batch_stamp(model, "chest_archetype", targets, {}, visible_state="closed")
+        assert plan["ok"], plan["errors"]
+        assert [p["entityId"] for p in plan["entityPatches"]] == ["chest_2"]
+        assert any("已有自己的显隐条件" in w for w in plan["warnings"]), plan["warnings"]
+        apply_batch_stamp(model, plan)
+        assert model.scenes["sc_a"]["hotspots"][0]["conditions"] == authored
+
+
+def test_visibility_wiring_handles_parameterized_state_ids() -> None:
+    """状态 id 自己带占位符时也要能接：下拉给骨架键，校验前先做同一次替换。
+
+    发现器会把实体 id 从状态键里一起挖走（`{{ownerId}}_出现`），若照骨架键去比盖出来的图，
+    每一项都点不通、整批恒被拦，而骨架只读、没有出口。
+    """
+    tpl = {
+        "id": "state_param_archetype",
+        "produces": ["composition"],
+        "params": [
+            {"name": "ownerId", "type": "identifier", "from": "entity.id", "required": True},
+            {"name": "ownerType", "type": "identifier", "from": "entity.kind", "required": True},
+        ],
+        "composition": {
+            "id": "sp_{{ownerId}}",
+            "mainGraph": {
+                "id": "sp_{{ownerId}}", "ownerType": "{{ownerType}}", "ownerId": "{{ownerId}}",
+                "initialState": "{{ownerId}}_出现",
+                "states": {"{{ownerId}}_出现": {"id": "{{ownerId}}_出现"},
+                           "{{ownerId}}_已取": {"id": "{{ownerId}}_已取"}},
+                "transitions": [],
+            },
+            "elements": [],
+        },
+    }
+    with TemporaryDirectory() as td:
+        model = _project(Path(td) / "p", chests=2, template=tpl)
+        targets = scene_entity_targets(model, "sc_a", [("hotspot", "chest_1"), ("hotspot", "chest_2")])
+        plan = plan_batch_stamp(model, "state_param_archetype", targets, {},
+                                visible_state="{{ownerId}}_出现")
+        assert plan["ok"], plan["errors"]
+        assert [p["conditions"][0]["state"] for p in plan["entityPatches"]] == [
+            "chest_1_出现", "chest_2_出现",
+        ]
+        assert [p["conditions"][0]["narrative"] for p in plan["entityPatches"]] == [
+            "sp_chest_1", "sp_chest_2",
+        ]
+
+
+def test_visibility_wiring_rejects_a_state_the_template_does_not_have() -> None:
+    """选了模板里不存在的状态 = 整批拦下并列出可选状态，不盖出指向空状态的死条件。"""
+    with TemporaryDirectory() as td:
+        model = _project(Path(td) / "p", chests=2)
+        targets = scene_entity_targets(model, "sc_a", [("hotspot", "chest_1")])
+        plan = plan_batch_stamp(model, "chest_archetype", targets, {}, visible_state="不存在的状态")
+        assert not plan["ok"]
+        assert any("closed" in e and "opened" in e for e in plan["errors"]), plan["errors"]
+
+
+def test_visibility_wiring_is_opt_in() -> None:
+    """不勾选就一个字节都不碰场景数据（默认行为与本功能上线前逐字一致）。"""
+    with TemporaryDirectory() as td:
+        model = _project(Path(td) / "p", chests=2)
+        targets = scene_entity_targets(model, "sc_a", [("hotspot", "chest_1")])
+        plan = plan_batch_stamp(model, "chest_archetype", targets, {})
+        assert plan["ok"], plan["errors"]
+        assert plan["entityPatches"] == []
+        apply_batch_stamp(model, plan)
+        assert "conditions" not in model.scenes["sc_a"]["hotspots"][0]
+
+
 def test_entity_binding_beats_a_stale_form_value() -> None:
     """表单里混进同名残值时，实体推导必须**覆盖**它——否则 100 个箱子会共用一个 ownerId，
     owner 索引全打到同一个实体上，等于这套机制白做。"""

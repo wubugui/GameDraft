@@ -20,9 +20,21 @@ import type { DeterministicRandom } from '../utils/deterministicRandom';
  *    回来不该立刻被一堆"攒够冷却"的闲聊淹没。
  */
 
-/** 谁在说：玩家，或按 id 解析的场景实体（NPC / 热点 / 过场演员，与 showEmote 的 target 同口径）。 */
+/**
+ * 谁在说，三档：
+ *
+ * - `player`    —— 当前受控的那个人（跟他具体是谁无关）；
+ * - `character` —— 角色注册表里的某个角色（`character_registry.json` 的 id）。角色跨场景漫游，
+ *                  运行时按**当前场景里哪个摆放引用了这个角色**解析；场上没有该角色则本组不说话。
+ *                  想收窄到某几个场景靠 `scenes`。
+ * - `entity`    —— 某一个摆放（NPC / 热点 / 过场演员，与 showEmote 的 target 同口径）。
+ *                  ⚠ 实体 id 是**场景相对**的（`resolveEmoteTarget` 按当前场景解析，且工程里确有
+ *                  跨场景重名的实体），所以这一档必须靠 `scenes` 把场景钉死，否则同名的另一个
+ *                  摆放也会跟着说。编辑器的选点弹窗会自动把 `scenes` 填成选中的那个场景。
+ */
 export type BubbleSpeakerRef =
   | { kind: 'player' }
+  | { kind: 'character'; characterId: string }
   | { kind: 'entity'; id: string };
 
 /** ambient=常驻氛围（冷却到了就可能说）；approach=玩家走近时说一次（进入半径的那一下才触发）。 */
@@ -95,8 +107,20 @@ export interface BubbleChatterDeps {
   emoteBubbleManager: EmoteBubbleManager;
   /** 与 showEmote 同口径的目标解析（NPC / 玩家 / 热点 / 过场演员） */
   resolveEmoteTarget: (id: string) => IEmoteBubbleAnchor | null;
-  /** 说话人所在世界坐标；解析不到返回 null（则跳过距离过滤，一律可说） */
-  resolveSpeakerPosition: (ref: BubbleSpeakerRef) => { x: number; y: number } | null;
+  /**
+   * 角色档说话人 → 当前场景里引用了该角色的那个摆放的实体 id；场上没有该角色返回 null。
+   * 同场景多个摆放引用同一角色时优先取可见的那个，其余按场景声明序（确定性；
+   * 校验器对多摆放另报 warning）。
+   */
+  resolveCharacterEntityId: (characterId: string) => string | null;
+  /**
+   * 目标实体的世界坐标；解析不到返回 null（则跳过距离过滤，一律可说）。
+   *
+   * ⚠ 入参是**已解析的目标 id**（与 `resolveEmoteTarget` 同一个串），不是说话人本身——
+   * 「角色档落到哪个摆放」只在 {@link BubbleChatterSystem.resolveTargetId} 判一次，
+   * 免得位置与锚点两条路各判各的、判出两个不同的人。
+   */
+  resolveSpeakerPosition: (targetId: string) => { x: number; y: number } | null;
   playerPosition: () => { x: number; y: number };
   currentSceneId: () => string;
   /** 是否处于玩家自由探索态；false 时本系统完全静默 */
@@ -127,7 +151,50 @@ function onceKey(lineSetId: string, text: string): string {
 
 /** 「谁在说」的稳定键：用于逐实体冷却与运行时覆盖 */
 function speakerKey(ref: BubbleSpeakerRef): string {
-  return ref.kind === 'player' ? 'player' : `entity:${ref.id}`;
+  if (ref.kind === 'player') return 'player';
+  if (ref.kind === 'character') return `character:${ref.characterId}`;
+  return `entity:${ref.id}`;
+}
+
+/** 动作 target 的角色档前缀（编辑器与校验器同口径引用它，别各写各的字面量） */
+export const CHARACTER_TARGET_PREFIX = 'character:';
+
+/**
+ * 动作参数里的 `target` 串 → 说话人（`setBubbleLineSet` / `clearBubbleLineSet` 共用）。
+ *
+ * - `player`            → 主角档；
+ * - `character:<角色id>` → 角色档（前缀是构造性的：实体 id 不含冒号，见校验器的 id 规则）；
+ * - 其余                 → 实体档（裸 id，与 showEmote 的 target 同口径）。
+ *
+ * ⚠ 必须与 {@link speakerKey} 配套：动作侧解析出的说话人要能与台词本自带的 speaker
+ * 算出同一个键，否则 `setLineSetFor` 会以"speaker 对不上"拒绝套用。
+ */
+export function bubbleSpeakerFromActionTarget(target: string): BubbleSpeakerRef {
+  const raw = String(target ?? '').trim();
+  if (raw === 'player') return { kind: 'player' };
+  if (raw.startsWith(CHARACTER_TARGET_PREFIX)) {
+    const cid = raw.slice(CHARACTER_TARGET_PREFIX.length).trim();
+    if (cid) return { kind: 'character', characterId: cid };
+  }
+  return { kind: 'entity', id: raw };
+}
+
+/**
+ * JSON 里的 speaker → 规范化说话人；形状不合法返回 null（调用方整组跳过）。
+ *
+ * 未知 kind 但带 `id` 时仍按实体读——保持历史宽容读法，避免手写数据一改就整组哑掉。
+ */
+function normalizeSpeaker(raw: unknown): BubbleSpeakerRef | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as { kind?: unknown; id?: unknown; characterId?: unknown };
+  const kind = String(obj.kind ?? '').trim();
+  if (kind === 'player') return { kind: 'player' };
+  if (kind === 'character') {
+    const cid = String(obj.characterId ?? '').trim();
+    return cid ? { kind: 'character', characterId: cid } : null;
+  }
+  const id = String(obj.id ?? '').trim();
+  return id ? { kind: 'entity', id } : null;
 }
 
 export class BubbleChatterSystem implements IGameSystem {
@@ -232,7 +299,8 @@ export class BubbleChatterSystem implements IGameSystem {
         console.warn('BubbleChatterSystem: 台词本缺 id，已跳过', def);
         continue;
       }
-      if (!def.speaker || (def.speaker.kind !== 'player' && !String((def.speaker as { id?: string }).id ?? '').trim())) {
+      const speaker = normalizeSpeaker(def.speaker);
+      if (!speaker) {
         console.warn(`BubbleChatterSystem: 台词本 "${id}" 的 speaker 非法，已跳过`);
         continue;
       }
@@ -244,7 +312,7 @@ export class BubbleChatterSystem implements IGameSystem {
       if (this.defs.has(id)) {
         console.warn(`BubbleChatterSystem: 台词本 id 重复 "${id}"，后者覆盖前者`);
       }
-      this.defs.set(id, { ...def, id, lines });
+      this.defs.set(id, { ...def, id, speaker, lines });
     }
   }
 
@@ -320,7 +388,7 @@ export class BubbleChatterSystem implements IGameSystem {
     this.reseedEdges = false;
     for (const def of this.defs.values()) {
       if (def.trigger !== 'approach') continue;
-      const pos = this.deps.resolveSpeakerPosition(def.speaker);
+      const pos = this.speakerPosition(def.speaker);
       const inRange = pos !== null
         && Math.hypot(pos.x - player.x, pos.y - player.y) <= (def.approachRange ?? DEFAULT_APPROACH_RANGE);
       const wasIn = this.wasInRange.get(def.id) === true;
@@ -343,7 +411,7 @@ export class BubbleChatterSystem implements IGameSystem {
     for (const def of this.defs.values()) {
       const key = speakerKey(def.speaker);
       const trigger: BubbleTrigger = def.trigger === 'approach' ? 'approach' : 'ambient';
-      const pos = this.deps.resolveSpeakerPosition(def.speaker);
+      const pos = this.speakerPosition(def.speaker);
       const dist = pos ? Math.hypot(pos.x - player.x, pos.y - player.y) : 0;
 
       // 该说话人被显式切到了别的本子（或被闭嘴）：本组不参选
@@ -368,8 +436,24 @@ export class BubbleChatterSystem implements IGameSystem {
     return out;
   }
 
+  /**
+   * 说话人 → 与 `showEmote` 同口径的目标 id。角色档要先落到当前场景的那个摆放上；
+   * 场上没有该角色时返回 null（本组不参选，不是报错——角色本来就可能不在这场）。
+   */
+  private resolveTargetId(ref: BubbleSpeakerRef): string | null {
+    if (ref.kind === 'player') return 'player';
+    if (ref.kind === 'character') return this.deps.resolveCharacterEntityId(ref.characterId);
+    return ref.id;
+  }
+
   private resolveAnchor(ref: BubbleSpeakerRef): IEmoteBubbleAnchor | null {
-    return this.deps.resolveEmoteTarget(ref.kind === 'player' ? 'player' : ref.id);
+    const id = this.resolveTargetId(ref);
+    return id ? this.deps.resolveEmoteTarget(id) : null;
+  }
+
+  private speakerPosition(ref: BubbleSpeakerRef): { x: number; y: number } | null {
+    const id = this.resolveTargetId(ref);
+    return id ? this.deps.resolveSpeakerPosition(id) : null;
   }
 
   private conditionPasses(when: ConditionExpr | undefined): boolean {

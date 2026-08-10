@@ -246,6 +246,43 @@ export function getElementByNodeId(comp: NarrativeCompositionDef | undefined, no
   return comp.elements?.find((el) => `element:${el.id}` === nodeId);
 }
 
+/** 把当前视图所在的 wrapper/scenario 子图抬成独立作曲形状（模板抽取源）。
+
+人在子图里时，「从当前作曲创建模板」抽的就该是这张子图——盖章产物本来就是
+「一实体一张 wrapper 作曲」。元素上的 owner 绑定优先于内嵌图自带的；实体图若还是
+画布自动名（wrapper_graph_N / graph_N），抬升时按 `wrap_<ownerId>` 惯例定名——否则
+图 id 里没有 ownerId 子串、挖不出 id 洞，批量盖 N 份全叫同一个名，第二份就撞名。
+在 main 视图或元素无内嵌图时原样返回母作曲。 */
+export function liftSubgraphForTemplate(
+  comp: NarrativeCompositionDef | undefined,
+  graphRef: GraphRef,
+): NarrativeCompositionDef | undefined {
+  if (!comp || graphRef === 'main') return comp;
+  const el = getElementByGraphRef(comp, graphRef);
+  if (!el?.graph || !isSubgraphElement(el)) return comp;
+  const ownerType = String(el.ownerType ?? el.graph.ownerType ?? '').trim();
+  const ownerId = String(el.ownerId ?? el.graph.ownerId ?? '').trim();
+  const rawId = String(el.graph.id ?? '').trim();
+  const entityOwned = ownerType === 'npc' || ownerType === 'hotspot' || ownerType === 'zone';
+  // 图 id 里必须含 ownerId，否则抽出来的骨架 id 是**常量**：盖第一份静默绑到样本实体、
+  // 第二份起撞名整批作废（策划验收 B-2）。作者起过名也照改——名字留在 label 里不丢。
+  const idCarriesOwner = Boolean(ownerId) && rawId.includes(ownerId);
+  const liftedId = entityOwned && ownerId && !idCarriesOwner ? `wrap_${ownerId}` : rawId || el.id;
+  const label = String(el.label ?? '').trim() || el.graph.label;
+  return {
+    id: liftedId,
+    ...(label ? { label } : {}),
+    mainGraph: {
+      ...el.graph,
+      id: liftedId,
+      ownerType: ownerType || el.graph.ownerType,
+      ...(ownerId ? { ownerId } : {}),
+      ...(label ? { label } : {}),
+    },
+    elements: [],
+  };
+}
+
 export function isSubgraphElement(el: CompositionElementDef | undefined): boolean {
   return Boolean(el?.graph && (el.kind === 'wrapperGraph' || el.kind === 'scenarioSubgraph'));
 }

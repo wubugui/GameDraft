@@ -1,5 +1,9 @@
 {
   "schemaVersion": 1,
   "compositions": {},
-  "subgraphs": {}
+  "subgraphs": {
+    "composition_3": {
+      "wrapper_2": "赌场交互点"
+    }
+  }
 }

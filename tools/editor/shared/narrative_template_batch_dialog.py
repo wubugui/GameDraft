@@ -9,15 +9,19 @@
 """
 from __future__ import annotations
 
+import re
+
 from typing import Any, Callable
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -149,6 +153,23 @@ class NarrativeTemplateBatchDialog(QDialog):
         )
         root.addWidget(self._gen_stubs)
 
+        # 显隐接线：不接的话，盖完 N 张图还要回来给 N 个实体逐个手填 conditions。
+        wire_row = QHBoxLayout()
+        self._wire_vis = QCheckBox("顺便把各实体的显隐接到它自己那张图：看得见的状态 =", self)
+        self._wire_vis.setToolTip(
+            "给每个实体写 conditions=[{narrative: 它自己的作曲, state: 选中的状态}] + conditionHidesEntity。\n"
+            "只写本来没有条件的实体——已有条件是作者手写的编排，绝不覆盖。",
+        )
+        self._wire_vis.stateChanged.connect(lambda _s: self._on_wire_toggled())
+        wire_row.addWidget(self._wire_vis)
+        self._visible_state = QComboBox(self)
+        self._visible_state.setEnabled(False)
+        self._visible_state.setMinimumWidth(140)
+        self._visible_state.currentIndexChanged.connect(lambda _i: self._schedule_preview())
+        wire_row.addWidget(self._visible_state)
+        wire_row.addStretch(1)
+        root.addLayout(wire_row)
+
         self._preview = QPlainTextEdit(self)
         self._preview.setReadOnly(True)
         self._preview.setMaximumHeight(160)
@@ -192,9 +213,37 @@ class NarrativeTemplateBatchDialog(QDialog):
                 widget.setParent(None)
                 widget.deleteLater()
 
+    def _on_wire_toggled(self) -> None:
+        self._visible_state.setEnabled(self._wire_vis.isChecked())
+        self._schedule_preview()
+
+    def _reload_state_choices(self, tpl: dict[str, Any] | None) -> None:
+        """「看得见的状态」候选 = 模板骨架里的状态（状态 id 通常不参数化，逐份一致）。"""
+        self._visible_state.blockSignals(True)
+        self._visible_state.clear()
+        states = ((tpl or {}).get("composition") or {}).get("mainGraph") or {}
+        for sid, node in (states.get("states") or {}).items():
+            label = str((node or {}).get("label") or "").strip() if isinstance(node, dict) else ""
+            # 状态 id 可能带占位符（`{{ownerId}}_出现`）；原样显示对策划没意义，
+            # 折成「…_出现」这种人能认的形状，真值仍存在 userData 里（盖章时逐份代入）。
+            shown = re.sub(r"\{\{\s*[^}]+\s*\}\}", "…", str(sid))
+            self._visible_state.addItem(f"{label}（{shown}）" if label and label != sid else shown, str(sid))
+        self._visible_state.blockSignals(False)
+        has_states = self._visible_state.count() > 0
+        self._wire_vis.setEnabled(has_states)
+        if not has_states:
+            self._wire_vis.setChecked(False)
+        self._visible_state.setEnabled(has_states and self._wire_vis.isChecked())
+
+    def current_visible_state(self) -> str:
+        if not (self._wire_vis.isChecked() and self._visible_state.isEnabled()):
+            return ""
+        return str(self._visible_state.currentData() or "")
+
     def _rebuild_param_form(self) -> None:
         self._clear_form()
         tpl = self.current_template()
+        self._reload_state_choices(tpl)
         if tpl is None:
             return
         bound = bound_param_names(tpl)
@@ -274,6 +323,7 @@ class NarrativeTemplateBatchDialog(QDialog):
             self._targets,
             self.shared_values(),
             generate_dialogue_stubs=self._gen_stubs.isChecked(),
+            visible_state=self.current_visible_state(),
         )
 
     def _schedule_preview(self) -> None:
@@ -294,6 +344,9 @@ class NarrativeTemplateBatchDialog(QDialog):
                 )
             if len(plan.get("items", [])) > 6:
                 lines.append(f"  …… 其余 {len(plan['items']) - 6} 份同构")
+            wired = len(plan.get("entityPatches") or [])
+            if wired:
+                lines.append(f"并给 {wired} 个实体接上显隐条件（state = {self.current_visible_state()}）")
         else:
             lines.append("暂不能盖章：")
             lines.extend(f"  {msg}" for msg in plan.get("errors", [])[:8])

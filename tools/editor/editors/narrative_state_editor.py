@@ -851,14 +851,21 @@ class NarrativeEditorBridge(QObject):
             return json.dumps({"ok": False, "reason": f"invalid json: {exc}"}, ensure_ascii=False)
         # 先对归一化前的原始输入校验：撞名检测（template.id.duplicate）设计上必须扫原始输入，
         # 归一化会先去重——旧写法"先归一后校验"使重复模板 id 永远查不出、第二份静默丢失还返回 ok。
-        errors = [i for i in validate_templates_file(parsed) if i.get("severity") == "error"]
+        issues = validate_templates_file(parsed)
+        errors = [i for i in issues if i.get("severity") == "error"]
         if errors:
             preview = "; ".join(str(e.get("message")) for e in errors[:4])
             return json.dumps({"ok": False, "reason": f"{len(errors)} 条错误：{preview}", "errors": errors}, ensure_ascii=False)
         normalized = normalize_templates_file(parsed)
         self._model.narrative_templates = normalized
         self._model.mark_dirty("narrative_templates")
-        return json.dumps({"ok": True, "templates": normalized}, ensure_ascii=False)
+        # warning 一并回传：曾整批丢弃，于是「参数没挖到洞」这类必炸的模板存下去时
+        # 面板只显示「已保存」，等盖章才炸（策划验收 §8）。
+        warnings = [i for i in issues if i.get("severity") != "error"]
+        return json.dumps(
+            {"ok": True, "templates": normalized, "warnings": warnings},
+            ensure_ascii=False,
+        )
 
     # --------------------------------------------------------------------- #
     # 「整理分组」标签：编辑器专用，运行时永不加载，绝不进 narrative_graphs.json。
@@ -1036,6 +1043,14 @@ class NarrativeEditorBridge(QObject):
             if isinstance(s, dict)
         }
         existing_sig.discard("")
+        # id → 行内容：让 stamp 做「内容逐字相同 = 幂等注册」判定。不传 = 模板里凡是
+        # 抽取时原样抄下来的信号声明（以及共用私有信号）第一次就判撞名，按钮永久变灰
+        # ——批量那条路一直传着，只有单张漏了（策划验收 B-1，官方种子模板同样中招）。
+        existing_sig_rows = {
+            str(s.get("id") or "").strip(): s
+            for s in (current.get("signals") or [])
+            if isinstance(s, dict) and str(s.get("id") or "").strip()
+        }
 
         result = stamp_template(
             tpl, values,
@@ -1043,6 +1058,7 @@ class NarrativeEditorBridge(QObject):
             existing_quest_ids=existing_quest,
             existing_dialogue_ids=existing_dlg,
             existing_signal_ids=existing_sig,
+            existing_signal_rows=existing_sig_rows,
             generate_dialogue_stubs=gen_stubs,
         )
         if not result.get("ok"):
@@ -2262,6 +2278,7 @@ def authoring_catalog(model: ProjectModel) -> dict[str, Any]:
         add_reference("cutscene", cutscene_id, cutscene_labels.get(cutscene_id, cutscene_id))
 
     from ..shared.narrative_catalog import emitted_signal_ids, plane_membership_counts
+    from ..shared.narrative_templates import PARAM_SOURCES
     return {
         "dialogueGraphIds": dialogue_ids,
         "scenarioIds": model.scenario_ids_ordered(),
@@ -2292,6 +2309,12 @@ def authoring_catalog(model: ProjectModel) -> dict[str, Any]:
         ],
         "emittedSignals": emitted_signal_ids(model),
         "referenceEntries": reference_entries,
+        # 模板参数「来源绑定」候选（批量盖章由被盖实体现推）。单一权威 =
+        # shared/narrative_templates.PARAM_SOURCES，喂给网页模板表单下拉，避免 TS 手写镜像漂移。
+        "paramSources": [
+            {"id": source_id, "label": source_label}
+            for source_id, source_label in PARAM_SOURCES.items()
+        ],
     }
 
 

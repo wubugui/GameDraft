@@ -255,7 +255,12 @@ export async function loadTemplates(): Promise<NarrativeTemplatesFileDef> {
 
 export async function saveTemplatesRemote(
   file: NarrativeTemplatesFileDef,
-): Promise<{ ok: boolean; reason?: string; templates?: NarrativeTemplatesFileDef }> {
+): Promise<{
+  ok: boolean;
+  reason?: string;
+  templates?: NarrativeTemplatesFileDef;
+  warnings?: ValidationIssueDef[];
+}> {
   const bridge = await waitForBridge();
   if (!bridge?.saveTemplates) {
     return { ok: false, reason: '模板保存只在主编辑器（Qt 宿主）内可用' };
@@ -263,7 +268,7 @@ export async function saveTemplatesRemote(
   return new Promise((resolve) => {
     bridge.saveTemplates!(JSON.stringify(file), (payload) => {
       try {
-        resolve(JSON.parse(payload) as { ok: boolean; reason?: string });
+        resolve(JSON.parse(payload) as { ok: boolean; reason?: string; warnings?: ValidationIssueDef[] });
       } catch (e) {
         resolve({ ok: false, reason: `无法解析保存响应：${String(e)}` });
       }

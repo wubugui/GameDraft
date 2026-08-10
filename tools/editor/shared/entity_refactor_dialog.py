@@ -87,6 +87,14 @@ def _usage_tree(report: dict[str, Any], parent: QWidget | None = None) -> QTreeW
         "sceneId+entityKind+entityId 的场景限定引用，改名/迁移自动跟随；"
         "**删除实体会让这些引导指空**（运行时不报错，只是引导默默不出现），需先改这些任务。",
     )
+    bubble = report.get("bubbleLineSpeakers") or 0
+    if bubble:
+        group(
+            "头顶闲聊台词本的说话人（bubble_lines.json）",
+            [("lineSets[].speaker.id", str(bubble))],
+            "钉死了本场景的条目改名/迁移自动跟随；没钉场景的只在 id 全局唯一时跟随。"
+            "**删除实体会让这些台词本整组静默不说话**（运行时不报错，要等 validate-data 才发现）。",
+        )
     group(
         "迁移后需人工复核的实体自带字段",
         [(item, "") for item in report.get("needsReview") or []],

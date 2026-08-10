@@ -1063,7 +1063,7 @@ _SEMANTIC_TEXT = {
 def semantic_text_color(kind: str) -> str:
     """按当前主题取语义文字色（十六进制串，可直接进 setStyleSheet）。
 
-    kind ∈ muted / faint / warn / error / info。未知 kind 回退 muted。
+    kind ∈ muted / faint / warn / error / info / ok(以 _SEMANTIC_TEXT 为准)。未知 kind 回退 muted。
     """
     dark, light = _SEMANTIC_TEXT.get(kind, _SEMANTIC_TEXT["muted"])
     return dark if is_dark_theme(current_theme_id()) else light

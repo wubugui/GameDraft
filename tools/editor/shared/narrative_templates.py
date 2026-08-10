@@ -393,6 +393,29 @@ def _issue(severity: str, code: str, message: str, template_id: str = "") -> dic
     return row
 
 
+def _params_used_in_owner_fields(tpl: dict[str, Any]) -> set[str]:
+    """骨架里 ``ownerType`` / ``ownerId`` 上用到的参数名（含内嵌子图）。
+
+    这两个字段拼出运行时的 owner 索引键，空值即"这张图谁也找不到"；别的字段为空只是难看。
+    """
+    names: set[str] = set()
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            for key in ("ownerType", "ownerId"):
+                value = node.get(key)
+                if isinstance(value, str):
+                    names.update(iter_placeholders(value))
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(tpl.get("composition"))
+    return names
+
+
 def validate_template(tpl: dict[str, Any]) -> list[dict[str, Any]]:
     """单模板校验：参数声明与占位符使用是否一致。warning 级为主。"""
     issues: list[dict[str, Any]] = []
@@ -432,7 +455,22 @@ def validate_template(tpl: dict[str, Any]) -> list[dict[str, Any]]:
             "error", "template.param.undeclared",
             f"模板「{tid}」用了占位符 {{{{{name}}}}} 但没在 params 里声明（盖章会把字面占位符泄漏进运行时数据）", tid,
         ))
+    bound_names = {
+        _as_str(p.get("name"))
+        for p in (tpl.get("params") or [])
+        if isinstance(p, dict) and _as_str(p.get("from"))
+    }
     for name in sorted(declared - used):
+        if name in bound_names:
+            # 实体推导参数没在骨架里挖到洞 = 每个实体盖出**一模一样**的产物：第一份静默
+            # 绑到样本实体身上（选 B 盖出 A 的图），第二份起撞名整批作废。可证伪的坏，
+            # 不是风格问题 —— 升 error 拦在保存/盖章前（策划验收 B-2）。
+            issues.append(_issue(
+                "error", "template.param.unused.bound",
+                f"模板「{tid}」的参数「{name}」绑了实体推导，但骨架里没有 {{{{{name}}}}} 洞"
+                f"——这样每个实体都会盖出同一份产物。请让骨架里的图 id / 信号名带上它", tid,
+            ))
+            continue
         issues.append(_issue(
             "warning", "template.param.unused",
             f"模板「{tid}」声明了参数「{name}」但骨架里没用到", tid,
@@ -440,6 +478,43 @@ def validate_template(tpl: dict[str, Any]) -> list[dict[str, Any]]:
 
     # 参数来源绑定：未知来源 = error 拦保存。留着不报 = 批量盖章时它会被当"没值的必填参数"
     # 顶回来，而策划在表单里根本看不到这个参数，只能看到一句莫名其妙的缺参数。
+    # **entity.id 绑两次** = 两条身份鉴别符被填成同一个实体：一个实体身上挂出多份产物
+    # （owner 索引歧义、其中一张永远收不到信号），ok=True 零提示。
+    # 只拦 entity.id：显示名/类型/场景绑多个参数是**正当需求**（图 label 与镜像任务标题
+    # 本来就该是同一个显示名），拦了会逼作者手写重复内容。
+    id_bound = [
+        _as_str(p.get("name"))
+        for p in (tpl.get("params") or [])
+        if isinstance(p, dict) and _as_str(p.get("from")) == "entity.id" and _as_str(p.get("name"))
+    ]
+    if len(id_bound) > 1:
+        issues.append(_issue(
+            "error", "template.param.from.duplicate",
+            f"模板「{tid}」有 {len(id_bound)} 个参数都绑了「实体自身 id」"
+            f"（{'、'.join(id_bound)}）——它们会被填成同一个实体，"
+            f"于是一个实体身上挂出多份产物。只保留一个", tid,
+        ))
+
+    # 喂给 owner 字段的推导参数必须必填（或有默认值）：推不出值时会填空串，
+    # 盖出 ownerType/ownerId 为空的图——运行时 ownerKey 空串直接 return，那张图**不进
+    # owner 索引**，私有信号一条都投不进来，而盖章 ok=True 零警告。
+    # 只管 owner 字段：显示名之类为空只是画布上没名字，拦它是过度概括（策划验收 P5）。
+    owner_field_params = _params_used_in_owner_fields(tpl)
+    for p in tpl.get("params") or []:
+        if not isinstance(p, dict) or not _as_str(p.get("from")):
+            continue
+        name = _as_str(p.get("name"))
+        if name not in owner_field_params:
+            continue
+        if p.get("required") or p.get("default") not in (None, ""):
+            continue
+        issues.append(_issue(
+            "error", "template.param.from.optional",
+            f"模板「{tid}」的参数「{name}」填的是图的 owner 字段，却不是必填"
+            f"——推不出值时会填空串，那张图进不了 owner 索引（私有信号一条都收不到）。"
+            f"勾上必填，或给它一个默认值", tid,
+        ))
+
     for p in tpl.get("params") or []:
         if not isinstance(p, dict):
             continue
@@ -777,7 +852,18 @@ def stamp_template(
     if not comp_id:
         errors.append(_issue("error", "stamp.composition.id", "盖章后作曲缺少 id（检查模板 composition.id 占位符）", tid))
     elif comp_id in existing_comp:
-        errors.append(_issue("error", "stamp.collision.composition", f"作曲 id「{comp_id}」已存在，换个 taskId", tid))
+        # 文案不能假设模板一定有 taskId：实体绑定型模板（一实体一张 wrapper）没有这个参数，
+        # 「换个 taskId」让人无从下手；按模板实际参数指名道姓（策划验收 §3）。
+        hint = "、".join(
+            f"「{_as_str(p.get('name'))}」" for p in (tpl.get("params") or [])
+            if isinstance(p, dict) and _as_str(p.get("name"))
+            and f"{{{{{_as_str(p.get('name'))}}}}}" in _as_str((tpl.get("composition") or {}).get("id"))
+        )
+        fix = f"换个 {hint}" if hint else "让模板的 composition.id 带上会逐份变化的参数洞"
+        errors.append(_issue(
+            "error", "stamp.collision.composition",
+            f"作曲 id「{comp_id}」已存在（这份可能盖过了）；{fix}", tid,
+        ))
 
     used_signals = _composition_signal_ids(composition) if isinstance(composition, dict) else set()
 

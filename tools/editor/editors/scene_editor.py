@@ -12462,6 +12462,8 @@ class SceneEditor(QWidget):
             lines.append(f"镜像任务：{len(summary['quests'])} 条")
         if summary.get("stubs"):
             lines.append(f"对话桩：{len(summary['stubs'])} 份")
+        if summary.get("visibilityWired"):
+            lines.append(f"显隐条件已接：{len(summary['visibilityWired'])} 个实体（各接到自己那张图）")
         if skipped:
             lines.append(f"已跳过 {skipped} 个不支持的选中项（出生点 / 分组）。")
         if summary.get("warnings"):

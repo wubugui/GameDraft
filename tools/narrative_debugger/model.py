@@ -242,6 +242,9 @@ class NarrativeIndex:
         self.emitters: dict[str, list[Emitter]] = {}
         self.beats: list[Beat] = []
         self.compositions: list[dict[str, Any]] = []
+        # 线 id → 界面上叫什么。编辑器新建的线常常没写 label（composition_3 这种），
+        # 下拉框里摆一串原始 id，人根本认不出哪条线装着自己刚画的图。
+        self.composition_labels: dict[str, str] = {}
         self.fingerprint: str = ""
         self.load_errors: list[str] = []
         self.dialogue_triggers: dict[str, list[TriggerPoint]] = {}
@@ -285,6 +288,7 @@ class NarrativeIndex:
         self.compositions = list(raw.get("compositions") or [])
         self._ingest_signal_defs(raw.get("signals"))
         for comp in self.compositions:
+            self.composition_labels[str(comp.get("id") or "")] = _composition_display(comp)
             self._ingest_composition(comp)
         self._index_transitions()
         self._scan_scene_triggers()
@@ -712,7 +716,7 @@ class NarrativeIndex:
         order = 0
         for comp in self.compositions:
             comp_id = str(comp.get("id") or "")
-            comp_label = str(comp.get("label") or comp_id)
+            comp_label = self.composition_label(comp_id)
             main = comp.get("mainGraph")
             if not isinstance(main, dict) or not main.get("id"):
                 continue
@@ -917,6 +921,13 @@ class NarrativeIndex:
         for signal in self.scene_signals(scene):
             for t in self.listeners.get(signal, []):
                 graph_ids.add(t.graph_id)
+        # 光靠「这个场景能打出的信号」反查是不够的：挂在本场景某个人/物身上的
+        # wrapper 图，只要它听的信号是别处发的（或者还是 __draft__ 占位），
+        # 就一条都反查不出来——门卫明明站在雾津街头，他那张图却哪儿都找不到。
+        # owner 在这个场景 ⇒ 这张图就是这个场景的戏，跟它听谁的没关系。
+        for gid, owner in self.graph_owners.items():
+            if owner.scene and owner.scene == scene:
+                graph_ids.add(gid)
         out: list[tuple[str, list[StateNode]]] = []
         for graph_id in sorted(graph_ids, key=lambda g: self.graph_labels.get(g, g)):
             nodes = [
@@ -940,6 +951,26 @@ class NarrativeIndex:
         """一条线下面挂的全部图（主图 + 它的子图），按标签排。"""
         ids = [g for g, comp in self.graph_composition.items() if comp == composition_id]
         return sorted(ids, key=lambda g: self.graph_labels.get(g, g))
+
+    def composition_label(self, composition_id: str) -> str:
+        """这条线在界面上叫什么。没名字的退到主图名，再退才是原始 id。"""
+        cid = str(composition_id or "")
+        return self.composition_labels.get(cid) or cid
+
+    def composition_entries(self) -> list[tuple[str, str]]:
+        """全部线（id, 显示名），按文件里的顺序。
+
+        口径必须是「文件里有几条线」而不是「有拍子的线」——没有 mainGraph 的线
+        一个拍子都排不出来，可它底下照样挂着子图；按拍子建下拉框的话，
+        那条线连同它的图会整条从界面上消失。
+        """
+        out: list[tuple[str, str]] = []
+        for comp in self.compositions:
+            cid = str(comp.get("id") or "")
+            if not cid:
+                continue
+            out.append((cid, self.composition_label(cid)))
+        return out
 
     # ---- 条件翻译（索引建完后按需算，才能把 id 换成人话 label） ----------
 
@@ -1051,6 +1082,23 @@ def _actor_name(npc: dict[str, Any]) -> str:
         return name
     raw = str(npc.get("id") or "").strip()
     return raw[4:] if raw.startswith("npc_") else raw
+
+
+def _composition_display(comp: dict[str, Any]) -> str:
+    """这条线叫什么：自己的 label > 主图的 label > 原始 id。
+
+    编辑器新建的线不写 label 是常态（`composition_3`），退到主图名至少还是句人话；
+    绝不拿 id 拼一个假名字。
+    """
+    label = str(comp.get("label") or "").strip()
+    if label:
+        return label
+    main = comp.get("mainGraph")
+    if isinstance(main, dict):
+        main_label = str(main.get("label") or main.get("id") or "").strip()
+        if main_label:
+            return main_label
+    return str(comp.get("id") or "")
 
 
 def _collect_dialogue_graphs(payload: Any) -> list[str]:

@@ -278,9 +278,14 @@ def test_python_backstop_is_a_subset_of_ts_codes() -> None:
 
 
 def test_live_project_data_has_no_new_private_signal_issues() -> None:
-    """现网数据一条私有信号都还没有：这三条检查对既有 validate-data 计数必须零影响。"""
+    """现网数据的私有信号用法必须零 issue。
+
+    发货时曾断言「现网一条私有信号都没有」（零影响证明），首条真私有信号
+    （私有事件完结，2026-08-09）落地后该快照过期；此处只守长期性质：
+    scope 只许合法值，且私有三检查对现网数据零报告。"""
     data = json.loads(
         (_repo_root() / "public/assets/data/narrative_graphs.json").read_text(encoding="utf-8"),
     )
-    assert not [s for s in data.get("signals") or [] if isinstance(s, dict) and s.get("scope")]
+    scoped = [s for s in data.get("signals") or [] if isinstance(s, dict) and s.get("scope")]
+    assert all(s.get("scope") == "private" for s in scoped), scoped
     assert _validator_issues(data) == []

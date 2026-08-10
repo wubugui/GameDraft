@@ -1146,7 +1146,7 @@ def _validate_entity_reachability(model: ProjectModel, issues: list[Issue]) -> N
 
         def visit(act_type: str, params: dict) -> None:
             for param, spec_kind in ENTITY_REF_PARAMS[act_type].items():
-                if spec_kind not in ("actor", "emote_subject", "npc"):
+                if spec_kind not in ("actor", "emote_subject", "npc", "bubble_speaker"):
                     continue
                 value = params.get(param)
                 if not isinstance(value, str):
@@ -1154,11 +1154,15 @@ def _validate_entity_reachability(model: ProjectModel, issues: list[Issue]) -> N
                 ref = value.strip()
                 if not ref or ref == "player" or ref.startswith("_cut_"):
                     continue
-                allowed = npc_union | (hotspot_union if spec_kind == "emote_subject" else set())
+                # 头顶闲聊的角色档 target 不是实体引用，可达场景无从谈起
+                if ref.startswith(BUBBLE_CHARACTER_TARGET_PREFIX):
+                    continue
+                # 热点也能冒气泡：emote_subject / bubble_speaker 两档同宽
+                wide = spec_kind in ("emote_subject", "bubble_speaker")
+                allowed = npc_union | (hotspot_union if wide else set())
                 if ref in allowed:
                     continue
-                exists_globally = ref in global_npcs or (
-                    spec_kind == "emote_subject" and ref in global_hotspots)
+                exists_globally = ref in global_npcs or (wide and ref in global_hotspots)
                 if not exists_globally:
                     continue
                 key = (act_type, param, ref)
@@ -2176,11 +2180,83 @@ def _validate_signal_cues(model: ProjectModel, issues: list[Issue]) -> None:
 
 
 
+# 动作 target 的角色档前缀。与 `src/systems/BubbleChatterSystem.ts` 的
+# `CHARACTER_TARGET_PREFIX` 是一份手工镜像，parity 由 test_bubble_speaker_model.py 钉住。
+BUBBLE_CHARACTER_TARGET_PREFIX = "character:"
+
+
+def _bubble_speaker_key_from_def(speaker: dict) -> str:
+    """台词本 speaker → 说话人键（镜像 BubbleChatterSystem.ts 的 speakerKey）。"""
+    kind = str(speaker.get("kind") or "").strip()
+    if kind == "player":
+        return "player"
+    if kind == "character":
+        cid = str(speaker.get("characterId") or "").strip()
+        return f"{BUBBLE_CHARACTER_TARGET_PREFIX}{cid}" if cid else ""
+    eid = str(speaker.get("id") or "").strip()
+    return f"entity:{eid}" if eid else ""
+
+
+def _bubble_speaker_key_from_target(target: str) -> str:
+    """动作 target 串 → 说话人键（镜像 BubbleChatterSystem.ts 的 bubbleSpeakerFromActionTarget）。
+
+    ⚠ 与 `_bubble_speaker_key_from_def` 对空值的处理**刻意不同**，因为 TS 两侧本就不同：
+    台词本侧先过 `normalizeSpeaker`（空 id ＝非法说话人，整组跳过，故这里返回空串），
+    动作侧的 `bubbleSpeakerFromActionTarget` 不做规范化、空串照样落成 `{kind:'entity',id:''}`。
+    """
+    raw = str(target or "").strip()
+    if raw == "player":
+        return "player"
+    if raw.startswith(BUBBLE_CHARACTER_TARGET_PREFIX):
+        cid = raw[len(BUBBLE_CHARACTER_TARGET_PREFIX):].strip()
+        if cid:
+            return f"{BUBBLE_CHARACTER_TARGET_PREFIX}{cid}"
+    return f"entity:{raw}"
+
+
+def _bubble_speaker_entity_scenes(model: ProjectModel) -> dict[str, set[str]]:
+    """实体 id → 定义它的场景集合（只算 NPC 与热点，与 resolveEmoteTarget 同口径）。"""
+    out: dict[str, set[str]] = {}
+    for sid, scene in (getattr(model, "scenes", None) or {}).items():
+        if not isinstance(scene, dict):
+            continue
+        for key in ("npcs", "hotspots"):
+            for e in scene.get(key) or []:
+                if not isinstance(e, dict):
+                    continue
+                eid = str(e.get("id", "") or "").strip()
+                if eid:
+                    out.setdefault(eid, set()).add(str(sid))
+    return out
+
+
+def _bubble_character_placements(model: ProjectModel) -> dict[str, list[str]]:
+    """角色 id → 引用它的 NPC 摆放所在场景（含重复：同场景两个摆放就出现两次）。"""
+    out: dict[str, list[str]] = {}
+    for sid, scene in (getattr(model, "scenes", None) or {}).items():
+        if not isinstance(scene, dict):
+            continue
+        for npc in scene.get("npcs") or []:
+            if not isinstance(npc, dict):
+                continue
+            cid = str(npc.get("characterId", "") or "").strip()
+            if cid:
+                out.setdefault(cid, []).append(str(sid))
+    return out
+
+
 def _validate_bubble_lines(model: ProjectModel, issues: list[Issue]) -> None:
     """bubble_lines.json：id 唯一、说话人可解析、场景存在、至少一句台词、条件可求值。
 
     说话人漏配是这张表最容易犯的错——运行时解析不到就**整组静默不说话**，
     策划只会看到"配了没反应"，所以这里按 error 拦。
+
+    三档说话人各有各的失效方式（口径与 `src/systems/BubbleChatterSystem.ts` 一致）：
+    - `player`    ——「当前受控的那个人」，恒可解析，只校验别的字段；
+    - `character` —— 得有摆放才有嘴：注册表里没有、或全工程/限定场景里没有任何 NPC
+                     引用它，运行时都是整组不说话；
+    - `entity`    —— 实体 id 是**场景相对**的。钉死的场景里没有这个实体＝永远不响（error）；
+                     没钉场景而该 id 又跨场景重名＝同名的另一个也会跟着说（warning）。
     """
     data = getattr(model, "bubble_lines", None)
     if not isinstance(data, dict):
@@ -2194,12 +2270,13 @@ def _validate_bubble_lines(model: ProjectModel, issues: list[Issue]) -> None:
         issues.append(Issue("error", "bubble_lines", "?", "lineSets 须为数组"))
         return
 
-    # ⚠ 排除 zone：`all_scene_entity_ids()` 把 zone 也算实体，但运行时 resolveEmoteTarget
-    # 只认「过场演员 / NPC / player / 当前场景热点」。把 zone 算进合法集，就等于放行了
-    # 一种"配了完全没反应"的写法——正是这条 error 本来要拦的那类。
-    known_entities = {
-        eid for eid, label in model.all_scene_entity_ids() if not label.startswith("zone:")
-    }
+    # ⚠ 合法实体集刻意**只有 NPC 与热点**（`_bubble_speaker_entity_scenes` 不收 zone）：
+    # 运行时 resolveEmoteTarget 只认「过场演员 / NPC / player / 当前场景热点」。把 zone
+    # 算进来就等于放行一种"配了完全没反应"的写法——正是这条 error 本来要拦的那类。
+    entity_scenes = _bubble_speaker_entity_scenes(model)
+    known_entities = set(entity_scenes)
+    character_placements = _bubble_character_placements(model)
+    known_characters = set(getattr(model, "character_registry", None) or {})
     known_scenes = set(model.all_scene_ids())
     seen: set[str] = set()
     for c in sets:
@@ -2214,11 +2291,46 @@ def _validate_bubble_lines(model: ProjectModel, issues: list[Issue]) -> None:
             issues.append(Issue("error", "bubble_lines", cid, f"id 重复: {cid!r}"))
         seen.add(cid)
 
+        pinned = [str(sc) for sc in (c.get("scenes") or [])]
         sp = c.get("speaker")
-        if not isinstance(sp, dict) or sp.get("kind") not in ("player", "entity"):
-            issues.append(Issue("error", "bubble_lines", cid, "speaker 须为 {kind:'player'} 或 {kind:'entity', id}"))
+        if not isinstance(sp, dict) or sp.get("kind") not in ("player", "character", "entity"):
+            issues.append(Issue(
+                "error", "bubble_lines", cid,
+                "speaker 须为 {kind:'player'} / {kind:'character', characterId} / {kind:'entity', id}",
+            ))
+        elif sp.get("kind") == "character":
+            ch = str(sp.get("characterId") or "").strip()
+            placed = character_placements.get(ch) or []
+            if not ch:
+                issues.append(Issue("error", "bubble_lines", cid, "speaker.kind=character 时必须填 characterId"))
+            elif ch not in known_characters:
+                issues.append(Issue(
+                    "error", "bubble_lines", cid,
+                    f"speaker.characterId {ch!r} 不在 character_registry.json 中",
+                ))
+            elif not placed:
+                issues.append(Issue(
+                    "error", "bubble_lines", cid,
+                    f"角色 {ch!r} 没有任何场景摆放引用它（运行时找不到嘴＝整组不说话）",
+                ))
+            elif pinned and not (set(placed) & set(pinned)):
+                issues.append(Issue(
+                    "error", "bubble_lines", cid,
+                    f"角色 {ch!r} 在限定的场景 {pinned!r} 里没有摆放（整组永远不响）",
+                ))
+            else:
+                # 同一场景两个摆放引用同一角色：运行时取第一个可见的，另一个永远说不上话
+                relevant = [s for s in placed if not pinned or s in pinned]
+                dup = {s for s in relevant if relevant.count(s) > 1}
+                if dup:
+                    issues.append(Issue(
+                        "warning", "bubble_lines", cid,
+                        f"场景 {sorted(dup)!r} 里有多个摆放引用角色 {ch!r}；"
+                        "运行时只让其中第一个可见的说话",
+                    ))
         elif sp.get("kind") == "entity":
             eid = str(sp.get("id") or "").strip()
+            defined_in = entity_scenes.get(eid) or set()
             if not eid:
                 issues.append(Issue("error", "bubble_lines", cid, "speaker.kind=entity 时必须填 id"))
             elif eid not in known_entities:
@@ -2226,9 +2338,20 @@ def _validate_bubble_lines(model: ProjectModel, issues: list[Issue]) -> None:
                     "error", "bubble_lines", cid,
                     f"speaker.id {eid!r} 不是任何场景里的实体（运行时解析不到＝整组不说话）",
                 ))
+            elif pinned and not (defined_in & set(pinned)):
+                issues.append(Issue(
+                    "error", "bubble_lines", cid,
+                    f"实体 {eid!r} 不在限定的场景 {pinned!r} 里（运行时按当前场景解析＝整组永远不响）",
+                ))
+            elif not pinned and len(defined_in) > 1:
+                issues.append(Issue(
+                    "warning", "bubble_lines", cid,
+                    f"实体 id {eid!r} 在 {sorted(defined_in)!r} 多个场景重名，却没钉死场景——"
+                    "同名的另一个也会跟着说；用编辑器「选点…」重选一次即可钉死",
+                ))
 
-        for sc in c.get("scenes") or []:
-            if str(sc) not in known_scenes:
+        for sc in pinned:
+            if sc not in known_scenes:
                 issues.append(Issue("error", "bubble_lines", cid, f"scenes 里的场景 {sc!r} 不存在"))
 
         lines = c.get("lines")
@@ -3228,8 +3351,8 @@ def _append_action_param_ref_issues(
                 None,
             )
             if isinstance(want, dict) and target:
-                want_key = "player" if want.get("kind") == "player" else str(want.get("id") or "")
-                have_key = "player" if target == "player" else target
+                want_key = _bubble_speaker_key_from_def(want)
+                have_key = _bubble_speaker_key_from_target(target)
                 if want_key and want_key != have_key:
                     issues.append(Issue(
                         "error", data_type, item_id,

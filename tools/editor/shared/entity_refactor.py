@@ -60,6 +60,8 @@ _COLLISION_KINDS: dict[str, tuple[str, ...]] = {
 # 裸 id 引用种类（value 语义）：
 #   actor         npc | player | _cut_ 临时演员（运行时按当前场景解析）
 #   emote_subject actor 基础上还可命中当前场景 hotspot
+#   bubble_speaker 头顶闲聊说话人:命中面同 emote_subject,另认 `character:<角色id>` 一档
+#                 (角色不是实体引用,改实体名时天然不命中)
 #   npc           仅 npc
 #   npc_soft      软引用：未命中回退为显示名（只在全局唯一时改写）
 #   owner         叙事 wrapper 绑定，种类由同 action 的 ownerType 决定
@@ -74,8 +76,11 @@ ENTITY_REF_PARAMS: dict[str, dict[str, str]] = {
     "attachToSocket": {"target": "actor"},
     "detachFromSocket": {"target": "actor"},
     "setEntityEnabled": {"target": "actor"},
-    "setBubbleLineSet": {"target": "actor"},
-    "clearBubbleLineSet": {"target": "actor"},
+    # 头顶闲聊说话人：运行时走 resolveEmoteTarget（NPC / 热点 / player / 过场演员），
+    # 所以命中面与 emote_subject 同宽；另外多认一档 `character:<角色id>`（不是实体引用，
+    # 改实体名时天然不命中）。原先登记成 "actor" 会让热点改名跟不上这两个参数。
+    "setBubbleLineSet": {"target": "bubble_speaker"},
+    "clearBubbleLineSet": {"target": "bubble_speaker"},
     "moveEntityTo": {"target": "actor", "sceneId": "scene_hint"},
     "jumpEntityTo": {"target": "actor", "sceneId": "scene_hint"},
     "faceEntity": {"target": "actor", "faceTarget": "actor"},
@@ -111,6 +116,7 @@ ENTITY_REF_PARAMS: dict[str, dict[str, str]] = {
 _BARE_KIND_SCOPE: dict[str, tuple[str, ...]] = {
     "actor": ("npc",),
     "emote_subject": ("npc", "hotspot"),
+    "bubble_speaker": ("npc", "hotspot"),
     "npc": ("npc",),
     "npc_soft": ("npc",),
 }
@@ -500,35 +506,78 @@ def _rewrite_source_ids_project(model: Any, old: str, new: str, *, count_only: b
 
 
 
-def _rewrite_bubble_line_speakers(
-    model: Any, kind: str, old: str, new: str, *, count_only: bool = False,
-) -> int:
-    """改写 `bubble_lines.json` 里 `lineSets[].speaker.id` 的裸实体引用。
-
-    这是**数据文件自身**的实体引用，`ENTITY_REF_PARAMS`（action 参数登记面）够不到。
-    不跟改的后果：改完名那组台词的说话人解析不到，运行时整组静默不说话
-    （validate-data 会报 error，但要等到下次跑校验才发现，且重构撤销也回滚不了它）。
-    与「全局裸面」同口径：只在 id 全局唯一时改写，其余交人工。
-    """
-    if kind not in ("npc", "hotspot"):
-        return 0
+def _iter_bubble_entity_speakers(model: Any) -> Iterator[tuple[dict[str, Any], dict[str, Any], list[str]]]:
+    """产出 (台词本, speaker, 钉死的场景列表)：只收 `speaker.kind=entity` 的条目。"""
     bl = getattr(model, "bubble_lines", None)
     sets = bl.get("lineSets") if isinstance(bl, dict) else None
     if not isinstance(sets, list):
-        return 0
-    total = 0
+        return
     for c in sets:
         if not isinstance(c, dict):
             continue
         sp = c.get("speaker")
         if not isinstance(sp, dict) or sp.get("kind") != "entity":
             continue
+        pinned = [str(s) for s in (c.get("scenes") or [])]
+        yield c, sp, pinned
+
+
+def _rewrite_bubble_line_speakers(
+    model: Any, kind: str, old: str, new: str,
+    *, scene_id: str = "", mode: str = "all", count_only: bool = False,
+) -> int:
+    """改写 `bubble_lines.json` 里 `lineSets[].speaker.id` 的实体引用。
+
+    这是**数据文件自身**的实体引用，`ENTITY_REF_PARAMS`（action 参数登记面）够不到。
+    不跟改的后果：改完名那组台词的说话人解析不到，运行时整组静默不说话
+    （validate-data 会报 error，但要等到下次跑校验才发现，且重构撤销也回滚不了它）。
+
+    `mode` 决定收哪一类引用，与 rename 的 qualified / global 两档一一对应：
+    - ``qualified``：`scenes` 里含 `scene_id` 的条目。编辑器选点写出来的就是这种形状，
+      场景已经钉死＝零歧义，**不看全局唯一性**照样机械跟随；
+    - ``bare``：`scenes` 为空的老条目。与「全局裸面」同歧义，只在 id 全局唯一时才该调用；
+    - ``all``：上面两类都算（扫描报告用，回答"有多少条指着它"）。
+
+    `scenes` 非空但不含 `scene_id` 的条目一律跳过——那指的是**别的场景里的同名实体**。
+    """
+    if kind not in ("npc", "hotspot"):
+        return 0
+    total = 0
+    for _c, sp, pinned in _iter_bubble_entity_speakers(model):
         if str(sp.get("id") or "").strip() != old:
+            continue
+        if pinned:
+            if mode == "bare" or not scene_id or scene_id not in pinned:
+                continue
+        elif mode == "qualified":
             continue
         total += 1
         if not count_only:
             sp["id"] = new
     if total and not count_only:
+        model.mark_dirty("bubble_lines")
+    return total
+
+
+def _rewrite_bubble_line_scene_pins(
+    model: Any, kind: str, entity_id: str, old_scene: str, new_scene: str,
+) -> int:
+    """实体迁移时，把钉在 `old_scene` 的台词本 `scenes` 改钉到 `new_scene`。
+
+    实体档说话人的 `scenes` 是「这个摆放在哪个场景」的记录（编辑器选点的产物），
+    与 `sceneId` 限定引用同档：零歧义、可机械跟随。不跟改的话人搬走了、台词还钉在
+    老场景，运行时永远解析不到＝整组静默不说话。
+    """
+    if kind not in ("npc", "hotspot"):
+        return 0
+    total = 0
+    for c, sp, pinned in _iter_bubble_entity_speakers(model):
+        if str(sp.get("id") or "").strip() != entity_id or old_scene not in pinned:
+            continue
+        # 就地按位置替换，保留其余场景与原顺序（多场景是老数据形状，不借机重排）
+        c["scenes"] = [new_scene if s == old_scene else s for s in pinned]
+        total += 1
+    if total:
         model.mark_dirty("bubble_lines")
     return total
 
@@ -797,6 +846,12 @@ def scan_entity_usages(model: Any, scene_id: str, kind: str, entity_id: str) -> 
     # 按任务分组给出，重构弹窗要能显示「是哪条任务的引导指着它」。
     report["questGuidance"] = _quest_guidance_hits(model, kind, sid, eid)
 
+    # 头顶闲聊台词本的 speaker.id。钉死本场景的按 qualified 档机械跟随，没钉场景的
+    # 与 globalRefs 同歧义规则；报告只回答"有多少条指着它"，故两类都算。
+    report["bubbleLineSpeakers"] = _rewrite_bubble_line_speakers(
+        model, kind, eid, "", scene_id=sid, mode="all", count_only=True,
+    )
+
     report["totalRefs"] = (
         self_refs
         + sum(h["count"] for h in scene_local)
@@ -806,15 +861,11 @@ def scan_entity_usages(model: Any, scene_id: str, kind: str, entity_id: str) -> 
         + len(report["ownerBindings"])
         + sum(h["count"] for h in tag_hits)
         + sum(h["count"] for h in report["questGuidance"])
+        + report["bubbleLineSpeakers"]
     )
 
     # emitNarrativeSignal 溯源复合串 "场景:实体"（trace-only,不进 totalRefs）
     report["traceRefs"] = _rewrite_source_ids_project(model, f"{sid}:{eid}", "", count_only=True)
-
-    # 头顶闲聊台词本的 speaker.id（裸引用，与 globalRefs 同歧义规则）
-    report["bubbleLineSpeakers"] = _rewrite_bubble_line_speakers(
-        model, kind, eid, "", count_only=True,
-    )
 
     # 迁移时需人工重定位/复核的实体自带字段
     if found is not None:
@@ -1032,6 +1083,11 @@ def _rewrite_qualified_scene_refs(
         if count:
             bucket = _sig._stage_dialogue_doc(model, gid, working)
             hits.append({"bucket": bucket, "itemId": gid, "count": count})
+    # 台词本的 scenes 钉在哪个场景，同样是"零歧义、随实体走"的场景限定引用。
+    # 放这里而不是 move_entity 里：撤销走的是本函数的反向调用，顺带就对称了。
+    pins = _rewrite_bubble_line_scene_pins(model, kind, entity_id, old_scene, new_scene)
+    if pins:
+        hits.append({"bucket": "bubble_lines", "itemId": "", "count": pins})
     return hits
 
 
@@ -1135,6 +1191,11 @@ def rename_entity(
     # 2.5) 溯源复合串 "场景:实体"（trace-only,带场景前缀零歧义,机械改写）
     counts["trace"] = _rewrite_source_ids_project(model, f"{sid}:{old}", f"{sid}:{new}")
 
+    # 2.6) 头顶闲聊台词本里**钉死了本场景**的说话人：与 qualified 同档（零歧义），
+    #      不看全局唯一性照样跟随。没钉场景的那些留给下面的 uniqueGlobal 档。
+    counts["bubbleLineSpeakersQualified"] = _rewrite_bubble_line_speakers(
+        model, kind, old, new, scene_id=sid, mode="qualified")
+
     # 3) 全局裸面（叙事图动作树 + owner 绑定 + 内容资产）——仅全局唯一时
     if scope["uniqueGlobal"]:
         global_hits: list[dict[str, Any]] = []
@@ -1164,7 +1225,8 @@ def rename_entity(
                                 "count": count + owner_count})
             model.mark_dirty("narrative_graphs")
         counts["global"] = global_hits
-        counts["bubbleLineSpeakers"] = _rewrite_bubble_line_speakers(model, kind, old, new)
+        counts["bubbleLineSpeakers"] = _rewrite_bubble_line_speakers(
+            model, kind, old, new, mode="bare")
     else:
         counts["global"] = []
         counts["bubbleLineSpeakers"] = 0

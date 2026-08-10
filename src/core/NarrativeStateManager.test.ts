@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { ActionExecutor } from './ActionExecutor';
 import { EventBus } from './EventBus';
 import { FlagStore } from './FlagStore';
-import { compileNarrativeGraphs, NarrativeStateManager, type NarrativeGraph, type NarrativeGraphsFile } from './NarrativeStateManager';
+import { compileNarrativeGraphs, NarrativeStateManager, REPLAY_SILENCED_ACTION_TYPES, type NarrativeGraph, type NarrativeGraphsFile } from './NarrativeStateManager';
+import { isKnownActionType } from './actionParamManifest';
 import { validateNarrativeGraphData } from './narrativeGraphValidation';
 import narrativeGraphsData from '../../public/assets/data/narrative_graphs.json';
 
@@ -478,6 +479,230 @@ describe('NarrativeStateManager', () => {
     expect(narrative.getActiveState('scenario')).toBe('inactive');
     const snapshot = narrative.debugSnapshot();
     expect(JSON.stringify(snapshot)).toContain('transition.crossGraphEndpoint.unsupported');
+  });
+
+  // ---- dev 远程推进（warp / 调试器）：沿链重放补铺垫 vs 跳级置态 ----
+  // 背景：scenario 图对外只暴露 entryState/exitStates，防的是「凭空落到中段、跳过前序 onEnter」。
+  // 但 dev 跳转要的恰恰是把中段进度**补出来**——解法是逐跳走合法边，每跳都等价于信号驱动。
+
+  function makeJobRuntime() {
+    const rt = makeRuntime();
+    const trail: string[] = [];
+    rt.actionExecutor.register('trail', async (params) => { trail.push(String(params?.tag ?? '')); }, ['tag']);
+    rt.narrative.registerGraphs([{
+      id: 'scenario_job',
+      ownerType: 'scenario',
+      ownerId: 'scene',
+      initialState: 'not_started',
+      entryState: 'not_started',
+      exitStates: ['done'],
+      states: {
+        not_started: { id: 'not_started' },
+        hired: { id: 'hired', onEnterActions: [{ type: 'trail', params: { tag: 'hired' } }] },
+        working: { id: 'working', onEnterActions: [{ type: 'trail', params: { tag: 'working' } }] },
+        done: { id: 'done', onEnterActions: [{ type: 'trail', params: { tag: 'done' } }] },
+        island: { id: 'island' },
+      },
+      transitions: [
+        { id: 't1', from: 'not_started', to: 'hired', signal: 'hire' },
+        { id: 't2', from: 'hired', to: 'working', signal: 'work' },
+        { id: 't3', from: 'working', to: 'done', signal: 'finish' },
+      ],
+    }]);
+    return { ...rt, trail };
+  }
+
+  it('planRemoteAdvance 求出逐跳路径，沿链推进把 scenario 补到中段且 onEnter 全跑', async () => {
+    const { narrative, trail } = makeJobRuntime();
+    const plan = narrative.planRemoteAdvance('scenario_job', 'working');
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    expect(plan.path).toEqual(['hired', 'working']);
+    expect(plan.direct).toBe(false);
+    expect(plan.needsRun).toBe(false);
+
+    for (const s of plan.path) await narrative.debugSetNarrativeState('scenario_job', s);
+    await flush();
+    expect(narrative.getActiveState('scenario_job')).toBe('working');
+    // 中段铺垫的核心价值：沿路每一跳的 onEnterActions 都执行了，一个不少
+    expect(trail).toEqual(['hired', 'working']);
+    expect(narrative.hasReachedState('scenario_job', 'hired')).toBe(true);
+  });
+
+  it('跳级置态仍被拒：一发跳到中段会跳过前序 onEnter，守卫不放行', async () => {
+    const { narrative, trail } = makeJobRuntime();
+    await narrative.debugSetNarrativeState('scenario_job', 'working');
+    await flush();
+    expect(narrative.getActiveState('scenario_job')).toBe('not_started');
+    expect(trail).toEqual([]);
+    expect(JSON.stringify(narrative.debugSnapshot())).toContain('scenario.boundary.stateCommand');
+  });
+
+  it('planRemoteAdvance 对图内无路可达的孤立状态报 unreachable（不谎报成功）', () => {
+    const { narrative } = makeJobRuntime();
+    const plan = narrative.planRemoteAdvance('scenario_job', 'island');
+    expect(plan.ok).toBe(false);
+    if (plan.ok) return;
+    expect(plan.code).toBe('unreachable');
+  });
+
+  it('非 scenario 图的孤立状态报 unreachable，绝不一发直达（直达会跳过整条 reached 链）', () => {
+    const { narrative } = makeRuntime();
+    narrative.registerGraphs([{
+      id: 'flow_milestones',
+      ownerType: 'flow',
+      initialState: 'm1',
+      states: { m1: { id: 'm1' }, m2: { id: 'm2' }, orphan: { id: 'orphan' } },
+      transitions: [{ id: 'a', from: 'm1', to: 'm2', signal: 'go' }],
+    }]);
+    const plan = narrative.planRemoteAdvance('flow_milestones', 'orphan');
+    expect(plan.ok).toBe(false);
+    if (plan.ok) return;
+    expect(plan.code).toBe('unreachable');
+    // 沿链可达的照常走，且不标记 direct
+    const good = narrative.planRemoteAdvance('flow_milestones', 'm2');
+    expect(good.ok).toBe(true);
+    if (!good.ok) return;
+    expect(good.path).toEqual(['m2']);
+    expect(good.direct).toBe(false);
+  });
+
+  it('planRemoteAdvance 点名缺失的图与状态（数据改名/删除后 warp 不再静默失败）', () => {
+    const { narrative } = makeJobRuntime();
+    const missingGraph = narrative.planRemoteAdvance('scenario_ghost', 'x');
+    expect(missingGraph.ok).toBe(false);
+    if (!missingGraph.ok) expect(missingGraph.code).toBe('graphMissing');
+    const missingState = narrative.planRemoteAdvance('scenario_job', 'renamed_away');
+    expect(missingState.ok).toBe(false);
+    if (!missingState.ok) expect(missingState.code).toBe('stateMissing');
+  });
+
+  it('无迁移边但目标是 exitState 时回退一发直达，并标记 direct 供调用方点名', async () => {
+    const { narrative } = makeRuntime();
+    narrative.registerGraphs([{
+      id: 'scenario_thin',
+      ownerType: 'scenario',
+      initialState: 'idle',
+      entryState: 'idle',
+      exitStates: ['fled'],
+      states: { idle: { id: 'idle' }, fled: { id: 'fled' } },
+      transitions: [],
+    }]);
+    const plan = narrative.planRemoteAdvance('scenario_thin', 'fled');
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    expect(plan.direct).toBe(true);
+    expect(plan.path).toEqual(['fled']);
+    await narrative.debugSetNarrativeState('scenario_thin', 'fled');
+    await flush();
+    expect(narrative.getActiveState('scenario_thin')).toBe('fled');
+  });
+
+  it('已在目标状态时路径为空（warp 幂等，不重跑 onEnter）', async () => {
+    const { narrative, trail } = makeJobRuntime();
+    for (const s of ['hired', 'working']) await narrative.debugSetNarrativeState('scenario_job', s);
+    await flush();
+    trail.length = 0;
+    const plan = narrative.planRemoteAdvance('scenario_job', 'working');
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    expect(plan.path).toEqual([]);
+    expect(trail).toEqual([]);
+  });
+
+  it('重放途经跳静默阻塞式演出，只落状态/资源副作用；最后一跳完整执行', async () => {
+    const { narrative, actionExecutor } = makeRuntime();
+    const ran: string[] = [];
+    for (const t of ['giveCurrency', 'startCutscene', 'playScriptedDialogue', 'waitClickContinue']) {
+      actionExecutor.register(t, async () => { ran.push(t); }, []);
+    }
+    narrative.registerGraphs([{
+      id: 'scenario_show',
+      ownerType: 'scenario',
+      initialState: 'a',
+      entryState: 'a',
+      exitStates: ['c'],
+      states: {
+        a: { id: 'a' },
+        b: {
+          id: 'b',
+          onEnterActions: [
+            { type: 'giveCurrency', params: {} },
+            { type: 'startCutscene', params: {} },
+            { type: 'playScriptedDialogue', params: {} },
+          ],
+        },
+        c: { id: 'c', onEnterActions: [{ type: 'waitClickContinue', params: {} }] },
+      },
+      transitions: [
+        { id: 'x', from: 'a', to: 'b', signal: 'go' },
+        { id: 'y', from: 'b', to: 'c', signal: 'end' },
+      ],
+    }]);
+
+    const plan = narrative.planRemoteAdvance('scenario_show', 'c');
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    expect(plan.path).toEqual(['b', 'c']);
+    for (let i = 0; i < plan.path.length; i += 1) {
+      await narrative.debugSetNarrativeState('scenario_show', plan.path[i], {
+        silencePerformance: i < plan.path.length - 1,
+      });
+    }
+    await flush();
+    expect(narrative.getActiveState('scenario_show')).toBe('c');
+    // 途经的 b：给钱这类"历史结果"照落，过场/脚本对话不重播
+    // 目标的 c：完整执行，等点击照旧
+    expect(ran).toEqual(['giveCurrency', 'waitClickContinue']);
+  });
+
+  it('静默清单只列已知动作类型（防拼写漂移把演出漏放进重放）', () => {
+    for (const type of REPLAY_SILENCED_ACTION_TYPES) {
+      expect(isKnownActionType(type), `未知动作类型：${type}`).toBe(true);
+    }
+  });
+
+  it('活计图：无实例拒绝置态（防幽灵条目），start 后可沿链逐跳推进', async () => {
+    const { narrative, actionExecutor } = makeRuntime();
+    const trail: string[] = [];
+    actionExecutor.register('trail', async (params) => { trail.push(String(params?.tag ?? '')); }, ['tag']);
+    narrative.registerGraphs([{
+      id: 'run_job',
+      ownerType: 'scenario',
+      run: { repeatable: true, resumable: true },
+      initialState: 'fresh',
+      entryState: 'fresh',
+      exitStates: ['settled'],
+      states: {
+        fresh: { id: 'fresh' },
+        midway: { id: 'midway', onEnterActions: [{ type: 'trail', params: { tag: 'midway' } }] },
+        settled: { id: 'settled' },
+      },
+      transitions: [
+        { id: 'r1', from: 'fresh', to: 'midway', signal: 'go' },
+        { id: 'r2', from: 'midway', to: 'settled', signal: 'end' },
+      ],
+    }]);
+
+    // 无实例：置态会凭空造幽灵条目，必须拒
+    await narrative.debugSetNarrativeState('run_job', 'midway');
+    await flush();
+    expect(narrative.getActiveState('run_job')).toBeUndefined();
+    expect(JSON.stringify(narrative.debugSnapshot())).toContain('setState.runGraph.unsupported');
+
+    // plan 告诉调用方「先开一轮」，开轮后同一条链就能走
+    const plan = narrative.planRemoteAdvance('run_job', 'midway');
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    expect(plan.needsRun).toBe(true);
+    expect(plan.path).toEqual(['midway']);
+
+    await narrative.startNarrativeRun('run_job');
+    await flush();
+    for (const s of plan.path) await narrative.debugSetNarrativeState('run_job', s);
+    await flush();
+    expect(narrative.getActiveState('run_job')).toBe('midway');
+    expect(trail).toEqual(['midway']);
   });
 
   it('skips a duplicate graph id gracefully and records an error issue (no hard crash)', () => {

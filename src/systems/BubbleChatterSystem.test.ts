@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest';
-import { BubbleChatterSystem, type BubbleChatterDeps } from './BubbleChatterSystem';
+import { BubbleChatterSystem, bubbleSpeakerFromActionTarget, type BubbleChatterDeps } from './BubbleChatterSystem';
 import { DeterministicRandom } from '../utils/deterministicRandom';
 import { FlagStore } from '../core/FlagStore';
 import { EventBus } from '../core/EventBus';
@@ -10,12 +10,14 @@ const anchorB: IEmoteBubbleAnchor = { getDisplayObject: () => ({}), getEmoteBubb
 
 interface Harness {
   sys: BubbleChatterSystem;
-  said: { text: string; duration: number }[];
+  said: { text: string; duration: number; anchor: IEmoteBubbleAnchor }[];
   state: {
     exploring: boolean;
     scene: string;
     player: { x: number; y: number };
     positions: Record<string, { x: number; y: number }>;
+    /** 角色 id → 当前场景里代表他的那个摆放（缺席=这场没他） */
+    characterPlacements: Record<string, string | null>;
     activeBubbles: number;
     bubbleOn: Set<IEmoteBubbleAnchor>;
   };
@@ -26,23 +28,26 @@ interface Harness {
 }
 
 function makeHarness(overrides: Partial<BubbleChatterDeps> = {}): Harness {
-  const said: { text: string; duration: number }[] = [];
+  const said: { text: string; duration: number; anchor: IEmoteBubbleAnchor }[] = [];
   const state = {
     exploring: true,
     scene: 'teahouse',
     player: { x: 0, y: 0 },
     positions: { npc_a: { x: 10, y: 0 }, npc_b: { x: 20, y: 0 } } as Record<string, { x: number; y: number }>,
+    /** 角色 id → 当前场景里代表他的那个摆放（null=这场没他） */
+    characterPlacements: { clara: 'npc_a' } as Record<string, string | null>,
     activeBubbles: 0,
     bubbleOn: new Set<IEmoteBubbleAnchor>(),
   };
   const deps: BubbleChatterDeps = {
     emoteBubbleManager: {
-      show: (_a: IEmoteBubbleAnchor, text: string, duration: number) => { said.push({ text, duration }); },
+      show: (a: IEmoteBubbleAnchor, text: string, duration: number) => { said.push({ text, duration, anchor: a }); },
       activeBubbleCount: () => state.activeBubbles,
       hasBubbleFor: (a: IEmoteBubbleAnchor) => state.bubbleOn.has(a),
     } as never,
     resolveEmoteTarget: (id) => (id === 'npc_a' ? anchorA : id === 'npc_b' ? anchorB : id === 'player' ? anchorA : null),
-    resolveSpeakerPosition: (ref) => (ref.kind === 'player' ? state.player : state.positions[ref.id] ?? null),
+    resolveCharacterEntityId: (cid) => state.characterPlacements[cid] ?? null,
+    resolveSpeakerPosition: (id) => (id === 'player' ? state.player : state.positions[id] ?? null),
     playerPosition: () => state.player,
     currentSceneId: () => state.scene,
     isExploring: () => state.exploring,
@@ -446,5 +451,121 @@ describe('BubbleChatterSystem 数据容错', () => {
     h.sys.destroy();
     h.tick(60);
     expect(h.said).toHaveLength(0);
+  });
+});
+
+describe('说话人三档（player / character / entity）', () => {
+  it('角色档：落到当前场景里代表该角色的那个摆放', () => {
+    const h = makeHarness();
+    h.state.characterPlacements = { clara: 'npc_b' };
+    h.sys.applyDefs({
+      lineSets: [{
+        id: 'set_clara',
+        speaker: { kind: 'character', characterId: 'clara' },
+        lines: [{ text: '克拉拉的口头禅' }],
+      }],
+    });
+    h.tick(1);
+    expect(h.said.map((s) => s.text)).toEqual(['克拉拉的口头禅']);
+  });
+
+  it('角色档：这场没有他的摆放就整组不说话（不是报错）', () => {
+    const h = makeHarness();
+    h.state.characterPlacements = {};
+    h.sys.applyDefs({
+      lineSets: [{
+        id: 'set_clara',
+        speaker: { kind: 'character', characterId: 'clara' },
+        lines: [{ text: '不该出现' }],
+      }],
+    });
+    h.tick(60);
+    expect(h.said).toHaveLength(0);
+  });
+
+  it('角色档：换场景后同一组台词落到另一个摆放头上', () => {
+    const h = makeHarness();
+    h.state.characterPlacements = { clara: 'npc_a' };
+    h.sys.applyDefs({
+      tuning: { globalMinIntervalMs: 0, perSpeakerMinIntervalMs: 0 },
+      lineSets: [{
+        id: 'set_clara',
+        speaker: { kind: 'character', characterId: 'clara' },
+        cooldownMs: 0,
+        lines: [{ text: '同一句' }],
+      }],
+    });
+    h.step();
+    expect(h.said.map((s) => s.anchor)).toEqual([anchorA]);
+
+    // 换场景：同一个角色由另一个摆放代表 → 气泡跟着换头，台词本一个字没改
+    h.state.scene = 'street';
+    h.state.characterPlacements = { clara: 'npc_b' };
+    h.step();
+    expect(h.said.map((s) => s.anchor)).toEqual([anchorA, anchorB]);
+  });
+
+  it('角色档与实体档的逐人冷却互不串台（说话人键不同）', () => {
+    const h = makeHarness();
+    h.state.characterPlacements = { clara: 'npc_a' };
+    h.sys.applyDefs({
+      lineSets: [
+        {
+          id: 'as_character', priority: 1, cooldownMs: 0,
+          speaker: { kind: 'character', characterId: 'clara' }, lines: [{ text: '角色档' }],
+        },
+        {
+          id: 'as_entity', priority: 0, cooldownMs: 0,
+          speaker: { kind: 'entity', id: 'npc_a' }, lines: [{ text: '实体档' }],
+        },
+      ],
+    });
+    // 两组指向同一个人，但说话人键不同：实体档不会被角色档的 perSpeaker 冷却压住
+    h.step();
+    expect(h.said.map((s) => s.text)).toEqual(['角色档']);
+    h.tick(5);
+    expect(h.said.map((s) => s.text)).toEqual(['角色档', '实体档']);
+  });
+
+  it('character 缺 characterId 的条目被跳过；未知 kind 但有 id 仍按实体读（宽容读法）', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const h = makeHarness();
+    h.sys.applyDefs({
+      lineSets: [
+        { id: 'bad_char', speaker: { kind: 'character' }, lines: [{ text: '不该出现' }] },
+        { id: 'legacy', speaker: { id: 'npc_a' }, lines: [{ text: '老写法仍然读得出' }] },
+      ] as never,
+    });
+    h.tick(1);
+    expect(h.said.map((s) => s.text)).toEqual(['老写法仍然读得出']);
+    warn.mockRestore();
+  });
+});
+
+describe('bubbleSpeakerFromActionTarget（动作 target 串 → 说话人）', () => {
+  it('三种形状各归各档', () => {
+    expect(bubbleSpeakerFromActionTarget('player')).toEqual({ kind: 'player' });
+    expect(bubbleSpeakerFromActionTarget('character:clara'))
+      .toEqual({ kind: 'character', characterId: 'clara' });
+    expect(bubbleSpeakerFromActionTarget('npc_a')).toEqual({ kind: 'entity', id: 'npc_a' });
+  });
+
+  it('前缀后面是空的时候不当角色档（否则会静默变成"谁都不是"）', () => {
+    expect(bubbleSpeakerFromActionTarget('character:')).toEqual({ kind: 'entity', id: 'character:' });
+  });
+
+  it('setBubbleLineSet 能套用到角色档台词本（speaker 键两侧算得一致）', () => {
+    const h = makeHarness();
+    h.state.characterPlacements = { clara: 'npc_a' };
+    h.sys.applyDefs({
+      lineSets: [{
+        id: 'clara_alt',
+        speaker: { kind: 'character', characterId: 'clara' },
+        lines: [{ text: '换过的词' }],
+      }],
+    });
+    expect(h.sys.setLineSetFor(bubbleSpeakerFromActionTarget('character:clara'), 'clara_alt')).toBe(true);
+    h.tick(1);
+    expect(h.said.map((s) => s.text)).toEqual(['换过的词']);
   });
 });

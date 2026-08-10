@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .. import theme
 from ..project_model import ProjectModel
 from ..shared import confirm
 from ..shared.condition_expr_tree import ConditionExprTreeRootWidget
@@ -34,7 +35,19 @@ from ..shared.form_layout import compact_form
 from ..shared.id_ref_selector import IdRefSelector
 from ..shared.list_affordances import wire_list_affordances
 from ..shared.num_fields import float_or as _float_or, int_or as _int_or
+from ..shared.reference_picker import ReferencePickerField
 from ..shared.rich_text_field import RichTextLineEdit
+from ..shared.scene_entity_picker import SceneEntityPickField
+
+# 「角色」档里代表主角的那一行。主角不是注册表条目（他是"当前受控的那个人"，
+# 换人了嘴也跟着换），但在策划眼里他就是角色之一，所以并进同一个选择器。
+# 构造性防撞前后缀，与运行时 LEGACY_PLAYER_CHARACTER_ID 同款惯例。
+_PLAYER_CHARACTER_VALUE = "__player__"
+
+_SPEAKER_MODES = [
+    ("character", "角色"),
+    ("entity", "场景实体"),
+]
 
 _TRIGGERS = [("ambient", "常驻氛围（冷却到了就可能说）"), ("approach", "玩家走近时说一次")]
 _PICK_MODES = [("random", "随机（按权重）"), ("sequence", "顺序循环")]
@@ -98,22 +111,68 @@ class BubbleLinesEditor(QWidget):
         self._f_desc.setToolTip("策划备注（不影响运行时，可空）")
         f.addRow("说明", self._f_desc)
 
-        sp_row = QWidget()
-        sp_lay = QHBoxLayout(sp_row)
-        sp_lay.setContentsMargins(0, 0, 0, 0)
+        # 说话人两档，语义完全不同（见 _sync_speaker_mode 的注释）：
+        #   角色     —— 主角 / 角色注册表里的角色，跨场景漫游，靠「限定场景」收窄；
+        #   场景实体 —— 某一个摆放，场景由选点决定，不另配「限定场景」。
         self._f_speaker_kind = QComboBox()
-        self._f_speaker_kind.addItem("场景实体", "entity")
-        self._f_speaker_kind.addItem("主角", "player")
+        for v, lab in _SPEAKER_MODES:
+            self._f_speaker_kind.addItem(lab, v)
         self._f_speaker_kind.setMaximumWidth(110)
-        self._f_speaker_kind.currentIndexChanged.connect(self._sync_speaker_enabled)
-        sp_lay.addWidget(self._f_speaker_kind)
-        # 实体引用走选择器（选择器铁律）；未知/悬垂值由 IdRefSelector 保值展示
-        self._f_speaker_id = IdRefSelector(allow_empty=True, click_opens_popup=True)
-        self._f_speaker_id.setToolTip("谁在说：NPC / 热点 id（与 showEmote 的 target 同口径）")
-        sp_lay.addWidget(self._f_speaker_id, 1)
-        f.addRow("说话人", sp_row)
+        self._f_speaker_kind.setToolTip(
+            "角色：主角或角色注册表里的角色，运行时按「当前场景里哪个摆放是他」解析，可配限定场景。\n"
+            "场景实体：某一个具体摆放，在地图上点选；场景由选点决定，不再单配限定场景。"
+        )
+        self._f_speaker_kind.currentIndexChanged.connect(self._on_speaker_kind_changed)
+        f.addRow("说话人类型", self._f_speaker_kind)
+
+        # 角色档：弹窗选择器（大候选集不走下拉）；未知/悬垂值原样保留展示
+        self._f_character = ReferencePickerField(
+            self._character_rows,
+            self,
+            allow_empty=False,
+            title="选择角色",
+            geometry_key="bubble_speaker_character_picker",
+        )
+        self._f_character.setToolTip(
+            "主角 = 当前受控的那个人；其余来自角色注册表（「角色」页 / character_registry.json）。\n"
+            "角色不绑定某个摆放：运行时在当前场景里找引用了该角色、且此刻可见的 NPC 来说。"
+        )
+        f.addRow("角色", self._f_character)
+
+        # 实体档：地图选点（返回 场景+实体 二元组）
+        # allow_empty=False：说话人是必填项，"清空"落不了盘（写空 id ＝半截形状，
+        # 见 _write_into），留个按了等于没按的按钮只会骗人；与角色档那边也就对称了
+        self._f_entity = SceneEntityPickField(lambda: self._model, self, allow_empty=False)
+        self._f_entity.setToolTip(
+            "在场景地图上点选说话人。实体 id 是场景相对的（工程里确有跨场景重名的实体），"
+            "所以选点同时钉死场景。"
+        )
+        self._f_entity.value_changed.connect(lambda _s, _e: self._sync_scene_lock_label())
+        f.addRow("场景实体", self._f_entity)
+        # 本档还没选出值时的提示：说清"没写盘、原来那个还在"，别让人以为改生效了
+        self._speaker_hint = QLabel("")
+        self._speaker_hint.setWordWrap(True)
+        self._speaker_hint.setStyleSheet(theme.semantic_text_css("warn"))
+        f.addRow("", self._speaker_hint)
+        # 整行显隐走 setRowVisible（Qt 6.4+）：只 hide 控件会留下一行空标签
+        self._speaker_form = f
+        self._f_character.value_changed.connect(lambda _v: self._sync_speaker_hint())
+        self._f_entity.value_changed.connect(lambda _s, _e: self._sync_speaker_hint())
 
         # 多值：单选控件会把 `["a","b"]` 静默截断成第一条（切一下列表就丢数据）
+        #
+        # ⚠ 这一行（「限定场景」）踩过两个连着的 Qt 坑，都表现为**整行被压成一条缝**：
+        #
+        # 1. `layout.addWidget(w)` 之后 `w` 仍是 `isHidden()`，要等下一轮事件循环才显示；
+        #    而隐藏项会被 QVBoxLayout **整个跳过** ⇒ 容器 sizeHint 当场是 0，同一回合里
+        #    算出来的行高按"零行"给。对策：`_add_scene_row` 里显式 `host.show()`。
+        # 2. 容器**隐藏期间**加进去的子控件，其 updateGeometry 不向上传播，重新 show 时
+        #    中间层不会去 invalidate 外层 QFormLayout，行高冻在旧 sizeHint。
+        #    隔离实验（QFormLayout → host →[可选中间层]→ rows，隐藏期加 3 行再 show）：
+        #      零中间层 无relayout 63/63 好   零中间层 有relayout 63/63 好
+        #      一层中间层 无relayout 17/63 塌  一层中间层 有relayout 63/63 好
+        #    ⇒ 嵌套只是放大器，根因是"隐藏期加子控件"。对策：`_relayout_scene_rows()`
+        #    自内向外逐层 invalidate + activate，嵌多深都免疫。
         scenes_host = QWidget()
         scenes_lay = QVBoxLayout(scenes_host)
         scenes_lay.setContentsMargins(0, 0, 0, 0)
@@ -122,11 +181,18 @@ class BubbleLinesEditor(QWidget):
         self._scenes_rows_lay = QVBoxLayout(self._scenes_rows_host)
         self._scenes_rows_lay.setContentsMargins(0, 0, 0, 0)
         scenes_lay.addWidget(self._scenes_rows_host)
-        add_scene = QPushButton("+ 场景")
-        add_scene.setMaximumWidth(90)
-        add_scene.setToolTip("限定在哪些场景说；一条都不加＝不限场景")
-        add_scene.clicked.connect(lambda: self._add_scene_row(""))
-        scenes_lay.addWidget(add_scene)
+        self._scenes_add_btn = QPushButton("+ 场景")
+        self._scenes_add_btn.setMaximumWidth(90)
+        self._scenes_add_btn.setToolTip("限定在哪些场景说；一条都不加＝不限场景")
+        self._scenes_add_btn.clicked.connect(lambda: self._add_scene_row(""))
+        scenes_lay.addWidget(self._scenes_add_btn)
+        # 实体档下「限定场景」不是可配项，而是选点的产物——这里只回显，不给编辑入口。
+        # 用只读单行框而不是 wordWrap 标签：换行标签的 heightForWidth 在 QFormLayout 里
+        # 同样会把行高算塌，长说明放 tooltip 更稳。
+        self._scenes_locked = QLineEdit()
+        self._scenes_locked.setReadOnly(True)
+        self._scenes_locked.setMinimumWidth(220)
+        scenes_lay.addWidget(self._scenes_locked)
         f.addRow("限定场景", scenes_host)
 
         self._f_trigger = QComboBox()
@@ -231,8 +297,9 @@ class BubbleLinesEditor(QWidget):
         self._reload_ref_candidates()
         self._refresh()
         self._load_tuning()
-        if self._list.count() == 0:
-            self._clear_form()
+        # 无条件清空：_refresh 不会自动选中任何条目，此时右侧必须是禁用的空表单，
+        # 否则开页第一眼是"两档都摊开、可编辑但点 Apply 无声无息"的假表单
+        self._clear_form()
 
     # ---------- tuning ----------
 
@@ -308,20 +375,12 @@ class BubbleLinesEditor(QWidget):
         return sets
 
     def _reload_ref_candidates(self) -> None:
-        """说话人候选＝**NPC 与热点**（与运行时 resolveEmoteTarget 同口径）。
+        """跨面板刷新：重拉场景行的候选。
 
-        ⚠ 刻意排除 zone：`all_scene_entity_ids()` 把 zone 也算实体，但运行时的
-        `resolveEmoteTarget` 只认「过场演员 / NPC / player / 当前场景热点」，选了 zone
-        这组一句话都不说、还不报错。同 id 跨场景只留第一次出现，标签带场景名便于分辨。
+        说话人两档都不需要在这里预热——角色档的 ReferencePickerField 与实体档的
+        选点弹窗都是**开窗时才查 provider**，别的页新建的角色/实体立刻就在（也就
+        不存在"候选表过期"这回事）。
         """
-        ents: list[tuple[str, str]] = []
-        seen: set[str] = set()
-        for eid, label in self._model.all_scene_entity_ids():
-            if eid in seen or label.startswith("zone:"):
-                continue
-            seen.add(eid)
-            ents.append((eid, label))
-        self._f_speaker_id.set_items(ents)
         for row in getattr(self, "_scene_rows", []):
             row["sel"].set_items([(sid, sid) for sid in self._model.all_scene_ids()])
 
@@ -335,7 +394,18 @@ class BubbleLinesEditor(QWidget):
         if not isinstance(c, dict):
             return "（无法解析的条目，原样保留）"
         sp = c.get("speaker") if isinstance(c.get("speaker"), dict) else {}
-        who = "主角" if sp.get("kind") == "player" else str(sp.get("id") or "?")
+        kind = str(sp.get("kind") or "")
+        if kind == "player":
+            who = "主角"
+        elif kind == "character":
+            cid = str(sp.get("characterId") or "?")
+            ch = (getattr(self._model, "character_registry", None) or {}).get(cid)
+            name = str(ch.get("name") or "").strip() if isinstance(ch, dict) else ""
+            who = f"角色:{name or cid}"
+        else:
+            scenes = [str(s) for s in (c.get("scenes") or [])]
+            eid = str(sp.get("id") or "?")
+            who = f"{scenes[0]}/{eid}" if len(scenes) == 1 else eid
         return f"{c.get('id', '?')}  · {who}  ({len(c.get('lines') or [])} 句)"
 
     # ---------- 台词行 ----------
@@ -425,9 +495,16 @@ class BubbleLinesEditor(QWidget):
         rm.setMaximumWidth(28)
         lay.addWidget(rm)
         self._scenes_rows_lay.addWidget(host)
+        # ⚠ `addWidget` 之后子控件仍是 `isHidden()`，要等下一轮事件循环才被显示——
+        # 而隐藏项会被 QVBoxLayout **整个跳过**，容器 sizeHint 因此是 0（实测：不 show
+        # 的话 sizeHint 高=0，show 了才是 17）。于是同一回合里算出来的行高按"零行"给，
+        # 用户看到的就是"刚点开这条时「限定场景」是一条缝"。显式 show 让它当场算数；
+        # 容器自己还隐藏着时（实体档）这只置位、不会真显示出来。
+        host.show()
         row = {"widget": host, "sel": sel}
         self._scene_rows.append(row)
         rm.clicked.connect(lambda: self._remove_scene_row(row))
+        self._relayout_scene_rows()
 
     def _remove_scene_row(self, row: dict) -> None:
         if row not in self._scene_rows:
@@ -435,10 +512,36 @@ class BubbleLinesEditor(QWidget):
         self._scene_rows.remove(row)
         row["widget"].setParent(None)
         row["widget"].deleteLater()
+        self._relayout_scene_rows()
 
     def _clear_scene_rows(self) -> None:
         for row in list(self._scene_rows):
             self._remove_scene_row(row)
+
+    def _relayout_scene_rows(self) -> None:
+        """把场景行的尺寸变化显式顶到外层 QFormLayout。
+
+        必要性见构造处那段注释：行是在 `_on_select` 里加的，而那时容器可能正处于隐藏态
+        （上一条是实体档），隐藏 widget 的 updateGeometry 不向上传播 → 事后 show 出来时
+        行高冻在旧 sizeHint。这里逐层 updateGeometry + invalidate，与嵌套层数无关。
+        """
+        # **自内向外逐层**走到本页根：每层 invalidate（清缓存的 sizeHint）+ activate
+        # （当场重算几何，而不是等下一轮事件循环）。
+        #
+        # 为什么必须走全链、不能只捅最近那一两层：这块外面还套着 QGroupBox → QVBoxLayout
+        # → QScrollArea 的 widget。只捅到 QFormLayout 时，实测**第一次点某条台词本**
+        # 「限定场景」仍是 30px（该 116px），要再点一次别的条目才弹开——用户看到的就是
+        # "刚打开时这一行是坏的"。
+        widget = self._scenes_rows_host
+        while widget is not None:
+            layout = widget.layout()
+            if layout is not None:
+                layout.invalidate()
+                layout.activate()
+            widget.updateGeometry()
+            if widget is self:
+                break
+            widget = widget.parentWidget()
 
     def _read_scenes(self) -> list[str]:
         out: list[str] = []
@@ -448,8 +551,101 @@ class BubbleLinesEditor(QWidget):
                 out.append(sid)
         return out
 
-    def _sync_speaker_enabled(self) -> None:
-        self._f_speaker_id.setEnabled(self._f_speaker_kind.currentData() == "entity")
+    def _character_rows(self) -> list[tuple[str, str, str]]:
+        """角色档候选：主角 + 角色注册表全体（ReferencePickerField 的 provider）。
+
+        主角单列一行而不是塞进注册表：他是「当前受控的那个人」，换人了嘴跟着换，
+        与"某个具体角色"是两种语义（落盘也是两种形状：player / character）。
+        """
+        rows: list[tuple[str, str, str]] = [(
+            _PLAYER_CHARACTER_VALUE, "主角",
+            "当前受控的那个人（换人了嘴也跟着换）；落盘 speaker.kind=player",
+        )]
+        reg = getattr(self._model, "character_registry", None) or {}
+        for cid, ch in reg.items():
+            if not isinstance(ch, dict):
+                continue
+            name = str(ch.get("name") or "").strip()
+            rows.append((str(cid), name or str(cid), "角色注册表条目；落盘 speaker.kind=character"))
+        return rows
+
+    def _on_speaker_kind_changed(self) -> None:
+        self._sync_speaker_mode()
+
+    def _sync_speaker_mode(self) -> None:
+        """按说话人档切换表单形态。
+
+        两档的差别不是"要不要多填一个字段"，而是**限定场景是谁说了算**：
+        - 角色档：角色跨场景漫游，「在哪些场景说」只能由作者显式收窄 → 场景行可编辑；
+        - 实体档：实体 id 是场景相对的，选点那一下已经把场景定死 → 场景由选点反填、只读回显。
+          留着可编辑的场景行会让人写出"speaker 在 A 场景、限定场景填 B"这种永远不响的配法。
+        """
+        is_entity = self._f_speaker_kind.currentData() == "entity"
+        self._speaker_form.setRowVisible(self._f_character, not is_entity)
+        self._speaker_form.setRowVisible(self._f_entity, is_entity)
+        self._scenes_rows_host.setVisible(not is_entity)
+        self._scenes_add_btn.setVisible(not is_entity)
+        self._scenes_locked.setVisible(is_entity)
+        self._relayout_scene_rows()
+        self._sync_scene_lock_label()
+        self._sync_speaker_hint()
+
+    def _sync_speaker_hint(self) -> None:
+        """本档没选出值时的提示（与 _write_into 的"不写半截形状"是同一条契约）。"""
+        is_entity = self._f_speaker_kind.currentData() == "entity"
+        empty = not (self._f_entity.entity_id() if is_entity else self._f_character.current_value())
+        # 没选中任何条目时右侧整块是禁用的空表单：既没有"这次"也没有"原来那个"，别弹警告
+        if self._current_idx < 0:
+            empty = False
+        if not empty:
+            self._speaker_hint.setText("")
+            self._speaker_hint.setVisible(False)
+            return
+        what = "实体" if is_entity else "角色"
+        self._speaker_hint.setText(
+            f"还没选{what}：在选出来之前不会写盘，原来配好的说话人原样保留。"
+        )
+        self._speaker_hint.setVisible(True)
+
+    def _sync_scene_lock_label(self) -> None:
+        """实体档下「限定场景」的只读回显文案（含老数据的提示）。"""
+        if self._f_speaker_kind.currentData() != "entity":
+            return
+        sid = self._f_entity.scene_id()
+        if sid:
+            self._scenes_locked.setText(f"{sid}（由选点决定）")
+            self._scenes_locked.setToolTip(
+                "实体档的限定场景＝选点时选中的那个场景，不再单独配：\n"
+                "实体 id 是场景相对的，另配一个场景只会配出「永远不响」的组合。"
+            )
+            self._scenes_locked.setStyleSheet(theme.semantic_text_css("muted"))
+            return
+        legacy = self._legacy_entity_scenes()
+        if legacy:
+            self._scenes_locked.setText(f"老数据：{'、'.join(legacy)}（不是一个场景）")
+            # 场景多到框里显示不下时，tooltip 得能看全（框本身可滚动/复制，但看不见全貌）
+            self._scenes_locked.setToolTip(
+                "盘上钉了不止一个场景，反填不出唯一的那个：\n"
+                + "\n".join(f"  · {s}" for s in legacy)
+                + "\n重新「选点…」即可把场景钉死；不动它则原样保留，编辑器不替你挑。"
+            )
+        else:
+            self._scenes_locked.setText("老数据：没钉死场景")
+            self._scenes_locked.setToolTip(
+                "没钉场景时运行时按当前场景解析裸 id——同名实体在别的场景也会跟着说。\n"
+                "重新「选点…」即可修正。"
+            )
+        self._scenes_locked.setStyleSheet(theme.semantic_text_css("warn"))
+
+    def _legacy_entity_scenes(self) -> list[str]:
+        """当前条目盘上的 scenes（实体档反填不出单一场景时用来提示，不改写）。"""
+        sets = self._sets()
+        if self._current_idx < 0 or self._current_idx >= len(sets):
+            return []
+        c = sets[self._current_idx]
+        if not isinstance(c, dict):
+            return []
+        return [str(s) for s in (c.get("scenes") or [])]
 
     def _sync_trigger_enabled(self) -> None:
         self._f_range.setEnabled(self._f_trigger.currentData() == "approach")
@@ -458,7 +654,9 @@ class BubbleLinesEditor(QWidget):
         self._current_idx = -1
         self._f_id.clear()
         self._f_desc.clear()
-        self._f_speaker_id.set_current("")
+        self._f_character.set_value("")
+        self._f_entity.set_value("", "")
+        self._sync_speaker_mode()
         self._clear_scene_rows()
         self._cond.set_expr(None)
         self._clear_line_rows()
@@ -499,13 +697,25 @@ class BubbleLinesEditor(QWidget):
         self._f_id.setText(str(c.get("id") or ""))
         self._f_desc.setText(str(c.get("description") or ""))
         sp = c.get("speaker") if isinstance(c.get("speaker"), dict) else {}
-        kind = "player" if sp.get("kind") == "player" else "entity"
-        self._f_speaker_kind.setCurrentIndex(self._f_speaker_kind.findData(kind))
-        self._f_speaker_id.set_current(str(sp.get("id") or ""))
-        self._sync_speaker_enabled()
+        sp_kind = str(sp.get("kind") or "").strip()
+        # 场景行无论哪一档都先按盘上值填满：切档时不至于把另一档的 scenes 弄丢
         self._clear_scene_rows()
-        for sid in c.get("scenes") or []:
-            self._add_scene_row(str(sid))
+        scenes = [str(s) for s in (c.get("scenes") or [])]
+        for sid in scenes:
+            self._add_scene_row(sid)
+        if sp_kind in ("player", "character"):
+            mode = "character"
+            self._f_character.set_value(
+                _PLAYER_CHARACTER_VALUE if sp_kind == "player" else str(sp.get("characterId") or ""))
+            self._f_entity.set_value("", "")
+        else:
+            mode = "entity"
+            self._f_character.set_value("")
+            # 场景只有恰好一条时才当作"选点结果"反填；0 条或多条是老数据，
+            # 反填成其中之一就是**替用户瞎改数据**——留空并在回显里提示。
+            self._f_entity.set_value(scenes[0] if len(scenes) == 1 else "", str(sp.get("id") or ""))
+        self._f_speaker_kind.setCurrentIndex(self._f_speaker_kind.findData(mode))
+        self._sync_speaker_mode()
         trig = "approach" if c.get("trigger") == "approach" else "ambient"
         self._f_trigger.setCurrentIndex(self._f_trigger.findData(trig))
         self._sync_trigger_enabled()
@@ -535,21 +745,49 @@ class BubbleLinesEditor(QWidget):
         # 从原件复制：speaker 里的未知子键（策划备注之类）与键序都不该被这一次保存抹掉
         old_sp = c.get("speaker")
         sp: dict = dict(old_sp) if isinstance(old_sp, dict) else {}
-        if self._f_speaker_kind.currentData() == "player":
-            sp["kind"] = "player"
-            sp.pop("id", None)
-        else:
+        entity_mode = self._f_speaker_kind.currentData() == "entity"
+        # ⚠ 本档还没选出值时**一个字都不写**：把类型下拉一拨就写出 {kind:'character',
+        # characterId:''} 这种半截形状，等于当场销毁作者原来配好的说话人（本编辑器无撤销，
+        # 且切条目/Save All 都会自动提交）。选出来之前，盘上原来那份原样留着。
+        if entity_mode and self._f_entity.entity_id():
             sp["kind"] = "entity"
-            sp["id"] = self._f_speaker_id.current_id()
-        c["speaker"] = sp
-        scenes = self._read_scenes()
-        old_scenes = c.get("scenes")
-        if isinstance(old_scenes, list) and set(map(str, old_scenes)) == set(scenes) and scenes:
-            pass                      # 集合没变（可能有重复项/别的顺序）：原样留着
-        elif scenes:
-            c["scenes"] = scenes
+            sp["id"] = self._f_entity.entity_id()
+            sp.pop("characterId", None)
+            c["speaker"] = sp
+        elif not entity_mode and self._f_character.current_value():
+            cid = self._f_character.current_value()
+            if cid == _PLAYER_CHARACTER_VALUE:
+                sp["kind"] = "player"
+                sp.pop("characterId", None)
+            else:
+                sp["kind"] = "character"
+                sp["characterId"] = cid
+            sp.pop("id", None)
+            c["speaker"] = sp
+        # scenes 归谁管，看**这条最终是什么形状**，不看下拉停在哪一档：
+        # 拨到「角色」但还没选角色时 speaker 仍是实体（上面刻意不写），此时若按角色档
+        # 去读场景行，× 掉一行就把实体档的场景钉悄悄抹了，而 speaker 一个字没动。
+        final_sp = c.get("speaker")
+        # 手写坏了的 speaker（字符串/数组…）只读透传：这里再 `.get` 就当场抛异常
+        final_kind = str(final_sp.get("kind") or "") if isinstance(final_sp, dict) else ""
+        if final_kind == "entity":
+            # 实体档的 scenes 是选点的产物，不读场景行。
+            # 选不出场景（老数据没钉死）时**原样保留**盘上的 scenes——
+            # 用户没重新选点，编辑器就没有资格替他决定这组话在哪儿说。
+            picked = self._f_entity.scene_id()
+            if picked:
+                old_scenes = c.get("scenes")
+                if not (isinstance(old_scenes, list) and [str(s) for s in old_scenes] == [picked]):
+                    c["scenes"] = [picked]
         else:
-            c.pop("scenes", None)
+            scenes = self._read_scenes()
+            old_scenes = c.get("scenes")
+            if isinstance(old_scenes, list) and set(map(str, old_scenes)) == set(scenes) and scenes:
+                pass                  # 集合没变（可能有重复项/别的顺序）：原样留着
+            elif scenes:
+                c["scenes"] = scenes
+            else:
+                c.pop("scenes", None)
         when = self._cond.get_expr()
         if when:
             c["when"] = when
@@ -666,9 +904,12 @@ class BubbleLinesEditor(QWidget):
         n = 0
         while f"bubble_{n}" in taken:
             n += 1
+        # 新条目默认「主角」：这是唯一零配置就合法的说话人形状。
+        # 写 {"kind":"entity","id":""} 会当场造出一条 validate-data error，
+        # 与 _write_into 的"不写半截形状"契约自相矛盾（终审 P2-D）。
         sets.append({
             "id": f"bubble_{n}",
-            "speaker": {"kind": "entity", "id": ""},
+            "speaker": {"kind": "player"},
             "lines": [],
         })
         self._model.mark_dirty("bubble_lines")

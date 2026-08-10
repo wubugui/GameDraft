@@ -26,6 +26,7 @@ import type { CutsceneManager } from '../systems/CutsceneManager';
 import type { SceneManager } from '../systems/SceneManager';
 import type { EmoteBubbleManager } from '../systems/EmoteBubbleManager';
 import type { BubbleChatterSystem } from '../systems/BubbleChatterSystem';
+import { bubbleSpeakerFromActionTarget } from '../systems/BubbleChatterSystem';
 import type { ScenarioStateManager } from './ScenarioStateManager';
 import type { NarrativeStateManager } from './NarrativeStateManager';
 import type { DocumentRevealManager } from '../systems/DocumentRevealManager';
@@ -761,10 +762,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       console.warn('setBubbleLineSet: 需要 target 与 lineSetId');
       return;
     }
-    d.bubbleChatterSystem.setLineSetFor(
-      target === 'player' ? { kind: 'player' } : { kind: 'entity', id: target },
-      lineSetId,
-    );
+    d.bubbleChatterSystem.setLineSetFor(bubbleSpeakerFromActionTarget(target), lineSetId);
   }, ['target', 'lineSetId']);
 
   /** 清掉 setBubbleLineSet 的覆盖；`silence=true` 则这人彻底不再自动说话。 */
@@ -774,10 +772,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       console.warn('clearBubbleLineSet: 需要 target');
       return;
     }
-    d.bubbleChatterSystem.clearLineSetFor(
-      target === 'player' ? { kind: 'player' } : { kind: 'entity', id: target },
-      p.silence === true,
-    );
+    d.bubbleChatterSystem.clearLineSetFor(bubbleSpeakerFromActionTarget(target), p.silence === true);
   }, ['target', 'silence']);
 
   // 【legacy】damagePlayer/healPlayer：旧扣血/回血。新内容统一用 decHealth/incHealth（编排控值）

@@ -170,6 +170,7 @@ import {
   graphLabel,
   graphReferenceLabel,
   isSubgraphElement,
+  liftSubgraphForTemplate,
   mergeValidationIssues,
   normalizeFile,
   parseExternalSignalKey,
@@ -2235,7 +2236,7 @@ function NarrativeEditorInner() {
               <TemplatesPanel
                 templates={templates}
                 catalog={catalog}
-                currentComposition={composition}
+                currentComposition={liftSubgraphForTemplate(composition, graphRef)}
                 currentNarrative={data}
                 onTemplatesChange={setTemplates}
                 onStamped={handleStamped}

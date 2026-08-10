@@ -12,7 +12,7 @@
       "speaker": {
         "kind": "player"
       },
-      "next": "n_1",
+      "next": "n_3",
       "text": "雾津藏钱！"
     },
     "n_1": {
@@ -23,8 +23,20 @@
       "speaker": {
         "kind": "player"
       },
-      "next": "n_1",
+      "next": "n_3",
       "text": "渡口藏钱"
+    },
+    "n_3": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": ""
+          }
+        }
+      ],
+      "next": "n_1"
     }
   }
 }

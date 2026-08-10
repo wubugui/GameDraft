@@ -321,6 +321,85 @@ class TestNarrativeStateEditor(unittest.TestCase):
             m.planes = [{"id": "normal", "label": "常态"}, {"id": "背尸"}]
             self.assertEqual(authoring_catalog(m)["planeIds"], ["normal", "背尸"])
 
+    def test_single_stamp_reuses_shared_signal_row_like_batch_does(self) -> None:
+        """单张盖章必须把「既有信号行内容」喂给引擎做幂等判定。
+
+        回归锁：slot 曾漏传 existing_signal_rows（批量那条路一直传着），于是模板里凡是
+        抽取时原样抄下来的信号声明——以及共用私有信号——第一次就判「已存在且声明不一致」，
+        叙事页的盖章按钮对这类模板**永久变灰**，官方 pickable 种子模板也盖不出第二份。
+        """
+        tpl = {
+            "id": "pick",
+            "params": [{"name": "ownerId", "type": "identifier", "from": "entity.id"}],
+            "signals": [{"id": "共用已取", "scope": "private"}],
+            "composition": {
+                "id": "wrap_{{ownerId}}",
+                "mainGraph": {
+                    "id": "wrap_{{ownerId}}", "ownerType": "hotspot", "ownerId": "{{ownerId}}",
+                    "initialState": "active",
+                    "states": {"active": {"id": "active"}, "taken": {"id": "taken"}},
+                    "transitions": [
+                        {"id": "t", "from": "active", "to": "taken", "signal": "共用已取"},
+                    ],
+                },
+            },
+        }
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            write_minimal_loadable_project(root)
+            m = ProjectModel()
+            m.load_project(root)
+            m.narrative_templates = {"schemaVersion": 1, "templates": [tpl]}
+            bridge = NarrativeEditorBridge(m)
+
+            narrative: dict = {"schemaVersion": 1, "compositions": [], "signals": []}
+            for spot in ("箱子1", "箱子2"):
+                res = json.loads(bridge.stampTemplate(json.dumps({
+                    "templateId": "pick",
+                    "values": {"ownerId": spot},
+                    "currentNarrative": narrative,
+                    "generateDialogueStubs": False,
+                    "dryRun": False,
+                }, ensure_ascii=False)))
+                self.assertTrue(res.get("ok"), f"{spot} 盖不出来：{res.get('reason')}")
+                narrative = res["narrative"]
+
+            self.assertEqual(
+                [c["id"] for c in narrative["compositions"]], ["wrap_箱子1", "wrap_箱子2"],
+            )
+            # 共用私有信号幂等注册：两次盖章只留一行
+            self.assertEqual(
+                [s["id"] for s in narrative["signals"]].count("共用已取"), 1, narrative["signals"],
+            )
+
+    def test_authoring_catalog_param_sources_match_authority_and_web_fallback(self) -> None:
+        """paramSources 目录 = shared/narrative_templates.PARAM_SOURCES 同序同集；
+        网页 FALLBACK_PARAM_SOURCES 兜底镜像（老 host 无 catalog 时用）必须同 id 集。"""
+        from tools.editor.shared.narrative_templates import PARAM_SOURCES
+
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            write_minimal_loadable_project(root)
+            m = ProjectModel()
+            m.load_project(root)
+            rows = authoring_catalog(m)["paramSources"]
+            self.assertEqual([row["id"] for row in rows], list(PARAM_SOURCES))
+            self.assertEqual(
+                [row["label"] for row in rows],
+                [PARAM_SOURCES[key] for key in PARAM_SOURCES],
+            )
+
+        tsx = (
+            Path(__file__).resolve().parents[3]
+            / "tools/narrative_editor_web/src/TemplatesPanel.tsx"
+        ).read_text(encoding="utf-8")
+        fallback_block = re.search(
+            r"const FALLBACK_PARAM_SOURCES[^=]*=\s*\[(.*?)\];", tsx, re.DOTALL
+        )
+        self.assertIsNotNone(fallback_block, "网页兜底镜像 FALLBACK_PARAM_SOURCES 不见了")
+        fallback_ids = re.findall(r"id:\s*'([^']+)'", fallback_block.group(1))
+        self.assertEqual(set(fallback_ids), set(PARAM_SOURCES), "网页兜底镜像与 PARAM_SOURCES 漂移")
+
     def test_bridge_save_rejects_invalid_narrative_graphs(self) -> None:
         with TemporaryDirectory() as td:
             root = Path(td) / "p"

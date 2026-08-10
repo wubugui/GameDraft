@@ -1,36 +1,12 @@
 {
   "schemaVersion": 1,
   "id": "街巷_赌坊门卫",
-  "entry": "n_1",
+  "entry": "n_7",
   "meta": {
     "title": "赌坊门卫对话"
   },
   "preconditions": [],
   "nodes": {
-    "n_1": {
-      "type": "switch",
-      "cases": [
-        {
-          "next": "n_4",
-          "conditions": [
-            {
-              "narrative": "flow_xungou_main",
-              "state": "主线_开放世界前半段"
-            }
-          ]
-        },
-        {
-          "next": "n_6",
-          "conditions": [
-            {
-              "narrative": "flow_xungou_main",
-              "state": "主线_开放世界后半段"
-            }
-          ]
-        }
-      ],
-      "defaultNext": "n_2"
-    },
     "n_2": {
       "type": "end"
     },
@@ -105,6 +81,44 @@
         }
       ],
       "next": "n_2"
+    },
+    "n_7": {
+      "type": "ownerState",
+      "cases": [
+        {
+          "state": "主线剧情状态",
+          "next": "n_6"
+        },
+        {
+          "state": "初始状态",
+          "next": "n_9"
+        },
+        {
+          "state": "赌场正常状态",
+          "next": "n_4"
+        }
+      ],
+      "defaultNext": "n_8",
+      "missingWrapperNext": "n_8",
+      "wrapperGraphId": "街巷_赌坊"
+    },
+    "n_8": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "next": "n_2",
+      "text": "状态错误！"
+    },
+    "n_9": {
+      "type": "line",
+      "speaker": {
+        "kind": "sceneNpc",
+        "npcId": "街巷_赌坊门卫"
+      },
+      "next": "n_2",
+      "text": "走走走！叫花子来凑什么热闹！"
     }
   }
 }

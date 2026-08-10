@@ -580,8 +580,8 @@
       "conditionHidesEntity": true,
       "conditions": [
         {
-          "narrative": "scenario_graph_1",
-          "state": "entry"
+          "narrative": "flow_xungou_main",
+          "state": "state_3"
         }
       ]
     },

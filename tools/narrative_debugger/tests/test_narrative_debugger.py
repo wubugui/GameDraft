@@ -262,6 +262,24 @@ def test_scene_view_lists_every_line_in_that_place(index: NarrativeIndex) -> Non
     assert any("背尸" in x for x in labels), "背尸那两单在雾津街头接活，必须列出来"
 
 
+def test_scene_view_lists_graphs_owned_by_someone_standing_there(index: NarrativeIndex) -> None:
+    """挂在本场景某个人/物身上的图，一律要出现在这个场景里。
+
+    只靠"这个场景能打出哪些信号"反查是不够的：赌坊门卫那张图听的是别处发的信号
+    （还有 __draft__ 占位），反查一条都出不来——人明明就站在雾津街头，
+    他的戏却在按场景看里彻底失踪。
+    """
+    owned: dict[str, set[str]] = {}
+    for gid, owner in index.graph_owners.items():
+        if owner.scene and index.graph_states(gid):
+            owned.setdefault(owner.scene, set()).add(gid)
+    assert owned, "没有一张图解析出 owner 所在场景，这条护栏就白设了"
+    for scene, gids in owned.items():
+        listed = {g for g, _ in index.scene_graphs(scene)}
+        missing = gids - listed
+        assert not missing, f"「{scene}」里挂着这些图，按场景看却列不出来：{sorted(missing)}"
+
+
 def test_composition_exposes_subgraphs_not_just_mainline(index: NarrativeIndex) -> None:
     """按线看要能下钻到子图——mainGraph 那十来拍只是骨架。"""
     graphs = index.graphs_in_composition("xungou_demo_main")

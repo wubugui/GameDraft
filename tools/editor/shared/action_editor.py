@@ -345,6 +345,8 @@ _SELECTOR_KIND_UNIVERSE: dict[str, str] = {
     "pressure_hold": "pressure_holds",
     "signal_cue": "signal_cues",
     "prop_preset": "prop_presets",
+    "bubble_line_set": "bubble_line_sets",
+    "bubble_speaker": "bubble_speakers",
     # 叙事活计生命周期（S1）：候选=声明 run 的活计图，宇宙沿用 narrative 条件叶的图 id 集合
     "narrative_run_archetype": "narrative_graph_ids",
     # 叙事章节包（C2）：候选=编排 package 标并集
@@ -3360,6 +3362,7 @@ class ActionRow(QWidget):
             "item", "quest", "quest_any", "encounter", "rule", "fragment", "cutscene", "shop",
             "spawn",
             "actor", "emote_target", "npc_only", "scene_group",
+            "bubble_speaker", "bubble_line_set",
             "water_minigame", "sugar_wheel_minigame", "paper_craft_minigame",
             "object_examine",
             "smell", "plane", "pressure_hold", "signal_cue", "prop_preset",
@@ -3412,6 +3415,30 @@ class ActionRow(QWidget):
             pairs.append(("player", "player"))
         elif kind == "actor":
             pairs = m.actor_id_items_for_scene(self._ctx_scene_id) if m else []
+        elif kind == "bubble_speaker":
+            # 头顶闲聊说话人：与台词本的三档一一对应（player / character:<角色id> / 实体 id）。
+            # 串的形状由 BubbleChatterSystem.bubbleSpeakerFromActionTarget 定义；与台词本自带的
+            # speaker 对不上时运行时**静默拒绝套用**，所以候选必须给全（三档都得选得出来）。
+            if m:
+                for cid, ch in (getattr(m, "character_registry", None) or {}).items():
+                    if not isinstance(ch, dict):
+                        continue
+                    name = str(ch.get("name") or "").strip() or str(cid)
+                    pairs.append((f"character:{cid}", f"角色 {name}"))
+                pairs.extend(m.actor_id_items_for_scene(self._ctx_scene_id))
+                # 热点也能冒气泡（resolveEmoteTarget 认它），候选面必须与 emote_target 同宽——
+                # actor_id_items_for_scene 不含热点，只用它会让"热点说话人"根本配不出来
+                pairs.extend(m.hotspot_ids_for_scene(self._ctx_scene_id))
+            else:
+                pairs.append(("player", "player"))
+        elif kind == "bubble_line_set":
+            bl = (getattr(m, "bubble_lines", None) or {}) if m else {}
+            sets = bl.get("lineSets") if isinstance(bl, dict) else None
+            pairs = [
+                (str(c.get("id", "")).strip(),
+                 str(c.get("description") or c.get("id", "")).strip()[:40])
+                for c in (sets or []) if isinstance(c, dict) and str(c.get("id", "")).strip()
+            ]
         elif kind == "npc_only":
             pairs = m.npc_actor_items_for_scene(self._ctx_scene_id) if m else []
         elif kind == "scene_group":
@@ -3485,6 +3512,12 @@ class ActionRow(QWidget):
         w.value_changed.connect(self.changed)
         tip = {
             "actor": "仅下拉选择；无场景上下文时列表可能不全，请先设置过场 targetScene。",
+            "bubble_speaker": (
+                "头顶闲聊的说话人，三档：player（当前受控角色）/ character:<角色id>"
+                "（角色注册表，运行时落到当前场景里那个摆放）/ 场景实体 id。\n"
+                "必须与所选台词本自带的 speaker 一致，否则运行时拒绝套用（只在控制台留一行警告）。"
+            ),
+            "bubble_line_set": "仅下拉选择；列表来自 bubble_lines.json（「闲聊台词本」页维护）。",
             "emote_target": "仅下拉选择；列表为当前场景 NPC + 热点 + player。",
             "npc_only": "仅下拉选择；列表为当前场景 NPC。",
             "scene_group": (
@@ -5378,6 +5411,61 @@ class ActionRow(QWidget):
 
                     source_type_w.typeCommitted.connect(sync_source_reference_mode)
                     sync_source_reference_mode()
+            elif act_type == "emitNarrativeSignal" and pname == "ownerType":
+                # 显式 owner 覆盖（私有信号定向的逃生口，终审 H1）。合法监听 owner 只有
+                # npc/hotspot/zone 三类（运行时 PRIVATE_SIGNAL_LISTENER_OWNER_TYPES）。
+                rows = [
+                    ("自动（跟随发射点上下文）", ""),
+                    ("NPC", "npc"),
+                    ("Hotspot", "hotspot"),
+                    ("Zone", "zone"),
+                ]
+                w = FilterableTypeCombo(rows, self, select_only=True)
+                w.set_committed_type(str(val) if val is not None else "")
+                w.setToolTip(
+                    "私有信号 owner 的显式覆盖；留空=跟随发射点上下文（origin）。"
+                    "运行时 ownerType 与 ownerId 同时非空才生效。"
+                    "历史未知类型会以「(数据)」保留，不会被自动改写。",
+                )
+                w.typeCommitted.connect(lambda _t: self.changed.emit())
+            elif act_type == "emitNarrativeSignal" and pname == "ownerId":
+                owner_type_w = self._param_widgets.get("ownerType")
+
+                def _signal_owner_rows(owner_type_w=owner_type_w):
+                    m = self._ctx_model
+                    if m is None or not isinstance(owner_type_w, FilterableTypeCombo):
+                        return []
+                    owner_kind = owner_type_w.committed_type().strip()
+                    sid = (self._ctx_scene_id or "").strip()
+                    if owner_kind == "npc":
+                        return m.npc_ids_for_scene(sid) if sid else m.all_npc_ids_global()
+                    if owner_kind == "hotspot":
+                        return m.hotspot_ids_for_scene(sid) if sid else m.all_hotspot_ids()
+                    if owner_kind == "zone":
+                        # zone 是纯场景内对象，没有全工程目录可回退。
+                        return m.standard_zone_ids_for_scene(sid)
+                    return []
+
+                w = ReferencePickerField(
+                    _signal_owner_rows,
+                    self,
+                    allow_empty=True,
+                    title="选择私有信号 owner",
+                    geometry_key="narrative_signal_owner_reference_picker",
+                )
+                w.set_value(str(val) if val is not None else "")
+                w.setToolTip(
+                    "候选随 ownerType 与当前场景联动；与 ownerType 成对填写才覆盖发射点上下文。"
+                    "悬垂或历史未知值始终保值，除非明确重选/清空。",
+                )
+                w.value_changed.connect(lambda _t: self.changed.emit())
+                if isinstance(owner_type_w, FilterableTypeCombo):
+                    # ⚠ 同 sourceId：`w` 是参数循环的复用变量，必须默认参绑定当前控件，
+                    # 晚绑定会在循环走到后续参数时指到别人的控件上。
+                    def sync_owner_reference_rows(_value: str = "", w=w) -> None:
+                        w.refresh_display()
+
+                    owner_type_w.typeCommitted.connect(sync_owner_reference_rows)
             elif act_type == "showEmote" and pname == "target":
                 w = self._make_selector("emote_target", str(val) if val is not None else "")
                 w.setToolTip(
@@ -5459,6 +5547,10 @@ class ActionRow(QWidget):
                     "停在末帧（可配 thenState 自动回 idle）；强制循环=让非循环状态持续循环。",
                 )
                 w.typeCommitted.connect(lambda _t: self.changed.emit())
+            elif act_type in ("setBubbleLineSet", "clearBubbleLineSet") and pname == "target":
+                w = self._make_selector("bubble_speaker", str(val) if val is not None else "")
+            elif act_type == "setBubbleLineSet" and pname == "lineSetId":
+                w = self._make_selector("bubble_line_set", str(val) if val is not None else "")
             elif act_type == "setEntityEnabled" and pname == "target":
                 w = self._make_selector("actor", str(val) if val is not None else "")
             elif act_type == "cameraFollowActor" and pname == "target":

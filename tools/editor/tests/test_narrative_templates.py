@@ -186,6 +186,132 @@ def test_validate_flags_undeclared_and_unused_params():
     assert "template.param.unused" in codes      # never 声明了没用
 
 
+def test_validate_bound_param_without_hole_is_error():
+    """实体推导参数没在骨架里挖到洞 = 每个实体盖出同一份产物：升 error 拦在保存前。
+
+    可证伪的坏：第一份静默绑到样本实体身上（策划选 B、产出 A 的图，ok=True 零警告），
+    第二份起作曲 id 撞名整批作废。普通未用参数仍只是 warning。
+    """
+    tpl = {
+        "id": "t1",
+        "params": [
+            {"name": "ownerId", "type": "identifier", "from": "entity.id"},
+            {"name": "闲置", "type": "text"},
+        ],
+        "composition": {"id": "wrap_常量名"},  # 没有 {{ownerId}} 洞
+    }
+    issues = validate_template(normalize_templates_file({"templates": [tpl]})["templates"][0])
+    bound = [i for i in issues if i["code"] == "template.param.unused.bound"]
+    assert bound and bound[0]["severity"] == "error", issues
+    assert "ownerId" in bound[0]["message"]
+    # 没绑 from 的闲置参数不受影响，仍是 warning
+    plain = [i for i in issues if i["code"] == "template.param.unused"]
+    assert plain and plain[0]["severity"] == "warning", issues
+
+    # 骨架里挖了洞就零问题
+    tpl["composition"] = {"id": "wrap_{{ownerId}}"}
+    ok_issues = validate_template(normalize_templates_file({"templates": [tpl]})["templates"][0])
+    assert not [i for i in ok_issues if i["code"] == "template.param.unused.bound"], ok_issues
+
+
+def test_same_from_bound_twice_is_error():
+    """同一来源绑多个参数 = 批量盖章把它们填成同一个值 → 一个实体挂出多份产物。
+
+    真实形状：站在母图上抽模板，母图挂着两张各绑不同实体的 wrapper，两条 ownerId 都被
+    参数化；盖给一个 npc 时两条都填成它，`npc:X` 下两张图（owner 歧义）+ `hotspot:X`
+    那张永远收不到信号。ok=True 零提示，只能靠校验拦。
+    """
+    tpl = {
+        "id": "t1",
+        "params": [
+            {"name": "ownerId", "type": "identifier", "from": "entity.id"},
+            {"name": "ownerId2", "type": "identifier", "from": "entity.id"},
+        ],
+        "composition": {"id": "a_{{ownerId}}_{{ownerId2}}"},
+    }
+    issues = validate_template(normalize_templates_file({"templates": [tpl]})["templates"][0])
+    dup = [i for i in issues if i["code"] == "template.param.from.duplicate"]
+    assert dup and dup[0]["severity"] == "error", issues
+    assert "ownerId" in dup[0]["message"] and "ownerId2" in dup[0]["message"]
+
+    # 一个来源一个参数 = 正常
+    tpl["params"][1]["from"] = "entity.kind"
+    ok_issues = validate_template(normalize_templates_file({"templates": [tpl]})["templates"][0])
+    assert not [i for i in ok_issues if i["code"] == "template.param.from.duplicate"], ok_issues
+
+
+def test_non_identity_sources_may_bind_several_params():
+    """只有 entity.id 不许绑两次；显示名绑两处是正当需求，拦了会逼作者手写重复内容。
+
+    真实形状：图 label 与镜像任务标题都用实体显示名——两个参数、同一个来源、同一个值，
+    正是想要的效果。
+    """
+    tpl = {
+        "id": "t1",
+        "params": [
+            {"name": "ownerId", "type": "identifier", "from": "entity.id"},
+            {"name": "label", "type": "text", "from": "entity.label"},
+            {"name": "questTitle", "type": "text", "from": "entity.label"},
+        ],
+        "composition": {"id": "w_{{ownerId}}", "label": "{{label}}"},
+        "quest": {"id": "q_{{ownerId}}", "title": "{{questTitle}}"},
+        "produces": ["composition", "quest"],
+    }
+    issues = validate_template(normalize_templates_file({"templates": [tpl]})["templates"][0])
+    assert not [i for i in issues if i["code"] == "template.param.from.duplicate"], issues
+
+
+def test_optional_bound_param_is_error_only_on_owner_fields():
+    """只有喂 owner 字段的推导参数才必须必填。
+
+    ownerType/ownerId 拼出运行时 owner 索引键，空串 = 那张图谁也找不到（私有信号收不到）；
+    显示名之类为空只是画布上没名字——拦它是过度概括，会把正当模板堵死。
+    """
+    def issues_for(param: dict, owner_type: str) -> list[dict]:
+        tpl = {
+            "id": "t",
+            "params": [{"name": "ownerId", "type": "identifier", "from": "entity.id", "required": True}, param],
+            "composition": {
+                "id": "wrap_{{ownerId}}",
+                "label": "{{%s}}" % param["name"],
+                "mainGraph": {
+                    "id": "wrap_{{ownerId}}", "ownerType": owner_type, "ownerId": "{{ownerId}}",
+                    "initialState": "a", "states": {"a": {"id": "a"}}, "transitions": [],
+                },
+            },
+        }
+        return [i for i in validate_templates_file({"schemaVersion": 1, "templates": [tpl]})
+                if i["code"] == "template.param.from.optional"]
+
+    # 只当显示名用 → 放行
+    assert not issues_for({"name": "label", "type": "text", "from": "entity.label"}, "hotspot")
+    # 喂 ownerType → 必须必填
+    bad = issues_for({"name": "ownerType", "type": "text", "from": "entity.kind"}, "{{ownerType}}")
+    assert bad and bad[0]["severity"] == "error", bad
+    # 给了默认值就放行（作者显式表达过缺省）
+    assert not issues_for(
+        {"name": "ownerType", "type": "text", "from": "entity.kind", "default": "hotspot"},
+        "{{ownerType}}",
+    )
+
+
+def test_stamp_collision_message_names_real_params_not_taskId():
+    """撞名提示按模板**实际参数**给建议：实体绑定型模板没有 taskId，甩「换个 taskId」等于没说。"""
+    tpl = normalize_templates_file({"templates": [{
+        "id": "pick",
+        "params": [{"name": "ownerId", "type": "identifier", "from": "entity.id"}],
+        "composition": {"id": "wrap_{{ownerId}}", "mainGraph": {
+            "id": "wrap_{{ownerId}}", "ownerType": "hotspot", "ownerId": "{{ownerId}}",
+            "initialState": "s", "states": {"s": {"id": "s"}}, "transitions": [],
+        }},
+    }]})["templates"][0]
+    res = stamp_template(tpl, {"ownerId": "箱子1"}, existing_composition_ids={"wrap_箱子1"})
+    assert not res["ok"]
+    msg = res["errors"][0]["message"]
+    assert "taskId" not in msg, msg
+    assert "ownerId" in msg, msg
+
+
 def test_validate_missing_composition_is_error():
     issues = validate_templates_file({"templates": [{"id": "t1", "params": []}]})
     assert any(i["code"] == "template.composition.missing" and i["severity"] == "error" for i in issues)

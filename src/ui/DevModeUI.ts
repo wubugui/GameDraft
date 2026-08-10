@@ -17,8 +17,12 @@ export interface DevModeCallbacks {
   /** Minigames 列表 */
   getMinigameEntries(): Array<{ id: string; label: string; kind: 'water' | 'sugarWheel' | 'paperCraft' | 'objectExamine' }>;
   launchMinigame(entry: { id: string; label: string; kind: 'water' | 'sugarWheel' | 'paperCraft' | 'objectExamine' }): void;
-  /** 叙事编排跳转：列出所有可直接进入的叙事，点击后自动满足前置状态并进入对应场景 */
-  getNarrativeWarps(): Array<{ id: string; label: string }>;
+  /**
+   * 叙事编排跳转：列出所有可直接进入的叙事，点击后自动满足前置状态并进入对应场景。
+   * `issues` = 冷启动预检发现的铺垫缺口（图/状态已改名或删除、只能一发直达等），
+   * 非空即在菜单里标出来——坏掉的跳转点要在点进去之前就看得见。
+   */
+  getNarrativeWarps(): Array<{ id: string; label: string; issues?: string[] }>;
   enterNarrativeWarp(id: string): void;
 }
 
@@ -300,7 +304,10 @@ export class DevModeUI {
     }
 
     for (const entry of entries) {
-      const row = this.makeListItem(entry.label, x + pad, y + cy, w - pad * 2, ITEM_HEIGHT, () => {
+      // 预检有缺口的跳转点当场标出来（详情在 dev 错误面 / 控制台），别让人点进去才发现戏没铺到。
+      const flaw = entry.issues?.length ?? 0;
+      const label = flaw > 0 ? `⚠ ${entry.label}　缺口${flaw}` : entry.label;
+      const row = this.makeListItem(label, x + pad, y + cy, w - pad * 2, ITEM_HEIGHT, () => {
         this.callbacks.enterNarrativeWarp(entry.id);
       });
       this.contentContainer.addChild(row);

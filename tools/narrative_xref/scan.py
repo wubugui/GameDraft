@@ -97,6 +97,26 @@ def _text(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _comp_label(comp: Any) -> str:
+    """这条线叫什么：自己的 label > 主图的 label > 原始 id。
+
+    编辑器新建的线不写 label 是常态（`composition_3`），四处清单里摆一串原始 id，
+    人根本认不出哪条线装着自己刚画的图。口径与调试器索引同款
+    （tools/narrative_debugger/model.py 的 `_composition_display`）。
+    """
+    if not isinstance(comp, dict):
+        return ""
+    label = _text(comp.get("label"))
+    if label:
+        return label
+    main = comp.get("mainGraph")
+    if isinstance(main, dict):
+        main_label = _text(main.get("label")) or _text(main.get("id"))
+        if main_label:
+            return main_label
+    return _text(comp.get("id"))
+
+
 def _esc(seg: Any) -> str:
     """JSON Pointer 段转义（RFC 6901），与 tools/json_lang/search.py 同款。"""
     return str(seg).replace("~", "~0").replace("/", "~1")
@@ -326,7 +346,7 @@ class SignalIndex:
                 graph_id=gid,
                 label=_text(graph.get("label")) or gid,
                 composition_id=_text(comp.get("id")),
-                composition_label=_text(comp.get("label")) or _text(comp.get("id")),
+                composition_label=_comp_label(comp),
                 element_id=element_id,
                 pointer=pointer,
                 initial_state=_text(graph.get("initialState")),
@@ -434,7 +454,7 @@ class SignalIndex:
                     self.declarations.setdefault(signal, []).append(Declaration(
                         signal=signal,
                         composition_id=_text(comp.get("id")),
-                        composition_label=_text(comp.get("label")) or _text(comp.get("id")),
+                        composition_label=_comp_label(comp),
                         element_id=_text(element.get("id")),
                         element_label=_text(element.get("label")) or _text(element.get("id")),
                         element_kind=_text(element.get("kind")),

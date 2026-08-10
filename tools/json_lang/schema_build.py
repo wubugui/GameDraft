@@ -34,6 +34,8 @@ REF_KIND_UNIVERSE: dict[str, str | None] = {
     "scene_hint": "scenes",
     "spawn": "spawn_points",
     "actor": "actors",
+    # 头顶闲聊说话人：emote_subject 那一套 + `character:<角色id>` 一档
+    "bubble_speaker": "bubble_speakers",
     "npc": "actors",
     "npc_soft": "actors",
     "emote_subject": "emote_subjects",
@@ -63,6 +65,7 @@ CONTENT_ID_PARAMS: dict[tuple[str, str], str] = {
     ("startPaperCraftMinigame", "id"): "paper_craft_minigames",
     ("startPressureHold", "id"): "pressure_holds",
     ("playSignalCue", "id"): "signal_cues",
+    ("setBubbleLineSet", "lineSetId"): "bubble_line_sets",
     ("activatePlane", "id"): "planes",
     ("openShop", "shopId"): "shops",
     ("startDialogueGraph", "graphId"): "dialogue_graphs",
@@ -122,7 +125,11 @@ _SNIPPET_DEFAULTS = {"int": 0, "float": 0, "bool": True}
 _CONDITION_HOST_KEY_PATTERN = "[cC]onditions?$"
 
 # 编辑器对"可选未填"的引用写空串(faceTarget、targetSpawnPoint 实测存在),这些宇宙允许 ""
-_EMPTY_OK_UNIVERSES = {"spawn_points", "actors", "emote_subjects"}
+# 编辑器侧对应的选择器允许留空（IdRefSelector allow_empty），半填状态不该报黄线——
+# "宁可少校验不误报"。bubble_speakers / bubble_line_sets 与 actors 同款控件，故同列。
+_EMPTY_OK_UNIVERSES = {
+    "spawn_points", "actors", "emote_subjects", "bubble_speakers", "bubble_line_sets",
+}
 
 
 def _with_labels(values: list[str], labels: dict[str, str] | None) -> dict:
