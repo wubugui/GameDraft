@@ -442,6 +442,54 @@
     },
     "voice_012": {
       "src": "/resources/runtime/audio/voice/12.mp3"
+    },
+    "sfx_coin_pouch_pat2fast": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_coin_pouch_pat2fast.wav"
+    },
+    "sfx_coin_pouch_slap_a": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_coin_pouch_slap_a.wav"
+    },
+    "sfx_coin_pouch_heft_b": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_coin_pouch_heft_b.wav"
+    },
+    "sfx_dice_bowl_roll_a": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_dice_bowl_roll_a.wav"
+    },
+    "sfx_dice_bowl_roll_b": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_dice_bowl_roll_b.wav"
+    },
+    "sfx_gamble_cheer_burst_a": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_gamble_cheer_burst_a.wav"
+    },
+    "sfx_gamble_cheer_burst_b": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_gamble_cheer_burst_b.wav"
+    },
+    "sfx_gamble_crowd_burst_a": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_gamble_crowd_burst_a.wav"
+    },
+    "sfx_gamble_crowd_burst_b": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_gamble_crowd_burst_b.wav"
+    },
+    "sfx_scuffle_shove_b": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_scuffle_shove_b.wav"
+    },
+    "sfx_bench_topple_a": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_bench_topple_a.wav"
+    },
+    "sfx_bench_topple_b": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_bench_topple_b.wav"
+    },
+    "sfx_body_dump_ground_a": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_body_dump_ground_a.wav"
+    },
+    "sfx_door_slam_shut_a": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_door_slam_shut_a.wav"
+    },
+    "sfx_gamble_jeer_muffled_a": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_gamble_jeer_muffled_a.wav"
+    },
+    "sfx_gamble_jeer_muffled_b": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_gamble_jeer_muffled_b.wav"
     }
   },
   "systemSfx": {

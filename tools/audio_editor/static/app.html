@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>寻狗记 · 音频编辑器</title>
+<script src="/static/wavesurfer.min.js"></script>
+<script src="/static/plugins/regions.min.js"></script>
+<script src="/static/plugins/timeline.min.js"></script>
+<script src="/static/plugins/hover.min.js"></script>
+<script src="/static/plugins/zoom.min.js"></script>
+<style>
+:root{
+  --bg:#17130e; --panel:#1f1a13; --panel2:#2a2218; --line:#4a3b26;
+  --gold:#c9a86a; --text:#d8cdb8; --dim:#8d8172;
+  --red:#a4553f; --green:#7d9457; --blue:#5f7d94;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{font:13px/1.55 "Songti SC","Noto Serif SC",serif;background:var(--bg);color:var(--text);
+  display:flex;flex-direction:column;overflow:hidden}
+button,input,select{font:inherit}
+button{cursor:pointer;background:var(--panel2);color:var(--text);border:1px solid var(--line);
+  border-radius:3px;padding:3px 10px}
+button:hover{border-color:var(--gold);color:var(--gold)}
+button.primary{background:#3a2f1c;border-color:var(--gold);color:var(--gold)}
+button.on{background:#33402a;border-color:var(--green);color:#c4d6a8}
+input,select{background:#12100c;border:1px solid var(--line);color:var(--text);
+  border-radius:3px;padding:2px 6px}
+input[type=range]{accent-color:var(--gold);padding:0}
+
+header{display:flex;gap:10px;align-items:center;padding:7px 14px;background:linear-gradient(#231c14,#17130e);
+  border-bottom:2px solid var(--line);flex:none}
+header h1{font-size:15px;margin:0;color:var(--gold);letter-spacing:2px;white-space:nowrap}
+.spacer{flex:1}
+#toast{position:fixed;right:16px;bottom:16px;background:#2a2218;border:1px solid var(--gold);
+  color:var(--gold);padding:8px 16px;border-radius:4px;display:none;z-index:99;max-width:460px}
+
+main{flex:1;display:flex;min-height:0}
+#lib{width:290px;flex:none;border-right:1px solid var(--line);display:flex;flex-direction:column;background:var(--panel)}
+#libTools{padding:7px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:5px}
+#libTools .row{display:flex;gap:5px}
+#search{flex:1;min-width:0}
+#list{flex:1;overflow:auto}
+.grp{padding:4px 9px;color:var(--gold);font-size:11px;background:#241d15;
+  position:sticky;top:0;border-bottom:1px solid var(--line)}
+.it{padding:4px 9px;border-bottom:1px solid #2c2419;cursor:pointer;display:flex;gap:6px;align-items:center}
+.it:hover{background:#2a2218}
+.it.sel{background:#3a2f1c;border-left:3px solid var(--gold);padding-left:6px}
+.it .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
+.dot{width:7px;height:7px;border-radius:50%;flex:none}
+.dot.e{background:var(--blue)} .dot.m{background:var(--green)} .dot.n{background:#3a3228}
+
+#work{flex:1;display:flex;flex-direction:column;min-width:0}
+#wtop{padding:8px 14px;border-bottom:1px solid var(--line)}
+#title{color:var(--gold);font-size:14px}
+#sub{color:var(--dim);font-size:11px;font-family:Menlo,monospace}
+#wavebox{flex:1;padding:10px 14px;overflow:auto;min-height:0}
+#wave{background:#12100c;border:1px solid var(--line);border-radius:4px}
+#tl{margin-top:2px}
+#transport{padding:7px 14px;border-top:1px solid var(--line);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.tag{color:var(--dim);font-size:11px}
+kbd{background:#12100c;border:1px solid var(--line);border-radius:3px;padding:0 4px;
+  font:11px Menlo,monospace;color:var(--gold)}
+
+#insp{width:265px;flex:none;border-left:1px solid var(--line);background:var(--panel);
+  overflow:auto;padding:10px}
+#insp h3{font-size:12px;color:var(--gold);margin:12px 0 6px;border-left:3px solid var(--gold);padding-left:7px}
+#insp h3:first-child{margin-top:0}
+.f{display:flex;gap:6px;align-items:center;margin-bottom:5px}
+.f label{width:56px;color:var(--dim);font-size:11px;flex:none}
+.f input[type=number]{width:64px}
+.f input[type=text]{flex:1;min-width:0}
+.f select{flex:1}
+.hint{color:var(--dim);font-size:10.5px;line-height:1.7;margin-top:5px}
+.empty{color:var(--dim);text-align:center;padding:40px 10px;font-style:italic}
+dialog{background:var(--panel);color:var(--text);border:1px solid var(--gold);border-radius:5px;
+  max-width:760px;width:88vw;padding:16px}
+dialog::backdrop{background:#000b}
+dialog h2{color:var(--gold);font-size:15px;margin:0 0 10px}
+table{border-collapse:collapse;width:100%;font-size:11.5px}
+th,td{border:1px solid var(--line);padding:3px 7px;text-align:left}
+th{background:#241d15;color:var(--gold)}
+.warnbox{background:#40281f;border:1px solid var(--red);color:#dfa18c;padding:7px 11px;
+  border-radius:3px;margin:8px 0;font-size:12px}
+.okbox{background:#28351f;border:1px solid var(--green);color:#c4d6a8;padding:7px 11px;
+  border-radius:3px;margin:8px 0;font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <h1>音频编辑器</h1>
+  <button onclick="fileInput.click()">导入音频…</button>
+  <input type="file" id="fileInput" accept="audio/*" multiple hidden>
+  <span class="spacer"></span>
+  <span class="tag" id="statTag"></span>
+  <button onclick="showPlan()">导出预览</button>
+  <button class="primary" onclick="doExport()">一键导出到项目</button>
+</header>
+
+<main>
+  <div id="lib">
+    <div id="libTools">
+      <div class="row"><input id="search" placeholder="搜索…" oninput="renderList()"></div>
+      <div class="row">
+        <select id="fSource" onchange="renderList()"><option value="">全部来源</option></select>
+        <select id="fState" onchange="renderList()">
+          <option value="">全部</option>
+          <option value="marked">已勾导出</option>
+          <option value="edited">已编辑</option>
+          <option value="raw">未处理</option>
+        </select>
+      </div>
+    </div>
+    <div id="list"></div>
+  </div>
+
+  <div id="work">
+    <div id="wtop"><div id="title">未选择音频</div><div id="sub">从左侧选一条,或点「导入音频…」</div></div>
+    <div id="wavebox"><div id="wave"></div><div id="tl"></div></div>
+    <div id="transport">
+      <button onclick="togglePlay()" id="btnPlay">▶ 播放</button>
+      <button onclick="playRegion()">▶ 播选区</button>
+      <button onclick="setIn()">起点 <kbd>I</kbd></button>
+      <button onclick="setOut()">终点 <kbd>O</kbd></button>
+      <button onclick="clearRegion()">清选区</button>
+      <span class="tag" id="posTag">—</span>
+      <span class="spacer"></span>
+      <span class="tag">缩放</span>
+      <input type="range" id="zoom" min="1" max="400" value="1" style="width:120px"
+        oninput="ws && ws.zoom(Number(this.value))">
+      <button onclick="preview()">试听处理后 <kbd>P</kbd></button>
+    </div>
+  </div>
+
+  <div id="insp"><div class="empty">未选择音频</div></div>
+</main>
+
+<dialog id="dlg"><div id="dlgBody"></div>
+  <div style="text-align:right;margin-top:12px">
+    <button onclick="dlg.close()">关闭</button>
+    <button class="primary" id="dlgOk" style="display:none"></button>
+  </div>
+</dialog>
+<div id="toast"></div>
+
+<script>
+let LIB = [], EDITS = {}, cur = null, ws = null, regions = null, curRegion = null;
+
+const $ = s => document.querySelector(s);
+const toastEl = $("#toast");
+function toast(msg, ms = 2600){
+  toastEl.textContent = msg; toastEl.style.display = "block";
+  clearTimeout(toastEl._t); toastEl._t = setTimeout(()=>toastEl.style.display="none", ms);
+}
+const fmt = t => (t == null ? "—" : t.toFixed(3) + "s");
+
+/* ---------------- 数据 ---------------- */
+async function loadAll(tries = 8){
+  // 首屏可能赶在内嵌服务进入 accept 循环之前,重试几次而不是留个空窗
+  let lib, ed;
+  for (let i = 0; i < tries; i++){
+    try {
+      [lib, ed] = await Promise.all([
+        fetch("/api/library").then(r=>r.json()),
+        fetch("/api/edits").then(r=>r.json()),
+      ]);
+      break;
+    } catch (err) {
+      if (i === tries - 1){ toast("连不上本地服务: " + err.message, 8000); return; }
+      await new Promise(r => setTimeout(r, 250));
+    }
+  }
+  LIB = lib.items; EDITS = ed;
+  const fs = $("#fSource");
+  if (fs.options.length <= 1)
+    lib.sources.forEach(s => fs.add(new Option(s, s)));
+  renderList(); updateStat();
+}
+let saveTimer = null;
+function saveEdits(){
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(async () => {
+    await fetch("/api/edits", {method:"POST", body: JSON.stringify(EDITS)});
+    updateStat();
+  }, 300);
+}
+function ed(key){ return EDITS[key] || (EDITS[key] = {}); }
+function updateStat(){
+  const m = Object.values(EDITS).filter(e=>e.export).length;
+  const e = Object.values(EDITS).filter(e=>e.trim||e.fadeIn||e.fadeOut||e.gainDb||e.normalize||e.reverse).length;
+  $("#statTag").textContent = `共 ${LIB.length} 条 · 已编辑 ${e} · 待导出 ${m}`;
+}
+
+/* ---------------- 列表 ---------------- */
+function renderList(){
+  const q = $("#search").value.trim().toLowerCase();
+  const fs = $("#fSource").value, st = $("#fState").value;
+  const groups = {};
+  for (const it of LIB){
+    if (q && !it.key.toLowerCase().includes(q)) continue;
+    if (fs && it.source !== fs) continue;
+    const e = EDITS[it.key] || {};
+    const isEd = !!(e.trim||e.fadeIn||e.fadeOut||e.gainDb||e.normalize||e.reverse);
+    if (st === "marked" && !e.export) continue;
+    if (st === "edited" && !isEd) continue;
+    if (st === "raw" && (isEd || e.export)) continue;
+    const g = it.source + (it.group ? " / " + it.group : "");
+    (groups[g] = groups[g] || []).push(it);
+  }
+  let h = "";
+  for (const [g, arr] of Object.entries(groups)){
+    h += `<div class="grp">${g}（${arr.length}）</div>`;
+    for (const it of arr){
+      const e = EDITS[it.key] || {};
+      const cls = e.export ? "m" : (e.trim||e.fadeIn||e.fadeOut||e.gainDb||e.normalize||e.reverse) ? "e" : "n";
+      h += `<div class="it ${cur===it.key?'sel':''}" onclick="select('${it.key.replace(/'/g,"\\'")}')">
+        <span class="dot ${cls}"></span><span class="nm">${it.name}</span></div>`;
+    }
+  }
+  $("#list").innerHTML = h || `<div class="empty">没有匹配的条目</div>`;
+}
+
+/* ---------------- 波形 ---------------- */
+function select(key){
+  const it = LIB.find(x => x.key === key);
+  if (!it) return;
+  cur = key; renderList();
+  $("#title").textContent = it.name;
+  $("#sub").textContent = it.key;
+
+  if (ws) ws.destroy();
+  regions = WaveSurfer.Regions.create();
+  ws = WaveSurfer.create({
+    container: "#wave", height: 190,
+    waveColor: "#6f6250", progressColor: "#c9a86a", cursorColor: "#dfa18c",
+    url: it.url, normalize: true, minPxPerSec: 1,
+    plugins: [
+      regions,
+      WaveSurfer.Timeline.create({container: "#tl", height: 16,
+        style: {fontSize: "10px", color: "#8d8172"}}),
+      WaveSurfer.Hover.create({lineColor: "#c9a86a", labelBackground: "#2a2218",
+        labelColor: "#d8cdb8", formatTimeCallback: s => s.toFixed(2) + "s"}),
+    ],
+  });
+  $("#zoom").value = 1;
+  ws.on("decode", () => {
+    const e = ed(key);
+    const t = e.trim;
+    curRegion = regions.addRegion({
+      start: t ? t.start : 0,
+      end: t ? t.end : ws.getDuration(),
+      color: "rgba(201,168,106,.18)", drag: true, resize: true,
+    });
+    curRegion.on("update-end", commitRegion);
+    renderInspector();
+  });
+  ws.on("timeupdate", t => $("#posTag").textContent =
+    `${t.toFixed(2)} / ${ws.getDuration().toFixed(2)}s`);
+  ws.on("finish", () => $("#btnPlay").textContent = "▶ 播放");
+  regions.on("region-updated", commitRegion);
+}
+
+function commitRegion(){
+  if (!cur || !curRegion) return;
+  const e = ed(cur);
+  const full = Math.abs(curRegion.start) < 1e-3 &&
+               Math.abs(curRegion.end - ws.getDuration()) < 1e-3;
+  if (full) delete e.trim;
+  else e.trim = {start: +curRegion.start.toFixed(4), end: +curRegion.end.toFixed(4)};
+  saveEdits(); renderList(); renderInspector();
+}
+
+function togglePlay(){
+  if (!ws) return;
+  ws.playPause();
+  $("#btnPlay").textContent = ws.isPlaying() ? "⏸ 暂停" : "▶ 播放";
+}
+function playRegion(){ if (curRegion) curRegion.play(); }
+function setIn(){
+  if (!ws || !curRegion) return;
+  const t = ws.getCurrentTime();
+  if (t < curRegion.end) { curRegion.setOptions({start: t}); commitRegion(); }
+}
+function setOut(){
+  if (!ws || !curRegion) return;
+  const t = ws.getCurrentTime();
+  if (t > curRegion.start) { curRegion.setOptions({end: t}); commitRegion(); }
+}
+function clearRegion(){
+  if (!ws || !curRegion) return;
+  curRegion.setOptions({start: 0, end: ws.getDuration()});
+  commitRegion();
+}
+
+/* ---------------- 参数面板 ---------------- */
+function renderInspector(){
+  if (!cur){ $("#insp").innerHTML = `<div class="empty">未选择音频</div>`; return; }
+  const it = LIB.find(x => x.key === cur), e = ed(cur);
+  const n = e.normalize || {};
+  const dur = ws ? ws.getDuration() : 0;
+  const outDur = e.trim ? (e.trim.end - e.trim.start) : dur;
+  $("#insp").innerHTML = `
+    <h3>裁剪</h3>
+    <div class="f"><label>起点</label><input type="number" step="0.01" min="0" value="${(e.trim?e.trim.start:0).toFixed(3)}"
+      onchange="setTrim('start', this.value)"><span class="tag">秒</span></div>
+    <div class="f"><label>终点</label><input type="number" step="0.01" min="0" value="${(e.trim?e.trim.end:dur).toFixed(3)}"
+      onchange="setTrim('end', this.value)"><span class="tag">秒</span></div>
+    <div class="hint">输出时长 ${outDur.toFixed(3)}s（原 ${dur.toFixed(3)}s）<br>
+      也可直接拖波形上的选区两端。</div>
+
+    <h3>淡入淡出</h3>
+    <div class="f"><label>淡入</label><input type="number" step="0.05" min="0" value="${e.fadeIn||0}"
+      onchange="setNum('fadeIn', this.value)"><span class="tag">秒</span></div>
+    <div class="f"><label>淡出</label><input type="number" step="0.05" min="0" value="${e.fadeOut||0}"
+      onchange="setNum('fadeOut', this.value)"><span class="tag">秒</span></div>
+    <div class="f"><button onclick="quickFade(0.02)">极短 20ms</button>
+      <button onclick="quickFade(0.15)">150ms</button><button onclick="quickFade(1)">1s</button></div>
+    <div class="hint">给一次性音效两端各加 20ms 可以消掉爆音(click)。</div>
+
+    <h3>音量</h3>
+    <div class="f"><label>增益</label>
+      <input type="range" min="-24" max="36" step="0.5" value="${e.gainDb||0}" style="flex:1"
+        oninput="setNum('gainDb', this.value); $('#gv').textContent=(this.value>0?'+':'')+this.value+' dB'">
+      <span id="gv" class="tag" style="min-width:56px;text-align:right">${(e.gainDb>0?'+':'')+(e.gainDb||0)} dB</span></div>
+    <div class="f"><label>峰值归一</label>
+      <input type="checkbox" ${n.enabled?"checked":""} onchange="setNorm('enabled', this.checked)">
+      <input type="number" step="0.5" value="${n.peakDb ?? -3}" style="width:56px"
+        onchange="setNorm('peakDb', this.value)"><span class="tag">dBFS</span></div>
+    <div class="f"><label>反向</label>
+      <input type="checkbox" ${e.reverse?"checked":""} onchange="setBool('reverse', this.checked)"></div>
+
+    <h3>导出</h3>
+    <div class="f"><label>类别</label>
+      <select onchange="setStr('category', this.value)">
+        ${["bgm","ambient","sfx"].map(c =>
+          `<option value="${c}" ${(e.category||it.category)===c?"selected":""}>${
+            {bgm:"BGM 音乐",ambient:"BGS 环境音",sfx:"SE 音效"}[c]}</option>`).join("")}
+      </select></div>
+    <div class="f"><label>音频 id</label>
+      <input type="text" value="${e.audio_id||it.audio_id}" onchange="setStr('audio_id', this.value)"></div>
+    <div class="f"><button class="${e.export?"on":""}" style="flex:1"
+      onclick="toggleExport()">${e.export?"✓ 已勾选导出":"勾选导出"}</button></div>
+    <div class="hint">类别决定登记进 audio_config.json 的哪个区,
+      音频 id 就是游戏里引用的名字。</div>
+
+    <h3>快捷键</h3>
+    <div class="hint">
+      <kbd>空格</kbd> 播放/暂停 · <kbd>I</kbd> 定起点 · <kbd>O</kbd> 定终点<br>
+      <kbd>P</kbd> 试听处理后 · <kbd>E</kbd> 勾选导出 · <kbd>←</kbd><kbd>→</kbd> 微移 0.1s<br>
+      <kbd>J</kbd>/<kbd>K</kbd> 上一条/下一条
+    </div>`;
+}
+function setTrim(which, v){
+  const e = ed(cur), dur = ws.getDuration();
+  const t = e.trim || {start: 0, end: dur};
+  t[which] = Math.max(0, Math.min(dur, Number(v) || 0));
+  if (t.end <= t.start) { toast("终点必须大于起点"); renderInspector(); return; }
+  e.trim = t;
+  if (curRegion) curRegion.setOptions({start: t.start, end: t.end});
+  saveEdits(); renderList(); renderInspector();
+}
+function setNum(k, v){ const e = ed(cur); const n = Number(v)||0; if(n) e[k]=n; else delete e[k]; saveEdits(); renderList(); }
+function setBool(k, v){ const e = ed(cur); if(v) e[k]=true; else delete e[k]; saveEdits(); renderList(); }
+function setStr(k, v){ const e = ed(cur); v = (v||"").trim(); if(v) e[k]=v; else delete e[k]; saveEdits(); renderList(); }
+function setNorm(k, v){
+  const e = ed(cur); const n = e.normalize || {};
+  n[k] = (k === "peakDb") ? Number(v) : v;
+  if (!n.enabled) delete e.normalize; else e.normalize = n;
+  saveEdits(); renderList(); renderInspector();
+}
+function quickFade(s){ const e = ed(cur); e.fadeIn = s; e.fadeOut = s; saveEdits(); renderInspector(); renderList(); }
+function toggleExport(){ const e = ed(cur); e.export = !e.export; saveEdits(); renderInspector(); renderList(); }
+
+/* ---------------- 试听处理后 ---------------- */
+let prevAudio = null;
+async function preview(){
+  if (!cur) return;
+  toast("渲染中…", 8000);
+  const r = await fetch("/api/render", {method:"POST",
+    body: JSON.stringify({key: cur, edits: EDITS[cur] || {}})}).then(r=>r.json());
+  if (!r.ok){ toast("渲染失败: " + r.error, 6000); return; }
+  if (prevAudio) prevAudio.pause();
+  prevAudio = new Audio(r.url); prevAudio.play();
+  toast(`试听处理后 · ${r.duration}s`);
+}
+
+/* ---------------- 导入 ---------------- */
+$("#fileInput").onchange = async ev => {
+  const files = [...ev.target.files];
+  for (const f of files){
+    const r = await fetch("/api/import", {method:"POST",
+      headers: {"X-Filename": encodeURIComponent(f.name)},
+      body: await f.arrayBuffer()}).then(r=>r.json());
+    if (!r.ok) toast("导入失败: " + r.error, 5000);
+  }
+  ev.target.value = "";
+  await loadAll();
+  toast(`已导入 ${files.length} 个文件`);
+};
+document.addEventListener("dragover", e => e.preventDefault());
+document.addEventListener("drop", async e => {
+  e.preventDefault();
+  const files = [...(e.dataTransfer?.files || [])].filter(f => f.type.startsWith("audio"));
+  if (!files.length) return;
+  for (const f of files)
+    await fetch("/api/import", {method:"POST",
+      headers: {"X-Filename": encodeURIComponent(f.name)},
+      body: await f.arrayBuffer()});
+  await loadAll(); toast(`已导入 ${files.length} 个文件`);
+});
+
+/* ---------------- 导出 ---------------- */
+async function showPlan(){
+  const p = await fetch("/api/export/plan").then(r=>r.json());
+  let h = `<h2>导出预览</h2>`;
+  if (!p.count){ h += `<div class="warnbox">还没有勾选任何音频。在右侧参数面板点「勾选导出」。</div>`; }
+  else {
+    const conf = Object.keys(p.conflicts||{}).length;
+    if (conf) h += `<div class="warnbox">有 ${conf} 个重名 id,导出会被拒绝:<br>` +
+      Object.entries(p.conflicts).map(([k,v])=>`<b>${k}</b> ← ${v.join(" , ")}`).join("<br>") + `</div>`;
+    h += `<div class="okbox">将写入 <b>${p.count}</b> 个音频到 <code>${p.dir}/</code>,
+      并登记进 <code>${p.config}</code></div>`;
+    h += `<table><tr><th>音频 id</th><th>类别</th><th>文件</th><th>来源</th><th>配置</th></tr>` +
+      p.files.map((f,i) => {
+        const c = (p.config_changes||[])[i] || {};
+        return `<tr><td>${f.audio_id}</td><td>${f.category}</td>
+          <td>${f.filename}${f.exists?' <span style="color:#d9a441">(覆盖)</span>':''}</td>
+          <td style="font-size:10px;color:#8d8172">${f.from}</td>
+          <td>${c.action === "update" ? "更新 src" : "新增登记"}</td></tr>`;
+      }).join("") + `</table>`;
+  }
+  $("#dlgBody").innerHTML = h;
+  $("#dlgOk").style.display = "none";
+  dlg.showModal();
+}
+
+async function doExport(){
+  const p = await fetch("/api/export/plan").then(r=>r.json());
+  if (!p.count){ toast("还没有勾选任何音频"); return; }
+  $("#dlgBody").innerHTML = `<h2>确认导出</h2>
+    <div class="okbox">${p.count} 个音频 → <code>${p.dir}/</code><br>
+    同时登记进 <code>${p.config}</code>（会先自动备份原文件）</div>
+    <div class="hint">这一步会真正写入项目目录。</div>`;
+  const ok = $("#dlgOk");
+  ok.style.display = ""; ok.textContent = "确认导出";
+  ok.onclick = async () => {
+    ok.disabled = true; ok.textContent = "导出中…";
+    const r = await fetch("/api/export", {method:"POST",
+      body: JSON.stringify({write_config: true})}).then(r=>r.json());
+    ok.disabled = false; ok.textContent = "确认导出";
+    let h = `<h2>导出结果</h2>`;
+    if (r.error) h += `<div class="warnbox">${r.error}</div>`;
+    if (r.rendered) h += `<div class="okbox">已写入 ${r.rendered} 个音频到 <code>${r.dir}/</code></div>`;
+    if (r.failed?.length) h += `<div class="warnbox">${r.failed.length} 个渲染失败:<br>` +
+      r.failed.map(f=>`${f.audio_id}: ${f.error}`).join("<br>") + `</div>`;
+    if (r.config){
+      h += r.config.ok
+        ? `<div class="okbox">audio_config.json:新增 ${r.config.added.length} 条,
+             更新 ${r.config.updated.length} 条<br>
+             备份: <code>${r.config.backup.split("/").pop()}</code></div>`
+        : `<div class="warnbox">配置写入失败: ${r.config.error}</div>`;
+    }
+    $("#dlgBody").innerHTML = h;
+    ok.style.display = "none";
+    await loadAll();
+  };
+  dlg.showModal();
+}
+
+/* ---------------- 快捷键 ---------------- */
+document.addEventListener("keydown", e => {
+  if (/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return;
+  if (dlg.open) return;
+  const k = e.key.toLowerCase();
+  if (e.code === "Space"){ e.preventDefault(); togglePlay(); }
+  else if (k === "i") setIn();
+  else if (k === "o") setOut();
+  else if (k === "p") preview();
+  else if (k === "e" && cur) toggleExport();
+  else if (k === "arrowleft" && ws){ e.preventDefault(); ws.setTime(Math.max(0, ws.getCurrentTime()-0.1)); }
+  else if (k === "arrowright" && ws){ e.preventDefault(); ws.setTime(ws.getCurrentTime()+0.1); }
+  else if (k === "j" || k === "k"){
+    const vis = [...document.querySelectorAll(".it")];
+    const i = vis.findIndex(x => x.classList.contains("sel"));
+    const n = k === "j" ? i+1 : i-1;
+    if (vis[n]) vis[n].click();
+  }
+});
+
+loadAll();
+</script>
+</body>
+</html>

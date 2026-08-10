@@ -435,6 +435,7 @@ class MainWindow(QMainWindow):
         self._act(ext, "Video to Atlas", self._launch_video_to_atlas_external)
         self._act(ext, "Production Workbench", self._launch_production_workbench_external)
         self._act(ext, "Parallax 场景编辑器", self._launch_parallax_editor_external)
+        self._act(ext, "音频编辑器", self._launch_audio_editor_external)
 
         view_menu = mb.addMenu("View")
         self._act(view_menu, "编辑器设置…", self._open_editor_settings, "Ctrl+,")
@@ -1222,6 +1223,16 @@ class MainWindow(QMainWindow):
 
     def _launch_copy_manager_external(self) -> None:
         self._launch_external_tool("tools.copy_manager", [], "Copy Manager")
+
+    def _launch_audio_editor_external(self) -> None:
+        """音频编辑器(波形裁剪/淡入淡出/一键导出进 audio_config)。
+
+        自带 QWebEngine 壳 + 内嵌 HTTP 服务,主编辑器这边只负责起进程。
+        """
+        root = self._ensure_valid_tool_root()
+        if root is None:
+            return
+        self._launch_external_tool("tools.audio_editor", [], "音频编辑器", root=root)
 
     def _launch_video_to_atlas_external(self) -> None:
         root = self._ensure_valid_tool_root()

@@ -1,18 +1,32 @@
-"""Audio id picker with inline preview controls.
+"""音频 id 选择控件：一个显示当前值的按钮 + 就地试听键，点开是可搜可听的弹窗。
 
-复用 :class:`IdRefSelector` 的保值/孤儿行契约，只在旁边补试听能力。
+**为什么不是下拉**：sfx 有一百多条，下拉既搜不了也听不了，还得先提交才知道选错。
+按 [dropdown-vs-popup-selector] 决策（只有很短的枚举才配用下拉），音频这种
+大候选集 + 需要感官确认的资产选择一律走弹窗，见 :mod:`audio_picker_dialog`。
+
+数据安全契约（沿用 IdRefSelector，勿退化）：
+- 当前值不在候选清单时**保值展示**为 ``id  [未登记]``，绝不静默替换或清空；
+- 程序性 ``set_current`` / ``set_items`` 不发 ``value_changed``（避免载入即脏）；
+- 弹窗取消 = 不改值；只有用户确实选中了别的 id 或按「清空」才发信号。
 """
 from __future__ import annotations
 
 from collections.abc import Callable
-from pathlib import Path
 
-from PySide6.QtCore import QUrl, Signal
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QMessageBox, QPushButton, QWidget
+from PySide6.QtCore import QEvent, Signal
+from PySide6.QtWidgets import (
+    QDialog,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QSizePolicy,
+    QWidget,
+)
 
 from ..project_model import ProjectModel
-from .id_ref_selector import IdRefSelector
-from .project_paths import URL_KIND_MEDIA
+from . import audio_library as lib
+from .audio_picker_dialog import AudioPickerDialog
 
 try:
     from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
@@ -20,37 +34,17 @@ except Exception:  # pragma: no cover - 取决于本机 QtMultimedia 是否安�
     QAudioOutput = None  # type: ignore[misc,assignment]
     QMediaPlayer = None  # type: ignore[misc,assignment]
 
+from PySide6.QtCore import QUrl  # noqa: E402  （放在可选导入之后，保持上面 try 的可读性）
 
-def audio_config_src_for_id(model: ProjectModel, channel: str, audio_id: str) -> str:
-    """Return audio_config[channel][audio_id].src if present."""
-    cfg = model.audio_config.get(channel, {})
-    if not isinstance(cfg, dict):
-        return ""
-    entry = cfg.get(audio_id)
-    if isinstance(entry, dict):
-        return str(entry.get("src") or "").strip()
-    if isinstance(entry, str):
-        return entry.strip()
-    return ""
+#: 旧调用点/测试沿用的解析入口，实现已收进 audio_library（保持单一真相源）。
+audio_config_src_for_id = lib.audio_config_src_for_id
+audio_config_file_for_id = lib.audio_config_file_for_id
 
-
-def audio_config_file_for_id(model: ProjectModel, channel: str, audio_id: str) -> Path | None:
-    """Resolve an audio_config id to an existing local file."""
-    src = audio_config_src_for_id(model, channel, audio_id)
-    if not src or model.project_path is None:
-        return None
-    path = model.paths.url_to_disk(src, kind=URL_KIND_MEDIA)
-    if path is None:
-        return None
-    try:
-        path = path.resolve()
-    except OSError:
-        return None
-    return path if path.is_file() else None
+_PLACEHOLDER = "（未选择）"
 
 
 class AudioPreviewControls(QWidget):
-    """Tiny play/stop row for the audio id returned by ``current_id_fn``."""
+    """一对 ▶/■：试听 ``current_id_fn()`` 当前返回的那个 id。"""
 
     def __init__(
         self,
@@ -71,10 +65,10 @@ class AudioPreviewControls(QWidget):
         lay.setSpacing(4)
 
         self._play = QPushButton("▶", self)
-        self._play.setFixedWidth(34)
+        self._play.setFixedWidth(30)
         self._play.setToolTip("试听当前选择的音频")
         self._stop = QPushButton("■", self)
-        self._stop.setFixedWidth(34)
+        self._stop.setFixedWidth(28)
         self._stop.setToolTip("停止试听")
         lay.addWidget(self._play)
         lay.addWidget(self._stop)
@@ -109,7 +103,7 @@ class AudioPreviewControls(QWidget):
     def preview_current(self) -> None:
         self._set_hint("")
         audio_id = (self._current_id_fn() or "").strip()
-        path = audio_config_file_for_id(self._model, self._channel, audio_id)
+        path = lib.audio_config_file_for_id(self._model, self._channel, audio_id)
         if path is None:
             # id 未选 / src 缺失 / 文件被移走全落到这里——旧实现裸 return 全静默。
             self._set_hint("该 id 无有效音频文件")
@@ -142,7 +136,11 @@ class AudioPreviewControls(QWidget):
 
 
 class AudioIdPreviewSelector(QWidget):
-    """IdRefSelector plus audio preview buttons."""
+    """当前值按钮（点开＝可搜可听的弹窗）+ 就地 ▶/■。
+
+    ``editable`` 保留旧语义「允许写入目录里还没有的 id」——现在由弹窗里的
+    「手输 id…」承载，而不是把一百多条塞进可编辑下拉。
+    """
 
     value_changed = Signal(str)
 
@@ -153,43 +151,114 @@ class AudioIdPreviewSelector(QWidget):
         parent: QWidget | None = None,
         *,
         allow_empty: bool = True,
-        click_opens_popup: bool = False,
+        click_opens_popup: bool = False,  # noqa: ARG002 - 兼容旧签名；本控件恒为弹窗
         editable: bool = False,
     ):
         super().__init__(parent)
-        self._selector = IdRefSelector(
-            self,
-            allow_empty=allow_empty,
-            click_opens_popup=click_opens_popup,
-            editable=editable,
-        )
-        self._preview = AudioPreviewControls(
-            model,
-            channel,
-            lambda: self.current_id(),
-            self,
-        )
+        self._model = model
+        self._channel = channel
+        self._allow_empty = bool(allow_empty)
+        self._editable = bool(editable)
+        self._items: list[tuple[str, str]] = []
+        self._value = ""
+
+        self._button = QPushButton(_PLACEHOLDER, self)
+        self._button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._button.setStyleSheet("text-align:left; padding-left:6px;")
+        self._button.setToolTip("点击打开音频选择窗（可搜索、可试听）")
+        self._button.clicked.connect(self.open_picker)
+
+        self._preview = AudioPreviewControls(model, channel, self.current_id, self)
 
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(6)
-        lay.addWidget(self._selector, stretch=1)
+        lay.setSpacing(4)
+        lay.addWidget(self._button, stretch=1)
         lay.addWidget(self._preview)
 
-        self._selector.value_changed.connect(self.value_changed.emit)
-
+    # ------------------------------------------------------------ 候选/取值
     def set_items(self, items: list[tuple[str, str]] | list[str]) -> None:
-        self._selector.set_items(items)
+        pairs: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for it in items:
+            if isinstance(it, tuple):
+                rid = str(it[0]).strip()
+                name = str(it[1]) if len(it) > 1 else rid
+            else:
+                rid = str(it).strip()
+                name = rid
+            if not rid or rid in seen:
+                continue
+            seen.add(rid)
+            pairs.append((rid, name))
+        self._items = pairs
+        self._sync_button()
+
+    def item_ids(self) -> list[str]:
+        """当前候选 id 列表（跨面板刷新与测试用；顺序即传入顺序）。"""
+        return [rid for rid, _name in self._items]
 
     def set_current(self, item_id: str) -> None:
-        self._selector.set_current(item_id)
+        """程序性设值：不发 ``value_changed``，未知 id 原样保值。"""
+        self._value = "" if item_id is None else str(item_id).strip()
+        self._sync_button()
 
     def current_id(self) -> str:
-        return self._selector.current_id()
+        return self._value
 
+    # --------------------------------------------------------------- 弹窗
+    def open_picker(self) -> None:
+        dialog = AudioPickerDialog(
+            self._model,
+            self._channel,
+            list(self._items),
+            current=self._value,
+            allow_empty=self._allow_empty,
+            parent=self,
+            allow_manual_id=self._editable,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        selected = dialog.selected_value()
+        if selected == self._value:
+            return
+        self._value = selected
+        self._sync_button()
+        self.value_changed.emit(selected)
+
+    # --------------------------------------------------------------- 展示
+    def _sync_button(self) -> None:
+        if not self._value:
+            self._button.setText(_PLACEHOLDER)
+            self._button.setToolTip("点击打开音频选择窗（可搜索、可试听）")
+            return
+        entry = lib.channel_dict(self._model, self._channel).get(self._value)
+        if entry is None:
+            self._button.setText(f"{self._value}  [未登记]")
+            self._button.setToolTip(
+                f"{self._value} 不在 audio_config.{self._channel} 里——原值已保留，"
+                "但运行时不会有声音。去「音频」页登记，或改选一条已登记的。",
+            )
+            return
+        src = lib.entry_src(entry)
+        if lib.src_to_local_file(self._model, src) is None:
+            self._button.setText(f"{self._value}  [文件缺失]")
+            self._button.setToolTip(f"src={src or '(空)'} 找不到对应文件")
+            return
+        self._button.setText(self._value)
+        self._button.setToolTip(src)
+
+    # ---------------------------------------------------------- 兼容旧 API
     def setMinimumWidth(self, minw: int) -> None:  # noqa: N802 - Qt API compatibility
         super().setMinimumWidth(minw)
-        self._selector.setMinimumWidth(minw)
+        # 按钮让出 ▶/■ 占的宽度，避免整行被顶爆（小屏护栏）
+        self._button.setMinimumWidth(max(60, minw - 70))
 
     def stop_preview(self) -> None:
         self._preview.stop()
+
+    def eventFilter(self, obj, event):  # noqa: ANN001, D102
+        if event.type() == QEvent.Type.MouseButtonPress and obj is self._button:
+            self.open_picker()
+            return True
+        return super().eventFilter(obj, event)

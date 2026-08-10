@@ -79,3 +79,6 @@ asset-backups/
 
 # Godot 视觉对齐审查截图(776MB 二进制,不入 Git;要长期归档可改挂 DVC)
 artifact/Reviews/godot-parity-visual/
+
+# 项目接手引导独立 App（只读学习工具，不入库）
+onboarding-app/
