@@ -24,6 +24,24 @@ export interface DevModeCallbacks {
    */
   getNarrativeWarps(): Array<{ id: string; label: string; issues?: string[] }>;
   enterNarrativeWarp(id: string): void;
+  /**
+   * 日夜现状：时刻/时段/天 + 本场景受日程管的 NPC 及其在场性。
+   * `leaving` / `arriving` 是正在演离场/入场的实例 id——调「NPC 有没有当面消失」就看它。
+   */
+  getDayNightState(): {
+    minutes: number;
+    phase: string;
+    day: number;
+    phases: Array<{ id: string; label: string }>;
+    sceneEnabled: boolean;
+    leaving: string[];
+    arriving: string[];
+    managed: Array<{ id: string; present: boolean }>;
+  };
+  /** 推进时刻（分钟）；transition 由面板当前档决定。 */
+  devAdvanceTime(minutes: number, transition: string): void;
+  /** 推进到指定时段起点。 */
+  devAdvanceTimeToPhase(phase: string, transition: string): void;
 }
 
 const CATEGORY_WIDTH = 178;
@@ -42,7 +60,14 @@ export class DevModeUI {
   private contentMask: Graphics | null = null;
   private contentContainer: Container | null = null;
   private boundWheel: ((e: WheelEvent) => void) | null = null;
-  private section: 'cutscene' | 'scene' | 'minigames' | 'narrative' = 'cutscene';
+  private section: 'cutscene' | 'scene' | 'minigames' | 'narrative' | 'daynight' = 'cutscene';
+  /** 日夜面板当前的推进档；只影响调试按钮，不改任何数据。 */
+  private devTransition: 'seamless' | 'timelapse' | 'fade' | 'cut' = 'seamless';
+  /**
+   * 日夜面板的轮询刷新：leaving/arriving 只在 NPC 走的那几秒存在，不轮询就盯不到。
+   * 只在该分区开启，close/destroy 必清（生命周期对称）。
+   */
+  private dayNightTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(renderer: Renderer, callbacks: DevModeCallbacks) {
     this.renderer = renderer;
@@ -71,6 +96,7 @@ export class DevModeUI {
     if (!this._isOpen) return;
     this._isOpen = false;
     this.container.visible = false;
+    this.stopDayNightPolling();
     this.clearChildren();
     if (this.boundWheel) {
       window.removeEventListener('wheel', this.boundWheel);
@@ -80,8 +106,40 @@ export class DevModeUI {
 
   destroy(): void {
     this.close();
+    this.stopDayNightPolling();
     if (this.container.parent) this.container.parent.removeChild(this.container);
     this.container.destroy({ children: true });
+  }
+
+  /**
+   * 切分区的唯一入口：**轮询启停只能挂在这里**，不能放进 rebuild——
+   * 轮询自身会调 rebuild，放进去等于每拍把定时器重置，永远不触发。
+   */
+  private setSection(s: 'cutscene' | 'scene' | 'minigames' | 'narrative' | 'daynight'): void {
+    this.section = s;
+    this.syncDayNightPolling();
+    this.rebuild();
+  }
+
+  private stopDayNightPolling(): void {
+    if (this.dayNightTimer !== null) {
+      clearInterval(this.dayNightTimer);
+      this.dayNightTimer = null;
+    }
+  }
+
+  /** 进/离日夜分区时启停轮询。重复调用幂等（先停后起）。 */
+  private syncDayNightPolling(): void {
+    this.stopDayNightPolling();
+    if (!this._isOpen || this.section !== 'daynight') return;
+    this.dayNightTimer = setInterval(() => {
+      // 面板被关掉/切走后残留的这一拍：自查后停表，不去动已清空的容器。
+      if (!this._isOpen || this.section !== 'daynight') {
+        this.stopDayNightPolling();
+        return;
+      }
+      this.rebuild();
+    }, 500);
   }
 
   private clearChildren(): void {
@@ -150,26 +208,27 @@ export class DevModeUI {
     const tabY0 = bodyY + 8;
     this.container.addChild(this.makeSectionTab(
       'Cutscene', panelX, tabY0, this.section === 'cutscene', () => {
-        this.section = 'cutscene';
-        this.rebuild();
+        this.setSection('cutscene');
       },
     ));
     this.container.addChild(this.makeSectionTab(
       '场景', panelX, tabY0 + TAB_H + 4, this.section === 'scene', () => {
-        this.section = 'scene';
-        this.rebuild();
+        this.setSection('scene');
       },
     ));
     this.container.addChild(this.makeSectionTab(
       'Minigames', panelX, tabY0 + (TAB_H + 4) * 2, this.section === 'minigames', () => {
-        this.section = 'minigames';
-        this.rebuild();
+        this.setSection('minigames');
       },
     ));
     this.container.addChild(this.makeSectionTab(
       '叙事', panelX, tabY0 + (TAB_H + 4) * 3, this.section === 'narrative', () => {
-        this.section = 'narrative';
-        this.rebuild();
+        this.setSection('narrative');
+      },
+    ));
+    this.container.addChild(this.makeSectionTab(
+      '日夜', panelX, tabY0 + (TAB_H + 4) * 4, this.section === 'daynight', () => {
+        this.setSection('daynight');
       },
     ));
 
@@ -186,9 +245,111 @@ export class DevModeUI {
       this.buildSceneList(contentX, bodyY, contentW, bodyH);
     } else if (this.section === 'narrative') {
       this.buildNarrativeList(contentX, bodyY, contentW, bodyH);
+    } else if (this.section === 'daynight') {
+      this.buildDayNightPanel(contentX, bodyY, contentW, bodyH);
     } else {
       this.buildMinigameList(contentX, bodyY, contentW, bodyH);
     }
+  }
+
+  /**
+   * 日夜面板：看时刻/时段、按档推进、盯 NPC 有没有「当面消失」。
+   *
+   * 判据就是 `leaving` / `arriving` 两行——正在演离场的实例会列在那儿，
+   * 且它此刻必须仍算「在场」；一旦看到某个 NPC 不在这两行里却已经不见了，就是穿帮。
+   */
+  private buildDayNightPanel(x: number, y: number, w: number, h: number): void {
+    const st = this.callbacks.getDayNightState();
+
+    this.contentMask = new Graphics();
+    this.contentMask.rect(x, y, w, h);
+    this.contentMask.fill(0xffffff);
+    this.container.addChild(this.contentMask);
+
+    this.contentContainer = new Container();
+    this.contentContainer.mask = this.contentMask;
+    this.container.addChild(this.contentContainer);
+
+    const pad = 8;
+    let cy = 0;
+
+    const addLine = (text: string, dim = false): void => {
+      const t = createStyledText({
+        text,
+        style: {
+          fontSize: 14,
+          fill: dim ? UITheme.colors.hint : UITheme.colors.body,
+          fontFamily: UITheme.fonts.ui,
+          wordWrap: true,
+          wordWrapWidth: w - pad * 2,
+          // 行距一律 lineHeight，禁 leading（量高比实绘矮半个 leading，末行会被裁）
+          lineHeight: 18,
+        },
+      });
+      t.x = x + pad;
+      t.y = y + cy;
+      this.contentContainer!.addChild(t);
+      cy += Math.max(20, t.height + 4);
+    };
+    const addButton = (label: string, onClick: () => void): void => {
+      const row = this.makeListItem(label, x + pad, y + cy, w - pad * 2, ITEM_HEIGHT, onClick);
+      this.contentContainer!.addChild(row);
+      cy += ITEM_HEIGHT + 2;
+    };
+
+    const hh = String(Math.floor(st.minutes / 60)).padStart(2, '0');
+    const mm = String(st.minutes % 60).padStart(2, '0');
+    addLine(`第 ${st.day} 天  ${hh}:${mm}  ·  时段 ${st.phase}`);
+    addLine(
+      st.sceneEnabled
+        ? '本场景已开日夜（NPC 受日程管）'
+        : '本场景未开日夜：时刻照走，但 NPC 不受日程管',
+      !st.sceneEnabled,
+    );
+    cy += 6;
+
+    addButton(`推进方式：${this.devTransition}（点此切换）`, () => {
+      const order = ['seamless', 'timelapse', 'fade', 'cut'] as const;
+      const i = order.indexOf(this.devTransition);
+      this.devTransition = order[(i + 1) % order.length];
+      this.rebuild();
+    });
+    addLine(
+      this.devTransition === 'seamless'
+        ? '无缝：NPC 会走到出口才隐去（看穿帮就用这档）'
+        : '有画面遮挡：不演离场，直接重贴',
+      true,
+    );
+    cy += 6;
+
+    for (const mins of [30, 60, 180]) {
+      addButton(`+${mins} 分钟`, () => {
+        this.callbacks.devAdvanceTime(mins, this.devTransition);
+        this.rebuild();
+      });
+    }
+    for (const p of st.phases) {
+      addButton(`跳到 ${p.label || p.id}`, () => {
+        this.callbacks.devAdvanceTimeToPhase(p.id, this.devTransition);
+        this.rebuild();
+      });
+    }
+
+    cy += 8;
+    addLine(`离场中 leaving：${st.leaving.length ? st.leaving.join('、') : '（无）'}`);
+    addLine(`入场中 arriving：${st.arriving.length ? st.arriving.join('、') : '（无）'}`);
+    cy += 4;
+    if (st.managed.length === 0) {
+      addLine('本场景没有受日程管的 NPC（没配 characterId 或没配日程表）', true);
+    } else {
+      addLine('受日程管的 NPC：');
+      for (const m of st.managed) {
+        addLine(`  ${m.id}  ${m.present ? '在场' : '不在场'}`, !m.present);
+      }
+    }
+
+    this.maxScrollY = Math.max(0, cy - h);
+    this.applyScroll();
   }
 
   private buildCutsceneList(x: number, y: number, w: number, h: number): void {

@@ -15,12 +15,13 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
     QLabel,
-    QPushButton,
     QSlider,
+    QStyle,
     QWidget,
 )
 
 from .. import theme
+from .qt_icon_buttons import outline_row_tool_button
 
 try:
     from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
@@ -62,12 +63,20 @@ class AudioTransportBar(QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(6)
 
-        self._play_btn = QPushButton(_ICON_PLAY, self)
-        self._play_btn.setFixedWidth(36)
-        self._play_btn.setToolTip("播放 / 暂停（空格）")
-        self._stop_btn = QPushButton("■", self)
-        self._stop_btn.setFixedWidth(32)
-        self._stop_btn.setToolTip("停止并回到开头")
+        # QToolButton + 系统媒体图标：QPushButton 在 modern 主题下的内边距会把窄按钮里的
+        # 字形挤没，且「■」在部分字体里退化成一根竖线。
+        self._play_btn = outline_row_tool_button(
+            self, "播放 / 暂停（空格）",
+            std=QStyle.StandardPixmap.SP_MediaPlay, fallback_text=_ICON_PLAY,
+            fixed_width=34, fixed_height=26,
+        )
+        self._stop_btn = outline_row_tool_button(
+            self, "停止并回到开头",
+            std=QStyle.StandardPixmap.SP_MediaStop, fallback_text="停",
+            fixed_width=32, fixed_height=26,
+        )
+        self._icon_play = self._play_btn.icon()
+        self._icon_pause = self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPause)
         lay.addWidget(self._play_btn)
         lay.addWidget(self._stop_btn)
 
@@ -207,7 +216,10 @@ class AudioTransportBar(QWidget):
         if QMediaPlayer is None:
             return
         playing = state == QMediaPlayer.PlaybackState.PlayingState
-        self._play_btn.setText(_ICON_PAUSE if playing else _ICON_PLAY)
+        if self._icon_play.isNull():
+            self._play_btn.setText(_ICON_PAUSE if playing else _ICON_PLAY)
+        else:
+            self._play_btn.setIcon(self._icon_pause if playing else self._icon_play)
 
     def _on_media_status(self, status) -> None:  # noqa: ANN001 - Qt 枚举
         if QMediaPlayer is None or self._player is None:

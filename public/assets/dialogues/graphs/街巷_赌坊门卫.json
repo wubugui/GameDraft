@@ -78,6 +78,12 @@
           "params": {
             "id": "主线_赌场输钱"
           }
+        },
+        {
+          "type": "setFlag",
+          "params": {
+            "value": true
+          }
         }
       ],
       "next": "n_2"

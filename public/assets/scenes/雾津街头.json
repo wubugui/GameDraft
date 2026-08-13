@@ -46,6 +46,10 @@
     "from_yizhuang": {
       "x": 3336.19,
       "y": 1869.6
+    },
+    "spawn_0": {
+      "x": 3194.3,
+      "y": 1347.9
     }
   },
   "hotspots": [
@@ -229,7 +233,7 @@
       "id": "T_去土地庙",
       "type": "transition",
       "label": "去土地庙（枯井）",
-      "x": 3325.3,
+      "x": 3334.3,
       "y": 473.4,
       "interactionRange": 60.0,
       "conditions": [
@@ -619,7 +623,12 @@
           "reached": true
         }
       ],
-      "conditionHidesEntity": true
+      "conditionHidesEntity": true,
+      "phases": [
+        "dawn",
+        "day",
+        "dusk"
+      ]
     },
     {
       "id": "npc_庄家来人",
@@ -643,7 +652,12 @@
           "reached": true
         }
       ],
-      "conditionHidesEntity": true
+      "conditionHidesEntity": true,
+      "phases": [
+        "dawn",
+        "day",
+        "dusk"
+      ]
     },
     {
       "id": "npc_婆子",
@@ -662,7 +676,12 @@
           "state": "s03_chuiniu"
         }
       ],
-      "conditionHidesEntity": true
+      "conditionHidesEntity": true,
+      "phases": [
+        "dawn",
+        "day",
+        "dusk"
+      ]
     },
     {
       "id": "npc_枯井街坊",
@@ -681,7 +700,12 @@
           "state": "s06_laoxiang"
         }
       ],
-      "conditionHidesEntity": true
+      "conditionHidesEntity": true,
+      "phases": [
+        "dawn",
+        "day",
+        "dusk"
+      ]
     },
     {
       "id": "npc_送货雇主",
@@ -700,7 +724,12 @@
           "state": "s08_xiangdao"
         }
       ],
-      "conditionHidesEntity": true
+      "conditionHidesEntity": true,
+      "phases": [
+        "dawn",
+        "day",
+        "dusk"
+      ]
     },
     {
       "id": "npc_义庄管事",
@@ -720,7 +749,12 @@
           "reached": true
         }
       ],
-      "conditionHidesEntity": true
+      "conditionHidesEntity": true,
+      "phases": [
+        "dawn",
+        "day",
+        "dusk"
+      ]
     },
     {
       "id": "npc_克拉拉",
@@ -739,7 +773,12 @@
           "reached": true
         }
       ],
-      "conditionHidesEntity": true
+      "conditionHidesEntity": true,
+      "phases": [
+        "dawn",
+        "day",
+        "dusk"
+      ]
     },
     {
       "id": "npc_街头脚夫",
@@ -751,7 +790,12 @@
       "initialAnimState": "idle",
       "initialFacing": "left",
       "dialogueGraphId": "寻狗_街头吹牛",
-      "dialogueCameraZoom": 1.5
+      "dialogueCameraZoom": 1.5,
+      "phases": [
+        "dawn",
+        "day",
+        "dusk"
+      ]
     },
     {
       "id": "npc_街头瞎子李",
@@ -763,7 +807,12 @@
       "initialAnimState": "idle",
       "initialFacing": "left",
       "dialogueGraphId": "寻狗_瞎子李算命",
-      "dialogueCameraZoom": 1.5
+      "dialogueCameraZoom": 1.5,
+      "phases": [
+        "dawn",
+        "day",
+        "dusk"
+      ]
     },
     {
       "id": "npc_街头叫花子",
@@ -775,7 +824,12 @@
       "initialAnimState": "idle",
       "initialFacing": "right",
       "dialogueGraphId": "寻狗_叫花子斗嘴",
-      "dialogueCameraZoom": 1.5
+      "dialogueCameraZoom": 1.5,
+      "phases": [
+        "dawn",
+        "day",
+        "dusk"
+      ]
     },
     {
       "id": "npc_街头肥鸡",
@@ -787,7 +841,12 @@
       "initialAnimState": "idle",
       "initialFacing": "left",
       "dialogueGraphId": "寻狗_偷鸡",
-      "dialogueCameraZoom": 1.5
+      "dialogueCameraZoom": 1.5,
+      "phases": [
+        "dawn",
+        "day",
+        "dusk"
+      ]
     },
     {
       "id": "npc_街头土狗",
@@ -799,7 +858,12 @@
       "initialAnimState": "idle",
       "initialFacing": "left",
       "dialogueGraphId": "寻狗_踢狗",
-      "dialogueCameraZoom": 1.5
+      "dialogueCameraZoom": 1.5,
+      "phases": [
+        "dawn",
+        "day",
+        "dusk"
+      ]
     },
     {
       "id": "npc_街头瘦猫",
@@ -811,7 +875,12 @@
       "initialAnimState": "idle",
       "initialFacing": "left",
       "dialogueGraphId": "寻狗_踢猫",
-      "dialogueCameraZoom": 1.5
+      "dialogueCameraZoom": 1.5,
+      "phases": [
+        "dawn",
+        "day",
+        "dusk"
+      ]
     },
     {
       "id": "npc_街头袍哥",
@@ -833,7 +902,12 @@
           }
         }
       ],
-      "conditionHidesEntity": true
+      "conditionHidesEntity": true,
+      "phases": [
+        "dawn",
+        "day",
+        "dusk"
+      ]
     },
     {
       "id": "npc_街头壮汉",
@@ -855,7 +929,12 @@
           }
         }
       ],
-      "conditionHidesEntity": true
+      "conditionHidesEntity": true,
+      "phases": [
+        "dawn",
+        "day",
+        "dusk"
+      ]
     },
     {
       "id": "npc_茅厕壮汉",
@@ -875,18 +954,28 @@
           "reached": true
         }
       ],
-      "conditionHidesEntity": true
+      "conditionHidesEntity": true,
+      "phases": [
+        "dawn",
+        "day",
+        "dusk"
+      ]
     },
     {
       "id": "街巷_赌坊门卫",
       "name": "赌坊看场",
-      "x": 3194.6,
-      "y": 1302.2,
+      "x": 3216.8,
+      "y": 1294.5,
       "interactionRange": 50,
       "animFile": "/resources/runtime/animation/npc_coolie_a_anim/anim.json",
       "initialAnimState": "idle",
       "portraitSlug": "npc_coolie_a_anim",
-      "dialogueGraphId": "街巷_赌坊门卫"
+      "dialogueGraphId": "街巷_赌坊门卫",
+      "phases": [
+        "dawn",
+        "day",
+        "dusk"
+      ]
     },
     {
       "id": "npc_送葬_道士",
@@ -898,7 +987,12 @@
       "initialAnimState": "idle",
       "initialFacing": "left",
       "castShadow": false,
-      "group": "雾津送葬队伍"
+      "group": "雾津送葬队伍",
+      "phases": [
+        "dawn",
+        "day",
+        "dusk"
+      ]
     },
     {
       "id": "npc_送葬_道士徒弟",
@@ -910,7 +1004,12 @@
       "initialAnimState": "idle",
       "initialFacing": "left",
       "castShadow": false,
-      "group": "雾津送葬队伍"
+      "group": "雾津送葬队伍",
+      "phases": [
+        "dawn",
+        "day",
+        "dusk"
+      ]
     },
     {
       "id": "npc_送葬_唢呐甲",
@@ -922,7 +1021,12 @@
       "initialAnimState": "idle",
       "initialFacing": "left",
       "castShadow": false,
-      "group": "雾津送葬队伍"
+      "group": "雾津送葬队伍",
+      "phases": [
+        "dawn",
+        "day",
+        "dusk"
+      ]
     },
     {
       "id": "npc_送葬_锣手",
@@ -934,7 +1038,12 @@
       "initialAnimState": "idle",
       "initialFacing": "left",
       "castShadow": false,
-      "group": "雾津送葬队伍"
+      "group": "雾津送葬队伍",
+      "phases": [
+        "dawn",
+        "day",
+        "dusk"
+      ]
     },
     {
       "id": "npc_送葬_唢呐乙",
@@ -946,7 +1055,12 @@
       "initialAnimState": "idle",
       "initialFacing": "left",
       "castShadow": false,
-      "group": "雾津送葬队伍"
+      "group": "雾津送葬队伍",
+      "phases": [
+        "dawn",
+        "day",
+        "dusk"
+      ]
     },
     {
       "id": "npc_送葬_鼓手",
@@ -958,7 +1072,12 @@
       "initialAnimState": "idle",
       "initialFacing": "left",
       "castShadow": false,
-      "group": "雾津送葬队伍"
+      "group": "雾津送葬队伍",
+      "phases": [
+        "dawn",
+        "day",
+        "dusk"
+      ]
     },
     {
       "id": "npc_送葬_孝子",
@@ -970,7 +1089,12 @@
       "initialAnimState": "idle",
       "initialFacing": "left",
       "castShadow": false,
-      "group": "雾津送葬队伍"
+      "group": "雾津送葬队伍",
+      "phases": [
+        "dawn",
+        "day",
+        "dusk"
+      ]
     },
     {
       "id": "npc_送葬_前肩土工",
@@ -982,7 +1106,12 @@
       "initialAnimState": "idle",
       "initialFacing": "left",
       "castShadow": false,
-      "group": "雾津送葬队伍"
+      "group": "雾津送葬队伍",
+      "phases": [
+        "dawn",
+        "day",
+        "dusk"
+      ]
     },
     {
       "id": "npc_送葬_棺",
@@ -994,7 +1123,12 @@
       "initialAnimState": "idle",
       "initialFacing": "left",
       "castShadow": false,
-      "group": "雾津送葬队伍"
+      "group": "雾津送葬队伍",
+      "phases": [
+        "dawn",
+        "day",
+        "dusk"
+      ]
     },
     {
       "id": "npc_送葬_后肩土工",
@@ -1006,7 +1140,12 @@
       "initialAnimState": "idle",
       "initialFacing": "left",
       "castShadow": false,
-      "group": "雾津送葬队伍"
+      "group": "雾津送葬队伍",
+      "phases": [
+        "dawn",
+        "day",
+        "dusk"
+      ]
     },
     {
       "id": "npc_送葬_孝眷甲",
@@ -1019,7 +1158,12 @@
       "initialFacing": "left",
       "castShadow": false,
       "perspectiveScaleEnabled": true,
-      "group": "雾津送葬队伍"
+      "group": "雾津送葬队伍",
+      "phases": [
+        "dawn",
+        "day",
+        "dusk"
+      ]
     },
     {
       "id": "npc_送葬_孝眷乙",
@@ -1031,7 +1175,12 @@
       "initialAnimState": "idle",
       "initialFacing": "left",
       "castShadow": false,
-      "group": "雾津送葬队伍"
+      "group": "雾津送葬队伍",
+      "phases": [
+        "dawn",
+        "day",
+        "dusk"
+      ]
     },
     {
       "id": "npc_送葬_孝孙",
@@ -1043,7 +1192,12 @@
       "initialAnimState": "idle",
       "initialFacing": "left",
       "castShadow": false,
-      "group": "雾津送葬队伍"
+      "group": "雾津送葬队伍",
+      "phases": [
+        "dawn",
+        "day",
+        "dusk"
+      ]
     },
     {
       "id": "hs_围观人群",
@@ -1073,7 +1227,12 @@
         }
       ],
       "conditionHidesEntity": true,
-      "perspectiveScaleEnabled": false
+      "perspectiveScaleEnabled": false,
+      "phases": [
+        "dawn",
+        "day",
+        "dusk"
+      ]
     },
     {
       "id": "new_npc_0",
@@ -1103,7 +1262,12 @@
           "state": "在捡钱"
         }
       ],
-      "conditionHidesEntity": true
+      "conditionHidesEntity": true,
+      "phases": [
+        "dawn",
+        "day",
+        "dusk"
+      ]
     }
   ],
   "zones": [
@@ -1714,6 +1878,29 @@
           ]
         }
       ]
+    }
+  ],
+  "dayNight": {
+    "enabled": true
+  },
+  "exitAnchors": [
+    {
+      "id": "街西口",
+      "x": 199.0,
+      "y": 963.0,
+      "kind": "street"
+    },
+    {
+      "id": "街东口",
+      "x": 3348.0,
+      "y": 884.0,
+      "kind": "street"
+    },
+    {
+      "id": "茶馆门",
+      "x": 1836.0,
+      "y": 1790.0,
+      "kind": "door"
     }
   ]
 }

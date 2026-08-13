@@ -50,6 +50,7 @@ export const TEXT_URLS = {
   objectExamineIndex: '/assets/data/object_examine/index.json',
   narrativeGraphs: '/assets/data/narrative_graphs.json',
   planes: '/assets/data/planes.json',
+  npcSchedules: '/assets/data/npc_schedules.json',
   pressureHolds: '/assets/data/pressure_holds.json',
   signalCues: '/assets/data/signal_cues.json',
   bubbleLines: '/assets/data/bubble_lines.json',

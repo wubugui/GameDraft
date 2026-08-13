@@ -1,0 +1,540 @@
+{
+  "bgm": {
+    "bgm_placeholder_dread_piano": {
+      "src": "/resources/runtime/audio/demo/bgm_placeholder_dread_piano.mp3"
+    },
+    "bgm_placeholder_dark_shadows": {
+      "src": "/resources/runtime/audio/demo/bgm_placeholder_dark_shadows.mp3"
+    },
+    "bgm_placeholder_low_tension": {
+      "src": "/resources/runtime/audio/demo/bgm_placeholder_low_tension.mp3"
+    },
+    "bgm_01_street_day_loop": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/bgm_01_street_day_loop.mp3"
+    },
+    "bgm_02_teahouse_loop": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/bgm_02_teahouse_loop.mp3"
+    },
+    "bgm_03_dock_loop": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/bgm_03_dock_loop.mp3"
+    },
+    "bgm_04_yizhuang_still_loop": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/bgm_04_yizhuang_still_loop.mp3"
+    },
+    "bgm_05_chenghuang_lamp_dread_loop": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/bgm_05_chenghuang_lamp_dread_loop.mp3"
+    },
+    "bgm_06_forest_hold_pressure_loop": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/bgm_06_forest_hold_pressure_loop.mp3"
+    },
+    "bgm_07_well_low_dread_loop": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/bgm_07_well_low_dread_loop.mp3"
+    },
+    "bgm_08_dream_warm_wrong_loop": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/bgm_08_dream_warm_wrong_loop.mp3"
+    },
+    "bgm_09_exit_gate_loop": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/bgm_09_exit_gate_loop.mp3"
+    }
+  },
+  "ambient": {
+    "amb_01_street_murmur_loop": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/amb_01_street_murmur_loop.mp3"
+    },
+    "amb_02_teahouse_loop": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/amb_02_teahouse_loop.mp3"
+    },
+    "amb_03_fog_damp_loop": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/amb_03_fog_damp_loop.mp3"
+    },
+    "amb_04_temple_incense_loop": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/amb_04_temple_incense_loop.mp3"
+    },
+    "amb_05_underwater_muffle_loop": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/amb_05_underwater_muffle_loop.mp3"
+    },
+    "amb_06_hold_pressure_bed_loop": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/amb_06_hold_pressure_bed_loop.mp3"
+    },
+    "amb_riverbank_loop": {
+      "src": "/resources/runtime/audio/demo/amb_riverbank_loop.wav"
+    },
+    "amb_dock_water_crowd_loop": {
+      "src": "/resources/runtime/audio/demo/amb_dock_water_crowd_loop.wav"
+    },
+    "amb_night_forest_loop": {
+      "src": "/resources/runtime/audio/demo/amb_night_forest_loop.wav"
+    },
+    "amb_yizhuang_room_tone": {
+      "src": "/resources/runtime/audio/demo/amb_yizhuang_room_tone.wav"
+    },
+    "amb_chenghuang_temple_loop": {
+      "src": "/resources/runtime/audio/demo/amb_chenghuang_temple_loop.wav"
+    },
+    "amb_light_rain_loop": {
+      "src": "/resources/runtime/audio/demo/amb_light_rain_loop.wav"
+    },
+    "teahouse_roomtone": {
+      "src": "/resources/runtime/audio/teahouse_roomtone.wav"
+    },
+    "night_alley_wind": {
+      "src": "/resources/runtime/audio/night_alley_wind.wav"
+    },
+    "fly_buzz": {
+      "src": "/resources/runtime/audio/fly_buzz.wav",
+      "volume": 0.55
+    },
+    "temple_rumble": {
+      "src": "/resources/runtime/audio/temple_rumble.wav"
+    },
+    "busy_market_ambient": {
+      "src": "/resources/runtime/audio/chinese_crowd_voices.mp3"
+    },
+    "海边": {
+      "src": "/resources/runtime/audio/BGS/29822_1076_635.mp3"
+    },
+    "野外鸟叫": {
+      "src": "/resources/runtime/audio/BGS/30116_1076_638.mp3"
+    },
+    "阴风": {
+      "src": "/resources/runtime/audio/BGS/SWDRSLGDIR_0025_wind01.wav"
+    },
+    "夜晚蛐蛐叫": {
+      "src": "/resources/runtime/audio/BGS/SWDRSLGDIR_0061_night2.wav"
+    },
+    "人声闹市": {
+      "src": "/resources/runtime/audio/ancient_market_base.mp3"
+    },
+    "中文人声闹市": {
+      "src": "/resources/runtime/audio/背景音/人声嘈杂2.wav"
+    },
+    "赌场背景声": {
+      "src": "/resources/runtime/audio/背景音/人声嘈杂1.wav"
+    }
+  },
+  "sfx": {
+    "sfx_force_swallowed_thud": {
+      "src": "/resources/runtime/audio/demo/sfx_force_swallowed_thud.wav"
+    },
+    "sfx_heartbeat_bed": {
+      "src": "/resources/runtime/audio/demo/sfx_heartbeat_bed.wav"
+    },
+    "sfx_paper_hand_rustle": {
+      "src": "/resources/runtime/audio/demo/sfx_paper_hand_rustle.wav"
+    },
+    "sfx_underwater_grab": {
+      "src": "/resources/runtime/audio/demo/sfx_underwater_grab.wav"
+    },
+    "sfx_well_cry_stop": {
+      "src": "/resources/runtime/audio/demo/sfx_well_cry_stop.wav"
+    },
+    "sfx_abnormal_breath": {
+      "src": "/resources/runtime/audio/demo/sfx_abnormal_breath.wav"
+    },
+    "sfx_bone_dull_knock": {
+      "src": "/resources/runtime/audio/demo/sfx_bone_dull_knock.wav"
+    },
+    "sfx_ink_line_snap": {
+      "src": "/resources/runtime/audio/demo/sfx_ink_line_snap.wav"
+    },
+    "sfx_stone_press": {
+      "src": "/resources/runtime/audio/demo/sfx_stone_press.wav"
+    },
+    "sfx_axiu_faint_hum": {
+      "src": "/resources/runtime/audio/demo/sfx_axiu_faint_hum.wav"
+    },
+    "sfx_axiu_tiny_signal": {
+      "src": "/resources/runtime/audio/demo/sfx_axiu_tiny_signal.wav"
+    },
+    "sfx_06_name_call_far": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/sfx_06_name_call_far.mp3"
+    },
+    "sfx_07_name_call_multi_a": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/sfx_07_name_call_multi_a.mp3"
+    },
+    "sfx_07_name_call_multi_b": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/sfx_07_name_call_multi_b.mp3"
+    },
+    "sfx_07_name_call_multi_c": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/sfx_07_name_call_multi_c.mp3"
+    },
+    "sfx_08_name_call_near": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/sfx_08_name_call_near.mp3"
+    },
+    "sfx_09_wrong_name_a": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/sfx_09_wrong_name_a.mp3"
+    },
+    "sfx_09_wrong_name_b": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/sfx_09_wrong_name_b.mp3"
+    },
+    "sfx_call_soul_return": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/sfx_call_soul_return.mp3"
+    },
+    "sfx_call_soul_chorus": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/sfx_call_soul_chorus.mp3"
+    },
+    "sfx_litiangou_shout": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/sfx_litiangou_shout.mp3"
+    },
+    "sfx_axiu_tune_hum": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/sfx_axiu_tune_hum.mp3"
+    },
+    "sfx_axiu_tune_far": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/sfx_axiu_tune_far.mp3"
+    },
+    "sfx_lamp_oil_flame": {
+      "src": "/resources/runtime/audio/demo/sfx_lamp_oil_flame.wav"
+    },
+    "sfx_night_bird_startle": {
+      "src": "/resources/runtime/audio/demo/sfx_night_bird_startle.wav"
+    },
+    "sfx_rice_scatter": {
+      "src": "/resources/runtime/audio/demo/sfx_rice_scatter.wav"
+    },
+    "sfx_hold_pressure_loop": {
+      "src": "/resources/runtime/audio/demo/sfx_hold_pressure_loop.wav"
+    },
+    "sfx_guidaoqiang_loop": {
+      "src": "/resources/runtime/audio/demo/sfx_guidaoqiang_loop.wav"
+    },
+    "sfx_guidaoqiang_corpse_breath": {
+      "src": "/resources/runtime/audio/demo/sfx_guidaoqiang_corpse_breath.wav"
+    },
+    "sfx_ui_paper_tick": {
+      "src": "/resources/runtime/audio/demo/sfx_ui_paper_tick.wav"
+    },
+    "sfx_corpse_cloth_creak": {
+      "src": "/resources/runtime/audio/demo/sfx_corpse_cloth_creak.wav"
+    },
+    "sfx_well_childlike_cry_loop": {
+      "src": "/resources/runtime/audio/demo/sfx_well_childlike_cry_loop.wav"
+    },
+    "story_intro": {
+      "src": "/resources/runtime/audio/story_intro.wav"
+    },
+    "sfx_gavel_rap": {
+      "src": "/resources/runtime/audio/sfx_gavel_rap.wav"
+    },
+    "sfx_sword_swing": {
+      "src": "/resources/runtime/audio/sfx_sword_swing.wav"
+    },
+    "sfx_sword_clash": {
+      "src": "/resources/runtime/audio/sfx_sword_clash.wav"
+    },
+    "sfx_hanba_roar": {
+      "src": "/resources/runtime/audio/sfx_hanba_roar.wav"
+    },
+    "sfx_fireball_whoosh": {
+      "src": "/resources/runtime/audio/sfx_fireball_whoosh.wav"
+    },
+    "sfx_teahouse_cheer": {
+      "src": "/resources/runtime/audio/sfx_teahouse_cheer.mp3"
+    },
+    "sfx_jingju_luogu": {
+      "src": "/resources/runtime/audio/sfx_jingju_luogu.mp3"
+    },
+    "sfx_yinfeng_gust": {
+      "src": "/resources/runtime/audio/sfx_yinfeng_gust.wav"
+    },
+    "iron_box_chime": {
+      "src": "/resources/runtime/audio/iron_box_chime.wav"
+    },
+    "reveal_sting": {
+      "src": "/resources/runtime/audio/reveal_sting.wav"
+    },
+    "ui_dialogue_advance": {
+      "src": "/resources/runtime/audio/ui_dialogue_advance.wav"
+    },
+    "ui_quest_update": {
+      "src": "/resources/runtime/audio/ui_quest_update.wav"
+    },
+    "ui_quest_complete": {
+      "src": "/resources/runtime/audio/ui_quest_complete.wav"
+    },
+    "ui_hover": {
+      "src": "/resources/runtime/audio/ui_hover.wav"
+    },
+    "ui_confirm": {
+      "src": "/resources/runtime/audio/ui_confirm.wav"
+    },
+    "ui_cancel": {
+      "src": "/resources/runtime/audio/ui_cancel.wav"
+    },
+    "ui_panel_open": {
+      "src": "/resources/runtime/audio/ui_panel_open.wav"
+    },
+    "ui_panel_close": {
+      "src": "/resources/runtime/audio/ui_panel_close.wav"
+    },
+    "ui_notification": {
+      "src": "/resources/runtime/audio/ui_notification.wav"
+    },
+    "item_pickup": {
+      "src": "/resources/runtime/audio/item_pickup.wav"
+    },
+    "coin_gain": {
+      "src": "/resources/runtime/audio/coin_gain.wav"
+    },
+    "coin_spend": {
+      "src": "/resources/runtime/audio/coin_spend.wav"
+    },
+    "inventory_full": {
+      "src": "/resources/runtime/audio/inventory_full.wav"
+    },
+    "rule_fragment_gain": {
+      "src": "/resources/runtime/audio/rule_fragment_gain.wav"
+    },
+    "rule_acquired": {
+      "src": "/resources/runtime/audio/rule_acquired.wav"
+    },
+    "archive_update": {
+      "src": "/resources/runtime/audio/archive_update.wav"
+    },
+    "hotspot_interact": {
+      "src": "/resources/runtime/audio/hotspot_interact.wav"
+    },
+    "scene_transition": {
+      "src": "/resources/runtime/audio/scene_transition.wav"
+    },
+    "ui_warning": {
+      "src": "/resources/runtime/audio/ui_warning.wav"
+    },
+    "dialogue_start": {
+      "src": "/resources/runtime/audio/dialogue_start.wav"
+    },
+    "dialogue_end": {
+      "src": "/resources/runtime/audio/dialogue_end.wav"
+    },
+    "item_consume": {
+      "src": "/resources/runtime/audio/item_consume.wav"
+    },
+    "rule_layer_gain": {
+      "src": "/resources/runtime/audio/rule_layer_gain.wav"
+    },
+    "rule_use_apply": {
+      "src": "/resources/runtime/audio/rule_use_apply.wav"
+    },
+    "zone_rule_available": {
+      "src": "/resources/runtime/audio/zone_rule_available.wav"
+    },
+    "zone_rule_unavailable": {
+      "src": "/resources/runtime/audio/zone_rule_unavailable.wav"
+    },
+    "encounter_start": {
+      "src": "/resources/runtime/audio/encounter_start.wav"
+    },
+    "encounter_choice": {
+      "src": "/resources/runtime/audio/encounter_choice.wav"
+    },
+    "encounter_result": {
+      "src": "/resources/runtime/audio/encounter_result.wav"
+    },
+    "cutscene_start": {
+      "src": "/resources/runtime/audio/cutscene_start.wav"
+    },
+    "cutscene_end": {
+      "src": "/resources/runtime/audio/cutscene_end.wav"
+    },
+    "day_start": {
+      "src": "/resources/runtime/audio/day_start.wav"
+    },
+    "day_end": {
+      "src": "/resources/runtime/audio/day_end.wav"
+    },
+    "shop_open": {
+      "src": "/resources/runtime/audio/shop_open.wav"
+    },
+    "shop_close": {
+      "src": "/resources/runtime/audio/shop_close.wav"
+    },
+    "map_travel": {
+      "src": "/resources/runtime/audio/map_travel.wav"
+    },
+    "minigame_result": {
+      "src": "/resources/runtime/audio/minigame_result.wav"
+    },
+    "document_reveal": {
+      "src": "/resources/runtime/audio/document_reveal.wav"
+    },
+    "sugar_wheel_pointer_pickup": {
+      "src": "/resources/runtime/audio/sugar_wheel_pointer_pickup.wav"
+    },
+    "sugar_wheel_pointer_set": {
+      "src": "/resources/runtime/audio/sugar_wheel_pointer_set.wav"
+    },
+    "sugar_wheel_charge_start": {
+      "src": "/resources/runtime/audio/sugar_wheel_charge_start.wav"
+    },
+    "sugar_wheel_launch": {
+      "src": "/resources/runtime/audio/sugar_wheel_launch.wav"
+    },
+    "sugar_wheel_tick_fast": {
+      "src": "/resources/runtime/audio/sugar_wheel_tick_fast.wav"
+    },
+    "sugar_wheel_tick_slow": {
+      "src": "/resources/runtime/audio/sugar_wheel_tick_slow.wav"
+    },
+    "sugar_wheel_stop": {
+      "src": "/resources/runtime/audio/sugar_wheel_stop.wav"
+    },
+    "sugar_wheel_prize_chime": {
+      "src": "/resources/runtime/audio/sugar_wheel_prize_chime.wav"
+    },
+    "voice_001": {
+      "src": "/resources/runtime/audio/voice/1.mp3"
+    },
+    "voice_002": {
+      "src": "/resources/runtime/audio/voice/2.mp3"
+    },
+    "voice_002a": {
+      "src": "/resources/runtime/audio/voice/2a.mp3"
+    },
+    "voice_002b": {
+      "src": "/resources/runtime/audio/voice/2b.mp3"
+    },
+    "voice_004a": {
+      "src": "/resources/runtime/audio/voice/4a.mp3"
+    },
+    "voice_004b": {
+      "src": "/resources/runtime/audio/voice/4b.mp3"
+    },
+    "voice_006a": {
+      "src": "/resources/runtime/audio/voice/6a.mp3"
+    },
+    "voice_006b": {
+      "src": "/resources/runtime/audio/voice/6b.mp3"
+    },
+    "voice_008a": {
+      "src": "/resources/runtime/audio/voice/8a.mp3"
+    },
+    "voice_008b": {
+      "src": "/resources/runtime/audio/voice/8b.mp3"
+    },
+    "voice_011a": {
+      "src": "/resources/runtime/audio/voice/11a.mp3"
+    },
+    "voice_011b": {
+      "src": "/resources/runtime/audio/voice/11b.mp3"
+    },
+    "voice_003": {
+      "src": "/resources/runtime/audio/voice/3.mp3"
+    },
+    "voice_004": {
+      "src": "/resources/runtime/audio/voice/4.mp3"
+    },
+    "voice_005": {
+      "src": "/resources/runtime/audio/voice/5.mp3"
+    },
+    "voice_006": {
+      "src": "/resources/runtime/audio/voice/6.mp3"
+    },
+    "voice_007": {
+      "src": "/resources/runtime/audio/voice/7.mp3"
+    },
+    "voice_008": {
+      "src": "/resources/runtime/audio/voice/8.mp3"
+    },
+    "voice_009": {
+      "src": "/resources/runtime/audio/voice/9.mp3"
+    },
+    "voice_010": {
+      "src": "/resources/runtime/audio/voice/10.mp3"
+    },
+    "voice_011": {
+      "src": "/resources/runtime/audio/voice/11.mp3"
+    },
+    "voice_012": {
+      "src": "/resources/runtime/audio/voice/12.mp3"
+    },
+    "sfx_coin_pouch_pat2fast": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_coin_pouch_pat2fast.wav"
+    },
+    "sfx_coin_pouch_slap_a": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_coin_pouch_slap_a.wav"
+    },
+    "sfx_coin_pouch_heft_b": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_coin_pouch_heft_b.wav"
+    },
+    "sfx_dice_bowl_roll_a": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_dice_bowl_roll_a.wav"
+    },
+    "sfx_dice_bowl_roll_b": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_dice_bowl_roll_b.wav"
+    },
+    "sfx_gamble_cheer_burst_a": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_gamble_cheer_burst_a.wav"
+    },
+    "sfx_gamble_cheer_burst_b": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_gamble_cheer_burst_b.wav"
+    },
+    "sfx_gamble_crowd_burst_a": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_gamble_crowd_burst_a.wav"
+    },
+    "sfx_gamble_crowd_burst_b": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_gamble_crowd_burst_b.wav"
+    },
+    "sfx_scuffle_shove_b": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_scuffle_shove_b.wav"
+    },
+    "sfx_bench_topple_a": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_bench_topple_a.wav"
+    },
+    "sfx_bench_topple_b": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_bench_topple_b.wav"
+    },
+    "sfx_body_dump_ground_a": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_body_dump_ground_a.wav"
+    },
+    "sfx_door_slam_shut_a": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_door_slam_shut_a.wav"
+    },
+    "sfx_gamble_jeer_muffled_a": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_gamble_jeer_muffled_a.wav"
+    },
+    "sfx_gamble_jeer_muffled_b": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_gamble_jeer_muffled_b.wav"
+    }
+  },
+  "systemSfx": {
+    "questAccepted": "ui_quest_update",
+    "questCompleted": "ui_quest_complete",
+    "dialogueStart": "dialogue_start",
+    "dialogueEnd": "dialogue_end",
+    "dialogueAdvance": "ui_dialogue_advance",
+    "dialogueChoice": "ui_confirm",
+    "uiHover": "ui_hover",
+    "uiConfirm": "ui_confirm",
+    "uiCancel": "ui_cancel",
+    "uiPanelOpen": "ui_panel_open",
+    "uiPanelClose": "ui_panel_close",
+    "uiNotification": "ui_notification",
+    "uiWarning": "ui_warning",
+    "hotspotInteract": "hotspot_interact",
+    "sceneTransition": "scene_transition",
+    "mapTravel": "map_travel",
+    "itemAcquired": "item_pickup",
+    "itemConsumed": "item_consume",
+    "inventoryFull": "inventory_full",
+    "coinGain": "coin_gain",
+    "coinSpend": "coin_spend",
+    "ruleFragment": "rule_fragment_gain",
+    "ruleLayer": "rule_layer_gain",
+    "ruleAcquired": "rule_acquired",
+    "ruleUseApply": "rule_use_apply",
+    "zoneRuleAvailable": "zone_rule_available",
+    "zoneRuleUnavailable": "zone_rule_unavailable",
+    "archiveUpdated": "archive_update",
+    "encounterStart": "encounter_start",
+    "encounterChoice": "encounter_choice",
+    "encounterResult": "encounter_result",
+    "audioUnlock": "ui_hover",
+    "cutsceneStart": "cutscene_start",
+    "cutsceneEnd": "cutscene_end",
+    "dayStart": "day_start",
+    "dayEnd": "day_end",
+    "shopOpen": "shop_open",
+    "shopClose": "shop_close",
+    "minigameResult": "minigame_result",
+    "documentReveal": "document_reveal"
+  }
+}

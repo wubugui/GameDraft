@@ -436,6 +436,7 @@ describe('narrative condition context injection', () => {
       flagStore,
       ctx.questManager as any,
       ctx.scenarioState as any,
+      { executeAwait: vi.fn(async () => {}) } as any,
     );
     manager.setConditionEvalContextFactory(() => ctx);
     const blend = vi.fn(async () => {});

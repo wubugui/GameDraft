@@ -83,6 +83,7 @@ ENTITY_REF_PARAMS: dict[str, dict[str, str]] = {
     "clearBubbleLineSet": {"target": "bubble_speaker"},
     "moveEntityTo": {"target": "actor", "sceneId": "scene_hint"},
     "jumpEntityTo": {"target": "actor", "sceneId": "scene_hint"},
+    "teleportEntityTo": {"target": "actor", "sceneId": "scene_hint"},
     "faceEntity": {"target": "actor", "faceTarget": "actor"},
     "cameraFollowActor": {"target": "actor"},
     "persistNpcEntityEnabled": {"target": "actor"},
@@ -110,6 +111,9 @@ ENTITY_REF_PARAMS: dict[str, dict[str, str]] = {
     "setHotspotDisplayImage": {"hotspotId": "scene_hotspot", "sceneId": "scene"},
     "tempSetHotspotDisplayFacing": {"hotspotId": "scene_hotspot", "sceneId": "scene"},
     "persistHotspotEnabled": {"hotspotId": "scene_hotspot", "sceneId": "scene"},
+    # 日程覆盖把角色钉在某场景：scene 是场景引用（改场景名要跟随）。
+    # characterId 指向 character_registry 的角色、不是场景实体，故不在本表登记。
+    "setNpcScheduleOverride": {"scene": "scene"},
 }
 
 # 裸引用按 value 匹配实体 id 时，各 kind 允许命中的实体种类

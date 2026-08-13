@@ -94,6 +94,12 @@
       ]
     },
     {
+      "glob": "public/assets/data/npc_schedules.json",
+      "docs": [
+        "day-night-npc-schedule"
+      ]
+    },
+    {
       "glob": "public/assets/data/object_examine/**",
       "docs": [
         "object-examine-scene"
@@ -454,6 +460,12 @@
       ]
     },
     {
+      "glob": "src/systems/DayManager.ts",
+      "docs": [
+        "day-night-npc-schedule"
+      ]
+    },
+    {
       "glob": "src/systems/DocumentRevealManager.ts",
       "docs": [
         "overlay-image-handle-semantics"
@@ -476,6 +488,12 @@
       "glob": "src/systems/InventoryManager.ts",
       "docs": [
         "inventory-capacity-critical"
+      ]
+    },
+    {
+      "glob": "src/systems/NpcScheduleSystem.ts",
+      "docs": [
+        "day-night-npc-schedule"
       ]
     },
     {
@@ -589,6 +607,12 @@
       "glob": "src/ui/uiPointerCoords.ts",
       "docs": [
         "ui-component-layer"
+      ]
+    },
+    {
+      "glob": "src/utils/dayTime.ts",
+      "docs": [
+        "day-night-npc-schedule"
       ]
     },
     {

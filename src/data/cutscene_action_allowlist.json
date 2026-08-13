@@ -1,6 +1,7 @@
 [
   "moveEntityTo",
   "jumpEntityTo",
+  "teleportEntityTo",
   "faceEntity",
   "cameraFollowActor",
   "cameraStopFollow",
@@ -25,6 +26,8 @@
   "setHotspotDisplayImage",
   "tempSetHotspotDisplayFacing",
   "playSfx",
+  "playSceneAmbient",
+  "stopSceneAmbient",
   "playBgm",
   "stopBgm",
   "playSignalCue",

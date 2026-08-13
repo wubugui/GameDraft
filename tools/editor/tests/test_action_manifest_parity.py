@@ -63,3 +63,53 @@ def test_editor_action_types_are_known_to_manifest() -> None:
     exempt = {str(x) for x in DEBUG_ONLY_ACTION_TYPES}
     unknown = sorted(editor - manifest - exempt)
     assert not unknown, f"编辑器 ACTION_TYPES 有 manifest 未登记的 action：{unknown}"
+
+
+# 语义级 parity：登记面 ENTITY_REF_PARAMS ↔ validator 的解析检查
+# ---------------------------------------------------------------------------
+# 曾经 validator 手抄了第二份 actor 清单，漏掉 jumpEntityTo.target —— 重构引擎认得它、
+# 校验器不认，于是悬垂演员引用一路静默（运行时那一步直接跳过）。这里不锁"名字都在"，
+# 锁"喂一个绝不存在的 id 进去，校验真的会报"。
+
+# npc_soft 是软引用：命中不了就当显示名用，报不报由各调用点自行决定，不进硬 parity。
+_HARD_BARE_REF_KINDS = ("actor", "emote_subject", "bubble_speaker", "npc")
+
+
+def test_every_registered_bare_entity_ref_param_is_actually_validated() -> None:
+    from tools.editor.project_model import ProjectModel
+    from tools.editor.shared.entity_refactor import ENTITY_REF_PARAMS
+    from tools.editor.validator import _append_action_param_ref_issues
+
+    model = ProjectModel()
+    model.load_project(REPO)
+    ghost = "绝不存在的实体_parity_probe"
+
+    unchecked: list[str] = []
+    for act_type, params in sorted(ENTITY_REF_PARAMS.items()):
+        for key, kind in params.items():
+            if kind not in _HARD_BARE_REF_KINDS:
+                continue
+            issues: list = []
+            _append_action_param_ref_issues(
+                model, issues, {"type": act_type, "params": {key: ghost}},
+                "parity", "probe", None,
+            )
+            if not any(ghost in i.message and key in i.message for i in issues):
+                unchecked.append(f"{act_type}.{key}（{kind}）")
+
+    assert not unchecked, (
+        "这些参数在 ENTITY_REF_PARAMS 里登记为实体引用，但 validator 喂悬垂 id 也不报——"
+        "改名/迁移后会静默断（运行时跳过该步，校验全绿）：" + "、".join(unchecked)
+    )
+
+
+def test_validator_actor_keys_come_from_the_single_registry() -> None:
+    """validator 的 actor 参数面必须**读**登记面，而不是另抄一份。"""
+    from tools.editor.shared.entity_refactor import ENTITY_REF_PARAMS
+    from tools.editor.validator import _actor_ref_keys
+
+    for act_type, params in ENTITY_REF_PARAMS.items():
+        expected = tuple(k for k, kind in params.items() if kind == "actor")
+        assert _actor_ref_keys(act_type) == expected, act_type
+    assert _actor_ref_keys("jumpEntityTo") == ("target",), "本轮修复的漏网之鱼"
+    assert _actor_ref_keys("根本不是 action") == ()

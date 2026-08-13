@@ -2,7 +2,7 @@
 <html lang="zh">
 <head>
 <meta charset="utf-8">
-<title>寻狗记 · 音频编辑器</title>
+<title>寻狗记 · 音频加工台</title>
 <script src="/static/wavesurfer.min.js"></script>
 <script src="/static/plugins/regions.min.js"></script>
 <script src="/static/plugins/timeline.min.js"></script>
@@ -12,7 +12,7 @@
 :root{
   --bg:#17130e; --panel:#1f1a13; --panel2:#2a2218; --line:#4a3b26;
   --gold:#c9a86a; --text:#d8cdb8; --dim:#8d8172;
-  --red:#a4553f; --green:#7d9457; --blue:#5f7d94;
+  --red:#a4553f; --green:#7d9457; --blue:#5f7d94; --amber:#c08a3e;
 }
 *{box-sizing:border-box}
 html,body{height:100%;margin:0}
@@ -21,7 +21,8 @@ body{font:13px/1.55 "Songti SC","Noto Serif SC",serif;background:var(--bg);color
 button,input,select{font:inherit}
 button{cursor:pointer;background:var(--panel2);color:var(--text);border:1px solid var(--line);
   border-radius:3px;padding:3px 10px}
-button:hover{border-color:var(--gold);color:var(--gold)}
+button:hover:not(:disabled){border-color:var(--gold);color:var(--gold)}
+button:disabled{opacity:.4;cursor:not-allowed}
 button.primary{background:#3a2f1c;border-color:var(--gold);color:var(--gold)}
 button.on{background:#33402a;border-color:var(--green);color:#c4d6a8}
 input,select{background:#12100c;border:1px solid var(--line);color:var(--text);
@@ -36,45 +37,69 @@ header h1{font-size:15px;margin:0;color:var(--gold);letter-spacing:2px;white-spa
   color:var(--gold);padding:8px 16px;border-radius:4px;display:none;z-index:99;max-width:460px}
 
 main{flex:1;display:flex;min-height:0}
-#lib{width:290px;flex:none;border-right:1px solid var(--line);display:flex;flex-direction:column;background:var(--panel)}
-#libTools{padding:7px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:5px}
-#libTools .row{display:flex;gap:5px}
-#search{flex:1;min-width:0}
-#list{flex:1;overflow:auto}
+#lib{width:326px;flex:none;border-right:1px solid var(--line);display:flex;flex-direction:column;background:var(--panel)}
+#tabs{display:flex;border-bottom:1px solid var(--line);flex:none}
+#tabs button{flex:1;border:0;border-radius:0;padding:6px 0;background:#1a1610;color:var(--dim)}
+#tabs button.sel{background:var(--panel2);color:var(--gold);box-shadow:inset 0 -2px 0 var(--gold)}
+.tools{padding:7px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:5px;flex:none}
+.tools .row{display:flex;gap:5px}
+.tools input[type=text]{flex:1;min-width:0}
+.pane{flex:1;display:flex;flex-direction:column;min-height:0}
+.pane[hidden]{display:none}
+.list{flex:1;overflow:auto}
 .grp{padding:4px 9px;color:var(--gold);font-size:11px;background:#241d15;
-  position:sticky;top:0;border-bottom:1px solid var(--line)}
-.it{padding:4px 9px;border-bottom:1px solid #2c2419;cursor:pointer;display:flex;gap:6px;align-items:center}
-.it:hover{background:#2a2218}
-.it.sel{background:#3a2f1c;border-left:3px solid var(--gold);padding-left:6px}
-.it .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
+  position:sticky;top:0;border-bottom:1px solid var(--line);z-index:1}
+.it,.kr{padding:4px 9px;border-bottom:1px solid #2c2419;cursor:pointer;display:flex;gap:6px;align-items:center}
+.it:hover,.kr:hover{background:#2a2218}
+.it.sel,.kr.sel{background:#3a2f1c;border-left:3px solid var(--gold);padding-left:6px}
+.it .nm,.kr .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
+.kr .sub{font-size:10px;color:var(--dim);white-space:nowrap}
+.kr.no{opacity:.5}
 .dot{width:7px;height:7px;border-radius:50%;flex:none}
-.dot.e{background:var(--blue)} .dot.m{background:var(--green)} .dot.n{background:#3a3228}
+.dot.e{background:var(--blue)} .dot.n{background:#3a3228}
+.dot.exported{background:var(--green)} .dot.foreign{background:#5b5346}
+.dot.drifted{background:var(--amber)} .dot.missing{background:var(--red)}
+.dot.unlinked{background:#3a3228;border:1px solid #5b5346}
+.pin{width:7px;height:7px;border-radius:50%;flex:none;background:var(--gold);
+  box-shadow:0 0 0 2px #3a2f1c}
 
 #work{flex:1;display:flex;flex-direction:column;min-width:0}
 #wtop{padding:8px 14px;border-bottom:1px solid var(--line)}
 #title{color:var(--gold);font-size:14px}
 #sub{color:var(--dim);font-size:11px;font-family:Menlo,monospace}
 #wavebox{flex:1;padding:10px 14px;overflow:auto;min-height:0}
-#wave{background:#12100c;border:1px solid var(--line);border-radius:4px}
+#wave{background:#12100c;min-height:230px;border:1px solid var(--line);border-radius:4px}
 #tl{margin-top:2px}
-#transport{padding:7px 14px;border-top:1px solid var(--line);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+#transport{padding:7px 10px;border-top:1px solid var(--line);display:flex;gap:6px;
+  align-items:center;flex-wrap:wrap;font-size:12px}
+#transport button{padding:3px 8px}
 .tag{color:var(--dim);font-size:11px}
 kbd{background:#12100c;border:1px solid var(--line);border-radius:3px;padding:0 4px;
   font:11px Menlo,monospace;color:var(--gold)}
 
-#insp{width:265px;flex:none;border-left:1px solid var(--line);background:var(--panel);
+#insp{width:312px;flex:none;border-left:1px solid var(--line);background:var(--panel);
   overflow:auto;padding:10px}
 #insp h3{font-size:12px;color:var(--gold);margin:12px 0 6px;border-left:3px solid var(--gold);padding-left:7px}
 #insp h3:first-child{margin-top:0}
 .f{display:flex;gap:6px;align-items:center;margin-bottom:5px}
-.f label{width:56px;color:var(--dim);font-size:11px;flex:none}
+.f label{width:52px;color:var(--dim);font-size:11px;flex:none}
 .f input[type=number]{width:64px}
 .f input[type=text]{flex:1;min-width:0}
 .f select{flex:1}
 .hint{color:var(--dim);font-size:10.5px;line-height:1.7;margin-top:5px}
-.empty{color:var(--dim);text-align:center;padding:40px 10px;font-style:italic}
+.empty{color:var(--dim);text-align:center;padding:26px 10px;font-style:italic}
+.card{background:#241d15;border:1px solid var(--line);border-radius:4px;padding:8px;margin-bottom:8px}
+.card .kname{color:var(--gold);font-size:12.5px;word-break:break-all}
+.kv{display:flex;gap:6px;font-size:11px;margin-top:3px}
+.kv b{color:var(--dim);font-weight:normal;flex:none;width:62px}
+.kv span{flex:1;min-width:0;word-break:break-all}
+.chip{display:inline-flex;align-items:center;gap:4px;background:#33402a;border:1px solid var(--green);
+  color:#c4d6a8;border-radius:10px;padding:1px 4px 1px 8px;font-size:11px;margin:2px 3px 0 0;max-width:100%}
+.chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chip button{border:0;background:none;color:#c4d6a8;padding:0 3px;font-size:12px;line-height:1}
+.badge{font-size:10px;border-radius:3px;padding:0 4px;border:1px solid var(--line);color:var(--dim)}
 dialog{background:var(--panel);color:var(--text);border:1px solid var(--gold);border-radius:5px;
-  max-width:760px;width:88vw;padding:16px}
+  max-width:820px;width:88vw;padding:16px}
 dialog::backdrop{background:#000b}
 dialog h2{color:var(--gold);font-size:15px;margin:0 0 10px}
 table{border-collapse:collapse;width:100%;font-size:11.5px}
@@ -84,38 +109,69 @@ th{background:#241d15;color:var(--gold)}
   border-radius:3px;margin:8px 0;font-size:12px}
 .okbox{background:#28351f;border:1px solid var(--green);color:#c4d6a8;padding:7px 11px;
   border-radius:3px;margin:8px 0;font-size:12px}
+.infobox{background:#232b33;border:1px solid var(--blue);color:#b7cbd8;padding:7px 11px;
+  border-radius:3px;margin:8px 0;font-size:12px}
+#pickList{max-height:52vh;overflow:auto;border:1px solid var(--line);border-radius:3px}
 </style>
 </head>
 <body>
 <header>
-  <h1>音频编辑器</h1>
-  <button onclick="fileInput.click()">导入音频…</button>
+  <h1>音频加工台</h1>
+  <button onclick="fileInput.click()">导入素材…</button>
   <input type="file" id="fileInput" accept="audio/*" multiple hidden>
   <span class="spacer"></span>
   <span class="tag" id="statTag"></span>
   <button onclick="showPlan()">导出预览</button>
-  <button class="primary" onclick="doExport()">一键导出到项目</button>
+  <button class="primary" onclick="doExport()">导出到项目</button>
 </header>
 
 <main>
   <div id="lib">
-    <div id="libTools">
-      <div class="row"><input id="search" placeholder="搜索…" oninput="renderList()"></div>
-      <div class="row">
-        <select id="fSource" onchange="renderList()"><option value="">全部来源</option></select>
-        <select id="fState" onchange="renderList()">
-          <option value="">全部</option>
-          <option value="marked">已勾导出</option>
-          <option value="edited">已编辑</option>
-          <option value="raw">未处理</option>
-        </select>
-      </div>
+    <div id="tabs">
+      <button id="tabKeys" class="sel" onclick="setTab('keys')">项目 key</button>
+      <button id="tabSrc" onclick="setTab('src')">素材</button>
     </div>
-    <div id="list"></div>
+
+    <div class="pane" id="paneKeys">
+      <div class="tools">
+        <div class="row"><input type="text" id="ksearch" placeholder="搜 key…(空格分词)"
+          oninput="renderKeys(); saveUiState()"></div>
+        <div class="row">
+          <select id="kState" onchange="renderKeys(); saveUiState()">
+            <option value="">全部状态</option>
+            <option value="assigned">本次已分配</option>
+            <option value="exported">已导出</option>
+            <option value="foreign">外来</option>
+            <option value="drifted">被外部改动</option>
+            <option value="missing">缺文件</option>
+            <option value="unlinked">未接</option>
+            <option value="blocked">不可写</option>
+          </select>
+        </div>
+      </div>
+      <div class="list" id="keyList"></div>
+    </div>
+
+    <div class="pane" id="paneSrc" hidden>
+      <div class="tools">
+        <div class="row"><input type="text" id="search" placeholder="搜素材…(空格分词)"
+          oninput="renderList(); saveUiState()"></div>
+        <div class="row">
+          <select id="fSource" onchange="renderList(); saveUiState()"><option value="">全部来源</option></select>
+          <select id="fState" onchange="renderList(); saveUiState()">
+            <option value="">全部</option>
+            <option value="assigned">已分配</option>
+            <option value="edited">已加工</option>
+            <option value="raw">未处理</option>
+          </select>
+        </div>
+      </div>
+      <div class="list" id="list"></div>
+    </div>
   </div>
 
   <div id="work">
-    <div id="wtop"><div id="title">未选择音频</div><div id="sub">从左侧选一条,或点「导入音频…」</div></div>
+    <div id="wtop"><div id="title">未选择素材</div><div id="sub">从「素材」页签选一条,或点「导入素材…」</div></div>
     <div id="wavebox"><div id="wave"></div><div id="tl"></div></div>
     <div id="transport">
       <button onclick="togglePlay()" id="btnPlay">▶ 播放</button>
@@ -128,11 +184,11 @@ th{background:#241d15;color:var(--gold)}
       <span class="tag">缩放</span>
       <input type="range" id="zoom" min="1" max="400" value="1" style="width:120px"
         oninput="ws && ws.zoom(Number(this.value))">
-      <button onclick="preview()">试听处理后 <kbd>P</kbd></button>
+      <button id="btnPrev" onclick="preview()">试听处理后 <kbd>P</kbd></button>
     </div>
   </div>
 
-  <div id="insp"><div class="empty">未选择音频</div></div>
+  <div id="insp"></div>
 </main>
 
 <dialog id="dlg"><div id="dlgBody"></div>
@@ -141,10 +197,38 @@ th{background:#241d15;color:var(--gold)}
     <button class="primary" id="dlgOk" style="display:none"></button>
   </div>
 </dialog>
+
+<!-- key 选择器单独一个 dialog:#dlg 是跨次开启带残留状态的单例,
+     复用它会踩到上一次残留的 onclick 与按钮可见性。 -->
+<dialog id="pick">
+  <h2>分配到 key</h2>
+  <div id="pickHead" class="hint"></div>
+  <div class="row" style="display:flex;gap:6px;margin:8px 0">
+    <input type="text" id="pickSearch" placeholder="搜 key…" style="flex:1" oninput="renderPick()">
+    <select id="pickState" onchange="renderPick()">
+      <option value="">全部状态</option>
+      <option value="unlinked">未接</option>
+      <option value="missing">缺文件</option>
+      <option value="foreign">外来</option>
+      <option value="drifted">被外部改动</option>
+      <option value="exported">已导出</option>
+    </select>
+  </div>
+  <div id="pickList"></div>
+  <div style="text-align:right;margin-top:12px"><button onclick="pick.close()">关闭</button></div>
+</dialog>
+
 <div id="toast"></div>
 
 <script>
-let LIB = [], EDITS = {}, cur = null, ws = null, regions = null, curRegion = null;
+/* ============================ 状态 ============================ */
+let LIB = [], EDITS = {}, KEYS = [], KSTATS = {}, ORPHANS = [];
+let cur = null;          // 当前选中的素材 key(源文件)
+let curKey = null;       // 当前选中的项目 key
+let tab = "keys";
+let ws = null, regions = null, curRegion = null;
+let ready = false, regionOwner = null;
+const badFiles = new Set();
 
 const $ = s => document.querySelector(s);
 const toastEl = $("#toast");
@@ -152,83 +236,266 @@ function toast(msg, ms = 2600){
   toastEl.textContent = msg; toastEl.style.display = "block";
   clearTimeout(toastEl._t); toastEl._t = setTimeout(()=>toastEl.style.display="none", ms);
 }
-const fmt = t => (t == null ? "—" : t.toFixed(3) + "s");
+// key id 与 src 都来自外部 JSON(已经有中文 id 和中文路径),一律转义再进 HTML
+const esc = v => String(v ?? "").replace(/[&<>"']/g, c =>
+  ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
-/* ---------------- 数据 ---------------- */
+const STATUS_LABEL = {
+  exported: "已导出", foreign: "外来", drifted: "被外部改动",
+  missing: "缺文件", unlinked: "未接",
+};
+const STATUS_HINT = {
+  exported: "这个 key 现在挂的就是本工具导出的那份内容",
+  foreign: "有文件,但不是本工具产出的(别处放的/存量素材),照样能听",
+  drifted: "台账记的内容和磁盘上的对不上——有人在外面把文件换了",
+  missing: "配置里写了 src,但那个文件在磁盘上找不到",
+  unlinked: "还没接任何文件",
+};
+
+/* ============================ 取数 ============================ */
+// 必须看 HTTP 状态:后端 500 时 body 是 {ok:false,error},
+// 不看状态就会把所有后端异常显示成"没有数据"。
+async function getJson(url){
+  let r;
+  try { r = await fetch(url); }
+  catch (err){ return {_err: "连不上本地服务: " + err.message}; }
+  let body;
+  try { body = await r.json(); } catch(e){ return {_err: `服务返回异常 (HTTP ${r.status})`}; }
+  if (!r.ok || body.ok === false) return {_err: body.error || `服务出错 (HTTP ${r.status})`};
+  return body;
+}
+
 async function loadAll(tries = 8){
-  // 首屏可能赶在内嵌服务进入 accept 循环之前,重试几次而不是留个空窗
   let lib, ed;
   for (let i = 0; i < tries; i++){
-    try {
-      [lib, ed] = await Promise.all([
-        fetch("/api/library").then(r=>r.json()),
-        fetch("/api/edits").then(r=>r.json()),
-      ]);
-      break;
-    } catch (err) {
-      if (i === tries - 1){ toast("连不上本地服务: " + err.message, 8000); return; }
-      await new Promise(r => setTimeout(r, 250));
-    }
+    // 首屏可能赶在内嵌服务进入 accept 循环之前,重试几次而不是留个空窗
+    [lib, ed] = await Promise.all([getJson("/api/library"), getJson("/api/edits")]);
+    if (!lib._err && !ed._err) break;
+    if (i === tries - 1){ toast((lib._err || ed._err), 8000); return; }
+    await new Promise(r => setTimeout(r, 250));
   }
   LIB = lib.items; EDITS = ed;
-  const fs = $("#fSource");
-  if (fs.options.length <= 1)
-    lib.sources.forEach(s => fs.add(new Option(s, s)));
-  renderList(); updateStat();
-}
-let saveTimer = null;
-function saveEdits(){
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(async () => {
-    await fetch("/api/edits", {method:"POST", body: JSON.stringify(EDITS)});
-    updateStat();
-  }, 300);
-}
-function ed(key){ return EDITS[key] || (EDITS[key] = {}); }
-function updateStat(){
-  const m = Object.values(EDITS).filter(e=>e.export).length;
-  const e = Object.values(EDITS).filter(e=>e.trim||e.fadeIn||e.fadeOut||e.gainDb||e.normalize||e.reverse).length;
-  $("#statTag").textContent = `共 ${LIB.length} 条 · 已编辑 ${e} · 待导出 ${m}`;
+  const fs = $("#fSource"), keepSrc = fs.value;
+  // 每次都重建:只在首屏填一次的话,导入后 imported 要刷新页面才出现
+  const used = new Set(LIB.map(i => i.source));
+  fs.innerHTML = '<option value="">全部来源</option>';
+  lib.sources.filter(s => used.has(s)).forEach(s => fs.add(new Option(s, s)));
+  if ([...fs.options].some(o => o.value === keepSrc)) fs.value = keepSrc;
+  renderList();
+  await loadKeys();
 }
 
-/* ---------------- 列表 ---------------- */
+async function loadKeys(){
+  const r = await getJson("/api/keys");
+  if (r._err){ toast(r._err, 8000); return; }
+  KEYS = r.keys; KSTATS = r.stats; ORPHANS = r.orphans || [];
+  renderKeys(); renderList(); updateStat(); renderInspector();
+}
+
+let saveTimer = null, dirty = false;
+function saveEdits(){
+  dirty = true;
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(flushEdits, 300);
+}
+// 返回「盘上的参数现在是不是最新的」。**调用方必须看返回值**:
+// 存盘失败还照样往下导出,导出的就是磁盘上的旧参数,而界面报的是成功。
+async function flushEdits(){
+  clearTimeout(saveTimer);
+  if (!dirty) return true;
+  const sent = JSON.stringify(EDITS);
+  try {
+    const r = await fetch("/api/edits", {method:"POST", body: sent});
+    if (!r.ok) throw new Error("HTTP " + r.status);
+  } catch (err) {
+    toast("加工参数没存上: " + err.message + "(改动还在页面里,别关窗)", 9000);
+    saveTimer = setTimeout(flushEdits, 2000);      // 自己再试,别把重试压在用户身上
+    return false;
+  }
+  // 只有「发出去的那份 == 现在这份」才算干净:await 期间用户可能又改了
+  if (JSON.stringify(EDITS) === sent) dirty = false;
+  return true;
+}
+// 300ms 防抖期内刷新/关窗会静默丢掉刚改的值。sendBeacon 在卸载时仍能送出去。
+window.addEventListener("pagehide", () => {
+  if (dirty) navigator.sendBeacon("/api/edits", JSON.stringify(EDITS));
+  navigator.sendBeacon("/api/uistate", JSON.stringify(uiState()));
+});
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden" && dirty) flushEdits();
+});
+
+/* 工作现场存服务端 —— 壳里 LocalStorage 是关的(防缓存) */
+function uiState(){
+  return {q: $("#search").value, source: $("#fSource").value, state: $("#fState").value,
+          cur, tab, curKey, kq: $("#ksearch").value, kstate: $("#kState").value};
+}
+let uiTimer = null;
+function saveUiState(){
+  clearTimeout(uiTimer);
+  uiTimer = setTimeout(() => {
+    fetch("/api/uistate", {method:"POST", body: JSON.stringify(uiState())}).catch(()=>{});
+  }, 400);
+}
+async function restoreUiState(){
+  const u = await getJson("/api/uistate");
+  if (!u || u._err || !Object.keys(u).length) return;
+  // 旧 shape 只有 {q,source,state,cur},新字段缺了也要能开
+  if (u.q) $("#search").value = u.q;
+  if (u.source) $("#fSource").value = u.source;
+  if (u.state) $("#fState").value = u.state;
+  if (u.kq) $("#ksearch").value = u.kq;
+  if (u.kstate) $("#kState").value = u.kstate;
+  if (u.curKey && KEYS.some(k => k.key === u.curKey)) curKey = u.curKey;
+  setTab(u.tab === "src" ? "src" : "keys", true);
+  renderKeys(); renderList();   // 两个列表都要按恢复出来的筛选条件重绘
+  if (u.cur && LIB.some(i => i.key === u.cur)){
+    select(u.cur);
+    const el = $(".it.sel");
+    if (el) el.scrollIntoView({block: "center"});
+  } else {
+    renderInspector();
+  }
+}
+
+function ed(key){ return EDITS[key] || (EDITS[key] = {}); }
+const isEdited = e => !!(e.trim||e.fadeIn||e.fadeOut||e.gainDb||e.normalize||e.reverse);
+function keysFor(sourceKey){
+  return KEYS.filter(k => k.assigned && k.assigned.sourceKey === sourceKey);
+}
+function keyRow(k){ return KEYS.find(x => x.key === k) || null; }
+
+function updateStat(){
+  const s = KSTATS || {};
+  $("#statTag").textContent =
+    `key ${s.total||0} · 已导出 ${s.exported||0} · 外来 ${s.foreign||0}`
+    + (s.drifted ? ` · 漂移 ${s.drifted}` : "")
+    + (s.missing ? ` · 缺文件 ${s.missing}` : "")
+    + (s.unlinked ? ` · 未接 ${s.unlinked}` : "")
+    + ` · 本次分配 ${s.assigned||0}`;
+}
+
+/* ============================ 页签 ============================ */
+function setTab(name, quiet){
+  tab = name;
+  $("#paneKeys").hidden = name !== "keys";
+  $("#paneSrc").hidden = name !== "src";
+  $("#tabKeys").classList.toggle("sel", name === "keys");
+  $("#tabSrc").classList.toggle("sel", name === "src");
+  if (!quiet) saveUiState();
+}
+
+/* ============================ key 列表 ============================ */
+function renderKeys(){
+  const q = $("#ksearch").value.trim().toLowerCase();
+  const st = $("#kState").value;
+  const box = $("#keyList");
+  const keepScroll = box.scrollTop;      // innerHTML 全量重建会把滚动位置清零
+  const groups = {};
+  for (const k of KEYS){
+    if (q && !q.split(/\s+/).every(w => k.key.toLowerCase().includes(w))) continue;
+    if (st === "assigned" && !k.assigned) continue;
+    else if (st === "blocked" && k.exportable) continue;
+    else if (st && st !== "assigned" && st !== "blocked" && k.status !== st) continue;
+    (groups[k.channel] = groups[k.channel] || []).push(k);
+  }
+  let h = "";
+  if (ORPHANS.length)
+    h += `<div class="grp" style="color:#dfa18c">${ORPHANS.length} 条分配指向了已不存在的 key</div>`
+       + ORPHANS.map(o => `<div class="kr no"><span class="dot missing"></span>
+           <span class="nm">${esc(o.key)}</span>
+           <button class="sub" data-drop="${esc(o.key)}">清除</button></div>`).join("");
+  for (const [ch, arr] of Object.entries(groups)){
+    h += `<div class="grp">${esc(ch)}（${arr.length}）</div>`;
+    for (const k of arr){
+      const when = k.ledger && k.ledger.exportedAt
+        ? k.ledger.exportedAt.replace("T", " ").slice(5, 16) + (k.ledger.inferred ? "?" : "")
+        : "";
+      const sub = k.assigned ? "← 本次待导出" : (when || (k.file ? k.file.name : "—"));
+      h += `<div class="kr ${curKey===k.key?'sel':''} ${k.exportable?'':'no'}" data-key="${esc(k.key)}"
+              title="${esc(STATUS_HINT[k.status]||"")}">
+        <span class="dot ${esc(k.status)}"></span>
+        ${k.assigned ? '<span class="pin"></span>' : ''}
+        <span class="nm">${esc(k.audio_id)}</span>
+        <span class="sub">${esc(sub.length > 22 ? sub.slice(0,21)+"…" : sub)}</span></div>`;
+    }
+  }
+  box.innerHTML = h || `<div class="empty">没有匹配的 key</div>`;
+  box.scrollTop = keepScroll;
+}
+
+$("#keyList").addEventListener("click", async ev => {
+  const drop = ev.target.closest("[data-drop]");
+  if (drop){ await assign(drop.dataset.drop, null); return; }
+  const row = ev.target.closest(".kr");
+  if (row && row.dataset.key){ selectKey(row.dataset.key); }
+});
+
+function selectKey(key){
+  curKey = key;
+  renderKeys(); renderInspector(); saveUiState();
+}
+
+/* ============================ 素材列表 ============================ */
 function renderList(){
   const q = $("#search").value.trim().toLowerCase();
   const fs = $("#fSource").value, st = $("#fState").value;
+  const box = $("#list");
+  const keepScroll = box.scrollTop;
   const groups = {};
   for (const it of LIB){
-    if (q && !it.key.toLowerCase().includes(q)) continue;
+    if (q && !q.split(/\s+/).every(w => it.key.toLowerCase().includes(w))) continue;
     if (fs && it.source !== fs) continue;
     const e = EDITS[it.key] || {};
-    const isEd = !!(e.trim||e.fadeIn||e.fadeOut||e.gainDb||e.normalize||e.reverse);
-    if (st === "marked" && !e.export) continue;
-    if (st === "edited" && !isEd) continue;
-    if (st === "raw" && (isEd || e.export)) continue;
+    const assigned = keysFor(it.key).length > 0;
+    if (st === "assigned" && !assigned) continue;
+    if (st === "edited" && !isEdited(e)) continue;
+    if (st === "raw" && (isEdited(e) || assigned)) continue;
     const g = it.source + (it.group ? " / " + it.group : "");
     (groups[g] = groups[g] || []).push(it);
   }
   let h = "";
   for (const [g, arr] of Object.entries(groups)){
-    h += `<div class="grp">${g}（${arr.length}）</div>`;
+    h += `<div class="grp">${esc(g)}（${arr.length}）</div>`;
     for (const it of arr){
       const e = EDITS[it.key] || {};
-      const cls = e.export ? "m" : (e.trim||e.fadeIn||e.fadeOut||e.gainDb||e.normalize||e.reverse) ? "e" : "n";
-      h += `<div class="it ${cur===it.key?'sel':''}" onclick="select('${it.key.replace(/'/g,"\\'")}')">
-        <span class="dot ${cls}"></span><span class="nm">${it.name}</span></div>`;
+      const n = keysFor(it.key).length;
+      // 文件名来自磁盘(导入时用户可控),一律转义;点击走事件委托 + data-key,
+      // 不把 key 拼进 onclick 属性——那是另一条注入面。
+      h += `<div class="it ${cur===it.key?'sel':''}" data-key="${esc(it.key)}">
+        <span class="dot ${isEdited(e)?'e':'n'}"></span>
+        ${n ? '<span class="pin"></span>' : ''}
+        <span class="nm">${esc(it.name)}</span>
+        ${it.product ? '<span class="badge" title="这是本工具导出的成品,不是原始料">成品</span>' : ''}
+        ${n > 1 ? `<span class="sub tag">${n} key</span>` : ''}</div>`;
     }
   }
-  $("#list").innerHTML = h || `<div class="empty">没有匹配的条目</div>`;
+  box.innerHTML = h || `<div class="empty">没有匹配的素材</div>`;
+  box.scrollTop = keepScroll;
 }
 
-/* ---------------- 波形 ---------------- */
+$("#list").addEventListener("click", ev => {
+  const row = ev.target.closest(".it");
+  if (row && row.dataset.key) select(row.dataset.key);
+});
+
+/* ============================ 波形 ============================ */
 function select(key){
   const it = LIB.find(x => x.key === key);
   if (!it) return;
-  cur = key; renderList();
+  stopPreview();
+  // 换条目瞬间就作废旧选区并锁住编辑:否则波形还没加载完时按 I/O,
+  // 上一条的选区会被按新 key 存盘(8 分半的曲子被剪成 0.6 秒且无警告)。
+  ready = false; curRegion = null;
+  cur = key; renderList(); saveUiState();
   $("#title").textContent = it.name;
   $("#sub").textContent = it.key;
-
+  $("#posTag").textContent = "载入中…";
+  $("#btnPlay").textContent = "▶ 播放";
   if (ws) ws.destroy();
+  ws = null;
+  renderInspector();          // 销毁之后再绘,否则读到的是上一条的时长
+
   regions = WaveSurfer.Regions.create();
   ws = WaveSurfer.create({
     container: "#wave", height: 190,
@@ -244,62 +511,149 @@ function select(key){
   });
   $("#zoom").value = 1;
   ws.on("decode", () => {
-    const e = ed(key);
-    const t = e.trim;
+    if (cur !== key) return;             // 已经切走了,别把选区挂到别人身上
+    const e = ed(key), t = e.trim;
     curRegion = regions.addRegion({
       start: t ? t.start : 0,
       end: t ? t.end : ws.getDuration(),
       color: "rgba(201,168,106,.18)", drag: true, resize: true,
     });
     curRegion.on("update-end", commitRegion);
+    ready = true; regionOwner = key;
+    $("#posTag").textContent = `0.00 / ${ws.getDuration().toFixed(2)}s`;
     renderInspector();
   });
   ws.on("timeupdate", t => $("#posTag").textContent =
     `${t.toFixed(2)} / ${ws.getDuration().toFixed(2)}s`);
   ws.on("finish", () => $("#btnPlay").textContent = "▶ 播放");
+  ws.on("error", () => {
+    if (cur !== key) return;
+    // 解码失败只标记本地不可用。**绝不**顺手去撤分配或碰台账:
+    // 播不出来是这台机器/这个解码器的事,不该反过来改项目里的账。
+    badFiles.add(key); ready = false;
+    $("#posTag").textContent = "载入失败";
+    renderInspector(); renderList();
+    toast("这个文件解码失败,无法编辑或导出", 6000);
+  });
   regions.on("region-updated", commitRegion);
 }
 
 function commitRegion(){
-  if (!cur || !curRegion) return;
-  const e = ed(cur);
-  const full = Math.abs(curRegion.start) < 1e-3 &&
-               Math.abs(curRegion.end - ws.getDuration()) < 1e-3;
-  if (full) delete e.trim;
-  else e.trim = {start: +curRegion.start.toFixed(4), end: +curRegion.end.toFixed(4)};
-  saveEdits(); renderList(); renderInspector();
+  // regionOwner 这道闸是 S2 的根治:只有选区确实属于当前条目才允许落盘
+  if (!cur || !curRegion || !ready || regionOwner !== cur) return;
+  applyTrim(ed(cur), {start: curRegion.start, end: curRegion.end}, ws.getDuration());
 }
 
 function togglePlay(){
-  if (!ws) return;
+  if (!guardReady()) return;
+  stopPreview();                       // 试听和原始声不能一起响
   ws.playPause();
   $("#btnPlay").textContent = ws.isPlaying() ? "⏸ 暂停" : "▶ 播放";
 }
-function playRegion(){ if (curRegion) curRegion.play(); }
+function playRegion(){
+  if (!guardReady()) return;
+  stopPreview();
+  if (curRegion) curRegion.play();
+}
+function guardReady(){
+  if (!cur){ toast("先从「素材」页签选一条"); return false; }
+  if (badFiles.has(cur)){ toast("这个文件解码失败,不能编辑"); return false; }
+  if (!ws || !ready){ toast("波形还在载入,稍等一下"); return false; }
+  return true;
+}
 function setIn(){
-  if (!ws || !curRegion) return;
+  if (!guardReady() || !curRegion) return;
   const t = ws.getCurrentTime();
-  if (t < curRegion.end) { curRegion.setOptions({start: t}); commitRegion(); }
+  if (t >= curRegion.end){ toast(`起点要在终点(${curRegion.end.toFixed(2)}s)之前`); return; }
+  curRegion.setOptions({start: t}); commitRegion();
+  toast(`起点 ${t.toFixed(2)}s`, 1200);
 }
 function setOut(){
-  if (!ws || !curRegion) return;
+  if (!guardReady() || !curRegion) return;
   const t = ws.getCurrentTime();
-  if (t > curRegion.start) { curRegion.setOptions({end: t}); commitRegion(); }
+  if (t <= curRegion.start){ toast(`终点要在起点(${curRegion.start.toFixed(2)}s)之后`); return; }
+  curRegion.setOptions({end: t}); commitRegion();
+  toast(`终点 ${t.toFixed(2)}s`, 1200);
 }
 function clearRegion(){
-  if (!ws || !curRegion) return;
+  if (!guardReady() || !curRegion) return;
   curRegion.setOptions({start: 0, end: ws.getDuration()});
   commitRegion();
 }
 
-/* ---------------- 参数面板 ---------------- */
+/* ============================ 右栏 ============================ */
 function renderInspector(){
-  if (!cur){ $("#insp").innerHTML = `<div class="empty">未选择音频</div>`; return; }
-  const it = LIB.find(x => x.key === cur), e = ed(cur);
+  $("#insp").innerHTML = keyBlock() + sourceBlock();
+}
+
+function keyBlock(){
+  if (!curKey) return `<h3>项目 key</h3>
+    <div class="hint">在左边「项目 key」里点一行,这里会显示它现在挂着什么、上次什么时候导的。</div>`;
+  const k = keyRow(curKey);
+  if (!k) return `<h3>项目 key</h3><div class="hint">这个 key 已经不在配置里了。</div>`;
+  const f = k.file;
+  const when = k.ledger && k.ledger.exportedAt
+    ? k.ledger.exportedAt.replace("T", " ") + (k.ledger.inferred ? "（按文件时间推断）" : "")
+    : "—";
+  const originTxt = !k.ledger ? "—"
+    : !k.ledger.origin ? "未知"
+    : k.ledger.origin.backfilled ? "未知（存量回填）"
+    : esc(k.ledger.origin.sourceKey || "未知");
+  const assignedSrc = k.assigned ? k.assigned.sourceKey : null;
+  const canFill = cur && ready && !badFiles.has(cur) && k.exportable;
+  return `<h3>项目 key</h3>
+    <div class="card">
+      <div class="kname">${esc(k.key)}</div>
+      <div class="kv"><b>状态</b><span title="${esc(STATUS_HINT[k.status]||"")}">
+        <span class="dot ${esc(k.status)}" style="display:inline-block;vertical-align:middle"></span>
+        ${esc(STATUS_LABEL[k.status]||k.status)}</span></div>
+      <div class="kv"><b>当前文件</b><span>${f ? esc(f.name) : "（没有）"}</span></div>
+      <div class="kv"><b>上次导出</b><span>${esc(when)}</span></div>
+      <div class="kv"><b>来料出处</b><span>${originTxt}</span></div>
+      <div class="kv"><b>输出格式</b><span>${esc(k.outExt)}${
+        k.file ? "" : "（这个 key 还没接过文件,按频道给的默认值）"}</span></div>
+      ${k.volume != null ? `<div class="kv"><b>音量</b><span>${k.volume}
+        <span class="tag">（只读,去主编辑器改）</span></span></div>` : ""}
+      ${!k.exportable ? `<div class="warnbox" style="margin:6px 0 0">不可写入:${esc(k.reason)}</div>` : ""}
+      <div style="margin-top:7px;display:flex;gap:5px">
+        <button ${f ? "" : "disabled"} onclick="auditionKey()">▶ 试听现在这份</button>
+        <button class="primary" ${canFill ? "" : "disabled"} data-fill="${esc(k.key)}"
+          onclick="assign(this.dataset.fill, cur)">用当前素材填</button>
+      </div>
+      ${assignedSrc ? `<div class="kv" style="margin-top:6px"><b>本次分配</b><span>
+        <span class="chip"><span>${esc(assignedSrc)}</span>
+        <button title="取消分配" data-un="${esc(curKey)}" onclick="assign(this.dataset.un, null)">✕</button>
+        </span></span></div>` : ""}
+    </div>`;
+}
+
+function sourceBlock(){
+  if (!cur) return `<h3>素材</h3><div class="empty">未选择素材</div>`;
+  const it = LIB.find(x => x.key === cur);
+  if (!ready){
+    // 没解码完就不给改任何参数:否则输入框留着值却不写盘(静默失效),
+    // 或按 0 时长算出"已改为 0.000s"这种荒谬提示
+    const msg = badFiles.has(cur) ? "这个文件解码失败,不能编辑也不能导出" : "波形载入中…";
+    return `<h3>素材</h3><div class="empty">${msg}<br>
+      <span style="font-size:11px">${esc(it ? it.name : "")}</span></div>`;
+  }
+  const e = ed(cur);
   const n = e.normalize || {};
   const dur = ws ? ws.getDuration() : 0;
   const outDur = e.trim ? (e.trim.end - e.trim.start) : dur;
-  $("#insp").innerHTML = `
+  const mine = keysFor(cur);
+  return `
+    <h3>导出到 key</h3>
+    <div class="f"><button style="flex:1" onclick="openPick()">分配到 key… <kbd>E</kbd></button></div>
+    <div>${mine.length
+      ? mine.map(k => `<span class="chip"><span>${esc(k.key)}</span>
+          <button title="取消分配" data-un="${esc(k.key)}"
+            onclick="assign(this.dataset.un, null)">✕</button></span>`).join("")
+      : `<span class="hint">还没分配给任何 key。同一份料可以分给多个 key,
+           它们会共用同一个文件,不会各拷一份。</span>`}</div>
+    ${it && it.product ? `<div class="hint">⚠ 这条本身就是本工具导出的成品,
+      不是原始料。拿它再加工一次会生成新的一份。</div>` : ""}
+
     <h3>裁剪</h3>
     <div class="f"><label>起点</label><input type="number" step="0.01" min="0" value="${(e.trim?e.trim.start:0).toFixed(3)}"
       onchange="setTrim('start', this.value)"><span class="tag">秒</span></div>
@@ -310,9 +664,9 @@ function renderInspector(){
 
     <h3>淡入淡出</h3>
     <div class="f"><label>淡入</label><input type="number" step="0.05" min="0" value="${e.fadeIn||0}"
-      onchange="setNum('fadeIn', this.value)"><span class="tag">秒</span></div>
+      onchange="setFade('fadeIn', this.value)"><span class="tag">秒</span></div>
     <div class="f"><label>淡出</label><input type="number" step="0.05" min="0" value="${e.fadeOut||0}"
-      onchange="setNum('fadeOut', this.value)"><span class="tag">秒</span></div>
+      onchange="setFade('fadeOut', this.value)"><span class="tag">秒</span></div>
     <div class="f"><button onclick="quickFade(0.02)">极短 20ms</button>
       <button onclick="quickFade(0.15)">150ms</button><button onclick="quickFade(1)">1s</button></div>
     <div class="hint">给一次性音效两端各加 20ms 可以消掉爆音(click)。</div>
@@ -324,67 +678,214 @@ function renderInspector(){
       <span id="gv" class="tag" style="min-width:56px;text-align:right">${(e.gainDb>0?'+':'')+(e.gainDb||0)} dB</span></div>
     <div class="f"><label>峰值归一</label>
       <input type="checkbox" ${n.enabled?"checked":""} onchange="setNorm('enabled', this.checked)">
-      <input type="number" step="0.5" value="${n.peakDb ?? -3}" style="width:56px"
+      <input type="number" step="0.5" value="${(NORM_MEM[cur] && NORM_MEM[cur].peakDb) ?? e.normPeakDb ?? n.peakDb ?? -3}" style="width:56px"
         onchange="setNorm('peakDb', this.value)"><span class="tag">dBFS</span></div>
     <div class="f"><label>反向</label>
       <input type="checkbox" ${e.reverse?"checked":""} onchange="setBool('reverse', this.checked)"></div>
 
-    <h3>导出</h3>
-    <div class="f"><label>类别</label>
-      <select onchange="setStr('category', this.value)">
-        ${["bgm","ambient","sfx"].map(c =>
-          `<option value="${c}" ${(e.category||it.category)===c?"selected":""}>${
-            {bgm:"BGM 音乐",ambient:"BGS 环境音",sfx:"SE 音效"}[c]}</option>`).join("")}
-      </select></div>
-    <div class="f"><label>音频 id</label>
-      <input type="text" value="${e.audio_id||it.audio_id}" onchange="setStr('audio_id', this.value)"></div>
-    <div class="f"><button class="${e.export?"on":""}" style="flex:1"
-      onclick="toggleExport()">${e.export?"✓ 已勾选导出":"勾选导出"}</button></div>
-    <div class="hint">类别决定登记进 audio_config.json 的哪个区,
-      音频 id 就是游戏里引用的名字。</div>
-
     <h3>快捷键</h3>
     <div class="hint">
       <kbd>空格</kbd> 播放/暂停 · <kbd>I</kbd> 定起点 · <kbd>O</kbd> 定终点<br>
-      <kbd>P</kbd> 试听处理后 · <kbd>E</kbd> 勾选导出 · <kbd>←</kbd><kbd>→</kbd> 微移 0.1s<br>
-      <kbd>J</kbd>/<kbd>K</kbd> 上一条/下一条
+      <kbd>P</kbd> 试听处理后 · <kbd>E</kbd> 分配到 key · <kbd>←</kbd><kbd>→</kbd> 微移 0.1s<br>
+      <kbd>J</kbd>/<kbd>K</kbd> 上一条/下一条（跟着当前页签走）
     </div>`;
 }
+
+/* ============================ 参数编辑 ============================ */
 function setTrim(which, v){
+  if (!ws || !ready) return;
   const e = ed(cur), dur = ws.getDuration();
-  const t = e.trim || {start: 0, end: dur};
-  t[which] = Math.max(0, Math.min(dur, Number(v) || 0));
-  if (t.end <= t.start) { toast("终点必须大于起点"); renderInspector(); return; }
-  e.trim = t;
+  // 关键:先在副本上算,校验通过才写回。以前是直接改 e.trim,
+  // 于是"弹提示说拒绝"和"值已经存进去了"同时发生,导出还悄悄给整条原音。
+  const t = e.trim ? {...e.trim} : {start: 0, end: dur};
+  const n = Number(v);
+  const raw = String(v ?? "").trim();
+  if (raw === "" || !Number.isFinite(n)){ toast("请输入数字"); renderInspector(); return; }
+  if (n < 0){ toast("不能是负数"); renderInspector(); return; }
+  if (n > dur){ toast(`不能超过音频总长 ${dur.toFixed(3)}s`); renderInspector(); return; }
+  t[which] = n;
+  if (t.end <= t.start){ toast("终点必须大于起点,已保持原值"); renderInspector(); return; }
+  applyTrim(e, t, dur);
+}
+
+function applyTrim(e, t, dur){
+  // 回到全长就把 trim 删掉,否则条目会一直挂着"已加工"标记(和「清选区」行为不一致)
+  if (t.start <= 1e-3 && t.end >= dur - 1e-3) delete e.trim;
+  else e.trim = {start: +t.start.toFixed(4), end: +t.end.toFixed(4)};
+  // 输出时长变了就复核淡入淡出——不管这次是"填淡入"还是"改裁剪"触发的
+  const outDur = e.trim ? e.trim.end - e.trim.start : dur;
+  const fi = Number(e.fadeIn || 0), fo = Number(e.fadeOut || 0);
+  // 记住用户本来填的值:选区收窄时会被缩,放宽后要还原回来
+  if (fi || fo) FADE_PREF[cur] = FADE_PREF[cur] || e.fadePref || {fi, fo};
+  const pref = FADE_PREF[cur] || e.fadePref;
+  if (pref && (pref.fi || pref.fo)) e.fadePref = pref;   // 落盘;全 0 不留垃圾
+  else delete e.fadePref;
+  if (pref && pref.fi + pref.fo <= outDur && (fi !== pref.fi || fo !== pref.fo)){
+    if (pref.fi) e.fadeIn = pref.fi; else delete e.fadeIn;
+    if (pref.fo) e.fadeOut = pref.fo; else delete e.fadeOut;
+    toast(`选区放宽,淡入淡出已还原到 ${pref.fi}s / ${pref.fo}s`, 3500);
+  } else if (fi + fo > outDur){
+    // 两边各自 toFixed 会让和比输出时长多出 1e-4,后端容差吃不下 -> 直接拒渲染。
+    // 改成:先定一个(向下取整到 4 位),另一个用剩余量补,和必然不超。
+    const budget = Math.max(0, outDur - 1e-4);
+    const k = budget / (fi + fo);
+    let nfi, nfo;
+    if (fi === fo){          // 对称输入必须缩成对称,1s/1s 不该变成 0.2499/0.2500
+      nfi = nfo = Math.floor(budget / 2 * 1e4) / 1e4;
+    } else {
+      nfi = fi ? Math.floor(fi * k * 1e4) / 1e4 : 0;
+      nfo = fo ? Math.max(0, Math.floor((budget - nfi) * 1e4) / 1e4) : 0;
+    }
+    if (nfi) e.fadeIn = nfi; else delete e.fadeIn;
+    if (nfo) e.fadeOut = nfo; else delete e.fadeOut;
+    toast(`选区变短,淡入淡出已缩到 ${nfi.toFixed(3)}s / ${nfo.toFixed(3)}s`, 4500);
+  }
+  if (e.trim && (e.trim.end - e.trim.start) < 0.01)
+    toast(`选区只有 ${((e.trim.end-e.trim.start)*1000).toFixed(0)} 毫秒,确认是想要的吗`, 4000);
   if (curRegion) curRegion.setOptions({start: t.start, end: t.end});
   saveEdits(); renderList(); renderInspector();
 }
-function setNum(k, v){ const e = ed(cur); const n = Number(v)||0; if(n) e[k]=n; else delete e[k]; saveEdits(); renderList(); }
-function setBool(k, v){ const e = ed(cur); if(v) e[k]=true; else delete e[k]; saveEdits(); renderList(); }
-function setStr(k, v){ const e = ed(cur); v = (v||"").trim(); if(v) e[k]=v; else delete e[k]; saveEdits(); renderList(); }
-function setNorm(k, v){
-  const e = ed(cur); const n = e.normalize || {};
-  n[k] = (k === "peakDb") ? Number(v) : v;
-  if (!n.enabled) delete e.normalize; else e.normalize = n;
+function setFade(k, v){
+  // 界面显示的值必须就是实际生效的值:负数拒绝、超长当场钳并告知,
+  // 不能"界面写 10 秒、后端偷偷截成 0.6 秒"。
+  const e = ed(cur), n = Number(v), raw = String(v ?? "").trim();
+  if (raw === "" || !Number.isFinite(n)){ toast("请输入数字"); renderInspector(); return; }
+  if (n < 0){ toast("淡入淡出不能为负"); renderInspector(); return; }
+  const dur = ws ? (e.trim ? e.trim.end - e.trim.start : ws.getDuration()) : n;
+  const other = Number(e[k === "fadeIn" ? "fadeOut" : "fadeIn"] || 0);
+  let val = n;
+  if (val + other > dur){
+    val = Math.max(0, dur - other);
+    toast(`淡入+淡出不能超过输出时长 ${dur.toFixed(3)}s,已改为 ${val.toFixed(3)}s`, 4000);
+  }
+  if (val > 0) e[k] = +val.toFixed(4); else delete e[k];
+  const pf = {fi: Number(e.fadeIn || 0), fo: Number(e.fadeOut || 0)};
+  FADE_PREF[cur] = pf;
+  if (pf.fi || pf.fo) e.fadePref = pf; else delete e.fadePref;   // 全 0 就别留垃圾
   saveEdits(); renderList(); renderInspector();
 }
-function quickFade(s){ const e = ed(cur); e.fadeIn = s; e.fadeOut = s; saveEdits(); renderInspector(); renderList(); }
-function toggleExport(){ const e = ed(cur); e.export = !e.export; saveEdits(); renderInspector(); renderList(); }
+// setNum / setBool 刻意不重绘 inspector:增益滑块靠内联更新读数,
+// 一重绘就把正在拖的那个 range 换掉,拖拽当场断。
+function setNum(k, v){ const e = ed(cur); const n = Number(v)||0; if(n) e[k]=n; else delete e[k]; saveEdits(); renderList(); }
+function setBool(k, v){ const e = ed(cur); if(v) e[k]=true; else delete e[k]; saveEdits(); renderList(); }
+function setNorm(k, v){
+  const e = ed(cur);
+  // peakDb 要记住,不能因为当前没勾选就丢掉(勾回来又变回 -3)
+  const n = Object.assign({peakDb: e.normPeakDb ?? -3}, e.normalize || {},
+                          NORM_MEM[cur] || {});
+  if (k === "peakDb"){
+    const num = Number(v);
+    if (!Number.isFinite(num)){ toast("归一目标请填数字"); renderInspector(); return; }
+    if (num > 0){ toast("归一目标不能是正数,0 已是满刻度,再高必削顶"); renderInspector(); return; }
+    n[k] = num;
+  } else n[k] = v;
+  if (!Number.isFinite(n.peakDb)) n.peakDb = -3;
+  NORM_MEM[cur] = {peakDb: n.peakDb};
+  // 没勾选也要把用户填过的目标值落盘,否则刷新后变回 -3
+  // 改回默认 -3 时必须**删掉**已落盘的记忆值:不删的话刷新后又被那条旧值顶回去,
+  // 界面显示 -3、实际按旧值归一。
+  if (!n.enabled){
+    delete e.normalize;
+    if (n.peakDb !== -3) e.normPeakDb = n.peakDb; else delete e.normPeakDb;
+  }
+  else { e.normalize = n; delete e.normPeakDb; }
+  saveEdits(); renderList(); renderInspector();
+}
+const NORM_MEM = {};
+const FADE_PREF = {};   // 用户填的淡入淡出原值(选区收窄会临时缩小)
+function quickFade(s){ if(!cur) return; setFade("fadeIn", s); setFade("fadeOut", s); }
 
-/* ---------------- 试听处理后 ---------------- */
-let prevAudio = null;
-async function preview(){
-  if (!cur) return;
-  toast("渲染中…", 8000);
-  const r = await fetch("/api/render", {method:"POST",
-    body: JSON.stringify({key: cur, edits: EDITS[cur] || {}})}).then(r=>r.json());
-  if (!r.ok){ toast("渲染失败: " + r.error, 6000); return; }
-  if (prevAudio) prevAudio.pause();
-  prevAudio = new Audio(r.url); prevAudio.play();
-  toast(`试听处理后 · ${r.duration}s`);
+/* ============================ 分配 ============================ */
+async function assign(key, sourceKey){
+  if (!key) return;
+  // 分配前先把参数落盘,免得后端拿旧参数算指纹;没存上就别往下走
+  if (!await flushEdits()){ toast("加工参数没存上,先解决再分配", 7000); return; }
+  let r;
+  try {
+    r = await fetch("/api/assign", {method:"POST",
+      body: JSON.stringify({key, sourceKey})}).then(x => x.json());
+  } catch (err){ toast("分配失败: " + err.message, 7000); return; }
+  if (!r.ok){ toast("分配失败: " + r.error, 7000); return; }
+  await loadKeys();
+  toast(sourceKey ? `已分配到 ${key}` : `已取消 ${key} 的分配`, 1800);
 }
 
-/* ---------------- 导入 ---------------- */
+function openPick(){
+  if (!cur){ toast("先从「素材」页签选一条素材"); return; }
+  if (badFiles.has(cur)){ toast("这个文件解码失败,不能分配"); return; }
+  if (!ready){ toast("波形还在载入,稍等一下"); return; }
+  $("#pickHead").innerHTML = `把 <b>${esc(cur)}</b> 的加工结果挂到哪个 key 上。
+    <br>key 全部来自 audio_config.json 的实时扫描 —— 这里没有手写 id 的入口,
+    要新 key 请先在主编辑器里建。`;
+  renderPick();
+  if (!pick.open) pick.showModal();
+  $("#pickSearch").focus();
+}
+
+function renderPick(){
+  const q = $("#pickSearch").value.trim().toLowerCase();
+  const st = $("#pickState").value;
+  const rows = KEYS.filter(k =>
+    (!q || q.split(/\s+/).every(w => k.key.toLowerCase().includes(w))) &&
+    (!st || k.status === st));
+  $("#pickList").innerHTML = rows.length ? rows.map(k => {
+    const taken = k.assigned && k.assigned.sourceKey !== cur;
+    return `<div class="kr ${k.exportable?'':'no'}" data-pick="${esc(k.key)}"
+      title="${esc(k.exportable ? (STATUS_HINT[k.status]||"") : k.reason)}">
+      <span class="dot ${esc(k.status)}"></span>
+      <span class="nm">${esc(k.key)}</span>
+      <span class="sub">${esc(STATUS_LABEL[k.status]||k.status)}${
+        k.file ? " · " + esc(k.file.name) : ""}${
+        taken ? " · 已分配给别的料" : ""}</span></div>`;
+  }).join("") : `<div class="empty">没有匹配的 key</div>`;
+}
+
+$("#pickList").addEventListener("click", async ev => {
+  const row = ev.target.closest("[data-pick]");
+  if (!row) return;
+  if (row.classList.contains("no")){
+    toast("这个 key 不能写入:" + (keyRow(row.dataset.pick) || {}).reason, 7000);
+    return;
+  }
+  await assign(row.dataset.pick, cur);
+  pick.close();
+});
+
+async function auditionKey(){
+  const k = keyRow(curKey);
+  if (!k || !k.file) return;
+  stopPreview();
+  if (ws && ws.isPlaying()){ ws.pause(); $("#btnPlay").textContent = "▶ 播放"; }
+  prevAudio = new Audio(k.file.url + "&t=" + Date.now());
+  prevAudio.onended = stopPreview;
+  prevAudio.play().catch(err => toast("播不了这个文件: " + err.message, 6000));
+  $("#btnPrev").textContent = "⏹ 停止试听";
+}
+
+/* ============================ 试听处理后 ============================ */
+let prevAudio = null;
+function stopPreview(){
+  if (prevAudio){ prevAudio.pause(); prevAudio.src = ""; prevAudio = null; }
+  $("#btnPrev").textContent = "试听处理后";
+}
+async function preview(){
+  if (!cur){ toast("先从「素材」页签选一条"); return; }
+  if (badFiles.has(cur)){ toast("这个文件解码失败,不能试听"); return; }
+  if (prevAudio){ stopPreview(); return; }      // 再按一次就是停,别让人只能刷新页面
+  if (ws && ws.isPlaying()){ ws.pause(); $("#btnPlay").textContent = "▶ 播放"; }
+  toast("渲染中…", 8000);
+  const r = await fetch("/api/render", {method:"POST",
+    body: JSON.stringify({key: cur, edits: EDITS[cur] || {}})}).then(r=>r.json())
+    .catch(err => ({ok:false, error: err.message}));
+  if (!r.ok){ toast("渲染失败: " + r.error, 7000); return; }
+  prevAudio = new Audio(r.url);
+  prevAudio.onended = stopPreview;
+  prevAudio.play();
+  $("#btnPrev").textContent = "⏹ 停止试听";
+  toast(r.warn ? `⚠ ${r.warn}` : `试听处理后 · ${r.duration}s`, r.warn ? 7000 : 2600);
+}
+
+/* ============================ 导入 ============================ */
 $("#fileInput").onchange = async ev => {
   const files = [...ev.target.files];
   for (const f of files){
@@ -395,99 +896,161 @@ $("#fileInput").onchange = async ev => {
   }
   ev.target.value = "";
   await loadAll();
+  setTab("src");
   toast(`已导入 ${files.length} 个文件`);
 };
 document.addEventListener("dragover", e => e.preventDefault());
 document.addEventListener("drop", async e => {
   e.preventDefault();
-  const files = [...(e.dataTransfer?.files || [])].filter(f => f.type.startsWith("audio"));
+  const files = [...(e.dataTransfer?.files || [])].filter(f =>
+    f.type.startsWith("audio") || /\.(wav|mp3|ogg|flac|m4a|aif|aiff)$/i.test(f.name));
   if (!files.length) return;
   for (const f of files)
     await fetch("/api/import", {method:"POST",
       headers: {"X-Filename": encodeURIComponent(f.name)},
       body: await f.arrayBuffer()});
-  await loadAll(); toast(`已导入 ${files.length} 个文件`);
+  await loadAll(); setTab("src"); toast(`已导入 ${files.length} 个文件`);
 });
 
-/* ---------------- 导出 ---------------- */
+/* ============================ 导出 ============================ */
+const ACTION_LABEL = {
+  render: "渲染并写入", relink: "复用已有内容（不重渲、不拷贝）",
+  unchanged: "已是最新（跳过）", blocked: "过不了检查",
+};
+
+function planTable(p){
+  return `<table><tr><th>key</th><th>动作</th><th>来料</th><th>目标文件</th><th>说明</th></tr>` +
+    p.rows.map(r => {
+      const bad = r.action === "blocked";
+      return `<tr${bad?' style="background:#3a241c"':''}>
+        <td>${esc(r.key)}</td>
+        <td>${esc(ACTION_LABEL[r.action] || r.action)}</td>
+        <td style="font-size:10px;color:#8d8172">${esc(r.sourceKey)}</td>
+        <td style="font-size:10px">${esc((r.targetSrc||"").split("/").pop() || (r.action==="render" ? "渲染后按内容命名" : "—"))}</td>
+        <td style="color:${bad?"#dfa18c":"#8d8172"}">${esc(r.reason || r.warn || "")}</td></tr>`;
+    }).join("") + `</table>`;
+}
+
+function planSummary(p){
+  const c = p.counts;
+  let h = "";
+  if (p.blocked)
+    h += `<div class="warnbox">有 ${c.blocked} 条过不了检查,点导出也只会被整批拒绝。
+      逐条原因见下表。</div>`;
+  h += `<div class="${p.blocked ? "infobox" : "okbox"}">
+    渲染并写入 <b>${c.render}</b> 条 ·
+    复用已有内容 <b>${c.relink}</b> 条（只改映射,不落新文件） ·
+    已是最新 <b>${c.unchanged}</b> 条（跳过）<br>
+    新文件落到 <code>${esc(p.exportDir)}/</code>,映射写进 <code>${esc(p.config)}</code></div>`;
+  return h;
+}
+
 async function showPlan(){
-  const p = await fetch("/api/export/plan").then(r=>r.json());
+  // 不 flush 会拿到 300ms 前的旧参数;flush 失败更不能往下算——那是在拿磁盘上的旧参数出计划
+  if (!await flushEdits()){ toast("加工参数没存上,先解决再看计划", 7000); return; }
+  const p = await getJson("/api/export/plan");
+  if (p._err){ toast(p._err, 8000); return; }
   let h = `<h2>导出预览</h2>`;
-  if (!p.count){ h += `<div class="warnbox">还没有勾选任何音频。在右侧参数面板点「勾选导出」。</div>`; }
-  else {
-    const conf = Object.keys(p.conflicts||{}).length;
-    if (conf) h += `<div class="warnbox">有 ${conf} 个重名 id,导出会被拒绝:<br>` +
-      Object.entries(p.conflicts).map(([k,v])=>`<b>${k}</b> ← ${v.join(" , ")}`).join("<br>") + `</div>`;
-    h += `<div class="okbox">将写入 <b>${p.count}</b> 个音频到 <code>${p.dir}/</code>,
-      并登记进 <code>${p.config}</code></div>`;
-    h += `<table><tr><th>音频 id</th><th>类别</th><th>文件</th><th>来源</th><th>配置</th></tr>` +
-      p.files.map((f,i) => {
-        const c = (p.config_changes||[])[i] || {};
-        return `<tr><td>${f.audio_id}</td><td>${f.category}</td>
-          <td>${f.filename}${f.exists?' <span style="color:#d9a441">(覆盖)</span>':''}</td>
-          <td style="font-size:10px;color:#8d8172">${f.from}</td>
-          <td>${c.action === "update" ? "更新 src" : "新增登记"}</td></tr>`;
-      }).join("") + `</table>`;
+  if (!p.rows.length){
+    h += `<div class="warnbox">还没有给任何 key 分配素材。
+      在「素材」里选一条,右栏点「分配到 key…」。</div>`;
+  } else {
+    h += planSummary(p) + planTable(p);
   }
   $("#dlgBody").innerHTML = h;
-  $("#dlgOk").style.display = "none";
-  dlg.showModal();
+  const ok = $("#dlgOk");
+  ok.style.display = "none"; ok.onclick = null; ok.disabled = false;
+  if (!dlg.open) dlg.showModal();
 }
 
 async function doExport(){
-  const p = await fetch("/api/export/plan").then(r=>r.json());
-  if (!p.count){ toast("还没有勾选任何音频"); return; }
-  $("#dlgBody").innerHTML = `<h2>确认导出</h2>
-    <div class="okbox">${p.count} 个音频 → <code>${p.dir}/</code><br>
-    同时登记进 <code>${p.config}</code>（会先自动备份原文件）</div>
-    <div class="hint">这一步会真正写入项目目录。</div>`;
+  if (!await flushEdits()){ toast("加工参数没存上,已中止导出(否则导出的是磁盘上的旧参数)", 9000); return; }
+  const p = await getJson("/api/export/plan");
+  if (p._err){ toast(p._err, 8000); return; }
+  if (!p.rows.length){ toast("还没有给任何 key 分配素材"); return; }
+  $("#dlgBody").innerHTML = `<h2>确认导出</h2>${planSummary(p)}
+    <div class="hint">${p.blocked
+      ? "上面的问题不解决,点了也只会被整批拒绝。"
+      : "这一步会真正写入项目:新内容落成文件,并把这些 key 的 src 指过去（会先备份配置）。"}</div>`
+    + planTable(p);
   const ok = $("#dlgOk");
   ok.style.display = ""; ok.textContent = "确认导出";
+  ok.disabled = !!p.blocked;                 // 明知必被拒绝就别让人白点
+  ok.style.opacity = p.blocked ? .45 : 1;
   ok.onclick = async () => {
     ok.disabled = true; ok.textContent = "导出中…";
-    const r = await fetch("/api/export", {method:"POST",
-      body: JSON.stringify({write_config: true})}).then(r=>r.json());
+    const r = await fetch("/api/export", {method:"POST", body: "{}"}).then(x=>x.json())
+      .catch(err => ({ok:false, error: "导出请求失败: " + err.message}));
     ok.disabled = false; ok.textContent = "确认导出";
-    let h = `<h2>导出结果</h2>`;
-    if (r.error) h += `<div class="warnbox">${r.error}</div>`;
-    if (r.rendered) h += `<div class="okbox">已写入 ${r.rendered} 个音频到 <code>${r.dir}/</code></div>`;
-    if (r.failed?.length) h += `<div class="warnbox">${r.failed.length} 个渲染失败:<br>` +
-      r.failed.map(f=>`${f.audio_id}: ${f.error}`).join("<br>") + `</div>`;
-    if (r.config){
-      h += r.config.ok
-        ? `<div class="okbox">audio_config.json:新增 ${r.config.added.length} 条,
-             更新 ${r.config.updated.length} 条<br>
-             备份: <code>${r.config.backup.split("/").pop()}</code></div>`
-        : `<div class="warnbox">配置写入失败: ${r.config.error}</div>`;
-    }
-    $("#dlgBody").innerHTML = h;
-    ok.style.display = "none";
+    $("#dlgBody").innerHTML = exportResultHtml(r);
+    // 导出在途时用户可能已经把弹窗关了:结果只写进 dlgBody 就等于没说。
+    if (!r.ok) toast("导出未完成: " + (r.error || "见导出结果"), 9000);
+    ok.style.display = "none"; ok.onclick = null;
     await loadAll();
   };
-  dlg.showModal();
+  if (!dlg.open) dlg.showModal();
 }
 
-/* ---------------- 快捷键 ---------------- */
+function exportResultHtml(r){
+  let h = `<h2>导出结果</h2>`;
+  if (r.error) h += `<div class="warnbox">${esc(r.error)}</div>`;
+  if (r.failed && r.failed.length) h += `<div class="warnbox">${r.failed.length} 条渲染失败:<br>` +
+    r.failed.map(f=>`${esc(f.key)}: ${esc(f.error)}`).join("<br>") + `</div>`;
+  if (r.rows && r.rows.some(x => x.action === "blocked"))
+    h += `<div class="warnbox">` + r.rows.filter(x=>x.action==="blocked")
+      .map(x=>`<b>${esc(x.key)}</b> — ${esc(x.reason)}`).join("<br>") + `</div>`;
+  if (r.ok){
+    const nNew = (r.newFiles||[]).length;
+    const nReuse = (r.rows||[]).filter(x => x.reuse).length;
+    const nSkip = (r.rows||[]).filter(x => x.action === "unchanged").length;
+    h += `<div class="okbox">
+      新写入文件 <b>${nNew}</b> 个 ·
+      复用已有内容 <b>${nReuse}</b> 条（没有拷贝任何文件） ·
+      已是最新跳过 <b>${nSkip}</b> 条</div>`;
+    if (r.config){
+      h += r.config.unchanged
+        ? `<div class="infobox">audio_config.json 内容无变化,没有动这个文件(也就没落备份)。</div>`
+        : `<div class="okbox">audio_config.json:更新 ${r.config.applied.length} 条 src${
+            r.config.backup ? `<br>备份: <code>${esc(r.config.backup.split("/").pop())}</code>` : ""}</div>`;
+    }
+    if (nNew) h += `<div class="hint">新文件:${(r.newFiles||[]).map(esc).join("、")}</div>`;
+  }
+  if (r.warnings && r.warnings.length) h += `<div class="warnbox">${r.warnings.length} 条有削顶风险:<br>` +
+    r.warnings.map(w=>`<b>${esc(w.key)}</b> — ${esc(w.warn)}`).join("<br>") + `</div>`;
+  return h;
+}
+
+/* ============================ 快捷键 ============================ */
 document.addEventListener("keydown", e => {
   if (/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return;
-  if (dlg.open) return;
+  if (dlg.open || pick.open) return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;   // 别抢系统/浏览器的组合键
   const k = e.key.toLowerCase();
   if (e.code === "Space"){ e.preventDefault(); togglePlay(); }
   else if (k === "i") setIn();
   else if (k === "o") setOut();
   else if (k === "p") preview();
-  else if (k === "e" && cur) toggleExport();
+  else if (k === "e") openPick();
   else if (k === "arrowleft" && ws){ e.preventDefault(); ws.setTime(Math.max(0, ws.getCurrentTime()-0.1)); }
   else if (k === "arrowright" && ws){ e.preventDefault(); ws.setTime(ws.getCurrentTime()+0.1); }
   else if (k === "j" || k === "k"){
-    const vis = [...document.querySelectorAll(".it")];
+    // 两套列表共用一个类名会让 J/K 串成一条,所以按当前页签取各自的行
+    const sel = tab === "keys" ? "#keyList .kr" : "#list .it";
+    const vis = [...document.querySelectorAll(sel)];
     const i = vis.findIndex(x => x.classList.contains("sel"));
     const n = k === "j" ? i+1 : i-1;
-    if (vis[n]) vis[n].click();
+    if (vis[n]){
+      vis[n].click();
+      // 点击会重建整个列表,旧节点已 isConnected=false,必须重新查
+      requestAnimationFrame(() => {
+        const s = document.querySelector(tab === "keys" ? "#keyList .kr.sel" : "#list .it.sel");
+        if (s) s.scrollIntoView({block:"nearest"});
+      });
+    }
   }
 });
 
-loadAll();
+loadAll().then(restoreUiState);
 </script>
 </body>
 </html>

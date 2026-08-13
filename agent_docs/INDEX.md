@@ -17,6 +17,7 @@
 - [角色注册表(characterId 合并)](runtime/mechanisms/character-registry.md) — 角色身份(name/animFile/portraitSlug)一处定义,NpcDef.characterId 引用,实例化时合并且 own 字段赢过注册表
 - [过场音频回收契约](runtime/mechanisms/cutscene-audio-reclamation.md) — 过场 SFX 作用域捕获 + 快照音频基线;中断路径停尾音、自然播完保留末拍——cleanup 布尔语义勿回退
 - [过场步骤语义(parallel/镜头位/运镜/字幕推进)](runtime/mechanisms/cutscene-step-semantics.md) — parallel 是 fork-join 组内无时序;匿名镜头位自动顶掉;运镜受相机夹紧约束、跳过快进到编排终姿;subtitleAutoAdvance 三态
+- [日夜循环与 NPC 日程(时刻不自流逝 · 离场宽限集)](runtime/mechanisms/day-night-npc-schedule.md) — 时刻只由动作推进;transition 决定 NPC 换班演不演离场;leaving/arriving 宽限集是"绝不当着玩家的面消失"的唯一实现,判定点只挂 NPC 不进 entityInPlane
 - [调试/游戏内 UI 偏好持久化范式](runtime/mechanisms/debug-ui-persistence.md) — 调试/编辑器 UI 的用户偏好必须落工程文件;传输两种:vite 中间件(游戏内)/QWebChannel bridge(内嵌编辑器);localStorage-only 被用户明确否决(2026-07-07)
 - [dialogue:end 负载语义](runtime/mechanisms/dialogue-end-payload.md) — dialogue:end 带 source/willContinue/nestedInGraph;状态恢复只认最外层、只认恰好一次 willContinue=false 的最终 end
 - [对话头像(立绘)运行时](runtime/mechanisms/dialogue-portrait-runtime.md) — 头像跟「装扮配置」走不跟实体走;跟随说话人要求这行的说话人实体解析得出来,UI 收到的 portrait 恒带 slug

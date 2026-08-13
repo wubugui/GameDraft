@@ -1,0 +1,1440 @@
+{
+ "version": 1,
+ "files": {
+  "f7ce9f4c051feacd95b1fd429a1852f4ac1ed81eb51b43c61b432d6ccdc607fd": {
+   "src": "/resources/runtime/audio/demo/bgm_placeholder_dread_piano.mp3",
+   "bytes": 3617898,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "e9268aa45b2f609bf75c724028488a4cf07dafd4bb7645758fd2b1d6d58aae8b": {
+   "src": "/resources/runtime/audio/demo/bgm_placeholder_dark_shadows.mp3",
+   "bytes": 3398179,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "504336577fa2c46ed9f06ed69ce8151e4cbcb357c33cf8f972d26f0827f5380c": {
+   "src": "/resources/runtime/audio/demo/bgm_placeholder_low_tension.mp3",
+   "bytes": 9594970,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "3f057bbda95723d3318a7c9ae79f00763b6ff14c76a85b6657ba4dc60551f672": {
+   "src": "/resources/runtime/audio/demo/generated_20260808/bgm_01_street_day_loop.mp3",
+   "bytes": 2001592,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "5425c4c78fde9d0c4c429ecd0166070bff4ddcc5a16e21a0c15c5050cc60a1a6": {
+   "src": "/resources/runtime/audio/demo/generated_20260808/bgm_02_teahouse_loop.mp3",
+   "bytes": 1177377,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "29b0b30bd7abb264024195c9abbdbf95e8e3e06c507eb896d07441cdf753be13": {
+   "src": "/resources/runtime/audio/demo/generated_20260808/bgm_03_dock_loop.mp3",
+   "bytes": 4984149,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "6bade03b5fc786bceb65f7cec292056ba57278e0124e633b6a40131cd570bfa2": {
+   "src": "/resources/runtime/audio/demo/generated_20260808/bgm_04_yizhuang_still_loop.mp3",
+   "bytes": 4959072,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "ed96ed787ca7be18a33f874df205590294b61ef240ca1b72614889b83875a2be": {
+   "src": "/resources/runtime/audio/demo/generated_20260808/bgm_05_chenghuang_lamp_dread_loop.mp3",
+   "bytes": 7090663,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "405b53109849b1fd738abf0f6467cafbf873e30f6309b3dddbe2a99056c85865": {
+   "src": "/resources/runtime/audio/demo/generated_20260808/bgm_06_forest_hold_pressure_loop.mp3",
+   "bytes": 3000515,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "17fbe2dfa6bd3a0f749b83ea416cf80222a8cda68260c755a6a64b7844aab803": {
+   "src": "/resources/runtime/audio/demo/generated_20260808/bgm_07_well_low_dread_loop.mp3",
+   "bytes": 253687,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "9c17dd76f152be7121d22288b5445518d71d065235ace247031765c141af0238": {
+   "src": "/resources/runtime/audio/demo/generated_20260808/bgm_08_dream_warm_wrong_loop.mp3",
+   "bytes": 6184528,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "16ef1ca0872e9d9371f37b16891403fdf19c52889b931629f73c5f96b1400235": {
+   "src": "/resources/runtime/audio/demo/generated_20260808/bgm_09_exit_gate_loop.mp3",
+   "bytes": 2091872,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "7dfab0e1f940946b372ea986aca74c20bf0879e0694ff2571098f1de395adb63": {
+   "src": "/resources/runtime/audio/demo/generated_20260808/amb_01_street_murmur_loop.mp3",
+   "bytes": 3942595,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "c50217cecbc00fb28b0829196acbbcd750acb39bd8129a26e3b48aa963ac5241": {
+   "src": "/resources/runtime/audio/demo/generated_20260808/amb_02_teahouse_loop.mp3",
+   "bytes": 1190752,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "3432a4d806394928a22c60caa9155dec09bffc0e821b5d67399a63780f617027": {
+   "src": "/resources/runtime/audio/demo/generated_20260808/amb_03_fog_damp_loop.mp3",
+   "bytes": 4716655,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "d58580901cbd00aa90725f551086caacf5694db6088db5c7bf8ac97da4067303": {
+   "src": "/resources/runtime/audio/demo/generated_20260808/amb_04_temple_incense_loop.mp3",
+   "bytes": 5341086,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "297fbac3e3cc496b38100a78b2ad039b9b01557b840c681005a78fae4ce8f650": {
+   "src": "/resources/runtime/audio/demo/generated_20260808/amb_05_underwater_muffle_loop.mp3",
+   "bytes": 3424325,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "f51e0b8f1a2d5a9f992ca90b7ecc5cf8a5f01cd5a9bb99d022c1887ef9d26ee7": {
+   "src": "/resources/runtime/audio/demo/generated_20260808/amb_06_hold_pressure_bed_loop.mp3",
+   "bytes": 3186925,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "dce84bd07c47d33e810a0f1e23d975464378d38427b53faf6f6bd6a8c12aa419": {
+   "src": "/resources/runtime/audio/demo/amb_riverbank_loop.wav",
+   "bytes": 47666978,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "5595f8f3b348df9da4c6e13d33b3e693d7b143fbfcd9c65df173eb5b559b1bce": {
+   "src": "/resources/runtime/audio/demo/amb_dock_water_crowd_loop.wav",
+   "bytes": 3796696,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "4a1e9c5cada898737a47c081117365907368fdc25acb8f66b8402d757320d4d0": {
+   "src": "/resources/runtime/audio/demo/amb_night_forest_loop.wav",
+   "bytes": 14819334,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "e334caf3fa4e5efa803006231138ba891b1777cfbbb5dce7bc3bb3442898d11d": {
+   "src": "/resources/runtime/audio/demo/amb_yizhuang_room_tone.wav",
+   "bytes": 296600,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "712e2f64ba56fed9a2aaeb9a9d693e7bfad8ba79eef52ff498103b94a81bd53d": {
+   "src": "/resources/runtime/audio/demo/amb_chenghuang_temple_loop.wav",
+   "bytes": 2179948,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "797718f15a024e232da00396c547002a1a083aed3298941e2fb498a3a10c16ce": {
+   "src": "/resources/runtime/audio/demo/amb_light_rain_loop.wav",
+   "bytes": 19288628,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "9d07c36b3df834e115291e8f10cf0db8ad557d650022ae88b6c5452b4c5ceb4b": {
+   "src": "/resources/runtime/audio/teahouse_roomtone.wav",
+   "bytes": 352878,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "d372f82ed47400aae2d6988fd2f44c0ae8add507e1c4a327607910943cdd6db3": {
+   "src": "/resources/runtime/audio/night_alley_wind.wav",
+   "bytes": 352844,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "3e59cec8c0656fcfb9d3fe80847501263b487bee993d36c52a332f57bc29ffe0": {
+   "src": "/resources/runtime/audio/fly_buzz.wav",
+   "bytes": 88244,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "9dae2a25dcbd508c7b92d91ae0066e9bb13fc085a730a444153db53ce195d80b": {
+   "src": "/resources/runtime/audio/temple_rumble.wav",
+   "bytes": 352844,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "7de715567fe531705ef40cda68c06c357bd77f9c45810c6fcb7d9d6050773416": {
+   "src": "/resources/runtime/audio/chinese_crowd_voices.mp3",
+   "bytes": 1494070,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "b590278e685d31e28a832eafa440897a87d17b79b83081129326ca8491e4d7b4": {
+   "src": "/resources/runtime/audio/BGS/29822_1076_635.mp3",
+   "bytes": 736780,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "9dffdfecea2ce24630ad476ab171a8410bd9f3ab7fcecb7066318825a3477294": {
+   "src": "/resources/runtime/audio/BGS/30116_1076_638.mp3",
+   "bytes": 728629,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "6584d3c99421ee505045a46627cf493c019f8d819708e46bd51febfbecece36b": {
+   "src": "/resources/runtime/audio/BGS/SWDRSLGDIR_0025_wind01.wav",
+   "bytes": 240111,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "1803ccdb3c5875f6bf2167c4d0706bceb151587c240ec33ad91239473b59969a": {
+   "src": "/resources/runtime/audio/BGS/SWDRSLGDIR_0061_night2.wav",
+   "bytes": 162092,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "346514a8d09f2ed16a0d840a430eee5b0676b3c58ec2fe603d5458678f8f44a7": {
+   "src": "/resources/runtime/audio/背景音/人声嘈杂2.wav",
+   "bytes": 5294108,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "5fe16701198e8cf140c2c9acfc3e9e36d92e103abeeeca1fcce69d6df2ec8f78": {
+   "src": "/resources/runtime/audio/背景音/人声嘈杂3.wav",
+   "bytes": 5294108,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "59684c39807379a2a9f2c803d75ebae4e11097d715df406d4691a42b6f4465dc": {
+   "src": "/resources/runtime/audio/背景音/人声嘈杂1.wav",
+   "bytes": 5294108,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "0adfcbc122b101821603547fd8115a9ad7cde07d63ea3c6925be3c1144d29004": {
+   "src": "/resources/runtime/audio/背景音/人声嘈杂4.wav",
+   "bytes": 5294108,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "7d435c8ee8320c87f99a01fc57fe652639a113711d5cb0757eb4a30649a127eb": {
+   "src": "/resources/runtime/audio/edited/minigame_lose.wav",
+   "bytes": 401324,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "dc6de2924278831b4e65fab7bd0cbab7a31f2931e1fb3df95deeaf2932003b3c": {
+   "src": "/resources/runtime/audio/edited/map_open.wav",
+   "bytes": 130108,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "a886d43dce165d2e7f77dcaffb65333c12293f027b167a8a18a20db9fafd36ab": {
+   "src": "/resources/runtime/audio/edited/minigame_win.wav",
+   "bytes": 562108,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "942ac6b3a94ea571c1af40f7e4efdebff3e859e96fbdbf32096f7a3f62e9cc8b": {
+   "src": "/resources/runtime/audio/edited/quest_accepted.wav",
+   "bytes": 333228,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "f63a38bbee76a8cd70bcae578512db90b52faf61069be7e6cca63fef6f38fac1": {
+   "src": "/resources/runtime/audio/edited/quest_completed.wav",
+   "bytes": 242108,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "49554ea866dc078c80f556396c0e9e5cd2f8fffbd30c5199b19f83891b290d83": {
+   "src": "/resources/runtime/audio/edited/quest_updated.wav",
+   "bytes": 562108,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "ec9b7ee59cc4fc41869d0af79a0401c5874ed7a647e45512f39f6c3ebd2ca213": {
+   "src": "/resources/runtime/audio/edited/smell_cue.wav",
+   "bytes": 104044,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "9405d549b8b180364987b3c84b2f67e701f6585f35a9cfc88859f5f1f0effc2e": {
+   "src": "/resources/runtime/audio/edited/ui_tab_switch.wav",
+   "bytes": 29836,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "8afa9df493fa526e8b07ffbba3842d2fc0df4a8d0e6461852e715b0abf1933be": {
+   "src": "/resources/runtime/audio/edited/ui_page_turn.wav",
+   "bytes": 64412,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "d011a65ca5af2af017d8fec26693f88c21d28cf56b348d491c8e2087a60ddf21": {
+   "src": "/resources/runtime/audio/edited/ui_error_denied.wav",
+   "bytes": 112508,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "34578cfcd9ae0168a46ba0fdfb92541d7ce1217d647a860bfe72ffbd0957bbf2": {
+   "src": "/resources/runtime/audio/edited/save_done.wav",
+   "bytes": 324524,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "6276de956a1725d9a3165dad596ffd3ac1a113256c6604a7ad8d7f8f109984d7": {
+   "src": "/resources/runtime/audio/edited/shop_trade.wav",
+   "bytes": 105580,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "45ce48bd10adc4d940c4381c0df8bb069f0b8ca74dbd54f335169a12539bf168": {
+   "src": "/resources/runtime/audio/edited/quest_failed.wav",
+   "bytes": 591308,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "2a556d8f6137e3d27f488f889aa40de4b710725de44b9a54a52f4f6c58bdd5dd": {
+   "src": "/resources/runtime/audio/edited/load_done.wav",
+   "bytes": 402108,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "d779aa8d3e5b0a47283b29da93c2f3011cf995cfa3e3b35354ff448ac9bc0d72": {
+   "src": "/resources/runtime/audio/edited/dialogue_choice.wav",
+   "bytes": 133580,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "352aaecf775ff299ea8c291621535cd07a224463d7a849aba7c8d06fcf075a94": {
+   "src": "/resources/runtime/audio/edited/dialogue_advance.wav",
+   "bytes": 153084,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "2fa559679f337a273a3a8b59f2e82693d22856acd951c6fbb57bf8e0f022e70d": {
+   "src": "/resources/runtime/audio/demo/sfx_force_swallowed_thud.wav",
+   "bytes": 462360,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "296c767dfdba846174de6f907569a67e1831ddca4ab7afabfbc7d88475de077d": {
+   "src": "/resources/runtime/audio/demo/sfx_heartbeat_bed.wav",
+   "bytes": 1549580,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "b794dee512711e6a7cbb12159ca193abc41ebefcd3c0d9170742f1f88b7f27b4": {
+   "src": "/resources/runtime/audio/demo/sfx_paper_hand_rustle.wav",
+   "bytes": 551978,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "139aab5b4d1a24db973de7c3fed531a3d2cc72856b4d2245fdb1efce7e32c552": {
+   "src": "/resources/runtime/audio/demo/sfx_underwater_grab.wav",
+   "bytes": 405764,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "4524eef9817d642e2d8ea62490b551bf72be22dbe20d1a4242cf6dcdfc69c8a1": {
+   "src": "/resources/runtime/audio/demo/sfx_well_cry_stop.wav",
+   "bytes": 8342918,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "cd6acf1dc873dc3716062221ac373bd60f96dc3f876a61235ddc503975de01c3": {
+   "src": "/resources/runtime/audio/demo/sfx_abnormal_breath.wav",
+   "bytes": 1364618,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "968011efe94541817382921d0f1beffccd4d0ec9798df8f0caaa89f5a1efe0bd": {
+   "src": "/resources/runtime/audio/demo/sfx_bone_dull_knock.wav",
+   "bytes": 218228,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "96965b2553e0d18d7bc9a43da7e7bd1489b0e6d067ca3b503845e4ca90e5709c": {
+   "src": "/resources/runtime/audio/demo/sfx_ink_line_snap.wav",
+   "bytes": 520154,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "3076e618e5402652e2d978ec6285d990f8529fda52f59e451464104fe7f96dd4": {
+   "src": "/resources/runtime/audio/demo/sfx_stone_press.wav",
+   "bytes": 75234,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "bd2dd4f187fe3a41d2980803f208721cf879dcb3aba9761a936e3d5efad40f4d": {
+   "src": "/resources/runtime/audio/demo/sfx_axiu_faint_hum.wav",
+   "bytes": 2316018,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "b3942ca2b9a103ed13235d3f30f3ff291b590b0d34385eec03f8d698fb943e2b": {
+   "src": "/resources/runtime/audio/demo/sfx_axiu_tiny_signal.wav",
+   "bytes": 354534,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "1042ed31e8974014219f5f6a7f38940e5acd68fd723a252a666b48b4b3e37ddf": {
+   "src": "/resources/runtime/audio/demo/generated_20260808/sfx_06_name_call_far.mp3",
+   "bytes": 21876,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "12b679bb2b177b5d5dbcb8219fb4b2b4199040f09f1bf704e05a1696f3f07a45": {
+   "src": "/resources/runtime/audio/demo/generated_20260808/sfx_07_name_call_multi_a.mp3",
+   "bytes": 21300,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "c3e182f06c1c0215e583ef9ebac0a56d598db3dac7b302818d87714b2910b4e7": {
+   "src": "/resources/runtime/audio/demo/generated_20260808/sfx_07_name_call_multi_b.mp3",
+   "bytes": 21300,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "37880488700f40017bcca09e88cbd10d84fd61278a34201ac9c0596d5a19689b": {
+   "src": "/resources/runtime/audio/demo/generated_20260808/sfx_07_name_call_multi_c.mp3",
+   "bytes": 13812,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "d691d188905acb88f8454cafb93c912a593c25ce7a68150bf6b9eea340512672": {
+   "src": "/resources/runtime/audio/demo/generated_20260808/sfx_08_name_call_near.mp3",
+   "bytes": 28788,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "a4a918018b982bfaa004bf4836a4bc575fb62d2e8980b74ec133717dc818904c": {
+   "src": "/resources/runtime/audio/demo/generated_20260808/sfx_09_wrong_name_a.mp3",
+   "bytes": 18420,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "e32c0201ce2598b5591b34fde65eb85a6873856b13f9b21753e505d0c2fd2b22": {
+   "src": "/resources/runtime/audio/demo/generated_20260808/sfx_09_wrong_name_b.mp3",
+   "bytes": 21876,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "f239a21bf4a8f63bd82be360825570abd1c0484070bbab7d5ff46a3e7e558364": {
+   "src": "/resources/runtime/audio/demo/generated_20260808/sfx_call_soul_return.mp3",
+   "bytes": 20724,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "d0bbd0f698ed6c31a5017282602f2cae032bee1656dde08a9c8eacab5323ea9c": {
+   "src": "/resources/runtime/audio/demo/generated_20260808/sfx_call_soul_chorus.mp3",
+   "bytes": 20724,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "af259aeff13a54b9bf942acf0e85e2e1d557cce9988a6739eddb78061d843f21": {
+   "src": "/resources/runtime/audio/demo/generated_20260808/sfx_litiangou_shout.mp3",
+   "bytes": 12660,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "95adc7f7c9acef7818b343e75197a4e84e6a0f5ff0a8d472079a3fe98bb1d384": {
+   "src": "/resources/runtime/audio/demo/generated_20260808/sfx_axiu_tune_hum.mp3",
+   "bytes": 84660,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "d52fdba01eca7f450d2f77d83891337ee33405f105e81ef1910e9bfaf09d074a": {
+   "src": "/resources/runtime/audio/demo/generated_20260808/sfx_axiu_tune_far.mp3",
+   "bytes": 28212,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "63740b9ab17a7fb30786457261f995ae6804ee1e9fc65d08778d565e2262feb8": {
+   "src": "/resources/runtime/audio/demo/sfx_lamp_oil_flame.wav",
+   "bytes": 1623404,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "93d95d7e7f8683d2e9d8ff1d48f77ed149d7ec704bee7278ab090858d5f0348d": {
+   "src": "/resources/runtime/audio/demo/sfx_night_bird_startle.wav",
+   "bytes": 862940,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "6040856d3b1a8ed612591e49315a60a366b457b5eb92dac739cfdbccd56232e4": {
+   "src": "/resources/runtime/audio/demo/sfx_rice_scatter.wav",
+   "bytes": 1147330,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "9f623396410f8aba9ef85d7bc048272f6d5f2231c6bce51157db582d46625de4": {
+   "src": "/resources/runtime/audio/demo/sfx_hold_pressure_loop.wav",
+   "bytes": 14490224,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "36e79616d5a71b58d888b8b5ebe673e36241280c3090c4d739660e5c442469c1": {
+   "src": "/resources/runtime/audio/demo/sfx_guidaoqiang_loop.wav",
+   "bytes": 617444,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "061a6aac0d561e5d488c99998d02fb8ac3e2e014d921361e48b06a32960672b6": {
+   "src": "/resources/runtime/audio/demo/sfx_guidaoqiang_corpse_breath.wav",
+   "bytes": 189674,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "a6cf4c34aaeb090641b3464b9a76af2f1b7d0140a306797d46ccd9daf6cdb74d": {
+   "src": "/resources/runtime/audio/demo/sfx_ui_paper_tick.wav",
+   "bytes": 159812,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "c88addfbadb8136ba3341cbdd789acd381b6c231c3afd93dc6c460c28d0a8b69": {
+   "src": "/resources/runtime/audio/demo/sfx_corpse_cloth_creak.wav",
+   "bytes": 354596,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "260a6a8fbe159a4e6169c6da373a37e00d89c80c1b01fc4979a8cda8804b6892": {
+   "src": "/resources/runtime/audio/demo/sfx_well_childlike_cry_loop.wav",
+   "bytes": 638288,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "120df877ab136196e2d7e61f3adfd1a42ed3bcdc17759d97dd2c728e2a4f36f9": {
+   "src": "/resources/runtime/audio/story_intro.wav",
+   "bytes": 79424,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "1fe3aae5d887188f37980a26aff462c53cac74573062512ddfc37883d704b56e": {
+   "src": "/resources/runtime/audio/sfx_gavel_rap.wav",
+   "bytes": 54762,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "e7bc1a1b9d85be6ac80b213b5487b4d9ffbd79dcb117bb3264532a8428eea842": {
+   "src": "/resources/runtime/audio/sfx_sword_swing.wav",
+   "bytes": 170642,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "5bc2f4482f1fa85d5c21401f7a295f309cff319ce9ad284a9d4a5c4474b1df2d": {
+   "src": "/resources/runtime/audio/sfx_sword_clash.wav",
+   "bytes": 182350,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "040d2841619c732098c30a638731317d13d7647e5ce1a75a3246219ce4b162ff": {
+   "src": "/resources/runtime/audio/sfx_hanba_roar.wav",
+   "bytes": 1273958,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "3992598c814de25c318780e506aeda673a7e410b7b3c4f0793883483ff9766b8": {
+   "src": "/resources/runtime/audio/sfx_fireball_whoosh.wav",
+   "bytes": 346694,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "e0c0ba685c9d2be1d0aab783baabe217f71d190ae02295ce720ff14dcd304d4f": {
+   "src": "/resources/runtime/audio/sfx_teahouse_cheer.mp3",
+   "bytes": 176013,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "b6845762d800a02a9d53dafb444795f4e524675ac669595ae97426b6850f1d16": {
+   "src": "/resources/runtime/audio/sfx_jingju_luogu.mp3",
+   "bytes": 87815,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "87b820971496b205d02c3faa7b5574fc6cb3480be0e7564c2153a8ce4b3d151a": {
+   "src": "/resources/runtime/audio/sfx_yinfeng_gust.wav",
+   "bytes": 617478,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "7f2c0343d9918041e1d71070de18d7ee7bcec889451c36b589509b8e902f6f56": {
+   "src": "/resources/runtime/audio/iron_box_chime.wav",
+   "bytes": 48554,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "822ce39550929be830d2c19015108e575d2500344befff12d0db842d5daadd53": {
+   "src": "/resources/runtime/audio/reveal_sting.wav",
+   "bytes": 92654,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "08c323e6b87a4ad54d44d33da8bccac6fc4261e1bc0375b50364b424438ff765": {
+   "src": "/resources/runtime/audio/ui_dialogue_advance.wav",
+   "bytes": 21212,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "69fe67dbfa2d9974d21377437e0ec6e9da8a9537ca8aa4e6f41d9f0cc5454379": {
+   "src": "/resources/runtime/audio/ui_quest_update.wav",
+   "bytes": 72368,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "b71e851f009157490d2d3379854e64e5f83e50c8911ba45cde8e4d5e46008480": {
+   "src": "/resources/runtime/audio/ui_quest_complete.wav",
+   "bytes": 93536,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "86a4b952151c96ab68e599cdfc61a181647d5d07c59ca74031636631cdbd9977": {
+   "src": "/resources/runtime/audio/edited/ui_hover.wav",
+   "bytes": 64636,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "955865510296a164609359d47b4cbca585ff26b9df3659cffccd1b85a655e49a": {
+   "src": "/resources/runtime/audio/edited/ui_confirm.wav",
+   "bytes": 189212,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "6fc49ad567ed7e5a8159e2bf746d983014e0d4aac34ca469ef94abfc48ea3ee2": {
+   "src": "/resources/runtime/audio/edited/ui_cancel.wav",
+   "bytes": 104540,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "a9b259c9a61a47ae1aef9898bbf5d6abe88939163d250d532f066bf169742179": {
+   "src": "/resources/runtime/audio/edited/ui_panel_open.wav",
+   "bytes": 130108,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "ac23ace6a8780f185eaa74b1432648d07900da3babc1ca6d178a9ce4266b0371": {
+   "src": "/resources/runtime/audio/edited/ui_panel_close.wav",
+   "bytes": 242108,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "9d8dd2655d1dfbbd0d8d1300f361715853c31fb38f6b2e0a9468b2097145cba6": {
+   "src": "/resources/runtime/audio/edited/ui_notification.wav",
+   "bytes": 220764,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "b6251dd5c888f91d7458f45c820770cc286bb828ddfd119c49941574ace23cc2": {
+   "src": "/resources/runtime/audio/edited/item_pickup.wav",
+   "bytes": 482108,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "6adc9a6af690ed5df30b9ed7dfdaa40d57fc12499d1537f113ace50f54b243a2": {
+   "src": "/resources/runtime/audio/edited/coin_gain.wav",
+   "bytes": 158300,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "2f3cc18a48e5b234d13c7ce57782b2cdaf53faca3d100427ee290c0311be1c0a": {
+   "src": "/resources/runtime/audio/edited/coin_spend.wav",
+   "bytes": 152428,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "ab532ab6a800458d9800d1af8d22cdb4343afbb2f549d89454df8b5da4f32c11": {
+   "src": "/resources/runtime/audio/edited/inventory_full.wav",
+   "bytes": 130108,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "0c557c2116573845b604721d48c80e240620475191525d5b83d7c272b7353883": {
+   "src": "/resources/runtime/audio/edited/rule_fragment_gain.wav",
+   "bytes": 111948,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "aa1fec7adf12cf24bd08c95e251f16ec31d244cc784c97fd8ced62686c1e90b1": {
+   "src": "/resources/runtime/audio/edited/rule_acquired.wav",
+   "bytes": 337276,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "165e6f8611201b94d4485b43a3f18a9a4ceb9751bace98246e6dcc2e9b3eab72": {
+   "src": "/resources/runtime/audio/edited/archive_update.wav",
+   "bytes": 246124,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "6c7596f1e4b79f5a21d53ff8f20de97c929d21fa7c9261f819fea7cf5023d682": {
+   "src": "/resources/runtime/audio/hotspot_interact.wav",
+   "bytes": 30032,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "0a733ac470ea78ccf3729adad742c3346ae64877192941e6447000823aa7f400": {
+   "src": "/resources/runtime/audio/edited/scene_transition.wav",
+   "bytes": 194108,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "6814353b70f2e4a86d477ed8d29cc46264b5f0b0c4797af0f9238cfabc92e6ec": {
+   "src": "/resources/runtime/audio/edited/ui_warning.wav",
+   "bytes": 165756,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "d4b6fbc8b773b5ff58241bb69ef2c702db24bc5e1f50ee7178d5859500cd381a": {
+   "src": "/resources/runtime/audio/edited/dialogue_start.wav",
+   "bytes": 250092,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "a13e91565a3052b42ee027d5289626fb8928690c976d438ec3039f6976e3ed34": {
+   "src": "/resources/runtime/audio/edited/dialogue_end.wav",
+   "bytes": 73308,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "ece6434e5eefdfd3f4433d9cd92908fe79c512dab8dd6dd71bdb5de0c4228a5b": {
+   "src": "/resources/runtime/audio/edited/item_consume.wav",
+   "bytes": 153788,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "ffcda07c3b41fc496dc5dbd13473c7726960e73b51041a1657cac2d25e6e33c1": {
+   "src": "/resources/runtime/audio/edited/rule_layer_gain.wav",
+   "bytes": 297356,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "8188d9dbbde13e55d888b38b725bcb1c72ee42708fcd97f7d76691912fc3614d": {
+   "src": "/resources/runtime/audio/edited/rule_use_apply.wav",
+   "bytes": 455276,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "38b38077dfa8d3e887e0a10d1ac26263d6d12f84e504dde2ef9285fc05b3f5a5": {
+   "src": "/resources/runtime/audio/zone_rule_available.wav",
+   "bytes": 54728,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "cc086f1f020c73d2fe99bf5db118851c025f7d56026a875ddbb9d4137face087": {
+   "src": "/resources/runtime/audio/zone_rule_unavailable.wav",
+   "bytes": 42380,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "1c1933141cbf485d8d189eef50e36ab20a8f21cd13f1628867edfcd571dfa4c8": {
+   "src": "/resources/runtime/audio/edited/encounter_start.wav",
+   "bytes": 402108,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "c7ad38f1a2f515a7e9275f4e70a5bd90afe2eb29e9964dd062dbdc8c6d2ef133": {
+   "src": "/resources/runtime/audio/edited/encounter_choice.wav",
+   "bytes": 98108,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "757e7cddd419a712a52db2d871d1770fbd15d49beb1075fb48bbbcb98ad32378": {
+   "src": "/resources/runtime/audio/encounter_result.wav",
+   "bytes": 68840,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "235b27b34a4621ac01a5e823e42f7f99a02eb0af2222a6e9134f0a5f3e6fed79": {
+   "src": "/resources/runtime/audio/cutscene_start.wav",
+   "bytes": 97064,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "cffab3169f96e1bf8851ec4376713e7f303edc274f27c5a0e78cfe2f97fc1a74": {
+   "src": "/resources/runtime/audio/cutscene_end.wav",
+   "bytes": 84716,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "7f71560543a0d6e1223210259f771e52c6a1e4dfcd94dcfd1b30f950bd4321da": {
+   "src": "/resources/runtime/audio/edited/day_start.wav",
+   "bytes": 365324,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "d162695130cb2e83448edf9f1e152ebedc54f5aaedf7a30fd6142beccd68a0c8": {
+   "src": "/resources/runtime/audio/edited/day_end.wav",
+   "bytes": 222908,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "c4c1d1972dbbf6581aaec537663b8ac4e0cfd0c0fd0d35f4de2c63dc439246c6": {
+   "src": "/resources/runtime/audio/edited/shop_open.wav",
+   "bytes": 217564,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "67501e7a6238aba0f7ae9053b1bb43edc963284c9500d140f12a6281bc3767b6": {
+   "src": "/resources/runtime/audio/edited/shop_close.wav",
+   "bytes": 142908,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "cc081824d778c6d608eef199a90dd7e0e2820f46f6d5cf8b7bcb6bb399ff0a03": {
+   "src": "/resources/runtime/audio/edited/map_travel.wav",
+   "bytes": 434108,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "5573dc1d331a1abfbafa036727b2183c2394753ebf17ccf7642388fcb60cf3cc": {
+   "src": "/resources/runtime/audio/minigame_result.wav",
+   "bytes": 61782,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "0b659826eed3288c4ea967374278f48f58232f314fe485f7615d124d5efc0cf5": {
+   "src": "/resources/runtime/audio/edited/document_reveal.wav",
+   "bytes": 562108,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": {
+    "backfilled": true
+   }
+  },
+  "7dbeab971e9213102cc2d0be72b51d6c01819ebad6218cfad12c7d069e1158a1": {
+   "src": "/resources/runtime/audio/sugar_wheel_pointer_pickup.wav",
+   "bytes": 11510,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "eec199f0ff7d7214c007cd95b8ad334fb78abcbf4500fa517fd44fdf35489ba5": {
+   "src": "/resources/runtime/audio/sugar_wheel_pointer_set.wav",
+   "bytes": 14156,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "ca5389186502b18d6cb1e03602b9db1082fcee1522cd797818756f6f5f1ebf0f": {
+   "src": "/resources/runtime/audio/sugar_wheel_charge_start.wav",
+   "bytes": 31796,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "6f7ecde869da0d0fa86f50d9cdd01dc1922269f817ad6edd3c0e902a4871e27a": {
+   "src": "/resources/runtime/audio/sugar_wheel_launch.wav",
+   "bytes": 37088,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "634e93f65bbae4d5c805f6ab0871e8801128bcaa96b28073241e86b2bbd72a60": {
+   "src": "/resources/runtime/audio/sugar_wheel_tick_fast.wav",
+   "bytes": 4896,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "ecc106443e0a13e261ec934c6a5913c57d2113a92bf89e5432fe767fe62b2c37": {
+   "src": "/resources/runtime/audio/sugar_wheel_tick_slow.wav",
+   "bytes": 8424,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "0600b3614452bc97e87eaecf3419d5b3b417d4e97ca50a2de9872b9006daad54": {
+   "src": "/resources/runtime/audio/sugar_wheel_stop.wav",
+   "bytes": 30034,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "3ae56065a5a7ee3a9bccf2ded4723747578ca7d9986e9fbe6248b7fb4f59d7d4": {
+   "src": "/resources/runtime/audio/sugar_wheel_prize_chime.wav",
+   "bytes": 63548,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "20f2ee0752f4fd8559a86743c3409d005c1261c5410954d3e0d1d6a0d35ac811": {
+   "src": "/resources/runtime/audio/voice/1.mp3",
+   "bytes": 89844,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "6e1ff1888d839f7bea87b7418427db7a39c7c2d01d2d0c2b3ff1c6102c25bb80": {
+   "src": "/resources/runtime/audio/voice/2.mp3",
+   "bytes": 184308,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "c303a1da10c81adb6a09e34852317f87eae6426768c31a9a7c510eb93dbeeabb": {
+   "src": "/resources/runtime/audio/voice/2a.mp3",
+   "bytes": 111156,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "a4bb672c35c2bcfd862262ffe702ed587b9248bb31b28763c03112d14a0a6580": {
+   "src": "/resources/runtime/audio/voice/2b.mp3",
+   "bytes": 76596,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "69e95da1e6a6f2ee5b112d0441c6f030f482b20630e7b9a0a3342bfe4eaf57b0": {
+   "src": "/resources/runtime/audio/voice/4a.mp3",
+   "bytes": 57012,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "eb11121bdf2903b785e9d7766aee408b6cbab43104743d770e890a059d35414e": {
+   "src": "/resources/runtime/audio/voice/4b.mp3",
+   "bytes": 83508,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "20d5dc8ffe3201a70807a713ca0cf0b2ef9673fbd371a514be68dca71075628a": {
+   "src": "/resources/runtime/audio/voice/6a.mp3",
+   "bytes": 84084,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "3e0d166446c53aca8fed4a37957449f06de38a3cb7f2c5300526b837b9b7a0d1": {
+   "src": "/resources/runtime/audio/voice/6b.mp3",
+   "bytes": 74868,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "b6a0a990986282164f729efc88918a216c5574c6d5e7ea1cd8b248d2b7b6d3ed": {
+   "src": "/resources/runtime/audio/voice/8a.mp3",
+   "bytes": 52980,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "a7f33ffb2f1e863c75ee26333e246c2604fadb013a08ed3f0b152effe2da17d6": {
+   "src": "/resources/runtime/audio/voice/8b.mp3",
+   "bytes": 89844,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "60b6c9e334fa3a3f0b2f1e6128832d29db0fa5c180d24909cc3a3f1991bd1297": {
+   "src": "/resources/runtime/audio/voice/11a.mp3",
+   "bytes": 131892,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "196ac553c2bbf5ee53b89039300e92fea992d9773e68c57776741bf4390ebe22": {
+   "src": "/resources/runtime/audio/voice/11b.mp3",
+   "bytes": 34548,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "1d31e36798a7756d6786de9a13347281e43be7fc08ab95ba0b719757abe488b6": {
+   "src": "/resources/runtime/audio/voice/3.mp3",
+   "bytes": 114612,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "8abb77968bdece9c1576429e4194806ee788750c14ae6f623baf3724426ab8d2": {
+   "src": "/resources/runtime/audio/voice/4.mp3",
+   "bytes": 137652,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "d36d69fc200c188af53c8f3cefedcd5f5a697617d830b1a2bda5947cede4e78d": {
+   "src": "/resources/runtime/audio/voice/5.mp3",
+   "bytes": 125556,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "f90ed9d24f803bc61c2b8a40f539fbc37c4ee87ceba6bda1fb0f9618f2a6f347": {
+   "src": "/resources/runtime/audio/voice/6.mp3",
+   "bytes": 156084,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "5309b2168180391d4481ffec6e4f0ee09c29efcc0b7fc1100b701d8d3c6397e5": {
+   "src": "/resources/runtime/audio/voice/7.mp3",
+   "bytes": 108276,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "99c46b33f31559771fef4a2e4992c7c1bdef080b118637eaa709e17b9b69adbd": {
+   "src": "/resources/runtime/audio/voice/8.mp3",
+   "bytes": 139380,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "6ee9894df919358b2bb44222fe947705ecc743defdb2fb56e935e5d9aebde332": {
+   "src": "/resources/runtime/audio/voice/9.mp3",
+   "bytes": 93876,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "9d0566f3014a64ac0d2f46220c21d95d050cd57917891d1a5461bb0a03900cf9": {
+   "src": "/resources/runtime/audio/voice/10.mp3",
+   "bytes": 74868,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "4f7ffc7a56bd7192b739be5bd3a30997741b1f542244672ba99b83e9223ea68a": {
+   "src": "/resources/runtime/audio/voice/11.mp3",
+   "bytes": 164148,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "b3ec65000820cec7ca1137ec8ad04ebccf4a5833ae5cfba4b274a00c1e8056eb": {
+   "src": "/resources/runtime/audio/voice/12.mp3",
+   "bytes": 104820,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "c3530a764d38d7168ae4c703799612091f53d03b6c9da1c241b60f0239fe7aa8": {
+   "src": "/resources/runtime/audio/demo/generated_20260810/sfx_coin_pouch_pat2fast.wav",
+   "bytes": 135548,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "2098abb3c9601e80a1607b8cd172685828af9f24efea55eda113183cd0b259bc": {
+   "src": "/resources/runtime/audio/demo/generated_20260810/sfx_coin_pouch_slap_a.wav",
+   "bytes": 322108,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "e0ac09f10cbc0586d190d73c2d4f9778336eac9db2b66ae17f81836d718ddd9e": {
+   "src": "/resources/runtime/audio/demo/generated_20260810/sfx_coin_pouch_heft_b.wav",
+   "bytes": 894908,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "d48e689786d5318f044b5de05252d6ade62da143f52d3d7e0dd79c92166604cf": {
+   "src": "/resources/runtime/audio/demo/generated_20260810/sfx_dice_bowl_roll_a.wav",
+   "bytes": 642108,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "138c33e63d88ceab10173bf2bca0bab222c5a6cfaf2818f801fa99aa85d31330": {
+   "src": "/resources/runtime/audio/demo/generated_20260810/sfx_dice_bowl_roll_b.wav",
+   "bytes": 482108,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "c7abb284d8d759f365b37379d5b7f7776d7a9844d6bed185063d99e076ca3a68": {
+   "src": "/resources/runtime/audio/demo/generated_20260810/sfx_gamble_cheer_burst_a.wav",
+   "bytes": 482108,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "fa42275d1011e334239f65640ac8a7b8381997745d6828dd9745a77c645bd769": {
+   "src": "/resources/runtime/audio/demo/generated_20260810/sfx_gamble_cheer_burst_b.wav",
+   "bytes": 466108,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "3c43421b135d737515257050a0a9ca32a388a9d8acc461856c8e65875d9cc4ec": {
+   "src": "/resources/runtime/audio/demo/generated_20260810/sfx_gamble_crowd_burst_a.wav",
+   "bytes": 446908,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "ae7feeb829d3f18609fa152356ad2375836761f73c84a5f726a18c811ad75afd": {
+   "src": "/resources/runtime/audio/demo/generated_20260810/sfx_gamble_crowd_burst_b.wav",
+   "bytes": 446908,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "e5491e873bce10fcd94071bb3a958071de037620cce7816b136787e044e0a38e": {
+   "src": "/resources/runtime/audio/demo/generated_20260810/sfx_scuffle_shove_b.wav",
+   "bytes": 802108,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "609cccf31ebfc1f01edc8717ffeeed2dd34e5ac414735beed6e03f4a71b87ce5": {
+   "src": "/resources/runtime/audio/demo/generated_20260810/sfx_bench_topple_a.wav",
+   "bytes": 562108,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "c5ca7461f35f3ed208ef78997d6f0ba4d3846dc599106550fc59f78b9d07f514": {
+   "src": "/resources/runtime/audio/demo/generated_20260810/sfx_bench_topple_b.wav",
+   "bytes": 526908,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "2bb5cf8faf18cfa5cd979bfac1e53c5fe6693dd5ba727f2d7ec1b1fbf34cf63c": {
+   "src": "/resources/runtime/audio/demo/generated_20260810/sfx_body_dump_ground_a.wav",
+   "bytes": 482108,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "342ea7fc8ce2b90eec0d5198bd1639bf3bdf74f4d388ce97096c2b3a9be784f4": {
+   "src": "/resources/runtime/audio/demo/generated_20260810/sfx_door_slam_shut_a.wav",
+   "bytes": 562108,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "55ed1ea56164dd36111cd8db5736dbd862c2fc89ca0636b4810cc2e67047139f": {
+   "src": "/resources/runtime/audio/demo/generated_20260810/sfx_gamble_jeer_muffled_a.wav",
+   "bytes": 642108,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  },
+  "85e50e54002b64db50a229fbc95f3ed678113e30cc99755e6e187c61cd780e30": {
+   "src": "/resources/runtime/audio/demo/generated_20260810/sfx_gamble_jeer_muffled_b.wav",
+   "bytes": 626108,
+   "firstSeen": "2026-08-10T22:03:34",
+   "origin": null
+  }
+ },
+ "keys": {
+  "sfx/minigame_lose": {
+   "hash": "7d435c8ee8320c87f99a01fc57fe652639a113711d5cb0757eb4a30649a127eb",
+   "src": "/resources/runtime/audio/edited/minigame_lose.wav",
+   "exportedAt": "2026-08-10T20:33:33",
+   "inferred": true
+  },
+  "sfx/map_open": {
+   "hash": "dc6de2924278831b4e65fab7bd0cbab7a31f2931e1fb3df95deeaf2932003b3c",
+   "src": "/resources/runtime/audio/edited/map_open.wav",
+   "exportedAt": "2026-08-10T20:33:33",
+   "inferred": true
+  },
+  "sfx/minigame_win": {
+   "hash": "a886d43dce165d2e7f77dcaffb65333c12293f027b167a8a18a20db9fafd36ab",
+   "src": "/resources/runtime/audio/edited/minigame_win.wav",
+   "exportedAt": "2026-08-10T20:33:32",
+   "inferred": true
+  },
+  "sfx/quest_accepted": {
+   "hash": "942ac6b3a94ea571c1af40f7e4efdebff3e859e96fbdbf32096f7a3f62e9cc8b",
+   "src": "/resources/runtime/audio/edited/quest_accepted.wav",
+   "exportedAt": "2026-08-10T20:33:32",
+   "inferred": true
+  },
+  "sfx/quest_completed": {
+   "hash": "f63a38bbee76a8cd70bcae578512db90b52faf61069be7e6cca63fef6f38fac1",
+   "src": "/resources/runtime/audio/edited/quest_completed.wav",
+   "exportedAt": "2026-08-10T20:33:32",
+   "inferred": true
+  },
+  "sfx/quest_updated": {
+   "hash": "49554ea866dc078c80f556396c0e9e5cd2f8fffbd30c5199b19f83891b290d83",
+   "src": "/resources/runtime/audio/edited/quest_updated.wav",
+   "exportedAt": "2026-08-10T20:33:32",
+   "inferred": true
+  },
+  "sfx/smell_cue": {
+   "hash": "ec9b7ee59cc4fc41869d0af79a0401c5874ed7a647e45512f39f6c3ebd2ca213",
+   "src": "/resources/runtime/audio/edited/smell_cue.wav",
+   "exportedAt": "2026-08-10T20:33:32",
+   "inferred": true
+  },
+  "sfx/ui_tab_switch": {
+   "hash": "9405d549b8b180364987b3c84b2f67e701f6585f35a9cfc88859f5f1f0effc2e",
+   "src": "/resources/runtime/audio/edited/ui_tab_switch.wav",
+   "exportedAt": "2026-08-10T20:33:31",
+   "inferred": true
+  },
+  "sfx/ui_page_turn": {
+   "hash": "8afa9df493fa526e8b07ffbba3842d2fc0df4a8d0e6461852e715b0abf1933be",
+   "src": "/resources/runtime/audio/edited/ui_page_turn.wav",
+   "exportedAt": "2026-08-10T20:33:31",
+   "inferred": true
+  },
+  "sfx/ui_error_denied": {
+   "hash": "d011a65ca5af2af017d8fec26693f88c21d28cf56b348d491c8e2087a60ddf21",
+   "src": "/resources/runtime/audio/edited/ui_error_denied.wav",
+   "exportedAt": "2026-08-10T20:33:31",
+   "inferred": true
+  },
+  "sfx/save_done": {
+   "hash": "34578cfcd9ae0168a46ba0fdfb92541d7ce1217d647a860bfe72ffbd0957bbf2",
+   "src": "/resources/runtime/audio/edited/save_done.wav",
+   "exportedAt": "2026-08-10T20:33:31",
+   "inferred": true
+  },
+  "sfx/shop_trade": {
+   "hash": "6276de956a1725d9a3165dad596ffd3ac1a113256c6604a7ad8d7f8f109984d7",
+   "src": "/resources/runtime/audio/edited/shop_trade.wav",
+   "exportedAt": "2026-08-10T20:33:31",
+   "inferred": true
+  },
+  "sfx/quest_failed": {
+   "hash": "45ce48bd10adc4d940c4381c0df8bb069f0b8ca74dbd54f335169a12539bf168",
+   "src": "/resources/runtime/audio/edited/quest_failed.wav",
+   "exportedAt": "2026-08-10T20:33:30",
+   "inferred": true
+  },
+  "sfx/load_done": {
+   "hash": "2a556d8f6137e3d27f488f889aa40de4b710725de44b9a54a52f4f6c58bdd5dd",
+   "src": "/resources/runtime/audio/edited/load_done.wav",
+   "exportedAt": "2026-08-10T20:33:30",
+   "inferred": true
+  },
+  "sfx/dialogue_choice": {
+   "hash": "d779aa8d3e5b0a47283b29da93c2f3011cf995cfa3e3b35354ff448ac9bc0d72",
+   "src": "/resources/runtime/audio/edited/dialogue_choice.wav",
+   "exportedAt": "2026-08-10T20:33:30",
+   "inferred": true
+  },
+  "sfx/dialogue_advance": {
+   "hash": "352aaecf775ff299ea8c291621535cd07a224463d7a849aba7c8d06fcf075a94",
+   "src": "/resources/runtime/audio/edited/dialogue_advance.wav",
+   "exportedAt": "2026-08-10T20:33:30",
+   "inferred": true
+  },
+  "sfx/ui_hover": {
+   "hash": "86a4b952151c96ab68e599cdfc61a181647d5d07c59ca74031636631cdbd9977",
+   "src": "/resources/runtime/audio/edited/ui_hover.wav",
+   "exportedAt": "2026-08-10T20:33:31",
+   "inferred": true
+  },
+  "sfx/ui_confirm": {
+   "hash": "955865510296a164609359d47b4cbca585ff26b9df3659cffccd1b85a655e49a",
+   "src": "/resources/runtime/audio/edited/ui_confirm.wav",
+   "exportedAt": "2026-08-10T20:33:31",
+   "inferred": true
+  },
+  "sfx/ui_cancel": {
+   "hash": "6fc49ad567ed7e5a8159e2bf746d983014e0d4aac34ca469ef94abfc48ea3ee2",
+   "src": "/resources/runtime/audio/edited/ui_cancel.wav",
+   "exportedAt": "2026-08-10T20:33:31",
+   "inferred": true
+  },
+  "sfx/ui_panel_open": {
+   "hash": "a9b259c9a61a47ae1aef9898bbf5d6abe88939163d250d532f066bf169742179",
+   "src": "/resources/runtime/audio/edited/ui_panel_open.wav",
+   "exportedAt": "2026-08-10T20:33:31",
+   "inferred": true
+  },
+  "sfx/ui_panel_close": {
+   "hash": "ac23ace6a8780f185eaa74b1432648d07900da3babc1ca6d178a9ce4266b0371",
+   "src": "/resources/runtime/audio/edited/ui_panel_close.wav",
+   "exportedAt": "2026-08-10T20:33:31",
+   "inferred": true
+  },
+  "sfx/ui_notification": {
+   "hash": "9d8dd2655d1dfbbd0d8d1300f361715853c31fb38f6b2e0a9468b2097145cba6",
+   "src": "/resources/runtime/audio/edited/ui_notification.wav",
+   "exportedAt": "2026-08-10T20:33:31",
+   "inferred": true
+  },
+  "sfx/item_pickup": {
+   "hash": "b6251dd5c888f91d7458f45c820770cc286bb828ddfd119c49941574ace23cc2",
+   "src": "/resources/runtime/audio/edited/item_pickup.wav",
+   "exportedAt": "2026-08-10T20:33:33",
+   "inferred": true
+  },
+  "sfx/coin_gain": {
+   "hash": "6adc9a6af690ed5df30b9ed7dfdaa40d57fc12499d1537f113ace50f54b243a2",
+   "src": "/resources/runtime/audio/edited/coin_gain.wav",
+   "exportedAt": "2026-08-10T20:33:29",
+   "inferred": true
+  },
+  "sfx/coin_spend": {
+   "hash": "2f3cc18a48e5b234d13c7ce57782b2cdaf53faca3d100427ee290c0311be1c0a",
+   "src": "/resources/runtime/audio/edited/coin_spend.wav",
+   "exportedAt": "2026-08-10T20:33:29",
+   "inferred": true
+  },
+  "sfx/inventory_full": {
+   "hash": "ab532ab6a800458d9800d1af8d22cdb4343afbb2f549d89454df8b5da4f32c11",
+   "src": "/resources/runtime/audio/edited/inventory_full.wav",
+   "exportedAt": "2026-08-10T20:33:30",
+   "inferred": true
+  },
+  "sfx/rule_fragment_gain": {
+   "hash": "0c557c2116573845b604721d48c80e240620475191525d5b83d7c272b7353883",
+   "src": "/resources/runtime/audio/edited/rule_fragment_gain.wav",
+   "exportedAt": "2026-08-10T20:33:32",
+   "inferred": true
+  },
+  "sfx/rule_acquired": {
+   "hash": "aa1fec7adf12cf24bd08c95e251f16ec31d244cc784c97fd8ced62686c1e90b1",
+   "src": "/resources/runtime/audio/edited/rule_acquired.wav",
+   "exportedAt": "2026-08-10T20:33:32",
+   "inferred": true
+  },
+  "sfx/archive_update": {
+   "hash": "165e6f8611201b94d4485b43a3f18a9a4ceb9751bace98246e6dcc2e9b3eab72",
+   "src": "/resources/runtime/audio/edited/archive_update.wav",
+   "exportedAt": "2026-08-10T20:33:29",
+   "inferred": true
+  },
+  "sfx/scene_transition": {
+   "hash": "0a733ac470ea78ccf3729adad742c3346ae64877192941e6447000823aa7f400",
+   "src": "/resources/runtime/audio/edited/scene_transition.wav",
+   "exportedAt": "2026-08-10T20:33:30",
+   "inferred": true
+  },
+  "sfx/ui_warning": {
+   "hash": "6814353b70f2e4a86d477ed8d29cc46264b5f0b0c4797af0f9238cfabc92e6ec",
+   "src": "/resources/runtime/audio/edited/ui_warning.wav",
+   "exportedAt": "2026-08-10T20:33:32",
+   "inferred": true
+  },
+  "sfx/dialogue_start": {
+   "hash": "d4b6fbc8b773b5ff58241bb69ef2c702db24bc5e1f50ee7178d5859500cd381a",
+   "src": "/resources/runtime/audio/edited/dialogue_start.wav",
+   "exportedAt": "2026-08-10T20:33:30",
+   "inferred": true
+  },
+  "sfx/dialogue_end": {
+   "hash": "a13e91565a3052b42ee027d5289626fb8928690c976d438ec3039f6976e3ed34",
+   "src": "/resources/runtime/audio/edited/dialogue_end.wav",
+   "exportedAt": "2026-08-10T20:33:30",
+   "inferred": true
+  },
+  "sfx/item_consume": {
+   "hash": "ece6434e5eefdfd3f4433d9cd92908fe79c512dab8dd6dd71bdb5de0c4228a5b",
+   "src": "/resources/runtime/audio/edited/item_consume.wav",
+   "exportedAt": "2026-08-10T20:33:33",
+   "inferred": true
+  },
+  "sfx/rule_layer_gain": {
+   "hash": "ffcda07c3b41fc496dc5dbd13473c7726960e73b51041a1657cac2d25e6e33c1",
+   "src": "/resources/runtime/audio/edited/rule_layer_gain.wav",
+   "exportedAt": "2026-08-10T20:33:32",
+   "inferred": true
+  },
+  "sfx/rule_use_apply": {
+   "hash": "8188d9dbbde13e55d888b38b725bcb1c72ee42708fcd97f7d76691912fc3614d",
+   "src": "/resources/runtime/audio/edited/rule_use_apply.wav",
+   "exportedAt": "2026-08-10T20:33:32",
+   "inferred": true
+  },
+  "sfx/encounter_start": {
+   "hash": "1c1933141cbf485d8d189eef50e36ab20a8f21cd13f1628867edfcd571dfa4c8",
+   "src": "/resources/runtime/audio/edited/encounter_start.wav",
+   "exportedAt": "2026-08-10T20:33:30",
+   "inferred": true
+  },
+  "sfx/encounter_choice": {
+   "hash": "c7ad38f1a2f515a7e9275f4e70a5bd90afe2eb29e9964dd062dbdc8c6d2ef133",
+   "src": "/resources/runtime/audio/edited/encounter_choice.wav",
+   "exportedAt": "2026-08-10T20:33:30",
+   "inferred": true
+  },
+  "sfx/day_start": {
+   "hash": "7f71560543a0d6e1223210259f771e52c6a1e4dfcd94dcfd1b30f950bd4321da",
+   "src": "/resources/runtime/audio/edited/day_start.wav",
+   "exportedAt": "2026-08-10T20:33:29",
+   "inferred": true
+  },
+  "sfx/day_end": {
+   "hash": "d162695130cb2e83448edf9f1e152ebedc54f5aaedf7a30fd6142beccd68a0c8",
+   "src": "/resources/runtime/audio/edited/day_end.wav",
+   "exportedAt": "2026-08-10T20:33:29",
+   "inferred": true
+  },
+  "sfx/shop_open": {
+   "hash": "c4c1d1972dbbf6581aaec537663b8ac4e0cfd0c0fd0d35f4de2c63dc439246c6",
+   "src": "/resources/runtime/audio/edited/shop_open.wav",
+   "exportedAt": "2026-08-10T20:33:31",
+   "inferred": true
+  },
+  "sfx/shop_close": {
+   "hash": "67501e7a6238aba0f7ae9053b1bb43edc963284c9500d140f12a6281bc3767b6",
+   "src": "/resources/runtime/audio/edited/shop_close.wav",
+   "exportedAt": "2026-08-10T20:33:30",
+   "inferred": true
+  },
+  "sfx/map_travel": {
+   "hash": "cc081824d778c6d608eef199a90dd7e0e2820f46f6d5cf8b7bcb6bb399ff0a03",
+   "src": "/resources/runtime/audio/edited/map_travel.wav",
+   "exportedAt": "2026-08-10T20:33:32",
+   "inferred": true
+  },
+  "sfx/document_reveal": {
+   "hash": "0b659826eed3288c4ea967374278f48f58232f314fe485f7615d124d5efc0cf5",
+   "src": "/resources/runtime/audio/edited/document_reveal.wav",
+   "exportedAt": "2026-08-10T20:33:30",
+   "inferred": true
+  }
+ },
+ "fingerprints": {}
+}

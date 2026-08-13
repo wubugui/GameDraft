@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PySide6.QtCore import QEvent, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -21,12 +21,14 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizePolicy,
+    QStyle,
     QWidget,
 )
 
 from ..project_model import ProjectModel
 from . import audio_library as lib
 from .audio_picker_dialog import AudioPickerDialog
+from .qt_icon_buttons import outline_row_tool_button
 
 try:
     from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
@@ -64,12 +66,17 @@ class AudioPreviewControls(QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(4)
 
-        self._play = QPushButton("▶", self)
-        self._play.setFixedWidth(30)
-        self._play.setToolTip("试听当前选择的音频")
-        self._stop = QPushButton("■", self)
-        self._stop.setFixedWidth(28)
-        self._stop.setToolTip("停止试听")
+        # 用 QToolButton + 系统媒体图标：QPushButton 在 modern 主题下带大内边距，
+        # 30px 宽的按钮会把 ▶/■ 挤没（实测两颗按钮渲染成空条），而 ■ 这个字形
+        # 在部分字体里还会退化成一根竖线。
+        self._play = outline_row_tool_button(
+            self, "试听当前选择的音频",
+            std=QStyle.StandardPixmap.SP_MediaPlay, fallback_text="▶",
+        )
+        self._stop = outline_row_tool_button(
+            self, "停止试听",
+            std=QStyle.StandardPixmap.SP_MediaStop, fallback_text="停",
+        )
         lay.addWidget(self._play)
         lay.addWidget(self._stop)
 
@@ -88,12 +95,21 @@ class AudioPreviewControls(QWidget):
             self._play.setToolTip("需要 PySide6.QtMultimedia 才能试听")
             self._stop.setToolTip("需要 PySide6.QtMultimedia 才能试听")
         else:
-            self._audio_out = QAudioOutput(self)
-            self._player = QMediaPlayer(self)
-            self._player.setAudioOutput(self._audio_out)
+            # 播放器**按需**创建：这对按钮在 System SFX 页有 40 份、在动作参数表里
+            # 更多，构造时就各起一个 ffmpeg 后端的 QMediaPlayer 纯属白烧资源。
             self._play.clicked.connect(self.preview_current)
             self._stop.clicked.connect(self.stop)
-            self._player.errorOccurred.connect(self._on_player_error)
+
+    def _ensure_player(self) -> QMediaPlayer | None:
+        if self._player is not None:
+            return self._player
+        if QMediaPlayer is None or QAudioOutput is None:
+            return None
+        self._audio_out = QAudioOutput(self)
+        self._player = QMediaPlayer(self)
+        self._player.setAudioOutput(self._audio_out)
+        self._player.errorOccurred.connect(self._on_player_error)
+        return self._player
 
     def _set_hint(self, text: str) -> None:
         self._hint.setText(text)
@@ -108,12 +124,13 @@ class AudioPreviewControls(QWidget):
             # id 未选 / src 缺失 / 文件被移走全落到这里——旧实现裸 return 全静默。
             self._set_hint("该 id 无有效音频文件")
             return
-        if self._player is None:
+        player = self._ensure_player()
+        if player is None:
             return
         self._active_source_key = str(path)
-        self._player.stop()
-        self._player.setSource(QUrl.fromLocalFile(str(path)))
-        self._player.play()
+        player.stop()
+        player.setSource(QUrl.fromLocalFile(str(path)))
+        player.play()
 
     def _on_player_error(self, error: object = None, error_string: str = "") -> None:
         """播放失败（格式不支持 / 解码器缺失 / 文件损坏…）：
@@ -256,9 +273,3 @@ class AudioIdPreviewSelector(QWidget):
 
     def stop_preview(self) -> None:
         self._preview.stop()
-
-    def eventFilter(self, obj, event):  # noqa: ANN001, D102
-        if event.type() == QEvent.Type.MouseButtonPress and obj is self._button:
-            self.open_picker()
-            return True
-        return super().eventFilter(obj, event)

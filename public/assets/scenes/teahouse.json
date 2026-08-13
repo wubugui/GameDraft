@@ -53,10 +53,6 @@
       "form": 0.3
     }
   },
-  "ambientSounds": [
-    "teahouse_roomtone",
-    "中文人声闹市"
-  ],
   "spawnPoint": {
     "x": 141.9,
     "y": 225.82
@@ -507,5 +503,8 @@
       0.042
     ],
     "saturation": 1.0
-  }
+  },
+  "ambientSounds": [
+    "中文人声闹市"
+  ]
 }

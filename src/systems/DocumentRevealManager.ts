@@ -1,3 +1,4 @@
+import type { ActionExecutor } from '../core/ActionExecutor';
 import type { AssetManager } from '../core/AssetManager';
 import type { EventBus } from '../core/EventBus';
 import type { FlagStore, FlagValue } from '../core/FlagStore';
@@ -36,9 +37,12 @@ export class DocumentRevealManager implements IGameSystem {
   private flagStore: FlagStore;
   private questManager: QuestManager;
   private scenarioState: ScenarioStateManager;
+  private actionExecutor: ActionExecutor;
   private defs = new Map<string, DocumentRevealDef>();
   private revealed = new Set<string>();
   private revealing = new Set<string>();
+  /** 已排期、尚未起播的揭示音效定时器；destroy / 读档必须清空（旧时间线不得发声） */
+  private sfxTimers = new Set<ReturnType<typeof setTimeout>>();
   private blend: BlendFn | null = null;
   private resolveConditionLiteral: ((raw: string) => string) | null = null;
   private conditionCtxFactory: (() => ConditionEvalContext) | null = null;
@@ -49,12 +53,14 @@ export class DocumentRevealManager implements IGameSystem {
     flagStore: FlagStore,
     questManager: QuestManager,
     scenarioState: ScenarioStateManager,
+    actionExecutor: ActionExecutor,
   ) {
     this.assetManager = assetManager;
     this.eventBus = eventBus;
     this.flagStore = flagStore;
     this.questManager = questManager;
     this.scenarioState = scenarioState;
+    this.actionExecutor = actionExecutor;
   }
 
   /** 须在 Game.start 中于 CutsceneManager 就绪后注入 */
@@ -94,10 +100,44 @@ export class DocumentRevealManager implements IGameSystem {
     this.defs.clear();
     this.revealed.clear();
     this.revealing.clear();
+    this.clearPendingSfx();
     // 注入的回调闭包持有 CutsceneManager/Game 侧引用，销毁时必须放掉
     this.blend = null;
     this.resolveConditionLiteral = null;
     this.conditionCtxFactory = null;
+  }
+
+  private clearPendingSfx(): void {
+    for (const t of this.sfxTimers) clearTimeout(t);
+    this.sfxTimers.clear();
+  }
+
+  /**
+   * 揭示音效：与叠化同时起播（等过 delayMs），走统一动作通道 playSfx——
+   * 因此过场内触发的揭示音效同样受过场 SFX 捕获管辖（过场收尾统一停，不留尾音）。
+   * 不阻塞叠化：调用方不等待本方法。
+   */
+  private scheduleRevealSfx(def: DocumentRevealDef, delayMs: number): void {
+    const sfxId = def.revealSfx?.trim();
+    if (!sfxId) return;
+    const params: Record<string, unknown> = { id: sfxId };
+    const vol = def.revealSfxVolume;
+    if (typeof vol === 'number' && Number.isFinite(vol)) params.volume = vol;
+    const fire = (): void => {
+      // fire-and-forget 但必须封口：playSfx 自身不阻塞叠化，失败只留痕不影响揭示。
+      void this.actionExecutor
+        .executeAwait({ type: 'playSfx', params })
+        .catch((e) => console.warn(`DocumentRevealManager: reveal sfx ${sfxId} failed`, e));
+    };
+    if (!(delayMs > 0)) {
+      fire();
+      return;
+    }
+    const timer = setTimeout(() => {
+      this.sfxTimers.delete(timer);
+      fire();
+    }, delayMs);
+    this.sfxTimers.add(timer);
   }
 
   private ctx(): ConditionEvalContext {
@@ -169,7 +209,11 @@ export class DocumentRevealManager implements IGameSystem {
     const delay = def.animation?.delayMs ?? 0;
 
     this.revealing.add(id);
-    this.eventBus.emit('document:revealed', { documentId: id });
+    // customSfx：本条自带揭示音效（revealSfx）时置真，AudioManager 据此跳过全局默认揭示音
+    // （systemSfx.documentReveal），否则两条声音会叠着响。
+    const hasCustomSfx = !!def.revealSfx?.trim();
+    this.eventBus.emit('document:revealed', { documentId: id, customSfx: hasCustomSfx });
+    this.scheduleRevealSfx(def, delay);
     try {
       await blendFn(
         oid,
@@ -211,6 +255,8 @@ export class DocumentRevealManager implements IGameSystem {
   deserialize(data: object): void {
     this.revealed.clear();
     this.revealing.clear();
+    // 读档＝新时间线：上一条时间线排期的揭示音效不得在新档里响
+    this.clearPendingSfx();
     const raw = data as { revealed?: unknown };
     if (!Array.isArray(raw.revealed)) return;
     for (const x of raw.revealed) {

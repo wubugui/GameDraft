@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QStackedWidget,
     QSpinBox,
+    QDoubleSpinBox,
     QCheckBox,
 )
 
@@ -43,6 +44,7 @@ from ..shared.flag_key_field import FlagKeyPickField
 from ..shared.flag_value_edit import FlagValueEdit
 from ..shared.id_ref_selector import IdRefSelector
 from ..shared.image_path_picker import CutsceneImagePathRow
+from ..shared.audio_preview_selector import AudioIdPreviewSelector
 from ..shared.blend_overlay_preview import BlendOverlayPreviewWidget
 from ..shared.condition_expr_tree import ConditionExprTreeRootWidget
 from ..shared.pick_strings_dialog import pick_strings_multi
@@ -1284,6 +1286,9 @@ class DocumentRevealsEditor(QWidget):
         self._model = model
         self._loading_ui = False
         self._reveals: list[dict] = []
+        # 当前行载入时的 revealSfxVolume 原值（None＝未配置）：用户没动控件就原样写回，
+        # 保住 int 不漂成 float、高精度/越界值不被控件钳掉。
+        self._dr_sfx_vol_loaded: float | int | None = None
         # 从磁盘载入时这批条目的 id 快照：用于区分"已有数据"与"新建草稿"，
         # 保存全工程时只跳过新建且未填图的草稿，已有数据一律保留（防数据丢失）。
         self._loaded_ids: set[str] = set()
@@ -1293,7 +1298,7 @@ class DocumentRevealsEditor(QWidget):
         tip.setWordWrap(True)
         tip.setToolTip(
             "「文档揭示」= 一条「模糊图→清晰图」的揭示包，带触发条件、会记进存档。\n"
-            "做法两步：① 在这里登记一条（模糊图/清晰图/揭示条件/位置/时长）；"
+            "做法两步：① 在这里登记一条（模糊图/清晰图/揭示条件/位置/时长/可选揭示音效）；"
             "② 在「图对话 runActions / 过场」里加 revealDocument，documentId 选这条 id。\n"
             "玩家侧：满足 revealCondition 时自动播叠化、放揭示音效、并把「已揭示」写进存档（重进保持清晰、不重播）。\n"
             "适合：告示揭真相、信件显字、线索清晰化。改完 Apply→Ctrl+S。",
@@ -1505,6 +1510,53 @@ class DocumentRevealsEditor(QWidget):
         anim.addRow("animation.durationMs", self._dr_dur)
         anim.addRow("animation.delayMs", self._dr_delay)
         rfl.addWidget(anim_g)
+
+        sfx_g = QGroupBox("揭示音效（可选，不配就用全局默认）")
+        sfx_g.setToolTip(
+            "揭示那一下配的声音。留空＝所有揭示共用的全局默认音"
+            "（「音频」页 System SFX 里的 documentReveal）；\n"
+            "在这里选一条＝这条揭示改用它，全局那条不再叠着响。\n"
+            "时机：与叠化同起，即等过上面的 delayMs 之后（全局默认音则在触发瞬间响）。",
+        )
+        sfx_form = compact_form(QFormLayout(sfx_g))
+        self._dr_sfx = AudioIdPreviewSelector(
+            self._model, "sfx", allow_empty=True, editable=True)
+        # 与动作参数里的音频选择器同宽度口径：够显示常见 sfx id，又不占死小屏预算
+        self._dr_sfx.setMinimumWidth(160)
+        self._dr_sfx.setToolTip(
+            "从「音频」页登记的音效里选一条（弹窗可搜可试听），揭示叠化开始时播一次。\n"
+            "留空＝这条揭示走全局默认揭示音（System SFX 的 documentReveal）。\n"
+            "过场里触发的揭示，音效跟着过场收尾一起停，不会拖尾音。",
+        )
+        self._dr_sfx.value_changed.connect(self._dr_on_edit)
+        sfx_form.addRow("revealSfx", self._dr_sfx)
+
+        self._dr_sfx_vol_chk = QCheckBox("自定义")
+        self._dr_sfx_vol_chk.setToolTip(
+            "不勾＝用「音频」页里这条音效自己的音量（推荐）。\n"
+            "只有这处需要更轻/更响时才勾，勾了才写 revealSfxVolume。",
+        )
+        self._dr_sfx_vol = QDoubleSpinBox()
+        # 上限放到 10：有效音量是 0..1（运行时 clamp01），但历史/手写数据可能越界，
+        # 控件必须能原样展示，不能一打开就把它钳成 1.0（往返保真优先于输入约束）。
+        self._dr_sfx_vol.setRange(0.0, 10.0)
+        self._dr_sfx_vol.setDecimals(2)
+        self._dr_sfx_vol.setSingleStep(0.05)
+        self._dr_sfx_vol.setValue(1.0)
+        self._dr_sfx_vol.setMaximumWidth(90)
+        self._dr_sfx_vol.setEnabled(False)
+        self._dr_sfx_vol.setToolTip("这一处的音量倍数：1.0＝原音量，0.5＝减半")
+        self._dr_sfx_vol_chk.toggled.connect(self._dr_sfx_vol.setEnabled)
+        self._dr_sfx_vol_chk.toggled.connect(self._dr_on_edit)
+        self._dr_sfx_vol.valueChanged.connect(self._dr_on_edit)
+        _sfx_vol_row = QWidget(rh)
+        _svl = QHBoxLayout(_sfx_vol_row)
+        _svl.setContentsMargins(0, 0, 0, 0)
+        _svl.addWidget(self._dr_sfx_vol_chk)
+        _svl.addWidget(self._dr_sfx_vol)
+        _svl.addStretch()
+        sfx_form.addRow("revealSfxVolume", _sfx_vol_row)
+        rfl.addWidget(sfx_g)
 
         opt_g = QGroupBox("位置与可选字段（清晰图叠放位置 / 可选 flag）")
         opt_g.setToolTip("控制图叠在屏幕上的位置与大小（都按屏幕百分比）；revealedFlag 可选。可对着下方「揭示过渡预览」调。")
@@ -1825,9 +1877,12 @@ class DocumentRevealsEditor(QWidget):
             self._dr_blur, self._dr_clear, self._dr_cond_kind, self._dr_cond_stack,
             self._dr_cond_tree, self._dr_dur, self._dr_delay, self._dr_rflag, self._dr_oid,
             self._dr_x, self._dr_y, self._dr_w,
+            self._dr_sfx, self._dr_sfx_vol_chk,
             self._dr_blend_preview,
         ):
             w.setEnabled(en)
+        # 音量输入的可用性从属于「自定义」勾选，无选中行时一并禁用
+        self._dr_sfx_vol.setEnabled(en and self._dr_sfx_vol_chk.isChecked())
         if row < 0 or row >= len(self._reveals):
             self._dr_json_preview.clear()
             self._dr_blend_preview.schedule_refresh_immediate()
@@ -1858,6 +1913,25 @@ class DocumentRevealsEditor(QWidget):
             self._dr_x.setValue(int(d.get("xPercent", 50) or 50))
             self._dr_y.setValue(int(d.get("yPercent", 50) or 50))
             self._dr_w.setValue(int(d.get("widthPercent", 40) or 40))
+
+            # 音效候选每次从模型重取（跨面板刷新约定）；当前值未登记时前置保值，
+            # 由选择器自己标 [未登记]，绝不顶替或清空。
+            sfx_cur = str(d.get("revealSfx", "") or "").strip()
+            sfx_ids = list(self._model.all_audio_ids("sfx"))
+            if sfx_cur and sfx_cur not in sfx_ids:
+                sfx_ids = [sfx_cur] + sfx_ids
+            self._dr_sfx.set_items(sfx_ids)
+            self._dr_sfx.set_current(sfx_cur)
+            raw_vol = d.get("revealSfxVolume")
+            has_vol = isinstance(raw_vol, (int, float)) and not isinstance(raw_vol, bool)
+            self._dr_sfx_vol_loaded = raw_vol if has_vol else None
+            self._dr_sfx_vol_chk.blockSignals(True)
+            self._dr_sfx_vol_chk.setChecked(bool(has_vol))
+            self._dr_sfx_vol_chk.blockSignals(False)
+            self._dr_sfx_vol.blockSignals(True)
+            self._dr_sfx_vol.setValue(float(raw_vol) if has_vol else 1.0)
+            self._dr_sfx_vol.blockSignals(False)
+            self._dr_sfx_vol.setEnabled(bool(has_vol))
 
             expr = d.get("revealCondition")
             kind = self._dr_infer_cond_kind(expr)
@@ -1983,6 +2057,17 @@ class DocumentRevealsEditor(QWidget):
         d["xPercent"] = int(self._dr_x.value())
         d["yPercent"] = int(self._dr_y.value())
         d["widthPercent"] = int(self._dr_w.value())
+        sfx = self._dr_sfx.current_id().strip()
+        if sfx:
+            d["revealSfx"] = sfx
+        else:
+            d.pop("revealSfx", None)
+        # 音量是覆盖项：没勾「自定义」就不写键（运行时用 audio_config 里该条目的音量）。
+        # 没选音效时同样不写——留个孤儿音量键只会误导。
+        if sfx and self._dr_sfx_vol_chk.isChecked():
+            d["revealSfxVolume"] = self._dr_sfx_volume_for_write()
+        else:
+            d.pop("revealSfxVolume", None)
 
         kind = self._dr_cond_kind.currentData()
         if not isinstance(kind, int):
@@ -2054,6 +2139,23 @@ class DocumentRevealsEditor(QWidget):
         it = self._dr_list.item(row)
         if it is not None:
             it.setText(d.get("id") or "(无 id)")
+
+    def _dr_sfx_volume_for_write(self) -> float | int:
+        """勾了「自定义音量」时该写什么值。
+
+        用户没动过控件（显示值 == 磁盘值经控件范围/精度归一后的样子）就原样写回磁盘值，
+        以免 ``1`` 漂成 ``1.0``、``0.333`` 被两位小数截掉、越界值被钳成上限。
+        """
+        ui_v = round(float(self._dr_sfx_vol.value()), 4)
+        loaded = self._dr_sfx_vol_loaded
+        if isinstance(loaded, (int, float)) and not isinstance(loaded, bool):
+            shown = round(
+                min(max(float(loaded), self._dr_sfx_vol.minimum()), self._dr_sfx_vol.maximum()),
+                self._dr_sfx_vol.decimals(),
+            )
+            if abs(shown - ui_v) < 1e-9:
+                return loaded
+        return ui_v
 
     def _dr_add(self) -> None:
         self._dr_sync_row_from_ui()

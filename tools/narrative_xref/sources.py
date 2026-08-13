@@ -62,6 +62,10 @@ CONDITION_EXTRA_SPECS: dict[str, dict[str, str]] = {
     "shops": {"path": "shops.json", "kind": "shop", "label": "商店"},
     "document_reveals": {"path": "document_reveals.json", "kind": "documentReveal", "label": "文档揭示"},
     "smell_profiles": {"path": "smell_profiles.json", "kind": "smellProfile", "label": "气味"},
+    # 气泡台词本的 `lineSets[].when` 是**表现层读状态**的主通道（BubbleChatterSystem 逐帧
+    # 按 when 挑人开口）。不登记 = 查"谁读这个状态"时整条气泡通道隐形，而那正是"世界对
+    # 玩家有反应"最主要的外显面。模型属性存的是整份文档（不是子树），故无 subtree。
+    "bubble_lines": {"path": "bubble_lines.json", "kind": "bubbleLineSet", "label": "气泡台词"},
     "game_config": {"path": "game_config.json", "kind": "gameConfig", "label": "全局配置"},
 }
 

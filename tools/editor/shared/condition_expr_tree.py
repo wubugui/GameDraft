@@ -95,6 +95,7 @@ class ConditionExprNodeEditor(QWidget):
             ("活计计数 (做过几单)", "narrativeCount"),
             ("激活位面", "plane"),
             ("玩家姿态", "posture"),
+            ("时段（日夜）", "timePhase"),
         ):
             self._kind.addItem(lab, val)
         self._kind.currentIndexChanged.connect(self._on_kind_changed)
@@ -146,6 +147,8 @@ class ConditionExprNodeEditor(QWidget):
         self._pl_wrap: QWidget | None = None
         self._po_wrap: QWidget | None = None
         self._po_kind: QComboBox | None = None
+        self._tp_wrap: QWidget | None = None
+        self._tp_kind: QComboBox | None = None
         self._pl_id: IdRefSelector | None = None
 
         self._remove_callback: Callable[[ConditionExprNodeEditor], None] | None = None
@@ -211,6 +214,8 @@ class ConditionExprNodeEditor(QWidget):
             return bool(self._pl_id and self._pl_id.current_id().strip())
         if k == "posture":
             return bool(self._po_kind and str(self._po_kind.currentData() or "").strip())
+        if k == "timePhase":
+            return bool(self._tp_kind and str(self._tp_kind.currentData() or "").strip())
         return False
 
     def _confirm_destructive_discard(self, action_label: str) -> bool:
@@ -285,6 +290,8 @@ class ConditionExprNodeEditor(QWidget):
         self._pl_wrap = None
         self._po_wrap = None
         self._po_kind = None
+        self._tp_wrap = None
+        self._tp_kind = None
         self._pl_id = None
 
     def _rebuild_body(self, kind: str) -> None:
@@ -537,6 +544,26 @@ class ConditionExprNodeEditor(QWidget):
             of.addRow("posture", self._po_kind)
             self._po_wrap = ow
             self._body.addWidget(ow)
+        elif kind == "timePhase":
+            tw = QWidget()
+            tf = compact_form(QFormLayout(tw))
+            self._tp_kind = QComboBox()
+            self._tp_kind.setMaximumWidth(220)
+            _tm = self._model()
+            _phases: list[tuple[str, str]] = []
+            if _tm is not None and hasattr(_tm, "all_time_phase_ids"):
+                _phases = list(_tm.all_time_phase_ids())
+            for _pid, _plabel in _phases:
+                self._tp_kind.addItem(_plabel, _pid)
+            self._tp_kind.setToolTip(
+                "此刻的时段 === 该值。时段由时刻派生（不是独立状态、不入 Flag）。\n"
+                "列表来自 game_config.dayNight.phases。\n"
+                "「白天」写法：否定(not) + 本叶子选夜晚那一档。",
+            )
+            self._tp_kind.currentIndexChanged.connect(lambda *_: self._emit_changed())
+            tf.addRow("timePhase", self._tp_kind)
+            self._tp_wrap = tw
+            self._body.addWidget(tw)
 
     def _narrative_graph_entries(self) -> list[tuple[str, str, dict[str, Any]]]:
         """(显示名, graphId, graph dict)：主图 + wrapper 子图，与 narrative_graphs.json 一致。"""
@@ -830,6 +857,8 @@ class ConditionExprNodeEditor(QWidget):
             self._kind.setCurrentIndex(self._kind.findData("plane"))
         elif isinstance(data.get("posture"), str) and str(data.get("posture", "")).strip():
             self._kind.setCurrentIndex(self._kind.findData("posture"))
+        elif isinstance(data.get("timePhase"), str) and str(data.get("timePhase", "")).strip():
+            self._kind.setCurrentIndex(self._kind.findData("timePhase"))
         else:
             self._kind.setCurrentIndex(3)
         k = self._kind.currentData()
@@ -957,6 +986,17 @@ class ConditionExprNodeEditor(QWidget):
             self._po_kind.blockSignals(True)
             self._po_kind.setCurrentIndex(idx if idx >= 0 else 0)
             self._po_kind.blockSignals(False)
+        elif k == "timePhase" and self._tp_kind:
+            want = str(data.get("timePhase", "")).strip()
+            idx = self._tp_kind.findData(want)
+            if idx < 0 and want:
+                # 保值展示：时段表里没有的值（改名/尚未登记）也必须原样留住，
+                # 否则一次「打开→保存」就把内容里的时段悄悄顶替成第一档。
+                self._tp_kind.addItem(f"{want}（未登记）", want)
+                idx = self._tp_kind.findData(want)
+            self._tp_kind.blockSignals(True)
+            self._tp_kind.setCurrentIndex(idx if idx >= 0 else 0)
+            self._tp_kind.blockSignals(False)
         elif k == "plane" and self._pl_id:
             pid = str(data.get("plane", "")).strip()
             _pm = self._model()
@@ -1095,6 +1135,11 @@ class ConditionExprNodeEditor(QWidget):
             if not want:
                 return {}
             return {"posture": want}
+        if k == "timePhase" and self._tp_kind:
+            want = str(self._tp_kind.currentData() or "").strip()
+            if not want:
+                return {}
+            return {"timePhase": want}
         return {}
 
 

@@ -495,8 +495,18 @@ export class CutsceneManager implements IGameSystem {
     return this.parallaxScenes[id] ?? null;
   }
 
+  /**
+   * 步骤级「禁用」判据：`disabled === true` = 数据保留但整步当作不存在
+   * （不播、不预热、不参与跳过终姿）。只认真布尔 true，字符串 "true" 之类不生效
+   * ——校验器负责在构建期把非布尔写法报出来（构建期严于运行时）。
+   */
+  private isStepDisabled(step: CutsceneStep): boolean {
+    return (step as { disabled?: unknown }).disabled === true;
+  }
+
   private collectImagePathsFromSteps(steps: CutsceneStep[], out: Set<string>): void {
     for (const step of steps) {
+      if (this.isStepDisabled(step)) continue;
       if (step.kind === 'present' && step.type === 'showImg' && typeof step.image === 'string') {
         out.add(step.image);
       }
@@ -643,6 +653,11 @@ export class CutsceneManager implements IGameSystem {
           } else if (!this.destroyed && wasSkipping) {
             this.applyFinalCameraPoseForSkip(def);
           }
+          // 音频基线还原**不受 restoreState 门控**（理由见 restoreAudioBaseline 注释）：
+          // 过场借用的 BGM / 环境音不得渗进场景。默认路径上 restoreSnapshot 已还原过，此处幂等重入。
+          if (!this.destroyed) {
+            this.restoreAudioBaseline();
+          }
         }
       } catch (e) {
         console.warn('CutsceneManager: restore cutscene scene session failed', e);
@@ -736,10 +751,7 @@ export class CutsceneManager implements IGameSystem {
       this.playerPositionSetter?.(this.snapshot.playerX, this.snapshot.playerY);
       this.cameraAccessor?.snapTo(this.snapshot.cameraX, this.snapshot.cameraY);
       this.cameraAccessor?.setZoom(this.snapshot.cameraZoom);
-      // 同场景过场结束：把被过场 action 改动的音频（playBgm/stopBgm/playSignalCue→stopSceneAmbient）
-      // 还原到过场前基线。跨场景分支下方 sceneSwitcher→loadScene→applySceneAudio 会重建目标场景音频，
-      // 故只在同场景分支处理（幂等：基线未被改动时全为 no-op）。
-      this.audioManager?.restoreAudioBaseline(this.snapshot.bgmId, this.snapshot.ambientIds);
+      this.restoreAudioBaseline();
       return;
     }
     if (this.snapshot.sceneId && this.sceneSwitcher) {
@@ -748,6 +760,21 @@ export class CutsceneManager implements IGameSystem {
     this.playerPositionSetter?.(this.snapshot.playerX, this.snapshot.playerY);
     this.cameraAccessor?.snapTo(this.snapshot.cameraX, this.snapshot.cameraY);
     this.cameraAccessor?.setZoom(this.snapshot.cameraZoom);
+  }
+
+  /**
+   * 同场景过场结束：把被过场 action 改动的音频（playBgm/stopBgm/playSignalCue→stopSceneAmbient）
+   * 还原到过场前基线。跨场景路径不调用——sceneSwitcher→loadScene→applySceneAudio 会重建目标
+   * 场景音频。幂等：基线未被改动时全为 no-op。
+   *
+   * **刻意不受 `restoreState` 门控**：restoreState:false 的语义是「过场自己拥有结束状态」，
+   * 指的是**玩家位置与相机位姿**；而音频基线属于**场景**、不属于过场——过场里临时借用的 BGM /
+   * 环境音（如赌坊氛围）没有理由在过场结束后继续渗到场景里。两者曾被同一个开关捆住，
+   * 导致 restoreState:false 的过场只能在「位置对」和「音频对」之间二选一，故拆开。
+   */
+  private restoreAudioBaseline(): void {
+    if (!this.snapshot) return;
+    this.audioManager?.restoreAudioBaseline(this.snapshot.bgmId, this.snapshot.ambientIds);
   }
 
   /**
@@ -766,6 +793,8 @@ export class CutsceneManager implements IGameSystem {
     let zoom: number | null = null;
     const walk = (steps: CutsceneStep[]): void => {
       for (const s of steps) {
+        // 禁用步不播 → 也不能贡献终姿，否则跳过后相机会落到一个永远播不到的位置
+        if (this.isStepDisabled(s)) continue;
         if (s.kind === 'parallel') {
           walk(s.tracks);
           continue;
@@ -918,6 +947,13 @@ export class CutsceneManager implements IGameSystem {
 
   private async executeOneStep(step: CutsceneStep, path: string, epoch: number): Promise<void> {
     if (this.isStepStale(epoch)) return;
+    /**
+     * 禁用步：整步跳过（顶层与 parallel 子轨同一入口，故子轨也认这面标记）。
+     * 位置在步进事件之前——被禁用的步不该出现在调试 HUD / 编辑器播放头上，
+     * 它在这次播放里等于不存在。顶层下标不受影响（数据仍在数组里），
+     * 「从第 N 步开播」的快进边界照旧对得上编辑器行号。
+     */
+    if (this.isStepDisabled(step)) return;
     /** 快进期不发步进事件：调试 HUD / 编辑器播放头只关心真正开演后的位置，不该被瞬时刷屏。 */
     if (!this.fastForwarding) this.emitPlaybackStep(path, step);
     /**

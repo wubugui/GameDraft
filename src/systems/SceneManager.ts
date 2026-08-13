@@ -41,6 +41,7 @@ import {
 } from '../data/EntityRuntimeFieldSchema';
 import type { ActivePlaneSnapshot } from './plane/types';
 import { createStyledText } from '../core/styledText';
+import { isEntityInPhase } from '../utils/dayTime';
 
 /** applyDebugWorldSize 成功时的返回值，供深度系统与碰撞比例同步 */
 export type ApplyDebugWorldSizeResult =
@@ -137,6 +138,10 @@ export class SceneManager implements IGameSystem {
 
   /** 由 Game 注入：当前激活位面快照（PlaneReconciler 派生）；未注入时按 normal/shared。 */
   private activePlaneGetter: (() => ActivePlaneSnapshot) | null = null;
+  /** 由 Game 注入：NPC 日程在场性（含离场/入场宽限）；未注入时全部在场。 */
+  private npcSchedulePresence: ((def: NpcDef) => boolean) | null = null;
+  /** 由 Game 注入：当前时段 id（实体 phases 归属判定用）；未注入时不施加限制。 */
+  private currentPhaseGetter: (() => string) | null = null;
 
   private playerPositionSetter: ((x: number, y: number) => void) | null = null;
   private cameraSetter: ((boundsW: number, boundsH: number, snapX: number, snapY: number, cameraConfig?: SceneCameraConfig, worldScale?: number) => void) | null = null;
@@ -316,6 +321,27 @@ export class SceneManager implements IGameSystem {
   }
 
   /**
+   * 由 Game 注入：NPC 此刻是否该在本场景（NpcScheduleSystem 派生，含离场/入场宽限）。
+   * 未注入 = 全部在场（无日夜的工程行为逐帧不变）。
+   *
+   * 刻意**只作用于 NPC**、不并进 `entityInPlane`——后者被 hotspot/zone 共用，
+   * 而日程是角色的行踪，热点和区域不该跟着 NPC 走。
+   */
+  setNpcSchedulePresenceGetter(fn: ((def: NpcDef) => boolean) | null): void {
+    this.npcSchedulePresence = fn;
+  }
+
+  /**
+   * 时段推进后重贴显隐。实体侧纯显隐、无副作用，任何 GameState 都能刷；
+   * zone 侧的差分注销会跑 onExit 动作批，故与切位面同规矩——**只在 Exploring 时刷**
+   * （`exploringOnly` 由调用方给出），非探索态留给回到探索态后的下一次刷新兜底。
+   */
+  refreshForTimeChange(sceneId: string, canRefreshZones: boolean): void {
+    this.refreshEntitiesForPlaneChange(sceneId);
+    if (canRefreshZones) this.refreshZonesForPlaneChange(sceneId);
+  }
+
+  /**
    * 实体/zone 是否归属当前激活位面。缺省（无 planes 字段/空数组）由激活位面的世界模型决定：
    * shared（共享世界型）= 存在；exclusive（独立世界型）= 不存在，只有显式归属实体在。
    * 显式 planes 为白名单：须包含激活位面 id。
@@ -334,6 +360,26 @@ export class SceneManager implements IGameSystem {
    */
   isEntityInActivePlane(def: { planes?: string[] }): boolean {
     return this.entityInPlane(def);
+  }
+
+  /**
+   * 实体/zone 是否存在于当前时段。与 `planes` 完全同构的**白名单**语义：
+   * 缺省（无 phases 字段/空数组）= 所有时段都在（旧数据零影响）。
+   *
+   * 与 NPC 日程的分工：日程管「这个**角色**此刻该在哪个场景」（有作息的具名角色），
+   * phases 管「这个**实体**在哪些时段存在」（整条街的群演、夜里收走的摊子热点）。
+   * 群演用日程表要给每个路人造 characterId + 一张表，那是拿错工具。
+   *
+   * 注意本判定**没有**离场宽限：它是瞬时的存在性开关，配合有遮挡的推进用。
+   * 要让 NPC 走出去再消失，那是日程的活。
+   */
+  private entityInPhase(def: { phases?: string[] }): boolean {
+    return isEntityInPhase(def.phases, this.currentPhaseGetter?.() ?? '');
+  }
+
+  /** 由 Game 注入当前时段 id（DayManager 派生）；未注入时 phases 归属不生效。 */
+  setCurrentPhaseGetter(fn: (() => string) | null): void {
+    this.currentPhaseGetter = fn;
   }
 
   /**
@@ -428,6 +474,7 @@ export class SceneManager implements IGameSystem {
    */
   getHotspotBaseEnabledForInteraction(hotspot: Hotspot): boolean {
     if (!this.entityInPlane(hotspot.def)) return false;
+    if (!this.entityInPhase(hotspot.def)) return false;
     if (!this.isCurrentSceneGroupEnabled(hotspot.def.group)) return false;
     const active = this.activeCutsceneBindingId?.trim() || null;
     const sceneId = this.currentScene?.id ?? '';
@@ -444,6 +491,10 @@ export class SceneManager implements IGameSystem {
   /** 与 {@link getHotspotBaseEnabledForInteraction} 对偶，用于 NPC container.visible 基底。 */
   getNpcBaseVisibleForInteraction(npc: Npc): boolean {
     if (!this.entityInPlane(npc.def)) return false;
+    if (!this.entityInPhase(npc.def)) return false;
+    // 日程：不在这个时段/这个场景就不在场。正在走向出口的 NPC 由宽限集判为在场，
+    // 故这条不会在它走到一半时把它抹掉（见 NpcScheduleSystem 的两条路径说明）。
+    if (this.npcSchedulePresence && !this.npcSchedulePresence(npc.def)) return false;
     if (!this.isCurrentSceneGroupEnabled(npc.def.group)) return false;
     const active = this.activeCutsceneBindingId?.trim() || null;
     const sceneId = this.currentScene?.id ?? '';
@@ -622,6 +673,7 @@ export class SceneManager implements IGameSystem {
 
   private shouldRegisterZoneWithZoneSystem(sceneId: string, z: ZoneDef): boolean {
     if (!this.entityInPlane(z)) return false;
+    if (!this.entityInPhase(z)) return false;
     if (!this.isCurrentSceneGroupEnabled(z.group)) return false;
     if (z.zoneKind === 'depth_floor') return true;
     const sid = sceneId.trim();
@@ -1546,7 +1598,11 @@ export class SceneManager implements IGameSystem {
     }
   }
 
-  /** 对 **已加载** 的 sceneData 应用 spawn / spawnPoints / cameraPosition（语义与 loadScene 末尾一致） */
+  /**
+   * 对 **已加载** 的 sceneData 应用 spawn / spawnPoints / cameraPosition（语义与 loadScene 末尾一致）。
+   * ⚠ `cameraPosition` 不只管镜头：它同时是**玩家落点覆盖**（给了就顶掉 spawnPoint）——
+   * changeScene 的 cameraX/cameraY 与读档恢复玩家站位都吃这一条。
+   */
   private applyPlayerSpawnAndCamera(
     sceneData: SceneData,
     spawnPointId?: string,

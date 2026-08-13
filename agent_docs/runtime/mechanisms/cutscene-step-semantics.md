@@ -29,6 +29,13 @@ cutscene 声画编排可用的原语边界:哪些时序纯数据做得到、哪�
 
 ## 硬契约(违反即 bug)
 
+- **步骤级禁用 `disabled: true`**(2026-08-12):数据保留、**播放时整步跳过**——等于把这一步
+  临时注释掉。判据只认**真布尔 true**(`"true"` / 1 照常播,校验器构建期报 error)。
+  跳过面必须三处一致:执行(`executeOneStep` 顶层与 parallel 子轨同一入口)、图片预热
+  (`collectImagePathsFromSteps`)、跳过终姿(`applyFinalCameraPoseForSkip` 不采纳禁用步的镜头目标)。
+  禁用步**不发 `cutscene:step`**(调试 HUD / 编辑器播放头当它不存在);顶层下标不变
+  (数据仍在数组里),`fastForwardTo`「从第 N 步开播」照旧对得上编辑器行号。
+  `parallel` 上写 `disabled` = 整组连子轨一起跳。
 - **parallel 是 fork-join**:tracks 同时启动、全部完成才继续,组内**没有 sequence**,
   "先等 N 秒再做 X"纯数据做不到(L2 候选,不要硬凑)。可行替代:`parallel{flashWhite|showImg}`、
   `parallel{playSfx|showSubtitle}`。skip 用 race 放弃在途轨道、靠步代际终止,别绕过。

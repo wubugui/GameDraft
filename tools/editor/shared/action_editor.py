@@ -194,6 +194,17 @@ _ACTION_SCOPED_OMIT_WHEN_ABSENT_AND_DEFAULT: dict[tuple[str, str], object] = {
     # 控件处理，全局剔除会跟它的保存路径打架。
     ("emitNarrativeSignal", "ownerType"): "",
     ("emitNarrativeSignal", "ownerId"): "",
+    # 时刻推进的表现档：不写 = 运行时缺省（advanceTime 走 seamless、advanceTimeTo 走 timelapse）。
+    # 不登记的话「打开→不改→保存」会把两者都钉死成空串，运行时按未知档告警。
+    ("advanceTime", "transition"): "",
+    ("advanceTimeTo", "transition"): "",
+    # 日程覆盖的可选项。x/y/scene 不能进全局表——它们在 moveEntityTo / switchScene 等
+    # 动作里是必填，全局剔除会把那些动作的坐标与目标场景一并抹掉。
+    ("setNpcScheduleOverride", "scene"): "",
+    ("setNpcScheduleOverride", "activity"): "",
+    ("setNpcScheduleOverride", "clear"): False,
+    ("setNpcScheduleOverride", "x"): 0.0,
+    ("setNpcScheduleOverride", "y"): 0.0,
 }
 
 # 运行时默认为 true 的可选 bool：控件用三态（""/"true"/"false"）表达"未设"，
@@ -278,7 +289,8 @@ ACTION_TYPES = [
     "loadNarrativePackage", "unloadNarrativePackage",
     "appendFlag", "giveItem", "removeItem", "giveCurrency", "removeCurrency",
     "giveRule", "grantRuleLayer", "giveFragment", "updateQuest", "setFocusedQuest", "startEncounter",
-    "playBgm", "stopBgm", "playSfx", "stopSceneAmbient", "endDay", "addDelayedEvent",
+    "playBgm", "stopBgm", "playSfx", "playSceneAmbient", "stopSceneAmbient", "endDay", "addDelayedEvent",
+    "advanceTime", "advanceTimeTo", "setNpcScheduleOverride",
     "addArchiveEntry", "startCutscene", "startWaterMinigame", "startSugarWheelMinigame", "startPaperCraftMinigame",
     "startObjectExamine",
     "startPressureHold", "playSignalCue", "addFlagValue",
@@ -308,7 +320,7 @@ ACTION_TYPES = [
     "waitClickContinue",
     "waitMs",
     "enableRuleOffers", "disableRuleOffers",
-    "moveEntityTo", "jumpEntityTo", "faceEntity", "cutsceneSpawnActor", "cutsceneRemoveActor", "showEmoteAndWait", "showSpeechBubbleAndWait",
+    "moveEntityTo", "jumpEntityTo", "teleportEntityTo", "faceEntity", "cutsceneSpawnActor", "cutsceneRemoveActor", "showEmoteAndWait", "showSpeechBubbleAndWait",
     "setGroupEnabled", "moveGroupBy",
 ]
 
@@ -394,9 +406,13 @@ ACTION_PERSISTENCE: dict[str, str] = {
     "playBgm": "memory",
     "stopBgm": "memory",
     "playSfx": "memory",
+    "playSceneAmbient": "memory",
     "stopSceneAmbient": "memory",
     "endDay": "save",
     "addDelayedEvent": "save",
+    "advanceTime": "save",
+    "advanceTimeTo": "save",
+    "setNpcScheduleOverride": "save",
     "addArchiveEntry": "save",
     "startCutscene": "memory",
     "addFlagValue": "save",
@@ -479,6 +495,9 @@ ACTION_PERSISTENCE: dict[str, str] = {
     "disableRuleOffers": "save",
     "moveEntityTo": "memory",
     "jumpEntityTo": "memory",
+    # 瞬移只改运行时坐标；要让新位置进存档得另配 persistNpcAt / setSceneEntityPosition
+    # （玩家除外——玩家站位由存档统一记录，见 Game.collectSaveData 的 player 桶）
+    "teleportEntityTo": "memory",
     "faceEntity": "memory",
     "cutsceneSpawnActor": "memory",
     "cutsceneRemoveActor": "memory",
@@ -567,8 +586,15 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "playBgm": [("id", "str"), ("fadeMs", "int")],
     "stopBgm": [("fadeMs", "int")],
     "playSfx": [("id", "str")],
+    "playSceneAmbient": [("id", "str")],
     "stopSceneAmbient": [("id", "str"), ("fadeMs", "int")],
     "endDay": [],
+    "advanceTime": [("minutes", "int"), ("transition", "str")],
+    "advanceTimeTo": [("phase", "str"), ("transition", "str")],
+    "setNpcScheduleOverride": [
+        ("characterId", "str"), ("scene", "str"), ("x", "float"), ("y", "float"),
+        ("activity", "str"), ("clear", "bool"),
+    ],
     "addArchiveEntry": [("bookType", "str"), ("entryId", "str")],
     "startCutscene": [("id", "str")],
     "startWaterMinigame": [("id", "str")],
@@ -671,6 +697,12 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
         ("jumpAnimState", "str"),
         ("landAnimState", "str"),
         ("faceTowardMovement", "bool"),
+    ],
+    "teleportEntityTo": [
+        ("target", "str"),
+        ("sceneId", "str"),
+        ("x", "float"),
+        ("y", "float"),
     ],
     "faceEntity": [("target", "str"), ("direction", "str"), ("faceTarget", "str")],
     "cutsceneSpawnActor": [("id", "str"), ("name", "str"), ("x", "float"), ("y", "float")],
@@ -3264,6 +3296,109 @@ class ActionRow(QWidget):
         self._sync_foldable_visibility()
         self._connect_jump_entity_animation_pickers(initial_jump=ja_init, initial_land=la_init)
 
+    def _rebuild_teleport_entity_to_params(self, params: dict) -> None:
+        """teleportEntityTo：复用 moveEntityTo 的地图选点；无速度/无动画/无朝向（瞬移一帧到位）。"""
+        from ..shared.move_entity_map_picker import MoveEntityToMapPickerDialog
+
+        self._params_frame.setVisible(True)
+        while self._params_layout.rowCount() > 0:
+            self._params_layout.removeRow(0)
+        self._param_widgets.clear()
+
+        m = self._ctx_model
+        tip = QLabel(
+            "瞬移：一帧到位，不走过去、不播动画、不改朝向（要转身在后面接一条 faceEntity）。\n"
+            "想走过去用 moveEntityTo，想跳过去用 jumpEntityTo。\n"
+            "在「地图 sceneId」上用弹窗必选落点；x/y 只读禁止手输。sceneId 仅存档供编辑器复现地图。"
+        )
+        tip.setWordWrap(True)
+        self._params_layout.addRow(tip)
+
+        # target —— 复用 actor id 选择器（NPC / 临时演员 / player）
+        tgt_w = self._make_selector("actor", str(params.get("target", "") or ""))
+        self._param_widgets["target"] = tgt_w
+        self._params_layout.addRow("target", tgt_w)
+
+        # 地图 sceneId —— 复用 moveEntityTo 的默认场景推导
+        scene_rows = [(s, s) for s in (m.all_scene_ids() if m else [])] or [("（无场景）", "")]
+
+        def _default_map_sid() -> str:
+            ms = str(params.get("sceneId") or "").strip()
+            if ms:
+                return ms
+            if self._ctx_scene_id:
+                return str(self._ctx_scene_id).strip()
+            cid = self._ctx_cutscene_id
+            if m and cid:
+                for cv in m.cutscenes or []:
+                    if isinstance(cv, dict) and str(cv.get("id", "")).strip() == str(cid).strip():
+                        return str(cv.get("targetScene") or "").strip()
+            return ""
+
+        sid0 = _default_map_sid()
+        map_scene_combo = FilterableTypeCombo(scene_rows, self, select_only=True)
+        vals = {v for _d, v in scene_rows if v}
+        if sid0 and sid0 in vals:
+            map_scene_combo.set_committed_type(sid0)
+        elif scene_rows and scene_rows[0][1]:
+            map_scene_combo.set_committed_type(scene_rows[0][1])
+        map_scene_combo.setToolTip("选点弹窗使用该场景的背景与尺寸。")
+        map_scene_combo.typeCommitted.connect(lambda _t: self.changed.emit())
+        self._param_widgets["sceneId"] = map_scene_combo
+        self._params_layout.addRow("地图 sceneId（仅编辑）", map_scene_combo)
+
+        # x/y —— 只读，只由地图弹窗写入
+        try:
+            ix = float(params.get("x"))
+            iy = float(params.get("y"))
+        except (TypeError, ValueError):
+            ix, iy = 0.0, 0.0
+        if not (math.isfinite(ix) and math.isfinite(iy)):
+            ix, iy = 0.0, 0.0
+
+        sx_v = QDoubleSpinBox(self)
+        sx_v.setRange(-1e9, 1e9)
+        sx_v.setDecimals(2)
+        sx_v.setReadOnly(True)
+        sx_v.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        sx_v.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        sx_v.setValue(ix)
+        sy_v = QDoubleSpinBox(self)
+        sy_v.setRange(-1e9, 1e9)
+        sy_v.setDecimals(2)
+        sy_v.setReadOnly(True)
+        sy_v.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        sy_v.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        sy_v.setValue(iy)
+        self._param_widgets["x"] = sx_v
+        self._param_widgets["y"] = sy_v
+        self._params_layout.addRow("落点 x", sx_v)
+        self._params_layout.addRow("落点 y", sy_v)
+
+        # 地图选落点（复用 MoveEntityToMapPickerDialog，无途经点故传 []）
+        pick_btn = QPushButton("地图选落点…", self)
+
+        def _open_teleport_pick() -> None:
+            sid = map_scene_combo.committed_type().strip()
+            if not m:
+                QMessageBox.warning(self, "选点", "未加载工程。")
+                return
+            if not sid or sid not in m.scenes:
+                QMessageBox.information(self, "选点", "请选择有效的地图场景 sceneId。")
+                return
+            dlg = MoveEntityToMapPickerDialog(m, sid, float(sx_v.value()), float(sy_v.value()), [], self)
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+            px, py = dlg.result_destination()
+            sx_v.setValue(float(px))
+            sy_v.setValue(float(py))
+            self.changed.emit()
+
+        pick_btn.clicked.connect(_open_teleport_pick)
+        self._params_layout.addRow("", pick_btn)
+
+        self._sync_foldable_visibility()
+
     def _connect_jump_entity_animation_pickers(self, *, initial_jump: str, initial_land: str = "") -> None:
         tgt_w = self._param_widgets.get("target")
         sc_w = self._param_widgets.get("sceneId")
@@ -3366,6 +3501,7 @@ class ActionRow(QWidget):
             "water_minigame", "sugar_wheel_minigame", "paper_craft_minigame",
             "object_examine",
             "smell", "plane", "pressure_hold", "signal_cue", "prop_preset",
+            "time_phase", "time_transition", "character",
         )
 
         pairs: list[tuple[str, str]] = []
@@ -3462,6 +3598,18 @@ class ActionRow(QWidget):
             pairs = m.all_smell_profile_ids() if m else []
         elif kind == "plane":
             pairs = m.all_plane_ids() if m else []
+        elif kind == "time_phase":
+            pairs = m.all_time_phase_ids() if m else []
+        elif kind == "character":
+            pairs = m.all_character_ids() if m else []
+        elif kind == "time_transition":
+            # 表现档是短固定枚举（不是引用），与 src/data/types.ts 的 TimeTransition 同源。
+            pairs = [
+                ("seamless", "无缝（NPC 走出去，不遮画面）"),
+                ("timelapse", "延时演出（玩家等待）"),
+                ("fade", "淡入淡出"),
+                ("cut", "直切（调试用）"),
+            ]
         elif kind == "pressure_hold":
             # project_model 暂无专用 id-provider，这里只读其 pressure_holds 列表（数据同源）
             pairs = [
@@ -3592,6 +3740,10 @@ class ActionRow(QWidget):
 
         if act_type == "jumpEntityTo":
             self._rebuild_jump_entity_to_params(params)
+            return
+
+        if act_type == "teleportEntityTo":
+            self._rebuild_teleport_entity_to_params(params)
             return
 
         if act_type == "setEntityField":
@@ -5203,6 +5355,14 @@ class ActionRow(QWidget):
                 w = self._make_selector("smell", str(val) if val is not None else "")
             elif act_type == "activatePlane" and pname == "id":
                 w = self._make_selector("plane", str(val) if val is not None else "")
+            elif act_type in ("advanceTime", "advanceTimeTo") and pname == "transition":
+                w = self._make_selector("time_transition", str(val) if val is not None else "")
+            elif act_type == "advanceTimeTo" and pname == "phase":
+                w = self._make_selector("time_phase", str(val) if val is not None else "")
+            elif act_type == "setNpcScheduleOverride" and pname == "characterId":
+                w = self._make_selector("character", str(val) if val is not None else "")
+            elif act_type == "setNpcScheduleOverride" and pname == "scene":
+                w = self._make_selector("scene", str(val) if val is not None else "")
             elif act_type == "giveItem" and pname == "id":
                 w = self._make_selector("item", str(val) if val is not None else "")
             elif act_type == "removeItem" and pname == "id":
@@ -5235,6 +5395,12 @@ class ActionRow(QWidget):
                 w = self._make_selector("audio_bgm", str(val) if val is not None else "")
             elif act_type == "playSfx" and pname == "id":
                 w = self._make_selector("audio_sfx", str(val) if val is not None else "")
+            elif act_type == "playSceneAmbient" and pname == "id":
+                w = self._make_selector("audio_ambient", str(val) if val is not None else "")
+                w.setToolTip(
+                    "必填：要叠加的场景环境音层 id。ambient 是分层叠加语义，"
+                    "不会顶掉场景原有的环境层。列表来自 audio_config.ambient，右侧按钮可试听。",
+                )
             elif act_type == "stopSceneAmbient" and pname == "id":
                 w = self._make_selector("audio_ambient", str(val) if val is not None else "")
                 w.setToolTip(
@@ -6178,6 +6344,25 @@ class ActionRow(QWidget):
             prm["faceTowardMovement"] = True
         return {"type": "jumpEntityTo", "params": prm}
 
+    def _to_dict_teleport_entity_to(self) -> dict:
+        tgt_w = self._param_widgets.get("target")
+        sc_w = self._param_widgets.get("sceneId")
+        sx_v = self._param_widgets.get("x")
+        sy_v = self._param_widgets.get("y")
+        tgt = tgt_w.current_id().strip() if isinstance(tgt_w, IdRefSelector) else ""
+        sid = sc_w.committed_type().strip() if isinstance(sc_w, FilterableTypeCombo) else ""
+        xv = float(sx_v.value()) if isinstance(sx_v, QDoubleSpinBox) else 0.0
+        yv = float(sy_v.value()) if isinstance(sy_v, QDoubleSpinBox) else 0.0
+        # sceneId 仅供编辑器复现地图（同 moveEntityTo）：仅当原数据本就带 sceneId 才回写，
+        # 否则无场景上下文时下拉自动落到工程第一个场景，一存就是凭空多出的漂移键。
+        # key 顺序维持 target,[sceneId],x,y。
+        prm = {"target": tgt}
+        if sid and "sceneId" in self._original_params:
+            prm["sceneId"] = sid
+        prm["x"] = round(xv, 2)
+        prm["y"] = round(yv, 2)
+        return {"type": "teleportEntityTo", "params": prm}
+
     def _to_dict_set_scene_entity_position(self) -> dict:
         sc_w = self._param_widgets.get("sceneId")
         k_w = self._param_widgets.get("entityKind")
@@ -6285,6 +6470,8 @@ class ActionRow(QWidget):
             return self._to_dict_move_entity_to()
         if act_type == "jumpEntityTo":
             return self._to_dict_jump_entity_to()
+        if act_type == "teleportEntityTo":
+            return self._to_dict_teleport_entity_to()
         schema = _PARAM_SCHEMAS.get(act_type, [])
         params: dict = {}
         for pname, ptype in schema:

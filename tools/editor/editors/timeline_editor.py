@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import re
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
@@ -21,7 +22,7 @@ from PySide6.QtCore import (
     QMimeData,
 )
 from PySide6.QtGui import (
-    QAction, QMouseEvent, QDrag, QKeySequence, QShortcut, QCursor,
+    QAction, QMouseEvent, QDrag, QKeySequence, QShortcut, QCursor, QColor,
 )
 
 from ..project_model import ProjectModel
@@ -53,6 +54,20 @@ _MONO_FONT_QSS = f'"{MONO_FONT_FAMILY}", "Cascadia Code", "Consolas", monospace'
 
 # Cutscene 步骤表头拖拽排序（TimelineEditor._dnd_cutscene_step_source 存 payload）
 _CUTSCENE_STEP_DRAG_MIME = "application/x-gamedraft-cutscene-step"
+
+# 校验消息开头的层级步号（validator 的 `step #4` / `step #4.2`）：问题清单把它拆成
+# 「定位」与「正文」两栏显示，正文里就不再重复步号。
+_STEP_LABEL_RE = re.compile(r"^step #([\d.]+)\s+")
+
+# 出生点是可选的（CutsceneManager.saveAndTransitionReturningCrossScene：不跨场景且没写
+# targetSpawnPoint / targetX,Y 时，玩家与镜头一动不动）。UI 过去只呈现"选一个"，
+# 空值还被写成「默认 (spawnPoint)」，看着像必填 —— 这段文案就是把真实规则摆出来。
+_SPAWN_FIELD_TIP = (
+    "可以不指定：不挪玩家、不动镜头，就在开演那一刻的镜头位置演。\n"
+    "指定了才会把玩家和镜头搬到该出生点。\n"
+    "跨场景（targetScene 与玩家当前场景不同）例外：一定会落人，不指定就落目标场景的默认出生点。\n"
+    "下面勾了 targetX/Y 的话，以 targetX/Y 为准（覆盖出生点）。"
+)
 
 if TYPE_CHECKING:
     pass
@@ -94,6 +109,29 @@ _PRESENT_PARAMS: dict[str, list[tuple[str, str]]] = {
 }
 
 _MS_KEYS = frozenset({"duration"})
+
+#: 步骤级「禁用」标记键（运行时 CutsceneManager.isStepDisabled 认这一个键，只认真 True）
+STEP_DISABLED_KEY = "disabled"
+
+
+def step_is_disabled(d: object) -> bool:
+    """数据侧判据：与运行时同口径——只有真 True 才算禁用。"""
+    return isinstance(d, dict) and d.get(STEP_DISABLED_KEY) is True
+
+
+def apply_step_disabled(d: dict, disabled: bool) -> dict:
+    """把禁用态写回步骤 dict（就地改并返回）。
+
+    启用态一律**删键**而不是写 ``false``：缺省即启用，运行时与数据面都少一份噪音；
+    键位置沿用原 dict（禁用→启用→禁用不会把键挪到末尾）。
+    """
+    if not isinstance(d, dict):
+        return d
+    if disabled:
+        d[STEP_DISABLED_KEY] = True
+    else:
+        d.pop(STEP_DISABLED_KEY, None)
+    return d
 
 
 def _new_step_data(kind: str) -> dict:
@@ -220,12 +258,14 @@ def _parallel_track_fold_label(tr: dict) -> str:
     """并行块折叠摘要中单轨标签：字幕步优先显示正文。"""
     k = str(tr.get("kind", "?"))
     t = str(tr.get("type", "?"))
+    # 折叠着也得看出哪条轨不播（展开才发现 = 白读一遍摘要）
+    mark = "〔禁〕" if step_is_disabled(tr) else ""
     if k == "present" and t == "showSubtitle":
         tx = str(tr.get("text") or "").replace("\n", " ").strip()
         if tx:
-            return tx[:36] + "…" if len(tx) > 36 else tx
-        return "showSubtitle"
-    return f"{k}:{t}"
+            return mark + (tx[:36] + "…" if len(tx) > 36 else tx)
+        return f"{mark}showSubtitle"
+    return f"{mark}{k}:{t}"
 
 
 def parallel_tracks_summary(tracks: list) -> str:
@@ -308,6 +348,9 @@ def step_summary_line(d: dict) -> str:
 
 def estimate_step_duration_ms(step: dict) -> int | None:
     """与 CutsceneManager.executePresent 对齐的粗估；None = 不定。"""
+    # 禁用步运行时整步跳过 → 一律 0，别把不播的时间算进节奏里（parallel 取 max 时同理）
+    if step_is_disabled(step):
+        return 0
     kind = str(step.get("kind", "present"))
     if kind == "action":
         return None
@@ -476,6 +519,9 @@ class StepWidget(QFrame):
         kind = str(step.get("kind", "present"))
         self._step_data = deepcopy(step)
         self._original_data = deepcopy(step)
+        # 禁用态：表单本身不呈现它（开关在大纲行/批量对白行上），但必须**带着走**——
+        # to_dict 会重建整份 dict，不显式续写就会在展开后被静默抹掉。
+        self._disabled = step_is_disabled(step)
         # 已提交的 kind / present type，用于切换前捕获旧内容并在取消时回退控件。
         self._committed_kind = kind
         self._committed_present_type = str(step.get("type", "waitClick"))
@@ -1910,8 +1956,21 @@ class StepWidget(QFrame):
             preserve_numeric_repr(se, ose)
         return d
 
+    def is_disabled(self) -> bool:
+        return self._disabled
+
+    def set_disabled(self, on: bool) -> None:
+        """由大纲行下推（唯一写入方向）；表单内不提供开关，故此处不标脏、不发信号。"""
+        self._disabled = bool(on)
+
     def to_dict(self, *, kind_override: str | None = None,
                 present_type_override: str | None = None) -> dict:
+        d = self._serialize_step(
+            kind_override=kind_override, present_type_override=present_type_override)
+        return apply_step_disabled(d, self._disabled)
+
+    def _serialize_step(self, *, kind_override: str | None = None,
+                        present_type_override: str | None = None) -> dict:
         # override 仅供「切换前捕获旧内容」用（此刻控件仍是旧 kind/type）；正常序列化不传。
         kind = kind_override if kind_override is not None else self._kind_combo.currentData()
 
@@ -2058,6 +2117,8 @@ class StepOutlineFrame(QFrame):
         self._issue_level: str | None = None
         self._cutscene_id = (cutscene_id or "") or None
         self._step_snapshot = deepcopy(step)
+        #: 禁用态以本行为准（折叠时表单尚未建，展开时下推给 StepWidget）
+        self._disabled = step_is_disabled(step)
         self._step: StepWidget | None = None
         self._cutscene_header_drag_press_local: QPoint | None = None
         self._cutscene_drag_occurred_this_press = False
@@ -2111,6 +2172,16 @@ class StepOutlineFrame(QFrame):
         self._gantt.setScaledContents(False)
         self._gantt.setToolTip("相对时长（只读，仅供参考）")
         hl.addWidget(self._gantt)
+
+        # 禁用开关：把一步临时"注释掉"（数据留着、运行时整步跳过）。排戏时反复开关，
+        # 与「从这一步播」同属主循环，故与它并排常驻，不藏进「⋯」。
+        self._btn_disable = outline_row_tool_button(
+            self._header, "", fallback_text="禁", fixed_width=28, fixed_height=26,
+        )
+        self._btn_disable.setCheckable(True)
+        self._btn_disable.setChecked(self._disabled)
+        self._btn_disable.toggled.connect(self._on_disable_toggled)
+        hl.addWidget(self._btn_disable)
 
         # 从这一步排演：反复调参数的主循环，必须一键可达（藏进「⋯」菜单等于没有）
         self._btn_play = outline_row_tool_button(
@@ -2198,12 +2269,46 @@ class StepOutlineFrame(QFrame):
         self._btn_del.clicked.connect(self._do_delete)
 
         self._detail_wrap.setVisible(False)
+        self._sync_disable_button()
         self.refresh_header()
+
+    # ----- 禁用（只记录、不播放） -----
+
+    def is_step_disabled(self) -> bool:
+        return self._disabled
+
+    def set_step_disabled(self, on: bool) -> None:
+        """本行是禁用态的唯一真相源：展开后下推给 StepWidget，序列化时再统一写回。"""
+        on = bool(on)
+        if on == self._disabled:
+            self._sync_disable_button()
+            return
+        self._disabled = on
+        if self._step is not None:
+            self._step.set_disabled(on)
+        self._sync_disable_button()
+        self.refresh_header()
+        self._emit_dirty()
+
+    def _sync_disable_button(self) -> None:
+        b = self._btn_disable
+        # 程序化回填不得回打 toggled——否则「构造即标脏」。
+        b.blockSignals(True)
+        b.setChecked(self._disabled)
+        b.blockSignals(False)
+        b.setToolTip(
+            "已禁用：数据留着，播放时整步跳过。点此恢复播放。"
+            if self._disabled
+            else "禁用本步：数据留着，播放时整步跳过（等于把这一步临时注释掉）。"
+        )
+
+    def _on_disable_toggled(self, on: bool) -> None:
+        self.set_step_disabled(on)
 
     def _header_dict(self) -> dict:
         if self._step is not None:
             return self._step.to_dict()
-        return deepcopy(self._step_snapshot)
+        return apply_step_disabled(deepcopy(self._step_snapshot), self._disabled)
 
     def ensure_step_detail(self) -> None:
         self._ensure_detail_built()
@@ -2217,6 +2322,8 @@ class StepOutlineFrame(QFrame):
             cutscene_id=self._cutscene_id,
         )
         self._step._outline_frame = self
+        # 折叠期间可能已被切过禁用态，快照是旧的：以本行为准回灌一次。
+        self._step.set_disabled(self._disabled)
         lay = self._detail_wrap.layout()
         if isinstance(lay, QVBoxLayout):
             lay.addWidget(self._step)
@@ -2230,7 +2337,7 @@ class StepOutlineFrame(QFrame):
     def to_dict(self) -> dict:
         if self._step is not None:
             return self._step.to_dict()
-        return deepcopy(self._step_snapshot)
+        return apply_step_disabled(deepcopy(self._step_snapshot), self._disabled)
 
     def set_row_index(self, idx: object) -> None:
         # idx 顶层为序号字符串（"3"），并行子轨为分层号（"3.1"）。
@@ -2262,10 +2369,10 @@ class StepOutlineFrame(QFrame):
             return
         if level == "error":
             self._issue_lbl.setText("✖")
-            color = "#e03131"
+            color = app_theme.semantic_text_color("error")
         else:
             self._issue_lbl.setText("⚠")
-            color = "#f08c00"
+            color = app_theme.semantic_text_color("warn")
         self._issue_lbl.setStyleSheet(f"color: {color}; font-weight: bold;")
         self._issue_lbl.setToolTip("\n".join(messages))
 
@@ -2332,14 +2439,20 @@ class StepOutlineFrame(QFrame):
         kind = str(d.get("kind", "present"))
         self._refresh_header_surface()
         sp, bb, bf = self._kind_palette(kind, tid)
+        dark = app_theme.is_dark_theme(tid)
+        primary = "#dcdcdc" if dark else "#1a1a1a"
+        muted = "#a0a0a0" if dark else "#666666"
+        if self._disabled:
+            # 禁用行整体退成灰：色条/徽章去色 + 摘要加删除线，扫一眼就知道这段不会播。
+            sp = "#5c636a" if dark else "#adb5bd"
+            bb, bf = ("#495057", "#adb5bd") if dark else ("#dee2e6", "#868e96")
+            primary = muted
         self._strip.setStyleSheet(f"background-color: {sp}; border-radius: 2px;")
         labels = {"present": "PRESENT", "action": "ACTION", "parallel": "PARALLEL"}
         self._badge.setText(labels.get(kind, kind.upper()))
         self._badge.setStyleSheet(
             f"background-color: {bb}; color: {bf}; border-radius: 4px; padding: 2px 6px;"
         )
-        primary = "#dcdcdc" if app_theme.is_dark_theme(tid) else "#1a1a1a"
-        muted = "#a0a0a0" if app_theme.is_dark_theme(tid) else "#666666"
         self._idx_lbl.setStyleSheet(
             f"color: {muted}; font-family: {_MONO_FONT_QSS};"
         )
@@ -2353,8 +2466,12 @@ class StepOutlineFrame(QFrame):
                 summ = parallel_tracks_summary(d.get("tracks") or [])
         else:
             summ = step_summary_line(d)
-        self._summary.setText(summ)
+        f = self._summary.font()
+        f.setStrikeOut(self._disabled)
+        self._summary.setFont(f)
+        self._summary.setText(f"〔已禁用〕{summ}" if self._disabled else summ)
 
+        # 禁用步的估时由 estimate_step_duration_ms 直接归 0（显示「—」），此处无需特判
         est = estimate_step_duration_ms(d)
         self._dur_lbl.setText(format_duration_hint(est))
         self._gantt.setStyleSheet(gantt_style_for_ms(est, tid))
@@ -2660,6 +2777,16 @@ class StepOutlineFrame(QFrame):
             a_pos.triggered.connect(self._prompt_move_to_position)
             m.addAction(a_pos)
 
+        # 禁用开关（行上已有常驻按钮，这里补一条带说明的入口）。
+        m.addSeparator()
+        a_dis = QAction(
+            "恢复播放本步" if self._disabled else "禁用本步（保留数据，不播放）", self)
+        a_dis.setCheckable(True)
+        a_dis.setChecked(self._disabled)
+        a_dis.setToolTip("禁用的步骤仍留在数据里，运行时整步跳过（parallel 连子轨一起跳）。")
+        a_dis.triggered.connect(lambda checked: self.set_step_disabled(checked))
+        m.addAction(a_dis)
+
         # 剪贴板：复制/剪切本步（可跨过场、进出并行粘贴）。
         m.addSeparator()
         a_copy_cb = QAction("复制到剪贴板", self)
@@ -2855,13 +2982,15 @@ class DialogueGroupHeader(QFrame):
 class _MinimapCell:
     """缩略条上的一格 = 一个顶层步。"""
 
-    __slots__ = ("kind", "ms", "summary", "issue", "x", "w")
+    __slots__ = ("kind", "ms", "summary", "issue", "disabled", "x", "w")
 
-    def __init__(self, kind: str, ms: int | None, summary: str, issue: str | None):
+    def __init__(self, kind: str, ms: int | None, summary: str, issue: str | None,
+                 disabled: bool = False):
         self.kind = kind
         self.ms = ms
         self.summary = summary
         self.issue = issue          # None / "warn" / "error"
+        self.disabled = disabled    # 禁用步：不占时长、画成灰色空心格
         self.x = 0.0                # 布局后填：像素左沿
         self.w = 0.0                # 布局后填：像素宽
 
@@ -3023,9 +3152,15 @@ class StepMinimapBar(QWidget):
         top, cell_h = 4, h - 8
         for i, c in enumerate(self._cells):
             strip, _bb, _bf = kind_palette(c.kind, self._theme_id)
+            if c.disabled:
+                strip = "#5c636a" if dark else "#adb5bd"
             col = QColor(strip)
             x, w = int(c.x), max(int(c.w), 1)
-            if c.ms is None:
+            if c.disabled:
+                # 禁用格：低透明度实心，与"不定时长"的空心格区分开
+                col.setAlpha(70)
+                p.fillRect(x, top, w, cell_h, col)
+            elif c.ms is None:
                 # 不定时长：空心格，与固定时长的实心块区分开
                 col.setAlpha(90)
                 p.fillRect(x, top, w, cell_h, col)
@@ -3514,10 +3649,15 @@ class TimelineEditor(QWidget):
         self._target_scene = IdRefSelector(self, allow_empty=True, editable=False, click_opens_popup=True)
         self._target_scene.setMinimumWidth(240)
         self._target_scene.setToolTip(
-            "从项目已加载场景列表选择；若 JSON 中已有但工程未载入的场景，会显示为「未在项目场景表中」。"
+            "可留空（选 (none)）：留空 = 就在玩家当前所在场景开演，不切场景。\n"
+            "填了且与玩家当前场景不同才会切场景（此时玩家会落到下面的出生点）；\n"
+            "填成当前场景则不切、只是给编辑器一个上下文（NPC/说话人候选按它取）。\n"
+            "若 JSON 中已有但工程未载入的场景，会显示为「未在项目场景表中」。"
         )
         self._refresh_target_scene_combo_items("")
-        bind_form.addRow("targetScene", self._target_scene)
+        scene_label = QLabel("targetScene（可选）")
+        scene_label.setToolTip(self._target_scene.toolTip())
+        bind_form.addRow(scene_label, self._target_scene)
 
         self._spawn_key = ""
         self._spawn_loading = False
@@ -3526,12 +3666,20 @@ class TimelineEditor(QWidget):
         spawn_lay.setContentsMargins(0, 0, 0, 0)
         self._spawn_display = QLineEdit()
         self._spawn_display.setReadOnly(True)
-        self._spawn_display.setPlaceholderText("点击右侧按钮在场景预览中选择...")
+        self._spawn_display.setPlaceholderText("不指定：就地开演")
         spawn_lay.addWidget(self._spawn_display, 1)
         self._spawn_pick_btn = QPushButton("选择出生点...")
         self._spawn_pick_btn.clicked.connect(self._open_spawn_picker)
         spawn_lay.addWidget(self._spawn_pick_btn)
-        bind_form.addRow("targetSpawnPoint", spawn_row)
+        # 「不指定」本来就是合法值，但过去只能靠打开弹窗选第一行才回得去 → 看着像必填。
+        self._spawn_clear_btn = QPushButton("清除")
+        self._spawn_clear_btn.setToolTip("改回不指定：不挪玩家，就在当前镜头位置开演")
+        self._spawn_clear_btn.clicked.connect(self._clear_spawn_key)
+        spawn_lay.addWidget(self._spawn_clear_btn)
+        spawn_label = QLabel("targetSpawnPoint（可选）")
+        spawn_label.setToolTip(_SPAWN_FIELD_TIP)
+        spawn_row.setToolTip(_SPAWN_FIELD_TIP)
+        bind_form.addRow(spawn_label, spawn_row)
         self._target_scene.value_changed.connect(self._on_target_scene_changed)
 
         pos_row = QHBoxLayout()
@@ -3576,10 +3724,12 @@ class TimelineEditor(QWidget):
         hint_row.addWidget(self._validate_summary, stretch=1)
         btn_validate = QPushButton("校验")
         btn_validate.setToolTip(
-            "检查本过场：未知类型 / 坏引用 / 非白名单动作 / 改存档动作 / 字幕语音缺失等，"
-            "并在对应步骤上打 ⚠/✖ 标记（悬停看详情）。",
+            "检查本过场：未知类型 / 坏引用 / 非白名单动作 / 改存档动作 / 字幕语音缺失等；"
+            "问题逐条列在下方清单，对应步骤同时打 ⚠/✖ 标记。",
         )
         btn_validate.clicked.connect(self._run_current_cutscene_validation)
+        # 留引用：护栏测试要从这个真实入口点下去，不能只调内部方法
+        self._btn_validate = btn_validate
         hint_row.addWidget(btn_validate)
         btn_collapse_all = QPushButton("全部折叠")
         btn_collapse_all.setToolTip("折叠本过场所有步骤（含并行子轨）")
@@ -3590,6 +3740,21 @@ class TimelineEditor(QWidget):
         hint_row.addWidget(btn_collapse_all)
         hint_row.addWidget(btn_expand_all)
         rl.addLayout(hint_row)
+
+        # 校验问题清单：状态区只报「几条」，具体是什么必须直接看得见——藏进 tooltip 等于没报。
+        # 无问题时整块隐藏，不占步骤列表的高度。
+        self._issue_list = QListWidget()
+        self._issue_list.setVisible(False)
+        self._issue_list.setWordWrap(True)
+        self._issue_list.setMaximumHeight(150)
+        self._issue_list.setAlternatingRowColors(True)
+        self._issue_list.setSelectionMode(
+            QAbstractItemView.SelectionMode.SingleSelection)
+        self._issue_list.setToolTip("校验发现的问题；点一条跳到对应步骤，右键可复制全部")
+        self._issue_list.itemClicked.connect(self._on_issue_item_activated)
+        self._issue_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._issue_list.customContextMenuRequested.connect(self._on_issue_list_menu)
+        rl.addWidget(self._issue_list)
 
         # 步骤级搜索 / 定位（长过场里靠肉眼滚整列很痛）：过滤匹配的顶层步骤 + 命中间跳转。
         filter_row = QHBoxLayout()
@@ -4028,53 +4193,80 @@ class TimelineEditor(QWidget):
 
     # ----- 校验：把 validate-data 对本过场的问题引进编辑器，落到具体步骤 -----
 
+    def _clear_validation_report(self) -> None:
+        """清空上一段过场留下的校验结论（换段/重建步骤列表时必须调，否则清单指向已析构的行）。"""
+        lst = getattr(self, "_issue_list", None)
+        if lst is not None:
+            lst.clear()
+            lst.setVisible(False)
+        summary = getattr(self, "_validate_summary", None)
+        if summary is not None:
+            summary.setStyleSheet("")
+            summary.setText("")
+            summary.setToolTip("点「校验」检查本过场的引用/类型/白名单/字幕语音等问题")
+
     def _run_current_cutscene_validation(self, *, scroll_to_first: bool = True) -> None:
         # scroll_to_first 仅键参：手动点「校验」滚到首个问题行；Apply 自动校验
-        # （scroll_to_first=False）不抢滚动位，只更新状态区。
+        # （scroll_to_first=False）不抢滚动位，只更新状态区与问题清单。
         for ol in self._iter_all_step_outlines():
             ol.set_issue_marker(None, [])
+        self._issue_list.clear()
         cid = self._current_cutscene_id() or self._c_id.text().strip() or ""
         steps = [ol.to_dict() for ol in self._step_outlines]
         try:
             from ..validator import (
-                _validate_cutscene_steps, _cutscene_has_show_movie_bar,
+                Issue, _validate_cutscene_steps, _cutscene_has_show_movie_bar,
+                _cutscene_temp_actor_ids_in_steps, _walk_cutscene_action_param_refs,
             )
         except Exception as exc:  # noqa: BLE001
+            self._issue_list.setVisible(False)
             self._validate_summary.setStyleSheet("")
             self._validate_summary.setText("校验未运行")
             self._validate_summary.setToolTip(f"无法加载校验器：{exc}")
             return
-        # 全树权威计数（与 validate-data 口径一致，含参数引用检查）。
-        all_issues: list[Any] = []
+        # 整树才看得全的两件事：黑边是否出现过（避免单步视角误报「无 showMovieBar」）、
+        # 本段 spawn 出的临时演员集（外层 spawn 的 _cut_* 在单行视角里不存在，会误报无法解析）。
         try:
-            _validate_cutscene_steps(
-                self._model, deepcopy(steps), cid, all_issues, scan_param_refs=True)
+            whole_mb = _cutscene_has_show_movie_bar(steps)
+            temp_ids = frozenset(_cutscene_temp_actor_ids_in_steps(steps))
         except Exception as exc:  # noqa: BLE001 — 校验器异常绝不能影响编辑
+            self._issue_list.setVisible(False)
             self._validate_summary.setStyleSheet("")
             self._validate_summary.setText("校验未运行")
             self._validate_summary.setToolTip(f"{type(exc).__name__}: {exc}")
             return
-        n_err = sum(1 for it in all_issues if it.severity == "error")
-        n_warn = sum(1 for it in all_issues if it.severity == "warning")
-        # 逐顶层步单独结构校验 → 问题精确落到对应行（并行嵌套问题归到其顶层 parallel 行）。
-        # 传入全树 movie-bar 标记，避免单步视角误报「无 showMovieBar」。
-        whole_mb = _cutscene_has_show_movie_bar(steps)
+        # 逐顶层步校验 → 每条问题都落到具体行（并行嵌套问题归到其顶层 parallel 行）。
+        # 参数引用扫描面限定在本行子树、判据用整树临时演员集：与 validate-data 同一口径，
+        # 但每条都有归属行（旧实现把参数引用问题只算进总数、不落行 → 有计数没标记）。
+        n_err = n_warn = 0
         first_row: int | None = None
         for i, step in enumerate(steps):
             row_issues: list[Any] = []
             try:
                 _validate_cutscene_steps(
                     self._model, [deepcopy(step)], cid, row_issues,
-                    scan_param_refs=False, cutscene_movie_bar=whole_mb)
-            except Exception:  # noqa: BLE001
+                    scan_param_refs=False, cutscene_movie_bar=whole_mb,
+                    step_index_base=i)
+                _walk_cutscene_action_param_refs(
+                    self._model, row_issues, [deepcopy(step)], cid, temp_ids)
+            except Exception as exc:  # noqa: BLE001
+                # fail-safe：校验器在某步上炸了要如实报出来，不能静默当这步没问题。
+                row_issues = [Issue(
+                    "error", "cutscene", cid,
+                    f"step #{i + 1} 校验器异常：{type(exc).__name__}: {exc}",
+                )]
+            if not row_issues:
                 continue
-            if row_issues:
-                level = ("error" if any(it.severity == "error" for it in row_issues)
-                         else "warning")
-                self._step_outlines[i].set_issue_marker(
-                    level, [it.message for it in row_issues])
-                if first_row is None:
-                    first_row = i
+            n_err += sum(1 for it in row_issues if it.severity == "error")
+            n_warn += sum(1 for it in row_issues if it.severity != "error")
+            level = ("error" if any(it.severity == "error" for it in row_issues)
+                     else "warning")
+            self._step_outlines[i].set_issue_marker(
+                level, [it.message for it in row_issues])
+            for it in row_issues:
+                self._append_issue_list_item(i, it)
+            if first_row is None:
+                first_row = i
         parts = []
         if n_err:
             parts.append(f"{n_err} 错误")
@@ -4082,23 +4274,68 @@ class TimelineEditor(QWidget):
             parts.append(f"{n_warn} 警告")
         # error 标红 / warning 标橙：Apply 后自动校验靠这里在状态区提示（不阻断入库）。
         if n_err:
-            self._validate_summary.setStyleSheet("color:#e03131; font-weight:bold;")
+            self._validate_summary.setStyleSheet(
+                app_theme.semantic_text_css("error") + " font-weight:bold;")
         elif n_warn:
-            self._validate_summary.setStyleSheet("color:#f08c00;")
+            self._validate_summary.setStyleSheet(app_theme.semantic_text_css("warn"))
         else:
             self._validate_summary.setStyleSheet("")
         self._validate_summary.setText(
             "校验：" + ("、".join(parts) if parts else "无问题 ✓"))
         self._validate_summary.setToolTip(
-            "\n".join(f"[{it.severity}] {it.message}" for it in all_issues)
-            if all_issues else "本过场未发现问题。")
+            "下方清单逐条列出；点一条跳到对应步骤"
+            if self._issue_list.count() else "本过场未发现问题。")
+        # 问题清单是这次校验的正文：有问题就展开，没问题不占地方。
+        self._issue_list.setVisible(self._issue_list.count() > 0)
         # 问题标记刚落到行上：重建缩略条，红/橙点随之出现在对应格顶。
         self._rebuild_minimap()
         if scroll_to_first and first_row is not None:
-            ol = self._step_outlines[first_row]
-            self._steps_scroll.ensureWidgetVisible(ol)
-            ol.flash_highlight()
-            self._minimap.set_current(first_row)
+            self._jump_to_top_step(first_row)
+
+    def _append_issue_list_item(self, row: int, issue: Any) -> None:
+        """把一条问题写进清单。定位标签优先取消息里的层级步号（"4.2"），回落到本行序号。"""
+        message = str(getattr(issue, "message", "") or "")
+        m = _STEP_LABEL_RE.match(message)
+        if m:
+            label, text = m.group(1), message[m.end():]
+        else:
+            label, text = str(row + 1), message
+        is_err = getattr(issue, "severity", "") == "error"
+        item = QListWidgetItem(f"{'✖' if is_err else '⚠'} 第 {label} 步 · {text}")
+        item.setToolTip(f"{'错误' if is_err else '警告'}：{text}\n（点击跳到第 {label} 步）")
+        item.setForeground(QColor(
+            app_theme.semantic_text_color("error" if is_err else "warn")))
+        item.setData(Qt.ItemDataRole.UserRole, row)
+        self._issue_list.addItem(item)
+
+    def _on_issue_item_activated(self, item: QListWidgetItem) -> None:
+        row = item.data(Qt.ItemDataRole.UserRole)
+        if isinstance(row, int):
+            self._jump_to_top_step(row)
+
+    def _on_issue_list_menu(self, pos: QPoint) -> None:
+        if self._issue_list.count() == 0:
+            return
+        menu = QMenu(self._issue_list)
+        act_copy = menu.addAction("复制全部问题")
+        chosen = menu.exec(self._issue_list.viewport().mapToGlobal(pos))
+        if chosen is act_copy:
+            lines = [self._issue_list.item(i).text()
+                     for i in range(self._issue_list.count())]
+            QApplication.clipboard().setText("\n".join(lines))
+
+    def _jump_to_top_step(self, row: int) -> None:
+        """滚到并高亮某个顶层步。被过滤隐藏时先清掉过滤词，否则点了像没反应。"""
+        if not (0 <= row < len(self._step_outlines)):
+            return
+        ol = self._step_outlines[row]
+        if not ol.isVisible():
+            box = getattr(self, "_step_search", None)
+            if box is not None and box.text().strip():
+                box.clear()
+        self._steps_scroll.ensureWidgetVisible(ol)
+        ol.flash_highlight()
+        self.focus_outline(ol)
 
     def _autoscroll_steps_for_drag(self) -> None:
         """拖拽重排时，光标接近步骤滚动区上下边缘则自动滚动，便于远距离搬运。"""
@@ -4150,11 +4387,13 @@ class TimelineEditor(QWidget):
                     [c.to_dict() for c in ol._step._child_outlines])
             else:
                 summary = step_summary_line(d)
+            dis = ol.is_step_disabled()
             cells.append(_MinimapCell(
                 kind=kind,
-                ms=estimate_step_duration_ms(d),
-                summary=summary,
+                ms=estimate_step_duration_ms(d),   # 禁用步在此已归 0
+                summary=("〔已禁用〕" + summary) if dis else summary,
                 issue=ol.issue_level(),
+                disabled=dis,
             ))
         mm.set_cells(cells)
         self._sync_minimap_viewport()
@@ -4543,23 +4782,38 @@ class TimelineEditor(QWidget):
         self._propagate_cutscene_scene_to_action_rows()
 
     def _refresh_spawn_display(self) -> None:
+        # 显示的是「运行时会发生什么」，不是字段裸值：空值过去写成「默认 (spawnPoint)」，
+        # 读起来像"会落到场景默认出生点"，而同场景其实是一动不动。
         sid = self._target_scene.current_id()
-        if not sid:
-            self._spawn_display.setText("")
-            self._spawn_pick_btn.setEnabled(False)
-            return
-        self._spawn_pick_btn.setEnabled(True)
+        self._spawn_pick_btn.setEnabled(bool(sid))
+        self._spawn_clear_btn.setEnabled(bool(self._spawn_key))
+        # 字段窄，长句会被裁；细则（跨场景例外、targetX/Y 覆盖）留在悬停说明里。
+        self._spawn_display.setText(self._spawn_key or "不指定：就地开演")
+
+    def _clear_spawn_key(self) -> None:
         if not self._spawn_key:
-            self._spawn_display.setText("默认 (spawnPoint)")
-        else:
-            self._spawn_display.setText(self._spawn_key)
+            return
+        self._spawn_key = ""
+        self._refresh_spawn_display()
+        self.mark_pending_changes()
 
     def _open_spawn_picker(self) -> None:
         sid = self._target_scene.current_id()
         if not sid:
-            QMessageBox.information(self, "过场", "请先选择目标场景。")
+            QMessageBox.information(
+                self, "过场",
+                "没填 targetScene 时本来就不挪玩家（就地开演），无需选出生点。\n"
+                "要挪人请先选目标场景。",
+            )
             return
-        dlg = TargetSpawnPickerDialog(self._model, sid, self._spawn_key, self)
+        dlg = TargetSpawnPickerDialog(
+            self._model, sid, self._spawn_key, self,
+            empty_label="不指定（就地开演，不挪玩家）",
+            empty_hint=(
+                "第一项「不指定」= 同场景不挪玩家、就在当前镜头位置开演"
+                "（跨场景时落该场景的默认 spawnPoint）；其余对应 spawnPoints 中的键。"
+            ),
+        )
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self._spawn_key = dlg.selected_spawn_key()
             self._refresh_spawn_display()
@@ -4628,6 +4882,8 @@ class TimelineEditor(QWidget):
     def _rebuild_steps(
         self, steps: list[dict], *, expanded_indices: set[int] | None = None,
     ) -> None:
+        # 上一段/上一版的校验结论对新列表已失效（清单条目指的是刚被 deleteLater 的行）。
+        self._clear_validation_report()
         self._overlay_selectors_fp_valid = False
         # 焦点引用必须先断：下面整批 deleteLater，留着会变悬空指针
         self._focused_outline = None

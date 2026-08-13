@@ -47,6 +47,8 @@ def new_dialogue_step(template: dict | None = None) -> dict:
     if not base or str(base.get("kind")) != "present":
         base = {"kind": "present", "type": "showDialogue"}
     base["text"] = ""
+    # 新句永远是启用的：模板恰好是被禁用的那句时，别把"不播"也继承过来
+    base.pop("disabled", None)
     if _has_speaker_field(base):
         base.setdefault("speaker", "")
     return base
@@ -160,6 +162,13 @@ class _DialogueLineRow(QFrame):
 
     def _sync_collapsed_fields(self) -> None:
         d = self._data
+        # 禁用句（外层大纲行上标的）：这里只如实显示 + 原样带走，不在本对话框里改
+        disabled = d.get("disabled") is True
+        for w in (self._speaker, self._text):
+            f = w.font()
+            f.setStrikeOut(disabled)
+            w.setFont(f)
+        self.setToolTip("这一句已被禁用：数据留着，播放时整步跳过。" if disabled else "")
         has_sp = _has_speaker_field(d)
         self._speaker.setVisible(has_sp)
         if has_sp:

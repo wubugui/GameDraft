@@ -4449,5 +4449,964 @@
       }
     ],
     "restoreState": false
+  },
+  {
+    "id": "赌坊输钱",
+    "targetScene": "雾津街头",
+    "restoreState": false,
+    "steps": [
+      {
+        "kind": "action",
+        "type": "playNpcAnimation",
+        "params": {
+          "target": "player",
+          "state": "idle",
+          "loop": "true"
+        }
+      },
+      {
+        "kind": "parallel",
+        "tracks": [
+          {
+            "kind": "present",
+            "type": "cameraMove",
+            "x": 3174.77,
+            "y": 1280.4,
+            "duration": 600.0
+          },
+          {
+            "kind": "present",
+            "type": "cameraZoom",
+            "scale": 1.4,
+            "duration": 600.0
+          }
+        ]
+      },
+      {
+        "kind": "action",
+        "type": "moveEntityTo",
+        "params": {
+          "target": "player",
+          "x": 3184.47,
+          "y": 1293.8,
+          "speed": 120.0,
+          "moveAnimState": "walk",
+          "arriveAnimState": "idle",
+          "faceTowardMovement": true
+        }
+      },
+      {
+        "kind": "action",
+        "type": "faceEntity",
+        "params": {
+          "target": "街巷_赌坊门卫",
+          "direction": "left"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "text": "哪点钻出来的叫花子哦？",
+        "speaker": "看门的",
+        "scriptedNpcId": "赌坊看门人",
+        "portrait": {
+          "emotion": "angry"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "text": "梭！梭远点，莫挨到老子的门。",
+        "speaker": "看门的",
+        "scriptedNpcId": "赌坊看门人",
+        "portrait": {
+          "emotion": "angry"
+        }
+      },
+      {
+        "kind": "action",
+        "type": "showEmoteAndWait",
+        "params": {
+          "target": "player",
+          "emote": "!"
+        }
+      },
+      {
+        "kind": "action",
+        "type": "faceEntity",
+        "params": {
+          "target": "player",
+          "direction": "right"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "text": "……嘿。",
+        "scriptedNpcId": "player",
+        "portrait": {
+          "emotion": "smirk"
+        }
+      },
+      {
+        "kind": "action",
+        "type": "playSfx",
+        "params": {
+          "id": "sfx_coin_pouch_pat2fast"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "waitTime",
+        "duration": 600
+      },
+      {
+        "kind": "action",
+        "type": "faceEntity",
+        "params": {
+          "target": "街巷_赌坊门卫",
+          "direction": "left"
+        }
+      },
+      {
+        "kind": "action",
+        "type": "showEmoteAndWait",
+        "params": {
+          "target": "街巷_赌坊门卫",
+          "emote": "!"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "text": "……也。",
+        "speaker": "看门的",
+        "scriptedNpcId": "赌坊看门人",
+        "portrait": {
+          "emotion": "smirk"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "text": "看走眼咯！二哥，里头请，里头请！",
+        "speaker": "看门的",
+        "scriptedNpcId": "赌坊看门人",
+        "portrait": {
+          "emotion": "smirk"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "text": "要得嘛。晓得就好。",
+        "scriptedNpcId": "player",
+        "portrait": {
+          "emotion": "laugh"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showMovieBar",
+        "heightPercent": 0.12
+      },
+      {
+        "kind": "action",
+        "type": "moveEntityTo",
+        "params": {
+          "target": "街巷_赌坊门卫",
+          "x": 3112.26,
+          "y": 1125.6,
+          "speed": 150.0,
+          "moveAnimState": "walk"
+        }
+      },
+      {
+        "kind": "action",
+        "type": "setEntityEnabled",
+        "params": {
+          "target": "街巷_赌坊门卫",
+          "enabled": false
+        }
+      },
+      {
+        "kind": "action",
+        "type": "moveEntityTo",
+        "params": {
+          "target": "player",
+          "x": 3107.07,
+          "y": 1115.23,
+          "speed": 110.0,
+          "moveAnimState": "slow_walk",
+          "faceTowardMovement": true
+        }
+      },
+      {
+        "kind": "action",
+        "type": "setEntityEnabled",
+        "params": {
+          "target": "player",
+          "enabled": false
+        }
+      },
+      {
+        "kind": "action",
+        "type": "playSceneAmbient",
+        "params": {
+          "id": "赌场背景声"
+        }
+      },
+      {
+        "kind": "parallel",
+        "tracks": [
+          {
+            "kind": "present",
+            "type": "cameraMove",
+            "x": 3107.0,
+            "y": 1115.0,
+            "duration": 900.0
+          },
+          {
+            "kind": "present",
+            "type": "cameraZoom",
+            "scale": 1.9,
+            "duration": 900.0
+          }
+        ]
+      },
+      {
+        "kind": "present",
+        "type": "animLayer",
+        "animFile": "/resources/runtime/animation/fx_lantern_glow/anim.json",
+        "id": "door_glow",
+        "state": "idle",
+        "xPercent": 58,
+        "yPercent": 42,
+        "widthPercent": 26,
+        "alpha": 0.85,
+        "zIndex": 60
+      },
+      {
+        "kind": "present",
+        "type": "waitTime",
+        "duration": 500
+      },
+      {
+        "kind": "present",
+        "type": "showImg",
+        "id": "gamble",
+        "image": "/resources/runtime/images/illustrations/赌坊输钱/01_first_win_rake_in.png",
+        "zIndex": 50,
+        "kenBurns": {
+          "fromScale": 1.02,
+          "toScale": 1.09,
+          "fromX": 1,
+          "toX": -1,
+          "toY": 1,
+          "durationMs": 7000
+        }
+      },
+      {
+        "kind": "action",
+        "type": "playSfx",
+        "params": {
+          "id": "sfx_dice_bowl_roll_a"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "waitTime",
+        "duration": 900
+      },
+      {
+        "kind": "action",
+        "type": "playSfx",
+        "params": {
+          "id": "sfx_gamble_cheer_burst_a"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "哈哈哈！又是老子！",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center"
+      },
+      {
+        "kind": "present",
+        "type": "showImg",
+        "id": "gamble",
+        "image": "/resources/runtime/images/illustrations/赌坊输钱/02_kiss_coin.png",
+        "zIndex": 50,
+        "kenBurns": {
+          "fromScale": 1.02,
+          "toScale": 1.08,
+          "fromX": -1,
+          "toX": 1,
+          "toY": 0,
+          "durationMs": 6000
+        }
+      },
+      {
+        "kind": "action",
+        "type": "playSfx",
+        "params": {
+          "id": "sfx_dice_bowl_roll_b"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "waitTime",
+        "duration": 800
+      },
+      {
+        "kind": "present",
+        "type": "showImg",
+        "id": "gamble",
+        "image": "/resources/runtime/images/illustrations/赌坊输钱/03_peak_winning.png",
+        "zIndex": 50,
+        "kenBurns": {
+          "fromScale": 1.03,
+          "toScale": 1.1,
+          "fromX": -1,
+          "toX": 1,
+          "toY": 0,
+          "durationMs": 6000
+        }
+      },
+      {
+        "kind": "action",
+        "type": "playSfx",
+        "params": {
+          "id": "sfx_gamble_crowd_burst_a"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "waitTime",
+        "duration": 200
+      },
+      {
+        "kind": "action",
+        "type": "playSfx",
+        "params": {
+          "id": "sfx_gamble_cheer_burst_b"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "再来嘛！老子今黑了手气凶得很！",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center"
+      },
+      {
+        "kind": "action",
+        "type": "playSfx",
+        "params": {
+          "id": "sfx_dice_bowl_roll_a"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "waitTime",
+        "duration": 900.0
+      },
+      {
+        "kind": "present",
+        "type": "showImg",
+        "id": "gamble",
+        "image": "/resources/runtime/images/illustrations/赌坊输钱/04_toss_coins.png",
+        "zIndex": 50,
+        "kenBurns": {
+          "fromScale": 1.03,
+          "toScale": 1.1,
+          "fromX": 0,
+          "toX": 1,
+          "toY": -1,
+          "durationMs": 7000
+        }
+      },
+      {
+        "kind": "action",
+        "type": "playSfx",
+        "params": {
+          "id": "sfx_gamble_crowd_burst_b"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "waitTime",
+        "duration": 200.0
+      },
+      {
+        "kind": "action",
+        "type": "playSfx",
+        "params": {
+          "id": "sfx_gamble_cheer_burst_a"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "哈哈哈哈！鬼都拦不倒老子！",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center"
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "都莫走！今黑了老子请客！",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center"
+      },
+      {
+        "kind": "present",
+        "type": "waitTime",
+        "duration": 600.0
+      },
+      {
+        "kind": "action",
+        "type": "playSfx",
+        "params": {
+          "id": "sfx_dice_bowl_roll_a"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showImg",
+        "id": "gamble",
+        "image": "/resources/runtime/images/illustrations/赌坊输钱/05_table_turn_cold.png",
+        "zIndex": 50,
+        "kenBurns": {
+          "fromScale": 1.02,
+          "toScale": 1.06,
+          "fromX": 0,
+          "toX": 1,
+          "toY": 0,
+          "durationMs": 7000
+        }
+      },
+      {
+        "kind": "present",
+        "type": "animLayer",
+        "animFile": "/resources/runtime/animation/fx_lantern_glow/anim.json",
+        "id": "door_glow",
+        "state": "idle",
+        "xPercent": 58,
+        "yPercent": 42,
+        "widthPercent": 26,
+        "alpha": 0.45,
+        "zIndex": 60
+      },
+      {
+        "kind": "present",
+        "type": "waitTime",
+        "duration": 1400
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "……啊？",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center"
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "……再来！老子还有！",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center"
+      },
+      {
+        "kind": "action",
+        "type": "playSfx",
+        "params": {
+          "id": "sfx_dice_bowl_roll_b"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "animLayer",
+        "animFile": "/resources/runtime/animation/fx_lantern_glow/anim.json",
+        "id": "door_glow",
+        "state": "idle",
+        "xPercent": 58,
+        "yPercent": 42,
+        "widthPercent": 26,
+        "alpha": 0.28,
+        "zIndex": 60
+      },
+      {
+        "kind": "present",
+        "type": "showImg",
+        "id": "gamble",
+        "image": "/resources/runtime/images/illustrations/赌坊输钱/06_dice_cold_close.png",
+        "zIndex": 50,
+        "kenBurns": {
+          "fromScale": 1.03,
+          "toScale": 1.09,
+          "fromX": 0,
+          "toX": -1,
+          "toY": 1,
+          "durationMs": 9000
+        }
+      },
+      {
+        "kind": "present",
+        "type": "waitTime",
+        "duration": 1600
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "……不对头哦。刚才那个……",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center"
+      },
+      {
+        "kind": "present",
+        "type": "waitTime",
+        "duration": 500
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "……啥子不对头？",
+        "subtitleBand": "movieTop",
+        "subtitleAlign": "center"
+      },
+      {
+        "kind": "present",
+        "type": "waitTime",
+        "duration": 700
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "……没得没得。老子扯把子的，扯把子的……",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center"
+      },
+      {
+        "kind": "present",
+        "type": "showImg",
+        "id": "gamble",
+        "image": "/resources/runtime/images/illustrations/赌坊输钱/07_dragged_out.png",
+        "zIndex": 50,
+        "kenBurns": {
+          "fromScale": 1.1,
+          "toScale": 1.02,
+          "fromX": -3,
+          "toX": 2,
+          "toY": -1,
+          "durationMs": 7000
+        }
+      },
+      {
+        "kind": "action",
+        "type": "playSfx",
+        "params": {
+          "id": "sfx_scuffle_shove_b"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "哎哎哎——扯啥子扯！衣裳要烂！",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center"
+      },
+      {
+        "kind": "present",
+        "type": "waitTime",
+        "duration": 600
+      },
+      {
+        "kind": "present",
+        "type": "flashWhite",
+        "duration": 120
+      },
+      {
+        "kind": "action",
+        "type": "playSfx",
+        "params": {
+          "id": "sfx_bench_topple_a"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "放手放手！老子自己会走！",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center"
+      },
+      {
+        "kind": "present",
+        "type": "animLayer",
+        "animFile": "/resources/runtime/animation/fx_lantern_glow/anim.json",
+        "id": "door_glow",
+        "state": "idle",
+        "xPercent": 58,
+        "yPercent": 42,
+        "widthPercent": 26,
+        "alpha": 0.12,
+        "zIndex": 60
+      },
+      {
+        "kind": "present",
+        "type": "waitTime",
+        "duration": 700
+      },
+      {
+        "kind": "action",
+        "type": "setEntityEnabled",
+        "params": {
+          "target": "player",
+          "enabled": true
+        }
+      },
+      {
+        "kind": "action",
+        "type": "jumpEntityTo",
+        "params": {
+          "target": "player",
+          "x": 3150.0,
+          "y": 1130.0
+        }
+      },
+      {
+        "kind": "action",
+        "type": "playNpcAnimation",
+        "params": {
+          "target": "player",
+          "state": "crouch",
+          "loop": "false"
+        }
+      },
+      {
+        "kind": "action",
+        "type": "faceEntity",
+        "params": {
+          "target": "player",
+          "direction": "left"
+        }
+      },
+      {
+        "kind": "action",
+        "type": "setEntityEnabled",
+        "params": {
+          "target": "街巷_赌坊门卫",
+          "enabled": true
+        }
+      },
+      {
+        "kind": "action",
+        "type": "jumpEntityTo",
+        "params": {
+          "target": "街巷_赌坊门卫",
+          "x": 3107.0,
+          "y": 1118.0
+        }
+      },
+      {
+        "kind": "action",
+        "type": "faceEntity",
+        "params": {
+          "target": "街巷_赌坊门卫",
+          "direction": "left"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "animLayer",
+        "animFile": "/resources/runtime/animation/fx_lantern_glow/anim.json",
+        "id": "door_glow",
+        "state": "idle",
+        "xPercent": 58,
+        "yPercent": 42,
+        "widthPercent": 26,
+        "alpha": 0.9,
+        "zIndex": 60
+      },
+      {
+        "kind": "parallel",
+        "tracks": [
+          {
+            "kind": "present",
+            "type": "cameraMove",
+            "x": 3140.0,
+            "y": 1125.0,
+            "duration": 500.0
+          },
+          {
+            "kind": "present",
+            "type": "cameraZoom",
+            "scale": 1.5,
+            "duration": 500.0
+          }
+        ]
+      },
+      {
+        "kind": "present",
+        "type": "showImg",
+        "id": "gamble",
+        "image": "/resources/runtime/images/illustrations/赌坊输钱/08_door_shut_alley.png",
+        "zIndex": 50,
+        "kenBurns": {
+          "fromScale": 1.09,
+          "toScale": 1.0,
+          "fromX": 1,
+          "toX": 0,
+          "toY": 2,
+          "durationMs": 9000
+        }
+      },
+      {
+        "kind": "action",
+        "type": "playSfx",
+        "params": {
+          "id": "sfx_body_dump_ground_a"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "waitTime",
+        "duration": 900
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "text": "……梭远点。",
+        "speaker": "看门的",
+        "scriptedNpcId": "赌坊看门人",
+        "portrait": {
+          "emotion": "angry"
+        }
+      },
+      {
+        "kind": "action",
+        "type": "playSfx",
+        "params": {
+          "id": "sfx_door_slam_shut_a"
+        }
+      },
+      {
+        "kind": "action",
+        "type": "stopSceneAmbient",
+        "params": {
+          "id": "赌场背景声",
+          "fadeMs": 900
+        }
+      },
+      {
+        "kind": "present",
+        "type": "animLayer",
+        "animFile": "/resources/runtime/animation/fx_lantern_glow/anim.json",
+        "id": "door_glow",
+        "state": "idle",
+        "xPercent": 58,
+        "yPercent": 42,
+        "widthPercent": 26,
+        "alpha": 0.0,
+        "zIndex": 60
+      },
+      {
+        "kind": "action",
+        "type": "setEntityEnabled",
+        "params": {
+          "target": "街巷_赌坊门卫",
+          "enabled": false
+        }
+      },
+      {
+        "kind": "present",
+        "type": "waitTime",
+        "duration": 700
+      },
+      {
+        "kind": "action",
+        "type": "playSfx",
+        "params": {
+          "id": "sfx_dog_howl_night_a"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "waitTime",
+        "duration": 1400.0
+      },
+      {
+        "kind": "action",
+        "type": "playSfx",
+        "params": {
+          "id": "sfx_gamble_jeer_muffled_a"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "waitTime",
+        "duration": 1300
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "……龟儿！那个骰子鬼迷日眼的！老子看到起的！",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center"
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "……你等到起哈！你个灾舅子！",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center"
+      },
+      {
+        "kind": "present",
+        "type": "waitTime",
+        "duration": 600.0
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "……老子今黑了背时。",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center"
+      },
+      {
+        "kind": "present",
+        "type": "waitTime",
+        "duration": 800.0
+      },
+      {
+        "kind": "present",
+        "type": "showImg",
+        "id": "gamble",
+        "image": "/resources/runtime/images/illustrations/赌坊输钱/09_picking_up_coins.png",
+        "zIndex": 50,
+        "kenBurns": {
+          "fromScale": 1.03,
+          "toScale": 1.07,
+          "fromX": 0,
+          "toX": -1,
+          "toY": 1,
+          "durationMs": 8000
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "……哦豁。",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center"
+      },
+      {
+        "kind": "action",
+        "type": "playSfx",
+        "params": {
+          "id": "sfx_coin_hand_heft_a"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showSubtitle",
+        "text": "嘿嘿……一文是一文嘛。",
+        "subtitleBand": "movieBottom",
+        "subtitleAlign": "center"
+      },
+      {
+        "kind": "action",
+        "type": "teleportEntityTo",
+        "params": {
+          "target": "player",
+          "x": 3273.06,
+          "y": 1317.52
+        }
+      },
+      {
+        "kind": "present",
+        "type": "waitTime",
+        "duration": 800.0
+      },
+      {
+        "kind": "present",
+        "type": "hideImg",
+        "id": "gamble"
+      },
+      {
+        "kind": "present",
+        "type": "hideMovieBar"
+      },
+      {
+        "kind": "action",
+        "type": "playNpcAnimation",
+        "params": {
+          "target": "player",
+          "state": "crouch",
+          "reverse": true,
+          "loop": "false",
+          "thenState": "idle"
+        }
+      },
+      {
+        "kind": "action",
+        "type": "showEmoteAndWait",
+        "params": {
+          "target": "player",
+          "emote": "!"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "text": "……义庄！还有二百五！",
+        "scriptedNpcId": "player",
+        "portrait": {
+          "emotion": "laugh"
+        }
+      },
+      {
+        "kind": "action",
+        "type": "moveEntityTo",
+        "params": {
+          "target": "player",
+          "x": 3112.26,
+          "y": 1110.04,
+          "speed": 130.0,
+          "moveAnimState": "walk",
+          "arriveAnimState": "idle",
+          "faceTowardMovement": true
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "text": "妈卖批。就当白跑一趟嘛，反正就背个人。",
+        "scriptedNpcId": "player",
+        "portrait": {
+          "emotion": "smirk"
+        }
+      },
+      {
+        "kind": "action",
+        "type": "moveEntityTo",
+        "params": {
+          "target": "player",
+          "x": 3133.01,
+          "y": 1115.23,
+          "speed": 150.0,
+          "moveAnimState": "walk",
+          "faceTowardMovement": true
+        }
+      },
+      {
+        "kind": "present",
+        "type": "cameraZoom",
+        "scale": 1.0,
+        "duration": 600.0
+      }
+    ],
+    "targetSpawnPoint": "spawn_0"
   }
 ]

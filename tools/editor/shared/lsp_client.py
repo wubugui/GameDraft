@@ -288,6 +288,7 @@ _SIMPLE_OVERLAY_FILES: dict[str, list[tuple[str, str]]] = {
     "signal_cues": [("signal_cues.json", "signal_cues")],
     "bubble_lines": [("bubble_lines.json", "bubble_lines")],
     "planes": [("planes.json", "planes")],
+    "npc_schedules": [("npc_schedules.json", "npc_schedules")],
 }
 
 #: 序列化形状特殊的镜像桶(overlay_payloads 内逐一特判,形状对齐 save_all 分支):

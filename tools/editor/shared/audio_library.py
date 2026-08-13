@@ -1,8 +1,9 @@
 """音频目录共享层：条目元数据 / 时长探测 / 引用计数 / 未登记文件扫描。
 
-**为什么单独一层**：音频 id 在编辑器里有六个消费点（playBgm/playSfx/stopSceneAmbient
+**为什么单独一层**：音频 id 在编辑器里有一把消费点（playBgm/playSfx/stopSceneAmbient
 三个 action 参数、场景 bgm 与 ambientSounds、过场字幕配音 subtitleVoice、
-pressure_holds.holdSfx、audio_config.systemSfx 映射）加上音频配置编辑器本身。
+pressure_holds.holdSfx、document_reveals.revealSfx、audio_config.systemSfx 映射）
+加上音频配置编辑器本身。
 「选之前得先知道」的信息——这条音多长、文件还在不在、有没有人在用——此前一处都没有，
 各处各写一份必然漂，所以收进这一层，选择器与配置编辑器共用同一份真相。
 
@@ -231,6 +232,13 @@ class AudioMetaCache(QObject):
         self._wake = threading.Event()
         self._worker: threading.Thread | None = None
         self._stopped = False
+        # 宿主（面板/弹窗）被销毁后，后台线程还可能在跑：往已析构的 QObject 发信号会
+        # 抛 RuntimeError（运气差时直接段错误）。用一个**不持有 self** 的共享标志来断路，
+        # 这样 destroyed 连接不会把 cache 自己钉在内存里。
+        self._alive = [True]
+        self.destroyed.connect(
+            lambda _obj=None, flag=self._alive: flag.__setitem__(0, False),
+        )
 
     # -- 主线程 API -------------------------------------------------------
     def duration(self, path: Path | None) -> float | None:
@@ -278,7 +286,7 @@ class AudioMetaCache(QObject):
         self._worker.start()
 
     def _run(self) -> None:
-        while not self._stopped:
+        while not self._stopped and self._alive[0]:
             batch: list[tuple[tuple[str, int, int], Path]] = []
             with self._lock:
                 while self._pending and len(batch) < 24:
@@ -297,8 +305,18 @@ class AudioMetaCache(QObject):
                 for key, value in results:
                     self._done[key] = value
                     self._queued.discard(key)
-            if not self._stopped:
-                self.updated.emit()
+            self._emit_updated()
+
+    def _emit_updated(self) -> None:
+        """只在宿主还活着时发信号；对象已析构就让线程自己收摊（fail-safe，不 fail-open）。"""
+        if self._stopped or not self._alive[0]:
+            self._stopped = True
+            return
+        try:
+            self.updated.emit()
+        except RuntimeError:
+            # destroyed 与本次 emit 之间的竞态窗口：宿主刚没，标记停机即可
+            self._stopped = True
 
 
 # --------------------------------------------------- 未登记文件 / 引用计数
@@ -351,22 +369,26 @@ def suggest_audio_id(channel: str, path: Path, taken: Iterable[str]) -> str:
 
 
 _STRING_TOKEN_RE = re.compile(r'"((?:[^"\\]|\\.)*)"')
+_TS_STRING_RE = re.compile(r"""'([^'\\\n]*)'|"([^"\\\n]*)"|`([^`\\\n$]*)`""")
 
 
 def build_reference_counts(model: ProjectModel) -> dict[str, int]:
-    """扫内容 JSON，统计每个字符串被当值出现的次数（audio_config 自身除外）。
+    """统计每个字符串在内容 JSON（当值）+ 运行时 TS 源码里出现的次数。
+
+    **为什么连 TS 一起扫**：有的音频 id 是代码里写死的常量（例如
+    `OBJECT_EXAMINE_FLY_BUZZ_AMBIENT_ID = 'fly_buzz'`），只扫 JSON 会把它报成
+    「0 引用」——那是最危险的假零：看着没人用，删了就静音。
 
     这是**文本级**统计，不是语义级：够用来回答「删掉这条会不会伤到人」，
     不该拿来当权威引用图（权威在 json_lang LSP 的「查引用」）。
-    统计只看磁盘文件，编辑器里未保存的改动不计——调用方需在文案里说清。
+    只看磁盘文件，编辑器里未保存的改动不计——调用方需在文案里说清。
     """
     if model.project_path is None:
         return {}
     paths = model.paths
-    roots = [paths.data_dir, paths.scenes_dir, paths.dialogues_dir]
     skip = {(paths.data_dir / "audio_config.json").resolve()}
     counter: Counter[str] = Counter()
-    for root in roots:
+    for root in (paths.data_dir, paths.scenes_dir, paths.dialogues_dir):
         if not root.is_dir():
             continue
         for file in root.rglob("*.json"):
@@ -377,6 +399,18 @@ def build_reference_counts(model: ProjectModel) -> dict[str, int]:
             except (OSError, UnicodeDecodeError):
                 continue
             counter.update(_iter_json_string_values(text))
+    src_root = model.project_path / "src"
+    if src_root.is_dir():
+        for pattern in ("*.ts", "*.tsx"):
+            for file in src_root.rglob(pattern):
+                try:
+                    text = file.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    continue
+                counter.update(
+                    next(g for g in match.groups() if g is not None)
+                    for match in _TS_STRING_RE.finditer(text)
+                )
     return dict(counter)
 
 

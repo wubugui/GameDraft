@@ -89,8 +89,16 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
   stopBgm: { required: [], optional: ['fadeMs'] },
   playSfx: { required: ['id'], nonEmpty: ['id'], optional: ['volume'] },
   stopSceneAmbient: { required: [], optional: ['id', 'fadeMs'] },
+  playSceneAmbient: { required: ['id'], nonEmpty: ['id'], optional: ['volume'] },
   endDay: { required: [] },
   addDelayedEvent: { required: ['targetDay', 'actions'] },
+  advanceTime: { required: ['minutes'], optional: ['transition'] },
+  advanceTimeTo: { required: ['phase'], nonEmpty: ['phase'], optional: ['transition'] },
+  setNpcScheduleOverride: {
+    required: ['characterId'],
+    nonEmpty: ['characterId'],
+    optional: ['scene', 'x', 'y', 'activity', 'clear'],
+  },
 
   // ---- 档案 / 过场 / 小游戏 ----
   addArchiveEntry: { required: ['bookType', 'entryId'], nonEmpty: ['bookType', 'entryId'] },
@@ -255,6 +263,13 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
     // jumpAnimState 只播一次且帧游标按移动进度插值；landAnimState 缺省回 rest/idle。
     // sceneId 仅编辑器复现地图用，运行时忽略。
     optional: ['durationMs', 'arcHeight', 'jumpAnimState', 'landAnimState', 'faceTowardMovement', 'sceneId'],
+  },
+  teleportEntityTo: {
+    required: ['target', 'x', 'y'],
+    nonEmpty: ['target'],
+    // 一帧到位：无时长、无动画、不碰朝向（要转身接 faceEntity）。
+    // sceneId 仅编辑器复现地图用，运行时忽略（同 moveEntityTo / jumpEntityTo）。
+    optional: ['sceneId'],
   },
   // direction / faceTarget 二选一（运行时校验至少一个），条件必填不在缺参检查建模。
   faceEntity: { required: ['target'], nonEmpty: ['target'], optional: ['direction', 'faceTarget'] },

@@ -67,7 +67,6 @@ class TestAudioSystemSfxNav(_Base):
         from tools.editor.editors.audio_editor import (
             AudioEditor, AudioIdPreviewSelector,
         )
-        from PySide6.QtWidgets import QTableWidgetItem
         with TemporaryDirectory() as td:
             m = self._model(Path(td) / "p")
             m.audio_config["sfx"] = {}
@@ -76,34 +75,25 @@ class TestAudioSystemSfxNav(_Base):
             sfx_tab = ed._sub_tabs[2]
             sys_tab = ed._sub_tabs[3]
             # 在 SFX 子页新增一行 id,Apply
-            r = sfx_tab._table.rowCount()
-            sfx_tab._table.insertRow(r)
-            sfx_tab._table.setItem(r, 0, QTableWidgetItem("sfx_new"))
-            sfx_tab._table.setCellWidget(r, 1, sfx_tab._make_src_row_widget(""))
+            sfx_tab.add_row("sfx_new")
             sfx_tab._apply()  # 触发 applied → sys_tab.refresh_sfx_choices
             self.assertIn("sfx_new", m.all_audio_ids("sfx"))
-            # System SFX 第 0 行的 sfx 下拉(IdRefSelector=QComboBox)现在应含 sfx_new
+            # System SFX 第 0 行的 sfx 选择器候选应立即含 sfx_new
             sel = sys_tab._table.cellWidget(0, 1)
             self.assertIsInstance(sel, AudioIdPreviewSelector)
-            combo = sel._selector  # 内部 QComboBox
-            texts = [combo.itemText(i) for i in range(combo.count())]
-            self.assertTrue(
-                any("sfx_new" in t for t in texts),
-                f"SFX 子页 Apply 后 System SFX 下拉候选应立即含新 id;实际={texts}")
+            self.assertIn(
+                "sfx_new", sel.item_ids(),
+                f"SFX 子页 Apply 后 System SFX 候选应立即含新 id;实际={sel.item_ids()}")
 
     def test_confirm_close_discard_rolls_back(self) -> None:
         from tools.editor.editors.audio_editor import AudioEditor
-        from PySide6.QtWidgets import QTableWidgetItem
         with TemporaryDirectory() as td:
             m = self._model(Path(td) / "p")
             m.audio_config["bgm"] = {"bgm_a": {"src": "/resources/runtime/audio/a.wav"}}
             ed = AudioEditor(m)
             # 在 BGM 子页新增一行未 Apply
             bgm = ed._sub_tabs[0]
-            r = bgm._table.rowCount()
-            bgm._table.insertRow(r)
-            bgm._table.setItem(r, 0, QTableWidgetItem("bgm_unsaved"))
-            bgm._table.setCellWidget(r, 1, bgm._make_src_row_widget(""))
+            bgm.add_row("bgm_unsaved")
             self.assertTrue(ed._is_dirty())
             with patch.object(QMessageBox, "question",
                               return_value=QMessageBox.StandardButton.Discard):

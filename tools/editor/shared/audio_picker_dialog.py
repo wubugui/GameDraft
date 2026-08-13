@@ -51,10 +51,16 @@ _CHANNEL_LABEL = {"bgm": "背景音乐", "ambient": "环境音", "sfx": "音效"
 
 
 class _AudioRowItem(QTreeWidgetItem):
-    """时长列按秒数排序（按文本排会把 ``9.9s`` 排到 ``10.0s`` 后面）。"""
+    """时长列按秒数排序（按文本排会把 ``9.9s`` 排到 ``10.0s`` 后面）。
+
+    ⚠ 这里**绝不能**调 ``super().__lt__``：PySide 的 ``QTreeWidgetItemWrapper::operator<``
+    会再派发回本 Python 覆写，无限递归直接把进程打成 SIGSEGV（实测 exit=139）。
+    非时长列自己做文本比较。
+    """
 
     def __lt__(self, other: QTreeWidgetItem) -> bool:  # noqa: D105
-        col = self.treeWidget().sortColumn() if self.treeWidget() else _COL_ID
+        tree = self.treeWidget()
+        col = tree.sortColumn() if tree is not None else _COL_ID
         if col == _COL_DURATION:
             mine = self.data(_COL_DURATION, _SORT_ROLE)
             theirs = other.data(_COL_DURATION, _SORT_ROLE)
@@ -62,7 +68,7 @@ class _AudioRowItem(QTreeWidgetItem):
             mine = float(mine) if isinstance(mine, (int, float)) else float("inf")
             theirs = float(theirs) if isinstance(theirs, (int, float)) else float("inf")
             return mine < theirs
-        return super().__lt__(other)
+        return self.text(col).casefold() < other.text(col).casefold()
 
 
 class AudioPickerDialog(QDialog):
@@ -89,6 +95,7 @@ class AudioPickerDialog(QDialog):
         self._cache = cache if cache is not None else lib.AudioMetaCache(self)
         self._owns_cache = cache is None
         self._pending_sound: str = ""
+        self._pending_autoplay = False
 
         label = _CHANNEL_LABEL.get(channel, channel)
         self.setWindowTitle(title or f"选择{label}（可试听）")
@@ -213,9 +220,14 @@ class AudioPickerDialog(QDialog):
             self._tree.addTopLevelItem(item)
             if aid == self._current:
                 current_item = item
+        # 默认保持 audio_config 的原键序（同批素材是挨着登记的，按 id 字典序排反而拆散它们）；
+        # 点表头才排序。**先**把排序指示器摘到 -1 再开 setSortingEnabled——顺序反了的话
+        # 开启那一下会立刻按第 0 列排一次，原键序就没了（实测：列表整个倒着显示）。
+        self._tree.header().setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
         self._tree.setSortingEnabled(True)
         if current_item is not None:
-            self._tree.setCurrentItem(current_item)
+            # 打开就自动出声太吓人：只定位不试听，等用户按方向键或 ▶。
+            self._auto_guard(lambda: self._tree.setCurrentItem(current_item))
             self._tree.scrollToItem(current_item)
         self._apply_filter(self._filter.text())
 
@@ -312,10 +324,12 @@ class AudioPickerDialog(QDialog):
     def _on_current_changed(
         self, item: QTreeWidgetItem | None, _prev: QTreeWidgetItem | None,
     ) -> None:
-        if item is None or not self._auto.isChecked():
+        if item is None:
             return
-        # 连按方向键快速掠过时不该每行都起播；50ms 内的连续移动只放最后一条
+        # 连按方向键快速掠过时不该每行都起播；60ms 内的连续移动只放最后一条。
+        # 关掉「选中即试听」也照样换源——否则走带的 ▶ 会放上一行那条（听错了还不知道）。
         self._pending_sound = str(item.data(_COL_ID, _VALUE_ROLE) or "")
+        self._pending_autoplay = self._auto.isChecked()
         QTimer.singleShot(60, self, self._play_pending)
 
     def _play_pending(self) -> None:
@@ -325,11 +339,11 @@ class AudioPickerDialog(QDialog):
         cur = self._tree.currentItem()
         if cur is None or str(cur.data(_COL_ID, _VALUE_ROLE) or "") != aid:
             return  # 已经又换行了，交给后一次
-        self._play_id(aid)
+        self._play_id(aid, autoplay=self._pending_autoplay)
 
-    def _play_id(self, audio_id: str) -> None:
+    def _play_id(self, audio_id: str, *, autoplay: bool = True) -> None:
         path = lib.audio_config_file_for_id(self._model, self._channel, audio_id)
-        self._transport.play_file(path)
+        self._transport.play_file(path, autoplay=autoplay)
 
     # ----------------------------------------------------------- 键盘/菜单
     def eventFilter(self, obj, event):  # noqa: ANN001, D102

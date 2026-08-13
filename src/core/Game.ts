@@ -41,6 +41,7 @@ import { SignalCueManager } from '../systems/SignalCueManager';
 import { HealthSystem } from '../systems/HealthSystem';
 import { SmellSystem } from '../systems/SmellSystem';
 import { PlaneReconciler } from '../systems/PlaneReconciler';
+import { NpcScheduleSystem } from '../systems/NpcScheduleSystem';
 import { HUD } from '../ui/HUD';
 import type { SmellProfilesRaw } from '../ui/smell/SmellIndicatorRenderer';
 import { NotificationUI } from '../ui/NotificationUI';
@@ -84,6 +85,7 @@ import type {
   CharacterRegistryFile,
   PlayerVerb,
   ISaveDataProvider,
+  TimeTransition,
 } from '../data/types';
 import { buildCharacterRegistry } from '../data/characterRegistry';
 import { DEFAULT_ENTITY_PIXEL_DENSITY_BLUR_SCALE } from '../rendering/EntityPixelDensityMatch';
@@ -403,6 +405,7 @@ export class Game {
   private healthSystem: HealthSystem;
   private smellSystem: SmellSystem;
   private planeReconciler: PlaneReconciler;
+  private npcScheduleSystem: NpcScheduleSystem;
   private smellProfilesData: SmellProfilesRaw | null = null;
   private pressureHoldUI!: PressureHoldUI;
   private depthDebugVisualizer!: DepthDebugVisualizer;
@@ -572,6 +575,7 @@ export class Game {
       this.flagStore,
       this.questManager,
       this.scenarioStateManager,
+      this.actionExecutor,
     );
     this.encounterManager = new EncounterManager(this.eventBus, this.flagStore, this.actionExecutor);
     this.audioManager = new AudioManager(this.eventBus);
@@ -585,6 +589,7 @@ export class Game {
     this.healthSystem = new HealthSystem(this.eventBus, this.flagStore, this.actionExecutor);
     this.smellSystem = new SmellSystem(this.eventBus, this.flagStore);
     this.planeReconciler = new PlaneReconciler(this.eventBus);
+    this.npcScheduleSystem = new NpcScheduleSystem(this.eventBus);
     this.archiveManager = new ArchiveManager(this.eventBus, this.flagStore);
     this.emoteBubbleManager = new EmoteBubbleManager();
     this.bubbleChatterSystem = new BubbleChatterSystem({
@@ -674,6 +679,8 @@ export class Game {
       { name: 'narrativeStateManager', system: this.narrativeStateManager },
       // 位面对账器排在叙事之后：deserialize 时叙事激活态已恢复，可立即重派生激活位面。
       { name: 'planeReconciler', system: this.planeReconciler },
+      // 日程排在 dayManager（时刻）之后无所谓：它自身只存剧情覆盖，位置由时刻现算。
+      { name: 'npcScheduleSystem', system: this.npcScheduleSystem },
       { name: 'narrativePackageDirector', system: this.narrativePackageDirector },
       { name: 'documentRevealManager', system: this.documentRevealManager },
       { name: 'encounterManager', system: this.encounterManager },
@@ -1034,6 +1041,9 @@ export class Game {
         assetManager: this.assetManager,
       });
     }
+    /** game_config.dayNight → DayManager：无条件调用（缺省段也要落到时段表上）。
+     *  configure 只在时刻尚未被动过时同步开局时刻，故不必像 health 那样重跑 init。 */
+    this.dayManager.configure(this.gameConfig.dayNight);
 
     this.inspectBox = new InspectBox(this.renderer, this.stringsProvider);
     this.pickupNotification = new PickupNotification(this.renderer, this.stringsProvider);
@@ -1411,6 +1421,36 @@ export class Game {
       membership: this.planeReconciler.getActivePlaneMembership(),
     }));
 
+    this.npcScheduleSystem.bindRuntime({
+      getMinutesOfDay: () => this.dayManager.minutesOfDay,
+      getCurrentSceneId: () => this.sceneManager.currentSceneData?.id ?? null,
+      getCurrentSceneData: () => this.sceneManager.currentSceneData ?? null,
+      getCurrentNpcs: () => [...this.sceneManager.getCurrentNpcs()],
+      isExploring: () => this.stateController.currentState === GameState.Exploring,
+      // 条件一律走唯一上下文工厂（律5）：日程条件因此能读 flag/quest/narrative/plane/timePhase 全套
+      evalConditions: (conds) => {
+        if (!conds || conds.length === 0) return true;
+        const ctx = this.buildConditionEvalContext();
+        return conds.every((c) => evaluateConditionExpr(c, ctx));
+      },
+      speak: (npc, text) => {
+        this.emoteBubbleManager.show(npc, this.resolveDisplayText(text));
+      },
+      refreshEntityVisibility: () => {
+        const sid = this.sceneManager.currentSceneData?.id;
+        if (!sid) return;
+        this.sceneManager.refreshForTimeChange(
+          sid,
+          this.stateController.currentState === GameState.Exploring,
+        );
+      },
+    });
+    this.sceneManager.setNpcSchedulePresenceGetter((def) =>
+      this.npcScheduleSystem.isNpcPresentNow(def),
+    );
+    // 实体级时段归属（phases）：与日程正交，判定挂在同一批派生基底口上
+    this.sceneManager.setCurrentPhaseGetter(() => this.dayManager.currentPhase);
+
     this.documentRevealManager.setBlendExecutor((id, from, to, x, y, w, dur, delay) =>
       this.cutsceneManager.blendOverlayImage(id, from, to, x, y, w, dur, delay));
     await this.documentRevealManager.loadDefinitions();
@@ -1444,6 +1484,7 @@ export class Game {
       encounterManager: this.encounterManager,
       audioManager: this.audioManager,
       dayManager: this.dayManager,
+      npcScheduleSystem: this.npcScheduleSystem,
       archiveManager: this.archiveManager,
       cutsceneManager: this.cutsceneManager,
       sceneManager: this.sceneManager,
@@ -1482,6 +1523,7 @@ export class Game {
       clearCameraFollowTarget: () => {
         this.cameraFollowTargetId = null;
       },
+      snapCameraToActorIfFollowed: (entityId) => this.snapCameraToActorIfFollowed(entityId),
       stopNpcPatrol: (npcId) => {
         this.stopNpcPatrol(npcId);
       },
@@ -1985,6 +2027,7 @@ export class Game {
       this.encounterManager.loadDefs(),
       this.pressureHoldManager.loadDefs(),
       this.planeReconciler.loadDefs(),
+      this.npcScheduleSystem.loadDefs(),
       this.signalCueManager.loadDefs(),
       this.bubbleChatterSystem.loadDefs(),
       this.audioManager.loadConfig(),
@@ -3831,6 +3874,8 @@ export class Game {
       getActivePlaneId: () => this.planeReconciler.getActivePlaneId(),
       // 身体姿态与位面同构：都是「世界此刻的样子」，走同一条条件通道
       getPlayerPosture: () => this.playerActionSystem.getPosture(),
+      // 时段同理（由 DayManager 的时刻派生，不是独立状态）
+      getTimePhase: () => this.dayManager.currentPhase,
     };
   }
 
@@ -4402,6 +4447,36 @@ export class Game {
         url.searchParams.set('narrativeWarp', id);
         window.location.assign(url.toString());
       },
+      getDayNightState: () => {
+        const sched = this.npcScheduleSystem.getDebugState();
+        const minutes = this.dayManager.minutesOfDay;
+        const sceneEnabled =
+          this.sceneManager.currentSceneData?.dayNight?.enabled === true;
+        const managed: Array<{ id: string; present: boolean }> = [];
+        for (const npc of this.sceneManager.getCurrentNpcs()) {
+          const cid = String(npc.def.characterId ?? '').trim();
+          if (!cid) continue;
+          // 受管 = 这个角色此刻能解析出日程落点（没配表/表条件不满足的不列）
+          if (!this.npcScheduleSystem.resolvePlacement(cid, minutes)) continue;
+          managed.push({ id: npc.id, present: this.npcScheduleSystem.isNpcPresentNow(npc.def) });
+        }
+        return {
+          minutes,
+          phase: this.dayManager.currentPhase,
+          day: this.dayManager.currentDay,
+          phases: this.dayManager.phaseList.map((p) => ({ id: p.id, label: p.label ?? p.id })),
+          sceneEnabled,
+          leaving: sched.leaving,
+          arriving: sched.arriving,
+          managed,
+        };
+      },
+      devAdvanceTime: (minutes, transition) => {
+        void this.dayManager.advanceTime(minutes, transition as TimeTransition);
+      },
+      devAdvanceTimeToPhase: (phase, transition) => {
+        void this.dayManager.advanceTimeTo(phase, transition as TimeTransition);
+      },
     });
     if (!visualCapture) this.devModeUI.open();
 
@@ -4649,6 +4724,9 @@ export class Game {
     }
     data.dialogueLog = this.dialogueLogUI.serialize();
     data.game = { playTimeMs: this.playTimeMs, randomState: this.runtimeRandom.getState() };
+    /** 玩家站位：不进 sceneManager 的 sceneMemory（那是场景实体的覆盖桶，玩家不是场景实体），
+     *  单列一桶。缺该键的旧档读回时回落到出生点（见 distributeSaveData）。 */
+    data.player = { x: this.player.x, y: this.player.y, facing: this.player.facingDirection };
     return data;
   }
 
@@ -4673,10 +4751,35 @@ export class Game {
         this.playTimeMs = (data['game'] as any).playTimeMs ?? 0;
         this.runtimeRandom.setState((data['game'] as any).randomState);
       }
+      this.restorePlayerPose(data['player']);
     } finally {
       this.questManager.setRestoring(false);
       this.archiveManager.setRestoring(false);
       this.narrativePackageDirector.setRestoring(false);
+    }
+  }
+
+  /** 读档待落位的玩家坐标：由 distribute 收下、由紧随其后的场景重载消费（见 restorePlayerPose）。 */
+  private pendingRestorePlayerPosition: { x: number; y: number } | null = null;
+
+  /**
+   * 读档恢复玩家站位与朝向。
+   * x/y **不能在这里直接写**：紧随 distribute 之后的场景重载会把玩家摆到出生点，就地写必被盖掉；
+   * 故只登记待落位坐标，交给 reloadScene 透传进 loadScene 覆盖出生点。
+   * 朝向不受场景装载影响，就地设即可。
+   * 旧档没有 player 桶 → 待落位保持 null = 一切照旧走出生点（向后兼容，不需要升存档版本）。
+   */
+  private restorePlayerPose(raw: unknown): void {
+    this.pendingRestorePlayerPosition = null;
+    if (!raw || typeof raw !== 'object') return;
+    const pose = raw as { x?: unknown; y?: unknown; facing?: unknown };
+    const x = typeof pose.x === 'number' ? pose.x : Number(pose.x);
+    const y = typeof pose.y === 'number' ? pose.y : Number(pose.y);
+    if (Number.isFinite(x) && Number.isFinite(y)) {
+      this.pendingRestorePlayerPosition = { x, y };
+    }
+    if (pose.facing === 'left' || pose.facing === 'right') {
+      this.player.setFacing(pose.facing === 'left' ? -1 : 1, 0);
     }
   }
 
@@ -5100,7 +5203,12 @@ export class Game {
 
   private async reloadScene(sceneId: string): Promise<void> {
     this.sceneManager.unloadScene();
-    await this.sceneManager.loadScene(sceneId);
+    /** 读档落位：存档里的玩家坐标覆盖出生点。走 loadScene 的位置覆盖参数（与 changeScene 的
+     *  cameraX/cameraY 同一条），落点在 onEnter **之前**，开场演出看到的就已经是存档站位。
+     *  非读档路径（F2 重载、dev 跳场景）待落位恒为 null，语义不变。 */
+    const restorePos = this.pendingRestorePlayerPosition;
+    this.pendingRestorePlayerPosition = null;
+    await this.sceneManager.loadScene(sceneId, undefined, restorePos ?? undefined);
     /** η2a 交接：读档后 onEnter 可能已自动开演（对话/过场/遭遇/小游戏）——
      *  仅在没有进行中的子状态时才盖写回 Exploring，避免顶掉刚开播的演出。 */
     const s = this.stateController.currentState;
@@ -5646,6 +5754,24 @@ export class Game {
     }
   }
 
+  /**
+   * 瞬移（teleportEntityTo）后的镜头补正：**只有镜头此刻真锚在该实体上才 snap**。
+   * - 有显式 cameraFollowActor 目标：只认它本人；
+   * - 无显式目标时只有玩家是默认锚点，且只在探索/动作链态成立——过场态无目标时
+   *   镜头归 cameraMove 摆布（见 applyCameraFollow(false)），抢过来会打乱运镜。
+   */
+  private snapCameraToActorIfFollowed(entityId: string): void {
+    const state = this.stateController.currentState;
+    const anchored =
+      this.cameraFollowTargetId !== null
+        ? this.cameraFollowTargetId === entityId
+        : entityId === 'player'
+          && (state === GameState.Exploring || state === GameState.ActionSequence);
+    if (!anchored) return;
+    const actor = this.resolveActorFn(entityId);
+    if (actor) this.camera.snapTo(actor.x, actor.y);
+  }
+
   private async debugSetPlayerPosition(x: number, y: number, snapCamera: boolean): Promise<void> {
     this.player.x = x;
     this.player.y = y;
@@ -5901,6 +6027,8 @@ export class Game {
     // 位面对账先于 Exploring 分支：回 Exploring 边沿挂起的 zone 重注册（pendingZoneRefresh）
     // 必须在本帧 zoneSystem.update 之前补刷，否则旧位面 zone 会以过期集合多跑一帧 enter/stay。
     this.planeReconciler.update(dt);
+    // 日程演出（离场/入场走位）：内部自判探索态，非探索态原地挂起。
+    this.npcScheduleSystem.update(dt);
 
     // 相机跟随（cameraFollowActor）是"演出期间"的临时行为：Cutscene / ActionSequence（锁玩家的
     // 动作链）态才消费；一旦回到玩家自由探索态（Exploring）——无论过场播完还是动作链播完——

@@ -78,10 +78,28 @@ _SYNTH_STEPS: list[dict] = [
      "params": {"target": "_cut_tall", "faceTarget": "player"}},
     {"kind": "action", "type": "showEmoteAndWait",
      "params": {"target": "_cut_tall", "emote": "？", "duration": 1200}},
+    # 瞬移最小形态：没有 sceneId 就不许凭空长出一个（下拉会自动落到工程第一个场景）
+    {"kind": "action", "type": "teleportEntityTo",
+     "params": {"target": "_cut_tall", "x": 1280, "y": 960}},
+    # 瞬移填满形态：原数据带 sceneId 就得原样保回，坐标不被量程 clamp、不 int->float 漂
+    {"kind": "action", "type": "teleportEntityTo",
+     "params": {"target": "player", "sceneId": "sc_b", "x": 1603.15, "y": 1092.18}},
     {"kind": "parallel", "tracks": [
         {"kind": "action", "type": "moveEntityTo",
          "params": {"target": "_cut_tall", "x": 700, "y": 500, "speed": 80}},
         {"kind": "present", "type": "cameraMove", "x": 850, "y": 500, "duration": 2000},
+    ]},
+    # 禁用标记（只记录不播放）：三种 kind 与并行子轨都要原样带回——
+    # to_dict 重建整份 dict，不显式续写就会在"打开→展开→Apply"里被静默抹掉。
+    {"kind": "present", "type": "waitTime", "duration": 300, "disabled": True},
+    {"kind": "action", "type": "faceEntity",
+     "params": {"target": "player", "faceTarget": "_cut_tall"}, "disabled": True},
+    {"kind": "parallel", "disabled": True, "tracks": [
+        {"kind": "present", "type": "flashWhite", "duration": 200},
+    ]},
+    {"kind": "parallel", "tracks": [
+        {"kind": "present", "type": "waitTime", "duration": 400, "disabled": True},
+        {"kind": "present", "type": "cameraZoom", "scale": 1.2, "duration": 500},
     ]},
 ]
 

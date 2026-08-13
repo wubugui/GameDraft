@@ -1,4 +1,14 @@
+# 会话工作态与本地素材:不进 git
 imported/
 .cache/
+.backups/
 edits.json
+assignments.json
+ui_state.json
 server.log
+app.log
+
+# exports.json（导出台账）刻意**不**忽略:
+# 它记的是「哪个 key 挂的是哪份内容、什么时候挂的、料从哪来」,是项目事实的账本,
+# 要能 review diff。会话工作态(分配/界面现场)已经拆到上面那几个文件里,
+# 所以台账的 diff 是干净的。

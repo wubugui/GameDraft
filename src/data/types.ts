@@ -242,6 +242,30 @@ export interface SceneData {
   lightEnv?: SceneLightEnv;
   /** 光照环境曲线：玩家位置投影到折线后插值切换光照关键帧；缺省=用静态 lightEnv（现状不变） */
   lightEnvCurve?: LightEnvCurveDef;
+  /**
+   * 日夜循环开关。**缺省（不写键）= 本场景不参与日夜**——旧场景零影响。
+   * 开启后本场景的 NPC 才受日程/`phases` 管，时段变化才会发出外观切换的事件。
+   *
+   * 注意本开关**不规定外观怎么变**：换图、实时算光、什么都不做，都是合法选择。
+   */
+  dayNight?: SceneDayNightConfig;
+  /**
+   * NPC 离场/入场用的**语义出口**（门、街口）。缺省可不配：不配时按场景边界推导
+   * （见 `NpcScheduleSystem.resolveExitPoint`），保证任何场景都不会出现"当面消失"。
+   */
+  exitAnchors?: SceneExitAnchor[];
+  /**
+   * 逐时段的外观覆盖（键 = 时段 id），**纯可选的其中一条路**。
+   *
+   * 夜景怎么来由渲染侧自己定，本字段只服务于「这个时段换一套素材」那一种做法：
+   * - 另画一张夜景图 / 换滤镜 / 换环境音 → 用本字段列出覆盖项；
+   * - 同一张图按时刻**实时算**（光照曲线、色调滤镜）→ **完全不必写本字段**，
+   *   渲染侧直接听 `time:changed` / `time:phaseChanged` 或读 `minutesOfDay` 自行推算。
+   *
+   * 不写 ≠ 没有日夜外观。校验器刻意不对"开了 dayNight 却没写 timeVariants"报任何问题。
+   * 未列出的时段沿用场景顶层的对应字段。
+   */
+  timeVariants?: Record<string, SceneTimeVariant>;
   /** 相机配置 */
   camera?: SceneCameraConfig;
   /** 世界整体缩放（用于背景图分辨率不够时整体缩小），默认1 */
@@ -418,6 +442,13 @@ export interface HotspotDef {
    * 有值时仅当激活位面包含于该列表时实体启用（由 PlaneReconciler 经派生基底通道驱动）。
    */
   planes?: string[];
+  /**
+   * 时段归属（与 `planes` 同构的白名单）：缺省 = 所有时段都在（旧数据零影响）；
+   * 有值时仅当前时段被列出才存在。用于「整条街的群演白天在、夜里没」这类批量表达——
+   * 有作息的具名角色请用 NPC 日程表（npc_schedules.json），两者正交。
+   * 值须是 `game_config.dayNight.phases` 里的 id。
+   */
+  phases?: string[];
   /** 关联一个或多个过场；有值时默认作为仅过场实体，除非 cutsceneOnly 显式为 false。 */
   cutsceneIds?: string[];
   /**
@@ -622,6 +653,15 @@ export type PostureConditionLeaf = {
   posture: string;
 };
 
+/**
+ * 时段条件叶：`{ timePhase: 'night' }`。与 posture / plane 同一条通道——
+ * 时段也是"世界此刻的样子"，且它由时刻**派生**（不是独立状态），故不镜像成 flag。
+ * 值须是 `game_config.dayNight.phases` 里的某个 id；`{not:{timePhase:…}}` 表示"不在该时段"。
+ */
+export type TimePhaseConditionLeaf = {
+  timePhase: string;
+};
+
 /** 图对话原子条件（无逻辑组合） */
 export type GraphConditionLeaf =
   | Condition
@@ -631,7 +671,8 @@ export type GraphConditionLeaf =
   | NarrativeStateConditionLeaf
   | NarrativeRunCountConditionLeaf
   | PlaneConditionLeaf
-  | PostureConditionLeaf;
+  | PostureConditionLeaf
+  | TimePhaseConditionLeaf;
 
 /**
  * 递归条件：叶子或 all / any / not（与叙事文档 ConditionExpr 一致）。
@@ -766,6 +807,13 @@ export interface DocumentRevealDef {
   xPercent?: number;
   yPercent?: number;
   widthPercent?: number;
+  /**
+   * 揭示音效：`audio_config.sfx` 的 id，与叠化同时起播（即等过 `animation.delayMs` 之后），
+   * 经统一动作通道 `playSfx` 播放；留空＝无声。
+   */
+  revealSfx?: string;
+  /** 揭示音效音量倍数 0..1（覆盖 audio_config 里该条目的基础音量）；未填＝用条目自身音量 */
+  revealSfxVolume?: number;
 }
 
 /**
@@ -929,6 +977,13 @@ export interface NpcDef {
    * 有值时仅当激活位面包含于该列表时实体可见（由 PlaneReconciler 经派生基底通道驱动）。
    */
   planes?: string[];
+  /**
+   * 时段归属（与 `planes` 同构的白名单）：缺省 = 所有时段都在（旧数据零影响）；
+   * 有值时仅当前时段被列出才存在。用于「整条街的群演白天在、夜里没」这类批量表达——
+   * 有作息的具名角色请用 NPC 日程表（npc_schedules.json），两者正交。
+   * 值须是 `game_config.dayNight.phases` 里的 id。
+   */
+  phases?: string[];
   /** 关联一个或多个过场；有值时默认作为仅过场实体，除非 cutsceneOnly 显式为 false。 */
   cutsceneIds?: string[];
   /**
@@ -1660,10 +1715,20 @@ export interface IEmoteBubbleProvider {
 // ------------------------------------------------------------
 
 /**
+ * 步骤级「禁用」标记（三种 kind 通用）——`true` = 数据保留但**运行时整步跳过**，
+ * 等于把这一步临时注释掉（编辑器可一键切换，不必删了再重写）。
+ * 缺省 / `false` = 正常播放；`parallel` 上写 `disabled` 则整组连同子轨全跳。
+ * 语义只在**播放**层：预热图片、跳过终姿计算等一并按「不存在」处理。
+ */
+export interface CutsceneStepDisableFlag {
+  disabled?: boolean;
+}
+
+/**
  * Action 步骤——通过 ActionExecutor.executeAwait 执行。
  * Cutscene 中仅允许无副作用的 Action 子集（白名单）。
  */
-export interface ActionStep {
+export interface ActionStep extends CutsceneStepDisableFlag {
   kind: 'action';
   type: string;
   params: Record<string, unknown>;
@@ -1694,7 +1759,7 @@ export interface ActionStep {
  * `cameraMove` / `cameraZoom` 可选 `easing`（linear|easeIn|easeOut|easeInOut，cubic 家族）；
  * 缺省沿用历史默认曲线（move=ease-in-out cubic，zoom=ease-in-out quad）。
  */
-export interface PresentStep {
+export interface PresentStep extends CutsceneStepDisableFlag {
   kind: 'present';
   type: string;
   [key: string]: unknown;
@@ -1794,7 +1859,7 @@ export interface ParallaxSceneDef {
 /**
  * 并行组——组内所有 step 同时启动，全部完成后继续主干。
  */
-export interface ParallelGroup {
+export interface ParallelGroup extends CutsceneStepDisableFlag {
   kind: 'parallel';
   tracks: CutsceneStep[];
 }
@@ -2072,6 +2137,13 @@ export interface ZoneDef {
    * 有值时仅当激活位面包含于该列表时才注册进 ZoneSystem（切位面后由刷新入口重注册）。
    */
   planes?: string[];
+  /**
+   * 时段归属（与 `planes` 同构的白名单）：缺省 = 所有时段都在（旧数据零影响）；
+   * 有值时仅当前时段被列出才存在。用于「整条街的群演白天在、夜里没」这类批量表达——
+   * 有作息的具名角色请用 NPC 日程表（npc_schedules.json），两者正交。
+   * 值须是 `game_config.dayNight.phases` 里的 id。
+   */
+  phases?: string[];
   /** 缺省为 standard（与未写字段的老数据兼容） */
   zoneKind?: ZoneKind;
   /**
@@ -2246,6 +2318,112 @@ export interface GameConfig {
    * 且改一次全局生效。缺省（不写此键）时用 `textStyle.DEFAULT_TEXT_PALETTE`。
    */
   textPalette?: TextPaletteEntry[];
+  /** 日夜循环：时段分段点与开局时刻。缺省=用 DayManager 的内置四段（拂晓/白日/黄昏/入夜）。 */
+  dayNight?: DayNightConfig;
+}
+
+// ============================================================
+// 日夜循环（时刻 / 时段 / 过渡）
+// ============================================================
+
+/**
+ * 推进时刻时的表现档，决定 **NPC 换班走不走离场演出**（见 `NpcScheduleSystem`）：
+ * - `seamless`：画面不遮挡，NPC 必须走到出口才隐去（「无缝切换」主力，也是唯一会演离场的档）
+ * - `timelapse` / `fade`：有画面遮挡（延时演出 / 黑场），遮挡期间直接重贴，不演离场
+ * - `cut`：无过渡，仅调试与演出内部使用
+ */
+export type TimeTransition = 'seamless' | 'timelapse' | 'fade' | 'cut';
+
+/** 一个时段的起点。`from` 为 `HH:MM`（24 小时制）；最后一段自动跨零点回绕到次日第一段。 */
+export interface DayPhaseDef {
+  id: string;
+  from: string;
+  /** 只给编辑器/调试看的中文名（如「入夜」）；不参与任何判定。 */
+  label?: string;
+}
+
+export interface DayNightConfig {
+  /** 时段分段点（至少 1 段）；缺省=DayManager 的内置四段。 */
+  phases?: DayPhaseDef[];
+  /** 开局与 `init()` 重置后的时刻（`HH:MM`）；缺省 `07:00`。 */
+  startAt?: string;
+  /** 过渡表现的缺省时长（毫秒），供渲染侧消费；缺省 1500。 */
+  defaultTransitionMs?: number;
+}
+
+/** 场景级日夜开关。 */
+export interface SceneDayNightConfig {
+  /** true 时本场景参与日夜（NPC 受日程管、时段变化触发外观切换）。缺省 false。 */
+  enabled?: boolean;
+}
+
+/**
+ * 场景出口锚点：NPC **走到这里才隐去**（反过来入场从这里走进来）。
+ * `kind` 只给编辑器分类与调试用，运行时不据此改行为。
+ */
+export interface SceneExitAnchor {
+  id: string;
+  x: number;
+  y: number;
+  kind?: 'door' | 'street' | 'other';
+}
+
+/**
+ * 某时段的场景外观覆盖（渲染侧消费；未写的字段沿用场景顶层同名字段）。
+ *
+ * 这只是「换一套素材」那种做法的载体，**不是**日夜外观的必经之路：
+ * 同一张图靠光照/滤镜实时算出夜色的方案根本不需要本结构。整块可以永远不用。
+ */
+export interface SceneTimeVariant {
+  filterId?: string;
+  lightEnv?: SceneLightEnv;
+  backgrounds?: BackgroundLayer[];
+  ambientSounds?: string[];
+  bgm?: string;
+}
+
+// ============================================================
+// NPC 日程（npc_schedules.json）
+// ============================================================
+
+/**
+ * 一条日程条目：**几点到几点、在哪个场景、在哪个位置**。
+ * 刻意不声明"怎么走过去"——走法由 `NpcScheduleSystem` 用 `Npc.moveTo` 决定。
+ */
+export interface NpcScheduleEntry {
+  /** 起始时刻 `HH:MM`（含）。 */
+  from: string;
+  /** 结束时刻 `HH:MM`（不含）。允许 `to < from` 表示**跨零点**（如 19:00→06:00）。 */
+  to: string;
+  /**
+   * 该时段所在场景 id。`null`（或不写）= **不在任何场景**（离场回家、下工）。
+   * 玩家在场时会先走到出口再隐去，不会凭空消失。
+   */
+  scene?: string | null;
+  /** 该时段的驻留坐标；缺省=用场景 JSON 里这个 NPC 自己的原始坐标（故绝大多数条目不必写）。 */
+  spot?: Position;
+  /** 到位后播放的动画状态名；缺省=不改动画。 */
+  activity?: string;
+  /** 本条目的额外生效条件（多条条目覆盖同一时段时，取**第一条**条件满足的）。 */
+  conditions?: ConditionExpr[];
+}
+
+/** 一个角色的日程表。按 `characterId` 挂——一张表管这个角色在全世界的行踪。 */
+export interface NpcScheduleDef {
+  /** 对应 `character_registry.json` 的角色 id；场景里 `NpcDef.characterId` 引用它的实例受此表管。 */
+  characterId: string;
+  entries: NpcScheduleEntry[];
+  /** 整张表的生效条件；不满足时该角色**完全不受日程管**（回落成普通常驻 NPC）。 */
+  conditions?: ConditionExpr[];
+  /** 离场时说的一句话（走之前播气泡）；不写则默默走。 */
+  exitLine?: string;
+  /** 优先使用的出口锚点 id；不写则取离 NPC 最近的出口。 */
+  preferredExit?: string;
+}
+
+/** `npc_schedules.json` 的文件形状。 */
+export interface NpcScheduleFile {
+  schedules: NpcScheduleDef[];
 }
 
 /** 语义色板一档：`id` 是内容里写的标记名，`label` 只给编辑器/人看，`color` 为 `#RRGGBB` */

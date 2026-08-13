@@ -127,6 +127,27 @@ class SceneGroupCanvasMoveTests(unittest.TestCase):
                 return row
         raise AssertionError(f"missing {coll}:{eid}")
 
+    def _assert_points_close(self, actual, expected, msg: str = "") -> None:
+        """坐标序列按容差比。
+
+        断言的是"每个成员挪了同一个 Δ"，不是浮点位模式：拖动的世界 Δ 由视口像素经
+        视图变换换算而来（如 96.1），而各成员基准值量级不同，`(160+96.1)-160` 得
+        96.10000000000002、`(100+96.1)-100` 得 96.1 —— 用 assertEqual 比就是在赌
+        Δ 恰好是二进制可精确表示的数（缩放一变就赌输，本文件曾因此在整套跑时红三条）。
+        """
+        act = [tuple(float(v) for v in pt) for pt in actual]
+        exp = [tuple(float(v) for v in pt) for pt in expected]
+        self.assertEqual(len(act), len(exp), f"{msg}（点数不同：{act} vs {exp}）")
+        for i, (a, e) in enumerate(zip(act, exp)):
+            self.assertEqual(len(a), len(e), f"{msg}（第 {i} 点维度不同）")
+            for j, (av, ev) in enumerate(zip(a, e)):
+                self.assertAlmostEqual(
+                    av, ev, places=6,
+                    msg=f"{msg}（第 {i} 点第 {j} 维：{act} vs {exp}）")
+
+    def _assert_point_close(self, actual, expected, msg: str = "") -> None:
+        self._assert_points_close([actual], [expected], msg)
+
     @staticmethod
     def _tree_item(ed: SceneEditor, ref: tuple[str, str]):
         for item in ed._iter_entity_tree_items():
@@ -624,16 +645,16 @@ class SceneGroupCanvasMoveTests(unittest.TestCase):
 
             # 每一类成员、每一处几何都按同一个 Δ 走
             h_cut = self._ent(model, "hotspots", "h_cut")
-            self.assertEqual(
+            self._assert_point_close(
                 (h_cut["x"] - 300, h_cut["y"] - 300), (dx, dy),
                 "画布上看不到的成员也必须跟着移动（否则是半份移动的坏数据）")
             n1 = self._ent(model, "npcs", "n1")
-            self.assertEqual((n1["x"] - 160, n1["y"] - 180), (dx, dy))
-            self.assertEqual(
+            self._assert_point_close((n1["x"] - 160, n1["y"] - 180), (dx, dy))
+            self._assert_points_close(
                 [(p["x"], p["y"]) for p in n1["patrol"]["route"]],
                 [(160 + dx, 180 + dy), (260 + dx, 180 + dy)],
                 "缺省 movePatrol=true：巡逻路点一起挪")
-            self.assertEqual(
+            self._assert_points_close(
                 [(p["x"], p["y"]) for p in n1["collisionPolygon"]],
                 [(150 + dx, 170 + dy), (170 + dx, 170 + dy), (170 + dx, 190 + dy)],
                 "NPC 的世界坐标碰撞多边形必须同步平移")
@@ -642,7 +663,7 @@ class SceneGroupCanvasMoveTests(unittest.TestCase):
                 [(-10, -10), (10, -10), (10, 10)],
                 "局部坐标多边形挂在锚点上，不得被再平移一次（否则碰撞面漂两倍）")
             z1 = self._ent(model, "zones", "z1")
-            self.assertEqual(
+            self._assert_points_close(
                 [(p["x"], p["y"]) for p in z1["polygon"]],
                 [(60 + dx, 60 + dy), (200 + dx, 60 + dy),
                  (200 + dx, 200 + dy), (60 + dx, 200 + dy)])
@@ -682,9 +703,9 @@ class SceneGroupCanvasMoveTests(unittest.TestCase):
             dn = (n1["x"] - 160, n1["y"] - 180)
             dz = (z1["polygon"][0]["x"] - 60, z1["polygon"][0]["y"] - 60)
             self.assertNotEqual(dh, (0, 0), "前提：拖动确实产生了位移")
-            self.assertEqual(dn, dh, f"预选 {pre} 后 npc 掉队")
-            self.assertEqual(dz, dh, f"预选 {pre} 后 zone 掉队")
-            self.assertEqual(
+            self._assert_point_close(dn, dh, f"预选 {pre} 后 npc 掉队")
+            self._assert_point_close(dz, dh, f"预选 {pre} 后 zone 掉队")
+            self._assert_points_close(
                 [(p["x"] - 160, p["y"] - 180) for p in n1["patrol"]["route"]],
                 [dh, (100 + dh[0], dh[1])],
                 f"预选 {pre} 后巡逻路点掉队")
@@ -693,7 +714,7 @@ class SceneGroupCanvasMoveTests(unittest.TestCase):
             # 停在旧位置且被"升级"成局部坐标——这条断言把两件事一起钉住。
             self.assertIsNone(n1.get("collisionPolygonLocal"),
                               f"预选 {pre} 后世界坐标碰撞面不得被悄悄转成局部")
-            self.assertEqual(
+            self._assert_points_close(
                 [(p["x"] - 150, p["y"] - 170) for p in n1["collisionPolygon"]],
                 [dh, (20 + dh[0], dh[1]), (20 + dh[0], 20 + dh[1])],
                 f"预选 {pre} 后 NPC 碰撞多边形掉队")

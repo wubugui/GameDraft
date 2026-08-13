@@ -672,7 +672,11 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     this.onSfx('shop:opened', () => this.playSystemSfx('shopOpen'));
     this.onSfx('shop:closed', () => this.playSystemSfx('shopClose'));
     this.onSfx('minigame:sugarWheelResult', () => this.playSystemSfx('minigameResult'));
-    this.onSfx('document:revealed', () => this.playSystemSfx('documentReveal'));
+    // 该条揭示在 document_reveals.json 里自带 revealSfx 时不再叠全局默认揭示音（逐条覆盖全局）
+    this.onSfx('document:revealed', (payload?: { customSfx?: boolean }) => {
+      if (payload?.customSfx) return;
+      this.playSystemSfx('documentReveal');
+    });
   }
 
   destroy(): void {

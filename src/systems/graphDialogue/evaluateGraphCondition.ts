@@ -19,6 +19,7 @@ export type ConditionTrace =
   | { kind: 'narrativeCount'; result: boolean; label: string }
   | { kind: 'plane'; result: boolean; label: string }
   | { kind: 'posture'; result: boolean; label: string }
+  | { kind: 'timePhase'; result: boolean; label: string }
   | { kind: 'unknown'; result: boolean; label: string };
 
 const questStatusMap: Record<string, QuestStatus> = {
@@ -65,6 +66,11 @@ export interface ConditionEvalContext {
    * ——姿态是瞬时表现态，取不到就当"没在那个姿态"，是安全侧。
    */
   getPlayerPosture?: () => string | null;
+  /**
+   * 当前时段 id（DayManager 由时刻派生）。未注入时 timePhase 叶子恒为假
+   * ——与 posture 同一条安全侧口径：取不到就当"不在那个时段"。
+   */
+  getTimePhase?: () => string;
 }
 
 /**
@@ -139,6 +145,29 @@ function evalPostureLeaf(expr: { posture: string }, ctx: ConditionEvalContext): 
   const want = expr.posture.trim();
   if (!want) return false;
   return (ctx.getPlayerPosture?.() ?? null) === want;
+}
+
+function isTimePhaseLeaf(x: ConditionExpr): x is { timePhase: string } {
+  const m = x as {
+    timePhase?: unknown;
+    flag?: unknown;
+    quest?: unknown;
+    scenario?: unknown;
+    narrative?: unknown;
+  };
+  return (
+    typeof m.timePhase === 'string' &&
+    typeof m.flag !== 'string' &&
+    m.quest === undefined &&
+    m.scenario === undefined &&
+    m.narrative === undefined
+  );
+}
+
+function evalTimePhaseLeaf(expr: { timePhase: string }, ctx: ConditionEvalContext): boolean {
+  const want = expr.timePhase.trim();
+  if (!want) return false;
+  return (ctx.getTimePhase?.() ?? '') === want;
 }
 
 function isPlaneLeaf(x: ConditionExpr): x is { plane: string } {
@@ -360,6 +389,10 @@ export function evaluateConditionExpr(
     return evalPostureLeaf(expr, ctx);
   }
 
+  if (isTimePhaseLeaf(expr)) {
+    return evalTimePhaseLeaf(expr, ctx);
+  }
+
   if (isQuestLeaf(expr)) {
     const m = expr as { quest: string; questStatus?: string; status?: string };
     return evalQuestLeaf(m.quest, m.questStatus ?? m.status, ctx);
@@ -476,6 +509,13 @@ export function evaluateConditionExprWithTrace(
     const now = ctx.getPlayerPosture?.() ?? null;
     const label = `posture 期望=${expr.posture.trim() || '—'} 实际=${now ?? '站姿'}`;
     return { result: ok, trace: { kind: 'posture', result: ok, label } };
+  }
+
+  if (isTimePhaseLeaf(expr)) {
+    const ok = evalTimePhaseLeaf(expr, ctx);
+    const now = ctx.getTimePhase?.() ?? '';
+    const label = `timePhase 期望=${expr.timePhase.trim() || '—'} 实际=${now || '—'}`;
+    return { result: ok, trace: { kind: 'timePhase', result: ok, label } };
   }
 
   if (isQuestLeaf(expr)) {

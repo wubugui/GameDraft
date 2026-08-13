@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import copy
 
+from PySide6.QtCore import QTime
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QPushButton, QLabel, QLineEdit,
     QTableWidget, QHeaderView, QSpinBox, QDoubleSpinBox, QCheckBox, QMessageBox,
-    QScrollArea, QGroupBox, QColorDialog, QTableWidgetItem,
+    QScrollArea, QGroupBox, QColorDialog, QTableWidgetItem, QTimeEdit,
 )
 
 from ..project_model import ProjectModel
@@ -65,6 +66,21 @@ _PLAYER_ACT_DEFAULTS: dict[str, dict[str, float]] = {
     "kick": {"callbackFrame": -1},
     "jump": {"durationMs": 480, "arcHeight": 46},
 }
+
+
+def _parse_hhmm(raw: str) -> tuple[int, int]:
+    """`HH:MM` → (时, 分)；非法回落 (0, 0)。与运行时 dayTime.parseClock 同口径。"""
+    s = str(raw or "").strip()
+    if ":" not in s:
+        return (0, 0)
+    h, _, m = s.partition(":")
+    try:
+        hh, mm = int(h), int(m)
+    except ValueError:
+        return (0, 0)
+    if not (0 <= hh <= 23 and 0 <= mm <= 59):
+        return (0, 0)
+    return (hh, mm)
 
 
 def _make_size_row(label: str) -> tuple[QHBoxLayout, QCheckBox, QSpinBox, QSpinBox]:
@@ -212,6 +228,7 @@ class GameConfigEditor(QWidget):
         lay.addWidget(flags_box)
         lay.addWidget(self._build_text_palette_section())
 
+        lay.addWidget(self._build_day_night_section())
         lay.addWidget(self._build_player_acts_section())
 
         apply_btn = QPushButton("Apply")
@@ -222,6 +239,151 @@ class GameConfigEditor(QWidget):
         self._load()
 
     # ———————————————— 玩家身体动词（playerActs） ————————————————
+
+    def _build_day_night_section(self) -> CollapsibleSection:
+        """时段分段点与开局时刻。整块缺省不写 = 用运行时内置四段。"""
+        sec = CollapsibleSection("日夜循环（时段分段 / 开局时刻）", start_open=False)
+        sec.set_header_tool_tip(
+            "时段由时刻派生：条件叶 {timePhase:…} 与场景外观都按它走。\n"
+            "整块留空（不勾「自定义时段」）= 用内置四段：拂晓 05:00 / 白日 07:00 / "
+            "黄昏 18:00 / 入夜 20:00。",
+        )
+        body = QWidget()
+        body_lay = QVBoxLayout(body)
+        body_lay.setContentsMargins(0, 0, 0, 0)
+
+        top = compact_form(QFormLayout())
+        self._dn_start = QTimeEdit()
+        self._dn_start.setDisplayFormat("HH:mm")
+        self._dn_start.setMaximumWidth(92)
+        self._dn_start.setToolTip("开局（和重开一局）时的时刻。缺省 07:00。")
+        top.addRow("开局时刻", self._dn_start)
+        self._dn_trans_ms = QSpinBox()
+        self._dn_trans_ms.setRange(0, 60000)
+        self._dn_trans_ms.setSingleStep(100)
+        self._dn_trans_ms.setMaximumWidth(120)
+        self._dn_trans_ms.setToolTip("过渡表现的缺省时长（毫秒），供渲染侧消费。缺省 1500。")
+        top.addRow("过渡时长(ms)", self._dn_trans_ms)
+        top_host = QWidget()
+        top_host.setLayout(top)
+        body_lay.addWidget(top_host)
+
+        self._dn_custom = QCheckBox("自定义时段分段（不勾＝用内置四段）")
+        self._dn_custom.setToolTip(
+            "勾上后下面的分段表生效并写进 game_config.json；\n"
+            "不勾＝不写 phases 键，运行时用内置四段。",
+        )
+        self._dn_custom.toggled.connect(self._on_dn_custom_toggled)
+        body_lay.addWidget(self._dn_custom)
+
+        btns = QHBoxLayout()
+        add = QPushButton("+ 时段")
+        add.clicked.connect(self._add_phase_row)
+        rm = QPushButton("删除时段")
+        rm.clicked.connect(self._remove_phase_row)
+        btns.addWidget(add)
+        btns.addWidget(rm)
+        btns.addStretch(1)
+        body_lay.addLayout(btns)
+
+        self._dn_phase_host = QWidget()
+        self._dn_phase_lay = QVBoxLayout(self._dn_phase_host)
+        self._dn_phase_lay.setContentsMargins(0, 0, 0, 0)
+        body_lay.addWidget(self._dn_phase_host)
+        self._dn_phase_rows: list[dict] = []
+
+        sec.add_body(body)
+        return sec
+
+    def _on_dn_custom_toggled(self, on: bool) -> None:
+        self._dn_phase_host.setEnabled(on)
+
+    def _add_phase_row(self, pid: str = "", frm: str = "00:00", label: str = "") -> None:
+        row = QWidget()
+        rl = QHBoxLayout(row)
+        rl.setContentsMargins(0, 0, 0, 0)
+        w_id = QLineEdit(pid)
+        w_id.setMaximumWidth(120)
+        w_id.setToolTip("时段 id，条件叶 {timePhase:…} 按它引用（如 night）。")
+        w_from = QTimeEdit()
+        w_from.setDisplayFormat("HH:mm")
+        w_from.setMaximumWidth(92)
+        h, m = _parse_hhmm(frm)
+        w_from.setTime(QTime(h, m))
+        w_label = QLineEdit(label)
+        w_label.setMaximumWidth(120)
+        w_label.setToolTip("中文名，只给编辑器/调试看，不参与判定。")
+        rl.addWidget(QLabel("id"))
+        rl.addWidget(w_id)
+        rl.addWidget(QLabel("起于"))
+        rl.addWidget(w_from)
+        rl.addWidget(QLabel("名"))
+        rl.addWidget(w_label)
+        rl.addStretch(1)
+        self._dn_phase_lay.addWidget(row)
+        self._dn_phase_rows.append({"widget": row, "id": w_id, "from": w_from, "label": w_label})
+
+    def _remove_phase_row(self) -> None:
+        if not self._dn_phase_rows:
+            return
+        row = self._dn_phase_rows.pop()
+        row["widget"].setParent(None)
+        row["widget"].deleteLater()
+
+    def _reset_phase_rows(self) -> None:
+        while self._dn_phase_rows:
+            self._remove_phase_row()
+
+    def _read_day_night_ui(self) -> dict:
+        out: dict = {}
+        start = self._dn_start.time()
+        start_s = f"{start.hour():02d}:{start.minute():02d}"
+        if start_s != "07:00":
+            out["startAt"] = start_s
+        if self._dn_trans_ms.value() != 1500:
+            out["defaultTransitionMs"] = self._dn_trans_ms.value()
+        if self._dn_custom.isChecked():
+            phases = []
+            for r in self._dn_phase_rows:
+                pid = r["id"].text().strip()
+                if not pid:
+                    continue
+                t = r["from"].time()
+                entry = {"id": pid, "from": f"{t.hour():02d}:{t.minute():02d}"}
+                lab = r["label"].text().strip()
+                if lab:
+                    entry["label"] = lab
+                phases.append(entry)
+            if phases:
+                out["phases"] = phases
+        return out
+
+    def _load_day_night(self) -> None:
+        cfg = self._model.game_config.get("dayNight")
+        cfg = cfg if isinstance(cfg, dict) else {}
+        h, m = _parse_hhmm(str(cfg.get("startAt") or "07:00"))
+        self._dn_start.setTime(QTime(h, m))
+        ms = cfg.get("defaultTransitionMs")
+        self._dn_trans_ms.setValue(int(ms) if isinstance(ms, (int, float)) else 1500)
+        self._reset_phase_rows()
+        phases = cfg.get("phases")
+        has_custom = isinstance(phases, list) and bool(phases)
+        self._dn_custom.blockSignals(True)
+        self._dn_custom.setChecked(has_custom)
+        self._dn_custom.blockSignals(False)
+        if has_custom:
+            for p in phases:
+                if not isinstance(p, dict):
+                    continue
+                self._add_phase_row(
+                    str(p.get("id") or ""),
+                    str(p.get("from") or "00:00"),
+                    str(p.get("label") or ""),
+                )
+        else:
+            for pid, frm, lab in ProjectModel.DEFAULT_TIME_PHASES:
+                self._add_phase_row(pid, frm, lab)
+        self._dn_phase_host.setEnabled(has_custom)
 
     def _build_player_acts_section(self) -> CollapsibleSection:
         """蹲/注视/躺/上脚/跳 的全局参数。重块 → 默认折叠。"""
@@ -535,6 +697,7 @@ class GameConfigEditor(QWidget):
             self._bubble_scale_chk.setChecked(False)
             self._bubble_scale.setValue(1.0)
 
+        self._load_day_night()
         self._load_player_acts()
 
         sf = cfg.get("startupFlags", {})
@@ -662,6 +825,13 @@ class GameConfigEditor(QWidget):
             cfg["emoteBubbleScale"] = int(v) if float(v).is_integer() else v
         elif "emoteBubbleScale" in cfg:
             del cfg["emoteBubbleScale"]
+
+        # 日夜块：整块为空且磁盘上本就没这个键时不写（防「打开即注入」）
+        dn = self._read_day_night_ui()
+        if dn:
+            cfg["dayNight"] = dn
+        elif "dayNight" in cfg:
+            del cfg["dayNight"]
 
         # 玩家动词块：整块与缺省一致且磁盘上本就没有这个键时不写（防「打开即注入」）
         acts = self._read_player_acts_ui()

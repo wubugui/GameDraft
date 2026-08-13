@@ -174,12 +174,15 @@ def test_dialogue_process_exit_refreshes_and_stops_watch_timer():
             stop=lambda: events.append("stop"),
         ),
         _reload_all_reference_catalogs=lambda: events.append("reload"),
+        # 音频加工台也登记在这张监视表里：它退出时必须重读 audio_config.json，
+        # 否则它改好的 src 会被主编辑器下一次 Save All 用内存里的旧值盖掉。
+        _resync_audio_config_from_disk=lambda: events.append("audio"),
     )
 
     main_window.MainWindow._poll_dialogue_external_processes(owner)
     assert len(owner._dialogue_external_processes) == 1
-    assert events == ["reload"]
+    assert events == ["reload", "audio"]
 
     owner._dialogue_external_processes[0].running = False
     main_window.MainWindow._poll_dialogue_external_processes(owner)
-    assert events == ["reload", "reload", "stop"]
+    assert events == ["reload", "audio", "reload", "audio", "stop"]

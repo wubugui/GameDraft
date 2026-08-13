@@ -19,6 +19,7 @@ from unittest.mock import patch
 
 from PySide6.QtWidgets import QApplication, QMessageBox
 
+from tools.editor import theme as app_theme
 from tools.editor.editors.timeline_editor import TimelineEditor
 from tools.editor.project_model import ProjectModel
 from tools.editor.tests.save_test_utils import write_minimal_loadable_project
@@ -205,7 +206,11 @@ class TestApplyAutoValidation(_Base):
         ed._on_select(0)
         self.assertTrue(ed._apply(), "校验 error 只提示，不阻断 Apply")
         self.assertIn("错误", ed._validate_summary.text())
-        self.assertIn("e03131", ed._validate_summary.styleSheet())
+        # 颜色只走主题语义色（theme.py 单点定义），测试不锁死十六进制字面量
+        self.assertIn(
+            app_theme.semantic_text_color("error"),
+            ed._validate_summary.styleSheet(),
+        )
 
     def test_apply_clean_steps_resets_style(self) -> None:
         self.model.cutscenes[0]["steps"] = [
@@ -215,7 +220,7 @@ class TestApplyAutoValidation(_Base):
         ed._on_select(0)
         self.assertTrue(ed._apply())
         self.assertIn("无问题", ed._validate_summary.text())
-        self.assertNotIn("e03131", ed._validate_summary.styleSheet())
+        self.assertEqual(ed._validate_summary.styleSheet(), "")
 
 
 class TestUndoRestoresExpandedState(_Base):

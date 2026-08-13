@@ -416,6 +416,7 @@ class CaseVerdictTests(unittest.TestCase):
             "isNarrativeCountLeaf": {"narrativeCount": "a", "value": 1},
             "isPlaneLeaf": {"plane": "yin"},
             "isPostureLeaf": {"posture": "crouch"},
+            "isTimePhaseLeaf": {"timePhase": "night"},
         }
         self.assertEqual(
             guards,

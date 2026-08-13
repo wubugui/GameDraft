@@ -102,6 +102,9 @@ class ProjectModel(QObject):
         # planes.json：位面注册表（PlaneDef[]，TS 权威类型 src/systems/plane/types.ts）。
         # 文件可能尚未创建（由运行时/内容侧初始化），缺失时容错为空数组。
         self.planes: list[dict] = []
+        # npc_schedules.json：NPC 日程表（NpcScheduleFile，TS 权威类型 src/data/types.ts）。
+        # 归一形状 {schedules:[...]}；缺文件时按空表处理（整个特性可以一条都不配）。
+        self.npc_schedules: dict = {"schedules": []}
         # narrative_templates.json：叙事状态机模板（archetype）注册表——编辑器专用，运行时永不加载。
         # 归一形状 {schemaVersion, templates:[...]}；缺失时容错为空表。见 shared/narrative_templates.py。
         self.narrative_templates: dict = {"schemaVersion": 1, "templates": []}
@@ -305,6 +308,25 @@ class ProjectModel(QObject):
                 self.load_anomalies.append(
                     "planes.json: 根不是数组，载入为空（下次保存 planes 会覆写该文件）",
                 )
+
+        raw_schedules = self._load(dp / "npc_schedules.json", {})
+        if isinstance(raw_schedules, dict):
+            rows = raw_schedules.get("schedules")
+            kept = [x for x in rows if isinstance(x, dict)] if isinstance(rows, list) else []
+            _dropped = (len(rows) - len(kept)) if isinstance(rows, list) else 0
+            if _dropped:
+                self.load_anomalies.append(
+                    f"npc_schedules.json: {_dropped} 条非对象日程载入时被丢弃"
+                    "（下次保存 npc_schedules 会把丢弃结果写盘）",
+                )
+            # 保留除 schedules 外的未知顶层键，避免往返丢数据。
+            self.npc_schedules = {**raw_schedules, "schedules": kept}
+        else:
+            self.npc_schedules = {"schedules": []}
+            if (dp / "npc_schedules.json").exists():
+                self.load_anomalies.append(
+                    "npc_schedules.json: 根不是对象，载入为空（下次保存 npc_schedules 会覆写该文件）",
+                )
         from .shared.narrative_templates import normalize_templates_file
         self.narrative_templates = normalize_templates_file(
             self._load(dp / "narrative_templates.json", {"schemaVersion": 1, "templates": []})
@@ -442,6 +464,52 @@ class ProjectModel(QObject):
             for p in list_json_files(filters_dir):
                 self.filter_defs[p.stem] = self._load(p, {})
         self.data_changed.emit("filter", "")
+
+    def audio_config_differs_on_disk(self) -> bool:
+        """磁盘上的 audio_config.json 与内存这份是否已经不一样。
+
+        **刻意不走 ``_load``**：那个函数会顺手把 ``_file_baselines`` 刷成磁盘现值，
+        而那份基线正是 Save All 用来发现「文件被别的进程改过」的唯一凭据
+        （``detect_external_changes`` 与提交时的 ``expect_unchanged``）。
+        只是想「看一眼盘上是什么」却把基线冲掉，等于亲手拆掉那道 fail-closed 的闸。
+        """
+        if self.project_path is None:
+            return False
+        path = self.data_path / "audio_config.json"
+        try:
+            on_disk = json.loads(path.read_bytes()) if path.exists() else {}
+        except (OSError, json.JSONDecodeError):
+            return False          # 读不了/坏了：当作没变，让正常路径去报错
+        return on_disk != self.audio_config
+
+    def reload_audio_config_from_disk(self) -> str:
+        """重读 public/assets/data/audio_config.json（外部音频工具改盘后同步内存）。
+
+        为什么非有不可：audio_config 只在打开工程时读一次。外部音频工具改了某些 key
+        的 src 之后，这边内存里还是旧值；此时 Save All 会被外部改动基线挡下来
+        （fail-closed，数据不会丢），但用户会一直卡在「检测到外部修改」上，
+        只能关掉工程重开。重读就是让他不必重开。
+
+        返回值三态：
+          * ``"unchanged"`` —— 磁盘与内存一致，什么都没做（**基线不动**）；
+          * ``"reloaded"``  —— 已用磁盘版本刷新内存，基线随之对齐到磁盘；
+          * ``"blocked"``   —— audio 域有未保存改动。两边都有真东西，自动取哪边都会
+            吞掉另一边，所以一律不动、**基线也不动**（那道闸得继续拦着），交给人决定。
+
+        ⚠ 只换模型是不够的：音频面板的表格是开工程时的一次性快照，没有任何重读入口。
+        模型换了而表格没换，下一次 Save All 会用陈旧表格把刚同步进来的值又写回去。
+        所以调用方（``MainWindow._resync_audio_config_from_disk``）必须在
+        ``"reloaded"`` 之后把面板一起重铺，并且在**动模型之前**先问面板有没有未应用编辑。
+        """
+        if self.project_path is None:
+            return "unchanged"
+        if not self.audio_config_differs_on_disk():
+            return "unchanged"
+        if "audio" in self._dirty:
+            return "blocked"
+        self.audio_config = self._load(self.data_path / "audio_config.json", {})
+        self.data_changed.emit("audio", "")
+        return "reloaded"
 
     def reload_animations_from_disk(self) -> None:
         """重读 public/resources/runtime/animation/*/anim.json（不标脏；导出/外部工具改盘后用于同步内存）。"""
@@ -721,6 +789,8 @@ class ProjectModel(QObject):
             out.append(dp / "bubble_lines.json")
         if "planes" in dty:
             out.append(dp / "planes.json")
+        if "npc_schedules" in dty:
+            out.append(dp / "npc_schedules.json")
         if "narrative_templates" in dty:
             out.append(dp / "narrative_templates.json")
         if "narrative_categories" in dty:
@@ -946,6 +1016,8 @@ class ProjectModel(QObject):
                 w.add(dp / "bubble_lines.json", self.bubble_lines)
             if "planes" in dty:
                 w.add(dp / "planes.json", self.planes)
+            if "npc_schedules" in dty:
+                w.add(dp / "npc_schedules.json", self.npc_schedules)
             if "narrative_templates" in dty:
                 from .shared.narrative_templates import normalize_templates_file
                 self.narrative_templates = normalize_templates_file(self.narrative_templates)
@@ -1110,7 +1182,7 @@ class ProjectModel(QObject):
         "flag_registry", "overlay_images", "prop_presets",
         "scenarios", "narrative_graphs", "narrative_packages",
         "document_reveals", "smell_profiles", "pressure_holds", "signal_cues", "bubble_lines",
-        "planes", "narrative_templates", "narrative_categories", "dialogue_stubs",
+        "planes", "npc_schedules", "narrative_templates", "narrative_categories", "dialogue_stubs",
         "dialogue_graph_edits", "dialogue_graph_deletes",
         "water_minigames", "sugar_wheel", "paper_craft", "filter",
     })
@@ -1597,6 +1669,70 @@ class ProjectModel(QObject):
             label = str(row.get("label") or "").strip()
             out.append((pid, label or pid))
         return out
+
+    #: 与 src/utils/dayTime.ts 的 DEFAULT_PHASES 对齐（parity 测试锁定）。
+    DEFAULT_TIME_PHASES: tuple[tuple[str, str, str], ...] = (
+        ("dawn", "05:00", "拂晓"),
+        ("day", "07:00", "白日"),
+        ("dusk", "18:00", "黄昏"),
+        ("night", "20:00", "入夜"),
+    )
+
+    def all_exit_anchor_ids(self, scene_id: str = "") -> list[tuple[str, str]]:
+        """`(id, 标签)`：场景出口锚点候选。
+
+        `scene_id` 为空时列全工程（日程表的 preferredExit 跨场景生效，标签注明来源场景）；
+        给了场景则只列该场景的。按 id 去重（同名出口在多场景里是常态，如「街口东」）。
+        """
+        out: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        want = (scene_id or "").strip()
+        for sid, scene in self.scenes.items():
+            if want and sid != want:
+                continue
+            if not isinstance(scene, dict):
+                continue
+            for a in scene.get("exitAnchors") or []:
+                if not isinstance(a, dict):
+                    continue
+                aid = str(a.get("id") or "").strip()
+                if not aid or aid in seen:
+                    continue
+                seen.add(aid)
+                out.append((aid, aid if want else f"{aid}（{sid}）"))
+        return out
+
+    def all_character_ids(self) -> list[tuple[str, str]]:
+        """`(id, 名字)`：character_registry.json 登记的角色。日程表与角色引用参数的候选源。"""
+        out: list[tuple[str, str]] = []
+        for cid, row in self.character_registry.items():
+            name = str((row or {}).get("name") or "").strip() if isinstance(row, dict) else ""
+            out.append((cid, name or cid))
+        return out
+
+    def all_time_phase_ids(self) -> list[tuple[str, str]]:
+        """`(id, label)`：game_config.dayNight.phases 的时段登记。
+
+        未配置/全部非法时回落内置四段——与运行时 `resolvePhases` 同口径（那边同样恒有
+        至少一段可用），否则编辑器会显示"没有任何时段可选"而运行时其实有。
+        """
+        out: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        cfg = self.game_config.get("dayNight") if isinstance(self.game_config, dict) else None
+        rows = cfg.get("phases") if isinstance(cfg, dict) else None
+        for row in rows if isinstance(rows, list) else []:
+            if not isinstance(row, dict):
+                continue
+            pid = str(row.get("id") or "").strip()
+            if not pid or pid in seen:
+                continue
+            seen.add(pid)
+            label = str(row.get("label") or "").strip()
+            frm = str(row.get("from") or "").strip()
+            out.append((pid, f"{label or pid}（{frm}）" if frm else (label or pid)))
+        if out:
+            return out
+        return [(pid, f"{label}（{frm}）") for pid, frm, label in self.DEFAULT_TIME_PHASES]
 
     def plane_membership(self, plane_id: str) -> str:
         """位面世界模型 'shared' | 'exclusive'（与运行时 PlaneReconciler 同口径）。

@@ -68,6 +68,11 @@ from ..shared.list_affordances import make_list_search_box
 from ..shared.rich_text_field import RichTextLineEdit
 from ..shared.condition_editor import ConditionEditor
 from ..shared.action_editor import ActionEditor, FilterableTypeCombo
+from ..shared.audio_library import (
+    AudioMetaCache,
+    audio_config_file_for_id,
+    format_duration,
+)
 from ..shared.audio_preview_selector import AudioIdPreviewSelector, AudioPreviewControls
 from ..shared.id_ref_selector import IdRefSelector
 from ..shared.reference_picker import ReferencePickerDialog, ReferencePickerField
@@ -3712,10 +3717,16 @@ class TargetSpawnPickerDialog(QDialog):
         target_scene_id: str,
         initial_spawn_key: str,
         parent: QWidget | None = None,
+        *,
+        empty_label: str = "默认（spawnPoint）",
+        empty_hint: str = "“默认”对应该场景 JSON 的 spawnPoint；其余对应 spawnPoints 中的键。",
     ) -> None:
+        # empty_label/empty_hint：空键（""）在不同调用方语义不同——switchScene 一定要落人，
+        # 空 = 场景默认出生点；过场则可以不挪人（同场景就地开演）。文案由调用方给，别写死。
         super().__init__(parent)
         self._model = model
         self._scene_id = target_scene_id
+        self._empty_label = empty_label
         sc0 = model.scenes.get(target_scene_id, {})
         init_key = (initial_spawn_key or "").strip()
         if init_key and init_key not in (sc0.get("spawnPoints") or {}):
@@ -3737,10 +3748,7 @@ class TargetSpawnPickerDialog(QDialog):
         self._btn_new = QPushButton("新建命名出生点")
         self._btn_new.clicked.connect(self._on_new_spawn)
         left.addWidget(self._btn_new)
-        hint = QLabel(
-            "“默认”对应该场景 JSON 的 spawnPoint；其余对应 spawnPoints 中的键。\n"
-            "拖拽图钉会立刻写回该场景数据。"
-        )
+        hint = QLabel(f"{empty_hint}\n拖拽图钉会立刻写回该场景数据。")
         hint.setWordWrap(True)
         left.addWidget(hint)
 
@@ -3798,7 +3806,7 @@ class TargetSpawnPickerDialog(QDialog):
 
         self._list.blockSignals(True)
         self._list.clear()
-        def_it = QListWidgetItem("默认（spawnPoint）")
+        def_it = QListWidgetItem(self._empty_label)
         def_it.setData(Qt.ItemDataRole.UserRole, "")
         self._list.addItem(def_it)
         for name in sorted((sc.get("spawnPoints") or {}).keys()):
@@ -4444,6 +4452,10 @@ class ScenePropertyPanel(QScrollArea):
         self._hs_plane_ids_pending: list[str] = []
         self._npc_plane_ids_pending: list[str] = []
         self._zn_plane_ids_pending: list[str] = []
+        # 时段归属（phases；缺省=所有时段都在）：与 planes 同款 pending 列表
+        self._hs_phase_ids_pending: list[str] = []
+        self._npc_phase_ids_pending: list[str] = []
+        self._zn_phase_ids_pending: list[str] = []
         self._spawn_flush_scene: dict | None = None
         self._editing_scene_id: str = ""
         self._zn_poly_updating: bool = False
@@ -4608,6 +4620,85 @@ class ScenePropertyPanel(QScrollArea):
     def _section(title: str, *, start_open: bool = True) -> CollapsibleSection:
         return CollapsibleSection(title, start_open=start_open)
 
+    # ---- 出口锚点（日夜块）----
+    # 编辑落在工作副本 self._exit_anchors 上，随 props 的 pending/Apply 一起提交，
+    # 与场景其它属性同一条路径——不即时改 model，避免"改了没 Apply 却已落盘"。
+
+    def _exit_anchor_row_text(self, a: dict) -> str:
+        kind = str(a.get("kind") or "").strip()
+        tail = f"  [{kind}]" if kind else ""
+        return f"{a.get('id', '(未命名)')}  ({a.get('x', 0):g}, {a.get('y', 0):g}){tail}"
+
+    def _reload_exit_anchor_list(self) -> None:
+        self._sc_exit_list.blockSignals(True)
+        try:
+            self._sc_exit_list.clear()
+            for a in self._exit_anchors:
+                self._sc_exit_list.addItem(self._exit_anchor_row_text(a))
+        finally:
+            self._sc_exit_list.blockSignals(False)
+        self._exit_anchor_idx = -1
+        if self._sc_exit_list.count():
+            self._sc_exit_list.setCurrentRow(0)
+        else:
+            self._set_exit_anchor_form_enabled(False)
+
+    def _set_exit_anchor_form_enabled(self, on: bool) -> None:
+        for w in (self._sc_exit_id, self._sc_exit_x, self._sc_exit_y, self._sc_exit_kind):
+            w.setEnabled(on)
+
+    def _on_exit_anchor_select(self, row: int) -> None:
+        if row < 0 or row >= len(self._exit_anchors):
+            self._exit_anchor_idx = -1
+            self._set_exit_anchor_form_enabled(False)
+            return
+        self._exit_anchor_idx = row
+        a = self._exit_anchors[row]
+        self._loading_exit_anchor = True
+        try:
+            self._set_exit_anchor_form_enabled(True)
+            self._sc_exit_id.setText(str(a.get("id", "") or ""))
+            self._sc_exit_x.setValue(float(a.get("x", 0) or 0))
+            self._sc_exit_y.setValue(float(a.get("y", 0) or 0))
+            idx = self._sc_exit_kind.findData(str(a.get("kind") or ""))
+            self._sc_exit_kind.setCurrentIndex(idx if idx >= 0 else 0)
+        finally:
+            self._loading_exit_anchor = False
+
+    def _on_exit_anchor_field_changed(self, *_args) -> None:
+        if getattr(self, "_loading_exit_anchor", False):
+            return
+        i = self._exit_anchor_idx
+        if i < 0 or i >= len(self._exit_anchors):
+            return
+        a = self._exit_anchors[i]
+        a["id"] = self._sc_exit_id.text().strip()
+        a["x"] = self._keep_num(self._sc_exit_x.value(), a.get("x"))
+        a["y"] = self._keep_num(self._sc_exit_y.value(), a.get("y"))
+        kind = str(self._sc_exit_kind.currentData() or "")
+        if kind:
+            a["kind"] = kind
+        else:
+            a.pop("kind", None)
+        item = self._sc_exit_list.item(i)
+        if item is not None:
+            item.setText(self._exit_anchor_row_text(a))
+        self._emit_props_changed()
+
+    def _add_exit_anchor(self) -> None:
+        self._exit_anchors.append({"id": f"出口{len(self._exit_anchors) + 1}", "x": 0.0, "y": 0.0})
+        self._reload_exit_anchor_list()
+        self._sc_exit_list.setCurrentRow(len(self._exit_anchors) - 1)
+        self._emit_props_changed()
+
+    def _delete_exit_anchor(self) -> None:
+        i = self._exit_anchor_idx
+        if i < 0 or i >= len(self._exit_anchors):
+            return
+        del self._exit_anchors[i]
+        self._reload_exit_anchor_list()
+        self._emit_props_changed()
+
     def _append_entity_delete_footer(self, vbox: QVBoxLayout) -> QPushButton:
         vbox.addSpacing(12)
         row = QHBoxLayout()
@@ -4652,45 +4743,122 @@ class ScenePropertyPanel(QScrollArea):
         table.keyPressEvent = _key_press  # type: ignore[method-assign]
 
     def _load_ambient_widgets(self, ambient_ids: list[str]) -> None:
-        catalog = list(self._model.all_audio_ids("ambient"))
-        want = set(ambient_ids)
-        self._sc_ambient_list.blockSignals(True)
-        self._sc_ambient_list.clear()
-        for aid in sorted(catalog):
-            it = QListWidgetItem(aid)
-            it.setFlags(it.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            it.setCheckState(
-                Qt.CheckState.Checked if aid in want else Qt.CheckState.Unchecked,
-            )
-            self._sc_ambient_list.addItem(it)
-        catalog_set = set(catalog)
-        extra = [x for x in ambient_ids if x not in catalog_set]
-        self._sc_ambient_extra.setText(", ".join(extra))
-        self._sc_ambient_list.blockSignals(False)
+        """列表只装**本场景实际用的** id，按编排顺序。
+
+        旧写法是把整个 ambient 目录铺成 110px 的勾选框列表 + 一个逗号串输入框：
+        候选越多越难用，两个输入面还得让人猜该填哪个；而且保存时按目录字母序
+        回写，作者写的顺序会被静默重排（当前数据恰好都已是字母序，没爆出来）。
+        """
+        lst = self._sc_ambient_list
+        lst.blockSignals(True)
+        lst.clear()
+        for aid in ambient_ids:
+            lst.addItem(self._make_ambient_item(aid))
+        lst.blockSignals(False)
+        self._sync_ambient_buttons()
+
+    def _make_ambient_item(self, aid: str) -> QListWidgetItem:
+        it = QListWidgetItem()
+        it.setData(Qt.ItemDataRole.UserRole, aid)
+        self._decorate_ambient_item(it)
+        return it
+
+    def _decorate_ambient_item(self, it: QListWidgetItem) -> None:
+        """行文本直接把「多长 / 在不在」写出来——以前只在 tooltip 里，得逐条悬停才知道。"""
+        aid = str(it.data(Qt.ItemDataRole.UserRole) or "")
+        path = audio_config_file_for_id(self._model, "ambient", aid)
+        if path is None:
+            it.setText(f"⚠ {aid}   找不到音频文件")
+            it.setToolTip(f"{aid}\n⚠ 找不到音频文件，运行时这层是静音的")
+            return
+        cache = getattr(self, "_ambient_meta", None)
+        duration = cache.duration(path) if cache is not None else None
+        it.setText(f"{aid}   {format_duration(duration)}")
+        it.setToolTip(f"{aid}\n{path.name}\n时长 {format_duration(duration)}\n（双击试听）")
+
+    def _refresh_ambient_tooltips(self) -> None:
+        """后台时长探测出结果后回填显示（只改文本/提示，不动条目与顺序）。"""
+        lst = getattr(self, "_sc_ambient_list", None)
+        if lst is None:
+            return
+        lst.blockSignals(True)
+        for i in range(lst.count()):
+            item = lst.item(i)
+            if item is not None:
+                self._decorate_ambient_item(item)
+        lst.blockSignals(False)
 
     def _ambient_ids_from_widgets(self) -> list[str]:
-        checked: list[str] = []
-        for i in range(self._sc_ambient_list.count()):
-            it = self._sc_ambient_list.item(i)
-            if it.checkState() == Qt.CheckState.Checked:
-                checked.append(it.text())
-        extra_raw = self._sc_ambient_extra.text().strip()
-        extra = [s.strip() for s in extra_raw.split(",") if s.strip()]
+        lst = self._sc_ambient_list
         seen: set[str] = set()
         out: list[str] = []
-        for x in checked + extra:
-            if x not in seen:
-                seen.add(x)
-                out.append(x)
+        for i in range(lst.count()):
+            it = lst.item(i)
+            aid = str(it.data(Qt.ItemDataRole.UserRole) or "").strip() if it else ""
+            if aid and aid not in seen:
+                seen.add(aid)
+                out.append(aid)
         return out
 
     def _current_ambient_preview_id(self) -> str:
-        item = self._sc_ambient_list.currentItem()
-        if item is not None:
-            return item.text().strip()
-        extra_raw = self._sc_ambient_extra.text().strip()
-        extra = [s.strip() for s in extra_raw.split(",") if s.strip()]
-        return extra[0] if extra else ""
+        it = self._sc_ambient_list.currentItem()
+        if it is None:
+            return ""
+        return str(it.data(Qt.ItemDataRole.UserRole) or "").strip()
+
+    def _sync_ambient_buttons(self) -> None:
+        lst = self._sc_ambient_list
+        row = lst.currentRow()
+        has = row >= 0
+        self._amb_btn_del.setEnabled(has)
+        self._amb_btn_up.setEnabled(has and row > 0)
+        self._amb_btn_down.setEnabled(has and row < lst.count() - 1)
+
+    def _add_ambient(self) -> None:
+        """走统一的弹窗选择器（可搜索、可试听、能看时长与缺失状态）。"""
+        from ..shared.audio_picker_dialog import AudioPickerDialog
+
+        used = set(self._ambient_ids_from_widgets())
+        rows = [(a, a) for a in self._model.all_audio_ids("ambient") if a not in used]
+        dlg = AudioPickerDialog(
+            self._model, "ambient", rows,
+            current="", allow_empty=False, parent=self,
+            cache=getattr(self, "_ambient_meta", None),
+            title="添加环境音（可搜索、可试听）",
+            allow_manual_id=True,      # 目录外的 id 也能加，不必再手打逗号串
+        )
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        aid = (dlg.selected_value() or "").strip()
+        if not aid:
+            return
+        if aid in used:
+            QMessageBox.information(self, "环境音", f"「{aid}」已经在列表里了。")
+            return
+        self._sc_ambient_list.addItem(self._make_ambient_item(aid))
+        self._sc_ambient_list.setCurrentRow(self._sc_ambient_list.count() - 1)
+        self._sync_ambient_buttons()
+        self._emit_props_changed()
+
+    def _remove_ambient(self) -> None:
+        row = self._sc_ambient_list.currentRow()
+        if row < 0:
+            return
+        self._sc_ambient_list.takeItem(row)
+        self._sync_ambient_buttons()
+        self._emit_props_changed()
+
+    def _move_ambient(self, delta: int) -> None:
+        lst = self._sc_ambient_list
+        row = lst.currentRow()
+        new = row + delta
+        if row < 0 or new < 0 or new >= lst.count():
+            return
+        it = lst.takeItem(row)
+        lst.insertItem(new, it)
+        lst.setCurrentRow(new)
+        self._sync_ambient_buttons()
+        self._emit_props_changed()
 
     def show_empty(self) -> None:
         self._show_panel(self._empty)
@@ -4753,6 +4921,74 @@ class ScenePropertyPanel(QScrollArea):
         form.addRow("worldScale", self._sc_scale)
         basic.add_body(basic_inner)
         outer.addWidget(basic)
+
+        # ---- 日夜与出口（重块默认折叠：多数场景不参与日夜） ----
+        dn_g = self._section("日夜与出口", start_open=False)
+        dn_inner = QWidget()
+        dn_lay = QVBoxLayout(dn_inner)
+        self._sc_daynight = QCheckBox("本场景参与日夜循环")
+        self._sc_daynight.setToolTip(
+            "不勾＝本场景没有昼夜之分，NPC 也不受日程/时段归属管（旧场景保持原样）。\n"
+            "勾上后：时段变化会发出事件，配了日程或时段归属的 NPC 按时段来去。\n"
+            "夜里画面长什么样不由这个开关决定——实时算光或另换一张夜景图都行，两者都不配也合法。",
+        )
+        self._sc_daynight.toggled.connect(lambda _v: self._emit_props_changed())
+        dn_lay.addWidget(self._sc_daynight)
+        exit_hint = QLabel(
+            "出口锚点＝NPC 走到这里才隐去（反过来入场从这里走进来）。\n"
+            "一个都不配也不会「当面消失」——那时自动走到场景边界外，只是不够好看。",
+        )
+        exit_hint.setWordWrap(True)
+        exit_hint.setStyleSheet("color:#888;")
+        dn_lay.addWidget(exit_hint)
+        ex_btns = QHBoxLayout()
+        ex_add = QPushButton("+ 出口")
+        ex_add.clicked.connect(self._add_exit_anchor)
+        ex_del = QPushButton("删除出口")
+        ex_del.clicked.connect(self._delete_exit_anchor)
+        ex_btns.addWidget(ex_add)
+        ex_btns.addWidget(ex_del)
+        ex_btns.addStretch(1)
+        dn_lay.addLayout(ex_btns)
+        self._sc_exit_list = QListWidget()
+        self._sc_exit_list.setMaximumHeight(120)
+        self._sc_exit_list.currentRowChanged.connect(self._on_exit_anchor_select)
+        dn_lay.addWidget(self._sc_exit_list)
+        ex_form = compact_form(QFormLayout())
+        self._sc_exit_id = QLineEdit()
+        self._sc_exit_id.setMaximumWidth(180)
+        self._sc_exit_id.setToolTip("出口名（本场景内唯一），日程表的「优先出口」按名引用。")
+        self._sc_exit_id.textEdited.connect(self._on_exit_anchor_field_changed)
+        ex_form.addRow("id", self._sc_exit_id)
+        self._sc_exit_x = QDoubleSpinBox()
+        self._sc_exit_x.setRange(-100000, 100000)
+        self._sc_exit_x.setMaximumWidth(110)
+        self._sc_exit_x.valueChanged.connect(self._on_exit_anchor_field_changed)
+        self._sc_exit_y = QDoubleSpinBox()
+        self._sc_exit_y.setRange(-100000, 100000)
+        self._sc_exit_y.setMaximumWidth(110)
+        self._sc_exit_y.valueChanged.connect(self._on_exit_anchor_field_changed)
+        xy_row = QWidget()
+        xy_lay = QHBoxLayout(xy_row)
+        xy_lay.setContentsMargins(0, 0, 0, 0)
+        xy_lay.addWidget(QLabel("x"))
+        xy_lay.addWidget(self._sc_exit_x)
+        xy_lay.addWidget(QLabel("y"))
+        xy_lay.addWidget(self._sc_exit_y)
+        xy_lay.addStretch(1)
+        ex_form.addRow("坐标", xy_row)
+        self._sc_exit_kind = QComboBox()
+        self._sc_exit_kind.setMaximumWidth(140)
+        for _lab, _val in (("（不分类）", ""), ("门", "door"), ("街口", "street"), ("其它", "other")):
+            self._sc_exit_kind.addItem(_lab, _val)
+        self._sc_exit_kind.setToolTip("只给编辑器分类用，运行时不据此改行为。")
+        self._sc_exit_kind.currentIndexChanged.connect(self._on_exit_anchor_field_changed)
+        ex_form.addRow("类型", self._sc_exit_kind)
+        ex_host = QWidget()
+        ex_host.setLayout(ex_form)
+        dn_lay.addWidget(ex_host)
+        dn_g.add_body(dn_inner)
+        outer.addWidget(dn_g)
 
         bg_g = self._section("背景图", start_open=True)
         bg_inner = QWidget()
@@ -4918,7 +5154,8 @@ class ScenePropertyPanel(QScrollArea):
         amb_lay = QVBoxLayout(amb_inner)
         self._sc_ambient_list = QListWidget()
         self._sc_ambient_list.setToolTip(
-            "勾选 audio_config.ambient 中的 id；目录外 id 在下方填写（逗号分隔）。",
+            "本场景要同时循环播放的环境音（多条会叠在一起）。\n"
+            "「添加…」打开可搜索、可试听的选择窗；双击某行试听。",
         )
         self._sc_ambient_list.setMaximumHeight(110)  # 上限而非固定，拥挤时可压缩
         self._sc_ambient_list.setSizePolicy(
@@ -4928,11 +5165,34 @@ class ScenePropertyPanel(QScrollArea):
         self._sc_ambient_list.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff,
         )
-        self._sc_ambient_list.itemChanged.connect(lambda _i: self._emit_props_changed())
+        self._sc_ambient_list.currentRowChanged.connect(
+            lambda _r: self._sync_ambient_buttons(),
+        )
         self._sc_ambient_list.itemDoubleClicked.connect(
             lambda _i: self._sc_ambient_preview.preview_current(),
         )
         amb_lay.addWidget(self._sc_ambient_list)
+
+        amb_btn_row = QHBoxLayout()
+        amb_add = QPushButton("添加…")
+        amb_add.setToolTip("打开音频选择窗（可搜索 / 试听 / 看时长与缺失状态）")
+        amb_add.clicked.connect(self._add_ambient)
+        amb_btn_row.addWidget(amb_add)
+        self._amb_btn_del = QPushButton("移除")
+        self._amb_btn_del.clicked.connect(self._remove_ambient)
+        amb_btn_row.addWidget(self._amb_btn_del)
+        self._amb_btn_up = QPushButton("↑")
+        self._amb_btn_up.setToolTip("上移（顺序只是编排顺序，多条同时循环播放）")
+        self._amb_btn_up.clicked.connect(lambda: self._move_ambient(-1))
+        amb_btn_row.addWidget(self._amb_btn_up)
+        self._amb_btn_down = QPushButton("↓")
+        self._amb_btn_down.clicked.connect(lambda: self._move_ambient(1))
+        amb_btn_row.addWidget(self._amb_btn_down)
+        amb_btn_row.addStretch(1)
+        amb_lay.addLayout(amb_btn_row)
+        # 环境音条目的时长探测缓存（后台线程，只喂 tooltip；探完自刷一次列表）
+        self._ambient_meta = AudioMetaCache(self)
+        self._ambient_meta.updated.connect(self._refresh_ambient_tooltips)
         amb_preview_row = QHBoxLayout()
         amb_preview_row.addWidget(QLabel("试听当前 ambient"))
         self._sc_ambient_preview = AudioPreviewControls(
@@ -4944,10 +5204,9 @@ class ScenePropertyPanel(QScrollArea):
         amb_preview_row.addWidget(self._sc_ambient_preview)
         amb_preview_row.addStretch(1)
         amb_lay.addLayout(amb_preview_row)
-        self._sc_ambient_extra = QLineEdit()
-        self._sc_ambient_extra.setPlaceholderText("其它 ambient id，逗号分隔")
-        self._sc_ambient_extra.textChanged.connect(lambda *_: self._emit_props_changed())
-        amb_lay.addWidget(self._sc_ambient_extra)
+        amb_hint = QLabel("多条会同时循环叠放；目录外的 id 也能在选择窗里手填。")
+        amb_hint.setStyleSheet("color: #888;")   # 字号交给全局皮肤，本地不写死
+        amb_lay.addWidget(amb_hint)
         amb_g.add_body(amb_inner)
         outer.addWidget(amb_g)
 
@@ -5147,6 +5406,15 @@ class ScenePropertyPanel(QScrollArea):
             self._sc_bgm.set_current(str(st.get("bgm", "") or ""))
             self._sc_filter.set_items(self._model.all_filter_ids())
             self._sc_filter.set_current(st.get("filterId", ""))
+            dn = st.get("dayNight")
+            self._sc_daynight.blockSignals(True)
+            self._sc_daynight.setChecked(isinstance(dn, dict) and dn.get("enabled") is True)
+            self._sc_daynight.blockSignals(False)
+            raw_anchors = st.get("exitAnchors")
+            self._exit_anchors = [
+                copy.deepcopy(a) for a in raw_anchors if isinstance(a, dict)
+            ] if isinstance(raw_anchors, list) else []
+            self._reload_exit_anchor_list()
             cam = st.get("camera", {})
             self._sc_zoom.setValue(cam.get("zoom", 1))
             self._sc_ppu.setValue(cam.get("pixelsPerUnit", 1))
@@ -5694,6 +5962,17 @@ class ScenePropertyPanel(QScrollArea):
             sc["filterId"] = fid
         elif "filterId" in sc:
             del sc["filterId"]
+        # 日夜：不勾＝不落键（缺省就是"不参与"，旧场景零字节变化）
+        if self._sc_daynight.isChecked():
+            dn = sc.setdefault("dayNight", {})
+            dn["enabled"] = True
+        elif "dayNight" in sc:
+            del sc["dayNight"]
+        anchors = [a for a in getattr(self, "_exit_anchors", []) if str(a.get("id", "")).strip()]
+        if anchors:
+            sc["exitAnchors"] = copy.deepcopy(anchors)
+        elif "exitAnchors" in sc:
+            del sc["exitAnchors"]
         # 场景本无 camera 且取值仍是运行时默认（zoom=1, ppu=1）→ 不注入 camera 块
         zoom_v = self._sc_zoom.value()
         ppu_v = self._sc_ppu.value()
@@ -6067,6 +6346,122 @@ class ScenePropertyPanel(QScrollArea):
         self._zn_plane_ids_label.setText(self._format_plane_ids_label([]))
         self._emit_props_changed()
 
+    # ---- 时段归属（phases）--------------------------------------------------
+    # 与 planes 完全同构的一套。语义差别只在候选源与缺省含义的措辞上。
+
+    def _entity_phase_ids_from_data(self, ent: dict) -> list[str]:
+        raw = ent.get("phases")
+        if not isinstance(raw, list):
+            return []
+        return [str(x).strip() for x in raw if str(x).strip()]
+
+    def _format_phase_ids_label(self, ids: list[str]) -> str:
+        return "、".join(ids) if ids else "（所有时段）"
+
+    def _pick_phase_ids(self, current: list[str]) -> list[str] | None:
+        dlg = QDialog(self)
+        dlg.setWindowTitle("选择时段归属")
+        dlg.resize(420, 420)
+        lay = QVBoxLayout(dlg)
+        hint = QLabel(
+            "可多选。写入实体的 phases 字段：实体只在所选时段存在；"
+            "全不选（清空）= 缺省 = 所有时段都在。候选来自 game_config.dayNight.phases。\n"
+            "注意：这是**瞬时**存在性开关，不会演离场——要 NPC 走到出口再消失，"
+            "请改用 NPC 日程表。",
+        )
+        hint.setWordWrap(True)
+        lay.addWidget(hint)
+        lw = QListWidget(dlg)
+        lw.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
+        pairs = [(pid, label) for pid, label in self._model.all_time_phase_ids() if pid]
+        known = {pid for pid, _ in pairs}
+        cur = [x for x in current if x]
+        # 保值孤儿项：数据里引用了配置里没有的时段 id，仍列出可去勾，不无声丢。
+        for orphan in cur:
+            if orphan not in known:
+                pairs.append((orphan, f"{orphan}（未登记）"))
+        cur_set = set(cur)
+        for pid, label in pairs:
+            text = pid if (not label or label == pid) else f"{pid} — {label}"
+            it = QListWidgetItem(text)
+            it.setData(Qt.ItemDataRole.UserRole, pid)
+            if pid in cur_set:
+                it.setSelected(True)
+            lw.addItem(it)
+        lay.addWidget(lw, 1)
+        bbox = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            parent=dlg,
+        )
+        bbox.accepted.connect(dlg.accept)
+        bbox.rejected.connect(dlg.reject)
+        lay.addWidget(bbox)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return None
+        return [str(it.data(Qt.ItemDataRole.UserRole)) for it in lw.selectedItems()]
+
+    def _make_phase_ids_row(self, label_attr: str, on_pick, on_clear) -> QWidget:
+        """「只读 label + 选择时段… + 清除」行（hotspot/npc/zone 共用）。"""
+        row = QWidget()
+        rl = QHBoxLayout(row)
+        rl.setContentsMargins(0, 0, 0, 0)
+        lbl = QLabel(self._format_phase_ids_label([]))
+        lbl.setWordWrap(True)
+        lbl.setToolTip(
+            "时段归属：实体只在所列时段存在；缺省（空）=所有时段都在。\n"
+            "候选来自 game_config.dayNight.phases（Config 页维护）。",
+        )
+        setattr(self, label_attr, lbl)
+        btn_pick = QPushButton("选择时段…")
+        btn_pick.setToolTip("多选该实体存在的时段（写入 phases 字段）")
+        btn_pick.clicked.connect(on_pick)
+        btn_clear = QPushButton("清除")
+        btn_clear.setToolTip("清空 phases（回到缺省=所有时段都在）")
+        btn_clear.clicked.connect(on_clear)
+        rl.addWidget(lbl, 1)
+        rl.addWidget(btn_pick)
+        rl.addWidget(btn_clear)
+        return row
+
+    def _open_hs_phase_ids_picker(self) -> None:
+        picked = self._pick_phase_ids(self._hs_phase_ids_pending)
+        if picked is None:
+            return
+        self._hs_phase_ids_pending = picked
+        self._hs_phase_ids_label.setText(self._format_phase_ids_label(picked))
+        self._emit_props_changed()
+
+    def _clear_hs_phase_ids(self) -> None:
+        self._hs_phase_ids_pending = []
+        self._hs_phase_ids_label.setText(self._format_phase_ids_label([]))
+        self._emit_props_changed()
+
+    def _open_npc_phase_ids_picker(self) -> None:
+        picked = self._pick_phase_ids(self._npc_phase_ids_pending)
+        if picked is None:
+            return
+        self._npc_phase_ids_pending = picked
+        self._npc_phase_ids_label.setText(self._format_phase_ids_label(picked))
+        self._emit_props_changed()
+
+    def _clear_npc_phase_ids(self) -> None:
+        self._npc_phase_ids_pending = []
+        self._npc_phase_ids_label.setText(self._format_phase_ids_label([]))
+        self._emit_props_changed()
+
+    def _open_zn_phase_ids_picker(self) -> None:
+        picked = self._pick_phase_ids(self._zn_phase_ids_pending)
+        if picked is None:
+            return
+        self._zn_phase_ids_pending = picked
+        self._zn_phase_ids_label.setText(self._format_phase_ids_label(picked))
+        self._emit_props_changed()
+
+    def _clear_zn_phase_ids(self) -> None:
+        self._zn_phase_ids_pending = []
+        self._zn_phase_ids_label.setText(self._format_phase_ids_label([]))
+        self._emit_props_changed()
+
     def _make_plane_ids_row(self, label_attr: str, on_pick, on_clear) -> QWidget:
         """「只读 label + 选择位面… + 清除」行（hotspot/npc/zone 共用）。"""
         row = QWidget()
@@ -6275,6 +6670,11 @@ class ScenePropertyPanel(QScrollArea):
             "_hs_plane_ids_label",
             self._open_hs_plane_ids_picker,
             self._clear_hs_plane_ids,
+        ))
+        form.addRow("时段归属", self._make_phase_ids_row(
+            "_hs_phase_ids_label",
+            self._open_hs_phase_ids_picker,
+            self._clear_hs_phase_ids,
         ))
         basic_g.add_body(basic_inner)
         lay.addWidget(basic_g)
@@ -7138,6 +7538,10 @@ class ScenePropertyPanel(QScrollArea):
             self._hs_plane_ids_label.setText(
                 self._format_plane_ids_label(self._hs_plane_ids_pending),
             )
+            self._hs_phase_ids_pending = self._entity_phase_ids_from_data(st)
+            self._hs_phase_ids_label.setText(
+                self._format_phase_ids_label(self._hs_phase_ids_pending),
+            )
             self._hs_cond.set_flag_pattern_context(self._model, self._editing_scene_id or None)
             self._hs_cond.set_data(st.get("conditions", []))
             self._hs_cond_hide_entity.blockSignals(True)
@@ -7599,6 +8003,11 @@ class ScenePropertyPanel(QScrollArea):
             hs["planes"] = hs_planes
         else:
             hs.pop("planes", None)  # 缺省=存在于所有位面
+        hs_phases = [x for x in self._hs_phase_ids_pending if str(x).strip()]
+        if hs_phases:
+            hs["phases"] = hs_phases
+        else:
+            hs.pop("phases", None)  # 缺省=所有时段都在
         if self._entity_has_cutscene_binding(hs):
             if self._hs_cutscene_only.isChecked():
                 hs.pop("cutsceneOnly", None)
@@ -7870,6 +8279,11 @@ class ScenePropertyPanel(QScrollArea):
             "_npc_plane_ids_label",
             self._open_npc_plane_ids_picker,
             self._clear_npc_plane_ids,
+        ))
+        form.addRow("时段归属", self._make_phase_ids_row(
+            "_npc_phase_ids_label",
+            self._open_npc_phase_ids_picker,
+            self._clear_npc_phase_ids,
         ))
         self._npc_cast_shadow = QCheckBox("投射阴影 + 接触AO")
         self._npc_cast_shadow.setToolTip(
@@ -8723,6 +9137,10 @@ class ScenePropertyPanel(QScrollArea):
             self._npc_plane_ids_label.setText(
                 self._format_plane_ids_label(self._npc_plane_ids_pending),
             )
+            self._npc_phase_ids_pending = self._entity_phase_ids_from_data(st)
+            self._npc_phase_ids_label.setText(
+                self._format_phase_ids_label(self._npc_phase_ids_pending),
+            )
             self._npc_cond.set_flag_pattern_context(self._model, self._editing_scene_id or None)
             self._npc_cond.set_data(st.get("conditions", []))
             self._npc_cond_hide_entity.blockSignals(True)
@@ -8871,6 +9289,11 @@ class ScenePropertyPanel(QScrollArea):
             npc["planes"] = npc_planes
         else:
             npc.pop("planes", None)  # 缺省=存在于所有位面
+        npc_phases = [x for x in self._npc_phase_ids_pending if str(x).strip()]
+        if npc_phases:
+            npc["phases"] = npc_phases
+        else:
+            npc.pop("phases", None)  # 缺省=所有时段都在
         if self._entity_has_cutscene_binding(npc):
             if self._npc_cutscene_only.isChecked():
                 npc.pop("cutsceneOnly", None)
@@ -8976,6 +9399,11 @@ class ScenePropertyPanel(QScrollArea):
             "_zn_plane_ids_label",
             self._open_zn_plane_ids_picker,
             self._clear_zn_plane_ids,
+        ))
+        form.addRow("时段归属", self._make_phase_ids_row(
+            "_zn_phase_ids_label",
+            self._open_zn_phase_ids_picker,
+            self._clear_zn_phase_ids,
         ))
         top_g.add_body(top_inner)
         lay.addWidget(top_g)
@@ -9345,6 +9773,10 @@ class ScenePropertyPanel(QScrollArea):
             self._zn_plane_ids_label.setText(
                 self._format_plane_ids_label(self._zn_plane_ids_pending),
             )
+            self._zn_phase_ids_pending = self._entity_phase_ids_from_data(st)
+            self._zn_phase_ids_label.setText(
+                self._format_phase_ids_label(self._zn_phase_ids_pending),
+            )
             poly = st.get("polygon")
             if isinstance(poly, list) and len(poly) >= 3:
                 self._set_zone_poly_table(poly)
@@ -9413,6 +9845,11 @@ class ScenePropertyPanel(QScrollArea):
             zone["planes"] = zn_planes
         else:
             zone.pop("planes", None)  # 缺省=存在于所有位面
+        zn_phases = [x for x in self._zn_phase_ids_pending if str(x).strip()]
+        if zn_phases:
+            zone["phases"] = zn_phases
+        else:
+            zone.pop("phases", None)  # 缺省=所有时段都在
         poly = self._zone_polygon_from_table()
         if len(poly) >= 3:
             zone["polygon"] = poly
@@ -9888,6 +10325,10 @@ class SceneEditor(QWidget):
         self._undo = SceneUndoController(self)
         # 拖拽手势的「按下时」场景快照：(scene_id, deepcopy)；release/取消时消费。
         self._drag_undo_before: tuple[str, dict] | None = None
+        # 出口锚点的工作副本（随 props 的 pending/Apply 一起提交，不即时改 model）
+        self._exit_anchors: list[dict] = []
+        self._exit_anchor_idx: int = -1
+        self._loading_exit_anchor: bool = False
         # 本次整组拖动手势里真正改到成员的次数（0 = release 不标脏，防伪脏）
         self._group_live_changed: int = 0
         # 缩放联动重算组框几何的重入哨兵（见 _on_view_scale_changed）

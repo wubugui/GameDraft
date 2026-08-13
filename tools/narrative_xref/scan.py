@@ -1033,6 +1033,8 @@ _SUBJECT_BY_CONTAINER: dict[str, tuple[str, str]] = {
     "zones": ("zone", "走进去有没有反应"),
     "nodes": ("dialogueNode", "对话走哪一支"),
     "cases": ("dialogueNode", "对话走哪一支"),
+    # 气泡台词本：主体是那一组台词（自带 id），不是整份 bubble_lines.json
+    "lineSets": ("bubbleLineSet", "这组台词说不说"),
 }
 # 整份文件装一堆条目的（容器键为空/顶层数组）→ 按数据域给说法
 _SUBJECT_BY_KIND: dict[str, tuple[str, str]] = {
@@ -1055,6 +1057,7 @@ _SUBJECT_BY_KIND: dict[str, tuple[str, str]] = {
     "signalCue": ("cue", "这段表现放不放"),
     "minigame": ("minigame", "小游戏里的分支"),
     "cutscene": ("cutscene", "这段过场的分支"),
+    "bubbleLineSet": ("bubbleLineSet", "这组台词说不说"),
 }
 
 # 主体类别的中文名。界面上说「NPC「庄家来人」」而不是「场景「庄家来人」」——
@@ -1078,6 +1081,7 @@ SUBJECT_KIND_LABELS: dict[str, str] = {
     "encounter": "遭遇",
     "rule": "规矩",
     "item": "物品",
+    "bubbleLineSet": "气泡台词",
 }
 
 

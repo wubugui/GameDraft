@@ -113,6 +113,8 @@ def condition_expr_text(expr: Any, depth: int = 0) -> str:
         return f"位面={expr['plane'].strip() or '?'}"
     if "posture" in expr:
         return f"姿态={_value_text(expr.get('posture'))}"
+    if isinstance(expr.get("timePhase"), str):
+        return f"时段={expr['timePhase'].strip() or '?'}"
 
     return _compact(expr)
 
@@ -154,8 +156,8 @@ def _is_recognized_leaf(expr: dict[str, Any]) -> bool:
         expr.get("value"), (int, float)
     ) and not isinstance(expr.get("value"), bool):
         return True
-    # isPlaneLeaf / isPostureLeaf
-    for key in ("plane", "posture"):
+    # isPlaneLeaf / isPostureLeaf / isTimePhaseLeaf
+    for key in ("plane", "posture", "timePhase"):
         if (
             isinstance(expr.get(key), str)
             and not flag_is_str

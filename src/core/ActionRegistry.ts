@@ -21,6 +21,7 @@ import type { QuestManager } from '../systems/QuestManager';
 import type { EncounterManager } from '../systems/EncounterManager';
 import type { AudioManager } from '../systems/AudioManager';
 import type { DayManager } from '../systems/DayManager';
+import type { NpcScheduleSystem } from '../systems/NpcScheduleSystem';
 import type { ArchiveManager } from '../systems/ArchiveManager';
 import type { CutsceneManager } from '../systems/CutsceneManager';
 import type { SceneManager } from '../systems/SceneManager';
@@ -39,7 +40,7 @@ import type { SignalCueManager } from '../systems/SignalCueManager';
 import type { HealthSystem } from '../systems/HealthSystem';
 import type { SmellSystem } from '../systems/SmellSystem';
 import type { PlaneReconciler } from '../systems/PlaneReconciler';
-import type { ActionDef, ActionOriginContext, AnimationPlaybackParams, DialogueLine, DialoguePortraitRef, EmoteBubbleOffsetOpts, ICutsceneActor, IEmoteBubbleAnchor, ZoneRuleSlot, RuleLayerKey } from '../data/types';
+import type { ActionDef, ActionOriginContext, AnimationPlaybackParams, DialogueLine, DialoguePortraitRef, EmoteBubbleOffsetOpts, ICutsceneActor, IEmoteBubbleAnchor, TimeTransition, ZoneRuleSlot, RuleLayerKey } from '../data/types';
 import { GameState } from '../data/types';
 import type { SceneEntityKind, RuntimeFieldValue } from '../data/EntityRuntimeFieldSchema';
 import { applyDialogueColonSpeakerFromResolvedText } from './resolveText';
@@ -178,6 +179,7 @@ export interface ActionRegistryDeps {
   encounterManager: EncounterManager;
   audioManager: AudioManager;
   dayManager: DayManager;
+  npcScheduleSystem: NpcScheduleSystem;
   archiveManager: ArchiveManager;
   cutsceneManager: CutsceneManager;
   sceneManager: SceneManager;
@@ -243,6 +245,9 @@ export interface ActionRegistryDeps {
   setCameraFollowTarget: (targetId: string, snap: boolean) => void;
   /** 解除相机跟随（回到默认锚点：探索/动作链态跟玩家；过场态改由 cameraMove 摆布）。 */
   clearCameraFollowTarget: () => void;
+  /** 瞬移（teleportEntityTo）后的镜头补正：**仅当镜头此刻真锚在该实体上**才 snap，
+   *  否则不碰镜头（判定见 Game.snapCameraToActorIfFollowed）。 */
+  snapCameraToActorIfFollowed: (entityId: string) => void;
   /** 停止指定 NPC 的巡逻协程（打断位移 + 失效该次巡逻 token） */
   stopNpcPatrol: (npcId: string) => void;
   /** 在当前场景为该 NPC 重新启动巡逻（会先 stop再跑，避免重复协程） */
@@ -393,6 +398,18 @@ function parseFaceTowardMovementParam(raw: unknown): boolean {
   if (typeof raw === 'number') return raw !== 0;
   const s = String(raw).trim().toLowerCase();
   return s === 'true' || s === '1' || s === 'yes';
+}
+
+/** 与 `TimeTransition` 联合类型同源；非法/缺省一律回落调用方给的档，不静默改语义。 */
+const TIME_TRANSITIONS: readonly TimeTransition[] = ['seamless', 'timelapse', 'fade', 'cut'];
+
+/** advanceTime*.params.transition：决定 NPC 换班演不演离场（只有 seamless 演）。 */
+function normalizeTimeTransition(raw: unknown, fallback: TimeTransition): TimeTransition {
+  const s = String(raw ?? '').trim();
+  if (!s) return fallback;
+  if ((TIME_TRANSITIONS as readonly string[]).includes(s)) return s as TimeTransition;
+  console.warn(`advanceTime: 未知 transition "${s}"，按 ${fallback} 处理`);
+  return fallback;
 }
 
 /** showSpeechBubble*：对白用 `text`；兼容沿用 `emote` 键以便从 showEmote 复制参数。 */
@@ -681,8 +698,65 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     if (p.id) { d.audioManager.removeAmbient(p.id as string, fadeMs); }
     else { d.audioManager.clearAmbient(fadeMs); }
   }, ['id', 'fadeMs']);
+  // 叠一层场景环境音（如过场里临时铺赌坊底噪）。与 stopSceneAmbient 配对——此前只有「停」
+  // 没有「播」，底层 addAmbient 无 action 可达。ambient 是**分层叠加**语义（区别于单声道的
+  // playBgm），同 id 重复调用由 AudioManager 自身幂等守卫处理。
+  // 过场结束时音频基线由 CutsceneManager.restoreAudioBaseline 统一还原，内容层不必自行收尾。
+  executor.register('playSceneAmbient', (p) => {
+    const rawVol = p.volume;
+    const vol = typeof rawVol === 'number' ? rawVol : Number(rawVol);
+    d.audioManager.addAmbient(p.id as string, Number.isFinite(vol) ? vol : undefined);
+  }, ['id', 'volume']);
   // 必须 return：endDay 含到期延迟事件批 + day:start，批内后续动作要等整段落地（严格顺序）。
   executor.register('endDay', () => d.dayManager.endDay(), []);
+
+  /**
+   * 推进当日时刻。`transition` 决定 NPC 换班怎么演：`seamless`（缺省）画面不遮挡，
+   * 到点的 NPC 会走到场景出口才隐去；`timelapse`/`fade`/`cut` 有遮挡，遮挡期间直接重贴。
+   * 必须 return：跨零点会连带跑 endDay 的延迟事件批，批内后续动作要等它落地。
+   */
+  executor.register('advanceTime', (p) => {
+    const minutes = Number(p.minutes);
+    if (!Number.isFinite(minutes) || minutes < 0) {
+      console.warn('advanceTime: 需要非负数值 minutes');
+      return;
+    }
+    return d.dayManager.advanceTime(minutes, normalizeTimeTransition(p.transition, 'seamless'));
+  }, ['minutes', 'transition']);
+
+  /** 推进到指定时段起点（玩家「等到天黑」）。已在该时段内则不推进。 */
+  executor.register('advanceTimeTo', (p) => {
+    const phase = String(p.phase ?? '').trim();
+    if (!phase) {
+      console.warn('advanceTimeTo: 需要 phase');
+      return;
+    }
+    return d.dayManager.advanceTimeTo(phase, normalizeTimeTransition(p.transition, 'timelapse'));
+  }, ['phase', 'transition']);
+
+  /**
+   * 剧情覆盖某角色的日程（把人钉在某场景/某位置，或钉成"不在任何场景"）。
+   * `clear: true` 清除覆盖、交还给日程表。覆盖入存档。
+   */
+  executor.register('setNpcScheduleOverride', (p) => {
+    const characterId = String(p.characterId ?? '').trim();
+    if (!characterId) {
+      console.warn('setNpcScheduleOverride: 需要 characterId');
+      return;
+    }
+    if (p.clear === true) {
+      d.npcScheduleSystem.setOverride(characterId, null);
+      return;
+    }
+    const rawScene = p.scene;
+    const scene =
+      typeof rawScene === 'string' && rawScene.trim() ? rawScene.trim() : null;
+    const x = Number(p.x);
+    const y = Number(p.y);
+    const spot = Number.isFinite(x) && Number.isFinite(y) ? { x, y } : undefined;
+    const activity = String(p.activity ?? '').trim() || undefined;
+    d.npcScheduleSystem.setOverride(characterId, { scene, spot, activity });
+  }, ['characterId', 'scene', 'x', 'y', 'activity', 'clear']);
 
   executor.register('addDelayedEvent', (p) => {
     const raw = p.actions;
@@ -1776,6 +1850,33 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     await actor.jumpTo(x, y, dur, arc, jumpAnim, landAnim, faceTowardMovement);
     // runtime 不要求 sceneId；JSON 中带 sceneId 仅编辑器复现地图
   }, ['target', 'x', 'y', 'durationMs', 'arcHeight', 'jumpAnimState', 'landAnimState', 'faceTowardMovement']);
+
+  /**
+   * 瞬移：一帧到位，不插值、不切动画、**不碰朝向**（要转身就接一条 `faceEntity`——
+   * 与 `faceTowardMovement` 不勾选时"完全不碰朝向"同一套语义）。
+   * 想要走过去用 `moveEntityTo`，想要跳过去用 `jumpEntityTo`。
+   */
+  executor.register('teleportEntityTo', (p) => {
+    const target = String(p.target ?? '').trim();
+    const x = typeof p.x === 'number' ? p.x : Number(p.x);
+    const y = typeof p.y === 'number' ? p.y : Number(p.y);
+    if (!target || !Number.isFinite(x) || !Number.isFinite(y)) {
+      console.warn('teleportEntityTo: 需要 target、有限数值 x/y');
+      return;
+    }
+    const actor = d.resolveActor(target);
+    if (!actor) {
+      console.warn(`teleportEntityTo: 找不到实体 "${target}"`);
+      return;
+    }
+    actor.x = x;
+    actor.y = y;
+    // 镜头此刻正锚在它身上时补一次 snap：不补的话相机会从原位平滑滑过去，
+    // 而瞬移的典型编排是遮黑里换位（fadeWorldToBlack → 瞬移 → fadeWorldFromBlack），
+    // 揭幕那一刻镜头还在半路 = 画面从旧机位滑向新机位。
+    d.snapCameraToActorIfFollowed(target);
+    // runtime 不要求 sceneId；JSON 中带 sceneId 仅编辑器复现地图
+  }, ['target', 'x', 'y']);
 
   executor.register('faceEntity', (p) => {
     const target = String(p.target ?? '').trim();

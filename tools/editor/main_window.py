@@ -1196,6 +1196,7 @@ class MainWindow(QMainWindow):
         self._dialogue_external_processes = [p for p in before if p.poll() is None]
         if len(before) != len(self._dialogue_external_processes):
             self._reload_all_reference_catalogs()
+            self._resync_audio_config_from_disk()
         if not self._dialogue_external_processes:
             self._dialogue_process_watch_timer.stop()
 
@@ -1209,6 +1210,9 @@ class MainWindow(QMainWindow):
             # 外置编辑器可能仍开着且刚保存：主窗口重新获得焦点就是最可靠的
             # 跨进程刷新边界。目录刷新只读且逐面板异常隔离。
             QTimer.singleShot(0, self, self._reload_all_reference_catalogs)
+            # 音频加工台改的是 audio_config.json 的 src，不属于「引用目录」那一路，
+            # 所以单独挂：那边只在打开工程时读一次，不重读就会被下一次 Save All 盖掉。
+            QTimer.singleShot(0, self, self._resync_audio_config_from_disk)
 
     def _launch_filter_tool_external(self) -> None:
         self._launch_external_tool("tools.filter_tool", [], "Filter Tool")
@@ -1225,14 +1229,22 @@ class MainWindow(QMainWindow):
         self._launch_external_tool("tools.copy_manager", [], "Copy Manager")
 
     def _launch_audio_editor_external(self) -> None:
-        """音频编辑器(波形裁剪/淡入淡出/一键导出进 audio_config)。
+        """音频加工台(波形裁剪/淡入淡出/把成品挂到已有音频 key 上)。
 
         自带 QWebEngine 壳 + 内嵌 HTTP 服务,主编辑器这边只负责起进程。
+
+        必须登记进外置进程监视表:那个工具会在外面改 audio_config.json 的 src,
+        而这边的 audio_config 只在打开工程时读一次、保存时整份 dump 回盘 ——
+        不重读就等于每次 Save All 都把它的成果静默盖掉(见
+        `ProjectModel.reload_audio_config_from_disk`)。
         """
         root = self._ensure_valid_tool_root()
         if root is None:
             return
-        self._launch_external_tool("tools.audio_editor", [], "音频编辑器", root=root)
+        proc = self._launch_external_tool("tools.audio_editor", [], "音频加工台", root=root)
+        if proc is not None:
+            self._dialogue_external_processes.append(proc)
+            self._dialogue_process_watch_timer.start()
 
     def _launch_video_to_atlas_external(self) -> None:
         root = self._ensure_valid_tool_root()
@@ -1612,12 +1624,14 @@ class MainWindow(QMainWindow):
         from .editors.bubble_lines_editor import BubbleLinesEditor
         from .editors.smell_profile_editor import SmellProfileEditor
         from .editors.plane_editor import PlaneEditor
+        from .editors.npc_schedule_editor import NpcScheduleEditor
         from tools.task_orchestration_editor.editor import TaskOrchestrationEditor
 
         rows: list[tuple[list[str], str, Any]] = [
             (["物理世界"], "Scene", SceneEditor),
             (["物理世界"], "角色", CharacterRegistryEditor),
             (["物理世界"], "Map", MapEditor),
+            (["物理世界"], "NPC 日程", NpcScheduleEditor),
             (["数据编辑", "叙事编排"], "任务编排", TaskOrchestrationEditor),
             (["数据编辑", "叙事编排"], "过场", TimelineEditor),
             (["数据编辑", "叙事编排"], "图对话", DialogueGraphEditorTab),
@@ -1764,6 +1778,65 @@ class MainWindow(QMainWindow):
             # 顶层钩子 + 子控件兜底（缺钩子的老编辑页靠兜底才不掉队），与切页走同一条路。
             # force：磁盘侧变化不经 mark_dirty，模型水位察觉不到，必须强制刷。
             self._refresh_page_reference_candidates(inst, force=True)
+
+    def _resync_audio_config_from_disk(self) -> None:
+        """外置音频工具改了 audio_config.json 就把内存**和面板**一起同步过来。
+
+        为什么要做：audio_config 只在打开工程时读一次。工具在外面改完，这边内存还是
+        旧值——数据不会丢（Save All 有外部改动基线挡着，是 fail-closed），但用户会一直
+        卡在「检测到外部修改」上，只能关掉工程重开。这里就是免掉那次重开。
+
+        为什么顺序不能反（这条是踩出来的）：音频面板的四张表是**开工程时的一次性快照**，
+        全类没有 showEvent / data_changed 订阅。如果先把模型换成磁盘版、面板不跟，
+        面板反而会因为「表 ≠ 模型」判成脏，下一次 Save All 就用陈旧表格把刚同步进来的
+        src 又写回去——比不同步更糟。所以必须：
+          先问面板有没有未应用编辑（此刻模型还是旧的，问出来的才是**用户的**编辑）
+            → 有就什么都不动（连基线都不许动，那道闸得继续拦着）
+            → 没有才换模型，换完立刻把面板重铺。
+
+        提示走状态栏而不是模态框——本方法挂在窗口激活/子进程退出路径上，在这条路径上
+        弹模态会与引用重建的控件销毁撞车（见 mainwindow-editor-hooks 那条
+        「模态框开着时销毁控件树 = 进程级红线」）。
+        """
+        try:
+            if not self._model.audio_config_differs_on_disk():
+                self._audio_config_conflict = False
+                return
+            panel = self._find_audio_editor()
+            if panel is not None and panel.has_unapplied_edits():
+                self._warn_audio_config_conflict()
+                return
+            state = self._model.reload_audio_config_from_disk()
+        except Exception:  # noqa: BLE001 — 刷新失败绝不能打断整条刷新链
+            return
+        if state == "reloaded":
+            self._audio_config_conflict = False
+            if panel is not None:
+                panel.reload_from_model()
+            self._status.showMessage("audio_config.json 已按磁盘刷新（外部音频工具改过）", 5000)
+        elif state == "blocked":
+            self._warn_audio_config_conflict()
+        else:
+            self._audio_config_conflict = False
+
+    def _find_audio_editor(self):
+        """拿到音频面板实例；没有（工程没开 / 页还没建）返回 None。"""
+        from .editors.audio_editor import AudioEditor
+
+        for ed in self._editor_instances:
+            if isinstance(ed, AudioEditor):
+                return ed
+        return None
+
+    def _warn_audio_config_conflict(self) -> None:
+        """两边都有真东西时的常驻提示。只在状态从「无冲突」翻成「有冲突」时播一次，
+        避免每次窗口激活都刷一条；冲突消解（面板保存/放弃后再同步）时自动复位。"""
+        if getattr(self, "_audio_config_conflict", False):
+            return
+        self._audio_config_conflict = True
+        self._status.showMessage(
+            "⚠ 音频面板有未应用/未保存的改动，而 audio_config.json 已被外部音频工具改过："
+            "两边都有真东西，已停止自动同步。请先 Apply 并保存、或放弃本面板的改动。", 0)
 
     def _on_task_native_domains_changed(self, raw_domains: object) -> None:
         """Rebase old editor projections after task compilation swaps domains."""

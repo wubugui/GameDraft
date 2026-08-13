@@ -91,7 +91,8 @@
       "src": "/resources/runtime/audio/chinese_crowd_voices.mp3"
     },
     "海边": {
-      "src": "/resources/runtime/audio/BGS/29822_1076_635.mp3"
+      "src": "/resources/runtime/audio/BGS/29822_1076_635.mp3",
+      "volume": 0.3
     },
     "野外鸟叫": {
       "src": "/resources/runtime/audio/BGS/30116_1076_638.mp3"
@@ -103,13 +104,69 @@
       "src": "/resources/runtime/audio/BGS/SWDRSLGDIR_0061_night2.wav"
     },
     "人声闹市": {
-      "src": "/resources/runtime/audio/ancient_market_base.mp3"
+      "src": "/resources/runtime/audio/背景音/人声嘈杂2.wav",
+      "volume": 0.5
     },
     "中文人声闹市": {
-      "src": "/resources/runtime/audio/chinese_crowd_voices.mp3"
+      "src": "/resources/runtime/audio/背景音/人声嘈杂3.wav",
+      "volume": 0.3
+    },
+    "赌场背景声": {
+      "src": "/resources/runtime/audio/背景音/人声嘈杂1.wav"
+    },
+    "闹市": {
+      "src": "/resources/runtime/audio/背景音/人声嘈杂4.wav"
     }
   },
   "sfx": {
+    "minigame_lose": {
+      "src": "/resources/runtime/audio/edited/minigame_lose.wav"
+    },
+    "map_open": {
+      "src": "/resources/runtime/audio/edited/map_open.wav"
+    },
+    "minigame_win": {
+      "src": "/resources/runtime/audio/edited/minigame_win.wav"
+    },
+    "quest_accepted": {
+      "src": "/resources/runtime/audio/edited/quest_accepted.wav"
+    },
+    "quest_completed": {
+      "src": "/resources/runtime/audio/edited/quest_completed.wav"
+    },
+    "quest_updated": {
+      "src": "/resources/runtime/audio/edited/quest_updated.wav"
+    },
+    "smell_cue": {
+      "src": "/resources/runtime/audio/edited/smell_cue.wav"
+    },
+    "ui_tab_switch": {
+      "src": "/resources/runtime/audio/edited/ui_tab_switch.wav"
+    },
+    "ui_page_turn": {
+      "src": "/resources/runtime/audio/edited/ui_page_turn.wav"
+    },
+    "ui_error_denied": {
+      "src": "/resources/runtime/audio/edited/ui_error_denied.wav"
+    },
+    "save_done": {
+      "src": "/resources/runtime/audio/edited/save_done.wav"
+    },
+    "shop_trade": {
+      "src": "/resources/runtime/audio/edited/shop_trade.wav"
+    },
+    "quest_failed": {
+      "src": "/resources/runtime/audio/edited/quest_failed.wav"
+    },
+    "load_done": {
+      "src": "/resources/runtime/audio/edited/load_done.wav"
+    },
+    "dialogue_choice": {
+      "src": "/resources/runtime/audio/edited/dialogue_choice.wav"
+    },
+    "dialogue_advance": {
+      "src": "/resources/runtime/audio/edited/dialogue_advance.wav"
+    },
     "sfx_force_swallowed_thud": {
       "src": "/resources/runtime/audio/demo/sfx_force_swallowed_thud.wav"
     },
@@ -249,67 +306,67 @@
       "src": "/resources/runtime/audio/ui_quest_complete.wav"
     },
     "ui_hover": {
-      "src": "/resources/runtime/audio/ui_hover.wav"
+      "src": "/resources/runtime/audio/edited/ui_hover.wav"
     },
     "ui_confirm": {
-      "src": "/resources/runtime/audio/ui_confirm.wav"
+      "src": "/resources/runtime/audio/edited/ui_confirm.wav"
     },
     "ui_cancel": {
-      "src": "/resources/runtime/audio/ui_cancel.wav"
+      "src": "/resources/runtime/audio/edited/ui_cancel.wav"
     },
     "ui_panel_open": {
-      "src": "/resources/runtime/audio/ui_panel_open.wav"
+      "src": "/resources/runtime/audio/edited/ui_panel_open.wav"
     },
     "ui_panel_close": {
-      "src": "/resources/runtime/audio/ui_panel_close.wav"
+      "src": "/resources/runtime/audio/edited/ui_panel_close.wav"
     },
     "ui_notification": {
-      "src": "/resources/runtime/audio/ui_notification.wav"
+      "src": "/resources/runtime/audio/edited/ui_notification.wav"
     },
     "item_pickup": {
-      "src": "/resources/runtime/audio/item_pickup.wav"
+      "src": "/resources/runtime/audio/edited/item_pickup.wav"
     },
     "coin_gain": {
-      "src": "/resources/runtime/audio/coin_gain.wav"
+      "src": "/resources/runtime/audio/edited/coin_gain.wav"
     },
     "coin_spend": {
-      "src": "/resources/runtime/audio/coin_spend.wav"
+      "src": "/resources/runtime/audio/edited/coin_spend.wav"
     },
     "inventory_full": {
-      "src": "/resources/runtime/audio/inventory_full.wav"
+      "src": "/resources/runtime/audio/edited/inventory_full.wav"
     },
     "rule_fragment_gain": {
-      "src": "/resources/runtime/audio/rule_fragment_gain.wav"
+      "src": "/resources/runtime/audio/edited/rule_fragment_gain.wav"
     },
     "rule_acquired": {
-      "src": "/resources/runtime/audio/rule_acquired.wav"
+      "src": "/resources/runtime/audio/edited/rule_acquired.wav"
     },
     "archive_update": {
-      "src": "/resources/runtime/audio/archive_update.wav"
+      "src": "/resources/runtime/audio/edited/archive_update.wav"
     },
     "hotspot_interact": {
       "src": "/resources/runtime/audio/hotspot_interact.wav"
     },
     "scene_transition": {
-      "src": "/resources/runtime/audio/scene_transition.wav"
+      "src": "/resources/runtime/audio/edited/scene_transition.wav"
     },
     "ui_warning": {
-      "src": "/resources/runtime/audio/ui_warning.wav"
+      "src": "/resources/runtime/audio/edited/ui_warning.wav"
     },
     "dialogue_start": {
-      "src": "/resources/runtime/audio/dialogue_start.wav"
+      "src": "/resources/runtime/audio/edited/dialogue_start.wav"
     },
     "dialogue_end": {
-      "src": "/resources/runtime/audio/dialogue_end.wav"
+      "src": "/resources/runtime/audio/edited/dialogue_end.wav"
     },
     "item_consume": {
-      "src": "/resources/runtime/audio/item_consume.wav"
+      "src": "/resources/runtime/audio/edited/item_consume.wav"
     },
     "rule_layer_gain": {
-      "src": "/resources/runtime/audio/rule_layer_gain.wav"
+      "src": "/resources/runtime/audio/edited/rule_layer_gain.wav"
     },
     "rule_use_apply": {
-      "src": "/resources/runtime/audio/rule_use_apply.wav"
+      "src": "/resources/runtime/audio/edited/rule_use_apply.wav"
     },
     "zone_rule_available": {
       "src": "/resources/runtime/audio/zone_rule_available.wav"
@@ -318,10 +375,10 @@
       "src": "/resources/runtime/audio/zone_rule_unavailable.wav"
     },
     "encounter_start": {
-      "src": "/resources/runtime/audio/encounter_start.wav"
+      "src": "/resources/runtime/audio/edited/encounter_start.wav"
     },
     "encounter_choice": {
-      "src": "/resources/runtime/audio/encounter_choice.wav"
+      "src": "/resources/runtime/audio/edited/encounter_choice.wav"
     },
     "encounter_result": {
       "src": "/resources/runtime/audio/encounter_result.wav"
@@ -333,25 +390,25 @@
       "src": "/resources/runtime/audio/cutscene_end.wav"
     },
     "day_start": {
-      "src": "/resources/runtime/audio/day_start.wav"
+      "src": "/resources/runtime/audio/edited/day_start.wav"
     },
     "day_end": {
-      "src": "/resources/runtime/audio/day_end.wav"
+      "src": "/resources/runtime/audio/edited/day_end.wav"
     },
     "shop_open": {
-      "src": "/resources/runtime/audio/shop_open.wav"
+      "src": "/resources/runtime/audio/edited/shop_open.wav"
     },
     "shop_close": {
-      "src": "/resources/runtime/audio/shop_close.wav"
+      "src": "/resources/runtime/audio/edited/shop_close.wav"
     },
     "map_travel": {
-      "src": "/resources/runtime/audio/map_travel.wav"
+      "src": "/resources/runtime/audio/edited/map_travel.wav"
     },
     "minigame_result": {
       "src": "/resources/runtime/audio/minigame_result.wav"
     },
     "document_reveal": {
-      "src": "/resources/runtime/audio/document_reveal.wav"
+      "src": "/resources/runtime/audio/edited/document_reveal.wav"
     },
     "sugar_wheel_pointer_pickup": {
       "src": "/resources/runtime/audio/sugar_wheel_pointer_pickup.wav"
@@ -490,6 +547,15 @@
     },
     "sfx_gamble_jeer_muffled_b": {
       "src": "/resources/runtime/audio/demo/generated_20260810/sfx_gamble_jeer_muffled_b.wav"
+    },
+    "sfx_coin_hand_heft_a": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_coin_hand_heft_a.wav"
+    },
+    "sfx_night_watch_clapper_a": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_night_watch_clapper_a.wav"
+    },
+    "sfx_dog_howl_night_a": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_dog_howl_night_a.wav"
     }
   },
   "systemSfx": {
