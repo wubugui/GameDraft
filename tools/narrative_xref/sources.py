@@ -66,6 +66,10 @@ CONDITION_EXTRA_SPECS: dict[str, dict[str, str]] = {
     # 按 when 挑人开口）。不登记 = 查"谁读这个状态"时整条气泡通道隐形，而那正是"世界对
     # 玩家有反应"最主要的外显面。模型属性存的是整份文档（不是子树），故无 subtree。
     "bubble_lines": {"path": "bubble_lines.json", "kind": "bubbleLineSet", "label": "气泡台词"},
+    # 行话本 `entries[].unlockConditions` 是图鉴解锁的条件面。档案五件套其余四份都在
+    # 发射面表里，唯它漏网（2026-08-13 全库对账抓获）——漏登记 = 查"谁读这个状态"少一域、
+    # 改名级联漏改 → 行话解锁条件悬垂、永远解不开，静默。它无动作树，纯条件面，故在此表。
+    "archive_slang": {"path": "archive/slang.json", "kind": "archiveSlang", "label": "档案·行话"},
     "game_config": {"path": "game_config.json", "kind": "gameConfig", "label": "全局配置"},
 }
 

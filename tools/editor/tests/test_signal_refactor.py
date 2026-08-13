@@ -388,6 +388,27 @@ def test_rules_json_is_reachable_by_refactor(disk_model: FakeModel) -> None:
     assert ("rules", "") in disk_model.dirty
 
 
+def test_archive_slang_is_registered_condition_source(disk_model: FakeModel) -> None:
+    """行话本 entries[].unlockConditions 必须在扫描与级联的可达面内。
+
+    档案五件套其余四份都登记了，唯 slang 漏网（2026-08-13 全库对账抓获）——与
+    bubble_lines/rules_data 同一形状的病：漏登记零报错，状态改名后行话解锁条件
+    悬垂、图鉴永远解不开，静默失败。
+    """
+    disk_model.archive_slang = {
+        "entries": [
+            {"id": "slang_1", "title": "锤子", "unlockConditions": [{"narrative": "flow_main", "state": "s1"}]},
+        ],
+    }
+    scan = scan_state_usages(disk_model, "flow_main", "s1")
+    assert any(h["bucket"] == "archive" for h in scan["external"]), \
+        f"archive/slang.json 未进扫描面（表键写错/漏登记会静默跳过）：{scan['external']}"
+
+    rename_state(disk_model, "flow_main", "s1", "s1_done")
+    assert disk_model.archive_slang["entries"][0]["unlockConditions"][0]["state"] == "s1_done"
+    assert ("archive", "") in disk_model.dirty
+
+
 def test_readonly_source_blocks_every_refactor(disk_model: FakeModel) -> None:
     """只读数据面（ProjectModel 加载但 save_all 不认领）有引用 → 四种重构一律拒绝。
 

@@ -77,6 +77,9 @@ CONDITION_EXTRA_SOURCES: dict[str, tuple[str, bool]] = {
     # 气泡台词本 lineSets[].when 读状态（表现层主通道）；改名级联必须扫到，否则
     # 状态改名后气泡条件悬垂、NPC 悄悄不说话——静默失败。
     "bubble_lines": ("bubble_lines", False),
+    # 行话本 entries[].unlockConditions（档案五件套第五份，2026-08-13 对账抓获的漏网）；
+    # 与其余档案同走 "archive" 脏桶落盘。漏它 = 状态改名后行话永远解不开，静默。
+    "archive_slang": ("archive", False),
     "game_config": ("config", False),
 }
 CONDITION_SOURCES: dict[str, tuple[str, bool]] = {**EMIT_SOURCE_BUCKETS, **CONDITION_EXTRA_SOURCES}
