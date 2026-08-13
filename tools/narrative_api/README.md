@@ -8,6 +8,18 @@
 把叙事编排从「GUI 连线」改成「写程序」的一层。**产出不变**——仍然是
 `public/assets/data/narrative_graphs.json` 那坨 JSON，运行时、校验器、编辑器**零改动**。
 
+两半，缺一不可：
+
+| | 干什么 |
+|---|---|
+| **叙事图构造 API** | 造机器/拍/边/绑定，产出 JSON。不变量以 `design/spec-v17.md` 为准 |
+| **世界查询 API** | 只读地问世界："所有 inspect 热点""雾津街头的 NPC""所有规矩"。**规模化编排的前提**——不能遍历就只能逐个点名 |
+
+世界查询**不需要给数据加任何字段**：实体已经有唯一 id，缺的只是「能问」。
+地址是 `(场景, id)`——实测跨场景重名的有 NPC 16 / 热点 8 / zone 3（多为编辑器占位名未改，
+以及 `exit_to_street` 这种语义上就该同名的），而现有数据里 zone 引用本就写成 `码头白天:new_zone_2`。
+单 id 能唯一定位时可省场景，**歧义时 fail loud，不许挑一个**。
+
 ### 为什么
 
 不是因为 GUI 表达不了——它表达得了。是因为**规模上去之后人管不过来**：
@@ -64,6 +76,8 @@ measure/
 
 - **产物**：`narrative_graphs.json`（以及模板盖章那几样：quests、对话桩）
 - **语义模型**：`src/core/NarrativeStateManager.ts` 的运行时行为是权威，`design/spec-v17.md` 是它的语义提炼
+- **世界查询的实现**：`ProjectModel` 数据面的**只读外观**——它本来就把场景/NPC/热点/zone/
+  规矩/任务/对话全载进来了，不需要新的加载器
 - **可能复用**：`tools/editor/project_model.py`（载入 / 脏桶 / 两阶段写盘 / 存盘前校验）、
   `tools/editor/shared/signal_refactor.py`（级联改名）、`tools/narrative_xref/`（引用扫描）
   —— 一旦编译期有了名字解析，xref 是副产品，那个包连同它的登记表可以退休

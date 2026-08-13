@@ -8,6 +8,31 @@
 from narrative import System, action, cond, entered, hotspot, is_in, npc, signal
 
 sys = System.load(PROJECT)
+world = sys.world          # 只读世界数据面（见 S0）
+
+
+# ════════════════════════════════════════════════════════════════════
+# S0  世界查询 API —— 规模化编排的前提
+#     不加任何字段。实体已有唯一 id，缺的只是「能问」。
+# ════════════════════════════════════════════════════════════════════
+#
+# 地址是 (场景, id)，不是裸 id：
+#   实测跨场景重名 —— NPC 90 个 id 里 16 个重名（new_npc_0 / fx_steam_1..3）、
+#   热点 8 个（exit_to_street 这种语义上就该同名的）、zone 3 个。
+#   而现有数据里 zone 引用本来就写成场景限定：`码头白天:new_zone_2`。
+#   ⇒ 单 id 能唯一定位时可省场景；**歧义时 fail loud，不许挑一个**
+#     （同 getPrimaryGraphByOwner 多台时返回 undefined 的口径）。
+#
+#   world.scenes                          → 29
+#   world.npcs                            → 111（跨场景）
+#   world.npcs(scene="雾津街头")            → 32
+#   world.hotspots(type="inspect")        → 73
+#   world.zones / world.items / world.quests / world.dialogues
+#   world.rules / world.fragments
+#   world.entity("码头白天:new_zone_2")     → 场景限定寻址
+#   world.entity("npc_婆子")               → 唯一则返回，重名则报错
+#
+# 实现上是 ProjectModel 数据面的**只读外观**——它本来就把这些全载进来了。
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -15,12 +40,12 @@ sys = System.load(PROJECT)
 #     现状：背尸位面配好了（拖拽/掉体力/不能跑/不能捡），但没有任何 NPC 对此有反应
 # ════════════════════════════════════════════════════════════════════
 
-# ⚠ 先说一个现实问题：**NPC 上没有身份字段**。
-#    实测 111 个 NPC，字段里有 id/name/characterId/group/patrol/phases/planes…
-#    没有职业或身份；`group` 全项目只用了 1 次，`characterId` 只有 10 个有。
-#    ⇒ "所有摊贩"这句话今天在数据里问不出来。
-#    两条路：①给 NPC 加一个 tags 字段（动 schema）②分类表放在编排这边（不动 schema）
-#    下面走 ②，顺带展示一个好处：**分类和用它的规则写在一起，不散在 111 个 NPC 里**。
+# 分类表写在这里，不是因为"NPC 上缺字段"——是因为
+# **分类属于规则，不属于实体**：
+#   同一个 NPC 对「背尸围观」是摊贩，对「赌债追讨」可能是债主。
+#   给 NPC 挂一个全局 tags 字段 = 强迫全世界共用一套分类法；
+#   写在规则旁边则允许多套并存，而且改分类时改动范围就是这条规则。
+# 实体 id 唯一且稳定，直接列就是最诚实的写法。
 
 身份表 = {
     "摊贩":  ["npc_零工工头", "npc_茶馆小二", "npc_面摊老板", ...],
@@ -72,11 +97,8 @@ def 一次性(宿主, 机器id):
     return m
 
 with sys.provenance("S2/一次性事件 v1"):
-    for scene in sys.scenes:
-        for h in scene.hotspots:
-            if h.type != "inspect":
-                continue
-            一次性(hotspot(h.id), f"看过_{scene.id}_{h.id}")
+    for h in world.hotspots(type="inspect"):        # 实测 73 个
+        一次性(hotspot(h.ref), f"看过_{h.ref}")      # h.ref = "场景:id"，见 S0
 
 # 产出：73 台机器。GUI 那边：73 张画布。
 # 而且这 73 台的**信号只有一条**，不是 73 条——命名面不随实体数膨胀。
@@ -91,7 +113,7 @@ comp3 = sys.composition("gen_规矩知识", label="[生成] 规矩三层的掌�
 
 with sys.provenance("S3/规矩知识网 v1"):
     知识 = {}
-    for r in sys.rules:                                # 直接读 rules.json，不复制一份
+    for r in world.rules:                              # 直接读 rules.json，不复制一份
         for layer in r.layers:                         # xiang / li / shu
             m = comp3.machine(f"知_{r.id}_{layer}", category=f"规矩·{r.category}")
             没听过 = m.initial("unknown",      label="没听过")
@@ -100,7 +122,7 @@ with sys.provenance("S3/规矩知识网 v1"):
             存疑   = m.state("questionable",   label="存疑")
 
             # 每条 fragment 是一个教学来源；fragment 自己发信号，这里只监听
-            for frag in sys.fragments_for(r.id, layer):
+            for frag in world.fragments_for(r.id, layer):
                 没听过.on(f"学到_{frag.id}", to=听说过)
 
             听说过.on(f"验证_{r.id}_{layer}", to=立住了)
