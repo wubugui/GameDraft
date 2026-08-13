@@ -33,6 +33,10 @@
     "bgm": "背景音乐",
     "sfx": "音效",
     "ambient": "环境音",
+    "typewriter": "逐字显示",
+    "textSpeed": "文字速度",
+    "toggleOn": "开",
+    "toggleOff": "关",
     "saveFailed": "存档失败",
     "loadFailed": "读档失败，进度未改变"
   },

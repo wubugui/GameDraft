@@ -10,9 +10,12 @@ import { ART_TEXT_SHADOW, createRule, createTitleRow, drawSelectedRow } from './
 import { clientToCanvas, markPointerConsumed } from './uiPointerCoords';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
-import type { ISaveDataProvider, IAudioSettingsProvider, SaveSlotMeta } from '../data/types';
+import type {
+  ISaveDataProvider, IAudioSettingsProvider, ITextDisplaySettingsProvider, SaveSlotMeta,
+} from '../data/types';
 import type { StringsProvider } from '../core/StringsProvider';
 import { createStyledText } from '../core/styledText';
+import { sliderToTypewriterScale, typewriterScaleToSlider } from '../core/TextDisplaySettings';
 
 type MenuMode = 'main' | 'pause' | 'save' | 'load' | 'settings';
 
@@ -158,10 +161,13 @@ const PAUSE_BAND_INSET = UITheme.spacing.lg;
 const MAIN_ROWS_CENTER_PCT = 0.58;
 const PAUSE_ROWS_CENTER_PCT = 0.56;
 
-/** 设置页：声道名列宽 / 百分比列宽 / 每行步进 */
+/** 设置页：项目名列宽 / 数值列宽 / 每行步进 */
 const CHANNEL_LABEL_W = 96;
 const PCT_COL_W = 52;
 const SETTING_ROW_H = 48;
+/** 设置页开关行的「开 / 关」小按钮尺寸（与滑条同起点，占一行的左半） */
+const TOGGLE_BTN_W = 72;
+const TOGGLE_BTN_H = 32;
 /** 音量滑条几何。组件层没有滑条件，这两个是控件自身的形状（非间距/字号），保留具名常量。 */
 const TRACK_H = 6;
 const HANDLE_R = 8;
@@ -188,6 +194,8 @@ export class MenuUI {
   private eventBus: EventBus;
   private saveData: ISaveDataProvider;
   private audioSettings: IAudioSettingsProvider;
+  /** 文字呈现偏好（逐字显示开关 / 速度），设置页里那两行 */
+  private textSettings: ITextDisplaySettingsProvider;
   private strings: StringsProvider;
   /** 全屏页（主菜单 / 暂停）的根容器；窗体页用 {@link win}，两者互斥 */
   private container: Container | null = null;
@@ -214,6 +222,7 @@ export class MenuUI {
     eventBus: EventBus,
     saveData: ISaveDataProvider,
     audioSettings: IAudioSettingsProvider,
+    textSettings: ITextDisplaySettingsProvider,
     strings: StringsProvider,
     devHooks?: MenuDevHooks | null,
   ) {
@@ -221,6 +230,7 @@ export class MenuUI {
     this.eventBus = eventBus;
     this.saveData = saveData;
     this.audioSettings = audioSettings;
+    this.textSettings = textSettings;
     this.strings = strings;
     this.devHooks = devHooks ?? null;
     // 主菜单是全屏页（不走 UIWindow），窗口尺寸变了得自己重排——满屏底色是按 build 时的
@@ -765,19 +775,21 @@ export class MenuUI {
     input.click();
   }
 
-  /** 设置页。窗体走 {@link UIWindow}；三条音量滑条是组件层没有的件，保留手写（见 drawSlider）。 */
+  /** 设置页。窗体走 {@link UIWindow}；音量/速度滑条是组件层没有的件，保留手写（见 drawSlider）。 */
   private buildSettings(animate: boolean): void {
     const channels: { label: string; channel: 'bgm' | 'sfx' | 'ambient' }[] = [
       { label: this.strings.get('menu', 'bgm'), channel: 'bgm' },
       { label: this.strings.get('menu', 'sfx'), channel: 'sfx' },
       { label: this.strings.get('menu', 'ambient'), channel: 'ambient' },
     ];
+    /** 行数 = 三条音量 + 「逐字显示」开关 + 「文字速度」滑条；窗高按它反推 */
+    const rowCount = channels.length + 2;
 
     const win = new UIWindow(this.renderer, {
       size: {
         width: Math.round(Math.min(WINDOW_SIZES.sm.width, this.renderer.screenWidth - UITheme.spacing.xl * 2)),
         height: Math.round(Math.min(
-          channels.length * SETTING_ROW_H + FOOTER_H + WINDOW_CHROME_H,
+          rowCount * SETTING_ROW_H + FOOTER_H + WINDOW_CHROME_H,
           this.renderer.screenHeight - UITheme.spacing.xl * 2,
         )),
       },
@@ -787,40 +799,85 @@ export class MenuUI {
     });
     this.win = win;
 
-    const sliderX = CHANNEL_LABEL_W;
+    const controlX = CHANNEL_LABEL_W;
     const sliderW = Math.max(
       HANDLE_R * 4,
       win.bodyWidth - CHANNEL_LABEL_W - PCT_COL_W - UITheme.spacing.md,
     );
+    const rowCenterY = (idx: number): number => idx * SETTING_ROW_H + SETTING_ROW_H / 2;
 
-    channels.forEach(({ label, channel }, idx) => {
-      const centerY = idx * SETTING_ROW_H + SETTING_ROW_H / 2;
+    // 行与行之间一条两端渐隐的细线：设计稿里同栏多行都靠这条线断句，不靠间距硬撑
+    const addSeparator = (idx: number): void => {
+      if (idx === 0) return;
+      const sep = createRule(win.bodyWidth);
+      sep.position.set(0, Math.round(idx * SETTING_ROW_H));
+      sep.alpha = 0.5;
+      win.body.addChild(sep);
+    };
 
-      // 行与行之间一条两端渐隐的细线：设计稿里同栏多行都靠这条线断句，不靠间距硬撑
-      if (idx > 0) {
-        const sep = createRule(win.bodyWidth);
-        sep.position.set(0, Math.round(idx * SETTING_ROW_H));
-        sep.alpha = 0.5;
-        win.body.addChild(sep);
-      }
-
+    /** @param dim 该行整行不可用时压暗（现在只有"逐字显示关掉后的速度行"用得上） */
+    const addLabel = (text: string, idx: number, dim = false): void => {
       const labelT = createStyledText({
-        text: label,
+        text,
         style: {
           // 迁移期这里是 colors.subtle（0xaaaacc 冷蓝灰），整块设置页因此偏冷；改暖正文色
-          fontSize: UITheme.fontSize.body, fill: UITheme.colors.bodyMuted, fontFamily: UITheme.fonts.ui,
+          fontSize: UITheme.fontSize.body,
+          fill: dim ? UITheme.colors.hint : UITheme.colors.bodyMuted,
+          fontFamily: UITheme.fonts.ui,
           wordWrap: true, breakWords: true, wordWrapWidth: CHANNEL_LABEL_W - UITheme.spacing.md,
         },
       });
       labelT.x = 0;
       // 迁移前标签顶对齐滑条的"行顶"，视觉上比滑条高半档；改成与滑条同一条中线
-      labelT.y = Math.round(centerY - labelT.height / 2);
+      labelT.y = Math.round(rowCenterY(idx) - labelT.height / 2);
       win.body.addChild(labelT);
+    };
 
-      this.drawSlider(win.body, sliderX, centerY, sliderW, this.audioSettings.getVolume(channel), (v) => {
+    channels.forEach(({ label, channel }, idx) => {
+      addSeparator(idx);
+      addLabel(label, idx);
+      this.drawSlider(win.body, controlX, rowCenterY(idx), sliderW, this.audioSettings.getVolume(channel), (v) => {
         this.audioSettings.setVolume(channel, v);
       });
     });
+
+    // ── 逐字显示（打字机）：一行开关 + 一行速度。
+    // 关掉时速度那行**整行压暗且点不动**——留一个"拖了没反应"的活滑条比少一行更糟。
+    const typewriterIdx = channels.length;
+    const speedIdx = typewriterIdx + 1;
+    const typewriterOn = this.textSettings.isTypewriterEnabled();
+
+    addSeparator(typewriterIdx);
+    addLabel(this.strings.get('menu', 'typewriter'), typewriterIdx);
+    const toggle = new UIButton({
+      label: this.strings.get('menu', typewriterOn ? 'toggleOn' : 'toggleOff'),
+      width: TOGGLE_BTN_W,
+      height: TOGGLE_BTN_H,
+      // 开着时按主操作那一档（亮），关掉退成次要——一眼看出当前是哪个态
+      variant: typewriterOn ? 'primary' : 'secondary',
+      onPress: () => {
+        this.textSettings.setTypewriterEnabled(!typewriterOn);
+        // 整页重建：按钮文案与速度行的压暗都跟着开关走。
+        // build() 走 attach()，不会重放窗体开场动效（见 build 的 animate 注释）。
+        this.build();
+      },
+    });
+    toggle.container.position.set(controlX, Math.round(rowCenterY(typewriterIdx) - TOGGLE_BTN_H / 2));
+    win.body.addChild(toggle.container);
+
+    addSeparator(speedIdx);
+    addLabel(this.strings.get('menu', 'textSpeed'), speedIdx, !typewriterOn);
+    this.drawSlider(
+      win.body, controlX, rowCenterY(speedIdx), sliderW,
+      typewriterScaleToSlider(this.textSettings.getTypewriterSpeedScale()),
+      (v) => this.textSettings.setTypewriterSpeedScale(sliderToTypewriterScale(v)),
+      {
+        disabled: !typewriterOn,
+        // 显示的是**速度倍率**（100% = 对白框/遭遇框各自的基准速度），不是滑条位置——
+        // 两者之间是几何映射（1× 落在轨道正中），直接拿 v 当百分比会写出 50%
+        format: (v) => `${Math.round(sliderToTypewriterScale(v) * 100)}%`,
+      },
+    );
 
     this.addBackButton(win);
 
@@ -838,6 +895,9 @@ export class MenuUI {
    * @param parent 挂载容器（现在是 `win.body`，原点 = 内容区左上角）
    * @param x      滑条左端（parent 局部坐标）
    * @param centerY 滑条中线（parent 局部坐标）
+   * @param opts.format 右侧数值列的文案（缺省按百分比读滑条位置）。滑条位置与真实取值
+   *   不是同一个量时（如速度倍率走几何映射）必须给，否则数值列会写出另一套数。
+   * @param opts.disabled 整条压暗且不挂任何交互（本行的前置开关关着时用）
    */
   private drawSlider(
     parent: Container,
@@ -846,8 +906,11 @@ export class MenuUI {
     width: number,
     value: number,
     onChange: (v: number) => void,
+    opts?: { format?: (v: number) => string; disabled?: boolean },
   ): void {
     const trackY = centerY - TRACK_H / 2;
+    const disabled = opts?.disabled === true;
+    const format = opts?.format ?? ((v: number) => `${Math.round(v * 100)}%`);
 
     const track = new Graphics();
     track.rect(x, trackY, width, TRACK_H);
@@ -861,7 +924,7 @@ export class MenuUI {
       fill.clear();
       if (v <= 0) return;
       fill.rect(x, trackY, width * v, TRACK_H);
-      fill.fill(UITheme.colors.sliderFill);
+      fill.fill(disabled ? UITheme.colors.borderSubtle : UITheme.colors.sliderFill);
     };
     drawFill(value);
     parent.addChild(fill);
@@ -870,24 +933,29 @@ export class MenuUI {
     const drawHandle = (v: number) => {
       handle.clear();
       handle.circle(x + width * v, centerY, HANDLE_R);
-      handle.fill(UITheme.colors.sliderHandle);
+      handle.fill(disabled ? UITheme.colors.hint : UITheme.colors.sliderHandle);
       handle.circle(x + width * v, centerY, HANDLE_R);
-      handle.stroke({ color: UITheme.colors.borderSelected, width: 1 });
+      handle.stroke({ color: disabled ? UITheme.colors.borderSubtle : UITheme.colors.borderSelected, width: 1 });
     };
     drawHandle(value);
     parent.addChild(handle);
 
     const pct = createStyledText({
-      text: `${Math.round(value * 100)}%`,
+      text: format(value),
       style: {
         // 数值跟着滑块走暖金，别再用 colors.section 的冷灰
-        fontSize: UITheme.fontSize.small, fill: UITheme.colors.goldDim, fontFamily: UITheme.fonts.ui,
+        fontSize: UITheme.fontSize.small,
+        fill: disabled ? UITheme.colors.hint : UITheme.colors.goldDim,
+        fontFamily: UITheme.fonts.ui,
         wordWrap: true, breakWords: true, wordWrapWidth: PCT_COL_W,
       },
     });
     pct.x = x + width + UITheme.spacing.md;
     pct.y = Math.round(centerY - pct.height / 2);
     parent.addChild(pct);
+
+    // 压暗态到此为止：不挂 eventMode / 不挂 window 级拖拽，点它、拖它都不动
+    if (disabled) return;
 
     let dragging = false;
     /**
@@ -900,7 +968,7 @@ export class MenuUI {
       onChange(v);
       drawFill(v);
       drawHandle(v);
-      pct.text = `${Math.round(v * 100)}%`;
+      pct.text = format(v);
     };
 
     // 拖拽跟随的是 window 级 PointerEvent，clientX 在画布被 CSS 缩放时与逻辑坐标不同系，须换算

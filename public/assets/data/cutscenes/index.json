@@ -4606,11 +4606,6 @@
         }
       },
       {
-        "kind": "present",
-        "type": "showMovieBar",
-        "heightPercent": 0.12
-      },
-      {
         "kind": "action",
         "type": "moveEntityTo",
         "params": {
@@ -4619,7 +4614,8 @@
           "y": 1125.6,
           "speed": 150.0,
           "moveAnimState": "walk"
-        }
+        },
+        "disabled": true
       },
       {
         "kind": "action",
@@ -4627,7 +4623,8 @@
         "params": {
           "target": "街巷_赌坊门卫",
           "enabled": false
-        }
+        },
+        "disabled": true
       },
       {
         "kind": "action",
@@ -4640,6 +4637,21 @@
           "moveAnimState": "slow_walk",
           "faceTowardMovement": true
         }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "text": "嘿，个狗日的乱世出妖怪也。龟儿这叫花儿都发大财了。",
+        "speaker": "看门的",
+        "scriptedNpcId": "街巷_赌坊门卫",
+        "portrait": {
+          "emotion": "smirk"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showMovieBar",
+        "heightPercent": 0.12
       },
       {
         "kind": "action",
@@ -4684,7 +4696,8 @@
         "yPercent": 42,
         "widthPercent": 26,
         "alpha": 0.85,
-        "zIndex": 60
+        "zIndex": 60,
+        "disabled": true
       },
       {
         "kind": "present",
@@ -4897,7 +4910,8 @@
         "yPercent": 42,
         "widthPercent": 26,
         "alpha": 0.45,
-        "zIndex": 60
+        "zIndex": 60,
+        "disabled": true
       },
       {
         "kind": "present",
@@ -4935,7 +4949,8 @@
         "yPercent": 42,
         "widthPercent": 26,
         "alpha": 0.28,
-        "zIndex": 60
+        "zIndex": 60,
+        "disabled": true
       },
       {
         "kind": "present",
@@ -5051,7 +5066,8 @@
         "yPercent": 42,
         "widthPercent": 26,
         "alpha": 0.12,
-        "zIndex": 60
+        "zIndex": 60,
+        "disabled": true
       },
       {
         "kind": "present",
@@ -5064,7 +5080,8 @@
         "params": {
           "target": "player",
           "enabled": true
-        }
+        },
+        "disabled": true
       },
       {
         "kind": "action",
@@ -5073,7 +5090,8 @@
           "target": "player",
           "x": 3150.0,
           "y": 1130.0
-        }
+        },
+        "disabled": true
       },
       {
         "kind": "action",
@@ -5082,7 +5100,8 @@
           "target": "player",
           "state": "crouch",
           "loop": "false"
-        }
+        },
+        "disabled": true
       },
       {
         "kind": "action",
@@ -5090,7 +5109,8 @@
         "params": {
           "target": "player",
           "direction": "left"
-        }
+        },
+        "disabled": true
       },
       {
         "kind": "action",
@@ -5098,7 +5118,8 @@
         "params": {
           "target": "街巷_赌坊门卫",
           "enabled": true
-        }
+        },
+        "disabled": true
       },
       {
         "kind": "action",
@@ -5107,7 +5128,8 @@
           "target": "街巷_赌坊门卫",
           "x": 3107.0,
           "y": 1118.0
-        }
+        },
+        "disabled": true
       },
       {
         "kind": "action",
@@ -5115,7 +5137,8 @@
         "params": {
           "target": "街巷_赌坊门卫",
           "direction": "left"
-        }
+        },
+        "disabled": true
       },
       {
         "kind": "present",
@@ -5127,7 +5150,8 @@
         "yPercent": 42,
         "widthPercent": 26,
         "alpha": 0.9,
-        "zIndex": 60
+        "zIndex": 60,
+        "disabled": true
       },
       {
         "kind": "parallel",
@@ -5175,16 +5199,6 @@
         "duration": 900
       },
       {
-        "kind": "present",
-        "type": "showDialogue",
-        "text": "……梭远点。",
-        "speaker": "看门的",
-        "scriptedNpcId": "赌坊看门人",
-        "portrait": {
-          "emotion": "angry"
-        }
-      },
-      {
         "kind": "action",
         "type": "playSfx",
         "params": {
@@ -5201,6 +5215,12 @@
       },
       {
         "kind": "present",
+        "type": "showSubtitle",
+        "text": "……梭远点哈。",
+        "position": "bottom"
+      },
+      {
+        "kind": "present",
         "type": "animLayer",
         "animFile": "/resources/runtime/animation/fx_lantern_glow/anim.json",
         "id": "door_glow",
@@ -5209,7 +5229,8 @@
         "yPercent": 42,
         "widthPercent": 26,
         "alpha": 0.0,
-        "zIndex": 60
+        "zIndex": 60,
+        "disabled": true
       },
       {
         "kind": "action",
@@ -5217,19 +5238,13 @@
         "params": {
           "target": "街巷_赌坊门卫",
           "enabled": false
-        }
+        },
+        "disabled": true
       },
       {
         "kind": "present",
         "type": "waitTime",
         "duration": 700
-      },
-      {
-        "kind": "action",
-        "type": "playSfx",
-        "params": {
-          "id": "sfx_dog_howl_night_a"
-        }
       },
       {
         "kind": "present",
@@ -5275,9 +5290,16 @@
         "subtitleAlign": "center"
       },
       {
+        "kind": "action",
+        "type": "playSfx",
+        "params": {
+          "id": "sfx_dog_howl_night_a"
+        }
+      },
+      {
         "kind": "present",
         "type": "waitTime",
-        "duration": 800.0
+        "duration": 3000.0
       },
       {
         "kind": "present",
@@ -5330,6 +5352,33 @@
         "duration": 800.0
       },
       {
+        "kind": "action",
+        "type": "teleportEntityTo",
+        "params": {
+          "target": "player",
+          "x": 3272.63,
+          "y": 1328.14
+        }
+      },
+      {
+        "kind": "action",
+        "type": "setEntityEnabled",
+        "params": {
+          "target": "player",
+          "enabled": true
+        }
+      },
+      {
+        "kind": "action",
+        "type": "playNpcAnimation",
+        "params": {
+          "target": "player",
+          "state": "lie_down",
+          "loop": false,
+          "holdFrame": 4
+        }
+      },
+      {
         "kind": "present",
         "type": "hideImg",
         "id": "gamble"
@@ -5343,11 +5392,24 @@
         "type": "playNpcAnimation",
         "params": {
           "target": "player",
+          "state": "lie_down",
+          "reverse": true,
+          "loop": false,
+          "holdFrame": -1,
+          "thenState": "idle"
+        }
+      },
+      {
+        "kind": "action",
+        "type": "playNpcAnimation",
+        "params": {
+          "target": "player",
           "state": "crouch",
           "reverse": true,
           "loop": "false",
           "thenState": "idle"
-        }
+        },
+        "disabled": true
       },
       {
         "kind": "action",
@@ -5355,7 +5417,8 @@
         "params": {
           "target": "player",
           "emote": "!"
-        }
+        },
+        "disabled": true
       },
       {
         "kind": "present",
@@ -5364,7 +5427,8 @@
         "scriptedNpcId": "player",
         "portrait": {
           "emotion": "laugh"
-        }
+        },
+        "disabled": true
       },
       {
         "kind": "action",
@@ -5377,7 +5441,8 @@
           "moveAnimState": "walk",
           "arriveAnimState": "idle",
           "faceTowardMovement": true
-        }
+        },
+        "disabled": true
       },
       {
         "kind": "present",
@@ -5386,7 +5451,8 @@
         "scriptedNpcId": "player",
         "portrait": {
           "emotion": "smirk"
-        }
+        },
+        "disabled": true
       },
       {
         "kind": "action",
@@ -5398,13 +5464,18 @@
           "speed": 150.0,
           "moveAnimState": "walk",
           "faceTowardMovement": true
-        }
+        },
+        "disabled": true
       },
       {
         "kind": "present",
         "type": "cameraZoom",
-        "scale": 1.0,
+        "scale": 0.0,
         "duration": 600.0
+      },
+      {
+        "kind": "present",
+        "type": "waitClick"
       }
     ],
     "targetSpawnPoint": "spawn_0"

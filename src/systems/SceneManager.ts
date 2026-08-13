@@ -41,7 +41,7 @@ import {
 } from '../data/EntityRuntimeFieldSchema';
 import type { ActivePlaneSnapshot } from './plane/types';
 import { createStyledText } from '../core/styledText';
-import { isEntityInPhase } from '../utils/dayTime';
+import { isEntityInPhase, NPC_DEFAULT_PHASES } from '../utils/dayTime';
 
 /** applyDebugWorldSize 成功时的返回值，供深度系统与碰撞比例同步 */
 export type ApplyDebugWorldSizeResult =
@@ -373,8 +373,10 @@ export class SceneManager implements IGameSystem {
    * 注意本判定**没有**离场宽限：它是瞬时的存在性开关，配合有遮挡的推进用。
    * 要让 NPC 走出去再消失，那是日程的活。
    */
-  private entityInPhase(def: { phases?: string[] }): boolean {
-    return isEntityInPhase(def.phases, this.currentPhaseGetter?.() ?? '');
+  private entityInPhase(def: { phases?: string[] }, fallback?: readonly string[]): boolean {
+    // 场景没开日夜 = 时段归属整套不生效（否则旧场景一到夜里就空了）
+    if (this.currentScene?.dayNight?.enabled !== true) return true;
+    return isEntityInPhase(def.phases, this.currentPhaseGetter?.() ?? '', fallback);
   }
 
   /** 由 Game 注入当前时段 id（DayManager 派生）；未注入时 phases 归属不生效。 */
@@ -491,7 +493,8 @@ export class SceneManager implements IGameSystem {
   /** 与 {@link getHotspotBaseEnabledForInteraction} 对偶，用于 NPC container.visible 基底。 */
   getNpcBaseVisibleForInteraction(npc: Npc): boolean {
     if (!this.entityInPlane(npc.def)) return false;
-    if (!this.entityInPhase(npc.def)) return false;
+    // NPC 未写 phases = 只在白日出没（内容定调）；热点/zone 不吃这个缺省
+    if (!this.entityInPhase(npc.def, NPC_DEFAULT_PHASES)) return false;
     // 日程：不在这个时段/这个场景就不在场。正在走向出口的 NPC 由宽限集判为在场，
     // 故这条不会在它走到一半时把它抹掉（见 NpcScheduleSystem 的两条路径说明）。
     if (this.npcSchedulePresence && !this.npcSchedulePresence(npc.def)) return false;

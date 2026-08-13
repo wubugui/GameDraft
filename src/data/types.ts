@@ -443,10 +443,14 @@ export interface HotspotDef {
    */
   planes?: string[];
   /**
-   * 时段归属（与 `planes` 同构的白名单）：缺省 = 所有时段都在（旧数据零影响）；
-   * 有值时仅当前时段被列出才存在。用于「整条街的群演白天在、夜里没」这类批量表达——
-   * 有作息的具名角色请用 NPC 日程表（npc_schedules.json），两者正交。
-   * 值须是 `game_config.dayNight.phases` 里的 id。
+   * 时段归属（与 `planes` 同构的白名单）。**缺省 = 只在白日（`day`）出没**——
+   * 这个世界的人白天做事、天一擦黑就归家，「街上有人」是特例不是常态。
+   * 要让他在拂晓/黄昏也在，显式写 `["dawn","day","dusk"]`；要昼夜常驻就四段全写。
+   * 用于「整条街的群演」这类批量表达——有作息的具名角色请用 NPC 日程表
+   * （npc_schedules.json），两者正交。值须是 `game_config.dayNight.phases` 里的 id。
+   *
+   * ⚠ 只在场景 `dayNight.enabled` 时生效；没开日夜的场景完全不走时段过滤。
+   * ⚠ 热点与 zone 的同名字段**不吃这个缺省**（它们缺省仍是全时段都在）。
    */
   phases?: string[];
   /** 关联一个或多个过场；有值时默认作为仅过场实体，除非 cutsceneOnly 显式为 false。 */
@@ -2566,6 +2570,22 @@ export interface IZoneDataProvider {
 export interface IAudioSettingsProvider {
   getVolume(channel: 'bgm' | 'sfx' | 'ambient'): number;
   setVolume(channel: 'bgm' | 'sfx' | 'ambient', vol: number): void;
+}
+
+/**
+ * 文字呈现偏好（玩家在设置页里调的那几项）。
+ *
+ * 与 {@link IAudioSettingsProvider} 同一个位置：设置页只认接口，实现在
+ * `src/core/TextDisplaySettings.ts`（含落盘）。**逐字速度是倍率不是字/秒**——
+ * 对白框与遭遇框各有自己调好的基准速度（30 / 35 字/秒），玩家调的是它们共同的快慢档。
+ */
+export interface ITextDisplaySettingsProvider {
+  /** 逐字显示总开关；关掉＝整段文字瞬间出全（点一下就直接推进下一句） */
+  isTypewriterEnabled(): boolean;
+  setTypewriterEnabled(on: boolean): void;
+  /** 逐字速度倍率（1 = 各 UI 的基准速度） */
+  getTypewriterSpeedScale(): number;
+  setTypewriterSpeedScale(scale: number): void;
 }
 
 /** 一次性短音频的调用方句柄：stop() 停止当前实例（不 unload 共享缓存 Howl）。 */

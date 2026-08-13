@@ -9,6 +9,7 @@ import type { NpcDef, SceneData } from '../data/types';
 import {
   forwardDistance,
   isEntityInPhase,
+  NPC_DEFAULT_PHASES,
   isWithinRange,
   parseClock,
   phaseAt,
@@ -66,12 +67,23 @@ describe('dayTime 时刻工具', () => {
     expect(isWithinRange(0, 480, 480)).toBe(true);
   });
 
-  it('isEntityInPhase：缺省=全时段在；取不到时段一律 fail-open（宁可多显示，不能整场景空掉）', () => {
-    expect(isEntityInPhase(undefined, 'night')).toBe(true);
-    expect(isEntityInPhase([], 'night')).toBe(true);
-    expect(isEntityInPhase(['day'], '')).toBe(true);
+  it('isEntityInPhase：写了就按白名单判；取不到时段一律 fail-open', () => {
     expect(isEntityInPhase(['dawn', 'day', 'dusk'], 'day')).toBe(true);
     expect(isEntityInPhase(['dawn', 'day', 'dusk'], 'night')).toBe(false);
+    expect(isEntityInPhase(['day'], '')).toBe(true);
+  });
+
+  it('没写 phases 时用 fallback：NPC 缺省只白日，热点/zone 不传 fallback＝全时段', () => {
+    // NPC：缺省 = 只在白日出没（内容定调，不是"全天都在"）
+    expect(isEntityInPhase(undefined, 'day', NPC_DEFAULT_PHASES)).toBe(true);
+    expect(isEntityInPhase(undefined, 'night', NPC_DEFAULT_PHASES)).toBe(false);
+    expect(isEntityInPhase(undefined, 'dusk', NPC_DEFAULT_PHASES)).toBe(false);
+    expect(isEntityInPhase([], 'night', NPC_DEFAULT_PHASES)).toBe(false);
+    // 热点 / zone：不传 fallback = 全时段都在（门、路牌夜里当然还在）
+    expect(isEntityInPhase(undefined, 'night')).toBe(true);
+    expect(isEntityInPhase([], 'night')).toBe(true);
+    // 显式写了就覆盖缺省
+    expect(isEntityInPhase(['night'], 'night', NPC_DEFAULT_PHASES)).toBe(true);
   });
 
   it('forwardDistance 绕一圈算跨零点距离', () => {

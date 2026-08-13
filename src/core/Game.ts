@@ -64,6 +64,7 @@ import { RuleUseUI } from '../ui/RuleUseUI';
 import { DebugPanelUI } from '../ui/DebugPanelUI';
 import { GameStateController } from './GameStateController';
 import { StringsProvider } from './StringsProvider';
+import { TextDisplaySettings } from './TextDisplaySettings';
 import { GameState, normalizeEmoteBubbleScale } from '../data/types';
 import type {
   ActionDef,
@@ -325,6 +326,8 @@ export class Game {
   private inventoryManager: InventoryManager;
   private encounterManager: EncounterManager;
   private audioManager: AudioManager;
+  /** 玩家的文字呈现偏好（逐字显示开关 / 速度）：设置页写、对白框与遭遇框读 */
+  private textDisplaySettings: TextDisplaySettings;
   private dayManager: DayManager;
   private cutsceneManager!: CutsceneManager;
   private cutsceneRenderer!: CutsceneRenderer;
@@ -579,6 +582,8 @@ export class Game {
     );
     this.encounterManager = new EncounterManager(this.eventBus, this.flagStore, this.actionExecutor);
     this.audioManager = new AudioManager(this.eventBus);
+    // 偏好在构造期就从 localStorage 读回来：首句台词可能早于任何一次开菜单
+    this.textDisplaySettings = new TextDisplaySettings();
     this.dayManager = new DayManager(this.eventBus, this.flagStore, this.actionExecutor);
     this.waterMinigameManager = new WaterMinigameManager();
     this.sugarWheelMinigameManager = new SugarWheelMinigameManager();
@@ -1063,7 +1068,9 @@ export class Game {
       this.resolveGuidanceWorldPoint(sceneId, kind, entityId));
     this.guidanceLayerUI.setPlayerPointProvider(() =>
       this.player ? { x: this.player.x, y: this.player.y } : null);
-    this.dialogueUI = new DialogueUI(this.renderer, this.eventBus, this.stringsProvider, this.assetManager);
+    this.dialogueUI = new DialogueUI(
+      this.renderer, this.eventBus, this.stringsProvider, this.assetManager, this.textDisplaySettings,
+    );
     // 说话中「…」气泡：当前行说话实体头顶挂常驻气泡（与对话大头像并存指示说话对象），
     // 换行随说话人移动、旁白无实体则收起、对话结束即撤。
     const SPEAKING_BUBBLE_OWNER = 'dialogue-speaking';
@@ -1088,7 +1095,9 @@ export class Game {
     const clearSpeakingBubble = () => this.emoteBubbleManager.cleanupByOwner(SPEAKING_BUBBLE_OWNER);
     this.eventBus.on('dialogue:end', clearSpeakingBubble);
     this.eventBus.on('dialogue:hidePanel', clearSpeakingBubble);
-    this.encounterUI = new EncounterUI(this.renderer, this.eventBus, this.stringsProvider);
+    this.encounterUI = new EncounterUI(
+      this.renderer, this.eventBus, this.stringsProvider, this.textDisplaySettings,
+    );
     this.actionChoiceUI = new ActionChoiceUI(this.renderer, this.stringsProvider);
     this.pressureHoldUI = new PressureHoldUI(this.renderer, this.stringsProvider);
     this.hud = new HUD(this.renderer, this.eventBus, this.stringsProvider);
@@ -1259,7 +1268,8 @@ export class Game {
       return this.narrativeStateManager.isIdle();
     });
     this.menuUI = new MenuUI(
-      this.renderer, this.eventBus, this.saveDataForMenu(options), this.audioManager, this.stringsProvider,
+      this.renderer, this.eventBus, this.saveDataForMenu(options), this.audioManager,
+      this.textDisplaySettings, this.stringsProvider,
       // 标题界面右下角那个 dev 小勾（prod build 里这个三元的另一支被静态剔除）
       import.meta.env.DEV
         ? {

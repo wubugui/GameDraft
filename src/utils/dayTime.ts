@@ -133,19 +133,38 @@ export function isWithinRange(minutes: number, fromMinutes: number, toMinutes: n
 }
 
 /**
+ * **NPC 未写 `phases` 时的缺省归属：只在白日出没。**
+ *
+ * 这是内容侧定调（2026-08-12）：这个世界的人白天做事、天一擦黑就归家，
+ * 「街上有人」是特例不是常态。要让某个 NPC 在拂晓/黄昏也在，**显式**写
+ * `["dawn","day","dusk"]`；要他昼夜常驻，把四个时段都写上。
+ *
+ * 热点与 zone **不吃这个缺省**（门、路牌、可拾取物夜里当然还在），
+ * 它们未写 `phases` 时仍是全时段——见 `SceneManager.entityInPhase` 的两个调用口径。
+ */
+export const NPC_DEFAULT_PHASES: readonly string[] = ['day'];
+
+/**
  * 实体的**时段归属**判定（与位面 `planes` 同构的白名单）。
  *
- * - 缺省（未写字段 / 空数组）= 所有时段都在。旧数据零影响。
- * - `currentPhase` 取不到（未接线 / 场景没开日夜）同样不施加限制——
- *   fail-open 是这里的正确侧：宁可多显示，也不能因为时钟没接上就让整场景空掉。
+ * - 写了 `phases` → 按白名单判。
+ * - 没写 → 用 `fallback`：NPC 传 {@link NPC_DEFAULT_PHASES}（只白日），
+ *   热点/zone 不传（= 全时段都在）。
+ * - `currentPhase` 取不到（未接线）一律 fail-open——宁可多显示，
+ *   也不能因为时钟没接上让整场景空掉。
+ *
+ * ⚠ 本函数不管「场景有没有开日夜」，那道闸在 `SceneManager.entityInPhase`：
+ *   没开日夜的场景根本不该走时段过滤，否则旧场景一到夜里就空了。
  */
 export function isEntityInPhase(
   phases: readonly string[] | undefined,
   currentPhase: string,
+  fallback?: readonly string[],
 ): boolean {
-  if (!Array.isArray(phases) || phases.length === 0) return true;
+  const list = Array.isArray(phases) && phases.length > 0 ? phases : fallback;
+  if (!list || list.length === 0) return true;
   if (!currentPhase) return true;
-  return phases.includes(currentPhase);
+  return list.includes(currentPhase);
 }
 
 /** 从 `fromMinutes` 前进到 `toMinutes` 需要的分钟数（跨零点按绕一圈算；相等返回 0）。 */

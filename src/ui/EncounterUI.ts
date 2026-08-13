@@ -9,7 +9,7 @@ import { UIFocus, type FocusItem } from './components/UIFocus';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
 import type { StringsProvider } from '../core/StringsProvider';
-import type { ResolvedOption } from '../data/types';
+import type { ResolvedOption, ITextDisplaySettingsProvider } from '../data/types';
 import { createStyledText, setStyledReveal, setStyledText } from '../core/styledText';
 import { plainTextLength } from '../core/textStyle';
 
@@ -89,7 +89,12 @@ const NARRATIVE_GAP = UITheme.spacing.xxl;
 const LINE_H = UITheme.fontSize.bodyLarge + UITheme.spacing.md;
 /** 叙述 / 结果盒的最小正文高度：一句话的遭遇也不该缩成一条缝 */
 const MIN_TEXT_H = LINE_H * 2;
-const TYPEWRITER_SPEED = 35;
+/**
+ * 打字机**基准**速度（字/秒）。玩家在设置页调的是倍率（见 `ITextDisplaySettingsProvider`），
+ * 实际速度 = 这个数 × 倍率；关掉逐字显示时整段瞬间出全。
+ * 比对白框（30）快半档是本面板自己的手感，别为了"统一"拉平。
+ */
+const TYPEWRITER_BASE_CPS = 35;
 
 /** 一行选项量好的排版件（三档字号各自成 Text，行高由它们反推）。 */
 interface RowPlan {
@@ -118,6 +123,8 @@ export class EncounterUI {
   private renderer: Renderer;
   private eventBus: EventBus;
   private strings: StringsProvider;
+  /** 逐字显示开关 / 速度（玩家在设置页调，每帧现读） */
+  private textSettings: ITextDisplaySettingsProvider;
   private container: Container | null = null;
   private phase: EncounterPhase = EncounterPhase.Inactive;
 
@@ -148,7 +155,11 @@ export class EncounterUI {
   /** fullText 的可见字数（剥掉 `[c:…]` 后的长度） */
   private fullTextVisible: number = 0;
   private displayedChars: number = 0;
-  private typewriterTimer: number = 0;
+  /**
+   * 打字机进度（**已累计字数**，含小数）。不存"已过秒数×速度"：玩家可以在正文播到一半时
+   * 去设置页改速度／关逐字，按秒数重算会让已出的字数跳变。
+   */
+  private typewriterChars: number = 0;
   private textComplete: boolean = false;
 
   private onClickBound: (e: PointerEvent) => void;
@@ -159,10 +170,16 @@ export class EncounterUI {
   private resultCb: (payload: { text: string }) => void;
   private endCb: () => void;
 
-  constructor(renderer: Renderer, eventBus: EventBus, strings: StringsProvider) {
+  constructor(
+    renderer: Renderer,
+    eventBus: EventBus,
+    strings: StringsProvider,
+    textSettings: ITextDisplaySettingsProvider,
+  ) {
     this.renderer = renderer;
     this.eventBus = eventBus;
     this.strings = strings;
+    this.textSettings = textSettings;
 
     this.onClickBound = this.onClick.bind(this);
     this.onKeyBound = this.onKey.bind(this);
@@ -408,8 +425,25 @@ export class EncounterUI {
     this.fullText = text;
     this.fullTextVisible = plainTextLength(text);
     this.displayedChars = 0;
-    this.typewriterTimer = 0;
+    this.typewriterChars = 0;
     this.textComplete = false;
+    // 逐字显示关掉：整段当场出全——否则玩家得先点一次"跳过打字"再点一次才推进
+    if (!this.textSettings.isTypewriterEnabled()) this.completeText();
+  }
+
+  /**
+   * 当前相的正文直接出全（关掉逐字 / 点击跳过共用这一条出路）。
+   * 正文对象取不到时也要落 `textComplete`：否则这一相点什么都不动，玩家被卡在这块面板上。
+   */
+  private completeText(): void {
+    const textObj = this.phase === EncounterPhase.Narrative ? this.narrativeText : this.resultText;
+    this.displayedChars = this.fullTextVisible;
+    if (textObj) {
+      setStyledReveal(textObj, this.displayedChars);
+      // 正文变长要重算可滚高度，否则滚动条停在"不用滚"
+      this.activeView()?.refresh();
+    }
+    this.textComplete = true;
   }
 
   private showNarrative(text: string): void {
@@ -629,11 +663,17 @@ export class EncounterUI {
     if (this.phase === EncounterPhase.Inactive || this.phase === EncounterPhase.Options) return;
     if (this.textComplete) return;
 
+    // 正文播到一半时玩家可以进暂停菜单把逐字关掉：这一帧直接补完
+    if (!this.textSettings.isTypewriterEnabled()) {
+      this.completeText();
+      return;
+    }
+
     const textObj = this.phase === EncounterPhase.Narrative ? this.narrativeText : this.resultText;
     if (!textObj) return;
 
-    this.typewriterTimer += dt;
-    const charsToShow = Math.floor(this.typewriterTimer * TYPEWRITER_SPEED);
+    this.typewriterChars += dt * TYPEWRITER_BASE_CPS * this.textSettings.getTypewriterSpeedScale();
+    const charsToShow = Math.floor(this.typewriterChars);
     if (charsToShow > this.displayedChars) {
       this.displayedChars = Math.min(charsToShow, this.fullTextVisible);
       // 不能 substring：带 `[c:…]` 标记的原串会被切碎
@@ -689,13 +729,7 @@ export class EncounterUI {
     if (this.phase === EncounterPhase.Options) return;
 
     if (!this.textComplete) {
-      const textObj = this.phase === EncounterPhase.Narrative ? this.narrativeText : this.resultText;
-      if (textObj) {
-        this.displayedChars = this.fullTextVisible;
-        setStyledReveal(textObj, this.displayedChars);
-        this.textComplete = true;
-        this.activeView()?.refresh();
-      }
+      this.completeText();
       return;
     }
 

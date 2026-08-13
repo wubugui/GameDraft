@@ -80,9 +80,10 @@
           }
         },
         {
-          "type": "setFlag",
+          "type": "playScriptedDialogue",
           "params": {
-            "value": true
+            "lines": [],
+            "scriptedNpcId": "player"
           }
         }
       ],

@@ -9,7 +9,9 @@ import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
 import type { StringsProvider } from '../core/StringsProvider';
 import type { AssetManager } from '../core/AssetManager';
-import type { DialogueLine, DialogueChoice, DialoguePortraitRef } from '../data/types';
+import type {
+  DialogueLine, DialogueChoice, DialoguePortraitRef, ITextDisplaySettingsProvider,
+} from '../data/types';
 import { DEFAULT_SPEAKER_SIDE, resolveSpeakerSide, type SpeakerSide } from '../utils/dialogueSpeakerSide';
 import { createStyledText, setStyledReveal, setStyledText } from '../core/styledText';
 import { plainTextLength } from '../core/textStyle';
@@ -17,7 +19,12 @@ import { plainTextLength } from '../core/textStyle';
 const BOX_MARGIN = UITheme.spacing.xl;
 /** 正文左右内缩：木框本身占 15px，缩进必须明显越过木条才有设计稿那种阔气的留白 */
 const TEXT_PADDING = UITheme.spacing.xxl;
-const TYPEWRITER_SPEED = 30;
+/**
+ * 打字机**基准**速度（字/秒）。玩家在设置页调的是倍率（见 `ITextDisplaySettingsProvider`），
+ * 实际速度 = 这个数 × 倍率；关掉逐字显示时整句瞬间出全。
+ * 这一档是按本框的行宽/行距调出来的，别拿它去跟遭遇框（35）拉平。
+ */
+const TYPEWRITER_BASE_CPS = 30;
 
 /** 压暗强度：远轻于 UITheme.alpha.overlay（0.5，弹窗遮罩）——对白期间场景仍要看得清 */
 const DIM_ALPHA = 0.25;
@@ -96,6 +103,8 @@ export class DialogueUI {
   private eventBus: EventBus;
   private strings: StringsProvider;
   private assetManager: AssetManager;
+  /** 逐字显示开关 / 速度（玩家在设置页调，每帧现读——设置页与对话框可以同时开着） */
+  private textSettings: ITextDisplaySettingsProvider;
   private container: Container | null = null;
 
   private speakerText: Text | null = null;
@@ -130,7 +139,12 @@ export class DialogueUI {
   /** fullText 的可见字数（= 剥掉样式标记后的长度） */
   private fullTextVisible: number = 0;
   private displayedChars: number = 0;
-  private typewriterTimer: number = 0;
+  /**
+   * 打字机进度（**已累计的字数**，含小数部分）。
+   * 刻意不存"已过秒数"再乘速度：玩家可以在一句台词播到一半时进设置改速度／关逐字，
+   * 按秒数重算会让已经出过的字数跳变（调快时整段瞬间蹦出、调慢时字数倒退）。
+   */
+  private typewriterChars: number = 0;
   private isShowingFullText: boolean = false;
   private waitingForAdvance: boolean = false;
   private waitingForChoice: boolean = false;
@@ -156,11 +170,18 @@ export class DialogueUI {
     return this.container !== null;
   }
 
-  constructor(renderer: Renderer, eventBus: EventBus, strings: StringsProvider, assetManager: AssetManager) {
+  constructor(
+    renderer: Renderer,
+    eventBus: EventBus,
+    strings: StringsProvider,
+    assetManager: AssetManager,
+    textSettings: ITextDisplaySettingsProvider,
+  ) {
     this.renderer = renderer;
     this.eventBus = eventBus;
     this.strings = strings;
     this.assetManager = assetManager;
+    this.textSettings = textSettings;
 
     this.onClickBound = this.onClick.bind(this);
     this.onKeyBound = this.onKey.bind(this);
@@ -191,7 +212,7 @@ export class DialogueUI {
     this.fullText = '';
     this.fullTextVisible = 0;
     this.displayedChars = 0;
-    this.typewriterTimer = 0;
+    this.typewriterChars = 0;
     this.isShowingFullText = false;
     this.waitingForAdvance = false;
     this.waitingForChoice = false;
@@ -454,17 +475,25 @@ export class DialogueUI {
     this.fullText = line.text;
     this.fullTextVisible = plainTextLength(this.fullText);
     this.displayedChars = 0;
-    this.typewriterTimer = 0;
+    this.typewriterChars = 0;
     this.isShowingFullText = false;
     this.waitingForAdvance = false;
     this.waitingForChoice = false;
     setStyledText(this.bodyText!, this.fullText, 0);
 
-    // 空文本台词打字机循环走不到完成分支，视为已显示完整、直接进入待推进态，避免卡死
-    if (this.fullTextVisible === 0) {
-      this.isShowingFullText = true;
-      this.waitingForAdvance = true;
+    // 两条一样的出路：**逐字显示关掉**时整句直接出全；空文本台词则是打字机循环走不到
+    // 完成分支（0 个字永远"打不完"），同样必须当场判完，否则整段对话卡死推不动。
+    if (this.fullTextVisible === 0 || !this.textSettings.isTypewriterEnabled()) {
+      this.completeText();
     }
+  }
+
+  /** 当前行直接出全（关掉逐字 / 空台词 / 玩家点击跳过共用这一条出路）。 */
+  private completeText(): void {
+    this.displayedChars = this.fullTextVisible;
+    if (this.bodyText) setStyledReveal(this.bodyText, this.displayedChars);
+    this.isShowingFullText = true;
+    this.waitingForAdvance = true;
   }
 
   private showChoices(choices: DialogueChoice[]): void {
@@ -665,9 +694,15 @@ export class DialogueUI {
 
     if (this.isShowingFullText || this.waitingForAdvance || this.waitingForChoice) return;
 
+    // 台词播到一半时玩家可以进暂停菜单把逐字关掉（设置页与对话框并存）：这一帧直接补完
+    if (!this.textSettings.isTypewriterEnabled()) {
+      this.completeText();
+      return;
+    }
+
     if (this.displayedChars < this.fullTextVisible) {
-      this.typewriterTimer += dt;
-      const charsToShow = Math.floor(this.typewriterTimer * TYPEWRITER_SPEED);
+      this.typewriterChars += dt * TYPEWRITER_BASE_CPS * this.textSettings.getTypewriterSpeedScale();
+      const charsToShow = Math.floor(this.typewriterChars);
       if (charsToShow > this.displayedChars) {
         this.displayedChars = Math.min(charsToShow, this.fullTextVisible);
         // 不能对 fullText 直接 substring：`[c:…]` 标记会被切碎（半个标记 = 满屏裸标记）
@@ -725,10 +760,7 @@ export class DialogueUI {
 
     if (!this.isShowingFullText) {
       this.eventBus.emit('dialogue:advanceInput', {});
-      this.displayedChars = this.fullTextVisible;
-      setStyledReveal(this.bodyText!, this.displayedChars);
-      this.isShowingFullText = true;
-      this.waitingForAdvance = true;
+      this.completeText();
       return;
     }
 
@@ -766,6 +798,7 @@ export class DialogueUI {
     this.fullText = '';
     this.fullTextVisible = 0;
     this.displayedChars = 0;
+    this.typewriterChars = 0;
     this.isShowingFullText = false;
     this.waitingForAdvance = false;
     this.waitingForChoice = false;

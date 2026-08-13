@@ -6356,7 +6356,8 @@ class ScenePropertyPanel(QScrollArea):
         return [str(x).strip() for x in raw if str(x).strip()]
 
     def _format_phase_ids_label(self, ids: list[str]) -> str:
-        return "、".join(ids) if ids else "（所有时段）"
+        # 空＝缺省，但 NPC 与 热点/zone 的缺省不同，故不写死"所有时段"
+        return "、".join(ids) if ids else "（缺省）"
 
     def _pick_phase_ids(self, current: list[str]) -> list[str] | None:
         dlg = QDialog(self)
@@ -6364,10 +6365,11 @@ class ScenePropertyPanel(QScrollArea):
         dlg.resize(420, 420)
         lay = QVBoxLayout(dlg)
         hint = QLabel(
-            "可多选。写入实体的 phases 字段：实体只在所选时段存在；"
-            "全不选（清空）= 缺省 = 所有时段都在。候选来自 game_config.dayNight.phases。\n"
-            "注意：这是**瞬时**存在性开关，不会演离场——要 NPC 走到出口再消失，"
-            "请改用 NPC 日程表。",
+            "可多选。写入实体的 phases 字段：实体只在所选时段存在。候选来自 "
+            "game_config.dayNight.phases。\n"
+            "全不选（清空）= 缺省 —— NPC 缺省是「只在白日出没」，热点/区域缺省是「所有时段都在」。\n"
+            "只在场景勾了「参与日夜循环」时才生效。\n"
+            "注意：这是瞬时存在性开关，不会演离场——要 NPC 走到出口再消失，请改用 NPC 日程表。",
         )
         hint.setWordWrap(True)
         lay.addWidget(hint)
@@ -6408,8 +6410,10 @@ class ScenePropertyPanel(QScrollArea):
         lbl = QLabel(self._format_phase_ids_label([]))
         lbl.setWordWrap(True)
         lbl.setToolTip(
-            "时段归属：实体只在所列时段存在；缺省（空）=所有时段都在。\n"
-            "候选来自 game_config.dayNight.phases（Config 页维护）。",
+            "时段归属：实体只在所列时段存在。\n"
+            "缺省（空）——NPC＝只在白日出没；热点/区域＝所有时段都在。\n"
+            "候选来自 game_config.dayNight.phases（Config 页维护）；"
+            "只在场景开了日夜循环时生效。",
         )
         setattr(self, label_attr, lbl)
         btn_pick = QPushButton("选择时段…")
