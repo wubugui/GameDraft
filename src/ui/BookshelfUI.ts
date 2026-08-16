@@ -94,6 +94,7 @@ export class BookshelfUI {
   private onOpenLore: OnOpenSubPanel;
   private onOpenDocuments: OnOpenSubPanel;
   private onOpenSlang: OnOpenSubPanel;
+  private onOpenRhymes: OnOpenSubPanel;
   private strings: StringsProvider;
   /**
    * 键盘/手柄焦点。书脊是一排二维可导航木牌，✕ 与底部键帽各自成组——
@@ -116,6 +117,7 @@ export class BookshelfUI {
     onOpenLore: OnOpenSubPanel,
     onOpenDocuments: OnOpenSubPanel,
     onOpenSlang: OnOpenSubPanel,
+    onOpenRhymes: OnOpenSubPanel,
     strings: StringsProvider,
   ) {
     this.renderer = renderer;
@@ -126,6 +128,7 @@ export class BookshelfUI {
     this.onOpenLore = onOpenLore;
     this.onOpenDocuments = onOpenDocuments;
     this.onOpenSlang = onOpenSlang;
+    this.onOpenRhymes = onOpenRhymes;
     this.strings = strings;
     this.onKeyBound = (e) => this.onKey(e);
   }
@@ -174,6 +177,7 @@ export class BookshelfUI {
       { id: 'lore', label: this.strings.get('bookshelf', 'lore'), icon: 'book', hasUnread: this.archiveData.hasUnread('lore') },
       { id: 'document', label: this.strings.get('bookshelf', 'documents'), icon: 'scroll', hasUnread: this.archiveData.hasUnread('document') },
       { id: 'slang', label: this.strings.get('bookshelf', 'slang'), icon: 'bowl', hasUnread: this.archiveData.hasUnread('slang') },
+      { id: 'rhyme', label: this.strings.get('bookshelf', 'rhymes'), icon: 'lantern', hasUnread: this.archiveData.hasUnread('rhyme') },
     ];
     const dynamicBooks = this.archiveData.getUnlockedBooks();
 
@@ -221,8 +225,11 @@ export class BookshelfUI {
       this.container.addChild(plank);
     }
 
+    // 固定书册六本起超过一行，与动态书籍走同一套折行：第六本落第二行首格
     fixedBooks.forEach((slot, i) => {
-      this.drawBookSlot(slot, startX + i * (PLAQUE_W + PLAQUE_GAP), startY);
+      const col = i % COLS;
+      const row = Math.floor(i / COLS);
+      this.drawBookSlot(slot, startX + col * (PLAQUE_W + PLAQUE_GAP), startY + row * (PLAQUE_H + ROW_GAP));
     });
 
     dynamicBooks.forEach((book, i) => {
@@ -464,6 +471,15 @@ export class BookshelfUI {
 
     if (bookId === 'slang') {
       this.activeSubPanel = this.onOpenSlang(() => {
+        this.closeSubPanel();
+        this.buildShelf();
+      });
+      this.destroyShelfOnly();
+      return;
+    }
+
+    if (bookId === 'rhyme') {
+      this.activeSubPanel = this.onOpenRhymes(() => {
         this.closeSubPanel();
         this.buildShelf();
       });

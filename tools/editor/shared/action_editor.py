@@ -737,7 +737,7 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
 }
 
 _NOTIFICATION_TYPES = ("info", "warning", "quest", "rule", "item")
-_ARCHIVE_BOOK_TYPES = ("character", "lore", "slang", "document", "book", "bookEntry")
+_ARCHIVE_BOOK_TYPES = ("character", "lore", "slang", "rhyme", "document", "book", "bookEntry")
 
 # 朝向只有左右镜像：SpriteEntity.setDirection 丢弃 dy、动画包也没有上下朝向，
 # 曾经列过的 up/down 运行时是静默空操作（现已 warn），故不再给出这两个选项。

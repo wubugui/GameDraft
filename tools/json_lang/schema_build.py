@@ -265,6 +265,8 @@ def _condition_snippets(spec: LanguageSpec) -> list[dict]:
         "narrative": {"narrative": "$1", "state": "$2"},
         "narrativeCount": {"narrativeCount": "$1", "exitState": "$2", "op": ">=", "value": 1},
         "plane": {"plane": "$1"},
+        "posture": {"posture": spec.player_postures[0] if spec.player_postures else "crouch"},
+        "timePhase": {"timePhase": "$1"},
     }
     snippets = [
         {"label": f"条件: {k}", "body": [body]}
@@ -391,8 +393,19 @@ def _condition_expr(spec: LanguageSpec, ud: UniverseData) -> dict:
         ))
     if "plane" in modeled:
         branches.append(leaf(["plane"], {"plane": _universe_schema("planes", ud)}))
+    if "posture" in modeled:
+        # 站姿为 null 不是枚举值,"非某姿态"写 {not:{posture:…}}
+        branches.append(leaf(["posture"], {
+            "posture": {"enum": spec.player_postures} if spec.player_postures else None,
+        }))
+    if "timePhase" in modeled:
+        # 时段枚举权威 = game_config.dayNight.phases(没配时回落缺省四段,见 id_universes)
+        branches.append(leaf(["timePhase"], {"timePhase": _universe_schema("time_phases", ud)}))
     # 提取到未建模叶子时(extract 已出 warning)加一条兜底,免得新叶子全量报错
-    for extra_leaf in modeled - {"flag", "quest", "scenario", "scenarioLine", "narrative", "narrativeCount", "plane"}:
+    for extra_leaf in modeled - {
+        "flag", "quest", "scenario", "scenarioLine", "narrative", "narrativeCount",
+        "plane", "posture", "timePhase",
+    }:
         branches.append(leaf([extra_leaf], {extra_leaf: {}}))
     return {"anyOf": branches}
 

@@ -56,6 +56,7 @@ import { BookReaderUI } from '../ui/BookReaderUI';
 import { CharacterBookUI } from '../ui/CharacterBookUI';
 import { LoreBookUI } from '../ui/LoreBookUI';
 import { SlangBookUI } from '../ui/SlangBookUI';
+import { RhymeBookUI } from '../ui/RhymeBookUI';
 import { DocumentBoxUI } from '../ui/DocumentBoxUI';
 import { ShopUI } from '../ui/ShopUI';
 import { MapUI } from '../ui/MapUI';
@@ -1129,6 +1130,7 @@ export class Game {
       (onClose) => { const s = new LoreBookUI(this.renderer, this.archiveManager, onClose, this.stringsProvider, this.assetManager); s.open(); return s; },
       (onClose) => { const s = new DocumentBoxUI(this.renderer, this.archiveManager, onClose, this.stringsProvider, this.assetManager); s.open(); return s; },
       (onClose) => { const s = new SlangBookUI(this.renderer, this.archiveManager, onClose, this.stringsProvider, this.assetManager); s.open(); return s; },
+      (onClose) => { const s = new RhymeBookUI(this.renderer, this.archiveManager, onClose, this.stringsProvider, this.assetManager); s.open(); return s; },
       this.stringsProvider,
     );
     this.shopUI = new ShopUI(this.renderer, this.eventBus, this.inventoryManager, this.stringsProvider, this.assetManager);

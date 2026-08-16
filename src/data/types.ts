@@ -1977,6 +1977,34 @@ export interface SlangProgress {
   allCompleteText: string;
 }
 
+/**
+ * 歪歌册条目。与怪话册同为「系统替文盲记账」的成就式搜集册，纯 flavor：只能被读、不能被用。
+ * 收民间连锁调式歪童谣；内容口径（宁冷勿俗、注释不提历史人物）见玩法功能需求清单 K5 书六。
+ */
+export interface RhymeEntry {
+  id: string;
+  /** 标题，如「张打铁」 */
+  title: string;
+  /** 顺口溜完整原文，多行用 \n */
+  content: string;
+  /** 在哪听来的（采风口径） */
+  source: string;
+  /** 末尾那句拆台备注（可空） */
+  note?: string;
+  unlockConditions: ConditionExpr[];
+  /** 玩家第一次在档案中点开该条目时执行（仅一次） */
+  firstViewActions?: ActionDef[];
+}
+
+/** 歪歌册总进度（暂无分类，全册一个进度） */
+export interface RhymeProgress {
+  collected: number;
+  total: number;
+  allComplete: boolean;
+  /** 全册集齐时显示的评语（未集齐为空串） */
+  allCompleteText: string;
+}
+
 export interface DocumentEntry {
   id: string;
   name: string;
@@ -2537,7 +2565,7 @@ export interface IRulesDataProvider {
 export interface IArchiveDataProvider {
   /** 将档案/书籍等 JSON 正文中的 [tag:…] 展开为当前展示文案 */
   resolveLine(raw: string | undefined): string;
-  hasUnread(bookType: 'character' | 'lore' | 'document' | 'book' | 'slang'): boolean;
+  hasUnread(bookType: 'character' | 'lore' | 'document' | 'book' | 'slang' | 'rhyme'): boolean;
   getUnlockedCharacters(): CharacterEntry[];
   getCharacterVisibleImpressions(entry: CharacterEntry): string[];
   getCharacterVisibleInfo(entry: CharacterEntry): string[];
@@ -2546,6 +2574,9 @@ export interface IArchiveDataProvider {
   /** 怪话册：按分类分组，含未解锁灰槽（刻意返回全部条目，不做已解锁过滤） */
   getSlangCategories(): SlangCategoryView[];
   getSlangProgress(): SlangProgress;
+  /** 歪歌册：flat 列表，含未解锁灰槽（刻意返回全部条目，不做已解锁过滤） */
+  getRhymeList(): { entry: RhymeEntry; unlocked: boolean }[];
+  getRhymeProgress(): RhymeProgress;
   getBooks(): BookDef[];
   getUnlockedBooks(): BookDef[];
   /** 左侧树：章节 → 子条目（含解锁状态） */

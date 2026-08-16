@@ -773,7 +773,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
 
   executor.register('addArchiveEntry', (p) => {
     d.archiveManager.addEntry(
-      p.bookType as 'character' | 'lore' | 'slang' | 'document' | 'book' | 'bookEntry',
+      p.bookType as 'character' | 'lore' | 'slang' | 'rhyme' | 'document' | 'book' | 'bookEntry',
       p.entryId as string,
     );
   }, ['bookType', 'entryId']);

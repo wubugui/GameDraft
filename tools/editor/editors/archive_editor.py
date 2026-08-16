@@ -235,6 +235,7 @@ class ArchiveEditor(QWidget):
         # 追加在末尾（而非插在 Lore 之后）：select_entry 的页签索引表按位置硬编码，
         # 末尾追加不打乱既有 characters/lore/documents/books 的 0~3。
         tabs.addTab(self._build_slang_tab(), "怪话册")
+        tabs.addTab(self._build_rhyme_tab(), "歪歌册")
 
     @staticmethod
     def _set_list_label(listw, idx: int, text: str) -> None:
@@ -259,6 +260,7 @@ class ArchiveEditor(QWidget):
             "books": (3, self._book_list, self._book_search,
                       lambda: self._model.archive_books),
             "slang": (4, self._slang_list, self._slang_search, self._slang_entries),
+            "rhymes": (5, self._rhyme_list, self._rhyme_search, self._rhyme_entries),
         }.get(book)
         if spec is None:
             return False
@@ -290,6 +292,9 @@ class ArchiveEditor(QWidget):
         self._refresh_slang()
         if self._slang_idx >= 0:
             self._on_slang_select(self._slang_idx)
+        self._refresh_rhyme()
+        if self._rhyme_idx >= 0:
+            self._on_rhyme_select(self._rhyme_idx)
 
     def confirm_close(self, parent=None) -> bool:
         """关闭/切工程门控：有未应用编辑则 Save/Discard/Cancel(对齐 item/shop 口径)。
@@ -303,6 +308,7 @@ class ArchiveEditor(QWidget):
         docs_b = copy.deepcopy(self._model.archive_documents)
         books_b = copy.deepcopy(self._model.archive_books)
         slang_b = copy.deepcopy(self._model.archive_slang)
+        rhymes_b = copy.deepcopy(self._model.archive_rhymes)
         dirty_before = "archive" in getattr(self._model, "_dirty", set())
 
         self.flush_to_model()
@@ -312,6 +318,7 @@ class ArchiveEditor(QWidget):
             or self._model.archive_documents != docs_b
             or self._model.archive_books != books_b
             or self._model.archive_slang != slang_b
+            or self._model.archive_rhymes != rhymes_b
         )
         if not changed:
             return True
@@ -330,6 +337,7 @@ class ArchiveEditor(QWidget):
         self._model.archive_books[:] = books_b
         self._model.archive_lore = lore_b  # lore 读取处均即时读属性,重新赋值安全
         self._model.archive_slang = slang_b  # 同 lore：_slang_root() 每次即时读属性
+        self._model.archive_rhymes = rhymes_b  # 同 slang：_rhyme_root() 每次即时读属性
         if not dirty_before and hasattr(self._model, "_dirty"):
             self._model._dirty.discard("archive")
             if not self._model.is_dirty:
@@ -351,8 +359,10 @@ class ArchiveEditor(QWidget):
         self._apply_doc(refresh=False)
         self._apply_book(refresh=False)
         self._apply_slang(refresh=False)
+        self._apply_rhyme(refresh=False)
         self._apply_lore_categories()
         self._apply_slang_categories()
+        self._apply_rhyme_globals()
         return True
 
     # ---- Characters -------------------------------------------------------
@@ -1080,6 +1090,204 @@ class ArchiveEditor(QWidget):
             self._slang_idx = -1
             self._model.mark_dirty("archive")
             self._refresh_slang()
+
+    # ---- Rhymes（歪歌册）--------------------------------------------------
+
+    def _rhyme_root(self) -> dict:
+        """rhymes.json 根对象（allCompleteText + entries；categories 键位预留未启用）。"""
+        d = self._model.archive_rhymes
+        if not isinstance(d, dict):
+            d = {}
+            self._model.archive_rhymes = d
+        return d
+
+    def _rhyme_entries(self) -> list[dict]:
+        return self._rhyme_root().setdefault("entries", [])
+
+    def _build_rhyme_tab(self) -> QWidget:
+        w = QWidget()
+        lay = QHBoxLayout(w)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        left = QWidget()
+        ll = QVBoxLayout(left); ll.setContentsMargins(0, 0, 0, 0)
+        btn_row = QHBoxLayout()
+        btn_add = QPushButton("+ 歪歌"); btn_add.clicked.connect(self._add_rhyme)
+        btn_del = QPushButton("Delete"); btn_del.clicked.connect(self._del_rhyme)
+        btn_row.addWidget(btn_add); btn_row.addWidget(btn_del)
+        ll.addLayout(btn_row)
+        self._rhyme_list = QListWidget()
+        self._rhyme_search = _make_list_search_box(self._rhyme_list)
+        ll.addWidget(self._rhyme_search)
+        self._rhyme_list.currentRowChanged.connect(self._on_rhyme_select)
+        _wire_list_affordances(self._rhyme_list, self._del_rhyme, delete_label="删除歪歌条目")
+        ll.addWidget(self._rhyme_list)
+        self._rhyme_empty_hint = QLabel("暂无歪歌条目，点击「+ 歪歌」新增")
+        self._rhyme_empty_hint.setStyleSheet("color: #888;")
+        self._rhyme_empty_hint.setWordWrap(True)
+        ll.addWidget(self._rhyme_empty_hint)
+
+        scroll = QScrollArea(); scroll.setWidgetResizable(True)
+        detail = QWidget()
+        f = compact_form(QFormLayout(detail))
+        self._rh_id = QLineEdit(); f.addRow("id", self._rh_id)
+        self._rh_title = RichTextLineEdit(self._model)
+        self._rh_title.setMinimumWidth(240)
+        self._rh_title.setToolTip("标题，如「张打铁」。")
+        f.addRow("title", self._rh_title)
+        self._rh_content = RichTextTextEdit(self._model)
+        self._rh_content.setMinimumWidth(240)
+        self._rh_content.setMinimumHeight(140)
+        self._rh_content.setMaximumHeight(280)
+        self._rh_content.setToolTip(
+            "顺口溜完整原文，多行（换行即游戏内换行）。内容口径见玩法文档 K5 书六："
+            "宁冷勿俗；注释与正文绝不提历史人物。")
+        rh_content_row = QHBoxLayout()
+        rh_content_row.addWidget(self._rh_content)
+        rh_content_row.addWidget(_make_insert_image_btn(self._rh_content, self._model))
+        f.addRow("content", rh_content_row)
+        self._rh_source = RichTextLineEdit(self._model)
+        self._rh_source.setMinimumWidth(240)
+        self._rh_source.setToolTip("在哪听来的（采风口径），如「院坝头娃儿拍手唱的」。")
+        f.addRow("source", self._rh_source)
+        self._rh_note = RichTextTextEdit(self._model)
+        self._rh_note.setMinimumWidth(240)
+        self._rh_note.setMinimumHeight(50)
+        self._rh_note.setMaximumHeight(110)
+        self._rh_note.setToolTip("末尾那句拆台备注——笑点落点。可空。")
+        f.addRow("note", self._rh_note)
+        self._rh_cond = ConditionEditor("unlockConditions")
+        apply_btn = QPushButton("Apply"); apply_btn.clicked.connect(lambda *_: self._apply_rhyme(refresh=False))
+
+        right = QWidget()
+        rl = QVBoxLayout(right)
+        rl.addWidget(scroll)
+        scroll.setWidget(detail)
+        rl.addWidget(self._rh_cond)
+        rl.addWidget(QLabel("<b>首次阅览动作 firstViewActions</b>"))
+        self._rh_first_view = ActionEditor("firstViewActions")
+        rl.addWidget(self._rh_first_view)
+        rl.addWidget(apply_btn)
+        rl.addWidget(self._build_rhyme_globals_section())
+
+        splitter.addWidget(left)
+        splitter.addWidget(right)
+        splitter.setSizes([220, 550])
+        lay.addWidget(splitter)
+        self._rhyme_idx = -1
+        self._refresh_rhyme()
+        return w
+
+    def _build_rhyme_globals_section(self) -> QWidget:
+        """全册集齐评语（全局，非按条目）。歪歌册暂不分类，全局区只有这一项。
+
+        集齐评语是这本册子唯一的「奖励」——只给文案、不给能力（红线见玩法文档 K5 书六）。
+        只就地改已存在的键，不向缺键的工程注入字段，保 JSON 往返。"""
+        root = self._rhyme_root()
+        self._rhyme_all_done_editable = "allCompleteText" in root
+        body = QWidget()
+        form = compact_form(QFormLayout(body))
+        self._rhyme_all_done = QLineEdit()
+        self._rhyme_all_done.setText(str(root.get("allCompleteText", "")))
+        self._rhyme_all_done.setToolTip("全册集齐时显示的评语。只出文案，不解锁任何能力。")
+        if not self._rhyme_all_done_editable:
+            self._rhyme_all_done.setReadOnly(True)
+        form.addRow("全册集齐评语", self._rhyme_all_done)
+        if self._rhyme_all_done_editable:
+            btn = QPushButton("应用评语")
+            btn.setMaximumWidth(140)
+            btn.clicked.connect(self._apply_rhyme_globals)
+            form.addRow("", btn)
+        sec = CollapsibleSection("集齐评语（全局）", start_open=False)
+        sec.set_header_tool_tip("编辑全册集齐评语。歪歌册暂不分类，无分类评语。")
+        sec.add_body(body)
+        return sec
+
+    def _apply_rhyme_globals(self) -> None:
+        if not getattr(self, "_rhyme_all_done_editable", False):
+            return
+        root = self._rhyme_root()
+        if "allCompleteText" in root and root["allCompleteText"] != self._rhyme_all_done.text():
+            root["allCompleteText"] = self._rhyme_all_done.text()
+            self._model.mark_dirty("archive")
+
+    def _refresh_rhyme(self) -> None:
+        self._rhyme_list.clear()
+        for e in self._rhyme_entries():
+            self._rhyme_list.addItem(f"{e.get('id', '?')}  [{e.get('title', '')}]")
+        self._rhyme_empty_hint.setVisible(self._rhyme_list.count() == 0)
+
+    def _on_rhyme_select(self, row: int) -> None:
+        entries = self._rhyme_entries()
+        if row < 0 or row >= len(entries):
+            return
+        prev = self._rhyme_idx
+        if 0 <= prev < len(entries) and prev != row:
+            self._apply_rhyme(refresh=False)
+        self._rhyme_idx = row
+        e = entries[row]
+        self._rh_id.setText(e.get("id", ""))
+        self._rh_title.setText(e.get("title", ""))
+        self._rh_content.setPlainText(e.get("content", ""))
+        self._rh_source.setText(e.get("source", ""))
+        self._rh_note.setPlainText(e.get("note", ""))
+        self._rh_cond.set_flag_pattern_context(self._model, None)
+        self._rh_cond.set_data(e.get("unlockConditions", []))
+        self._rh_first_view.set_project_context(self._model, None)
+        self._rh_first_view.set_data(e.get("firstViewActions", []))
+        self._rh_id.setFocus()
+
+    def _apply_rhyme(self, refresh: bool = True) -> None:
+        entries = self._rhyme_entries()
+        if self._rhyme_idx < 0 or self._rhyme_idx >= len(entries):
+            return
+        e = entries[self._rhyme_idx]
+        _before = copy.deepcopy(e)
+        e["id"] = self._rh_id.text().strip()
+        e["title"] = self._rh_title.text()
+        e["content"] = self._rh_content.toPlainText()
+        e["source"] = self._rh_source.text()
+        note = self._rh_note.toPlainText()
+        if note:
+            e["note"] = note
+        elif "note" in e:
+            del e["note"]
+        e["unlockConditions"] = self._rh_cond.to_list()
+        rh_fv = self._rh_first_view.to_list()
+        if rh_fv:
+            e["firstViewActions"] = rh_fv
+        elif "firstViewActions" in e:
+            del e["firstViewActions"]
+        if e == _before:
+            return  # 无实质变化：不标脏、不重建列表（保留选中）
+        self._model.mark_dirty("archive")
+        if refresh:
+            self._refresh_rhyme()
+        else:
+            self._set_list_label(
+                self._rhyme_list, self._rhyme_idx,
+                f"{e.get('id', '?')}  [{e.get('title', '')}]")
+
+    def _add_rhyme(self) -> None:
+        entries = self._rhyme_entries()
+        new_id = _next_unique_id("rhyme", (e.get("id", "") for e in entries))
+        entries.append({
+            "id": new_id, "title": "", "content": "",
+            "source": "", "unlockConditions": [],
+        })
+        self._model.mark_dirty("archive")
+        self._refresh_rhyme()
+        self._rhyme_list.setCurrentRow(len(entries) - 1)
+
+    def _del_rhyme(self) -> None:
+        entries = self._rhyme_entries()
+        if 0 <= self._rhyme_idx < len(entries):
+            if not confirm.confirm_delete(self, f"歪歌条目「{entries[self._rhyme_idx].get('id', '')}」"):
+                return
+            entries.pop(self._rhyme_idx)
+            self._rhyme_idx = -1
+            self._model.mark_dirty("archive")
+            self._refresh_rhyme()
 
     # ---- Documents --------------------------------------------------------
 

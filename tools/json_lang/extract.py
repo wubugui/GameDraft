@@ -32,7 +32,10 @@ TYPES_TS = "src/data/types.ts"
 # ConditionTrace 里非叶子的 kind;剩下的就是条件叶子清单(机器可校验锚点)
 _NON_LEAF_TRACE_KINDS = {"all", "any", "not", "unknown"}
 # 本工具已建模的叶子;提取出新 kind → warning "有新条件叶子,json_lang 需要跟进"
-_MODELED_LEAVES = {"flag", "quest", "scenario", "scenarioLine", "narrative", "narrativeCount", "plane"}
+_MODELED_LEAVES = {
+    "flag", "quest", "scenario", "scenarioLine", "narrative", "narrativeCount",
+    "plane", "posture", "timePhase",
+}
 # ENTITY_REF_PARAMS 已知 kind;出现新 kind → warning
 _KNOWN_REF_KINDS = {
     "actor", "emote_subject", "npc", "npc_soft", "owner", "bubble_speaker",
@@ -57,6 +60,7 @@ class LanguageSpec:
     quest_statuses: list[str]
     scenario_line_statuses: list[str]
     flag_ops: list[str]
+    player_postures: list[str]
     warnings: list[str] = field(default_factory=list)
 
 
@@ -133,8 +137,8 @@ def extract_action_manifest(root: Path) -> dict[str, dict[str, list[str]]]:
     return out
 
 
-def extract_condition_language(root: Path) -> tuple[list[str], list[str], list[str], list[str], list[str]]:
-    """→ (叶子清单, quest 状态, scenarioLine 状态, flag op, warnings)"""
+def extract_condition_language(root: Path) -> tuple[list[str], list[str], list[str], list[str], list[str], list[str]]:
+    """→ (叶子清单, quest 状态, scenarioLine 状态, flag op, posture 枚举, warnings)"""
     warnings: list[str] = []
     text = (root / EVAL_CONDITION_TS).read_text(encoding="utf-8")
 
@@ -171,7 +175,13 @@ def extract_condition_language(root: Path) -> tuple[list[str], list[str], list[s
         raise ValueError(f"{TYPES_TS} Condition 里提不到 op 联合")
     flag_ops = re.findall(r"'([^']+)'", op_line.group(1))
 
-    return leaves, quest_statuses, line_statuses, flag_ops, warnings
+    # posture 叶枚举权威 = PLAYER_POSTURES(types.ts 注释:值须为其一;站姿为 null 不是枚举值)
+    m = re.search(r"PLAYER_POSTURES\s*=\s*\[([^\]]*)\]", types_text)
+    if not m:
+        raise ValueError(f"{TYPES_TS} 提不到 PLAYER_POSTURES(posture 条件叶枚举权威)")
+    postures = re.findall(r"'(\w+)'", m.group(1))
+
+    return leaves, quest_statuses, line_statuses, flag_ops, postures, warnings
 
 
 # --------------------------------------------------------------------------- #
@@ -190,7 +200,7 @@ def extract_language_spec(root: Path) -> LanguageSpec:
     entity_ref_params = _py_toplevel_literal(refactor_src, "ENTITY_REF_PARAMS", ENTITY_REFACTOR_PY)
 
     manifest = extract_action_manifest(root)
-    leaves, quest_statuses, line_statuses, flag_ops, warnings = extract_condition_language(root)
+    leaves, quest_statuses, line_statuses, flag_ops, postures, warnings = extract_condition_language(root)
 
     # tripwire 1:manifest ∪ DEBUG_ONLY 应恰好等于 ACTION_TYPES(setNarrativeState 特例见 manifest 头注释)
     at, mk = set(action_types), set(manifest)
@@ -218,5 +228,6 @@ def extract_language_spec(root: Path) -> LanguageSpec:
         quest_statuses=quest_statuses,
         scenario_line_statuses=line_statuses,
         flag_ops=flag_ops,
+        player_postures=postures,
         warnings=warnings,
     )

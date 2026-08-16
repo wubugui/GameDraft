@@ -247,6 +247,19 @@ def collect_id_universes(root: Path, read_text=None) -> UniverseData:
     plane_labels.setdefault("normal", "常态(无位面)")
     labels["planes"] = plane_labels
 
+    # timePhase 叶枚举:game_config.dayNight.phases 配了用配置;没配回落缺省四段——
+    # 与运行时 resolvePhases(src/utils/dayTime.ts DEFAULT_PHASES)同口径,回落值属
+    # planes「normal」同类的运行时魔法清单
+    gc_doc = _load(data / "game_config.json", read)
+    day_night = gc_doc.get("dayNight") if isinstance(gc_doc, dict) else None
+    phase_rows = day_night.get("phases") if isinstance(day_night, dict) else None
+    phase_ids, phase_labels = _ids_and_labels(phase_rows, "label")
+    if not phase_ids:
+        phase_ids = ["dawn", "day", "dusk", "night"]
+        phase_labels = {"dawn": "拂晓", "day": "白日", "dusk": "黄昏", "night": "入夜"}
+    u["time_phases"] = phase_ids
+    labels["time_phases"] = phase_labels
+
     rules_doc = _load(data / "rules.json", read)
     if isinstance(rules_doc, dict):
         u["rules"], labels["rules"] = _ids_and_labels(rules_doc.get("rules"), "name")
@@ -392,7 +405,7 @@ def collect_id_universes(root: Path, read_text=None) -> UniverseData:
     else:
         u["flag_static_keys"] = u["flag_prefixes"] = []
 
-    # ---- 档案:全量并集 + bookType 收窄映射(对齐 ArchiveManager.addEntry 的五路 switch) ----
+    # ---- 档案:全量并集 + bookType 收窄映射(对齐 ArchiveManager.addEntry 的 switch 各路) ----
     def _archive(path: Path) -> dict[str, str]:
         out: dict[str, str] = {}
         _deep_entries(_load(path, read), out)
@@ -401,6 +414,7 @@ def collect_id_universes(root: Path, read_text=None) -> UniverseData:
     characters = _archive(data / "archive/characters.json")
     lore = _archive(data / "archive/lore.json")
     slang = _archive(data / "archive/slang.json")
+    rhymes = _archive(data / "archive/rhymes.json")
     documents = _archive(data / "archive/documents.json")
     books_doc = _load(data / "archive/books.json", read)
     book_labels: dict[str, str] = {}
@@ -416,13 +430,14 @@ def collect_id_universes(root: Path, read_text=None) -> UniverseData:
                 if isinstance(pg, dict):
                     _deep_entries(pg.get("entries"), book_entry_labels)
 
-    all_archive = {**characters, **lore, **slang, **documents, **book_labels, **book_entry_labels}
+    all_archive = {**characters, **lore, **slang, **rhymes, **documents, **book_labels, **book_entry_labels}
     u["archive_entries"] = sorted(all_archive)
     labels["archive_entries"] = {k: v for k, v in all_archive.items() if v}
     scoped["archive_by_booktype"] = {
         "character": sorted(characters),
         "lore": sorted(lore),
         "slang": sorted(slang),
+        "rhyme": sorted(rhymes),
         "document": sorted(documents),
         "book": sorted(book_labels),
         "bookEntry": sorted(book_entry_labels),

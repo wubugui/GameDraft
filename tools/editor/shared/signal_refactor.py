@@ -80,6 +80,9 @@ CONDITION_EXTRA_SOURCES: dict[str, tuple[str, bool]] = {
     # 行话本 entries[].unlockConditions（档案五件套第五份，2026-08-13 对账抓获的漏网）；
     # 与其余档案同走 "archive" 脏桶落盘。漏它 = 状态改名后行话永远解不开，静默。
     "archive_slang": ("archive", False),
+    # 歪歌册 entries[].unlockConditions（档案第六份，2026-08-17 与运行时同步新增）；
+    # 同走 "archive" 脏桶落盘。
+    "archive_rhymes": ("archive", False),
     "game_config": ("config", False),
 }
 CONDITION_SOURCES: dict[str, tuple[str, bool]] = {**EMIT_SOURCE_BUCKETS, **CONDITION_EXTRA_SOURCES}

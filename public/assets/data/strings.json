@@ -56,7 +56,8 @@
     "characters": "人物簿",
     "lore": "见闻录",
     "documents": "杂书匣",
-    "slang": "怪话册"
+    "slang": "怪话册",
+    "rhymes": "歪歌册"
   },
   "characterBook": {
     "title": "人物簿",
@@ -78,6 +79,15 @@
     "progress": "已记 {collected} / {total}",
     "lockedSlot": "——还没听人说过",
     "example": "他的用法：",
+    "source": "-- 来源：",
+    "note": "备注："
+  },
+  "rhymeBook": {
+    "title": "歪歌册",
+    "back": "[返回书架]",
+    "empty": "(还没记下一首)",
+    "progress": "已记 {collected} / {total}",
+    "lockedSlot": "——还没听人唱过",
     "source": "-- 来源：",
     "note": "备注："
   },

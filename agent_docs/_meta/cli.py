@@ -4,12 +4,12 @@
 agent 遇到任何治理类业务(治理/建库/收编/炼化/体检…)先访问本 CLI,现场发现并取用
 权威流程文件;各客户端只需安装一个指向本 CLI 的薄壳技能,新增治理流程零接线。
 
-用法:
-  python3 agent_docs/_meta/cli.py list             # 列出所有治理流程
-  python3 agent_docs/_meta/cli.py route "一句话"    # 按业务描述匹配流程
-  python3 agent_docs/_meta/cli.py get <id>         # 打印流程权威正文(照做)
-  python3 agent_docs/_meta/cli.py audit [args...]  # 代理 audit.py(体检/索引/--check/--paths)
-  python3 agent_docs/_meta/cli.py install          # 一键安装/修复客户端薄壳(幂等)
+用法(sh scripts/py.sh = 跨平台 python 选择器,python3 直调在部分 Windows 机上是 Store stub):
+  sh scripts/py.sh agent_docs/_meta/cli.py list             # 列出所有治理流程
+  sh scripts/py.sh agent_docs/_meta/cli.py route "一句话"    # 按业务描述匹配流程
+  sh scripts/py.sh agent_docs/_meta/cli.py get <id>         # 打印流程权威正文(照做)
+  sh scripts/py.sh agent_docs/_meta/cli.py audit [args...]  # 代理 audit.py(体检/索引/--check/--paths)
+  sh scripts/py.sh agent_docs/_meta/cli.py install          # 一键安装/修复客户端薄壳(幂等)
       [--client cursor|claude ...]                 #   只装指定客户端(缺目录会创建)
       [--dir <skills目录>]                          #   其它客户端:装到指定技能目录下
 
@@ -38,7 +38,7 @@ name: agent-docs-cli
 description: >-
   agent_docs 公共知识库治理台 CLI 的统一入口。凡遇治理类业务——治理 agent 文档/一键治理/
   更新知识库/建库/蒸馏记忆/govern agent docs/收编方法论/炼化经验/这个坑入库/记到库里/
-  intake——先跑 python3 agent_docs/_meta/cli.py,从中现场发现并取用权威流程文件照做。
+  intake——先跑 sh scripts/py.sh agent_docs/_meta/cli.py,从中现场发现并取用权威流程文件照做。
   本壳不含任何流程内容。
 ---
 
@@ -47,10 +47,10 @@ description: >-
 治理类业务统一走 CLI,现场发现流程,不要凭记忆发挥:
 
 ```
-python3 agent_docs/_meta/cli.py list             # 列出所有治理流程
-python3 agent_docs/_meta/cli.py route "一句话"    # 按业务描述匹配流程
-python3 agent_docs/_meta/cli.py get <id>         # 打印权威正文,读它并严格照做
-python3 agent_docs/_meta/cli.py audit [...]      # 机械体检/索引/--paths 查必读卡
+sh scripts/py.sh agent_docs/_meta/cli.py list             # 列出所有治理流程
+sh scripts/py.sh agent_docs/_meta/cli.py route "一句话"    # 按业务描述匹配流程
+sh scripts/py.sh agent_docs/_meta/cli.py get <id>         # 打印权威正文,读它并严格照做
+sh scripts/py.sh agent_docs/_meta/cli.py audit [...]      # 机械体检/索引/--paths 查必读卡
 ```
 
 权威正文全部在 `agent_docs/_meta/<id>-skill.md`;本壳与 CLI 都不复制正文。
@@ -62,13 +62,14 @@ GATE_CONTENT = """<!-- agent-docs-gate:begin (由 agent_docs/_meta/cli.py instal
 ## §A 开工先查公共知识库(agent_docs)
 
 - 动手前按任务域读 `agent_docs/INDEX.md` 对应条目;确定要改的文件后跑
-  `python3 agent_docs/_meta/audit.py --paths <files...>` 取必读机制卡,先读卡再动手。
-- 治理类业务(治理/建库/收编方法论/炼化/intake)统一入口:`python3 agent_docs/_meta/cli.py`。
+  `sh scripts/py.sh agent_docs/_meta/audit.py --paths <files...>` 取必读机制卡,先读卡再动手。
+- 治理类业务(治理/建库/收编方法论/炼化/intake)统一入口:`sh scripts/py.sh agent_docs/_meta/cli.py`。
+  (py.sh = 跨平台 python 选择器;部分 Windows 机上 python3 是 Store stub 会静默空转)
 - 发现库内文档与现实打架:收尾往 `agent_docs/_meta/inbox/` 丢一条三行偏差记录(零门槛)。
 <!-- agent-docs-gate:end -->"""
 GATE_FILES = ("CLAUDE.md", "AGENTS.md")  # 2026-07-11 用户批准的接线面
 
-HOOK_COMMAND = 'python3 "${CLAUDE_PROJECT_DIR:-.}/agent_docs/_meta/hooks/paths_reminder.py"'
+HOOK_COMMAND = 'sh "${CLAUDE_PROJECT_DIR:-.}/scripts/py.sh" "${CLAUDE_PROJECT_DIR:-.}/agent_docs/_meta/hooks/paths_reminder.py"'
 HOOK_MARK = "paths_reminder.py"
 HOOK_ENTRY = {
     "matcher": "Edit|Write|NotebookEdit",
@@ -104,9 +105,12 @@ def ensure_claude_hook() -> None:
             print(f"✗ 跳过 hook:{settings} 不是合法 JSON,请先修复(坏 settings 会禁用全部配置)")
             return
     post = data.setdefault("hooks", {}).setdefault("PostToolUse", [])
-    if any(HOOK_MARK in h.get("command", "") for e in post for h in e.get("hooks", [])):
+    kept = [e for e in post if not any(HOOK_MARK in h.get("command", "") for h in e.get("hooks", []))]
+    if len(post) - len(kept) == 1 and HOOK_ENTRY in post:
         print(f"✓ hook 已是最新: {settings}")
         return
+    data["hooks"]["PostToolUse"] = kept
+    post = kept
     post.append(HOOK_ENTRY)
     settings.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"✓ hook 已接线: {settings}(新接需重开会话或 /hooks 重载生效)")
@@ -182,7 +186,7 @@ def cmd_install(rest: list[str]) -> int:
     print("\n若你的客户端不是 Cursor/Claude Code:`install --dir <你的技能目录>`;格式不同则")
     print("`install --print` 取薄壳、`install --print-gate` 取开工闸门块、`install --print-hook`")
     print("取强制层 hook 接法,按你客户端的机制自行适配(规则见 _meta/install-prompt.md)。")
-    print("自检: python3 agent_docs/_meta/cli.py list")
+    print("自检: sh scripts/py.sh agent_docs/_meta/cli.py list")
     return 0
 
 

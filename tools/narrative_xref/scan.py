@@ -1046,6 +1046,7 @@ _SUBJECT_BY_KIND: dict[str, tuple[str, str]] = {
     "archiveBook": ("archive", "书能不能看到"),
     "archiveDocument": ("archive", "文书能不能看到"),
     "archiveSlang": ("archive", "行话能不能解锁"),
+    "archiveRhyme": ("archive", "歪歌能不能解锁"),
     "dialogue": ("dialogueNode", "对话走哪一支"),
     "scene": ("sceneEntity", "场景里这东西的显隐"),
     "encounter": ("encounter", "遭遇触不触发"),
