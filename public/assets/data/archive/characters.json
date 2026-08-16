@@ -36,6 +36,7 @@
     "id": "storyteller_zhang",
     "name": "说书人张叨叨",
     "title": "茶馆说书先生",
+    "portrait": "npc_storyteller_anim",
     "impressions": [
       {
         "text": "一个瘦巴巴的中年人，留着山羊胡子，声音洪亮，说起故事来眉飞色舞。",
@@ -77,6 +78,7 @@
     "id": "waiter_xiaoer",
     "name": "小二",
     "title": "茶馆跑堂",
+    "portrait": "npc_lifu_anim",
     "impressions": [
       {
         "text": "一个麻利的年轻人，嘴甜腿快。",
@@ -135,6 +137,7 @@
     "id": "blind_li",
     "name": "瞎子李",
     "title": "走南闯北的老瞎子",
+    "portrait": "npc_blind_li_anim",
     "impressions": [
       {
         "text": "一个拄着竹竿的老瞎子，眼虽看不见，话里却总像藏着钩子。",
@@ -168,6 +171,7 @@
     "id": "clara_crossley",
     "name": "克拉拉·克罗斯利",
     "title": "洋人考察者",
+    "portrait": "clara",
     "impressions": [
       {
         "text": "码头上那个洋婆子。眼睛尖，话不多，看人的时候像在记账。",
@@ -215,6 +219,7 @@
     "id": "edgar_crossley",
     "name": "埃德加·克罗斯利",
     "title": "洋行执照持有人",
+    "portrait": "edgar",
     "impressions": [
       {
         "text": "急躁、自信、嗓门大，拿执照当护身符。不信风水，但信钱。",
@@ -248,6 +253,7 @@
     "id": "yizhuang_keeper",
     "name": "义庄管事",
     "title": "看死人屋的",
+    "portrait": "npc_yizhuang_keeper_anim",
     "impressions": [
       {
         "text": "瘦弱、惊惶，说话时眼睛不敢往庄里看。请不起正经先生，才轮到你。",
