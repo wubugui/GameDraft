@@ -5544,6 +5544,24 @@ def _validate_flags(model: ProjectModel, issues: list[Issue]) -> None:
     for ch in model.archive_characters:
         cid = str(ch.get("id", ""))
         # 人物解锁只走 addArchiveEntry，无 unlockConditions 可校验；仅走分段显示条件 + 首阅动作。
+        # portrait（人物簿头像）：可选、对话立绘集 slug；缺资产报 warning 不升 error（素材可后补）。
+        por = ch.get("portrait")
+        if por is not None:
+            if not isinstance(por, str) or not por.strip():
+                issues.append(Issue(
+                    "warning", "archive", cid,
+                    "人物档案 portrait 须为非空字符串（对话立绘集 slug，或删除该键）",
+                ))
+            elif model.project_path is not None and not (
+                model.project_path / "public" / "resources" / "runtime" / "images"
+                / "dialogue_portraits" / por.strip() / f"{por.strip()}_calm.png"
+            ).is_file():
+                issues.append(Issue(
+                    "warning", "archive", cid,
+                    f"人物档案 portrait 指向 '{por.strip()}'，但缺人物簿头像帧 "
+                    f"public/resources/runtime/images/dialogue_portraits/"
+                    f"{por.strip()}/{por.strip()}_calm.png（人物簿固定用 calm 表情）",
+                ))
         for imp in ch.get("impressions", []) or []:
             _walk_conditions(model, issues, imp.get("conditions"), "archive", cid, None)
         for ki in ch.get("knownInfo", []) or []:
@@ -5591,6 +5609,20 @@ def _validate_flags(model: ProjectModel, issues: list[Issue]) -> None:
                         "warning", "archive", "slang",
                         f"categoryCompleteText 含未登记分类键 {k!r}，该评语永不显示",
                     ))
+
+    rhyme_root = model.archive_rhymes
+    rhyme_entries = rhyme_root.get("entries", []) if isinstance(rhyme_root, dict) else []
+    for re_ in rhyme_entries or []:
+        if not isinstance(re_, dict):
+            continue
+        rid = str(re_.get("id", ""))
+        _walk_conditions(model, issues, re_.get("unlockConditions"), "archive", rid, None)
+        _walk_action_defs(model, issues, re_.get("firstViewActions"), "archive", rid, None)
+        # 标题/全文为空 → 运行时是个点得开的空壳（歪歌册无分类，无 category 检查）
+        if not str(re_.get("title", "")).strip():
+            issues.append(Issue("warning", "archive", rid, "歪歌条目缺 title（标题），运行时列表显示为空行"))
+        if not str(re_.get("content", "")).strip():
+            issues.append(Issue("warning", "archive", rid, "歪歌条目缺 content（顺口溜全文），点开是空白"))
 
     for doc in model.archive_documents:
         did = str(doc.get("id", ""))
@@ -5651,6 +5683,10 @@ def _validate_flags(model: ProjectModel, issues: list[Issue]) -> None:
     if isinstance(_slang_dup, dict):
         _slang_dup = _slang_dup.get("entries", [])
     _check_archive_dup_ids(_slang_dup, "怪话词条")
+    _rhyme_dup = model.archive_rhymes
+    if isinstance(_rhyme_dup, dict):
+        _rhyme_dup = _rhyme_dup.get("entries", [])
+    _check_archive_dup_ids(_rhyme_dup, "歪歌条目")
     _check_archive_dup_ids(model.archive_documents, "文档档案")
     _check_archive_dup_ids(model.archive_books, "书籍")
 
