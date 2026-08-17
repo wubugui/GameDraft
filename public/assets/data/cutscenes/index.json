@@ -1352,8 +1352,8 @@
         "text": "说有一天李天狗来到一处穷山恶水之地。",
         "subtitleBand": "movieBottom",
         "subtitleAlign": "center",
-        "subtitleVoice": "voice_001",
-        "subtitleAutoAdvance": "voice"
+        "voice": "sfx_开场说书1",
+        "autoAdvance": "voice"
       },
       {
         "kind": "present",
@@ -1382,8 +1382,11 @@
         "text": "那地方唤作神仙顶——名头好听，",
         "subtitleBand": "movieBottom",
         "subtitleAlign": "center",
-        "subtitleVoice": "voice_002a",
-        "subtitleAutoAdvance": "voice"
+        "voice": {
+          "id": "sfx_开场说书2",
+          "hold": true
+        },
+        "autoAdvance": 3000.0
       },
       {
         "kind": "parallel",
@@ -1401,8 +1404,7 @@
             "text": "实则乱坟遍野，阴风刮得人脊背发凉。",
             "subtitleBand": "movieBottom",
             "subtitleAlign": "center",
-            "subtitleVoice": "voice_002b",
-            "subtitleAutoAdvance": "voice"
+            "autoAdvance": "voice"
           }
         ]
       },
@@ -1433,8 +1435,8 @@
         "text": "李天狗一袭旧道袍，独自循着邪气，摸到半山一座古墓跟前。",
         "subtitleBand": "movieBottom",
         "subtitleAlign": "center",
-        "subtitleVoice": "voice_003",
-        "subtitleAutoAdvance": "voice"
+        "voice": "voice_003",
+        "autoAdvance": "voice"
       },
       {
         "kind": "present",
@@ -1459,8 +1461,8 @@
         "text": "墓砖焦黑，土缝里直冒热气。",
         "subtitleBand": "movieBottom",
         "subtitleAlign": "center",
-        "subtitleVoice": "voice_004a",
-        "subtitleAutoAdvance": "voice"
+        "voice": "voice_004a",
+        "autoAdvance": "voice"
       },
       {
         "kind": "present",
@@ -1468,8 +1470,8 @@
         "text": "他心里咯噔一声——底下镇着的，是个旱魃！",
         "subtitleBand": "movieBottom",
         "subtitleAlign": "center",
-        "subtitleVoice": "voice_004b",
-        "subtitleAutoAdvance": "voice"
+        "voice": "voice_004b",
+        "autoAdvance": "voice"
       },
       {
         "kind": "action",
@@ -1528,8 +1530,8 @@
             "text": "那墓门一开，地里腾起一只大旱魃，赤地千里，草木一舔就焦！",
             "subtitleBand": "movieBottom",
             "subtitleAlign": "center",
-            "subtitleVoice": "voice_005",
-            "subtitleAutoAdvance": "voice"
+            "voice": "voice_005",
+            "autoAdvance": "voice"
           }
         ]
       },
@@ -1566,8 +1568,8 @@
         "text": "几个摸坟的吓瘫在地，眼看就要喂了妖物。",
         "subtitleBand": "movieBottom",
         "subtitleAlign": "center",
-        "subtitleVoice": "voice_006a",
-        "subtitleAutoAdvance": "voice"
+        "voice": "voice_006a",
+        "autoAdvance": "voice"
       },
       {
         "kind": "parallel",
@@ -1585,8 +1587,8 @@
             "text": "说时迟那时快，李天狗一把将人拽到身后！",
             "subtitleBand": "movieBottom",
             "subtitleAlign": "center",
-            "subtitleVoice": "voice_006b",
-            "subtitleAutoAdvance": "voice"
+            "voice": "voice_006b",
+            "autoAdvance": "voice"
           }
         ]
       },
@@ -1636,8 +1638,8 @@
             "text": "「只见那李天狗——拔剑！咬指！画符！剑光跟焦风撞在一处！」",
             "subtitleBand": "movieBottom",
             "subtitleAlign": "center",
-            "subtitleVoice": "voice_007",
-            "subtitleAutoAdvance": "voice"
+            "voice": "voice_007",
+            "autoAdvance": "voice"
           }
         ]
       },
@@ -1686,8 +1688,8 @@
             "text": "那旱魃张口喷火、扑爪带风；",
             "subtitleBand": "movieBottom",
             "subtitleAlign": "center",
-            "subtitleVoice": "voice_008a",
-            "subtitleAutoAdvance": "voice"
+            "voice": "voice_008a",
+            "autoAdvance": "voice"
           }
         ]
       },
@@ -1707,8 +1709,8 @@
             "text": "道士咬定牙关，符纸一张接着一张，往它身上招呼！",
             "subtitleBand": "movieBottom",
             "subtitleAlign": "center",
-            "subtitleVoice": "voice_008b",
-            "subtitleAutoAdvance": "voice"
+            "voice": "voice_008b",
+            "autoAdvance": "voice"
           }
         ]
       },
@@ -1759,8 +1761,8 @@
             "text": "「最后只见李天狗一道符，生生把那旱魃镇进地里！」",
             "subtitleBand": "movieBottom",
             "subtitleAlign": "center",
-            "subtitleVoice": "voice_009",
-            "subtitleAutoAdvance": "voice"
+            "voice": "voice_009",
+            "autoAdvance": "voice"
           }
         ]
       },
@@ -1781,8 +1783,8 @@
         "text": "「摸坟的连滚带爬，捧着银钱磕头谢恩呐——」",
         "subtitleBand": "movieBottom",
         "subtitleAlign": "center",
-        "subtitleVoice": "voice_010",
-        "subtitleAutoAdvance": "voice"
+        "voice": "voice_010",
+        "autoAdvance": "voice"
       },
       {
         "kind": "present",
@@ -1811,8 +1813,8 @@
         "text": "说这李天狗降了旱魃，一路往西风风火火地继续深入神仙顶。",
         "subtitleBand": "movieBottom",
         "subtitleAlign": "center",
-        "subtitleVoice": "voice_011a",
-        "subtitleAutoAdvance": "voice"
+        "voice": "voice_011a",
+        "autoAdvance": "voice"
       },
       {
         "kind": "present",
@@ -1820,8 +1822,8 @@
         "text": "他到底是去干嘛呢？",
         "subtitleBand": "movieBottom",
         "subtitleAlign": "center",
-        "subtitleVoice": "voice_011b",
-        "subtitleAutoAdvance": "voice"
+        "voice": "voice_011b",
+        "autoAdvance": "voice"
       },
       {
         "kind": "action",
@@ -1842,8 +1844,8 @@
         "text": "欲知后事如何，各位看官，且听下回分解吧。",
         "subtitleBand": "movieBottom",
         "subtitleAlign": "center",
-        "subtitleVoice": "voice_012",
-        "subtitleAutoAdvance": "voice"
+        "voice": "voice_012",
+        "autoAdvance": "voice"
       },
       {
         "kind": "action",

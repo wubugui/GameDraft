@@ -47,6 +47,8 @@ SOURCE_NAVIGATION_TABS = {
     "scene_zone": "Scene",
     "scene_zone_rule": "Scene",
     "plane": "位面",
+    # 物件自身用途 use.actions（ItemEditor 已有 select_by_id(item_id, scene_id) 这一签名）
+    "item": "Item",
 }
 
 SOURCE_NAVIGATION_SELECTORS = {

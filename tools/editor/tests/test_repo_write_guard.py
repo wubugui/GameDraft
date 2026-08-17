@@ -58,6 +58,11 @@ def test_guard_blocks_lexical_repository_path_through_symlink(tmp_path: Path) ->
         )
 
 
+@pytest.mark.skipif(
+    os.remove not in os.supports_dir_fd,
+    reason="dir_fd 是 POSIX 专属：Windows 上 os.open(目录) 直接 PermissionError，"
+           "shutil.rmtree 也不会走 fd 遍历，这条护栏在该平台无对应现实",
+)
 def test_dir_fd_relative_path_is_resolved_against_the_fd_not_cwd(tmp_path: Path) -> None:
     """``shutil.rmtree`` 走 fd 遍历时只给裸文件名 + dir_fd。
 

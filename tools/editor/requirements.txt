@@ -9,6 +9,11 @@ Pillow>=10.0.0
 PyOpenGL>=3.1.7
 pyopengltk>=0.0.4
 grandalf>=0.8  # 对话图自动布局 Sugiyama 分层算法
+# tools/animation_pipeline 的 bake_normal_atlas / form_align / matte_illustration 是**硬
+# import**（不是可选降级），而编辑器测试 test_anim_normal_bake_config.py 直接 import 它。
+# 此前任何 requirements 都没声明 scipy：装了才绿、没装就是一条 collect ERROR，
+# 看起来像"测试坏了"而不是"环境缺件"。
+scipy>=1.11
 
 # 测试（根 pytest.ini 的 addopts 默认带 -n auto --dist loadfile，缺 xdist 会全线报
 # "unrecognized arguments"，所以它是硬依赖不是可选项）

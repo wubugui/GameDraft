@@ -28,8 +28,8 @@ from PySide6.QtGui import (
 from ..project_model import ProjectModel
 from .. import theme as app_theme
 from ..shared import confirm
-from ..shared.audio_preview_selector import AudioIdPreviewSelector
 from ..shared.bubble_anchor_field import BubbleAnchorPickField, actor_for_emote_target
+from ..shared.voice_spec_field import VoiceSpecField
 from ..shared.id_ref_selector import IdRefSelector
 from ..shared.image_path_picker import CutsceneImagePathRow
 from ..shared.action_editor import (
@@ -281,6 +281,24 @@ def parallel_tracks_summary(tracks: list) -> str:
     return f"并行 ({len(tracks)} 轨) · {s}"
 
 
+def _step_voice_id(d: dict) -> str:
+    """本步配的配音 id（新键 voice 优先，回落旧键 subtitleVoice）；没配返回空串。"""
+    raw = d.get("voice")
+    if raw is None:
+        raw = d.get("subtitleVoice")
+    if isinstance(raw, str):
+        return raw.strip()
+    if isinstance(raw, dict):
+        return str(raw.get("id") or raw.get("sfxId") or "").strip()
+    return ""
+
+
+def _step_auto_advance(d: dict) -> object:
+    """本步的推进方式（新键 autoAdvance 优先，回落旧键 subtitleAutoAdvance）。"""
+    raw = d.get("autoAdvance")
+    return d.get("subtitleAutoAdvance") if raw is None else raw
+
+
 def step_summary_line(d: dict) -> str:
     kind = str(d.get("kind", "present"))
     if kind == "action":
@@ -296,7 +314,10 @@ def step_summary_line(d: dict) -> str:
         t = str(d.get("type", ""))
         if t == "showDialogue":
             tx = str(d.get("text", "")).replace("\n", " ")
-            return f"showDialogue: {tx[:40]}…" if len(tx) > 40 else f"showDialogue: {tx}"
+            vid = _step_voice_id(d)
+            suf = f" · voice:{vid}" if vid else ""
+            head = f"showDialogue: {tx[:40]}…" if len(tx) > 40 else f"showDialogue: {tx}"
+            return head + suf
         if t == "showTitle":
             tx = str(d.get("text", ""))
             return f"showTitle: {tx[:24]}…" if len(tx) > 24 else f"showTitle: {tx}"
@@ -322,12 +343,7 @@ def step_summary_line(d: dict) -> str:
                 em = str(se.get("emote") or "").strip()
                 if tg and em:
                     em_suf = f" · {em}@{tg}"
-            raw_voice = d.get("subtitleVoice")
-            voice_id = ""
-            if isinstance(raw_voice, str):
-                voice_id = raw_voice.strip()
-            elif isinstance(raw_voice, dict):
-                voice_id = str(raw_voice.get("id") or raw_voice.get("sfxId") or "").strip()
+            voice_id = _step_voice_id(d)
             voice_suf = f" · voice:{voice_id}" if voice_id else ""
             geo = ""
             if b in ("movieTop", "movieBottom") and a in ("left", "center", "right"):
@@ -370,11 +386,11 @@ def estimate_step_duration_ms(step: dict) -> int | None:
     if kind != "present":
         return None
     t = str(step.get("type", ""))
-    if t in ("waitClick", "showDialogue"):
-        return None
-    if t == "showSubtitle":
-        # 固定时长自动推进 → 可估算；跟随配音 / 点击推进 → 不定
-        aa = step.get("subtitleAutoAdvance")
+    if t in ("waitClick", "showDialogue", "showSubtitle"):
+        # 固定时长自动推进 → 可估算；跟随配音 / 点击推进 → 不定（对话框与字幕同一套推进语义）
+        if t == "waitClick":
+            return None
+        aa = _step_auto_advance(step)
         if isinstance(aa, (int, float)) and not isinstance(aa, bool) and aa > 0:
             return int(float(aa))
         return None
@@ -466,7 +482,7 @@ def _step_has_authored_content(d: dict) -> bool:
         return bool(d.get("params"))
     if kind == "present":
         for k in ("text", "id", "image", "from", "toImage", "animFile", "scene",
-                  "handle", "subtitleVoice", "subtitleEmote"):
+                  "handle", "voice", "subtitleVoice", "subtitleEmote"):
             v = d.get(k)
             if isinstance(v, str) and v.strip():
                 return True
@@ -511,8 +527,6 @@ class StepWidget(QFrame):
         self._action_row: ActionRow | None = None
         self._parallel_layout: QVBoxLayout | None = None
         self._parallel_group: QGroupBox | None = None
-        self._subtitle_voice_was_object = False
-        self._subtitle_voice_had_volume = False
         # 构造期各控件程序化赋值会触发 valueChanged/typeCommitted；勿标为「未 Apply」
         self._report_editor_dirty: bool = False
 
@@ -770,6 +784,8 @@ class StepWidget(QFrame):
                 portrait=self._step_data.get("portrait") if isinstance(self._step_data.get("portrait"), dict) else None,
                 bubble_anchor_y=self._step_data.get("bubbleAnchorY"),
                 bubble_scale=self._step_data.get("bubbleScale"),
+                voice=self._step_data.get("voice"),
+                auto_advance=self._step_data.get("autoAdvance"),
             )
             self._widgets["__showDialogue__"] = wdg
             self._present_params_layout.addRow(wdg)
@@ -1044,62 +1060,20 @@ class StepWidget(QFrame):
                 spec["bubbleScale"] = bsc
         d["subtitleEmote"] = spec
 
-    def _subtitle_voice_initial(self) -> tuple[str, bool, bool, float]:
-        raw = self._step_data.get("subtitleVoice")
+    def _subtitle_voice_raw(self) -> object:
+        """配音原值：新键 `voice` 优先，回落旧键 `subtitleVoice`（本能力铺到全部台词面前的名字）。"""
+        raw = self._step_data.get("voice")
+        return self._step_data.get("subtitleVoice") if raw is None else raw
 
-        if isinstance(raw, str):
-            return raw.strip(), False, False, 1.0
-
-        if isinstance(raw, dict):
-            sid = raw.get("id")
-            if not isinstance(sid, str):
-                sid = raw.get("sfxId")
-            vid = sid.strip() if isinstance(sid, str) else ""
-            had_volume = "volume" in raw
-            try:
-                vol = float(raw.get("volume", 1.0))
-            except (TypeError, ValueError):
-                vol = 1.0
-            if not (vol == vol):
-                vol = 1.0
-            return vid, True, had_volume, max(0.0, min(1.0, vol))
-
-        return "", False, False, 1.0
+    def _subtitle_advance_raw(self) -> object:
+        raw = self._step_data.get("autoAdvance")
+        return self._step_data.get("subtitleAutoAdvance") if raw is None else raw
 
     def _show_subtitle_merge_voice_optional(self, d: dict) -> None:
-        sel = self._widgets.get("_subtitle_voice_id")
-        vid = ""
-        if isinstance(sel, (IdRefSelector, AudioIdPreviewSelector)):
-            vid = sel.current_id().strip()
-        elif isinstance(sel, QLineEdit):
-            vid = sel.text().strip()
-        if not vid:
-            return
-
-        vol_w = self._widgets.get("_subtitle_voice_volume")
-        volume = 1.0
-        if isinstance(vol_w, QDoubleSpinBox):
-            volume = max(0.0, min(1.0, float(vol_w.value())))
-
-        if self._subtitle_voice_was_object or self._subtitle_voice_had_volume or abs(volume - 1.0) > 1e-6:
-            payload: dict[str, Any] = {"id": vid}
-            if self._subtitle_voice_had_volume or abs(volume - 1.0) > 1e-6:
-                payload["volume"] = volume
-            d["subtitleVoice"] = payload
-        else:
-            d["subtitleVoice"] = vid
-
-    def _show_subtitle_merge_auto_advance_optional(self, d: dict) -> None:
-        """自动推进：voice → "voice"；固定时长 → 毫秒数（未改动时由 _preserve_present_numbers 保真）；点击 → 不写键。"""
-        cw = self._widgets.get("_subtitle_auto_mode")
-        if not isinstance(cw, FilterableTypeCombo):
-            return
-        mode = cw.committed_type().strip()
-        if mode == "__voice__":
-            d["subtitleAutoAdvance"] = "voice"
-        elif mode == "__timer__":
-            w = self._widgets.get("_subtitle_auto_ms")
-            d["subtitleAutoAdvance"] = float(w.value()) if isinstance(w, QDoubleSpinBox) else 3000.0
+        """配音 + 推进方式一并写出（统一键名 voice / autoAdvance；旧键名保存时自然消失）。"""
+        w = self._widgets.get("_subtitle_voice")
+        if isinstance(w, VoiceSpecField):
+            w.apply_to(d)
 
     def _build_show_subtitle_present_params(self) -> None:
         raw_txt = self._step_data.get("text", "")
@@ -1231,41 +1205,26 @@ class StepWidget(QFrame):
         movie_wrap_l.setContentsMargins(0, 0, 0, 0)
         movie_wrap_l.addWidget(movie_row)
 
-        voice_id, voice_was_object, voice_had_volume, voice_volume = self._subtitle_voice_initial()
-        self._subtitle_voice_was_object = voice_was_object
-        self._subtitle_voice_had_volume = voice_had_volume
-        voice_pairs = [(a, a) for a in (self._model.all_audio_ids("sfx") if self._model else [])]
-        voice_sel = AudioIdPreviewSelector(
-            self._model,
-            "sfx",
+        # 配音 + 推进方式：与过场对话框、图对话拍、脚本台词行、气泡 action 同一个控件。
+        voice_field = VoiceSpecField(
             self,
-            allow_empty=True,
-            editable=False,
-            click_opens_popup=True,
+            model=self._model,
+            voice_raw=self._subtitle_voice_raw(),
+            advance_raw=self._subtitle_advance_raw(),
         )
-        voice_sel.setMinimumWidth(220)
-        voice_sel.set_items(_id_ref_rows_with_orphan(voice_pairs, voice_id))
-        voice_sel.set_current(voice_id)
-        voice_sel.value_changed.connect(self._emit_dirty)
-        voice_sel.setToolTip("可选：选择 audio_config.sfx 中的一条音频；右侧按钮可试听当前选择。")
-
-        voice_volume = max(0.0, min(1.0, voice_volume))
-        voice_vol = QDoubleSpinBox(self)
-        voice_vol.setRange(0.0, 1.0)
-        voice_vol.setDecimals(3)
-        voice_vol.setSingleStep(0.05)
-        voice_vol.setValue(voice_volume)
-        voice_vol.setToolTip("仅本字幕配音的相对音量；1.0 为不额外衰减。")
-        voice_vol.valueChanged.connect(self._emit_dirty)
-
+        voice_field.changed.connect(self._emit_dirty)
         voice_body = QWidget(self)
-        voice_form = compact_form(QFormLayout(voice_body))
-        voice_form.setContentsMargins(8, 4, 8, 4)
-        voice_form.addRow("sfx id", voice_sel)
-        voice_form.addRow("volume", voice_vol)
-        voice_section = _CollapsibleSection("字幕配音（可选）", voice_body, self)
-        voice_section.setToolTip("写入 subtitleVoice；运行时按字幕生命周期播放、停止并释放。")
-        if voice_id:
+        voice_body_l = QVBoxLayout(voice_body)
+        voice_body_l.setContentsMargins(8, 4, 8, 4)
+        voice_body_l.addWidget(voice_field)
+        voice_section = _CollapsibleSection("配音 / 推进方式（可选）", voice_body, self)
+        voice_section.setToolTip(
+            "写入 voice / autoAdvance 两个键。\n"
+            "默认：无配音、等玩家点击。\n"
+            "一条配音要盖住后面几条字幕时，起头那条勾「播完不停」，"
+            "由后面某条选「跟随配音结束」来收尾。"
+        )
+        if voice_field.has_content():
             voice_section.expand_if(True)
 
         se_raw = self._step_data.get("subtitleEmote")
@@ -1363,49 +1322,6 @@ class StepWidget(QFrame):
         if se_t and se_e:
             emote_section.expand_if(True)
 
-        # ---- 自动推进（可选，写 subtitleAutoAdvance）----
-        aa_raw = self._step_data.get("subtitleAutoAdvance")
-        aa_mode = "__click__"
-        aa_ms = 3000.0
-        if aa_raw == "voice":
-            aa_mode = "__voice__"
-        elif isinstance(aa_raw, (int, float)) and not isinstance(aa_raw, bool) and aa_raw > 0:
-            aa_mode = "__timer__"
-            aa_ms = float(aa_raw)
-        auto_rows = [
-            ("点击推进（默认）", "__click__"),
-            ("跟随配音结束", "__voice__"),
-            ("固定时长后…", "__timer__"),
-        ]
-        auto_combo = FilterableTypeCombo(auto_rows, self, select_only=True)
-        auto_combo.set_committed_type(aa_mode)
-        auto_combo.setToolTip(
-            "字幕如何结束：默认等玩家点击；「跟随配音结束」在 subtitleVoice 自然播完后自动推进"
-            "（配音缺失/加载失败退化为点击）；「固定时长」到点自动推进。两种自动模式下点击仍可提前跳。"
-        )
-        auto_ms = QDoubleSpinBox(self)
-        auto_ms.setRange(100.0, 600000.0)
-        auto_ms.setDecimals(0)
-        auto_ms.setSingleStep(250.0)
-        auto_ms.setValue(max(100.0, aa_ms))
-        auto_ms.setMaximumWidth(96)
-        auto_ms.setToolTip("固定时长模式的展示毫秒数，到点自动推进。")
-        auto_ms.setEnabled(aa_mode == "__timer__")
-        auto_ms.valueChanged.connect(self._emit_dirty)
-
-        def _on_auto_mode_committed(_t: str) -> None:
-            auto_ms.setEnabled(auto_combo.committed_type().strip() == "__timer__")
-            self._emit_dirty()
-
-        auto_combo.typeCommitted.connect(_on_auto_mode_committed)
-        auto_wrap = QWidget()
-        auto_hl = QHBoxLayout(auto_wrap)
-        auto_hl.setContentsMargins(0, 0, 0, 0)
-        auto_hl.addWidget(auto_combo)
-        auto_hl.addWidget(QLabel("ms"))
-        auto_hl.addWidget(auto_ms)
-        auto_hl.addStretch(1)
-
         self._widgets["text"] = tw
         self._widgets["_subtitle_layout_mode"] = layout_combo
         self._widgets["_subtitle_mode"] = cw
@@ -1414,10 +1330,7 @@ class StepWidget(QFrame):
         self._widgets["_subtitle_movie_band"] = band_c
         self._widgets["_subtitle_movie_align"] = align_c
         self._widgets["_subtitle_movie_wrap"] = movie_wrap
-        self._widgets["_subtitle_voice_id"] = voice_sel
-        self._widgets["_subtitle_voice_volume"] = voice_vol
-        self._widgets["_subtitle_auto_mode"] = auto_combo
-        self._widgets["_subtitle_auto_ms"] = auto_ms
+        self._widgets["_subtitle_voice"] = voice_field
         self._widgets["_subtitle_emote_target"] = emote_tgt
         self._widgets["_subtitle_emote_emote"] = emote_txt
         self._widgets["_subtitle_emote_duration"] = emote_dur
@@ -1428,7 +1341,6 @@ class StepWidget(QFrame):
         self._present_params_layout.addRow("布局模式", layout_combo)
         self._present_params_layout.addRow("", classic_wrap)
         self._present_params_layout.addRow("", movie_wrap)
-        self._present_params_layout.addRow("自动推进", auto_wrap)
         self._present_params_layout.addRow("", voice_section)
         self._present_params_layout.addRow("", emote_section)
         self._subtitle_on_layout_mode_changed()
@@ -2028,7 +1940,6 @@ class StepWidget(QFrame):
                         "subtitleAlign": sa,
                     })
                     self._show_subtitle_merge_voice_optional(d)
-                    self._show_subtitle_merge_auto_advance_optional(d)
                     self._show_subtitle_merge_emote_optional(d)
                     return self._preserve_present_numbers(d)
                 cw = self._widgets.get("_subtitle_mode")
@@ -2042,7 +1953,6 @@ class StepWidget(QFrame):
                         po = pv
                 d.update({"kind": "present", "type": "showSubtitle", "text": txt, "position": po})
                 self._show_subtitle_merge_voice_optional(d)
-                self._show_subtitle_merge_auto_advance_optional(d)
                 self._show_subtitle_merge_emote_optional(d)
                 return self._preserve_present_numbers(d)
             for pname, pt in schema:
@@ -3834,6 +3744,14 @@ class TimelineEditor(QWidget):
         step_btns.addWidget(add_action)
         step_btns.addWidget(add_parallel)
         step_btns.addStretch(1)
+        rl.addLayout(step_btns)
+
+        # 撤销/重做/粘贴另起一行。九枚按钮挤一行时这一行的最小宽是 902px，直接把整页
+        # 顶出 13″ 预算（护栏 test_small_screen_layout）——而 Qt 的 QHBoxLayout 不会自动
+        # 换行，宽度不够只会把整个面板撑出横向滚动条。按语义切一刀：上行是「加步骤」，
+        # 下行是「改已有步骤」，宽屏上看起来仍是两排短工具条，不挤。
+        edit_btns = QHBoxLayout()
+        edit_btns.addStretch(1)
         self._btn_undo = QPushButton("↶ 撤销")
         self._btn_undo.setToolTip("撤销上一步结构编辑（增删/重排/复制粘贴/合并）  Ctrl+Z")
         self._btn_undo.clicked.connect(self.undo_last_structural)
@@ -3843,10 +3761,10 @@ class TimelineEditor(QWidget):
         self._btn_paste = QPushButton("粘贴")
         self._btn_paste.setToolTip("把剪贴板里的步骤追加到末尾（复制/剪切来自步骤「⋯」菜单）")
         self._btn_paste.clicked.connect(self.paste_step_append)
-        step_btns.addWidget(self._btn_undo)
-        step_btns.addWidget(self._btn_redo)
-        step_btns.addWidget(self._btn_paste)
-        rl.addLayout(step_btns)
+        edit_btns.addWidget(self._btn_undo)
+        edit_btns.addWidget(self._btn_redo)
+        edit_btns.addWidget(self._btn_paste)
+        rl.addLayout(edit_btns)
         self._refresh_edit_buttons()
 
         apply_btn = QPushButton("Apply")
