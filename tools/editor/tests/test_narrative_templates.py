@@ -613,7 +613,9 @@ def test_save_all_template_roundtrip_byte_identical(tmp_path):
     write_minimal_loadable_project(root)
     seed = (_repo_root() / "public/assets/data/narrative_templates.json").read_text(encoding="utf-8")
     tpl_path = root / "public/assets/data/narrative_templates.json"
-    tpl_path.write_text(seed, encoding="utf-8")
+    # newline="" 不可省（同 test_data_core_review_fixes._dump 的理由）：Windows 文本模式
+    # 会把种子写成 CRLF，而 file_io.write_json 二进制落盘恒 LF，字节比对必假红。
+    tpl_path.write_text(seed, encoding="utf-8", newline="")
 
     model = ProjectModel()
     model.load_project(root)

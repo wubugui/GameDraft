@@ -148,8 +148,14 @@ class AudioPreviewControls(QWidget):
         QMessageBox.warning(self, "音频试听", f"无法播放：\n{key}\n\n{msg}")
 
     def stop(self) -> None:
-        if self._player is not None:
-            self._player.stop()
+        if self._player is None:
+            return
+        self._player.stop()
+        # 清空 source 才真正松开文件句柄：`stop()` 只是停播，QMediaPlayer 仍持有
+        # 打开的文件。在 Windows 上那是独占的——编辑器开着时该音频文件删不掉、
+        # 移不动、改名失败（`WinError 32 另一个程序正在使用此文件`）。
+        self._player.setSource(QUrl())
+        self._active_source_key = None
 
 
 class AudioIdPreviewSelector(QWidget):

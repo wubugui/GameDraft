@@ -30,6 +30,7 @@ from .bubble_anchor_field import (
     actor_for_emote_target,
 )
 from .collapsible_section import CollapsibleSection
+from .voice_spec_field import VoiceSpecField
 
 _SPEAKER_INSERTS = (
     ("{{player}}", "玩家显示名"),
@@ -220,6 +221,8 @@ class CutsceneShowDialogueFields(QWidget):
         portrait: dict | None = None,
         bubble_anchor_y: object = None,
         bubble_scale: object = None,
+        voice: object = None,
+        auto_advance: object = None,
     ) -> None:
         super().__init__(parent)
         self._model = model
@@ -289,6 +292,23 @@ class CutsceneShowDialogueFields(QWidget):
         form.addRow(self._bubble_sec)
         if bubble_anchor_y is not None or bubble_scale is not None:
             self._bubble_sec.set_expanded(True)
+
+        # 配音 + 推进方式：与字幕、图对话拍、脚本台词行完全同一个控件同一套语义。
+        self._voice = VoiceSpecField(
+            self, model=model, voice_raw=voice, advance_raw=auto_advance,
+        )
+        self._voice.changed.connect(lambda: on_change())
+        self._voice_sec = CollapsibleSection("配音 / 推进方式（可选）", start_open=False, parent=self)
+        self._voice_sec.set_header_tool_tip(
+            "这句话的配音，以及这句怎么结束。\n"
+            "默认：没有配音、等玩家点击。\n"
+            "一条长配音要盖住后面几句时，在起头那句勾「播完不停」，"
+            "让后面某句选「跟随配音结束」来收尾。",
+        )
+        self._voice_sec.add_body(self._voice)
+        form.addRow(self._voice_sec)
+        if self._voice.has_content():
+            self._voice_sec.set_expanded(True)
         root.addLayout(form)
 
     def _bubble_actor(self) -> BubbleAnchorActor:
@@ -326,4 +346,5 @@ class CutsceneShowDialogueFields(QWidget):
         bsc = self._bubble.scale_value()
         if bsc is not None:
             d["bubbleScale"] = bsc
+        self._voice.apply_to(d)
         return d

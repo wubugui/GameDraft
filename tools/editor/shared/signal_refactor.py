@@ -53,6 +53,13 @@ EMIT_SOURCE_BUCKETS: dict[str, tuple[str, bool]] = {
     "water_minigames_instances": ("water_minigames", False),
     "sugar_wheel_instances": ("sugar_wheel", False),
     "paper_craft_instances": ("paper_craft", False),
+    # 物件自身用途 `use.actions` 由 EventBridge 经 ActionExecutor 真执行（2026-08-17 与运行时
+    # 同步新增），于是 items 从"只有条件面"升级成实发面——原先它在 CONDITION_EXTRA_SOURCES。
+    # 漏这一步 = 信号改名不扫物件用途，物件里那条 emitSignal 悄悄悬垂、按了没反应。
+    "items": ("item", False),
+    # K7 线索注册表 clues[].collectActions（2026-08-17「采集=内容事件」拍板）：首采经
+    # ActionExecutor 真执行，是实发面；独立脏桶 "clues"（data/clues.json 整文件落盘）。
+    "clues_registry": ("clues", False),
 }
 
 
@@ -66,7 +73,6 @@ CONDITION_EXTRA_SOURCES: dict[str, tuple[str, bool]] = {
     "narrative_packages": ("narrative_packages", False),  # 章节清单 when/done 条件 + autoPlay 动作
     "map_nodes": ("map", False),
     "quest_groups": ("questGroup", False),
-    "items": ("item", False),
     # ⚠ 属性名是 rules_data（rules.json 载入到该属性），不是 rules——2026-08-05 前这里
     # 误写 "rules"，getattr 兜 None 静默跳过，rules.json 对全部重构引擎不可见。
     # 表键写错零报错正是这类漏洞的温床，故有 test_refactor_source_tables_resolve 逐键断言。
@@ -80,6 +86,9 @@ CONDITION_EXTRA_SOURCES: dict[str, tuple[str, bool]] = {
     # 行话本 entries[].unlockConditions（档案五件套第五份，2026-08-13 对账抓获的漏网）；
     # 与其余档案同走 "archive" 脏桶落盘。漏它 = 状态改名后行话永远解不开，静默。
     "archive_slang": ("archive", False),
+    # 歪歌册 entries[].unlockConditions（档案第六份，2026-08-17 与运行时同步新增）；
+    # 同走 "archive" 脏桶落盘。
+    "archive_rhymes": ("archive", False),
     "game_config": ("config", False),
 }
 CONDITION_SOURCES: dict[str, tuple[str, bool]] = {**EMIT_SOURCE_BUCKETS, **CONDITION_EXTRA_SOURCES}
