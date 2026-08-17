@@ -139,7 +139,7 @@ export class ActionChoiceUI {
         style: {
           fontSize: UITheme.fontSize.small,
           // subtle 而非 hintMid：序号压在点亮的琥珀行底上，hintMid 那一档灰在这块底上读不出来
-          fill: UITheme.colors.subtle,
+          fill: UITheme.colors.descText,
           fontFamily: UITheme.fonts.ui,
         },
       }));
@@ -189,7 +189,7 @@ export class ActionChoiceUI {
         const setHighlight = (on: boolean): void => {
           hoverBg.visible = on;
           label.style.fill = on ? UITheme.colors.title : UITheme.colors.choiceEnabled;
-          prefix.style.fill = on ? UITheme.colors.title : UITheme.colors.subtle;
+          prefix.style.fill = on ? UITheme.colors.title : UITheme.colors.descText;
         };
 
         // 整行命中：命中区自己是一块 Graphics，压在按钮面板之上整条接管，

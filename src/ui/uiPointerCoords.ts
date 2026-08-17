@@ -62,3 +62,21 @@ export function markPointerConsumed(e: unknown): void {
 export function isPointerConsumed(e: Event): boolean {
   return lastConsumedPointerEvent === e;
 }
+
+// ---------------------------------------------------------------------------
+// 内容区拖动滚动的全局标志（UIScrollView ↔ UIListRow 的协议）。
+// 行的激活语义是 tap（pointerup），拖着列表滚动时经过的行**不许被激活**：
+// UIScrollView 在拖动越过阈值的 pointermove 阶段置位、在自己的 window pointerup
+// 监听里复位；行的 pointerup 是 canvas 派发阶段、先于 window 阶段执行——
+// 查到置位即知道"这一下是拖滚不是点选"。
+// ---------------------------------------------------------------------------
+
+let dragScrolling = false;
+
+export function setPointerDragScrolling(on: boolean): void {
+  dragScrolling = on;
+}
+
+export function isPointerDragScrolling(): boolean {
+  return dragScrolling;
+}

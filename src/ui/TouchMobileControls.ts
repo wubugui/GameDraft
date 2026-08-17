@@ -10,8 +10,11 @@ type Dir = 'u' | 'd' | 'l' | 'r';
 /**
  * 与 `562335a` 首次触屏 HUD 一致：`(pointer: coarse)` 或存在 `ontouchstart`。
  * 曾改用 `(hover: none)` + 排除 `fine`，在大量手机浏览器上会得到 false（例如误报 hover:hover），导致整块 HUD 永远不显示。
+ *
+ * 导出给 HUD 桌面入口条做互斥判据（触屏有整套 chip，桌面条只在非触屏出现）——
+ * 两边必须用同一个判断，各写一份迟早漂移出「两套都显示/都不显示」。
  */
-function useCoarsePointerOrTouchDevice(): boolean {
+export function useCoarsePointerOrTouchDevice(): boolean {
   if (typeof window === 'undefined') return false;
   try {
     if (window.matchMedia('(pointer: coarse)').matches) return true;
@@ -78,7 +81,8 @@ export class TouchMobileControls {
       { id: 'bookshelf', label: strings.get('touchControls', 'bookshelf') },
       { id: 'map', label: strings.get('touchControls', 'map') },
       { id: 'ruleUse', label: strings.get('touchControls', 'ruleUse') },
-      { id: 'shop', label: strings.get('touchControls', 'shop') },
+      // 「铺子」chip 已删（审查 P2 死按钮）：shop 面板没有快捷键语义，只由世界里的
+      // 掌柜交互（openShop 动作）拉起——触屏玩家同样是点场景里的人，不是点 HUD。
       { id: 'menu', label: strings.get('touchControls', 'menu') },
     ];
     // F2 调试面板属于开发工具，生产构建不给玩家渲染这个入口

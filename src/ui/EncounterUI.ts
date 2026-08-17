@@ -362,7 +362,7 @@ export class EncounterUI {
           text: opt.disableReason,
           style: {
             fontSize: UITheme.fontSize.small,
-            fill: UITheme.colors.hint,
+            fill: UITheme.colors.hintMid,
             fontFamily: UITheme.fonts.ui,
             align: 'center',
             wordWrap: true, breakWords: true,
@@ -527,14 +527,14 @@ export class EncounterUI {
       hoverBg.visible = false;
       list.content.addChild(hoverBg);
 
-      // 数字键 1~9 仍然能选：留一个极暗的序号压在左沿，正文该居中还是居中。
+      // 数字键 1~9 仍然能选：留一个偏暗的序号压在左沿（批2a 从塌陷的 hintLight 提亮到 hintMid），正文该居中还是居中。
       // 序号是「扫一眼就走」的配角，钉在 small——跟着选项字一起长到 bodyLarge
       // 就成了每行左边一排大数字，比选项本身还抢眼。
       const index = createStyledText({
         text: String(i + 1),
         style: {
           fontSize: UITheme.fontSize.small,
-          fill: UITheme.colors.hintLight,
+          fill: UITheme.colors.hintMid,
           fontFamily: UITheme.fonts.ui,
         },
       });
@@ -588,9 +588,9 @@ export class EncounterUI {
         // 悬停即移焦：鼠标与手柄共用同一个"当前项"，高亮由 onFocus 一处画
         // （所以这里不再自己开关 hoverBg，也不再在 pointerout 里关掉它——
         //  指针挪开后焦点仍在这一行上，屏幕上必须始终看得见焦点在哪）。
+        // 切换音由 UIFocus 的移焦钩子统一发；这里再补发一次就是同一次悬停响两下
         hit.on('pointerover', () => {
           this.focus.syncHover(`opt-${i}`);
-          this.eventBus.emit('ui:hover', {});
         });
       }
       hit.on('pointerdown', (ev) => {

@@ -19,6 +19,9 @@ interface AudioConfig {
 
 type EventCallback = (payload?: any) => void;
 
+/** UI 切换/悬停音的最小间隔（毫秒）；理由见 installSystemSfxListeners 里的 ui:hover */
+const UI_HOVER_SFX_MIN_GAP_MS = 60;
+
 export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   private eventBus: EventBus;
   private config: AudioConfig = { bgm: {}, ambient: {}, sfx: {}, systemSfx: {} };
@@ -68,6 +71,8 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   private gestureListenersInstalled = false;
   private sfxEventListeners: Array<{ event: string; callback: EventCallback }> = [];
   private lastMapTravelSfxAt = 0;
+  /** UI 切换/悬停音的上次发声时刻（节流，见 installSystemSfxListeners 的 ui:hover） */
+  private lastUiHoverSfxAt = 0;
 
   constructor(eventBus: EventBus) {
     this.eventBus = eventBus;
@@ -428,6 +433,39 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     }
   }
 
+  /**
+   * 设置页「松手试听」：按**这条通道刚调好的响度**放一声样本。语义见 IAudioSettingsProvider。
+   *
+   * ⚠ 音量取的是 `getVolume(channel)` 而**不是** `sfxVolume`——调环境音时听到的响度
+   * 必须就是环境音那条的响度，拿音效通道的音量放一声等于给了个假参照。
+   * 所以这里不能图省事走 `playSfx()`（那条恒乘 sfxVolume）。
+   * 样本取 `systemSfx.volumePreview`，没配就退到确认音/悬停音——这三个都没有就静默不响。
+   */
+  previewVolume(channel: 'bgm' | 'sfx' | 'ambient'): void {
+    // bgm / ambient 是实时生效的：正在出声时拖滑条本来就听得见，再补一声是多余的噪音
+    if (channel === 'bgm' && this.currentBgm?.playing() === true) return;
+    if (channel === 'ambient' && this.ambientLayers.size > 0) return;
+
+    const cueId = (
+      this.config.systemSfx.volumePreview
+      || this.config.systemSfx.uiConfirm
+      || this.config.systemSfx.uiHover
+      || ''
+    ).trim();
+    const entry = cueId ? this.config.sfx[cueId] : undefined;
+    if (!entry) return;
+    const channelVolume = this.getVolume(channel);
+
+    this.runWhenAudioAllowed(async () => {
+      const howl = this.sfxCache.get(cueId)
+        ?? this.assetManager.getAudio(entry.src, { loop: false })
+        ?? await this.assetManager.loadAudio(entry.src, { loop: false });
+      if (!this.sfxCache.has(cueId)) this.sfxCache.set(cueId, howl);
+      howl.volume(this.clamp01((entry.volume ?? 1.0) * channelVolume));
+      howl.play();
+    });
+  }
+
   getVolume(channel: 'bgm' | 'sfx' | 'ambient'): number {
     switch (channel) {
       case 'bgm': return this.bgmVolume;
@@ -620,7 +658,20 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     this.onSfx('dialogue:advanceInput', () => this.playSystemSfx('dialogueAdvance'));
     this.onSfx('dialogue:choiceSelected:log', () => this.playSystemSfx('dialogueChoice'));
 
-    this.onSfx('ui:hover', () => this.playSystemSfx('uiHover'));
+    /**
+     * 切换/悬停音**在这里节流**，不在各发射端各限一次。
+     *
+     * 发射端不止一处（UIFocus 的移焦钩子、UIButton/UIWindow 的 onSound、面板自己的悬停），
+     * 同一次悬停常常同帧发两条（一枚按钮既是焦点项、又挂了 onSound）；而鼠标横扫背包网格 /
+     * 地图节点会一路移焦，连发十几声。收在消费端一处限速：两种情况一起解决，
+     * 且以后再多接一个发射端也不会突然变吵。60ms ≈ 人快按方向键的上限，键盘导航一按一响不受影响。
+     */
+    this.onSfx('ui:hover', () => {
+      const now = Date.now();
+      if (now - this.lastUiHoverSfxAt < UI_HOVER_SFX_MIN_GAP_MS) return;
+      this.lastUiHoverSfxAt = now;
+      this.playSystemSfx('uiHover');
+    });
     this.onSfx('ui:confirm', () => this.playSystemSfx('uiConfirm'));
     this.onSfx('ui:cancel', () => this.playSystemSfx('uiCancel'));
     this.onSfx('ui:panelOpen', () => this.playSystemSfx('uiPanelOpen'));

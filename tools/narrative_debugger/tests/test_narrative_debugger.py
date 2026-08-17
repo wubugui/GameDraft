@@ -43,21 +43,28 @@ def test_loads_real_project_data(index: NarrativeIndex) -> None:
 def test_mainline_beats_are_ordered_from_initial(index: NarrativeIndex) -> None:
     beats = [b for b in index.beats if b.graph_id == "flow_xungou_main"]
     assert beats, "主线拍子不该为空"
-    assert beats[0].state_id == "initial"
+    # 2026-08 开场重构后主线初态是「未开始」（state_1，开机旗门控）；
+    # 旧 s01_tingshu（听书完成）已并入 initial，锚点换成稳定里程碑。
+    assert beats[0].state_id == "state_1"
     labels = [b.label for b in beats]
-    assert "听书完成" in labels
+    assert "背崖墓尸完成" in labels
 
 
 def test_broadcast_edges_link_subgraph_to_mainline(index: NarrativeIndex) -> None:
-    """跨图因果边是这张图的灵魂：子图末态 → 主线下一拍。"""
-    key = broadcast_key("scenario_听书", "kicked_out")
+    """跨图因果边是这张图的灵魂：子图末态 → 主线下一拍。
+
+    （听书那条 2026-08 起改走显式信号「主线_开局被赶出茶馆」，不再是广播边；
+    换用梦→主线这条仍在的广播边当锚点。）
+    """
+    key = broadcast_key("scenario_梦待死之礼", "woken")
     listeners = index.listeners.get(key)
     assert listeners, f"{key} 应当被主线监听"
     assert any(t.graph_id == "flow_xungou_main" for t in listeners)
 
 
 def test_neighborhood_stays_small_and_two_sided(index: NarrativeIndex) -> None:
-    hood = index.neighborhood("flow_xungou_main.s02_beishi", 2)
+    # 锚在两侧都已接线的 s02b_meng（s02_beishi 的上游 t_6 还是 __draft__ 占位，画不出前侧）
+    hood = index.neighborhood("flow_xungou_main.s02b_meng", 2)
     assert 2 <= len(hood.nodes) <= 40, "邻域必须小到一眼能看完"
     assert any(d < 0 for d in hood.depth.values()), "要看得见前面是哪儿"
     assert any(d > 0 for d in hood.depth.values()), "要看得见后面是哪儿"
@@ -65,23 +72,26 @@ def test_neighborhood_stays_small_and_two_sided(index: NarrativeIndex) -> None:
 
 def test_player_action_drills_through_broadcast(index: NarrativeIndex) -> None:
     """主线出口几乎都是 state:子图:末态，必须一路追到玩家真正要做的动作。"""
-    items = waiting_items(index, "flow_xungou_main", "s01_tingshu")
+    items = waiting_items(index, "flow_xungou_main", "s02b_meng")
     assert items
     assert items[0].action, "追不到玩家动作 = 对策划没用"
-    assert "对话" in items[0].action or "走进" in items[0].action
+    # 具体动作的措辞集合与 humanize 对齐：对话/走位/点热点/进场景都算"玩家真动手那一下"
+    assert any(v in items[0].action for v in ("对话", "走进", "点「", "进这个场景"))
 
 
 def test_every_mainline_beat_can_explain_next_action(index: NarrativeIndex) -> None:
     """每个已接线的主线拍子都要能说出"玩家该干嘛"。
 
     `__draft__` 出口是编辑器的合法占位（还没接线），它有自己的说法，不算失败。
+    纯条件门控的反应式出口（如「未开始」等开机旗）追不到玩家动作，
+    但 blocked_by 说得出在等什么条件——那就是它的答案，也不算失败。
     """
     unresolved = []
     for beat in index.beats:
         if beat.graph_id != "flow_xungou_main":
             continue
         items = [i for i in waiting_items(index, beat.graph_id, beat.state_id) if i.signal != DRAFT_SIGNAL]
-        if items and not any(i.action for i in items):
+        if items and not any(i.action or i.blocked_by for i in items):
             unresolved.append(beat.label)
     assert not unresolved, f"这些拍子说不出玩家该干嘛：{unresolved}"
 
@@ -243,10 +253,14 @@ def test_most_exits_say_where(index: NarrativeIndex) -> None:
 
 
 def test_draft_placeholder_edges_are_not_drawn(index: NarrativeIndex) -> None:
-    """编辑器占位不是真路：画在图上会让人以为"开局前面还漏了一拍"。"""
-    hood = index.neighborhood("flow_xungou_main.initial", 2)
+    """编辑器占位不是真路：画在图上会让人以为"前面还漏了一拍"。
+
+    （state_1 如今是真设计的门控态、由反应式边接进 initial，会画、该画；
+    换 state_4 当锚点：它两侧 t_5/t_6 都还是纯 __draft__ 信号边，不该被画。）
+    """
+    hood = index.neighborhood("flow_xungou_main.s02_beishi", 2)
     for node in hood.nodes.values():
-        assert node.state_id != "state_1", "占位状态不该出现在邻域图里"
+        assert node.state_id != "state_4", "纯占位边（__draft__ 非反应式）不该出现在邻域图里"
 
 
 def test_scene_view_lists_every_line_in_that_place(index: NarrativeIndex) -> None:

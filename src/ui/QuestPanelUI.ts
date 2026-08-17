@@ -10,7 +10,7 @@ import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
 import type { StringsProvider } from '../core/StringsProvider';
 import type { IQuestDataProvider } from '../data/types';
-import { createStyledText, getStyledRaw, setStyledText } from '../core/styledText';
+import { createStyledText, ellipsizeStyledText, getStyledRaw, setStyledText } from '../core/styledText';
 import { stripStyleMarkup } from '../core/textStyle';
 import { plainTextLength, sliceStyledMarkup } from '../core/textStyle';
 
@@ -192,13 +192,25 @@ export class QuestPanelUI {
     if (!this._isOpen) return;
     this._isOpen = false;
     window.removeEventListener('keydown', this.onKeyBound);
-    this.teardown();
+    // 关场淡出（绕开重建路径共用的瞬时 teardown）：先摘两块滚动区的输入面，
+    // 再让窗体带视觉淡出自毁——逻辑态已同步落定，尸体窗只是视觉。
+    this.detail?.detachInput();
+    this.list?.detachInput();
+    const win = this.win;
+    this.detail = null;
+    this.list = null;
+    this.win = null;
+    win?.fadeOutAndDestroy();
     // 焦点只在**关面板**时清；build() 里的重建要靠它按 id 把焦点放回原处
     this.focus.destroy();
   }
 
   destroy(): void {
-    this.close();
+    // 真销毁走瞬时路径（不经 close 的关场淡出）
+    this._isOpen = false;
+    window.removeEventListener('keydown', this.onKeyBound);
+    this.teardown();
+    this.focus.destroy();
     this.eventBus.off('quest:changed', this.questChangedCb);
   }
 
@@ -257,12 +269,21 @@ export class QuestPanelUI {
     return this.plainLabel(key).charAt(0);
   }
 
+  /** 页签文案：只剥模板两端的装饰（`-- 进行中 (2) --` → `进行中 (2)`），**保留计数** */
+  private tabLabel(key: string, count: number): string {
+    return stripStyleMarkup(this.strings.get('quest', key, { count }))
+      .replace(/^[-=\s]+|[-=\s]+$/g, '')
+      .trim();
+  }
+
   private tabLabels(): { key: TabKey; label: string }[] {
+    // 页签带各页数量（审查 P2：模板本来就有 {count}，此前被 plainLabel 连括号一起剥掉了）。
+    // 数量从数据源现查，与 rowsOf 同一批查询，不会与列表对不上。
     return [
       // 「进行中」不再写成「主线·支线」：主线可以同时有好几条，两类混列才是这一页的真实内容
-      { key: 'active', label: this.plainLabel('inProgress') },
-      { key: 'repeatable', label: this.plainLabel('repeatable') },
-      { key: 'completed', label: this.plainLabel('completed') },
+      { key: 'active', label: this.tabLabel('inProgress', this.questData.getActiveQuests().length) },
+      { key: 'repeatable', label: this.tabLabel('repeatable', this.questData.getRepeatableQuestEntries().length) },
+      { key: 'completed', label: this.tabLabel('completed', this.questData.getCompletedQuests().length) },
     ];
   }
 
@@ -435,12 +456,14 @@ export class QuestPanelUI {
     const listY = tabsY + TAB_H + UITheme.spacing.md;
     const listH = Math.max(ROW_H, bodyH - listY);
 
-    // 两栏之间那条极淡竖线
-    const divider = new Graphics();
-    divider.rect(listW + UITheme.spacing.md, tabsY, 1, bodyH - tabsY);
-    divider.fill({ color: UITheme.colors.hairline, alpha: UITheme.alpha.hairline });
-    divider.eventMode = 'none';
-    win.body.addChild(divider);
+    // 两栏之间那条极淡竖线。空态不画：整块面板只剩中央那段指路，竖线只会白切一刀
+    if (rows.length > 0) {
+      const divider = new Graphics();
+      divider.rect(listW + UITheme.spacing.md, tabsY, 1, bodyH - tabsY);
+      divider.fill({ color: UITheme.colors.hairline, alpha: UITheme.alpha.hairline });
+      divider.eventMode = 'none';
+      win.body.addChild(divider);
+    }
 
     const list = new UIScrollView(this.renderer, {
       width: listW,
@@ -461,6 +484,10 @@ export class QuestPanelUI {
       if (this.detail && this.selectedKey === keptForKey) this.detail.scrollOffset = keepDetail;
     }
 
+    // 空态：面板中央一句现状 + 一句指路（审查 P2：84% 屏宽的面板空时只剩角落一句暗灰，
+    // 近乎白板还不告诉玩家怎么才会有内容）
+    if (rows.length === 0) this.buildEmptyState(win.body, bodyW, listY, bodyH);
+
     // 内容整份重建，焦点按 id 复位（`setItems` 自己保；id 没了就落到几何上最近的一项）。
     this.focus.setItems(focusItems);
     // **默认焦点不放左上角**：落在当前选中的那一条（列表空时退到当前页签）。
@@ -474,6 +501,35 @@ export class QuestPanelUI {
 
     if (animate) win.open();
     else win.attach();
+  }
+
+  /**
+   * 空态块：一行主句（body 档）+ 一行指路副句（small 档），整块在内容区里居中。
+   * 副句告诉玩家「怎么才会有内容」，文案在 strings 的 emptyTitle / emptyHint。
+   */
+  private buildEmptyState(parent: Container, bodyW: number, top: number, bottom: number): void {
+    const main = createStyledText({
+      text: this.strings.get('quest', 'emptyTitle'),
+      style: {
+        fontSize: UITheme.fontSize.body, fill: UITheme.colors.bodyMuted,
+        fontFamily: UITheme.fonts.ui, letterSpacing: UITheme.letterSpacing.hint,
+      },
+    });
+    const hint = createStyledText({
+      text: this.strings.get('quest', 'emptyHint'),
+      style: {
+        fontSize: UITheme.fontSize.small, fill: UITheme.colors.hintMid,
+        fontFamily: UITheme.fonts.ui,
+        wordWrap: true, breakWords: true, wordWrapWidth: Math.round(bodyW * 0.7),
+      },
+    });
+    const gap = UITheme.spacing.md;
+    const blockTop = Math.round(top + (bottom - top - main.height - gap - hint.height) / 2);
+    main.position.set(Math.round((bodyW - main.width) / 2), blockTop);
+    hint.position.set(Math.round((bodyW - hint.width) / 2), blockTop + main.height + gap);
+    main.eventMode = 'none';
+    hint.eventMode = 'none';
+    parent.addChild(main, hint);
   }
 
   /** 切页签（页签点击与回车激活共用一条路径） */
@@ -591,7 +647,7 @@ export class QuestPanelUI {
           fill: active ? UITheme.colors.title : UITheme.colors.hintMid,
           fontFamily: UITheme.fonts.ui,
           fontWeight: active ? 'bold' : 'normal',
-          letterSpacing: 1,
+          letterSpacing: UITheme.letterSpacing.hint,
         },
       });
       label.position.set(
@@ -641,16 +697,8 @@ export class QuestPanelUI {
     const list = this.list;
     if (!list) return;
 
+    // 空态不在列表栏里出字：整块面板的空态块由 build() 统一画在面板中央
     if (rows.length === 0) {
-      const t = createStyledText({
-        text: this.strings.get('quest', 'empty'),
-        style: {
-          fontSize: UITheme.fontSize.small, fill: UITheme.colors.hint,
-          fontFamily: UITheme.fonts.ui,
-        },
-      });
-      t.position.set(UITheme.spacing.md, UITheme.spacing.md);
-      list.content.addChild(t);
       list.refresh();
       return;
     }
@@ -715,7 +763,7 @@ export class QuestPanelUI {
           fontSize: UITheme.fontSize.bodyLarge,
           fill: selected ? UITheme.colors.title : row.titleColor,
           fontFamily: UITheme.fonts.ui, fontWeight: 'bold',
-          letterSpacing: 1,
+          letterSpacing: UITheme.letterSpacing.hint,
         },
       });
       title.position.set(titleX, y + Math.round((rowBodyH - title.height) / 2));
@@ -729,7 +777,7 @@ export class QuestPanelUI {
           style: {
             // 简述是"扫一眼"的配角：全文就在右栏，这里只需要一句提示。停在 `small`。
             fontSize: UITheme.fontSize.small,
-            fill: selected ? UITheme.colors.bodyMuted : UITheme.colors.descTextDim,
+            fill: selected ? UITheme.colors.bodyMuted : UITheme.colors.hintMid,
             fontFamily: UITheme.fonts.ui,
           },
         });
@@ -979,16 +1027,9 @@ export class QuestPanelUI {
     return g;
   }
 
-  /** 一行放不下就截到能放下为止（省略号是标点，不是文案） */
+  /** 一行放不下就截到能放下为止；实现收编在 styledText.ellipsizeStyledText（审查 P2 双份同文） */
   private ellipsize(t: Text, maxW: number): void {
-    if (t.width <= maxW || maxW <= 0) return;
-    // 按**可见字数**退，且用 sliceStyledMarkup 保住色标记成对——
-    // 直接对带标记原串 slice 会切出半个 `[c:emph`，剥不掉、原样露给玩家。
-    const raw = getStyledRaw(t);
-    for (let n = plainTextLength(raw) - 1; n > 0; n--) {
-      setStyledText(t, `${sliceStyledMarkup(raw, n)}…`);
-      if (t.width <= maxW) return;
-    }
+    ellipsizeStyledText(t, maxW);
   }
 
   /**

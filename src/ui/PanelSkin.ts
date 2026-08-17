@@ -36,6 +36,18 @@ export interface PanelSkin {
   hairlineInset?: number;
   /** 底是否用纸纹。行/格这类小件关掉，免得细碎起伏在小面积上变噪点。 */
   grain?: boolean;
+  /**
+   * 纸纹叠色/强度覆盖。缺省那组（暖旧木 0x8a7350 @0.2）是照**暗底**调的——
+   * 在近黑上叠出材质。底色一变亮同一组值就成了往下压的一层卡其，所以给了这个口子；
+   * 目前全站没有亮底皮肤（见 ArchiveBookView 顶部注释），留着是给"底色明显抬高"的皮肤用的。
+   */
+  grainTint?: number;
+  grainAlpha?: number;
+  /**
+   * 暗角边缘强度覆盖。缺省：带大木框的面板 0.55（现值），其余不画。
+   * 亮底纸页压 0.55 会像烧糊的纸，给 0.15~0.2 出旧纸晕即可；显式 0 = 关。
+   */
+  vignette?: number;
 }
 
 /** 局部覆盖（如选项行按 enabled/disabled 改边色，或临时换底色），不必新增皮肤。 */
@@ -69,6 +81,17 @@ const GRAIN_MATRIX = new Matrix();
 /** 叠加纸纹的颜色与强度：暖旧木色、压到很低——要的是「摸得出材质」，不是一层看得见的脏。 */
 const GRAIN_TINT = 0x8a7350;
 const GRAIN_ALPHA = 0.2;
+/**
+ * ⚠ **`vignette` 给不出渐变，它是一层"整体压暗"** —— 2026-08-17 在真跑的游戏里
+ * A/B 采样确认：那层 `FillGradient`（radial + textureSpace:'local'）在面板尺寸下
+ * 渲染成一整块平的黑，逐点采样中心与四角完全同值（关掉 → 215,198,163；开着 → 174,160,132，
+ * 标称 0.16、实际遮蔽 ~0.19）。也就是说**每块走 createPanel 的面板都比配色里写的暗一档**，
+ * 而"暗角"这个设计意图从来没实现过。
+ *
+ * 暂不修：现有暗底面板的底色（`UITheme.colors.panelBg` 那一组"逐块量过设计稿"的值）
+ * 当年就是**连着这层纱一起量**定下来的，真去修渐变，全站面板会一起变亮 = 重调一遍配色。
+ * 偏差已记 `agent_docs/_meta/inbox/2026-08-17-panel-vignette-renders-flat.md`。
+ */
 
 /**
  * 皮肤注册表：面板按语义取皮肤。
@@ -94,6 +117,11 @@ export const SKINS = {
   /** 物品格：比 row 更暗的凹槽感，选中态由 UISlot 另画金框 */
   slot: { fill: C.rowBgInactive, fillAlpha: A.slotBg, radius: 4, borderWidth: 1, border: C.borderSubtle, grain: false },
   plain: { fill: C.panelBg, fillAlpha: A.panelBg, radius: 3, borderWidth: 1, border: C.panelBorder, grain: false },
+  /**
+   * 纸页（亮底整面板，带木框）：米白旧纸 + 纤维叠纹 + 软暗角。审查批3a——
+   * 此前 SKINS 16 种全是暗底，「米白纸页 + 墨字 + 插图」的商业档案观感第一步就撞墙。
+   * 配套墨字只取 UITheme.paperInk（浅灰文字令牌在纸上全部失效）。
+   */
 } satisfies Record<string, PanelSkin>;
 
 export type SkinName = keyof typeof SKINS;
@@ -126,7 +154,9 @@ export function drawPanelBase(
     if (grain) {
       g.roundRect(x, y, w, h, skin.radius);
       g.fill({
-        texture: grain, color: GRAIN_TINT, alpha: GRAIN_ALPHA * fillAlpha,
+        texture: grain,
+        color: skin.grainTint ?? GRAIN_TINT,
+        alpha: (skin.grainAlpha ?? GRAIN_ALPHA) * fillAlpha,
         matrix: GRAIN_MATRIX, textureSpace: 'global',
       });
     }
@@ -197,8 +227,10 @@ export function createPanel(
   }
 
   // 暗角：设计稿里的面板内部不是一块死平的色——中间稍亮、四周压下去。
-  // 只给上了木框的大面板加，小芯片上做暗角只会显脏。
-  if (skin.wood !== undefined && skin.wood >= WOOD_PANEL) {
+  // 缺省只给上了大木框的面板加（小芯片上做暗角只会显脏）；skin.vignette 显式给了就听它的
+  // （纸页这类亮底要压到 0.15~0.2 才是"旧纸晕"而不是"烧糊"，0 = 关）。
+  const vigEdge = skin.vignette ?? (skin.wood !== undefined && skin.wood >= WOOD_PANEL ? 0.55 : 0);
+  if (vigEdge > 0) {
     const vig = new Graphics();
     vig.rect(x, y, w, h);
     vig.fill(new FillGradient({
@@ -207,8 +239,8 @@ export function createPanel(
       outerCenter: { x: 0.5, y: 0.42 }, outerRadius: 0.72,
       colorStops: [
         { offset: 0, color: 'rgba(0,0,0,0)' },
-        { offset: 0.5, color: 'rgba(0,0,0,0.16)' },
-        { offset: 1, color: 'rgba(0,0,0,0.55)' },
+        { offset: 0.5, color: `rgba(0,0,0,${(vigEdge * 0.3).toFixed(3)})` },
+        { offset: 1, color: `rgba(0,0,0,${vigEdge.toFixed(3)})` },
       ],
       textureSpace: 'local',
     }));

@@ -21,6 +21,8 @@ ID_SOURCES = [
     "encounter", "cutscene",
     "archive_character", "archive_lore", "archive_document", "archive_book",
     "archive_book_entry",
+    "archive_slang", "archive_rhyme",
+    "clue",
 ]
 
 # ---- flag key 全工程引用扫描（P1-13：Rename/Delete 引用防护） -----------------

@@ -11,7 +11,20 @@ import type { DialogueLine } from '../data/types';
 import { createStyledText } from '../core/styledText';
 import { hasStyleMarkup, paletteTagStyles, toPixiTagged } from '../core/textStyle';
 
+/**
+ * 回顾里保留的最大条数（**硬上限，不随游戏时长增长**）。
+ *
+ * 三道闸一起兜住"玩十小时会不会撑爆"：
+ *  ① 条数：这里 200 条，超出从头丢（`addEntry`）；读档同样夹（`deserialize`——
+ *     旧实现只夹了写入端，存档里若有更长的表会被原样吃回来，闸门等于漏了一半）；
+ *  ② 单条长度：单句台词按 `MAX_ENTRY_CHARS` 截断，防某条超长文本一条顶一屏；
+ *  ③ 显示对象：面板走虚拟化（`syncRows`），同时存在的行只有视口附近十几条，
+ *     与总条数无关——200 条也好 20 条也好，draw call 一样。
+ * 200 条 × 平均几十字 ≈ 数十 KB，且随存档一起走；不改这几个常数就不会膨胀。
+ */
 const MAX_ENTRIES = 200;
+/** 单条最长字符数：超出截断并加省略号（回顾是"翻一眼刚才说了啥"，不是全文存档） */
+const MAX_ENTRY_CHARS = 600;
 /**
  * 一行日志的最小步进，同时是滚轮/方向键的一格。
  * 原来取 spacing.xl（20）是照小字号定的：body 20 号一行实测就有 ~26px，这个下限从来没生效过，
@@ -38,6 +51,13 @@ const ROW_PAD_Y = UITheme.spacing.sm;
 const SPEAKER_W = 108;
 /** 玩家选项在说话人列的记号（选项没有说话人，但列不能空着——空列会让整叠行失去左边界） */
 const CHOICE_MARK = '›';
+
+/** 单条按 `MAX_ENTRY_CHARS` 截断；短于上限时原样返回（不造新对象） */
+function clampEntry(entry: DialogueLogEntry): DialogueLogEntry {
+  const text = entry.text ?? '';
+  if (text.length <= MAX_ENTRY_CHARS) return entry;
+  return { ...entry, text: `${text.slice(0, MAX_ENTRY_CHARS)}…` };
+}
 
 
 export class DialogueLogUI {
@@ -95,7 +115,7 @@ export class DialogueLogUI {
   }
 
   private addEntry(entry: DialogueLogEntry): void {
-    this.entries.push(entry);
+    this.entries.push(clampEntry(entry));
     if (this.entries.length > MAX_ENTRIES) {
       this.entries.shift();
     }
@@ -112,7 +132,24 @@ export class DialogueLogUI {
     if (!this._isOpen) return;
     this._isOpen = false;
     window.removeEventListener('keydown', this.onKeyBound);
-    this.teardown();
+    // 关场淡出（绕开 build/destroy 共用的瞬时 teardown）：先摘滚动区输入面
+    // （detachInput 后 onScroll 不再触发，syncRows 不会再动虚拟化行），
+    // 行的视觉节点随窗体的 fadeOutAndDestroy 一起拆。
+    // 量高用的三份 TextStyle 可同步销毁：行上挂的都是 clone（见 syncRows）。
+    this.rows.clear();
+    this.rowLayout = [];
+    this.totalH = 0;
+    this.list?.detachInput();
+    const win = this.win;
+    this.list = null;
+    this.win = null;
+    win?.fadeOutAndDestroy();
+    this.lineStyle?.destroy();
+    this.choiceStyle?.destroy();
+    this.speakerStyle?.destroy();
+    this.lineStyle = null;
+    this.choiceStyle = null;
+    this.speakerStyle = null;
   }
 
   private teardown(): void {
@@ -219,7 +256,7 @@ export class DialogueLogUI {
       style: {
         // 空态是这块 850×630 面板上**唯一**一行字，不是角落里的说明：
         // small 在这么大一片空里读起来像没加载完，抬到与正文同档（颜色仍压成 hint 灰）
-        fontSize: UITheme.fontSize.body, fill: UITheme.colors.hint,
+        fontSize: UITheme.fontSize.body, fill: UITheme.colors.hintMid,
         fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true,
         wordWrapWidth: bodyWidth - UITheme.spacing.md,
       },
@@ -407,11 +444,17 @@ export class DialogueLogUI {
   }
 
   deserialize(data: { entries?: DialogueLogEntry[] }): void {
-    this.entries = data.entries ?? [];
+    // 读档端**必须同样夹上限**：闸门只装在写入端时，一份旧档（或改过的档）能把任意长的
+    // 表整个灌回来，此后每次 build 都要按这张表量高。三道闸的说明见 MAX_ENTRIES。
+    const raw = data.entries ?? [];
+    this.entries = raw.slice(-MAX_ENTRIES).map(clampEntry);
   }
 
   destroy(): void {
-    this.close();
+    // 真销毁走瞬时路径（不经 close 的关场淡出）
+    this._isOpen = false;
+    window.removeEventListener('keydown', this.onKeyBound);
+    this.teardown();
     this.eventBus.off('dialogue:line', this.lineCb);
     this.eventBus.off('dialogue:choiceSelected:log', this.choiceCb);
   }

@@ -58,10 +58,15 @@ interface BookSlot {
   hasUnread: boolean;
 }
 
+/** 子面板句柄：close 必须有；handleEscapeStep 可选（阅读器这类内部还有层级的实现它） */
+export interface BookshelfSubPanel {
+  close(): void;
+  handleEscapeStep?(): boolean;
+}
 /** 打开子面板的回调类型，返回带 close 的句柄 */
-export type OnOpenSubPanel = (onClose: () => void) => { close(): void };
+export type OnOpenSubPanel = (onClose: () => void) => BookshelfSubPanel;
 /** 打开独立书籍时的回调，返回带 close 的句柄供书架在关闭子面板时使用 */
-export type OnOpenBook = (book: BookDef, onClose: () => void) => { close(): void };
+export type OnOpenBook = (book: BookDef, onClose: () => void) => BookshelfSubPanel;
 
 /** 中文竖排：Pixi 没有 writing-mode，逐字换行即竖排（代理对安全地按码点拆）。 */
 function verticalize(label: string): string {
@@ -86,14 +91,17 @@ export class BookshelfUI {
   private archiveData: IArchiveDataProvider;
   private container: Container | null = null;
   private _isOpen = false;
-  private activeSubPanel: { close(): void } | null = null;
+  private activeSubPanel: BookshelfSubPanel | null = null;
   private closeRequester: (() => void) | null = null;
-  private onOpenRules: () => void;
+  private onOpenRules: OnOpenSubPanel;
   private onOpenBook: OnOpenBook;
   private onOpenCharacters: OnOpenSubPanel;
   private onOpenLore: OnOpenSubPanel;
   private onOpenDocuments: OnOpenSubPanel;
   private onOpenSlang: OnOpenSubPanel;
+  private onOpenRhymes: OnOpenSubPanel;
+  private onOpenClues: OnOpenSubPanel;
+  private cluesHasUnread: () => boolean;
   private strings: StringsProvider;
   /**
    * 键盘/手柄焦点。书脊是一排二维可导航木牌，✕ 与底部键帽各自成组——
@@ -110,12 +118,16 @@ export class BookshelfUI {
   constructor(
     renderer: Renderer,
     archiveData: IArchiveDataProvider,
-    onOpenRules: () => void,
+    onOpenRules: OnOpenSubPanel,
     onOpenBook: OnOpenBook,
     onOpenCharacters: OnOpenSubPanel,
     onOpenLore: OnOpenSubPanel,
     onOpenDocuments: OnOpenSubPanel,
     onOpenSlang: OnOpenSubPanel,
+    onOpenRhymes: OnOpenSubPanel,
+    onOpenClues: OnOpenSubPanel,
+    /** 线索簿的未读判据（真相在 ClueManager+读集，书架只问不算） */
+    cluesHasUnread: () => boolean,
     strings: StringsProvider,
   ) {
     this.renderer = renderer;
@@ -126,6 +138,9 @@ export class BookshelfUI {
     this.onOpenLore = onOpenLore;
     this.onOpenDocuments = onOpenDocuments;
     this.onOpenSlang = onOpenSlang;
+    this.onOpenRhymes = onOpenRhymes;
+    this.onOpenClues = onOpenClues;
+    this.cluesHasUnread = cluesHasUnread;
     this.strings = strings;
     this.onKeyBound = (e) => this.onKey(e);
   }
@@ -174,6 +189,9 @@ export class BookshelfUI {
       { id: 'lore', label: this.strings.get('bookshelf', 'lore'), icon: 'book', hasUnread: this.archiveData.hasUnread('lore') },
       { id: 'document', label: this.strings.get('bookshelf', 'documents'), icon: 'scroll', hasUnread: this.archiveData.hasUnread('document') },
       { id: 'slang', label: this.strings.get('bookshelf', 'slang'), icon: 'bowl', hasUnread: this.archiveData.hasUnread('slang') },
+      { id: 'rhyme', label: this.strings.get('bookshelf', 'rhymes'), icon: 'lantern', hasUnread: this.archiveData.hasUnread('rhyme') },
+      // 第七本（K7 线索簿）：玩家自己摘的词条；图标=线团（2026-08-17 批产民俗图标）
+      { id: 'clues', label: this.strings.get('bookshelf', 'clues'), icon: 'thread', hasUnread: this.cluesHasUnread() },
     ];
     const dynamicBooks = this.archiveData.getUnlockedBooks();
 
@@ -221,8 +239,11 @@ export class BookshelfUI {
       this.container.addChild(plank);
     }
 
+    // 固定书册六本起超过一行，与动态书籍走同一套折行：第六本落第二行首格
     fixedBooks.forEach((slot, i) => {
-      this.drawBookSlot(slot, startX + i * (PLAQUE_W + PLAQUE_GAP), startY);
+      const col = i % COLS;
+      const row = Math.floor(i / COLS);
+      this.drawBookSlot(slot, startX + col * (PLAQUE_W + PLAQUE_GAP), startY + row * (PLAQUE_H + ROW_GAP));
     });
 
     dynamicBooks.forEach((book, i) => {
@@ -429,9 +450,15 @@ export class BookshelfUI {
   private onBookClick(bookId: string): void {
     this.closeSubPanel();
 
+    // 规矩本与其余六本走同一条路（子面板 + 返回书架）。
+    // 旧写法是 `this.close(); this.onOpenRules();`——书架整个关掉再另开一个注册面板，
+    // 于是它是架上唯一一本"进去就回不来"的书。
     if (bookId === 'rules') {
-      this.close();
-      this.onOpenRules();
+      this.activeSubPanel = this.onOpenRules(() => {
+        this.closeSubPanel();
+        this.buildShelf();
+      });
+      this.destroyShelfOnly();
       return;
     }
 
@@ -471,6 +498,24 @@ export class BookshelfUI {
       return;
     }
 
+    if (bookId === 'rhyme') {
+      this.activeSubPanel = this.onOpenRhymes(() => {
+        this.closeSubPanel();
+        this.buildShelf();
+      });
+      this.destroyShelfOnly();
+      return;
+    }
+
+    if (bookId === 'clues') {
+      this.activeSubPanel = this.onOpenClues(() => {
+        this.closeSubPanel();
+        this.buildShelf();
+      });
+      this.destroyShelfOnly();
+      return;
+    }
+
     if (bookId.startsWith('book_')) {
       const realId = bookId.substring(5);
       const books = this.archiveData.getBooks();
@@ -483,6 +528,21 @@ export class BookshelfUI {
         this.destroyShelfOnly();
       }
     }
+  }
+
+  /**
+   * Esc = **退一层**（GameStateController.handleEscape 的面板钩子）：
+   * 子册还有内层（阅读器章节页→目录）先让子册退；否则子册退回书架；
+   * 书架根层返回 false，由控制器关整个面板。旧行为是控制器直接跳级全关（审查 P1）。
+   */
+  handleEscapeStep(): boolean {
+    if (this.activeSubPanel) {
+      if (this.activeSubPanel.handleEscapeStep?.()) return true;
+      this.closeSubPanel();
+      this.buildShelf();
+      return true;
+    }
+    return false;
   }
 
   private closeSubPanel(): void {

@@ -153,6 +153,58 @@ _PICK_CYCLE_PX_TOL = 4
 # 实体缺省不写 occlusionBlendFactor 键 → 运行时用此默认；仅「自定义」勾选才落显式值。
 _OCCLUSION_BLEND_DEFAULT = 0.28
 
+# 「进对话时改不改朝向」的四档（运行时权威：src/data/types.ts 的 DialogueFacing）。
+# **缺省两边不同**：NPC 是 player（历来就转向玩家）、热点是 keep（历来就不转身）——
+# 各自维持改造前的行为，缺省档一律不写键，旧数据字节不动。
+_DIALOGUE_FACING_VALUES = ("keep", "left", "right", "player")
+_DIALOGUE_FACING_LABELS = {
+    "keep": "不改动朝向",
+    "left": "朝向左边",
+    "right": "朝向右边",
+    "player": "朝向角色",
+}
+_DIALOGUE_FACING_TIP = (
+    "进入这段对话的一瞬间，这个实体要不要转身：\n"
+    "  不改动 = 保持原朝向（背对着剁馅的屠户、跪着的孝子、只画了一面的烤入人物用这档）\n"
+    "  朝左/朝右 = 固定转向一侧（不管玩家绕到哪边）\n"
+    "  朝向角色 = 转过来面对玩家\n"
+    "对话结束会恢复成进对话前的朝向。热点还需要配了「显示图」才有可镜像的东西。"
+)
+
+
+def _make_dialogue_facing_combo(default_value: str) -> QComboBox:
+    """四档对话朝向下拉；`default_value` 那档标注「（默认）」并排在首位。"""
+    cb = QComboBox()
+    order = [default_value] + [v for v in _DIALOGUE_FACING_VALUES if v != default_value]
+    for v in order:
+        suffix = "（默认）" if v == default_value else ""
+        cb.addItem(f"{_DIALOGUE_FACING_LABELS[v]}{suffix}", v)
+    cb.setToolTip(_DIALOGUE_FACING_TIP)
+    return cb
+
+
+def _load_dialogue_facing_combo(cb: QComboBox, data: dict, default_value: str) -> None:
+    """按实体数据设当前档；未知/缺省值一律落到 default_value（不静默改数据）。"""
+    cur = str(data.get("dialogueFacing", "") or "").strip().lower()
+    if cur not in _DIALOGUE_FACING_VALUES:
+        cur = default_value
+    cb.blockSignals(True)
+    try:
+        idx = cb.findData(cur)
+        cb.setCurrentIndex(idx if idx >= 0 else 0)
+    finally:
+        cb.blockSignals(False)
+
+
+def _write_dialogue_facing_combo(cb: QComboBox, data: dict, default_value: str) -> None:
+    """缺省档不写键（保住哈希基线与字节级往返），其余写显式值。"""
+    v = str(cb.currentData() or default_value)
+    if v != default_value and v in _DIALOGUE_FACING_VALUES:
+        data["dialogueFacing"] = v
+    else:
+        data.pop("dialogueFacing", None)
+
+
 def _entity_cutscene_ids_from_data(ent: dict) -> list[str]:
     out: list[str] = []
     raw = ent.get("cutsceneIds")
@@ -6769,6 +6821,12 @@ class ScenePropertyPanel(QScrollArea):
         self._hs_disp_facing.setToolTip("展示图水平镜像，与 NPC initialFacing 一致")
         self._hs_disp_facing.currentIndexChanged.connect(self._on_hs_disp_facing_changed)
         df.addRow("朝向", self._hs_disp_facing)
+        # 对话朝向与上面那档「朝向」正交：这条是**进图对话那一下**怎么摆，退出对话即复位。
+        # 键写在热点顶层（不在 displayImage 里）：与 NpcDef.dialogueFacing 同名同语义，
+        # 热点转 NPC 时能原样搬过去。
+        self._hs_dialogue_facing = _make_dialogue_facing_combo("keep")
+        self._hs_dialogue_facing.currentIndexChanged.connect(lambda *_: self._emit_props_changed())
+        df.addRow("对话朝向(dialogueFacing)", self._hs_dialogue_facing)
         self._hs_disp_sprite_sort = QComboBox()
         self._hs_disp_sprite_sort.addItem("与角色/NPC 同层（按 Y）", "default")
         self._hs_disp_sprite_sort.addItem("永远画在最底层", "back")
@@ -7580,6 +7638,8 @@ class ScenePropertyPanel(QScrollArea):
             self._hs_disp_facing.blockSignals(True)
             self._hs_disp_facing.setCurrentIndex(1 if fac == "left" else 0)
             self._hs_disp_facing.blockSignals(False)
+            # dialogueFacing 在热点顶层（不在 displayImage 里），取 st 不取 di
+            _load_dialogue_facing_combo(self._hs_dialogue_facing, st, "keep")
             ss = str(di.get("spriteSort", "") or "default").strip().lower()
             sort_idx = 0
             if ss == "back":
@@ -8040,6 +8100,7 @@ class ScenePropertyPanel(QScrollArea):
             )
         else:
             hs.pop("displayImage", None)
+        _write_dialogue_facing_combo(self._hs_dialogue_facing, hs, "keep")
         if self._hs_col_enable.isChecked():
             poly_world = self._hs_col_polygon_from_table()
             if len(poly_world) >= 3:
@@ -8184,6 +8245,9 @@ class ScenePropertyPanel(QScrollArea):
         self._npc_dialogue_graph_entry.value_changed.connect(
             lambda *_: self._emit_props_changed())
         form.addRow("dialogueGraphEntry", self._npc_dialogue_graph_entry)
+        self._npc_dialogue_facing = _make_dialogue_facing_combo("player")
+        self._npc_dialogue_facing.currentIndexChanged.connect(lambda *_: self._emit_props_changed())
+        form.addRow("对话朝向(dialogueFacing)", self._npc_dialogue_facing)
         self._npc_dialogue_zoom = QDoubleSpinBox()
         self._npc_dialogue_zoom.setRange(0.05, 8.0)
         self._npc_dialogue_zoom.setDecimals(3)
@@ -9160,6 +9224,7 @@ class ScenePropertyPanel(QScrollArea):
                 self._npc_facing.setCurrentIndex(idx if idx >= 0 else 0)
             finally:
                 self._npc_facing.blockSignals(False)
+            _load_dialogue_facing_combo(self._npc_dialogue_facing, st, "player")
             a_items = self._model.anim_asset_path_choices()
             cur_a = st.get("animFile", "") or ""
             if cur_a and all(x[0] != cur_a for x in a_items):
@@ -9250,6 +9315,7 @@ class ScenePropertyPanel(QScrollArea):
             npc["dialogueGraphEntry"] = dge
         elif "dialogueGraphEntry" in npc:
             del npc["dialogueGraphEntry"]
+        _write_dialogue_facing_combo(self._npc_dialogue_facing, npc, "player")
         zv = float(self._npc_dialogue_zoom.value())
         if abs(zv - 1.0) > 1e-6:
             npc["dialogueCameraZoom"] = zv

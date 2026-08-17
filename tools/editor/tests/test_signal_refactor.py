@@ -409,6 +409,26 @@ def test_archive_slang_is_registered_condition_source(disk_model: FakeModel) -> 
     assert ("archive", "") in disk_model.dirty
 
 
+def test_archive_rhymes_is_registered_condition_source(disk_model: FakeModel) -> None:
+    """歪歌册 entries[].unlockConditions 必须在扫描与级联的可达面内。
+
+    档案第六份（2026-08-17 与运行时同步新增），登记形状照 slang——漏登记零报错，
+    状态改名后歪歌解锁条件悬垂、永远解不开，静默失败。
+    """
+    disk_model.archive_rhymes = {
+        "entries": [
+            {"id": "rhyme_1", "title": "张打铁", "unlockConditions": [{"narrative": "flow_main", "state": "s1"}]},
+        ],
+    }
+    scan = scan_state_usages(disk_model, "flow_main", "s1")
+    assert any(h["bucket"] == "archive" for h in scan["external"]), \
+        f"archive/rhymes.json 未进扫描面（表键写错/漏登记会静默跳过）：{scan['external']}"
+
+    rename_state(disk_model, "flow_main", "s1", "s1_done")
+    assert disk_model.archive_rhymes["entries"][0]["unlockConditions"][0]["state"] == "s1_done"
+    assert ("archive", "") in disk_model.dirty
+
+
 def test_readonly_source_blocks_every_refactor(disk_model: FakeModel) -> None:
     """只读数据面（ProjectModel 加载但 save_all 不认领）有引用 → 四种重构一律拒绝。
 

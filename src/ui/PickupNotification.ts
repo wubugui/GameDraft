@@ -1,43 +1,29 @@
-import { Container, Graphics, Text } from 'pixi.js';
+import { Container } from 'pixi.js';
 import { UITheme } from './UITheme';
-import { createPanel, SKINS } from './PanelSkin';
-import { createIcon } from './components/UIDecor';
+import { buildToastChip } from './components/UIToast';
 import type { Renderer } from '../rendering/Renderer';
 import type { StringsProvider } from '../core/StringsProvider';
-import { createStyledText } from '../core/styledText';
+import type { EventBus } from '../core/EventBus';
 
 // ---------------------------------------------------------------------------
-// 时序常量：**语义不可改**（2s 后移除，1.5s 起淡出）。
+// 时序常量：**语义不可改**（2s 后移除，1.5s 起淡出）。与顶中事件 toast 的 4s 是
+// 语义差异不是漂移——入袋回执扫一眼就走；**视觉**已收敛到 components/UIToast 一份。
 // ---------------------------------------------------------------------------
 const DISPLAY_DURATION = 2000;
 const FADE_START = 1500;
 /** 进场淡入：motion 的「提示进出」档，配 easeOut */
 const FADE_IN_DURATION = UITheme.motion.normal;
 
-const PAD_X = UITheme.spacing.md;
-/** 行高自带上下各半档留白，所以竖向内边距收到 xs，单行条高仍是 {@link MIN_BOX_H} */
-const PAD_Y = UITheme.spacing.xs;
-/**
- * 正文行高 1.3 倍：物品名长到换行时两行之间要有缝。
- * ⚠ 用 `lineHeight` 不用 `leading`——Pixi v8 的 leading 量高比实际绘制矮半档，末行会被裁掉。
- */
-const LINE_H = Math.round(UITheme.fontSize.body * 1.3);
 /** 屏幕右上角内缩 */
 const SCREEN_MARGIN = UITheme.spacing.xl;
 /**
  * 堆叠时两条之间的缝。
- * ⚠ 旧实现是**固定步距 40**，而条高是按正文现算的（`max(36, 文字高 + 上下内边距)`）——
- * 字号一超过 24 或者物品名换行，条高就大于步距，后一条直接压在前一条身上。
- * 现在改成按各条真高累加，步距只剩这条缝。
+ * ⚠ 旧实现是**固定步距 40**，而条高是按正文现算的——物品名换行时后一条直接压在前一条身上。
+ * 现在按各条真高累加，步距只剩这条缝。
  */
 const ROW_GAP = UITheme.spacing.xs;
-/** 正文换行宽度：按 body 档一行装得下「获得了 + 十来字物品名 + xN」，免得为一个 xN 换行 */
-const MAX_TEXT_WIDTH = 300;
-/** 条高下限：木边 5px + 圆形图标徽章（直径 20）留得下 */
-const MIN_BOX_H = UITheme.spacing.xxl + UITheme.spacing.xs;
-/** 左侧圆形图标徽章，与 NotificationUI 的提示条同一枚 */
-const BADGE_R = 10;
-const BADGE_ICON = 12;
+/** 条宽上限：按 body 档一行装得下「获得了 + 十来字物品名 + xN」 */
+const MAX_BOX_W = 340;
 
 export class PickupNotification {
   private static readonly MAX_VISIBLE = 5;
@@ -45,64 +31,47 @@ export class PickupNotification {
   private strings: StringsProvider;
   private activeNotifications: Container[] = [];
   private unsubscribeResize: () => void;
+  /**
+   * 电影化静默（审查 P1：本类原是全桶唯一零压制通道，过场里回执照样砸脸）：
+   * 过场期间入队不上屏，cutscene:end 一次性补冒。监听自订自摘（生命周期对称）。
+   */
+  private suppressed = false;
+  private pending: { itemName: string; count: number }[] = [];
+  private eventBus: EventBus | null;
+  private cutsceneStartCb = (): void => { this.suppressed = true; };
+  private cutsceneEndCb = (): void => {
+    this.suppressed = false;
+    const queued = this.pending;
+    this.pending = [];
+    for (const q of queued) this.show(q.itemName, q.count);
+  };
 
-  constructor(renderer: Renderer, strings: StringsProvider) {
+  constructor(renderer: Renderer, strings: StringsProvider, eventBus?: EventBus) {
     this.renderer = renderer;
     this.strings = strings;
+    this.eventBus = eventBus ?? null;
     // 右上角贴边：画布尺寸变化后必须重算 x（侧栏挤压 #game-mount 走 Renderer 的
     // ResizeObserver，根本不发 window resize；真窗口 resize 也被 Pixi 推到 rAF 之后）
     this.unsubscribeResize = this.renderer.subscribeAfterResize(() => this.relayout());
+    this.eventBus?.on('cutscene:start', this.cutsceneStartCb);
+    this.eventBus?.on('cutscene:end', this.cutsceneEndCb);
   }
 
   show(itemName: string, count: number): void {
-    const container = new Container();
-
+    if (this.suppressed) {
+      this.pending.push({ itemName, count });
+      return;
+    }
     const label = this.strings.get('pickup', 'acquired', { name: itemName, count });
 
-    const text = createStyledText({
+    // 视觉件与顶中事件 toast 同一份实现（components/UIToast）；回执贴边摆、宽度全贴内容
+    const chip = buildToastChip({
       text: label,
-      style: {
-        // 「获得了 纸钱 x5」是**扫一眼就过**的入袋回执，不是要读的正文：
-        // bodyLarge 是台词/按钮的档，挂在屏幕右上角比场景里任何东西都抢眼。收回 body。
-        fontSize: UITheme.fontSize.body,
-        fill: UITheme.colors.pickupText,
-        fontFamily: UITheme.fonts.ui,
-        wordWrap: true,
-        breakWords: true,
-        lineHeight: LINE_H,
-        wordWrapWidth: MAX_TEXT_WIDTH,
-      },
+      color: UITheme.colors.pickupText,
+      icon: 'pouch',
+      maxWidth: MAX_BOX_W,
     });
-
-    // 与提示条同一套语汇：小木框条 + 左边一枚圆形图标徽章（布袋）+ 右边一行短字。
-    // 图标素材没到位（createIcon → null）时圆章整枚省掉，文字左移贴回内边距。
-    // ⚠ tint 走赋值不走入参：`createIcon` 的默认参数把 tint 推断成了字面量类型，传变量不过编译
-    const icon = createIcon('pouch', BADGE_ICON);
-    if (icon) icon.tint = UITheme.colors.pickupText;
-    const textX = icon ? PAD_X + BADGE_R * 2 + UITheme.spacing.sm : PAD_X;
-    const boxW = Math.ceil(textX + text.width + PAD_X);
-    const boxH = Math.max(MIN_BOX_H, Math.ceil(text.height + PAD_Y * 2));
-
-    container.addChild(createPanel(0, 0, boxW, boxH, SKINS.toast));
-
-    if (icon) {
-      const cx = PAD_X + BADGE_R;
-      const cy = Math.round(boxH / 2);
-      const badge = new Graphics();
-      badge.circle(cx, cy, BADGE_R);
-      badge.fill({ color: UITheme.colors.rowBgInactive, alpha: 0.9 });
-      badge.circle(cx, cy, BADGE_R);
-      badge.stroke({ color: UITheme.colors.hairline, width: 1, alpha: UITheme.alpha.hairline * 2 });
-      badge.eventMode = 'none';
-      container.addChild(badge);
-
-      icon.position.set(cx - BADGE_ICON / 2, cy - BADGE_ICON / 2);
-      container.addChild(icon);
-    }
-
-    text.x = textX;
-    text.y = Math.round((boxH - text.height) / 2);
-    container.addChild(text);
+    const container = chip.container;
 
     container.y = SCREEN_MARGIN;
     // 进场从全透明起，由 tick 按 easeOut 推到 1
@@ -179,5 +148,8 @@ export class PickupNotification {
   destroy(): void {
     this.forceCleanup();
     this.unsubscribeResize();
+    this.eventBus?.off('cutscene:start', this.cutsceneStartCb);
+    this.eventBus?.off('cutscene:end', this.cutsceneEndCb);
+    this.pending = [];
   }
 }

@@ -1,7 +1,7 @@
 import { Container, Graphics, Rectangle } from 'pixi.js';
 import type { FederatedPointerEvent } from 'pixi.js';
 import { UITheme } from '../UITheme';
-import { canvasPointFromEvent, clientToCanvas, markPointerConsumed } from '../uiPointerCoords';
+import { canvasPointFromEvent, clientToCanvas, markPointerConsumed, setPointerDragScrolling } from '../uiPointerCoords';
 import type { Renderer } from '../../rendering/Renderer';
 
 /**
@@ -19,6 +19,11 @@ const BAR_W = 4;
 const BAR_MIN_H = 24;
 /** 4px 宽的条用鼠标抓不住：thumb 的命中区左右各放宽到这个宽度（只放宽命中，不放宽视觉） */
 const GRAB_W = 16;
+/** 内容区拖滚的判定阈值：位移小于它算 tap（行照常激活），超过才转为拖动滚动 */
+const DRAG_THRESHOLD = 6;
+/** 惯性衰减（每秒保留比例）与停表速度（px/s） */
+const INERTIA_DECAY_PER_S = 0.0025;
+const INERTIA_STOP_SPEED = 30;
 
 export interface UIScrollViewOptions {
   /** 视口宽高（裁切范围） */
@@ -59,6 +64,18 @@ export class UIScrollView {
   private onWheelBound: (e: WheelEvent) => void;
   private onDragMoveBound: (e: PointerEvent) => void;
   private onDragEndBound: () => void;
+  /** 内容区拖滚（审查批3b：此前触屏在列表上唯一的滚动手段是抓 4px 的条） */
+  private contentDragArmed = false;
+  private contentDragging = false;
+  private contentDragStartY = 0;
+  private contentDragStartOffset = 0;
+  /** 速度采样（惯性用）：最近一次 move 的 y/t 与瞬时速度（px/s，向下为正） */
+  private contentVel = 0;
+  private contentLastY = 0;
+  private contentLastT = 0;
+  private inertiaRaf = 0;
+  private onContentMoveBound: (e: PointerEvent) => void;
+  private onContentEndBound: () => void;
   private destroyed = false;
 
   constructor(renderer: Renderer, opts: UIScrollViewOptions) {
@@ -93,7 +110,16 @@ export class UIScrollView {
     this.onWheelBound = (e) => this.onWheel(e);
     this.onDragMoveBound = (e) => this.onDragMove(e);
     this.onDragEndBound = () => this.endDrag();
+    this.onContentMoveBound = (e) => this.onContentDragMove(e);
+    this.onContentEndBound = () => this.endContentDrag();
     window.addEventListener('wheel', this.onWheelBound, { passive: false });
+
+    // 内容区拖动滚动：整个视口即拖动面（触屏的主滚动手段；桌面拖动同样可用）。
+    // 命中挂在根容器上，Pixi 事件从子节点冒泡上来——行先收到 down（记 tap 起点），
+    // 这里后收到（预备拖动）；位移越过阈值才转为拖滚并置全局标志，行的 up 据此让路。
+    this.container.eventMode = 'static';
+    this.container.hitArea = new Rectangle(0, 0, opts.width, opts.height);
+    this.container.on('pointerdown', (e: FederatedPointerEvent) => this.onContentDown(e));
   }
 
   /**
@@ -236,6 +262,94 @@ export class UIScrollView {
     if (!this.destroyed) this.drawBar();
   }
 
+  // -- 内容区拖动滚动 + 惯性 --------------------------------------------------
+
+  private onContentDown(e: FederatedPointerEvent): void {
+    if (this.destroyed || this.maxScroll <= 0) return;
+    const y = this.pointerY(e.nativeEvent);
+    if (y === null) return;
+    this.stopInertia();
+    this.contentDragArmed = true;
+    this.contentDragging = false;
+    this.contentDragStartY = y;
+    this.contentDragStartOffset = this.offset;
+    this.contentVel = 0;
+    this.contentLastY = y;
+    this.contentLastT = performance.now();
+    window.addEventListener('pointermove', this.onContentMoveBound);
+    window.addEventListener('pointerup', this.onContentEndBound);
+    window.addEventListener('pointercancel', this.onContentEndBound);
+  }
+
+  private onContentDragMove(e: PointerEvent): void {
+    if (this.destroyed || !this.contentDragArmed) return;
+    const y = this.pointerY(e);
+    if (y === null) return;
+    const dy = y - this.contentDragStartY;
+    if (!this.contentDragging && Math.abs(dy) > DRAG_THRESHOLD) {
+      this.contentDragging = true;
+      setPointerDragScrolling(true);
+    }
+    if (!this.contentDragging) return;
+    // 内容跟手（拖动方向与滚动方向相反）
+    this.offset = Math.max(0, Math.min(this.contentDragStartOffset - dy, this.maxScroll));
+    this.apply();
+    const now = performance.now();
+    const dt = (now - this.contentLastT) / 1000;
+    if (dt > 0.001) {
+      this.contentVel = (y - this.contentLastY) / dt;
+      this.contentLastY = y;
+      this.contentLastT = now;
+    }
+  }
+
+  private endContentDrag(): void {
+    window.removeEventListener('pointermove', this.onContentMoveBound);
+    window.removeEventListener('pointerup', this.onContentEndBound);
+    window.removeEventListener('pointercancel', this.onContentEndBound);
+    if (!this.contentDragArmed) return;
+    this.contentDragArmed = false;
+    if (this.contentDragging) {
+      this.contentDragging = false;
+      // 复位排在行的 pointerup 之后（canvas 派发先于 window 阶段）——行已据置位让路
+      setPointerDragScrolling(false);
+      // 停顿后再松手不该飞出去：只有仍有速度时才起惯性
+      if (Math.abs(this.contentVel) > INERTIA_STOP_SPEED && performance.now() - this.contentLastT < 120) {
+        this.startInertia(-this.contentVel);
+      }
+    }
+  }
+
+  /** 惯性滑动：拖滚松手后的自然减速（审查批3b「滚动无惯性」）。 */
+  private startInertia(initialVel: number): void {
+    this.stopInertia();
+    let vel = initialVel;
+    let last = performance.now();
+    const step = (): void => {
+      if (this.destroyed) { this.inertiaRaf = 0; return; }
+      const now = performance.now();
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      const before = this.offset;
+      this.scrollBy(vel * dt);
+      vel *= Math.pow(INERTIA_DECAY_PER_S, dt);
+      // 撞到边界或速度耗尽即停
+      if (Math.abs(vel) < INERTIA_STOP_SPEED || this.offset === before) {
+        this.inertiaRaf = 0;
+        return;
+      }
+      this.inertiaRaf = requestAnimationFrame(step);
+    };
+    this.inertiaRaf = requestAnimationFrame(step);
+  }
+
+  private stopInertia(): void {
+    if (this.inertiaRaf) {
+      cancelAnimationFrame(this.inertiaRaf);
+      this.inertiaRaf = 0;
+    }
+  }
+
   private onWheel(e: WheelEvent): void {
     if (this.destroyed) return;
     const pt = canvasPointFromEvent(this.renderer, e);
@@ -245,6 +359,7 @@ export class UIScrollView {
     // （旧四个面板都是无条件 preventDefault）。
     e.preventDefault();
     if (this.maxScroll <= 0) return;
+    this.stopInertia();
     this.scrollBy(this.normalizedDelta(e));
   }
 
@@ -289,10 +404,39 @@ export class UIScrollView {
   get scrollOffset(): number { return this.offset; }
   set scrollOffset(v: number) { this.offset = Math.max(0, Math.min(v, this.maxScroll)); this.apply(); }
 
+  /**
+   * 只摘输入（wheel/拖动监听、指针命中、惯性），**保留视觉**。
+   * 给「窗体淡出关场」用：尸体窗在 150ms 里还看得见内容，但绝不许再吃滚轮/拖动；
+   * 视觉节点随后由 UIWindow.fadeOutAndDestroy 的 destroy({children}) 一起拆。
+   */
+  detachInput(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    this.endDrag();
+    this.stopInertia();
+    if (this.contentDragging) setPointerDragScrolling(false);
+    this.contentDragArmed = false;
+    this.contentDragging = false;
+    window.removeEventListener('pointermove', this.onContentMoveBound);
+    window.removeEventListener('pointerup', this.onContentEndBound);
+    window.removeEventListener('pointercancel', this.onContentEndBound);
+    window.removeEventListener('wheel', this.onWheelBound);
+    this.container.eventMode = 'none';
+    this.container.interactiveChildren = false;
+  }
+
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
     this.endDrag();
+    this.stopInertia();
+    // 拖滚进行中被销毁（拖着列表时面板被关）：flag 不复位会永久吞掉后续所有行激活
+    if (this.contentDragging) setPointerDragScrolling(false);
+    this.contentDragArmed = false;
+    this.contentDragging = false;
+    window.removeEventListener('pointermove', this.onContentMoveBound);
+    window.removeEventListener('pointerup', this.onContentEndBound);
+    window.removeEventListener('pointercancel', this.onContentEndBound);
     window.removeEventListener('wheel', this.onWheelBound);
     this.content.mask = null;
     if (this.container.parent) this.container.parent.removeChild(this.container);

@@ -16,6 +16,11 @@ const ICON_FILES = {
   scroll: 'scroll', map: 'map', gear: 'gear', hat: 'hat',
   key: 'key', umbrella: 'umbrella', lantern: 'lantern', censer: 'censer',
   rope: 'rope', incense: 'incense', bowl: 'bowl', boat: 'boat',
+  // 2026-08-17 批产(tmp/ui_assets_2026-08-17_icons/):功能图标也走民俗物件——
+  // ruler=戒尺(规矩) fan=说书折扇(对话录) mirror=照妖铜镜(检视)
+  // hand=民国印刷指示手(指路/翻页,向右;向左用 scale.x=-1 镜像) thread=线团(线索) lock=广锁(锁定)
+  ruler: 'ruler', fan: 'fan', mirror: 'mirror',
+  hand: 'hand', thread: 'thread', lock: 'lock',
 } as const;
 
 export type UIIconName = keyof typeof ICON_FILES;
