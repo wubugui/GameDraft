@@ -23,6 +23,7 @@ import type { AudioManager } from '../systems/AudioManager';
 import type { DayManager } from '../systems/DayManager';
 import type { NpcScheduleSystem } from '../systems/NpcScheduleSystem';
 import type { ArchiveManager } from '../systems/ArchiveManager';
+import type { ClueManager } from '../systems/ClueManager';
 import type { CutsceneManager } from '../systems/CutsceneManager';
 import type { SceneManager } from '../systems/SceneManager';
 import type { EmoteBubbleManager } from '../systems/EmoteBubbleManager';
@@ -39,6 +40,13 @@ import type { PressureHoldManager } from '../systems/pressureHold/PressureHoldMa
 import type { SignalCueManager } from '../systems/SignalCueManager';
 import type { HealthSystem } from '../systems/HealthSystem';
 import type { SmellSystem } from '../systems/SmellSystem';
+import {
+  readVoiceSpec,
+  readVoiceAdvanceSpec,
+  type VoiceChannel,
+  type VoiceBeatTicket,
+  type VoiceAdvanceSpec,
+} from '../systems/VoiceChannel';
 import type { PlaneReconciler } from '../systems/PlaneReconciler';
 import type { ActionDef, ActionOriginContext, AnimationPlaybackParams, DialogueLine, DialoguePortraitRef, EmoteBubbleOffsetOpts, ICutsceneActor, IEmoteBubbleAnchor, TimeTransition, ZoneRuleSlot, RuleLayerKey } from '../data/types';
 import { GameState } from '../data/types';
@@ -181,6 +189,7 @@ export interface ActionRegistryDeps {
   dayManager: DayManager;
   npcScheduleSystem: NpcScheduleSystem;
   archiveManager: ArchiveManager;
+  clueManager: ClueManager;
   cutsceneManager: CutsceneManager;
   sceneManager: SceneManager;
   emoteBubbleManager: EmoteBubbleManager;
@@ -353,6 +362,68 @@ export interface ActionRegistryDeps {
   healthSystem: HealthSystem;
   smellSystem: SmellSystem;
   planeReconciler: PlaneReconciler;
+  /** 配音通道（与过场字幕、世界对话共用同一条）；未注入时气泡配音整体退化为不发声。 */
+  voiceChannel?: VoiceChannel;
+}
+
+/**
+ * 阻塞型气泡（showEmoteAndWait / showSpeechBubbleAndWait）的配音：
+ * 写了 `voice` 就起一条；本 action 没写但声明了 `autoAdvance: "voice"` 时接管前面留声的那条。
+ */
+function beginBubbleVoice(
+  d: ActionRegistryDeps,
+  params: Record<string, unknown>,
+): { ticket: VoiceBeatTicket | null; advance: VoiceAdvanceSpec | null } {
+  const voice = readVoiceSpec(params);
+  const advance = readVoiceAdvanceSpec(params);
+  const ticket = voice
+    ? d.voiceChannel?.play(voice) ?? null
+    : advance?.mode === 'voice'
+      ? d.voiceChannel?.takeSustained() ?? null
+      : null;
+  return { ticket, advance };
+}
+
+/**
+ * 非阻塞气泡（showEmote / showSpeechBubble）的配音：起了就留声。
+ * 这类 action 立刻返回、没有"本拍结束"这个时刻，若按默认"跟本拍一起停"就是刚响一帧即哑。
+ */
+function startSustainedBubbleVoice(d: ActionRegistryDeps, params: Record<string, unknown>): void {
+  const voice = readVoiceSpec(params);
+  if (!voice) return;
+  const ticket = d.voiceChannel?.play({ ...voice, hold: true }) ?? null;
+  ticket?.endBeat();
+}
+
+/**
+ * 阻塞型气泡的一拍：默认按 `duration` 到点收（既有行为逐字不变）；
+ * 声明 `autoAdvance: "voice"` 且确有配音时，气泡改为常驻、**跟配音一起结束**——
+ * 与字幕 / 对话框的"跟随配音推进"同一语义。
+ * 等待方封口用 `onSettled`（配音被顶掉 / 被停也照样归来），绝不悬挂。
+ */
+async function presentBubbleBeat(
+  d: ActionRegistryDeps,
+  params: Record<string, unknown>,
+  subject: IEmoteBubbleAnchor,
+  text: string,
+  durationMs: number,
+  off: EmoteBubbleOffsetOpts,
+): Promise<void> {
+  const { ticket, advance } = beginBubbleVoice(d, params);
+  try {
+    if (advance?.mode === 'voice' && ticket) {
+      const dismiss = d.emoteBubbleManager.showSticky(subject, text, off);
+      try {
+        await new Promise<void>((resolve) => { ticket.onSettled(resolve); });
+      } finally {
+        dismiss();
+      }
+      return;
+    }
+    await d.emoteBubbleManager.showAndWait(subject, text, durationMs, off);
+  } finally {
+    ticket?.endBeat();
+  }
 }
 
 function parseEmoteOffsetParams(params: Record<string, unknown>): EmoteBubbleOffsetOpts {
@@ -773,10 +844,24 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
 
   executor.register('addArchiveEntry', (p) => {
     d.archiveManager.addEntry(
-      p.bookType as 'character' | 'lore' | 'slang' | 'document' | 'book' | 'bookEntry',
+      p.bookType as 'character' | 'lore' | 'slang' | 'rhyme' | 'document' | 'book' | 'bookEntry',
       p.entryId as string,
     );
   }, ['bookType', 'entryId']);
+
+  /**
+   * 采集线索（K7）：等价于玩家点击文本里的 `[clue:id]`，供任务/对话/热区等编排面直接给线索。
+   * 幂等与回执全由 ClueManager.collect 统一处理（未知 id warn 一次并跳过；重复采集静默；
+   * 成功才落 flag `clue_<id>` + notification 回执）——动作层不重复弹回执。
+   */
+  executor.register('collectClue', (p) => {
+    const clueId = String(p.clueId ?? '').trim();
+    if (!clueId) {
+      console.warn('collectClue: 需要 clueId（clues.json 词条 id）');
+      return;
+    }
+    d.clueManager.collect(clueId);
+  }, ['clueId']);
 
   executor.register('startCutscene', (p) => {
     // 进入前的状态可能是 Exploring 加锁后的 ActionSequence、或对话 runActions 里的 Dialogue。
@@ -1021,8 +1106,11 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     const off = parseEmoteOffsetParams(p);
     dbg(d, 'showEmote', `调用 bubble.show durMs=${duration} off=(${off.anchorOffsetX},${off.anchorOffsetY})`);
     d.emoteBubbleManager.show(subject, emote, duration, off);
+    /** 非阻塞气泡：本 action 立刻返回、没有"本拍结束"这个时刻，故配音一律留声——
+     *  自然播完 / 被下一条配音顶掉 / 被后续台词拍接管为止（`hold` 写不写都一样）。 */
+    startSustainedBubbleVoice(d, p);
     dbg(d, 'showEmote', `bubble.show 已返回`);
-  }, ['target', 'emote', 'duration', 'anchorOffsetX', 'anchorOffsetY', 'bubbleAnchorY', 'bubbleScale']);
+  }, ['target', 'emote', 'duration', 'anchorOffsetX', 'anchorOffsetY', 'bubbleAnchorY', 'bubbleScale', 'voice']);
 
   /** 与 showEmote 相同锚点与白底气泡；params.text 为对白（经 resolveDisplayText，支持 `[tag:…]`）。 */
   executor.register('showSpeechBubble', (p) => {
@@ -1046,7 +1134,9 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     }
     const off = parseEmoteOffsetParams(p);
     d.emoteBubbleManager.show(subject, text, parseBubbleDurationParam(p), off);
-  }, ['target', 'text', 'duration', 'anchorOffsetX', 'anchorOffsetY', 'bubbleAnchorY', 'bubbleScale']);
+    /** 同 showEmote：非阻塞气泡的配音一律留声 */
+    startSustainedBubbleVoice(d, p);
+  }, ['target', 'text', 'duration', 'anchorOffsetX', 'anchorOffsetY', 'bubbleAnchorY', 'bubbleScale', 'voice']);
 
   /**
    * `target` 为 NPC id 或 `player`；`state` 为 anim.json 中的状态名（与 `npcAnim` 旧标签语义一致，统一走 Action）。
@@ -1731,6 +1821,11 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
         ...(speakerEntity ? { speakerEntity } : {}),
         /** 分边默认按 speakerEntity 推导（主角在右）；逐行 speakerSide 可显式覆盖 */
         ...(isSpeakerSide(o.speakerSide) ? { speakerSide: o.speakerSide } : {}),
+        /** 逐行配音 / 推进方式：原样透传，由 DialogueVoiceDirector 消费（与图对话拍同一套语义） */
+        ...(o.voice !== undefined && o.voice !== null ? { voice: o.voice as DialogueLine['voice'] } : {}),
+        ...(o.autoAdvance !== undefined && o.autoAdvance !== null
+          ? { autoAdvance: o.autoAdvance as DialogueLine['autoAdvance'] }
+          : {}),
         ...(dim ? { dim: true } : {}),
       });
     }
@@ -1966,9 +2061,10 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     }
     const off = parseEmoteOffsetParams(p);
     dbg(d, 'showEmoteAndWait', `await showAndWait durMs=${duration} off=(${off.anchorOffsetX},${off.anchorOffsetY})`);
-    await d.emoteBubbleManager.showAndWait(subject, emote, duration, off);
+    await presentBubbleBeat(d, p, subject, emote, duration, off);
     dbg(d, 'showEmoteAndWait', 'showAndWait 结束');
-  }, ['target', 'emote', 'duration', 'anchorOffsetX', 'anchorOffsetY', 'bubbleAnchorY', 'bubbleScale']);
+  }, ['target', 'emote', 'duration', 'anchorOffsetX', 'anchorOffsetY', 'bubbleAnchorY', 'bubbleScale',
+    'voice', 'autoAdvance']);
 
   executor.register('showSpeechBubbleAndWait', async (p) => {
     const target = String(p.target ?? '').trim();
@@ -1992,9 +2088,10 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     }
     const off = parseEmoteOffsetParams(p);
     dbg(d, 'showSpeechBubbleAndWait', `await showAndWait durMs=${duration}`);
-    await d.emoteBubbleManager.showAndWait(subject, text, duration, off);
+    await presentBubbleBeat(d, p, subject, text, duration, off);
     dbg(d, 'showSpeechBubbleAndWait', 'showAndWait 结束');
-  }, ['target', 'text', 'duration', 'anchorOffsetX', 'anchorOffsetY', 'bubbleAnchorY', 'bubbleScale']);
+  }, ['target', 'text', 'duration', 'anchorOffsetX', 'anchorOffsetY', 'bubbleAnchorY', 'bubbleScale',
+    'voice', 'autoAdvance']);
 
   executor.register('revealDocument', async (p) => {
     await d.documentRevealManager.checkAndReveal(String(p.documentId ?? ''));

@@ -1,11 +1,12 @@
 import { Graphics, Text } from 'pixi.js';
 import { UITheme } from './UITheme';
 import { drawPanelBase, SKINS } from './PanelSkin';
-import { createBadge, drawSelectedRow } from './components/UIDecor';
+import { createBadge, drawFocusRing, drawHoverRow } from './components/UIDecor';
 import { markPointerConsumed } from './uiPointerCoords';
 import { UIWindow, WINDOW_CHROME } from './components/UIWindow';
 import { UIScrollView } from './components/UIScrollView';
-import { UIFocus, type FocusItem } from './components/UIFocus';
+import { UIFocus, type FocusItem, type FocusVia } from './components/UIFocus';
+import { openConfirmDialog } from './components/UIConfirmDialog';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
 import type { IZoneDataProvider, IRulesDataProvider, ZoneRuleSlot, RuleLayerKey } from '../data/types';
@@ -91,6 +92,15 @@ export class RuleUseUI {
 
   get isOpen(): boolean { return this._isOpen; }
 
+  /**
+   * 本区当前有没有能摆上台面的规矩槽（含收集中的灰条）。
+   * 给 GameStateController 注册时的 openGuard 用：HUD 亮着 [G] 而这里为空时，
+   * 守卫在拒绝的同时发提示——「按了没反应」是审查点名的死键体验（P1）。
+   */
+  hasUsableSlots(): boolean {
+    return this.resolveSlots().length > 0;
+  }
+
   open(): void {
     if (this._isOpen) return;
     const slots = this.resolveSlots();
@@ -107,7 +117,13 @@ export class RuleUseUI {
     if (!this._isOpen) return;
     this._isOpen = false;
     window.removeEventListener('keydown', this.onKeyBound);
-    this.destroyUI();
+    // 关场淡出（绕开 build/destroy 共用的瞬时 destroyUI）：先摘滚动区输入面，
+    // 再让窗体带视觉淡出自毁——逻辑态已同步落定，尸体窗只是视觉。
+    this.list?.detachInput();
+    const win = this.win;
+    this.list = null;
+    this.win = null;
+    win?.fadeOutAndDestroy();
     this.focus.destroy();
   }
 
@@ -189,15 +205,22 @@ export class RuleUseUI {
       });
       list.content.addChild(rowBg);
 
-      // 悬停 = 点亮一档琥珀铺光（设计稿里选中不是「换个深色」）。
-      // **必须紧跟 rowBg 加进去**：它是不透明的铺光，排在徽章/文字之后会把它们盖掉。
+      // 悬停（极淡暖底）与导航光标（空心金框）两张，见 UIFocus 类注释的三态表。
+      // 用规矩没有"选中"这一态——点一下就直接用掉了——所以只有这两张。
+      // **必须紧跟 rowBg 加进去**：排在徽章/文字之后会把它们盖掉。
       let hoverBg: Graphics | null = null;
+      let ringBg: Graphics | null = null;
       if (s.enabled) {
         hoverBg = new Graphics();
-        drawSelectedRow(hoverBg, 0, ry, rowW, rowBodyH);
+        drawHoverRow(hoverBg, 0, ry, rowW, rowBodyH);
         hoverBg.visible = false;
         hoverBg.eventMode = 'none';
         list.content.addChild(hoverBg);
+        ringBg = new Graphics();
+        drawFocusRing(ringBg, 0, ry, rowW, rowBodyH);
+        ringBg.visible = false;
+        ringBg.eventMode = 'none';
+        list.content.addChild(ringBg);
       }
 
       // 行首圆徽章：可用的走琥珀、还在攒碎片的走灰，与规矩本列表同一套语汇
@@ -215,7 +238,7 @@ export class RuleUseUI {
           // 规矩名是这一行的主角，与规矩本列表同档（bodyLarge）。
           fontSize: UITheme.fontSize.bodyLarge,
           fill: s.enabled ? UITheme.colors.body : UITheme.colors.disabled,
-          fontFamily: UITheme.fonts.ui, fontWeight: 'bold', letterSpacing: 1,
+          fontFamily: UITheme.fonts.ui, fontWeight: 'bold', letterSpacing: UITheme.letterSpacing.hint,
           wordWrap: true, breakWords: true,
           // 右侧有碎片读数时多让一截，否则长规矩名会折到读数底下
           wordWrapWidth:
@@ -233,7 +256,7 @@ export class RuleUseUI {
           style: {
             // 「1/2」是纯**计数角标**：玩家扫一眼知道"还没攒齐"就够了。
             // 它是这块面板里最该小的一处，micro。
-            fontSize: UITheme.fontSize.micro, fill: UITheme.colors.ruleProgress,
+            fontSize: UITheme.fontSize.micro, fill: UITheme.colors.hintMid,
             fontFamily: UITheme.fonts.ui,
           },
         });
@@ -246,8 +269,13 @@ export class RuleUseUI {
       const id = `slot:${i}`;
       if (s.enabled && hoverBg) {
         const hover = hoverBg;
+        const ring = ringBg;
         /** 点亮/收回 = 行原本的悬停画法，焦点与指针共用这一套，不另发明焦点框 */
-        const light = (on: boolean): void => { hover.visible = on; rowBg.visible = !on; };
+        /** on=该亮，via 决定亮哪一张；底板恒留着（两张新画法都是叠加，不再顶掉底板） */
+        const light = (on: boolean, via: FocusVia = 'pointer'): void => {
+          hover.visible = on && via === 'pointer';
+          if (ring) ring.visible = on && via === 'key';
+        };
         // 整行命中：Pixi 是逐子元素命中测试，命中区必须自己是一块 Graphics，
         // 且**不能**拿会被隐藏的 rowBg 当靶子（旧实现 hover 时把靶子 visible=false）
         const hit = new Graphics();
@@ -256,9 +284,9 @@ export class RuleUseUI {
         hit.eventMode = 'static';
         hit.cursor = 'pointer';
         // 指针悬停即移焦：鼠标与手柄共用同一个"当前项"（移开鼠标再按方向键要从这里接着走）
-        hit.on('pointerover', () => { light(true); this.focus.syncHover(id); });
-        // 移开时**只在焦点不在它身上**才收回：抹掉就等于屏幕上没有焦点了
-        hit.on('pointerout', () => { if (this.focus.current?.id !== id) light(false); });
+        hit.on('pointerover', () => this.focus.syncHover(id));
+        // 亮/灭统一由 onFocus 画：移开即 clearHover，hover 那层随之熄掉
+        hit.on('pointerout', () => this.focus.clearHover(id));
         hit.on('pointerdown', (e) => {
           markPointerConsumed((e as { nativeEvent?: unknown }).nativeEvent);
           this.selectSlot(s);
@@ -269,10 +297,10 @@ export class RuleUseUI {
           id,
           x: 0, y: ry, w: rowW, h: rowBodyH,
           group: 'list',
-          onFocus: (f) => {
-            light(f);
-            // 焦点走到视口外的行要把它滚进来（槽位多了列表会滚）
-            if (f) this.revealRow(i);
+          onFocus: (f, via) => {
+            light(f, via);
+            // 只在按键模式滚：鼠标划过时滚列表会把指针下的行抽走
+            if (f && via === 'key') this.revealRow(i);
           },
           onActivate: () => this.selectSlot(s),
         });
@@ -297,7 +325,7 @@ export class RuleUseUI {
     // （前几条恰好都在攒碎片时，焦点不该白白停在一条点不动的行上）。
     const firstUsable = focusItems.find(f => !f.disabled);
     if (firstUsable) this.focus.focusDefault(firstUsable.id);
-    this.focus.current?.onFocus(true);
+    this.focus.repaint();
 
     win.open();
   }
@@ -355,12 +383,23 @@ export class RuleUseUI {
   }
 
   private selectSlot(slot: ResolvedRuleSlot): void {
-    // 不在此处 close()：直接自关会绕过 GameStateController 的弹栈恢复，状态滞留 UIOverlay
-    // 造成软锁（R11）。关面板统一由 ruleUse:apply 的处理方（EventBridge）走 closePanel 通道。
-    this.eventBus.emit('ruleUse:apply', {
-      ruleId: slot.slot.ruleId,
-      actions: slot.slot.resultActions,
-      resultText: slot.slot.resultText,
+    // 施放不可撤销（审查 P2：一点即施放无确认）：先过确认框，确认了才发 apply。
+    void openConfirmDialog(this.renderer, {
+      title: this.strings.get('confirm', 'castTitle'),
+      message: this.strings.get('confirm', 'castBody', { name: slot.ruleName }),
+      confirmLabel: this.strings.get('confirm', 'ok'),
+      cancelLabel: this.strings.get('confirm', 'cancel'),
+      // 施放是「确认动作」不是破坏性删除，确认钮走 primary 不走 danger 红
+      danger: false,
+    }).then((ok) => {
+      if (!ok) return;
+      // 不在此处 close()：直接自关会绕过 GameStateController 的弹栈恢复，状态滞留 UIOverlay
+      // 造成软锁（R11）。关面板统一由 ruleUse:apply 的处理方（EventBridge）走 closePanel 通道。
+      this.eventBus.emit('ruleUse:apply', {
+        ruleId: slot.slot.ruleId,
+        actions: slot.slot.resultActions,
+        resultText: slot.slot.resultText,
+      });
     });
   }
 

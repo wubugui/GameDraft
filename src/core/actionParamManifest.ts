@@ -100,8 +100,10 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
     optional: ['scene', 'x', 'y', 'activity', 'clear'],
   },
 
-  // ---- 档案 / 过场 / 小游戏 ----
+  // ---- 档案 / 线索 / 过场 / 小游戏 ----
   addArchiveEntry: { required: ['bookType', 'entryId'], nonEmpty: ['bookType', 'entryId'] },
+  // 线索采集（K7）：clueId=clues.json 词条引用；幂等/回执由 ClueManager.collect 统一处理
+  collectClue: { required: ['clueId'], nonEmpty: ['clueId'] },
   startCutscene: { required: ['id'], nonEmpty: ['id'] },
   startWaterMinigame: { required: ['id'], nonEmpty: ['id'] },
   startSugarWheelMinigame: { required: ['id'], nonEmpty: ['id'] },
@@ -134,25 +136,29 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
   deactivatePlane: { required: [] },
 
   // ---- 气泡 / 动画 / 实体显隐 ----
+  // voice：气泡台词配音（与字幕 / 对话框同一套 VoiceSpec）。非阻塞的两个只吃 voice——
+  // 它们没有"本拍结束"这个时刻，配音一律留声；autoAdvance 只对 AndWait 两个有意义。
   showEmote: {
     required: ['target', 'emote'],
     nonEmpty: ['target', 'emote'],
-    optional: ['duration', 'anchorOffsetX', 'anchorOffsetY', 'bubbleAnchorY', 'bubbleScale'],
+    optional: ['duration', 'anchorOffsetX', 'anchorOffsetY', 'bubbleAnchorY', 'bubbleScale', 'voice'],
   },
   showSpeechBubble: {
     required: ['target', 'text'],
     nonEmpty: ['target', 'text'],
-    optional: ['emote', 'duration', 'anchorOffsetX', 'anchorOffsetY', 'bubbleAnchorY', 'bubbleScale'],
+    optional: ['emote', 'duration', 'anchorOffsetX', 'anchorOffsetY', 'bubbleAnchorY', 'bubbleScale', 'voice'],
   },
   showEmoteAndWait: {
     required: ['target', 'emote'],
     nonEmpty: ['target', 'emote'],
-    optional: ['duration', 'anchorOffsetX', 'anchorOffsetY', 'bubbleAnchorY', 'bubbleScale'],
+    optional: ['duration', 'anchorOffsetX', 'anchorOffsetY', 'bubbleAnchorY', 'bubbleScale',
+      'voice', 'autoAdvance'],
   },
   showSpeechBubbleAndWait: {
     required: ['target', 'text'],
     nonEmpty: ['target', 'text'],
-    optional: ['emote', 'duration', 'anchorOffsetX', 'anchorOffsetY', 'bubbleAnchorY', 'bubbleScale'],
+    optional: ['emote', 'duration', 'anchorOffsetX', 'anchorOffsetY', 'bubbleAnchorY', 'bubbleScale',
+      'voice', 'autoAdvance'],
   },
   playNpcAnimation: {
     required: ['target', 'state'],

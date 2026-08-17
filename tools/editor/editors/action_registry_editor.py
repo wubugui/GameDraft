@@ -47,6 +47,7 @@ class ActionRecord:
             "archive": "档案",
             "dialogueGraph": "图对话",
             "cutscene": "过场",
+            "item": "物件用途",
         }
         return labels.get(self.source_type, self.source_type)
 
@@ -233,6 +234,15 @@ def _scan_actions(model: ProjectModel) -> list[ActionRecord]:
               source_id=str(iid), scene_id="", field="onAllFound",
               navigable=False)
 
+    # 物件自身用途：items[].use.actions（背包里主动使用；由 EventBridge 真执行）
+    for it in model.items:
+        if not isinstance(it, dict):
+            continue
+        use = it.get("use")
+        if isinstance(use, dict):
+            _emit(records, use.get("actions"), source_type="item",
+                  source_id=str(it.get("id") or "?"), scene_id="", field="use.actions")
+
     # 档案 firstViewActions：人物 / 传说 / 文档 / 书页与书页子条目
     for ch in getattr(model, "archive_characters", None) or []:
         if isinstance(ch, dict):
@@ -315,6 +325,7 @@ def _iter_cutscene_step_actions(steps, prefix: str):
 _SOURCE_TYPES = [
     "全部", "Quest", "Encounter", "Scene", "Hotspot", "Zone", "ZoneRule",
     "长按", "信号Cue", "捞尸", "糖画", "扎纸", "物件检视", "档案", "图对话", "过场",
+    "物件用途",
 ]
 _SOURCE_MAP = {
     "Quest": "quest", "Encounter": "encounter", "Scene": "scene",
@@ -324,13 +335,14 @@ _SOURCE_MAP = {
     "捞尸": "water_minigame", "糖画": "sugar_wheel", "扎纸": "paper_craft",
     "物件检视": "object_examine",
     "档案": "archive", "图对话": "dialogueGraph", "过场": "cutscene",
+    "物件用途": "item",
 }
 
 # 覆盖这些脏桶变更时标记需重扫（扩大自 scene/quest/encounter，含新纳入的动作站点）。
 _ACTION_REGISTRY_DIRTY_TYPES = frozenset({
     "scene", "quest", "encounter", "pressure_holds", "signal_cues",
     "water_minigames", "sugar_wheel", "paper_craft", "object_examine", "archive",
-    "cutscene", "dialogue_graph_edits",
+    "cutscene", "dialogue_graph_edits", "item",
 })
 
 

@@ -377,7 +377,7 @@ export class PaperCraftMinigameScene {
       style: {
         fontFamily: UITheme.fonts.ui,
         fontSize: UITheme.fontSize.micro,
-        fill: UITheme.colors.subtle,
+        fill: UITheme.colors.descText,
       },
     });
     count.anchor.set(0, 0.5);
@@ -424,7 +424,7 @@ export class PaperCraftMinigameScene {
       style: {
         fontFamily: UITheme.fonts.ui,
         fontSize: UITheme.fontSize.micro,
-        fill: placed ? UITheme.colors.hint : UITheme.colors.bodyMuted,
+        fill: placed ? UITheme.colors.hintMid : UITheme.colors.bodyMuted,
       },
     });
     t.anchor.set(0.5, 0);
@@ -594,7 +594,7 @@ export class PaperCraftMinigameScene {
       style: {
         fontFamily: UITheme.fonts.ui,
         fontSize: UITheme.fontSize.small,
-        fill: UITheme.colors.subtle,
+        fill: UITheme.colors.descText,
         wordWrap: true,
         wordWrapWidth: innerW - UITheme.spacing.xxl * 2,
         align: 'center',
@@ -759,7 +759,7 @@ export class PaperCraftMinigameScene {
       style: {
         fontFamily: UITheme.fonts.ui,
         fontSize: UITheme.fontSize.small,
-        fill: UITheme.colors.section,
+        fill: UITheme.colors.hintMid,
       },
     });
     t.position.set(0, Math.round((BTN_H - t.height) / 2));
@@ -789,7 +789,7 @@ export class PaperCraftMinigameScene {
       style: {
         fontFamily: UITheme.fonts.ui,
         fontSize: UITheme.fontSize.body,
-        fill: active ? UITheme.colors.title : UITheme.colors.buttonText,
+        fill: active ? UITheme.colors.title : UITheme.colors.bodyMuted,
       },
     });
     const swatchW = swatchTint === undefined ? 0 : SWATCH_R * 2 + UITheme.spacing.sm;

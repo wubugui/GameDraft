@@ -19,10 +19,14 @@ import { RulesManager } from '../systems/RulesManager';
 import { InventoryManager } from '../systems/InventoryManager';
 import { EncounterManager } from '../systems/EncounterManager';
 import { AudioManager } from '../systems/AudioManager';
+import { VoiceChannel } from '../systems/VoiceChannel';
+import { DialogueVoiceDirector } from '../systems/DialogueVoiceDirector';
 import { DayManager } from '../systems/DayManager';
 import { CutsceneManager } from '../systems/CutsceneManager';
 import { CutsceneRenderer } from '../rendering/CutsceneRenderer';
 import { ArchiveManager } from '../systems/ArchiveManager';
+import { ClueManager } from '../systems/ClueManager';
+import { GameLogManager } from '../systems/GameLogManager';
 import { EmoteBubbleManager } from '../systems/EmoteBubbleManager';
 import { ZoneSystem } from '../systems/ZoneSystem';
 import { InspectBox } from '../ui/InspectBox';
@@ -56,6 +60,11 @@ import { BookReaderUI } from '../ui/BookReaderUI';
 import { CharacterBookUI } from '../ui/CharacterBookUI';
 import { LoreBookUI } from '../ui/LoreBookUI';
 import { SlangBookUI } from '../ui/SlangBookUI';
+import { RhymeBookUI } from '../ui/RhymeBookUI';
+import { ClueBookUI } from '../ui/ClueBookUI';
+import { setClueAccess } from '../ui/clueAccess';
+import { setFocusChangeSound } from '../ui/components/UIFocus';
+import { isConfirmDialogOpen } from '../ui/components/UIConfirmDialog';
 import { DocumentBoxUI } from '../ui/DocumentBoxUI';
 import { ShopUI } from '../ui/ShopUI';
 import { MapUI } from '../ui/MapUI';
@@ -87,6 +96,8 @@ import type {
   PlayerVerb,
   ISaveDataProvider,
   TimeTransition,
+  DialogueLogEntry,
+  GameLogLink,
 } from '../data/types';
 import { buildCharacterRegistry } from '../data/characterRegistry';
 import { DEFAULT_ENTITY_PIXEL_DENSITY_BLUR_SCALE } from '../rendering/EntityPixelDensityMatch';
@@ -326,6 +337,10 @@ export class Game {
   private inventoryManager: InventoryManager;
   private encounterManager: EncounterManager;
   private audioManager: AudioManager;
+  /** 台词配音通道（过场 / 世界对话 / 气泡共用一条，见 systems/VoiceChannel） */
+  private voiceChannel: VoiceChannel;
+  /** 世界对话的配音导演：把 dialogue:line 翻成配音通道调用（不进 registeredSystems，无存档态） */
+  private dialogueVoiceDirector: DialogueVoiceDirector;
   /** 玩家的文字呈现偏好（逐字显示开关 / 速度）：设置页写、对白框与遭遇框读 */
   private textDisplaySettings: TextDisplaySettings;
   private dayManager: DayManager;
@@ -341,6 +356,8 @@ export class Game {
   private sceneDisplayNameById = new Map<string, string>();
   private npcDisplayNameById = new Map<string, string>();
   private archiveManager: ArchiveManager;
+  private clueManager!: ClueManager;
+  private gameLogManager!: GameLogManager;
   private emoteBubbleManager: EmoteBubbleManager;
   private ruleOfferRegistry: RuleOfferRegistry;
   private zoneSystem: ZoneSystem;
@@ -582,6 +599,12 @@ export class Game {
     );
     this.encounterManager = new EncounterManager(this.eventBus, this.flagStore, this.actionExecutor);
     this.audioManager = new AudioManager(this.eventBus);
+    /** 配音通道：全部台词面（过场字幕 / 过场对话框 / 脚本台词 / 图对话 / 头顶气泡）共用一条，
+     *  "一条长配音跨几拍"的留声记账在它那里。导演只负责把对话事件翻译成通道调用。 */
+    this.voiceChannel = new VoiceChannel();
+    this.voiceChannel.setAudioPlayer(this.audioManager);
+    this.dialogueVoiceDirector = new DialogueVoiceDirector(this.eventBus, this.voiceChannel);
+    this.dialogueVoiceDirector.init();
     // 偏好在构造期就从 localStorage 读回来：首句台词可能早于任何一次开菜单
     this.textDisplaySettings = new TextDisplaySettings();
     this.dayManager = new DayManager(this.eventBus, this.flagStore, this.actionExecutor);
@@ -596,6 +619,10 @@ export class Game {
     this.planeReconciler = new PlaneReconciler(this.eventBus);
     this.npcScheduleSystem = new NpcScheduleSystem(this.eventBus);
     this.archiveManager = new ArchiveManager(this.eventBus, this.flagStore);
+    // 线索系统（K7）：真相在 flag（clue_<id>），本体只管注册表/采集口/查询口
+    this.clueManager = new ClueManager(this.eventBus, this.flagStore);
+    // 事件日志（K3）：监听领域事件攒时间线；面板（DialogueLogUI）只是它的只读视图
+    this.gameLogManager = new GameLogManager(this.eventBus);
     this.emoteBubbleManager = new EmoteBubbleManager();
     this.bubbleChatterSystem = new BubbleChatterSystem({
       emoteBubbleManager: this.emoteBubbleManager,
@@ -701,6 +728,8 @@ export class Game {
       { name: 'smellSystem', system: this.smellSystem },
       { name: 'cutsceneManager', system: null as any },
       { name: 'archiveManager', system: this.archiveManager },
+      { name: 'clueManager', system: this.clueManager },
+      { name: 'gameLogManager', system: this.gameLogManager },
       { name: 'zoneSystem', system: this.zoneSystem },
       { name: 'emoteBubbleManager', system: this.emoteBubbleManager },
       { name: 'bubbleChatterSystem', system: this.bubbleChatterSystem },
@@ -995,6 +1024,98 @@ export class Game {
     this.cutsceneManager.setDisplayTextResolver(fn);
     this.hud.setResolveDisplay(fn);
     this.ruleUseUI.setResolveDisplay(fn);
+    // 事件日志存的是 raw（`[tag:…]` 原样入档），显示时才解析——与全站同一注入范式
+    this.dialogueLogUI.setResolveDisplay(fn);
+  }
+
+  /**
+   * 事件日志（K3）的三条接线：数据口、时刻戳、跳转路由。
+   *
+   * 跳转的统一形状是「`switchToPanel` 换过去 → 目标面板 `focusEntry` 定位」：
+   * 前半截保证走状态机的唯一通道（关旧开新、压栈平衡，与 HUD 入口条同一条路），
+   * 后半截是各面板自己的定位入口。**路由只认 id，不认各面板的行 key 格式**——
+   * key 的构造留在各面板内部，复制到这里就会漂。
+   */
+  private wireGameLog(): void {
+    this.dialogueLogUI.setDataProvider(this.gameLogManager);
+    this.gameLogManager.setStampProvider(() => ({
+      day: this.dayManager.currentDay,
+      phase: this.dayManager.currentPhaseLabel,
+    }));
+    this.dialogueLogUI.setJumpHandler((link) => this.jumpFromLog(link));
+    // HUD 的日志入口红点。提示条一闪而过是**有意保留**的手感（2026-08-17 拍板），
+    // 所以必须有个东西告诉玩家「刚才那几条还在，L 键可查」——否则日志没人去开。
+    this.hud.setPanelUnreadProvider((panel) =>
+      panel === 'dialogueLog' && this.gameLogManager.unreadCount() > 0);
+  }
+
+  /**
+   * 日志条目 → 目标面板。
+   *
+   * 定位失败（东西已经用掉/丢掉、条目还没解锁）**不静默**：面板照样换过去，
+   * 另冒一条木条说明"那件东西已经不在了"——玩家点了总得有回音（拒绝路径也要有反馈）。
+   */
+  private jumpFromLog(link: GameLogLink): void {
+    const missing = (): void => {
+      this.eventBus.emit('notification:show', {
+        text: this.stringsProvider.get('notifications', 'logTargetGone'),
+        type: 'info',
+      });
+    };
+    switch (link.kind) {
+      case 'quest': {
+        this.stateController.switchToPanel('quest');
+        if (!this.questPanelUI.focusEntry(link.id)) missing();
+        return;
+      }
+      case 'item': {
+        this.stateController.switchToPanel('inventory');
+        if (!this.inventoryUI.focusEntry(link.id)) missing();
+        return;
+      }
+      case 'rule': {
+        this.stateController.switchToPanel('rules');
+        if (!this.rulesPanelUI.focusEntry(link.id)) missing();
+        return;
+      }
+      case 'clue': {
+        this.stateController.switchToPanel('bookshelf');
+        this.bookshelfUI.openAt('clues', link.id);
+        return;
+      }
+      case 'archive': {
+        // 册子 id 与书架槽 id 的对应表**只在这里一份**：它是路由知识（哪本册子装哪类条目），
+        // 不是册子的内部知识，放在册子里反而要每本都知道自己在架上叫什么。
+        const shelfSlot: Record<string, string> = {
+          character: 'character',
+          lore: 'lore',
+          document: 'document',
+          slang: 'slang',
+          rhyme: 'rhyme',
+        };
+        const slot = shelfSlot[link.bookType];
+        this.stateController.switchToPanel('bookshelf');
+        if (slot) {
+          this.bookshelfUI.openAt(slot, link.id);
+          return;
+        }
+        // `book` 通道：id 可能是一本书，也可能是某本书里的一条轶闻。
+        // 是书就直接翻开那本；是轶闻则找它所在的书翻开（定位到条一级由阅读器自理，
+        // 这里不越过它的目录模型去指页）。
+        if (link.bookType === 'book') {
+          const books = this.archiveManager.getBooks();
+          const direct = books.find(b => b.id === link.id);
+          const owner = direct ?? books.find(b =>
+            b.pages.some(p => (p.entries ?? []).some(e => e.id === link.id)));
+          if (owner) {
+            this.bookshelfUI.openAt(`book_${owner.id}`);
+            return;
+          }
+        }
+        missing();
+        return;
+      }
+    }
   }
 
   async start(options: GameStartOptions = {}): Promise<void> {
@@ -1051,7 +1172,8 @@ export class Game {
     this.dayManager.configure(this.gameConfig.dayNight);
 
     this.inspectBox = new InspectBox(this.renderer, this.stringsProvider);
-    this.pickupNotification = new PickupNotification(this.renderer, this.stringsProvider);
+    // eventBus 给到回执条做电影化静默（过场里入队、cutscene:end 补冒）
+    this.pickupNotification = new PickupNotification(this.renderer, this.stringsProvider, this.eventBus);
     // 新任务醒目横幅（玩法文档 D9）与任务引导层（D8）：两者都是常驻展示件，
     // 不进 stateController 的面板栈（没有可交互元素，也不该抢返回栈）。
     this.questBannerUI = new QuestBannerUI(this.renderer, this.eventBus, this.stringsProvider);
@@ -1104,9 +1226,13 @@ export class Game {
     // HUD 的当前任务芯片是**查询式**的：quest:changed 只喊"该查了"，真相在 QuestManager
     this.hud.setQuestDataProvider(this.questManager);
     this.notificationUI = new NotificationUI(this.renderer, this.eventBus);
-    // 全屏面板开着时压住提示条出队：它挂在最上层，一叠就糊住面板标题与右栏正文。
-    // 只压出队，面板一关攒下的会照常冒出来。
-    this.notificationUI.setSuppressed(() => this.stateController?.currentState === 'UIOverlay');
+    // 全屏面板开着 / 过场播着时压住提示条出队：面板里一叠就糊住标题，过场里是砸在
+    // 电影化镜头脸上（审查 P1「电影化静默」）。只压出队不丢，出来再冒；
+    // priority='system' 的条（过场跳过确认）在 NotificationUI 里越过静默直接出。
+    this.notificationUI.setSuppressed(() => {
+      const s = this.stateController?.currentState;
+      return s === 'UIOverlay' || s === 'Cutscene';
+    });
     this.questPanelUI = new QuestPanelUI(
       this.renderer, this.questManager, this.stringsProvider, this.eventBus,
     );
@@ -1117,18 +1243,30 @@ export class Game {
     this.bookshelfUI = new BookshelfUI(
       this.renderer,
       this.archiveManager,
-      () => {
-        this.stateController.restorePreviousState();
-        this.stateController.togglePanel('rules');
+      // 规矩本：**另建一份实例**当书架子面板，与其余六本同形（能「返回书架」）。
+      // 不复用 R 键那一份——同一实例走两条打开路径时，`closePanel('rules')` 会去弹
+      // 书架压进 overlayReturnStack 的那一层，状态与栈直接叠歪。
+      (onClose, entryId) => {
+        const s = new RulesPanelUI(this.renderer, this.rulesManager, this.stringsProvider);
+        s.setResolveDisplay((raw) => this.resolveRichText(raw));
+        s.openAsSubPanel(onClose);
+        if (entryId) s.focusEntry(entryId);
+        return s;
       },
       (book, onClose) => {
         this.bookReaderUI.openBook(book, onClose);
         return this.bookReaderUI;
       },
-      (onClose) => { const s = new CharacterBookUI(this.renderer, this.archiveManager, onClose, this.stringsProvider, this.assetManager); s.open(); return s; },
-      (onClose) => { const s = new LoreBookUI(this.renderer, this.archiveManager, onClose, this.stringsProvider, this.assetManager); s.open(); return s; },
-      (onClose) => { const s = new DocumentBoxUI(this.renderer, this.archiveManager, onClose, this.stringsProvider, this.assetManager); s.open(); return s; },
-      (onClose) => { const s = new SlangBookUI(this.renderer, this.archiveManager, onClose, this.stringsProvider, this.assetManager); s.open(); return s; },
+      // 各本册子的 `entryId` 是事件日志「进册」条目跳过来的定位目标（可选，缺省即普通打开）。
+      // 行 key 的构造归各册自己（`char_…`/`lore_…`…），这里只把 id 递过去。
+      (onClose, entryId) => { const s = new CharacterBookUI(this.renderer, this.archiveManager, onClose, this.stringsProvider, this.assetManager); s.open(); if (entryId) s.focusEntry(entryId); return s; },
+      (onClose, entryId) => { const s = new LoreBookUI(this.renderer, this.archiveManager, onClose, this.stringsProvider, this.assetManager); s.open(); if (entryId) s.focusEntry(entryId); return s; },
+      (onClose, entryId) => { const s = new DocumentBoxUI(this.renderer, this.archiveManager, onClose, this.stringsProvider, this.assetManager); s.open(); if (entryId) s.focusEntry(entryId); return s; },
+      (onClose, entryId) => { const s = new SlangBookUI(this.renderer, this.archiveManager, onClose, this.stringsProvider, this.assetManager); s.open(); if (entryId) s.focusEntry(entryId); return s; },
+      (onClose, entryId) => { const s = new RhymeBookUI(this.renderer, this.archiveManager, onClose, this.stringsProvider, this.assetManager); s.open(); if (entryId) s.focusEntry(entryId); return s; },
+      (onClose, entryId) => { const s = new ClueBookUI(this.renderer, this.archiveManager, this.clueManager, onClose, this.stringsProvider, this.assetManager); s.open(); if (entryId) s.focusEntry(entryId); return s; },
+      // 线索簿未读 = 有已采集但没在册子里点开过的词条（读集是档案通用泛键 cluebook_<id>）
+      () => this.clueManager.getCollectedClues().some((c) => !this.archiveManager.isRead(`cluebook_${c.id}`)),
       this.stringsProvider,
     );
     this.shopUI = new ShopUI(this.renderer, this.eventBus, this.inventoryManager, this.stringsProvider, this.assetManager);
@@ -1164,6 +1302,20 @@ export class Game {
     this.cutsceneManager.init({ eventBus: this.eventBus, flagStore: this.flagStore, strings: this.stringsProvider, assetManager: this.assetManager });
     this.cutsceneManager.setInputManager(this.inputManager);
     this.cutsceneManager.setAudioManager(this.audioManager);
+    this.cutsceneManager.setVoiceChannel(this.voiceChannel);
+    this.cutsceneManager.setSkipConfirmTextProvider(() => this.stringsProvider.get('cutscene', 'skipConfirm'));
+    // K7 线索：采集回执文案 + 册面/成书/对话框的词条通道（模块级单点注入，见 ui/clueAccess）
+    this.clueManager.setCollectTextProvider((def) =>
+      this.stringsProvider.get('notifications', 'clueCollected', { title: def.title }));
+    setClueAccess({
+      isCollected: (id) => this.clueManager.isCollected(id),
+      collect: (id) => { this.clueManager.collect(id); },
+      isKnown: (id) => this.clueManager.isKnownClue(id),
+    });
+    // 面板条目切换音：与对话选项切换用同一枚（ui:hover → systemSfx.uiHover）。
+    // 接在 UIFocus 那一处，全站面板一次到位——见 UIFocus.setFocusChangeSound。
+    // 连发/同帧双响由 AudioManager 在消费端节流，这里只管"换项了"这件事实。
+    setFocusChangeSound(() => this.eventBus.emit('ui:hover', {}));
     const cmEntry = this.registeredSystems.find(e => e.name === 'cutsceneManager');
     if (cmEntry) cmEntry.system = this.cutsceneManager;
     /**
@@ -1496,6 +1648,7 @@ export class Game {
       dayManager: this.dayManager,
       npcScheduleSystem: this.npcScheduleSystem,
       archiveManager: this.archiveManager,
+      clueManager: this.clueManager,
       cutsceneManager: this.cutsceneManager,
       sceneManager: this.sceneManager,
       emoteBubbleManager: this.emoteBubbleManager,
@@ -1663,6 +1816,7 @@ export class Game {
       healthSystem: this.healthSystem,
       smellSystem: this.smellSystem,
       planeReconciler: this.planeReconciler,
+      voiceChannel: this.voiceChannel,
     });
 
     /** D1：DEV 下对照 actionParamManifest 与 executor 实际注册互查，防三方参数表再漂移 */
@@ -1793,6 +1947,18 @@ export class Game {
       })();
     });
 
+    // K7 线索采集动作批（与 archive:firstView 同一范式）：采集=内容事件，
+    // collectActions 经统一执行器跑——解锁文书/推 flag/起对话都行，入册只是默认呈现之一。
+    this.listenEvent('clue:collectActions', (p: { id: string; actions: ActionDef[] }) => {
+      void (async () => {
+        try {
+          await this.actionExecutor.executeBatchAwait(p.actions);
+        } catch (e) {
+          console.warn(`Game: clue:collectActions(${p.id}) failed`, e);
+        }
+      })();
+    });
+
     this.eventBridge = new EventBridge(this.eventBus, {
       dialogueManager: this.dialogueManager,
       graphDialogueManager: this.graphDialogueManager,
@@ -1803,6 +1969,7 @@ export class Game {
       menuUI: this.menuUI,
       inspectBox: this.inspectBox,
       guardMapTravel: () => this.guardMapTravel(),
+      consumeItem: (itemId, count) => this.inventoryManager.removeItem(itemId, count),
     });
     this.eventBridge.init();
 
@@ -2043,6 +2210,7 @@ export class Game {
       this.audioManager.loadConfig(),
       this.cutsceneManager.loadDefs(),
       this.archiveManager.loadDefs(),
+      this.clueManager.loadDefs(),
       this.shopUI.loadDefs(),
       this.mapUI.loadConfig(),
     ]);
@@ -2051,6 +2219,7 @@ export class Game {
     await this.refreshTextResolveLookups();
     if (this.tearDownComplete) return;
     this.wireTextResolve();
+    this.wireGameLog();
 
     this.debugPanelUI.attachFlagDebug(this.flagStore, this.eventBus);
     /** F2「场景」页：与 DebugTools 同一条 DEV 门控——生产玩家没有任意跳场景的入口。 */
@@ -2686,6 +2855,12 @@ export class Game {
           }
         }
       }
+      // 本方法是**逐键白名单**拷贝，漏一个键 = 那份配置永远读不到、且毫无动静。
+      // dayNight 此前就漏在这儿：`GameConfig.dayNight` 有类型、`DayManager.configure`
+      // 有实现、校验器还拿 `game_config.dayNight.phases` 校验 timePhase 条件——
+      // 唯独没人把它从 JSON 搬进来，于是 configure() 恒收 undefined、时段表恒是
+      // DEFAULT_PHASES，作者配了自定义时段却一点反应都没有。
+      if (cfg.dayNight) this.gameConfig.dayNight = cfg.dayNight;
       if (cfg.viewport) this.gameConfig.viewport = cfg.viewport;
       if (cfg.windowSize) this.gameConfig.windowSize = cfg.windowSize;
       if (cfg.playerAvatar !== undefined) {
@@ -3922,19 +4097,52 @@ export class Game {
 
   private registerUIPanels(): void {
     this.injectPanelCloseRequesters();
+    // HUD 右下入口条 / 芯片点击 → 面板开关（关旧开新的「换过去」语义，见 switchToPanel）
+    this.hud.setPanelOpener((name) => this.stateController.switchToPanel(name));
+    // 确认框在场时控制器整帧不吃键盘（Esc 双消费修复，见 UIConfirmDialog.isConfirmDialogOpen）
+    this.stateController.setKeySuppressor(() => isConfirmDialogOpen());
     this.stateController.registerPanel('quest', this.questPanelUI, 'Tab');
     this.stateController.registerPanel('inventory', this.inventoryUI, 'KeyI');
     this.stateController.registerPanel('rules', this.rulesPanelUI, 'KeyR');
-    this.stateController.registerPanel('dialogueLog', this.dialogueLogUI, 'KeyL');
+    // 对话/遭遇里最需要回看上一句（审查 P1：那时 KeyL 恰恰是死键），放行到叙事态；
+    // 过场/小游戏/标题仍不可开（guard），另一面板开着时允许叠开（UIOverlay）。
+    this.stateController.registerPanel('dialogueLog', this.dialogueLogUI, 'KeyL', {
+      alwaysOpenable: true,
+      openGuard: () => {
+        const s = this.stateController.currentState;
+        return s === GameState.Exploring || s === GameState.Dialogue
+          || s === GameState.Encounter || s === GameState.UIOverlay;
+      },
+    });
     this.stateController.registerPanel('bookshelf', this.bookshelfUI, 'KeyB');
     this.stateController.registerPanel('map', this.mapUI, 'KeyM', {
       openGuard: () => this.guardMapTravel(),
     });
     // 「用规矩」面板键位 F→G（2026-08-03）：F 让给身体动词「上脚」，面板键与
     // Tab/I/R/L/B/M 一族归位。改此处须同步 TouchMobileControls 与 strings 的按键说明。
-    this.stateController.registerPanel('ruleUse', this.ruleUseUI, 'KeyG');
+    // openGuard：区里没有可用规矩槽时按 G 不再静默（审查 P1「亮 [G] 按了没反应」），
+    // 拒绝提示按 RegisterPanelOptions 的约定由注册方在守卫内自行发。
+    this.stateController.registerPanel('ruleUse', this.ruleUseUI, 'KeyG', {
+      openGuard: () => {
+        if (this.ruleUseUI.hasUsableSlots()) return true;
+        this.eventBus.emit('notification:show', {
+          text: this.stringsProvider.get('ruleUse', 'noneUsable'),
+          type: 'info',
+        });
+        return false;
+      },
+    });
     this.stateController.registerPanel('shop', this.shopUI);
-    this.stateController.registerPanel('menu', this.menuUI);
+    // 对话/遭遇里 Esc 也能呼出暂停（escapeFallback → togglePanel('menu') 要过 canOpen 闸，
+    // 故 alwaysOpenable + guard 限定叙事态；过场/小游戏各有自己的 Esc 通道）。
+    this.stateController.registerPanel('menu', this.menuUI, undefined, {
+      alwaysOpenable: true,
+      openGuard: () => {
+        const s = this.stateController.currentState;
+        return s === GameState.Exploring || s === GameState.Dialogue
+          || s === GameState.Encounter || s === GameState.UIOverlay;
+      },
+    });
     /** T1：F2 调试坞仅 DEV 注册（门控判据与 TouchMobileControls 的「调试」chip 一致）；
      *  生产构建下 F2 与触屏调试入口都不存在。 */
     if (import.meta.env.DEV) {
@@ -3963,6 +4171,9 @@ export class Game {
       this.touchMobileControls.setVerbAvailabilityReader(
         (verb) => this.playerActionSystem.isVerbUsable(verb as PlayerVerb),
       );
+      // 未读点与桌面入口条同一判据（K3）：触屏玩家一样要知道「刚才那几条还在」
+      this.touchMobileControls.setPanelUnreadProvider((panel) =>
+        panel === 'dialogueLog' && this.gameLogManager.unreadCount() > 0);
     }
   }
 
@@ -4732,7 +4943,8 @@ export class Game {
     for (const entry of this.registeredSystems) {
       if (entry.system) data[entry.name] = entry.system.serialize();
     }
-    data.dialogueLog = this.dialogueLogUI.serialize();
+    // 事件日志走 registeredSystems 的统一序列化通道（桶名 `gameLogManager`）——
+    // 升级前它是"UI 自持状态 + 这里手工挂一桶"，那是 UI 持真相的形状，已随 K3 下沉。
     data.game = { playTimeMs: this.playTimeMs, randomState: this.runtimeRandom.getState() };
     /** 玩家站位：不进 sceneManager 的 sceneMemory（那是场景实体的覆盖桶，玩家不是场景实体），
      *  单列一桶。缺该键的旧档读回时回落到出生点（见 distributeSaveData）。 */
@@ -4751,12 +4963,19 @@ export class Game {
     this.questManager.setRestoring(true);
     this.archiveManager.setRestoring(true);
     this.narrativePackageDirector.setRestoring(true);
+    // 事件日志同样闸住：各系统 deserialize 会补发 quest:accepted{restored} / 档案重评等
+    // 一大堆事件，不挡的话读一次档日志里就多出一屏假记录（K3 红线一）。
+    this.gameLogManager.setRestoring(true);
     try {
       if (data['flagStore']) this.flagStore.deserialize(data['flagStore'] as Record<string, boolean | number>);
       for (const entry of this.registeredSystems) {
         if (entry.system && data[entry.name]) entry.system.deserialize(data[entry.name]);
       }
-      if (data['dialogueLog']) this.dialogueLogUI.deserialize(data['dialogueLog'] as any);
+      // 旧档兼容：K3 之前日志是 UI 自持的 `dialogueLog` 桶（只有对话、无序号无通道）。
+      // 新桶缺席时把它迁进来——开了新版本不该把老档的记录清空。
+      if (!data['gameLogManager'] && data['dialogueLog']) {
+        this.gameLogManager.migrateLegacyDialogueLog(data['dialogueLog'] as { entries?: DialogueLogEntry[] });
+      }
       if (data['game']) {
         this.playTimeMs = (data['game'] as any).playTimeMs ?? 0;
         this.runtimeRandom.setState((data['game'] as any).randomState);
@@ -4766,6 +4985,7 @@ export class Game {
       this.questManager.setRestoring(false);
       this.archiveManager.setRestoring(false);
       this.narrativePackageDirector.setRestoring(false);
+      this.gameLogManager.setRestoring(false);
     }
   }
 
@@ -5998,6 +6218,9 @@ export class Game {
 
     this.interactionCoordinator?.destroy();
     this.eventBridge?.destroy();
+    /** 配音导演不在 registeredSystems 里（无存档态），显式摘监听 + 停在播人声 */
+    this.dialogueVoiceDirector?.destroy();
+    this.voiceChannel?.stopAll();
     this.debugTools?.destroy();
     this.debugTools = null;
     this.depthDebugVisualizer?.destroy();
@@ -6010,6 +6233,10 @@ export class Game {
     for (const entry of this.registeredSystems) {
       if (entry.system) entry.system.destroy();
     }
+    // 模块级注入复位（生命周期对称：destroy 后再 init 与首启一致；
+    // 切换音的钩子还捏着已销毁那局的 eventBus，不摘就是一条跨局的死引用）
+    setClueAccess(null);
+    setFocusChangeSound(null);
 
     // 各系统/UI/桥接均已各自 off 监听后，再清空总线作为兜底；
     // 早于各 destroy() 清空会使各模块的 off() 作用在空总线上，掩盖其监听泄漏。

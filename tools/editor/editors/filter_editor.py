@@ -8,7 +8,7 @@ from PySide6.QtCore import QProcess, Qt
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QListWidget,
     QFormLayout, QLineEdit, QPushButton, QLabel, QDoubleSpinBox, QMessageBox,
-    QComboBox,
+    QComboBox, QSizePolicy,
 )
 
 from ..project_model import ProjectModel
@@ -81,6 +81,13 @@ class FilterEditor(QWidget):
         rl = QVBoxLayout(right)
         self._path_lbl = QLabel()
         self._path_lbl.setWordWrap(True)
+        # 这行显示的是**任意长度的绝对路径**。setWordWrap 对它无效：路径里没有空格，
+        # 整条就是一个不可断的 token，QLabel 的 minimumSizeHint 于是恒等于整条路径的
+        # 像素宽（实测 962px），把整个面板的最小宽顶出 13″ 预算——路径越深越糟，
+        # 而路径深度是用户机器决定的，不该反过来决定面板能不能在小屏上打开。
+        # Ignored 让布局不再拿它的 hint 当下限；文字仍照常换行/裁切，全文进 tooltip。
+        self._path_lbl.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self._path_lbl.setStyleSheet(
             app_theme.secondary_label_stylesheet(app_theme.current_theme_id()))
         rl.addWidget(self._path_lbl)
@@ -152,6 +159,7 @@ class FilterEditor(QWidget):
     def _update_path_label(self) -> None:
         if self._model.project_path is None:
             self._path_lbl.setText("未打开工程")
+            self._path_lbl.setToolTip("")
             self._btn_tool.setEnabled(False)
             self._btn_reload.setEnabled(False)
             return
@@ -159,6 +167,8 @@ class FilterEditor(QWidget):
         self._btn_reload.setEnabled(True)
         p = filters_json_dir(self._model.project_path)
         self._path_lbl.setText(f"目录（与 filter_tool 一致）：{p}")
+        # 标签横向策略是 Ignored（见构造处），窄面板下这行会被裁；全路径进 tooltip 兜底
+        self._path_lbl.setToolTip(str(p))
 
     def _on_model_data_changed(self, data_type: str, _item_id: str) -> None:
         if data_type != "filter":

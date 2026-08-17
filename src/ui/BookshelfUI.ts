@@ -1,7 +1,7 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import { UITheme, fadeIn } from './UITheme';
 import { createPanel, SKINS } from './PanelSkin';
-import { createIcon, createKeyCap, createRule, createTitleRow, drawSelectedRow } from './components/UIDecor';
+import { createIcon, createKeyCap, createRule, createTitleRow, drawFocusRing, drawHoverRow } from './components/UIDecor';
 import { UIFocus, type FocusItem } from './components/UIFocus';
 import { markPointerConsumed } from './uiPointerCoords';
 import type { UIIconName } from './UIIcons';
@@ -58,10 +58,20 @@ interface BookSlot {
   hasUnread: boolean;
 }
 
-/** 打开子面板的回调类型，返回带 close 的句柄 */
-export type OnOpenSubPanel = (onClose: () => void) => { close(): void };
+/** 子面板句柄：close 必须有；handleEscapeStep 可选（阅读器这类内部还有层级的实现它） */
+export interface BookshelfSubPanel {
+  close(): void;
+  handleEscapeStep?(): boolean;
+}
+/**
+ * 打开子面板的回调类型，返回带 close 的句柄。
+ *
+ * `entryId` 是**可选的定位目标**（事件日志「进册」条目跳过来时给）：工厂开完册子后
+ * 自己把它翻译成本册的行 key 并选中。参数可选，既有工厂只取第一个参数仍旧成立。
+ */
+export type OnOpenSubPanel = (onClose: () => void, entryId?: string) => BookshelfSubPanel;
 /** 打开独立书籍时的回调，返回带 close 的句柄供书架在关闭子面板时使用 */
-export type OnOpenBook = (book: BookDef, onClose: () => void) => { close(): void };
+export type OnOpenBook = (book: BookDef, onClose: () => void, entryId?: string) => BookshelfSubPanel;
 
 /** 中文竖排：Pixi 没有 writing-mode，逐字换行即竖排（代理对安全地按码点拆）。 */
 function verticalize(label: string): string {
@@ -86,14 +96,17 @@ export class BookshelfUI {
   private archiveData: IArchiveDataProvider;
   private container: Container | null = null;
   private _isOpen = false;
-  private activeSubPanel: { close(): void } | null = null;
+  private activeSubPanel: BookshelfSubPanel | null = null;
   private closeRequester: (() => void) | null = null;
-  private onOpenRules: () => void;
+  private onOpenRules: OnOpenSubPanel;
   private onOpenBook: OnOpenBook;
   private onOpenCharacters: OnOpenSubPanel;
   private onOpenLore: OnOpenSubPanel;
   private onOpenDocuments: OnOpenSubPanel;
   private onOpenSlang: OnOpenSubPanel;
+  private onOpenRhymes: OnOpenSubPanel;
+  private onOpenClues: OnOpenSubPanel;
+  private cluesHasUnread: () => boolean;
   private strings: StringsProvider;
   /**
    * 键盘/手柄焦点。书脊是一排二维可导航木牌，✕ 与底部键帽各自成组——
@@ -110,12 +123,16 @@ export class BookshelfUI {
   constructor(
     renderer: Renderer,
     archiveData: IArchiveDataProvider,
-    onOpenRules: () => void,
+    onOpenRules: OnOpenSubPanel,
     onOpenBook: OnOpenBook,
     onOpenCharacters: OnOpenSubPanel,
     onOpenLore: OnOpenSubPanel,
     onOpenDocuments: OnOpenSubPanel,
     onOpenSlang: OnOpenSubPanel,
+    onOpenRhymes: OnOpenSubPanel,
+    onOpenClues: OnOpenSubPanel,
+    /** 线索簿的未读判据（真相在 ClueManager+读集，书架只问不算） */
+    cluesHasUnread: () => boolean,
     strings: StringsProvider,
   ) {
     this.renderer = renderer;
@@ -126,6 +143,9 @@ export class BookshelfUI {
     this.onOpenLore = onOpenLore;
     this.onOpenDocuments = onOpenDocuments;
     this.onOpenSlang = onOpenSlang;
+    this.onOpenRhymes = onOpenRhymes;
+    this.onOpenClues = onOpenClues;
+    this.cluesHasUnread = cluesHasUnread;
     this.strings = strings;
     this.onKeyBound = (e) => this.onKey(e);
   }
@@ -174,6 +194,9 @@ export class BookshelfUI {
       { id: 'lore', label: this.strings.get('bookshelf', 'lore'), icon: 'book', hasUnread: this.archiveData.hasUnread('lore') },
       { id: 'document', label: this.strings.get('bookshelf', 'documents'), icon: 'scroll', hasUnread: this.archiveData.hasUnread('document') },
       { id: 'slang', label: this.strings.get('bookshelf', 'slang'), icon: 'bowl', hasUnread: this.archiveData.hasUnread('slang') },
+      { id: 'rhyme', label: this.strings.get('bookshelf', 'rhymes'), icon: 'lantern', hasUnread: this.archiveData.hasUnread('rhyme') },
+      // 第七本（K7 线索簿）：玩家自己摘的词条；图标=线团（2026-08-17 批产民俗图标）
+      { id: 'clues', label: this.strings.get('bookshelf', 'clues'), icon: 'thread', hasUnread: this.cluesHasUnread() },
     ];
     const dynamicBooks = this.archiveData.getUnlockedBooks();
 
@@ -221,8 +244,11 @@ export class BookshelfUI {
       this.container.addChild(plank);
     }
 
+    // 固定书册六本起超过一行，与动态书籍走同一套折行：第六本落第二行首格
     fixedBooks.forEach((slot, i) => {
-      this.drawBookSlot(slot, startX + i * (PLAQUE_W + PLAQUE_GAP), startY);
+      const col = i % COLS;
+      const row = Math.floor(i / COLS);
+      this.drawBookSlot(slot, startX + col * (PLAQUE_W + PLAQUE_GAP), startY + row * (PLAQUE_H + ROW_GAP));
     });
 
     dynamicBooks.forEach((book, i) => {
@@ -246,7 +272,7 @@ export class BookshelfUI {
       this.focusInit = true;
     }
     // setItems 按同 id 复位时不会重放 onFocus（currentId 没变），新一批显示对象拿不到高亮 → 补一次
-    this.focus.current?.onFocus(true);
+    this.focus.repaint();
 
     this.renderer.uiLayer.addChild(this.container);
     fadeIn(this.container);
@@ -254,8 +280,8 @@ export class BookshelfUI {
 
   /**
    * 一块竖立木牌：木框 + 暗底 + 顶端木刻图标 + 竖排书名，右上角未读红点。
-   * 悬停时整块铺一层琥珀（`drawSelectedRow`），书名同步转 `colors.title`——
-   * 设计稿里"选中"是点亮一档，不是换个深色。
+   * 鼠标压着 = 极淡暖底；手柄光标停着 = 空心金框 + 书名转 `colors.title`。
+   * 两张画法必须不同，否则"鼠标划过"与"当前选中"在屏幕上分不开（见 UIFocus 三态表）。
    */
   private drawBookSlot(slot: BookSlot, x: number, y: number): void {
     const plaque = new Container();
@@ -268,11 +294,18 @@ export class BookshelfUI {
       fillAlpha: UITheme.alpha.panelBg,
     }));
 
+    // 悬停（极淡暖底）与导航光标（空心金框）两张。书架上没有"选中的那本书"这一态——
+    // 点下去就直接翻开了——所以只有这两张，见 UIFocus 类注释的三态表。
     const glow = new Graphics();
-    drawSelectedRow(glow, GLOW_INSET, GLOW_INSET, PLAQUE_W - GLOW_INSET * 2, PLAQUE_H - GLOW_INSET * 2);
+    drawHoverRow(glow, GLOW_INSET, GLOW_INSET, PLAQUE_W - GLOW_INSET * 2, PLAQUE_H - GLOW_INSET * 2);
     glow.alpha = 0;
     glow.eventMode = 'none';
     plaque.addChild(glow);
+    const ring = new Graphics();
+    drawFocusRing(ring, GLOW_INSET, GLOW_INSET, PLAQUE_W - GLOW_INSET * 2, PLAQUE_H - GLOW_INSET * 2);
+    ring.alpha = 0;
+    ring.eventMode = 'none';
+    plaque.addChild(ring);
 
     // 图标压暗一档：它是书名的陪衬，跟书名同亮度会把牌面看花
     const icon = createIcon(slot.icon, ICON_SIZE, UITheme.colors.goldDim);
@@ -329,17 +362,19 @@ export class BookshelfUI {
     // 悬停即移焦：鼠标与手柄共用同一个"当前项"，高亮统一由 onFocus 画（就是原来的悬停画法）。
     // 原先的 pointerout 复位去掉了——移开鼠标不该把唯一的焦点擦掉，焦点恒有一个可见。
     hit.on('pointerover', () => this.focus.syncHover(slot.id));
+    hit.on('pointerout', () => this.focus.clearHover(slot.id));
     plaque.addChild(hit);
 
     this.focusPlaques.push({
       id: slot.id,
       x, y, w: PLAQUE_W, h: PLAQUE_H,
       group: 'plaques',
-      // 焦点高亮 = 这块牌子原本的悬停画法（琥珀铺光 + 书名转 title），不另发明焦点框
-      onFocus: (on) => {
-        if (glow.destroyed || label.destroyed) return;
-        glow.alpha = on ? 0.85 : 0;
-        label.style.fill = on ? UITheme.colors.title : UITheme.colors.bookLabel;
+      onFocus: (on, via) => {
+        if (glow.destroyed || ring.destroyed || label.destroyed) return;
+        glow.alpha = on && via === 'pointer' ? 1 : 0;
+        ring.alpha = on && via === 'key' ? 1 : 0;
+        // 书名只跟导航光标提亮：鼠标划过只出那层暖底，字色一起变就又像"选中了"
+        label.style.fill = on && via === 'key' ? UITheme.colors.title : UITheme.colors.bookLabel;
       },
       onActivate: () => this.onBookClick(slot.id),
     });
@@ -361,6 +396,7 @@ export class BookshelfUI {
     row.eventMode = 'static';
     row.cursor = 'pointer';
     row.on('pointerover', () => this.focus.syncHover('closeHint'));
+    row.on('pointerout', () => this.focus.clearHover('closeHint'));
     row.on('pointerdown', (e: { nativeEvent?: unknown }) => {
       markPointerConsumed(e.nativeEvent);
       this.requestClose();
@@ -394,6 +430,7 @@ export class BookshelfUI {
     c.eventMode = 'static';
     c.cursor = 'pointer';
     c.on('pointerover', () => this.focus.syncHover('close'));
+    c.on('pointerout', () => this.focus.clearHover('close'));
     c.on('pointerdown', (e) => {
       markPointerConsumed((e as { nativeEvent?: unknown }).nativeEvent);
       this.requestClose();
@@ -426,47 +463,35 @@ export class BookshelfUI {
     this.closeRequester = fn;
   }
 
-  private onBookClick(bookId: string): void {
+  /**
+   * 打开一本（木牌点击、回车激活、以及事件日志的跳转都走这条）。
+   *
+   * 规矩本与其余六本走同一条路（子面板 + 返回书架）。旧写法是
+   * `this.close(); this.onOpenRules();`——书架整个关掉再另开一个注册面板，
+   * 于是它是架上唯一一本"进去就回不来"的书。
+   *
+   * @param entryId 可选：开完顺手定位到某一条（事件日志「进册」条目跳过来时给）。
+   *   具体 key 的构造归各本册子自己，本类只负责把 id 递过去。
+   */
+  private onBookClick(bookId: string, entryId?: string): void {
     this.closeSubPanel();
+    const backToShelf = (): void => {
+      this.closeSubPanel();
+      this.buildShelf();
+    };
 
-    if (bookId === 'rules') {
-      this.close();
-      this.onOpenRules();
-      return;
-    }
-
-    if (bookId === 'character') {
-      this.activeSubPanel = this.onOpenCharacters(() => {
-        this.closeSubPanel();
-        this.buildShelf();
-      });
-      this.destroyShelfOnly();
-      return;
-    }
-
-    if (bookId === 'lore') {
-      this.activeSubPanel = this.onOpenLore(() => {
-        this.closeSubPanel();
-        this.buildShelf();
-      });
-      this.destroyShelfOnly();
-      return;
-    }
-
-    if (bookId === 'document') {
-      this.activeSubPanel = this.onOpenDocuments(() => {
-        this.closeSubPanel();
-        this.buildShelf();
-      });
-      this.destroyShelfOnly();
-      return;
-    }
-
-    if (bookId === 'slang') {
-      this.activeSubPanel = this.onOpenSlang(() => {
-        this.closeSubPanel();
-        this.buildShelf();
-      });
+    const fixed: Record<string, OnOpenSubPanel | undefined> = {
+      rules: this.onOpenRules,
+      character: this.onOpenCharacters,
+      lore: this.onOpenLore,
+      document: this.onOpenDocuments,
+      slang: this.onOpenSlang,
+      rhyme: this.onOpenRhymes,
+      clues: this.onOpenClues,
+    };
+    const openFixed = fixed[bookId];
+    if (openFixed) {
+      this.activeSubPanel = openFixed(backToShelf, entryId);
       this.destroyShelfOnly();
       return;
     }
@@ -476,13 +501,38 @@ export class BookshelfUI {
       const books = this.archiveData.getBooks();
       const book = books.find(b => b.id === realId);
       if (book) {
-        this.activeSubPanel = this.onOpenBook(book, () => {
-          this.closeSubPanel();
-          this.buildShelf();
-        });
+        this.activeSubPanel = this.onOpenBook(book, backToShelf, entryId);
         this.destroyShelfOnly();
       }
     }
+  }
+
+  /**
+   * 直接开到某一本（可选再定位到某一条）——事件日志「进册」条目的跳转落点。
+   *
+   * 书架本身必须先开着（由组装层经 `switchToPanel('bookshelf')` 保证走统一的
+   * 状态机通道），这里只负责把子面板拉起来；`bookId` 用书架自己的槽 id
+   * （`character` / `lore` / `document` / `slang` / `rhyme` / `clues` / `rules` /
+   * `book_<书id>`），与木牌点击同一套。
+   */
+  openAt(bookId: string, entryId?: string): void {
+    if (!this._isOpen || !bookId) return;
+    this.onBookClick(bookId, entryId);
+  }
+
+  /**
+   * Esc = **退一层**（GameStateController.handleEscape 的面板钩子）：
+   * 子册还有内层（阅读器章节页→目录）先让子册退；否则子册退回书架；
+   * 书架根层返回 false，由控制器关整个面板。旧行为是控制器直接跳级全关（审查 P1）。
+   */
+  handleEscapeStep(): boolean {
+    if (this.activeSubPanel) {
+      if (this.activeSubPanel.handleEscapeStep?.()) return true;
+      this.closeSubPanel();
+      this.buildShelf();
+      return true;
+    }
+    return false;
   }
 
   private closeSubPanel(): void {

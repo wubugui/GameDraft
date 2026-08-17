@@ -110,6 +110,15 @@ export class DayManager implements IGameSystem {
     return phaseAt(this.phases, this._minutesOfDay);
   }
 
+  /**
+   * 当前时段的**展示名**（拂晓/白日/黄昏/入夜）。时段表没配 label 就退回 id——
+   * 给玩家看的地方（事件日志的日/时段分组）用它，别在显示层拿 `currentPhase` 的裸 id。
+   */
+  get currentPhaseLabel(): string {
+    const id = this.currentPhase;
+    return this.phases.find((p) => p.id === id)?.label ?? id;
+  }
+
   /** 时段表（只读副本，供调试面板/编辑器预览）。 */
   get phaseList(): ResolvedPhase[] {
     return this.phases.map((p) => ({ ...p }));

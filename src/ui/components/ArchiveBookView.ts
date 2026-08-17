@@ -1,9 +1,9 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import { UITheme } from '../UITheme';
-import { drawPanelBase, SKINS } from '../PanelSkin';
-import { buildRichContent } from '../RichContent';
-import { markPointerConsumed } from '../uiPointerCoords';
-import { createRule, drawSelectedRow } from './UIDecor';
+import { SKINS } from '../PanelSkin';
+import { buildRichContent, buildRichDoc, RICH_DARK, type RichBlock, type RichContentOptions } from '../RichContent';
+import { createRule } from './UIDecor';
+import { UIListRow } from './UIListRow';
 import { UIFocus, type FocusItem } from './UIFocus';
 import { UIWindow } from './UIWindow';
 import { UIScrollView } from './UIScrollView';
@@ -11,6 +11,7 @@ import type { Renderer } from '../../rendering/Renderer';
 import type { ActionDef, IArchiveDataProvider } from '../../data/types';
 import type { AssetManager } from '../../core/AssetManager';
 import { createStyledText } from '../../core/styledText';
+import { getClueAccess } from '../clueAccess';
 
 /**
  * 档案册通用视图：左列表 + 右正文，全站四本册子（见闻录 / 杂书匣 / 人物簿 / 怪话册）
@@ -25,6 +26,26 @@ import { createStyledText } from '../../core/styledText';
  * 左栏是一叠行牌（选中整条铺琥珀 + 金描边、未读一颗红点），两栏之间一条极淡竖线，
  * 右栏是「琥珀大标题 → 渐隐横线 → 纸灰白正文」。**正文首行不再重复标题**——
  * 标题由这里统一渲染，各册的 `buildDetail()` 只出正文。
+ *
+ * ## 右栏为什么**不是**一张米白纸页（2026-08-17 撤销批3a 的"商业档案观感"）
+ *
+ * 曾经这里嵌了一块 `SKINS.paperPage`（米白旧纸 + 墨字），实测数据：面板内容区的底是
+ * **(9,8,6)**、相对亮度 0.0024，而那张纸是 (220,203,170)、亮度 0.608——**亮 248 倍**，
+ * 两者之间的对比度 12.6:1。也就是说，在一款整屏都活在明度最低那 5% 里的夜戏游戏里，
+ * 这块 UI 自己成了全屏最亮的光源，比主菜单标题、比三把火、比场景里任何一盏灯都亮。
+ * 三条后果，条条踩在这游戏的立身之本上：
+ *
+ * 1. **它是一盏灯**。暗近黑 + 旧木 + 琥珀这套配色的分量全在"暗"上；开一块亮面板等于
+ *    在志怪夜戏中间打开日光灯，气氛一刀两断。
+ * 2. **它烧掉暗适应**。恐怖游戏刻意把玩家的眼睛养在暗适应状态里，场景的辐射度还原
+ *    也是照着这个前提烘的；看完一屏亮纸再退回场景，那些幽微的层次要好几秒才看得见——
+ *    等于用 UI 主动破坏自家美术最贵的那部分。
+ * 3. **它是第五种材质、第二套色板**。全站语汇是"木牌 + 暗底 + 琥珀"，纸页只出现在册子
+ *    与成书两处，读起来像从另一个游戏贴过来的；且它逼出一整套 `paperInk`
+ *    （五档灰 + 六个语义色 + 词条色）要与暗底那套**永远同步维护**。
+ *
+ * 现在右栏回到规矩本那条已定稿的版式：**两栏＝一本摊开的书的两页**，中间一条极淡竖线，
+ * 右栏没有自己的底。要"纸"的意思，靠的是纸纹材质与暖色，不是靠把明度拉到顶。
  */
 
 /** 一行条目。`enabled:false` 即灰槽——列出来但点不动（怪话册的未收集格）。 */
@@ -34,8 +55,13 @@ export interface ArchiveRow {
   label: string;
   enabled: boolean;
   firstViewActions?: ActionDef[];
-  /** 点开时现拼正文（rich content 字符串，支持 [img:…]）。**不含标题**——标题走 `label` */
-  buildDetail: () => string;
+  /** 点开时现拼正文（rich content 标记字符串）。**不含标题**——标题走 `label` */
+  buildDetail?: () => string;
+  /**
+   * 结构化正文（优先于 buildDetail）：五本册子把印象/例句/来源/批注拼成块结构，
+   * 语义字段各有声部（标题/引文/弱化段），不再拍平成一种字号一种颜色（审查 P1 最实锤）。
+   */
+  buildDetailDoc?: () => RichBlock[];
 }
 
 /** 一个分组。`header` 留空即不分组（见闻录/杂书匣/人物簿都是单组）。 */
@@ -62,6 +88,13 @@ export interface ArchiveBookViewOptions {
 }
 
 /**
+ * 线索通道（K7）已搬去 {@link ../clueAccess}——二阶段把词条落进对话框之后，
+ * `DialogueUI` 也要用它，而对话框 import 册子组件只为拿一个全局单例是耦合噪音。
+ * 这里保留 re-export 只是为了本文件内部用得顺手，**注入口只有一个**（`setClueAccess`）。
+ */
+export type { ClueAccess } from '../clueAccess';
+
+/**
  * 左栏列宽。条目名走 body 档（20），列窄了「[传说] 城隍庙夜话」这类名字要折三行，
  * 一屏就只剩五六条——**宽一点反而更密**。右栏仍有 450+ 的正文宽度，不亏。
  */
@@ -80,6 +113,15 @@ const DOT_COL_W = 16;
  * 等于 1.1 倍，中文方块字在这个行距下会连成一堵墙。1.6 倍才是长文该有的呼吸。
  */
 const DETAIL_LINE_H = 32;
+/**
+ * 正文栏离中缝的内白。
+ *
+ * 曾经这里是"米白纸页"的页边距（批3a 的商业档案观感），已撤——**这个游戏没有亮面板**，
+ * 理由见 {@link ArchiveBookView} 顶部的注释。留下的是它带来的那条纪律：
+ * 中缝位置 / 滚动视口宽 / 排版换行宽**必须同出一源**。旧版三者互相不认账
+ * （换行宽比视口还宽 12px），长行末字被切在栏外——歪歌册截图里「只有」「脑壳」两处。
+ */
+export const PAGE_PAD = UITheme.spacing.xl;
 
 export class ArchiveBookView {
   private renderer: Renderer;
@@ -93,6 +135,8 @@ export class ArchiveBookView {
   private detailKey: string | null = null;
   /** 本次布局实际用的左栏宽（窄画布下按内容区比例收一道，见 `build`） */
   private listW = LIST_W;
+  /** 本次布局的正文栏宽（= 纸宽 - 两倍页边距）。视口与换行共用这一个值 */
+  private detailW = 1;
   /**
    * 键盘/手柄焦点。册子只有左栏条目一组可交互（右栏是正文，窗体的 ✕ / 关闭提示归 `UIWindow`），
    * 所以不分多组；灰槽（未收集条目）以 `disabled` 登记，不吃焦点。
@@ -123,7 +167,16 @@ export class ArchiveBookView {
 
   close(): void {
     window.removeEventListener('keydown', this.onKeyBound);
-    this.teardown();
+    // 关场淡出：先把输入面摘干净（滚动区的 wheel/拖动、上面的 keydown），
+    // 再让窗体带着视觉淡出自毁——尸体窗只是视觉，绝不吃输入。
+    // 重建路径（build → teardown）保持瞬时 destroy，不走这里。
+    this.list?.detachInput();
+    this.detail?.detachInput();
+    const win = this.win;
+    this.list = null;
+    this.detail = null;
+    this.win = null;
+    win?.fadeOutAndDestroy();
     this.focus.destroy();
     this.focusItems = [];
     // 复位默认焦点标志：四本册子的 view 实例是**跨开关复用**的（LoreBookUI 等在构造期建一次），
@@ -131,9 +184,13 @@ export class ArchiveBookView {
     this.focusInit = false;
   }
 
-  /** 供书架当子面板句柄用 */
+  /** 供书架当子面板句柄用（真销毁走瞬时路径，不播关场动画） */
   destroy(): void {
-    this.close();
+    window.removeEventListener('keydown', this.onKeyBound);
+    this.teardown();
+    this.focus.destroy();
+    this.focusItems = [];
+    this.focusInit = false;
   }
 
   private teardown(): void {
@@ -200,17 +257,20 @@ export class ArchiveBookView {
     // 否则 248 的定宽会把右栏挤成负宽度。
     this.listW = Math.max(140, Math.min(LIST_W, Math.round(win.bodyWidth * 0.36)));
     const listW = this.listW;
-    const detailX = listW + UITheme.spacing.xl;
-    const detailW = Math.max(1, win.bodyWidth - detailX);
 
-    // 两栏之间一条极淡竖线（设计稿里书页中缝就是这么一条），不是描边也不是色块
+    // 两栏之间一条极淡竖线（书脊位），与规矩本同一条：这是"一本摊开的书的两页"，
+    // 不是"暗底面板里嵌了一张亮纸"。竖线之外不给右栏任何底——右栏就是这块面板本身。
+    const dividerX = listW + UITheme.spacing.lg;
     const divider = new Graphics();
-    const divX = listW + UITheme.spacing.md;
-    divider.moveTo(divX, 0);
-    divider.lineTo(divX, win.bodyHeight);
-    divider.stroke({ color: UITheme.colors.hairline, width: 1, alpha: UITheme.alpha.hairline });
+    divider.rect(dividerX, 0, 1, win.bodyHeight);
+    divider.fill({ color: UITheme.colors.hairline, alpha: UITheme.alpha.hairline });
     divider.eventMode = 'none';
     win.body.addChild(divider);
+
+    // 中缝 / 视口宽 / 换行宽同出一源（见 PAGE_PAD）；右沿留一档给滚动条的道
+    const detailX = dividerX + PAGE_PAD;
+    const detailW = Math.max(1, win.bodyWidth - detailX - UITheme.spacing.sm);
+    this.detailW = detailW;
 
     // 滚轮分栏：鼠标在左栏滚列表、在右栏滚正文。
     // 边界**每次现读** win.body.x —— 窗口 resize 会重算居中位移，捕获成常量会让分栏判据错位。
@@ -234,9 +294,15 @@ export class ArchiveBookView {
     this.detail = detail;
 
     this.focusItems = [];
+    // 首开自动选中第一条可读条目（审查 P1：右栏 60% 首开全空）。**只展示不 markRead、
+    // 不触发 firstViewActions**——那两样是"玩家主动点开"的语义，红点留给他自己消。
+    if (!this.detailKey) {
+      const first = this.opts.buildSections().flatMap(s => s.rows).find(r => r.enabled);
+      if (first) this.detailKey = first.key;
+    }
     this.fillList();
     list.scrollOffset = keepList;
-    if (keepDetail) this.showDetailByKey(keepDetail);
+    if (keepDetail ?? this.detailKey) this.showDetailByKey(keepDetail ?? this.detailKey!);
 
     // 点条目 → 重绘列表，`setItems` 按 key 把焦点放回原处（新一批显示对象另算）
     this.focus.setItems(this.focusItems);
@@ -248,7 +314,7 @@ export class ArchiveBookView {
       this.focusInit = true;
     }
     // setItems 按同 key 复位时不会重放 onFocus（currentId 没变），新一批行牌拿不到高亮 → 补一次
-    this.focus.current?.onFocus(true);
+    this.focus.repaint();
     this.scrollFocusIntoView();
 
     if (animate) win.open();
@@ -265,7 +331,7 @@ export class ArchiveBookView {
       const empty = createStyledText({
         text: this.opts.emptyText,
         style: {
-          fontSize: UITheme.fontSize.small, fill: UITheme.colors.hint,
+          fontSize: UITheme.fontSize.small, fill: UITheme.colors.hintMid,
           fontFamily: UITheme.fonts.ui, wordWrap: true, breakWords: true,
           wordWrapWidth: this.listW - UITheme.spacing.md,
         },
@@ -286,7 +352,7 @@ export class ArchiveBookView {
           text: sec.header,
           style: {
             fontSize: UITheme.fontSize.small,
-            fill: sec.headerAccent ? UITheme.colors.gold : UITheme.colors.section,
+            fill: sec.headerAccent ? UITheme.colors.gold : UITheme.colors.hintMid,
             fontFamily: UITheme.fonts.display, fontWeight: 'bold',
             letterSpacing: UITheme.letterSpacing.title,
           },
@@ -309,7 +375,7 @@ export class ArchiveBookView {
     list.refresh();
   }
 
-  /** 一条行牌，返回下一行的 y。 */
+  /** 一条行牌（UIListRow 原语：tap 激活 + 拖滚让路 + 消费标记 + 焦点铺光全内建），返回下一行的 y。 */
   private drawRow(row: ArchiveRow, cy: number, rowW: number): number {
     const list = this.list;
     if (!list) return cy;
@@ -332,56 +398,32 @@ export class ArchiveBookView {
     // 会顶到行牌的金描边上。单行行高由 ROW_H 兜底，整列节奏保持一致。
     const rowH = Math.max(ROW_H, label.height + UITheme.spacing.md);
 
-    // 平常是极暗的行底 + 一条极淡的边；选中整条铺琥珀 + 金描边（不是换个深色）
-    const plate = new Graphics();
-    if (selected) {
-      drawSelectedRow(plate, 0, cy, rowW, rowH);
-    } else {
-      drawPanelBase(plate, 0, cy, rowW, rowH, SKINS.row,
-        row.enabled ? undefined : { fillAlpha: UITheme.alpha.rowBgLight });
-    }
-    plate.eventMode = 'none';
-    list.content.addChild(plate);
-
-    // 焦点高亮 = 这一行原本的选中画法（琥珀铺光 + 金描边），不另发明一种焦点框。
-    // **正在看的那一行不再叠一层**：它的 `plate` 已经是同一张铺光，再叠上去只会亮一档，
-    // 等于偷偷改了观感。
-    const focusGlow = selected ? null : new Graphics();
-    if (focusGlow) {
-      drawSelectedRow(focusGlow, 0, cy, rowW, rowH);
-      focusGlow.alpha = 0;
-      focusGlow.eventMode = 'none';
-      list.content.addChild(focusGlow);
-    }
-
-    if (row.enabled) {
-      // 整行命中：Pixi 是逐子元素命中测试，只给 Text 会让行内空白成死区
-      const hit = new Graphics();
-      hit.rect(0, cy, rowW, rowH);
-      hit.fill({ color: 0xffffff, alpha: UITheme.alpha.hitArea });
-      hit.eventMode = 'static';
-      hit.cursor = 'pointer';
-      hit.on('pointerdown', (e) => {
-        markPointerConsumed((e as { nativeEvent?: unknown }).nativeEvent);
-        this.selectRow(row);
-      });
+    const listRow = new UIListRow({
+      width: rowW,
+      height: rowH,
+      selected,
+      disabled: !row.enabled,
+      baseOverrides: row.enabled ? undefined : { fillAlpha: UITheme.alpha.rowBgLight },
+      onTap: () => this.selectRow(row),
       // 悬停即移焦：鼠标与手柄共用同一个"当前项"
-      hit.on('pointerover', () => this.focus.syncHover(row.key));
-      list.content.addChild(hit);
-    }
+      onHover: () => this.focus.syncHover(row.key),
+      onHoverEnd: () => this.focus.clearHover(row.key),
+    });
+    listRow.container.y = cy;
+    list.content.addChild(listRow.container);
 
     if (unread) {
       const dot = new Graphics();
-      dot.circle(DOT_COL_W / 2 + UITheme.spacing.xs, cy + rowH / 2, DOT_R);
+      dot.circle(DOT_COL_W / 2 + UITheme.spacing.xs, rowH / 2, DOT_R);
       dot.fill(UITheme.colors.redDot);
       dot.eventMode = 'none';
-      list.content.addChild(dot);
+      listRow.container.addChild(dot);
     }
 
     label.x = textX;
-    label.y = cy + Math.round((rowH - label.height) / 2);
+    label.y = Math.round((rowH - label.height) / 2);
     label.eventMode = 'none';
-    list.content.addChild(label);
+    listRow.container.addChild(label);
 
     // 灰槽（怪话册未收集的条目）以 disabled 登记：列出来占位，但方向键不落上去
     this.focusItems.push({
@@ -390,10 +432,12 @@ export class ArchiveBookView {
       // 左栏条目自成一组（右栏是正文、窗体 ✕ 归 UIWindow），一组之内上下走
       group: 'rows',
       disabled: !row.enabled,
-      onFocus: (on) => {
-        if (focusGlow && !focusGlow.destroyed) focusGlow.alpha = on ? 0.85 : 0;
+      onFocus: (on, via) => {
+        listRow.setFocused(on, via);
+        // 条目名只在**导航光标**落上来时提亮：鼠标划过只该出那层极淡暖底，
+        // 连字色一起变就又把 hover 拉回"看着像选中"了
         if (!label.destroyed && row.enabled && !selected) {
-          label.style.fill = on ? UITheme.colors.title : UITheme.colors.bodyMuted;
+          label.style.fill = on && via === 'key' ? UITheme.colors.title : UITheme.colors.bodyMuted;
         }
       },
       onActivate: () => this.selectRow(row),
@@ -410,6 +454,33 @@ export class ArchiveBookView {
     this.build();
   }
 
+  /**
+   * 按行 key 定位（事件日志「进册」条目跳过来的落点）：选中它、滚进视口、焦点也放上去。
+   *
+   * key 的构造归各本册子自己（`char_…` / `lore_…` / `cluebook_…` 等，见各 `*BookUI`），
+   * 本件只按 key 找——把前缀规则复制到路由层就会漂。
+   *
+   * **灰槽拒绝定位**：怪话册/歪歌册里未收集的条目是占位灰行，跳过去等于把还没拿到的
+   * 东西指给玩家看（K7 同源纪律：没到手的条目连存在都不该被指认）。
+   *
+   * @returns 找到且可读返回 true；查无此条或是灰槽返回 false。
+   */
+  focusEntryByKey(key: string): boolean {
+    if (!key) return false;
+    for (const sec of this.opts.buildSections()) {
+      const row = sec.rows.find(r => r.key === key);
+      if (!row) continue;
+      if (!row.enabled) return false;
+      this.selectRow(row);
+      // selectRow 已重建；焦点按显式意图落到这一条（build 只在首开时指定默认项）
+      this.focus.focusDefault(key);
+      this.focus.repaint();
+      this.scrollFocusIntoView();
+      return true;
+    }
+    return false;
+  }
+
   private showDetailByKey(key: string): void {
     for (const sec of this.opts.buildSections()) {
       const row = sec.rows.find(r => r.key === key);
@@ -417,10 +488,11 @@ export class ArchiveBookView {
     }
   }
 
-  /** 右栏：琥珀大标题 → 一条渐隐横线 → 纸灰白正文（有 `[img:…]` 就摆插图）。 */
-  private renderDetail(row: ArchiveRow): void {
+  /** 右栏：琥珀大标题 → 一条渐隐横线 → 暖灰正文（run 级版式引擎，见 RichContent）。 */
+  private renderDetail(row: ArchiveRow, keepScroll = false): void {
     const detail = this.detail;
     if (!detail) return;
+    const prevScroll = detail.scrollOffset;
     detail.content.removeChildren().forEach(c => c.destroy({ children: true }));
     const w = this.detailWidth();
     let y = 0;
@@ -447,28 +519,45 @@ export class ArchiveBookView {
     // 否则首行贴着横线、后面每行反而更松，读起来头重脚轻。
     y += UITheme.spacing.xl;
 
-    const { container } = buildRichContent(row.buildDetail(), {
+    const docBlocks = row.buildDetailDoc?.();
+    const buildOpts: RichContentOptions = {
       width: w,
       fontSize: UITheme.fontSize.body,
-      fill: UITheme.colors.body,
       fontFamily: UITheme.fonts.ui,
       lineHeight: DETAIL_LINE_H,
+      palette: RICH_DARK,
       // 插图是现装的（没人预载过册子里的 `[img:…]`），到位后整段重排。
       // **两道守卫**：面板可能已经关了（this.detail 为 null），或玩家已翻到另一条
       // （detailKey 变了）——那就别把旧条目的正文画回去。
+      // keepScroll=true：重排是插图到位引起的，读者读到哪就停在哪，不弹回顶（审查 P2）。
       onImageLoaded: () => {
         if (!this.detail || this.detailKey !== row.key) return;
-        this.renderDetail(row);
+        this.renderDetail(row, true);
       },
-    }, this.assetManager);
+      // K7 线索词条：状态色 + 点击采集。采集后**延迟重画**换到暗金常驻——
+      // 立刻重画会把"闪金"那 280ms 的采集动画连容器一起拆掉。
+      linkStateResolver: (link) =>
+        (link.kind === 'clue' && getClueAccess()?.isCollected(link.id) ? 'collected' : 'fresh'),
+      onLinkTap: (link) => {
+        const clues = getClueAccess();
+        if (link.kind !== 'clue' || !clues) return;
+        clues.collect(link.id);
+        window.setTimeout(() => {
+          if (this.detail && this.detailKey === row.key) this.renderDetail(row, true);
+        }, 320);
+      },
+    };
+    const { container } = docBlocks
+      ? buildRichDoc(docBlocks, buildOpts, this.assetManager)
+      : buildRichContent(row.buildDetail?.() ?? '', buildOpts, this.assetManager);
     container.y = y;
     detail.content.addChild(container);
 
-    detail.scrollOffset = 0;
     detail.refresh();
+    detail.scrollOffset = keepScroll ? prevScroll : 0;
   }
 
   private detailWidth(): number {
-    return Math.max(1, (this.win?.bodyWidth ?? 400) - this.listW - UITheme.spacing.xl);
+    return this.detailW;
   }
 }

@@ -24,6 +24,10 @@ ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _OPEN_RE = re.compile(r"\[c:([A-Za-z0-9_-]+)\]")
 _TOKEN_RE = re.compile(r"\[c:([A-Za-z0-9_-]+)\]|\[/c\]")
 CLOSE_TOKEN = "[/c]"
+# 线索标记层（K7）：`[clue:<id>]…[/clue]`。与 [c:] 分层、各自成栈（TS tokenize 同口径），
+# 闭合各认各的，因此可独立于色板层扫描。正则须与 src/core/textStyle.ts 的 CLUE_OPEN_RE 同形。
+CLUE_CLOSE_TOKEN = "[/clue]"
+_CLUE_TOKEN_RE = re.compile(r"\[clue:([A-Za-z0-9_-]+)\]|\[/clue\]")
 
 
 def load_text_palette(model) -> list[dict]:
@@ -83,6 +87,42 @@ def inspect_style_markup(text: str, valid_ids: Iterable[str]) -> dict:
             stray += 1
     return {"unknown_ids": unknown, "stray_closes": stray, "unclosed": depth,
             "malformed": malformed}
+
+
+def has_clue_markup(text: str) -> bool:
+    return "[clue:" in text or CLUE_CLOSE_TOKEN in text
+
+
+def inspect_clue_markup(text: str) -> dict:
+    """线索层 `[clue:<id>]…[/clue]` 的结构性检查。
+
+    与 TS `inspectStyleMarkup` 的线索面（clueIds/strayClueCloses/unclosedClue/malformed）
+    同语义；引用完整性（id 是否在 clues.json）由 ref_validator 对账，这里只查结构。
+    独立函数而非并入 :func:`inspect_style_markup`：色板 parity 测试锁死了那份返回形状。
+    """
+    clue_ids: list[str] = []
+    malformed: list[str] = []
+    stray = 0
+    depth = 0
+    if not has_clue_markup(text):
+        return {"clue_ids": [], "stray_clue_closes": 0, "unclosed_clue": 0, "malformed": []}
+    # `[clue:后山三更]` 这类非 ASCII slug 的 id 正则认不出来 → 运行时剥不掉、原样糊给玩家
+    for m in re.finditer(r"\[clue:([^\]]*)\]", text):
+        if not ID_RE.match(m.group(1)) and m.group(1) not in malformed:
+            malformed.append(m.group(1))
+    for m in _CLUE_TOKEN_RE.finditer(text):
+        if m.group(1) is not None:
+            depth += 1
+            if m.group(1) not in clue_ids:
+                clue_ids.append(m.group(1))
+        elif depth > 0:
+            depth -= 1
+        else:
+            stray += 1
+    return {
+        "clue_ids": clue_ids, "stray_clue_closes": stray, "unclosed_clue": depth,
+        "malformed": malformed,
+    }
 
 
 def wrap_with_color(text: str, palette_id: str) -> str:

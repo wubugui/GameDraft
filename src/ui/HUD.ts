@@ -1,9 +1,11 @@
-import { Container, Graphics, Text } from 'pixi.js';
+import { Container, Graphics, Rectangle, Text, type FederatedPointerEvent } from 'pixi.js';
 import { SmellIndicatorRenderer, type SmellProfilesRaw, type SmellRenderState, type SmellFormParams } from './smell/SmellIndicatorRenderer';
 import { UITheme } from './UITheme';
 import { createPanel, SKINS, WOOD_CHIP } from './PanelSkin';
-import { createIcon, createKeyCap } from './components/UIDecor';
+import { createChip, createIcon, createKeyCap } from './components/UIDecor';
 import { uiIcon, type UIIconName } from './UIIcons';
+import { markPointerConsumed } from './uiPointerCoords';
+import { useCoarsePointerOrTouchDevice } from './TouchMobileControls';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
 import type { StringsProvider } from '../core/StringsProvider';
@@ -16,12 +18,11 @@ import { createStyledText, setStyledText } from '../core/styledText';
 //   不做通栏长条——设计稿里空着的半条 HUD 是最显廉价的一处。
 // ---------------------------------------------------------------------------
 //
-// **键盘/手柄导航（`UIFocus`）不接**：本层是**只读常驻显示**，没有任何可交互元素。
-// 铜钱芯片 / 追踪活计芯片 / 底部提示带 / 场景名 / 三把阳火 / 气味指示器全是展示件——
-// `createPanel` / `createIcon` / `createKeyCap` 造出来的节点本身就是 `eventMode: 'none'`，
-// 本类自己一个 pointer 监听都没挂。底部那条 `[G] 使用规矩` 是**键位说明**不是按钮，
-// 真正的入口是按 G 起 `RuleUseUI`。焦点导航的前提是"有可激活的元素"，这里没有，
-// 硬塞一个恒空的 UIFocus 只会多一份死代码。HUD 长出可点的件时再回来接。
+// **键盘/手柄导航（`UIFocus`）不接**：本层可点的件（右下入口条、两枚芯片）全部
+// **有键盘等价物**（入口条本身就是键位图例，芯片对应 Tab/I），指针是快捷方式而非唯一通路，
+// 给 HUD 挂焦点环只会跟真正的面板抢按键。三把阳火 / 场景名 / 提示带仍是纯展示件。
+// 所有行内 pointerdown 必须 `markPointerConsumed`（否则穿透到 window 级推进监听），
+// 容器当按钮必须自带 `hitArea`（pixi-v8-traps：普通 Container 恒判不中）。
 // ---------------------------------------------------------------------------
 /**
  * 芯片文字档位：**small，不是 body**。
@@ -56,12 +57,68 @@ const HINT_BAR_PAD = UITheme.spacing.lg;
 /** 提示带离屏幕下沿的净空 */
 const HINT_BAR_BOTTOM = UITheme.spacing.xxl;
 
-/** 三把阳火的锚点：让到芯片列下方（芯片列最深两条 = 12 + 30 + 8 + 30 = 80，再留 32 净空） */
+/**
+ * 三把阳火 + 气味丝合装进一根 `metaColumn`，锚点是**下限**不是定值：
+ * 任务芯片是策划自由文案、可折行，列高动态；火焰写死 y=112 时长任务名会把芯片列
+ * 顶进火苗里（审查 P1）。现在每次芯片重建后由 {@link layoutMetaColumn} 把整根列
+ * 压到芯片列之下，短文案时仍停在这个下限、与旧版版式一致。
+ */
 const FLAME_ORIGIN_X = 16;
 const FLAME_ORIGIN_Y = 112;
-/** 气味丝锚点：仍是三把火正下方、组中心同列（与旧版保持 90px 的相对落差） */
+/** 气味丝锚点：三把火正下方、组中心同列（相对 metaColumn 顶 = 火焰基线，落差 90px） */
 const SMELL_ORIGIN_X = 34;
 const SMELL_ORIGIN_Y = 202;
+/** 芯片列底与火焰列顶之间的净空 */
+const META_COLUMN_GAP = 24;
+
+/**
+ * 三把火 / 气味丝这一整列的**设计基准画布高**。
+ *
+ * 上面那几个锚点、火苗的 18px 间距、气味丝的 `DEFAULT_SMELL_FORM`（riseH 72 / baseW 50）
+ * 全是照 1024×768 这块画布定的——与 `UITheme.fontSize` 的档位同一基准。
+ * 定死成像素之后，2560×1440 上这一列只占屏高的一半不到：**火苗缩成三粒芝麻、
+ * 气缕细成一根头发**，而它俩恰恰是要在余光里被"感觉到"的东西，看不清等于没有。
+ */
+const META_BASE_H = 768;
+/**
+ * 缩放夹取范围。
+ * - 下限 0.85：F2 调试坞把 `#game-mount` 挤扁时别跟着缩没，那不是玩家的真实分辨率；
+ * - 上限 2.2：4K 全屏时也不许长成一根挡住半边街的火柱——它是元信息，不是主角。
+ */
+const META_SCALE_MIN = 0.85;
+const META_SCALE_MAX = 2.2;
+
+// ---------------------------------------------------------------------------
+// 右下角入口条（桌面端）：7 个内容面板 + 菜单的常驻可点入口，同时就是键位图例。
+// 审查 P0：此前这些面板只能背 Tab/I/R/L/B/M/G 盲按，画面上零入口零教学；
+// 触屏端由 TouchMobileControls 出整套 chip，桌面端一直是裸的。两端判据共用
+// `useCoarsePointerOrTouchDevice`，触屏时本条不建（否则重复两套入口）。
+// ---------------------------------------------------------------------------
+/** 入口钮图标边长 */
+const ENTRY_ICON = 22;
+/** 入口钮宽：图标 + 左右木边 + 呼吸 */
+const ENTRY_BTN_W = ENTRY_ICON + WOOD_CHIP * 2 + UITheme.spacing.sm;
+/** 入口钮高：图标 + 键帽字行 + 上下木边 + 缝 */
+const ENTRY_BTN_H = ENTRY_ICON + UITheme.fontSize.micro + WOOD_CHIP * 2 + UITheme.spacing.xs * 2;
+const ENTRY_GAP = UITheme.spacing.sm;
+const ENTRY_MARGIN = UITheme.spacing.xl;
+
+/**
+ * 入口定义：`panel` 与 `GameStateController.registerPanel` 的注册名一一对应，
+ * 名签文案复用触屏 chip 的 `strings.touchControls`（两端同一名，不另开一份会漂的文案）。
+ * `cap` 是键帽显示名（对应注册的快捷键；菜单无快捷键、Esc 走 fallback 通道）。
+ * 图标全部民俗物件：戒尺=规矩、说书折扇=对话录、符=用规矩（题材铁律，勿换西洋隐喻）。
+ */
+const HUD_ENTRIES: readonly { panel: string; icon: UIIconName; cap: string }[] = [
+  { panel: 'quest', icon: 'scroll', cap: 'Tab' },
+  { panel: 'inventory', icon: 'pouch', cap: 'I' },
+  { panel: 'rules', icon: 'ruler', cap: 'R' },
+  { panel: 'dialogueLog', icon: 'fan', cap: 'L' },
+  { panel: 'bookshelf', icon: 'book', cap: 'B' },
+  { panel: 'map', icon: 'map', cap: 'M' },
+  { panel: 'ruleUse', icon: 'talisman', cap: 'G' },
+  { panel: 'menu', icon: 'gear', cap: 'Esc' },
+];
 
 /** 0xRRGGBB 线性插值（油灯琥珀↔冷灰青的阳火调色用）。 */
 function lerpColor(a: number, b: number, t: number): number {
@@ -92,6 +149,26 @@ export class HUD {
   /** 图标是异步预载的（Game 里 `void preloadUIIcons()`），到位后补一次重建 */
   private chipIconsApplied = false;
 
+  /** 右下角入口条（桌面端；触屏 = TouchMobileControls 的 chip，本条不建） */
+  private entryLayer: Container;
+  private entryStripWidth = 0;
+  /** 悬停名签（一次只有一枚；换钮即销毁重建） */
+  private entryTip: Container | null = null;
+  /** 由组装层注入（Game.registerUIPanels → stateController.switchToPanel） */
+  private panelOpener: ((name: string) => void) | null = null;
+  /**
+   * 「这个面板里有没有玩家还没看过的东西」判据（组装层注入；未注入 = 全都不亮）。
+   *
+   * 事件日志靠它才成立：提示条是一闪而过的（这是**有意保留**的手感），玩家错过之后
+   * 得有个东西告诉他「刚才那几条还在，L 键可查」——没有这枚点，日志等于没人去开。
+   */
+  private unreadProvider: ((panel: string) => boolean) | null = null;
+  /** 入口钮上的未读红点：随入口条重建，逐帧只改 visible（不重画） */
+  private entryDots = new Map<string, Graphics>();
+  private readonly isTouchDevice = useCoarsePointerOrTouchDevice();
+
+  /** 三把阳火 + 气味丝的合装列（随芯片列高度让位，见 layoutMetaColumn） */
+  private metaColumn: Container;
   // 离死之距：HUD 层"三把阳火"（元信息，替掉旧血条）
   private flameLayer: Container;
   private flames: Graphics[] = [];
@@ -127,7 +204,10 @@ export class HUD {
   private zoneInteractOffCb: () => void;
 
   private mapNameText: Text;
+  private sceneNameFadeTimer: number | null = null;
+  private sceneNameFadeRaf = 0;
   private onResizeBound: () => void;
+  private unsubscribeResize: (() => void) | null = null;
   private sceneEnterCb: (p: { sceneId: string; sceneName?: string }) => void;
   /** 过场期间整层 HUD 淡出：电影化镜头上不该压着铜钱/三把火/场景名/任务条 */
   private cutsceneStartCb: () => void;
@@ -196,10 +276,13 @@ export class HUD {
     // 离死之距 = HUD 层"三把阳火"（替掉旧血条；铜钱下方常驻）。
     // 它不是血量，是关二狗离死多近：活的特效，旺时暖稳、近死时青冷明灭挣扎；
     // 关二狗自己看不见、玩家看得见（冥冥之中，不进 world、不上全屏、不喊注意）。
+    this.metaColumn = new Container();
+    this.container.addChild(this.metaColumn);
     this.flameLayer = new Container();
     this.flameLayer.x = FLAME_ORIGIN_X;
-    this.flameLayer.y = FLAME_ORIGIN_Y;
-    this.container.addChild(this.flameLayer);
+    this.flameLayer.y = 0;
+    this.metaColumn.addChild(this.flameLayer);
+    this.layoutMetaColumn();
     for (let i = 0; i < 3; i++) {
       const g = new Graphics();
       g.x = i * 18;
@@ -227,14 +310,26 @@ export class HUD {
       },
     });
     this.mapNameText.x = (this.renderer.screenWidth - this.mapNameText.width) / 2;
-    this.mapNameText.y = 10;
+    this.mapNameText.y = UITheme.topLanes.sceneName;
     this.container.addChild(this.mapNameText);
+
+    // ⚠ 入口条必须建在 mapNameText **之后**：buildEntryStrip 末尾会调 layout()，
+    // 而 layout 要摸场景名——放在前面桌面端构造期必崩（2026-08-17 headless 实机验证抓获,
+    // 触屏路径在 strip 里早退不调 layout 所以只有桌面炸）。
+    this.entryLayer = new Container();
+    this.container.addChild(this.entryLayer);
+    this.buildEntryStrip();
 
     this.renderer.uiLayer.addChild(this.container);
 
     this.layout();
+    // ⚠ 必须订 `renderer.subscribeAfterResize`，**不能**用 `window` 的 resize（与 UIWindow 同一条）：
+    // ① `#game-mount` 被 F2 调试坞挤压走的是 Renderer 的 ResizeObserver，**根本不发 window resize**；
+    // ② 真·浏览器 resize 被 Pixi 的 ResizePlugin 推到 rAF 之后才真正生效，同步跑的 window 监听
+    //    读到的 `screenHeight` 还是旧值 —— 而这一列的缩放正是 `screenHeight` 的函数，
+    //    用旧值算就等于每次 resize 都慢一拍、缩放停在上一档。
     this.onResizeBound = () => this.layout();
-    window.addEventListener('resize', this.onResizeBound);
+    this.unsubscribeResize = this.renderer.subscribeAfterResize(this.onResizeBound);
 
     this.cutsceneStartCb = () => this.fadeHudTo(0);
     this.cutsceneEndCb = () => this.fadeHudTo(1);
@@ -243,6 +338,11 @@ export class HUD {
       const raw = p.sceneName ?? p.sceneId ?? '';
       setStyledText(this.mapNameText, this.r(raw));
       this.mapNameText.x = (this.renderer.screenWidth - this.mapNameText.width) / 2;
+      // 场景名是「到哪了」的一次性播报，不是常驻读数（审查 P2：永久挂着与场景抢戏）：
+      // 进场亮 4s，再 600ms 淡走；换场景重来。
+      this.mapNameText.alpha = 1;
+      if (this.sceneNameFadeTimer) window.clearTimeout(this.sceneNameFadeTimer);
+      this.sceneNameFadeTimer = window.setTimeout(() => this.fadeSceneNameOut(), 4000);
       // 上一张场景的区域提示不许跟着过来：切场景先收，新场景由 InteractionSystem 下一帧重发。
       this.setZoneInteractHint(null);
     };
@@ -306,8 +406,179 @@ export class HUD {
     this.resolveDisplay = fn;
   }
 
+  /** 组装层注入面板开关通道（stateController.switchToPanel）；HUD 不直接依赖控制器。 */
+  setPanelOpener(fn: ((name: string) => void) | null): void {
+    this.panelOpener = fn;
+  }
+
+  /** 组装层注入「某面板有未读」的判据；HUD 只问不算（真相在各自系统里）。 */
+  setPanelUnreadProvider(fn: ((panel: string) => boolean) | null): void {
+    this.unreadProvider = fn;
+    this.syncEntryDots();
+  }
+
+  /** 逐帧同步未读点（只改 visible）。判据由注入方保证是廉价查询。 */
+  private syncEntryDots(): void {
+    if (this.entryDots.size === 0) return;
+    for (const [panel, dot] of this.entryDots) {
+      if (dot.destroyed) continue;
+      dot.visible = this.unreadProvider?.(panel) === true;
+    }
+  }
+
+  /**
+   * 重建右下角入口条。触屏设备不建（TouchMobileControls 有整套 chip）；
+   * 图标异步预载，晚到时由 {@link stepFlames} 的到位检查再重建一次。
+   */
+  private buildEntryStrip(): void {
+    for (const child of [...this.entryLayer.children]) {
+      this.entryLayer.removeChild(child);
+      child.destroy({ children: true });
+    }
+    this.entryTip = null;
+    // 红点随入口条重建（旧的那批已随 children 一起销毁），先清登记再逐钮补
+    this.entryDots.clear();
+    if (this.isTouchDevice) return;
+
+    for (let i = 0; i < HUD_ENTRIES.length; i++) {
+      const def = HUD_ENTRIES[i];
+      const btn = new Container();
+      btn.x = i * (ENTRY_BTN_W + ENTRY_GAP);
+
+      btn.addChild(createPanel(0, 0, ENTRY_BTN_W, ENTRY_BTN_H, SKINS.chip));
+      const icon = createIcon(def.icon, ENTRY_ICON);
+      if (icon) {
+        icon.position.set(
+          Math.round((ENTRY_BTN_W - ENTRY_ICON) / 2),
+          WOOD_CHIP + Math.round(UITheme.spacing.xs / 2),
+        );
+        btn.addChild(icon);
+      }
+      const cap = createStyledText({
+        text: def.cap,
+        style: { fontSize: UITheme.fontSize.micro, fill: UITheme.colors.hintMid, fontFamily: UITheme.fonts.ui },
+      });
+      cap.eventMode = 'none';
+      cap.position.set(
+        Math.round((ENTRY_BTN_W - cap.width) / 2),
+        ENTRY_BTN_H - WOOD_CHIP - cap.height - Math.round(UITheme.spacing.xs / 2),
+      );
+      btn.addChild(cap);
+
+      // 未读红点：压右上角木边上（与书架木牌的那枚同一支红、同一个语汇）。
+      // 每个钮都建一枚、常态隐藏——逐帧只翻 visible，不重画不重建。
+      const dot = new Graphics();
+      dot.circle(ENTRY_BTN_W - WOOD_CHIP - 1, WOOD_CHIP + 1, 3.5);
+      dot.fill(UITheme.colors.redDot);
+      dot.eventMode = 'none';
+      dot.visible = false;
+      btn.addChild(dot);
+      this.entryDots.set(def.panel, dot);
+
+      btn.eventMode = 'static';
+      btn.cursor = 'pointer';
+      // pixi-v8-traps：普通 Container 无 hitArea 恒不命中
+      btn.hitArea = new Rectangle(0, 0, ENTRY_BTN_W, ENTRY_BTN_H);
+      btn.alpha = 0.92;
+      btn.on('pointerover', () => {
+        btn.alpha = 1;
+        this.showEntryTip(def.panel, btn.x);
+      });
+      btn.on('pointerout', () => {
+        btn.alpha = 0.92;
+        this.hideEntryTip();
+      });
+      btn.on('pointerdown', (e: FederatedPointerEvent) => {
+        // 不消费的话同一原生事件会穿到 window 级推进监听（打字机瞬跳一类）
+        markPointerConsumed(e.nativeEvent);
+        this.panelOpener?.(def.panel);
+      });
+      this.entryLayer.addChild(btn);
+    }
+    this.entryStripWidth = HUD_ENTRIES.length * (ENTRY_BTN_W + ENTRY_GAP) - ENTRY_GAP;
+    this.layout();
+  }
+
+  /** 悬停名签：钮上方一枚小字牌，文案复用触屏 chip 的 strings（两端同名）。 */
+  private showEntryTip(panel: string, btnX: number): void {
+    this.hideEntryTip();
+    const label = this.strings.get('touchControls', panel);
+    if (!label) return;
+    const tip = createChip(label, UITheme.colors.bodyMuted);
+    tip.eventMode = 'none';
+    tip.position.set(
+      Math.round(btnX + (ENTRY_BTN_W - tip.totalWidth) / 2),
+      -(UITheme.fontSize.small + 6 + UITheme.spacing.sm),
+    );
+    this.entryLayer.addChild(tip);
+    this.entryTip = tip;
+  }
+
+  private hideEntryTip(): void {
+    if (this.entryTip) {
+      this.entryLayer.removeChild(this.entryTip);
+      this.entryTip.destroy({ children: true });
+      this.entryTip = null;
+    }
+  }
+
+  /**
+   * 芯片可点化：铜钱 → 行囊、当前活计 → 活计面板。芯片本体是信息件，可点是快捷方式，
+   * 不做强按钮观感（hover 只提一档亮度），键盘等价物是 I / Tab。
+   */
+  private makeChipClickable(chip: Container, panel: string): void {
+    chip.eventMode = 'static';
+    chip.cursor = 'pointer';
+    chip.hitArea = new Rectangle(0, 0, chip.width, chip.height);
+    chip.alpha = 0.96;
+    chip.on('pointerover', () => { chip.alpha = 1; });
+    chip.on('pointerout', () => { chip.alpha = 0.96; });
+    chip.on('pointerdown', (e: FederatedPointerEvent) => {
+      markPointerConsumed(e.nativeEvent);
+      this.panelOpener?.(panel);
+    });
+  }
+
+  /**
+   * 这一列在当前画布上的缩放。**位置不挪（还是左上角那一列），变的是大小与间距**——
+   * 一切内部尺寸都由 `metaColumn.scale` 一处承担，火苗间距/气缕高度/两者的落差
+   * 因此自动等比，不必逐个常数乘系数（也就不会漏乘某一个）。
+   */
+  private metaScale(): number {
+    const raw = this.renderer.screenHeight / META_BASE_H;
+    return Math.max(META_SCALE_MIN, Math.min(META_SCALE_MAX, raw));
+  }
+
+  /**
+   * 芯片列高度变了就把三把火 + 气味丝整列压下去（下限 = 旧版定位，短文案不动版式），
+   * 并按当前画布重设整列缩放。
+   */
+  private layoutMetaColumn(): void {
+    if (!this.metaColumn) return;
+    const s = this.metaScale();
+    this.metaColumn.scale.set(s);
+    // 顶端下限也跟着缩放走，否则高分屏下这一列会贴着放大后的芯片列
+    const chipsBottom = CHIP_ORIGIN + this.chipLayer.height + META_COLUMN_GAP * s;
+    this.metaColumn.y = Math.max(FLAME_ORIGIN_Y * s, chipsBottom);
+  }
+
   private r(s: string): string {
     return this.resolveDisplay ? this.resolveDisplay(s) : s;
+  }
+
+  /** 场景名的退场淡出（600ms）；进新场景由 sceneEnterCb 拉回 alpha=1 重计时。 */
+  private fadeSceneNameOut(): void {
+    if (this.sceneNameFadeRaf) cancelAnimationFrame(this.sceneNameFadeRaf);
+    const from = this.mapNameText.alpha;
+    const start = performance.now();
+    const tick = (): void => {
+      if (this.mapNameText.destroyed) { this.sceneNameFadeRaf = 0; return; }
+      const t = Math.min(1, (performance.now() - start) / 600);
+      this.mapNameText.alpha = from * (1 - UITheme.motion.easeOut(t));
+      if (t < 1) this.sceneNameFadeRaf = requestAnimationFrame(tick);
+      else this.sceneNameFadeRaf = 0;
+    };
+    this.sceneNameFadeRaf = requestAnimationFrame(tick);
   }
 
   /**
@@ -401,6 +672,7 @@ export class HUD {
     }
 
     this.coinChip = this.buildChip('coin', this.coinsLabel, UITheme.colors.body);
+    this.makeChipClickable(this.coinChip, 'inventory');
     this.chipLayer.addChild(this.coinChip);
 
     if (this.questLabel) {
@@ -408,9 +680,12 @@ export class HUD {
         ? this.buildQuestChip(this.questLabel, this.questObjectiveLabel)
         : this.buildChip('hat', this.questLabel, UITheme.colors.bodyMuted);
       this.questChip.y = CHIP_H + CHIP_GAP;
+      this.makeChipClickable(this.questChip, 'quest');
       this.chipLayer.addChild(this.questChip);
     }
     this.chipIconsApplied = uiIcon('coin') !== null;
+    // 任务芯片可折行、列高动态：火焰列跟着让位（P1：长任务名压三把火）
+    this.layoutMetaColumn();
   }
 
   /**
@@ -425,7 +700,9 @@ export class HUD {
     // ⚠ 这里刻意**只取键帽本身**、说明文字自己排：`createKeyCap(key, label)` 内建的说明是
     // body 档，而这条带子常年挂在屏幕下沿，body 会让「使用规矩」四个字跟对白一样大、
     // 抢走本该给场景的注意力。键位说明是配角，一律 small。
-    const cap = m ? createKeyCap(m[1]) : null;
+    // 触屏不画键帽（审查 P1：[G]/[E] 在触屏指向不存在的键盘）——只留说明词，
+    // 真入口是触屏 chip / 直点场景。
+    const cap = m && !this.isTouchDevice ? createKeyCap(m[1]) : null;
     // 拆不出方括号就整句当说明文字，绝不吞内容
     const labelText = m ? (m[2] ?? '') : raw;
     const label = labelText
@@ -540,8 +817,16 @@ export class HUD {
     this.layout();
   }
 
+  /** 构造期各成员分步就位，本方法可能在部分成员未建时被调——逐块判空防御，不许再炸启动 */
   private layout(): void {
     const bottomY = this.renderer.screenHeight - HINT_BAR_H - HINT_BAR_BOTTOM;
+    if (this.entryLayer) {
+      this.entryLayer.x = this.renderer.screenWidth - this.entryStripWidth - ENTRY_MARGIN;
+      this.entryLayer.y = this.renderer.screenHeight - ENTRY_BTN_H - ENTRY_MARGIN;
+    }
+    // 三把火/气味那一列的缩放是画布的函数，所以每次 resize 都要重算（不只在芯片重建时）
+    this.layoutMetaColumn();
+    if (!this.ruleHintChip || !this.mapNameText) return;
     this.ruleHintChip.x = Math.round((this.renderer.screenWidth - this.ruleHintWidth) / 2);
     this.ruleHintChip.y = bottomY;
     if (this.zoneHintChip) {
@@ -570,8 +855,13 @@ export class HUD {
   }
 
   private stepFlames(dt: number): void {
-    // 图标是 fire-and-forget 预载的：晚到就补一次芯片重建，否则常驻的铜钱条会一直没图标
-    if (!this.chipIconsApplied && uiIcon('coin') !== null) this.rebuildChips();
+    // 图标是 fire-and-forget 预载的：晚到就补一次重建，否则铜钱条/入口条会一直没图标
+    // （同一批预载，coin 到位 = 全到位，入口条跟着芯片一起补）
+    if (!this.chipIconsApplied && uiIcon('coin') !== null) {
+      this.rebuildChips();
+      this.buildEntryStrip();
+    }
+    this.syncEntryDots();
     const healthRatio = this.healthMax > 0 ? Math.max(0, Math.min(1, this.healthCurrent / this.healthMax)) : 0;
     this.flameTargetRatio = this.healthDebugOverrideEnabled ? this.healthDebugOverrideRatio : healthRatio;
     const ratioDelta = this.flameTargetRatio - this.flameDisplayRatio;
@@ -723,10 +1013,14 @@ export class HUD {
   }
 
   /** 由 Game 异步加载 smell_profiles.json 后调用：建/重建气味指示器渲染器（方案 E·双层·基线+浮现）。
-   *  位置：三把火（FLAME_ORIGIN 起、组中心约 x:34）**正下方**、居中同宽；方案 E 是竖向（高>>宽），气缕从基线往上升。 */
+   *  位置：三把火（FLAME_ORIGIN 起、组中心约 x:34）**正下方**、居中同宽；方案 E 是竖向（高>>宽），气缕从基线往上升。
+   *  挂在 metaColumn 里（相对火焰基线 90px），芯片列变高时随整列让位。 */
   setSmellProfiles(data: SmellProfilesRaw): void {
     if (this.smellRenderer) this.smellRenderer.destroy();
-    this.smellRenderer = new SmellIndicatorRenderer(this.container, data, { x: SMELL_ORIGIN_X, y: SMELL_ORIGIN_Y });
+    this.smellRenderer = new SmellIndicatorRenderer(this.metaColumn, data, {
+      x: SMELL_ORIGIN_X,
+      y: SMELL_ORIGIN_Y - FLAME_ORIGIN_Y,
+    });
     this.smellRenderer.setState(this.smellLast);
   }
 
@@ -742,8 +1036,11 @@ export class HUD {
 
   destroy(): void {
     if (this.flameRafId !== null && typeof cancelAnimationFrame !== 'undefined') cancelAnimationFrame(this.flameRafId);
-    window.removeEventListener('resize', this.onResizeBound);
+    this.unsubscribeResize?.();
+    this.unsubscribeResize = null;
     if (this.hudFadeRaf) { cancelAnimationFrame(this.hudFadeRaf); this.hudFadeRaf = 0; }
+    if (this.sceneNameFadeTimer) { window.clearTimeout(this.sceneNameFadeTimer); this.sceneNameFadeTimer = null; }
+    if (this.sceneNameFadeRaf) { cancelAnimationFrame(this.sceneNameFadeRaf); this.sceneNameFadeRaf = 0; }
     this.eventBus.off('cutscene:start', this.cutsceneStartCb);
     this.eventBus.off('cutscene:end', this.cutsceneEndCb);
     this.eventBus.off('scene:enter', this.sceneEnterCb);

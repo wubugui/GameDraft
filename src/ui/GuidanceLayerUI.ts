@@ -25,8 +25,8 @@ const MARK_LIFT = 54;
 const EDGE_INSET = 34;
 /** 标签与距离数字离浮标的间距 */
 const LABEL_GAP = UITheme.spacing.xs;
-/** 场景提示条：屏幕上沿居中偏下，避开场景名 */
-const HINT_TOP = 44;
+/** 场景提示条：顶中车道表的 guidance 车道（避开场景名；toast 车道已挪到横幅之下不再压它） */
+const HINT_TOP = UITheme.topLanes.guidance;
 const HINT_PAD_X = UITheme.spacing.lg;
 const HINT_PAD_Y = UITheme.spacing.xs;
 

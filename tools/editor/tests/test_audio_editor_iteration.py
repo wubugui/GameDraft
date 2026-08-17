@@ -156,17 +156,28 @@ class AudioConfigRoundTripTests(_Base):
             scene = root / "public" / "assets" / "scenes" / "ref_scene.json"
             scene.write_text('{"id": "ref_scene", "bgm": "bgm_int_vol"}', encoding="utf-8")
             ed = AudioEditor(model)
-            ed.refresh_reference_counts()
-            bgm = ed._sub_tabs[0]
-            bgm._table.setCurrentCell(0, 0)
-            rows_before = bgm._table.rowCount()
-            with patch.object(
-                QMessageBox, "question",
-                return_value=QMessageBox.StandardButton.No,
-            ) as ask:
-                bgm._delete()
-            self.assertTrue(ask.called, "删除被引用的音频前必须先问")
-            self.assertEqual(bgm._table.rowCount(), rows_before, "答 No 不得删行")
+            try:
+                ed.refresh_reference_counts()
+                bgm = ed._sub_tabs[0]
+                bgm._table.setCurrentCell(0, 0)
+                rows_before = bgm._table.rowCount()
+                with patch.object(
+                    QMessageBox, "question",
+                    return_value=QMessageBox.StandardButton.No,
+                ) as ask:
+                    bgm._delete()
+                self.assertTrue(ask.called, "删除被引用的音频前必须先问")
+                self.assertEqual(bgm._table.rowCount(), rows_before, "答 No 不得删行")
+            finally:
+                # 选中一行会让 AudioTransportBar 把该 .wav 设成 QMediaPlayer 的 source，
+                # 而 source 一直挂着就一直占着文件句柄。Windows 上那是独占的：
+                # 不先松手，退出 TemporaryDirectory 时 rmtree 必挂
+                # 「WinError 32 另一个程序正在使用此文件」——测试断言其实早就过了，
+                # 红的是清理。autouse 的控件回收 fixture 在 with 块**之后**才跑，指望不上。
+                for sub in ed._sub_tabs:
+                    tp = getattr(sub, "_transport", None)
+                    if tp is not None:
+                        tp.play_file(None)
 
 
 def _pick_exec(target: str):

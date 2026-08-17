@@ -1067,6 +1067,8 @@ export class GraphDialogueManager implements IGameSystem {
         return out;
       });
     }
+    /** 无 lines 的单拍节点：配音写在节点顶层。**多拍时节点级 voice 不作各拍默认**——
+     *  各拍的配音必然各是一条，继承只会让同一条声音每拍重播。 */
     return [{
       speaker: node.speaker,
       text: node.text,
@@ -1074,6 +1076,8 @@ export class GraphDialogueManager implements IGameSystem {
       portrait: node.portrait,
       bubbleAnchorY: node.bubbleAnchorY,
       bubbleScale: node.bubbleScale,
+      voice: node.voice,
+      autoAdvance: node.autoAdvance,
     }];
   }
 
@@ -1100,6 +1104,9 @@ export class GraphDialogueManager implements IGameSystem {
       ...(typeof p.bubbleScale === 'number' && Number.isFinite(p.bubbleScale) && p.bubbleScale > 0
         ? { bubbleScale: p.bubbleScale }
         : {}),
+      /** 配音 / 推进方式原样透传给 DialogueVoiceDirector（本管理器不碰音频，见分层不变量） */
+      ...(p.voice !== undefined && p.voice !== null ? { voice: p.voice } : {}),
+      ...(p.autoAdvance !== undefined && p.autoAdvance !== null ? { autoAdvance: p.autoAdvance } : {}),
       dim: this.dimBackground || undefined,
     };
   }

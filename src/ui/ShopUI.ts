@@ -4,7 +4,7 @@ import { drawPanelBase, SKINS } from './PanelSkin';
 import { UIWindow, WINDOW_CHROME } from './components/UIWindow';
 import { UIScrollView } from './components/UIScrollView';
 import { UIButton } from './components/UIButton';
-import { createIcon, createRule, drawSelectedRow } from './components/UIDecor';
+import { createIcon, createRule, drawFocusRing, drawHoverRow } from './components/UIDecor';
 import { UIFocus, type FocusItem } from './components/UIFocus';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
@@ -142,7 +142,13 @@ export class ShopUI {
     this.currentShop = null;
     window.removeEventListener('keydown', this.onKeyBound);
     this.focus.destroy();
-    this.destroyUI();
+    // 关场淡出（绕开买后重绘/destroy 共用的瞬时 destroyUI）：先摘滚动区输入面，
+    // 再让窗体带视觉淡出自毁——逻辑态已同步落定，尸体窗只是视觉。
+    this.list?.detachInput();
+    const win = this.win;
+    this.list = null;
+    this.win = null;
+    win?.fadeOutAndDestroy();
     this.eventBus.emit('shop:closed', {});
   }
 
@@ -236,6 +242,7 @@ export class ShopUI {
     const leaveX = Math.round((win.bodyWidth - LEAVE_BTN_W) / 2);
     leave.container.position.set(leaveX, win.bodyHeight - LEAVE_BTN_H);
     leave.container.on('pointerover', () => this.focus.syncHover('leave'));
+    leave.container.on('pointerout', () => this.focus.clearHover('leave'));
     win.body.addChild(leave.container);
 
     // 焦点几何：「离开」必须落在**所有货品行的下方**，最后一行按 ↓ 才能跳到它。
@@ -248,7 +255,7 @@ export class ShopUI {
       w: LEAVE_BTN_W,
       h: LEAVE_BTN_H,
       group: 'footer',
-      onFocus: (f) => leave.setSelected(f),
+      onFocus: (f, via) => leave.setSelected(f && via === 'key'),
       onActivate: () => this.close(),
     };
     this.focus.setItems([...rowFocus, leaveItem]);
@@ -257,7 +264,7 @@ export class ShopUI {
     if (animate) this.focus.focusDefault((rowFocus.find(f => !f.disabled) ?? leaveItem).id);
     // 重建后补画一次高亮：UIFocus 复位到**同一个 id** 时走的是"已经在这儿了"的早退分支，
     // 不会再喊 onFocus——而这批显示对象是刚 new 出来的，不补就是暗的（买完一件后焦点凭空消失）。
-    this.focus.current?.onFocus(true);
+    this.focus.repaint();
 
     if (animate) win.open();
     else win.attach();
@@ -343,7 +350,7 @@ export class ShopUI {
         text: name,
         style: {
           fontSize: UITheme.fontSize.title,
-          fill: canBuy ? UITheme.colors.bodyLight : UITheme.colors.disabled,
+          fill: canBuy ? UITheme.colors.body : UITheme.colors.disabled,
           fontFamily: UITheme.fonts.ui,
           wordWrap: true, breakWords: true,
           wordWrapWidth: priceX - UITheme.spacing.md * 2,
@@ -373,16 +380,19 @@ export class ShopUI {
       // **不接 pointerdown**：这里没有"选中行"这回事，接了就等于凭空多消费一次指针。
       //
       // 指针与焦点**共用同一套画法**、各拿一个开关：谁亮着行就亮着。分成两个 flag 是因为
-      // 鼠标移开时焦点可能还停在这一行（手柄/鼠标共用同一个"当前项"），此时不能把行擦暗。
+      // 悬停与导航光标是**两件事、两张画法**（见 UIFocus 类注释的三态表）：
+      // 鼠标压着 = 极淡暖底；手柄光标停着 = 空心金框。货品行没有"选中"这一态，
+      // 所以这里只有两张。`hovered` 由指针事件自己维护（买不起的行不进焦点集、
+      // syncHover 是 no-op，但它照样该有悬停反馈）；`focused` 只由 onFocus 在按键模式下给。
       let hovered = false;
       let focused = false;
       const paintRow = (): void => {
-        const active = hovered || focused;
         rowBg.clear();
-        if (active) drawSelectedRow(rowBg, 0, ry, rowW, rowBodyH);
-        else drawPanelBase(rowBg, 0, ry, rowW, rowBodyH, SKINS.row);
+        drawPanelBase(rowBg, 0, ry, rowW, rowBodyH, SKINS.row);
+        if (hovered) drawHoverRow(rowBg, 0, ry, rowW, rowBodyH);
+        if (focused) drawFocusRing(rowBg, 0, ry, rowW, rowBodyH);
         nameT.style.fill = canBuy
-          ? (active ? UITheme.colors.title : UITheme.colors.bodyLight)
+          ? (focused ? UITheme.colors.title : UITheme.colors.body)
           : UITheme.colors.disabled;
       };
 
@@ -400,6 +410,7 @@ export class ShopUI {
       hoverHit.on('pointerout', () => {
         hovered = false;
         paintRow();
+        this.focus.clearHover(id);
       });
       list.content.addChild(hoverHit);
 
@@ -418,6 +429,7 @@ export class ShopUI {
       });
       buy.container.position.set(buyX, ry);
       buy.container.on('pointerover', () => this.focus.syncHover(id));
+      buy.container.on('pointerout', () => this.focus.clearHover(id));
       list.content.addChild(buy.container);
 
       // 一行 = 一个焦点项：亮的是整行（琥珀铺光）+ 那枚钮（UIButton 的活跃态），
@@ -430,11 +442,12 @@ export class ShopUI {
         h: rowBodyH,
         group: 'rows',
         disabled: !canBuy,
-        onFocus: (f) => {
-          focused = f;
+        onFocus: (f, via) => {
+          focused = f && via === 'key';
           paintRow();
-          buy.setSelected(f);
-          if (f) this.scrollRowIntoView(i);
+          buy.setSelected(focused);
+          // 只在按键模式滚：鼠标划过时滚列表会把指针下的行抽走
+          if (focused) this.scrollRowIntoView(i);
         },
         onActivate: () => this.doPurchase(item.itemId, price),
       });
