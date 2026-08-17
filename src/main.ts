@@ -5,17 +5,23 @@ import { LOAD_SLOT_PARAM, TITLE_BOOT_PARAM } from './core/EventBridge';
 installResizeObserverQuiet();
 
 const urlParams = new URLSearchParams(window.location.search);
+/**
+ * dev 直达参数族只在 dev 构建生效：`?mode=dev` 能开 DevModeUI 任意跳场景，
+ * `devScene` / `narrativeWarp` / `play_cutscene` / 各预览同样是绕过正常开局的直达通道。
+ * 生产构建里玩家改 URL 不该拿到任何一条（发行阻断项，2026-08-17 审查批0）。
+ */
+const isDevBuild = import.meta.env.DEV;
 /** 开发面板等；另见 `?cutsceneDebug` 可在非 dev 时显示过场当前 step HUD */
-const devMode = urlParams.get('mode') === 'dev';
-const playCutscene = urlParams.get('play_cutscene') ?? undefined;
+const devMode = isDevBuild && urlParams.get('mode') === 'dev';
+const playCutscene = (isDevBuild && urlParams.get('play_cutscene')) || undefined;
 /** 配合 play_cutscene：顶层步下标，之前的步瞬时快进后从该步起常速（编辑器「从这一步开始播」） */
-const playCutsceneFrom = urlParams.get('play_cutscene_from') ?? undefined;
-const devScene = urlParams.get('devScene') ?? urlParams.get('dev_scene') ?? undefined;
-const narrativeWarp = urlParams.get('narrativeWarp') ?? urlParams.get('narrative_warp') ?? undefined;
-const waterPreview = urlParams.get('waterPreview') ?? undefined;
-const sugarWheelPreview = urlParams.get('sugarWheelPreview') ?? undefined;
-const paperCraftPreview = urlParams.get('paperCraftPreview') ?? undefined;
-const visualCapture = urlParams.has('visualCapture');
+const playCutsceneFrom = (isDevBuild && urlParams.get('play_cutscene_from')) || undefined;
+const devScene = (isDevBuild && (urlParams.get('devScene') ?? urlParams.get('dev_scene'))) || undefined;
+const narrativeWarp = (isDevBuild && (urlParams.get('narrativeWarp') ?? urlParams.get('narrative_warp'))) || undefined;
+const waterPreview = (isDevBuild && urlParams.get('waterPreview')) || undefined;
+const sugarWheelPreview = (isDevBuild && urlParams.get('sugarWheelPreview')) || undefined;
+const paperCraftPreview = (isDevBuild && urlParams.get('paperCraftPreview')) || undefined;
+const visualCapture = isDevBuild && urlParams.has('visualCapture');
 /**
  * 引导态标记（由 EventBridge 在整页重启时写入，见 TITLE_BOOT_PARAM / LOAD_SLOT_PARAM）：
  * - `startAtTitle`：停在标题界面，**不装载世界**（「回主菜单」＝彻底退出这一局）；

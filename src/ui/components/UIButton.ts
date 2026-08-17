@@ -65,7 +65,7 @@ const VARIANT_STYLE: Record<ButtonVariant, VariantStyle> = {
   secondary: {
     fill: UITheme.colors.rowBgDark, fillHover: UITheme.colors.selectedFillDim, fillPress: UITheme.colors.rowBgInactive,
     border: UITheme.colors.borderMid, borderHover: UITheme.colors.borderSelected,
-    text: UITheme.colors.buttonText,
+    text: UITheme.colors.bodyMuted,
   },
   danger: {
     fill: UITheme.colors.dangerBg, fillHover: UITheme.colors.encounterHover, fillPress: UITheme.colors.encounterRow,

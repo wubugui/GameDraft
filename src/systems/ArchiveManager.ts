@@ -8,6 +8,8 @@ import type {
   SlangEntry,
   SlangCategoryView,
   SlangProgress,
+  RhymeEntry,
+  RhymeProgress,
   DocumentEntry,
   BookDef,
   BookPageEntry,
@@ -24,7 +26,7 @@ import { evaluateConditionExprList } from './graphDialogue/conditionEvalBridge';
 import { FlagKeys } from '../core/FlagKeys';
 import { mediaUrlFromShortPath, TEXT_URLS } from '../core/projectPaths';
 
-type BookType = 'character' | 'lore' | 'slang' | 'document' | 'book' | 'bookEntry';
+type BookType = 'character' | 'lore' | 'slang' | 'rhyme' | 'document' | 'book' | 'bookEntry';
 
 export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
   private eventBus: EventBus;
@@ -33,6 +35,7 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
   private characterDefs: Map<string, CharacterEntry> = new Map();
   private loreDefs: Map<string, LoreEntry> = new Map();
   private slangDefs: Map<string, SlangEntry> = new Map();
+  private rhymeDefs: Map<string, RhymeEntry> = new Map();
   private documentDefs: Map<string, DocumentEntry> = new Map();
   private bookDefs: Map<string, BookDef> = new Map();
   private bookEntryIds: Set<string> = new Set();
@@ -41,6 +44,7 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
   private unlockedCharacters: Set<string> = new Set();
   private unlockedLore: Set<string> = new Set();
   private unlockedSlang: Set<string> = new Set();
+  private unlockedRhymes: Set<string> = new Set();
   private unlockedDocuments: Set<string> = new Set();
   private unlockedBooks: Set<string> = new Set();
 
@@ -51,6 +55,7 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
   private slangCategoryNames: Record<string, string> = {};
   private slangCategoryCompleteText: Record<string, string> = {};
   private slangAllCompleteText = '';
+  private rhymeAllCompleteText = '';
   private strings: { get(cat: string, key: string, vars?: Record<string, string | number>): string } = { get: (_c, k) => k };
   private assetManager!: AssetManager;
   private conditionCtxFactory: (() => ConditionEvalContext) | null = null;
@@ -160,6 +165,7 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
       this.loadCharacters(),
       this.loadLore(),
       this.loadSlang(),
+      this.loadRhymes(),
       this.loadDocuments(),
       this.loadBooks(),
       this.loadItemDisplayNames(),
@@ -240,6 +246,9 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
     for (const entry of this.slangDefs.values()) {
       for (const m of entry.content.matchAll(imgRe)) addMedia(m[1]);
     }
+    for (const entry of this.rhymeDefs.values()) {
+      for (const m of entry.content.matchAll(imgRe)) addMedia(m[1]);
+    }
     for (const doc of this.documentDefs.values()) {
       for (const m of doc.content.matchAll(imgRe)) addMedia(m[1]);
     }
@@ -302,6 +311,17 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
     } catch { /* no data yet */ }
   }
 
+  private async loadRhymes(): Promise<void> {
+    try {
+      const data = await this.assetManager.loadJson<{
+        entries?: RhymeEntry[];
+        allCompleteText?: string;
+      }>(`${TEXT_URLS.archiveDir}/rhymes.json`);
+      for (const e of data.entries ?? []) this.rhymeDefs.set(e.id, e);
+      this.rhymeAllCompleteText = data.allCompleteText ?? '';
+    } catch { /* no data yet */ }
+  }
+
   private async loadDocuments(): Promise<void> {
     try {
       const list = await this.assetManager.loadJson<DocumentEntry[]>(`${TEXT_URLS.archiveDir}/documents.json`);
@@ -355,6 +375,13 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
           this.unlockedSlang.add(entryId);
           this.flagStore.set(`archive_slang_${entryId}`, true);
           this.emitUpdate('slang', entryId);
+        }
+        break;
+      case 'rhyme':
+        if (this.rhymeDefs.has(entryId) && !this.unlockedRhymes.has(entryId)) {
+          this.unlockedRhymes.add(entryId);
+          this.flagStore.set(`archive_rhyme_${entryId}`, true);
+          this.emitUpdate('rhyme', entryId);
         }
         break;
       case 'document':
@@ -443,6 +470,11 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
           if (!this.readEntries.has(`slang_${id}`)) return true;
         }
         return false;
+      case 'rhyme':
+        for (const id of this.unlockedRhymes) {
+          if (!this.readEntries.has(`rhyme_${id}`)) return true;
+        }
+        return false;
       case 'document':
         for (const id of this.unlockedDocuments) {
           if (!this.readEntries.has(`doc_${id}`)) return true;
@@ -470,6 +502,14 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
         this.unlockedSlang.add(id);
         this.flagStore.set(`archive_slang_${id}`, true);
         if (!silent) this.emitUpdate('slang', id);
+      }
+    });
+
+    this.rhymeDefs.forEach((def, id) => {
+      if (!this.unlockedRhymes.has(id) && this.checkConditions(def.unlockConditions)) {
+        this.unlockedRhymes.add(id);
+        this.flagStore.set(`archive_rhyme_${id}`, true);
+        if (!silent) this.emitUpdate('rhyme', id);
       }
     });
 
@@ -570,6 +610,24 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
     };
   }
 
+  /** 歪歌册 flat 列表。**刻意返回全部条目（含未解锁灰槽）**，理由同怪话册：成就式搜集册，空槽是驱动力。 */
+  getRhymeList(): { entry: RhymeEntry; unlocked: boolean }[] {
+    return Array.from(this.rhymeDefs.values())
+      .map(entry => ({ entry, unlocked: this.unlockedRhymes.has(entry.id) }));
+  }
+
+  getRhymeProgress(): RhymeProgress {
+    const total = this.rhymeDefs.size;
+    const collected = this.unlockedRhymes.size;
+    const allComplete = total > 0 && collected >= total;
+    return {
+      collected,
+      total,
+      allComplete,
+      allCompleteText: allComplete ? this.rd(this.rhymeAllCompleteText) : '',
+    };
+  }
+
   getUnlockedDocuments(): DocumentEntry[] {
     return Array.from(this.unlockedDocuments)
       .map(id => this.documentDefs.get(id))
@@ -651,6 +709,7 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
       characters: Array.from(this.unlockedCharacters),
       lore: Array.from(this.unlockedLore),
       slang: Array.from(this.unlockedSlang),
+      rhymes: Array.from(this.unlockedRhymes),
       documents: Array.from(this.unlockedDocuments),
       books: Array.from(this.unlockedBooks),
       read: Array.from(this.readEntries),
@@ -662,6 +721,7 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
     characters?: string[];
     lore?: string[];
     slang?: string[];
+    rhymes?: string[];
     documents?: string[];
     books?: string[];
     read?: string[];
@@ -670,6 +730,7 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
     this.unlockedCharacters = new Set(data.characters ?? []);
     this.unlockedLore = new Set(data.lore ?? []);
     this.unlockedSlang = new Set(data.slang ?? []);
+    this.unlockedRhymes = new Set(data.rhymes ?? []);
     this.unlockedDocuments = new Set(data.documents ?? []);
     this.unlockedBooks = new Set(data.books ?? []);
     this.readEntries = new Set(data.read ?? []);
@@ -699,9 +760,11 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
     this.slangCategoryNames = {};
     this.slangCategoryCompleteText = {};
     this.slangAllCompleteText = '';
+    this.rhymeAllCompleteText = '';
     this.characterDefs.clear();
     this.loreDefs.clear();
     this.slangDefs.clear();
+    this.rhymeDefs.clear();
     this.documentDefs.clear();
     this.bookDefs.clear();
     this.bookEntryIds.clear();
@@ -709,6 +772,7 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
     this.unlockedCharacters.clear();
     this.unlockedLore.clear();
     this.unlockedSlang.clear();
+    this.unlockedRhymes.clear();
     this.unlockedDocuments.clear();
     this.unlockedBooks.clear();
     this.readEntries.clear();

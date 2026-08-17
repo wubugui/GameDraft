@@ -1,6 +1,6 @@
 import type { EventBus } from '../core/EventBus';
 import type { FlagStore } from '../core/FlagStore';
-import type { Condition, ConditionExpr, ItemDef, IGameSystem, GameContext, IInventoryDataProvider } from '../data/types';
+import type { Condition, ConditionExpr, ItemDef, IGameSystem, GameContext, IInventoryDataProvider, ResolvedItemUse } from '../data/types';
 import type { AssetManager } from '../core/AssetManager';
 import type { ConditionEvalContext } from './graphDialogue/evaluateGraphCondition';
 import { evaluateConditionExprList } from './graphDialogue/conditionEvalBridge';
@@ -163,6 +163,51 @@ export class InventoryManager implements IGameSystem, IInventoryDataProvider {
   canDiscard(id: string): boolean {
     const def = this.itemDefs.get(id);
     return def?.type === 'consumable';
+  }
+
+  /**
+   * 把 `ItemDef.use` 求成"点下去之前就知道结果"的查询产物（与遭遇选项的 ResolvedOption 同构）。
+   *
+   * **只读声明式那一半**（conditions / consume / 持有量），一条 action 都不跑——UI 的按钮
+   * 灰态与理由全靠它，跑一遍再看结果就成了"点了才发现没反应"。
+   */
+  resolveItemUse(id: string): ResolvedItemUse | null {
+    const def = this.itemDefs.get(id);
+    const use = def?.use;
+    if (!def || !use) return null;
+
+    // 缺省按类型推定：关键道具不因使用而消失（玩法清单 F1b），消耗品扣一个。
+    // 推定只在这里做一次，下游（UI、EventBridge）读 ResolvedItemUse.consume 不再各自推。
+    const consume = use.consume ?? def.type === 'consumable';
+
+    let enabled = true;
+    let disableReason: string | undefined;
+
+    // 要扣却不够：本该被面板"包里有才画得出这一格"挡住，但存档/剧情可能在面板开着时
+    // 把数量清零，这里补一道——不变量「失败不得伪装成功」。
+    if (consume && (this.slots.get(id) ?? 0) < 1) {
+      enabled = false;
+      disableReason = this.strings.get('inventory', 'useDisabled');
+    } else if (use.conditions?.length) {
+      const ctx = this.conditionCtxFactory?.();
+      const ok = ctx
+        ? evaluateConditionExprList(use.conditions, ctx)
+        : this.flagStore.checkConditions(use.conditions as Condition[]);
+      if (!ok) {
+        enabled = false;
+        disableReason = use.disableHint || this.strings.get('inventory', 'useDisabled');
+      }
+    }
+
+    return {
+      itemId: id,
+      label: use.label,
+      enabled,
+      disableReason,
+      consume,
+      actions: use.actions ?? [],
+      resultText: use.resultText,
+    };
   }
 
   discardItem(id: string): void {

@@ -109,6 +109,9 @@ function resolveCutsceneImageHandle(raw: unknown): string {
 
 const CUTSCENE_CAMERA_EASINGS: ReadonlySet<string> = new Set(['linear', 'easeIn', 'easeOut', 'easeInOut']);
 
+/** Esc 跳过的二次确认窗口：首按提示后，这段时间内再按 Esc 才真跳过 */
+const SKIP_CONFIRM_WINDOW_MS = 3000;
+
 /** cameraMove / cameraZoom 步骤的可选 easing；非法值当缺省（沿用各自历史默认曲线） */
 function parseCameraEasing(raw: unknown): CutsceneCameraEasing | undefined {
   return typeof raw === 'string' && CUTSCENE_CAMERA_EASINGS.has(raw)
@@ -216,6 +219,9 @@ export class CutsceneManager implements IGameSystem {
   private unsubKey: (() => void) | null = null;
   private destroyed = false;
   private skipping = false;
+  /** Esc 跳过的二次确认：首按时刻（0=未武装）；限时窗口内再按才真 skip */
+  private skipArmedAt = 0;
+  private skipConfirmTextProvider: (() => string) | null = null;
   /** dev-only「从第 N 步开播」：顶层前 N 步瞬时执行（零时长补间、跳过等待/对白/音效），
    *  到第 N 步复位为常速。目的是把画面状态（底图/图层/黑边/相机/演员站位）建起来再排演，
    *  而不是从缺底图的空壳开始。只由 devPlayCutscene 传入，正式播放路径恒为 false。 */
@@ -303,6 +309,11 @@ export class CutsceneManager implements IGameSystem {
 
   setInputManager(im: InputManager): void {
     this.inputManager = im;
+  }
+
+  /** 跳过确认提示文案（组装层从 strings 注入；系统层不 import UI/StringsProvider）。 */
+  setSkipConfirmTextProvider(fn: (() => string) | null): void {
+    this.skipConfirmTextProvider = fn;
   }
 
   setAudioManager(audioManager: ICutsceneAudioPlayer): void {
@@ -530,6 +541,7 @@ export class CutsceneManager implements IGameSystem {
     if (this.playing) return;
     this.playing = true;
     this.skipping = false;
+    this.skipArmedAt = 0;
     this.fastForwarding = false;
     /** 本次会话的代际快照：steps 执行与 finally 收尾据此判断是否已被 skip / 读档 / 拆除作废 */
     const stepEpochAtStart = this.stepEpoch;
@@ -552,7 +564,21 @@ export class CutsceneManager implements IGameSystem {
       if (e.repeat) return;
       if (e.code === 'Escape') {
         e.preventDefault();
-        this.skip();
+        // Esc 跳过要**二次确认**：整段演出一键蒸发与「Esc=关面板」的肌肉记忆撞车，
+        // 手滑代价是不可逆的（审查 P1）。首按提示、限时窗口内再按才真跳。
+        const now = performance.now();
+        if (now - this.skipArmedAt <= SKIP_CONFIRM_WINDOW_MS) {
+          this.skipArmedAt = 0;
+          this.skip();
+        } else {
+          this.skipArmedAt = now;
+          this.eventBus.emit('notification:show', {
+            text: this.skipConfirmTextProvider?.() ?? '再按一次 Esc 跳过',
+            type: 'info',
+            // 过场里 toast 被「电影化静默」压队，本条恰恰只在过场里有意义：走系统优先级
+            priority: 'system',
+          });
+        }
         return;
       }
       if (

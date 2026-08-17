@@ -274,6 +274,7 @@ _SIMPLE_OVERLAY_FILES: dict[str, list[tuple[str, str]]] = {
         ("archive/characters.json", "archive_characters"),
         ("archive/lore.json", "archive_lore"),
         ("archive/slang.json", "archive_slang"),
+        ("archive/rhymes.json", "archive_rhymes"),
         ("archive/books.json", "archive_books"),
         ("archive/documents.json", "archive_documents"),
     ],

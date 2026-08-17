@@ -142,7 +142,13 @@ export class ShopUI {
     this.currentShop = null;
     window.removeEventListener('keydown', this.onKeyBound);
     this.focus.destroy();
-    this.destroyUI();
+    // 关场淡出（绕开买后重绘/destroy 共用的瞬时 destroyUI）：先摘滚动区输入面，
+    // 再让窗体带视觉淡出自毁——逻辑态已同步落定，尸体窗只是视觉。
+    this.list?.detachInput();
+    const win = this.win;
+    this.list = null;
+    this.win = null;
+    win?.fadeOutAndDestroy();
     this.eventBus.emit('shop:closed', {});
   }
 
@@ -343,7 +349,7 @@ export class ShopUI {
         text: name,
         style: {
           fontSize: UITheme.fontSize.title,
-          fill: canBuy ? UITheme.colors.bodyLight : UITheme.colors.disabled,
+          fill: canBuy ? UITheme.colors.body : UITheme.colors.disabled,
           fontFamily: UITheme.fonts.ui,
           wordWrap: true, breakWords: true,
           wordWrapWidth: priceX - UITheme.spacing.md * 2,
@@ -382,7 +388,7 @@ export class ShopUI {
         if (active) drawSelectedRow(rowBg, 0, ry, rowW, rowBodyH);
         else drawPanelBase(rowBg, 0, ry, rowW, rowBodyH, SKINS.row);
         nameT.style.fill = canBuy
-          ? (active ? UITheme.colors.title : UITheme.colors.bodyLight)
+          ? (active ? UITheme.colors.title : UITheme.colors.body)
           : UITheme.colors.disabled;
       };
 

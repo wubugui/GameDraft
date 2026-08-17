@@ -608,9 +608,10 @@ export class DialogueUI {
 
         // 悬停即移焦（不直接画高亮）：鼠标和手柄共用同一个"当前项"。
         // 指针挪开后不再清高亮——屏幕上恒有一个可见的焦点，接着按方向键从这条继续走。
+        // 切换音由 UIFocus 的移焦钩子统一发（键盘/手柄挪选项也才有声）——
+        // 这里原来自己补发一次 ui:hover，两条一起就是同一次悬停响两下
         row.on('pointerover', () => {
           this.choiceFocus.syncHover(`c${choice.index}`);
-          this.eventBus.emit('ui:hover', {});
         });
         row.on('pointerdown', (ev) => {
           markPointerConsumed(ev.nativeEvent);

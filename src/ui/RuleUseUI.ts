@@ -6,6 +6,7 @@ import { markPointerConsumed } from './uiPointerCoords';
 import { UIWindow, WINDOW_CHROME } from './components/UIWindow';
 import { UIScrollView } from './components/UIScrollView';
 import { UIFocus, type FocusItem } from './components/UIFocus';
+import { openConfirmDialog } from './components/UIConfirmDialog';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
 import type { IZoneDataProvider, IRulesDataProvider, ZoneRuleSlot, RuleLayerKey } from '../data/types';
@@ -91,6 +92,15 @@ export class RuleUseUI {
 
   get isOpen(): boolean { return this._isOpen; }
 
+  /**
+   * 本区当前有没有能摆上台面的规矩槽（含收集中的灰条）。
+   * 给 GameStateController 注册时的 openGuard 用：HUD 亮着 [G] 而这里为空时，
+   * 守卫在拒绝的同时发提示——「按了没反应」是审查点名的死键体验（P1）。
+   */
+  hasUsableSlots(): boolean {
+    return this.resolveSlots().length > 0;
+  }
+
   open(): void {
     if (this._isOpen) return;
     const slots = this.resolveSlots();
@@ -107,7 +117,13 @@ export class RuleUseUI {
     if (!this._isOpen) return;
     this._isOpen = false;
     window.removeEventListener('keydown', this.onKeyBound);
-    this.destroyUI();
+    // 关场淡出（绕开 build/destroy 共用的瞬时 destroyUI）：先摘滚动区输入面，
+    // 再让窗体带视觉淡出自毁——逻辑态已同步落定，尸体窗只是视觉。
+    this.list?.detachInput();
+    const win = this.win;
+    this.list = null;
+    this.win = null;
+    win?.fadeOutAndDestroy();
     this.focus.destroy();
   }
 
@@ -215,7 +231,7 @@ export class RuleUseUI {
           // 规矩名是这一行的主角，与规矩本列表同档（bodyLarge）。
           fontSize: UITheme.fontSize.bodyLarge,
           fill: s.enabled ? UITheme.colors.body : UITheme.colors.disabled,
-          fontFamily: UITheme.fonts.ui, fontWeight: 'bold', letterSpacing: 1,
+          fontFamily: UITheme.fonts.ui, fontWeight: 'bold', letterSpacing: UITheme.letterSpacing.hint,
           wordWrap: true, breakWords: true,
           // 右侧有碎片读数时多让一截，否则长规矩名会折到读数底下
           wordWrapWidth:
@@ -233,7 +249,7 @@ export class RuleUseUI {
           style: {
             // 「1/2」是纯**计数角标**：玩家扫一眼知道"还没攒齐"就够了。
             // 它是这块面板里最该小的一处，micro。
-            fontSize: UITheme.fontSize.micro, fill: UITheme.colors.ruleProgress,
+            fontSize: UITheme.fontSize.micro, fill: UITheme.colors.hintMid,
             fontFamily: UITheme.fonts.ui,
           },
         });
@@ -355,12 +371,23 @@ export class RuleUseUI {
   }
 
   private selectSlot(slot: ResolvedRuleSlot): void {
-    // 不在此处 close()：直接自关会绕过 GameStateController 的弹栈恢复，状态滞留 UIOverlay
-    // 造成软锁（R11）。关面板统一由 ruleUse:apply 的处理方（EventBridge）走 closePanel 通道。
-    this.eventBus.emit('ruleUse:apply', {
-      ruleId: slot.slot.ruleId,
-      actions: slot.slot.resultActions,
-      resultText: slot.slot.resultText,
+    // 施放不可撤销（审查 P2：一点即施放无确认）：先过确认框，确认了才发 apply。
+    void openConfirmDialog(this.renderer, {
+      title: this.strings.get('confirm', 'castTitle'),
+      message: this.strings.get('confirm', 'castBody', { name: slot.ruleName }),
+      confirmLabel: this.strings.get('confirm', 'ok'),
+      cancelLabel: this.strings.get('confirm', 'cancel'),
+      // 施放是「确认动作」不是破坏性删除，确认钮走 primary 不走 danger 红
+      danger: false,
+    }).then((ok) => {
+      if (!ok) return;
+      // 不在此处 close()：直接自关会绕过 GameStateController 的弹栈恢复，状态滞留 UIOverlay
+      // 造成软锁（R11）。关面板统一由 ruleUse:apply 的处理方（EventBridge）走 closePanel 通道。
+      this.eventBus.emit('ruleUse:apply', {
+        ruleId: slot.slot.ruleId,
+        actions: slot.slot.resultActions,
+        resultText: slot.slot.resultText,
+      });
     });
   }
 

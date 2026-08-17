@@ -70,6 +70,9 @@ CONDITION_EXTRA_SPECS: dict[str, dict[str, str]] = {
     # 发射面表里，唯它漏网（2026-08-13 全库对账抓获）——漏登记 = 查"谁读这个状态"少一域、
     # 改名级联漏改 → 行话解锁条件悬垂、永远解不开，静默。它无动作树，纯条件面，故在此表。
     "archive_slang": {"path": "archive/slang.json", "kind": "archiveSlang", "label": "档案·行话"},
+    # 歪歌册 `entries[].unlockConditions`，档案第六份（2026-08-17 与运行时同步新增）。
+    # 形状同 slang：无动作树，纯条件面。
+    "archive_rhymes": {"path": "archive/rhymes.json", "kind": "archiveRhyme", "label": "档案·歪歌"},
     "game_config": {"path": "game_config.json", "kind": "gameConfig", "label": "全局配置"},
 }
 

@@ -145,6 +145,8 @@ export class DebugPanelUI implements IDebugPanelAPI {
 
   /** 游戏画面常驻卡容器（挂 #game-mount，F2 收起也显示） */
   private screenOverlay: HTMLElement;
+  /** 已挂在画面上的常驻卡：id → { 节点, 就地刷新 }。集合不变就永不重建 DOM（见 renderScreenPins） */
+  private screenCards = new Map<string, { el: HTMLElement; update: () => void }>();
   private screenOverlayTimer: number | null = null;
   private screenOverlayPointerDown = false;
   private screenOverlayPointerUpHandler: () => void = () => {};
@@ -645,6 +647,21 @@ export class DebugPanelUI implements IDebugPanelAPI {
 
   /** 渲染单个区块为可折叠 <details>；ctx 决定默认展开与 pin 按钮形态 */
   private buildSectionBlock(id: string, getter: () => DebugSectionContent, ctx: SectionContext): HTMLElement {
+    return this.buildLiveSectionBlock(id, getter, ctx).el;
+  }
+
+  /**
+   * 同上，但额外返回一个**就地刷新**的 `update()`：只改文字/按钮字面，不动 DOM 结构。
+   *
+   * 给画面常驻卡（📌）用。原来那条路是每秒 `replaceChildren` 整批重建——
+   * 卡片的展开态、`overflow-y` 的滚动位置、:hover、焦点、正在拖的滑条全部每秒被冲掉一次，
+   * 屏幕上就是"debug GUI 一直在闪"。读数变了只该改字，不该把牌子重打一块。
+   */
+  private buildLiveSectionBlock(
+    id: string,
+    getter: () => DebugSectionContent,
+    ctx: SectionContext,
+  ): { el: HTMLElement; update: () => void } {
     const details = document.createElement('details');
     details.className = 'debug-dock__section';
     if (ctx === 'screen') details.classList.add('debug-screen-pins__card');
@@ -666,23 +683,46 @@ export class DebugPanelUI implements IDebugPanelAPI {
     summary.appendChild(this.buildPinButtons(id, ctx));
     details.appendChild(summary);
 
-    try {
-      const data = getter();
+    // 三个槽位一次性建好并按固定次序挂上（正文 → 按钮行 → 附加件），
+    // 之后只切 hidden / 改字面，次序永远不会因为某次读数为空而错乱。
+    const pre = document.createElement('pre');
+    pre.className = 'debug-dock__pre';
+    const row = document.createElement('div');
+    row.className = 'debug-dock__actions';
+    const err = document.createElement('p');
+    err.className = 'debug-dock__err';
+    details.append(pre, row, err);
+
+    /** 上一轮的按钮字面：一致就只留着不动，变了才重建这一行（按钮带闭包，不能只改文字） */
+    let lastActionKey: string | null = null;
+    let mountedExtra: HTMLElement | null = null;
+
+    const apply = (): void => {
+      let data: DebugSectionContent;
+      try {
+        data = getter();
+      } catch (e) {
+        err.hidden = false;
+        err.textContent = `[${id}] ${String(e)}`;
+        pre.hidden = true;
+        row.hidden = true;
+        return;
+      }
+      err.hidden = true;
       const text = typeof data === 'string' ? data : data.text;
       const actions = typeof data === 'string' ? undefined : data.actions;
       const extra = typeof data === 'string' ? undefined : data.extra;
 
-      if (text) {
-        const pre = document.createElement('pre');
-        pre.className = 'debug-dock__pre';
-        pre.textContent = text;
-        details.appendChild(pre);
-      }
+      pre.hidden = !text;
+      // 只在真变了时写 textContent：同值赋值也会让浏览器把这块标脏、重排一次
+      if (text && pre.textContent !== text) pre.textContent = text;
 
-      if (actions && actions.length > 0) {
-        const row = document.createElement('div');
-        row.className = 'debug-dock__actions';
-        for (const a of actions) {
+      const actionKey = (actions ?? []).map((a) => a.label).join('');
+      row.hidden = !actions || actions.length === 0;
+      if (actionKey !== lastActionKey) {
+        lastActionKey = actionKey;
+        row.replaceChildren();
+        for (const a of actions ?? []) {
           const btn = document.createElement('button');
           btn.type = 'button';
           btn.className = 'debug-dock__btn';
@@ -697,16 +737,18 @@ export class DebugPanelUI implements IDebugPanelAPI {
           });
           row.appendChild(btn);
         }
-        details.appendChild(row);
       }
-      if (extra) details.appendChild(extra);
-    } catch (e) {
-      const err = document.createElement('p');
-      err.className = 'debug-dock__err';
-      err.textContent = `[${id}] ${String(e)}`;
-      details.appendChild(err);
-    }
-    return details;
+
+      // 附加件（滑条等）由注册方持有：**同一个节点就绝不重挂**，否则每秒把拖到一半的滑条摘下来
+      if (extra !== mountedExtra) {
+        mountedExtra?.remove();
+        mountedExtra = extra ?? null;
+        if (extra) details.appendChild(extra);
+      }
+    };
+
+    apply();
+    return { el: details, update: apply };
   }
 
   /** @returns 实际渲染的区块数量 */
@@ -847,18 +889,30 @@ export class DebugPanelUI implements IDebugPanelAPI {
 
   // ---- 游戏画面常驻卡（📌） -------------------------------------------------
 
-  /** 无论 F2 开合都渲染；无 pin（或 pin 的区块未注册）时整体隐藏不挡画面 */
+  /**
+   * 无论 F2 开合都渲染；无 pin（或 pin 的区块未注册）时整体隐藏不挡画面。
+   *
+   * **卡片只建一次，之后逐秒只刷读数**（见 `buildLiveSectionBlock`）：
+   * 只有常驻卡的集合真的变了才重建 DOM。
+   */
   private renderScreenPins(): void {
-    const frag = document.createDocumentFragment();
-    let n = 0;
-    for (const id of this.screenPins) {
-      const getter = this.sections.get(id);
-      if (!getter) continue;
-      frag.appendChild(this.buildSectionBlock(id, getter, 'screen'));
-      n++;
+    const wanted = [...this.screenPins].filter((id) => this.sections.has(id));
+    const sameSet = wanted.length === this.screenCards.size
+      && wanted.every((id) => this.screenCards.has(id));
+
+    if (sameSet) {
+      for (const id of wanted) this.screenCards.get(id)?.update();
+    } else {
+      this.screenCards.clear();
+      const frag = document.createDocumentFragment();
+      for (const id of wanted) {
+        const card = this.buildLiveSectionBlock(id, this.sections.get(id)!, 'screen');
+        this.screenCards.set(id, card);
+        frag.appendChild(card.el);
+      }
+      this.screenOverlay.replaceChildren(frag);
     }
-    this.screenOverlay.replaceChildren(frag);
-    this.screenOverlay.classList.toggle('is-visible', n > 0);
+    this.screenOverlay.classList.toggle('is-visible', wanted.length > 0);
   }
 
   /** 有画面常驻卡时低频自刷读数；按住指针时暂停，避免拖滑条被 DOM 重建打断 */
@@ -893,6 +947,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
     }
     window.removeEventListener('pointerup', this.screenOverlayPointerUpHandler);
     window.removeEventListener('pointercancel', this.screenOverlayPointerUpHandler);
+    this.screenCards.clear();
     this.screenOverlay.replaceChildren();
     this.screenOverlay.remove();
     this.flagSectionHandle?.destroy();

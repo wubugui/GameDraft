@@ -432,6 +432,22 @@ export interface HotspotDisplayImage {
   spriteSort?: EntitySpriteSort;
 }
 
+/**
+ * 「进对话的这一下，这个实体要不要转身、转向哪」。
+ *
+ * 此前是写死的：NPC 一律转过来面对玩家、热点一律不动。可是这条街上有太多不该转身的东西——
+ * 背对着你剁馅的屠户、跪在灵前的孝子、钉在墙上的告示、只有一面能看的烤入背景人物；
+ * 也有该转身但玩家绕到了背后的（只想让他冲街心那侧）。所以做成逐实体可配。
+ *
+ * - `keep`   完全不碰朝向（进对话前是哪面，对话时还是哪面）
+ * - `left` / `right`  进对话时固定转向该侧（与 `initialFacing` / `displayImage.facing` 同语义）
+ * - `player` 转向玩家（NPC 的历史行为，仍是 NPC 的缺省）
+ *
+ * 缺省：**NPC = `player`，热点 = `keep`**——两边各自维持改造前的行为，旧数据零影响。
+ * 朝向只有左右镜像，不存在上下（见 entity-move-facing 机制卡）。
+ */
+export type DialogueFacing = 'keep' | 'left' | 'right' | 'player';
+
 export interface HotspotDef {
   id: string;
   type: HotspotType;
@@ -470,6 +486,12 @@ export interface HotspotDef {
   label?: string;
   autoTrigger?: boolean;
   data: InspectData | PickupData | TransitionData | NpcHotspotData | EncounterTriggerData | ActSpotData;
+  /**
+   * 进入本热点的图对话时怎么摆朝向；语义见 {@link DialogueFacing}。
+   * **缺省 `keep`**（热点历来不转身）。只对配了 `displayImage` 的热点有意义——
+   * 没有展示图就没有可镜像的东西。对话结束恢复成进对话前的朝向。
+   */
+  dialogueFacing?: DialogueFacing;
   /** 可选：展示用贴图，底中锚点对齐 (x,y) */
   displayImage?: HotspotDisplayImage;
   /**
@@ -1035,6 +1057,11 @@ export interface NpcDef {
    * 缺省为 right。对话/巡逻中仍可由逻辑改写朝向。
    */
   initialFacing?: 'left' | 'right';
+  /**
+   * 进入本 NPC 对话时怎么摆朝向；语义见 {@link DialogueFacing}。
+   * **缺省 `player`**（转向玩家，即改造前的写死行为）。对话结束恢复成进对话前的朝向。
+   */
+  dialogueFacing?: DialogueFacing;
   patrol?: PatrolDef;
   /**
    * 可选：相对场景 JSON 中 NPC 锚点 (x,y) 的局部多边形；与 `collisionPolygonLocal` 配合。
@@ -1327,6 +1354,33 @@ export interface RuleFragmentDef {
 // 物件数据
 // ============================================================
 
+/**
+ * 物件的**自身用途**：玩家在背包里对它主动执行的一次行为（吃掉、点燃、撕开）。
+ *
+ * 与「对着场景里某个东西用」是两回事——后者归物件检视的用物表
+ * （`ObjectExamineItemUseDef`，按热区登记），两者互不覆盖、互不拼接。
+ *
+ * 设计上分成**声明式**（label/conditions/disableHint/consume）与**命令式**（actions/resultText）
+ * 两半：前者必须能在玩家点下去**之前**求值，UI 才画得出灰态与理由；把"能不能用"的判断
+ * 写进 actions 里会让按钮态、婉拒文案、引导提示全部失去依据（见 ResolvedItemUse）。
+ */
+export interface ItemUseDef {
+  /** 按钮文字，如「吃掉」「点燃」「撕开」；可含 [tag:…] */
+  label: string;
+  /** 可用条件；空/缺省＝恒可用 */
+  conditions?: ConditionExpr[];
+  /** 条件不满足时按钮的置灰理由；缺省用 strings.inventory.useDisabled */
+  disableHint?: string;
+  /**
+   * 使用后是否扣掉一个。缺省按类型推定：`consumable` 扣、`key` 不扣
+   * （关键道具默认不因使用而消失，见玩法清单 F1b）。
+   */
+  consume?: boolean;
+  actions: ActionDef[];
+  /** 执行完另起一段 InspectBox 展示；可含 [tag:…] */
+  resultText?: string;
+}
+
 export interface ItemDef {
   id: string;
   name: string;
@@ -1341,6 +1395,29 @@ export interface ItemDef {
   dynamicDescriptions?: { conditions: ConditionExpr[]; text: string }[];
   buyPrice?: number;
   maxStack: number;
+  /**
+   * 民俗类别标签（辟邪 / 食物 / 引火 / 信物 / 沾秽…）。**给系统看的分类，不是玩家可见文案**：
+   * 让"用点"按类别接受物件，不必逐个点名 id。受控词表由校验器兜（同义词会让按类别匹配失效）。
+   */
+  tags?: string[];
+  /** 自身用途；缺省＝该物件在背包里没有使用入口 */
+  use?: ItemUseDef;
+}
+
+/**
+ * `ItemUseDef` 的求值结果——UI 只读这个，**不碰 `actions`**。
+ *
+ * 与遭遇选项的 `ResolvedOption` 同构（`enabled` + `disableReason`）：都是"点下去之前
+ * 就得知道结果"的查询产物。`consume` 已把类型缺省推定折进来，下游不再各自推一遍。
+ */
+export interface ResolvedItemUse {
+  itemId: string;
+  label: string;
+  enabled: boolean;
+  disableReason?: string;
+  consume: boolean;
+  actions: ActionDef[];
+  resultText?: string;
 }
 
 // ============================================================
@@ -1917,6 +1994,13 @@ export interface CharacterEntry {
   id: string;
   name: string;
   title: string;
+  /**
+   * 人物簿头像：对话立绘集目录名（`resources/runtime/images/dialogue_portraits/<slug>/`），
+   * 与 `NpcDef.portraitSlug` / `DialoguePortraitRef.slug` 同一 slug 语义——复用对话立绘
+   * 切片管线的产物，可用值即该目录下的子目录名（character_registry / 场景 NPC 同源）。
+   * 人物簿固定取该集的 calm（平静）表情帧；不设或缺图则不显头像（RichContent 占位块兜底）。
+   */
+  portrait?: string;
   impressions: { text: string; conditions: ConditionExpr[] }[];
   knownInfo: { text: string; conditions: ConditionExpr[] }[];
   /** 玩家第一次在档案中点开该人物时执行（仅一次，记入存档） */
@@ -1970,6 +2054,34 @@ export interface SlangCategoryView {
 
 /** 怪话册总进度 */
 export interface SlangProgress {
+  collected: number;
+  total: number;
+  allComplete: boolean;
+  /** 全册集齐时显示的评语（未集齐为空串） */
+  allCompleteText: string;
+}
+
+/**
+ * 歪歌册条目。与怪话册同为「系统替文盲记账」的成就式搜集册，纯 flavor：只能被读、不能被用。
+ * 收民间连锁调式歪童谣；内容口径（宁冷勿俗、注释不提历史人物）见玩法功能需求清单 K5 书六。
+ */
+export interface RhymeEntry {
+  id: string;
+  /** 标题，如「张打铁」 */
+  title: string;
+  /** 顺口溜完整原文，多行用 \n */
+  content: string;
+  /** 在哪听来的（采风口径） */
+  source: string;
+  /** 末尾那句拆台备注（可空） */
+  note?: string;
+  unlockConditions: ConditionExpr[];
+  /** 玩家第一次在档案中点开该条目时执行（仅一次） */
+  firstViewActions?: ActionDef[];
+}
+
+/** 歪歌册总进度（暂无分类，全册一个进度） */
+export interface RhymeProgress {
   collected: number;
   total: number;
   allComplete: boolean;
@@ -2514,6 +2626,8 @@ export interface IInventoryDataProvider {
   getItemDescription(id: string): string;
   getItemCount(id: string): number;
   canDiscard(id: string): boolean;
+  /** 该物件此刻的使用态；没配 `use` 返回 null（＝面板不画使用键） */
+  resolveItemUse(id: string): ResolvedItemUse | null;
 }
 
 export interface IRulesDataProvider {
@@ -2537,7 +2651,7 @@ export interface IRulesDataProvider {
 export interface IArchiveDataProvider {
   /** 将档案/书籍等 JSON 正文中的 [tag:…] 展开为当前展示文案 */
   resolveLine(raw: string | undefined): string;
-  hasUnread(bookType: 'character' | 'lore' | 'document' | 'book' | 'slang'): boolean;
+  hasUnread(bookType: 'character' | 'lore' | 'document' | 'book' | 'slang' | 'rhyme'): boolean;
   getUnlockedCharacters(): CharacterEntry[];
   getCharacterVisibleImpressions(entry: CharacterEntry): string[];
   getCharacterVisibleInfo(entry: CharacterEntry): string[];
@@ -2546,6 +2660,9 @@ export interface IArchiveDataProvider {
   /** 怪话册：按分类分组，含未解锁灰槽（刻意返回全部条目，不做已解锁过滤） */
   getSlangCategories(): SlangCategoryView[];
   getSlangProgress(): SlangProgress;
+  /** 歪歌册：flat 列表，含未解锁灰槽（刻意返回全部条目，不做已解锁过滤） */
+  getRhymeList(): { entry: RhymeEntry; unlocked: boolean }[];
+  getRhymeProgress(): RhymeProgress;
   getBooks(): BookDef[];
   getUnlockedBooks(): BookDef[];
   /** 左侧树：章节 → 子条目（含解锁状态） */
@@ -2570,6 +2687,14 @@ export interface IZoneDataProvider {
 export interface IAudioSettingsProvider {
   getVolume(channel: 'bgm' | 'sfx' | 'ambient'): number;
   setVolume(channel: 'bgm' | 'sfx' | 'ambient', vol: number): void;
+  /**
+   * 「松手试听」：玩家把某条音量滑条**停下**之后，按刚调好的响度放一声样本。
+   *
+   * 没有它的话，`sfx` 那条是**完全哑的**——音效只在事件发生时才响，玩家在设置页里
+   * 把滑条从 20% 拖到 80% 全程听不到任何变化，等于在盲调（bgm/ambient 是实时生效的，
+   * 拖的时候本来就听得见，所以那两条只在**当前没出声**时才补这一声）。
+   */
+  previewVolume(channel: 'bgm' | 'sfx' | 'ambient'): void;
 }
 
 /**

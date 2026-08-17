@@ -101,7 +101,12 @@ export class InspectBox {
     this.resolveDisplay = fn;
   }
 
-  show(text: string): Promise<void> {
+  /**
+   * @param title 检视对象的名字（可选）。给了就在正文上方出一行标题（title 档琥珀 +
+   *   渐隐细横线，与各面板 createTitleRow 同一语汇）；不给则版式与原先完全一致。
+   *   「任意点击 / 任意键关闭」的语义不因标题行改变——标题行不吃任何事件。
+   */
+  show(text: string, title?: string): Promise<void> {
     // 二次 show 时先正常收尾旧会话（resolve 旧 Promise、拆监听、销毁旧容器），
     // 否则旧 Promise 永不 resolve、等待它的动作链悬挂。
     if (this.container || this.resolveClose) this.close();
@@ -114,6 +119,9 @@ export class InspectBox {
       const sh = this.renderer.screenHeight;
       const boxWidth = Math.min(sw - H_MARGIN * 2, MAX_BOX_W);
       const displayText = this.resolveDisplay ? this.resolveDisplay(text) : text;
+      const displayTitle = title
+        ? (this.resolveDisplay ? this.resolveDisplay(title) : title).trim()
+        : '';
 
       const textObj = createStyledText({
         text: displayText,
@@ -130,9 +138,29 @@ export class InspectBox {
         },
       });
 
+      // 标题行（可选）：对象名 title 档琥珀 + 下方渐隐细线。先建出来才能量高——
+      // 盒高与正文视口都要给它让位；没有名字时 headerH=0，版式与原先逐像素一致。
+      const titleObj: Text | null = displayTitle
+        ? createStyledText({
+          text: displayTitle,
+          style: {
+            fontSize: UITheme.fontSize.title,
+            fill: UITheme.colors.title,
+            fontFamily: UITheme.fonts.display,
+            fontWeight: 'bold',
+            letterSpacing: UITheme.letterSpacing.title,
+            wordWrap: true, breakWords: true,
+            wordWrapWidth: boxWidth - PAD * 2,
+          },
+        })
+        : null;
+      const headerH = titleObj
+        ? titleObj.height + UITheme.spacing.sm + 1 + UITheme.spacing.md
+        : 0;
+
       // 先量正文再定盒高：短句不撑空盒，长文封顶到满屏后交给滚动
       const boxHeight = Math.min(
-        Math.max(MIN_BOX_H, textObj.height + TEXT_TOP + HINT_BAND),
+        Math.max(MIN_BOX_H + headerH, textObj.height + TEXT_TOP + headerH + HINT_BAND),
         sh - V_MARGIN * 2,
       );
       const boxX = (sw - boxWidth) / 2;
@@ -144,14 +172,23 @@ export class InspectBox {
         border: UITheme.colors.borderActive,
       }));
 
-      const viewH = boxHeight - TEXT_TOP - HINT_BAND;
+      if (titleObj) {
+        titleObj.eventMode = 'none';
+        titleObj.position.set(boxX + PAD, boxY + TEXT_TOP);
+        this.container.addChild(titleObj);
+        const titleRule = createRule(boxWidth - PAD * 2);
+        titleRule.position.set(boxX + PAD, boxY + TEXT_TOP + titleObj.height + UITheme.spacing.sm);
+        this.container.addChild(titleRule);
+      }
+
+      const viewH = boxHeight - TEXT_TOP - headerH - HINT_BAND;
       const view = new UIScrollView(this.renderer, {
         width: boxWidth - PAD * 2,
         height: viewH,
         // 本框不铺遮罩，屏幕其余部分仍是场景：只吃落在盒子上的滚轮
         hitTest: (hx, hy) => hx >= boxX && hx <= boxX + boxWidth && hy >= boxY && hy <= boxY + boxHeight,
       });
-      view.container.position.set(boxX + PAD, boxY + TEXT_TOP);
+      view.container.position.set(boxX + PAD, boxY + TEXT_TOP + headerH);
       view.content.addChild(textObj);
       this.container.addChild(view.container);
       view.refresh();

@@ -174,8 +174,15 @@ class InsertRefDialog(QDialog):
 
 
 def _needs_check(text: str) -> bool:
-    """要不要跑校验：有项目引用或有色标记才跑（无则不占一行提示）。"""
-    return "[tag:" in text or "[c:" in text or "[/c]" in text
+    """要不要跑校验：有项目引用/色标记/线索标记才跑（无则不占一行提示）。
+
+    [clue:] 与 [c:] 同理必须进这道门：未知/非法线索 id 会被 validate_refs_for_save
+    硬拦保存，编辑期零反馈会让两边口径反着。
+    """
+    return (
+        "[tag:" in text or "[c:" in text or "[/c]" in text
+        or "[clue:" in text or "[/clue]" in text
+    )
 
 
 def _format_errs(errs: list[str]) -> str:

@@ -2,6 +2,7 @@ import { Container, Graphics, Text } from 'pixi.js';
 import { UITheme } from './UITheme';
 import { createPanel, SKINS } from './PanelSkin';
 import { createProgressBar } from './components/UIDecor';
+import { useCoarsePointerOrTouchDevice } from './TouchMobileControls';
 import type { Renderer } from '../rendering/Renderer';
 import type { StringsProvider } from '../core/StringsProvider';
 import { HoldProgress } from '../systems/pressureHold/holdProgress';
@@ -226,7 +227,8 @@ export class PressureHoldUI {
     // 键位提示：配角，但**第一次遇到必须读得懂**——micro(14) 是给角标/页码的，
     // 一句「按住 [空格] 或按住鼠标」缩到那一档就成了看不清的脚注。
     const keyHint = createStyledText({
-      text: this.strings.get('pressureHold', 'holdHint'),
+      // 触屏不提「空格/鼠标」（审查 P1：键帽指向不存在的键盘），换触屏话术
+      text: this.strings.get('pressureHold', useCoarsePointerOrTouchDevice() ? 'holdHintTouch' : 'holdHint'),
       style: {
         fontSize: UITheme.fontSize.small,
         fill: UITheme.colors.hintMid,

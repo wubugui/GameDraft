@@ -5,7 +5,9 @@ import { markPointerConsumed } from './uiPointerCoords';
 import { UIWindow, WINDOW_CHROME } from './components/UIWindow';
 import { UIScrollView } from './components/UIScrollView';
 import { UIButton } from './components/UIButton';
+import { openConfirmDialog } from './components/UIConfirmDialog';
 import { createIcon, createKeyCap, createRule, createSlot } from './components/UIDecor';
+import { UIFocus, type FocusItem } from './components/UIFocus';
 import { mediaUrlFromShortPath } from '../core/projectPaths';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
@@ -111,6 +113,15 @@ export class InventoryUI {
   private selectedId: string | null = null;
   /** 物品格边长：`build()` 里按面板实际可用宽反算（见 CELL_MIN/CELL_MAX 的说明） */
   private cell = CELL_MIN;
+  /**
+   * 键盘/手柄焦点。三组：`grid` 物品格（4×3 二维空间导航）/ `actions` 右栏丢弃钮 /
+   * `footer` 底部关闭键帽——不分组的话上下键会在格子与按钮之间乱跳。
+   * 高亮一律复用元素已有画法：格子是悬停金描边、按钮是 setSelected、键帽是变淡。
+   */
+  private focus = new UIFocus();
+  /** 当前 build 攒出来的焦点项；fillGrid/buildDetail/buildFooter 往里推，build() 收尾统一喂 */
+  private focusItems: FocusItem[] = [];
+  private onKeyBound: (e: KeyboardEvent) => void;
 
   /**
    * 图标纹理缓存。**本类拿不到 AssetManager**（构造签名与 Game.ts 接线不改），
@@ -126,6 +137,7 @@ export class InventoryUI {
     this.eventBus = eventBus;
     this.inventoryData = inventoryData;
     this.strings = strings;
+    this.onKeyBound = (e) => this.onKey(e);
   }
 
   setResolveDisplay(fn: ((s: string) => string) | null): void {
@@ -144,12 +156,43 @@ export class InventoryUI {
     if (this._isOpen) return;
     this._isOpen = true;
     this.build(true);
+    // 方向键/回车走 UIFocus（网格二维导航），与书架/用规矩同一范式；Esc/I 归全局关闭通道
+    window.addEventListener('keydown', this.onKeyBound);
   }
 
   close(): void {
     if (!this._isOpen) return;
     this._isOpen = false;
-    this.destroyUI();
+    window.removeEventListener('keydown', this.onKeyBound);
+    // 关场淡出（绕开重建路径共用的瞬时 destroyUI）：先摘两块滚动区的输入面，
+    // 再让窗体带视觉淡出自毁——逻辑态已同步落定，尸体窗只是视觉。
+    this.descView?.detachInput();
+    this.grid?.detachInput();
+    const win = this.win;
+    this.descView = null;
+    this.grid = null;
+    this.win = null;
+    win?.fadeOutAndDestroy();
+    this.focus.destroy();
+  }
+
+  /**
+   * 键盘/手柄：**焦点优先，滚动兜底**。方向键先交给 UIFocus 在格子/丢弃/关闭之间挪焦点，
+   * 挪不动才让给网格滚动区（critical 给予溢出 12 槽时网格真的会滚）；两级都没吃下的按键
+   * **一律不吞**（Esc / I 关面板等全局快捷键）。确认框（丢弃）打开期间键盘事件在
+   * window capture 阶段就被它吞掉，这里天然收不到，无需配合。
+   */
+  private onKey(e: KeyboardEvent): void {
+    if (!this._isOpen) return;
+    if (this.focus.handleKey(e.code)) {
+      e.preventDefault();
+      return;
+    }
+    const grid = this.grid;
+    if (!grid) return;
+    const before = grid.scrollOffset;
+    if (!grid.handleKey(e.code)) return;
+    if (grid.scrollOffset !== before) e.preventDefault();
   }
 
   private sound = (name: 'hover' | 'press' | 'cancel'): void => {
@@ -182,7 +225,11 @@ export class InventoryUI {
    */
   private build(animate = false): void {
     const keepScroll = this.grid?.scrollOffset ?? 0;
+    // 重建前记一下"焦点是否已在手上"：点格子/丢弃/图标到位触发的重建要按 id 复位，
+    // 只有首开（focus 还空着）才落默认焦点
+    const hadFocus = this.focus.current !== null;
     this.destroyUI();
+    this.focusItems = [];
 
     const items = this.inventoryData.getAllItems();
     // critical 给予（关键道具保底）可临时超过 12 槽——网格按实际物品数增行，溢出物品不隐身
@@ -268,6 +315,14 @@ export class InventoryUI {
 
     this.buildFooter(win, gridAreaH);
 
+    // 焦点项整批重喂：重建按 id 复位（id 没了落到几何最近一格，丢弃后正好是顺延的那件）。
+    // 默认焦点 = 当前选中格（build 前面已保证 selectedId 非空时必在包里）；
+    // 空包无格时 focusItems 只剩关闭键帽，setItems 落在它身上（UIFocus 空列表也安全）。
+    this.focus.setItems(this.focusItems);
+    if (!hadFocus && this.selectedId) this.focus.focusDefault(`item:${this.selectedId}`);
+    // setItems 按同 id 复位时不重放 onFocus，新一批显示对象拿不到高亮 → 补一次
+    this.focus.current?.onFocus(true);
+
     if (animate) win.open();
     else win.attach();
   }
@@ -334,20 +389,29 @@ export class InventoryUI {
       : createKeyCap(raw.replace(/[[\]]/g, ''), undefined);
     // 竖向**从内容区下沿夹一次**：窗高被 SCREEN_MARGIN 夹小时（矮屏 / 侧栏挤压）
     // 光按 top 往下量会把键帽推到木框上甚至推出面板，出口就此变成半截字。
-    cap.position.set(
-      Math.round((win.bodyWidth - cap.totalWidth) / 2),
-      Math.round(Math.min(top + UITheme.spacing.md * 2, win.bodyHeight - cap.height)),
-    );
+    const capX = Math.round((win.bodyWidth - cap.totalWidth) / 2);
+    const capY = Math.round(Math.min(top + UITheme.spacing.md * 2, win.bodyHeight - cap.height));
+    cap.position.set(capX, capY);
     cap.eventMode = 'static';
     cap.cursor = 'pointer';
-    cap.on('pointerover', () => { cap.alpha = 0.75; this.sound('hover'); });
-    cap.on('pointerout', () => { cap.alpha = 1; });
+    cap.on('pointerover', () => { cap.alpha = 0.75; this.sound('hover'); this.focus.syncHover('close'); });
+    // 移开时**只在焦点不在它身上**才复原：鼠标与手柄共用同一个"当前项"
+    cap.on('pointerout', () => { if (this.focus.current?.id !== 'close') cap.alpha = 1; });
     cap.on('pointerdown', (e) => {
       markPointerConsumed((e as { nativeEvent?: unknown }).nativeEvent);
       this.sound('cancel');
       this.requestClose();
     });
     win.body.addChild(cap);
+    // 键帽自成一组：与网格/丢弃同组的话，下键会从格子直接跳过丢弃钮落到面板底
+    this.focusItems.push({
+      id: 'close',
+      x: capX, y: capY, w: cap.totalWidth, h: cap.height,
+      group: 'footer',
+      // 焦点高亮 = 键帽自己的 hover 画法（整枚变淡一档）
+      onFocus: (on) => { if (!cap.destroyed) cap.alpha = on ? 0.75 : 1; },
+      onActivate: () => { this.sound('cancel'); this.requestClose(); },
+    });
   }
 
   private fillGrid(items: ReturnType<IInventoryDataProvider['getAllItems']>, slotCount: number): void {
@@ -441,8 +505,11 @@ export class InventoryUI {
       hit.fill({ color: 0xffffff, alpha: UITheme.alpha.hitArea });
       hit.eventMode = 'static';
       hit.cursor = 'pointer';
-      hit.on('pointerover', () => { hover.visible = true; });
-      hit.on('pointerout', () => { hover.visible = false; });
+      const fid = `item:${item.id}`;
+      // 悬停即移焦：鼠标与手柄共用同一个"当前项"；移开时**只在焦点不在它身上**才熄描边
+      // （抹掉就等于屏幕上没有焦点了）
+      hit.on('pointerover', () => { hover.visible = true; this.focus.syncHover(fid); });
+      hit.on('pointerout', () => { if (this.focus.current?.id !== fid) hover.visible = false; });
       hit.on('pointerdown', (e) => {
         markPointerConsumed((e as { nativeEvent?: unknown }).nativeEvent);
         if (this.selectedId === item.id) return;
@@ -450,9 +517,39 @@ export class InventoryUI {
         this.build();
       });
       grid.content.addChild(hit);
+
+      // 空格子不进焦点环（不可交互项不吃焦点），只登记有物品的格
+      this.focusItems.push({
+        id: fid,
+        x: cx, y: cy, w: this.cell, h: this.cell,
+        group: 'grid',
+        // 焦点高亮 = 格子原有的悬停金描边；网格溢出滚动时焦点格要滚进视口
+        onFocus: (on) => {
+          if (!hover.destroyed) hover.visible = on;
+          if (on) this.revealCell(cy);
+        },
+        // 回车/空格 = 选中该格（与 pointerdown 同一条路径：selectedId 换人 + build 重绘详情）
+        onActivate: () => {
+          if (this.selectedId === item.id) return;
+          this.selectedId = item.id;
+          this.build();
+        },
+      });
     }
 
     grid.refresh();
+  }
+
+  /** 焦点落到视口外的格子时滚进来（只在 critical 溢出 12 槽、网格真滚动时起作用）。 */
+  private revealCell(cy: number): void {
+    const grid = this.grid;
+    if (!grid) return;
+    const top = cy - GRID_INSET;
+    const bottom = cy + this.cell + GRID_INSET;
+    if (top < grid.scrollOffset) grid.scrollOffset = Math.max(0, top);
+    else if (bottom > grid.scrollOffset + grid.viewportHeight) {
+      grid.scrollOffset = bottom - grid.viewportHeight;
+    }
   }
 
   /**
@@ -508,19 +605,42 @@ export class InventoryUI {
     const canDiscard = this.inventoryData.canDiscard(itemId);
     if (canDiscard) {
       bottom -= DISCARD_BTN_H;
+      const itemName = this.r(def?.name ?? itemId);
+      const discardW = Math.min(DISCARD_BTN_W, detailW);
+      // 点按/回车共用同一个执行体。丢弃不可撤销（审查 P1 五条零确认路径之一）：过确认框再真丢
+      const confirmDiscard = (): void => {
+        void openConfirmDialog(this.renderer, {
+          title: this.strings.get('confirm', 'discardTitle'),
+          message: this.strings.get('confirm', 'discardBody', { name: itemName }),
+          confirmLabel: this.strings.get('confirm', 'ok'),
+          cancelLabel: this.strings.get('confirm', 'cancel'),
+          onSound: this.sound,
+        }).then((ok) => { if (ok) this.discard(itemId); });
+      };
       const btn = new UIButton({
         label: this.strings.get('inventory', 'discard'),
-        width: Math.min(DISCARD_BTN_W, detailW),
+        width: discardW,
         height: DISCARD_BTN_H,
         // 破坏性操作、贴在右栏左下的小键：按钮缺省的 bodyLarge 在 34 高的键里会顶满上下沿
         // （原来 26 高配 25px 字，字比键还高），退到 body 档才是"小键"的样子。
         fontSize: UITheme.fontSize.body,
         variant: 'danger',
-        onPress: () => this.discard(itemId),
+        onPress: confirmDiscard,
         onSound: this.sound,
       });
       btn.container.position.set(0, bottom);
+      btn.container.on('pointerover', () => this.focus.syncHover('discard'));
       box.addChild(btn.container);
+      // 丢弃与网格分组：右键从网格末列跨过来（同组找不到才跨组），上下键不会在格子与按钮间乱跳。
+      // 矩形取面板内容坐标系（box 挂在 detailX），与格子在同一套坐标里比距离。
+      this.focusItems.push({
+        id: 'discard',
+        x: detailX, y: bottom, w: discardW, h: DISCARD_BTN_H,
+        group: 'actions',
+        // 焦点高亮 = UIButton 自己的常驻选中态
+        onFocus: (on) => btn.setSelected(on),
+        onActivate: confirmDiscard,
+      });
       bottom -= UITheme.spacing.md;
     }
 
@@ -676,7 +796,11 @@ export class InventoryUI {
   }
 
   destroy(): void {
-    this.close();
+    // 真销毁走瞬时路径（不经 close 的关场淡出），destroy 后重 open 与首次一致
+    this._isOpen = false;
+    window.removeEventListener('keydown', this.onKeyBound);
+    this.destroyUI();
+    this.focus.destroy();
     this.iconTex.clear();
     this.iconLoading.clear();
   }

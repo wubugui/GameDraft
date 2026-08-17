@@ -42,6 +42,22 @@ export interface FocusItem {
   disabled?: boolean;
 }
 
+/**
+ * 「换了一项」的提示音钩子（**模块级单点注入**，与 ArchiveBookView 的线索通道同一先例）。
+ *
+ * 全站面板的条目切换都经 `UIFocus.focusById`——键盘/手柄挪焦点、鼠标悬停移焦、
+ * 重建后落到别的项，全在这一处。所以切换音接在这里，一次覆盖书架木牌 / 六本册子的条目 /
+ * 规矩行 / 背包格 / 地图节点 / 铺子行 / 暂停菜单，不必逐面板各接一遍（也就不会漏）。
+ *
+ * 由 `Game` 注入 `eventBus.emit('ui:hover')`（= 对话选项切换用的那一枚音）。
+ * 未注入时静默——jsdom 测试与预览态不需要声音。
+ */
+let focusChangeSound: (() => void) | null = null;
+
+export function setFocusChangeSound(fn: (() => void) | null): void {
+  focusChangeSound = fn;
+}
+
 type Dir = 'up' | 'down' | 'left' | 'right';
 
 const DIR_KEYS: Record<string, Dir> = {
@@ -97,6 +113,9 @@ export class UIFocus {
     if (prev) prev.onFocus(false);
     this.currentId = id;
     this.current?.onFocus(true);
+    // **只有"从某一项挪到另一项"才响**：面板刚打开落默认焦点（prev 为空）不该响一声，
+    // 那是开面板音的活儿；同 id 复位在上面就早退了，重建也不会响。
+    if (prev) focusChangeSound?.();
   }
 
   /** 指针悬停时同步焦点：鼠标和手柄共用同一个"当前项"，不各走各的。 */

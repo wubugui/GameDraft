@@ -53,17 +53,25 @@ export const UITheme = {
     title: 0xffcc88,
     /** 主角说话人名：同一暖色系里提亮一档，与 NPC 的 title 拉开而不跳出配色 */
     speakerSelf: 0xfff0d8,
+    // ── 语义灰五档（2026-08-17 批2a 收敛）────────────────────────────────
+    // 前史：这批灰原本是冷蓝灰（bbbbcc / aaaacc / 555566 / 888899 / 8888aa / ccccdd），
+    // 是 debug 配色的残留，在暖近黑 + 旧木的画面里每一处都发蓝，先统一挪进了暖灰；
+    // 挪暖后灰域又膨胀到 14 档 + 同值双名，相邻档肉眼不可分——审查主诉
+    // 「文字没有重点」的令牌层根因。收敛为五档，旧名去向见各键注释。
+    /** 主文（并入原 bodyLight 0xcccccc） */
     body: 0xdddddd,
+    /** 次主文/强调次级（并入原 bodyDim 0xc4bbad、buttonText 0xd6cec0） */
     bodyMuted: 0xccbbaa,
-    // 以下几档原本是冷蓝灰（bbbbcc / aaaacc / 555566 / 888899 / 8888aa / ccccdd）——
-    // 那是 debug 配色的残留，在暖近黑 + 旧木的画面里每一处都发蓝。统一挪进暖灰。
-    bodyDim: 0xc4bbad,
-    subtle: 0xb0a690,
-    hint: 0x5c5346,
-    disabled: 0x666666,
-    section: 0x8f8672,
-    link: 0x9a8b6b,
-    buttonText: 0xd6cec0,
+    /** 说明/描述（并入原 subtle 0xb0a690、ruleDesc 0x999988、同值双名 questDesc） */
+    descText: 0xa9a094,
+    /**
+     * 注/弱提示（并入原 section 0x8f8672、ruleSource 0x777766、ruleProgress 0x888877、
+     * descTextDim 0x8e867a、pageInfo 0x6b6355、同值双名 questDescDim；
+     * 旧 hint 0x5c5346 / hintLight 0x736b5e 对比度塌陷是审查主诉，统一提亮到这档）
+     */
+    hintMid: 0x857c6e,
+    /** 禁用/占位（并入原 disabledDark 0x555555）。原值 0x666666 是暖木配色里的中性灰残留，换同明度暖灰 */
+    disabled: 0x6b6355,
 
     gold: 0xffcc66,
     orange: 0xffaa44,
@@ -90,9 +98,7 @@ export const UITheme = {
     ruleEffective: 0x8fae72,
     ruleQuestionable: 0xb0644a,
     ruleCollecting: 0xbbaa77,
-    ruleDesc: 0x999988,
-    ruleSource: 0x777766,
-    ruleProgress: 0x888877,
+    // （原 ruleDesc/ruleSource/ruleProgress 三档灰已并入 descText/hintMid，见语义灰五档）
     ruleName: 0xddccaa,
     /** 进度空槽：原来是中性冷灰 0x333333，在暖木面板上一眼像 debug 控件 */
     progressBg: 0x261e14,
@@ -112,8 +118,7 @@ export const UITheme = {
     /** 支线：留一点青以便与主线拉开，但压暗压灰，不再是发亮的薄荷色 */
     questSide: 0x8fb8a8,
     questCompleted: 0x7a7264,
-    questDesc: 0xa9a094,
-    questDescDim: 0x8e867a,
+    // （原 questDesc/questDescDim 是 descText/descTextDim 的同值双名，已随批2a 收敛删除）
 
     notifQuest: 0xffcc66,
     /** 「学到规矩」：原来是薄荷绿 0x88ddaa，toast 的书图标跟着 tint 成绿的，
@@ -134,17 +139,19 @@ export const UITheme = {
     bookLabel: 0xeeddcc,
     pickupText: 0xffcc44,
 
-    bodyLight: 0xcccccc,
-    descText: 0xa9a094,
-    descTextDim: 0x8e867a,
-    hintMid: 0x857c6e,
-    hintLight: 0x736b5e,
-    pageInfo: 0x6b6355,
-    disabledDark: 0x555555,
     encounterSpecial: 0xddaa88,
+    /** 暗金：数值/链接类交互字（原 link 档并入——交互色归琥珀族，MenuUI 的 JSON 链接是先例） */
     goldDim: 0xccaa66,
     hudRuleHint: 0x1a0e0e,
   },
+
+  /*
+   * ⚠ 这里曾有一套 `paperInk`（米白纸页的墨字色板，审查批3a 的"商业档案观感"）。
+   * **2026-08-17 连同亮底纸页一起撤销**——理由见 `components/ArchiveBookView` 顶部注释
+   * （一句话：面板底实测 (9,8,6)，那张纸亮 248 倍，在夜戏里它自己是全屏最亮的光源）。
+   * 撤销它同时消掉了"两套色板永远要同步"这笔维护账：全站文档色板现在只有
+   * `RichContent.RICH_DARK` 一套。要找旧值去 git 历史，别在这儿重建第二套。
+   */
 
   alpha: {
     panelBg: 0.95,
@@ -176,6 +183,18 @@ export const UITheme = {
   letterSpacing: {
     title: 4,
     display: 8,
+    /** 小节头/序号/提示行的轻字距：全站原散落的 `letterSpacing: 1` 硬编码收敛于此 */
+    hint: 1,
+  },
+
+  /**
+   * 行距倍率（2026-08-17 批2a 新增）。用法：`Math.round(fontSize * UITheme.lineHeight.body)`。
+   * 存量行距各有论证，不强制回改；新代码与顺手可换处取这里，别再手写魔法数。
+   */
+  lineHeight: {
+    tight: 1.3,
+    body: 1.5,
+    loose: 1.6,
   },
 
   /**
@@ -281,8 +300,23 @@ export const UITheme = {
     panel: 10,
     overlay: 5,
     toast: 50,
+    /** 任务横幅：与 toast 同带不同车道，但真撞上时大事（新任务）压过流水播报 */
+    banner: 51,
     tooltip: 60,
     debug: 100,
+  },
+
+  /**
+   * 顶中浮层的**车道表**。场景名 / 引导提示条 / 任务横幅 / 事件 toast 四家共用屏幕顶带，
+   * 此前各写各的 y（10 / 44 / 50 / 96）：toast 从 50 起往下堆，一条就盖住 44 的引导条、
+   * 两条就压进 96 的横幅（审查 P1：重叠是必然不是偶发）。
+   * 车道在这里一处定死、四家只取不算——toast 车道排在横幅之下，堆叠向下延伸永不上侵。
+   */
+  topLanes: {
+    sceneName: 10,
+    guidance: 44,
+    banner: 96,
+    toast: 160,
   },
 
   animation: {
