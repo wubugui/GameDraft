@@ -291,7 +291,7 @@ ACTION_TYPES = [
     "giveRule", "grantRuleLayer", "giveFragment", "updateQuest", "setFocusedQuest", "startEncounter",
     "playBgm", "stopBgm", "playSfx", "playSceneAmbient", "stopSceneAmbient", "endDay", "addDelayedEvent",
     "advanceTime", "advanceTimeTo", "setNpcScheduleOverride",
-    "addArchiveEntry", "startCutscene", "startWaterMinigame", "startSugarWheelMinigame", "startPaperCraftMinigame",
+    "addArchiveEntry", "collectClue", "startCutscene", "startWaterMinigame", "startSugarWheelMinigame", "startPaperCraftMinigame",
     "startObjectExamine",
     "startPressureHold", "playSignalCue", "addFlagValue",
     "setBubbleLineSet", "clearBubbleLineSet",
@@ -363,6 +363,8 @@ _SELECTOR_KIND_UNIVERSE: dict[str, str] = {
     "narrative_run_archetype": "narrative_graph_ids",
     # 叙事章节包（C2）：候选=编排 package 标并集
     "narrative_package": "narrative_package_ids",
+    # 线索（K7）：候选=clues.json 现扫 id 列表
+    "clue": "clues",
 }
 
 
@@ -414,6 +416,7 @@ ACTION_PERSISTENCE: dict[str, str] = {
     "advanceTimeTo": "save",
     "setNpcScheduleOverride": "save",
     "addArchiveEntry": "save",
+    "collectClue": "save",
     "startCutscene": "memory",
     "addFlagValue": "save",
     "startPressureHold": "memory",
@@ -596,6 +599,7 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
         ("activity", "str"), ("clear", "bool"),
     ],
     "addArchiveEntry": [("bookType", "str"), ("entryId", "str")],
+    "collectClue": [("clueId", "str")],
     "startCutscene": [("id", "str")],
     "startWaterMinigame": [("id", "str")],
     "startSugarWheelMinigame": [("id", "str")],
@@ -737,7 +741,7 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
 }
 
 _NOTIFICATION_TYPES = ("info", "warning", "quest", "rule", "item")
-_ARCHIVE_BOOK_TYPES = ("character", "lore", "slang", "document", "book", "bookEntry")
+_ARCHIVE_BOOK_TYPES = ("character", "lore", "slang", "rhyme", "document", "book", "bookEntry")
 
 # 朝向只有左右镜像：SpriteEntity.setDirection 丢弃 dy、动画包也没有上下朝向，
 # 曾经列过的 up/down 运行时是静默空操作（现已 warn），故不再给出这两个选项。
@@ -3501,7 +3505,7 @@ class ActionRow(QWidget):
             "water_minigame", "sugar_wheel_minigame", "paper_craft_minigame",
             "object_examine",
             "smell", "plane", "pressure_hold", "signal_cue", "prop_preset",
-            "time_phase", "time_transition", "character",
+            "time_phase", "time_transition", "character", "clue",
         )
 
         pairs: list[tuple[str, str]] = []
@@ -3624,6 +3628,15 @@ class ActionRow(QWidget):
                 for c in ((m.signal_cues if m else None) or [])
                 if isinstance(c, dict) and str(c.get("id", "")).strip()
             ]
+        elif kind == "clue":
+            # 线索注册表暂无编辑器落盘通道、ProjectModel 不装载：现扫 clues.json（数据同源，
+            # 与 [clue:] 校验读同一份；照 archive_editor portrait 的"目录现扫"惯例）
+            from .ref_validator import clue_registry_rows
+            pairs = [
+                (str(c.get("id", "")).strip(), str(c.get("title") or c.get("id", "")).strip()[:32])
+                for c in (clue_registry_rows(m) if m else [])
+                if str(c.get("id", "")).strip()
+            ]
         else:
             pairs = []
 
@@ -3684,6 +3697,10 @@ class ActionRow(QWidget):
             "spawn": "选目标场景的出生点；(none) = 不指定（进场用默认出生点）。",
             "pressure_hold": "仅下拉选择；列表来自 pressure_holds.json（按压蓄力配置）。",
             "signal_cue": "仅下拉选择；列表来自 signal_cues.json（信号演出配置）。",
+            "clue": (
+                "仅下拉选择；列表来自 clues.json（线索注册表）。\n"
+                "采集幂等：已采集过的线索不重复弹回执；未知 id 运行时拒绝采集。"
+            ),
             "prop_preset": (
                 "仅下拉选择；列表来自 prop_presets.json（「挂件预设」页维护）。\n"
                 "预设带着这件挂件的贴图 + 支点 + 自转 + 缩放——选了它下面几项就不用填；\n"
@@ -5452,6 +5469,9 @@ class ActionRow(QWidget):
                 w.set_current(str(val) if val is not None else "")
                 w.value_changed.connect(self.changed)
                 _tag_content_universe(w, "archive_entries")
+            elif act_type == "collectClue" and pname == "clueId":
+                # 线索引用（选择器铁律：引用字段禁裸 QLineEdit；候选=clues.json 现扫，保值展示悬垂值）
+                w = self._make_selector("clue", str(val) if val is not None else "")
             elif act_type == "showNotification" and pname == "type":
                 w = QComboBox(self)
                 # 非 editable：notification type 是固定枚举，不需要手写；同时避免顶层弹窗闪烁。

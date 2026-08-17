@@ -18,8 +18,11 @@ import type { TextPaletteEntry } from '../data/types';
 const OPEN_RE = /\[c:([A-Za-z0-9_-]+)\]/g;
 /** `[/c]` */
 const CLOSE_TOKEN = '[/c]';
+/** `[clue:id]` 线索标记层（玩法需求清单 K7）：圈出可采集词条；渲染面负责着色/命中 */
+const CLUE_OPEN_RE = /\[clue:([A-Za-z0-9_-]+)\]/g;
+const CLUE_CLOSE_TOKEN = '[/clue]';
 /** 开/闭一起扫的分词器（下标语义依赖捕获组位置，改这里要同步改 tokenize） */
-const TOKEN_RE = /\[c:([A-Za-z0-9_-]+)\]|\[\/c\]/g;
+const TOKEN_RE = /\[c:([A-Za-z0-9_-]+)\]|\[\/c\]|\[clue:([A-Za-z0-9_-]+)\]|\[\/clue\]/g;
 
 /**
  * game_config 未配 textPalette 时的兜底色板。
@@ -109,8 +112,16 @@ export function paletteTagStyles(): Record<string, { fill: number }> {
 interface Token {
   /** 纯文本片段（可能为空） */
   text: string;
-  /** 该片段之后的标记：open=压栈的色板 id，close=出栈，null=串尾 */
-  mark: { kind: 'open'; id: string } | { kind: 'close' } | null;
+  /**
+   * 该片段之后的标记：open/close=色板层压/出栈，openClue/closeClue=线索层压/出栈，null=串尾。
+   * 两层各自成栈（[clue:] 里可以再套 [c:]，反之亦然），闭合各认各的。
+   */
+  mark:
+    | { kind: 'open'; id: string }
+    | { kind: 'close' }
+    | { kind: 'openClue'; id: string }
+    | { kind: 'closeClue' }
+    | null;
 }
 
 function tokenize(raw: string): Token[] {
@@ -119,7 +130,12 @@ function tokenize(raw: string): Token[] {
   TOKEN_RE.lastIndex = 0;
   for (let m = TOKEN_RE.exec(raw); m !== null; m = TOKEN_RE.exec(raw)) {
     const text = raw.slice(last, m.index);
-    out.push({ text, mark: m[1] !== undefined ? { kind: 'open', id: m[1] } : { kind: 'close' } });
+    let mark: Token['mark'];
+    if (m[1] !== undefined) mark = { kind: 'open', id: m[1] };
+    else if (m[2] !== undefined) mark = { kind: 'openClue', id: m[2] };
+    else if (m[0] === CLUE_CLOSE_TOKEN) mark = { kind: 'closeClue' };
+    else mark = { kind: 'close' };
+    out.push({ text, mark });
     last = m.index + m[0].length;
   }
   out.push({ text: raw.slice(last), mark: null });
@@ -129,18 +145,24 @@ function tokenize(raw: string): Token[] {
 /** 是否含样式标记（快路径判断，避免对绝大多数无标记文本做整串处理） */
 export function hasStyleMarkup(raw: string | undefined): boolean {
   if (!raw) return false;
-  return raw.includes('[c:') || raw.includes(CLOSE_TOKEN);
+  return raw.includes('[c:') || raw.includes(CLOSE_TOKEN)
+    || raw.includes('[clue:') || raw.includes(CLUE_CLOSE_TOKEN);
 }
 
 /**
- * 去掉全部样式标记，只留正文。
+ * 去掉全部样式标记（含线索层），只留正文。
  *
  * 这是**默认路径**：未迁移到 StyledText 的显示点、以及一切把文本当数据用的地方
- * （数量解析、存档、日志、比较）都走它，保证任何位置都不会把 `[c:…]` 原样显示给玩家。
+ * （数量解析、存档、日志、比较）都走它，保证任何位置都不会把 `[c:…]`/`[clue:…]`
+ * 原样显示给玩家（K7 红线：剥标记路径必须把线索层一并剥净）。
  */
 export function stripStyleMarkup(raw: string | undefined): string {
   if (!hasStyleMarkup(raw)) return raw ?? '';
-  return raw!.replace(OPEN_RE, '').split(CLOSE_TOKEN).join('');
+  return raw!
+    .replace(OPEN_RE, '')
+    .split(CLOSE_TOKEN).join('')
+    .replace(CLUE_OPEN_RE, '')
+    .split(CLUE_CLOSE_TOKEN).join('');
 }
 
 /** 解出来的可见字数（= stripStyleMarkup 后的长度） */
@@ -196,6 +218,8 @@ export function toPixiTagged(raw: string | undefined, limit = Infinity): string 
   if (paletteColors.size === 0) setTextPalette(undefined);
 
   const stack: string[] = [];
+  /** 线索层单独成栈（[clue:] 内可以再套 [c:]）；单 Text 路径上线索只上 clue 色不交互（K7 二阶段并入） */
+  const clueStack: string[] = [];
   let out = '';
   let shown = 0;
   let truncated = false;
@@ -235,12 +259,25 @@ export function toPixiTagged(raw: string | undefined, limit = Infinity): string 
         stack.push(id);
         out += `<${id}>`;
       }
+    } else if (tok.mark.kind === 'openClue') {
+      if (paletteColors.has('clue')) {
+        clueStack.push('clue');
+        out += '<clue>';
+      } else {
+        clueStack.push('');
+      }
+    } else if (tok.mark.kind === 'closeClue') {
+      const id = clueStack.pop();
+      if (id) out += `</${id}>`;
     } else {
       const id = stack.pop();
       if (id) out += `</${id}>`;
     }
   }
 
+  for (let i = clueStack.length - 1; i >= 0; i--) {
+    if (clueStack[i]) out += `</${clueStack[i]}>`;
+  }
   for (let i = stack.length - 1; i >= 0; i--) {
     const id = stack[i];
     if (id) out += `</${id}>`;
@@ -259,6 +296,7 @@ export function sliceStyledMarkup(raw: string | undefined, limit: number): strin
   if (!hasStyleMarkup(src)) return src.slice(0, Math.max(0, limit));
 
   const stack: string[] = [];
+  const clueStack: string[] = [];
   let out = '';
   let shown = 0;
   for (const tok of tokenize(src)) {
@@ -275,11 +313,65 @@ export function sliceStyledMarkup(raw: string | undefined, limit: number): strin
     if (tok.mark.kind === 'open') {
       stack.push(tok.mark.id);
       out += `[c:${tok.mark.id}]`;
+    } else if (tok.mark.kind === 'openClue') {
+      clueStack.push(tok.mark.id);
+      out += `[clue:${tok.mark.id}]`;
+    } else if (tok.mark.kind === 'closeClue') {
+      if (clueStack.pop() !== undefined) out += CLUE_CLOSE_TOKEN;
     } else if (stack.pop() !== undefined) {
       out += CLOSE_TOKEN;
     }
   }
+  for (let i = 0; i < clueStack.length; i++) out += CLUE_CLOSE_TOKEN;
   for (let i = 0; i < stack.length; i++) out += CLOSE_TOKEN;
+  return out;
+}
+
+/**
+ * 把带 `[c:…]` 标记的文本切成**顺序 run 列表**（RichContent run 级版式引擎的输入）。
+ *
+ * 与 `toPixiTagged` 是同一分词器的两个出口：那边翻成 Pixi tagged text（单 Text 路径，
+ * 受"裸 < 降级"约束）；这边直接给出 `{text, paletteId}`，渲染方逐 run 自建 Text、
+ * **完全不经过 Pixi 的标记解析**——正文里的裸 `<` 在这条路径下就是普通字符，无降级。
+ * 嵌套标记按"最内层生效"展开；未知 id 的 run 回落 null（渲染方用基础色）。
+ */
+export interface StyledRun {
+  text: string;
+  /** 生效的色板 id；null = 无标记/未知 id，用调用方的基础色 */
+  paletteId: string | null;
+  /** 线索层（K7）：run 落在 [clue:id] 圈内时给出；渲染方据此挂命中与状态色 */
+  link?: { kind: 'clue'; id: string } | null;
+}
+
+export function styledRuns(raw: string | undefined): StyledRun[] {
+  const src = raw ?? '';
+  if (!hasStyleMarkup(src)) return src ? [{ text: src, paletteId: null, link: null }] : [];
+  if (paletteColors.size === 0) setTextPalette(undefined);
+
+  const out: StyledRun[] = [];
+  const stack: (string | null)[] = [];
+  const clueStack: string[] = [];
+  const push = (text: string): void => {
+    if (!text) return;
+    const top = stack.length > 0 ? stack[stack.length - 1] : null;
+    const id = top && paletteColors.has(top) ? top : null;
+    const clueTop = clueStack.length > 0 ? clueStack[clueStack.length - 1] : null;
+    const link = clueTop ? ({ kind: 'clue', id: clueTop } as const) : null;
+    const prev = out[out.length - 1];
+    if (prev && prev.paletteId === id && (prev.link?.id ?? null) === (link?.id ?? null)) {
+      prev.text += text;
+    } else {
+      out.push({ text, paletteId: id, link });
+    }
+  };
+  for (const tok of tokenize(src)) {
+    push(tok.text);
+    if (!tok.mark) break;
+    if (tok.mark.kind === 'open') stack.push(tok.mark.id);
+    else if (tok.mark.kind === 'close') stack.pop();
+    else if (tok.mark.kind === 'openClue') clueStack.push(tok.mark.id);
+    else clueStack.pop();
+  }
   return out;
 }
 
@@ -293,15 +385,28 @@ export function inspectStyleMarkup(raw: string | undefined): {
   unclosed: number;
   /** 形如 `[c:强调]` 的非法 id（只允许字母/数字/下划线/连字符）——正则认不出来，会原样糊给玩家 */
   malformed: string[];
+  /** 线索层（K7）：出现过的 [clue:id]（引用完整性由 validator 对 clues.json 对账） */
+  clueIds: string[];
+  strayClueCloses: number;
+  unclosedClue: number;
 } {
   const src = raw ?? '';
   const unknownIds: string[] = [];
   const malformed: string[] = [];
+  const clueIds: string[] = [];
   let strayCloses = 0;
   let depth = 0;
-  if (!hasStyleMarkup(src)) return { unknownIds, strayCloses, unclosed: 0, malformed };
-  // `[c:` 出现的次数必须与合法开标记数相同；多出来的就是 id 写得不合法的那些
+  let strayClueCloses = 0;
+  let clueDepth = 0;
+  if (!hasStyleMarkup(src)) {
+    return { unknownIds, strayCloses, unclosed: 0, malformed, clueIds, strayClueCloses: 0, unclosedClue: 0 };
+  }
+  // `[c:`/`[clue:` 的合法 id 集之外都算 malformed（正则认不出来，会原样糊给玩家）
   for (const m of src.matchAll(/\[c:([^\]]*)\]/g)) {
+    const id = m[1];
+    if (!/^[A-Za-z0-9_-]+$/.test(id) && !malformed.includes(id)) malformed.push(id);
+  }
+  for (const m of src.matchAll(/\[clue:([^\]]*)\]/g)) {
     const id = m[1];
     if (!/^[A-Za-z0-9_-]+$/.test(id) && !malformed.includes(id)) malformed.push(id);
   }
@@ -312,11 +417,17 @@ export function inspectStyleMarkup(raw: string | undefined): {
       if (!paletteColors.has(tok.mark.id) && !unknownIds.includes(tok.mark.id)) {
         unknownIds.push(tok.mark.id);
       }
+    } else if (tok.mark.kind === 'openClue') {
+      clueDepth++;
+      if (!clueIds.includes(tok.mark.id)) clueIds.push(tok.mark.id);
+    } else if (tok.mark.kind === 'closeClue') {
+      if (clueDepth > 0) clueDepth--;
+      else strayClueCloses++;
     } else if (depth > 0) {
       depth--;
     } else {
       strayCloses++;
     }
   }
-  return { unknownIds, strayCloses, unclosed: depth, malformed };
+  return { unknownIds, strayCloses, unclosed: depth, malformed, clueIds, strayClueCloses, unclosedClue: clueDepth };
 }

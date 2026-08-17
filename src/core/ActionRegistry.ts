@@ -23,6 +23,7 @@ import type { AudioManager } from '../systems/AudioManager';
 import type { DayManager } from '../systems/DayManager';
 import type { NpcScheduleSystem } from '../systems/NpcScheduleSystem';
 import type { ArchiveManager } from '../systems/ArchiveManager';
+import type { ClueManager } from '../systems/ClueManager';
 import type { CutsceneManager } from '../systems/CutsceneManager';
 import type { SceneManager } from '../systems/SceneManager';
 import type { EmoteBubbleManager } from '../systems/EmoteBubbleManager';
@@ -181,6 +182,7 @@ export interface ActionRegistryDeps {
   dayManager: DayManager;
   npcScheduleSystem: NpcScheduleSystem;
   archiveManager: ArchiveManager;
+  clueManager: ClueManager;
   cutsceneManager: CutsceneManager;
   sceneManager: SceneManager;
   emoteBubbleManager: EmoteBubbleManager;
@@ -773,10 +775,24 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
 
   executor.register('addArchiveEntry', (p) => {
     d.archiveManager.addEntry(
-      p.bookType as 'character' | 'lore' | 'slang' | 'document' | 'book' | 'bookEntry',
+      p.bookType as 'character' | 'lore' | 'slang' | 'rhyme' | 'document' | 'book' | 'bookEntry',
       p.entryId as string,
     );
   }, ['bookType', 'entryId']);
+
+  /**
+   * 采集线索（K7）：等价于玩家点击文本里的 `[clue:id]`，供任务/对话/热区等编排面直接给线索。
+   * 幂等与回执全由 ClueManager.collect 统一处理（未知 id warn 一次并跳过；重复采集静默；
+   * 成功才落 flag `clue_<id>` + notification 回执）——动作层不重复弹回执。
+   */
+  executor.register('collectClue', (p) => {
+    const clueId = String(p.clueId ?? '').trim();
+    if (!clueId) {
+      console.warn('collectClue: 需要 clueId（clues.json 词条 id）');
+      return;
+    }
+    d.clueManager.collect(clueId);
+  }, ['clueId']);
 
   executor.register('startCutscene', (p) => {
     // 进入前的状态可能是 Exploring 加锁后的 ActionSequence、或对话 runActions 里的 Dialogue。

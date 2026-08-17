@@ -432,6 +432,22 @@ export interface HotspotDisplayImage {
   spriteSort?: EntitySpriteSort;
 }
 
+/**
+ * 「进对话的这一下，这个实体要不要转身、转向哪」。
+ *
+ * 此前是写死的：NPC 一律转过来面对玩家、热点一律不动。可是这条街上有太多不该转身的东西——
+ * 背对着你剁馅的屠户、跪在灵前的孝子、钉在墙上的告示、只有一面能看的烤入背景人物；
+ * 也有该转身但玩家绕到了背后的（只想让他冲街心那侧）。所以做成逐实体可配。
+ *
+ * - `keep`   完全不碰朝向（进对话前是哪面，对话时还是哪面）
+ * - `left` / `right`  进对话时固定转向该侧（与 `initialFacing` / `displayImage.facing` 同语义）
+ * - `player` 转向玩家（NPC 的历史行为，仍是 NPC 的缺省）
+ *
+ * 缺省：**NPC = `player`，热点 = `keep`**——两边各自维持改造前的行为，旧数据零影响。
+ * 朝向只有左右镜像，不存在上下（见 entity-move-facing 机制卡）。
+ */
+export type DialogueFacing = 'keep' | 'left' | 'right' | 'player';
+
 export interface HotspotDef {
   id: string;
   type: HotspotType;
@@ -470,6 +486,12 @@ export interface HotspotDef {
   label?: string;
   autoTrigger?: boolean;
   data: InspectData | PickupData | TransitionData | NpcHotspotData | EncounterTriggerData | ActSpotData;
+  /**
+   * 进入本热点的图对话时怎么摆朝向；语义见 {@link DialogueFacing}。
+   * **缺省 `keep`**（热点历来不转身）。只对配了 `displayImage` 的热点有意义——
+   * 没有展示图就没有可镜像的东西。对话结束恢复成进对话前的朝向。
+   */
+  dialogueFacing?: DialogueFacing;
   /** 可选：展示用贴图，底中锚点对齐 (x,y) */
   displayImage?: HotspotDisplayImage;
   /**
@@ -1035,6 +1057,11 @@ export interface NpcDef {
    * 缺省为 right。对话/巡逻中仍可由逻辑改写朝向。
    */
   initialFacing?: 'left' | 'right';
+  /**
+   * 进入本 NPC 对话时怎么摆朝向；语义见 {@link DialogueFacing}。
+   * **缺省 `player`**（转向玩家，即改造前的写死行为）。对话结束恢复成进对话前的朝向。
+   */
+  dialogueFacing?: DialogueFacing;
   patrol?: PatrolDef;
   /**
    * 可选：相对场景 JSON 中 NPC 锚点 (x,y) 的局部多边形；与 `collisionPolygonLocal` 配合。
@@ -1917,6 +1944,13 @@ export interface CharacterEntry {
   id: string;
   name: string;
   title: string;
+  /**
+   * 人物簿头像：对话立绘集目录名（`resources/runtime/images/dialogue_portraits/<slug>/`），
+   * 与 `NpcDef.portraitSlug` / `DialoguePortraitRef.slug` 同一 slug 语义——复用对话立绘
+   * 切片管线的产物，可用值即该目录下的子目录名（character_registry / 场景 NPC 同源）。
+   * 人物簿固定取该集的 calm（平静）表情帧；不设或缺图则不显头像（RichContent 占位块兜底）。
+   */
+  portrait?: string;
   impressions: { text: string; conditions: ConditionExpr[] }[];
   knownInfo: { text: string; conditions: ConditionExpr[] }[];
   /** 玩家第一次在档案中点开该人物时执行（仅一次，记入存档） */
@@ -1970,6 +2004,34 @@ export interface SlangCategoryView {
 
 /** 怪话册总进度 */
 export interface SlangProgress {
+  collected: number;
+  total: number;
+  allComplete: boolean;
+  /** 全册集齐时显示的评语（未集齐为空串） */
+  allCompleteText: string;
+}
+
+/**
+ * 歪歌册条目。与怪话册同为「系统替文盲记账」的成就式搜集册，纯 flavor：只能被读、不能被用。
+ * 收民间连锁调式歪童谣；内容口径（宁冷勿俗、注释不提历史人物）见玩法功能需求清单 K5 书六。
+ */
+export interface RhymeEntry {
+  id: string;
+  /** 标题，如「张打铁」 */
+  title: string;
+  /** 顺口溜完整原文，多行用 \n */
+  content: string;
+  /** 在哪听来的（采风口径） */
+  source: string;
+  /** 末尾那句拆台备注（可空） */
+  note?: string;
+  unlockConditions: ConditionExpr[];
+  /** 玩家第一次在档案中点开该条目时执行（仅一次） */
+  firstViewActions?: ActionDef[];
+}
+
+/** 歪歌册总进度（暂无分类，全册一个进度） */
+export interface RhymeProgress {
   collected: number;
   total: number;
   allComplete: boolean;
@@ -2537,7 +2599,7 @@ export interface IRulesDataProvider {
 export interface IArchiveDataProvider {
   /** 将档案/书籍等 JSON 正文中的 [tag:…] 展开为当前展示文案 */
   resolveLine(raw: string | undefined): string;
-  hasUnread(bookType: 'character' | 'lore' | 'document' | 'book' | 'slang'): boolean;
+  hasUnread(bookType: 'character' | 'lore' | 'document' | 'book' | 'slang' | 'rhyme'): boolean;
   getUnlockedCharacters(): CharacterEntry[];
   getCharacterVisibleImpressions(entry: CharacterEntry): string[];
   getCharacterVisibleInfo(entry: CharacterEntry): string[];
@@ -2546,6 +2608,9 @@ export interface IArchiveDataProvider {
   /** 怪话册：按分类分组，含未解锁灰槽（刻意返回全部条目，不做已解锁过滤） */
   getSlangCategories(): SlangCategoryView[];
   getSlangProgress(): SlangProgress;
+  /** 歪歌册：flat 列表，含未解锁灰槽（刻意返回全部条目，不做已解锁过滤） */
+  getRhymeList(): { entry: RhymeEntry; unlocked: boolean }[];
+  getRhymeProgress(): RhymeProgress;
   getBooks(): BookDef[];
   getUnlockedBooks(): BookDef[];
   /** 左侧树：章节 → 子条目（含解锁状态） */
