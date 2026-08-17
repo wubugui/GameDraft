@@ -13,7 +13,10 @@
     "type": "consumable",
     "description": "一小片桃木，据说能驱邪避凶。老辈人出门都爱带一块。",
     "buyPrice": 3,
-    "maxStack": 10
+    "maxStack": 10,
+    "tags": [
+      "辟邪"
+    ]
   },
   {
     "id": "nuomi",
@@ -22,7 +25,10 @@
     "icon": "/resources/runtime/images/icons/nuomi.png",
     "description": "一把糯米，粘乎乎的。听说洒在不干净的东西上有奇效。",
     "buyPrice": 2,
-    "maxStack": 10
+    "maxStack": 10,
+    "tags": [
+      "辟邪"
+    ]
   },
   {
     "id": "shaojiu",
@@ -30,7 +36,15 @@
     "type": "consumable",
     "description": "一壶土烧酒，辣得很。既能壮胆，据说泼在邪物上也管用。",
     "buyPrice": 5,
-    "maxStack": 5
+    "maxStack": 5,
+    "tags": [
+      "辟邪",
+      "引火"
+    ],
+    "use": {
+      "label": "灌一口",
+      "resultText": "一口下去，从喉咙一路烧到胃里。手抖是不抖了，就是脑壳有点晕。"
+    }
   },
   {
     "id": "iron_box",
@@ -62,7 +76,11 @@
     "name": "艾草",
     "type": "consumable",
     "description": "一把晒干的艾草，点燃后烟气呛人。老人说挂在门上能辟邪。",
-    "maxStack": 10
+    "maxStack": 10,
+    "tags": [
+      "辟邪",
+      "引火"
+    ]
   },
   {
     "id": "talisman",
@@ -71,7 +89,10 @@
     "icon": "/resources/runtime/images/icons/talisman.png",
     "description": "城东道士画的符，歪歪扭扭的，也不知道灵不灵。",
     "buyPrice": 8,
-    "maxStack": 5
+    "maxStack": 5,
+    "tags": [
+      "辟邪"
+    ]
   },
   {
     "id": "temple_notes",
@@ -104,7 +125,10 @@
     "type": "consumable",
     "icon": "/resources/runtime/images/icons/joss_paper.png",
     "description": "河滩上那只手递来的纸钱，黄的、软的。用剩下这几张，扔也不是，留也不是。",
-    "maxStack": 10
+    "maxStack": 10,
+    "tags": [
+      "沾秽"
+    ]
   },
   {
     "id": "heavy_bundle",
@@ -167,14 +191,28 @@
     "name": "橘子",
     "type": "consumable",
     "description": "顺手摸来的一个橘子，饿了能垫一垫。",
-    "maxStack": 5
+    "maxStack": 5,
+    "tags": [
+      "食物"
+    ],
+    "use": {
+      "label": "吃掉",
+      "resultText": "皮薄，掰开一股酸气。三两口下肚，肚皮里那点空总算被压住了。"
+    }
   },
   {
     "id": "banbing",
     "name": "半个粗粮饼",
     "type": "consumable",
     "description": "从叫花子那儿抢来的半个饼，有点脏，好歹能咬两口。",
-    "maxStack": 5
+    "maxStack": 5,
+    "tags": [
+      "食物"
+    ],
+    "use": {
+      "label": "吃掉",
+      "resultText": "饼硬得硌牙，就着口水往下咽。噎是噎，到底是顶了饿。"
+    }
   },
   {
     "id": "feiji",

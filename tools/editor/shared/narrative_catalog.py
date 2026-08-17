@@ -36,6 +36,9 @@ _EMIT_SOURCE_ATTRS = (
     "water_minigames_instances",
     "sugar_wheel_instances",
     "paper_craft_instances",
+    # 物件自身用途 use.actions 由 EventBridge 经 ActionExecutor 真执行（背包里主动使用），
+    # 与 signal_refactor.EMIT_SOURCE_BUCKETS 同源；2026-08-17 起 items 从纯条件面升为实发面。
+    "items",
     # 物件检视实例动作树同样由 ActionExecutor 真执行（ObjectExamineManager），是实发面。
     # 它在 signal_refactor 里属 READONLY_SOURCES（主编辑器只加载不保存）——目录要看得见
     # 它发的信号，重构则拒绝改写它，两张表的并集才等于本表（parity 测试锁定）。

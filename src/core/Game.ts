@@ -23,6 +23,7 @@ import { DayManager } from '../systems/DayManager';
 import { CutsceneManager } from '../systems/CutsceneManager';
 import { CutsceneRenderer } from '../rendering/CutsceneRenderer';
 import { ArchiveManager } from '../systems/ArchiveManager';
+import { ClueManager } from '../systems/ClueManager';
 import { EmoteBubbleManager } from '../systems/EmoteBubbleManager';
 import { ZoneSystem } from '../systems/ZoneSystem';
 import { InspectBox } from '../ui/InspectBox';
@@ -56,6 +57,11 @@ import { BookReaderUI } from '../ui/BookReaderUI';
 import { CharacterBookUI } from '../ui/CharacterBookUI';
 import { LoreBookUI } from '../ui/LoreBookUI';
 import { SlangBookUI } from '../ui/SlangBookUI';
+import { RhymeBookUI } from '../ui/RhymeBookUI';
+import { ClueBookUI } from '../ui/ClueBookUI';
+import { setArchiveClueAccess } from '../ui/components/ArchiveBookView';
+import { setFocusChangeSound } from '../ui/components/UIFocus';
+import { isConfirmDialogOpen } from '../ui/components/UIConfirmDialog';
 import { DocumentBoxUI } from '../ui/DocumentBoxUI';
 import { ShopUI } from '../ui/ShopUI';
 import { MapUI } from '../ui/MapUI';
@@ -341,6 +347,7 @@ export class Game {
   private sceneDisplayNameById = new Map<string, string>();
   private npcDisplayNameById = new Map<string, string>();
   private archiveManager: ArchiveManager;
+  private clueManager!: ClueManager;
   private emoteBubbleManager: EmoteBubbleManager;
   private ruleOfferRegistry: RuleOfferRegistry;
   private zoneSystem: ZoneSystem;
@@ -596,6 +603,8 @@ export class Game {
     this.planeReconciler = new PlaneReconciler(this.eventBus);
     this.npcScheduleSystem = new NpcScheduleSystem(this.eventBus);
     this.archiveManager = new ArchiveManager(this.eventBus, this.flagStore);
+    // 线索系统（K7）：真相在 flag（clue_<id>），本体只管注册表/采集口/查询口
+    this.clueManager = new ClueManager(this.eventBus, this.flagStore);
     this.emoteBubbleManager = new EmoteBubbleManager();
     this.bubbleChatterSystem = new BubbleChatterSystem({
       emoteBubbleManager: this.emoteBubbleManager,
@@ -701,6 +710,7 @@ export class Game {
       { name: 'smellSystem', system: this.smellSystem },
       { name: 'cutsceneManager', system: null as any },
       { name: 'archiveManager', system: this.archiveManager },
+      { name: 'clueManager', system: this.clueManager },
       { name: 'zoneSystem', system: this.zoneSystem },
       { name: 'emoteBubbleManager', system: this.emoteBubbleManager },
       { name: 'bubbleChatterSystem', system: this.bubbleChatterSystem },
@@ -1051,7 +1061,8 @@ export class Game {
     this.dayManager.configure(this.gameConfig.dayNight);
 
     this.inspectBox = new InspectBox(this.renderer, this.stringsProvider);
-    this.pickupNotification = new PickupNotification(this.renderer, this.stringsProvider);
+    // eventBus 给到回执条做电影化静默（过场里入队、cutscene:end 补冒）
+    this.pickupNotification = new PickupNotification(this.renderer, this.stringsProvider, this.eventBus);
     // 新任务醒目横幅（玩法文档 D9）与任务引导层（D8）：两者都是常驻展示件，
     // 不进 stateController 的面板栈（没有可交互元素，也不该抢返回栈）。
     this.questBannerUI = new QuestBannerUI(this.renderer, this.eventBus, this.stringsProvider);
@@ -1104,9 +1115,13 @@ export class Game {
     // HUD 的当前任务芯片是**查询式**的：quest:changed 只喊"该查了"，真相在 QuestManager
     this.hud.setQuestDataProvider(this.questManager);
     this.notificationUI = new NotificationUI(this.renderer, this.eventBus);
-    // 全屏面板开着时压住提示条出队：它挂在最上层，一叠就糊住面板标题与右栏正文。
-    // 只压出队，面板一关攒下的会照常冒出来。
-    this.notificationUI.setSuppressed(() => this.stateController?.currentState === 'UIOverlay');
+    // 全屏面板开着 / 过场播着时压住提示条出队：面板里一叠就糊住标题，过场里是砸在
+    // 电影化镜头脸上（审查 P1「电影化静默」）。只压出队不丢，出来再冒；
+    // priority='system' 的条（过场跳过确认）在 NotificationUI 里越过静默直接出。
+    this.notificationUI.setSuppressed(() => {
+      const s = this.stateController?.currentState;
+      return s === 'UIOverlay' || s === 'Cutscene';
+    });
     this.questPanelUI = new QuestPanelUI(
       this.renderer, this.questManager, this.stringsProvider, this.eventBus,
     );
@@ -1117,9 +1132,14 @@ export class Game {
     this.bookshelfUI = new BookshelfUI(
       this.renderer,
       this.archiveManager,
-      () => {
-        this.stateController.restorePreviousState();
-        this.stateController.togglePanel('rules');
+      // 规矩本：**另建一份实例**当书架子面板，与其余六本同形（能「返回书架」）。
+      // 不复用 R 键那一份——同一实例走两条打开路径时，`closePanel('rules')` 会去弹
+      // 书架压进 overlayReturnStack 的那一层，状态与栈直接叠歪。
+      (onClose) => {
+        const s = new RulesPanelUI(this.renderer, this.rulesManager, this.stringsProvider);
+        s.setResolveDisplay((raw) => this.resolveRichText(raw));
+        s.openAsSubPanel(onClose);
+        return s;
       },
       (book, onClose) => {
         this.bookReaderUI.openBook(book, onClose);
@@ -1129,6 +1149,10 @@ export class Game {
       (onClose) => { const s = new LoreBookUI(this.renderer, this.archiveManager, onClose, this.stringsProvider, this.assetManager); s.open(); return s; },
       (onClose) => { const s = new DocumentBoxUI(this.renderer, this.archiveManager, onClose, this.stringsProvider, this.assetManager); s.open(); return s; },
       (onClose) => { const s = new SlangBookUI(this.renderer, this.archiveManager, onClose, this.stringsProvider, this.assetManager); s.open(); return s; },
+      (onClose) => { const s = new RhymeBookUI(this.renderer, this.archiveManager, onClose, this.stringsProvider, this.assetManager); s.open(); return s; },
+      (onClose) => { const s = new ClueBookUI(this.renderer, this.archiveManager, this.clueManager, onClose, this.stringsProvider, this.assetManager); s.open(); return s; },
+      // 线索簿未读 = 有已采集但没在册子里点开过的词条（读集是档案通用泛键 cluebook_<id>）
+      () => this.clueManager.getCollectedClues().some((c) => !this.archiveManager.isRead(`cluebook_${c.id}`)),
       this.stringsProvider,
     );
     this.shopUI = new ShopUI(this.renderer, this.eventBus, this.inventoryManager, this.stringsProvider, this.assetManager);
@@ -1164,6 +1188,18 @@ export class Game {
     this.cutsceneManager.init({ eventBus: this.eventBus, flagStore: this.flagStore, strings: this.stringsProvider, assetManager: this.assetManager });
     this.cutsceneManager.setInputManager(this.inputManager);
     this.cutsceneManager.setAudioManager(this.audioManager);
+    this.cutsceneManager.setSkipConfirmTextProvider(() => this.stringsProvider.get('cutscene', 'skipConfirm'));
+    // K7 线索：采集回执文案 + 册面/成书的词条通道（模块级单点注入，见 ArchiveBookView）
+    this.clueManager.setCollectTextProvider((def) =>
+      this.stringsProvider.get('notifications', 'clueCollected', { title: def.title }));
+    setArchiveClueAccess({
+      isCollected: (id) => this.clueManager.isCollected(id),
+      collect: (id) => { this.clueManager.collect(id); },
+    });
+    // 面板条目切换音：与对话选项切换用同一枚（ui:hover → systemSfx.uiHover）。
+    // 接在 UIFocus 那一处，全站面板一次到位——见 UIFocus.setFocusChangeSound。
+    // 连发/同帧双响由 AudioManager 在消费端节流，这里只管"换项了"这件事实。
+    setFocusChangeSound(() => this.eventBus.emit('ui:hover', {}));
     const cmEntry = this.registeredSystems.find(e => e.name === 'cutsceneManager');
     if (cmEntry) cmEntry.system = this.cutsceneManager;
     /**
@@ -1496,6 +1532,7 @@ export class Game {
       dayManager: this.dayManager,
       npcScheduleSystem: this.npcScheduleSystem,
       archiveManager: this.archiveManager,
+      clueManager: this.clueManager,
       cutsceneManager: this.cutsceneManager,
       sceneManager: this.sceneManager,
       emoteBubbleManager: this.emoteBubbleManager,
@@ -1803,6 +1840,7 @@ export class Game {
       menuUI: this.menuUI,
       inspectBox: this.inspectBox,
       guardMapTravel: () => this.guardMapTravel(),
+      consumeItem: (itemId, count) => this.inventoryManager.removeItem(itemId, count),
     });
     this.eventBridge.init();
 
@@ -2043,6 +2081,7 @@ export class Game {
       this.audioManager.loadConfig(),
       this.cutsceneManager.loadDefs(),
       this.archiveManager.loadDefs(),
+      this.clueManager.loadDefs(),
       this.shopUI.loadDefs(),
       this.mapUI.loadConfig(),
     ]);
@@ -3922,19 +3961,52 @@ export class Game {
 
   private registerUIPanels(): void {
     this.injectPanelCloseRequesters();
+    // HUD 右下入口条 / 芯片点击 → 面板开关（关旧开新的「换过去」语义，见 switchToPanel）
+    this.hud.setPanelOpener((name) => this.stateController.switchToPanel(name));
+    // 确认框在场时控制器整帧不吃键盘（Esc 双消费修复，见 UIConfirmDialog.isConfirmDialogOpen）
+    this.stateController.setKeySuppressor(() => isConfirmDialogOpen());
     this.stateController.registerPanel('quest', this.questPanelUI, 'Tab');
     this.stateController.registerPanel('inventory', this.inventoryUI, 'KeyI');
     this.stateController.registerPanel('rules', this.rulesPanelUI, 'KeyR');
-    this.stateController.registerPanel('dialogueLog', this.dialogueLogUI, 'KeyL');
+    // 对话/遭遇里最需要回看上一句（审查 P1：那时 KeyL 恰恰是死键），放行到叙事态；
+    // 过场/小游戏/标题仍不可开（guard），另一面板开着时允许叠开（UIOverlay）。
+    this.stateController.registerPanel('dialogueLog', this.dialogueLogUI, 'KeyL', {
+      alwaysOpenable: true,
+      openGuard: () => {
+        const s = this.stateController.currentState;
+        return s === GameState.Exploring || s === GameState.Dialogue
+          || s === GameState.Encounter || s === GameState.UIOverlay;
+      },
+    });
     this.stateController.registerPanel('bookshelf', this.bookshelfUI, 'KeyB');
     this.stateController.registerPanel('map', this.mapUI, 'KeyM', {
       openGuard: () => this.guardMapTravel(),
     });
     // 「用规矩」面板键位 F→G（2026-08-03）：F 让给身体动词「上脚」，面板键与
     // Tab/I/R/L/B/M 一族归位。改此处须同步 TouchMobileControls 与 strings 的按键说明。
-    this.stateController.registerPanel('ruleUse', this.ruleUseUI, 'KeyG');
+    // openGuard：区里没有可用规矩槽时按 G 不再静默（审查 P1「亮 [G] 按了没反应」），
+    // 拒绝提示按 RegisterPanelOptions 的约定由注册方在守卫内自行发。
+    this.stateController.registerPanel('ruleUse', this.ruleUseUI, 'KeyG', {
+      openGuard: () => {
+        if (this.ruleUseUI.hasUsableSlots()) return true;
+        this.eventBus.emit('notification:show', {
+          text: this.stringsProvider.get('ruleUse', 'noneUsable'),
+          type: 'info',
+        });
+        return false;
+      },
+    });
     this.stateController.registerPanel('shop', this.shopUI);
-    this.stateController.registerPanel('menu', this.menuUI);
+    // 对话/遭遇里 Esc 也能呼出暂停（escapeFallback → togglePanel('menu') 要过 canOpen 闸，
+    // 故 alwaysOpenable + guard 限定叙事态；过场/小游戏各有自己的 Esc 通道）。
+    this.stateController.registerPanel('menu', this.menuUI, undefined, {
+      alwaysOpenable: true,
+      openGuard: () => {
+        const s = this.stateController.currentState;
+        return s === GameState.Exploring || s === GameState.Dialogue
+          || s === GameState.Encounter || s === GameState.UIOverlay;
+      },
+    });
     /** T1：F2 调试坞仅 DEV 注册（门控判据与 TouchMobileControls 的「调试」chip 一致）；
      *  生产构建下 F2 与触屏调试入口都不存在。 */
     if (import.meta.env.DEV) {
@@ -6010,6 +6082,10 @@ export class Game {
     for (const entry of this.registeredSystems) {
       if (entry.system) entry.system.destroy();
     }
+    // 模块级注入复位（生命周期对称：destroy 后再 init 与首启一致；
+    // 切换音的钩子还捏着已销毁那局的 eventBus，不摘就是一条跨局的死引用）
+    setArchiveClueAccess(null);
+    setFocusChangeSound(null);
 
     // 各系统/UI/桥接均已各自 off 监听后，再清空总线作为兜底；
     // 早于各 destroy() 清空会使各模块的 off() 作用在空总线上，掩盖其监听泄漏。

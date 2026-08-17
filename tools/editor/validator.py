@@ -22,6 +22,7 @@ from .shared.dialogue_entry_overrides import (
 )
 from .shared.cutscene_action_allowlist_io import cutscene_action_allowlist_frozenset
 from .shared.move_entity_map_picker import normalize_move_entity_waypoints
+from .shared.item_tags import is_known_item_tag
 from .shared.narrative_catalog import emitted_signal_ids
 from .shared.project_paths import URL_KIND_MEDIA
 from .shared.runtime_field_schema import field_meta, is_valid_field, value_matches_field
@@ -35,6 +36,11 @@ class Issue:
     data_type: str
     item_id: str
     message: str
+
+
+# 「进对话时改不改朝向」的四档；权威在 src/data/types.ts 的 DialogueFacing。
+# NPC 与 hotspot 共用同一组值（缺省不同：NPC=player、hotspot=keep，缺省档不写键）。
+_DIALOGUE_FACING_VALUES = ("keep", "left", "right", "player")
 
 
 def _entity_cutscene_bindings(ent: dict) -> list[str]:
@@ -71,7 +77,7 @@ def _anim_bundle_id_from_ref(raw: object) -> str:
 
 def validate(model: ProjectModel) -> list[Issue]:
     issues: list[Issue] = []
-    from .shared.ref_validator import validate_all_embedded_refs
+    from .shared.ref_validator import REF_WARNING_PREFIX, validate_all_embedded_refs
 
     # 载入期被静默修正/丢弃的数据异常（重复 id 后者覆盖等）：不冒出来的话，
     # 模型里已看不到原始问题、validator 之后永远发现不了。
@@ -79,7 +85,12 @@ def validate(model: ProjectModel) -> list[Issue]:
         issues.append(Issue("warning", "load", "project", str(msg)))
 
     for i, msg in enumerate(validate_all_embedded_refs(model)):
-        issues.append(Issue("error", "embeddedRef", f"#{i}", msg))
+        # warning 面（如 [clue:] 未闭合/多余闭合）：ref_validator 用前缀标注，这里拆 severity。
+        if msg.startswith(REF_WARNING_PREFIX):
+            issues.append(Issue("warning", "embeddedRef", f"#{i}", msg[len(REF_WARNING_PREFIX):]))
+        else:
+            issues.append(Issue("error", "embeddedRef", f"#{i}", msg))
+    _validate_clues_registry(model, issues)
     scene_ids = set(model.all_scene_ids())
     # 用 .get 而非 it["id"]：任一条目缺 id 不该让整个 validate() KeyError 崩溃、
     # 用一条格式错误掩盖其余全部校验（审查 P2-34）。缺 id 由各自去重/结构校验单独报。
@@ -388,6 +399,20 @@ def validate(model: ProjectModel) -> list[Issue]:
                             "error", "scene", sid,
                             f"Hotspot '{hid}' displayImage.spriteSort 须为 back 或 front",
                         ))
+            hdf = hs.get("dialogueFacing")
+            if hdf is not None and hdf not in _DIALOGUE_FACING_VALUES:
+                issues.append(Issue(
+                    "error", "scene", sid,
+                    f"Hotspot '{hid}' dialogueFacing 须为 "
+                    + " / ".join(_DIALOGUE_FACING_VALUES),
+                ))
+            elif hdf not in (None, "keep") and not isinstance(hs.get("displayImage"), dict):
+                # 没有展示图就没有可镜像的东西：配了也不会有任何效果，属于写了没用
+                issues.append(Issue(
+                    "warning", "scene", sid,
+                    f"Hotspot '{hid}' 配了 dialogueFacing={hdf!r} 但没有 displayImage，"
+                    "运行时无可镜像的展示图，该配置不会有任何效果",
+                ))
             bindings = _entity_cutscene_bindings(hs)
             if hs.get("cutsceneId") is not None:
                 issues.append(Issue(
@@ -542,6 +567,13 @@ def validate(model: ProjectModel) -> list[Issue]:
                 issues.append(Issue(
                     "error", "scene", sid,
                     f"NPC '{npc.get('id')}' initialFacing 须为 'left' 或 'right'",
+                ))
+            ndf = npc.get("dialogueFacing")
+            if ndf is not None and ndf not in _DIALOGUE_FACING_VALUES:
+                issues.append(Issue(
+                    "error", "scene", sid,
+                    f"NPC '{nid}' dialogueFacing 须为 "
+                    + " / ".join(_DIALOGUE_FACING_VALUES),
                 ))
             nsort = npc.get("spriteSort")
             if nsort is not None and nsort not in ("back", "front"):
@@ -3111,8 +3143,85 @@ def _validate_object_examine(model: ProjectModel, issues: list[Issue]) -> None:
             ))
 
 
+def _validate_item_tags(it: dict, iid: str, issues: list[Issue]) -> None:
+    """标签必须是字符串列表，且收敛到受控词表。
+
+    词表外的值只报 warning **不拦**（编辑器同样原样保值）：拦下来就成了"加个类别
+    还得先改代码"。但必须报——「辟邪 / 驱邪 / 避邪」并存时按类别匹配会安静地少匹配
+    一批物件，运行时不会有任何抱怨。
+    """
+    raw = it.get("tags")
+    if raw is None:
+        return
+    if not isinstance(raw, list):
+        issues.append(Issue(
+            "error", "item", iid, f"tags 必须是字符串数组，当前 {type(raw).__name__}"))
+        return
+    seen: set[str] = set()
+    for t in raw:
+        if not isinstance(t, str) or not t.strip():
+            issues.append(Issue("error", "item", iid, f"tags 含空/非字符串条目：{t!r}"))
+            continue
+        tag = t.strip()
+        if tag in seen:
+            issues.append(Issue("warning", "item", iid, f"tags 重复：{tag!r}"))
+        seen.add(tag)
+        if not is_known_item_tag(tag):
+            issues.append(Issue(
+                "warning", "item", iid,
+                f"tags 含受控词表外的值 {tag!r}；确认不是同义词拼歧"
+                "（词表在 tools/editor/shared/item_tags.py，可加）",
+            ))
+
+
+def _validate_item_use(model: ProjectModel, it: dict, iid: str, issues: list[Issue]) -> None:
+    """物件自身用途：按钮得有字、动作树得能跑、关键道具别被自己吃掉。"""
+    use = it.get("use")
+    if use is None:
+        return
+    if not isinstance(use, dict):
+        issues.append(Issue(
+            "error", "item", iid, f"use 必须是对象，当前 {type(use).__name__}"))
+        return
+    label = use.get("label")
+    if not isinstance(label, str) or not label.strip():
+        issues.append(Issue(
+            "error", "item", iid,
+            "use.label 不能为空——背包里会画出一枚没有字的按钮；"
+            "该物件若本就不该主动使用，请整个删掉 use 字段",
+        ))
+    consume = use.get("consume")
+    if consume is not None and not isinstance(consume, bool):
+        issues.append(Issue(
+            "error", "item", iid, f"use.consume 须为布尔，当前 {consume!r}"))
+    elif consume is True and it.get("type") == "key":
+        issues.append(Issue(
+            "warning", "item", iid,
+            "关键道具 use.consume=true：用一次这件剧情道具就永久消失了，确认是有意的",
+        ))
+    hint = use.get("disableHint")
+    if hint is not None and (not isinstance(hint, str) or not hint.strip()):
+        issues.append(Issue(
+            "error", "item", iid,
+            "use.disableHint 填了就不能是空串；不想自定义理由请删掉该键（退回默认文案）",
+        ))
+    acts = use.get("actions")
+    if acts is not None:
+        if not isinstance(acts, list):
+            issues.append(Issue(
+                "error", "item", iid, f"use.actions 必须是数组，当前 {type(acts).__name__}"))
+        else:
+            _walk_action_defs(model, issues, acts, "item", f"{iid}:use", None)
+    # 既不跑动作也不出文字的"使用"＝按下去只是东西少一个，玩家读不到任何反馈
+    if not acts and not str(use.get("resultText", "") or "").strip():
+        issues.append(Issue(
+            "warning", "item", iid,
+            "use 既没有 actions 也没有 resultText：按下去除了少一个物件，玩家看不到任何反馈",
+        ))
+
+
 def _validate_items(model: ProjectModel, issues: list[Issue]) -> None:
-    """物品：背包图标 icon 指向的媒体文件必须存在。
+    """物品：背包图标存在性 + 标签词表收敛 + 自身用途（use）的完备性。
 
     留空是合法的（背包格子退回物品名文字显示），但**填了却指不到文件**运行时就是
     一个静默画不出来的空格子——只报到不存在/越界这两种，不强制所有物品都配图。
@@ -3121,6 +3230,8 @@ def _validate_items(model: ProjectModel, issues: list[Issue]) -> None:
         if not isinstance(it, dict):
             continue
         iid = str(it.get("id", "") or "?")
+        _validate_item_tags(it, iid, issues)
+        _validate_item_use(model, it, iid, issues)
         raw = it.get("icon")
         if raw is None:
             continue
@@ -3730,6 +3841,20 @@ def _append_action_param_ref_issues(
             issues.append(Issue(
                 "error", data_type, item_id,
                 f"activatePlane id {pid!r} 不在 planes.json 中（运行时会拒绝激活）",
+            ))
+
+    if t == "collectClue":
+        from .shared.ref_validator import clue_id_set
+
+        cid = str(p.get("clueId") or "").strip()
+        if not cid:
+            issues.append(Issue("error", data_type, item_id, "collectClue 缺少 clueId"))
+        elif cid not in clue_id_set(model):
+            # K7 红线：引用完整性与 [tag:] 同级。运行时 ClueManager.collect 对未知 id
+            # 只留一行 console.warn 并跳过（不落 flag、无回执），必须 error 拦在编辑期。
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"collectClue clueId {cid!r} 不在 clues.json 注册表中（运行时拒绝采集、只留一行警告）",
             ))
 
     if t == "startDialogueGraph":
@@ -4409,6 +4534,59 @@ def _iter_cutscene_show_dialogue(steps: object):
                 yield f"[{si}].tracks{sub_path}", sub
         elif step.get("type") == "showDialogue":
             yield f"[{si}]", step
+
+
+def _validate_clues_registry(model: ProjectModel, issues: list[Issue]) -> None:
+    """线索注册表 clues.json 自身的形状（K7）。
+
+    id 唯一 / id·title·desc 必填 / id 须为 ASCII slug（否则 `[clue:id]` 正则认不出、
+    flag `clue_<id>` 也没法在文本标记里引用）= error；category 填了但不在 categories
+    表里 = warning（运行时只降级为按原键分组显示，不炸）。
+    [clue:] 标记的引用完整性在 ref_validator.scan_clue_markup（embeddedRef 面）。
+    """
+    from .shared.ref_validator import clue_registry_rows
+    from .shared.text_palette import ID_RE
+
+    raw = getattr(model, "clues_registry", None)
+    if not isinstance(raw, dict) or not raw:
+        # 模型未装载（独立工具）或活数据为空：回落磁盘读，保持旧口径。
+        try:
+            raw = read_json(model.data_path / "clues.json")
+        except (OSError, ValueError):
+            return  # 注册表尚未建立：合法（[clue:] 引用会在 embeddedRef 面报未知）
+    categories = raw.get("categories") if isinstance(raw, dict) else None
+    known_categories = set(categories) if isinstance(categories, dict) else set()
+    seen: set[str] = set()
+    for i, c in enumerate(clue_registry_rows(model)):
+        cid = str(c.get("id") or "").strip()
+        label = cid or f"#{i}"
+        if not cid:
+            issues.append(Issue("error", "clue", label, f"clues[{i}] 缺少 id"))
+        elif not ID_RE.match(cid):
+            issues.append(Issue(
+                "error", "clue", label,
+                f"线索 id {cid!r} 不是 ASCII slug（只允许字母/数字/下划线/连字符）"
+                "——[clue:id] 标记与 flag clue_<id> 都引用不到它",
+            ))
+        elif cid in seen:
+            issues.append(Issue(
+                "error", "clue", label,
+                f"线索 id 重复: {cid!r}（运行时按 id 建表，后者覆盖前者）",
+            ))
+        seen.add(cid)
+        for field_name in ("title", "desc"):
+            if not str(c.get(field_name) or "").strip():
+                issues.append(Issue(
+                    "error", "clue", label,
+                    f"线索 {label!r} 缺少 {field_name}（线索簿与采集回执都要用）",
+                ))
+        cat = str(c.get("category") or "").strip()
+        if cat and cat not in known_categories:
+            issues.append(Issue(
+                "warning", "clue", label,
+                f"线索 {label!r} 的 category {cat!r} 不在 categories 表中"
+                "（线索簿会按原键分组、无中文组名）",
+            ))
 
 
 def _validate_cutscene_speakers(model: ProjectModel, issues: list[Issue]) -> None:
@@ -5540,10 +5718,32 @@ def _validate_flags(model: ProjectModel, issues: list[Issue]) -> None:
         iid = str(it.get("id", ""))
         for dd in it.get("dynamicDescriptions", []) or []:
             _walk_conditions(model, issues, dd.get("conditions"), "item", iid, None)
+        use = it.get("use")
+        if isinstance(use, dict):
+            # 这批条件决定背包里那枚使用键灰不灰；条件叶悬垂 = 按钮永远灰着，静默
+            _walk_conditions(model, issues, use.get("conditions"), "item", iid, None)
 
     for ch in model.archive_characters:
         cid = str(ch.get("id", ""))
         # 人物解锁只走 addArchiveEntry，无 unlockConditions 可校验；仅走分段显示条件 + 首阅动作。
+        # portrait（人物簿头像）：可选、对话立绘集 slug；缺资产报 warning 不升 error（素材可后补）。
+        por = ch.get("portrait")
+        if por is not None:
+            if not isinstance(por, str) or not por.strip():
+                issues.append(Issue(
+                    "warning", "archive", cid,
+                    "人物档案 portrait 须为非空字符串（对话立绘集 slug，或删除该键）",
+                ))
+            elif model.project_path is not None and not (
+                model.project_path / "public" / "resources" / "runtime" / "images"
+                / "dialogue_portraits" / por.strip() / f"{por.strip()}_calm.png"
+            ).is_file():
+                issues.append(Issue(
+                    "warning", "archive", cid,
+                    f"人物档案 portrait 指向 '{por.strip()}'，但缺人物簿头像帧 "
+                    f"public/resources/runtime/images/dialogue_portraits/"
+                    f"{por.strip()}/{por.strip()}_calm.png（人物簿固定用 calm 表情）",
+                ))
         for imp in ch.get("impressions", []) or []:
             _walk_conditions(model, issues, imp.get("conditions"), "archive", cid, None)
         for ki in ch.get("knownInfo", []) or []:
@@ -5591,6 +5791,20 @@ def _validate_flags(model: ProjectModel, issues: list[Issue]) -> None:
                         "warning", "archive", "slang",
                         f"categoryCompleteText 含未登记分类键 {k!r}，该评语永不显示",
                     ))
+
+    rhyme_root = model.archive_rhymes
+    rhyme_entries = rhyme_root.get("entries", []) if isinstance(rhyme_root, dict) else []
+    for re_ in rhyme_entries or []:
+        if not isinstance(re_, dict):
+            continue
+        rid = str(re_.get("id", ""))
+        _walk_conditions(model, issues, re_.get("unlockConditions"), "archive", rid, None)
+        _walk_action_defs(model, issues, re_.get("firstViewActions"), "archive", rid, None)
+        # 标题/全文为空 → 运行时是个点得开的空壳（歪歌册无分类，无 category 检查）
+        if not str(re_.get("title", "")).strip():
+            issues.append(Issue("warning", "archive", rid, "歪歌条目缺 title（标题），运行时列表显示为空行"))
+        if not str(re_.get("content", "")).strip():
+            issues.append(Issue("warning", "archive", rid, "歪歌条目缺 content（顺口溜全文），点开是空白"))
 
     for doc in model.archive_documents:
         did = str(doc.get("id", ""))
@@ -5651,6 +5865,10 @@ def _validate_flags(model: ProjectModel, issues: list[Issue]) -> None:
     if isinstance(_slang_dup, dict):
         _slang_dup = _slang_dup.get("entries", [])
     _check_archive_dup_ids(_slang_dup, "怪话词条")
+    _rhyme_dup = model.archive_rhymes
+    if isinstance(_rhyme_dup, dict):
+        _rhyme_dup = _rhyme_dup.get("entries", [])
+    _check_archive_dup_ids(_rhyme_dup, "歪歌条目")
     _check_archive_dup_ids(model.archive_documents, "文档档案")
     _check_archive_dup_ids(model.archive_books, "书籍")
 

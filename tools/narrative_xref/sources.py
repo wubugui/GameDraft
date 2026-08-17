@@ -38,6 +38,10 @@ ASSET_SPECS: dict[str, dict[str, str]] = {
     "sugar_wheel_instances": {"mode": "minigame", "kind": "minigame", "family": "sugar_wheel", "label": "转盘小游戏"},
     "paper_craft_instances": {"mode": "minigame", "kind": "minigame", "family": "paper_craft", "label": "扎纸小游戏"},
     "object_examine_instances": {"mode": "minigame", "kind": "minigame", "family": "object_examine", "label": "物件检视"},
+    # 物件自身用途 use.actions 是实发面（EventBridge → ActionExecutor）；2026-08-17 起
+    # items 从 CONDITION_EXTRA_SPECS 移来，条件面（动态描述 / use.conditions）不受影响：
+    # 发射面是条件面的子集，扫发射的同时照样扫引用。
+    "items": {"mode": "whole", "kind": "item", "path": "items.json", "label": "物品"},
 }
 
 # 主编辑器只加载不保存的数据面：目录/清单要看得见它发的信号，重构则拒绝改写它
@@ -55,7 +59,6 @@ CONDITION_EXTRA_SPECS: dict[str, dict[str, str]] = {
     "narrative_packages": {"path": "narrative_packages.json", "kind": "narrativePackage", "label": "章节包"},
     "map_nodes": {"path": "map_config.json", "kind": "mapNode", "label": "地图节点", "subtree": "nodes"},
     "quest_groups": {"path": "questGroups.json", "kind": "questGroup", "label": "任务组"},
-    "items": {"path": "items.json", "kind": "item", "label": "物品"},
     # ⚠ 属性名是 rules_data（rules.json 载入到该属性），不是 rules——写错会 getattr 兜
     # None 静默跳过整张表，与 signal_refactor 踩过的是同一个坑。
     "rules_data": {"path": "rules.json", "kind": "rule", "label": "规矩"},
@@ -70,6 +73,9 @@ CONDITION_EXTRA_SPECS: dict[str, dict[str, str]] = {
     # 发射面表里，唯它漏网（2026-08-13 全库对账抓获）——漏登记 = 查"谁读这个状态"少一域、
     # 改名级联漏改 → 行话解锁条件悬垂、永远解不开，静默。它无动作树，纯条件面，故在此表。
     "archive_slang": {"path": "archive/slang.json", "kind": "archiveSlang", "label": "档案·行话"},
+    # 歪歌册 `entries[].unlockConditions`，档案第六份（2026-08-17 与运行时同步新增）。
+    # 形状同 slang：无动作树，纯条件面。
+    "archive_rhymes": {"path": "archive/rhymes.json", "kind": "archiveRhyme", "label": "档案·歪歌"},
     "game_config": {"path": "game_config.json", "kind": "gameConfig", "label": "全局配置"},
 }
 
