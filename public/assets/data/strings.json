@@ -4,14 +4,25 @@
     "fragmentAcquired": "获得规矩碎片",
     "fragmentSynthesized": "碎片合成：{name}",
     "archiveUpdated": "档案更新",
+    "archiveCharacter": "人物簿新增：{name}",
+    "archiveLore": "见闻录新增：{name}",
+    "archiveSlang": "怪话册记下一句：{name}",
+    "archiveRhyme": "歪歌册记下一首：{name}",
+    "archiveDocument": "杂书匣收进：{name}",
+    "archiveBook": "得了一本书：《{name}》",
+    "archiveBookEntry": "书页新解轶闻：{name}",
     "inventoryFull": "包袱满了！",
     "questAccepted": "新任务：{title}",
     "questFocused": "当前任务：{title}",
     "questCompleted": "任务完成：{title}",
+    "jobAccepted": "新活计：{title}",
+    "jobCompleted": "活计完成：{title}",
     "jobDiscarded": "撂下了活计：{title}",
     "currencyInsufficient": "铜钱不足!",
     "shopPurchased": "购买了 {name}",
-    "mapTravelBlocked": "此刻脱不开身，无法看图赶路。"
+    "mapTravelBlocked": "此刻脱不开身，无法看图赶路。",
+    "clueCollected": "已录线索：{title}",
+    "logTargetGone": "那件东西已经不在手上了。"
   },
   "menu": {
     "gameTitle": "七日惊魂",
@@ -28,7 +39,8 @@
     "load": "读档",
     "back": "[返回]",
     "slotEmpty": "槽位 {slot}: (空)",
-    "slotInfo": "槽位 {slot}: {scene}  第{day}天  {date}  {minutes}分钟",
+    "slotDay": "第{day}天",
+    "slotSub": "{date} · 游玩{minutes}分钟",
     "unknownScene": "未知",
     "bgm": "背景音乐",
     "sfx": "音效",
@@ -56,7 +68,9 @@
     "characters": "人物簿",
     "lore": "见闻录",
     "documents": "杂书匣",
-    "slang": "怪话册"
+    "slang": "怪话册",
+    "rhymes": "歪歌册",
+    "clues": "线索簿"
   },
   "characterBook": {
     "title": "人物簿",
@@ -81,11 +95,26 @@
     "source": "-- 来源：",
     "note": "备注："
   },
+  "rhymeBook": {
+    "title": "歪歌册",
+    "back": "[返回书架]",
+    "empty": "(还没记下一首)",
+    "progress": "已记 {collected} / {total}",
+    "lockedSlot": "——还没听人唱过",
+    "source": "-- 来源：",
+    "note": "备注："
+  },
   "documentBox": {
     "title": "杂书匣",
     "back": "[返回书架]",
     "empty": "(暂无文件)",
     "note": "[注]"
+  },
+  "clueBook": {
+    "title": "线索簿",
+    "back": "[返回书架]",
+    "empty": "(还没记下什么。看书读告示时，标了记号的词点一下就能记来。)",
+    "progress": "已录 {count} 条"
   },
   "bookReader": {
     "back": "[返回书架]",
@@ -97,7 +126,9 @@
     "backToChapter": "返回本章正文",
     "untitledEntry": "（轶闻）",
     "entryFromChapter": "出自：{chapter}",
-    "annotationHeading": "按语"
+    "annotationHeading": "按语",
+    "prevChapter": "← 上一章",
+    "nextChapter": "下一章 →"
   },
   "hud": {
     "coins": "铜钱:",
@@ -109,19 +140,46 @@
   "inspectBox": {
     "closeHint": "[ 点击或按任意键关闭 ]"
   },
+  "cutscene": {
+    "skipConfirm": "再按一次 Esc 跳过"
+  },
+  "confirm": {
+    "ok": "确认",
+    "cancel": "取消",
+    "overwriteTitle": "覆盖存档",
+    "overwriteBody": "第 {slot} 槽已有存档，覆盖后原进度找不回来。",
+    "loadTitle": "读取存档",
+    "loadBody": "当前未保存的进度会丢失。",
+    "returnTitle": "返回主菜单",
+    "returnBody": "未保存的进度会丢失，确定回到标题？",
+    "discardTitle": "丢弃物件",
+    "discardBody": "「{name}」丢了就找不回来。",
+    "castTitle": "使用规矩",
+    "castBody": "要用「{name}」吗？",
+    "useTitle": "使用物件",
+    "useBody": "要把「{name}」{action}？"
+  },
   "inventory": {
     "title": "包袱",
     "coins": "铜钱:",
     "keyItem": "[关键]",
     "noDesc": "(无描述)",
     "discard": "丢弃",
+    "useDisabled": "眼下用不成。",
     "closeHint": "按 I 关闭"
   },
   "map": {
     "title": "[tag:string:place:wujin]城区图",
     "closeHint": "按 M 关闭",
     "noData": "(地图数据暂未配置)",
-    "locked": "???"
+    "locked": "???",
+    "legendTitle": "图例",
+    "legendCurrent": "当前所在",
+    "legendUnlocked": "可前往",
+    "legendLocked": "尚不可往",
+    "legendUnknown": "未知之地",
+    "legendQuest": "任务目标",
+    "legendRoute": "来往路线"
   },
   "pickup": {
     "acquired": "获得了 {name} x{count}"
@@ -133,11 +191,12 @@
     "repeatable": "-- 零活 ({count}) --",
     "completed": "-- 已完成 ({count}) --",
     "done": "[已了]",
-    "empty": "(暂无)",
+    "emptyTitle": "这一页还空着",
+    "emptyHint": "去街面上多走动、找人搭话，接下的活计都会记在这里",
     "closeHint": "按 Tab 关闭",
     "runOrdinal": "第{n}单",
     "runTracked": " ▶ 追踪中",
-    "runSuspended": " ‖ 搁置·点击追踪",
+    "runSuspended": " ‖ 搁置",
     "runCurrent": "当前：{state}",
     "runArchive": "{label} ×{count}",
     "inProgress": "-- 进行中 ({count}) --",
@@ -158,15 +217,18 @@
     "layerShu": "术",
     "source": "来源:",
     "fragments": "碎片:",
-    "empty": "(尚未习得任何规矩)",
+    "emptyTitle": "规矩本还空着",
+    "emptyHint": "多听人讲话、留意各处的告示，听来的规矩会记在这里",
     "closeHint": "按 R 关闭",
+    "backToShelf": "[返回书架]",
     "unknown": "未知规矩",
     "hidden": "???"
   },
   "ruleUse": {
     "title": "使用规矩",
     "closeHint": "按 Esc 关闭",
-    "unknown": "未知规矩"
+    "unknown": "未知规矩",
+    "noneUsable": "还没学到这里用得上的规矩"
   },
   "shop": {
     "coins": "铜钱:",
@@ -176,10 +238,17 @@
     "leave": "[离开]"
   },
   "dialogueLog": {
-    "title": "对话记录",
-    "empty": "(暂无对话记录)",
+    "title": "日志",
+    "empty": "(还没记下什么)",
+    "emptyEvents": "(这阵子没出什么事)",
     "closeHint": "按 L 关闭",
-    "total": "共 {count} 条"
+    "total": "共 {count} 条",
+    "filterAll": "全部",
+    "filterEvents": "只看事件",
+    "filterHint": "Tab 切换",
+    "sessionHeader": "与 {name}",
+    "stampDay": "第{day}日",
+    "stampDayPhase": "第{day}日 · {phase}"
   },
   "dialogue": {
     "ruleTag": "[规]",
@@ -237,7 +306,8 @@
     "抽糖画价格": 5
   },
   "pressureHold": {
-    "holdHint": "按住 [空格] 或按住鼠标"
+    "holdHint": "按住 [空格] 或按住鼠标",
+    "holdHintTouch": "按住屏幕不放"
   },
   "actionChoice": {
     "cancelHint": "Esc 取消"
