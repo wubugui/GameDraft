@@ -25,6 +25,7 @@ import tempfile
 import time
 from pathlib import Path
 from typing import Any
+from tools.atomic_io import retry_transient
 
 #: audio_config 里承载 ``{id: {src, volume?}}`` 的三个频道。
 #: systemSfx 是 id→id 映射,不在此列(它不挂文件)。
@@ -411,7 +412,7 @@ def _atomic_write(path: Path, text: str) -> None:
             fh.write(text)
             fh.flush()
             os.fsync(fh.fileno())
-        os.replace(tmp, path)
+        retry_transient(os.replace, tmp, path)
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
         raise

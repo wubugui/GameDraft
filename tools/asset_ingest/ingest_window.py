@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
+from tools.atomic_io import retry_transient
 
 from PySide6.QtCore import QUrl, Qt
 from PySide6.QtGui import QCloseEvent, QDesktopServices, QDragEnterEvent, QDropEvent
@@ -348,7 +349,7 @@ class IngestWindow(QMainWindow):
             final = _unique_dest(dest, name)
             try:
                 if op == "move":
-                    shutil.move(str(src), str(final))
+                    retry_transient(shutil.move, str(src), str(final))
                 else:
                     shutil.copy2(str(src), str(final))
             except OSError as e:

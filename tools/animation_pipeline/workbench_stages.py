@@ -37,6 +37,7 @@ from PIL import Image
 
 from tools.animation_pipeline import matting
 from tools.video_to_atlas import atlas_core
+from tools.atomic_io import retry_transient
 
 
 SCHEMA_VERSION = 1
@@ -860,7 +861,7 @@ def _commit_output_temp(temp_dir: Path, out_dir: Path) -> None:
             temp_dir.iterdir(), key=lambda child: (child.name == "manifest.json", child.name)
         )
         for child in children:
-            os.rename(child, out_dir / child.name)
+            retry_transient(os.rename, child, out_dir / child.name)
         temp_dir.rmdir()
     except Exception:
         # Only the directory atomically claimed above is removed here; no

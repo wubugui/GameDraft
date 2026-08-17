@@ -16,6 +16,7 @@ from typing import Any
 from tools.chronicle_sim_v2.core.llm.agent_spec import AgentSpec, render_system
 from tools.chronicle_sim_v2.core.llm.provider_profile import ProviderProfile
 from tools.chronicle_sim_v2.paths import AGENT_SPECS_DIR
+from tools.atomic_io import retry_transient
 
 CLINE_CONFIG_DIRNAME = ".cline_config"
 # Cline 内部：``clineDir`` 默认为 ``~/.cline``，真实状态在 ``join(clineDir, \"data\")``（含 ``secrets.json``、``globalState.json``）。
@@ -182,7 +183,7 @@ def archive_workspace_after_run(run_dir: Path, temp_ws: Path, agent_id: str) -> 
     dest_root.mkdir(parents=True, exist_ok=True)
     dest = dest_root / f"{ts}_{agent_id}_{temp_ws.name}"
     try:
-        shutil.move(str(temp_ws.resolve()), str(dest))
+        retry_transient(shutil.move, str(temp_ws.resolve()), str(dest))
         _log.info("工作区已归档: %s", dest)
         return dest
     except OSError as e:
