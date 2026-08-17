@@ -100,8 +100,10 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
     optional: ['scene', 'x', 'y', 'activity', 'clear'],
   },
 
-  // ---- 档案 / 过场 / 小游戏 ----
+  // ---- 档案 / 线索 / 过场 / 小游戏 ----
   addArchiveEntry: { required: ['bookType', 'entryId'], nonEmpty: ['bookType', 'entryId'] },
+  // 线索采集（K7）：clueId=clues.json 词条引用；幂等/回执由 ClueManager.collect 统一处理
+  collectClue: { required: ['clueId'], nonEmpty: ['clueId'] },
   startCutscene: { required: ['id'], nonEmpty: ['id'] },
   startWaterMinigame: { required: ['id'], nonEmpty: ['id'] },
   startSugarWheelMinigame: { required: ['id'], nonEmpty: ['id'] },

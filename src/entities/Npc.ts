@@ -3,6 +3,7 @@ import type {
   NpcDef,
   AnimationPlaybackParams,
   AnimationSetDef,
+  DialogueFacing,
   ICutsceneActor,
   NpcInitialAnimPlayback,
 } from '../data/types';
@@ -564,8 +565,12 @@ export class Npc implements ICutsceneActor {
   }
 
   /**
-   * 进入对话：暂停巡逻（取消当前位移并阻塞巡逻循环）、朝向玩家。
+   * 进入对话：暂停巡逻（取消当前位移并阻塞巡逻循环）、按 `def.dialogueFacing` 摆朝向。
    * 对话中要播的站立/表情动画由图对话 `runActions` 的 playNpcAnimation 等驱动。
+   *
+   * 朝向不再写死"转向玩家"（语义与四个档见 {@link DialogueFacing}）；**缺省仍是 `player`**。
+   * `keep` 档连 `facingScaleXBeforeDialogue` 都不记——不碰就是不碰，
+   * 记了的话对话期间图动作合法改过的朝向会在结束时被"还原"掉。
    */
   pausePatrolAndFaceForDialogue(playerX: number, playerY: number): void {
     if (this.def.patrol) {
@@ -573,8 +578,12 @@ export class Npc implements ICutsceneActor {
       this.patrolSkipWaypointAdvance = true;
       this.patrolPaused = true;
     }
+    const mode: DialogueFacing = this.def.dialogueFacing ?? 'player';
+    if (mode === 'keep') return;
     this.facingScaleXBeforeDialogue = this.container.scale.x;
-    this.setFacing(playerX - this._x, playerY - this._y);
+    if (mode === 'left') this.setFacing(-1, 0);
+    else if (mode === 'right') this.setFacing(1, 0);
+    else this.setFacing(playerX - this._x, playerY - this._y);
   }
 
   /** @deprecated 请改用 `pausePatrolAndFaceForDialogue` */
