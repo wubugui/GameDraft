@@ -461,6 +461,7 @@ class TestSaveContract(unittest.TestCase):
                 ap / "characters.json",
                 ap / "lore.json",
                 ap / "slang.json",
+                ap / "rhymes.json",
                 ap / "books.json",
                 ap / "documents.json",
             ])

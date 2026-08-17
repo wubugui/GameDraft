@@ -166,7 +166,23 @@ describe('inspectStyleMarkup（校验用）', () => {
 
   it('干净文本零问题', () => {
     expect(inspectStyleMarkup('前[c:emphasis]中[/c]后'))
-      .toEqual({ unknownIds: [], strayCloses: 0, unclosed: 0, malformed: [] });
+      .toEqual({
+        unknownIds: [], strayCloses: 0, unclosed: 0, malformed: [],
+        clueIds: [], strayClueCloses: 0, unclosedClue: 0,
+      });
+  });
+
+  it('线索层（K7）：clueIds 列出、闭合独立记账、strip 剥净', () => {
+    expect(inspectStyleMarkup('看见[clue:ghost]白影[/clue]了'))
+      .toMatchObject({ clueIds: ['ghost'], strayClueCloses: 0, unclosedClue: 0 });
+    expect(inspectStyleMarkup('[clue:a]没闭合')).toMatchObject({ unclosedClue: 1 });
+    expect(inspectStyleMarkup('多余[/clue]')).toMatchObject({ strayClueCloses: 1 });
+    // 两层各认各的闭合，交错不串账
+    expect(inspectStyleMarkup('[c:emphasis][clue:a]词[/clue][/c]'))
+      .toMatchObject({ unclosed: 0, unclosedClue: 0, clueIds: ['a'] });
+    // K7 红线：剥标记默认路径必须把线索层一并剥净
+    expect(stripStyleMarkup('看[clue:a]白影[/clue]与[c:danger]险[/c]')).toBe('看白影与险');
+    expect(plainTextLength('[clue:a]白影[/clue]')).toBe(2);
   });
 
   it('非 ASCII slug 的 id 单列出来（不闭合时三项检查全过、剥不掉、会糊给玩家）', () => {

@@ -80,6 +80,7 @@ class ProjectModel(QObject):
         self.archive_characters: list[dict] = []
         self.archive_lore: dict = {}
         self.archive_slang: dict = {}
+        self.archive_rhymes: dict = {}
         self.archive_books: list[dict] = []
         self.archive_documents: list[dict] = []
         self.animations: dict[str, dict] = {}
@@ -288,6 +289,7 @@ class ProjectModel(QObject):
         self.archive_characters = self._load(dp / "archive" / "characters.json", [])
         self.archive_lore = self._load(dp / "archive" / "lore.json", {})
         self.archive_slang = self._load(dp / "archive" / "slang.json", {})
+        self.archive_rhymes = self._load(dp / "archive" / "rhymes.json", {})
         self.archive_books = self._load(dp / "archive" / "books.json", [])
         self.archive_documents = self._load(dp / "archive" / "documents.json", [])
         self.pressure_holds = self._load(dp / "pressure_holds.json", [])
@@ -755,6 +757,7 @@ class ProjectModel(QObject):
                 dp / "archive" / "characters.json",
                 dp / "archive" / "lore.json",
                 dp / "archive" / "slang.json",
+                dp / "archive" / "rhymes.json",
                 dp / "archive" / "books.json",
                 dp / "archive" / "documents.json",
             ])
@@ -976,6 +979,7 @@ class ProjectModel(QObject):
                 w.add(dp / "archive" / "characters.json", self.archive_characters)
                 w.add(dp / "archive" / "lore.json", self.archive_lore)
                 w.add(dp / "archive" / "slang.json", self.archive_slang)
+                w.add(dp / "archive" / "rhymes.json", self.archive_rhymes)
                 w.add(dp / "archive" / "books.json", self.archive_books)
                 w.add(dp / "archive" / "documents.json", self.archive_documents)
             maybe_stamp(clk, "已暂存 data 下聚合 JSON（按 dirty）")
@@ -1277,6 +1281,15 @@ class ProjectModel(QObject):
             ]
         if book_type == "slang":
             entries = self.archive_slang
+            if isinstance(entries, dict):
+                entries = entries.get("entries", [])
+            return [
+                (e["id"], (e.get("title") or e["id"])[:40])
+                for e in entries
+                if isinstance(e, dict) and e.get("id")
+            ]
+        if book_type == "rhyme":
+            entries = self.archive_rhymes
             if isinstance(entries, dict):
                 entries = entries.get("entries", [])
             return [
