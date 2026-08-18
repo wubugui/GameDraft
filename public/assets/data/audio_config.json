@@ -490,6 +490,15 @@
     },
     "sfx_dog_howl_night_a": {
       "src": "/resources/runtime/audio/demo/generated_20260810/sfx_dog_howl_night_a.wav"
+    },
+    "sfx_well_cry_childdog_a": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/candidates/sfx_well_cry_childdog_a.wav"
+    },
+    "sfx_well_cry_childdog_b": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/candidates/sfx_well_cry_childdog_b.wav"
+    },
+    "sfx_well_cry_childdog_c": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/candidates/sfx_well_cry_childdog_c.wav"
     }
   },
   "voice": {

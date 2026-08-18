@@ -2,7 +2,7 @@
   "version": 1,
   "name": "角色配音切片",
   "settings": {
-    "target_lufs": -20.0,
+    "target_lufs": -13.0,
     "true_peak_ceiling_db": -1.5,
     "limiter": false,
     "denoise_reduction_db": 12.0,

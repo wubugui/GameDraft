@@ -147,6 +147,25 @@ class UiSmokeTests(unittest.TestCase):
             self.assertIn("audio_sources", str(win.lib.root))
 
 
+class EntryPointTests(unittest.TestCase):
+    """启动入口:主编辑器从「Tools → External tools → 配音工作台」把工程根传进来。"""
+
+    def test_repo_root_comes_from_argv_when_it_exists(self) -> None:
+        from tools.voice_workbench.__main__ import REPO, _repo_root_from_argv
+
+        with TemporaryDirectory() as td:
+            self.assertEqual(
+                _repo_root_from_argv(["prog", td]), Path(td).resolve(),
+                "编辑器传下来的工程根要用上，否则源库/导出目录会指向另一个仓库",
+            )
+            self.assertEqual(_repo_root_from_argv(["prog"]), REPO)
+            self.assertEqual(
+                _repo_root_from_argv(["prog", str(Path(td) / "并不存在")]), REPO,
+                "路径不存在就回落，不许拿一个错的根去扫源库（会扫出空列表，像素材全没了）",
+            )
+            self.assertEqual(_repo_root_from_argv(["prog", "--flag"]), REPO)
+
+
 class ProductStateTests(unittest.TestCase):
     """产物状态这一层的界面契约:**状态是算出来的,不是勾出来的**。
 

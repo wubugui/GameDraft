@@ -437,6 +437,8 @@ class MainWindow(QMainWindow):
         self._act(ext, "Video to Atlas", self._launch_video_to_atlas_external)
         self._act(ext, "Production Workbench", self._launch_production_workbench_external)
         self._act(ext, "Parallax 场景编辑器", self._launch_parallax_editor_external)
+        # 两个音频工具按链路顺序摆：先从原始录音做出产物，再把产物挂到 key 上
+        self._act(ext, "配音工作台", self._launch_voice_workbench_external)
         self._act(ext, "音频编辑器", self._launch_audio_editor_external)
 
         view_menu = mb.addMenu("View")
@@ -1229,6 +1231,28 @@ class MainWindow(QMainWindow):
 
     def _launch_copy_manager_external(self) -> None:
         self._launch_external_tool("tools.copy_manager", [], "Copy Manager")
+
+    def _launch_voice_workbench_external(self) -> None:
+        """配音工作台(原始录音 → 切片 → 降噪 → 响度对齐 → 导出 wav)。
+
+        **不登记进外置进程监视表**,与隔壁的音频编辑器正相反:那个会在外面改
+        `audio_config.json` 的 src,所以必须让这边回头重读;这个按设计**永不写
+        audio_config**(见 tools/voice_workbench/__init__ 里的分工),它只碰源库、
+        自己的工程 sidecar、以及 public 下的产物 wav —— 主编辑器一份都不持有,
+        没有可被静默盖掉的东西。
+
+        把工程根当参数传进去:工作台的源库与导出目录都是相对仓库根算的,
+        不传就会用它自己所在的仓库,在"编辑器开着另一个工程"时指错地方。
+        """
+        root = self._ensure_valid_tool_root()
+        if root is None:
+            return
+        self._launch_external_tool(
+            "tools.voice_workbench",
+            [str(root.resolve())],
+            "配音工作台",
+            root=root,
+        )
 
     def _launch_audio_editor_external(self) -> None:
         """音频加工台(波形裁剪/淡入淡出/把成品挂到已有音频 key 上)。

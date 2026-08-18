@@ -2975,16 +2975,6 @@
         "voice": "茶馆开场_瞎子李_12"
       },
       {
-        "kind": "present",
-        "type": "showDialogue",
-        "text": "爬哟，背死人子的所？老子挨到起坐了半天！呸呸呸！",
-        "scriptedNpcId": "waiter_xiaoer",
-        "portrait": {
-          "emotion": "angry"
-        },
-        "voice": "开场茶馆_小二_4"
-      },
-      {
         "kind": "action",
         "type": "playNpcAnimation",
         "params": {
@@ -3015,6 +3005,16 @@
           "target": "waiter_xiaoer",
           "faceTarget": "player"
         }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "text": "爬哟，背死人子的所？老子挨到起坐了半天！呸呸呸！",
+        "scriptedNpcId": "waiter_xiaoer",
+        "portrait": {
+          "emotion": "angry"
+        },
+        "voice": "开场茶馆_小二_4"
       },
       {
         "kind": "action",
@@ -3203,7 +3203,8 @@
         "scriptedNpcId": "waiter_xiaoer",
         "portrait": {
           "emotion": "angry"
-        }
+        },
+        "voice": "开场茶馆_小二_5"
       },
       {
         "kind": "present",
@@ -3313,6 +3314,13 @@
           "emotion": "angry"
         },
         "voice": "开场茶馆_小二_7"
+      },
+      {
+        "kind": "action",
+        "type": "playSfx",
+        "params": {
+          "id": "sfx_well_cry_childdog_a"
+        }
       },
       {
         "kind": "action",

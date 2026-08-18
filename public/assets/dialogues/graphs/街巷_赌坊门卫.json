@@ -76,13 +76,18 @@
         {
           "type": "startCutscene",
           "params": {
-            "id": "主线_赌场输钱"
+            "id": "赌坊输钱"
           }
         },
         {
           "type": "playScriptedDialogue",
           "params": {
-            "lines": [],
+            "lines": [
+              {
+                "speaker": "",
+                "text": "???"
+              }
+            ],
             "scriptedNpcId": "player"
           }
         }
