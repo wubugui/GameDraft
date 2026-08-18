@@ -10,10 +10,12 @@ from tools.dev.paths import project_python, repo_root
 RUNTIME_TARGET = "public/resources/runtime.dvc"
 EDITOR_TARGET = "resources/editor_projects.dvc"
 VENDOR_TARGET = "resources/vendor_archives.dvc"
+AUDIO_SOURCES_TARGET = "resources/audio_sources.dvc"
 COMMIT_DVC_ADD_PATHS = [
     "public/resources/runtime",
     "resources/editor_projects",
     "resources/vendor_archives",
+    "resources/audio_sources",
 ]
 COMMIT_GIT_ADD_PATHS = [
     ".dvc",
@@ -105,7 +107,9 @@ def push(git_proxy: str = "") -> int:
 
     with proxyenv.without_proxy():
         run_project_python(["-m", "dvc", "status"])
-        sync_dvc_cache("push", RUNTIME_TARGET, EDITOR_TARGET, VENDOR_TARGET)
+        sync_dvc_cache(
+            "push", RUNTIME_TARGET, EDITOR_TARGET, VENDOR_TARGET, AUDIO_SOURCES_TARGET
+        )
 
     rc = proxyenv.run_git_with_temp_proxy(["push"], git_proxy)
     if rc != 0:

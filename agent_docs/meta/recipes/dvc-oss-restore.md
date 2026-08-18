@@ -24,6 +24,14 @@ last_governed: 2026-08-05
 # 等价壳:./scripts/pull-all.sh --editor
 ```
 
+配音原始音源库(`resources/audio_sources`,不可再生素材)不在默认拉取集里,要用
+`tools/voice_workbench` 时单独拉:
+
+```bash
+.tools/venv/Scripts/python.exe scripts/sync-dvc-cache.py pull resources/audio_sources.dvc
+.tools/venv/Scripts/python.exe -m dvc checkout resources/audio_sources.dvc
+```
+
 分工:DVC 只负责记录版本/校验 hash/本地 checkout;实际上传下载由 `sync.pull()`
 (`tools/dev/__main__.py`,阿里云官方 `oss2` **同步** SDK + 多线程 + 断点续传)接管。
 
