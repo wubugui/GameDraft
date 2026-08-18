@@ -1,7 +1,7 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import { UITheme } from './UITheme';
 import { drawPanelBase, SKINS } from './PanelSkin';
-import { createProgressBar, createRule, createTitleRow, drawSelectedRow } from './components/UIDecor';
+import { createProgressBar, createRule, createTitleRow, drawFocusRing, drawHoverRow, drawSelectedRow } from './components/UIDecor';
 import { markPointerConsumed } from './uiPointerCoords';
 import { UIWindow, WINDOW_SIZES } from './components/UIWindow';
 import { UIScrollView } from './components/UIScrollView';
@@ -9,7 +9,7 @@ import { UIFocus, type FocusItem } from './components/UIFocus';
 import type { Renderer } from '../rendering/Renderer';
 import type { IRulesDataProvider, RuleLayerKey } from '../data/types';
 import type { StringsProvider } from '../core/StringsProvider';
-import { createStyledText, getStyledRaw, setStyledText } from '../core/styledText';
+import { createStyledText, ellipsizeStyledText, getStyledRaw, setStyledText } from '../core/styledText';
 import { plainTextLength, sliceStyledMarkup } from '../core/textStyle';
 
 /**
@@ -45,14 +45,10 @@ const LIST_RATIO = 0.48;
 const FOOTER_H = 40;
 const PROGRESS_BAR_H = 10;
 /**
- * 底部「按 R 关闭」键帽在内容区里**实际占掉**的高度。
- *
- * 那行键帽由 UIWindow 画在 overlay 层（恒在内容之上），位置是从面板下沿往上量
- * （木条 15 + sm 8 + 行高 ~26），也就是说它伸进内容区约 29px。左栏列表与右栏
- * 收集进度条原来都一路铺到 `bodyHeight`：规矩一多，最后一行就被键帽压住；
- * 进度条更是整条压在键帽和木框上（截图里「碎片 2/3」与「关闭」叠在一起）。
+ * 底部「按 R 关闭」键帽此前在这里手工预留 34px——**已收回 UIWindow**
+ * （`closeHintReserve`：窗体自己按键帽实际行高把 `bodyHeight` 扣掉）。
+ * 本面板只管把内容铺满 `bodyHeight` 即可，再减一次就是双重预留、白留一条空带。
  */
-const HINT_RESERVE = 34;
 /** 行底色 = 状态色压到这个亮度（同色系**极暗**，不是统一灰；再高一档就成了发光的绿条） */
 const ROW_TINT = 0.1;
 
@@ -91,6 +87,15 @@ interface RuleRow {
 export class RulesPanelUI {
   private renderer: Renderer;
   private closeRequester: (() => void) | null = null;
+  /**
+   * 书架子面板模式：由书架用 `openAsSubPanel(onBack)` 拉起的那一份实例（**另建一份，
+   * 不是 Game 注册给 R 键的那一个**——同一个实例两条打开路径会让 `closePanel('rules')`
+   * 去弹书架压的那层栈，状态直接叠歪）。
+   *
+   * 这一份的出口不是"关面板"而是"退回书架"：底部提示写「返回书架」，✕ 与提示都回调
+   * 书架给的 `onClose`，Esc 由书架的 `handleEscapeStep` 统一退一层——与其余六本书同一形状。
+   */
+  private backToShelf: (() => void) | null = null;
   private rulesData: IRulesDataProvider;
   private strings: StringsProvider;
   private win: UIWindow | null = null;
@@ -136,17 +141,39 @@ export class RulesPanelUI {
     window.addEventListener('keydown', this.onKeyBound);
   }
 
+  /**
+   * 从书架打开（子面板语义）。规矩本既是 R 键的独立面板、又摆在书架上，
+   * 但此前从书架点进来是 `书架.close() + 打开 rules 面板`——**书架没了、回不去**，
+   * 而其余六本都能「返回书架」。既然它在架上，就得和架上其它书一样能退回去。
+   */
+  openAsSubPanel(onBack: () => void): void {
+    this.backToShelf = onBack;
+    this.open();
+  }
+
   close(): void {
     if (!this._isOpen) return;
     this._isOpen = false;
     window.removeEventListener('keydown', this.onKeyBound);
-    this.teardown();
+    // 关场淡出（绕开重建路径共用的瞬时 teardown）：先摘两块滚动区的输入面，
+    // 再让窗体带视觉淡出自毁——逻辑态已同步落定，尸体窗只是视觉。
+    this.detail?.detachInput();
+    this.list?.detachInput();
+    const win = this.win;
+    this.detail = null;
+    this.list = null;
+    this.win = null;
+    win?.fadeOutAndDestroy();
     // 焦点只在**关面板**时清；build() 里的重建要靠它按 id 把焦点放回原处
     this.focus.destroy();
   }
 
+  /** 真销毁（游戏退出）：瞬时路径，不播关场动画 */
   destroy(): void {
-    this.close();
+    this._isOpen = false;
+    window.removeEventListener('keydown', this.onKeyBound);
+    this.teardown();
+    this.focus.destroy();
   }
 
   private teardown(): void {
@@ -168,6 +195,11 @@ export class RulesPanelUI {
    * 注入还顺带干掉了「快捷键码在面板里抄一份」这处会漂移的手工镜像。
    */
   private requestClose(): void {
+    // 书架子面板模式下出口是「退回书架」，由书架负责收子面板 + 重建自己（勿走 closePanel）
+    if (this.backToShelf) {
+      this.backToShelf();
+      return;
+    }
     this.closeRequester?.();
   }
 
@@ -259,7 +291,7 @@ export class RulesPanelUI {
       // 标题自己摆（居中压在左栏那一页上，不是压在整块面板上），故不给 UIWindow 标题栏
       size: { width: this.panelWidth(), height: this.panelHeight() },
       skin: SKINS.book,
-      closeHint: this.strings.get('rulesPanel', 'closeHint'),
+      closeHint: this.strings.get('rulesPanel', this.backToShelf ? 'backToShelf' : 'closeHint'),
       onClose: () => this.requestClose(),
     });
     this.win = win;
@@ -276,12 +308,14 @@ export class RulesPanelUI {
     // 边界**每次现读** win.body.x —— 窗口 resize 会重算居中位移，捕获成常量会让判据错位。
     const splitX = (): number => (this.win?.body.x ?? 0) + listW + UITheme.spacing.lg;
 
-    // 两栏之间那条极淡竖线（书脊位）
-    const divider = new Graphics();
-    divider.rect(listW + UITheme.spacing.lg, 0, 1, bodyH);
-    divider.fill({ color: UITheme.colors.hairline, alpha: UITheme.alpha.hairline });
-    divider.eventMode = 'none';
-    win.body.addChild(divider);
+    // 两栏之间那条极淡竖线（书脊位）。空态不画：中央那段指路要横跨两页，书脊只会切在字上
+    if (rows.length > 0) {
+      const divider = new Graphics();
+      divider.rect(listW + UITheme.spacing.lg, 0, 1, bodyH);
+      divider.fill({ color: UITheme.colors.hairline, alpha: UITheme.alpha.hairline });
+      divider.eventMode = 'none';
+      win.body.addChild(divider);
+    }
 
     const titleRow = createTitleRow(this.strings.get('rulesPanel', 'title'), {
       width: listW,
@@ -299,7 +333,7 @@ export class RulesPanelUI {
     win.body.addChild(this.diamond(Math.round(listW / 2), ruleY));
 
     const listY = ruleY + UITheme.spacing.lg;
-    const listH = Math.max(ROW_H, bodyH - listY - HINT_RESERVE);
+    const listH = Math.max(ROW_H, bodyH - listY);
 
     const list = new UIScrollView(this.renderer, {
       width: listW,
@@ -317,6 +351,10 @@ export class RulesPanelUI {
     const selected = rows.find(r => r.id === this.selectedId) ?? null;
     if (selected) this.buildDetail(win, selected, detailX, detailW, bodyH, splitX);
 
+    // 空态：面板中央一句现状 + 一句指路（审查 P2：大面板空时只剩角落一句暗灰，
+    // 近乎白板还不告诉玩家怎么才会有内容）。底部让开键帽那一条。
+    if (rows.length === 0) this.buildEmptyState(win.body, bodyW, listY, bodyH);
+
     // 内容整份重建，焦点按 id 复位（`setItems` 自己保；id 没了就落到几何上最近的一项）
     this.focus.setItems(focusItems);
     // **默认焦点不放左上角**：落在当前选中的那一条。只在刚打开面板时指定——
@@ -324,10 +362,39 @@ export class RulesPanelUI {
     if (!hadFocus && this.selectedId) this.focus.focusDefault(rowFocusId(this.selectedId));
     // ⚠ `setItems` 在焦点 id 不变时会**早退**，不会回调新元素的 onFocus——
     // 重建后的高亮得在这里补画一次，否则每点一次面板焦点就"看不见了"。
-    this.focus.current?.onFocus(true);
+    this.focus.repaint();
 
     if (animate) win.open();
     else win.attach();
+  }
+
+  /**
+   * 空态块：一行主句（body 档）+ 一行指路副句（small 档），整块在内容区里居中。
+   * 副句告诉玩家「怎么才会有内容」，文案在 strings 的 emptyTitle / emptyHint。
+   */
+  private buildEmptyState(parent: Container, bodyW: number, top: number, bottom: number): void {
+    const main = createStyledText({
+      text: this.strings.get('rulesPanel', 'emptyTitle'),
+      style: {
+        fontSize: UITheme.fontSize.body, fill: UITheme.colors.bodyMuted,
+        fontFamily: UITheme.fonts.ui, letterSpacing: UITheme.letterSpacing.hint,
+      },
+    });
+    const hint = createStyledText({
+      text: this.strings.get('rulesPanel', 'emptyHint'),
+      style: {
+        fontSize: UITheme.fontSize.small, fill: UITheme.colors.hintMid,
+        fontFamily: UITheme.fonts.ui,
+        wordWrap: true, breakWords: true, wordWrapWidth: Math.round(bodyW * 0.7),
+      },
+    });
+    const gap = UITheme.spacing.md;
+    const blockTop = Math.round(top + (bottom - top - main.height - gap - hint.height) / 2);
+    main.position.set(Math.round((bodyW - main.width) / 2), blockTop);
+    hint.position.set(Math.round((bodyW - hint.width) / 2), blockTop + main.height + gap);
+    main.eventMode = 'none';
+    hint.eventMode = 'none';
+    parent.addChild(main, hint);
   }
 
   /** 选中某一条规矩（行点击与回车激活共用一条路径） */
@@ -335,6 +402,27 @@ export class RulesPanelUI {
     if (this.selectedId === id) return;
     this.selectedId = id;
     this.build();
+  }
+
+  /**
+   * 按规矩 id 定位：选中那一条、滚进视口、把焦点也放上去。
+   * 事件日志点「规矩本新增：…」跳过来走的就是这条。
+   *
+   * @returns 规矩本里有这条返回 true；查无此条返回 false。
+   */
+  focusEntry(ruleId: string): boolean {
+    if (!ruleId) return false;
+    const rows = this.rows();
+    const index = rows.findIndex(r => r.id === ruleId);
+    if (index < 0) return false;
+    this.selectedId = ruleId;
+    if (!this.isOpen) return true; // 面板还没开：留着选中态，open() 的 build 会用上
+    this.build();
+    this.revealRow(index);
+    // 焦点也跟过去：build 只在"本来就没焦点"时才指定默认项，跳转是显式意图，压过它
+    this.focus.focusDefault(rowFocusId(ruleId));
+    this.focus.repaint();
+    return true;
   }
 
   /** 焦点落到视口外的行时把它滚进来。只动 `scrollOffset`，不碰选中态。 */
@@ -374,16 +462,8 @@ export class RulesPanelUI {
     const list = this.list;
     if (!list) return;
 
+    // 空态不在列表页里出字：整块面板的空态块由 build() 统一画在面板中央
     if (rows.length === 0) {
-      const t = createStyledText({
-        text: this.strings.get('rulesPanel', 'empty'),
-        style: {
-          fontSize: UITheme.fontSize.small, fill: UITheme.colors.hint,
-          fontFamily: UITheme.fonts.ui,
-        },
-      });
-      t.position.set(UITheme.spacing.md, UITheme.spacing.md);
-      list.content.addChild(t);
       list.refresh();
       return;
     }
@@ -408,17 +488,23 @@ export class RulesPanelUI {
       }
       list.content.addChild(bg);
 
-      // 焦点高亮 = 行**自己那层选中画法**（琥珀铺光 + 金描边），不另发明一种焦点框。
-      // 只给未选中的行备：`drawSelectedRow` 是半透明铺光，叠在已选中的行上会亮成两倍。
-      // **必须紧跟 bg 加进去**：它排在圆点/文字之后会把它们盖掉。
-      let focusG: Graphics | null = null;
+      // 三态三画法（见 UIFocus 类注释）：选中已由上面的 bg 铺光表达；这里另备两层——
+      // 导航光标 = 空心金框（未选中/已选中都要有，手柄把光标移回选中行时也得看得见），
+      // 悬停 = 极淡暖底（只给未选中的行；选中行本就铺着琥珀，再垫一层只会白亮一档）。
+      // **必须紧跟 bg 加进去**：排在圆点/文字之后会把它们盖掉。
+      let hoverG: Graphics | null = null;
       if (!selected) {
-        focusG = new Graphics();
-        drawSelectedRow(focusG, 0, y, rowW, rowBodyH);
-        focusG.visible = false;
-        focusG.eventMode = 'none';
-        list.content.addChild(focusG);
+        hoverG = new Graphics();
+        drawHoverRow(hoverG, 0, y, rowW, rowBodyH);
+        hoverG.visible = false;
+        hoverG.eventMode = 'none';
+        list.content.addChild(hoverG);
       }
+      const ringG = new Graphics();
+      drawFocusRing(ringG, 0, y, rowW, rowBodyH);
+      ringG.visible = false;
+      ringG.eventMode = 'none';
+      list.content.addChild(ringG);
 
       const dot = new Graphics();
       dot.circle(DOT_X, y + rowBodyH / 2, DOT_R);
@@ -432,7 +518,7 @@ export class RulesPanelUI {
           // 「未验证 / 有效 / 存疑 / 搜集中」是**状态词**：扫一眼就够，停在 small。
           // 它已经有自己的颜色 + 行底同色系，再放大只会跟规矩名抢行。
           fontSize: UITheme.fontSize.small, fill: row.statusColor,
-          fontFamily: UITheme.fonts.ui, letterSpacing: 1,
+          fontFamily: UITheme.fonts.ui, letterSpacing: UITheme.letterSpacing.hint,
         },
       });
       status.position.set(
@@ -448,7 +534,7 @@ export class RulesPanelUI {
           fontSize: UITheme.fontSize.bodyLarge,
           fill: selected ? UITheme.colors.title : row.statusColor,
           fontFamily: UITheme.fonts.ui, fontWeight: 'bold',
-          letterSpacing: 1,
+          letterSpacing: UITheme.letterSpacing.hint,
         },
       });
       const nameX = DOT_X + DOT_R + UITheme.spacing.md;
@@ -469,6 +555,7 @@ export class RulesPanelUI {
       });
       // 指针悬停即移焦：鼠标与手柄共用同一个"当前项"，移开鼠标再按方向键要从这里接着走
       hit.on('pointerover', () => this.focus.syncHover(rowFocusId(row.id)));
+      hit.on('pointerout', () => this.focus.clearHover(rowFocusId(row.id)));
       list.content.addChild(hit);
 
       focusItems.push({
@@ -476,10 +563,12 @@ export class RulesPanelUI {
         // 焦点矩形取**面板坐标**（列表偏移 + 行在滚动区内的 y）
         x: 0, y: listY + y, w: rowW, h: rowBodyH,
         group: 'list',
-        onFocus: (f) => {
-          if (focusG) focusG.visible = f;
-          // 焦点走到视口外的行要把它滚进来（只动 scrollOffset，不碰选中态）
-          if (f) this.revealRow(i);
+        onFocus: (f, via) => {
+          ringG.visible = f && via === 'key';
+          if (hoverG) hoverG.visible = f && via === 'pointer';
+          // 焦点走到视口外的行要把它滚进来（只动 scrollOffset，不碰选中态）。
+          // 只在按键模式滚：鼠标划过时把列表滚起来会把指针下的行抽走
+          if (f && via === 'key') this.revealRow(i);
         },
         onActivate: () => this.selectRule(row.id),
       });
@@ -498,7 +587,7 @@ export class RulesPanelUI {
   ): void {
     const progress = this.rulesData.getFragmentProgress(row.id);
     const hasFooter = progress.total > 0;
-    const viewH = Math.max(ROW_H, bodyH - HINT_RESERVE - (hasFooter ? FOOTER_H : 0));
+    const viewH = Math.max(ROW_H, bodyH - (hasFooter ? FOOTER_H : 0));
 
     const view = new UIScrollView(this.renderer, {
       width: w,
@@ -539,8 +628,8 @@ export class RulesPanelUI {
       style: {
         // 分类（禁忌/避祸/行话/江湖）是**标签**。micro 是给角标与计数留的，
         // 一个要认字的分类掉到 14 就成了灰渣；抬到 small——仍明显小于正文。
-        fontSize: UITheme.fontSize.small, fill: UITheme.colors.section,
-        fontFamily: UITheme.fonts.ui, letterSpacing: 1,
+        fontSize: UITheme.fontSize.small, fill: UITheme.colors.hintMid,
+        fontFamily: UITheme.fonts.ui, letterSpacing: UITheme.letterSpacing.hint,
       },
     });
     cat.position.set(0, cy);
@@ -567,7 +656,7 @@ export class RulesPanelUI {
           style: {
             // 出处（「听茶馆说书人提起」）是**副信息**：说明这条规矩打哪儿来的，
             // 不是要读的正文。停在 small，行距略放开一点就够。
-            fontSize: UITheme.fontSize.small, fill: UITheme.colors.ruleSource,
+            fontSize: UITheme.fontSize.small, fill: UITheme.colors.hintMid,
             fontFamily: UITheme.fonts.ui, lineHeight: 24,
             wordWrap: true, breakWords: true, wordWrapWidth: wrapW,
           },
@@ -598,8 +687,8 @@ export class RulesPanelUI {
       const head = createStyledText({
         text: `「${this.layerLabelOf(L)}」`,
         style: {
-          fontSize: UITheme.fontSize.body, fill: UITheme.colors.section,
-          fontFamily: UITheme.fonts.ui, fontWeight: 'bold', letterSpacing: 1,
+          fontSize: UITheme.fontSize.body, fill: UITheme.colors.hintMid,
+          fontFamily: UITheme.fonts.ui, fontWeight: 'bold', letterSpacing: UITheme.letterSpacing.hint,
         },
       });
       head.position.set(0, cy);
@@ -625,7 +714,7 @@ export class RulesPanelUI {
           // 分层正文：这一栏真正要读的东西，抬到 body 就够——**不再往上抬**。
           // 规矩正文动辄三五行，抬到 bodyLarge 一屏只剩两层、右栏立刻变成滚动条。
           // 真正让它好读的是行距（20 → 30），不是字号。
-          fontSize: UITheme.fontSize.body, fill: UITheme.colors.ruleDesc,
+          fontSize: UITheme.fontSize.body, fill: UITheme.colors.descText,
           fontFamily: UITheme.fonts.ui, lineHeight: 30,
           wordWrap: true, breakWords: true, wordWrapWidth: wrapW,
         },
@@ -647,8 +736,8 @@ export class RulesPanelUI {
       const cap = createStyledText({
         text: `「${this.layerLabelOf(L)}」 ${lp.collected}/${lp.total}`,
         style: {
-          fontSize: UITheme.fontSize.body, fill: UITheme.colors.section,
-          fontFamily: UITheme.fonts.ui, fontWeight: 'bold', letterSpacing: 1,
+          fontSize: UITheme.fontSize.body, fill: UITheme.colors.hintMid,
+          fontFamily: UITheme.fonts.ui, fontWeight: 'bold', letterSpacing: UITheme.letterSpacing.hint,
         },
       });
       cap.position.set(0, cy);
@@ -665,7 +754,7 @@ export class RulesPanelUI {
         style: {
           // 碎片原文与分层正文同档：它就是「搜集中」那半本规矩的正文。
           fontSize: UITheme.fontSize.body,
-          fill: got ? UITheme.colors.ruleDesc : UITheme.colors.disabledDark,
+          fill: got ? UITheme.colors.descText : UITheme.colors.disabled,
           fontFamily: UITheme.fonts.ui, lineHeight: 30,
           wordWrap: true, breakWords: true, wordWrapWidth: wrapW,
         },
@@ -682,8 +771,8 @@ export class RulesPanelUI {
     const head = createStyledText({
       text,
       style: {
-        fontSize: UITheme.fontSize.body, fill: UITheme.colors.section,
-        fontFamily: UITheme.fonts.ui, fontWeight: 'bold', letterSpacing: 1,
+        fontSize: UITheme.fontSize.body, fill: UITheme.colors.hintMid,
+        fontFamily: UITheme.fonts.ui, fontWeight: 'bold', letterSpacing: UITheme.letterSpacing.hint,
       },
     });
     head.position.set(0, y);
@@ -703,7 +792,7 @@ export class RulesPanelUI {
     const box = new Container();
     // 从「内容区下沿再减去键帽那一条」往上量：读数 + 进度条整块必须落在 FOOTER_H 之内，
     // 原来还额外 +sm 往下推，进度条因此整条越过内容区、压到木框上。
-    box.position.set(x, bodyH - HINT_RESERVE - FOOTER_H);
+    box.position.set(x, bodyH - FOOTER_H);
     win.body.addChild(box);
 
     const label = createStyledText({
@@ -712,7 +801,7 @@ export class RulesPanelUI {
         // 「碎片」是进度条的**说明**、不是小标题：它与读数一起退到 small，
         // 让这一条钉在栏底的状态带整体轻于上面的正文，分量由那根琥珀进度条出。
         fontSize: UITheme.fontSize.small, fill: UITheme.colors.bodyMuted,
-        fontFamily: UITheme.fonts.ui, letterSpacing: 1,
+        fontFamily: UITheme.fonts.ui, letterSpacing: UITheme.letterSpacing.hint,
       },
     });
     box.addChild(label);
@@ -721,7 +810,7 @@ export class RulesPanelUI {
       text: `${collected} / ${total}`,
       style: {
         // 读数是**计数**，与它的说明同档，不比说明大。
-        fontSize: UITheme.fontSize.small, fill: UITheme.colors.ruleProgress,
+        fontSize: UITheme.fontSize.small, fill: UITheme.colors.hintMid,
         fontFamily: UITheme.fonts.ui,
       },
     });
@@ -733,16 +822,9 @@ export class RulesPanelUI {
     box.addChild(bar);
   }
 
-  /** 一行放不下就截到能放下为止（省略号是标点，不是文案） */
+  /** 一行放不下就截到能放下为止；实现收编在 styledText.ellipsizeStyledText（审查 P2 双份同文） */
   private ellipsize(t: Text, maxW: number): void {
-    if (t.width <= maxW || maxW <= 0) return;
-    // 按**可见字数**退，且用 sliceStyledMarkup 保住色标记成对——
-    // 直接对带标记原串 slice 会切出半个 `[c:emph`，剥不掉、原样露给玩家。
-    const raw = getStyledRaw(t);
-    for (let n = plainTextLength(raw) - 1; n > 0; n--) {
-      setStyledText(t, `${sliceStyledMarkup(raw, n)}…`);
-      if (t.width <= maxW) return;
-    }
+    ellipsizeStyledText(t, maxW);
   }
 
   /**

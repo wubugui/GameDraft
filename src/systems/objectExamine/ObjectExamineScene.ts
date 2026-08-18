@@ -91,7 +91,7 @@ const HEAD_SWAY_AMP_Y = 1.9;
  * 异常影子（线索条目）的两态色：未揭示＝暗暖灰的"影"，已揭示＝琥珀点亮一档。
  * 与全站「选中/生效＝琥珀」同一套语汇，不再另起 INK_* 私有色板。
  */
-const SHADE_COLOR_HIDDEN = UITheme.colors.section;
+const SHADE_COLOR_HIDDEN = UITheme.colors.hintMid;
 const SHADE_COLOR_REVEALED = UITheme.colors.title;
 /** 右下异常影子：大字悬浮感 */
 const SHADE_LINE_SIZE = UITheme.fontSize.bodyLarge;
@@ -285,7 +285,7 @@ export class ObjectExamineScene {
     style: {
       fontFamily: UITheme.fonts.ui,
       fontSize: UITheme.fontSize.small,
-      fill: UITheme.colors.subtle,
+      fill: UITheme.colors.descText,
     },
   });
 
@@ -1305,7 +1305,7 @@ export class ObjectExamineScene {
       const decoy = hs.decoy === true;
       // 三态沿用规矩本那套状态色（生效苔绿 / 未证实土黄 / 次要暖灰），不再是 debug 三原色
       const color = decoy
-        ? UITheme.colors.subtle
+        ? UITheme.colors.descText
         : found
           ? UITheme.colors.ruleEffective
           : UITheme.colors.ruleUnverified;
@@ -1921,7 +1921,7 @@ export class ObjectExamineScene {
         style: {
           fontFamily: UITheme.fonts.ui,
           fontSize: UITheme.fontSize.body,
-          fill: UITheme.colors.subtle,
+          fill: UITheme.colors.descText,
         },
       });
       empty.position.set(Math.round(sw / 2 - empty.width / 2), y);
@@ -1977,7 +1977,7 @@ export class ObjectExamineScene {
       style: {
         fontFamily: UITheme.fonts.ui,
         fontSize: UITheme.fontSize.body,
-        fill: UITheme.colors.buttonText,
+        fill: UITheme.colors.bodyMuted,
       },
     });
     t.eventMode = 'none';

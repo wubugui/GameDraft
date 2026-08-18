@@ -12,8 +12,7 @@
         {
           "conditions": [
             {
-              "narrative": "eco_时辰",
-              "state": "辰"
+              "timePhase": "辰"
             }
           ],
           "next": "l_wu"
@@ -21,8 +20,7 @@
         {
           "conditions": [
             {
-              "narrative": "eco_时辰",
-              "state": "午"
+              "timePhase": "午"
             }
           ],
           "next": "l_mu"
@@ -30,8 +28,7 @@
         {
           "conditions": [
             {
-              "narrative": "eco_时辰",
-              "state": "暮"
+              "timePhase": "暮"
             }
           ],
           "next": "l_ye"

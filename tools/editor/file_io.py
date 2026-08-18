@@ -8,6 +8,14 @@ import os
 import tempfile
 from pathlib import Path
 
+# Windows 上「写 .tmp 再 os.replace 就位」不是原子的，是概率性失败的
+# （目标被 dev server watcher / 杀毒 / 索引器持有句柄时抛 EACCES/EPERM/EBUSY）。
+# 实现与边界（为什么只吃那三个 errno、为什么 os.link 的 EEXIST 绝不能重试）见共用模块。
+#
+# 对本文件的意义：`save-all-dirty-buckets` 契约 1 的三层失败语义**一字不改**——
+# 重试用尽后抛的是同一个异常对象，走的是同一条回滚。
+from tools.atomic_io import retry_transient as _retry_transient
+
 
 class JsonFileError(json.JSONDecodeError):
     """坏 JSON 报错必须带文件路径 + 行列 + 修复建议（审查 P1-18）。
@@ -58,7 +66,7 @@ def write_json(path: Path, data: dict | list) -> None:
             fh.write(blob)
             fh.flush()
             os.fsync(fh.fileno())
-        os.replace(tmp_path, path)
+        _retry_transient(os.replace, tmp_path, path)
     finally:
         if os.path.isfile(tmp_path):
             try:
@@ -240,7 +248,7 @@ class StagedJsonWriter:
                     )
                 if target.exists():
                     backup = self._reserve_backup_path(target)
-                    os.replace(target, backup)
+                    _retry_transient(os.replace, target, backup)
                     backups[target] = backup
                     expected = self._expected_content.get(target, "")
                     if expected and self._digest(backup) != expected:
@@ -267,13 +275,13 @@ class StagedJsonWriter:
                     # Atomic create-without-overwrite. If another process won
                     # the name after preflight, EEXIST triggers full rollback
                     # and its bytes are never touched.
-                    os.link(tmp_path, active_target)
+                    _retry_transient(os.link, tmp_path, active_target)
                     installed.append(
                         (active_target, installed_identity, installed_digest),
                     )
                     os.remove(tmp_path)
                 else:
-                    os.replace(tmp_path, active_target)
+                    _retry_transient(os.replace, tmp_path, active_target)
                     installed.append(
                         (active_target, installed_identity, installed_digest),
                     )
@@ -336,7 +344,7 @@ class StagedJsonWriter:
                     )
                     continue
                 try:
-                    os.link(backup, target)
+                    _retry_transient(os.link, backup, target)
                     os.remove(backup)
                 except OSError as rb_exc:
                     rollback_errors.append(f"恢复 {target} 失败: {rb_exc}")

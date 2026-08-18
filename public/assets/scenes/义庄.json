@@ -393,7 +393,15 @@
       "conditions": [
         {
           "narrative": "flow_xungou_main",
-          "state": "s01_tingshu"
+          "state": "state_2",
+          "reached": true
+        },
+        {
+          "not": {
+            "narrative": "flow_xungou_main",
+            "state": "s02_beishi",
+            "reached": true
+          }
         },
         {
           "any": [

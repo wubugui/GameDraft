@@ -13,7 +13,7 @@
   {
     "id": "doc_temple_keeper_diary",
     "name": "庙祝日记残页",
-    "content": "七月十五，中元节。\n今年的香火比去年还少了。城里的人都不来拜了，说城隍爷不灵了。可我觉得不是城隍爷不灵，是城隍爷管不过来了。\n后山义冢那边又不太平了。昨晚值夜的时候隐约听到唱曲的声音，凄凄惨惨的。我没敢出去看。\n那个坟……又是一年不长草了。",
+    "content": "七月十五，中元节。\n今年的香火比去年还少了。城里的人都不来拜了，说[clue:chenghuang_buling]城隍爷不灵了[/clue]。可我觉得不是城隍爷不灵，是城隍爷管不过来了。\n后山义冢那边又不太平了。昨晚值夜的时候隐约听到唱曲的声音，凄凄惨惨的。我没敢出去看。\n那个坟……又是一年不长草了。",
     "annotation": "日记残页的纸质很差，好像是从账本上撕下来的。墨迹有些晕开，字写得工工整整。",
     "discoverConditions": [
       {
@@ -24,17 +24,25 @@
   {
     "id": "doc_wanted_poster",
     "name": "通缉令",
-    "content": "通缉令\n\n缉拿在逃匪首刘麻子一名，身高五尺五寸，左脸有一刀疤，操北方口音。此人系北山匪帮头目，积案累累。\n知情者速到城防署报案，赏银五十两。\n\n窝藏者同罪论处。",
+    "content": "通缉令\n\n缉拿在逃匪首[clue:liu_mazi]刘麻子[/clue]一名，身高五尺五寸，左脸有一刀疤，操北方口音。此人系北山匪帮头目，积案累累。\n知情者速到城防署报案，赏银五十两。\n\n窝藏者同罪论处。",
     "discoverConditions": [
       {
         "flag": "heard_city_news"
+      }
+    ],
+    "firstViewActions": [
+      {
+        "type": "collectClue",
+        "params": {
+          "clueId": "liu_mazi"
+        }
       }
     ]
   },
   {
     "id": "doc_opera_playbill",
     "name": "旧戏单",
-    "content": "柳家班 庚申年 新春公演\n\n头折《牡丹亭·惊梦》 旦角：柳如烟\n二折《窦娥冤·斩娥》 旦角：柳如烟\n三折《红楼梦·葬花》 旦角：柳如烟\n\n地点：[tag:string:place:wujin]城隍庙戏台\n票价：铜钱十文",
+    "content": "[h]柳家班 庚申年 新春公演\n\n头折《牡丹亭·惊梦》 旦角：[clue:liu_ruyan]柳如烟[/clue]\n二折《窦娥冤·斩娥》 旦角：柳如烟\n三折《红楼梦·葬花》 旦角：柳如烟\n\n[hr]\n地点：[tag:string:place:wujin]城隍庙戏台\n票价：铜钱十文",
     "annotation": "一张已经发黄发脆的老戏单。柳如烟这个名字被人用红笔圈了起来。",
     "discoverConditions": [
       {

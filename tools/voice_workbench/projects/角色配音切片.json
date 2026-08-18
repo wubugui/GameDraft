@@ -1,0 +1,368 @@
+{
+  "version": 1,
+  "name": "角色配音切片",
+  "settings": {
+    "target_lufs": -13.0,
+    "true_peak_ceiling_db": -1.5,
+    "limiter": false,
+    "denoise_reduction_db": 12.0,
+    "export_bits": 16,
+    "export_mono": true,
+    "export_dir": "public/resources/runtime/audio/voice/重庆话",
+    "noise_source": "",
+    "noise_start": 0.0,
+    "noise_end": 0.0,
+    "split_threshold_db": -35.0,
+    "split_min_silence_s": 0.5
+  },
+  "slices": [
+    {
+      "source": "瞎子.wav",
+      "start": 0.134,
+      "end": 8.545,
+      "name": "开场茶馆_瞎子李_1",
+      "id": "40d48af51d5c",
+      "enabled": true,
+      "denoise": true,
+      "gain_db": 0.0,
+      "fade_in_s": 0.0,
+      "fade_out_s": 0.0,
+      "note": "",
+      "tags": [
+        "瞎子李_茶馆开场"
+      ]
+    },
+    {
+      "source": "瞎子.wav",
+      "start": 8.673,
+      "end": 18.387,
+      "name": "开场茶馆_瞎子李_2",
+      "id": "ddad4ed67eb5",
+      "enabled": true,
+      "denoise": true,
+      "gain_db": 0.0,
+      "fade_in_s": 0.0,
+      "fade_out_s": 0.0,
+      "note": "",
+      "tags": [
+        "瞎子李_茶馆开场"
+      ]
+    },
+    {
+      "source": "瞎子.wav",
+      "start": 18.74,
+      "end": 21.613,
+      "name": "开场茶馆_瞎子李_3",
+      "id": "6d1f91efab4a",
+      "enabled": true,
+      "denoise": true,
+      "gain_db": 0.0,
+      "fade_in_s": 0.0,
+      "fade_out_s": 0.0,
+      "note": "",
+      "tags": [
+        "瞎子李_茶馆开场"
+      ]
+    },
+    {
+      "source": "瞎子.wav",
+      "start": 23.101,
+      "end": 28.709,
+      "name": "开场茶馆_瞎子李_4",
+      "id": "a1e3c9ce170a",
+      "enabled": true,
+      "denoise": true,
+      "gain_db": 0.0,
+      "fade_in_s": 0.0,
+      "fade_out_s": 0.0,
+      "note": "",
+      "tags": [
+        "瞎子李_茶馆开场"
+      ]
+    },
+    {
+      "source": "瞎子.wav",
+      "start": 29.069,
+      "end": 37.001,
+      "name": "开场茶馆_瞎子李_5",
+      "id": "ea009d836760",
+      "enabled": true,
+      "denoise": true,
+      "gain_db": 0.0,
+      "fade_in_s": 0.0,
+      "fade_out_s": 0.0,
+      "note": "",
+      "tags": [
+        "瞎子李_茶馆开场"
+      ]
+    },
+    {
+      "source": "瞎子.wav",
+      "start": 36.724,
+      "end": 46.934,
+      "name": "开场茶馆_瞎子李_6",
+      "id": "c0fe55f09815",
+      "enabled": true,
+      "denoise": true,
+      "gain_db": 0.0,
+      "fade_in_s": 0.0,
+      "fade_out_s": 0.0,
+      "note": "",
+      "tags": [
+        "瞎子李_茶馆开场"
+      ]
+    },
+    {
+      "source": "瞎子.wav",
+      "start": 48.088,
+      "end": 51.276,
+      "name": "开场茶馆_瞎子李_7",
+      "id": "de6445571321",
+      "enabled": true,
+      "denoise": true,
+      "gain_db": 0.0,
+      "fade_in_s": 0.0,
+      "fade_out_s": 0.0,
+      "note": "",
+      "tags": [
+        "瞎子李_茶馆开场"
+      ]
+    },
+    {
+      "source": "瞎子.wav",
+      "start": 51.717,
+      "end": 53.738,
+      "name": "开场茶馆_瞎子李_8",
+      "id": "c605121041cf",
+      "enabled": true,
+      "denoise": true,
+      "gain_db": 0.0,
+      "fade_in_s": 0.0,
+      "fade_out_s": 0.0,
+      "note": "",
+      "tags": [
+        "瞎子李_茶馆开场"
+      ]
+    },
+    {
+      "source": "瞎子.wav",
+      "start": 55.081,
+      "end": 56.704,
+      "name": "开场茶馆_瞎子李_9",
+      "id": "0faccc6cb071",
+      "enabled": true,
+      "denoise": true,
+      "gain_db": 0.0,
+      "fade_in_s": 0.0,
+      "fade_out_s": 0.0,
+      "note": "",
+      "tags": [
+        "瞎子李_茶馆开场"
+      ]
+    },
+    {
+      "source": "瞎子.wav",
+      "start": 57.303,
+      "end": 61.553,
+      "name": "开场茶馆_瞎子李_10",
+      "id": "0e8174714286",
+      "enabled": true,
+      "denoise": true,
+      "gain_db": 0.0,
+      "fade_in_s": 0.0,
+      "fade_out_s": 0.0,
+      "note": "",
+      "tags": [
+        "瞎子李_茶馆开场"
+      ]
+    },
+    {
+      "source": "瞎子.wav",
+      "start": 61.902,
+      "end": 63.642,
+      "name": "开场茶馆_瞎子李_11",
+      "id": "76f0c3b49252",
+      "enabled": true,
+      "denoise": true,
+      "gain_db": 0.0,
+      "fade_in_s": 0.0,
+      "fade_out_s": 0.0,
+      "note": "",
+      "tags": [
+        "瞎子李_茶馆开场"
+      ]
+    },
+    {
+      "source": "瞎子.wav",
+      "start": 65.945,
+      "end": 77.239,
+      "name": "开场茶馆_瞎子李_12",
+      "id": "4625c9e7bd5c",
+      "enabled": true,
+      "denoise": true,
+      "gain_db": 0.0,
+      "fade_in_s": 0.0,
+      "fade_out_s": 0.0,
+      "note": "",
+      "tags": [
+        "瞎子李_茶馆开场"
+      ]
+    },
+    {
+      "source": "小二.wav",
+      "start": 0.497,
+      "end": 7.992,
+      "name": "开场茶馆_小二_1",
+      "id": "c5f10447b6df",
+      "enabled": true,
+      "denoise": true,
+      "gain_db": 0.0,
+      "fade_in_s": 0.0,
+      "fade_out_s": 0.0,
+      "note": ""
+    },
+    {
+      "source": "小二.wav",
+      "start": 8.131,
+      "end": 14.283,
+      "name": "开场茶馆_小二_2",
+      "id": "9c95733e960c",
+      "enabled": true,
+      "denoise": true,
+      "gain_db": 0.0,
+      "fade_in_s": 0.0,
+      "fade_out_s": 0.0,
+      "note": ""
+    },
+    {
+      "source": "小二.wav",
+      "start": 15.396,
+      "end": 21.197,
+      "name": "开场茶馆_小二_3",
+      "id": "fb970d2c8f49",
+      "enabled": true,
+      "denoise": true,
+      "gain_db": 0.0,
+      "fade_in_s": 0.0,
+      "fade_out_s": 0.0,
+      "note": ""
+    },
+    {
+      "source": "小二.wav",
+      "start": 22.465,
+      "end": 31.448,
+      "name": "开场茶馆_小二_4",
+      "id": "d93aa52ad1e0",
+      "enabled": true,
+      "denoise": true,
+      "gain_db": 0.0,
+      "fade_in_s": 0.0,
+      "fade_out_s": 0.0,
+      "note": ""
+    },
+    {
+      "source": "小二.wav",
+      "start": 35.406,
+      "end": 41.882,
+      "name": "开场茶馆_小二_5",
+      "id": "8fa1f2c0a892",
+      "enabled": true,
+      "denoise": true,
+      "gain_db": 0.0,
+      "fade_in_s": 0.0,
+      "fade_out_s": 0.0,
+      "note": ""
+    },
+    {
+      "source": "小二.wav",
+      "start": 31.561,
+      "end": 35.047,
+      "name": "开场茶馆_小二_6",
+      "id": "aacd2efd9292",
+      "enabled": true,
+      "denoise": true,
+      "gain_db": 0.0,
+      "fade_in_s": 0.0,
+      "fade_out_s": 0.0,
+      "note": ""
+    },
+    {
+      "source": "小二.wav",
+      "start": 42.151,
+      "end": 49.489,
+      "name": "开场茶馆_小二_7",
+      "id": "d6496f5f5a88",
+      "enabled": true,
+      "denoise": true,
+      "gain_db": 0.0,
+      "fade_in_s": 0.0,
+      "fade_out_s": 0.0,
+      "note": ""
+    },
+    {
+      "source": "掌柜.wav",
+      "start": 0.259,
+      "end": 8.098,
+      "name": "开场茶馆_掌柜_1",
+      "id": "6a6abf59f317",
+      "enabled": true,
+      "denoise": true,
+      "gain_db": 0.0,
+      "fade_in_s": 0.0,
+      "fade_out_s": 0.0,
+      "note": ""
+    },
+    {
+      "source": "掌柜.wav",
+      "start": 8.461,
+      "end": 16.591,
+      "name": "开场茶馆_掌柜_2",
+      "id": "aa01c7e16ee2",
+      "enabled": true,
+      "denoise": true,
+      "gain_db": 0.0,
+      "fade_in_s": 0.0,
+      "fade_out_s": 0.0,
+      "note": ""
+    },
+    {
+      "source": "掌柜.wav",
+      "start": 17.352,
+      "end": 20.798,
+      "name": "开场茶馆_掌柜_3",
+      "id": "924b9aadcb4d",
+      "enabled": true,
+      "denoise": true,
+      "gain_db": 0.0,
+      "fade_in_s": 0.0,
+      "fade_out_s": 0.0,
+      "note": ""
+    },
+    {
+      "source": "掌柜.wav",
+      "start": 23.133,
+      "end": 28.362,
+      "name": "开场茶馆_掌柜_4",
+      "id": "314204f101ad",
+      "enabled": true,
+      "denoise": true,
+      "gain_db": 0.0,
+      "fade_in_s": 0.0,
+      "fade_out_s": 0.0,
+      "note": ""
+    },
+    {
+      "source": "掌柜.wav",
+      "start": 28.475,
+      "end": 36.903,
+      "name": "开场茶馆_掌柜_5",
+      "id": "03eef5260015",
+      "enabled": true,
+      "denoise": true,
+      "gain_db": 0.0,
+      "fade_in_s": 0.0,
+      "fade_out_s": 0.0,
+      "note": ""
+    }
+  ]
+}

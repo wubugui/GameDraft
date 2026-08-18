@@ -3,78 +3,148 @@
   "configurations": [
     {
       "name": "game-dev",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "scripts/dev_agent.cjs"
+      ],
       "port": 5173,
       "autoPort": false
     },
     {
       "name": "game-dev-5174",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--", "--port", "5174", "--strictPort"],
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "scripts/dev_agent.cjs",
+        "--port",
+        "5174",
+        "--strictPort"
+      ],
       "port": 5174,
       "autoPort": false
     },
     {
       "name": "game-dev-5178",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--", "--port", "5178", "--strictPort"],
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "scripts/dev_agent.cjs",
+        "--port",
+        "5178",
+        "--strictPort"
+      ],
       "port": 5178,
       "autoPort": false
     },
     {
       "name": "game-dev-5180",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--", "--port", "5180", "--strictPort"],
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "scripts/dev_agent.cjs",
+        "--port",
+        "5180",
+        "--strictPort"
+      ],
       "port": 5180,
       "autoPort": false
     },
     {
       "name": "tool-test",
-      "runtimeExecutable": "python3",
-      "runtimeArgs": ["-m", "http.server", "8099"],
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "scripts/py.sh",
+        "-m",
+        "http.server",
+        "8099"
+      ],
       "port": 8099
     },
     {
       "name": "anim-preview",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev:anim-preview", "--", "--port", "5199", "--strictPort"],
+      "runtimeArgs": [
+        "run",
+        "dev:anim-preview",
+        "--",
+        "--port",
+        "5199",
+        "--strictPort"
+      ],
       "port": 5199,
       "autoPort": false
     },
     {
       "name": "parallax-editor",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev:parallax-editor", "--", "--port", "5205", "--strictPort"],
+      "runtimeArgs": [
+        "run",
+        "dev:parallax-editor",
+        "--",
+        "--port",
+        "5205",
+        "--strictPort"
+      ],
       "port": 5205,
       "autoPort": false
     },
     {
       "name": "narrative-editor",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev:narrative-editor", "--", "--port", "5210", "--strictPort"],
+      "runtimeArgs": [
+        "run",
+        "dev:narrative-editor",
+        "--",
+        "--port",
+        "5210",
+        "--strictPort"
+      ],
       "port": 5210,
       "autoPort": false
     },
     {
       "name": "char-lighting-lab",
-      "runtimeExecutable": ".tools/venv/bin/python",
-      "runtimeArgs": ["-m", "tools.character_lighting_lab", "--port", "5311", "--no-open"],
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "scripts/py.sh",
+        "-m",
+        "tools.character_lighting_lab",
+        "--port",
+        "5311",
+        "--no-open"
+      ],
       "port": 5311,
       "autoPort": false
     },
     {
       "name": "acos-web",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "/Users/dannyteng/AIWork/agent-canvas-os/web", "run", "dev"],
+      "runtimeArgs": [
+        "--prefix",
+        "/Users/dannyteng/AIWork/agent-canvas-os/web",
+        "run",
+        "dev"
+      ],
       "port": 3100,
       "autoPort": false
     },
     {
       "name": "cloudcli",
       "runtimeExecutable": "bash",
-      "runtimeArgs": ["-lc", "export PATH=/opt/homebrew/opt/node@22/bin:$PATH; cd /Users/dannyteng/AIWork/claudecodeui; exec npm run dev"],
+      "runtimeArgs": [
+        "-lc",
+        "export PATH=/opt/homebrew/opt/node@22/bin:$PATH; cd /Users/dannyteng/AIWork/claudecodeui; exec npm run dev"
+      ],
       "port": 5273,
+      "autoPort": false
+    },
+    {
+      "name": "game-dev-5188",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "scripts/dev_agent.cjs",
+        "--port",
+        "5188",
+        "--strictPort"
+      ],
+      "port": 5188,
       "autoPort": false
     }
   ]

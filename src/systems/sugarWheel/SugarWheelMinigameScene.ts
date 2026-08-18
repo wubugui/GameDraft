@@ -231,7 +231,7 @@ export class SugarWheelMinigameScene {
       text: '',
       style: {
         fontSize: UITheme.fontSize.micro,
-        fill: UITheme.colors.bodyDim,
+        fill: UITheme.colors.bodyMuted,
         fontFamily: UITheme.fonts.ui,
         align: 'center',
       },
@@ -559,7 +559,7 @@ export class SugarWheelMinigameScene {
       text: labelText,
       style: {
         fontSize: UITheme.fontSize.bodyLarge,
-        fill: UITheme.colors.buttonText,
+        fill: UITheme.colors.bodyMuted,
         fontFamily: UITheme.fonts.ui,
         fontWeight: 'bold',
       },
@@ -579,7 +579,7 @@ export class SugarWheelMinigameScene {
         const i = WOOD_CHIP;
         drawSelectedRow(hi, i, i, width - i * 2, height - i * 2);
       }
-      label.style.fill = hover ? UITheme.colors.title : UITheme.colors.buttonText;
+      label.style.fill = hover ? UITheme.colors.title : UITheme.colors.bodyMuted;
     };
     c.on('pointerover', () => paint(true));
     c.on('pointerout', () => paint(false));
@@ -721,7 +721,7 @@ export class SugarWheelMinigameScene {
       text: labelText,
       style: {
         fontSize: UITheme.fontSize.micro,
-        fill: UITheme.colors.buttonText,
+        fill: UITheme.colors.bodyMuted,
         fontFamily: UITheme.fonts.ui,
         fontWeight: 'bold',
       },
@@ -825,7 +825,7 @@ export class SugarWheelMinigameScene {
     bg.clear();
     drawPanelBase(bg, 0, 0, w, h, SKINS.row, hover ? { border: UITheme.colors.borderSelected } : undefined);
     if (hover) drawSelectedRow(bg, 0, 0, w, h);
-    if (label) label.style.fill = hover ? UITheme.colors.title : UITheme.colors.buttonText;
+    if (label) label.style.fill = hover ? UITheme.colors.title : UITheme.colors.bodyMuted;
   }
 
   private layout(): void {
@@ -1839,7 +1839,7 @@ export class SugarWheelMinigameScene {
       g.moveTo(p0.x, p0.y);
       g.lineTo(p1.x, p1.y);
       g.stroke({
-        color: major ? UITheme.colors.bodyDim : UITheme.colors.hint,
+        color: major ? UITheme.colors.bodyMuted : UITheme.colors.hintMid,
         alpha: major ? 0.9 : 0.55,
         width: major ? 2 : 1,
       });
@@ -1891,7 +1891,7 @@ export class SugarWheelMinigameScene {
       g.moveTo(0, 0);
       g.lineTo(p.x, p.y);
       g.stroke({
-        color: highlight ? UITheme.colors.borderSelected : UITheme.colors.subtle,
+        color: highlight ? UITheme.colors.borderSelected : UITheme.colors.descText,
         alpha: highlight ? 0.95 : 0.38,
         width: highlight ? 2.5 : 1,
       });

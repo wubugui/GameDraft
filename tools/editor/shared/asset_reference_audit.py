@@ -62,8 +62,10 @@ _MEDIA_KEY_NAMES = {
     "images",
 }
 
-# 富文本里 [img:...] 也按媒体短名解析
-_RICH_IMG_RE = re.compile(r"\[img:([^\]]+)\]")
+# 富文本里 [img:...] 也按媒体短名解析。
+# 2026-08-17 RichContent v2 起支持档位后缀 [img:路径|inline|wide|full]（见 src/ui/RichContent.ts
+# 的 IMG_LINE_RE/IMG_INLINE_RE）——捕获组只取路径段，`|档位` 不属于文件名。
+_RICH_IMG_RE = re.compile(r"\[img:([^\]|]+)(?:\|(?:inline|wide|full))?\]")
 
 _TEXT_KEY_NAMES = {
     "animFile",  # /resources/runtime/animation/<id>/anim.json 实际是 JSON，但运行时与媒体共用 runtime 根

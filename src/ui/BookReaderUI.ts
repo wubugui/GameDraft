@@ -1,9 +1,12 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import { UITheme } from './UITheme';
-import { drawPanelBase, SKINS } from './PanelSkin';
-import { buildRichContent } from './RichContent';
+import { SKINS } from './PanelSkin';
+import { buildRichDoc, parseRichMarkup, RICH_DARK, type RichBlock } from './RichContent';
 import { markPointerConsumed } from './uiPointerCoords';
-import { createRule, drawSelectedRow } from './components/UIDecor';
+import { createRule } from './components/UIDecor';
+import { UIListRow } from './components/UIListRow';
+import { PAGE_PAD } from './components/ArchiveBookView';
+import { getClueAccess } from './clueAccess';
 import { UIFocus, type FocusItem } from './components/UIFocus';
 import { UIWindow, WINDOW_SIZES } from './components/UIWindow';
 import { UIScrollView } from './components/UIScrollView';
@@ -56,6 +59,8 @@ export class BookReaderUI {
   private content: UIScrollView | null = null;
   /** 目录滚动位置跨重绘保留（点目录重建面板不该把目录跳回顶部） */
   private tocScrollKeep = 0;
+  /** 插图到位触发的整页重画要停在读者读到的位置，不弹回顶（审查 P2）；navigate 归零 */
+  private pendingContentScroll = 0;
   /**
    * 键盘/手柄焦点。两组：左栏目录（章 + 轶闻）一组，右栏「返回本章正文」一组——
    * 不分组的话上下键会在目录与右栏那条链接之间乱跳。
@@ -95,8 +100,21 @@ export class BookReaderUI {
   private navigate(pageNum: number, entryId: string | null): void {
     this.navPageNum = pageNum;
     this.navEntryId = entryId;
+    this.pendingContentScroll = 0;
     this.fireSliceFirstView();
     this.build(false);
+  }
+
+  /**
+   * Esc = **退一层**（经 BookshelfUI 的子面板钩子转进来）：
+   * 正在读轶闻 → 退回本章正文；已在章正文/占位页 → 交回书架（退到书架层）。
+   */
+  handleEscapeStep(): boolean {
+    if (this.navEntryId !== null) {
+      this.navigate(this.navPageNum, null);
+      return true;
+    }
+    return false;
   }
 
   /**
@@ -113,7 +131,15 @@ export class BookReaderUI {
 
   close(): void {
     window.removeEventListener('keydown', this.onKeyBound);
-    this.teardown();
+    // 关场淡出：先摘输入面（滚动区 wheel/拖动 + 上面的 keydown），再让窗体淡出自毁。
+    // 翻页/目录跳转的重建路径（build → teardown）保持瞬时 destroy，不走这里。
+    this.toc?.detachInput();
+    this.content?.detachInput();
+    const win = this.win;
+    this.toc = null;
+    this.content = null;
+    this.win = null;
+    win?.fadeOutAndDestroy();
     this.currentBook = null;
     this.onCloseCb = null;
     this.tocScrollKeep = 0;
@@ -122,8 +148,16 @@ export class BookReaderUI {
     this.focusInit = false;
   }
 
+  /** 真销毁（游戏退出）：瞬时路径，不播关场动画 */
   destroy(): void {
-    this.close();
+    window.removeEventListener('keydown', this.onKeyBound);
+    this.teardown();
+    this.currentBook = null;
+    this.onCloseCb = null;
+    this.tocScrollKeep = 0;
+    this.focus.destroy();
+    this.focusItems = [];
+    this.focusInit = false;
   }
 
   /**
@@ -233,7 +267,7 @@ export class BookReaderUI {
       text: this.breadcrumbText(chapters),
       style: {
         fontSize: UITheme.fontSize.micro,
-        fill: UITheme.colors.pageInfo,
+        fill: UITheme.colors.hintMid,
         fontFamily: UITheme.fonts.ui,
         wordWrap: true,
         breakWords: true,
@@ -247,7 +281,7 @@ export class BookReaderUI {
       text: this.strings.get('bookReader', 'tocTitle'),
       style: {
         fontSize: UITheme.fontSize.small,
-        fill: UITheme.colors.section,
+        fill: UITheme.colors.hintMid,
         fontFamily: UITheme.fonts.display,
         fontWeight: 'bold',
         letterSpacing: UITheme.letterSpacing.title,
@@ -258,17 +292,15 @@ export class BookReaderUI {
     const tocW = Math.min(TOC_W, Math.round(win.bodyWidth * TOC_W_RATIO));
     const listTop = tocTitle.height + UITheme.spacing.xs;
     const colH = Math.max(MIN_COL_H, win.bodyHeight - pageInfo.height - UITheme.spacing.sm - listTop);
-    const contentX = tocW + UITheme.spacing.lg;
-    const contentW = Math.max(1, win.bodyWidth - contentX);
-
-    // 两栏之间一条极淡竖线（设计稿里书页中缝就是这么一条）。
-    // 旧实现还在目录列整块铺了一层 SKINS.row 的底板——那让左栏变成"面板里的面板"，
-    // 与"一张摊开的书页"的观感相反，且行牌自己的选中态在它上面提不起来。
+    // 两栏＝摊开的一本书的两页，中间一条极淡竖线；右栏没有自己的底
+    // （批3a 的米白纸页已撤，理由见 ArchiveBookView 顶部注释：这游戏没有亮面板）。
+    // 内白仍走同一个 PAGE_PAD：中缝位置 / 视口宽 / 换行宽三处同出一源。
+    const dividerX = tocW + UITheme.spacing.lg;
+    const contentX = dividerX + PAGE_PAD;
+    const contentW = Math.max(1, win.bodyWidth - contentX - UITheme.spacing.sm);
     const divider = new Graphics();
-    const divX = tocW + UITheme.spacing.sm;
-    divider.moveTo(divX, listTop - UITheme.spacing.xs);
-    divider.lineTo(divX, listTop + colH + UITheme.spacing.xs);
-    divider.stroke({ width: 1, color: UITheme.colors.hairline, alpha: UITheme.alpha.hairline });
+    divider.rect(dividerX, listTop, 1, colH);
+    divider.fill({ color: UITheme.colors.hairline, alpha: UITheme.alpha.hairline });
     divider.eventMode = 'none';
     win.body.addChild(divider);
 
@@ -290,7 +322,7 @@ export class BookReaderUI {
     toc.refresh();
     toc.scrollOffset = this.tocScrollKeep;
 
-    this.buildContentColumn(book, contentX, listTop, contentW, colH, splitX);
+    this.buildContentColumn(book, chapters, contentX, listTop, contentW, colH, splitX);
 
     // 目录在前、右栏链接在后（setItems 无历史焦点时落到第一项，先排目录就不会开在链接上）
     this.focus.setItems(this.focusItems);
@@ -300,7 +332,7 @@ export class BookReaderUI {
       this.focusInit = true;
     }
     // setItems 按同 id 复位时不会重放 onFocus（currentId 没变），新一批行牌拿不到高亮 → 补一次
-    this.focus.current?.onFocus(true);
+    this.focus.repaint();
     this.scrollFocusIntoView();
 
     if (animateOpen) win.open();
@@ -344,54 +376,37 @@ export class BookReaderUI {
         },
       });
       const rowH = Math.max(opts.level.minH, t.height + UITheme.spacing.sm);
+      const focusId = this.tocLineId(pageNum, entryId);
 
-      // 选中 = 整条铺琥珀 + 金描边（不是把字换个颜色）；平常是极暗行底 + 一条极淡的边
-      const plate = new Graphics();
-      if (opts.selected) drawSelectedRow(plate, 0, cy, lineW, rowH);
-      else {
-        drawPanelBase(plate, 0, cy, lineW, rowH, SKINS.row,
-          opts.muted ? { fillAlpha: UITheme.alpha.rowBgLight } : undefined);
-      }
-      plate.eventMode = 'none';
-      toc.content.addChild(plate);
-
-      // 焦点高亮 = 这一行原本的选中画法（琥珀铺光 + 金描边），不另发明一种焦点框。
-      // **正在读的那一行不再叠一层**：它的 `plate` 已经是同一张铺光，叠上去只会亮一档。
-      const focusGlow = opts.selected ? null : new Graphics();
-      if (focusGlow) {
-        drawSelectedRow(focusGlow, 0, cy, lineW, rowH);
-        focusGlow.alpha = 0;
-        focusGlow.eventMode = 'none';
-        toc.content.addChild(focusGlow);
-      }
+      // 行原语（UIListRow）：tap 激活 + 拖滚让路 + 消费标记 + 焦点铺光全内建。
+      // 未解锁的章/条**不作 disabled**：它们点得开（给一句「尚未解锁」占位），按键到不了才是死角。
+      const listRow = new UIListRow({
+        width: lineW,
+        height: rowH,
+        selected: opts.selected,
+        baseOverrides: opts.muted ? { fillAlpha: UITheme.alpha.rowBgLight } : undefined,
+        onTap: () => this.navigate(pageNum, entryId),
+        // 悬停即移焦：鼠标与手柄共用同一个"当前项"
+        onHover: () => this.focus.syncHover(focusId),
+        onHoverEnd: () => this.focus.clearHover(focusId),
+      });
+      listRow.container.y = cy;
+      toc.content.addChild(listRow.container);
 
       t.x = indent + UITheme.spacing.xs;
-      t.y = cy + Math.round((rowH - t.height) / 2);
-      // 整行命中：Pixi 是逐子元素命中测试，只给 Text 会让行内空白成死区
-      const hit = new Graphics();
-      hit.rect(0, cy, lineW, rowH);
-      hit.fill({ color: 0xffffff, alpha: UITheme.alpha.hitArea });
-      hit.eventMode = 'static';
-      hit.cursor = 'pointer';
-      hit.on('pointerdown', (e) => {
-        markPointerConsumed((e as { nativeEvent?: unknown }).nativeEvent);
-        this.navigate(pageNum, entryId);
-      });
-      const focusId = this.tocLineId(pageNum, entryId);
-      // 悬停即移焦：鼠标与手柄共用同一个"当前项"
-      hit.on('pointerover', () => this.focus.syncHover(focusId));
-      toc.content.addChild(hit);
-      toc.content.addChild(t);
+      t.y = Math.round((rowH - t.height) / 2);
+      t.eventMode = 'none';
+      listRow.container.addChild(t);
 
-      // 未解锁的章/条也登记：它们**点得开**（会给一句「尚未解锁」的提示），
-      // 按键到不了才是死角。焦点矩形按内容区坐标登记，好与右栏链接同台比位置。
+      // 焦点矩形按内容区坐标登记，好与右栏链接同台比位置。
       this.focusItems.push({
         id: focusId,
         x: 0, y: this.tocTop + cy, w: lineW, h: rowH,
         group: 'toc',
-        onFocus: (on) => {
-          if (focusGlow && !focusGlow.destroyed) focusGlow.alpha = on ? 0.85 : 0;
-          if (!t.destroyed && !opts.selected) t.style.fill = on ? UITheme.colors.title : fill;
+        onFocus: (on, via) => {
+          listRow.setFocused(on, via);
+          // 字色只跟**导航光标**走，不跟鼠标走（理由见 ArchiveBookView 同处）
+          if (!t.destroyed && !opts.selected) t.style.fill = on && via === 'key' ? UITheme.colors.title : fill;
         },
         onActivate: () => this.navigate(pageNum, entryId),
       });
@@ -426,6 +441,7 @@ export class BookReaderUI {
    */
   private buildContentColumn(
     book: BookDef,
+    chapters: BookTocChapter[],
     x: number,
     top: number,
     w: number,
@@ -469,7 +485,7 @@ export class BookReaderUI {
           text: this.strings.get('bookReader', 'entryFromChapter', { chapter }),
           style: {
             fontSize: UITheme.fontSize.small,
-            fill: UITheme.colors.pageInfo,
+            fill: UITheme.colors.hintMid,
             fontFamily: UITheme.fonts.ui,
             wordWrap: true,
             breakWords: true,
@@ -494,7 +510,8 @@ export class BookReaderUI {
         text: this.strings.get('bookReader', 'backToChapter'),
         style: {
           fontSize: UITheme.fontSize.small,
-          fill: UITheme.colors.link,
+          // 纸页上的链接：墨系弱化色，焦点/悬停提到墨题色（暗底的 link 色在纸上会发灰蓝）
+          fill: UITheme.colors.hintMid,
           fontFamily: UITheme.fonts.ui,
           wordWrap: true,
           breakWords: true,
@@ -507,6 +524,7 @@ export class BookReaderUI {
       // 悬停即移焦：变色统一由 onFocus 画（就是原来的悬停画法）。
       // 原先的 pointerout 复位去掉了——移开鼠标不该把唯一的焦点擦掉，焦点恒有一个可见。
       backCh.on('pointerover', () => this.focus.syncHover('backToChapter'));
+      backCh.on('pointerout', () => this.focus.clearHover('backToChapter'));
       backCh.on('pointerdown', (e) => {
         markPointerConsumed((e as { nativeEvent?: unknown }).nativeEvent);
         this.navigate(this.navPageNum, null);
@@ -518,7 +536,7 @@ export class BookReaderUI {
         x: x, y: top + hy, w: backCh.width, h: backCh.height,
         group: 'content',
         onFocus: (on) => {
-          if (!backCh.destroyed) backCh.style.fill = on ? UITheme.colors.title : UITheme.colors.link;
+          if (!backCh.destroyed) backCh.style.fill = on ? UITheme.colors.title : UITheme.colors.hintMid;
         },
         onActivate: () => this.navigate(this.navPageNum, null),
       });
@@ -526,60 +544,124 @@ export class BookReaderUI {
       hy += backCh.height + UITheme.spacing.md;
     }
 
+    // 底部章导航行占位：翻页式阅读器没有上一章/下一章是审查 P1（自称翻页却章间只能回目录）
+    const navH = slice.kind === 'page' ? this.chapterNavHeight(chapters) : 0;
+
     const scroll = new UIScrollView(this.renderer, {
       width: w,
-      height: Math.max(MIN_COL_H, h - hy),
+      height: Math.max(MIN_COL_H, h - hy - navH),
       hitTest: (px) => px >= splitX(),
     });
     scroll.container.position.set(x, top + hy);
     win.body.addChild(scroll.container);
     this.content = scroll;
 
-    // 插图走 rich content 的 [img:…]（与档案册同一条通道），插在正文最前
-    let raw = slice.content;
+    // 正文块：整页插画（wide 档居中，`[img:…]` 数据侧声明的仍按标记档位）→ 正文标记解析
+    // → 轶闻按语（分隔线 + 引文声部；旧版是同色 small + 伪斜体，审查 P1/P2 双点名）。
+    const blocks: RichBlock[] = [];
     if (slice.illustration?.trim()) {
-      raw = `[img:${slice.illustration.trim()}]\n${raw}`;
+      blocks.push({ kind: 'image', path: slice.illustration.trim(), size: 'wide' });
     }
+    blocks.push(...parseRichMarkup(slice.content));
+    if (slice.kind === 'entry' && slice.annotation?.trim()) {
+      blocks.push({ kind: 'divider' });
+      blocks.push({ kind: 'quote', text: `${this.strings.get('bookReader', 'annotationHeading')}：${slice.annotation.trim()}` });
+    }
+
     // 插图是现装的（书里的 `[img:…]` 不在任何预载清单里），到位后整页重画。
     // 守卫：书可能已经关了、也可能已经翻到别页——那就别把旧页画回去。
+    // 重画停在读者读到的位置（pendingContentScroll），不弹回顶。
     const atPage = this.navPageNum;
     const atEntry = this.navEntryId;
-    const { container: rc, totalHeight: mainH } = buildRichContent(raw, {
+    const { container: rc } = buildRichDoc(blocks, {
       width: w,
       fontSize: UITheme.fontSize.body,
-      fill: UITheme.colors.bodyDim,
       fontFamily: UITheme.fonts.display,
       lineHeight: BODY_LINE_H,
+      palette: RICH_DARK,
       onImageLoaded: () => {
         if (!this.win || !this.currentBook) return;
         if (this.navPageNum !== atPage || this.navEntryId !== atEntry) return;
+        this.pendingContentScroll = this.content?.scrollOffset ?? 0;
         this.build(false);
+      },
+      // K7 线索词条（书页里同样能圈线索）：状态色 + 采集后延迟重画（保住闪金动画）
+      linkStateResolver: (link) =>
+        (link.kind === 'clue' && getClueAccess()?.isCollected(link.id) ? 'collected' : 'fresh'),
+      onLinkTap: (link) => {
+        const clues = getClueAccess();
+        if (link.kind !== 'clue' || !clues) return;
+        clues.collect(link.id);
+        window.setTimeout(() => {
+          if (!this.win || this.navPageNum !== atPage || this.navEntryId !== atEntry) return;
+          this.pendingContentScroll = this.content?.scrollOffset ?? 0;
+          this.build(false);
+        }, 320);
       },
     }, this.assetManager);
     scroll.content.addChild(rc);
 
-    if (slice.kind === 'entry' && slice.annotation?.trim()) {
-      const ann = createStyledText({
-        text: `${this.strings.get('bookReader', 'annotationHeading')}：${slice.annotation.trim()}`,
-        style: {
-          fontSize: UITheme.fontSize.small,
-          fill: UITheme.colors.bodyMuted,
-          fontFamily: UITheme.fonts.display,
-          fontStyle: 'italic',
-          wordWrap: true,
-          breakWords: true,
-          wordWrapWidth: w,
-          lineHeight: ANNOTATION_LINE_H,
-        },
-      });
-      ann.y = mainH + UITheme.spacing.md;
-      scroll.content.addChild(ann);
-    }
-
     scroll.refresh();
+    scroll.scrollOffset = this.pendingContentScroll;
+    this.pendingContentScroll = 0;
+
+    if (navH > 0) {
+      this.buildChapterNav(chapters, x, top + h - navH + UITheme.spacing.sm, w);
+    }
   }
 
-  /** 页题 / 轶闻名：琥珀大字 + 一条渐隐横线（设计稿右页的开头就这两笔）。 */
+  /** 章导航行高：有上一章或下一章可去才占位 */
+  private chapterNavHeight(chapters: BookTocChapter[]): number {
+    const idx = chapters.findIndex((c) => c.pageNum === this.navPageNum);
+    if (idx < 0) return 0;
+    return (idx > 0 || idx < chapters.length - 1) ? UITheme.fontSize.small + UITheme.spacing.md : 0;
+  }
+
+  /**
+   * 章正文页底部的「← 上一章 / 下一章 →」：纸页页脚的一对导航链接，
+   * 键盘归 content 组（左右键即可在两枚间横跳）。未解锁的章照样能翻过去看占位提示。
+   */
+  private buildChapterNav(chapters: BookTocChapter[], x: number, y: number, w: number): void {
+    const win = this.win;
+    if (!win) return;
+    const idx = chapters.findIndex((c) => c.pageNum === this.navPageNum);
+    if (idx < 0) return;
+
+    const mk = (label: string, target: BookTocChapter, id: string, alignRight: boolean): void => {
+      const t = createStyledText({
+        text: label,
+        style: { fontSize: UITheme.fontSize.small, fill: UITheme.colors.hintMid, fontFamily: UITheme.fonts.ui },
+      });
+      t.position.set(alignRight ? x + w - t.width : x, y);
+      t.eventMode = 'static';
+      t.cursor = 'pointer';
+      t.on('pointerover', () => this.focus.syncHover(id));
+      t.on('pointerout', () => this.focus.clearHover(id));
+      t.on('pointerdown', (e) => {
+        markPointerConsumed((e as { nativeEvent?: unknown }).nativeEvent);
+        this.navigate(target.pageNum, null);
+      });
+      win.body.addChild(t);
+      this.focusItems.push({
+        id,
+        x: t.x, y: t.y, w: t.width, h: t.height,
+        group: 'content',
+        onFocus: (on) => {
+          if (!t.destroyed) t.style.fill = on ? UITheme.colors.title : UITheme.colors.hintMid;
+        },
+        onActivate: () => this.navigate(target.pageNum, null),
+      });
+    };
+
+    if (idx > 0) {
+      mk(this.strings.get('bookReader', 'prevChapter'), chapters[idx - 1], 'prevChapter', false);
+    }
+    if (idx < chapters.length - 1) {
+      mk(this.strings.get('bookReader', 'nextChapter'), chapters[idx + 1], 'nextChapter', true);
+    }
+  }
+
+  /** 页题 / 轶闻名：墨题大字 + 一条纸色横线（纸页上的开头两笔）。 */
   private headingText(text: string, w: number): Container {
     const c = new Container();
     const t = createStyledText({
@@ -603,15 +685,14 @@ export class BookReaderUI {
     return c;
   }
 
-  /** 未解锁 / 缺页的占位话 */
+  /** 未解锁 / 缺页的占位话（伪斜体已去——中文斜体是横向剪切，观感廉价，审查 P2） */
   private placeholderText(text: string, w: number): Text {
     return createStyledText({
       text,
       style: {
         fontSize: UITheme.fontSize.bodyLarge,
-        fill: UITheme.colors.disabledDark,
+        fill: UITheme.colors.hintMid,
         fontFamily: UITheme.fonts.display,
-        fontStyle: 'italic',
         wordWrap: true,
         breakWords: true,
         wordWrapWidth: w,

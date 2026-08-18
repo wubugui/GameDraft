@@ -1,5 +1,6 @@
 import { ArchiveBookView } from './components/ArchiveBookView';
 import type { ArchiveSection } from './components/ArchiveBookView';
+import { parseRichMarkup, type RichBlock } from './RichContent';
 import type { Renderer } from '../rendering/Renderer';
 import type { IArchiveDataProvider, LoreEntry } from '../data/types';
 import type { StringsProvider } from '../core/StringsProvider';
@@ -32,25 +33,42 @@ export class LoreBookUI {
     });
   }
 
-  /** 单组不分节；分类以行首 `[传说]` 前缀呈现（沿用原样式）。 */
+  /**
+   * 按分类分组（与怪话册同一套分组表头语法）。旧版是行首 `[传说]` 前缀——
+   * 同一视图族两种分类语法（审查 P2），统一成表头后条目名不再被前缀顶掉一截列宽。
+   */
   private buildSections(): ArchiveSection[] {
-    const rows = this.archiveData.getUnlockedLore().map(entry => ({
-      key: `lore_${entry.id}`,
-      label: `[${this.archiveData.getLoreCategoryName(entry.category)}] ${this.archiveData.resolveLine(entry.title)}`,
-      enabled: true,
-      firstViewActions: entry.firstViewActions,
-      buildDetail: () => this.buildDetail(entry),
+    const groups = new Map<string, LoreEntry[]>();
+    for (const entry of this.archiveData.getUnlockedLore()) {
+      const list = groups.get(entry.category);
+      if (list) list.push(entry);
+      else groups.set(entry.category, [entry]);
+    }
+    return [...groups.entries()].map(([category, entries]) => ({
+      header: this.archiveData.getLoreCategoryName(category),
+      rows: entries.map(entry => ({
+        key: `lore_${entry.id}`,
+        label: this.archiveData.resolveLine(entry.title),
+        enabled: true,
+        firstViewActions: entry.firstViewActions,
+        buildDetailDoc: () => this.buildDetailDoc(entry),
+      })),
     }));
-    return [{ rows }];
   }
 
-  private buildDetail(entry: LoreEntry): string {
-    const content = this.archiveData.resolveLine(entry.content);
+  /** 正文（支持块级标记）→ 出处（弱化小字，不再与正文同声部——审查 P1 拍平问题）。 */
+  private buildDetailDoc(entry: LoreEntry): RichBlock[] {
+    const blocks: RichBlock[] = [...parseRichMarkup(this.archiveData.resolveLine(entry.content))];
     const source = this.archiveData.resolveLine(entry.source);
-    return `${content}\n\n${this.strings.get('loreBook', 'source')} ${source}`;
+    if (source) {
+      blocks.push({ kind: 'paragraph', tone: 'faint', text: `${this.strings.get('loreBook', 'source')} ${source}` });
+    }
+    return blocks;
   }
 
   open(): void { this.view.open(); }
+  /** 按见闻 id 定位（事件日志跳转落点）。key 的构造归本册子自己，路由层只给 id。 */
+  focusEntry(entryId: string): boolean { return this.view.focusEntryByKey(`lore_${entryId}`); }
   close(): void { this.view.close(); }
   destroy(): void { this.view.destroy(); }
 }

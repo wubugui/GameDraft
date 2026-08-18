@@ -41,7 +41,7 @@ import {
 } from '../data/EntityRuntimeFieldSchema';
 import type { ActivePlaneSnapshot } from './plane/types';
 import { createStyledText } from '../core/styledText';
-import { isEntityInPhase, NPC_DEFAULT_PHASES } from '../utils/dayTime';
+import { isEntityInPhase } from '../utils/dayTime';
 
 /** applyDebugWorldSize 成功时的返回值，供深度系统与碰撞比例同步 */
 export type ApplyDebugWorldSizeResult =
@@ -142,6 +142,12 @@ export class SceneManager implements IGameSystem {
   private npcSchedulePresence: ((def: NpcDef) => boolean) | null = null;
   /** 由 Game 注入：当前时段 id（实体 phases 归属判定用）；未注入时不施加限制。 */
   private currentPhaseGetter: (() => string) | null = null;
+  /**
+   * 由 Game 注入：NPC 未写 `phases` 时的缺省归属（DayManager 从 `phases[].daylight` 派生）。
+   * 未注入时不施加限制——本层**刻意不预设任何时段 id**，那正是 2026-08-18
+   * 「整条街空无一人」的成因（详见 `dayTime.daylightPhaseIds`）。
+   */
+  private npcDefaultPhasesGetter: (() => readonly string[]) | null = null;
 
   private playerPositionSetter: ((x: number, y: number) => void) | null = null;
   private cameraSetter: ((boundsW: number, boundsH: number, snapX: number, snapY: number, cameraConfig?: SceneCameraConfig, worldScale?: number) => void) | null = null;
@@ -385,6 +391,14 @@ export class SceneManager implements IGameSystem {
   }
 
   /**
+   * 由 Game 注入「NPC 未写 `phases` 时算在哪几段」（DayManager 从 `daylight` 标记派生）。
+   * 未注入 / 返回空数组时不施加限制（全时段都在）——宁可街上多几个人，绝不静默清空。
+   */
+  setNpcDefaultPhasesGetter(fn: (() => readonly string[]) | null): void {
+    this.npcDefaultPhasesGetter = fn;
+  }
+
+  /**
    * 根据 cutsceneOnly/shared/普通实体 + 位面归属语义刷新当前已加载实体显隐。
    * 判定委托 getHotspotBaseEnabledForInteraction / getNpcBaseVisibleForInteraction
    * （派生基底的唯一真源），保证与 InteractionSystem 每帧回写口径一致、不漂移。
@@ -493,8 +507,9 @@ export class SceneManager implements IGameSystem {
   /** 与 {@link getHotspotBaseEnabledForInteraction} 对偶，用于 NPC container.visible 基底。 */
   getNpcBaseVisibleForInteraction(npc: Npc): boolean {
     if (!this.entityInPlane(npc.def)) return false;
-    // NPC 未写 phases = 只在白日出没（内容定调）；热点/zone 不吃这个缺省
-    if (!this.entityInPhase(npc.def, NPC_DEFAULT_PHASES)) return false;
+    // NPC 未写 phases = 只在标了 daylight 的那几段出没（内容定调）；热点/zone 不吃这个缺省。
+    // 缺省清单由内容侧的时段表派生，本层不认任何时段 id——写死 id 会在内容换词表时恒假。
+    if (!this.entityInPhase(npc.def, this.npcDefaultPhasesGetter?.())) return false;
     // 日程：不在这个时段/这个场景就不在场。正在走向出口的 NPC 由宽限集判为在场，
     // 故这条不会在它走到一半时把它抹掉（见 NpcScheduleSystem 的两条路径说明）。
     if (this.npcSchedulePresence && !this.npcSchedulePresence(npc.def)) return false;
@@ -696,6 +711,16 @@ export class SceneManager implements IGameSystem {
 
   get switching(): boolean {
     return this.isSwitching;
+  }
+
+  /**
+   * 画面此刻是否被系统级遮蔽（切场/加载过渡遮罩、显式持久黑幕任一在场）。
+   * 给「玩家自由可控」判据用（2026-08-18 拍板：Esc 菜单只在自由可控时能出——
+   * 加载遮罩下 state 仍是 Exploring，光看状态机会漏掉这扇窗）。
+   * 初始进场与 switchScene 都走 transitionOverlay，揭幕收尾销毁它；黑幕独立显隐。
+   */
+  get viewObscured(): boolean {
+    return this.transitionOverlay !== null || this.blackoutOverlay !== null;
   }
 
   private emptyEntityOverrides(): SceneEntityRuntimeOverrides {
@@ -1741,6 +1766,9 @@ export class SceneManager implements IGameSystem {
         }
       } finally {
         this.isSwitching = false;
+        // 切场收尾的**必达**事件（成功/失败/双失败都发）：SceneTransition 状态的复位
+        // 兜底挂在它上面——揭幕事件在双失败路径不会发生，没有这条就是输入永久锁死（审批红线）。
+        this.eventBus.emit('scene:transitionEnd', { toSceneId: tid });
       }
     };
 

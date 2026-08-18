@@ -1,4 +1,4 @@
-"""Archive editor: characters, lore, books, documents."""
+"""Archive editor: characters, lore, books, documents, 怪话册/歪歌册, 线索注册表."""
 from __future__ import annotations
 
 import copy
@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QListWidget, QTabWidget,
     QFormLayout, QLineEdit, QComboBox, QTextEdit, QPushButton, QSpinBox,
     QScrollArea, QLabel, QGroupBox, QFileDialog, QMessageBox,
-    QToolButton, QStyle, QMenu,
+    QToolButton, QStyle, QMenu, QCheckBox,
 )
 from PySide6.QtCore import Qt, QObject, QEvent
 
@@ -21,6 +21,7 @@ from ..shared.condition_editor import ConditionEditor
 from ..shared.id_ref_selector import IdRefSelector
 from ..shared.action_editor import ActionEditor
 from ..shared.rich_text_field import RichTextLineEdit, RichTextTextEdit
+from ..shared.portrait_catalog import load_portrait_sets
 from ..shared.qt_icon_buttons import outline_row_tool_button, delete_standard_pixmap
 from ..shared.project_paths import (
     DIR_KIND_RUNTIME_IMAGES_ILLUSTRATIONS,
@@ -235,6 +236,9 @@ class ArchiveEditor(QWidget):
         # 追加在末尾（而非插在 Lore 之后）：select_entry 的页签索引表按位置硬编码，
         # 末尾追加不打乱既有 characters/lore/documents/books 的 0~3。
         tabs.addTab(self._build_slang_tab(), "怪话册")
+        tabs.addTab(self._build_rhyme_tab(), "歪歌册")
+        # 线索注册表（K7）：数据在 data/clues.json（非 archive/ 子目录），独立脏桶 "clues"。
+        tabs.addTab(self._build_clues_tab(), "线索 Clues")
 
     @staticmethod
     def _set_list_label(listw, idx: int, text: str) -> None:
@@ -259,6 +263,8 @@ class ArchiveEditor(QWidget):
             "books": (3, self._book_list, self._book_search,
                       lambda: self._model.archive_books),
             "slang": (4, self._slang_list, self._slang_search, self._slang_entries),
+            "rhymes": (5, self._rhyme_list, self._rhyme_search, self._rhyme_entries),
+            "clues": (6, self._clue_list, self._clue_search, self._clue_entries),
         }.get(book)
         if spec is None:
             return False
@@ -290,6 +296,12 @@ class ArchiveEditor(QWidget):
         self._refresh_slang()
         if self._slang_idx >= 0:
             self._on_slang_select(self._slang_idx)
+        self._refresh_rhyme()
+        if self._rhyme_idx >= 0:
+            self._on_rhyme_select(self._rhyme_idx)
+        self._refresh_clue()
+        if self._clue_idx >= 0:
+            self._on_clue_select(self._clue_idx)
 
     def confirm_close(self, parent=None) -> bool:
         """关闭/切工程门控：有未应用编辑则 Save/Discard/Cancel(对齐 item/shop 口径)。
@@ -303,7 +315,10 @@ class ArchiveEditor(QWidget):
         docs_b = copy.deepcopy(self._model.archive_documents)
         books_b = copy.deepcopy(self._model.archive_books)
         slang_b = copy.deepcopy(self._model.archive_slang)
+        rhymes_b = copy.deepcopy(self._model.archive_rhymes)
+        clues_b = copy.deepcopy(self._model.clues_registry)
         dirty_before = "archive" in getattr(self._model, "_dirty", set())
+        clues_dirty_before = "clues" in getattr(self._model, "_dirty", set())
 
         self.flush_to_model()
         changed = (
@@ -312,6 +327,8 @@ class ArchiveEditor(QWidget):
             or self._model.archive_documents != docs_b
             or self._model.archive_books != books_b
             or self._model.archive_slang != slang_b
+            or self._model.archive_rhymes != rhymes_b
+            or self._model.clues_registry != clues_b
         )
         if not changed:
             return True
@@ -330,9 +347,14 @@ class ArchiveEditor(QWidget):
         self._model.archive_books[:] = books_b
         self._model.archive_lore = lore_b  # lore 读取处均即时读属性,重新赋值安全
         self._model.archive_slang = slang_b  # 同 lore：_slang_root() 每次即时读属性
-        if not dirty_before and hasattr(self._model, "_dirty"):
-            self._model._dirty.discard("archive")
-            if not self._model.is_dirty:
+        self._model.archive_rhymes = rhymes_b  # 同 slang：_rhyme_root() 每次即时读属性
+        self._model.clues_registry = clues_b  # 同 slang：_clue_root() 每次即时读属性
+        if hasattr(self._model, "_dirty"):
+            if not dirty_before:
+                self._model._dirty.discard("archive")
+            if not clues_dirty_before:
+                self._model._dirty.discard("clues")
+            if (not dirty_before or not clues_dirty_before) and not self._model.is_dirty:
                 self._model.dirty_changed.emit(False)
         self._reload_all_forms()
         return r == QMessageBox.StandardButton.Discard
@@ -351,8 +373,12 @@ class ArchiveEditor(QWidget):
         self._apply_doc(refresh=False)
         self._apply_book(refresh=False)
         self._apply_slang(refresh=False)
+        self._apply_rhyme(refresh=False)
+        self._apply_clue(refresh=False)
         self._apply_lore_categories()
         self._apply_slang_categories()
+        self._apply_rhyme_globals()
+        self._apply_clue_categories()
         return True
 
     # ---- Characters -------------------------------------------------------
@@ -391,6 +417,14 @@ class ArchiveEditor(QWidget):
         self._ch_title = RichTextLineEdit(self._model)
         self._ch_title.setMinimumWidth(240)
         f.addRow("title", self._ch_title)
+        # 短枚举下拉（同 character_registry_editor 的 portraitSlug 惯例）；候选=立绘集目录现扫，
+        # 每次选中条目时重灌；磁盘上的未知值以「（缺集）」条目注入保值，不静默清空。
+        self._ch_portrait = QComboBox()
+        self._ch_portrait.setMinimumWidth(200)
+        self._ch_portrait.setToolTip(
+            "人物簿头像：对话立绘集（resources/runtime/images/dialogue_portraits/<slug>/），\n"
+            "人物簿取该集的 calm（平静）表情帧。留空=不显示头像。")
+        f.addRow("portrait（人物簿头像）", self._ch_portrait)
         dl.addLayout(f)
         ch_unlock_hint = QLabel(
             "人物档案的解锁唯一入口是 addArchiveEntry 动作"
@@ -464,6 +498,17 @@ class ArchiveEditor(QWidget):
         self._ch_id.setText(ch.get("id", ""))
         self._ch_name.setText(ch.get("name", ""))
         self._ch_title.setText(ch.get("title", ""))
+        self._ch_portrait.blockSignals(True)
+        self._ch_portrait.clear()
+        self._ch_portrait.addItem("（不显示头像）", "")
+        if self._model.project_path is not None:
+            for s in load_portrait_sets(self._model.project_path):
+                self._ch_portrait.addItem(s, s)
+        ps = str(ch.get("portrait") or "")
+        if ps and self._ch_portrait.findData(ps) < 0:
+            self._ch_portrait.addItem(f"{ps}（缺集）", ps)  # 悬垂值保值展示，不静默顶替
+        self._ch_portrait.setCurrentIndex(max(0, self._ch_portrait.findData(ps)))
+        self._ch_portrait.blockSignals(False)
         self._ch_first_view.set_project_context(self._model, None)
         self._ch_first_view.set_data(ch.get("firstViewActions", []))
         self._rebuild_cond_text_list(self._ch_imp_layout, self._imp_widgets,
@@ -563,6 +608,12 @@ class ArchiveEditor(QWidget):
         ch["id"] = self._ch_id.text().strip()
         ch["name"] = self._ch_name.text()
         ch["title"] = self._ch_title.text()
+        # portrait 可选：不填=不写键（零丢失往返），已有值经保值条目原样回写。
+        ps = str(self._ch_portrait.currentData() or "").strip()
+        if ps:
+            ch["portrait"] = ps
+        else:
+            ch.pop("portrait", None)
         # 人物解锁只走 addArchiveEntry 动作；清掉历史遗留的死字段 unlockConditions。
         ch.pop("unlockConditions", None)
         ch_fv = self._ch_first_view.to_list()
@@ -1080,6 +1131,443 @@ class ArchiveEditor(QWidget):
             self._slang_idx = -1
             self._model.mark_dirty("archive")
             self._refresh_slang()
+
+    # ---- Rhymes（歪歌册）--------------------------------------------------
+
+    def _rhyme_root(self) -> dict:
+        """rhymes.json 根对象（allCompleteText + entries；categories 键位预留未启用）。"""
+        d = self._model.archive_rhymes
+        if not isinstance(d, dict):
+            d = {}
+            self._model.archive_rhymes = d
+        return d
+
+    def _rhyme_entries(self) -> list[dict]:
+        return self._rhyme_root().setdefault("entries", [])
+
+    def _build_rhyme_tab(self) -> QWidget:
+        w = QWidget()
+        lay = QHBoxLayout(w)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        left = QWidget()
+        ll = QVBoxLayout(left); ll.setContentsMargins(0, 0, 0, 0)
+        btn_row = QHBoxLayout()
+        btn_add = QPushButton("+ 歪歌"); btn_add.clicked.connect(self._add_rhyme)
+        btn_del = QPushButton("Delete"); btn_del.clicked.connect(self._del_rhyme)
+        btn_row.addWidget(btn_add); btn_row.addWidget(btn_del)
+        ll.addLayout(btn_row)
+        self._rhyme_list = QListWidget()
+        self._rhyme_search = _make_list_search_box(self._rhyme_list)
+        ll.addWidget(self._rhyme_search)
+        self._rhyme_list.currentRowChanged.connect(self._on_rhyme_select)
+        _wire_list_affordances(self._rhyme_list, self._del_rhyme, delete_label="删除歪歌条目")
+        ll.addWidget(self._rhyme_list)
+        self._rhyme_empty_hint = QLabel("暂无歪歌条目，点击「+ 歪歌」新增")
+        self._rhyme_empty_hint.setStyleSheet("color: #888;")
+        self._rhyme_empty_hint.setWordWrap(True)
+        ll.addWidget(self._rhyme_empty_hint)
+
+        scroll = QScrollArea(); scroll.setWidgetResizable(True)
+        detail = QWidget()
+        f = compact_form(QFormLayout(detail))
+        self._rh_id = QLineEdit(); f.addRow("id", self._rh_id)
+        self._rh_title = RichTextLineEdit(self._model)
+        self._rh_title.setMinimumWidth(240)
+        self._rh_title.setToolTip("标题，如「张打铁」。")
+        f.addRow("title", self._rh_title)
+        self._rh_content = RichTextTextEdit(self._model)
+        self._rh_content.setMinimumWidth(240)
+        self._rh_content.setMinimumHeight(140)
+        self._rh_content.setMaximumHeight(280)
+        self._rh_content.setToolTip(
+            "顺口溜完整原文，多行（换行即游戏内换行）。内容口径见玩法文档 K5 书六："
+            "宁冷勿俗；注释与正文绝不提历史人物。")
+        rh_content_row = QHBoxLayout()
+        rh_content_row.addWidget(self._rh_content)
+        rh_content_row.addWidget(_make_insert_image_btn(self._rh_content, self._model))
+        f.addRow("content", rh_content_row)
+        self._rh_source = RichTextLineEdit(self._model)
+        self._rh_source.setMinimumWidth(240)
+        self._rh_source.setToolTip("在哪听来的（采风口径），如「院坝头娃儿拍手唱的」。")
+        f.addRow("source", self._rh_source)
+        self._rh_note = RichTextTextEdit(self._model)
+        self._rh_note.setMinimumWidth(240)
+        self._rh_note.setMinimumHeight(50)
+        self._rh_note.setMaximumHeight(110)
+        self._rh_note.setToolTip("末尾那句拆台备注——笑点落点。可空。")
+        f.addRow("note", self._rh_note)
+        self._rh_cond = ConditionEditor("unlockConditions")
+        apply_btn = QPushButton("Apply"); apply_btn.clicked.connect(lambda *_: self._apply_rhyme(refresh=False))
+
+        right = QWidget()
+        rl = QVBoxLayout(right)
+        rl.addWidget(scroll)
+        scroll.setWidget(detail)
+        rl.addWidget(self._rh_cond)
+        rl.addWidget(QLabel("<b>首次阅览动作 firstViewActions</b>"))
+        self._rh_first_view = ActionEditor("firstViewActions")
+        rl.addWidget(self._rh_first_view)
+        rl.addWidget(apply_btn)
+        rl.addWidget(self._build_rhyme_globals_section())
+
+        splitter.addWidget(left)
+        splitter.addWidget(right)
+        splitter.setSizes([220, 550])
+        lay.addWidget(splitter)
+        self._rhyme_idx = -1
+        self._refresh_rhyme()
+        return w
+
+    def _build_rhyme_globals_section(self) -> QWidget:
+        """全册集齐评语（全局，非按条目）。歪歌册暂不分类，全局区只有这一项。
+
+        集齐评语是这本册子唯一的「奖励」——只给文案、不给能力（红线见玩法文档 K5 书六）。
+        只就地改已存在的键，不向缺键的工程注入字段，保 JSON 往返。"""
+        root = self._rhyme_root()
+        self._rhyme_all_done_editable = "allCompleteText" in root
+        body = QWidget()
+        form = compact_form(QFormLayout(body))
+        self._rhyme_all_done = QLineEdit()
+        self._rhyme_all_done.setText(str(root.get("allCompleteText", "")))
+        self._rhyme_all_done.setToolTip("全册集齐时显示的评语。只出文案，不解锁任何能力。")
+        if not self._rhyme_all_done_editable:
+            self._rhyme_all_done.setReadOnly(True)
+        form.addRow("全册集齐评语", self._rhyme_all_done)
+        if self._rhyme_all_done_editable:
+            btn = QPushButton("应用评语")
+            btn.setMaximumWidth(140)
+            btn.clicked.connect(self._apply_rhyme_globals)
+            form.addRow("", btn)
+        sec = CollapsibleSection("集齐评语（全局）", start_open=False)
+        sec.set_header_tool_tip("编辑全册集齐评语。歪歌册暂不分类，无分类评语。")
+        sec.add_body(body)
+        return sec
+
+    def _apply_rhyme_globals(self) -> None:
+        if not getattr(self, "_rhyme_all_done_editable", False):
+            return
+        root = self._rhyme_root()
+        if "allCompleteText" in root and root["allCompleteText"] != self._rhyme_all_done.text():
+            root["allCompleteText"] = self._rhyme_all_done.text()
+            self._model.mark_dirty("archive")
+
+    def _refresh_rhyme(self) -> None:
+        self._rhyme_list.clear()
+        for e in self._rhyme_entries():
+            self._rhyme_list.addItem(f"{e.get('id', '?')}  [{e.get('title', '')}]")
+        self._rhyme_empty_hint.setVisible(self._rhyme_list.count() == 0)
+
+    def _on_rhyme_select(self, row: int) -> None:
+        entries = self._rhyme_entries()
+        if row < 0 or row >= len(entries):
+            return
+        prev = self._rhyme_idx
+        if 0 <= prev < len(entries) and prev != row:
+            self._apply_rhyme(refresh=False)
+        self._rhyme_idx = row
+        e = entries[row]
+        self._rh_id.setText(e.get("id", ""))
+        self._rh_title.setText(e.get("title", ""))
+        self._rh_content.setPlainText(e.get("content", ""))
+        self._rh_source.setText(e.get("source", ""))
+        self._rh_note.setPlainText(e.get("note", ""))
+        self._rh_cond.set_flag_pattern_context(self._model, None)
+        self._rh_cond.set_data(e.get("unlockConditions", []))
+        self._rh_first_view.set_project_context(self._model, None)
+        self._rh_first_view.set_data(e.get("firstViewActions", []))
+        self._rh_id.setFocus()
+
+    def _apply_rhyme(self, refresh: bool = True) -> None:
+        entries = self._rhyme_entries()
+        if self._rhyme_idx < 0 or self._rhyme_idx >= len(entries):
+            return
+        e = entries[self._rhyme_idx]
+        _before = copy.deepcopy(e)
+        e["id"] = self._rh_id.text().strip()
+        e["title"] = self._rh_title.text()
+        e["content"] = self._rh_content.toPlainText()
+        e["source"] = self._rh_source.text()
+        note = self._rh_note.toPlainText()
+        if note:
+            e["note"] = note
+        elif "note" in e:
+            del e["note"]
+        e["unlockConditions"] = self._rh_cond.to_list()
+        rh_fv = self._rh_first_view.to_list()
+        if rh_fv:
+            e["firstViewActions"] = rh_fv
+        elif "firstViewActions" in e:
+            del e["firstViewActions"]
+        if e == _before:
+            return  # 无实质变化：不标脏、不重建列表（保留选中）
+        self._model.mark_dirty("archive")
+        if refresh:
+            self._refresh_rhyme()
+        else:
+            self._set_list_label(
+                self._rhyme_list, self._rhyme_idx,
+                f"{e.get('id', '?')}  [{e.get('title', '')}]")
+
+    def _add_rhyme(self) -> None:
+        entries = self._rhyme_entries()
+        new_id = _next_unique_id("rhyme", (e.get("id", "") for e in entries))
+        entries.append({
+            "id": new_id, "title": "", "content": "",
+            "source": "", "unlockConditions": [],
+        })
+        self._model.mark_dirty("archive")
+        self._refresh_rhyme()
+        self._rhyme_list.setCurrentRow(len(entries) - 1)
+
+    def _del_rhyme(self) -> None:
+        entries = self._rhyme_entries()
+        if 0 <= self._rhyme_idx < len(entries):
+            if not confirm.confirm_delete(self, f"歪歌条目「{entries[self._rhyme_idx].get('id', '')}」"):
+                return
+            entries.pop(self._rhyme_idx)
+            self._rhyme_idx = -1
+            self._model.mark_dirty("archive")
+            self._refresh_rhyme()
+
+    # ---- Clues（线索注册表）------------------------------------------------
+
+    def _clue_root(self) -> dict:
+        """clues.json 根对象（categories + clues）。数据在 data/ 根下，独立脏桶 "clues"。"""
+        d = self._model.clues_registry
+        if not isinstance(d, dict):
+            d = {}
+            self._model.clues_registry = d
+        return d
+
+    def _clue_entries(self) -> list[dict]:
+        return self._clue_root().setdefault("clues", [])
+
+    def _clue_category_keys(self) -> list[str]:
+        """分类键取自数据本身（不硬编码）——数据里出现但未登记的分类也一并列出，避免下拉选不到。"""
+        cats = self._clue_root().get("categories")
+        keys = list(cats.keys()) if isinstance(cats, dict) else []
+        for e in self._clue_entries():
+            if isinstance(e, dict):
+                c = str(e.get("category", "")).strip()
+                if c and c not in keys:
+                    keys.append(c)
+        return keys
+
+    def _build_clues_tab(self) -> QWidget:
+        w = QWidget()
+        lay = QHBoxLayout(w)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        left = QWidget()
+        ll = QVBoxLayout(left); ll.setContentsMargins(0, 0, 0, 0)
+        btn_row = QHBoxLayout()
+        btn_add = QPushButton("+ 线索"); btn_add.clicked.connect(self._add_clue)
+        btn_del = QPushButton("Delete"); btn_del.clicked.connect(self._del_clue)
+        btn_row.addWidget(btn_add); btn_row.addWidget(btn_del)
+        ll.addLayout(btn_row)
+        self._clue_list = QListWidget()
+        self._clue_search = _make_list_search_box(self._clue_list)
+        ll.addWidget(self._clue_search)
+        self._clue_list.currentRowChanged.connect(self._on_clue_select)
+        _wire_list_affordances(self._clue_list, self._del_clue, delete_label="删除线索词条")
+        ll.addWidget(self._clue_list)
+        self._clue_empty_hint = QLabel("暂无线索词条，点击「+ 线索」新增")
+        self._clue_empty_hint.setStyleSheet("color: #888;")
+        self._clue_empty_hint.setWordWrap(True)
+        ll.addWidget(self._clue_empty_hint)
+
+        scroll = QScrollArea(); scroll.setWidgetResizable(True)
+        detail = QWidget()
+        f = compact_form(QFormLayout(detail))
+        self._cl_id = QLineEdit()
+        self._cl_id.setToolTip(
+            "ASCII slug（字母/数字/下划线/连字符）。被正文 [clue:id] 标记与动态 flag clue_<id>\n"
+            "引用——改名不会自动跟随，会让既有引用悬垂（保存时 validator 会拦下）。")
+        f.addRow("id", self._cl_id)
+        self._cl_title = RichTextLineEdit(self._model)
+        self._cl_title.setMinimumWidth(240)
+        self._cl_title.setToolTip("词条名，如「后山三更的白影」。线索簿与采集回执都显示它。")
+        f.addRow("title", self._cl_title)
+        self._cl_desc = RichTextTextEdit(self._model)
+        self._cl_desc.setMinimumWidth(240)
+        self._cl_desc.setMinimumHeight(100)
+        self._cl_desc.setMaximumHeight(240)
+        self._cl_desc.setToolTip("线索簿里的正文描述；可用「标记 ▾」插入 [clue:]/块级标记，「引用」插 [tag:…]。")
+        f.addRow("desc", self._cl_desc)
+        self._cl_cat = QComboBox()
+        self._cl_cat.setMaximumWidth(160)
+        self._cl_cat.setToolTip(
+            "分类键，取自本文件的 categories 映射（中文显示名见下方「分类名称」；短枚举下拉合规）。")
+        f.addRow("category", self._cl_cat)
+        self._cl_hidden = QCheckBox("不进线索簿")
+        self._cl_hidden.setToolTip(
+            "纯机制线索：采集不弹回执、不入线索簿、不占集齐计数，只跑 collectActions/落 flag。\n"
+            "不勾=正常入册（数据里不写 hidden 键；仅勾选时写 hidden: true）。")
+        f.addRow("hidden", self._cl_hidden)
+        apply_btn = QPushButton("Apply"); apply_btn.clicked.connect(lambda *_: self._apply_clue(refresh=False))
+
+        right = QWidget()
+        rl = QVBoxLayout(right)
+        rl.addWidget(scroll)
+        scroll.setWidget(detail)
+        rl.addWidget(QLabel("<b>首采动作 collectActions</b>"))
+        self._cl_collect = ActionEditor("collectActions")
+        self._cl_collect.setToolTip(
+            "首次采集该线索时经统一动作执行器执行一次（与档案 firstViewActions 同范式）；"
+            "重复采集不复发。不配=不写键。")
+        rl.addWidget(self._cl_collect)
+        rl.addWidget(apply_btn)
+        rl.addWidget(self._build_clue_categories_section())
+        rl.addStretch()
+
+        splitter.addWidget(left)
+        splitter.addWidget(right)
+        splitter.setSizes([220, 550])
+        lay.addWidget(splitter)
+        self._clue_idx = -1
+        self._refresh_clue()
+        return w
+
+    def _build_clue_categories_section(self) -> QWidget:
+        """分类显示名编辑（全局，非按条目）。照 lore/slang 的现成范式：
+        只就地改已存在的键，不向缺键的工程注入字段、不增删分类，保 JSON 字节级往返。"""
+        cats = self._clue_root().get("categories")
+        self._clue_cats_editable = isinstance(cats, dict)
+        self._clue_cat_name_edits: dict[str, QLineEdit] = {}
+        body = QWidget()
+        form = compact_form(QFormLayout(body))
+        for key in (cats or {}):
+            le = QLineEdit()
+            le.setMaximumWidth(160)
+            le.setText(str((cats or {}).get(key, "")))
+            if not self._clue_cats_editable:
+                le.setReadOnly(True)
+            self._clue_cat_name_edits[key] = le
+            form.addRow(key, le)
+        if self._clue_cats_editable:
+            btn = QPushButton("应用分类名")
+            btn.setMaximumWidth(120)
+            btn.clicked.connect(self._apply_clue_categories)
+            form.addRow("", btn)
+        sec = CollapsibleSection("分类名称 categories（全局）", start_open=False)
+        if self._clue_cats_editable:
+            sec.set_header_tool_tip(
+                "编辑各分类的中文显示名（线索簿分组用）。键取自数据本身，此处不增删分类。")
+        else:
+            sec.set_header_tool_tip("当前工程 clues.json 未含 categories 映射，此处为只读。")
+        sec.add_body(body)
+        return sec
+
+    def _apply_clue_categories(self) -> None:
+        if not getattr(self, "_clue_cats_editable", False):
+            return
+        cats = self._clue_root().get("categories")
+        if not isinstance(cats, dict):
+            return
+        changed = False
+        for key, le in self._clue_cat_name_edits.items():
+            if key in cats and cats[key] != le.text():
+                cats[key] = le.text()
+                changed = True
+        if changed:
+            self._model.mark_dirty("clues")
+
+    def _refresh_clue(self) -> None:
+        self._clue_list.clear()
+        for e in self._clue_entries():
+            self._clue_list.addItem(f"{e.get('id', '?')}  [{e.get('title', '')}]")
+        self._clue_empty_hint.setVisible(self._clue_list.count() == 0)
+
+    def _on_clue_select(self, row: int) -> None:
+        entries = self._clue_entries()
+        if row < 0 or row >= len(entries):
+            return
+        prev = self._clue_idx
+        if 0 <= prev < len(entries) and prev != row:
+            self._apply_clue(refresh=False)
+        self._clue_idx = row
+        e = entries[row]
+        self._cl_id.setText(e.get("id", ""))
+        self._cl_title.setText(e.get("title", ""))
+        self._cl_desc.setPlainText(e.get("desc", ""))
+        # 下拉候选每次按当前数据重建：新增分类后不必重开编辑器
+        keys = self._clue_category_keys()
+        cur = e.get("category", "")
+        self._cl_cat.blockSignals(True)
+        self._cl_cat.clear()
+        self._cl_cat.addItems(keys)
+        if cur and cur not in keys:
+            self._cl_cat.addItem(cur)  # 悬垂值保值展示，不静默顶替
+        self._cl_cat.setCurrentText(cur)
+        self._cl_cat.blockSignals(False)
+        # bool(...)：数据里的非 bool 真值也如实显示为勾选（validator 会报形状 warning）
+        self._cl_hidden.setChecked(bool(e.get("hidden")))
+        self._cl_collect.set_project_context(self._model, None)
+        raw_ca = e.get("collectActions", [])
+        self._cl_collect.set_data(raw_ca if isinstance(raw_ca, list) else [])
+        self._cl_id.setFocus()
+
+    def _apply_clue(self, refresh: bool = True) -> None:
+        entries = self._clue_entries()
+        if self._clue_idx < 0 or self._clue_idx >= len(entries):
+            return
+        e = entries[self._clue_idx]
+        _before = copy.deepcopy(e)
+        e["id"] = self._cl_id.text().strip()
+        e["title"] = self._cl_title.text()
+        e["desc"] = self._cl_desc.toPlainText()
+        e["category"] = self._cl_cat.currentText()
+        # collectActions：不配=不写键（照 firstViewActions 惯例）。磁盘上的非法非列表值
+        # 不删不盖（表单以空列表展示过它），留给 validator 报——零丢失往返。
+        ca = self._cl_collect.to_list()
+        if ca:
+            e["collectActions"] = ca
+        elif isinstance(e.get("collectActions"), list):
+            del e["collectActions"]
+        # hidden：仅 true 时写键。勾选状态与磁盘真值一致时不动键——显式 false /
+        # 非 bool 真值等等义旧值原样保留（validator 报形状），只有真实用户变更才改写。
+        if self._cl_hidden.isChecked() != bool(e.get("hidden")):
+            if self._cl_hidden.isChecked():
+                e["hidden"] = True
+            else:
+                e.pop("hidden", None)
+        if e == _before:
+            return  # 无实质变化：不标脏、不重建列表（保留选中）
+        self._model.mark_dirty("clues")
+        if refresh:
+            self._refresh_clue()
+        else:
+            self._set_list_label(
+                self._clue_list, self._clue_idx,
+                f"{e.get('id', '?')}  [{e.get('title', '')}]")
+
+    def _add_clue(self) -> None:
+        entries = self._clue_entries()
+        new_id = _next_unique_id("clue", (e.get("id", "") for e in entries))
+        keys = self._clue_category_keys()
+        entries.append({
+            "id": new_id, "title": "", "desc": "",
+            "category": keys[0] if keys else "",
+        })
+        self._model.mark_dirty("clues")
+        self._refresh_clue()
+        self._clue_list.setCurrentRow(len(entries) - 1)
+
+    def _del_clue(self) -> None:
+        entries = self._clue_entries()
+        if 0 <= self._clue_idx < len(entries):
+            cid = entries[self._clue_idx].get("id", "")
+            if not confirm.confirm_delete(
+                self, f"线索词条「{cid}」",
+                "正文里引用它的 [clue:] 标记与 collectClue 动作会悬垂（保存时 validator 会拦下），"
+                f"已点亮的 flag clue_{cid} 也会失去登记。",
+            ):
+                return
+            entries.pop(self._clue_idx)
+            self._clue_idx = -1
+            self._model.mark_dirty("clues")
+            self._refresh_clue()
 
     # ---- Documents --------------------------------------------------------
 

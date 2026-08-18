@@ -1,4 +1,7 @@
-"""音频配置编辑器（audio_config.json 的 bgm / ambient / sfx / systemSfx 四页）。
+"""音频配置编辑器（audio_config.json 的各频道 + systemSfx）。
+
+频道页签由 audio_library.AUDIO_CHANNELS 驱动，本文件不另列清单——
+两处各写一份的结果是"配置里有、编辑器里看不见"，而且没有任何提示。
 
 2026-08-10 重做。旧版的问题不是缺功能，是**挑不动音**：一行一个只读长路径框加三个
 按钮，横向全被吃掉；看不见时长、看不见文件还在不在、看不见有没有人在用；试听是一个
@@ -57,6 +60,9 @@ _COL_REFS = 4
 _COL_STATUS = 5
 _COLUMN_LABELS = ["id", "时长", "文件", "volume", "引用", "状态"]
 
+#: 频道页签的显示名（键必须覆盖 audio_library.AUDIO_CHANNELS，缺了会退化成大写英文）
+_CHANNEL_LABELS = {"bgm": "BGM", "ambient": "Ambient", "sfx": "SFX", "voice": "配音"}
+
 #: 行的 src 挂在 id 单元格上（「文件」列只显示文件名，长路径进 tooltip）。
 _SRC_ROLE = Qt.ItemDataRole.UserRole
 #: volume 单元格上一次的合法文本，用于输入非法时回滚（绝不把用户原值改成 0）。
@@ -94,6 +100,7 @@ class _UnregisteredFilesDialog(QDialog):
         self._model = model
         self._channel = channel
         self._rows: list[tuple[Path, str]] = []
+        self._rejected: list[tuple[str, str]] = []
 
         root = QVBoxLayout(self)
         head = QLabel(
@@ -114,9 +121,13 @@ class _UnregisteredFilesDialog(QDialog):
             1, QHeaderView.ResizeMode.Stretch,
         )
         self._table.setColumnWidth(0, 280)
+        # 起名时避开**所有频道**已有的 id：跨频道同名是 validate-data 的一条 warning
+        # （各区独立查表不回落，同名两条极容易改错一边），没必要现建现犯。
         used = set(taken_ids)
+        for ch in lib.AUDIO_CHANNELS:
+            used |= set(lib.channel_dict(model, ch))
         for i, path in enumerate(files):
-            suggested = lib.suggest_audio_id(channel, path, used)
+            suggested = lib.suggest_audio_id(path, used)
             used.add(suggested)
             id_item = QTableWidgetItem(suggested)
             id_item.setFlags(id_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
@@ -156,20 +167,34 @@ class _UnregisteredFilesDialog(QDialog):
                 item.setCheckState(state)
 
     def chosen(self) -> list[tuple[str, str]]:
-        """返回 ``[(audio_id, src_url), …]``；id 留空的行视为不登记。"""
+        """返回 ``[(audio_id, src_url), …]``；id 留空的行视为不登记。
+
+        id 这一格可以手改，改坏了**不放行**——理由挂在 :meth:`rejected` 由调用方摆出来。
+        静默丢掉更糟：用户以为登记好了，等到游戏里没声才发现。
+        """
         out: list[tuple[str, str]] = []
+        self._rejected = []
         for r, (_path, rel) in enumerate(self._rows):
             item = self._table.item(r, 0)
             if item is None or item.checkState() != Qt.CheckState.Checked:
                 continue
             aid = item.text().strip()
-            if aid:
-                out.append((aid, rel))
+            if not aid:
+                continue
+            problem = lib.audio_id_problem(aid)
+            if problem:
+                self._rejected.append((aid, problem))
+                continue
+            out.append((aid, rel))
         return out
+
+    def rejected(self) -> list[tuple[str, str]]:
+        """上一次 :meth:`chosen` 里被挡下的 ``[(id, 原因), …]``。"""
+        return list(self._rejected)
 
 
 class _AudioChannelTab(QWidget):
-    """bgm / ambient / sfx 三个频道共用的表格页。"""
+    """各频道共用的表格页（bgm / ambient / sfx / voice 通用，无频道特化逻辑）。"""
 
     applied = Signal()  # Apply 后发出（System SFX 子页据此刷新 sfx id 候选）
 
@@ -491,6 +516,17 @@ class _AudioChannelTab(QWidget):
         if row >= 0:
             self._set_row_src(row, "")
 
+    def _reject_bad_id(self, title: str, aid: str) -> bool:
+        """id 不合法就弹窗说明并返回 True（调用方直接 return）。"""
+        problem = lib.audio_id_problem(aid)
+        if problem is None:
+            return False
+        QMessageBox.warning(
+            self, title,
+            f"{problem}\n\n直接照文件名起最省事——中文可以，空格、引号、斜杠不行。",
+        )
+        return True
+
     def _add(self) -> None:
         taken = self._table_ids()
         aid, ok = QInputDialog.getText(
@@ -500,6 +536,8 @@ class _AudioChannelTab(QWidget):
             return
         aid = (aid or "").strip()
         if not aid:
+            return
+        if self._reject_bad_id("新增音频条目", aid):
             return
         if aid in taken:
             QMessageBox.warning(self, "新增音频条目", f"id「{aid}」在本频道已存在。")
@@ -553,6 +591,8 @@ class _AudioChannelTab(QWidget):
         new = (new or "").strip()
         if not new or new == old:
             return
+        if self._reject_bad_id("重命名音频 id", new):
+            return
         if new in self._table_ids() - {old}:
             QMessageBox.warning(self, "重命名音频 id", f"id「{new}」在本频道已存在。")
             return
@@ -584,17 +624,26 @@ class _AudioChannelTab(QWidget):
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         chosen = dialog.chosen()
-        if not chosen:
+        skipped = [f"「{aid}」{why}" for aid, why in dialog.rejected()]
+        if not chosen and not skipped:
             return
         taken = self._table_ids()
         added = 0
         for aid, src in chosen:
             if aid in taken:
+                skipped.append(f"「{aid}」本频道已有同名条目")
                 continue
             taken.add(aid)
             self.add_row(aid, src)
             added += 1
-        self._note.setText(f"已加入 {added} 条新登记，按 Apply 才写进模型。")
+        note = f"已加入 {added} 条新登记，按 Apply 才写进模型。"
+        if skipped:
+            note += f"另有 {len(skipped)} 条没登记。"
+            QMessageBox.warning(
+                self, "扫描未登记的音频文件",
+                "这些行没有登记：\n" + "\n".join(skipped),
+            )
+        self._note.setText(note)
 
     def _table_ids(self) -> set[str]:
         out: set[str] = set()
@@ -889,26 +938,35 @@ class AudioEditor(QWidget):
         self._cache = lib.AudioMetaCache(self)
 
         # 保留子页引用，供 Save All 时统一提交（否则未点 Apply 的音频表编辑会被静默丢弃）。
+        # 频道清单从 audio_library.AUDIO_CHANNELS 来，**不再在这里写死**：
+        # voice 区加进配置后，这里漏加一行的后果是"数据在盘上、编辑器里看不见"，
+        # 而且一声不吭（踩过一次）。加新频道只改那一处常量。
         self._sub_tabs = [
-            _AudioChannelTab(model, "bgm", self._cache),
-            _AudioChannelTab(model, "ambient", self._cache),
-            _AudioChannelTab(model, "sfx", self._cache),
-            _SystemSfxTab(model),
-        ]
+            _AudioChannelTab(model, ch, self._cache) for ch in lib.AUDIO_CHANNELS
+        ] + [_SystemSfxTab(model)]
 
-        tabs.addTab(self._sub_tabs[0], "BGM")
-        tabs.addTab(self._sub_tabs[1], "Ambient")
-        tabs.addTab(self._sub_tabs[2], "SFX")
-        tabs.addTab(self._sub_tabs[3], "System SFX")
+        for tab, ch in zip(self._sub_tabs, lib.AUDIO_CHANNELS):
+            tabs.addTab(tab, _CHANNEL_LABELS.get(ch, ch.upper()))
+        tabs.addTab(self._sub_tabs[-1], "System SFX")
 
         # SFX 子页 Apply 后，System SFX 子页的 sfx id 候选立即刷新（编辑器内自刷）。
-        self._sub_tabs[2].applied.connect(self._sub_tabs[3].refresh_sfx_choices)
+        self.channel_tab("sfx").applied.connect(self.system_sfx_tab().refresh_sfx_choices)
         # 切页时停掉上一页的试听：换页还在响会让人以为是别的地方在出声。
         tabs.currentChanged.connect(self._on_tab_changed)
 
         self._tabs = tabs
         lay.addWidget(tabs)
+        # 开面板即统计引用（~0.2s）。这一行掉了的后果是四个页的「引用」列全空，
+        # 而且不报错——由 TestAudioColumnsPopulated 钉住。
         self.refresh_reference_counts()
+
+    # 子页一律**按名取**，不按下标：加一个频道就会把后面的下标全顶偏，
+    # 而顶偏之后调用方拿到的是"另一个页"——不报错，只是行为悄悄错了（加 voice 页时踩过）。
+    def channel_tab(self, channel: str) -> "_AudioChannelTab":
+        return self._sub_tabs[lib.AUDIO_CHANNELS.index(channel)]
+
+    def system_sfx_tab(self) -> "_SystemSfxTab":
+        return self._sub_tabs[-1]
 
     def refresh_reference_counts(self) -> None:
         """扫一遍内容 JSON + src 源码填「引用」列（实测 ~0.2s，开面板时直接做，不劳用户点）。"""

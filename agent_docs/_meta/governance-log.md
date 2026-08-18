@@ -111,3 +111,5 @@
 - 07-16 改1×3 —— asset-pipeline norms 不变量⑥ 归档规矩(两次订正至中文角色名);cutscene-step-semantics 补 Esc 整段跳过。
 - 07-16 收1/改2 —— content/methods/narrative-flow-authoring 落地并绑进策划模式载入面。
 - 07-21 收1 —— runtime 决策「二维场景辐射度还原与发光增益管线定稿」。
+- 08-17 收1/改4 —— meta/mechanisms/atomic-write-windows 落地(Windows 原子写不原子,全仓 18 处就位点收敛到 tools/atomic_io);ui-component-layer 补「面板内键位撞全局快捷键静默失效」坑;save-all-dirty-buckets 与 anim-preview-tool 各挂向下指针;libtv-image-generation 死锚点(tmp/ 下已删脚本)换成仓内稳定路径。
+- 08-18 intake:收1/改2 —— editor-tools/mechanisms/scene-view-filter-axes 落地(画布三条视图轴分两层,后置显隐轴必须合一判定,否则互相冲掉);day-night-npc-schedule 补「代码不许出现时段 id 字面量」硬契约与 2026-08-18「整条街一个人都没有」事故复盘;dialogue-voice-channel 的 verified_by 去掉 schema 不支持的 `::类名` 后缀(存量 error,挡收编门)。

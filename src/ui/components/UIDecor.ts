@@ -328,7 +328,32 @@ export function createProgressBar(width: number, height: number, ratio: number):
 }
 
 /**
- * 选中态的琥珀铺光：整条点亮一档 + 左右描边。
+ * 三态画法之二：**导航光标**（键盘/手柄的光标停在哪）。
+ *
+ * 只描一圈金边、**不铺底**——与「选中」（琥珀铺光 + 金边）拉开的是"有没有那层光"。
+ * 于是光标停在 B、选中还在 A 时，两者一眼分得清：A 是亮的一条，B 是空心的一框。
+ * 此前这两件事共用 `drawSelectedRow`，屏幕上就出现两条一模一样的亮行（看着像多选）。
+ *
+ * 边描在**内侧半像素**：贴着行盒外沿描线会被相邻行的边压掉半条，一列下来时有时无。
+ */
+export function drawFocusRing(g: Graphics, x: number, y: number, w: number, h: number): void {
+  g.rect(x + 1, y + 1, Math.max(0, w - 2), Math.max(0, h - 2));
+  g.stroke({ color: UITheme.colors.borderSelected, width: 1.5, alpha: 0.95 });
+}
+
+/**
+ * 三态画法之三：**指针悬停**（鼠标正压在哪）。
+ *
+ * 三档里最轻的一档：极淡暖底、**无描边**——它只是"手在这儿"，不表达任何选中语义，
+ * 鼠标一移开就消失。给描边会立刻和上面那圈导航光标撞脸。
+ */
+export function drawHoverRow(g: Graphics, x: number, y: number, w: number, h: number): void {
+  g.rect(x, y, w, h);
+  g.fill({ color: UITheme.colors.rowHover, alpha: 0.55 });
+}
+
+/**
+ * 三态画法之一：**选中**——琥珀铺光，整条点亮一档 + 左右描边。三档里最强的一档。
  * 用在列表行/菜单项上，替代此前「换个深色」的悬停做法。
  */
 export function drawSelectedRow(g: Graphics, x: number, y: number, w: number, h: number): void {

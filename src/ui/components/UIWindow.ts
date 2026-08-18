@@ -164,6 +164,16 @@ export class UIWindow {
   private overlay: Container;
   private unsubscribeResize: () => void;
   private destroyed = false;
+  /**
+   * 底部关闭键帽**伸进内容区**的高度，由 `buildCloseHint` 量出实际行高后回填。
+   *
+   * 键帽画在 `overlay`（body 之上）且位置是从面板下沿往上量的，而 `bodyHeight` 原来只扣
+   * 一个 `pad`(20)——键帽实际吃掉的是 `木条15 + sm8 + 行高~29 = 52`，也就是有 ~32px
+   * 压在内容上。对话记录滚到底时最后一行正好被这条压住（制作人截图），册子长正文同病。
+   * 此前只有规矩本自己发现了这件事、在面板里硬编码 `HINT_RESERVE = 34` 各修各的——
+   * 那是窗体的账，收回窗体自己算。
+   */
+  private closeHintReserve = 0;
 
   constructor(renderer: Renderer, opts: UIWindowOptions) {
     this.renderer = renderer;
@@ -213,10 +223,12 @@ export class UIWindow {
     const topInset = hasTitle ? TITLE_BAR_H : pad + CLOSE_HIT;
 
     this.bodyWidth = w - pad * 2;
-    this.bodyHeight = h - topInset - pad;
     this.body.position.set(px + pad, py + topInset);
 
+    // 先画窗体件：底部关闭键帽的实际行高只有建出来才知道，`closeHintReserve` 在那里回填。
+    // drawChrome 不读 bodyHeight，顺序安全。
     this.drawChrome(px, py, w, h, hasTitle);
+    this.bodyHeight = Math.max(1, h - topInset - pad - this.closeHintReserve);
   }
 
   private drawChrome(px: number, py: number, w: number, h: number, hasTitle: boolean): void {
@@ -252,7 +264,7 @@ export class UIWindow {
           text: this.opts.subtitle,
           style: {
             fontSize: UITheme.fontSize.small,
-            fill: this.opts.subtitleColor ?? UITheme.colors.section,
+            fill: this.opts.subtitleColor ?? UITheme.colors.hintMid,
             fontFamily: UITheme.fonts.ui,
           },
         });
@@ -277,6 +289,7 @@ export class UIWindow {
       this.overlay.addChild(this.buildCloseButton(px + w - pad - CLOSE_HIT / 2, py + UITheme.spacing.lg + 2));
     }
 
+    this.closeHintReserve = 0;
     if (this.opts.closeHint) {
       this.overlay.addChild(this.buildCloseHint(px, py, w, h, pad));
     }
@@ -303,10 +316,10 @@ export class UIWindow {
     // 木条上甚至越到面板外（木框有 15px 实体厚度，不是一条线）。按木条厚度让开。
     const skin = this.opts.skin ?? SKINS.panel;
     const bottomInset = (skin.wood ?? 0) + UITheme.spacing.sm;
-    row.position.set(
-      px + Math.round((w - row.totalWidth) / 2),
-      Math.round(py + h - bottomInset - row.height),
-    );
+    const rowTop = Math.round(py + h - bottomInset - row.height);
+    row.position.set(px + Math.round((w - row.totalWidth) / 2), rowTop);
+    // 键帽压进内容区多少，就从 bodyHeight 里扣多少（再让开一档，末行别贴着键帽）
+    this.closeHintReserve = Math.max(0, py + h - pad - rowTop + UITheme.spacing.sm);
     // 命中盒由 createKeyCap / plainHint 自带（见 UIDecor 里的说明）：这两个件的方框与文字
     // 都是 eventMode:'none'，没有 hitArea 的普通 Container 在 Pixi v8 里一律判不中。
     row.eventMode = 'static';
@@ -383,5 +396,37 @@ export class UIWindow {
     this.unsubscribeResize();
     if (this.container.parent) this.container.parent.removeChild(this.container);
     this.container.destroy({ children: true });
+  }
+
+  /**
+   * 真正关闭面板时用：淡出下沉（开场动画的倒放）后再销毁。**内容重绘的重建路径别用**
+   * ——那条必须瞬时（attach 语义）。调用方要先把自己的输入面摘干净
+   * （UIScrollView.detachInput / 面板自己的 window 监听），尸体窗只是视觉，绝不吃输入。
+   * 审查批5：面板有开无关，关场"啪"一下拆走是全站手感最糙的一处。
+   */
+  fadeOutAndDestroy(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    this.unsubscribeResize();
+    this.container.eventMode = 'none';
+    this.container.interactiveChildren = false;
+    const dur = UITheme.motion.normal;
+    const start = performance.now();
+    const baseY = this.container.y;
+    const finish = (): void => {
+      if (this.container.destroyed) return;
+      if (this.container.parent) this.container.parent.removeChild(this.container);
+      this.container.destroy({ children: true });
+    };
+    const tick = (): void => {
+      if (this.container.destroyed) return;
+      const raw = Math.min((performance.now() - start) / dur, 1);
+      const t = UITheme.motion.easeOut(raw);
+      this.container.alpha = 1 - t;
+      this.container.y = baseY + t * 8;
+      if (raw < 1) requestAnimationFrame(tick);
+      else finish();
+    };
+    requestAnimationFrame(tick);
   }
 }

@@ -461,10 +461,40 @@ class TestSaveContract(unittest.TestCase):
                 ap / "characters.json",
                 ap / "lore.json",
                 ap / "slang.json",
+                ap / "rhymes.json",
                 ap / "books.json",
                 ap / "documents.json",
             ])
             self.assertEqual(sorted(touched), want)
+            self.assertFalse(m.is_dirty)
+
+    def test_dirty_clues_writes_only_clues(self) -> None:
+        with TemporaryDirectory() as td:
+            root = Path(td) / "p"
+            write_minimal_loadable_project(root)
+            m = ProjectModel()
+            m.load_project(root)
+            m.clues_registry.setdefault("clues", []).append(
+                {"id": "clue_x", "title": "T", "desc": "D", "category": ""},
+            )
+            m.mark_dirty("clues")
+
+            touched: list[Path] = []
+
+            def cap(p: Path, _data):
+                touched.append(Path(p))
+
+            with patch(
+                "tools.editor.shared.ref_validator.validate_refs_for_save",
+                return_value=None,
+            ), patch(
+                "tools.editor.scenarios_catalog_validate.validate_scenarios_catalog_for_save",
+                return_value=None,
+            ), patch_staged_add(cap):
+                m.save_all()
+
+            dp = root / "public" / "assets" / "data"
+            self.assertEqual(touched, [dp / "clues.json"])
             self.assertFalse(m.is_dirty)
 
     def test_filter_dirty_unlinks_orphan_files(self) -> None:

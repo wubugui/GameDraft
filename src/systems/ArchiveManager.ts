@@ -8,6 +8,8 @@ import type {
   SlangEntry,
   SlangCategoryView,
   SlangProgress,
+  RhymeEntry,
+  RhymeProgress,
   DocumentEntry,
   BookDef,
   BookPageEntry,
@@ -23,8 +25,9 @@ import type { ConditionEvalContext } from './graphDialogue/evaluateGraphConditio
 import { evaluateConditionExprList } from './graphDialogue/conditionEvalBridge';
 import { FlagKeys } from '../core/FlagKeys';
 import { mediaUrlFromShortPath, TEXT_URLS } from '../core/projectPaths';
+import { extractMarkupImagePaths } from '../core/richMarkup';
 
-type BookType = 'character' | 'lore' | 'slang' | 'document' | 'book' | 'bookEntry';
+type BookType = 'character' | 'lore' | 'slang' | 'rhyme' | 'document' | 'book' | 'bookEntry';
 
 export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
   private eventBus: EventBus;
@@ -33,6 +36,7 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
   private characterDefs: Map<string, CharacterEntry> = new Map();
   private loreDefs: Map<string, LoreEntry> = new Map();
   private slangDefs: Map<string, SlangEntry> = new Map();
+  private rhymeDefs: Map<string, RhymeEntry> = new Map();
   private documentDefs: Map<string, DocumentEntry> = new Map();
   private bookDefs: Map<string, BookDef> = new Map();
   private bookEntryIds: Set<string> = new Set();
@@ -41,6 +45,7 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
   private unlockedCharacters: Set<string> = new Set();
   private unlockedLore: Set<string> = new Set();
   private unlockedSlang: Set<string> = new Set();
+  private unlockedRhymes: Set<string> = new Set();
   private unlockedDocuments: Set<string> = new Set();
   private unlockedBooks: Set<string> = new Set();
 
@@ -51,6 +56,7 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
   private slangCategoryNames: Record<string, string> = {};
   private slangCategoryCompleteText: Record<string, string> = {};
   private slangAllCompleteText = '';
+  private rhymeAllCompleteText = '';
   private strings: { get(cat: string, key: string, vars?: Record<string, string | number>): string } = { get: (_c, k) => k };
   private assetManager!: AssetManager;
   private conditionCtxFactory: (() => ConditionEvalContext) | null = null;
@@ -160,6 +166,7 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
       this.loadCharacters(),
       this.loadLore(),
       this.loadSlang(),
+      this.loadRhymes(),
       this.loadDocuments(),
       this.loadBooks(),
       this.loadItemDisplayNames(),
@@ -210,7 +217,6 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
 
   private async preloadContentImages(): Promise<void> {
     const paths = new Set<string>();
-    const imgRe = /\[img:([^\]]+)\]/g;
 
     const addMedia = (ref: string | undefined): void => {
       if (!ref) return;
@@ -220,29 +226,28 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
         // 媒体不再允许落到 assets/，跳过非法引用
       }
     };
+    // 正文插图走与渲染同一份解析（core/richMarkup），预热到的 = 会画出来的。
+    // 这里曾手写影子正则,v2 加 |wide 档位后没跟上、把假路径喂给加载器(2026-08-17)——语法知识不许再抄第二份。
+    const addFromMarkup = (text: string | undefined): void => {
+      if (!text) return;
+      for (const p of extractMarkupImagePaths(text)) addMedia(p);
+    };
 
     for (const book of this.bookDefs.values()) {
       for (const page of book.pages) {
         addMedia(page.illustration);
-        for (const m of page.content.matchAll(imgRe)) addMedia(m[1]);
+        addFromMarkup(page.content);
         for (const ent of page.entries ?? []) {
           addMedia(ent.illustration);
-          for (const m of ent.content.matchAll(imgRe)) addMedia(m[1]);
-          if (ent.annotation) {
-            for (const m of ent.annotation.matchAll(imgRe)) addMedia(m[1]);
-          }
+          addFromMarkup(ent.content);
+          addFromMarkup(ent.annotation);
         }
       }
     }
-    for (const entry of this.loreDefs.values()) {
-      for (const m of entry.content.matchAll(imgRe)) addMedia(m[1]);
-    }
-    for (const entry of this.slangDefs.values()) {
-      for (const m of entry.content.matchAll(imgRe)) addMedia(m[1]);
-    }
-    for (const doc of this.documentDefs.values()) {
-      for (const m of doc.content.matchAll(imgRe)) addMedia(m[1]);
-    }
+    for (const entry of this.loreDefs.values()) addFromMarkup(entry.content);
+    for (const entry of this.slangDefs.values()) addFromMarkup(entry.content);
+    for (const entry of this.rhymeDefs.values()) addFromMarkup(entry.content);
+    for (const doc of this.documentDefs.values()) addFromMarkup(doc.content);
 
     if (this.destroyed || paths.size === 0) return;
     await this.loadTexturesPooled([...paths], 3);
@@ -302,6 +307,17 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
     } catch { /* no data yet */ }
   }
 
+  private async loadRhymes(): Promise<void> {
+    try {
+      const data = await this.assetManager.loadJson<{
+        entries?: RhymeEntry[];
+        allCompleteText?: string;
+      }>(`${TEXT_URLS.archiveDir}/rhymes.json`);
+      for (const e of data.entries ?? []) this.rhymeDefs.set(e.id, e);
+      this.rhymeAllCompleteText = data.allCompleteText ?? '';
+    } catch { /* no data yet */ }
+  }
+
   private async loadDocuments(): Promise<void> {
     try {
       const list = await this.assetManager.loadJson<DocumentEntry[]>(`${TEXT_URLS.archiveDir}/documents.json`);
@@ -357,6 +373,13 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
           this.emitUpdate('slang', entryId);
         }
         break;
+      case 'rhyme':
+        if (this.rhymeDefs.has(entryId) && !this.unlockedRhymes.has(entryId)) {
+          this.unlockedRhymes.add(entryId);
+          this.flagStore.set(`archive_rhyme_${entryId}`, true);
+          this.emitUpdate('rhyme', entryId);
+        }
+        break;
       case 'document':
         if (this.documentDefs.has(entryId) && !this.unlockedDocuments.has(entryId)) {
           this.unlockedDocuments.add(entryId);
@@ -383,12 +406,57 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
     }
   }
 
+  /** 进册提示的每册文案键（与规矩本 ruleAcquired 同一口径：册名 + 条目名，不发万金油） */
+  private static readonly ARCHIVE_NOTIF_KEYS: Record<string, string> = {
+    character: 'archiveCharacter',
+    lore: 'archiveLore',
+    slang: 'archiveSlang',
+    rhyme: 'archiveRhyme',
+    document: 'archiveDocument',
+    book: 'archiveBook',
+    bookEntry: 'archiveBookEntry',
+  };
+
+  /** 条目在提示里的显示名（经 [tag:] 解析）；查不到返回空串（回落万金油文案） */
+  private entryDisplayName(bookType: string, entryId: string): string {
+    switch (bookType) {
+      case 'character': return this.rd(this.characterDefs.get(entryId)?.name);
+      case 'lore': return this.rd(this.loreDefs.get(entryId)?.title);
+      case 'slang': return this.rd(this.slangDefs.get(entryId)?.title);
+      case 'rhyme': return this.rd(this.rhymeDefs.get(entryId)?.title);
+      case 'document': return this.rd(this.documentDefs.get(entryId)?.name);
+      case 'book': return this.rd(this.bookDefs.get(entryId)?.title);
+      case 'bookEntry': {
+        for (const b of this.bookDefs.values()) {
+          for (const p of b.pages) {
+            for (const e of p.entries ?? []) {
+              if (e.id === entryId) return this.rd(e.title);
+            }
+          }
+        }
+        return '';
+      }
+      default: return '';
+    }
+  }
+
+  /**
+   * 进册提示是**系统默认绑定**（2026-08-17 制作人拍板：一切进册行为自带提示 UI，
+   * 内容侧零手配）。文案带册名+条目名——此前的万金油「档案更新」等于没说
+   * （玩家不知道哪本册子多了什么）。seeding/读档路径照旧静默（调用方不走本方法）。
+   */
   private emitUpdate(bookType: string, entryId: string): void {
-    this.eventBus.emit('archive:updated', { bookType, entryId });
-    this.eventBus.emit('notification:show', {
-      text: this.strings.get('notifications', 'archiveUpdated'),
-      type: 'archive',
-    });
+    // book 与 bookEntry 共用 'book' 通道进来：按「id 是不是一本书」分流文案
+    const kind = bookType === 'book' && !this.bookDefs.has(entryId) ? 'bookEntry' : bookType;
+    const name = this.entryDisplayName(kind, entryId).trim();
+    const key = ArchiveManager.ARCHIVE_NOTIF_KEYS[kind];
+    const text = name && key
+      ? this.strings.get('notifications', key, { name })
+      : this.strings.get('notifications', 'archiveUpdated');
+    // 组装好的文案随事件带出（`kind`/`name`/`text` 三个增字段，既有消费方不受影响）：
+    // 七种册子的文案映射表只此一份，事件日志抄第二份必漂。
+    this.eventBus.emit('archive:updated', { bookType, entryId, kind, name, text });
+    this.eventBus.emit('notification:show', { text, type: 'archive' });
   }
 
   markRead(key: string): void {
@@ -443,6 +511,11 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
           if (!this.readEntries.has(`slang_${id}`)) return true;
         }
         return false;
+      case 'rhyme':
+        for (const id of this.unlockedRhymes) {
+          if (!this.readEntries.has(`rhyme_${id}`)) return true;
+        }
+        return false;
       case 'document':
         for (const id of this.unlockedDocuments) {
           if (!this.readEntries.has(`doc_${id}`)) return true;
@@ -470,6 +543,14 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
         this.unlockedSlang.add(id);
         this.flagStore.set(`archive_slang_${id}`, true);
         if (!silent) this.emitUpdate('slang', id);
+      }
+    });
+
+    this.rhymeDefs.forEach((def, id) => {
+      if (!this.unlockedRhymes.has(id) && this.checkConditions(def.unlockConditions)) {
+        this.unlockedRhymes.add(id);
+        this.flagStore.set(`archive_rhyme_${id}`, true);
+        if (!silent) this.emitUpdate('rhyme', id);
       }
     });
 
@@ -570,6 +651,24 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
     };
   }
 
+  /** 歪歌册 flat 列表。**刻意返回全部条目（含未解锁灰槽）**，理由同怪话册：成就式搜集册，空槽是驱动力。 */
+  getRhymeList(): { entry: RhymeEntry; unlocked: boolean }[] {
+    return Array.from(this.rhymeDefs.values())
+      .map(entry => ({ entry, unlocked: this.unlockedRhymes.has(entry.id) }));
+  }
+
+  getRhymeProgress(): RhymeProgress {
+    const total = this.rhymeDefs.size;
+    const collected = this.unlockedRhymes.size;
+    const allComplete = total > 0 && collected >= total;
+    return {
+      collected,
+      total,
+      allComplete,
+      allCompleteText: allComplete ? this.rd(this.rhymeAllCompleteText) : '',
+    };
+  }
+
   getUnlockedDocuments(): DocumentEntry[] {
     return Array.from(this.unlockedDocuments)
       .map(id => this.documentDefs.get(id))
@@ -651,6 +750,7 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
       characters: Array.from(this.unlockedCharacters),
       lore: Array.from(this.unlockedLore),
       slang: Array.from(this.unlockedSlang),
+      rhymes: Array.from(this.unlockedRhymes),
       documents: Array.from(this.unlockedDocuments),
       books: Array.from(this.unlockedBooks),
       read: Array.from(this.readEntries),
@@ -662,6 +762,7 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
     characters?: string[];
     lore?: string[];
     slang?: string[];
+    rhymes?: string[];
     documents?: string[];
     books?: string[];
     read?: string[];
@@ -670,6 +771,7 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
     this.unlockedCharacters = new Set(data.characters ?? []);
     this.unlockedLore = new Set(data.lore ?? []);
     this.unlockedSlang = new Set(data.slang ?? []);
+    this.unlockedRhymes = new Set(data.rhymes ?? []);
     this.unlockedDocuments = new Set(data.documents ?? []);
     this.unlockedBooks = new Set(data.books ?? []);
     this.readEntries = new Set(data.read ?? []);
@@ -699,9 +801,11 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
     this.slangCategoryNames = {};
     this.slangCategoryCompleteText = {};
     this.slangAllCompleteText = '';
+    this.rhymeAllCompleteText = '';
     this.characterDefs.clear();
     this.loreDefs.clear();
     this.slangDefs.clear();
+    this.rhymeDefs.clear();
     this.documentDefs.clear();
     this.bookDefs.clear();
     this.bookEntryIds.clear();
@@ -709,6 +813,7 @@ export class ArchiveManager implements IGameSystem, IArchiveDataProvider {
     this.unlockedCharacters.clear();
     this.unlockedLore.clear();
     this.unlockedSlang.clear();
+    this.unlockedRhymes.clear();
     this.unlockedDocuments.clear();
     this.unlockedBooks.clear();
     this.readEntries.clear();

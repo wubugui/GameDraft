@@ -34,7 +34,14 @@ from tools.editor.tests.save_test_utils import (
 
 def _dump(path: Path, obj) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(obj, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    # newline="" 不可省：文本模式在 Windows 上把 \n 静默写成 \r\n，而产品侧
+    # file_io.write_json 是**二进制**落盘、永远 LF。少了它，字节级往返用例比的是
+    # 「CRLF 种子 vs LF 产物」，在 Windows 上恒红、在 macOS 上恒绿——把平台差异
+    # 伪装成了产品缺陷。
+    path.write_text(
+        json.dumps(obj, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8", newline="",
+    )
 
 
 class _QtBase(unittest.TestCase):

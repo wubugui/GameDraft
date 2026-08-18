@@ -246,7 +246,9 @@ class GameConfigEditor(QWidget):
         sec.set_header_tool_tip(
             "时段由时刻派生：条件叶 {timePhase:…} 与场景外观都按它走。\n"
             "整块留空（不勾「自定义时段」）= 用内置四段：拂晓 05:00 / 白日 07:00 / "
-            "黄昏 18:00 / 入夜 20:00。",
+            "黄昏 18:00 / 入夜 20:00。\n\n"
+            "「街上有人」勾选＝这一段人在外面做事，是没写时段归属的 NPC（龙套/群演）的缺省。\n"
+            "改时段 id 不会连累代码——运行时只认这个勾，不认任何时段名字。",
         )
         body = QWidget()
         body_lay = QVBoxLayout(body)
@@ -298,7 +300,9 @@ class GameConfigEditor(QWidget):
     def _on_dn_custom_toggled(self, on: bool) -> None:
         self._dn_phase_host.setEnabled(on)
 
-    def _add_phase_row(self, pid: str = "", frm: str = "00:00", label: str = "") -> None:
+    def _add_phase_row(
+        self, pid: str = "", frm: str = "00:00", label: str = "", daylight: bool = False
+    ) -> None:
         row = QWidget()
         rl = QHBoxLayout(row)
         rl.setContentsMargins(0, 0, 0, 0)
@@ -313,15 +317,32 @@ class GameConfigEditor(QWidget):
         w_label = QLineEdit(label)
         w_label.setMaximumWidth(120)
         w_label.setToolTip("中文名，只给编辑器/调试看，不参与判定。")
+        w_daylight = QCheckBox("街上有人")
+        w_daylight.setChecked(bool(daylight))
+        w_daylight.setToolTip(
+            "勾上＝这一段「人在外面做事」。\n"
+            "没写时段归属的 NPC（龙套/群演）就只在勾了的段里出现，天一擦黑自动收摊。\n"
+            "有作息的具名角色请用 NPC 日程表，两者正交。\n\n"
+            "⚠ 一段都不勾＝这条缺省失效，所有龙套全天都在（并在控制台告警）。"
+        )
         rl.addWidget(QLabel("id"))
         rl.addWidget(w_id)
         rl.addWidget(QLabel("起于"))
         rl.addWidget(w_from)
         rl.addWidget(QLabel("名"))
         rl.addWidget(w_label)
+        rl.addWidget(w_daylight)
         rl.addStretch(1)
         self._dn_phase_lay.addWidget(row)
-        self._dn_phase_rows.append({"widget": row, "id": w_id, "from": w_from, "label": w_label})
+        self._dn_phase_rows.append(
+            {
+                "widget": row,
+                "id": w_id,
+                "from": w_from,
+                "label": w_label,
+                "daylight": w_daylight,
+            }
+        )
 
     def _remove_phase_row(self) -> None:
         if not self._dn_phase_rows:
@@ -353,6 +374,9 @@ class GameConfigEditor(QWidget):
                 lab = r["label"].text().strip()
                 if lab:
                     entry["label"] = lab
+                # 缺省 False 不写键（防「打开即注入」，与本页其它可选键同惯例）
+                if r["daylight"].isChecked():
+                    entry["daylight"] = True
                 phases.append(entry)
             if phases:
                 out["phases"] = phases
@@ -379,10 +403,11 @@ class GameConfigEditor(QWidget):
                     str(p.get("id") or ""),
                     str(p.get("from") or "00:00"),
                     str(p.get("label") or ""),
+                    p.get("daylight") is True,
                 )
         else:
-            for pid, frm, lab in ProjectModel.DEFAULT_TIME_PHASES:
-                self._add_phase_row(pid, frm, lab)
+            for pid, frm, lab, daylight in ProjectModel.DEFAULT_TIME_PHASES:
+                self._add_phase_row(pid, frm, lab, daylight)
         self._dn_phase_host.setEnabled(has_custom)
 
     def _build_player_acts_section(self) -> CollapsibleSection:

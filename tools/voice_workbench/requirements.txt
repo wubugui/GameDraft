@@ -1,0 +1,15 @@
+# 配音工作台。装进共用 venv：.tools/venv/Scripts/python -m pip install -r tools/voice_workbench/requirements.txt
+#
+# 这几个都是"别自己造"的轮子：
+#   pyloudnorm  ITU-R BS.1770-4 响度（K 加权 + 双门限）。自己实现过一版，48k 参考系数
+#               对得上但 1kHz 合规信号仍差 0.25 LU——那种错没有任何提示，全批一致偏移。
+#   soundfile   libsndfile 绑定，wheel 自带二进制。**这是不装 ffmpeg 的前提**。
+#   noisereduce 谱门限降噪（会拉起 matplotlib，故在 dsp.py 里惰性 import）。
+#   pyqtgraph   波形显示 + 可拖的区间（LinearRegionItem）——这个工具的核心手感。
+pyloudnorm>=0.1.1
+soundfile>=0.12
+noisereduce>=3.0
+pyqtgraph>=0.13
+numpy>=1.24
+scipy>=1.11
+PySide6>=6.5.0

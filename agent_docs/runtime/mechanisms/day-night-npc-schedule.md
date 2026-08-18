@@ -12,11 +12,13 @@ authority:
   - public/assets/data/npc_schedules.json
 triggers:
   paths: ["src/systems/DayManager.ts", "src/systems/NpcScheduleSystem.ts", "src/utils/dayTime.ts", "public/assets/data/npc_schedules.json"]
-  topics: [日夜, 时段, timePhase, 时刻, NPC日程, 离场, 出口锚点, exitAnchors]
+  topics: [日夜, 时段, timePhase, daylight, 街上有人, 时刻, NPC日程, 离场, 出口锚点, exitAnchors]
   tasks: [做日夜, 改时段, 配NPC作息, 加日程]
 verified_by:
   - src/systems/DayNightSchedule.test.ts
-last_governed: 2026-08-12
+  - tools/editor/tests/test_day_night_parity.py
+  - tools/editor/tests/test_day_night_daylight_gate.py
+last_governed: 2026-08-18
 ---
 
 ## 是什么(一句话)
@@ -50,12 +52,28 @@ last_governed: 2026-08-12
   没 `characterId` 或没配日程表的 NPC 同样不受日程管——这些缺省闸门是"旧数据零影响"的保证,
   别为图省事去掉。
 - **`phases` 缺省按实体种类分叉,不是统一的"全时段"**(2026-08-12 内容定调):
-  **NPC 未写 = 只在白日(`day`)出没**(`NPC_DEFAULT_PHASES`),热点与 zone 未写 = 全时段都在。
+  **NPC 未写 = 只在标了 `daylight` 的那几段出没**,热点与 zone 未写 = 全时段都在。
   理由:这个世界的人白天做事、天黑归家,"街上有人"是特例;而门、路牌、可拾取物夜里当然还在。
   改这个缺省会静默改变**所有**已开日夜场景的夜间人口,动之前先想清楚。
+- **代码里不许出现时段 id 字面量**(2026-08-18 事故后定): 哪几段算"白天有人"由内容侧在
+  `game_config.dayNight.phases[].daylight` 上标,运行时只认这个语义角色
+  (`dayTime.daylightPhaseIds` → `DayManager.daylightPhases` → `SceneManager` 注入口)。
+  时辰是内容侧的设定(本作是 `辰/午/暮/夜`),不是引擎的概念——代码存了 id,内容一换词表就恒假。
+  要新增"代码需要理解的时段语义"(如遭遇率、光照),加**新的角色标记**,不要去比 id。
+- **一段都没标 `daylight` = fail-open**(全时段都在)+ `DayManager.configure` 告警一次,
+  **绝不静默清空**。告警只能放在 configure(每帧每实体调用的判定点上告警会刷屏)。
+  构建期那一半由 `validator._validate_day_night` 兜(仅当真有场景开了日夜时才报)。
 
 ## 已知坑
 
+- **2026-08-18「整条街一个人都没有」**:内容侧 8/7 起就在生态图里用中文时段 id,
+  8/13 日夜落地时代码带了英文内置兜底表,8/14 一个叫「打字机文本设置」的提交
+  顺手塞进 `NPC_DEFAULT_PHASES = ['day']`——当时 `Game` 的逐键白名单还漏着 `dayNight`,
+  配置根本读不进来,所以它**当场是对的、测试全绿**。等到白名单补上、中文表真正生效那一拍,
+  `'day'` 变成悬垂引用,全场 NPC 判定恒假,雾津街头 32 个 NPC 全天不可见。
+  同一个白名单漏洞还让 40+ 生态图的 `{timePhase:…}` 条件恒假了近两周,一声不吭。
+  **教训有两条**:(1) 代码存内容侧的 id 就是定时炸弹,引信是"哪天配置真的接通";
+  (2) 语义改动不要搭车塞进无关提交,`git log` 事后根本翻不出来。
 - 日程**没覆盖到**的时段等于「不受管」(回落成普通常驻 NPC),不是「不在场」。
   validator 的「日程没覆盖全天」warning 提醒的就是它。
 - 时段表天然是环:时刻早于第一段起点时属于**最后一段**(01:40 属于前一晚的 night),

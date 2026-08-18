@@ -22,6 +22,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from tools.atomic_io import retry_transient
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -80,7 +81,7 @@ def _rebuild(root: Path) -> dict:
     if not _file_matches_text(out_path, text):
         tmp = out_path.with_suffix(".tmp")
         tmp.write_text(text, encoding="utf-8")
-        os.replace(tmp, out_path)
+        retry_transient(os.replace, tmp, out_path)
 
     summary = {
         "actionTypes": len(set(spec.action_types) | set(spec.param_manifest)),

@@ -10,7 +10,8 @@
 
 舞台画的三样东西与运行时同口径（`anim_atlas_preview` 是数学镜像，配 parity 测试）：
 灰虚线 = 格子 quad（旧口径贴的地方）、青实线 = 当前帧内容框（新口径贴的地方）、
-白圆角块 = 气泡本体（按真实字号量宽高）。切状态下拉到 ``lie_down`` 就能看见两者差多少。
+墨匣泡 = 气泡本体（按真实字号量宽高，含尾巴；皮肤与运行时 2026-08-18 定稿同口径）。
+切状态下拉到 ``lie_down`` 就能看见两者差多少。
 """
 from __future__ import annotations
 
@@ -18,7 +19,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -53,17 +54,23 @@ _STAGE_MARGIN = 10
 
 # 运行时气泡基准量（EmoteBubbleManager 的 BUBBLE_*），单位是世界 px。
 # 2026-07-25 与运行时一同减半（原 20/8/4/6）——预览撒谎的代价比数字难看大得多，必须同步。
+# 2026-08-18 与运行时一同换「墨匣」皮肤（方案甲定稿）：白圆角矩形 → 墨底金褐勾线切角+尾巴。
 _BUBBLE_FONT_PX = 10
-_BUBBLE_PAD_X = 4
-_BUBBLE_PAD_Y = 2
-_BUBBLE_RADIUS = 3
+_BUBBLE_PAD_X = 6
+_BUBBLE_PAD_Y = 3.5
+_BUBBLE_CUT = 3.5
+_BUBBLE_TAIL_W = 10
+_BUBBLE_TAIL_H = 7
 
 _COL_QUAD = QColor(150, 150, 150, 170)
 _COL_CONTENT = QColor(64, 200, 210, 230)
 _COL_GROUND = QColor(120, 120, 120, 120)
-_COL_BUBBLE_BG = QColor(255, 255, 255, 242)
-_COL_BUBBLE_LINE = QColor(136, 136, 136)
-_COL_BUBBLE_TEXT = QColor(34, 34, 34)
+# 与运行时 BUBBLE_FILL/LINE 及 speech 分型取色同值（0x12100d×.92 / 0x6b5636 / 0xe8dcc8）
+_COL_BUBBLE_BG = QColor(18, 16, 13, 235)
+_COL_BUBBLE_LINE = QColor(107, 86, 54)
+_COL_BUBBLE_TEXT = QColor(232, 220, 200)
+# 与运行时 BUBBLE_FONT_FAMILY 同栈（楷体优先，字族缺失时逐级回落）
+_BUBBLE_FONT_FAMILIES = ["Kaiti SC", "STKaiti", "KaiTi", "Songti SC", "SimSun"]
 
 
 #: 「同步到游戏」推送口：主窗口在有 WebEngine 面时安装（见 main_window._push_bubble_anchor_preview）。
@@ -344,12 +351,13 @@ class _BubbleStage(QWidget):
         """与运行时 EmoteBubbleManager 同一组基准量 × 缩放（那边按新字号重排，这里同理）。"""
         k = self._scale
         f = QFont(self.font())
+        f.setFamilies(_BUBBLE_FONT_FAMILIES)
         f.setPixelSize(max(1, int(round(_BUBBLE_FONT_PX * k))))
-        f.setBold(True)
         fm = QFontMetricsF(f)
+        # 高度含尾巴：运行时摆位口径是「总高贴锚点」（尾尖即锚点方向），预览必须同口径
         return (
             fm.horizontalAdvance(self._bubble_text) + _BUBBLE_PAD_X * k * 2,
-            fm.height() + _BUBBLE_PAD_Y * k * 2,
+            fm.height() + _BUBBLE_PAD_Y * k * 2 + _BUBBLE_TAIL_H * k,
         )
 
     def _fit(self) -> tuple[float, QPointF]:
@@ -416,17 +424,37 @@ class _BubbleStage(QWidget):
             p.drawRect(QRectF(-cw / 2.0, -(gap + ch), cw, ch))
         p.restore()
 
+        # 「墨匣」泡：切角矩形 + 底边正中尾尖，一条路径成形（与运行时勾线连续同口径）
         rect = self._bubble_rect_px()
-        p.setPen(QPen(_COL_BUBBLE_LINE, 1))
+        kk = self._scale * k
+        cut = _BUBBLE_CUT * kk
+        tail_w = _BUBBLE_TAIL_W * kk
+        tail_h = _BUBBLE_TAIL_H * kk
+        body_bottom = rect.bottom() - tail_h
+        cx = rect.center().x()
+        path = QPainterPath()
+        path.moveTo(rect.left() + cut, rect.top())
+        path.lineTo(rect.right() - cut, rect.top())
+        path.lineTo(rect.right(), rect.top() + cut)
+        path.lineTo(rect.right(), body_bottom - cut)
+        path.lineTo(rect.right() - cut, body_bottom)
+        path.lineTo(cx + tail_w / 2, body_bottom)
+        path.lineTo(cx, rect.bottom())
+        path.lineTo(cx - tail_w / 2, body_bottom)
+        path.lineTo(rect.left() + cut, body_bottom)
+        path.lineTo(rect.left(), body_bottom - cut)
+        path.lineTo(rect.left(), rect.top() + cut)
+        path.closeSubpath()
+        p.setPen(QPen(_COL_BUBBLE_LINE, max(1.0, kk)))
         p.setBrush(_COL_BUBBLE_BG)
-        r = _BUBBLE_RADIUS * self._scale * k
-        p.drawRoundedRect(rect, r, r)
+        p.drawPath(path)
         f = QFont(self.font())
-        f.setPixelSize(max(6, int(round(_BUBBLE_FONT_PX * self._scale * k))))
-        f.setBold(True)
+        f.setFamilies(_BUBBLE_FONT_FAMILIES)
+        f.setPixelSize(max(6, int(round(_BUBBLE_FONT_PX * kk))))
         p.setFont(f)
         p.setPen(QPen(_COL_BUBBLE_TEXT))
-        p.drawText(rect, Qt.AlignmentFlag.AlignCenter, self._bubble_text)
+        body_rect = QRectF(rect.left(), rect.top(), rect.width(), max(1.0, body_bottom - rect.top()))
+        p.drawText(body_rect, Qt.AlignmentFlag.AlignCenter, self._bubble_text)
 
     # -- 拖拽 -----------------------------------------------------------
     def mousePressEvent(self, e) -> None:  # noqa: N802

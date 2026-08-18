@@ -5,6 +5,7 @@ import re
 from typing import Callable
 
 from PySide6.QtWidgets import (
+    QCheckBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -30,6 +31,7 @@ from .bubble_anchor_field import (
     actor_for_emote_target,
 )
 from .collapsible_section import CollapsibleSection
+from .voice_spec_field import VoiceSpecField
 
 _SPEAKER_INSERTS = (
     ("{{player}}", "玩家显示名"),
@@ -64,6 +66,47 @@ def scripted_speaker_items(model, scene_id: str | None) -> list[tuple[str, str]]
 
 #: speaker 恰好是「一个占位、别无他物」时的形态——下拉与文本框据此双向同步。
 _SOLE_PLACEHOLDER_RE = re.compile(r"^\{\{\s*(player|npc)\s*(?::\s*([^}]*?)\s*)?\}\}$")
+
+
+def _strings_dialogue(model, key: str, fallback: str) -> str:
+    """strings.json 的 `dialogue.<key>`；回落口径抄运行时（取不到 / 取回键名本身即用兜底串）。"""
+    strings = getattr(model, "strings", None) if model is not None else None
+    if isinstance(strings, dict):
+        v = (strings.get("dialogue") or {}).get(key)
+        if isinstance(v, str) and v.strip() and v.strip() != key:
+            return v.strip()
+    return fallback
+
+
+def speaker_display_names(model) -> dict[str, str]:
+    """实体 id → **玩家看到的那个名字** 的快照，供摘要/大纲这类只读展示用。
+
+    与运行时 `resolveScriptedSpeakerDisplay` 同口径：主角取
+    `strings.dialogue.defaultProtagonistName`、NPC 取该 NPC 的名字；
+    没有说话实体（空 id）就是旁白，用 `strings.dialogue.narratorLabel`——
+    故空串 `""` 是本表里表示旁白的保留键。
+
+    差一处且只差这一处：运行时的主角名优先读存档 flag `player_display_name`
+    （玩家改过名就跟着变），编辑期没有存档，只能给工程配置里的缺省名。
+    """
+    if model is None:
+        return {}
+    out: dict[str, str] = {"": _strings_dialogue(model, "narratorLabel", "旁白")}
+    try:
+        out.update({str(nid): str(label) for nid, label in model.all_npc_ids_global()})
+    except Exception:  # noqa: BLE001 — 名字表是展示增强，工程半残时退回显示 id 即可
+        pass
+    out[PLAYER_ENTITY_ID] = _strings_dialogue(model, "defaultProtagonistName", "主角")
+    return out
+
+
+def speaker_is_sole_placeholder(text: str) -> bool:
+    """speaker 整体就是一个占位（`{{player}}` / `{{npc}}` / `{{npc:id}}`）而非字面名/混排文本。
+
+    与 speaker_placeholder_entity 配套：后者对 `{{npc}}`（没带 id）和字面名都返回空串，
+    但两者语义相反——前者要回落到说话人实体，后者就是显示名本身。
+    """
+    return bool(_SOLE_PLACEHOLDER_RE.match(str(text or "").strip()))
 
 
 def speaker_placeholder_entity(text: str) -> str:
@@ -220,6 +263,9 @@ class CutsceneShowDialogueFields(QWidget):
         portrait: dict | None = None,
         bubble_anchor_y: object = None,
         bubble_scale: object = None,
+        voice: object = None,
+        auto_advance: object = None,
+        typewriter: object = None,
     ) -> None:
         super().__init__(parent)
         self._model = model
@@ -289,6 +335,35 @@ class CutsceneShowDialogueFields(QWidget):
         form.addRow(self._bubble_sec)
         if bubble_anchor_y is not None or bubble_scale is not None:
             self._bubble_sec.set_expanded(True)
+
+        # 配音 + 推进方式：与字幕、图对话拍、脚本台词行完全同一个控件同一套语义。
+        self._voice = VoiceSpecField(
+            self, model=model, voice_raw=voice, advance_raw=auto_advance,
+        )
+        self._voice.changed.connect(lambda: on_change())
+        self._voice_sec = CollapsibleSection("配音 / 推进方式（可选）", start_open=False, parent=self)
+        self._voice_sec.set_header_tool_tip(
+            "这句话的配音，以及这句怎么结束。\n"
+            "默认：没有配音、等玩家点击。\n"
+            "一条长配音要盖住后面几句时，在起头那句勾「播完不停」，"
+            "让后面某句选「跟随配音结束」来收尾。",
+        )
+        self._voice_sec.add_body(self._voice)
+        form.addRow(self._voice_sec)
+        if self._voice.has_content():
+            self._voice_sec.set_expanded(True)
+
+        # 逐字显示：过场对白框缺省**逐字**（与常规对话框同一种阅读体验），取消勾选才整句上屏。
+        self._typewriter = QCheckBox("逐字显示（打字机）", self)
+        self._typewriter.setChecked(typewriter is not False)
+        self._typewriter.setToolTip(
+            "缺省勾上 = 这句逐字打出来，与常规对话框一致。\n"
+            "取消勾选 = 整句上屏（一句话要「砸」在脸上时用）。\n"
+            "打字期间玩家点一下先补完，再点才过这一拍。\n"
+            "玩家在设置里关掉「逐字显示」时一律整句——玩家偏好压过编排。",
+        )
+        self._typewriter.toggled.connect(lambda _v: on_change())
+        form.addRow(self._typewriter)
         root.addLayout(form)
 
     def _bubble_actor(self) -> BubbleAnchorActor:
@@ -326,4 +401,9 @@ class CutsceneShowDialogueFields(QWidget):
         bsc = self._bubble.scale_value()
         if bsc is not None:
             d["bubbleScale"] = bsc
+        self._voice.apply_to(d)
+        # 对白框缺省逐字：只有取消勾选（偏离缺省）才落 typewriter=false，
+        # 与 disabled「只写偏离值」同口径——否则 187 拍平白多一行噪声。
+        if not self._typewriter.isChecked():
+            d["typewriter"] = False
         return d

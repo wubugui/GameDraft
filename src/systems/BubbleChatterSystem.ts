@@ -530,7 +530,8 @@ export class BubbleChatterSystem implements IGameSystem {
       anchor,
       text,
       duration,
-      def.bubbleScale !== undefined ? { scale: def.bubbleScale } : undefined,
+      // 巡场碎嘴走弱一档皮肤（chatter 分型）：环境音不与剧情话同权重
+      { variant: 'chatter', ...(def.bubbleScale !== undefined ? { scale: def.bubbleScale } : {}) },
       CHATTER_OWNER,
     );
     this.pendingApproach.delete(def.id);   // 这一次「走近」已经兑现

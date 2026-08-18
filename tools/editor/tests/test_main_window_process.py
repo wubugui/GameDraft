@@ -186,3 +186,39 @@ def test_dialogue_process_exit_refreshes_and_stops_watch_timer():
     owner._dialogue_external_processes[0].running = False
     main_window.MainWindow._poll_dialogue_external_processes(owner)
     assert events == ["reload", "audio", "reload", "audio", "stop"]
+
+
+def test_voice_workbench_launches_the_right_module_with_the_project_root(tmp_path):
+    """外部工具菜单最典型的坏法是"点了没反应"：模块路径打错、或忘了把工程根传下去。
+    前者要等到真去点才发现，后者更阴——工具起来了，但源库/导出目录指向另一个仓库，
+    看起来像"素材全没了"。这里从菜单绑的那个方法进，把两件事都钉住。"""
+    calls = []
+    root = tmp_path / "repo"
+    root.mkdir()
+    owner = SimpleNamespace(
+        _ensure_valid_tool_root=lambda: root,
+        _launch_external_tool=lambda module, args, label, root=None: calls.append(
+            (module, args, label, root)
+        ),
+    )
+
+    main_window.MainWindow._launch_voice_workbench_external(owner)
+
+    assert len(calls) == 1
+    module, args, label, passed_root = calls[0]
+    assert module == "tools.voice_workbench"
+    assert args == [str(root.resolve())], "工程根必须传下去，否则工具会用它自己所在的仓库"
+    assert label == "配音工作台"
+    assert passed_root == root
+
+
+def test_voice_workbench_is_not_launched_without_a_valid_root(tmp_path):
+    calls = []
+    owner = SimpleNamespace(
+        _ensure_valid_tool_root=lambda: None,
+        _launch_external_tool=lambda *a, **k: calls.append(a),
+    )
+
+    main_window.MainWindow._launch_voice_workbench_external(owner)
+
+    assert calls == []

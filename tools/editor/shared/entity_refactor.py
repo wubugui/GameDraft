@@ -1670,6 +1670,9 @@ _HOTSPOT_TO_NPC_CARRY = (
     "planes", "cutsceneIds", "cutsceneOnly", "conditions", "conditionHidesEntity",
     "collisionPolygon", "collisionPolygonLocal", "castShadow", "rotation",
     "occlusionBlendFactor", "perspectiveScaleEnabled", "group",
+    # 对话朝向两边同名同语义（DialogueFacing 四档），显式值原样搬；
+    # **缺省不同**（热点 keep / NPC player），没写这个键的热点由下面显式补 keep 保住现状
+    "dialogueFacing",
 )
 
 # 转换后不再有对应语义、必须丢弃的热点字段（逐项进报告，不静默吞）。
@@ -1950,6 +1953,13 @@ def convert_hotspot_to_npc(
     for key in _HOTSPOT_TO_NPC_CARRY:
         if key in row:
             npc[key] = copy.deepcopy(row[key])
+    # 对话朝向的**缺省值两边也相反**（热点缺省 keep 不转身、NPC 缺省 player 转向玩家）：
+    # 同上，迁移只保持现状。只有真会进对话的（graph 载荷）才补这一条，纯展示的不啰嗦。
+    if payload_kind == "graph" and "dialogueFacing" not in row:
+        npc["dialogueFacing"] = "keep"
+        warnings.append(
+            "已显式写入 dialogueFacing=keep 保持热点原行为（NPC 缺省是进对话时转向玩家）；"
+            "这是个会搭话的角色的话，可以改成 player")
     # 透视缩放的**缺省值两边相反**（热点缺省不参与、NPC 缺省参与），不显式写死就会
     # 在转换那一刻悄悄开始跟着深度缩放。迁移的职责是保持现状，要开由人后面自己开。
     if "perspectiveScaleEnabled" not in row:

@@ -106,6 +106,7 @@ from .id_ref_selector import IdRefSelector
 from .audio_preview_selector import AudioIdPreviewSelector
 from .blend_overlay_preview import BlendOverlayPreviewWidget
 from .bubble_anchor_field import BubbleAnchorPickField, actor_for_emote_target
+from .voice_spec_field import VoiceSpecField
 from .collapsible_section import CollapsibleSection
 from .dialog_geometry import remember_dialog_geometry
 from .form_layout import compact_form
@@ -291,7 +292,7 @@ ACTION_TYPES = [
     "giveRule", "grantRuleLayer", "giveFragment", "updateQuest", "setFocusedQuest", "startEncounter",
     "playBgm", "stopBgm", "playSfx", "playSceneAmbient", "stopSceneAmbient", "endDay", "addDelayedEvent",
     "advanceTime", "advanceTimeTo", "setNpcScheduleOverride",
-    "addArchiveEntry", "startCutscene", "startWaterMinigame", "startSugarWheelMinigame", "startPaperCraftMinigame",
+    "addArchiveEntry", "collectClue", "startCutscene", "startWaterMinigame", "startSugarWheelMinigame", "startPaperCraftMinigame",
     "startObjectExamine",
     "startPressureHold", "playSignalCue", "addFlagValue",
     "setBubbleLineSet", "clearBubbleLineSet",
@@ -363,6 +364,8 @@ _SELECTOR_KIND_UNIVERSE: dict[str, str] = {
     "narrative_run_archetype": "narrative_graph_ids",
     # 叙事章节包（C2）：候选=编排 package 标并集
     "narrative_package": "narrative_package_ids",
+    # 线索（K7）：候选=clues.json（装载工程后读 ProjectModel 活数据）
+    "clue": "clues",
 }
 
 
@@ -414,6 +417,7 @@ ACTION_PERSISTENCE: dict[str, str] = {
     "advanceTimeTo": "save",
     "setNpcScheduleOverride": "save",
     "addArchiveEntry": "save",
+    "collectClue": "save",
     "startCutscene": "memory",
     "addFlagValue": "save",
     "startPressureHold": "memory",
@@ -596,6 +600,7 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
         ("activity", "str"), ("clear", "bool"),
     ],
     "addArchiveEntry": [("bookType", "str"), ("entryId", "str")],
+    "collectClue": [("clueId", "str")],
     "startCutscene": [("id", "str")],
     "startWaterMinigame": [("id", "str")],
     "startSugarWheelMinigame": [("id", "str")],
@@ -614,6 +619,7 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
         ("anchorOffsetY", "float"),
         ("bubbleAnchorY", "bubble_anchor"),
         ("bubbleScale", "bubble_scale"),
+        ("voice", "voice_spec"),
     ],
     "showSpeechBubble": [
         ("target", "str"),
@@ -623,6 +629,7 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
         ("anchorOffsetY", "float"),
         ("bubbleAnchorY", "bubble_anchor"),
         ("bubbleScale", "bubble_scale"),
+        ("voice", "voice_spec"),
     ],
     "playNpcAnimation": [
         ("target", "str"),
@@ -715,6 +722,8 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
         ("anchorOffsetY", "float"),
         ("bubbleAnchorY", "bubble_anchor"),
         ("bubbleScale", "bubble_scale"),
+        ("voice", "voice_spec"),
+        ("autoAdvance", "voice_advance"),
     ],
     "showSpeechBubbleAndWait": [
         ("target", "str"),
@@ -724,6 +733,8 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
         ("anchorOffsetY", "float"),
         ("bubbleAnchorY", "bubble_anchor"),
         ("bubbleScale", "bubble_scale"),
+        ("voice", "voice_spec"),
+        ("autoAdvance", "voice_advance"),
     ],
     # 分组批量：运行时按当前场景解析 group（非跨场景实体引用，勿登记 ENTITY_REF_PARAMS）；
     # 编辑器从 ProjectModel.scene_group_ids_for_scene 选择，validator 同源检查存在性。
@@ -737,7 +748,7 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
 }
 
 _NOTIFICATION_TYPES = ("info", "warning", "quest", "rule", "item")
-_ARCHIVE_BOOK_TYPES = ("character", "lore", "slang", "document", "book", "bookEntry")
+_ARCHIVE_BOOK_TYPES = ("character", "lore", "slang", "rhyme", "document", "book", "bookEntry")
 
 # 朝向只有左右镜像：SpriteEntity.setDirection 丢弃 dy、动画包也没有上下朝向，
 # 曾经列过的 up/down 运行时是静默空操作（现已 warn），故不再给出这两个选项。
@@ -3501,7 +3512,7 @@ class ActionRow(QWidget):
             "water_minigame", "sugar_wheel_minigame", "paper_craft_minigame",
             "object_examine",
             "smell", "plane", "pressure_hold", "signal_cue", "prop_preset",
-            "time_phase", "time_transition", "character",
+            "time_phase", "time_transition", "character", "clue",
         )
 
         pairs: list[tuple[str, str]] = []
@@ -3624,6 +3635,15 @@ class ActionRow(QWidget):
                 for c in ((m.signal_cues if m else None) or [])
                 if isinstance(c, dict) and str(c.get("id", "")).strip()
             ]
+        elif kind == "clue":
+            # 线索候选与 [clue:] 校验读同一通道：装载工程后走 ProjectModel.clues_registry
+            # 活数据（档案「线索」页新建未保存的词条立即可选），无工程上下文时回落磁盘现扫。
+            from .ref_validator import clue_registry_rows
+            pairs = [
+                (str(c.get("id", "")).strip(), str(c.get("title") or c.get("id", "")).strip()[:32])
+                for c in (clue_registry_rows(m) if m else [])
+                if str(c.get("id", "")).strip()
+            ]
         else:
             pairs = []
 
@@ -3684,6 +3704,10 @@ class ActionRow(QWidget):
             "spawn": "选目标场景的出生点；(none) = 不指定（进场用默认出生点）。",
             "pressure_hold": "仅下拉选择；列表来自 pressure_holds.json（按压蓄力配置）。",
             "signal_cue": "仅下拉选择；列表来自 signal_cues.json（信号演出配置）。",
+            "clue": (
+                "仅下拉选择；列表来自 clues.json（线索注册表）。\n"
+                "采集幂等：已采集过的线索不重复弹回执；未知 id 运行时拒绝采集。"
+            ),
             "prop_preset": (
                 "仅下拉选择；列表来自 prop_presets.json（「挂件预设」页维护）。\n"
                 "预设带着这件挂件的贴图 + 支点 + 自转 + 缩放——选了它下面几项就不用填；\n"
@@ -5147,6 +5171,37 @@ class ActionRow(QWidget):
                 if isinstance(aw, BubbleAnchorPickField):
                     self._param_widgets[pname] = aw
                 continue
+            if ptype == "voice_advance":
+                # 推进方式与配音同属一个 VoiceSpecField（同 bubble_scale 的做法）
+                vw = self._param_widgets.get("voice")
+                if isinstance(vw, VoiceSpecField):
+                    self._param_widgets[pname] = vw
+                continue
+            if ptype == "voice_spec":
+                # 台词配音：与过场字幕 / 对话框 / 图对话拍同一个控件。
+                # 只有 *AndWait 两个 action 吃 autoAdvance（非阻塞气泡没有"本拍结束"这个时刻，
+                # 配音一律留声到自然播完 / 被下一条顶掉）。
+                vf = VoiceSpecField(
+                    self,
+                    model=self._ctx_model,
+                    voice_raw=params.get(pname),
+                    advance_raw=params.get("autoAdvance"),
+                    show_advance=any(p == "autoAdvance" for p, _ in schema),
+                    compact=True,
+                )
+                vf.changed.connect(self.changed)
+                sec = CollapsibleSection(
+                    "配音（可选）", start_open=vf.has_content(), parent=self,
+                )
+                sec.set_header_tool_tip(
+                    "这句气泡台词的配音。\n"
+                    "阻塞型（*AndWait）还能选「跟随配音结束」——气泡改为一直挂到配音播完；\n"
+                    "非阻塞型只起配音、不改气泡时长，配音自然播完为止。",
+                )
+                sec.add_body(vf)
+                self._param_widgets[pname] = vf
+                self._params_layout.addRow("", sec)
+                continue
             if ptype == "bubble_anchor":
                 # 气泡头顶锚：可视化舞台 + 「继承/覆盖」闸门。target 与 emote/text 在 schema 里
                 # 排在本行之前，故此刻 _param_widgets 里已有它们——用惰性闭包读，切 target 即刷新。
@@ -5452,6 +5507,9 @@ class ActionRow(QWidget):
                 w.set_current(str(val) if val is not None else "")
                 w.value_changed.connect(self.changed)
                 _tag_content_universe(w, "archive_entries")
+            elif act_type == "collectClue" and pname == "clueId":
+                # 线索引用（选择器铁律：引用字段禁裸 QLineEdit；候选=clues.json 现扫，保值展示悬垂值）
+                w = self._make_selector("clue", str(val) if val is not None else "")
             elif act_type == "showNotification" and pname == "type":
                 w = QComboBox(self)
                 # 非 editable：notification type 是固定枚举，不需要手写；同时避免顶层弹窗闪烁。
@@ -6478,7 +6536,19 @@ class ActionRow(QWidget):
             w = self._param_widgets.get(pname)
             if w is None:
                 continue
-            if ptype == "bubble_scale":
+            if ptype == "voice_spec":
+                # None = 没配配音，不写键（最小形态打开→保存不得凭空多键）
+                if isinstance(w, VoiceSpecField):
+                    v = w.voice_value()
+                    if v is not None:
+                        params[pname] = v
+            elif ptype == "voice_advance":
+                # 与 voice 共用同一控件（见构造处）；None = 点击推进（缺省语义），不写键
+                if isinstance(w, VoiceSpecField):
+                    a = w.advance_value()
+                    if a is not None:
+                        params[pname] = a
+            elif ptype == "bubble_scale":
                 # 与 bubbleAnchorY 共用同一控件（见构造处）；None = 继承全局，不写键
                 if isinstance(w, BubbleAnchorPickField):
                     sv = w.scale_value()

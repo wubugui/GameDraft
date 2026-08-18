@@ -27,6 +27,8 @@
 """
 from __future__ import annotations
 
+from tools.atomic_io import retry_transient
+
 import hashlib
 import json
 import mimetypes
@@ -754,7 +756,7 @@ def _place_product(tmp: Path, row: dict, content_hash: str,
         dst = EXPORT_DIR / f"{stem}_{content_hash[:width]}{row['ext']}"
         if not dst.exists():
             dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(tmp), str(dst))
+            retry_transient(shutil.move, str(tmp), str(dst))
             placed.append(dst)
             return dst, ""
         if HASHES.get(dst) == content_hash:

@@ -3,7 +3,7 @@ import type { EventBus } from '../core/EventBus';
 import type { AssetManager, AssetRef } from '../core/AssetManager';
 import { resolveAssetPath } from '../core/assetPath';
 import { TEXT_URLS } from '../core/projectPaths';
-import type { DialogueEndPayload, IGameSystem, GameContext, IAudioSettingsProvider, AudioPlaybackHandle, TransientSfxOptions } from '../data/types';
+import type { AudioChannel, DialogueEndPayload, IGameSystem, GameContext, IAudioSettingsProvider, AudioPlaybackHandle, TransientSfxOptions } from '../data/types';
 
 interface AudioEntry {
   src: string;
@@ -14,14 +14,19 @@ interface AudioConfig {
   bgm: Record<string, AudioEntry>;
   ambient: Record<string, AudioEntry>;
   sfx: Record<string, AudioEntry>;
+  /** 对白配音。独立一区（配音会长到近千条，混进 sfx 就没法管）；**不与 sfx 互相回落** */
+  voice: Record<string, AudioEntry>;
   systemSfx: Record<string, string>;
 }
 
 type EventCallback = (payload?: any) => void;
 
+/** UI 切换/悬停音的最小间隔（毫秒）；理由见 installSystemSfxListeners 里的 ui:hover */
+const UI_HOVER_SFX_MIN_GAP_MS = 60;
+
 export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   private eventBus: EventBus;
-  private config: AudioConfig = { bgm: {}, ambient: {}, sfx: {}, systemSfx: {} };
+  private config: AudioConfig = { bgm: {}, ambient: {}, sfx: {}, voice: {}, systemSfx: {} };
   private loaded = false;
 
   private currentBgm: Howl | null = null;
@@ -57,6 +62,9 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   private bgmVolume = 0.6;
   private sfxVolume = 0.8;
   private ambientVolume = 0.4;
+  /** 对白音量。**默认满档**：台词是"听不见就玩不下去"的信息，
+   *  其余通道相对它让位，而不是反过来把台词压在音效之下（对白锚定）。 */
+  private voiceVolume = 1.0;
   private pendingTimers = new Set<ReturnType<typeof setTimeout>>();
 
   private assetManager!: AssetManager;
@@ -68,6 +76,8 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   private gestureListenersInstalled = false;
   private sfxEventListeners: Array<{ event: string; callback: EventCallback }> = [];
   private lastMapTravelSfxAt = 0;
+  /** UI 切换/悬停音的上次发声时刻（节流，见 installSystemSfxListeners 的 ui:hover） */
+  private lastUiHoverSfxAt = 0;
 
   constructor(eventBus: EventBus) {
     this.eventBus = eventBus;
@@ -86,6 +96,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
         bgm?: Record<string, { src: string }>;
         ambient?: Record<string, { src: string }>;
         sfx?: Record<string, { src: string }>;
+        voice?: Record<string, { src: string }>;
         systemSfx?: Record<string, string>;
       }>(TEXT_URLS.audioConfig);
       const resolveSrc = (obj: Record<string, { src: string; volume?: number }>) => {
@@ -100,6 +111,9 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
         bgm: resolveSrc(raw.bgm ?? {}),
         ambient: resolveSrc(raw.ambient ?? {}),
         sfx: resolveSrc(raw.sfx ?? {}),
+        // 按键名逐个装配的白名单：新增一个区必须同步加这一行，
+        // 否则 JSON 里写了、运行时是空的，而且一声不吭（踩过）。
+        voice: resolveSrc(raw.voice ?? {}),
         systemSfx: Object.fromEntries(
           Object.entries(raw.systemSfx ?? {}).filter(([, v]) => typeof v === 'string' && v.trim()),
         ),
@@ -343,9 +357,24 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
    * 加载失败 / 加载归来发现已 stop 均安全退化为不发声（onEnd 不触发，调用方退化为等待点击）。
    */
   playTransientSfx(id: string, options: TransientSfxOptions = {}): AudioPlaybackHandle | null {
-    const entry = this.config.sfx[id];
+    return this.playTransientEntry(id, options, 'sfx');
+  }
+
+  /**
+   * playTransientSfx / playVoice 的共同实现。唯一差别是乘哪条通道音量。
+   *
+   * **不做任何回落**：id 查不到就是查不到，当场 warn + 返回 null。
+   * 静默回落（"这里没有就去那里找"）是混乱的源头——它让"配置写错了"这件事
+   * 在游戏里表现正常、只在别处露馅，等于把矛盾藏起来留给以后。
+   */
+  private playTransientEntry(
+    id: string,
+    options: TransientSfxOptions,
+    channel: 'sfx' | 'voice',
+  ): AudioPlaybackHandle | null {
+    const entry = this.config[channel][id];
     if (!entry) {
-      console.warn(`AudioManager: unknown transient sfx "${id}"`);
+      console.warn(`AudioManager: audio_config.${channel} 里没有 "${id}"——不回落别的区，这条不发声`);
       return null;
     }
 
@@ -378,7 +407,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
         shared = this.assetManager.getAudio(entry.src, { loop: false })
           ?? await this.assetManager.loadAudio(entry.src, { loop: false });
       } catch (error) {
-        console.warn(`AudioManager: transient sfx "${id}" failed to load`, error);
+        console.warn(`AudioManager: transient ${channel} "${id}" failed to load`, error);
         stopped = true;
         return;
       }
@@ -391,7 +420,8 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
       const baseVolume = optionVolume ?? entry.volume ?? 1.0;
 
       const sid = shared.play();
-      shared.volume(this.clamp01(baseVolume * this.sfxVolume), sid);
+      const channelVolume = channel === 'voice' ? this.voiceVolume : this.sfxVolume;
+      shared.volume(this.clamp01(baseVolume * channelVolume), sid);
       howl = shared;
       soundId = sid;
       // 结束事件绑到本次 soundId：只在本实例自然播完时触发一次（手动 stop 不会走到这里）。
@@ -409,7 +439,18 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     return handle;
   }
 
-  setVolume(channel: 'bgm' | 'sfx' | 'ambient', vol: number): void {
+  /**
+   * 播放一条对白配音。与 playTransientSfx 只差一件事：**音量乘 `voiceVolume`**。
+   *
+   * 条目和音效同在 `audio_config.sfx` 一个来源——**走哪条总线由调用点决定，
+   * 不由条目存在哪个区决定**。曾经为此单开过一个 `voice` 配置区，结果是
+   * 编辑器四处登记面漏配、"游戏能放但编辑器说 id 无效"，白白多出一层不一致。
+   */
+  playVoice(id: string, options: TransientSfxOptions = {}): AudioPlaybackHandle | null {
+    return this.playTransientEntry(id, options, 'voice');
+  }
+
+  setVolume(channel: AudioChannel, vol: number): void {
     const v = Math.max(0, Math.min(1, vol));
     switch (channel) {
       case 'bgm':
@@ -425,14 +466,51 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
         this.ambientLayers.forEach((howl, id) =>
           howl.volume(this.clamp01((this.ambientBaseVolume.get(id) ?? 1.0) * v)));
         break;
+      case 'voice':
+        this.voiceVolume = v;
+        break;
     }
   }
 
-  getVolume(channel: 'bgm' | 'sfx' | 'ambient'): number {
+  /**
+   * 设置页「松手试听」：按**这条通道刚调好的响度**放一声样本。语义见 IAudioSettingsProvider。
+   *
+   * ⚠ 音量取的是 `getVolume(channel)` 而**不是** `sfxVolume`——调环境音时听到的响度
+   * 必须就是环境音那条的响度，拿音效通道的音量放一声等于给了个假参照。
+   * 所以这里不能图省事走 `playSfx()`（那条恒乘 sfxVolume）。
+   * 样本取 `systemSfx.volumePreview`，没配就退到确认音/悬停音——这三个都没有就静默不响。
+   */
+  previewVolume(channel: AudioChannel): void {
+    // bgm / ambient 是实时生效的：正在出声时拖滑条本来就听得见，再补一声是多余的噪音
+    if (channel === 'bgm' && this.currentBgm?.playing() === true) return;
+    if (channel === 'ambient' && this.ambientLayers.size > 0) return;
+
+    const cueId = (
+      this.config.systemSfx.volumePreview
+      || this.config.systemSfx.uiConfirm
+      || this.config.systemSfx.uiHover
+      || ''
+    ).trim();
+    const entry = cueId ? this.config.sfx[cueId] : undefined;
+    if (!entry) return;
+    const channelVolume = this.getVolume(channel);
+
+    this.runWhenAudioAllowed(async () => {
+      const howl = this.sfxCache.get(cueId)
+        ?? this.assetManager.getAudio(entry.src, { loop: false })
+        ?? await this.assetManager.loadAudio(entry.src, { loop: false });
+      if (!this.sfxCache.has(cueId)) this.sfxCache.set(cueId, howl);
+      howl.volume(this.clamp01((entry.volume ?? 1.0) * channelVolume));
+      howl.play();
+    });
+  }
+
+  getVolume(channel: AudioChannel): number {
     switch (channel) {
       case 'bgm': return this.bgmVolume;
       case 'sfx': return this.sfxVolume;
       case 'ambient': return this.ambientVolume;
+      case 'voice': return this.voiceVolume;
     }
   }
 
@@ -456,13 +534,18 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
       bgmVolume: this.bgmVolume,
       sfxVolume: this.sfxVolume,
       ambientVolume: this.ambientVolume,
+      voiceVolume: this.voiceVolume,
     };
   }
 
-  deserialize(data: { bgmVolume?: number; sfxVolume?: number; ambientVolume?: number }): void {
+  deserialize(data: {
+    bgmVolume?: number; sfxVolume?: number; ambientVolume?: number; voiceVolume?: number;
+  }): void {
     if (data.bgmVolume !== undefined) this.bgmVolume = data.bgmVolume;
     if (data.sfxVolume !== undefined) this.sfxVolume = data.sfxVolume;
     if (data.ambientVolume !== undefined) this.ambientVolume = data.ambientVolume;
+    // 旧档没有这个键：保持默认满档，不要按 0 处理（那会让老存档一读进来台词全哑）
+    if (data.voiceVolume !== undefined) this.voiceVolume = data.voiceVolume;
   }
 
   private clamp01(v: number): number {
@@ -620,7 +703,20 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     this.onSfx('dialogue:advanceInput', () => this.playSystemSfx('dialogueAdvance'));
     this.onSfx('dialogue:choiceSelected:log', () => this.playSystemSfx('dialogueChoice'));
 
-    this.onSfx('ui:hover', () => this.playSystemSfx('uiHover'));
+    /**
+     * 切换/悬停音**在这里节流**，不在各发射端各限一次。
+     *
+     * 发射端不止一处（UIFocus 的移焦钩子、UIButton/UIWindow 的 onSound、面板自己的悬停），
+     * 同一次悬停常常同帧发两条（一枚按钮既是焦点项、又挂了 onSound）；而鼠标横扫背包网格 /
+     * 地图节点会一路移焦，连发十几声。收在消费端一处限速：两种情况一起解决，
+     * 且以后再多接一个发射端也不会突然变吵。60ms ≈ 人快按方向键的上限，键盘导航一按一响不受影响。
+     */
+    this.onSfx('ui:hover', () => {
+      const now = Date.now();
+      if (now - this.lastUiHoverSfxAt < UI_HOVER_SFX_MIN_GAP_MS) return;
+      this.lastUiHoverSfxAt = now;
+      this.playSystemSfx('uiHover');
+    });
     this.onSfx('ui:confirm', () => this.playSystemSfx('uiConfirm'));
     this.onSfx('ui:cancel', () => this.playSystemSfx('uiCancel'));
     this.onSfx('ui:panelOpen', () => this.playSystemSfx('uiPanelOpen'));

@@ -7,7 +7,18 @@ from typing import Any
 from ..file_io import read_json
 from ..project_model import ProjectModel
 from .tag_catalog import TagCatalog
-from .text_palette import has_style_markup, inspect_style_markup, palette_ids
+from .text_palette import (
+    has_clue_markup,
+    has_style_markup,
+    inspect_clue_markup,
+    inspect_style_markup,
+    palette_ids,
+)
+
+#: [clue:] 的结构性问题（未闭合/多余闭合）走 warning 面：消息带此前缀，validator 拆
+#: severity 报 warning；保存门（validate_refs_for_save）会滤掉它们不拦存。
+#: 未知/非法 id 仍是 error（K7 红线：引用完整性与 [tag:] 同级）。
+REF_WARNING_PREFIX = "[warn] "
 
 STRING_TAG_RE: re.Pattern[str] = re.compile(
     r"\[tag:string:([^:]+):([^\]]+)\]",
@@ -52,6 +63,88 @@ def scan_style_markup(text: Any, where: str, model: ProjectModel) -> list[str]:
     return errs
 
 
+#: clues.json 读盘缓存：{路径: ((mtime, size), rows)}。仅用于**未装载工程**的模型
+#: （独立小工具/无工程上下文）；装载工程后 ProjectModel.clues_registry 是单一真相源，
+#: 走下面的活数据分支（新建未保存的线索立即可选/可校验）。
+_CLUE_ROWS_CACHE: dict[str, tuple[tuple[float, int], list[dict]]] = {}
+
+
+def clue_registry_rows(model: ProjectModel) -> list[dict]:
+    """clues.json 的 clues[] 行。
+
+    优先读 ProjectModel 活数据（编辑器有落盘通道后与保存内容同源）；模型未装载工程时
+    回落磁盘现扫（防御式读盘 + mtime 缓存；注册表未建立/损坏时返回空表）。
+    """
+    if getattr(model, "project_path", None) is not None:
+        live = getattr(model, "clues_registry", None)
+        if isinstance(live, dict):
+            rows = live.get("clues")
+            return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
+    try:
+        path = model.data_path / "clues.json"
+        stat = path.stat()
+    except Exception:
+        return []
+    key = (stat.st_mtime, stat.st_size)
+    cached = _CLUE_ROWS_CACHE.get(str(path))
+    if cached and cached[0] == key:
+        return cached[1]
+    try:
+        doc = read_json(path)
+    except (OSError, ValueError):
+        return []
+    rows = doc.get("clues") if isinstance(doc, dict) else doc
+    out = [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
+    _CLUE_ROWS_CACHE[str(path)] = (key, out)
+    return out
+
+
+def clue_id_set(model: ProjectModel) -> set[str]:
+    return {
+        str(r.get("id") or "").strip()
+        for r in clue_registry_rows(model)
+        if str(r.get("id") or "").strip()
+    }
+
+
+def scan_clue_markup(text: Any, where: str, model: ProjectModel) -> list[str]:
+    """检查线索标记 `[clue:<id>]…[/clue]`（K7）：非法/未知 id = error，未闭合/多余闭合 = warning。
+
+    与 :func:`scan_style_markup` 同挂在 `scan_refs` 通道上——覆盖面与 `[tag:…]`/`[c:…]`
+    完全一致（每一处策划写的文本），不另开遍历。
+    """
+    if text is None:
+        return []
+    s = text if isinstance(text, str) else str(text)
+    if not has_clue_markup(s):
+        return []
+    info = inspect_clue_markup(s)
+    errs: list[str] = []
+    for bad in info["malformed"]:
+        errs.append(
+            f'{where}: 线索标记 [clue:{bad}] 的 id 不合法（只允许字母/数字/下划线/连字符）'
+            "——运行时剥不掉，会原样显示给玩家"
+        )
+    known = clue_id_set(model)
+    for cid in info["clue_ids"]:
+        if cid not in known:
+            errs.append(
+                f'{where}: 未知线索 [clue:{cid}]（不在 clues.json 注册表——'
+                "运行时按普通文字渲染，玩家永远采不到）"
+            )
+    if info["stray_clue_closes"]:
+        errs.append(
+            f'{REF_WARNING_PREFIX}{where}: 多出 {info["stray_clue_closes"]} 个'
+            "没有对应 [clue:…] 的 [/clue]"
+        )
+    if info["unclosed_clue"]:
+        errs.append(
+            f'{REF_WARNING_PREFIX}{where}: 有 {info["unclosed_clue"]} 个 [clue:…] '
+            "没有闭合的 [/clue]（圈住的词条会一路染到文本尾）"
+        )
+    return errs
+
+
 def scan_refs(text: Any, where: str, model: ProjectModel) -> list[str]:
     if text is None:
         return []
@@ -59,6 +152,7 @@ def scan_refs(text: Any, where: str, model: ProjectModel) -> list[str]:
     if not s:
         return []
     style_errs = scan_style_markup(s, where, model)
+    style_errs.extend(scan_clue_markup(s, where, model))
     if "[tag:" not in s:
         return style_errs
     cat = TagCatalog(model)
@@ -362,6 +456,16 @@ def validate_all_embedded_refs(
             for di, d in enumerate(it.get("dynamicDescriptions") or []):
                 if isinstance(d, dict):
                     errs.extend(scan_refs(d.get("text"), f"items[{iid}].dynamicDescriptions[{di}].text", model))
+            # 自身用途的三个玩家可见文本 + 动作树内嵌引用。漏扫的后果是打错的
+            # `[tag:item:xxx]` 存得下去、运行时静默渲染成兜底串——而"引用目标不存在
+            # 就整工程存不了"正是本校验存在的理由（editor-roundtrip-contract）。
+            use = it.get("use")
+            if isinstance(use, dict):
+                for key in ("label", "disableHint", "resultText"):
+                    errs.extend(scan_refs(use.get(key), f"items[{iid}].use.{key}", model))
+                walk_action_defs_embedded_refs(
+                    use.get("actions"), f"items[{iid}].use.actions", model, errs,
+                )
     if want("quest"):
         for i, q in enumerate(model.quests):
             qid = q.get("id", i)
@@ -467,6 +571,16 @@ def validate_all_embedded_refs(
             errs.extend(scan_refs(d.get("annotation"), f"documents[{did}].annotation", model))
             walk_action_defs_embedded_refs(d.get("firstViewActions"), f"documents[{did}].firstViewActions", model, errs)
         _walk_books(model, errs)
+    if want("clues"):
+        # 线索注册表自身的文案（title/desc 会进线索簿与采集回执，可带 [tag:]/[c:]/[clue:]）。
+        reg = getattr(model, "clues_registry", None)
+        rows = reg.get("clues") if isinstance(reg, dict) else None
+        for i, c in enumerate(rows or []):
+            if not isinstance(c, dict):
+                continue
+            cid = c.get("id", i)
+            errs.extend(scan_refs(c.get("title"), f"clues[{cid}].title", model))
+            errs.extend(scan_refs(c.get("desc"), f"clues[{cid}].desc", model))
     if want("strings"):
         if isinstance(model.strings, dict):
             for cat, sub in model.strings.items():
@@ -598,8 +712,9 @@ def validate_refs_for_save(
 
     ``dirty`` 传入本次脏桶集合时按脏桶收口——只校验将写盘的域，盘上无关域的历史坏
     tag 不再锁死保存（审查 P2-③）。缺省 None 保持全量校验（既有调用方兼容）。
+    warning 面（REF_WARNING_PREFIX，如 [clue:] 未闭合）只在 Validate Data 里报，不拦保存。
     """
-    errs = validate_all_embedded_refs(model, dirty)
+    errs = [e for e in validate_all_embedded_refs(model, dirty) if not e.startswith(REF_WARNING_PREFIX)]
     if not errs:
         return None
     return "嵌入引用校验失败:\n" + "\n".join(errs[:80]) + (f"\n… 共 {len(errs)} 条" if len(errs) > 80 else "")

@@ -63,6 +63,9 @@ _ACTION_SOURCE_BUCKETS: tuple[tuple[str, str], ...] = (
     # 该新域只在 ProjectModel 已登记对应脏桶时参与重写，防止
     # 扫到后无法经统一保存出口落盘。
     ("object_examine_instances", "object_examine"),
+    # K7 线索注册表 clues[].collectActions（2026-08-17）：动作树经统一执行器真执行，
+    # 里面的 startDialogueGraph 引用必须参与对话图改名级联，否则悄悄悬垂。
+    ("clues_registry", "clues"),
 )
 
 

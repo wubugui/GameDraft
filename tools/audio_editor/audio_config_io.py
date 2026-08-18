@@ -25,10 +25,11 @@ import tempfile
 import time
 from pathlib import Path
 from typing import Any
+from tools.atomic_io import retry_transient
 
 #: audio_config 里承载 ``{id: {src, volume?}}`` 的三个频道。
 #: systemSfx 是 id→id 映射,不在此列(它不挂文件)。
-CHANNELS: tuple[str, ...] = ("bgm", "ambient", "sfx")
+CHANNELS: tuple[str, ...] = ("bgm", "ambient", "sfx", "voice")
 
 #: src 唯一合法形状 —— 运行时与编辑器两侧都只认这个前缀
 #: (见 tools/editor/shared/project_paths.py 的 _URL_PREFIX_RUNTIME)。
@@ -411,7 +412,7 @@ def _atomic_write(path: Path, text: str) -> None:
             fh.write(text)
             fh.flush()
             os.fsync(fh.fileno())
-        os.replace(tmp, path)
+        retry_transient(os.replace, tmp, path)
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
         raise

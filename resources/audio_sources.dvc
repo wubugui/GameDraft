@@ -1,0 +1,6 @@
+outs:
+- md5: 7aeef641f1379c9172a935ac2176d728.dir
+  size: 70564819
+  nfiles: 18
+  hash: md5
+  path: audio_sources

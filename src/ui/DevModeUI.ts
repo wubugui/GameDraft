@@ -68,6 +68,8 @@ export class DevModeUI {
    * 只在该分区开启，close/destroy 必清（生命周期对称）。
    */
   private dayNightTimer: ReturnType<typeof setInterval> | null = null;
+  /** 上一拍日夜快照的指纹；与本拍相同就跳过重建（见 syncDayNightPolling） */
+  private dayNightSig = '';
 
   constructor(renderer: Renderer, callbacks: DevModeCallbacks) {
     this.renderer = renderer;
@@ -121,6 +123,16 @@ export class DevModeUI {
     this.rebuild();
   }
 
+  /** 日夜面板画出来的全部读数拼成一串——轮询靠它判断"这一拍有没有东西真的变了"。 */
+  private dayNightSignature(): string {
+    const st = this.callbacks.getDayNightState();
+    return [
+      st.day, st.minutes, st.phase, st.sceneEnabled ? 1 : 0,
+      st.leaving.join(','), st.arriving.join(','),
+      st.managed.map((m) => `${m.id}:${m.present ? 1 : 0}`).join(','),
+    ].join('|');
+  }
+
   private stopDayNightPolling(): void {
     if (this.dayNightTimer !== null) {
       clearInterval(this.dayNightTimer);
@@ -132,12 +144,20 @@ export class DevModeUI {
   private syncDayNightPolling(): void {
     this.stopDayNightPolling();
     if (!this._isOpen || this.section !== 'daynight') return;
+    // 进分区时先记一次基线，否则第一拍必然"看着变了"、白重建一次
+    this.dayNightSig = this.dayNightSignature();
     this.dayNightTimer = setInterval(() => {
       // 面板被关掉/切走后残留的这一拍：自查后停表，不去动已清空的容器。
       if (!this._isOpen || this.section !== 'daynight') {
         this.stopDayNightPolling();
         return;
       }
+      // **读数没变就别重建**：rebuild 是整块面板拆了重画（Text 全部重造、鼠标悬停态清零），
+      // 每秒两次无条件重建等于让这块调试面板一直在抖。时刻只在动作推进时走，
+      // 绝大多数拍次快照与上一拍逐字相同。
+      const sig = this.dayNightSignature();
+      if (sig === this.dayNightSig) return;
+      this.dayNightSig = sig;
       this.rebuild();
     }, 500);
   }
@@ -278,7 +298,7 @@ export class DevModeUI {
         text,
         style: {
           fontSize: 14,
-          fill: dim ? UITheme.colors.hint : UITheme.colors.body,
+          fill: dim ? UITheme.colors.hintMid : UITheme.colors.body,
           fontFamily: UITheme.fonts.ui,
           wordWrap: true,
           wordWrapWidth: w - pad * 2,
@@ -370,7 +390,7 @@ export class DevModeUI {
     if (ids.length === 0) {
       const empty = createStyledText({
         text: 'No cutscenes defined.',
-        style: { fontSize: 14, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui },
+        style: { fontSize: 14, fill: UITheme.colors.hintMid, fontFamily: UITheme.fonts.ui },
       });
       empty.x = x + pad;
       empty.y = y + pad;
@@ -410,7 +430,7 @@ export class DevModeUI {
     if (entries.length === 0) {
       const empty = createStyledText({
         text: '未加载 water_minigames/index.json 或无条目。',
-        style: { fontSize: 14, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui },
+        style: { fontSize: 14, fill: UITheme.colors.hintMid, fontFamily: UITheme.fonts.ui },
       });
       empty.x = x + pad;
       empty.y = y + pad;
@@ -455,7 +475,7 @@ export class DevModeUI {
     if (entries.length === 0) {
       const empty = createStyledText({
         text: '无叙事编排（缺 data/dev_narrative_warps.json）。',
-        style: { fontSize: 14, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui },
+        style: { fontSize: 14, fill: UITheme.colors.hintMid, fontFamily: UITheme.fonts.ui },
       });
       empty.x = x + pad;
       empty.y = y + pad;
@@ -493,7 +513,7 @@ export class DevModeUI {
     const pad = 8;
     const loading = createStyledText({
       text: '加载场景列表…',
-      style: { fontSize: 14, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui },
+      style: { fontSize: 14, fill: UITheme.colors.hintMid, fontFamily: UITheme.fonts.ui },
     });
     loading.x = x + pad;
     loading.y = y + pad;
@@ -516,7 +536,7 @@ export class DevModeUI {
       if (entries.length === 0) {
         const empty = createStyledText({
           text: 'No scenes in list (check map_config / game_config).',
-          style: { fontSize: 14, fill: UITheme.colors.hint, fontFamily: UITheme.fonts.ui },
+          style: { fontSize: 14, fill: UITheme.colors.hintMid, fontFamily: UITheme.fonts.ui },
         });
         empty.x = x + pad;
         empty.y = y + pad;
@@ -559,7 +579,7 @@ export class DevModeUI {
 
     const playIcon = createStyledText({
       text: '>>',
-      style: { fontSize: 12, fill: UITheme.colors.subtle, fontFamily: UITheme.fonts.ui },
+      style: { fontSize: 12, fill: UITheme.colors.descText, fontFamily: UITheme.fonts.ui },
     });
     playIcon.x = w - playIcon.width - 12;
     playIcon.y = (h - playIcon.height) / 2;
@@ -604,7 +624,7 @@ export class DevModeUI {
 
     const label = createStyledText({
       text,
-      style: { fontSize: 13, fill: UITheme.colors.buttonText, fontFamily: UITheme.fonts.ui },
+      style: { fontSize: 13, fill: UITheme.colors.bodyMuted, fontFamily: UITheme.fonts.ui },
     });
     label.x = (w - label.width) / 2;
     label.y = (h - label.height) / 2;
@@ -643,7 +663,7 @@ export class DevModeUI {
       text,
       style: {
         fontSize: 14,
-        fill: active ? UITheme.colors.title : UITheme.colors.subtle,
+        fill: active ? UITheme.colors.title : UITheme.colors.descText,
         fontFamily: UITheme.fonts.ui,
         fontWeight: active ? 'bold' : 'normal',
       },

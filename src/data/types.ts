@@ -34,6 +34,15 @@ import cutsceneActionAllowlist from './cutscene_action_allowlist.json';
 export enum GameState {
   MainMenu = 'MainMenu',
   Exploring = 'Exploring',
+  /**
+   * 切场景/加载遮罩期间的独立状态（2026-08-18 拍板：加载中**绝不能**是 Exploring——
+   * 否则移动/交互/嗅探等探索输入系统在遮罩下全都活着，玩家乱按有实害）。
+   * 入口两处：直调 sceneManager.switchScene 时由 Game 的 scene:transition 钩子从 Exploring
+   * 迁入；switchScene/changeScene 动作通道由 ActionRegistry 从 Exploring/批锁 ActionSequence
+   * 预锁迁入（对话/过场内的跨场景切换沿用 Cutscene 锁，不经此态）。
+   * 揭幕（scene:revealed）即还权回 Exploring，onEnter 的开场演出从 Exploring 正常起跳。
+   */
+  SceneTransition = 'SceneTransition',
   /** 探索中下发的同步/异步指令链在执行中（不接收移动与场景交互），执行完或未占用则回到 Exploring */
   ActionSequence = 'ActionSequence',
   Dialogue = 'Dialogue',
@@ -432,6 +441,22 @@ export interface HotspotDisplayImage {
   spriteSort?: EntitySpriteSort;
 }
 
+/**
+ * 「进对话的这一下，这个实体要不要转身、转向哪」。
+ *
+ * 此前是写死的：NPC 一律转过来面对玩家、热点一律不动。可是这条街上有太多不该转身的东西——
+ * 背对着你剁馅的屠户、跪在灵前的孝子、钉在墙上的告示、只有一面能看的烤入背景人物；
+ * 也有该转身但玩家绕到了背后的（只想让他冲街心那侧）。所以做成逐实体可配。
+ *
+ * - `keep`   完全不碰朝向（进对话前是哪面，对话时还是哪面）
+ * - `left` / `right`  进对话时固定转向该侧（与 `initialFacing` / `displayImage.facing` 同语义）
+ * - `player` 转向玩家（NPC 的历史行为，仍是 NPC 的缺省）
+ *
+ * 缺省：**NPC = `player`，热点 = `keep`**——两边各自维持改造前的行为，旧数据零影响。
+ * 朝向只有左右镜像，不存在上下（见 entity-move-facing 机制卡）。
+ */
+export type DialogueFacing = 'keep' | 'left' | 'right' | 'player';
+
 export interface HotspotDef {
   id: string;
   type: HotspotType;
@@ -443,11 +468,15 @@ export interface HotspotDef {
    */
   planes?: string[];
   /**
-   * 时段归属（与 `planes` 同构的白名单）。**缺省 = 只在白日（`day`）出没**——
-   * 这个世界的人白天做事、天一擦黑就归家，「街上有人」是特例不是常态。
-   * 要让他在拂晓/黄昏也在，显式写 `["dawn","day","dusk"]`；要昼夜常驻就四段全写。
-   * 用于「整条街的群演」这类批量表达——有作息的具名角色请用 NPC 日程表
-   * （npc_schedules.json），两者正交。值须是 `game_config.dayNight.phases` 里的 id。
+   * 时段归属（与 `planes` 同构的白名单）。**缺省 = 只在标了 `daylight` 的那几段出没**
+   * ——这个世界的人白天做事、天一擦黑就归家，「街上有人」是特例不是常态。
+   * 哪几段算白天由内容侧在 `game_config.dayNight.phases[].daylight` 上标，代码不预设
+   * 任何时段 id（这条缺省的解析在 `dayTime.daylightPhaseIds`）。
+   *
+   * 要让他在别的时段也在，显式写上那几段的 id（如 `["辰","午","暮"]`）；
+   * 要昼夜常驻就把所有段写全。用于「整条街的群演」这类批量表达——有作息的具名角色
+   * 请用 NPC 日程表（npc_schedules.json），两者正交。
+   * 值须是 `game_config.dayNight.phases` 里的 id。
    *
    * ⚠ 只在场景 `dayNight.enabled` 时生效；没开日夜的场景完全不走时段过滤。
    * ⚠ 热点与 zone 的同名字段**不吃这个缺省**（它们缺省仍是全时段都在）。
@@ -470,6 +499,12 @@ export interface HotspotDef {
   label?: string;
   autoTrigger?: boolean;
   data: InspectData | PickupData | TransitionData | NpcHotspotData | EncounterTriggerData | ActSpotData;
+  /**
+   * 进入本热点的图对话时怎么摆朝向；语义见 {@link DialogueFacing}。
+   * **缺省 `keep`**（热点历来不转身）。只对配了 `displayImage` 的热点有意义——
+   * 没有展示图就没有可镜像的东西。对话结束恢复成进对话前的朝向。
+   */
+  dialogueFacing?: DialogueFacing;
   /** 可选：展示用贴图，底中锚点对齐 (x,y) */
   displayImage?: HotspotDisplayImage;
   /**
@@ -710,7 +745,36 @@ export interface DialogueLinePayload {
    * 用于两个 NPC 对谈也想各占一边的场合；与 portrait 同范式。
    */
   speakerSide?: SpeakerSide;
+  /**
+   * 可选：本拍配音。字符串 = audio_config.sfx id；对象可写 `{ id, volume, hold }`。
+   * `hold: true` = 本拍点完不停、把配音留给后续拍（一条长配音配几句短台词）。
+   * **不作节点级默认**（节点级 voice 只对无 `lines` 的单拍生效）——各拍配音必然各是一条，
+   * 默认继承只会让同一条声音在每拍重播。
+   */
+  voice?: VoiceSpecData;
+  /**
+   * 可选：本拍如何推进。`"voice"` = 配音自然播完自动推进（自己没配音时接管前面
+   * `hold` 留下的那条，语义即"跟着前面那条配音一起结束"）；正数 = 毫秒定时；
+   * 缺省 = 等玩家点击。两种自动模式下点击仍可提前推进。
+   */
+  autoAdvance?: VoiceAdvanceData;
 }
+
+/**
+ * 配音字段的**数据侧**形态（运行时解析见 systems/VoiceChannel.parseVoiceSpec）。
+ * 字符串形态等价于只写 id；两种形态在所有台词面（过场字幕 / 过场对话框 /
+ * playScriptedDialogue 行 / 图对话拍 / 头顶气泡）完全一致。
+ */
+export type VoiceSpecData = string | {
+  id?: string;
+  /** 历史别名，与 id 等价 */
+  sfxId?: string;
+  volume?: number;
+  hold?: boolean;
+};
+
+/** 自动推进字段的数据侧形态：`"voice"` 或正毫秒数。 */
+export type VoiceAdvanceData = 'voice' | number;
 
 export interface GraphChoiceOptionDef {
   id: string;
@@ -741,6 +805,10 @@ export type DialogueGraphNodeDef =
       bubbleAnchorY?: number;
       /** 可选：说话气泡缩放，作各拍默认；见 DialogueLinePayload.bubbleScale */
       bubbleScale?: number;
+      /** 可选：本节点配音（**仅单拍节点生效**；多拍一律写在 lines[].voice 上，节点级不作默认） */
+      voice?: VoiceSpecData;
+      /** 可选：本节点推进方式（同上，仅单拍节点生效） */
+      autoAdvance?: VoiceAdvanceData;
       /** 多拍连续对白（每拍仍需点击继续）；若存在则按顺序播放，且首拍应与 speaker/text/textKey 一致（可由编辑器镜像） */
       lines?: DialogueLinePayload[];
       next: string;
@@ -1035,6 +1103,11 @@ export interface NpcDef {
    * 缺省为 right。对话/巡逻中仍可由逻辑改写朝向。
    */
   initialFacing?: 'left' | 'right';
+  /**
+   * 进入本 NPC 对话时怎么摆朝向；语义见 {@link DialogueFacing}。
+   * **缺省 `player`**（转向玩家，即改造前的写死行为）。对话结束恢复成进对话前的朝向。
+   */
+  dialogueFacing?: DialogueFacing;
   patrol?: PatrolDef;
   /**
    * 可选：相对场景 JSON 中 NPC 锚点 (x,y) 的局部多边形；与 `collisionPolygonLocal` 配合。
@@ -1327,6 +1400,34 @@ export interface RuleFragmentDef {
 // 物件数据
 // ============================================================
 
+/**
+ * 物件的**自身用途**：玩家在背包里对它主动执行的一次行为（吃掉、点燃、撕开）。
+ *
+ * 与「对着场景里某个东西用」是两回事——后者归物件检视的用物表
+ * （`ObjectExamineItemUseDef`，按热区登记），两者互不覆盖、互不拼接。
+ *
+ * 设计上分成**声明式**（label/conditions/disableHint/consume）与**命令式**（actions/resultText）
+ * 两半：前者必须能在玩家点下去**之前**求值，UI 才画得出灰态与理由；把"能不能用"的判断
+ * 写进 actions 里会让按钮态、婉拒文案、引导提示全部失去依据（见 ResolvedItemUse）。
+ */
+export interface ItemUseDef {
+  /** 按钮文字，如「吃掉」「点燃」「撕开」；可含 [tag:…] */
+  label: string;
+  /** 可用条件；空/缺省＝恒可用 */
+  conditions?: ConditionExpr[];
+  /** 条件不满足时按钮的置灰理由；缺省用 strings.inventory.useDisabled */
+  disableHint?: string;
+  /**
+   * 使用后是否扣掉一个。缺省按类型推定：`consumable` 扣、`key` 不扣
+   * （关键道具默认不因使用而消失，见玩法清单 F1b）。
+   */
+  consume?: boolean;
+  /** 缺省/空＝纯叙述型使用（只扣除 + 只出 resultText），编辑器按空键删除的惯例不写该键 */
+  actions?: ActionDef[];
+  /** 执行完另起一段 InspectBox 展示；可含 [tag:…] */
+  resultText?: string;
+}
+
 export interface ItemDef {
   id: string;
   name: string;
@@ -1341,6 +1442,29 @@ export interface ItemDef {
   dynamicDescriptions?: { conditions: ConditionExpr[]; text: string }[];
   buyPrice?: number;
   maxStack: number;
+  /**
+   * 民俗类别标签（辟邪 / 食物 / 引火 / 信物 / 沾秽…）。**给系统看的分类，不是玩家可见文案**：
+   * 让"用点"按类别接受物件，不必逐个点名 id。受控词表由校验器兜（同义词会让按类别匹配失效）。
+   */
+  tags?: string[];
+  /** 自身用途；缺省＝该物件在背包里没有使用入口 */
+  use?: ItemUseDef;
+}
+
+/**
+ * `ItemUseDef` 的求值结果——UI 只读这个，**不碰 `actions`**。
+ *
+ * 与遭遇选项的 `ResolvedOption` 同构（`enabled` + `disableReason`）：都是"点下去之前
+ * 就得知道结果"的查询产物。`consume` 已把类型缺省推定折进来，下游不再各自推一遍。
+ */
+export interface ResolvedItemUse {
+  itemId: string;
+  label: string;
+  enabled: boolean;
+  disableReason?: string;
+  consume: boolean;
+  actions: ActionDef[];
+  resultText?: string;
 }
 
 // ============================================================
@@ -1523,9 +1647,60 @@ export type NpcInitialAnimPlayback = Pick<
 >;
 
 // ============================================================
-// 对话记录
+// 事件日志（玩法文档 K3）
 // ============================================================
 
+/**
+ * 日志条目的跳转目标。
+ *
+ * id 一律是**领域事件原样带出的那个 id**——日志不做二次解析、不猜。
+ *
+ * ⚠ 这里**没有** `scene`：设计稿一度写了"地点条目跳地图高亮"，但现网没有任何领域事件
+ * 携带场景 id（任务的地点在目标的 `guidance` 上，会随目标推进而变，烘进日志条目必然过时）。
+ * 与其留一条没有生产者的死路，不如等真出现"这条日志指向某地"的内容需求时再加。
+ */
+export type GameLogLink =
+  | { kind: 'quest'; id: string }
+  | { kind: 'item'; id: string }
+  | { kind: 'clue'; id: string }
+  | { kind: 'rule'; id: string }
+  | { kind: 'archive'; id: string; bookType: string };
+
+/** 日志通道。`dialogue` 之外的一律算"事件"——过滤开关与未读点都用这一条口径。 */
+export type GameLogChannel = 'dialogue' | 'quest' | 'item' | 'clue' | 'rule' | 'archive';
+
+export interface GameLogEntry {
+  /** 单调递增序号（**不是**时间戳）：跨会话稳定，兼作未读游标与行的稳定 key */
+  seq: number;
+  channel: GameLogChannel;
+  /** line/choice/header 是对话通道的三种形态；其余通道一律 event */
+  type: 'line' | 'choice' | 'header' | 'event';
+  /** 仅对话行：说话人 */
+  speaker?: string;
+  /** 正文，**存原始带标记文本**（`[c:]`/`[tag:]` 原样入档，显示时即时解析） */
+  text: string;
+  /** 有就可点：整行是热区，点它跳到目标面板并选中该条 */
+  link?: GameLogLink;
+  /** 合并计数（相邻同目标合并，如连拿三张纸钱并成一条 ×3） */
+  count?: number;
+  /** 合并时重算 `text` 用的主语（物品名等）。不直接显示，只是重算的原料 */
+  subject?: string;
+  /** 游戏内时刻，用于按「第几日·哪个时段」分组；缺省 = 无日夜信息（早期存档/测试） */
+  stamp?: { day: number; phase: string };
+}
+
+/** 日志面板的只读数据口（UI→系统 单向依赖，组装层注入） */
+export interface IGameLogDataProvider {
+  getEntries(): readonly GameLogEntry[];
+  /** 未读**事件**条数（对话行不计——每句台词都算未读的话，点永远亮着，等于没有） */
+  unreadCount(): number;
+  markAllSeen(): void;
+}
+
+/**
+ * 旧存档桶 `data.dialogueLog` 的条目形状。
+ * **仅供 GameLogManager 迁移读取**——新写入一律走 {@link GameLogEntry}。
+ */
 export interface DialogueLogEntry {
   type: 'line' | 'choice';
   speaker?: string;
@@ -1551,6 +1726,10 @@ export interface DialogueLine {
   bubbleScale?: number;
   /** 本行所属对话是否压暗场景（startDialogueGraph 动作可选项 dimBackground；默认不压） */
   dim?: boolean;
+  /** 本行配音（原样透传自 DialogueLinePayload / playScriptedDialogue 行）；由 DialogueVoiceDirector 消费 */
+  voice?: VoiceSpecData;
+  /** 本行推进方式（同上）；`"voice"` 由 DialogueVoiceDirector 驱动自动推进 */
+  autoAdvance?: VoiceAdvanceData;
 }
 
 /** `dialogue:start` / `dialogue:end` 事件来源：脚本台词（DialogueManager）或图对话（GraphDialogueManager） */
@@ -1676,7 +1855,15 @@ export type EmoteBubbleOffsetOpts = {
   anchorY?: number;
   /** 本次气泡的缩放覆盖；缺省 = 用全局 `game_config.emoteBubbleScale`。 */
   scale?: number;
+  /**
+   * 「墨匣」皮肤分型（2026-08-18 气泡重设计定稿）：speech=剧情对白（满档，缺省）；
+   * chatter=氛围碎嘴（底/勾线/字各弱一档，环境音不与剧情话同权重）；
+   * emote=神情符号（烛金放大 1.6 倍、近方形小泡）。只影响外观，不影响任何行为。
+   */
+  variant?: EmoteBubbleVariant;
 };
+
+export type EmoteBubbleVariant = 'speech' | 'chatter' | 'emote';
 
 /** 气泡缩放夹取范围：小于下限看不清，大于上限一句话糊住半个屏幕 */
 export const EMOTE_BUBBLE_SCALE_MIN = 0.3;
@@ -1749,6 +1936,10 @@ export interface ActionStep extends CutsceneStepDisableFlag {
  * 声音随字幕存在，玩家点击推进或跳过过场时会立即停止并释放该条字幕的播放实例。
  * 另可选用 `subtitleAutoAdvance`：`"voice"`=配音**自然播完**后自动推进（配音缺失 / 加载失败 / 手动停止
  * 不触发，退化为等待点击）；正数=展示该毫秒数后自动推进。两种模式下玩家点击仍可提前推进；缺省=等待点击。
+ * `showDialogue` / `showSubtitle` 另可选用 `typewriter`（真布尔）：本拍逐字显示与否。
+ * **缺省按台词面分家**——对白框逐字、字幕整句上屏；只在偏离缺省时写这个键。
+ * 玩家在设置页关掉逐字则一律整句（玩家偏好压过编排）；逐字期间点击**只补完当前这句**，
+ * 补完后再点才推进本拍。
  * 单独 Action `showEmoteAndWait` / `showSpeechBubbleAndWait` 仍完全由 `duration` 控制消失与 await。
  * `showImg` 另可选用 `kenBurns`（见 CutsceneKenBurns）：全屏插画缓推缓移，不阻塞后续步骤；
  * 另可选用 `zIndex`（数值，越大越靠前，缺省 0）：多层视差合成时决定叠层顺序，电影黑边恒 10000 之下。
@@ -1917,6 +2108,13 @@ export interface CharacterEntry {
   id: string;
   name: string;
   title: string;
+  /**
+   * 人物簿头像：对话立绘集目录名（`resources/runtime/images/dialogue_portraits/<slug>/`），
+   * 与 `NpcDef.portraitSlug` / `DialoguePortraitRef.slug` 同一 slug 语义——复用对话立绘
+   * 切片管线的产物，可用值即该目录下的子目录名（character_registry / 场景 NPC 同源）。
+   * 人物簿固定取该集的 calm（平静）表情帧；不设或缺图则不显头像（RichContent 占位块兜底）。
+   */
+  portrait?: string;
   impressions: { text: string; conditions: ConditionExpr[] }[];
   knownInfo: { text: string; conditions: ConditionExpr[] }[];
   /** 玩家第一次在档案中点开该人物时执行（仅一次，记入存档） */
@@ -1970,6 +2168,34 @@ export interface SlangCategoryView {
 
 /** 怪话册总进度 */
 export interface SlangProgress {
+  collected: number;
+  total: number;
+  allComplete: boolean;
+  /** 全册集齐时显示的评语（未集齐为空串） */
+  allCompleteText: string;
+}
+
+/**
+ * 歪歌册条目。与怪话册同为「系统替文盲记账」的成就式搜集册，纯 flavor：只能被读、不能被用。
+ * 收民间连锁调式歪童谣；内容口径（宁冷勿俗、注释不提历史人物）见玩法功能需求清单 K5 书六。
+ */
+export interface RhymeEntry {
+  id: string;
+  /** 标题，如「张打铁」 */
+  title: string;
+  /** 顺口溜完整原文，多行用 \n */
+  content: string;
+  /** 在哪听来的（采风口径） */
+  source: string;
+  /** 末尾那句拆台备注（可空） */
+  note?: string;
+  unlockConditions: ConditionExpr[];
+  /** 玩家第一次在档案中点开该条目时执行（仅一次） */
+  firstViewActions?: ActionDef[];
+}
+
+/** 歪歌册总进度（暂无分类，全册一个进度） */
+export interface RhymeProgress {
   collected: number;
   total: number;
   allComplete: boolean;
@@ -2344,6 +2570,17 @@ export interface DayPhaseDef {
   from: string;
   /** 只给编辑器/调试看的中文名（如「入夜」）；不参与任何判定。 */
   label?: string;
+  /**
+   * **语义角色：这一段「人在外面做事」。** 未写 `phases` 的 NPC（龙套/群演）
+   * 就只在打了这个标记的段里出现，见 `dayTime.daylightPhaseIds`。
+   *
+   * 存在的理由：**代码不许记住时段 id**。`id` 是内容侧的设定（辰/午/暮/夜，
+   * 想改名、拆段、加段都随意），代码只认这个角色标记，于是词表怎么换都对不上不了。
+   * 2026-08-18 之前这里是代码常量 `['day']`，内容侧一换词表就整条街空了还不报错。
+   *
+   * 一段都没标 = NPC 缺省不施加限制（全时段都在）并告警——宁可多几个人，绝不静默清空。
+   */
+  daylight?: boolean;
 }
 
 export interface DayNightConfig {
@@ -2514,6 +2751,8 @@ export interface IInventoryDataProvider {
   getItemDescription(id: string): string;
   getItemCount(id: string): number;
   canDiscard(id: string): boolean;
+  /** 该物件此刻的使用态；没配 `use` 返回 null（＝面板不画使用键） */
+  resolveItemUse(id: string): ResolvedItemUse | null;
 }
 
 export interface IRulesDataProvider {
@@ -2537,7 +2776,7 @@ export interface IRulesDataProvider {
 export interface IArchiveDataProvider {
   /** 将档案/书籍等 JSON 正文中的 [tag:…] 展开为当前展示文案 */
   resolveLine(raw: string | undefined): string;
-  hasUnread(bookType: 'character' | 'lore' | 'document' | 'book' | 'slang'): boolean;
+  hasUnread(bookType: 'character' | 'lore' | 'document' | 'book' | 'slang' | 'rhyme'): boolean;
   getUnlockedCharacters(): CharacterEntry[];
   getCharacterVisibleImpressions(entry: CharacterEntry): string[];
   getCharacterVisibleInfo(entry: CharacterEntry): string[];
@@ -2546,6 +2785,9 @@ export interface IArchiveDataProvider {
   /** 怪话册：按分类分组，含未解锁灰槽（刻意返回全部条目，不做已解锁过滤） */
   getSlangCategories(): SlangCategoryView[];
   getSlangProgress(): SlangProgress;
+  /** 歪歌册：flat 列表，含未解锁灰槽（刻意返回全部条目，不做已解锁过滤） */
+  getRhymeList(): { entry: RhymeEntry; unlocked: boolean }[];
+  getRhymeProgress(): RhymeProgress;
   getBooks(): BookDef[];
   getUnlockedBooks(): BookDef[];
   /** 左侧树：章节 → 子条目（含解锁状态） */
@@ -2567,9 +2809,23 @@ export interface IZoneDataProvider {
   getCurrentRuleSlots(): ZoneRuleSlot[];
 }
 
+/**
+ * 可独立调音量的音频通道。**对白单独一条不是设计洁癖**:玩家把音效压低时
+ * 台词必须还听得见(听障/外语玩家更依赖它),这是有对白的游戏的通行做法。
+ */
+export type AudioChannel = 'bgm' | 'sfx' | 'ambient' | 'voice';
+
 export interface IAudioSettingsProvider {
-  getVolume(channel: 'bgm' | 'sfx' | 'ambient'): number;
-  setVolume(channel: 'bgm' | 'sfx' | 'ambient', vol: number): void;
+  getVolume(channel: AudioChannel): number;
+  setVolume(channel: AudioChannel, vol: number): void;
+  /**
+   * 「松手试听」：玩家把某条音量滑条**停下**之后，按刚调好的响度放一声样本。
+   *
+   * 没有它的话，`sfx` 那条是**完全哑的**——音效只在事件发生时才响，玩家在设置页里
+   * 把滑条从 20% 拖到 80% 全程听不到任何变化，等于在盲调（bgm/ambient 是实时生效的，
+   * 拖的时候本来就听得见，所以那两条只在**当前没出声**时才补这一声）。
+   */
+  previewVolume(channel: AudioChannel): void;
 }
 
 /**

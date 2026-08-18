@@ -10,6 +10,7 @@ from typing import Literal
 
 from PySide6.QtCore import QObject, QUrl
 from PySide6.QtGui import QDesktopServices
+from tools.atomic_io import retry_transient
 
 try:
     from natsort import natsorted
@@ -119,7 +120,7 @@ def move_to(dest_dir: str, src_paths: list[str], overwrite: bool = False) -> Fil
                     shutil.rmtree(t)
                 elif t.is_file() or t.is_symlink():
                     t.unlink()
-            shutil.move(str(s), str(t))
+            retry_transient(shutil.move, str(s), str(t))
             r.add_ok(str(t))
         except OSError as e:
             r.add_fail(sp, str(e))

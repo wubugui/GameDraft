@@ -26,6 +26,14 @@ export interface EventBridgeDeps {
   inspectBox: { show(text: string): Promise<void> };
   /** travel 槽第二道闸（第一道在 map 面板 openGuard）：返回 false 拒绝快速旅行并自行提示 */
   guardMapTravel: () => boolean;
+  /**
+   * 使用物件时的扣除通道，返回**是否真的扣到了**。
+   *
+   * 不走 action 通道的 `removeItem`：那条把 `InventoryManager.removeItem` 的返回值 `void` 掉了，
+   * 扣不动与扣到了长得一模一样，用在"扣不到就不许往下跑"的判据上等于没判
+   * （不变量「失败不得伪装成功」；同族教训见 inventory-capacity-critical 卡）。
+   */
+  consumeItem: (itemId: string, count: number) => boolean;
 }
 
 export class EventBridge {
@@ -35,6 +43,8 @@ export class EventBridge {
   /** 本次页面生命周期内是否已开过局（首次「新游戏」或从游戏内返回主菜单都算）。
    *  开过局后内存里全是旧局状态，「新游戏」必须整页重启才能零残留（R20）。 */
   private hasStartedSession = false;
+  /** `item:use` 在途锁：扣除 + 结算动作含 await，期间禁止再次进入（重复消耗/重复结算）。 */
+  private itemUseInFlight = false;
 
   constructor(eventBus: EventBus, deps: EventBridgeDeps) {
     this.eventBus = eventBus;
@@ -176,6 +186,42 @@ export class EventBridge {
         if (stateController.currentState === GameState.UIOverlay) {
           stateController.setState(GameState.Exploring);
         }
+      }
+    });
+
+    /**
+     * 背包里主动使用物件（ItemDef.use）。与 `ruleUse:apply` 同构，另加两道：
+     *
+     * 1. **先扣后跑**——与遭遇选项 `EncounterManager.chooseOption` 同序；且扣不到就整件事
+     *    取消，一条 action 都不跑。扣除排在关面板之前：失败时画面上什么都没发生过。
+     * 2. **在途锁**——`actions` 含 await，其间面板尚未真正卸掉输入的一帧内可能再点一次；
+     *    没有这把锁就是重复消耗 + 重复结算（遭遇那边靠 `resolving` + 清空选项双保险）。
+     */
+    this.listen('item:use', async (p: {
+      itemId: string; consume: boolean; actions: ActionDef[]; resultText?: string;
+    }) => {
+      if (this.itemUseInFlight) return;
+      this.itemUseInFlight = true;
+      try {
+        if (p.consume && !this.deps.consumeItem(p.itemId, 1)) {
+          console.warn(`EventBridge: item:use「${p.itemId}」扣除失败，已取消本次使用`);
+          return;
+        }
+        stateController.closePanel('inventory');
+        try {
+          await actionExecutor.executeBatchAwait(p.actions);
+        } catch (e) {
+          console.warn('EventBridge: item:use actions failed', e);
+        }
+        if (p.resultText) {
+          stateController.setState(GameState.UIOverlay);
+          await inspectBox.show(p.resultText);
+          if (stateController.currentState === GameState.UIOverlay) {
+            stateController.setState(GameState.Exploring);
+          }
+        }
+      } finally {
+        this.itemUseInFlight = false;
       }
     });
   }

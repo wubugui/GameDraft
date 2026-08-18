@@ -9,13 +9,13 @@
     {
       "id": "lore_li_tiangou_story",
       "title": "李天狗除魃的说书段子",
-      "content": "张叨叨今日摆的，是崂山道士李天狗捡天书、上神仙顶途中撞见摸坟的客放出旱魃的故事。张叨叨说那道士与旱魃大战三百回合，最后拂袖而去，连赏钱都不收。听着像胡吹，可也怪勾人。",
+      "content": "张叨叨今日摆的，是崂山道士李天狗捡[clue:tianshu]天书[/clue]、上神仙顶途中撞见摸坟的客放出旱魃的故事。张叨叨说那道士与旱魃大战三百回合，最后拂袖而去，连赏钱都不收。听着像胡吹，可也怪勾人。\n\n[img:images/illustrations/li_tiangou_story.png|wide]\n[caption]张叨叨的说书场：李天狗大战旱魃",
       "source": "说书人张叨叨",
       "category": "legend",
       "unlockConditions": [
         {
           "narrative": "flow_xungou_main",
-          "state": "s01_tingshu",
+          "state": "state_2",
           "reached": true
         }
       ]
@@ -23,7 +23,7 @@
     {
       "id": "lore_ghost_mountain",
       "title": "城隍庙后山怪谈",
-      "content": "据说城隍庙后山每到三更天就有白色身影出没，还会唱戏。有个胆大的人去看了，回来之后疯了，整天嘟囔着《红楼》里的曲词。老百姓都说那是鬼在唱堂会。",
+      "content": "据说城隍庙后山每到三更天就有[clue:houshan_sangeng]白色身影[/clue]出没，还会唱戏。有个胆大的人去看了，回来之后疯了，整天嘟囔着《红楼》里的曲词。老百姓都说那是鬼在唱堂会。",
       "source": "说书人张叨叨",
       "category": "legend",
       "unlockConditions": [
@@ -35,7 +35,7 @@
     {
       "id": "lore_yanwang_ridge",
       "title": "阎王岭传说",
-      "content": "城北有一片死黑死黑的山脉叫做阎王岭。老辈子传下来的话：人死了，魂往北走，过了阎王岭就回不来了。但偏偏有不少活人往那边跑——找金子的、找药的、自称能通阴阳的。去的人多，回来的人少，[tag:string:place:wujin]人管他们叫短命娃娃。",
+      "content": "城北有一片死黑死黑的山脉叫做[clue:yanwang_ridge]阎王岭[/clue]。老辈子传下来的话：人死了，魂往北走，过了阎王岭就回不来了。但偏偏有不少活人往那边跑——找金子的、找药的、自称能通阴阳的。去的人多，回来的人少，[tag:string:place:wujin]人管他们叫短命娃娃。",
       "source": "说书人张叨叨",
       "category": "geography",
       "unlockConditions": [
@@ -67,7 +67,7 @@
       "unlockConditions": [
         {
           "narrative": "flow_xungou_main",
-          "state": "s01_tingshu",
+          "state": "state_2",
           "reached": true
         }
       ]

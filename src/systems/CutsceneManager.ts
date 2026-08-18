@@ -5,10 +5,18 @@ import type { AssetManager } from '../core/AssetManager';
 import type { InputManager } from '../core/InputManager';
 import type { CutsceneRenderer, ShowSubtitleLayout, CutsceneCameraEasing } from '../rendering/CutsceneRenderer';
 import type { Camera } from '../rendering/Camera';
-import type { ICutsceneActor, IEmoteBubbleAnchor, IEmoteBubbleProvider, EmoteBubbleOffsetOpts, NpcDef, IGameSystem, GameContext, NewCutsceneDef, CutsceneStep, CutsceneKenBurns, ICutsceneAudioPlayer, AudioPlaybackHandle, ParallaxSceneDef, DialoguePortraitRef } from '../data/types';
+import type { ICutsceneActor, IEmoteBubbleAnchor, IEmoteBubbleProvider, EmoteBubbleOffsetOpts, NpcDef, IGameSystem, GameContext, NewCutsceneDef, CutsceneStep, CutsceneKenBurns, ICutsceneAudioPlayer, ParallaxSceneDef, DialoguePortraitRef } from '../data/types';
 import { CUTSCENE_ACTION_WHITELIST, CUTSCENE_ANON_SHOT_ID } from '../data/types';
 import { Npc } from '../entities/Npc';
 import { splitSpeakerBodyAfterResolve } from '../core/resolveText';
+import {
+  readVoiceSpec,
+  readVoiceAdvanceSpec,
+  type VoiceChannel,
+  type VoiceBeatTicket,
+  type VoiceSpec,
+  type VoiceAdvanceSpec,
+} from './VoiceChannel';
 import { DEFAULT_SPEAKER_SIDE, type SpeakerSide } from '../utils/dialogueSpeakerSide';
 import { TEXT_URLS } from '../core/projectPaths';
 
@@ -108,6 +116,20 @@ function resolveCutsceneImageHandle(raw: unknown): string {
 }
 
 const CUTSCENE_CAMERA_EASINGS: ReadonlySet<string> = new Set(['linear', 'easeIn', 'easeOut', 'easeInOut']);
+
+/**
+ * 本拍要不要逐字显示。**缺省按台词面分家**：过场对白框默认逐字（与常规对话框同一种阅读体验），
+ * 字幕默认整句上屏（旁白/画外音多是短句，逐字反而拖节奏、还常配着定时或配音推进）。
+ * 数据写 `typewriter` 才覆盖缺省，且**只认真布尔**（与 `disabled` 同口径：`"true"` / 1 不算，
+ * 免得一处笔误静默改掉演出）。玩家在设置页关掉逐字则一律整句——那是玩家偏好，压过编排。
+ */
+function readTypewriterFlag(step: Record<string, unknown>, dflt: boolean): boolean {
+  const raw = step.typewriter;
+  return typeof raw === 'boolean' ? raw : dflt;
+}
+
+/** Esc 跳过的二次确认窗口：首按提示后，这段时间内再按 Esc 才真跳过 */
+const SKIP_CONFIRM_WINDOW_MS = 3000;
 
 /** cameraMove / cameraZoom 步骤的可选 easing；非法值当缺省（沿用各自历史默认曲线） */
 function parseCameraEasing(raw: unknown): CutsceneCameraEasing | undefined {
@@ -216,6 +238,9 @@ export class CutsceneManager implements IGameSystem {
   private unsubKey: (() => void) | null = null;
   private destroyed = false;
   private skipping = false;
+  /** Esc 跳过的二次确认：首按时刻（0=未武装）；限时窗口内再按才真 skip */
+  private skipArmedAt = 0;
+  private skipConfirmTextProvider: (() => string) | null = null;
   /** dev-only「从第 N 步开播」：顶层前 N 步瞬时执行（零时长补间、跳过等待/对白/音效），
    *  到第 N 步复位为常速。目的是把画面状态（底图/图层/黑边/相机/演员站位）建起来再排演，
    *  而不是从缺底图的空壳开始。只由 devPlayCutscene 传入，正式播放路径恒为 false。 */
@@ -251,7 +276,12 @@ export class CutsceneManager implements IGameSystem {
   /** 与 Game.resolveDisplayText 同源；过场字幕在此解析后再交给 CutsceneRenderer（避免绕开统一解析链）。 */
   private displayTextResolver: ((s: string) => string) | null = null;
   private sceneManagerAPI: SceneManagerCutsceneAPI | null = null;
-  private activeSubtitleVoiceStops = new Set<() => void>();
+  /**
+   * 配音通道（组装层注入，与世界对话共用同一条）：过场里起的配音由它持有，
+   * 跨拍留声（`voice.hold`）也在它那记账。未注入时所有配音退化为不发声、
+   * 「跟随配音推进」退化为等点击。
+   */
+  private voiceChannel: VoiceChannel | null = null;
 
   constructor(
     eventBus: EventBus,
@@ -275,6 +305,8 @@ export class CutsceneManager implements IGameSystem {
       }
       if (this.dialogueResolve) {
         if (now < this.dialogueAdvanceNotBefore) return;
+        /** 「先补完、再点才过拍」：还在逐字时这一下只把台词补满，不推进（与 DialogueUI 同口径）。 */
+        if (this.cutsceneRenderer.completeTypewriters()) return;
         const r = this.dialogueResolve;
         this.dialogueResolve = null;
         this.dialogueAdvanceNotBefore = 0;
@@ -305,8 +337,18 @@ export class CutsceneManager implements IGameSystem {
     this.inputManager = im;
   }
 
+  /** 跳过确认提示文案（组装层从 strings 注入；系统层不 import UI/StringsProvider）。 */
+  setSkipConfirmTextProvider(fn: (() => string) | null): void {
+    this.skipConfirmTextProvider = fn;
+  }
+
   setAudioManager(audioManager: ICutsceneAudioPlayer): void {
     this.audioManager = audioManager;
+  }
+
+  /** 配音通道（与世界对话共用同一条，组装层注入）；不注入时过场配音整体退化为不发声。 */
+  setVoiceChannel(channel: VoiceChannel): void {
+    this.voiceChannel = channel;
   }
 
   setEntityResolver(resolver: EntityResolver): void {
@@ -530,6 +572,7 @@ export class CutsceneManager implements IGameSystem {
     if (this.playing) return;
     this.playing = true;
     this.skipping = false;
+    this.skipArmedAt = 0;
     this.fastForwarding = false;
     /** 本次会话的代际快照：steps 执行与 finally 收尾据此判断是否已被 skip / 读档 / 拆除作废 */
     const stepEpochAtStart = this.stepEpoch;
@@ -552,7 +595,21 @@ export class CutsceneManager implements IGameSystem {
       if (e.repeat) return;
       if (e.code === 'Escape') {
         e.preventDefault();
-        this.skip();
+        // Esc 跳过要**二次确认**：整段演出一键蒸发与「Esc=关面板」的肌肉记忆撞车，
+        // 手滑代价是不可逆的（审查 P1）。首按提示、限时窗口内再按才真跳。
+        const now = performance.now();
+        if (now - this.skipArmedAt <= SKIP_CONFIRM_WINDOW_MS) {
+          this.skipArmedAt = 0;
+          this.skip();
+        } else {
+          this.skipArmedAt = now;
+          this.eventBus.emit('notification:show', {
+            text: this.skipConfirmTextProvider?.() ?? '再按一次 Esc 跳过',
+            type: 'info',
+            // 过场里 toast 被「电影化静默」压队，本条恰恰只在过场里有意义：走系统优先级
+            priority: 'system',
+          });
+        }
         return;
       }
       if (
@@ -682,7 +739,8 @@ export class CutsceneManager implements IGameSystem {
     /** R9：推进 step 代际——被 parallel race 放弃的在途轨道在 `skipping` 于 finally 复位后
      *  仍会从当前 await 归来，靠代际不再执行后续步（残留 tween / 加回图片 / 对已销毁演员操作） */
     this.stepEpoch++;
-    this.stopActiveSubtitleVoices();
+    /** 跳过是中断路径：在播的配音（含 hold 留声的）立即闭嘴，别跟着跳过后的画面继续念 */
+    this.voiceChannel?.stopAll();
     this.cutsceneRenderer.abortCutsceneOps();
     if (this.waitClickResolve) {
       const r = this.waitClickResolve;
@@ -1096,9 +1154,12 @@ export class CutsceneManager implements IGameSystem {
           ? this.scriptedSpeakerIsSelfResolver(rawSpeaker, scriptedNpcId || undefined)
           : false;
         const merged = this.mergePresentShowDialogueLine(step.text as string, speakerOut);
+        const stepRec = step as Record<string, unknown>;
         await this.showDialogueText(
           merged.text, merged.speaker, portrait, speakingAnchor,
           parsePresentBubbleOpts(step), side, isSelf,
+          readVoiceSpec(stepRec), readVoiceAdvanceSpec(stepRec),
+          readTypewriterFlag(stepRec, true),
         );
         break;
       }
@@ -1155,15 +1216,20 @@ export class CutsceneManager implements IGameSystem {
       case 'hideMovieBar':
         this.cutsceneRenderer.hideMovieBar();
         break;
-      case 'showSubtitle':
+      case 'showSubtitle': {
+        /** `subtitleVoice` / `subtitleAutoAdvance` 是本能力铺开到全部台词面之前的旧键名，
+         *  仍原样读（编辑器已改写新键，旧数据不至于一开工程就哑）。 */
+        const subRec = step as Record<string, unknown>;
         await this.showSubtitleText(
           step.text as string,
-          this.resolveShowSubtitleLayout(step as Record<string, unknown>),
-          this.parseSubtitleEmoteSpec(step as Record<string, unknown>),
-          this.parseSubtitleVoiceSpec(step as Record<string, unknown>),
-          this.parseSubtitleAutoAdvanceSpec(step as Record<string, unknown>),
+          this.resolveShowSubtitleLayout(subRec),
+          this.parseSubtitleEmoteSpec(subRec),
+          readVoiceSpec(subRec, ['voice', 'subtitleVoice']),
+          readVoiceAdvanceSpec(subRec, ['autoAdvance', 'subtitleAutoAdvance']),
+          readTypewriterFlag(subRec, false),
         );
         break;
+      }
       case 'cameraMove':
         await this.cutsceneRenderer.cameraMove(
           step.x as number, step.y as number,
@@ -1298,31 +1364,18 @@ export class CutsceneManager implements IGameSystem {
     bubbleOpts?: EmoteBubbleOffsetOpts,
     side: SpeakerSide = DEFAULT_SPEAKER_SIDE,
     isSelf: boolean = false,
+    voice: VoiceSpec | null = null,
+    autoAdvance: VoiceAdvanceSpec | null = null,
+    typewriter: boolean = true,
   ): Promise<void> {
-    const box = this.cutsceneRenderer.showDialogueBox(text, speaker, portrait, side, isSelf);
+    const box = this.cutsceneRenderer.showDialogueBox(text, speaker, portrait, side, isSelf, typewriter);
     /** 说话人头顶「……」气泡：与本步同生命周期,finally 撤;skip/读档/拆除经 cleanup 定向清 CUTSCENE_EMOTE_OWNER 兜底。 */
     const dismissSpeakingBubble = speakingAnchor && this.emoteBubbleProvider
       ? this.emoteBubbleProvider.showSticky(speakingAnchor, '……', bubbleOpts, CUTSCENE_EMOTE_OWNER)
       : null;
+    const ticket = this.beginBeatVoice(voice, autoAdvance);
     try {
-      await new Promise<void>(resolve => {
-        const arm = () => {
-          /** 同 waitForClick：arming 窗口内已 skip / 读档 / 拆除则立即落地 */
-          if (!this.canArmWait()) {
-            resolve();
-            return;
-          }
-          this.dialogueAdvanceNotBefore = performance.now() + 120;
-          this.dialogueResolve = () => {
-            this.dialogueResolve = null;
-            this.dialogueAdvanceNotBefore = 0;
-            resolve();
-          };
-        };
-        requestAnimationFrame(() => {
-          requestAnimationFrame(arm);
-        });
-      });
+      await this.awaitBeatDismiss(ticket, autoAdvance);
     } finally {
       dismissSpeakingBubble?.();
       this.cutsceneRenderer.dismissDialogueBox(box);
@@ -1389,49 +1442,13 @@ export class CutsceneManager implements IGameSystem {
     };
   }
 
-  /**
-   * 字幕配音。`subtitleVoice` 字符串表示 audio_config.sfx id；
-   * 对象形态可写 `{ "id": "...", "volume": 0.8 }`。
-   */
-  private parseSubtitleVoiceSpec(step: Record<string, unknown>): { id: string; volume?: number } | null {
-    const raw = step.subtitleVoice;
-    if (typeof raw === 'string') {
-      const id = raw.trim();
-      return id ? { id } : null;
-    }
-    if (!raw || typeof raw !== 'object') return null;
-    const o = raw as Record<string, unknown>;
-    const id = typeof o.id === 'string'
-      ? o.id.trim()
-      : typeof o.sfxId === 'string'
-        ? o.sfxId.trim()
-        : '';
-    if (!id) return null;
-    const rawVolume = o.volume;
-    const volume = typeof rawVolume === 'number' ? rawVolume : Number(rawVolume);
-    return Number.isFinite(volume) ? { id, volume } : { id };
-  }
-
-  /**
-   * `subtitleAutoAdvance`：`"voice"`=配音自然播完后自动推进；正数=展示该毫秒数后自动推进。
-   * 缺省 / 非法值 = 现状（等待点击）。两种模式下玩家点击仍可提前推进。
-   */
-  private parseSubtitleAutoAdvanceSpec(
-    step: Record<string, unknown>,
-  ): { mode: 'voice' } | { mode: 'timer'; ms: number } | null {
-    const raw = step.subtitleAutoAdvance;
-    if (raw === 'voice') return { mode: 'voice' };
-    const ms = typeof raw === 'number' ? raw : NaN;
-    if (Number.isFinite(ms) && ms > 0) return { mode: 'timer', ms };
-    return null;
-  }
-
   private async showSubtitleText(
     text: string,
     layout: ShowSubtitleLayout,
     subtitleEmote: ReturnType<CutsceneManager['parseSubtitleEmoteSpec']>,
-    subtitleVoice: ReturnType<CutsceneManager['parseSubtitleVoiceSpec']>,
-    autoAdvance: ReturnType<CutsceneManager['parseSubtitleAutoAdvanceSpec']> = null,
+    voice: VoiceSpec | null,
+    autoAdvance: VoiceAdvanceSpec | null = null,
+    typewriter: boolean = false,
   ): Promise<void> {
     const raw = String(text ?? '');
     const resolved = this.displayTextResolver ? this.displayTextResolver(raw) : raw;
@@ -1439,32 +1456,9 @@ export class CutsceneManager implements IGameSystem {
     const subtitleContent = split
       ? { speaker: split.speaker, separator: split.separator, body: split.body }
       : resolved;
-    const container = this.cutsceneRenderer.showSubtitle(subtitleContent, layout);
+    const container = this.cutsceneRenderer.showSubtitle(subtitleContent, layout, typewriter);
     let dismissSubtitleEmote: (() => void) | null = null;
-    let voiceHandle: AudioPlaybackHandle | null = null;
-    let stopVoice: (() => void) | null = null;
-    /** voice 模式：配音自然播完 → 触发与点击等价的推进；等待尚未武装时先记账，武装时补发 */
-    let autoAdvanceFire: (() => void) | null = null;
-    let voiceEndedBeforeArm = false;
-    const onVoiceEnd = autoAdvance?.mode === 'voice'
-      ? () => {
-        if (autoAdvanceFire) autoAdvanceFire();
-        else voiceEndedBeforeArm = true;
-      }
-      : undefined;
-    if (subtitleVoice) {
-      voiceHandle = this.audioManager?.playTransientSfx(
-        subtitleVoice.id,
-        { volume: subtitleVoice.volume, onEnd: onVoiceEnd },
-      ) ?? null;
-      if (voiceHandle) {
-        stopVoice = () => {
-          voiceHandle?.stop();
-          voiceHandle = null;
-        };
-        this.activeSubtitleVoiceStops.add(stopVoice);
-      }
-    }
+    const ticket = this.beginBeatVoice(voice, autoAdvance);
     if (subtitleEmote && this.emoteBubbleProvider) {
       const anchor = this.emoteTargetResolver?.(subtitleEmote.target) ?? null;
       if (anchor) {
@@ -1474,7 +1468,8 @@ export class CutsceneManager implements IGameSystem {
         dismissSubtitleEmote = this.emoteBubbleProvider.showSticky(
           anchor,
           emoteText,
-          subtitleEmote.opts,
+          // 字幕旁注神情恒为符号（？！…），走 emote 分型（烛金放大）
+          { ...subtitleEmote.opts, variant: 'emote' },
           CUTSCENE_EMOTE_OWNER,
         );
       } else {
@@ -1482,10 +1477,43 @@ export class CutsceneManager implements IGameSystem {
       }
     }
     try {
+      await this.awaitBeatDismiss(ticket, autoAdvance);
+    } finally {
+      dismissSubtitleEmote?.();
+      this.cutsceneRenderer.dismissSubtitle(container);
+    }
+  }
+
+  /**
+   * 起本拍配音。写了 `voice` 就播（先顶掉在播的任何一条）；本拍没写配音但声明了
+   * 「跟随配音推进」时，**接管**前面某拍 `hold` 留下的那条——这就是"一条长配音配几句
+   * 短字幕、最后那句跟配音一起结束"的实现。返回 null = 本拍没有可等的配音，
+   * 自动推进安全退化为等点击。
+   */
+  private beginBeatVoice(
+    voice: VoiceSpec | null,
+    autoAdvance: VoiceAdvanceSpec | null,
+  ): VoiceBeatTicket | null {
+    if (voice) return this.voiceChannel?.play(voice) ?? null;
+    if (autoAdvance?.mode === 'voice') return this.voiceChannel?.takeSustained() ?? null;
+    return null;
+  }
+
+  /**
+   * 台词类拍（字幕 / 过场对话框）的统一等待：点击、定时、配音自然播完三条路径共享
+   * 同一个幂等收束，arming 与 waitForClick 同一套双 rAF 窗口。
+   * 无论从哪条路径归来都调 `ticket.endBeat()`：hold 的留声给后续拍，其余就地停。
+   */
+  private async awaitBeatDismiss(
+    ticket: VoiceBeatTicket | null,
+    autoAdvance: VoiceAdvanceSpec | null,
+  ): Promise<void> {
+    try {
       await new Promise<void>(resolve => {
         let settled = false;
         let autoTimerId: ReturnType<typeof setTimeout> | null = null;
-        /** 点击 / skip / 定时 / 配音结束共用的收束：幂等，负责清理定时器与共享 resolver */
+        let unsubVoice: (() => void) | null = null;
+        /** 点击 / skip / 定时 / 配音结束共用的收束：幂等，负责清理定时器、订阅与共享 resolver */
         const finish = () => {
           if (settled) return;
           settled = true;
@@ -1493,7 +1521,8 @@ export class CutsceneManager implements IGameSystem {
             clearTimeout(autoTimerId);
             autoTimerId = null;
           }
-          autoAdvanceFire = null;
+          unsubVoice?.();
+          unsubVoice = null;
           if (this.dialogueResolve === wrappedFinish) this.dialogueResolve = null;
           this.dialogueAdvanceNotBefore = 0;
           resolve();
@@ -1506,15 +1535,15 @@ export class CutsceneManager implements IGameSystem {
             finish();
             return;
           }
-          if (voiceEndedBeforeArm) {
-            finish();
-            return;
-          }
           this.dialogueAdvanceNotBefore = performance.now() + 120;
           this.dialogueResolve = wrappedFinish;
-          autoAdvanceFire = finish;
           if (autoAdvance?.mode === 'timer') {
             autoTimerId = setTimeout(finish, autoAdvance.ms);
+          }
+          /** 订阅放在 resolver 就位之后：配音在 arming 窗口里已播完时 onEnd 同步回调，
+           *  此时 finish 必须能把刚挂上的 dialogueResolve 一并摘掉（否则留下无人认领的 resolver）。 */
+          if (autoAdvance?.mode === 'voice' && ticket) {
+            unsubVoice = ticket.onEnd(finish);
           }
         };
         requestAnimationFrame(() => {
@@ -1522,31 +1551,21 @@ export class CutsceneManager implements IGameSystem {
         });
       });
     } finally {
-      if (stopVoice) {
-        stopVoice();
-        this.activeSubtitleVoiceStops.delete(stopVoice);
-      }
-      dismissSubtitleEmote?.();
-      this.cutsceneRenderer.dismissSubtitle(container);
+      ticket?.endBeat();
     }
-  }
-
-  private stopActiveSubtitleVoices(): void {
-    for (const stop of Array.from(this.activeSubtitleVoiceStops)) {
-      stop();
-    }
-    this.activeSubtitleVoiceStops.clear();
   }
 
   /**
    * @param stopCutsceneSfx 中断路径（Esc 跳过 / 读档 / 拆除）传 true——停掉本过场尚在播放的一次性音效；
    *   自然播完传 false——只关闭捕获作用域、让末拍音效按编排收尾。所有退出路径都经 cleanup，是音频收尾唯一收口。
+   *   配音同此口径：中断即停；自然播完时**只可能**剩下一条 hold 留声的配音（跟拍的那条早随本拍停了），
+   *   与"末拍音效按编排收尾"同一条道理，让它自然播完。
    */
   private cleanup(stopCutsceneSfx: boolean): void {
     /** Esc 跳过 / 读档 / 拆除会让 executeSteps 中途 return，快进标志不经其尾部复位——
      *  在此兜底，避免残留态污染下一段过场的常速播放。 */
     this.fastForwarding = false;
-    this.stopActiveSubtitleVoices();
+    if (stopCutsceneSfx) this.voiceChannel?.stopAll();
     this.audioManager?.endCutsceneSfxCapture(stopCutsceneSfx);
     this.cutsceneRenderer.cleanup();
     /** 只清过场自己发的气泡（owner='cutscene'）：全量 cleanup 会误杀世界侧仍在倒计时的气泡 */

@@ -100,6 +100,43 @@ _FIXTURES: list[tuple[str, dict]] = [
         "portrait": {},
         "next": "n1",
     }),
+    # 配音：单拍写在节点顶层，字符串形态不得被升级成对象
+    ("ln_voice_string", {
+        "type": "line",
+        "speaker": {"kind": "npc"},
+        "text": "hi",
+        "voice": "voice_001",
+        "next": "n1",
+    }),
+    # 配音：对象形态（音量 + 跨拍留声）与推进方式一并保真
+    ("ln_voice_object_hold", {
+        "type": "line",
+        "speaker": {"kind": "npc"},
+        "text": "hi",
+        "voice": {"id": "voice_002", "volume": 0.75, "hold": True},
+        "autoAdvance": 2500,
+        "next": "n1",
+    }),
+    # 配音：多拍逐拍各一条，且顶层不被注入
+    ("ln_voice_per_beat", {
+        "type": "line",
+        "speaker": {"kind": "npc"},
+        "text": "一",
+        "lines": [
+            {"speaker": {"kind": "npc"}, "text": "一", "voice": {"id": "v_a", "hold": True}},
+            {"speaker": {"kind": "player"}, "text": "二", "autoAdvance": "voice"},
+        ],
+        "next": "n1",
+    }),
+    # 配音：choice 的 promptLine 同样是一拍台词
+    ("ch_prompt_voice", {
+        "type": "choice",
+        "promptLine": {
+            "speaker": {"kind": "npc"}, "text": "你要问哪一样？",
+            "voice": "voice_003", "autoAdvance": "voice",
+        },
+        "options": [{"id": "a", "text": "去河边看看", "next": "n1"}],
+    }),
 ]
 
 

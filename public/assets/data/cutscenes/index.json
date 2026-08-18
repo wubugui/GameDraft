@@ -1352,8 +1352,8 @@
         "text": "说有一天李天狗来到一处穷山恶水之地。",
         "subtitleBand": "movieBottom",
         "subtitleAlign": "center",
-        "subtitleVoice": "voice_001",
-        "subtitleAutoAdvance": "voice"
+        "voice": "sfx_开场说书1",
+        "autoAdvance": "voice"
       },
       {
         "kind": "present",
@@ -1382,8 +1382,11 @@
         "text": "那地方唤作神仙顶——名头好听，",
         "subtitleBand": "movieBottom",
         "subtitleAlign": "center",
-        "subtitleVoice": "voice_002a",
-        "subtitleAutoAdvance": "voice"
+        "voice": {
+          "id": "sfx_开场说书2",
+          "hold": true
+        },
+        "autoAdvance": 3000.0
       },
       {
         "kind": "parallel",
@@ -1401,8 +1404,7 @@
             "text": "实则乱坟遍野，阴风刮得人脊背发凉。",
             "subtitleBand": "movieBottom",
             "subtitleAlign": "center",
-            "subtitleVoice": "voice_002b",
-            "subtitleAutoAdvance": "voice"
+            "autoAdvance": "voice"
           }
         ]
       },
@@ -1433,8 +1435,8 @@
         "text": "李天狗一袭旧道袍，独自循着邪气，摸到半山一座古墓跟前。",
         "subtitleBand": "movieBottom",
         "subtitleAlign": "center",
-        "subtitleVoice": "voice_003",
-        "subtitleAutoAdvance": "voice"
+        "voice": "sfx_开场说书3",
+        "autoAdvance": "voice"
       },
       {
         "kind": "present",
@@ -1459,8 +1461,8 @@
         "text": "墓砖焦黑，土缝里直冒热气。",
         "subtitleBand": "movieBottom",
         "subtitleAlign": "center",
-        "subtitleVoice": "voice_004a",
-        "subtitleAutoAdvance": "voice"
+        "voice": "sfx_开场说书4",
+        "autoAdvance": "voice"
       },
       {
         "kind": "present",
@@ -1468,8 +1470,8 @@
         "text": "他心里咯噔一声——底下镇着的，是个旱魃！",
         "subtitleBand": "movieBottom",
         "subtitleAlign": "center",
-        "subtitleVoice": "voice_004b",
-        "subtitleAutoAdvance": "voice"
+        "voice": "sfx_开场说书5",
+        "autoAdvance": "voice"
       },
       {
         "kind": "action",
@@ -1528,8 +1530,8 @@
             "text": "那墓门一开，地里腾起一只大旱魃，赤地千里，草木一舔就焦！",
             "subtitleBand": "movieBottom",
             "subtitleAlign": "center",
-            "subtitleVoice": "voice_005",
-            "subtitleAutoAdvance": "voice"
+            "voice": "sfx_开场说书6",
+            "autoAdvance": "voice"
           }
         ]
       },
@@ -1566,8 +1568,8 @@
         "text": "几个摸坟的吓瘫在地，眼看就要喂了妖物。",
         "subtitleBand": "movieBottom",
         "subtitleAlign": "center",
-        "subtitleVoice": "voice_006a",
-        "subtitleAutoAdvance": "voice"
+        "voice": "sfx_开场说书7",
+        "autoAdvance": "voice"
       },
       {
         "kind": "parallel",
@@ -1585,8 +1587,11 @@
             "text": "说时迟那时快，李天狗一把将人拽到身后！",
             "subtitleBand": "movieBottom",
             "subtitleAlign": "center",
-            "subtitleVoice": "voice_006b",
-            "subtitleAutoAdvance": "voice"
+            "voice": {
+              "id": "sfx_开场说书8",
+              "hold": true
+            },
+            "autoAdvance": 3000.0
           }
         ]
       },
@@ -1636,8 +1641,7 @@
             "text": "「只见那李天狗——拔剑！咬指！画符！剑光跟焦风撞在一处！」",
             "subtitleBand": "movieBottom",
             "subtitleAlign": "center",
-            "subtitleVoice": "voice_007",
-            "subtitleAutoAdvance": "voice"
+            "autoAdvance": "voice"
           }
         ]
       },
@@ -1686,8 +1690,11 @@
             "text": "那旱魃张口喷火、扑爪带风；",
             "subtitleBand": "movieBottom",
             "subtitleAlign": "center",
-            "subtitleVoice": "voice_008a",
-            "subtitleAutoAdvance": "voice"
+            "voice": {
+              "id": "sfx_开场说书9",
+              "hold": true
+            },
+            "autoAdvance": 3000.0
           }
         ]
       },
@@ -1707,8 +1714,7 @@
             "text": "道士咬定牙关，符纸一张接着一张，往它身上招呼！",
             "subtitleBand": "movieBottom",
             "subtitleAlign": "center",
-            "subtitleVoice": "voice_008b",
-            "subtitleAutoAdvance": "voice"
+            "autoAdvance": 3000.0
           }
         ]
       },
@@ -1759,8 +1765,7 @@
             "text": "「最后只见李天狗一道符，生生把那旱魃镇进地里！」",
             "subtitleBand": "movieBottom",
             "subtitleAlign": "center",
-            "subtitleVoice": "voice_009",
-            "subtitleAutoAdvance": "voice"
+            "autoAdvance": "voice"
           }
         ]
       },
@@ -1781,8 +1786,8 @@
         "text": "「摸坟的连滚带爬，捧着银钱磕头谢恩呐——」",
         "subtitleBand": "movieBottom",
         "subtitleAlign": "center",
-        "subtitleVoice": "voice_010",
-        "subtitleAutoAdvance": "voice"
+        "voice": "sfx_开场说书10",
+        "autoAdvance": "voice"
       },
       {
         "kind": "present",
@@ -1811,8 +1816,8 @@
         "text": "说这李天狗降了旱魃，一路往西风风火火地继续深入神仙顶。",
         "subtitleBand": "movieBottom",
         "subtitleAlign": "center",
-        "subtitleVoice": "voice_011a",
-        "subtitleAutoAdvance": "voice"
+        "voice": "sfx_开场说书11",
+        "autoAdvance": "voice"
       },
       {
         "kind": "present",
@@ -1820,15 +1825,15 @@
         "text": "他到底是去干嘛呢？",
         "subtitleBand": "movieBottom",
         "subtitleAlign": "center",
-        "subtitleVoice": "voice_011b",
-        "subtitleAutoAdvance": "voice"
+        "voice": "sfx_开场说书12",
+        "autoAdvance": "voice"
       },
       {
         "kind": "action",
         "type": "playSfx",
         "params": {
           "id": "sfx_gavel_rap",
-          "volume": 2.1
+          "volume": 4.0
         }
       },
       {
@@ -1842,8 +1847,8 @@
         "text": "欲知后事如何，各位看官，且听下回分解吧。",
         "subtitleBand": "movieBottom",
         "subtitleAlign": "center",
-        "subtitleVoice": "voice_012",
-        "subtitleAutoAdvance": "voice"
+        "voice": "sfx_开场说书13",
+        "autoAdvance": "voice"
       },
       {
         "kind": "action",
@@ -2032,7 +2037,7 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "text": "想对付旱魃？莫说桃木剑和几张符，墨斗和黑驴蹄子都不一定得行。",
+        "text": "想对付旱魃？莫说桃木剑和几张符，墨斗和火烧都不一定得行。",
         "scriptedNpcId": "blind_li",
         "portrait": {
           "emotion": "calm"
@@ -2679,7 +2684,8 @@
         "scriptedNpcId": "blind_li",
         "portrait": {
           "emotion": "calm"
-        }
+        },
+        "voice": "茶馆开场_瞎子李_1"
       },
       {
         "kind": "present",
@@ -2688,7 +2694,8 @@
         "scriptedNpcId": "blind_li",
         "portrait": {
           "emotion": "calm"
-        }
+        },
+        "voice": "茶馆开场_瞎子李_2"
       },
       {
         "kind": "present",
@@ -2697,7 +2704,8 @@
         "scriptedNpcId": "blind_li",
         "portrait": {
           "emotion": "calm"
-        }
+        },
+        "voice": "茶馆开场_瞎子李_3"
       },
       {
         "kind": "present",
@@ -2706,7 +2714,8 @@
         "scriptedNpcId": "waiter_xiaoer",
         "portrait": {
           "emotion": "laugh"
-        }
+        },
+        "voice": "开场茶馆_小二_1"
       },
       {
         "kind": "present",
@@ -2715,7 +2724,8 @@
         "scriptedNpcId": "waiter_xiaoer",
         "portrait": {
           "emotion": "laugh"
-        }
+        },
+        "voice": "开场茶馆_小二_2"
       },
       {
         "kind": "present",
@@ -2724,7 +2734,8 @@
         "scriptedNpcId": "blind_li",
         "portrait": {
           "emotion": "calm"
-        }
+        },
+        "voice": "茶馆开场_瞎子李_4"
       },
       {
         "kind": "present",
@@ -2733,7 +2744,8 @@
         "scriptedNpcId": "blind_li",
         "portrait": {
           "emotion": "calm"
-        }
+        },
+        "voice": "茶馆开场_瞎子李_5"
       },
       {
         "kind": "action",
@@ -2750,7 +2762,8 @@
         "scriptedNpcId": "npc_掌柜",
         "portrait": {
           "emotion": "laugh"
-        }
+        },
+        "voice": "开场茶馆_掌柜_1"
       },
       {
         "kind": "present",
@@ -2759,7 +2772,8 @@
         "scriptedNpcId": "blind_li",
         "portrait": {
           "emotion": "calm"
-        }
+        },
+        "voice": "茶馆开场_瞎子李_6"
       },
       {
         "kind": "present",
@@ -2768,7 +2782,8 @@
         "scriptedNpcId": "waiter_xiaoer",
         "portrait": {
           "emotion": "laugh"
-        }
+        },
+        "voice": "开场茶馆_小二_3"
       },
       {
         "kind": "present",
@@ -2777,7 +2792,8 @@
         "scriptedNpcId": "npc_掌柜",
         "portrait": {
           "emotion": "laugh"
-        }
+        },
+        "voice": "开场茶馆_掌柜_2"
       },
       {
         "kind": "action",
@@ -2813,7 +2829,8 @@
         "scriptedNpcId": "blind_li",
         "portrait": {
           "emotion": "smirk"
-        }
+        },
+        "voice": "茶馆开场_瞎子李_7"
       },
       {
         "kind": "present",
@@ -2831,7 +2848,8 @@
         "scriptedNpcId": "blind_li",
         "portrait": {
           "emotion": "smirk"
-        }
+        },
+        "voice": "茶馆开场_瞎子李_8"
       }
     ],
     "targetScene": "teahouse",
@@ -2895,7 +2913,8 @@
         "scriptedNpcId": "blind_li",
         "portrait": {
           "emotion": "calm"
-        }
+        },
+        "voice": "茶馆开场_瞎子李_9"
       },
       {
         "kind": "present",
@@ -2904,7 +2923,8 @@
         "scriptedNpcId": "blind_li",
         "portrait": {
           "emotion": "calm"
-        }
+        },
+        "voice": "茶馆开场_瞎子李_10"
       },
       {
         "kind": "present",
@@ -2913,7 +2933,8 @@
         "scriptedNpcId": "blind_li",
         "portrait": {
           "emotion": "calm"
-        }
+        },
+        "voice": "茶馆开场_瞎子李_11"
       },
       {
         "kind": "present",
@@ -2922,7 +2943,8 @@
         "scriptedNpcId": "npc_掌柜",
         "portrait": {
           "emotion": "angry"
-        }
+        },
+        "voice": "开场茶馆_掌柜_3"
       },
       {
         "kind": "present",
@@ -2949,16 +2971,8 @@
         "scriptedNpcId": "blind_li",
         "portrait": {
           "emotion": "laugh"
-        }
-      },
-      {
-        "kind": "present",
-        "type": "showDialogue",
-        "text": "爬哟，背死人子的所？老子挨到起坐了半天！呸呸呸！",
-        "scriptedNpcId": "waiter_xiaoer",
-        "portrait": {
-          "emotion": "angry"
-        }
+        },
+        "voice": "茶馆开场_瞎子李_12"
       },
       {
         "kind": "action",
@@ -2991,6 +3005,16 @@
           "target": "waiter_xiaoer",
           "faceTarget": "player"
         }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "text": "爬哟，背死人子的所？老子挨到起坐了半天！呸呸呸！",
+        "scriptedNpcId": "waiter_xiaoer",
+        "portrait": {
+          "emotion": "angry"
+        },
+        "voice": "开场茶馆_小二_4"
       },
       {
         "kind": "action",
@@ -3061,7 +3085,8 @@
         "scriptedNpcId": "waiter_xiaoer",
         "portrait": {
           "emotion": "fear"
-        }
+        },
+        "voice": "开场茶馆_小二_6"
       },
       {
         "kind": "parallel",
@@ -3168,7 +3193,8 @@
         "scriptedNpcId": "npc_掌柜",
         "portrait": {
           "emotion": "angry"
-        }
+        },
+        "voice": "开场茶馆_掌柜_4"
       },
       {
         "kind": "present",
@@ -3177,7 +3203,8 @@
         "scriptedNpcId": "waiter_xiaoer",
         "portrait": {
           "emotion": "angry"
-        }
+        },
+        "voice": "开场茶馆_小二_5"
       },
       {
         "kind": "present",
@@ -3186,7 +3213,8 @@
         "scriptedNpcId": "npc_掌柜",
         "portrait": {
           "emotion": "angry"
-        }
+        },
+        "voice": "开场茶馆_掌柜_5"
       },
       {
         "kind": "present",
@@ -3284,6 +3312,14 @@
         "scriptedNpcId": "waiter_xiaoer",
         "portrait": {
           "emotion": "angry"
+        },
+        "voice": "开场茶馆_小二_7"
+      },
+      {
+        "kind": "action",
+        "type": "playSfx",
+        "params": {
+          "id": "sfx_well_cry_childdog_a"
         }
       },
       {

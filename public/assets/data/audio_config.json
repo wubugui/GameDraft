@@ -434,6 +434,149 @@
     "sugar_wheel_prize_chime": {
       "src": "/resources/runtime/audio/sugar_wheel_prize_chime.wav"
     },
+    "sfx_coin_pouch_pat2fast": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_coin_pouch_pat2fast.wav"
+    },
+    "sfx_coin_pouch_slap_a": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_coin_pouch_slap_a.wav"
+    },
+    "sfx_coin_pouch_heft_b": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_coin_pouch_heft_b.wav"
+    },
+    "sfx_dice_bowl_roll_a": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_dice_bowl_roll_a.wav"
+    },
+    "sfx_dice_bowl_roll_b": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_dice_bowl_roll_b.wav"
+    },
+    "sfx_gamble_cheer_burst_a": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_gamble_cheer_burst_a.wav"
+    },
+    "sfx_gamble_cheer_burst_b": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_gamble_cheer_burst_b.wav"
+    },
+    "sfx_gamble_crowd_burst_a": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_gamble_crowd_burst_a.wav"
+    },
+    "sfx_gamble_crowd_burst_b": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_gamble_crowd_burst_b.wav"
+    },
+    "sfx_scuffle_shove_b": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_scuffle_shove_b.wav"
+    },
+    "sfx_bench_topple_a": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_bench_topple_a.wav"
+    },
+    "sfx_bench_topple_b": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_bench_topple_b.wav"
+    },
+    "sfx_body_dump_ground_a": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_body_dump_ground_a.wav"
+    },
+    "sfx_door_slam_shut_a": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_door_slam_shut_a.wav"
+    },
+    "sfx_gamble_jeer_muffled_a": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_gamble_jeer_muffled_a.wav"
+    },
+    "sfx_gamble_jeer_muffled_b": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_gamble_jeer_muffled_b.wav"
+    },
+    "sfx_coin_hand_heft_a": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_coin_hand_heft_a.wav"
+    },
+    "sfx_night_watch_clapper_a": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_night_watch_clapper_a.wav"
+    },
+    "sfx_dog_howl_night_a": {
+      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_dog_howl_night_a.wav"
+    },
+    "sfx_well_cry_childdog_a": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/candidates/sfx_well_cry_childdog_a.wav"
+    },
+    "sfx_well_cry_childdog_b": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/candidates/sfx_well_cry_childdog_b.wav"
+    },
+    "sfx_well_cry_childdog_c": {
+      "src": "/resources/runtime/audio/demo/generated_20260808/candidates/sfx_well_cry_childdog_c.wav"
+    }
+  },
+  "voice": {
+    "sfx_开场说书1": {
+      "src": "/resources/runtime/audio/voice/说书重庆话/说书1.wav"
+    },
+    "sfx_开场说书2": {
+      "src": "/resources/runtime/audio/voice/说书重庆话/说书2.wav"
+    },
+    "sfx_开场说书3": {
+      "src": "/resources/runtime/audio/voice/说书重庆话/说书3.wav"
+    },
+    "sfx_开场说书4": {
+      "src": "/resources/runtime/audio/voice/说书重庆话/说书4.wav"
+    },
+    "sfx_开场说书5": {
+      "src": "/resources/runtime/audio/voice/说书重庆话/说书5.wav"
+    },
+    "sfx_开场说书6": {
+      "src": "/resources/runtime/audio/voice/说书重庆话/说书6.wav"
+    },
+    "sfx_开场说书7": {
+      "src": "/resources/runtime/audio/voice/说书重庆话/说书7.wav"
+    },
+    "sfx_开场说书8": {
+      "src": "/resources/runtime/audio/voice/说书重庆话/说书8.wav"
+    },
+    "sfx_开场说书9": {
+      "src": "/resources/runtime/audio/voice/说书重庆话/说书9.wav"
+    },
+    "sfx_开场说书10": {
+      "src": "/resources/runtime/audio/voice/说书重庆话/说书10.wav"
+    },
+    "sfx_开场说书11": {
+      "src": "/resources/runtime/audio/voice/说书重庆话/说书11.wav"
+    },
+    "sfx_开场说书12": {
+      "src": "/resources/runtime/audio/voice/说书重庆话/说书12.wav"
+    },
+    "sfx_开场说书13": {
+      "src": "/resources/runtime/audio/voice/说书重庆话/说书13.wav"
+    },
+    "茶馆开场_瞎子李_1": {
+      "src": "/resources/runtime/audio/voice/重庆话/开场茶馆_瞎子李_1.wav"
+    },
+    "茶馆开场_瞎子李_10": {
+      "src": "/resources/runtime/audio/voice/重庆话/开场茶馆_瞎子李_10.wav"
+    },
+    "茶馆开场_瞎子李_11": {
+      "src": "/resources/runtime/audio/voice/重庆话/开场茶馆_瞎子李_11.wav"
+    },
+    "茶馆开场_瞎子李_12": {
+      "src": "/resources/runtime/audio/voice/重庆话/开场茶馆_瞎子李_12.wav"
+    },
+    "茶馆开场_瞎子李_2": {
+      "src": "/resources/runtime/audio/voice/重庆话/开场茶馆_瞎子李_2.wav"
+    },
+    "茶馆开场_瞎子李_3": {
+      "src": "/resources/runtime/audio/voice/重庆话/开场茶馆_瞎子李_3.wav"
+    },
+    "茶馆开场_瞎子李_4": {
+      "src": "/resources/runtime/audio/voice/重庆话/开场茶馆_瞎子李_4.wav"
+    },
+    "茶馆开场_瞎子李_5": {
+      "src": "/resources/runtime/audio/voice/重庆话/开场茶馆_瞎子李_5.wav"
+    },
+    "茶馆开场_瞎子李_6": {
+      "src": "/resources/runtime/audio/voice/重庆话/开场茶馆_瞎子李_6.wav"
+    },
+    "茶馆开场_瞎子李_7": {
+      "src": "/resources/runtime/audio/voice/重庆话/开场茶馆_瞎子李_7.wav"
+    },
+    "茶馆开场_瞎子李_8": {
+      "src": "/resources/runtime/audio/voice/重庆话/开场茶馆_瞎子李_8.wav"
+    },
+    "茶馆开场_瞎子李_9": {
+      "src": "/resources/runtime/audio/voice/重庆话/开场茶馆_瞎子李_9.wav"
+    },
     "voice_001": {
       "src": "/resources/runtime/audio/voice/1.mp3"
     },
@@ -500,62 +643,41 @@
     "voice_012": {
       "src": "/resources/runtime/audio/voice/12.mp3"
     },
-    "sfx_coin_pouch_pat2fast": {
-      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_coin_pouch_pat2fast.wav"
+    "开场茶馆_小二_1": {
+      "src": "/resources/runtime/audio/voice/重庆话/开场茶馆_小二_1.wav"
     },
-    "sfx_coin_pouch_slap_a": {
-      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_coin_pouch_slap_a.wav"
+    "开场茶馆_小二_2": {
+      "src": "/resources/runtime/audio/voice/重庆话/开场茶馆_小二_2.wav"
     },
-    "sfx_coin_pouch_heft_b": {
-      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_coin_pouch_heft_b.wav"
+    "开场茶馆_小二_3": {
+      "src": "/resources/runtime/audio/voice/重庆话/开场茶馆_小二_3.wav"
     },
-    "sfx_dice_bowl_roll_a": {
-      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_dice_bowl_roll_a.wav"
+    "开场茶馆_小二_4": {
+      "src": "/resources/runtime/audio/voice/重庆话/开场茶馆_小二_4.wav"
     },
-    "sfx_dice_bowl_roll_b": {
-      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_dice_bowl_roll_b.wav"
+    "开场茶馆_小二_5": {
+      "src": "/resources/runtime/audio/voice/重庆话/开场茶馆_小二_5.wav"
     },
-    "sfx_gamble_cheer_burst_a": {
-      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_gamble_cheer_burst_a.wav"
+    "开场茶馆_小二_6": {
+      "src": "/resources/runtime/audio/voice/重庆话/开场茶馆_小二_6.wav"
     },
-    "sfx_gamble_cheer_burst_b": {
-      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_gamble_cheer_burst_b.wav"
+    "开场茶馆_小二_7": {
+      "src": "/resources/runtime/audio/voice/重庆话/开场茶馆_小二_7.wav"
     },
-    "sfx_gamble_crowd_burst_a": {
-      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_gamble_crowd_burst_a.wav"
+    "开场茶馆_掌柜_1": {
+      "src": "/resources/runtime/audio/voice/重庆话/开场茶馆_掌柜_1.wav"
     },
-    "sfx_gamble_crowd_burst_b": {
-      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_gamble_crowd_burst_b.wav"
+    "开场茶馆_掌柜_2": {
+      "src": "/resources/runtime/audio/voice/重庆话/开场茶馆_掌柜_2.wav"
     },
-    "sfx_scuffle_shove_b": {
-      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_scuffle_shove_b.wav"
+    "开场茶馆_掌柜_3": {
+      "src": "/resources/runtime/audio/voice/重庆话/开场茶馆_掌柜_3.wav"
     },
-    "sfx_bench_topple_a": {
-      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_bench_topple_a.wav"
+    "开场茶馆_掌柜_4": {
+      "src": "/resources/runtime/audio/voice/重庆话/开场茶馆_掌柜_4.wav"
     },
-    "sfx_bench_topple_b": {
-      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_bench_topple_b.wav"
-    },
-    "sfx_body_dump_ground_a": {
-      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_body_dump_ground_a.wav"
-    },
-    "sfx_door_slam_shut_a": {
-      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_door_slam_shut_a.wav"
-    },
-    "sfx_gamble_jeer_muffled_a": {
-      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_gamble_jeer_muffled_a.wav"
-    },
-    "sfx_gamble_jeer_muffled_b": {
-      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_gamble_jeer_muffled_b.wav"
-    },
-    "sfx_coin_hand_heft_a": {
-      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_coin_hand_heft_a.wav"
-    },
-    "sfx_night_watch_clapper_a": {
-      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_night_watch_clapper_a.wav"
-    },
-    "sfx_dog_howl_night_a": {
-      "src": "/resources/runtime/audio/demo/generated_20260810/sfx_dog_howl_night_a.wav"
+    "开场茶馆_掌柜_5": {
+      "src": "/resources/runtime/audio/voice/重庆话/开场茶馆_掌柜_5.wav"
     }
   },
   "systemSfx": {

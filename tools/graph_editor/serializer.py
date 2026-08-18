@@ -8,6 +8,7 @@ from tools.editor.shared.project_paths import ProjectPaths
 
 from .model.graph_model import GameGraph
 from .model.node_types import NodeType
+from tools.atomic_io import retry_transient
 
 
 def _atomic_write(filepath: str, data):
@@ -18,7 +19,7 @@ def _atomic_write(filepath: str, data):
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(content)
             f.write("\n")
-        os.replace(tmp_path, filepath)
+        retry_transient(os.replace, tmp_path, filepath)
     except Exception:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)

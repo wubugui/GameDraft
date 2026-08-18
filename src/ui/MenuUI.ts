@@ -4,14 +4,16 @@ import { MEDIA_URLS } from '../core/projectPaths';
 import { UITheme, fadeIn } from './UITheme';
 import { createPanel, drawPanelBase, SKINS } from './PanelSkin';
 import { UIButton } from './components/UIButton';
+import { openConfirmDialog } from './components/UIConfirmDialog';
 import { UIWindow, WINDOW_SIZES } from './components/UIWindow';
 import { UIScrollView } from './components/UIScrollView';
 import { ART_TEXT_SHADOW, createRule, createTitleRow, drawSelectedRow } from './components/UIDecor';
+import { UIFocus, type FocusItem } from './components/UIFocus';
 import { clientToCanvas, markPointerConsumed } from './uiPointerCoords';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
 import type {
-  ISaveDataProvider, IAudioSettingsProvider, ITextDisplaySettingsProvider, SaveSlotMeta,
+  AudioChannel, ISaveDataProvider, IAudioSettingsProvider, ITextDisplaySettingsProvider, SaveSlotMeta,
 } from '../data/types';
 import type { StringsProvider } from '../core/StringsProvider';
 import { createStyledText } from '../core/styledText';
@@ -105,8 +107,14 @@ let mainMenuBgPending: Promise<void> | null = null;
 
 /** 存档槽位数。真值在 SaveManager，这里只是渲染多少行——本文件不定义规则。 */
 const SLOT_COUNT = 3;
-/** 一个槽位按钮的高度与行间距 */
-const SLOT_H = 56;
+/**
+ * 一个槽位按钮的高度与行间距。
+ *
+ * 两行版式（审查 P1：场景名/天数/日期/时长同字号同色挤一行，玩家没法扫）：
+ * 主行 = 场景名(bodyLarge) + 右侧「第 N 天」，副行 = 保存时间 + 游玩时长(small)。
+ * 行高要容得下 bodyLarge(~33px 实测字框) + xs 行缝 + small(~21px) 再留上下呼吸。
+ */
+const SLOT_H = 76;
 const SLOT_GAP = UITheme.spacing.sm;
 /** 槽位右侧「JSON ↓ / JSON ↑」列宽 */
 const JSON_COL_W = 64;
@@ -171,6 +179,14 @@ const TOGGLE_BTN_H = 32;
 /** 音量滑条几何。组件层没有滑条件，这两个是控件自身的形状（非间距/字号），保留具名常量。 */
 const TRACK_H = 6;
 const HANDLE_R = 8;
+/** 键盘步进一格 = 滑条量程的 1/10（焦点停在滑条上时左右键调值） */
+const SLIDER_KEY_STEP = 0.1;
+/**
+ * 键盘连按后判定"手停了"的静默时长。
+ * 短于这个值，按住方向键会连放一串试听声；长了又会让人以为没生效。
+ * 250ms ≈ 一次有意的松手，且比键盘自动重复的间隔（~30–50ms）宽出一个数量级。
+ */
+const SLIDER_SETTLE_MS = 250;
 
 /** {@link MenuUI.makeMenuRow} 的返回值：容器交给调用方摆位，setActive 交给"当前项"这套状态。 */
 interface MenuRowHandle {
@@ -216,6 +232,21 @@ export class MenuUI {
   private devHooks: MenuDevHooks | null = null;
   /** 标题界面那行 dev 小开关的重画钩子（页面重建即失效，destroyUI 里清） */
   private devToggleRepaint: (() => void) | null = null;
+  /**
+   * 键盘/手柄焦点。五个页共用这一个实例：每次 build() 把当页的焦点项整批重喂，
+   * 页内重建（存完档刷新槽位 / 切逐字显示开关）靠 setItems 按 id 复位，
+   * **换页**才重落该页的默认焦点（focusMode 判定）。
+   */
+  private focus = new UIFocus();
+  /** 当前 build 攒出来的焦点项；各页 builder 往里推，build() 收尾统一喂给 UIFocus */
+  private focusItems: FocusItem[] = [];
+  /** 当页默认焦点（各页 builder 自报）：标题=新游戏、暂停=继续、存读=第一个可用槽位、设置=第一条滑条 */
+  private focusDefaultId: string | null = null;
+  /** 上一次喂过焦点项的页；与 mode 不同才算换页（页内重建不重落默认焦点） */
+  private focusMode: MenuMode | null = null;
+  /** 焦点停在滑条上时左右键改走步进（UIFocus 会把左右键当"挪焦点"吃掉，必须先拦） */
+  private sliderSteps = new Map<string, (dir: -1 | 1) => void>();
+  private onKeyBound: (e: KeyboardEvent) => void;
 
   constructor(
     renderer: Renderer,
@@ -233,6 +264,7 @@ export class MenuUI {
     this.textSettings = textSettings;
     this.strings = strings;
     this.devHooks = devHooks ?? null;
+    this.onKeyBound = (e) => this.onKey(e);
     // 主菜单是全屏页（不走 UIWindow），窗口尺寸变了得自己重排——满屏底色是按 build 时的
     // sw/sh 画死的，不重排就露边。子页的 resize 响应由 UIWindow 自带。
     //
@@ -256,21 +288,59 @@ export class MenuUI {
   openMainMenu(): void {
     this._isOpen = true;
     this.mode = 'main';
+    // 两条打开路径（标题直开 / 暂停）都要挂键盘导航；同 ref 重复 addEventListener 是 no-op，重开安全
+    window.addEventListener('keydown', this.onKeyBound);
     this.build(true);
   }
 
   openPauseMenu(): void {
     this._isOpen = true;
     this.mode = 'pause';
+    window.addEventListener('keydown', this.onKeyBound);
     this.build(true);
   }
 
   close(): void {
     if (!this._isOpen) return;
     this._isOpen = false;
+    window.removeEventListener('keydown', this.onKeyBound);
     this.destroyUI();
+    this.focus.destroy();
+    this.focusMode = null;
     // 底图跨页存活但**不跨"菜单关闭"**：否则回到游戏里整块主视觉还盖在画面上
     this.dropTitleBackdrop();
+  }
+
+  /**
+   * 方向键挪焦点、回车/空格激活；焦点停在**滑条**上时左右键改走步进——必须先于
+   * `UIFocus.handleKey`（它会把左右键当"挪焦点"消费掉）。
+   *
+   * 确认框（openConfirmDialog）打开期间在 window capture 阶段吞掉全部键盘事件，
+   * 这里天然收不到，无需配合。两级都没吃下的按键**一律不吞**（Esc 归 GameStateController）。
+   */
+  private onKey(e: KeyboardEvent): void {
+    if (!this._isOpen) return;
+    const cur = this.focus.current;
+    const step = cur ? this.sliderSteps.get(cur.id) : undefined;
+    if (step) {
+      const dir = e.code === 'ArrowLeft' || e.code === 'KeyA' ? -1
+        : e.code === 'ArrowRight' || e.code === 'KeyD' ? 1 : 0;
+      if (dir !== 0) {
+        step(dir);
+        e.preventDefault();
+        return;
+      }
+    }
+    if (this.focus.handleKey(e.code)) {
+      e.preventDefault();
+      return;
+    }
+    // 存/读页在小画布上列表真的会滚：焦点挪不动的方向键让给滚动区兜底
+    const list = this.list;
+    if (!list) return;
+    const before = list.scrollOffset;
+    if (!list.handleKey(e.code)) return;
+    if (list.scrollOffset !== before) e.preventDefault();
   }
 
   /**
@@ -280,6 +350,8 @@ export class MenuUI {
    */
   private build(animate = false): void {
     this.destroyUI();
+    this.focusItems = [];
+    this.focusDefaultId = null;
     switch (this.mode) {
       // 全屏页（主菜单/暂停）也吃 animate：`goBack()` 从子页退回暂停页走的是 build()，
       // 无条件淡入会让「暂停→设置→返回」每来回一次就重放一遍暂停页开场。
@@ -289,6 +361,14 @@ export class MenuUI {
       case 'load': this.buildSaveLoadPanel('load', animate); break;
       case 'settings': this.buildSettings(animate); break;
     }
+    // 焦点项整批重喂：页内重建按 id 复位（UIFocus 自己保），换页才重落该页默认焦点
+    this.focus.setItems(this.focusItems);
+    if (this.focusMode !== this.mode) {
+      if (this.focusDefaultId) this.focus.focusDefault(this.focusDefaultId);
+      this.focusMode = this.mode;
+    }
+    // setItems 按同 id 复位时不重放 onFocus（currentId 没变），新一批显示对象拿不到高亮 → 补一次
+    this.focus.repaint();
   }
 
   /**
@@ -303,6 +383,19 @@ export class MenuUI {
   private goBack(): void {
     this.mode = this.previousMode;
     this.build();
+  }
+
+  /**
+   * Esc = **退一层**（GameStateController.handleEscape 的面板钩子）：
+   * 子页（存/读/设置）退回进来那页；暂停根层交回控制器关面板；
+   * 标题根层返回 false 后控制器也无处可关（MainMenu 态不弹栈），Esc 即无操作——正确。
+   */
+  handleEscapeStep(): boolean {
+    if (this.mode === 'save' || this.mode === 'load' || this.mode === 'settings') {
+      this.goBack();
+      return true;
+    }
+    return false;
   }
 
   /** @param animate 保留形参与其它页对齐；主菜单本就无进场动画（冷启即全屏底色），故未使用。 */
@@ -463,8 +556,22 @@ export class MenuUI {
       { label: this.strings.get('menu', 'save'), action: () => { this.previousMode = this.mode; this.mode = 'save'; this.build(); } },
       { label: this.strings.get('menu', 'load'), action: () => { this.previousMode = this.mode; this.mode = 'load'; this.build(); } },
       { label: this.strings.get('menu', 'settings'), action: () => { this.previousMode = this.mode; this.mode = 'settings'; this.build(); } },
-      // 会丢进度的破坏性操作，与「继续」拉开层级——此前五个按钮同宽同色，一模一样
-      { label: this.strings.get('menu', 'returnToMain'), tone: 'danger', action: () => { this.close(); this.eventBus.emit('menu:returnToMain', {}); } },
+      // 会丢进度的破坏性操作，与「继续」拉开层级——此前五个按钮同宽同色，一模一样。
+      // 返回主菜单 = 整页重启丢未存进度（审查 P1 零确认路径之一）：过确认框再走。
+      {
+        label: this.strings.get('menu', 'returnToMain'), tone: 'danger', action: () => {
+          void openConfirmDialog(this.renderer, {
+            title: this.strings.get('confirm', 'returnTitle'),
+            message: this.strings.get('confirm', 'returnBody'),
+            confirmLabel: this.strings.get('confirm', 'ok'),
+            cancelLabel: this.strings.get('confirm', 'cancel'),
+          }).then((ok) => {
+            if (!ok) return;
+            this.close();
+            this.eventBus.emit('menu:returnToMain', {});
+          });
+        },
+      },
     ];
 
     const titleText = this.strings.get('menu', 'pause');
@@ -515,10 +622,9 @@ export class MenuUI {
   private buildSaveLoadPanel(action: 'save' | 'load', animate: boolean): void {
     const metas: (SaveSlotMeta | null)[] = [];
     for (let i = 0; i < SLOT_COUNT; i++) metas.push(this.saveData.getSlotMeta(i));
-    const labels = metas.map((meta, i) => this.slotLabel(meta, i));
 
     const win = new UIWindow(this.renderer, {
-      size: { width: this.saveLoadWidth(labels), height: this.saveLoadHeight() },
+      size: { width: this.saveLoadWidth(metas), height: this.saveLoadHeight() },
       title: action === 'save' ? this.strings.get('menu', 'save') : this.strings.get('menu', 'load'),
       // 迁移前这两页自己铺的是 overlayDark，比 UIWindow 缺省的 overlay 浓一档，照旧
       dimAlpha: UITheme.alpha.overlayDark,
@@ -546,32 +652,55 @@ export class MenuUI {
 
     metas.forEach((meta, i) => {
       const ry = i * (SLOT_H + SLOT_GAP);
+      const disabled = action === 'load' && meta === null;
       const slot = this.makeMenuRow({
-        label: labels[i],
+        // 两级层级：主行场景名（暖白，选中提到琥珀）+ 右侧「第 N 天」，副行时间·时长。
+        // 空槽仍是单行「槽位 N: (空)」灰态（不给 sub 就走单行版式）。
+        label: meta ? meta.sceneName : this.strings.get('menu', 'slotEmpty', { slot: i + 1 }),
+        trailing: meta ? this.strings.get('menu', 'slotDay', { day: meta.dayNumber }) : undefined,
+        sub: meta ? this.slotSubLabel(meta) : undefined,
         width: slotW,
         height: SLOT_H,
         style: 'box',
         align: 'left',
         font: 'ui',
         fontSize: UITheme.fontSize.bodyLarge,
+        textColor: meta ? UITheme.colors.bookLabel : UITheme.colors.descText,
         // 读档页的空槽不可点：迁移前是"不挂 pointerdown"，语义相同，多了灰态
-        disabled: action === 'load' && meta === null,
+        disabled,
+        onHover: () => this.focus.syncHover(`slot:${i}`),
         onPress: () => this.commitSlot(action, i),
       });
       slot.container.position.set(0, ry);
       list.content.addChild(slot.container);
 
+      // 槽位行自成一组（JSON 链另一组）：上下键在槽位间走，左右键才跨到本行的文字链，
+      // 不会出现"下键从槽位 1 跳进槽位 1 的导出链"这种乱序
+      this.focusItems.push({
+        id: `slot:${i}`,
+        x: 0, y: ry, w: slotW, h: SLOT_H,
+        group: 'slots',
+        disabled,
+        // 焦点高亮 = 行原有的选中重绘通道；小画布上列表真的会滚，焦点行要滚进视口
+        onFocus: (on, via) => { slot.setActive(on && via === 'key'); if (on && via === 'key') this.revealSlot(ry); },
+        onActivate: () => this.commitSlot(action, i),
+      });
+
       // JSON 导入/导出仍是文字链（不是主操作，做成按钮会与槽位抢视觉），但两行必须错开摆
       const mid = ry + SLOT_H / 2;
       if (meta) {
-        this.addJsonLink(list.content, 'JSON ↓', jsonX, mid - UITheme.spacing.md, () => this.exportSaveFile(i));
-        this.addJsonLink(list.content, 'JSON ↑', jsonX, mid + UITheme.spacing.md, () => this.importSaveFile(i));
+        this.addJsonLink(list.content, 'JSON ↓', jsonX, mid - UITheme.spacing.md, () => this.exportSaveFile(i), `json:down:${i}`);
+        this.addJsonLink(list.content, 'JSON ↑', jsonX, mid + UITheme.spacing.md, () => this.importSaveFile(i), `json:up:${i}`);
       } else {
         // 空槽没得导出，导入链居中——迁移前空槽也照画两行位，上面那行是空的
-        this.addJsonLink(list.content, 'JSON ↑', jsonX, mid, () => this.importSaveFile(i));
+        this.addJsonLink(list.content, 'JSON ↑', jsonX, mid, () => this.importSaveFile(i), `json:up:${i}`);
       }
     });
     list.refresh();
+
+    // 默认焦点 = 第一个可用槽位：存档页全可用，读档页跳过空槽（disabled 的行不吃焦点）
+    const firstUsable = metas.findIndex(m => action === 'save' || m !== null);
+    if (firstUsable >= 0) this.focusDefaultId = `slot:${firstUsable}`;
 
     this.addBackButton(win);
 
@@ -579,32 +708,52 @@ export class MenuUI {
     else win.attach();
   }
 
-  /** 槽位按钮上的一行字：有档给时间/场景/天数/时长，空槽给「(空)」。文案模板全在 strings。 */
-  private slotLabel(meta: SaveSlotMeta | null, index: number): string {
-    if (!meta) return this.strings.get('menu', 'slotEmpty', { slot: index + 1 });
-    const date = new Date(meta.timestamp);
-    const dateStr = `${date.getFullYear()}/${String(date.getMonth() + 1).padStart(2, '0')}/${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-    const playMin = Math.floor(meta.playTimeMs / 60000);
-    return this.strings.get('menu', 'slotInfo', {
-      slot: String(index + 1), scene: meta.sceneName, day: String(meta.dayNumber),
-      date: dateStr, minutes: String(playMin),
-    });
+  /** 焦点落到视口外的槽位行时滚进来（正常分辨率下滚不动，小画布被挤压时才起作用）。 */
+  private revealSlot(top: number): void {
+    const list = this.list;
+    if (!list) return;
+    const bottom = top + SLOT_H;
+    if (top < list.scrollOffset) list.scrollOffset = top;
+    else if (bottom > list.scrollOffset + list.viewportHeight) {
+      list.scrollOffset = bottom - list.viewportHeight;
+    }
+  }
+
+  /** 槽位副行：保存日期时间 + 游玩时长（模板在 strings，格式化留代码） */
+  private slotSubLabel(meta: SaveSlotMeta): string {
+    const d = new Date(meta.timestamp);
+    const date = `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    return this.strings.get('menu', 'slotSub', { date, minutes: Math.floor(meta.playTimeMs / 60000) });
+  }
+
+  /** 量一行 ui 字族文案的宽（窗宽反推用；样式须与槽位行里实际那份一致） */
+  private measureUiText(text: string, fontSize: number): number {
+    const probe = createStyledText({ text, style: { fontSize, fontFamily: UITheme.fonts.ui } });
+    const w = probe.width;
+    probe.destroy();
+    return w;
   }
 
   /**
-   * 窗宽按最长的一条槽位文案反推（与 ShopUI/QuestPanelUI 的"按内容反推尺寸"同一手法）。
-   * 写死 400 宽在场景名一长时就把「槽位 3: …分钟」挤出按钮——槽位行的标签不折行。
+   * 窗宽按最宽的一行槽位内容反推（与 ShopUI/QuestPanelUI 的"按内容反推尺寸"同一手法）。
+   * 两行版式下取「主行（场景名 + 第 N 天）」与「副行（时间·时长）」里较宽的一条；
+   * 空槽量它那句「(空)」。槽位行的文字不折行，写死 400 宽在场景名一长时必挤出按钮。
    */
-  private saveLoadWidth(labels: string[]): number {
+  private saveLoadWidth(metas: (SaveSlotMeta | null)[]): number {
     let textW = 0;
-    for (const label of labels) {
-      const probe = createStyledText({
-        text: label,
-        style: { fontSize: UITheme.fontSize.bodyLarge, fontFamily: UITheme.fonts.ui },
-      });
-      textW = Math.max(textW, probe.width);
-      probe.destroy();
-    }
+    metas.forEach((meta, i) => {
+      if (!meta) {
+        textW = Math.max(textW, this.measureUiText(
+          this.strings.get('menu', 'slotEmpty', { slot: i + 1 }), UITheme.fontSize.bodyLarge,
+        ));
+        return;
+      }
+      const mainW = this.measureUiText(meta.sceneName, UITheme.fontSize.bodyLarge)
+        + UITheme.spacing.lg
+        + this.measureUiText(this.strings.get('menu', 'slotDay', { day: meta.dayNumber }), UITheme.fontSize.small);
+      const subW = this.measureUiText(this.slotSubLabel(meta), UITheme.fontSize.small);
+      textW = Math.max(textW, mainW, subW);
+    });
     const desired = textW
       + UITheme.spacing.xl * 2      // 槽位行左右留白
       + UITheme.spacing.sm * 2      // 滚动条道 + 槽位与 JSON 列的间隙
@@ -674,25 +823,37 @@ export class MenuUI {
     this.devToggleRepaint?.();
   }
 
-  private addJsonLink(parent: Container, text: string, x: number, centerY: number, onPress: () => void): void {
+  private addJsonLink(parent: Container, text: string, x: number, centerY: number, onPress: () => void, focusId: string): void {
     const link = createStyledText({
       text,
-      // 迁移期沿用的 colors.link 是 0x8888aa 的冷蓝，在整屏暖木配色里是唯一一处蓝调；
-      // 收进暗金，hover 才提到 title。
+      // 迁移期沿用的旧 link 档是 0x8888aa 的冷蓝，在整屏暖木配色里是唯一一处蓝调；
+      // 收进暗金，hover 才提到 title（批2a 已删 link 键，交互色归琥珀族 goldDim）。
       style: { fontSize: UITheme.fontSize.micro, fill: UITheme.colors.goldDim, fontFamily: UITheme.fonts.ui },
     });
     link.x = x;
     link.y = Math.round(centerY - link.height / 2);
     link.eventMode = 'static';
     link.cursor = 'pointer';
-    link.on('pointerover', () => { link.style.fill = UITheme.colors.title; });
-    link.on('pointerout', () => { link.style.fill = UITheme.colors.goldDim; });
+    link.on('pointerover', () => { link.style.fill = UITheme.colors.title; this.focus.syncHover(focusId); });
+    link.on('pointerout', () => this.focus.clearHover(focusId));
+    link.on('pointerout', () => this.focus.clearHover(focusId));
+    // 移开时**只在焦点不在它身上**才复原：抹掉就等于屏幕上没有焦点了
+    link.on('pointerout', () => { if (this.focus.current?.id !== focusId) link.style.fill = UITheme.colors.goldDim; });
     link.on('pointerdown', (e) => {
       // 同一次原生事件随后还会到达挂在 window 上的推进监听，不标记会"点导出顺便推进剧情"
       markPointerConsumed((e as { nativeEvent?: unknown }).nativeEvent);
       onPress();
     });
     parent.addChild(link);
+    // 文字链自成一组：与槽位同组的话，上下键会在槽位与链之间乱跳（混排面板的通病）
+    this.focusItems.push({
+      id: focusId,
+      x, y: link.y, w: link.width, h: link.height,
+      group: 'json',
+      // 焦点高亮 = 链自己的 hover 画法（goldDim 提到 title）
+      onFocus: (on) => { if (!link.destroyed) link.style.fill = on ? UITheme.colors.title : UITheme.colors.goldDim; },
+      onActivate: onPress,
+    });
   }
 
   /** 子页底部的「[返回]」。与 ✕ 同一个出口（goBack），文案带方括号是本项目"可点"的视觉约定。 */
@@ -704,41 +865,77 @@ export class MenuUI {
       variant: 'secondary',
       onPress: () => this.goBack(),
     });
-    back.container.position.set(
-      Math.round((win.bodyWidth - BACK_BTN_W) / 2),
-      Math.round(win.bodyHeight - BACK_BTN_H),
-    );
+    const bx = Math.round((win.bodyWidth - BACK_BTN_W) / 2);
+    const by = Math.round(win.bodyHeight - BACK_BTN_H);
+    back.container.position.set(bx, by);
+    back.container.on('pointerover', () => this.focus.syncHover('back'));
+    back.container.on('pointerout', () => this.focus.clearHover('back'));
     win.body.addChild(back.container);
+    // 返回自成一组（footer）：从槽位/设置列往下走到底才落到它，不与内容行抢上下键
+    this.focusItems.push({
+      id: 'back',
+      x: bx, y: by, w: BACK_BTN_W, h: BACK_BTN_H,
+      group: 'footer',
+      // 焦点高亮 = UIButton 自己的常驻选中态
+      onFocus: (on, via) => back.setSelected(on && via === 'key'),
+      onActivate: () => this.goBack(),
+    });
   }
 
-  /** 点槽位：存档就地刷新槽位（走 build() → attach，不重放开场动画），读档成功才关菜单。 */
+  /** 点槽位：存档就地刷新槽位（走 build() → attach，不重放开场动画），读档成功才关菜单。
+   *  覆盖已有存档 / 游戏中读档都是不可逆操作（审查 P1 零确认路径），先过确认框。 */
   private commitSlot(action: 'save' | 'load', slot: number): void {
     if (action === 'save') {
-      const ok = this.saveData.save(slot);
-      this.eventBus.emit('notification:show', {
-        text: ok
-          ? this.strings.get('menu', 'saveSlot', { slot: slot + 1 })
-          : this.strings.get('menu', 'saveFailed'),
-        type: ok ? 'info' : 'error',
-      });
-      this.build();
+      const doSave = (): void => {
+        const ok = this.saveData.save(slot);
+        this.eventBus.emit('notification:show', {
+          text: ok
+            ? this.strings.get('menu', 'saveSlot', { slot: slot + 1 })
+            : this.strings.get('menu', 'saveFailed'),
+          type: ok ? 'info' : 'error',
+        });
+        this.build();
+      };
+      if (this.saveData.hasSave(slot)) {
+        void openConfirmDialog(this.renderer, {
+          title: this.strings.get('confirm', 'overwriteTitle'),
+          message: this.strings.get('confirm', 'overwriteBody', { slot: String(slot + 1) }),
+          confirmLabel: this.strings.get('confirm', 'ok'),
+          cancelLabel: this.strings.get('confirm', 'cancel'),
+        }).then((ok) => { if (ok) doSave(); });
+      } else {
+        doSave();
+      }
       return;
     }
-    this.saveData.load(slot).then((ok) => {
-      if (ok) {
-        this.close();
-        this.eventBus.emit('notification:show', {
-          text: this.strings.get('menu', 'loadSlot', { slot: slot + 1 }),
-          type: 'info',
-        });
-      } else {
-        // 读档失败：SaveManager 已回滚到读档前状态，留在面板让玩家换槽位重试
-        this.eventBus.emit('notification:show', {
-          text: this.strings.get('menu', 'loadFailed'),
-          type: 'error',
-        });
-      }
-    });
+    const doLoad = (): void => {
+      this.saveData.load(slot).then((ok) => {
+        if (ok) {
+          this.close();
+          this.eventBus.emit('notification:show', {
+            text: this.strings.get('menu', 'loadSlot', { slot: slot + 1 }),
+            type: 'info',
+          });
+        } else {
+          // 读档失败：SaveManager 已回滚到读档前状态，留在面板让玩家换槽位重试
+          this.eventBus.emit('notification:show', {
+            text: this.strings.get('menu', 'loadFailed'),
+            type: 'error',
+          });
+        }
+      });
+    };
+    // 标题页「继续」进来的读档没有会丢的进度，不拦；暂停页进来的读档会丢当前局，要确认
+    if (this.previousMode === 'pause') {
+      void openConfirmDialog(this.renderer, {
+        title: this.strings.get('confirm', 'loadTitle'),
+        message: this.strings.get('confirm', 'loadBody'),
+        confirmLabel: this.strings.get('confirm', 'ok'),
+        cancelLabel: this.strings.get('confirm', 'cancel'),
+      }).then((ok) => { if (ok) doLoad(); });
+    } else {
+      doLoad();
+    }
   }
 
   private exportSaveFile(slot: number): void {
@@ -777,12 +974,14 @@ export class MenuUI {
 
   /** 设置页。窗体走 {@link UIWindow}；音量/速度滑条是组件层没有的件，保留手写（见 drawSlider）。 */
   private buildSettings(animate: boolean): void {
-    const channels: { label: string; channel: 'bgm' | 'sfx' | 'ambient' }[] = [
+    const channels: { label: string; channel: AudioChannel }[] = [
       { label: this.strings.get('menu', 'bgm'), channel: 'bgm' },
       { label: this.strings.get('menu', 'sfx'), channel: 'sfx' },
       { label: this.strings.get('menu', 'ambient'), channel: 'ambient' },
+      // 对白单独一条：玩家把音效压低时台词必须还听得见
+      { label: this.strings.get('menu', 'voice'), channel: 'voice' },
     ];
-    /** 行数 = 三条音量 + 「逐字显示」开关 + 「文字速度」滑条；窗高按它反推 */
+    /** 行数 = 四条音量 + 「逐字显示」开关 + 「文字速度」滑条；窗高按它反推 */
     const rowCount = channels.length + 2;
 
     const win = new UIWindow(this.renderer, {
@@ -820,9 +1019,9 @@ export class MenuUI {
       const labelT = createStyledText({
         text,
         style: {
-          // 迁移期这里是 colors.subtle（0xaaaacc 冷蓝灰），整块设置页因此偏冷；改暖正文色
+          // 迁移期这里是旧 subtle 档（0xaaaacc 冷蓝灰），整块设置页因此偏冷；改暖正文色
           fontSize: UITheme.fontSize.body,
-          fill: dim ? UITheme.colors.hint : UITheme.colors.bodyMuted,
+          fill: dim ? UITheme.colors.hintMid : UITheme.colors.bodyMuted,
           fontFamily: UITheme.fonts.ui,
           wordWrap: true, breakWords: true, wordWrapWidth: CHANNEL_LABEL_W - UITheme.spacing.md,
         },
@@ -838,6 +1037,10 @@ export class MenuUI {
       addLabel(label, idx);
       this.drawSlider(win.body, controlX, rowCenterY(idx), sliderW, this.audioSettings.getVolume(channel), (v) => {
         this.audioSettings.setVolume(channel, v);
+      }, {
+        focusId: `slider:${channel}`,
+        // 松手试听：音效那条通道在设置页里本来是全哑的，不放一声玩家就是在盲调
+        onSettle: () => this.audioSettings.previewVolume(channel),
       });
     });
 
@@ -849,21 +1052,34 @@ export class MenuUI {
 
     addSeparator(typewriterIdx);
     addLabel(this.strings.get('menu', 'typewriter'), typewriterIdx);
+    // 点按/回车共用同一个执行体。整页重建：按钮文案与速度行的压暗都跟着开关走。
+    // build() 走 attach()，不会重放窗体开场动效（见 build 的 animate 注释）；
+    // 焦点按 id（toggle:typewriter）复位，回车切开关后焦点仍停在开关上。
+    const toggleTypewriter = (): void => {
+      this.textSettings.setTypewriterEnabled(!typewriterOn);
+      this.build();
+    };
     const toggle = new UIButton({
       label: this.strings.get('menu', typewriterOn ? 'toggleOn' : 'toggleOff'),
       width: TOGGLE_BTN_W,
       height: TOGGLE_BTN_H,
       // 开着时按主操作那一档（亮），关掉退成次要——一眼看出当前是哪个态
       variant: typewriterOn ? 'primary' : 'secondary',
-      onPress: () => {
-        this.textSettings.setTypewriterEnabled(!typewriterOn);
-        // 整页重建：按钮文案与速度行的压暗都跟着开关走。
-        // build() 走 attach()，不会重放窗体开场动效（见 build 的 animate 注释）。
-        this.build();
-      },
+      onPress: toggleTypewriter,
     });
-    toggle.container.position.set(controlX, Math.round(rowCenterY(typewriterIdx) - TOGGLE_BTN_H / 2));
+    const toggleY = Math.round(rowCenterY(typewriterIdx) - TOGGLE_BTN_H / 2);
+    toggle.container.position.set(controlX, toggleY);
+    toggle.container.on('pointerover', () => this.focus.syncHover('toggle:typewriter'));
+    toggle.container.on('pointerout', () => this.focus.clearHover('toggle:typewriter'));
     win.body.addChild(toggle.container);
+    this.focusItems.push({
+      id: 'toggle:typewriter',
+      x: controlX, y: toggleY, w: TOGGLE_BTN_W, h: TOGGLE_BTN_H,
+      group: 'settings',
+      // 焦点高亮 = UIButton 自己的常驻选中态
+      onFocus: (on, via) => toggle.setSelected(on && via === 'key'),
+      onActivate: toggleTypewriter,
+    });
 
     addSeparator(speedIdx);
     addLabel(this.strings.get('menu', 'textSpeed'), speedIdx, !typewriterOn);
@@ -873,11 +1089,15 @@ export class MenuUI {
       (v) => this.textSettings.setTypewriterSpeedScale(sliderToTypewriterScale(v)),
       {
         disabled: !typewriterOn,
+        focusId: 'slider:speed',
         // 显示的是**速度倍率**（100% = 对白框/遭遇框各自的基准速度），不是滑条位置——
         // 两者之间是几何映射（1× 落在轨道正中），直接拿 v 当百分比会写出 50%
         format: (v) => `${Math.round(sliderToTypewriterScale(v) * 100)}%`,
       },
     );
+
+    // 默认焦点落第一个控件（第一条音量滑条）
+    this.focusDefaultId = `slider:${channels[0].channel}`;
 
     this.addBackButton(win);
 
@@ -898,6 +1118,9 @@ export class MenuUI {
    * @param opts.format 右侧数值列的文案（缺省按百分比读滑条位置）。滑条位置与真实取值
    *   不是同一个量时（如速度倍率走几何映射）必须给，否则数值列会写出另一套数。
    * @param opts.disabled 整条压暗且不挂任何交互（本行的前置开关关着时用）
+   * @param opts.focusId 给了就进键盘焦点环：焦点在滑条上时左右键按量程 1/10 步进
+   *   （onKey 在 UIFocus 之前拦，否则左右键被当"挪焦点"吃掉）。滑条没有 hover 视觉，
+   *   焦点视觉与 JSON 文字链同一套语言——滑块/数值点亮到 title，不另发明高亮。
    */
   private drawSlider(
     parent: Container,
@@ -906,11 +1129,24 @@ export class MenuUI {
     width: number,
     value: number,
     onChange: (v: number) => void,
-    opts?: { format?: (v: number) => string; disabled?: boolean },
+    opts?: {
+      format?: (v: number) => string;
+      disabled?: boolean;
+      focusId?: string;
+      /**
+       * 值**停下来**时回调一次（松开拖拽 / 点一下轨道 / 键盘步进停手 250ms 后）。
+       * 与 `onChange` 的分工：onChange 是"正在变"（每一像素都要回写，否则拖着没反应），
+       * onSettle 是"调完了"——试听声只能挂在这一头，挂 onChange 上会拖出一串机关枪。
+       */
+      onSettle?: (v: number) => void;
+    },
   ): void {
     const trackY = centerY - TRACK_H / 2;
     const disabled = opts?.disabled === true;
     const format = opts?.format ?? ((v: number) => `${Math.round(v * 100)}%`);
+    // 当前值/焦点态：拖拽与键盘步进共用一份，重绘三件套（fill/handle/pct）都从这读
+    let current = Math.max(0, Math.min(1, value));
+    let focused = false;
 
     const track = new Graphics();
     track.rect(x, trackY, width, TRACK_H);
@@ -926,26 +1162,26 @@ export class MenuUI {
       fill.rect(x, trackY, width * v, TRACK_H);
       fill.fill(disabled ? UITheme.colors.borderSubtle : UITheme.colors.sliderFill);
     };
-    drawFill(value);
+    drawFill(current);
     parent.addChild(fill);
 
     const handle = new Graphics();
     const drawHandle = (v: number) => {
       handle.clear();
       handle.circle(x + width * v, centerY, HANDLE_R);
-      handle.fill(disabled ? UITheme.colors.hint : UITheme.colors.sliderHandle);
+      handle.fill(disabled ? UITheme.colors.hintMid : focused ? UITheme.colors.title : UITheme.colors.sliderHandle);
       handle.circle(x + width * v, centerY, HANDLE_R);
       handle.stroke({ color: disabled ? UITheme.colors.borderSubtle : UITheme.colors.borderSelected, width: 1 });
     };
-    drawHandle(value);
+    drawHandle(current);
     parent.addChild(handle);
 
     const pct = createStyledText({
-      text: format(value),
+      text: format(current),
       style: {
-        // 数值跟着滑块走暖金，别再用 colors.section 的冷灰
+        // 数值跟着滑块走暖金，别再用旧 section 档的冷灰（该档已并入 hintMid）
         fontSize: UITheme.fontSize.small,
-        fill: disabled ? UITheme.colors.hint : UITheme.colors.goldDim,
+        fill: disabled ? UITheme.colors.hintMid : UITheme.colors.goldDim,
         fontFamily: UITheme.fonts.ui,
         wordWrap: true, breakWords: true, wordWrapWidth: PCT_COL_W,
       },
@@ -954,7 +1190,59 @@ export class MenuUI {
     pct.y = Math.round(centerY - pct.height / 2);
     parent.addChild(pct);
 
-    // 压暗态到此为止：不挂 eventMode / 不挂 window 级拖拽，点它、拖它都不动
+    // 拖拽 / 键盘步进共同的收口：夹值 → 回写 setter → 重绘三件套
+    const applyValue = (v: number) => {
+      current = Math.max(0, Math.min(1, v));
+      onChange(current);
+      drawFill(current);
+      drawHandle(current);
+      pct.text = format(current);
+    };
+
+    /**
+     * 「停下了」的收口。键盘步进要防抖：按住方向键是一串连发的 keydown，
+     * 每一下都试听就成了机关枪；等手停 250ms 再放一声。拖拽路径由 pointerup 直接触发。
+     */
+    let settleTimer: ReturnType<typeof setTimeout> | null = null;
+    const cancelSettle = (): void => {
+      if (settleTimer === null) return;
+      clearTimeout(settleTimer);
+      settleTimer = null;
+    };
+    const settleNow = (): void => {
+      cancelSettle();
+      opts?.onSettle?.(current);
+    };
+    const settleSoon = (): void => {
+      cancelSettle();
+      settleTimer = setTimeout(() => { settleTimer = null; opts?.onSettle?.(current); }, SLIDER_SETTLE_MS);
+    };
+    // 面板拆除时把在途的防抖表一并停掉（与拖拽的 window 监听同一个清理集合）：
+    // 尸体面板绝不许在关掉之后再冒出一声
+    if (opts?.onSettle) this.sliderDragCleanups.add(cancelSettle);
+
+    if (opts?.focusId !== undefined && !disabled) {
+      const id = opts.focusId;
+      // 左右键步进注册表（onKey 里先于 UIFocus 查它）；量程固定 [0,1]，步进 1/10
+      this.sliderSteps.set(id, (dir) => { applyValue(current + dir * SLIDER_KEY_STEP); settleSoon(); });
+      track.on('pointerover', () => this.focus.syncHover(id));
+      track.on('pointerout', () => this.focus.clearHover(id));
+      handle.on('pointerover', () => this.focus.syncHover(id));
+      handle.on('pointerout', () => this.focus.clearHover(id));
+      this.focusItems.push({
+        id,
+        x, y: Math.round(centerY - SETTING_ROW_H / 2), w: width, h: SETTING_ROW_H,
+        group: 'settings',
+        onFocus: (on) => {
+          focused = on;
+          if (!handle.destroyed) drawHandle(current);
+          if (!pct.destroyed) pct.style.fill = on ? UITheme.colors.title : UITheme.colors.goldDim;
+        },
+        // 滑条没有"激活"这回事：回车在它身上不吃键（onActivate 缺省即让键）
+      });
+    }
+
+    // 压暗态到此为止：不挂 eventMode / 不挂 window 级拖拽，点它、拖它都不动（焦点也不注册）
     if (disabled) return;
 
     let dragging = false;
@@ -964,20 +1252,20 @@ export class MenuUI {
      */
     const updateValue = (globalX: number) => {
       const localX = parent.toLocal({ x: globalX, y: 0 }).x;
-      const v = Math.max(0, Math.min(1, (localX - x) / width));
-      onChange(v);
-      drawFill(v);
-      drawHandle(v);
-      pct.text = format(v);
+      applyValue((localX - x) / width);
     };
 
     // 拖拽跟随的是 window 级 PointerEvent，clientX 在画布被 CSS 缩放时与逻辑坐标不同系，须换算
     const onMove = (e: PointerEvent) => { if (dragging) updateValue(clientToCanvas(this.renderer, e.clientX, e.clientY).x); };
     const onUp = () => {
+      const wasDragging = dragging;
       dragging = false;
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       this.sliderDragCleanups.delete(onUp);
+      // 松手 = 调完了，按新音量放一声。**只在真的拖过时响**：
+      // 这个 onUp 也会被 sliderDragCleanups 在拆面板时调用，那条路径不该出声。
+      if (wasDragging) settleNow();
     };
 
     track.eventMode = 'static';
@@ -1031,16 +1319,28 @@ export class MenuUI {
         textColor: override?.restColor ?? this.toneColor(item.tone),
         shadow: override?.shadow,
         align: override?.align,
-        onHover: () => setActive(i),
+        // 悬停即移焦：鼠标与键盘共用同一个"当前项"，高亮统一由 onFocus 驱动 setActive
+        onHover: () => this.focus.syncHover(`row:${i}`),
         onPress: item.action,
       });
       row.container.position.set(x, y + i * (rowH + gap));
       this.container!.addChild(row.container);
       rows.push(row);
+      this.focusItems.push({
+        id: `row:${i}`,
+        x, y: y + i * (rowH + gap), w: width, h: rowH,
+        group: 'menu',
+        // 焦点高亮 = 行原有的"当前项"通道（setActive 互斥点亮），不另发明第三种高亮；
+        // 失焦不用管——本页只有这一列，下一项的 setActive 会把这行熄掉
+        onFocus: (on) => { if (on) setActive(i); },
+        onActivate: item.action,
+      });
     });
 
     const primary = items.findIndex((it) => it.tone === 'primary');
     setActive(primary >= 0 ? primary : 0);
+    // 默认焦点落主操作那一项：标题页=新游戏、暂停页=继续（都是 tone: primary，即第一项）
+    this.focusDefaultId = `row:${primary >= 0 ? primary : 0}`;
   }
 
   /**
@@ -1051,7 +1351,7 @@ export class MenuUI {
    */
   private toneColor(tone: MenuTone | undefined): number {
     if (tone === 'primary') return UITheme.colors.body;
-    if (tone === 'danger') return UITheme.colors.subtle;
+    if (tone === 'danger') return UITheme.colors.descText;
     return UITheme.colors.bodyMuted;
   }
 
@@ -1160,6 +1460,10 @@ export class MenuUI {
     disabled?: boolean;
     /** 压在主视觉上（标题界面）时开字影，替代给整张画铺黑纱 */
     shadow?: boolean;
+    /** 主行右端的短标（存档槽位的「第 N 天」）：small 档暖金，选中跟主行一起提到琥珀 */
+    trailing?: string;
+    /** 副行（存档槽位的「时间 · 时长」）：给了就走两行版式，small 档弱化色，恒不换色 */
+    sub?: string;
     onHover?: () => void;
     onPress: () => void;
   }): MenuRowHandle {
@@ -1185,6 +1489,28 @@ export class MenuUI {
     });
     label.eventMode = 'none';
     c.addChild(label);
+
+    // 两级层级的另外两件（都不吃事件，命中恒是整行）：主行右端短标 + 副行
+    const trailing = opts.trailing
+      ? createStyledText({
+        text: opts.trailing,
+        style: { fontSize: UITheme.fontSize.small, fill: UITheme.colors.goldDim, fontFamily: UITheme.fonts.ui },
+      })
+      : null;
+    if (trailing) {
+      trailing.eventMode = 'none';
+      c.addChild(trailing);
+    }
+    const sub = opts.sub
+      ? createStyledText({
+        text: opts.sub,
+        style: { fontSize: UITheme.fontSize.small, fill: UITheme.colors.hintMid, fontFamily: UITheme.fonts.ui },
+      })
+      : null;
+    if (sub) {
+      sub.eventMode = 'none';
+      c.addChild(sub);
+    }
 
     let active = false;
     let hovered = false;
@@ -1214,11 +1540,33 @@ export class MenuUI {
         bg.fill({ color: UITheme.colors.overlay, alpha: UITheme.alpha.hitArea });
       }
       label.style.fill = lit ? UITheme.colors.title : restColor;
-      // 带字距时 Pixi 量到的宽含末位那一格空隙，直接居中会整体左偏半格
-      label.x = align === 'left'
-        ? UITheme.spacing.xl
-        : Math.round((w - label.width + ls) / 2);
-      label.y = Math.round((h - label.height) / 2) + (pressed ? 1 : 0);
+      const press = pressed ? 1 : 0;
+      if (sub) {
+        // 两行版式（存档槽位）：主行 + 副行整块在行内垂直居中，副行色不随选中变——
+        // 层级靠「主行亮、副行弱」表达，选中只点亮主行与右端短标
+        const gap = UITheme.spacing.xs;
+        const top = Math.round((h - label.height - gap - sub.height) / 2) + press;
+        label.x = UITheme.spacing.xl;
+        label.y = top;
+        sub.x = UITheme.spacing.xl;
+        sub.y = top + label.height + gap;
+        if (trailing) {
+          trailing.style.fill = lit ? UITheme.colors.title : UITheme.colors.goldDim;
+          trailing.x = w - UITheme.spacing.xl - trailing.width;
+          trailing.y = top + Math.round((label.height - trailing.height) / 2);
+        }
+      } else {
+        // 带字距时 Pixi 量到的宽含末位那一格空隙，直接居中会整体左偏半格
+        label.x = align === 'left'
+          ? UITheme.spacing.xl
+          : Math.round((w - label.width + ls) / 2);
+        label.y = Math.round((h - label.height) / 2) + press;
+        if (trailing) {
+          trailing.style.fill = lit ? UITheme.colors.title : UITheme.colors.goldDim;
+          trailing.x = w - UITheme.spacing.xl - trailing.width;
+          trailing.y = Math.round((h - trailing.height) / 2) + press;
+        }
+      }
 
       // bare 选中记号：文字正下方一道短琥珀线，宽度取文字实宽的一半，**呼应标题下那道线**。
       // 居中排版里这是唯一自洽的选中标记——竖条/色块都会破掉"无框"这件事。
@@ -1370,6 +1718,8 @@ export class MenuUI {
   private destroyUI(): void {
     for (const cleanup of [...this.sliderDragCleanups]) cleanup();
     this.sliderDragCleanups.clear();
+    // 步进注册表跟着页面走：滑条随 container/win 销毁，留着条目就会去摸已销毁的 Graphics
+    this.sliderSteps.clear();
     // 那行 dev 小开关随 container 一起没：留着钩子就会去摸已销毁的 Text
     this.devToggleRepaint = null;
     // 顺序要紧：滚动区先摘（它自己挂着 window 级 wheel/pointermove），再拆窗体
@@ -1387,6 +1737,10 @@ export class MenuUI {
   destroy(): void {
     this.unsubscribeResize?.();
     this.unsubscribeResize = null;
+    // 键盘监听/焦点兜底再摘一次（close() 只在 _isOpen 时走），destroy 后重建与首次一致
+    window.removeEventListener('keydown', this.onKeyBound);
+    this.focus.destroy();
+    this.focusMode = null;
     this.destroyUI();
     this.dropTitleBackdrop();
   }

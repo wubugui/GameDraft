@@ -1,10 +1,14 @@
 """Repository-wide safety fixtures for tests under ``tools/``."""
 from __future__ import annotations
 
+import faulthandler
 import json
 import os
 import shutil
+import subprocess
+import sys
 import tempfile
+import threading
 from pathlib import Path
 from typing import Callable, Iterator
 
@@ -79,6 +83,88 @@ def pytest_configure() -> None:
 
     install_repository_write_guard(_REPOSITORY_ROOT)
     _install_qsettings_isolation()
+
+
+_SHUTDOWN_GRACE_SECONDS = 120.0
+
+
+def _child_pids_windows() -> list[str]:
+    lister = subprocess.run(
+        [
+            "powershell", "-NoProfile", "-Command",
+            f"(Get-CimInstance Win32_Process -Filter 'ParentProcessId={os.getpid()}').ProcessId",
+        ],
+        capture_output=True, text=True, check=False,
+    )
+    return [p.strip() for p in (lister.stdout or "").split() if p.strip().isdigit()]
+
+
+def _dump_child_stacks(pids: list[str]) -> None:
+    """py-spy 拍下卡死 worker 的 python 栈——这是定位「谁留了不退线程」的根因证据。
+
+    py-spy 是可选依赖（pip install py-spy），不在就跳过，不影响强退兜底。
+    """
+
+    py_spy = Path(sys.executable).with_name("py-spy.exe" if os.name == "nt" else "py-spy")
+    if not py_spy.exists():
+        return
+    for pid in pids:
+        probe = subprocess.run(
+            [str(py_spy), "dump", "--pid", pid, "--nonblocking"],
+            capture_output=True, text=True, check=False, timeout=30,
+        )
+        sys.stderr.write(f"\n[tools/conftest] 卡死子进程 {pid} 的线程栈（py-spy）：\n")
+        sys.stderr.write(probe.stdout or probe.stderr or "(py-spy 无输出)\n")
+    sys.stderr.flush()
+
+
+def _kill_child_process_trees_windows(pids: list[str]) -> None:
+    """Terminate direct children (stuck xdist workers) so os._exit can keep the real exit code."""
+
+    for pid in pids:
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", pid],
+            capture_output=True, check=False,
+        )
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_sessionfinish(session, exitstatus):
+    """Arm a shutdown watchdog so a stuck xdist worker cannot hang the whole run.
+
+    实测（2026-08-17，Windows）：全量套件测试本体 ~7 分钟跑完后，个别 xdist worker
+    在 execnet 收尾握手里退不出去，controller 干等 ~15 分钟，整条命令零输出挂死。
+    这里在 controller 的会话收尾一开始点火一个守卫计时器：正常收尾几秒内进程自然
+    退出、守卫（daemon 线程）随进程消亡；超时仍活着则先 dump 全线程栈到 stderr 留
+    根因证据，再清掉残留 worker 进程树并以会话真实退出码强退。worker 侧不设卡——
+    先测完的 worker 等 controller 收编是合法状态，掐它会丢测试。
+    """
+    if hasattr(session.config, "workerinput"):
+        yield
+        return
+
+    status = int(exitstatus) if exitstatus is not None else 1
+
+    def _force_shutdown() -> None:
+        faulthandler.dump_traceback(all_threads=True, file=sys.stderr)
+        sys.stderr.write(
+            f"\n[tools/conftest] 会话结束 {_SHUTDOWN_GRACE_SECONDS:.0f}s 后进程仍未退出"
+            "（xdist worker 收尾挂死），已 dump 线程栈并强退；退出码保留会话真实结果。\n",
+        )
+        sys.stderr.flush()
+        if os.name == "nt":
+            pids = _child_pids_windows()
+            try:
+                _dump_child_stacks(pids)
+            except Exception:
+                pass  # 取证失败不拦兜底强退
+            _kill_child_process_trees_windows(pids)
+        os._exit(status)
+
+    watchdog = threading.Timer(_SHUTDOWN_GRACE_SECONDS, _force_shutdown)
+    watchdog.daemon = True
+    watchdog.start()
+    yield
 
 
 def pytest_unconfigure() -> None:

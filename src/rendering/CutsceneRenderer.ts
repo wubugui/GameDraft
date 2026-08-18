@@ -3,10 +3,14 @@ import type { Renderer } from './Renderer';
 import type { Camera } from './Camera';
 import { createOverlayBlendMesh } from './overlayBlendShader';
 import type { AssetManager } from '../core/AssetManager';
-import type { CutsceneKenBurns, AnimationSetDef, ParallaxSceneDef, ParallaxLayerDef, ParallaxKeyframe } from '../data/types';
+import type {
+  CutsceneKenBurns, AnimationSetDef, ParallaxSceneDef, ParallaxLayerDef, ParallaxKeyframe,
+  ITextDisplaySettingsProvider,
+} from '../data/types';
 import { CUTSCENE_ANON_SHOT_ID } from '../data/types';
 import { DEFAULT_SPEAKER_SIDE, type SpeakerSide } from '../utils/dialogueSpeakerSide';
-import { createStyledText } from '../core/styledText';
+import { createStyledText, setStyledReveal, styledPlainLength } from '../core/styledText';
+import { plainTextLength, sliceStyledMarkup } from '../core/textStyle';
 
 /**
  * 过场对话框(present:showDialogue)的观感样式，由组装层(Game)注入，令其与常规对话框
@@ -38,10 +42,15 @@ export interface CutsceneDialoguePanelStyle {
    * 建「继续」点捺（等玩家推进的那枚小记号）。
    *
    * **走注入而不是 import**：件在 ui 层，渲染层不反向依赖（架构铁律一），
-   * 与上面三个 build* 钩子同一范式。返回值自带 `update(dt)`——过场对白框是静态一句、
-   * 没有打字机，所以由 CutsceneManager 的帧驱动喂它；不注入就不画（测试/未接线）。
+   * 与上面三个 build* 钩子同一范式。返回值自带 `update(dt)`，由组装层的帧驱动喂它；
+   * 不注入就不画（测试/未接线）。台词还在逐字时这枚记号先藏起来，打完才现。
    */
-  buildContinueMark?: (x: number, y: number) => { view: Container; update: (dt: number) => void };
+  buildContinueMark?: (x: number, y: number) => {
+    view: Container;
+    update: (dt: number) => void;
+    /** 逐字期间藏起来用；不给就直接改 `view.visible`（相位不会归零，仅此差别） */
+    setVisible?: (visible: boolean) => void;
+  };
 }
 
 /** 字幕位置：top/center/bottom 或 0-1 表示距底部高度比例 */
@@ -92,6 +101,26 @@ function applyCameraEase(t: number, easing: CutsceneCameraEasing): number {
   }
 }
 
+/**
+ * 过场台词的打字机**基准**速度（字/秒）。玩家在设置页调的是倍率（见 `ITextDisplaySettingsProvider`）。
+ * ⚠ 与 `DialogueUI` 的 `TYPEWRITER_BASE_CPS` **同值**：过场对白框与常规对话框同皮同字，
+ * 快慢也必须同，那边改了这里要跟。独立一份而非共享，是因为渲染层不反向依赖 UI 层。
+ */
+const TYPEWRITER_BASE_CPS = 30;
+
+/** 一条在跑的打字机。owner 是台词容器（对白框 / 字幕），dismiss 时按它销号。 */
+interface TypewriterEntry {
+  /** 把「已显示 n 个可见字」画到当前节点上。字幕 resize 重排会换节点，届时整个换成新闭包 */
+  apply: (n: number) => void;
+  /** 可见字总数（终点）。按 `plainTextLength` 口径算，`[c:…]` 标记不占字数 */
+  full: number;
+  /** 浮点累计进度：不取整存着，否则低倍率下每帧增量 <1 会永远进不了下一个字 */
+  chars: number;
+  shown: number;
+  /** 打完之前压住「继续」点捺，打完即现（与 DialogueUI 的 waitingForAdvance 同口径） */
+  setContinueMarkVisible: ((visible: boolean) => void) | null;
+}
+
 export class CutsceneRenderer {
   private resolveDisplay: ((s: string) => string) | null = null;
   private dialoguePanelStyle: CutsceneDialoguePanelStyle | null = null;
@@ -118,6 +147,10 @@ export class CutsceneRenderer {
   private movieBarHeightPercent: number = 0;
   /** 活跃字幕及其布局参数：resize 时按新屏幕尺寸原容器重排（容器由 CutsceneManager 持有并 dismiss） */
   private activeSubtitles = new Map<Container, { content: ShowSubtitleContent; layout: ShowSubtitleLayout }>();
+  /** 玩家的文字呈现偏好（逐字开关 + 速度倍率），由组装层注入；未注入 = 不逐字（测试/未接线） */
+  private textSettings: ITextDisplaySettingsProvider | null = null;
+  /** 在跑的打字机，键是台词容器（对白框 / 字幕）；dismiss / cleanup 时按键销号 */
+  private typewriters = new Map<Container, TypewriterEntry>();
   private pendingRafIds = new Set<number>();
   private pendingTimerIds = new Set<ReturnType<typeof setTimeout>>();
   /** 过场跳过 / cleanup 时需立即 settle 的异步（animateAlpha、wait、镜头插值等） */
@@ -156,8 +189,78 @@ export class CutsceneRenderer {
     this.dialoguePanelStyle = style;
   }
 
+  /** 注入玩家的文字呈现偏好（与 `setResolveDisplay` 同一范式：偏好属 core，渲染层不去 import Game）。 */
+  setTextDisplaySettings(settings: ITextDisplaySettingsProvider | null): void {
+    this.textSettings = settings;
+  }
+
   private r(s: string): string {
     return this.resolveDisplay ? this.resolveDisplay(s) : s;
+  }
+
+  /**
+   * 登记一条打字机。**只在编排开了这一拍、且玩家没关逐字时调**——两个条件由调用点先并。
+   * `full<=0`（空台词）不登记，免得留一条永远打不完的空跑项把点击语义卡在"补完"上。
+   */
+  private beginTypewriter(
+    owner: Container,
+    apply: (n: number) => void,
+    full: number,
+    setContinueMarkVisible: ((visible: boolean) => void) | null = null,
+  ): void {
+    if (full <= 0) return;
+    setContinueMarkVisible?.(false);
+    this.typewriters.set(owner, { apply, full, chars: 0, shown: 0, setContinueMarkVisible });
+    apply(0);
+  }
+
+  /** 一步到位打完并销号（点击补完、玩家中途关掉逐字、自然打完共用这一个出口）。 */
+  private settleTypewriter(owner: Container, entry: TypewriterEntry): void {
+    this.typewriters.delete(owner);
+    if (owner.destroyed) return;
+    entry.apply(entry.full);
+    entry.setContinueMarkVisible?.(true);
+  }
+
+  /**
+   * 每帧推进过场台词的打字机。与 `tickDialogueMarks` 同一处驱动——同样**不能挂进状态分支**，
+   * 台词框在状态刚切换的那一帧也可能在屏上。
+   */
+  tickTypewriters(dt: number): void {
+    if (this.typewriters.size === 0) return;
+    // 打到一半玩家把逐字关掉（设置页与过场并存）或偏好根本没注入：这一帧直接补完，与 DialogueUI 同口径
+    const scale = this.textSettings?.isTypewriterEnabled()
+      ? this.textSettings.getTypewriterSpeedScale()
+      : 0;
+    for (const [owner, e] of Array.from(this.typewriters)) {
+      if (owner.destroyed) {
+        this.typewriters.delete(owner);
+        continue;
+      }
+      if (!(scale > 0)) {
+        this.settleTypewriter(owner, e);
+        continue;
+      }
+      e.chars += dt * TYPEWRITER_BASE_CPS * scale;
+      const next = Math.min(Math.floor(e.chars), e.full);
+      if (next <= e.shown) continue;
+      e.shown = next;
+      if (next >= e.full) this.settleTypewriter(owner, e);
+      else e.apply(next);
+    }
+  }
+
+  /**
+   * 把在跑的打字机全部补完，返回**刚才是否真有没打完的**。
+   * 过场的点击语义靠这个返回值分岔：有 → 这一下只补完，不过拍；没有 → 这一下才推进
+   * （与 DialogueUI「先补完、再点才推进」同口径）。
+   */
+  completeTypewriters(): boolean {
+    if (this.typewriters.size === 0) return false;
+    for (const [owner, e] of Array.from(this.typewriters)) {
+      this.settleTypewriter(owner, e);
+    }
+    return true;
   }
 
   private escapeSubtitleHtml(s: string): string {
@@ -368,10 +471,11 @@ export class CutsceneRenderer {
   /**
    * 过场对白框。观感与常规对话框(DialogueUI)对齐：同尺(BOX_MARGIN=20/BOX_HEIGHT=140)、
    * 同皮(经注入的 SKINS.dialogue 底 + SKINS.panelAlt 说话人名牌)、同字(UITheme)。
-   * 生命周期仍由 CutsceneManager 掌控(await/skip)；此处只画一句静态对白，无打字机/选项。
+   * 生命周期仍由 CutsceneManager 掌控(await/skip)；此处只画一句对白，无选项。
    * portrait 恒带 slug（解析在 CutsceneManager 层做完）；有立绘则正文/名牌让出 PORTRAIT_INSET。
    * side 决定**立绘**贴哪一侧（主角在右、其余在左；解析同在 CutsceneManager 层做完）；
    * 名牌恒定贴左，主角身份改由 isSelf 的名牌配色表达。
+   * `typewriter` = 本拍编排要不要逐字（默认由 CutsceneManager 按台词面定）；玩家关了逐字则一律整句。
    */
   showDialogueBox(
     text: string,
@@ -379,6 +483,7 @@ export class CutsceneRenderer {
     portrait?: { slug: string; emotion: string },
     side: SpeakerSide = DEFAULT_SPEAKER_SIDE,
     isSelf: boolean = false,
+    typewriter: boolean = false,
   ): Container {
     const sw = this.screenWidth;
     const sh = this.screenHeight;
@@ -517,6 +622,15 @@ export class CutsceneRenderer {
       box.once('destroyed', () => this.dialogueMarks.delete(mk));
     }
 
+    if (typewriter && this.textSettings?.isTypewriterEnabled()) {
+      this.beginTypewriter(
+        box,
+        (n) => setStyledReveal(bodyText, n),
+        styledPlainLength(bodyText),
+        mk ? (v) => { if (mk.setVisible) mk.setVisible(v); else mk.view.visible = v; } : null,
+      );
+    }
+
     this.renderer.uiLayer.addChild(box);
     // 记账：生命周期归 CutsceneManager，这里只在它被销毁时把计数减回去
     this.liveDialogueBoxes += 1;
@@ -535,6 +649,7 @@ export class CutsceneRenderer {
   }
 
   dismissDialogueBox(box: Container): void {
+    this.typewriters.delete(box);
     if (box.parent) box.parent.removeChild(box);
     box.destroy({ children: true });
   }
@@ -1191,17 +1306,51 @@ export class CutsceneRenderer {
 
   /**
    * 显示字幕：已解析的整串，或说话人/正文对象（同行；布局与纯 string 一致，仅说话人段变色）。
+   * `typewriter` 为真且玩家没关逐字时逐字显示——**版式恒按整串算好再收字**，
+   * 所以字幕块的落位不随打字漂移（多行居中时次行仍会随自身变宽微移，这是 align:center 的固有行为）。
    */
-  showSubtitle(content: ShowSubtitleContent, layout: ShowSubtitleLayout = 'bottom'): Container {
+  showSubtitle(
+    content: ShowSubtitleContent,
+    layout: ShowSubtitleLayout = 'bottom',
+    typewriter: boolean = false,
+  ): Container {
     const container = new Container();
-    this.layoutSubtitleInto(container, content, layout);
+    const node = this.layoutSubtitleInto(container, content, layout);
     this.renderer.uiLayer.addChild(container);
     this.activeSubtitles.set(container, { content, layout });
+    if (typewriter && this.textSettings?.isTypewriterEnabled()) {
+      const rv = this.subtitleReveal(node, content);
+      this.beginTypewriter(container, rv.apply, rv.full);
+    }
     return container;
   }
 
+  /**
+   * 字幕节点的逐字口径：纯串走 `setStyledReveal`（标记不会被切碎）；
+   * 说话人拆分那种走 HTMLText 重建——**说话人段恒显示、只逐字正文**（名字是标签不是台词）。
+   */
+  private subtitleReveal(
+    node: Text | HTMLText,
+    content: ShowSubtitleContent,
+  ): { apply: (n: number) => void; full: number } {
+    if (typeof content === 'string') {
+      return { apply: (n) => setStyledReveal(node as Text, n), full: plainTextLength(content) };
+    }
+    const html = node as HTMLText;
+    return {
+      apply: (n) => {
+        html.text = this.subtitleStyledHtml({ ...content, body: sliceStyledMarkup(content.body, n) });
+      },
+      full: plainTextLength(content.body),
+    };
+  }
+
   /** 按当前屏幕尺寸把字幕文本构建进 container（resize 重排时重建：换行宽度随屏宽变化，须重排版而非平移） */
-  private layoutSubtitleInto(container: Container, content: ShowSubtitleContent, layout: ShowSubtitleLayout): void {
+  private layoutSubtitleInto(
+    container: Container,
+    content: ShowSubtitleContent,
+    layout: ShowSubtitleLayout,
+  ): Text | HTMLText {
     const sw = this.screenWidth;
     const sh = this.screenHeight;
     const margin = 40;
@@ -1232,7 +1381,7 @@ export class CutsceneRenderer {
         this.placeSubtitleTextCenterAt(t, sw / 2, y);
       }
       container.addChild(t);
-      return;
+      return t;
     }
 
     const position = layout;
@@ -1251,10 +1400,12 @@ export class CutsceneRenderer {
     }
     this.placeSubtitleTextCenterAt(t, sw / 2, y);
     container.addChild(t);
+    return t;
   }
 
   dismissSubtitle(container: Container): void {
     this.activeSubtitles.delete(container);
+    this.typewriters.delete(container);
     if (container.parent) container.parent.removeChild(container);
     container.destroy({ children: true });
   }
@@ -1295,7 +1446,14 @@ export class CutsceneRenderer {
     }
     for (const [container, { content, layout }] of this.activeSubtitles) {
       for (const child of container.removeChildren()) child.destroy({ children: true });
-      this.layoutSubtitleInto(container, content, layout);
+      const node = this.layoutSubtitleInto(container, content, layout);
+      // 还在逐字的字幕：闭包指向的是刚被销毁的旧节点，整条换成新节点的，并立即回到当前进度
+      // （否则重排会把已经打出来的字吐回去、末尾整串闪一下）
+      const tw = this.typewriters.get(container);
+      if (tw) {
+        tw.apply = this.subtitleReveal(node, content).apply;
+        tw.apply(tw.shown);
+      }
     }
   }
 
@@ -1324,6 +1482,8 @@ export class CutsceneRenderer {
     this.hideMovieBar();
     // 字幕容器本身由 CutsceneManager 在其 finally 中 dismissSubtitle 销毁，此处仅停止 resize 重排跟踪
     this.activeSubtitles.clear();
+    // 打字机同理：容器归 CutsceneManager 销毁，这里只是不再逐帧去碰它们（跳过/读档/拆除都经此）
+    this.typewriters.clear();
     // showImg/showAnimLayer/showMovieBar 用到 zIndex 时会把共享 cutsceneOverlay 的 sortableChildren
     // 置 true；overlay 已清空，复位为 false，不把本过场的排序开关残留给后续过场。
     this.renderer.cutsceneOverlay.sortableChildren = false;

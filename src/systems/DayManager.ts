@@ -14,6 +14,7 @@ import {
   DEFAULT_START_AT,
   DEFAULT_TRANSITION_MS,
   MINUTES_PER_DAY,
+  daylightPhaseIds,
   forwardDistance,
   parseClock,
   phaseAt,
@@ -46,6 +47,8 @@ export class DayManager implements IGameSystem {
   // ---- 当日时刻 / 时段 ----
   private _minutesOfDay: number = 0;
   private phases: ResolvedPhase[] = resolvePhases(undefined);
+  /** 「街上有人」的那几段（`phases[].daylight` 派生）。随 phases 一起重算，见 recomputeDaylight。 */
+  private _daylightPhases: readonly string[] = daylightPhaseIds(resolvePhases(undefined));
   private startMinutes: number = parseClock(DEFAULT_START_AT) ?? 0;
   private _defaultTransitionMs: number = DEFAULT_TRANSITION_MS;
   /** 时刻是否已被 advanceTime / deserialize 动过；未动过时 configure 可安全改写开局时刻。 */
@@ -81,6 +84,7 @@ export class DayManager implements IGameSystem {
    */
   configure(cfg: DayNightConfig | undefined): void {
     this.phases = resolvePhases(cfg?.phases);
+    this.recomputeDaylight();
     const start = parseClock(cfg?.startAt ?? DEFAULT_START_AT);
     if (start === null) {
       console.warn(`DayManager.configure: startAt 非法（需 HH:MM），回落 ${DEFAULT_START_AT}`);
@@ -110,9 +114,45 @@ export class DayManager implements IGameSystem {
     return phaseAt(this.phases, this._minutesOfDay);
   }
 
+  /**
+   * 当前时段的**展示名**（拂晓/白日/黄昏/入夜）。时段表没配 label 就退回 id——
+   * 给玩家看的地方（事件日志的日/时段分组）用它，别在显示层拿 `currentPhase` 的裸 id。
+   */
+  get currentPhaseLabel(): string {
+    const id = this.currentPhase;
+    return this.phases.find((p) => p.id === id)?.label ?? id;
+  }
+
   /** 时段表（只读副本，供调试面板/编辑器预览）。 */
   get phaseList(): ResolvedPhase[] {
     return this.phases.map((p) => ({ ...p }));
+  }
+
+  /**
+   * 「人在外面做事」的那几段 id——**NPC 未写 `phases` 时的缺省归属**，
+   * 由 `SceneManager` 经注入口消费（见 `setNpcDefaultPhasesGetter`）。
+   *
+   * 从时段表的 `daylight` 标记现算，故内容侧换词表（`辰/午/暮/夜`）时不会悬垂。
+   * 空数组 = 一段都没标 = 缺省不施加限制（全时段都在），已在 configure 时告警过。
+   */
+  get daylightPhases(): readonly string[] {
+    return this._daylightPhases;
+  }
+
+  /**
+   * 随时段表重算「白天」。一段都没标时告警——**只在这里响一次**：
+   * 判定点（`SceneManager.getNpcBaseVisibleForInteraction`）是每帧每实体调用的，
+   * 告警放那儿会刷屏。
+   */
+  private recomputeDaylight(): void {
+    this._daylightPhases = daylightPhaseIds(this.phases);
+    if (this._daylightPhases.length === 0) {
+      console.warn(
+        `DayManager: 时段表 [${this.phases.map((p) => p.id).join(', ')}] 里一段都没标 daylight。` +
+          '未写 phases 的 NPC（龙套/群演）暂按「全时段都在」处理——' +
+          '请在 game_config.dayNight.phases 里给「街上有人」的那几段打上 daylight:true。',
+      );
+    }
   }
 
   get defaultTransitionMs(): number {

@@ -15,6 +15,8 @@ import type {
 import { DEFAULT_SPEAKER_SIDE, resolveSpeakerSide, type SpeakerSide } from '../utils/dialogueSpeakerSide';
 import { createStyledText, setStyledReveal, setStyledText } from '../core/styledText';
 import { plainTextLength } from '../core/textStyle';
+import { getClueAccess } from './clueAccess';
+import { measureClueSpans, type TextLinkSpan } from './clueSpans';
 
 const BOX_MARGIN = UITheme.spacing.xl;
 /** 正文左右内缩：木框本身占 15px，缩进必须明显越过木条才有设计稿那种阔气的留白 */
@@ -114,6 +116,11 @@ export class DialogueUI {
   private boxBg: Container | null = null;
   private bodyText: Text | null = null;
   private bodyMask: Graphics | null = null;
+  /**
+   * K7 二阶段：盖在正文之上的 `[clue:…]` 词条命中层（透明命中框 + 悬停下划 + 采集闪金）。
+   * 整句显示完才建、换行宽变了重建、换句/关框即拆（见 buildClueLayer）。
+   */
+  private clueLayer: Container | null = null;
   private choicesContainer: Container | null = null;
   /** 「继续」点捺：等待推进时浮现并轻微上下浮动（全站共用件） */
   private continueMark: ContinueIndicator | null = null;
@@ -164,6 +171,7 @@ export class DialogueUI {
   private dialogueEndCb: () => void;
   private dialoguePrepareBeatCb: () => void;
   private dialogueHidePanelCb: () => void;
+  private dialogueAutoAdvanceCb: () => void;
 
   /** 对白框此刻是否在屏上（屏底那一条被占着）。供屏底提示语让位，避免横穿它的木框。 */
   get isVisible(): boolean {
@@ -192,6 +200,7 @@ export class DialogueUI {
     this.dialogueEndCb = () => this.hide();
     this.dialoguePrepareBeatCb = () => this.onPrepareBeat();
     this.dialogueHidePanelCb = () => this.hide();
+    this.dialogueAutoAdvanceCb = () => this.handleAutoAdvance();
 
     this.eventBus.on('dialogue:line', this.dialogueLineCb);
     this.eventBus.on('dialogue:choices', this.dialogueChoicesCb);
@@ -199,6 +208,7 @@ export class DialogueUI {
     this.eventBus.on('dialogue:end', this.dialogueEndCb);
     this.eventBus.on('dialogue:prepareBeat', this.dialoguePrepareBeatCb);
     this.eventBus.on('dialogue:hidePanel', this.dialogueHidePanelCb);
+    this.eventBus.on('dialogue:autoAdvance', this.dialogueAutoAdvanceCb);
   }
 
   /** 推进到下一拍之前清空当前台词区（与推迟 action、下一句台词顺序配合）。 */
@@ -208,6 +218,7 @@ export class DialogueUI {
     setStyledText(this.speakerText, '');
     this.layoutSpeaker();
     this.continueMark?.setVisible(false);
+    this.clearClueLayer();
     this.bodyText.text = '';
     this.fullText = '';
     this.fullTextVisible = 0;
@@ -277,6 +288,120 @@ export class DialogueUI {
       BOX_HEIGHT - BODY_MASK_TOP - BODY_MASK_BOTTOM_INSET,
     );
     this.bodyMask.fill({ color: 0xffffff });
+    // 换行宽变了 → 词条落点全变（立绘进出、开合 F2 侧栏、改窗口都会走到这）
+    if (this.isShowingFullText) this.buildClueLayer();
+  }
+
+  // ---- K7 二阶段：正文里的 `[clue:…]` 词条命中层 ---------------------------------
+
+  /**
+   * 重建词条命中层。**只在整句显示完之后建**（`isShowingFullText`）：
+   *
+   * - 打字机跑着的时候正文每帧在变，命中框跟着重算既费又飘；
+   * - 更要紧的是玩法语义——"点一下记下来"是玩家对一句**已经读完**的话做的动作，
+   *   给还在往外蹦字的半句挂上可点词条，只会让人误点。
+   *
+   * 渲染一个字都不动：这一层是盖在单 `Text` 上的透明命中框（几何怎么来的见 clueSpans）。
+   */
+  private buildClueLayer(): void {
+    this.clearClueLayer();
+    const body = this.bodyText;
+    if (!this.container || !body || !this.fullText.includes('[clue:')) return;
+    const clues = getClueAccess();
+    if (!clues) return;
+
+    const spans = measureClueSpans(this.fullText, body.style);
+    if (spans.length === 0) return;
+
+    // 越过遮罩下沿的行是被裁掉的，别给看不见的字挂命中框
+    const boxY = this.renderer.screenHeight - BOX_HEIGHT - BOX_MARGIN;
+    const maskBottom = boxY + BOX_HEIGHT - BODY_MASK_BOTTOM_INSET;
+    const maxLocalY = maskBottom - body.y;
+
+    const layer = new Container();
+    layer.x = body.x;
+    layer.y = body.y;
+    this.clueLayer = layer;
+    // 命中层必须压在正文之上；`container` 的子序里正文之后就是遮罩与「继续」点捺，
+    // 加在末尾即可（两者都是 eventMode:'none'，不会抢指针）。
+    this.container.addChild(layer);
+
+    for (const span of spans) {
+      // 没在 clues.json 登记的 id 不画成可点：那是内容写错了，不该骗玩家去点
+      if (!clues.isKnown(span.id)) continue;
+      if (span.y + span.h > maxLocalY) continue;
+
+      const collected = clues.isCollected(span.id);
+      // 已采集常驻一条暗金细线（"这条我记过了"）；未采集平时不画，悬停才亮一档。
+      // ⚠ 与册页的"已采集转暗金字色"不同构是**有意**的：对话框是单 Text，
+      //   改不了其中一段的颜色；下划线是这块 UI 能给出的同义表达。
+      const underline = new Graphics();
+      underline.rect(span.x, span.y + span.h - 5, span.w, 1.5);
+      underline.fill({
+        color: collected ? UITheme.colors.goldDim : UITheme.colors.borderSelected,
+        alpha: 0.9,
+      });
+      underline.visible = collected;
+      underline.eventMode = 'none';
+      layer.addChild(underline);
+
+      const hit = new Graphics();
+      hit.rect(span.x, span.y, span.w, span.h);
+      hit.fill({ color: 0xffffff, alpha: UITheme.alpha.hitArea });
+      hit.eventMode = 'static';
+      hit.cursor = 'pointer';
+      hit.on('pointerover', () => { if (!underline.destroyed) underline.visible = true; });
+      hit.on('pointerout', () => { if (!underline.destroyed) underline.visible = collected; });
+      hit.on('pointerdown', (e: { nativeEvent?: unknown }) => {
+        // **必须消费**：不消费的话同一下点击穿到 DialogueUI 自己的 window 监听上，
+        // 变成"记下词条的同时把这句话翻过去了"（onClick 查的就是这个标记）。
+        markPointerConsumed(e.nativeEvent);
+        this.collectClueAt(span.id, span);
+      });
+      layer.addChild(hit);
+    }
+  }
+
+  /** 采集 + 那一下"闪金"（与册页词条同一套反馈：给"记下了"一个看得见的落点）。 */
+  private collectClueAt(id: string, span: TextLinkSpan): void {
+    const clues = getClueAccess();
+    const layer = this.clueLayer;
+    if (!clues || !layer) return;
+    const already = clues.isCollected(id);
+    clues.collect(id);
+    if (already) return;   // 幂等：重复点不再闪、不再重建
+
+    const flash = new Graphics();
+    flash.rect(span.x, span.y, span.w, span.h);
+    flash.fill({ color: UITheme.colors.gold, alpha: 0.45 });
+    flash.eventMode = 'none';
+    layer.addChild(flash);
+    const start = performance.now();
+    const fade = (): void => {
+      if (flash.destroyed) return;
+      const t = Math.min(1, (performance.now() - start) / 280);
+      flash.alpha = (1 - UITheme.motion.easeOut(t)) * 0.45;
+      if (t < 1) { requestAnimationFrame(fade); return; }
+      if (flash.parent) flash.parent.removeChild(flash);
+      flash.destroy();
+      // 闪完再重建，让"已采集"的常驻下划线接上——立刻重建会把这 280ms 的动画连容器一起拆
+      if (this.isShowingFullText) this.buildClueLayer();
+    };
+    requestAnimationFrame(fade);
+  }
+
+  private clearClueLayer(): void {
+    if (!this.clueLayer) return;
+    if (this.clueLayer.parent) this.clueLayer.parent.removeChild(this.clueLayer);
+    this.clueLayer.destroy({ children: true });
+    this.clueLayer = null;
+  }
+
+  /** 整句显示完（打字机跑完 / 直接出全 / 玩家点击跳过共用这一个落点）。 */
+  private onLineFullyShown(): void {
+    this.isShowingFullText = true;
+    this.waitingForAdvance = true;
+    this.buildClueLayer();
   }
 
   /**
@@ -463,6 +588,10 @@ export class DialogueUI {
     this.clearChoices();
     /** 新一句必须清掉上一句的「点按结束」标记，否则连续多段 playScriptedDialogue 时首句会误走 advanceEnd 直接关对话 */
     this.willEndAfterAdvance = false;
+    // 词条命中层与"整句已显示"标记要**在 relayout 之前**归零：
+    // 下面的 relayout 会按该标记决定要不要重建命中层，晚一步就是拿**上一句**的正文重建一层。
+    this.clearClueLayer();
+    this.isShowingFullText = false;
 
     setStyledText(this.speakerText!, line.speaker);
     if (this.sceneDim) this.sceneDim.visible = line.dim === true;
@@ -492,8 +621,7 @@ export class DialogueUI {
   private completeText(): void {
     this.displayedChars = this.fullTextVisible;
     if (this.bodyText) setStyledReveal(this.bodyText, this.displayedChars);
-    this.isShowingFullText = true;
-    this.waitingForAdvance = true;
+    this.onLineFullyShown();
   }
 
   private showChoices(choices: DialogueChoice[]): void {
@@ -608,9 +736,13 @@ export class DialogueUI {
 
         // 悬停即移焦（不直接画高亮）：鼠标和手柄共用同一个"当前项"。
         // 指针挪开后不再清高亮——屏幕上恒有一个可见的焦点，接着按方向键从这条继续走。
+        // 切换音由 UIFocus 的移焦钩子统一发（键盘/手柄挪选项也才有声）——
+        // 这里原来自己补发一次 ui:hover，两条一起就是同一次悬停响两下
         row.on('pointerover', () => {
           this.choiceFocus.syncHover(`c${choice.index}`);
-          this.eventBus.emit('ui:hover', {});
+        });
+        row.on('pointerout', () => {
+          this.choiceFocus.clearHover(`c${choice.index}`);
         });
         row.on('pointerdown', (ev) => {
           markPointerConsumed(ev.nativeEvent);
@@ -710,8 +842,7 @@ export class DialogueUI {
       }
 
       if (this.displayedChars >= this.fullTextVisible) {
-        this.isShowingFullText = true;
-        this.waitingForAdvance = true;
+        this.onLineFullyShown();
       }
     }
   }
@@ -755,6 +886,26 @@ export class DialogueUI {
     }
   }
 
+  /**
+   * 台词自身编排的自动推进（配音播完 / 定时到点，由 DialogueVoiceDirector 发起）。
+   * 与点击等价但**不是玩家输入**：一次到位（打字机没打完先补完再翻页），且不发
+   * `dialogue:advanceInput`——那是点击音的触发口，自动推进响一声就成了幽灵点击。
+   * 选项期不推进（选项必须玩家自己选）；已经不在等待推进的行（玩家抢先点过了）直接忽略。
+   */
+  private handleAutoAdvance(): void {
+    if (!this.container) return;
+    if (this.waitingForChoice) return;
+    if (!this.isShowingFullText) this.completeText();
+    if (!this.waitingForAdvance) return;
+    this.waitingForAdvance = false;
+    if (this.willEndAfterAdvance) {
+      this.willEndAfterAdvance = false;
+      this.eventBus.emit('dialogue:advanceEnd', {});
+    } else {
+      this.eventBus.emit('dialogue:advance', {});
+    }
+  }
+
   private handleAdvance(): void {
     if (this.waitingForChoice) return;
 
@@ -778,6 +929,8 @@ export class DialogueUI {
 
   hide(): void {
     this.clearChoices();
+    // 命中层挂在 container 上，随它一起销毁；这里先把句柄摘掉，免得留一个指向死容器的引用
+    this.clueLayer = null;
     this.portraitToken++; // 使任何在途头像加载作废
     if (this.container) {
       if (this.container.parent) {
@@ -819,5 +972,6 @@ export class DialogueUI {
     this.eventBus.off('dialogue:end', this.dialogueEndCb);
     this.eventBus.off('dialogue:prepareBeat', this.dialoguePrepareBeatCb);
     this.eventBus.off('dialogue:hidePanel', this.dialogueHidePanelCb);
+    this.eventBus.off('dialogue:autoAdvance', this.dialogueAutoAdvanceCb);
   }
 }

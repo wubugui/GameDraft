@@ -456,13 +456,20 @@
       "glob": "src/systems/CutsceneManager.ts",
       "docs": [
         "cutscene-audio-reclamation",
-        "cutscene-step-semantics"
+        "cutscene-step-semantics",
+        "dialogue-voice-channel"
       ]
     },
     {
       "glob": "src/systems/DayManager.ts",
       "docs": [
         "day-night-npc-schedule"
+      ]
+    },
+    {
+      "glob": "src/systems/DialogueVoiceDirector.ts",
+      "docs": [
+        "dialogue-voice-channel"
       ]
     },
     {
@@ -515,6 +522,12 @@
       ]
     },
     {
+      "glob": "src/systems/VoiceChannel.ts",
+      "docs": [
+        "dialogue-voice-channel"
+      ]
+    },
+    {
       "glob": "src/systems/ZoneSystem.ts",
       "docs": [
         "save-restore-contracts",
@@ -557,7 +570,8 @@
     {
       "glob": "src/ui/DialogueUI.ts",
       "docs": [
-        "dialogue-portrait-runtime"
+        "dialogue-portrait-runtime",
+        "dialogue-voice-channel"
       ]
     },
     {
@@ -619,6 +633,12 @@
       "glob": "src/utils/scriptedDialogueSpeaker.ts",
       "docs": [
         "dialogue-portrait-runtime"
+      ]
+    },
+    {
+      "glob": "tools/**",
+      "docs": [
+        "atomic-write-windows"
       ]
     },
     {
@@ -747,6 +767,12 @@
       ]
     },
     {
+      "glob": "tools/editor/editors/scene_editor.py",
+      "docs": [
+        "scene-view-filter-axes"
+      ]
+    },
+    {
       "glob": "tools/editor/editors/sugar_wheel_editor.py",
       "docs": [
         "atmosphere-script-editor"
@@ -835,6 +861,12 @@
       "glob": "tools/editor/shared/rich_text_field.py",
       "docs": [
         "text-ref-tag-system"
+      ]
+    },
+    {
+      "glob": "tools/editor/shared/voice_spec_field.py",
+      "docs": [
+        "dialogue-voice-channel"
       ]
     },
     {

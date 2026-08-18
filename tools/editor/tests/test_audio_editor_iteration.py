@@ -156,17 +156,28 @@ class AudioConfigRoundTripTests(_Base):
             scene = root / "public" / "assets" / "scenes" / "ref_scene.json"
             scene.write_text('{"id": "ref_scene", "bgm": "bgm_int_vol"}', encoding="utf-8")
             ed = AudioEditor(model)
-            ed.refresh_reference_counts()
-            bgm = ed._sub_tabs[0]
-            bgm._table.setCurrentCell(0, 0)
-            rows_before = bgm._table.rowCount()
-            with patch.object(
-                QMessageBox, "question",
-                return_value=QMessageBox.StandardButton.No,
-            ) as ask:
-                bgm._delete()
-            self.assertTrue(ask.called, "删除被引用的音频前必须先问")
-            self.assertEqual(bgm._table.rowCount(), rows_before, "答 No 不得删行")
+            try:
+                ed.refresh_reference_counts()
+                bgm = ed._sub_tabs[0]
+                bgm._table.setCurrentCell(0, 0)
+                rows_before = bgm._table.rowCount()
+                with patch.object(
+                    QMessageBox, "question",
+                    return_value=QMessageBox.StandardButton.No,
+                ) as ask:
+                    bgm._delete()
+                self.assertTrue(ask.called, "删除被引用的音频前必须先问")
+                self.assertEqual(bgm._table.rowCount(), rows_before, "答 No 不得删行")
+            finally:
+                # 选中一行会让 AudioTransportBar 把该 .wav 设成 QMediaPlayer 的 source，
+                # 而 source 一直挂着就一直占着文件句柄。Windows 上那是独占的：
+                # 不先松手，退出 TemporaryDirectory 时 rmtree 必挂
+                # 「WinError 32 另一个程序正在使用此文件」——测试断言其实早就过了，
+                # 红的是清理。autouse 的控件回收 fixture 在 with 块**之后**才跑，指望不上。
+                for sub in ed._sub_tabs:
+                    tp = getattr(sub, "_transport", None)
+                    if tp is not None:
+                        tp.play_file(None)
 
 
 def _pick_exec(target: str):
@@ -367,14 +378,138 @@ class AudioLibraryTests(_Base):
         cache._emit_updated()           # 后台线程走的正是这条路：不得抛
         self.assertTrue(cache._stopped, "发现宿主没了就该让线程收摊")
 
-    def test_suggest_audio_id_prefixes_and_dedupes(self) -> None:
+    def test_suggest_audio_id_keeps_chinese_filename(self) -> None:
+        """建议 id = 文件名原样。
+
+        旧版把非 ASCII 全抹成 `_` 再 strip，`茶馆开场_瞎子李_1.wav` 建议出来是 `1`
+        ——这个项目的 id 全是中文，那套 ASCII 白名单等于把文件名信息全丢了。
+        """
+        for stem, want in (
+            ("茶馆开场_瞎子李_1", "茶馆开场_瞎子李_1"),
+            ("说书9", "说书9"),
+            ("说书-李天狗大战旱魃_说书人_01", "说书-李天狗大战旱魃_说书人_01"),
+            ("sfx_stone_press", "sfx_stone_press"),
+            ("door slam", "door_slam"),          # 空格换掉：中间空格在表里看不见
+        ):
+            self.assertEqual(lib.suggest_audio_id(Path(f"/x/{stem}.wav"), []), want)
+
+    def test_suggest_audio_id_dedupes_with_parent_dir_then_number(self) -> None:
         self.assertEqual(
-            lib.suggest_audio_id("sfx", Path("/x/door slam.wav"), []), "sfx_door_slam",
+            lib.suggest_audio_id(Path("/x/说书重庆话/1.wav"), ["1"]), "说书重庆话_1",
         )
         self.assertEqual(
-            lib.suggest_audio_id("sfx", Path("/x/sfx_door.wav"), ["sfx_door"]),
-            "sfx_door_2",
+            lib.suggest_audio_id(Path("/x/说书重庆话/1.wav"), ["1", "说书重庆话_1"]), "1_2",
         )
+
+    def test_audio_id_problem_rejects_only_what_breaks(self) -> None:
+        for ok in ("茶馆开场_瞎子李_1", "sfx_door", "说书-景别复位", "1"):
+            self.assertIsNone(lib.audio_id_problem(ok), ok)
+        for bad in ("", "   ", " 前导空白", "尾随空白 ", "带 空格", "带/斜杠", '带"引号', "带\\反斜杠"):
+            self.assertIsNotNone(lib.audio_id_problem(bad), repr(bad))
+
+
+class AudioIdGuardTests(_Base):
+    """三个建 id 的入口(新增 / 重命名 / 扫描登记)都得挡住不合法 id。
+
+    在这之前一处都没挡：`1`、`带 空格`、空串照收，validate-data 也一声不吭。
+    """
+
+    def _tab(self, model: ProjectModel, channel: str = "voice"):
+        from tools.editor.editors.audio_editor import AudioEditor
+        ed = AudioEditor(model)
+        self.addCleanup(ed.deleteLater)
+        return ed.channel_tab(channel)
+
+    def test_scan_dialog_suggests_filename_and_blocks_bad_hand_edit(self) -> None:
+        from tools.editor.editors.audio_editor import _UnregisteredFilesDialog
+        with TemporaryDirectory() as td:
+            model, root = self._project(td)
+            audio_dir = root.joinpath(*_AUDIO_REL, "说书重庆话")
+            _write_wav(audio_dir / "茶馆开场_瞎子李_1.wav", 0.2)
+            _write_wav(audio_dir / "说书9.wav", 0.2)
+            # sfx 里先占掉「说书9」：跨频道同名是 validate-data 的 warning，
+            # 建议 id 要主动绕开（拿父目录兜），不能现建现犯
+            model.audio_config = {
+                "bgm": {}, "ambient": {},
+                "sfx": {"说书9": {"src": "/resources/runtime/audio/b.wav"}},
+                "voice": {},
+            }
+            files = [p for p in lib.scan_unregistered_files(model) if p.stem in
+                     ("茶馆开场_瞎子李_1", "说书9")]
+            self.assertEqual(len(files), 2)
+            dlg = _UnregisteredFilesDialog(model, "voice", sorted(files), set())
+            self.addCleanup(dlg.deleteLater)
+            suggested = {dlg._table.item(r, 0).text() for r in range(dlg._table.rowCount())}
+            self.assertEqual(
+                suggested, {"茶馆开场_瞎子李_1", "说书重庆话_说书9"},
+                "建议 id 必须是文件名原样（抹掉中文只剩 '1'/'9' 是旧版的祸）；"
+                "撞上别的频道时拿父目录兜，而不是 '说书9_2'",
+            )
+            for r in range(dlg._table.rowCount()):
+                dlg._table.item(r, 0).setCheckState(Qt.CheckState.Checked)
+            # 手改成非法值：不能放行，也不能静默丢
+            bad_row = next(r for r in range(dlg._table.rowCount())
+                           if dlg._table.item(r, 0).text() == "茶馆开场_瞎子李_1")
+            dlg._table.item(bad_row, 0).setText('坏"id')
+            kept = dlg.chosen()
+            self.assertEqual([aid for aid, _src in kept], ["说书重庆话_说书9"])
+            self.assertEqual([aid for aid, _why in dlg.rejected()], ['坏"id'])
+
+    def test_add_and_rename_reject_bad_id(self) -> None:
+        with TemporaryDirectory() as td:
+            model, _root = self._project(td)
+            model.audio_config = {
+                "bgm": {}, "ambient": {}, "sfx": {},
+                "voice": {"说书1": {"src": "/resources/runtime/audio/a.wav"}},
+            }
+            tab = self._tab(model)
+            before = tab._table.rowCount()
+            warned: list[str] = []
+            # 护栏若失效，_add 会往下走到 _browse_row 弹真的文件对话框 → 测试挂死而非变红。
+            # 打桩成"用户取消"，让回归干净地失败在断言上。
+            with patch.object(QMessageBox, "warning",
+                              side_effect=lambda *a, **k: warned.append(a[2])), \
+                 patch("tools.editor.editors.audio_editor.QFileDialog.getOpenFileName",
+                       return_value=("", "")), \
+                 patch("tools.editor.editors.audio_editor.QInputDialog.getText",
+                       return_value=("带 空格", True)):
+                tab._add()
+            self.assertEqual(tab._table.rowCount(), before, "非法 id 不得建行")
+            self.assertTrue(warned and "不能含" in warned[0], warned)
+
+            warned.clear()
+            with patch.object(QMessageBox, "warning",
+                              side_effect=lambda *a, **k: warned.append(a[2])), \
+                 patch("tools.editor.editors.audio_editor.QInputDialog.getText",
+                       return_value=('坏"id', True)):
+                tab._rename_row(0)
+            self.assertEqual(tab._table.item(0, 0).text(), "说书1", "非法新名不得落到表里")
+            self.assertTrue(warned, "被挡下必须说明原因")
+
+    def test_validator_reports_bad_and_cross_channel_ids(self) -> None:
+        """validate-data 也得认同一条口径——只挡编辑器，改 JSON 绕过去就白挡了。"""
+        from tools.editor.validator import validate
+        with TemporaryDirectory() as td:
+            model, _root = self._project(td)
+            src = {"src": "/resources/runtime/audio/a.wav"}
+            model.audio_config = {
+                "bgm": {}, "ambient": {},
+                "sfx": {"说书1": dict(src)},
+                "voice": {
+                    "说书1": dict(src),        # 跨频道重名 → warning
+                    "带 空格": dict(src),      # → error
+                    "": dict(src),             # → error
+                    "正常_id": dict(src),      # 不该报
+                },
+                # systemSfx 是逻辑名→sfx id 的映射，键由代码定，不参与本校验
+                "systemSfx": {"uiHover": "说书1"},
+            }
+            got = [(i.severity, i.item_id) for i in validate(model)
+                   if i.data_type == "audio_config"]
+            self.assertIn(("error", "voice.带 空格"), got)
+            self.assertIn(("error", "voice."), got)
+            self.assertIn(("warning", "说书1"), got)
+            self.assertEqual(len(got), 3, f"不该多报也不该少报：{got}")
 
 
 if __name__ == "__main__":
