@@ -8,6 +8,7 @@ import re
 import tempfile
 from pathlib import Path
 from typing import Any
+from tools.atomic_io import retry_transient
 
 # Agent read_file 工具：文件不存在或路径非法时返回内容使用此前缀（勿与普通正文混淆）。
 READ_TEXT_AGENT_ERROR_PREFIX = "[read_text错误]"
@@ -100,7 +101,7 @@ def _atomic_write(path: Path, content: str) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(content)
-        os.replace(tmp, str(path))
+        retry_transient(os.replace, tmp, str(path))
     except Exception:
         try:
             os.unlink(tmp)

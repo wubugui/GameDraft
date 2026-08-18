@@ -7,6 +7,9 @@
 
 常见成因，改表单时对着这张单子自检：
 - 摘要用普通 QLabel（`wordWrap=False` 时最小宽 = 整段文字宽）→ 用 `_ElidingLabel`；
+- **顶宽的不一定是表单**：顶部「节点 id：… 类型：…」那条曾是富文本 QLabel，最小宽 = 整行
+  文字宽，且 `wordWrap=True` 对富文本不生效 —— 一个 24 字的 node id 就把面板顶到 316px，
+  而报错写的是节点类型名，看着像刚加的控件闯的祸（2026-08-17 踩过整整一轮）；
 - 说明写进控件文案（`多拍连续对白（每句点击继续；存为 lines 数组）`）→ 说明进 tooltip；
 - 一行塞下拉 + 输入框 + 选择器 + 五个操作按钮 → 拆两行；
 - QComboBox 的 minimumSizeHint 不吃 minimumContentsLength → 必须 `setMaximumWidth` 封顶；
@@ -184,6 +187,45 @@ class InspectorPanelWidthTests(unittest.TestCase):
                     f"[{theme_id}] {name}: 最小宽 {need}px > 面板 {INSPECTOR_PANEL_WIDTH}px"
                 )
         return too_wide
+
+    def test_long_node_id_does_not_push_the_panel_wide(self) -> None:
+        """顶部「节点 id：… 类型：…」也必须可省略——它装的是**数据来的** id，长度无上限。
+
+        由来（2026-08-17）：上面那条护栏红在 `choice_with_prompt 316px`，成因却是
+        fixture 自己造的 24 字 id `probe_choice_with_prompt` 顶宽了顶部那条富文本 QLabel，
+        与 promptLine 的任何控件无关（换成 `n` 立刻降到 268px；`git stash` 掉当时的
+        node_inspector 改动仍是 316px）。**护栏红着但指错人**，比不红更费人——
+        下一个改检查器的人会以为是自己弄坏的。这里直接拿真实数据里那种长度量。
+        """
+        from tools.dialogue_graph_editor.node_inspector import _ElidingLabel
+
+        long_id = "生态_歇口气_码头白天_搬运工_闲聊_02_问价钱_被打断"
+        orig_theme = app_theme.current_theme_id()
+        self.addCleanup(app_theme.apply_application_theme, self._app, orig_theme)
+        too_wide: list[str] = []
+        for theme_id in (app_theme.THEME_MODERN, app_theme.THEME_LIGHT, app_theme.THEME_DARK):
+            app_theme.apply_application_theme(self._app, theme_id)
+            for _ in range(3):
+                self._app.processEvents()
+            insp = NodeInspector(
+                lambda: [long_id],
+                project_root=_PROJECT_ROOT,
+                project_model_getter=lambda: self._pm,
+            )
+            self.addCleanup(insp.deleteLater)
+            insp.resize(INSPECTOR_PANEL_WIDTH, 700)
+            insp.set_node(long_id, {"type": "end"})
+            for _ in range(6):
+                self._app.processEvents()
+            self.assertIsInstance(insp._type_label, _ElidingLabel)
+            self.assertIn(long_id, insp._type_label.toolTip(), "完整 id 必须能从 tooltip 看到")
+            need = insp.minimumSizeHint().width()
+            if need > INSPECTOR_PANEL_WIDTH:
+                too_wide.append(f"[{theme_id}] 长 id 的顶部标签: {need}px > {INSPECTOR_PANEL_WIDTH}px")
+        self.assertEqual(
+            too_wide, [],
+            "长 node id 把检查器顶出横向滚动条（顶部标签不可省略）：\n  " + "\n  ".join(too_wide),
+        )
 
     def test_row_summaries_are_elidable_not_wall_pushing(self) -> None:
         """分支/选项/台词的摘要标签必须是可省略的那种，否则一行就把面板顶爆。"""

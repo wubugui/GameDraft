@@ -189,11 +189,41 @@ function assertExistingPathWithoutSymlinks(root, candidate, label = 'path') {
   return safe;
 }
 
+/**
+ * Windows 下 rename 覆盖已存在文件是**会瞬时失败**的：
+ * POSIX 的 `rename()` 无条件原子替换，即使目标正被别的进程打开；Windows 的
+ * `MoveFileEx(REPLACE_EXISTING)` 在目标被任何进程持有句柄时抛 `EPERM`/`EACCES`/`EBUSY`
+ * ——而持有者不一定是我们：另一个进程刚读完还没关、杀毒软件扫描、搜索索引器都算。
+ *
+ * 所以退避重试，不是加平台分支：这段在 POSIX 上第一次就成功，一次都不会重试。
+ * 症状之所以"单跑不复现、连着跑就炸"，正是因为它是**时序敏感**的——机器一忙窗口就变宽。
+ */
+const RENAME_RETRY_CODES = new Set(['EPERM', 'EACCES', 'EBUSY']);
+const RENAME_RETRY_DELAYS_MS = [1, 2, 5, 10, 25, 50, 100, 200];
+
+function renameWithRetry(tmp, filePath) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      fs.renameSync(tmp, filePath);
+      return;
+    } catch (error) {
+      if (!RENAME_RETRY_CODES.has(error?.code) || attempt >= RENAME_RETRY_DELAYS_MS.length) {
+        // 重试用尽也要把临时文件收干净，否则工作区里会攒一地 .tmp-<pid>-<hex>
+        try { fs.rmSync(tmp, { force: true }); } catch { /* 尽力而为 */ }
+        throw error;
+      }
+      // 同步忙等：本函数在写盘锁的临界区内，不能让出去给别的写者
+      const until = Date.now() + RENAME_RETRY_DELAYS_MS[attempt];
+      while (Date.now() < until) { /* spin */ }
+    }
+  }
+}
+
 function writeJsonAtomic(filePath, value) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const tmp = `${filePath}.tmp-${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
   fs.writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
-  fs.renameSync(tmp, filePath);
+  renameWithRetry(tmp, filePath);
 }
 
 function workspaceLockPath(repoRoot, folderName) {

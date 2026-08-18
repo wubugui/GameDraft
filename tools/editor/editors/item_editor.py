@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QListWidget,
     QFormLayout, QLineEdit, QComboBox, QPushButton, QSpinBox,
     QDoubleSpinBox, QScrollArea, QGroupBox, QLabel, QStyle, QMessageBox,
+    QCheckBox, QInputDialog,
 )
 from PySide6.QtCore import Qt
 
@@ -12,11 +13,19 @@ from ..project_model import ProjectModel
 from ..shared import confirm
 from ..shared.list_affordances import wire_list_affordances
 from ..shared.condition_editor import ConditionEditor
+from ..shared.action_editor import ActionEditor
+from ..shared.item_tags import ITEM_TAGS
 from ..shared.rich_text_field import RichTextLineEdit, RichTextTextEdit
 from ..shared.image_path_picker import CutsceneImagePathRow
 from ..shared.qt_icon_buttons import outline_row_tool_button, delete_standard_pixmap
 from ..shared.form_layout import compact_form
 from ..shared.collapsible_section import CollapsibleSection
+
+#: consume 三态下拉的取值顺序（索引即 combo 行号）。
+#: ``None`` = 不写 ``consume`` 键，运行时按 type 推定（consumable 扣 / key 不扣）——
+#: 与位面编辑器的槽继承同一范式：不显式配置就不写键，别拿默认值把"没配"写成"配了"。
+_CONSUME_MODES: tuple[bool | None, ...] = (None, True, False)
+_CONSUME_LABELS = ("按类型（默认）", "消耗一个", "不消耗")
 
 
 class DynDescWidget(QGroupBox):
@@ -123,7 +132,80 @@ class ItemEditor(QWidget):
         self._i_price = QSpinBox(); self._i_price.setRange(0, 99999)
         self._i_price.setToolTip("商店买入价；为 0 时不写入该字段（视为非卖品）")
         f.addRow("buyPrice", self._i_price)
+        # tags 是**枚举多选**不是自由文本，按选择器铁律不能用裸 QLineEdit；候选很短，
+        # 勾选框比弹窗合适。候选 = 种子词表 ∪ 全工程已在用的标签 ∪ 本条自己的——
+        # 于是「加一个新类别」不必改代码：「+ 新类别」录一次，此后到处可勾。
+        self._tag_boxes: dict[str, QCheckBox] = {}
+        self._loaded_tags: list[str] = []
+        tags_host = QWidget()
+        self._tags_row = QHBoxLayout(tags_host)
+        self._tags_row.setContentsMargins(0, 0, 0, 0)
+        self._tags_row.addStretch(1)
+        self._btn_add_tag = QPushButton("+ 新类别")
+        self._btn_add_tag.setToolTip(
+            "录一个词表外的新类别（只影响本工程数据；校验器会提示它不在种子词表里，"
+            "确认要长期使用再补进 tools/editor/shared/item_tags.py）。")
+        self._btn_add_tag.clicked.connect(self._prompt_new_tag)
+        self._tags_row.addWidget(self._btn_add_tag)
+        self._ensure_tag_boxes(ITEM_TAGS)
+        tags_host.setToolTip(
+            "物件的民俗类别，给系统看的分类（不是玩家可见文案）。\n"
+            "用途：让「用点」按类别接受物件，不必逐个点名物件 id。")
+        f.addRow("tags", tags_host)
         dl.addWidget(basic_box)
+
+        # ── 自身用途（ItemDef.use）─────────────────────────────────────────
+        # 「对着场景里某个东西用」不在这里，那是检视热区的 itemUses；两者互不覆盖。
+        use_section = CollapsibleSection("Use（背包里主动使用）", start_open=False)
+        use_section.set_header_tool_tip(
+            "玩家在背包里对该物件执行的一次自身行为（吃掉 / 点燃 / 撕开）。\n"
+            "不勾「本物件可主动使用」就不写 use 键——该物件在背包里没有使用入口。")
+        use_inner = QWidget()
+        use_lay = QVBoxLayout(use_inner)
+        use_lay.setContentsMargins(0, 0, 0, 0)
+
+        self._u_enabled = QCheckBox("本物件可主动使用")
+        self._u_enabled.setToolTip(
+            "不勾＝删除 use 键（背包里不画使用键）；勾上才写入下面这些字段。")
+        self._u_enabled.toggled.connect(self._sync_use_enabled)
+        use_lay.addWidget(self._u_enabled)
+
+        self._u_body = QWidget()
+        uf = compact_form(QFormLayout(self._u_body))
+        self._u_label = RichTextLineEdit(self._model)
+        self._u_label.setMinimumWidth(240)
+        self._u_label.setToolTip("按钮文字，如「吃掉」「点燃」「灌一口」；可含 [tag:…]")
+        uf.addRow("label", self._u_label)
+        self._u_consume = QComboBox(); self._u_consume.addItems(_CONSUME_LABELS)
+        self._u_consume.setToolTip(
+            "使用后是否扣掉一个。「按类型」＝不写该键：consumable 扣、key 不扣。")
+        uf.addRow("consume", self._u_consume)
+        self._u_hint = RichTextLineEdit(self._model)
+        self._u_hint.setMinimumWidth(240)
+        self._u_hint.setToolTip(
+            "条件不满足时，按钮置灰旁边显示的理由；留空用 strings.inventory.useDisabled。")
+        uf.addRow("disableHint", self._u_hint)
+        self._u_result = RichTextTextEdit(self._model)
+        self._u_result.setMinimumHeight(56)
+        self._u_result.setMaximumHeight(140)
+        self._u_result.setPlaceholderText("使用后另起一段展示的叙事（可选）")
+        uf.addRow("resultText", self._u_result)
+        use_lay.addWidget(self._u_body)
+
+        # 条件决定按钮灰不灰，必须是声明式的：写进 actions 里去判断，
+        # 按钮态与置灰理由就再也算不出来了（详见 types.ts 的 ItemUseDef 注释）。
+        self._u_conds = ConditionEditor("Conditions")
+        self._u_conds.set_flag_pattern_context(self._model, None)
+        use_lay.addWidget(self._u_conds)
+        # 本编辑器全程只有这一棵 ActionEditor（切物件走 set_data 而不是重建），
+        # 不必走 CollapsibleSection 的懒建：控件数不随物件数增长。
+        self._u_actions = ActionEditor("Use Actions")
+        self._u_actions.set_project_context(self._model, None)
+        use_lay.addWidget(self._u_actions)
+
+        use_section.add_body(use_inner)
+        dl.addWidget(use_section)
+        self._sync_use_enabled(False)
 
         dyn_section = CollapsibleSection("Dynamic Descriptions（条件动态描述）", start_open=False)
         dyn_section.set_header_tool_tip(
@@ -175,6 +257,109 @@ class ItemEditor(QWidget):
                 return True
         return False
 
+    # --- tags / use 的 UI ↔ 数据 互转 ------------------------------------
+    # 三处同步契约：这两组字段必须同时出现在 _on_select（读进 UI）、_is_dirty（判脏）、
+    # _apply（写回）里。漏掉 _is_dirty 的后果最阴——切换物件时 commit-on-leave 判不脏，
+    # 编辑被静默吞掉，而 flush_to_model / confirm_close 全靠它。
+
+    def _sync_use_enabled(self, on: bool) -> None:
+        self._u_body.setEnabled(on)
+        self._u_conds.setEnabled(on)
+        self._u_actions.setEnabled(on)
+
+    def _ensure_tag_boxes(self, tags) -> None:
+        """按需补勾选框（只增不删）。
+
+        不销毁重建：勾选框销毁重建会让持着引用的调用方拿到已析构的 C++ 对象，
+        也会在每次切物件时白白抖动一排控件。
+        """
+        for tag in tags:
+            t = str(tag).strip()
+            if not t or t in self._tag_boxes:
+                continue
+            cb = QCheckBox(t)
+            if t not in ITEM_TAGS:
+                cb.setToolTip(
+                    f"「{t}」不在种子词表里（校验器会提示，但不拦）。"
+                    "确认要长期使用就补进 tools/editor/shared/item_tags.py。")
+            self._tag_boxes[t] = cb
+            # 插在「+ 新类别」与伸缩项之前，否则新框会被挤到按钮右边
+            self._tags_row.insertWidget(max(0, self._tags_row.count() - 2), cb)
+
+    def _project_tags_in_use(self) -> list[str]:
+        """全工程已在用的标签——让别处录过的类别在这里直接可勾，不必再录一遍。"""
+        seen: list[str] = []
+        for it in self._model.items:
+            if not isinstance(it, dict):
+                continue
+            for t in it.get("tags") or []:
+                s = str(t).strip()
+                if s and s not in seen:
+                    seen.append(s)
+        return seen
+
+    def _prompt_new_tag(self) -> None:
+        """录一个新类别。**定义新值**是选择器铁律里点名的唯一例外，故可用文本输入。"""
+        text, ok = QInputDialog.getText(self, "新标签类别", "类别名（如：药材、凶器）：")
+        if not ok:
+            return
+        tag = (text or "").strip()
+        if not tag:
+            return
+        self._ensure_tag_boxes([tag])
+        self._tag_boxes[tag].setChecked(True)
+
+    def _set_tags(self, tags: list) -> None:
+        """按数据回填勾选；候选 = 种子词表 ∪ 全工程在用 ∪ 本条自己的（词表外的值保值）。"""
+        clean = [str(t).strip() for t in (tags or []) if str(t).strip()]
+        self._loaded_tags = list(clean)
+        self._ensure_tag_boxes([*ITEM_TAGS, *self._project_tags_in_use(), *clean])
+        chosen = set(clean)
+        for tag, cb in self._tag_boxes.items():
+            cb.setChecked(tag in chosen)
+
+    def _tags_to_list(self) -> list[str]:
+        """先按载入时的原顺序输出，再追加新勾的——不动的数据往返后逐字节不变
+        （勾选框天然按词表顺序输出，直接那么写就是把 ["引火","辟邪"] 悄悄重排）。"""
+        checked = {t for t, cb in self._tag_boxes.items() if cb.isChecked()}
+        out = [t for t in self._loaded_tags if t in checked]
+        out += [t for t in self._tag_boxes if t in checked and t not in out]
+        return out
+
+    def _set_use(self, use: dict | None) -> None:
+        u = use if isinstance(use, dict) else {}
+        self._u_enabled.setChecked(bool(use))
+        self._u_label.setText(str(u.get("label", "") or ""))
+        raw = u.get("consume")
+        mode = raw if isinstance(raw, bool) else None
+        self._u_consume.setCurrentIndex(_CONSUME_MODES.index(mode))
+        self._u_hint.setText(str(u.get("disableHint", "") or ""))
+        self._u_result.setPlainText(str(u.get("resultText", "") or ""))
+        self._u_conds.set_data(u.get("conditions") or [])
+        self._u_actions.set_data(u.get("actions") or [])
+        self._sync_use_enabled(bool(use))
+
+    def _use_to_dict(self) -> dict | None:
+        if not self._u_enabled.isChecked():
+            return None
+        out: dict = {"label": self._u_label.text()}
+        conds = self._u_conds.to_list()
+        if conds:
+            out["conditions"] = conds
+        hint = self._u_hint.text().strip()
+        if hint:
+            out["disableHint"] = hint
+        mode = _CONSUME_MODES[self._u_consume.currentIndex()]
+        if mode is not None:
+            out["consume"] = mode
+        acts = self._u_actions.to_list()
+        if acts:
+            out["actions"] = acts
+        result = self._u_result.toPlainText().strip()
+        if result:
+            out["resultText"] = result
+        return out
+
     def _is_dirty(self) -> bool:
         """当前 UI 是否与模型里的该物品有差异（用于切换/保存/关闭时判断是否需提交）。"""
         if self._current_idx < 0 or self._current_idx >= len(self._model.items):
@@ -197,10 +382,26 @@ class ItemEditor(QWidget):
         dyns = [dw.to_dict() for dw in self._dyn_widgets]
         if dyns != (it.get("dynamicDescriptions") or []):
             return True
+        if self._tags_to_list() != [str(t) for t in (it.get("tags") or [])]:
+            return True
+        if self._use_to_dict() != (it.get("use") if isinstance(it.get("use"), dict) else None):
+            return True
         return False
 
     def flush_to_model(self) -> bool:
         """Save All 钩子：未应用的编辑在保存前提交进模型，否则被静默丢弃。"""
+        if self._current_idx >= 0 and self._is_dirty():
+            self._apply()
+        return True
+
+    def commit_pending_on_leave(self) -> bool:
+        """切到别的编辑器页之前提交未应用的编辑（mainwindow-editor-hooks 契约 4）。
+
+        本面板是 staging + 「Apply」模式，而 commit-on-leave 原先只覆盖**面板内部**
+        切物件（`_on_select`）；改完不点 Apply 直接切页，模型里根本没有这次编辑——
+        该卡把它列为已知坑（"item 编辑器有 Apply 却没钩子"）。主窗不会拿
+        `flush_to_model` 兜底（那对图对话/叙事页是灾难），所以必须显式实现。
+        """
         if self._current_idx >= 0 and self._is_dirty():
             self._apply()
         return True
@@ -243,6 +444,8 @@ class ItemEditor(QWidget):
         self._i_stack.setValue(it.get("maxStack", 1))
         self._i_price.setValue(it.get("buyPrice", 0))
         self._rebuild_dyn(it.get("dynamicDescriptions", []))
+        self._set_tags(it.get("tags") or [])
+        self._set_use(it.get("use") if isinstance(it.get("use"), dict) else None)
         self._i_id.setFocus()
 
     def _rebuild_dyn(self, dyns: list[dict]) -> None:
@@ -370,6 +573,16 @@ class ItemEditor(QWidget):
             it["dynamicDescriptions"] = dyns
         elif "dynamicDescriptions" in it:
             del it["dynamicDescriptions"]
+        tags = self._tags_to_list()
+        if tags:
+            it["tags"] = tags
+        elif "tags" in it:
+            del it["tags"]
+        use = self._use_to_dict()
+        if use is not None:
+            it["use"] = use
+        elif "use" in it:
+            del it["use"]
         self._model.mark_dirty("item")
         row = self._current_idx
         tag = "[K]" if it.get("type") == "key" else "[C]"

@@ -2425,7 +2425,7 @@
                   }
                 },
                 "label": "被赶出门（beat完成）",
-                "broadcastOnEnter": true
+                "broadcastOnEnter": false
               }
             },
             "transitions": [
@@ -4339,7 +4339,8 @@
           "y": -221,
           "meta": {
             "emits": [
-              "tingshu_kicked"
+              "tingshu_kicked",
+              "主线_开局被赶出茶馆"
             ],
             "reads": [
               "scenario_听书"

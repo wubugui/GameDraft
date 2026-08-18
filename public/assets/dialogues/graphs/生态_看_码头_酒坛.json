@@ -12,8 +12,7 @@
         {
           "conditions": [
             {
-              "narrative": "eco_时辰",
-              "state": "暮"
+              "timePhase": "暮"
             }
           ],
           "next": "mu1"
@@ -21,8 +20,7 @@
         {
           "conditions": [
             {
-              "narrative": "eco_时辰",
-              "state": "夜"
+              "timePhase": "夜"
             }
           ],
           "next": "mu1"

@@ -16,6 +16,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
+from tools.atomic_io import retry_transient
 
 from tools.chronicle_sim_v3.agents.errors import (
     AgentRunnerError,
@@ -107,7 +108,7 @@ def archive_workspace(run_dir: Path, ws: Path, role: str) -> Path | None:
     safe_role = "".join(c for c in role if c.isalnum() or c in "_-") or "agent"
     target = base / f"{ts}_{safe_role}_{uuid.uuid4().hex[:8]}"
     try:
-        shutil.move(str(ws), str(target))
+        retry_transient(shutil.move, str(ws), str(target))
         return target
     except OSError:
         return None

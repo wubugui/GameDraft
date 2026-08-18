@@ -37,6 +37,7 @@ CONTAINER_KEYS: dict[str, str] = {
     "cutscenes": "过场",
     "packages": "章节包",
     "entities": "实体",
+    "clues": "线索",
 }
 
 # 「条件面」的结构键。它们不是容器也不是动作面，但**必须译**：读状态那一栏的位置串
@@ -79,6 +80,7 @@ ACTION_LIST_KEYS: dict[str, str] = {
     "belowActions": "水下分支",
     "firstViewActions": "首次查看",
     "onFirstView": "首次查看",
+    "collectActions": "首次采集",
     "effects": "效果",
     "rewards": "奖励",
     "onGive": "交付时",

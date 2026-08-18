@@ -5,7 +5,7 @@
       "flowGraph": "flow_xungou_main", "flowState": "initial",
       "set": [{ "graph": "scenario_听书", "state": "listening" }] },
     { "id": "背尸", "label": "2 · 背尸（崖墓）", "scene": "崖墓",
-      "flowGraph": "flow_xungou_main", "flowState": "s01_tingshu",
+      "flowGraph": "flow_xungou_main", "flowState": "state_4",
       "set": [{ "graph": "scenario_背尸", "state": "hired" }] },
     { "id": "梦待死之礼", "label": "3 · 梦待死之礼（雾津街头）", "scene": "雾津街头",
       "flowGraph": "flow_xungou_main", "flowState": "s02_beishi",

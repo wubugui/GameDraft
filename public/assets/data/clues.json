@@ -1,0 +1,55 @@
+{
+  "categories": {
+    "people": "人",
+    "place": "地",
+    "thing": "物",
+    "saying": "话"
+  },
+  "clues": [
+    {
+      "id": "houshan_sangeng",
+      "title": "后山三更的白影",
+      "desc": "城隍庙后山，三更天有白影出没，还会唱戏。看过的人回来疯了，嘟囔的是《红楼》曲词。鬼唱堂会，还是有人装鬼？",
+      "category": "place",
+      "collectActions": [
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "heard_opera_rumor",
+            "value": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "liu_mazi",
+      "title": "匪首刘麻子",
+      "desc": "通缉令上的北山匪帮头目：身高五尺五寸，左脸一道刀疤，操北方口音。城防署赏银五十两，人还在逃。",
+      "category": "people"
+    },
+    {
+      "id": "liu_ruyan",
+      "title": "旦角柳如烟",
+      "desc": "柳家班的旦角。庚申年新春的戏单上，三折戏全压在她一人身上——《牡丹亭》《窦娥冤》，还有一折《红楼梦·葬花》。",
+      "category": "people"
+    },
+    {
+      "id": "yanwang_ridge",
+      "title": "阎王岭",
+      "desc": "城北死黑的一片山。老辈子传下来的话：人死了魂往北走，过了阎王岭就回不来。偏偏总有活人往那边跑。",
+      "category": "place"
+    },
+    {
+      "id": "chenghuang_buling",
+      "title": "「城隍爷不灵了」",
+      "desc": "庙祝日记残页里的世道话：香火一年比一年少，城里人都说城隍爷不灵了。写字的人觉得，不是城隍爷不灵。",
+      "category": "saying"
+    },
+    {
+      "id": "tianshu",
+      "title": "李天狗的天书",
+      "desc": "说书段子里，崂山道士李天狗上神仙顶前捡的那部书。张叨叨讲得有鼻子有眼，听着像胡吹。",
+      "category": "thing"
+    }
+  ]
+}

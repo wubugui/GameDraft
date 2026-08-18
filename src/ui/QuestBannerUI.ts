@@ -36,8 +36,8 @@ const STALE_MS = 60_000;
 
 /** 进场时从上方落下这么多像素（配 easeOut 收得住），比纯淡入更容易被余光抓到 */
 const DROP_PX = 14;
-/** 横幅顶边距屏幕上沿（避开 HUD 芯片列与场景名） */
-const TOP_MARGIN = 96;
+/** 横幅顶边：顶中车道表的 banner 车道（避开场景名/引导条；toast 车道在其下方） */
+const TOP_MARGIN = UITheme.topLanes.banner;
 const PAD_X = UITheme.spacing.xl;
 const PAD_Y = UITheme.spacing.md;
 /** 木牌最大宽度：再宽就横穿整个画面，读起来反而费劲 */
@@ -261,7 +261,8 @@ export class QuestBannerUI {
 
     // 纯展示件，绝不吃指针：横幅飘在画面中上部，可命中就会把它底下的场景点击全挡掉
     c.eventMode = 'none';
-    c.zIndex = UITheme.z.toast;
+    // banner 档：与 toast 同带不同车道，真撞上时「新任务」这类大事压过流水播报（审查 P1 档内无优先级）
+    c.zIndex = UITheme.z.banner;
     c.alpha = 0;
     c.x = Math.round((this.renderer.screenWidth - w) / 2);
     c.y = this.baseY() - DROP_PX;

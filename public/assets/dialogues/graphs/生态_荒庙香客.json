@@ -22,8 +22,7 @@
         {
           "conditions": [
             {
-              "narrative": "eco_时辰",
-              "state": "午"
+              "timePhase": "午"
             }
           ],
           "next": "wu1"

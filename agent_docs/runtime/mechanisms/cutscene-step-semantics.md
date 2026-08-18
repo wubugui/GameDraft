@@ -3,7 +3,7 @@ id: cutscene-step-semantics
 title: 过场步骤语义(parallel/镜头位/运镜/字幕推进)
 domain: runtime
 type: mechanism
-summary: parallel 是 fork-join 组内无时序;匿名镜头位自动顶掉;运镜受相机夹紧约束、跳过快进到编排终姿;subtitleAutoAdvance 三态
+summary: parallel 是 fork-join 组内无时序;匿名镜头位自动顶掉;运镜受相机夹紧约束、跳过快进到编排终姿;subtitleAutoAdvance 三态;typewriter 缺省按台词面分家
 status: active
 authority:
   - src/systems/CutsceneManager.ts
@@ -14,7 +14,10 @@ authority:
   - src/core/GameStateController.ts#handleEscape
 triggers:
   paths: ["src/systems/CutsceneManager.ts", "src/rendering/CutsceneRenderer.ts", "public/assets/data/cutscenes*"]
-  topics: [过场, cutscene, parallel, kenBurns, 字幕, showImg, 运镜, cameraMove, cameraZoom]
+  topics: [过场, cutscene, parallel, kenBurns, 字幕, showImg, 运镜, cameraMove, cameraZoom, 逐字, 打字机, typewriter]
+verified_by:
+  - src/systems/CutsceneTypewriter.test.ts
+  - tools/editor/tests/test_cutscene_typewriter_toggle.py
 last_governed: 2026-08-05
 ---
 
@@ -51,8 +54,19 @@ cutscene 声画编排可用的原语边界:哪些时序纯数据做得到、哪�
 - **showImg**:`kenBurns`(缓推缓移,fire-and-forget 不阻塞,hideImg/换图/跳过即停)、`zIndex`
   (parallel 并发加载 z 序不定,多层合成**必须**显式 zIndex;电影黑边恒 10000)。渲染器只支持
   静态纹理 + kenBurns,真动画 FX 走 present:animLayer。
-- **`subtitleAutoAdvance`**:`"voice"` = 配音自然播完自动推进(配音缺失/加载失败/手动停都退化为
-  等点击)、正数 = 毫秒定时、缺省 = 等点击;点击始终可提前跳。
+- **`autoAdvance`**(旧键名 `subtitleAutoAdvance` 仍读):`"voice"` = 配音自然播完自动推进
+  (配音缺失/加载失败/手动停都退化为等点击)、正数 = 毫秒定时、缺省 = 等点击;点击始终可提前跳。
+  **本拍没自带配音时,`"voice"` = 接管前面某拍留声的那条**,见 [dialogue-voice-channel](dialogue-voice-channel.md)。
+- **`typewriter` 逐字显示**(2026-08-18):**缺省按台词面分家**——`showDialogue` 逐字、
+  `showSubtitle` 整句上屏;数据写 `typewriter` 才覆盖,**只认真布尔**(同 `disabled`;
+  非布尔构建期报 error)。编辑器**只落偏离缺省的那一侧**,回到缺省即删键。
+  玩家设置页的「逐字显示」总开关与速度倍率**压过编排**(关掉即全部整句;
+  打到一半关掉当帧补完)。速度基准 30 字/秒,与 `DialogueUI` 同值——那边改了
+  `CutsceneRenderer.TYPEWRITER_BASE_CPS` 要跟。点击语义:**还在打就只补完这一句,
+  补完后再点才过这一拍**(`completeTypewriters()` 的返回值就是这个分岔);
+  Esc 跳过不受影响。字幕的说话人段(`说话人：正文`)恒显示,只逐字正文。
+- **`voice`**(旧键名 `subtitleVoice` 仍读):字幕与 `showDialogue` **同一套**配音字段;
+  `{"hold": true}` = 本拍结束不停、留给后面的拍。收尾口径见配音通道卡。
 - **串行 step 一次一个,上一步必须先上屏**:`executeOneStep` 的帧屏障是语义不是优化,
   后人不得为省帧把连续同步步合并回同一帧(白名单里多数 action 是同步 handler,合并即静默丢步)。
 - playSfx 支持 action 级 `volume`(0–1,替换 entry 基础音量再乘全局)。
@@ -62,6 +76,13 @@ cutscene 声画编排可用的原语边界:哪些时序纯数据做得到、哪�
 - **一帧 ≈16ms 人眼仍看不见**:帧屏障只保证"这一步真的发生过",要被看见的节拍必须用
   `present:waitTime` 授权时长——别指望屏障替编排者决定停留多久。
 - 全屏插画下 `subtitleEmote` 气泡被 cutsceneOverlay 盖住不可见——别往全屏图字幕上挂 emote。
+- **自动推进的拍上开逐字要自己算长度**:`autoAdvance` 定时/配音到点就撤字幕,打字机不会
+  为了打完而拖住这一拍——字太长、时间太短就是"没打完就没了"。30 字/秒是基准,
+  玩家还能把倍率调到 0.4×。这也是字幕缺省不逐字的原因之一。
+- **居中字幕逐字时次行会随自身变宽微移**:整块落位按**整串**算好不漂,但 Pixi `align:center`
+  是按当前最宽行居中的,第二行打字期间会左右挪一点。单行字幕无此现象。
+- **「说话人：正文」那种字幕走 HTMLText**,逐字是逐帧重建 HTML(Pixi 的 HTMLText 每次改文本
+  都要重新栅格化一张 SVG)。短句无碍,长段落别在这类字幕上开逐字。
 - 分层视差的前景句柄要管完整生命周期:每个基帧要么 show 要么 hideImg,结尾也要 hide,否则残留到后帧。
 
 ## 怎么验证

@@ -7,7 +7,7 @@
   2. 通用模式:`paths_reminder.py <file_path> [session_id]` → 命中则输出纯文本提醒,
      未命中无输出。任何客户端的 after-edit 钩子机制都可这样接。
 
-给了 session_id 才做"每会话每文件只提醒一次"去重(状态存 /tmp/agent_docs_reminded_<sid>)。
+给了 session_id 才做"每会话每文件只提醒一次"去重(状态存系统临时目录 agent_docs_reminded_<sid>)。
 任何异常都静默退出 0,绝不阻断编辑。
 """
 
@@ -16,6 +16,7 @@ from __future__ import annotations
 import fnmatch
 import json
 import sys
+import tempfile
 from pathlib import Path
 
 META_DIR = Path(__file__).resolve().parent.parent
@@ -60,7 +61,7 @@ def main() -> None:
 
     sid = str(payload.get("session_id") or "")[:64]
     if sid:
-        state = Path("/tmp") / f"agent_docs_reminded_{sid}"
+        state = Path(tempfile.gettempdir()) / f"agent_docs_reminded_{sid}"
         try:
             seen = set(state.read_text(encoding="utf-8").splitlines()) if state.is_file() else set()
         except Exception:
@@ -76,7 +77,7 @@ def main() -> None:
     ids = ", ".join(hits)
     if plain_mode:
         print(f"[agent_docs] {rel} 登记了必读机制卡: {ids} —— 先读 agent_docs 对应卡再动手"
-              f"(定位: python3 agent_docs/_meta/audit.py --paths {rel})。")
+              f"(定位: sh scripts/py.sh agent_docs/_meta/audit.py --paths {rel})。")
         return
     print(json.dumps({
         "hookSpecificOutput": {
@@ -84,7 +85,7 @@ def main() -> None:
             "additionalContext": (
                 f"[agent_docs 提醒] 你正在改 {rel},该路径登记了必读机制卡: {ids}。"
                 f"若本会话尚未读过,先读 agent_docs 对应卡再继续"
-                f"(定位命令: python3 agent_docs/_meta/audit.py --paths {rel});已读过则忽略。"
+                f"(定位命令: sh scripts/py.sh agent_docs/_meta/audit.py --paths {rel});已读过则忽略。"
                 f"本会话此文件只提醒一次。"
             ),
         },

@@ -79,3 +79,7 @@ asset-backups/
 
 # 项目接手引导独立 App（只读学习工具，不入库）
 onboarding-app/
+
+# 配音原始音源库：大文件、不可再生素材。不进 Git；请用 DVC 或自己的备份方案托管
+# （建议：dvc add resources/audio_sources），工具见 tools/voice_workbench
+resources/audio_sources/

@@ -90,6 +90,36 @@ class TestCutsceneValidationReport(unittest.TestCase):
         self.assertEqual(ed._step_outlines[1]._issue_level, "error",
                          "嵌套问题归到其顶层 parallel 行")
 
+    def test_cross_step_held_voice_is_not_reported_as_missing(self) -> None:
+        """跨拍留声的配音：逐行校验必须看得见"上文"，否则合法编排每行都被误报。
+
+        单行视角天然看不到前面那拍勾了「播完不停」——不把整树算出来的留声状态带进去，
+        「接管前面那条配音」这种正确写法就会在编辑器里一直挂着黄标（而 validate-data
+        全量口径下干干净净），策划只能当护栏在骗人。并行子轨里的那条尤其容易中招。
+        """
+        steps = [
+            {"kind": "present", "type": "showSubtitle", "text": "起头这句短",
+             "voice": {"id": "v_long", "hold": True}, "autoAdvance": 3000},
+            {"kind": "present", "type": "showSubtitle", "text": "中间这句不碰配音",
+             "autoAdvance": 2000},
+            {"kind": "parallel", "tracks": [
+                {"kind": "action", "type": "playSfx", "params": {"id": "sfx_x"}},
+                {"kind": "present", "type": "showSubtitle", "text": "收尾这句跟配音一起结束",
+                 "autoAdvance": "voice"},
+            ]},
+            # 上面那条把留声接管掉了，这条才是真的没声可等（必须照报）
+            {"kind": "present", "type": "showSubtitle", "text": "这句真的没配音",
+             "autoAdvance": "voice"},
+        ]
+        ed, _model, _root = _load_editor(steps)
+        ed._run_current_cutscene_validation()
+        texts = [ed._issue_list.item(i).text() for i in range(ed._issue_list.count())]
+        voice_msgs = [t for t in texts if "没有配音" in t or "可接管" in t]
+        self.assertEqual(len(voice_msgs), 1, texts)
+        self.assertIn("第 4 步", voice_msgs[0], voice_msgs[0])
+        self.assertIsNone(ed._step_outlines[2]._issue_level,
+                          "并行里接管留声的那条是合法写法，不该挂标记")
+
     def test_counts_match_validate_data(self) -> None:
         """状态区条数必须与 validate-data 全树口径一致（逐行归因不得多报少报）。"""
         steps = [

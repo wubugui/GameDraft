@@ -10,8 +10,11 @@ type Dir = 'u' | 'd' | 'l' | 'r';
 /**
  * 与 `562335a` 首次触屏 HUD 一致：`(pointer: coarse)` 或存在 `ontouchstart`。
  * 曾改用 `(hover: none)` + 排除 `fine`，在大量手机浏览器上会得到 false（例如误报 hover:hover），导致整块 HUD 永远不显示。
+ *
+ * 导出给 HUD 桌面入口条做互斥判据（触屏有整套 chip，桌面条只在非触屏出现）——
+ * 两边必须用同一个判断，各写一份迟早漂移出「两套都显示/都不显示」。
  */
-function useCoarsePointerOrTouchDevice(): boolean {
+export function useCoarsePointerOrTouchDevice(): boolean {
   if (typeof window === 'undefined') return false;
   try {
     if (window.matchMedia('(pointer: coarse)').matches) return true;
@@ -52,6 +55,10 @@ export class TouchMobileControls {
   private readonly verbBtns: { btn: HTMLButtonElement; verb: string }[] = [];
   /** 由 Game 注入的动词可用性只读口；未注入时按"全可用"（与旧行为一致） */
   private isVerbUsable: ((verb: string) => boolean) | null = null;
+  /** 面板 chip → 面板名：未读点逐帧只翻 data 属性（样式在 CSS 里） */
+  private readonly panelBtns: { btn: HTMLButtonElement; panel: string }[] = [];
+  /** 由 Game 注入的「某面板有未读」判据；未注入 = 全都不亮 */
+  private unreadProvider: ((panel: string) => boolean) | null = null;
 
   constructor(
     inputManager: InputManager,
@@ -78,7 +85,8 @@ export class TouchMobileControls {
       { id: 'bookshelf', label: strings.get('touchControls', 'bookshelf') },
       { id: 'map', label: strings.get('touchControls', 'map') },
       { id: 'ruleUse', label: strings.get('touchControls', 'ruleUse') },
-      { id: 'shop', label: strings.get('touchControls', 'shop') },
+      // 「铺子」chip 已删（审查 P2 死按钮）：shop 面板没有快捷键语义，只由世界里的
+      // 掌柜交互（openShop 动作）拉起——触屏玩家同样是点场景里的人，不是点 HUD。
       { id: 'menu', label: strings.get('touchControls', 'menu') },
     ];
     // F2 调试面板属于开发工具，生产构建不给玩家渲染这个入口
@@ -204,7 +212,15 @@ export class TouchMobileControls {
       e.preventDefault();
       this.stateController.togglePanel(panelName);
     });
+    // 未读点与桌面入口条同一语义（见 HUD.setPanelUnreadProvider）：触屏玩家一样要知道
+    // 「刚才那几条还在」。样式走 CSS 的 [data-unread="1"]::after，这里只翻属性。
+    this.panelBtns.push({ btn, panel: panelName });
     return btn;
+  }
+
+  /** 组装层注入「某面板有未读」的判据；未注入 = 全都不亮（与 HUD 同一注入范式）。 */
+  setPanelUnreadProvider(fn: ((panel: string) => boolean) | null): void {
+    this.unreadProvider = fn;
   }
 
   /** 注入动词可用性只读口（Game 组装层给 PlayerActionSystem 的闭包）。 */
@@ -318,6 +334,14 @@ export class TouchMobileControls {
     if (mobile) {
       if (st === GameState.Exploring) explore = true;
       else if (st === GameState.UIOverlay) overlay = true;
+    }
+
+    // 未读点（与桌面入口条同一判据）：只在这些 chip 真的显示着时才有意义，
+    // 但翻属性无副作用，统一每帧同步一次即可。
+    for (const { btn, panel } of this.panelBtns) {
+      const unread = this.unreadProvider?.(panel) === true;
+      if (unread) btn.dataset.unread = '1';
+      else delete btn.dataset.unread;
     }
 
     // 死按钮不给玩家：缺动画片段（如背尸包没有 kick）、被位面禁、全局关 → 直接隐藏

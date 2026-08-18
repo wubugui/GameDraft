@@ -100,6 +100,56 @@
           }
         ]
       }
+    },
+    {
+      "id": "hs_纸扎日工",
+      "type": "inspect",
+      "label": "雾津纸扎铺 · 接桩糊纸人日工",
+      "x": 466.6,
+      "y": 549.2,
+      "interactionRange": 60.0,
+      "data": {
+        "actions": [
+          {
+            "type": "playScriptedDialogue",
+            "params": {
+              "lines": [
+                {
+                  "speaker": "纸扎铺掌柜",
+                  "text": "搭把手不嘛？铺子接了桩白事活路，糊几个随葬纸人，按件给钱。手脚麻利点，莫把忌讳犯了。"
+                }
+              ]
+            }
+          },
+          {
+            "type": "chooseAction",
+            "params": {
+              "prompt": "接这桩糊纸人的日工不？",
+              "allowCancel": true,
+              "options": [
+                {
+                  "text": "接（按件算钱）",
+                  "actions": [
+                    {
+                      "type": "startPaperCraftMinigame",
+                      "params": {
+                        "id": "wujin_paper_servant_daywork"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "text": "莫得空，先走",
+                  "actions": []
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "planes": [
+        "normal"
+      ]
     }
   ],
   "zones": [

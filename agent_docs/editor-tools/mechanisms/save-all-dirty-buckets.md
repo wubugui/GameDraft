@@ -35,6 +35,9 @@ last_governed: 2026-08-05
 
 ## 已知坑
 
+- **就位那几下在 Windows 上会瞬时失败**(目标/源被 dev server watcher、杀毒、索引器持有句柄):
+  `os.replace`/`os.link` 一律经 `retry_transient` 重试,失败语义三层不变——
+  见 [atomic-write-windows](../../meta/mechanisms/atomic-write-windows.md)。
 - 键名拼错的历史真 bug:标 `"quests"`(复数)而 save_all 只认 `"quest"` → Save All 不写文件却清了脏标记,暂存数据无声丢失。护栏 raise 就是为它加的,别绕过。
 
 ## 怎么验证

@@ -13,9 +13,11 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QFontMetrics
 
+from .collapsible_section import CollapsibleSection
 from .cutscene_dialogue_speaker_row import build_speaker_line_with_inserts
 from .portrait_ref_field import PortraitRefField
 from .rich_text_field import RichTextTextEdit
+from .voice_spec_field import VoiceSpecField
 
 
 class ScriptedLinesEditor(QWidget):
@@ -143,7 +145,27 @@ class ScriptedLinesEditor(QWidget):
         portrait = PortraitRefField(proot, data.get("portrait") if isinstance(data, dict) else None)
         portrait.changed.connect(self.changed.emit)
         bl.addWidget(portrait)
-        rec = {"box": box, "speaker": sp, "text": tx, "portrait": portrait, "btn_up": up, "btn_down": dn}
+        # 逐行配音 / 推进方式：与过场字幕、过场对话框、图对话拍同一个控件同一套语义。
+        # 折叠默认收起——绝大多数台词没有配音，展开会把这一列撑得很长。
+        voice = VoiceSpecField(
+            box,
+            model=m,
+            voice_raw=data.get("voice") if isinstance(data, dict) else None,
+            advance_raw=data.get("autoAdvance") if isinstance(data, dict) else None,
+            compact=True,
+        )
+        voice.changed.connect(self.changed.emit)
+        voice_sec = CollapsibleSection("配音 / 推进方式（可选）", start_open=voice.has_content(), parent=box)
+        voice_sec.set_header_tool_tip(
+            "这一句的配音，以及这一句怎么结束。\n"
+            "默认：无配音、等玩家点击。\n"
+            "一条长配音要盖住后面几句时，起头那句勾「播完不停」，"
+            "由后面某句选「跟随配音结束」来收尾。",
+        )
+        voice_sec.add_body(voice)
+        bl.addWidget(voice_sec)
+        rec = {"box": box, "speaker": sp, "text": tx, "portrait": portrait, "voice": voice,
+               "btn_up": up, "btn_down": dn}
         rm.clicked.connect(lambda: self._remove_row(rec))
         up.clicked.connect(lambda: self._move_row(rec, -1))
         dn.clicked.connect(lambda: self._move_row(rec, 1))
@@ -163,9 +185,11 @@ class ScriptedLinesEditor(QWidget):
             spw = r["speaker"]
             sp_txt = spw.text().strip() if hasattr(spw, "text") else ""
             por = r["portrait"].to_ref()
+            vf = r.get("voice")
+            has_voice = bool(vf is not None and vf.has_content())
             # 空正文行：过去无条件静默丢弃，会连带丢掉已配好的 speaker / 立绘（审查 P3）。
-            # 只丢「三项全空」的纯空行；已配 speaker 或立绘的空文本行保留，避免默默吃掉编辑。
-            if not t and not sp_txt and not por:
+            # 只丢「全空」的纯空行；已配 speaker / 立绘 / 配音的空文本行保留，避免默默吃掉编辑。
+            if not t and not sp_txt and not por and not has_voice:
                 continue
             rec: dict = {
                 "speaker": sp_txt,
@@ -173,5 +197,7 @@ class ScriptedLinesEditor(QWidget):
             }
             if por:
                 rec["portrait"] = por
+            if vf is not None:
+                vf.apply_to(rec)
             out.append(rec)
         return out

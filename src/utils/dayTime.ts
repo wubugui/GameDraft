@@ -12,7 +12,7 @@ export const MINUTES_PER_DAY = 1440;
 /** 缺省时段分段：内容侧不配 `game_config.dayNight.phases` 时用这四段。 */
 export const DEFAULT_PHASES: readonly DayPhaseDef[] = [
   { id: 'dawn', from: '05:00', label: '拂晓' },
-  { id: 'day', from: '07:00', label: '白日' },
+  { id: 'day', from: '07:00', label: '白日', daylight: true },
   { id: 'dusk', from: '18:00', label: '黄昏' },
   { id: 'night', from: '20:00', label: '入夜' },
 ] as const;
@@ -26,6 +26,8 @@ export interface ResolvedPhase {
   id: string;
   fromMinutes: number;
   label?: string;
+  /** 语义角色：这一段「人在外面做事」。见 {@link daylightPhaseIds}。 */
+  daylight?: boolean;
 }
 
 /**
@@ -84,7 +86,7 @@ export function resolvePhases(defs: readonly DayPhaseDef[] | undefined): Resolve
       continue;
     }
     seen.add(id);
-    out.push({ id, fromMinutes, label: def?.label });
+    out.push({ id, fromMinutes, label: def?.label, daylight: def?.daylight === true });
   }
   if (out.length === 0) return resolveDefaultPhases();
   out.sort((a, b) => a.fromMinutes - b.fromMinutes);
@@ -96,6 +98,7 @@ function resolveDefaultPhases(): ResolvedPhase[] {
     id: p.id,
     fromMinutes: parseClock(p.from) ?? 0,
     label: p.label,
+    daylight: p.daylight === true,
   }));
 }
 
@@ -133,16 +136,38 @@ export function isWithinRange(minutes: number, fromMinutes: number, toMinutes: n
 }
 
 /**
- * **NPC 未写 `phases` 时的缺省归属：只在白日出没。**
+ * 「人在外面做事」的那几段——**NPC 未写 `phases` 时的缺省归属**，从当前时段表现算。
  *
- * 这是内容侧定调（2026-08-12）：这个世界的人白天做事、天一擦黑就归家，
- * 「街上有人」是特例不是常态。要让某个 NPC 在拂晓/黄昏也在，**显式**写
- * `["dawn","day","dusk"]`；要他昼夜常驻，把四个时段都写上。
+ * ## 为什么是算的，不是常量
+ *
+ * 这里原先是个常量 `NPC_DEFAULT_PHASES = ['day']`，从 {@link DEFAULT_PHASES} 里抠了
+ * 一个 id 硬写进代码。而那张表**会被内容侧整表替换**（本作换成了 `辰/午/暮/夜`）。
+ * 表一换，`'day'` 指向一个不存在的时段，白名单判定恒假——所有开了日夜的场景
+ * 全天空无一人，且没有任何报错。2026-08-18 雾津街头「一个人都没有」就是这么来的。
+ *
+ * 根子在于**代码存了时段 id**。所以修法不是换个常量，是让代码从此不认 id：
+ * 内容侧在时段表里给「街上有人」的段打上 `daylight`，代码只问这个语义角色。
+ * 时段叫什么、分几段、几点切换、什么语言，代码一概不知道，也就再没法对不上。
+ * 时辰是内容侧的设定，不是引擎的概念。
+ *
+ * ## 缺省的含义（内容定调 2026-08-12，未变）
+ *
+ * 这个世界的人白天做事、天一擦黑就归家，「街上有人」是特例不是常态。
+ * 龙套/群演走这条缺省，**不必人手一张日程表**——日程是给有作息的具名角色的
+ * （分工见 `NpcScheduleSystem` 文件头）。要谁在别的时段也在，给他显式写 `phases`。
  *
  * 热点与 zone **不吃这个缺省**（门、路牌、可拾取物夜里当然还在），
  * 它们未写 `phases` 时仍是全时段——见 `SceneManager.entityInPhase` 的两个调用口径。
+ *
+ * ## 一段都没标时
+ *
+ * 返回 `[]` = **不施加限制**（全时段都在）。调用方负责告警一次。与「`currentPhase`
+ * 取不到一律 fail-open」同一条原则：宁可街上多几个人，也绝不能静默清空整条街。
+ * 这是上面那场事故留下的唯一硬要求。
  */
-export const NPC_DEFAULT_PHASES: readonly string[] = ['day'];
+export function daylightPhaseIds(phases: readonly ResolvedPhase[]): readonly string[] {
+  return phases.filter((p) => p.daylight === true).map((p) => p.id);
+}
 
 /**
  * 实体的**时段归属**判定（与位面 `planes` 同构的白名单）。

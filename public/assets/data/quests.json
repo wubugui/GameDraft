@@ -181,7 +181,7 @@
     "completionConditions": [
       {
         "narrative": "flow_xungou_main",
-        "state": "s01_tingshu",
+        "state": "state_2",
         "reached": true
       }
     ],

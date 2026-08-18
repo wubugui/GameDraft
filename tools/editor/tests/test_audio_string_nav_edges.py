@@ -44,7 +44,11 @@ class TestAudioSystemSfxNav(_Base):
             ed = AudioEditor(m)
             # System SFX 子页键在 cellWidget 里,item(r,0) 恒 None——此前恒失败
             self.assertTrue(ed.select_by_id("questAccepted"))
-            self.assertEqual(ed._tabs.currentIndex(), 3, "应切到 System SFX 子页")
+            # 断言"切到了 System SFX 那一页"，不是"切到了第 3 页"——
+            # 页序会随频道增减变化，钉死数字的断言迟早红在无关改动上
+            self.assertIs(
+                ed._tabs.widget(ed._tabs.currentIndex()), ed.system_sfx_tab(),
+                "应切到 System SFX 子页")
 
     def test_select_by_id_miss_returns_false(self) -> None:
         from tools.editor.editors.audio_editor import AudioEditor
@@ -72,8 +76,9 @@ class TestAudioSystemSfxNav(_Base):
             m.audio_config["sfx"] = {}
             m.audio_config["systemSfx"] = {"questAccepted": ""}
             ed = AudioEditor(m)
-            sfx_tab = ed._sub_tabs[2]
-            sys_tab = ed._sub_tabs[3]
+            # 按名取，不按下标：加一个频道页就会把下标全顶偏（加 voice 页时踩过）
+            sfx_tab = ed.channel_tab("sfx")
+            sys_tab = ed.system_sfx_tab()
             # 在 SFX 子页新增一行 id,Apply
             sfx_tab.add_row("sfx_new")
             sfx_tab._apply()  # 触发 applied → sys_tab.refresh_sfx_choices
@@ -92,7 +97,7 @@ class TestAudioSystemSfxNav(_Base):
             m.audio_config["bgm"] = {"bgm_a": {"src": "/resources/runtime/audio/a.wav"}}
             ed = AudioEditor(m)
             # 在 BGM 子页新增一行未 Apply
-            bgm = ed._sub_tabs[0]
+            bgm = ed.channel_tab("bgm")
             bgm.add_row("bgm_unsaved")
             self.assertTrue(ed._is_dirty())
             with patch.object(QMessageBox, "question",
@@ -167,3 +172,44 @@ class TestStringPartialHit(_Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAudioColumnsPopulated(unittest.TestCase):
+    """打开面板时「引用」列必须已经填好——四个频道页一个都不能漏。
+
+    由来：给音频面板加「配音」页时，我把 `refresh_reference_counts()` 挤到了
+    `return` 后面变成死代码，四个页的引用列**全空**，而全套 1489 条测试一条没红——
+    因为没有任何测试断言过"这一列有值"。用户开面板一眼就看见了，测试却看不见。
+
+    必须拿**真实工程**测：引用统计对空工程返回空字典，而空字典时留空是设计内行为
+    （"还没扫过"≠"扫过了是 0"）。拿最小 fixture 测会得到一条恒绿的假护栏。
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._app = QApplication.instance() or QApplication([])
+        from tools.editor.project_model import ProjectModel
+        from tools.editor.tests.save_test_utils import repo_root_from_tests
+
+        cls._pm = ProjectModel()
+        cls._pm.load_project(repo_root_from_tests())
+
+    def test_reference_column_filled_on_open_for_every_channel(self) -> None:
+        from tools.editor.editors.audio_editor import AudioEditor, _COL_REFS
+        from tools.editor.shared import audio_library as lib
+
+        ed = AudioEditor(self._pm)
+        self.addCleanup(ed.deleteLater)
+        for ch in lib.AUDIO_CHANNELS:
+            tab = ed.channel_tab(ch)
+            self.assertGreater(tab._table.rowCount(), 0, f"{ch} 页应有行")
+            blank = [
+                r for r in range(tab._table.rowCount())
+                if (tab._table.item(r, _COL_REFS) is None
+                    or not tab._table.item(r, _COL_REFS).text().strip())
+            ]
+            self.assertEqual(
+                blank, [],
+                f"{ch} 页有 {len(blank)} 行的「引用」列是空的——引用统计没跑"
+                f"（0 次也要显示 '0'，空白表示压根没算）",
+            )

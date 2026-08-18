@@ -8,6 +8,7 @@ import type { Hotspot } from '../entities/Hotspot';
 import type { Npc } from '../entities/Npc';
 import type {
   DialogueEndPayload,
+  DialogueFacing,
   HotspotDef,
   InspectData,
   InspectDataGraphMode,
@@ -25,7 +26,7 @@ export interface InteractionDeps {
   dialogueManager: DialogueManager;
   graphDialogueManager: GraphDialogueManager;
   actionExecutor: ActionExecutor;
-  inspectBox: { show(text: string): Promise<void>; readonly isOpen: boolean; close(): void };
+  inspectBox: { show(text: string, title?: string): Promise<void>; readonly isOpen: boolean; close(): void };
   eventBus: EventBus;
   getPlayerWorldPos: () => { x: number; y: number };
   getCameraZoom: () => number;
@@ -38,6 +39,24 @@ export interface InteractionDeps {
 }
 
 const NPC_DIALOGUE_CAMERA_ZOOM_MS = 550;
+
+/**
+ * 热点进图对话时按 `def.dialogueFacing` 摆展示图朝向，返回收尾用的复位函数。
+ *
+ * 与 NPC 侧同一套四档语义（{@link DialogueFacing}），差别只有缺省：热点缺省 `keep`
+ * ——它历来就不转身，旧数据不能因为多了这个字段就开始动。
+ * 复位走 `setRuntimeDisplayFacing(null)` 清覆盖（回到 `displayImage.facing`），
+ * 与 action `tempSetHotspotDisplayFacing` 的 `restore` 同一条路，不写进场景 JSON / 存档。
+ */
+function applyHotspotDialogueFacing(hotspot: Hotspot, playerX: number): () => void {
+  const mode: DialogueFacing = hotspot.def.dialogueFacing ?? 'keep';
+  if (mode === 'keep' || !hotspot.def.displayImage) return () => {};
+  const facing: 'left' | 'right' = mode === 'left' ? 'left'
+    : mode === 'right' ? 'right'
+    : (playerX < hotspot.def.x ? 'left' : 'right');
+  hotspot.setRuntimeDisplayFacing(facing);
+  return () => hotspot.setRuntimeDisplayFacing(null);
+}
 
 export class InteractionCoordinator {
   private eventBus: EventBus;
@@ -203,7 +222,9 @@ export class InteractionCoordinator {
     const trimmed = text.trim();
     if (trimmed) {
       stateController.setState(GameState.UIOverlay);
-      await inspectBox.show(text);
+      // 检视框标题 = 热区展示名（审查 P2：检视框无对象名，玩家不知道自己在看什么）；
+      // 没配 label 的热区照旧无标题，版式与从前一致
+      await inspectBox.show(text, hotspot.def.label);
     }
     eventBus.emit('hotspot:inspected', { hotspotId: hotspot.def.id });
     if (data.actions) {
@@ -230,6 +251,9 @@ export class InteractionCoordinator {
     if (stateController.currentState !== GameState.Exploring) return;
     if (graphDialogueManager.isActive) return;
 
+    // 展示图朝向按热点自己的配置摆；收尾（含异常路径）一律复位，别把覆盖留在场景里
+    const restoreFacing = applyHotspotDialogueFacing(hotspot, this.deps.getPlayerWorldPos().x);
+
     let cleanupDone = false;
     const onDialogueEnd = (p?: DialogueEndPayload) => {
       /** R5：同 NPC 路径——嵌套脚本台词 / 链式接续的中间 end 不触发 inspect 收尾
@@ -237,6 +261,7 @@ export class InteractionCoordinator {
       if (p?.source !== 'graph' || p.willContinue === true) return;
       if (cleanupDone) return;
       cleanupDone = true;
+      restoreFacing();
       eventBus.off('dialogue:end', onDialogueEnd);
       eventBus.emit('hotspot:inspected', { hotspotId: hotspot.def.id });
       void (async () => {
@@ -268,6 +293,7 @@ export class InteractionCoordinator {
       if (!graphDialogueManager.isActive && !graphDialogueManager.hasPendingChainContinuation) {
         if (!cleanupDone) {
           cleanupDone = true;
+          restoreFacing();
           eventBus.off('dialogue:end', onDialogueEnd);
         }
         stateController.setState(GameState.Exploring);
@@ -275,6 +301,7 @@ export class InteractionCoordinator {
     } catch (e) {
       if (!cleanupDone) {
         cleanupDone = true;
+        restoreFacing();
         eventBus.off('dialogue:end', onDialogueEnd);
       }
       console.warn('InteractionCoordinator: inspect graph failed', e);

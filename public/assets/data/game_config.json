@@ -127,5 +127,32 @@
       "label": "弱化",
       "color": "#8e867a"
     }
-  ]
+  ],
+  "dayNight": {
+    "startAt": "11:00",
+    "phases": [
+      {
+        "id": "辰",
+        "from": "07:00",
+        "label": "辰时",
+        "daylight": true
+      },
+      {
+        "id": "午",
+        "from": "11:00",
+        "label": "午时",
+        "daylight": true
+      },
+      {
+        "id": "暮",
+        "from": "18:00",
+        "label": "向晚"
+      },
+      {
+        "id": "夜",
+        "from": "20:00",
+        "label": "入夜"
+      }
+    ]
+  }
 }

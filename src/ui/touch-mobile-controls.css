@@ -120,6 +120,25 @@
   font-size: 12px;
 }
 
+/* 未读点：与桌面入口条、书架木牌同一枚（「这里有你没看过的东西」）。
+   色号 = UITheme.colors.redDot（0xd9a052 琥珀，不是正红——整屏暖木里一点正红太跳）。
+   position 挂在按钮上，点本身不吃指针——按钮整块仍是一个命中区。 */
+.touch-mc-btn[data-unread="1"] {
+  position: relative;
+}
+
+.touch-mc-btn[data-unread="1"]::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #d9a052;
+  pointer-events: none;
+}
+
 .touch-mc-spacer {
   width: 52px;
   height: 52px;

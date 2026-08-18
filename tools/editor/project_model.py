@@ -80,8 +80,12 @@ class ProjectModel(QObject):
         self.archive_characters: list[dict] = []
         self.archive_lore: dict = {}
         self.archive_slang: dict = {}
+        self.archive_rhymes: dict = {}
         self.archive_books: list[dict] = []
         self.archive_documents: list[dict] = []
+        # clues.json：线索注册表（K7）。形状 {categories:{key:显示名}, clues:[{id,title,desc,category}]}；
+        # 缺文件时按空表处理（[clue:] 引用会在 embeddedRef 面报未知）。独立脏桶 "clues"。
+        self.clues_registry: dict = {}
         self.animations: dict[str, dict] = {}
         self.scenes: dict[str, dict] = {}
         self.filter_defs: dict[str, dict] = {}
@@ -288,8 +292,10 @@ class ProjectModel(QObject):
         self.archive_characters = self._load(dp / "archive" / "characters.json", [])
         self.archive_lore = self._load(dp / "archive" / "lore.json", {})
         self.archive_slang = self._load(dp / "archive" / "slang.json", {})
+        self.archive_rhymes = self._load(dp / "archive" / "rhymes.json", {})
         self.archive_books = self._load(dp / "archive" / "books.json", [])
         self.archive_documents = self._load(dp / "archive" / "documents.json", [])
+        self.clues_registry = self._load(dp / "clues.json", {})
         self.pressure_holds = self._load(dp / "pressure_holds.json", [])
         self.signal_cues = self._load(dp / "signal_cues.json", [])
         self.bubble_lines = self._load(dp / "bubble_lines.json", {})
@@ -755,9 +761,12 @@ class ProjectModel(QObject):
                 dp / "archive" / "characters.json",
                 dp / "archive" / "lore.json",
                 dp / "archive" / "slang.json",
+                dp / "archive" / "rhymes.json",
                 dp / "archive" / "books.json",
                 dp / "archive" / "documents.json",
             ])
+        if "clues" in dty:
+            out.append(dp / "clues.json")
         if "scene" in dty:
             if self._dirty_scenes_all or not self._dirty_scene_ids:
                 scene_ids = sorted(self.scenes.keys())
@@ -976,8 +985,11 @@ class ProjectModel(QObject):
                 w.add(dp / "archive" / "characters.json", self.archive_characters)
                 w.add(dp / "archive" / "lore.json", self.archive_lore)
                 w.add(dp / "archive" / "slang.json", self.archive_slang)
+                w.add(dp / "archive" / "rhymes.json", self.archive_rhymes)
                 w.add(dp / "archive" / "books.json", self.archive_books)
                 w.add(dp / "archive" / "documents.json", self.archive_documents)
+            if "clues" in dty:
+                w.add(dp / "clues.json", self.clues_registry)
             maybe_stamp(clk, "已暂存 data 下聚合 JSON（按 dirty）")
             if "scene" in dty:
                 if self._dirty_scenes_all or not self._dirty_scene_ids:
@@ -1178,7 +1190,7 @@ class ProjectModel(QObject):
     #: 暂存内容无声丢失（复核 P1-02 护栏）。新增数据域时两处同步更新。
     KNOWN_DIRTY_BUCKETS: frozenset = frozenset({
         "config", "characterRegistry", "item", "quest", "questGroup", "encounter",
-        "rules", "shop", "map", "cutscene", "audio", "strings", "archive", "scene",
+        "rules", "shop", "map", "cutscene", "audio", "strings", "archive", "clues", "scene",
         "flag_registry", "overlay_images", "prop_presets",
         "scenarios", "narrative_graphs", "narrative_packages",
         "document_reveals", "smell_profiles", "pressure_holds", "signal_cues", "bubble_lines",
@@ -1277,6 +1289,15 @@ class ProjectModel(QObject):
             ]
         if book_type == "slang":
             entries = self.archive_slang
+            if isinstance(entries, dict):
+                entries = entries.get("entries", [])
+            return [
+                (e["id"], (e.get("title") or e["id"])[:40])
+                for e in entries
+                if isinstance(e, dict) and e.get("id")
+            ]
+        if book_type == "rhyme":
+            entries = self.archive_rhymes
             if isinstance(entries, dict):
                 entries = entries.get("entries", [])
             return [
@@ -1671,11 +1692,13 @@ class ProjectModel(QObject):
         return out
 
     #: 与 src/utils/dayTime.ts 的 DEFAULT_PHASES 对齐（parity 测试锁定）。
-    DEFAULT_TIME_PHASES: tuple[tuple[str, str, str], ...] = (
-        ("dawn", "05:00", "拂晓"),
-        ("day", "07:00", "白日"),
-        ("dusk", "18:00", "黄昏"),
-        ("night", "20:00", "入夜"),
+    # 第四位 = daylight（「街上有人」的段）：与运行时 DEFAULT_PHASES 逐字对齐，
+    # 由 tests/test_day_night_parity.py 锁死。漏改一处 = 编辑器显示的缺省与运行时不同。
+    DEFAULT_TIME_PHASES: tuple[tuple[str, str, str, bool], ...] = (
+        ("dawn", "05:00", "拂晓", False),
+        ("day", "07:00", "白日", True),
+        ("dusk", "18:00", "黄昏", False),
+        ("night", "20:00", "入夜", False),
     )
 
     def all_exit_anchor_ids(self, scene_id: str = "") -> list[tuple[str, str]]:
@@ -1732,7 +1755,35 @@ class ProjectModel(QObject):
             out.append((pid, f"{label or pid}（{frm}）" if frm else (label or pid)))
         if out:
             return out
-        return [(pid, f"{label}（{frm}）") for pid, frm, label in self.DEFAULT_TIME_PHASES]
+        return [(pid, f"{label}（{frm}）") for pid, frm, label, _daylight in self.DEFAULT_TIME_PHASES]
+
+    def daylight_phase_ids(self) -> list[str]:
+        """「街上有人」的时段 id（与运行时 `dayTime.daylightPhaseIds` 同口径）。
+
+        这是**未写 `phases` 的 NPC（龙套/群演）的缺省归属**。空列表 = 一段都没标
+        `daylight`，运行时按「不施加限制」处理并告警——校验器据此出警告，
+        因为那说明作者多半是想让缺省生效却忘了打标记。
+
+        回落口径与 `all_time_phase_ids` 一致：配了 phases 就只看配的，没配才看内置表。
+        """
+        cfg = self.game_config.get("dayNight") if isinstance(self.game_config, dict) else None
+        rows = cfg.get("phases") if isinstance(cfg, dict) else None
+        out: list[str] = []
+        seen: set[str] = set()
+        has_row = False
+        for row in rows if isinstance(rows, list) else []:
+            if not isinstance(row, dict):
+                continue
+            pid = str(row.get("id") or "").strip()
+            if not pid or pid in seen:
+                continue
+            seen.add(pid)
+            has_row = True
+            if row.get("daylight") is True:
+                out.append(pid)
+        if has_row:
+            return out
+        return [pid for pid, _frm, _label, daylight in self.DEFAULT_TIME_PHASES if daylight]
 
     def plane_membership(self, plane_id: str) -> str:
         """位面世界模型 'shared' | 'exclusive'（与运行时 PlaneReconciler 同口径）。

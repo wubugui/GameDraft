@@ -7,9 +7,9 @@ import { DayManager } from './DayManager';
 import { NpcScheduleSystem, type NpcScheduleRuntimeBinding } from './NpcScheduleSystem';
 import type { NpcDef, SceneData } from '../data/types';
 import {
+  daylightPhaseIds,
   forwardDistance,
   isEntityInPhase,
-  NPC_DEFAULT_PHASES,
   isWithinRange,
   parseClock,
   phaseAt,
@@ -74,16 +74,56 @@ describe('dayTime 时刻工具', () => {
   });
 
   it('没写 phases 时用 fallback：NPC 缺省只白日，热点/zone 不传 fallback＝全时段', () => {
+    const npcDefault = daylightPhaseIds(resolvePhases(undefined));
     // NPC：缺省 = 只在白日出没（内容定调，不是"全天都在"）
-    expect(isEntityInPhase(undefined, 'day', NPC_DEFAULT_PHASES)).toBe(true);
-    expect(isEntityInPhase(undefined, 'night', NPC_DEFAULT_PHASES)).toBe(false);
-    expect(isEntityInPhase(undefined, 'dusk', NPC_DEFAULT_PHASES)).toBe(false);
-    expect(isEntityInPhase([], 'night', NPC_DEFAULT_PHASES)).toBe(false);
+    expect(isEntityInPhase(undefined, 'day', npcDefault)).toBe(true);
+    expect(isEntityInPhase(undefined, 'night', npcDefault)).toBe(false);
+    expect(isEntityInPhase(undefined, 'dusk', npcDefault)).toBe(false);
+    expect(isEntityInPhase([], 'night', npcDefault)).toBe(false);
     // 热点 / zone：不传 fallback = 全时段都在（门、路牌夜里当然还在）
     expect(isEntityInPhase(undefined, 'night')).toBe(true);
     expect(isEntityInPhase([], 'night')).toBe(true);
     // 显式写了就覆盖缺省
-    expect(isEntityInPhase(['night'], 'night', NPC_DEFAULT_PHASES)).toBe(true);
+    expect(isEntityInPhase(['night'], 'night', npcDefault)).toBe(true);
+  });
+
+  it('daylightPhaseIds 只认真布尔，且内置表就是原来那个 [day]', () => {
+    expect(daylightPhaseIds(resolvePhases(undefined))).toEqual(['day']);
+    expect(
+      daylightPhaseIds(
+        resolvePhases([
+          { id: '辰', from: '07:00', daylight: true },
+          { id: '午', from: '11:00', daylight: true },
+          { id: '暮', from: '18:00' },
+          { id: '夜', from: '20:00', daylight: false },
+        ]),
+      ),
+    ).toEqual(['辰', '午']);
+    // 只认 === true：真值字符串不算标记（与编辑器 daylight_phase_ids 同口径）
+    expect(
+      daylightPhaseIds(resolvePhases([{ id: '辰', from: '07:00', daylight: 'true' }] as never)),
+    ).toEqual([]);
+  });
+
+  it('换了时段词表却没标 daylight → 缺省为空 → fail-open 全时段都在（2026-08-18 回归锁）', () => {
+    // 事故形状：内容侧把时段表换成 辰/午/暮/夜，而代码里硬写着 ['day']。
+    // 'day' 在新表里不存在 → 白名单恒假 → 整条街 24 小时空无一人，且不报错。
+    const 换了词表 = resolvePhases([
+      { id: '辰', from: '07:00' },
+      { id: '午', from: '11:00' },
+      { id: '暮', from: '18:00' },
+      { id: '夜', from: '20:00' },
+    ]);
+    const 缺省 = daylightPhaseIds(换了词表);
+    expect(缺省).toEqual([]);
+    // 空 fallback = 不施加限制。宁可街上多几个人，也绝不静默清空。
+    for (const phase of ['辰', '午', '暮', '夜']) {
+      expect(isEntityInPhase(undefined, phase, 缺省)).toBe(true);
+    }
+    // 对照：旧的硬编码常量在这张表下每一段都判假——这就是当时的现场
+    for (const phase of ['辰', '午', '暮', '夜']) {
+      expect(isEntityInPhase(undefined, phase, ['day'])).toBe(false);
+    }
   });
 
   it('forwardDistance 绕一圈算跨零点距离', () => {
@@ -115,6 +155,45 @@ describe('DayManager 时刻推进', () => {
     const { day } = makeClock();
     expect(day.minutesOfDay).toBe(parseClock('08:00'));
     expect(day.currentPhase).toBe('day');
+  });
+
+  it('daylightPhases 随时段表重算，且未 configure 时就是内置表的 [day]', () => {
+    const eventBus = new EventBus();
+    const flagStore = new FlagStore(eventBus);
+    const day = new DayManager(eventBus, flagStore, new ActionExecutor(eventBus, flagStore));
+    // 没 configure 过 = 内置四段，缺省与旧硬编码常量等价
+    expect(day.daylightPhases).toEqual(['day']);
+    day.configure({
+      phases: [
+        { id: '辰', from: '07:00', daylight: true },
+        { id: '午', from: '11:00', daylight: true },
+        { id: '暮', from: '18:00' },
+        { id: '夜', from: '20:00' },
+      ],
+    });
+    expect(day.daylightPhases).toEqual(['辰', '午']);
+    expect(day.currentPhase).toBe('辰'); // startAt 缺省 07:00
+  });
+
+  it('时段表一段都没标 daylight：缺省清空 + 告警一次（不静默）', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const eventBus = new EventBus();
+      const flagStore = new FlagStore(eventBus);
+      const day = new DayManager(eventBus, flagStore, new ActionExecutor(eventBus, flagStore));
+      day.configure({
+        phases: [
+          { id: '辰', from: '07:00' },
+          { id: '夜', from: '20:00' },
+        ],
+      });
+      // 空 = SceneManager 侧不施加限制（全时段都在），而不是回落到表里没有的 'day'
+      expect(day.daylightPhases).toEqual([]);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]?.[0])).toContain('daylight');
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('推进跨过时段边界时发 time:phaseChanged，并透传 transition', () => {

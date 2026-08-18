@@ -221,6 +221,10 @@
       "valueType": "bool"
     },
     {
+      "key": "minutes_of_day",
+      "valueType": "float"
+    },
+    {
       "key": "old_box_checked",
       "valueType": "bool"
     },
@@ -487,6 +491,18 @@
       "id": "archive_slang",
       "prefix": "archive_slang_",
       "idSource": "archive_slang",
+      "valueType": "bool"
+    },
+    {
+      "id": "archive_rhyme",
+      "prefix": "archive_rhyme_",
+      "idSource": "archive_rhyme",
+      "valueType": "bool"
+    },
+    {
+      "id": "clue_collected",
+      "prefix": "clue_",
+      "idSource": "clue",
       "valueType": "bool"
     }
   ],

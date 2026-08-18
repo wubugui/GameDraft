@@ -12,7 +12,7 @@
 
 import { Text, TextStyle } from 'pixi.js';
 import type { TextOptions, TextStyleOptions } from 'pixi.js';
-import { hasStyleMarkup, paletteTagStyles, plainTextLength, toPixiTagged } from './textStyle';
+import { hasStyleMarkup, paletteTagStyles, plainTextLength, sliceStyledMarkup, toPixiTagged } from './textStyle';
 
 /** Text → 它当前承载的「原始带标记文本」。用 WeakMap 是为了不往 Pixi 对象上挂私有字段。 */
 const rawByText = new WeakMap<Text, string>();
@@ -98,4 +98,19 @@ export function getStyledRaw(target: Text): string {
 /** 该 Text 的可见字数（打字机的终点） */
 export function styledPlainLength(target: Text): number {
   return plainTextLength(getStyledRaw(target));
+}
+
+/**
+ * 一行放不下就按**可见字数**退到放得下为止，补省略号（省略号是标点，不是文案）。
+ * 用 `sliceStyledMarkup` 保住 `[c:…]`/`[clue:…]` 标记成对——直接对带标记原串 slice
+ * 会切出半个 `[c:emph`，剥不掉、原样露给玩家。
+ * （此前 QuestPanelUI / RulesPanelUI 各私藏一份逐字同文实现，审查 P2 收编到这。）
+ */
+export function ellipsizeStyledText(target: Text, maxW: number): void {
+  if (target.width <= maxW || maxW <= 0) return;
+  const raw = getStyledRaw(target);
+  for (let n = plainTextLength(raw) - 1; n > 0; n--) {
+    setStyledText(target, `${sliceStyledMarkup(raw, n)}…`);
+    if (target.width <= maxW) return;
+  }
 }

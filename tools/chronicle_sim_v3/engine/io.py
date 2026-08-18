@@ -17,6 +17,7 @@ from typing import Any
 
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap
+from tools.atomic_io import retry_transient
 
 
 def _yaml_loader() -> YAML:
@@ -92,7 +93,7 @@ def atomic_write_text(path: str | os.PathLike[str], text: str) -> None:
                 os.fsync(f.fileno())
             except OSError:
                 pass
-        os.replace(tmp, p)
+        retry_transient(os.replace, tmp, p)
     except BaseException:
         try:
             os.unlink(tmp)

@@ -1,7 +1,7 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import { UITheme } from './UITheme';
 import { drawPanelBase, SKINS } from './PanelSkin';
-import { createBadge, createChip, createKeyCap, createRule, createTitleRow, drawSelectedRow } from './components/UIDecor';
+import { createBadge, createChip, createKeyCap, createRule, createTitleRow, drawFocusRing, drawHoverRow, drawSelectedRow } from './components/UIDecor';
 import { markPointerConsumed } from './uiPointerCoords';
 import { UIWindow, WINDOW_SIZES } from './components/UIWindow';
 import { UIScrollView } from './components/UIScrollView';
@@ -10,7 +10,7 @@ import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
 import type { StringsProvider } from '../core/StringsProvider';
 import type { IQuestDataProvider } from '../data/types';
-import { createStyledText, getStyledRaw, setStyledText } from '../core/styledText';
+import { createStyledText, ellipsizeStyledText, getStyledRaw, setStyledText } from '../core/styledText';
 import { stripStyleMarkup } from '../core/textStyle';
 import { plainTextLength, sliceStyledMarkup } from '../core/textStyle';
 
@@ -192,13 +192,25 @@ export class QuestPanelUI {
     if (!this._isOpen) return;
     this._isOpen = false;
     window.removeEventListener('keydown', this.onKeyBound);
-    this.teardown();
+    // 关场淡出（绕开重建路径共用的瞬时 teardown）：先摘两块滚动区的输入面，
+    // 再让窗体带视觉淡出自毁——逻辑态已同步落定，尸体窗只是视觉。
+    this.detail?.detachInput();
+    this.list?.detachInput();
+    const win = this.win;
+    this.detail = null;
+    this.list = null;
+    this.win = null;
+    win?.fadeOutAndDestroy();
     // 焦点只在**关面板**时清；build() 里的重建要靠它按 id 把焦点放回原处
     this.focus.destroy();
   }
 
   destroy(): void {
-    this.close();
+    // 真销毁走瞬时路径（不经 close 的关场淡出）
+    this._isOpen = false;
+    window.removeEventListener('keydown', this.onKeyBound);
+    this.teardown();
+    this.focus.destroy();
     this.eventBus.off('quest:changed', this.questChangedCb);
   }
 
@@ -257,12 +269,21 @@ export class QuestPanelUI {
     return this.plainLabel(key).charAt(0);
   }
 
+  /** 页签文案：只剥模板两端的装饰（`-- 进行中 (2) --` → `进行中 (2)`），**保留计数** */
+  private tabLabel(key: string, count: number): string {
+    return stripStyleMarkup(this.strings.get('quest', key, { count }))
+      .replace(/^[-=\s]+|[-=\s]+$/g, '')
+      .trim();
+  }
+
   private tabLabels(): { key: TabKey; label: string }[] {
+    // 页签带各页数量（审查 P2：模板本来就有 {count}，此前被 plainLabel 连括号一起剥掉了）。
+    // 数量从数据源现查，与 rowsOf 同一批查询，不会与列表对不上。
     return [
       // 「进行中」不再写成「主线·支线」：主线可以同时有好几条，两类混列才是这一页的真实内容
-      { key: 'active', label: this.plainLabel('inProgress') },
-      { key: 'repeatable', label: this.plainLabel('repeatable') },
-      { key: 'completed', label: this.plainLabel('completed') },
+      { key: 'active', label: this.tabLabel('inProgress', this.questData.getActiveQuests().length) },
+      { key: 'repeatable', label: this.tabLabel('repeatable', this.questData.getRepeatableQuestEntries().length) },
+      { key: 'completed', label: this.tabLabel('completed', this.questData.getCompletedQuests().length) },
     ];
   }
 
@@ -435,12 +456,14 @@ export class QuestPanelUI {
     const listY = tabsY + TAB_H + UITheme.spacing.md;
     const listH = Math.max(ROW_H, bodyH - listY);
 
-    // 两栏之间那条极淡竖线
-    const divider = new Graphics();
-    divider.rect(listW + UITheme.spacing.md, tabsY, 1, bodyH - tabsY);
-    divider.fill({ color: UITheme.colors.hairline, alpha: UITheme.alpha.hairline });
-    divider.eventMode = 'none';
-    win.body.addChild(divider);
+    // 两栏之间那条极淡竖线。空态不画：整块面板只剩中央那段指路，竖线只会白切一刀
+    if (rows.length > 0) {
+      const divider = new Graphics();
+      divider.rect(listW + UITheme.spacing.md, tabsY, 1, bodyH - tabsY);
+      divider.fill({ color: UITheme.colors.hairline, alpha: UITheme.alpha.hairline });
+      divider.eventMode = 'none';
+      win.body.addChild(divider);
+    }
 
     const list = new UIScrollView(this.renderer, {
       width: listW,
@@ -461,6 +484,10 @@ export class QuestPanelUI {
       if (this.detail && this.selectedKey === keptForKey) this.detail.scrollOffset = keepDetail;
     }
 
+    // 空态：面板中央一句现状 + 一句指路（审查 P2：84% 屏宽的面板空时只剩角落一句暗灰，
+    // 近乎白板还不告诉玩家怎么才会有内容）
+    if (rows.length === 0) this.buildEmptyState(win.body, bodyW, listY, bodyH);
+
     // 内容整份重建，焦点按 id 复位（`setItems` 自己保；id 没了就落到几何上最近的一项）。
     this.focus.setItems(focusItems);
     // **默认焦点不放左上角**：落在当前选中的那一条（列表空时退到当前页签）。
@@ -470,10 +497,39 @@ export class QuestPanelUI {
     }
     // ⚠ `setItems` 在焦点 id 不变时会**早退**，不会回调新元素的 onFocus——
     // 重建后的高亮得在这里补画一次，否则每点一次面板焦点就"看不见了"。
-    this.focus.current?.onFocus(true);
+    this.focus.repaint();
 
     if (animate) win.open();
     else win.attach();
+  }
+
+  /**
+   * 空态块：一行主句（body 档）+ 一行指路副句（small 档），整块在内容区里居中。
+   * 副句告诉玩家「怎么才会有内容」，文案在 strings 的 emptyTitle / emptyHint。
+   */
+  private buildEmptyState(parent: Container, bodyW: number, top: number, bottom: number): void {
+    const main = createStyledText({
+      text: this.strings.get('quest', 'emptyTitle'),
+      style: {
+        fontSize: UITheme.fontSize.body, fill: UITheme.colors.bodyMuted,
+        fontFamily: UITheme.fonts.ui, letterSpacing: UITheme.letterSpacing.hint,
+      },
+    });
+    const hint = createStyledText({
+      text: this.strings.get('quest', 'emptyHint'),
+      style: {
+        fontSize: UITheme.fontSize.small, fill: UITheme.colors.hintMid,
+        fontFamily: UITheme.fonts.ui,
+        wordWrap: true, breakWords: true, wordWrapWidth: Math.round(bodyW * 0.7),
+      },
+    });
+    const gap = UITheme.spacing.md;
+    const blockTop = Math.round(top + (bottom - top - main.height - gap - hint.height) / 2);
+    main.position.set(Math.round((bodyW - main.width) / 2), blockTop);
+    hint.position.set(Math.round((bodyW - hint.width) / 2), blockTop + main.height + gap);
+    main.eventMode = 'none';
+    hint.eventMode = 'none';
+    parent.addChild(main, hint);
   }
 
   /** 切页签（页签点击与回车激活共用一条路径） */
@@ -490,6 +546,35 @@ export class QuestPanelUI {
     if (this.selectedKey === key) return;
     this.selectedKey = key;
     this.build();
+  }
+
+  /**
+   * 按任务 id 定位：切到它所在的页签、选中它、滚进视口、把焦点也放上去。
+   * 事件日志点「新任务：…」跳过来走的就是这条（组装层的跳转路由）。
+   *
+   * **自己找页签**：调用方只知道任务 id，不知道它此刻是进行中、零活还是已完成——
+   * 让外面去猜就等于把面板的分页规则复制一份出去。
+   *
+   * @returns 找到并定位了返回 true；查无此任务返回 false（调用方据此决定要不要提示）。
+   */
+  focusEntry(questId: string): boolean {
+    if (!questId) return false;
+    const tabs: TabKey[] = ['active', 'repeatable', 'completed'];
+    for (const tab of tabs) {
+      const rows = this.rowsOf(tab);
+      const index = rows.findIndex(r => r.questId === questId);
+      if (index < 0) continue;
+      this.tab = tab;
+      this.selectedKey = rows[index].key;
+      if (!this._isOpen) return true; // 面板还没开：留着状态，open() 的 build 会用上
+      this.build();
+      this.revealRow(index);
+      // 焦点也跟过去：build 只在"本来就没焦点"时才指定默认项，跳转是显式意图，压过它
+      this.focus.focusDefault(rowFocusId(rows[index].key));
+      this.focus.repaint();
+      return true;
+    }
+    return false;
   }
 
   /** 焦点落到视口外的行时把它滚进来。只动 `scrollOffset`，不碰选中态。 */
@@ -529,6 +614,7 @@ export class QuestPanelUI {
     row.eventMode = 'static';
     row.cursor = 'pointer';
     row.on('pointerover', () => { row.alpha = 0.75; this.focus.syncHover('close'); });
+    row.on('pointerout', () => this.focus.clearHover('close'));
     // 指针移开时**只在焦点不在它身上**才复原：鼠标与手柄共用同一个"当前项"，
     // 移开鼠标不该把焦点高亮一起抹掉（抹掉就等于屏幕上没有焦点了）。
     row.on('pointerout', () => { if (this.focus.current?.id !== 'close') row.alpha = 1; });
@@ -563,21 +649,30 @@ export class QuestPanelUI {
       else drawPanelBase(g, x, y + TAB_LIFT, tabW, TAB_H - TAB_LIFT, SKINS.row);
       parent.addChild(g);
 
-      // 焦点高亮 = 页签自己那块「铺琥珀」的画法，盖在它自己那个框上
+      // 光标框 / 悬停底各一张，盖在页签自己那个框上
       // （当前页签是通高的 TAB_H，其余页签下沉了 TAB_LIFT）。
-      // **必须紧跟 g 加进去**：它是不透明铺光，排在标签文字之后会把字盖掉。
-      const focusG = new Graphics();
-      if (active) drawSelectedRow(focusG, x, y, tabW, TAB_H);
-      else drawSelectedRow(focusG, x, y + TAB_LIFT, tabW, TAB_H - TAB_LIFT);
-      focusG.visible = false;
-      focusG.eventMode = 'none';
-      parent.addChild(focusG);
+      // **必须紧跟 g 加进去**：排在标签文字之后会把字盖掉。
+      const tabY = active ? y : y + TAB_LIFT;
+      const tabH = active ? TAB_H : TAB_H - TAB_LIFT;
+      const hoverG = new Graphics();
+      drawHoverRow(hoverG, x, tabY, tabW, tabH);
+      hoverG.visible = false;
+      hoverG.eventMode = 'none';
+      parent.addChild(hoverG);
+      const ringG = new Graphics();
+      drawFocusRing(ringG, x, tabY, tabW, tabH);
+      ringG.visible = false;
+      ringG.eventMode = 'none';
+      parent.addChild(ringG);
 
       focusItems.push({
         id: `tab:${t.key}`,
         x, y, w: tabW, h: TAB_H,
         group: 'tabs',
-        onFocus: (on) => { focusG.visible = on; },
+        onFocus: (on, via) => {
+          ringG.visible = on && via === 'key';
+          hoverG.visible = on && via === 'pointer';
+        },
         // 当前页签没有"再切一次"这回事，不给激活回调（回车让回给下一层处理）
         onActivate: active ? undefined : () => this.switchTab(t.key),
       });
@@ -591,7 +686,7 @@ export class QuestPanelUI {
           fill: active ? UITheme.colors.title : UITheme.colors.hintMid,
           fontFamily: UITheme.fonts.ui,
           fontWeight: active ? 'bold' : 'normal',
-          letterSpacing: 1,
+          letterSpacing: UITheme.letterSpacing.hint,
         },
       });
       label.position.set(
@@ -613,6 +708,7 @@ export class QuestPanelUI {
       });
       // 指针悬停即移焦：鼠标与手柄共用同一个"当前项"，移开鼠标再按方向键要从这里接着走
       hit.on('pointerover', () => this.focus.syncHover(`tab:${t.key}`));
+      hit.on('pointerout', () => this.focus.clearHover(`tab:${t.key}`));
       parent.addChild(hit);
     });
 
@@ -641,16 +737,8 @@ export class QuestPanelUI {
     const list = this.list;
     if (!list) return;
 
+    // 空态不在列表栏里出字：整块面板的空态块由 build() 统一画在面板中央
     if (rows.length === 0) {
-      const t = createStyledText({
-        text: this.strings.get('quest', 'empty'),
-        style: {
-          fontSize: UITheme.fontSize.small, fill: UITheme.colors.hint,
-          fontFamily: UITheme.fonts.ui,
-        },
-      });
-      t.position.set(UITheme.spacing.md, UITheme.spacing.md);
-      list.content.addChild(t);
       list.refresh();
       return;
     }
@@ -668,17 +756,21 @@ export class QuestPanelUI {
       else drawPanelBase(bg, 0, y, rowW, rowBodyH, SKINS.row);
       list.content.addChild(bg);
 
-      // 焦点高亮 = 行**自己那层选中画法**（琥珀铺光 + 金描边），不另发明一种焦点框。
-      // 只给未选中的行备：`drawSelectedRow` 是半透明铺光，叠在已选中的行上会亮成两倍。
-      // **必须紧跟 bg 加进去**：它排在徽章/文字之后会把它们盖掉。
-      let focusG: Graphics | null = null;
+      // 三态三画法（见 UIFocus 类注释）：光标 = 空心金框，悬停 = 极淡暖底。
+      // **必须紧跟 bg 加进去**：排在徽章/文字之后会把它们盖掉。
+      let hoverG: Graphics | null = null;
       if (!selected) {
-        focusG = new Graphics();
-        drawSelectedRow(focusG, 0, y, rowW, rowBodyH);
-        focusG.visible = false;
-        focusG.eventMode = 'none';
-        list.content.addChild(focusG);
+        hoverG = new Graphics();
+        drawHoverRow(hoverG, 0, y, rowW, rowBodyH);
+        hoverG.visible = false;
+        hoverG.eventMode = 'none';
+        list.content.addChild(hoverG);
       }
+      const ringG = new Graphics();
+      drawFocusRing(ringG, 0, y, rowW, rowBodyH);
+      ringG.visible = false;
+      ringG.eventMode = 'none';
+      list.content.addChild(ringG);
 
       const badge = createBadge(row.badge, row.badgeColor, BADGE_R);
       badge.position.set(BADGE_X, y + rowBodyH / 2);
@@ -715,7 +807,7 @@ export class QuestPanelUI {
           fontSize: UITheme.fontSize.bodyLarge,
           fill: selected ? UITheme.colors.title : row.titleColor,
           fontFamily: UITheme.fonts.ui, fontWeight: 'bold',
-          letterSpacing: 1,
+          letterSpacing: UITheme.letterSpacing.hint,
         },
       });
       title.position.set(titleX, y + Math.round((rowBodyH - title.height) / 2));
@@ -729,7 +821,7 @@ export class QuestPanelUI {
           style: {
             // 简述是"扫一眼"的配角：全文就在右栏，这里只需要一句提示。停在 `small`。
             fontSize: UITheme.fontSize.small,
-            fill: selected ? UITheme.colors.bodyMuted : UITheme.colors.descTextDim,
+            fill: selected ? UITheme.colors.bodyMuted : UITheme.colors.hintMid,
             fontFamily: UITheme.fonts.ui,
           },
         });
@@ -755,6 +847,7 @@ export class QuestPanelUI {
       });
       // 指针悬停即移焦：鼠标与手柄共用同一个"当前项"，不各走各的
       hit.on('pointerover', () => this.focus.syncHover(rowFocusId(row.key)));
+      hit.on('pointerout', () => this.focus.clearHover(rowFocusId(row.key)));
       list.content.addChild(hit);
 
       focusItems.push({
@@ -762,10 +855,11 @@ export class QuestPanelUI {
         // 焦点矩形取**面板坐标**（列表偏移 + 行在滚动区内的 y），空间导航才能与右栏比位置
         x: 0, y: listY + y, w: rowW, h: rowBodyH,
         group: QuestPanelUI.GROUP_BODY,
-        onFocus: (f) => {
-          if (focusG) focusG.visible = f;
-          // 焦点走到视口外的行要把它滚进来（只动 scrollOffset，不碰选中态）
-          if (f) this.revealRow(i);
+        onFocus: (f, via) => {
+          ringG.visible = f && via === 'key';
+          if (hoverG) hoverG.visible = f && via === 'pointer';
+          // 只在按键模式滚：鼠标划过时滚列表会把指针下的行抽走
+          if (f && via === 'key') this.revealRow(i);
         },
         onActivate: select,
       });
@@ -938,6 +1032,7 @@ export class QuestPanelUI {
           act();
         });
         hit.on('pointerover', () => this.focus.syncHover('detail:focus'));
+        hit.on('pointerout', () => this.focus.clearHover('detail:focus'));
         view.content.addChild(hit);
 
         // 右栏唯一的可点项。**与左栏列表同组**（GROUP_BODY）——左右键要跨得过去
@@ -979,16 +1074,9 @@ export class QuestPanelUI {
     return g;
   }
 
-  /** 一行放不下就截到能放下为止（省略号是标点，不是文案） */
+  /** 一行放不下就截到能放下为止；实现收编在 styledText.ellipsizeStyledText（审查 P2 双份同文） */
   private ellipsize(t: Text, maxW: number): void {
-    if (t.width <= maxW || maxW <= 0) return;
-    // 按**可见字数**退，且用 sliceStyledMarkup 保住色标记成对——
-    // 直接对带标记原串 slice 会切出半个 `[c:emph`，剥不掉、原样露给玩家。
-    const raw = getStyledRaw(t);
-    for (let n = plainTextLength(raw) - 1; n > 0; n--) {
-      setStyledText(t, `${sliceStyledMarkup(raw, n)}…`);
-      if (t.width <= maxW) return;
-    }
+    ellipsizeStyledText(t, maxW);
   }
 
   /**

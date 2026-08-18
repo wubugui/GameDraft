@@ -501,6 +501,33 @@ function sceneListApi(): Plugin {
   };
 }
 
+/**
+ * 项目根下挂着一批**与前端无关**的巨型目录（`.tools/` 便携 Python+venv 约 6 万文件 /
+ * 6300 目录、`.dvc/` 缓存、`dist/` `tmp/` `output/` `artifact/`）。Vite 默认会把它们
+ * 全部拖进两条热路径，两条都实测拖慢开服/首屏：
+ *
+ * 1. dev 文件监听：默认只排除 `.git` / `node_modules` / `test-results` / cacheDir / outDir，
+ *    于是 chokidar 开服时要走完整棵树。实测（`server.watcher.getWatched()`，开服 20s 后取样）
+ *    2939 个监听目录里 1958 个来自 `.tools/`、261 个来自 `.dvc/`，进程 RSS 517MB；
+ *    加上下面的 ignored 后降到 687 目录 / 143MB。
+ * 2. 依赖预打包的入口扫描：`optimizeDeps.entries` 不填时 Vite 用 `**\/*.html` 全树 glob 找入口，
+ *    本仓库能扫出 679 个 html——其中 655 个是 `.tools/` 里的 Python 文档页，全被当成入口爬一遍。
+ *    实测 scan 冷盘 11.3s / 热盘 4.8s，钉死入口后 1.8s。
+ *
+ * 改这里前先想清楚：被 ignored 的目录改动不再触发 dev 热更/整页刷新。游戏真正会在 dev 期
+ * 编辑的 `public/` `resources/` `src/` `tools/` 都**不在**排除名单里。
+ */
+const DEV_WATCH_IGNORED = [
+  '**/.tools/**',
+  '**/.dvc/**',
+  '**/tmp/**',
+  '**/output/**',
+  '**/artifact/**',
+  '**/logs/**',
+  '**/.claude/**',
+  '**/asset-backups/**',
+];
+
 export default defineConfig({
   plugins: [
     debugFlagFavoritesApi(),
@@ -511,6 +538,10 @@ export default defineConfig({
     sceneListApi(),
   ],
   base: './',
+  optimizeDeps: {
+    // 只认根目录这几个真入口（index.html + 几个 demo 页），不再全树找 html。
+    entries: ['*.html'],
+  },
   test: {
     globals: true,
     environment: 'node',
@@ -527,7 +558,9 @@ export default defineConfig({
     port: 5173,
     // Editor embed: bind explicitly so Local: URL matches WebEngine (127.0.0.1).
     host: process.env.GAMEDRAFT_EDITOR_EMBED === '1' ? '127.0.0.1' : undefined,
-    // Editor embed: do not open external browser.
-    open: process.env.GAMEDRAFT_EDITOR_EMBED !== '1',
+    // Editor embed / agent 启动(scripts/dev_agent.cjs):do not open external browser.
+    open: process.env.GAMEDRAFT_EDITOR_EMBED !== '1' && process.env.GAMEDRAFT_NO_OPEN !== '1',
+    // 追加在 Vite 内建排除项（.git / node_modules / test-results / cacheDir / outDir）之后
+    watch: { ignored: DEV_WATCH_IGNORED },
   },
 });

@@ -42,7 +42,7 @@ async function makeWorld() {
     assetManager: { loadJson: async () => narrativePackagesData },
   } as never);
   await director.loadDefs();
-  return { eventBus, narrative, director };
+  return { eventBus, narrative, director, flagStore };
 }
 
 function flush(): Promise<void> {
@@ -51,25 +51,31 @@ function flush(): Promise<void> {
 
 describe('C4 导演驱动全主线拆包（真实数据）', () => {
   it('每拍章节包由导演按里程碑 load/unload；背尸→梦握手成立；dormant 后状态永存', async () => {
-    const { eventBus, narrative, director } = await makeWorld();
+    const { eventBus, narrative, director, flagStore } = await makeWorld();
     const emit = async (sourceType: string, sourceId: string, signal: string) => {
       narrative.emitNarrativeSignal({ sourceType: sourceType as never, sourceId, signal });
       await flush(); await flush(); await flush();
     };
     const live = () => narrative.getLivePackages();
 
-    // 开局：无章节被标活跃（导演还没评估）；里程碑 initial
-    expect(narrative.getActiveState(FLOW)).toBe('initial');
+    // 开局：无章节被标活跃（导演还没评估）；主线停在未开始（state_1，开机旗门控）
+    expect(narrative.getActiveState(FLOW)).toBe('state_1');
     expect(live()).toEqual([]);
 
-    // 听书：进茶馆点亮章节_听书（scene 行），演完 kicked_out→里程碑 s01
+    // 开机旗点火（game_config startupFlags 同款）→ t_1 reactive → 开局·听书斗嘴
+    flagStore.set('GameConfig_Demo主线剧情', true);
+    await flush(); await flush();
+    expect(narrative.getActiveState(FLOW)).toBe('initial');
+
+    // 听书：进茶馆点亮章节_听书（scene 行），演完 kicked_out；被赶出茶馆推主线 initial→state_2
     eventBus.emit('scene:revealed', { sceneId: 'teahouse' });
     await flush(); await flush();
     expect(live()).toContain('章节_听书');
     await emit('dialogue', '寻狗_听书开场', 'tingshu_kicked');
     expect(narrative.getActiveState('scenario_听书')).toBe('kicked_out');
-    expect(narrative.getActiveState(FLOW)).toBe('s01_tingshu');
-    // 里程碑到 s01 → 导演卸听书、载背尸+梦（梦 when=s01 与背尸重叠）
+    await emit('dialogue', '寻狗_听书开场', '主线_开局被赶出茶馆');
+    expect(narrative.getActiveState(FLOW)).toBe('state_2');
+    // 里程碑到 state_2（旧 s01 的后继锚点）→ 导演卸听书、载背尸+梦（梦 when=state_2 与背尸重叠）
     expect(live()).not.toContain('章节_听书');
     expect(live()).toContain('章节_背尸');
     expect(live()).toContain('章节_梦');
@@ -82,6 +88,10 @@ describe('C4 导演驱动全主线拆包（真实数据）', () => {
     await emit('dialogue', '寻狗_背尸', 'beishi_scent');
     await emit('dialogue', '寻狗_鬼打墙', 'beishi_fled');
     expect(narrative.getActiveState('scenario_背尸')).toBe('fled');
+    // 开场重构缺口：state_2→…→s02_beishi 仍是 __draft__ 占位（闲逛/赌坊段未接线），
+    // 硬跳补上主线里程碑；缺口接线完成后应删掉这一跳。
+    await narrative.debugSetNarrativeState(FLOW, 's02_beishi');
+    await flush(); await flush();
     expect(narrative.getActiveState(FLOW)).toBe('s02_beishi');
     // 梦接住 fled → 梦子图开到 road（不是停在 not_started）——包不 gate，故必然接住
     expect(narrative.getActiveState('scenario_梦待死之礼')).toBe('road');

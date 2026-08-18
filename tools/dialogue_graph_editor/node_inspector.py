@@ -40,6 +40,7 @@ from tools.editor.shared.bubble_anchor_field import (
     actor_for_dialogue_speaker,
 )
 from tools.editor.shared.collapsible_section import CollapsibleSection
+from tools.editor.shared.voice_spec_field import VoiceSpecField
 from .dialogue_condition_text import (
     ALWAYS as _COND_ALWAYS,
     NEVER as _COND_NEVER,
@@ -60,6 +61,14 @@ from .npc_picker_dialog import NpcPickerDialog
 #: 私有信号标记 QLabel 的 objectName——每轮刷新按它复用，不然每次 changed 都会
 #: 在那一行右边再挂一个「私有」。
 _PRIVATE_SIGNAL_MARK_OBJECT = "gdPrivateSignalMark"
+
+#: 配音折叠区的说明（单拍与多拍两处共用；与过场字幕/对话框同一套语义）
+_GRAPH_VOICE_TIP = (
+    "这一句的配音，以及这一句怎么结束。\n"
+    "默认：无配音、等玩家点击。\n"
+    "一条长配音要盖住后面几句时，起头那句勾「播完不停」，"
+    "由后面某句选「跟随配音结束」来收尾。"
+)
 
 
 def _without_private_note(text: str) -> str:
@@ -599,9 +608,15 @@ class NodeInspector(QWidget):
         # 面板本身只有 280px，别再被自己的外边距吃掉 22px——那正好是压不压得进的差额。
         self._root_layout.setContentsMargins(2, 2, 2, 2)
 
-        self._type_label = QLabel(self)
-        self._type_label.setWordWrap(True)
-        self._type_label.setTextFormat(Qt.TextFormat.RichText)
+        # 顶部这条「节点 id + 类型」同样必须可省略：它装的是**数据来的** id，长度无上限
+        # （真实图里 `生态_歇口气_码头白天_搬运工_闲聊_02` 一抓一把），而富文本 QLabel 的
+        # minimumSizeHint = 整行文字宽、`wordWrap=True` 对富文本根本不生效 —— 于是
+        # **顶宽面板的元凶不在表单里，宽度护栏却红着指向表单**，下一个改检查器的人会以为
+        # 是自己刚加的控件弄坏的（2026-08-17 偏差记录：choice_with_prompt 316px，成因是
+        # 那条 24 字的 id 而非任何控件；把 id 换成 `n` 立刻降到 268px）。
+        # 代价是 `<b>` 加粗没了（_ElidingLabel 只画纯文本），换来 id 再长也不顶宽、
+        # 完整内容进 tooltip。
+        self._type_label = _ElidingLabel("", self)
         self._root_layout.addWidget(self._type_label)
 
         # parent=self 从构造的第一刻起就在 inspector 子树内，避免短暂 orphan top-level。
@@ -689,7 +704,7 @@ class NodeInspector(QWidget):
             # 降级为只读展示 + 原样透传：getter 返回原值，不被改写、round-trip 无损。
             if not isinstance(data, dict):
                 self._type_label.setText(
-                    f"节点 id：<b>{node_id}</b>　　类型：<b>畸形（非对象）</b>"
+                    f"节点 id：{node_id}　　类型：畸形（非对象）"
                 )
                 self._body_layout.addWidget(
                     QLabel(
@@ -706,8 +721,10 @@ class NodeInspector(QWidget):
             # 「类型：switch」——同一个节点左中右三栏三个名字，交流时对不上号。
             # 映射复用 graph_document.node_type_label_zh（画布/布局估算的同一来源）。
             from .graph_document import node_type_label_zh
+            # 类型名也可能无上限长（未知类型走 `其它({node_type})`，原文照抄数据里的字符串），
+            # 所以整行一起交给 _ElidingLabel，而不是只省略 id 那一段。
             self._type_label.setText(
-                f"节点 id：<b>{node_id}</b>　　类型：<b>{node_type_label_zh(t)}</b>"
+                f"节点 id：{node_id}　　类型：{node_type_label_zh(t)}"
             )
 
             # 几何模式只读展示所属分组（画布分组框决定），无需 assign 回调；
@@ -1199,6 +1216,24 @@ class NodeInspector(QWidget):
             o_fl.addRow(_lb_t, tx_plain)
             _lb_tk = QLabel("文本键（可选）", content); _lb_tk.setToolTip("JSON 字段 textKey：走 strings 表时填")
             o_fl.addRow(_lb_tk, tked)
+            # 拍级配音：与立绘/气泡锚不同，**必须逐拍可编**——各拍的配音必然各是一条，
+            # 节点级默认在这里没有意义（继承只会让同一条声音每拍重播）。
+            beat_voice = VoiceSpecField(
+                content,
+                model=self._project_model_getter() if self._project_model_getter else None,
+                voice_raw=(beat or {}).get("voice") if isinstance(beat, dict) else None,
+                advance_raw=(beat or {}).get("autoAdvance") if isinstance(beat, dict) else None,
+                compact=True,
+            )
+            beat_voice.changed.connect(self._emit_changed)
+            beat_voice_sec = CollapsibleSection(
+                "配音（可选）",
+                start_open=beat_voice.has_content(),
+                parent=content,
+            )
+            beat_voice_sec.set_header_tool_tip(_GRAPH_VOICE_TIP)
+            beat_voice_sec.add_body(beat_voice)
+            o_fl.addRow(beat_voice_sec)
 
             def flip_collapse() -> None:
                 row["collapsed"] = not row["collapsed"]
@@ -1294,6 +1329,7 @@ class NodeInspector(QWidget):
                         kcb.currentData(), exed.text().strip()
                     ),
                     # 拍级头像 / 气泡锚无 UI（节点级选择器作各拍默认），但既有数据必须随行保真回写
+                    "voice_field": beat_voice,
                     "portrait": copy.deepcopy((beat or {}).get("portrait"))
                     if isinstance(beat, dict)
                     else None,
@@ -1402,6 +1438,24 @@ class NodeInspector(QWidget):
         leg_l.addRow(_lb_t2, text_edit)
         _lb_tk2 = QLabel("文本键（可选）", self._body); _lb_tk2.setToolTip("JSON 字段 textKey")
         leg_l.addRow(_lb_tk2, text_key)
+        # 单拍节点的配音写在节点顶层（多拍一律写在各拍上，节点级不作默认——
+        # 各拍配音必然各是一条，继承只会让同一条声音每拍重播）。
+        legacy_voice = VoiceSpecField(
+            legacy_wrap,
+            model=self._project_model_getter() if self._project_model_getter else None,
+            voice_raw=data.get("voice"),
+            advance_raw=data.get("autoAdvance"),
+            compact=True,
+        )
+        legacy_voice.changed.connect(self._emit_changed)
+        legacy_voice_sec = CollapsibleSection(
+            "配音（可选）",
+            start_open=legacy_voice.has_content(),
+            parent=legacy_wrap,
+        )
+        legacy_voice_sec.set_header_tool_tip(_GRAPH_VOICE_TIP)
+        legacy_voice_sec.add_body(legacy_voice)
+        leg_l.addRow(legacy_voice_sec)
 
         def upd_extra_label():
             k = kind_cb.currentData()
@@ -1704,6 +1758,9 @@ class NodeInspector(QWidget):
                     b["bubbleAnchorY"] = r["bubbleAnchorY"]
                 if r.get("bubbleScale") is not None:
                     b["bubbleScale"] = r["bubbleScale"]
+                vf = r.get("voice_field")
+                if vf is not None:
+                    vf.apply_to(b)
                 out_beats.append(b)
             return out_beats
 
@@ -1750,6 +1807,7 @@ class NodeInspector(QWidget):
                 bsc = bub_field.scale_value()
                 if bsc is not None:
                     out["bubbleScale"] = bsc
+                # 多拍：配音只在各拍上（顶层不写，避免"节点级默认"这个会重播的错觉）
                 return out
             k = kind_cb.currentData()
             ex = extra_edit.text().strip()
@@ -1775,6 +1833,7 @@ class NodeInspector(QWidget):
             bsc = bub_field.scale_value()
             if bsc is not None:
                 out["bubbleScale"] = bsc
+            legacy_voice.apply_to(out)
             return out
 
         self._getter = getter
@@ -1991,6 +2050,23 @@ class NodeInspector(QWidget):
         _lb_ptk = QLabel("文本键（可选）", prompt_box); _lb_ptk.setToolTip("JSON 字段 textKey")
         pfl.addRow(_lb_ptk, pl_text_key)
         pfl.addRow("立绘（可选）", pl_portrait)
+        # promptLine 也是一拍台词：配音语义与 line 拍完全一致
+        pl_voice = VoiceSpecField(
+            prompt_box,
+            model=self._project_model_getter() if self._project_model_getter else None,
+            voice_raw=(pl or {}).get("voice"),
+            advance_raw=(pl or {}).get("autoAdvance"),
+            compact=True,
+        )
+        pl_voice.changed.connect(self._emit_changed)
+        pl_voice_sec = CollapsibleSection(
+            "配音（可选）",
+            start_open=pl_voice.has_content(),
+            parent=prompt_box,
+        )
+        pl_voice_sec.set_header_tool_tip(_GRAPH_VOICE_TIP)
+        pl_voice_sec.add_body(pl_voice)
+        pfl.addRow(pl_voice_sec)
         prompt_box.setLayout(pfl)
         prompt_box.setVisible(has_pl)
 
@@ -2492,6 +2568,7 @@ class NodeInspector(QWidget):
                 pl_por = pl_portrait.to_ref()
                 if pl_por:
                     pl_out["portrait"] = pl_por
+                pl_voice.apply_to(pl_out)
                 out["promptLine"] = pl_out
             return out
 

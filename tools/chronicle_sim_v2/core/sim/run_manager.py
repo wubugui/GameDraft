@@ -9,6 +9,7 @@ from typing import Any
 from uuid import uuid4
 
 from tools.chronicle_sim_v2.paths import RUNS_DIR, ensure_runs_dir
+from tools.atomic_io import retry_transient
 
 DATA_DIR = Path(__file__).parent.parent.parent / "data"
 
@@ -116,7 +117,7 @@ def save_run_meta(run_dir: Path, meta: dict[str, Any]) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(meta, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, str(p))
+        retry_transient(os.replace, tmp, str(p))
     except Exception:
         try:
             os.unlink(tmp)

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QEvent, QObject, Qt, Signal, QTimer
-from PySide6.QtGui import QAction, QColor, QIcon, QPixmap
+from PySide6.QtGui import QAction, QColor, QIcon, QPixmap, QTextCursor
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -174,8 +174,15 @@ class InsertRefDialog(QDialog):
 
 
 def _needs_check(text: str) -> bool:
-    """要不要跑校验：有项目引用或有色标记才跑（无则不占一行提示）。"""
-    return "[tag:" in text or "[c:" in text or "[/c]" in text
+    """要不要跑校验：有项目引用/色标记/线索标记才跑（无则不占一行提示）。
+
+    [clue:] 与 [c:] 同理必须进这道门：未知/非法线索 id 会被 validate_refs_for_save
+    硬拦保存，编辑期零反馈会让两边口径反着。
+    """
+    return (
+        "[tag:" in text or "[c:" in text or "[/c]" in text
+        or "[clue:" in text or "[/clue]" in text
+    )
 
 
 def _format_errs(errs: list[str]) -> str:
@@ -204,6 +211,16 @@ class RichTextTextEdit(QWidget):
         btn.clicked.connect(self._insert_ref)
         row.addWidget(btn)
         row.addWidget(build_color_button(self, lambda: self._model, self._wrap_color))
+        # 「插入标记 ▾」：线索词条走弹窗选择器（勿手打 id），块级标记纯文本插入。
+        # 只挂在多行控件上——[h]/[quote]/[hr]/[caption] 是行首/块级语义，单行字段没用。
+        mark_btn = QPushButton("标记 ▾")
+        mark_btn.setMaximumWidth(56)
+        mark_btn.setToolTip(
+            "插入标记：线索词条 [clue:id]…[/clue]（弹窗选择，勿手打 id），\n"
+            "以及块级标记 [h] 小节标题 / [quote] 引文 / [hr] 分隔线 / [caption] 图注。")
+        mark_btn.clicked.connect(self._marker_menu_popup)
+        self._mark_btn = mark_btn
+        row.addWidget(mark_btn)
         lay.addLayout(row)
         self._hint = QLabel("")
         self._hint.setWordWrap(True)
@@ -270,6 +287,102 @@ class RichTextTextEdit(QWidget):
             # 空选区：把光标停到一对标记中间，接着打字就是带色的
             cur.setPosition(cur.position() - len("[/c]"))
             self._edit.setTextCursor(cur)
+        self._hint_timer.stop()
+        self._flush_hint()
+
+    # ---- 插入标记（[clue:] 弹窗选择 + 块级标记）----------------------------
+
+    def _marker_menu_popup(self) -> None:
+        menu = QMenu(self)
+        act_clue = menu.addAction("线索词条…（[clue:id]…[/clue]，有选区则包裹）")
+        act_clue.triggered.connect(lambda _=False: self._insert_clue_marker())
+        menu.addSeparator()
+        act_h = menu.addAction("[h] 小节标题（行首，标记后接着打标题）")
+        act_h.triggered.connect(lambda _=False: self._insert_block_line("[h]"))
+        act_q = menu.addAction("[quote] 引文块（有选区则包裹）")
+        act_q.triggered.connect(lambda _=False: self._insert_quote_marker())
+        act_hr = menu.addAction("[hr] 分隔线（独立一行）")
+        act_hr.triggered.connect(lambda _=False: self._insert_block_line("[hr]"))
+        act_cap = menu.addAction("[caption] 图注（紧跟 [img:] 行之后）")
+        act_cap.triggered.connect(lambda _=False: self._insert_block_line("[caption]"))
+        menu.exec(self._mark_btn.mapToGlobal(self._mark_btn.rect().bottomLeft()))
+
+    def _insert_clue_marker(self) -> None:
+        """弹窗选线索词条（候选=ProjectModel 活数据），包裹选区或插入空对停光标于中间。"""
+        from .ref_validator import clue_registry_rows
+        from .reference_picker import ReferencePickerDialog
+
+        rows: list[tuple[str, str, str]] = []
+        for c in clue_registry_rows(self._model):
+            cid = str(c.get("id") or "").strip()
+            if not cid:
+                continue
+            title = str(c.get("title") or "").strip() or cid
+            desc = str(c.get("desc") or "").strip().replace("\n", " ")
+            detail = desc[:60] + ("…" if len(desc) > 60 else "")
+            cat = str(c.get("category") or "").strip()
+            if cat:
+                detail = f"[{cat}] {detail}".rstrip()
+            rows.append((cid, title, detail))
+        if not rows:
+            QMessageBox.information(
+                self, "插入线索词条",
+                "线索注册表为空——先在 档案 → 线索 Clues 页新建词条。")
+            return
+        dlg = ReferencePickerDialog(
+            rows,
+            title="插入线索词条（[clue:id]…[/clue]）",
+            parent=self,
+            geometry_key="clue_marker_picker",
+        )
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        cid = dlg.selected_value()
+        if not cid:
+            return
+        cur = self._edit.textCursor()
+        sel = cur.selectedText().replace("\u2029", "\n")
+        cur.insertText(f"[clue:{cid}]{sel}[/clue]")
+        if not sel:
+            # 空选区：光标停在一对标记中间，接着打字就是被圈住的词条
+            cur.setPosition(cur.position() - len("[/clue]"))
+        self._edit.setTextCursor(cur)
+        self._hint_timer.stop()
+        self._flush_hint()
+
+    def _insert_block_line(self, marker: str) -> None:
+        """行首语义标记（[h]/[hr]/[caption]）：当前行空则落行首，非空则先换到下一行。"""
+        cur = self._edit.textCursor()
+        cur.clearSelection()
+        if cur.block().text().strip():
+            cur.movePosition(QTextCursor.MoveOperation.EndOfBlock)
+            cur.insertText("\n" + marker)
+        else:
+            cur.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+            cur.insertText(marker)
+        self._edit.setTextCursor(cur)
+        self._hint_timer.stop()
+        self._flush_hint()
+
+    def _insert_quote_marker(self) -> None:
+        """[quote] 引文块：包裹选区（选区不在行首时先换行保住行首语义）；无选区插空对。"""
+        cur = self._edit.textCursor()
+        sel = cur.selectedText().replace("\u2029", "\n")
+        if sel:
+            start_cur = QTextCursor(cur)
+            start_cur.setPosition(cur.selectionStart())
+            prefix = "" if start_cur.positionInBlock() == 0 else "\n"
+            close = "\n[/quote]" if "\n" in sel else "[/quote]"
+            cur.insertText(f"{prefix}[quote]{sel}{close}")
+        else:
+            if cur.block().text().strip():
+                cur.movePosition(QTextCursor.MoveOperation.EndOfBlock)
+                cur.insertText("\n[quote][/quote]")
+            else:
+                cur.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+                cur.insertText("[quote][/quote]")
+            cur.setPosition(cur.position() - len("[/quote]"))
+        self._edit.setTextCursor(cur)
         self._hint_timer.stop()
         self._flush_hint()
 

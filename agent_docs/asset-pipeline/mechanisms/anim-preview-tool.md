@@ -99,6 +99,9 @@ last_governed: 2026-08-05
   刷新已授权页签、`--no-open` 都只剩只读——**审核/失效/回退/R 提交按钮不响应不是 bug,是要重跑
   启动器换一个能力页签**。这条边界只防 Agent 自升为"人",不防同账号恶意进程。
 - 浮动设置面板必须是 fixed 居中 modal;固定像素偏移的 absolute 浮层会随分辨率乱飘遮控件。
+- **工作区存盘的「原子写」在 Windows 上是概率性失败的**(`workspaceStore.mjs` 的
+  tmp→rename),表现为丢一次编辑;测试上的表现是**单跑绿、连着跑红**,极易被当成环境问题。
+  已按退避重试修好——见 [atomic-write-windows](../../meta/mechanisms/atomic-write-windows.md)。
 
 ## 怎么验证
 

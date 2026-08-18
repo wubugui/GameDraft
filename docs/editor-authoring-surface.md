@@ -77,6 +77,7 @@
 
 - 顶层:id / targetScene / targetSpawnPoint / targetX / targetY / restoreState(旧 `commands` 被 pop)。
 - 15 种 present:fadeToBlack / fadeIn / flashWhite / waitTime / waitClick / showTitle / showDialogue(speaker+text+scriptedNpcId) / showImg(id+image) / hideImg / showMovieBar / hideMovieBar / showSubtitle(classic position 或 movie band+align+可选 subtitleVoice/subtitleEmote) / cameraMove(x/y/duration+可选easing,可地图点选) / cameraZoom(scale/duration+可选easing) / showCharacter(visible)。easing 下拉:linear/easeIn/easeOut/easeInOut,缺省=运行时默认曲线。
+- 台词两类(showDialogue / showSubtitle)另带「逐字显示」勾选(`typewriter`):**缺省分家**——对白框逐字、字幕整句;**只写偏离缺省的那一侧**(对白框取消勾选写 `false`,字幕勾上写 `true`),回到缺省即删键。
 - action 步:type 来自 33 项白名单(`src/data/cutscene_action_allowlist.json`),白名单外+改存档的被拒。
 - parallel:tracks[] 可嵌套 present/action/parallel。
 - 步骤增删、折叠大纲拖拽重排。

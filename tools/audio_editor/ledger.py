@@ -32,6 +32,7 @@ import tempfile
 import time
 from pathlib import Path
 from typing import Any
+from tools.atomic_io import retry_transient
 
 LEDGER_VERSION = 1
 
@@ -242,7 +243,7 @@ def _atomic_write_json(path: Path, data: Any) -> None:
             fh.write("\n")
             fh.flush()
             os.fsync(fh.fileno())
-        os.replace(tmp, path)
+        retry_transient(os.replace, tmp, path)
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
         raise

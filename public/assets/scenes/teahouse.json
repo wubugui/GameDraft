@@ -72,7 +72,15 @@
       "interactionRange": 64.3,
       "label": "告示板",
       "data": {
-        "text": "告示板上贴着几张旧启事，大多是招工、寻人和催债。最上头一张红纸写得扎眼：\"近日夜里少往城隍庙方向去，若闻怪声，切勿停步。\""
+        "text": "告示板上贴着几张旧启事，大多是招工、寻人和催债。最上头一张红纸写得扎眼：\"近日夜里少往城隍庙方向去，若闻怪声，切勿停步。\"",
+        "actions": [
+          {
+            "type": "collectClue",
+            "params": {
+              "clueId": "houshan_sangeng"
+            }
+          }
+        ]
       }
     },
     {
@@ -96,13 +104,15 @@
         {
           "not": {
             "narrative": "flow_xungou_main",
-            "state": "s01_tingshu",
+            "state": "state_2",
             "reached": true
           }
         }
       ],
       "label": "门口",
-      "data": {}
+      "data": {
+        "text": "门板虚掩，街上的雾气顺着门缝往里钻。身后醒木一响，满堂茶客都伸长了脖子——书正说到要紧处，这时候哪个舍得起身走人。"
+      }
     },
     {
       "id": "exit_to_street",
@@ -113,7 +123,7 @@
       "conditions": [
         {
           "narrative": "flow_xungou_main",
-          "state": "s01_tingshu",
+          "state": "state_2",
           "reached": true
         }
       ],

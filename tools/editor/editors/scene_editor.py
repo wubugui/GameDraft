@@ -153,6 +153,58 @@ _PICK_CYCLE_PX_TOL = 4
 # 实体缺省不写 occlusionBlendFactor 键 → 运行时用此默认；仅「自定义」勾选才落显式值。
 _OCCLUSION_BLEND_DEFAULT = 0.28
 
+# 「进对话时改不改朝向」的四档（运行时权威：src/data/types.ts 的 DialogueFacing）。
+# **缺省两边不同**：NPC 是 player（历来就转向玩家）、热点是 keep（历来就不转身）——
+# 各自维持改造前的行为，缺省档一律不写键，旧数据字节不动。
+_DIALOGUE_FACING_VALUES = ("keep", "left", "right", "player")
+_DIALOGUE_FACING_LABELS = {
+    "keep": "不改动朝向",
+    "left": "朝向左边",
+    "right": "朝向右边",
+    "player": "朝向角色",
+}
+_DIALOGUE_FACING_TIP = (
+    "进入这段对话的一瞬间，这个实体要不要转身：\n"
+    "  不改动 = 保持原朝向（背对着剁馅的屠户、跪着的孝子、只画了一面的烤入人物用这档）\n"
+    "  朝左/朝右 = 固定转向一侧（不管玩家绕到哪边）\n"
+    "  朝向角色 = 转过来面对玩家\n"
+    "对话结束会恢复成进对话前的朝向。热点还需要配了「显示图」才有可镜像的东西。"
+)
+
+
+def _make_dialogue_facing_combo(default_value: str) -> QComboBox:
+    """四档对话朝向下拉；`default_value` 那档标注「（默认）」并排在首位。"""
+    cb = QComboBox()
+    order = [default_value] + [v for v in _DIALOGUE_FACING_VALUES if v != default_value]
+    for v in order:
+        suffix = "（默认）" if v == default_value else ""
+        cb.addItem(f"{_DIALOGUE_FACING_LABELS[v]}{suffix}", v)
+    cb.setToolTip(_DIALOGUE_FACING_TIP)
+    return cb
+
+
+def _load_dialogue_facing_combo(cb: QComboBox, data: dict, default_value: str) -> None:
+    """按实体数据设当前档；未知/缺省值一律落到 default_value（不静默改数据）。"""
+    cur = str(data.get("dialogueFacing", "") or "").strip().lower()
+    if cur not in _DIALOGUE_FACING_VALUES:
+        cur = default_value
+    cb.blockSignals(True)
+    try:
+        idx = cb.findData(cur)
+        cb.setCurrentIndex(idx if idx >= 0 else 0)
+    finally:
+        cb.blockSignals(False)
+
+
+def _write_dialogue_facing_combo(cb: QComboBox, data: dict, default_value: str) -> None:
+    """缺省档不写键（保住哈希基线与字节级往返），其余写显式值。"""
+    v = str(cb.currentData() or default_value)
+    if v != default_value and v in _DIALOGUE_FACING_VALUES:
+        data["dialogueFacing"] = v
+    else:
+        data.pop("dialogueFacing", None)
+
+
 def _entity_cutscene_ids_from_data(ent: dict) -> list[str]:
     out: list[str] = []
     raw = ent.get("cutsceneIds")
@@ -2407,7 +2459,15 @@ class SceneCanvas(QGraphicsView):
         # 与运行时 SceneManager.entityInPlane 同口径。
         self._plane_filter: str | None = None
         self._plane_filter_exclusive: bool = False
-        self._entity_planes: dict[str, list[str] | None] = {}
+        # 时段视图过滤（同为纯视图）：None=显示全部；否则只显示存在于该时段的实体。
+        # 缺省(无 phases)按**实体种类分叉**——NPC 只在「街上有人」的段，热点/区域全时段，
+        # 与运行时 SceneManager.getNpcBaseVisibleForInteraction / getHotspotBase… 同口径。
+        self._phase_filter: str | None = None
+        self._phase_npc_default: list[str] = []
+        # 两条过滤共用一份登记：`kind:id` → (planes, phases)。**必须合一**——各存各的
+        # 就会各自 set_entity_visible，后跑的那条把前一条的判定冲掉（切位面会让被时段
+        # 藏起来的实体冒出来）。判定见 _entity_visible_under_view_filters。
+        self._entity_view_meta: dict[str, tuple[list[str] | None, list[str] | None]] = {}
         self._patrol_overlays: dict[str, _NpcPatrolPolyline] = {}
         self._lightcurve_overlay: _LightCurvePolyline | None = None
         self._world_w: float = 800
@@ -2465,7 +2525,8 @@ class SceneCanvas(QGraphicsView):
         self._bg_item = None
         self._entity_items.clear()
         self._group_boxes.clear()  # 图元已随 _gfx.clear() 析构；选中组由调用方重设
-        self._entity_planes.clear()  # _plane_filter 保留：切场景后按同一位面视图重贴
+        # _plane_filter / _phase_filter 保留：切场景后按同一视图重贴
+        self._entity_view_meta.clear()
         self._patrol_overlays.clear()
         self._lightcurve_overlay = None
         self._transform_gizmo = None  # 图元已随 _gfx.clear() 析构
@@ -2650,7 +2711,7 @@ class SceneCanvas(QGraphicsView):
         self._gfx.addItem(item)
         self._entity_items[f"hotspot:{hs.get('id', '')}"] = item
         self.refresh_hotspot_visuals(hs)
-        self._record_entity_planes(f"hotspot:{hs.get('id', '')}", hs.get("planes"))
+        self._record_entity_view(f"hotspot:{hs.get('id', '')}", hs)
 
     def refresh_hotspot_visuals(self, hs: dict) -> None:
         """同步 displayImage 预览（底边中点对齐 x,y）与 collisionPolygon。"""
@@ -2855,7 +2916,7 @@ class SceneCanvas(QGraphicsView):
         self._gfx.addItem(item)
         self._entity_items[f"npc:{npc.get('id', '')}"] = item
         self.refresh_npc_collision_visuals(npc)
-        self._record_entity_planes(f"npc:{npc.get('id', '')}", npc.get("planes"))
+        self._record_entity_view(f"npc:{npc.get('id', '')}", npc)
 
     def add_zone(self, zone: dict) -> None:
         pts = _zone_polygon_points_for_editor(zone)
@@ -2863,7 +2924,7 @@ class SceneCanvas(QGraphicsView):
             self, pts, _zone_canvas_color(zone), zone.get("id", "?"))
         self._gfx.addItem(item)
         self._entity_items[f"zone:{zone.get('id', '')}"] = item
-        self._record_entity_planes(f"zone:{zone.get('id', '')}", zone.get("planes"))
+        self._record_entity_view(f"zone:{zone.get('id', '')}", zone)
         if self._zone_pick_frozen:
             item.set_zone_pick_frozen(True)
 
@@ -3117,7 +3178,7 @@ class SceneCanvas(QGraphicsView):
         hid = str(entity_id).strip()
         if not hid:
             return
-        self._entity_planes.pop(f"hotspot:{hid}", None)
+        self._entity_view_meta.pop(f"hotspot:{hid}", None)
         for key in (f"hotspot:{hid}", f"hotspot_display:{hid}", f"hotspot_collision:{hid}",
                     f"hotspot_collision_ghost:{hid}"):
             it = self._entity_items.pop(key, None)
@@ -3129,7 +3190,7 @@ class SceneCanvas(QGraphicsView):
         if not nid:
             return
         self.remove_npc_patrol_overlay(nid)
-        self._entity_planes.pop(f"npc:{nid}", None)
+        self._entity_view_meta.pop(f"npc:{nid}", None)
         for key in (f"npc:{nid}", f"npc_collision:{nid}", f"npc_collision_ghost:{nid}"):
             it = self._entity_items.pop(key, None)
             if it is not None and it.scene() is self._gfx:
@@ -3140,7 +3201,7 @@ class SceneCanvas(QGraphicsView):
         if not zid:
             return
         key = f"zone:{zid}"
-        self._entity_planes.pop(key, None)
+        self._entity_view_meta.pop(key, None)
         it = self._entity_items.pop(key, None)
         if it is not None and it.scene() is self._gfx:
             self._gfx.removeItem(it)
@@ -3195,15 +3256,25 @@ class SceneCanvas(QGraphicsView):
             if it is not None:
                 it.setVisible(visible)
 
-    # ---- 位面视图过滤（纯视图，不改数据；与运行时 entityInPlane 同口径）----------
+    # ---- 位面 / 时段视图过滤（纯视图，不改数据；与运行时派生基底同口径）----------
+    #
+    # 三条轴的分工，改这块之前先分清楚（混了就是"切一个视图把另一个的判定冲掉"）：
+    #   过场视图 → 决定实体**存不存在**（cutsceneOnly 实体不加载，改它触发场景重载）
+    #   位面视图 → 决定已存在的实体**显不显**（planes 白名单）
+    #   时段视图 → 同上（phases 白名单）
+    # 后两条都是后置显隐，故**必须合成一个判定再落 set_entity_visible**；
+    # 运行时那边同理，它们是 getNpcBaseVisibleForInteraction 里串起来的一串 and。
 
     @staticmethod
-    def _norm_planes(raw: object) -> list[str] | None:
-        """实体 planes 归一：非空字符串列表，或 None（缺省=存在于所有位面）。"""
+    def _norm_id_list(raw: object) -> list[str] | None:
+        """实体 planes/phases 归一：非空字符串列表，或 None（缺省=不受该轴限制）。"""
         if not isinstance(raw, list):
             return None
         xs = [str(p).strip() for p in raw if str(p).strip()]
         return xs or None
+
+    # 旧名保留：外部（含测试）按 _norm_planes 调用过
+    _norm_planes = _norm_id_list
 
     def _entity_visible_under_plane_filter(self, planes: list[str] | None) -> bool:
         pf = self._plane_filter
@@ -3214,12 +3285,38 @@ class SceneCanvas(QGraphicsView):
             return not self._plane_filter_exclusive
         return pf in planes
 
-    def _record_entity_planes(self, key: str, raw: object) -> None:
-        """add_* 登记实体归属并按当前位面视图即时套用（新图元默认可见，故只需隐藏被过滤掉的）。"""
-        planes = self._norm_planes(raw)
-        self._entity_planes[key] = planes
-        if not self._entity_visible_under_plane_filter(planes):
-            kind, _, eid = key.partition(":")
+    def _entity_visible_under_phase_filter(self, kind: str, phases: list[str] | None) -> bool:
+        """时段轴判定。**缺省按实体种类分叉**，这是与位面轴唯一的形状差别：
+
+        - NPC 未写 phases → 只在「街上有人」的段（`_phase_npc_default`，由 game_config
+          的 `dayNight.phases[].daylight` 派生）。一段都没标时该列表为空 = 不施加限制，
+          与运行时 fail-open 同口径（宁可多显示，绝不静默清空）。
+        - 热点 / 区域未写 phases → 全时段都在（门、路牌夜里当然还在）。
+        """
+        pf = self._phase_filter
+        if pf is None:
+            return True
+        if phases is None:
+            if str(kind).strip().lower() != "npc":
+                return True
+            return (not self._phase_npc_default) or pf in self._phase_npc_default
+        return pf in phases
+
+    def _entity_visible_under_view_filters(
+        self, kind: str, planes: list[str] | None, phases: list[str] | None,
+    ) -> bool:
+        return (self._entity_visible_under_plane_filter(planes)
+                and self._entity_visible_under_phase_filter(kind, phases))
+
+    def _record_entity_view(self, key: str, ent: object) -> None:
+        """add_* 登记实体的位面/时段归属并按当前视图即时套用
+        （新图元默认可见，故只需隐藏被过滤掉的）。"""
+        d = ent if isinstance(ent, dict) else {}
+        planes = self._norm_id_list(d.get("planes"))
+        phases = self._norm_id_list(d.get("phases"))
+        self._entity_view_meta[key] = (planes, phases)
+        kind, _, eid = key.partition(":")
+        if not self._entity_visible_under_view_filters(kind, planes, phases):
             self.set_entity_visible(kind, eid, False)
 
     def set_plane_filter(self, plane_id: str | None, exclusive: bool = False) -> None:
@@ -3227,13 +3324,28 @@ class SceneCanvas(QGraphicsView):
         exclusive（该位面世界模型是否独立世界型）决定显隐。纯预览，不改数据。"""
         self._plane_filter = (str(plane_id).strip() or None) if plane_id else None
         self._plane_filter_exclusive = bool(exclusive) and self._plane_filter is not None
-        self._apply_plane_filter()
+        self._apply_entity_view_filters()
 
-    def _apply_plane_filter(self) -> None:
-        for key, planes in self._entity_planes.items():
+    def set_phase_filter(
+        self, phase_id: str | None, npc_default_phases: list[str] | None = None,
+    ) -> None:
+        """设时段视图：None=显示全部；否则只显示存在于该时段的实体。
+
+        `npc_default_phases` = 「街上有人」的段（`ProjectModel.daylight_phase_ids()`），
+        即未写 phases 的 NPC 的缺省归属。由调用方注入而不在这里读 game_config：
+        画布只管画，词表归属是模型的事。
+        """
+        self._phase_filter = (str(phase_id).strip() or None) if phase_id else None
+        if npc_default_phases is not None:
+            self._phase_npc_default = [str(p).strip() for p in npc_default_phases if str(p).strip()]
+        self._apply_entity_view_filters()
+
+    def _apply_entity_view_filters(self) -> None:
+        """按位面 ∧ 时段重贴全部已登记实体。两轴合一次算，不许分开各贴各的。"""
+        for key, (planes, phases) in self._entity_view_meta.items():
             kind, _, eid = key.partition(":")
             self.set_entity_visible(
-                kind, eid, self._entity_visible_under_plane_filter(planes))
+                kind, eid, self._entity_visible_under_view_filters(kind, planes, phases))
 
     def update_hotspot_type_color(self, entity_id: str, hs_type: str) -> None:
         hid = str(entity_id).strip()
@@ -6367,7 +6479,8 @@ class ScenePropertyPanel(QScrollArea):
         hint = QLabel(
             "可多选。写入实体的 phases 字段：实体只在所选时段存在。候选来自 "
             "game_config.dayNight.phases。\n"
-            "全不选（清空）= 缺省 —— NPC 缺省是「只在白日出没」，热点/区域缺省是「所有时段都在」。\n"
+            "全不选（清空）= 缺省 —— NPC 缺省是「只在勾了『街上有人』的那几段出没」"
+            "（在 Config 页的日夜循环里勾），热点/区域缺省是「所有时段都在」。\n"
             "只在场景勾了「参与日夜循环」时才生效。\n"
             "注意：这是瞬时存在性开关，不会演离场——要 NPC 走到出口再消失，请改用 NPC 日程表。",
         )
@@ -6411,7 +6524,7 @@ class ScenePropertyPanel(QScrollArea):
         lbl.setWordWrap(True)
         lbl.setToolTip(
             "时段归属：实体只在所列时段存在。\n"
-            "缺省（空）——NPC＝只在白日出没；热点/区域＝所有时段都在。\n"
+            "缺省（空）——NPC＝只在勾了「街上有人」的那几段出没；热点/区域＝所有时段都在。\n"
             "候选来自 game_config.dayNight.phases（Config 页维护）；"
             "只在场景开了日夜循环时生效。",
         )
@@ -6420,7 +6533,9 @@ class ScenePropertyPanel(QScrollArea):
         btn_pick.setToolTip("多选该实体存在的时段（写入 phases 字段）")
         btn_pick.clicked.connect(on_pick)
         btn_clear = QPushButton("清除")
-        btn_clear.setToolTip("清空 phases（回到缺省=所有时段都在）")
+        btn_clear.setToolTip(
+            "清空 phases（回到缺省：NPC=只在「街上有人」的段；热点/区域=所有时段都在）"
+        )
         btn_clear.clicked.connect(on_clear)
         rl.addWidget(lbl, 1)
         rl.addWidget(btn_pick)
@@ -6769,6 +6884,12 @@ class ScenePropertyPanel(QScrollArea):
         self._hs_disp_facing.setToolTip("展示图水平镜像，与 NPC initialFacing 一致")
         self._hs_disp_facing.currentIndexChanged.connect(self._on_hs_disp_facing_changed)
         df.addRow("朝向", self._hs_disp_facing)
+        # 对话朝向与上面那档「朝向」正交：这条是**进图对话那一下**怎么摆，退出对话即复位。
+        # 键写在热点顶层（不在 displayImage 里）：与 NpcDef.dialogueFacing 同名同语义，
+        # 热点转 NPC 时能原样搬过去。
+        self._hs_dialogue_facing = _make_dialogue_facing_combo("keep")
+        self._hs_dialogue_facing.currentIndexChanged.connect(lambda *_: self._emit_props_changed())
+        df.addRow("对话朝向(dialogueFacing)", self._hs_dialogue_facing)
         self._hs_disp_sprite_sort = QComboBox()
         self._hs_disp_sprite_sort.addItem("与角色/NPC 同层（按 Y）", "default")
         self._hs_disp_sprite_sort.addItem("永远画在最底层", "back")
@@ -7580,6 +7701,8 @@ class ScenePropertyPanel(QScrollArea):
             self._hs_disp_facing.blockSignals(True)
             self._hs_disp_facing.setCurrentIndex(1 if fac == "left" else 0)
             self._hs_disp_facing.blockSignals(False)
+            # dialogueFacing 在热点顶层（不在 displayImage 里），取 st 不取 di
+            _load_dialogue_facing_combo(self._hs_dialogue_facing, st, "keep")
             ss = str(di.get("spriteSort", "") or "default").strip().lower()
             sort_idx = 0
             if ss == "back":
@@ -8040,6 +8163,7 @@ class ScenePropertyPanel(QScrollArea):
             )
         else:
             hs.pop("displayImage", None)
+        _write_dialogue_facing_combo(self._hs_dialogue_facing, hs, "keep")
         if self._hs_col_enable.isChecked():
             poly_world = self._hs_col_polygon_from_table()
             if len(poly_world) >= 3:
@@ -8184,6 +8308,9 @@ class ScenePropertyPanel(QScrollArea):
         self._npc_dialogue_graph_entry.value_changed.connect(
             lambda *_: self._emit_props_changed())
         form.addRow("dialogueGraphEntry", self._npc_dialogue_graph_entry)
+        self._npc_dialogue_facing = _make_dialogue_facing_combo("player")
+        self._npc_dialogue_facing.currentIndexChanged.connect(lambda *_: self._emit_props_changed())
+        form.addRow("对话朝向(dialogueFacing)", self._npc_dialogue_facing)
         self._npc_dialogue_zoom = QDoubleSpinBox()
         self._npc_dialogue_zoom.setRange(0.05, 8.0)
         self._npc_dialogue_zoom.setDecimals(3)
@@ -9160,6 +9287,7 @@ class ScenePropertyPanel(QScrollArea):
                 self._npc_facing.setCurrentIndex(idx if idx >= 0 else 0)
             finally:
                 self._npc_facing.blockSignals(False)
+            _load_dialogue_facing_combo(self._npc_dialogue_facing, st, "player")
             a_items = self._model.anim_asset_path_choices()
             cur_a = st.get("animFile", "") or ""
             if cur_a and all(x[0] != cur_a for x in a_items):
@@ -9250,6 +9378,7 @@ class ScenePropertyPanel(QScrollArea):
             npc["dialogueGraphEntry"] = dge
         elif "dialogueGraphEntry" in npc:
             del npc["dialogueGraphEntry"]
+        _write_dialogue_facing_combo(self._npc_dialogue_facing, npc, "player")
         zv = float(self._npc_dialogue_zoom.value())
         if abs(zv - 1.0) > 1e-6:
             npc["dialogueCameraZoom"] = zv
@@ -9297,7 +9426,7 @@ class ScenePropertyPanel(QScrollArea):
         if npc_phases:
             npc["phases"] = npc_phases
         else:
-            npc.pop("phases", None)  # 缺省=所有时段都在
+            npc.pop("phases", None)  # NPC 缺省=只在标了 daylight 的段（不是全时段）
         if self._entity_has_cutscene_binding(npc):
             if self._npc_cutscene_only.isChecked():
                 npc.pop("cutsceneOnly", None)
@@ -10535,6 +10664,23 @@ class SceneEditor(QWidget):
         self._combo_plane_view.typeCommitted.connect(self._on_plane_view_changed)
         ll.addWidget(self._combo_plane_view)
 
+        _phase_lab = QLabel("时段视图")
+        _phase_lab.setToolTip(
+            "只显示存在于所选时段的实体。缺省（无 phases 字段）实体**按种类分叉**——\n"
+            "  · NPC：只在勾了「街上有人」的段出现（在 Config 页的日夜循环里勾）；\n"
+            "  · 热点 / 区域：全时段都在（门、路牌夜里当然还在）。\n"
+            "与位面视图正交、同时生效（两条都通过才显示）；与过场视图也正交——"
+            "过场视图决定实体加不加载，这两条只管已加载实体显不显。\n"
+            "纯预览过滤，不改数据；选「全部时段」= 不过滤。\n"
+            "⚠ 只在场景勾了「参与日夜循环」时运行时才真按时段过滤；本视图对没开日夜的"
+            "场景同样能预览，但那只是「假如开了会怎样」。"
+        )
+        ll.addWidget(_phase_lab)
+        self._combo_phase_view = FilterableTypeCombo([], self, select_only=True)
+        self._combo_phase_view.setToolTip(_phase_lab.toolTip())
+        self._combo_phase_view.typeCommitted.connect(self._on_phase_view_changed)
+        ll.addWidget(self._combo_phase_view)
+
         # 左栏双页签（2026-07-18 布局重组二轮：弹窗切换器手感差，用户拍板改 tab）：
         # 场景列表与实体树是两级导航、永不同时使用——「场景 | 实体」页签互斥、各占
         # 整栏高度。单击选场景不跳页（连续浏览不被打断），双击/回车视为「进入」跳到
@@ -10762,12 +10908,15 @@ class SceneEditor(QWidget):
         self._refresh_scene_list()
         self._refill_scene_cutscene_ctx_combo(init=True)
         self._refill_scene_plane_view_combo(init=True)
+        self._refill_scene_phase_view_combo(init=True)
 
     def reload_refs_from_model(self) -> None:
         """切页激活时,让属性面板重拉跨域引用候选(filter/item/encounter)。"""
         self._props.reload_refs_from_model()
         # 位面面板可能新增/删位面：刷新「位面视图」下拉候选（保留当前选中）。
         self._refill_scene_plane_view_combo()
+        # Config 页可能改了时段表（增删段 / 改 daylight 勾选）：同理刷新「时段视图」。
+        self._refill_scene_phase_view_combo()
 
     def _refill_scene_plane_view_combo(self, *, init: bool = False) -> None:
         w = getattr(self, "_combo_plane_view", None)
@@ -10790,6 +10939,38 @@ class SceneEditor(QWidget):
     def _plane_view_exclusive(self, pid: str) -> bool:
         """所选位面是否独立世界型（含 extends 链解析），与运行时缺省实体口径一致。"""
         return bool(pid) and self._model.plane_membership(pid) == "exclusive"
+
+    def _refill_scene_phase_view_combo(self, *, init: bool = False) -> None:
+        """时段视图候选 = game_config.dayNight.phases（与条件叶 {timePhase:…} 同一份）。
+
+        标了 daylight 的段在标签上注明「街上有人」——策划一眼看出这一段龙套在不在，
+        不用回 Config 页对着表数。
+        """
+        w = getattr(self, "_combo_phase_view", None)
+        if not isinstance(w, FilterableTypeCombo):
+            return
+        prev = "" if init else w.committed_type().strip()
+        daylight = set(self._model.daylight_phase_ids())
+        rows: list[tuple[str, str]] = [("（全部时段）", "")]
+        for pid, label in self._model.all_time_phase_ids():
+            text = f"{pid}（{label}）" if label and str(label) != pid else pid
+            rows.append((f"{text}· 街上有人" if pid in daylight else text, pid))
+        w.set_entries(rows)
+        keys = {v for _a, v in rows}
+        w.set_committed_type(prev if (prev and prev in keys) else "")
+        # 候选变化后按当前选中重贴一次（选中时段被删则回落到全部=显示全部）。
+        self._apply_phase_view_to_canvas(w.committed_type().strip())
+
+    def _apply_phase_view_to_canvas(self, pid: str) -> None:
+        self._canvas.set_phase_filter(
+            pid or None, npc_default_phases=list(self._model.daylight_phase_ids()))
+
+    def _on_phase_view_changed(self, _t: str = "") -> None:
+        w = getattr(self, "_combo_phase_view", None)
+        pid = w.committed_type().strip() if isinstance(w, FilterableTypeCombo) else ""
+        self._apply_phase_view_to_canvas(pid)
+        # 与位面视图同理：只改可见性、不改数据，但"画布不可见成员数"要跟着更新
+        self._refresh_group_bounds_note()
 
     def activate_plane_view(self, plane_id: str) -> None:
         """外部跳转入口（位面面板 hub）：打开指定位面的位面视图（空/未知 id 回落全部）。"""
@@ -12134,7 +12315,7 @@ class SceneEditor(QWidget):
                 f"（{rect.width():.0f} × {rect.height():.0f}）"
             )
         hidden_note = (
-            f"，其中 {hidden} 个在画布上不可见（位面视图/过场视图过滤），位移同样生效"
+            f"，其中 {hidden} 个在画布上不可见（位面/时段/过场视图过滤），位移同样生效"
             if hidden else ""
         )
         props.set_group_bounds_note(
@@ -12479,7 +12660,7 @@ class SceneEditor(QWidget):
     def _report_group_move(self, sc: dict, gid: str, dx: float, dy: float) -> None:
         """状态栏回报本次整组位移的真实影响面。
 
-        画布上看不见的成员（位面视图/过场视图过滤掉的）也被移动了——不说出来的话，
+        画布上看不见的成员（位面/时段/过场视图过滤掉的）也被移动了——不说出来的话，
         用户以为只动了眼前这几个，事后才发现别的位面里的实体跟着跑了。
         """
         members = self._group_members(sc, gid)
@@ -14046,8 +14227,8 @@ class SceneEditor(QWidget):
         self._canvas.update_entity_circle_label("hotspot", new_id, lbl)
         self._canvas.refresh_hotspot_visuals(hs)
         # planes 归属可能被本次 Apply 改动：更新登记并全量重贴位面过滤（含由隐转显）。
-        self._canvas._record_entity_planes(key, hs.get("planes"))
-        self._canvas._apply_plane_filter()
+        self._canvas._record_entity_view(key, hs)
+        self._canvas._apply_entity_view_filters()
 
     def _sync_npc_canvas_after_commit(self, old_id: str, npc: dict) -> None:
         new_id = str(npc.get("id", "") or "").strip()
@@ -14079,8 +14260,8 @@ class SceneEditor(QWidget):
         self._canvas.refresh_npc_collision_visuals(npc)
         self._refresh_one_scene_npc_anim(new_id)
         # planes 归属可能被本次 Apply 改动：更新登记并全量重贴位面过滤（含由隐转显）。
-        self._canvas._record_entity_planes(key, npc.get("planes"))
-        self._canvas._apply_plane_filter()
+        self._canvas._record_entity_view(key, npc)
+        self._canvas._apply_entity_view_filters()
 
     def _sync_zone_canvas_after_commit(self, old_id: str, zone: dict) -> None:
         new_id = str(zone.get("id", "") or "").strip()
@@ -14107,8 +14288,8 @@ class SceneEditor(QWidget):
                     new_id, [{"x": x, "y": y} for x, y in pts],
                 )
         # planes 归属可能被本次 Apply 改动：更新登记并全量重贴位面过滤（含由隐转显）。
-        self._canvas._record_entity_planes(key, zone.get("planes"))
-        self._canvas._apply_plane_filter()
+        self._canvas._record_entity_view(key, zone)
+        self._canvas._apply_entity_view_filters()
 
     def _capture_canvas_primary_selection(self) -> tuple[str, str] | None:
         """返回画布当前选中图元的 (entity_kind, entity_id)；无选中则 None。"""

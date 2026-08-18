@@ -6,7 +6,8 @@ type: recipe
 summary: 本项目用 LibTV CLI 出素材的实测配方:禁生成透明底(灰底优先/洋红可)、干净 cwd 铁律、三模型选型、悠船 V8.1 三连坑、prompt 换底写法
 status: active
 authority:
-  - tmp/libtv_animation_batch_run_20260702/run_animation_batch.py
+  - public/resources/runtime/images
+  - tools/animation_pipeline/README.md
 triggers:
   topics: [LibTV, 出图, image2image, 模型选型, 洋红底, 灰底, 透明底, 生成底色, 串行提交, 并行槽, 2020057, 1K, Seedream]
   tasks: [生成素材图, 生成动画视频, 换背景出分层]

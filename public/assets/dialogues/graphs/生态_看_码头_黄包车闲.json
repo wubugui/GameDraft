@@ -12,8 +12,7 @@
         {
           "conditions": [
             {
-              "narrative": "eco_时辰",
-              "state": "夜"
+              "timePhase": "夜"
             }
           ],
           "next": "ye1"

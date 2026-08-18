@@ -28,8 +28,21 @@ from PySide6.QtCore import QObject, Signal
 from ..project_model import ProjectModel
 from .project_paths import URL_KIND_MEDIA
 
-#: audio_config 里承载 ``{id: {src, volume?}}`` 的三个频道（systemSfx 是 id→id 映射，不在此列）。
-AUDIO_CHANNELS: tuple[str, ...] = ("bgm", "ambient", "sfx")
+#: audio_config 里承载 ``{id: {src, volume?}}`` 的频道（systemSfx 是 id→id 映射，不在此列）。
+#:
+#: ``voice`` = 对白配音，独立成区（配音会长到近千条，混进 sfx 就没法管）。
+#: **加频道必须把下列登记面一次扫齐**——漏一处的表现是"游戏能放但编辑器说 id 无效"：
+#:   1. 本常量（驱动音频编辑器页签）
+#:   2. ``audio_editor._CHANNEL_LABELS``（页签中文名）
+#:   3. ``tools/audio_editor/audio_config_io.CHANNELS``（独立加工台）
+#:   4. ``voice_spec_field``（配音选择器查哪个区）
+#:   5. ``validator._audio_id_known``（校验认哪个区）
+#:   6. 运行时 ``AudioManager.loadConfig`` 的装配白名单
+AUDIO_CHANNELS: tuple[str, ...] = ("bgm", "ambient", "sfx", "voice")
+
+#: 配音 id 所在的区。**只有这一个来源,不做回落**——
+#: "这里没有就去那里找"会让配置写错在某些路径上表现正常、只在别处露馅。
+VOICE_CHANNEL = "voice"
 
 #: 编辑器认得的音频扩展名（与 audio_editor 的文件选择过滤器同源）。
 AUDIO_SUFFIXES: frozenset[str] = frozenset(
@@ -354,14 +367,55 @@ def scan_unregistered_files(model: ProjectModel) -> list[Path]:
     return out
 
 
-def suggest_audio_id(channel: str, path: Path, taken: Iterable[str]) -> str:
-    """由文件名推一个合法 id：``sfx_`` / ``bgm_`` / ``amb_`` 前缀 + 去重后缀。"""
-    stem = re.sub(r"[^0-9a-zA-Z_]+", "_", path.stem).strip("_").lower() or "audio"
-    prefix = {"bgm": "bgm_", "ambient": "amb_", "sfx": "sfx_"}.get(channel, "")
-    base = stem if (not prefix or stem.startswith(prefix)) else f"{prefix}{stem}"
+#: id 里不许出现的字符：空白（首尾会被各处 ``.strip()`` 吃掉、中间的在表格里看不见）、
+#: ``"`` 与 ``\`` （打断 :func:`build_reference_counts` 的字符串取词，引用数直接失真）、
+#: ``/`` （id 长得像路径，跟 ``src`` 混淆）、控制字符。
+#: **其余一律保留——中文是这个项目 id 的常态**，见 :func:`suggest_audio_id`。
+_ID_BAD_CHAR_RE = re.compile(r'[\s"\\/\x00-\x1f]')
+
+
+def sanitize_audio_id(raw: str) -> str:
+    """把任意串清成合法 audio id：只换掉会出事的字符，中文与大小写原样保留。"""
+    return _ID_BAD_CHAR_RE.sub("_", str(raw or "")).strip("_")
+
+
+def audio_id_problem(raw: str) -> str | None:
+    """这个 id 哪里不合法；合法返回 ``None``。
+
+    编辑器录入面与 validator 共用同一条口径——两边分别写判据必然漂成
+    "编辑器让存、校验器报错"。
+    """
+    s = str(raw or "")
+    if not s.strip():
+        return "id 不能为空"
+    if s != s.strip():
+        return "id 首尾不能有空白（各处读 id 都会 strip，存进去就对不上了）"
+    bad = sorted({c for c in s if _ID_BAD_CHAR_RE.match(c)})
+    if bad:
+        shown = "、".join(repr(c) for c in bad)
+        return f"id 不能含 {shown}（会打断引用扫描或被当成路径）"
+    return None
+
+
+def suggest_audio_id(path: Path, taken: Iterable[str]) -> str:
+    """由文件名推 id：**直接用文件名**（同一目录下文件名本就唯一，天然是个好 id）。
+
+    不加频道前缀、不转小写、不动中文。旧版把非 ASCII 全抹成 ``_`` 再 strip，
+    于是 ``茶馆开场_瞎子李_1.wav`` 建议出来的 id 是 ``1``、``说书9.wav`` 是 ``9``
+    ——那套白名单是给早年全英文 sfx 文件名写的，项目 id 全中文之后纯属作对。
+
+    撞名时先拿父目录名兜（配音按场次分文件夹，``说书重庆话/1.wav`` → ``说书重庆话_1``
+    比 ``1_2`` 认得出），仍撞才补数字后缀。
+    """
     used = set(taken)
+    base = sanitize_audio_id(path.stem) or "audio"
     if base not in used:
         return base
+    parent = sanitize_audio_id(path.parent.name)
+    if parent:
+        withdir = f"{parent}_{base}"
+        if withdir not in used:
+            return withdir
     n = 2
     while f"{base}_{n}" in used:
         n += 1

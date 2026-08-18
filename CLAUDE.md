@@ -14,8 +14,9 @@
 ## §A 开工先查公共知识库(agent_docs)
 
 - 动手前按任务域读 `agent_docs/INDEX.md` 对应条目;确定要改的文件后跑
-  `python3 agent_docs/_meta/audit.py --paths <files...>` 取必读机制卡,先读卡再动手。
-- 治理类业务(治理/建库/收编方法论/炼化/intake)统一入口:`python3 agent_docs/_meta/cli.py`。
+  `sh scripts/py.sh agent_docs/_meta/audit.py --paths <files...>` 取必读机制卡,先读卡再动手。
+- 治理类业务(治理/建库/收编方法论/炼化/intake)统一入口:`sh scripts/py.sh agent_docs/_meta/cli.py`。
+  (py.sh = 跨平台 python 选择器;部分 Windows 机上 python3 是 Store stub 会静默空转)
 - 发现库内文档与现实打架:收尾往 `agent_docs/_meta/inbox/` 丢一条三行偏差记录(零门槛)。
 <!-- agent-docs-gate:end -->
 
@@ -44,7 +45,7 @@
 先刷新并取结构化上下文:
 
 ```bash
-python3 -B tools/skill_workflow_governance/govern.py audit
+sh scripts/py.sh -B tools/skill_workflow_governance/govern.py audit
 ```
 
 产物在 `tools/skill_workflow_governance/out/`(`agent-context-current.md` = 给 agent 直读的便携包,

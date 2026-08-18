@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 import re
 from copy import deepcopy
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Mapping
 
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QListWidget,
@@ -28,8 +28,8 @@ from PySide6.QtGui import (
 from ..project_model import ProjectModel
 from .. import theme as app_theme
 from ..shared import confirm
-from ..shared.audio_preview_selector import AudioIdPreviewSelector
 from ..shared.bubble_anchor_field import BubbleAnchorPickField, actor_for_emote_target
+from ..shared.voice_spec_field import VoiceSpecField
 from ..shared.id_ref_selector import IdRefSelector
 from ..shared.image_path_picker import CutsceneImagePathRow
 from ..shared.action_editor import (
@@ -38,7 +38,13 @@ from ..shared.action_editor import (
     FilterableTypeCombo,
     _id_ref_rows_with_orphan,
 )
-from ..shared.cutscene_dialogue_speaker_row import CutsceneShowDialogueFields
+from ..shared.cutscene_dialogue_speaker_row import (
+    PLAYER_ENTITY_ID,
+    CutsceneShowDialogueFields,
+    speaker_display_names,
+    speaker_is_sole_placeholder,
+    speaker_placeholder_entity,
+)
 from ..shared.cutscene_dialogue_run_dialog import (
     DialogueRunEditorDialog,
     new_dialogue_step,
@@ -254,8 +260,45 @@ def _float_ms(step: dict, key: str, default: float) -> int:
         return int(default)
 
 
-def _parallel_track_fold_label(tr: dict) -> str:
-    """并行块折叠摘要中单轨标签：字幕步优先显示正文。"""
+#: 说话人标签在摘要里最多占几个字——摘要主体是正文，说话人只是「谁在说」这一眼
+#: （取 18 是为了 snake_case 的实体 id 大多能整根显示，中文名远用不满）
+_SPEAKER_LABEL_MAX = 18
+
+
+def _clip(text: str, limit: int) -> str:
+    return text[: limit - 1] + "…" if len(text) > limit else text
+
+
+def _speaker_label(speaker: object, scripted_npc_id: object, names: Mapping | None = None) -> str:
+    """一句对白在摘要里的说话人标签，走与运行时（CutsceneManager）同一条回落链：
+    显式 speaker → scriptedNpcId → 两者都没设 = 旁白。
+
+    `names` = `speaker_display_names(model)` 的 id→显示名快照（空串键 = 旁白标签）：
+    摘要要露的是**玩家看到的那个名字**（`storyteller_zhang` → 说书先生），不是内部 id；
+    表里查不到的 id 原样显示——那是个悬垂引用，显示 id 才找得回是哪条数据写错了。
+    没给表时（纯函数用法/无工程）退化成 id + 通用兜底名。
+    """
+    names = names or {}
+    raw = str(speaker or "").strip()
+    # 字面名/混排文本就是显示名本身，直接照搬（`{{npc}}` 这种纯占位则要回落到实体）
+    if raw and not speaker_is_sole_placeholder(raw):
+        return _clip(raw.replace("\n", " "), _SPEAKER_LABEL_MAX)
+    eid = (speaker_placeholder_entity(raw) if raw else "") or str(scripted_npc_id or "").strip()
+    if not eid:
+        return str(names.get("") or "旁白")
+    dflt = "主角" if eid == PLAYER_ENTITY_ID else eid
+    return _clip(str(names.get(eid) or dflt), _SPEAKER_LABEL_MAX)
+
+
+def _dialogue_fold_text(d: dict, limit: int, names: Mapping | None = None) -> str:
+    """`说话人：正文` —— showDialogue 在各处折叠摘要里的统一写法。"""
+    spk = _speaker_label(d.get("speaker"), d.get("scriptedNpcId"), names)
+    tx = str(d.get("text") or "").replace("\n", " ").strip()
+    return f"{spk}：{_clip(tx, limit)}" if tx else spk
+
+
+def _parallel_track_fold_label(tr: dict, names: Mapping | None = None) -> str:
+    """并行块折叠摘要中单轨标签：台词步优先显示「谁说的 + 正文」。"""
     k = str(tr.get("kind", "?"))
     t = str(tr.get("type", "?"))
     # 折叠着也得看出哪条轨不播（展开才发现 = 白读一遍摘要）
@@ -263,16 +306,19 @@ def _parallel_track_fold_label(tr: dict) -> str:
     if k == "present" and t == "showSubtitle":
         tx = str(tr.get("text") or "").replace("\n", " ").strip()
         if tx:
-            return mark + (tx[:36] + "…" if len(tx) > 36 else tx)
+            return mark + _clip(tx, 37)
         return f"{mark}showSubtitle"
+    if k == "present" and t == "showDialogue":
+        # 说话人不能省：并行轨里同屏几条台词，光看正文认不出谁在说
+        return mark + _dialogue_fold_text(tr, 30, names)
     return f"{mark}{k}:{t}"
 
 
-def parallel_tracks_summary(tracks: list) -> str:
+def parallel_tracks_summary(tracks: list, names: Mapping | None = None) -> str:
     types: list[str] = []
     for tr in tracks:
         if isinstance(tr, dict):
-            types.append(_parallel_track_fold_label(tr))
+            types.append(_parallel_track_fold_label(tr, names))
     s = " | ".join(types[:6])
     if len(types) > 6:
         s += "…"
@@ -281,22 +327,71 @@ def parallel_tracks_summary(tracks: list) -> str:
     return f"并行 ({len(tracks)} 轨) · {s}"
 
 
-def step_summary_line(d: dict) -> str:
+def _step_voice_id(d: dict) -> str:
+    """本步配的配音 id（新键 voice 优先，回落旧键 subtitleVoice）；没配返回空串。"""
+    raw = d.get("voice")
+    if raw is None:
+        raw = d.get("subtitleVoice")
+    if isinstance(raw, str):
+        return raw.strip()
+    if isinstance(raw, dict):
+        return str(raw.get("id") or raw.get("sfxId") or "").strip()
+    return ""
+
+
+def _step_auto_advance(d: dict) -> object:
+    """本步的推进方式（新键 autoAdvance 优先，回落旧键 subtitleAutoAdvance）。"""
+    raw = d.get("autoAdvance")
+    return d.get("subtitleAutoAdvance") if raw is None else raw
+
+
+def _step_typewriter_suffix(d: dict, dflt: bool) -> str:
+    """逐字显示的大纲标记：**只在偏离本类型缺省时**标出来（对白框缺省逐字、字幕缺省整句），
+    缺省态不占摘要位置。与运行时同口径：只认真布尔。"""
+    raw = d.get("typewriter")
+    if not isinstance(raw, bool) or raw == dflt:
+        return ""
+    return " · 逐字" if raw else " · 整句"
+
+
+def _scripted_lines_summary(params: dict, names: Mapping | None = None) -> str:
+    """playScriptedDialogue 的摘要：行数 + 首行「谁说什么」（+ 还有几个别的说话人）。
+
+    这一步的 params 里躺着整个 lines 数组，按通用 action 那样 json.dumps 再截 48 字，
+    截出来的全是 `{"lines": [{"speaker": "` —— 一个字的台词都看不见。
+    """
+    lines = [ln for ln in (params.get("lines") or []) if isinstance(ln, dict)]
+    if not lines:
+        return "（无台词）"
+    dflt = params.get("scriptedNpcId")
+    labels = [_speaker_label(ln.get("speaker"), dflt, names) for ln in lines]
+    others = len({x for x in labels[1:] if x != labels[0]})
+    tx = str(lines[0].get("text") or "").replace("\n", " ").strip()
+    more = f" +{others}人" if others else ""
+    return f"{len(lines)}行 · {labels[0]}：{_clip(tx, 33)}{more}"
+
+
+def step_summary_line(d: dict, names: Mapping | None = None) -> str:
     kind = str(d.get("kind", "present"))
     if kind == "action":
         t = str(d.get("type", ""))
         p = d.get("params") or {}
+        if t == "playScriptedDialogue":
+            return f"{t}  {_scripted_lines_summary(p, names)}"
         ps = json.dumps(p, ensure_ascii=False) if p else ""
         if len(ps) > 48:
             ps = ps[:45] + "…"
         return f"{t}  {ps}" if ps else t
     if kind == "parallel":
-        return parallel_tracks_summary(d.get("tracks") or [])
+        return parallel_tracks_summary(d.get("tracks") or [], names)
     if kind == "present":
         t = str(d.get("type", ""))
         if t == "showDialogue":
-            tx = str(d.get("text", "")).replace("\n", " ")
-            return f"showDialogue: {tx[:40]}…" if len(tx) > 40 else f"showDialogue: {tx}"
+            vid = _step_voice_id(d)
+            suf = (f" · voice:{vid}" if vid else "") + _step_typewriter_suffix(d, True)
+            # 说话人排在正文前：一屏几十行台词，「谁说的」比正文更快定位，
+            # 且 scriptedNpcId-only 的行（占实际数据的大头）以前在摘要里完全看不出说话人。
+            return f"showDialogue {_dialogue_fold_text(d, 41, names)}" + suf
         if t == "showTitle":
             tx = str(d.get("text", ""))
             return f"showTitle: {tx[:24]}…" if len(tx) > 24 else f"showTitle: {tx}"
@@ -322,13 +417,8 @@ def step_summary_line(d: dict) -> str:
                 em = str(se.get("emote") or "").strip()
                 if tg and em:
                     em_suf = f" · {em}@{tg}"
-            raw_voice = d.get("subtitleVoice")
-            voice_id = ""
-            if isinstance(raw_voice, str):
-                voice_id = raw_voice.strip()
-            elif isinstance(raw_voice, dict):
-                voice_id = str(raw_voice.get("id") or raw_voice.get("sfxId") or "").strip()
-            voice_suf = f" · voice:{voice_id}" if voice_id else ""
+            voice_id = _step_voice_id(d)
+            voice_suf = (f" · voice:{voice_id}" if voice_id else "") + _step_typewriter_suffix(d, False)
             geo = ""
             if b in ("movieTop", "movieBottom") and a in ("left", "center", "right"):
                 geo = f" · {b}/{a}"
@@ -370,11 +460,11 @@ def estimate_step_duration_ms(step: dict) -> int | None:
     if kind != "present":
         return None
     t = str(step.get("type", ""))
-    if t in ("waitClick", "showDialogue"):
-        return None
-    if t == "showSubtitle":
-        # 固定时长自动推进 → 可估算；跟随配音 / 点击推进 → 不定
-        aa = step.get("subtitleAutoAdvance")
+    if t in ("waitClick", "showDialogue", "showSubtitle"):
+        # 固定时长自动推进 → 可估算；跟随配音 / 点击推进 → 不定（对话框与字幕同一套推进语义）
+        if t == "waitClick":
+            return None
+        aa = _step_auto_advance(step)
         if isinstance(aa, (int, float)) and not isinstance(aa, bool) and aa > 0:
             return int(float(aa))
         return None
@@ -466,7 +556,7 @@ def _step_has_authored_content(d: dict) -> bool:
         return bool(d.get("params"))
     if kind == "present":
         for k in ("text", "id", "image", "from", "toImage", "animFile", "scene",
-                  "handle", "subtitleVoice", "subtitleEmote"):
+                  "handle", "voice", "subtitleVoice", "subtitleEmote"):
             v = d.get(k)
             if isinstance(v, str) and v.strip():
                 return True
@@ -511,8 +601,6 @@ class StepWidget(QFrame):
         self._action_row: ActionRow | None = None
         self._parallel_layout: QVBoxLayout | None = None
         self._parallel_group: QGroupBox | None = None
-        self._subtitle_voice_was_object = False
-        self._subtitle_voice_had_volume = False
         # 构造期各控件程序化赋值会触发 valueChanged/typeCommitted；勿标为「未 Apply」
         self._report_editor_dirty: bool = False
 
@@ -770,6 +858,9 @@ class StepWidget(QFrame):
                 portrait=self._step_data.get("portrait") if isinstance(self._step_data.get("portrait"), dict) else None,
                 bubble_anchor_y=self._step_data.get("bubbleAnchorY"),
                 bubble_scale=self._step_data.get("bubbleScale"),
+                voice=self._step_data.get("voice"),
+                auto_advance=self._step_data.get("autoAdvance"),
+                typewriter=self._step_data.get("typewriter"),
             )
             self._widgets["__showDialogue__"] = wdg
             self._present_params_layout.addRow(wdg)
@@ -1044,62 +1135,27 @@ class StepWidget(QFrame):
                 spec["bubbleScale"] = bsc
         d["subtitleEmote"] = spec
 
-    def _subtitle_voice_initial(self) -> tuple[str, bool, bool, float]:
-        raw = self._step_data.get("subtitleVoice")
+    def _subtitle_voice_raw(self) -> object:
+        """配音原值：新键 `voice` 优先，回落旧键 `subtitleVoice`（本能力铺到全部台词面前的名字）。"""
+        raw = self._step_data.get("voice")
+        return self._step_data.get("subtitleVoice") if raw is None else raw
 
-        if isinstance(raw, str):
-            return raw.strip(), False, False, 1.0
-
-        if isinstance(raw, dict):
-            sid = raw.get("id")
-            if not isinstance(sid, str):
-                sid = raw.get("sfxId")
-            vid = sid.strip() if isinstance(sid, str) else ""
-            had_volume = "volume" in raw
-            try:
-                vol = float(raw.get("volume", 1.0))
-            except (TypeError, ValueError):
-                vol = 1.0
-            if not (vol == vol):
-                vol = 1.0
-            return vid, True, had_volume, max(0.0, min(1.0, vol))
-
-        return "", False, False, 1.0
+    def _subtitle_advance_raw(self) -> object:
+        raw = self._step_data.get("autoAdvance")
+        return self._step_data.get("subtitleAutoAdvance") if raw is None else raw
 
     def _show_subtitle_merge_voice_optional(self, d: dict) -> None:
-        sel = self._widgets.get("_subtitle_voice_id")
-        vid = ""
-        if isinstance(sel, (IdRefSelector, AudioIdPreviewSelector)):
-            vid = sel.current_id().strip()
-        elif isinstance(sel, QLineEdit):
-            vid = sel.text().strip()
-        if not vid:
-            return
+        """配音 + 推进方式一并写出（统一键名 voice / autoAdvance；旧键名保存时自然消失）。"""
+        w = self._widgets.get("_subtitle_voice")
+        if isinstance(w, VoiceSpecField):
+            w.apply_to(d)
 
-        vol_w = self._widgets.get("_subtitle_voice_volume")
-        volume = 1.0
-        if isinstance(vol_w, QDoubleSpinBox):
-            volume = max(0.0, min(1.0, float(vol_w.value())))
-
-        if self._subtitle_voice_was_object or self._subtitle_voice_had_volume or abs(volume - 1.0) > 1e-6:
-            payload: dict[str, Any] = {"id": vid}
-            if self._subtitle_voice_had_volume or abs(volume - 1.0) > 1e-6:
-                payload["volume"] = volume
-            d["subtitleVoice"] = payload
-        else:
-            d["subtitleVoice"] = vid
-
-    def _show_subtitle_merge_auto_advance_optional(self, d: dict) -> None:
-        """自动推进：voice → "voice"；固定时长 → 毫秒数（未改动时由 _preserve_present_numbers 保真）；点击 → 不写键。"""
-        cw = self._widgets.get("_subtitle_auto_mode")
-        if not isinstance(cw, FilterableTypeCombo):
-            return
-        mode = cw.committed_type().strip()
-        if mode == "__voice__":
-            d["subtitleAutoAdvance"] = "voice"
-        elif mode == "__timer__":
-            w = self._widgets.get("_subtitle_auto_ms")
-            d["subtitleAutoAdvance"] = float(w.value()) if isinstance(w, QDoubleSpinBox) else 3000.0
+    def _show_subtitle_merge_typewriter(self, d: dict) -> None:
+        """逐字显示：**字幕缺省整句上屏**，只有勾上才写 `typewriter: true`。
+        与缺省一致就不落键（同 `disabled` 的「只写偏离值」口径，免得 254 拍平白多一行噪声）。"""
+        w = self._widgets.get("_subtitle_typewriter")
+        if isinstance(w, QCheckBox) and w.isChecked():
+            d["typewriter"] = True
 
     def _build_show_subtitle_present_params(self) -> None:
         raw_txt = self._step_data.get("text", "")
@@ -1231,41 +1287,26 @@ class StepWidget(QFrame):
         movie_wrap_l.setContentsMargins(0, 0, 0, 0)
         movie_wrap_l.addWidget(movie_row)
 
-        voice_id, voice_was_object, voice_had_volume, voice_volume = self._subtitle_voice_initial()
-        self._subtitle_voice_was_object = voice_was_object
-        self._subtitle_voice_had_volume = voice_had_volume
-        voice_pairs = [(a, a) for a in (self._model.all_audio_ids("sfx") if self._model else [])]
-        voice_sel = AudioIdPreviewSelector(
-            self._model,
-            "sfx",
+        # 配音 + 推进方式：与过场对话框、图对话拍、脚本台词行、气泡 action 同一个控件。
+        voice_field = VoiceSpecField(
             self,
-            allow_empty=True,
-            editable=False,
-            click_opens_popup=True,
+            model=self._model,
+            voice_raw=self._subtitle_voice_raw(),
+            advance_raw=self._subtitle_advance_raw(),
         )
-        voice_sel.setMinimumWidth(220)
-        voice_sel.set_items(_id_ref_rows_with_orphan(voice_pairs, voice_id))
-        voice_sel.set_current(voice_id)
-        voice_sel.value_changed.connect(self._emit_dirty)
-        voice_sel.setToolTip("可选：选择 audio_config.sfx 中的一条音频；右侧按钮可试听当前选择。")
-
-        voice_volume = max(0.0, min(1.0, voice_volume))
-        voice_vol = QDoubleSpinBox(self)
-        voice_vol.setRange(0.0, 1.0)
-        voice_vol.setDecimals(3)
-        voice_vol.setSingleStep(0.05)
-        voice_vol.setValue(voice_volume)
-        voice_vol.setToolTip("仅本字幕配音的相对音量；1.0 为不额外衰减。")
-        voice_vol.valueChanged.connect(self._emit_dirty)
-
+        voice_field.changed.connect(self._emit_dirty)
         voice_body = QWidget(self)
-        voice_form = compact_form(QFormLayout(voice_body))
-        voice_form.setContentsMargins(8, 4, 8, 4)
-        voice_form.addRow("sfx id", voice_sel)
-        voice_form.addRow("volume", voice_vol)
-        voice_section = _CollapsibleSection("字幕配音（可选）", voice_body, self)
-        voice_section.setToolTip("写入 subtitleVoice；运行时按字幕生命周期播放、停止并释放。")
-        if voice_id:
+        voice_body_l = QVBoxLayout(voice_body)
+        voice_body_l.setContentsMargins(8, 4, 8, 4)
+        voice_body_l.addWidget(voice_field)
+        voice_section = _CollapsibleSection("配音 / 推进方式（可选）", voice_body, self)
+        voice_section.setToolTip(
+            "写入 voice / autoAdvance 两个键。\n"
+            "默认：无配音、等玩家点击。\n"
+            "一条配音要盖住后面几条字幕时，起头那条勾「播完不停」，"
+            "由后面某条选「跟随配音结束」来收尾。"
+        )
+        if voice_field.has_content():
             voice_section.expand_if(True)
 
         se_raw = self._step_data.get("subtitleEmote")
@@ -1363,50 +1404,19 @@ class StepWidget(QFrame):
         if se_t and se_e:
             emote_section.expand_if(True)
 
-        # ---- 自动推进（可选，写 subtitleAutoAdvance）----
-        aa_raw = self._step_data.get("subtitleAutoAdvance")
-        aa_mode = "__click__"
-        aa_ms = 3000.0
-        if aa_raw == "voice":
-            aa_mode = "__voice__"
-        elif isinstance(aa_raw, (int, float)) and not isinstance(aa_raw, bool) and aa_raw > 0:
-            aa_mode = "__timer__"
-            aa_ms = float(aa_raw)
-        auto_rows = [
-            ("点击推进（默认）", "__click__"),
-            ("跟随配音结束", "__voice__"),
-            ("固定时长后…", "__timer__"),
-        ]
-        auto_combo = FilterableTypeCombo(auto_rows, self, select_only=True)
-        auto_combo.set_committed_type(aa_mode)
-        auto_combo.setToolTip(
-            "字幕如何结束：默认等玩家点击；「跟随配音结束」在 subtitleVoice 自然播完后自动推进"
-            "（配音缺失/加载失败退化为点击）；「固定时长」到点自动推进。两种自动模式下点击仍可提前跳。"
+        # 逐字显示：字幕缺省整句上屏（旁白/画外音多是短句，逐字反而拖节奏），勾上才逐字。
+        tw_chk = QCheckBox("逐字显示（打字机）", self)
+        tw_chk.setChecked(self._step_data.get("typewriter") is True)
+        tw_chk.setToolTip(
+            "缺省不勾 = 整句上屏（字幕的缺省，与过场对白框相反）。\n"
+            "勾上 = 这条字幕逐字打出来；打字期间玩家点一下先补完，再点才过这一拍。\n"
+            "玩家在设置里关掉「逐字显示」时一律整句——玩家偏好压过编排。\n"
+            "配了定时/配音自动推进的拍要留意：字太长可能没打完就被推走。"
         )
-        auto_ms = QDoubleSpinBox(self)
-        auto_ms.setRange(100.0, 600000.0)
-        auto_ms.setDecimals(0)
-        auto_ms.setSingleStep(250.0)
-        auto_ms.setValue(max(100.0, aa_ms))
-        auto_ms.setMaximumWidth(96)
-        auto_ms.setToolTip("固定时长模式的展示毫秒数，到点自动推进。")
-        auto_ms.setEnabled(aa_mode == "__timer__")
-        auto_ms.valueChanged.connect(self._emit_dirty)
-
-        def _on_auto_mode_committed(_t: str) -> None:
-            auto_ms.setEnabled(auto_combo.committed_type().strip() == "__timer__")
-            self._emit_dirty()
-
-        auto_combo.typeCommitted.connect(_on_auto_mode_committed)
-        auto_wrap = QWidget()
-        auto_hl = QHBoxLayout(auto_wrap)
-        auto_hl.setContentsMargins(0, 0, 0, 0)
-        auto_hl.addWidget(auto_combo)
-        auto_hl.addWidget(QLabel("ms"))
-        auto_hl.addWidget(auto_ms)
-        auto_hl.addStretch(1)
+        tw_chk.toggled.connect(lambda _v: self._emit_dirty())
 
         self._widgets["text"] = tw
+        self._widgets["_subtitle_typewriter"] = tw_chk
         self._widgets["_subtitle_layout_mode"] = layout_combo
         self._widgets["_subtitle_mode"] = cw
         self._widgets["_subtitle_frac"] = frac
@@ -1414,10 +1424,7 @@ class StepWidget(QFrame):
         self._widgets["_subtitle_movie_band"] = band_c
         self._widgets["_subtitle_movie_align"] = align_c
         self._widgets["_subtitle_movie_wrap"] = movie_wrap
-        self._widgets["_subtitle_voice_id"] = voice_sel
-        self._widgets["_subtitle_voice_volume"] = voice_vol
-        self._widgets["_subtitle_auto_mode"] = auto_combo
-        self._widgets["_subtitle_auto_ms"] = auto_ms
+        self._widgets["_subtitle_voice"] = voice_field
         self._widgets["_subtitle_emote_target"] = emote_tgt
         self._widgets["_subtitle_emote_emote"] = emote_txt
         self._widgets["_subtitle_emote_duration"] = emote_dur
@@ -1425,10 +1432,10 @@ class StepWidget(QFrame):
         self._widgets["_subtitle_emote_oy"] = emote_oy
 
         self._present_params_layout.addRow("text", tw)
+        self._present_params_layout.addRow("", tw_chk)
         self._present_params_layout.addRow("布局模式", layout_combo)
         self._present_params_layout.addRow("", classic_wrap)
         self._present_params_layout.addRow("", movie_wrap)
-        self._present_params_layout.addRow("自动推进", auto_wrap)
         self._present_params_layout.addRow("", voice_section)
         self._present_params_layout.addRow("", emote_section)
         self._subtitle_on_layout_mode_changed()
@@ -2028,7 +2035,7 @@ class StepWidget(QFrame):
                         "subtitleAlign": sa,
                     })
                     self._show_subtitle_merge_voice_optional(d)
-                    self._show_subtitle_merge_auto_advance_optional(d)
+                    self._show_subtitle_merge_typewriter(d)
                     self._show_subtitle_merge_emote_optional(d)
                     return self._preserve_present_numbers(d)
                 cw = self._widgets.get("_subtitle_mode")
@@ -2042,7 +2049,7 @@ class StepWidget(QFrame):
                         po = pv
                 d.update({"kind": "present", "type": "showSubtitle", "text": txt, "position": po})
                 self._show_subtitle_merge_voice_optional(d)
-                self._show_subtitle_merge_auto_advance_optional(d)
+                self._show_subtitle_merge_typewriter(d)
                 self._show_subtitle_merge_emote_optional(d)
                 return self._preserve_present_numbers(d)
             for pname, pt in schema:
@@ -2458,14 +2465,15 @@ class StepOutlineFrame(QFrame):
         )
         self._summary.setStyleSheet(f"color: {primary};")
         self._dur_lbl.setStyleSheet(f"color: {muted};")
+        names = self._editor.speaker_names()
         if kind == "parallel":
             if self._step is not None:
                 tracks = [ol.to_dict() for ol in self._step._child_outlines]
-                summ = parallel_tracks_summary(tracks)
+                summ = parallel_tracks_summary(tracks, names)
             else:
-                summ = parallel_tracks_summary(d.get("tracks") or [])
+                summ = parallel_tracks_summary(d.get("tracks") or [], names)
         else:
-            summ = step_summary_line(d)
+            summ = step_summary_line(d, names)
         f = self._summary.font()
         f.setStrikeOut(self._disabled)
         self._summary.setFont(f)
@@ -3578,6 +3586,8 @@ class TimelineEditor(QWidget):
         )
         self._overlay_selectors_fp_cache = ""
         self._overlay_selectors_fp_valid = False
+        #: 摘要用的「实体 id → 显示名」表；见 speaker_names()
+        self._speaker_names_cache: dict[str, str] | None = None
         self._dnd_cutscene_step_source: StepOutlineFrame | None = None
         # 对白分组组头（纯视图行，不进 _step_outlines）与当前焦点条
         self._dialogue_groups: list[DialogueGroupHeader] = []
@@ -3834,6 +3844,14 @@ class TimelineEditor(QWidget):
         step_btns.addWidget(add_action)
         step_btns.addWidget(add_parallel)
         step_btns.addStretch(1)
+        rl.addLayout(step_btns)
+
+        # 撤销/重做/粘贴另起一行。九枚按钮挤一行时这一行的最小宽是 902px，直接把整页
+        # 顶出 13″ 预算（护栏 test_small_screen_layout）——而 Qt 的 QHBoxLayout 不会自动
+        # 换行，宽度不够只会把整个面板撑出横向滚动条。按语义切一刀：上行是「加步骤」，
+        # 下行是「改已有步骤」，宽屏上看起来仍是两排短工具条，不挤。
+        edit_btns = QHBoxLayout()
+        edit_btns.addStretch(1)
         self._btn_undo = QPushButton("↶ 撤销")
         self._btn_undo.setToolTip("撤销上一步结构编辑（增删/重排/复制粘贴/合并）  Ctrl+Z")
         self._btn_undo.clicked.connect(self.undo_last_structural)
@@ -3843,10 +3861,10 @@ class TimelineEditor(QWidget):
         self._btn_paste = QPushButton("粘贴")
         self._btn_paste.setToolTip("把剪贴板里的步骤追加到末尾（复制/剪切来自步骤「⋯」菜单）")
         self._btn_paste.clicked.connect(self.paste_step_append)
-        step_btns.addWidget(self._btn_undo)
-        step_btns.addWidget(self._btn_redo)
-        step_btns.addWidget(self._btn_paste)
-        rl.addLayout(step_btns)
+        edit_btns.addWidget(self._btn_undo)
+        edit_btns.addWidget(self._btn_redo)
+        edit_btns.addWidget(self._btn_paste)
+        rl.addLayout(edit_btns)
         self._refresh_edit_buttons()
 
         apply_btn = QPushButton("Apply")
@@ -4217,6 +4235,7 @@ class TimelineEditor(QWidget):
             from ..validator import (
                 Issue, _validate_cutscene_steps, _cutscene_has_show_movie_bar,
                 _cutscene_temp_actor_ids_in_steps, _walk_cutscene_action_param_refs,
+                cutscene_voice_sustained_before as _cutscene_voice_sustained_before,
             )
         except Exception as exc:  # noqa: BLE001
             self._issue_list.setVisible(False)
@@ -4246,7 +4265,11 @@ class TimelineEditor(QWidget):
                 _validate_cutscene_steps(
                     self._model, [deepcopy(step)], cid, row_issues,
                     scan_param_refs=False, cutscene_movie_bar=whole_mb,
-                    step_index_base=i)
+                    step_index_base=i,
+                    # 单行视角看不到上文：跨拍留声的配音（前面某拍勾了「播完不停」）
+                    # 必须由整树算出来带进来，否则"接管前面那条配音"这种合法写法
+                    # 每次都被误报成"没有配音可接管"（与 whole_mb / temp_ids 同一个道理）。
+                    voice_sustain=[_cutscene_voice_sustained_before(steps, i)])
                 _walk_cutscene_action_param_refs(
                     self._model, row_issues, [deepcopy(step)], cid, temp_ids)
             except Exception as exc:  # noqa: BLE001
@@ -4376,6 +4399,7 @@ class TimelineEditor(QWidget):
         if mm is None:
             return
         cells: list[_MinimapCell] = []
+        names = self.speaker_names()
         for ol in self._step_outlines:
             try:
                 d = ol._header_dict()
@@ -4384,9 +4408,9 @@ class TimelineEditor(QWidget):
             kind = str(d.get("kind", "present"))
             if kind == "parallel" and ol._step is not None:
                 summary = parallel_tracks_summary(
-                    [c.to_dict() for c in ol._step._child_outlines])
+                    [c.to_dict() for c in ol._step._child_outlines], names)
             else:
-                summary = step_summary_line(d)
+                summary = step_summary_line(d, names)
             dis = ol.is_step_disabled()
             cells.append(_MinimapCell(
                 kind=kind,
@@ -4614,6 +4638,9 @@ class TimelineEditor(QWidget):
             self._zebra_descendant_tracks(ol._step, prefix=label)
 
     def _on_model_data_changed(self, data_type: str, item_id: str) -> None:
+        # 名字表在下面任何一个提前 return 之前作废：NPC 改名走 scene/characterRegistry、
+        # 主角缺省名与旁白标签走 strings，几个桶都要让大纲上的说话人跟着变。
+        self._speaker_names_cache = None
         if data_type != "scene":
             return
         if self._loading_ui:
@@ -4628,6 +4655,16 @@ class TimelineEditor(QWidget):
         self._pending_scene_refresh_need_propagate |= propagate
         # Save All 等会在同一调用栈里连续 mark_dirty 多次；合并为一次刷新，避免 O(步骤数)×N。
         self._scene_data_changed_debounce.start(0)
+
+    def speaker_names(self) -> Mapping[str, str]:
+        """摘要里把说话人 id 换成玩家看到的名字用的表（空串键 = 旁白标签）。
+
+        一次列表重排要问上百次（每行大纲 + 缩略条整份过场），故缓存一份；
+        任何模型数据变更即作废（`_on_model_data_changed`），改完名不用重开过场。
+        """
+        if self._speaker_names_cache is None:
+            self._speaker_names_cache = speaker_display_names(self._model)
+        return self._speaker_names_cache
 
     def _run_debounced_scene_model_refresh(self) -> None:
         if self._loading_ui or self._current_idx < 0:
