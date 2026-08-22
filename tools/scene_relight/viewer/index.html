@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>场景重打光工作台</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:#17181b; color:#cfd2d8; font:13px/1.5 system-ui,"Microsoft YaHei",sans-serif; display:flex; flex-direction:column; height:100vh; }
+  header { display:flex; gap:10px; align-items:center; padding:8px 12px; background:#1f2126; border-bottom:1px solid #2c2f36; flex-wrap:wrap; }
+  header select, header button, header input[type=number] { background:#2a2d34; color:#dfe2e8; border:1px solid #3a3e47; border-radius:4px; padding:4px 8px; }
+  header button { cursor:pointer; } header button:hover { background:#353946; }
+  #main { display:flex; flex:1; min-height:0; }
+  #left { flex:1; display:flex; flex-direction:column; min-width:0; }
+  #canvasWrap { flex:1; display:flex; align-items:center; justify-content:center; overflow:auto; background:#101114; position:relative; }
+  canvas { max-width:100%; max-height:100%; image-rendering:auto; }
+  #canvasBar { display:flex; gap:8px; padding:6px 12px; background:#1a1c20; border-top:1px solid #2c2f36; align-items:center; flex-wrap:wrap; }
+  #canvasBar button, #canvasBar label { background:#2a2d34; border:1px solid #3a3e47; border-radius:4px; padding:3px 10px; cursor:pointer; user-select:none; }
+  #canvasBar button.on { background:#4a6b3f; border-color:#5d8a4e; }
+  #right { width:330px; overflow-y:auto; background:#1c1e23; border-left:1px solid #2c2f36; padding:8px 12px 40px; }
+  .grp { margin-bottom:6px; border:1px solid #2c2f36; border-radius:6px; }
+  .grp > .t { padding:5px 10px; background:#24262c; cursor:pointer; font-weight:600; border-radius:6px; }
+  .grp .body { padding:6px 10px; display:none; }
+  .grp.open .body { display:block; }
+  .row { display:flex; align-items:center; gap:6px; margin:3px 0; }
+  .row label { width:86px; flex:none; color:#9aa0ab; }
+  .row input[type=range] { flex:1; }
+  .row input[type=number] { width:64px; background:#2a2d34; color:#dfe2e8; border:1px solid #3a3e47; border-radius:3px; padding:1px 4px; }
+  #log { padding:6px 12px; background:#15161a; border-top:1px solid #2c2f36; font-family:Consolas,monospace; font-size:12px; white-space:pre-wrap; max-height:120px; overflow-y:auto; }
+  #stat { color:#7f8694; margin-left:auto; }
+  .warn { color:#d9a05b; }
+</style>
+</head>
+<body>
+<header>
+  <b>场景重打光</b>
+  <select id="scene"></select>
+  <span id="sceneStat"></span>
+  <span style="border-left:1px solid #3a3e47; height:20px"></span>
+  预设 <select id="preset"></select>
+  <button id="loadPreset">载入预设</button>
+  <span style="border-left:1px solid #3a3e47; height:20px"></span>
+  时刻 <input type="range" id="timeSlider" min="0" max="24" step="0.25" value="21" style="width:130px">
+  <span id="timeLabel">21:00</span>
+  <button id="applyTime">按时刻推光照</button>
+  <span id="stat"></span>
+</header>
+<div id="main">
+  <div id="left">
+    <div id="canvasWrap"><canvas id="cv"></canvas></div>
+    <div id="canvasBar">
+      <button id="holdOrig" title="按住显示白天原图">按住看原图</button>
+      <button id="maskMode">✎ 刷发光 mask</button>
+      <label style="display:none" id="maskCtl">半径 <input type="range" id="brushR" min="2" max="120" value="18" style="width:90px;vertical-align:middle">
+        <input type="checkbox" id="erase"> 擦除</label>
+      <button id="maskSave" style="display:none">保存 mask</button>
+      <button id="maskClear" style="display:none">清空 mask</button>
+      <span style="flex:1"></span>
+      <button id="saveParams">保存参数</button>
+      <button id="exportBtn"><b>⇪ 导出本预设(全分辨率)</b></button>
+    </div>
+    <div id="log">选场景开始。预览 = 同一份重打光核心在低分辨率跑,所见即导出。</div>
+  </div>
+  <div id="right"></div>
+</div>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const PREVIEW_W = 760;
+
+// [key, 标签, min, max, step, 组]
+const SPEC = [
+  ['amb_int','环境强度',0,2,0.01,'环境光'], ['amb_kelvin','环境色温K',2000,15000,50,'环境光'],
+  ['amb_hemi','半球权重',0,1,0.01,'环境光'], ['day_hemi','白天参考半球',0,1,0.01,'环境光'],
+  ['sun_int','强度',0,2,0.01,'太阳/月亮'], ['sun_elev','高度角°',2,85,0.5,'太阳/月亮'],
+  ['sun_azim','方位角°',0,360,1,'太阳/月亮'], ['sun_kelvin','色温K',1500,12000,50,'太阳/月亮'],
+  ['shadow_strength','浓度',0,1,0.01,'阴影'], ['shadow_len','长度wu',0.2,6,0.05,'阴影'],
+  ['shadow_steps','步数',8,96,1,'阴影'], ['shadow_soft','软化px',0,12,0.1,'阴影'],
+  ['shadow_bias','bias',0,0.15,0.001,'阴影'], ['occ_thick','遮挡厚度wu',0.2,5,0.05,'阴影'],
+  ['emis_gain','灯体亮度',0,8,0.05,'发光(要mask)'], ['emis_kelvin','灯光色温K',1000,8000,25,'发光(要mask)'],
+  ['lamp_int','点光强度',0,5,0.05,'发光(要mask)'], ['lamp_range','作用半径wu',0.3,5,0.05,'发光(要mask)'],
+  ['lamp_h','抬起高度wu',0,1,0.01,'发光(要mask)'], ['lamp_falloff','近场软化',0.02,1.5,0.01,'发光(要mask)'],
+  ['lamp_clamp','单灯上限',0.2,5,0.05,'发光(要mask)'], ['lamp_vis','遮挡(0/1)',0,1,1,'发光(要mask)'],
+  ['lamp_sat','吃原图色',0,1,0.01,'发光(要mask)'], ['lamp_maxn','灯数上限',1,64,1,'发光(要mask)'],
+  ['glow_radius','光晕半径',0,30,0.5,'发光(要mask)'], ['glow_gain','光晕强度',0,4,0.05,'发光(要mask)'],
+  ['fog_density','浓度',0,5,0.02,'雾'], ['fog_start','起雾深度',0,1,0.01,'雾'],
+  ['fog_kelvin','雾色温K',2000,15000,50,'雾'], ['fog_lum','雾亮度',0,1.2,0.01,'雾'],
+  ['fog_y','雾面高度wu',-1,3,0.02,'雾'], ['fog_fall','高度衰减',0,4,0.02,'雾'],
+  ['wet','湿地',0,1,0.01,'雨/湿'], ['sheen','水光',0,2,0.02,'雨/湿'],
+  ['ev','曝光EV',-3,2,0.02,'调色'], ['contrast','对比',0.5,1.6,0.01,'调色'],
+  ['sat','饱和',0,1.6,0.01,'调色'], ['grade_kelvin','白平衡K',2000,15000,50,'调色'],
+  ['lift','暗部提升',0,1,0.01,'调色'], ['lift_kelvin','暗部色温K',2000,15000,50,'调色'],
+  ['ratio_max','比值上限',1,12,0.1,'护栏'], ['keep_src','保留原图',0,1,0.01,'护栏'],
+];
+const OPEN_GROUPS = new Set(['环境光','太阳/月亮','发光(要mask)','调色']);
+
+let scenes=[], presets={}, defaults={}, params={}, sceneId='';
+let bgImg=null, relitImg=null, nativeW=0, nativeH=0;
+let maskCv=document.createElement('canvas'), maskDirty=false, maskOn=false;
+let previewSeq=0, debTimer=0;
+
+function log(s, warn){ const el=$('log'); el.innerHTML = (warn?'<span class="warn">'+s+'</span>':s); }
+
+// ---------------- 参数面板 ----------------
+function buildPanel(){
+  const right=$('right'); right.innerHTML='';
+  const groups={};
+  for(const [k,label,min,max,step,grp] of SPEC){
+    if(!groups[grp]){
+      const g=document.createElement('div'); g.className='grp'+(OPEN_GROUPS.has(grp)?' open':'');
+      g.innerHTML='<div class="t">'+grp+'</div><div class="body"></div>';
+      g.querySelector('.t').onclick=()=>g.classList.toggle('open');
+      right.appendChild(g); groups[grp]=g.querySelector('.body');
+    }
+    const row=document.createElement('div'); row.className='row';
+    row.innerHTML=`<label title="${k}">${label}</label>
+      <input type="range" id="r_${k}" min="${min}" max="${max}" step="${step}">
+      <input type="number" id="n_${k}" min="${min}" max="${max}" step="${step}">`;
+    groups[grp].appendChild(row);
+    const r=row.children[1], n=row.children[2];
+    r.oninput=()=>{ params[k]=+r.value; n.value=r.value; schedulePreview(); };
+    n.onchange=()=>{ params[k]=+n.value; r.value=n.value; schedulePreview(); };
+  }
+}
+function syncPanel(){
+  for(const [k] of SPEC){ const v=params[k] ?? defaults[k] ?? 0;
+    $('r_'+k).value=v; $('n_'+k).value=Math.round(v*1000)/1000; }
+}
+
+// ---------------- 预览 ----------------
+function schedulePreview(){ clearTimeout(debTimer); debTimer=setTimeout(preview, 220); }
+async function preview(){
+  if(!sceneId) return;
+  const seq=++previewSeq;
+  const t0=performance.now();
+  const rsp=await fetch(`/api/preview?scene=${encodeURIComponent(sceneId)}&w=${PREVIEW_W}`,
+    {method:'POST', body:JSON.stringify(params)});
+  if(seq!==previewSeq) return;
+  if(!rsp.ok){ log('预览失败: '+await rsp.text(), true); return; }
+  const blob=await rsp.blob();
+  const img=new Image();
+  img.onload=()=>{ if(seq===previewSeq){ relitImg=img; draw();
+    $('stat').textContent=`渲染 ${rsp.headers.get('X-Render-Ms')}ms · 往返 ${Math.round(performance.now()-t0)}ms`; } };
+  img.src=URL.createObjectURL(blob);
+}
+function draw(showOrig){
+  const cv=$('cv'), img=showOrig?bgImg:relitImg;
+  if(!img) return;
+  cv.width=img.width; cv.height=img.height;
+  const g=cv.getContext('2d');
+  g.drawImage(img,0,0);
+  if(maskOn && maskCv.width){
+    g.save(); g.globalAlpha=0.45;
+    g.drawImage(maskCv,0,0,cv.width,cv.height);   // mask 原生分辨率 → 缩放显示
+    g.restore();
+  }
+}
+
+// ---------------- 场景/预设 ----------------
+async function loadScenes(){
+  scenes=await (await fetch('/api/scenes')).json();
+  const sel=$('scene'); sel.innerHTML='';
+  for(const s of scenes){
+    const o=document.createElement('option'); o.value=s.id;
+    o.textContent=`${s.depth?'✓':'○'} ${s.id}${s.variants.length?` (${s.variants.length}变体)`:''}`;
+    if(!s.bg_ok) o.textContent='⚠缺背景 '+s.id;
+    sel.appendChild(o);
+  }
+  const pr=await (await fetch('/api/presets')).json();
+  presets=pr.presets; defaults=pr.defaults;
+  const ps=$('preset'); ps.innerHTML='';
+  for(const k of Object.keys(presets)){ const o=document.createElement('option'); o.value=o.textContent=k; ps.appendChild(o); }
+  ps.value='夜';
+}
+async function pickScene(sid){
+  sceneId=sid;
+  const info=scenes.find(s=>s.id===sid);
+  $('sceneStat').textContent = info.depth ? '有深度(阴影/雾可用)' : '无深度(退化为调色+发光)';
+  const rsp=await fetch(`/api/bg?scene=${encodeURIComponent(sid)}&w=${PREVIEW_W}`);
+  nativeW=+rsp.headers.get('X-Native-W'); nativeH=+rsp.headers.get('X-Native-H');
+  const blob=await rsp.blob();
+  bgImg=await new Promise(res=>{ const i=new Image(); i.onload=()=>res(i); i.src=URL.createObjectURL(blob); });
+  maskCv.width=nativeW; maskCv.height=nativeH;
+  maskCv.getContext('2d').clearRect(0,0,nativeW,nativeH);
+  const mr=await fetch(`/api/mask?scene=${encodeURIComponent(sid)}`);
+  if(mr.ok){ const mb=await mr.blob();
+    const mi=await new Promise(res=>{ const i=new Image(); i.onload=()=>res(i); i.src=URL.createObjectURL(mb); });
+    const g=maskCv.getContext('2d'); g.drawImage(mi,0,0,nativeW,nativeH); tintMask(); }
+  maskDirty=false;
+  // 恢复该场景已保存的当前预设参数;没有就用全局预设
+  const saved=await (await fetch(`/api/params?scene=${encodeURIComponent(sid)}`)).json();
+  const pn=$('preset').value;
+  params = Object.assign({}, defaults, saved[pn] || presets[pn] || {});
+  syncPanel(); preview();
+}
+function tintMask(){    // 把灰度 mask 染红(仅显示用;保存时转回灰度)
+  const g=maskCv.getContext('2d'), d=g.getImageData(0,0,maskCv.width,maskCv.height);
+  for(let i=0;i<d.data.length;i+=4){ const v=Math.max(d.data[i],d.data[i+1],d.data[i+2]);
+    d.data[i]=255; d.data[i+1]=40; d.data[i+2]=40; d.data[i+3]=d.data[i+3]?v:0; }
+  g.putImageData(d,0,0);
+}
+
+// ---------------- mask 笔刷 ----------------
+function canvasPos(e){
+  const cv=$('cv'), r=cv.getBoundingClientRect();
+  const x=(e.clientX-r.left)*cv.width/r.width, y=(e.clientY-r.top)*cv.height/r.height;
+  return [x*nativeW/cv.width, y*nativeH/cv.height];   // → 原生分辨率坐标
+}
+let painting=false;
+function paint(e){
+  const [x,y]=canvasPos(e);
+  const g=maskCv.getContext('2d');
+  const rr=+$('brushR').value * nativeW/PREVIEW_W;
+  g.save();
+  if($('erase').checked){ g.globalCompositeOperation='destination-out'; g.fillStyle='rgba(0,0,0,1)'; }
+  else { g.fillStyle='rgba(255,40,40,1)'; }
+  g.beginPath(); g.arc(x,y,rr,0,Math.PI*2); g.fill(); g.restore();
+  maskDirty=true; draw();
+}
+$('cv').addEventListener('mousedown',e=>{ if(maskOn){ painting=true; paint(e); }});
+$('cv').addEventListener('mousemove',e=>{ if(maskOn&&painting) paint(e); });
+window.addEventListener('mouseup',()=>painting=false);
+
+$('maskMode').onclick=()=>{
+  maskOn=!maskOn;
+  $('maskMode').classList.toggle('on',maskOn);
+  for(const id of ['maskCtl','maskSave','maskClear'])
+    $(id).style.display=maskOn?'':'none';
+  draw();
+  if(maskOn) log('刷发光 mask:左键画(红),勾「擦除」擦。画完点「保存 mask」再调「发光」组参数。');
+};
+$('maskSave').onclick=async()=>{
+  // 红显示层 → 灰度 mask(取 alpha)
+  const out=document.createElement('canvas'); out.width=nativeW; out.height=nativeH;
+  const g=out.getContext('2d'); g.drawImage(maskCv,0,0);
+  const d=g.getImageData(0,0,nativeW,nativeH);
+  for(let i=0;i<d.data.length;i+=4){ const a=d.data[i+3]; d.data[i]=d.data[i+1]=d.data[i+2]=a; d.data[i+3]=255; }
+  g.putImageData(d,0,0);
+  const blob=await new Promise(res=>out.toBlob(res,'image/png'));
+  const r=await fetch(`/api/mask?scene=${encodeURIComponent(sceneId)}`,{method:'POST',body:blob});
+  log(r.ok?'mask 已保存':'mask 保存失败',!r.ok); maskDirty=false; preview();
+};
+$('maskClear').onclick=async()=>{
+  maskCv.getContext('2d').clearRect(0,0,nativeW,nativeH);
+  await fetch(`/api/mask?scene=${encodeURIComponent(sceneId)}`,{method:'POST',body:'CLEAR'});
+  log('mask 已清空'); draw(); preview();
+};
+
+// ---------------- 顶栏 ----------------
+$('scene').onchange=e=>pickScene(e.target.value);
+$('preset').onchange=()=>{};
+$('loadPreset').onclick=()=>{ const pn=$('preset').value;
+  params=Object.assign({},defaults,presets[pn]||{}); syncPanel(); preview();
+  log(`已载入全局预设「${pn}」(改完记得保存参数/导出)`); };
+$('timeSlider').oninput=e=>{ const t=+e.target.value;
+  $('timeLabel').textContent=`${String(Math.floor(t)).padStart(2,'0')}:${String(Math.round(t%1*60)).padStart(2,'0')}`; };
+$('applyTime').onclick=async()=>{
+  const t=+$('timeSlider').value;
+  const rig=await (await fetch(`/api/rig?t=${t}`)).json();
+  params=Object.assign({},params,rig); syncPanel(); preview();
+  log(`已按 ${$('timeLabel').textContent} 推光照(在此基础上微调)`);
+};
+$('holdOrig').onmousedown=()=>draw(true);
+$('holdOrig').onmouseup=$('holdOrig').onmouseleave=()=>draw(false);
+$('saveParams').onclick=async()=>{
+  const pn=$('preset').value;
+  const r=await(await fetch(`/api/save_params?scene=${encodeURIComponent(sceneId)}&preset=${encodeURIComponent(pn)}`,
+    {method:'POST',body:JSON.stringify(params)})).json();
+  log(r.ok?`参数已存 ${r.file}`:('保存失败: '+r.err),!r.ok);
+};
+$('exportBtn').onclick=async()=>{
+  if(maskDirty){ log('mask 改了还没保存——先点「保存 mask」', true); return; }
+  const pn=$('preset').value;
+  log('导出中(全分辨率渲染)…');
+  const r=await(await fetch(`/api/export?scene=${encodeURIComponent(sceneId)}&preset=${encodeURIComponent(pn)}`,
+    {method:'POST',body:JSON.stringify(params)})).json();
+  if(!r.ok){ log('导出失败: '+r.err, true); return; }
+  log(`✓ 已导出 ${r.dest}(${(r.bytes/1048576).toFixed(1)}MB, ${r.ms}ms)`
+    +(r.backup?`\n  旧变体已备份 ${r.backup}`:'')
+    +`\n  接线(场景 JSON,由编辑器/人工确认):\n  ${JSON.stringify(r.snippet)}`);
+  loadScenes().then(()=>{ $('scene').value=sceneId; });
+};
+
+// ---------------- init ----------------
+buildPanel();
+loadScenes().then(()=>{ if(scenes.length){ $('scene').value=scenes[0].id; pickScene(scenes[0].id); }});
+</script>
+</body>
+</html>

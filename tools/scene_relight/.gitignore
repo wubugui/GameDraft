@@ -1,0 +1,5 @@
+# out/ 里的参数(params_*.json)与发光 mask(emissive_mask.png)是创作源,要进版本库;
+# 只有导出前自动备份的旧变体图不进(可再生,且体积大)。
+out/*/backup/
+
+# lighting2/ 几何场是烘出来的产物,落在 public/resources/runtime(整个 runtime 已 gitignore)
