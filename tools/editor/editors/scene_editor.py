@@ -351,7 +351,9 @@ _LIGHTCURVE_OVERLAY_Z = 500_100.0   # 原 2.5
 _Z_DECOR_GROUP_BOX = 600_000.0      # 原 6_000（细分公式保留，见 sync_group_boxes）
 _Z_DECOR_PERSP_AXIS = 800_000.0     # 原 8_000
 _Z_DECOR_GIZMO = 900_000.0          # 原 9_000
-_Z_PICK_RAISED = 1_000_000.0        # 原 z_top+1：叠放循环点选的临时抬升
+# 叠放循环点选的临时抬升**没有常量**：它必须是「栈内 z_top + 1」这样的相对值。
+# 抬成固定的全画布顶会跨过巡逻折线/分组框/透视轴/gizmo，把本该属于它们的鼠标按下
+# 抢走（详见 mousePressEvent 里那段注释）。
 
 # 图集寻址/切分/世界尺寸推导已抽到 shared/anim_atlas_preview.py（气泡锚控件与本画布共用，
 # 两份实现会各自漂移）。此处保留私有别名，call site 不变。
@@ -553,6 +555,19 @@ class _SceneNpcAnimRuntime:
         """视图过滤闸门。立刻生效，且下一拍 draw_at 不会把它冲掉。"""
         self.visible = bool(on)
         self.item.setVisible(self.visible)
+
+    def has_drawn_pos(self) -> bool:
+        """是否已经画过至少一拍（`drawn_x/y` 才有意义）。"""
+        return self._have_prev
+
+    @property
+    def drawn_x(self) -> float:
+        """**上一拍真的画到哪儿**。巡逻预览时它 ≠ 实体的作者态 x。"""
+        return self._prev_x
+
+    @property
+    def drawn_y(self) -> float:
+        return self._prev_y
 
 def _background_pixel_aspect(model: ProjectModel, scene_id: str, sc: dict) -> float | None:
     """背景图像素高/宽，与 worldHeight/worldWidth 比例一致时匹配画面。"""
@@ -3819,10 +3834,14 @@ class SceneCanvas(QGraphicsView):
                         self._pick_cycle_i = 0
                 target = stack[self._pick_cycle_i]
                 self._saved_item_z = [(it, it.zValue()) for it in stack]
-                # 抬到全画布之上的固定值（原先是 z_top+1，栈内相对值）。装饰品区间
-                # 顶到 90 万，内容区间在 ±10 万，1_000_000 恒在两者之上，语义等价且
-                # 不依赖栈内当前 z —— 内容 z 现在会随实体移动实时重排。
-                target.setZValue(_Z_PICK_RAISED)
+                # **必须是栈内相对抬升，不能抬到全画布之上。**
+                # 栈只含实体图元（把手/Zone/碰撞面），抬到栈顶 +1 仍远低于巡逻折线、
+                # 分组框、透视轴、gizmo —— 而本行执行在 `super().mousePressEvent()`
+                # **之前**，直接决定 Qt 按 z 把这一 press 派给谁。抬成绝对顶会让被抬起
+                # 的多边形吃掉本该属于那四类手柄的按下（表现：gizmo 旋转手柄点不动，
+                # 整个手势变成拖 Zone），且要等 release 时 _restore_pick_z_order 才复原。
+                z_top = max(z for _, z in self._saved_item_z)
+                target.setZValue(z_top + 1.0)
         super().mousePressEvent(event)
         if event.button() == Qt.MouseButton.LeftButton:
             # 快照当前选中图元位置，供 release 判定「是否真的移动过」。
@@ -11893,7 +11912,7 @@ class SceneEditor(QWidget):
             foot = sort_foot_y_of(hs, ww * s, hh * s)
             z = entity_sort_z(
                 hotspot_sort_band_of(hs, texture_loaded), float(hs.get("y", 0)), foot)
-            out.append((z, 1_000 + i, item))
+            out.append((z, 1_000 + i, item, f"hotspot:{eid}"))
 
         for i, npc in enumerate(sc.get("npcs", []) or []):
             if not isinstance(npc, dict):
@@ -11902,14 +11921,25 @@ class SceneEditor(QWidget):
             rt = self._scene_npc_runtimes.get(eid)
             if rt is None or rt.item is None:
                 continue
-            # 位置与 transform 都读 staging 感知的真相源，与精灵自身每拍拉取的同源
+            # 位置、transform、**档位**统统读 staging 感知的真相源。
+            # 档位漏读 staging 的后果：改「精灵排序」下拉后画布要等到 Apply 才跳一下，
+            # 而热点侧是即时的 —— 同一个函数里三个字段读两个源，属于最难查的不对称。
             pos = self._npc_render_pos_dict(eid, npc)
             s = entity_scale_of(pos) * (rt.persp if rt.persp and rt.persp > 0 else 1.0)
-            foot = sort_foot_y_of(pos, rt.world_w * s, rt.world_h * s)
+            foot_src = pos
+            # 巡逻预览中：精灵被画在这一拍的瞬时位置（rt 里存着刚传给 draw_at 的那对
+            # 坐标），而作者态 x/y 一直没动。排序必须跟着**画出去的位置**走，否则
+            # 「一个人走过井口」这种最需要看前后关系的场景里，画布全程纹丝不动。
+            foot_y = float(pos.get("y", 0))
+            if eid in self._patrol_preview_ids and rt.has_drawn_pos():
+                foot_y = rt.drawn_y
+                foot_src = dict(pos)
+                foot_src["y"] = foot_y
+            foot = sort_foot_y_of(foot_src, rt.world_w * s, rt.world_h * s)
             # NPC 的 collisionPolygon **不参与**遮挡带（运行时只有 Hotspot 写
             # entityOcclusionPolygon）；一视同仁会造出运行时根本不存在的层级翻转。
-            z = entity_sort_z(npc_sort_band_of(npc), float(pos.get("y", 0)), foot)
-            out.append((z, 2_000_000 + i, rt.item))
+            z = entity_sort_z(npc_sort_band_of(pos), foot_y, foot)
+            out.append((z, 2_000_000 + i, rt.item, f"npc:{eid}"))
 
         return out
 
@@ -11921,11 +11951,14 @@ class SceneEditor(QWidget):
         """
         entries = self._content_sort_entries()
         entries.sort(key=lambda e: (e[0], e[1]))
-        key = tuple((tie, round(z, 4), id(item)) for z, tie, item in entries)
+        # 脏检查的键用**实体 ref**，不用 `id(item)`：CPython 的 id 是内存地址，
+        # 图元析构后新图元完全可能拿到同一个 id（换贴图、换场景后极易发生）。
+        # 那样键"看着没变"而图元已经换人，该重排的一趟被静默跳过。
+        key = tuple((tie, round(z, 4), ref) for z, tie, _item, ref in entries)
         if key == self._content_z_key:
             return
         self._content_z_key = key
-        for rank, (_z, _tie, item) in enumerate(entries):
+        for rank, (_z, _tie, item, _ref) in enumerate(entries):
             item.setZValue(_Z_CONTENT_LO + rank * _Z_CONTENT_STEP)
 
     def _refresh_lightcurve_overlay(self) -> None:
@@ -13405,6 +13438,8 @@ class SceneEditor(QWidget):
                     self._canvas.update_npc_patrol_overlay_points(eid, route or [])
             else:
                 self._canvas.update_zone_polygon(eid, ent.get("polygon") or [])
+        # 整组位移改的是成员脚底 y —— 组内成员与组外实体的前后关系必须跟着重排
+        self._resort_canvas_content_z()
         self._canvas.viewport().update()
 
     def _group_write_target_scene(self, gid: str) -> dict | None:
@@ -14132,6 +14167,9 @@ class SceneEditor(QWidget):
             self._canvas.refresh_npc_collision_visuals(d)
             self._canvas.update_interaction_range("npc", eid, eff_r)
             # 精灵预览由动画 tick 从 staging 感知字典自动同步
+        # 旋转会把排序键从锚点 y 换成旋转后 quad 的接地线（sort_foot_y_of），
+        # 缩放则改 quad 尺寸 —— 两者都动排序输入，必须重排。
+        self._resort_canvas_content_z()
 
     def _on_gizmo_transform_live(
         self, kind: str, eid: str, s: float, rot: float,
@@ -14446,12 +14484,20 @@ class SceneEditor(QWidget):
         self._canvas.update_npc_collision_polygon(eid, poly_list)
 
     def _on_hotspot_visual_refresh_requested(self, eid: str) -> None:
+        """属性面板改了热点的展示图 / 精灵排序 / x-y 数值框 / 碰撞开关后重画。
+
+        末尾**必须**重排内容 z：这条 handler 覆盖的正是「排序输入变了但坐标没被
+        画布手势改」的那一族（改 spriteSort、在数值框里改 y）。少这一句的表现是
+        「数值框改 y → 贴图移过去了、前后关系没跟着变」，而在画布上拖同一个热点
+        却是对的 —— 两条路径行为不一致，最难查。
+        """
         if not eid:
             return
         hs_st = self._props._staging_hotspot
         if hs_st is not None and str(hs_st.get("id", "")) == str(eid):
             self._canvas.move_entity_handle("hotspot", eid, hs_st.get("x", 0), hs_st.get("y", 0))
             self._canvas.refresh_hotspot_visuals(hs_st)
+            self._resort_canvas_content_z()
             return
         sc = self._model.scenes.get(self._current_scene_id or "")
         if sc is None:
@@ -14460,6 +14506,7 @@ class SceneEditor(QWidget):
             if hs.get("id") == eid:
                 self._canvas.move_entity_handle("hotspot", eid, hs.get("x", 0), hs.get("y", 0))
                 self._canvas.refresh_hotspot_visuals(hs)
+                self._resort_canvas_content_z()
                 return
 
     def _on_item_position_live(

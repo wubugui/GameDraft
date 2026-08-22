@@ -234,6 +234,89 @@ class CanvasContentOrderTests(unittest.TestCase):
             for k, v in before.items():
                 self.assertEqual(ed._canvas._entity_items[k].zValue(), v)
 
+    # ---- 排序输入变了就必须重排（对抗式复核逮到的整族漏网） ----
+
+    def test_property_panel_y_change_reorders(self) -> None:
+        """在**数值框**里改 y 也要重排 —— 不能只有画布拖动那条路对。
+
+        漏这一条的表现最刺眼：数值框改完，贴图移过去了、前后关系没跟着变；
+        而在画布上拖同一个热点却是对的。两条路径行为不一致。
+        """
+        with TemporaryDirectory() as td:
+            ed = self._editor(Path(td) / "p")
+            ed._resort_canvas_content_z()
+            self.assertLess(
+                self._z(ed, "hotspot_display:hs_远"),
+                self._z(ed, "hotspot_display:hs_近"))
+
+            ed._on_item_selected("hotspot", "hs_远")
+            ed._props._hs_y.setValue(590.0)
+
+            self.assertGreater(
+                self._z(ed, "hotspot_display:hs_远"),
+                self._z(ed, "hotspot_display:hs_近"),
+                "数值框改 y 后没重排：贴图移了、前后关系没动")
+
+    def test_sprite_sort_change_takes_effect_without_apply(self) -> None:
+        """改「精灵排序」下拉必须**立刻**在画布上生效，不能等到 Apply。
+
+        两处新 tooltip 对策划承诺了"画布已按运行时同一条规则预览"。
+        """
+        with TemporaryDirectory() as td:
+            ed = self._editor(Path(td) / "p")
+            ed._resort_canvas_content_z()
+            self.assertLess(
+                self._z(ed, "hotspot_display:hs_远"),
+                self._z(ed, "hotspot_display:hs_近"))
+
+            ed._on_item_selected("hotspot", "hs_远")
+            idx = ed._props._hs_disp_sprite_sort.findData("front")
+            self.assertGreaterEqual(idx, 0, "夹具：找不到 front 选项")
+            ed._props._hs_disp_sprite_sort.setCurrentIndex(idx)
+
+            self.assertGreater(
+                self._z(ed, "hotspot_display:hs_远"),
+                self._z(ed, "hotspot_display:hs_近"),
+                "改精灵排序后画布没跟着重排（要等 Apply 才跳一下）")
+
+    def test_npc_sprite_sort_reads_staging_not_model(self) -> None:
+        """NPC 的档位也要读 staging —— 与热点侧对称。
+
+        同一个函数里位置读 staging、档位读模型，是最难查的不对称。
+        """
+        with TemporaryDirectory() as td:
+            ed = self._editor(Path(td) / "p")
+            # 先选中再挂精灵：选中会走 _refresh_one_scene_npc_anim，那条路会（正确地）
+            # 把手工挂的替身 runtime 回收掉——真实场景里那里会重建一个真 runtime。
+            ed._on_item_selected("npc", "npc_中")
+            rt = self._attach_sprite(ed, "npc_中")
+            ed._resort_canvas_content_z()
+            self.assertLess(rt.item.zValue(), self._z(ed, "hotspot_display:hs_近"))
+
+            idx = ed._props._npc_sprite_sort.findData("front")
+            self.assertGreaterEqual(idx, 0, "夹具：找不到 front 选项")
+            ed._props._npc_sprite_sort.setCurrentIndex(idx)
+            ed._resort_canvas_content_z()
+
+            self.assertGreater(
+                rt.item.zValue(), self._z(ed, "hotspot_display:hs_近"),
+                "NPC 档位读的是模型而不是 staging：改完要等 Apply 才生效")
+
+    def test_dirty_key_survives_item_identity_reuse(self) -> None:
+        """脏检查的键不许用 `id(item)` —— CPython 的 id 是内存地址，会被回收复用。
+
+        图元析构后新图元完全可能拿到同一个 id，那时键"看着没变"而图元已换人，
+        该重排的一趟被静默跳过。这里直接断言键里不含任何 id 值。
+        """
+        with TemporaryDirectory() as td:
+            ed = self._editor(Path(td) / "p")
+            ed._resort_canvas_content_z()
+            ids = {id(e[2]) for e in ed._content_sort_entries()}
+            flat = {v for row in ed._content_z_key for v in row}
+            self.assertTrue(ed._content_z_key, "前置条件：脏检查键不应为空")
+            self.assertFalse(
+                ids & flat, "脏检查键里混进了 id(item)，图元换人后会静默跳过重排")
+
     def test_moving_an_entity_reorders(self) -> None:
         """把远处热点拖到最下面，它就该翻到最前 —— 排序是真的在跟着数据走。"""
         with TemporaryDirectory() as td:

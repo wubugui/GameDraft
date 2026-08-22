@@ -37,7 +37,6 @@ class DecorLayerOrderTests(unittest.TestCase):
             ("场景分组框", se._Z_DECOR_GROUP_BOX),        # 原 6_000
             ("透视深度轴", se._Z_DECOR_PERSP_AXIS),       # 原 8_000
             ("transform gizmo", se._Z_DECOR_GIZMO),      # 原 9_000
-            ("叠放循环临时抬升", se._Z_PICK_RAISED),       # 原 z_top+1
         ]
         for (lo_name, lo), (hi_name, hi) in zip(layers, layers[1:]):
             self.assertLess(lo, hi, f"{lo_name} 应当低于 {hi_name}")
@@ -65,15 +64,33 @@ class DecorLayerOrderTests(unittest.TestCase):
         """碰撞面压在独立 Zone 与把手之下 —— 这是原来 -2 vs 0 的刻意差。"""
         self.assertLess(se._Z_DECOR_COLLISION, se._Z_DECOR_ENTITY)
 
-    def test_pick_raise_is_above_everything(self) -> None:
-        """叠放循环点选的临时抬升要盖过全画布（原先是栈内 z_top+1）。"""
+    def test_pick_raise_must_stay_below_gesture_handles(self) -> None:
+        """叠放循环点选的临时抬升**不许**盖过手柄类装饰品。
+
+        这条曾经写反过，而且写反的版本还把回归当契约锁死了 —— 教训值得留在这。
+
+        `mousePressEvent` 里抬 z 发生在 `super().mousePressEvent()` **之前**，
+        直接决定 Qt 按 z 把这一 press 派给谁。栈里只有实体图元（把手 / 独立 Zone /
+        碰撞面），所以「栈内 z_top + 1」最高只到 `_Z_DECOR_ENTITY + 1`，仍在
+        巡逻折线 / 分组框 / 透视轴 / gizmo 之下 —— 那四类的手柄照常拿得到按下。
+        换成固定的全画布顶（比如 1_000_000）就会把它们全压住：gizmo 的旋转手柄
+        点不动，整个手势变成拖那块被抬起来的多边形。
+        """
+        raised = se._Z_DECOR_ENTITY + 1.0   # 栈内最高的实体图元被抬起后的 z
         for name, z in [
-            ("gizmo", se._Z_DECOR_GIZMO),
-            ("透视轴", se._Z_DECOR_PERSP_AXIS),
+            ("巡逻折线", se._PATROL_OVERLAY_Z),
+            ("光环境曲线", se._LIGHTCURVE_OVERLAY_Z),
             ("分组框", se._Z_DECOR_GROUP_BOX),
-            ("内容上界", se._Z_CONTENT_HI),
+            ("透视轴", se._Z_DECOR_PERSP_AXIS),
+            ("gizmo", se._Z_DECOR_GIZMO),
         ]:
-            self.assertGreater(se._Z_PICK_RAISED, z, f"临时抬升没能盖过 {name}")
+            self.assertLess(raised, z, f"临时抬升压过了 {name} 的手柄，会抢走鼠标按下")
+
+    def test_no_absolute_pick_raise_constant(self) -> None:
+        """别再引入「固定抬到全画布顶」的常量 —— 它必须是栈内相对值。"""
+        self.assertFalse(
+            hasattr(se, "_Z_PICK_RAISED"),
+            "_Z_PICK_RAISED 又回来了：叠放点选的抬升只能是 z_top+1 这样的相对值")
 
 
 class GroupBoxSubdivisionTests(unittest.TestCase):
