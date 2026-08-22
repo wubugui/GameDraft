@@ -14,7 +14,8 @@ triggers:
   tasks: [加场景编辑器视图, 改画布显隐, 加实体归属轴]
 verified_by:
   - tools/editor/tests/test_scene_view_filters_compose.py
-last_governed: 2026-08-18
+  - tools/editor/tests/test_scene_canvas_presence_regressions.py
+last_governed: 2026-08-23
 ---
 
 ## 是什么(一句话)
@@ -43,6 +44,11 @@ last_governed: 2026-08-18
 - **纯视图,不改数据**:三条轴都只影响画布显隐/加载,任何一条都不得写回实体字段。
   批量操作(整组位移等)作用于**全部成员**而不只是可见的那些,故必须当面告知
   "其中 N 个在画布上不可见"。
+- **"藏一个实体"= 藏它的每一个图元**。判定对了不等于藏对了:一个实体在画布上是
+  一束图元,漏掉其中一层就是"圆点没了、人还站着"。清单唯一真相是 `PART_TABLE`,
+  且新建/重建的图元默认可见、必须重贴 presence —— 详见
+  [scene-canvas-item-parts-and-z](scene-canvas-item-parts-and-z.md)。
+  本卡管**判定**,那张卡管**落到哪些图元**,两者缺一不可。
 
 ## 已知坑
 

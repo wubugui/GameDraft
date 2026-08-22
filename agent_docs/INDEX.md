@@ -79,6 +79,7 @@
 - [数值往返保真(preserve_numeric_repr)](editor-tools/mechanisms/numeric-roundtrip-fidelity.md) — Qt 数值控件会把"打开即保存"变成 int→float 漂移/clamp 丢值/默认 0 盖掉运行时默认——未改动的数值键必须按原始表示回写
 - [位面编辑器槽继承 UI 语义](editor-tools/mechanisms/plane-editor-slot-inheritance.md) — dict 槽用"显式配置此槽"闸门——不勾=不写键(继承)、勾且空 {} 是合法的整槽覆盖原语;解析口径与运行时 expandExtends 靠 parity 测试锁定
 - [save_all 两阶段写与脏桶护栏](editor-tools/mechanisms/save-all-dirty-buckets.md) — 唯一写盘出口:先落 .tmp 再统一就位,stage 失败磁盘零变化、commit 失败按基线回滚、外部竞态 preservation-first;mark_dirty 只认登记键,新数据域三处同步
+- [场景画布的图元 part 表与内容层 z](editor-tools/mechanisms/scene-canvas-item-parts-and-z.md) — 一个实体在画布上是一束图元,清单唯一真相是 PART_TABLE;新建/重建的图元默认可见必须重贴 presence;内容层 z 按运行时排序规则的 Python 镜像实时派名次,不是写死层表
 - [场景编辑器的三条视图轴(过场 / 位面 / 时段)](editor-tools/mechanisms/scene-view-filter-axes.md) — 过场轴决定实体存不存在,位面与时段轴决定已加载实体显不显;后两条必须合成一个判定再落显隐,分开各贴各的会互相冲掉
 - [共享选择器控件的保值契约](editor-tools/mechanisms/shared-widget-value-fidelity.md) — IdRefSelector 等共享控件被约 40 处调用点依赖——未知/悬垂值必须保值展示而非静默顶替或清空;一处控件破坏 = 全编辑器数据面污染
 - [过场步骤编辑器(TimelineEditor)契约](editor-tools/mechanisms/timeline-editor-contracts.md) — UI/交互改动不得改 StepWidget.to_dict 序列化输出;已有搜索/撤销/剪贴板等能力勿重复造;含一个 PySide takeAt 布局级深坑

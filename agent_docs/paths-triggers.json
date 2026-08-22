@@ -448,6 +448,12 @@
       ]
     },
     {
+      "glob": "src/rendering/entitySortRule.ts",
+      "docs": [
+        "scene-canvas-item-parts-and-z"
+      ]
+    },
+    {
       "glob": "src/rendering/lightEnv*",
       "docs": [
         "entity-lighting"
@@ -814,8 +820,15 @@
       ]
     },
     {
+      "glob": "tools/editor/editors/scene_canvas_model.py",
+      "docs": [
+        "scene-canvas-item-parts-and-z"
+      ]
+    },
+    {
       "glob": "tools/editor/editors/scene_editor.py",
       "docs": [
+        "scene-canvas-item-parts-and-z",
         "scene-view-filter-axes"
       ]
     },
@@ -874,6 +887,12 @@
       "docs": [
         "action-registration-quadruple",
         "entity-refactor-engine"
+      ]
+    },
+    {
+      "glob": "tools/editor/shared/entity_sort_math.py",
+      "docs": [
+        "scene-canvas-item-parts-and-z"
       ]
     },
     {
