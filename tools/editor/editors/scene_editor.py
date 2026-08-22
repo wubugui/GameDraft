@@ -51,7 +51,7 @@ from PySide6.QtCore import (
     QElapsedTimer,
 )
 
-from .scene_canvas_model import iter_part_keys
+from .scene_canvas_model import iter_part_keys, part_key
 from ..shared.entity_sort_math import (
     entity_sort_z,
     hotspot_sort_band_of,
@@ -1857,7 +1857,7 @@ class _PerspAxisItem(QGraphicsObject):
         return (-dy / L, dx / L)  # 垂直于轴
 
     def _iso_half(self) -> float:
-        return max(40.0, self._canvas._world_w * 0.06, self._canvas._world_h * 0.06)
+        return max(40.0, self._canvas.world_size()[0] * 0.06, self._canvas.world_size()[1] * 0.06)
 
     def _point_at(self, pos: float) -> QPointF:
         return QPointF(
@@ -2271,7 +2271,7 @@ class _SceneGroupBox(QGraphicsObject):
         # 起手拉橡皮筋框选，实际把整组悄悄挪走了（框边细，起点压上去太容易）。
         if not self._selected and not on_handle_hit:
             self._view.note_group_press()
-            self._view._gfx.clearSelection()
+            self._view.clear_selection()
             self._view.group_clicked.emit(self.gid)
             self._view.group_gesture_finished.emit(self.gid)
             self._mode = None
@@ -2280,7 +2280,7 @@ class _SceneGroupBox(QGraphicsObject):
         # 选组 = 取消实体选择：否则 release 时 view 会拿残留的实体选中 emit
         # item_selected，把刚装载的分组面板顶掉（同一手势里两个面板打架）。
         self._view.note_group_press()
-        self._view._gfx.clearSelection()
+        self._view.clear_selection()
         # press 阶段**只做画布内的事**（高亮该组），不碰属性面板、不弹窗。
         # 装载面板会切 QStackedWidget → 布局重排 → 画布 resize → 若此刻 fit_all 的
         # 自动适配窗口还开着，resizeEvent 里的 resetTransform() 就会在 Qt 的鼠标
@@ -3072,6 +3072,14 @@ class SceneCanvas(QGraphicsView):
         if isinstance(item, _EditableZonePolygon):
             item.set_points_from_model(polygon)
 
+    # ---- 图元 → 宿主画布的上报通道（`_emit_*` 与 `_persp_axis_drag_update`）------
+    #
+    # 这一族**刻意**保持下划线开头，且**刻意**由图元类从"类外"调用：图元
+    # （_EditableZonePolygon / _NpcPatrolPolyline / _LightCurvePolyline / _PerspAxisItem）
+    # 与画布是同模块内的一体两面，手势结束时要把结果交回宿主再转成 Signal 发出去。
+    # 它们不是"越界访问"，是 item→view 的内部回调 —— 与上面那批已收口成公共 API 的
+    # 查询/命令是两回事，别顺手把它们也改成 public（那等于邀请编辑器直接伪造手势结果）。
+
     def _emit_zone_polygon_committed(
         self,
         eid: str,
@@ -3535,6 +3543,76 @@ class SceneCanvas(QGraphicsView):
 
     def graphics_scene(self) -> QGraphicsScene:
         return self._gfx
+
+    # ---- 公共查询 / 命令（收口用）--------------------------------------------
+    #
+    # 这一族存在的理由：此前编辑器、图元类、选择器对话框从**类外**直接摸画布私有成员
+    # 约 60 处（`_gfx` / `_entity_items` / `_patrol_overlays` / `_bg_item` /
+    # `_zoom_by` / `_auto_fit_after_layout` …）。后果不是"不好看"，是**画布这层没有
+    # 边界**：图元清单、显隐、z 都可以被绕过去改，任何新规矩都守不住 —— 这次修的
+    # "精灵藏不掉"就是被绕过去的一例。
+    #
+    # 迁移期私有成员保留不删（新 API 与旧 dict 指向同一份对象），测试可继续内省。
+
+    def entity_item(self, kind: str, entity_id: str, part: str = "handle"):
+        """按 ``(kind, id, part)`` 取图元；没有就 ``None``。外部 part 也查得到。"""
+        k = str(kind).strip().lower()
+        return self._part_item(k, str(entity_id).strip(), part,
+                               part_key(k, str(entity_id).strip(), part))
+
+    def entity_item_by_key(self, key: str):
+        """按既有 ``"kind:id"`` 形式的键取图元（迁移期兼容用）。"""
+        return self._entity_items.get(key)
+
+    def has_entity_item(self, key: str) -> bool:
+        return key in self._entity_items
+
+    def world_size(self) -> tuple[float, float]:
+        return self._world_w, self._world_h
+
+    def scene_rect_top(self) -> float:
+        return self._gfx.sceneRect().top()
+
+    def clear_selection(self) -> None:
+        self._gfx.clearSelection()
+
+    def selected_items(self) -> list:
+        return list(self._gfx.selectedItems())
+
+    def patrol_overlay(self, npc_id: str):
+        return self._patrol_overlays.get(npc_id)
+
+    def patrol_overlay_ids(self) -> list[str]:
+        return list(self._patrol_overlays.keys())
+
+    def background_item(self):
+        return self._bg_item
+
+    def clear_background(self) -> None:
+        """摘掉当前背景图元并清句柄（换背景前调；`load_background` 负责装新的）。"""
+        old = self._bg_item
+        self._bg_item = None
+        if old is not None and old.scene() is self._gfx:
+            self._gfx.removeItem(old)
+
+    def zoom_by_step(self, factor: float) -> None:
+        """按钮式缩放：**先取消待跑的自动适配**，否则那一拍 fit 会把缩放抹掉。
+
+        这条"顺序"此前散在两个按钮回调里各写一遍（`_auto_fit_after_layout = False`
+        紧跟 `_zoom_by`），漏写一处就是"点了放大没反应"。收进来一处。
+        """
+        self._auto_fit_after_layout = False
+        self._zoom_by(factor)
+
+    def refresh_entity_view(self, key: str, ent: object) -> None:
+        """重登记某实体的位面/时段归属并全量重贴过滤（含由隐转显）。
+
+        Apply 可能改了 `planes` / `phases`，两步必须成对出现 —— 此前是调用方各自
+        手写 `_record_entity_view` + `_apply_entity_view_filters` 两行，成对关系
+        全靠自觉。
+        """
+        self._record_entity_view(key, ent)
+        self._apply_entity_view_filters()
 
     def fit_all(self) -> None:
         """将场景矩形适配到视口。
@@ -4052,10 +4130,10 @@ class TargetSpawnPickerDialog(QDialog):
 
     def _select_canvas_spawn(self, logical_key: str) -> None:
         eid = "default" if logical_key == "" else logical_key
-        item = self._canvas._entity_items.get(f"spawn:{eid}")
+        item = self._canvas.entity_item_by_key(f"spawn:{eid}")
         if item is None:
             return
-        self._canvas._gfx.clearSelection()
+        self._canvas.clear_selection()
         item.setSelected(True)
 
     def _on_list_row(self, row: int) -> None:
@@ -11495,7 +11573,11 @@ class SceneEditor(QWidget):
         self._canvas.drag_cancelled.connect(self._on_drag_cancelled)
         self._canvas.item_drag_press.connect(self._on_canvas_drag_press)
         self._canvas.items_batch_moved.connect(self._on_items_batch_moved)
-        self._canvas._gfx.selectionChanged.connect(self._on_canvas_selection_changed)
+        # 直连画布的 QGraphicsScene 信号（公共 graphics_scene()）。**不要**在画布上
+        # 再包一层 Signal 转发：多一跳就多一次排队时机，而这条回路上的墓碑注释
+        # （见下方 _on_canvas_selection_changed）记的正是延后派发引发的 SIGSEGV。
+        self._canvas.graphics_scene().selectionChanged.connect(
+            self._on_canvas_selection_changed)
         self._canvas.transform_gizmo_live.connect(self._on_gizmo_transform_live)
         self._canvas.transform_gizmo_committed.connect(self._on_gizmo_transform_committed)
         # 全部直连：数据写入必须发生在手势里（撤销快照/提交时序都挂在上面）。
@@ -11807,7 +11889,7 @@ class SceneEditor(QWidget):
             # 会算出旧坐标的次序，表现为"拖着拖着前后关系不跟着变，松手才跳一下"。
             # 与 _npc_render_pos_dict 同一条契约（editor-data-sync-paradigm 硬契约 1）。
             hs = self._staging_hotspot_for_canvas_drag(eid) or model_hs
-            item = self._canvas._entity_items.get(f"hotspot_display:{eid}")
+            item = self._canvas.entity_item_by_key(f"hotspot_display:{eid}")
             if item is None:
                 continue  # 没展示图的热点不进内容区（运行时容器里也只有不可见 marker）
             # 与运行时 `displaySprite !== null` 同口径：画成紫色缺件框时那边也没有档位
@@ -11910,7 +11992,7 @@ class SceneEditor(QWidget):
             if not isinstance(hs, dict) or not self._entity_visible_for_cutscene_edit(hs):
                 continue
             eid = str(hs.get("id", "") or "")
-            item = self._canvas._entity_items.get(f"hotspot:{eid}")
+            item = self._canvas.entity_item_by_key(f"hotspot:{eid}")
             if isinstance(item, _DraggableCircle):
                 item.set_interaction_range(
                     float(hs.get("interactionRange", 50) or 0)
@@ -11920,7 +12002,7 @@ class SceneEditor(QWidget):
             if not isinstance(npc, dict) or not self._entity_visible_for_cutscene_edit(npc):
                 continue
             eid = str(npc.get("id", "") or "")
-            item = self._canvas._entity_items.get(f"npc:{eid}")
+            item = self._canvas.entity_item_by_key(f"npc:{eid}")
             if isinstance(item, _DraggableCircle):
                 item.set_interaction_range(
                     float(npc.get("interactionRange", 50) or 0)
@@ -11950,7 +12032,7 @@ class SceneEditor(QWidget):
             r = (npc.get("patrol") or {}).get("route")
             if isinstance(r, list) and len(r) >= 2:
                 active_route = r
-        for nid in list(self._canvas._patrol_overlays.keys()):
+        for nid in self._canvas.patrol_overlay_ids():
             if nid != active_npc_id:
                 self._canvas.remove_npc_patrol_overlay(nid)
         if active_npc_id:
@@ -12489,7 +12571,7 @@ class SceneEditor(QWidget):
             self._canvas.load_background(img_path, world_w, world_h)
 
         try:
-            self._canvas._gfx.clearSelection()
+            self._canvas.clear_selection()
         except (AttributeError, RuntimeError):
             pass
         self._on_item_deselected()
@@ -12703,7 +12785,7 @@ class SceneEditor(QWidget):
         """画布当前全部选中实体 (kind, id)：碰撞图元归并到本体、去重保序。"""
         refs: list[tuple[str, str]] = []
         seen: set[tuple[str, str]] = set()
-        for it in self._canvas._gfx.selectedItems():
+        for it in self._canvas.selected_items():
             ek = getattr(it, "entity_kind", None)
             ei = getattr(it, "entity_id", None)
             if not ek or ei is None or str(ei) == "":
@@ -12798,9 +12880,9 @@ class SceneEditor(QWidget):
                 return
         self._syncing_tree_selection = True
         try:
-            self._canvas._gfx.clearSelection()
+            self._canvas.clear_selection()
             for kind, eid in refs:
-                item = self._canvas._entity_items.get(f"{kind}:{eid}")
+                item = self._canvas.entity_item_by_key(f"{kind}:{eid}")
                 if item is not None:
                     item.setSelected(True)
         finally:
@@ -12849,7 +12931,7 @@ class SceneEditor(QWidget):
         self._restoring_blocked_navigation = True
         self._syncing_tree_selection = True
         try:
-            self._canvas._gfx.clearSelection()
+            self._canvas.clear_selection()
             for item in self._iter_entity_tree_items():
                 item.setSelected(False)
             if ref is None:
@@ -12866,7 +12948,7 @@ class SceneEditor(QWidget):
             if tree_hit is not None:
                 self._entity_tree.scrollToItem(tree_hit)
             if kind != "group":
-                canvas_item = self._canvas._entity_items.get(f"{kind}:{entity_id}")
+                canvas_item = self._canvas.entity_item_by_key(f"{kind}:{entity_id}")
                 if canvas_item is not None:
                     canvas_item.setSelected(True)
         finally:
@@ -13042,7 +13124,7 @@ class SceneEditor(QWidget):
         hidden = 0
         for kind, ent in members:
             key = f"{kind}:{str(ent.get('id') or '')}"
-            item = self._canvas._entity_items.get(key)
+            item = self._canvas.entity_item_by_key(key)
             if item is None or not item.isVisible():
                 hidden += 1
         anchor = self._group_anchor_point(sc, gid, rect)
@@ -13092,7 +13174,7 @@ class SceneEditor(QWidget):
             # 成员数这个唯一辨识信息）看不见、把手也够不着。
             y = rect.top() - _GROUP_HANDLE_PX * 2.2 * wpp
             try:
-                scene_top = self._canvas._gfx.sceneRect().top()
+                scene_top = self._canvas.scene_rect_top()
             except (AttributeError, RuntimeError):
                 scene_top = 0.0
             return QPointF(
@@ -13328,7 +13410,7 @@ class SceneEditor(QWidget):
                 if rt is not None:
                     rt.draw_at(x, y)
                 self._canvas.refresh_npc_collision_visuals(ent)
-                overlay = self._canvas._patrol_overlays.get(eid)
+                overlay = self._canvas.patrol_overlay(eid)
                 if overlay is not None:
                     patrol = ent.get("patrol")
                     route = patrol.get("route") if isinstance(patrol, dict) else None
@@ -13509,7 +13591,7 @@ class SceneEditor(QWidget):
         hidden = sum(
             1 for kind, ent in members
             if (lambda it: it is None or not it.isVisible())(
-                self._canvas._entity_items.get(f"{kind}:{str(ent.get('id') or '')}"))
+                self._canvas.entity_item_by_key(f"{kind}:{str(ent.get('id') or '')}"))
         )
         tail = f"，其中 {hidden} 个画布上不可见" if hidden else ""
         try:
@@ -13756,12 +13838,12 @@ class SceneEditor(QWidget):
         self._canvas.set_selected_group(None)
         self._syncing_tree_selection = True
         try:
-            self._canvas._gfx.clearSelection()
+            self._canvas.clear_selection()
             for item in self._iter_entity_tree_items():
                 data = item.data(0, Qt.ItemDataRole.UserRole)
                 item.setSelected(bool(data) and tuple(data) in set(refs))
             for kind, eid in refs:
-                canvas_item = self._canvas._entity_items.get(f"{kind}:{eid}")
+                canvas_item = self._canvas.entity_item_by_key(f"{kind}:{eid}")
                 if canvas_item is not None:
                     canvas_item.setSelected(True)
         finally:
@@ -14102,19 +14184,17 @@ class SceneEditor(QWidget):
 
     def _on_block_zone_pick_toggled(self, checked: bool) -> None:
         if checked:
-            for it in list(self._canvas._gfx.selectedItems()):
+            for it in list(self._canvas.selected_items()):
                 if isinstance(it, _EditableZonePolygon):
                     it.setSelected(False)
         self._canvas.set_zone_pick_frozen(checked)
 
     def _on_canvas_zoom_in(self) -> None:
         # mirror wheelEvent zoom factor; pure view transform, no data change
-        self._canvas._auto_fit_after_layout = False
-        self._canvas._zoom_by(1.15)
+        self._canvas.zoom_by_step(1.15)
 
     def _on_canvas_zoom_out(self) -> None:
-        self._canvas._auto_fit_after_layout = False
-        self._canvas._zoom_by(1 / 1.15)
+        self._canvas.zoom_by_step(1 / 1.15)
 
     def _on_canvas_zoom_fit(self) -> None:
         self._canvas.fit_all()
@@ -14812,11 +14892,7 @@ class SceneEditor(QWidget):
         img_path = _scene_background_disk_path(self._model, scene_id, sc)
         world_w, world_h = resolve_world_size_for_scene_json(sc, img_path)
         self._canvas.setup_world(world_w, world_h)
-        old_bg = getattr(self._canvas, "_bg_item", None)
-        scene_gfx = self._canvas.graphics_scene()
-        if old_bg is not None and old_bg.scene() is scene_gfx:
-            scene_gfx.removeItem(old_bg)
-            self._canvas._bg_item = None
+        self._canvas.clear_background()
         if img_path:
             self._canvas.load_background(img_path, world_w, world_h)
         self._last_canvas_world = (world_w, world_h)
@@ -15057,7 +15133,7 @@ class SceneEditor(QWidget):
             self._canvas.remove_hotspot_graphics(new_id)
             return
         key = f"hotspot:{new_id}"
-        item = self._canvas._entity_items.get(key)
+        item = self._canvas.entity_item_by_key(key)
         if item is None:
             self._canvas.add_hotspot(hs)
         elif isinstance(item, _DraggableCircle):
@@ -15071,8 +15147,7 @@ class SceneEditor(QWidget):
         self._canvas.update_entity_circle_label("hotspot", new_id, lbl)
         self._canvas.refresh_hotspot_visuals(hs)
         # planes 归属可能被本次 Apply 改动：更新登记并全量重贴位面过滤（含由隐转显）。
-        self._canvas._record_entity_view(key, hs)
-        self._canvas._apply_entity_view_filters()
+        self._canvas.refresh_entity_view(key, hs)
         # 本次 Apply 可能改了 spriteSort / displayImage / 坐标 / 实例 transform，
         # 全都进排序键 —— 重排一次（脏检查会在没变时空转）。
         self._resort_canvas_content_z()
@@ -15094,7 +15169,7 @@ class SceneEditor(QWidget):
                 rt2.item.scene().removeItem(rt2.item)
             return
         key = f"npc:{new_id}"
-        item = self._canvas._entity_items.get(key)
+        item = self._canvas.entity_item_by_key(key)
         if item is None:
             self._canvas.add_npc(npc)
         elif isinstance(item, _DraggableCircle):
@@ -15107,8 +15182,7 @@ class SceneEditor(QWidget):
         self._canvas.refresh_npc_collision_visuals(npc)
         self._refresh_one_scene_npc_anim(new_id)
         # planes 归属可能被本次 Apply 改动：更新登记并全量重贴位面过滤（含由隐转显）。
-        self._canvas._record_entity_view(key, npc)
-        self._canvas._apply_entity_view_filters()
+        self._canvas.refresh_entity_view(key, npc)
         # 同热点侧：spriteSort / 坐标 / 实例 transform 都进排序键
         self._resort_canvas_content_z()
 
@@ -15119,11 +15193,11 @@ class SceneEditor(QWidget):
         if old_id and old_id != new_id:
             self._canvas.remove_zone_graphics(old_id)
         key = f"zone:{new_id}"
-        item = self._canvas._entity_items.get(key)
+        item = self._canvas.entity_item_by_key(key)
         if item is None:
             self._canvas.add_zone(zone)
             if self._chk_block_zone_pick.isChecked():
-                zit = self._canvas._entity_items.get(key)
+                zit = self._canvas.entity_item_by_key(key)
                 if isinstance(zit, _EditableZonePolygon):
                     zit.set_zone_pick_frozen(True)
         else:
@@ -15137,12 +15211,11 @@ class SceneEditor(QWidget):
                     new_id, [{"x": x, "y": y} for x, y in pts],
                 )
         # planes 归属可能被本次 Apply 改动：更新登记并全量重贴位面过滤（含由隐转显）。
-        self._canvas._record_entity_view(key, zone)
-        self._canvas._apply_entity_view_filters()
+        self._canvas.refresh_entity_view(key, zone)
 
     def _capture_canvas_primary_selection(self) -> tuple[str, str] | None:
         """返回画布当前选中图元的 (entity_kind, entity_id)；无选中则 None。"""
-        for it in self._canvas._gfx.selectedItems():
+        for it in self._canvas.selected_items():
             if hasattr(it, "entity_kind") and hasattr(it, "entity_id"):
                 ei = getattr(it, "entity_id", None)
                 if ei is not None and str(ei).strip() != "":
@@ -15221,28 +15294,28 @@ class SceneEditor(QWidget):
     def _restore_canvas_selection(self, kind: str, eid: str) -> None:
         """reload 场景后选中图元并刷新右侧属性（与鼠标选中语义一致）。"""
         key = f"{kind}:{eid}"
-        it = self._canvas._entity_items.get(key)
+        it = self._canvas.entity_item_by_key(key)
         ek = kind
         if it is None:
             if kind == "hotspot_collision":
-                it = self._canvas._entity_items.get(f"hotspot:{eid}")
+                it = self._canvas.entity_item_by_key(f"hotspot:{eid}")
                 ek = "hotspot"
             elif kind == "npc_collision":
-                it = self._canvas._entity_items.get(f"npc:{eid}")
+                it = self._canvas.entity_item_by_key(f"npc:{eid}")
                 ek = "npc"
         if it is None:
             return
-        self._canvas._gfx.clearSelection()
+        self._canvas.clear_selection()
         it.setSelected(True)
         self._on_item_selected(ek, eid)
 
     def _try_select_canvas_item(self, kind: str, eid: str) -> None:
         key = f"{kind}:{eid}"
-        it = self._canvas._entity_items.get(key)
+        it = self._canvas.entity_item_by_key(key)
         if it is None:
             return
         try:
-            self._canvas._gfx.clearSelection()
+            self._canvas.clear_selection()
         except (AttributeError, RuntimeError):
             pass
         it.setSelected(True)
@@ -15524,7 +15597,7 @@ class SceneEditor(QWidget):
 
     def _try_delete_zone_hovered_vertex(self) -> bool:
         """若当前选中 Zone 多边形且鼠标正悬停某一顶点，则删该顶点。"""
-        for it in self._canvas._gfx.selectedItems():
+        for it in self._canvas.selected_items():
             if isinstance(it, _EditableZonePolygon) and it.try_delete_hovered_vertex():
                 return True
         return False
@@ -15536,7 +15609,7 @@ class SceneEditor(QWidget):
 
     def _selected_entity_ref(self) -> tuple[str, str] | None:
         """当前选中实体的 (kind, id)：画布选中优先，退回右侧属性面板正在编辑的实体。"""
-        for it in self._canvas._gfx.selectedItems():
+        for it in self._canvas.selected_items():
             if hasattr(it, "entity_kind") and hasattr(it, "entity_id"):
                 ek = str(getattr(it, "entity_kind", "") or "")
                 ei = getattr(it, "entity_id", None)
@@ -15696,9 +15769,9 @@ class SceneEditor(QWidget):
                     kind, new_id, self._current_scene_id or "")
         else:
             # 批量复制：全选全部副本（多选状态，方便整体拖开摆位）
-            self._canvas._gfx.clearSelection()
+            self._canvas.clear_selection()
             for kind, new_id in new_ids:
-                item = self._canvas._entity_items.get(f"{kind}:{new_id}")
+                item = self._canvas.entity_item_by_key(f"{kind}:{new_id}")
                 if item is not None:
                     item.setSelected(True)
         notices: list[str] = []
@@ -15888,7 +15961,7 @@ class SceneEditor(QWidget):
         (_fit_stabilize_step),补一拍再断言一次。"""
         def _go() -> None:
             try:
-                it = self._canvas._entity_items.get(f"{kind}:{eid}")
+                it = self._canvas.entity_item_by_key(f"{kind}:{eid}")
                 if it is None:
                     return
                 # centerOn:实体拉到视口正中(整景已适配时无滚动余地,自然无操作),
