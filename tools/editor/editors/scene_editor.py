@@ -14,7 +14,7 @@ import re
 import shutil
 import time
 from contextlib import contextmanager
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 
@@ -51,6 +51,7 @@ from PySide6.QtCore import (
     QElapsedTimer,
 )
 
+from .scene_canvas_model import iter_part_keys
 from .scene_undo import SceneUndoController
 from ..shared.entity_transform_math import (
     entity_perspective_factor,
@@ -374,7 +375,7 @@ class _SceneNpcAnimRuntime:
         "facing_x", "_prev_x", "_prev_y", "_have_prev",
         "inst_scale", "inst_rot_deg", "persp",
         "speed_mult", "reverse", "hold_frame", "start_frame",
-        "ref_speed",
+        "ref_speed", "visible",
     )
 
     def __init__(
@@ -427,6 +428,10 @@ class _SceneNpcAnimRuntime:
         self.start_frame: int | None = None
         # 本 runtime 所播状态的步速匹配基准（anim.json state.referenceSpeed；巡逻预览步速缩放用）
         self.ref_speed = float(ref_speed) if ref_speed and ref_speed > 0 else None
+        # 视图过滤闸门（位面/时段/过场）。**必须是 runtime 的状态，不能只 setVisible(item)**：
+        # draw_at 每 8ms 被动画定时器调一次，从前它最后一行是无条件 `item.show()`，
+        # 于是"把精灵藏起来"这件事最多活 8 毫秒——外面怎么改都像没生效。
+        self.visible = True
 
     def set_instance_transform(self, scale: float, rot_deg: float) -> None:
         self.inst_scale = float(scale) if scale and scale > 0 else 1.0
@@ -520,7 +525,14 @@ class _SceneNpcAnimRuntime:
         t.translate(-fw * 0.5, -float(fh))
         self.item.setTransform(t)
         self.item.setPos(0.0, 0.0)
-        self.item.show()
+        # 过闸门，不是无条件 show()：被位面/时段/过场过滤掉的 NPC，其精灵每拍都要
+        # 保持隐藏。写成 show() 时"藏起来"只能活到下一拍（8ms），外面怎么改都像没生效。
+        self.item.setVisible(self.visible)
+
+    def set_visible(self, on: bool) -> None:
+        """视图过滤闸门。立刻生效，且下一拍 draw_at 不会把它冲掉。"""
+        self.visible = bool(on)
+        self.item.setVisible(self.visible)
 
 def _background_pixel_aspect(model: ProjectModel, scene_id: str, sc: dict) -> float | None:
     """背景图像素高/宽，与 worldHeight/worldWidth 比例一致时匹配画面。"""
@@ -2474,6 +2486,14 @@ class SceneCanvas(QGraphicsView):
         # 藏起来的实体冒出来）。判定见 _entity_visible_under_view_filters。
         self._entity_view_meta: dict[str, tuple[list[str] | None, list[str] | None]] = {}
         self._patrol_overlays: dict[str, _NpcPatrolPolyline] = {}
+        # 不住 _entity_items 的 part 的适配器（见 scene_canvas_model.EXTERNAL_PARTS）。
+        # 巡逻折线由画布自己登记；NPC 动画精灵由 SceneEditor 登记（它才持有 runtime）。
+        self._part_adapters: dict[tuple[str, str], dict] = {}
+        self.register_part_adapter(
+            "npc", "patrol",
+            item_of=lambda eid: self._patrol_overlays.get(eid),
+            drop=self.remove_npc_patrol_overlay,
+        )
         self._lightcurve_overlay: _LightCurvePolyline | None = None
         self._light_place_mode: bool = False
         self._world_w: float = 800
@@ -2846,6 +2866,10 @@ class SceneCanvas(QGraphicsView):
         self._sync_collision_persp_ghost(
             f"hotspot_collision_ghost:{hid}", cx, cy, pts, pf,
             _HOTSPOT_COLLISION_ZONE_COLOR)
+        # 上面几支都可能**重建**图元（展示图缺件占位框那一支没有签名缓存，每次必重建），
+        # 而新图元默认可见。不在这里重贴一次，被位面/时段藏起来的热点只要被刷新一次
+        # 就会冒出来半个鬼影：圆点还藏着、贴图回来了。
+        self.refresh_entity_presence("hotspot", hid)
 
     def update_hotspot_collision_polygon(self, entity_id: str, polygon: list) -> None:
         key = f"hotspot_collision:{entity_id}"
@@ -2905,6 +2929,8 @@ class SceneCanvas(QGraphicsView):
             float(npc.get("x", 0)), float(npc.get("y", 0)),
             pts, self.persp_factor(npc, "npc"),
             _NPC_COLLISION_ZONE_COLOR)
+        # 同 refresh_hotspot_visuals 末尾：重建出来的图元默认可见，必须重贴过滤。
+        self.refresh_entity_presence("npc", nid)
 
     def update_npc_collision_polygon(self, entity_id: str, polygon: list) -> None:
         key = f"npc_collision:{entity_id}"
@@ -3133,6 +3159,8 @@ class SceneCanvas(QGraphicsView):
         item = _NpcPatrolPolyline(self, npc_id, pts)
         self._gfx.addItem(item)
         self._patrol_overlays[npc_id] = item
+        # 新建的折线默认可见：被位面/时段藏起来的 NPC 不许因为"加了个巡逻点"就露出来。
+        self.refresh_entity_presence("npc", npc_id)
 
     def remove_npc_patrol_overlay(self, npc_id: str) -> None:
         it = self._patrol_overlays.pop(npc_id, None)
@@ -3185,46 +3213,77 @@ class SceneCanvas(QGraphicsView):
             if had:
                 item.setFlag(flag, True)
 
-    def remove_hotspot_graphics(self, entity_id: str) -> None:
-        hid = str(entity_id).strip()
-        if not hid:
+    # ---- part 级统一操作（清单唯一真相在 scene_canvas_model.PART_TABLE）--------
+    #
+    # 此前 set_entity_visible / remove_hotspot_graphics / remove_npc_graphics 各手写
+    # 一份"这一族有哪些图元"的字符串清单，彼此不同步——npc 那份漏了动画精灵，于是
+    # 切时段藏 NPC 时圆点没了、人还站着。三处合并到 PART_TABLE 后，增删附属图元
+    # 只改那一张表。
+
+    def register_part_adapter(
+        self,
+        kind: str,
+        part: str,
+        *,
+        item_of: "Callable[[str], QGraphicsItem | None]",
+        set_visible: "Callable[[str, bool], None] | None" = None,
+        drop: "Callable[[str], None] | None" = None,
+    ) -> None:
+        """登记一个**不住 `_entity_items`** 的 part（见 `EXTERNAL_PARTS`）。
+
+        为什么要适配器而不是把它们搬进 `_entity_items`：巡逻折线住
+        `_patrol_overlays`、NPC 动画精灵住 `SceneEditor._scene_npc_runtimes`，
+        大量既有测试直接摸这两个容器；搬家会把一次结构收敛变成一次大范围改测试。
+        适配器让"账本走一圈"覆盖到它们，而物理存储原地不动。
+
+        `set_visible` 可选：某些 part 的可见性**不能**直接 `item.setVisible()` 了事
+        （NPC 精灵的动画定时器每 8ms 会无条件把 item 显出来，必须改 runtime 的闸门）。
+        给了就用它，没给就退回 `item_of(...).setVisible(...)`。
+        """
+        self._part_adapters[(str(kind).strip().lower(), part)] = {
+            "item_of": item_of, "set_visible": set_visible, "drop": drop,
+        }
+
+    def _part_item(self, kind: str, entity_id: str, part: str, key: str | None):
+        """取某个 part 的图元：住 `_entity_items` 的直接查，外部 part 问适配器。"""
+        if key is not None:
+            return self._entity_items.get(key)
+        ad = self._part_adapters.get((str(kind).strip().lower(), part))
+        return None if ad is None else ad["item_of"](entity_id)
+
+    def _drop_entity_parts(self, kind: str, entity_id: str) -> None:
+        """删掉一个实体的**全部** part 图元（含外部 part），并清掉视图登记。"""
+        eid = str(entity_id).strip()
+        if not eid:
             return
-        self._entity_view_meta.pop(f"hotspot:{hid}", None)
-        for key in (f"hotspot:{hid}", f"hotspot_display:{hid}", f"hotspot_collision:{hid}",
-                    f"hotspot_collision_ghost:{hid}"):
+        k = str(kind).strip().lower()
+        self._entity_view_meta.pop(f"{k}:{eid}", None)
+        for part, key in iter_part_keys(k, eid):
+            if key is None:
+                ad = self._part_adapters.get((k, part))
+                if ad is not None and ad["drop"] is not None:
+                    ad["drop"](eid)
+                continue
             it = self._entity_items.pop(key, None)
             if it is not None and it.scene() is self._gfx:
                 self._gfx.removeItem(it)
+
+    def remove_hotspot_graphics(self, entity_id: str) -> None:
+        self._drop_entity_parts("hotspot", entity_id)
 
     def remove_npc_graphics(self, entity_id: str) -> None:
         nid = str(entity_id).strip()
         if not nid:
             return
+        # 巡逻折线的删除有自己的防崩溃收尾（先 setSelected(False)），走它自己的出口。
         self.remove_npc_patrol_overlay(nid)
-        self._entity_view_meta.pop(f"npc:{nid}", None)
-        for key in (f"npc:{nid}", f"npc_collision:{nid}", f"npc_collision_ghost:{nid}"):
-            it = self._entity_items.pop(key, None)
-            if it is not None and it.scene() is self._gfx:
-                self._gfx.removeItem(it)
+        self._drop_entity_parts("npc", nid)
 
     def remove_zone_graphics(self, entity_id: str) -> None:
-        zid = str(entity_id).strip()
-        if not zid:
-            return
-        key = f"zone:{zid}"
-        self._entity_view_meta.pop(key, None)
-        it = self._entity_items.pop(key, None)
-        if it is not None and it.scene() is self._gfx:
-            self._gfx.removeItem(it)
+        self._drop_entity_parts("zone", entity_id)
 
     def remove_spawn_graphics(self, spawn_key: str) -> None:
-        sk = str(spawn_key).strip()
-        if not sk:
-            return
-        key = f"spawn:{sk}"
-        it = self._entity_items.pop(key, None)
-        if it is not None and it.scene() is self._gfx:
-            self._gfx.removeItem(it)
+        self._drop_entity_parts("spawn", spawn_key)
 
     def reload_spawn_items_from_scene(self, sc: dict) -> None:
         """重建出生点图元（spawnPoint + spawnPoints），用于 Apply 后与模型一致。"""
@@ -3242,27 +3301,28 @@ class SceneCanvas(QGraphicsView):
                     self.add_spawn(str(name), pos)
 
     def set_entity_visible(self, logical_kind: str, entity_id: str, visible: bool) -> None:
-        """按逻辑实体类型切换画布上图元可见性（含附属展示图/碰撞）。"""
+        """切换一个实体在画布上的可见性 —— **它的每一个 part 都要跟着**。
+
+        清单来自 `PART_TABLE`，不再手写。这一条是"切时段藏 NPC、人还站着"那个 bug
+        的根治点：精灵是 npc 族的一个 part，只要它在表里，就不可能再被漏掉。
+        """
         eid = str(entity_id).strip()
         if not eid:
             return
         lk = str(logical_kind).strip().lower()
-        keys: list[str] = []
-        if lk == "hotspot":
-            keys = [f"hotspot:{eid}", f"hotspot_display:{eid}", f"hotspot_collision:{eid}",
-                    f"hotspot_collision_ghost:{eid}"]
-        elif lk == "npc":
-            keys = [f"npc:{eid}", f"npc_collision:{eid}", f"npc_collision_ghost:{eid}"]
-            ov = self._patrol_overlays.get(eid)
-            if ov is not None:
-                ov.setVisible(visible)
-        elif lk == "zone":
-            keys = [f"zone:{eid}"]
-        elif lk == "spawn":
-            keys = [f"spawn:{eid}"]
-        else:
-            return
-        for key in keys:
+        for part, key in iter_part_keys(lk, eid):
+            if key is None:
+                ad = self._part_adapters.get((lk, part))
+                if ad is None:
+                    continue
+                # 有些 part 的显隐不能直接 setVisible（精灵会被 8ms 定时器打回来）
+                if ad["set_visible"] is not None:
+                    ad["set_visible"](eid, visible)
+                    continue
+                it = ad["item_of"](eid)
+                if it is not None:
+                    it.setVisible(visible)
+                continue
             it = self._entity_items.get(key)
             if it is not None:
                 it.setVisible(visible)
@@ -3353,10 +3413,25 @@ class SceneCanvas(QGraphicsView):
 
     def _apply_entity_view_filters(self) -> None:
         """按位面 ∧ 时段重贴全部已登记实体。两轴合一次算，不许分开各贴各的。"""
-        for key, (planes, phases) in self._entity_view_meta.items():
+        for key in list(self._entity_view_meta):
             kind, _, eid = key.partition(":")
-            self.set_entity_visible(
-                kind, eid, self._entity_visible_under_view_filters(kind, planes, phases))
+            self.refresh_entity_presence(kind, eid)
+
+    def refresh_entity_presence(self, kind: str, entity_id: str) -> None:
+        """按当前视图轴重贴**单个**实体的显隐。
+
+        任何新建/重建了某个 part 图元的路径都该在末尾调一次 —— 新图元默认可见，
+        不重贴就会把过滤结论冲掉（"藏起来的实体刷新一次就冒回来一半"那一族 bug）。
+        未登记的实体（如出生点，本来就不吃位面/时段轴）直接跳过，不做任何改动。
+        """
+        k = str(kind).strip().lower()
+        eid = str(entity_id).strip()
+        meta = self._entity_view_meta.get(f"{k}:{eid}")
+        if meta is None:
+            return
+        planes, phases = meta
+        self.set_entity_visible(
+            k, eid, self._entity_visible_under_view_filters(k, planes, phases))
 
     def update_hotspot_type_color(self, entity_id: str, hs_type: str) -> None:
         hid = str(entity_id).strip()
@@ -11478,6 +11553,16 @@ class SceneEditor(QWidget):
         self._canvas.persp_axis_committed.connect(self._on_persp_axis_committed)
         self._canvas.persp_axis_live_refresh.connect(self._refresh_all_persp_previews)
         self._props.perspective_preview_changed.connect(self._on_persp_preview_changed)
+        # NPC 动画精灵住在这里（_scene_npc_runtimes），不在画布的实体图元表里。
+        # 登记成 npc 族的一个 part，画布贴显隐/回收时就能覆盖到它——此前正是因为
+        # 画布"看不见"这一层，切时段藏 NPC 时圆点没了、人还站在原地。
+        # 显隐走 runtime 的闸门而不是 item.setVisible：动画定时器每 8ms 重画一次。
+        self._canvas.register_part_adapter(
+            "npc", "sprite",
+            item_of=lambda eid: getattr(self._scene_npc_runtimes.get(eid), "item", None),
+            set_visible=self._set_npc_sprite_visible,
+            drop=self._drop_npc_sprite,
+        )
 
         splitter.addWidget(left)
         # 画布列：顶部一行轻量「实体查找」入口 + 画布本体（小屏纪律：单行紧凑，不加大面板）。
@@ -11640,8 +11725,36 @@ class SceneEditor(QWidget):
         ctx = getattr(self, "_scene_edit_cutscene_id", "").strip()
         return bool(ctx) and ctx in bindings
 
+    def _set_npc_sprite_visible(self, npc_id: str, visible: bool) -> None:
+        """npc/sprite part 的显隐出口（由画布经适配器调）。
+
+        必须落到 runtime 的闸门上：`draw_at` 每 8ms 按 `rt.visible` 重贴一次，
+        直接 `item.setVisible(False)` 只能活到下一拍。
+        """
+        rt = self._scene_npc_runtimes.get(npc_id)
+        if rt is not None:
+            rt.set_visible(visible)
+
+    def _drop_npc_sprite(self, npc_id: str) -> None:
+        """npc/sprite part 的回收出口：**真的把图元从场景里摘掉**。
+
+        此前 `_clear_scene_npc_anim_layers` 只 `dict.clear()` 不 removeItem，
+        全靠 `clear_scene()` 的 `_gfx.clear()` 一把梭兜底。而
+        `_rebuild_scene_npc_anim_layers` 第一句就调它、路上**没有** clear_scene ——
+        于是每次全量重建都会在画布上留下一个再也没人驱动的旧精灵（幽灵）。
+        """
+        rt = self._scene_npc_runtimes.pop(npc_id, None)
+        if rt is None:
+            return
+        item = rt.item
+        gfx = self._canvas.graphics_scene()
+        if item is not None and item.scene() is gfx:
+            gfx.removeItem(item)
+
     def _clear_scene_npc_anim_layers(self) -> None:
         self._scene_npc_anim_timer.stop()
+        for npc_id in list(self._scene_npc_runtimes):
+            self._drop_npc_sprite(npc_id)
         self._scene_npc_runtimes.clear()
         self._patrol_preview_ids.clear()
         self._patrol_preview_state.clear()
@@ -11978,6 +12091,9 @@ class SceneEditor(QWidget):
         rt.persp = self._canvas.persp_factor(pos0, "npc", nx, ny)
         rt.draw_at(nx, ny)
         self._scene_npc_runtimes[npc_id] = rt
+        # 新建的精灵默认可见；若这个 NPC 当前正被位面/时段过滤掉，必须立刻重贴，
+        # 否则"重建一次就冒回来"。登记进账本之后再调——重贴要经适配器找到它。
+        self._canvas.refresh_entity_presence("npc", npc_id)
 
     def _rebuild_scene_npc_anim_layers(self) -> None:
         self._clear_scene_npc_anim_layers()

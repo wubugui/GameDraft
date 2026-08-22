@@ -134,13 +134,12 @@ class NpcSpriteFollowsViewFiltersTests(_CanvasPresenceBase):
         self.assertTrue(item.isVisible(), "前置条件：精灵初始应当可见")
         return rt
 
-    @unittest.expectedFailure
     def test_phase_filter_hides_npc_sprite(self) -> None:
         """切时段藏掉 NPC 时，它的动画精灵必须一起藏。
 
-        当前失败：`set_entity_visible` 的 npc 分支只处理 `npc:` / `npc_collision:` /
-        `npc_collision_ghost:` 三个键加巡逻折线，**完全不碰**精灵——精灵不在
-        `_entity_items` 里，而在 `SceneEditor._scene_npc_runtimes[eid].item`。
+        修复前：`set_entity_visible` 的 npc 分支手写了三个键加巡逻折线，**完全不碰**
+        精灵——精灵不在 `_entity_items` 里，而在 `SceneEditor._scene_npc_runtimes[eid].item`。
+        现在 sprite 是 `PART_TABLE["npc"]` 里的一个 part，经适配器覆盖到。
         """
         with TemporaryDirectory() as td:
             ed = self._editor(Path(td) / "p")
@@ -151,37 +150,38 @@ class NpcSpriteFollowsViewFiltersTests(_CanvasPresenceBase):
                 rt.item.isVisible(),
                 "圆点藏了但动画精灵还在画——画布上那个人根本没消失")
 
-    @unittest.expectedFailure
     def test_anim_tick_does_not_resurrect_hidden_sprite(self) -> None:
-        """就算精灵被藏了，8ms 动画定时器也不许把它放出来。
+        """精灵被时段藏起来后，8ms 动画定时器**连走三拍**也不许把它放出来。
 
-        当前失败：`_SceneNpcAnimRuntime.draw_at` 最后一行是无条件 `self.item.show()`，
-        每拍都执行。所以「给精灵补一句 setVisible(False)」是**无效修法**——
-        必须在 runtime 内部加可见性闸门。
+        修复前：`_SceneNpcAnimRuntime.draw_at` 最后一行是无条件 `self.item.show()`，
+        每拍都执行。所以「给精灵补一句 `item.setVisible(False)`」是**无效修法**，
+        改完看着像判定函数写错——闸门必须在 runtime 内部（`rt.visible`）。
         """
         with TemporaryDirectory() as td:
             ed = self._editor(Path(td) / "p")
             rt = self._attach_runtime(ed, "npc_龙套")
             self._set_night(ed)
-            rt.item.setVisible(False)          # 模拟「显隐通道已经把它藏了」
+            self.assertFalse(rt.item.isVisible(), "前置条件：切时段后精灵应当已经藏了")
             ed._patrol_preview_ids = set()
             ed._scene_npc_anim_elapsed.start()
-            ed._tick_scene_npc_anims()          # 走一拍
-            self.assertFalse(
-                rt.item.isVisible(),
-                "动画定时器每 8ms 无条件 show()，把隐藏结论冲掉了")
+            for tick in range(3):
+                ed._tick_scene_npc_anims()
+                self.assertFalse(
+                    rt.item.isVisible(),
+                    f"第 {tick + 1} 拍把隐藏结论冲掉了——draw_at 又无条件 show() 了")
 
 
 class RebuiltPartsKeepPresenceTests(_CanvasPresenceBase):
     """附属图元重建后必须重贴过滤，不许默认可见地冒回来。"""
 
-    @unittest.expectedFailure
     def test_display_image_rebuild_keeps_hidden(self) -> None:
         """被时段藏起来的热点，刷新展示图后展示图不许冒出来。
 
         触发链（真实可复现）：改透视配置 → `_refresh_all_persp_previews` 无差别遍历
         **全部**热点调 `refresh_hotspot_visuals` → 重建出来的展示图默认可见，
         没人重贴过滤 → 圆点还藏着、贴图回来了，画布上出现半个鬼影。
+
+        修复：`refresh_hotspot_visuals` 末尾无条件重贴一次 presence。
         """
         with TemporaryDirectory() as td:
             ed = self._editor(Path(td) / "p")
