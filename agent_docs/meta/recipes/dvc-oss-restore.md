@@ -7,6 +7,7 @@ summary: 大文件还原钦定路径 = ./dev.sh pull;裸 dvc pull 在慢速直�
 status: active
 authority:
   - scripts/sync-dvc-cache.py
+  - tools/dev/sync.py
   - tools/dev/__main__.py
 triggers:
   topics: [DVC, OSS, 资源还原, 异地部署, 新机, dvc pull, 超时]
@@ -21,19 +22,30 @@ last_governed: 2026-08-05
 ```bash
 ./dev.sh pull              # = git pull + DVC pull(内部走 scripts/sync-dvc-cache.py)
 ./dev.sh pull --editor     # 同时拉编辑器工程资源
-# 等价壳:./scripts/pull-all.sh --editor
+./dev.sh pull --audio      # 同时拉配音原始音源(~70MB)
+./dev.sh init-audio        # 只补音源(不 git pull),等价于换机后单独补这一份
+# 等价壳:./scripts/pull-all.sh --editor(壳里已带 --editor,再加 --audio 即可)
 ```
 
-配音原始音源库(`resources/audio_sources`,不可再生素材)不在默认拉取集里,要用
-`tools/voice_workbench` 时单独拉:
+拉取分三挡,**默认集只有跑游戏必需的 vendor + runtime**:
 
-```bash
-.tools/venv/Scripts/python.exe scripts/sync-dvc-cache.py pull resources/audio_sources.dvc
-.tools/venv/Scripts/python.exe -m dvc checkout resources/audio_sources.dvc
-```
+| 挡位 | 多拉什么 | 谁需要 |
+|---|---|---|
+| 默认 | — | 跑游戏、改数据 |
+| `--editor` | `resources/editor_projects` | 开编辑器工程(`pull-all.sh` 无条件带) |
+| `--audio` | `resources/audio_sources`(~70MB,不可再生) | 用 `tools/voice_workbench` 重录/重导配音 |
+
+音源单独一挡而不是并进 `--editor`:后者被 `pull-all.sh` 无条件带上,并进去就等于
+把 70MB 变成事实上的默认拉取。工作台在源库缺席时按设计如实报「源不在本机」而非坏掉,
+所以缺它不是故障态。
+
+**没拉过某一挡的机器照样能 push / commit**:`sync.push()` 按本机 DVC 缓存过滤目标、
+`sync.commit()` 按工作区目录是否存在过滤 `dvc add`,跳过的那份会打印一行说明。
+(过滤之前会炸:push 侧要展开该目标的 `.dir` 缓存清单,缓存里没有就是裸
+`FileNotFoundError`;`dvc add` 对不存在的目录直接报错退出。)
 
 分工:DVC 只负责记录版本/校验 hash/本地 checkout;实际上传下载由 `sync.pull()`
-(`tools/dev/__main__.py`,阿里云官方 `oss2` **同步** SDK + 多线程 + 断点续传)接管。
+(`tools/dev/sync.py`,阿里云官方 `oss2` **同步** SDK + 多线程 + 断点续传)接管。
 
 ## 为什么不能用裸 dvc pull / dvc fetch
 

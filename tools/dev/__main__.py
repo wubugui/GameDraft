@@ -23,6 +23,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_initrt = sub.add_parser("init-runtime", help="Sync game runtime resources")
     p_initrt.add_argument("--install-deps", action="store_true")
     sub.add_parser("init-editor", help="Sync editor project resources")
+    sub.add_parser("init-audio", help="Sync the voice source library (tools/voice_workbench)")
 
     p_cfg = sub.add_parser("configure-oss", help="Configure DVC OSS remote")
     p_cfg.add_argument("--bucket", required=True)
@@ -31,6 +32,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_pull = sub.add_parser("pull", help="git pull + DVC pull (pull-all)")
     p_pull.add_argument("--editor", action="store_true")
+    p_pull.add_argument(
+        "--audio",
+        action="store_true",
+        help="Also pull the voice source library (~70MB, only tools/voice_workbench needs it)",
+    )
     p_pull.add_argument("--git-proxy", default="")
 
     p_push = sub.add_parser("push", help="DVC push + git push (push-all)")
@@ -88,6 +94,10 @@ def main(argv: list[str] | None = None) -> int:
         from tools.dev import sync
 
         return sync.init_editor()
+    if task == "init-audio":
+        from tools.dev import sync
+
+        return sync.init_audio()
     if task == "configure-oss":
         from tools.dev import sync
 
@@ -95,7 +105,7 @@ def main(argv: list[str] | None = None) -> int:
     if task == "pull":
         from tools.dev import sync
 
-        return sync.pull(editor=args.editor, git_proxy=args.git_proxy)
+        return sync.pull(editor=args.editor, audio=args.audio, git_proxy=args.git_proxy)
     if task == "push":
         from tools.dev import sync
 

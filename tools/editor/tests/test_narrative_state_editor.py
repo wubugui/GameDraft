@@ -18,7 +18,9 @@ from tools.editor.editors.narrative_state_editor import (
     WRAPPER_OWNER_CATALOG_KEYS,
     WRAPPER_OWNER_NAVIGATION,
     _VALID_WRAPPER_OWNER_TYPES,
+    _WEB_REBUILD_TASK,
     _placeholder_html,
+    _rebuild_shell_invocation,
     authoring_catalog,
     derive_projection,
     validate_narrative_graphs,
@@ -1391,6 +1393,37 @@ class TestLoadedPageStalenessBanner(unittest.TestCase):
                 patch(f"{N}._current_dist_mtime", return_value=2000.0):
             ed._refresh_staleness_banner()
         self.assertTrue(ed._staleness_banner.isHidden())
+
+
+class TestWebRebuildInvocation(unittest.TestCase):
+    """「重建并刷新」按钮的进程调用必须分平台。
+
+    旧实现只有 POSIX 版（`$SHELL -lc 'cd <root> && npm run …'`，回落 `/bin/zsh`）：
+    Windows 原生启动的编辑器里 `SHELL` 为空，程序名指向一个不存在的路径，QProcess 必然
+    FailedToStart —— 这个按钮在 Windows 上从来只会弹「无法启动重建命令」。
+    """
+
+    def test_windows_goes_through_the_shared_npm_entrypoint(self) -> None:
+        N = "tools.editor.editors.narrative_state_editor"
+        fake = ("C:/Windows/System32/cmd.exe",
+                ["/d", "/c", "npm.cmd", "run", _WEB_REBUILD_TASK])
+        with patch(f"{N}.npm_run_command", return_value=fake) as spy:
+            self.assertEqual(_rebuild_shell_invocation(windows=True), fake)
+        spy.assert_called_once_with("run", _WEB_REBUILD_TASK)
+
+    def test_posix_keeps_the_login_shell_form(self) -> None:
+        N = "tools.editor.editors.narrative_state_editor"
+        with patch.dict("os.environ", {"SHELL": "/bin/zsh"}):
+            program, args = _rebuild_shell_invocation(windows=False)
+        self.assertEqual(program, "/bin/zsh")  # profile 里的 nvm/homebrew PATH 还得靠它
+        self.assertEqual(args[0], "-lc")
+        self.assertIn(f"npm run {_WEB_REBUILD_TASK}", args[1])
+
+    def test_rebuild_task_matches_package_json(self) -> None:
+        """常量与 package.json 对齐：任务名飘了的话按钮会「跑起来即失败」。"""
+        root = Path(__file__).resolve().parents[3]
+        scripts = json.loads((root / "package.json").read_text(encoding="utf-8"))["scripts"]
+        self.assertIn(_WEB_REBUILD_TASK, scripts)
 
 
 class TestReview20260717Regressions(unittest.TestCase):

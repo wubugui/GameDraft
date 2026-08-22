@@ -100,6 +100,19 @@
       "autoPort": false
     },
     {
+      "name": "scene-relight",
+      "runtimeExecutable": ".tools/venv/Scripts/python.exe",
+      "runtimeArgs": [
+        "-m",
+        "tools.scene_relight",
+        "--serve",
+        "--port",
+        "5317"
+      ],
+      "port": 5317,
+      "autoPort": false
+    },
+    {
       "name": "char-lighting-lab",
       "runtimeExecutable": "sh",
       "runtimeArgs": [

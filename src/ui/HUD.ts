@@ -165,7 +165,14 @@ export class HUD {
   private unreadProvider: ((panel: string) => boolean) | null = null;
   /** 入口钮上的未读红点：随入口条重建，逐帧只改 visible（不重画） */
   private entryDots = new Map<string, Graphics>();
-  private readonly isTouchDevice = useCoarsePointerOrTouchDevice();
+  /**
+   * 触屏判据**现算不缓存**。构造时冻住的话：判据来源（设备模拟开关、外接触屏拔插）变了
+   * 只能刷新页面才恢复，而且会跟每帧现算的 TouchMobileControls 错位成「两套入口都在 / 都不在」。
+   * 调用点只有入口条重建与提示条重建，都不在逐帧路径上，现算的开销可以忽略。
+   */
+  private get isTouchDevice(): boolean {
+    return useCoarsePointerOrTouchDevice();
+  }
 
   /** 三把阳火 + 气味丝的合装列（随芯片列高度让位，见 layoutMetaColumn） */
   private metaColumn: Container;

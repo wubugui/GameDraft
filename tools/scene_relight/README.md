@@ -19,6 +19,26 @@ sh scripts/py.sh -m tools.scene_relight --scene 码头白天 --preset 夜 --expo
 sh scripts/py.sh -m tools.scene_relight --all --preset 夜 --export   # 批量
 ```
 
+**接进游戏的两步**（离线导出变体图是旧路线，现在走运行时重打光）：
+
+```bash
+# ① 烘几何场：法线 / 天穹可见性 / 3D 网格 / GI 命中图 → runtime/scenes/<id>/lighting2/
+sh scripts/py.sh -m tools.scene_relight.bake --scene 雾津街头
+sh scripts/py.sh -m tools.scene_relight.bake --all              # 全部（约 3 分钟/场景）
+
+# ② 恒等迁移：把场景接进统一光影且**画面零变化**（S_new ≡ S_day）
+sh scripts/py.sh -m tools.scene_relight.migrate --all
+sh scripts/py.sh -m tools.scene_relight.migrate --all --verify  # 只验不写
+```
+
+★ **烘的全是几何项**，与灯、时刻、天光无关——摆灯、调参、推进时刻**都不用重烘**。
+
+★ 恒等迁移写的是**占位**配置（`lighting.placeholder: true`）：背景已接新管线、
+画面逐像素不变，但**角色仍走旧 probe 路径**（恒等只对背景成立）。
+作者真给某个场景摆了灯之后，删掉 `placeholder` 键，那个场景的角色才切过来。
+
+两步也可以在桌面壳里点（`POST /api/bake?scene=` / `POST /api/migrate?scene=`）。
+
 桌面壳零浏览器缓存(app.py,三层):off-the-record profile(纯内存,磁盘无缓存目录)
 + 显式 NoCache/NoPersistentCookies + 服务端全响应 `no-store`。F5/Ctrl+R 刷新。
 

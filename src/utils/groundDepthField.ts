@@ -1,3 +1,5 @@
+import { WR_EPS_PROJ, wrWorldToPxDiv } from './worldReconstruct';
+
 /**
  * 行走面深度场（实验室 `walk_depth` → `lighting/ground_d.png`）。
  *
@@ -37,7 +39,14 @@ export function sampleGroundField(
     + data[i01] * (1 - fx) * fy + data[i01 + 1] * fx * fy;
 }
 
-/** 世界坐标直采（场景世界宽高 → work 像素）。 */
+/**
+ * 世界坐标直采（场景世界宽高 → work 像素）。
+ *
+ * 换算走 {@link wrWorldToPxDiv}（世界重建数学的唯一真相源），**先除后乘**——
+ * 与本函数迁移前的写法逐位一致。改成 `worldX * (w/S)` 会在末位产生 ~1e-14 的差异，
+ * 视觉为零但破坏"逐位复现现役"这条迁移口径。
+ * ⚠ 这里的 eps 是 `WR_EPS_PROJ`(1e-6) 不是 `WR_EPS_SCENE`(1e-3)——原文如此，勿改。
+ */
 export function sampleGroundFieldWorld(
   field: GroundDepthField,
   sceneWorldW: number,
@@ -47,7 +56,7 @@ export function sampleGroundFieldWorld(
 ): number {
   return sampleGroundField(
     field.data, field.w, field.h,
-    (worldX / Math.max(sceneWorldW, 1e-6)) * field.w,
-    (worldY / Math.max(sceneWorldH, 1e-6)) * field.h,
+    wrWorldToPxDiv(worldX, sceneWorldW, field.w, WR_EPS_PROJ),
+    wrWorldToPxDiv(worldY, sceneWorldH, field.h, WR_EPS_PROJ),
   );
 }

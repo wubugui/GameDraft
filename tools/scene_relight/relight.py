@@ -292,7 +292,12 @@ def relight(scene: Scene, params: dict | None = None, width: int | None = None) 
     # 夜间 amb_hemi 拉高 → 巷道/屋檐下/立面按真实遮蔽结构变暗,不是全局压。
     amb_rgb = kelvin_rgb(p['amb_kelvin'])
     if geo is not None:
-        sky = sky_field(geo, px_scale)
+        # ★ 优先用**烘好的**天穹可见性——运行时消费的就是它。现算的高斯半径随预览宽度变,
+        #   与烘焙的固定 512 宽不同,会让工具与游戏差一点点(实测 1.19/255)。用同一张 ⇒
+        #   parity 是构造性的。没烘过的场景才回落现算(纯预览场景仍可用)。
+        sky = scene.baked_skyvis((w, h))
+        if sky is None:
+            sky = sky_field(geo, px_scale)
         s_day = (1.0 - p['day_hemi']) + p['day_hemi'] * sky
         s_new = p['amb_int'] * amb_rgb[None, None, :] * \
             ((1.0 - p['amb_hemi']) + p['amb_hemi'] * sky)[..., None]

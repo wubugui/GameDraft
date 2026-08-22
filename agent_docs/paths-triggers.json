@@ -244,6 +244,12 @@
       ]
     },
     {
+      "glob": "src/authoring/*",
+      "docs": [
+        "light-authoring-gizmos"
+      ]
+    },
+    {
       "glob": "src/core/ActionExecutor.ts",
       "docs": [
         "zone-lifecycle-contracts"
@@ -307,7 +313,14 @@
     {
       "glob": "src/core/SceneDepthSystem.ts",
       "docs": [
+        "coordinate-spaces",
         "entity-lighting"
+      ]
+    },
+    {
+      "glob": "src/core/UnifiedCharacterLighting.ts",
+      "docs": [
+        "character-lighting"
       ]
     },
     {
@@ -379,6 +392,12 @@
       ]
     },
     {
+      "glob": "src/rendering/Character*",
+      "docs": [
+        "coordinate-spaces"
+      ]
+    },
+    {
       "glob": "src/rendering/CharacterLitSprite.ts",
       "docs": [
         "character-lighting"
@@ -422,9 +441,24 @@
       ]
     },
     {
+      "glob": "src/rendering/entityShadowBinding.ts",
+      "docs": [
+        "entity-lighting",
+        "lighting-scale-reference"
+      ]
+    },
+    {
       "glob": "src/rendering/lightEnv*",
       "docs": [
         "entity-lighting"
+      ]
+    },
+    {
+      "glob": "src/rendering/lighting/**",
+      "docs": [
+        "character-lighting",
+        "coordinate-spaces",
+        "lighting-scale-reference"
       ]
     },
     {
@@ -612,6 +646,12 @@
       ]
     },
     {
+      "glob": "src/ui/debugLightingSection.ts",
+      "docs": [
+        "light-authoring-gizmos"
+      ]
+    },
+    {
       "glob": "src/ui/smell/**",
       "docs": [
         "smell-system"
@@ -633,6 +673,12 @@
       "glob": "src/utils/scriptedDialogueSpeaker.ts",
       "docs": [
         "dialogue-portrait-runtime"
+      ]
+    },
+    {
+      "glob": "src/utils/worldReconstruct.ts",
+      "docs": [
+        "coordinate-spaces"
       ]
     },
     {
@@ -687,7 +733,8 @@
       "glob": "tools/character_lighting_lab/**",
       "docs": [
         "character-lighting",
-        "scene-bake-downstream"
+        "scene-bake-downstream",
+        "scene-radiance-restoration-pipeline"
       ]
     },
     {
@@ -770,6 +817,14 @@
       "glob": "tools/editor/editors/scene_editor.py",
       "docs": [
         "scene-view-filter-axes"
+      ]
+    },
+    {
+      "glob": "tools/editor/editors/scene_lights.py",
+      "docs": [
+        "coordinate-spaces",
+        "light-authoring-gizmos",
+        "lighting-scale-reference"
       ]
     },
     {
@@ -907,6 +962,14 @@
         "editor-tools-norms",
         "parallax-layer-assembly",
         "parallax-scene-runtime"
+      ]
+    },
+    {
+      "glob": "tools/scene_relight/**",
+      "docs": [
+        "coordinate-spaces",
+        "lighting-scale-reference",
+        "scene-radiance-restoration-pipeline"
       ]
     },
     {

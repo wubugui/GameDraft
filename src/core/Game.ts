@@ -85,8 +85,10 @@ import type {
   GameConfig,
   MapConfigFile,
   MapNodeDef,
+  EntityShadowBinding,
   SceneData,
   SceneDataRaw,
+  SceneLightingDef,
   ScenarioCatalogFile,
   SceneLightEnv,
   ICutsceneActor,
@@ -129,14 +131,21 @@ import { DocumentRevealManager } from '../systems/DocumentRevealManager';
 import { RuleOfferRegistry } from './RuleOfferRegistry';
 import { InteractionCoordinator } from './InteractionCoordinator';
 import { EventBridge } from './EventBridge';
-import { DebugTools, type ScenarioDebugPanelRow } from './DebugTools';
+import { DebugTools, type ScenarioDebugPanelRow, type LightingSyncHooks } from './DebugTools';
+// 运行时编辑模式（DEV 专用，在真实画面里摆灯）。与 DebugTools 同款门控：
+// 静态 import，但只在 `import.meta.env.DEV` 分支里实例化，prod build 整块剔除。
+import { AuthoringMode } from '../authoring/AuthoringMode';
+import { RuntimeLightingSync } from '../dev/runtimeLightingSync';
+import type { LightSpaceGeometry } from '../authoring/lightSpace';
 import { reportDevError } from './devErrorOverlay';
 import { SceneDepthSystem } from './SceneDepthSystem';
 import {
   CharacterLightingSystem,
   type CharShadingEntityInfo,
-  type ShadowLightSample,
 } from './CharacterLightingSystem';
+import { SceneLightingSystem } from './SceneLightingSystem';
+import { UnifiedCharacterLighting } from './UnifiedCharacterLighting';
+import { resolveBoundShadow, type ShadowBindingContext } from '../rendering/entityShadowBinding';
 import { CharacterShadingFilter } from '../rendering/CharacterShadingFilter';
 import { getNormalAtlasSource, normalAtlasUrlFor } from '../rendering/spriteNormalAtlas';
 import type { LitShaderProvider, SpriteEntity } from '../rendering/SpriteEntity';
@@ -238,6 +247,11 @@ export interface GameStartOptions {
 declare global {
   interface Window {
     __gameDevAPI?: {
+      /**
+       * 当前场景的统一光影参数，供编辑器「从运行时拉取灯位」。
+       * 只读、不碰磁盘；没进场景 / 没配 lighting 时返回 null。
+       */
+      getSceneLightingForEditor(): { sceneId: string; lighting: unknown } | null;
       /** @param fromStep 顶层步下标：之前的步瞬时快进建立画面状态，从该步起常速排演 */
       playCutscene(id: string, fromStep?: number): void;
       /** 编辑器缩略条播放头轮询用：当前播到哪段过场的哪一步（未播放时 path 为 null） */
@@ -289,30 +303,33 @@ type DevNarrativeWarp = {
  *  此处留边界余量，超限即丢弃最重的 eventTrace 后再上报，防 413 与主线程卡顿。 */
 const RUNTIME_DEBUG_SNAPSHOT_MAX_BYTES = 1_900_000;
 
-/** 光源驱动阴影:单槽平滑状态(按光源身份绑定,时间低通消抖/交叉淡化) */
-type ShadowSlotState = {
-  /** 绑定的光源(-1=太阳,-3=能流主光,-2=空槽) */
-  light: number;
-  /** 影子屏幕方向角(deg,planar 剪切方向,最短弧平滑) */
-  az: number;
-  /** 光源仰角(deg,决定影长) */
-  el: number;
-  w: number;
-  tan: number;
-};
-
-/** 每实体阴影 entry:shadow=手调单影(兼 deferred);auto 模式用 extra 里的 planar 剪影槽 */
+/**
+ * 每实体阴影 entry。
+ *
+ * `shadow` = 没配绑定时的手调单影（兼 deferred 实现）；
+ * `extra` = 配了绑定时的 planar 剪影，与 `EntityShadowBinding[]` **逐条对位**。
+ *
+ * 2026-08-20 起没有"槽位分配"这回事了：作者列表里的第 i 条就是第 i 个实例，
+ * 不投影的那条把浓度压到 0。旧的按光源身份绑槽 + 时间低通已随自动 resolve 一起删除。
+ */
 type EntityShadowEntry = {
+  /** entityShadows map 里的键（'player' / npcId / 'hotspot:<id>'）。绑定按它查。 */
+  key: string;
   shadow: IEntityShadow;
   src: ShadowSource;
   owner: unknown;
-  /** 光源驱动模式的 planar 剪影槽(0..K-1;此时 shadow 熄灭。剪影形状=用户红线) */
+  /** 与绑定列表逐条对位的 planar 剪影（剪影形状=用户红线，不许逐像素求交） */
   extra?: IEntityShadow[];
-  /** 槽平滑状态(与 extra 对位) */
-  slots?: ShadowSlotState[];
-  /** 每槽 env 覆盖对象(缓存复用,避免逐帧分配;末位=熄灭 env) */
+  /** 每条 env 覆盖对象(缓存复用,避免逐帧分配) */
   envSlots?: ResolvedLightEnv[];
 };
+
+/**
+ * 冻主 tick 的原因。两个来源互相独立、可以同时成立，见 `logicFreezeReasons`。
+ * · `narrative` = 叙事断点命中，等调试器发「继续」
+ * · `authoring` = 进了运行时编辑模式（`src/authoring`），DEV 专用
+ */
+type LogicFreezeReason = 'narrative' | 'authoring';
 
 export class Game {
   private eventBus: EventBus;
@@ -412,9 +429,23 @@ export class Game {
   private eventBridge!: EventBridge;
   /** T1：仅 DEV 装配（F10 坐标、中键缩放、F2 调试区块等纯开发设施），生产为 null */
   private debugTools: DebugTools | null = null;
+  /**
+   * F2「光影」页交出来的独奏钩子（装配光影页时注入；prod 不装配）。
+   * 独奏是临时视图态：同步在独奏期间**只发不收**，且发出去的那份要先还原。
+   */
+  private lightingSyncHooks: LightingSyncHooks | null = null;
+  /** 场景光照的双向实时同步（DEV 专用，走 dev server 的同步槽） */
+  private lightingSync: RuntimeLightingSync | null = null;
+  /** 运行时编辑模式（DEV 专用）。null = 生产构建，或还没装配到。 */
+  private authoringMode: AuthoringMode | null = null;
+  private unsubAuthoringHotkey: (() => void) | null = null;
   private sceneDepthSystem: SceneDepthSystem;
   /** 角色照明(烘焙 probe 消费端);载荷缺失/过期时 inactive,回落旧色调管线 */
   private characterLighting: CharacterLightingSystem;
+  /** 统一光影系统（lighting-rebuild）。场景未配 `lighting` 块时整体不启用。 */
+  private sceneLighting: SceneLightingSystem;
+  /** 角色并入统一光影的那一路。未启用时实体回落 `characterLighting` 的 probe 路径。 */
+  private readonly unifiedCharLighting = new UnifiedCharacterLighting();
   private waterMinigameManager: WaterMinigameManager;
   private sugarWheelMinigameManager: SugarWheelMinigameManager;
   private paperCraftMinigameManager: PaperCraftMinigameManager;
@@ -463,6 +494,14 @@ export class Game {
    */
   private entityShadows = new Map<string, EntityShadowEntry>();
   /**
+   * 实体阴影绑定表。键同 `entityShadows`（'player' / npcId / 'hotspot:<id>'）。
+   *
+   * **手动指定，系统不猜**（制作人 2026-08-20 定死）。进场景时从场景数据播种，
+   * 之后由 `setEntityShadow` Action 改。**不入存档**——它是演出态，
+   * 跟着场景数据走；存档里存一份会让"改了场景 JSON 但老档还是旧影子"。
+   */
+  private entityShadowBindings = new Map<string, EntityShadowBinding[]>();
+  /**
    * 场景 onEnter 执行期间的隐式叙事 owner（`scene:<场景id>`）。
    * 供 onEnter 里未显式指定 owner 的 startDialogueGraph 与条件 `@owner` 继承当前场景。
    * 仅在 sceneEnterRunner 执行窗口内非空。
@@ -485,13 +524,31 @@ export class Game {
   private mainTick: (() => void) | null = null;
   /** sprite 网格着色的共享帧组同步(挂 Pixi ticker,不经游戏状态分支;destroy 时摘除) */
   private charLitFrameSync: (() => void) | null = null;
-  /** 网格着色 shader 供给方:实体只管几何,shader 建/换/收归照明系统 + 法线图集寻址在这 */
+  /**
+   * 网格着色 shader 供给方:实体只管几何,shader 建/换/收归照明系统 + 法线图集寻址在这。
+   *
+   * **两条路径在这里分流**(2026-08-20):
+   * · 场景配了 `lighting` 且烘好载荷 → 走统一光影(角色与背景同一份光、同一条显示变换)
+   * · 否则 → 回落旧的 probe/体素路径
+   *
+   * 回收时按 `owns` 判归属,**不能按当前 active 判** —— 场景切换时新场景可能已经
+   * 切到另一条路径,而待回收的 shader 还是上一条路径建的,按 active 判会销毁到错的那边。
+   */
   private readonly litShaderProvider: LitShaderProvider = {
-    create: (colorTex, sheetUrl) => this.characterLighting.createEntityLitShader(
-      colorTex, getNormalAtlasSource(this.assetManager, sheetUrl)),
-    swapTextures: (sh, colorTex, sheetUrl) => this.characterLighting.swapEntityLitTextures(
-      sh, colorTex, getNormalAtlasSource(this.assetManager, sheetUrl)),
-    release: (sh) => this.characterLighting.releaseEntityLitShader(sh),
+    create: (colorTex, sheetUrl) => {
+      const nrm = getNormalAtlasSource(this.assetManager, sheetUrl);
+      return this.unifiedCharLighting.createShader(colorTex, nrm)
+        ?? this.characterLighting.createEntityLitShader(colorTex, nrm);
+    },
+    swapTextures: (sh, colorTex, sheetUrl) => {
+      const nrm = getNormalAtlasSource(this.assetManager, sheetUrl);
+      if (this.unifiedCharLighting.owns(sh)) this.unifiedCharLighting.swapTextures(sh, colorTex, nrm);
+      else this.characterLighting.swapEntityLitTextures(sh, colorTex, nrm);
+    },
+    release: (sh) => {
+      if (this.unifiedCharLighting.owns(sh)) this.unifiedCharLighting.release(sh);
+      else this.characterLighting.releaseEntityLitShader(sh);
+    },
   };
   /** Pixi 渲染之后 drain gl.getError（优先级 UTILITY，低于内置 render） */
   private glPostRenderDrain: (() => void) | null = null;
@@ -506,9 +563,16 @@ export class Game {
   private runtimeDebugSnapshotErrorLogged = false;
   private runtimeDebugSnapshotOversizeLogged = false;
   private fixedTickMode = false;
-  /** 叙事断点命中期间为 true：主 tick 整个跳过（画面停在那一帧，玩家动不了）。 */
-  private narrativeBreakFrozen = false;
-  /** 冻结前 stage 的交互模式；解冻时原样还回去（不是写死 'static'）。 */
+  /**
+   * 冻主 tick 的**原因集合**（叙事断点命中 / 运行时编辑模式）。非空即冻：
+   * 主 tick 整个跳过，画面停在那一帧，玩家动不了。
+   *
+   * ⚠ 为什么是集合不是布尔：两个冻结源可能同时成立（断点断下来之后再进编辑模式）。
+   * 裸布尔的话先退出的那一方会把另一方的冻结也一起解掉，玩家在"断点还断着"的时候
+   * 突然又能动了。
+   */
+  private readonly logicFreezeReasons = new Set<LogicFreezeReason>();
+  /** 冻结前 stage 的交互模式；全部解冻时原样还回去（不是写死 'static'）。 */
   private stageEventModeBeforeFreeze: import('pixi.js').EventMode | null = null;
   /** 主 ticker 与启动直达路由均已落地后才开放自动化命令，防启动场景覆盖测试场景。 */
   private runtimeReady = false;
@@ -675,6 +739,7 @@ export class Game {
     this.zoneSystem = new ZoneSystem(this.eventBus, this.flagStore, this.actionExecutor, this.ruleOfferRegistry);
     this.sceneDepthSystem = new SceneDepthSystem();
     this.characterLighting = new CharacterLightingSystem();
+    this.sceneLighting = new SceneLightingSystem();
     // 载荷就绪(depthLoader 内已 await,先于 scene:ready):把行走面深度场交给深度系统——
     // 遮挡脚点/碰撞反投影/影子落地面从此以它为真值,不再用 floor_depth_A/B 全图拟合直线
     // (见 entity-lighting「脚点锚必须同源」)。滤镜由随后的 scene:ready 权威挂载(此时
@@ -1651,6 +1716,21 @@ export class Game {
         this.scriptedSpeakerDisplayFallback(scriptedNpcId ?? ''),
       resolveScriptedLineExtras: (rawSpeaker, portraitRef, scriptedNpcId) =>
         this.resolveScriptedLineExtras(rawSpeaker, portraitRef, scriptedNpcId ?? ''),
+      setEntityShadowBindings: (target, bindings) => {
+        // target 的命中面与 showEmote 一致（player / NPC id / **裸**热区 id）——
+        // 内部键给热区加了 `hotspot:` 前缀防与 npc.id 撞，这里补上。
+        // 让作者写裸 id 是为了实体重构（改名/迁移）能扫到它，前缀形式会对重构隐形。
+        let key = target;
+        if (target !== 'player' && !this.sceneManager.getNpcById(target)) {
+          const isHotspot = this.sceneManager.getCurrentHotspots()
+            .some((h) => h.def.id === target);
+          if (isHotspot) key = `hotspot:${target}`;
+        }
+        // 空数组 = 回到手调单影（删表项而不是存个空表，免得"配了但是空的"与"没配"
+        // 在下游变成两种行为）
+        if (bindings.length === 0) this.entityShadowBindings.delete(key);
+        else this.entityShadowBindings.set(key, bindings);
+      },
       ruleOfferRegistry: this.ruleOfferRegistry,
       inventoryManager: this.inventoryManager,
       rulesManager: this.rulesManager,
@@ -2013,6 +2093,70 @@ export class Game {
       (msg) => this.logDepthDiag(msg),
     );
 
+    /**
+     * 运行时编辑模式（在真实画面里摆灯）。与 F2 同门控、同一份 `sceneLighting.params`、
+     * 同一条存回通道——它只多提供"画面上直接拖"这一种输入方式。
+     *
+     * 隔离靠三样：DEV 门控（代码）、冻主 tick 且不碰 sceneMemory（状态）、
+     * 退出时从磁盘重载场景（数据）。详见 `src/authoring/AuthoringMode.ts`。
+     */
+    if (import.meta.env.DEV) {
+      this.authoringMode = new AuthoringMode({
+        renderer: this.renderer,
+        camera: this.camera,
+        setFrozen: (frozen) => this.setLogicFrozen('authoring', frozen),
+        getSceneId: () => this.sceneManager.currentSceneData?.id ?? null,
+        reloadScene: (id) => this.reloadScene(id),
+        getLightSpaceGeometry: () => this.buildLightSpaceGeometry(),
+        getParams: () => this.sceneLighting.params,
+        applyParams: (part) => {
+          const cur = this.sceneLighting.params;
+          if (!cur) return;
+          this.applySceneLightingParams({ ...cur, ...part });
+        },
+        // 主 tick 冻着 ⇒ tick 尾巴上的这两句不会跑。不自己驱动的话拖灯毫无反应
+        // （光照缓存不重算）、影子也停在旧方向上。
+        pumpFrame: () => {
+          this.sceneLighting.update(this.renderer.app.renderer);
+          this.updateEntityShadows();
+        },
+        refreshDebugPanel: () => this.debugPanelUI?.refresh(),
+        getSyncStatus: () => this.lightingSync?.statusLine() ?? '',
+        onSceneChanged: (cb) => {
+          this.eventBus.on('scene:enter', cb);
+          return () => this.eventBus.off('scene:enter', cb);
+        },
+        log: (m) => this.debugPanelUI?.log(m),
+      });
+      /**
+       * 光照的**双向实时同步**：游戏这边（F3 摆灯 / F2 滑条）与桌面编辑器场景页的灯表
+       * 改的是同一份 `lighting`，任一边动了另一边就跟上，不用按按钮。
+       *
+       * 走 dev server 的同步槽而不是编辑器的 WebEngine 桥——游戏开在外部浏览器时
+       * 桥是断的，而那正是最常见的用法。
+       */
+      this.lightingSync = new RuntimeLightingSync({
+        getSceneId: () => this.sceneManager.currentSceneData?.id ?? null,
+        getParams: () => this.sceneLighting.params,
+        applyParams: (def) => this.applySceneLightingParams(def),
+        // 拖灯中 / 独奏中只发不收：收会把手上的动作或视图当场冲掉
+        isBusy: () => (this.authoringMode?.isDragging ?? false)
+          || (this.lightingSyncHooks?.isSoloActive() ?? false),
+        exportFixup: (def) => this.lightingSyncHooks?.exportFixup(def) ?? def,
+        // 选中态过同步：编辑器选哪盏，画面就高亮哪盏，反之亦然
+        getSelectedId: () => this.lightingSyncHooks?.getSelectedId() ?? null,
+        setSelectedId: (id) => this.lightingSyncHooks?.setSelectedId(id),
+        log: (m) => this.debugPanelUI?.log(m),
+      }, `game:${this.runtimeBootId}`);
+      this.lightingSync.start();
+
+      this.unsubAuthoringHotkey = this.inputManager.subscribeKeyDown((e) => {
+        // F3 进/出。**刻意不走 registerPanel**：它不是面板——退出要问存盘、要重载场景，
+        // 塞进面板的 open/close 语义里会把那些副作用藏起来。
+        if (e.code === 'F3') this.authoringMode?.toggle();
+      });
+    }
+
     /** T1：调试工具与 F2 面板注册统一按 import.meta.env.DEV 门控（判据与
      *  TouchMobileControls 的「调试」chip 一致），生产玩家无任何调试入口。 */
     if (import.meta.env.DEV) this.debugTools = new DebugTools({
@@ -2045,6 +2189,15 @@ export class Game {
       toggleFrustumCulling: () => { this.frustumCullingEnabled = !this.frustumCullingEnabled; },
       getAuthoringMarkersVisible: () => this.sceneManager.getAuthoringMarkersVisible(),
       setAuthoringMarkersVisible: (v) => this.sceneManager.setAuthoringMarkersVisible(v),
+      // F2「光影」页的编辑模式入口（进/出、可用性、与画布互选）
+      authoring: {
+        isActive: () => this.authoringMode?.isActive ?? false,
+        availability: () => this.authoringMode?.availability()
+          ?? { ok: false, reason: '编辑模式未装配' },
+        toggle: () => this.authoringMode?.toggle(),
+        selectedId: () => this.authoringMode?.selectedLightId ?? null,
+        select: (id) => this.authoringMode?.selectLight(id),
+      },
       goToDevScene: () => {
         void this.devLoadScene('dev_room');
       },
@@ -2116,11 +2269,7 @@ export class Game {
           probes: info.probes, lights: info.lights,
           hasVolumes: cl.hasVolumes,
           params: { ...cl.params, sunColor: [...cl.params.sunColor] as [number, number, number] },
-          shadowAuto: {
-            enabled: cl.shadowAuto.enabled, k: cl.shadowAuto.k,
-            ambScale: cl.shadowAuto.ambScale, tauMs: cl.shadowAuto.tauMs,
-            gain: cl.shadowAuto.gain, ready: cl.shadowAutoReady,
-          },
+          shadowStyle: { gain: cl.shadowStyle.gain },
         };
       },
       setCharLighting: (patch) => {
@@ -2139,7 +2288,56 @@ export class Game {
             void this.applyCharMode(nextMode);
           }
         }
-        if (patch.shadowAuto) Object.assign(cl.shadowAuto, patch.shadowAuto);
+        if (patch.shadowStyle) Object.assign(cl.shadowStyle, patch.shadowStyle);
+      },
+      // ---- 统一光影（lighting-rebuild）。与上面的角色照明是两代系统，刻意分开 ----
+      getSceneLighting: () => {
+        const p = this.sceneLighting.params;
+        if (!this.sceneLighting.active || !p) return null;
+        const lights = p.lights.filter((l) => l.enabled ?? true);
+        return {
+          active: true,
+          params: p,
+          backgroundWu: this.sceneLighting.backgroundWu,
+          lightCount: lights.length,
+          shadowLightCount: lights.filter((l) => l.castShadow).length,
+          radianceScale: this.sceneLighting.radianceScale,
+          giReady: this.sceneLighting.giBounceTexture !== null,
+        };
+      },
+      setSceneLighting: (part) => {
+        const cur = this.sceneLighting.params;
+        if (!cur) return;
+        this.applySceneLightingParams({ ...cur, ...part });
+      },
+      setSceneLightingDebug: (mode) => {
+        this.sceneLighting.setDebug(mode);
+        // 角色的调试视图与场景共用一个旋钮：1=天穹可见性 2=法线在两边都成立，
+        // 其余档角色回正常显示（场景那几档是重打光中间量，角色没有对应物）。
+        // 1=天穹可见性 2=法线 在两边都成立；5=GI 反弹只有角色侧有对应物，
+        // 其余档是场景重打光的中间量，角色回正常显示。
+        this.unifiedCharLighting.setDebug(
+          mode === 1 || mode === 2 || mode === 5 ? mode : 0);
+      },
+      setLightingSyncHooks: (hooks) => { this.lightingSyncHooks = hooks; },
+      // 同步连接状态：断了必须在界面上看得见，不能只在 console 里
+      getLightingSyncStatus: () => this.lightingSync?.statusLine() ?? '',
+      /**
+       * 角色的世界坐标(**wu**)。走与影子绑定同一条链:脚点 → 胸口 q → M-world → ×wuPerQUnit。
+       * 复用 `shadowBasisRows`(det=+1 的游戏约定 R),别自己再拼一遍矩阵。
+       */
+      getPlayerLightWorld: () => {
+        const rows = this.characterLighting.shadowBasisRows;
+        if (!rows || !this.sceneLighting.active) return null;
+        const q = this.characterLighting.chestQAt(
+          this.player.x, this.player.y, this.player.sprite.getWorldSize().height);
+        if (!q) return null;
+        const k = this.sceneLighting.wuPerQUnit;
+        return [
+          (rows[0] * q[0] + rows[1] * q[1] + rows[2] * q[2]) * k,
+          (rows[3] * q[0] + rows[4] * q[1] + rows[5] * q[2]) * k,
+          (rows[6] * q[0] + rows[7] * q[1] + rows[8] * q[2]) * k,
+        ] as [number, number, number];
       },
       getCharEChroma: () => this.characterLighting.eChroma,
       setCharEChroma: (v) => { this.characterLighting.eChroma = v; },
@@ -2343,7 +2541,7 @@ export class Game {
       const now = performance.now();
       const dt = Math.min((now - this.lastTime) / 1000, 0.1);
       this.lastTime = now;
-      if (this.narrativeBreakFrozen) {
+      if (this.logicFreezeReasons.size > 0) {
         /**
          * 断点冻结期间仍要**每帧清一次输入沿**。`endFrame()` 原本是 tick 的最后一句，
          * tick 被整个跳过的话 `keyJustPressed` / `mouseJustClicked` 会一直攒着——
@@ -2360,7 +2558,17 @@ export class Game {
     // 任何状态分支(filter 路径的"Cutscene 态驱动被跳过 → uniform 冻死"正是这么来的)。
     this.charLitFrameSync = () => {
       const wc = this.renderer.worldContainer;
-      this.characterLighting.syncFrame(wc.x, wc.y, this.camera.getProjectionScale());
+      const scale = this.camera.getProjectionScale();
+      this.characterLighting.syncFrame(wc.x, wc.y, scale);
+      // 统一光影那一路吃**同一个** worldContainer 位姿与同一组形体参数，
+      // 挂在同一个回调里 —— 两条路径不可能出现"一条同步了另一条没有"。
+      if (this.unifiedCharLighting.active) {
+        // ⚠ 只借 AO 两项。形体参数（bulge/flatten）**不**从这里拿——
+        //   `shapeParams` 里的值来自旧 probe 载荷、是给旧着色模型调的，
+        //   含义与新模型不同（见 SceneLightingDef.characterShape）。
+        const { aoContact, aoForm } = this.characterLighting.shapeParams;
+        this.unifiedCharLighting.syncFrame(wc.x, wc.y, scale, { aoContact, aoForm });
+      }
     };
     ticker.add(this.charLitFrameSync, undefined, UPDATE_PRIORITY.LOW + 1);
 
@@ -2558,6 +2766,38 @@ export class Game {
     this.narrativeDebugConsoleApiInstalled = true;
   }
 
+  /**
+   * 冻/解冻游戏逻辑（主 tick）。**按原因记账**：任一原因还在就继续冻。
+   *
+   * 只冻游戏逻辑：Pixi 照渲、WebSocket 照收、DOM 面板照点——所以叙事调试器的「继续」
+   * 送得进来，编辑模式的鼠标也还能用。
+   *
+   * ⚠ 除了主 tick 还要挡 **Pixi 事件**：UI 层的点击走 Pixi 的 DOM 事件，与主 tick 无关。
+   * 不挡的话断在"对话选项还亮着"那一拍时，鼠标点选项照样执行动作、照样发信号，
+   * "断下来是干净现场"就不成立了。世界热点/NPC 交互是 tick 里轮询按键的，本来就冻住了。
+   */
+  private setLogicFrozen(reason: LogicFreezeReason, frozen: boolean): void {
+    const before = this.logicFreezeReasons.size;
+    if (frozen) this.logicFreezeReasons.add(reason);
+    else this.logicFreezeReasons.delete(reason);
+    const after = this.logicFreezeReasons.size;
+    if ((before > 0) === (after > 0)) return;
+
+    const stage = this.renderer?.app?.stage;
+    if (!stage) return;
+    if (after > 0) {
+      // ⚠ 记住原值再改：stage 的缺省是 'passive'（只有子节点可交互），
+      // 解冻时写死 'static' 会把它改成"容器自己也可交互"——那是另一种行为。
+      if (this.stageEventModeBeforeFreeze === null) {
+        this.stageEventModeBeforeFreeze = stage.eventMode ?? 'passive';
+      }
+      stage.eventMode = 'none';
+    } else if (this.stageEventModeBeforeFreeze !== null) {
+      stage.eventMode = this.stageEventModeBeforeFreeze;
+      this.stageEventModeBeforeFreeze = null;
+    }
+  }
+
   /** 真正把探针挂上去（连接、观察者、五个玩家动作事件）。只由 enable 路径调用。 */
   private attachNarrativeDebugBridge(port: number): void {
     const bridge = installNarrativeDebugBridge({
@@ -2576,27 +2816,7 @@ export class Game {
       setState: (graphId, stateId) => this.narrativeStateManager.debugSetNarrativeState(graphId, stateId),
       reloadScene: (sceneId) => this.devLoadScene(sceneId || (this.sceneManager.currentSceneData?.id ?? '')),
       /** 断点期间冻主 tick（只冻游戏逻辑；Pixi 照渲、WebSocket 照收，所以「继续」送得进来） */
-      setLogicFrozen: (frozen) => {
-        this.narrativeBreakFrozen = frozen;
-        /**
-         * UI 层的点击走 Pixi 的 DOM 事件，与主 tick 无关——不挡的话断在"对话选项还亮着"
-         * 那一拍时，鼠标点选项照样执行动作、照样发信号，"断下来是干净现场"就不成立了。
-         * 世界热点/NPC 交互是 tick 里轮询按键的，本来就冻住了，只有 UI 层需要额外挡。
-         */
-        const stage = this.renderer?.app?.stage;
-        if (!stage) return;
-        if (frozen) {
-          // ⚠ 记住原值再改：stage 的缺省是 'passive'（只有子节点可交互），
-          // 解冻时写死 'static' 会把它改成"容器自己也可交互"——那是另一种行为。
-          if (this.stageEventModeBeforeFreeze === null) {
-            this.stageEventModeBeforeFreeze = stage.eventMode ?? 'passive';
-          }
-          stage.eventMode = 'none';
-        } else if (this.stageEventModeBeforeFreeze !== null) {
-          stage.eventMode = this.stageEventModeBeforeFreeze;
-          this.stageEventModeBeforeFreeze = null;
-        }
-      },
+      setLogicFrozen: (frozen) => this.setLogicFrozen('narrative', frozen),
     }, { port });
     this.narrativeDebugBridge = bridge;
     NarrativeStateManager.traceObserver = bridge.onTrace;
@@ -3408,6 +3628,27 @@ export class Game {
       this.refreshPlayerWorldCollision();
     });
 
+    // 统一光影（lighting-rebuild）。装载在 depthLoader **之后**——它要用深度纹理。
+    // 场景没配 lighting 块、或没烘 lighting2/ 载荷时安静地不启用，背景照旧走 Sprite。
+    this.sceneManager.setLightingLoader(async (sceneId, sceneData, primary) => {
+      const ok = await this.sceneLighting.load(sceneId, sceneData, this.assetManager, primary);
+      if (!ok) return null;
+      // ⚠ 顺序即正确性：先渲一次缓存（顺带建出 GI 反弹 RT），再接角色。
+      //   反过来的话角色拿到的 `giBounceTexture` 是 null（RT 是懒建的），
+      //   于是 GI 增益被压成 0 —— 表现为"这个场景没有反弹光"，而且不报错。
+      //   这一次渲染本来也必须做：免得揭幕那一帧背景是空的。
+      this.sceneLighting.update(this.renderer.app.renderer);
+      this.setupUnifiedCharacterLighting();
+      return this.sceneLighting.backgroundMesh;
+    });
+    this.sceneManager.setLightingUnloader(() => {
+      // 换场景 = 同步基线作废（新场景的第一份内容不是"已对齐"）
+      this.lightingSync?.resetBaseline();
+      // 顺序：先拆角色（它的 shader 绑着场景的深度/网格纹理），再卸场景
+      this.unifiedCharLighting.teardown();
+      this.sceneLighting.unload();
+    });
+
     this.sceneManager.setDepthUnloader(() => {
       if (this.probeVizGfx) { this.probeVizGfx.destroy(); this.probeVizGfx = null; }
       // 顺序即正确性：**先拆掉所有引用照明载荷纹理的东西，最后才销毁载荷**。
@@ -3469,6 +3710,119 @@ export class Game {
    * 场景加载时配置逐 entity 光照：解析光照环境、按背景建辐照度探针、启用光照系统。
    * 总开关关闭或上一探针存在时先清理。需在 depth load/loadDefault 之后调用（共享 sceneW/worldToPixel）。
    */
+  /**
+   * 把角色接进统一光影。两半几何各有各的真相源，在这里合成：
+   * · 场景那一半（深度场标定 / M / 3D 网格边界 / 深度纹理）← SceneLightingSystem
+   * · 角色那一半（work px 标定 / ground 深度场）           ← CharacterLightingSystem
+   *
+   * 任一半缺料就不启用，实体回落 probe 路径。**必须在 sceneLighting.load 成功之后调**。
+   */
+  private setupUnifiedCharacterLighting(): void {
+    // 恒等占位场景：背景已接进新管线（画面零变化），但**角色不动**。
+    // 恒等只对背景成立——旧路径给角色的是烘焙出来的 3D 辐射场，新路径给的是一个
+    // 标量天光项，两者不可能相等。硬切会让所有占位场景的角色一起从"有方向、有颜色的
+    // 烘焙光"变成平光，那不叫零变化。等作者真给这个场景摆了灯（删掉 placeholder）再切。
+    if (this.sceneLighting.params?.placeholder) {
+      this.unifiedCharLighting.teardown();
+      this.rebuildEntityLitShaders();
+      return;
+    }
+    const half = this.sceneLighting.characterGeometryHalf;
+    const charGeo = this.characterLighting.unifiedGeometry;
+    const skyGrid = this.sceneLighting.skyVisibilityTexture;
+    if (!half || !charGeo || !skyGrid) {
+      this.unifiedCharLighting.teardown();
+      return;
+    }
+    this.unifiedCharLighting.setup({
+      worldToWork: charGeo.worldToWork,
+      cal: charGeo.cal,
+      groundRange: charGeo.groundRange,
+      sceneWorld: charGeo.sceneWorld,
+      depthSize: half.depthSize,
+      depthCal: half.depthCal,
+      depthMapping: half.depthMapping,
+      mRows: half.mRows,
+      grid: half.grid,
+    }, {
+      ground: charGeo.ground,
+      skyGrid,
+      giBounce: this.sceneLighting.giBounceTexture,
+      depth: half.depth,
+    });
+
+    const def = this.sceneLighting.params;
+    const packed = this.sceneLighting.packedLights;
+    if (def && packed) {
+      this.unifiedCharLighting.applyParams(
+        def, packed, this.sceneLighting.wuPerQUnit, this.sceneLighting.radianceScale);
+    }
+    // 已经在场上的实体（玩家/NPC）是在 lighting 装载**之前**建的 shader，
+    // 那时统一光影还没启用，它们拿到的是旧路径的 shader —— 必须重建一遍，
+    // 否则「场景变了角色没变」正是制作人最不能接受的那种不一致。
+    this.rebuildEntityLitShaders();
+  }
+
+  /**
+   * 改场景光照参数的**唯一入口**。场景与角色在同一次调用里一起更新——
+   * 分两处调就迟早有一处漏掉，那时角色与背景会在某些参数上分家。
+   */
+  /**
+   * 交给编辑器的当前场景光照。**只读，不碰磁盘**。
+   *
+   * 落盘这件事 2026-08-21 起整个收回桌面编辑器：游戏侧不再有任何写场景 JSON 的通道，
+   * 由编辑器在场景页点「从运行时拉取灯位」把这份拿走、入脏，人再按 Save All 落盘
+   * （`save_all` 是工程唯一写盘出口）。这样"编辑器开着 + 游戏也在写"的互相覆盖从根上没了。
+   *
+   * ⚠ 先退独奏再交：独奏（只亮一盏）是**临时视图状态**，不退就等于把"其余灯全关"
+   * 当成作者意图交出去。这与从前存回按钮的做法一致（那时也是先 `applySolo(null)`）。
+   */
+  private getSceneLightingForEditor(): { sceneId: string; lighting: SceneLightingDef } | null {
+    const sceneId = this.sceneManager.currentSceneData?.id;
+    const raw = this.sceneLighting.params;
+    if (!sceneId || !raw) return null;
+    const lighting = this.lightingSyncHooks?.exportFixup(raw) ?? raw;
+    // 结构化克隆经 QWebEngine 回到 Python 侧；直接交内部对象等于把运行时状态借出去
+    return { sceneId, lighting: JSON.parse(JSON.stringify(lighting)) as SceneLightingDef };
+  }
+
+  /**
+   * 运行时摆灯要的坐标换算几何。凑不齐（没配 lighting / 没烘载荷 / 没有行走面场）返回 null，
+   * 调用方据此把入口灰掉并说明原因——不做"猜一个深度"的降级。
+   *
+   * ⚠ 全部取 **work** 栅格（照明载荷的 `cal` 与地面场），不是 `depthConfig.M` 那套 native。
+   * 两套栅格的比例逐场景不同（实测 1.95–4.0），混用不报错、只是位置差一截。
+   */
+  private buildLightSpaceGeometry(): LightSpaceGeometry | null {
+    const ground = this.characterLighting.groundDepthField;
+    const rows = this.characterLighting.shadowBasisRows;
+    const uni = this.characterLighting.unifiedGeometry;
+    if (!ground || !rows || !uni || !this.sceneLighting.active) return null;
+    return {
+      work: { w: ground.w, h: ground.h },
+      cal: { ppu: uni.cal.ppu, cx: uni.cal.cx, cy: uni.cal.cy },
+      sceneWorld: { w: uni.sceneWorld[0], h: uni.sceneWorld[1] },
+      basisRows: rows,
+      wuPerQUnit: this.sceneLighting.wuPerQUnit,
+      ground,
+    };
+  }
+
+  private applySceneLightingParams(def: SceneLightingDef): void {
+    this.sceneLighting.applyParams(def);
+    const packed = this.sceneLighting.packedLights;
+    if (packed) {
+      this.unifiedCharLighting.applyParams(
+        def, packed, this.sceneLighting.wuPerQUnit, this.sceneLighting.radianceScale);
+    }
+  }
+
+  /** 让场上所有开了网格着色的实体重新向供给方要一次 shader（路径切换时用）。 */
+  private rebuildEntityLitShaders(): void {
+    this.player?.sprite.refreshBakedShading();
+    for (const npc of this.sceneManager.getCurrentNpcs()) npc.refreshBakedShading();
+  }
+
   private setupSceneLighting(
     sceneData: SceneData,
     worldToPixelX: number,
@@ -3523,7 +3877,16 @@ export class Game {
       : null);
     if (!env || env.shadow.mode === 'off' || !this.sceneDepthSystem.isLightingEnabled) return;
 
+    // 绑定表整表重建：**运行时覆盖跟着场景走**。留到下一个场景等于"上一场演出的影子
+    // 跟着角色进了新场景"，那种残留极难查（画面上只是影子方向莫名其妙）。
+    this.entityShadowBindings.clear();
+    const sceneData = this.sceneManager.currentSceneData;
+    if (sceneData?.playerShadowBindings?.length) {
+      this.entityShadowBindings.set('player', sceneData.playerShadowBindings);
+    }
+
     this.entityShadows.set('player', {
+      key: 'player',
       shadow: this.createShadowImpl(env.shadow.mode),
       src: this.makePlayerShadowSource(),
       owner: this.player,
@@ -3576,7 +3939,11 @@ export class Game {
   private buildNpcShadowEntry(npc: Npc): void {
     const env = this.currentLightEnv;
     if (!env || npc.def.castShadow === false) return;
+    if (npc.def.shadowBindings?.length) {
+      this.entityShadowBindings.set(npc.id, npc.def.shadowBindings);
+    }
     this.entityShadows.set(npc.id, {
+      key: npc.id,
       shadow: this.createShadowImpl(env.shadow.mode),
       src: this.makeNpcShadowSource(npc),
       owner: npc,
@@ -3587,7 +3954,11 @@ export class Game {
   private buildHotspotShadowEntry(h: Hotspot): void {
     const env = this.currentLightEnv;
     if (!env || h.def.castShadow === false || !h.def.displayImage?.image) return;
+    if (h.def.shadowBindings?.length) {
+      this.entityShadowBindings.set(`hotspot:${h.def.id}`, h.def.shadowBindings);
+    }
     this.entityShadows.set(`hotspot:${h.def.id}`, {
+      key: `hotspot:${h.def.id}`,
       shadow: this.createShadowImpl(env.shadow.mode),
       src: this.makeHotspotShadowSource(h),
       owner: h,
@@ -3809,96 +4180,109 @@ export class Game {
   }
 
   /**
-   * 单实体阴影驱动。手调模式=原单影路径;光源驱动模式=K 个 **planar 剪影槽**:
-   * 影子形状=角色 mask 剪影经光向剪切(脚边钉住、头边偏移,用户红线——deferred
-   * 逐像素与重建面求交会把形状啃烂,auto 一律不用);模糊在剪影上做。
-   * 逐灯样本(屏幕方向/仰角/份额/角尺寸)→按光源身份绑槽→时间低通→逐槽 env 覆盖;
-   * 过渡即物理:份额归一化交叉淡化。
+   * 单实体阴影驱动。
+   *
+   * 配了 `EntityShadowBinding[]` → 逐条解出一个 **planar 剪影**（作者摆什么就是什么）；
+   * 没配 → 走原来的手调单影路径（旧场景零影响）。
+   *
+   * ## 为什么没有"自动"这一档
+   *
+   * 制作人 2026-08-20 明确要求删掉：「角色阴影的控制，要能够手动指定绑定灯光和
+   * 虚拟灯光，**不能自动 resolve**」。旧的能流模型会算出一组光、按身份绑槽、
+   * 再做时间低通——作者既看不懂也改不动，换盏灯就全变，演出上完全没有抓手。
+   *
+   * 现在这里**逐帧幂等**：同样的绑定 + 同样的位置永远解出同样的影子。
+   * 没有槽位继承、没有低通、没有隐藏状态。
+   *
+   * 影子形状只能是**剪影**（角色 mask 经光向剪切，脚边钉住、头边偏移）——
+   * 角色本身是一个片，deferred 逐像素与重建面求交会把形状啃烂，这条是用户红线。
    */
   private driveEntryShadows(
     entry: EntityShadowEntry,
     env: ResolvedLightEnv,
     field: ShadowProjectionField | null,
-    dtMs: number,
+    _dtMs: number,
   ): void {
-    const cl = this.characterLighting;
-    const offSlot = (): ResolvedLightEnv => {
-      const off = this.getSlotEnv(entry, 3, env);
+    const bindings = this.resolveEntityShadowBindings(entry);
+    const offSlot = (i: number): ResolvedLightEnv => {
+      const off = this.getSlotEnv(entry, i, env);
       off.shadow.darkness = 0; off.shadow.contact = 0;
       return off;
     };
-    if (!cl.shadowAutoReady) {
+
+    if (!bindings || bindings.length === 0) {
+      // 没配绑定：原手调单影。**不是**回落到某种自动行为——没配就是没配。
       entry.shadow.update(entry.src, env, field);
-      // 从 auto 切回手调:planar 槽熄灭
       if (entry.extra?.length) {
-        const off = offSlot();
-        for (const ex of entry.extra) ex.update(entry.src, off, null);
+        for (let i = 0; i < entry.extra.length; i++) {
+          entry.extra[i].update(entry.src, offSlot(i), null);
+        }
       }
       return;
     }
 
-    // auto:手调影子熄灭,K 个 planar 剪影槽接管
-    entry.shadow.update(entry.src, offSlot(), field);
-    const K = Math.max(1, Math.min(3, Math.round(cl.shadowAuto.k)));
-    entry.slots ??= [];
+    // 配了绑定：手调单影熄灭，逐条 planar 剪影接管
+    entry.shadow.update(entry.src, offSlot(bindings.length), field);
+
+    const ctx = this.shadowBindingContext(entry);
     entry.extra ??= [];
-    while (entry.extra.length < K) entry.extra.push(this.createShadowImpl('planar'));
-    const impls = entry.extra;
-    while (entry.slots.length < impls.length) {
-      entry.slots.push({ light: -2, az: 90, el: 45, w: 0, tan: 0.05 });
-    }
+    while (entry.extra.length < bindings.length) entry.extra.push(this.createShadowImpl('planar'));
 
-    const samples = cl.resolveShadowLights(
-      entry.src.getFootX(), entry.src.getFootY(), entry.src.getWorldHeight(),
-    );
-    // 槽位分配:已绑光源续用;失配槽淡出;新样本进空槽(w≈0 起步 → 淡入)
-    const bound = new Map<number, ShadowSlotState>();
-    for (const slot of entry.slots) if (slot.light !== -2) bound.set(slot.light, slot);
-    const targets = new Map<ShadowSlotState, ShadowLightSample>();
-    for (const s of samples) {
-      const slot = bound.get(s.light);
-      if (slot) { targets.set(slot, s); continue; }
-      const free = entry.slots.find((sl) => sl.light === -2 || (sl.w < 0.015 && !targets.has(sl)));
-      if (free) {
-        free.light = s.light;
-        free.az = s.screenAngleDeg; free.el = s.elevationDeg; free.tan = s.tanAlpha;
-        free.w = 0;   // 淡入起点
-        targets.set(free, s);
-      }
-    }
-
-    const k = 1 - Math.exp(-dtMs / Math.max(cl.shadowAuto.tauMs, 1));
-    for (let i = 0; i < impls.length; i++) {
-      const slot = entry.slots[i];
-      const t = targets.get(slot);
-      if (t) {
-        const da = ((t.screenAngleDeg - slot.az + 540) % 360) - 180;   // 最短弧
-        slot.az += da * k;
-        slot.el += (t.elevationDeg - slot.el) * k;
-        slot.w += (t.weight - slot.w) * k;
-        slot.tan += (t.tanAlpha - slot.tan) * k;
-      } else {
-        slot.w += (0 - slot.w) * k;
-        if (slot.w < 0.005) slot.light = -2;   // 槽释放
-      }
+    const style = this.characterLighting.shadowStyle;
+    for (let i = 0; i < entry.extra.length; i++) {
+      const impl = entry.extra[i] as IEntityShadow & {
+        setShadowColor?: (c: [number, number, number]) => void;
+      };
+      const sol = i < bindings.length && ctx ? resolveBoundShadow(bindings[i], ctx) : null;
+      if (!sol) { impl.update(entry.src, offSlot(i), null); continue; }
       const se = this.getSlotEnv(entry, i, env);
-      // planar 取向:angleRad = (key.azimuthDeg+180);slot.az 已是屏幕影子方向
-      se.key.azimuthDeg = slot.az - 180;
-      se.key.elevationDeg = slot.el;
-      // 浓度全自动:√份额(感知压缩,相对强弱)× 全局强度调制(绝对可见度总控)
-      se.shadow.darkness = Math.min(1, cl.shadowAuto.gain * Math.sqrt(Math.max(0, Math.min(slot.w, 1))));
-      // 影长=1/tan(仰角)自动(planar reach=H·length),封顶防拖满屏
-      const tanEl = Math.tan((Math.max(slot.el, 5) * Math.PI) / 180);
-      se.shadow.length = Math.min(2.5, Math.max(0.4, 1 / Math.max(tanEl, 0.05)));
-      // 模糊自动:做在剪影上,强度∝光源角尺寸 tanα
-      se.shadow.softness = Math.max(0.25, Math.min(1.2, slot.tan * 6));
-      // 接触斑=主槽,强度随全局 gain(自动,不再读手调 env.shadow.contact)
-      se.shadow.contact = i === 0 ? Math.min(1, 0.5 * cl.shadowAuto.gain) : 0;
-      // field 会覆盖 key 方向,auto 槽必须传 null 走本槽 env
-      const impl = impls[i] as IEntityShadow & { setShadowColor?: (c: [number, number, number]) => void };
-      impl.setShadowColor?.(cl.shadowAuto.color);
-      impl.update(entry.src, se, null);
+      // planar 取向:angleRad = (key.azimuthDeg+180);解出来的已是屏幕影子方向
+      se.key.azimuthDeg = sol.screenAngleDeg - 180;
+      se.key.elevationDeg = sol.elevationDeg;
+      // 全局强度只是**最后乘上去的调制**：绝对可见度靠它（暗场景 alpha 摊在黑地上看不见）
+      se.shadow.darkness = Math.min(1, style.gain * sol.darkness);
+      se.shadow.length = sol.length;
+      se.shadow.softness = sol.softness;
+      // 接触斑只给第一条：多条都画会在脚下糊成一团
+      se.shadow.contact = i === 0 ? Math.min(1, style.gain * sol.contact) : 0;
+      impl.setShadowColor?.(style.color);
+      // field 会覆盖 key 方向，绑定解出来的方向必须传 null 才不被冲掉
+      impl.update(entry.src, se, null, { spread: sol.spread, widthScale: sol.widthScale });
     }
+  }
+
+  /**
+   * 取实体的阴影绑定。运行时覆盖（`setEntityShadow` Action）优先于场景数据里的缺省。
+   * 返回 null = 没配，走手调单影。
+   */
+  private resolveEntityShadowBindings(entry: EntityShadowEntry): EntityShadowBinding[] | null {
+    return this.entityShadowBindings.get(entry.key) ?? null;
+  }
+
+  /** 解算绑定要用的场景上下文。缺深度基（无深度场景）返回 null → 不投影。 */
+  private shadowBindingContext(entry: EntityShadowEntry): ShadowBindingContext | null {
+    const rows = this.characterLighting.shadowBasisRows;
+    const lighting = this.sceneLighting.params;
+    if (!rows || !lighting) return null;
+    // 参考点取胸口（脚点抬半个身高）——影子方向该由角色所在处的光决定，
+    // 而脚点贴着地面时与灯的方向关系会被地面高差放大。
+    const worldH = entry.src.getWorldHeight();
+    const q = this.characterLighting.chestQAt(entry.src.getFootX(), entry.src.getFootY(), worldH);
+    if (!q) return null;
+    const charHeightQ = this.characterLighting.heightQ(worldH);
+    if (charHeightQ === null) return null;
+    return {
+      charWorld: [
+        rows[0] * q[0] + rows[1] * q[1] + rows[2] * q[2],
+        rows[3] * q[0] + rows[4] * q[1] + rows[5] * q[2],
+        rows[6] * q[0] + rows[7] * q[1] + rows[8] * q[2],
+      ],
+      wuPerQUnit: this.sceneLighting.wuPerQUnit,
+      mRows: rows,
+      lights: lighting.lights,
+      skyIntensity: lighting.sky.intensity,
+      charHeightQ,
+    };
   }
 
   /** 槽 env 覆盖对象:缓存复用,每帧从活 env 刷新标量再由调用方覆写方向/浓度/软度。 */
@@ -4768,6 +5152,8 @@ export class Game {
     });
 
     window.__gameDevAPI = {
+      // 编辑器「从运行时拉取灯位」的取数口（只读）。落盘在编辑器那边，游戏不写盘。
+      getSceneLightingForEditor: () => this.getSceneLightingForEditor(),
       playCutscene: (id: string, fromStep?: number) => this.devPlayCutscene(id, fromStep),
       getCutscenePlayback: () => this.cutsceneManager.getPlaybackHudSnapshot(),
       reload: () => this.devReload(),
@@ -6235,6 +6621,15 @@ export class Game {
     this.unsubRendererResize?.();
     this.unsubRendererResize = null;
 
+    // 运行时编辑模式：destroy 期不走 exit()（那条要问存盘、还要重载场景），
+    // 直接拆监听/ticker/DOM 并解冻——生命周期对称，不留残留。
+    this.lightingSync?.stop();
+    this.lightingSync = null;
+    this.unsubAuthoringHotkey?.();
+    this.unsubAuthoringHotkey = null;
+    this.authoringMode?.destroy();
+    this.authoringMode = null;
+
     /**
      * 面板属主契约（P3 双重 destroy 收敛）：凡 registerPanel 进 stateController 的面板
      * （quest/inventory/rules/dialogueLog/bookshelf/map/ruleUse/shop/menu/debug）由
@@ -6533,6 +6928,8 @@ export class Game {
     }
 
     this.updateLightEnvFromCurve();
+    // 统一光影：脏才重算场景辐射缓存，稳态是一次布尔判断（零光照计算）。
+    this.sceneLighting.update(this.renderer.app.renderer);
     this.updateEntityShadows();
 
     this.renderer.sortEntityLayer(this.player.x, this.player.y);

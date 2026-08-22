@@ -1,4 +1,39 @@
 {
+  "lighting": {
+    "sky": {
+      "color": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "intensity": 1.0,
+      "hemi": 0.3
+    },
+    "day": {
+      "sunIntensity": 0.0,
+      "sunElevationDeg": 50.0,
+      "sunAzimuthDeg": 180.0
+    },
+    "lights": [],
+    "display": {
+      "ev": 0.0,
+      "tonemap": "none",
+      "whiteKelvin": 6500.0,
+      "contrast": 1.0,
+      "saturation": 1.0,
+      "lift": 0.0,
+      "liftKelvin": 6500.0
+    },
+    "aoStrength": 1.0,
+    "ratioMax": 8.0,
+    "dehaze": 0.0,
+    "emissive": {
+      "gain": 0.0
+    },
+    "giGain": 0.0,
+    "placeholder": true,
+    "_migration": "identity-2026-08-21"
+  },
   "id": "枯井土地庙",
   "name": "土地庙后 · 枯井",
   "worldWidth": 1376.0,

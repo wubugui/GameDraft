@@ -177,7 +177,7 @@ class StatusTests(unittest.TestCase):
             self.assertEqual(rig.status().state, ldg.STATE_MODIFIED)
 
     def test_missing_source_says_it_does_not_know(self) -> None:
-        """源库不进版本控制,换台机器源就不在。那时**不许**猜——
+        """源库默认不拉(./dev.sh pull --audio 才带),换台机器源就不在。那时**不许**猜——
         判成"最新"会让人以为万事大吉,判成"过时"会让人白渲一整批。"""
         with TemporaryDirectory() as td:
             rig = _Rig(Path(td))

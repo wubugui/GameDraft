@@ -245,6 +245,15 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
     required: ['sceneId', 'entityKind', 'entityId', 'fieldName', 'value'],
     nonEmpty: ['sceneId', 'entityKind', 'entityId', 'fieldName'],
   },
+  // 角色阴影绑定（手动指定光源，禁止自动 resolve）。
+  // target 命中面同 showEmote：player / NPC id / **裸**热区 id。
+  // source: 'light:<灯id>' | 'virtual' | 'none'。后五个只有 virtual 用得全，
+  // 绑真实灯时 darkness/softness 可选覆盖、其余忽略 —— 所以一律 optional。
+  setEntityShadow: {
+    required: ['target', 'source'],
+    nonEmpty: ['target', 'source'],
+    optional: ['azimuthDeg', 'elevationDeg', 'darkness', 'softness', 'length'],
+  },
 
   // ---- 对话 / 演出 ----
   startDialogueGraph: {

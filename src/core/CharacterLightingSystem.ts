@@ -35,22 +35,6 @@ export interface ProbeVizPoint {
   valid: boolean;
 }
 
-/**
- * 光源驱动阴影:单个光源在角色处的阴影参数样本。
- * 约定与 env.key 一致(az 0=+X 绕 Y 逆时针,el 从地面;M-world 轴)。
- */
-export interface ShadowLightSample {
-  /** 光源身份(载荷 lights 下标;-1=太阳,-3=能流主光)。槽位按它绑定,防方向对调 */
-  light: number;
-  azimuthDeg: number;
-  elevationDeg: number;
-  /** 影子在屏幕平面的方向角(deg,PlanarEntityShadow 剪切方向;=光地面方向投影取反) */
-  screenAngleDeg: number;
-  /** 照度份额 0..1 = w_i/(Σw+w_amb):浓度直接乘它,过渡=物理交叉淡化 */
-  weight: number;
-  /** 光源角半径 tanα=√(A/π)/D → 剪影模糊强度,面积越大距离越近影子越软 */
-  tanAlpha: number;
-}
 
 /** 每场景照明烘焙载荷 v2(character_lighting_lab 导出的 lighting/ 目录)。 */
 interface LightingPayloadMeta {
@@ -177,27 +161,27 @@ export class CharacterLightingSystem implements IGameSystem {
   /** 总开关(关= Game 重挂旧滤镜回落曲线管线) */
   enabled = true;
 
-  /** 光源驱动阴影(F2 可调,运行时,不入存档;enabled 关=回落手调单影) */
-  readonly shadowAuto = {
-    enabled: true,
-    /** 每实体影子槽上限(浓度低于阈值的灯不占槽) */
-    k: 3,
-    /** 各向同性稀释系数:w_iso = ambScale × (1−δ) × 本地总照度(probe L0)。
-     *  δ=能流方向性。1.0=诚实物理;调大影子更淡,调小更浓 */
-    ambScale: 1.0,
-    /** 方位/浓度时间低通常数(ms) */
-    tauMs: 150,
-    /** **全局阴影强度调制**:乘在自动算出的每条阴影浓度上。份额只给相对强弱,
-     *  绝对可见度靠它——暗场景 alpha 摊在黑地上不可见,这是自动阴影本就需要的总控。 */
+  /**
+   * 全局阴影表现（F2 可调，运行时，不入存档）。
+   *
+   * 2026-08-20 制作人否决自动 resolve 后，这里只剩**表现总控**：
+   * 影子往哪儿投、有多浓，由实体自己的绑定决定（见 `rendering/entityShadowBinding.ts`）；
+   * 这两个数只是最后乘上去的全局调制，用于「整场影子统一淡一点/换个颜色」。
+   */
+  readonly shadowStyle = {
+    /** 全局阴影强度调制。暗场景里 alpha 摊在黑地上不可见，需要一个总控把它提起来。 */
     gain: 1.4,
     /** 全局阴影颜色(RGB 0..1);默认纯黑最可见,可染色 */
     color: [0, 0, 0] as [number, number, number],
   };
-  /** 游戏 depthConfig 基(行主 r00..r22,q→M-world);无深度场景=null→auto 不可用 */
+  /**
+   * 游戏 depthConfig 基（行主 r00..r22，q→M-world）。
+   *
+   * ⚠ 必须是 **det=+1** 的游戏约定矩阵。阴影绑定要用它把光的世界方向投回屏幕，
+   * 混进实验室那份 det=−1 的会让 Z 轴整体翻号、影子前后颠倒。
+   */
   private shadowBasis: Float32Array | null = null;
-  /** 每光源 lum(radiance)×area(权重分子,load 时预算) */
-  private lightLum: Float32Array | null = null;
-  /** 当前 mode 固化 probe 图集的 CPU 拷贝(能流采样/点云可视化用,(P,probeAtlasCol,4) f16;按需加载会随切档更新) */
+  /** 当前 mode 固化 probe 图集的 CPU 拷贝(点云可视化用,(P,probeAtlasCol,4) f16;按需加载会随切档更新) */
   private probeAtlasU16: Uint16Array | null = null;
   /** probeAtlasU16 的列数(=当前 mode 系数数:L1=4 / L2=9 / BIN=64) */
   private probeAtlasCol = 9;
@@ -221,7 +205,6 @@ export class CharacterLightingSystem implements IGameSystem {
     this.groundTex = null;
     this.resources = null;
     this.probeViz = null;
-    this.lightLum = null;
     this.probeAtlasU16 = null;
     this.probeAtlasCol = 9;
     this.validU8 = null;
@@ -250,178 +233,54 @@ export class CharacterLightingSystem implements IGameSystem {
     this.shadowBasis = r ? new Float32Array(r) : null;
   }
 
-  /** 光源驱动阴影可用?(载荷+光源+深度基齐备且开关开) */
-  get shadowAutoReady(): boolean {
-    return this.shadowAuto.enabled && this.active && this.shadowBasis !== null
-      && (this.resources?.lightCount ?? 0) + (this.params.sunEnabled ? 1 : 0) > 0;
+  /**
+   * 阴影绑定解算要用的 q→world 基。没有深度场的场景返回 null，那种场景不投影。
+   *
+   * ⚠ 只读，不复制——热路径逐实体逐帧调。调用方不许改内容。
+   */
+  get shadowBasisRows(): Float32Array | null {
+    return this.shadowBasis;
   }
 
   /**
-   * 光源驱动阴影 resolver(能流模型,2026-07-22 重做)。
+   * 实体**胸口**参考点的伪世界 q。阴影绑定拿它算「灯在哪个方向」。
    *
-   * 记账要点:烛火往场景倒的能量大头在画作光晕/被照亮区域(base 账),不在火苗
-   * surfel 的 emit 增量里——所以主光不能用 surfel 功率算,要用 probe E 场的
-   * **L1 能流向量**(含全部记账,方向=感知主光方向,|L1|/L0=方向性 δ)。
-   * surfel 只做锐利次级光;与能流方向相近(<35°)时合并,主光继承其锐方向与 tanα。
-   * 稀释项 = ambScale × (1−δ) × 本地总照度(各向同性部分才不投影)。全部本地量,
-   * 无全局魔法常数。
+   * 为什么取胸口不取脚点：脚点贴着地面，与灯的方向关系会被地面高差放大
+   * （角色站在台阶上时影子方向会跳）。胸口与着色的采样带一致。
+   *
+   * ⚠ 脚深度走 `sampleGroundField`，与 `driveFilter` / `SceneDepthSystem` **同一个采样器**。
+   * 遮挡、阴影、着色三处一旦用上不同的地面值就会互相打架，且画面上只表现为"差一点"。
    */
-  resolveShadowLights(worldX: number, worldY: number, worldH: number): ShadowLightSample[] {
-    const m = this.meta; const g = this.groundD; const res = this.resources;
-    const R = this.shadowBasis; const lum = this.lightLum;
-    if (!m || !g || !res || !R) return [];
-    // 脚点 → q(与 driveFilter / SceneDepthSystem 同一个采样器:三处脚深度必须同源,
-    // 各写一份迟早漂——遮挡、阴影、着色一旦用上不同的地面值就会互相打架)
-    const W = m.work.w, H = m.work.h;
+  chestQAt(worldX: number, worldY: number, worldH: number): [number, number, number] | null {
+    const m = this.meta;
+    const g = this.groundD;
+    if (!m || !g) return null;
+    const W = m.work.w;
+    const H = m.work.h;
     const sx = (worldX / Math.max(this.sceneWorldW, 1e-6)) * W;
     const sy = (worldY / Math.max(this.sceneWorldH, 1e-6)) * H;
     const d = sampleGroundField(g, W, H, sx, sy);
-    const th = m.cal.theta;
-    const cosT = Math.cos(th), sinT = Math.sin(th);
-    const hWu = (worldH * (H / Math.max(this.sceneWorldH, 1e-6))) / Math.max(cosT * m.cal.ppu, 1e-6);
-    // 胸口参考点(与着色采样带一致)
-    const qmx = (sx - m.cal.cx) / m.cal.ppu;
-    const qmy = (m.cal.cy - sy) / m.cal.ppu + 0.5 * hWu * cosT;
-    const qmz = d - 0.5 * hWu * sinT;
-
-    const flux = this.sampleFluxLum(qmx, qmy, qmz);
-    if (!flux) return [];
-    const totalE = Math.max(flux.l0, 1e-6);
-    const fluxMag = Math.hypot(flux.fx, flux.fy, flux.fz);
-    // 方向性 δ:E(±d) 反差 = 0.488|L1| / (0.282·L0),钳 [0,1]
-    const delta = Math.max(0, Math.min(1, (0.488603 * fluxMag) / (0.282095 * totalE)));
-
-    const toAzEl = (dqx: number, dqy: number, dqz: number): { az: number; el: number; scr: number } => {
-      // q → M-world:world = col0·qx + col1·qy + col2·qz(R 行主存 r00..r22)
-      const Lx = R[0] * dqx + R[1] * dqy + R[2] * dqz;
-      const Ly = R[3] * dqx + R[4] * dqy + R[5] * dqz;
-      const Lz = R[6] * dqx + R[7] * dqy + R[8] * dqz;
-      const az = (Math.atan2(Lz, Lx) * 180) / Math.PI;
-      const el = (Math.atan2(Ly, Math.hypot(Lx, Lz)) * 180) / Math.PI;
-      // 屏幕方向:影子=光的地面方向取反(M-world 水平),经 R^T 回 q 再投屏(sx=qx, sy=−qy)
-      const hn = Math.max(Math.hypot(Lx, Lz), 1e-6);
-      const hx = -Lx / hn, hz = -Lz / hn;
-      const qvx = R[0] * hx + R[6] * hz;
-      const qvy = R[1] * hx + R[7] * hz;
-      const scr = (Math.atan2(-qvy, qvx) * 180) / Math.PI;
-      // 感知钳 25°:12° 影子拉成 5×身高薄条,每像素浓度摊没,真机不可读(2026-07-22)
-      return { az, el: Math.max(25, Math.min(80, el)), scr };
-    };
-
-    type Raw = { light: number; az: number; el: number; scr: number; w: number; tan: number };
-    const surfels: Array<Raw & { dq: [number, number, number] }> = [];
-    for (let i = 0; i < res.lightCount; i++) {
-      const dqx = res.lightsQ[i * 4] - qmx;
-      const dqy = res.lightsQ[i * 4 + 1] - qmy;
-      const dqz = res.lightsQ[i * 4 + 2] - qmz;
-      const D2 = Math.max(dqx * dqx + dqy * dqy + dqz * dqz, 0.04);
-      const D = Math.sqrt(D2);
-      const area = res.lightsQ[i * 4 + 3];
-      const { az, el, scr } = toAzEl(dqx, dqy, dqz);
-      surfels.push({
-        light: i, az, el, scr,
-        w: (lum ? lum[i] : area) / D2,
-        tan: Math.sqrt(Math.max(area, 1e-6) / Math.PI) / D,
-        dq: [dqx / D, dqy / D, dqz / D],
-      });
-    }
-
-    // 主光 = 能流:方向性份额 × 本地总照度;与最近 surfel 同向(<35°)则合并——
-    // 继承其身份/锐方向/tanα(火苗给出比 L1 更锐的几何),能量并账
-    const raw: Raw[] = [];
-    let domRaw = delta * totalE;
-    if (fluxMag > 1e-7 && domRaw > 0) {
-      const fn = 1 / Math.max(fluxMag, 1e-9);
-      const fdx = flux.fx * fn, fdy = flux.fy * fn, fdz = flux.fz * fn;
-      let merged: (Raw & { dq: [number, number, number] }) | null = null;
-      for (const s of surfels) {
-        const cosA = s.dq[0] * fdx + s.dq[1] * fdy + s.dq[2] * fdz;
-        if (cosA > 0.819 && (!merged || s.w > merged.w)) merged = s;   // <35°
-      }
-      if (merged) {
-        domRaw += merged.w;
-        raw.push({ light: merged.light, az: merged.az, el: merged.el, scr: merged.scr, w: domRaw, tan: merged.tan });
-      } else {
-        const { az, el, scr } = toAzEl(fdx, fdy, fdz);
-        raw.push({ light: -3, az, el, scr, w: domRaw, tan: 0.25 });   // 面光晕 → 软
-      }
-      for (const s of surfels) if (!raw.some((r) => r.light === s.light)) raw.push(s);
-    } else {
-      raw.push(...surfels);
-    }
-
-    // 太阳=无穷远光源,同一分母(sunIntensity 与 E 同量纲)
-    if (this.params.sunEnabled && this.params.sunIntensity > 1e-4) {
-      const azS = (this.params.sunAzimuthDeg * Math.PI) / 180;
-      const elS = (this.params.sunElevationDeg * Math.PI) / 180;
-      const { az, el, scr } = toAzEl(
-        Math.cos(elS) * Math.cos(azS), Math.sin(elS), Math.cos(elS) * Math.sin(azS));
-      const c = this.params.sunColor;
-      raw.push({
-        light: -1, az, el, scr,
-        w: this.params.sunIntensity * (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]),
-        tan: 0.03,   // 日面角半径极小 → 硬影
-      });
-    }
-
-    // 分母 = 全部方向光 + 各向同性余量(唯一不投影的部分)
-    let denom = this.shadowAuto.ambScale * (1 - delta) * totalE;
-    for (const r of raw) denom += r.w;
-    if (denom <= 1e-9) return [];
-    raw.sort((p, q) => q.w - p.w);
-    const out: ShadowLightSample[] = [];
-    for (const r of raw) {
-      const weight = r.w / denom;
-      if (weight < 0.02 || out.length >= this.shadowAuto.k) break;
-      out.push({
-        light: r.light, azimuthDeg: r.az, elevationDeg: r.el,
-        screenAngleDeg: r.scr, weight, tanAlpha: r.tan,
-      });
-    }
-    return out;
+    const cosT = Math.cos(m.cal.theta);
+    const sinT = Math.sin(m.cal.theta);
+    const hWu = this.heightQ(worldH) ?? 0;
+    return [
+      (sx - m.cal.cx) / m.cal.ppu,
+      (m.cal.cy - sy) / m.cal.ppu + 0.5 * hWu * cosT,
+      d - 0.5 * hWu * sinT,
+    ];
   }
 
-  /** probe E 场 L0/L1 亮度采样(q 胸口点):base+amb+nee 三账合流,world 轴三线性。 */
-  private sampleFluxLum(qx: number, qy: number, qz: number):
-    { l0: number; fx: number; fy: number; fz: number } | null {
-    const res = this.resources; const u16 = this.probeAtlasU16; const validU8 = this.validU8;
-    const nCol = this.probeAtlasCol;
-    if (!res || !u16) return null;
-    if (nCol !== 4 && nCol !== 9) return null;   // 能流方向取 SH L0/L1;BIN(方向桶)无 SH,不供影子跟灯
-    const M = res.mCol;
-    const wx = M[0] * qx + M[3] * qy + M[6] * qz;
-    const wy = M[1] * qx + M[4] * qy + M[7] * qz;
-    const wz = M[2] * qx + M[5] * qy + M[8] * qz;
-    const pn = res.pn;
-    const tx = Math.max(0, Math.min(pn[0] - 1.001, (wx - res.wMin[0]) * res.wScale[0]));
-    const ty = Math.max(0, Math.min(pn[1] - 1.001, (wy - res.wMin[1]) * res.wScale[1]));
-    const tz = Math.max(0, Math.min(pn[2] - 1.001, (wz - res.wMin[2]) * res.wScale[2]));
-    const bx = Math.floor(tx), by = Math.floor(ty), bz = Math.floor(tz);
-    const fx = tx - bx, fy = ty - by, fz = tz - bz;
-    // 固化后每 probe 一块最终 E(base+amb+emit/nee 已合流),k=0..3 = SH L0/L1;列步长=nCol
-    let c0 = 0, c1 = 0, c2 = 0, c3 = 0, wsum = 0;
-    for (let c = 0; c < 8; c++) {
-      const ox = c & 1, oy = (c >> 1) & 1, oz = (c >> 2) & 1;
-      const px = Math.min(bx + ox, pn[0] - 1), py = Math.min(by + oy, pn[1] - 1), pz = Math.min(bz + oz, pn[2] - 1);
-      const wgt = (ox ? fx : 1 - fx) * (oy ? fy : 1 - fy) * (oz ? fz : 1 - fz);
-      if (wgt < 1e-6) continue;
-      const flat = (px * pn[1] + py) * pn[2] + pz;
-      if (validU8 && validU8[flat] === 0) continue;
-      const row = flat * nCol * 4;
-      for (let k = 0; k < 4; k++) {
-        const o = row + k * 4;
-        const lr = f16(u16[o]), lg = f16(u16[o + 1]), lb = f16(u16[o + 2]);
-        const lm = 0.2126 * lr + 0.7152 * lg + 0.0722 * lb;
-        if (k === 0) c0 += wgt * lm;
-        else if (k === 1) c1 += wgt * lm;
-        else if (k === 2) c2 += wgt * lm;
-        else c3 += wgt * lm;
-      }
-      wsum += wgt;
-    }
-    if (wsum < 1e-4) return null;
-    // shY:k1=y,k2=z,k3=x → 能流向量 (x,y,z)=(c3,c1,c2)
-    return { l0: c0 / wsum, fx: c3 / wsum, fy: c1 / wsum, fz: c2 / wsum };
+  /**
+   * 实体高度(场景世界 px)→ **伪世界 q**。`chestQAt` 抬胸口用的就是它,一处表达式。
+   *
+   * 影子绑定要拿它算"灯离头顶多近"(`spread`):那是个比值,分子分母必须同尺——
+   * 给 wu 会差一个 `wuPerQUnit`(雾津街头 880),不报错,只是影子恒不散开。
+   */
+  heightQ(worldH: number): number | null {
+    const m = this.meta;
+    if (!m) return null;
+    const cosT = Math.cos(m.cal.theta);
+    return (worldH * (m.work.h / Math.max(this.sceneWorldH, 1e-6))) / Math.max(cosT * m.cal.ppu, 1e-6);
   }
 
   get active(): boolean { return this.enabled && this.resources !== null; }
@@ -621,7 +480,7 @@ export class CharacterLightingSystem implements IGameSystem {
     this.volInflight = null;   // 旧场景的在途拉取作废(epoch 已变,回来也写不进)
     this.loadedSceneId = null;
     this.meta = null; this.groundD = null; this.resources = null; this.probeViz = null;
-    this.lightLum = null; this.probeAtlasU16 = null; this.validU8 = null;
+    this.probeAtlasU16 = null; this.validU8 = null;
     this.parkLitShaders();      // 活 shader 先退白图,再销毁旧纹理(防 BindGroup 自毁)
     for (const t of this.ownedTextures) t.destroy();
     this.ownedTextures = [];
@@ -735,20 +594,11 @@ export class CharacterLightingSystem implements IGameSystem {
         lightsE[i * 4 + 2] = li.radiance[2];
       }
 
-      // 光源阴影权重分子:lum(radiance)×area(与 NEE 同源的照度量纲)
-      const lightLum = new Float32Array(Math.max(lightCount, 1));
-      for (let i = 0; i < lightCount; i++) {
-        const li = meta.lights[i];
-        const lm = 0.2126 * li.radiance[0] + 0.7152 * li.radiance[1] + 0.0722 * li.radiance[2];
-        lightLum[i] = Math.max(lm, 0) * Math.max(li.area, 1e-6);
-      }
-
       const w = meta.world;
       const pn = meta.probes;
       this.meta = meta;
       this.groundD = g;
       this.groundTex = gtex;
-      this.lightLum = lightLum;
       this.probeAtlasU16 = new Uint16Array(atlasBuf);
       this.probeAtlasCol = probeCfg0.col;
       this.validU8 = new Uint8Array(valid);
@@ -933,6 +783,53 @@ export class CharacterLightingSystem implements IGameSystem {
   }
 
   // ---------------------------------------------------------------- mesh 着色 API(2026-07-25)
+
+  /**
+   * 统一光影的角色路径要用的场景几何（2026-08-20）。
+   *
+   * 只交出**标定与 ground 场**——光一概不给：新路径的光来自 `SceneLightingSystem`，
+   * 与背景同一份。这里若顺手把 probe/体素也交出去，就等于开了第二个光源真相，
+   * 「角色与场景明暗一致」立刻失去构造性保证。
+   *
+   * 载荷没装好时返回 null，调用方据此回落旧路径。
+   */
+  get unifiedGeometry(): {
+    worldToWork: [number, number];
+    cal: { ppu: number; cx: number; cy: number; theta: number };
+    groundRange: [number, number];
+    sceneWorld: [number, number];
+    ground: TextureSource;
+  } | null {
+    const r = this.resources;
+    if (!r || !this.groundTex) return null;
+    return {
+      worldToWork: [r.worldToWorkX, r.worldToWorkY],
+      cal: r.cal,
+      groundRange: this.groundRange,
+      sceneWorld: [this.sceneWorldW, this.sceneWorldH],
+      ground: this.groundTex,
+    };
+  }
+
+  /**
+   * 形体参数（鼓起/压平/两条 AO）。**这一组是旧路径专用的**。
+   *
+   * ⚠ 曾经写的是「新旧两条角色路径吃同一组，避免切换时跳变」，那条已经不成立、
+   *   而且当初就是个 bug 源：这里的 flatten/bulge 来自旧 probe 载荷
+   *   （`lighting/lighting.json` 的 shading 块），是给**旧着色模型**调的。
+   *   雾津街头带着 flatten=1.0，喂给新模型等于把法线整个压平，
+   *   每盏灯的 N·L 都一样、方向性全丢。新路径改从
+   *   `SceneLightingDef.characterShape` 取（缺省 flatten=0），
+   *   只有两条 AO 是新旧真正共享的量（见 `UnifiedCharacterLighting.syncFrame`）。
+   */
+  get shapeParams(): { bulge: number; flatten: number; aoContact: number; aoForm: number } {
+    return {
+      bulge: this.params.bulge,
+      flatten: this.params.flatten,
+      aoContact: this.aoContact,
+      aoForm: this.aoForm,
+    };
+  }
 
   /** 场景卸载/重载前把活 shader 的场景纹理全部退到白图 —— 防 BindGroup 绑到已销毁纹理自毁。 */
   private parkLitShaders(): void {

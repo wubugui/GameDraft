@@ -1,4 +1,39 @@
 {
+  "lighting": {
+    "sky": {
+      "color": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "intensity": 1.0,
+      "hemi": 0.46
+    },
+    "day": {
+      "sunIntensity": 0.0,
+      "sunElevationDeg": 50.0,
+      "sunAzimuthDeg": 180.0
+    },
+    "lights": [],
+    "display": {
+      "ev": 0.0,
+      "tonemap": "none",
+      "whiteKelvin": 6500.0,
+      "contrast": 1.0,
+      "saturation": 1.0,
+      "lift": 0.0,
+      "liftKelvin": 6500.0
+    },
+    "aoStrength": 1.0,
+    "ratioMax": 8.0,
+    "dehaze": 0.0,
+    "emissive": {
+      "gain": 0.0
+    },
+    "giGain": 0.0,
+    "placeholder": true,
+    "_migration": "identity-2026-08-21"
+  },
   "id": "test_room_b",
   "name": "后巷",
   "worldWidth": 1500.0,
@@ -15,8 +50,8 @@
     }
   ],
   "spawnPoint": {
-    "x": 586.2,
-    "y": 631.3
+    "x": 603.33,
+    "y": 638.93
   },
   "spawnPoints": {
     "from_a": {
@@ -290,16 +325,5 @@
   ],
   "dayNight": {
     "enabled": true
-  },
-  "timeVariants": {
-    "night": {
-      "backgrounds": [
-        {
-          "image": "background_night.png",
-          "x": 0,
-          "y": 0
-        }
-      ]
-    }
   }
 }

@@ -42,6 +42,7 @@ except ImportError:  # pragma: no cover - depends on local Qt install
 from ..project_model import ProjectModel
 from .. import theme
 from ..shared.dialog_geometry import remember_dialog_geometry
+from ..shared.npm_process import node_process_environment, npm_run_command
 from .narrative_anchor_codec import transition_anchor_id
 
 
@@ -1568,6 +1569,7 @@ class NarrativeStateEditor(QWidget):
         program, args = _rebuild_shell_invocation()
         proc = QProcess(self)
         proc.setWorkingDirectory(str(_repo_root()))
+        proc.setProcessEnvironment(node_process_environment())
         proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
         proc.setProgram(program)
         proc.setArguments(args)
@@ -3209,7 +3211,8 @@ def _web_editor_index() -> Path:
     return _web_editor_dir() / "dist" / "index.html"
 
 
-_WEB_REBUILD_CMD = "npm run build:narrative-editor"
+_WEB_REBUILD_TASK = "build:narrative-editor"
+_WEB_REBUILD_CMD = f"npm run {_WEB_REBUILD_TASK}"
 
 
 def _current_dist_mtime() -> float | None:
@@ -3221,13 +3224,26 @@ def _current_dist_mtime() -> float | None:
         return None
 
 
-def _rebuild_shell_invocation() -> tuple[str, list[str]]:
-    """经登录 shell 跑重建命令：`$SHELL -lc 'cd <root> && npm run …'`。
+def _rebuild_shell_invocation(windows: bool | None = None) -> tuple[str, list[str]]:
+    """重建命令的 (program, args)；工作目录由调用方设成仓库根。
 
-    `-l` 会加载用户 profile（.zprofile/.bash_profile 等），从而拿到 nvm/homebrew 的 PATH——
-    这样即便编辑器从 Finder/Dock 等 GUI 启动（PATH 精简、`which npm` 找不到）也能跑起来。
+    POSIX 走登录 shell：`-l` 会加载用户 profile（.zprofile/.bash_profile 等），从而拿到
+    nvm/homebrew 的 PATH——这样即便编辑器从 Finder/Dock 等 GUI 启动（PATH 精简、
+    `which npm` 找不到）也能跑起来。
+
+    Windows 上**没有 `$SHELL`**（原生启动时该变量为空），旧实现会回落到 `/bin/zsh`，
+    程序名指向一个不存在的路径 ⇒ QProcess 必然 FailedToStart ⇒ 这个按钮在 Windows 上
+    从来只会弹「无法启动重建命令」。改走 `shared/npm_process` 的统一出口（cmd /d /c
+    npm.cmd），它认得仓库自带的 .tools/node 便携版。
+
+    windows 仅供测试注入（两条分支都得能在任一平台上被验到；别改成 patch os.name，
+    那会连 pathlib 的平台分派一起改掉）。
     """
     import shlex
+    if windows is None:
+        windows = os.name == "nt"
+    if windows:
+        return npm_run_command("run", _WEB_REBUILD_TASK)
     shell = os.environ.get("SHELL") or "/bin/zsh"
     cmd = f"cd {shlex.quote(str(_repo_root()))} && {_WEB_REBUILD_CMD}"
     return shell, ["-lc", cmd]

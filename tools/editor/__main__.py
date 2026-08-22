@@ -15,6 +15,7 @@ except ImportError:
 from PySide6.QtWidgets import QApplication
 
 from tools.editor.shared.qt_combo_wheel_guard import install_global_combo_wheel_block
+from tools.editor.shared.qt_drag_spin import install_global_spin_drag
 
 from . import theme
 from .main_window import MainWindow
@@ -60,6 +61,7 @@ def main() -> None:
         os.environ.setdefault("QT_FATAL_WARNINGS", "1")
     app = QApplication(sys.argv)
     install_global_combo_wheel_block(app)
+    install_global_spin_drag(app)
     app.setApplicationName("GameDraft Editor")
 
     theme.apply_application_theme(app, theme.settings_load_theme())

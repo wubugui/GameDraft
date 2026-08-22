@@ -11,6 +11,9 @@
   POST /api/mask?scene=        body=PNG(原生分辨率)存发光 mask;body=CLEAR 删除
   POST /api/save_params?scene=&preset=   body=参数 JSON,只存不导出
   POST /api/export?scene=&preset=        body=参数 JSON,全分辨率导出变体+存参数
+  POST /api/bake?scene=                烘几何场(法线/天穹可见性/3D 网格/GI 命中图)
+  POST /api/migrate?scene=[&force=1]   恒等迁移:接进统一光影且**画面零变化**
+  POST /api/dump?name=                 运行时取证:游戏页 POST 像素过来落盘
 
 预览是**同一份** relight() 在低分辨率跑——看到的就是导出的(无 GLSL/Python 两套数学)。
 """
@@ -19,6 +22,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import sys
 import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -85,6 +89,14 @@ class H(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def do_OPTIONS(self):
+        # /api/dump 要被**游戏页**(另一个端口)调用,得放行跨源预检
+        self.send_response(204)
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.end_headers()
+
     def _body_json(self) -> dict:
         n = int(self.headers.get('Content-Length', 0))
         return json.loads(self.rfile.read(n) or b'{}')
@@ -129,6 +141,23 @@ class H(SimpleHTTPRequestHandler):
                 if not f.exists():
                     return self._json({'ok': False, 'err': 'no mask'}, 404)
                 return self._png(f.read_bytes())
+            if u.path == '/api/field':
+                # 烘出来的几何场(skyvis / normal),给作者看"光照结构从哪来"
+                sid = q.get('scene', [''])[0]
+                kind = q.get('kind', ['skyvis'])[0]
+                fname = {'skyvis': 'skyvis.png', 'normal': 'normal.png'}.get(kind)
+                if not fname:
+                    return self._json({'ok': False, 'err': 'bad kind'}, 400)
+                f = _get_scene(sid).rt_dir / 'lighting2' / fname
+                if not f.exists():
+                    return self._json({'ok': False, 'err': '该场景还没烘几何场(--bake)'}, 404)
+                return self._png(f.read_bytes())
+            if u.path == '/api/bake_meta':
+                sid = q.get('scene', [''])[0]
+                f = _get_scene(sid).rt_dir / 'lighting2' / 'meta.json'
+                if not f.exists():
+                    return self._json({'ok': True, 'meta': None})
+                return self._json({'ok': True, 'meta': json.loads(f.read_text(encoding='utf-8'))})
             return super().do_GET()
         except Exception as e:                       # noqa: BLE001 — 工具服务:报错给前端而不是断连
             return self._json({'ok': False, 'err': f'{type(e).__name__}: {e}'}, 500)
@@ -162,6 +191,49 @@ class H(SimpleHTTPRequestHandler):
                     tmp.write_bytes(data)
                     retry_transient(os.replace, tmp, f)
                 return self._json({'ok': True})
+            if u.path == '/api/dump':
+                # 运行时取证通道:游戏页把 extract 出来的像素 POST 过来落盘,供 agent 目视。
+                # 存在的理由:本环境的浏览器面板不显示 ⇒ 截图工具用不了;而 Pixi 坑⑧ 说
+                # `extract.pixels` 不过 filter、**但过 mesh 自定义 shader** —— 统一光影的
+                # 背景正是 mesh,所以这条路拿到的是真着色像素。
+                name = re.sub(r'[^\w.\-]', '_', q.get('name', ['dump'])[0])[:80]
+                n = int(self.headers.get('Content-Length', 0))
+                if n <= 0 or n > 64 * 1024 * 1024:
+                    return self._json({'ok': False, 'err': 'bad size'}, 400)
+                data = self.rfile.read(n)
+                dest = TOOL / 'out' / '_dump' / f'{name}.png'
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                tmp = dest.with_suffix('.png.tmp')
+                tmp.write_bytes(data)
+                retry_transient(os.replace, tmp, dest)
+                self.send_response(200)
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.send_header('Content-Type', 'application/json')
+                body = json.dumps({'ok': True, 'dest': str(dest), 'bytes': n}).encode()
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if u.path == '/api/bake':
+                # 烘几何场（法线 / 天穹可见性 / 3D 网格 / GI 命中图）。
+                # ⚠ 同步跑，单场景约 2'40"–3'25"：这个服务是**本机单用户**的桌面壳后端，
+                #   开线程只会让"跑到哪了"更难看清，而且并发烘同一个场景会互相覆盖产物。
+                from .bake import bake as _bake
+                sid = q.get('scene', [''])[0]
+                _get_scene(sid)                      # 场景不存在时在这里就报，别烘一半才发现
+                r = _bake(sid)
+                return self._json({'ok': True, 'result': {
+                    k: v for k, v in r.items() if k != 'dest'}})
+            if u.path == '/api/migrate':
+                # 恒等迁移：把场景接进统一光影且**画面零变化**。
+                # 不覆盖手调过的场景（migrate 自己判 already-configured）。
+                from .migrate import migrate as _migrate, verify_identity as _verify
+                sid = q.get('scene', [''])[0]
+                force = q.get('force', ['0'])[0] == '1'
+                status = _migrate(sid, force=force)
+                return self._json({'ok': status in ('migrated', 'already-configured'),
+                                   'status': status,
+                                   'verify': _verify(sid) if status == 'migrated' else None})
             if u.path == '/api/save_params':
                 sid = q.get('scene', [''])[0]
                 preset = q.get('preset', [''])[0]

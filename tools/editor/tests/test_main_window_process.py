@@ -8,27 +8,33 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication, QWidget
 
 from tools.editor import main_window
+from tools.editor.shared import npm_process
 
 
 def test_npm_run_command_uses_cmd_shell_on_windows(monkeypatch):
-    monkeypatch.setattr(main_window.os, "name", "nt", raising=False)
-    monkeypatch.setitem(main_window.os.environ, "ComSpec", "C:/Windows/System32/cmd.exe")
-    monkeypatch.setattr(main_window, "npm_command", lambda: r"C:\Program Files\nodejs\npm.cmd")
+    monkeypatch.setattr(npm_process.os, "name", "nt", raising=False)
+    monkeypatch.setitem(npm_process.os.environ, "ComSpec", "C:/Windows/System32/cmd.exe")
+    monkeypatch.setattr(npm_process, "npm_command", lambda: r"C:\Program Files\nodejs\npm.cmd")
 
-    program, args = main_window._npm_run_command("run", "dev")
+    program, args = npm_process.npm_run_command("run", "dev")
 
     assert program == "C:/Windows/System32/cmd.exe"
     assert args == ["/d", "/c", r"C:\Program Files\nodejs\npm.cmd", "run", "dev"]
 
 
 def test_npm_run_command_uses_direct_npm_on_unix(monkeypatch):
-    monkeypatch.setattr(main_window.os, "name", "posix", raising=False)
-    monkeypatch.setattr(main_window, "npm_command", lambda: "/opt/homebrew/bin/npm")
+    monkeypatch.setattr(npm_process.os, "name", "posix", raising=False)
+    monkeypatch.setattr(npm_process, "npm_command", lambda: "/opt/homebrew/bin/npm")
 
-    program, args = main_window._npm_run_command("run", "dev")
+    program, args = npm_process.npm_run_command("run", "dev")
 
     assert program == "/opt/homebrew/bin/npm"
     assert args == ["run", "dev"]
+
+
+def test_main_window_still_reaches_the_shared_npm_entrypoint():
+    """main_window 用的是同一个出口（别再手搓第二份 program/args）。"""
+    assert main_window._npm_run_command is npm_process.npm_run_command
 
 
 def test_reference_catalog_reload_isolates_one_broken_editor():

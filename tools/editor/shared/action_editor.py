@@ -317,6 +317,7 @@ ACTION_TYPES = [
     "cameraFollowActor", "cameraStopFollow",
     "hideOverlayImage", "playScriptedDialogue", "showOverlayImage", "setHotspotDisplayImage",
     "tempSetHotspotDisplayFacing", "setEntityField", "setSceneEntityPosition", "blendOverlayImage",
+    "setEntityShadow",
     "revealDocument", "startDialogueGraph",
     "waitClickContinue",
     "waitMs",
@@ -489,6 +490,9 @@ ACTION_PERSISTENCE: dict[str, str] = {
     "setHotspotDisplayImage": "save",
     "tempSetHotspotDisplayFacing": "memory",
     "setEntityField": "save",
+    # 阴影绑定是**演出态**：覆盖不入存档、切场景即清（存进档会造成
+    # 「改了场景数据但老档还是旧影子」这类无从下手的错）
+    "setEntityShadow": "memory",
     "setSceneEntityPosition": "save",
     "blendOverlayImage": "memory",
     "revealDocument": "save",
@@ -561,6 +565,16 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "unloadNarrativePackage": [("packageId", "str")],
     "appendFlag": [("key", "str"), ("text", "str")],
     "addFlagValue": [("key", "str"), ("delta", "float")],
+    # 角色阴影绑定（手动指定，禁止自动 resolve —— 制作人 2026-08-20）。
+    #   target: 'player' / NPC id / 'hotspot:<热区id>'
+    #   source: 'light:<灯id>' 绑场景灯 ｜ 'virtual' 虚拟灯（只影响影子不照亮）｜ 'none' 不投影
+    #   后五个只在 source='virtual' 时全用；绑真实灯时 darkness/softness 可选覆盖，其余忽略。
+    #   ⚠ azimuthDeg 是**屏幕**方向不是世界方位（虚拟灯没有世界位置）。
+    "setEntityShadow": [
+        ("target", "str"), ("source", "str"),
+        ("azimuthDeg", "float"), ("elevationDeg", "float"),
+        ("darkness", "float"), ("softness", "float"), ("length", "float"),
+    ],
     "startPressureHold": [("id", "str")],
     "playSignalCue": [("id", "str")],
     "setBubbleLineSet": [("target", "str"), ("lineSetId", "str")],

@@ -1,6 +1,6 @@
 import { defineConfig, type Plugin } from 'vite';
 import { resolve, dirname } from 'path';
-import { mkdir, readdir, readFile, unlink, writeFile } from 'fs/promises';
+import { mkdir, readdir, readFile, stat, unlink, writeFile } from 'fs/promises';
 
 /** 开发服：读写 resources/editor_projects/editor_data/debug_flag_favorites.json，供 F2 Flag 收藏持久化（不使用 localStorage）。 */
 function debugFlagFavoritesApi(): Plugin {
@@ -48,6 +48,108 @@ function debugFlagFavoritesApi(): Plugin {
           await writeFile(filePath, `${JSON.stringify(keys, null, 2)}\n`, 'utf-8');
           res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify(keys));
+          return;
+        }
+        res.statusCode = 405;
+        res.end();
+      });
+    },
+  };
+}
+
+/**
+ * 开发服：运行时光照的**同步槽**（`editor_data/runtime_lighting.json`）。
+ *
+ * 游戏（F3 编辑模式 / F2 光影页）与桌面编辑器（场景页灯表）**双向实时同步**同一份
+ * `lighting`：任一边改了，另一边下一次轮询就跟上，不用按任何按钮。
+ *
+ * ## 为什么走 dev server 而不是 WebEngine 桥
+ *
+ * 游戏可能跑在外部 Chrome、编辑器内嵌页签、弹出窗口，两边还会各自中途重启。
+ * dev server 是**唯一两边都始终可达**的点：先到的写、后到的读，谁重启都能自动接上。
+ * 靠 `runJavaScript` 只在"游戏正好跑在编辑器里"时成立——实测第一版就是这么连不上的。
+ *
+ * ## 版本号与回声抑制
+ *
+ * `rev` 由**服务端**自增（客户端自己编号会在两边同时写时撞车）。每一方记住
+ * 「我发出去的那个 rev」与「我应用过的最大 rev」，只应用 `rev > 已见 && writer ≠ 我`
+ * 的文档——否则自己写的东西会被自己读回来再写一遍，形成回声风暴。
+ *
+ * ⚠ 这**不是**写工程数据：只写 `editor_data/`（与 F2 pin、Flag 收藏同族的交接文件）。
+ * 场景 JSON 仍然只有编辑器 `save_all` 一个写入者。
+ */
+function runtimeLightingApi(): Plugin {
+  return {
+    name: 'gamedraft-runtime-lighting-api',
+    configureServer(server) {
+      server.middlewares.use(async (req, res, next) => {
+        const pathOnly = (req.url ?? '').split('?')[0] ?? '';
+        if (pathOnly !== '/__gamedraft-api/runtime-lighting') {
+          next();
+          return;
+        }
+        const filePath = resolve(
+          server.config.root, 'resources/editor_projects/editor_data/runtime_lighting.json');
+        const readDoc = async (): Promise<Record<string, unknown> | null> => {
+          try {
+            const raw = (await readFile(filePath, 'utf-8')).trim();
+            return raw ? JSON.parse(raw) as Record<string, unknown> : null;
+          } catch {
+            return null;
+          }
+        };
+        if (req.method === 'GET') {
+          res.setHeader('Content-Type', 'application/json');
+          const doc = await readDoc();
+          let ageMs: number | null = null;
+          try {
+            ageMs = Math.max(0, Date.now() - (await stat(filePath)).mtimeMs);
+          } catch { /* 没这个文件 = 还没人发过，ageMs 保持 null */ }
+          res.end(JSON.stringify({ doc, ageMs }));
+          return;
+        }
+        if (req.method === 'POST') {
+          const chunks: Buffer[] = [];
+          for await (const ch of req) chunks.push(ch as Buffer);
+          let parsed: {
+            sceneId?: unknown; lighting?: unknown; writer?: unknown; selectedId?: unknown;
+          };
+          try {
+            parsed = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+          } catch {
+            res.statusCode = 400;
+            res.end('invalid json');
+            return;
+          }
+          const sceneId = String(parsed.sceneId ?? '').trim();
+          const writer = String(parsed.writer ?? '').trim();
+          const lt = parsed.lighting as Record<string, unknown> | null;
+          // 形状闸门与两侧同口径：半个对象进了槽，对面看着像"同步到了"却是残缺的
+          const ok = !!sceneId && !!writer && !!lt && typeof lt === 'object'
+            && !!lt.sky && !!lt.day && Array.isArray(lt.lights) && !!lt.display;
+          if (!ok) {
+            res.statusCode = 400;
+            res.end('bad payload: 需要 sceneId + writer + lighting{sky,day,lights,display}');
+            return;
+          }
+          const prev = await readDoc();
+          const rev = Number(prev?.rev ?? 0) + 1;
+          const payload = {
+            rev,
+            writer,
+            sceneId,
+            publishedAt: new Date().toISOString(),
+            lighting: parsed.lighting,
+            // ★ 选中态也过槽：灯一多，「编辑器里选的是哪盏」与「画面上高亮的是哪盏」
+            //   对不上就等于没法找灯。这是**会话态**不是策划数据 —— 它跟 rev/writer
+            //   一样住在文档层，**不进 `lighting`**，所以 Save All 落盘时带不出去。
+            selectedId: typeof parsed.selectedId === 'string' ? parsed.selectedId : null,
+          };
+          await mkdir(dirname(filePath), { recursive: true });
+          await writeFile(filePath, `${JSON.stringify(payload, null, 2)}
+`, 'utf-8');
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ ok: true, rev }));
           return;
         }
         res.statusCode = 405;
@@ -532,6 +634,7 @@ export default defineConfig({
   plugins: [
     debugFlagFavoritesApi(),
     debugDockPinsApi(),
+    runtimeLightingApi(),
     narrativeDebugBridgeApi(),
     runtimeDebugSnapshotApi(),
     runtimeCommandApi(),

@@ -135,6 +135,23 @@ class Scene:
             m = resize_f(m, size)
         return m
 
+    # ---------------------------------------------------------- 烘好的几何场
+    def baked_skyvis(self, size: tuple[int, int]) -> np.ndarray | None:
+        """烘好的逐像素天穹可见性(`lighting2/skyvis.png`),缺则 None。
+
+        ★ **工具预览优先用它,不要现算**——运行时消费的就是这张图。现算的话
+        `sky_field` 的高斯半径随预览宽度变,而烘的是固定 512 宽,两边模糊程度不同,
+        工具里调好的效果进游戏会略微不一样(实测逐像素平均差 1.19/255)。
+        用同一张图 ⇒ parity 是**构造性**的,不是碰巧对上的。
+        """
+        f = self.rt_dir / 'lighting2' / 'skyvis.png'
+        if not f.exists():
+            return None
+        m = np.asarray(Image.open(f).convert('L'), np.float32) / 255.0
+        if m.shape[::-1] != size:
+            m = resize_f(m, size)
+        return m
+
     # ------------------------------------------------------------- geometry
     def geometry(self, size: tuple[int, int], normal_sigma: float = 2.0) -> dict | None:
         """按目标分辨率重建伪世界几何:pos/normal/depth。无深度场景返回 None。

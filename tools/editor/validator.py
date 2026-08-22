@@ -14,6 +14,8 @@ from tools.dialogue_graph_editor.dialogue_condition_text import (
     case_verdict as _dialogue_case_verdict,
 )
 
+from .editors.scene_lights import validate_lights as _validate_scene_lights
+from .editors.scene_lights import validate_shadow_bindings as _validate_shadow_bindings
 from .file_io import read_json
 from .shared.character_dialogue import resolve_npc_dialogue_graph
 from .shared.dialogue_entry_overrides import (
@@ -903,6 +905,81 @@ def validate(model: ProjectModel) -> list[Issue]:
                         "运行时跨关键帧切模式会重建阴影实例，建议保持一致",
                     ))
 
+        # 统一光影 lighting（新一代：场景与角色共享同一份光照状态）
+        # ⚠ 期望值以**运行时消费端**为准（src/core/SceneLightingSystem.ts 与
+        #   SceneLightingPass.ts）。2026-08-06 那次 lighting-bake 校验器多乘 4、
+        #   把 28 个场景全量误报的教训：校验器自己另立口径 = 把 error 通道淹掉。
+        lit = sc.get("lighting")
+        if lit is not None:
+            if not isinstance(lit, dict):
+                issues.append(Issue("error", "scene", sid, "lighting 须为对象"))
+            else:
+                for key in ("sky", "day", "display"):
+                    if not isinstance(lit.get(key), dict):
+                        issues.append(Issue(
+                            "error", "scene", sid, f"lighting.{key} 缺失或不是对象"))
+                lights = lit.get("lights")
+                if not isinstance(lights, list):
+                    issues.append(Issue("error", "scene", sid, "lighting.lights 须为数组"))
+                else:
+                    for t in _validate_scene_lights(lights):
+                        issues.append(Issue("error", "scene", sid, f"lighting: {t}"))
+                # 统一光影依赖深度场；没有 depthConfig 时运行时会安静不启用
+                if not sc.get("depthConfig"):
+                    issues.append(Issue(
+                        "warning", "scene", sid,
+                        "配了 lighting 但没有 depthConfig —— 统一光影依赖深度场，运行时不会启用",
+                    ))
+                # day.hemi 手填几乎必错：它是原画自己的遮蔽响应，由烘焙拟合
+                day = lit.get("day")
+                if isinstance(day, dict) and "hemi" in day:
+                    issues.append(Issue(
+                        "warning", "scene", sid,
+                        "lighting.day.hemi 是手填的；它是**原画自己的遮蔽响应**，"
+                        "应交给烘焙期拟合（删掉这个键即可）。填错会让画里的遮蔽与夜里的"
+                        "遮蔽叠加，角落黑两遍、地面却几乎没变暗",
+                    ))
+                # 阴影 march 的偏置与厚度窗(**wu**)。这两个曾经写死在 shader 的
+                # uniform 初值里且没有写入方，F2 与场景 JSON 都够不着；现在能写了，
+                # 就得挡住写错单位——厚度窗填成"世界单位"的量级会「隔山打影」。
+                for _t in _shadow_bias_issues(lit.get("shadowBias")):
+                    issues.append(Issue("error", "scene", sid, _t))
+
+        # lighting2/ 载荷。配了 lighting 块却没烘载荷 ⇒ 运行时**安静不启用**，
+        # 画面上只表现为"这个场景的光照没生效"，没有任何报错。
+        #
+        # ⚠ 期望值一律以**运行时消费端**为准（`SceneLightingSystem` / `GiBouncePass`）。
+        #   2026-08-06 那次 lighting-bake 校验器自立口径多乘 4、把 28 个场景全量误报，
+        #   教训是：校验器另立一套 = 把 error 通道淹掉。
+        if isinstance(lit, dict):
+            _l2 = _lighting2_issues(sid)
+            for _sev, _t in _l2:
+                issues.append(Issue(_sev, "scene", sid, _t))
+
+        # 角色阴影绑定（**必须手动指定，系统不自动 resolve**）。
+        # 绑到不存在的灯是 **error**：运行时的表现是"没有影子"，
+        # 画面上完全看不出是配错了还是本来就该没有。
+        # ⚠ 这段在 lighting 块**之外**——没配 lighting 的场景若写了 `light:` 绑定，
+        #   那些引用一样是悬垂的，同样要报（灯表按空表看待）。
+        _scene_lights = (lit.get("lights") if isinstance(lit, dict) else None) or []
+        if not isinstance(_scene_lights, list):
+            _scene_lights = []
+        _sb_targets: list[tuple[str, object]] = [("玩家", sc.get("playerShadowBindings"))]
+        for _n in sc.get("npcs") or []:
+            if isinstance(_n, dict) and _n.get("shadowBindings") is not None:
+                _sb_targets.append((f'NPC {_n.get("id")}', _n.get("shadowBindings")))
+        for _h in sc.get("hotspots") or []:
+            if isinstance(_h, dict) and _h.get("shadowBindings") is not None:
+                _sb_targets.append((f'热区 {_h.get("id")}', _h.get("shadowBindings")))
+        for _who, _sb in _sb_targets:
+            if _sb is None:
+                continue
+            if not isinstance(_sb, list):
+                issues.append(Issue("error", "scene", sid, f"{_who} shadowBindings 须为数组"))
+                continue
+            for _t in _validate_shadow_bindings(_sb, _scene_lights, _who):
+                issues.append(Issue("error", "scene", sid, _t))
+
     # --- quest groups ---
     quest_group_ids = {g["id"] for g in model.quest_groups}
     for g in model.quest_groups:
@@ -1153,6 +1230,119 @@ def validate(model: ProjectModel) -> list[Issue]:
 
 
 _CLOCK_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
+
+
+
+#: `lighting2/` 载荷代次。改产物布局要同步 `bake.py#PAYLOAD_VERSION` 与
+#: `SceneLightingSystem.LIGHTING2_VERSION`——三处必须一致，否则运行时整包忽略。
+_LIGHTING2_VERSION = 1
+
+
+def _shadow_bias_issues(sb: object) -> list[str]:
+    """校验 `lighting.shadowBias`。两个量都是 **wu**(本项目唯一的空间单位)。
+
+    厚度窗是"遮挡体有多厚"——深度场只有可见壳、没有背面，所以必须人为给一个厚度：
+    太薄会漏挡，太厚会「隔山打影」（远处的墙挡住近处的地）。
+    角色高 **150 wu**,场景纵深就是 `worldWidth` 的量级(几百到几千 wu)。
+    上限按"一堵墙/一栋房子的进深"取 3000 wu(20 个人高);再大基本等于
+    "前面有东西就算挡"。
+    """
+    if sb is None:
+        return []
+    if not isinstance(sb, dict):
+        return ["lighting.shadowBias 须为对象 {bias, thickness}"]
+    out: list[str] = []
+    for key, lo, hi, what in (
+        ("bias", 0.0, 400.0, "起步偏置"),
+        ("thickness", 5.0, 3000.0, "遮挡体厚度窗"),
+    ):
+        v = sb.get(key)
+        if v is None:
+            continue
+        if not isinstance(v, (int, float)) or isinstance(v, bool):
+            out.append(f"lighting.shadowBias.{key} 必须是数值({what},单位 **wu**)")
+        elif not (lo <= float(v) <= hi):
+            out.append(
+                f"lighting.shadowBias.{key} = {v} 超出 [{lo}, {hi}] wu({what})"
+                f"——本项目只有 wu 这一个空间单位,别按别的尺度填")
+    for k in sb:
+        if k not in ("bias", "thickness"):
+            out.append(f"lighting.shadowBias 不认识的键 {k!r}（运行时会忽略）")
+    return out
+
+
+def _lighting2_issues(sid: str) -> list[tuple[str, str]]:
+    """校验一个场景的 `lighting2/` 烘焙载荷。返回 (severity, text) 列表。
+
+    ## 为什么必须校验
+
+    配了 `lighting` 块却没烘载荷（或载荷代次不对、尺寸对不上）时，运行时是
+    **安静地不启用**——不报错、不崩，画面上只表现为"这个场景的光照没生效"。
+    作者第一反应会去调参数，而参数根本没被读。
+
+    ## 期望值从哪来
+
+    一律以**运行时消费端**为准：
+    · 代次 `SceneLightingSystem.LIGHTING2_VERSION`
+    · `skyvis_grid.bin` = nx·ny·nz 个 f32 → 字节数 = 乘积 × 4
+    · `gi_hitmap.bin`   = size[0] × size[1] × 4（RGBA8）
+
+    ⚠ 2026-08-06 那次 lighting-bake 校验器自立口径多乘 4、把 28 个场景全量误报——
+    校验器另立一套 = 把 error 通道淹掉。这里的每个数都能在消费端逐字找到出处。
+    """
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    d = root / "public" / "resources" / "runtime" / "scenes" / sid / "lighting2"
+    meta_p = d / "meta.json"
+    if not meta_p.exists():
+        return [("warning",
+                 f"配了 lighting 但没烘 lighting2/ 载荷 —— 运行时会**安静地不启用**，"
+                 f"画面上看着就像'光照没生效'。跑 "
+                 f"`python -m tools.scene_relight.bake --scene {sid}`")]
+    out: list[tuple[str, str]] = []
+    try:
+        meta = json.loads(meta_p.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return [("error", f"lighting2/meta.json 解析失败：{exc}")]
+
+    ver = meta.get("version")
+    if ver != _LIGHTING2_VERSION:
+        out.append(("error",
+                    f"lighting2 载荷代次 {ver} ≠ 运行时认的 {_LIGHTING2_VERSION}，整包会被忽略"))
+
+    for name in ("normal.png", "skyvis.png", "skyvis_grid.bin"):
+        if not (d / name).exists():
+            out.append(("error", f"lighting2/{name} 缺失"))
+
+    g = meta.get("grid") or {}
+    try:
+        n = int(g["nx"]) * int(g["ny"]) * int(g["nz"])
+    except Exception:
+        out.append(("error", "lighting2/meta.json 的 grid 缺 nx/ny/nz"))
+        n = 0
+    if n and (d / "skyvis_grid.bin").exists():
+        want = n * 4                      # f32
+        got = (d / "skyvis_grid.bin").stat().st_size
+        if got != want:
+            out.append(("error",
+                        f"skyvis_grid.bin {got} 字节 ≠ 网格声明的 {n} 个 f32（{want} 字节）"
+                        f" —— 运行时会拒绝装载"))
+
+    gi = meta.get("gi")
+    if gi:
+        f = d / "gi_hitmap.bin"
+        if not f.exists():
+            out.append(("error", "meta 里声明了 gi 但 gi_hitmap.bin 缺失 —— GI 不会启用"))
+        else:
+            try:
+                want = int(gi["size"][0]) * int(gi["size"][1]) * 4      # RGBA8
+                got = f.stat().st_size
+                if got != want:
+                    out.append(("error",
+                                f"gi_hitmap.bin {got} 字节 ≠ 声明的 {gi['size']} × 4（{want}）"))
+            except Exception:
+                out.append(("error", "meta.gi.size 不是 [宽, 高]"))
+    return out
 
 
 def _parse_clock_minutes(raw: object) -> int | None:

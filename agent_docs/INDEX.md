@@ -13,8 +13,9 @@
 ### 机制卡
 - [加 Action 四件套](runtime/mechanisms/action-registration-quadruple.md) — 新 action = 运行时 register + actionParamManifest(TS 权威) + 编辑器 ACTION_TYPES/_PARAM_SCHEMAS + validator 认可;参数含实体/场景引用另登记 ENTITY_REF_PARAMS(第五件);DEV 启动一致性审计兜底
 - [档案系统解锁语义](runtime/mechanisms/archive-unlock-semantics.md) — 人物档案解锁唯一入口=addArchiveEntry(幂等);lore/doc/book 走声明式条件;totalPages 只认 pages.length
-- [角色逐像素照明(probe·法线·着色核心)](runtime/mechanisms/character-lighting.md) — 场景烘出的 E 只给角色出明暗不给颜色;着色核心是单一 GLSL 源;法线必须与 color 同 UV 采样、格边界与运行时 stride 对齐
+- [角色逐像素照明(probe·法线·着色核心)](runtime/mechanisms/character-lighting.md) — 两条路径——统一光影(角色与场景吃同一份 S,吃 3D 天穹遮蔽)优先,没配 lighting 的场景回落旧 probe;着色核心各自单一 GLSL 源;法线必须与 color 同 UV 采样、格边界与运行时 stride 对齐
 - [角色注册表(characterId 合并)](runtime/mechanisms/character-registry.md) — 角色身份(name/animFile/portraitSlug)一处定义,NpcDef.characterId 引用,实例化时合并且 own 字段赢过注册表
+- [坐标空间总表(屏幕→场景 wu→像素栅格→伪世界 q→M-world)](runtime/mechanisms/coordinate-spaces.md) — 全项目六个坐标空间的单位/原点/住户/权威源与逐条可验判据;两个 M(det ±1)、两套像素栅格(比例非恒定 4)、着色在 M-world 而 march 在 q——混用一律不报错只是效果不对
 - [过场音频回收契约](runtime/mechanisms/cutscene-audio-reclamation.md) — 过场 SFX 作用域捕获 + 快照音频基线;中断路径停尾音、自然播完保留末拍——cleanup 布尔语义勿回退
 - [过场步骤语义(parallel/镜头位/运镜/字幕推进)](runtime/mechanisms/cutscene-step-semantics.md) — parallel 是 fork-join 组内无时序;匿名镜头位自动顶掉;运镜受相机夹紧约束、跳过快进到编排终姿;subtitleAutoAdvance 三态;typewriter 缺省按台词面分家
 - [日夜循环与 NPC 日程(时刻不自流逝 · 离场宽限集)](runtime/mechanisms/day-night-npc-schedule.md) — 时刻只由动作推进;transition 决定 NPC 换班演不演离场;leaving/arriving 宽限集是"绝不当着玩家的面消失"的唯一实现,判定点只挂 NPC 不进 entityInPlane
@@ -22,10 +23,12 @@
 - [dialogue:end 负载语义](runtime/mechanisms/dialogue-end-payload.md) — dialogue:end 带 source/willContinue/nestedInGraph;状态恢复只认最外层、只认恰好一次 willContinue=false 的最终 end
 - [对话头像(立绘)运行时](runtime/mechanisms/dialogue-portrait-runtime.md) — 头像跟「装扮配置」走不跟实体走;跟随说话人要求这行的说话人实体解析得出来,UI 收到的 portrait 恒带 slug
 - [台词配音通道(voice/autoAdvance · 跨拍留声)](runtime/mechanisms/dialogue-voice-channel.md) — 全部台词面共用一条单声道配音通道;默认跟本拍停、hold 留声给后面、声明跟随配音的那拍接管并收尾
-- [场景光环境 / 实体阴影 / 深度遮挡](runtime/mechanisms/entity-lighting.md) — 行走面深度场是遮挡·阴影·碰撞的唯一脚点锚(没场就整体关,不回落拟合直线);阴影一律 planar 剪影;色调与阴影解耦
+- [场景光环境 / 实体阴影 / 深度遮挡](runtime/mechanisms/entity-lighting.md) — 行走面深度场是遮挡·阴影·碰撞的唯一脚点锚(没场就整体关,不回落拟合直线);阴影一律 planar 剪影;角色阴影**手动绑灯,禁止自动 resolve**;色调与阴影解耦
 - [实体位移的朝向语义(faceTowardMovement)](runtime/mechanisms/entity-move-facing.md) — 不勾选=完全不碰朝向(勿回退成"起点偷改一次");需要转身的内部调用必须显式传 true;朝向只有左右镜像,up/down 不存在
 - [实体显隐四通道合成](runtime/mechanisms/entity-visibility-channels.md) — 四个独立通道(派生基底/条件/会话覆盖/拾取位)在实体内单点合成;任何一方只写自己的通道,禁止直接 setEnabled 冲掉运行态
 - [背包槽上限与 critical 给予](runtime/mechanisms/inventory-capacity-critical.md) — 背包有槽上限,giveItem 返回值必须消费;关键道具用 critical=true 绕上限,拾取失败走 inventory:full 不消耗热点
+- [运行时摆灯的可视化手柄(聚光靶点/锥角、面光尺寸/朝向)](runtime/mechanisms/light-authoring-gizmos.md) — 判据只有一条——三维朝向/尺寸必须能拖,标量数字框就够;聚光靶点落行走面(正向求交要粗扫+二分),面光正面判据必须用真视线不能写 n.z<0;面板兜底值要与 packLights 逐字对齐
+- [光照参数的空间与单位(世界空间 wu ↔ 伪世界 q)](runtime/mechanisms/lighting-scale-reference.md) — 灯摆在世界空间、单位 wu(与 NPC/热区/spawn 同尺,角色高 150 wu 恒定);shader 里 march 走伪世界 q,两者差一个逐场景的 wuPerQUnit,transform 只在打包处折一次
 - [小游戏会话生命周期](runtime/mechanisms/minigame-session-lifecycle.md) — 小游戏统一走 MinigameSessionManagerBase;start 的异常必须 catch→teardownSession,否则一次抛错 brick 整个子系统
 - [信号驱动 5 层编排脊椎](runtime/mechanisms/narrative-signal-spine.md) — 世界→对话(只演+打信号)→scenario子图→主线里程碑图→quest纯镜像;主线叙事图是唯一进度真相源
 - [物件检视场景(物理单位制 + 伪形体)](runtime/mechanisms/object-examine-scene.md) — 一张静帧撑起的可看场景;长度类参数一律真实单位并由实例声明物理标尺,alpha 只给边界、形体要另烘高度场
@@ -51,9 +54,10 @@
 ### 决策记录
 - [人物档案解锁只走一个动作](runtime/decisions/2026-06-30-archive-unlock-single-action.md) — 人物档案解锁唯一通道=addArchiveEntry;名字匹配、条件自动解锁、unlockConditions 字段全部删除
 - [对话立绘构图定稿](runtime/decisions/2026-07-07-dialogue-portrait-composition.md) — VN 式小半身像(240px)压面板前景、底边伸出画面外、暗幕 opt-in;大立绘/默认压暗/垫面板后/底部渐隐均被否
+- [曝光逐场景独立调,不做全局对齐](runtime/decisions/2026-08-21-per-scene-exposure.md) — display（ev/tonemap/对比/饱和/lift）留在场景 JSON 里逐场景调;不把 albedo 标定接进背景、不提全局曝光层——精度不是这个项目要的东西
 - [位面基建 v3 模型拍板](runtime/decisions/2026-07-05-plane-v3-model.md) — 位面=全局一等资产+实体归属+叙事只点名+对账器重派生;v1(绑任务图)/v2(实体变体表)/接管式小游戏均被否
 - [scenarios.json 一等公民系统退役](runtime/decisions/2026-07-15-scenario-firstclass-retirement.md) — 2026-07-13 拍板退役一等公民 scenario 系统;stage-1 数据侧已落地(scenarios.json 清空、码头两线迁 narrative),stage-2 代码删除待做(届时 6→4 条件叶为 approval①)
-- [二维场景辐射度还原与发光增益管线定稿](runtime/decisions/2026-07-21-scene-radiance-restoration-pipeline.md) — LDR 线性化后离线还原辐射场;发光/底光按语义 mask 一刀两断,实体受光只在伪世界深度中积分
+- [二维场景辐射度还原与发光增益管线定稿](runtime/decisions/2026-07-21-scene-radiance-restoration-pipeline.md) — 【2026-08-21 已被统一光影取代】原「离线还原绝对辐射度 + 语义 mask 一刀两断」不再是新场景的路线;新路线是先除掉画里的白天光再乘新光,离线只烘几何项
 - [UI 面板美学方向定稿](runtime/decisions/2026-07-05-ui-panel-skin-direction.md) — 民俗草根·做旧木框——纸纹底+厚木条外框+内侧暗金细线;标题界面是海报、不走这套皮
 
 ## editor-tools

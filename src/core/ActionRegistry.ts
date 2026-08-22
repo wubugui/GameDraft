@@ -48,7 +48,7 @@ import {
   type VoiceAdvanceSpec,
 } from '../systems/VoiceChannel';
 import type { PlaneReconciler } from '../systems/PlaneReconciler';
-import type { ActionDef, ActionOriginContext, AnimationPlaybackParams, DialogueLine, DialoguePortraitRef, EmoteBubbleOffsetOpts, EmoteBubbleVariant, ICutsceneActor, IEmoteBubbleAnchor, TimeTransition, ZoneRuleSlot, RuleLayerKey } from '../data/types';
+import type { ActionDef, ActionOriginContext, AnimationPlaybackParams, DialogueLine, DialoguePortraitRef, EmoteBubbleOffsetOpts, EmoteBubbleVariant, EntityShadowBinding, ICutsceneActor, IEmoteBubbleAnchor, TimeTransition, ZoneRuleSlot, RuleLayerKey } from '../data/types';
 import { GameState } from '../data/types';
 import type { SceneEntityKind, RuntimeFieldValue } from '../data/EntityRuntimeFieldSchema';
 import { applyDialogueColonSpeakerFromResolvedText } from './resolveText';
@@ -180,6 +180,11 @@ export interface ActionRegistryDeps {
     portraitRef: DialoguePortraitRef | undefined,
     scriptedNpcId?: string,
   ) => { portrait?: DialoguePortraitRef; speakerEntity?: DialogueLine['speakerEntity'] };
+  /**
+   * 改实体阴影绑定（`setEntityShadow`）。`target` = 'player' / npcId / 'hotspot:<id>'。
+   * 传空数组 = 回到手调单影。覆盖不入存档，切场景即清。
+   */
+  setEntityShadowBindings: (target: string, bindings: EntityShadowBinding[]) => void;
   ruleOfferRegistry: RuleOfferRegistry;
   inventoryManager: InventoryManager;
   rulesManager: RulesManager;
@@ -1726,6 +1731,50 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       console.warn('ActionRegistry: setEntityField failed', e);
     });
   }, ['sceneId', 'entityKind', 'entityId', 'fieldName', 'value']);
+
+  /**
+   * 改一个实体的阴影绑定（演出用）。
+   *
+   * **手动指定，系统不猜**——这正是本 Action 存在的理由：制作人 2026-08-20 要求
+   * 「角色阴影要能手动指定绑定灯光和虚拟灯光，不能自动 resolve」，而演出里
+   * 「这一刻影子必须往那边倒」只能由外部下令。
+   *
+   * `target`：`'player'` ｜ NPC id ｜ `'hotspot:<热区id>'`。
+   * `source`：`'light:<灯id>'` 绑场景灯 ｜ `'virtual'` 虚拟灯 ｜ `'none'` 不投影。
+   * 虚拟灯的角度/浓度走 `azimuthDeg`/`elevationDeg`/`darkness`/`softness`（都可缺省）。
+   *
+   * ⚠ 覆盖**不入存档**，且切场景即清空——它是演出态。存进档会造成
+   * 「改了场景数据但老档还是旧影子」这类无从下手的错。
+   */
+  executor.register('setEntityShadow', (p) => {
+    const target = String(p.target ?? '').trim();
+    const source = String(p.source ?? '').trim();
+    if (!target || !source) {
+      console.warn('setEntityShadow: 需要 target 与 source');
+      return;
+    }
+    const num = (v: unknown, dflt: number): number => {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : dflt;
+    };
+    const binding: EntityShadowBinding = source === 'virtual'
+      ? {
+        source,
+        virtual: {
+          azimuthDeg: num(p.azimuthDeg, 135),
+          elevationDeg: num(p.elevationDeg, 50),
+          darkness: num(p.darkness, 0.6),
+          softness: num(p.softness, 0.35),
+          length: num(p.length, 0),
+        },
+      }
+      : { source };
+    if (source !== 'virtual') {
+      if (p.darkness !== undefined) binding.darkness = num(p.darkness, 0.6);
+      if (p.softness !== undefined) binding.softness = num(p.softness, 0.35);
+    }
+    d.setEntityShadowBindings(target, [binding]);
+  }, ['target', 'source', 'azimuthDeg', 'elevationDeg', 'darkness', 'softness', 'length']);
 
   executor.register('hideOverlayImage', (p) => {
     const id = String(p.id ?? '').trim();

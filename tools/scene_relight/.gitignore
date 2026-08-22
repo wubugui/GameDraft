@@ -2,4 +2,13 @@
 # 只有导出前自动备份的旧变体图不进(可再生,且体积大)。
 out/*/backup/
 
+# _dump/ 是运行时取证通道(/api/dump)的落盘:游戏页 POST 过来的 extract 像素。
+# 单张 1 MB 上下、随手就写，不进版本库。
+#
+# ⚠ 例外：`__lighting_params_json.png`(名字是 .png，内容其实是 JSON)是**运行时存回的
+#   场景光照参数**。2026-08-21 我用 `git checkout` 回滚一次 JSON 格式噪声时把未提交的
+#   `lighting` 块一起丢了，正是靠这份 dump 逐字节还原回来的(166 行)。留着。
+out/_dump/*
+!out/_dump/__lighting_params_json.png
+
 # lighting2/ 几何场是烘出来的产物,落在 public/resources/runtime(整个 runtime 已 gitignore)

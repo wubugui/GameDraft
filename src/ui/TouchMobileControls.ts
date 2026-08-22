@@ -8,20 +8,90 @@ import { stripStyleMarkup } from '../core/textStyle';
 type Dir = 'u' | 'd' | 'l' | 'r';
 
 /**
- * 与 `562335a` 首次触屏 HUD 一致：`(pointer: coarse)` 或存在 `ontouchstart`。
- * 曾改用 `(hover: none)` + 排除 `fine`，在大量手机浏览器上会得到 false（例如误报 hover:hover），导致整块 HUD 永远不显示。
+ * 触屏 UI 短边上限：**设备屏幕**短边超过它，就算有触摸能力也按桌面出 UI。
+ * 820 的来历：手机横屏短边（iPhone 390 / 主流安卓 360~430）、平板竖屏短边（iPad 768）
+ * 都在门内；1080p 起步的触屏显示器、二合一大屏在门外。
+ */
+const TOUCH_UI_MAX_SHORT_SIDE = 820;
+
+function matchesSafe(query: string): boolean {
+  try {
+    return window.matchMedia(query).matches;
+  } catch {
+    return false;
+  }
+}
+
+/** 设备屏幕短边；取不到（某些内嵌 WebView 启动瞬间报 0×0）返回 0 = 未知。
+ *  刻意不退回 `innerWidth`：窗口能被随手拖窄，设备不会——用窗口尺寸会把
+ *  1280×720 的桌面窗口当成手机，而且缩一下窗口就换一套 HUD。 */
+function deviceShortSide(): number {
+  const w = window.screen?.width ?? 0;
+  const h = window.screen?.height ?? 0;
+  return w > 0 && h > 0 ? Math.min(w, h) : 0;
+}
+
+/**
+ * 「这一局出触屏 UI 还是桌面 UI」的唯一判据。判错的症状是**整套 HUD 换成另一套**
+ * （桌面右下角入口条 vs 顶部文字条 + 虚拟摇杆 + 动作网格），离根因极远，所以判据集中在这里、
+ * 三段顺序不可调换：
  *
- * 导出给 HUD 桌面入口条做互斥判据（触屏有整套 chip，桌面条只在非触屏出现）——
+ * 1. **硬否决**：桌面尺寸的屏幕 + 系统里存在精确指针 → 桌面。挡内嵌 Chromium 把主指针报成 coarse。
+ * 2. `(pointer: coarse)` 快车道，**原样保留、不加任何附加条件**——真手机与 DevTools 设备模拟走这条。
+ *    曾改用 `(hover: none)` + 排除 `fine`（`562335a` 之后），在大量手机浏览器上得到 false
+ *    （误报 hover:hover），把整块触屏 HUD 干没了；别再走那条路。
+ * 3. 兜底支只为「coarse 漏报的真手机」存在：要它拿出**是手机**的正面证据
+ *    （UA-CH mobile / UA / 设备屏幕短边），光有触摸能力不算——触屏显示器、二合一、
+ *    装了驱动的数位板都有 `ontouchstart`。
+ *
+ * 导出给 HUD 桌面入口条做互斥判据（触屏有整套 chip，桌面条只在非触屏出现，见 buildEntryStrip）——
  * 两边必须用同一个判断，各写一份迟早漂移出「两套都显示/都不显示」。
  */
-export function useCoarsePointerOrTouchDevice(): boolean {
+function computeTouchUi(): boolean {
   if (typeof window === 'undefined') return false;
-  try {
-    if (window.matchMedia('(pointer: coarse)').matches) return true;
-  } catch {
-    /* ignore */
+  const shortSide = deviceShortSide();
+
+  // 【硬否决，优先于下面所有判据】设备屏幕明显是桌面尺寸 + 系统里存在精确指针（鼠标/触控板）
+  // → 一律桌面 UI。放在 coarse 之前是有意的：内嵌 Chromium（Electron 壳、触屏一体机）
+  // 会把主指针报成 coarse，只靠 coarse 快车道挡不住，玩家在 27 寸屏上用鼠标却拿到竖屏手机布局。
+  // 真手机 shortSide 远在门限之下踩不到；DevTools 设备模拟会把 screen 一起改成设备尺寸，
+  // 同样踩不到——所以这条不会把任何真触屏场景误伤成桌面。
+  // 用 `any-pointer: fine`（系统里**存在**精确指针）而不是 `hover`/`pointer`：
+  // 后两者问的是「主指针是什么」，正是 562335a 之后翻车过的那条路。
+  if (shortSide > TOUCH_UI_MAX_SHORT_SIDE && matchesSafe('(any-pointer: fine)')) return false;
+
+  if (matchesSafe('(pointer: coarse)')) return true;
+
+  const hasTouch = 'ontouchstart' in window || (navigator?.maxTouchPoints ?? 0) > 0;
+  if (!hasTouch) return false;
+  // 到这一步说明：有触摸能力，但主指针是鼠标。这条兜底支存在的唯一理由是
+  // 「coarse 漏报的真手机」，所以要求拿出**是手机**的正面证据，而不是「能触摸」。
+  const uaData = (navigator as { userAgentData?: { mobile?: boolean } }).userAgentData;
+  if (uaData?.mobile === true) return true;
+  if (/Android|iPhone|iPod|iPad|Mobile|Silk|Kindle/i.test(navigator.userAgent)) return true;
+  return shortSide > 0 && shortSide <= TOUCH_UI_MAX_SHORT_SIDE;
+}
+
+/** dev 下把判据的原始输入打一次。这个判断出错时症状是「整套 HUD 换了一套」，
+ *  离根因极远——留下这行，下次一眼看出是哪个信号把它推成触屏的，不用再猜。 */
+let verdictLogged = false;
+
+export function useCoarsePointerOrTouchDevice(): boolean {
+  const verdict = computeTouchUi();
+  if (import.meta.env.DEV && !verdictLogged && typeof window !== 'undefined') {
+    verdictLogged = true;
+    console.info('[touch-ui] 判据 =', verdict ? '触屏 UI' : '桌面 UI', {
+      coarse: matchesSafe('(pointer: coarse)'),
+      anyPointerFine: matchesSafe('(any-pointer: fine)'),
+      ontouchstart: 'ontouchstart' in window,
+      maxTouchPoints: navigator?.maxTouchPoints ?? null,
+      uaDataMobile: (navigator as { userAgentData?: { mobile?: boolean } }).userAgentData?.mobile ?? null,
+      screen: [window.screen?.width ?? 0, window.screen?.height ?? 0],
+      shortSide: deviceShortSide(),
+      ua: navigator?.userAgent ?? '',
+    });
   }
-  return 'ontouchstart' in window;
+  return verdict;
 }
 
 function recomputeAxes(active: Set<Dir>): { x: -1 | 0 | 1; y: -1 | 0 | 1 } {

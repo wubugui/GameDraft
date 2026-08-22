@@ -36,7 +36,9 @@ def _make_scene(tmp: Path, sid: str = 'testtown', with_depth: bool = True,
     rgb[..., 1] = 128
     rgb[..., 2] = np.linspace(200, 60, H, dtype=np.uint8)[:, None]
     Image.fromarray(rgb).save(rt / 'background.png')
-    data: dict = {'id': sid, 'backgrounds': [{'image': 'background.png', 'x': 0, 'y': 0}]}
+    # worldWidth 是刻度链的一环：场景坐标 →(native_w/worldWidth)→ 背景像素 →(1/ppu)→ 世界单位
+    data: dict = {'id': sid, 'worldWidth': 640.0, 'worldHeight': 400.0,
+                  'backgrounds': [{'image': 'background.png', 'x': 0, 'y': 0}]}
     if with_depth:
         d = np.linspace(0.5, 2.5, H, dtype=np.float32)[:, None].repeat(W, 1)  # 底近顶远
         lo, hi = float(d.min()) - 1e-4, float(d.max()) + 1e-4
@@ -154,6 +156,72 @@ def test_export_writes_variant_params_and_backup(town):
     res2 = store.export_variant(s, '夜', PRESETS['夜'])       # 二次导出必须备份旧变体
     assert res2['backup'] is not None
     assert Path(town / res2['backup']).exists() or Path(res2['backup']).exists()
+
+
+# ---------------------------------------------------------------- 几何场烘焙
+
+def test_character_scale_derivation(town):
+    """刻度链：角色在这张画里占多少 wu，由 worldWidth/native_w/ppu 推出。
+
+    合成场景：worldWidth=640、native_w=64、ppu=20
+    ⇒ scene_per_wu = 640 / (64/20) = 200 场景坐标每 wu
+    ⇒ 角色 150 场景坐标 = 0.75 wu
+
+    `char_wu` 是**全项目唯一的尺度参照**（每张原画取景远近不同，实测 28 个场景
+    0.17–0.97，差 5.7 倍）。这里一度还导出过 `meters_per_wu = 1.7 / char_wu`
+    ——那是凭空造的单位，游戏里没有米，2026-08-21 整层删掉。
+    """
+    from tools.scene_relight.bake import character_band_wu
+    s = Scene('testtown')
+    sc = character_band_wu(s)
+    assert abs(sc['scene_per_wu'] - 200.0) < 1e-6
+    assert abs(sc['char_wu'] - 0.75) < 1e-6
+    assert abs(sc['band'] - 0.75 * 1.15) < 1e-6
+    # 防回退：别再往刻度里塞造出来的单位
+    assert 'meters_per_wu' not in sc, sc
+
+
+def test_bake_produces_all_fields(town):
+    from tools.scene_relight.bake import PAYLOAD_VERSION, bake
+    r = bake('testtown', grid=(6, 5, 6))
+    out = town / 'rt' / 'testtown' / 'lighting2'
+    for name in ('normal.png', 'skyvis.png', 'skyvis_grid.bin', 'meta.json'):
+        assert (out / name).exists(), name
+        assert not (out / name).with_suffix((out / name).suffix + '.tmp').exists()
+    meta = json.loads((out / 'meta.json').read_text(encoding='utf-8'))
+    assert meta['version'] == PAYLOAD_VERSION
+    assert meta['grid']['nx'] == 6 and meta['grid']['ny'] == 5 and meta['grid']['nz'] == 6
+    assert 'scale' in meta and meta['scale']['char_wu'] > 0
+    n = np.frombuffer((out / 'skyvis_grid.bin').read_bytes(), np.float32)
+    assert n.size == 6 * 5 * 6
+    assert 0.0 <= n.min() and n.max() <= 1.0
+    assert r['band'] > 0
+
+
+def test_skyvis_grid_increases_with_height(town):
+    """物理判据：越高看见的天越多。任何一层比下面一层暗都是几何/march 写错了。"""
+    from tools.scene_relight.bake import bake
+    bake('testtown', grid=(8, 6, 8))
+    out = town / 'rt' / 'testtown' / 'lighting2'
+    meta = json.loads((out / 'meta.json').read_text(encoding='utf-8'))
+    g = meta['grid']
+    v = np.frombuffer((out / 'skyvis_grid.bin').read_bytes(), np.float32) \
+        .reshape(g['nx'], g['ny'], g['nz'])
+    per_layer = [float(v[:, i, :].mean()) for i in range(g['ny'])]
+    assert all(per_layer[i] <= per_layer[i + 1] + 1e-6 for i in range(len(per_layer) - 1)), \
+        f'天穹可见性未随高度单调上升: {per_layer}'
+
+
+def test_skyvis_is_light_independent(town):
+    """几何项判据：改任何光照参数都不该影响烘出来的场（否则就不是"烘几何"了）。"""
+    from tools.scene_relight.bake import bake
+    bake('testtown', grid=(6, 4, 6))
+    out = town / 'rt' / 'testtown' / 'lighting2'
+    first = (out / 'skyvis_grid.bin').read_bytes()
+    px_first = (out / 'skyvis.png').read_bytes()
+    bake('testtown', grid=(6, 4, 6))
+    assert (out / 'skyvis_grid.bin').read_bytes() == first
+    assert (out / 'skyvis.png').read_bytes() == px_first
 
 
 def test_saved_params_roundtrip(town):

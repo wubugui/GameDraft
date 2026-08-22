@@ -9,6 +9,8 @@
 > `ACTION_TYPES`,游戏状态查 `src/data/types.ts` 的 `GameState`,条件叶子查
 > `src/systems/graphDialogue/evaluateGraphCondition.ts`。架构文档
 > (`docs/游戏架构设计文档.md`)里的清单会漂,不要照抄任何文档里的表。
+>
+> **光影现在有新旧两套并存**(2026-08-21):场景配了 `lighting` 块的走统一光影(`src/rendering/lighting/`),没配的走旧的 `lightEnv`/probe。28 个场景已全部接进新管线,但其中 27 个是**恒等占位**(`lighting.placeholder: true`)——背景零变化、角色仍走旧 probe。判断某个场景走哪条,看 `placeholder` 这个键,别看文档。
 
 <!-- agent-docs-gate:begin (由 agent_docs/_meta/cli.py install 维护,勿手改) -->
 ## §A 开工先查公共知识库(agent_docs)
@@ -31,6 +33,7 @@
 | 不改玩法的技术改动(重构、架构修复、性能、UI 实现、工具、修 bug) | `agent_docs/runtime/norms.md` | 分层反向依赖;`destroy` 留残留 |
 | 改编辑器 / 策划工具(`tools/editor`、`tools/*_editor` 等 PyQt) | 叠加 `agent_docs/editor-tools/norms.md` | 裸 `QLineEdit` 承载引用字段;绕过统一写盘出口 |
 | 产素材(抠图、动画、立绘、配音、音效、视差) | `agent_docs/asset-pipeline/norms.md` | 重扣源 ≠ 游戏当前实际源 |
+| 改光影(场景重打光、灯、雾、角色受光、阴影) | `agent_docs/runtime/mechanisms/character-lighting.md` + `entity-lighting.md` | 用**旧的** probe/lightEnv 那套去改新场景 |
 | 跨域 / 拿不准 / 系统设计 | `agent_docs/meta/norms.md` | 四个存放面混放 |
 
 两个例外流程:

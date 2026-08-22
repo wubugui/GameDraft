@@ -2,11 +2,31 @@ import 'pixi.js/mesh';
 import { BlurFilter, Container, Mesh, MeshGeometry, Shader, Texture, type TextureSource } from 'pixi.js';
 import type { ResolvedLightEnv } from './lightEnv';
 import type { ShadowProjectionField } from './shadowField';
-import type { ShadowSource, ShadowSceneContext, IEntityShadow } from './entityShadowTypes';
+import {
+  IDENTITY_SHADOW_SHAPE,
+  type ShadowSource, type ShadowSceneContext, type IEntityShadow, type ShadowShapeParams,
+} from './entityShadowTypes';
 
 export type { ShadowSource, ShadowSceneContext } from './entityShadowTypes';
 
 const DEG2RAD = Math.PI / 180;
+
+/**
+ * 末端渐隐：从影长的这个位置开始，浓度向 `TIP_ALPHA` 收。
+ *
+ * 为什么要有：剪影是等比拉长的，头端会保留**清晰的头肩轮廓边**——大脑对那条边极其敏感，
+ * 一眼就读成"一张人形贴纸躺在地上"。真实影子的远端半影最宽、本影最弱，本来就该化掉。
+ */
+const TIP_FADE_START = 0.4;
+const TIP_ALPHA = 0.42;
+/**
+ * 半影随距离展宽：采样半径（占剪影帧尺寸的比例）从脚端 0 长到头端这个值。
+ *
+ * 脚端保持 0 是刻意的——接触点本来就该是锐的，而且 `env.shadow.softness` 驱动的那个
+ * `BlurFilter` 已经在给全长一个由光源角尺寸决定的基础软度。这里只加"随距离变软"那一份，
+ * 存量场景的接触端观感因此逐像素不变。
+ */
+const PENUMBRA_GROW = 0.06;
 
 // 纯平面投影:cast 单 quad,FRAG 做碰撞方向阻挡 + 前景深度 blend;contact 单 quad 仅压暗(uColEnabled/uOccEnabled=0)。
 const VERT = /* glsl */ `
@@ -46,6 +66,10 @@ uniform float uUvMode;
 uniform float uShearX;     // 影子头端偏移(世界px)
 uniform float uShearY;
 uniform float uHalfW;      // 底边半宽
+uniform float uSpreadTop;  // 头端半宽 ÷ 底边半宽:1=平行四边形, >1=梯形(点光散开)
+uniform float uTipFadeStart; // 末端渐隐起点(t)
+uniform float uTipAlpha;     // t=1 处的浓度系数
+uniform float uPenGrow;      // 头端半影半径(占剪影帧尺寸比例);脚端恒 0
 uniform float uU0;         // 剪影帧 uv:u0/v0=脚(底), u1/v1=头(顶)
 uniform float uV0;
 uniform float uU1;
@@ -100,19 +124,63 @@ bool isCollisionAt(vec2 wp) {
     return texture(uCollisionMap, vec2(gx / uCol_gw, gz / uCol_gh)).r > 0.5;
 }
 
+/** 取剪影 alpha。**必须 clamp 在当前帧框内**:越界会采到图集里相邻的帧——那正是
+ *  2026-07-22「剪影被整张图集横扫成条纹」的复发路径。contact 的静态 uv 缺省是整张 0..1,
+ *  clamp 对它是恒等的。 */
+float silAt(vec2 uv) {
+    vec2 lo = vec2(min(uU0, uU1), min(uV0, uV1));
+    vec2 hi = vec2(max(uU0, uU1), max(uV0, uV1));
+    return texture(uTexture, clamp(uv, lo, hi)).a;
+}
+
+/** 45° 环上的对角分量。 */
+const float RING_K = 0.7071;
+
+/** 变半径半影:内圈 8 抽(权 1)+ 外圈 4 抽(权 .5)+ 中心(权 2),权和 12。
+ *  半径给的是**帧内比例**,按帧跨度换成 uv,于是拉长方向糊得多、横向糊得少
+ *  ——正是长影子该有的样子。r=0 直接短路。
+ *
+ *  ⚠ 抽样点必须手写展开、不能用常量数组:本工程的 Pixi 上下文是 WebGL1,
+ *    源码里的 in / out / texture() 是 Pixi 反向转译过去的,数组构造式没有转译,
+ *    写了会在 GLSL ES 1.00 下编译失败 → 整个影子 shader 起不来(2026-08-22 真机实证)。
+ *  ⚠ 本段在 TS 模板字符串里,注释中一律不许出现反引号——会当场截断 GLSL 源。 */
+float silSoft(vec2 uv, float r) {
+    if (r < 1e-4) return silAt(uv);
+    vec2 rad = r * vec2(abs(uU1 - uU0), abs(uV1 - uV0));
+    float sum = silAt(uv) * 2.0
+        + silAt(uv + vec2( rad.x, 0.0))
+        + silAt(uv + vec2(-rad.x, 0.0))
+        + silAt(uv + vec2( 0.0,  rad.y))
+        + silAt(uv + vec2( 0.0, -rad.y))
+        + silAt(uv + vec2( RING_K * rad.x,  RING_K * rad.y))
+        + silAt(uv + vec2(-RING_K * rad.x,  RING_K * rad.y))
+        + silAt(uv + vec2( RING_K * rad.x, -RING_K * rad.y))
+        + silAt(uv + vec2(-RING_K * rad.x, -RING_K * rad.y));
+    sum += 0.5 * (
+          silAt(uv + vec2( 2.0 * rad.x, 0.0))
+        + silAt(uv + vec2(-2.0 * rad.x, 0.0))
+        + silAt(uv + vec2( 0.0,  2.0 * rad.y))
+        + silAt(uv + vec2( 0.0, -2.0 * rad.y)));
+    return sum / 12.0;
+}
+
 void main(void) {
     vec2 uv = vUV;
+    float t = 0.0;
     if (uUvMode > 0.5) {
-        // 平行四边形反解:vWorld = foot + (s-0.5)·2hw·x̂ + t·off
+        // 梯形反解:vWorld = foot + t·off + (s-0.5)·2·hw(t)·x̂,hw(t)=uHalfW·mix(1,uSpreadTop,t)。
+        // 底边沿世界 x̂、头端只在 x̂ 上放大,所以 t 的解与 uSpreadTop 无关(仍是 y 的一次式)。
         float offY = abs(uShearY) < 1e-3 ? (uShearY < 0.0 ? -1e-3 : 1e-3) : uShearY;
-        float t = (vWorld.y - uFootY) / offY;
-        float s = ((vWorld.x - uFootX) - uShearX * t) / max(uHalfW * 2.0, 1e-3) + 0.5;
+        t = (vWorld.y - uFootY) / offY;
+        float halfAt = uHalfW * mix(1.0, uSpreadTop, clamp(t, 0.0, 1.0));
+        float s = ((vWorld.x - uFootX) - uShearX * t) / max(halfAt * 2.0, 1e-3) + 0.5;
         if (t < 0.0 || t > 1.0 || s < 0.0 || s > 1.0) { discard; }
         uv = vec2(mix(uU0, uU1, s), mix(uV0, uV1, t));
     }
-    float sil = texture(uTexture, uv).a;
+    float sil = silSoft(uv, uPenGrow * t);
     if (sil < 0.01) { discard; }
-    float a = sil * uDarkness;
+    // 末端渐隐:远端本影本来就该弱下去,不渐隐就会看见清晰的头肩边(纸片感的第一来源)
+    float a = sil * uDarkness * mix(1.0, uTipAlpha, smoothstep(uTipFadeStart, 1.0, t));
 
     // 碰撞方向阻挡:从脚底沿投射方向 march,撞到碰撞格则其后整段裁掉
     if (uColEnabled > 0.5 && uHasGroundTex > 0.5) {
@@ -182,6 +250,11 @@ function makePlanarShader(ctx: ShadowSceneContext | null, texSource: TextureSour
         uShearX: f32(0),
         uShearY: f32(1),
         uHalfW: f32(1),
+        uSpreadTop: f32(1),
+        // contact(colOcc=false)恒 t=0,渐隐与半影对它是恒等的;cast 由 update 逐帧写
+        uTipFadeStart: f32(TIP_FADE_START),
+        uTipAlpha: f32(colOcc ? TIP_ALPHA : 1),
+        uPenGrow: f32(colOcc ? PENUMBRA_GROW : 0),
         uU0: f32(0), uV0: f32(1), uU1: f32(1), uV1: f32(0),
         uSceneSize: { value: new Float32Array([ctx?.sceneW ?? 1, ctx?.sceneH ?? 1]), type: 'vec2<f32>' },
         uFootX: f32(0),
@@ -229,6 +302,9 @@ function setU(shader: Shader, key: string, v: number): void {
 /**
  * planar 模式:纯平面投影阴影 + 碰撞方向阻挡 + 前景遮挡 blend + 脚底接触斑。
  * 阴影/接触均在 shadowLayer(实体层之下)。被前景实体覆盖由 z-order 处理。
+ *
+ * cast 的 quad 是**梯形**(2026-08-22 起):底边=脚点半宽×迎光截面系数,头端再乘散开系数。
+ * 恒等形状(spread=1, widthScale=1)退化回原来的平行四边形,没绑灯的实体走的就是这条。
  */
 export class PlanarEntityShadow implements IEntityShadow {
   private readonly ctx: ShadowSceneContext | null;
@@ -267,7 +343,12 @@ export class PlanarEntityShadow implements IEntityShadow {
     layer.addChild(this.contactMesh);
   }
 
-  update(src: ShadowSource, env: ResolvedLightEnv, field?: ShadowProjectionField | null): void {
+  update(
+    src: ShadowSource,
+    env: ResolvedLightEnv,
+    field?: ShadowProjectionField | null,
+    shape?: ShadowShapeParams | null,
+  ): void {
     const tex = src.getTexture();
     if (!tex || !src.isVisible() || !env.shadow.enabled) {
       this.castMesh.visible = false;
@@ -313,7 +394,12 @@ export class PlanarEntityShadow implements IEntityShadow {
     const proj = field
       ? field.sample(fx, fy)
       : { angleRad: (env.key.azimuthDeg + 180) * DEG2RAD, length: env.shadow.length };
-    const hw = Math.max(0.5, w * 0.5);
+    // 形状:绑定路径解得出迎光截面与散开;没绑定就是恒等(存量场景的 quad 逐像素不变)
+    const shp = shape ?? IDENTITY_SHADOW_SHAPE;
+    const spread = Number.isFinite(shp.spread) ? Math.max(0.2, shp.spread) : 1;
+    const widthScale = Number.isFinite(shp.widthScale) ? Math.max(0.05, shp.widthScale) : 1;
+    const hw = Math.max(0.5, w * 0.5 * widthScale);
+    const hwTop = hw * spread;
     const reach = H * proj.length;
     const offX = Math.cos(proj.angleRad) * reach;
     const offY = Math.sin(proj.angleRad) * reach;
@@ -327,11 +413,13 @@ export class PlanarEntityShadow implements IEntityShadow {
     const vTop = fr.y / sh;
     const vBot = (fr.y + fr.height) / sh;
 
+    // 梯形:头端半宽 = hwTop(点光散开)。凸,两三角形拆分无歧义;(s,t) 在片元里解析反解,
+    // 与顶点插值无关,所以拆法不影响采样。
     const p = this.castPositions;
-    p[0] = fx - hw;        p[1] = fy;          // BL 脚
-    p[2] = fx + hw;        p[3] = fy;          // BR 脚
-    p[4] = fx + hw + offX; p[5] = fy + offY;   // TR 头
-    p[6] = fx - hw + offX; p[7] = fy + offY;   // TL 头
+    p[0] = fx - hw;           p[1] = fy;          // BL 脚
+    p[2] = fx + hw;           p[3] = fy;          // BR 脚
+    p[4] = fx + hwTop + offX; p[5] = fy + offY;   // TR 头
+    p[6] = fx - hwTop + offX; p[7] = fy + offY;   // TL 头
     this.castGeometry.getBuffer('aPosition').update();
 
     setU(this.castShader, 'uDarkness', Math.max(0, Math.min(1, env.shadow.darkness)));
@@ -341,6 +429,7 @@ export class PlanarEntityShadow implements IEntityShadow {
     setU(this.castShader, 'uShearX', offX);
     setU(this.castShader, 'uShearY', offY);
     setU(this.castShader, 'uHalfW', hw);
+    setU(this.castShader, 'uSpreadTop', spread);
     setU(this.castShader, 'uU0', u0);
     setU(this.castShader, 'uV0', vBot);
     setU(this.castShader, 'uU1', u1);

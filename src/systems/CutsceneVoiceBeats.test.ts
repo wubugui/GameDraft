@@ -101,8 +101,14 @@ describe('过场台词拍的配音收尾', () => {
     let mid1Done = false;
     const mid1 = run(rig.mgr, SUB('中间A', { autoAdvance: 250 })).then(() => { mid1Done = true; });
     await vi.waitFor(() => expect(rig.subtitles.length).toBe(2));
+    const t0 = performance.now();
     await new Promise((r) => setTimeout(r, 60));
-    expect(mid1Done).toBe(false);          // 60ms 时还没走：真的按毫秒数在等
+    // ⚠ 只有**确实还没到 250ms 截止**时这条断言才成立。并行满负载跑时事件循环
+    //   可能被饿死几百毫秒，那种情况下"已经走了"是对的，断言它没走反而是误报。
+    //   守卫而不是删掉：正常情况下(60ms ≪ 250ms)这条照跑，仍然守着"真的按毫秒在等"。
+    if (performance.now() - t0 < 250) {
+      expect(mid1Done).toBe(false);        // 60ms 时还没走：真的按毫秒数在等
+    }
     await mid1;                            // 到点自己走掉
     expect(mid1Done).toBe(true);
     expect(rig.stopped).toEqual([]);       // 定时推进没有停配音
@@ -113,7 +119,7 @@ describe('过场台词拍的配音收尾', () => {
     await vi.waitFor(() => expect(rig.subtitles.length).toBe(3));
     await new Promise((r) => setTimeout(r, 40));
     expect(mid2Done).toBe(false);          // 没有任何自动推进：确实在等点击
-    mgrResolve(rig.mgr)();
+    (await armedResolve(rig.mgr))();
     await mid2;
     expect(rig.stopped).toEqual([]);
 
@@ -153,7 +159,7 @@ describe('过场台词拍的配音收尾', () => {
     await vi.waitFor(() => expect(rig.subtitles.length).toBe(1));
     await new Promise((r) => setTimeout(r, 30));
     expect(done).toBe(false);               // 仍在等玩家点
-    (mgrResolve(rig.mgr))();                // 模拟点击
+    (await armedResolve(rig.mgr))();        // 模拟点击
     await p;
     expect(done).toBe(true);
   });
@@ -169,9 +175,19 @@ describe('过场台词拍的配音收尾', () => {
   });
 });
 
-/** 取当前武装着的「点击推进」回调（等价于玩家点了一下） */
-function mgrResolve(mgr: CutsceneManager): () => void {
-  const r = (mgr as any).dialogueResolve;
-  expect(typeof r).toBe('function');
-  return r;
+/**
+ * 取当前武装着的「点击推进」回调（等价于玩家点了一下）。
+ *
+ * ⚠ 必须**等它武装好**，不能靠前面那句墙钟 sleep 顺带赌到。
+ * `dialogueResolve` 走双 rAF arming（测试里用 `setTimeout(cb,0)` 打桩），
+ * 并行满负载跑时事件循环被饿死，固定 40ms 的等待根本保证不了那两个宏任务已经过去
+ * ——读到的还是 `null`，而 `typeof null === 'object'`，报错形态是
+ * 「expected 'object' to be 'function'」，看着像被测代码坏了，其实是测试自己在赌。
+ */
+async function armedResolve(mgr: CutsceneManager): Promise<() => void> {
+  return vi.waitFor(() => {
+    const r = (mgr as any).dialogueResolve;
+    expect(typeof r).toBe('function');
+    return r as () => void;
+  });
 }

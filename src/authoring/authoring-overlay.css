@@ -1,0 +1,88 @@
+/* 运行时编辑模式的画面叠层。DEV 专用；prod build 里整个 src/authoring 被静态剔除。 */
+
+#authoring-hud {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.5rem;
+  z-index: 60;
+  display: none;
+  flex-direction: column;
+  gap: 0.35rem;
+  width: min(22rem, 40vw);
+  padding: 0.45rem 0.6rem 0.55rem;
+  background: rgba(13, 13, 20, 0.88);
+  border: 1px solid #4a6ea8;
+  border-radius: 6px;
+  font-family: system-ui, 'Segoe UI', sans-serif;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: #ccd;
+  /* 交互全在 canvas 上；HUD 吃了指针事件就会挡住摆灯 */
+  pointer-events: none;
+  user-select: none;
+}
+
+#authoring-hud.is-visible { display: flex; }
+
+.authoring-hud__title {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #ffd08a;
+}
+
+.authoring-hud__scene {
+  font-weight: 400;
+  font-size: 0.75rem;
+  color: #8fa;
+}
+
+.authoring-hud__dirty {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: #ff9b9b;
+}
+
+.authoring-hud__row {
+  margin: 0;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 0.75rem;
+  color: #cfd8ff;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.authoring-hud__muted {
+  margin: 0;
+  font-size: 0.75rem;
+  color: #8890a8;
+  white-space: pre-wrap;
+}
+
+.authoring-hud__warn {
+  margin: 0;
+  font-size: 0.75rem;
+  color: #ffcf7a;
+  white-space: pre-wrap;
+}
+
+.authoring-hud__msg {
+  margin: 0;
+  font-size: 0.75rem;
+  color: #9be89b;
+  white-space: pre-wrap;
+}
+
+.authoring-hud__msg.is-error { color: #ff9b9b; }
+
+.authoring-hud__sync {
+  margin: 0;
+  font-size: 0.75rem;
+  color: #8fd1a8;
+  white-space: pre-wrap;
+}
+
+.authoring-hud__sync.is-bad { color: #ffcf7a; }

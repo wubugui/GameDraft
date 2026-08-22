@@ -319,6 +319,30 @@ export class SpriteEntity {
     this.syncAttachments();
   }
 
+  /**
+   * 丢掉现有 shader，向供给方重新要一次（2026-08-20，统一光影用）。
+   *
+   * 为什么需要：实体的 shader 是**建实体那一刻**向供给方要的。场景光影载荷晚于
+   * 实体装载才就绪时（进场景的正常顺序就是如此），已经在场的角色手里握着的是
+   * 旧路径的 shader —— 场景变了角色没变。这里把它们推到新路径上。
+   *
+   * 供给方仍然可能返回 null（新旧两条都不可用），那就安静回到无着色的旧管线。
+   */
+  refreshBakedShading(): void {
+    if (!this.litProvider) return;
+    if (this.litQuad) { this.litQuad.destroy(); this.litQuad = null; }
+    if (this.litShader) this.litProvider.release(this.litShader);
+    this.litShader = null;
+    this.litColorSrc = null;
+    this.sprite.renderable = true;
+    this.refreshLitQuad();
+    for (const at of this.attachments.values()) {
+      this.disposeAttachmentLit(at);
+      this.refreshAttachmentLit(at);
+    }
+    this.syncAttachments();
+  }
+
   disableBakedShading(): void {
     for (const at of this.attachments.values()) {
       this.disposeAttachmentLit(at);

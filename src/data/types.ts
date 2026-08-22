@@ -191,6 +191,313 @@ export interface LightEnvCurveDef {
   points: LightEnvCurvePoint[];
 }
 
+// ============================================================
+// 统一光影系统（lighting-rebuild）
+//
+// 与上面的 SceneLightEnv / LightEnvCurveDef 是**两代**：那一代是"逐 entity 色调 + 单一
+// 全局主光 + planar 阴影"，这一代是"场景与角色共享同一份光照状态 L"。
+// 并存到收敛期结束（旧字段届时删除，见实施方案 §5.3）。
+//
+// ⚠ 铁律：**一切光照发生在伪世界空间**（灯位、遮挡、投影都是），禁止纯屏幕空间光照。
+// ⚠ 刻度：世界单位是**逐场景**的（实测 1 wu = 2.0–10.0 m 不等）。所以**有物理含义的
+//   一切长度都是 **wu**——本项目只有这一个空间单位，与 pos/depthConfig/碰撞同尺。
+// ============================================================
+
+/** 光源类型。天光不是 Light（它是场景级唯一项，见 SceneLightingDef.sky）。 */
+export type LightKind = 'point' | 'spot' | 'area' | 'directional';
+
+/**
+ * 一盏灯。位置与一切长度都在**世界空间**，单位 **wu** —— 与 NPC、热区、spawn、
+ * 碰撞用的是同一把尺（`worldWidth` 就是世界宽度：雾津街头 4000 wu，teahouse 700 wu）。
+ * 原点就是世界空间的原点，角色高 **150 wu**（28 个场景恒定，可以拿它估尺寸）。
+ *
+ * ## 与伪世界 q 的关系
+ *
+ * shader 里的 march 走在**伪世界 q 空间**（深度场的值就是 q，`depthConfig.M.ppu`
+ * 是"每个 q 单位多少原生像素"）。它是深度重建出来的，**要 transform 才能和世界
+ * 空间对齐**——比例是 `wuPerQUnit = worldWidth / (native_w / ppu)`，逐场景不同
+ * （雾津街头 880、teahouse 154）。那一次 transform 在 `packLights` 里，作者不必知道。
+ *
+ * ## 两次踩过的坑（都不要回退）
+ *
+ * ① 一度给所有长度加了 `*Meters` 后缀，换算系数取 `1.7 / char_wu`（假设角色 1.7 米高）。
+ *    **游戏里没有米**，那是凭空造的单位。
+ * ② 推倒①之后又把**伪世界 q 单位**叫成了 wu，还说"同一个 wu 在不同场景差 5.7 倍"。
+ *    那是把**相机变换**当成了世界单位的变化——角色在 q 里从 0.17 变到 0.97，
+ *    在 wu 里 28 个场景**恒为 150**。
+ *
+ * `castShadow` 既是效果开关，也是**性能预算闸门**——带阴影的灯要沿深度场 march，
+ * 在目标机（GTX 970）上同屏 4–6 盏是线。编辑器须显示「带影灯数 N / 预算」。
+ */
+export interface LightDef {
+  id: string;
+  kind: LightKind;
+  /** **世界坐标** [x,y,z]（**wu**，原点 = 世界原点）。`directional` 忽略本字段。 */
+  pos?: [number, number, number];
+  /** 色温 K。与 `color` 二选一；两者都写时 `color` 赢。 */
+  kelvin?: number;
+  color?: RgbColor;
+  intensity: number;
+  /** 作用半径（**wu**）。缺省 450（≈3 个人高）。`directional` 忽略。 */
+  range?: number;
+  /**
+   * 发光体半径（**wu**），防贴脸核爆。缺省 `DEFAULT_LAMP_RADIUS_WU`（10 wu ≈ 1/15 个人高）。
+   *
+   * 消费方折进 q 之后**平方**，进 `1/(r²+c)`——作者填的是半径，不是半径平方。
+   */
+  softeningRadius?: number;
+
+  /** spot：射出方向 + 内外锥角 */
+  dir?: [number, number, number];
+  innerAngleDeg?: number;
+  outerAngleDeg?: number;
+
+  /** directional（日/月）：光的**来向** */
+  elevationDeg?: number;
+  azimuthDeg?: number;
+
+  /**
+   * area：矩形尺寸（**wu**）。缺省 `[range*0.3, range*0.2]`。
+   *
+   * ⚠ `orientation` 缺省是 **`[0,0,-1]`**（见 `packLights` 的
+   *   `l.dir ?? l.orientation ?? [0,0,-1]`）。这里原来写的是「取深度场在 `pos`
+   *   处的法线」—— **代码里没有这回事**，从来没实现过。
+   *   单面面光的背面完全不发光，朝向填反 = 整盏灯全黑，所以这条注释骗人的代价很高。
+   */
+  size?: [number, number];
+  orientation?: [number, number, number];
+  /**
+   * area：矩形**绕自身法线的自转**（度，逆时针）。缺省 0。
+   *
+   * 为什么必须有它：`orientation` 只说了「朝哪面」，说不了「哪边是宽」。
+   * 没有这一项时 u/v 两条半轴由 `areaAxes` 从法线用一条**固定配方**推出来
+   * （`up = |n.y|>0.95 ? X : Y`，再两次叉乘），也就是说矩形的横竖是被算出来的、
+   * 作者说了不算 —— 一扇斜着的窗、一块转了 30° 的灯板根本表达不出来。
+   *
+   * 打包时占 **`C.y`**：那一格是软化半径，而面光**不吃**软化
+   * （`lcAreaLight` 的参数表里没有它）。所以这是一个本来就空着的槽，
+   * 不必为自转再开一组 vec4（四组已经排满，加一组要动所有 shader 的布局）。
+   */
+  rollDeg?: number;
+  twoSided?: boolean;
+
+  /** 投不投影。缺省 false。 */
+  castShadow?: boolean;
+
+  /** 初始是否点亮，缺省 true。运行时可由 action 改。 */
+  enabled?: boolean;
+}
+
+/** 天光（半球环境光）。经**烘出来的**天穹可见性场调制。 */
+export interface SkyLightDef {
+  kelvin?: number;
+  color?: RgbColor;
+  intensity: number;
+  /** 半球梯度权重 0..1：越大则"朝上面亮、立面暗"越明显。 */
+  hemi: number;
+}
+
+/**
+ * 白天参考光 `S_day`——决定"除掉多少白天光"。
+ * 与 `S_new` **同式**（天穹可见性 + 定向光），只是取白天的参数。
+ * ⚠ 干活的是天穹可见性与投影；除/乘只是最后一步算术。**只用法线朝上项、不做 march
+ *   的写法已被否**（那是逐像素调色，画不出遮蔽结构）。
+ */
+export interface DayReferenceDef {
+  /**
+   * 原画自己的**遮蔽响应**。缺省 = 用 `lighting2/meta.json` 里烘焙期拟合出来的值。
+   *
+   * ⚠ **别手填**。填小了 → 画里的遮蔽没除净，夜里的 `sky.hemi` 再加一份，
+   * 遮蔽被算两遍：角落黑得不合理、开阔地却几乎没变暗（症状是"地面还那么亮、
+   * 角落又那么黑"）。实测各场景真实值在 0.00–0.96 之间，差别极大，拍脑袋必错。
+   */
+  hemi?: number;
+  sunIntensity: number;
+  sunElevationDeg: number;
+  sunAzimuthDeg: number;
+}
+
+/**
+ * 雾：按**消光系数 σ** 定义，不按"最终混合系数"。
+ * 这样将来上体积雾时，已调好的浓度/高度/颜色全部继续有效。
+ * 本期只实现高度雾（正交相机 ⇒ 积分有闭式解，无需 march）。
+ */
+export interface FogDef {
+  /** 基准消光系数（**1/wu**）。场景纵深就是 worldWidth 的量级。 */
+  sigma: number;
+  /** 高度衰减尺度（**wu**）：σ(y) = sigma · exp(−(y−baseY)/scaleHeight) */
+  scaleHeight: number;
+  /** 雾的基准高度（**wu**，相对场景地面） */
+  baseHeight: number;
+  kelvin?: number;
+  color?: RgbColor;
+  /** 散射强度（雾自身的亮度） */
+  scatter: number;
+}
+
+/**
+ * 显示变换。**同时作用于场景与角色**——这是两者亮度永远一致的结构性保证。
+ * ⚠ 绝不能烤进辐射场（烤进去会毁掉动态范围，实测过：导出图只剩 17× 动态范围）。
+ */
+export interface DisplayTransformDef {
+  ev: number;
+  tonemap: 'none' | 'reinhard' | 'filmic';
+  whiteKelvin: number;
+  contrast: number;
+  saturation: number;
+  lift: number;
+  liftKelvin: number;
+}
+
+/** 一个场景的完整光照状态。场景与角色消费**同一份**。 */
+export interface SceneLightingDef {
+  /**
+   * **恒等占位**标记（迁移用，作者调过这个场景后应当删掉这个键）。
+   *
+   * `true` 时这份配置只是把场景接进新管线、**画面零变化**：
+   * `S_new ≡ S_day` ⇒ 背景 = 原画（实测逐像素差 0）。
+   *
+   * ⚠ 此时**角色仍走旧的 probe 路径**。恒等只对背景成立——角色那边旧路径给的是
+   * 烘焙出来的 3D 辐射场，新路径给的是一个标量天光项，两者不可能相等。
+   * 硬切过去会让 27 个场景的角色一起从"有方向、有颜色的烘焙光"变成平光，
+   * 那不叫零变化。所以占位期角色不动，等作者真正给这个场景摆了灯再切。
+   *
+   * 存在的意义：**把"能删旧机制"与"逐场景调参"解耦**。
+   * 旧机制（`lightEnv` / `lightEnvCurve` / …）是未迁移场景唯一的光照来源，
+   * 不迁移就永远删不掉；而逐场景摆灯是内容工作、要美术拍板。
+   */
+  placeholder?: boolean;
+  /**
+   * 产出这份配置的迁移器版本（如 `'identity-2026-08-21'`）。
+   *
+   * 只给工具看：`tools/scene_relight/migrate.py` 靠它认出"这块是我写的、可以重写"，
+   * 从而绝不覆盖手调过的场景。**在这里声明是为了它不是个无名夹带**——
+   * 编辑器的写回是整块深拷贝透传，未声明的键虽然不会被吞掉，
+   * 但读代码的人无从知道它是什么、能不能删。
+   */
+  _migration?: string;
+  sky: SkyLightDef;
+  day: DayReferenceDef;
+  lights: LightDef[];
+  fog?: FogDef;
+  display: DisplayTransformDef;
+  /**
+   * 场景辐射尺度 ↔ 角色 albedo 尺度的标定常数。
+   *
+   * ⚠ **别手填**，理由与 `day.hemi` 同源：它描述的是这张原画的性质，不是美术意图。
+   * 缺省 = 烘焙期反解的场景反射率 ÷ 角色图集实测反射率
+   * （见 `SceneLightingSystem.CHARACTER_ALBEDO_REFERENCE`，本作实测 0.0381 而**不是**
+   * 通用图形学说的 0.25 —— 差 6.5 倍）。
+   *
+   * 填错的症状很好认：角色**系统性**偏亮或偏暗，且怎么调灯都对不上——错的是尺度不是光。
+   */
+  radianceScale?: number;
+  /**
+   * 灯体自发光 + 大气光晕。**灯本身是看得见的发光体**。
+   *
+   * ★ 这是"这是夜晚"最强的视觉信号：白天的原画里根本没有发光体，
+   * 所以无论把画压得多暗、调得多冷，只要没有发光体，看着永远是**低亮度的白天**。
+   */
+  emissive?: {
+    /** 增益。0 = 灯不可见（只照亮不发光） */
+    gain: number;
+    /** 灯体半径（**wu**），缺省 30（≈1/5 个人高） */
+    coreRadius?: number;
+    /** 光晕半径（**wu**），缺省 140（≈1 个人高） */
+    haloRadius?: number;
+    /** 光晕相对灯体的强度 */
+    haloGain?: number;
+  };
+  /**
+   * 角色的形体参数。**统一光影这一路自己的**，不从旧 probe 载荷继承。
+   *
+   * ⚠ 为什么必须自己一份：旧载荷（`lighting/lighting.json` 的 `shading` 块）里也有
+   * 同名的 `flatten` / `bulge`，但那是实验室为**旧着色模型**调的，含义不一样：
+   * · 旧模型：`flatten` 压平法线后去查 probe 的 SH 辐照场 —— 压平只是让 E 更均匀，
+   *   因为 sprite 像素本来就是画好明暗的 color，再按法线调制一次会二次着色。
+   * · 新模型：法线直接进**每盏灯的 N·L**。`flatten = 1` ⇒ 左边的灯和右边的灯
+   *   算出来一模一样、背后的灯完全不亮 —— **方向性整个消失**，法线图集等于白配。
+   *
+   * 2026-08-21 实测：雾津街头的旧载荷带着 `flatten: 1.0` / `bulge: 0.6`，
+   * 被原样传进新 shader，角色调试视图里是一片扁平的橄榄色（`n = (0,0,-1)`），
+   * 全身零形体明暗。所以这里断掉继承，给新模型自己的缺省。
+   */
+  characterShape?: {
+    /** 0 = 用真实法线（缺省，也是新模型该有的样子）；1 = 完全压平 */
+    flatten?: number;
+    /** 采样点沿深度轴的鼓起量，缺省 0.22 */
+    bulge?: number;
+  };
+  /**
+   * GI 反弹增益，缺省 1；0 = 关（画面只是少一层反弹光，不会崩）。
+   *
+   * 这里的 "GI" 是制作人给的定义（2026-08-20）：**角色如何被 relighting 后的场景照亮**，
+   * 不做多次反弹。实现是离线烘「网格点 × 方向 → 撞到哪个像素」的命中图
+   * （几何项，与光无关），运行时脏时查一次当前的重打光结果。
+   *
+   * ★ **只作用于角色**。场景背景自身不吃反弹——背景的间接光已经画在原画里了，
+   * 再加一遍就是重复计光。这是设计如此，不是没接完。
+   *
+   * 场景没烘 `lighting2/gi_hitmap.bin` 时本参数被忽略（增益强制 0）。
+   */
+  giGain?: number;
+  /**
+   * 去掉画里的**白天大气散射**的强度，0..1，缺省 1（全去）。
+   *
+   * 原画 = 表面 × T(d) + 白天的霾 × (1−T(d))。霾是被日光照亮的空气，不是表面；
+   * 不除掉的话它在夜里照样亮着——实测雾津街头远景比近景亮 **4.32 倍**，
+   * "远处一片亮灰"正是判定"这是白天"最强的信号之一。
+   * 参数由烘焙期用暗通道先验拟合（`bake.fit_haze`），这里只给一个总开关。
+   */
+  dehaze?: number;
+  /** 天穹遮蔽强度 0..1：1=完全吃遮蔽，0=完全不吃。可读性旋钮。 */
+  aoStrength?: number;
+  /** 比值上限，防暗部除法爆掉。缺省 8。 */
+  ratioMax?: number;
+  /**
+   * 场景阴影 march 的深度偏置与遮挡体厚度窗（**都是 wu**）。缺省 `[30, 260]`。
+   *
+   * - `bias`：起步偏置，防自遮挡（表面把自己挡黑）。约 1/5 个人高。
+   * - `thickness`：厚度窗。深度场只有**可见壳**、没有背面，所以要人为给遮挡体一个
+   *   厚度。缺省 260 wu ≈ 1.7 个人高，也就是一堵墙/一栋房子的进深。
+   *   太薄会漏挡，太厚会「隔山打影」——远处的墙挡住近处的地。
+   *
+   * ⚠ 这两个值曾经写死在两个 shader 的 uniform 初值里且**没有任何写入方**
+   *   ——F2 里调不到，场景 JSON 里也写不了。
+   */
+  shadowBias?: { bias?: number; thickness?: number };
+}
+
+/**
+ * 实体阴影绑定。**必须手动指定，系统不自动 resolve**。
+ * `virtual` 只影响影子、**不照亮角色**——角色的受光永远来自场景与真实灯。
+ */
+export interface EntityShadowBinding {
+  /** `'light:<id>'` 绑真实灯 ｜ `'virtual'` 用虚拟灯 ｜ `'none'` 不投影 */
+  source: string;
+  /**
+   * 虚拟灯。**只影响影子、不照亮角色**——角色的受光永远来自场景与真实灯。
+   * 用在"这一刻影子必须往那边倒"的演出需求上：那种时候不存在一盏该跟的灯。
+   *
+   * ⚠ `azimuthDeg` 给的是**屏幕**方向，不是世界方位。虚拟灯没有世界位置，
+   * 绕世界坐标只会让作者调的数与看到的效果对不上。
+   */
+  virtual?: {
+    azimuthDeg: number;
+    elevationDeg: number;
+    darkness: number;
+    softness: number;
+    /** 影长（**wu**）。0 或不填 = 按仰角自动算。 */
+    length: number;
+  };
+  /** 覆盖浓度（绑真实灯时缺省由「灯强度 vs 天光」算出）。 */
+  darkness?: number;
+  /** 覆盖软度（绑真实灯时缺省由光源角尺寸算出）。 */
+  softness?: number;
+  /** 影长倍率，缺省 1。 */
+  lengthScale?: number;
+}
+
 /** 透视深度轴端点：世界坐标 + 该端缩放系数（>0） */
 export interface PerspectivePoint {
   x: number;
@@ -251,6 +558,16 @@ export interface SceneData {
   lightEnv?: SceneLightEnv;
   /** 光照环境曲线：玩家位置投影到折线后插值切换光照关键帧；缺省=用静态 lightEnv（现状不变） */
   lightEnvCurve?: LightEnvCurveDef;
+  /**
+   * 统一光影系统的场景光照状态（新一代）。**场景与角色消费同一份**。
+   * 写了本字段的场景走新系统；没写的沿用 `lightEnv` / `lightEnvCurve`（收敛期结束后删）。
+   */
+  lighting?: SceneLightingDef;
+  /**
+   * 玩家的阴影绑定。与 NPC/热区的 `shadowBindings` 同语义，只是玩家不在场景数据里
+   * 有自己的 def，所以挂在场景上——本来就该逐场景配（这条街有路灯，那间屋子只有烛火）。
+   */
+  playerShadowBindings?: EntityShadowBinding[];
   /**
    * 日夜循环开关。**缺省（不写键）= 本场景不参与日夜**——旧场景零影响。
    * 开启后本场景的 NPC 才受日程/`phases` 管，时段变化才会发出外观切换的事件。
@@ -516,6 +833,16 @@ export interface HotspotDef {
   collisionPolygonLocal?: boolean;
   /** 投射阴影 + 接触 AO 开关（合并）；缺省视为 true。false 时该实体不投影也无接触 AO。仅对有 displayImage 的热区有意义。 */
   castShadow?: boolean;
+  /**
+   * 角色阴影绑定。**必须手动指定，系统不自动 resolve**（制作人 2026-08-20 定死）。
+   *
+   * 每条绑定 = 一个 planar 剪影：绑一盏场景灯（`'light:<灯id>'`），
+   * 或用虚拟灯（`'virtual'`，只影响影子不照亮），或明确不投影（`'none'`）。
+   * 不写这个字段 = 走旧的手调单影（存量数据零变化）。
+   *
+   * 运行时可经 `setEntityShadow` Action 覆盖（演出用），覆盖不入存档。
+   */
+  shadowBindings?: EntityShadowBinding[];
   /**
    * 实例级等比缩放（quad 级真变换，绕脚底锚点）：渲染/碰撞多边形/交互半径/
    * 阴影尺寸/气泡/遮挡随动；缺省 1。可经 setEntityField 运行时改并入档。
@@ -1119,6 +1446,16 @@ export interface NpcDef {
   collisionPolygonLocal?: boolean;
   /** 投射阴影 + 接触 AO 开关（合并）；缺省视为 true。false 时该 NPC 不投影也无接触 AO。 */
   castShadow?: boolean;
+  /**
+   * 角色阴影绑定。**必须手动指定，系统不自动 resolve**（制作人 2026-08-20 定死）。
+   *
+   * 每条绑定 = 一个 planar 剪影：绑一盏场景灯（`'light:<灯id>'`），
+   * 或用虚拟灯（`'virtual'`，只影响影子不照亮），或明确不投影（`'none'`）。
+   * 不写这个字段 = 走旧的手调单影（存量数据零变化）。
+   *
+   * 运行时可经 `setEntityShadow` Action 覆盖（演出用），覆盖不入存档。
+   */
+  shadowBindings?: EntityShadowBinding[];
   /**
    * 为 true 时该 NPC 不附加逐 entity 光照 / 深度遮挡滤镜，渲染原始贴图像素（仍受全局场景色彩滤镜影响）。
    * 用于「从背景抠出、贴回原位做循环动画」的装饰实体：这类贴图本就取自已烤好光照的背景，

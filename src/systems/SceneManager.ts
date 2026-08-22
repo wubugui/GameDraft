@@ -160,6 +160,17 @@ export class SceneManager implements IGameSystem {
    *  实体在过场重建 / 卸载时若不摘除，已 destroy 的滤镜仍留在每帧驱动列表里。 */
   private entityFilterReleaser: ((filters: Array<{ destroy(): void }>) => void) | null = null;
   private depthLoader: ((sceneId: string, sceneData: SceneData, worldToPixelX: number, worldToPixelY: number) => Promise<void>) | null = null;
+  /**
+   * 统一光影的装载钩子。在 `depthLoader` **之后**调用（那时深度纹理才就绪），
+   * 返回一个替代主背景的 mesh；返回 null = 该场景不启用，背景照旧走 Sprite。
+   */
+  private lightingLoader:
+    | ((sceneId: string, sceneData: SceneData, primary: Texture) => Promise<Container | null>)
+    | null = null;
+  private lightingUnloader: (() => void) | null = null;
+  /** 主背景 Sprite 与其纹理（统一光影启用时要把它换掉）。 */
+  private primaryBgSprite: Sprite | null = null;
+  private primaryBgTexture: Texture | null = null;
   private depthUnloader: (() => void) | null = null;
   /** 场景根 `onEnter` 动作：由 Game 注入 ActionExecutor.executeBatchAwait */
   private sceneEnterRunner: ((actions: ActionDef[]) => Promise<void>) | null = null;
@@ -254,6 +265,18 @@ export class SceneManager implements IGameSystem {
 
   setDepthUnloader(fn: () => void): void {
     this.depthUnloader = fn;
+  }
+
+  /** 见 {@link lightingLoader}。 */
+  setLightingLoader(
+    fn: (sceneId: string, sceneData: SceneData, primary: Texture) => Promise<Container | null>,
+  ): void {
+    this.lightingLoader = fn;
+  }
+
+  /** 卸载场景时先拆光影（顺序见 unloadScene 的注释）。 */
+  setLightingUnloader(fn: () => void): void {
+    this.lightingUnloader = fn;
   }
 
   setSceneEnterRunner(fn: ((actions: ActionDef[]) => Promise<void>) | null): void {
@@ -1461,6 +1484,11 @@ export class SceneManager implements IGameSystem {
             sceneData.worldHeight / texture.height,
           );
           this.sceneContainerBg.addChild(sprite);
+          if (i === 0) {
+            // 统一光影启用时要拿它的纹理当原画、并把这个 Sprite 换成点亮的 mesh
+            this.primaryBgSprite = sprite;
+            this.primaryBgTexture = texture;
+          }
         } catch (_e) {
           // 加载失败时跳过该层
         }
@@ -1531,6 +1559,23 @@ export class SceneManager implements IGameSystem {
       report(`深度图 · ${sceneId}`);
       await this.depthLoader(sceneId, sceneData, worldToPixelX, worldToPixelY);
       advance(`深度图 ✓`);
+    }
+
+    // 统一光影：必须在 depthLoader 之后（深度纹理那时才就绪）。
+    // 启用则把主背景 Sprite 换成点亮的 mesh；不启用则背景照旧（旧场景零影响）。
+    if (this.lightingLoader && this.primaryBgTexture && this.sceneContainerBg) {
+      report(`统一光影 · ${sceneId}`);
+      try {
+        const litMesh = await this.lightingLoader(sceneId, sceneData, this.primaryBgTexture);
+        if (litMesh && this.primaryBgSprite) {
+          const idx = this.sceneContainerBg.getChildIndex(this.primaryBgSprite);
+          this.sceneContainerBg.addChildAt(litMesh, idx);
+          this.primaryBgSprite.renderable = false;
+        }
+      } catch (e) {
+        console.warn('[SceneManager] 统一光影装载失败，回落原背景', e);
+      }
+      advance('统一光影 ✓');
     }
 
     if (sceneData.filterId) {
@@ -1668,6 +1713,13 @@ export class SceneManager implements IGameSystem {
       npc.destroy();
     }
     this.currentNpcs = [];
+
+    // ⚠ 顺序:先让光影系统拆掉它的 mesh 与 RT,再销毁背景容器。
+    //   反了会命中 Pixi 坑②——绑着按场景销毁纹理的对象若在纹理之后才解绑,
+    //   BindGroup 见资源已 destroyed 就自作废,那个 shader 从此永久烧毁(不是泄漏,是坏掉)。
+    this.lightingUnloader?.();
+    this.primaryBgSprite = null;
+    this.primaryBgTexture = null;
 
     if (this.sceneContainerBg) {
       this.renderer.backgroundLayer.removeChild(this.sceneContainerBg);

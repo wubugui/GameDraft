@@ -1,0 +1,6 @@
+[mcp_servers.narrative-debugger]
+command = ".tools/venv/bin/python"
+args = [
+    "-m",
+    "tools.narrative_debugger.mcp_server",
+]

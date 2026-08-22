@@ -15,6 +15,9 @@ import type { ShadowSceneContext, IEntityShadow } from '../rendering/entityShado
 import { depthLog, depthError } from './depthLog';
 import { sceneRuntimeAssetUrl } from './projectPaths';
 import { sampleGroundFieldWorld, type GroundDepthField } from '../utils/groundDepthField';
+import {
+    wrCellInside, wrQToWorldRow, wrQx, wrQy, wrWorldXZToCell,
+} from '../utils/worldReconstruct';
 
 const T = 'DepthSystem';
 
@@ -367,18 +370,24 @@ export class SceneDepthSystem implements IGameSystem {
 
         // 像素坐标 → 伪3D空间 → 碰撞网格。地面深度只认行走面场——floor 拟合直线在
         // 多层街巷可偏出 200+ 行地面，会把碰撞读到错误的格子上，已废除。
+        //
+        // 这段换算走 utils/worldReconstruct 的唯一真相源（`wrQx` 里不翻 Y、`wrQy` 里翻，
+        // `wrQToWorldRow` 按行展开且不用 dot()）。本函数是 `./dev.sh audit-walkable` 的
+        // 裁决基准，判据必须与它逐位一致——所以迁移只换调用，不动任何表达式顺序。
         const dFloor = this.sampleGroundDepth(worldX, worldY);
         if (dFloor === null) return false;
-        const px = (sx - this.cx) / this.ppu;
-        const py = (this.cy - sy) / this.ppu;
+        const px = wrQx(sx, this.ppu, this.cx);
+        const py = wrQy(sy, this.ppu, this.cy);
 
-        const wx = this.R00 * px + this.R01 * py + this.R02 * dFloor;
-        const wz = this.R20 * px + this.R21 * py + this.R22 * dFloor;
+        const wx = wrQToWorldRow(this.R00, this.R01, this.R02, px, py, dFloor);
+        const wz = wrQToWorldRow(this.R20, this.R21, this.R22, px, py, dFloor);
 
-        const gx = Math.floor((wx - this.colXMin) / this.colCellSize);
-        const gz = Math.floor((wz - this.colZMin) / this.colCellSize);
+        const gx = Math.floor(wrWorldXZToCell(wx, this.colXMin, this.colCellSize));
+        const gz = Math.floor(wrWorldXZToCell(wz, this.colZMin, this.colCellSize));
 
-        if (gx < 0 || gx >= this.collisionW || gz < 0 || gz >= this.collisionH) return false;
+        // NaN 与越界都判"不碰撞"：wrCellInside 的 NaN→false 与原文 `gx<0||gx>=w` 对
+        // NaN 全假后落到 data[NaN] === undefined > 127 === false 的结果一致。
+        if (!wrCellInside(gx, gz, this.collisionW, this.collisionH)) return false;
         return this.collisionData[gz * this.collisionW + gx] > 127;
     }
 

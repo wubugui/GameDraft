@@ -7,12 +7,15 @@ import type { InventoryManager } from '../systems/InventoryManager';
 import type { AssetManager } from './AssetManager';
 import type { DebugPanelUI, DebugSectionContent } from '../ui/DebugPanelUI';
 import {
+  LIGHTING_DEBUG_SECTION_ID,
+  LIGHTING_SCENE_SECTION_ID,
   NARRATIVE_BRIDGE_SECTION_ID,
   NARRATIVE_DEBUG_SECTION_ID,
   OBJECT_EXAMINE_AMBIENCE_DEBUG_SECTION_ID,
   OBJECT_EXAMINE_DEBUG_SECTION_ID,
   SOCKET_DEBUG_SECTION_ID,
 } from '../ui/DebugPanelUI';
+import { createDebugLightingSection, type DebugLightingSectionHandle } from '../ui/debugLightingSection';
 import { createDebugSocketSection, type DebugSocketSectionHandle } from '../ui/debugSocketSection';
 import type { PropPresetTable } from '../data/propPresets';
 import type { DepthDebugVisualizer, BgDebugMode } from '../debug/DepthDebugVisualizer';
@@ -24,6 +27,7 @@ import type {
   ResolvedObjectExamineAmbience,
 } from '../systems/objectExamine/types';
 import { OBJECT_EXAMINE_BACKGROUND_PRESETS } from '../systems/objectExamine/types';
+import type { SceneLightingDef } from '../data/types';
 
 /** F2 气味指示器调试：驱动味种 + 实时调烟形参数（只影响显示，不写盘/不动存档）。 */
 export interface SmellDebugController {
@@ -50,6 +54,20 @@ export interface ScenarioDebugPanelRow {
   lifecycle: string;
   manual: boolean;
   phaseBrief: string;
+}
+
+/**
+ * F2「光影」页交给组装层的钩子，供光照双向同步用。
+ *
+ * 前两个是独奏（临时视图态）的：同步在独奏期间只发不收，且发出去那份要先还原。
+ * 后两个是选中态的：编辑器选哪盏、画面就高亮哪盏，反之亦然 —— 灯一多，
+ * 两边选中对不上就等于没法找灯。
+ */
+export interface LightingSyncHooks {
+  isSoloActive: () => boolean;
+  exportFixup: (def: SceneLightingDef) => SceneLightingDef;
+  getSelectedId: () => string | null;
+  setSelectedId: (id: string | null) => void;
 }
 
 export interface DebugToolsDeps {
@@ -110,13 +128,56 @@ export interface DebugToolsDeps {
     active: boolean; enabled: boolean; probes: number; lights: number;
     hasVolumes: boolean;
     params: CharShadingParams;
-    shadowAuto: { enabled: boolean; k: number; ambScale: number; tauMs: number; gain: number; ready: boolean };
+    shadowStyle: { gain: number };
   } | null;
   setCharLighting: (patch: {
     enabled?: boolean;
     params?: Partial<CharShadingParams>;
-    shadowAuto?: Partial<{ enabled: boolean; k: number; ambScale: number; tauMs: number; gain: number }>;
+    shadowStyle?: Partial<{ gain: number }>;
   }) => void;
+  /**
+   * F2「统一光影」tab 的接口。场景未配 `lighting` 块或没烘 `lighting2/` 时返回 null。
+   * 与「角色照明（烘焙）」那一组是**两代**系统，刻意分开成两个 section，别混用。
+   */
+  getSceneLighting: () => {
+    active: boolean;
+    params: SceneLightingDef;
+    backgroundWu: number;
+    /** 灯数与带影灯数——**带影灯数就是性能预算**，面板必须显示 */
+    lightCount: number;
+    shadowLightCount: number;
+    /** 生效中的角色标定常数（`params.radianceScale` 未写时是烘焙期反解出来的自动值）。 */
+    radianceScale: number;
+    /** 本场景烘了 GI 命中图吗？没烘的话 `giGain` 无效。 */
+    giReady: boolean;
+  } | null;
+  /** 写参数（会标脏，下一帧重算缓存）。 */
+  setSceneLighting: (patch: Partial<SceneLightingDef>) => void;
+  /** 调试可视化：0=正常 1=天穹可见性 2=法线 3=S_day 4=S_new 5=比值 6=线性化原画 */
+  setSceneLightingDebug: (mode: number) => void;
+  /**
+   * F2「光影」页把两个钩子交给组装层，供光照双向同步用：
+   * 「现在在不在独奏」（独奏中只发不收）与「交出去前把独奏还原」。
+   */
+  setLightingSyncHooks: (hooks: LightingSyncHooks) => void;
+  /** 光照同步的连接状态（一行给人看的）。空串 = 同步没装配（prod）。 */
+  getLightingSyncStatus: () => string;
+  /**
+   * 角色当前的**世界坐标(wu)** —— F2 光影页的「移到角色处」用。
+   * 拿不到（没进场景 / 统一光影没启用）返回 null。
+   */
+  getPlayerLightWorld: () => [number, number, number] | null;
+  /**
+   * 运行时编辑模式（在画面上直接拖灯）的遥控口。DEV 才装配，prod 下不传。
+   * 类型与 `DebugLightingDeps.authoring` 同形——这里只做转交，不加语义。
+   */
+  authoring?: {
+    isActive: () => boolean;
+    availability: () => { ok: boolean; reason: string };
+    toggle: () => void;
+    selectedId: () => string | null;
+    select: (id: string | null) => void;
+  } | null;
   /** F2 测试旋钮：E 色度权重 0(只借场景明暗)~1(完整彩色 E) */
   getCharEChroma: () => number;
   setCharEChroma: (v: number) => void;
@@ -210,6 +271,7 @@ export class DebugTools {
   private smellDebugLayer: 'action' | 'zone' = 'action';
 
   private socketSection: DebugSocketSectionHandle | null = null;
+  private lightingSection: DebugLightingSectionHandle | null = null;
 
   constructor(deps: DebugToolsDeps) {
     this.deps = deps;
@@ -1322,6 +1384,245 @@ export class DebugTools {
   }
 
   /** F2「气味指示器（调试）」：左边驱动味种/浓度看效果，右边实时调所有味共用的烟形，底部读数可抄回 smell_profiles.json 的 form 块。 */
+  /**
+   * F2「统一光影（场景）」。
+   *
+   * 与「角色照明（烘焙）」是**两代**系统：那一代烘辐射、光变必须重烘；这一代
+   * 只烘几何项（法线/天穹可见性），光全实时。两组刻意分开，别混着调。
+   *
+   * ⚠ 这里改动**能落盘**，但不是游戏自己写：由编辑器在场景页点
+   * 「从运行时拉取灯位」把这份参数拿走入脏，再 Save All（工程唯一写盘出口）。
+   * 与角色照明那组「改动只是运行时测试、场景重载回配置」的口径**不同**。
+   */
+  private buildSceneLightingSection(): {
+    text: string; extra?: HTMLElement;
+    actions?: { label: string; fn: () => void; noRefresh?: boolean }[];
+  } {
+    const s = this.deps.getSceneLighting();
+    if (!s) {
+      return {
+        text: '本场景未启用统一光影。需要两样：①场景 JSON 里有 `lighting` 块；'
+          + '②烘过几何场（`python -m tools.scene_relight --bake --scene <id>`，'
+          + '产物在 runtime/scenes/<id>/lighting2/）。缺任一都安静回落到旧背景路径。',
+      };
+    }
+
+    const wrap = document.createElement('div');
+    wrap.className = 'debug-dock__section-extra';
+    const valLine = document.createElement('div');
+    valLine.className = 'debug-dock__slider-hint';
+    let noteMsg = '';
+
+    const P = (): SceneLightingDef => this.deps.getSceneLighting()!.params;
+    const patch = (part: Partial<SceneLightingDef>): void => this.deps.setSceneLighting(part);
+
+    const sync = (): void => {
+      const cur = this.deps.getSceneLighting();
+      if (!cur) return;
+      const p = cur.params;
+      // ★ 带影灯数就是性能预算（GTX 970 上动态带影灯 4–6 盏是线）。超了标出来。
+      const over = cur.shadowLightCount > 6 ? '  ⚠超预算' : '';
+      valLine.textContent =
+        `灯 ${cur.lightCount} 盏（带影 ${cur.shadowLightCount}/6${over}）　世界宽 ${cur.backgroundWu.toFixed(0)} wu　角色高 150 wu\n`
+        + `天光 强度 ${p.sky.intensity.toFixed(3)}　半球 ${p.sky.hemi.toFixed(2)}　`
+        + `色温 ${Math.round(p.sky.kelvin ?? 6500)}K　AO ${(p.aoStrength ?? 1).toFixed(2)}\n`
+        + `画内遮蔽响应 day.hemi ${p.day.hemi === undefined ? '（用烘焙拟合值）' : p.day.hemi.toFixed(2)}　`
+        + `去霾 ${(p.dehaze ?? 1).toFixed(2)}\n`
+        + `灯体发光 ${(p.emissive?.gain ?? 0).toFixed(2)}　核心 ${(p.emissive?.coreRadius ?? 0).toFixed(1)}wu　`
+        + `光晕 ${(p.emissive?.haloRadius ?? 0).toFixed(1)}wu×${(p.emissive?.haloGain ?? 0).toFixed(2)}\n`
+        + `雾 σ ${(p.fog?.sigma ?? 0).toFixed(4)}/wu　高度尺度 ${(p.fog?.scaleHeight ?? 0).toFixed(0)}wu　`
+        + `基准 ${(p.fog?.baseHeight ?? 0).toFixed(0)}wu　散射 ${(p.fog?.scatter ?? 0).toFixed(2)}\n`
+        + `角色标定 ${cur.radianceScale.toFixed(3)}`
+        + `　压平 ${(p.characterShape?.flatten ?? 0).toFixed(2)}`
+        + `　鼓起 ${(p.characterShape?.bulge ?? 0.22).toFixed(2)}`
+        + `　GI ${cur.giReady ? `增益 ${(p.giGain ?? 1).toFixed(2)}` : '（本场景未烘命中图）'}`
+        + (p.radianceScale === undefined ? '（自动估）' : '（已手动写死）') + '\n'
+        + `显示 EV ${p.display.ev.toFixed(2)}　tonemap ${p.display.tonemap}　`
+        + `对比 ${p.display.contrast.toFixed(2)}　饱和 ${p.display.saturation.toFixed(2)}　`
+        + `白平衡 ${Math.round(p.display.whiteKelvin)}K`
+        + (noteMsg ? `\n${noteMsg}` : '');
+    };
+
+    const mkSlider = (
+      label: string, min: number, max: number, stepV: number,
+      get: () => number, set: (v: number) => void, digits = 2,
+    ): HTMLDivElement => {
+      const row = document.createElement('div');
+      row.className = 'debug-dock__slider-row';
+      const range = document.createElement('input');
+      range.type = 'range';
+      range.min = String(min); range.max = String(max); range.step = String(stepV);
+      range.value = String(get());
+      const span = document.createElement('span');
+      span.className = 'debug-dock__slider-value';
+      const fmt = (v: number): string => `${label} ${v.toFixed(digits)}`;
+      span.textContent = fmt(get());
+      range.addEventListener('input', () => {
+        const v = Number(range.value);
+        set(v);
+        span.textContent = fmt(v);
+        noteMsg = '';
+        sync();
+      });
+      row.appendChild(range); row.appendChild(span);
+      return row;
+    };
+
+    const group = (title: string): void => {
+      const h = document.createElement('div');
+      h.className = 'debug-dock__slider-hint';
+      h.textContent = title;
+      wrap.appendChild(h);
+    };
+
+    wrap.appendChild(valLine);
+
+    group('① 天光（经烘出来的天穹可见性调制。AO=遮蔽强度，可读性旋钮）');
+    wrap.appendChild(mkSlider('天光强度', 0, 1.5, 0.005,
+      () => P().sky.intensity, (v) => patch({ sky: { ...P().sky, intensity: v } }), 3));
+    wrap.appendChild(mkSlider('天光半球', 0, 1, 0.01,
+      () => P().sky.hemi, (v) => patch({ sky: { ...P().sky, hemi: v } })));
+    wrap.appendChild(mkSlider('天光色温K', 2000, 15000, 50,
+      () => P().sky.kelvin ?? 6500, (v) => patch({ sky: { ...P().sky, kelvin: v } }), 0));
+    wrap.appendChild(mkSlider('AO强度', 0, 1, 0.02,
+      () => P().aoStrength ?? 1, (v) => patch({ aoStrength: v })));
+    // 重打光是「原画 × S_new/S_day」，暗部 S_day→0 会让比值爆掉；这是那个夹子。
+    // 调小 = 暗部更保守（接近原画），调大 = 允许暗角被灯拉得更亮。
+    wrap.appendChild(mkSlider('比值上限', 1, 24, 0.25,
+      () => P().ratioMax ?? 8, (v) => patch({ ratioMax: v }), 2));
+    // 这两个曾经写死在两个 shader 的 uniform 初值里、没有任何写入方（F2 调不到、
+    // 场景 JSON 也写不了），而缺省 thick=2 世界单位在雾津街头 ≈ 19.9 m ——
+    // 厚度窗盖住一半场景深度，正是 lightingCore.glsl 注释里点名的「隔山打影」。
+    group('①b 阴影 march（世界空间 wu；角色高 150 wu。厚度窗太厚 = 远处的墙挡住近处的地）');
+    wrap.appendChild(mkSlider('影偏置wu', 0, 200, 1,
+      () => P().shadowBias?.bias ?? 30.8,
+      (v) => patch({ shadowBias: { ...(P().shadowBias ?? {}), bias: v } })));
+    wrap.appendChild(mkSlider('遮挡厚度wu', 10, 2000, 10,
+      () => P().shadowBias?.thickness ?? 264,
+      (v) => patch({ shadowBias: { ...(P().shadowBias ?? {}), thickness: v } }), 1));
+
+    group('② 灯体自发光（白天的画里没有发光体——这是"这是夜晚"最强的信号）');
+    wrap.appendChild(mkSlider('发光增益', 0, 6, 0.05,
+      () => P().emissive?.gain ?? 0,
+      (v) => patch({ emissive: { ...(P().emissive ?? { gain: 0 }), gain: v } })));
+    wrap.appendChild(mkSlider('灯体半径wu', 2, 300, 1,
+      () => P().emissive?.coreRadius ?? 30,
+      (v) => patch({ emissive: { ...(P().emissive ?? { gain: 0 }), coreRadius: v } })));
+    wrap.appendChild(mkSlider('光晕半径wu', 10, 1200, 5,
+      () => P().emissive?.haloRadius ?? 140,
+      (v) => patch({ emissive: { ...(P().emissive ?? { gain: 0 }), haloRadius: v } }), 1));
+    wrap.appendChild(mkSlider('光晕强度', 0, 1, 0.02,
+      () => P().emissive?.haloGain ?? 0.2,
+      (v) => patch({ emissive: { ...(P().emissive ?? { gain: 0 }), haloGain: v } })));
+
+    group('③ 去掉画里的白天散射（远景那片亮灰不除掉，夜里看着永远像"低亮度白天"）');
+    wrap.appendChild(mkSlider('去霾', 0, 1.5, 0.02,
+      () => P().dehaze ?? 1, (v) => patch({ dehaze: v })));
+
+    group('④ 雾（按消光系数 σ 定义，不是混合系数——将来上体积雾时参数继续有效）');
+    // ⚠ σ 的量纲是 **1/wu**。场景纵深就是 worldWidth 的量级（几千 wu），σ≈0.002 就已经把远端糊平了
+    //   （实测雾津街头 38 m：σ=0.05 时远端透射率 <0.15）。量程给 0–0.5 才有可用行程；
+    //   给 0–3 的话前 2% 的行程就是全部能用的范围，等于没有旋钮。
+    wrap.appendChild(mkSlider('雾 σ /wu', 0, 0.006, 0.00002,
+      () => P().fog?.sigma ?? 0,
+      (v) => patch({
+        fog: {
+          ...(P().fog ?? { sigma: 0, scaleHeight: 6, baseHeight: 0, scatter: 0.2 }),
+          sigma: v,
+        },
+      })));
+    wrap.appendChild(mkSlider('雾高度尺度wu', 50, 6000, 25,
+      () => P().fog?.scaleHeight ?? 530,
+      (v) => patch({
+        fog: {
+          ...(P().fog ?? { sigma: 0, scaleHeight: 6, baseHeight: 0, scatter: 0.2 }),
+          scaleHeight: v,
+        },
+      }), 1));
+    wrap.appendChild(mkSlider('雾基准高度wu', -500, 3000, 25,
+      () => P().fog?.baseHeight ?? 0,
+      (v) => patch({
+        fog: {
+          ...(P().fog ?? { sigma: 0, scaleHeight: 6, baseHeight: 0, scatter: 0.2 }),
+          baseHeight: v,
+        },
+      }), 1));
+    // 散射 = 雾**自身的亮度**。σ 决定看不看得见远处，scatter 决定雾是白的还是黑的；
+    // 只调 σ 不调 scatter 会得到"越远越黑"的隧道感，那不是雾。
+    wrap.appendChild(mkSlider('雾散射', 0, 1, 0.01,
+      () => P().fog?.scatter ?? 0.2,
+      (v) => patch({
+        fog: {
+          ...(P().fog ?? { sigma: 0, scaleHeight: 6, baseHeight: 0, scatter: 0.2 }),
+          scatter: v,
+        },
+      })));
+    wrap.appendChild(mkSlider('雾色温K', 2000, 15000, 50,
+      () => P().fog?.kelvin ?? 6500,
+      (v) => patch({
+        fog: {
+          ...(P().fog ?? { sigma: 0, scaleHeight: 6, baseHeight: 0, scatter: 0.2 }),
+          kelvin: v,
+        },
+      }), 0));
+
+    group('④b 角色标定（角色 albedo 尺度 ↔ 场景辐射尺度）');
+    // ⚠ 缺省是**烘焙期反解出来的**（场景反解反射率 ÷ 角色图集实测反射率 0.0381）。
+    //   这个数描述的是这张原画的性质、不是美术意图，正常不该手动写死。
+    //   拖动本滑杆会把它固化进场景 JSON，之后换背景 / 重烘都不再自动跟随。
+    wrap.appendChild(mkSlider('角色标定 radianceScale', 0, 3, 0.01,
+      () => P().radianceScale ?? this.deps.getSceneLighting()?.radianceScale ?? 1,
+      (v) => patch({ radianceScale: v })));
+    // GI = 「角色如何被 relighting 后的场景照亮」（制作人 2026-08-20 的定义），
+    // 不做多次反弹。**只作用于角色**——背景的间接光已经画在原画里了，
+    // 再给背景加一遍就是重复计光。场景没烘 gi_hitmap 时本旋钮无效（增益被强制 0）。
+    wrap.appendChild(mkSlider('GI 反弹增益(仅角色)', 0, 3, 0.05,
+      () => P().giGain ?? 1,
+      (v) => patch({ giGain: v })));
+    // ⚠ 这两个是**统一光影自己的**形体参数，不是旧 probe 载荷里那对同名值。
+    //   旧载荷那对是给旧着色模型调的：那边 flatten 只是让 probe 的 SH 辐照更均匀，
+    //   这边 flatten 直接压掉每盏灯的 N·L —— 压到 1 就等于"左边的灯和右边的灯一样亮"。
+    wrap.appendChild(mkSlider('角色压平 flatten', 0, 1, 0.05,
+      () => P().characterShape?.flatten ?? 0,
+      (v) => patch({ characterShape: { ...(P().characterShape ?? {}), flatten: v } })));
+    wrap.appendChild(mkSlider('角色鼓起 bulge', 0, 1, 0.01,
+      () => P().characterShape?.bulge ?? 0.22,
+      (v) => patch({ characterShape: { ...(P().characterShape ?? {}), bulge: v } })));
+
+    group('⑤ 显示变换（**同时作用于场景与角色**，这是两者亮度永远一致的结构性保证）');
+    wrap.appendChild(mkSlider('EV', -6, 6, 0.05, () => P().display.ev,
+      (v) => patch({ display: { ...P().display, ev: v } })));
+    wrap.appendChild(mkSlider('对比', 0.4, 1.6, 0.01, () => P().display.contrast,
+      (v) => patch({ display: { ...P().display, contrast: v } })));
+    wrap.appendChild(mkSlider('饱和', 0, 1.6, 0.02, () => P().display.saturation,
+      (v) => patch({ display: { ...P().display, saturation: v } })));
+    wrap.appendChild(mkSlider('白平衡K', 2000, 15000, 50, () => P().display.whiteKelvin,
+      (v) => patch({ display: { ...P().display, whiteKelvin: v } }), 0));
+
+    sync();
+
+    const btn = (label: string, fn: () => void) => ({ label, noRefresh: true, fn: () => { fn(); sync(); } });
+    const TONEMAPS: SceneLightingDef['display']['tonemap'][] = ['none', 'reinhard', 'filmic'];
+    const DEBUG_NAMES = ['正常', '天穹可见性', '法线', 'S_day', 'S_new', '比值', '线性化原画'];
+    let dbg = 0;
+
+    return {
+      text: '',
+      extra: wrap,
+      actions: [
+        btn('tonemap 循环', () => {
+          const i = TONEMAPS.indexOf(P().display.tonemap);
+          patch({ display: { ...P().display, tonemap: TONEMAPS[(i + 1) % TONEMAPS.length] } });
+        }),
+        btn('调试视图 循环', () => {
+          dbg = (dbg + 1) % DEBUG_NAMES.length;
+          this.deps.setSceneLightingDebug(dbg);
+          noteMsg = `调试视图：${DEBUG_NAMES[dbg]}`;
+        }),
+      ],
+    };
+  }
+
   private buildSmellDebugSection(): { text: string; extra?: HTMLElement; actions?: { label: string; fn: () => void; noRefresh?: boolean }[] } {
     const sd = this.deps.smellDebug;
     const form = sd.getForm();
@@ -1674,6 +1975,29 @@ export class DebugTools {
     });
     debugPanelUI.addSection(SOCKET_DEBUG_SECTION_ID, () => this.socketSection!.build());
 
+    // F2「光影」独立页:灯的增删改 + 逐盏独奏。
+    // 独立一页不是排版偏好——摆灯要反复对着画面调,挤在 section 列里每次刷新都要重新滚。
+    this.lightingSection = createDebugLightingSection({
+      getParams: () => this.deps.getSceneLighting()?.params ?? null,
+      patch: (part) => this.deps.setSceneLighting(part),
+      refresh: () => debugPanelUI.refresh(),
+      getPlayerWorld: () => this.deps.getPlayerLightWorld(),
+      getWorldWu: () => this.deps.getSceneLighting()?.backgroundWu ?? 0,
+      // 画面上摆灯那条入口。与本页共用同一份 params、同一个选中态。
+      authoring: this.deps.authoring ?? null,
+      syncStatus: () => this.deps.getLightingSyncStatus(),
+      log: (m) => debugPanelUI.log(m),
+    });
+    // 把独奏的两个钩子交给组装层：同步靠它们判断“现在能不能收”
+    // 与“交出去的那份该长什么样”。
+    this.deps.setLightingSyncHooks({
+      isSoloActive: () => this.lightingSection?.isSoloActive() ?? false,
+      exportFixup: (def) => this.lightingSection?.exportFixup(def) ?? def,
+      getSelectedId: () => this.lightingSection?.getSelectedId() ?? null,
+      setSelectedId: (id) => this.lightingSection?.setSelectedId(id),
+    });
+    debugPanelUI.addSection(LIGHTING_DEBUG_SECTION_ID, () => this.lightingSection!.build());
+
     debugPanelUI.addSection('Quick Actions', () => {
       const actions: { label: string; fn: () => void }[] = [
         {
@@ -1958,6 +2282,8 @@ export class DebugTools {
       };
     });
 
+    debugPanelUI.addSection(LIGHTING_SCENE_SECTION_ID, () => this.buildSceneLightingSection());
+
     debugPanelUI.addSection('角色照明（烘焙）', () => {
       const s = this.deps.getCharLightingDebug();
       if (!s) {
@@ -1979,8 +2305,8 @@ export class DebugTools {
           `着色 ${cur.enabled ? '开' : '关'}(${cur.active ? '生效' : '未生效'})　模式 ${MODE_NAMES[pp.mode] ?? pp.mode}　probe ${cur.probes}　光源 ${cur.lights}\n`
           + `★曝光 β 2^${pp.beta.toFixed(1)}　★E色度 ${this.deps.getCharEChroma().toFixed(2)}（0=只借明暗 1=彩色E）\n`
           + `隆起 ${pp.bulge.toFixed(2)}　压平 ${pp.flatten.toFixed(2)}　probe点云 ${this.deps.charProbeVizActive() ? '开' : '关'}\n`
-          + `影子跟灯 ${cur.shadowAuto.enabled ? (cur.shadowAuto.ready ? '开(生效)' : '开(不可用)') : '关'}　`
-          + `全局强度 ${cur.shadowAuto.gain.toFixed(2)}　槽 ${cur.shadowAuto.k}　环境稀释 ${cur.shadowAuto.ambScale.toFixed(2)}　平滑 ${Math.round(cur.shadowAuto.tauMs)}ms\n`
+          + `阴影绑定 手动（禁止自动 resolve）　全局强度 ${cur.shadowStyle.gain.toFixed(2)}
+`
           + `太阳 ${pp.sunEnabled ? '开' : '关'}　方位 ${Math.round(pp.sunAzimuthDeg)}°　仰角 ${Math.round(pp.sunElevationDeg)}°　强度 ${pp.sunIntensity.toFixed(2)}`;
       };
       const hint = document.createElement('div');
@@ -2037,18 +2363,12 @@ export class DebugTools {
         (v) => patch({ sunElevationDeg: v }), (v) => `日仰角 ${Math.round(v)}°`));
       wrap.appendChild(mkSlider(0, 3, 0.05, () => p().sunIntensity,
         (v) => patch({ sunIntensity: v }), (v) => `日强度 ${v.toFixed(2)}`));
-      const sa = (): { enabled: boolean; k: number; ambScale: number; tauMs: number; gain: number; ready: boolean } =>
-        this.deps.getCharLightingDebug()!.shadowAuto;
-      const patchSa = (part: Partial<{ enabled: boolean; k: number; ambScale: number; tauMs: number; gain: number }>): void =>
-        this.deps.setCharLighting({ shadowAuto: part });
-      wrap.appendChild(mkSlider(0, 4, 0.1, () => sa().gain,
-        (v) => patchSa({ gain: v }), (v) => `全局阴影强度 ${v.toFixed(1)}`));
-      wrap.appendChild(mkSlider(1, 3, 1, () => sa().k,
-        (v) => patchSa({ k: Math.round(v) }), (v) => `影子槽 ${Math.round(v)}`));
-      wrap.appendChild(mkSlider(0, 4, 0.1, () => sa().ambScale,
-        (v) => patchSa({ ambScale: v }), (v) => `环境稀释 ${v.toFixed(1)}`));
-      wrap.appendChild(mkSlider(40, 600, 10, () => sa().tauMs,
-        (v) => patchSa({ tauMs: v }), (v) => `影子平滑 ${Math.round(v)}ms`));
+      // 阴影只剩**全局表现总控**:往哪儿投、多浓由实体自己的绑定决定
+      // (2026-08-20 制作人否决自动 resolve,槽数/环境稀释/时间平滑那三个旋钮随之作废)。
+      wrap.appendChild(mkSlider(0, 4, 0.1,
+        () => this.deps.getCharLightingDebug()!.shadowStyle.gain,
+        (v) => this.deps.setCharLighting({ shadowStyle: { gain: v } }),
+        (v) => `全局阴影强度 ${v.toFixed(1)}`));
       sync();
 
       const btn = (label: string, fn: () => void): { label: string; fn: () => void; noRefresh: boolean } => ({
@@ -2064,9 +2384,6 @@ export class DebugTools {
           btn('法线显示 开/关', () => patch({ showNormals: !p().showNormals })),
           btn('probe点云 开/关', () => this.deps.toggleCharProbeViz()),
           btn('太阳 开/关', () => patch({ sunEnabled: !p().sunEnabled })),
-          btn('影子跟灯 开/关', () => this.deps.setCharLighting({
-            shadowAuto: { enabled: !this.deps.getCharLightingDebug()?.shadowAuto.enabled },
-          })),
         ],
       };
     });

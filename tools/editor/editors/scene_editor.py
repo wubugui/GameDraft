@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QSpinBox, QComboBox, QCheckBox, QLabel, QPushButton, QScrollArea,
     QStackedWidget, QToolBar, QMenu, QGraphicsTextItem,
     QToolButton, QMessageBox, QInputDialog, QFileDialog, QDialog, QDialogButtonBox, QAbstractItemView,
+    QApplication,
     QTreeWidget, QTreeWidgetItem,
     QSizePolicy, QGraphicsSceneMouseEvent, QGraphicsSceneHoverEvent,
     QGraphicsSceneContextMenuEvent,     QTableWidget, QTableWidgetItem, QHeaderView, QSlider,
@@ -95,6 +96,8 @@ from ..shared.hex_color_pick_row import HexColorPickRow
 from ..shared.portrait_catalog import load_portrait_sets
 from ..shared.project_paths import ProjectPaths
 from ..shared.fonts import MONO_FONT_FAMILY
+from . import scene_lights
+from .shadow_bindings_ui import ShadowBindingsEditor
 
 def _assert_path_within(path: Path, base: Path) -> Path:
     """安全闸：确保 path 落在 base 目录内，否则抛错。
@@ -2386,6 +2389,8 @@ class SceneCanvas(QGraphicsView):
     item_npc_patrol_route_committed = Signal(str, object)
     # 光环境曲线在画布上拖动/插点/删点后提交完整点列(含 env)
     item_lightcurve_committed = Signal(object)
+    # 统一光影：定位模式下点画布 → 把选中的灯落到该处地面
+    light_place_requested = Signal(float, float)
     # 右键菜单：在 (wx, wy) 世界坐标处添加实体；kind: hotspot|npc|zone|spawn
     context_add_entity = Signal(str, float, float)
     # 拖拽中按 Esc 取消：把该实体恢复到按下前坐标（kind, id, orig_x, orig_y）
@@ -2470,6 +2475,7 @@ class SceneCanvas(QGraphicsView):
         self._entity_view_meta: dict[str, tuple[list[str] | None, list[str] | None]] = {}
         self._patrol_overlays: dict[str, _NpcPatrolPolyline] = {}
         self._lightcurve_overlay: _LightCurvePolyline | None = None
+        self._light_place_mode: bool = False
         self._world_w: float = 800
         self._world_h: float = 600
         self._project_model: ProjectModel | None = None
@@ -3055,6 +3061,11 @@ class SceneCanvas(QGraphicsView):
         self.item_npc_patrol_route_committed.emit(npc_id, route)
 
     # ---- 光环境曲线画布 overlay ----
+    def set_light_place_mode(self, on: bool) -> None:
+        """开/关「在画布上定位灯」。开着时左键点击只用来落灯，不选实体。"""
+        self._light_place_mode = bool(on)
+        self.setCursor(Qt.CursorShape.CrossCursor if on else Qt.CursorShape.ArrowCursor)
+
     def _emit_lightcurve_committed(self, points: list) -> None:
         self.item_lightcurve_committed.emit(points)
 
@@ -3599,6 +3610,13 @@ class SceneCanvas(QGraphicsView):
         event.accept()
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
+        # 统一光影的「在画布上定位」模式：拦在最前面，先落灯再说，
+        # 免得点击被下面的实体选中/框选逻辑吃掉。
+        if getattr(self, '_light_place_mode', False) and event.button() == Qt.MouseButton.LeftButton:
+            sp = self.mapToScene(event.position().toPoint())
+            self.light_place_requested.emit(float(sp.x()), float(sp.y()))
+            event.accept()
+            return
         if event.button() == Qt.MouseButton.MiddleButton:
             self._middle_panning = True
             self._pan_last_pos = event.pos()
@@ -4409,6 +4427,8 @@ class ScenePropertyPanel(QScrollArea):
     npc_patrol_overlay_refresh_requested = Signal()
     # 透视缩放配置 live 预览：携带按当前 UI 生成的 cfg dict（未启用为 None）
     perspective_preview_changed = Signal(object)
+    # 统一光影：「在画布上定位灯」开关
+    light_place_mode_changed = Signal(bool)
     # 光环境曲线数据变化→请求画布重建 overlay
     lightcurve_overlay_refresh_requested = Signal()
     # npc_id, enabled — 仅编辑器内沿路径预览精灵
@@ -4575,6 +4595,12 @@ class ScenePropertyPanel(QScrollArea):
         self._npc_col_updating: bool = False
         # 光环境曲线：单一真相源(每项 {x,y,env})，表格只读展示 x/y，env 走逐帧编辑器
         self._sc_lightcurve_points: list[dict] = []
+        # 统一光影：灯位
+        self._sc_lighting: dict | None = None
+        self._sl_selected: int = -1
+        self._sl_updating: bool = False
+        self._sl_placing: bool = False
+        self._sl_space = None
         self._lc_selected: int = -1
         self._lc_table_updating: bool = False
         self._props_changed_suppressed: int = 0
@@ -5391,8 +5417,171 @@ class ScenePropertyPanel(QScrollArea):
         outer.addWidget(lc_g)
         self._sc_lightcurve_fold = lc_g
 
+        outer.addWidget(self._build_scene_lights_section())
+
         outer.addStretch(1)
         return w
+
+    # ---- 统一光影：灯位 ------------------------------------------------
+    def _build_scene_lights_section(self) -> QWidget:
+        """灯位编辑。
+
+        与上面的「光环境曲线」是**两代**系统：那一代是单一全局主光 + 逐 entity 色调；
+        这一代是场景里摆真实的点/聚/面光，场景与角色共享同一份光照状态。
+
+        作者模型 = **点哪儿摆哪儿，再拉高度**：画布上点一个地面点 → 取该像素深度
+        反投影成伪世界坐标；高度另给一个数值（**米**）。2D 画布只有两个自由度，
+        第三个必须由深度图补出来。
+
+        距离量一律用**米**：世界单位是逐场景的（实测 1 wu = 2.0–10.0 m），
+        用 wu 填参数会让同一个数在不同场景差 5 倍。
+        """
+        g = CollapsibleSection("统一光影 lighting（灯位）", start_open=False)
+        g.set_header_tool_tip(
+            "场景里的点光/聚光/面光/平行光。位置在伪世界空间；距离量用米。\n"
+            "⚠ 带阴影的灯是性能预算的唯一约束项——面板常驻显示 N/预算。\n"
+            "天光/雾/显示变换等参数在游戏内 F2「统一光影（场景）」里调，改完可存回本文件。")
+        inner = QWidget()
+        lay = QVBoxLayout(inner)
+
+        self._sl_status = QLabel("")
+        self._sl_status.setWordWrap(True)
+        lay.addWidget(self._sl_status)
+
+        self._sl_table = QTableWidget(0, 5)
+        self._sl_table.setHorizontalHeaderLabels(["id", "类型", "启用", "投影", "强度"])
+        hh = self._sl_table.horizontalHeader()
+        hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for c in (1, 2, 3, 4):
+            hh.setSectionResizeMode(c, QHeaderView.ResizeMode.ResizeToContents)
+        self._sl_table.setMinimumHeight(120)
+        self._sl_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._sl_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._sl_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._sl_table.itemSelectionChanged.connect(self._on_sl_row_selected)
+        self._install_vertex_table_affordances(
+            self._sl_table, self._on_sl_remove, label="删除选中的灯")
+        lay.addWidget(self._sl_table)
+
+        row1 = QHBoxLayout()
+        for kind, label in (("point", "＋点光"), ("spot", "＋聚光"),
+                            ("area", "＋面光"), ("directional", "＋平行光")):
+            b = QPushButton(label)
+            b.clicked.connect(lambda _=False, k=kind: self._on_sl_add(k))
+            row1.addWidget(b)
+        self._sl_del = QPushButton("删除")
+        self._sl_del.clicked.connect(self._on_sl_remove)
+        row1.addWidget(self._sl_del)
+        row1.addStretch(1)
+        lay.addLayout(row1)
+
+        self._sl_sync_status = QLabel("↔ 同步未启动　发0 收0")
+        self._sl_sync_status.setWordWrap(True)
+        self._sl_sync_status.setToolTip(
+            "灯位与正在跑的游戏是双向实时同步的。这行显示连接状态——\n"
+            "「连着连着没了」最怕的是没人知道，所以断线在这里一定看得见（并会自动重连）。")
+        lay.addWidget(self._sl_sync_status)
+
+        self._sl_pull = QPushButton("立即从运行时抓一次（平时自动同步）")
+        self._sl_pull.setToolTip(
+            "灯位与游戏是**双向实时同步**的：这张表改了游戏跟着变，游戏里 F3 拖了这张表也跟着变，\n"
+            "平时不用点任何按钮。这个按钮只在同步被打断时（游戏刚起来、刚换场景）用来立刻抓一次。\n"
+            "同步只把参数搬过来入脏——落盘仍然是本编辑器 Save All（工程唯一写盘出口）。")
+        self._sl_pull.clicked.connect(self._on_sl_pull_runtime)
+        lay.addWidget(self._sl_pull)
+
+        self._sl_place = QPushButton("在画布上定位选中的灯")
+        self._sl_place.setCheckable(True)
+        self._sl_place.setToolTip(
+            "点亮后在画布上点一下：取该处地面的伪世界坐标作为灯的落点，"
+            "再用下面的「离地高度」把它抬起来。")
+        self._sl_place.toggled.connect(self._on_sl_place_toggled)
+        lay.addWidget(self._sl_place)
+
+        self._sl_form = QWidget()
+        form = QFormLayout(self._sl_form)
+        self._sl_id = QLineEdit()
+        self._sl_id.editingFinished.connect(self._on_sl_field_changed)
+        form.addRow("id", self._sl_id)
+        self._sl_enabled = QCheckBox("点亮")
+        self._sl_enabled.toggled.connect(self._on_sl_field_changed)
+        self._sl_cast = QCheckBox("投影（吃性能预算）")
+        self._sl_cast.toggled.connect(self._on_sl_field_changed)
+        cb = QHBoxLayout()
+        cb.addWidget(self._sl_enabled)
+        cb.addWidget(self._sl_cast)
+        cb.addStretch(1)
+        cbw = QWidget()
+        cbw.setLayout(cb)
+        form.addRow("", cbw)
+
+        def spin(lo: float, hi: float, step: float, dec: int) -> QDoubleSpinBox:
+            s = QDoubleSpinBox()
+            s.setRange(lo, hi)
+            s.setSingleStep(step)
+            s.setDecimals(dec)
+            s.valueChanged.connect(self._on_sl_field_changed)
+            return s
+
+        # 灯型下拉。**以前没有这个东西，编辑器里根本改不了灯型**（F2 面板有，
+        # 编辑器没有），只能删了重建。换型走 scene_lights.retype：从新型的缺省
+        # 起手，只搬与类型无关的作者意图，旧型专属字段一概摘掉（留着是静默失效）。
+        self._sl_kind = QComboBox()
+        for _k, _lbl in (("point", "点光"), ("spot", "聚光"),
+                         ("area", "面光"), ("directional", "平行光")):
+            self._sl_kind.addItem(_lbl, _k)
+        self._sl_kind.setToolTip("换灯型会自动摘掉对新类型无意义的字段")
+        self._sl_kind.currentIndexChanged.connect(self._on_sl_kind_changed)
+        form.addRow("灯型", self._sl_kind)
+
+        self._sl_intensity = spin(0.0, 200.0, 0.1, 2)
+        form.addRow("强度", self._sl_intensity)
+        self._sl_kelvin = spin(1000.0, 15000.0, 50.0, 0)
+        form.addRow("色温 K", self._sl_kelvin)
+        self._sl_range = spin(1.0, 8000.0, 10.0, 1)
+        self._sl_range.setToolTip("作用半径,单位 **wu**(世界空间,与 NPC 坐标同一把尺)。角色高 150 wu,对着它估。")
+        form.addRow("作用半径 wu", self._sl_range)
+        self._sl_soft = spin(0.1, 200.0, 0.5, 2)
+        self._sl_soft.setToolTip(
+            "发光体**半径**,单位 wu。平方后进 1/(r²+c) 当近场软化,防贴脸核爆。"
+            "调大 = 光斑变平摊,调小 = 中心更硬更亮。")
+        form.addRow("发光体半径 wu", self._sl_soft)
+        self._sl_height = spin(-500.0, 2000.0, 5.0, 1)
+        self._sl_height.setToolTip("离地高度,单位 wu。角色高 150 wu——街灯大约挂在 2.5 个人高。它直接决定 N·L/r² 的形状。")
+        form.addRow("离地高度 wu", self._sl_height)
+        self._sl_inner = spin(1.0, 89.0, 1.0, 0)
+        form.addRow("聚光内角 °", self._sl_inner)
+        self._sl_outer = spin(1.0, 89.0, 1.0, 0)
+        form.addRow("聚光外角 °", self._sl_outer)
+        self._sl_size_w = spin(1.0, 4000.0, 5.0, 1)
+        form.addRow("面光宽 wu", self._sl_size_w)
+        self._sl_size_h = spin(1.0, 4000.0, 5.0, 1)
+        form.addRow("面光高 wu", self._sl_size_h)
+        self._sl_form_layout = form          # 整行隐藏要用它（setRowVisible）
+        # 自转：面光绕**自身法线**转。没有它，矩形的横竖由 areaAxes 从法线推出来，
+        # 作者说了不算 —— 一扇斜着的窗、一块转过角度的灯板根本表达不出来。
+        self._sl_roll = spin(-180.0, 180.0, 5.0, 1)
+        form.addRow("面光自转°", self._sl_roll)
+        self._sl_two_sided = QCheckBox("面光双面发光")
+        self._sl_two_sided.setToolTip(
+            "勾上 = 矩形两面都发光（窗、灯箱）；不勾 = 只朝 orientation 那一面。只对面光有意义。")
+        self._sl_two_sided.toggled.connect(self._on_sl_field_changed)
+        form.addRow("", self._sl_two_sided)
+        self._sl_elev = spin(1.0, 89.0, 1.0, 0)
+        form.addRow("平行光仰角 °", self._sl_elev)
+        self._sl_azim = spin(0.0, 359.0, 1.0, 0)
+        form.addRow("平行光方位 °", self._sl_azim)
+        lay.addWidget(self._sl_form)
+
+        # 玩家的阴影绑定。玩家不在场景数据里有自己的 def，所以挂在场景上——
+        # 本来就该逐场景配（这条街有路灯，那间屋子只有烛火）。
+        lay.addWidget(QLabel("玩家阴影绑定"))
+        self._player_shadow_bind = ShadowBindingsEditor(self._emit_props_changed, self)
+        lay.addWidget(self._player_shadow_bind)
+
+        g.add_body(inner)
+        self._sc_lights_fold = g
+        return g
 
     def _ensure_source_scene_for_editing(self) -> None:
         sid = self._editing_scene_id or ""
@@ -6133,7 +6322,408 @@ class ScenePropertyPanel(QScrollArea):
             sc["lightEnvCurve"] = {"points": lc_pts}
         elif "lightEnvCurve" in sc:
             del sc["lightEnvCurve"]
+        self._writeback_scene_lights(sc)
         self._emit_props_changed()
+
+    # ---- 统一光影：灯位 ------------------------------------------------
+    def _sl_lights(self) -> list[dict]:
+        return self._sc_lighting.setdefault("lights", []) if self._sc_lighting else []
+
+    def _sl_current(self) -> dict | None:
+        ls = self._sl_lights()
+        return ls[self._sl_selected] if 0 <= self._sl_selected < len(ls) else None
+
+    def _fill_sl_table(self, *, select_row: int = -1) -> None:
+        self._sl_updating = True
+        try:
+            ls = self._sl_lights()
+            self._sl_table.setRowCount(len(ls))
+            for i, l in enumerate(ls):
+                for c, txt in enumerate((
+                    str(l.get("id", "")),
+                    str(l.get("kind", "")),
+                    "✓" if l.get("enabled", True) else "",
+                    "✓" if l.get("castShadow") else "",
+                    f'{float(l.get("intensity", 0) or 0):.2f}',
+                )):
+                    self._sl_table.setItem(i, c, QTableWidgetItem(txt))
+            if 0 <= select_row < len(ls):
+                self._sl_table.selectRow(select_row)
+                self._sl_selected = select_row
+            elif not ls:
+                self._sl_selected = -1
+        finally:
+            self._sl_updating = False
+        self._sync_sl_form()
+        self._sync_sl_status()
+
+    def _sync_sl_status(self) -> None:
+        ls = self._sl_lights()
+        n, budget, over = scene_lights.shadow_budget_status(ls)
+        issues = scene_lights.validate_lights(ls)
+        ww = self._sl_space.world_w if self._sl_space else 0.0
+        head = (f"灯 {len(ls)} 盏　带影 <b>{n}/{budget}</b>"
+                + ("　<span style='color:#e06c4a'>⚠ 超预算,跑起来会掉帧</span>" if over else "")
+                + (f"　世界宽 {ww:.0f} wu　角色高 {scene_lights.CHARACTER_HEIGHT_WU} wu"
+                   if ww else "　⚠ 场景缺 worldWidth"))
+        if issues:
+            head += "<br>" + "<br>".join(f"• {t}" for t in issues[:6])
+        self._sl_status.setText(head)
+
+    def _sync_sl_form(self) -> None:
+        l = self._sl_current()
+        self._sl_form.setEnabled(l is not None)
+        if l is None:
+            return
+        self._sl_updating = True
+        try:
+            kind = str(l.get("kind", "point"))
+            _ki = self._sl_kind.findData(kind)
+            if _ki >= 0:
+                self._sl_kind.setCurrentIndex(_ki)
+            self._sl_id.setText(str(l.get("id", "")))
+            self._sl_enabled.setChecked(bool(l.get("enabled", True)))
+            self._sl_cast.setChecked(bool(l.get("castShadow")))
+            self._sl_intensity.setValue(float(l.get("intensity", 0) or 0))
+            self._sl_kelvin.setValue(float(l.get("kelvin", 2400) or 2400))
+            self._sl_range.setValue(float(
+                l.get("range") or scene_lights.DEFAULT_LIGHT_RANGE_WU))
+            self._sl_soft.setValue(float(
+                l.get("softeningRadius") or scene_lights.DEFAULT_LAMP_RADIUS_WU))
+            self._sl_height.setValue(float(l.get("_editorHeightWu", 300.0) or 0.0))
+            self._sl_inner.setValue(float(l.get("innerAngleDeg", 25) or 25))
+            self._sl_outer.setValue(float(l.get("outerAngleDeg", 45) or 45))
+            self._sl_two_sided.setChecked(bool(l.get("twoSided")))
+            sz = l.get("size") or [0.2, 0.15]
+            self._sl_size_w.setValue(float(sz[0]))
+            self._sl_size_h.setValue(float(sz[1]))
+            self._sl_roll.setValue(float(l.get("rollDeg", 0) or 0))
+            self._sl_elev.setValue(float(l.get("elevationDeg", 45) or 45))
+            self._sl_azim.setValue(float(l.get("azimuthDeg", 180) or 180))
+            # 按灯型只留相关的行，别让作者对着一堆不生效的字段发懵
+            # ★ 按灯型**整行隐藏**，不是置灰。
+            #
+            #   以前九个控件永远都在、只把无关的置灰，于是不管选哪种灯，面前
+            #   永远摊着「聚光内角/外角 + 面光宽/高/双面 + 平行光仰角/方位」
+            #   这一堆用不上的东西 —— 任何一种灯型真正用得上的只有其中 3–4 个。
+            #   置灰只是"看得见摸不着"，读表的人还是要逐行判断哪些算数。
+            for w, on in (
+                (self._sl_range, kind != "directional"),
+                # 面光**不吃**软化半径:`lcAreaLight(…, C.x, twoSided, vis)` 的
+                # 参数表里根本没有它(点光/聚光走 lcFalloff 才用)。摆着 = 骗人。
+                (self._sl_soft, kind in ("point", "spot")),
+                (self._sl_height, kind != "directional"),
+                (self._sl_inner, kind == "spot"), (self._sl_outer, kind == "spot"),
+                (self._sl_size_w, kind == "area"), (self._sl_size_h, kind == "area"),
+                (self._sl_roll, kind == "area"),
+                (self._sl_two_sided, kind == "area"),
+                (self._sl_elev, kind == "directional"), (self._sl_azim, kind == "directional"),
+            ):
+                self._set_sl_row_visible(w, on)
+        finally:
+            self._sl_updating = False
+
+    def _set_sl_row_visible(self, w, on: bool) -> None:
+        """整行显示/隐藏（连标签一起）。找不到行就退回置灰，绝不因此崩掉表单。"""
+        form = getattr(self, "_sl_form_layout", None)
+        if form is None:
+            w.setEnabled(on)
+            return
+        try:
+            idx, _role = form.getWidgetPosition(w)
+            if idx >= 0:
+                form.setRowVisible(idx, on)
+                return
+        except Exception:
+            pass
+        w.setEnabled(on)
+
+    def _on_sl_kind_changed(self) -> None:
+        """换灯型：走 retype（摘掉旧型专属字段），然后整表重刷。
+
+        ⚠ 必须过 `_sl_updating` 闸：`_sync_sl_form` 自己会 setCurrentIndex，
+          不挡住就会递归换型，把作者的字段一路清干净。
+        """
+        if getattr(self, "_sl_updating", False):
+            return
+        l = self._sl_current()
+        if l is None:
+            return
+        kind = self._sl_kind.currentData()
+        if not kind or kind == l.get("kind"):
+            return
+        lights = self._sl_lights()
+        i = lights.index(l)
+        lights[i] = scene_lights.retype(l, str(kind))
+        self._sync_sl_form()
+        self._fill_sl_table(select_row=self._sl_selected)
+        self._sync_sl_status()
+        self._emit_props_changed()
+
+    def _on_sl_row_selected(self) -> None:
+        if self._sl_updating:
+            return
+        rows = self._sl_table.selectionModel().selectedRows()
+        self._sl_selected = rows[0].row() if rows else -1
+        self._sync_sl_form()
+
+    def _on_sl_add(self, kind: str) -> None:
+        if self._sc_lighting is None:
+            self._sc_lighting = scene_lights.default_lighting_block()
+        ls = self._sl_lights()
+        n = 1
+        used = {str(x.get("id")) for x in ls}
+        while f"light_{n}" in used:
+            n += 1
+        l = scene_lights.default_light(n, kind)
+        # 新灯落在画面中心的地面上，作者随后用「在画布上定位」挪走
+        if kind != "directional" and self._sl_space:
+            g = self._sl_space.ground_world_at_scene(
+                self._sl_space.world_w * 0.5, self._sl_space.world_h * 0.5)
+            if g:
+                l["_editorHeightWu"] = 300.0
+                l["pos"] = list(self._sl_space.raise_world(g, 2.0))
+        ls.append(l)
+        self._fill_sl_table(select_row=len(ls) - 1)
+        self._emit_props_changed()
+
+    def _on_sl_remove(self) -> None:
+        ls = self._sl_lights()
+        if not (0 <= self._sl_selected < len(ls)):
+            return
+        ls.pop(self._sl_selected)
+        self._sl_selected = min(self._sl_selected, len(ls) - 1)
+        self._fill_sl_table(select_row=self._sl_selected)
+        self._emit_props_changed()
+
+    def _on_sl_field_changed(self) -> None:
+        if self._sl_updating:
+            return
+        l = self._sl_current()
+        if l is None:
+            return
+        kind = str(l.get("kind", "point"))
+        l["id"] = self._sl_id.text().strip() or l.get("id", "light")
+        l["enabled"] = self._sl_enabled.isChecked()
+        l["castShadow"] = self._sl_cast.isChecked()
+        l["intensity"] = round(self._sl_intensity.value(), 3)
+        l["kelvin"] = round(self._sl_kelvin.value(), 1)
+        if kind != "directional":
+            l["range"] = round(self._sl_range.value(), 4)
+            l["softeningRadius"] = round(self._sl_soft.value(), 4)
+            # 高度改了要重算 pos —— 只动世界 Y，落点不变
+            h = round(self._sl_height.value(), 3)
+            prev = float(l.get("_editorHeightWu", h) or 0.0)
+            l["_editorHeightWu"] = h
+            if self._sl_space and isinstance(l.get("pos"), list) and abs(h - prev) > 1e-9:
+                l["pos"] = list(self._sl_space.raise_world(tuple(l["pos"]), h - prev))
+        if kind == "spot":
+            l["innerAngleDeg"] = round(self._sl_inner.value(), 1)
+            l["outerAngleDeg"] = round(self._sl_outer.value(), 1)
+        if kind == "area":
+            l["size"] = [round(self._sl_size_w.value(), 4),
+                         round(self._sl_size_h.value(), 4)]
+            l["rollDeg"] = round(self._sl_roll.value(), 1)
+            l["twoSided"] = bool(self._sl_two_sided.isChecked())
+        else:
+            # 换了灯型就把只对面光有意义的键清掉，别在数据里留下不生效的字段
+            l.pop("twoSided", None)
+            l.pop("rollDeg", None)
+        if kind == "directional":
+            l["elevationDeg"] = round(self._sl_elev.value(), 1)
+            l["azimuthDeg"] = round(self._sl_azim.value(), 1)
+        self._fill_sl_table(select_row=self._sl_selected)
+        self._emit_props_changed()
+
+    def _on_sl_place_toggled(self, on: bool) -> None:
+        self._sl_placing = bool(on)
+        self.light_place_mode_changed.emit(bool(on))
+
+    def place_selected_light_at(self, scene_x: float, scene_y: float) -> bool:
+        """画布点击时调这里。取该处**地面**的伪世界坐标当落点，再按当前高度抬起。"""
+        if not self._sl_placing:
+            return False
+        l = self._sl_current()
+        if l is None or str(l.get("kind")) == "directional" or not self._sl_space:
+            return False
+        g = self._sl_space.ground_world_at_scene(scene_x, scene_y)
+        if g is None:
+            self._sl_status.setText(
+                "⚠ 这个场景没有深度图，点选取不到地面高度。"
+                "先在角色照明实验室导出场景深度，再来摆灯。")
+            return True
+        h = float(l.get("_editorHeightWu", 300.0) or 0.0)
+        l["pos"] = [round(v, 4) for v in self._sl_space.raise_world(g, h)]
+        self._fill_sl_table(select_row=self._sl_selected)
+        self._emit_props_changed()
+        return True
+
+    def _load_scene_lights(self, st: dict) -> None:
+        """载入。**整块透传保值**——F2 里调的天光/雾/显示变换本编辑器不显示，
+        但必须原样带回去，否则打开保存一次就把它们清了。"""
+        lit = st.get("lighting")
+        self._sc_lighting = copy.deepcopy(lit) if isinstance(lit, dict) else None
+        self._sl_selected = -1
+        self._sl_placing = False
+        if hasattr(self, "_sl_place"):
+            self._sl_place.setChecked(False)
+        self._sl_space = scene_lights.SceneLightSpace(str(st.get("id") or ""), st)
+        self._recompute_light_heights()
+        self._sc_lights_fold.set_expanded(bool(self._sc_lighting and self._sc_lighting.get("lights")))
+        self._fill_sl_table(select_row=0 if (self._sc_lighting or {}).get("lights") else -1)
+        self._player_shadow_bind.set_lights((self._sc_lighting or {}).get("lights"))
+        self._player_shadow_bind.load(st.get("playerShadowBindings"))
+
+    def _recompute_light_heights(self) -> None:
+        """从 `pos` 反推「离地高度」供 UI 显示（存档里只有绝对坐标）。
+
+        载入与「从运行时拉取」都走这里——两处各算一遍的话，拉取后那一栏高度
+        会停在上一份数据上，而它又是「在画布上定位」的输入，错了会把灯摆到错地方。
+        """
+        if not (self._sc_lighting and self._sl_space and self._sl_space.load_depth()):
+            return
+        for l in self._sc_lighting.get("lights") or []:
+            pos = l.get("pos")
+            if not (isinstance(pos, list) and len(pos) == 3):
+                continue
+            sx, sy = self._sl_space.world_to_scene(tuple(pos))
+            g = self._sl_space.ground_world_at_scene(sx, sy)
+            if g:
+                l["_editorHeightWu"] = round(
+                    self._sl_space.height_wu_above(tuple(pos), g), 3)
+
+    # ---- 与游戏的双向实时同步（驱动在 MainWindow 的定时器，这里只给三个口） ----
+
+    @property
+    def current_scene_id(self) -> str:
+        return self._sl_space.scene_id if self._sl_space else ""
+
+    def set_sync_status(self, text: str) -> None:
+        """把连接状态摆到界面上。断了必须看得见——静默掉线是最难查的一种坏。"""
+        if getattr(self, "_sl_sync_status", None) is not None:
+            self._sl_sync_status.setText(text)
+
+    def sync_lighting_snapshot(self) -> dict | None:
+        """当前这份 lighting（工作副本本体，调用方只读不改）。没配 lighting 则 None。"""
+        return self._sc_lighting
+
+    def sync_selected_id(self) -> str | None:
+        """本页当前选中那盏灯的 id（没选中 → None）。"""
+        l = self._sl_current()
+        if not isinstance(l, dict):
+            return None
+        lid = l.get("id")
+        return lid if isinstance(lid, str) and lid else None
+
+    def apply_synced_selection(self, light_id: object) -> None:
+        """套用对面的选中：把灯表的行跳到那盏灯上。
+
+        为什么值得单独走一条路：灯一多，「编辑器里选的是哪盏」和「画面上高亮的
+        是哪盏」对不上，就等于没法找灯 —— 只能改个参数看画面哪儿变了来反推。
+
+        找不到那个 id 就什么都不做（对面可能刚加了一盏我还没收到）。
+        """
+        if not isinstance(light_id, str) or not light_id:
+            return
+        if self.sync_selected_id() == light_id:
+            return
+        ls = self._sl_lights()
+        for i, l in enumerate(ls):
+            if isinstance(l, dict) and l.get("id") == light_id:
+                self._fill_sl_table(select_row=i)
+                return
+
+    def sync_busy(self) -> bool:
+        """现在别往里塞对面的数据。
+
+        两种情况：①焦点在灯的表单里（人正在打字，塞进来当场把这次编辑吞了）；
+        ②正处于"在画布上定位选中的灯"模式（下一次点击就要落点，参数被换掉会摆到错的灯上）。
+        """
+        if getattr(self, "_sl_placing", False):
+            return True
+        app = QApplication.instance()
+        fw = app.focusWidget() if app is not None else None
+        form = getattr(self, "_sl_form", None)
+        if fw is not None and form is not None and (fw is form or form.isAncestorOf(fw)):
+            return True
+        return False
+
+    def apply_synced_lighting(self, lit: dict) -> None:
+        """把对面（游戏）那份整块套进来。只改工作副本 + 入脏，落盘仍由 Save All。"""
+        self._sc_lighting = copy.deepcopy(lit)
+        keep = self._sl_selected
+        self._recompute_light_heights()
+        self._sc_lights_fold.set_expanded(bool(self._sc_lighting.get("lights")))
+        n = len(self._sc_lighting.get("lights") or [])
+        # 尽量保住选中行：同步是每 0.4s 一次的，行一直跳会没法在表里改东西
+        self._fill_sl_table(select_row=keep if 0 <= keep < n else (0 if n else -1))
+        self._player_shadow_bind.set_lights(self._sc_lighting.get("lights"))
+        self._emit_props_changed()
+        self._sl_status.setText("↔ 已同步游戏里的灯位（%d 盏）——记得 Save All 才落盘" % n)
+
+    def _on_sl_pull_runtime(self) -> None:
+        """立即抓一次（平时靠自动同步）。走 dev server 的同步槽，游戏在哪个浏览器里都行。"""
+        expect = self.current_scene_id
+        doc, age_ms, err = scene_lights.fetch_sync_doc()
+        if err:
+            self._sl_status.setText("⚠ %s（游戏跑起来了吗？dev server 在吗？）" % err)
+            return
+        # 手动抓不受新鲜期限制（人明确要的），但要把岁数说出来——
+        # 免得把半天前的残留当成刚摆好的抓进来。
+        if scene_lights.is_sync_doc_stale(age_ms):
+            mins = int(float(age_ms) / 60000)
+            self._sl_status.setText("⚠ 同步槽里这份是 %d 分钟前的（游戏可能没在跑）" % mins)
+        self._on_sl_runtime_lighting(doc, expect)
+
+    def _on_sl_runtime_lighting(self, payload: object, expect_scene_id: str) -> None:
+        lit, err = scene_lights.validate_pulled_lighting(payload, expect_scene_id)
+        if lit is None:
+            self._sl_status.setText(f"⚠ 拉取失败：{err}")
+            return
+        n = len(lit.get("lights") or [])
+        cur = len(self._sl_lights())
+        r = QMessageBox.question(
+            self,
+            "从运行时拉取灯位",
+            f"用运行时的 lighting 块覆盖本场景（灯 {cur} 盏 → {n} 盏）？\n"
+            "天光/雾/显示变换等整块参数一并替换。\n"
+            "还没落盘：确认后还要按 Save All（之前可以 Ctrl+Z 撤销）。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if r != QMessageBox.StandardButton.Yes:
+            self._sl_status.setText("已取消拉取")
+            return
+        self._sc_lighting = copy.deepcopy(lit)
+        self._sl_selected = -1
+        self._recompute_light_heights()
+        self._sc_lights_fold.set_expanded(bool(self._sc_lighting.get("lights")))
+        self._fill_sl_table(select_row=0 if n else -1)
+        self._player_shadow_bind.set_lights(self._sc_lighting.get("lights"))
+        self._emit_props_changed()
+        self._sl_status.setText(
+            f"✓ 已拉取运行时灯位（{n} 盏）——还没落盘，记得 Save All")
+
+    def _writeback_scene_lights(self, sc: dict) -> None:
+        """写回。剥掉只给编辑器看的 `_editorHeightWu`（它是从 pos 推出来的派生量，
+        不进数据契约）。整块其余字段透传。"""
+        if not self._sc_lighting:
+            sc.pop("lighting", None)
+            self._writeback_player_shadow(sc)
+            return
+        out = copy.deepcopy(self._sc_lighting)
+        for l in out.get("lights") or []:
+            l.pop("_editorHeightWu", None)
+        sc["lighting"] = out
+        self._writeback_player_shadow(sc)
+
+    def _writeback_player_shadow(self, sc: dict) -> None:
+        """玩家阴影绑定。None = 不写字段（回落手调单影），不是「不投影」。"""
+        b = self._player_shadow_bind.dump()
+        if b:
+            sc["playerShadowBindings"] = b
+        else:
+            sc.pop("playerShadowBindings", None)
 
     # ---- 光环境曲线 lightEnvCurve --------------------------------------
     def _fill_lc_table(self, *, select_row: int = -1) -> None:
@@ -6260,6 +6850,7 @@ class ScenePropertyPanel(QScrollArea):
         self._sc_lightcurve_points = pts
         self._lc_selected = -1
         self._sc_lightcurve_fold.set_expanded(bool(pts))
+        self._load_scene_lights(st)
         self._fill_lc_table(select_row=0 if pts else -1)
         self.lightcurve_overlay_refresh_requested.emit()
 
@@ -6738,6 +7329,8 @@ class ScenePropertyPanel(QScrollArea):
         )
         self._hs_cast_shadow.stateChanged.connect(lambda _s: self._emit_props_changed())
         form.addRow("castShadow", self._hs_cast_shadow)
+        self._hs_shadow_bind = ShadowBindingsEditor(self._emit_props_changed, self)
+        form.addRow("阴影绑定", self._hs_shadow_bind)
         # 遮挡混合系数：缺省用场景默认（当前 0.28）；勾「自定义」写显式 [0,1] 值并脱离 F2 全局滑块
         _hs_occ_tip = (
             "深度遮挡半透明混合系数 [0,1]：被场景深度遮挡的展示图像素 alpha 乘此系数"
@@ -7654,6 +8247,8 @@ class ScenePropertyPanel(QScrollArea):
             self._hs_persp.blockSignals(False)
             self._hs_auto.setChecked(st.get("autoTrigger", False))
             self._hs_cast_shadow.setChecked(st.get("castShadow", True) is not False)
+            self._hs_shadow_bind.set_lights((self._sc_lighting or {}).get("lights"))
+            self._hs_shadow_bind.load(st.get("shadowBindings"))
             self._hs_cutscene_ids_pending = self._entity_cutscene_ids_from_data(st)
             self._hs_cutscene_ids_label.setText(
                 self._format_cutscene_ids_label(self._hs_cutscene_ids_pending),
@@ -8119,6 +8714,13 @@ class ScenePropertyPanel(QScrollArea):
             hs["castShadow"] = False
         elif "castShadow" in hs:
             del hs["castShadow"]
+        # 阴影绑定：控件给 None = 不写字段（回落手调单影）；
+        # 「不投影」与「不写字段」是两回事，别在这里合并
+        _hs_sb = self._hs_shadow_bind.dump()
+        if _hs_sb:
+            hs["shadowBindings"] = _hs_sb
+        else:
+            hs.pop("shadowBindings", None)
         hs_ids = [x for x in self._hs_cutscene_ids_pending if str(x).strip()]
         if hs_ids:
             hs["cutsceneIds"] = hs_ids
@@ -8422,6 +9024,9 @@ class ScenePropertyPanel(QScrollArea):
         )
         self._npc_cast_shadow.stateChanged.connect(lambda _s: self._emit_props_changed())
         form.addRow("castShadow", self._npc_cast_shadow)
+        # 阴影绑定：**手动指定光源**，系统不自动 resolve（制作人 2026-08-20）
+        self._npc_shadow_bind = ShadowBindingsEditor(self._emit_props_changed, self)
+        form.addRow("阴影绑定", self._npc_shadow_bind)
         base_g.add_body(base_inner)
         outer.addWidget(base_g)
 
@@ -9279,6 +9884,8 @@ class ScenePropertyPanel(QScrollArea):
             self._npc_cond_hide_entity.blockSignals(False)
             self._npc_cast_shadow.blockSignals(True)
             self._npc_cast_shadow.setChecked(st.get("castShadow", True) is not False)
+            self._npc_shadow_bind.set_lights((self._sc_lighting or {}).get("lights"))
+            self._npc_shadow_bind.load(st.get("shadowBindings"))
             self._npc_cast_shadow.blockSignals(False)
             self._npc_facing.blockSignals(True)
             try:
@@ -9448,6 +10055,11 @@ class ScenePropertyPanel(QScrollArea):
             npc["castShadow"] = False
         elif "castShadow" in npc:
             del npc["castShadow"]
+        _npc_sb = self._npc_shadow_bind.dump()
+        if _npc_sb:
+            npc["shadowBindings"] = _npc_sb
+        else:
+            npc.pop("shadowBindings", None)
         anim = self._npc_anim.current_id().strip()
         if _cid:
             # 引用角色：animFile 默认继承；异于继承才作本摆放覆盖写入
@@ -10860,6 +11472,9 @@ class SceneEditor(QWidget):
             self._on_npc_patrol_route_committed)
         self._canvas.item_lightcurve_committed.connect(
             self._on_lightcurve_committed)
+        # 统一光影：画布定位 ←→ 属性面板的开关，双向接起来
+        self._canvas.light_place_requested.connect(self._on_light_place_requested)
+        self._props.light_place_mode_changed.connect(self._canvas.set_light_place_mode)
         self._canvas.persp_axis_committed.connect(self._on_persp_axis_committed)
         self._canvas.persp_axis_live_refresh.connect(self._refresh_all_persp_previews)
         self._props.perspective_preview_changed.connect(self._on_persp_preview_changed)
@@ -11055,6 +11670,12 @@ class SceneEditor(QWidget):
             return
         with self._undo.capture("编辑光环境曲线"):
             self._props.apply_lightcurve_committed(points)
+
+    def _on_light_place_requested(self, sx: float, sy: float) -> None:
+        """画布上点了一下 → 把选中的灯落到该处地面（属性面板负责取深度与抬高）。"""
+        # place_selected_light_at 内部已 _emit_props_changed（脏态经既有通道走），
+        # 这里只负责把画布事件转过去。
+        self._props.place_selected_light_at(float(sx), float(sy))
 
     def _on_persp_axis_committed(self, which: str, x: float, y: float) -> None:
         # 与光曲线同门：画布手势 → 面板 staging（走统一 dirty/预览），一条撤销命令

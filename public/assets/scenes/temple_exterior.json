@@ -1,4 +1,39 @@
 {
+  "lighting": {
+    "sky": {
+      "color": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "intensity": 1.0,
+      "hemi": 0.6
+    },
+    "day": {
+      "sunIntensity": 0.0,
+      "sunElevationDeg": 50.0,
+      "sunAzimuthDeg": 180.0
+    },
+    "lights": [],
+    "display": {
+      "ev": 0.0,
+      "tonemap": "none",
+      "whiteKelvin": 6500.0,
+      "contrast": 1.0,
+      "saturation": 1.0,
+      "lift": 0.0,
+      "liftKelvin": 6500.0
+    },
+    "aoStrength": 1.0,
+    "ratioMax": 8.0,
+    "dehaze": 0.0,
+    "emissive": {
+      "gain": 0.0
+    },
+    "giGain": 0.0,
+    "placeholder": true,
+    "_migration": "identity-2026-08-21"
+  },
   "id": "temple_exterior",
   "name": "庙宇",
   "worldWidth": 2576.0,
@@ -110,13 +145,13 @@
     },
     "collision": {
       "x_min": -2.2727272510528564,
-      "z_min": -1.85777078931811,
+      "z_min": -1.256907981849996,
       "cell_size": 0.02861251464133875,
       "grid_width": 160,
-      "grid_height": 130,
+      "grid_height": 109,
       "height_offset": 0.05
     },
-    "depth_tolerance": 0.0,
+    "depth_tolerance": 0.05,
     "floor_offset": 0.0
   },
   "ambientSounds": [

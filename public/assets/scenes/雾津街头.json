@@ -49,7 +49,7 @@
     },
     "spawn_0": {
       "x": 3194.3,
-      "y": 1347.9
+      "y": 1367.9
     }
   },
   "hotspots": [
@@ -554,6 +554,189 @@
       "group": "主线_吃饭点"
     }
   ],
+  "lighting": {
+    "sky": {
+      "kelvin": 6500,
+      "intensity": 0.045,
+      "hemi": 0.92
+    },
+    "day": {
+      "sunIntensity": 0,
+      "sunElevationDeg": 50,
+      "sunAzimuthDeg": 180
+    },
+    "lights": [
+      {
+        "id": "moon",
+        "kind": "directional",
+        "intensity": 0,
+        "kelvin": 5200,
+        "elevationDeg": 35,
+        "azimuthDeg": 210,
+        "castShadow": true,
+        "enabled": true
+      },
+      {
+        "id": "lamp_1",
+        "kind": "point",
+        "pos": [
+          -484,
+          369.6,
+          -264
+        ],
+        "kelvin": 2200,
+        "intensity": 2.8787063689022983,
+        "castShadow": true,
+        "enabled": true,
+        "range": 529.4115066528,
+        "softeningRadius": 10.5881602252
+      },
+      {
+        "id": "lamp_2",
+        "kind": "point",
+        "pos": [
+          -50.5,
+          125.5,
+          -1423.1
+        ],
+        "kelvin": 2200,
+        "intensity": 0.1,
+        "castShadow": true,
+        "enabled": true,
+        "range": 200,
+        "softeningRadius": 1
+      },
+      {
+        "id": "lamp_3",
+        "kind": "point",
+        "pos": [
+          -1188,
+          334.4,
+          484
+        ],
+        "kelvin": 2200,
+        "intensity": 2.8787063689022983,
+        "castShadow": true,
+        "enabled": true,
+        "range": 529.4115066528,
+        "softeningRadius": 10.5881602252
+      },
+      {
+        "id": "lamp_4",
+        "kind": "point",
+        "intensity": 0,
+        "kelvin": 850,
+        "castShadow": false,
+        "enabled": true,
+        "pos": [
+          754.3774434936443,
+          328.9815256246355,
+          -756.0350276826549
+        ],
+        "range": 200,
+        "softeningRadius": 7
+      },
+      {
+        "id": "lamp_5",
+        "kind": "spot",
+        "pos": [
+          -88,
+          396,
+          -44
+        ],
+        "kelvin": 2200,
+        "intensity": 4.605930190243678,
+        "castShadow": true,
+        "enabled": true,
+        "dir": [
+          0.2,
+          -0.8,
+          0.5
+        ],
+        "innerAngleDeg": 22,
+        "outerAngleDeg": 48,
+        "range": 529.4115066528,
+        "softeningRadius": 10.5881602252
+      },
+      {
+        "id": "lamp_6",
+        "kind": "area",
+        "pos": [
+          545.6,
+          396,
+          -176
+        ],
+        "kelvin": 2400,
+        "intensity": 3.454447642682759,
+        "castShadow": true,
+        "enabled": true,
+        "orientation": [
+          0,
+          0,
+          -1
+        ],
+        "range": 529.4115066528,
+        "size": [
+          194.1174387932,
+          141.1766421795
+        ],
+        "softeningRadius": 10.5881602252
+      },
+      {
+        "id": "light_1",
+        "kind": "spot",
+        "pos": [
+          1427.3,
+          98.34600000000002,
+          748.2
+        ],
+        "kelvin": 2400.0,
+        "intensity": 0.5,
+        "range": 450.0,
+        "softeningRadius": 10.0,
+        "castShadow": false,
+        "enabled": true,
+        "dir": [
+          0,
+          -1,
+          0.3
+        ],
+        "innerAngleDeg": 1.0,
+        "outerAngleDeg": 45.0
+      }
+    ],
+    "fog": {
+      "sigma": 0,
+      "kelvin": 6500,
+      "scatter": 0.06,
+      "scaleHeight": 529.4115066528,
+      "baseHeight": 0
+    },
+    "display": {
+      "ev": 3.3175638002432013,
+      "tonemap": "filmic",
+      "whiteKelvin": 7200,
+      "contrast": 0.7000000000000002,
+      "saturation": 0.85,
+      "lift": 0.02,
+      "liftKelvin": 9000
+    },
+    "aoStrength": 1,
+    "ratioMax": 6,
+    "emissive": {
+      "gain": 0.3,
+      "haloGain": 0.18,
+      "coreRadius": 30.8827203512,
+      "haloRadius": 141.1766421795
+    },
+    "dehaze": 1,
+    "giGain": 1
+  },
+  "playerShadowBindings": [
+    {
+      "source": "light:lamp_2"
+    }
+  ],
   "npcs": [
     {
       "id": "npc_零工工头",
@@ -608,6 +791,11 @@
     },
     {
       "id": "npc_婆子",
+      "shadowBindings": [
+        {
+          "source": "light:lamp_1"
+        }
+      ],
       "name": "找上门的婆子",
       "x": 673.7,
       "y": 1307.9,
@@ -716,6 +904,18 @@
     },
     {
       "id": "npc_街头瞎子李",
+      "shadowBindings": [
+        {
+          "source": "virtual",
+          "virtual": {
+            "azimuthDeg": 108.0,
+            "elevationDeg": 46.0,
+            "darkness": 0.45,
+            "softness": 0.6,
+            "length": 0.0
+          }
+        }
+      ],
       "name": "卦摊瞎子李",
       "x": 3516.0,
       "y": 1516.0,
@@ -1655,7 +1855,7 @@
       "grid_height": 137,
       "height_offset": 0.1
     },
-    "depth_tolerance": 0.0,
+    "depth_tolerance": 0.05,
     "floor_offset": 0.0
   },
   "filterId": "day",

@@ -90,6 +90,9 @@ ENTITY_REF_PARAMS: dict[str, dict[str, str]] = {
     "persistNpcAt": {"target": "actor"},
     "persistNpcAnimState": {"target": "actor"},
     "persistPlayNpcAnimation": {"target": "actor"},
+    # 角色阴影绑定（setEntityShadow）：target 命中面与 showEmote 完全一致
+    # （player / NPC id / 裸热区 id）——刻意让作者写**裸** id，前缀形式会对重构隐形。
+    "setEntityShadow": {"target": "emote_subject"},
     "showEmote": {"target": "emote_subject"},
     "showEmoteAndWait": {"target": "emote_subject"},
     "showSpeechBubble": {"target": "emote_subject"},

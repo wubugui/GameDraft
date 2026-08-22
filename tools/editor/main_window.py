@@ -4,7 +4,6 @@ from __future__ import annotations
 import os
 import re
 import json
-import shutil
 import subprocess
 import sys
 import time
@@ -30,7 +29,13 @@ from . import theme
 from .project_model import ProjectModel
 from .validator import validate, Issue
 from .editors.game_browser import GAME_DEV_URL, GameBrowserTab, GamePlayWindow
-from tools.dev.paths import env_with_node_path, npm_command
+from .editors import scene_lights as scene_lights_mod
+from tools.dev.paths import env_with_node_path
+from .shared.npm_process import (
+    augment_env_for_nodejs as _augment_env_for_nodejs,
+    copy_env_to_qprocess as _copy_env_to_qprocess,
+    npm_run_command as _npm_run_command,
+)
 
 # Vite 就绪行示例:  Local:   http://127.0.0.1:5173/
 _VITE_DEV_URL_RE = re.compile(
@@ -80,67 +85,6 @@ def _vite_dev_url_from_log(log: str) -> str | None:
     if not url.endswith("/"):
         url += "/"
     return url
-
-
-def _augment_env_for_nodejs(env: QProcessEnvironment) -> None:
-    """GUI 启动的进程常缺少终端里的 PATH；补全常见 Node/npm 目录。"""
-    path_key = "PATH"
-    if not env.contains(path_key):
-        for alt in ("PATH", "Path"):
-            if env.contains(alt):
-                path_key = alt
-                break
-    current = env.value(path_key, "")
-    prefixes: list[str] = []
-
-    npm = shutil.which("npm")
-    if npm:
-        prefixes.append(str(Path(npm).resolve().parent))
-
-        nvm_link = os.environ.get("NVM_SYMLINK", "")
-        if nvm_link and os.path.isdir(nvm_link):
-            prefixes.insert(0, nvm_link)
-    else:
-        # macOS/Linux: GUI launches (Finder/Dock) often start with a minimal
-        # PATH that omits Homebrew / volta / nvm node installs.
-        home = os.path.expanduser("~")
-        for d in (
-            "/opt/homebrew/bin",
-            "/usr/local/bin",
-            os.path.join(home, ".volta", "bin"),
-        ):
-            if os.path.isdir(d):
-                prefixes.append(d)
-        nvm_dir = os.environ.get("NVM_DIR", "")
-        if nvm_dir:
-            nvm_current = os.path.join(nvm_dir, "current", "bin")
-            if os.path.isdir(nvm_current):
-                prefixes.insert(0, nvm_current)
-
-    seen: set[str] = set()
-    merged: list[str] = []
-    for p in prefixes:
-        if not p:
-            continue
-        norm = os.path.normcase(os.path.abspath(p))
-        if os.path.isdir(p) and norm not in seen:
-            seen.add(norm)
-            merged.append(p)
-    if merged:
-        env.insert(path_key, os.pathsep.join(merged) + os.pathsep + current)
-
-
-def _copy_env_to_qprocess(env: QProcessEnvironment, values: dict[str, str]) -> None:
-    for key, value in values.items():
-        env.insert(key, value)
-
-
-def _npm_run_command(*args: str) -> tuple[str, list[str]]:
-    npm = npm_command()
-    if os.name == "nt":
-        comspec = os.environ.get("ComSpec") or "cmd.exe"
-        return comspec, ["/d", "/c", npm, *args]
-    return npm, list(args)
 
 
 _GAME_BROWSER_SENTINEL = object()
@@ -318,6 +262,19 @@ class MainWindow(QMainWindow):
         from .shared.bubble_anchor_field import set_game_anchor_pusher
 
         set_game_anchor_pusher(self._push_bubble_anchor_preview)
+        # 光照双向实时同步：编辑器灯表 ↔ 游戏（F3 摆灯 / F2 滑条）改的是同一份 lighting，
+        # 任一边动了另一边就跟上。走 dev server 的同步槽，所以游戏开在外部浏览器也连得上；
+        # 落盘仍然只有 Save All 一个出口。基址同样用模块级注册（共享控件散在多个包里）。
+        from .editors.scene_lights import set_runtime_lighting_endpoint
+
+        set_runtime_lighting_endpoint(self._runtime_lighting_base_url)
+        self._lighting_sync = scene_lights_mod.LightingSyncClient(
+            "editor:%d" % (os.getpid(),))
+        self._lighting_transport = scene_lights_mod.default_transport()
+        self._lighting_sync_timer: QTimer | None = None
+        self._lighting_sync_inflight = False
+        self._lighting_sync_last_tick = 0.0
+        self._ensure_lighting_sync_timer()
         self._nav_tree.currentItemChanged.connect(self._on_nav_tree_current_changed)
 
         # 导航历史栈（浏览器式后退/前进）——见 _record_nav / _replay_nav。
@@ -2634,6 +2591,116 @@ class MainWindow(QMainWindow):
               "}catch(e){return false;}})()")
         return bool(surface.run_js_async(js, lambda _v=None: None))
 
+    # ----- 光照双向实时同步（编辑器 ↔ 游戏，走 dev server 的同步槽） -----
+
+    def _runtime_lighting_base_url(self) -> str:
+        """dev server 基址。编辑器自己起的服优先，否则回落默认端口——
+        用户自己在终端跑 `npm run dev` 时也连得上。"""
+        return (self._last_vite_dev_url or GAME_DEV_URL or "").strip()
+
+    def _ensure_lighting_sync_timer(self) -> None:
+        if self._lighting_sync_timer is not None:
+            return
+        t = QTimer(self)
+        t.setInterval(scene_lights_mod.SYNC_POLL_MS)
+        t.timeout.connect(self._tick_lighting_sync)
+        self._lighting_sync_timer = t
+        t.start()
+
+    def _lighting_sync_panel(self):
+        """当前该参与同步的场景属性面板；不在场景页 / 没配 lighting 就返回 None。
+
+        只在场景页可见时同步：切到别的编辑器时人看不见灯表，白问一轮还白占 UI 线程。
+
+        ⚠ 必须走 `_current_editor_instance()`，**不能** `self._stack.currentWidget()`——
+        栈里装的是 `_StackPageHost` 外壳（见 :113），外壳不转发任何属性，
+        `getattr(外壳, "_props")` 恒为 None，于是这一拍每次都在下面掉头走人，
+        **编辑器那半边的同步一次都不会跑**（2026-08-22 实测：同步槽 rev 到 59，
+        writer 全是 game，从没出现过 editor）。
+        同一个坑「审查 P1-29」已经记过一次（见 :176 的解包注释），这是第二次犯。
+        """
+        ed = self._current_editor_instance()
+        panel = getattr(ed, "_props", None)
+        if panel is None or not hasattr(panel, "sync_lighting_snapshot"):
+            return None
+        if not panel.current_scene_id:
+            return None
+        return panel
+
+    def _tick_lighting_sync(self) -> None:
+        """一拍同步：先看对面有没有新的（有就套进来），再看自己有没有新的（有就发出去）。
+
+        整拍都在 UI 线程上，所以三道闸缺一不可：
+        · `SYNC_TIMEOUT_S` 短超时——dev server 没在跑时每拍最多卡 0.6 秒，不会冻住编辑器；
+        · 连接层的**指数退避**——连不上就从 0.4s 逐步放慢到 3s，不白占 UI 线程；
+        · 连接层的**换端口重连**——dev server 换了端口也能自己找回来。
+        状态回灌到面板上，断线看得见。
+        """
+        if self._lighting_sync_inflight:
+            return
+        panel = self._lighting_sync_panel()
+        if panel is None:
+            return
+        now_ms = time.monotonic() * 1000.0
+        if not self._lighting_transport.due(now_ms, self._lighting_sync_last_tick):
+            return
+        self._lighting_sync_last_tick = now_ms
+        self._lighting_sync_inflight = True
+        try:
+            scene_id = panel.current_scene_id
+            doc, age_ms, err = self._lighting_transport.fetch(now_ms)
+            # 诊断量：这几个就是"一眼看穿"的全部依据（见 scene_lights.status_line）
+            tr = self._lighting_transport
+            tr.ticks += 1
+            tr.last_doc_age_ms = age_ms
+            tr.last_writer = str((doc or {}).get("writer") or "")
+            tr.last_doc_scene = str((doc or {}).get("sceneId") or "")
+            tr.suppressed = ""
+            if doc is None and not err:
+                tr.suppressed = "槽是空的"
+            elif not err and scene_lights_mod.is_sync_doc_stale(age_ms):
+                tr.suppressed = "对面那份太旧（>5 分钟），不套用"
+            elif not err and tr.last_doc_scene and tr.last_doc_scene != scene_id:
+                tr.suppressed = "场景对不上（槽里是 %s，本页是 %s）" % (
+                    tr.last_doc_scene, scene_id)
+            elif panel.sync_busy():
+                tr.suppressed = "本侧忙（灯表里在打字／正在画布上定位）只发不收"
+            panel.set_sync_status(tr.status_line(now_ms))
+            if not err and not scene_lights_mod.is_sync_doc_stale(age_ms):
+                incoming = self._lighting_sync.plan_apply(doc, scene_id)
+                if incoming is not None and not panel.sync_busy():
+                    lit, why = scene_lights_mod.validate_pulled_lighting(
+                        {"sceneId": scene_id, "lighting": incoming}, scene_id)
+                    if lit is not None:
+                        sel = scene_lights_mod.doc_selected_id(doc)
+                        self._lighting_sync.note_applied(
+                            lit, int(doc.get("rev") or 0), sel)
+                        self._lighting_transport.applied += 1
+                        panel.apply_synced_lighting(lit)
+                        # 选中放在灯表之后：apply_synced_lighting 会重填表格，
+                        # 先跳行会被它冲掉
+                        panel.apply_synced_selection(sel)
+                        return          # 这一拍吃了对面的，就别再把它发回去
+                    else:
+                        # 残缺文档：记下 rev 免得每拍重试同一份坏数据
+                        self._lighting_sync.note_applied({}, int(doc.get("rev") or 0))
+            if err:
+                return                  # 这一拍连不上：别拿旧状态去发，等退避后重来
+            mine = panel.sync_lighting_snapshot()
+            my_sel = panel.sync_selected_id()
+            if mine and self._lighting_sync.needs_publish(mine, my_sel):
+                rev, perr = self._lighting_transport.publish(
+                    scene_id, self._lighting_sync.writer, mine, now_ms,
+                    selected_id=my_sel)
+                if not perr:
+                    self._lighting_sync.note_published(mine, rev, my_sel)
+                    self._lighting_transport.published += 1
+                panel.set_sync_status(self._lighting_transport.status_line(now_ms))
+        except Exception:  # noqa: BLE001 — 同步是附加能力，绝不能反噬编辑器
+            pass
+        finally:
+            self._lighting_sync_inflight = False
+
     def _ensure_cutscene_playback_timer(self) -> None:
         if self._cutscene_playback_timer is not None:
             return
@@ -2651,7 +2718,9 @@ class MainWindow(QMainWindow):
         ed = self._timeline_editor
         if ed is None or not hasattr(ed, "set_playback_position"):
             return
-        if self._stack.currentWidget() is not ed:
+        # ⚠ 与 `_lighting_sync_panel` 同一个坑：栈里是 `_StackPageHost` 外壳，
+        #   拿它跟编辑器实例比**永远不等**，播放头轮询会静默全死。
+        if self._current_editor_instance() is not ed:
             return
         if self._cutscene_playback_inflight:
             return          # 上一次还没回来：不叠发，避免慢机上排队堆积

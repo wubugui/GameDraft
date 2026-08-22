@@ -25,6 +25,7 @@ TOOL_MODULES: dict[str, tuple[str, list[str]]] = {
     "filter-tool": ("tools.filter_tool", []),
     "lightvol": ("tools.lightvolume_lab", []),
     "char-lighting": ("tools.character_lighting_lab", []),
+    "scene-relight": ("tools.scene_relight", []),
     "anim-preview": ("tools.anim_preview", []),
     "parallax-editor": ("tools.parallax_editor", []),
     "skill-governance": ("tools.skill_workflow_governance.console", []),

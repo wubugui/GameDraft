@@ -419,6 +419,11 @@ export class Npc implements ICutsceneActor {
     this.sprite?.disableBakedShading();
   }
 
+  /** 重新向供给方要 shader（统一光影载荷晚于实体就绪时用；透传）。 */
+  refreshBakedShading(): void {
+    this.sprite?.refreshBakedShading();
+  }
+
   getShadingFrameInfo(): ReturnType<SpriteEntity['getShadingFrameInfo']> {
     const info = this.sprite?.getShadingFrameInfo() ?? null;
     if (info && this.container.scale.x < 0) info.flipX = !info.flipX;

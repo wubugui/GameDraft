@@ -16,7 +16,8 @@
 
 ## 源读不到就说读不到
 
-源库在 ``resources/audio_sources/``,不进版本控制。换台机器打开工程时源可能根本不在,
+源库在 ``resources/audio_sources/``,DVC 托管但**不在默认拉取集里**
+(要它:``./dev.sh init-audio`` 或 ``./dev.sh pull --audio``)。换台机器打开工程时源可能根本不在,
 那时**算不出**当前指纹——状态是「源不在本机 · 无法判断」,不是「已过时」。
 fail-safe 不 fail-open:读不到就如实说读不到,绝不拿"大概没变"糊过去。
 
@@ -424,7 +425,7 @@ def compute_status(
     if src_sha is None:
         return SliceStatus(
             STATE_NO_SOURCE,
-            f"源不在本机：{sl.source}（源库不进版本控制，换台机器要先把它放回来）",
+            f"源不在本机：{sl.source}（源库走 DVC 但默认不拉，跑 ./dev.sh init-audio 补回来）",
             dest, orphan,
         )
     key = render_key(project.settings, sl, src_sha)

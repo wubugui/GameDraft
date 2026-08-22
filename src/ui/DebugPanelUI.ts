@@ -39,6 +39,7 @@ const TAB_EXAMINE = 'examine';
 const TAB_EXAMINE_AMBIENCE = 'examineAmbience';
 const TAB_SOCKET = 'socket';
 const TAB_FLAGS = 'flags';
+const TAB_LIGHTING = 'lighting';
 const TAB_SCENE = 'scene';
 const TAB_LOG = 'log';
 
@@ -52,6 +53,11 @@ export const OBJECT_EXAMINE_DEBUG_SECTION_ID = '物件检视';
 export const OBJECT_EXAMINE_AMBIENCE_DEBUG_SECTION_ID = '检视氛围';
 /** 动画挂点 Tab（试挂道具、看位姿读数）；不进「工具」页 */
 export const SOCKET_DEBUG_SECTION_ID = '挂点';
+/** 统一光影 Tab：灯的增删改 + 场景光照参数。**独立一页**，不塞进「工具」页的 section 列表
+ *  —— 摆灯要反复对着画面调，挤在一列 section 里根本用不了。 */
+export const LIGHTING_DEBUG_SECTION_ID = '光影';
+/** 场景级光照参数(雾/去霾/AO/角色标定/调试视图)。与灯的工作台**同一页**,排在它下面。 */
+export const LIGHTING_SCENE_SECTION_ID = '统一光影（场景）';
 
 function isDedicatedTabSection(id: string): boolean {
   return (
@@ -59,7 +65,9 @@ function isDedicatedTabSection(id: string): boolean {
     id === NARRATIVE_DEBUG_SECTION_ID ||
     id === OBJECT_EXAMINE_DEBUG_SECTION_ID ||
     id === OBJECT_EXAMINE_AMBIENCE_DEBUG_SECTION_ID ||
-    id === SOCKET_DEBUG_SECTION_ID
+    id === SOCKET_DEBUG_SECTION_ID ||
+    id === LIGHTING_DEBUG_SECTION_ID ||
+    id === LIGHTING_SCENE_SECTION_ID
   );
 }
 
@@ -80,11 +88,13 @@ type TabId =
   | typeof TAB_EXAMINE_AMBIENCE
   | typeof TAB_SOCKET
   | typeof TAB_FLAGS
+  | typeof TAB_LIGHTING
   | typeof TAB_SCENE
   | typeof TAB_LOG;
 
 /** 区块渲染上下文：tools / screen 默认折叠；其余默认展开。screen=游戏画面常驻卡（只有 ✕ 取消常驻） */
-type SectionContext = 'tools' | 'narrative' | 'examine' | 'examineAmbience' | 'socket' | 'quick' | 'screen';
+type SectionContext = 'tools' | 'narrative' | 'examine' | 'examineAmbience' | 'socket'
+  | 'lighting' | 'quick' | 'screen';
 
 function normalizePinList(data: unknown): string[] {
   if (!Array.isArray(data)) return [];
@@ -134,6 +144,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
   private panelExamine: HTMLElement;
   private panelExamineAmbience: HTMLElement;
   private panelSocket: HTMLElement;
+  private panelLighting: HTMLElement;
   private panelFlags: HTMLElement;
   private panelScene: HTMLElement;
   private panelLog: HTMLElement;
@@ -213,6 +224,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
     mkTab(TAB_EXAMINE, '检视');
     mkTab(TAB_EXAMINE_AMBIENCE, '检视氛围');
     mkTab(TAB_SOCKET, '挂点');
+    mkTab(TAB_LIGHTING, '光影');
     mkTab(TAB_FLAGS, 'Flag');
     mkTab(TAB_SCENE, '场景');
     mkTab(TAB_LOG, '日志');
@@ -227,6 +239,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
     this.panelExamine = this.mkPanel('examine-panel');
     this.panelExamineAmbience = this.mkPanel('examine-ambience-panel');
     this.panelSocket = this.mkPanel('socket-panel');
+    this.panelLighting = this.mkPanel('lighting-panel');
     this.panelFlags = this.mkPanel('flags-panel');
     this.panelScene = this.mkPanel('scene-panel');
     this.panelLog = this.mkPanel('log-panel');
@@ -256,6 +269,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
     panels.appendChild(this.panelExamine);
     panels.appendChild(this.panelExamineAmbience);
     panels.appendChild(this.panelSocket);
+    panels.appendChild(this.panelLighting);
     panels.appendChild(this.panelFlags);
     panels.appendChild(this.panelScene);
     panels.appendChild(this.panelLog);
@@ -308,6 +322,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
     this.panelExamine.classList.toggle('is-active', id === TAB_EXAMINE);
     this.panelExamineAmbience.classList.toggle('is-active', id === TAB_EXAMINE_AMBIENCE);
     this.panelSocket.classList.toggle('is-active', id === TAB_SOCKET);
+    this.panelLighting.classList.toggle('is-active', id === TAB_LIGHTING);
     this.panelFlags.classList.toggle('is-active', id === TAB_FLAGS);
     this.panelScene.classList.toggle('is-active', id === TAB_SCENE);
     this.panelLog.classList.toggle('is-active', id === TAB_LOG);
@@ -427,6 +442,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
     this.panelExamine.replaceChildren();
     this.panelExamineAmbience.replaceChildren();
     this.panelSocket.replaceChildren();
+    this.panelLighting.replaceChildren();
     this.panelFlags.replaceChildren();
     this.panelScene.replaceChildren();
     this.logPre.textContent = '';
@@ -450,6 +466,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
       this.panelExamine,
       this.panelExamineAmbience,
       this.panelSocket,
+      this.panelLighting,
       this.panelFlags,
       this.panelScene,
       this.panelLog,
@@ -473,6 +490,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
       this.panelExamine,
       this.panelExamineAmbience,
       this.panelSocket,
+      this.panelLighting,
       this.panelFlags,
       this.panelScene,
       this.panelLog,
@@ -495,6 +513,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
     this.renderExamine();
     this.renderExamineAmbience();
     this.renderSocket();
+    this.renderLighting();
     this.renderFlags();
     this.renderScene();
     this.renderLogOnly();
@@ -861,6 +880,21 @@ export class DebugPanelUI implements IDebugPanelAPI {
       scroll.appendChild(this.p('（未注册挂点调试区块）'));
     }
     this.panelSocket.appendChild(scroll);
+  }
+
+  private renderLighting(): void {
+    this.panelLighting.replaceChildren();
+    const scroll = document.createElement('div');
+    scroll.className = 'debug-dock__scroll';
+    const n = this.appendSectionBlocks(
+      scroll,
+      (id) => id === LIGHTING_DEBUG_SECTION_ID || id === LIGHTING_SCENE_SECTION_ID,
+      'lighting',
+    );
+    if (n === 0) {
+      scroll.appendChild(this.p('（这个场景没配 lighting 块，或统一光影没启用）'));
+    }
+    this.panelLighting.appendChild(scroll);
   }
 
   private renderFlags(): void {

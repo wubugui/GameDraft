@@ -8,6 +8,10 @@ from pathlib import Path
 from tools.dev import creds
 from tools.dev.paths import project_python, project_python_ready, repo_root
 
+#: clean 要删掉的本地产物。**四个 DVC 工作区目录必须全在这里**:
+#: 少一个就会留下"目录还在、`.dvc/cache` 已被删空"的半残状态,
+#: 下一次 push 展开该目标的缓存清单时会炸(见 sync.target_is_in_local_cache)。
+#: 由 tools/dev/tests/test_bootstrap.py 对着 sync.COMMIT_DVC_ADD_PATHS 锁住。
 CLEAN_PATHS = [
     ".tools",
     "node_modules",
@@ -16,6 +20,8 @@ CLEAN_PATHS = [
     "dist",
     "public/resources/runtime",
     "resources/editor_projects",
+    "resources/vendor_archives",
+    "resources/audio_sources",
 ]
 
 
@@ -45,6 +51,12 @@ def initialize_game() -> int:
 
 
 def initialize_editor() -> int:
+    """编辑器初始化:运行时 + 编辑器工程,**不含配音音源**。
+
+    工作台虽然挂在主编辑器菜单上,但源库缺席时它如实报「源不在本机」而非坏掉,
+    所以 70MB 素材不进这条通用初始化路径。要它:`./dev.sh init-audio`
+    (或 `./dev.sh pull --audio`)。
+    """
     _initialize([sync_runtime_target(), sync_editor_target()])
     print("Editor initialization complete.")
     return 0
@@ -79,6 +91,7 @@ def _remove_repo_path(relative: str) -> None:
 def clean_local_environment(assume_yes: bool = False) -> int:
     print("Clean removes local fetched resources, dependency installs, build output, and DVC cache.")
     print("It does not remove Git-tracked code or your saved OSS credentials.")
+    print("Will remove: " + ", ".join(CLEAN_PATHS))
     if not assume_yes:
         if input("Type CLEAN to continue: ").strip() != "CLEAN":
             print("Clean cancelled.")

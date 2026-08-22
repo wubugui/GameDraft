@@ -50,6 +50,7 @@
     <div id="canvasWrap"><canvas id="cv"></canvas></div>
     <div id="canvasBar">
       <button id="holdOrig" title="按住显示白天原图">按住看原图</button>
+      <button id="showField" title="切换查看烘出来的几何场">几何场: 关</button>
       <button id="maskMode">✎ 刷发光 mask</button>
       <label style="display:none" id="maskCtl">半径 <input type="range" id="brushR" min="2" max="120" value="18" style="width:90px;vertical-align:middle">
         <input type="checkbox" id="erase"> 擦除</label>
@@ -96,6 +97,8 @@ const OPEN_GROUPS = new Set(['环境光','太阳/月亮','发光(要mask)','调�
 
 let scenes=[], presets={}, defaults={}, params={}, sceneId='';
 let bgImg=null, relitImg=null, nativeW=0, nativeH=0;
+// 几何场查看:'off' → 'skyvis' → 'normal' → 'off'
+let fieldMode='off', fieldImg=null, bakeMeta=null;
 let maskCv=document.createElement('canvas'), maskDirty=false, maskOn=false;
 let previewSeq=0, debTimer=0;
 
@@ -144,7 +147,14 @@ async function preview(){
   img.src=URL.createObjectURL(blob);
 }
 function draw(showOrig){
-  const cv=$('cv'), img=showOrig?bgImg:relitImg;
+  const cv=$('cv');
+  // 几何场优先:它是"光照结构从哪来"的证据,看它时不叠重打光结果
+  if(fieldMode!=='off' && fieldImg){
+    cv.width=fieldImg.width; cv.height=fieldImg.height;
+    cv.getContext('2d').drawImage(fieldImg,0,0);
+    return;
+  }
+  const img=showOrig?bgImg:relitImg;
   if(!img) return;
   cv.width=img.width; cv.height=img.height;
   const g=cv.getContext('2d');
@@ -187,6 +197,10 @@ async function pickScene(sid){
     const mi=await new Promise(res=>{ const i=new Image(); i.onload=()=>res(i); i.src=URL.createObjectURL(mb); });
     const g=maskCv.getContext('2d'); g.drawImage(mi,0,0,nativeW,nativeH); tintMask(); }
   maskDirty=false;
+  // 切场景时几何场重置(否则会拿上一个场景的场当这个场景的看)
+  fieldMode='off'; fieldImg=null;
+  $('showField').textContent='几何场: 关'; $('showField').classList.remove('on');
+  bakeMeta=(await (await fetch(`/api/bake_meta?scene=${encodeURIComponent(sid)}`)).json()).meta;
   // 恢复该场景已保存的当前预设参数;没有就用全局预设
   const saved=await (await fetch(`/api/params?scene=${encodeURIComponent(sid)}`)).json();
   const pn=$('preset').value;
@@ -262,6 +276,26 @@ $('applyTime').onclick=async()=>{
 };
 $('holdOrig').onmousedown=()=>draw(true);
 $('holdOrig').onmouseup=$('holdOrig').onmouseleave=()=>draw(false);
+const FIELD_SEQ=['off','skyvis','normal'];
+const FIELD_LABEL={off:'几何场: 关', skyvis:'几何场: 天穹可见性', normal:'几何场: 法线'};
+$('showField').onclick=async()=>{
+  fieldMode=FIELD_SEQ[(FIELD_SEQ.indexOf(fieldMode)+1)%FIELD_SEQ.length];
+  $('showField').textContent=FIELD_LABEL[fieldMode];
+  $('showField').classList.toggle('on', fieldMode!=='off');
+  if(fieldMode==='off'){ fieldImg=null; draw(); return; }
+  const r=await fetch(`/api/field?scene=${encodeURIComponent(sceneId)}&kind=${fieldMode}`);
+  if(!r.ok){ log('该场景还没烘几何场——跑 `--bake --scene '+sceneId+'`', true);
+             fieldMode='off'; $('showField').textContent=FIELD_LABEL.off;
+             $('showField').classList.remove('on'); return; }
+  const b=await r.blob();
+  fieldImg=await new Promise(res=>{const i=new Image(); i.onload=()=>res(i); i.src=URL.createObjectURL(b);});
+  draw();
+  const m=bakeMeta;
+  log(fieldMode==='skyvis'
+      ? '天穹可见性:逐像素向上半球 12 方向 march 深度场。黑=巷道深处/屋檐下收不到天光,白=开阔。'
+        +(m?` 角色 ${m.scale.char_wu.toFixed(3)} wu(1 wu≈${m.scale.meters_per_wu.toFixed(1)} m)`:'')
+      : '法线:深度梯度出的朝向。R=x,G=y(越绿越朝上),B=|z|。');
+};
 $('saveParams').onclick=async()=>{
   const pn=$('preset').value;
   const r=await(await fetch(`/api/save_params?scene=${encodeURIComponent(sceneId)}&preset=${encodeURIComponent(pn)}`,

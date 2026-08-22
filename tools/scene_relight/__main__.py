@@ -2,6 +2,8 @@
 
   python -m tools.scene_relight                          # 桌面应用(默认;零浏览器缓存)
   python -m tools.scene_relight --serve [--port 5317]    # 仅起 HTTP 服务(浏览器/面板用)
+  python -m tools.scene_relight --bake --all             # 烘几何场(法线/天穹可见性/3D网格)
+  python -m tools.scene_relight --bake --scene 雾津街头
   python -m tools.scene_relight --list                   # 场景清单与状态
   python -m tools.scene_relight --scene 码头白天 --preset 夜 --export
   python -m tools.scene_relight --all --preset 夜 --export      # 批量(跳过缺背景的)
@@ -47,6 +49,8 @@ def main() -> None:
     ap.add_argument('--export', action='store_true', help='全分辨率导出进 runtime 场景目录')
     ap.add_argument('--out', help='只写这个路径(试跑,不进工程)')
     ap.add_argument('--width', type=int, help='--out 时的预览宽度,缺省原生')
+    ap.add_argument('--bake', action='store_true',
+                    help='烘几何场(法线 / 天穹可见性 / 3D 网格)到 lighting2/')
     ap.add_argument('--serve', action='store_true', help='仅起 HTTP 服务,不开桌面窗口')
     ap.add_argument('--smoke', action='store_true', help='桌面壳无头自检:load 完即退')
     ap.add_argument('--port', type=int, default=None)
@@ -57,6 +61,24 @@ def main() -> None:
             marks = ('✓深度' if s['depth'] else '○无深度') + (' ✓mask' if s['mask'] else '')
             var = f"  变体: {', '.join(s['variants'])}" if s['variants'] else ''
             print(f"{s['id']:<16} {marks}{var}")
+        return
+
+    if args.bake:
+        from tools.scene_relight.bake import bake
+        sids = ([s['id'] for s in list_scenes() if s['bg_ok'] and s['depth']]
+                if args.all else [args.scene] if args.scene else None)
+        if not sids:
+            raise SystemExit('--bake 需要 --scene <id> 或 --all')
+        for sid in sids:
+            try:
+                r = bake(sid)
+            except Exception as e:                   # noqa: BLE001
+                print(f'{sid}: 失败 {type(e).__name__}: {e}')
+                continue
+            sc, px = r['scale'], r['skyvis_px']
+            print(f"{sid}: → lighting2/ ({r['bytes'] / 1024:.0f} KB)  "
+                  f"角色 {sc['char_wu']:.3f} wu  "
+                  f"天穹可见性均 {px['mean']:.2f}")
         return
 
     if args.scene or args.all:

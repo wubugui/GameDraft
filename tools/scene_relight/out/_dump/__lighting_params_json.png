@@ -1,0 +1,148 @@
+{
+  "sky": {
+    "kelvin": 6500,
+    "intensity": 0.045,
+    "hemi": 0.92
+  },
+  "day": {
+    "sunIntensity": 0,
+    "sunElevationDeg": 50,
+    "sunAzimuthDeg": 180
+  },
+  "lights": [
+    {
+      "id": "moon",
+      "kind": "directional",
+      "intensity": 0,
+      "kelvin": 5200,
+      "elevationDeg": 35,
+      "azimuthDeg": 210,
+      "castShadow": true
+    },
+    {
+      "id": "lamp_1",
+      "kind": "point",
+      "pos": [
+        -0.55,
+        0.42,
+        -0.3
+      ],
+      "kelvin": 2200,
+      "intensity": 2.8787063689022983,
+      "rangeMeters": 6,
+      "castShadow": true,
+      "enabled": true
+    },
+    {
+      "id": "lamp_2",
+      "kind": "point",
+      "pos": [
+        0.35,
+        0.4,
+        0.15
+      ],
+      "kelvin": 2200,
+      "intensity": 2.8787063689022983,
+      "rangeMeters": 6,
+      "castShadow": true,
+      "enabled": true
+    },
+    {
+      "id": "lamp_3",
+      "kind": "point",
+      "pos": [
+        -1.35,
+        0.38,
+        0.55
+      ],
+      "kelvin": 2200,
+      "intensity": 2.8787063689022983,
+      "rangeMeters": 6,
+      "castShadow": true,
+      "enabled": true
+    },
+    {
+      "id": "lamp_4",
+      "kind": "point",
+      "pos": [
+        1.15,
+        0.4,
+        -0.55
+      ],
+      "kelvin": 2200,
+      "intensity": 2.8787063689022983,
+      "rangeMeters": 6,
+      "castShadow": true,
+      "enabled": true
+    },
+    {
+      "id": "lamp_5",
+      "kind": "spot",
+      "pos": [
+        -0.1,
+        0.45,
+        -0.05
+      ],
+      "kelvin": 2200,
+      "intensity": 4.605930190243678,
+      "rangeMeters": 6,
+      "castShadow": true,
+      "enabled": true,
+      "dir": [
+        0.2,
+        -0.8,
+        0.5
+      ],
+      "innerAngleDeg": 22,
+      "outerAngleDeg": 48
+    },
+    {
+      "id": "lamp_6",
+      "kind": "area",
+      "pos": [
+        0.62,
+        0.45,
+        -0.2
+      ],
+      "kelvin": 2400,
+      "intensity": 3.454447642682759,
+      "rangeMeters": 6,
+      "castShadow": true,
+      "enabled": true,
+      "sizeMeters": [
+        2.2,
+        1.6
+      ],
+      "orientation": [
+        0,
+        0,
+        -1
+      ]
+    }
+  ],
+  "fog": {
+    "sigma": 0,
+    "scaleHeightMeters": 6,
+    "baseHeightMeters": 0,
+    "kelvin": 6500,
+    "scatter": 0.06
+  },
+  "display": {
+    "ev": 3.3175638002432013,
+    "tonemap": "filmic",
+    "whiteKelvin": 7200,
+    "contrast": 0.7000000000000002,
+    "saturation": 0.85,
+    "lift": 0,
+    "liftKelvin": 9000
+  },
+  "aoStrength": 1,
+  "ratioMax": 6,
+  "emissive": {
+    "gain": 2.2,
+    "coreRadiusMeters": 0.35,
+    "haloRadiusMeters": 1.6,
+    "haloGain": 0.18
+  },
+  "dehaze": 1
+}
