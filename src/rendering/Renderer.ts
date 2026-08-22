@@ -1,6 +1,6 @@
 import { Application, Container, type Filter } from 'pixi.js';
 import { WorldFilterPipeline, loadFilter } from './filter';
-import { pointPolygonVerticalSide } from '../utils/zoneGeometry';
+import { entitySortZ, type EntitySortBand } from './entitySortRule';
 import type { AssetManager } from '../core/AssetManager';
 
 /** Pixi 类型未包含 null，运行时必须赋 null 以断开 auto-resize */
@@ -184,31 +184,29 @@ export class Renderer {
    * - 玩家在多边形下方（near side）→ 热点排在玩家后面（back band）
    * - 玩家在多边形上方（far side）或内部 → 热点排在玩家前面（front band）
    * 该逻辑优先级高于静态 `entitySortBand`。
+   *
+   * **规则本体在 {@link entitySortZ}（`./entitySortRule`），本方法只负责遍历与 sortChildren。**
+   * 场景编辑器画布按同一条规则派 z（Python 镜像 `tools/editor/shared/entity_sort_math.py`），
+   * 两侧由 parity 测试钉死同一组黄金用例 —— 改规则必须改那一处，不要在这里就地改。
    */
   sortEntityLayer(playerFootX?: number, playerFootY?: number): void {
-    const bandSize = 10_000_000;
-    const hasPlayer = playerFootX !== undefined && playerFootY !== undefined;
     for (const child of this.entityLayer.children) {
       const ext = child as {
-        entitySortBand?: 'back' | 'front';
+        entitySortBand?: EntitySortBand;
         entityOcclusionPolygon?: ReadonlyArray<{ x: number; y: number }>;
         /** 实例旋转实体的变换后接地线 y（实体自身维护）；缺省用容器 y（锚点） */
         entitySortFootY?: number;
       };
-      let band = ext.entitySortBand;
-      if (hasPlayer && ext.entityOcclusionPolygon && ext.entityOcclusionPolygon.length >= 3) {
-        const side = pointPolygonVerticalSide(ext.entityOcclusionPolygon, playerFootX, playerFootY);
-        if (side === 'below') {
-          band = 'back';
-        } else if (side === 'above' || side === 'inside') {
-          band = 'front';
-        }
-      }
-      const footY = ext.entitySortFootY ?? child.y;
-      let z = footY;
-      if (band === 'back') z = -bandSize + footY;
-      else if (band === 'front') z = bandSize + footY;
-      child.zIndex = z;
+      child.zIndex = entitySortZ(
+        {
+          band: ext.entitySortBand,
+          occlusionPolygon: ext.entityOcclusionPolygon,
+          sortFootY: ext.entitySortFootY,
+          y: child.y,
+        },
+        playerFootX,
+        playerFootY,
+      );
     }
     this.entityLayer.sortChildren();
   }

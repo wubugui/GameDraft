@@ -87,6 +87,26 @@ def content_top_local_y_around_foot(
     )
 
 
+def quad_ground_y_around_foot(
+    anchor_y: float, eff_w: float, eff_h: float, rotation_rad: float,
+) -> float:
+    """底中锚 quad 变换后的**接地线** y（世界坐标）。镜像 TS quadGroundYAroundFoot。
+
+    即旋转后 AABB 的底边（最大世界 y）。无旋转时恒等于 ``anchor_y`` —— 运行时正是靠
+    这一条在 ``rad == 0`` 时删掉 ``entitySortFootY``、回落容器锚点 y。
+    w/h 传**有效尺寸**（已含实例 scale 与透视系数），本函数只做旋转扩展，避免双重缩放。
+    """
+    if rotation_rad == 0:
+        return anchor_y
+    c = math.cos(rotation_rad)
+    n = math.sin(rotation_rad)
+    hw = eff_w / 2.0
+    return anchor_y + max(
+        lx * n + ly * c
+        for lx, ly in ((-hw, 0.0), (hw, 0.0), (hw, -eff_h), (-hw, -eff_h))
+    )
+
+
 def inverse_transform_world_vec(vx: float, vy: float, scale: float, rot_deg: float) -> tuple[float, float]:
     """变换后向量（相对锚点）→ 原始局部向量：先反旋转后反缩放。"""
     if rot_deg != 0:
