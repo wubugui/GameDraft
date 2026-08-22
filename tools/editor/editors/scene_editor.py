@@ -95,6 +95,7 @@ from ..shared.move_entity_map_picker import (
     MoveEntityToMapPickerDialog,
     WorldPointPickView,
     resolve_world_size_for_scene_json,
+    scene_background_disk_path as _shared_scene_background_disk_path,
 )
 from ..shared.player_acts_editor import ZoneActsEditor
 from ..shared.collapsible_section import CollapsibleSection
@@ -120,23 +121,10 @@ def _assert_path_within(path: Path, base: Path) -> Path:
         raise RuntimeError(f"拒绝操作场景目录之外的文件：{rp}（限定目录 {rb}）")
     return rp
 
-def _scene_background_disk_path(model: ProjectModel, scene_id: str, sc: dict) -> Path | None:
-    """场景 JSON 背景项 → ``public/resources/runtime/scenes/<id>/background.png``。
-
-    背景图文件名强约束：场景主背景**只能**叫 ``background.png``。名字不对直接拒绝解析、
-    不加载（与运行时 AssetManager / 校验器一致），不再回退或容忍任意文件名。
-    backgrounds 为空 = 无背景（合法，返回 None）。
-    """
-    bgs = sc.get("backgrounds", [])
-    if not bgs:
-        return None
-    img_name = bgs[0].get("image", "")
-    if img_name != "background.png":
-        return None
-    try:
-        return model.paths.scene_runtime_asset(scene_id, img_name)
-    except ValueError:
-        return None
+#: 主画布与坐标点选器共用同一个背景解析出口（实现在 shared/move_entity_map_picker.py，
+#: 那里已经住着共用的 resolve_world_size_for_scene_json）。此前两处各写一份、严格程度
+#: 不同：点选器拿 backgrounds[0] 的任意文件名去加载，于是同一个场景在两处长相不同。
+_scene_background_disk_path = _shared_scene_background_disk_path
 
 _HOTSPOT_COLORS = {
     "inspect": QColor(60, 140, 255, 160),

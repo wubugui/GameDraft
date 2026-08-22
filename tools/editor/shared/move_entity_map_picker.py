@@ -69,6 +69,27 @@ def resolve_world_size_for_scene_json(
     return (800, 800 * aspect)
 
 
+def scene_background_disk_path(model, scene_id: str, sc: dict) -> Path | None:
+    """场景 JSON 背景项 → ``public/resources/runtime/scenes/<id>/background.png``。
+
+    **文件名强约束**:场景主背景只能叫 ``background.png``。名字不对直接拒绝解析,
+    与运行时 AssetManager / 校验器一致 —— 容忍任意文件名会让编辑器显示一张
+    **游戏里根本不会加载**的背景,是"编辑器骗人"里最难查的一类。
+
+    此前主画布与坐标点选器各写一份:主画布严格,点选器却拿 ``backgrounds[0]`` 的
+    任意文件名去加载。同一个场景在两处长相不同,而两处都不报错。
+    """
+    bgs = sc.get("backgrounds", [])
+    if not bgs or not isinstance(bgs[0], dict):
+        return None
+    if bgs[0].get("image", "") != "background.png":
+        return None
+    try:
+        return model.paths.scene_runtime_asset(scene_id, "background.png")
+    except ValueError:
+        return None
+
+
 def normalize_move_entity_waypoints(raw: object) -> list[tuple[float, float]]:
     """解析 moveEntityTo.params.waypoints（世界坐标途经点序列）。"""
     out: list[tuple[float, float]] = []
@@ -124,14 +145,8 @@ class WorldPointPickView(QGraphicsView):
         """返回 (world_w, world_h)。无场景数据时占位 800×600。"""
         self.clear_visual()
         sc = model.scenes.get(scene_id) or {}
-        bgs = sc.get("backgrounds", [])
-        img_path: Path | None = None
-        if bgs:
-            img_name = bgs[0].get("image", "background.png")
-            try:
-                img_path = model.paths.scene_runtime_asset(scene_id, str(img_name))
-            except ValueError:
-                img_path = None
+        # 与主画布同一个出口:文件名强约束,不然点选器会显示一张游戏根本不加载的背景
+        img_path = scene_background_disk_path(model, scene_id, sc)
         if img_path is not None and not img_path.is_file():
             img_path = None
         ww, wh = resolve_world_size_for_scene_json(sc, img_path)
