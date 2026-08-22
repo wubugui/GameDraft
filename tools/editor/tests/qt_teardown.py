@@ -78,6 +78,34 @@ def destroy_leftover_qt_widgets() -> None:
         gc.collect()
 
 
+#: `SceneEditor` 上全部会自己回调进画布的定时器。收尾时必须逐个停掉——
+#: 少停一个，控件析构后定时器仍会触发、回调碰到已析构的 C++ 对象即 RuntimeError，
+#: 而 PySide 会沿最近的 Python-override 边界外抛，炸在**毫不相干的下一段操作**里。
+_SCENE_EDITOR_TIMERS = (
+    "_nudge_idle_timer",
+    "_scene_npc_anim_timer",
+    "_patrol_overlay_refresh_timer",
+    "_lightcurve_overlay_refresh_timer",
+)
+
+
+def quiesce_scene_editor(ed) -> None:
+    """把一个 `SceneEditor` 静默下来，供测试 tearDown 在 `deleteLater()` **之前**调。
+
+    做两件事：停掉全部定时器；掐断画布 `QGraphicsScene` 的信号（销毁期
+    `selectionChanged` 会命中正在析构的图元，是地图编辑器旧坑的同族）。
+
+    **刻意不吞异常。** 此前十余处测试各自复制了一份
+    ``try: ...stop()... except Exception: pass``，那层 ``except`` 会在画布内部
+    结构改名后把保护静默变成空操作，表现是**随机的 worker crashed**，现场极难反查。
+    属性缺失就该当场报错——那说明画布结构变了、收尾没跟上。
+    """
+    for name in _SCENE_EDITOR_TIMERS:
+        getattr(ed, name).stop()
+    # 走公共 graphics_scene()，不摸 _gfx：画布私有成员正在收敛，测试收尾不该是新的越界点。
+    ed._canvas.graphics_scene().blockSignals(True)
+
+
 def live_widget_count() -> int:
     """当前进程存活的 QWidget 数；没起过 QApplication 返回 0。"""
     if "PySide6.QtWidgets" not in sys.modules:
