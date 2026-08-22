@@ -52,6 +52,12 @@ from PySide6.QtCore import (
 )
 
 from .scene_canvas_model import iter_part_keys
+from ..shared.entity_sort_math import (
+    entity_sort_z,
+    hotspot_sort_band_of,
+    npc_sort_band_of,
+    sort_foot_y_of,
+)
 from .scene_undo import SceneUndoController
 from ..shared.entity_transform_math import (
     entity_perspective_factor,
@@ -324,14 +330,40 @@ _RANGE_PEN = QPen(QColor(255, 255, 255, 60), 0, Qt.PenStyle.DotLine)
 _NPC_REF_FILL = QColor(130, 220, 160, 55)
 _NPC_REF_PEN = QPen(QColor(90, 180, 120), 0, Qt.PenStyle.DashLine)
 _NPC_REF_MARGIN = 24.0
-_NPC_REF_Z = -20.0
-# 高于参考框、低于可拖实体（0），避免挡住点选 NPC
-_NPC_SCENE_ANIM_PREVIEW_Z = -10.0
-# 巡逻折线：高于精灵预览、高于 NPC 控制点，shape 仅顶点以便线段处点选 NPC
+
+# ---------------------------------------------------------------------------
+# 画布 z 分层
+#
+# 分成**内容**与**装饰品**两段，因为它们该由完全不同的规则决定次序：
+#
+# - **内容** = 运行时画面上真实存在的东西（热点展示图、NPC 动画精灵）。它们的前后
+#   关系必须与运行时一致，否则画布就在骗人 —— 运行时按「三档 × 档内脚底 y」实时排
+#   （`src/rendering/entitySortRule.ts`），编辑器经 `_resort_canvas_content_z`
+#   用同一条规则的 Python 镜像派名次。此前这两层是写死的 -10 / -4，于是
+#   **画布上 NPC 永远被热点贴图压住**，与游戏里谁前谁后毫无关系。
+# - **装饰品** = 只存在于编辑器的东西（把手、碰撞面、辅助线、gizmo、组框、标尺）。
+#   它们本来就该恒在内容之上/之下，不参与内容排序。
+#
+# 装饰品整体搬到 20 万以上、标尺搬到 -20 万，**相对次序一字未改**（原值在各行注释里），
+# 于是点选/拖动/gizmo 行为零回归；中间空出的 [-100000, 100000] 全留给内容。
+# 平局也照抄：独立 Zone 与各类把手原本都是默认 0，现在同为 `_Z_DECOR_ENTITY`。
+# ---------------------------------------------------------------------------
+_Z_BACKGROUND = -1_000_000.0        # 原 -100
+_Z_BG_PLACEHOLDER = -999_999.0      # 原 -90
+_NPC_REF_Z = -200_000.0             # 原 -20（标尺恒在内容之下，别挡住精灵）
+_Z_CONTENT_LO = -100_000.0          # 内容区间下界（按名次 +1 递增）
+_Z_CONTENT_STEP = 1.0
+_Z_CONTENT_HI = 100_000.0           # 内容区间上界（实体数远低于 20 万格）
+_Z_DECOR_COLLISION = 300_000.0      # 原 -2：碰撞多边形 + 透视幽灵
+_Z_DECOR_ENTITY = 400_000.0         # 原 0（默认）：独立 Zone 与 hotspot/npc/spawn 把手
 _PATROL_LINE_COLOR = QColor(0, 200, 220, 220)
-_PATROL_OVERLAY_Z = 2.0
+_PATROL_OVERLAY_Z = 500_000.0       # 原 2.0
 _LIGHTCURVE_LINE_COLOR = QColor(255, 196, 64, 230)  # 暖金,区别于巡逻的青色
-_LIGHTCURVE_OVERLAY_Z = 2.5
+_LIGHTCURVE_OVERLAY_Z = 500_100.0   # 原 2.5
+_Z_DECOR_GROUP_BOX = 600_000.0      # 原 6_000（细分公式保留，见 sync_group_boxes）
+_Z_DECOR_PERSP_AXIS = 800_000.0     # 原 8_000
+_Z_DECOR_GIZMO = 900_000.0          # 原 9_000
+_Z_PICK_RAISED = 1_000_000.0        # 原 z_top+1：叠放循环点选的临时抬升
 
 # 图集寻址/切分/世界尺寸推导已抽到 shared/anim_atlas_preview.py（气泡锚控件与本画布共用，
 # 两份实现会各自漂移）。此处保留私有别名，call site 不变。
@@ -581,6 +613,9 @@ class _DraggableCircle(QGraphicsEllipseItem):
         self.setFlags(self.GraphicsItemFlag.ItemIsMovable |
                       self.GraphicsItemFlag.ItemIsSelectable |
                       self.GraphicsItemFlag.ItemSendsGeometryChanges)
+        # 把手是装饰品，恒在内容之上（原先靠默认 z=0，而内容是负值）。显式写出来，
+        # 免得内容 z 改成按运行时规则实时重排后，把手被排到贴图底下点不着。
+        self.setZValue(_Z_DECOR_ENTITY)
         self.entity_id = entity_id
         self.entity_kind = entity_kind
         self._scene_view = scene_view
@@ -669,34 +704,6 @@ class _DraggableCircle(QGraphicsEllipseItem):
                 self.entity_kind, self.entity_id, p.x(), p.y())
         return result
 
-class _DraggableRect(QGraphicsRectItem):
-    """A rectangle positioned and sized in world units."""
-
-    def __init__(self, x: float, y: float, w: float, h: float,
-                 color: QColor, entity_id: str, entity_kind: str):
-        super().__init__(0, 0, w, h)
-        self.setPos(x, y)
-        self.setBrush(QBrush(color))
-        self.setPen(QPen(color.darker(180), 0, Qt.PenStyle.DashLine))
-        self.setFlags(self.GraphicsItemFlag.ItemIsMovable |
-                      self.GraphicsItemFlag.ItemIsSelectable |
-                      self.GraphicsItemFlag.ItemSendsGeometryChanges)
-        self.entity_id = entity_id
-        self.entity_kind = entity_kind
-
-        self._label = QGraphicsTextItem(entity_id, self)
-        self._label.setDefaultTextColor(Qt.GlobalColor.white)
-        theme.set_graphics_text_font(
-            self._label,
-            theme.FONT_ROLE_CANVAS_SECONDARY,
-            family=MONO_FONT_FAMILY,
-        )
-        self._label.setFlag(
-            QGraphicsTextItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
-        self._label.setFlag(
-            QGraphicsTextItem.GraphicsItemFlag.ItemIsSelectable, False)
-        self._label.setPos(2, 2)
-
 class _TransformGizmo(QGraphicsObject):
     """选中实体的实例 transform 手柄（P3）：绕脚底锚点的细环 + 两个世界尺寸手柄。
 
@@ -722,7 +729,7 @@ class _TransformGizmo(QGraphicsObject):
         self._press_rot = 0.0
         self._press_ang = 0.0
         self._press_len = 1.0
-        self.setZValue(9_000)
+        self.setZValue(_Z_DECOR_GIZMO)
         self.setAcceptedMouseButtons(Qt.MouseButton.LeftButton)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
 
@@ -878,6 +885,10 @@ class _EditableZonePolygon(QGraphicsObject):
         )
         self.setAcceptHoverEvents(True)
         self.setAcceptedMouseButtons(Qt.MouseButton.LeftButton)
+        # 独立 Zone 原先靠默认 z=0（与把手并列，刻意压在碰撞面之上）；两类碰撞多边形
+        # 由建它们的调用方随后覆写成 _Z_DECOR_COLLISION。两者都是装饰品，恒在内容之上，
+        # 否则会被热点展示图整个盖住、顶点点不到（碰撞面主要靠拖顶点编辑）。
+        self.setZValue(_Z_DECOR_ENTITY)
         self._base_color = QColor(color)
         self._pick_frozen = False
         self._drag_vertex: int | None = None
@@ -1830,7 +1841,7 @@ class _PerspAxisItem(QGraphicsObject):
         self.far_scale = float(far_scale)
         self.mid_stops = list(mid_stops)  # [(pos, scale)...]
         self._drag: str | None = None  # 'near' | 'far' | None
-        self.setZValue(8_000)
+        self.setZValue(_Z_DECOR_PERSP_AXIS)
         self.setAcceptedMouseButtons(Qt.MouseButton.LeftButton)
 
     # ---- 几何 --------------------------------------------------------------
@@ -2010,7 +2021,7 @@ class _SceneGroupBox(QGraphicsObject):
         self._acc_dy = 0.0
         self._press_scene = QPointF(0.0, 0.0)
         self._anchor_press = QPointF(0.0, 0.0)
-        self.setZValue(6_000)                  # 在实体之上、gizmo(9000) 之下
+        self.setZValue(_Z_DECOR_GROUP_BOX)     # 在实体之上、gizmo 之下
         self.setAcceptedMouseButtons(Qt.MouseButton.LeftButton)
         self.setAcceptHoverEvents(True)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
@@ -2638,7 +2649,7 @@ class SceneCanvas(QGraphicsView):
         g.setPen(QPen(QColor(color.red(), color.green(), color.blue(), 210), 0,
                       Qt.PenStyle.DashLine))
         g.setBrush(Qt.BrushStyle.NoBrush)
-        g.setZValue(-2)
+        g.setZValue(_Z_DECOR_COLLISION)
         g.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
         self._gfx.addItem(g)
         self._entity_items[key] = g
@@ -2701,7 +2712,7 @@ class SceneCanvas(QGraphicsView):
         txt.setDefaultTextColor(QColor(180, 180, 190))
         theme.set_graphics_text_font(
             txt, theme.FONT_ROLE_CANVAS_SECONDARY, family=MONO_FONT_FAMILY)
-        txt.setZValue(-90)
+        txt.setZValue(_Z_BG_PLACEHOLDER)
         br = txt.boundingRect()
         txt.setPos(max(0.0, world_w / 2 - br.width() / 2),
                    max(0.0, world_h / 2 - br.height() / 2))
@@ -2719,7 +2730,7 @@ class SceneCanvas(QGraphicsView):
             self._add_bg_placeholder(world_w, world_h, "（背景图加载失败：仍可点选坐标，但无底图参照）")
             return
         self._bg_item = QGraphicsPixmapItem(pm)
-        self._bg_item.setZValue(-100)
+        self._bg_item.setZValue(_Z_BACKGROUND)
         sx = world_w / pm.width()
         sy = world_h / pm.height()
         self._bg_item.setTransform(QTransform.fromScale(sx, sy))
@@ -2809,7 +2820,7 @@ class SceneCanvas(QGraphicsView):
                     pix_it = QGraphicsPixmapItem(pm_data)
                     pix_it.setTransform(_foot_anchor_transform(sw, sh))
                     pix_it.setPos(0.0, 0.0)
-                    pix_it.setZValue(-4)
+                    pix_it.setZValue(_Z_CONTENT_LO)
                     pix_it._disp_sig = disp_sig
                     self._gfx.addItem(pix_it)
                     self._entity_items[disp_key] = pix_it
@@ -2819,7 +2830,7 @@ class SceneCanvas(QGraphicsView):
                     rect.setPen(QPen(QColor(140, 70, 190, 200), 0, Qt.PenStyle.DashLine))
                     rect.setTransform(_foot_anchor_transform(ww, hh))
                     rect.setPos(0.0, 0.0)
-                    rect.setZValue(-4)
+                    rect.setZValue(_Z_CONTENT_LO)
                     self._gfx.addItem(rect)
                     self._entity_items[disp_key] = rect
         col_key = f"hotspot_collision:{hid}"
@@ -2854,7 +2865,7 @@ class SceneCanvas(QGraphicsView):
                     self, pts, _HOTSPOT_COLLISION_ZONE_COLOR, hid,
                     poly_kind="hotspot_collision",
                 )
-                poly_item.setZValue(-2)
+                poly_item.setZValue(_Z_DECOR_COLLISION)
                 self._gfx.addItem(poly_item)
                 self._entity_items[col_key] = poly_item
                 if self._zone_pick_frozen:
@@ -2915,7 +2926,7 @@ class SceneCanvas(QGraphicsView):
                     self, pts, _NPC_COLLISION_ZONE_COLOR, nid,
                     poly_kind="npc_collision",
                 )
-                poly_item.setZValue(-2)
+                poly_item.setZValue(_Z_DECOR_COLLISION)
                 self._gfx.addItem(poly_item)
                 self._entity_items[col_key] = poly_item
                 if self._zone_pick_frozen:
@@ -2991,7 +3002,8 @@ class SceneCanvas(QGraphicsView):
             # 面积相同的组再按登记顺序拉开一点，避免 z 相等时命中不确定。
             area = (rect.width() * rect.height()) if isinstance(rect, QRectF) else 0.0
             item.setZValue(
-                6_000.0 + 1.0 / (1.0 + area / 1_000_000.0) + len(wanted) * 1e-4)
+                _Z_DECOR_GROUP_BOX + 1.0 / (1.0 + area / 1_000_000.0)
+                + len(wanted) * 1e-4)
             item.setVisible(self._group_boxes_visible)
             self._entity_items[f"group:{gid}"] = item
         for gid in [g for g in self._group_boxes if g not in wanted]:
@@ -3741,8 +3753,10 @@ class SceneCanvas(QGraphicsView):
                         self._pick_cycle_i = 0
                 target = stack[self._pick_cycle_i]
                 self._saved_item_z = [(it, it.zValue()) for it in stack]
-                z_top = max(z for _, z in self._saved_item_z)
-                target.setZValue(z_top + 1.0)
+                # 抬到全画布之上的固定值（原先是 z_top+1，栈内相对值）。装饰品区间
+                # 顶到 90 万，内容区间在 ±10 万，1_000_000 恒在两者之上，语义等价且
+                # 不依赖栈内当前 z —— 内容 z 现在会随实体移动实时重排。
+                target.setZValue(_Z_PICK_RAISED)
         super().mousePressEvent(event)
         if event.button() == Qt.MouseButton.LeftButton:
             # 快照当前选中图元位置，供 release 判定「是否真的移动过」。
@@ -7563,8 +7577,8 @@ class ScenePropertyPanel(QScrollArea):
         self._hs_disp_sprite_sort.addItem("永远画在最底层", "back")
         self._hs_disp_sprite_sort.addItem("永远画在最顶层", "front")
         self._hs_disp_sprite_sort.setToolTip(
-            "仅运行时有效：同一 entityLayer 内与玩家、NPC 的叠放；"
-            "最底/最顶仍会在同档热点之间按 Y 细分。"
+            "同一实体层内与玩家、NPC 的叠放；最底/最顶仍会在同档热点之间按 Y 细分。\n"
+            "画布已按运行时同一条规则预览（展示图贴图读不出来时不生效，与运行时一致）。"
         )
         self._hs_disp_sprite_sort.currentIndexChanged.connect(self._on_hs_disp_sprite_sort_changed)
         df.addRow("精灵排序", self._hs_disp_sprite_sort)
@@ -9056,9 +9070,10 @@ class ScenePropertyPanel(QScrollArea):
         self._npc_sprite_sort.addItem("永远画在最底层", "back")
         self._npc_sprite_sort.addItem("永远画在最顶层", "front")
         self._npc_sprite_sort.setToolTip(
-            "仅运行时有效：同一 entityLayer 内与玩家、其它 NPC、热点展示图的叠放；"
-            "最底/最顶仍会在同档实体之间按 Y 细分。与热点展示图的「精灵排序」同语义。"
-            "贴背景的群像/前景路人需要它——它们与背景的前后关系是画出来的，按 Y 排会穿帮。"
+            "同一实体层内与玩家、其它 NPC、热点展示图的叠放；"
+            "最底/最顶仍会在同档实体之间按 Y 细分。与热点展示图的「精灵排序」同语义。\n"
+            "贴背景的群像/前景路人需要它——它们与背景的前后关系是画出来的，按 Y 排会穿帮。\n"
+            "画布已按运行时同一条规则预览。"
         )
         self._npc_sprite_sort.currentIndexChanged.connect(self._on_npc_sprite_sort_changed)
         form.addRow("精灵排序", self._npc_sprite_sort)
@@ -11166,6 +11181,8 @@ class SceneEditor(QWidget):
         self._restoring_blocked_navigation = False
         self._last_canvas_world: tuple[float, float] | None = None
         self._scene_npc_runtimes: dict[str, _SceneNpcAnimRuntime] = {}
+        # 内容层 z 的上次排序键；相同就整趟跳过（巡逻预览下每 8ms 会调一次）
+        self._content_z_key: tuple = ()
         self._scene_npc_anim_timer = QTimer(self)
         self._scene_npc_anim_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._scene_npc_anim_timer.setInterval(8)
@@ -11759,6 +11776,88 @@ class SceneEditor(QWidget):
         self._patrol_preview_ids.clear()
         self._patrol_preview_state.clear()
 
+    # ---- 内容层 z：按运行时规则实时重排 ------------------------------------
+    #
+    # 运行时 `Renderer.sortEntityLayer` 按「三档 × 档内脚底 y」每帧排一次；编辑器此前
+    # 是一张写死的层表（NPC 精灵恒 -10、热点展示图恒 -4），于是**画布上 NPC 永远被
+    # 热点贴图压住**，与游戏里谁前谁后毫无关系 —— 策划照着画布排前后关系等于白排。
+    # 这里用同一条规则的 Python 镜像（`entity_sort_math`，双侧 parity 测试钉死）
+    # 算出名次，再按名次派 z 到内容区间里。
+    #
+    # 为什么不直接把运行时的 z 搬过来：运行时档位偏移是 ±1e7，直接当 zValue 会盖穿
+    # 全部装饰品（gizmo、把手、碰撞面）。名次映射既保住次序，又留在内容区间内。
+
+    def _content_sort_entries(self) -> list[tuple[float, int, object]]:
+        """收集参与内容排序的图元 → ``(排序键 z, 平局序, 图元)``。
+
+        `tie_index` 复刻运行时 `entityLayer` 的 addChild 次序（玩家 → 热点按 JSON 序
+        → NPC 按 JSON 序）。运行时平局时靠 Pixi 稳定排序保持数组现序，编辑器只能用
+        JSON 数组序近似 —— 但它必须**稳定**，抖动会让画布闪烁。
+        """
+        sc = self._model.scenes.get(self._current_scene_id or "")
+        if not isinstance(sc, dict):
+            return []
+        out: list[tuple[float, int, object]] = []
+
+        for i, model_hs in enumerate(sc.get("hotspots", []) or []):
+            if not isinstance(model_hs, dict):
+                continue
+            eid = str(model_hs.get("id", "") or "")
+            # **必须读 staging 感知的真相源**：拖动/数值框只写 staging 深拷贝，读模型
+            # 会算出旧坐标的次序，表现为"拖着拖着前后关系不跟着变，松手才跳一下"。
+            # 与 _npc_render_pos_dict 同一条契约（editor-data-sync-paradigm 硬契约 1）。
+            hs = self._staging_hotspot_for_canvas_drag(eid) or model_hs
+            item = self._canvas._entity_items.get(f"hotspot_display:{eid}")
+            if item is None:
+                continue  # 没展示图的热点不进内容区（运行时容器里也只有不可见 marker）
+            # 与运行时 `displaySprite !== null` 同口径：画成紫色缺件框时那边也没有档位
+            texture_loaded = isinstance(item, QGraphicsPixmapItem)
+            pf = self._canvas.persp_factor(hs, "hotspot")
+            di = hs.get("displayImage") if isinstance(hs.get("displayImage"), dict) else {}
+            try:
+                ww = float(di.get("worldWidth", 0) or 0)
+                hh = float(di.get("worldHeight", 0) or 0)
+            except (TypeError, ValueError):
+                ww = hh = 0.0
+            s = entity_scale_of(hs) * pf
+            foot = sort_foot_y_of(hs, ww * s, hh * s)
+            z = entity_sort_z(
+                hotspot_sort_band_of(hs, texture_loaded), float(hs.get("y", 0)), foot)
+            out.append((z, 1_000 + i, item))
+
+        for i, npc in enumerate(sc.get("npcs", []) or []):
+            if not isinstance(npc, dict):
+                continue
+            eid = str(npc.get("id", "") or "")
+            rt = self._scene_npc_runtimes.get(eid)
+            if rt is None or rt.item is None:
+                continue
+            # 位置与 transform 都读 staging 感知的真相源，与精灵自身每拍拉取的同源
+            pos = self._npc_render_pos_dict(eid, npc)
+            s = entity_scale_of(pos) * (rt.persp if rt.persp and rt.persp > 0 else 1.0)
+            foot = sort_foot_y_of(pos, rt.world_w * s, rt.world_h * s)
+            # NPC 的 collisionPolygon **不参与**遮挡带（运行时只有 Hotspot 写
+            # entityOcclusionPolygon）；一视同仁会造出运行时根本不存在的层级翻转。
+            z = entity_sort_z(npc_sort_band_of(npc), float(pos.get("y", 0)), foot)
+            out.append((z, 2_000_000 + i, rt.item))
+
+        return out
+
+    def _resort_canvas_content_z(self) -> None:
+        """把内容图元按运行时规则重新派 z。带脏检查，可以随便调。
+
+        脏检查不是可选优化：巡逻预览开着时 NPC 的 y 每 8ms 都在变，不比对就会
+        每拍对全场 `setZValue`，Qt 会掉帧（与 perf-reload 同类教训）。
+        """
+        entries = self._content_sort_entries()
+        entries.sort(key=lambda e: (e[0], e[1]))
+        key = tuple((tie, round(z, 4), id(item)) for z, tie, item in entries)
+        if key == self._content_z_key:
+            return
+        self._content_z_key = key
+        for rank, (_z, _tie, item) in enumerate(entries):
+            item.setZValue(_Z_CONTENT_LO + rank * _Z_CONTENT_STEP)
+
     def _refresh_lightcurve_overlay(self) -> None:
         self._lightcurve_overlay_refresh_timer.start(0)
 
@@ -11831,6 +11930,8 @@ class SceneEditor(QWidget):
         # NPC 精灵预览由动画 tick 每拍拉取 persp（无需在此显式刷）
         # 透视系数变了 = 成员画布占位变了：分组框跟着重算，否则框对不上眼见的图形
         self._refresh_group_boxes()
+        # 透视系数进 footY（旋转态）与遮挡面尺寸，前后关系可能整体翻转
+        self._resort_canvas_content_z()
 
     def _refresh_npc_patrol_overlay(self) -> None:
         self._patrol_overlay_refresh_timer.start(0)
@@ -12055,7 +12156,7 @@ class SceneEditor(QWidget):
         except (TypeError, ValueError):
             ref_speed = 0.0
         item = QGraphicsPixmapItem()
-        item.setZValue(_NPC_SCENE_ANIM_PREVIEW_Z)
+        item.setZValue(_Z_CONTENT_LO)
         item.setOpacity(0.9)
         item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
         item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
@@ -12196,6 +12297,8 @@ class SceneEditor(QWidget):
                 # 透视系数与位置同源每拍拉取（staging 感知：拖动/数值框 live 改坐标即时反映）
                 rt.persp = self._canvas.persp_factor(pos, "npc", x, y)
                 rt.tick(dt, x, y)
+        # 位置变了前后关系就可能变：每拍重排（脏检查命中时是空操作）
+        self._resort_canvas_content_z()
         self._canvas.viewport().update()
 
     def _on_npc_scene_anim_refresh_requested(self, npc_id: str) -> None:
@@ -12420,6 +12523,8 @@ class SceneEditor(QWidget):
         # 分组框在 NPC 精灵运行时就绪后重建（包围盒要用精灵真实世界尺寸）
         self._canvas.set_group_boxes_visible(self._chk_group_boxes.isChecked())
         self._refresh_group_boxes()
+        # 展示图与精灵都已就绪：按运行时规则派一次内容 z
+        self._resort_canvas_content_z()
 
     def _refresh_entity_find_completer(self, sc: dict) -> None:
         """按当前场景实体刷新「实体查找」下拉候选（类型:id）。"""
@@ -14301,6 +14406,8 @@ class SceneEditor(QWidget):
             hs["x"] = rx
             hs["y"] = ry
             self._canvas.refresh_hotspot_visuals(hs)
+            # 热点没有动画 runtime，走不到 tick 那条重排；拖动改了脚底 y 就得重排
+            self._resort_canvas_content_z()
             self._props.sync_hotspot_xy_widgets(eid, rx, ry)
             return
         if kind == "npc":
@@ -14966,6 +15073,9 @@ class SceneEditor(QWidget):
         # planes 归属可能被本次 Apply 改动：更新登记并全量重贴位面过滤（含由隐转显）。
         self._canvas._record_entity_view(key, hs)
         self._canvas._apply_entity_view_filters()
+        # 本次 Apply 可能改了 spriteSort / displayImage / 坐标 / 实例 transform，
+        # 全都进排序键 —— 重排一次（脏检查会在没变时空转）。
+        self._resort_canvas_content_z()
 
     def _sync_npc_canvas_after_commit(self, old_id: str, npc: dict) -> None:
         new_id = str(npc.get("id", "") or "").strip()
@@ -14999,6 +15109,8 @@ class SceneEditor(QWidget):
         # planes 归属可能被本次 Apply 改动：更新登记并全量重贴位面过滤（含由隐转显）。
         self._canvas._record_entity_view(key, npc)
         self._canvas._apply_entity_view_filters()
+        # 同热点侧：spriteSort / 坐标 / 实例 transform 都进排序键
+        self._resort_canvas_content_z()
 
     def _sync_zone_canvas_after_commit(self, old_id: str, zone: dict) -> None:
         new_id = str(zone.get("id", "") or "").strip()

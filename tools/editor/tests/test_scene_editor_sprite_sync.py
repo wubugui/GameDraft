@@ -32,6 +32,13 @@ class _CapturingRuntime:
         self.last_xy: tuple[float, float] | None = None
         self.last_transform: tuple[float, float] | None = None
         self.last_playback: tuple[float, bool, int | None, int | None] | None = None
+        # 真 runtime 的几何/图元字段。内容层 z 重排（_content_sort_entries）会读它们；
+        # `item = None` 表示这个替身没有画布图元，于是不参与排序 —— 正是本桩想要的。
+        # 桩必须覆盖它所替身的那份契约，否则真实现一加字段，这里就 AttributeError。
+        self.item = None
+        self.persp = 1.0
+        self.world_w = 40.0
+        self.world_h = 80.0
 
     def tick(self, dt: float, x: float, y: float) -> None:
         self.last_xy = (x, y)
