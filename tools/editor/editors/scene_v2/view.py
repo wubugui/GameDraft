@@ -30,8 +30,9 @@ from .changes import (
     SelectionChanged,
     ViewFiltersChanged,
 )
+from .content_items import DisplayImageItem, SpritePreviewItem
 from .entity_items import HandleItem, PolygonItem, PolylineItem
-from .items import EntityItem
+from .items import CanvasItem, EntityItem
 from .renderer import SceneRenderer
 from .tools import ToolManager
 
@@ -42,13 +43,18 @@ __all__ = ["SceneView"]
 #: 这里只声明**新画布已经实现**的那几种，未实现的 part 不建图元、也不报错。
 _PART_ITEM_FACTORY = {
     ("hotspot", "handle"): HandleItem,
+    ("hotspot", "display"): DisplayImageItem,
     ("hotspot", "collision"): PolygonItem,
     ("npc", "handle"): HandleItem,
     ("npc", "collision"): PolygonItem,
     ("npc", "patrol"): PolylineItem,
+    ("npc", "sprite"): SpritePreviewItem,
     ("zone", "polygon"): PolygonItem,
     ("spawn", "handle"): HandleItem,
 }
+
+#: 内容层 part（前后关系按运行时规则排，不是固定层）
+_CONTENT_PARTS = {("hotspot", "display"), ("npc", "sprite")}
 
 
 class SceneView(QGraphicsView):
@@ -77,6 +83,8 @@ class SceneView(QGraphicsView):
         self._items: dict[tuple[EntityRef, str], EntityItem] = {}
         #: 视图轴（纯视图，不改数据）。判定沿用老画布已验证的那套语义。
         self._presence_filter = None
+        #: ``url -> QPixmap | None``。视图**不读盘**，路径解析归宿主。
+        self._texture_provider = None
 
         self._doc.changed.connect(self._on_document_changed)
         self.rebuild_all()
@@ -147,6 +155,9 @@ class SceneView(QGraphicsView):
 
     def _sync_part(self, ref, part, factory, ent, properties) -> None:
         item = self._items.get((ref, part))
+        if (ref.kind, part) in _CONTENT_PARTS:
+            self._sync_content_part(ref, part, factory, ent)
+            return
         pts = self._part_points(ref.kind, part, ent)
         if part in ("collision", "patrol") and not pts:
             # 数据门：没有多边形/路线就不该有图元（不是"藏起来"，是不存在）
@@ -164,6 +175,62 @@ class SceneView(QGraphicsView):
                 item.set_interaction_range(float(ent.get("interactionRange", 0) or 0))
         else:
             item.set_points(pts)
+
+    def _sync_content_part(self, ref, part, factory, ent) -> None:
+        """内容 part（展示图 / 精灵）的同步。
+
+        贴图由宿主经 `set_texture_provider` 注入 —— 视图**不读盘**：读盘要经
+        ProjectModel 的路径解析，那是宿主的事；视图只管画。没有 provider 时
+        画占位框，且 `texture_loaded` 为 False（与运行时"没有 displaySprite"同口径）。
+        """
+        spec = self._content_spec(ref.kind, ent)
+        if spec is None:
+            self._drop_part(ref, part)
+            return
+        item = self._items.get((ref, part))
+        if item is None:
+            item = factory(ref)
+            self._gfx.addItem(item)
+            self._items[(ref, part)] = item
+        anchor, w, h, facing, scale, rot, url = spec
+        item.setPos(anchor)
+        item.set_geometry(QPointF(0, 0), w, h, scale=scale, rotation=rot, facing=facing)
+        if self._texture_provider is not None:
+            item.set_pixmap(self._texture_provider(url))
+        else:
+            item.set_pixmap(None)
+
+    @staticmethod
+    def _content_spec(kind: str, ent: dict):
+        """内容 part 的几何与贴图来源；没有内容返回 None。"""
+        if kind != "hotspot":
+            return None
+        di = ent.get("displayImage")
+        if not isinstance(di, dict):
+            return None
+        url = str(di.get("image", "") or "").strip()
+        try:
+            w = float(di.get("worldWidth", 0) or 0)
+            h = float(di.get("worldHeight", 0) or 0)
+        except (TypeError, ValueError):
+            return None
+        if not url or w <= 0 or h <= 0:
+            return None
+        facing = -1 if str(di.get("facing", "")).strip().lower() == "left" else 1
+        return (
+            QPointF(float(ent.get("x", 0) or 0), float(ent.get("y", 0) or 0)),
+            w, h, facing,
+            float(ent.get("scale", 1.0) or 1.0),
+            float(ent.get("rotation", 0.0) or 0.0),
+            url,
+        )
+
+    def set_texture_provider(self, provider) -> None:
+        """注入 ``url -> QPixmap | None``。视图不读盘，路径解析归宿主。"""
+        self._texture_provider = provider
+        for (ref, part) in list(self._items):
+            if (ref.kind, part) in _CONTENT_PARTS:
+                self._sync_entity(ref)
 
     def _part_points(self, kind: str, part: str, ent: dict):
         if part == "polygon":

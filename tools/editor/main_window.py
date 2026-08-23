@@ -1633,8 +1633,13 @@ class MainWindow(QMainWindow):
         from .editors.npc_schedule_editor import NpcScheduleEditor
         from tools.task_orchestration_editor.editor import TaskOrchestrationEditor
 
+        from .editors.scene_v2.page import SceneEditorV2
+
         rows: list[tuple[list[str], str, Any]] = [
             (["物理世界"], "Scene", SceneEditor),
+            # 新画布（Document–View–Command）。与老画布并存：数据同一份 ProjectModel，
+            # 跨页知会与跳转落点由 scene_page_registry 统一管（并存期的两条防线）。
+            (["物理世界"], "Scene（新画布）", SceneEditorV2),
             (["物理世界"], "角色", CharacterRegistryEditor),
             (["物理世界"], "Map", MapEditor),
             (["物理世界"], "NPC 日程", NpcScheduleEditor),

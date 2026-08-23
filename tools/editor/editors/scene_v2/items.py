@@ -70,6 +70,18 @@ class CanvasItem(QGraphicsObject):
     def paint(self, painter, option, widget=None) -> None:  # pragma: no cover - 抽象
         raise NotImplementedError
 
+    # ---- 选中/悬停：基类给空实现，让视图可以无差别地刷全部图元 --------------
+    #
+    # 缺省空实现而不是让调用方 hasattr：内容图元（贴图、精灵）本来就不该显示选中态
+    # （选中是编辑器概念，不是画面内容），但视图不该为此记得区分。用 hasattr 兜
+    # 是那种"脆弱的隐式契约"——加一种新图元忘了实现就静默不刷。
+
+    def set_selected(self, on: bool) -> None:
+        """缺省不表现选中态。装饰类图元覆盖它。"""
+
+    def set_hovered(self, on: bool) -> None:
+        """缺省不表现悬停态。"""
+
 
 class EntityItem(CanvasItem):
     """代表一个场景实体的图元。命中白名单只认它。
