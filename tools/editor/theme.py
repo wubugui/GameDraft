@@ -304,6 +304,16 @@ def _stylesheet_flat_dark(base_px: int = DEFAULT_FONT_PX) -> str:
         }}
         QToolButton:hover {{ background-color: #252525; border: 1px solid {brm}; }}
         QToolButton:pressed {{ background-color: #141414; }}
+        /* **可勾选的工具按钮必须看得出自己被选中**。QSS 一旦接管 QToolButton，
+           Qt 就不再画原生的按下/选中外观 —— 只写 :hover / :pressed 的话，
+           进了某个模式的按钮和没进的长得一模一样（场景画布的工具栏就是
+           整排工具，用户点了完全看不出自己在哪个模式）。*/
+        QToolButton:checked {{
+            background-color: {ac};
+            border: 1px solid {ac};
+            color: #ffffff;
+        }}
+        QToolButton:checked:hover {{ background-color: {ac}; border: 1px solid {tx}; }}
         QStatusBar {{
             background-color: {b};
             border-top: 1px solid {brm};
@@ -558,6 +568,16 @@ def _stylesheet_flat_modern(base_px: int = DEFAULT_FONT_PX) -> str:
         }}
         QToolButton:hover {{ background-color: {hov}; border: 1px solid {brm}; }}
         QToolButton:pressed {{ background-color: {sel}; }}
+        /* **可勾选的工具按钮必须看得出自己被选中**。QSS 一旦接管 QToolButton，
+           Qt 就不再画原生的按下/选中外观 —— 只写 :hover / :pressed 的话，
+           进了某个模式的按钮和没进的长得一模一样（场景画布的工具栏就是
+           整排工具，用户点了完全看不出自己在哪个模式）。*/
+        QToolButton:checked {{
+            background-color: {ac};
+            border: 1px solid {ac};
+            color: #ffffff;
+        }}
+        QToolButton:checked:hover {{ background-color: {ac}; border: 1px solid {tx}; }}
         QStatusBar {{
             background-color: {tbar};
             border-top: 1px solid {brm};
@@ -806,6 +826,16 @@ def _stylesheet_flat_light(base_px: int = DEFAULT_FONT_PX) -> str:
         }}
         QToolButton:hover {{ background-color: #e0e0e0; border: 1px solid {brm}; }}
         QToolButton:pressed {{ background-color: #d0d0d0; }}
+        /* **可勾选的工具按钮必须看得出自己被选中**。QSS 一旦接管 QToolButton，
+           Qt 就不再画原生的按下/选中外观 —— 只写 :hover / :pressed 的话，
+           进了某个模式的按钮和没进的长得一模一样（场景画布的工具栏就是
+           整排工具，用户点了完全看不出自己在哪个模式）。*/
+        QToolButton:checked {{
+            background-color: {ac};
+            border: 1px solid {ac};
+            color: #ffffff;
+        }}
+        QToolButton:checked:hover {{ background-color: {ac}; border: 1px solid {tx}; }}
         QStatusBar {{
             background-color: {ab};
             border-top: 1px solid {brm};
