@@ -633,6 +633,10 @@ class SceneEditorV2(QWidget):
             act = self._toolbar.addAction(tool.display_name)
             act.setCheckable(True)
             group.addAction(act)
+            # **每个按钮都要有 tooltip**。只有一个两三字的按钮名时，用户唯一能做的
+            # 就是挨个点开试 —— 而这套画布里"现在是哪个工具"决定了按下鼠标会发生
+            # 什么，试错的代价不小。
+            act.setToolTip(getattr(tool, "tooltip", "") or tool.status_hint)
             act.triggered.connect(lambda _c, t=tool: view.tools.select(t))
             self._tool_actions[tool.tool_id] = act
         view.tools.tool_changed.connect(self._sync_tool_actions)
@@ -654,12 +658,15 @@ class SceneEditorV2(QWidget):
         act_boxes.toggled.connect(view.set_group_boxes_visible)
         # 视图动作：缩放 / 适配 / 撤销 / 重做。老画布工具栏上都有；
         # 没有"适配"时视口一旦跑偏只能靠滚轮一格一格摇回来。
-        for text, slot in (("−", lambda: view.zoom_by(1 / 1.15)),
-                           ("+", lambda: view.zoom_by(1.15)),
-                           ("适配", self.fit_view),
-                           ("撤销", self.editor_undo),
-                           ("重做", self.editor_redo)):
+        for text, tip, slot in (
+                ("−", "缩小画布视图", lambda: view.zoom_by(1 / 1.15)),
+                ("+", "放大画布视图（Ctrl+滚轮同效）", lambda: view.zoom_by(1.15)),
+                ("适配", "把整个场景适配到视口", self.fit_view),
+                ("撤销", "撤销上一步画布编辑（Ctrl+Z）；"
+                        "焦点在输入框里时退的是那一格字", self.editor_undo),
+                ("重做", "重做（Ctrl+Y）", self.editor_redo)):
             act = self._toolbar.addAction(text)
+            act.setToolTip(tip)
             act.triggered.connect(slot)
 
     def _sync_tool_actions(self, tool) -> None:
@@ -1057,6 +1064,11 @@ class SceneEditorV2(QWidget):
         if isinstance(event, SelectionChanged):
             self._sync_tree_selection()
             self._scroll_tree_to_selection()
+            # 有些工具的提示**随选择变**（「编辑多边形」要说清当前能编什么），
+            # 选择一变就重播一次，否则状态栏一直停在"先选中一个…"上。
+            tool = self._view.tools.current if self._view is not None else None
+            if tool is not None:
+                tool.announce()
             return
         self.refresh_group_boxes()
         self.refresh_perspective_axis()

@@ -34,7 +34,12 @@ class TransformTool(AbstractTool):
 
     tool_id = "transform"
     display_name = "缩放旋转"
-    status_hint = "拖动圆手柄旋转、方手柄等比缩放；Esc 取消"
+    status_hint = "拖圆手柄旋转、方手柄等比缩放；Shift 吸附 15°；Esc 取消"
+    tooltip = ("选中单个热点或 NPC 后拖手柄：\n"
+               "  圆手柄 = 旋转（按住 Shift 吸附到 15°）\n"
+               "  方手柄 = 等比缩放\n"
+               "手势中贴图、碰撞面、交互圈一起跟着变；松手才落库。\n"
+               "出生点不参与变换（运行时不读它的 scale/rotation）。")
 
     #: 手柄环到锚点的屏幕像素距离
     RING_PX = 70.0

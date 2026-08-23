@@ -26,7 +26,10 @@ class PerspectiveAxisTool(AbstractTool):
 
     tool_id = "persp_axis"
     display_name = "透视轴"
-    status_hint = "拖动近端 / 远端手柄调整透视深度轴"
+    status_hint = "拖近端 / 远端手柄调整透视深度轴；没配过透视时点一下画布就地种一条"
+    tooltip = ("近大远小的深度轴。拖两端手柄调整；轴上标着近/远端缩放倍率，\n"
+               "中途点用虚线等值线标出。\n"
+               "没配过透视的场景：在想放轴的位置点一下，就地种一条竖直轴。")
 
     def __init__(self, document, renderer, item=None, parent=None) -> None:
         super().__init__(document, renderer, parent)
@@ -185,7 +188,11 @@ class GroupBoxTool(AbstractTool):
 
     tool_id = "group_box"
     display_name = "分组"
-    status_hint = "点组框边线选中；再拖动整组位移；方向键微移"
+    status_hint = "点组框边线选中该组；再拖就是整组走；方向键微移；Alt+拖把手挪把手"
+    tooltip = ("分组框：点边线选中一个组，右侧切到分组属性\n"
+               "（组 id / label / 整组显影条件 / 成员列表）。\n"
+               "选中后再拖 = 整组位移；方向键微移；Alt+拖左上角把手 = 挪把手位置。\n"
+               "「选择」工具里点组框边线同样能选中组。")
 
     def __init__(self, document, renderer, view=None, parent=None) -> None:
         super().__init__(document, renderer, parent)

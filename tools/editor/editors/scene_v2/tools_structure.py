@@ -121,7 +121,13 @@ class CreateTool(AbstractTool):
 
     @property
     def status_hint(self) -> str:
-        return f"点击画布新建 {self.entity_kind}"
+        return f"{self.display_name}：在画布上点一下，就地新建一个（会连点连建）"
+
+    @property
+    def tooltip(self) -> str:
+        return (f"{self.display_name}：在画布上点一下就地新建。\n"
+                "这是持续模式 —— 每点一下就多一个，建完记得切回「选择」。\n"
+                "画布右键菜单里也有「在此新建…」，那个是点一次建一个。")
 
     def mouse_pressed(self, scene_pos, button, modifiers) -> bool:
         if button != Qt.MouseButton.LeftButton:

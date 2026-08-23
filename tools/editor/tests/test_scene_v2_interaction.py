@@ -327,7 +327,11 @@ class InitialFitTests(unittest.TestCase):
             got / expect, 1.0, delta=0.08,
             msg=f"初始缩放不对：m11={got:.4f}，应当约 {expect:.4f}"
                 "（场景被画成一小坨就是这个值差了两个数量级）")
-        self.assertFalse(view._pending_fit, "补 fit 的账没销掉")
+        # `_pending_fit` **刻意不在这里清**：布局是分几拍 settle 的，
+        # 只适配一次的话后面那几拍会把比例改掉（实测差 14%）。它由
+        # `end_auto_fit()` 在用户第一次缩放/平移/按下手势时清掉。
+        view.end_auto_fit()
+        self.assertFalse(view._pending_fit)
 
     def test_manual_fit_still_works_on_an_unlaid_view(self) -> None:
         """用户点「适配」是明确指令，不看布版状态。"""

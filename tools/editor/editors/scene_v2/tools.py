@@ -37,6 +37,10 @@ class AbstractTool(QObject):
     tool_id = "abstract"
     display_name = "工具"
     status_hint = ""
+    #: 鼠标悬停在工具栏按钮上时的完整说明（比 `status_hint` 更啰嗦一点）。
+    #: 空则回落 `status_hint`。**每个工具都该写** —— 只有一个两三字的按钮名时，
+    #: 用户唯一能做的就是挨个点开试。
+    tooltip = ""
 
     def __init__(self, document, renderer, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -55,8 +59,18 @@ class AbstractTool(QObject):
     def activate(self) -> None:
         self._active = True
         self.on_activated()
-        if self.status_hint:
-            self.status_text_changed.emit(self.status_hint)
+        self.announce()
+
+    def announce(self) -> None:
+        """把"我是谁 + 现在能干什么"喊到状态栏。
+
+        **带上工具名**：不带的话切了工具只有底下一行提示悄悄换了字，用户根本
+        注意不到自己已经换了模式 —— 而在这套画布里"现在是哪个工具"决定了按下
+        鼠标会发生什么。
+        """
+        hint = self.status_hint
+        if hint:
+            self.status_text_changed.emit(f"【{self.display_name}】{hint}")
 
     def deactivate(self) -> None:
         """**必须**能安全地在手势中途被调用：切工具不该留下半个手势。"""

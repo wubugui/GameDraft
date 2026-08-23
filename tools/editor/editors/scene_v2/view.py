@@ -587,6 +587,10 @@ class SceneView(QGraphicsView):
     #: 视口小于这个尺寸时不认为它"已经布好版"（刚 addWidget 的 view 是 100x30 之类）
     _FIT_MIN_VIEWPORT = 64
 
+    def end_auto_fit(self) -> None:
+        """用户第一次自己动视口（缩放/平移/手势）之后，就别再自动适配了。"""
+        self._pending_fit = False
+
     def request_fit(self) -> None:
         """请求把整个场景适配到视口 —— **布好版之前先记账**。
 
@@ -602,14 +606,24 @@ class SceneView(QGraphicsView):
         self._fit_if_laid_out()
 
     def _fit_if_laid_out(self) -> bool:
+        """布好版就适配一次。**在用户自己动视口之前，每次布版都重来一次。**
+
+        布局是分几拍settle 的（工具栏第二行出现、splitter 归位…），只在"第一次
+        拿到像样尺寸"时适配一次的话，后面那几拍会把比例改掉，结果差十几个百分点。
+        所以这里不清账，改由 `end_auto_fit()` 在用户第一次缩放/平移/按下手势时清 ——
+        与老画布 `_auto_fit_after_layout` 同一套语义。
+        """
         if not self._pending_fit:
             return False
         vp = self.viewport()
         if (vp.width() < self._FIT_MIN_VIEWPORT
                 or vp.height() < self._FIT_MIN_VIEWPORT):
             return False
-        self._pending_fit = False
-        self.fit_scene()
+        rect = self._gfx.sceneRect()
+        if rect.width() <= 0 or rect.height() <= 0:
+            return False
+        self.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
+        self._push_view_scale()
         return True
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt 接口
@@ -629,6 +643,7 @@ class SceneView(QGraphicsView):
             self._push_view_scale()
 
     def zoom_by(self, factor: float) -> None:
+        self.end_auto_fit()
         cur = self.transform().m11()
         new = cur * float(factor)
         if new < 0.02 or new > 20.0:
@@ -764,10 +779,12 @@ class SceneView(QGraphicsView):
         # 老画布也有。缺了它，放大之后只剩滚轮与拖滚动条，横向平移尤其难受 ——
         # 习惯了的人会以为画布卡死。必须排在转发给工具**之前**：工具链不认中键。
         if event.button() == Qt.MouseButton.MiddleButton:
+            self.end_auto_fit()
             self._pan_from = event.position().toPoint()
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
             event.accept()
             return
+        self.end_auto_fit()
         pos = self._world(event)
         handled = self.tools.mouse_pressed(pos, event.button(), event.modifiers())
         self.refresh_gesture_preview()

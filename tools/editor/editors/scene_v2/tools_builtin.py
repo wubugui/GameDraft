@@ -49,7 +49,10 @@ class SelectTool(AbstractTool):
 
     tool_id = "select"
     display_name = "选择"
-    status_hint = "点选实体；Shift 加选；同一处重复点击在重叠实体间轮转；拖拽空白处框选"
+    status_hint = "点选实体；Shift/Ctrl 加选；同一处重复点击在重叠实体间轮转；拖空白处框选"
+    tooltip = ("默认工具。点选实体、Shift/Ctrl 加选、拖空白处框选。\n"
+               "选中单个实体后直接出缩放/旋转手柄，点分组框边线直接选中该组 ——\n"
+               "不必先切到「缩放旋转」或「分组」。")
 
     def __init__(self, document, renderer, view=None, parent=None) -> None:
         super().__init__(document, renderer, parent)
@@ -276,7 +279,10 @@ class MoveTool(AbstractTool):
 
     tool_id = "move"
     display_name = "移动"
-    status_hint = "拖动选中的实体；Esc 取消本次拖动"
+    status_hint = "按住选中的实体拖走；Esc 取消本次拖动"
+    tooltip = ("纯拖动模式：按在**已选中的**实体上拖走（按在空白处不会误拖）。\n"
+               "「选择」工具里同样能拖，这个只是不会顺手改选择。\n"
+               "拖动中数据不变，松手才落一条可撤销的命令。")
 
     def __init__(self, document, renderer, view=None, parent=None) -> None:
         super().__init__(document, renderer, parent)
@@ -396,7 +402,33 @@ class PolygonEditTool(AbstractTool):
 
     tool_id = "polygon"
     display_name = "编辑多边形"
-    status_hint = "拖动顶点；双击边线插入顶点；右键顶点删除"
+    tooltip = ("改点列：Zone 的多边形、热点/NPC 的碰撞面、NPC 的巡逻路线、\n"
+               "场景的光环境曲线。\n\n"
+               "拖顶点移动 / 双击边线插入顶点 / 右键顶点删除。\n"
+               "注意：顶点只在实体被选中时才显示 —— 先用「选择」点中它。")
+
+    @property
+    def status_hint(self) -> str:
+        """**按现场说话**。
+
+        这个工具只对"选中且带点列"的实体生效，所以切过来时画布上常常什么都
+        没变 —— 用户于是完全不知道它是干嘛的（原话："完全不知道是干嘛用的"）。
+        没有可编辑对象时就直接说清楚缺什么、该先做什么。
+        """
+        targets = list(self._target_parts()) if self._view is not None else []
+        if not targets:
+            if not self._doc.selection:
+                return ("编辑多边形：先选中一个 Zone / 带碰撞面的实体 / 带巡逻路线的 "
+                        "NPC，它的顶点才会显示")
+            return ("编辑多边形：当前选中的实体没有可编辑的点列"
+                    "（Zone 多边形 / 碰撞面 / 巡逻路线）")
+        kinds = []
+        for _ref, part in targets:
+            label = {"polygon": "Zone 多边形", "collision": "碰撞面",
+                     "patrol": "巡逻路线", "lightcurve": "光环境曲线"}.get(part)
+            if label and label not in kinds:
+                kinds.append(label)
+        return f"正在编辑 {'、'.join(kinds)}：拖顶点 / 双击边线插点 / 右键顶点删点"
 
     #: 各 part 的点列住在实体的哪个字段里，以及是否闭合
     PART_FIELD = {
