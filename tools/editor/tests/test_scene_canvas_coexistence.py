@@ -137,6 +137,59 @@ class CoexistenceUndoTests(unittest.TestCase):
         self.assertGreaterEqual(self.v1._undo.stack.count(), 1,
                                 "无关场景的撤销历史被误清了")
 
+    # ---- 陈旧 staging 回灌：并存期最阴的一条 --------------------------------
+
+    def test_v1_reload_shows_what_v2_just_wrote(self) -> None:
+        """在 v2 改完切到 v1（主窗口每次切页都会调 `reload_from_model`），
+        老画布必须显示**新值**。
+
+        不刷的话它手里还捏着载入时那份深拷贝，下一次 Apply 会用旧值整份盖回去 ——
+        画面上看不出来、没有任何提示，用户以为自己刚才那笔改动还在。
+        """
+        self._v2_move(321)
+        self.v1.reload_from_model()
+        quiesce_scene_editor(self.v1)
+        self.assertEqual(self.hs()["x"], 321,
+                         "老画布重载把新画布刚写的值盖掉了")
+
+    def test_v2_reload_shows_what_v1_just_wrote(self) -> None:
+        self._v1_snapshot_command()
+        self.v2.reload_from_model()
+        self.assertEqual(
+            self.v2.document.model_entity(EntityRef("hotspot", "h1"))["y"], 555,
+            "新画布重投影之后看到的还是旧值")
+
+    def test_repeated_page_switches_do_not_corrupt_the_scene(self) -> None:
+        """来回切页多次：数据必须**逐字节**稳定。
+
+        主窗口每次切页都对两个页调 `reload_from_model`；任何一侧在重载里
+        顺手写点什么，这里就会红。
+        """
+        import json
+
+        self._v2_move(250)
+        before = json.dumps(self.model.scenes[_SCENE], ensure_ascii=False,
+                            sort_keys=True)
+        for _ in range(4):
+            self.v1.reload_from_model()
+            quiesce_scene_editor(self.v1)
+            self.v2.reload_from_model()
+            QApplication.processEvents()
+        self.assertEqual(
+            json.dumps(self.model.scenes[_SCENE], ensure_ascii=False,
+                       sort_keys=True),
+            before, "反复切页把场景改脏了")
+
+    def test_both_pages_implement_the_duck_protocol(self) -> None:
+        """主窗口是按鸭子协议逐个调钩子的，缺一个就会把该页当成"缺钩子"锁死。"""
+        for page in (self.v1, self.v2):
+            for hook in ("flush_to_model", "commit_pending_on_leave",
+                         "confirm_close", "reload_from_model",
+                         "reload_refs_from_model"):
+                self.assertTrue(
+                    callable(getattr(page, hook, None)),
+                    f"{type(page).__name__} 缺钩子 {hook}")
+
     def test_both_canvases_see_the_same_data(self) -> None:
         """并存的前提：同一份 ProjectModel。"""
         self._v2_move(300)

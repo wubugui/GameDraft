@@ -14,6 +14,9 @@ from .renderer import point_in_polygon, point_segment_distance_sq
 
 __all__ = [
     "HANDLE_R_PX",
+    "HOTSPOT_TYPE_COLORS",
+    "ZONE_COLOR_DEPTH_FLOOR",
+    "entity_canvas_color",
     "CollisionGhostItem",
     "KIND_COLORS",
     "HandleItem",
@@ -32,6 +35,32 @@ KIND_COLORS = {
     "zone": QColor(255, 200, 0, 90),
     "spawn": QColor(255, 255, 255, 215),
 }
+
+#: 热点**按 type 分色**（与老画布同一份取值）。六类长得一模一样时策划一眼分不出
+#: "这是传送点还是可查看点还是遭遇点"，改错对象的概率明显上升。
+HOTSPOT_TYPE_COLORS = {
+    "inspect": QColor(60, 140, 255, 190),
+    "act_spot": QColor(190, 120, 255, 190),
+    "pickup": QColor(60, 200, 80, 190),
+    "transition": QColor(255, 160, 40, 190),
+    "npc": QColor(200, 100, 255, 190),
+    "encounter": QColor(255, 60, 60, 190),
+}
+
+#: 深度地面与普通触发区必须分色：前者决定角色踩地深度（改错直接影响遮挡与缩放），
+#: 两者叠在一起时同色更容易拖错、删错。
+ZONE_COLOR_DEPTH_FLOOR = QColor(80, 160, 255, 90)
+
+
+def entity_canvas_color(kind: str, ent: dict | None) -> QColor:
+    """实体在画布上的颜色 —— 与老画布同口径的唯一出口。"""
+    d = ent if isinstance(ent, dict) else {}
+    if kind == "hotspot":
+        return HOTSPOT_TYPE_COLORS.get(
+            str(d.get("type", "") or ""), KIND_COLORS["hotspot"])
+    if kind == "zone" and d.get("zoneKind") == "depth_floor":
+        return ZONE_COLOR_DEPTH_FLOOR
+    return KIND_COLORS.get(kind, QColor(200, 200, 200, 200))
 _SELECTED_PEN = QPen(QColor(255, 236, 120), 0)
 _HOVER_PEN = QPen(QColor(255, 255, 255, 200), 0)
 
@@ -66,6 +95,7 @@ class HandleItem(_StateMixin, EntityItem):
         super().__init__(ref)
         self._color = color or KIND_COLORS.get(ref.kind, QColor(200, 200, 200, 200))
         self._radius_px = HANDLE_R_PX
+        self._label = ""
         self._range_world = 0.0
         self._scale = 1.0
         self.setFlag(
@@ -91,7 +121,28 @@ class HandleItem(_StateMixin, EntityItem):
 
     def boundingRect(self) -> QRectF:
         r = max(self._radius_px, self._range_px()) + 2.0
-        return QRectF(-r, -r, r * 2.0, r * 2.0)
+        rect = QRectF(-r, -r, r * 2.0, r * 2.0)
+        if self._label:
+            # 给标签留位置，否则文字会被裁掉一截
+            rect = rect.united(QRectF(r, -r - 14.0, 8.0 * len(self._label) + 8.0, 16.0))
+        return rect
+
+    def set_color(self, color: QColor) -> None:
+        if color != self._color:
+            self._color = color
+            self.update()
+
+    def set_label(self, text: str) -> None:
+        """把手旁边的实体名。
+
+        没有它，"这个圆点是哪个热点""把玩家送到哪个出生点"这类日常判断只能回
+        左边实体树逐个点选比对；老画布是抬眼就能读。
+        """
+        text = str(text or "")
+        if text != self._label:
+            self.prepareGeometryChange()
+            self._label = text
+            self.update()
 
     def paint(self, painter, option, widget=None) -> None:
         painter.setRenderHint(painter.RenderHint.Antialiasing, True)
@@ -109,6 +160,11 @@ class HandleItem(_StateMixin, EntityItem):
             painter.setPen(QPen(self._color.darker(150), 0))
         r = self._radius_px
         painter.drawEllipse(QPointF(0, 0), r, r)
+        if self._label:
+            # 本图元是 `ItemIgnoresTransformations`，所以这里的单位就是屏幕像素：
+            # 字号天然恒定，缩小视图后不会糊成一团。
+            painter.setPen(QPen(QColor(235, 235, 235, 230), 0))
+            painter.drawText(QPointF(r + 3.0, -r - 2.0), self._label)
 
     def pick_rect(self) -> QRectF:
         """把手的命中范围只算圆点本身，**不含交互半径圈** ——
@@ -127,6 +183,8 @@ class _PointsItem(_StateMixin, EntityItem):
         self._closed = closed
         self._scale = 1.0
         self._active_vertex: int | None = None
+        #: 恒显顶点手柄（供选不中的点列用，见 `paint`）
+        self.always_show_vertices = False
 
     @property
     def closed(self) -> bool:
@@ -207,8 +265,12 @@ class _PointsItem(_StateMixin, EntityItem):
         else:
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawPolyline(poly)
-        # 顶点手柄：只在选中时画，免得满屏都是点
-        if not self._selected:
+        # 顶点手柄：缺省只在选中时画，免得满屏都是点。
+        # `always_show_vertices` 是给**没有选中概念**的点列开的口子 ——
+        # 场景级光环境曲线不属于任何实体、选不中，可它的控制点又永远可拖：
+        # 看不见却拖得动是最坏的组合（想编的找不到点、不想编的会误拖误删，
+        # 而删一个看不见的控制点还会连带把它那一帧光带走）。
+        if not self._selected and not self.always_show_vertices:
             return
         r = self._handle_r_world()
         for i, (x, y) in enumerate(self._pts):
@@ -225,6 +287,11 @@ class PolygonItem(_PointsItem):
     def __init__(self, ref: EntityRef, color: QColor | None = None) -> None:
         super().__init__(ref, color or KIND_COLORS.get(ref.kind, QColor(255, 200, 0, 90)),
                          closed=True)
+
+    def set_color(self, color: QColor) -> None:
+        if color != self._color:
+            self._color = color
+            self.update()
 
 
 class CollisionGhostItem(_PointsItem):

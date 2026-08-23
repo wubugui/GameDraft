@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidgetItem,
     QMenu,
+    QMessageBox,
     QSplitter,
     QToolBar,
     QTreeWidget,
@@ -65,6 +66,14 @@ from .panel_bridge import PanelBridge
 from .sorting import assign_content_z
 from .tools_builtin import MoveTool, PolygonEditTool, SelectTool
 from .tools_overlays import GroupBoxTool, PerspectiveAxisTool, group_bounds
+from ...shared.entity_refactor import (
+    EntityRefactorError,
+    delete_entity,
+    move_entity,
+    rename_entity,
+    scan_entity_usages,
+    undo_last,
+)
 from .groups import all_group_ids, assign_group, create_group, delete_group
 from .tools_structure import (
     CreateTool,
@@ -249,6 +258,7 @@ class SceneEditorV2(QWidget):
         self._doc.changed.connect(self._on_doc_changed)
         self._view.content_resort_requested.connect(self.resort_content_z)
         self._view.context_menu_requested.connect(self._show_canvas_menu)
+        self._view.content_resort_requested.connect(self._sync_live_xy_widgets)
         # **fit 要等 Qt 把 view 真正布局出来。** 刚 addWidget 的 view 视口还是
         # 98x28 之类的占位尺寸，此刻 fit 出来的缩放是正确值的 4~6%：每开一个场景
         # 都要 Ctrl+滚轮摇二十格才能看清。老画布为此专门排了 0/40/120/240ms 四次
@@ -561,6 +571,10 @@ class SceneEditorV2(QWidget):
             self._tool_actions[tool.tool_id] = act
         view.tools.tool_changed.connect(self._sync_tool_actions)
         self._toolbar.addSeparator()
+        act_boxes = self._toolbar.addAction("分组框")
+        act_boxes.setCheckable(True)
+        act_boxes.setChecked(True)
+        act_boxes.toggled.connect(view.set_group_boxes_visible)
         # 视图动作：缩放 / 适配 / 撤销 / 重做。老画布工具栏上都有；
         # 没有"适配"时视口一旦跑偏只能靠滚轮一格一格摇回来。
         for text, slot in (("−", lambda: view.zoom_by(1 / 1.15)),
@@ -606,8 +620,87 @@ class SceneEditorV2(QWidget):
             act_dup = menu.addAction(f"复制选中（{len(sel)}）")
             act_dup.triggered.connect(self.duplicate_selected)
             act_del = menu.addAction(f"删除选中（{len(sel)}）")
-            act_del.triggered.connect(self.delete_selected)
+            act_del.triggered.connect(self.delete_selected_interactive)
         menu.exec(global_pos)
+
+    # ---- 跨文件重构（改名 / 迁移 / 安全删除）---------------------------------
+    #
+    # 这三件事最容易搞坏引用：改名/迁移/删除一个被别处引用的实体，不跟随改写就是
+    # 悬垂引用，而且**没有任何提示**，要等 Validate Data 才发现。老画布为此专门
+    # 有一个"重构"菜单：先全项目扫描、弹预览、确认才执行。新画布起初一个入口
+    # 都没有，删除就是裸删。
+    #
+    # 实现全部在 `shared/entity_refactor`（跨文件机械改写 + 自己的撤销日志），
+    # 这里只负责"问清楚再调"。注意它**不进本页的 QUndoStack** —— 跨文件改写
+    # 撤不进字段级命令栈，撤销走 `entity_refactor.undo_last`。
+
+    def refactor_selected(self, op: str) -> bool:
+        """`op` ∈ {"rename", "move", "delete"}。返回是否真的执行了。"""
+        if self._doc is None:
+            return False
+        sel = [r for r in self._doc.selection
+               if r.kind in ("hotspot", "npc", "zone", "spawn")]
+        if len(sel) != 1:
+            self._doc.notify("请先选中恰好一个实体再做重构")
+            return False
+        ref = sel[0]
+        sid = self.current_scene_id
+        usages = scan_entity_usages(self._model, sid, ref.kind, ref.id)
+        total = int(usages.get("total", 0) or 0)
+        rows = usages.get("rows") or usages.get("hits") or []
+        preview = "\n".join(f"• {r}" for r in list(rows)[:12])
+        suffix = f"\n…另有 {len(rows) - 12} 处" if len(rows) > 12 else ""
+        try:
+            if op == "rename":
+                new_id, ok = QInputDialog.getText(
+                    self, "重命名 id",
+                    f"「{ref.id}」在全项目有 {total} 处引用，改名会**跟随改写**。\n"
+                    f"{preview}{suffix}\n\n新 id：", text=ref.id)
+                if not ok or not str(new_id).strip():
+                    return False
+                rename_entity(self._model, sid, ref.kind, ref.id,
+                              str(new_id).strip())
+            elif op == "move":
+                targets = sorted(k for k in self._model.scenes if k != sid)
+                if not targets:
+                    self._doc.notify("没有别的场景可迁移")
+                    return False
+                target, ok = QInputDialog.getItem(
+                    self, "迁移到场景",
+                    f"「{ref.id}」在全项目有 {total} 处引用；迁移会跟随改写。\n"
+                    "polygon / 坐标需要迁移后在目标场景重画。\n\n目标场景：",
+                    targets, 0, False)
+                if not ok:
+                    return False
+                move_entity(self._model, sid, str(target), ref.kind, ref.id)
+            elif op == "delete":
+                answer = QMessageBox.question(
+                    self, "安全删除",
+                    f"删除「{ref.id}」。全项目有 {total} 处引用，删除后会**悬垂**：\n"
+                    f"{preview}{suffix}\n\n仍要删除吗？")
+                if answer != QMessageBox.StandardButton.Yes:
+                    return False
+                delete_entity(self._model, sid, ref.kind, ref.id)
+            else:
+                return False
+        except EntityRefactorError as exc:
+            QMessageBox.warning(self, "重构失败", str(exc))
+            return False
+        # 跨文件改写绕过了本页的命令栈，所以必须整份重投影并清栈
+        self.reload_from_model()
+        self._doc.notify(f"重构完成（{op}）。撤销请用「重构 → 撤销上次重构」")
+        return True
+
+    def undo_last_refactor(self) -> bool:
+        """撤销上一次跨文件重构。**与 Ctrl+Z 是两条独立的历史** ——
+        字段级命令栈撤不了跨文件机械改写。"""
+        try:
+            undo_last(self._model)
+        except EntityRefactorError as exc:
+            QMessageBox.warning(self, "撤销重构失败", str(exc))
+            return False
+        self.reload_from_model()
+        return True
 
     def _show_tree_menu(self, pos) -> None:
         if self._doc is None:
@@ -630,11 +723,43 @@ class SceneEditorV2(QWidget):
             act_dup = menu.addAction(f"复制（{len(sel)}）")
             act_dup.triggered.connect(self.duplicate_selected)
             act_del = menu.addAction(f"删除（{len(sel)}）")
-            act_del.triggered.connect(self.delete_selected)
+            act_del.triggered.connect(self.delete_selected_interactive)
+        if len(entities) == 1 or (len(sel) == 1 and sel[0].kind == "spawn"):
+            menu.addSeparator()
+            for label, op in (("重命名 id…", "rename"),
+                              ("迁移到场景…", "move"),
+                              ("安全删除（引用报告）…", "delete")):
+                act = menu.addAction(label)
+                act.triggered.connect(
+                    lambda _c, o=op: self.refactor_selected(o))
+            act = menu.addAction("撤销上次重构")
+            act.triggered.connect(lambda _c: self.undo_last_refactor())
         if menu.isEmpty():
             act = menu.addAction("新建分组")
             act.triggered.connect(lambda _c: create_group(self._doc))
         menu.exec(self._tree.viewport().mapToGlobal(pos))
+
+    def _sync_live_xy_widgets(self) -> None:
+        """拖动中把 x/y 实时喂给属性面板的数值框。
+
+        数据此刻**没有**被改（手势不写数据），喂的是预览位置。不喂的话想拖到某个
+        精确坐标时没有实时读数，只能松手看一眼、不对再拖一次。
+        """
+        if self._doc is None or self._view is None:
+            return
+        offsets = self._view.preview_offsets()
+        if not offsets:
+            return
+        for ref, (dx, dy) in offsets.items():
+            ent = self._doc.entity(ref)
+            if not isinstance(ent, dict) or "x" not in ent:
+                continue
+            setter = getattr(
+                self._props,
+                {"hotspot": "sync_hotspot_xy_widgets",
+                 "npc": "sync_npc_xy_widgets"}.get(ref.kind, ""), None)
+            if callable(setter):
+                setter(ref.id, float(ent["x"]) + dx, float(ent["y"]) + dy)
 
     def _create_spawn_at(self, world_pos) -> None:
         name, ok = QInputDialog.getText(self, "新建命名出生点", "出生点名称：")
@@ -816,7 +941,39 @@ class SceneEditorV2(QWidget):
     # ---- 编辑动作（供快捷键/菜单接线）--------------------------------------
 
     def delete_selected(self) -> bool:
-        return delete_selected(self._doc) if self._doc else False
+        """删除当前选择（**不弹窗**）。
+
+        删除是可撤销的，所以这条路不拦；但**必须说出刚删了什么** ——
+        误触 Delete（尤其焦点不明确时）之后，用户至少要知道发生了什么才想得起
+        按 Ctrl+Z。菜单那条路另有确认（`delete_selected_interactive`）。
+
+        刻意不在这里弹模态：本方法也是程序化入口（快捷键、面板按钮、测试都走它），
+        塞一个模态循环进去会让无头环境**挂死**。
+        """
+        if self._doc is None:
+            return False
+        sel = list(self._doc.selection)
+        if not sel:
+            return False
+        names = "、".join(f"{r.kind}:{r.id}" for r in sel[:6])
+        more = f" 等 {len(sel)} 个" if len(sel) > 6 else ""
+        if not delete_selected(self._doc):
+            return False
+        self._doc.notify(f"已删除 {names}{more}（Ctrl+Z 可撤销）")
+        return True
+
+    def delete_selected_interactive(self) -> bool:
+        """菜单里的删除：先问一句再删。"""
+        if self._doc is None or not self._doc.selection:
+            return False
+        n = len(self._doc.selection)
+        names = "、".join(f"{r.kind}:{r.id}" for r in list(self._doc.selection)[:6])
+        more = f" 等 {n} 个" if n > 6 else ""
+        if QMessageBox.question(
+                self, "删除实体",
+                f"从场景删除 {names}{more}？") != QMessageBox.StandardButton.Yes:
+            return False
+        return self.delete_selected()
 
     def duplicate_selected(self) -> bool:
         return duplicate_selected(self._doc) if self._doc else False

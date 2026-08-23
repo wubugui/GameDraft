@@ -28,8 +28,13 @@ from .tools import AbstractTool
 __all__ = ["unique_entity_id", "CreateTool", "create_entity_at", "create_spawn",
            "delete_spawn", "spawn_names", "delete_selected", "duplicate_selected"]
 
+#: 新建实体的默认字段。**与老画布逐字对齐**（scene_editor.py 的
+#: `_add_hotspot_at` / `_add_npc_at`）—— 不对齐的话从两个画布建出来的实体
+#: 在数据里长得不一样：v2 建的热点少了 label / data 两个键，NPC 的名字直接
+#: 是 id（老画布是 "New NPC"，一眼能看出没改过名）。
 _DEFAULTS = {
-    "hotspot": {"type": "inspect", "interactionRange": 50},
+    "hotspot": {"type": "inspect", "label": "", "interactionRange": 50,
+                "data": {"text": ""}},
     "npc": {"interactionRange": 50},
     "zone": {},
 }
@@ -82,7 +87,7 @@ def _new_entity(document, kind: str, x: float, y: float) -> dict:
            "y": round(float(y), 1)}
     ent.update(copy.deepcopy(_DEFAULTS.get(kind, {})))
     if kind == "npc":
-        ent["name"] = ent["id"]
+        ent["name"] = "New NPC"
     if kind == "zone":
         # Zone 没有 x/y，用一个以落点为中心的小方块起步
         ent.pop("x", None)

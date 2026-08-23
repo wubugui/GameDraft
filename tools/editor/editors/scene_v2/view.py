@@ -41,6 +41,7 @@ from .entity_items import (
     HandleItem,
     PolygonItem,
     PolylineItem,
+    entity_canvas_color,
 )
 from .light_curve import light_curve_points
 from .items import CanvasItem, EntityItem
@@ -124,8 +125,11 @@ class SceneView(QGraphicsView):
         self._sprite_frame = None
         #: 中键平移的上一帧位置（None = 没在平移）
         self._pan_from = None
+        #: 最近一次鼠标所在的世界坐标（`None` = 还没进过画布）
+        self.last_cursor_world = None
         #: 覆盖物（分组框 / 透视轴 / 橡皮筋）。它们不进图元账，也不进命中白名单。
         self._group_boxes: dict[str, GroupBoxItem] = {}
+        self._group_boxes_visible = True
         self._persp_axis = PerspectiveAxisItem()
         self._gfx.addItem(self._persp_axis)
         self._persp_axis.setVisible(False)
@@ -246,8 +250,13 @@ class SceneView(QGraphicsView):
             self._gfx.addItem(item)
             self._items[(ref, part)] = item
             self._push_view_scale(item)
+            if part == "lightcurve":
+                # 光曲线选不中（它不属于任何实体），所以控制点必须恒显
+                item.always_show_vertices = True
         if isinstance(item, HandleItem):
             item.set_base_pos(float(ent.get("x", 0) or 0), float(ent.get("y", 0) or 0))
+            item.set_color(entity_canvas_color(ref.kind, ent))
+            item.set_label(ref.id)
             if properties & (EntityProperty.POSITION | EntityProperty.BEHAVIOUR
                              | EntityProperty.TRANSFORM | EntityProperty.ALL):
                 # **缺省 50，且乘实例 scale 与透视系数** —— 与运行时同口径。
@@ -264,6 +273,12 @@ class SceneView(QGraphicsView):
                     * self.perspective_factor(ent, ref.kind))
         else:
             item.set_points(pts)
+            if part == "polygon":
+                # Zone 按 zoneKind 分色：深度地面决定角色踩地深度，
+                # 与普通触发区同色时叠在一起容易拖错、删错。
+                setter = getattr(item, "set_color", None)
+                if callable(setter):
+                    setter(entity_canvas_color(ref.kind, ent))
 
     def _sync_content_part(self, ref, part, factory, ent) -> None:
         """内容 part（展示图 / 精灵）的同步。
@@ -357,6 +372,13 @@ class SceneView(QGraphicsView):
     def group_boxes(self) -> dict:
         return dict(self._group_boxes)
 
+    def set_group_boxes_visible(self, on: bool) -> None:
+        """分组框总开关。对着背景图精细对位时那些虚线框很碍事，
+        老画布提供了这条出路，新画布不该缺。"""
+        self._group_boxes_visible = bool(on)
+        for box in self._group_boxes.values():
+            box.setVisible(self._group_boxes_visible)
+
     def sync_group_boxes(self, rows) -> None:
         """按 ``[(gid, rect, title), ...]`` 重建分组框。差集回收，不整批重建 ——
         重建会丢掉选中态，而组的选中态不在 Qt 选择系统里、丢了就回不来。"""
@@ -368,6 +390,7 @@ class SceneView(QGraphicsView):
                 self._gfx.addItem(box)
                 self._group_boxes[gid] = box
                 box.set_view_scale(self.renderer.view_scale)
+                box.setVisible(self._group_boxes_visible)
             box.set_geometry(rect, title)
             wanted[gid] = box
         for gid in [g for g in self._group_boxes if g not in wanted]:
@@ -680,6 +703,8 @@ class SceneView(QGraphicsView):
             event.accept()
             return
         pos = self._world(event)
+        #: 供"对着某个顶点按 Delete"这类以鼠标位置为准的快捷键用
+        self.last_cursor_world = pos
         self.cursor_world_moved.emit(pos)
         handled = self.tools.mouse_moved(pos, event.buttons(), event.modifiers())
         if handled:

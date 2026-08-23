@@ -45,6 +45,13 @@ class PerspectiveAxisTool(AbstractTool):
     def mouse_pressed(self, scene_pos, button, modifiers) -> bool:
         if button != Qt.MouseButton.LeftButton or self._item is None:
             return False
+        if self._cfg() is None:
+            # **没配过透视的场景要能就地起一条轴。** 否则新画布在这个功能上是
+            # 只读的一半：只能改已有轴的端点，不能给新场景加近大远小 ——
+            # 策划必须切回老画布（或手改 JSON）。
+            # 种一条竖直轴：近端在下（scale 1.0）、远端在上（0.6），与老画布
+            # `_on_persp_widgets_changed` 自动 seed 的形状一致。
+            return self._seed_axis(scene_pos)
         which = self._item.hit_endpoint(scene_pos)
         if which is None:
             return False
@@ -54,6 +61,23 @@ class PerspectiveAxisTool(AbstractTool):
         self._which = which
         self._start = copy.deepcopy(cfg)
         return True
+
+    def _seed_axis(self, scene_pos) -> bool:
+        sc = self._doc.scene() or {}
+        try:
+            h = float(sc.get("worldHeight", 0) or 0)
+        except (TypeError, ValueError):
+            h = 0.0
+        h = h if h > 0 else 600.0
+        x = float(scene_pos.x())
+        cfg = {"near": {"x": x, "y": h * 0.9, "scale": 1.0},
+               "far": {"x": x, "y": h * 0.2, "scale": 0.6}}
+        ok = self._doc.push(build_change_fields_command(
+            self._doc, [EntityRef("scene", self._doc.scene_id)],
+            [{"perspectiveScale": cfg}], EntityProperty.TRANSFORM, "启用透视缩放"))
+        if ok:
+            self._doc.notify("已在此处种下一条透视深度轴，拖两端调整")
+        return ok
 
     def mouse_moved(self, scene_pos, buttons, modifiers) -> bool:
         if not self._which or not (buttons & Qt.MouseButton.LeftButton):
@@ -85,9 +109,27 @@ class PerspectiveAxisTool(AbstractTool):
             [{"perspectiveScale": cfg}], EntityProperty.TRANSFORM, "调整透视轴"))
         return True
 
+    def _restore_overlay(self) -> None:
+        """把 overlay 拨回**模型现值**。
+
+        取消一次拖动后不拨回的话，画布上显示的深度轴与实际生效的对不上，
+        用户会照着这根假轴继续摆实体 —— 数据没坏，但画面在骗人。
+        """
+        cfg = self._cfg()
+        if self._item is None or not isinstance(cfg, dict):
+            return
+        near, far = cfg.get("near") or {}, cfg.get("far") or {}
+        try:
+            self._item.set_axis(
+                QPointF(float(near.get("x", 0)), float(near.get("y", 0))),
+                QPointF(float(far.get("x", 0)), float(far.get("y", 0))))
+        except (TypeError, ValueError):
+            pass
+
     def cancel_gesture(self) -> bool:
         if not self._which:
             return False
+        self._restore_overlay()
         self._which = ""
         self._start = None
         return True

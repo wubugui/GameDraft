@@ -21,6 +21,15 @@ from .tools import AbstractTool
 __all__ = ["SelectTool", "MoveTool", "PolygonEditTool", "pick_cycle"]
 
 
+#: 加选/减选修饰键。**Ctrl 与 Shift 都认**。
+#:
+#: 老画布用的是 Ctrl（"Ctrl+点选 = Qt 原生加选/减选"），v2 起初只认 Shift ——
+#: 从老画布过来的人第一时间选不出多选，而且 Ctrl+点在 v2 是"静默丢掉已选"，
+#: 配合"多选没有多选页"就更难自查。两个都收，谁的肌肉记忆都不落空。
+_ADD_MODIFIERS = (Qt.KeyboardModifier.ShiftModifier
+                  | Qt.KeyboardModifier.ControlModifier)
+
+
 def pick_cycle(hits: list, current) -> object | None:
     """叠放循环点选：同一落点重复点击时在候选里轮转。
 
@@ -119,7 +128,7 @@ class SelectTool(AbstractTool):
             self._band_origin = QPointF(scene_pos)
             self._band_rect = None
             self._last_pick_pos = None
-            if not (modifiers & Qt.KeyboardModifier.ShiftModifier):
+            if not (modifiers & _ADD_MODIFIERS):
                 self._doc.clear_selection()
             return True
 
@@ -134,7 +143,7 @@ class SelectTool(AbstractTool):
         self._last_pick_pos = (scene_pos.x(), scene_pos.y())
         if chosen is None:
             return True
-        if modifiers & Qt.KeyboardModifier.ShiftModifier:
+        if modifiers & _ADD_MODIFIERS:
             sel = list(self._doc.selection)
             if chosen.ref in sel:
                 sel.remove(chosen.ref)
@@ -173,7 +182,7 @@ class SelectTool(AbstractTool):
         candidates = self.entities_at(scene_pos, self._view.entity_items())
         picked = [it.ref for it in candidates
                   if it.isVisible() and rect.intersects(it.pick_rect())]
-        if modifiers & Qt.KeyboardModifier.ShiftModifier:
+        if modifiers & _ADD_MODIFIERS:
             picked = list(self._doc.selection) + [r for r in picked
                                                   if r not in self._doc.selection]
         self._doc.set_selection(picked)
@@ -561,6 +570,18 @@ class PolygonEditTool(AbstractTool):
                 EntityProperty.GEOMETRY, "插入顶点"))
             return True
         return False
+
+    def key_pressed(self, key, modifiers) -> bool:
+        """Delete **先删鼠标下的那个顶点**，删不到才交回基类删整个实体。
+
+        用惯老画布的人以为在删一个顶点，v2 起初直接把整个 Zone / 热点删掉了。
+        Ctrl+Z 能回来，但要先意识到发生了什么。
+        """
+        if key in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+            pos = getattr(self._view, "last_cursor_world", None) if self._view else None
+            if pos is not None and self.delete_vertex_at(pos):
+                return True
+        return super().key_pressed(key, modifiers)
 
     def delete_vertex_at(self, scene_pos: QPointF) -> bool:
         """右键删顶点。少于最低点数时拒绝（多边形 3，折线 2）。"""
