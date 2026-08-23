@@ -43,6 +43,7 @@ from .changes import (
     SelectionChanged,
 )
 from .document import SceneDocument
+from .panel_bridge import PanelBridge
 from .sorting import assign_content_z
 from .tools_builtin import MoveTool, PolygonEditTool, SelectTool
 from .tools_overlays import GroupBoxTool, PerspectiveAxisTool, group_bounds
@@ -96,6 +97,14 @@ class SceneEditorV2(QWidget):
         rv.addWidget(self._status)
         splitter.addWidget(right)
         splitter.setStretchFactor(1, 1)
+
+        # 复用老画布那 6657 行属性面板，**一行不改**。它的 staging 在新架构里
+        # 降级成"UI 局部编辑缓冲"——Document 永远不读它，编辑经 PanelBridge
+        # 变成命令。详见 panel_bridge 模块文档。
+        from ..scene_editor import ScenePropertyPanel
+        self._props = ScenePropertyPanel(model)
+        splitter.addWidget(self._props)
+        self._bridge: PanelBridge | None = None
         root.addWidget(splitter)
 
         self.refresh_scene_list()
@@ -136,6 +145,10 @@ class SceneEditorV2(QWidget):
         if self._doc is not None:
             self._doc.deleteLater()
         self._doc = SceneDocument(self._model, scene_id, self)
+        self._bridge = PanelBridge(self._props, self._doc, self)
+        # 桥恒返回 None，于是 write_target 恒指向模型 —— 新画布没有第二层真相。
+        self._doc.set_staging_provider(self._bridge)
+        self._props.load_scene_props(self._doc.scene(), clear_pending_edits=True)
         self._view = SceneView(self._doc, self._canvas_host)
         self._canvas_layout.addWidget(self._view)
         self._install_tools()
