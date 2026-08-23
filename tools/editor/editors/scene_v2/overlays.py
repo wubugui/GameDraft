@@ -41,6 +41,7 @@ class GroupBoxItem(OverlayItem):
         self._title = self._gid
         self._selected = False
         self._scale = 1.0
+        self._anchor: QPointF | None = None
 
     @property
     def gid(self) -> str:
@@ -85,12 +86,34 @@ class GroupBoxItem(OverlayItem):
         老画布试过三个位置才收敛到这儿，死法记在它的注释里：框心会把成员挡死、
         左上角斜外侧会盖住相邻组的框角、框内左上角在缩小的视图里会挡住本组成员。
         """
+        if self._anchor is not None:
+            # 作者自己摆过把手（`editor.anchor`）就用它。派生位置会压住成员时，
+            # 这是唯一的救济手段 —— 老画布注释里写明那个位置是为了躲开成员密集区
+            # 才反复调过三轮的。
+            return QPointF(self._anchor)
         if self._rect.isNull():
             return QPointF()
         r = HANDLE_PICK_PX / self._scale
         return QPointF(self._rect.left() + r, self._rect.top() - r * 1.6)
 
+    def set_anchor(self, anchor: QPointF | None) -> None:
+        """自定义把手位置；`None` = 回到派生位置。"""
+        self.prepareGeometryChange()
+        self._anchor = QPointF(anchor) if anchor is not None else None
+        self.update()
+
+    @property
+    def has_custom_anchor(self) -> bool:
+        return self._anchor is not None
+
     def boundingRect(self) -> QRectF:
+        if self._anchor is not None:
+            r = HANDLE_PICK_PX / self._scale
+            handle = QRectF(self._anchor.x() - r * 2, self._anchor.y() - r * 2,
+                            r * 4, r * 4)
+            if self._rect.isNull():
+                return handle
+            return self._rect.adjusted(-r * 2, -r * 3, r * 2, r * 2).united(handle)
         if self._rect.isNull():
             return QRectF()
         pad = self._pad() + HANDLE_PICK_PX / self._scale * 3.0

@@ -10,7 +10,7 @@ import copy
 from PySide6.QtCore import QPointF, QRectF, Qt
 
 from .changes import EntityProperty, EntityRef
-from .commands import build_change_fields_command
+from .commands import _MISSING, build_change_fields_command
 from .tools import _NUDGE_DIR, AbstractTool
 from .tools_transform import group_member_refs, translate_group
 
@@ -195,6 +195,7 @@ class GroupBoxTool(AbstractTool):
         self._drag_gid = ""
         #: 上一次整组微移作用的组（判断能不能并进同一条命令）
         self._nudge_gid = ""
+        self._anchor_mode = False
         self._origin: QPointF | None = None
         self._offset = (0.0, 0.0)
 
@@ -247,6 +248,10 @@ class GroupBoxTool(AbstractTool):
         self._drag_gid = gid
         self._origin = QPointF(scene_pos)
         self._offset = (0.0, 0.0)
+        # **Alt + 拖把手 = 挪把手**（`editor.anchor`），不是挪整组。
+        # 派生位置压住成员时这是唯一的救济手段。
+        self._anchor_mode = bool(
+            modifiers & Qt.KeyboardModifier.AltModifier) and box.hit_handle(scene_pos)
         return True
 
     def mouse_moved(self, scene_pos, buttons, modifiers) -> bool:
@@ -261,11 +266,33 @@ class GroupBoxTool(AbstractTool):
             return False
         gid = self._drag_gid
         dx, dy = self._offset
+        anchor_mode = self._anchor_mode
         self._drag_gid = ""
         self._origin = None
         self._offset = (0.0, 0.0)
+        self._anchor_mode = False
+        if anchor_mode:
+            return self.set_group_anchor(gid, scene_pos)
         translate_group(self._doc, gid, round(dx, 1), round(dy, 1))
         return True
+
+    def set_group_anchor(self, gid: str, pos: QPointF | None) -> bool:
+        """把手位置写进 `editor.anchor`；`pos` 为 None = 重置回派生位置。"""
+        ref = EntityRef("group", str(gid))
+        ent = self._doc.model_entity(ref)
+        if not isinstance(ent, dict):
+            return False
+        editor = dict(ent.get("editor") or {})
+        if pos is None:
+            editor.pop("anchor", None)
+        else:
+            editor["anchor"] = {"x": round(float(pos.x()), 1),
+                                "y": round(float(pos.y()), 1)}
+        value = editor if editor else _MISSING
+        return self._doc.push(build_change_fields_command(
+            self._doc, [ref], [{"editor": value}],
+            EntityProperty.GROUPING,
+            "重置分组把手" if pos is None else "挪动分组把手"))
 
     @property
     def drag_offset(self) -> tuple[float, float]:

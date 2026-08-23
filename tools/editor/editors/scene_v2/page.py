@@ -450,6 +450,7 @@ class SceneEditorV2(QWidget):
             ("delete_current_entity_requested", lambda: self.delete_selected()),
             ("group_delete_requested", self._on_group_delete),
             ("group_select_members_requested", self._on_group_select_members),
+            ("group_anchor_reset_requested", self._on_group_anchor_reset),
             ("group_translate_requested", self._on_group_translate),
             ("group_member_activated", self.select_entity),
             ("scene_directly_written", self._on_scene_directly_written),
@@ -533,6 +534,12 @@ class SceneEditorV2(QWidget):
                 if str((self._doc.entity(ref) or {}).get("group", "")) == str(gid)]
         if refs:
             self._doc.set_selection(refs)
+
+    def _on_group_anchor_reset(self, gid: str) -> None:
+        """「重置把手」：清掉 `editor.anchor`，回到派生位置。"""
+        tool = getattr(self, "group_box_tool", None)
+        if tool is not None:
+            tool.set_group_anchor(str(gid), None)
 
     def _on_group_translate(self, gid: str, dx: float, dy: float) -> None:
         if self._doc is not None:
@@ -898,6 +905,19 @@ class SceneEditorV2(QWidget):
                         if str((self._doc.entity(ref) or {}).get("group", "")) == gid)
             rows.append((gid, rect, f"[组] {label or gid} ×{count}"))
         self._view.sync_group_boxes(rows)
+        # 自定义把手位置（`editor.anchor`）—— 老画布里摆好的位置在新画布上要生效
+        for gid, box in self._view.group_boxes.items():
+            ent = self._doc.model_entity(EntityRef("group", gid)) or {}
+            editor = ent.get("editor") if isinstance(ent.get("editor"), dict) else {}
+            anchor = editor.get("anchor")
+            if isinstance(anchor, dict):
+                try:
+                    box.set_anchor(QPointF(float(anchor.get("x", 0)),
+                                           float(anchor.get("y", 0))))
+                    continue
+                except (TypeError, ValueError):
+                    pass
+            box.set_anchor(None)
         self.group_box_tool.set_boxes(self._view.group_boxes)
 
     def refresh_perspective_axis(self) -> None:

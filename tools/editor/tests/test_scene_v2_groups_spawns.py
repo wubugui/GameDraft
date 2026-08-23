@@ -146,6 +146,42 @@ class GroupIsAnEditableThingTests(_Base):
         self.assertEqual(found, ["h_free"], f"过滤没生效：{found}")
 
 
+class GroupAnchorTests(_Base):
+    """组把手位置（`editor.anchor`）—— 派生位置压住成员时唯一的救济手段。"""
+
+    def test_existing_anchor_is_honoured(self) -> None:
+        """老画布里摆好的把手位置在新画布上必须生效，否则把手会跑到别处。"""
+        self.scene()["entityGroups"][0]["editor"] = {
+            "anchor": {"x": 111, "y": 222}}
+        self.page.refresh_group_boxes()
+        box = self.view.group_boxes["g1"]
+        self.assertTrue(box.has_custom_anchor)
+        self.assertEqual((box.handle_center().x(), box.handle_center().y()),
+                         (111.0, 222.0))
+
+    def test_setting_and_resetting_the_anchor(self) -> None:
+        tool = self.page.group_box_tool
+        self.assertTrue(tool.set_group_anchor("g1", QPointF(400, 500)))
+        ent = self.doc.model_entity(EntityRef("group", "g1"))
+        self.assertEqual(ent["editor"]["anchor"], {"x": 400.0, "y": 500.0})
+        self.assertTrue(tool.set_group_anchor("g1", None))
+        ent = self.doc.model_entity(EntityRef("group", "g1"))
+        self.assertNotIn("anchor", ent.get("editor") or {},
+                         "重置没有把 anchor 清掉")
+
+    def test_reset_signal_is_connected(self) -> None:
+        self.page.group_box_tool.set_group_anchor("g1", QPointF(400, 500))
+        self.page._props.group_anchor_reset_requested.emit("g1")
+        ent = self.doc.model_entity(EntityRef("group", "g1"))
+        self.assertNotIn("anchor", ent.get("editor") or {})
+
+    def test_anchor_change_is_undoable(self) -> None:
+        self.page.group_box_tool.set_group_anchor("g1", QPointF(400, 500))
+        self.page.editor_undo()
+        ent = self.doc.model_entity(EntityRef("group", "g1"))
+        self.assertNotIn("anchor", ent.get("editor") or {})
+
+
 class SpawnIsEditableTests(_Base):
     """出生点看得见、拖得动，也必须建得了、删得掉、改得了名。"""
 

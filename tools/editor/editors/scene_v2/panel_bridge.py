@@ -260,6 +260,11 @@ class PanelBridge(QObject):
                 loader(ent)
         finally:
             self._syncing = False
+        if ref != self._loaded:
+            # **换了编辑对象 = 撤销分界**。不断开的话"改 A、切到 B、再切回 A 改一次"
+            # 会被并成一条：撤销一次直接退回最初值,中间那个想留下的值既撤不到、
+            # redo 也只能跳到最后一次。选择切换在老画布是天然的分界。
+            self._gesture_open = False
         self._loaded = ref
 
     def _show_multi(self, count: int) -> None:
