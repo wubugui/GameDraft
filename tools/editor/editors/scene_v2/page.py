@@ -165,6 +165,7 @@ class SceneEditorV2(QWidget):
         splitter.addWidget(self._props)
         self._bridge: PanelBridge | None = None
         self._pending_fit = False
+        self._loaded_scene_obj = None
         self._tool_actions: dict = {}
         # NPC 精灵的动画驱动。**宿主持有** —— 解析 anim.json、读图集、跑定时器
         # 都是读资源，视图那层不做这件事。
@@ -246,6 +247,8 @@ class SceneEditorV2(QWidget):
         # 还是 None，于是这一页上的每一次编辑都在 `commit_panel_edits` 第一个
         # 分支早退 —— 界面看着能改，改完一个字节都不进模型。
         self._bridge.sync_from_selection()
+        #: 装载那一刻的场景 dict 对象。重投影时靠它判断"是不是被换掉了"。
+        self._loaded_scene_obj = self._doc.scene()
         self._view = SceneView(self._doc, self._canvas_host)
         self._canvas_layout.addWidget(self._view)
         self._view.set_texture_provider(self._load_texture)
@@ -1067,16 +1070,55 @@ class SceneEditorV2(QWidget):
 
         必须**保住当前选择**：不保的话，Task 编排替换场景后用户的选中态丢失，
         属性面板会掉回场景级，看着像"我刚才在编辑的东西没了"。
+
+        **场景 dict 还是同一个对象时不重建。** 主窗口每次切页都调本方法，而
+        `load_scene` 会新建 Document 与 View —— 于是每查一次别的页就丢一次
+        视口位置（逐个摆位时要重新找回刚才在编辑的那块区域），**撤销历史也
+        一起没**（在用户完全没意识到的时机被清空，误操作再也退不回去）。
+        老画布在同样的路径上是保住的，那属于实打实的倒退。
+
+        判据是**对象身份**而不是内容比对：别的编辑器"替换场景域"时换的就是
+        dict 对象本身（Task 编排、导入、切工程）；只是改了里面的字段则不必重建，
+        重投影一遍就够。
         """
         sid = self.current_scene_id
-        selection = tuple(self._doc.selection) if self._doc else ()
         self.refresh_scene_list()
-        if sid and sid in self._model.scenes:
-            self.load_scene(sid)
-            if self._doc is not None and selection:
-                alive = [r for r in selection if self._doc.model_entity(r) is not None]
-                if alive:
-                    self._doc.set_selection(alive)
+        if not sid or sid not in self._model.scenes:
+            return
+        # 与**装载那一刻**记下的对象比。不能拿 `self._doc.scene()` 比 ——
+        # 它每次都现读 `model.scenes[sid]`，于是永远等于当前对象，"被换掉了"
+        # 这件事就再也检测不到，该重建的一趟被静默跳过。
+        same_object = (self._doc is not None
+                       and self._loaded_scene_obj is self._model.scenes[sid])
+        if same_object:
+            self._reproject_in_place()
+            return
+        selection = tuple(self._doc.selection) if self._doc else ()
+        self.load_scene(sid)
+        if self._doc is not None and selection:
+            alive = [r for r in selection if self._doc.model_entity(r) is not None]
+            if alive:
+                self._doc.set_selection(alive)
+
+    def _reproject_in_place(self) -> None:
+        """按现有 Document 重画一遍：视口、撤销栈、选择全部保住。"""
+        if self._doc is None or self._view is None:
+            return
+        # **先把已经不存在的实体从选择集里摘掉。** 别的编辑器可能删过东西；
+        # 留着悬垂 ref 会让属性面板继续显示一个已经不存在的实体，
+        # 用户在那张表单上打的字既不写这个也不写那个。
+        self._doc._prune_selection()
+        self._content_z_key = None      # 图元没换，但排序键可能已经变了
+        self._view.rebuild_all()
+        self._refresh_background()
+        self._apply_view_axes()
+        self.resort_content_z()
+        self.refresh_group_boxes()
+        self.refresh_perspective_axis()
+        self.refresh_scene_geometry()
+        self.refresh_entity_tree()
+        if self._bridge is not None:
+            self._bridge.sync_from_selection()
 
     def editor_undo(self) -> None:
         if self._doc is not None:

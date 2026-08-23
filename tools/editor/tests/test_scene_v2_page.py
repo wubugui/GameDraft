@@ -14,7 +14,8 @@ from PySide6.QtCore import QPointF, Qt
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
-from tools.editor.editors.scene_v2.changes import EntityRef
+from tools.editor.editors.scene_v2.changes import EntityProperty, EntityRef
+from tools.editor.editors.scene_v2.commands import build_change_fields_command
 from tools.editor.editors.scene_v2.page import SceneEditorV2
 from tools.editor.project_model import ProjectModel
 from tools.editor.shared.scene_view_filters import ViewAxes
@@ -195,15 +196,44 @@ class ViewAxesWiringTests(_Base):
 class ReloadChurnTests(_Base):
     """主窗口每次切页都调 `reload_from_model()` —— 它必须只装载**一次**。"""
 
-    def test_reload_loads_the_scene_exactly_once(self) -> None:
+    def test_reload_does_not_rebuild_when_the_scene_object_is_unchanged(self) -> None:
+        """场景 dict 还是同一个对象时，重投影不该重建 Document/View。
+
+        重建的代价是**视口位置与撤销历史一起没** —— 而主窗口每次切页都会调
+        `reload_from_model`：逐个摆位时每查一次别的页就丢一次现场。
+        """
         calls: list[str] = []
         real = self.page.load_scene
         self.page.load_scene = lambda sid, _r=real, _c=calls: (_c.append(sid), _r(sid))[1]
+        doc_before = self.page.document
         try:
             self.page.reload_from_model()
         finally:
             del self.page.load_scene
-        self.assertEqual(len(calls), 1, f"装载了 {len(calls)} 次：{calls}")
+        self.assertEqual(calls, [], f"同一份场景还被重新装载了：{calls}")
+        self.assertIs(self.page.document, doc_before, "Document 被换掉了")
+
+    def test_reload_keeps_the_undo_history(self) -> None:
+        ref = EntityRef("hotspot", "h1")
+        self.page.document.set_selection([ref])
+        self.page.document.push(build_change_fields_command(
+            self.page.document, [ref], [{"x": 321}],
+            EntityProperty.POSITION, "移动"))
+        self.assertEqual(self.page.document.undo_stack.count(), 1)
+        self.page.reload_from_model()
+        self.assertEqual(self.page.document.undo_stack.count(), 1,
+                         "切页把撤销历史清掉了 —— 误操作再也退不回去")
+        self.page.editor_undo()
+        self.assertEqual(
+            self.page.document.model_entity(ref)["x"], 100)
+
+    def test_reload_rebuilds_when_the_scene_object_was_replaced(self) -> None:
+        """别的编辑器**换掉了场景 dict 对象**（Task 编排/导入）时必须重建。"""
+        doc_before = self.page.document
+        self.model.scenes[_SCENE] = dict(self.model.scenes[_SCENE])
+        self.page.reload_from_model()
+        self.assertIsNot(self.page.document, doc_before,
+                         "场景域被替换了却还在用旧 Document")
 
     def test_reload_keeps_the_document_usable(self) -> None:
         self.page.document.set_selection([EntityRef("hotspot", "h1")])
