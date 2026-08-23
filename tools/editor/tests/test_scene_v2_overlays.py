@@ -83,11 +83,38 @@ class GroupBoxTests(_Base):
 
     def test_bounds_cover_every_member_not_just_the_last(self) -> None:
         """点实体的矩形是零尺寸，`QRectF.united` 会把它当 null 丢掉 ——
-        直接对全部点取 min/max，否则一组点实体的包围盒会塌成最后一个成员。"""
+        直接对全部点取 min/max，否则一组点实体的包围盒会塌成最后一个成员。
+
+        框还要**向外留白**（`GROUP_BOX_PAD`）：贴着成员画的话框线正好压在最外侧
+        成员脚下，看起来没框住，而且框边的命中带会吃掉那几个成员的点击。
+        """
+        from tools.editor.editors.scene_v2.tools_overlays import GROUP_BOX_PAD
+
         rect = group_bounds(self.page.document, "夜巡")
         self.assertIsNotNone(rect)
-        self.assertEqual((rect.left(), rect.top()), (200.0, 200.0))
-        self.assertEqual((rect.right(), rect.bottom()), (400.0, 300.0))
+        pad = GROUP_BOX_PAD
+        self.assertEqual((rect.left(), rect.top()), (200.0 - pad, 200.0 - pad))
+        self.assertEqual((rect.right(), rect.bottom()), (400.0 + pad, 300.0 + pad))
+        self.assertGreater(pad, 0.0, "没有留白 = 框线压在成员身上")
+
+    def test_single_member_group_still_has_a_visible_box(self) -> None:
+        """单成员（甚至零尺寸）的组也要有看得见、点得中的框。
+
+        零尺寸矩形会让 `paint` 直接早退 —— 那个组在画布上既看不见也选不中，
+        整组位移/微移全部够不到，用户会以为分组丢了。
+        """
+        sc = self.page.document.scene()
+        for ent in sc.get("hotspots") or []:
+            ent.pop("group", None)
+        for ent in sc.get("npcs") or []:
+            ent.pop("group", None)
+        for ent in sc.get("zones") or []:
+            ent.pop("group", None)
+        (sc.get("hotspots") or [{}])[0]["group"] = "夜巡"
+        rect = group_bounds(self.page.document, "夜巡")
+        self.assertIsNotNone(rect, "单成员组算不出包围盒")
+        self.assertGreater(rect.width(), 0.0, "单成员组的框是零尺寸 —— 画不出来")
+        self.assertGreater(rect.height(), 0.0)
 
     def test_edge_hits_but_interior_passes_through(self) -> None:
         """只有边线带算命中 —— 否则大框会把里面的一切都吞掉。"""

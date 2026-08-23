@@ -22,12 +22,14 @@ from __future__ import annotations
 import json
 
 from PySide6.QtCore import QPointF, Qt, QTimer
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QActionGroup, QPixmap
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QListWidget,
+    QComboBox,
     QListWidgetItem,
+    QMenu,
     QSplitter,
     QToolBar,
     QTreeWidget,
@@ -61,7 +63,12 @@ from .panel_bridge import PanelBridge
 from .sorting import assign_content_z
 from .tools_builtin import MoveTool, PolygonEditTool, SelectTool
 from .tools_overlays import GroupBoxTool, PerspectiveAxisTool, group_bounds
-from .tools_structure import CreateTool, delete_selected, duplicate_selected
+from .tools_structure import (
+    CreateTool,
+    create_entity_at,
+    delete_selected,
+    duplicate_selected,
+)
 from .tools_transform import GroupMoveTool, TransformTool
 from .view import SceneView
 
@@ -110,7 +117,9 @@ class SceneEditorV2(QWidget):
         rv = QVBoxLayout(right)
         rv.setContentsMargins(0, 0, 0, 0)
         self._toolbar = QToolBar()
+        self._axis_bar = QToolBar()
         rv.addWidget(self._toolbar)
+        rv.addWidget(self._axis_bar)
         self._canvas_host = QWidget()
         self._canvas_layout = QVBoxLayout(self._canvas_host)
         self._canvas_layout.setContentsMargins(0, 0, 0, 0)
@@ -127,6 +136,8 @@ class SceneEditorV2(QWidget):
         self._props = ScenePropertyPanel(model)
         splitter.addWidget(self._props)
         self._bridge: PanelBridge | None = None
+        self._pending_fit = False
+        self._tool_actions: dict = {}
         # NPC 精灵的动画驱动。**宿主持有** —— 解析 anim.json、读图集、跑定时器
         # 都是读资源，视图那层不做这件事。
         self._anim_bank = NpcAnimBank(model, self._public_asset_path)
@@ -136,6 +147,8 @@ class SceneEditorV2(QWidget):
         self._anim_timer.timeout.connect(self._tick_npc_anims)
         root.addWidget(splitter)
 
+        self._build_axis_bar()
+        self.refresh_axis_choices()
         self.refresh_scene_list()
 
     # ---- 场景装载 ----------------------------------------------------------
@@ -216,6 +229,12 @@ class SceneEditorV2(QWidget):
         self._apply_view_axes()
         self._doc.changed.connect(self._on_doc_changed)
         self._view.content_resort_requested.connect(self.resort_content_z)
+        self._view.context_menu_requested.connect(self._show_canvas_menu)
+        # **fit 要等 Qt 把 view 真正布局出来。** 刚 addWidget 的 view 视口还是
+        # 98x28 之类的占位尺寸，此刻 fit 出来的缩放是正确值的 4~6%：每开一个场景
+        # 都要 Ctrl+滚轮摇二十格才能看清。老画布为此专门排了 0/40/120/240ms 四次
+        # 重试；这里改成"视口第一次拿到像样尺寸时再 fit"，语义更直接。
+        self._pending_fit = True
         self._view.fit_scene()
         self._sync_scene_row(scene_id)
         self.resort_content_z()
@@ -280,6 +299,16 @@ class SceneEditorV2(QWidget):
         if self._anim_bank.advance(_ANIM_TICK_MS / 1000.0):
             self._view.refresh_sprite_frames()
 
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt 接口
+        """视口第一次拿到像样尺寸时补做那次 fit（见 `load_scene` 里的注释）。"""
+        super().resizeEvent(event)
+        if not getattr(self, "_pending_fit", False) or self._view is None:
+            return
+        vp = self._view.viewport()
+        if vp.width() > 200 and vp.height() > 150:
+            self._pending_fit = False
+            self._view.fit_scene()
+
     def hideEvent(self, event) -> None:  # noqa: N802 - Qt 接口
         self._anim_timer.stop()
         super().hideEvent(event)
@@ -302,33 +331,6 @@ class SceneEditorV2(QWidget):
         if size is None:
             return None
         return (size[0], size[1], "")
-
-    def _npc_sprite_metrics_legacy(self, npc: dict):
-        anim_id = str(self._model.character_field(npc, "animFile") or "").strip()
-        if not anim_id:
-            return None
-        cached = self._anim_cache.get(anim_id)
-        if cached is not None:
-            return cached or None
-        path = self._public_asset_path(anim_id)
-        if path is None or not path.is_file():
-            self._anim_cache[anim_id] = ()
-            return None
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            self._anim_cache[anim_id] = ()
-            return None
-        pair = resolved_anim_world_pair(data, self._model, anim_manifest_url=anim_id)
-        sheet = str(data.get("spritesheet", "") or "").strip()
-        if not pair or not sheet:
-            self._anim_cache[anim_id] = ()
-            return None
-        sheet_path = spritesheet_public_path(self._model, sheet, anim_id)
-        url = str(sheet_path) if sheet_path is not None else ""
-        out = (float(pair[0]), float(pair[1]), url)
-        self._anim_cache[anim_id] = out
-        return out
 
     def refresh_scene_geometry(self) -> None:
         """场景级几何（光环境曲线）。用 scene ref 走与实体几何**同一套**
@@ -362,7 +364,11 @@ class SceneEditorV2(QWidget):
         self.move_tool = view.tools.register(MoveTool(doc, r, view))
         self.polygon_tool = view.tools.register(PolygonEditTool(doc, r, view))
         self.transform_tool = view.tools.register(TransformTool(doc, r, view))
-        self.group_tool = view.tools.register(GroupMoveTool(doc, r, view))
+        # `GroupMoveTool` **不进工具栏**：它没有 mouse_pressed，手势唯一入口是
+        # `begin()`，切过去之后拖组框/点实体/按方向键全都没反应 —— 工具栏上一个
+        # 名字最像"我想干的事"的按钮却让画布装死。整组拖动本来就在 `GroupBoxTool`
+        # 里（点框选中、再拖就是整组走），这里只留它做程序化位移入口。
+        self.group_tool = GroupMoveTool(doc, r, view, self)
         self.create_hotspot_tool = view.tools.register(
             CreateTool(doc, r, "hotspot", view))
         self.create_npc_tool = view.tools.register(CreateTool(doc, r, "npc", view))
@@ -370,14 +376,138 @@ class SceneEditorV2(QWidget):
         self.persp_tool = view.tools.register(
             PerspectiveAxisTool(doc, r, view.perspective_axis))
         self.group_box_tool = view.tools.register(GroupBoxTool(doc, r, view))
+        # **"选择"工具兼管 gizmo 手柄与分组框** —— 回到老画布的无模式手感：
+        # 选中一个实体就出手柄、点组框边线就选中组，不必先切工具。
+        self.select_tool.add_delegate(self.transform_tool)
+        self.select_tool.add_delegate(self.move_tool)
+        # 分组框排在**实体点选之后**：框边经过最外侧成员，排前面会吃掉它们的点击
+        self.select_tool.add_delegate(self.group_box_tool, after_entities=True)
         view.tools.status_text_changed.connect(self._status.setText)
         self._doc.notice.connect(self._status.setText)
+        self._rebuild_toolbar(view)
+        view.tools.select(self.select_tool)
+
+    def _build_axis_bar(self) -> None:
+        """三条视图轴的控件：过场编辑视图 / 位面视图 / 时段视图。
+
+        判定层（`shared/scene_view_filters`）与落显隐层（`view.set_presence_filter`）
+        一直是好的，缺的纯粹是**控件**：`set_view_axes` 在全仓只有测试在调，
+        于是整套"按位面/时段分层预览"在新画布上不可达 —— 多位面/多时段场景里
+        实体互相叠死，点选与摆位全靠猜。
+        """
+        self._axis_combos = {}
+        for key, label in (("cutscene", "过场"), ("plane", "位面"), ("phase", "时段")):
+            self._axis_bar.addWidget(QLabel(f" {label} "))
+            combo = QComboBox()
+            combo.setMinimumWidth(120)
+            combo.currentIndexChanged.connect(
+                lambda _i, k=key: self._on_axis_combo_changed(k))
+            self._axis_combos[key] = combo
+            self._axis_bar.addWidget(combo)
+
+    def refresh_axis_choices(self) -> None:
+        """按当前工程重填三个下拉的候选。别处新建位面/时段后要调它。"""
+        combos = getattr(self, "_axis_combos", None)
+        if not combos:
+            return
+        rows = {
+            "cutscene": [("（不加载：隐藏仅过场实体）", "")]
+            + [(cid, cid) for cid, _ in self._model.all_cutscene_ids()],
+            "plane": [("（全部位面）", "")]
+            + [(pid, pid) for pid, _ in self._model.all_plane_ids()],
+            "phase": [("（全部时段）", "")]
+            + [(pid, pid) for pid, _ in self._model.all_time_phase_ids()],
+        }
+        for key, combo in combos.items():
+            prev = combo.currentData()
+            combo.blockSignals(True)
+            combo.clear()
+            for text, value in rows[key]:
+                combo.addItem(text, value)
+            idx = combo.findData(prev)
+            combo.setCurrentIndex(idx if idx >= 0 else 0)
+            combo.blockSignals(False)
+        self._on_axis_combo_changed(None)
+
+    def _on_axis_combo_changed(self, _key) -> None:
+        combos = getattr(self, "_axis_combos", None)
+        if not combos:
+            return
+        plane = str(combos["plane"].currentData() or "")
+        self.set_view_axes(ViewAxes(
+            cutscene_id=str(combos["cutscene"].currentData() or ""),
+            plane_id=plane or None,
+            # "独立世界型"位面里缺省实体不存在 —— 口径与运行时一致
+            plane_exclusive=bool(
+                plane and self._model.plane_membership(plane) == "exclusive"),
+            phase_id=str(combos["phase"].currentData() or "") or None,
+            npc_default_phases=tuple(self._model.daylight_phase_ids()),
+        ))
+
+    def _rebuild_toolbar(self, view) -> None:
+        """工具按钮 + 视图动作。
+
+        **按钮必须互斥且跟着当前工具走**：v2 里"现在是什么工具"决定了按下鼠标
+        会发生什么，勾选态与真实模式对不上时，用户无从判断自己在哪个模式。
+        此前既没有 QActionGroup、也没在 `tool_changed` 时同步，于是点过两个工具
+        两个按钮都亮着，而启动时活着的那个反而不亮。
+        """
         self._toolbar.clear()
+        group = QActionGroup(self._toolbar)
+        group.setExclusive(True)
+        self._tool_actions = {}
         for tool in view.tools.tools:
             act = self._toolbar.addAction(tool.display_name)
             act.setCheckable(True)
+            group.addAction(act)
             act.triggered.connect(lambda _c, t=tool: view.tools.select(t))
-        view.tools.select(self.select_tool)
+            self._tool_actions[tool.tool_id] = act
+        view.tools.tool_changed.connect(self._sync_tool_actions)
+        self._toolbar.addSeparator()
+        # 视图动作：缩放 / 适配 / 撤销 / 重做。老画布工具栏上都有；
+        # 没有"适配"时视口一旦跑偏只能靠滚轮一格一格摇回来。
+        for text, slot in (("−", lambda: view.zoom_by(1 / 1.15)),
+                           ("+", lambda: view.zoom_by(1.15)),
+                           ("适配", self.fit_view),
+                           ("撤销", self.editor_undo),
+                           ("重做", self.editor_redo)):
+            act = self._toolbar.addAction(text)
+            act.triggered.connect(slot)
+
+    def _sync_tool_actions(self, tool) -> None:
+        act = self._tool_actions.get(getattr(tool, "tool_id", ""))
+        if act is not None and not act.isChecked():
+            act.setChecked(True)
+
+    def _show_canvas_menu(self, world_pos, global_pos) -> None:
+        """画布右键菜单：**在落点就地新建**，外加对选中项的删除/复制。
+
+        老画布最常用的建实体方式就是"在想要的位置右键"。v2 起初一个 QMenu 都
+        没有，只能先切到某个"新建"工具再点 —— 而三个新建工具当时还重名。
+        """
+        if self._doc is None:
+            return
+        menu = QMenu(self._view)
+        for kind, label in (("hotspot", "在此新建热点"),
+                            ("npc", "在此新建 NPC"),
+                            ("zone", "在此新建区域")):
+            act = menu.addAction(label)
+            act.triggered.connect(
+                lambda _c, k=kind, p=QPointF(world_pos): create_entity_at(
+                    self._doc, k, p))
+        sel = self._doc.selection
+        if sel:
+            menu.addSeparator()
+            act_dup = menu.addAction(f"复制选中（{len(sel)}）")
+            act_dup.triggered.connect(self.duplicate_selected)
+            act_del = menu.addAction(f"删除选中（{len(sel)}）")
+            act_del.triggered.connect(self.delete_selected)
+        menu.exec(global_pos)
+
+    def fit_view(self) -> None:
+        """把整个场景适配到视口。"""
+        if self._view is not None:
+            self._view.fit_scene()
 
     # ---- 视图轴与 z 序 -----------------------------------------------------
 
@@ -525,6 +655,54 @@ class SceneEditorV2(QWidget):
         if item is not None and self._view is not None:
             self._view.centerOn(item)
         return True
+
+    # ---- 跨页跳转落点（主窗口按这些方法名找页）------------------------------
+    #
+    # `scene_page_registry.NAV_TARGET` 承诺"改一个常量就能把跳转整体切到新画布"。
+    # 这几个方法缺一个，切过去之后那一类跳转就**静默失效**：页切了、定位没做，
+    # 用户点搜索结果跳过来发现是空的。
+
+    def select_scene_by_id(self, scene_id: str) -> bool:
+        return self.load_scene(str(scene_id or ""))
+
+    def select_hotspot_by_id(self, scene_id: str, entity_id: str) -> bool:
+        return self._select_in_scene(scene_id, "hotspot", entity_id)
+
+    def select_npc_by_id(self, scene_id: str, entity_id: str) -> bool:
+        return self._select_in_scene(scene_id, "npc", entity_id)
+
+    def select_zone_by_id(self, scene_id: str, entity_id: str) -> bool:
+        return self._select_in_scene(scene_id, "zone", entity_id)
+
+    def _select_in_scene(self, scene_id: str, kind: str, entity_id: str) -> bool:
+        sid = str(scene_id or "").strip()
+        if sid and sid != self.current_scene_id and not self.load_scene(sid):
+            return False
+        return self.select_entity(kind, str(entity_id or ""))
+
+    def activate_plane_view(self, plane_id: str) -> bool:
+        """外部跳转入口（位面面板 hub）：打开指定位面的位面视图。
+
+        未知 / 空 id 回落"全部位面"。缺了它，位面页那种"带位面的跳转"
+        在新画布上无从落地。
+        """
+        combo = getattr(self, "_axis_combos", {}).get("plane")
+        if combo is None:
+            return False
+        idx = combo.findData(str(plane_id or "").strip())
+        combo.setCurrentIndex(idx if idx >= 0 else 0)
+        return True
+
+    def reload_refs_from_model(self) -> None:
+        """别处新建了物品/滤镜/遭遇/BGM/立绘/动画包之后刷新引用候选。
+
+        缺了这个钩子，「要重启编辑器才看得到刚建的东西」那一族老 bug 会在新画布
+        上原样复活 —— 面板下拉里永远看不见新引用。
+        """
+        reload = getattr(self._props, "reload_refs_from_model", None)
+        if callable(reload):
+            reload()
+        self.refresh_axis_choices()
 
     # ---- 主窗口鸭子协议钩子 ------------------------------------------------
 

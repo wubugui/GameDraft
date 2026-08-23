@@ -48,6 +48,35 @@ class SelectTool(AbstractTool):
         self._band_origin: QPointF | None = None
         self._band_rect: QRectF | None = None
         self._last_pick_pos: tuple[float, float] | None = None
+        #: 手势委派链（按顺序问，谁接住就归谁）。见 `_delegate`。
+        #: 拆成"实体点选之前"与"之后"两段 —— 顺序就是优先级。
+        self._delegates: list = []
+        self._delegates_post: list = []
+        self._active_delegate = None
+
+    def add_delegate(self, tool, *, after_entities: bool = False) -> None:
+        """把另一个工具挂进"选择"工具的手势链。
+
+        老画布**没有模式**：gizmo 手柄、分组框、实体，在同一次按下里按优先级
+        竞争。v2 把它们拆成并列的工具之后，"选中→直接转"变成"切工具→拖→再切
+        回来"，而且进了变换模式点实体既不能选也不能移，用户会以为画布卡死。
+        这条链把无模式手感接回来：**先 gizmo 手柄、再分组框、最后实体**。
+        """
+        chain = self._delegates_post if after_entities else self._delegates
+        if tool is not None and tool not in chain:
+            chain.append(tool)
+
+    def _delegate(self, name: str, *args, chain=None) -> bool:
+        for tool in (self._delegates if chain is None else chain):
+            fn = getattr(tool, name, None)
+            if callable(fn) and fn(*args):
+                self._active_delegate = tool
+                return True
+        return False
+
+    @property
+    def gizmo_positions_source(self):
+        return self._delegates
 
     # ---- 命中 --------------------------------------------------------------
 
@@ -74,7 +103,18 @@ class SelectTool(AbstractTool):
     def mouse_pressed(self, scene_pos, button, modifiers) -> bool:
         if button != Qt.MouseButton.LeftButton:
             return False
+        self._active_delegate = None
+        # 先问"实体之前"那一段（gizmo 手柄、拖动已选中的实体）
+        if self._delegate("mouse_pressed", scene_pos, button, modifiers):
+            return True
         hits = self._hits(scene_pos)
+        if not hits:
+            # 落点上没有实体，再问"实体之后"那一段（分组框边线）。
+            # **必须排在实体之后**：分组框的边正好经过最外侧成员，排在前面就会把
+            # 那几个成员的点击整个吃掉 —— 点谁都变成"选中了这个组"。
+            if self._delegate("mouse_pressed", scene_pos, button, modifiers,
+                              chain=self._delegates_post):
+                return True
         if not hits:
             self._band_origin = QPointF(scene_pos)
             self._band_rect = None
@@ -106,12 +146,19 @@ class SelectTool(AbstractTool):
         return True
 
     def mouse_moved(self, scene_pos, buttons, modifiers) -> bool:
+        if self._active_delegate is not None:
+            return bool(self._active_delegate.mouse_moved(
+                scene_pos, buttons, modifiers))
         if self._band_origin is None or not (buttons & Qt.MouseButton.LeftButton):
             return False
         self._band_rect = QRectF(self._band_origin, scene_pos).normalized()
         return True
 
     def mouse_released(self, scene_pos, button, modifiers) -> bool:
+        if self._active_delegate is not None:
+            tool = self._active_delegate
+            self._active_delegate = None
+            return bool(tool.mouse_released(scene_pos, button, modifiers))
         if self._band_origin is None:
             return False
         rect = self._band_rect
@@ -133,11 +180,44 @@ class SelectTool(AbstractTool):
         return True
 
     def cancel_gesture(self) -> bool:
+        if self._active_delegate is not None:
+            tool = self._active_delegate
+            self._active_delegate = None
+            tool.cancel_gesture()
+            return True
         if self._band_origin is None:
             return False
         self._band_origin = None
         self._band_rect = None
         return True
+
+    def gizmo_positions(self) -> dict:
+        """把委派链里那个能画 gizmo 的工具的手柄透出来 —— 于是"选中即出手柄"。"""
+        for tool in self._delegates + self._delegates_post:
+            fn = getattr(tool, "gizmo_positions", None)
+            if callable(fn):
+                got = fn()
+                if got:
+                    return got
+        return {}
+
+    @property
+    def transform_preview(self):
+        for tool in self._delegates + self._delegates_post:
+            got = getattr(tool, "transform_preview", None)
+            if got is not None:
+                return got
+        return None
+
+    @property
+    def drag_offset(self) -> tuple[float, float]:
+        tool = self._active_delegate
+        return getattr(tool, "drag_offset", (0.0, 0.0)) if tool else (0.0, 0.0)
+
+    @property
+    def dragging_refs(self) -> tuple:
+        tool = self._active_delegate
+        return getattr(tool, "dragging_refs", ()) if tool else ()
 
     @property
     def band_rect(self) -> QRectF | None:
@@ -204,6 +284,15 @@ class MoveTool(AbstractTool):
     def mouse_pressed(self, scene_pos, button, modifiers) -> bool:
         if button != Qt.MouseButton.LeftButton or not self._doc.selection:
             return False
+        # **必须按在选中的东西上才起拖。** 不做命中判定的话，在画布任意空白处
+        # （或另一个实体上）按下拖动，挪走的都是"之前选中的那个" —— 它可能在
+        # 视口外，用户只看到"我拖的这个没动"，实际另一个实体的坐标已经被改并
+        # 写进模型，很可能存盘后才发现。顺带这也让"点空白取消选中"重新成为可能
+        # （此前 press 恒被吃掉）。
+        if self._view is not None:
+            hits = {it.ref for it in self.hits_at(scene_pos, self._view.entity_items())}
+            if not hits & set(self._doc.selection):
+                return False
         movable: dict[EntityRef, tuple[float, float]] = {}
         polys: dict[EntityRef, list[tuple[float, float]]] = {}
         for ref in self._doc.selection:

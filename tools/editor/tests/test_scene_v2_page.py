@@ -72,9 +72,31 @@ class PageAssemblyTests(_Base):
 
     def test_every_tool_is_registered_and_one_is_active(self) -> None:
         ids = {t.tool_id for t in self.page.view.tools.tools}
+        # `group_move` **刻意不进工具栏**：它没有 mouse_pressed，切过去画布装死。
+        # 整组拖动在 `group_box` 里（点框选中、再拖就是整组走）。
         self.assertTrue(
-            {"select", "move", "polygon", "transform", "group_move", "create"} <= ids)
+            {"select", "move", "polygon", "transform", "group_box",
+             "create_hotspot", "create_npc", "create_zone"} <= ids,
+            f"少了工具：{ids}")
+        self.assertNotIn("group_move", ids, "死按钮又回到工具栏上了")
         self.assertIsNotNone(self.page.view.tools.current)
+
+    def test_toolbar_checkstate_follows_the_active_tool(self) -> None:
+        """勾选态必须互斥且跟着当前工具走 —— v2 里"现在是哪个工具"决定了按下
+        鼠标会发生什么，对不上时用户无从判断自己在哪个模式。"""
+        checked = [tid for tid, act in self.page._tool_actions.items()
+                   if act.isChecked()]
+        self.assertEqual(checked, ["select"], f"启动时勾选态不对：{checked}")
+        self.page.view.tools.select(self.page.polygon_tool)
+        checked = [tid for tid, act in self.page._tool_actions.items()
+                   if act.isChecked()]
+        self.assertEqual(checked, ["polygon"], f"切工具后勾选态不对：{checked}")
+
+    def test_create_tools_say_what_they_create(self) -> None:
+        names = {t.tool_id: t.display_name for t in self.page.view.tools.tools
+                 if t.tool_id.startswith("create")}
+        self.assertEqual(len(set(names.values())), 3,
+                         f"三个新建工具重名，只能靠试点来挑：{names}")
 
     def test_items_exist_for_loaded_entities(self) -> None:
         self.assertIsNotNone(

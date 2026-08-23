@@ -100,11 +100,17 @@ class CreateTool(AbstractTool):
     tool_id = "create"
     display_name = "新建"
 
+    #: 各族在工具栏上的名字。三个工具都叫"新建"的话用户只能靠猜或试点来挑
+    #: 要建的实体类型（建错了还得撤销）。
+    KIND_LABELS = {"hotspot": "新建热点", "npc": "新建 NPC", "zone": "新建区域"}
+
     def __init__(self, document, renderer, kind: str = "hotspot",
                  view=None, parent=None) -> None:
         super().__init__(document, renderer, parent)
         self._view = view
         self.entity_kind = kind
+        self.tool_id = f"create_{kind}"
+        self.display_name = self.KIND_LABELS.get(kind, f"新建 {kind}")
 
     @property
     def status_hint(self) -> str:

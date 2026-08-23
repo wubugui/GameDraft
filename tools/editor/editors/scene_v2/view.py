@@ -81,6 +81,9 @@ class SceneView(QGraphicsView):
     #: 鼠标世界坐标变化（状态栏用）
     cursor_world_moved = Signal(QPointF)
 
+    #: 请宿主在此处弹右键菜单：``(世界坐标, 全局屏幕坐标)``
+    context_menu_requested = Signal(QPointF, object)
+
     def __init__(self, document, parent=None) -> None:
         super().__init__(parent)
         self._doc = document
@@ -112,6 +115,8 @@ class SceneView(QGraphicsView):
         #: ``npc_dict -> QPixmap | None``（图集里的**当前一格**）。
         #: 与 `_texture_provider` 分开：精灵是随时间变的一帧，展示图是一整张。
         self._sprite_frame = None
+        #: 中键平移的上一帧位置（None = 没在平移）
+        self._pan_from = None
         #: 覆盖物（分组框 / 透视轴 / 橡皮筋）。它们不进图元账，也不进命中白名单。
         self._group_boxes: dict[str, GroupBoxItem] = {}
         self._persp_axis = PerspectiveAxisItem()
@@ -621,6 +626,14 @@ class SceneView(QGraphicsView):
         return self.mapToScene(event.position().toPoint())
 
     def mousePressEvent(self, event) -> None:
+        # **中键拖动平移画布**：全编辑器统一的手势（map / quest / 坐标点选器都有），
+        # 老画布也有。缺了它，放大之后只剩滚轮与拖滚动条，横向平移尤其难受 ——
+        # 习惯了的人会以为画布卡死。必须排在转发给工具**之前**：工具链不认中键。
+        if event.button() == Qt.MouseButton.MiddleButton:
+            self._pan_from = event.position().toPoint()
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            event.accept()
+            return
         pos = self._world(event)
         handled = self.tools.mouse_pressed(pos, event.button(), event.modifiers())
         self.refresh_gesture_preview()
@@ -630,6 +643,16 @@ class SceneView(QGraphicsView):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event) -> None:
+        if self._pan_from is not None:
+            now = event.position().toPoint()
+            delta = now - self._pan_from
+            self._pan_from = now
+            self.horizontalScrollBar().setValue(
+                self.horizontalScrollBar().value() - delta.x())
+            self.verticalScrollBar().setValue(
+                self.verticalScrollBar().value() - delta.y())
+            event.accept()
+            return
         pos = self._world(event)
         self.cursor_world_moved.emit(pos)
         handled = self.tools.mouse_moved(pos, event.buttons(), event.modifiers())
@@ -640,6 +663,11 @@ class SceneView(QGraphicsView):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.MiddleButton and self._pan_from is not None:
+            self._pan_from = None
+            self.unsetCursor()
+            event.accept()
+            return
         pos = self._world(event)
         handled = self.tools.mouse_released(pos, event.button(), event.modifiers())
         # **松手后必须刷一次**，而且不管工具吃没吃这一下：手势状态已经清空，
@@ -657,6 +685,20 @@ class SceneView(QGraphicsView):
             event.accept()
             return
         super().mouseDoubleClickEvent(event)
+
+    def contextMenuEvent(self, event) -> None:  # noqa: N802 - Qt 接口
+        """右键：先让当前工具处理（多边形工具要删顶点），否则请宿主弹菜单。
+
+        菜单内容归宿主 —— 视图不知道有哪些实体族、也不该持有命令。
+        """
+        pos = self.mapToScene(event.pos())
+        if self.tools.mouse_pressed(pos, Qt.MouseButton.RightButton,
+                                    event.modifiers()):
+            self.refresh_gesture_preview()
+            event.accept()
+            return
+        self.context_menu_requested.emit(pos, event.globalPos())
+        event.accept()
 
     def keyPressEvent(self, event) -> None:
         handled = self.tools.key_pressed(event.key(), event.modifiers())

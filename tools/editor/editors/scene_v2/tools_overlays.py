@@ -93,11 +93,23 @@ class PerspectiveAxisTool(AbstractTool):
         return True
 
 
+#: 分组框相对成员最外沿再外扩多少世界单位。
+#:
+#: 不外扩的话框线正好压在最外侧成员的脚下：看起来"框没把成员框住"（用户以为
+#: 选错了组），而且框边的命中带会把那几个成员的点击整个吃掉 —— 想点它们得先
+#: 躲开框线。老画布是 Figma frame 式的"框 + 留白 + 名字"。
+GROUP_BOX_PAD = 24.0
+
+
 def group_bounds(document, gid: str) -> QRectF | None:
     """分组包围盒 —— 从**模型层名册**算，与整组位移同源。
 
     与画布上看得见的图元无关：被过滤藏起来的成员照样算进包围盒，
     否则框会随着切视图忽大忽小，而成员其实一个没少。
+
+    单成员（甚至零尺寸）的组同样要出一个**看得见、点得中**的框：不外扩的话
+    单点成员算出来是零尺寸矩形，`paint` 直接早退 —— 那个组在画布上既看不见
+    也选不中，整组位移/微移全部够不到，用户会以为分组丢了。
     """
     all_pts: list[tuple[float, float]] = []
     for ref in group_member_refs(document, gid):
@@ -117,7 +129,9 @@ def group_bounds(document, gid: str) -> QRectF | None:
     # 于是"一组点实体"的包围盒会塌成最后一个成员的位置。
     xs = [p[0] for p in all_pts]
     ys = [p[1] for p in all_pts]
-    return QRectF(min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
+    pad = GROUP_BOX_PAD
+    return QRectF(min(xs) - pad, min(ys) - pad,
+                  (max(xs) - min(xs)) + pad * 2, (max(ys) - min(ys)) + pad * 2)
 
 
 class GroupBoxTool(AbstractTool):
@@ -169,6 +183,12 @@ class GroupBoxTool(AbstractTool):
             return False
         gid, box = self._box_at(scene_pos)
         if gid is None:
+            # **点空白要熄灯。** 组选中态粘滞的话，用户以为什么都没选，
+            # 一按方向键（很多人用方向键的肌肉记忆）就把整组坐标改了并标脏，
+            # 而撤销记录写的是"整组微移"，与操作意图对不上。
+            if self._selected_gid:
+                self.select_group("")
+                self._nudge_gid = ""
             return False
         if gid != self._selected_gid:
             # 第一段：只选中，不拖
