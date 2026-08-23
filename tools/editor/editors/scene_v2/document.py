@@ -30,6 +30,7 @@ from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QUndoCommand, QUndoStack
 
 from ...shared.scene_migrations import migrate_scene_collision_to_local
+from ..scene_undo import broadcast_external_scene_write, register_undo_owner
 from .changes import (
     ChangeEvent,
     EntitiesAboutToBeRemoved,
@@ -80,6 +81,10 @@ class SceneDocument(QObject):
         self.undo_stack.setUndoLimit(self.UNDO_LIMIT)
         #: 命令回放期间为 True：此时一切"用户操作"入口都应短路，杜绝 undo 中途 push
         self.restoring = False
+        # **并存期的命门**：老画布持自己的整场景快照栈。不互相知会的话，
+        # 在这边改完到那边按 Ctrl+Z，会用它改动之前的旧快照把这次编辑**静默回滚**，
+        # 且 redo 找不回。两个方向都要通，所以既登记（收）也广播（发）。
+        register_undo_owner(self)
         sc = self.scene()
         if isinstance(sc, dict) and migrate_scene_collision_to_local(sc):
             self._model.mark_dirty("scene", self._scene_id)
@@ -200,7 +205,21 @@ class SceneDocument(QObject):
         if getattr(command, "is_noop", False):
             return False
         self.undo_stack.push(command)
+        # 知会其它画布：这个场景被它们栈外的力量改了（见 register_undo_owner 注释）
+        broadcast_external_scene_write(self._scene_id, origin=self)
         return True
+
+    def notice_external_scene_write(self, sid: str) -> None:
+        """别的画布改了这个场景 → 清掉本栈。
+
+        本文档的命令持的是**字段级** before/after，跨过外部直写做 undo 会把那次
+        直写连带撤掉（且 redo 找不回）。代价是"切画布 = 撤销栈清空"，
+        语义诚实，好过两个栈互撤。
+        """
+        if self.restoring or str(sid or "") != self._scene_id:
+            return
+        if self.undo_stack.count():
+            self.undo_stack.clear()
 
     def mark_dirty(self) -> None:
         """标记本场景为未保存。命令改完数据后调，**调用方不必再手写第二级脏标记**。"""

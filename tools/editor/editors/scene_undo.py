@@ -27,8 +27,18 @@ if TYPE_CHECKING:  # pragma: no cover - 仅类型提示
     from .scene_editor import SceneEditor
 
 
-#: 本进程里活着的全部场景撤销控制器。用弱引用，页销毁后自动掉出，不必手工注销。
-_LIVE_CONTROLLERS: "weakref.WeakSet[SceneUndoController]" = weakref.WeakSet()
+#: 本进程里活着的全部**场景撤销栈持有者**。用弱引用，页销毁后自动掉出。
+#:
+#: 成员不限于 `SceneUndoController` —— 新画布的 `SceneDocument` 持自己的 QUndoStack，
+#: 同样要进来。判据是鸭子协议：有 `notice_external_scene_write(sid)` 即可。
+#: **漏登记的后果是最危险的一种**：在一个画布改数据，到另一个画布按 Ctrl+Z 会用
+#: 它的旧快照把改动静默回滚，且 redo 找不回。
+_LIVE_CONTROLLERS: "weakref.WeakSet" = weakref.WeakSet()
+
+
+def register_undo_owner(owner) -> None:
+    """把一个撤销栈持有者登记进跨页知会。构造时调一次即可（弱引用，不必注销）。"""
+    _LIVE_CONTROLLERS.add(owner)
 
 
 def broadcast_external_scene_write(sid: str, *, origin: object = None) -> None:
