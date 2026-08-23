@@ -253,5 +253,57 @@ class RealSceneSmokeTests(unittest.TestCase):
                 QApplication.processEvents()
 
 
+class BrowsingIsReadOnlyTests(unittest.TestCase):
+    """**把真实工程装进真实页面，把每个实体点一遍，数据必须一个字节不变。**
+
+    这是最接近"打开编辑器用一遍"的一条，也是最容易被绕过的一条：属性面板的
+    `_write_*_widgets_to_dict` 会把它管的每个键都刷一遍（空文本框 → `""`、
+    空表 → `{}`），只要桥把这些当成改动，**光是浏览**就会给全库实体加上
+    `label: ""` / `data: {}`，撤销栈平白多几十格、整个场景域被标脏。
+    造数据的单测看不见这一幕，因为造出来的实体本来就没这些空键。
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._app = QApplication.instance() or QApplication(sys.argv)
+
+    def test_selecting_every_entity_changes_nothing(self) -> None:
+        import copy
+
+        from tools.editor.editors.scene_v2.page import SceneEditorV2
+        from tools.editor.project_model import ProjectModel
+
+        model = ProjectModel()
+        model.load_project(REPO)
+        self.assertGreater(len(model.scenes), 10, "真实工程没装进来")
+        before = {k: copy.deepcopy(v) for k, v in model.scenes.items()}
+
+        page = SceneEditorV2(model)
+        try:
+            for sid in sorted(model.scenes.keys()):
+                page.load_scene(sid)
+                doc = page.document
+                refs = (doc.entity_refs("hotspot") + doc.entity_refs("npc")
+                        + doc.entity_refs("zone") + doc.entity_refs("spawn"))
+                for ref in refs:
+                    doc.set_selection([ref])
+                doc.clear_selection()
+                with self.subTest(scene=sid):
+                    self.assertEqual(
+                        doc.undo_stack.count(), 0,
+                        "只是逐个点选就产生了撤销记录")
+                QApplication.processEvents()
+        finally:
+            page.deleteLater()
+            QApplication.processEvents()
+
+        for sid, orig in before.items():
+            with self.subTest(scene=sid):
+                self.assertEqual(
+                    json.dumps(model.scenes[sid], ensure_ascii=False, sort_keys=True),
+                    json.dumps(orig, ensure_ascii=False, sort_keys=True),
+                    "只是浏览就把场景数据改了")
+
+
 if __name__ == "__main__":
     unittest.main()
