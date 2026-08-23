@@ -140,7 +140,17 @@ _PANEL_BINDING = {
     "npc": ("_staging_npc", "load_npc_props"),
     "zone": ("_staging_zone", "load_zone_props"),
     "scene": ("_staging_scene", "load_scene_props"),
+    # 出生点写的是**共享的** `_staging_scene`（它没有自己的 staging），
+    # 所以提交时比对的也是整份场景 —— 与 scene 走同一条路。
+    "spawn": ("_staging_scene", "load_spawn_props"),
+    "group": ("_staging_group", "load_group_props"),
 }
+
+#: 载入方法需要 `(场景, id)` 两个参数的族。其余只吃实体本身。
+_TWO_ARG_LOADERS = frozenset({"spawn", "group"})
+
+#: 提交时拿整份场景比对的族（它们的 staging 就是 `_staging_scene`）。
+_SCENE_SCOPED = frozenset({"scene", "spawn"})
 
 #: 场景级 staging 里**不参与字段提交**的键：实体名册归命令层管。
 #: 与老画布 `commit_scene_staging_to_source` 同一份口径（它 skip 的正是这四个）。
@@ -244,7 +254,10 @@ class PanelBridge(QObject):
             return
         self._syncing = True
         try:
-            loader(ent)
+            if ref.kind in _TWO_ARG_LOADERS:
+                loader(self._doc.scene(), ref.id)
+            else:
+                loader(ent)
         finally:
             self._syncing = False
         self._loaded = ref
@@ -330,10 +343,11 @@ class PanelBridge(QObject):
         finally:
             self._committing = False
         staged = getattr(self._panel, binding[0], None)
-        current = self._doc.model_entity(ref)
+        current = (self._doc.scene() if ref.kind in _SCENE_SCOPED
+                   else self._doc.model_entity(ref))
         if not isinstance(staged, dict) or not isinstance(current, dict):
             return False
-        if ref.kind == "scene":
+        if ref.kind in _SCENE_SCOPED:
             # 名册归命令层，字段归面板 —— 见 `_SCENE_SKIP_KEYS`
             staged = {k: v for k, v in staged.items() if k not in _SCENE_SKIP_KEYS}
             current = {k: v for k, v in current.items() if k not in _SCENE_SKIP_KEYS}

@@ -14,6 +14,7 @@ from .renderer import point_in_polygon, point_segment_distance_sq
 
 __all__ = [
     "HANDLE_R_PX",
+    "CollisionGhostItem",
     "KIND_COLORS",
     "HandleItem",
     "PolygonItem",
@@ -224,6 +225,32 @@ class PolygonItem(_PointsItem):
     def __init__(self, ref: EntityRef, color: QColor | None = None) -> None:
         super().__init__(ref, color or KIND_COLORS.get(ref.kind, QColor(255, 200, 0, 90)),
                          closed=True)
+
+
+class CollisionGhostItem(_PointsItem):
+    """**运行时真正生效的**命中面轮廓（只读虚线）。
+
+    参与透视缩放的实体上，作者画的多边形与游戏里真能点到的范围差一个透视系数
+    （远端可差一半）。老画布同时画 authored（可编辑实线）+ ghost（只读虚线）
+    两套，明确告诉你"真正生效的是这一圈"；新画布起初只有前一套 —— 策划照着画的
+    命中面在游戏里点不到，而画布上没有任何提示。
+
+    它**不进命中白名单**（`pick_contains` 恒 False）：只读的东西不该抢点击。
+    """
+
+    def __init__(self, ref: EntityRef, color: QColor | None = None) -> None:
+        super().__init__(ref, color or QColor(255, 120, 60, 200), closed=True)
+
+    def pick_contains(self, pos, tol: float = 0.0) -> bool:
+        return False
+
+    def paint(self, painter, option, widget=None) -> None:
+        if len(self._pts) < 3:
+            return
+        painter.setRenderHint(painter.RenderHint.Antialiasing, True)
+        painter.setPen(QPen(self._color, 0, Qt.PenStyle.DashLine))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPolygon(QPolygonF([QPointF(x, y) for x, y in self._pts]))
 
 
 class PolylineItem(_PointsItem):

@@ -128,6 +128,14 @@ class SceneDocument(QObject):
             return sc
         if ref.kind == "spawn":
             return self._spawn_dict(sc, ref.id)
+        if ref.kind == "group":
+            # 分组住在 `entityGroups`。走同一套命令/撤销 —— 组也是**可编辑的东西**
+            # （id / label / 整组显影条件 / 编辑器锚点都是数据），不该只有画布上
+            # 那个框是它的全部。
+            for g in sc.get("entityGroups") or []:
+                if isinstance(g, dict) and str(g.get("id", "")) == ref.id:
+                    return g
+            return None
         key = _LIST_KEY.get(ref.kind)
         if key is None:
             return None
@@ -156,6 +164,11 @@ class SceneDocument(QObject):
             names = ["default"] if isinstance(sc.get("spawnPoint"), dict) else []
             names += sorted((sc.get("spawnPoints") or {}).keys())
             return tuple(EntityRef("spawn", n) for n in names)
+        if kind == "group":
+            return tuple(
+                EntityRef("group", str(g.get("id", "")))
+                for g in sc.get("entityGroups") or []
+                if isinstance(g, dict) and str(g.get("id", "")))
         key = _LIST_KEY.get(kind)
         if key is None:
             return ()

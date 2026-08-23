@@ -168,9 +168,17 @@ class GroupBoxTool(AbstractTool):
         return self._offset
 
     def select_group(self, gid: str) -> None:
+        """选中一个分组框。
+
+        **同时把文档选择切到这个组** —— 属性面板据此切到分组页。不切的话组的
+        id / label / 整组显影条件 / 成员列表在新画布上一个入口都没有，
+        分组只剩"整体拖动"一个能力。
+        """
         self._selected_gid = str(gid or "")
         for g, box in self._boxes.items():
             box.set_selected(g == self._selected_gid)
+        if self._selected_gid:
+            self._doc.set_selection([EntityRef("group", self._selected_gid)])
 
     def _box_at(self, pos: QPointF):
         for gid, box in self._boxes.items():

@@ -36,7 +36,12 @@ from .changes import (
     ViewFiltersChanged,
 )
 from .content_items import BackgroundItem, DisplayImageItem, SpritePreviewItem
-from .entity_items import HandleItem, PolygonItem, PolylineItem
+from .entity_items import (
+    CollisionGhostItem,
+    HandleItem,
+    PolygonItem,
+    PolylineItem,
+)
 from .light_curve import light_curve_points
 from .items import CanvasItem, EntityItem
 from .overlays import (
@@ -57,8 +62,10 @@ _PART_ITEM_FACTORY = {
     ("hotspot", "handle"): HandleItem,
     ("hotspot", "display"): DisplayImageItem,
     ("hotspot", "collision"): PolygonItem,
+    ("hotspot", "ghost"): CollisionGhostItem,
     ("npc", "handle"): HandleItem,
     ("npc", "collision"): PolygonItem,
+    ("npc", "ghost"): CollisionGhostItem,
     ("npc", "patrol"): PolylineItem,
     ("npc", "sprite"): SpritePreviewItem,
     ("zone", "polygon"): PolygonItem,
@@ -230,7 +237,7 @@ class SceneView(QGraphicsView):
             self._sync_content_part(ref, part, factory, ent)
             return
         pts = self._part_points(ref.kind, part, ent)
-        if part in ("collision", "patrol", "lightcurve") and not pts:
+        if part in ("collision", "ghost", "patrol", "lightcurve") and not pts:
             # 数据门：没有多边形/路线就不该有图元（不是"藏起来"，是不存在）
             self._drop_part(ref, part)
             return
@@ -438,6 +445,8 @@ class SceneView(QGraphicsView):
             return ent.get("polygon") or []
         if part == "collision":
             return self._collision_world_points(ent)
+        if part == "ghost":
+            return self._collision_ghost_points(ent, kind)
         if part == "patrol":
             patrol = ent.get("patrol")
             return (patrol or {}).get("route") or [] if isinstance(patrol, dict) else []
@@ -456,6 +465,23 @@ class SceneView(QGraphicsView):
         if not isinstance(poly, list) or len(poly) < 3:
             return []
         return collision_polygon_local_to_world(ent, poly)
+
+    def _collision_ghost_points(self, ent: dict, kind: str):
+        """运行时真正生效的命中面：authored 多边形绕锚点再乘一次透视系数。
+
+        与运行时 `anchorCollisionPolygonToWorld` 同口径。透视系数为 1 时与
+        authored 完全重合，这时**不建图元**（两条线重叠反而看不清）。
+        """
+        pts = self._collision_world_points(ent)
+        if len(pts) < 3:
+            return []
+        pf = self.perspective_factor(ent, kind)
+        if abs(pf - 1.0) < 1e-6:
+            return []
+        ax = float(ent.get("x", 0) or 0)
+        ay = float(ent.get("y", 0) or 0)
+        return [{"x": ax + (p["x"] - ax) * pf, "y": ay + (p["y"] - ay) * pf}
+                for p in pts]
 
     def _drop_part(self, ref: EntityRef, part: str) -> None:
         item = self._items.pop((ref, part), None)

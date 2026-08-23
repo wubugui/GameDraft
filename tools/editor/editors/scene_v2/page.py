@@ -28,6 +28,8 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QComboBox,
+    QInputDialog,
+    QLineEdit,
     QListWidgetItem,
     QMenu,
     QSplitter,
@@ -63,13 +65,15 @@ from .panel_bridge import PanelBridge
 from .sorting import assign_content_z
 from .tools_builtin import MoveTool, PolygonEditTool, SelectTool
 from .tools_overlays import GroupBoxTool, PerspectiveAxisTool, group_bounds
+from .groups import all_group_ids, assign_group, create_group, delete_group
 from .tools_structure import (
     CreateTool,
     create_entity_at,
+    create_spawn,
     delete_selected,
     duplicate_selected,
 )
-from .tools_transform import GroupMoveTool, TransformTool
+from .tools_transform import GroupMoveTool, TransformTool, translate_group
 from .view import SceneView
 
 #: NPC 精灵的动画节拍（毫秒）。~30fps 足够看清动画对不对，
@@ -108,8 +112,23 @@ class SceneEditorV2(QWidget):
         self._tree.setHeaderHidden(True)
         self._tree.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection)
         self._tree.itemSelectionChanged.connect(self._on_tree_selection_changed)
+        # 树的右键菜单。**没有它，在树里选中实体就删不掉也复制不了** ——
+        # 快捷键只挂在画布上（`SceneView.keyPressEvent`），焦点在树上时全部失效，
+        # 而用户的习惯正是"在左树里点名字选实体、再按 Delete"。
+        self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._tree.customContextMenuRequested.connect(self._show_tree_menu)
         self._syncing_tree = False
         lv.addWidget(QLabel("实体"))
+        # 过滤框 + 视图模式：实体多的场景（雾津街头 30+ 项）没有它们只能靠肉眼扫
+        self._tree_filter = QLineEdit()
+        self._tree_filter.setPlaceholderText("过滤实体 id…")
+        self._tree_filter.textChanged.connect(lambda _t: self.refresh_entity_tree())
+        lv.addWidget(self._tree_filter)
+        self._tree_mode = QComboBox()
+        self._tree_mode.addItems(["按类型", "按分组"])
+        self._tree_mode.currentIndexChanged.connect(
+            lambda _i: self.refresh_entity_tree())
+        lv.addWidget(self._tree_mode)
         lv.addWidget(self._tree, 2)
         splitter.addWidget(left)
 
@@ -384,8 +403,86 @@ class SceneEditorV2(QWidget):
         self.select_tool.add_delegate(self.group_box_tool, after_entities=True)
         view.tools.status_text_changed.connect(self._status.setText)
         self._doc.notice.connect(self._status.setText)
+        self._connect_panel_signals()
         self._rebuild_toolbar(view)
         view.tools.select(self.select_tool)
+
+    def _connect_panel_signals(self) -> None:
+        """接面板 → 编辑器那一族信号。
+
+        起初一条都没接：面板底部的「从场景删除」、分组面板的四个按钮、多选页的
+        三个批量按钮、成员双击定位……在新画布上全是**死控件** —— 点了毫无反馈
+        也无报错，用户只会以为编辑器卡了。接线是幂等的（`_panel_wired` 挡住重复
+        连接：面板是页面级共享的，每换一个场景就会再走一次这里）。
+        """
+        if getattr(self, "_panel_wired", False):
+            return
+        self._panel_wired = True
+        p = self._props
+        pairs = [
+            ("delete_current_entity_requested", lambda: self.delete_selected()),
+            ("group_delete_requested", self._on_group_delete),
+            ("group_select_members_requested", self._on_group_select_members),
+            ("group_translate_requested", self._on_group_translate),
+            ("group_member_activated", self.select_entity),
+            ("scene_directly_written", self._on_scene_directly_written),
+        ]
+        for name, slot in pairs:
+            sig = getattr(p, name, None)
+            if sig is not None:
+                sig.connect(slot)
+        for attr, slot in (("_multi_group_btn", self._on_assign_group_clicked),
+                           ("_multi_dup_btn", lambda: self.duplicate_selected()),
+                           ("_multi_del_btn", lambda: self.delete_selected())):
+            btn = getattr(p, attr, None)
+            if btn is not None:
+                btn.clicked.connect(slot)
+
+    def _on_group_delete(self, gid: str) -> None:
+        if self._doc is not None:
+            delete_group(self._doc, gid)
+
+    def _on_group_select_members(self, gid: str) -> None:
+        if self._doc is None:
+            return
+        refs = [ref for kind in ("hotspot", "npc", "zone")
+                for ref in self._doc.entity_refs(kind)
+                if str((self._doc.entity(ref) or {}).get("group", "")) == str(gid)]
+        if refs:
+            self._doc.set_selection(refs)
+
+    def _on_group_translate(self, gid: str, dx: float, dy: float) -> None:
+        if self._doc is not None:
+            translate_group(self._doc, gid, dx, dy)
+
+    def _on_scene_directly_written(self, sid: str) -> None:
+        """别的对话框直写了某个场景（坐标点选器一族）。
+
+        本页的撤销栈持的是**字段级** before/after，跨过一次外部直写做 undo 会把
+        那次直写连带撤掉且 redo 找不回，所以收到就清栈；如果写的正是当前场景，
+        还要重投影 —— 否则用户刚建好的出生点在画布和实体树上都看不见，
+        会以为没建成而重复新建。
+        """
+        if self._doc is None:
+            return
+        self._doc.notice_external_scene_write(sid)
+        if str(sid or "") == self.current_scene_id:
+            self.reload_from_model()
+
+    def _on_assign_group_clicked(self) -> None:
+        """多选页的「指派分组」。"""
+        if self._doc is None or not self._doc.selection:
+            return
+        choices = all_group_ids(self._doc)
+        gid, ok = QInputDialog.getItem(
+            self, "指派分组", "选择或输入分组 id：",
+            ["（移出分组）"] + choices, 0, True)
+        if not ok:
+            return
+        target = "" if gid == "（移出分组）" else str(gid or "").strip()
+        if target and target not in choices:
+            create_group(self._doc, target)
+        assign_group(self._doc, list(self._doc.selection), target)
 
     def _build_axis_bar(self) -> None:
         """三条视图轴的控件：过场编辑视图 / 位面视图 / 时段视图。
@@ -495,14 +592,55 @@ class SceneEditorV2(QWidget):
             act.triggered.connect(
                 lambda _c, k=kind, p=QPointF(world_pos): create_entity_at(
                     self._doc, k, p))
+        act_spawn = menu.addAction("在此新建命名出生点")
+        act_spawn.triggered.connect(
+            lambda _c, p=QPointF(world_pos): self._create_spawn_at(p))
+        menu.addSeparator()
+        act_group = menu.addAction("新建分组")
+        act_group.triggered.connect(lambda _c: create_group(self._doc))
         sel = self._doc.selection
         if sel:
             menu.addSeparator()
+            act_assign = menu.addAction(f"指派分组（{len(sel)}）…")
+            act_assign.triggered.connect(self._on_assign_group_clicked)
             act_dup = menu.addAction(f"复制选中（{len(sel)}）")
             act_dup.triggered.connect(self.duplicate_selected)
             act_del = menu.addAction(f"删除选中（{len(sel)}）")
             act_del.triggered.connect(self.delete_selected)
         menu.exec(global_pos)
+
+    def _show_tree_menu(self, pos) -> None:
+        if self._doc is None:
+            return
+        sel = list(self._doc.selection)
+        menu = QMenu(self._tree)
+        groups = [r for r in sel if r.kind == "group"]
+        entities = [r for r in sel if r.kind in ("hotspot", "npc", "zone")]
+        if groups:
+            act = menu.addAction(f"删除分组「{groups[0].id}」")
+            act.triggered.connect(lambda _c, g=groups[0].id: self._on_group_delete(g))
+            act2 = menu.addAction("选中本组全部成员")
+            act2.triggered.connect(
+                lambda _c, g=groups[0].id: self._on_group_select_members(g))
+        if entities:
+            act = menu.addAction(f"指派分组（{len(entities)}）…")
+            act.triggered.connect(self._on_assign_group_clicked)
+        if sel:
+            menu.addSeparator()
+            act_dup = menu.addAction(f"复制（{len(sel)}）")
+            act_dup.triggered.connect(self.duplicate_selected)
+            act_del = menu.addAction(f"删除（{len(sel)}）")
+            act_del.triggered.connect(self.delete_selected)
+        if menu.isEmpty():
+            act = menu.addAction("新建分组")
+            act.triggered.connect(lambda _c: create_group(self._doc))
+        menu.exec(self._tree.viewport().mapToGlobal(pos))
+
+    def _create_spawn_at(self, world_pos) -> None:
+        name, ok = QInputDialog.getText(self, "新建命名出生点", "出生点名称：")
+        if ok and str(name or "").strip():
+            create_spawn(self._doc, str(name).strip(),
+                         world_pos.x(), world_pos.y())
 
     def fit_view(self) -> None:
         """把整个场景适配到视口。"""
@@ -537,16 +675,19 @@ class SceneEditorV2(QWidget):
         if self._doc is None or self._view is None:
             return
         sc = self._doc.scene() or {}
+        labels = {str(g.get("id", "")): str(g.get("label", "") or "").strip()
+                  for g in sc.get("entityGroups") or [] if isinstance(g, dict)}
         rows = []
-        for grp in sc.get("entityGroups") or []:
-            if not isinstance(grp, dict):
-                continue
-            gid = str(grp.get("id", "") or "")
-            if not gid:
-                continue
+        # **按 `all_group_ids` 建**：它同时认 `entityGroups` 条目与"只在成员身上
+        # 出现"的兼容标签组。只遍历 entityGroups 的话，旧场景在新画布上看不到
+        # 任何分组框，用户会以为分组数据丢了 —— 而组框是整组位移的唯一入口。
+        for gid in all_group_ids(self._doc):
             rect = group_bounds(self._doc, gid)
-            label = str(grp.get("label", "") or "").strip()
-            rows.append((gid, rect, f"[组] {label or gid}"))
+            label = labels.get(gid, "")
+            count = sum(1 for kind in ("hotspot", "npc", "zone")
+                        for ref in self._doc.entity_refs(kind)
+                        if str((self._doc.entity(ref) or {}).get("group", "")) == gid)
+            rows.append((gid, rect, f"[组] {label or gid} ×{count}"))
         self._view.sync_group_boxes(rows)
         self.group_box_tool.set_boxes(self._view.group_boxes)
 
@@ -569,17 +710,54 @@ class SceneEditorV2(QWidget):
         """左侧实体树。选择与 Document 双向同步 —— 树与画布看到的是**同一份**选择集。"""
         if self._doc is None:
             return
+        needle = self._tree_filter.text().strip().lower()
+        by_group = self._tree_mode.currentIndex() == 1
         self._tree.blockSignals(True)
         self._tree.clear()
-        for kind, label in (("hotspot", "热点"), ("npc", "NPC"),
-                            ("zone", "区域"), ("spawn", "出生点")):
-            top = QTreeWidgetItem([label])
-            self._tree.addTopLevelItem(top)
-            for ref in self._doc.entity_refs(kind):
-                node = QTreeWidgetItem([ref.id])
-                node.setData(0, Qt.ItemDataRole.UserRole, (ref.kind, ref.id))
-                top.addChild(node)
-            top.setExpanded(True)
+        if by_group:
+            # 按分组看：**分组也是可选中的节点**（选中后右侧就是分组面板）。
+            # 起初树里根本没有分组节点，于是建组/改组名/看成员在新画布上做不到。
+            for gid in all_group_ids(self._doc):
+                top = QTreeWidgetItem([f"[组] {gid}"])
+                top.setData(0, Qt.ItemDataRole.UserRole, ("group", gid))
+                self._tree.addTopLevelItem(top)
+                for kind in ("hotspot", "npc", "zone"):
+                    for ref in self._doc.entity_refs(kind):
+                        ent = self._doc.entity(ref) or {}
+                        if str(ent.get("group", "")) != gid:
+                            continue
+                        if needle and needle not in ref.id.lower():
+                            continue
+                        node = QTreeWidgetItem([ref.id])
+                        node.setData(0, Qt.ItemDataRole.UserRole,
+                                     (ref.kind, ref.id))
+                        top.addChild(node)
+                top.setExpanded(True)
+            ungrouped = QTreeWidgetItem(["（未分组）"])
+            self._tree.addTopLevelItem(ungrouped)
+            for kind in ("hotspot", "npc", "zone"):
+                for ref in self._doc.entity_refs(kind):
+                    ent = self._doc.entity(ref) or {}
+                    if str(ent.get("group", "")):
+                        continue
+                    if needle and needle not in ref.id.lower():
+                        continue
+                    node = QTreeWidgetItem([ref.id])
+                    node.setData(0, Qt.ItemDataRole.UserRole, (ref.kind, ref.id))
+                    ungrouped.addChild(node)
+            ungrouped.setExpanded(True)
+        else:
+            for kind, label in (("hotspot", "热点"), ("npc", "NPC"),
+                                ("zone", "区域"), ("spawn", "出生点")):
+                top = QTreeWidgetItem([label])
+                self._tree.addTopLevelItem(top)
+                for ref in self._doc.entity_refs(kind):
+                    if needle and needle not in ref.id.lower():
+                        continue
+                    node = QTreeWidgetItem([ref.id])
+                    node.setData(0, Qt.ItemDataRole.UserRole, (ref.kind, ref.id))
+                    top.addChild(node)
+                top.setExpanded(True)
         self._tree.blockSignals(False)
         self._sync_tree_selection()
 

@@ -176,9 +176,31 @@ class GroupBoxTests(_Base):
         self.assertEqual(self.page.document.undo_stack.count(), 1)
 
     def test_box_is_removed_when_the_group_disappears(self) -> None:
-        self.model.scenes[_SCENE]["entityGroups"] = []
+        """名册行**和**成员引用都没了，框才该消失。
+
+        只清 `entityGroups` 是不够的：成员身上还挂着 `group` 字符串时它仍是一个
+        **兼容标签组**（老场景就是这个形态，老画布照样给它画框、能选能拖）。
+        """
+        sc = self.model.scenes[_SCENE]
+        sc["entityGroups"] = []
+        for key in ("hotspots", "npcs", "zones"):
+            for ent in sc.get(key) or []:
+                if isinstance(ent, dict):
+                    ent.pop("group", None)
         self.page.refresh_group_boxes()
         self.assertNotIn("夜巡", self.page.view.group_boxes)
+
+    def test_tag_only_group_still_gets_a_box(self) -> None:
+        """只在成员身上出现、名册里没有条目的组同样要有框。
+
+        没有框 = 这个组在新画布上不存在：整组位移/微移一个入口都没有
+        （组框是唯一入口），用户会以为分组数据丢了。
+        """
+        sc = self.model.scenes[_SCENE]
+        sc["entityGroups"] = []
+        self.page.refresh_group_boxes()
+        self.assertIn("夜巡", self.page.view.group_boxes,
+                      "兼容标签组在新画布上没有框")
 
     def test_selection_survives_a_refresh(self) -> None:
         """组的选中态不在 Qt 选择系统里，整批重建会把它丢掉、且回不来。"""

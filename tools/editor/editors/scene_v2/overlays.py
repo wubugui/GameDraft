@@ -107,6 +107,16 @@ class GroupBoxItem(OverlayItem):
         painter.setBrush(QBrush(QColor(255, 236, 120) if self._selected
                                 else QColor(120, 200, 255, 200)))
         painter.drawEllipse(c, r, r)
+        # **标题**：多组场景里没有它就只剩几个一模一样的虚线框，分不出谁是谁，
+        # 也看不到成员数。字号按屏幕像素恒定（除以缩放），缩小视图后不会糊成一团。
+        if self._title:
+            painter.setPen(_GROUP_SEL_PEN if self._selected else _GROUP_PEN)
+            font = painter.font()
+            font.setPointSizeF(max(1e-3, 9.0 / self._scale))
+            painter.setFont(font)
+            painter.drawText(
+                QPointF(self._rect.left(), self._rect.top() - 4.0 / self._scale),
+                self._title)
 
     # ---- 命中（工具调，不靠 Qt 派发）--------------------------------------
 

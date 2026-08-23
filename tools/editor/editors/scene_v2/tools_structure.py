@@ -15,7 +15,8 @@ from ...shared.entity_refactor import (
     build_duplicate_payload,
     id_namespace_kinds,
 )
-from .changes import EntityRef
+from .changes import EntityProperty, EntityRef
+from .commands import build_change_fields_command
 from .commands_structure import (
     LIST_KEY,
     AddEntitiesCommand,
@@ -24,7 +25,8 @@ from .commands_structure import (
 )
 from .tools import AbstractTool
 
-__all__ = ["unique_entity_id", "CreateTool", "delete_selected", "duplicate_selected"]
+__all__ = ["unique_entity_id", "CreateTool", "create_entity_at", "create_spawn",
+           "delete_spawn", "spawn_names", "delete_selected", "duplicate_selected"]
 
 _DEFAULTS = {
     "hotspot": {"type": "inspect", "interactionRange": 50},
@@ -137,14 +139,65 @@ def create_entity_at(document, kind: str, scene_pos: QPointF) -> bool:
 
 
 def delete_selected(document) -> bool:
-    """删除当前选中的实体（一条命令，可整体撤销）。"""
-    refs = [r for r in document.selection if r.kind in LIST_KEY]
-    if not refs:
+    """删除当前选中的实体（一条命令，可整体撤销）。
+
+    出生点与分组不住实体名册，各走各的出口（见 `delete_spawn` / `groups.delete_group`）——
+    此前它们落进这里的空集合、`delete_selected` 直接返回 False，用户按 Delete
+    毫无反应；更坏的是选中分组框按 Delete 时，删掉的是"上一个选中的实体"。
+    """
+    sel = list(document.selection)
+    refs = [r for r in sel if r.kind in LIST_KEY]
+    if refs:
+        entries = snapshot_entries(document, refs)
+        if entries:
+            return document.push(
+                RemoveEntitiesCommand(document, entries, "删除实体"))
         return False
-    entries = snapshot_entries(document, refs)
-    if not entries:
+    spawns = [r for r in sel if r.kind == "spawn"]
+    if spawns:
+        return all(delete_spawn(document, r.id) for r in spawns)
+    return False
+
+
+def spawn_names(document) -> list[str]:
+    sc = document.scene() or {}
+    return sorted((sc.get("spawnPoints") or {}).keys())
+
+
+def create_spawn(document, name: str, x: float, y: float) -> bool:
+    """新建一个**命名**出生点。默认出生点是顶层 `spawnPoint`，不在这里建。"""
+    key = str(name or "").strip()
+    sc = document.scene()
+    if not key or key == "default" or not isinstance(sc, dict):
         return False
-    return document.push(RemoveEntitiesCommand(document, entries, "删除实体"))
+    points = dict(sc.get("spawnPoints") or {})
+    if key in points:
+        return False
+    points[key] = {"x": round(float(x), 1), "y": round(float(y), 1)}
+    if document.push(build_change_fields_command(
+            document, [EntityRef("scene", document.scene_id)],
+            [{"spawnPoints": points}], EntityProperty.POSITION, "新建出生点")):
+        document.set_selection([EntityRef("spawn", key)])
+        return True
+    return False
+
+
+def delete_spawn(document, name: str) -> bool:
+    """删除一个命名出生点。**默认出生点不可删** —— 场景没有落点会直接坏掉。"""
+    key = str(name or "").strip()
+    sc = document.scene()
+    if not key or not isinstance(sc, dict):
+        return False
+    if key == "default":
+        document.notify("默认出生点不可删除（场景需要一个落点）")
+        return False
+    points = dict(sc.get("spawnPoints") or {})
+    if key not in points:
+        return False
+    points.pop(key, None)
+    return document.push(build_change_fields_command(
+        document, [EntityRef("scene", document.scene_id)],
+        [{"spawnPoints": points}], EntityProperty.POSITION, "删除出生点"))
 
 
 def duplicate_selected(document, offset: tuple[float, float] = (24.0, 24.0)) -> bool:
