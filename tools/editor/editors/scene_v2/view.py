@@ -57,6 +57,12 @@ _PART_ITEM_FACTORY = {
 #: 内容层 part（前后关系按运行时规则排，不是固定层）
 _CONTENT_PARTS = {("hotspot", "display"), ("npc", "sprite")}
 
+#: **场景级** part —— 它们不挂在任何实体上，而是场景自己的几何
+#: （光环境曲线；透视轴与分组框走独立的覆盖物通道）。
+#: 用 `EntityRef("scene", <scene_id>)` 做键，于是它们与实体几何共用同一套
+#: 命令 / 撤销 / 顶点编辑工具，不必另起一条平行实现。
+_SCENE_PARTS = {"lightcurve": PolylineItem}
+
 
 class SceneView(QGraphicsView):
     """场景画布。**只读 Document、只转发输入**。"""
@@ -161,6 +167,10 @@ class SceneView(QGraphicsView):
         if ent is None:
             self._drop_entity(ref)
             return
+        if ref.kind == "scene":
+            for part, factory in _SCENE_PARTS.items():
+                self._sync_part(ref, part, factory, ent, properties)
+            return
         for part, _key in iter_part_keys(ref.kind, ref.id):
             factory = _PART_ITEM_FACTORY.get((ref.kind, part))
             if factory is None:
@@ -174,7 +184,7 @@ class SceneView(QGraphicsView):
             self._sync_content_part(ref, part, factory, ent)
             return
         pts = self._part_points(ref.kind, part, ent)
-        if part in ("collision", "patrol") and not pts:
+        if part in ("collision", "patrol", "lightcurve") and not pts:
             # 数据门：没有多边形/路线就不该有图元（不是"藏起来"，是不存在）
             self._drop_part(ref, part)
             return
@@ -283,6 +293,8 @@ class SceneView(QGraphicsView):
                 self._sync_entity(ref)
 
     def _part_points(self, kind: str, part: str, ent: dict):
+        if part == "lightcurve":
+            return ent.get("lightEnvCurve") or []
         if part == "polygon":
             return ent.get("polygon") or []
         if part == "collision":

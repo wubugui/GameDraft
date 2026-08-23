@@ -270,9 +270,33 @@ class PolygonEditTool(AbstractTool):
             patrol["route"] = [{"x": round(x, 1), "y": round(y, 1)}
                                for x, y in world_pts]
             return {"patrol": patrol}
+        if part == "lightcurve":
+            # **每个控制点都驮着一份完整的 env 关键帧** —— 只写 x/y 会把它整份丢掉，
+            # 而画面要下一次打光才看得出来，属于最难查的那种静默数据丢失。
+            old = ent.get("lightEnvCurve")
+            old = old if isinstance(old, list) else []
+            out = []
+            for i, (x, y) in enumerate(world_pts):
+                src = old[i] if i < len(old) and isinstance(old[i], dict) else {}
+                node = copy.deepcopy(src)
+                node["x"] = round(x, 1)
+                node["y"] = round(y, 1)
+                if "env" not in node and old:
+                    # 新插入的点：继承前一个点的 env，而不是留空
+                    prev = old[min(i, len(old) - 1)]
+                    if isinstance(prev, dict) and isinstance(prev.get("env"), dict):
+                        node["env"] = copy.deepcopy(prev["env"])
+                out.append(node)
+            return {"lightEnvCurve": out}
         return {}
 
     def _target_parts(self):
+        """可编辑的点列。**场景级的光曲线永远在列** —— 它不属于任何实体，
+        所以不该要求"先选中某个实体"才能编辑。"""
+        if self._view is not None:
+            scene_ref = EntityRef("scene", self._doc.scene_id)
+            if self._view.item_for(scene_ref, "lightcurve") is not None:
+                yield scene_ref, "lightcurve"
         for ref in self._doc.selection:
             for part in ("polygon", "collision", "patrol"):
                 if self._view and self._view.item_for(ref, part) is not None:

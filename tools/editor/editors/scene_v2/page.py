@@ -146,8 +146,16 @@ class SceneEditorV2(QWidget):
         self.resort_content_z()
         self.refresh_group_boxes()
         self.refresh_perspective_axis()
+        self.refresh_scene_geometry()
         self.refresh_entity_tree()
         return True
+
+    def refresh_scene_geometry(self) -> None:
+        """场景级几何（光环境曲线）。用 scene ref 走与实体几何**同一套**
+        命令 / 撤销 / 顶点编辑，不另起一条平行实现。"""
+        if self._doc is None or self._view is None:
+            return
+        self._view._sync_entity(EntityRef("scene", self._doc.scene_id))
 
     def _sync_scene_row(self, scene_id: str) -> None:
         self._scene_list.blockSignals(True)
@@ -304,6 +312,7 @@ class SceneEditorV2(QWidget):
             return
         self.refresh_group_boxes()
         self.refresh_perspective_axis()
+        self.refresh_scene_geometry()
         if isinstance(event, (EntitiesAdded, EntitiesRemoved, SceneReloaded)):
             self.refresh_entity_tree()
 

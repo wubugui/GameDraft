@@ -223,6 +223,70 @@ class PerspectiveAxisTests(_Base):
         self.assertFalse(self.page.view.perspective_axis.isVisible())
 
 
+class LightCurveTests(_Base):
+    """光环境曲线：场景级点列，走与实体几何**同一套**编辑与撤销。"""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.model.scenes[_SCENE]["lightEnvCurve"] = [
+            {"x": 100, "y": 100, "env": {"toneStrength": 0.4}},
+            {"x": 300, "y": 100, "env": {"toneStrength": 0.8}},
+        ]
+        self.page.load_scene(_SCENE)
+        self.scene_ref = EntityRef("scene", _SCENE)
+
+    def curve(self) -> list:
+        return self.model.scenes[_SCENE]["lightEnvCurve"]
+
+    def test_curve_item_exists(self) -> None:
+        self.assertIsNotNone(self.page.view.item_for(self.scene_ref, "lightcurve"))
+
+    def test_editable_without_selecting_any_entity(self) -> None:
+        """光曲线不属于任何实体，不该要求"先选中某个实体"才能编辑。"""
+        self.page.document.clear_selection()
+        tool = self.page.polygon_tool
+        self.assertTrue(tool.mouse_pressed(QPointF(100, 100), _LEFT, _NO_MOD))
+        tool.mouse_moved(QPointF(120, 130), _LEFT, _NO_MOD)
+        tool.mouse_released(QPointF(120, 130), _LEFT, _NO_MOD)
+        self.assertEqual((self.curve()[0]["x"], self.curve()[0]["y"]), (120.0, 130.0))
+
+    def test_dragging_keeps_the_env_payload(self) -> None:
+        """**每个控制点都驮着一份完整 env 关键帧** —— 只写 x/y 会把它整份丢掉，
+        而画面要下一次打光才看得出来，属于最难查的静默数据丢失。"""
+        tool = self.page.polygon_tool
+        tool.mouse_pressed(QPointF(100, 100), _LEFT, _NO_MOD)
+        tool.mouse_released(QPointF(120, 130), _LEFT, _NO_MOD)
+        self.assertEqual(self.curve()[0]["env"], {"toneStrength": 0.4})
+        self.assertEqual(self.curve()[1]["env"], {"toneStrength": 0.8})
+
+    def test_insert_inherits_env_from_a_neighbour(self) -> None:
+        """新插入的控制点继承相邻点的 env，而不是留空 —— 留空会让那一段没光。"""
+        tool = self.page.polygon_tool
+        self.assertTrue(
+            tool.mouse_double_clicked(QPointF(200, 100), _LEFT, _NO_MOD))
+        self.assertEqual(len(self.curve()), 3)
+        self.assertIn("env", self.curve()[1])
+
+    def test_edit_is_undoable(self) -> None:
+        tool = self.page.polygon_tool
+        tool.mouse_pressed(QPointF(100, 100), _LEFT, _NO_MOD)
+        tool.mouse_released(QPointF(120, 130), _LEFT, _NO_MOD)
+        self.page.editor_undo()
+        self.assertEqual((self.curve()[0]["x"], self.curve()[0]["y"]), (100, 100))
+        self.assertEqual(self.curve()[0]["env"], {"toneStrength": 0.4})
+
+    def test_open_polyline_semantics(self) -> None:
+        """光曲线是**开放**折线，首尾之间没有边。"""
+        item = self.page.view.item_for(self.scene_ref, "lightcurve")
+        self.assertFalse(item.closed)
+
+    def test_scene_without_a_curve_has_no_item(self) -> None:
+        self.model.scenes[_SCENE].pop("lightEnvCurve")
+        self.page.load_scene(_SCENE)
+        self.assertIsNone(
+            self.page.view.item_for(EntityRef("scene", _SCENE), "lightcurve"))
+
+
 class OverlaysAreNotHitCandidatesTests(_Base):
     """覆盖物**永不进命中白名单** —— 结构性保证，不靠逐个 isinstance 排除。"""
 
