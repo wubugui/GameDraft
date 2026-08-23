@@ -841,6 +841,12 @@
       ]
     },
     {
+      "glob": "tools/editor/editors/scene_v2/*",
+      "docs": [
+        "scene-canvas-v2-document-view-command"
+      ]
+    },
+    {
       "glob": "tools/editor/editors/sugar_wheel_editor.py",
       "docs": [
         "atmosphere-script-editor"
