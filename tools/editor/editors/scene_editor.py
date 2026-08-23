@@ -330,6 +330,7 @@ _Z_DECOR_GIZMO = 900_000.0          # 原 9_000
 
 # 图集寻址/切分/世界尺寸推导已抽到 shared/anim_atlas_preview.py（气泡锚控件与本画布共用，
 # 两份实现会各自漂移）。此处保留私有别名，call site 不变。
+from ..shared.anim_frame_cursor import AnimFrameCursor    # noqa: E402
 from ..shared.anim_atlas_preview import (          # noqa: E402
     anim_bundle_key_from_manifest_url as _anim_bundle_key_from_manifest_url,
     crop_atlas_cell as _crop_atlas_cell,
@@ -362,16 +363,34 @@ def _npc_initial_playback_tuple(npc: dict) -> tuple[float, bool, int | None, int
 class _SceneNpcAnimRuntime:
     """场景画布上单个 NPC 的循环动画（与脚底锚点、世界尺寸一致）。"""
 
+    # 帧游标那九个字段（frames / frame_idx / _accum / frame_rate / loop /
+    # speed_mult / reverse / hold_frame / start_frame）改由 `cursor` 持有，
+    # 这里保留同名属性做转发 —— 语义只有 shared/anim_frame_cursor.py 一份，
+    # 新画布用的是同一个游标，两个画布不可能各播各的。
     __slots__ = (
         "npc_id", "item", "atlas", "cols", "rows",
         "cell_w", "cell_h", "atlas_frames",
-        "world_w", "world_h", "frames", "frame_idx", "_accum",
-        "frame_rate", "loop",
+        "world_w", "world_h", "cursor",
         "facing_x", "_prev_x", "_prev_y", "_have_prev",
         "inst_scale", "inst_rot_deg", "persp",
-        "speed_mult", "reverse", "hold_frame", "start_frame",
         "ref_speed", "visible",
     )
+
+    frames = property(lambda self: self.cursor.frames)
+    frame_rate = property(lambda self: self.cursor.frame_rate)
+    loop = property(lambda self: self.cursor.loop)
+    speed_mult = property(lambda self: self.cursor.speed_mult)
+    reverse = property(lambda self: self.cursor.reverse)
+    hold_frame = property(lambda self: self.cursor.hold_frame)
+    start_frame = property(lambda self: self.cursor.start_frame)
+
+    @property
+    def frame_idx(self) -> int:
+        return self.cursor.frame_idx
+
+    @frame_idx.setter
+    def frame_idx(self, value: int) -> None:
+        self.cursor.frame_idx = int(value)
 
     def __init__(
         self,
@@ -401,12 +420,9 @@ class _SceneNpcAnimRuntime:
         self.atlas_frames = atlas_frames if isinstance(atlas_frames, list) else None
         self.world_w = world_w
         self.world_h = world_h
-        self.frames = frames
-        self.frame_idx = 0
-        self._accum = 0.0
         fr = float(frame_rate)
-        self.frame_rate = max(1e-6, fr if fr > 0 else 8.0)
-        self.loop = loop
+        self.cursor = AnimFrameCursor(
+            frames, max(1e-6, fr if fr > 0 else 8.0), loop)
         self.facing_x = 1
         self._prev_x = 0.0
         self._prev_y = 0.0
@@ -416,11 +432,6 @@ class _SceneNpcAnimRuntime:
         self.inst_rot_deg = 0.0
         # 场景透视缩放系数（近大远小预览；随位置每拍拉取，与运行时 sprite 级施加同口径）
         self.persp = 1.0
-        # 初始播放参数（initialAnimPlayback 预览；与 tick 循环的位置/transform 同为每拍拉取）
-        self.speed_mult = 1.0
-        self.reverse = False
-        self.hold_frame: int | None = None
-        self.start_frame: int | None = None
         # 本 runtime 所播状态的步速匹配基准（anim.json state.referenceSpeed；巡逻预览步速缩放用）
         self.ref_speed = float(ref_speed) if ref_speed and ref_speed > 0 else None
         # 视图过滤闸门（位面/时段/过场）。**必须是 runtime 的状态，不能只 setVisible(item)**：
@@ -436,44 +447,12 @@ class _SceneNpcAnimRuntime:
         self, speed: float, reverse: bool,
         hold: int | None, start: int | None,
     ) -> None:
-        """每拍拉取式套用初始播放参数。speed/reverse 是连续量直接覆盖；hold/start/reverse
-        的**变化边沿**才拨动游标（与运行时起播语义一致：hold 定格 > start 起播帧 >
-        反向末帧/正向 0），否则每拍重置游标动画就永远停在起点了。"""
-        self.speed_mult = float(speed) if speed and speed > 0 else 1.0
-        n = max(1, len(self.frames))
-        rev = bool(reverse)
-        rev_changed = rev != self.reverse
-        self.reverse = rev
-        hold_changed = hold != self.hold_frame
-        self.hold_frame = hold
-        start_changed = start != self.start_frame
-        self.start_frame = start
-        if hold is not None:
-            if hold_changed:
-                self.frame_idx = int(hold) % n
-                self._accum = 0.0
-            return
-        if hold_changed or start_changed or rev_changed:
-            if start is not None:
-                self.frame_idx = int(start) % n
-            else:
-                self.frame_idx = (n - 1) if rev else 0
-            self._accum = 0.0
+        """每拍拉取式套用初始播放参数。语义与实现都在
+        `shared/anim_frame_cursor.AnimFrameCursor.set_playback`（新画布共用同一份）。"""
+        self.cursor.set_playback(speed, reverse, hold, start)
 
     def tick(self, dt: float, npc_x: float, npc_y: float) -> None:
-        if self.hold_frame is None:
-            self._accum += dt
-            step = 1.0 / max(1e-6, self.frame_rate * self.speed_mult)
-            while self._accum >= step and len(self.frames) > 1:
-                self._accum -= step
-                self.frame_idx += -1 if self.reverse else 1
-                if self.frame_idx < 0 or self.frame_idx >= len(self.frames):
-                    if self.loop:
-                        self.frame_idx = (len(self.frames) - 1) if self.reverse else 0
-                    else:
-                        self.frame_idx = 0 if self.reverse else (len(self.frames) - 1)
-                        self._accum = 0.0
-                        break
+        self.cursor.advance(dt)
         if self._have_prev:
             dx = npc_x - self._prev_x
             if abs(dx) > 1e-4:
@@ -486,7 +465,7 @@ class _SceneNpcAnimRuntime:
     def draw_at(self, npc_x: float, npc_y: float) -> None:
         if not self.frames:
             return
-        idx = int(self.frames[self.frame_idx % len(self.frames)])
+        idx = self.cursor.atlas_index
         sw: int | None = None
         sh: int | None = None
         if self.atlas_frames and 0 <= idx < len(self.atlas_frames):

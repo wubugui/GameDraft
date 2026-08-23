@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 
-from PySide6.QtCore import QPointF, Qt
+from PySide6.QtCore import QPointF, Qt, QTimer
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -56,6 +56,7 @@ from .changes import (
     SelectionChanged,
 )
 from .document import SceneDocument
+from .npc_anim import NpcAnimBank
 from .panel_bridge import PanelBridge
 from .sorting import assign_content_z
 from .tools_builtin import MoveTool, PolygonEditTool, SelectTool
@@ -63,6 +64,10 @@ from .tools_overlays import GroupBoxTool, PerspectiveAxisTool, group_bounds
 from .tools_structure import CreateTool, delete_selected, duplicate_selected
 from .tools_transform import GroupMoveTool, TransformTool
 from .view import SceneView
+
+#: NPC 精灵的动画节拍（毫秒）。~30fps 足够看清动画对不对，
+#: 又不至于让 NPC 上百的场景每秒裁上千张图。
+_ANIM_TICK_MS = 33
 
 __all__ = ["SceneEditorV2"]
 
@@ -122,6 +127,13 @@ class SceneEditorV2(QWidget):
         self._props = ScenePropertyPanel(model)
         splitter.addWidget(self._props)
         self._bridge: PanelBridge | None = None
+        # NPC 精灵的动画驱动。**宿主持有** —— 解析 anim.json、读图集、跑定时器
+        # 都是读资源，视图那层不做这件事。
+        self._anim_bank = NpcAnimBank(model, self._public_asset_path)
+        self._anim_timer = QTimer(self)
+        self._anim_timer.setTimerType(Qt.TimerType.CoarseTimer)
+        self._anim_timer.setInterval(_ANIM_TICK_MS)
+        self._anim_timer.timeout.connect(self._tick_npc_anims)
         root.addWidget(splitter)
 
         self.refresh_scene_list()
@@ -177,6 +189,13 @@ class SceneEditorV2(QWidget):
             self._bridge = None
         if self._doc is not None:
             self._doc.deleteLater()
+        # **重建视图 = 内容层 z 的脏检查缓存作废。**
+        # 缓存键是 (装配序, z, ref) —— 刻意不含图元身份（CPython 的 id 会被回收
+        # 复用，图元换人后键"看着没变"）。代价是换一批全新图元时键仍然相同，
+        # 于是 `assign_content_z` 早退、一个 setZValue 都不发，全场内容图元停在
+        # 默认 z=0：该被挡住的贴图跑到前面来，而数据其实没变 —— 用户会去改数据
+        # "修"一个根本不存在的问题。切页/跳转/Task 编排后重投影都会走到这里。
+        self._content_z_key = None
         self._doc = SceneDocument(self._model, scene_id, self)
         self._bridge = PanelBridge(self._props, self._doc, self)
         # 桥恒返回 None，于是 write_target 恒指向模型 —— 新画布没有第二层真相。
@@ -190,10 +209,13 @@ class SceneEditorV2(QWidget):
         self._canvas_layout.addWidget(self._view)
         self._view.set_texture_provider(self._load_texture)
         self._view.set_sprite_metrics_provider(self._npc_sprite_metrics)
+        self._anim_bank.clear()
+        self._view.set_sprite_frame_provider(self._anim_bank.frame_pixmap)
         self._refresh_background()
         self._install_tools()
         self._apply_view_axes()
         self._doc.changed.connect(self._on_doc_changed)
+        self._view.content_resort_requested.connect(self.resort_content_z)
         self._view.fit_scene()
         self._sync_scene_row(scene_id)
         self.resort_content_z()
@@ -201,6 +223,7 @@ class SceneEditorV2(QWidget):
         self.refresh_perspective_axis()
         self.refresh_scene_geometry()
         self.refresh_entity_tree()
+        self._anim_timer.start()
         return True
 
     # ---- 资源解析（视图不读盘，路径解析归这里）-----------------------------
@@ -246,12 +269,41 @@ class SceneEditorV2(QWidget):
         self._texture_cache[url] = pix
         return pix if not pix.isNull() else None
 
+    def _tick_npc_anims(self) -> None:
+        """把 NPC 精灵推进一帧。
+
+        `hideEvent`/`showEvent` 里停/开定时器：页不可见时没人看，白烧 CPU；
+        而 28 个场景里 NPC 上百，每拍裁图不是免费的。
+        """
+        if self._view is None:
+            return
+        if self._anim_bank.advance(_ANIM_TICK_MS / 1000.0):
+            self._view.refresh_sprite_frames()
+
+    def hideEvent(self, event) -> None:  # noqa: N802 - Qt 接口
+        self._anim_timer.stop()
+        super().hideEvent(event)
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt 接口
+        if self._doc is not None:
+            self._anim_timer.start()
+        super().showEvent(event)
+
     def _npc_sprite_metrics(self, npc: dict):
-        """NPC 精灵的世界尺寸与图集 URL；动画包解不出来返回 None。
+        """NPC 精灵的世界尺寸；动画包解不出来返回 None。
 
         返回 None 时视图不建精灵图元 —— 与老画布同口径（没有 animFile / 图集
         读不到就没有精灵），也与运行时一致（`getWorldSize()` 为 0 时不出 sprite）。
+
+        尺寸与**当前帧**都由 `NpcAnimBank` 给（它解析 anim.json、持图集与帧游标），
+        第三项 URL 只是留给旧契约的占位 —— 精灵的像素走帧通路，不走 texture_provider。
         """
+        size = self._anim_bank.world_size(npc)
+        if size is None:
+            return None
+        return (size[0], size[1], "")
+
+    def _npc_sprite_metrics_legacy(self, npc: dict):
         anim_id = str(self._model.character_field(npc, "animFile") or "").strip()
         if not anim_id:
             return None

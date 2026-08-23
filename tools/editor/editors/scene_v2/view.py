@@ -18,6 +18,10 @@ from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import QGraphicsScene, QGraphicsView
 
+from ...shared.entity_transform_math import (
+    entity_perspective_factor,
+    entity_scale_of,
+)
 from ...shared.scene_migrations import collision_polygon_local_to_world
 from ..scene_canvas_model import iter_part_keys
 from .changes import (
@@ -105,6 +109,9 @@ class SceneView(QGraphicsView):
         #: ``npc_dict -> (world_w, world_h, texture_url) | None``。
         #: 精灵尺寸住在动画包里，不在场景 JSON 里 —— 同样归宿主。
         self._sprite_metrics = None
+        #: ``npc_dict -> QPixmap | None``（图集里的**当前一格**）。
+        #: 与 `_texture_provider` 分开：精灵是随时间变的一帧，展示图是一整张。
+        self._sprite_frame = None
         #: 覆盖物（分组框 / 透视轴 / 橡皮筋）。它们不进图元账，也不进命中白名单。
         self._group_boxes: dict[str, GroupBoxItem] = {}
         self._persp_axis = PerspectiveAxisItem()
@@ -229,9 +236,20 @@ class SceneView(QGraphicsView):
             self._push_view_scale(item)
         if isinstance(item, HandleItem):
             item.set_base_pos(float(ent.get("x", 0) or 0), float(ent.get("y", 0) or 0))
-            if properties & (EntityProperty.BEHAVIOUR | EntityProperty.TRANSFORM
-                             | EntityProperty.ALL):
-                item.set_interaction_range(float(ent.get("interactionRange", 0) or 0))
+            if properties & (EntityProperty.POSITION | EntityProperty.BEHAVIOUR
+                             | EntityProperty.TRANSFORM | EntityProperty.ALL):
+                # **缺省 50，且乘实例 scale 与透视系数** —— 与运行时同口径。
+                # 少乘的话策划照着虚线圈调"走到多近能交互"，实际游戏里最多差
+                # 2.2 倍（透视）× 实例缩放；缺省写 0 则整个圈直接不画，
+                # 而运行时缺省是 50，等于画布对玩法参数直接撒谎。
+                raw = ent.get("interactionRange", 50)
+                try:
+                    base = float(raw if raw is not None else 50)
+                except (TypeError, ValueError):
+                    base = 50.0
+                item.set_interaction_range(
+                    base * entity_scale_of(ent)
+                    * self.perspective_factor(ent, ref.kind))
         else:
             item.set_points(pts)
 
@@ -254,7 +272,10 @@ class SceneView(QGraphicsView):
         anchor, w, h, facing, scale, rot, url = spec
         item.set_base_pos(anchor.x(), anchor.y())
         item.set_geometry(QPointF(0, 0), w, h, scale=scale, rotation=rot, facing=facing)
-        if self._texture_provider is not None:
+        if ref.kind == "npc" and self._sprite_frame is not None:
+            # 精灵走**帧**通路（图集里的一格），不是整张图
+            item.refresh_frame(self._sprite_frame(ent))
+        elif self._texture_provider is not None:
             item.set_pixmap(self._texture_provider(url))
         else:
             item.set_pixmap(None)
@@ -281,7 +302,9 @@ class SceneView(QGraphicsView):
             return (
                 QPointF(float(ent.get("x", 0) or 0), float(ent.get("y", 0) or 0)),
                 w, h, facing,
-                float(ent.get("scale", 1.0) or 1.0),
+                # 实例 scale **×** 透视系数：与运行时容器级复合同口径（防预览撒谎）
+                float(ent.get("scale", 1.0) or 1.0)
+                * self.perspective_factor(ent, kind),
                 float(ent.get("rotation", 0.0) or 0.0),
                 url,
             )
@@ -302,7 +325,8 @@ class SceneView(QGraphicsView):
         return (
             QPointF(float(ent.get("x", 0) or 0), float(ent.get("y", 0) or 0)),
             w, h, facing,
-            float(ent.get("scale", 1.0) or 1.0),
+            float(ent.get("scale", 1.0) or 1.0)
+            * self.perspective_factor(ent, kind),
             float(ent.get("rotation", 0.0) or 0.0),
             url,
         )
@@ -352,6 +376,27 @@ class SceneView(QGraphicsView):
         self._texture_provider = provider
         self._resync_content()
 
+    def set_sprite_frame_provider(self, provider) -> None:
+        """注入 ``npc_dict -> QPixmap | None``（**当前帧**，不是整张图集）。
+
+        NPC 精灵与静态展示图走两条不同的贴图通路：展示图是一张图，精灵是图集里
+        随时间变的一格。共用 `texture_provider` 的下场是把整张图集压进 NPC 的世界
+        框里 —— 画布上每个 NPC 变成一坨缩微小人网格，而且不会动。
+        """
+        self._sprite_frame = provider
+        self._resync_content()
+
+    def refresh_sprite_frames(self) -> None:
+        """动画驱动每拍调：把当前帧推进已有的精灵图元。**不重建图元**。"""
+        if self._sprite_frame is None:
+            return
+        for (ref, part), item in list(self._items.items()):
+            if part != "sprite":
+                continue
+            ent = self._doc.entity(ref)
+            if isinstance(ent, dict):
+                item.refresh_frame(self._sprite_frame(ent))
+
     def set_sprite_metrics_provider(self, provider) -> None:
         """注入 ``npc_dict -> (world_w, world_h, texture_url) | None``。"""
         self._sprite_metrics = provider
@@ -364,6 +409,22 @@ class SceneView(QGraphicsView):
             refs.update(self._doc.entity_refs(kind))
         for ref in refs:
             self._sync_entity(ref)
+
+    def perspective_factor(self, ent: dict, kind: str,
+                           foot_x=None, foot_y=None) -> float:
+        """实体在画布上的**透视系数**（参与判定 × f(脚底点)）；未配置时恒 1。
+
+        **画布上一切"多大"的东西都要乘它**：贴图/精灵的世界尺寸、交互半径圈、
+        内容层排序用的脚底 quad。漏乘的后果不是"画得略歪"，而是编辑器**撒谎**：
+        透视场景里最多差 2.2 倍，策划照着画布摆好的构图进游戏就是散的，
+        而且没有任何报错。老画布在这一处专门写了注释「防预览撒谎」。
+
+        与老画布共用同一份数学（`shared/entity_transform_math`），两个画布因此
+        不可能各算各的。
+        """
+        sc = self._doc.scene() or {}
+        cfg = sc.get("perspectiveScale") if isinstance(sc, dict) else None
+        return entity_perspective_factor(cfg, ent, kind, foot_x, foot_y)
 
     def _part_points(self, kind: str, part: str, ent: dict):
         if part == "lightcurve":
@@ -486,6 +547,18 @@ class SceneView(QGraphicsView):
                 item.set_preview_offset(dx, dy)
         self._preview_refs = wanted
 
+    def preview_offsets(self) -> dict:
+        """手势中每个实体的预览位移 ``{ref: (dx, dy)}``。排序要把它算进脚底 y。"""
+        if not self._preview_refs:
+            return {}
+        off = (0.0, 0.0)
+        for ref in self._preview_refs:
+            items = self.items_of(ref)
+            if items:
+                off = items[0].preview_offset
+                break
+        return {ref: off for ref in self._preview_refs}
+
     def set_transform_preview(self, spec) -> None:
         """缩放/旋转预览：``(ref, scale, rotation)`` 或 ``None``。
 
@@ -513,6 +586,9 @@ class SceneView(QGraphicsView):
                 item.set_geometry(QPointF(0, 0), w, h,
                                   scale=scale, rotation=rot, facing=facing)
 
+    #: 手势预览刷新后要不要重排内容层（宿主接上；视图自己不算 z）
+    content_resort_requested = Signal()
+
     def refresh_gesture_preview(self) -> None:
         """把当前工具的手势状态投影到画面上。
 
@@ -529,6 +605,11 @@ class SceneView(QGraphicsView):
         self.set_transform_preview(getattr(tool, "transform_preview", None))
         gizmo = getattr(tool, "gizmo_positions", None)
         self._gizmo.set_positions(gizmo() if callable(gizmo) else None)
+        # **拖动中也要重排前后关系。** 手势期间不写数据（对的），但脚底 y 已经
+        # 在画面上变了；不重排的话"把这个人挪到树后面"这类调层动作看到的层级是
+        # 错的，只能靠松手那一跳试错。老画布在 live 分支里每帧都重排。
+        if self._preview_refs or self._preview_transform is not None:
+            self.content_resort_requested.emit()
 
     @property
     def transform_gizmo(self) -> TransformGizmoItem:

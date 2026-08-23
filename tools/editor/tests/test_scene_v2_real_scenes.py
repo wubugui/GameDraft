@@ -305,5 +305,87 @@ class BrowsingIsReadOnlyTests(unittest.TestCase):
                     "只是浏览就把场景数据改了")
 
 
+class ReloadKeepsTheCanvasHonestTests(unittest.TestCase):
+    """主窗口每次切页/跳转都调 `reload_from_model()` —— 走一趟之后画布必须还是对的。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._app = QApplication.instance() or QApplication(sys.argv)
+
+    def test_content_z_survives_a_reload(self) -> None:
+        """重投影会换一批全新图元（默认 z=0）。内容层次序必须被重新派。
+
+        不派的话，切页回来一次全场遮挡关系就整套失效，而数据其实没变 ——
+        用户会去改数据"修"一个根本不存在的问题。
+        """
+        from tools.editor.editors.scene_v2.page import SceneEditorV2
+        from tools.editor.project_model import ProjectModel
+
+        model = ProjectModel()
+        model.load_project(REPO)
+        target = None
+        for sid, sc in sorted(model.scenes.items()):
+            n = sum(1 for h in (sc.get("hotspots") or [])
+                    if isinstance(h.get("displayImage"), dict)
+                    and h["displayImage"].get("image"))
+            if n >= 2:
+                target = sid
+                break
+        self.assertIsNotNone(target, "找不到带两张以上展示图的真实场景")
+
+        page = SceneEditorV2(model)
+        try:
+            page.load_scene(target)
+            page.reload_from_model()
+            zs = [it.zValue() for (ref, part), it in page.view._items.items()
+                  if part in ("display", "sprite")]
+            self.assertTrue(zs, "前置条件：该场景应当有内容图元")
+            self.assertFalse(all(z == 0.0 for z in zs),
+                             f"重投影之后内容 z 全塌成 0（{target}）")
+        finally:
+            page.deleteLater()
+            QApplication.processEvents()
+
+    def test_npc_sprites_are_single_frames_not_whole_atlases(self) -> None:
+        """NPC 画的必须是图集里的**一格**。
+
+        画整张图集的话，画布上每个 NPC 不是一个人而是一坨缩微小人网格：
+        没法判断这个角色是谁、朝哪边、占多大地方，摆位与遮挡只能靠猜。
+        """
+        from tools.editor.editors.scene_v2.page import SceneEditorV2
+        from tools.editor.project_model import ProjectModel
+
+        model = ProjectModel()
+        model.load_project(REPO)
+        checked = 0
+        for sid in sorted(model.scenes.keys()):
+            if not (model.scenes[sid].get("npcs") or []):
+                continue
+            page = SceneEditorV2(model)
+            try:
+                page.load_scene(sid)
+                bank = page._anim_bank
+                for ref in page.document.entity_refs("npc"):
+                    if page.view.item_for(ref, "sprite") is None:
+                        continue
+                    npc = page.document.entity(ref)
+                    frame = bank.frame_pixmap(npc)
+                    bundle = bank._bundle(bank._anim_id(npc))
+                    if frame is None or bundle is None:
+                        continue
+                    checked += 1
+                    with self.subTest(scene=sid, npc=ref.id):
+                        self.assertTrue(
+                            frame.width() < bundle.atlas.width()
+                            or frame.height() < bundle.atlas.height(),
+                            "整张图集被当成一帧画进了 NPC 的世界框")
+            finally:
+                page.deleteLater()
+                QApplication.processEvents()
+            if checked >= 8:
+                break
+        self.assertGreater(checked, 0, "一个真实 NPC 精灵都没查到 —— 这条没测到")
+
+
 if __name__ == "__main__":
     unittest.main()

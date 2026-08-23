@@ -36,6 +36,9 @@ def content_sort_entries(document, view, *, probe=None):
     `hasPlayer` 为假同分支，遮挡多边形那一支不生效、回落静态档位。
     """
     out: list[tuple[float, int, object, str]] = []
+    # 手势预览位移要算进脚底 y，否则拖动中的重排用的还是旧位置（等于没排）
+    offsets = getattr(view, "preview_offsets", None)
+    offsets = offsets() if callable(offsets) else {}
     for i, ref in enumerate(document.entity_refs("hotspot")):
         # **只认展示图图元，不回落到把手。** 回落会把"配了 displayImage 但图缺件/
         # 尺寸为 0"的热点的**把手**拖进内容区 —— 那个把手于是被派到内容层 z，
@@ -53,10 +56,16 @@ def content_sort_entries(document, view, *, probe=None):
         except (TypeError, ValueError):
             ww = hh = 0.0
         texture_loaded = bool(getattr(item, "texture_loaded", True))
-        s = entity_scale_of(ent)
+        # **脚底 quad 的尺寸要乘透视系数**，否则"谁挡谁"与运行时算出来不是一回事。
+        # 触发条件窄（实体要同时有 rotation 且参与透视），正因为窄，撞上时最难归因：
+        # 两个画布都不报错、结果不同。
+        s = entity_scale_of(ent) * _pf(view, ent, "hotspot")
         foot = sort_foot_y_of(ent, ww * s, hh * s)
+        dy = offsets.get(ref, (0.0, 0.0))[1]
         z = entity_sort_z(
-            hotspot_sort_band_of(ent, texture_loaded), float(ent.get("y", 0) or 0), foot)
+            hotspot_sort_band_of(ent, texture_loaded),
+            float(ent.get("y", 0) or 0) + dy,
+            None if foot is None else foot + dy)
         out.append((z, 1_000 + i, item, ref.key))
 
     for i, ref in enumerate(document.entity_refs("npc")):
@@ -65,14 +74,28 @@ def content_sort_entries(document, view, *, probe=None):
         if item is None or not isinstance(ent, dict):
             continue
         size = getattr(item, "world_size", (0.0, 0.0))
-        s = entity_scale_of(ent)
+        s = entity_scale_of(ent) * _pf(view, ent, "npc")
         foot = sort_foot_y_of(ent, size[0] * s, size[1] * s)
         # NPC 的 collisionPolygon **不参与**遮挡带（运行时只有 Hotspot 写
         # entityOcclusionPolygon）；一视同仁会造出运行时根本不存在的层级翻转。
-        z = entity_sort_z(npc_sort_band_of(ent), float(ent.get("y", 0) or 0), foot)
+        dy = offsets.get(ref, (0.0, 0.0))[1]
+        z = entity_sort_z(npc_sort_band_of(ent),
+                          float(ent.get("y", 0) or 0) + dy,
+                          None if foot is None else foot + dy)
         out.append((z, 2_000_000 + i, item, ref.key))
 
     return out
+
+
+def _pf(view, ent: dict, kind: str) -> float:
+    """透视系数。视图提供唯一出口；拿不到（脱离视图单测）时按 1。"""
+    getter = getattr(view, "perspective_factor", None)
+    if not callable(getter):
+        return 1.0
+    try:
+        return float(getter(ent, kind))
+    except (TypeError, ValueError):
+        return 1.0
 
 
 def assign_content_z(document, view, *, probe=None, cache: tuple | None = None):
