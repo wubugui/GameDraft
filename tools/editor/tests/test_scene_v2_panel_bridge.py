@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import copy
 import sys
 import unittest
 from pathlib import Path
@@ -17,6 +18,7 @@ from PySide6.QtWidgets import QApplication
 
 from tools.editor.editors.scene_v2.changes import EntityProperty, EntityRef
 from tools.editor.editors.scene_v2.page import SceneEditorV2
+from tools.editor.editors.scene_v2.commands import _MISSING
 from tools.editor.editors.scene_v2.panel_bridge import diff_fields
 from tools.editor.project_model import ProjectModel
 from tools.editor.tests.save_test_utils import write_minimal_loadable_project
@@ -40,21 +42,41 @@ def _scene() -> dict:
 
 
 class DiffFieldsTests(unittest.TestCase):
-    """比对只看 staging 出现过的键 —— 未受管字段必须原样留在模型里。"""
+    """staging 是实体的**完整投影**（面板 `load_*_props` 里是 `copy.deepcopy(ent)`），
+    所以两个方向都要比：值不同要写，**键消失要删**。"""
 
     def test_only_changed_keys_are_returned(self) -> None:
         self.assertEqual(diff_fields({"x": 1, "y": 2}, {"x": 1, "y": 5}), {"y": 2})
 
-    def test_unmanaged_keys_are_never_touched(self) -> None:
-        got = diff_fields({"x": 1}, {"x": 1, "unknownKey": {"keep": 1}})
-        self.assertEqual(got, {}, "面板没碰的键被当成变更写回去了")
+    def test_key_missing_from_staging_is_a_deletion(self) -> None:
+        """"取消勾选 / 清空下拉"是靠**键消失**表达的，必须变成删键。
+
+        此前这里断言的是"没出现在 staging 的键原样保留" —— 那条断言的前提
+        （staging 只含面板管的键）与真实面板不符：`load_hotspot_props` 里
+        `st = copy.deepcopy(hs)`，staging 从一开始就是全量副本。按旧断言写，
+        取消勾选永远存不下来。
+        """
+        got = diff_fields({"x": 1}, {"x": 1, "cutsceneOnly": True})
+        self.assertEqual(got, {"cutsceneOnly": _MISSING})
 
     def test_new_key_is_written(self) -> None:
         self.assertEqual(diff_fields({"scale": 2.0}, {}), {"scale": 2.0})
 
-    def test_int_float_representation_counts_as_a_change(self) -> None:
-        """数值往返保真：未改动的数值键必须按原始表示回写。"""
-        self.assertEqual(diff_fields({"x": 100.0}, {"x": 100}), {"x": 100.0})
+    def test_int_float_representation_is_not_a_change(self) -> None:
+        """`100` 与 `100.0` 在**本层**视为没变 —— 保住模型里的整数表示。
+
+        与命令层刻意相反，理由是输入性质不同：命令层收的是工具主动写下的值，
+        这里收的是穿过控件的投影（spinbox 一律吐 float，面板的 x/y 实时回写
+        更是硬编码 `float(...)`）。按表示判定的话，用户只拖了 x，同一实体的 y
+        也会被写成 `320.0`，一次提交污染一串整数坐标。
+        """
+        self.assertEqual(diff_fields({"x": 100.0}, {"x": 100}), {})
+        self.assertEqual(diff_fields({"x": 101.0}, {"x": 100}), {"x": 101.0})
+
+    def test_bool_and_int_are_not_confused(self) -> None:
+        """Python 里 `True == 1`。不单独挡就会把"勾选变成 1"当成没变。"""
+        self.assertEqual(diff_fields({"flag": 1}, {"flag": True}), {"flag": 1})
+        self.assertEqual(diff_fields({"flag": True}, {"flag": 1}), {"flag": True})
 
     def test_no_change_returns_empty(self) -> None:
         self.assertEqual(diff_fields({"x": 100, "y": 120}, {"x": 100, "y": 120}), {})
@@ -123,13 +145,71 @@ class WriteTargetAlwaysModelTests(_Base):
                           self.ent("hotspot", "h1")["y"]), (150.0, 170.0))
 
 
+class RealWidgetCommitTests(_Base):
+    """**从真实控件进**，不往 staging 里塞值。
+
+    上一轮这里全绿却完全没测到真实通路：老面板的控件只调 `_emit_props_changed()`
+    （标脏 + 发信号），staging 是靠 `flush_active_panel_widgets_to_staging()` 才刷新的，
+    而当时的用例直接写 `_staging_hotspot`，恰好把那一步跳过去了。
+    """
+
+    def test_editing_a_spinbox_reaches_the_model(self) -> None:
+        ref = EntityRef("hotspot", "h2")
+        self.page.document.set_selection([ref])
+        self.page._props._hs_x.setValue(301.0)
+        self.page._bridge.commit_panel_edits()
+        self.assertEqual(self.ent("hotspot", "h2")["x"], 301.0,
+                         "控件里的编辑压根没进模型")
+
+    def test_editing_x_does_not_float_ify_the_untouched_y(self) -> None:
+        """只改 x，同一实体的 y 必须**保持整数表示**。
+
+        面板的 x/y 实时回写是硬编码 `float(...)`，两个键一起写；若比对按
+        int/float 表示判定，一次提交就会把没碰过的 y 写成 `320.0`。真实场景里
+        成串的整数坐标会被逐个污染，黄金往返当场红。
+        """
+        ref = EntityRef("hotspot", "h2")
+        self.page.document.set_selection([ref])
+        before_y = self.ent("hotspot", "h2")["y"]
+        self.assertIsInstance(before_y, int, "前置条件：y 在数据里是整数")
+        self.page._props._hs_x.setValue(301.0)
+        self.page._bridge.commit_panel_edits()
+        after_y = self.ent("hotspot", "h2")["y"]
+        self.assertEqual(after_y, before_y)
+        self.assertIsInstance(after_y, int,
+                              "没碰过的 y 被写成了浮点 —— 数值表示被污染")
+
+    def test_selecting_an_entity_alone_changes_nothing(self) -> None:
+        """光是**选中**不该改数据、不该进撤销栈。
+
+        老面板的 `_write_*_widgets_to_dict` 会把它管的每个键都刷一遍：空文本框
+        写成 `""`、空表写成 `{}`。若把这些当成改动，点一下实体就给它加上
+        `label: ""` / `data: {}` —— 本仓约定"缺省不落键"，黄金往返当场红，
+        而且撤销栈平白多一格、场景被标脏，用户什么都没干。
+        """
+        ref = EntityRef("hotspot", "h2")
+        before = copy.deepcopy(self.ent("hotspot", "h2"))
+        self.page.document.set_selection([ref])
+        self.assertEqual(self.ent("hotspot", "h2"), before,
+                         "光是选中就把面板缺省值写进了数据")
+        self.assertEqual(self.page.document.undo_stack.count(), 0)
+
+    def test_commit_without_any_widget_change_pushes_nothing(self) -> None:
+        """光是选中（面板载入 + flush 一遍控件）不该产生任何命令。"""
+        self.page.document.set_selection([EntityRef("hotspot", "h2")])
+        self.assertFalse(self.page._bridge.commit_panel_edits())
+        self.assertEqual(self.page.document.undo_stack.count(), 0)
+
+
 class PanelEditsBecomeCommandsTests(_Base):
     def test_panel_edit_lands_in_the_model_as_a_command(self) -> None:
         ref = EntityRef("hotspot", "h1")
         self.page.document.set_selection([ref])
-        staged = self.page._props._staging_hotspot
-        self.assertIsNotNone(staged, "前置条件：面板应当已载入该实体")
-        staged["interactionRange"] = 88
+        self.assertIsNotNone(self.page._props._staging_hotspot,
+                             "前置条件：面板应当已载入该实体")
+        # **从控件进。** 直接写 staging 会被 `flush_active_panel_widgets_to_staging`
+        # 用控件值原样盖掉 —— 那才是真实通路，绕过它等于什么都没测。
+        self.page._props._hs_range.setValue(88)
         self.page._bridge.commit_panel_edits()
         self.assertEqual(self.ent("hotspot", "h1")["interactionRange"], 88)
         self.assertEqual(self.page.document.undo_stack.count(), 1)
@@ -137,7 +217,7 @@ class PanelEditsBecomeCommandsTests(_Base):
     def test_panel_edit_is_undoable(self) -> None:
         ref = EntityRef("hotspot", "h1")
         self.page.document.set_selection([ref])
-        self.page._props._staging_hotspot["interactionRange"] = 88
+        self.page._props._hs_range.setValue(88)
         self.page._bridge.commit_panel_edits()
         self.page.editor_undo()
         self.assertEqual(self.ent("hotspot", "h1")["interactionRange"], 50)
@@ -151,7 +231,7 @@ class PanelEditsBecomeCommandsTests(_Base):
     def test_unmanaged_keys_survive_a_panel_edit(self) -> None:
         ref = EntityRef("hotspot", "h1")
         self.page.document.set_selection([ref])
-        self.page._props._staging_hotspot["interactionRange"] = 77
+        self.page._props._hs_range.setValue(77)
         self.page._bridge.commit_panel_edits()
         self.assertEqual(self.ent("hotspot", "h1").get("unknownKey"), {"keep": 1},
                          "面板提交把未受管字段弄丢了 —— 黄金往返会红")
@@ -161,7 +241,7 @@ class PanelEditsBecomeCommandsTests(_Base):
         ref = EntityRef("hotspot", "h1")
         self.page.document.set_selection([ref])
         for v in (60, 70, 80):
-            self.page._props._staging_hotspot["interactionRange"] = v
+            self.page._props._hs_range.setValue(v)
             self.page._bridge.commit_panel_edits()
         self.assertEqual(self.page.document.undo_stack.count(), 1)
         self.page.editor_undo()
@@ -171,10 +251,10 @@ class PanelEditsBecomeCommandsTests(_Base):
     def test_switching_entity_starts_a_new_command(self) -> None:
         a, b = EntityRef("hotspot", "h1"), EntityRef("hotspot", "h2")
         self.page.document.set_selection([a])
-        self.page._props._staging_hotspot["interactionRange"] = 60
+        self.page._props._hs_range.setValue(60)
         self.page._bridge.commit_panel_edits()
         self.page.document.set_selection([b])
-        self.page._props._staging_hotspot["interactionRange"] = 90
+        self.page._props._hs_range.setValue(90)
         self.page._bridge.commit_panel_edits()
         self.assertEqual(self.page.document.undo_stack.count(), 2,
                          "两个实体的编辑被并成一条 —— 撤销会把两个都退回去")
@@ -214,7 +294,7 @@ class NoStagingLayerMeansNoCommitPatchesTests(_Base):
     def test_leave_and_close_hooks_are_unconditionally_fine(self) -> None:
         ref = EntityRef("hotspot", "h1")
         self.page.document.set_selection([ref])
-        self.page._props._staging_hotspot["interactionRange"] = 66
+        self.page._props._hs_range.setValue(66)
         self.page._bridge.commit_panel_edits()
         # 编辑已经在模型里了，所以离开/关闭不需要"先提交"
         self.assertTrue(self.page.commit_pending_on_leave())
@@ -226,7 +306,7 @@ class NoStagingLayerMeansNoCommitPatchesTests(_Base):
         """老画布的"不点应用直接切走就丢编辑"在这里不可能发生。"""
         ref = EntityRef("hotspot", "h1")
         self.page.document.set_selection([ref])
-        self.page._props._staging_hotspot["interactionRange"] = 99
+        self.page._props._hs_range.setValue(99)
         self.page._bridge.commit_panel_edits()
         self.model.scenes["别的街"] = dict(_scene(), id="别的街", name="别的街")
         self.page.refresh_scene_list()

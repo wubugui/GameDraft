@@ -35,8 +35,14 @@ import copy
 
 from PySide6.QtCore import QObject
 
-from .changes import EntityProperty, EntityRef
-from .commands import build_change_fields_command
+from .changes import (
+    EntitiesChanged,
+    EntityProperty,
+    EntityRef,
+    SceneReloaded,
+    SelectionChanged,
+)
+from .commands import _MISSING, build_change_fields_command
 
 __all__ = ["PanelBridge", "diff_fields"]
 
@@ -47,11 +53,22 @@ _INTERNAL_KEYS = frozenset()
 def diff_fields(staged: dict, current: dict) -> dict:
     """staging 与模型逐字段比对，返回**需要写入的字段**。
 
-    只看 staging 里出现过的键：面板不碰的键（未受管字段、AI 写的未知键）
-    因此原样留在模型里 —— 黄金往返要求未受管字段零篡改。
+    `staged` 是面板对该实体的**完整投影**（`load_*_props` 深拷贝 + 控件 flush），
+    所以两个方向都要比：
 
-    刻意**区分 int/float 表示**（`100` 与 `100.0` 视为不同），与命令层同口径：
-    数值往返保真要求未改动的数值键按原始表示回写。
+    - staged 有而 current 没有 / 值不同 → 写入；
+    - **current 有而 staged 没有 → 删键**。取消勾选、清空下拉这类操作正是靠
+      「键消失」表达的；只比 staged 的键会让"取消勾选"永远存不下来。
+
+    **数值相等即视为未改动**，即使 int/float 表示不同。这一条与命令层刻意相反，
+    理由是这两层的输入性质不同：命令层的入参是工具**主动写下**的值，表示变化就是
+    真实意图；而这里的 `staged` 是一份**穿过控件的投影** —— `QDoubleSpinBox`
+    一律吐 float，面板的 x/y 实时回写更是硬编码 `float(...)`。于是用户只拖了 x，
+    同一实体的 y 也被顺手变成 `320.0`。若按表示判定，每次提交都会捎带一串
+    "值没变、只多了 `.0`" 的假改动写进场景（真实场景里成串的整数坐标会被逐个
+    污染），diff 与黄金往返双双失真。
+
+    bool 单独挡在前面：Python 里 `True == 1`，不挡就会把"勾选变成 1"当作没变。
     """
     out: dict = {}
     for key, value in staged.items():
@@ -59,11 +76,48 @@ def diff_fields(staged: dict, current: dict) -> dict:
             continue
         old = current.get(key, _ABSENT)
         if old is _ABSENT:
+            if _is_empty_default(value):
+                # **面板给缺省键刷了个空值 ≠ 用户改了东西。**
+                # `_write_*_widgets_to_dict` 会把面板管的每个键都写一遍，空文本框
+                # 写成 `""`、空表写成 `{}`。本仓约定"缺省不落键"（写空值污染 JSON、
+                # 黄金往返立刻红），而且这会让**光是选中一个实体**就产生一条命令：
+                # 撤销栈平白多一格、场景被标脏，用户什么都没做。
+                continue
             out[key] = copy.deepcopy(value)
             continue
-        if type(old) is not type(value) or old != value:
-            out[key] = copy.deepcopy(value)
+        if _same_value(old, value):
+            continue
+        out[key] = copy.deepcopy(value)
+    for key in current:
+        if key in _INTERNAL_KEYS or key in staged:
+            continue
+        out[key] = _MISSING          # 命令层认这个哨兵 = 删键
     return out
+
+
+#: 视为"没写"的空值。**不含 `0` / `False`** —— 它们是有意义的取值，
+#: 与"这个键不存在"不是一回事（`interactionRange: 0` 与缺省的 50 天差地别）。
+_EMPTY_DEFAULTS = ("", {}, [])
+
+
+def _is_empty_default(value) -> bool:
+    if isinstance(value, bool) or isinstance(value, (int, float)):
+        return False
+    if value is None:
+        return True
+    return any(value == e and type(value) is type(e) for e in _EMPTY_DEFAULTS)
+
+
+def _same_value(old, new) -> bool:
+    """两个 staging 值是否"没有实质变化"。
+
+    数值只比大小、不比 int/float 表示（理由见 `diff_fields`）；其余按 `==`。
+    """
+    if isinstance(old, bool) or isinstance(new, bool):
+        return type(old) is type(new) and old == new
+    if isinstance(old, (int, float)) and isinstance(new, (int, float)):
+        return float(old) == float(new)
+    return old == new
 
 
 class _Absent:
@@ -90,8 +144,26 @@ class PanelBridge(QObject):
         self._loaded: EntityRef | None = None
         self._syncing = False
         self._gesture_open = False
+        self._committing = False
         panel.changed.connect(self._on_panel_changed)
         document.changed.connect(self._on_document_changed)
+
+    def detach(self) -> None:
+        """断开与面板/文档的连线。
+
+        **换场景时必须调。** 面板是**页面级共享**的（每次换场景不重建），
+        而桥的 parent 是页面 —— 不断开的话每换一次场景就多一个活着的旧桥挂在
+        `panel.changed` 上，它们仍持着上一个场景的 ref 与**已析构的**文档：
+        轻则把编辑写进上一个场景的同名实体，重则碰死掉的 QUndoStack 抛
+        `Internal C++ object already deleted`。实测每次重载多两个接收者。
+        """
+        for sig, slot in ((self._panel.changed, self._on_panel_changed),
+                          (self._doc.changed, self._on_document_changed)):
+            try:
+                sig.disconnect(slot)
+            except (RuntimeError, TypeError):
+                pass    # 已断开或宿主已析构：目的已达到
+        self._loaded = None
 
     # ---- Document 侧的 StagingProvider 契约 --------------------------------
 
@@ -107,10 +179,22 @@ class PanelBridge(QObject):
     # ---- 选择 → 载入面板 ---------------------------------------------------
 
     def _on_document_changed(self, event) -> None:
-        from .changes import SelectionChanged
-        if not isinstance(event, SelectionChanged):
+        if isinstance(event, SelectionChanged):
+            self.sync_from_selection()
             return
-        self.sync_from_selection()
+        if isinstance(event, SceneReloaded):
+            self.sync_from_selection()
+            return
+        if isinstance(event, EntitiesChanged):
+            # **本桥自己发起的那次变更不要回灌** —— 那会在用户打字的中途把控件
+            # 重置回刚提交的值（光标跳走、输入法中断）。
+            if self._committing:
+                return
+            if self._loaded is not None and self._loaded in event.refs:
+                # 画布拖动 / 撤销 / 别处改动 → 面板必须刷成模型当前值。
+                # 不刷的话下一次面板编辑会把**陈旧值连同新编辑**一起写回去，
+                # 等于把刚才那次拖动（或撤销）悄悄撤销。
+                self.sync_from_selection()
 
     def sync_from_selection(self) -> None:
         sel = self._doc.selection
@@ -167,28 +251,58 @@ class PanelBridge(QObject):
         self.commit_panel_edits()
 
     def commit_panel_edits(self) -> bool:
-        """把面板 staging 与模型的差异做成**一条命令**。无差异则什么都不做。"""
+        """把面板的当前控件值与模型的差异做成**一条命令**。无差异则什么都不做。
+
+        **必须先把控件刷进 staging。** 老面板绝大多数控件的信号只接
+        `_emit_props_changed()`（置脏 + 发信号），**不写 staging**；staging 只在
+        `flush_active_panel_widgets_to_staging()` 里由 `_write_*_widgets_to_dict`
+        一次性刷新。少了这一步，桥读到的永远是"载入时的深拷贝"，diff 恒为空、
+        命令永不构造 —— 改标签、改类型、取消勾选全部**静默丢失**，而且因为本页
+        的 flush/confirm_close 恒为 True，切页关窗连一句提示都没有。
+
+        本方法**不可重入**。`flush_active_panel_widgets_to_staging()` 内部会调
+        `_emit_props_changed()`，那正是把本方法接上去的那个信号 —— 不挡住就是
+        `commit → flush → 信号 → commit → …` 的无限递归，直接把进程**栈溢出打死**
+        （不是抛异常，是硬崩）。老面板刷 staging 顺手发信号是它的既有行为，
+        桥这一侧必须自己扛住。
+        """
+        if self._committing:
+            return False
         ref = self._loaded
         if ref is None:
             return False
         binding = _PANEL_BINDING.get(ref.kind)
         if binding is None:
             return False
+        self._committing = True
+        try:
+            flush = getattr(self._panel, "flush_active_panel_widgets_to_staging", None)
+            if callable(flush):
+                flush()
+        finally:
+            self._committing = False
         staged = getattr(self._panel, binding[0], None)
         current = self._doc.model_entity(ref)
         if not isinstance(staged, dict) or not isinstance(current, dict):
             return False
-        # 面板可能已经把 id 改了：以**载入时的 ref** 为准去找模型行，
-        # 否则改完 id 就再也定位不到那一行（老画布靠 _source_* 引用兜这件事）。
+        # 以**载入时的 ref** 为准去找模型行：面板可能已经把 id 改了，
+        # 用新 id 就再也定位不到那一行（老画布靠 _source_* 引用兜这件事）。
         fields = diff_fields(staged, current)
         if not fields:
             return False
         cmd = build_change_fields_command(
             self._doc, [ref], [fields], _properties_for(fields), "编辑属性",
             mergeable=self._gesture_open)
-        pushed = self._doc.push(cmd)
+        self._committing = True
+        try:
+            pushed = self._doc.push(cmd)
+        finally:
+            self._committing = False
         if pushed:
             self._gesture_open = True
+            if "id" in fields and fields["id"] is not _MISSING:
+                # id 改了：后续编辑要认新的那一行，否则第二次编辑定位不到
+                self._loaded = EntityRef(ref.kind, str(fields["id"]))
         return pushed
 
 

@@ -25,7 +25,7 @@ z 本来只该表示"画在哪一层"。老画布拿它当"这一下该派给谁
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QRectF, Qt
+from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsObject
 
 from .changes import EntityRef
@@ -63,6 +63,40 @@ class CanvasItem(QGraphicsObject):
         self.setAcceptHoverEvents(False)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
+        self._base_pos = (0.0, 0.0)
+        self._preview_offset = (0.0, 0.0)
+
+    # ---- 手势预览位移 ------------------------------------------------------
+    #
+    # 拖动期间画面要跟着手走，但**数据一个字节都不能改**（这是本架构最硬的一条：
+    # 手势不写数据，松手才由命令落地）。于是预览必须走一条与数据同步互不干扰的
+    # 通道：位置拆成"数据位"+"预览位移"两半，`_sync_*` 只写前者，手势只写后者，
+    # 谁都不会把对方的结果抹掉。
+    #
+    # 直接 `setPos(数据位 + 位移)` 的话，手势中任何一次同步（别的实体变更、
+    # 视图轴刷新）都会把预览冲掉；反过来若同步读回带位移的 pos，预览就会被
+    # **当成真实几何**烘进数据 —— 那正是老画布"拖到一半点别处，实体永久跑偏"的成因。
+
+    def set_base_pos(self, x: float, y: float) -> None:
+        """设置**数据位**。`_sync_*` 走这里，不直接 `setPos`。"""
+        self._base_pos = (float(x), float(y))
+        self._apply_pos()
+
+    def set_preview_offset(self, dx: float, dy: float) -> None:
+        """设置**手势预览位移**。只影响画面。"""
+        off = (float(dx), float(dy))
+        if off == self._preview_offset:
+            return
+        self._preview_offset = off
+        self._apply_pos()
+
+    @property
+    def preview_offset(self) -> tuple[float, float]:
+        return self._preview_offset
+
+    def _apply_pos(self) -> None:
+        self.setPos(self._base_pos[0] + self._preview_offset[0],
+                    self._base_pos[1] + self._preview_offset[1])
 
     def boundingRect(self) -> QRectF:  # pragma: no cover - 抽象
         raise NotImplementedError
@@ -115,6 +149,17 @@ class EntityItem(CanvasItem):
         工具会用 `SceneRenderer.inflate_for_picking` 把它撑到最小命中尺寸。
         """
         return self.boundingRect()
+
+    def pick_contains(self, pos: QPointF, tol: float = 0.0) -> bool:
+        """落点是否命中本图元。缺省按放宽 `tol` 的 `pick_rect()` 判定。
+
+        之所以要这个钩子而不是让工具一律拿包围盒比：**包围盒对斜边/凹形几何的
+        误差是压倒性的**。一个直角三角形 Zone 的 AABB 有一半面积在形外，于是
+        点空白处也选中它；更糟的是它把叠在同一片区域里的小实体一并压过去
+        （装饰层 z 全等，谁先谁后本来就没保证），点谁都选中那个 Zone。
+        折线更甚 —— 巡逻路线的 AABB 是整条路线的外框。
+        """
+        return self.pick_rect().adjusted(-tol, -tol, tol, tol).contains(pos)
 
 
 class OverlayItem(CanvasItem):

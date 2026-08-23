@@ -10,6 +10,7 @@ from PySide6.QtGui import QBrush, QColor, QPen, QPolygonF
 
 from .changes import EntityRef
 from .items import EntityItem
+from .renderer import point_in_polygon, point_segment_distance_sq
 
 __all__ = [
     "HANDLE_R_PX",
@@ -164,6 +165,33 @@ class _PointsItem(_StateMixin, EntityItem):
         pad = self._handle_r_world() + 2.0
         return QRectF(min(xs) - pad, min(ys) - pad,
                       max(xs) - min(xs) + pad * 2, max(ys) - min(ys) + pad * 2)
+
+    def pick_contains(self, pos, tol: float = 0.0) -> bool:
+        """按**真实形状**判定命中：顶点圈 → 边线带 → （闭合时）形内。
+
+        缺省实现拿 AABB 比，对三角形/凹多边形/折线的误差见
+        `EntityItem.pick_contains` 的说明。
+        """
+        pts = self._pts
+        if not pts:
+            return False
+        px, py = pos.x(), pos.y()
+        r = max(self._handle_r_world(), float(tol))
+        r2 = r * r
+        for x, y in pts:
+            dx = x - px
+            dy = y - py
+            if dx * dx + dy * dy <= r2:
+                return True
+        n = len(pts)
+        closed = self._closed and n >= 3
+        span = n if closed else n - 1
+        for i in range(max(0, span)):
+            ax, ay = pts[i]
+            bx, by = pts[(i + 1) % n]
+            if point_segment_distance_sq(px, py, ax, ay, bx, by) <= r2:
+                return True
+        return closed and point_in_polygon(px, py, pts)
 
     def paint(self, painter, option, widget=None) -> None:
         if not self._pts:

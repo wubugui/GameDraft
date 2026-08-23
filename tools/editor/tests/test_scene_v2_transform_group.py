@@ -54,6 +54,10 @@ def _scene() -> dict:
             {"id": "h_hidden", "type": "inspect", "x": 200, "y": 100,
              "group": "夜巡", "planes": ["yin"]},
             {"id": "h_free", "type": "inspect", "x": 500, "y": 500},
+            # 真实场景里大量坐标是**多位小数**的 float（`城门口.json` 等）：
+            # 纯水平位移不得把它的 y 截断成一位小数
+            {"id": "h_float", "type": "inspect", "x": 1308.14, "y": 218.02,
+             "group": "夜巡"},
         ],
         "npcs": [
             {"id": "n1", "name": "甲", "x": 300, "y": 300, "group": "夜巡",
@@ -169,7 +173,7 @@ class GroupMoveTests(_Base):
     def test_members_come_from_the_model_roster(self) -> None:
         refs = group_member_refs(self.doc, "夜巡")
         ids = {r.id for r in refs}
-        self.assertEqual(ids, {"h1", "h_hidden", "n1", "z1"})
+        self.assertEqual(ids, {"h1", "h_hidden", "h_float", "n1", "z1"})
         self.assertNotIn("h_free", ids)
 
     def test_hidden_member_moves_too(self) -> None:
@@ -203,6 +207,29 @@ class GroupMoveTests(_Base):
         """微移一次就把整数漂成小数 = 黄金往返红 + diff 满屏 `.0`。"""
         translate_group(self.doc, "夜巡", 1, 0)
         self.assertIsInstance(self.ent("hotspot", "h1")["x"], int)
+
+    def test_horizontal_move_leaves_the_untouched_axis_byte_identical(self) -> None:
+        """只横移时，每个成员的 y 必须**一个字节都不变**。
+
+        整组位移对每个成员的 x 与 y 是**无条件同时**写入的，dy 为 0 时若仍走
+        `round(v, 1)`，全组的 y 会被静默截断（218.02 → 218.0）。真实场景里
+        几百个 float 坐标会被一次水平拖动顺手改脏，而画面上完全看不出来。
+        """
+        translate_group(self.doc, "夜巡", 1, 0)
+        self.assertEqual(self.ent("hotspot", "h_float")["y"], 218.02,
+                         "没动的那一维被截断了")
+        # 真动了的那一维照常取一位小数（本仓坐标精度约定）
+        self.assertEqual(self.ent("hotspot", "h_float")["x"], 1309.1)
+
+    def test_vertical_move_leaves_x_byte_identical(self) -> None:
+        translate_group(self.doc, "夜巡", 0, 1)
+        self.assertEqual(self.ent("hotspot", "h_float")["x"], 1308.14)
+
+    def test_diagonal_move_still_rounds_both(self) -> None:
+        """两维都真的动了就照常取一位小数 —— 放行零位移不等于取消取整。"""
+        translate_group(self.doc, "夜巡", 0.55, 0.55)
+        self.assertEqual(self.ent("hotspot", "h_float")["x"], 1308.7)
+        self.assertEqual(self.ent("hotspot", "h_float")["y"], 218.6)
 
     def test_whole_group_move_is_one_command(self) -> None:
         translate_group(self.doc, "夜巡", 50, 40)

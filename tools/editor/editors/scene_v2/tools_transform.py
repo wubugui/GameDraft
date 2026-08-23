@@ -17,7 +17,8 @@ from .changes import EntityProperty, EntityRef
 from .commands import _MISSING, build_change_fields_command
 from .tools import AbstractTool
 
-__all__ = ["TransformTool", "GroupMoveTool", "group_member_refs", "translate_group"]
+__all__ = ["TransformTool", "GroupMoveTool", "group_member_refs",
+           "translate_entities", "translate_group"]
 
 #: 缩放的合法区间。与老画布一致，防止缩成 0 或天文数字。
 SCALE_MIN = 0.05
@@ -63,14 +64,19 @@ class TransformTool(AbstractTool):
     def _ring_world(self) -> float:
         return self._renderer.px_to_world(self.RING_PX)
 
-    def handle_positions(self, ref: EntityRef) -> dict[str, QPointF]:
+    def handle_positions(self, ref: EntityRef,
+                         rotation: float | None = None) -> dict[str, QPointF]:
         """两个手柄的世界坐标。视图照它画，工具照它判命中 —— **同一个函数**，
-        免得"看着在这、点着在那"。"""
+        免得"看着在这、点着在那"。
+
+        `rotation` 显式给值时用它（手势中用预览角度画，手柄才会跟着手转）。
+        """
         anchor = self._anchor(ref)
         if anchor is None:
             return {}
         ent = self._doc.entity(ref) or {}
-        rot = math.radians(float(ent.get("rotation", 0) or 0))
+        rot = math.radians(float(ent.get("rotation", 0) or 0)
+                           if rotation is None else float(rotation))
         r = self._ring_world()
         return {
             "rotate": QPointF(anchor.x() + r * math.cos(rot),
@@ -78,6 +84,24 @@ class TransformTool(AbstractTool):
             "scale": QPointF(anchor.x() - r * math.sin(rot),
                              anchor.y() + r * math.cos(rot)),
         }
+
+    def gizmo_positions(self) -> dict[str, QPointF]:
+        """供视图画 gizmo：锚点 + 两个手柄。**手势中按预览角度算**，
+        否则转动时手柄纹丝不动，用户没有任何"转到哪了"的反馈。
+
+        手柄位置与命中判定同源（都走 `handle_positions`）。
+        """
+        sel = self._doc.selection
+        ref = self._ref if self._ref is not None else (sel[0] if len(sel) == 1 else None)
+        if ref is None:
+            return {}
+        anchor = self._anchor(ref)
+        if anchor is None:
+            return {}
+        rot = self._preview[1] if self._ref is not None else None
+        out: dict[str, QPointF] = {"anchor": anchor}
+        out.update(self.handle_positions(ref, rot))
+        return out
 
     def mouse_pressed(self, scene_pos, button, modifiers) -> bool:
         if button != Qt.MouseButton.LeftButton or len(self._doc.selection) != 1:
@@ -143,6 +167,17 @@ class TransformTool(AbstractTool):
         self._reset()
         return True
 
+    @property
+    def transform_preview(self):
+        """手势中的 `(ref, scale, rotation)`；没在手势里返回 ``None``。
+
+        视图照它临时改内容图元的几何 —— **数据一个字节都没动**，
+        松手才由命令落地。
+        """
+        if self._ref is None:
+            return None
+        return (self._ref, self._preview[0], self._preview[1])
+
     def _reset(self) -> None:
         self._ref = None
         self._mode = ""
@@ -178,7 +213,18 @@ def translate_group(document, gid: str, dx: float, dy: float,
     - **碰撞面不动** —— 加载期迁移保证它一定是局部坐标，挂在锚点上自动跟随；
       再平移一次就是"碰撞面漂两倍"。
     """
-    refs = group_member_refs(document, gid)
+    return translate_entities(document, group_member_refs(document, gid), dx, dy,
+                              mergeable=mergeable, label=label)
+
+
+def translate_entities(document, refs, dx: float, dy: float,
+                       *, mergeable: bool = False, label: str = "位移") -> bool:
+    """把 (dx, dy) 烘进这些实体自己的坐标。**一条命令**。
+
+    整组位移与方向键微移共用它 —— 两处各写一遍的话，"Zone 要平移 polygon"
+    "碰撞面不能再平移一次"这些规则就得维护两份，迟早分叉。
+    """
+    refs = list(refs)
     if not refs or (dx == 0 and dy == 0):
         return False
     values: list[dict] = []
@@ -214,16 +260,24 @@ def translate_group(document, gid: str, dx: float, dy: float,
 
 
 def _shift(value, delta: float):
-    """平移一个坐标，**保留原始数值表示**（int 仍是 int）。
+    """平移一个坐标，**保留原始数值表示**。
 
-    不保留的话，方向键微移一次就把整份场景的整数坐标漂成小数 ——
-    黄金往返会红，而且 diff 里满屏都是 `.0`。
+    两条都要守住，缺一条都会污染整份场景：
+
+    1. **零位移即原值返回。** 整组位移对每个成员的 x 与 y **无条件同时**写入，
+       纯水平拖动时 dy 恒为 0；若这一支仍走 `round(out, 1)`，那么全组成员的
+       y 会被静默截断（218.02 → 218.0）。真实场景里 445 个坐标是 float，
+       一次水平拖动就能改脏一大片与本次手势毫无关系的数值。
+    2. **int 仍是 int。** 否则方向键微移一次就把整数坐标漂成小数，黄金往返会红。
     """
     try:
         v = float(value)
     except (TypeError, ValueError):
         return value
-    out = v + float(delta)
+    d = float(delta)
+    if d == 0.0:
+        return value          # 见 docstring 第 1 条：这一维没动，就一个字节都别碰
+    out = v + d
     if isinstance(value, int) and float(out).is_integer():
         return int(out)
     return round(out, 1)
@@ -246,6 +300,20 @@ class GroupMoveTool(AbstractTool):
     @property
     def offset(self) -> tuple[float, float]:
         return self._offset
+
+    @property
+    def drag_offset(self) -> tuple[float, float]:
+        """与 `MoveTool` 同名同义 —— 视图只认这一条预览通道，不为每个工具
+        写一个分支（老画布的预览就是每个手势各写一套，于是各有各的漏画）。"""
+        return self._offset
+
+    @property
+    def dragging_refs(self) -> tuple[EntityRef, ...]:
+        """手势中要跟着走的成员。取**模型层名册**，被过滤藏起来的也在内 ——
+        与真正落地的 `translate_group` 同一份名单，预览才不会与结果不一致。"""
+        if self._origin is None or not self._gid:
+            return ()
+        return tuple(group_member_refs(self._doc, self._gid))
 
     def begin(self, gid: str, scene_pos: QPointF) -> bool:
         if not group_member_refs(self._doc, gid):

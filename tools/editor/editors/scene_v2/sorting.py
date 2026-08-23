@@ -37,7 +37,10 @@ def content_sort_entries(document, view, *, probe=None):
     """
     out: list[tuple[float, int, object, str]] = []
     for i, ref in enumerate(document.entity_refs("hotspot")):
-        item = view.item_for(ref, "display") or view.item_for(ref, "handle")
+        # **只认展示图图元，不回落到把手。** 回落会把"配了 displayImage 但图缺件/
+        # 尺寸为 0"的热点的**把手**拖进内容区 —— 那个把手于是被派到内容层 z，
+        # 沉到贴图底下点不着，而它本该恒在内容之上。
+        item = view.item_for(ref, "display")
         ent = document.entity(ref)
         if item is None or not isinstance(ent, dict):
             continue

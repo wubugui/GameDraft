@@ -85,6 +85,67 @@ Document 永远写模型。面板编辑经桥变成命令。
 - **删除撤销要回原数组下标**：数组序是运行时平局排序的依据。
 - 新增实体族要同时改：`document._LIST_KEY`、`commands_structure.LIST_KEY`、
   `view._PART_ITEM_FACTORY`、`scene_canvas_model.PART_TABLE`。
+- **命中要按真实形状，不是包围盒**（`EntityItem.pick_contains`）。三角 Zone 的
+  AABB 有一半在形外,拿包围盒判定 = 点空白处选中一个大区域,还把叠在上面的小
+  实体一并压过去。
+- **z 相等时命中要有确定的兜底次序**(面积小者优先)。装饰层 z 是同一个常量,
+  只按 z 排的话次序取决于图元账的迭代顺序 —— 那是"上次谁被重建过"的副产物,
+  同一处点两次可能选中不同实体。
+- **零位移的那一维要原值返回**。整组位移对每个成员的 x 与 y 是无条件同时写的,
+  纯水平拖动时 dy 恒为 0;这一支若仍走 `round(v, 1)`,全组的 y 会被静默截断
+  (218.02 → 218.0)。真实场景里几百个 float 坐标一次拖动就被改脏。
+- **碰撞面的"画"与"写"必须是同一对互逆变换**
+  (`shared/scene_migrations` 的 `collision_polygon_local_to_world` /
+  `..._world_to_local`)。画只做 `anchor + local`(漏掉实例 transform)、写走完整
+  反变换时,`scale != 1` 的实体上顶点一松手就跳走,且越拖越远。
+- **视图轴只管辖 `FILTERED_KINDS`**(热点/NPC/区域)。出生点、光曲线这些结构件
+  没有 `planes` 键,与实体走同一条判定就会落进"缺省实体在 exclusive 位面里不存在"
+  那一支 —— 一切到梦境位面,出生点全体消失。
+- **场景级图元不在任何 `entity_refs` 里**:`rebuild_all()` 必须显式同步
+  `EntityRef("scene", sid)`,否则光环境曲线只在收到一次 scene 变更事件后才凭空
+  出现(= 打开场景时看不见也编辑不了)。
+- **`PolygonEditTool._target_parts` 的产出顺序即优先级**:选中实体的点列必须排在
+  场景级光曲线之前。曲线控制点的命中半径是 10 屏幕像素,排前面就会把正下方
+  选中实体的顶点拖拽整个抢走 —— 拖拽/双击插点/右键删点三条路径一起错。
+
+## 面板桥：三条与直觉相反的规则
+
+老面板一行不改地复用，代价是它的既有行为要由桥这一侧扛住。三条都踩过：
+
+- **提交前必须 `flush_active_panel_widgets_to_staging()`**。老面板绝大多数控件
+  只调 `_emit_props_changed()`(置脏 + 发信号),**不写 staging**。少了这一步,
+  桥读到的永远是载入时的深拷贝、diff 恒为空,改标签/改类型/取消勾选全部静默丢失。
+- **`commit_panel_edits()` 不可重入**。上面那个 flush 内部会调 `_emit_props_changed()`,
+  正是把 commit 接上去的那个信号 —— 不挡就是无限递归,进程**栈溢出硬崩**(不是抛异常)。
+- **数值只比大小、不比 int/float 表示**,且**空值不当新增**。staging 是穿过控件的
+  投影(spinbox 一律吐 float,x/y 实时回写硬编码 `float(...)`),按表示判定会让
+  "只改了 x"顺手把 y 写成 `320.0`;把空文本框的 `""`、空表的 `{}` 当新增,则
+  **光是选中一个实体**就产生一条命令、给数据加上 `label: ""`(本仓约定缺省不落键)。
+  注意 bool 要单独挡在数值比较之前 —— Python 里 `True == 1`。
+
+## 手势预览：一条通道，不要每个工具各写一套
+
+拖动/框选/gizmo 的**过程**画面全走 `SceneView.refresh_gesture_preview()`,
+它只读工具的几个可选属性(`band_rect` / `drag_offset` + `dragging_refs` /
+`transform_preview` / `gizmo_positions()`)。每个工具各写一套预览的下场是各有各的
+漏画 —— 本轮实测:橡皮筋画了、拖动没画、gizmo 干脆一个像素都没有。
+
+位置拆成**数据位**(`set_base_pos`,只由 `_sync_*` 写)+ **预览位移**
+(`set_preview_offset`,只由手势写)。合成一个 `setPos` 的话,手势中任何一次同步
+都会把预览冲掉;反过来若同步读回带位移的 pos,预览就被**当成真实几何**烘进数据。
+
+## "有提示没接线"是这个画布的固定病灶
+
+状态栏/文档写了、代码一个调用点都没有的功能,本轮一次性清出五条:橡皮筋覆盖物、
+拖动与变换预览、右键删顶点、方向键微移、Delete/Ctrl+D。成因都一样:**画布的
+键盘与右键路径没有测试**。新增任何"提示里承诺的交互",同一轮必须补一条从
+真实入口进的用例。
+
+顺带两条容易漏的接线:
+- `SceneView` 要 `setFocusPolicy(StrongFocus)`,否则 `QGraphicsView` 默认不接受
+  点击取焦,`keyPressEvent` 一个事件都收不到。
+- Delete / Ctrl+D / 方向键作用在**当前选择**上,不属于任何工具 —— 接在
+  `AbstractTool.key_pressed` 基类,免得"换个工具就删不了"。
 
 ## 并存期(两个画布同时活着)
 
@@ -97,6 +158,7 @@ Document 永远写模型。面板编辑经桥变成命令。
 
 ## 怎么验证
 
+`test_scene_v2_hit_and_preview.py`（形状命中 / 手势预览 / 键盘快捷键）、
 `test_scene_v2_document.py`（五条架构验收）、`test_scene_v2_architecture_guard.py`
 （不退化）、`test_scene_v2_tools.py` / `test_scene_v2_overlays.py`（交互级）、
 `test_scene_v2_panel_bridge.py`（面板不是第二层真相）、

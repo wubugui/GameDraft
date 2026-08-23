@@ -37,14 +37,20 @@ def existing_ids(document, kind: str) -> set[str]:
     return {str(e.get("id", "")) for e in sc.get(key) or [] if isinstance(e, dict)}
 
 
-def unique_entity_id(document, kind: str, stem: str = "") -> str:
+def unique_entity_id(document, kind: str, stem: str = "",
+                     extra_taken: set[str] | None = None) -> str:
     """生成不撞名的 id。
 
     **不用 `len(列表)` 编号** —— 删了中间项之后 `len` 会回落到一个已被占用的
     数字，于是"新建的实体覆盖了别人"。这里扫描现有 id 取真正的空位。
+
+    `extra_taken` 是**本批还没入模型**的 id。批量复制时命令直到最后才 push，
+    模型里看不到本批已分配的名字；不传它就会出现"返回值等于入参"的情况，
+    调用方那个 `while new_id in taken` 于是**零推进量、死循环卡死编辑器**
+    （实测：同时选中 `a` 与 `a_2` 复制即触发）。
     """
     base = (stem or f"new_{kind}").strip() or f"new_{kind}"
-    taken = existing_ids(document, kind)
+    taken = existing_ids(document, kind) | set(extra_taken or ())
     if base not in taken:
         return base
     # 已有 `xxx_3` 这类后缀时从它之后接着数，避免每次都从 2 开始试
@@ -139,10 +145,11 @@ def duplicate_selected(document, offset: tuple[float, float] = (24.0, 24.0)) -> 
         if not isinstance(src, dict):
             continue
         clone = copy.deepcopy(src)
-        taken = taken_per_kind.setdefault(ref.kind, set(existing_ids(document, ref.kind)))
-        new_id = unique_entity_id(document, ref.kind, str(src.get("id", "")))
-        while new_id in taken:      # 同一批里也不许互撞
-            new_id = unique_entity_id(document, ref.kind, new_id)
+        taken = taken_per_kind.setdefault(ref.kind, set())
+        # 把"本批已分配但还没入模型"的名字一并交给分配器：命令直到最后才 push，
+        # 模型里看不到它们。此前是外面套一个 `while new_id in taken` 重试 ——
+        # 而分配器看不到本批名字时会原样返回入参，循环零推进、**死循环卡死编辑器**。
+        new_id = unique_entity_id(document, ref.kind, str(src.get("id", "")), taken)
         taken.add(new_id)
         clone["id"] = new_id
         if "x" in clone:

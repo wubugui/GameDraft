@@ -43,6 +43,8 @@ class AbstractTool(QObject):
         self._doc = document
         self._renderer = renderer
         self._active = False
+        #: 上一次方向键微移作用的选择（用于判断能不能并进同一条命令）
+        self._nudge_sel: tuple = ()
 
     # ---- 生命周期 ----------------------------------------------------------
 
@@ -89,11 +91,60 @@ class AbstractTool(QObject):
         """
         return False
 
+    #: 方向键微移的步长（世界单位）。按住 Shift 走 `NUDGE_STEP_FAST`。
+    NUDGE_STEP = 1.0
+    NUDGE_STEP_FAST = 10.0
+
     def key_pressed(self, key, modifiers) -> bool:
-        """Esc 一律先给 `cancel_gesture`，子类通常不必自己处理。"""
+        """选择级快捷键在**基类**统一处理，工具只覆盖自己特有的那些。
+
+        Esc / Delete / Ctrl+D / 方向键都不属于任何一个工具 —— 它们作用在
+        "当前选择"上。放进基类是为了让"换个工具就没法删了"不可能发生：
+        这几条此前一个调用点都没有（`delete_selected` / `duplicate_selected`
+        是公开方法却没人调，状态栏还写着"方向键微移"），全靠这一处兑现。
+        """
         if key == Qt.Key.Key_Escape and self.cancel_gesture():
             return True
+        if key in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+            return self._delete_selection()
+        if (key == Qt.Key.Key_D
+                and modifiers & Qt.KeyboardModifier.ControlModifier):
+            return self._duplicate_selection()
+        step = (self.NUDGE_STEP_FAST
+                if modifiers & Qt.KeyboardModifier.ShiftModifier
+                else self.NUDGE_STEP)
+        delta = _NUDGE_DIR.get(key)
+        if delta is not None:
+            return self._nudge_selection(delta[0] * step, delta[1] * step)
         return False
+
+    # 这三个是"作用在选择上"的动作，实现住在 tools_structure / tools_transform。
+    # **函数级延迟导入**：那两个模块反过来要 import 本模块的 `AbstractTool`，
+    # 模块级导入会成环。（把动作搬到基类文件里也能破环，但那样"增删"与"位移"
+    # 的规则就散在两处了。）
+
+    def _delete_selection(self) -> bool:
+        from .tools_structure import delete_selected
+        return delete_selected(self._doc)
+
+    def _duplicate_selection(self) -> bool:
+        from .tools_structure import duplicate_selected
+        return duplicate_selected(self._doc)
+
+    def _nudge_selection(self, dx: float, dy: float) -> bool:
+        """方向键微移。连按由**命令合并**收成一条撤销记录。
+
+        换了选择就起一条新命令 —— 否则"挪 A、改选 B、再挪 B"会并成一条，
+        撤销一次把两个实体都退回去。
+        """
+        from .tools_transform import translate_entities
+        sel = tuple(self._doc.selection)
+        if not sel:
+            return False
+        mergeable = sel == self._nudge_sel
+        self._nudge_sel = sel
+        return translate_entities(self._doc, sel, dx, dy,
+                                  mergeable=mergeable, label="微移")
 
     def cancel_gesture(self) -> bool:
         """中止进行中的手势并**原样回到起点**。返回是否真的中止了什么。
@@ -116,11 +167,38 @@ class AbstractTool(QObject):
             it for it in items
             if isinstance(it, EntityItem) and it.isVisible() and it.isEnabled()
         ]
-        hits.sort(key=lambda it: it.zValue(), reverse=True)
+        # z 相等时按**命中面积从小到大**兜底。装饰层图元的 z 全是同一个常量
+        # （`Z_DECOR_BASE`），只按 z 排的话次序取决于图元账的迭代顺序 ——
+        # 那是"上次谁被重建过"的副产物，同一个落点两次点击可能选中不同实体。
+        # 面积小者优先也符合直觉：叠在大区域上的小把手应该先被选中。
+        hits.sort(key=lambda it: (-it.zValue(), _pick_area(it)))
         return hits
+
+    def hits_at(self, scene_pos: QPointF, items: Iterable) -> list[EntityItem]:
+        """落点**真正命中**的实体图元（形状判定 + 手抖容差），次序同 `entities_at`。"""
+        tol = self._renderer.pick_tolerance_world()
+        return [it for it in self.entities_at(scene_pos, items)
+                if it.pick_contains(scene_pos, tol)]
 
     def refs_at(self, scene_pos: QPointF, items: Iterable) -> list[EntityRef]:
         return [it.ref for it in self.entities_at(scene_pos, items)]
+
+
+#: 方向键 → 单位位移
+_NUDGE_DIR = {
+    Qt.Key.Key_Left: (-1.0, 0.0),
+    Qt.Key.Key_Right: (1.0, 0.0),
+    Qt.Key.Key_Up: (0.0, -1.0),
+    Qt.Key.Key_Down: (0.0, 1.0),
+}
+
+
+def _pick_area(item) -> float:
+    try:
+        rect = item.pick_rect()
+    except Exception:      # 图元刚被移除等边界情况，不该让点选整条路径崩掉
+        return float("inf")
+    return abs(rect.width() * rect.height())
 
 
 class ToolManager(QObject):

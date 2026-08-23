@@ -20,8 +20,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-__all__ = ["ViewAxes", "norm_id_list", "entity_cutscene_ids", "entity_is_cutscene_only",
-           "passes_cutscene", "passes_plane", "passes_phase", "passes_view_filters"]
+__all__ = ["FILTERED_KINDS", "ViewAxes", "norm_id_list", "entity_cutscene_ids",
+           "entity_is_cutscene_only", "passes_cutscene", "passes_plane", "passes_phase",
+           "passes_view_filters"]
+
+#: **受三条轴管辖的实体族**。名单之外的一律恒显。
+#:
+#: 这不是可选优化，而是老画布的既有语义：显隐只施加于「登记过的实体」
+#: （`_record_entity_view` 只登记热点/NPC/区域），出生点、光环境曲线、透视轴这些
+#: 场景级结构件从来不登记，`refresh_entity_presence` 对它们直接 return。
+#:
+#: 忘了这道闸的后果不是"多藏一点"而是**语义反了**：出生点的 dict 里当然没有
+#: `planes`，于是 `passes_plane` 走「缺省实体」那一支，在 exclusive（独立世界型）
+#: 位面视图下判为不存在 —— 一切开梦境位面，出生点全体消失、没法编辑。
+FILTERED_KINDS = frozenset({"hotspot", "npc", "zone"})
 
 
 def norm_id_list(raw: object) -> list[str] | None:
@@ -116,7 +128,11 @@ def passes_view_filters(kind: str, ent: object, axes: ViewAxes) -> bool:
 
     过场绑定判定排在时段/位面**之后**，故仅过场实体**同样吃**时段与位面过滤 ——
     画布不得为了"方便编辑"擅自放行。
+
+    `kind` 不在 `FILTERED_KINDS` 里的一律放行（理由见该常量）。
     """
+    if str(kind).strip().lower() not in FILTERED_KINDS:
+        return True
     return (passes_plane(ent, axes)
             and passes_phase(kind, ent, axes)
             and passes_cutscene(ent, axes))

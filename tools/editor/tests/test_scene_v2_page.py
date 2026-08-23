@@ -11,6 +11,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from PySide6.QtCore import QPointF, Qt
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from tools.editor.editors.scene_v2.changes import EntityRef
@@ -36,6 +37,9 @@ def _scene() -> dict:
         "zones": [{"id": "z1", "polygon": [{"x": 600, "y": 100},
                                            {"x": 700, "y": 100},
                                            {"x": 700, "y": 200}]}],
+        # 出生点：**结构件**，不带 planes/phases，也不受三条视图轴管辖
+        "spawnPoint": {"x": 50, "y": 500},
+        "spawnPoints": {"north": {"x": 700, "y": 50}},
     }
 
 
@@ -131,6 +135,26 @@ class ViewAxesWiringTests(_Base):
         night = self.page.view.items_of(EntityRef("npc", "n_night"))
         self.assertTrue(night and all(i.isVisible() for i in night))
 
+    def test_spawn_points_survive_an_exclusive_plane_view(self) -> None:
+        """出生点在**独立世界型**位面视图下必须照样在。
+
+        它没有 `planes` 键，若与实体走同一条判定就会落进"缺省实体在 exclusive
+        位面里不存在"那一支 —— 一切到梦境位面，出生点全体消失、没法编辑。
+        老画布靠"没登记过的实体不施加显隐"避开，新画布得把这条闸写明。
+        """
+        self.page.set_view_axes(ViewAxes(plane_id="dream", plane_exclusive=True))
+        for name in ("default", "north"):
+            items = self.page.view.items_of(EntityRef("spawn", name))
+            self.assertTrue(items, f"前置条件：出生点 {name} 应当有图元")
+            self.assertTrue(all(i.isVisible() for i in items),
+                            f"出生点 {name} 被位面轴藏掉了")
+
+    def test_exclusive_plane_still_hides_default_entities(self) -> None:
+        """反向锁：放行出生点不等于把 exclusive 语义整个放掉。"""
+        self.page.set_view_axes(ViewAxes(plane_id="dream", plane_exclusive=True))
+        items = self.page.view.items_of(EntityRef("hotspot", "h1"))
+        self.assertTrue(items and all(not i.isVisible() for i in items))
+
     def test_clearing_axes_shows_everything(self) -> None:
         self.page.set_view_axes(ViewAxes(plane_id="yang"))
         self.page.set_view_axes(ViewAxes())
@@ -144,6 +168,33 @@ class ViewAxesWiringTests(_Base):
         self.page.load_scene(_SCENE)
         hidden = self.page.view.items_of(EntityRef("hotspot", "h_yin"))
         self.assertTrue(hidden and all(not i.isVisible() for i in hidden))
+
+
+class ReloadChurnTests(_Base):
+    """主窗口每次切页都调 `reload_from_model()` —— 它必须只装载**一次**。"""
+
+    def test_reload_loads_the_scene_exactly_once(self) -> None:
+        calls: list[str] = []
+        real = self.page.load_scene
+        self.page.load_scene = lambda sid, _r=real, _c=calls: (_c.append(sid), _r(sid))[1]
+        try:
+            self.page.reload_from_model()
+        finally:
+            del self.page.load_scene
+        self.assertEqual(len(calls), 1, f"装载了 {len(calls)} 次：{calls}")
+
+    def test_reload_keeps_the_document_usable(self) -> None:
+        self.page.document.set_selection([EntityRef("hotspot", "h1")])
+        self.page.reload_from_model()
+        self.assertEqual(self.page.current_scene_id, _SCENE)
+        self.assertEqual(self.page.document.selection, (EntityRef("hotspot", "h1"),),
+                         "重投影把选择丢了")
+
+    def test_refresh_scene_list_highlights_the_current_scene(self) -> None:
+        self.page.refresh_scene_list()
+        item = self.page._scene_list.currentItem()
+        self.assertIsNotNone(item, "清单没有高亮当前场景")
+        self.assertEqual(item.data(Qt.ItemDataRole.UserRole), _SCENE)
 
 
 class DuckProtocolHookTests(_Base):

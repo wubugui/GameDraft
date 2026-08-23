@@ -11,7 +11,8 @@ from PySide6.QtGui import QBrush, QColor, QPen
 
 from .items import OverlayItem
 
-__all__ = ["GroupBoxItem", "PerspectiveAxisItem", "RubberBandItem"]
+__all__ = ["GroupBoxItem", "PerspectiveAxisItem", "RubberBandItem",
+           "TransformGizmoItem"]
 
 _GROUP_PEN = QPen(QColor(120, 200, 255, 220), 0, Qt.PenStyle.DashLine)
 _GROUP_SEL_PEN = QPen(QColor(255, 236, 120), 0, Qt.PenStyle.DashLine)
@@ -226,3 +227,77 @@ class RubberBandItem(OverlayItem):
         painter.setPen(_BAND_PEN)
         painter.setBrush(QBrush(_BAND_FILL))
         painter.drawRect(self._rect)
+
+
+class TransformGizmoItem(OverlayItem):
+    """缩放 / 旋转的手柄图形。
+
+    位置**不自己算** —— 由 `TransformTool.gizmo_positions()` 给，工具照同一个
+    函数判命中。两边各算一遍是"看着在这、点着在那"的标准做法，本仓已经栽过。
+
+    手柄尺寸按**屏幕像素**恒定：缩小视图后仍抓得住。
+    """
+
+    #: 手柄绘制半径（屏幕像素）
+    HANDLE_R_PX = 7.0
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._pos: dict[str, QPointF] = {}
+        self._scale = 1.0
+        self.setVisible(False)
+
+    def set_view_scale(self, scale: float) -> None:
+        s = float(scale) if scale and scale > 1e-9 else 1e-9
+        if s != self._scale:
+            self.prepareGeometryChange()
+            self._scale = s
+            self.update()
+
+    def set_positions(self, positions: dict | None) -> None:
+        self.prepareGeometryChange()
+        self._pos = dict(positions or {})
+        self.setVisible(bool(self._pos.get("anchor")))
+        self.update()
+
+    def _r_world(self) -> float:
+        return self.HANDLE_R_PX / self._scale
+
+    def boundingRect(self) -> QRectF:
+        pts = [p for p in self._pos.values() if isinstance(p, QPointF)]
+        if not pts:
+            return QRectF()
+        xs = [p.x() for p in pts]
+        ys = [p.y() for p in pts]
+        pad = self._r_world() + 2.0
+        return QRectF(min(xs) - pad, min(ys) - pad,
+                      max(xs) - min(xs) + pad * 2, max(ys) - min(ys) + pad * 2)
+
+    def paint(self, painter, option, widget=None) -> None:
+        anchor = self._pos.get("anchor")
+        if not isinstance(anchor, QPointF):
+            return
+        painter.setRenderHint(painter.RenderHint.Antialiasing, True)
+        r = self._r_world()
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(_GIZMO_LINE_PEN)
+        for key in ("rotate", "scale"):
+            p = self._pos.get(key)
+            if isinstance(p, QPointF):
+                painter.drawLine(anchor, p)
+        rot = self._pos.get("rotate")
+        if isinstance(rot, QPointF):
+            painter.setPen(_GIZMO_PEN)
+            painter.setBrush(QBrush(_GIZMO_ROTATE_FILL))
+            painter.drawEllipse(rot, r, r)
+        sca = self._pos.get("scale")
+        if isinstance(sca, QPointF):
+            painter.setPen(_GIZMO_PEN)
+            painter.setBrush(QBrush(_GIZMO_SCALE_FILL))
+            painter.drawRect(QRectF(sca.x() - r, sca.y() - r, r * 2.0, r * 2.0))
+
+
+_GIZMO_PEN = QPen(QColor(30, 30, 30, 220), 0)
+_GIZMO_LINE_PEN = QPen(QColor(255, 236, 120, 200), 0, Qt.PenStyle.DashLine)
+_GIZMO_ROTATE_FILL = QColor(120, 220, 255, 235)
+_GIZMO_SCALE_FILL = QColor(255, 236, 120, 235)

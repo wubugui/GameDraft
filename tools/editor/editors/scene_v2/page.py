@@ -128,16 +128,26 @@ class SceneEditorV2(QWidget):
     # ---- 场景装载 ----------------------------------------------------------
 
     def refresh_scene_list(self) -> None:
+        """重建左侧场景清单。**只动清单，不重载场景。**
+
+        此前这里在收尾处又调了一次 `load_scene(current)`，于是
+        `reload_from_model()`（主窗口每次切页都调）会**装载两遍**：每次切页
+        新建两套 Document / View / PanelBridge，旧的那套还挂着信号。
+        清单刷新与场景装载是两件事，混在一起既浪费又让"装载了几次"变得没法推理。
+        """
         current = self.current_scene_id
         self._scene_list.blockSignals(True)
         self._scene_list.clear()
-        for sid in sorted(self._model.scenes.keys()):
+        row = -1
+        for i, sid in enumerate(sorted(self._model.scenes.keys())):
             item = QListWidgetItem(sid)
             item.setData(Qt.ItemDataRole.UserRole, sid)
             self._scene_list.addItem(item)
+            if sid == current:
+                row = i
+        if row >= 0:
+            self._scene_list.setCurrentRow(row)
         self._scene_list.blockSignals(False)
-        if current and current in self._model.scenes:
-            self.load_scene(current)
 
     @property
     def current_scene_id(self) -> str:
@@ -158,6 +168,12 @@ class SceneEditorV2(QWidget):
             self._canvas_layout.removeWidget(self._view)
             self._view.deleteLater()
             self._view = None
+        if self._bridge is not None:
+            # 面板是页面级共享的（换场景不重建），旧桥不断开就会一直挂在
+            # panel.changed 上，持着上个场景的 ref 与已析构的文档。
+            self._bridge.detach()
+            self._bridge.deleteLater()
+            self._bridge = None
         if self._doc is not None:
             self._doc.deleteLater()
         self._doc = SceneDocument(self._model, scene_id, self)

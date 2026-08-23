@@ -11,8 +11,10 @@ import copy
 
 from PySide6.QtCore import QPointF, QRectF, Qt
 
+from ...shared.scene_migrations import collision_polygon_world_to_local
 from .changes import EntityProperty, EntityRef
 from .commands import build_change_fields_command
+from .light_curve import light_curve_points, light_curve_write_shape
 from .entity_items import HandleItem
 from .tools import AbstractTool
 
@@ -50,12 +52,13 @@ class SelectTool(AbstractTool):
     # ---- 命中 --------------------------------------------------------------
 
     def _hits(self, pos: QPointF) -> list:
+        """落点下的候选，按 `hits_at` 的次序（z 高者先，同 z 面积小者先）。
+
+        用形状判定而不是包围盒 —— 理由见 `EntityItem.pick_contains`。
+        """
         if self._view is None:
             return []
-        candidates = self._view.entity_items()
-        under = [it for it in self.entities_at(pos, candidates)
-                 if self._renderer.inflate_for_picking(it.pick_rect()).contains(pos)]
-        return under
+        return self.hits_at(pos, self._view.entity_items())
 
     def _same_spot(self, pos: QPointF) -> bool:
         """同一落点判定用**屏幕像素**容差，不是世界单位 —— 否则缩小视图后
@@ -116,7 +119,12 @@ class SelectTool(AbstractTool):
         self._band_rect = None
         if rect is None or self._view is None:
             return True
-        picked = [it.ref for it in self._view.entity_items()
+        # **必须过同一道白名单。** 图元账里也装着内容项（展示图 / 精灵），
+        # 它们继承 `CanvasItem` 而非 `EntityItem`、没有 `pick_rect` ——
+        # 直接遍历会当场 AttributeError，而且框选会把内容项也算成选中的实体。
+        # 按下那条路本来就走 `entities_at()` 的白名单，松手这条漏了同一道闸。
+        candidates = self.entities_at(scene_pos, self._view.entity_items())
+        picked = [it.ref for it in candidates
                   if it.isVisible() and rect.intersects(it.pick_rect())]
         if modifiers & Qt.KeyboardModifier.ShiftModifier:
             picked = list(self._doc.selection) + [r for r in picked
@@ -137,6 +145,25 @@ class SelectTool(AbstractTool):
         return self._band_rect
 
 
+def _world_polygon_of(ent: dict) -> list[tuple[float, float]]:
+    """实体自带的**世界坐标**闭合多边形（目前只有 Zone 是这一形状）。
+
+    热点/NPC 的 `collisionPolygon` 是**局部**坐标、且跟着锚点走，不走这条。
+    """
+    poly = ent.get("polygon")
+    if not isinstance(poly, list) or len(poly) < 3:
+        return []
+    out = []
+    for p in poly:
+        if not isinstance(p, dict):
+            return []
+        try:
+            out.append((float(p.get("x", 0) or 0), float(p.get("y", 0) or 0)))
+        except (TypeError, ValueError):
+            return []
+    return out
+
+
 class MoveTool(AbstractTool):
     """拖动选中实体。**手势期间不写数据** —— 只记偏移，release 时一条命令落地。
 
@@ -154,6 +181,7 @@ class MoveTool(AbstractTool):
         self._origin: QPointF | None = None
         self._refs: tuple[EntityRef, ...] = ()
         self._start: dict[EntityRef, tuple[float, float]] = {}
+        self._start_poly: dict[EntityRef, list[tuple[float, float]]] = {}
         self._offset = (0.0, 0.0)
 
     @property
@@ -169,15 +197,27 @@ class MoveTool(AbstractTool):
         if button != Qt.MouseButton.LeftButton or not self._doc.selection:
             return False
         movable: dict[EntityRef, tuple[float, float]] = {}
+        polys: dict[EntityRef, list[tuple[float, float]]] = {}
         for ref in self._doc.selection:
             ent = self._doc.entity(ref)
-            if isinstance(ent, dict) and "x" in ent and "y" in ent:
+            if not isinstance(ent, dict):
+                continue
+            if "x" in ent and "y" in ent:
                 movable[ref] = (float(ent["x"]), float(ent["y"]))
-        if not movable:
+                continue
+            # **没有锚点的实体靠整体平移多边形来移动。** Zone 就是这一类
+            # （它压根没有 x/y，几何全在 `polygon` 里、且是世界坐标）。
+            # 漏掉这一支不是"少一个便利功能"：选中 Zone 之后拖拽**毫无反应**，
+            # 而老画布是能整体拖的，等于新画布把 Zone 变成了只能逐个顶点挪。
+            pts = _world_polygon_of(ent)
+            if pts:
+                polys[ref] = pts
+        if not movable and not polys:
             return False
         self._origin = QPointF(scene_pos)
-        self._refs = tuple(movable)
+        self._refs = tuple(movable) + tuple(polys)
         self._start = movable
+        self._start_poly = polys
         self._offset = (0.0, 0.0)
         return True
 
@@ -193,27 +233,37 @@ class MoveTool(AbstractTool):
             return False
         dx, dy = self._offset
         refs = self._refs
-        self._origin = None
-        self._refs = ()
-        self._offset = (0.0, 0.0)
+        start, start_poly = self._start, self._start_poly
+        self._reset()
         if not refs:
             return True
         values = []
         for ref in refs:
-            sx, sy = self._start[ref]
-            values.append({"x": round(sx + dx, 1), "y": round(sy + dy, 1)})
+            if ref in start:
+                sx, sy = start[ref]
+                values.append({"x": round(sx + dx, 1), "y": round(sy + dy, 1)})
+            else:
+                values.append({"polygon": [
+                    {"x": round(px + dx, 1), "y": round(py + dy, 1)}
+                    for px, py in start_poly[ref]]})
         # 零位移时 build_* 返回 None → 不入栈、不标脏。**不需要额外的防伪脏闸。**
         self._doc.push(build_change_fields_command(
-            self._doc, refs, values, EntityProperty.POSITION, "移动实体"))
+            self._doc, refs, values,
+            EntityProperty.POSITION | EntityProperty.GEOMETRY, "移动实体"))
         return True
 
     def cancel_gesture(self) -> bool:
         if self._origin is None:
             return False
+        self._reset()
+        return True
+
+    def _reset(self) -> None:
         self._origin = None
         self._refs = ()
+        self._start = {}
+        self._start_poly = {}
         self._offset = (0.0, 0.0)
-        return True
 
 
 class PolygonEditTool(AbstractTool):
@@ -253,15 +303,15 @@ class PolygonEditTool(AbstractTool):
                       world_pts: list[tuple[float, float]]) -> dict:
         """世界点列 → 该 part 在实体上的字段值。
 
-        碰撞面是**局部坐标**（加载期迁移保证），所以写回要减锚点；
+        碰撞面是**局部坐标**（加载期迁移保证），写回要走**完整反变换**
+        （减锚点 + 反 scale/rotation），与视图画它用的正变换严格互逆 ——
+        只减锚点的话，`scale != 1` 的实体上顶点一松手就跳走。
         Zone 与巡逻路线是世界坐标，直接写。
         """
         ent = self._doc.entity(ref) or {}
         if part == "collision":
-            x0 = float(ent.get("x", 0) or 0)
-            y0 = float(ent.get("y", 0) or 0)
-            return {"collisionPolygon": [
-                {"x": round(x - x0, 1), "y": round(y - y0, 1)} for x, y in world_pts]}
+            return {"collisionPolygon": collision_polygon_world_to_local(
+                ent, [{"x": x, "y": y} for x, y in world_pts])}
         if part == "polygon":
             return {"polygon": [{"x": round(x, 1), "y": round(y, 1)}
                                 for x, y in world_pts]}
@@ -273,8 +323,7 @@ class PolygonEditTool(AbstractTool):
         if part == "lightcurve":
             # **每个控制点都驮着一份完整的 env 关键帧** —— 只写 x/y 会把它整份丢掉，
             # 而画面要下一次打光才看得出来，属于最难查的那种静默数据丢失。
-            old = ent.get("lightEnvCurve")
-            old = old if isinstance(old, list) else []
+            old = light_curve_points(ent)
             out = []
             for i, (x, y) in enumerate(world_pts):
                 src = old[i] if i < len(old) and isinstance(old[i], dict) else {}
@@ -287,24 +336,43 @@ class PolygonEditTool(AbstractTool):
                     if isinstance(prev, dict) and isinstance(prev.get("env"), dict):
                         node["env"] = copy.deepcopy(prev["env"])
                 out.append(node)
-            return {"lightEnvCurve": out}
+            return {"lightEnvCurve": light_curve_write_shape(ent, out)}
         return {}
 
     def _target_parts(self):
-        """可编辑的点列。**场景级的光曲线永远在列** —— 它不属于任何实体，
-        所以不该要求"先选中某个实体"才能编辑。"""
-        if self._view is not None:
-            scene_ref = EntityRef("scene", self._doc.scene_id)
-            if self._view.item_for(scene_ref, "lightcurve") is not None:
-                yield scene_ref, "lightcurve"
+        """可编辑的点列，**按优先级**产出（第一个命中的即生效）。
+
+        两条硬约束：
+
+        1. **选中实体的点列排在场景级光曲线之前。** 光曲线不属于任何实体、
+           不需要先选中就能编辑，但正因如此它是"永远在列"的候选；命中半径又是
+           10 屏幕像素（缩小视图后折合成很大的世界范围）。排在前面时，用户明明
+           选中并拖 Zone 的角，动的却是打光曲线的控制点 —— Zone 纹丝不动，
+           而打光被悄悄改脏。拖拽、双击插点、右键删点三条路径共用本方法，
+           所以错序是**三处一起错**。
+        2. **只产可见图元。** 被视图轴藏起来的点列不该能被拖到。
+        """
+        view = self._view
+        if view is None:
+            return
         for ref in self._doc.selection:
             for part in ("polygon", "collision", "patrol"):
-                if self._view and self._view.item_for(ref, part) is not None:
+                item = view.item_for(ref, part)
+                if item is not None and item.isVisible():
                     yield ref, part
+        scene_ref = EntityRef("scene", self._doc.scene_id)
+        curve = view.item_for(scene_ref, "lightcurve")
+        if curve is not None and curve.isVisible():
+            yield scene_ref, "lightcurve"
 
     # ---- 手势 --------------------------------------------------------------
 
     def mouse_pressed(self, scene_pos, button, modifiers) -> bool:
+        # 右键删顶点走同一个入口。**必须在这里接**：视图把三个按键都转给
+        # `mouse_pressed`，没有第二条右键通路；此前 `delete_vertex_at` 写完了
+        # 却一个调用点都没有，状态栏提示的"右键顶点删除"是空头支票。
+        if button == Qt.MouseButton.RightButton:
+            return self.delete_vertex_at(scene_pos)
         if button != Qt.MouseButton.LeftButton:
             return False
         for ref, part in self._target_parts():

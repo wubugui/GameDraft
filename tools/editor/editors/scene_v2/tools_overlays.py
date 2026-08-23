@@ -11,7 +11,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 
 from .changes import EntityProperty, EntityRef
 from .commands import build_change_fields_command
-from .tools import AbstractTool
+from .tools import _NUDGE_DIR, AbstractTool
 from .tools_transform import group_member_refs, translate_group
 
 __all__ = ["PerspectiveAxisTool", "GroupBoxTool", "group_bounds"]
@@ -137,6 +137,8 @@ class GroupBoxTool(AbstractTool):
         self._boxes: dict[str, object] = {}
         self._selected_gid = ""
         self._drag_gid = ""
+        #: 上一次整组微移作用的组（判断能不能并进同一条命令）
+        self._nudge_gid = ""
         self._origin: QPointF | None = None
         self._offset = (0.0, 0.0)
 
@@ -195,9 +197,37 @@ class GroupBoxTool(AbstractTool):
         translate_group(self._doc, gid, round(dx, 1), round(dy, 1))
         return True
 
+    @property
+    def drag_offset(self) -> tuple[float, float]:
+        """与 `MoveTool` 同名同义，接进视图那一条统一预览通道。"""
+        return self._offset
+
+    @property
+    def dragging_refs(self) -> tuple:
+        """拖动中的组成员。取**模型层名册** —— 与真正落地的 `translate_group`
+        同一份名单，预览才不会与结果不一致（被过滤藏起来的成员也在内）。"""
+        if self._origin is None or not self._drag_gid:
+            return ()
+        return tuple(group_member_refs(self._doc, self._drag_gid))
+
+    def key_pressed(self, key, modifiers) -> bool:
+        """选中了组时，方向键微移**整组**；没选组就交回基类按实体选择微移。
+
+        此前 `nudge` 一个调用点都没有 —— 状态栏写着"方向键微移"，按了没反应。
+        """
+        if self._selected_gid and key in _NUDGE_DIR:
+            dx, dy = _NUDGE_DIR[key]
+            step = (self.NUDGE_STEP_FAST
+                    if modifiers & Qt.KeyboardModifier.ShiftModifier
+                    else self.NUDGE_STEP)
+            return self.nudge(dx * step, dy * step,
+                              mergeable=(self._nudge_gid == self._selected_gid))
+        return super().key_pressed(key, modifiers)
+
     def nudge(self, dx: float, dy: float, *, mergeable: bool) -> bool:
         if not self._selected_gid:
             return False
+        self._nudge_gid = self._selected_gid
         return translate_group(self._doc, self._selected_gid, dx, dy,
                                mergeable=mergeable, label="整组微移")
 

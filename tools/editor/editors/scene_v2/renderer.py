@@ -22,6 +22,8 @@ __all__ = [
     "EDGE_PICK_PX",
     "MIN_PICK_PX",
     "SceneRenderer",
+    "point_in_polygon",
+    "point_segment_distance_sq",
 ]
 
 #: 顶点手柄的命中半径（**屏幕像素**）。取值参考老画布分组框那一族已经验证过的
@@ -122,7 +124,7 @@ class SceneRenderer:
         for i in range(span):
             ax, ay = pts[i]
             bx, by = pts[(i + 1) % n]
-            d2 = _point_segment_distance_sq(at.x(), at.y(), ax, ay, bx, by)
+            d2 = point_segment_distance_sq(at.x(), at.y(), ax, ay, bx, by)
             if d2 <= limit and (best is None or d2 < best[0]):
                 best = (d2, i)
         return None if best is None else best[1]
@@ -144,6 +146,15 @@ class SceneRenderer:
                 path.lineTo(poly[i])
         return path
 
+    def pick_tolerance_world(self) -> float:
+        """点选的"手抖容差"（世界单位）。形状命中用它放宽边界。
+
+        与 :meth:`inflate_for_picking` 同源（都取 :data:`MIN_PICK_PX`）：
+        前者是"把太小的包围盒撑大"，后者是"形状判定放宽多少"，
+        两条路必须同一口径，否则会出现"框选选得中、点选点不中"。
+        """
+        return self.px_to_world(MIN_PICK_PX / 2.0)
+
     def inflate_for_picking(self, rect: QRectF) -> QRectF:
         """把包围盒撑到至少 :data:`MIN_PICK_PX` 见方（世界单位换算）。
 
@@ -155,7 +166,28 @@ class SceneRenderer:
         return rect.adjusted(-dw, -dh, dw, dh)
 
 
-def _point_segment_distance_sq(
+def point_in_polygon(px: float, py: float, pts) -> bool:
+    """点是否落在闭合多边形**内部**（射线法，含奇偶规则）。
+
+    边界附近由调用方的容差带兜住，这里不额外放宽。
+    """
+    n = len(pts)
+    if n < 3:
+        return False
+    inside = False
+    j = n - 1
+    for i in range(n):
+        xi, yi = pts[i]
+        xj, yj = pts[j]
+        if (yi > py) != (yj > py):
+            t = (py - yi) / (yj - yi) if yj != yi else 0.0
+            if px < xi + t * (xj - xi):
+                inside = not inside
+        j = i
+    return inside
+
+
+def point_segment_distance_sq(
     px: float, py: float, ax: float, ay: float, bx: float, by: float,
 ) -> float:
     """点到线段的距离平方。退化线段（两端重合）按点距处理。"""

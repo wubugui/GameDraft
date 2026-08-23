@@ -53,6 +53,7 @@ from PySide6.QtCore import (
 
 from .scene_canvas_model import iter_part_keys, part_key
 from ..shared.scene_migrations import (
+    collision_polygon_local_to_world,
     collision_polygon_world_to_local,
     migrate_scene_collision_to_local,
 )
@@ -229,18 +230,10 @@ def _entity_is_cutscene_only(ent: dict) -> bool:
 #: 名字保留（6 处调用点不变），热点与 NPC 都用它（函数本身与实体族无关）。
 _hotspot_collision_world_to_local = collision_polygon_world_to_local
 
-def _hotspot_collision_local_to_world(hs: dict, local_poly: list) -> list[dict[str, float]]:
-    """authored 局部点 → 画布世界点：实例 transform 正变换后加锚点（与运行时同口径）。"""
-    x0 = float(hs.get("x", 0))
-    y0 = float(hs.get("y", 0))
-    s = entity_scale_of(hs)
-    rot = entity_rotation_deg_of(hs)
-    out: list[dict[str, float]] = []
-    for p in local_poly:
-        if isinstance(p, dict):
-            wx, wy = transform_local_vec(float(p.get("x", 0)), float(p.get("y", 0)), s, rot)
-            out.append({"x": round(wx + x0, 1), "y": round(wy + y0, 1)})
-    return out
+#: authored 局部点 → 画布世界点。实现同样在 shared/scene_migrations.py，
+#: 与 `_hotspot_collision_world_to_local` 成对 —— 新画布用的是同一对函数，
+#: 两个画布因此不可能在"碰撞面画在哪"上产生分歧。
+_hotspot_collision_local_to_world = collision_polygon_local_to_world
 
 def _default_hotspot_collision_triangle_local() -> list[dict[str, float]]:
     return [

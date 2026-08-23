@@ -18,6 +18,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import QGraphicsScene, QGraphicsView
 
+from ...shared.scene_migrations import collision_polygon_local_to_world
 from ..scene_canvas_model import iter_part_keys
 from .changes import (
     EntitiesAboutToBeRemoved,
@@ -32,8 +33,14 @@ from .changes import (
 )
 from .content_items import BackgroundItem, DisplayImageItem, SpritePreviewItem
 from .entity_items import HandleItem, PolygonItem, PolylineItem
+from .light_curve import light_curve_points
 from .items import CanvasItem, EntityItem
-from .overlays import GroupBoxItem, PerspectiveAxisItem, RubberBandItem
+from .overlays import (
+    GroupBoxItem,
+    PerspectiveAxisItem,
+    RubberBandItem,
+    TransformGizmoItem,
+)
 from .renderer import SceneRenderer
 from .tools import ToolManager
 
@@ -85,6 +92,9 @@ class SceneView(QGraphicsView):
 
         self.renderer = SceneRenderer(1.0)
         self.tools = ToolManager(self)
+        # **没有这一行，键盘一个事件都收不到。** 方向键微移 / Delete / Ctrl+D
+        # 全走 `keyPressEvent`，而 `QGraphicsView` 默认不接受点击取焦。
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
         #: **一本账**：(ref, part) → 图元
         self._items: dict[tuple[EntityRef, str], EntityItem] = {}
@@ -101,8 +111,15 @@ class SceneView(QGraphicsView):
         self._gfx.addItem(self._persp_axis)
         self._persp_axis.setVisible(False)
         self._band = RubberBandItem()
+        self._gizmo = TransformGizmoItem()
+        self._preview_refs: set = set()
+        self._preview_transform = None
         self._gfx.addItem(self._band)
         self._band.setVisible(False)
+        self._gfx.addItem(self._gizmo)
+        # 切工具要重画预览：gizmo 只属于变换工具，切走必须收掉，
+        # 否则手柄留在画面上、点它却没有任何工具接管。
+        self.tools.tool_changed.connect(lambda _t: self.refresh_gesture_preview())
         self._background = BackgroundItem()
         self._gfx.addItem(self._background)
 
@@ -123,6 +140,13 @@ class SceneView(QGraphicsView):
     # ---- 变更事件分发（唯一入口）------------------------------------------
 
     def _on_document_changed(self, event) -> None:
+        self._dispatch_change(event)
+        # gizmo 挂在"当前选中 + 当前变换"上，选择变了、旋转角变了都要重画。
+        # 放在分发之后统一刷一次，而不是散在各分支里 —— 散着写就一定会漏一支
+        # （老画布的 gizmo 正是"选择变了才刷"，撤销一次旋转后手柄留在旧角度）。
+        self.refresh_gesture_preview()
+
+    def _dispatch_change(self, event) -> None:
         if isinstance(event, SceneReloaded):
             self.rebuild_all()
         elif isinstance(event, EntitiesAdded):
@@ -159,6 +183,11 @@ class SceneView(QGraphicsView):
         for kind in ("zone", "hotspot", "npc", "spawn"):
             for ref in self._doc.entity_refs(kind):
                 self._sync_entity(ref)
+        # **场景级图元（光环境曲线）也要建。** 它不在任何 `entity_refs` 里，
+        # 漏掉的话它只在"收到一次 scene 变更事件"之后才凭空出现 —— 也就是
+        # 打开场景时根本看不见、也编辑不了，而单测若直接调 `_sync_entity`
+        # 就完全测不出来（本条正是这么漏过一轮的）。
+        self._sync_entity(EntityRef("scene", self._doc.scene_id))
         self._apply_selection(self._doc.selection)
         self._update_scene_rect()
 
@@ -199,7 +228,7 @@ class SceneView(QGraphicsView):
             self._items[(ref, part)] = item
             self._push_view_scale(item)
         if isinstance(item, HandleItem):
-            item.setPos(float(ent.get("x", 0) or 0), float(ent.get("y", 0) or 0))
+            item.set_base_pos(float(ent.get("x", 0) or 0), float(ent.get("y", 0) or 0))
             if properties & (EntityProperty.BEHAVIOUR | EntityProperty.TRANSFORM
                              | EntityProperty.ALL):
                 item.set_interaction_range(float(ent.get("interactionRange", 0) or 0))
@@ -223,7 +252,7 @@ class SceneView(QGraphicsView):
             self._gfx.addItem(item)
             self._items[(ref, part)] = item
         anchor, w, h, facing, scale, rot, url = spec
-        item.setPos(anchor)
+        item.set_base_pos(anchor.x(), anchor.y())
         item.set_geometry(QPointF(0, 0), w, h, scale=scale, rotation=rot, facing=facing)
         if self._texture_provider is not None:
             item.set_pixmap(self._texture_provider(url))
@@ -338,7 +367,7 @@ class SceneView(QGraphicsView):
 
     def _part_points(self, kind: str, part: str, ent: dict):
         if part == "lightcurve":
-            return ent.get("lightEnvCurve") or []
+            return light_curve_points(ent)
         if part == "polygon":
             return ent.get("polygon") or []
         if part == "collision":
@@ -350,15 +379,17 @@ class SceneView(QGraphicsView):
 
     @staticmethod
     def _collision_world_points(ent: dict):
-        """碰撞面画在**世界坐标**里。加载期迁移保证了它一定是局部坐标，
-        所以这里只做"锚点 + 局部值"，不再有第二个分支。"""
+        """碰撞面画在**世界坐标**里：`anchor + T(local)`，与运行时同口径。
+
+        `T` 就是实例 transform（scale / rotation），**不能省**。省掉它的后果不是
+        "画得略歪"：写回走的是完整反变换，画与写口径不一致时，在 `scale != 1` 的
+        实体上拖一个顶点松手就会跳走，而且越拖越远。数学与老画布共用同一对函数
+        （`shared/scene_migrations`），两个画布因此不可能各画各的。
+        """
         poly = ent.get("collisionPolygon")
         if not isinstance(poly, list) or len(poly) < 3:
             return []
-        x0 = float(ent.get("x", 0) or 0)
-        y0 = float(ent.get("y", 0) or 0)
-        return [{"x": x0 + float(p.get("x", 0)), "y": y0 + float(p.get("y", 0))}
-                for p in poly if isinstance(p, dict)]
+        return collision_polygon_local_to_world(ent, poly)
 
     def _drop_part(self, ref: EntityRef, part: str) -> None:
         item = self._items.pop((ref, part), None)
@@ -408,7 +439,7 @@ class SceneView(QGraphicsView):
             targets = [item]
         else:
             targets = [*self._items.values(), *self._group_boxes.values(),
-                       self._persp_axis]
+                       self._persp_axis, self._gizmo]
         for it in targets:
             setter = getattr(it, "set_view_scale", None)
             if callable(setter):
@@ -438,6 +469,71 @@ class SceneView(QGraphicsView):
         self.scale(factor, factor)
         self._push_view_scale()
 
+    # ---- 手势预览（**纯显示，不碰数据**）----------------------------------
+
+    def set_move_preview(self, refs, dx: float, dy: float) -> None:
+        """手势中的位移预览。传空 refs（或零位移）即清除。
+
+        预览走图元的 `set_preview_offset`，与 `_sync_*` 写的"数据位"互不覆盖 ——
+        理由见 `items.CanvasItem` 的那段注释。
+        """
+        wanted = set(refs) if (dx or dy) else set()
+        for ref in self._preview_refs - wanted:
+            for item in self.items_of(ref):
+                item.set_preview_offset(0.0, 0.0)
+        for ref in wanted:
+            for item in self.items_of(ref):
+                item.set_preview_offset(dx, dy)
+        self._preview_refs = wanted
+
+    def set_transform_preview(self, spec) -> None:
+        """缩放/旋转预览：``(ref, scale, rotation)`` 或 ``None``。
+
+        只改内容图元的绘制几何；松手后由 `_sync_entity` 用真实数据复位。
+        """
+        old = self._preview_transform
+        if old == spec:
+            return
+        self._preview_transform = spec
+        if old is not None and (spec is None or spec[0] != old[0]):
+            self._sync_entity(old[0])          # 用真实数据把上一个复位
+        if spec is None:
+            return
+        ref, scale, rot = spec
+        ent = self._doc.entity(ref)
+        if not isinstance(ent, dict):
+            return
+        content = self._content_spec(ref.kind, ent)
+        if content is None:
+            return
+        _anchor, w, h, facing, _s, _r, _url = content
+        for part in ("display", "sprite"):
+            item = self._items.get((ref, part))
+            if item is not None:
+                item.set_geometry(QPointF(0, 0), w, h,
+                                  scale=scale, rotation=rot, facing=facing)
+
+    def refresh_gesture_preview(self) -> None:
+        """把当前工具的手势状态投影到画面上。
+
+        **一条通道服务所有工具**：工具只暴露 `band_rect` / `drag_offset` +
+        `dragging_refs` / `transform_preview` / `gizmo_positions()` 这几个可选属性，
+        视图不为每个工具写分支。老画布是每个手势各写一套预览，于是各有各的漏画
+        （橡皮筋画了、拖动没画、gizmo 干脆没画）。
+        """
+        tool = self.tools.current
+        self._band.set_rect(getattr(tool, "band_rect", None))
+        off = tuple(getattr(tool, "drag_offset", (0.0, 0.0)) or (0.0, 0.0))
+        self.set_move_preview(getattr(tool, "dragging_refs", ()) or (),
+                              float(off[0]), float(off[1]))
+        self.set_transform_preview(getattr(tool, "transform_preview", None))
+        gizmo = getattr(tool, "gizmo_positions", None)
+        self._gizmo.set_positions(gizmo() if callable(gizmo) else None)
+
+    @property
+    def transform_gizmo(self) -> TransformGizmoItem:
+        return self._gizmo
+
     # ---- 输入转发（一律交给当前工具）--------------------------------------
 
     def _world(self, event) -> QPointF:
@@ -445,7 +541,9 @@ class SceneView(QGraphicsView):
 
     def mousePressEvent(self, event) -> None:
         pos = self._world(event)
-        if self.tools.mouse_pressed(pos, event.button(), event.modifiers()):
+        handled = self.tools.mouse_pressed(pos, event.button(), event.modifiers())
+        self.refresh_gesture_preview()
+        if handled:
             event.accept()
             return
         super().mousePressEvent(event)
@@ -453,14 +551,21 @@ class SceneView(QGraphicsView):
     def mouseMoveEvent(self, event) -> None:
         pos = self._world(event)
         self.cursor_world_moved.emit(pos)
-        if self.tools.mouse_moved(pos, event.buttons(), event.modifiers()):
+        handled = self.tools.mouse_moved(pos, event.buttons(), event.modifiers())
+        if handled:
+            self.refresh_gesture_preview()
             event.accept()
             return
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:
         pos = self._world(event)
-        if self.tools.mouse_released(pos, event.button(), event.modifiers()):
+        handled = self.tools.mouse_released(pos, event.button(), event.modifiers())
+        # **松手后必须刷一次**，而且不管工具吃没吃这一下：手势状态已经清空，
+        # 预览若不跟着清，画面会永久停在最后一帧偏移上 —— 数据是对的、画面是错的，
+        # 属于最难自查的一类。
+        self.refresh_gesture_preview()
+        if handled:
             event.accept()
             return
         super().mouseReleaseEvent(event)
@@ -473,7 +578,9 @@ class SceneView(QGraphicsView):
         super().mouseDoubleClickEvent(event)
 
     def keyPressEvent(self, event) -> None:
-        if self.tools.key_pressed(event.key(), event.modifiers()):
+        handled = self.tools.key_pressed(event.key(), event.modifiers())
+        self.refresh_gesture_preview()      # Esc 取消手势后要把预览一并撤掉
+        if handled:
             event.accept()
             return
         super().keyPressEvent(event)

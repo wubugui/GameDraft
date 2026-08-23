@@ -34,10 +34,12 @@ from .entity_transform_math import (
     entity_rotation_deg_of,
     entity_scale_of,
     inverse_transform_world_vec,
+    transform_local_vec,
 )
 
 __all__ = [
     "COLLISION_OWNER_KEYS",
+    "collision_polygon_local_to_world",
     "collision_polygon_world_to_local",
     "legacy_world_authored_to_local",
     "migrate_scene_collision_to_local",
@@ -47,6 +49,27 @@ __all__ = [
 #: 加新的带碰撞面实体族时只改这里 —— 与 `scene_canvas_model.PART_TABLE` 同样是
 #: "清单只有一份"的做法，避免"新增一族、忘了迁移"。
 COLLISION_OWNER_KEYS = ("hotspots", "npcs")
+
+
+def collision_polygon_local_to_world(ent: dict, local_poly: list) -> list[dict[str, float]]:
+    """authored 局部点 → **画布上的**世界点：正变换后加锚点（与运行时同口径）。
+
+    :func:`collision_polygon_world_to_local` 的严格逆运算。两者必须成对使用：
+    画布若只用 `anchor + local` 画（漏掉 transform），而写回走完整反变换，
+    那么在 `scale != 1` 的实体上"拖一个顶点、松手、顶点跳到别处"，
+    且每拖一次偏得更远。
+    """
+    x0 = float(ent.get("x", 0) or 0)
+    y0 = float(ent.get("y", 0) or 0)
+    s = entity_scale_of(ent)
+    rot = entity_rotation_deg_of(ent)
+    out: list[dict[str, float]] = []
+    for p in local_poly:
+        if not isinstance(p, dict):
+            continue
+        wx, wy = transform_local_vec(float(p.get("x", 0)), float(p.get("y", 0)), s, rot)
+        out.append({"x": round(wx + x0, 1), "y": round(wy + y0, 1)})
+    return out
 
 
 def collision_polygon_world_to_local(ent: dict, world_poly: list) -> list[dict[str, float]]:
