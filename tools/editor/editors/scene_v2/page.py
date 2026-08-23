@@ -61,6 +61,7 @@ from .changes import (
     SelectionChanged,
 )
 from .document import SceneDocument
+from ...shared.patrol_preview import PatrolWalker
 from .npc_anim import NpcAnimBank
 from .panel_bridge import PanelBridge
 from .sorting import assign_content_z
@@ -172,6 +173,8 @@ class SceneEditorV2(QWidget):
         self._pending_fit = False
         self._loaded_scene_obj = None
         self._tool_actions: dict = {}
+        #: npc_id → 巡逻预览游标（只在勾了预览的 NPC 上有）
+        self._patrol_walkers: dict = {}
         # NPC 精灵的动画驱动。**宿主持有** —— 解析 anim.json、读图集、跑定时器
         # 都是读资源，视图那层不做这件事。
         self._anim_bank = NpcAnimBank(model, self._public_asset_path)
@@ -259,6 +262,7 @@ class SceneEditorV2(QWidget):
         self._view.set_texture_provider(self._load_texture)
         self._view.set_sprite_metrics_provider(self._npc_sprite_metrics)
         self._anim_bank.clear()
+        self._patrol_walkers.clear()
         self._view.set_sprite_frame_provider(self._anim_bank.frame_pixmap)
         self._refresh_background()
         self._install_tools()
@@ -335,6 +339,7 @@ class SceneEditorV2(QWidget):
             return
         if self._anim_bank.advance(_ANIM_TICK_MS / 1000.0):
             self._view.refresh_sprite_frames()
+        self._tick_patrol_previews()
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt 接口
         """视口第一次拿到像样尺寸时补做那次 fit（见 `load_scene` 里的注释）。"""
@@ -448,6 +453,7 @@ class SceneEditorV2(QWidget):
             ("group_member_activated", self.select_entity),
             ("scene_directly_written", self._on_scene_directly_written),
             ("light_place_mode_changed", self._on_light_place_mode),
+            ("npc_patrol_preview_changed", self._on_patrol_preview_toggled),
         ]
         for name, slot in pairs:
             sig = getattr(p, name, None)
@@ -459,6 +465,42 @@ class SceneEditorV2(QWidget):
             btn = getattr(p, attr, None)
             if btn is not None:
                 btn.clicked.connect(slot)
+
+    def _on_patrol_preview_toggled(self, npc_id: str, on: bool) -> None:
+        """「画布预览巡逻（不写回 x,y）」。
+
+        面板是新老画布共用的，所以这个复选框在 v2 上照常显示、照常可勾 ——
+        没接线时勾了什么都不发生，策划会以为是自己的路线/速度配错了，
+        去改一堆本来没问题的数据。
+        """
+        nid = str(npc_id or "")
+        if not nid:
+            return
+        if on:
+            self._patrol_walkers[nid] = PatrolWalker()
+        else:
+            self._patrol_walkers.pop(nid, None)
+            # 关掉时把精灵拨回数据里的真实位置
+            if self._view is not None:
+                self._view.set_move_preview((), 0.0, 0.0)
+                self._view._sync_entity(EntityRef("npc", nid))
+
+    def _tick_patrol_previews(self) -> None:
+        """把预览中的 NPC 沿路线挪一步。**只动画面，不写 x/y。**"""
+        if self._doc is None or self._view is None or not self._patrol_walkers:
+            return
+        for nid, walker in list(self._patrol_walkers.items()):
+            ref = EntityRef("npc", nid)
+            npc = self._doc.entity(ref)
+            if not isinstance(npc, dict):
+                self._patrol_walkers.pop(nid, None)
+                continue
+            px, py = walker.advance(npc, _ANIM_TICK_MS / 1000.0)
+            dx = px - float(npc.get("x", 0) or 0)
+            dy = py - float(npc.get("y", 0) or 0)
+            for item in self._view.items_of(ref):
+                item.set_preview_offset(dx, dy)
+        self.resort_content_z()
 
     def _on_light_place_mode(self, on: bool) -> None:
         tool = getattr(self, "light_place_tool", None)

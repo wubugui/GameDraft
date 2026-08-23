@@ -22,6 +22,7 @@ from tools.editor.editors.scene_v2.sorting import assign_content_z
 from tools.editor.editors.scene_v2.tools_builtin import MoveTool
 from tools.editor.editors.scene_v2.view import SceneView
 from tools.editor.shared.anim_frame_cursor import AnimFrameCursor
+from tools.editor.shared.patrol_preview import PatrolWalker
 
 _NO_MOD = Qt.KeyboardModifier.NoModifier
 _LEFT = Qt.MouseButton.LeftButton
@@ -225,6 +226,49 @@ class AnimFrameCursorTests(unittest.TestCase):
         self.assertEqual(c.atlas_index, 5)
         c.advance(0.1)
         self.assertEqual(c.atlas_index, 7)
+
+
+class PatrolWalkerTests(unittest.TestCase):
+    """巡逻预览的走位推进 —— 两个画布共用的那一份。"""
+
+    # 起点**不要**正好落在第一个路点上：那样第一拍会直接判定"到了"、
+    # 把目标推进到下一个点，位置纹丝不动 —— 断言就成了空过。
+    NPC = {"id": "n1", "x": 0, "y": 0,
+           "patrol": {"speed": 10, "route": [{"x": 50, "y": 0},
+                                             {"x": 100, "y": 0}]}}
+
+    def test_walks_towards_the_next_point(self) -> None:
+        w = PatrolWalker()
+        x, _y = w.advance(self.NPC, 1.0)
+        self.assertGreater(x, 0.0, "预览没往前走")
+
+    def test_turns_around_at_the_end(self) -> None:
+        """端点**折返**，不是绕回起点（与老画布同口径）。
+
+        断言"走过最远端之后 x 会减小"，而不是盯某一拍的 step ——
+        跑久了会来回弹好几次，那个瞬时值说明不了问题。
+        """
+        w = PatrolWalker()
+        xs = [w.advance(self.NPC, 1.0)[0] for _ in range(20)]
+        top = max(xs)
+        self.assertAlmostEqual(top, 100.0, places=3, msg="没走到路线末端")
+        after = xs[xs.index(top):]
+        self.assertTrue(any(x < top - 1e-6 for x in after),
+                        f"到了末端没有折返：{xs}")
+
+    def test_a_route_shorter_than_two_points_stands_still(self) -> None:
+        npc = {"id": "n", "x": 5, "y": 6, "patrol": {"route": [{"x": 0, "y": 0}]}}
+        self.assertEqual(PatrolWalker().advance(npc, 1.0), (5.0, 6.0))
+
+    def test_never_writes_back_to_the_entity(self) -> None:
+        """复选框的名字就是"不写回 x,y" —— 数据一个字节都不能动。"""
+        import copy
+
+        npc = copy.deepcopy(self.NPC)
+        w = PatrolWalker()
+        for _ in range(10):
+            w.advance(npc, 1.0)
+        self.assertEqual(npc, self.NPC, "巡逻预览把坐标写回数据了")
 
 
 if __name__ == "__main__":

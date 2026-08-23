@@ -56,8 +56,21 @@ def entity_cutscene_ids(ent: object) -> tuple[str, ...]:
 
 
 def entity_is_cutscene_only(ent: object) -> bool:
+    """绑了过场的实体**默认就是"仅过场"**，除非 `cutsceneOnly` 显式写了 false。
+
+    口径抄自运行时（`src/data/types.ts`：「有值时默认作为仅过场实体，除非
+    cutsceneOnly 显式为 false」）与老画布（`scene_editor._entity_is_cutscene_only`）。
+
+    写成 `is True`（缺省判成"共享实体、永远显示"）的后果是**语义反了**：
+    新画布对同一份场景 JSON 显示出比老画布多的实体，多出来的正是"只在过场里
+    存在"的那些。策划照着这块骗人的画布排位、改坐标，改动会落到真实数据上
+    但在正常游戏里看不到效果；反过来也会误以为这些实体在普通场景里存在，
+    据此规划走位与遮挡。
+    """
     d = ent if isinstance(ent, dict) else {}
-    return d.get("cutsceneOnly") is True
+    if not entity_cutscene_ids(d):
+        return False
+    return d.get("cutsceneOnly", True) is not False
 
 
 @dataclass(frozen=True, slots=True)

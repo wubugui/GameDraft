@@ -80,14 +80,30 @@ class PhaseAxisTests(unittest.TestCase):
 
 
 class CutsceneAxisTests(unittest.TestCase):
+    """缺省口径以**运行时**为准：`src/data/cutsceneEntity.test.ts` 里
+    `{cutsceneIds:['intro','dock']}`（没写 cutsceneOnly）判定为 **仅过场**，
+    只有显式 `cutsceneOnly: false` 才是共享实体。老画布
+    (`scene_editor._entity_is_cutscene_only`) 同口径。
+    """
+
     ONLY = {"cutsceneIds": ["cs_夜访"], "cutsceneOnly": True}
-    BOUND = {"cutsceneIds": ["cs_夜访"]}
+    #: **没写 cutsceneOnly = 仍然是仅过场**（这条此前被写反了）
+    BOUND_DEFAULT = {"cutsceneIds": ["cs_夜访"]}
+    #: 显式 false 才是共享实体
+    SHARED = {"cutsceneIds": ["cs_夜访"], "cutsceneOnly": False}
 
     def test_unbound_entity_always_exists(self) -> None:
         self.assertTrue(passes_cutscene({}, ViewAxes()))
 
-    def test_bound_but_not_only_always_exists(self) -> None:
-        self.assertTrue(passes_cutscene(self.BOUND, ViewAxes()))
+    def test_bound_without_the_flag_defaults_to_cutscene_only(self) -> None:
+        """判反了的话，画布会把"只在过场里存在"的实体当普通实体画出来 ——
+        可点可拖可改，而改动在正常游戏里根本看不到效果。"""
+        self.assertFalse(passes_cutscene(self.BOUND_DEFAULT, ViewAxes()))
+        self.assertTrue(
+            passes_cutscene(self.BOUND_DEFAULT, ViewAxes(cutscene_id="cs_夜访")))
+
+    def test_explicit_false_is_a_shared_entity(self) -> None:
+        self.assertTrue(passes_cutscene(self.SHARED, ViewAxes()))
 
     def test_cutscene_only_needs_the_matching_context(self) -> None:
         self.assertFalse(passes_cutscene(self.ONLY, ViewAxes()))
@@ -97,7 +113,9 @@ class CutsceneAxisTests(unittest.TestCase):
     def test_helpers(self) -> None:
         self.assertEqual(entity_cutscene_ids(self.ONLY), ("cs_夜访",))
         self.assertTrue(entity_is_cutscene_only(self.ONLY))
-        self.assertFalse(entity_is_cutscene_only(self.BOUND))
+        self.assertTrue(entity_is_cutscene_only(self.BOUND_DEFAULT))
+        self.assertFalse(entity_is_cutscene_only(self.SHARED))
+        self.assertFalse(entity_is_cutscene_only({}), "没绑过场的实体不是仅过场")
 
 
 class CompositionTests(unittest.TestCase):
