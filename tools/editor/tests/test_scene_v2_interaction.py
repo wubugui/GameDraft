@@ -106,6 +106,79 @@ class MoveNeedsAHitTests(_Base):
         self.assertEqual((self.ent("h1")["x"], self.ent("h1")["y"]), (250, 240))
 
 
+class DragFollowsTheMouseTests(_Base):
+    """**拖动必须逐帧跟手，且全程不写数据。**
+
+    这条逃过了之前所有用例：它们只断言"松手后模型等于放手处"，而那一条在
+    bug 存在时**照样是绿的** —— 松手那一下会用 `_start + 总偏移` 覆盖掉中途
+    被写坏的值。真正坏掉的是**中途**：实测鼠标每步走 20、实体飞 40，且每帧复利
+    （屏幕上就是"不跟鼠标、飘得很快"）。
+
+    成因是画布拖动中把预览坐标喂给属性面板，而面板的回写方法末尾会
+    `_emit_props_changed()`，桥把它当用户编辑提交成命令 → 模型在手势中被写 →
+    图元的"数据位"跟着动 → 预览位移再叠上去。
+    """
+
+    def _drag_steps(self, tool, ref, steps=5, dx=20):
+        ent = self.doc.model_entity(ref)
+        x0, y0 = float(ent["x"]), float(ent["y"])
+        self.doc.set_selection([ref])
+        self.view.tools.select(tool)
+        self.assertTrue(tool.mouse_pressed(QPointF(x0, y0), _LEFT, _NO_MOD),
+                        "前置条件：这一按应当抓住了实体")
+        self.view.refresh_gesture_preview()
+        item = self.view.item_for(ref, "handle")
+        out = []
+        for i in range(1, steps + 1):
+            mx = x0 + i * dx
+            tool.mouse_moved(QPointF(mx, y0), _LEFT, _NO_MOD)
+            self.view.refresh_gesture_preview()
+            QApplication.processEvents()
+            out.append((mx, item.pos().x(), float(
+                self.doc.model_entity(ref)["x"])))
+        return (x0, y0), out
+
+    def test_item_tracks_the_cursor_frame_by_frame(self) -> None:
+        ref = EntityRef("hotspot", "h1")
+        _start, steps = self._drag_steps(self.page.select_tool, ref)
+        for mouse_x, item_x, _model_x in steps:
+            self.assertAlmostEqual(
+                item_x, mouse_x, places=3,
+                msg=f"拖动中图元没跟住鼠标：鼠标 {mouse_x}、图元 {item_x}")
+
+    def test_model_is_untouched_until_release(self) -> None:
+        ref = EntityRef("hotspot", "h1")
+        (x0, _y0), steps = self._drag_steps(self.page.select_tool, ref)
+        for _mouse_x, _item_x, model_x in steps:
+            self.assertEqual(model_x, x0, "手势中就把数据改了")
+        self.assertEqual(self.doc.undo_stack.count(), 0,
+                         "手势中已经产生了撤销记录")
+
+    def test_release_lands_exactly_where_the_mouse_let_go(self) -> None:
+        ref = EntityRef("hotspot", "h1")
+        (x0, y0), steps = self._drag_steps(self.page.select_tool, ref)
+        drop = steps[-1][0]
+        self.page.select_tool.mouse_released(QPointF(drop, y0), _LEFT, _NO_MOD)
+        self.view.refresh_gesture_preview()
+        self.assertEqual(float(self.doc.model_entity(ref)["x"]), drop)
+        self.assertEqual(self.doc.undo_stack.count(), 1)
+
+    def test_panel_readout_follows_without_committing(self) -> None:
+        """面板 x 数值框要跟着走（这是那条 live 读数的价值），但**不许落库**。"""
+        ref = EntityRef("hotspot", "h1")
+        _start, steps = self._drag_steps(self.page.select_tool, ref)
+        self.assertAlmostEqual(self.page._props._hs_x.value(), steps[-1][0],
+                               places=1, msg="面板数值框没跟着预览走")
+        self.assertEqual(self.doc.undo_stack.count(), 0)
+
+    def test_move_tool_directly_also_tracks(self) -> None:
+        """走「移动」工具那条路同样要跟手。"""
+        ref = EntityRef("hotspot", "h1")
+        _start, steps = self._drag_steps(self.page.move_tool, ref)
+        for mouse_x, item_x, _m in steps:
+            self.assertAlmostEqual(item_x, mouse_x, places=3)
+
+
 class NoModeSelectToolTests(_Base):
     """「选择」工具兼管 gizmo 手柄与分组框 —— 回到老画布的无模式手感。"""
 

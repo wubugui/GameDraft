@@ -825,18 +825,22 @@ class SceneEditorV2(QWidget):
         if self._doc is None or self._view is None:
             return
         offsets = self._view.preview_offsets()
-        if not offsets:
+        if not offsets or self._bridge is None:
             return
-        for ref, (dx, dy) in offsets.items():
-            ent = self._doc.entity(ref)
-            if not isinstance(ent, dict) or "x" not in ent:
-                continue
-            setter = getattr(
-                self._props,
-                {"hotspot": "sync_hotspot_xy_widgets",
-                 "npc": "sync_npc_xy_widgets"}.get(ref.kind, ""), None)
-            if callable(setter):
-                setter(ref.id, float(ent["x"]) + dx, float(ent["y"]) + dy)
+        # **必须挡住桥**：面板的回写方法末尾会 `_emit_props_changed()`，
+        # 不挡就会把预览坐标当成用户编辑提交成命令 —— 手势中写了数据，
+        # 而且模型一动、图元的数据位跟着动，预览位移再叠上去，实体越拖越快地飘走。
+        with self._bridge.pushing_values():
+            for ref, (dx, dy) in offsets.items():
+                ent = self._doc.entity(ref)
+                if not isinstance(ent, dict) or "x" not in ent:
+                    continue
+                setter = getattr(
+                    self._props,
+                    {"hotspot": "sync_hotspot_xy_widgets",
+                     "npc": "sync_npc_xy_widgets"}.get(ref.kind, ""), None)
+                if callable(setter):
+                    setter(ref.id, float(ent["x"]) + dx, float(ent["y"]) + dy)
 
     def _create_spawn_at(self, world_pos) -> None:
         name, ok = QInputDialog.getText(self, "新建命名出生点", "出生点名称：")

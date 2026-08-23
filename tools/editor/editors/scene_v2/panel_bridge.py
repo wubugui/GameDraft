@@ -32,6 +32,7 @@ Apply 式提交会让撤销粒度变成"一整页表单"，而且用户不点 Ap
 from __future__ import annotations
 
 import copy
+from contextlib import contextmanager
 
 from PySide6.QtCore import QObject
 
@@ -172,6 +173,23 @@ class PanelBridge(QObject):
         self._committing = False
         panel.changed.connect(self._on_panel_changed)
         document.changed.connect(self._on_document_changed)
+
+    @contextmanager
+    def pushing_values(self):
+        """**把值推进面板**的那一段：期间面板发的 `changed` 不算用户编辑。
+
+        面板的一些"回写控件"方法（`sync_hotspot_xy_widgets` 一族）末尾会调
+        `_emit_props_changed()`。不挡住的话，画布**拖动中**喂给面板的预览坐标会被
+        当成一次真实编辑提交成命令 —— 数据在手势中就被写了（违反"手势不写数据"
+        这条最硬的约束），而且模型一动，图元的"数据位"跟着动、预览位移又照旧叠上去，
+        于是实体越拖越快地飘走（实测鼠标走 20、实体飞 40，且每帧复利）。
+        """
+        before = self._syncing
+        self._syncing = True
+        try:
+            yield
+        finally:
+            self._syncing = before
 
     def detach(self) -> None:
         """断开与面板/文档的连线。
