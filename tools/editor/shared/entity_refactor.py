@@ -1548,6 +1548,46 @@ def _offset_points(points: Any, dx: float, dy: float) -> None:
             pt[1] = _offset_num(pt[1], dy)
 
 
+def id_namespace_kinds(kind: str) -> tuple[str, ...]:
+    """与 `kind` **共用 id 命名空间**的全部实体族。
+
+    npc 与 hotspot 互为 emote / 动作目标，运行时按 id 寻址时不分族，所以取号与
+    撞名判定必须一起查两张表。只查自己那张表就能造出「一个热点和一个 NPC 同 id」
+    的数据 —— 而属性面板自己的撞名闸是禁止用户手输这种数据的。
+    """
+    return _COLLISION_KINDS.get(kind, (kind,))
+
+
+def build_duplicate_payload(row: dict[str, Any], new_id: str,
+                            dx: float, dy: float) -> tuple[dict[str, Any], list[str]]:
+    """把一行实体 def 复制成副本负载。**不写模型**，返回 ``(副本, 被剥离的过场 id)``。
+
+    抽出来是为了让两个画布共用同一套复制规则 —— 新画布此前自己写了一份，
+    结果漏掉了「剥离过场绑定」与「巡逻路点跟随平移」两条：
+    - 不剥离 `cutsceneIds` / `cutsceneOnly`：副本挂着绑定却无人驱动，
+      而 cutsceneOnly 副本在正常游戏里**永远不显示**，排查时毫无线索；
+    - 巡逻路点不跟随：副本一进游戏就往原实体那条路上跑，两条折线在画布上完全重叠。
+
+    `collisionPolygon` 在打了 `collisionPolygonLocal` 标记时是**局部坐标**（挂在锚点上
+    自动跟随），不能再平移一次。
+    """
+    dup = copy.deepcopy(row)
+    dup["id"] = new_id
+    stripped = [str(c) for c in (dup.pop("cutsceneIds", None) or []) if str(c).strip()]
+    dup.pop("cutsceneOnly", None)
+    if "x" in dup:
+        dup["x"] = _offset_num(dup.get("x"), dx)
+    if "y" in dup:
+        dup["y"] = _offset_num(dup.get("y"), dy)
+    _offset_points(dup.get("polygon"), dx, dy)
+    if dup.get("collisionPolygonLocal") is not True:
+        _offset_points(dup.get("collisionPolygon"), dx, dy)
+    patrol = dup.get("patrol")
+    if isinstance(patrol, dict):
+        _offset_points(patrol.get("route"), dx, dy)
+    return dup, stripped
+
+
 def _probe_copy_id(scene: dict[str, Any], kind: str, base: str) -> str:
     """`原id_copy` 起步探测取号（撞了再 _copy_2/_copy_3…）；npc/hotspot 互为
     emote 目标命名空间，取号一起查（与 move/rename 的撞名互拒口径一致）。"""
@@ -1599,21 +1639,10 @@ def duplicate_entity(
         new = _probe_copy_id(scene, kind, eid)
 
     idx, row = found
-    dup = copy.deepcopy(row)
-    dup["id"] = new
-    stripped = [str(c) for c in (dup.pop("cutsceneIds", None) or []) if str(c).strip()]
-    dup.pop("cutsceneOnly", None)
+    # 复制规则的**唯一实现**在 build_duplicate_payload（新画布也调它）。
     # 几何整体平移：x/y、zone polygon、世界系碰撞多边形、巡逻路点同幅跟随；
     # collisionPolygonLocal 是局部系（随 x/y 走），不动。
-    if "x" in dup:
-        dup["x"] = _offset_num(dup.get("x"), dx)
-    if "y" in dup:
-        dup["y"] = _offset_num(dup.get("y"), dy)
-    _offset_points(dup.get("polygon"), dx, dy)
-    _offset_points(dup.get("collisionPolygon"), dx, dy)
-    patrol = dup.get("patrol")
-    if isinstance(patrol, dict):
-        _offset_points(patrol.get("route"), dx, dy)
+    dup, stripped = build_duplicate_payload(row, new, dx, dy)
     _rewrite_source_id_strings(dup, f"{sid}:{eid}", f"{sid}:{new}")
     # 紧挨原实体之后插入：保持作者期上下文局部性，JSON diff 最小
     scene[_entity_list_key(kind)].insert(idx + 1, dup)

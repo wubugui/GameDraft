@@ -11,6 +11,10 @@ import re
 
 from PySide6.QtCore import QPointF, Qt
 
+from ...shared.entity_refactor import (
+    build_duplicate_payload,
+    id_namespace_kinds,
+)
 from .changes import EntityRef
 from .commands_structure import (
     LIST_KEY,
@@ -30,11 +34,20 @@ _DEFAULTS = {
 
 
 def existing_ids(document, kind: str) -> set[str]:
+    """该 kind **命名空间内**已被占用的 id。
+
+    npc 与 hotspot 共用一个命名空间（运行时按 id 寻址不分族），所以两张表都要扫。
+    只扫自己那张的话，复制/新建能造出「一个热点和一个 NPC 同 id」——
+    而属性面板自己的撞名闸恰恰禁止用户手输这种数据。
+    """
     sc = document.scene() or {}
-    key = LIST_KEY.get(kind)
-    if key is None:
-        return set()
-    return {str(e.get("id", "")) for e in sc.get(key) or [] if isinstance(e, dict)}
+    out: set[str] = set()
+    for k in id_namespace_kinds(kind):
+        key = LIST_KEY.get(k)
+        if key is None:
+            continue
+        out |= {str(e.get("id", "")) for e in sc.get(key) or [] if isinstance(e, dict)}
+    return out
 
 
 def unique_entity_id(document, kind: str, stem: str = "",
@@ -139,28 +152,26 @@ def duplicate_selected(document, offset: tuple[float, float] = (24.0, 24.0)) -> 
     sc = document.scene() or {}
     entries = []
     new_refs = []
+    stripped_cutscenes: list[tuple[str, list[str]]] = []
     taken_per_kind: dict[str, set[str]] = {}
     for ref in refs:
         src = document.model_entity(ref)
         if not isinstance(src, dict):
             continue
-        clone = copy.deepcopy(src)
         taken = taken_per_kind.setdefault(ref.kind, set())
         # 把"本批已分配但还没入模型"的名字一并交给分配器：命令直到最后才 push，
         # 模型里看不到它们。此前是外面套一个 `while new_id in taken` 重试 ——
         # 而分配器看不到本批名字时会原样返回入参，循环零推进、**死循环卡死编辑器**。
         new_id = unique_entity_id(document, ref.kind, str(src.get("id", "")), taken)
         taken.add(new_id)
-        clone["id"] = new_id
-        if "x" in clone:
-            clone["x"] = round(float(clone["x"]) + offset[0], 1)
-        if "y" in clone:
-            clone["y"] = round(float(clone["y"]) + offset[1], 1)
-        if isinstance(clone.get("polygon"), list):
-            clone["polygon"] = [
-                {"x": round(float(p.get("x", 0)) + offset[0], 1),
-                 "y": round(float(p.get("y", 0)) + offset[1], 1)}
-                for p in clone["polygon"] if isinstance(p, dict)]
+        # **复制规则走共享实现**（`shared/entity_refactor.build_duplicate_payload`）：
+        # 剥离过场绑定、平移 x/y 与 polygon 与**巡逻路点**、局部碰撞面不重复平移。
+        # 自己写一份的代价已经付过了：副本挂着 cutsceneOnly 在游戏里永不显示、
+        # 巡逻路线仍钉在原实体那条路上，两条都要进游戏才看得出来。
+        clone, stripped = build_duplicate_payload(
+            src, new_id, float(offset[0]), float(offset[1]))
+        if stripped:
+            stripped_cutscenes.append((new_id, stripped))
         new_ref = EntityRef(ref.kind, new_id)
         index = len(sc.get(LIST_KEY[ref.kind]) or []) + len(entries)
         entries.append((new_ref, index, clone))
@@ -169,5 +180,11 @@ def duplicate_selected(document, offset: tuple[float, float] = (24.0, 24.0)) -> 
         return False
     if document.push(AddEntitiesCommand(document, entries, "复制实体")):
         document.set_selection(new_refs)
+        if stripped_cutscenes:
+            # 剥离是对的（副本挂着绑定无人驱动），但**必须说出来** ——
+            # 静默剥离会让作者以为副本与原件完全一致。
+            document.notify(
+                "副本已剥离过场绑定：" + "；".join(
+                    f"{nid} ← {', '.join(cs)}" for nid, cs in stripped_cutscenes))
         return True
     return False

@@ -49,6 +49,7 @@ from ...shared.move_entity_map_picker import (
 from ...shared.scene_view_filters import ViewAxes, passes_view_filters
 from .changes import (
     EntitiesAdded,
+    EntitiesChanged,
     EntitiesRemoved,
     EntityRef,
     SceneReloaded,
@@ -180,7 +181,11 @@ class SceneEditorV2(QWidget):
         self._bridge = PanelBridge(self._props, self._doc, self)
         # 桥恒返回 None，于是 write_target 恒指向模型 —— 新画布没有第二层真相。
         self._doc.set_staging_provider(self._bridge)
-        self._props.load_scene_props(self._doc.scene(), clear_pending_edits=True)
+        # 装载时选择为空 → 落在场景属性页。**必须经桥**，不能自己调
+        # `load_scene_props`：直接调的话面板确实显示了场景页，但桥的 `_loaded`
+        # 还是 None，于是这一页上的每一次编辑都在 `commit_panel_edits` 第一个
+        # 分支早退 —— 界面看着能改，改完一个字节都不进模型。
+        self._bridge.sync_from_selection()
         self._view = SceneView(self._doc, self._canvas_host)
         self._canvas_layout.addWidget(self._view)
         self._view.set_texture_provider(self._load_texture)
@@ -314,6 +319,7 @@ class SceneEditorV2(QWidget):
             PerspectiveAxisTool(doc, r, view.perspective_axis))
         self.group_box_tool = view.tools.register(GroupBoxTool(doc, r, view))
         view.tools.status_text_changed.connect(self._status.setText)
+        self._doc.notice.connect(self._status.setText)
         self._toolbar.clear()
         for tool in view.tools.tools:
             act = self._toolbar.addAction(tool.display_name)
@@ -436,6 +442,14 @@ class SceneEditorV2(QWidget):
         self.refresh_group_boxes()
         self.refresh_perspective_axis()
         self.refresh_scene_geometry()
+        # **场景级字段变了要重刷背景。** 在面板里换/导入背景图或改世界尺寸之后
+        # 不刷的话，画布仍显示旧背景（或"本场景无背景图"占位），而磁盘与数据其实
+        # 已经换了 —— 用户会以为导入失败反复重导；sceneRect 也停在旧世界尺寸，
+        # 适配与滚动范围全是错的，必须切走场景再切回来才恢复。
+        if isinstance(event, SceneReloaded) or (
+                isinstance(event, EntitiesChanged)
+                and any(r.kind == "scene" for r in event.refs)):
+            self._refresh_background()
         if isinstance(event, (EntitiesAdded, EntitiesRemoved, SceneReloaded)):
             self.refresh_entity_tree()
 

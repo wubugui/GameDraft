@@ -55,7 +55,14 @@ class TransformTool(AbstractTool):
         """(scale, rotation) 的手势中预览值。数据里**没有**这个值。"""
         return self._preview
 
+    #: 参与实例变换的实体族。**出生点不在内** —— 它是只有 x/y 的结构件，
+    #: 运行时根本不读 scale/rotation；给它写这两个键只会在 JSON 里长期躺着，
+    #: 而老画布打开同一场景时既不显示也不可编辑，只能手改文本删掉。
+    TRANSFORMABLE_KINDS = ("hotspot", "npc")
+
     def _anchor(self, ref: EntityRef) -> QPointF | None:
+        if ref.kind not in self.TRANSFORMABLE_KINDS:
+            return None
         ent = self._doc.entity(ref)
         if not isinstance(ent, dict) or "x" not in ent:
             return None
@@ -148,15 +155,28 @@ class TransformTool(AbstractTool):
         if self._ref is None:
             return False
         ref = self._ref
+        mode = self._mode
         scale, rot = self._preview
+        start_scale, start_rot = self._start_scale, self._start_rot
         self._reset()
-        # **缺省值写成"删键"**：本仓约定缺省不落键，写 `scale: 1` / `rotation: 0`
-        # 会污染 JSON，黄金往返立刻红。
-        vals = {
-            "scale": _MISSING if abs(scale - 1.0) < 1e-9 else round(scale, 4),
-            "rotation": (_MISSING if abs(rot % 360.0) < 1e-9
-                         else round(rot % 360.0, 3)),
-        }
+        # **没动过就一个字节都不写。** 手柄上按一下不拖就松手是很常见的误触
+        # （尤其在手柄叠着实体时），无条件写会把场景标脏、JSON 数值被静默改写、
+        # 撤销栈平白多一格 —— 批量点检一遍场景就能污染一片实体。
+        if abs(scale - start_scale) < 1e-9 and abs(rot - start_rot) < 1e-9:
+            return True
+        # **只写本次手势真正动过的那一维。** 旋转手柄不该顺手重写 scale
+        # （整数缩放会漂成小数、精度被 round(…,4) 截断），缩放手柄也不该把
+        # 作者填的 `-30` 单方面归一化成 `330`。
+        vals: dict = {}
+        if mode == "scale" or abs(scale - start_scale) >= 1e-9:
+            # **缺省值写成"删键"**：本仓约定缺省不落键，写 `scale: 1` 会污染 JSON。
+            vals["scale"] = (_MISSING if abs(scale - 1.0) < 1e-9
+                             else round(scale, 4))
+        if mode == "rotate" or abs(rot - start_rot) >= 1e-9:
+            vals["rotation"] = (_MISSING if abs(rot % 360.0) < 1e-9
+                                else round(rot % 360.0, 3))
+        if not vals:
+            return True
         self._doc.push(build_change_fields_command(
             self._doc, [ref], [vals], EntityProperty.TRANSFORM, "缩放/旋转"))
         return True
@@ -280,7 +300,20 @@ def _shift(value, delta: float):
     out = v + d
     if isinstance(value, int) and float(out).is_integer():
         return int(out)
-    return round(out, 1)
+    # **保留原值与位移里更精细的那个小数位**，不要一律截到 1 位。
+    # 截断会把 1308.14 静默抹成 1308.1：画面上看不出来，数据却被改了，
+    # 而且存盘之后撤销也救不回来。老画布 `_shift_point_dict` 用的就是这个口径。
+    return round(out, max(1, _decimals_of(v), _decimals_of(d)))
+
+
+def _decimals_of(value: float, limit: int = 6) -> int:
+    """一个数写成十进制时的小数位数（上限 `limit`，防浮点尾巴炸开）。"""
+    text = repr(float(value))
+    if "e" in text or "E" in text:
+        return limit
+    frac = text.split(".", 1)[1] if "." in text else ""
+    frac = frac.rstrip("0")
+    return min(len(frac), limit)
 
 
 class GroupMoveTool(AbstractTool):

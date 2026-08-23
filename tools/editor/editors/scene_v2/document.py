@@ -69,6 +69,10 @@ class SceneDocument(QObject):
     #: 唯一的变更出口。参数是 :class:`ChangeEvent` 子类实例。
     changed = Signal(object)
 
+    #: 需要**说给用户听**的一句话（状态栏）。命令层做了用户没明说的事时必须发它 ——
+    #: 例如复制实体时剥离过场绑定：剥离是对的，但静默剥离会让作者以为副本与原件一致。
+    notice = Signal(str)
+
     UNDO_LIMIT = 100
 
     def __init__(self, model, scene_id: str, parent: QObject | None = None) -> None:
@@ -230,6 +234,12 @@ class SceneDocument(QObject):
         这就是"正着改能刷新、撤回来不刷新"写不出来的原因。"""
         self.changed.emit(event)
 
+    def notify(self, message: str) -> None:
+        """发一句状态栏提示。不改数据、不入撤销栈。"""
+        text = str(message or "").strip()
+        if text:
+            self.notice.emit(text)
+
     def notify_reloaded(self) -> None:
         """整份场景被换掉（切场景 / 撤销回灌 / 外部重载）后调。"""
         sc = self.scene()
@@ -253,6 +263,18 @@ class SceneDocument(QObject):
 
     def clear_selection(self) -> None:
         self.set_selection(())
+
+    def rename_selection(self, old: EntityRef, new: EntityRef) -> None:
+        """实体改了 id：把选择集里的旧 ref 换成新的。
+
+        不换的后果不是"少高亮一下"：选择集里留着已经不存在的 ref，画布上那个
+        实体因此**当场从选中态消失**（图元按新 id 重建、没人选它），左侧实体树
+        还在显示旧 id、点它选不中任何东西 —— 用户以为实体被改没了。
+        """
+        if old == new or old not in self._selection:
+            return
+        self._selection = tuple(new if r == old else r for r in self._selection)
+        self.emit_changed(SelectionChanged(self._selection))
 
     def _prune_selection(self) -> None:
         """场景换了之后，选择集里已经不存在的实体必须掉出去。"""

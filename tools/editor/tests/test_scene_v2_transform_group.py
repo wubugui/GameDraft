@@ -218,18 +218,25 @@ class GroupMoveTests(_Base):
         translate_group(self.doc, "夜巡", 1, 0)
         self.assertEqual(self.ent("hotspot", "h_float")["y"], 218.02,
                          "没动的那一维被截断了")
-        # 真动了的那一维照常取一位小数（本仓坐标精度约定）
-        self.assertEqual(self.ent("hotspot", "h_float")["x"], 1309.1)
+        # 真动了的那一维**保住原有小数位**，不截到 1 位：
+        # 截断会把 1308.14 静默抹成 1308.1，画面看不出、存盘后撤销也救不回。
+        self.assertEqual(self.ent("hotspot", "h_float")["x"], 1309.14)
 
     def test_vertical_move_leaves_x_byte_identical(self) -> None:
         translate_group(self.doc, "夜巡", 0, 1)
         self.assertEqual(self.ent("hotspot", "h_float")["x"], 1308.14)
 
-    def test_diagonal_move_still_rounds_both(self) -> None:
-        """两维都真的动了就照常取一位小数 —— 放行零位移不等于取消取整。"""
+    def test_diagonal_move_keeps_the_finer_precision(self) -> None:
+        """两维都动了：取「原值」与「位移」里更精细的那个小数位，不做统一截断。"""
         translate_group(self.doc, "夜巡", 0.55, 0.55)
-        self.assertEqual(self.ent("hotspot", "h_float")["x"], 1308.7)
-        self.assertEqual(self.ent("hotspot", "h_float")["y"], 218.6)
+        self.assertEqual(self.ent("hotspot", "h_float")["x"], 1308.69)
+        self.assertEqual(self.ent("hotspot", "h_float")["y"], 218.57)
+
+    def test_integer_member_stays_integer_on_diagonal_move(self) -> None:
+        """保精度不等于把整数也拖下水：整数坐标 + 整数位移仍是整数。"""
+        translate_group(self.doc, "夜巡", 2, 3)
+        self.assertIsInstance(self.ent("hotspot", "h1")["x"], int)
+        self.assertEqual(self.ent("hotspot", "h1")["x"], 102)
 
     def test_whole_group_move_is_one_command(self) -> None:
         translate_group(self.doc, "夜巡", 50, 40)

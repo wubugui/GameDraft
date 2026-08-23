@@ -145,6 +145,14 @@ class SelectTool(AbstractTool):
         return self._band_rect
 
 
+def _place(old_value, new_value: float):
+    """写一个坐标，**保留原始数值表示**（原来是 int 且新值是整数就仍写 int）。"""
+    out = round(float(new_value), 1)
+    if isinstance(old_value, int) and not isinstance(old_value, bool)             and float(out).is_integer():
+        return int(out)
+    return out
+
+
 def _world_polygon_of(ent: dict) -> list[tuple[float, float]]:
     """实体自带的**世界坐标**闭合多边形（目前只有 Zone 是这一形状）。
 
@@ -240,8 +248,17 @@ class MoveTool(AbstractTool):
         values = []
         for ref in refs:
             if ref in start:
-                sx, sy = start[ref]
-                values.append({"x": round(sx + dx, 1), "y": round(sy + dy, 1)})
+                ent = self._doc.entity(ref) or {}
+                # **只写真正动过的那一维，且保留原始数值表示。**
+                # 纯水平拖动时 dy 恒为 0，无条件重算会把没碰过的整数 y 写成
+                # `100.0` —— 一次拖动就在 diff 里留下一串与本次操作无关的改动，
+                # 而本仓的数值往返保真契约在鼠标这条路径上就是这么破的。
+                vals: dict = {}
+                if dx:
+                    vals["x"] = _place(ent.get("x"), start[ref][0] + dx)
+                if dy:
+                    vals["y"] = _place(ent.get("y"), start[ref][1] + dy)
+                values.append(vals)
             else:
                 values.append({"polygon": [
                     {"x": round(px + dx, 1), "y": round(py + dy, 1)}
@@ -300,7 +317,8 @@ class PolygonEditTool(AbstractTool):
         return item.points() if item is not None else []
 
     def _write_values(self, ref: EntityRef, part: str,
-                      world_pts: list[tuple[float, float]]) -> dict:
+                      world_pts: list[tuple[float, float]],
+                      index_map: list | None = None) -> dict:
         """世界点列 → 该 part 在实体上的字段值。
 
         碰撞面是**局部坐标**（加载期迁移保证），写回要走**完整反变换**
@@ -321,18 +339,38 @@ class PolygonEditTool(AbstractTool):
                                for x, y in world_pts]
             return {"patrol": patrol}
         if part == "lightcurve":
-            # **每个控制点都驮着一份完整的 env 关键帧** —— 只写 x/y 会把它整份丢掉，
-            # 而画面要下一次打光才看得出来，属于最难查的那种静默数据丢失。
-            old = light_curve_points(ent)
+            # **每个控制点都驮着一份完整的 env 光照关键帧。**
+            #
+            # 所以配对**必须按来源下标**（`index_map`），不能按输出位置。按位置配对
+            # 时，往中间插一个点会让其后每一个点都取到前一个点的 env —— 整条曲线
+            # 后半段的打光集体前移一格、最后一帧被复制；删点则整体后移。画布上折线
+            # 形状完全正确、面板关键帧表也不刷新，作者要进游戏走到那一段才可能察觉，
+            # 而 v2 页又改不了关键帧，撞上之后连修都修不了。
+            #
+            # `index_map[i]` = 输出第 i 个点来自原列表的哪一个下标；`None` = 新插入。
+            src_nodes = light_curve_points(ent)
+            imap = list(index_map) if index_map is not None else list(
+                range(len(world_pts)))
             out = []
             for i, (x, y) in enumerate(world_pts):
-                src = old[i] if i < len(old) and isinstance(old[i], dict) else {}
+                si = imap[i] if i < len(imap) else None
+                src = (src_nodes[si]
+                       if isinstance(si, int) and 0 <= si < len(src_nodes)
+                       and isinstance(src_nodes[si], dict) else {})
                 node = copy.deepcopy(src)
                 node["x"] = round(x, 1)
                 node["y"] = round(y, 1)
-                if "env" not in node and old:
-                    # 新插入的点：继承前一个点的 env，而不是留空
-                    prev = old[min(i, len(old) - 1)]
+                if "env" not in node and src_nodes:
+                    # 新插入的点：继承**它前面那个已有点**的 env，而不是留空
+                    prev_i = None
+                    for j in range(i - 1, -1, -1):
+                        cand = imap[j] if j < len(imap) else None
+                        if isinstance(cand, int):
+                            prev_i = cand
+                            break
+                    if prev_i is None:
+                        prev_i = 0
+                    prev = src_nodes[min(prev_i, len(src_nodes) - 1)]
                     if isinstance(prev, dict) and isinstance(prev.get("env"), dict):
                         node["env"] = copy.deepcopy(prev["env"])
                 out.append(node)
@@ -426,8 +464,11 @@ class PolygonEditTool(AbstractTool):
                 continue
             new_pts = list(pts)
             new_pts.insert(edge + 1, (scene_pos.x(), scene_pos.y()))
+            # 来源下标表：新点是 None，其余原样带着自己的出身
+            imap = list(range(len(pts)))
+            imap.insert(edge + 1, None)
             self._doc.push(build_change_fields_command(
-                self._doc, [ref], [self._write_values(ref, part, new_pts)],
+                self._doc, [ref], [self._write_values(ref, part, new_pts, imap)],
                 EntityProperty.GEOMETRY, "插入顶点"))
             return True
         return False
@@ -445,8 +486,9 @@ class PolygonEditTool(AbstractTool):
             if len(pts) <= minimum:
                 return False
             new_pts = [p for i, p in enumerate(pts) if i != idx]
+            imap = [i for i in range(len(pts)) if i != idx]
             self._doc.push(build_change_fields_command(
-                self._doc, [ref], [self._write_values(ref, part, new_pts)],
+                self._doc, [ref], [self._write_values(ref, part, new_pts, imap)],
                 EntityProperty.GEOMETRY, "删除顶点"))
             return True
         return False
