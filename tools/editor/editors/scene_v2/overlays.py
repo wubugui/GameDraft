@@ -12,11 +12,12 @@ from PySide6.QtGui import QBrush, QColor, QPen
 from .items import OverlayItem
 
 __all__ = ["GroupBoxItem", "PerspectiveAxisItem", "RubberBandItem",
-           "TransformGizmoItem"]
+           "ScaleReferenceItem", "TransformGizmoItem"]
 
 _GROUP_PEN = QPen(QColor(120, 200, 255, 220), 0, Qt.PenStyle.DashLine)
 _GROUP_SEL_PEN = QPen(QColor(255, 236, 120), 0, Qt.PenStyle.DashLine)
 _AXIS_PEN = QPen(QColor(255, 170, 60, 230), 0)
+_AXIS_MID_PEN = QPen(QColor(255, 210, 140, 170), 0, Qt.PenStyle.DashLine)
 _BAND_PEN = QPen(QColor(255, 255, 255, 200), 0, Qt.PenStyle.DashLine)
 _BAND_FILL = QColor(255, 255, 255, 30)
 
@@ -146,6 +147,9 @@ class PerspectiveAxisItem(OverlayItem):
         self._far = QPointF()
         self._active = False
         self._scale = 1.0
+        self._near_scale: float | None = None
+        self._far_scale: float | None = None
+        self._mid_stops: list = []
 
     def set_view_scale(self, scale: float) -> None:
         s = float(scale) if scale and scale > 1e-9 else 1e-9
@@ -154,11 +158,17 @@ class PerspectiveAxisItem(OverlayItem):
             self._scale = s
             self.update()
 
-    def set_axis(self, near: QPointF | None, far: QPointF | None) -> None:
+    def set_axis(self, near: QPointF | None, far: QPointF | None,
+                 near_scale: float | None = None,
+                 far_scale: float | None = None,
+                 mid_stops: list | None = None) -> None:
         self.prepareGeometryChange()
         self._active = near is not None and far is not None
         self._near = QPointF(near) if near is not None else QPointF()
         self._far = QPointF(far) if far is not None else QPointF()
+        self._near_scale = near_scale
+        self._far_scale = far_scale
+        self._mid_stops = list(mid_stops or [])
         self.setVisible(self._active)
         self.update()
 
@@ -196,10 +206,74 @@ class PerspectiveAxisItem(OverlayItem):
         painter.setPen(_AXIS_PEN)
         painter.drawLine(self._near, self._far)
         r = self._r()
+        # **指向远端的箭头**：轴是有方向的（近 → 远），没有箭头时两个端点长得
+        # 一样，调轴时得回面板对着数字才知道哪头是远。
+        self._draw_arrow(painter)
+        painter.setPen(_AXIS_PEN)
         painter.setBrush(QBrush(QColor(255, 210, 120)))
         painter.drawEllipse(self._near, r, r)
         painter.setBrush(QBrush(QColor(120, 170, 255)))
         painter.drawEllipse(self._far, r, r)
+        # **近/远端缩放读数 + 中途点等值线**：调透视轴时的现场读数。
+        # 缺了它们，"近远端缩放到底是多少、中途点卡在轴的哪个位置"全得回面板
+        # 对着数字猜。
+        self._draw_readouts(painter, r)
+
+    def _draw_arrow(self, painter) -> None:
+        import math
+
+        dx = self._far.x() - self._near.x()
+        dy = self._far.y() - self._near.y()
+        length = math.hypot(dx, dy)
+        if length <= 1e-6:
+            return
+        ux, uy = dx / length, dy / length
+        size = min(self._r() * 1.6, length * 0.2)
+        tipx, tipy = self._far.x(), self._far.y()
+        for sign in (1, -1):
+            painter.drawLine(
+                QPointF(tipx, tipy),
+                QPointF(tipx - ux * size + sign * uy * size * 0.5,
+                        tipy - uy * size - sign * ux * size * 0.5))
+
+    def _draw_readouts(self, painter, r: float) -> None:
+        import math
+
+        font = painter.font()
+        font.setPointSizeF(max(1e-3, 8.0 / self._scale))
+        painter.setFont(font)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        gap = r + 4.0 / self._scale
+        if self._near_scale is not None:
+            painter.drawText(
+                QPointF(self._near.x() + gap, self._near.y()),
+                f"近 ×{float(self._near_scale):g}")
+        if self._far_scale is not None:
+            painter.drawText(
+                QPointF(self._far.x() + gap, self._far.y()),
+                f"远 ×{float(self._far_scale):g}")
+        dx = self._far.x() - self._near.x()
+        dy = self._far.y() - self._near.y()
+        length = math.hypot(dx, dy)
+        if length <= 1e-6:
+            return
+        # 等值线垂直于轴：一眼看出中途点把轴切在哪
+        nx, ny = -dy / length, dx / length
+        half = min(length * 0.12, 60.0 / self._scale)
+        painter.setPen(_AXIS_MID_PEN)
+        for stop in self._mid_stops:
+            try:
+                pos = float(stop.get("pos"))
+                sc = float(stop.get("scale"))
+            except (TypeError, ValueError, AttributeError):
+                continue
+            if not (0.0 < pos < 1.0):
+                continue
+            cx = self._near.x() + dx * pos
+            cy = self._near.y() + dy * pos
+            painter.drawLine(QPointF(cx - nx * half, cy - ny * half),
+                             QPointF(cx + nx * half, cy + ny * half))
+            painter.drawText(QPointF(cx + nx * half, cy + ny * half), f"×{sc:g}")
 
     def hit_endpoint(self, at: QPointF) -> str | None:
         """命中哪个端点手柄。**只有端点吃鼠标**，轴线本身穿透 ——
@@ -311,3 +385,69 @@ _GIZMO_PEN = QPen(QColor(30, 30, 30, 220), 0)
 _GIZMO_LINE_PEN = QPen(QColor(255, 236, 120, 200), 0, Qt.PenStyle.DashLine)
 _GIZMO_ROTATE_FILL = QColor(120, 220, 255, 235)
 _GIZMO_SCALE_FILL = QColor(255, 236, 120, 235)
+
+
+class ScaleReferenceItem(OverlayItem):
+    """NPC 比例参考框：画布上唯一的**世界单位实物比例尺**。
+
+    给新场景定 `worldWidth/worldHeight`、或判断某个热点交互半径"按人身高算大概
+    多少"时，没有它就只能靠数字盲估。老画布默认在世界左上/右下各画一个与角色
+    动画的 worldWidth×worldHeight 同尺寸的框。
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._rects: list[QRectF] = []
+        self._label = ""
+        self._scale = 1.0
+        self.setVisible(False)
+
+    def set_view_scale(self, scale: float) -> None:
+        s = float(scale) if scale and scale > 1e-9 else 1e-9
+        if s != self._scale:
+            self.prepareGeometryChange()
+            self._scale = s
+            self.update()
+
+    def set_reference(self, world_w: float, world_h: float,
+                      scene_w: float, scene_h: float, label: str = "") -> None:
+        self.prepareGeometryChange()
+        w = float(world_w or 0)
+        h = float(world_h or 0)
+        self._label = str(label or "")
+        if w <= 0 or h <= 0 or scene_w <= 0 or scene_h <= 0:
+            self._rects = []
+        else:
+            pad = 20.0
+            self._rects = [
+                QRectF(pad, pad, w, h),
+                QRectF(scene_w - pad - w, scene_h - pad - h, w, h),
+            ]
+        self.setVisible(bool(self._rects) and self.isVisible())
+        self.update()
+
+    def boundingRect(self) -> QRectF:
+        if not self._rects:
+            return QRectF()
+        out = QRectF(self._rects[0])
+        for r in self._rects[1:]:
+            out = out.united(r)
+        return out.adjusted(-4, -20, 4, 4)
+
+    def paint(self, painter, option, widget=None) -> None:
+        if not self._rects:
+            return
+        painter.setPen(_SCALE_REF_PEN)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        for r in self._rects:
+            painter.drawRect(r)
+        if self._label:
+            font = painter.font()
+            font.setPointSizeF(max(1e-3, 8.0 / self._scale))
+            painter.setFont(font)
+            top = self._rects[0]
+            painter.drawText(
+                QPointF(top.left(), top.top() - 3.0 / self._scale), self._label)
+
+
+_SCALE_REF_PEN = QPen(QColor(160, 255, 200, 170), 0, Qt.PenStyle.DotLine)

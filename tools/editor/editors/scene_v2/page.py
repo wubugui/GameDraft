@@ -61,6 +61,7 @@ from .changes import (
     SelectionChanged,
 )
 from .document import SceneDocument
+from ...shared.anim_atlas_preview import reference_world_size
 from ...shared.patrol_preview import PatrolWalker
 from .npc_anim import NpcAnimBank
 from .panel_bridge import PanelBridge
@@ -466,6 +467,17 @@ class SceneEditorV2(QWidget):
             if btn is not None:
                 btn.clicked.connect(slot)
 
+    def _on_scale_reference_toggled(self, on: bool) -> None:
+        """NPC 比例参考框：画布上唯一的世界单位实物比例尺。"""
+        if self._view is None:
+            return
+        if not on:
+            self._view.scale_reference.setVisible(False)
+            return
+        w, h = reference_world_size(self._model)
+        self._view.scale_reference.setVisible(True)
+        self._view.set_scale_reference(w, h, f"参考角色 {w:g}×{h:g}")
+
     def _on_patrol_preview_toggled(self, npc_id: str, on: bool) -> None:
         """「画布预览巡逻（不写回 x,y）」。
 
@@ -632,6 +644,11 @@ class SceneEditorV2(QWidget):
             self._tool_actions[tool.tool_id] = act
         view.tools.tool_changed.connect(self._sync_tool_actions)
         self._toolbar.addSeparator()
+        act_ref = self._toolbar.addAction("比例参考")
+        act_ref.setCheckable(True)
+        act_ref.setToolTip("在世界左上/右下各画一个与角色同尺寸的框，"
+                           "用来判断世界尺寸与交互半径的量级")
+        act_ref.toggled.connect(self._on_scale_reference_toggled)
         act_lock = self._toolbar.addAction("锁定 Zone")
         act_lock.setCheckable(True)
         act_lock.setToolTip("勾上之后 Zone 不参与点选（仍然显示），"
@@ -896,7 +913,10 @@ class SceneEditorV2(QWidget):
             return
         self._view.sync_perspective_axis(
             QPointF(float(near.get("x", 0)), float(near.get("y", 0))),
-            QPointF(float(far.get("x", 0)), float(far.get("y", 0))))
+            QPointF(float(far.get("x", 0)), float(far.get("y", 0))),
+            near_scale=near.get("scale"),
+            far_scale=far.get("scale"),
+            mid_stops=cfg.get("midStops"))
 
     def refresh_entity_tree(self) -> None:
         """左侧实体树。选择与 Document 双向同步 —— 树与画布看到的是**同一份**选择集。"""

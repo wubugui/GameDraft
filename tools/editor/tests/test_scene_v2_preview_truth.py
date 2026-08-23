@@ -22,6 +22,7 @@ from tools.editor.editors.scene_v2.sorting import assign_content_z
 from tools.editor.editors.scene_v2.tools_builtin import MoveTool
 from tools.editor.editors.scene_v2.view import SceneView
 from tools.editor.shared.anim_frame_cursor import AnimFrameCursor
+from tools.editor.shared.light_env_visual import light_env_visual
 from tools.editor.shared.patrol_preview import PatrolWalker
 
 _NO_MOD = Qt.KeyboardModifier.NoModifier
@@ -226,6 +227,41 @@ class AnimFrameCursorTests(unittest.TestCase):
         self.assertEqual(c.atlas_index, 5)
         c.advance(0.1)
         self.assertEqual(c.atlas_index, 7)
+
+
+class LightEnvVisualTests(unittest.TestCase):
+    """光环境关键帧 → 画布可视化参数（两个画布共用的那一份）。"""
+
+    def test_azimuth_is_measured_in_a_y_down_frame(self) -> None:
+        """`sin` **不取负** —— 取负会与运行时上下镜像（看着像差 90°）。"""
+        vis = light_env_visual({"key": {"azimuthDeg": 90}})
+        self.assertAlmostEqual(vis.dir_x, 0.0, places=6)
+        self.assertAlmostEqual(vis.dir_y, 1.0, places=6)
+
+    def test_low_sun_casts_a_longer_shadow(self) -> None:
+        low = light_env_visual({"key": {"elevationDeg": 10}})
+        high = light_env_visual({"key": {"elevationDeg": 80}})
+        self.assertGreater(low.shadow_len, high.shadow_len)
+
+    def test_shadow_length_is_clamped(self) -> None:
+        """与运行时 resolveLightEnv 同口径的夹取区间。"""
+        vis = light_env_visual({"key": {"elevationDeg": 8}})
+        self.assertLessEqual(vis.shadow_len, 1.6)
+        self.assertGreaterEqual(vis.shadow_len, 0.3)
+
+    def test_colours_accept_the_three_writings(self) -> None:
+        self.assertEqual(
+            light_env_visual({"key": {"color": "#102030"}}).key_rgb, (16, 32, 48))
+        self.assertEqual(
+            light_env_visual({"key": {"color": [1, 2, 3]}}).key_rgb, (1, 2, 3))
+        self.assertEqual(
+            light_env_visual({"key": {"color": {"r": 4, "g": 5, "b": 6}}}).key_rgb,
+            (4, 5, 6))
+
+    def test_missing_env_falls_back_to_runtime_defaults(self) -> None:
+        vis = light_env_visual(None)
+        self.assertEqual(vis.key_rgb, (255, 247, 235))
+        self.assertAlmostEqual(vis.darkness, 0.4, places=6)
 
 
 class PatrolWalkerTests(unittest.TestCase):

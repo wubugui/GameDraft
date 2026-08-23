@@ -9,6 +9,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QPen, QPolygonF
 
 from .changes import EntityRef
+from ...shared.light_env_visual import light_env_visual
 from .items import EntityItem
 from .renderer import point_in_polygon, point_segment_distance_sq
 
@@ -18,6 +19,7 @@ __all__ = [
     "ZONE_COLOR_DEPTH_FLOOR",
     "entity_canvas_color",
     "CollisionGhostItem",
+    "LightCurveItem",
     "KIND_COLORS",
     "HandleItem",
     "PolygonItem",
@@ -326,3 +328,71 @@ class PolylineItem(_PointsItem):
 
     def __init__(self, ref: EntityRef, color: QColor | None = None) -> None:
         super().__init__(ref, color or QColor(0, 200, 220, 220), closed=False)
+
+
+class LightCurveItem(PolylineItem):
+    """光环境曲线：折线 + **每个控制点的一套光照可视化**。
+
+    只画一条青线的话，"这一段的光从哪来、影子多长多黑"这层信息整个丢了 ——
+    而那正是光曲线在画布上存在的意义；作者只能盯右侧表格里的数字反推。
+
+    解析走 `shared/light_env_visual`（与老画布同一份），两个画布不会画出两种光。
+    """
+
+    def __init__(self, ref: EntityRef, color: QColor | None = None) -> None:
+        super().__init__(ref, color or QColor(0, 200, 220, 220))
+        self.always_show_vertices = True
+        self._envs: list = []
+        self._ref_width = 100.0
+
+    def set_envs(self, envs) -> None:
+        self._envs = list(envs or [])
+        self.update()
+
+    def set_reference_width(self, width: float) -> None:
+        w = float(width or 0)
+        if w > 0 and w != self._ref_width:
+            self._ref_width = w
+            self.update()
+
+    def paint(self, painter, option, widget=None) -> None:
+        super().paint(painter, option, widget)
+        if not self._pts or not self._envs:
+            return
+        painter.setRenderHint(painter.RenderHint.Antialiasing, True)
+        r = self._handle_r_world()
+        for i, (px, py) in enumerate(self._pts):
+            if i >= len(self._envs):
+                break
+            vis = light_env_visual(self._envs[i])
+            # 接触阴影：脚下椭圆，半轴与 EntityShadow 同公式
+            if vis.contact_size > 0 and vis.contact > 0:
+                painter.setBrush(QBrush(QColor(0, 0, 0,
+                                               int(18 + 70 * vis.contact))))
+                painter.setPen(QPen(QColor(20, 24, 32, 200), 0,
+                                    Qt.PenStyle.DashLine))
+                painter.drawEllipse(
+                    QPointF(px, py),
+                    self._ref_width * 0.65 * vis.contact_size,
+                    self._ref_width * 0.30 * vis.contact_size)
+            # 影迹：沿光来向的**反方向**，长度随仰角、暗度随 darkness
+            trail = r * (2.4 + 2.2 * vis.shadow_len)
+            pen = QPen(QColor(8, 8, 14, int(70 + 150 * vis.darkness)), 0)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawLine(QPointF(px, py),
+                             QPointF(px - vis.dir_x * trail,
+                                     py - vis.dir_y * trail))
+            # 主光来向箭头：颜色 = 主光色，强度 → 不透明度
+            arrow = r * (2.6 + 1.4 * vis.shadow_len)
+            kc = QColor(*vis.key_rgb)
+            kc.setAlpha(int(max(70, min(255, 110 + 80 * min(vis.intensity, 2.0)))))
+            painter.setPen(QPen(kc, 0))
+            painter.drawLine(QPointF(px + vis.dir_x * arrow,
+                                     py + vis.dir_y * arrow),
+                             QPointF(px, py))
+            # 环境光色环
+            painter.setPen(QPen(QColor(*vis.ambient_rgb, 200), 0))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(QPointF(px, py), r * 1.5, r * 1.5)

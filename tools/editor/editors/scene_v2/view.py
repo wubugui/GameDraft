@@ -38,6 +38,7 @@ from .changes import (
 from .content_items import BackgroundItem, DisplayImageItem, SpritePreviewItem
 from .entity_items import (
     CollisionGhostItem,
+    LightCurveItem,
     HandleItem,
     PolygonItem,
     PolylineItem,
@@ -49,6 +50,7 @@ from .overlays import (
     GroupBoxItem,
     PerspectiveAxisItem,
     RubberBandItem,
+    ScaleReferenceItem,
     TransformGizmoItem,
 )
 from .renderer import SceneRenderer
@@ -80,7 +82,7 @@ _CONTENT_PARTS = {("hotspot", "display"), ("npc", "sprite")}
 #: （光环境曲线；透视轴与分组框走独立的覆盖物通道）。
 #: 用 `EntityRef("scene", <scene_id>)` 做键，于是它们与实体几何共用同一套
 #: 命令 / 撤销 / 顶点编辑工具，不必另起一条平行实现。
-_SCENE_PARTS = {"lightcurve": PolylineItem}
+_SCENE_PARTS = {"lightcurve": LightCurveItem}
 
 
 class SceneView(QGraphicsView):
@@ -142,6 +144,8 @@ class SceneView(QGraphicsView):
         self._gfx.addItem(self._band)
         self._band.setVisible(False)
         self._gfx.addItem(self._gizmo)
+        self._scale_ref = ScaleReferenceItem()
+        self._gfx.addItem(self._scale_ref)
         # 切工具要重画预览：gizmo 只属于变换工具，切走必须收掉，
         # 否则手柄留在画面上、点它却没有任何工具接管。
         self.tools.tool_changed.connect(lambda _t: self.refresh_gesture_preview())
@@ -275,6 +279,10 @@ class SceneView(QGraphicsView):
                     * self.perspective_factor(ent, ref.kind))
         else:
             item.set_points(pts)
+            if part == "lightcurve":
+                # 每个控制点驮着一份 env —— 图元照它画光照可视化
+                item.set_envs([p.get("env") if isinstance(p, dict) else None
+                               for p in pts])
             if part == "polygon":
                 # Zone 按 zoneKind 分色：深度地面决定角色踩地深度，
                 # 与普通触发区同色时叠在一起容易拖错、删错。
@@ -400,8 +408,10 @@ class SceneView(QGraphicsView):
             if box.scene() is self._gfx:
                 self._gfx.removeItem(box)
 
-    def sync_perspective_axis(self, near, far) -> None:
-        self._persp_axis.set_axis(near, far)
+    def sync_perspective_axis(self, near, far, *, near_scale=None,
+                              far_scale=None, mid_stops=None) -> None:
+        self._persp_axis.set_axis(near, far, near_scale=near_scale,
+                                  far_scale=far_scale, mid_stops=mid_stops)
 
     def sync_background(self, pix, world_w: float, world_h: float,
                         note: str = "") -> None:
@@ -556,7 +566,7 @@ class SceneView(QGraphicsView):
             targets = [item]
         else:
             targets = [*self._items.values(), *self._group_boxes.values(),
-                       self._persp_axis, self._gizmo]
+                       self._persp_axis, self._gizmo, self._scale_ref]
         for it in targets:
             setter = getattr(it, "set_view_scale", None)
             if callable(setter):
@@ -641,6 +651,25 @@ class SceneView(QGraphicsView):
             if item is not None:
                 item.set_geometry(QPointF(0, 0), w, h,
                                   scale=scale, rotation=rot, facing=facing)
+        # **碰撞面、幽灵、交互半径圈也要跟着转/缩。**
+        # 只动贴图的话，转的时候画面自相矛盾：贴图转了、碰撞面和交互圈留在原地，
+        # 用户没法边拖边把碰撞面与美术对齐，只能松手看一眼、不满意再来一次。
+        preview_ent = dict(ent)
+        preview_ent["scale"] = scale
+        preview_ent["rotation"] = rot
+        for part in ("collision", "ghost"):
+            item = self._items.get((ref, part))
+            if item is not None:
+                item.set_points(self._part_points(ref.kind, part, preview_ent))
+        handle = self._items.get((ref, "handle"))
+        if handle is not None:
+            raw = ent.get("interactionRange", 50)
+            try:
+                base = float(raw if raw is not None else 50)
+            except (TypeError, ValueError):
+                base = 50.0
+            handle.set_interaction_range(
+                base * float(scale) * self.perspective_factor(preview_ent, ref.kind))
 
     #: 手势预览刷新后要不要重排内容层（宿主接上；视图自己不算 z）
     content_resort_requested = Signal()
@@ -670,6 +699,20 @@ class SceneView(QGraphicsView):
     @property
     def transform_gizmo(self) -> TransformGizmoItem:
         return self._gizmo
+
+    @property
+    def scale_reference(self) -> ScaleReferenceItem:
+        return self._scale_ref
+
+    def set_scale_reference(self, world_w: float, world_h: float,
+                            label: str = "") -> None:
+        sc = self._doc.scene() or {}
+        try:
+            w = float(sc.get("worldWidth", 0) or 0)
+            h = float(sc.get("worldHeight", 0) or 0)
+        except (TypeError, ValueError):
+            w = h = 0.0
+        self._scale_ref.set_reference(world_w, world_h, w, h, label)
 
     # ---- 输入转发（一律交给当前工具）--------------------------------------
 
