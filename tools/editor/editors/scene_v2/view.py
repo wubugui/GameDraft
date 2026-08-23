@@ -127,6 +127,8 @@ class SceneView(QGraphicsView):
         self._sprite_frame = None
         #: 中键平移的上一帧位置（None = 没在平移）
         self._pan_from = None
+        #: 还欠一次"布好版之后再适配"
+        self._pending_fit = False
         #: 最近一次鼠标所在的世界坐标（`None` = 还没进过画布）
         self.last_cursor_world = None
         #: 覆盖物（分组框 / 透视轴 / 橡皮筋）。它们不进图元账，也不进命中白名单。
@@ -582,7 +584,45 @@ class SceneView(QGraphicsView):
         if w > 0 and h > 0:
             self._gfx.setSceneRect(QRectF(0, 0, w, h))
 
+    #: 视口小于这个尺寸时不认为它"已经布好版"（刚 addWidget 的 view 是 100x30 之类）
+    _FIT_MIN_VIEWPORT = 64
+
+    def request_fit(self) -> None:
+        """请求把整个场景适配到视口 —— **布好版之前先记账**。
+
+        刚 `addWidget` 的 view 视口还是 100x30 之类的占位尺寸，此刻 fit 出来的
+        缩放是正确值的百分之一：整个场景被画成十几个像素，背景和实体全挤成一坨，
+        用户以为"新画布什么都没画出来"。
+
+        钩子必须挂在**本视图**上：页是先布版、后 `load_scene` 新建 view 的，
+        所以页的 `resizeEvent` 在这之后再也不会触发 —— 挂在页上等于永远等不到。
+        （上一版正是这么错的。）
+        """
+        self._pending_fit = True
+        self._fit_if_laid_out()
+
+    def _fit_if_laid_out(self) -> bool:
+        if not self._pending_fit:
+            return False
+        vp = self.viewport()
+        if (vp.width() < self._FIT_MIN_VIEWPORT
+                or vp.height() < self._FIT_MIN_VIEWPORT):
+            return False
+        self._pending_fit = False
+        self.fit_scene()
+        return True
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt 接口
+        super().resizeEvent(event)
+        self._fit_if_laid_out()
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt 接口
+        super().showEvent(event)
+        self._fit_if_laid_out()
+
     def fit_scene(self) -> None:
+        """立刻适配（用户点「适配」按钮走这里，不看布版状态）。"""
+        self._pending_fit = False
         rect = self._gfx.sceneRect()
         if rect.width() > 0 and rect.height() > 0:
             self.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)

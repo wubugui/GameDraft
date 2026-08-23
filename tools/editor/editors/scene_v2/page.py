@@ -171,7 +171,6 @@ class SceneEditorV2(QWidget):
         self._props = ScenePropertyPanel(model)
         splitter.addWidget(self._props)
         self._bridge: PanelBridge | None = None
-        self._pending_fit = False
         self._loaded_scene_obj = None
         self._tool_actions: dict = {}
         #: npc_id → 巡逻预览游标（只在勾了预览的 NPC 上有）
@@ -272,12 +271,9 @@ class SceneEditorV2(QWidget):
         self._view.content_resort_requested.connect(self.resort_content_z)
         self._view.context_menu_requested.connect(self._show_canvas_menu)
         self._view.content_resort_requested.connect(self._sync_live_xy_widgets)
-        # **fit 要等 Qt 把 view 真正布局出来。** 刚 addWidget 的 view 视口还是
-        # 98x28 之类的占位尺寸，此刻 fit 出来的缩放是正确值的 4~6%：每开一个场景
-        # 都要 Ctrl+滚轮摇二十格才能看清。老画布为此专门排了 0/40/120/240ms 四次
-        # 重试；这里改成"视口第一次拿到像样尺寸时再 fit"，语义更直接。
-        self._pending_fit = True
-        self._view.fit_scene()
+        # 适配要等 Qt 把 view 真正布局出来 —— 记账逻辑在 `SceneView.request_fit`
+        # （钩子必须挂在视图自己身上，理由见那里）。
+        self._view.request_fit()
         self._sync_scene_row(scene_id)
         self.resort_content_z()
         self.refresh_group_boxes()
@@ -341,16 +337,6 @@ class SceneEditorV2(QWidget):
         if self._anim_bank.advance(_ANIM_TICK_MS / 1000.0):
             self._view.refresh_sprite_frames()
         self._tick_patrol_previews()
-
-    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt 接口
-        """视口第一次拿到像样尺寸时补做那次 fit（见 `load_scene` 里的注释）。"""
-        super().resizeEvent(event)
-        if not getattr(self, "_pending_fit", False) or self._view is None:
-            return
-        vp = self._view.viewport()
-        if vp.width() > 200 and vp.height() > 150:
-            self._pending_fit = False
-            self._view.fit_scene()
 
     def hideEvent(self, event) -> None:  # noqa: N802 - Qt 接口
         self._anim_timer.stop()

@@ -205,6 +205,79 @@ class ViewportTests(_Base):
         self.assertIsNone(self.view._pan_from)
 
 
+class InitialFitTests(unittest.TestCase):
+    """**打开场景时的初始缩放** —— 这条错了整块画布就是"什么都没画出来"。
+
+    真实序列是：页先被布好版 → 用户选场景 → `load_scene` **新建** view
+    （此刻它刚 addWidget，viewport 还是 100x30 之类的占位尺寸）→ Qt 才给这个
+    新 view 布版。在占位尺寸上 fit 出来的缩放是正确值的百分之一：4000×2251 的
+    场景被画成十几个像素，背景和实体全挤成一坨。
+
+    所以这一条必须**按真实序列**测：先 show 再 load。此前把补 fit 的钩子挂在
+    **页**上，页在 load_scene 之后再也不会 resize，于是补 fit 永远等不到 ——
+    而当时的用例没有走这个序列，测不出来。
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._app = QApplication.instance() or QApplication(sys.argv)
+
+    def setUp(self) -> None:
+        self._tmp = TemporaryDirectory()
+        root = Path(self._tmp.name) / "p"
+        write_minimal_loadable_project(root)
+        self.model = ProjectModel()
+        self.model.load_project(root)
+        big = dict(_scene())
+        big["worldWidth"] = 4000
+        big["worldHeight"] = 2250
+        self.model.scenes[_SCENE] = big
+        self.page = SceneEditorV2(self.model)
+
+    def tearDown(self) -> None:
+        self.page.deleteLater()
+        QApplication.processEvents()
+        self._tmp.cleanup()
+
+    def test_fit_lands_after_the_view_is_laid_out(self) -> None:
+        self.page.resize(1200, 800)
+        self.page.show()
+        QApplication.processEvents()
+        self.page.load_scene(_SCENE)      # view 此刻还没被布版
+        QApplication.processEvents()
+        view = self.page.view
+        vp = view.viewport()
+        self.assertGreaterEqual(vp.width(), 64, "前置条件：视口应当已经布好版")
+        expect = min(vp.width() / 4000.0, vp.height() / 2250.0)
+        got = view.transform().m11()
+        self.assertAlmostEqual(
+            got / expect, 1.0, delta=0.08,
+            msg=f"初始缩放不对：m11={got:.4f}，应当约 {expect:.4f}"
+                "（场景被画成一小坨就是这个值差了两个数量级）")
+        self.assertFalse(view._pending_fit, "补 fit 的账没销掉")
+
+    def test_manual_fit_still_works_on_an_unlaid_view(self) -> None:
+        """用户点「适配」是明确指令，不看布版状态。"""
+        self.page.load_scene(_SCENE)
+        self.page.fit_view()
+        self.assertFalse(self.page.view._pending_fit)
+
+    def test_user_zoom_is_not_overwritten_by_a_later_layout(self) -> None:
+        """补 fit 只补一次：用户缩放过之后再布版一次，不许把他的视口抢回去。"""
+        self.page.resize(1200, 800)
+        self.page.show()
+        QApplication.processEvents()
+        self.page.load_scene(_SCENE)
+        QApplication.processEvents()
+        view = self.page.view
+        view.zoom_by(2.0)
+        zoomed = view.transform().m11()
+        self.page.resize(1000, 700)
+        QApplication.processEvents()
+        self.assertAlmostEqual(view.transform().m11(), zoomed, places=6,
+                               msg="布版又把用户的缩放冲掉了")
+
+
 class SmallButRealTests(_Base):
     """回归清单尾巴上那几条：单独看都不致命，凑一起就是"这画布用着别扭"。"""
 
