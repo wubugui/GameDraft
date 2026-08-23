@@ -165,6 +165,28 @@ def build_report(bundle: dict, results: list[CheckResult] | None = None,
                 f'<div class="stat">p99={np.percentile(err_lum, 99):.4f}（线性亮度）</div></div>')
     body.append('</div>')
 
+    # ------------------------------------------------- 2b E 分解（间接 + 直接 = 合起来）
+    body.append('<h2>2b · E 分解（间接光 + 直接光 = 合起来）</h2><div class="row">')
+    g = b['gather_gain']
+    e_ind_gain = (b['e_ind'] * g).astype(np.float32)
+    e_dir_gain = (b['e_direct'] * g).astype(np.float32)
+    e_comb = b['e']  # 已乘 gain（e_ind+e_direct 之后乘的）
+    body.append(f'<div class="card"><div class="lbl">间接光 E_ind（天空 + 画面反弹，×gain）</div>'
+                f'<img src="{_b64(_to_u8(linear_to_srgb(from_hdr(np.maximum(e_ind_gain, 0.0)))))}">'
+                f'<div class="stat">{_stats(e_ind_gain @ _LUM)}</div></div>')
+    body.append(f'<div class="card"><div class="lbl">直接光 E_dir（反解的太阳 ×gain）</div>'
+                f'<img src="{_b64(_to_u8(linear_to_srgb(from_hdr(np.maximum(e_dir_gain, 0.0)))))}">'
+                f'<div class="stat">{_stats(e_dir_gain @ _LUM)}'
+                f'<br>太阳 dir={np.round(b["sun"]["dir"], 3)} radiance={np.round(b["sun"].get("radiance", [0,0,0]), 3)}</div></div>')
+    body.append(f'<div class="card"><div class="lbl">合起来 E（= 间接 + 直接，irradiance.png 存的就是它）</div>'
+                f'<img src="{_b64(_to_u8(linear_to_srgb(from_hdr(np.maximum(e_comb, 0.0)))))}">'
+                f'<div class="stat">{_stats(e_comb @ _LUM)}</div></div>')
+    sum_err = np.abs((e_ind_gain + e_dir_gain) - e_comb).max(-1)
+    body.append(f'<div class="card"><div class="lbl">|间接+直接 − 合起来|（应为 0）</div>'
+                f'<img src="{_gray_b64(sum_err, 0.0, float(np.percentile(sum_err, 99)))}">'
+                f'<div class="stat">max={sum_err.max():.3e}</div></div>')
+    body.append('</div>')
+
     # ------------------------------------------------------------- 3 遮蔽
     body.append('<h2>3 · 遮蔽</h2><div class="row">')
     body.append(f'<div class="card"><div class="lbl">V（余弦加权可见度）</div>'

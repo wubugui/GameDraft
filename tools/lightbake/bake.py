@@ -74,8 +74,10 @@ def bake_scene(sid: str, work_w: int = const.WORK_W,
     if sun['found']:
         sdir = np.asarray(sun['dir'], np.float32)
         S = (np.clip(normal @ sdir, 0.0, None) * direct_visibility(vfit, sdir)).astype(np.float32)
-        e = e_ind + np.asarray(sun['radiance'], np.float32)[None, None, :] * S[..., None]
+        e_direct = (np.asarray(sun['radiance'], np.float32)[None, None, :] * S[..., None]).astype(np.float32)
+        e = e_ind + e_direct
     else:
+        e_direct = np.zeros_like(e_ind)
         e = e_ind
 
     t0 = vis * ((1.0 + normal[..., 1]) * 0.5)
@@ -136,7 +138,7 @@ def bake_scene(sid: str, work_w: int = const.WORK_W,
         'hdr_work': hdr_work, 'hdr_native': hdr_native,
         'depth': depth, 'depth_native': d_native,
         'normal': normal, 'q': q, 'world': world,
-        'e_ind': e_ind, 'vis': vis, 'bent': bent, 'vfit': vfit,
+        'e_ind': e_ind, 'e_direct': e_direct, 'vis': vis, 'bent': bent, 'vfit': vfit,
         'sun': sun, 'e': e, 'e_native': e_native, 'e_q': e_q,
         'e8': e8, 'e_scale': e_scale, 'e_span': e_span,
         'ao': ao, 't0': t0, 'rt_fit': rt_fit,
