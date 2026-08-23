@@ -308,3 +308,42 @@ class GroupBoxTool(AbstractTool):
         self._origin = None
         self._offset = (0.0, 0.0)
         return True
+
+
+class LightPlaceTool(AbstractTool):
+    """「在画布上定位选中的灯」模式：点一下，把灯落到该处地面。
+
+    灯位是 3D 伪世界坐标（x/y/z），**属性面板里根本没有 x/y 输入框** ——
+    `pos` 只能靠"画布点一下取地面深度"得到。所以这条链路断掉的后果不是"少一个
+    便利功能"：新加的灯永远停在场景中心的缺省位置，作者没有任何办法把它挪到
+    想要的地方。
+
+    落点的计算（取地面深度、按当前高度抬起、没有深度图时给提示）全在面板的
+    `place_selected_light_at` 里，本工具只负责把画布点击转过去。
+    """
+
+    tool_id = "light_place"
+    display_name = "定位灯"
+    status_hint = "点击画布把选中的灯落到该处地面"
+
+    def __init__(self, document, renderer, panel=None, parent=None) -> None:
+        super().__init__(document, renderer, parent)
+        self._panel = panel
+        self.active_mode = False
+
+    def set_mode(self, on: bool) -> None:
+        self.active_mode = bool(on)
+
+    def mouse_pressed(self, scene_pos, button, modifiers) -> bool:
+        if not self.active_mode or button != Qt.MouseButton.LeftButton:
+            return False
+        place = getattr(self._panel, "place_selected_light_at", None)
+        if not callable(place):
+            return False
+        return bool(place(float(scene_pos.x()), float(scene_pos.y())))
+
+    def mouse_moved(self, scene_pos, buttons, modifiers) -> bool:
+        return False
+
+    def mouse_released(self, scene_pos, button, modifiers) -> bool:
+        return bool(self.active_mode)

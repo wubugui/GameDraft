@@ -217,5 +217,38 @@ class PanelButtonsAreWiredTests(_Base):
         self.assertEqual(self.scene()["hotspots"][0]["y"], 205)
 
 
+class LightPlacementTests(_Base):
+    """「在画布上定位选中的灯」——摆灯唯一顺手的入口。
+
+    灯位是 3D 伪世界坐标，面板表单里**没有 x/y 输入框**：`pos` 只能靠
+    "画布点一下取地面深度"得到。这条链路断掉时，新加的灯永远停在场景中心的
+    缺省位置，作者没有任何办法把它挪走。
+    """
+
+    def test_mode_signal_is_connected(self) -> None:
+        self.page._props.light_place_mode_changed.emit(True)
+        self.assertTrue(self.page.light_place_tool.active_mode,
+                        "面板的定位开关按下去了，画布这边没进模式")
+        self.page._props.light_place_mode_changed.emit(False)
+        self.assertFalse(self.page.light_place_tool.active_mode)
+
+    def test_click_is_forwarded_to_the_panel_while_placing(self) -> None:
+        got = []
+        self.page._props.place_selected_light_at = (
+            lambda x, y: (got.append((x, y)), True)[1])
+        self.page._props.light_place_mode_changed.emit(True)
+        self.page.select_tool.mouse_pressed(QPointF(321, 654), _LEFT, _NO_MOD)
+        self.assertEqual(got, [(321.0, 654.0)], "点击没有转给面板去落灯")
+
+    def test_click_is_not_swallowed_when_not_placing(self) -> None:
+        """没开定位模式时，点击照常是点选 —— 不许把画布吃掉。"""
+        got = []
+        self.page._props.place_selected_light_at = (
+            lambda x, y: (got.append((x, y)), True)[1])
+        self.page.select_tool.mouse_pressed(QPointF(200, 200), _LEFT, _NO_MOD)
+        self.assertEqual(got, [])
+        self.assertEqual(self.doc.selection, (EntityRef("hotspot", "h1"),))
+
+
 if __name__ == "__main__":
     unittest.main()

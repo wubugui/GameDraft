@@ -65,7 +65,12 @@ from .npc_anim import NpcAnimBank
 from .panel_bridge import PanelBridge
 from .sorting import assign_content_z
 from .tools_builtin import MoveTool, PolygonEditTool, SelectTool
-from .tools_overlays import GroupBoxTool, PerspectiveAxisTool, group_bounds
+from .tools_overlays import (
+    GroupBoxTool,
+    LightPlaceTool,
+    PerspectiveAxisTool,
+    group_bounds,
+)
 from ...shared.entity_refactor import (
     EntityRefactorError,
     delete_entity,
@@ -408,6 +413,9 @@ class SceneEditorV2(QWidget):
         self.persp_tool = view.tools.register(
             PerspectiveAxisTool(doc, r, view.perspective_axis))
         self.group_box_tool = view.tools.register(GroupBoxTool(doc, r, view))
+        # 摆灯模式排在**最前面**：它开着的时候点击就该落灯，不该被点选吃掉
+        self.light_place_tool = LightPlaceTool(doc, r, self._props, self)
+        self.select_tool.add_delegate(self.light_place_tool)
         # **"选择"工具兼管 gizmo 手柄与分组框** —— 回到老画布的无模式手感：
         # 选中一个实体就出手柄、点组框边线就选中组，不必先切工具。
         self.select_tool.add_delegate(self.transform_tool)
@@ -439,6 +447,7 @@ class SceneEditorV2(QWidget):
             ("group_translate_requested", self._on_group_translate),
             ("group_member_activated", self.select_entity),
             ("scene_directly_written", self._on_scene_directly_written),
+            ("light_place_mode_changed", self._on_light_place_mode),
         ]
         for name, slot in pairs:
             sig = getattr(p, name, None)
@@ -450,6 +459,13 @@ class SceneEditorV2(QWidget):
             btn = getattr(p, attr, None)
             if btn is not None:
                 btn.clicked.connect(slot)
+
+    def _on_light_place_mode(self, on: bool) -> None:
+        tool = getattr(self, "light_place_tool", None)
+        if tool is not None:
+            tool.set_mode(bool(on))
+            if on:
+                self._status.setText("点击画布把选中的灯落到该处地面")
 
     def _on_group_delete(self, gid: str) -> None:
         if self._doc is not None:
