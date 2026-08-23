@@ -238,6 +238,24 @@ class GroupMoveTests(_Base):
         self.assertIsInstance(self.ent("hotspot", "h1")["x"], int)
         self.assertEqual(self.ent("hotspot", "h1")["x"], 102)
 
+    def test_move_patrol_switch_is_respected(self) -> None:
+        """分组的 `editor.movePatrol=false` 明确说了"整组位移不带巡逻路线"。
+
+        静默忽略它 = 路线被改脏，而路线偏移往往要进游戏跑一遍才看得出来。
+        """
+        sc = self.doc.scene()
+        sc["entityGroups"] = [{"id": "夜巡", "editor": {"movePatrol": False}}]
+        route_before = [dict(p) for p in
+                        self.ent("npc", "n1")["patrol"]["route"]]
+        translate_group(self.doc, "夜巡", 50, 40)
+        self.assertEqual(self.ent("npc", "n1")["patrol"]["route"], route_before,
+                         "关掉的开关被忽略了，巡逻路线跟着整组走了")
+        self.assertEqual(self.ent("npc", "n1")["x"], 350, "NPC 本身还是该动")
+
+    def test_move_patrol_defaults_to_on(self) -> None:
+        translate_group(self.doc, "夜巡", 50, 40)
+        self.assertEqual(self.ent("npc", "n1")["patrol"]["route"][0]["x"], 350)
+
     def test_whole_group_move_is_one_command(self) -> None:
         translate_group(self.doc, "夜巡", 50, 40)
         self.assertEqual(self.doc.undo_stack.count(), 1)

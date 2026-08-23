@@ -96,7 +96,13 @@ class SelectTool(AbstractTool):
         """
         if self._view is None:
             return []
-        return self.hits_at(pos, self._view.entity_items())
+        hits = self.hits_at(pos, self._view.entity_items())
+        if getattr(self._view, "zone_pick_frozen", False):
+            # 大面积 Zone / 碰撞面盖住其它实体时，选中下层实体要反复点、每次还得
+            # 先经过 Zone，拖到一半容易把 Zone 顶点带走。这个开关把它们排除在
+            # 点选之外（**只影响点选，不影响显示**）。
+            hits = [it for it in hits if it.ref.kind != "zone"] or hits
+        return hits
 
     def _same_spot(self, pos: QPointF) -> bool:
         """同一落点判定用**屏幕像素**容差，不是世界单位 —— 否则缩小视图后

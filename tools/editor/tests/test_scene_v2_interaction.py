@@ -205,6 +205,45 @@ class ViewportTests(_Base):
         self.assertIsNone(self.view._pan_from)
 
 
+class SmallButRealTests(_Base):
+    """回归清单尾巴上那几条：单独看都不致命，凑一起就是"这画布用着别扭"。"""
+
+    def test_tree_click_centers_the_canvas(self) -> None:
+        """树里点一行，画布要滚过去 —— 否则实体多的场景里树失去定位功能。"""
+        far = EntityRef("hotspot", "h2")          # (700, 600)
+        self.view.centerOn(0, 0)
+        before = self.view.mapToScene(self.view.viewport().rect().center())
+        self.doc.set_selection([far])
+        self.page._center_on_selection()
+        after = self.view.mapToScene(self.view.viewport().rect().center())
+        self.assertNotEqual((round(before.x()), round(before.y())),
+                            (round(after.x()), round(after.y())),
+                            "树里选中之后画布没有滚过去")
+
+    def test_zone_pick_lock_excludes_zones_from_picking(self) -> None:
+        """大面积 Zone 盖住别人时，锁定之后点选跳过它（**仍然显示**）。"""
+        self.view.zone_pick_frozen = True
+        zone_item = self.view.item_for(EntityRef("hotspot", "h1"), "handle")
+        self.assertTrue(zone_item.isVisible(), "锁定点选不该影响显示")
+
+    def test_undo_goes_to_the_focused_text_field(self) -> None:
+        """焦点在输入框里时 Ctrl+Z 该退那一格字，而不是退画布上一步编辑。"""
+        from PySide6.QtWidgets import QLineEdit
+
+        edit = QLineEdit(self.page)
+        edit.show()
+        edit.setFocus()
+        QApplication.processEvents()
+        if QApplication.focusWidget() is not edit:
+            self.skipTest("offscreen 平台没给到焦点")
+        edit.setText("abc")
+        self.doc.set_selection([EntityRef("hotspot", "h1")])
+        before = self.doc.undo_stack.count()
+        self.page.editor_undo()
+        self.assertEqual(self.doc.undo_stack.count(), before,
+                         "Ctrl+Z 没交回文本框，去动了画布的撤销栈")
+
+
 class ViewAxisUiTests(_Base):
     """三条视图轴要有真的入口 —— 此前 `set_view_axes` 全仓只有测试在调。"""
 

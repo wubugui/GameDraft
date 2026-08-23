@@ -130,6 +130,8 @@ class SceneView(QGraphicsView):
         #: 覆盖物（分组框 / 透视轴 / 橡皮筋）。它们不进图元账，也不进命中白名单。
         self._group_boxes: dict[str, GroupBoxItem] = {}
         self._group_boxes_visible = True
+        #: 锁定 Zone 点选（只影响命中，不影响显示）
+        self.zone_pick_frozen = False
         self._persp_axis = PerspectiveAxisItem()
         self._gfx.addItem(self._persp_axis)
         self._persp_axis.setVisible(False)

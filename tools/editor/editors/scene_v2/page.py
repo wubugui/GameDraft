@@ -632,6 +632,12 @@ class SceneEditorV2(QWidget):
             self._tool_actions[tool.tool_id] = act
         view.tools.tool_changed.connect(self._sync_tool_actions)
         self._toolbar.addSeparator()
+        act_lock = self._toolbar.addAction("锁定 Zone")
+        act_lock.setCheckable(True)
+        act_lock.setToolTip("勾上之后 Zone 不参与点选（仍然显示），"
+                            "方便选中被大面积 Zone 盖住的实体")
+        act_lock.toggled.connect(
+            lambda on: setattr(view, "zone_pick_frozen", bool(on)))
         act_boxes = self._toolbar.addAction("分组框")
         act_boxes.setCheckable(True)
         act_boxes.setChecked(True)
@@ -947,6 +953,40 @@ class SceneEditorV2(QWidget):
         self._tree.blockSignals(False)
         self._sync_tree_selection()
 
+    def _scroll_tree_to_selection(self) -> None:
+        """把树滚到当前选中那一行 —— 否则画布上点一个实体，树里对应行可能在
+        滚动区外，看不到高亮。"""
+        if self._doc is None or self._syncing_tree:
+            return
+        chosen = set(self._doc.selection)
+        if not chosen:
+            return
+        it = QTreeWidgetItemIterator(self._tree)
+        while it.value():
+            node = it.value()
+            data = node.data(0, Qt.ItemDataRole.UserRole)
+            if data is not None and EntityRef(*data) in chosen:
+                self._tree.scrollToItem(node)
+                break
+            it += 1
+
+    def _center_on_selection(self) -> None:
+        """把画布滚到当前选择上。
+
+        树里点一行画布不滚过去、画布上点一个实体树也不滚到那一行时，实体多的
+        场景里树基本失去"定位"功能：点一行只能看见树自己变蓝，找不到东西在哪。
+        """
+        if self._doc is None or self._view is None:
+            return
+        sel = self._doc.selection
+        if len(sel) != 1:
+            return
+        for part in ("handle", "polygon", "display", "sprite"):
+            item = self._view.item_for(sel[0], part)
+            if item is not None and item.isVisible():
+                self._view.centerOn(item)
+                return
+
     def _sync_tree_selection(self) -> None:
         if self._doc is None or self._syncing_tree:
             return
@@ -978,12 +1018,15 @@ class SceneEditorV2(QWidget):
             self._doc.set_selection(refs)
         finally:
             self._syncing_tree = False
+        # 树里点一行 → 画布滚过去（老画布的 `_focus_canvas_on_entity` 同位）
+        self._center_on_selection()
 
     def _on_doc_changed(self, event) -> None:
         # 任何数据变更都可能改前后关系；脏检查让这一趟在没变时是空操作
         self.resort_content_z()
         if isinstance(event, SelectionChanged):
             self._sync_tree_selection()
+            self._scroll_tree_to_selection()
             return
         self.refresh_group_boxes()
         self.refresh_perspective_axis()
@@ -1178,10 +1221,32 @@ class SceneEditorV2(QWidget):
         if self._bridge is not None:
             self._bridge.sync_from_selection()
 
+    @staticmethod
+    def _focused_text_widget():
+        """焦点在文本框里时，Ctrl+Z 该归那个框（与老画布、TimelineEditor 同法）。
+
+        不交回去的话，在属性面板输入框里打字想退一格，退掉的是画布上一步编辑 ——
+        而文本框自己的撤销历史没被用上，这一步在框里不可逆。
+        """
+        from PySide6.QtWidgets import (
+            QApplication, QLineEdit, QPlainTextEdit, QTextEdit,
+        )
+
+        fw = QApplication.focusWidget()
+        return fw if isinstance(fw, (QLineEdit, QTextEdit, QPlainTextEdit)) else None
+
     def editor_undo(self) -> None:
+        tw = self._focused_text_widget()
+        if tw is not None:
+            tw.undo()
+            return
         if self._doc is not None:
             self._doc.undo_stack.undo()
 
     def editor_redo(self) -> None:
+        tw = self._focused_text_widget()
+        if tw is not None:
+            tw.redo()
+            return
         if self._doc is not None:
             self._doc.undo_stack.redo()

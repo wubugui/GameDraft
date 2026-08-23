@@ -18,7 +18,7 @@ from .commands import _MISSING, build_change_fields_command
 from .tools import AbstractTool
 
 __all__ = ["TransformTool", "GroupMoveTool", "group_member_refs",
-           "translate_entities", "translate_group"]
+           "group_moves_patrol", "translate_entities", "translate_group"]
 
 #: 缩放的合法区间。与老画布一致，防止缩成 0 或天文数字。
 SCALE_MIN = 0.05
@@ -223,6 +223,21 @@ def group_member_refs(document, gid: str) -> list[EntityRef]:
     return out
 
 
+def group_moves_patrol(document, gid: str) -> bool:
+    """该组整体位移时要不要带上巡逻路线（`editor.movePatrol`，缺省带）。
+
+    用户明确关掉的开关被静默忽略 = 巡逻路线被改脏，而路线偏移往往要进游戏跑
+    一遍才看得出来。
+    """
+    sc = document.scene() or {}
+    for g in sc.get("entityGroups") or []:
+        if isinstance(g, dict) and str(g.get("id", "")) == str(gid):
+            editor = g.get("editor")
+            state = editor if isinstance(editor, dict) else {}
+            return state.get("movePatrol") is not False
+    return True
+
+
 def translate_group(document, gid: str, dx: float, dy: float,
                     *, mergeable: bool = False, label: str = "整组位移") -> bool:
     """把 (dx, dy) 烘进该组每个成员自己的坐标。**一条命令**。
@@ -234,11 +249,13 @@ def translate_group(document, gid: str, dx: float, dy: float,
       再平移一次就是"碰撞面漂两倍"。
     """
     return translate_entities(document, group_member_refs(document, gid), dx, dy,
-                              mergeable=mergeable, label=label)
+                              mergeable=mergeable, label=label,
+                              move_patrol=group_moves_patrol(document, gid))
 
 
 def translate_entities(document, refs, dx: float, dy: float,
-                       *, mergeable: bool = False, label: str = "位移") -> bool:
+                       *, mergeable: bool = False, label: str = "位移",
+                       move_patrol: bool = True) -> bool:
     """把 (dx, dy) 烘进这些实体自己的坐标。**一条命令**。
 
     整组位移与方向键微移共用它 —— 两处各写一遍的话，"Zone 要平移 polygon"
@@ -262,7 +279,7 @@ def translate_entities(document, refs, dx: float, dy: float,
             vals["polygon"] = [{"x": _shift(p.get("x", 0), dx),
                                 "y": _shift(p.get("y", 0), dy)}
                                for p in poly if isinstance(p, dict)]
-        patrol = ent.get("patrol")
+        patrol = ent.get("patrol") if move_patrol else None
         if isinstance(patrol, dict) and isinstance(patrol.get("route"), list):
             new_patrol = dict(patrol)
             new_patrol["route"] = [{"x": _shift(p.get("x", 0), dx),
