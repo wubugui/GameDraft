@@ -224,23 +224,124 @@ from_hdr(x) = x / (1 + x)                                          正 Reinhard
 ⚠ 同理不许发明 `sky_mask`。「哪些像素是天」这个问题在单视角伪世界里无解，
 任何按深度分位切出来的掩码都和「是不是天」零关系。
 
-### 5.4 唯一 tracer
+### 5.4 唯一 tracer —— **独立通用组件**
 
-**一份代码两个入口，判据 / bias / 终止条件逐字共享。**
+`trace.py` 是**一个独立可迭代的组件**，不是 gather 的内部实现细节。它自己有 API、
+自己有测试、自己有版本；上层怎么用都不影响它。
 
-#### 终止条件（三个，全精确，**没有射程参数**）
+#### 铁律
+
+> **本 baker 里任何需要"这根射线打不打得中"的地方，都必须调 `trace.py`。**
+> **不许任何消费者自己写 march 循环。** 判据、bias、步长、出画语义只有一份。
+
+历史教训就在这条上：场景侧换成蒙特卡洛无截断之后，实体侧、局部 AO、GI 三处
+各自留着自己的 march，其中实体侧那份还带 `MARCH_LENGTH = 2.4` 的截断，
+**而世界宽 4.54** —— 一半以上宽度外的遮挡物对角色不存在。
+实测深遮蔽处偏 **+0.4946**（§15）。这不是某个参数调错了，是**同一件事被写了四遍**。
+
+#### 职责边界：tracer 只管求交，不管采样
+
+| 归 tracer | 不归 tracer |
+|---|---|
+| 射线推进、命中判据、bias、出画语义、终止条件 | **方向怎么生成**（余弦重要性 / 均匀半球 / 均匀球面） |
+| 命中点坐标、行进距离 | 命中之后取什么值（辐射？只要 0/1？） |
+| `max_distance` 的执行 | `max_distance` 取多少、**为什么** |
+
+⚠ 「两个入口」那种写法是错的分解方式：`trace_pixels` 与 `trace_points` 的差别**只在方向
+怎么采样**，而采样是调用方的事。把它塞进 tracer 会让每加一个消费者就要给 tracer 加一个入口。
+
+#### API
+
+```python
+@dataclass(frozen=True)
+class DepthField:
+    """被追踪的那个场。一次构造、到处复用，不许每个消费者自己拼。"""
+    depth: np.ndarray        # (h,w) float32，q 空间深度
+    ppu: float; cx: float; cy: float
+    d_min: float             # depth.min()，预算好，终止条件 3 要用
+
+@dataclass
+class TraceResult:
+    escaped: np.ndarray      # (n,) bool —— True = 一路跑出去了
+    hit_yx:  np.ndarray|None # (n,2) int32，命中像素（want_hit=True 时才有）
+    t_hit:   np.ndarray|None # (n,) float32，命中处的行进距离
+
+def trace(origins_q: np.ndarray,      # (n,3) q 空间起点
+          dirs_q:    np.ndarray,      # (n,3) q 空间方向，单位长
+          field:     DepthField,
+          *,
+          max_distance: float = math.inf,   # ★ 缺省无穷。见下方规矩
+          want_hit: bool = False,
+          ) -> TraceResult: ...
+```
+
+⚠ **`max_distance` 的缺省必须是 `inf`。** 任何有限值都得由调用方**显式传**，
+并在调用处的注释里写明「**为什么这个积分本身就是有界的**」。
+tracer 自己**不许有任何射程常量**——`MARCH_LENGTH` 这种东西在新 baker 里不存在。
+
+这样「射程」就从"tracer 的一个可调参数"变成了"某个积分的定义的一部分"，
+不会再出现「谁也说不清这个 2.4 是干嘛的」。
+
+#### 谁在用它（全表，加消费者就往这加行）
+
+| 消费者 | 起点 | 方向采样 | `max_distance` | `want_hit` |
+|---|---|---|---|---|
+| 场景 `E` gather | 像素表面 | 余弦重要性，绕 `N` | `inf` | ✔ 取原画辐射 |
+| 天穹遮蔽 / `Bdir` / `vis_linear` | **同一趟，同一批光线** | 同上 | `inf` | ✘ 只要 0/1 |
+| **场景局部 AO** | 像素表面 | 全球面均匀 | **`AO_RANGE`** | ✘ |
+| 实体天穹遮蔽 | 空间格点 | 上半球均匀 | `inf` | ✘ |
+| **实体局部 AO** | 空间格点 | 全球面均匀 | **`AO_RANGE`** | ✘ |
+| 实体 GI | 空间格点 | 全球面均匀 | `inf` | ✔ |
+
+⚠ 前两行是**同一趟 march**，不要为了「代码干净」拆成两趟——那是 2× 的成本，
+而且两趟用的是不同的随机数，遮蔽与辐照度会对不上。
+
+#### 方向采样（在 `sampling.py`，不在 tracer 里）
+
+```python
+def cosine_hemisphere(N, spp, rng)        -> ω    # 绕 N，pdf ∝ (N·ω)₊/π
+def uniform_upper_hemisphere(spp, rng)    -> ω    # 绕 up，pdf = 1/2π
+def uniform_sphere(spp, rng)              -> ω    # 全球面，pdf = 1/4π
+```
+
+**余弦重要性**（有法线时用）：`pdf ∝ (N·ω)₊/π` ⇒ 估计量就是样本的**算术平均**，
+没有权重表、没有"方位数×仰角节点"这种配比问题。
+
+```
+逐像素切线基（世界系，法线为 +Z）：
+    up' = |N.y| < 0.9 ? (0,1,0) : (1,0,0)
+    TA  = normalize(cross(up', N))
+    TB  = cross(N, TA)
+每个样本 s ∈ [0, spp)：
+    u1 = (s + ξ₁)/spp            分层（ξ 跨样本），逐像素抖动
+    u2 = ξ₂
+    r  = √u1 ;  φ = 2π·u2
+    ω  = TA·(r·cosφ) + TB·(r·sinφ) + N·√(1-u1)
+```
+
+**均匀上半球**（空间点没有法线时用；结果要对**任意运行时法线**求值，所以矩必须法线无关）：
+
+```
+    μ  = (s + ξ₁)/spp            分层，μ = ω·up ∈ [0,1]，dΩ = dφ·dμ ⇒ 均匀取 μ 即吸收立体角权重
+    φ  = 2π·ξ₂
+    ω  = (√(1-μ²)·cosφ,  μ,  √(1-μ²)·sinφ)
+```
+
+**均匀球面**（AO 用，要绕表面自己的法线积，而法线朝哪都有可能）：`μ ∈ [-1, 1]` 均匀。
+
+#### 终止条件（三个，全精确）
 
 ```
 1. 命中：  bias < pen < MARCH_THICKNESS          穿透进可见壳
 2. 出画：  sx ∉ [0, w-1)  或  sy ∉ [0, h-1)
 3. 前穿：  q_z ≤ d_min - 1e-3                    深度跑到全场景最前，再也不可能打中
+(+ 调用方给了有限 max_distance 时，t > max_distance 也收工，按"逃逸"算)
 ```
 
-⚠ **`MARCH_LENGTH` 这个概念在新 baker 里不存在。** 离线计算没有任何理由截断。
 实测旧法（96 方向均匀求积 + 2.4 截断）的**偏差 0.1346 > MC 16spp 的噪声 0.1120**——
-偏差比只打 16 根随机光线的噪声还大。
+偏差比只打 16 根随机光线的噪声还大。**离线计算没有任何理由默认截断。**
 
-#### 推进循环（伪代码，两个入口共用）
+#### 推进循环（伪代码）
 
 ```
 step = GATHER_STEP_PX / ppu                # GATHER_STEP_PX = 0.5 像素
@@ -254,7 +355,8 @@ loop:
     xi = round(sx) ;  yi = round(sy)
     pen  = qz - depth[yi, xi]
     bias = MARCH_BIAS + MARCH_BIAS_GROWTH · t
-    if bias < pen < MARCH_THICKNESS:                       → 命中，取 hdr[yi,xi]，收工
+    if t > max_distance:                                   → 收工，按"逃逸"算（缺省 inf ⇒ 永不触发）
+    if bias < pen < MARCH_THICKNESS:                       → 命中，收工（want_hit 时带回 yi,xi）
 ```
 
 ⚠ **出画语义：钳到边缘继续判，不做任何启发式。** 曾经有个 `inside` 门：射线离开画幅
@@ -268,38 +370,23 @@ loop:
 ⚠ 还否掉过「只有底边算挡」：低仰角、朝相机方向的射线在 45° 伪世界里投影是**向下**的，
 从底边出画不代表撞地，那是投影假象。
 
-#### 入口 A：`trace_pixels` —— 从每个像素的表面出发
+#### 契约测试（必须有，缺一不可）
 
-有法线 ⇒ **余弦重要性采样**，按 `pdf ∝ (N·ω)₊/π` ⇒ 估计量就是样本的**算术平均**。
+1. **单一实现**：全包源码里 `depth[` 的下标访问只允许出现在 `trace.py`。
+   静态扫一遍，别处出现就红。这条把「谁又偷偷写了一个 march」变成编译期问题。
+2. **起点无关性**：同一批点、同一批**给定**方向，无论走哪条采样路径进来，
+   `trace()` 给出的逃逸判定**逐位相同**。这是「角色贴得住背景」的构造性保证，
+   不是靠两处代码碰巧写得一样。
+3. **`max_distance` 单调性**：`max_distance` 越大，`escaped` 只会越少，不会变多。
+4. **`max_distance = inf` 与省略参数** 结果逐位相同。
+5. **构造性真值**：把 `depth` 设成一个解析平面 / 半空间，逐方向的逃逸判定
+   与解析解一致（这条不依赖任何场景数据，CI 里能跑）。
 
-```
-逐像素切线基（世界系，法线为 +Z）：
-    up' = |N.y| < 0.9 ? (0,1,0) : (1,0,0)
-    TA  = normalize(cross(up', N))
-    TB  = cross(N, TA)
+#### 独立迭代
 
-每个样本 s ∈ [0, spp)：
-    u1 = (s + ξ₁)/spp            分层（ξ 跨样本），逐像素抖动
-    u2 = ξ₂
-    r  = √u1 ;  φ = 2π·u2
-    ω  = TA·(r·cosφ) + TB·(r·sinφ) + N·√(1-u1)
-```
-
-#### 入口 B：`trace_points` —— 从任意空间点出发
-
-**没有法线**（空间点不属于任何表面），余弦重要性采样绕的是 N，这里没有 N 可绕；
-而结果要对**任意运行时法线**求值，所以矩必须是法线无关的。⇒ **均匀上半球采样**（pdf = 1/2π）：
-
-```
-    μ  = (s + ξ₁)/spp            分层，μ = ω·up ∈ [0,1]，dΩ = dφ·dμ ⇒ 均匀取 μ 即吸收立体角权重
-    φ  = 2π·ξ₂
-    ω  = (√(1-μ²)·cosφ,  μ,  √(1-μ²)·sinφ)
-```
-
-#### 契约测试（必须有）
-
-同一批点、同一批**给定**方向，两个入口必须给出**逐位相同**的逃逸判定。
-这条测试是「角色贴得住背景」的构造性保证，不是靠两处代码碰巧写得一样。
+tracer 之后要动的方向（换 DDA、换保守上界场加速、换成半解析求交……）
+全部落在 `trace.py` 内部：只要上面 5 条契约测试还绿，**上层一行都不用改**。
+这正是把它拆出来的目的。
 
 ### 5.5 场景侧 gather
 
@@ -422,12 +509,42 @@ base = hdr_native / E_native                # 纯除法，无钳位、无 emissi
 
 ⚠ 拿 `V` 当封闭度用，在室内直接失效。这是「一个量当两个用」，v2 犯过、v3 头几版也犯过。
 
+#### 走**同一个 tracer**，一行都不许自己写
+
+```python
+ω  = uniform_sphere(spp, rng)                      # 全球面：AO 绕表面自己的法线积，法线朝哪都可能
+r  = trace(origins_q, ω_q, field, max_distance=AO_RANGE)      # ★ 就是 trace.py，没有第二份
+AO = weighted_mean(r.escaped, w=(N·ω)₊)            # 绕表面自己的法线加权
 ```
-方向：全球面均匀采样
-射程：AO_LENGTH = 0.25（**这里的截断是设计，不是 bug** —— 它量的就是近场）
-步数：AO_STEPS = 10
-AO = ⟨esc⟩ ，绕表面自己的法线加权
-```
+
+⚠ **`AO_RANGE` 不是「tracer 的截断」，是「AO 这个积分的定义的一部分」。**
+两者的区别是实的：
+
+| | 问的问题 | 有没有半径 |
+|---|---|---|
+| 天穹遮蔽 `V` | 你**能不能看见天** | **没有**。天在无穷远，任何射程都是错的 |
+| 局部 AO | 你在**半径 r 之内**有多封闭 | **有，而且 r 就是问题的一部分** |
+
+所以 AO 传一个有限的 `max_distance` 是**正确**的，而天穹遮蔽传任何有限值都是**错**的。
+这也正是为什么 `max_distance` 必须是**调用方显式传的参数**、tracer 自己不许有射程常量
+（§5.4）——把它做成参数之后，「这个 2.4 是干嘛的」这类问题在结构上就不会再出现。
+
+⚠ 旧实现里 AO 有自己的 `AO_STEPS = 10` —— **删掉**。步长归 tracer 统一管
+（`GATHER_STEP_PX = 0.5` 像素）。算一下代价：`step_q = 0.5/ppu = 0.00222`（ppu=225.28），
+`AO_RANGE/step_q ≈ **113 步**`，而旧的是 10 步 —— **单根 AO 射线贵 11 倍**。
+
+这个代价**认下**，理由有两条：
+
+1. 10 步走完 0.25 q 意味着每步 **25 px**，和旧天穹 tracer 那 30 px 是同一个量级 ——
+   而 §15 已经量出来那个粗步长会**同时**漏掉薄遮挡物、和报出根本没穿过的假命中。
+   AO 用 10 步不会比它更可信，只是没人量过。
+2. **要提速就去 `trace.py` 里提**（DDA、保守上界场、层级跳步），
+   一次改**所有消费者一起受益**。这正是把 tracer 拆成独立组件的回报；
+   给 AO 单开一个粗步长是把这个回报提前花掉，换回四份 march 的老问题。
+
+⚠ 但这条要**实测**：P3 收工时记 AO 那一趟的墙钟时间。若它成了整个 bake 的瓶颈，
+处理顺序是「先在 tracer 里优化」→ 「再考虑降 AO 的 spp」→ **最后**才轮到动步长，
+而动步长必须连带给出「粗到什么程度还不失真」的实测曲线。
 
 ⚠ **AO 在收窄后的范围里没有别的合法归宿**：GTAO 论文自己的定义把 AO 限定为
 「**均匀**环境光下的遮挡比例」。所以 AO **不该乘直接光**，**也不该乘天光**
@@ -714,9 +831,13 @@ tools/lightbake/
     __main__.py     CLI（§12）
     input.py        场景 → (深度, 原画, R/ppu/cx/cy, world, normal, char_wu, band)
                     ★ 唯一的外部依赖面。不许别的模块直接碰 tools/scene_relight
-    trace.py        唯一 tracer：trace_pixels / trace_points + 契约测试
-    gather.py       E / base / Bdir / V / vis_linear / 直接光反解 / gather_gain
-    volume.py       实体空间数据：密度、validity、dilation、打包
+    trace.py        ★★ 独立通用组件：DepthField / trace() / TraceResult
+                    只管求交，不管采样、不管命中后取什么值。
+                    **全包唯一允许出现 depth[...] 下标访问的地方**（§5.4 契约测试 1）
+    sampling.py     方向采样：cosine_hemisphere / uniform_upper_hemisphere / uniform_sphere
+                    ★ 与 trace 分开：加消费者时加采样器，不动 tracer
+    gather.py       E / base / Bdir / V / vis_linear / 局部 AO / 直接光反解 / gather_gain
+    volume.py       实体空间数据：天穹 / AO / GI 三类通道、密度、validity、dilation、打包
     sky.py          程序性天空的 CPU 镜像（与 src/rendering/lighting/skySh.ts 同式）
     encode.py       三条编码曲线 + 往返自检
     payload.py      原子写 + meta.json + PAYLOAD_VERSION
@@ -743,9 +864,18 @@ class SceneInput:
     char_wu: float; band: float; scene_per_wu: float
 def load(sid: str, work_w: int = 1024) -> SceneInput: ...
 
-# trace.py
-def trace_pixels(inp, hdr, sky_fn, spp, seed) -> GatherResult: ...
-def trace_points(pts_q, inp, spp, seed) -> tuple[np.ndarray, np.ndarray]:  # (a0, a1)
+# trace.py —— 独立组件，签名见 §5.4
+def trace(origins_q, dirs_q, field, *, max_distance=math.inf, want_hit=False) -> TraceResult: ...
+
+# sampling.py
+def cosine_hemisphere(N, spp, rng) -> np.ndarray: ...        # (n,spp,3) 或逐 spp 生成
+def uniform_upper_hemisphere(n, spp, rng) -> np.ndarray: ...
+def uniform_sphere(n, spp, rng) -> np.ndarray: ...
+
+# gather.py / volume.py 里的消费者一律长这样，没有第二种形态：
+#     ω = <某个采样器>(...)
+#     r = trace(origins_q, ω @ R, field, max_distance=<inf 或有理由的有限值>, want_hit=<要不要辐射>)
+#     <把 r.escaped / r.hit_yx 归约成自己要的量>
 ```
 
 ---
@@ -769,7 +899,7 @@ def trace_points(pts_q, inp, spp, seed) -> tuple[np.ndarray, np.ndarray]:  # (a0
 | `GATHER_GAIN_MAX` | 12 | 日照/天光 ≈ 5–10 倍，12 是宽松但有界的天花板 |
 | `SUN_SCAN_EL × AZ` | 7 × 16 | |
 | `SUN_CHROMA_CLAMP` | [0.78, 1.28] | 防止逐通道解跑到边界 |
-| `AO_STEPS / AO_LENGTH` | 10 / 0.25 | **这里的截断是设计** |
+| `AO_RANGE` | 0.25 | AO 问的就是「半径 r 内有多封闭」，**r 是问题的一部分**，不是 tracer 截断。以 `max_distance` 显式传给 `trace()`。⚠ 旧的 `AO_STEPS = 10` **删掉**，步长归 tracer 统一管 |
 | `CHAR_VOL_SPP` | 64 | 均匀采样收敛比余弦重要性慢 |
 | `CELLS_PER_CHAR_XZ / _Y` | 3 / 6 | §5.9 的密度扫描 |
 | `CHAR_VOL_MAX_CELLS` | 200,000 | 载荷上限 |
@@ -784,7 +914,9 @@ def trace_points(pts_q, inp, spp, seed) -> tuple[np.ndarray, np.ndarray]:  # (a0
 | 1 | 无遮挡格点 `a₀` | `0.5 ± 1e-3` |
 | 2 | 无遮挡格点 `T(up)` | `1.0 ± 2e-3` |
 | 3 | 往返 `from_hdr(base_q · E_q)` vs 原画 | p99 ≤ 2/255 |
-| 4 | 两个 tracer 入口在同一批点/方向上 | **逐位相同** |
+| 4 | **tracer 单一实现**：全包 `depth[...]` 下标只出现在 `trace.py` | 静态扫描，别处出现即红 |
+| 4b | tracer 的 5 条契约（起点无关 / `max_distance` 单调 / `inf` 等价 / 解析真值） | 见 §5.4 |
+| 4c | **每个消费者的 `max_distance`** | 要么是 `inf`，要么在调用处有注释说明「这个积分为什么有界」 |
 | 5 | 体数据在表面 vs `sky_occlusion.png` | 偏差中位、**深遮蔽偏差 ≤ 0.06** |
 | 6 | validity 覆盖率 | 报警阈值待定 |
 | 7 | 三条编码曲线各自往返 | p99 ≤ 1/255（可见性量）/ 2/255（HDR 量） |
@@ -839,9 +971,9 @@ diff   --scene X --against DIR      两次产物逐项对比
 
 | | 内容 | 完成判据 |
 |---|---|---|
-| P1 | `input` + `trace` + 契约测试 | 自检 #1 #2 #4 绿 |
-| P2 | `gather`（E/base/occ/vis_linear/直接光）+ `encode` | 自检 #3 #7 #8 绿；与现有 v5 产物逐项比对，**每处差异都要能解释** |
-| P3 | `volume` + validity/dilation | 自检 #5 #6 #9 绿；深遮蔽偏差 ≤ 0.06；贴墙不再压暗 |
+| P1 | `input` + **`trace`（独立组件）** + `sampling` + 契约测试 | 自检 #1 #2 **#4 #4b #4c** 绿。⚠ **P1 结束时 `trace.py` 就要是完成态**：后面 P2/P3 只准调它，不准改它的判据。真要改，改完必须重跑 P2/P3 的全部数值判据 |
+| P2 | `gather`（E/base/occ/vis_linear/**局部 AO**/直接光）+ `encode` | 自检 #3 #7 #8 绿；与现有 v5 产物逐项比对，**每处差异都要能解释**。AO 走 `trace(max_distance=AO_RANGE)`，与天穹遮蔽同一条判据 |
+| P3 | `volume`（天穹 + AO + GI）+ validity/dilation | 自检 #5 #6 #9 绿；深遮蔽偏差 ≤ 0.06；贴墙不再压暗。**记 AO 那一趟的墙钟时间**（§5.8 的代价条） |
 | P4 | `report` | §11 全部面板 |
 | P5 | `sky` | 自检 #10 绿；与 `skySh.ts` 逐系数对齐 |
 | P6 | `diff` + 全场景重烘 + 运行时接 v6 | 28/28 装载成功 |
