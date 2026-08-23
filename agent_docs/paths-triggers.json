@@ -318,6 +318,12 @@
       ]
     },
     {
+      "glob": "src/core/SceneLightingSystem.ts",
+      "docs": [
+        "pseudo-world-final-gather"
+      ]
+    },
+    {
       "glob": "src/core/UnifiedCharacterLighting.ts",
       "docs": [
         "character-lighting"
@@ -458,7 +464,8 @@
       "docs": [
         "character-lighting",
         "coordinate-spaces",
-        "lighting-scale-reference"
+        "lighting-scale-reference",
+        "pseudo-world-final-gather"
       ]
     },
     {
@@ -970,6 +977,18 @@
         "coordinate-spaces",
         "lighting-scale-reference",
         "scene-radiance-restoration-pipeline"
+      ]
+    },
+    {
+      "glob": "tools/scene_relight/bake_gbuffer.py",
+      "docs": [
+        "pseudo-world-final-gather"
+      ]
+    },
+    {
+      "glob": "tools/scene_relight/migrate3.py",
+      "docs": [
+        "pseudo-world-final-gather"
       ]
     },
     {

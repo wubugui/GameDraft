@@ -221,8 +221,8 @@ class TestNpcAndHotspotRoundTrip:
         assert out['shadowBindings'] == [{'source': 'light:lamp_1'}]
 
 
-class TestLighting2PayloadValidation:
-    """`lighting2/` 载荷校验。
+class TestLighting3PayloadValidation:
+    """`lighting3/` 载荷校验。
 
     载荷缺失 / 代次不符 / 尺寸对不上时，运行时是**安静地不启用**——不报错、不崩，
     画面上只表现为"这个场景的光照没生效"。作者第一反应会去调参数，
@@ -230,12 +230,15 @@ class TestLighting2PayloadValidation:
     """
 
     def test_已烘的场景零问题(self) -> None:
-        from tools.editor.validator import _lighting2_issues
-        assert _lighting2_issues('teahouse') == []
+        from tools.editor.validator import _lighting3_issues
+        # ⚠ 第二个参数是场景的 sky.intensity —— 体检警告的判据是
+        #   「残留高 **且** 场景确实在依赖天光模型」。传 0 表示"不依赖"，
+        #   于是健康场景应当零问题。判据本身另有用例覆盖。
+        assert _lighting3_issues('teahouse', 0.0) == []
 
     def test_没烘的场景报警告(self) -> None:
-        from tools.editor.validator import _lighting2_issues
-        got = _lighting2_issues('这个场景不存在')
+        from tools.editor.validator import _lighting3_issues
+        got = _lighting3_issues('这个场景不存在')
         assert len(got) == 1 and got[0][0] == 'warning'
         assert 'bake' in got[0][1], '提示里要给出怎么烘的命令，不然作者不知道下一步'
 
@@ -245,17 +248,17 @@ class TestLighting2PayloadValidation:
         from pathlib import Path
         from tools.editor import validator as V
         src = Path(V.__file__).resolve().parents[2] / \
-            'public/resources/runtime/scenes/teahouse/lighting2'
+            'public/resources/runtime/scenes/teahouse/lighting3'
         if not src.exists():
             pytest.skip('teahouse 载荷不在（DVC 未拉取）')
-        dst = tmp_path / 'public' / 'resources' / 'runtime' / 'scenes' / 'X' / 'lighting2'
+        dst = tmp_path / 'public' / 'resources' / 'runtime' / 'scenes' / 'X' / 'lighting3'
         dst.parent.mkdir(parents=True)
         shutil.copytree(src, dst)
-        raw = (dst / 'skyvis_grid.bin').read_bytes()
-        (dst / 'skyvis_grid.bin').write_bytes(raw[:-8])
+        raw = (dst / 'sky_sh_grid.bin').read_bytes()
+        (dst / 'sky_sh_grid.bin').write_bytes(raw[:-8])
         monkeypatch.setattr(V, '__file__', str(tmp_path / 'tools' / 'editor' / 'validator.py'))
-        got = V._lighting2_issues('X')
-        assert any(s == 'error' and 'skyvis_grid.bin' in t for s, t in got), got
+        got = V._lighting3_issues('X')
+        assert any(s == 'error' and 'sky_sh_grid.bin' in t for s, t in got), got
 
     def test_代次不符报error(self, tmp_path, monkeypatch) -> None:
         import json as _json
@@ -263,10 +266,10 @@ class TestLighting2PayloadValidation:
         from pathlib import Path
         from tools.editor import validator as V
         src = Path(V.__file__).resolve().parents[2] / \
-            'public/resources/runtime/scenes/teahouse/lighting2'
+            'public/resources/runtime/scenes/teahouse/lighting3'
         if not src.exists():
             pytest.skip('teahouse 载荷不在（DVC 未拉取）')
-        dst = tmp_path / 'public' / 'resources' / 'runtime' / 'scenes' / 'X' / 'lighting2'
+        dst = tmp_path / 'public' / 'resources' / 'runtime' / 'scenes' / 'X' / 'lighting3'
         dst.parent.mkdir(parents=True)
         shutil.copytree(src, dst)
         m = dst / 'meta.json'
@@ -274,5 +277,5 @@ class TestLighting2PayloadValidation:
         j['version'] = 99
         m.write_text(_json.dumps(j, ensure_ascii=False), encoding='utf-8')
         monkeypatch.setattr(V, '__file__', str(tmp_path / 'tools' / 'editor' / 'validator.py'))
-        got = V._lighting2_issues('X')
+        got = V._lighting3_issues('X')
         assert any(s == 'error' and '代次' in t for s, t in got), got

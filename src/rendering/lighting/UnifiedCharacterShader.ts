@@ -9,17 +9,22 @@
  * 这里走的是同一条链：
  *
  * ```
- * 角色 = albedo × [ 天光×天穹可见性(3D 网格) ← ① 决定该多暗
- *                  + 灯(点/聚/面/平行，与场景同一份打包) ← ②
- *                 ] × radianceScale
+ * 角色 = 比例基底 × [ 烘焙 GI(网格 GI 通道) + 天光 × 传输基(SH-L1，吃角色自己的法线) ← ①
+ *                       + 环境反弹底 ← ②
+ *                       + 灯(点/聚/面/平行，与场景同一份打包) ← ③ ]
  *        → 雾（与场景同一组参数、各用自己的深度）
  *        → 显示变换（与场景**同一组**参数）
  * ```
  *
  * 与背景共享的不是"两处写得一样的代码"，而是**同一份数据**：
  * 灯来自 `SceneLightingPass.packedLights` 的同一次打包，
- * 天穹可见性来自烘焙期与逐像素 `skyvis.png` 同源、同方向、同 march 的 3D 网格，
- * 显示变换来自同一个 `def.display`。三者任一漂了，两边一起漂 —— 不会分家。
+ * 天穹传输来自与场景 `transport.png` 同一次烘焙、同一组方向、同一套归一化的 SH-L1 网格，
+ * 烘焙 GI 来自**同一次 final gather**（只是起点从像素换成网格点），
+ * 显示变换来自同一个 `def.display`。任一处漂了，两边一起漂 —— 不会分家。
+ *
+ * ⚠ 这里的「烘焙 GI」**不是**被删掉的那个屏幕空间反弹 pass（`GiBouncePass`）。
+ * 它是场景自身的辐照度场，是角色在**未重打光**的场景里唯一的光源
+ * （那时 `sky` / `lights` 都是 0）。`charGi` 调到 0 角色会全黑。
  *
  * ★ 铁律 S12：一切光照都在**伪世界空间**求值。这里的 `q` 由顶点几何 + ground 深度场
  * 直出（与 `CharacterLitSprite` 逐字同式），没有任何逐实体逐帧 CPU 驱动。
@@ -34,12 +39,16 @@ import {
 
 import type { SceneLightingDef } from '../../data/types';
 import { resolveLightColor } from './kelvin';
-import { MAX_STATIC_LIGHTS, type PackedLights, packShadowBias } from './lightPacking';
+import { skyIrradianceSh } from './skySh';
+import { MAX_STATIC_LIGHTS, type PackedLights, packShadowBias, sunDirectionOf } from './lightPacking';
 import LIGHTING_CORE from './lightingCore.glsl?raw';
+import SHADE_CORE_3 from './shadeCore3.glsl?raw';
 import WORLD_RECONSTRUCT from './worldReconstruct.glsl?raw';
 
 const WR_CORE = WORLD_RECONSTRUCT;
 const LC = LIGHTING_CORE;
+// ⚠ 拼接顺序固定 LC → SC3：shadeCore3 用 lightingCore 的 LC_* 常量与 lc* 函数。
+const SC3 = SHADE_CORE_3;
 
 /**
  * 顶点：与 `CharacterLitSprite` 的 VERT **逐字同式**。
@@ -97,8 +106,12 @@ out vec4 finalColor;
 uniform sampler2D uColorTex;    // 动画图集
 uniform sampler2D uNrm;         // 法线图集（与 color 逐 texel 对齐）
 uniform sampler2D uGround;      // ground_d.png（RG16：行走面深度场）
-uniform sampler2D uSkyGrid;     // 3D 天穹可见性，Z 切片横向平铺（r8）
-uniform sampler2D uGiBounce;    // 反弹辐照网格（与 uSkyGrid 同平铺，RGBA16F）
+// 角色的天穹传输网格：SH-L1，每格每通道存 (a0, a1)。
+// 布局：4 个通道**纵向堆叠** —— 宽 = nx*nz，高 = ny*4，通道 c 占 [c*ny,(c+1)*ny) 行。
+uniform sampler2D uSkyTransport;
+uniform float uGiScale;      // GI 通道的对数编码中心（= 该场景网格 a0 的中位）
+uniform float uGiLogSpan;    // GI 通道的对数编码跨度（档）
+uniform float uCharGi;       // 角色吃多少烘焙 GI。0 = 完全不吃
 uniform sampler2D uDepth;       // raw_depth_rg.png（角色阴影 march 用）
 
 // ---- 场景几何标定（work px 栅格；与 CharacterLitSprite 同一套）----
@@ -128,10 +141,8 @@ uniform vec3  uGridMin;         // 世界 AABB 下界
 uniform vec3  uGridMax;
 
 // ---- 光（与场景**同一次打包**）----
-uniform vec3  uSkyColor;
-uniform float uSkyIntensity;
-uniform float uSkyHemi;
-uniform float uAoStrength;
+uniform vec3  uAmbientColor;    // 环境反弹底
+uniform float uAmbientIntensity;
 uniform vec3  uSunColor;
 uniform float uSunIntensity;
 uniform vec3  uSunDir;
@@ -144,7 +155,7 @@ uniform vec4  uLightC[${MAX_STATIC_LIGHTS}];
 uniform vec4  uLightD[${MAX_STATIC_LIGHTS}];
 
 // ---- 标定 + 雾 + 显示（与背景同一组参数）----
-uniform float uRadianceScale;
+uniform float uCharRefIntensity;  // 角色图集的参考天穹强度（见 sc3CharBase）
 uniform float uFogSigma;
 uniform float uFogScaleH;
 uniform float uFogBaseY;
@@ -161,27 +172,78 @@ uniform vec3  uLiftColor;
 uniform float uAOContact;
 uniform float uAOForm;
 
-/** GI 反弹增益。0 = 关（画面只是少一层反弹光，不会崩）。 */
-uniform float uGiGain;
-
-// 调试：0=正常 1=天穹可见性 2=法线 3=光照(无 albedo) 4=albedo 5=GI 反弹
+/** 逐 buffer 调试视图。编号见 shadeCore3.glsl 的 SC3_DEBUG_*，**与场景共用一套**。 */
 uniform int   uDebug;
 
 ${WR_CORE}
 ${LC}
+${SC3}
 
 /**
- * 3D 天穹可见性的三线性采样。
+ * 角色位置上的**天穹传输基**：4 个纬向通道，各自 T_k(N) = a0 + a1·N。
  *
- * 网格按 Z 切片横向平铺成 2D：宽 = nx·nz，列 = x + z·nx，行 = y。
- * ⚠ 必须用 texelFetch 不能用 texture()——硬件线性过滤会在切片接缝上把
- * 相邻 Z 层混进来（平铺图集的经典坑），八个角自己取、自己插。
+ * ## 为什么是这个形状而不是一个标量
+ *
+ * 场景侧把法线烘进了传输基（逐像素法线固定，见 lighting3/transport.png）；
+ * 角色的法线**逐像素在变**，所以必须存方向性。v2 存的是标量 V(x, up) ——
+ * 相当于把角色当成一块朝上的板，实测比它真正需要的量偏高 61%（中位），
+ * 身上还完全没有方向性。这一条是「角色和场景走同一套光照」的前提。
+ *
+ * ## 平铺与插值
+ *
+ * 网格按 Z 切片横向平铺、4 个通道纵向堆叠：宽 = nx*nz，高 = ny*4，
+ * 通道 c 占 [c*ny, (c+1)*ny) 行，行内列 = x + z*nx。
+ *
+ * ⚠ 必须 texelFetch 不能 texture()：硬件线性过滤会在 Z 切片接缝**和通道边界**
+ * 上混样（平铺图集的经典坑，而通道边界这一条比 v2 更致命 —— 混进来的是
+ * 另一个纬向通道，不是相邻的空间层）。八个角自己取、自己插。
  */
-float ucGridFetch(int x, int y, int z, int nx) {
-    return texelFetch(uSkyGrid, ivec2(x + z * nx, y), 0).r;
+/**
+ * GI 通道（5..7 = R/G/B）的解码。**与 0..4 不是同一套编码**：
+ *
+ *   R   = a0 的**对数**编码（uGiScale / uGiLogSpan），因为 GI 的动态范围是
+ *         400 倍量级（烛火旁 vs 暗角），线性或 from_hdr 都盖不住；
+ *   GBA = a1/(4·a0) + 0.5，纯方向量天然有界（单方向光时 |a1/a0| = 2）。
+ *
+ * ⚠ 幅度与方向分开存是**有理由的**：这样量化误差只作用在幅度上，
+ *   方向不会跟着抖 —— 角色走动时最刺眼的正是方向抖动。
+ */
+float ucGiChannel(int col, int ny, int y, int ch, vec3 N) {
+    vec4 px = texelFetch(uSkyTransport, ivec2(col, ch * ny + y), 0);
+    float a0 = uGiScale * exp2((px.r - 0.5) * uGiLogSpan);
+    vec3 a1 = (px.gba - vec3(0.5)) * 2.0 * 2.0 * a0;
+    return max(a0 + dot(a1, N), 0.0);
 }
 
-float ucSkyvisAt(vec3 world) {
+void ucGridFetch(int x, int y, int z, int nx, int ny, vec3 N,
+                 out vec4 sky, out float ao, out vec3 gi) {
+    // 通道 0 = 天穹遮蔽（y0 传输的 SH-L1），1 = 局部 AO，2..4 = 烘焙 GI 的 RGB。
+    // 0/1：R = a0，GBA = a1*0.5+0.5。
+    //
+    // ⚠ 天穹这一通道**原样带出 (a0, a1)，不在这里求值** —— bent 方向要靠
+    //   a1 的**向量**做三线性，先归一化再插值会在格点之间把方向拧歪。
+    int col = x + z * nx;
+    vec4 px = texelFetch(uSkyTransport, ivec2(col, 0 * ny + y), 0);
+    sky = vec4(px.r, (px.gba - vec3(0.5)) * 2.0);
+    ao  = sc3SHTransfer(texelFetch(uSkyTransport, ivec2(col, 1 * ny + y), 0), N);
+    gi  = vec3(ucGiChannel(col, ny, y, 2, N),
+               ucGiChannel(col, ny, y, 3, N),
+               ucGiChannel(col, ny, y, 4, N));
+}
+
+/**
+ * 查这一点的天穹遮蔽（bent 方向 + 可见度）、局部 AO、烘焙 GI。
+ *
+ * ⚠ 天穹遮蔽与场景侧是**同一个量**：
+ *     T0(N) = a0 + a1·N            —— y0 传输，无遮挡朝上 = 1
+ *     V(N)  = T0(N) / cap0(N)      —— cap0 = (1+N·up)/2 是无遮挡时的传输（解析闭式）
+ *     Bdir  = normalize(a1)        —— 平均未遮挡方向
+ *   场景侧法线烘焙期已知，直接存精确的 V 与 Bdir；这边法线运行时才有，
+ *   所以存 L1 再当场求值。**两条路都把 (Bdir, V) 交给同一个 sc3SkyIrradiance。**
+ *   y0 通道的 L1 截断实测 ≤1.2%，所以两边一致到约 1%（旧的 4 通道阶梯是 10%–15%）。
+ */
+void ucSkyAt(vec3 world, vec3 N, out vec3 bentDir, out float skyVis,
+             out float ao, out vec3 gi) {
     vec3 span = max(uGridMax - uGridMin, vec3(1e-5));
     vec3 t = clamp((world - uGridMin) / span, 0.0, 1.0);
     vec3 f = t * (uGridN - vec3(1.0));
@@ -191,55 +253,40 @@ float ucSkyvisAt(vec3 world) {
     ivec3 a = clamp(ivec3(i0), ivec3(0), nmax);
     ivec3 b = min(a + ivec3(1), nmax);
     int nx = int(uGridN.x);
+    int ny = int(uGridN.y);
 
-    float c000 = ucGridFetch(a.x, a.y, a.z, nx);
-    float c100 = ucGridFetch(b.x, a.y, a.z, nx);
-    float c010 = ucGridFetch(a.x, b.y, a.z, nx);
-    float c110 = ucGridFetch(b.x, b.y, a.z, nx);
-    float c001 = ucGridFetch(a.x, a.y, b.z, nx);
-    float c101 = ucGridFetch(b.x, a.y, b.z, nx);
-    float c011 = ucGridFetch(a.x, b.y, b.z, nx);
-    float c111 = ucGridFetch(b.x, b.y, b.z, nx);
+    vec4 s000, s100, s010, s110, s001, s101, s011, s111;
+    float o000, o100, o010, o110, o001, o101, o011, o111;
+    vec3 g000, g100, g010, g110, g001, g101, g011, g111;
+    ucGridFetch(a.x, a.y, a.z, nx, ny, N, s000, o000, g000);
+    ucGridFetch(b.x, a.y, a.z, nx, ny, N, s100, o100, g100);
+    ucGridFetch(a.x, b.y, a.z, nx, ny, N, s010, o010, g010);
+    ucGridFetch(b.x, b.y, a.z, nx, ny, N, s110, o110, g110);
+    ucGridFetch(a.x, a.y, b.z, nx, ny, N, s001, o001, g001);
+    ucGridFetch(b.x, a.y, b.z, nx, ny, N, s101, o101, g101);
+    ucGridFetch(a.x, b.y, b.z, nx, ny, N, s011, o011, g011);
+    ucGridFetch(b.x, b.y, b.z, nx, ny, N, s111, o111, g111);
 
-    float x00 = mix(c000, c100, fr.x);
-    float x10 = mix(c010, c110, fr.x);
-    float x01 = mix(c001, c101, fr.x);
-    float x11 = mix(c011, c111, fr.x);
-    return mix(mix(x00, x10, fr.y), mix(x01, x11, fr.y), fr.z);
-}
+    vec4 sx00 = mix(s000, s100, fr.x);
+    vec4 sx10 = mix(s010, s110, fr.x);
+    vec4 sx01 = mix(s001, s101, fr.x);
+    vec4 sx11 = mix(s011, s111, fr.x);
+    vec4 sky = mix(mix(sx00, sx10, fr.y), mix(sx01, sx11, fr.y), fr.z);
+    float t0 = max(sky.x + dot(sky.yzw, N), 0.0);
+    skyVis  = clamp(t0 / max((1.0 + N.y) * 0.5, 1.0 / 255.0), 0.0, 1.0);
+    bentDir = normalize(sky.yzw + vec3(1e-6, 1e-6, 1e-6));
 
-/**
- * GI 反弹辐照的三线性采样。与 ucSkyvisAt **同一套平铺与插值**，只是取 RGB。
- *
- * 网格内容 = 「沿 16 个烘好的方向撞到的那面墙，**当前**有多亮」的平均
- * （由 GiBouncePass 在脏时算好）。这就是制作人给 GI 下的定义：
- * 角色如何被 relighting 后的场景照亮 —— 不需要真的多次反弹。
- */
-vec3 ucBounceAt(vec3 world) {
-    vec3 span = max(uGridMax - uGridMin, vec3(1e-5));
-    vec3 t = clamp((world - uGridMin) / span, 0.0, 1.0);
-    vec3 f = t * (uGridN - vec3(1.0));
-    vec3 i0 = floor(f);
-    vec3 fr = f - i0;
-    ivec3 nmax = ivec3(uGridN) - ivec3(1);
-    ivec3 a = clamp(ivec3(i0), ivec3(0), nmax);
-    ivec3 b = min(a + ivec3(1), nmax);
-    int nx = int(uGridN.x);
+    float a00 = mix(o000, o100, fr.x);
+    float a10 = mix(o010, o110, fr.x);
+    float a01 = mix(o001, o101, fr.x);
+    float a11 = mix(o011, o111, fr.x);
+    ao = mix(mix(a00, a10, fr.y), mix(a01, a11, fr.y), fr.z);
 
-    vec3 c000 = texelFetch(uGiBounce, ivec2(a.x + a.z * nx, a.y), 0).rgb;
-    vec3 c100 = texelFetch(uGiBounce, ivec2(b.x + a.z * nx, a.y), 0).rgb;
-    vec3 c010 = texelFetch(uGiBounce, ivec2(a.x + a.z * nx, b.y), 0).rgb;
-    vec3 c110 = texelFetch(uGiBounce, ivec2(b.x + a.z * nx, b.y), 0).rgb;
-    vec3 c001 = texelFetch(uGiBounce, ivec2(a.x + b.z * nx, a.y), 0).rgb;
-    vec3 c101 = texelFetch(uGiBounce, ivec2(b.x + b.z * nx, a.y), 0).rgb;
-    vec3 c011 = texelFetch(uGiBounce, ivec2(a.x + b.z * nx, b.y), 0).rgb;
-    vec3 c111 = texelFetch(uGiBounce, ivec2(b.x + b.z * nx, b.y), 0).rgb;
-
-    vec3 x00 = mix(c000, c100, fr.x);
-    vec3 x10 = mix(c010, c110, fr.x);
-    vec3 x01 = mix(c001, c101, fr.x);
-    vec3 x11 = mix(c011, c111, fr.x);
-    return mix(mix(x00, x10, fr.y), mix(x01, x11, fr.y), fr.z);
+    vec3 g00 = mix(g000, g100, fr.x);
+    vec3 g10 = mix(g010, g110, fr.x);
+    vec3 g01 = mix(g001, g101, fr.x);
+    vec3 g11 = mix(g011, g111, fr.x);
+    gi = mix(mix(g00, g10, fr.y), mix(g01, g11, fr.y), fr.z);
 }
 
 /** 一盏灯对角色的可见性。与 SceneLightingPass.lightVisibility 同式（同一条 march）。 */
@@ -311,12 +358,21 @@ void main(void) {
     // ---------- ① 天光 × 天穹可见性：决定角色"该多暗" ----------
     // ★ 这一项承重。制作人的原话是「角色首要目标是与场景明暗一致，必须吃天光遮蔽」——
     //   走进巷子该跟着暗下来，站到开阔地该跟着亮起来，靠的就是这个逐点查出来的遮蔽。
-    float skyvis = ucSkyvisAt(P);
-    vec3 S = lcSkyLight(uSkyColor, uSkyIntensity, skyvis, uSkyHemi, uAoStrength);
+    // ★ 遮蔽按**角色自己的法线**求值 —— 与场景侧同一个量、同一个归一化约定
+    //   （无遮挡朝上 = 1），所以两边同尺度、可直接比。
+    vec3 bentDir; float skyVis; float ao; vec3 giE;
+    ucSkyAt(P, n, bentDir, skyVis, ao, giE);
+    giE *= uCharGi;
+    // 与场景**同一个函数**：bent 方向 + 可见度。角色这侧法线运行时才有，
+    // 所以网格存的是可见度的 SH-L1，V(N) = a0 + a1·N、Bdir = normalize(a1)。
+    vec3 skyE = sc3SkyIrradiance(bentDir, skyVis, n);
+    vec3 ambientE = uAmbientColor * (uAmbientIntensity * sc3AmbientTerm(ao));
+    vec3 sunE = vec3(0.0);
+    vec3 lampE = vec3(0.0);
+    float sunVis = 1.0;
 
     // ---------- ② 灯：与场景**同一份**打包，同样的解析式 ----------
     if (uSunIntensity > 0.0) {
-        float vis = 1.0;
         if (uShadow.x > 0.0) {
             vec3 dirQ = normalize(uSunDir);
             float blocked = lcMarchVisibility(
@@ -324,9 +380,9 @@ void main(void) {
                 uDepthMap.x, uDepthMap.y, uDepthMap.z,
                 q, dirQ, int(uShadow.z), uShadow.y,
                 uShadowBias.x, uShadowBias.y);
-            vis = 1.0 - uShadow.x * (1.0 - blocked);
+            sunVis = 1.0 - uShadow.x * (1.0 - blocked);
         }
-        S += lcDirectionalLight(n, uSunDir, uSunColor, uSunIntensity, vis);
+        sunE = lcDirectionalLight(n, uSunDir, uSunColor, uSunIntensity, sunVis);
     }
     for (int i = 0; i < ${MAX_STATIC_LIGHTS}; i++) {
         if (i >= uLightCount) break;
@@ -341,42 +397,51 @@ void main(void) {
             vis = ucLightVisibility(q, A.xyz);
         }
         if (kind == LC_POINT) {
-            S += lcPointLight(P, n, A.xyz, B.rgb, B.w, C.x, C.y, vis);
+            lampE += lcPointLight(P, n, A.xyz, B.rgb, B.w, C.x, C.y, vis);
         } else if (kind == LC_SPOT) {
-            S += lcSpotLight(P, n, A.xyz, D.xyz, B.rgb, B.w, C.x, C.y, C.z, C.w, vis);
+            lampE += lcSpotLight(P, n, A.xyz, D.xyz, B.rgb, B.w, C.x, C.y, C.z, C.w, vis);
         } else if (kind == LC_AREA) {
             vec3 hu, hv;
             areaAxes(normalize(D.xyz), C.z, C.w, C.y, hu, hv);
-            S += lcAreaLight(P, n, A.xyz, hu, hv, B.rgb, B.w, C.x, (flags & 2) != 0, vis);
+            lampE += lcAreaLight(P, n, A.xyz, hu, hv, B.rgb, B.w, C.x, (flags & 2) != 0, vis);
         } else {
-            S += lcDirectionalLight(n, D.xyz, B.rgb, B.w, 1.0);
+            lampE += lcDirectionalLight(n, D.xyz, B.rgb, B.w, 1.0);
         }
     }
 
-    // ---------- ③ GI：被 relight 后的场景反弹照亮（加分项，关掉只是少一层）----------
-    // ⚠ 反弹项**在 radianceScale 之外**加：它已经是场景辐射尺度的量
-    //   （直接取自重打光结果），再乘一次标定就等于把尺度算两遍。
+    // ---------- ③ 比例基底：把角色送进和场景同一个空间 ----------
+    // 图集也是美术在某种隐含光照下画的，所以它同样要除掉自己的 E_ref。
+    // 括号里正是无遮挡、均匀阴天下的传输（与场景侧同一归一化），
+    // 于是两边出来的基底是**同一个量纲** —— 这才叫"和角色对齐"。
     //
-    // ⚠ 这一项是**各向同性**的：网格里存的是 16 个方向的平均，这里不再按 N·d 加权。
-    //   所以它给的是"周围有多亮"而不是"光从哪边来"——间接光本就低频，这个近似
-    //   看不出来；但**别指望它做出方向感**，那是解析灯的活。
-    //   实测（雾津街头灯下）：贡献 +35.6%，纯 GI 项 rgb(164,132,85) 明显偏暖
-    //   ——2200K 灯光打在石板上反弹回来的颜色。离灯 15 m 外降到 2.4%。
-    vec3 bounce = uGiGain > 0.0 ? ucBounceAt(P) * uGiGain : vec3(0.0);
+    // ⚠ 取代了 v2 的 uRadianceScale：那是个标量总增益，补不上一个逐像素的场。
+    vec3 alb = sc3CharBase(lcSrgbToLinear(color.rgb / max(color.a, 1e-4)), n, uCharRefIntensity);
 
-    // ---------- albedo × (S × 标定 + 反弹) ----------
-    // 场景那边 albedo 被画进像素里拿不出来，所以走「先除白天光再乘新光」；
-    // 角色的 albedo 是显式的，直接乘。**两边算的是同一个 S**，这是"融进去"的根。
-    // uRadianceScale 把「S 的尺度」对齐到「重打光后的场景辐射尺度」——
-    // 缺它角色会**系统性**偏亮或偏暗，且怎么调灯都对不上。
-    vec3 alb = lcSrgbToLinear(color.rgb / max(color.a, 1e-4));
-    vec3 lin = alb * (S * uRadianceScale + bounce);
+    // ★ 场景与角色的**唯一会合点**：两边都走 sc3Shade，第四个参数都是烘焙 GI。
+    //
+    // ⚠ 这里的 GI **不是**被删掉的那个屏幕空间反弹 pass（GiBouncePass，已删）。
+    //   它是烘焙期在伪世界里 final gather 积出的**场景自身辐照度**，角色从
+    //   同一份网格里按自己的世界位置和法线查出来 —— 这正是"融入场景"要的东西。
+    //   缺了它角色会**全黑**：未重打光的场景 sky/ambient 都是 0，
+    //   而场景本体靠的就是这一份 GI。uCharGi 可以调到 0，但那时必须自己摆灯。
+    vec3 lin = sc3Shade(alb, skyE + ambientE, sunE + lampE, giE);
 
-    if (uDebug == 1) { finalColor = vec4(vec3(skyvis) * color.a, color.a) * vColor; return; }
-    if (uDebug == 2) { finalColor = vec4((n * .5 + .5) * color.a, color.a) * vColor; return; }
-    if (uDebug == 3) { lin = S * uRadianceScale; }
-    if (uDebug == 4) { lin = alb; }
-    if (uDebug == 5) { lin = bounce; }
+    // ---------- 逐 buffer 调试视图 ----------
+    // ⚠ 走 sc3DebugView，与**场景用的是同一套编号、同一个函数**。
+    if (uDebug != SC3_DEBUG_OFF) {
+        vec3 span = max(uGridMax - uGridMin, vec3(1e-5));
+        vec3 posNorm = (P - uGridMin) / span;
+        vec3 dbg = sc3DebugView(uDebug, alb, n, posNorm, bentDir, skyVis, ao,
+                                skyE + ambientE, sunE, lampE, giE, sunVis, vec3(0.0));
+        // 辐射量走完整显示变换（才和真实画面对得上）；其余 buffer 只做 sRGB 编码
+        // —— 把法线乘上 2^ev 再 tonemap 就是一片白，那种视图是在骗人。
+        vec3 dbgOut = sc3DebugIsRadiometric(uDebug)
+            ? lcDisplayTransform(dbg, uEv, uTonemap, uWhiteBalance,
+                                 uSaturation, uContrast, uLift, uLiftColor)
+            : lcLinearToSrgb(dbg);
+        finalColor = vec4(dbgOut * color.a, color.a) * vColor;
+        return;
+    }
 
     // ---------- 雾：与场景**同一组参数**，各用自己的深度 ----------
     if (uFogSigma > 0.0) {
@@ -451,10 +516,10 @@ export function createUnifiedCharLightGroup(): UniformGroup {
   return new UniformGroup({
     uWCPos: { value: new Float32Array([0, 0]), type: 'vec2<f32>' },
     uWCScale: { value: 1, type: 'f32' },
-    uSkyColor: { value: new Float32Array([1, 1, 1]), type: 'vec3<f32>' },
-    uSkyIntensity: { value: 1, type: 'f32' },
-    uSkyHemi: { value: 0.35, type: 'f32' },
-    uAoStrength: { value: 1, type: 'f32' },
+    uSkySh: { value: new Float32Array(9 * 4), type: 'vec4<f32>', size: 9 },
+    uSkyProfile: { value: 1, type: 'f32' },
+    uAmbientColor: { value: new Float32Array([1, 1, 1]), type: 'vec3<f32>' },
+    uAmbientIntensity: { value: 0, type: 'f32' },
     uSunColor: { value: new Float32Array([1, 1, 1]), type: 'vec3<f32>' },
     uSunIntensity: { value: 0, type: 'f32' },
     uSunDir: { value: new Float32Array([0, 1, 0]), type: 'vec3<f32>' },
@@ -465,8 +530,10 @@ export function createUnifiedCharLightGroup(): UniformGroup {
     uLightB: { value: new Float32Array(MAX_STATIC_LIGHTS * 4), type: 'vec4<f32>', size: MAX_STATIC_LIGHTS },
     uLightC: { value: new Float32Array(MAX_STATIC_LIGHTS * 4), type: 'vec4<f32>', size: MAX_STATIC_LIGHTS },
     uLightD: { value: new Float32Array(MAX_STATIC_LIGHTS * 4), type: 'vec4<f32>', size: MAX_STATIC_LIGHTS },
-    uRadianceScale: { value: 1, type: 'f32' },
-    uGiGain: { value: 1, type: 'f32' },
+    uCharRefIntensity: { value: 1, type: 'f32' },
+    uGiScale: { value: 1, type: 'f32' },
+    uGiLogSpan: { value: 16, type: 'f32' },
+    uCharGi: { value: 1, type: 'f32' },
     uFogSigma: { value: 0, type: 'f32' },
     uFogScaleH: { value: 1, type: 'f32' },
     uFogBaseY: { value: 0, type: 'f32' },
@@ -497,17 +564,17 @@ export function applyUnifiedCharLight(
   def: SceneLightingDef,
   packed: PackedLights,
   wuPerQUnit: number,
-  radianceScale: number,
-  giGain: number,
+  charRefIntensity: number,
+  giScale: number,
+  giLogSpan: number,
 ): void {
   const bag = group.uniforms as Record<string, unknown>;
   const num = (k: string, v: number): void => { bag[k] = v; };
   const vec = (k: string, v: ArrayLike<number>): void => { (bag[k] as Float32Array).set(v); };
 
-  vec('uSkyColor', resolveLightColor(def.sky.color, def.sky.kelvin));
-  num('uSkyIntensity', def.sky.intensity);
-  num('uSkyHemi', def.sky.hemi);
-  num('uAoStrength', def.aoStrength ?? 1);
+  vec('uSkySh', skyIrradianceSh(def.sky, sunDirectionOf(def)));
+  vec('uAmbientColor', resolveLightColor(def.ambient?.color, def.ambient?.kelvin));
+  num('uAmbientIntensity', def.ambient?.intensity ?? 0);
 
   vec('uSunColor', packed.sunColor);
   num('uSunIntensity', packed.sunIntensity);
@@ -521,18 +588,27 @@ export function applyUnifiedCharLight(
   vec('uLightD', packed.d);
   num('uLightCount', packed.count);
 
-  // ⚠ 用传进来的解析值，不用 def.radianceScale —— 它缺省时要由烘焙期反解的
-  //   反射率推出来（见 SceneLightingSystem.radianceScale），这里读 def 会拿到 undefined。
-  num('uRadianceScale', radianceScale);
+  // ⚠ 用传进来的解析值，不用直接读 def —— 缺省要由系统层统一决定，
+  //   两处各写一份 `?? 1` 迟早有一处漏掉。
+  num('uCharRefIntensity', charRefIntensity);
+  // ⚠ GI 通道的对数编码参数**逐场景不同**（scale = 该场景网格 a0 的中位）。
+  //   写错这个不会报错，只是角色整体偏亮/偏暗一个常数倍 —— 所以由系统层
+  //   从 meta 直接传进来，不给缺省。
+  num('uGiScale', giScale);
+  num('uGiLogSpan', giLogSpan);
+  // ★ 角色吃多少烘焙 GI。缺省**跟随场景的 `gi`**，不是恒 1。
+  //
+  //   ⚠ 缺省写死 1 是个坑，真机验过：把 `gi` 调到 0.3 重打光时背景暗下来了，
+  //     角色纹丝不动 —— 两个旋钮各管一边，作者得记住同时调两个。
+  //     跟随之后「调 gi」就是一件事，`charGi` 只在**故意**要角色与背景吃得
+  //     不一样多时才显式填（比如让角色比环境亮一点好认）。
+  num('uCharGi', def.charGi ?? def.gi ?? 1);
   // 形体参数是**作者参数**不是逐帧状态，所以在这里写而不是 syncFrame。
   // ⚠ 缺省 flatten=0（用真实法线）。**不要**从旧 probe 载荷继承同名值——
   //   那是给旧着色模型调的，新模型里 flatten=1 会让所有灯的 N·L 相同、方向性全丢
   //   （见 SceneLightingDef.characterShape 的注释）。
   num('uFlatten', def.characterShape?.flatten ?? 0);
   num('uBulge', def.characterShape?.bulge ?? 0.22);
-  // 没烘 gi_hitmap 的场景传 0：白图占位不会被读进结果
-  num('uGiGain', giGain);
-
   // 雾全程 wu：σ 的量纲是 1/wu，两个高度是 wu。与 `LitBackground.applyParams`
   // 逐位一致——两边分家会让角色与背景的雾在同一深度处浓度不同，穿帮得很难查。
   const f = def.fog;
@@ -561,9 +637,8 @@ export interface UnifiedCharTextures {
   colorTex: TextureSource;
   nrm: TextureSource | null;
   ground: TextureSource;
-  skyGrid: TextureSource;
-  /** GI 反弹网格。没烘 `gi_hitmap` 的场景传 null → 增益自动置 0，画面只是少一层。 */
-  giBounce: TextureSource | null;
+  /** SH-L1 天穹传输网格（RGBA8，4 通道纵向堆叠）。 */
+  skyTransport: TextureSource;
   depth: TextureSource;
 }
 
@@ -583,9 +658,7 @@ export function createUnifiedCharShader(
       uColorTex: tex.colorTex,
       uNrm: tex.nrm ?? Texture.WHITE.source,
       uGround: tex.ground,
-      uSkyGrid: tex.skyGrid,
-      // 缺 GI 网格时绑白图占位保采样器合法；增益由 applyUnifiedCharLight 置 0，永不读进结果
-      uGiBounce: tex.giBounce ?? Texture.WHITE.source,
+      uSkyTransport: tex.skyTransport,
       uDepth: tex.depth,
     },
   });

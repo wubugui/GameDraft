@@ -20,7 +20,14 @@ last_governed: 2026-08-21
 
 > 「ev 这个是随便调的?曝光随便调,都不对齐不统一」
 
-当时查出来的技术事实(**仍然成立,只是不去动它**):
+> ⚠ **2026-08-23 更新**:下面那三条技术事实里,`meta.albedo.albedo_mean` 与
+> `radianceScale` 这两个名字**已经不存在了**(见
+> [pseudo-world-final-gather](2026-08-23-pseudo-world-final-gather.md))。
+> 现在角色的标定走 `charRefIntensity`(由 `base.median` 推出),背景与角色共用
+> `base·E` 这一条式子。**结论没变**:每张画自带的曝光差异仍在,仍然逐场景用
+> `display.ev` 补,仍然不提全局曝光层。改的只是这些数叫什么、从哪来。
+
+当时查出来的技术事实(名字已变,量级仍成立):
 
 1. 烘焙期已经反解了每张原画的平均反射率 `meta.albedo.albedo_mean`
    (先去霾再除 `sDay`),它跨 28 个场景差 **448 倍** —— 那就是"每张画自带的曝光"。

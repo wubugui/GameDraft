@@ -56,6 +56,7 @@
 - [对话立绘构图定稿](runtime/decisions/2026-07-07-dialogue-portrait-composition.md) — VN 式小半身像(240px)压面板前景、底边伸出画面外、暗幕 opt-in;大立绘/默认压暗/垫面板后/底部渐隐均被否
 - [曝光逐场景独立调,不做全局对齐](runtime/decisions/2026-08-21-per-scene-exposure.md) — display（ev/tonemap/对比/饱和/lift）留在场景 JSON 里逐场景调;不把 albedo 标定接进背景、不提全局曝光层——精度不是这个项目要的东西
 - [位面基建 v3 模型拍板](runtime/decisions/2026-07-05-plane-v3-model.md) — 位面=全局一等资产+实体归属+叙事只点名+对账器重派生;v1(绑任务图)/v2(实体变体表)/接管式小游戏均被否
+- [原画照明用伪世界 final gather 积出来，不拟合](runtime/decisions/2026-08-23-pseudo-world-final-gather.md) — E 是在伪世界里做 final gather 积出的辐照度(画本身就是辐射缓存),不是从原画回归出来的系数;画拆成 base·E + emissive 是恒等式;天穹遮蔽是同一趟积分的另一个投影;默认 gi=1 时画面精确等于原画
 - [scenarios.json 一等公民系统退役](runtime/decisions/2026-07-15-scenario-firstclass-retirement.md) — 2026-07-13 拍板退役一等公民 scenario 系统;stage-1 数据侧已落地(scenarios.json 清空、码头两线迁 narrative),stage-2 代码删除待做(届时 6→4 条件叶为 approval①)
 - [二维场景辐射度还原与发光增益管线定稿](runtime/decisions/2026-07-21-scene-radiance-restoration-pipeline.md) — 【2026-08-21 已被统一光影取代】原「离线还原绝对辐射度 + 语义 mask 一刀两断」不再是新场景的路线;新路线是先除掉画里的白天光再乘新光,离线只烘几何项
 - [UI 面板美学方向定稿](runtime/decisions/2026-07-05-ui-panel-skin-direction.md) — 民俗草根·做旧木框——纸纹底+厚木条外框+内侧暗金细线;标题界面是海报、不走这套皮

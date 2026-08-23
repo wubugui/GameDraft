@@ -27,8 +27,7 @@ import {
 
 function def(lights: LightDef[], extra: Partial<SceneLightingDef> = {}): SceneLightingDef {
   return {
-    sky: { intensity: 1, hemi: 0.7, color: [1, 1, 1] },
-    day: { sunIntensity: 0.8, sunElevationDeg: 50, sunAzimuthDeg: 150 },
+    sky: { intensity: 1, profile: 1, color: [1, 1, 1] },
     lights,
     display: {
       ev: 0, tonemap: 'filmic', whiteKelvin: 6500,

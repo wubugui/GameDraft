@@ -1,38 +1,30 @@
 {
   "lighting": {
+    "_migration": "gather-v3-2026-08-23",
+    "gi": 1.0,
     "sky": {
-      "color": [
-        1.0,
-        1.0,
-        1.0
-      ],
-      "intensity": 1.0,
-      "hemi": 0.64
+      "kelvin": 6500,
+      "intensity": 0.0,
+      "profile": 0.0
     },
-    "day": {
-      "sunIntensity": 0.0,
-      "sunElevationDeg": 50.0,
-      "sunAzimuthDeg": 180.0
+    "ambient": {
+      "kelvin": 6500,
+      "intensity": 0.0
     },
     "lights": [],
     "display": {
       "ev": 0.0,
-      "tonemap": "none",
+      "tonemap": "reinhard",
       "whiteKelvin": 6500.0,
       "contrast": 1.0,
       "saturation": 1.0,
       "lift": 0.0,
       "liftKelvin": 6500.0
     },
-    "aoStrength": 1.0,
-    "ratioMax": 8.0,
-    "dehaze": 0.0,
     "emissive": {
       "gain": 0.0
     },
-    "giGain": 0.0,
-    "placeholder": true,
-    "_migration": "identity-2026-08-21"
+    "charRefIntensity": 0.2771
   },
   "id": "野道",
   "name": "城外野道",

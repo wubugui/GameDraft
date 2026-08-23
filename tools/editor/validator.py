@@ -914,7 +914,9 @@ def validate(model: ProjectModel) -> list[Issue]:
             if not isinstance(lit, dict):
                 issues.append(Issue("error", "scene", sid, "lighting 须为对象"))
             else:
-                for key in ("sky", "day", "display"):
+                # ⚠ v3 必需键。`day` 已随 S_day 一起移除（那一步搬进了烘焙期）；
+                #   `ambient` 是新的多次反弹底，缺了巷道会黑得不合理。
+                for key in ("sky", "ambient", "display"):
                     if not isinstance(lit.get(key), dict):
                         issues.append(Issue(
                             "error", "scene", sid, f"lighting.{key} 缺失或不是对象"))
@@ -930,14 +932,29 @@ def validate(model: ProjectModel) -> list[Issue]:
                         "warning", "scene", sid,
                         "配了 lighting 但没有 depthConfig —— 统一光影依赖深度场，运行时不会启用",
                     ))
-                # day.hemi 手填几乎必错：它是原画自己的遮蔽响应，由烘焙拟合
-                day = lit.get("day")
-                if isinstance(day, dict) and "hemi" in day:
+                # v2 的遗留键：留着 = 两套语义并存，而且编辑器往返会把它们一路带回来
+                for _dead, _why in (
+                    ("day", "S_day 已在烘焙期做完（比例基底里），运行时没有第二个分母了"),
+                    ("placeholder", "它会把角色整个挡在新管线外——摆多少灯角色都零响应"),
+                    ("aoStrength", "遮蔽与朝向已在传输基里，这个旋钮只会让画面偏离几何"),
+                    ("ratioMax", "基底显式之后没有比值可钳，钳位只会藏起标定错误"),
+                    ("dehaze", "去霾已搬进烘焙期（在 final gather 之前），运行时再去一遍是减两次"),
+                    ("radianceScale", "已由 charRefIntensity 取代（标量 → 逐像素解析除）"),
+                    ("giGain", "GI 已移除；要给角色加反弹接在 sc3Shade 的第四个参数上"),
+                ):
+                    if _dead in lit:
+                        issues.append(Issue(
+                            "warning", "scene", sid,
+                            f"lighting.{_dead} 是 v2 遗留键，v3 已移除：{_why}。"
+                            f"跑 `py -m tools.scene_relight.migrate3 --scene {sid}` 清掉",
+                        ))
+                # sky.profile 是 v3 的必填项；缺了运行时会拿到 undefined
+                _sky = lit.get("sky")
+                if isinstance(_sky, dict) and "profile" not in _sky:
                     issues.append(Issue(
-                        "warning", "scene", sid,
-                        "lighting.day.hemi 是手填的；它是**原画自己的遮蔽响应**，"
-                        "应交给烘焙期拟合（删掉这个键即可）。填错会让画里的遮蔽与夜里的"
-                        "遮蔽叠加，角落黑两遍、地面却几乎没变暗",
+                        "error", "scene", sid,
+                        "lighting.sky.profile 缺失（v3 必填，0..4 的天穹纬向分布）。"
+                        f"跑 `py -m tools.scene_relight.migrate3 --scene {sid}`",
                     ))
                 # 阴影 march 的偏置与厚度窗(**wu**)。这两个曾经写死在 shader 的
                 # uniform 初值里且没有写入方，F2 与场景 JSON 都够不着；现在能写了，
@@ -945,14 +962,15 @@ def validate(model: ProjectModel) -> list[Issue]:
                 for _t in _shadow_bias_issues(lit.get("shadowBias")):
                     issues.append(Issue("error", "scene", sid, _t))
 
-        # lighting2/ 载荷。配了 lighting 块却没烘载荷 ⇒ 运行时**安静不启用**，
+        # lighting3/ 载荷。配了 lighting 块却没烘载荷 ⇒ 运行时**安静不启用**，
         # 画面上只表现为"这个场景的光照没生效"，没有任何报错。
         #
         # ⚠ 期望值一律以**运行时消费端**为准（`SceneLightingSystem` / `GiBouncePass`）。
         #   2026-08-06 那次 lighting-bake 校验器自立口径多乘 4、把 28 个场景全量误报，
         #   教训是：校验器另立一套 = 把 error 通道淹掉。
         if isinstance(lit, dict):
-            _l2 = _lighting2_issues(sid)
+            _sky_i = float(((lit or {}).get("sky") or {}).get("intensity") or 0.0)
+            _l2 = _lighting3_issues(sid, _sky_i)
             for _sev, _t in _l2:
                 issues.append(Issue(_sev, "scene", sid, _t))
 
@@ -1233,9 +1251,9 @@ _CLOCK_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 
 
 
-#: `lighting2/` 载荷代次。改产物布局要同步 `bake.py#PAYLOAD_VERSION` 与
+#: `lighting3/` 载荷代次。改产物布局要同步 `bake_gbuffer.py#PAYLOAD_VERSION` 与
 #: `SceneLightingSystem.LIGHTING2_VERSION`——三处必须一致，否则运行时整包忽略。
-_LIGHTING2_VERSION = 1
+_LIGHTING3_VERSION = 5
 
 
 def _shadow_bias_issues(sb: object) -> list[str]:
@@ -1271,77 +1289,100 @@ def _shadow_bias_issues(sb: object) -> list[str]:
     return out
 
 
-def _lighting2_issues(sid: str) -> list[tuple[str, str]]:
-    """校验一个场景的 `lighting2/` 烘焙载荷。返回 (severity, text) 列表。
+def _lighting3_issues(sid: str, sky_intensity: float = 0.0) -> list[tuple[str, str]]:
+    """校验一个场景的 `lighting3/` 烘焙载荷。返回 (severity, text) 列表。
 
     ## 为什么必须校验
 
-    配了 `lighting` 块却没烘载荷（或载荷代次不对、尺寸对不上）时，运行时是
-    **安静地不启用**——不报错、不崩，画面上只表现为"这个场景的光照没生效"。
+    配了 `lighting` 块却没烘载荷（或代次不对、尺寸对不上）时，运行时是
+    **安静地不启用** —— 不报错、不崩，画面上只表现为"这个场景的光照没生效"。
     作者第一反应会去调参数，而参数根本没被读。
 
     ## 期望值从哪来
 
-    一律以**运行时消费端**为准：
-    · 代次 `SceneLightingSystem.LIGHTING2_VERSION`
-    · `skyvis_grid.bin` = nx·ny·nz 个 f32 → 字节数 = 乘积 × 4
-    · `gi_hitmap.bin`   = size[0] × size[1] × 4（RGBA8）
+    一律以**运行时消费端**为准（`SceneLightingSystem`）：
+    · 代次 `LIGHTING3_VERSION`
+    · `sky_sh_grid.bin` = 通道数 × nx × ny × nz × 4（RGBA8），通道数含 AO 那一路
+    · `base.png` / `normal.png` / `sky_occlusion.png` / `ao.png` / `irradiance.png`
+      五张缺一不可 —— `irradiance` 是**正式载荷**不是调试图，缺了默认画面（gi=1）
+      就不再等于原画
+    · **没有** `emissive.png`（2026-08-23 起，制作人：「光都是单独打」），
+      也**没有** `transport.png`（4 通道纬向阶梯已被 bent normal 取代）
 
-    ⚠ 2026-08-06 那次 lighting-bake 校验器自立口径多乘 4、把 28 个场景全量误报——
-    校验器另立一套 = 把 error 通道淹掉。这里的每个数都能在消费端逐字找到出处。
+    ⚠ 2026-08-06 那次校验器自立口径多乘 4、把 28 个场景全量误报 ——
+    校验器另立一套 = 把 error 通道淹掉。这里每个数都能在消费端逐字找到出处。
     """
     from pathlib import Path
     root = Path(__file__).resolve().parents[2]
-    d = root / "public" / "resources" / "runtime" / "scenes" / sid / "lighting2"
+    d = root / "public" / "resources" / "runtime" / "scenes" / sid / "lighting3"
     meta_p = d / "meta.json"
     if not meta_p.exists():
         return [("warning",
-                 f"配了 lighting 但没烘 lighting2/ 载荷 —— 运行时会**安静地不启用**，"
+                 f"配了 lighting 但没烘 lighting3/ 载荷 —— 运行时会**安静地不启用**，"
                  f"画面上看着就像'光照没生效'。跑 "
-                 f"`python -m tools.scene_relight.bake --scene {sid}`")]
+                 f"`py -m tools.scene_relight.bake_gbuffer --scene {sid}`")]
     out: list[tuple[str, str]] = []
     try:
         meta = json.loads(meta_p.read_text(encoding="utf-8"))
-    except Exception as exc:
-        return [("error", f"lighting2/meta.json 解析失败：{exc}")]
+    except Exception as exc:                                       # noqa: BLE001
+        return [("error", f"lighting3/meta.json 解析失败：{exc}")]
 
     ver = meta.get("version")
-    if ver != _LIGHTING2_VERSION:
+    if ver != _LIGHTING3_VERSION:
         out.append(("error",
-                    f"lighting2 载荷代次 {ver} ≠ 运行时认的 {_LIGHTING2_VERSION}，整包会被忽略"))
+                    f"lighting3 载荷代次 {ver} ≠ 运行时认的 {_LIGHTING3_VERSION}，整包会被忽略"))
 
-    for name in ("normal.png", "skyvis.png", "skyvis_grid.bin"):
+    for name in ("base.png", "normal.png", "sky_occlusion.png", "ao.png",
+                 "irradiance.png"):
         if not (d / name).exists():
-            out.append(("error", f"lighting2/{name} 缺失"))
+            out.append(("error", f"lighting3/{name} 缺失"))
+    # 旧载荷的残留：留着不报错，但会白占几百 MB 的 DVC，而且下一个人会以为它还在用。
+    for name in ("transport.png", "emissive.png", "albedo.png", "e_est.png"):
+        if (d / name).exists():
+            out.append(("warning", f"lighting3/{name} 是上一代载荷的残留，重烘后应删掉"))
 
-    g = meta.get("grid") or {}
+    g = meta.get("char_grid") or {}
     try:
-        n = int(g["nx"]) * int(g["ny"]) * int(g["nz"])
-    except Exception:
-        out.append(("error", "lighting2/meta.json 的 grid 缺 nx/ny/nz"))
+        nch = len(g["channels"])
+        n = nch * int(g["nx"]) * int(g["ny"]) * int(g["nz"])
+    except Exception:                                              # noqa: BLE001
+        out.append(("error", "lighting3/meta.json 的 char_grid 缺 channels/nx/ny/nz"))
         n = 0
-    if n and (d / "skyvis_grid.bin").exists():
-        want = n * 4                      # f32
-        got = (d / "skyvis_grid.bin").stat().st_size
+    grid_f = d / str(g.get("file", "sky_sh_grid.bin"))
+    if not grid_f.exists():
+        out.append(("error", f"lighting3/{grid_f.name} 缺失 —— 角色会拿不到天穹传输，"
+                             f"而 v3 没有回落旧 probe 那条后路了"))
+    elif n:
+        want = n * 4                      # RGBA8
+        got = grid_f.stat().st_size
         if got != want:
             out.append(("error",
-                        f"skyvis_grid.bin {got} 字节 ≠ 网格声明的 {n} 个 f32（{want} 字节）"
+                        f"{grid_f.name} {got} 字节 ≠ 网格声明的 {n} 个 RGBA8（{want} 字节）"
                         f" —— 运行时会拒绝装载"))
 
-    gi = meta.get("gi")
-    if gi:
-        f = d / "gi_hitmap.bin"
-        if not f.exists():
-            out.append(("error", "meta 里声明了 gi 但 gi_hitmap.bin 缺失 —— GI 不会启用"))
-        else:
-            try:
-                want = int(gi["size"][0]) * int(gi["size"][1]) * 4      # RGBA8
-                got = f.stat().st_size
-                if got != want:
-                    out.append(("error",
-                                f"gi_hitmap.bin {got} 字节 ≠ 声明的 {gi['size']} × 4（{want}）"))
-            except Exception:
-                out.append(("error", "meta.gi.size 不是 [宽, 高]"))
+    # ---- 体检指标：不是错误，但作者该知道 ----
+    rt = (meta.get("roundtrip") or {}).get("p99_255")
+    if isinstance(rt, (int, float)) and rt > 2.0:
+        out.append(("error",
+                    f"往返 p99 {rt:.2f}/255 > 2 —— `base·E + emissive ≡ 原画` 这条恒等式"
+                    f"在存储精度上没兜住。这不是「看着差不多」的事：gi=1 是默认状态，"
+                    f"复原不回原画意味着**每个没重打光的场景都已经变样了**。"
+                    f"多半是某个 HDR 载荷的编码 scale 被离群值拉飞"))
+    codec = ((g.get("selfcheck") or {}).get("gi_codec_p99_rel"))
+    if isinstance(codec, (int, float)) and codec > 0.30:
+        out.append(("warning",
+                    f"角色 GI 通道编解码误差 p99 {codec:.0%} —— 角色的受光会与背景差一截。"
+                    f"多半是这张画的辐照度动态范围超出了对数编码的 ±8 档"))
+    sc = (g.get("selfcheck") or {})
+    up = sc.get("open_T_up")
+    # ⚠ 同一条门槛：场景没在吃天光模型（sky.intensity 收成 0）时，
+    #   「最开阔格点的天穹传输够不够 1」根本不影响画面 —— 报它就是永远修不掉的噪音。
+    #   室内 / 墓穴天然没有开阔点，实测 temple 0.766，那不是烘错了。
+    if isinstance(up, (int, float)) and abs(up - 1.0) > 0.15 and sky_intensity > 0.05:
+        out.append(("warning",
+                    f"角色网格最开阔格点的传输 {up:.3f}，解析真值应 ≈1.000，"
+                    f"而 sky.intensity={sky_intensity:.2f} 说明这个场景在吃天光模型 —— "
+                    f"多半是烘焙的求积或归一化出了问题"))
     return out
 
 

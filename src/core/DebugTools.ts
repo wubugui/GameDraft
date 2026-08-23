@@ -146,10 +146,13 @@ export interface DebugToolsDeps {
     /** 灯数与带影灯数——**带影灯数就是性能预算**，面板必须显示 */
     lightCount: number;
     shadowLightCount: number;
-    /** 生效中的角色标定常数（`params.radianceScale` 未写时是烘焙期反解出来的自动值）。 */
-    radianceScale: number;
-    /** 本场景烘了 GI 命中图吗？没烘的话 `giGain` 无效。 */
-    giReady: boolean;
+    /** 角色图集的参考天穹强度（见 `SceneLightingDef.charRefIntensity`）。 */
+    charRefIntensity: number;
+    /** 烘焙期算出来的体检指标。见 `SceneLightingSystem.diagnostics`。 */
+    diagnostics: {
+      analyticFitErr: number; roundtripP99: number;      lightScale: number;
+      openTUp: number; openTHorizontal: number;
+    } | null;
   } | null;
   /** 写参数（会标脏，下一帧重算缓存）。 */
   setSceneLighting: (patch: Partial<SceneLightingDef>) => void;
@@ -1422,21 +1425,38 @@ export class DebugTools {
       const p = cur.params;
       // ★ 带影灯数就是性能预算（GTX 970 上动态带影灯 4–6 盏是线）。超了标出来。
       const over = cur.shadowLightCount > 6 ? '  ⚠超预算' : '';
+      const d = cur.diagnostics;
+      // 体检指标放**第一行**：画面不对时，先看它是参数问题还是模型问题。
+      const health = d
+        ? `往返 ${d.roundtripP99.toFixed(2)}/255`
+          + (d.roundtripP99 > 2 ? ' ⚠基底量化档位不够' : '')
+          // ★ 摆灯的量级参考。E 的中位跨场景差 25000 倍，没有这个数只能瞎试。
+          + `　本场景光尺度 ≈${d.lightScale < 10 ? d.lightScale.toFixed(2) : d.lightScale.toFixed(0)}`
+          + `　解析逼近误差 ${d.analyticFitErr.toFixed(2)}`
+          + (d.analyticFitErr > 0.5 ? '（局部光强，重打光要摆真灯）' : '')
+          // ⚠ 这两个数是**本场景最开阔那 1% 格点**的开天率，不是求积自检。
+          //   低于 1.000/0.500 通常是对的 —— 封闭室内本来就没有完全开阔的格点
+          //   （实测 28 个场景 0.759–1.000 / 0.202–0.500，最低的是寺庙内景）。
+          //   求积本身的解析锚点由 skyTransport.test.ts 锁着，不该在这里再报一次警。
+          //   真正的故障信号是**超过解析上界**：T₀ ≤ cap₀(N) ≤ 1 是可证的。
+          + `　最开阔处开天 ${d.openTUp.toFixed(3)}/${d.openTHorizontal.toFixed(3)}`
+          + (d.openTUp > 1.03 ? ' ⚠超出解析上界 1.000，归一化被动过' : '')
+        : '（无烘焙体检数据）';
       valLine.textContent =
-        `灯 ${cur.lightCount} 盏（带影 ${cur.shadowLightCount}/6${over}）　世界宽 ${cur.backgroundWu.toFixed(0)} wu　角色高 150 wu\n`
-        + `天光 强度 ${p.sky.intensity.toFixed(3)}　半球 ${p.sky.hemi.toFixed(2)}　`
-        + `色温 ${Math.round(p.sky.kelvin ?? 6500)}K　AO ${(p.aoStrength ?? 1).toFixed(2)}\n`
-        + `画内遮蔽响应 day.hemi ${p.day.hemi === undefined ? '（用烘焙拟合值）' : p.day.hemi.toFixed(2)}　`
-        + `去霾 ${(p.dehaze ?? 1).toFixed(2)}\n`
+        `${health}\n`
+        + `灯 ${cur.lightCount} 盏（带影 ${cur.shadowLightCount}/6${over}）　世界宽 ${cur.backgroundWu.toFixed(0)} wu　角色高 150 wu\n`
+        + `烘焙GI ${(p.gi ?? 1).toFixed(2)}
+`
+        + `天光 强度 ${p.sky.intensity.toFixed(3)}　纬向分布 ${p.sky.profile.toFixed(2)}　`
+        + `色温 ${Math.round(p.sky.kelvin ?? 6500)}K\n`
+        + `环境反弹 强度 ${(p.ambient?.intensity ?? 0).toFixed(3)}　色温 ${Math.round(p.ambient?.kelvin ?? 6500)}K\n`
         + `灯体发光 ${(p.emissive?.gain ?? 0).toFixed(2)}　核心 ${(p.emissive?.coreRadius ?? 0).toFixed(1)}wu　`
         + `光晕 ${(p.emissive?.haloRadius ?? 0).toFixed(1)}wu×${(p.emissive?.haloGain ?? 0).toFixed(2)}\n`
         + `雾 σ ${(p.fog?.sigma ?? 0).toFixed(4)}/wu　高度尺度 ${(p.fog?.scaleHeight ?? 0).toFixed(0)}wu　`
         + `基准 ${(p.fog?.baseHeight ?? 0).toFixed(0)}wu　散射 ${(p.fog?.scatter ?? 0).toFixed(2)}\n`
-        + `角色标定 ${cur.radianceScale.toFixed(3)}`
+        + `角色参考天穹 ${cur.charRefIntensity.toFixed(3)}`
         + `　压平 ${(p.characterShape?.flatten ?? 0).toFixed(2)}`
-        + `　鼓起 ${(p.characterShape?.bulge ?? 0.22).toFixed(2)}`
-        + `　GI ${cur.giReady ? `增益 ${(p.giGain ?? 1).toFixed(2)}` : '（本场景未烘命中图）'}`
-        + (p.radianceScale === undefined ? '（自动估）' : '（已手动写死）') + '\n'
+        + `　鼓起 ${(p.characterShape?.bulge ?? 0.22).toFixed(2)}\n`
         + `显示 EV ${p.display.ev.toFixed(2)}　tonemap ${p.display.tonemap}　`
         + `对比 ${p.display.contrast.toFixed(2)}　饱和 ${p.display.saturation.toFixed(2)}　`
         + `白平衡 ${Math.round(p.display.whiteKelvin)}K`
@@ -1477,19 +1497,32 @@ export class DebugTools {
 
     wrap.appendChild(valLine);
 
-    group('① 天光（经烘出来的天穹可见性调制。AO=遮蔽强度，可读性旋钮）');
+    group('⓪ 烘焙 GI（伪世界 final gather 积出的原画自身照明。1 = 画面就是原画）');
+    // ★ 重打光的主旋钮就是这一对。把 GI 调低、把①的天光加上去 —— 这是一条
+    //   **连续**的路，不是"要么原画要么全新"的开关。
+    //   画内自发光（灶口/灯笼/天）不乘任何 E，所以单独一根：换天、吹灯改这里。
+    //   ⚠ 载荷里**没有"画内自发光"这一层**了（2026-08-23，制作人：「光都是单独打」）。
+    //     ⑤ 那组「灯体自发光」是另一回事：那是给**手摆的灯**画一个可见灯体。
+    wrap.appendChild(mkSlider('烘焙 GI 权重', 0, 1.5, 0.005,
+      () => P().gi ?? 1, (v) => patch({ gi: v }), 3));
+
+    group('① 天光（经烘出来的传输基调制。遮蔽与朝向已在传输基里，没有"要不要吃遮蔽"的旋钮）');
     wrap.appendChild(mkSlider('天光强度', 0, 1.5, 0.005,
       () => P().sky.intensity, (v) => patch({ sky: { ...P().sky, intensity: v } }), 3));
-    wrap.appendChild(mkSlider('天光半球', 0, 1, 0.01,
-      () => P().sky.hemi, (v) => patch({ sky: { ...P().sky, hemi: v } })));
+    // 0=均匀阴天 1=余弦天穹 2/4=越来越集中于天顶。它描述的是**天空长什么样**，
+    // 不是 v2 那个 hemi（那是个凑出来的混合权重，还和 day.hemi 互相约掉过）。
+    wrap.appendChild(mkSlider('天穹纬向分布', 0, 4, 0.05,
+      () => P().sky.profile, (v) => patch({ sky: { ...P().sky, profile: v } }), 2));
     wrap.appendChild(mkSlider('天光色温K', 2000, 15000, 50,
       () => P().sky.kelvin ?? 6500, (v) => patch({ sky: { ...P().sky, kelvin: v } }), 0));
-    wrap.appendChild(mkSlider('AO强度', 0, 1, 0.02,
-      () => P().aoStrength ?? 1, (v) => patch({ aoStrength: v })));
-    // 重打光是「原画 × S_new/S_day」，暗部 S_day→0 会让比值爆掉；这是那个夹子。
-    // 调小 = 暗部更保守（接近原画），调大 = 允许暗角被灯拉得更亮。
-    wrap.appendChild(mkSlider('比值上限', 1, 24, 0.25,
-      () => P().ratioMax ?? 8, (v) => patch({ ratioMax: v }), 2));
+
+    group('①a 环境反弹（多次反弹的低频底。吃遮蔽但不归零——少了它巷道会黑得不合理）');
+    wrap.appendChild(mkSlider('反弹强度', 0, 2, 0.005,
+      () => P().ambient?.intensity ?? 0,
+      (v) => patch({ ambient: { ...(P().ambient ?? { intensity: 0 }), intensity: v } }), 3));
+    wrap.appendChild(mkSlider('反弹色温K', 2000, 15000, 50,
+      () => P().ambient?.kelvin ?? 6500,
+      (v) => patch({ ambient: { ...(P().ambient ?? { intensity: 0 }), kelvin: v } }), 0));
     // 这两个曾经写死在两个 shader 的 uniform 初值里、没有任何写入方（F2 调不到、
     // 场景 JSON 也写不了），而缺省 thick=2 世界单位在雾津街头 ≈ 19.9 m ——
     // 厚度窗盖住一半场景深度，正是 lightingCore.glsl 注释里点名的「隔山打影」。
@@ -1515,9 +1548,11 @@ export class DebugTools {
       () => P().emissive?.haloGain ?? 0.2,
       (v) => patch({ emissive: { ...(P().emissive ?? { gain: 0 }), haloGain: v } })));
 
-    group('③ 去掉画里的白天散射（远景那片亮灰不除掉，夜里看着永远像"低亮度白天"）');
-    wrap.appendChild(mkSlider('去霾', 0, 1.5, 0.02,
-      () => P().dehaze ?? 1, (v) => patch({ dehaze: v })));
+    group('③ 角色标定（把角色送进和场景同一个基底空间）');
+    // 含义：「美术把角色当成被多强的天穹照亮来画的」。调它 = 角色整体明暗，
+    // 但**形体明暗与遮蔽响应不受影响**——那两样来自传输基与法线。
+    wrap.appendChild(mkSlider('角色参考天穹', 0.05, 4, 0.01,
+      () => P().charRefIntensity ?? 1, (v) => patch({ charRefIntensity: v }), 3));
 
     group('④ 雾（按消光系数 σ 定义，不是混合系数——将来上体积雾时参数继续有效）');
     // ⚠ σ 的量纲是 **1/wu**。场景纵深就是 worldWidth 的量级（几千 wu），σ≈0.002 就已经把远端糊平了
@@ -1566,19 +1601,6 @@ export class DebugTools {
         },
       }), 0));
 
-    group('④b 角色标定（角色 albedo 尺度 ↔ 场景辐射尺度）');
-    // ⚠ 缺省是**烘焙期反解出来的**（场景反解反射率 ÷ 角色图集实测反射率 0.0381）。
-    //   这个数描述的是这张原画的性质、不是美术意图，正常不该手动写死。
-    //   拖动本滑杆会把它固化进场景 JSON，之后换背景 / 重烘都不再自动跟随。
-    wrap.appendChild(mkSlider('角色标定 radianceScale', 0, 3, 0.01,
-      () => P().radianceScale ?? this.deps.getSceneLighting()?.radianceScale ?? 1,
-      (v) => patch({ radianceScale: v })));
-    // GI = 「角色如何被 relighting 后的场景照亮」（制作人 2026-08-20 的定义），
-    // 不做多次反弹。**只作用于角色**——背景的间接光已经画在原画里了，
-    // 再给背景加一遍就是重复计光。场景没烘 gi_hitmap 时本旋钮无效（增益被强制 0）。
-    wrap.appendChild(mkSlider('GI 反弹增益(仅角色)', 0, 3, 0.05,
-      () => P().giGain ?? 1,
-      (v) => patch({ giGain: v })));
     // ⚠ 这两个是**统一光影自己的**形体参数，不是旧 probe 载荷里那对同名值。
     //   旧载荷那对是给旧着色模型调的：那边 flatten 只是让 probe 的 SH 辐照更均匀，
     //   这边 flatten 直接压掉每盏灯的 N·L —— 压到 1 就等于"左边的灯和右边的灯一样亮"。
@@ -1603,7 +1625,14 @@ export class DebugTools {
 
     const btn = (label: string, fn: () => void) => ({ label, noRefresh: true, fn: () => { fn(); sync(); } });
     const TONEMAPS: SceneLightingDef['display']['tonemap'][] = ['none', 'reinhard', 'filmic'];
-    const DEBUG_NAMES = ['正常', '天穹可见性', '法线', 'S_day', 'S_new', '比值', '线性化原画'];
+    // 逐 buffer 视图。**下标即 shadeCore3.glsl 的 SC3_DEBUG_* 编号**，
+    // 场景与角色共用同一套 —— 同一个模式下两边显示的必是同一个量，
+    // 这正是"能拿它定位问题"的前提（不然两边各画各的，对照没有意义）。
+    const DEBUG_NAMES = [
+      '正常', '比例基底 I/E', '法线', '世界位置', '天穹可见度 V', 'bent 方向',
+      '天光辐照', '日月辐照', '灯辐照', '总辐照 E（纯光照）', '烘焙 GI（gather 出的 E）',
+      '日月阴影', '自发光（烘焙+灯体）', '越界指示', '反射（本项目恒 0）', '局部 AO',
+    ];
     let dbg = 0;
 
     return {
@@ -1614,10 +1643,21 @@ export class DebugTools {
           const i = TONEMAPS.indexOf(P().display.tonemap);
           patch({ display: { ...P().display, tonemap: TONEMAPS[(i + 1) % TONEMAPS.length] } });
         }),
-        btn('调试视图 循环', () => {
+        btn('buffer 视图 →', () => {
           dbg = (dbg + 1) % DEBUG_NAMES.length;
           this.deps.setSceneLightingDebug(dbg);
-          noteMsg = `调试视图：${DEBUG_NAMES[dbg]}`;
+          noteMsg = `buffer 视图 [${dbg}] ${DEBUG_NAMES[dbg]}`
+            + (dbg === 14 ? '　（Lambert-only，不重建高光，所以这张恒为黑）' : '');
+        }),
+        btn('buffer 视图 ←', () => {
+          dbg = (dbg + DEBUG_NAMES.length - 1) % DEBUG_NAMES.length;
+          this.deps.setSceneLightingDebug(dbg);
+          noteMsg = `buffer 视图 [${dbg}] ${DEBUG_NAMES[dbg]}`;
+        }),
+        btn('buffer 视图 关', () => {
+          dbg = 0;
+          this.deps.setSceneLightingDebug(0);
+          noteMsg = '';
         }),
       ],
     };

@@ -2,8 +2,8 @@ import { BufferImageSource, type Renderer, type Texture, type TextureSource } fr
 
 import type { SceneData, SceneDepthConfig, SceneLightingDef } from '../data/types';
 import { LitBackground } from '../rendering/lighting/LitBackground';
+import { RawPatchRelightFilter } from '../rendering/lighting/RawPatchRelightFilter';
 import { SceneLightingPass, type SceneLightingGeometry } from '../rendering/lighting/SceneLightingPass';
-import { GiBouncePass } from '../rendering/lighting/GiBouncePass';
 import type { PackedLights } from '../rendering/lighting/lightPacking';
 import { resolveDepthPerSy } from '../utils/worldReconstruct';
 import type { AssetManager } from './AssetManager';
@@ -12,59 +12,94 @@ import { sceneRuntimeAssetUrl } from './projectPaths';
 
 const T = 'SceneLighting';
 
-/** `lighting2/meta.json` 的载荷。由 `tools/scene_relight/bake.py` 产出。 */
+/** `lighting3/meta.json` 的载荷。由 `tools/scene_relight/bake_gbuffer.py` 产出。 */
 export interface LightingGeometryMeta {
   version: number;
-  background_sha1: string;
+  background_sha1: string | null;
   work: { w: number; h: number };
   native: { w: number; h: number };
   cal: { ppu: number; cx: number; cy: number };
   M: number[][];
-  grid: {
-    nx: number; ny: number; nz: number;
-    x0: number; x1: number; y0: number; y1: number; z0: number; z1: number;
-  };
-  band: number;
+  // ⚠ 这里曾经声明过顶层的 `grid` / `band` / `depth_range` 三个必填字段。
+  //   烘焙器**从来没写过**它们（网格与 band 在 `char_grid` 里），也没有任何
+  //   消费端读它们 —— `tsc` 因此全绿，数据里却是空的。同一个坑在 `scale` 上
+  //   炸过一次（真机装载即抛）。**类型声明不是数据契约**：改这个接口时
+  //   一定要跟 `bake_gbuffer.bake()` 里的 `meta = {...}` 逐键对一遍。
   /**
    * 刻度链。`char_wu` 只反映**取景远近**（角色固定 150 场景坐标高，而
-   * worldWidth 逐场景 700–4000），**不是**摆灯的尺度参照——那个看 `backgroundWu`。
+   * worldWidth 逐场景 700–4000），**不是**摆灯的尺度参照。
    */
   scale: { char_wu: number; scene_per_wu: number };
-  depth_range: [number, number];
-  /** 烘焙期拟合出的原画遮蔽响应。场景没写 day.hemi 时用它——手填必错。 */
-  day_hemi?: number;
-  day_hemi_residual_corr?: number;
+  /** march 参数（诊断用，运行时不读 —— 它有自己的一套 uniform）。 */
+  march: { steps: number; length: number; bias: number;
+           bias_growth: number; thickness: number };
+  /** 拟合出的白天大气散射（诊断用；去霾已在烘焙期做完）。 */
+  haze: { k: number; strength: number; color: number[]; residual: number };
   /**
-   * 烘焙期拟合出的**画内白天大气散射**。不除掉它，远景在夜里会继续发亮，
-   * 而"远处一片亮灰"是判定"这是白天"最强的信号之一（实测远/近亮度比 4.32）。
-   */
-  haze?: {
-    k: number;
-    strength: number;
-    color: [number, number, number];
-    depth_min: number;
-    depth_max: number;
-    residual: number;
-  };
-  /**
-   * 从原画反解出的反射率（去霾后再除 S_day）。角色标定常数的地基。
+   * 天穹遮蔽（`sky_occlusion.png`，RGBA8：RGB = bent 方向·½+½，A = 余弦加权可见度）。
    *
-   * 场景 = `A_scene × S_new`，角色 = `A_char × S_new × radianceScale`。
-   * 两边的 `S_new` 是同一个，所以能不能对上只取决于反射率尺度对不对齐。
+   * ⚠ v3 起**不再逐像素预投影天空**。上一版每像素存 4 个纬向通道的传输，
+   *   角色网格还要为同一件事再存 4 个 SH-L1 通道 —— 同一个量两种参数化，
+   *   实测在角色典型法线处两边差 10%–15%。现在两侧都只存
+   *   (bent 方向, 可见度)，天空是运行时的全局 SH。
    */
-  albedo?: { albedo_mean: number; albedo_p25: number; albedo_p75: number };
+  sky_occlusion: { file: string; encoding: string; directions: number };
+  /** 可见度对方向的线性重建 `V(ω)=clamp(a+b·ω,0,1)`（`vis_linear.png`）。 */
+  vis_linear: { file: string; encoding: string; b_max: number };
+  /** 烘焙期反解出的直射光（方向 / 辐射 / 拟合降幅）。migrate3 会把它写进场景。 */
+  direct_light: { found: boolean; dir: number[]; radiance: number[];
+                  elevation_deg?: number; azimuth_deg?: number; drop?: number };
+  /** 局部 AO（`ao.png`，R8）。**与天穹传输是两个量** —— 一个问"看得见多少天"，
+   *  一个问"有多封闭"。环境反弹底走这一路。 */
+  ao: { file: string; encoding: string; min: number; max: number; mean: number };
   /**
-   * GI 命中图的元信息。缺这一节 = 本场景没烘 `gi_hitmap.bin`，GI 整体不启用
-   * （画面只是少一层反弹光，不会崩）。
+   * **烘焙 GI** —— 伪世界 final gather 积出的原画自身辐照度。
+   *
+   *     E(x) = ∫ L_in(x,ω)·max(N·ω,0) dω ÷ ∫ max(N·ω,0) dω
+   *     L_in = HDR(原画)@命中点   /   天空辐射@逃逸
+   *
+   * 画本身就是辐射缓存，所以这一步不含任何拟合系数。`gather_gain` 是把
+   * "伪世界里没有的光"（太阳、多次反弹）吸收进整体尺度的那个自由因子。
    */
-  gi?: {
-    ndir: number;
-    dirs: number[][];
-    work: { w: number; h: number };
-    /** [宽, 高] = [nx*nz, ny*ndir] */
-    size: [number, number];
-    hit_rate: number;
+  irradiance: {
+    file: string; encoding: string; method: string;
+    w: number; h: number;
+    /** 对数编码参数（解码必需，逐场景不同）。 */
+    scale: number; log_span: number;
+    hdr_max: number; gather_gain: number; sky_radiance: number[];
+    directions: number;
+    min: number; max: number; mean: number;
   };
+  /**
+   * 运行时默认灯光的**建议值**：若要用解析天光+环境替换掉烘焙 GI，大约填多少。
+   * `rel_err` 是这个两基逼近相对 `E` 的平均相对误差 —— 大就说明这张画的照明
+   * 有强烈的局部结构（灶口、窗），两个全局基表达不了，该摆真灯。
+   */
+  runtime_fit: { sky: number; ambient: number; rel_err: number; e_chroma: number[] };
+  /**
+   * 比例基底 `I_原画 / E`。**不是 albedo**（见 shadeCore3.glsl 头注释）。
+   * `clamped_frac` = 出射辐射超过入射辐照的像素占比，那些像素的超出部分
+   * 被归进 `emissive`。
+   */
+  base: {
+    file: string; encoding: string;
+    /** 对数编码参数（解码必需）。 */
+    scale: number; log_span: number;
+    w: number; h: number;
+    median: number; p99_9: number; clamped_frac: number; chroma: number[];
+  };
+  /** 角色侧的 SH-L1 传输网格。 */
+  char_grid: {
+    file: string; nx: number; ny: number; nz: number;
+    x0: number; x1: number; y0: number; y1: number; z0: number; z1: number;
+    char_wu: number; band: number;
+    /** GI 三通道的对数编码参数（解码必需，逐场景不同）。 */
+    gi_scale: number; gi_log_span: number;
+    channels: string[];
+    selfcheck: { open_T_up: number; open_T_horizontal: number };
+  };
+  /** `gi = 1` 时输出与原画的逐像素差（存储精度体检，单位 1/255）。 */
+  roundtrip: { mean_255: number; p99_255: number; max_255: number };
 }
 
 /**
@@ -87,7 +122,7 @@ export interface LightingGeometryMeta {
 export const CHARACTER_ALBEDO_REFERENCE = 0.0381;
 
 /** 本系统认得的载荷代次。改产物布局必须 +1，并同步 `bake.py` 与 validate。 */
-export const LIGHTING2_VERSION = 1;
+export const LIGHTING3_VERSION = 5;
 
 /**
  * 统一光影系统的场景侧协调者。
@@ -99,18 +134,24 @@ export const LIGHTING2_VERSION = 1;
  * ②【逐帧】    LitBackground      → 雾 → 显示变换 → 屏幕
  * ```
  *
- * 场景没有 `lighting` 块、或没烘 `lighting2/` 载荷时，本系统**整体不启用**，
+ * 场景没有 `lighting` 块、或没烘 `lighting3/` 载荷时，本系统**整体不启用**，
  * 背景照旧走原来的 Sprite 路径（旧场景零影响）。
  */
 export class SceneLightingSystem {
   private meta: LightingGeometryMeta | null = null;
   private pass: SceneLightingPass | null = null;
+  private geo: SceneLightingGeometry | null = null;
+  /**
+   * `renderRaw` 装饰实体的重打光滤镜。它们不走角色那条链（那条会除掉
+   * `charRefIntensity` 反解基底，对"从背景抠出来的补丁"是错的），只吃
+   * `E_目标/E` 这个比值 —— 见 `RawPatchRelightFilter`。
+   */
+  private readonly rawPatchFilters = new Set<RawPatchRelightFilter>();
   private litBg: LitBackground | null = null;
   private def: SceneLightingDef | null = null;
-  private skyvisGrid: Float32Array | null = null;
-  private skyvisTex: BufferImageSource | null = null;
-  private giHitmapTex: BufferImageSource | null = null;
-  private giPass: GiBouncePass | null = null;
+  /** 角色侧的 SH-L1 传输网格（RGBA8，逐通道 Z 切片平铺）。 */
+  private shGridTex: BufferImageSource | null = null;
+  private shGridBytes: Uint8Array | null = null;
   private enabled = false;
 
   get active(): boolean {
@@ -122,48 +163,55 @@ export class SceneLightingSystem {
     return this.litBg?.mesh ?? null;
   }
 
-  /** 角色侧要用的 3D 天穹可见性网格（CPU 侧数据）。 */
-  get skyVisibilityGrid(): { data: Float32Array; meta: LightingGeometryMeta } | null {
-    return this.skyvisGrid && this.meta ? { data: this.skyvisGrid, meta: this.meta } : null;
-  }
-
   /**
-   * 3D 天穹可见性网格的 GPU 纹理。
+   * 角色侧的 **SH-L1 天穹传输网格**（GPU 纹理）。
    *
-   * WebGL2 有 sampler3D，但 Pixi v8 的 TextureSource 不给 3D 纹理，
-   * 所以按 **Z 切片横向平铺** 成 2D：宽 = nx×nz，高 = ny，列 = `x + z·nx`。
-   * 三线性在 shader 里手写（与体素卷那套平铺同思路）。
+   * 每格每通道存 `(a0, a1)`，运行时 `T_k(N) = a0 + a1·N` —— 这是角色能和场景
+   * 走同一套光照的前提：场景把法线烘进了传输基（逐像素法线固定），
+   * 而角色的法线**逐像素在变**，喂标量就永远对不上。v2 的标量网格实测比角色
+   * 真正需要的那个量偏高 61%（中位），而且身上完全没有方向性。
    *
-   * ⚠ 两条：①`scaleMode: 'nearest'` + shader 里 `texelFetch`——硬件线性过滤会跨
-   * Z 切片边界把相邻切片混进来（平铺图集的经典坑），插值必须自己算。
-   * ②走 `r8unorm` 而不是浮点：与场景那张 `skyvis.png` **同为 8 位**，
-   * 于是角色与背景在同一处拿到的遮蔽值逐位相同，不会在接缝上分家。
+   * 布局：4 个通道**纵向堆叠**成一张图 —— 宽 = nx*nz，高 = ny*4，
+   * 通道 c 占 [c*ny, (c+1)*ny) 行；每行内列 = x + z*nx。
+   *
+   * 两条铁律：
+   * 1. scaleMode nearest + shader 里 texelFetch —— 硬件线性过滤会跨 Z 切片与
+   *    通道边界混样（平铺图集的经典坑），三线性必须自己算。
+   * 2. alphaMode no-premultiply-alpha —— a1 的三个分量装在 GBA 里当**数据**用，
+   *    走默认装载通道会在解码期被预乘毁掉（见 pixi-v8-traps）。
    */
-  get skyVisibilityTexture(): TextureSource | null {
-    if (this.skyvisTex) return this.skyvisTex;
-    if (!this.skyvisGrid || !this.meta) return null;
-    const g = this.meta.grid;
+  get skyTransportTexture(): TextureSource | null {
+    if (this.shGridTex) return this.shGridTex;
+    if (!this.shGridBytes || !this.meta) return null;
+    const g = this.meta.char_grid;
+    const nch = g.channels.length;
     const w = g.nx * g.nz;
-    const h = g.ny;
-    const packed = new Uint8Array(w * h);
-    for (let z = 0; z < g.nz; z++) {
-      for (let y = 0; y < g.ny; y++) {
-        for (let x = 0; x < g.nx; x++) {
-          // 烘焙侧是 C 序 (nx, ny, nz)
-          const v = this.skyvisGrid[(x * g.ny + y) * g.nz + z];
-          packed[y * w + (x + z * g.nx)] = Math.max(0, Math.min(255, Math.round(v * 255)));
+    const h = g.ny * nch;
+    const packed = new Uint8Array(w * h * 4);
+    // 烘焙侧是 C 序 (channel, x, y, z, rgba)
+    for (let c = 0; c < nch; c++) {
+      for (let z = 0; z < g.nz; z++) {
+        for (let y = 0; y < g.ny; y++) {
+          for (let x = 0; x < g.nx; x++) {
+            const src = ((((c * g.nx + x) * g.ny + y) * g.nz) + z) * 4;
+            const dst = ((c * g.ny + y) * w + (x + z * g.nx)) * 4;
+            packed[dst] = this.shGridBytes[src];
+            packed[dst + 1] = this.shGridBytes[src + 1];
+            packed[dst + 2] = this.shGridBytes[src + 2];
+            packed[dst + 3] = this.shGridBytes[src + 3];
+          }
         }
       }
     }
-    this.skyvisTex = new BufferImageSource({
+    this.shGridTex = new BufferImageSource({
       resource: packed,
       width: w,
       height: h,
-      format: 'r8unorm',
+      format: 'rgba8unorm',
       scaleMode: 'nearest',
       alphaMode: 'no-premultiply-alpha',
     });
-    return this.skyvisTex;
+    return this.shGridTex;
   }
 
   /**
@@ -193,58 +241,14 @@ export class SceneLightingSystem {
     return m ? (m.work.w / Math.max(m.cal.ppu, 1e-9)) * this.wuPerQUnit : 0;
   }
 
-  /**
-   * GI 反弹辐照网格。没烘 `gi_hitmap.bin` 的场景返回 null，
-   * 角色侧据此把增益压到 0 —— 画面只是少一层反弹光。
-   */
-  get giBounceTexture(): TextureSource | null {
-    return this.giPass?.bounce ?? null;
-  }
-
-  /**
-   * 装载 GI 命中图并建反弹 pass。缺料一律安静跳过（GI 是加分项，不是必需）。
-   *
-   * ⚠ 命中图是**几何项**：它记的是"从这个网格点往那个方向看会撞到哪面墙"，
-   * 与灯、时刻、天光全无关。所以摆灯、调参、推进时刻都**不用重烘**——
-   * 变的只是"撞到的那面墙现在有多亮"，那是 `GiBouncePass` 每次脏时现查的。
-   */
-  private async loadGiHitmap(sceneId: string, meta: LightingGeometryMeta): Promise<void> {
-    const gi = meta.gi;
-    const pass = this.pass;
-    if (!gi || !pass) return;
-    const radiance = pass.radiance;
-    if (!radiance) return;
-    let bytes: ArrayBuffer;
-    try {
-      const res = await fetch(sceneRuntimeAssetUrl(sceneId, 'lighting2/gi_hitmap.bin'));
-      // ⚠ 本仓库 dev server 上文件不存在返回 **200 + HTML**，判据必须看 content-type
-      if (!res.ok || (res.headers.get('content-type') ?? '').includes('text/html')) return;
-      bytes = await res.arrayBuffer();
-    } catch {
-      return;
-    }
-    const [w, h] = gi.size;
-    const expect = w * h * 4;
-    if (bytes.byteLength !== expect) {
-      depthError(T, `${sceneId}: gi_hitmap 长度 ${bytes.byteLength} ≠ 声明 ${expect}，GI 不启用`);
-      return;
-    }
-    this.giHitmapTex = new BufferImageSource({
-      resource: new Uint8Array(bytes),
-      width: w,
-      height: h,
-      format: 'rgba8unorm',
-      scaleMode: 'nearest',
-      alphaMode: 'no-premultiply-alpha',
-    });
-    const g = meta.grid;
-    this.giPass = new GiBouncePass(radiance.source, {
-      hitmap: this.giHitmapTex,
-      gridN: [g.nx, g.ny, g.nz],
-      ndir: gi.ndir,
-    });
-  }
-
+  // ⚠ **屏幕空间反弹那套**（`gi_hitmap` + `GiBouncePass`）已在 v3 移除，
+  //   依据是制作人 2026-08-22 的「角色暂时不考虑 gi，把 gi 拿掉」。
+  //
+  //   ⚠ 现在 `sc3Shade` 第四个参数上接的**烘焙 GI 不是那个东西**，别混为一谈：
+  //   它是烘焙期在伪世界里 final gather 积出的**场景自身辐照度**（`irradiance.png`
+  //   / 网格 5..7 通道），是"原画里本来就有的光"，不是新加的一遍反弹。
+  //   场景默认 `gi = 1` 时画面精确等于原画；角色查同一份网格 —— 这正是
+  //   「融入场景」要的东西，也是角色在未重打光的场景里唯一的光源。
   /**
    * 角色侧要的**场景那一半**几何：深度场标定 + M + 3D 网格边界。
    *
@@ -263,7 +267,7 @@ export class SceneLightingSystem {
     const m = this.meta;
     const p = this.pass;
     if (!m || !p) return null;
-    const g = m.grid;
+    const g = m.char_grid;
     const geo = p.geometry;
     return {
       depthSize: [m.native.w, m.native.h],
@@ -285,29 +289,82 @@ export class SceneLightingSystem {
   }
 
   /**
-   * 角色标定常数。场景显式写了 `radianceScale` 就用它，否则由烘焙期反解的反射率推。
+   * 角色图集的参考天穹强度 —— 把角色送进和场景同一个基底空间。
    *
-   * ⚠ 这个数**不该手填**，理由与 `day.hemi` 同源：它描述的是这张原画的性质，
-   * 不是美术意图。填错的表现是角色系统性偏亮/偏暗，且怎么调灯都对不上
-   * ——因为错的是尺度不是光。
+   * 见 `SceneLightingDef.charRefIntensity`：角色基底 = 图集 ÷ ((1+N·up)/2 × 本值)。
+   * 缺省 1（美术按"单位强度天穹"画的）。
+   *
+   * ⚠ 这**不是** v2 的 `radianceScale`。那个是标量总增益，补不上逐像素的场；
+   *   这里是解析除法的分母系数。
    */
-  get radianceScale(): number {
-    const explicit = this.def?.radianceScale;
-    if (explicit !== undefined) return explicit;
-    const mean = this.meta?.albedo?.albedo_mean;
-    if (mean === undefined || !(mean > 0)) return 1;
-    return mean / CHARACTER_ALBEDO_REFERENCE;
+  get charRefIntensity(): number {
+    return this.def?.charRefIntensity ?? 1;
+  }
+
+  /**
+   * 角色网格 GI 通道的对数编码参数。**逐场景不同**（scale = 该场景网格 a₀ 的中位）。
+   *
+   * ⚠ 没有合理缺省：填错不会报错，只是角色整体偏亮/偏暗一个常数倍。
+   * 所以由这里从 meta 直读，绝不在着色器侧兜底。
+   */
+  get giScale(): number {
+    return this.meta?.char_grid.gi_scale ?? 1;
+  }
+
+  get giLogSpan(): number {
+    return this.meta?.char_grid.gi_log_span ?? 16;
+  }
+
+  /**
+   * 烘焙期算出来的**体检指标**。给 F2 面板显示 —— 这几个数是判断
+   * 「画面不对是参数问题还是模型问题」的第一手依据，藏起来等于让人瞎调。
+   *
+   * - `analyticFitErr`：用解析天光+环境两个基去逼近烘焙 `E` 的平均相对误差。
+   *   **大不是错误** —— 它说的是"这张画的照明有强烈局部结构（灶口/窗），
+   *   两个全局基表达不了"。重打光时该摆真灯，而不是指望调天光。
+   * - `roundtripP99`：`gi = 1` 时输出与原画的逐像素差（1/255）。
+   *   这是**存储精度**体检，超过 2 就该怀疑基底的量化档位。
+   * - `lightScale`：这个场景**一盏灯该填多大强度**的量级参考（= 用解析天光+环境
+   *   逼近烘焙 `E` 时那两个系数之和）。
+   *
+   *   ⚠ 这条必须显示出来，否则摆灯只能靠瞎试：`E` 的中位跨场景差 **25000 倍**
+   *   （城隍庙夜 0.04 ↔ 梦_醒来土路 1041），因为 `to_hdr` 对亮画的展开是指数级的。
+   *   而这个尺度**不能归一** —— `base ≤ 1` 这条物理钳位就绑在 `E` 的绝对值上，
+   *   把 `E` 缩到中位 1 会让 base 全部撞顶、整张图变成自发光。既然改不了，
+   *   就得把它摆到台面上。
+   * - `clampedPixels`：**发光压过反射**的像素占比 —— 也就是"重打光时不会跟着
+   *   变的那部分画面"。这里刻意用**像素**口径而不是光能口径：灯的 HDR 辐射
+   *   极亮，按光能算连 teahouse 这种普通室内都报 79%，而实际上 91% 的像素
+   *   照样跟着灯变。作者要判断的是"改光有多少画面会响应"，那是面积问题。
+   *   （光能口径仍在 meta 里：`emissive.surface_energy_frac`。）
+   * - `openTUp` / `openTHorizontal`：角色网格最开阔格点上的传输值。
+   *   户外应当贴近解析真值 **1.000 / 0.500**；偏离说明烘焙的求积或归一化出了问题。
+   */
+  get diagnostics(): {
+    analyticFitErr: number; roundtripP99: number;    lightScale: number; openTUp: number; openTHorizontal: number;
+  } | null {
+    const m = this.meta;
+    if (!m) return null;
+    return {
+      analyticFitErr: m.runtime_fit.rel_err,
+      roundtripP99: m.roundtrip.p99_255,
+      lightScale: m.runtime_fit.sky + m.runtime_fit.ambient,
+      openTUp: m.char_grid.selfcheck.open_T_up,
+      openTHorizontal: m.char_grid.selfcheck.open_T_horizontal,
+    };
   }
 
   /**
    * 装载一个场景的光影。任何一步缺料都**安静地不启用**（返回 false），不打扰玩家；
    * dev 下留日志便于排查（构建期严于运行时，运行时对内容错误容错跳过）。
    */
+  // ⚠ v3 起**不再需要原画**：渲染路径上的背景本体是 `lighting3/base.png`
+  //   （原画 ÷ E_est，烘焙期算好）。原画只在本方法返回 false 时由 SceneManager
+  //   当普通 Sprite 兜底。参数删掉是为了让"谁在用原画"这件事一眼可见。
   async load(
     sceneId: string,
     sceneData: SceneData,
     assetManager: AssetManager,
-    paintingTexture: Texture,
   ): Promise<boolean> {
     this.unload();
     const def = sceneData.lighting;
@@ -324,24 +381,38 @@ export class SceneLightingSystem {
     // ⚠ 走 loadOptionalJson 不走 loadJson：本仓库 dev server 上文件不存在返回的是
     //   **200 + HTML** 而不是 404，判据必须看 content-type（optional-asset-probe 机制卡）。
     const meta = await assetManager.loadOptionalJson<LightingGeometryMeta>(
-      sceneRuntimeAssetUrl(sceneId, 'lighting2/meta.json'),
+      sceneRuntimeAssetUrl(sceneId, 'lighting3/meta.json'),
     );
     if (!meta) {
-      depthLog(T, `${sceneId}: 没烘 lighting2/（跑 \`--bake --scene ${sceneId}\`）`);
+      depthLog(T, `${sceneId}: 没烘 lighting3/（跑 \`py -m tools.scene_relight.bake_gbuffer --scene ${sceneId}\`）`);
       return false;
     }
-    if (meta.version !== LIGHTING2_VERSION) {
-      depthError(T, `${sceneId}: lighting2 载荷版本 ${meta.version} ≠ ${LIGHTING2_VERSION}，整包忽略`);
+    if (meta.version !== LIGHTING3_VERSION) {
+      depthError(T, `${sceneId}: lighting3 载荷版本 ${meta.version} ≠ ${LIGHTING3_VERSION}，整包忽略`);
       return false;
     }
 
     let normal: Texture;
-    let skyvis: Texture;
+    let skyOcc: Texture;
+    let visLin: Texture;
+    let aoTex: Texture;
+    let base: Texture;
+    let irradiance: Texture;
     try {
-      normal = await assetManager.loadTexture(sceneRuntimeAssetUrl(sceneId, 'lighting2/normal.png'));
-      skyvis = await assetManager.loadTexture(sceneRuntimeAssetUrl(sceneId, 'lighting2/skyvis.png'));
+      normal = await assetManager.loadTexture(sceneRuntimeAssetUrl(sceneId, 'lighting3/normal.png'));
+      skyOcc = await assetManager.loadTexture(sceneRuntimeAssetUrl(sceneId, 'lighting3/sky_occlusion.png'));
+      visLin = await assetManager.loadTexture(sceneRuntimeAssetUrl(sceneId, 'lighting3/vis_linear.png'));
+      aoTex = await assetManager.loadTexture(sceneRuntimeAssetUrl(sceneId, 'lighting3/ao.png'));
+      // ★ base 是**渲染路径上的背景本体**（原画不再进渲染），必须原生分辨率、
+      //   且必须 await 纳入加载门 —— 它没到位就没有背景可画。
+      base = await assetManager.loadTexture(sceneRuntimeAssetUrl(sceneId, 'lighting3/base.png'));
+      // ★ 烘焙 GI 与自发光同样是**正式载荷**，不是调试图：缺了它们默认画面
+      //   （gi=1）就不再等于原画。所以一起纳入加载门，不做可选降级 ——
+      //   静默少一张图的后果是"这个场景怎么变暗了"，查起来极贵。
+      irradiance = await assetManager.loadTexture(
+        sceneRuntimeAssetUrl(sceneId, 'lighting3/irradiance.png'));
     } catch (e) {
-      depthError(T, `${sceneId}: lighting2 贴图装载失败`, e);
+      depthError(T, `${sceneId}: lighting3 贴图装载失败`, e);
       return false;
     }
 
@@ -366,9 +437,19 @@ export class SceneLightingSystem {
       );
     }
 
+    const cg = meta.char_grid;
     const geo: SceneLightingGeometry = {
+      base,
+      baseScale: meta.base.scale,
+      baseLogSpan: meta.base.log_span,
+      irradiance,
+      irradianceScale: meta.irradiance.scale,
+      irradianceLogSpan: meta.irradiance.log_span,
       normal,
-      skyvis,
+      skyOcc,
+      visLin,
+      visBMax: meta.vis_linear.b_max,
+      ao: aoTex,
       depth: depthTex,
       depthSize: [meta.native.w, meta.native.h],
       cal: [depthCfg.M.ppu, depthCfg.M.cx, depthCfg.M.cy],
@@ -383,21 +464,15 @@ export class SceneLightingSystem {
         [R[1][0], R[1][1], R[1][2]],
         [R[2][0], R[2][1], R[2][2]],
       ],
-      haze: meta.haze
-        ? {
-          k: meta.haze.k,
-          strength: meta.haze.strength,
-          color: meta.haze.color,
-          depthMin: meta.haze.depth_min,
-          depthMax: meta.haze.depth_max,
-        }
-        : undefined,
+      gridMin: [cg.x0, cg.y0, cg.z0],
+      gridMax: [cg.x1, cg.y1, cg.z1],
     };
 
     this.meta = meta;
     this.def = def;
-    this.pass = new SceneLightingPass(paintingTexture, geo);
-    this.pass.applyParams(def, meta.day_hemi);
+    this.geo = geo;
+    this.pass = new SceneLightingPass(geo);
+    this.pass.applyParams(def);
     this.pass.markDirty();
 
     // LitBackground 采样 pass 的 RT，所以必须先让 pass 建出 RT
@@ -416,35 +491,73 @@ export class SceneLightingSystem {
     );
     this.litBg.applyParams(def);
 
-    // 3D 天穹可见性网格（角色侧 P3 用）；缺了不致命
+    // 角色侧的 SH-L1 传输网格。⚠ 缺了**是致命的**：角色会拿不到天穹传输，
+    //   而 v3 里角色与场景走同一条链，没有"回落旧 probe"这个后路了。
+    //   所以这里失败要整包不启用，而不是安静降级成平光。
+    const g = meta.char_grid;
     try {
-      const url = sceneRuntimeAssetUrl(sceneId, 'lighting2/skyvis_grid.bin');
-      const buf = await (await fetch(url)).arrayBuffer();
-      const expect = meta.grid.nx * meta.grid.ny * meta.grid.nz;
-      const arr = new Float32Array(buf);
-      this.skyvisGrid = arr.length === expect ? arr : null;
-      if (!this.skyvisGrid) {
-        depthError(T, `${sceneId}: skyvis_grid 长度 ${arr.length} ≠ 网格声明 ${expect}`);
+      const url = sceneRuntimeAssetUrl(sceneId, `lighting3/${g.file}`);
+      const res = await fetch(url);
+      // ⚠ 本仓库 dev server 上文件不存在返回 **200 + HTML**，判据必须看 content-type
+      if (!res.ok || (res.headers.get('content-type') ?? '').includes('text/html')) {
+        throw new Error('missing');
       }
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      const expect = g.channels.length * g.nx * g.ny * g.nz * 4;
+      if (bytes.length !== expect) {
+        depthError(T, `${sceneId}: sky_sh_grid 长度 ${bytes.length} ≠ 网格声明 ${expect}`);
+        this.unload();
+        return false;
+      }
+      this.shGridBytes = bytes;
     } catch {
-      this.skyvisGrid = null;
+      depthError(T, `${sceneId}: 拿不到 lighting3/${g.file}，统一光影不启用`);
+      this.unload();
+      return false;
     }
 
-    // GI 命中图（P5）。缺了不致命：GI 增益会被压到 0，画面只是少一层反弹光。
-    await this.loadGiHitmap(sceneId, meta);
-
     this.enabled = true;
-    depthLog(T, `${sceneId}: 统一光影已启用（角色高 ${meta.scale.char_wu.toFixed(3)} wu）`
-      + `${this.giPass ? '，GI 反弹已接' : ''}`);
+    depthLog(T, `${sceneId}: 统一光影 v3 已启用（角色高 ${meta.scale.char_wu.toFixed(3)} wu，`
+      + `往返 p99 ${meta.roundtrip.p99_255.toFixed(2)}/255）`);
     return true;
   }
 
   /** 改了光照参数：写进 uniform 并标脏。下一帧 update 时重算缓存。 */
   applyParams(def: SceneLightingDef): void {
     this.def = def;
-    this.pass?.applyParams(def, this.meta?.day_hemi);
+    this.pass?.applyParams(def);
     this.pass?.markDirty();
     this.litBg?.applyParams(def);
+    // 装饰补丁与背景吃**同一组**显示变换 —— 分家的话补丁的色调会和背景对不上，
+    // 而那正是 `renderRaw` 当初要躲开的毛病。
+    for (const f of this.rawPatchFilters) f.applyParams(def);
+  }
+
+  /**
+   * 给 `renderRaw` 装饰实体建一份重打光滤镜。载荷没到位就返回 null
+   * （调用方回落到"什么都不挂"，也就是现状）。
+   */
+  createRawPatchFilter(): RawPatchRelightFilter | null {
+    const rad = this.pass?.radiance;
+    if (!this.enabled || !this.geo || !rad) return null;
+    const f = new RawPatchRelightFilter(this.geo, rad);
+    if (this.def) f.applyParams(this.def);
+    this.rawPatchFilters.add(f);
+    return f;
+  }
+
+  releaseRawPatchFilter(f: RawPatchRelightFilter): void {
+    this.rawPatchFilters.delete(f);
+  }
+
+  /** 逐帧把相机与世界容器位姿喂给装饰补丁滤镜（与深度遮挡滤镜同一个节拍）。 */
+  updateRawPatchFrame(worldContainerX: number, worldContainerY: number,
+                      projectionScale: number, sceneW: number, sceneH: number): void {
+    for (const f of this.rawPatchFilters) {
+      f.setWorldContainerPos(worldContainerX, worldContainerY);
+      f.setProjectionScale(projectionScale);
+      f.setSceneSize(sceneW, sceneH);
+    }
   }
 
   get params(): SceneLightingDef | null {
@@ -458,11 +571,7 @@ export class SceneLightingSystem {
 
   /** 逐帧调。脏才重算，稳态零成本。返回是否真的重算了（供性能观测）。 */
   update(renderer: Renderer): boolean {
-    const recomputed = this.pass?.update(renderer) ?? false;
-    // ⚠ 顺序即正确性：GI 读的是**这一次**重算出来的辐射场，必须排在它之后。
-    //   反过来会让反弹光永远落后一次改动——F2 拖滑杆时表现为"角色慢半拍"。
-    if (recomputed) this.giPass?.render(renderer);
-    return recomputed;
+    return this.pass?.update(renderer) ?? false;
   }
 
   unload(): void {
@@ -471,15 +580,13 @@ export class SceneLightingSystem {
     this.litBg = null;
     this.pass?.destroy();
     this.pass = null;
+    this.geo = null;
+    this.rawPatchFilters.clear();
     this.meta = null;
     this.def = null;
-    this.skyvisGrid = null;
-    this.giPass?.destroy();
-    this.giPass = null;
-    this.giHitmapTex?.destroy();
-    this.giHitmapTex = null;
-    this.skyvisTex?.destroy();
-    this.skyvisTex = null;
+    this.shGridBytes = null;
+    this.shGridTex?.destroy();
+    this.shGridTex = null;
     this.enabled = false;
   }
 }

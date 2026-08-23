@@ -28,8 +28,7 @@ export class UnifiedCharacterLighting {
   private geometryGroup: UniformGroup | null = null;
   private lightGroup: UniformGroup | null = null;
   private ground: TextureSource | null = null;
-  private skyGrid: TextureSource | null = null;
-  private giBounce: TextureSource | null = null;
+  private skyTransport: TextureSource | null = null;
   private depth: TextureSource | null = null;
   private readonly shaders = new Set<Shader>();
   private enabled = false;
@@ -42,20 +41,19 @@ export class UnifiedCharacterLighting {
    * 建立本场景的角色照明。任何一步缺料都返回 false 并保持关闭。
    *
    * @param geo   work px 栅格标定 + 深度场标定 + 3D 网格边界
-   * @param tex   ground_d / 3D 天穹可见性 / 深度图
+   * @param tex   ground_d / SH-L1 天穹传输网格 / 深度图
    */
   setup(geo: UnifiedCharGeometry, tex: {
-    ground: TextureSource; skyGrid: TextureSource;
-    /** GI 反弹网格；没烘 `gi_hitmap` 的场景传 null，增益自动置 0 */
-    giBounce: TextureSource | null;
+    ground: TextureSource;
+    /** SH-L1 天穹传输网格。⚠ 缺它角色就没有天光，v3 没有回落路径。 */
+    skyTransport: TextureSource;
     depth: TextureSource;
   }): boolean {
     this.teardown();
     this.geometryGroup = createUnifiedCharGeometryGroup(geo);
     this.lightGroup = createUnifiedCharLightGroup();
     this.ground = tex.ground;
-    this.skyGrid = tex.skyGrid;
-    this.giBounce = tex.giBounce;
+    this.skyTransport = tex.skyTransport;
     this.depth = tex.depth;
     this.enabled = true;
     depthLog(T, `角色并入统一光影（网格 ${geo.grid.n.join('×')}）`);
@@ -64,11 +62,11 @@ export class UnifiedCharacterLighting {
 
   /** 改了光照参数：灯**直接用场景那次打包的结果**，不重打，所以两边不可能漂。 */
   applyParams(def: SceneLightingDef, packed: PackedLights,
-              wuPerQUnit: number, radianceScale: number): void {
+              wuPerQUnit: number, charRefIntensity: number,
+              giScale: number, giLogSpan: number): void {
     if (!this.lightGroup) return;
-    // 没有 GI 网格就把增益压到 0——占位白图绝不能被读进结果
-    const giGain = this.giBounce ? (def.giGain ?? 1) : 0;
-    applyUnifiedCharLight(this.lightGroup, def, packed, wuPerQUnit, radianceScale, giGain);
+    applyUnifiedCharLight(this.lightGroup, def, packed, wuPerQUnit, charRefIntensity,
+                          giScale, giLogSpan);
   }
 
   /**
@@ -110,10 +108,10 @@ export class UnifiedCharacterLighting {
 
   createShader(colorTex: TextureSource, nrm: TextureSource | null): Shader | null {
     if (!this.enabled || !this.geometryGroup || !this.lightGroup
-      || !this.ground || !this.skyGrid || !this.depth) return null;
+      || !this.ground || !this.skyTransport || !this.depth) return null;
     const sh = createUnifiedCharShader(this.geometryGroup, this.lightGroup, {
-      colorTex, nrm, ground: this.ground, skyGrid: this.skyGrid,
-      giBounce: this.giBounce, depth: this.depth,
+      colorTex, nrm, ground: this.ground,
+      skyTransport: this.skyTransport, depth: this.depth,
     });
     this.shaders.add(sh);
     return sh;
@@ -140,8 +138,7 @@ export class UnifiedCharacterLighting {
     this.geometryGroup = null;
     this.lightGroup = null;
     this.ground = null;
-    this.skyGrid = null;
-    this.giBounce = null;
+    this.skyTransport = null;
     this.depth = null;
     this.enabled = false;
   }

@@ -5,13 +5,15 @@ import {
 
 import type { SceneLightingDef } from '../../data/types';
 import { resolveLightColor } from './kelvin';
+import { skyIrradianceSh } from './skySh';
 import {
   LIGHT_KIND_CODE,
-  MAX_STATIC_LIGHTS, type PackedLights, directionFromAngles, packEmissive, packLights,
+  MAX_STATIC_LIGHTS, type PackedLights, directionFromAngles, packEmissive, packLights, sunDirectionOf,
   packShadowBias,
 } from './lightPacking';
 import { LIGHTS_PER_SLAB, type PrefixLight, ShadowPrefixPass } from './shadowPrefix';
 import LIGHTING_CORE from './lightingCore.glsl?raw';
+import SHADE_CORE_3 from './shadeCore3.glsl?raw';
 import WORLD_RECONSTRUCT from './worldReconstruct.glsl?raw';
 
 /**
@@ -53,6 +55,8 @@ function slice(src: string, tag: string): string {
 
 const WR_CORE = slice(WORLD_RECONSTRUCT, 'WR_CORE');
 const LC = slice(LIGHTING_CORE, 'LIGHTING_CORE');
+// ⚠ 拼接顺序固定 LC → SC3：shadeCore3 用 lightingCore 的 LC_* 常量与 lc* 函数。
+const SC3 = slice(SHADE_CORE_3, 'SHADE_CORE_3');
 
 /**
  * 进**缓存那一级**的灯数上限（定义在 `lightPacking`，场景与角色共用一份）。
@@ -85,10 +89,15 @@ void main(void) {
 `;
 
 /**
- * 重打光 shader。**只产线性 HDR 辐射，不做雾、不做显示变换**——那两样在逐帧那一级。
- * 一个像素的完整链路：
- *   原画 → 线性化 → 除以 S_day → 乘上 S_new → 输出
- * S_day / S_new 同式（天穹可见性 + 定向光×N·L×投影），只是取不同参数。
+ * 重打光 shader（v3 / G-buffer）。**只产线性 HDR 辐射，不做雾、不做显示变换**
+ * ——那两样在逐帧那一级。一个像素的完整链路：
+ *
+ *     基底 × ( 烘焙GI + 天光·传输基 + 环境反弹 + 日月 + 灯 )  →  + 自发光
+ *
+ * ⚠ **没有分母了**。v2 是「原画 ÷ S_day × S_new」，S_day 那一步现在**在烘焙期做完**
+ *   （`bake_gbuffer.py` 在伪世界里 final gather 积出 E，直接产出 `lighting3/base.png`）。
+ *   运行时只剩一次乘法 —— 这正是角色能走同一条路径的前提：角色没有原画可除，
+ *   但它有自己的解析 E_ref，两边除完就进同一个空间。
  */
 // 与 lightingCore.glsl 的 LC_* 宏同值，拼进 shader 时做常量替换
 const LC_POINT = 0;
@@ -102,9 +111,13 @@ precision highp float;
 in vec2 vUv;
 out vec4 fragColor;
 
-uniform sampler2D uPainting;     // 原画（sRGB）
-uniform sampler2D uNormal;       // lighting2/normal.png
-uniform sampler2D uSkyvis;       // lighting2/skyvis.png（R 通道）
+uniform sampler2D uBase;         // lighting3/base.png（sRGB8，× uBaseScale）
+uniform sampler2D uNormal;       // lighting3/normal.png
+uniform sampler2D uSkyOcc;       // lighting3/sky_occlusion.png（RGB = bent 方向，A = 可见度）
+uniform sampler2D uVisLin;       // lighting3/vis_linear.png（RGB = b/(2*bmax)+0.5，A = a）
+uniform float uVisBMax;          // 上面那张的 b 缩放
+uniform sampler2D uAo;          // lighting3/ao.png（R8 = 局部封闭度，与天穹是两个量）
+uniform sampler2D uIrradiance;   // lighting3/irradiance.png（烘焙 GI，from_hdr 编码）
 uniform sampler2D uDepth;        // raw_depth_rg.png
 
 uniform vec2  uDepthTexSize;
@@ -115,14 +128,20 @@ uniform vec3  uMRow0;
 uniform vec3  uMRow1;
 uniform vec3  uMRow2;
 
-uniform vec3  uSkyColor;
-uniform float uSkyIntensity;
-uniform float uSkyHemi;
-uniform float uAoStrength;
+uniform float uBaseScale;        // base 的对数编码中心（= 2^(-span/2)）
+uniform float uBaseLogSpan;      // base 的对数编码跨度（档）
+uniform float uGi;               // 烘焙 GI 的权重。1 = 原样吃（画面≡原画）
+uniform float uIrradianceScale;  // 烘焙 GI 的对数编码中心（= 该场景 E 的中位）
+uniform float uIrradianceLogSpan;// 烘焙 GI 的对数编码跨度（档）
 
-uniform float uDayHemi;
-uniform float uDaySunIntensity;
-uniform vec3  uDaySunDir;        // 指向光源（世界）
+
+uniform vec3  uAmbientColor;     // 环境反弹底（多次反弹）
+uniform float uAmbientIntensity;
+
+// 世界 AABB —— 只给 SC3_DEBUG_POSITION 归一用，不进光照计算。
+// 与角色网格取同一份边界，所以两边的位置视图颜色可以直接对照。
+uniform vec3  uGridMin;
+uniform vec3  uGridMax;
 
 uniform vec3  uSunColor;
 uniform float uSunIntensity;
@@ -130,8 +149,7 @@ uniform vec3  uSunDir;           // 指向光源（世界）
 uniform vec4  uShadow;           // strength, len, steps, soft(未用于 march)
 uniform vec2  uShadowBias;       // bias0, thick
 
-uniform float uRatioMax;
-/** 0=正常 1=天穹可见性 2=法线 3=S_day 4=S_new 5=比值。调试可视化，F2 也用它。 */
+/** 逐 buffer 调试视图。编号见 shadeCore3.glsl 的 SC3_DEBUG_*，**与角色共用一套**。 */
 uniform int   uDebug;
 
 // ---- 灯（静态的进这一级缓存；动态的在逐帧那级）----
@@ -149,20 +167,11 @@ uniform sampler2D uPrefix0;
 uniform sampler2D uPrefix1;
 // 每盏灯在**图像**上的位置 xy 与在 q 里的深度 z;w = 这盏灯有没有前缀解（0 = 回落）
 uniform vec4 uLightPx[${MAX_STATIC_LIGHTS}];
-/** 画里的大气霾：x=消光 k y=强度 H（去掉白天的散射用），zw 备用 */
-uniform vec4 uHaze;
-/** 霾的色度（归一） */
-uniform vec3 uHazeColor;
+// ⚠ v2 的去霾 uniform（uHaze / uHazeColor / HAZE_KEEP）已整体移除。
+//   「去掉画里的白天大气散射」现在**在烘焙期做完**，在 final gather 之前。
+//   运行时再去一遍等于对同一份散射减两次。夜的雾另在显示级按 σ 加回
+//   （LitBackground），那是**加**不是**减**，两者不冲突。
 
-/**
- * 去霾时**每个通道至少留下**的比例。
- *
- * 存在的唯一理由：让减法结构上不可能把某个通道钳到 0。霾是**有颜色**的，
- * 绝对量的减法会在暗部逐通道非对称地清零 ⇒ 彩色噪点（见去霾那一段的注释）。
- * 0.1 是实测下来"去霾力度最大、而孤立零点已经归零"的取值——再大只是少去霾，
- * 噪点指标不会更好。
- */
-#define HAZE_KEEP 0.1
 
 uniform int  uLightCount;
 uniform vec4 uLightA[${MAX_STATIC_LIGHTS}];
@@ -172,6 +181,7 @@ uniform vec4 uLightD[${MAX_STATIC_LIGHTS}];
 
 ${WR_CORE}
 ${LC}
+${SC3}
 
 /**
  * 一盏灯的可见性（0=被挡）。**一次查表 + 一次比较，零步进。**
@@ -221,87 +231,91 @@ void areaAxes(vec3 n, float halfW, float halfH, float roll, out vec3 halfU, out 
 }
 
 void main(void) {
-    vec3 painting = lcSrgbToLinear(texture(uPainting, vUv).rgb);
+    // ---- G-buffer 取样 ----
+    // base 是**原生分辨率**的（它替代 background.png 进渲染路径），
+    // 其余几何量是 work 分辨率的低频量，由硬件线性过滤升采样。
+    // ⚠ 对数编码（一侧对齐：base=1 钉在编码上端）。吃**原始字节**，
+    //   绝不能先过 lcSrgbToLinear —— sRGB 的线性趾部在 base ~3e-4 处每档跳
+    //   100%，而那正是暗物体逆光剪影的量级。
+    //   字节 0 表示**精确的 0**（天空、以及真值低于编码下限的近黑像素）——
+    //   少了这条，那些像素的 base 会被抬到下限、base·E 超过原画，自发光钳成 0
+    //   之后本该全黑的地方会发灰（实测某场景往返 p99 12.1/255）。
+    vec3 basePx = texture(uBase, vUv).rgb;
+    vec3 base = sc3DecodeLogHdr(basePx, uBaseScale, uBaseLogSpan)
+              * step(vec3(0.5 / 255.0), basePx);
+
     // ---- 场景法线 ----
-    // ⚠ **rg 与 b 的编码不是一回事**，不能一起做 *2−1：
-    //   bake.py 里 rg 存的是 xy*0.5+0.5（要 *2−1 还原），
-    //   b 存的是 **|z| 直存 0..1**（不要 *2−1）。
+    // 三通道**同一条** n*0.5+0.5，解码统一 *2−1（bake_gbuffer.bake 写的就是这个）。
     //
-    //   原来写成 rgb*2−1 再 -abs(z)，等价于 n.z = −|2b−1| —— 一个二对一的 V 形：
-    //   b=1 侥幸对（−1），b=0.5 解成 **0**（应为 −0.5），b=0 解成 **−1**（应为 0）。
-    //   实测雾津街头 66% 的像素 z 误差 >0.2、法线中位偏 **20.4°**、24% 偏超 30°
-    //   （中位 b=0.48 正好踩在 V 的谷底）。normalize 之后 xy 被顶起来，
-    //   法线整体被扳向屏幕平面 —— 而 n 同时进 sDay、每盏灯的 N·L 与 march 起点。
+    // ⚠ 这里存的是**世界法线**，不是视空间法线 —— z 两头都有。实测 28 个场景
+    //   n.z > 0 的像素占 10.6%–39.8%（最高 +0.74）。所以角色那套「b 存 |z|、
+    //   解码时强制取负」的约定**表达不了这张图**：那是给视空间法线贴图用的，
+    //   视空间下法线必然朝相机、z 恒为负，这里不是。
     //
-    //   同一套编码在角色两条路径里**都解对了**（-max(ne.b, .05)，不对 b 做 *2−1），
-    //   这里跟它们对齐。max(...,0.05) 是防 b=0 时法线退化成零长。
-    //   这条有机械契约锁着：normalEncoding.test.ts。
+    // ⚠ 曾经这一处就是照抄角色那套写的（-max(nrmTex.b, 0.05)），而 v3 烘焙侧
+    //   已经改成全值域编码 —— 实测着色器拿到的法线**中位偏 23°–33°、25%–57%
+    //   的像素偏超 30°**。默认画面看不出来（gi=1 时只走 base·E，不过法线），
+    //   一重打光就每盏灯的 N·L 全歪。机械契约：normalEncoding.test.ts。
+    //   ⚠ 这一段在 GLSL 模板串里，**不许出现反引号**（glslTemplateLint 锁着）。
     vec3 nrmTex = texture(uNormal, vUv).rgb;
-    vec3 n = normalize(vec3(nrmTex.r * 2.0 - 1.0,
-                            nrmTex.g * 2.0 - 1.0,
-                            -max(nrmTex.b, 0.05)));
-    float skyvis = texture(uSkyvis, vUv).r;
+    vec3 n = normalize(nrmTex * 2.0 - 1.0);
+
+    // ---- 天穹遮蔽：bent 方向 + 余弦加权可见度 ----
+    // 场景侧法线在烘焙期就已知，所以这里的可见度是**精确**的（不是 L1 估计）。
+    // 角色侧存的是同一个量的 SH-L1，两边进同一个 sc3SkyIrradiance。
+    vec4 visLinPx = texture(uVisLin, vUv);
+    // 任意方向的可见度：a 在 alpha，b 在 rgb（乘回 2*bmax）
+    vec4 visLin = vec4((visLinPx.rgb * 2.0 - 1.0) * uVisBMax, visLinPx.a);
+    vec4 occPx = texture(uSkyOcc, vUv);
+    vec3 bentDir = normalize(occPx.rgb * 2.0 - 1.0 + vec3(1e-6));
+    float skyVis = occPx.a;
+    float ao = texture(uAo, vUv).r;
+
+    // ---- 烘焙 GI 与自发光 ----
+    // giE 是烘焙期在伪世界里 final gather 积出来的辐照度 —— **原画自身的照明**。
+    // uGi = 1 时 base·giE ≡ min(原画, E)（精确到量化，烘焙期有断言）。
+    // ⚠ 2026-08-23 起载荷里**没有自发光**（制作人：「光都是单独打」）。画里
+    //   发出的比收到的多的像素（灶口、灯笼、天）被 base 的上限 1 钳住，
+    //   gi=1 时会比原画暗 —— 那儿该由作者摆一盏真灯。
+    // 重打光就是把 uGi 调低、把下面的天光/灯加上去：这是一条**连续**的路，
+    // 不是"要么原画要么全新"的开关。
+    // ⚠ 对数编码：直接吃**原始字节**，绝不能先过 lcSrgbToLinear（见 sc3DecodeLogHdr）。
+    vec3 giE = sc3DecodeLogHdr(texture(uIrradiance, vUv).rgb,
+                               uIrradianceScale, uIrradianceLogSpan) * uGi;
+    // 自发光不乘任何 E —— 它不反射光，它就是光（灶口、灯笼、天）。
 
     // 该像素的伪世界 q（供 march 起点用）
     vec2 px = vec2(vUv.x, vUv.y) * uDepthTexSize;
     float d = wrDecodeSceneDepth(texture(uDepth, vUv), uDepthMap.x, uDepthMap.y, uDepthMap.z);
     vec3 q = wrPixelToQ(px, uCal.x, uCal.y, uCal.z, d);
 
-    // ---- 去掉画里的**白天大气散射** ----
-    // 原画 = 表面辐射 × T(d) + 白天的霾 × (1−T(d))。霾不是表面，是被日光照亮的空气；
-    // 若不除掉，它在夜里照样亮着 —— "远处一片亮灰"正是大脑判定"这是白天"最强的信号。
-    // 与表面项的「除掉白天光」严格对称：这是「除掉白天的散射」。
-    // 夜的雾另在显示级按 σ 加回（LitBackground）。
-    // dn 是归一视深，T 是白天的透射率。
-    if (uHaze.y > 0.0) {
-        float dn = clamp((d - uHaze.z) / max(uHaze.w - uHaze.z, 1e-5), 0.0, 1.0);
-        float T = exp(-uHaze.x * dn);
-        vec3 hazeAmt = uHazeColor * (uHaze.y * (1.0 - T));
-        // ★ 逐通道**不许拿走超过该通道自身的 (1−HAZE_KEEP)**。
-        //
-        // 原来写的是 max(painting - hazeAmt, 0.0) ——绝对量的减法配上**有颜色**的霾
-        //（实测雾津街头 hazeColor = (0.835, 1.021, 1.144)，蓝减得最多、红最少），
-        // 在暗部会把通道**非对称地钳到 0**：蓝绿先死、红活下来 ⇒ 画面上一片红色噪点。
-        // 实测该场景 7.23% 的像素被部分钳零（其中 84% 只剩红通道）、18.87% 三通道全黑，
-        // **孤立零点（=肉眼看到的噪点）占 5.02%**。
-        //
-        // 改成按自身设下限后：孤立零点 5.02% → **0.002%**，部分钳零 → 0.00%，
-        // 且钳住时是整体按比例缩小 ⇒ **色度守恒**，不会凭空冒出彩点。
-        // 结构上保证非负（结果 ≥ painting × HAZE_KEEP ≥ 0），所以不再需要 max(...,0)。
-        //
-        // ⚠ 占位场景 dehaze = 0，整段跳过 —— 27 个场景的"背景逐像素零变化"不受影响。
-        painting = (painting - min(hazeAmt, painting * (1.0 - HAZE_KEEP))) / max(T, 0.15);
-    }
+    // ---- ① 天光：传输基 × 当前天穹 ----
+    vec3 skyE = sc3SkyIrradiance(bentDir, skyVis, n);
 
-    // ---- S_day：白天参考光。与 S_new 同式，只是参数不同 ----
-    float sDayHemi = (1.0 - uDayHemi) + uDayHemi * skyvis;
-    float sDay = sDayHemi + uDaySunIntensity * max(dot(n, uDaySunDir), 0.0);
+    // ---- ② 环境反弹底：吃遮蔽但不归零 ----
+    // 与烘焙侧 E_est 的常数项 c₀ 同一个角色。少了它巷道会黑得不合理 ——
+    // 那不是打光风格，是漏了一项（实测 c₀ 在多数场景比天光项还大）。
+    vec3 ambientE = uAmbientColor * (uAmbientIntensity * sc3AmbientTerm(ao));
 
-    // ---- S_new：当前时刻的自然光 ----
-    // ⚠ lcSkyLight 已含半球项，这里**不要再乘一遍**（踩过：整场景暗到 0.6 倍）
-    vec3 sNew = lcSkyLight(uSkyColor, uSkyIntensity, skyvis, uSkyHemi, uAoStrength);
+    // ---- ③ 日/月 ----
+    vec3 sunE = vec3(0.0);
+    float sunVis = 1.0;
     if (uSunIntensity > 0.0) {
-        float vis = 1.0;
-        if (uShadow.x > 0.0) {
-            // 沿光方向 march 深度场（伪世界空间，铁律 S12）
-            vec3 dirQ = normalize(vec3(uSunDir.x, uSunDir.y, uSunDir.z));
-            float blockedVis = lcMarchVisibility(
-                uDepth, uDepthTexSize, uCal.x, uCal.y, uCal.z,
-                uDepthMap.x, uDepthMap.y, uDepthMap.z,
-                q, dirQ, int(uShadow.z), uShadow.y,
-                uShadowBias.x, uShadowBias.y);
-            vis = 1.0 - uShadow.x * (1.0 - blockedVis);
-        }
-        sNew += lcDirectionalLight(n, uSunDir, uSunColor, uSunIntensity, vis);
+        // ⚠ 遮蔽走**线性重建**，不 march。烘焙期与运行时是同一条式子，
+        //   所以换太阳方向不用重烘。旧的 lcMarchVisibility 那条已废弃 ——
+        //   它对 delta 光源给出的是硬边二值图，配上软深度图就是锯齿黑块。
+        sunVis = 1.0 - uShadow.x * (1.0 - sc3DirectVisibility(visLin, normalize(uSunDir)));
+        sunE = lcDirectionalLight(n, uSunDir, uSunColor, uSunIntensity, sunVis);
     }
+    vec3 lampE = vec3(0.0);
 
     // ---- 灯（点/聚/面/平行）。全在**伪世界空间**求值（铁律 S12）----
     vec3 P = wrQToWorld(uMRow0, uMRow1, uMRow2, q);
-    // 灯体自发光：灯**本身是看得见的发光体**。这一项不乘 albedo（发光不是反射），
+    // 灯体自发光：灯**本身是看得见的发光体**。这一项不乘基底（发光不是反射），
     // 所以单独累加、最后加到结果上。
     // ★ 这是"这是夜晚"最强的视觉信号——白天的原画里根本没有发光体，
     //   只把画整体压暗永远得不到它（那只会得到"低亮度的白天"）。
-    vec3 emissive = vec3(0.0);
+    vec3 lampEmissive = vec3(0.0);
     for (int i = 0; i < ${MAX_STATIC_LIGHTS}; i++) {
         if (i >= uLightCount) break;
         vec4 A = uLightA[i], B = uLightB[i], C = uLightC[i], D = uLightD[i];
@@ -333,16 +347,16 @@ void main(void) {
             vis = lightVisibilityPrefix(i, px, d);
         }
         if (kind == ${LC_POINT}) {
-            sNew += lcPointLight(P, n, A.xyz, B.rgb, B.w, C.x, C.y, vis);
+            lampE += lcPointLight(P, n, A.xyz, B.rgb, B.w, C.x, C.y, vis);
         } else if (kind == ${LC_SPOT}) {
-            sNew += lcSpotLight(P, n, A.xyz, D.xyz, B.rgb, B.w, C.x, C.y, C.z, C.w, vis);
+            lampE += lcSpotLight(P, n, A.xyz, D.xyz, B.rgb, B.w, C.x, C.y, C.z, C.w, vis);
         } else if (kind == ${LC_AREA}) {
             vec3 hu, hv;
             areaAxes(normalize(D.xyz), C.z, C.w, C.y, hu, hv);
-            sNew += lcAreaLight(P, n, A.xyz, hu, hv, B.rgb, B.w, C.x, (flags & 2) != 0, vis);
+            lampE += lcAreaLight(P, n, A.xyz, hu, hv, B.rgb, B.w, C.x, (flags & 2) != 0, vis);
         } else {
             // directional：方向光的遮挡走 uShadow 那条（与日月同一套），这里不再 march
-            sNew += lcDirectionalLight(n, D.xyz, B.rgb, B.w, 1.0);
+            lampE += lcDirectionalLight(n, D.xyz, B.rgb, B.w, 1.0);
         }
         // ---- 灯体 + 大气光晕：沿**视线**积分，不是拿表面点到灯的距离 ----
         //
@@ -387,37 +401,88 @@ void main(void) {
             //   分工：**积分管遮挡与深度，包络管范围**。两者相乘。
             float core = visC * exp(-r2 / max(uCore.y * uCore.y, 1e-9));
             float halo = visH * exp(-r2 / max(uCore.z * uCore.z, 1e-9));
-            emissive += B.rgb * (B.w * uCore.x * (core + halo * uCore.w));
+            lampEmissive += B.rgb * (B.w * uCore.x * (core + halo * uCore.w));
         }
     }
 
-    if (uDebug == 1) { fragColor = vec4(vec3(skyvis), 1.0); return; }
-    if (uDebug == 2) { fragColor = vec4(n * 0.5 + 0.5, 1.0); return; }
-    if (uDebug == 3) { fragColor = vec4(vec3(sDay), 1.0); return; }
-    if (uDebug == 4) { fragColor = vec4(sNew, 1.0); return; }
-    if (uDebug == 5) { fragColor = vec4(clamp(sNew / max(sDay, 1e-4), 0.0, 1.0), 1.0); return; }
-    if (uDebug == 6) { fragColor = vec4(painting, 1.0); return; }
+    // ---- 逐 buffer 调试视图 ----
+    // ⚠ 走 sc3DebugView，与**角色用的是同一套编号、同一个函数** —— 同一个编号
+    //   在场景和角色上必是同一个量，F2 里两边对照才有意义。
+    if (uDebug != SC3_DEBUG_OFF) {
+        vec3 span = max(uGridMax - uGridMin, vec3(1e-5));
+        vec3 posNorm = (wrQToWorld(uMRow0, uMRow1, uMRow2, q) - uGridMin) / span;
+        vec3 dbg = sc3DebugView(uDebug, base, n, posNorm, bentDir, skyVis, ao,
+                                skyE + ambientE, sunE, lampE, giE, sunVis,
+                                lampEmissive);
+        // ⚠ 本 pass 写的是**线性 HDR 辐射场**，显示变换在 LitBackground 那一级。
+        //   所以辐射量直接原样写进 RT（下游会做变换），非辐射量则先编码成
+        //   显示域再写 —— 否则它会被下游的 2^ev 再乘一次，烧成一片白。
+        fragColor = vec4(sc3DebugIsRadiometric(uDebug) ? dbg : lcSrgbToLinear(lcLinearToSrgb(dbg)), 1.0);
+        return;
+    }
 
-    // 发光体不乘 albedo（发光不是反射），所以加在重打光结果之外。
-    // ★ alpha 存**灯体自发光占该像素的比例**（0..1）：GI gather 据此跳过打在灯本体上
-    //   的射线——那是直接光，解析灯已经算过一遍（见 GiBouncePass 头注释）。
+    // 发光体不乘基底（发光不是反射），所以加在重打光结果之外。
     //
-    // ⚠ 存**比例**不存绝对亮度。绝对阈值会随灯的强度漂：灯调亮一档，被判成"灯体"
-    //   的区域就跟着变大，把本该采到的反弹光一起挡掉——症状是"GI 不跟着灯变"。
-    //   比例是尺度无关的，灯怎么调，判据都成立。
-    // 显示端（LitBackground）只读 .rgb，不受影响。
-    vec3 surf = lcRelightScene(painting, vec3(max(sDay, 1e-4)), sNew, uRatioMax);
-    float emitLum = dot(emissive, LC_LUMA);
-    float emitFrac = emitLum / max(emitLum + dot(surf, LC_LUMA), 1e-6);
-    fragColor = vec4(surf + emissive, emitFrac);
+    // ⚠ alpha 曾经存"灯体自发光占该像素的比例"，供 GiBouncePass 跳过打在灯本体
+    //   上的射线。那个 pass 在 v3 删掉了（场景的反弹现在是烘焙期 final gather 积出
+    //   的 irradiance.png），于是这个值**再没有任何消费端** —— LitBackground
+    //   只读 rgb。留着一个没人读的通道 + 一段指向已删模块的注释，比删掉更贵：
+    //   下一个人会以为它有用。要重新用的话重算一次就是两行。
+    // ★ 场景与角色的**唯一会合点**：两边都走 sc3Shade。
+    //   场景把烘焙 GI 传进第四个槽；角色按要求当前传 0（"角色暂时不考虑 gi"）。
+    vec3 surf = sc3Shade(base, skyE + ambientE, sunE + lampE, giE);
+    fragColor = vec4(surf + lampEmissive, 1.0);
 }
 `;
 
 export interface SceneLightingGeometry {
-  /** lighting2/normal.png */
+  /**
+   * `lighting3/base.png` —— **比例基底（`I_原画 / E`），原生分辨率**。
+   *
+   * ⚠ 它**不是 albedo**：是比例式 `I_out = I_原画 × E_目标 / E` 里被提出来的
+   * 中间因子。数值上落在反射率量级（因为 `E` 是伪世界 final gather 积出的
+   * 真辐照度），但它不是"反解出的材质"。
+   *
+   * ⚠ 它**替代 background.png 进渲染路径**，不是辅助图。所以它必须是原生分辨率：
+   * 烘在 work 分辨率等于把背景降采样，画面直接糊。其余几何量（法线/传输/GI）
+   * 是低频的，work 分辨率由硬件线性过滤升采样即可。
+   */
+  base: Texture;
+  /**
+   * base 的**对数编码**参数。一侧对齐：`base ≤ 1` 是物理上界，1.0 钉在编码
+   * 上端、往下覆盖 2^-span，于是 `scale = 2^(-span/2)`。
+   *
+   * ⚠ 不能用 sRGB8。sRGB 暗端那段线性趾部的绝对步长恒为 3.0e-4，而暗物体
+   * 逆光剪影的 base 实测就在 3e-4 —— 一档 100% 相对误差，乘上巨大的 `E`
+   * 之后是肉眼可见的偏差（实测某场景往返 p99 22.2/255）。
+   */
+  baseScale: number;
+  baseLogSpan: number;
+  /**
+   * `lighting3/irradiance.png` —— **烘焙 GI**：伪世界 final gather 积出的
+   * 原画自身辐照度。编码 `x/(1+x)` 再 sRGB8（无需 scale，见 sc3ToHdr）。
+   *
+   * ⚠ 这是正式载荷不是调试图。`gi = 1` 时 `base·E + emissive ≡ 原画`。
+   */
+  irradiance: Texture;
+  /**
+   * 烘焙 GI 的**对数编码**参数（逐场景不同，`scale` = 该场景 `E` 的中位）。
+   *
+   * ⚠ 没有合理缺省。填错不会报错，只是整个场景的亮度沿一条幂曲线歪掉 ——
+   * 所以由 `SceneLightingSystem` 从 meta 直读传进来，绝不在着色器侧兜底。
+   */
+  irradianceScale: number;
+  irradianceLogSpan: number;
+  /** `lighting3/normal.png` */
   normal: Texture;
-  /** lighting2/skyvis.png */
-  skyvis: Texture;
+  /** `lighting3/sky_occlusion.png` —— RGBA8：RGB = bent 方向·½+½，A = 余弦加权可见度 */
+  skyOcc: Texture;
+  /** `lighting3/vis_linear.png` —— RGBA8：可见度的线性重建 V(ω)=clamp(a+b·ω,0,1) */
+  visLin: Texture;
+  /** 上面那张 rgb 的缩放：b = (rgb*2−1)·visBMax */
+  visBMax: number;
+  /** `lighting3/ao.png` —— 局部封闭度（短程全球面余弦可见性），R8、值域 [0,1]。 */
+  ao: Texture;
   /** raw_depth_rg.png（与 SceneDepthSystem 同一张） */
   depth: Texture;
   /** 深度图尺寸（native px） */
@@ -430,19 +495,13 @@ export interface SceneLightingGeometry {
   depthMapping: [number, number, number];
   /** `depthConfig.M.R` 三行（**det = +1** 游戏约定）。q → M-world。 */
   mRows: [[number, number, number], [number, number, number], [number, number, number]];
-  /** 烘焙期拟合出的**画内白天大气散射**。去掉它，远景才不会在夜里继续发亮。 */
-  haze?: {
-    k: number;
-    strength: number;
-    color: [number, number, number];
-    depthMin: number;
-    depthMax: number;
-  };
+  /** 角色网格的世界 AABB。只给位置调试视图归一用，两边取同一份才能对照。 */
+  gridMin: [number, number, number];
+  gridMax: [number, number, number];
 }
 
 export class SceneLightingPass {
   private readonly geo: SceneLightingGeometry;
-  private readonly painting: Texture;
   private rt: RenderTexture | null = null;
   /** 阴影的线扫求解器。脏时先解它，主 pass 再查表。 */
   private prefix: ShadowPrefixPass | null = null;
@@ -467,8 +526,10 @@ export class SceneLightingPass {
     return this.geo;
   }
 
-  constructor(painting: Texture, geo: SceneLightingGeometry) {
-    this.painting = painting;
+  // ⚠ v3 起**不再接收原画**：渲染路径上的背景本体是 `geo.base`
+  //   （原画 ÷ E_est，烘焙期算好）。原画只在没有 lighting3 载荷时由
+  //   SceneManager 当普通 Sprite 兜底，不进这一级。
+  constructor(geo: SceneLightingGeometry) {
     this.geo = geo;
   }
 
@@ -503,31 +564,37 @@ export class SceneLightingPass {
     this.shader = Shader.from({
       gl: { vertex: BAKE_VERT, fragment: BAKE_FRAG },
       resources: {
-        uPainting: this.painting.source,
+        uBase: this.geo.base.source,
         // 线扫前缀的两张 slab。solve() 之前先拿深度纹理占位（尺寸一致，
         // 内容不会被读到 —— uLightPx[i].w = 0 时 lightVisibilityPrefix 直接返回 1）。
         uPrefix0: this.geo.depth.source,
         uPrefix1: this.geo.depth.source,
         uNormal: this.geo.normal.source,
-        uSkyvis: this.geo.skyvis.source,
+        uSkyOcc: this.geo.skyOcc.source,
+        uVisLin: this.geo.visLin.source,
+        uAo: this.geo.ao.source,
+        uIrradiance: this.geo.irradiance.source,
         uDepth: this.geo.depth.source,
         sceneLight: {
           uDepthTexSize: { value: new Float32Array(this.geo.depthSize), type: 'vec2<f32>' },
           uCal: { value: new Float32Array(this.geo.cal), type: 'vec3<f32>' },
           uDepthMap: { value: new Float32Array(this.geo.depthMapping), type: 'vec3<f32>' },
-          uSkyColor: { value: new Float32Array([1, 1, 1]), type: 'vec3<f32>' },
-          uSkyIntensity: { value: 1, type: 'f32' },
-          uSkyHemi: { value: 0.35, type: 'f32' },
-          uAoStrength: { value: 1, type: 'f32' },
-          uDayHemi: { value: 0.35, type: 'f32' },
-          uDaySunIntensity: { value: 0, type: 'f32' },
-          uDaySunDir: { value: new Float32Array([0, 1, 0]), type: 'vec3<f32>' },
+          uBaseScale: { value: this.geo.baseScale, type: 'f32' },
+          uBaseLogSpan: { value: this.geo.baseLogSpan, type: 'f32' },
+          uGi: { value: 1, type: 'f32' },
+          uIrradianceScale: { value: this.geo.irradianceScale, type: 'f32' },
+          uIrradianceLogSpan: { value: this.geo.irradianceLogSpan, type: 'f32' },
+          uSkySh: { value: new Float32Array(9 * 4), type: 'vec4<f32>', size: 9 },
+          uVisBMax: { value: 1, type: 'f32' },
+          uAmbientColor: { value: new Float32Array([1, 1, 1]), type: 'vec3<f32>' },
+          uAmbientIntensity: { value: 0, type: 'f32' },
+          uGridMin: { value: new Float32Array(this.geo.gridMin), type: 'vec3<f32>' },
+          uGridMax: { value: new Float32Array(this.geo.gridMax), type: 'vec3<f32>' },
           uSunColor: { value: new Float32Array([1, 1, 1]), type: 'vec3<f32>' },
           uSunIntensity: { value: 0, type: 'f32' },
           uSunDir: { value: new Float32Array([0, 1, 0]), type: 'vec3<f32>' },
           uShadow: { value: new Float32Array([0.9, 3.5, 48, 2]), type: 'vec4<f32>' },
           uShadowBias: { value: new Float32Array([0.035, 2]), type: 'vec2<f32>' },
-          uRatioMax: { value: 8, type: 'f32' },
           uDebug: { value: 0, type: 'i32' },
           uMRow0: { value: new Float32Array(3), type: 'vec3<f32>' },
           uMRow1: { value: new Float32Array(3), type: 'vec3<f32>' },
@@ -537,8 +604,6 @@ export class SceneLightingPass {
             value: new Float32Array(MAX_STATIC_LIGHTS * 4),
             type: 'vec4<f32>', size: MAX_STATIC_LIGHTS,
           },
-          uHaze: { value: new Float32Array([0, 0, 0, 1]), type: 'vec4<f32>' },
-          uHazeColor: { value: new Float32Array([1, 1, 1]), type: 'vec3<f32>' },
           uLightCount: { value: 0, type: 'i32' },
           uLightA: { value: new Float32Array(MAX_STATIC_LIGHTS * 4), type: 'vec4<f32>', size: MAX_STATIC_LIGHTS },
           uLightB: { value: new Float32Array(MAX_STATIC_LIGHTS * 4), type: 'vec4<f32>', size: MAX_STATIC_LIGHTS },
@@ -560,24 +625,27 @@ export class SceneLightingPass {
 
   /**
    * 把场景光照参数写进 uniform。**不触发重算**，调用方随后 markDirty。
-   * @param bakedDayHemi 烘焙期拟合出的原画遮蔽响应，`def.day.hemi` 缺省时用它。
    */
-  applyParams(def: SceneLightingDef, bakedDayHemi?: number): void {
+  applyParams(def: SceneLightingDef): void {
     this.ensure();
     const u = this.shader?.resources.sceneLight?.uniforms;
     if (!u) return;
 
-    const sky = resolveLightColor(def.sky.color, def.sky.kelvin);
-    u.uSkyColor.set(sky);
-    u.uSkyIntensity = def.sky.intensity;
-    u.uSkyHemi = def.sky.hemi;
-    u.uAoStrength = def.aoStrength ?? 1;
-    u.uRatioMax = def.ratioMax ?? 8;
+    // 天空色、强度、纬向分布全部并进这 9 个 SH 系数（CPU 侧按
+    // 「无遮挡朝上 = intensity·color」归一，作者面语义不变）。
+    (u.uSkySh as Float32Array).set(skyIrradianceSh(def.sky, sunDirectionOf(def)));
+    u.uVisBMax = this.geo.visBMax;
 
-    // 缺省用烘焙期拟合值——这个量必须与原画匹配，手填必错（见 DayReferenceDef.hemi）
-    u.uDayHemi = def.day.hemi ?? bakedDayHemi ?? 0.9;
-    u.uDaySunIntensity = def.day.sunIntensity;
-    u.uDaySunDir.set(directionFromAngles(def.day.sunElevationDeg, def.day.sunAzimuthDeg));
+    const amb = def.ambient;
+    u.uAmbientColor.set(resolveLightColor(amb?.color, amb?.kelvin));
+    u.uAmbientIntensity = amb?.intensity ?? 0;
+
+    // ★ 烘焙 GI 的权重。缺省 1 = 原样吃 ⇒ 画面精确等于原画。
+    //   ⚠ 这个缺省是**有意**的，而且和 v2 那个 `placeholder` 开关不是一回事：
+    //     那个是"整条链绕过去"，角色被一起挡在门外（27 个场景摆灯零响应）；
+    //     这个是光照方程里一个有物理含义的项，值为 1 只是说"这个场景还没重打光"。
+    //     作者把 gi 调低、把天光/灯加上去，是一条连续的路。
+    u.uGi = def.gi ?? 1;
 
     const M = this.geo.mRows;
     u.uMRow0.set(M[0]);
@@ -638,19 +706,12 @@ export class SceneLightingPass {
     // 灯体自发光 + 大气光晕（wu）
     u.uCore.set(packEmissive(def, this.geo.wuPerQUnit));
 
-    // 去掉画里的白天大气散射（由烘焙期拟合出来，见 bake.fit_haze）
-    const hz = this.geo.haze;
-    if (hz && (def.dehaze ?? 1) > 0) {
-      u.uHaze.set([hz.k, hz.strength * (def.dehaze ?? 1), hz.depthMin, hz.depthMax]);
-      u.uHazeColor.set(hz.color);
-    } else {
-      u.uHaze.set([0, 0, 0, 1]);
-    }
   }
 
   /**
-   * 调试可视化：0=正常 1=天穹可见性 2=法线 3=S_day 4=S_new 5=比值 6=线性化原画。
-   * 会标脏（下一帧重算）。F2 的「显示 skyvis 场」等按钮走这条。
+   * 逐 buffer 调试视图。编号见 `shadeCore3.glsl` 的 `SC3_DEBUG_*`，
+   * **与角色路径共用同一套** —— 同一个编号在两边必是同一个量。
+   * 会标脏（下一帧重算）。
    */
   setDebug(mode: number): void {
     this.ensure();

@@ -19,6 +19,14 @@ import sys
 import tempfile
 from datetime import datetime
 
+# 中文 Windows 下标准流被重定向时编码是 GBK,非 GBK 字符(如 ✓)会让 print 抛 UnicodeEncodeError:
+# --mark 已经写盘成功,却因为打不出成功消息而以 1 退出(假失败)。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 
 GATE_RULES = [
@@ -82,7 +90,7 @@ def main() -> int:
             return 1
         with open(marker_path(sid), "w", encoding="utf-8") as f:
             f.write(datetime.now().isoformat())
-        print(f"✓ 会话 {sid} 已标记验证完成,收尾门放行")
+        print(f"[OK] 会话 {sid} 已标记验证完成,收尾门放行")
         return 0
 
     try:

@@ -10,7 +10,7 @@
 > `src/systems/graphDialogue/evaluateGraphCondition.ts`。架构文档
 > (`docs/游戏架构设计文档.md`)里的清单会漂,不要照抄任何文档里的表。
 >
-> **光影现在有新旧两套并存**(2026-08-21):场景配了 `lighting` 块的走统一光影(`src/rendering/lighting/`),没配的走旧的 `lightEnv`/probe。28 个场景已全部接进新管线,但其中 27 个是**恒等占位**(`lighting.placeholder: true`)——背景零变化、角色仍走旧 probe。判断某个场景走哪条,看 `placeholder` 这个键,别看文档。
+> **光影现在有新旧两套并存**(2026-08-23):场景配了 `lighting` 块的走统一光影(`src/rendering/lighting/`),没配的走旧的 `lightEnv`/probe。28 个场景已全部接进新管线,**恒等占位那套(`placeholder`)已删除** —— 现在默认状态是 `lighting.gi = 1`(吃烘焙 GI,画面精确等于原画),角色走完整同一条链、不再被挡在门外。重打光 = 把 `gi` 调低 + 加天光/灯。判断某个场景重打光到什么程度,看 `gi` 与 `sky.intensity`。
 
 <!-- agent-docs-gate:begin (由 agent_docs/_meta/cli.py install 维护,勿手改) -->
 ## §A 开工先查公共知识库(agent_docs)

@@ -555,17 +555,33 @@
     }
   ],
   "lighting": {
+    "_migration": "gather-v3-2026-08-23",
+    "gi": 1.0,
     "sky": {
       "kelvin": 6500,
-      "intensity": 0.045,
-      "hemi": 0.92
+      "intensity": 0.0,
+      "profile": 0.0
     },
-    "day": {
-      "sunIntensity": 0,
-      "sunElevationDeg": 50,
-      "sunAzimuthDeg": 180
+    "ambient": {
+      "kelvin": 6500,
+      "intensity": 0.0
     },
     "lights": [
+      {
+        "id": "baked_sun",
+        "kind": "directional",
+        "enabled": true,
+        "intensity": 1.1822,
+        "color": [
+          1.3079,
+          0.9267,
+          0.8197
+        ],
+        "elevationDeg": 45.0,
+        "azimuthDeg": 90.0,
+        "castShadow": true,
+        "_from": "bake: std(log base) 降 14.7%"
+      },
       {
         "id": "moon",
         "kind": "directional",
@@ -713,24 +729,21 @@
       "baseHeight": 0
     },
     "display": {
-      "ev": 3.3175638002432013,
-      "tonemap": "filmic",
+      "ev": 0.0,
+      "tonemap": "reinhard",
       "whiteKelvin": 7200,
       "contrast": 0.7000000000000002,
       "saturation": 0.85,
       "lift": 0.02,
       "liftKelvin": 9000
     },
-    "aoStrength": 1,
-    "ratioMax": 6,
     "emissive": {
       "gain": 0.3,
       "haloGain": 0.18,
       "coreRadius": 30.8827203512,
       "haloRadius": 141.1766421795
     },
-    "dehaze": 1,
-    "giGain": 1
+    "charRefIntensity": 0.6864
   },
   "playerShadowBindings": [
     {

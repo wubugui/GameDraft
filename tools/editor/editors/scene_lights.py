@@ -267,14 +267,18 @@ def default_light(index: int, kind: str = 'point') -> dict:
 
 
 def default_lighting_block() -> dict:
-    """一个场景第一次启用统一光影时的缺省 `lighting` 块。
+    """一个场景第一次启用统一光影时的缺省 `lighting` 块（v3 / G-buffer）。
 
-    ⚠ `day.hemi` **刻意不写** —— 它是原画自己的遮蔽响应，由烘焙期拟合，手填必错
-    （填小了会让画里的遮蔽与夜里的遮蔽叠加，角落黑两遍）。
+    ⚠ `sky.intensity` / `ambient.intensity` / `charRefIntensity` 正常**不该手填**：
+    它们由 `tools/scene_relight/migrate3.py` 从烘焙反解出的 `E_est = c0 + c1*T0`
+    写入。这里给的只是"还没烘焙时也别崩"的占位值。
+
+    ⚠ v2 的 `day` / `aoStrength` / `ratioMax` / `dehaze` 已整体移除 ——
+    去霾搬进了烘焙期，遮蔽与朝向进了传输基，比值钳位随分母一起没了。
     """
     return {
-        'sky': {'kelvin': 9000.0, 'intensity': 0.05, 'hemi': 0.85},
-        'day': {'sunIntensity': 0.0, 'sunElevationDeg': 50.0, 'sunAzimuthDeg': 180.0},
+        'sky': {'kelvin': 9000.0, 'intensity': 0.05, 'profile': 0.0},
+        'ambient': {'kelvin': 9000.0, 'intensity': 0.05},
         'lights': [],
         'fog': {'sigma': 0.0, 'scaleHeight': 530.0, 'baseHeight': 0.0,
                 'kelvin': 7000.0, 'scatter': 0.15},
@@ -282,9 +286,6 @@ def default_lighting_block() -> dict:
                     'contrast': 0.85, 'saturation': 0.9, 'lift': 0.0, 'liftKelvin': 10000.0},
         'emissive': {'gain': 2.0, 'coreRadius': 30.0,
                      'haloRadius': 140.0, 'haloGain': 0.18},
-        'dehaze': 1.0,
-        'aoStrength': 1.0,
-        'ratioMax': 8.0,
         # 阴影 march 的偏置与遮挡体厚度窗(**wu**)。深度场只有可见壳、没有背面,
         # 所以遮挡体的厚度必须人为给：太薄漏挡，太厚「隔山打影」（远处的墙挡住近处的地）。
         'shadowBias': {'bias': DEFAULT_SHADOW_BIAS_WU,

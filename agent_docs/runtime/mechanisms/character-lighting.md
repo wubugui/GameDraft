@@ -19,8 +19,8 @@ authority:
   - tools/animation_pipeline/bake_normal_atlas.py
 triggers:
   paths: ["src/rendering/lighting/**", "src/core/UnifiedCharacterLighting.ts", "src/rendering/charShadeCore.glsl", "src/rendering/CharacterLitSprite.ts", "src/rendering/CharacterShadingFilter.ts", "src/rendering/spriteNormalAtlas.ts", "src/core/CharacterLightingSystem.ts", "tools/character_lighting_lab/**", "tools/animation_pipeline/bake_normal_atlas.py"]
-  topics: [角色照明, probe, 法线图集, 伪世界照明, CHAR_FS, 体素卷, 融入场景, 统一光影, 天穹可见性, radianceScale]
-last_governed: 2026-08-21
+  topics: [角色照明, probe, 法线图集, 伪世界照明, CHAR_FS, 体素卷, 融入场景, 统一光影, 天穹可见性, radianceScale, 烘焙 GI, charGi, 比例基底]
+last_governed: 2026-08-23
 ---
 
 ## 是什么(一句话)
@@ -30,9 +30,14 @@ last_governed: 2026-08-21
 | | 统一光影(2026-08-20 起,优先) | 旧 probe(回落) |
 |---|---|---|
 | 光从哪来 | 与场景背景**同一份** `SceneLightingDef`(同一次 `packLights`) | 离线烘死的 probe 辐射场 E |
-| 遮蔽 | 3D 天穹可见性网格三线性(与场景逐像素 `skyvis.png` **同源同 march**) | probe 里已经烘进去了 |
+| 遮蔽 | 3D 天穹可见性网格三线性(与场景逐像素传输基 **同源同 march**) | probe 里已经烘进去了 |
 | 场景光变了角色跟不跟 | **跟**(实时) | **不跟**(烘死的) |
 | shader | `lighting/UnifiedCharacterShader.ts` + `lightingCore.glsl` | `charShadeCore.glsl` |
+
+**2026-08-23 起角色还吃场景的烘焙 GI**(`sky_sh_grid.bin` 的 5..7 通道,与场景那份
+是同一次 final gather、起点换成网格点)。这不是可选装饰:未重打光的场景 `sky`/`lights`
+都是 0,场景本体靠的就是那份 GI —— `charGi` 调到 0 角色会**全黑**。
+详见 [pseudo-world-final-gather](../decisions/2026-08-23-pseudo-world-final-gather.md)。
 
 分流点是 `Game.litShaderProvider`:`UnifiedCharacterLighting.createShader()` 返回非 null 就走新路,
 否则回落 `CharacterLightingSystem.createEntityLitShader`。旧场景零影响。
@@ -46,7 +51,9 @@ last_governed: 2026-08-21
 (`S(L,几何)` 的唯一实现,场景与角色共用)+ `core/UnifiedCharacterLighting.ts`(协调者)。
 旧路:`charShadeCore.glsl`;载荷与 probe / 体素卷生命周期 `CharacterLightingSystem.ts`;
 离线端 `tools/character_lighting_lab/`(烘焙+调参预览)与 `bake_normal_atlas.py`(法线图集)。
-统一光影的几何场由 `tools/scene_relight/bake.py` 烘(`lighting2/`)。
+统一光影的几何场与照明由 `tools/scene_relight/bake_gbuffer.py` 烘(`lighting3/`):
+伪世界 final gather 出辐照度 `E`,把原画拆成 `base·E + emissive`(恒等式);
+天穹传输是同一趟积分的另一个投影。`lighting2/` 是上一代,已不进渲染路径。
 
 ## 硬契约(违反即 bug)
 

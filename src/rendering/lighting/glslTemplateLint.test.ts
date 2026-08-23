@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import CHAR from './UnifiedCharacterShader.ts?raw';
 import LIT_BG from './LitBackground.ts?raw';
+import RAWPATCH from './RawPatchRelightFilter.ts?raw';
 import SCENE from './SceneLightingPass.ts?raw';
 
 /**
@@ -35,10 +36,14 @@ function glslBlocks(src: string): string[] {
   return out;
 }
 
+// ⚠ **新增带 GLSL 模板串的文件必须登记到这里**。这条 lint 在 2026-08-23 一天里
+//   抓了三次同一个坑（注释里写 `xxx` 会直接截断模板串），但只对登记过的文件生效
+//   —— 漏登记的新文件照样会静默烂掉，症状是 tsc 报一串看不懂的 TS1005。
 const FILES: [string, string][] = [
   ['SceneLightingPass.ts', SCENE],
   ['UnifiedCharacterShader.ts', CHAR],
   ['LitBackground.ts', LIT_BG],
+  ['RawPatchRelightFilter.ts', RAWPATCH],
 ];
 
 describe('GLSL 模板串里不许出现反引号', () => {

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import CHAR from './UnifiedCharacterShader.ts?raw';
 import LIT_BG from './LitBackground.ts?raw';
 import LIGHTING_CORE from './lightingCore.glsl?raw';
+import SHADE_CORE_3 from './shadeCore3.glsl?raw';
 import PREFIX from './shadowPrefix.ts?raw';
 import SCENE from './SceneLightingPass.ts?raw';
 import WORLD_RECONSTRUCT from './worldReconstruct.glsl?raw';
@@ -114,10 +115,13 @@ function calledFns(src: string): Set<string> {
 /** 每个 shader 文件 + 它实际拼进去的切片。 */
 const WR_CORE = slice(WORLD_RECONSTRUCT, 'WR_CORE');
 const LC = slice(LIGHTING_CORE, 'LIGHTING_CORE');
+// ⚠ shadeCore3 与 lightingCore 是**两份都要拼**的：前者用后者的 LC_* 与 lc*。
+// 漏拼一份的症状与 lightToQ 那次一模一样 —— link 失败、整条管线一帧不画。
+const SC3 = slice(SHADE_CORE_3, 'SHADE_CORE_3');
 
 const TARGETS: { name: string; own: string; deps: string[] }[] = [
-  { name: 'SceneLightingPass.ts', own: SCENE, deps: [WR_CORE, LC] },
-  { name: 'UnifiedCharacterShader.ts', own: CHAR, deps: [WORLD_RECONSTRUCT, LIGHTING_CORE] },
+  { name: 'SceneLightingPass.ts', own: SCENE, deps: [WR_CORE, LC, SC3] },
+  { name: 'UnifiedCharacterShader.ts', own: CHAR, deps: [WORLD_RECONSTRUCT, LIGHTING_CORE, SHADE_CORE_3] },
   { name: 'LitBackground.ts', own: LIT_BG, deps: [WR_CORE, LC] },
   // 线扫求解器是自洽的：不拼任何切片，所有函数都在自己的模板串里
   { name: 'shadowPrefix.ts', own: PREFIX, deps: [] },

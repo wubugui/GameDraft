@@ -2301,8 +2301,8 @@ export class Game {
           backgroundWu: this.sceneLighting.backgroundWu,
           lightCount: lights.length,
           shadowLightCount: lights.filter((l) => l.castShadow).length,
-          radianceScale: this.sceneLighting.radianceScale,
-          giReady: this.sceneLighting.giBounceTexture !== null,
+          charRefIntensity: this.sceneLighting.charRefIntensity,
+          diagnostics: this.sceneLighting.diagnostics,
         };
       },
       setSceneLighting: (part) => {
@@ -2312,12 +2312,12 @@ export class Game {
       },
       setSceneLightingDebug: (mode) => {
         this.sceneLighting.setDebug(mode);
-        // 角色的调试视图与场景共用一个旋钮：1=天穹可见性 2=法线在两边都成立，
-        // 其余档角色回正常显示（场景那几档是重打光中间量，角色没有对应物）。
-        // 1=天穹可见性 2=法线 在两边都成立；5=GI 反弹只有角色侧有对应物，
-        // 其余档是场景重打光的中间量，角色回正常显示。
-        this.unifiedCharLighting.setDebug(
-          mode === 1 || mode === 2 || mode === 5 ? mode : 0);
+        // ★ v3：**整套编号在两边都成立**，直接透传。
+        //   场景与角色调的是同一个 sc3DebugView，同一个编号必是同一个量 ——
+        //   这正是这套视图能用来定位问题的前提。v2 那种"只有 1/2/5 在两边成立、
+        //   其余角色回正常显示"的对照是残缺的：你切到"纯光照"看见背景变了、
+        //   角色没变，根本分不清是角色没吃到光还是这一档角色压根没实现。
+        this.unifiedCharLighting.setDebug(mode);
       },
       setLightingSyncHooks: (hooks) => { this.lightingSyncHooks = hooks; },
       // 同步连接状态：断了必须在界面上看得见，不能只在 console 里
@@ -3630,13 +3630,10 @@ export class Game {
 
     // 统一光影（lighting-rebuild）。装载在 depthLoader **之后**——它要用深度纹理。
     // 场景没配 lighting 块、或没烘 lighting2/ 载荷时安静地不启用，背景照旧走 Sprite。
-    this.sceneManager.setLightingLoader(async (sceneId, sceneData, primary) => {
-      const ok = await this.sceneLighting.load(sceneId, sceneData, this.assetManager, primary);
+    this.sceneManager.setLightingLoader(async (sceneId, sceneData) => {
+      const ok = await this.sceneLighting.load(sceneId, sceneData, this.assetManager);
       if (!ok) return null;
-      // ⚠ 顺序即正确性：先渲一次缓存（顺带建出 GI 反弹 RT），再接角色。
-      //   反过来的话角色拿到的 `giBounceTexture` 是 null（RT 是懒建的），
-      //   于是 GI 增益被压成 0 —— 表现为"这个场景没有反弹光"，而且不报错。
-      //   这一次渲染本来也必须做：免得揭幕那一帧背景是空的。
+      // ⚠ 先渲一次缓存再接角色：这一帧本来就必须渲，免得揭幕那一帧背景是空的。
       this.sceneLighting.update(this.renderer.app.renderer);
       this.setupUnifiedCharacterLighting();
       return this.sceneLighting.backgroundMesh;
@@ -3718,19 +3715,19 @@ export class Game {
    * 任一半缺料就不启用，实体回落 probe 路径。**必须在 sceneLighting.load 成功之后调**。
    */
   private setupUnifiedCharacterLighting(): void {
-    // 恒等占位场景：背景已接进新管线（画面零变化），但**角色不动**。
-    // 恒等只对背景成立——旧路径给角色的是烘焙出来的 3D 辐射场，新路径给的是一个
-    // 标量天光项，两者不可能相等。硬切会让所有占位场景的角色一起从"有方向、有颜色的
-    // 烘焙光"变成平光，那不叫零变化。等作者真给这个场景摆了灯（删掉 placeholder）再切。
-    if (this.sceneLighting.params?.placeholder) {
-      this.unifiedCharLighting.teardown();
-      this.rebuildEntityLitShaders();
-      return;
-    }
+    // ⚠ v2 在这里有一道 `placeholder` 闸门：见到这个标记就 teardown 角色那一路、
+    //   回落旧 probe。后果是 27 个场景里**摆多少灯角色都零响应**，而背景照常亮，
+    //   面板还不给任何提示 —— 表现出来就是"灯打在脸上，角色纹丝不动"。
+    //
+    //   v3 不需要它，也不能有它：现在角色与场景走的是**同一条链**，
+    //   角色的基底由解析式除出来（sc3CharBase），没有"恒等只对背景成立"
+    //   这个前提了。未调过的场景默认 `gi = 1`（吃烘焙 GI，画面精确等于原画），
+    //   而角色从**同一份** GI 网格里按自己的世界位置和法线查值 ——
+    //   那是光照方程里一个有物理含义的项，不是一个把角色挡在门外的开关。
     const half = this.sceneLighting.characterGeometryHalf;
     const charGeo = this.characterLighting.unifiedGeometry;
-    const skyGrid = this.sceneLighting.skyVisibilityTexture;
-    if (!half || !charGeo || !skyGrid) {
+    const skyTransport = this.sceneLighting.skyTransportTexture;
+    if (!half || !charGeo || !skyTransport) {
       this.unifiedCharLighting.teardown();
       return;
     }
@@ -3746,8 +3743,7 @@ export class Game {
       grid: half.grid,
     }, {
       ground: charGeo.ground,
-      skyGrid,
-      giBounce: this.sceneLighting.giBounceTexture,
+      skyTransport,
       depth: half.depth,
     });
 
@@ -3755,7 +3751,8 @@ export class Game {
     const packed = this.sceneLighting.packedLights;
     if (def && packed) {
       this.unifiedCharLighting.applyParams(
-        def, packed, this.sceneLighting.wuPerQUnit, this.sceneLighting.radianceScale);
+        def, packed, this.sceneLighting.wuPerQUnit, this.sceneLighting.charRefIntensity,
+        this.sceneLighting.giScale, this.sceneLighting.giLogSpan);
     }
     // 已经在场上的实体（玩家/NPC）是在 lighting 装载**之前**建的 shader，
     // 那时统一光影还没启用，它们拿到的是旧路径的 shader —— 必须重建一遍，
@@ -3813,7 +3810,8 @@ export class Game {
     const packed = this.sceneLighting.packedLights;
     if (packed) {
       this.unifiedCharLighting.applyParams(
-        def, packed, this.sceneLighting.wuPerQUnit, this.sceneLighting.radianceScale);
+        def, packed, this.sceneLighting.wuPerQUnit, this.sceneLighting.charRefIntensity,
+        this.sceneLighting.giScale, this.sceneLighting.giLogSpan);
     }
   }
 
@@ -4857,7 +4855,19 @@ export class Game {
   }
 
   private attachNpcSceneFilters(npc: Npc): void {
-    if (npc.def.renderRaw) { npc.container.filters = []; return; }
+    if (npc.def.renderRaw) {
+      // ★ `renderRaw` = 从背景抠出、贴回原位做循环动画的装饰补丁。它**不该**吃
+      //   角色着色（那条会除掉 charRefIntensity 反解基底，对"取自已烤好光照的
+      //   背景"的像素是错的，会与背景色调不符、露出方框接缝）。
+      //
+      //   但它必须跟着重打光变：`gi = 1` 时背景渲出来精确等于原画、补丁严丝合缝，
+      //   而作者一旦调低 `gi`，背景变了补丁不变就会浮出来。所以挂一条**只吃比值**
+      //   的滤镜 —— `I_out = I_补丁 × E_目标/E`，见 RawPatchRelightFilter。
+      //   ⚠ `gi = 1` 时该滤镜的比值恒为 1、像素精确不变。
+      const relight = this.sceneLighting.createRawPatchFilter();
+      npc.container.filters = relight ? [relight] : [];
+      return;
+    }
     const lightingOn = this.sceneDepthSystem.isLightingEnabled;
     const baked = this.characterLighting.shadingResources;
     try {
@@ -6818,6 +6828,20 @@ export class Game {
     this.updateFrustumCulling();
 
     this.syncEntityPixelDensityMatch();
+
+    // ★ 装饰补丁（renderRaw）的重打光滤镜与深度遮挡滤镜**同一个节拍**喂位姿。
+    //   放在 isActive 判断之外：没有深度系统时统一光影仍可能在跑。
+    {
+      const sd = this.sceneManager.currentSceneData;
+      if (sd) {
+        this.sceneLighting.updateRawPatchFrame(
+          this.renderer.worldContainer.x,
+          this.renderer.worldContainer.y,
+          this.camera.getProjectionScale(),
+          sd.worldWidth, sd.worldHeight,
+        );
+      }
+    }
 
     if (this.sceneDepthSystem.isActive) {
       const S = this.camera.getProjectionScale();

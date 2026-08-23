@@ -100,9 +100,26 @@ export function directionFromAngles(elevationDeg: number, azimuthDeg: number): [
  * ⚠ 别再把 q 单位叫成 wu —— 那是两个空间。q 的尺度随相机标定走，
  *   wu 不随；角色在 q 里从 0.17 变到 0.97，在 wu 里**恒为 150**。
  */
+/**
+ * 「哪一盏是太阳」的**唯一**定义：第一盏启用的 `directional`。
+ *
+ * ⚠ 抽出来是因为现在有三处要问同一个问题：灯的打包、场景侧天空 SH、角色侧天空 SH。
+ *   日侧辉光（`sky.glowGain`）要绕太阳方位摆，要是三处各自 find 一遍，
+ *   哪天有人给 `directional` 加个筛选条件就会出现「辉光朝西、太阳朝东」。
+ */
+export function sunLightOf(def: SceneLightingDef) {
+  return def.lights.find((l) => l.kind === 'directional' && (l.enabled ?? true));
+}
+
+/** 太阳方向（世界，指向光源）。没有太阳时返回 undefined —— 日侧辉光随之整项跳过。 */
+export function sunDirectionOf(def: SceneLightingDef): [number, number, number] | undefined {
+  const sun = sunLightOf(def);
+  return sun ? directionFromAngles(sun.elevationDeg ?? 45, sun.azimuthDeg ?? 180) : undefined;
+}
+
 export function packLights(def: SceneLightingDef, wuPerQUnit: number): PackedLights {
   const quPerWu = 1 / Math.max(wuPerQUnit, 1e-9);
-  const sun = def.lights.find((l) => l.kind === 'directional' && (l.enabled ?? true));
+  const sun = sunLightOf(def);
 
   const out: PackedLights = {
     sunColor: [1, 1, 1],

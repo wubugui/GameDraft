@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import SCENE_PASS from './SceneLightingPass.ts?raw';
+// ⚠ 去霾在 v3 里从**运行时 shader 搬到了烘焙期**（v3 运行时不再有原画可除，
+//   albedo 是烘好的）。所以这份契约跟着代码走，改盯 Python 烘焙器。
+//   知识没变，位置变了 —— 契约必须跟着搬，否则它锁的是一段已经不存在的代码。
+import BAKE_GBUFFER from '../../../tools/scene_relight/bake_gbuffer.py?raw';
 
 /**
  * 去霾的**非负性**与**色度守恒**。
@@ -13,6 +16,11 @@ import SCENE_PASS from './SceneLightingPass.ts?raw';
  *
  * 改成"每通道至少留 HAZE_KEEP"之后孤立零点降到 0.002%。这里锁住那个性质，
  * 免得有人"顺手"把下限改回硬钳 —— 那种回退**不会报错**，只会让噪点悄悄回来。
+ *
+ * ⚠ 搬家提醒：v2 时这段算术在运行时 shader 里，v3 搬进了烘焙期
+ * （`tools/scene_relight/bake_gbuffer.py` 的 `apply_dehaze`）。**注意 bake.py
+ * 里那份旧的 `fit_albedo_mean` 用的仍是 `max(x − haze, 0)` 硬钳** —— 那是 v2 的
+ * 遗留，不要照抄。
  */
 
 /** GLSL 里那一行的 JS 镜像。改一边必须改另一边（见文末机械契约）。 */
@@ -89,23 +97,34 @@ describe('色度守恒：下限起作用时按比例缩，不是逐通道乱砍'
   });
 });
 
-describe('机械契约：GLSL 与这份镜像不许分家', () => {
-  it('shader 里是下限法，不是硬钳', () => {
-    expect(SCENE_PASS).toContain(
-      'painting = (painting - min(hazeAmt, painting * (1.0 - HAZE_KEEP))) / max(T, 0.15);');
-    expect(SCENE_PASS).toContain('#define HAZE_KEEP 0.1');
+describe('机械契约：烘焙器与这份镜像不许分家', () => {
+  it('烘焙器里是下限法，不是硬钳', () => {
+    // 与上面 JS 镜像的 `Math.min(hazeAmt, painting * (1 - keep))` 逐字对应
+    expect(BAKE_GBUFFER).toContain('np.minimum(amount, lin * (1.0 - HAZE_KEEP))');
+    expect(BAKE_GBUFFER).toContain('HAZE_KEEP = 0.1');
+    expect(BAKE_GBUFFER).toContain('np.maximum(trans, 0.15)');
   });
 
   it('旧的硬钳写法必须已经不在（防回退）', () => {
-    expect(SCENE_PASS).not.toContain('max(painting - uHazeColor');
+    // `np.maximum(lin - ..., 0.0)` 正是 bake.py 里那份 v2 遗留的形状
+    expect(BAKE_GBUFFER).not.toMatch(/np\.maximum\(\s*lin\s*-/);
   });
 
-  it('去霾整段仍被 uHaze.y > 0 守着——占位场景 dehaze=0 必须整段跳过', () => {
-    // 这是 27 个占位场景"背景逐像素零变化"的前提
-    const i = SCENE_PASS.indexOf('if (uHaze.y > 0.0) {');
-    expect(i).toBeGreaterThan(0);
-    const j = SCENE_PASS.indexOf('HAZE_KEEP', i);
-    expect(j).toBeGreaterThan(i);
+  it('去霾必须排在 final gather 之前', () => {
+    // 霾是**被日光照亮的空气**，不是表面。喂进 gather 就等于让远处那片亮灰
+    // 当光源用，近处会被它照亮；而重打光只处理表面项，夜里那片霾还继续亮着
+    // （实测雾津街头远/近亮度比 4.32）。顺序反了不会报错，只会让画面悄悄不对。
+    const iDehaze = BAKE_GBUFFER.indexOf('lin_work = apply_dehaze(');
+    const iHdr = BAKE_GBUFFER.indexOf('hdr_work = to_hdr(lin_work)');
+    const iGather = BAKE_GBUFFER.indexOf('e_ind, sky_vis, bent, vfit = bake_gather(');
+    expect(iDehaze).toBeGreaterThan(0);
+    expect(iHdr).toBeGreaterThan(iDehaze);
+    expect(iGather).toBeGreaterThan(iHdr);
+  });
+
+  it('原生分辨率那一份也要去霾（基底是背景本体，不能只处理 work 那份）', () => {
+    expect(BAKE_GBUFFER).toContain(
+      'lin_native = apply_dehaze(srgb_to_linear(scene.bg_srgb), d_native, haze)');
   });
 });
 

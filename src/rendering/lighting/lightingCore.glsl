@@ -141,21 +141,9 @@ vec3 lcDirectionalLight(vec3 N, vec3 toLight, vec3 color, float intensity, float
 }
 
 // ---------------------------------------------------------------- 天光
-// 天光 = 天光色 × 强度 × ( (1−hemi) + hemi × 天穹可见性 )。
-// 可见性来自**烘出来的几何场**（逐像素 skyvis.png / 角色用 3D 网格），与光无关，
-// 光怎么变都不用重烘。
-//
-// · `hemi` = 有多少比例的天光是"从上方来、会被遮住"的；`1−hemi` 是各向同性的底。
-//   hemi 越大，巷道/檐下与开阔地的反差越强。
-// · `aoStrength` 是可读性旋钮：1=完全吃遮蔽，0=完全不吃（`mix` 把可见性拉回 1）。
-//
-// ⚠ **本函数已含半球项，调用方不要再乘一遍**。踩过：调用处又乘了
-//   `(1−hemi)+hemi·skyvis`，等于把可见性算了两次，整场景暗到离线口径的 0.6 倍
-//   （sky 均值 0.48，比值正好对上）。与 `relight.py` 的 `s_new` 逐项对齐即可。
-vec3 lcSkyLight(vec3 color, float intensity, float skyvis, float hemi, float aoStrength) {
-    float v = mix(1.0, clamp(skyvis, 0.0, 1.0), clamp(aoStrength, 0.0, 1.0));
-    return color * (intensity * ((1.0 - hemi) + hemi * v));
-}
+// ⚠ v2 的 `lcSkyLight`（`(1−hemi)+hemi·V` 那一套）已删。
+//   天光现在走 `shadeCore3.glsl` 的**传输基** `sc3SkyIrradiance` ——
+//   遮蔽与朝向都在 T 里，没有 hemi 这个凑出来的旋钮了。
 
 // ---------------------------------------------------------------- 阴影 march
 // 沿光线在**伪世界 q 空间**里 march 深度场：落到可见壳背后、且在 thick 厚度窗内 = 被挡。
@@ -264,16 +252,10 @@ vec3 lcDisplayTransform(vec3 lin, float ev, int tonemapMode, vec3 whiteBalance,
 }
 
 // ---------------------------------------------------------------- 场景重打光
-// 场景的 albedo 被画进了像素里，拿不出来，所以走「先除掉白天光、再乘上新光」。
-// 角色的 albedo 是显式的，直接乘 S —— **两边算的是同一个 S**，这是"完美融合"的根。
-//
-// ⚠ 干活的是 S_day / S_new 里的天穹可见性与定向光投影；除/乘只是最后一步算术。
-//   **被否**（2026-08-20 制作人当场否决）：S 只用法线朝上项、不做任何 march 的写法
-//   ——那是逐像素调色，画不出巷道与屋檐下的遮蔽结构，看着就是贴滤镜。勿回退。
-vec3 lcRelightScene(vec3 paintingLinear, vec3 sDay, vec3 sNew, float ratioMax) {
-    vec3 ratio = clamp(sNew / max(sDay, vec3(1e-4)), vec3(0.0), vec3(ratioMax));
-    return paintingLinear * ratio;
-}
+// ⚠ v2 的 `lcRelightScene`（原画 × clamp(S_new/S_day, 0, ratioMax)）已删。
+//   「除掉白天光」现在**在烘焙期做完**并产出比例基底，运行时只剩
+//   `sc3Shade` 的一次乘法 —— 那正是角色能走同一条路径的前提：
+//   角色没有原画可除，但它有自己的解析 E_ref。
 
 #endif // LIGHTING_CORE_INCLUDED
 

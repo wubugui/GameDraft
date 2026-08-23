@@ -135,14 +135,25 @@ class TestValidate:
 
 
 class TestDefaults:
-    def test_缺省块刻意不写_day_hemi(self) -> None:
-        """day.hemi 是原画自己的遮蔽响应，由烘焙拟合。手填必错（角落会黑两遍）。"""
+    def test_缺省块不含任何_v2_遗留键(self) -> None:
+        """v3 把这些键连同它们背后的机制一起删了 —— 留在缺省块里 = 一新建场景
+        就把两套语义带回来，而编辑器的写回是整块透传，会一路传到运行时。"""
         block = default_lighting_block()
-        assert 'hemi' not in block['day']
+        for dead in ('day', 'placeholder', 'aoStrength', 'ratioMax',
+                     'dehaze', 'radianceScale', 'giGain'):
+            assert dead not in block, dead
 
-    def test_缺省块四个必需键齐全(self) -> None:
+    def test_缺省块的天穹用_profile_不用_hemi(self) -> None:
+        """`hemi` 是 `(1−h)+h·V` 里那个没有量纲意义的混合权重，且和 day.hemi
+        互相约掉过（实测 28/28 场景背景对天穹遮蔽零响应）。v3 换成
+        `profile`：天穹辐亮度的纬向分布，描述的是天空本身长什么样。"""
+        sky = default_lighting_block()['sky']
+        assert 'hemi' not in sky
+        assert 0.0 <= sky['profile'] <= 4.0
+
+    def test_缺省块必需键齐全(self) -> None:
         block = default_lighting_block()
-        for k in ('sky', 'day', 'lights', 'display'):
+        for k in ('sky', 'ambient', 'lights', 'display'):
             assert k in block, k
 
     def test_平行光不带位置与半径(self) -> None:
