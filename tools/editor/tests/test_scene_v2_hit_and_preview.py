@@ -71,6 +71,10 @@ def _scene() -> dict:
             # displayImage 存在但尺寸为 0：内容图元建不出来
             {"id": "h_broken", "type": "inspect", "x": 200, "y": 600,
              "displayImage": {"image": "", "worldWidth": 0, "worldHeight": 0}},
+            # 正常展示图：拖动时贴图要跟着走（内容图元也吃预览通道）
+            {"id": "h_disp", "type": "inspect", "x": 300, "y": 200,
+             "displayImage": {"image": "a.png", "worldWidth": 40,
+                              "worldHeight": 60}},
         ],
         "npcs": [],
         "zones": [
@@ -326,6 +330,60 @@ class GesturePreviewTests(_Base):
         self.assertFalse(self.view.rubber_band.isVisible())
 
 
+class ContentPreviewTests(_Base):
+    """**贴图也要跟着手走。** 只让把手动、贴图留在原地，等于拖的时候看不出
+    自己在往哪儿摆 —— 而这恰恰是拖热点唯一有意义的视觉反馈。"""
+
+    def setUp(self) -> None:
+        super().setUp()
+        from PySide6.QtGui import QPixmap
+        self.view.set_texture_provider(lambda _url: QPixmap(8, 8))
+
+    def test_display_image_follows_the_drag(self) -> None:
+        ref = EntityRef("hotspot", "h_disp")
+        disp = self.view.item_for(ref, "display")
+        self.assertIsNotNone(disp, "前置条件：展示图图元应当存在")
+        self.doc.set_selection([ref])
+        self.view.tools.select(self.move)
+        self.move.mouse_pressed(QPointF(300, 200), _LEFT, _NO_MOD)
+        self.move.mouse_moved(QPointF(360, 230), _LEFT, _NO_MOD)
+        self.view.refresh_gesture_preview()
+        self.assertEqual((disp.pos().x(), disp.pos().y()), (360.0, 230.0),
+                         "拖动中贴图没跟着走")
+
+    def test_release_leaves_no_residual_offset_on_content(self) -> None:
+        ref = EntityRef("hotspot", "h_disp")
+        disp = self.view.item_for(ref, "display")
+        self.doc.set_selection([ref])
+        self.view.tools.select(self.move)
+        self.move.mouse_pressed(QPointF(300, 200), _LEFT, _NO_MOD)
+        self.move.mouse_moved(QPointF(360, 230), _LEFT, _NO_MOD)
+        self.view.refresh_gesture_preview()
+        self.move.mouse_released(QPointF(360, 230), _LEFT, _NO_MOD)
+        self.view.refresh_gesture_preview()
+        self.assertEqual(disp.preview_offset, (0.0, 0.0))
+        self.assertEqual((disp.pos().x(), disp.pos().y()), (360.0, 230.0),
+                         "松手后贴图位置应由真实数据决定，且与放手处重合")
+
+    def test_zone_preview_moves_the_item_not_the_points(self) -> None:
+        """Zone 的点列是世界坐标、住在图元本地系里 —— 预览只准动图元的 pos，
+        动点列就是把预览烘进了几何。"""
+        ref = EntityRef("zone", "z1")
+        poly = self.view.item_for(ref, "polygon")
+        self.doc.set_selection([ref])
+        self.view.tools.select(self.move)
+        self.move.mouse_pressed(QPointF(620, 250), _LEFT, _NO_MOD)
+        self.move.mouse_moved(QPointF(640, 280), _LEFT, _NO_MOD)
+        self.view.refresh_gesture_preview()
+        self.assertEqual((poly.pos().x(), poly.pos().y()), (20.0, 30.0))
+        self.assertEqual(poly.points()[0], (600.0, 100.0),
+                         "预览被写进了点列")
+        self.move.mouse_released(QPointF(640, 280), _LEFT, _NO_MOD)
+        self.view.refresh_gesture_preview()
+        self.assertEqual((poly.pos().x(), poly.pos().y()), (0.0, 0.0))
+        self.assertEqual(poly.points()[0], (620.0, 130.0))
+
+
 class TransformGizmoTests(_Base):
     """缩放/旋转手柄要真的画出来，且与命中同源。"""
 
@@ -343,6 +401,27 @@ class TransformGizmoTests(_Base):
         self.view.tools.select(self.select)
         self.assertFalse(self.view.transform_gizmo.isVisible(),
                          "切走变换工具后手柄还留在画面上，点它却没人接管")
+
+    def test_gizmo_follows_an_undo(self) -> None:
+        """撤销一次旋转后，手柄必须回到 0 度那一边。
+
+        gizmo 若只在"选择变了"时重画，撤销之后它会停在旧角度上 ——
+        画面与数据从此对不上，而用户下一次拖动是照着旧手柄拖的。
+        """
+        ref = EntityRef("hotspot", "h_in")
+        self.view.tools.select(self.transform)
+        self.doc.set_selection([ref])
+        rest = self.transform.gizmo_positions()["rotate"]
+        handle = self.transform.handle_positions(ref)["rotate"]
+        self.transform.mouse_pressed(handle, _LEFT, _NO_MOD)
+        self.transform.mouse_moved(QPointF(650, 210), _LEFT, _NO_MOD)
+        self.transform.mouse_released(QPointF(650, 210), _LEFT, _NO_MOD)
+        self.assertIsNotNone(self.ent("hotspot", "h_in").get("rotation"),
+                             "前置条件：这一拖应当写下了 rotation")
+        self.doc.undo_stack.undo()
+        back = self.transform.gizmo_positions()["rotate"]
+        self.assertAlmostEqual(back.x(), rest.x(), places=3)
+        self.assertAlmostEqual(back.y(), rest.y(), places=3)
 
     def test_gizmo_follows_the_preview_rotation(self) -> None:
         """转动过程中手柄要跟着手转，否则没有"转到哪了"的反馈。"""
@@ -391,17 +470,19 @@ class SelectionShortcutTests(_Base):
         self.assertIsNotNone(self.doc.model_entity(EntityRef("hotspot", "h_in")))
 
     def test_ctrl_d_duplicates(self) -> None:
+        before = len(self.doc.entity_refs("hotspot"))
         self.doc.set_selection([EntityRef("hotspot", "h_in")])
         self.assertTrue(self.key(self.select, Qt.Key.Key_D,
                                  Qt.KeyboardModifier.ControlModifier))
         ids = [r.id for r in self.doc.entity_refs("hotspot")]
-        self.assertEqual(len(ids), 4, f"复制没发生：{ids}")
+        self.assertEqual(len(ids), before + 1, f"复制没发生：{ids}")
 
     def test_plain_d_does_not_duplicate(self) -> None:
         """没按 Ctrl 的 D 是普通输入，不该动数据。"""
+        before = len(self.doc.entity_refs("hotspot"))
         self.doc.set_selection([EntityRef("hotspot", "h_in")])
         self.assertFalse(self.key(self.select, Qt.Key.Key_D))
-        self.assertEqual(len(self.doc.entity_refs("hotspot")), 3)
+        self.assertEqual(len(self.doc.entity_refs("hotspot")), before)
 
     def test_arrow_key_nudges_by_one_unit(self) -> None:
         self.doc.set_selection([EntityRef("hotspot", "h_in")])
