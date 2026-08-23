@@ -30,7 +30,7 @@ from .changes import (
     SelectionChanged,
     ViewFiltersChanged,
 )
-from .content_items import DisplayImageItem, SpritePreviewItem
+from .content_items import BackgroundItem, DisplayImageItem, SpritePreviewItem
 from .entity_items import HandleItem, PolygonItem, PolylineItem
 from .items import CanvasItem, EntityItem
 from .overlays import GroupBoxItem, PerspectiveAxisItem, RubberBandItem
@@ -103,6 +103,8 @@ class SceneView(QGraphicsView):
         self._band = RubberBandItem()
         self._gfx.addItem(self._band)
         self._band.setVisible(False)
+        self._background = BackgroundItem()
+        self._gfx.addItem(self._background)
 
         self._doc.changed.connect(self._on_document_changed)
         self.rebuild_all()
@@ -310,6 +312,11 @@ class SceneView(QGraphicsView):
 
     def sync_perspective_axis(self, near, far) -> None:
         self._persp_axis.set_axis(near, far)
+
+    def sync_background(self, pix, world_w: float, world_h: float,
+                        note: str = "") -> None:
+        """背景由宿主解析路径后传进来（视图不读盘）。"""
+        self._background.set_background(pix, world_w, world_h, note)
 
     def set_texture_provider(self, provider) -> None:
         """注入 ``url -> QPixmap | None``。视图不读盘，路径解析归宿主。"""

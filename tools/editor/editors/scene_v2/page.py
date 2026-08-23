@@ -42,6 +42,10 @@ from ...shared.anim_atlas_preview import (
     spritesheet_public_path,
 )
 from ...shared.image_path_picker import disk_path_for_runtime_url
+from ...shared.move_entity_map_picker import (
+    resolve_world_size_for_scene_json,
+    scene_background_disk_path,
+)
 from ...shared.scene_view_filters import ViewAxes, passes_view_filters
 from .changes import (
     EntitiesAdded,
@@ -165,6 +169,7 @@ class SceneEditorV2(QWidget):
         self._canvas_layout.addWidget(self._view)
         self._view.set_texture_provider(self._load_texture)
         self._view.set_sprite_metrics_provider(self._npc_sprite_metrics)
+        self._refresh_background()
         self._install_tools()
         self._apply_view_axes()
         self._doc.changed.connect(self._on_doc_changed)
@@ -178,6 +183,27 @@ class SceneEditorV2(QWidget):
         return True
 
     # ---- 资源解析（视图不读盘，路径解析归这里）-----------------------------
+
+    def _refresh_background(self) -> None:
+        """场景背景。**文件名强约束走共享出口** —— 与老画布、坐标点选器同一份
+        解析（只认 `background.png`），否则会显示一张游戏根本不加载的背景。"""
+        if self._doc is None or self._view is None:
+            return
+        sc = self._doc.scene() or {}
+        path = scene_background_disk_path(self._model, self._doc.scene_id, sc)
+        world_w, world_h = resolve_world_size_for_scene_json(
+            sc, path if path and path.is_file() else None)
+        pix = None
+        note = ""
+        if path is not None and path.is_file():
+            pix = QPixmap(str(path))
+            if pix.isNull():
+                pix, note = None, f"{self._doc.scene_id}\n（背景图加载失败）"
+        elif sc.get("backgrounds"):
+            note = f"{self._doc.scene_id}\n（背景图缺失或文件名不是 background.png）"
+        else:
+            note = f"{self._doc.scene_id}\n（本场景无背景图）"
+        self._view.sync_background(pix, world_w, world_h, note)
 
     def _public_asset_path(self, rel: str):
         """``/anim/x.json`` 之类的公开资源相对路径 → 磁盘路径。与老画布同口径。"""

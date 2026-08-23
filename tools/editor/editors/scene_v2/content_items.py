@@ -21,7 +21,53 @@ from PySide6.QtGui import QBrush, QColor, QPen, QPixmap, QTransform
 from .changes import EntityRef
 from .items import CanvasItem
 
-__all__ = ["DisplayImageItem", "SpritePreviewItem"]
+__all__ = ["BackgroundItem", "DisplayImageItem", "SpritePreviewItem"]
+
+#: 背景恒在最底。它不参与内容排序 —— 运行时 `backgroundLayer` 本来就恒在
+#: `entityLayer` 之下，语义一致。
+Z_BACKGROUND = -1_000_000.0
+
+
+class BackgroundItem(CanvasItem):
+    """场景背景图，缩放填满 world_w × world_h。
+
+    读不出来时画一句占位提示而不是留空白：对着纯色空画布盲点坐标，
+    策划分不清"这个场景没有背景"和"背景加载失败"。
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._pix: QPixmap | None = None
+        self._w = 0.0
+        self._h = 0.0
+        self._note = ""
+        self.setZValue(Z_BACKGROUND)
+
+    def set_background(self, pix: QPixmap | None, world_w: float, world_h: float,
+                       note: str = "") -> None:
+        self.prepareGeometryChange()
+        self._pix = pix if (pix is not None and not pix.isNull()) else None
+        self._w = max(0.0, float(world_w or 0.0))
+        self._h = max(0.0, float(world_h or 0.0))
+        self._note = note
+        self.update()
+
+    def boundingRect(self) -> QRectF:
+        return QRectF(0, 0, self._w, self._h)
+
+    def paint(self, painter, option, widget=None) -> None:
+        rect = QRectF(0, 0, self._w, self._h)
+        if self._w <= 0 or self._h <= 0:
+            return
+        if self._pix is not None:
+            painter.drawPixmap(rect, self._pix, QRectF(self._pix.rect()))
+            return
+        painter.setBrush(QBrush(QColor(38, 40, 46)))
+        painter.setPen(QPen(QColor(90, 95, 105), 0, Qt.PenStyle.DashLine))
+        painter.drawRect(rect)
+        if self._note:
+            painter.setPen(QPen(QColor(170, 175, 185)))
+            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, self._note)
 
 _MISSING_FILL = QColor(200, 120, 255, 38)
 _MISSING_PEN = QPen(QColor(140, 70, 190, 200), 0, Qt.PenStyle.DashLine)

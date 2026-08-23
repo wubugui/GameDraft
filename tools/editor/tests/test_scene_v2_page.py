@@ -88,6 +88,30 @@ class PageAssemblyTests(_Base):
         self.assertFalse(self.page.load_scene("不存在"))
 
 
+class BackgroundTests(_Base):
+    """背景走与老画布、坐标点选器**同一个**解析出口（只认 background.png）。"""
+
+    def test_background_item_exists(self) -> None:
+        self.assertIsNotNone(self.page.view._background)
+
+    def test_missing_background_shows_a_note_not_a_blank(self) -> None:
+        """对着纯色空画布盲点坐标时，策划分不清"没有背景"和"加载失败"。"""
+        self.assertTrue(self.page.view._background._note,
+                        "没有背景时应当给一句占位说明")
+
+    def test_world_size_drives_the_background_rect(self) -> None:
+        rect = self.page.view._background.boundingRect()
+        self.assertEqual((rect.width(), rect.height()), (800.0, 600.0))
+
+    def test_wrong_filename_is_refused_like_the_old_canvas(self) -> None:
+        """文件名不是 background.png 一律拒绝 —— 否则会显示一张游戏不加载的图。"""
+        sc = self.model.scenes[_SCENE]
+        sc["backgrounds"] = [{"image": "别的名字.png"}]
+        self.page._refresh_background()
+        self.assertIsNone(self.page.view._background._pix)
+        self.assertIn("background.png", self.page.view._background._note)
+
+
 class ViewAxesWiringTests(_Base):
     def test_plane_axis_hides_non_members(self) -> None:
         self.page.set_view_axes(ViewAxes(plane_id="yang"))
