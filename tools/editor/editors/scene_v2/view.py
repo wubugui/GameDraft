@@ -92,6 +92,9 @@ class SceneView(QGraphicsView):
         self._presence_filter = None
         #: ``url -> QPixmap | None``。视图**不读盘**，路径解析归宿主。
         self._texture_provider = None
+        #: ``npc_dict -> (world_w, world_h, texture_url) | None``。
+        #: 精灵尺寸住在动画包里，不在场景 JSON 里 —— 同样归宿主。
+        self._sprite_metrics = None
         #: 覆盖物（分组框 / 透视轴 / 橡皮筋）。它们不进图元账，也不进命中白名单。
         self._group_boxes: dict[str, GroupBoxItem] = {}
         self._persp_axis = PerspectiveAxisItem()
@@ -225,9 +228,32 @@ class SceneView(QGraphicsView):
         else:
             item.set_pixmap(None)
 
-    @staticmethod
-    def _content_spec(kind: str, ent: dict):
-        """内容 part 的几何与贴图来源；没有内容返回 None。"""
+    def _content_spec(self, kind: str, ent: dict):
+        """内容 part 的几何与贴图来源；没有内容返回 None。
+
+        NPC 精灵的世界尺寸来自**动画包**（不在场景 JSON 里），所以由宿主经
+        `set_sprite_metrics_provider` 注入 —— 视图不解析资源路径。
+        动画包解不出来时返回 None：与老画布同口径（没有 animFile / 图集读不到
+        就没有精灵），也与运行时一致（`getWorldSize()` 为 0 时不出 sprite）。
+        """
+        if kind == "npc":
+            if self._sprite_metrics is None:
+                return None
+            metrics = self._sprite_metrics(ent)
+            if not metrics:
+                return None
+            w, h, url = metrics
+            if w <= 0 or h <= 0:
+                return None
+            facing = -1 if str(
+                ent.get("initialFacing", "")).strip().lower() == "left" else 1
+            return (
+                QPointF(float(ent.get("x", 0) or 0), float(ent.get("y", 0) or 0)),
+                w, h, facing,
+                float(ent.get("scale", 1.0) or 1.0),
+                float(ent.get("rotation", 0.0) or 0.0),
+                url,
+            )
         if kind != "hotspot":
             return None
         di = ent.get("displayImage")
@@ -288,9 +314,20 @@ class SceneView(QGraphicsView):
     def set_texture_provider(self, provider) -> None:
         """注入 ``url -> QPixmap | None``。视图不读盘，路径解析归宿主。"""
         self._texture_provider = provider
-        for (ref, part) in list(self._items):
-            if (ref.kind, part) in _CONTENT_PARTS:
-                self._sync_entity(ref)
+        self._resync_content()
+
+    def set_sprite_metrics_provider(self, provider) -> None:
+        """注入 ``npc_dict -> (world_w, world_h, texture_url) | None``。"""
+        self._sprite_metrics = provider
+        self._resync_content()
+
+    def _resync_content(self) -> None:
+        refs = {ref for (ref, part) in self._items if (ref.kind, part) in _CONTENT_PARTS}
+        # 还没建出内容图元的实体也要过一遍：provider 刚接上时它们才第一次有内容
+        for kind in ("hotspot", "npc"):
+            refs.update(self._doc.entity_refs(kind))
+        for ref in refs:
+            self._sync_entity(ref)
 
     def _part_points(self, kind: str, part: str, ent: dict):
         if part == "lightcurve":

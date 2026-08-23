@@ -19,7 +19,10 @@
 """
 from __future__ import annotations
 
+import json
+
 from PySide6.QtCore import QPointF, Qt
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -34,6 +37,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ...shared.anim_atlas_preview import (
+    resolved_anim_world_pair,
+    spritesheet_public_path,
+)
+from ...shared.image_path_picker import disk_path_for_runtime_url
 from ...shared.scene_view_filters import ViewAxes, passes_view_filters
 from .changes import (
     EntitiesAdded,
@@ -64,6 +72,10 @@ class SceneEditorV2(QWidget):
         self._view: SceneView | None = None
         self._axes = ViewAxes()
         self._content_z_key: tuple | None = None
+        #: 贴图与动画包解析结果的缓存。不缓存的话拖一次实体要重读几十次盘
+        #: （老画布的 `_disp_sig` 签名缓存是同一个教训：perf-reload）。
+        self._texture_cache: dict[str, QPixmap] = {}
+        self._anim_cache: dict[str, tuple] = {}
 
         root = QHBoxLayout(self)
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -151,6 +163,8 @@ class SceneEditorV2(QWidget):
         self._props.load_scene_props(self._doc.scene(), clear_pending_edits=True)
         self._view = SceneView(self._doc, self._canvas_host)
         self._canvas_layout.addWidget(self._view)
+        self._view.set_texture_provider(self._load_texture)
+        self._view.set_sprite_metrics_provider(self._npc_sprite_metrics)
         self._install_tools()
         self._apply_view_axes()
         self._doc.changed.connect(self._on_doc_changed)
@@ -162,6 +176,60 @@ class SceneEditorV2(QWidget):
         self.refresh_scene_geometry()
         self.refresh_entity_tree()
         return True
+
+    # ---- 资源解析（视图不读盘，路径解析归这里）-----------------------------
+
+    def _public_asset_path(self, rel: str):
+        """``/anim/x.json`` 之类的公开资源相对路径 → 磁盘路径。与老画布同口径。"""
+        r = (rel or "").strip().lstrip("/").replace("\\", "/")
+        if not r or self._model.project_path is None:
+            return None
+        return self._model.project_path / "public" / r
+
+    def _load_texture(self, url: str):
+        """``url -> QPixmap | None``。读不出来返回 None，视图会画缺件占位框
+        且把 `texture_loaded` 置 False —— 与运行时"没有 displaySprite"同口径。"""
+        if not url:
+            return None
+        cached = self._texture_cache.get(url)
+        if cached is not None:
+            return cached if not cached.isNull() else None
+        path = disk_path_for_runtime_url(self._model, url)
+        pix = QPixmap(str(path)) if path is not None else QPixmap()
+        self._texture_cache[url] = pix
+        return pix if not pix.isNull() else None
+
+    def _npc_sprite_metrics(self, npc: dict):
+        """NPC 精灵的世界尺寸与图集 URL；动画包解不出来返回 None。
+
+        返回 None 时视图不建精灵图元 —— 与老画布同口径（没有 animFile / 图集
+        读不到就没有精灵），也与运行时一致（`getWorldSize()` 为 0 时不出 sprite）。
+        """
+        anim_id = str(self._model.character_field(npc, "animFile") or "").strip()
+        if not anim_id:
+            return None
+        cached = self._anim_cache.get(anim_id)
+        if cached is not None:
+            return cached or None
+        path = self._public_asset_path(anim_id)
+        if path is None or not path.is_file():
+            self._anim_cache[anim_id] = ()
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            self._anim_cache[anim_id] = ()
+            return None
+        pair = resolved_anim_world_pair(data, self._model, anim_manifest_url=anim_id)
+        sheet = str(data.get("spritesheet", "") or "").strip()
+        if not pair or not sheet:
+            self._anim_cache[anim_id] = ()
+            return None
+        sheet_path = spritesheet_public_path(self._model, sheet, anim_id)
+        url = str(sheet_path) if sheet_path is not None else ""
+        out = (float(pair[0]), float(pair[1]), url)
+        self._anim_cache[anim_id] = out
+        return out
 
     def refresh_scene_geometry(self) -> None:
         """场景级几何（光环境曲线）。用 scene ref 走与实体几何**同一套**
