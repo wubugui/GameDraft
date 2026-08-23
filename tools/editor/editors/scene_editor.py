@@ -56,6 +56,7 @@ from ..shared.scene_migrations import (
     collision_polygon_world_to_local,
     migrate_scene_collision_to_local,
 )
+from ..shared.scene_view_filters import ViewAxes, passes_phase, passes_plane
 from ..shared.entity_sort_math import (
     entity_sort_z,
     hotspot_sort_band_of,
@@ -3349,37 +3350,32 @@ class SceneCanvas(QGraphicsView):
     # 旧名保留：外部（含测试）按 _norm_planes 调用过
     _norm_planes = _norm_id_list
 
+    def _view_axes(self) -> ViewAxes:
+        """把画布当前的轴状态打包成共享判定要的形状。"""
+        return ViewAxes(
+            plane_id=self._plane_filter,
+            plane_exclusive=self._plane_filter_exclusive,
+            phase_id=self._phase_filter,
+            npc_default_phases=tuple(self._phase_npc_default),
+        )
+
     def _entity_visible_under_plane_filter(self, planes: list[str] | None) -> bool:
-        pf = self._plane_filter
-        if pf is None:
-            return True
-        if planes is None:
-            # 缺省实体：shared 位面存在 / exclusive（独立世界型）不存在
-            return not self._plane_filter_exclusive
-        return pf in planes
+        return passes_plane({"planes": planes}, self._view_axes())
 
     def _entity_visible_under_phase_filter(self, kind: str, phases: list[str] | None) -> bool:
-        """时段轴判定。**缺省按实体种类分叉**，这是与位面轴唯一的形状差别：
-
-        - NPC 未写 phases → 只在「街上有人」的段（`_phase_npc_default`，由 game_config
-          的 `dayNight.phases[].daylight` 派生）。一段都没标时该列表为空 = 不施加限制，
-          与运行时 fail-open 同口径（宁可多显示，绝不静默清空）。
-        - 热点 / 区域未写 phases → 全时段都在（门、路牌夜里当然还在）。
-        """
-        pf = self._phase_filter
-        if pf is None:
-            return True
-        if phases is None:
-            if str(kind).strip().lower() != "npc":
-                return True
-            return (not self._phase_npc_default) or pf in self._phase_npc_default
-        return pf in phases
+        return passes_phase(kind, {"phases": phases}, self._view_axes())
 
     def _entity_visible_under_view_filters(
         self, kind: str, planes: list[str] | None, phases: list[str] | None,
     ) -> bool:
-        return (self._entity_visible_under_plane_filter(planes)
-                and self._entity_visible_under_phase_filter(kind, phases))
+        """判定实现在 `shared/scene_view_filters.py`，**新老画布共用同一份**。
+
+        那张机制卡反复强调"后置显隐轴必须合成一个判定"——如果新画布自己再写一份，
+        这件事就会变成两份实现各自维护，正是本次重建要消灭的东西。
+        """
+        axes = self._view_axes()
+        ent = {"planes": planes, "phases": phases}
+        return passes_plane(ent, axes) and passes_phase(kind, ent, axes)
 
     def _record_entity_view(self, key: str, ent: object) -> None:
         """add_* 登记实体的位面/时段归属并按当前视图即时套用
