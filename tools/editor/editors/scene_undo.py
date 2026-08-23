@@ -17,6 +17,7 @@ entity_refactor journal，执行后本栈清空，防止快照撤销跨过跨文
 from __future__ import annotations
 
 import copy
+import weakref
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
@@ -24,6 +25,35 @@ from PySide6.QtGui import QUndoCommand, QUndoStack
 
 if TYPE_CHECKING:  # pragma: no cover - 仅类型提示
     from .scene_editor import SceneEditor
+
+
+#: 本进程里活着的全部场景撤销控制器。用弱引用，页销毁后自动掉出，不必手工注销。
+_LIVE_CONTROLLERS: "weakref.WeakSet[SceneUndoController]" = weakref.WeakSet()
+
+
+def broadcast_external_scene_write(sid: str, *, origin: object = None) -> None:
+    """知会**除 origin 外**的所有场景页：某个场景被它们栈外的力量改了。
+
+    并存期（新老两个场景页同时活着）的核心防线。两个页各自持整场景快照、改同一份
+    模型 dict，若不互相知会：在 A 页按 Ctrl+Z 会把 B 页刚做的改动**静默回滚，
+    而且 redo 找不回**——因为 A 的 before 快照是在 B 改之前拍的。
+
+    代价说清楚：**切页 = 另一个页的撤销栈清空**。这是并存期的必然代价，也是
+    语义诚实的——总好过两个栈互撤。
+    """
+    sid = str(sid or "")
+    if not sid:
+        return
+    for ctrl in list(_LIVE_CONTROLLERS):
+        if ctrl is origin:
+            continue
+        try:
+            ctrl.notice_external_scene_write(sid)
+        except RuntimeError:
+            # 宿主页已析构，但 Python 侧的控制器还没被 gc 掉：碰它的 QUndoStack
+            # 会抛 "Internal C++ object already deleted"。这类僵尸直接摘掉。
+            # **只吞 RuntimeError**——别的异常是真问题，必须冒出来。
+            _LIVE_CONTROLLERS.discard(ctrl)
 
 
 class SceneSnapshotCommand(QUndoCommand):
@@ -67,6 +97,19 @@ class SceneUndoController:
         self.stack.setUndoLimit(self.UNDO_LIMIT)
         self._depth = 0
         self.restoring = False
+        # 并存期（新老两个场景页同时活着）必须互相知会，见 broadcast_external_scene_write
+        _LIVE_CONTROLLERS.add(self)
+
+    def _push(self, sid: str, cmd: QUndoCommand) -> None:
+        """**唯一的入栈出口**：入栈后知会其它场景页。
+
+        两个场景页各自持整场景快照，改同一份模型 dict。若不知会，在 A 页
+        Ctrl+Z 会把 B 页的改动**静默回滚，且 redo 找不回** —— 与
+        `notice_external_scene_write` 挡的是同一类事故，只是来源从"背景直写"
+        变成了"另一个页"。
+        """
+        self.stack.push(cmd)
+        broadcast_external_scene_write(sid, origin=self)
 
     # ---- 快照原语 ----------------------------------------------------------
 
@@ -94,7 +137,7 @@ class SceneUndoController:
             return False
         after = self._scene_snapshot(sid)
         if before != after:
-            self.stack.push(SceneSnapshotCommand(ed, sid, label, before, after))
+            self._push(sid, SceneSnapshotCommand(ed, sid, label, before, after))
         return True
 
     @contextmanager
@@ -128,8 +171,8 @@ class SceneUndoController:
                 if committed and self._depth == 0:
                     after = self._scene_snapshot(sid)
                     if before != after:
-                        self.stack.push(
-                            SceneSnapshotCommand(ed, sid, label, before, after))
+                        self._push(
+                            sid, SceneSnapshotCommand(ed, sid, label, before, after))
 
     def complete_deferred(
         self, sid: str, label: str, before: dict | None,
@@ -152,7 +195,7 @@ class SceneUndoController:
             return
         after = self._scene_snapshot(sid)
         if before != after:
-            self.stack.push(SceneSnapshotCommand(ed, sid, label, before, after))
+            self._push(sid, SceneSnapshotCommand(ed, sid, label, before, after))
 
     def notice_external_scene_write(self, sid: str) -> None:
         """未命令化的模型直写（背景导入的文件副作用、picker 对话框写他场景等）发生后调用：

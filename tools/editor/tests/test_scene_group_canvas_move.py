@@ -25,6 +25,7 @@ from PySide6.QtWidgets import QApplication
 
 from tools.editor.editors.scene_editor import SceneEditor, _SceneGroupBox
 from tools.editor.project_model import ProjectModel
+from tools.editor.shared.entity_sort_math import anchor_collision_polygon_to_world
 from tools.editor.tests.save_test_utils import write_minimal_loadable_project
 
 
@@ -54,7 +55,8 @@ def _scene() -> dict:
                 "id": "n1", "name": "甲", "x": 160, "y": 180,
                 "interactionRange": 50, "group": "夜巡",
                 "patrol": {"route": [{"x": 160, "y": 180}, {"x": 260, "y": 180}]},
-                # 旧数据：世界坐标碰撞多边形（NPC 侧没有加载期迁移，这条分支是活的）
+                # 刻意写成**旧的世界坐标**形状：加载期迁移（shared/scene_migrations.py）
+                # 会把它就地转成局部坐标并打标，本夹具因此顺带把迁移也跑成了端到端用例。
                 "collisionPolygon": [{"x": 150, "y": 170}, {"x": 170, "y": 170},
                                      {"x": 170, "y": 190}],
             },
@@ -654,10 +656,14 @@ class SceneGroupCanvasMoveTests(unittest.TestCase):
                 [(p["x"], p["y"]) for p in n1["patrol"]["route"]],
                 [(160 + dx, 180 + dy), (260 + dx, 180 + dy)],
                 "缺省 movePatrol=true：巡逻路点一起挪")
+            # NPC 碰撞面：夹具是旧世界坐标，加载期迁移已转成局部。局部多边形挂在锚点上，
+            # 整组位移时**不该**再被平移一次，但它的**有效世界位置**必须跟着走。
+            self.assertIs(n1.get("collisionPolygonLocal"), True, "加载期迁移没跑")
             self._assert_points_close(
-                [(p["x"], p["y"]) for p in n1["collisionPolygon"]],
+                [(p["x"], p["y"])
+                 for p in anchor_collision_polygon_to_world(n1["x"], n1["y"], n1) or []],
                 [(150 + dx, 170 + dy), (170 + dx, 170 + dy), (170 + dx, 190 + dy)],
-                "NPC 的世界坐标碰撞多边形必须同步平移")
+                "NPC 碰撞面的有效世界位置必须跟着整组走")
             self.assertEqual(
                 [(p["x"], p["y"]) for p in h1["collisionPolygon"]],
                 [(-10, -10), (10, -10), (10, 10)],
@@ -709,15 +715,22 @@ class SceneGroupCanvasMoveTests(unittest.TestCase):
                 [(p["x"] - 160, p["y"] - 180) for p in n1["patrol"]["route"]],
                 [dh, (100 + dh[0], dh[1])],
                 f"预选 {pre} 后巡逻路点掉队")
-            # NPC 的世界坐标碰撞多边形：面板的 npc 写口会拿表里的旧坐标反算成
-            # local 并打 collisionPolygonLocal=True，若哪天它跑起来，碰撞面就会
-            # 停在旧位置且被"升级"成局部坐标——这条断言把两件事一起钉住。
-            self.assertIsNone(n1.get("collisionPolygonLocal"),
-                              f"预选 {pre} 后世界坐标碰撞面不得被悄悄转成局部")
+            # NPC 碰撞面：夹具写的是旧世界坐标，加载期迁移已把它转成局部并打标。
+            self.assertIs(n1.get("collisionPolygonLocal"), True,
+                          "加载期迁移没跑：NPC 碰撞面仍停在世界坐标")
+            # 局部多边形挂在锚点上，整组位移时**不该**再被平移一次（平移两次 = 跑掉一倍）
             self._assert_points_close(
-                [(p["x"] - 150, p["y"] - 170) for p in n1["collisionPolygon"]],
+                [(p["x"], p["y"]) for p in n1["collisionPolygon"]],
+                [(-10, -10), (10, -10), (10, 10)],
+                f"预选 {pre} 后局部碰撞多边形被重复平移了")
+            # 真正要保的是**有效世界位置**跟着组走。原先那条 assertIsNone 只是这件事的
+            # 代理信号（"没被面板写口拿旧坐标反算"），这里直接断言结果本身，更强：
+            # 面板若拿表里的旧坐标反算成 local，锚点已移而 local 未变，这里立刻红。
+            self._assert_points_close(
+                [(p["x"] - 150, p["y"] - 170)
+                 for p in anchor_collision_polygon_to_world(n1["x"], n1["y"], n1) or []],
                 [dh, (20 + dh[0], dh[1]), (20 + dh[0], 20 + dh[1])],
-                f"预选 {pre} 后 NPC 碰撞多边形掉队")
+                f"预选 {pre} 后 NPC 碰撞面的有效世界位置掉队")
 
     def test_preselected_npc_still_moves_with_group(self) -> None:
         self._assert_preselected_member_moves(("npc", "n1"))

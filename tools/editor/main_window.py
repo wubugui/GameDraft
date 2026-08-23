@@ -1339,6 +1339,7 @@ class MainWindow(QMainWindow):
         self._stack.setCurrentIndex(index)
         if self._stack.currentIndex() != index:
             return
+        self._refresh_scene_page_on_activate(index)
         item = self._stack_index_to_item.get(index)
         if item is None:
             return
@@ -1348,15 +1349,37 @@ class MainWindow(QMainWindow):
         finally:
             self._nav_tree.blockSignals(False)
 
+    def _refresh_scene_page_on_activate(self, index: int) -> None:
+        """切到某个场景页时，先按模型重载它。
+
+        并存期（两个场景页同时活着）的第二条防线：两个页各自持 staging 深拷贝，
+        指向**同一份**模型 dict。若不重载，回到另一个页随便点一下，就会用它
+        **打开时的旧快照**把模型整份拍回去 —— 这正是 P1-01 / P1-25 那族
+        "新增的实体又被静默抹掉"事故的跨页版本。
+
+        只对场景页做，且失败不阻断切页（重载本身是尽力而为的刷新，不是门控）。
+        """
+        if index < 0 or index >= len(self._editor_instances):
+            return
+        from .scene_page_registry import scene_page_types
+
+        editor = self._editor_instances[index]
+        if not isinstance(editor, scene_page_types()):
+            return
+        reload_from_model = getattr(editor, "reload_from_model", None)
+        if callable(reload_from_model):
+            reload_from_model()
+
     def _prepare_task_native_mutation(self) -> bool:
         """Commit/resolve every old editor that Task may replace, synchronously."""
         from .editors.dialogue_graph_editor_tab import DialogueGraphEditorTab
         from .editors.narrative_state_editor import NarrativeStateEditor
         from .editors.quest_editor import QuestEditor
-        from .editors.scene_editor import SceneEditor
+        from .scene_page_registry import scene_page_types
 
+        # 场景页可能不止一个：清单只有一份，漏一个 = 那个页不会被强制提交、编排替换后丢编辑
         affected_types = (
-            SceneEditor,
+            *scene_page_types(),
             QuestEditor,
             NarrativeStateEditor,
             DialogueGraphEditorTab,
@@ -1831,10 +1854,10 @@ class MainWindow(QMainWindow):
         from .editors.dialogue_graph_editor_tab import DialogueGraphEditorTab
         from .editors.narrative_state_editor import NarrativeStateEditor
         from .editors.quest_editor import QuestEditor
-        from .editors.scene_editor import SceneEditor
+        from .scene_page_registry import scene_page_types
 
         mappings = (
-            (SceneEditor, {"scene"}),
+            (scene_page_types(), {"scene"}),
             (QuestEditor, {"quest"}),
             (NarrativeStateEditor, {"narrative_graphs"}),
             (DialogueGraphEditorTab, {"dialogue_stubs", "dialogue_graph_edits"}),
@@ -1890,10 +1913,10 @@ class MainWindow(QMainWindow):
         from .editors.dialogue_graph_editor_tab import DialogueGraphEditorTab
         from .editors.narrative_state_editor import NarrativeStateEditor
         from .editors.quest_editor import QuestEditor
-        from .editors.scene_editor import SceneEditor
+        from .scene_page_registry import scene_page_types
 
         mappings = (
-            (SceneEditor, {"scene"}),
+            (scene_page_types(), {"scene"}),
             (QuestEditor, {"quest"}),
             (NarrativeStateEditor, {"narrative_graphs"}),
             (DialogueGraphEditorTab, {"dialogue_stubs", "dialogue_graph_edits"}),
@@ -2981,8 +3004,10 @@ class MainWindow(QMainWindow):
     ) -> None:
         """切换到「Scene」页选中场景实体；plane_view 非空时同时打开该位面的位面视图
         （位面面板 Tab3 跳转落点）。"""
-        from .editors.scene_editor import SceneEditor
+        from .scene_page_registry import navigation_scene_page_types
 
+        # 同一时刻只有一个场景页可被跳转到（见 scene_page_registry.NAV_TARGET）
+        nav_types = navigation_scene_page_types()
         kind = (kind or "").strip()
         selector_name = {
             "npc": "select_npc_by_id",
@@ -2992,7 +3017,7 @@ class MainWindow(QMainWindow):
         if not selector_name:
             return
         for i, ed in enumerate(self._editor_instances):
-            if isinstance(ed, SceneEditor):
+            if isinstance(ed, nav_types):
                 self._show_stack_page(i)
                 self._record_nav(_NavLocation(
                     "scene_entity",

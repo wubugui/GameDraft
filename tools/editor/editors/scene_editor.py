@@ -52,6 +52,10 @@ from PySide6.QtCore import (
 )
 
 from .scene_canvas_model import iter_part_keys, part_key
+from ..shared.scene_migrations import (
+    collision_polygon_world_to_local,
+    migrate_scene_collision_to_local,
+)
 from ..shared.entity_sort_math import (
     entity_sort_z,
     hotspot_sort_band_of,
@@ -219,21 +223,10 @@ def _entity_has_cutscene_binding(ent: dict) -> bool:
 def _entity_is_cutscene_only(ent: dict) -> bool:
     return _entity_has_cutscene_binding(ent) and ent.get("cutsceneOnly", True) is not False
 
-def _hotspot_collision_world_to_local(hs: dict, world_poly: list) -> list[dict[str, float]]:
-    """画布世界点 → authored 局部点：先去锚点平移，再按实例 transform 反变换
-    （与运行时 anchorCollisionPolygonToWorld 的求值时正变换互逆——变换态下拖顶点
-    写回的仍是干净的未变换局部坐标）。"""
-    x0 = float(hs.get("x", 0))
-    y0 = float(hs.get("y", 0))
-    s = entity_scale_of(hs)
-    rot = entity_rotation_deg_of(hs)
-    out: list[dict[str, float]] = []
-    for p in world_poly:
-        if isinstance(p, dict):
-            lx, ly = inverse_transform_world_vec(
-                float(p.get("x", 0)) - x0, float(p.get("y", 0)) - y0, s, rot)
-            out.append({"x": round(lx, 1), "y": round(ly, 1)})
-    return out
+#: 画布世界点 → authored 局部点。实现在 shared/scene_migrations.py，与加载期迁移
+#: **共用同一份数学** —— 此前这里有一份独立实现，与迁移那份逐行重复。
+#: 名字保留（6 处调用点不变），热点与 NPC 都用它（函数本身与实体族无关）。
+_hotspot_collision_world_to_local = collision_polygon_world_to_local
 
 def _hotspot_collision_local_to_world(hs: dict, local_poly: list) -> list[dict[str, float]]:
     """authored 局部点 → 画布世界点：实例 transform 正变换后加锚点（与运行时同口径）。"""
@@ -289,24 +282,10 @@ def _hotspot_display_image_dict(
         d["spriteSort"] = ss
     return d
 
-def _migrate_scene_hotspot_collision_to_local(sc: dict) -> bool:
-    """旧数据 collisionPolygon 为世界坐标：转为相对 (x,y) 的局部坐标并打标。"""
-    changed = False
-    for hs in sc.get("hotspots") or []:
-        if not isinstance(hs, dict):
-            continue
-        poly = hs.get("collisionPolygon")
-        if not isinstance(poly, list) or len(poly) < 3:
-            continue
-        if hs.get("collisionPolygonLocal") is True:
-            continue
-        lp = _hotspot_collision_world_to_local(hs, poly)
-        if len(lp) < 3:
-            continue
-        hs["collisionPolygon"] = lp
-        hs["collisionPolygonLocal"] = True
-        changed = True
-    return changed
+#: 加载期把碰撞多边形归一成局部坐标。**热点与 NPC 一起迁**（旧实现只迁热点，
+#: 于是 NPC 那边"两种坐标系"被永久摊进了每一个读点）。实现在 shared/，新画布共用
+#: 同一个出口 —— 兼容分支只该存在一处。
+_migrate_scene_hotspot_collision_to_local = migrate_scene_collision_to_local
 
 def _zone_canvas_color(zone: dict) -> QColor:
     if zone.get("zoneKind") == "depth_floor":
@@ -13343,8 +13322,10 @@ class SceneEditor(QWidget):
         - npc：x/y；`movePatrol` 时连 patrol.route 全部路点；
         - npc / hotspot：`collisionPolygon` **仅当不是局部坐标**——局部多边形挂在
           锚点上会自动跟随，旧世界坐标数据则必须一起平移，否则碰撞面与本体脱节。
-          （hotspot 的世界坐标多边形在场景加载时已被迁成局部，NPC 的没有迁移路径，
-          所以这条分支对 NPC 是活的；两类都判，不赌某一类"不会出现"。）
+          （2026-08-23 起**热点与 NPC 都有加载期迁移**（`shared/scene_migrations.py`），
+          所以正常路径下这条分支已经不会命中。**刻意保留**：它零成本——局部多边形
+          直接跳过——而万一有数据绕过加载期迁移进来，少了它就是静默的碰撞面脱节。
+          不赌某一类"不会出现"。）
         - zone：polygon 全部顶点。
         """
         if not isinstance(sc, dict):
