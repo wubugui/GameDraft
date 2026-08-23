@@ -135,7 +135,10 @@ def pending_dialogue_stub_conflicts(model: Any) -> list[str]:
             continue
         target = graphs_dir / f"{gid}.json"
         if target.exists():
-            out.append(str(target.relative_to(project_path)))
+            # **一律用正斜杠**。这些串会进错误弹窗、进比对、也可能进数据；
+            # `str(PurePath)` 在 Windows 上给反斜杠，于是同一份工程在两个平台上
+            # 得到两种写法 —— 本条的既有用例正是在 Windows 上恒红。
+            out.append(target.relative_to(project_path).as_posix())
     return out
 
 

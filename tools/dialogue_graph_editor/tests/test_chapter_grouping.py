@@ -30,10 +30,14 @@ class TestChapterGrouping(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls._app = QApplication.instance() or QApplication(sys.argv)
-        cls._ng = json.load(open(_ROOT / "public/assets/data/narrative_graphs.json"))
+        # **必须显式 utf-8**：Windows 上 `open()` 缺省用系统 ANSI 码页（GBK），
+        # 读带中文的 JSON 直接 UnicodeDecodeError —— 这四条用例在本平台从来没跑起来过。
+        cls._ng = json.loads(
+            (_ROOT / "public/assets/data/narrative_graphs.json").read_text("utf-8"))
 
     def _dlg(self, gid: str) -> dict:
-        return json.load(open(_ROOT / f"public/assets/dialogues/graphs/{gid}.json"))
+        return json.loads(
+            (_ROOT / f"public/assets/dialogues/graphs/{gid}.json").read_text("utf-8"))
 
     def test_pure_derive_owner(self) -> None:
         owners = build_narrative_signal_owners(self._ng)
