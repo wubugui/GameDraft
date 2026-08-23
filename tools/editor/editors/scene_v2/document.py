@@ -112,6 +112,11 @@ class SceneDocument(QObject):
         sc = self.scene()
         if not isinstance(sc, dict):
             return None
+        if ref.kind == "scene":
+            # 场景级字段（perspectiveScale / lighting / backgrounds …）也走命令，
+            # 于是"改透视轴"与"拖实体"共用同一套撤销语义 —— 老画布这里是裸写模型，
+            # 所以摆灯、拖轴这类操作点错了没法 Ctrl+Z。
+            return sc
         if ref.kind == "spawn":
             return self._spawn_dict(sc, ref.id)
         key = _LIST_KEY.get(ref.kind)

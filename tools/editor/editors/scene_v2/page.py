@@ -19,7 +19,7 @@
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPointF, Qt
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -27,15 +27,25 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QSplitter,
     QToolBar,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QTreeWidgetItemIterator,
     QVBoxLayout,
     QWidget,
 )
 
 from ...shared.scene_view_filters import ViewAxes, passes_view_filters
-from .changes import EntityRef
+from .changes import (
+    EntitiesAdded,
+    EntitiesRemoved,
+    EntityRef,
+    SceneReloaded,
+    SelectionChanged,
+)
 from .document import SceneDocument
 from .sorting import assign_content_z
 from .tools_builtin import MoveTool, PolygonEditTool, SelectTool
+from .tools_overlays import GroupBoxTool, PerspectiveAxisTool, group_bounds
 from .tools_structure import CreateTool, delete_selected, duplicate_selected
 from .tools_transform import GroupMoveTool, TransformTool
 from .view import SceneView
@@ -64,6 +74,13 @@ class SceneEditorV2(QWidget):
         self._scene_list.currentItemChanged.connect(self._on_scene_row_changed)
         lv.addWidget(QLabel("场景"))
         lv.addWidget(self._scene_list, 1)
+        self._tree = QTreeWidget()
+        self._tree.setHeaderHidden(True)
+        self._tree.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection)
+        self._tree.itemSelectionChanged.connect(self._on_tree_selection_changed)
+        self._syncing_tree = False
+        lv.addWidget(QLabel("实体"))
+        lv.addWidget(self._tree, 2)
         splitter.addWidget(left)
 
         right = QWidget()
@@ -127,6 +144,9 @@ class SceneEditorV2(QWidget):
         self._view.fit_scene()
         self._sync_scene_row(scene_id)
         self.resort_content_z()
+        self.refresh_group_boxes()
+        self.refresh_perspective_axis()
+        self.refresh_entity_tree()
         return True
 
     def _sync_scene_row(self, scene_id: str) -> None:
@@ -159,6 +179,9 @@ class SceneEditorV2(QWidget):
             CreateTool(doc, r, "hotspot", view))
         self.create_npc_tool = view.tools.register(CreateTool(doc, r, "npc", view))
         self.create_zone_tool = view.tools.register(CreateTool(doc, r, "zone", view))
+        self.persp_tool = view.tools.register(
+            PerspectiveAxisTool(doc, r, view.perspective_axis))
+        self.group_box_tool = view.tools.register(GroupBoxTool(doc, r, view))
         view.tools.status_text_changed.connect(self._status.setText)
         self._toolbar.clear()
         for tool in view.tools.tools:
@@ -189,9 +212,100 @@ class SceneEditorV2(QWidget):
         self._content_z_key = assign_content_z(
             self._doc, self._view, cache=self._content_z_key)
 
-    def _on_doc_changed(self, _event) -> None:
+    def refresh_group_boxes(self) -> None:
+        """按模型层名册重建分组框。包围盒**不受视图过滤影响** ——
+        被藏起来的成员照样算进去，否则框会随着切视图忽大忽小而成员一个没少。"""
+        if self._doc is None or self._view is None:
+            return
+        sc = self._doc.scene() or {}
+        rows = []
+        for grp in sc.get("entityGroups") or []:
+            if not isinstance(grp, dict):
+                continue
+            gid = str(grp.get("id", "") or "")
+            if not gid:
+                continue
+            rect = group_bounds(self._doc, gid)
+            label = str(grp.get("label", "") or "").strip()
+            rows.append((gid, rect, f"[组] {label or gid}"))
+        self._view.sync_group_boxes(rows)
+        self.group_box_tool.set_boxes(self._view.group_boxes)
+
+    def refresh_perspective_axis(self) -> None:
+        if self._doc is None or self._view is None:
+            return
+        cfg = (self._doc.scene() or {}).get("perspectiveScale")
+        if not isinstance(cfg, dict):
+            self._view.sync_perspective_axis(None, None)
+            return
+        near, far = cfg.get("near"), cfg.get("far")
+        if not isinstance(near, dict) or not isinstance(far, dict):
+            self._view.sync_perspective_axis(None, None)
+            return
+        self._view.sync_perspective_axis(
+            QPointF(float(near.get("x", 0)), float(near.get("y", 0))),
+            QPointF(float(far.get("x", 0)), float(far.get("y", 0))))
+
+    def refresh_entity_tree(self) -> None:
+        """左侧实体树。选择与 Document 双向同步 —— 树与画布看到的是**同一份**选择集。"""
+        if self._doc is None:
+            return
+        self._tree.blockSignals(True)
+        self._tree.clear()
+        for kind, label in (("hotspot", "热点"), ("npc", "NPC"),
+                            ("zone", "区域"), ("spawn", "出生点")):
+            top = QTreeWidgetItem([label])
+            self._tree.addTopLevelItem(top)
+            for ref in self._doc.entity_refs(kind):
+                node = QTreeWidgetItem([ref.id])
+                node.setData(0, Qt.ItemDataRole.UserRole, (ref.kind, ref.id))
+                top.addChild(node)
+            top.setExpanded(True)
+        self._tree.blockSignals(False)
+        self._sync_tree_selection()
+
+    def _sync_tree_selection(self) -> None:
+        if self._doc is None or self._syncing_tree:
+            return
+        chosen = set(self._doc.selection)
+        self._syncing_tree = True
+        try:
+            self._tree.blockSignals(True)
+            it = QTreeWidgetItemIterator(self._tree)
+            while it.value():
+                node = it.value()
+                data = node.data(0, Qt.ItemDataRole.UserRole)
+                if data is not None:
+                    node.setSelected(EntityRef(*data) in chosen)
+                it += 1
+            self._tree.blockSignals(False)
+        finally:
+            self._syncing_tree = False
+
+    def _on_tree_selection_changed(self) -> None:
+        if self._doc is None or self._syncing_tree:
+            return
+        refs = []
+        for node in self._tree.selectedItems():
+            data = node.data(0, Qt.ItemDataRole.UserRole)
+            if data is not None:
+                refs.append(EntityRef(*data))
+        self._syncing_tree = True
+        try:
+            self._doc.set_selection(refs)
+        finally:
+            self._syncing_tree = False
+
+    def _on_doc_changed(self, event) -> None:
         # 任何数据变更都可能改前后关系；脏检查让这一趟在没变时是空操作
         self.resort_content_z()
+        if isinstance(event, SelectionChanged):
+            self._sync_tree_selection()
+            return
+        self.refresh_group_boxes()
+        self.refresh_perspective_axis()
+        if isinstance(event, (EntitiesAdded, EntitiesRemoved, SceneReloaded)):
+            self.refresh_entity_tree()
 
     # ---- 编辑动作（供快捷键/菜单接线）--------------------------------------
 

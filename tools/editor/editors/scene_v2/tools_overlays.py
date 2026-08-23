@@ -1,0 +1,210 @@
+"""覆盖物的工具：透视深度轴、分组框。
+
+两者的命中都由**工具用显式几何判定**（问 overlay 的 `hit_*`），不靠 Qt 按 z 派发。
+所以"组框把实体的点击吞掉""轴线横贯全场挡住一切"这两类问题没有发生的余地。
+"""
+from __future__ import annotations
+
+import copy
+
+from PySide6.QtCore import QPointF, QRectF, Qt
+
+from .changes import EntityProperty, EntityRef
+from .commands import build_change_fields_command
+from .tools import AbstractTool
+from .tools_transform import group_member_refs, translate_group
+
+__all__ = ["PerspectiveAxisTool", "GroupBoxTool", "group_bounds"]
+
+
+class PerspectiveAxisTool(AbstractTool):
+    """拖动 near / far 端点改透视深度轴。
+
+    透视系数进实体的脚底缩放，所以改完必须让内容重排 —— 页面订阅变更事件即可，
+    这里不自己去碰 z。
+    """
+
+    tool_id = "persp_axis"
+    display_name = "透视轴"
+    status_hint = "拖动近端 / 远端手柄调整透视深度轴"
+
+    def __init__(self, document, renderer, item=None, parent=None) -> None:
+        super().__init__(document, renderer, parent)
+        self._item = item
+        self._which = ""
+        self._start: dict | None = None
+
+    def set_item(self, item) -> None:
+        self._item = item
+
+    def _cfg(self) -> dict | None:
+        sc = self._doc.scene()
+        cfg = sc.get("perspectiveScale") if isinstance(sc, dict) else None
+        return cfg if isinstance(cfg, dict) else None
+
+    def mouse_pressed(self, scene_pos, button, modifiers) -> bool:
+        if button != Qt.MouseButton.LeftButton or self._item is None:
+            return False
+        which = self._item.hit_endpoint(scene_pos)
+        if which is None:
+            return False
+        cfg = self._cfg()
+        if cfg is None:
+            return False
+        self._which = which
+        self._start = copy.deepcopy(cfg)
+        return True
+
+    def mouse_moved(self, scene_pos, buttons, modifiers) -> bool:
+        if not self._which or not (buttons & Qt.MouseButton.LeftButton):
+            return False
+        # 预览：只动 overlay，不写数据
+        if self._item is not None:
+            near = self._item.near
+            far = self._item.far
+            if self._which == "near":
+                near = QPointF(scene_pos)
+            else:
+                far = QPointF(scene_pos)
+            self._item.set_axis(near, far)
+        return True
+
+    def mouse_released(self, scene_pos, button, modifiers) -> bool:
+        if not self._which or self._start is None:
+            return False
+        which, start = self._which, self._start
+        self._which = ""
+        self._start = None
+        cfg = copy.deepcopy(start)
+        end = cfg.setdefault(which, {})
+        end["x"] = round(scene_pos.x(), 1)
+        end["y"] = round(scene_pos.y(), 1)
+        # 透视配置挂在**场景**上，不是实体上 —— 用 scene ref 走同一套命令机制
+        self._doc.push(build_change_fields_command(
+            self._doc, [EntityRef("scene", self._doc.scene_id)],
+            [{"perspectiveScale": cfg}], EntityProperty.TRANSFORM, "调整透视轴"))
+        return True
+
+    def cancel_gesture(self) -> bool:
+        if not self._which:
+            return False
+        self._which = ""
+        self._start = None
+        return True
+
+
+def group_bounds(document, gid: str) -> QRectF | None:
+    """分组包围盒 —— 从**模型层名册**算，与整组位移同源。
+
+    与画布上看得见的图元无关：被过滤藏起来的成员照样算进包围盒，
+    否则框会随着切视图忽大忽小，而成员其实一个没少。
+    """
+    all_pts: list[tuple[float, float]] = []
+    for ref in group_member_refs(document, gid):
+        ent = document.entity(ref)
+        if not isinstance(ent, dict):
+            continue
+        if "x" in ent and "y" in ent:
+            all_pts.append((float(ent["x"]), float(ent["y"])))
+        poly = ent.get("polygon")
+        if isinstance(poly, list):
+            all_pts += [(float(p.get("x", 0)), float(p.get("y", 0)))
+                        for p in poly if isinstance(p, dict)]
+    if not all_pts:
+        return None
+    # **直接对全部点取 min/max**，不要用 QRectF.united 逐个并 ——
+    # 点实体的矩形是零尺寸，Qt 把零尺寸矩形当 null，united 会把它整个丢掉，
+    # 于是"一组点实体"的包围盒会塌成最后一个成员的位置。
+    xs = [p[0] for p in all_pts]
+    ys = [p[1] for p in all_pts]
+    return QRectF(min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
+
+
+class GroupBoxTool(AbstractTool):
+    """点选组框、拖框整组位移、拖把手挪锚点。
+
+    两段式：**没选中的组，边线按下只选中不拖**。否则用户想从那儿起手拉橡皮筋
+    框选，实际把整组悄悄挪走了（老画布的血债之一）。
+    """
+
+    tool_id = "group_box"
+    display_name = "分组"
+    status_hint = "点组框边线选中；再拖动整组位移；方向键微移"
+
+    def __init__(self, document, renderer, view=None, parent=None) -> None:
+        super().__init__(document, renderer, parent)
+        self._view = view
+        self._boxes: dict[str, object] = {}
+        self._selected_gid = ""
+        self._drag_gid = ""
+        self._origin: QPointF | None = None
+        self._offset = (0.0, 0.0)
+
+    def set_boxes(self, boxes: dict) -> None:
+        self._boxes = dict(boxes)
+
+    @property
+    def selected_gid(self) -> str:
+        return self._selected_gid
+
+    @property
+    def offset(self) -> tuple[float, float]:
+        return self._offset
+
+    def select_group(self, gid: str) -> None:
+        self._selected_gid = str(gid or "")
+        for g, box in self._boxes.items():
+            box.set_selected(g == self._selected_gid)
+
+    def _box_at(self, pos: QPointF):
+        for gid, box in self._boxes.items():
+            if box.hit_handle(pos) or box.hit_edge(pos):
+                return gid, box
+        return None, None
+
+    def mouse_pressed(self, scene_pos, button, modifiers) -> bool:
+        if button != Qt.MouseButton.LeftButton:
+            return False
+        gid, box = self._box_at(scene_pos)
+        if gid is None:
+            return False
+        if gid != self._selected_gid:
+            # 第一段：只选中，不拖
+            self.select_group(gid)
+            return True
+        self._drag_gid = gid
+        self._origin = QPointF(scene_pos)
+        self._offset = (0.0, 0.0)
+        return True
+
+    def mouse_moved(self, scene_pos, buttons, modifiers) -> bool:
+        if self._origin is None or not (buttons & Qt.MouseButton.LeftButton):
+            return False
+        self._offset = (scene_pos.x() - self._origin.x(),
+                        scene_pos.y() - self._origin.y())
+        return True
+
+    def mouse_released(self, scene_pos, button, modifiers) -> bool:
+        if self._origin is None:
+            return False
+        gid = self._drag_gid
+        dx, dy = self._offset
+        self._drag_gid = ""
+        self._origin = None
+        self._offset = (0.0, 0.0)
+        translate_group(self._doc, gid, round(dx, 1), round(dy, 1))
+        return True
+
+    def nudge(self, dx: float, dy: float, *, mergeable: bool) -> bool:
+        if not self._selected_gid:
+            return False
+        return translate_group(self._doc, self._selected_gid, dx, dy,
+                               mergeable=mergeable, label="整组微移")
+
+    def cancel_gesture(self) -> bool:
+        if self._origin is None:
+            return False
+        self._drag_gid = ""
+        self._origin = None
+        self._offset = (0.0, 0.0)
+        return True

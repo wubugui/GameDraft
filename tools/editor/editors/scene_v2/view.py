@@ -33,6 +33,7 @@ from .changes import (
 from .content_items import DisplayImageItem, SpritePreviewItem
 from .entity_items import HandleItem, PolygonItem, PolylineItem
 from .items import CanvasItem, EntityItem
+from .overlays import GroupBoxItem, PerspectiveAxisItem, RubberBandItem
 from .renderer import SceneRenderer
 from .tools import ToolManager
 
@@ -85,6 +86,14 @@ class SceneView(QGraphicsView):
         self._presence_filter = None
         #: ``url -> QPixmap | None``。视图**不读盘**，路径解析归宿主。
         self._texture_provider = None
+        #: 覆盖物（分组框 / 透视轴 / 橡皮筋）。它们不进图元账，也不进命中白名单。
+        self._group_boxes: dict[str, GroupBoxItem] = {}
+        self._persp_axis = PerspectiveAxisItem()
+        self._gfx.addItem(self._persp_axis)
+        self._persp_axis.setVisible(False)
+        self._band = RubberBandItem()
+        self._gfx.addItem(self._band)
+        self._band.setVisible(False)
 
         self._doc.changed.connect(self._on_document_changed)
         self.rebuild_all()
@@ -127,9 +136,15 @@ class SceneView(QGraphicsView):
     # ---- 图元同步（唯一出口）----------------------------------------------
 
     def rebuild_all(self) -> None:
-        """整份重建。切场景 / 撤销回灌 / 外部重载走这里。"""
-        self._gfx.clear()
-        self._items.clear()
+        """整份重建。切场景 / 撤销回灌 / 外部重载走这里。
+
+        只清**实体图元**，覆盖物（透视轴 / 橡皮筋 / 分组框）保留 ——
+        `QGraphicsScene.clear()` 会连它们一起析构，之后任何引用都是野指针。
+        """
+        for key in list(self._items):
+            item = self._items.pop(key)
+            if item.scene() is self._gfx:
+                self._gfx.removeItem(item)
         for kind in ("zone", "hotspot", "npc", "spawn"):
             for ref in self._doc.entity_refs(kind):
                 self._sync_entity(ref)
@@ -225,6 +240,41 @@ class SceneView(QGraphicsView):
             url,
         )
 
+    # ---- 覆盖物 ------------------------------------------------------------
+
+    @property
+    def perspective_axis(self) -> PerspectiveAxisItem:
+        return self._persp_axis
+
+    @property
+    def rubber_band(self) -> RubberBandItem:
+        return self._band
+
+    @property
+    def group_boxes(self) -> dict:
+        return dict(self._group_boxes)
+
+    def sync_group_boxes(self, rows) -> None:
+        """按 ``[(gid, rect, title), ...]`` 重建分组框。差集回收，不整批重建 ——
+        重建会丢掉选中态，而组的选中态不在 Qt 选择系统里、丢了就回不来。"""
+        wanted = {}
+        for gid, rect, title in rows:
+            box = self._group_boxes.get(gid)
+            if box is None:
+                box = GroupBoxItem(gid)
+                self._gfx.addItem(box)
+                self._group_boxes[gid] = box
+                box.set_view_scale(self.renderer.view_scale)
+            box.set_geometry(rect, title)
+            wanted[gid] = box
+        for gid in [g for g in self._group_boxes if g not in wanted]:
+            box = self._group_boxes.pop(gid)
+            if box.scene() is self._gfx:
+                self._gfx.removeItem(box)
+
+    def sync_perspective_axis(self, near, far) -> None:
+        self._persp_axis.set_axis(near, far)
+
     def set_texture_provider(self, provider) -> None:
         """注入 ``url -> QPixmap | None``。视图不读盘，路径解析归宿主。"""
         self._texture_provider = provider
@@ -298,7 +348,11 @@ class SceneView(QGraphicsView):
     def _push_view_scale(self, item=None) -> None:
         scale = self.transform().m11() or 1.0
         self.renderer.set_view_scale(scale)
-        targets = [item] if item is not None else list(self._items.values())
+        if item is not None:
+            targets = [item]
+        else:
+            targets = [*self._items.values(), *self._group_boxes.values(),
+                       self._persp_axis]
         for it in targets:
             setter = getattr(it, "set_view_scale", None)
             if callable(setter):
