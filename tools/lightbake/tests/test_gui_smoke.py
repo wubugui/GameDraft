@@ -23,11 +23,16 @@ def test_editor_write_exit_available():
 
 class _FakeInp:
     def __init__(self, h, w, rng):
+        import numpy as np
         self.work = (w, h)
         self.native = (w, h)
         self.bg_srgb = rng.uniform(0.05, 0.9, (h, w, 3)).astype('float32')
         self.depth = rng.uniform(2.0, 8.0, (h, w)).astype('float32')
         self.scene_json = None            # 场景 sky 预设按缺失优雅降级
+        xx, yy = np.meshgrid(np.linspace(-1, 1, w, dtype='float32'),
+                             np.linspace(-1, 1, h, dtype='float32'))
+        self.world = np.stack(
+            [xx, yy, rng.uniform(0.0, 1.0, (h, w)).astype('float32')], -1)
 
 
 def _rich_fake_ctx(h=24, w=32):
@@ -38,8 +43,11 @@ def _rich_fake_ctx(h=24, w=32):
     nx, ny, nz = 6, 4, 5
     n = nx * ny * nz
     vol = {'grid': {'nx': nx, 'ny': ny, 'nz': nz},
+           'bounds': {'x0': -1.1, 'x1': 1.1, 'y0': -1.1, 'y1': 1.1,
+                      'z0': -0.1, 'z1': 1.1},
            'residual_invalid': 0.0,
            'raw': {'sky_a0': rng.uniform(0, .5, n).astype('float32'),
+                   'sky_a1': rng.uniform(-.3, .3, (n, 3)).astype('float32'),
                    'ao_a0': rng.uniform(0, 1, n).astype('float32'),
                    'gi_a0': rng.uniform(0, 2, (n, 3)).astype('float32'),
                    'invalid': rng.random(n) < 0.3}}

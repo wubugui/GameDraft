@@ -260,6 +260,18 @@ def read_bake_params(sid: str) -> dict:
     return parse_bake_params((data.get('lighting') or {}).get('bakeParams'))
 
 
+def save_runtime_sky(sid: str, sky: dict) -> Path:
+    """把**运行时**程序性天空写回场景 JSON `lighting.sky`(游戏着色消费的
+    那份;与 bakeSky 是两回事)。统一写盘出口,同 save_bake_sky。"""
+    from tools.editor.file_io import read_json, write_json
+    j = SCENES_JSON / f'{sid}.json'
+    clean = {k: v for k, v in sky.items() if not k.startswith('_')}
+    data = read_json(j)
+    data.setdefault('lighting', {})['sky'] = clean
+    write_json(j, data)
+    return j
+
+
 def save_bake_params(sid: str, params: dict) -> Path:
     """把质量参数写回 `lighting.bakeParams`(camelCase;与 save_bake_sky
     同门:统一写盘出口,GUI 与脚本都从这走)。None 值不落盘。"""

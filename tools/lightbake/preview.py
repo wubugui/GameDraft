@@ -86,10 +86,40 @@ def sky_response(a0f: np.ndarray, a1f: np.ndarray, normal: np.ndarray,
 
 def compose_final(base_rgb: np.ndarray, e_bake: np.ndarray,
                   e_sky: np.ndarray, gi: float = 0.15,
-                  ev: float = 0.0) -> np.ndarray:
-    """shade 的便宜半:out = base·(gi·E + E_天光)·2^ev → 显示域。毫秒级。"""
-    e_target = (np.float32(gi) * e_bake + e_sky) * np.float32(2.0 ** ev)
-    return linear_to_srgb(from_hdr(base_rgb * e_target))
+                  ev: float = 0.0, e_env: np.ndarray | None = None
+                  ) -> np.ndarray:
+    """shade 的便宜半:out = base·(gi·E + E_天光 [+ E_环境])·2^ev → 显示域。
+    E_环境 = 环境色·强度·clamp(0.28+0.72·AO, 0, 1.2)(§6.1 静态半的第三项;
+    见 ambient_env)。毫秒级。"""
+    e_target = np.float32(gi) * e_bake + e_sky
+    if e_env is not None:
+        e_target = e_target + e_env
+    return linear_to_srgb(from_hdr(base_rgb
+                                   * (e_target * np.float32(2.0 ** ev))))
+
+
+def ambient_env(ao: np.ndarray, ambient_rgb, gain: float) -> np.ndarray:
+    """§6.1 的 E_环境 项(AO 的唯一消费处,与运行时同式)。"""
+    mod = np.clip(0.28 + 0.72 * np.asarray(ao, np.float32), 0.0, 1.2)
+    c = np.asarray(ambient_rgb, np.float32).reshape(1, 1, 3)
+    return (c * np.float32(gain) * mod[..., None]).astype(np.float32)
+
+
+def volume_sky_at_surface(ctx: dict) -> tuple[np.ndarray, np.ndarray]:
+    """体矩在**表面**三线性重建 (a₀,a₁)(自检 #5 的口径)—— 用它替换逐像素
+    矩去着色,就是「角色/实体从体数据受光」的一致性直接可视化。"""
+    from .check import _trilinear
+    vol = ctx.get('volume')
+    if not vol:
+        raise ValueError('ctx 无体数据(重烘时勾「含体积数据」)')
+    raw = vol['raw']
+    M = np.concatenate([raw['sky_a0'][:, None], raw['sky_a1']], 1
+                       ).astype(np.float32)
+    pts = ctx['inp'].world.reshape(-1, 3).astype(np.float64)
+    t = _trilinear(M, vol['bounds'], vol['grid'], pts)
+    h, w = ctx['moments_smooth'][0].shape
+    return (t[:, 0].reshape(h, w).astype(np.float32),
+            t[:, 1:4].reshape(h, w, 3).astype(np.float32))
 
 
 def shade_final(base_rgb: np.ndarray, e_bake: np.ndarray, a0f: np.ndarray,
