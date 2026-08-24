@@ -24,7 +24,10 @@
     "emissive": {
       "gain": 0.0
     },
-    "charRefIntensity": 0.8744
+    "charRefIntensity": 0.8744,
+    "bakeParams": {
+      "volDensity": 4
+    }
   },
   "id": "崖墓",
   "name": "临江崖墓",

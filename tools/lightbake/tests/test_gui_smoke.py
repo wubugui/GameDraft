@@ -168,8 +168,8 @@ def test_cli_flags_all_have_gui_controls():
     gui_map = {'work_w': 'work_w', 'spp': 'spp', 'moment_spp': 'moment_spp',
                'ao_spp': 'ao_spp', 'vol_spp': 'vol_spp',
                'vol_density': 'vol_density', 'vol_max_cells': 'vol_max_cells',
-               'no_gi': 'no_gi', 'no_nee': 'nee_on',
-               'clamp_indirect': 'clamp', 'no_denoise': 'denoise_on',
+               'gi': 'no_gi', 'nee': 'nee_on',
+               'clamp_indirect': 'clamp', 'denoise': 'denoise_on',
                'denoise_iters': 'denoise_iters',
                'sky': 'mode'}                     # 天空 = 整个天空面板
     workflow_whitelist = {'scene', 'all', 'threads', 'quiet', 'out_root',

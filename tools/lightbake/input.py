@@ -212,6 +212,72 @@ def save_bake_sky(sid: str, spec: dict) -> Path:
     return j
 
 
+#: lighting.bakeParams 键表:场景 JSON 用 camelCase,库内用 snake_case。
+#: 三处消费(parse/save/GUI)共用一张表 —— 键的存在性只在这里定义一次。
+_BP_CAMEL = {'workW': 'work_w', 'spp': 'spp', 'momentSpp': 'moment_spp',
+             'aoSpp': 'ao_spp', 'volSpp': 'vol_spp',
+             'volDensity': 'vol_density', 'volMaxCells': 'vol_max_cells',
+             'noGi': 'no_gi', 'nee': 'nee', 'clampIndirect': 'clamp_indirect',
+             'denoise': 'denoise', 'denoiseIters': 'denoise_iters'}
+_BP_SNAKE = {v: k for k, v in _BP_CAMEL.items()}
+_BP_TYPES = {'work_w': int, 'spp': int, 'moment_spp': int, 'ao_spp': int,
+             'vol_spp': int, 'vol_density': (int, float),
+             'vol_max_cells': int, 'no_gi': bool, 'nee': bool,
+             'clamp_indirect': (int, float), 'denoise': bool,
+             'denoise_iters': int}
+
+
+def parse_bake_params(raw) -> dict:
+    """`lighting.bakeParams`(camelCase)→ snake kwargs。未知键/错类型**硬错**
+    —— 参数长在数据里就必须被校验:静默吞错键,「teahouse 要密度 4」这类
+    事实就会再次死于拼写(2026-08-25 制作人「4搞」的立法目的)。"""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError('lighting.bakeParams 必须是对象,拿到 '
+                         f'{type(raw).__name__}')
+    out = {}
+    for k, v in raw.items():
+        if k not in _BP_CAMEL:
+            raise ValueError(f'lighting.bakeParams 未知键 {k!r};'
+                             f'允许:{sorted(_BP_CAMEL)}')
+        sk = _BP_CAMEL[k]
+        t = _BP_TYPES[sk]
+        if isinstance(v, bool) and t is not bool:
+            raise ValueError(f'bakeParams.{k} 类型错:期望 {t},拿到 bool')
+        if not isinstance(v, t):
+            raise ValueError(f'bakeParams.{k} 类型错:期望 {t},'
+                             f'拿到 {type(v).__name__}')
+        out[sk] = v
+    return out
+
+
+def read_bake_params(sid: str) -> dict:
+    """读场景 JSON 的 `lighting.bakeParams`(snake 化;无则 {})。
+    独立于 load —— work_w 要在 load **之前**决议。"""
+    j = SCENES_JSON / f'{sid}.json'
+    data = json.loads(j.read_text(encoding='utf-8'))
+    return parse_bake_params((data.get('lighting') or {}).get('bakeParams'))
+
+
+def save_bake_params(sid: str, params: dict) -> Path:
+    """把质量参数写回 `lighting.bakeParams`(camelCase;与 save_bake_sky
+    同门:统一写盘出口,GUI 与脚本都从这走)。None 值不落盘。"""
+    from tools.editor.file_io import read_json, write_json
+    j = SCENES_JSON / f'{sid}.json'
+    camel = {}
+    for k, v in params.items():
+        if k not in _BP_SNAKE:
+            raise ValueError(f'save_bake_params 未知键 {k!r}')
+        if v is None:
+            continue
+        camel[_BP_SNAKE[k]] = v
+    data = read_json(j)
+    data.setdefault('lighting', {})['bakeParams'] = camel
+    write_json(j, data)
+    return j
+
+
 def list_bakeable() -> list[str]:
     """全部可烘场景(有背景 + depthConfig + 深度图)。身份 = 场景 JSON 文件名。"""
     out = []

@@ -92,14 +92,35 @@ def recombine_sky(ctx_like: dict, sky_spec: dict,
             'e': (e * gain).astype(np.float32), 'sky_of': sky_of}
 
 
-def bake_scene(sid: str, *, work_w: int = WORK_W, spp: int = GATHER_SPP,
-               moment_spp: int = MOMENT_SPP, ao_spp: int = AO_SPP,
-               vol_spp: int = CHAR_VOL_SPP,
+#: 质量参数的库缺省(三级决议的最后一级)。
+_BP_DEFAULTS = dict(work_w=WORK_W, spp=GATHER_SPP, moment_spp=MOMENT_SPP,
+                    ao_spp=AO_SPP, vol_spp=CHAR_VOL_SPP, vol_density=None,
+                    vol_max_cells=None, no_gi=False, nee=True,
+                    clamp_indirect=None, denoise=True, denoise_iters=None)
+
+
+def _resolve_bp(explicit: dict, scene: dict) -> dict:
+    """质量参数三级决议:显式(CLI/GUI,None=未指定)> 场景 JSON
+    `lighting.bakeParams` > 库缺省。2026-08-25 制作人「4搞」:
+    「teahouse 要 --vol-density 4」这类逐场景事实必须长在数据里,
+    不长在复制粘贴里(终参 showcase 就因复制丢参数红过一次 #5)。"""
+    out = {}
+    for k, dflt in _BP_DEFAULTS.items():
+        v = explicit.get(k)
+        if v is None:
+            v = scene.get(k, dflt)
+        out[k] = v
+    return out
+
+
+def bake_scene(sid: str, *, work_w: int | None = None, spp: int | None = None,
+               moment_spp: int | None = None, ao_spp: int | None = None,
+               vol_spp: int | None = None,
                vol_max_cells: int | None = None,
-               sky_override: dict | None = None, no_gi: bool = False,
+               sky_override: dict | None = None, no_gi: bool | None = None,
                vol_density: float | None = None,
-               nee: bool = True, clamp_indirect: float | None = None,
-               denoise: bool = True, denoise_iters: int | None = None,
+               nee: bool | None = None, clamp_indirect: float | None = None,
+               denoise: bool | None = None, denoise_iters: int | None = None,
                out_root: Path | None = None,
                write: bool = True, run_checks: bool = True,
                heavy_checks: bool = False, make_report: bool = True,
@@ -117,6 +138,26 @@ def bake_scene(sid: str, *, work_w: int = WORK_W, spp: int = GATHER_SPP,
     t_start = time.time()
     # progress_cb:GUI/外部注入的进度回调(stage, i, n);缺省沿用打印版
     prog = progress_cb if progress_cb is not None else _progress(quiet)
+    # ---- 质量参数三级决议(显式 > 场景 JSON > 库缺省;load 前决议 work_w)----
+    _bp = _resolve_bp(
+        dict(work_w=work_w, spp=spp, moment_spp=moment_spp, ao_spp=ao_spp,
+             vol_spp=vol_spp, vol_density=vol_density,
+             vol_max_cells=vol_max_cells, no_gi=no_gi, nee=nee,
+             clamp_indirect=clamp_indirect, denoise=denoise,
+             denoise_iters=denoise_iters),
+        input_mod.read_bake_params(sid))
+    work_w = _bp['work_w']
+    spp = _bp['spp']
+    moment_spp = _bp['moment_spp']
+    ao_spp = _bp['ao_spp']
+    vol_spp = _bp['vol_spp']
+    vol_density = _bp['vol_density']
+    vol_max_cells = _bp['vol_max_cells']
+    no_gi = _bp['no_gi']
+    nee = _bp['nee']
+    clamp_indirect = _bp['clamp_indirect']
+    denoise = _bp['denoise']
+    denoise_iters = _bp['denoise_iters']
     t0 = time.time()
     inp = input_mod.load(sid, work_w)
     t_load = time.time() - t0

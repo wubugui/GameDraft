@@ -209,6 +209,8 @@ class Win(QMainWindow):
         self.rebake_btn.clicked.connect(self._preview_rebake)
         save = QPushButton('存回场景 JSON(lighting.bakeSky)')
         save.clicked.connect(self._save_sky)
+        save_bp = QPushButton('存回场景 JSON(lighting.bakeParams)')
+        save_bp.clicked.connect(self._save_bake_params)
         self.bake_btn = QPushButton('全量 bake(写载荷 + 自检 + report)')
         self.bake_btn.clicked.connect(self._full_bake)
         self.cancel_btn = QPushButton('取消当前烘焙')
@@ -253,6 +255,7 @@ class Win(QMainWindow):
             (None, self.heavy_on)])
         side.addWidget(self.rebake_btn)
         side.addWidget(save)
+        side.addWidget(save_bp)
         side.addWidget(self.bake_btn)
         side.addWidget(self.cancel_btn)
         side.addWidget(QLabel('等价 CLI:'))
@@ -465,6 +468,29 @@ class Win(QMainWindow):
         del blockers
         if spec.get('file'):
             self.sky_file.setText(str(spec['file']))
+        # 质量面板回填为**决议后**的值(场景 bakeParams 生效时面板如实反映;
+        # 面板此后永远显式传参 = 覆盖层)。程序化回填不触发重估/CLI 抖动。
+        bp = ctx.get('bake_params') or {}
+        if bp:
+            blk2 = [QSignalBlocker(w) for w in
+                    (self.work_w, self.spp, self.moment_spp, self.ao_spp,
+                     self.vol_spp, self.vol_density, self.vol_max_cells,
+                     self.nee_on, self.clamp, self.no_gi, self.denoise_on,
+                     self.denoise_iters)]
+            self.work_w.setValue(int(bp.get('work_w') or WORK_W))
+            self.spp.setValue(int(bp.get('spp') or GATHER_SPP))
+            self.moment_spp.setValue(int(bp.get('moment_spp') or MOMENT_SPP))
+            self.ao_spp.setValue(int(bp.get('ao_spp') or AO_SPP))
+            self.vol_spp.setValue(int(bp.get('vol_spp') or CHAR_VOL_SPP))
+            self.vol_density.setValue(float(bp.get('vol_density') or 0.0))
+            self.vol_max_cells.setValue(int(bp.get('vol_max_cells') or 0))
+            self.nee_on.setChecked(bool(bp.get('nee', True)))
+            self.clamp.setValue(float(bp.get('clamp_indirect') or 0.0))
+            self.no_gi.setChecked(bool(bp.get('no_gi', False)))
+            self.denoise_on.setChecked(bool(bp.get('denoise', True)))
+            it = bp.get('denoise_iters')
+            self.denoise_iters.setValue(ATROUS_ITERS if it is None else int(it))
+            del blk2
         self.result = {'e': ctx.get('e'), 'e_ind': ctx.get('e_ind'),
                        'sun': ctx.get('sun', {'found': False}),
                        'gain': ctx.get('gain', 1.0), 'spec': spec,
@@ -703,6 +729,13 @@ class Win(QMainWindow):
         self.sky_file.setText(str(f))
         self._refresh_cli()
         self.debounce.start()
+
+    def _save_bake_params(self) -> None:
+        j = input_mod.save_bake_params(self.sid, self._bake_kwargs())
+        QMessageBox.information(self, 'lightbake',
+                                f'已存回 {j.name} 的 lighting.bakeParams。\n'
+                                'CLI 不带旗标烘 = 自动用这份;带旗标 = 显式'
+                                '覆盖(三级决议:显式 > 场景 > 库缺省)。')
 
     def _save_sky(self) -> None:
         j = input_mod.save_bake_sky(self.sid, self._spec())

@@ -24,7 +24,10 @@
     "emissive": {
       "gain": 0.0
     },
-    "charRefIntensity": 0.8294
+    "charRefIntensity": 0.8294,
+    "bakeParams": {
+      "volDensity": 4
+    }
   },
   "id": "teahouse",
   "name": "茶馆",

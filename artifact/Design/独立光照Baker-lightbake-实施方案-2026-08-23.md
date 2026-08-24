@@ -1648,6 +1648,27 @@ gi/ev 走缓存毫秒级;⑨富 ctx 全通道非占位断言 + CLI→GUI 反向 
   运行时 v5 仍在,GLSL↔Python 跨语言 parity 测试留给 P7 接线时补。
 全套测试 **110 通过 + 1 xfail**。
 
+### 逐场景质量参数 lighting.bakeParams(2026-08-25,制作人「4搞」)
+
+立法目的:「teahouse 需 --vol-density 4」这类逐场景事实必须长在数据里 ——
+终参 showcase 曾因复制脚本丢参数而 #5 红一次。设计:
+
+- **数据**:场景 JSON `lighting.bakeParams`(camelCase:workW/spp/momentSpp/
+  aoSpp/volSpp/volDensity/volMaxCells/noGi/nee/clampIndirect/denoise/
+  denoiseIters)。`input.parse_bake_params` **未知键/错类型硬错**(拼写不许
+  静默吞 —— 这功能就是为杀拼写与复制丢参);`read_bake_params` 独立于
+  load(work_w 要在 load 前决议);`save_bake_params` 走编辑器统一写盘出口。
+- **决议**:`pipeline._resolve_bp` 三级 —— **显式(CLI/GUI)> 场景 JSON >
+  库缺省**。CLI 全部质量旗标缺省改 None=未指定;布尔换
+  `--nee/--no-nee`、`--denoise/--no-denoise`、`--gi/--no-gi` 双态
+  (显式开可压过场景的关)。bake_params/meta 记**决议后**的值。
+- **GUI**:面板在 set_ctx 时回填决议值(场景配置如实可见),此后面板即
+  显式覆盖层;新增「存回场景 JSON(lighting.bakeParams)」按钮,与
+  bakeSky 同门。
+- **落数据**:teahouse / 崖墓 已写入 `bakeParams.volDensity = 4`(室内
+  密度既有结论第一次长在数据里);红场景密度等制作人终拍后同通道落。
+- 测试 4 项新钉(映射双射/硬错/三级决议/CLI None 透传),全套 **114+1**。
+
 **复核轮(同日,变异对照法)**:8 项修复全部实打实(逐项打回旧实现 ⇒
 对应钉子逐一变红);full-MIS 无回归(16384spp 分区域参考,阴影/受光两侧
 < 0.2%,支撑一致 0 失配);成本实测**有界** —— 发光 bbox 覆盖 82–96% 的
