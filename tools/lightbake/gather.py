@@ -120,6 +120,25 @@ def clamp_rows(contrib: np.ndarray, clamp: float | None) -> np.ndarray:
     return contrib * f[:, None]
 
 
+def chroma_clamp_e(e: np.ndarray, tau: float | None) -> np.ndarray:
+    """E 的色度向中性钳(方案 A,2026-08-25):亮度**精确保持**,逐通道
+    色度比 c = E/lum(E) 钳进 [1/(1+τ), 1+τ] 后按亮度重归一。
+
+    动机(base 色度反噬诊断,相关 −0.807):base = 原画⊘E 的逐通道除法把
+    E 的色度以**倒数**写进 base,重打光的中性天光一乘,灯角显互补色。
+    钳 E 的色度 ⇒ 灯色大头留在 base(= 原画自己的橙),反色消失。
+    存储的 E 只有一份 ⇒ base 除它、运行时 gi 乘它**天然双侧一致**,
+    gi=1 恒等逐字节不动。τ=None/0 = 关(原样返回,逐位旧路)。
+    (发光体 mask 类方案为制作人明令永久禁止 —— 只许走这类全局算子。)"""
+    if tau is None or tau <= 0:
+        return e
+    lum = np.maximum(e @ LUMA, 1e-9)[..., None]
+    c = e / lum
+    c = np.clip(c, 1.0 / (1.0 + tau), 1.0 + tau)
+    c = c / np.maximum(c @ LUMA, 1e-9)[..., None]      # 亮度精确回位
+    return (lum * c).astype(np.float32)
+
+
 def nee_mis_downweight(contrib: np.ndarray, nee_ctx: NeeContext,
                        hit: np.ndarray, origins_q: np.ndarray,
                        d_q: np.ndarray, pdf_b: np.ndarray) -> None:

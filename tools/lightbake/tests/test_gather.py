@@ -97,5 +97,29 @@ def test_combine_e_is_reestimation_identity():
     assert np.array_equal(a, b)
 
 
+def test_chroma_clamp_e_properties():
+    """方案 A 的钉子:亮度精确保持、色度进 [1/(1+τ),1+τ] 邻域、
+    τ=None 原对象返回(关闭 = 逐位旧路)。"""
+    from tools.lightbake.encode import LUMA
+    from tools.lightbake.gather import chroma_clamp_e
+    rng = np.random.default_rng(7)
+    e = (rng.uniform(0.01, 2.0, (40, 50, 3))
+         * rng.uniform(0.2, 5.0, (40, 50, 1))).astype(np.float32)
+    same = chroma_clamp_e(e, None)
+    assert same is e
+    out = chroma_clamp_e(e, 0.25)
+    lum_in = e @ LUMA
+    lum_out = out @ LUMA
+    assert np.allclose(lum_out, lum_in, rtol=1e-5)     # 亮度保持
+    c = out / np.maximum(lum_out, 1e-9)[..., None]
+    # 重归一后的松弛界(钳完再除亮度,边界略移)
+    assert float(c.max()) < (1.0 + 0.25) * 1.6
+    assert float(c.min()) > 1.0 / (1.0 + 0.25) / 1.6
+    # 单调:τ 越小,色度越接近中性
+    tight = chroma_clamp_e(e, 0.05)
+    ct = tight / np.maximum(tight @ LUMA, 1e-9)[..., None]
+    assert float(np.abs(ct - 1).mean()) < float(np.abs(c - 1).mean()) + 1e-9
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

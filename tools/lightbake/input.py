@@ -218,13 +218,14 @@ _BP_CAMEL = {'workW': 'work_w', 'spp': 'spp', 'momentSpp': 'moment_spp',
              'aoSpp': 'ao_spp', 'volSpp': 'vol_spp',
              'volDensity': 'vol_density', 'volMaxCells': 'vol_max_cells',
              'noGi': 'no_gi', 'nee': 'nee', 'clampIndirect': 'clamp_indirect',
-             'denoise': 'denoise', 'denoiseIters': 'denoise_iters'}
+             'denoise': 'denoise', 'denoiseIters': 'denoise_iters',
+             'eChromaClamp': 'e_chroma_clamp'}
 _BP_SNAKE = {v: k for k, v in _BP_CAMEL.items()}
 _BP_TYPES = {'work_w': int, 'spp': int, 'moment_spp': int, 'ao_spp': int,
              'vol_spp': int, 'vol_density': (int, float),
              'vol_max_cells': int, 'no_gi': bool, 'nee': bool,
              'clamp_indirect': (int, float), 'denoise': bool,
-             'denoise_iters': int}
+             'denoise_iters': int, 'e_chroma_clamp': (int, float)}
 
 
 def parse_bake_params(raw) -> dict:

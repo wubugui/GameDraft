@@ -179,6 +179,7 @@ def test_cli_flags_all_have_gui_controls():
                'gi': 'no_gi', 'nee': 'nee_on',
                'clamp_indirect': 'clamp', 'denoise': 'denoise_on',
                'denoise_iters': 'denoise_iters',
+               'e_chroma_clamp': 'e_chroma',
                'sky': 'mode'}                     # 天空 = 整个天空面板
     workflow_whitelist = {'scene', 'all', 'threads', 'quiet', 'out_root',
                           'help', 'cmd'}

@@ -355,7 +355,8 @@ def check_12_sky_reestimate(ctx: dict) -> dict:
     bp = ctx['bake_params']
     rec = pipeline_mod.recombine_sky(
         ctx, ctx['sky_spec'],
-        denoise_iters=(0 if not bp['denoise'] else bp['denoise_iters']))
+        denoise_iters=(0 if not bp['denoise'] else bp['denoise_iters']),
+        e_chroma_clamp=bp.get('e_chroma_clamp'))
     ok_c = bool(np.array_equal(rec['e'], ctx['e']))
     return _res('12', '天空重估 ≡ 全新 bake(march半逐位 + 组合半逐位 + 全链逐位)',
                 ok_a and ok_b and ok_c,

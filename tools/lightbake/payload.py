@@ -93,7 +93,8 @@ def build_meta(ctx: dict) -> dict:
                    'nee_emitters': ctx['nee_emitters'],
                    'clamp_indirect': ctx['bake_params']['clamp_indirect'],
                    'denoise': ctx['bake_params']['denoise'],
-                   'denoise_iters': ctx['bake_params']['denoise_iters']},
+                   'denoise_iters': ctx['bake_params']['denoise_iters'],
+                   'e_chroma_clamp': ctx['bake_params']['e_chroma_clamp']},
         'haze': ctx['haze'],
         'sun': ctx['sun'],
         'volume': {

@@ -90,6 +90,11 @@ def _quality_flags(p) -> None:
     p.add_argument('--denoise', action=argparse.BooleanOptionalAction,
                    default=None,
                    help='E间接 引导去噪(à-trous 联合双边,库缺省开)')
+    p.add_argument('--e-chroma-clamp', type=_positive('--e-chroma-clamp'),
+                   default=None,
+                   help='E 色度向中性钳的幅度 τ(方案 A:治 base=原画⊘E 的'
+                        '互补反色;亮度保持,恒等锚不动。0.2~0.3 起试;'
+                        '缺省关)')
     p.add_argument('--denoise-iters', type=int, default=None,
                    help='E间接 引导去噪的 à-trous 趟数(库缺省 3;0 = 关,'
                         '等价 --no-denoise;越多越柔)')
@@ -107,6 +112,7 @@ def _quality_kwargs(args) -> dict:
                 no_gi=(None if args.gi is None else (not args.gi)),
                 nee=args.nee, clamp_indirect=args.clamp_indirect,
                 denoise=args.denoise, denoise_iters=args.denoise_iters,
+                e_chroma_clamp=args.e_chroma_clamp,
                 sky_override=_parse_sky(args.sky))
 
 

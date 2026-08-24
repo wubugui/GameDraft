@@ -22,9 +22,9 @@ from .const import (AO_RANGE, AO_SPP, CHAR_VOL_SPP, GATHER_SEED, GATHER_SPP,
                     HDR_MAX, MOMENT_SPP, WORK_W)
 from .encode import (decode_log_hdr, encode_log_hdr, pick_log_params, resize_rgb,
                      srgb_to_linear, to_hdr)
-from .gather import (apply_dehaze, combine_e, compose_sun_e, exposure_of,
-                     fit_haze, gather_gain_of, gather_scene_e, local_ao,
-                     sky_moments, smooth_moments, solve_direct_light)
+from .gather import (apply_dehaze, chroma_clamp_e, combine_e, compose_sun_e,
+                     exposure_of, fit_haze, gather_gain_of, gather_scene_e,
+                     local_ao, sky_moments, smooth_moments, solve_direct_light)
 from .nee import build_nee
 from .sampling import point_keys
 from .sky import make_sky_sampler
@@ -59,7 +59,8 @@ def _progress(quiet: bool):
 
 
 def recombine_sky(ctx_like: dict, sky_spec: dict,
-                  denoise_iters: int | None = None, progress=None,
+                  denoise_iters: int | None = None,
+                  e_chroma_clamp: float | None = None, progress=None,
                   on_partial=None) -> dict:
     """§5.12「重估 ≡ 全新 bake」的**唯一编排**:
     combine → 去噪 → 直射光反解 → compose → gain。
@@ -87,6 +88,9 @@ def recombine_sky(ctx_like: dict, sky_spec: dict,
     #   post-gain),标记出来免得消费者拿错尺度。
     sun['radiance_scale'] = 'pre-gain(烘入 E 的实际量还要 ×gather.gain)'
     e = compose_sun_e(e_ind, inp.normal, a0f, a1f, sun)
+    # 方案 A(2026-08-25):色度钳在 compose 之后、gain 之前 —— 亮度保持
+    # ⇒ gain 的 p95 约定基本不动;唯一编排里做 ⇒ GUI/CLI/#12(c) 自动一致
+    e = chroma_clamp_e(e, e_chroma_clamp)
     gain = gather_gain_of(ctx_like['hdr_work'], e)
     return {'e_ind': e_ind, 'sun': sun, 'gain': gain,
             'e': (e * gain).astype(np.float32), 'sky_of': sky_of}
@@ -96,7 +100,8 @@ def recombine_sky(ctx_like: dict, sky_spec: dict,
 _BP_DEFAULTS = dict(work_w=WORK_W, spp=GATHER_SPP, moment_spp=MOMENT_SPP,
                     ao_spp=AO_SPP, vol_spp=CHAR_VOL_SPP, vol_density=None,
                     vol_max_cells=None, no_gi=False, nee=True,
-                    clamp_indirect=None, denoise=True, denoise_iters=None)
+                    clamp_indirect=None, denoise=True, denoise_iters=None,
+                    e_chroma_clamp=None)
 
 
 def _resolve_bp(explicit: dict, scene: dict) -> dict:
@@ -121,6 +126,7 @@ def bake_scene(sid: str, *, work_w: int | None = None, spp: int | None = None,
                vol_density: float | None = None,
                nee: bool | None = None, clamp_indirect: float | None = None,
                denoise: bool | None = None, denoise_iters: int | None = None,
+               e_chroma_clamp: float | None = None,
                out_root: Path | None = None,
                write: bool = True, run_checks: bool = True,
                heavy_checks: bool = False, make_report: bool = True,
@@ -144,7 +150,7 @@ def bake_scene(sid: str, *, work_w: int | None = None, spp: int | None = None,
              vol_spp=vol_spp, vol_density=vol_density,
              vol_max_cells=vol_max_cells, no_gi=no_gi, nee=nee,
              clamp_indirect=clamp_indirect, denoise=denoise,
-             denoise_iters=denoise_iters),
+             denoise_iters=denoise_iters, e_chroma_clamp=e_chroma_clamp),
         input_mod.read_bake_params(sid))
     work_w = _bp['work_w']
     spp = _bp['spp']
@@ -158,6 +164,7 @@ def bake_scene(sid: str, *, work_w: int | None = None, spp: int | None = None,
     clamp_indirect = _bp['clamp_indirect']
     denoise = _bp['denoise']
     denoise_iters = _bp['denoise_iters']
+    e_chroma_clamp = _bp['e_chroma_clamp']
     t0 = time.time()
     inp = input_mod.load(sid, work_w)
     t_load = time.time() - t0
@@ -220,6 +227,7 @@ def bake_scene(sid: str, *, work_w: int | None = None, spp: int | None = None,
          'hdr_work': hdr_work},
         sky_spec,
         denoise_iters=(0 if not denoise else denoise_iters),
+        e_chroma_clamp=e_chroma_clamp,
         progress=prog)
     e_ind = rec['e_ind']
     sun = rec['sun']
@@ -263,7 +271,8 @@ def bake_scene(sid: str, *, work_w: int | None = None, spp: int | None = None,
                         'denoise_iters': denoise_iters,
                         'sky_override': sky_override, 'no_gi': no_gi,
                         'vol_density': vol_density, 'nee': nee,
-                        'clamp_indirect': clamp_indirect, 'denoise': denoise},
+                        'clamp_indirect': clamp_indirect, 'denoise': denoise,
+                        'e_chroma_clamp': e_chroma_clamp},
         # ⚠ 派生量不进 bake_params —— 它必须保持「可原样 ** 回灌 bake_scene
         # 的纯 kwargs」不变量(#8 重档二次 bake 靠它;审查抓过 TypeError 整场崩)
         'nee_emitters': int(len(nee_ctx.yx)) if nee_ctx is not None else 0,
