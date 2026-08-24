@@ -52,7 +52,9 @@ def base_of_ctx(ctx: dict) -> tuple[np.ndarray, np.ndarray]:
     w, h = inp.work
     bg = (resize_rgb(inp.bg_srgb, (w, h)) if (w, h) != inp.native
           else inp.bg_srgb)
-    base = to_hdr(srgb_to_linear(bg)) / np.maximum(ctx['e_q'], 1e-6)
+    # 纯除法,无钳位、无上界(§5.7 铁令;对抗审查 P-2:1e-6 地板会在极暗
+    # 场景破坏恒等锚)。log 编解码的 E_q 严格 > 0,除法安全。
+    base = to_hdr(srgb_to_linear(bg)) / ctx['e_q']
     return base.astype(np.float32), bg
 
 
@@ -66,8 +68,11 @@ def sky_response(a0f: np.ndarray, a1f: np.ndarray, normal: np.ndarray,
     wgt = 1.0 - (1.0 - V) ** 2
     nmix = (bent_of_moments(a1f, normal) * (1.0 - wgt[..., None])
             + normal * wgt[..., None])
-    nmix = nmix / np.maximum(np.linalg.norm(nmix, axis=-1, keepdims=True),
-                             1e-6)
+    # 与 sc3SkyIrradiance 逐字对齐:normalize(mix + 1e-6) —— 加 ε 向量后
+    # **真归一**(P-4:max(|·|,1e-6) 不是 normalize,Bdir=−N 的退化处会把
+    # SH 求值在原点,与 GLSL 分叉)
+    nmix = nmix + np.float32(1e-6)
+    nmix = nmix / np.linalg.norm(nmix, axis=-1, keepdims=True)
     h, w = a0f.shape
     b = sh_basis(nmix[..., 0].ravel().astype(np.float64),
                  nmix[..., 1].ravel().astype(np.float64),
@@ -103,4 +108,6 @@ def identity_check(ctx: dict) -> int:
                       {'intensity': 0.0, 'profile': 1.0}, None, 1.0, 0.0)
     got = np.round(np.clip(img, 0, 1) * 255).astype(np.int16)
     ref = np.round(np.clip(bg, 0, 1) * 255).astype(np.int16)
-    return int((got != ref).sum())
+    # 255 饱和位除外(P-1:Reinhard 界数学上强制 255→254,#3 同口径豁免)
+    sat = ref >= 254
+    return int((got[~sat] != ref[~sat]).sum())

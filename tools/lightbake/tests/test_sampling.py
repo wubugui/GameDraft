@@ -181,5 +181,57 @@ def test_distribution_chi_square():
         assert chi2p < 80.0, f'{fn.__name__} 方位卡方 {chi2p:.1f}'
 
 
+def test_phi_actually_exercised_by_asymmetric_integrals():
+    """审查 S:此前所有解析积分都方位对称 —— φ 坏成常数也能全绿。
+    非对称核把 φ 真正拉上考场:∫_上半球 max(ω·x̂,0) dω = π/2
+    (x̂ 半球积分 π 的上半);∫_球面 (ω·x̂)² dω = 4π/3。"""
+    n, spp = 1500, 128
+    keys = point_keys(_pts(n, seed=21))
+    acc = np.zeros(n)
+    for s in range(spp):
+        d, pdf = uniform_upper_hemisphere(keys, s, spp)
+        acc += np.maximum(d[:, 0], 0.0) / pdf
+    assert abs(float(acc.mean() / spp) - math.pi / 2) < 0.02
+    acc = np.zeros(n)
+    for s in range(spp):
+        d, pdf = uniform_sphere(keys, s, spp)
+        acc += d[:, 0] ** 2 / pdf
+    assert abs(float(acc.mean() / spp) - 4 * math.pi / 3) < 0.03
+
+
+def test_phi_cross_sampler_not_rigidly_coupled():
+    """审查 S-1:同增量下不同采样器的 φ 只差逐点常数旋转(刚性耦合,
+    「流独立」在 φ 分量为假)。逐采样器不同 Kronecker 增量后,
+    φ 差必须随 s 变。"""
+    pts = _pts(6, seed=31)
+    keys = point_keys(pts)
+    spp = 16
+    N = np.tile(np.array([[0.0, 1.0, 0.0]], np.float32), (len(keys), 1))
+    deltas = []
+    for s in range(8):
+        dc, _ = cosine_hemisphere(N, keys, s, spp)
+        du, _ = uniform_upper_hemisphere(keys, s, spp)
+        pc = (np.arctan2(dc[:, 0], dc[:, 2]) / (2 * math.pi)) % 1.0
+        pu = (np.arctan2(du[:, 0], du[:, 2]) / (2 * math.pi)) % 1.0
+        deltas.append((pc - pu) % 1.0)
+    deltas = np.stack(deltas, 0)               # (s, n)
+    spread = deltas.std(axis=0)
+    assert float(spread.min()) > 1e-3, '跨采样器 φ 仍是刚性旋转(S-1)'
+
+
+def test_salt_registry_min_circular_distance():
+    """审查 S:盐经 splitmix 后的最小两两环距必须 ≫ 可达计数器范围(2³³),
+    加第五个盐时不许静默撞号。"""
+    from tools.lightbake.sampling import (_SALT_COSINE, _SALT_NEE,
+                                          _SALT_SPHERE, _SALT_UPPER,
+                                          _splitmix64)
+    hs = [int(_splitmix64(s)[0]) for s in
+          (_SALT_COSINE, _SALT_UPPER, _SALT_SPHERE, _SALT_NEE)]
+    m = 1 << 64
+    dmin = min(min((a - b) % m, (b - a) % m)
+               for i, a in enumerate(hs) for b in hs[i + 1:])
+    assert dmin > (1 << 40), hex(dmin)
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

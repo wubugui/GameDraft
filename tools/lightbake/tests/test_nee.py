@@ -275,5 +275,102 @@ def test_volume_gi_nee_energy_consistent():
         f'体 GI 能量漂了:nee {g_on:.4f} vs bsdf {g_off:.4f}')
 
 
+# ------------------------------------------ 对抗审查 N 系钉子(2026-08-25)
+
+def _slab_pdf_reference(ctx, o, d, per_box=False):
+    """独立参考实现:逐发光箱 slab 求交,Σ p_sel·(t_out³−t_in³)/(3V)。
+    与 _pdf_dda_kernel 完全不同的算法路径 —— 两者逐点吻合才算 pdf 正确。"""
+    cx = ctx.center[:, 0]
+    cy = ctx.center[:, 1]
+    hp = ctx.half_px
+    v_box = (2.0 * hp) ** 2 * float(ctx.z1[0] - ctx.z0[0])
+    inv3v = 1.0 / (3.0 * v_box)
+    out = np.zeros(len(o), np.float64)
+    boxes_last = None
+    for i in range(len(o)):
+        oi = o[i].astype(np.float64)
+        di = d[i].astype(np.float64)
+        t_in = np.zeros(len(cx))
+        t_out = np.full(len(cx), np.inf)
+        ok = np.ones(len(cx), bool)
+        for lo, hi_, oc, dc in ((cx - hp, cx + hp, oi[0], di[0]),
+                                (cy - hp, cy + hp, oi[1], di[1]),
+                                (ctx.z0, ctx.z1, oi[2], di[2])):
+            if abs(dc) < 1e-12:
+                ok &= (oc >= lo) & (oc <= hi_)
+            else:
+                ta = (lo - oc) / dc
+                tb = (hi_ - oc) / dc
+                t_in = np.maximum(t_in, np.minimum(ta, tb))
+                t_out = np.minimum(t_out, np.maximum(ta, tb))
+        t_in = np.maximum(t_in, 0.0)
+        ok &= t_out > t_in
+        boxes_last = (ctx.p_sel[ok]
+                      * (t_out[ok] ** 3 - t_in[ok] ** 3)) * inv3v
+        out[i] = float(boxes_last.sum())
+    if per_box:
+        return out, boxes_last
+    return out
+
+
+def test_pdf_light_matches_independent_slab_integrator():
+    """审查 N:pdf_light 的**数值**此前无覆盖。DDA vs 独立逐箱 slab,
+    随机方向逐点吻合;顺带钉池化(横穿发光块的射线,密度 ≥ 1.5× 单箱)。"""
+    field = _rim_field(64, 96)
+    hdr = _hdr_with_emitters(field, block=(24, 40, 6))
+    ctx = build_nee(hdr, field)
+    rng = np.random.default_rng(17)
+    n = 300
+    o = np.stack([rng.uniform(-0.6, 0.6, n), rng.uniform(-0.4, 0.4, n),
+                  rng.uniform(6.0, 9.0, n)], 1).astype(np.float32)
+    d = rng.normal(size=(n, 3))
+    d = (d / np.linalg.norm(d, axis=1, keepdims=True)).astype(np.float32)
+    pl = pdf_light(ctx, o, d)
+    ref = _slab_pdf_reference(ctx, o, d)
+    assert np.allclose(pl, ref, rtol=1e-5, atol=1e-12), \
+        float(np.abs(pl - ref).max())
+    # 池化:与发光块同层的横向射线穿过 6 连箱 —— 总密度必须显著大于
+    # 任何单箱贡献(单箱口径实测超收 ×3.6 的历史,§15)
+    o1 = np.array([[ctx.center[0, 0] - 1.0, ctx.center[0, 1],
+                    float(ctx.center[0, 2])]], np.float32)
+    d1 = np.array([[1.0, 0.0, 0.0]], np.float32)
+    pooled = float(pdf_light(ctx, o1, d1)[0])
+    ref1, per_box = _slab_pdf_reference(ctx, o1, d1, per_box=True)
+    assert np.isclose(pooled, ref1[0], rtol=1e-5)
+    assert len(per_box) >= 4                      # 确实穿过多箱
+    assert pooled > 1.5 * float(per_box.max()), (pooled, per_box.max())
+
+
+def test_nee_no_energy_injection_when_emitter_fully_occluded():
+    """审查 N-1 的钉子:发光体被山脊完全遮挡的接收面,NEE 开/关能量必须一致
+    (sel_map 过滤版在此 +15% 漏光;full-MIS 版应 < 3%)。"""
+    h, w = 64, 220
+    depth = np.full((h, w), 8.0, np.float32)
+    depth[:4, :] = 5.0
+    depth[-4:, :] = 5.0
+    depth[:, :4] = 5.0
+    depth[:, -4:] = 5.0
+    depth[:, 50:110] = 7.6                     # 山脊,挡住右侧发光带
+    field = DepthField.build(depth, ppu=40.0, cx=w / 2, cy=h / 2)
+    rng = np.random.default_rng(23)
+    hdr = rng.uniform(0.5, 1.5, (h, w, 3)).astype(np.float32)   # 亮挡板(最坏类)
+    hdr[8:56, 110:200] = 60.0
+    ctx = build_nee(hdr, field)
+    assert ctx is not None
+    n = 160
+    ys = np.linspace(10, 53, n)
+    q = np.stack([np.full(n, (20 - field.cx) / field.ppu),
+                  (field.cy - ys) / field.ppu,
+                  np.full(n, 7.9)], 1).astype(np.float32)
+    nrm = np.tile(np.array([1.0, 0.0, 0.0], np.float32), (n, 1))
+    q = np.ascontiguousarray(q)
+    off = gather_scene_e(q, nrm, R_ID, field, hdr, 256, (1, n))
+    on = gather_scene_e(q, nrm, R_ID, field, hdr, 256, (1, n), nee_ctx=ctx)
+    m_off = float(((off.hit_sum / 256) @ LUMA).mean())
+    m_on = float(((on.hit_sum / 256) @ LUMA).mean())
+    rel = abs(m_on - m_off) / max(m_off, 1e-9)
+    assert rel < 0.03, f'被遮挡发光体注入能量 {rel:+.1%}(N-1 漏光)'
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

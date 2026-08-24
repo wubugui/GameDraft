@@ -77,18 +77,29 @@ def _u01(keys: np.ndarray, salt: np.uint64, ctr: int) -> np.ndarray:
             * np.float32(1.0 / 16777216.0))
 
 
-def _fib_phi01(keys: np.ndarray, salt: np.uint64, s: int) -> np.ndarray:
-    """低差异方位角(∈[0,1),×2π 即 φ):frac(s·(1/φ黄金比) + ρ(点))。
+def _fib_phi01(keys: np.ndarray, salt: np.uint64, s: int,
+               mult: float) -> np.ndarray:
+    """低差异方位角(∈[0,1),×2π 即 φ):frac(s·mult + ρ(点))。
 
     QMC(§5.4 采样扩展,2026-08-25):μ 保持逐 s 分层,φ 从纯随机换成
-    斐波那契增量 + 逐点 Cranley-Patterson 旋转 ρ —— 旋转保**无偏性**与
+    Kronecker 增量 + 逐点 Cranley-Patterson 旋转 ρ —— 旋转保**无偏性**与
     逐点确定性(位置哈希,ctr=2³²,与逐 s 的 ξ 流不撞),序列保低差异。
     实测(mountain_pass 6000 格点,a₀ 对 4096spp 参考):64spp 的 p95
     从 0.0313 降到 0.0157 ≈ 旧采样 256spp —— 同成本白捡 ~4× 等效 spp。
-    s·0.618… 用 f64 求模再降 f32(s 大时 f32 尾数不够,φ 会量化)。"""
+
+    ⚠ `mult` **逐采样器不同**(黄金比/塑料常数/√2−1,都是坏可逼近无理数):
+    同一增量下不同采样器的 φ 序列只差逐点常数旋转 —— 跨采样器「流独立」在
+    φ 分量上刚性耦合(对抗审查 S-1 逐位实测)。增量不同 ⇒ 差随 s 变,
+    去耦;各自仍低差异。s·mult 用 f64 求模再降 f32(s 大时 f32 尾数不够)。"""
     rot = _u01(keys, salt, 1 << 32).astype(np.float64)
-    v = (np.float64(s) * 0.6180339887498949) % 1.0
+    v = (np.float64(s) * mult) % 1.0
     return ((v + rot) % 1.0).astype(np.float32)
+
+
+#: 逐采样器的 Kronecker 增量(S-1 去耦):黄金比 1/φ、塑料常数 1/ρ、√2−1。
+_PHI_MULT_COSINE = 0.6180339887498949
+_PHI_MULT_UPPER = 0.7548776662466927
+_PHI_MULT_SPHERE = 0.4142135623730951
 
 
 def tangent_basis(normals: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -119,7 +130,7 @@ def cosine_hemisphere(normals: np.ndarray, keys: np.ndarray,
     u1 = (np.float32(s) + xi1) / np.float32(spp)
     ta, tb = basis if basis is not None else tangent_basis(N)
     r = np.sqrt(u1)
-    phi = _TWO_PI * _fib_phi01(keys, _SALT_COSINE, s)
+    phi = _TWO_PI * _fib_phi01(keys, _SALT_COSINE, s, _PHI_MULT_COSINE)
     dirs = (ta * (r * np.cos(phi))[:, None]
             + tb * (r * np.sin(phi))[:, None]
             + N * np.sqrt(np.maximum(1.0 - u1, 0.0))[:, None]).astype(np.float32)
@@ -138,7 +149,7 @@ def uniform_upper_hemisphere(keys: np.ndarray, s: int,
     xi1 = _u01(keys, _SALT_UPPER, 2 * s)
     mu = (np.float32(s) + xi1) / np.float32(spp)
     sr = np.sqrt(np.maximum(1.0 - mu * mu, 0.0))
-    phi = _TWO_PI * _fib_phi01(keys, _SALT_UPPER, s)
+    phi = _TWO_PI * _fib_phi01(keys, _SALT_UPPER, s, _PHI_MULT_UPPER)
     dirs = np.stack([sr * np.cos(phi), mu, sr * np.sin(phi)], 1).astype(np.float32)
     pdf = np.full(len(keys), _INV_2PI, np.float32)
     return dirs, pdf
@@ -161,7 +172,7 @@ def uniform_sphere(keys: np.ndarray, s: int,
     xi1 = _u01(keys, _SALT_SPHERE, 2 * s)
     mu = ((np.float32(s) + xi1) / np.float32(spp)) * np.float32(2.0) - np.float32(1.0)
     sr = np.sqrt(np.maximum(1.0 - mu * mu, 0.0))
-    phi = _TWO_PI * _fib_phi01(keys, _SALT_SPHERE, s)
+    phi = _TWO_PI * _fib_phi01(keys, _SALT_SPHERE, s, _PHI_MULT_SPHERE)
     dirs = np.stack([sr * np.cos(phi), mu, sr * np.sin(phi)], 1).astype(np.float32)
     pdf = np.full(len(keys), _INV_4PI, np.float32)
     return dirs, pdf

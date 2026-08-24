@@ -60,5 +60,31 @@ def test_denoise_flat_region_converges_to_mean():
     assert abs(float(out.mean()) - float(noisy.mean())) < 0.02
 
 
+def test_denoise_does_not_mutate_float64_input():
+    """审查 D-1:ascontiguousarray 对 f64 连续输入返回原对象,乒乓交换会
+    就地改写调用方数组 —— 纯函数承诺。"""
+    _clean, noisy, nrm, dep = _scene(seed=7)
+    x64 = np.ascontiguousarray(noisy, np.float64)
+    snap = x64.copy()
+    _ = denoise_e(x64, nrm, dep)
+    assert np.array_equal(x64, snap)
+
+
+def test_denoise_degenerate_normals_fall_back_to_source():
+    """审查 D-2:零/非单位法线导致权重塌缩时必须回退源像素,不许注入硬零。"""
+    rng = np.random.default_rng(11)
+    h, w = 32, 40
+    dep = np.full((h, w), 6.0, np.float32)
+    noisy = (1.0 + rng.normal(0, 0.2, (h, w, 3))).astype(np.float32)
+    noisy = np.clip(noisy, 0, None)
+    zero_n = np.zeros((h, w, 3), np.float32)
+    out = denoise_e(noisy, zero_n, dep)
+    assert np.array_equal(out, noisy.astype(np.float32))
+    half_n = np.zeros((h, w, 3), np.float32)
+    half_n[..., 2] = -0.5
+    out2 = denoise_e(noisy, half_n, dep)
+    assert float(np.abs(out2 - noisy).max()) < 1e-5
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

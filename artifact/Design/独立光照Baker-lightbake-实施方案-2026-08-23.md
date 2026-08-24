@@ -1604,5 +1604,48 @@ gi=1 时被 base 的现算除法**精确抵消**（默认画面无感）,只在�
   meta 分记 gather 块(spp/矩/AO/NEE/clamp/去噪与趟数)与 volume 块
   (vol_spp/cells_xz/max_cells/no_gi),回溯零猜测。质量参数组同时挂在
   bake/check/report 三个子命令上。推荐终参口径:
+
+### 三路独立审查轮(2026-08-25,制作人令:反复 subagent 自检到商业品质)
+
+**一致性审查(C,全修)**:bake_params 混入派生量 nee_emitters ⇒ `check`
+重档 #8 二次 bake 必炸 TypeError(移出恢复纯 kwargs 不变量);
+`--clamp-indirect 0`/`--vol-density 0` 语义反转(0 会清零间接光)⇒ 入口拒收;
+质量参数组抽 `_quality_flags` 挂 bake/check/report;`--work-w`/`--out-root`
+补齐;meta 补 denoise_iters/cells_xz/max_cells;§12 用法块重写、契约编号
+6 纠正;`--serve` 标未实装。tests/test_cli_parity.py 钉镜像。
+
+**壳纪律审查(A,P0–P2 全修)**:①重估**编排**曾在 GUI 手抄第二份 ⇒ 抽
+`pipeline.recombine_sky` 唯一编排,GUI 纯转发,自检 #12 扩 (c) 全链逐位;
+②E直接 通道 gain 口径错(post−pre 混差);③numba 线程数**线程局部**,GUI
+工作线程各自重设;④等价 CLI 行漏 `--sky`(壳公理破口)⇒ 无条件回显;
+⑤进度/取消/关窗收尾;⑥自检红照 CLI 口径开 report 列红项;⑦天空 spec
+往返打补丁保真(未知键不丢);⑧preview 拆 sky_response/compose_final,
+gi/ev 走缓存毫秒级;⑨富 ctx 全通道非占位断言 + CLI→GUI 反向 parity。
+真 ctx 离屏实测:22/22 通道真数据、Recombine 全链 e ≡ bake 逐位。
+
+**算法对抗审查(B,8 项 CONFIRMED 全修 + 逐项钉子)**:
+- **N-1(最重)**:MIS 降权曾按「命中像素 ∈ sel_map」过滤,自称有界近似
+  —— 实锤为阴影区单向 **+15%** 漏光(被挡方向 p_L/p_B 中位 4.74、总权重至
+  1.97),两个 8% 能量门的几何恰好失明。修:**full-MIS**,对每根命中射线
+  求 pdf_light(bbox 快拒控成本);钉子 = 山脊全遮挡场景零能量注入
+  (修后 <3%,修前 +15%)。pdf_light 数值另加**独立 slab 积分器对照**
+  (rtol 1e-5)与池化断言。审查同时验证:ω 密度推导、DDA 全边界类
+  (对照 8e-8)、分层选取无偏、逃逸/天空分账 —— 未能驳倒。
+- **S-1**:三采样器共用黄金比增量 ⇒ φ 序列跨采样器只差逐点常数旋转
+  (刚性耦合,「流独立」在 φ 分量为假)。修:逐采样器 Kronecker 增量
+  (黄金比/塑料常数/√2−1);钉子 = 跨采样器 φ 差随 s 变 + **非对称积分**
+  (∫max(ω·x̂,0)=π/2、∫(ω·x̂)²=4π/3 —— 此前 φ 坏成常数也能全绿)+
+  盐注册表最小环距 > 2⁴⁰。
+- **D-1/2/3**:denoise 对 f64 连续输入就地改写(纯函数破)⇒ 强制拷贝;
+  退化法线权重塌缩注入硬零 ⇒ 回退源像素;死常量 _K5 ⇒ 进核参数。
+  钉子 = 不变输入 + 退化法线回退。
+- **P-1/2/4**:identity_check 没执行自己的饱和位豁免 ⇒ 补 mask;
+  base_of_ctx 的 1e-6 地板违 §5.7 铁令 ⇒ 纯除法(log 码 E_q 恒 >0);
+  退化 mix 的 max(|·|,ε) 不是 normalize ⇒ 对齐 sc3SkyIrradiance 的
+  normalize(mix+ε)。钉子三枚。遗留记录(未修,已知边界):#3(f64/原生
+  分辨率)与 preview(f32/工作分辨率)是同一恒等的两个口径,权威判定在
+  #3;§6.1 的 E_环境 项预览侧默认为 0(「无解析灯」口径,GUI 未暴露);
+  运行时 v5 仍在,GLSL↔Python 跨语言 parity 测试留给 P7 接线时补。
+全套测试 **110 通过 + 1 xfail**。
   `--spp 64 --moment-spp 256 --ao-spp 128 --vol-spp 256`
   (雾津街头终参 showcase 见交付页)。

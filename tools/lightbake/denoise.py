@@ -10,8 +10,10 @@ UE GPU Lightmass / Unity / Bakery 的同层对应物是 OIDN/OptiX AI 去噪
 0.0047→0.0000,视觉「完全平滑」且结构保留(§15)。
 
 实现是 numba 核(逐像素独立写,prange 行并行,固定求和序 ⇒ 与线程数无关;
-fastmath=False 与 tracer 同门风)。边界钳而不环绕。不引用任何 march 判据
-常量 —— 这层只看 (E, normal, depth) 三张图,与求交无关。
+fastmath=False 与 tracer 同门风)。边界**截断核并重归一**(不钳不环绕;
+行随机算子 ⇒ 常数场仍精确保持)。退化法线(零/非单位)导致权重塌缩时
+**回退源像素**,不许注入硬零(对抗审查 D-2)。不引用任何 march 判据常量
+—— 这层只看 (E, normal, depth) 三张图,与求交无关。
 """
 from __future__ import annotations
 
@@ -30,10 +32,9 @@ _LUMA64 = np.array([0.2126, 0.7152, 0.0722], np.float64)
 
 
 @njit(parallel=True, nogil=True, cache=True, fastmath=False)
-def _atrous_pass(src, lum, nrm, dep, step, sig_d, sig_l,
+def _atrous_pass(src, lum, nrm, dep, step, sig_d, sig_l, k5,
                  dst):  # pragma: no cover — 语义由 tests/test_denoise.py 钉
     h, w = dep.shape
-    k5 = np.array([1.0, 4.0, 6.0, 4.0, 1.0]) / 16.0
     for y in prange(h):
         for x in range(w):
             n0x = nrm[y, x, 0]
@@ -70,10 +71,14 @@ def _atrous_pass(src, lum, nrm, dep, step, sig_d, sig_l,
                     a2 += src[yy, xx, 2] * wgt
                     ws += wgt
             if ws < 1e-12:
-                ws = 1e-12
-            dst[y, x, 0] = a0 / ws
-            dst[y, x, 1] = a1 / ws
-            dst[y, x, 2] = a2 / ws
+                # 权重塌缩(退化法线等)⇒ 回退源像素,不许注入硬零(D-2)
+                dst[y, x, 0] = src[y, x, 0]
+                dst[y, x, 1] = src[y, x, 1]
+                dst[y, x, 2] = src[y, x, 2]
+            else:
+                dst[y, x, 0] = a0 / ws
+                dst[y, x, 1] = a1 / ws
+                dst[y, x, 2] = a2 / ws
 
 
 def denoise_e(e: np.ndarray, normal: np.ndarray, depth: np.ndarray,
@@ -83,7 +88,9 @@ def denoise_e(e: np.ndarray, normal: np.ndarray, depth: np.ndarray,
     iters=0 原样返回(--no-denoise 的关闭路径,逐位 = 旧管线)。"""
     if iters <= 0:
         return e
-    src = np.ascontiguousarray(e, np.float64)
+    # np.array 强制拷贝:ascontiguousarray 对已是 f64 连续的输入返回**原对象**,
+    # 乒乓交换后就地改写调用方数组 —— 纯函数承诺被打破(对抗审查 D-1 实测)
+    src = np.array(e, np.float64)
     nrm = np.ascontiguousarray(normal, np.float64)
     dep = np.ascontiguousarray(depth, np.float64)
     lum0 = src @ _LUMA64
@@ -92,6 +99,6 @@ def denoise_e(e: np.ndarray, normal: np.ndarray, depth: np.ndarray,
     for it in range(iters):
         lum = src @ _LUMA64
         _atrous_pass(src, lum, nrm, dep, 1 << it,
-                     float(ATROUS_SIGMA_DEPTH), sig_l, dst)
+                     float(ATROUS_SIGMA_DEPTH), sig_l, _K5, dst)
         src, dst = dst, src
     return np.ascontiguousarray(src, np.float32)

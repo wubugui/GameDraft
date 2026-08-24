@@ -123,26 +123,30 @@ def clamp_rows(contrib: np.ndarray, clamp: float | None) -> np.ndarray:
 def nee_mis_downweight(contrib: np.ndarray, nee_ctx: NeeContext, res,
                        hit: np.ndarray, origins_q: np.ndarray,
                        d_q: np.ndarray, pdf_b: np.ndarray) -> None:
-    """BSDF 样本命中发光体 → balance heuristic 的 BSDF 半权重(原地降权)。
-    场景与体 GI 共用的**唯一实现**;pdf_light 与光源样本分母同一个函数
-    ⇒ 两侧权重逐点归一,无偏。
+    """BSDF 命中样本的 balance-heuristic 降权(原地)。场景与体 GI 共用的
+    **唯一实现**;pdf_light 与光源样本分母同一个函数。
 
-    配对类 = **壳体素箱的射线弦**(nee.py 模块文档):march 命中点必在其
-    texel 的箱内 ⇒ 弦恒非空 ⇒ 每一发发光体命中都有正的光源密度,横向命中
-    (伪世界表面间传输的主体)不再漏网;近场 r<r_min 密度 0 ⇒ 权重自动 = 1。
-    §15 记录了三版口径的验尸:容差配对砍半、逐像素配对空转、薄平面方格
-    在真实场景 in-support 趋零。"""
+    ⚠ **对每一根命中射线**求 pdf_light,不许按「命中像素是否发光体」过滤
+    (2026-08-25 对抗审查 N-1 实锤:光源策略在**被挡方向**上密度照样 > 0
+    且常远大于 pdf_b —— 只降权发光体命中会让被挡方向总权重 1+w_L ⇒
+    阴影区单向 +15% 漏光,而两个 8% 能量门的几何恰好看不见这一类。
+    full-MIS 后被挡方向的挡板辐射由 w_B·L + w_L·L = L 严格分账,逐向
+    权重归一无条件成立)。非发光方向 pdf_light 经 bbox 快拒 O(1) 归零,
+    权重自动 = 1,成本可控。
+
+    配对类几何 = 壳体素箱的射线弦(nee.py 模块文档);§15 记录了四版口径
+    的验尸:容差配对砍半、逐像素配对空转、薄平面 in-support 趋零、
+    sel_map 过滤漏光 +15%。"""
     hit_idx = np.where(hit)[0]
     if len(hit_idx) == 0:
         return
-    e_idx = nee_ctx.sel_map[res.hit_yx[hit_idx, 0], res.hit_yx[hit_idx, 1]]
-    em = e_idx >= 0
-    if not em.any():
+    pl = pdf_light(nee_ctx, origins_q[hit_idx], d_q[hit_idx])
+    nz = pl > 0.0
+    if not nz.any():
         return
-    rows = hit_idx[em]
-    pl = pdf_light(nee_ctx, origins_q[rows], d_q[rows])
+    rows = hit_idx[nz]
     pb = pdf_b[rows].astype(np.float64)
-    contrib[rows] *= (pb / np.maximum(pb + pl, 1e-300))[:, None]
+    contrib[rows] *= (pb / np.maximum(pb + pl[nz], 1e-300))[:, None]
 
 
 def _nee_scene_light(nee_ctx: NeeContext, q_pts: np.ndarray,
