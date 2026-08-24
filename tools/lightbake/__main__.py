@@ -49,6 +49,8 @@ def cmd_bake(args) -> int:
         try:
             ctx = bake_scene(sid, spp=args.spp, sky_override=sky,
                              no_gi=args.no_gi, vol_density=args.vol_density,
+                             nee=not args.no_nee,
+                             clamp_indirect=args.clamp_indirect,
                              quiet=args.quiet)
         except Exception as exc:                       # noqa: BLE001 — 单场景失败不拖垮全烘
             print(f'  [{sid}] 失败: {type(exc).__name__}: {exc}', file=sys.stderr)
@@ -166,6 +168,10 @@ def main(argv: list[str] | None = None) -> int:
                    help=f'每角色高几格(横向;纵向自动 2 倍),缺省 '
                         f'{CELLS_PER_CHAR_XZ:g};室内场景实测需 4')
     p.add_argument('--no-gi', action='store_true')
+    p.add_argument('--no-nee', action='store_true',
+                   help='关闭 NEE+MIS 光源采样(firefly 的无偏解,缺省开)')
+    p.add_argument('--clamp-indirect', type=float, default=None,
+                   help='单样本间接贡献的亮度上限(Cycles 系,有偏;缺省关)')
     p.add_argument('--sky', help='烘焙期天空:内联 JSON 或 json 文件路径(覆写场景值)')
     p.add_argument('--threads', type=int, default=0)
     p.add_argument('--quiet', action='store_true')

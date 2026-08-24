@@ -62,6 +62,14 @@ except Exception as _exc:  # noqa: BLE001 — 统一转成带修复命令的硬�
     raise ImportError(_NUMBA_INSTALL_HINT) from _exc
 
 
+#: 可见壳的命中 z 窗(相对像素深度的 (下界, 上界)):march 在 pen ∈ 此窗内记命中。
+#: **壳几何的唯一出口** —— NEE 光源采样需要发光 texel 在 march 测度下的真实
+#: 几何(像素列 × 此 z 窗的体素箱),从这里拿数据,不许在别处引用判据常量
+#: (契约测试 1 只认名字;bias 随 t 的增长项不进箱 —— 长距射线的窗浅端采不中,
+#: 由「取 march 注册处辐射」的估计框架自洽吸收,只损一点效率不损无偏)。
+SHELL_WINDOW = (float(MARCH_BIAS), float(MARCH_THICKNESS))
+
+
 @dataclass(frozen=True)
 class DepthField:
     """被追踪的那个场。一次构造、到处复用,不许每个消费者自己拼。"""

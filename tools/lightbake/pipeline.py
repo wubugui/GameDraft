@@ -24,6 +24,7 @@ from .encode import (decode_log_hdr, encode_log_hdr, pick_log_params, resize_rgb
 from .gather import (apply_dehaze, combine_e, compose_sun_e, exposure_of,
                      fit_haze, gather_gain_of, gather_scene_e, local_ao,
                      sky_moments, smooth_moments, solve_direct_light)
+from .nee import build_nee
 from .sampling import point_keys
 from .sky import make_sky_sampler
 from .trace import DepthField
@@ -58,7 +59,9 @@ def _progress(quiet: bool):
 
 def bake_scene(sid: str, *, work_w: int = WORK_W, spp: int = GATHER_SPP,
                sky_override: dict | None = None, no_gi: bool = False,
-               vol_density: float | None = None, out_root: Path | None = None,
+               vol_density: float | None = None,
+               nee: bool = True, clamp_indirect: float | None = None,
+               out_root: Path | None = None,
                write: bool = True, run_checks: bool = True,
                heavy_checks: bool = False, make_report: bool = True,
                with_volume: bool = True, quiet: bool = False) -> dict:
@@ -100,8 +103,14 @@ def bake_scene(sid: str, *, work_w: int = WORK_W, spp: int = GATHER_SPP,
         _say(f'  ⚠ [{sid}] 场景无 lighting.bakeSky,用 DEFAULT_SKY(白 ×0.05)——'
              f'在 GUI 里调定并存回场景 JSON(§5.3)')
     t0 = time.time()
+    # NEE 发光体表(§5.4 MIS 扩展):场景 gather 与体 GI 共用一份;
+    # 没有阈上发光体 ⇒ None ⇒ 纯 BSDF 老路,逐位不变。
+    nee_ctx = build_nee(hdr_work, field) if nee else None
+    if nee_ctx is not None and not quiet:
+        _say(f'    nee 发光体 {len(nee_ctx.yx)} texel')
     cache = gather_scene_e(Q, N, inp.R, field, hdr_work, spp, (h, w),
-                           progress=prog)
+                           progress=prog, nee_ctx=nee_ctx,
+                           clamp=clamp_indirect)
     e_ind = combine_e(cache, sky_of)
     t_gather = time.time() - t0
 
@@ -152,6 +161,7 @@ def bake_scene(sid: str, *, work_w: int = WORK_W, spp: int = GATHER_SPP,
             lambda dw, f=sky_of, g=gain: np.asarray(f(dw), np.float32) * g,
             inp.char_wu, inp.band, spp=CHAR_VOL_SPP, no_gi=no_gi,
             **({'cells_xz': vol_density} if vol_density is not None else {}),
+            nee_ctx=nee_ctx, clamp=clamp_indirect,
             progress=prog)
     else:
         vol = None
@@ -162,7 +172,11 @@ def bake_scene(sid: str, *, work_w: int = WORK_W, spp: int = GATHER_SPP,
         'sid': sid, 'inp': inp, 'field': field, 'keys': keys,
         'bake_params': {'work_w': work_w, 'spp': spp,
                         'sky_override': sky_override, 'no_gi': no_gi,
-                        'vol_density': vol_density},
+                        'vol_density': vol_density, 'nee': nee,
+                        'clamp_indirect': clamp_indirect,
+                        'nee_emitters': (int(len(nee_ctx.yx))
+                                         if nee_ctx is not None else 0)},
+        'nee_ctx': nee_ctx, 'clamp_indirect': clamp_indirect,
         # trans_floor:apply_dehaze 的透射率下限(恢复步 /max(trans, 0.15),
         # 与被替换的现役实现同式)—— 记进 meta,回溯可查
         'haze': {**haze, 'keep': HAZE_KEEP, 'trans_floor': 0.15},

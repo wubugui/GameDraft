@@ -24,6 +24,7 @@ from .const import (AO_RANGE, AO_SPP, GATHER_GAIN_MAX, GATHER_GAIN_PERCENTILE,
                     HAZE_KEEP, MOMENT_SPP, SUN_CHROMA_CLAMP, SUN_SCAN_AZ,
                     SUN_SCAN_EL)
 from .encode import LUMA
+from .nee import NeeContext, pdf_light, sample_light
 from .sampling import (cosine_hemisphere, point_keys, tangent_basis,
                        uniform_sphere, uniform_upper_hemisphere)
 from .trace import DepthField, trace
@@ -108,10 +109,82 @@ class GatherCache:
     shape_hw: tuple[int, int]
 
 
+def clamp_rows(contrib: np.ndarray, clamp: float | None) -> np.ndarray:
+    """Cycles「Clamp Indirect」同款(有偏,可开关):单样本贡献的**亮度**上限,
+    超限整行等比缩(保色度)。与 NEE 正交,逐策略样本各自钳;
+    clamp=None(缺省)原样返回 —— 关闭路径逐位不变。场景 E 与体 GI 共用。"""
+    if clamp is None:
+        return contrib
+    lum = contrib @ LUMA.astype(np.float64)
+    f = np.minimum(1.0, clamp / np.maximum(lum, 1e-9))
+    return contrib * f[:, None]
+
+
+def nee_mis_downweight(contrib: np.ndarray, nee_ctx: NeeContext, res,
+                       hit: np.ndarray, origins_q: np.ndarray,
+                       d_q: np.ndarray, pdf_b: np.ndarray) -> None:
+    """BSDF 样本命中发光体 → balance heuristic 的 BSDF 半权重(原地降权)。
+    场景与体 GI 共用的**唯一实现**;pdf_light 与光源样本分母同一个函数
+    ⇒ 两侧权重逐点归一,无偏。
+
+    配对类 = **壳体素箱的射线弦**(nee.py 模块文档):march 命中点必在其
+    texel 的箱内 ⇒ 弦恒非空 ⇒ 每一发发光体命中都有正的光源密度,横向命中
+    (伪世界表面间传输的主体)不再漏网;近场 r<r_min 密度 0 ⇒ 权重自动 = 1。
+    §15 记录了三版口径的验尸:容差配对砍半、逐像素配对空转、薄平面方格
+    在真实场景 in-support 趋零。"""
+    hit_idx = np.where(hit)[0]
+    if len(hit_idx) == 0:
+        return
+    e_idx = nee_ctx.sel_map[res.hit_yx[hit_idx, 0], res.hit_yx[hit_idx, 1]]
+    em = e_idx >= 0
+    if not em.any():
+        return
+    rows = hit_idx[em]
+    pl = pdf_light(nee_ctx, origins_q[rows], d_q[rows])
+    pb = pdf_b[rows].astype(np.float64)
+    contrib[rows] *= (pb / np.maximum(pb + pl, 1e-300))[:, None]
+
+
+def _nee_scene_light(nee_ctx: NeeContext, q_pts: np.ndarray,
+                     normals: np.ndarray, keys: np.ndarray, s: int, spp: int,
+                     R: np.ndarray, field: DepthField,
+                     hdr: np.ndarray) -> np.ndarray:
+    """场景侧光源样本贡献(n,3 f64,已含 MIS 权):
+    C = w_L · L · cosθ_r / (π · pdf_L) —— E 的 ÷π 约定下与 BSDF 样本同量纲。
+    光源样本就是第二个方向采样器:march 打到哪、就取哪的辐射
+    (逃逸 = f_hit 的合法零样本)—— 可见性完全在被积函数里,零判据。"""
+    j, dl_q, r, pl = sample_light(nee_ctx, q_pts, keys, s, spp)
+    cos_r = np.maximum(
+        np.einsum('ij,ij->i', dl_q @ R.T, normals), 0.0).astype(np.float64)
+    out = np.zeros((len(q_pts), 3), np.float64)
+    valid = (pl > 0.0) & (cos_r > 0.0)
+    if not valid.any():
+        return out
+    idx = np.where(valid)[0]
+    vres = trace(np.ascontiguousarray(q_pts[idx]),
+                 np.ascontiguousarray(dl_q[idx]), field,
+                 max_distance=math.inf)
+    vis = ~vres.escaped
+    if not vis.any():
+        return out
+    rows = idx[vis]
+    L = hdr[vres.hit_yx[vis, 0], vres.hit_yx[vis, 1]].astype(np.float64)
+    pb = cos_r[rows] / math.pi
+    w_l = pl[rows] / np.maximum(pl[rows] + pb, 1e-300)
+    out[rows] = L * (w_l * cos_r[rows] / (math.pi * pl[rows]))[:, None]
+    return out
+
+
 def gather_scene_e(q_pts: np.ndarray, normals: np.ndarray, R: np.ndarray,
                    field: DepthField, hdr: np.ndarray, spp: int,
-                   shape_hw: tuple[int, int], progress=None) -> GatherCache:
+                   shape_hw: tuple[int, int], progress=None,
+                   nee_ctx: NeeContext | None = None,
+                   clamp: float | None = None) -> GatherCache:
     """伪世界 final gather 的 march 半(与天空无关的那半)。
+
+    `nee_ctx`(NEE+MIS,无偏)与 `clamp`(Cycles 系亮度钳,有偏)都只改
+    hit_sum 的累积 —— 逃逸位与天空半原样,GatherCache 结构、combine_e、
+    §5.12 重估(#12)全部不动;两者都关时逐位 = 旧路。
 
         E(x) = ∫ L_in·(N·ω)₊ dω ÷ ∫ (N·ω)₊ dω      (分母 ≡ π,§5.5)
 
@@ -132,10 +205,18 @@ def gather_scene_e(q_pts: np.ndarray, normals: np.ndarray, R: np.ndarray,
                 'cosine_hemisphere 的 pdf ≠ cos/π —— E = mean(L) 特例失效(§5.5),'
                 '换了采样器要改回 Σ f/pdf/n 的通式')
         # 天在无穷远:命中/出画/前穿三条精确终止就是积分的边界,无理由截断
-        res = trace(q_pts, dirs @ R, field, max_distance=math.inf)
+        d_q = dirs @ R
+        res = trace(q_pts, d_q, field, max_distance=math.inf)
         esc_mask[:, s] = res.escaped
         hit = ~res.escaped
-        hit_sum[hit] += hdr[res.hit_yx[hit, 0], res.hit_yx[hit, 1]]
+        contrib = np.zeros((n, 3), np.float64)
+        contrib[hit] = hdr[res.hit_yx[hit, 0], res.hit_yx[hit, 1]]
+        if nee_ctx is not None:
+            nee_mis_downweight(contrib, nee_ctx, res, hit, q_pts, d_q, pdf)
+            light = _nee_scene_light(nee_ctx, q_pts, normals, keys, s, spp,
+                                     R, field, hdr)
+            hit_sum += clamp_rows(light, clamp)
+        hit_sum += clamp_rows(contrib, clamp)
         if progress:
             progress('gather', s + 1, spp)
     return GatherCache(hit_sum=hit_sum, esc_mask=esc_mask, spp=spp,

@@ -58,6 +58,18 @@ AO_SPP = 64
 MOMENT_SPP = 64
 CHAR_VOL_SPP = MOMENT_SPP
 
+#: ---- NEE + MIS(firefly 的无偏解,§5.4 预留的采样扩展;实现在 nee.py)----
+#: 发光体判定阈:to_hdr 展开后的辐亮度(典型反射面 ≲1,灯芯 ~200)。
+NEE_EMITTER_MIN = 4.0
+#: 发光体表上限(按亮度确定性截取;1024 宽工作分辨率下实测远够)。
+NEE_MAX_EMITTERS = 65536
+#: (历史:曾有 NEE_MIN_DIST_PX 近场移交与 NEE_DZ_FLOOR 掠射保护 —— 终版
+#: 壳箱体采样的 ω 密度天生有界,两者皆不需要,§15 验尸记录。)
+
+#: clamp 系(有偏,Cycles「Clamp Indirect」同款):单样本间接贡献的亮度上限,
+#: None = 关闭(缺省)。CLI `--clamp-indirect X` 打开;与 NEE 正交、可叠加。
+CLAMP_INDIRECT_DEFAULT = None
+
 #: 实体空间网格密度:按角色高度定,不按场景尺寸定(§5.9)。
 CELLS_PER_CHAR_XZ = 3.0
 CELLS_PER_CHAR_Y = 6.0

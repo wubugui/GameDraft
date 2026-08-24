@@ -21,7 +21,8 @@ import numpy as np
 from .const import (AO_RANGE, CELLS_PER_CHAR_XZ, CELLS_PER_CHAR_Y,
                     CHAR_VOL_MAX_CELLS, CHAR_VOL_SPP, MOMENT_SPP)
 from .encode import decode_log_hdr, encode_log_hdr, encode_moments, pick_log_params
-from .gather import sky_moments
+from .gather import clamp_rows, nee_mis_downweight, sky_moments
+from .nee import sample_light
 from .sampling import point_keys, uniform_sphere
 from .trace import DepthField, buried, trace
 
@@ -136,6 +137,7 @@ def bake_volume(world: np.ndarray, R: np.ndarray, field: DepthField,
                 *, spp: int = CHAR_VOL_SPP, no_gi: bool = False,
                 cells_xz: float = CELLS_PER_CHAR_XZ,
                 want_cache: bool = False,
+                nee_ctx=None, clamp: float | None = None,
                 progress=None) -> dict:
     """烘一份实体空间数据。`hdr_gained` / `sky_of_gained` 必须已整体乘
     `gather_gain` —— 辐射场要和场景侧同一个尺度(§5.9:gain 逐场景 1–12,
@@ -181,7 +183,8 @@ def bake_volume(world: np.ndarray, R: np.ndarray, field: DepthField,
         # GI 的积分边界就是命中/出画/前穿三条精确终止 ⇒ max_distance=inf;
         # AO 的 r 是问题定义的一部分(§5.8),按 t_hit ≤ AO_RANGE 事后过滤
         # (语义 ≡ 显式截断,契约测试 7),一次 trace 两个消费者。
-        res = trace(pts_act, dirs @ R, field, max_distance=math.inf)
+        d_q = dirs @ R
+        res = trace(pts_act, d_q, field, max_distance=math.inf)
         esc_mask[:, s] = res.escaped
         esc_ao = (res.escaped | (res.t_hit > AO_RANGE)).astype(np.float64)
         ao_m0 += esc_ao * inv_pdf
@@ -192,6 +195,35 @@ def bake_volume(world: np.ndarray, R: np.ndarray, field: DepthField,
             if hit.any():
                 rad[hit] = hdr_gained[res.hit_yx[hit, 0], res.hit_yx[hit, 1]]
             contrib = rad * inv_pdf[:, None]
+            if nee_ctx is not None:
+                # BSDF 命中发光体 → 按壳箱弦 MIS 降权(pdf_b = 采样器逐行 pdf,
+                # 均匀球 1/4π;配对类判据见 gather.nee_mis_downweight,单一实现)
+                nee_mis_downweight(contrib, nee_ctx, res, hit, pts_act, d_q,
+                                   pdf)
+                # 光源样本:积分核 = L(空间点无法线,无余弦);方向矩必须用
+                # 样本**自己的** ω(世界系,与 BSDF 侧 d64 同系),不许借道 d64。
+                jl, dl_q, rl, pll = sample_light(nee_ctx, pts_act, keys, s, spp)
+                lv = np.where(pll > 0.0)[0]
+                if len(lv):
+                    vres = trace(np.ascontiguousarray(pts_act[lv]),
+                                 np.ascontiguousarray(dl_q[lv]), field,
+                                 max_distance=math.inf)
+                    # 光源样本 = 第二个方向采样器:march 打到哪取哪的辐射
+                    # (逃逸 = f_hit 的合法零样本),可见性全在被积函数里
+                    vis = ~vres.escaped
+                    if vis.any():
+                        rows = lv[vis]
+                        L = hdr_gained[vres.hit_yx[vis, 0], vres.hit_yx[vis, 1]
+                                       ].astype(np.float64)
+                        pb_s = 1.0 / (4.0 * math.pi)
+                        w_l = pll[rows] / (pll[rows] + pb_s)
+                        lc = np.zeros((n_act, 3), np.float64)
+                        lc[rows] = L * (w_l / pll[rows])[:, None]
+                        lc = clamp_rows(lc, clamp)
+                        dl_w = (dl_q @ R.T).astype(np.float64)
+                        gi_m0_hit += lc
+                        gi_m1_hit += lc[:, :, None] * dl_w[:, None, :]
+            contrib = clamp_rows(contrib, clamp)
             gi_m0_hit += contrib
             gi_m1_hit += contrib[:, :, None] * d64[:, None, :]
             if res.escaped.any():

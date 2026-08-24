@@ -86,7 +86,12 @@ def build_meta(ctx: dict) -> dict:
         },
         'gather': {'gain': ctx['gain'], 'spp': ctx['spp'],
                    'seed': ctx['seed'], 'moment_spp': ctx['moment_spp'],
-                   'ao_spp': ctx['ao_spp'], 'hdr_max': ctx['hdr_max']},
+                   'ao_spp': ctx['ao_spp'], 'hdr_max': ctx['hdr_max'],
+                   # NEE+MIS(无偏)与 clamp(有偏)的采样配置 —— 回溯 firefly
+                   # 口径必看(§5.4 采样扩展)
+                   'nee': ctx['bake_params']['nee'],
+                   'nee_emitters': ctx['bake_params']['nee_emitters'],
+                   'clamp_indirect': ctx['bake_params']['clamp_indirect']},
         'haze': ctx['haze'],
         'sun': ctx['sun'],
         'volume': {

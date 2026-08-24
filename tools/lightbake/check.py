@@ -333,10 +333,14 @@ def check_12_sky_reestimate(ctx: dict) -> dict:
     Q = inp.q.reshape(-1, 3)
     N = inp.normal.reshape(-1, 3)
     idx = np.arange(0, len(Q), 19)[:30000]
+    # NEE/clamp 必须与原 bake 同配置透传:位置哈希下光源样本逐点确定,
+    # 子集重 march 才与整场缓存逐位可比(配置漂了这里就该红)。
     sub = gather_scene_e(np.ascontiguousarray(Q[idx]),
                          np.ascontiguousarray(N[idx]),
                          inp.R, ctx['field'], ctx['hdr_work'], cache.spp,
-                         (1, len(idx)))
+                         (1, len(idx)),
+                         nee_ctx=ctx.get('nee_ctx'),
+                         clamp=ctx.get('clamp_indirect'))
     ok_a = (np.array_equal(sub.hit_sum, cache.hit_sum[idx])
             and np.array_equal(sub.esc_mask, cache.esc_mask[idx]))
     sky2 = make_sky_sampler({'mode': 'color', 'color': [0.5, 0.7, 1.0],
