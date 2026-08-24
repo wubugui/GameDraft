@@ -11,9 +11,11 @@
 ## 0. 一句话
 
 写一个**全新、独立、自带预览**的离线 baker，产出统一光影管线的全部烘焙产物；
-预览是**单文件自包含 HTML**（图全部内联），结构上不可能看到浏览器缓存的旧图。
+带一个**编辑器 GUI 壳**（调烘焙期天空、实时看结果，§11.1），但本体是库 + CLI，
+无 GUI 全功能可跑；存档预览是**单文件自包含 HTML**（图全部内联），
+结构上不可能看到浏览器缓存的旧图。
 
-**交付是全量。** §13 的 P1..P6 是施工顺序，不是分期交付，不存在「先出个能跑的」。
+**交付是全量。** §13 的 P1..P7 是施工顺序，不是分期交付，不存在「先出个能跑的」。
 
 ---
 
@@ -44,6 +46,7 @@
 - 环境光
 - 色彩与曝光的标定量（§5.11，写进 meta，运行时消费）
 - 实体（角色）与场景走**同一条**光照管线
+- 编辑器 GUI（调烘焙期天空、实时看结果）——**只是壳**，烘焙器本体纯 CLI 全功能可跑（§11.1）
 
 ### 不做
 
@@ -70,7 +73,7 @@
 | 深度图 | `public/resources/runtime/scenes/<sid>/raw_depth_rg.png` | RG 双通道 16-bit 打包 |
 | 深度标定 | 场景 JSON 的 `depthConfig` | `M.R` / `M.ppu` / `M.cx` / `M.cy` / `depth_mapping` |
 | 角色尺度 | `character_band_wu(scene)` | `char_wu`（角色高，世界单位）、`band`、`scene_per_wu` |
-| 天空（烘焙期） | 场景 JSON `lighting.bakeSky` 或 CLI `--sky` | 纯色或 skybox，**不进运行时** |
+| 天空（烘焙期） | 场景 JSON `lighting.bakeSky`——**在 baker 的 GUI 里边调边看，调好存回这里**，不是手工外部导入 | 纯色或 skybox，**不进运行时**（§5.3 / §11.1） |
 
 ⚠ **`raw_depth_rg.png` 与 `collision.png` 是成对的**，git 可能把它俩拆散（见记忆
 `depthconfig-png-pair-can-split`）。开工前跑一次尺寸一致性检查。
@@ -125,17 +128,19 @@ view = R · (0,0,1)                   # 指向场景深处
 
 ```
 public/resources/runtime/scenes/<sid>/lighting3/
-    base.png            原生分辨率
     irradiance.png      work 分辨率
     normal.png          work
-    sky_occlusion.png   work
-    vis_linear.png      work
+    sky_moments.png     work —— 遮蔽矩 (a₀, a₁)，一张替掉旧的 sky_occlusion + vis_linear
     ao.png              work
     char_volume.bin     3D，见 §5.9
     meta.json
     preview/
         report.html     单文件自包含预览
 ```
+
+⚠ **没有 `base.png`**（制作人 2026-08-24 定）：base 不落盘，运行时由
+`原画 → to_hdr → ÷ E_q` 现算（§5.7）。gi=1 时 `(hdr/E_q)·E_q` 精确抵消 ⇒
+**画面逐字节等于原画**；base 在内存全精度、**无上界、无量化损失**，载荷还省 ~5 MB。
 
 ⚠ 载荷版本 **v6**。三处常量必须同时改、且被测试钉死（历史上一天内漂过两次）：
 
@@ -149,23 +154,29 @@ public/resources/runtime/scenes/<sid>/lighting3/
 
 | 文件 | 通道 | 编码 |
 |---|---|---|
-| `base.png` | RGB | log2，`字节 0 = 精确 0` |
 | `irradiance.png` | RGB | log2 |
 | `normal.png` | RGB | `n*0.5+0.5`，线性 8-bit |
-| `sky_occlusion.png` | RGBA | `rgb = Bdir*0.5+0.5`，`a = 余弦加权 V ∈ [0,1]` |
-| `vis_linear.png` | RGBA | `rgb = b/(2·b_max)+0.5`，`a = a₀`（`V(ω)=clamp(a₀+b·ω,0,1)`） |
+| `sky_moments.png` | RGBA | `R = 2·a₀`，`GBA = a₁ + 0.5`（a₀∈[0,½]、a₁ 分量∈[−½,½]，固定编码、无逐场景 scale） |
 | `ao.png` | L | 线性 8-bit |
 | `char_volume.bin` | 见 §5.9 | |
+
+天穹 `V(N)`、`Bdir`、太阳方向可见度 `V_dir(ω)` **全部**由 `(a₀, a₁)` 闭式导出（§5.5）——
+场景与实体消费同一组公式、同一段 shader（§6.1）。
 
 ### 4.3 三条编码曲线，绝不能混用
 
 8-bit PNG 限死了动态范围，所以三条曲线是**被显式设计出来的**，不是随手选的：
 
-1. **对数**（`base` / `irradiance` / 体数据的 GI 幅度）：动态范围几百到上万倍
+1. **对数**（`irradiance` / 体数据的 GI 幅度）：动态范围几百到上万倍
 2. **`from_hdr`（正 Reinhard）**：只用于把 8-bit 原画展开成 HDR，甜区仅 0.1–3
-3. **纯线性 8-bit**：只给本来就在 `[0,1]` 的可见性量（`V`、AO、`vis_linear`）
+3. **纯线性 8-bit**：只给本来就有界的可见性量（遮蔽矩、AO）
 
 ⚠ **升采样必须在编码域做**，不能解码后插值再编码。
+
+**有损点审计**（PNG 容器本身无损，损失全在量化那一步）：`E` 8-bit log ±~2% 相对
+（≪ 16 spp 的 MC 噪声，且在 gi=1 恒等式里被 base 的现算除法**精确吸收**）；
+`normal` 8-bit ≈ 0.4°/分量；可见性量 1/255。
+**唯一曾把完好数据变有损的是 base.png——已废除**（§4.1）。
 
 ### 4.4 `meta.json` 的字段（集中列这，别散在各节猜）
 
@@ -173,7 +184,7 @@ public/resources/runtime/scenes/<sid>/lighting3/
 |---|---|---|
 | 顶层 | `version = 6` | §4.1 |
 | `scale` | `char_wu` / `scene_per_wu` / `band` | §3.1 |
-| `encoding` | 每张对数图的 `scale`/`span`；`vis_linear` 的 `b_max` | §5.10 / §4.2 |
+| `encoding` | 每张对数图的 `scale`/`span`（遮蔽矩为固定编码，无逐场景参数） | §5.10 / §4.2 |
 | `gather` | `gain` / `spp` / `seed` | §5.7 |
 | `haze` | `k` / `H` / `color` / `strength` | §5.1 |
 | `sun` | 方向 / 辐亮度 / 色度 / **完整评分表** | §5.6 |
@@ -232,7 +243,11 @@ from_hdr(x) = x / (1 + x)                                          正 Reinhard
 射线跑出伪世界之后带走多少辐射，**画面里没有任何东西能回答**——它已经离开画面了。
 
 所以这是**烘焙期的自由输入**：纯色，或一张 skybox（equirect，`.hdr` RGBE 或 8-bit）。
-来源优先级：CLI `--sky` > 场景 JSON `lighting.bakeSky` > `DEFAULT_SKY`。
+
+**怎么定**：不是手写配置从外部导入——在 baker 的 GUI（§11.1）里**边调边看**
+（实时重估机制见 §5.12），调好存回场景 JSON `lighting.bakeSky`。这份存盘值是唯一事实：
+CLI 读同一份 ⇒ GUI 里看到什么，无头重烘就出什么。
+读取优先级：CLI `--sky`（仅脚本/实验覆写）> 场景 JSON `lighting.bakeSky` > `DEFAULT_SKY`。
 
 ⚠ **绝对不许从画面上取值**。历史上写过 `estimate_sky_radiance`：拿 `depth > p92`
 那批像素的均值当逃逸辐射。室内场景那 8% 是后墙脚的地面（实测茶馆选中区亮度中位 0.130，
@@ -280,16 +295,16 @@ class DepthField:
 
 @dataclass
 class TraceResult:
+    """全记录，永远带满（12 B/射线）——**一次 trace 带回任何想要的数据**（制作人铁令）。"""
     escaped: np.ndarray      # (n,) bool —— True = 一路跑出去了
-    hit_yx:  np.ndarray|None # (n,2) int32，命中像素（want_hit=True 时才有）
-    t_hit:   np.ndarray|None # (n,) float32，命中处的行进距离
+    hit_yx:  np.ndarray      # (n,2) int32，命中像素（逃逸射线为 -1）
+    t_hit:   np.ndarray      # (n,) float32，命中处的行进距离（逃逸为 +inf）
 
 def trace(origins_q: np.ndarray,      # (n,3) q 空间起点
           dirs_q:    np.ndarray,      # (n,3) q 空间方向，单位长
           field:     DepthField,
           *,
-          max_distance: float = math.inf,   # ★ 缺省无穷。见下方规矩
-          want_hit: bool = False,
+          max_distance: float = math.inf,   # ★ 缺省无穷；仅性能截断，语义 = 事后过滤
           ) -> TraceResult: ...
 
 def buried(pts_q: np.ndarray, field: DepthField) -> np.ndarray:
@@ -297,6 +312,13 @@ def buried(pts_q: np.ndarray, field: DepthField) -> np.ndarray:
     「埋没」就是 t=0 的命中判据，所以它属于 tracer；
     validity（§5.9）从这里拿，消费者不许自己算 pen。"""
 ```
+
+**一次 trace 带回一切**：`t_hit` 是万能通货——
+
+- 命中处要什么值（辐射 / 深度 / 法线）= 拿 `hit_yx` 索引一次，**永不重跑 march**；
+- **任何射程的判定 = 对 `t_hit` 的事后过滤**：`r 内被挡 ⇔ t_hit ≤ r`。
+  一次全程 trace 同时回答**所有半径**的问题；`max_distance` 只是提前收工的
+  **性能截断**，语义必须严格等于「全程 trace 后按 `t_hit` 过滤」（契约测试 8）。
 
 ⚠ **`max_distance` 的缺省必须是 `inf`。** 任何有限值都得由调用方**显式传**，
 并在调用处的注释里写明「**为什么这个积分本身就是有界的**」。
@@ -307,25 +329,34 @@ tracer 自己**不许有任何射程常量**——`MARCH_LENGTH` 这种东西在
 
 #### 谁在用它（全表，加消费者就往这加行）
 
-| 消费者 | 起点 | 方向采样 | `max_distance` | `want_hit` |
+| 消费者 | 起点 | 方向采样 | `max_distance` | 命中后拿什么 |
 |---|---|---|---|---|
-| 场景 `E` gather | 像素表面 | 余弦重要性，绕 `N` | `inf` | ✔ 取原画辐射 |
-| 天穹遮蔽 / `Bdir` / `vis_linear` | **同一趟，同一批光线** | 同上 | `inf` | ✘ 只要 0/1 |
-| **场景局部 AO** | 像素表面 | 全球面均匀 | **`AO_RANGE`** | ✘ |
-| 实体天穹遮蔽 | 空间格点 | 上半球均匀 | `inf` | ✘ |
-| **实体局部 AO** | 空间格点 | 全球面均匀 | **`AO_RANGE`** | ✘ |
-| 实体 GI | 空间格点 | 全球面均匀 | `inf` | ✔ |
+| 场景 `E` gather | 像素表面 | 余弦重要性，绕 `N` | `inf` | `hit_yx` 索引原画辐射 |
+| **场景遮蔽矩 (M₀,M₁)** | 像素表面 | **上半球均匀——与实体侧同一个估计器（§5.5）** | `inf` | 只要 `escaped` |
+| 场景局部 AO | 像素表面 | 全球面均匀 | `AO_RANGE`（性能截断，≡ `t_hit` 过滤） | 只要 `escaped` |
+| 实体遮蔽矩 (M₀,M₁) | 空间格点 | 上半球均匀——**与上一行逐字同一套** | `inf` | 只要 `escaped` |
+| 实体局部 AO | 空间格点 | 全球面均匀 | `AO_RANGE` | 只要 `escaped` |
+| 实体 GI | 空间格点 | 全球面均匀 | `inf` | `hit_yx` 索引原画辐射 |
 
-⚠ 前两行是**同一趟 march**，不要为了「代码干净」拆成两趟——那是 2× 的成本，
-而且两趟用的是不同的随机数，遮蔽与辐照度会对不上。
+⚠ 场景遮蔽矩**不再**搭 `E` 的余弦射线的便车——遮蔽与实体侧统一成同一个估计器
+（§5.5 / §5.9 的极限一致性），这是「实体贴得住场景」的**结构保证**，比省一趟 march
+重要。march 量约 ×2.5，离线可接受（编译核 12 线程 ~0.2 s / 590k 射线，§15）。
 
-#### 方向采样（在 `sampling.py`，不在 tracer 里）
+#### 方向采样 —— `sampling.py`，与 tracer 平级的独立组件
+
+接口定死：**每个采样器返回 `(dirs, pdf)`**，估计量统一写成 `Σ f(ω)/pdf(ω) / n`——
+余弦重要性下 pdf 恰好约掉、估计量 = 样本平均，只是特例。这样以后加分层、低差异序列、
+蓝噪声、MIS，**消费者一行不改**。自带测试：解析可积函数的收敛 + 分布卡方。
 
 ```python
-def cosine_hemisphere(N, spp, rng)        -> ω    # 绕 N，pdf ∝ (N·ω)₊/π
-def uniform_upper_hemisphere(spp, rng)    -> ω    # 绕 up，pdf = 1/2π
-def uniform_sphere(spp, rng)              -> ω    # 全球面，pdf = 1/4π
+def cosine_hemisphere(N, spp, key)        -> (ω, pdf)   # 绕 N，pdf = (N·ω)₊/π
+def uniform_upper_hemisphere(spp, key)    -> (ω, pdf)   # 绕 up，pdf = 1/2π
+def uniform_sphere(spp, key)              -> (ω, pdf)   # 全球面，pdf = 1/4π
 ```
+
+**种子按位置哈希**：`key = hash(GATHER_SEED, 量化后的 q 坐标)`——同一个空间点
+**永远抽到同一批方向**，与调用顺序、批次划分、线程数全部无关。这是字节可复现
+（自检 #8）与「格点落在表面点 ⇒ 与像素侧逐位相同」（自检 #13）共同的地基。
 
 **余弦重要性**（有法线时用）：`pdf ∝ (N·ω)₊/π` ⇒ 估计量就是样本的**算术平均**，
 没有权重表、没有"方位数×仰角节点"这种配比问题。
@@ -379,7 +410,7 @@ loop:
     pen  = qz - depth[yi, xi]
     bias = MARCH_BIAS + MARCH_BIAS_GROWTH · t
     if t > max_distance:                                   → 收工，按"逃逸"算（缺省 inf ⇒ 永不触发）
-    if bias < pen < MARCH_THICKNESS:                       → 命中，收工（want_hit 时带回 yi,xi）
+    if bias < pen < MARCH_THICKNESS:                       → 命中，收工（永远带回 yi,xi 与 t）
 ```
 
 ⚠ **出画语义定死：出画就是逃逸（终止条件 2），没有任何启发式。**（制作人 2026-08-24 拍板）
@@ -477,7 +508,7 @@ def _march_kernel(origins, dirs, depth, ppu, cx, cy, step, bias, grow, thickness
 - ✗ **层级深度金字塔空跳**（hierarchical-Z）：能再砍一个数量级步数，但命中判据是
   `bias < pen < THICKNESS` 的**壳**测试不是半空间，保守上界要重推，
   且会破坏与参考实现的逐位一致。真要做时走「独立迭代」流程：
-  参考实现同步换、七条契约测试全绿才算数。
+  参考实现同步换、八条契约测试全绿才算数。
 
 预期（外推，P1 收工实测回填 §15）：单场景 tracer 全部通道 ~10–15 s（现状 ~8–9.5 min），
 全量 28 场景的 tracer 部分 ~6 min，瓶颈移到 load / encode / dilation / report。
@@ -504,11 +535,14 @@ def _march_kernel(origins, dirs, depth, ppu, cx, cy, step, bias, grow, thickness
 7. **线程数无关**：`set_num_threads(1)` 与 `set_num_threads(N)` 跑同一批射线，
    结果逐位相同。由「归约不进核」构造性保证，仍要测——这条钉住的是
    「以后没人把归约挪进核里」。
+8. **射程 = 过滤**：`trace(max_distance=r)` 的结果 ≡ 全程 trace 后按 `t_hit ≤ r`
+   改写 `escaped`，逐位。`max_distance` 因此只是性能截断，永远不改变语义
+   （这条蕴含并强化第 3 条的单调性）。
 
 #### 独立迭代
 
 tracer 之后要动的方向（换 DDA、换保守上界场加速、换成半解析求交……）
-全部落在 `trace.py` 内部：只要上面 7 条契约测试还绿，**上层一行都不用改**。
+全部落在 `trace.py` 内部：只要上面 8 条契约测试还绿，**上层一行都不用改**。
 这正是把它拆出来的目的。只改**执行方式**（调度、分块、SIMD）动编译核不动
 参考实现，测试 6 原样护航；改**语义**（判据、步进、求交方式）必须两个后端
 一起改，并重跑 §13 P1 但书里的全部数值判据。
@@ -524,38 +558,50 @@ L_in(x,ω) = HDR原画(命中像素)     射线打中表面
 
 余弦重要性采样下 `E = mean(L_in)`，一行。
 
-**同一趟顺带出三样**（都是同一个积分的不同投影，不要另开一趟 march）：
+⚠ **「÷ ∫(N·ω)₊dω」除的是常数 π**（半球上该积分恒等于 π，与 N 无关），不是数据相关
+的操作。写成积分比是为了显示「余弦重要性采样下估计量 = 样本平均」这件事。除 π 的效果
+是把 E 的量纲定成**余弦加权平均入射辐亮度**：被辐亮度 L 的均匀环境包住的面得 `E = L`，
+于是 `base = L_out/E` 直接是反射率量纲、`out = base·E` 在辐亮度单位下成立、§5.11 的
+单位锚（E=1 ⇒ 白面落显示 0.5）才成立。不除也自洽，只是 base 和所有光强永远拖一个 π。
+
+**遮蔽：一律走矩表示 `(M₀, M₁)`，场景与实体同一个估计器。**
+（制作人验收令 §6.3：实体必须无缝隐没在场景的 sky occlusion 里——这是达成它的结构手段）
 
 ```
-天穹可见度   V(x) = ⟨ esc ∧ (ω·up > 0) ⟩ / cap₀(N)
-             cap₀(N) = max( (1 + N·up)/2, 1/255 )
-bent 方向    Bdir(x) = normalize( Σ_{esc ∧ ω·up>0} ω )
+M₀ = ∫_{ω·up>0} vis(ω) dω          M₁ = ∫_{ω·up>0} vis(ω)·ω dω
+a₀ = M₀/4π = ⟨esc⟩/2               a₁ = M₁/2π = ⟨esc·ω⟩        （均匀上半球采样）
 ```
 
-⚠ **分母用解析闭式 `cap₀` 而不是「朝上样本的计数」**：后者在竖直面上只有一半样本，
-16 spp 时分母只剩 8，比值噪声翻倍。闭式没有噪声。
-
-⚠ 一根都没逃出去的像素 `Bdir` 未定义 → 退回法线（那儿 `V=0`，方向不参与计算）。
-
-**可见度的线性重建**（`vis_linear`）：定向光要问的是「**这个方向**挡不挡」，
-而 `(Bdir, V)` 回答不了——归一化那一步把方向的置信度扔掉了，只剩一个「可见锥」，
-而锥对 delta 光源的判据**天生是二值的**。实测 `α−θ` 的 std 有 24.8°，18° 的过渡带
-让 **78%** 的像素直接饱和成 0/1，孤立黑点密度在 `V<0.15` 处是 `V>0.6` 处的 **300 倍**。
-
-改成用**同一批光线**做加权最小二乘，把每根光线的「逃逸与否」当观测值：
+这是**点的属性**，与法线无关；逐像素的 `sky_moments.png` 与体网格每格存的是
+**同一个东西**，由同一个采样器 + 位置哈希种子 + 同一 spp 估计（§5.4 消费者表）。
+运行时三个量全部由它闭式导出，场景/实体走同一段 shader：
 
 ```
-[ Σ1    Σωᵀ  ] [a]   [ Σesc    ]
-[ Σω    Σωωᵀ ] [b] = [ Σesc·ω  ]
-
-岭正则：对角线的 (1,1)(2,2)(3,3) 各 += 1e-3·spp
-V(ω) = clamp(a + b·ω, 0, 1)
+天穹     T(N) = a₀ + a₁·N ；  V(N) = clamp( T(N)/cap₀(N), 0, 1 )
+         cap₀(N) = max( (1+N·up)/2, 1/255 )
+bent     Bdir = normalize(a₁)          （|a₁|≈0 时退回 N；那儿 V≈0，方向不参与）
+定向光   V_dir(ω) = clamp( α + β·ω, 0, 1 )
+         α  = 8a₀ − 6a₁ᵧ    βᵧ = 12a₁ᵧ − 12a₀    βₓ = 3a₁ₓ    β_z = 3a₁_z
 ```
 
-四个未知数、每像素一个 4×4、闭式解，**没有任何自由参数**，天生连续。
-换掉之后孤立黑点 **0.0000%**，代价是对 `base` 的解释力降约 2 个百分点。
+`(α, β)` 是 vis 在上半球均匀测度下对基 `{1, ω}` 的**正交投影**——Gram 矩阵是常数
+（只有 1↔ωᵧ 耦合的 2×2），一次求逆写死，**零自由参数、无逐像素求解、无岭正则**。
+构造性自检：`vis ≡ 1 ⇒ a₀ = ½、a₁ᵧ = ½ ⇒ α = 1、β = 0 ⇒ V_dir ≡ 1`，代入即验。
 
-⚠ 出锅后对 `V` / `Bdir` / `E` / `vfit` 各做 `gaussian_filter(σ=0.8)`，`Bdir` 滤完重新归一。
+⚠ **cap₀ 不是拍脑袋**：它是分子在**完全无遮挡**时的解析值（逐角度验过：0°→1.000、
+45°→0.854、90°→0.500，全中闭式 `(1+N·up)/2`）。除以它之后 V=1 = 「把朝向允许看到的
+天全看到了」。必须归一的物理原因：运行时 `E_天 = SkySH(n)·V`，而 SkySH(N) 本身已经
+算过「墙只朝半边天」这件事——V 里再含一次朝向就是**同一件事扣两遍**。
+`1/255` 只防 N 朝正下时 0/0，那种面 V 本来就无意义。
+
+⚠ **为什么定向光不用 (V, Bdir) 锥、也不再用逐像素加权最小二乘**：锥对 delta 光源的
+判据天生二值（实测 78% 像素饱和成 0/1，孤立黑点 ×300——历史教训保留）；旧 WLS 是在
+**余弦采样测度**下的投影，与体侧的均匀测度不同 ⇒ 两边**不收敛到同一个函数**，实体
+永远贴不住场景。统一成均匀测度的闭式投影后，这两个问题一起消失，
+`vis_linear.png` 与 `b_max` 编码参数全部废除。
+
+⚠ 出锅后对 `E` 与矩 `(a₀, a₁)` 各做 `gaussian_filter(σ=0.8)`（矩是线性量，
+滤波与求值可交换，安全）。
 
 ⚠ **命名冲突**：宏观可见度叫 `V(ω)`，而 BRDF 里的几何项也叫 `V`。两者语义无关
 （微面自遮蔽 vs 宏观遮蔽）。新 baker 里宏观量一律叫 `macro_vis` / `vis`，
@@ -571,7 +617,7 @@ V(ω) = clamp(a + b·ω, 0, 1)
 
 ```
 对每个候选方向 ω_s：
-    S = (N·ω_s)₊ · clamp(a + b·ω_s, 0, 1)          用 vis_linear 拿这个方向的遮蔽
+    S = (N·ω_s)₊ · V_dir(ω_s)                      方向遮蔽由遮蔽矩闭式导出（§5.5）
     用中位匹配解出一个标量辐亮度 L
     评分 = std( log( hdr / (E_间接 + L·S) ) )       越小越好
 取 argmin 的方向与 L
@@ -586,7 +632,7 @@ V(ω) = clamp(a + b·ω, 0, 1)
 新 baker 必须在 meta 里记下**扫描的完整评分表**，让这种「落回中心」能被一眼看出来。
 
 ```
-E = E_间接 + 太阳辐亮度 · (N·ω_s)₊ · clamp(a + b·ω_s, 0, 1)
+E = E_间接 + 太阳辐亮度 · (N·ω_s)₊ · V_dir(ω_s)
 ```
 
 ### 5.7 整体增益与 base
@@ -597,29 +643,28 @@ gather_gain = clip( percentile(ratio, GATHER_GAIN_PERCENTILE), 1.0, GATHER_GAIN_
 E *= gather_gain
 ```
 
-**为什么有这一步**：`base = L_出射/E` 对朗伯面就是反射率，物理上 ≤ 1。实测 `gain=1` 时
-temple 20.1%、mountain_pass 17.0% 的像素超过 1——那不是它们在发光，是 **`E` 被系统性低估**：
-伪世界的 gather 没有太阳（被日光直射的岩面收到的光远超天穹 + 周围表面），也没有多次反弹。
-
-`E` 的整体尺度**本来就是自由的**（`E` 放大 k 倍、`base` 缩小 k 倍，`gi=1` 时输出不变），
-所以取 `k = p95(hdr/E)` 让 `base` 的 p95 落在 1。
+**为什么有这一步**：`E` 的整体尺度是自由的（`E` 放大 k 倍、`base` 缩小 k 倍，`gi=1` 时
+输出不变）——乘性歧义总得钉死在某个**约定**上，约定取 `k = p95(hdr/E) 落在 1`。
+这只是尺度约定，**不是**对 base 的任何物理主张（base 是工程量不是 albedo，见下）。
+实测 `gain=1` 时 temple 20.1%、mountain_pass 17.0% 的像素 `hdr/E > 1`——那是 `E` 被
+系统性低估（伪世界 gather 没有太阳、没有多次反弹），gain 把这份**整体**低估补回来。
 
 ⚠ **代价说清楚**：日照与阴影的**结构**差异因此被留在 `base` 里当「材质」，
 重打光时太阳不会跟着动。伪世界没有太阳，这是诚实的边界，不是 bug。
 
-⚠ 实测雾津街头 `gather_gain = 1.0`，**撞了下限，归一化没有生效**（因为 `p95(ratio) < 1`）。
-所以那个场景 `p95(base) = 0.9130` 是**自然落点**，不是被摆上去的——而 0.90 正是
-真实材质反照率的物理上限。**亮端是准的。**
+⚠ 实测雾津街头 `gather_gain = 1.0`，**撞了下限，约定未生效**（因为 `p95(ratio) < 1`），
+`p95(base) = 0.9130` 是自然落点，不是被摆上去的。
 
 ```
-base = hdr_native / E_native                # 纯除法，无钳位、无 emissive
+base = to_hdr(原画) / E_q                   # 纯除法，无钳位、无上界、无 emissive
 ```
 
-⚠ **先量化 E，再据量化后的 E 反推 base**。顺序反过来的话运行时拿到的是量化过的 `E`，
-而 `base` 是按精确 `E` 算的，`base·E_q ≠ 原画`——端到端就不再恒等。
-
-⚠ `base` 出**原生分辨率**（它就是背景本体，运行时渲的是 `base × E_目标`，原画不再进渲染路径）。
-`E` / 遮蔽 / 法线都是低频量，work 分辨率足够 ⇒ 把 `E` 升采样到原生再除。
+⚠ **base 不落盘、不量化**（制作人铁令：base 是工程量不是 albedo，算出来是啥就是啥，
+**绝对禁止任何 ≤ 1 的限制**）。运行时装载/着色时由原画与量化后的 `E_q` 现算：
+gi=1 时 `(hdr/E_q)·E_q` 精确抵消（浮点 1 ulp），显示**逐字节等于原画**。
+旧方案 base.png 的 8-bit log 量化（往返 p99 2/255）与 `one_sided` 编码把 1.0 钉在
+量程上端的**变相钳位**，一并废除（§5.10）。`E` 是低频量 work 分辨率即可，
+运行时采样在**编码域**双线性、采完再解码（§4.3 的同一条规矩）。
 
 ⚠ **没有 emissive**。载荷里不存自发光，`base = I/E` 无钳位，`base·E ≡ 原画` 处处成立。
 画里的发光体（灶口、灯笼）由作者摆真灯来出；`gi=1` 时它们比原画暗是已知且被接受的代价。
@@ -708,6 +753,21 @@ Bdir    = normalize(a₁)
 ⚠ 无遮挡时 L1 展开**不是近似、是精确**：朝上 1.0、45° 0.854、竖直 0.5，逐个命中
 解析真值 `(1+cos β)/2`——因为那个式子本身就是 L1 形式。遮蔽越各向异性，截断误差才出现。
 
+#### 极限一致性（结构保证，不是愿望）
+
+制作人验收令（§6.3）：**实体必须无缝隐没在场景的 sky occlusion 里，从而保证实体
+接受的天光与场景一致、无脱节**。结构上由三条铁律保证：
+
+1. **同一被估对象**：每个空间点的 vis_x(ω)，由唯一 tracer 定义；
+2. **同一表示与求值**：逐像素 `sky_moments.png` 与体网格每格存的都是 `(a₀, a₁)`，
+   V(N) / Bdir / V_dir 由同一组闭式（§5.5）导出，shader 同一段代码；
+3. **同一估计器**：同一采样器 + 位置哈希种子 + 同一 spp（`MOMENT_SPP = CHAR_VOL_SPP = 64`）
+   ⇒ **格点恰好落在某表面点上时，与该像素逐位相同**（自检 #13）。
+
+于是一般位置的差**只剩三线性插值误差**——格密度 → ∞ 时趋 0，这是唯一被允许的差异项。
+（附带补洞：实体的**太阳方向遮蔽**也从体矩用同一闭式导出——旧设计里实体根本没有
+这个通道。）
+
 #### 格密度：按**角色高度**定，不按场景尺寸定
 
 要表达的结构（门洞、柱子、檐下、墙沿）是相对角色的，不是相对画幅的。
@@ -767,7 +827,7 @@ UE 的 validity）。**不做就是把「精确的 0」直接漏进画面。**
 
 | 通道 | 内容 | 编码 |
 |---|---|---|
-| 0 | 天穹遮蔽 `(a₀, a₁)` | `R = a₀`，`GBA = a₁·0.5 + 0.5` |
+| 0 | 天穹遮蔽 `(a₀, a₁)` | `R = 2·a₀`，`GBA = a₁ + 0.5` —— 与 `sky_moments.png` **逐字同一套**（§4.2） |
 | 1 | 局部 AO `(a₀, a₁)` | 同上 |
 | 2..4 | 烘焙 GI 的 RGB `(a₀, a₁)` | `R = log2 编码的 a₀`；`GBA = a₁/(4a₀) + 0.5` |
 
@@ -797,25 +857,22 @@ Z 切片横向平铺，列 = `x + z·nx`。运行时三线性，与 `ucSkyAt` �
 ### 5.10 编码
 
 ```
-pick_log_params(x, one_sided):
+pick_log_params(x):
     pos  = x[x > 0]
-    hi   = 1.0 if one_sided else max(pos)
+    hi   = max(pos)
     lo   = percentile(pos, HDR_LOG_FLOOR_PCT)
     lo   = clamp(lo, hi·2^(-HDR_LOG_SPAN_MAX), hi)
     span = clip( ceil(log2(hi/lo)), HDR_LOG_SPAN_MIN, HDR_LOG_SPAN_MAX )
-    scale= hi·2^(-span/2)  if one_sided  else  sqrt(lo·hi)
+    scale= sqrt(lo·hi)
 
 encode_log_hdr(x, scale, span) = round( clip( log2(max(x,1e-30)/scale)/span + 0.5, 0, 1 ) · 255 )
 decode_log_hdr(u8, scale, span)= scale · 2^( (u8/255 - 0.5)·span )
-decode_base(u8, ...)           = decode_log_hdr(...) · (u8 > 0)     # 字节 0 = 精确 0
 ```
 
-`one_sided=True` 用于 `base`：它有物理上界 1，把 1.0 钉在量程上端、往下覆盖到数据下界。
-
-⚠ **`base` 的字节 0 必须表示精确的 0，不是编码下限。** `base` 的下端会真的撞到下限：
-极亮场景 `E` 到 1000 量级，而近黑像素的 `hdr/E` 能小到 5e-6。把它们抬到下限之后
-`base·E` 已经**超过**原画，画面上就是一片本该全黑的地方发灰
-（实测梦_醒来土路 往返 p99 **12.1/255**，误差 99 分位像素的 `base` 恰好是编码下限）。
+⚠ `one_sided`（把 1.0 钉量程上端 = **变相 ≤1 钳位**）与 `decode_base`（字节 0 = 精确 0）
+**随 base 不落盘一并废除**（§5.7）。它们当年要解决的两个问题——上端钳位吃掉 base>1、
+下端撞编码下限把全黑处抬灰（实测梦_醒来土路 往返 p99 **12.1/255**）——在 base
+不量化之后**不存在了**。
 
 **GLSL 侧解码**（`shadeCore3.glsl`，`px` 已归一到 `[0,1]`）：
 
@@ -861,6 +918,36 @@ e_p95    = percentile( lum(E_烘焙), 95 )             画作亮部辐照度
 **色彩侧不新增机制**：标定量就是已经在出的测量值——去霾色度（§5.1）、太阳方向与色度
 （§5.6）、分级算子现值（§15：28/29 恒等）。全部进 meta，运行时照常消费。
 
+### 5.12 天空重估 —— march 一次，天空随便换（GUI 实时性的来源）
+
+天空只影响**逃逸的射线**；哪根射线逃逸、命中射线打中哪个像素，与天空**无关**。
+所以 E 对天空是逐像素线性的：
+
+```
+E(x) = ( Σ_打中 hdr[命中像素]  +  Σ_逃逸 sky(ω_s) ) / spp
+       └────── march 一次定死 ──────┘   └ 换天空只重算这半 ┘
+```
+
+march 一趟缓存两样（**方向不用存**——采样是定种子确定性的，重估时按同一
+`GATHER_SEED` 重生成即可）：
+
+| 缓存 | 内容 | 大小（1024 宽 / 16 spp） |
+|---|---|---|
+| `hit_sum` | 逐像素命中辐射和（RGB f32） | ~12 MB |
+| `esc_mask` | 逐像素 × 逐样本的逃逸位 | ~2 MB |
+
+换一次天空的成本 = 重生成方向 + 按位组合 + 下游轻量后处理（gain → base →
+直射光反解 → 预览渲染），全程**无 march**，工作分辨率下亚秒级。
+
+三个要点：
+
+- 遮蔽矩 `(a₀, a₁)` 与 AO 只依赖逃逸位形 ⇒ **完全与天空无关**，march 后算一次就定死；
+- 体数据 GI 通道（取命中辐射的消费者）同一套缓存机制适用，格点数远小于像素数，代价更低；
+- **重估不是近似**：同种子下，缓存重估出的 E 与拿这个天空全新 bake 的 E **逐位相同**
+  ——「预览即产物」，不存在预览一套、烘出来另一套（自检 #12 钉死）。
+
+缓存只活在 GUI 会话内存里，不落盘；CLI 单发 bake 不需要它。
+
 ---
 
 ## 6. 运行时契约（产物怎么被消费）
@@ -871,10 +958,13 @@ e_p95    = percentile( lum(E_烘焙), 95 )             画作亮部辐照度
 out      = base · E_目标 + 灯体自发光
 E_目标   = gi·E_烘焙 + E_天光 + E_环境 + E_太阳 + E_灯
 
-E_天光   = SkySH( normalize(mix(Bdir, N, w)) ) · V ,     w = 1 - (1-V)²
+E_天光   = SkySH( normalize(mix(Bdir, N, w)) ) · V(N) ,   w = 1 - (1-V)²
 E_环境   = 环境色·强度·clamp(0.28 + 0.72·AO, 0, 1.2)
-E_太阳   = 日色·强度·(N·ω_s)₊·clamp(a + b·ω_s, 0, 1)
+E_太阳   = 日色·强度·(N·ω_s)₊·V_dir(ω_s)
 ```
+
+`V(N)` / `Bdir` / `V_dir` 一律由遮蔽矩 `(a₀, a₁)` 闭式导出（§5.5）：场景采
+`sky_moments.png`，实体采 `char_volume` 三线性——**公式与代码同一份**。
 
 场景与实体在 `sc3Shade` 会合，两侧**只差 G-buffer 怎么填**。
 收窄后无阴影 / 无镜面 / 无 GI 弹射 ⇒ 解析光不带任何遮挡项。
@@ -890,6 +980,20 @@ E_太阳   = 日色·强度·(N·ω_s)₊·clamp(a + b·ω_s, 0, 1)
 
 ⚠ UE 保证静态表面与动态物体天光一致，靠的是**共享同一份全局 SH-L2**，
 **不是**统一遮蔽混合公式。所以我们的架构方向是对的，全部负担在「两个遮蔽来源算出同一个数」。
+
+### 6.3 验收铁令：遮蔽可视化 buffer（制作人 2026-08-24）
+
+> **运行时开一个只渲遮蔽项的可视化 buffer（场景与实体都只输出天穹遮蔽，同一公式、
+> 固定参考法线 N=up，即 `2·a₀` 场）。实体站在场景任何位置——尤其檐下、巷子、墙根这类
+> 深遮蔽处——必须无缝隐没在场景的 sky occlusion 里，这保证了实体接受的天光和场景
+> 一致，没有任何违和和脱节。**
+
+这是实体空间数据整块设计的**最终验收标准**；§5.5 / §5.9 的表示统一是达成它的手段。
+
+- 定量门：实体覆盖区 vs 周边场景像素，|Δ| 中位 ≤ 0.03、p95 ≤ 0.06（与自检 #5 对齐）；
+- 定性门：实体**无缝隐没**在场景的 sky occlusion 场里——身上没有任何相对周边场景
+  突兀的亮斑/暗斑（值一致 ⇒ 天光输入一致 ⇒ 不脱节）；
+- 执法：P7 用 headless-runner 在每个场景的标定测试点（必含深遮蔽点）截图对比，进交付判据。
 
 ---
 
@@ -1006,13 +1110,17 @@ tools/lightbake/
                     语义金标准 + 降级路径），契约测试 6 钉两者逐位一致
     sampling.py     方向采样：cosine_hemisphere / uniform_upper_hemisphere / uniform_sphere
                     ★ 与 trace 分开：加消费者时加采样器，不动 tracer
-    gather.py       E / base / Bdir / V / vis_linear / 局部 AO / 直接光反解 / gather_gain
+    gather.py       E / 遮蔽矩 (a₀,a₁) / 局部 AO / 直接光反解 / gather_gain
+                    （base 不落盘：运行时由原画 ÷ E_q 现算，§5.7）
     volume.py       实体空间数据：天穹 / AO / GI 三类通道、密度、validity、dilation、打包
     sky.py          程序性天空的 CPU 镜像（与 src/rendering/lighting/skySh.ts 同式）
     encode.py       三条编码曲线 + 往返自检
     payload.py      原子写 + meta.json + PAYLOAD_VERSION
     check.py        自检断言（§10）
-    report.py       自包含 HTML 预览（§11）
+    report.py       自包含 HTML 预览（§11.2）
+    gui/            编辑器壳（§11.1）：天空面板 + 视口 + 存回场景 JSON + bake 按钮
+                    ★ 不含任何烘焙逻辑——只调 gather/volume/sky/payload 的公开函数；
+                    实时性靠 §5.12 的 march 缓存重估
     tests/
 ```
 
@@ -1035,7 +1143,7 @@ class SceneInput:
 def load(sid: str, work_w: int = 1024) -> SceneInput: ...
 
 # trace.py —— 独立组件，签名见 §5.4
-def trace(origins_q, dirs_q, field, *, max_distance=math.inf, want_hit=False) -> TraceResult: ...
+def trace(origins_q, dirs_q, field, *, max_distance=math.inf) -> TraceResult: ...   # 全记录
 
 # sampling.py
 def cosine_hemisphere(N, spp, rng) -> np.ndarray: ...        # (n,spp,3) 或逐 spp 生成
@@ -1044,8 +1152,8 @@ def uniform_sphere(n, spp, rng) -> np.ndarray: ...
 
 # gather.py / volume.py 里的消费者一律长这样，没有第二种形态：
 #     ω = <某个采样器>(...)
-#     r = trace(origins_q, ω @ R, field, max_distance=<inf 或有理由的有限值>, want_hit=<要不要辐射>)
-#     <把 r.escaped / r.hit_yx 归约成自己要的量>
+#     r = trace(origins_q, ω @ R, field, max_distance=<inf 或有理由的有限值>)
+#     <把 r.escaped / r.hit_yx / r.t_hit 归约成自己要的量——要什么都从这份全记录里拿>
 ```
 
 ---
@@ -1057,7 +1165,7 @@ def uniform_sphere(n, spp, rng) -> np.ndarray: ...
 | `WORK_W` | 1024 | 遮蔽/E/法线是低频量，够用 |
 | `GATHER_SPP` | 16 | 实测偏差 0.1120 < 旧法偏差 0.1346 |
 | `GATHER_STEP_PX` | 0.5 | 亚像素，避免跨过薄壳 |
-| `GATHER_SEED` | 20260823 | 固定种子，产物必须字节可复现 |
+| `GATHER_SEED` | 20260823 | 位置哈希种子的根（§5.4）：同一空间点永远同一批方向，与批次/线程无关；产物字节可复现 |
 | `MARCH_BIAS` | 0.025 | 自遮挡护栏 |
 | `MARCH_BIAS_GROWTH` | 0.015 | 随距离放宽 |
 | `MARCH_THICKNESS` | 0.75 | 可见壳厚度 |
@@ -1071,7 +1179,7 @@ def uniform_sphere(n, spp, rng) -> np.ndarray: ...
 | `SUN_SCAN_EL × AZ` | 7 × 16 | |
 | `SUN_CHROMA_CLAMP` | [0.78, 1.28] | 防止逐通道解跑到边界 |
 | `AO_RANGE` | 0.25 | AO 问的就是「半径 r 内有多封闭」，**r 是问题的一部分**，不是 tracer 截断。以 `max_distance` 显式传给 `trace()`。⚠ 旧的 `AO_STEPS = 10` **删掉**，步长归 tracer 统一管 |
-| `CHAR_VOL_SPP` | 64 | 均匀采样收敛比余弦重要性慢 |
+| `MOMENT_SPP` = `CHAR_VOL_SPP` | 64 | 遮蔽矩的统一 spp：场景逐像素与体格点**必须同值**（§5.9 极限一致性铁律 3）；均匀采样收敛比余弦重要性慢 |
 | `CELLS_PER_CHAR_XZ / _Y` | 3 / 6 | §5.9 的密度扫描 |
 | `CHAR_VOL_MAX_CELLS` | 200,000 | 载荷上限 |
 | `PAYLOAD_VERSION` | 6 | 三处同时改，测试钉死 |
@@ -1084,17 +1192,19 @@ def uniform_sphere(n, spp, rng) -> np.ndarray: ...
 |---|---|---|
 | 1 | 无遮挡格点 `a₀` | `0.5 ± 1e-3` |
 | 2 | 无遮挡格点 `T(up)` | `1.0 ± 2e-3` |
-| 3 | 往返 `from_hdr(base_q · E_q)` vs 原画 | p99 ≤ 2/255 |
+| 3 | gi=1 恒等：运行时公式的 CPU 镜像 `from_hdr((to_hdr(原画)/E_q)·E_q)` vs 原画 | **逐字节相同**（base 不量化后精确抵消，§5.7） |
 | 4 | **tracer 单一实现**：判据常量 `MARCH_*` / `GATHER_STEP_PX` 只被 `trace.py` 引用（`depth` 是共有数据，读它不禁；禁的是别处自写判据/march） | 静态扫描，别处引用即红 |
-| 4b | tracer 其余 6 条契约（起点无关 / `max_distance` 单调 / `inf` 等价 / 解析真值 / 编译核≡参考实现 / 线程数无关） | 见 §5.4 |
+| 4b | tracer 其余 7 条契约（起点无关 / `max_distance` 单调 / `inf` 等价 / 解析真值 / 编译核≡参考实现 / 线程数无关 / **射程=过滤**） | 见 §5.4 |
 | 4c | **每个消费者的 `max_distance`** | 要么是 `inf`，要么在调用处有注释说明「这个积分为什么有界」 |
-| 5 | 体数据在表面 vs `sky_occlusion.png` | 偏差中位、**深遮蔽偏差 ≤ 0.06** |
+| 5 | 体数据在表面 vs `sky_moments.png` | 偏差中位、**深遮蔽偏差 ≤ 0.06** |
 | 6 | validity 覆盖率 | 报警阈值待定 |
 | 7 | 三条编码曲线各自往返 | p99 ≤ 1/255（可见性量）/ 2/255（HDR 量） |
 | 8 | 字节可复现 | 同参数两次同字节；且与 `--threads` 取值、与后端（编译核/参考实现）无关 |
 | 9 | GI 通道编解码 | 软化相对误差 p99 |
 | 10 | 天空 SH：三个 gain 全 0 时 | 与旧路**逐位相同** |
 | 11 | `base` 残留相关 | 对 `V` / `AO` / `log E` 的 \|corr\| 显著非零就报警（见 §15） |
+| 12 | 天空重估一致性：march 缓存重估的 `E` vs 同 sky 全新 bake | **逐位相同**（§5.12） |
+| 13 | **极限一致性**：格点落在表面点、同 spp/种子 ⇒ 与像素侧 `(a₀, a₁)` | **逐位相同**（§5.9） |
 
 ⚠ **`base·E ≡ 原画` 恒真是零信息量的**——它是乘性歧义本身的复述，对**任何**正的 `E` 都成立。
 它只能当**非回归护栏**（数值链路无溢出、无双 gamma、无通道错位），
@@ -1102,7 +1212,29 @@ def uniform_sphere(n, spp, rng) -> np.ndarray: ...
 
 ---
 
-## 11. 预览 —— 这条直接回答「没有浏览器 cache」
+## 11. 预览与编辑器 GUI
+
+### 11.1 编辑器 GUI —— 壳，不是第二个烘焙器
+
+**硬规矩：GUI 只是壳。** 烘焙器本体是库 + CLI，**没有 GUI 也全功能可跑**；
+GUI 里每一个按钮背后都是 CLI 也能调到的同一个库函数，**GUI 自己不含一行烘焙逻辑**。
+「GUI 里能做、CLI 做不到」= 架构 bug。
+
+界面（PyQt，与 `tools/editor` 同族，叠加 `agent_docs/editor-tools/norms.md`）：
+
+- **烘焙期天空面板**：模式（纯色 / skybox）、颜色、强度、skybox 路径——**边调边看**，
+  视口实时重估（§5.12），不重新 march；
+- **视口**：`E` / `base·E`（≡ 原画的重构）/ `V` / `Bdir` / AO 各通道切换看；
+- **存回**：调好的天空写回场景 JSON 的 `lighting.bakeSky`——⚠ 必须走编辑器的
+  **统一写盘出口**（editor-tools norms 第一戒），不许自己 `json.dump`；
+- **全量 bake 按钮**：调的就是 CLI `bake` 同一条函数链，跑完自动开 report.html。
+
+启动：`sh scripts/py.sh -m tools.lightbake gui --scene X`（就是 §12 的一个子命令）。
+
+⚠ 视口是 GUI 会话里的实时判读工具，**report.html 仍是唯一的存档预览**——
+两者渲的是同一份数据（§5.12 的重估逐位等于真 bake），不存在两套渲染。
+
+### 11.2 report.html —— 这条直接回答「没有浏览器 cache」
 
 `preview/report.html`：**单文件，所有图 base64 内联成 `data:` URI，零外部请求。**
 浏览器没有可缓存的对象，文件变了内容就变了，**结构上不可能看到旧图**。
@@ -1111,7 +1243,7 @@ def uniform_sphere(n, spp, rng) -> np.ndarray: ...
 
 1. 每张产物 + 分位统计 + 越界比例
 2. `原画 / E / base` 三联 + `base·E − 原画` 误差图
-3. 遮蔽：`V`、`Bdir`、`vis_linear` 重建 vs 直接积分的差图
+3. 遮蔽：`2·a₀` 场、`V(N=up)`、`Bdir`、`V_dir` 若干方向切片 + 矩重建 vs 直接积分的差图
 4. 实体体数据：若干高度的水平切片 + 与场景表面的一致性图 + **validity 图**
 5. 程序性天空：天穹辐亮度球、9 个 SH 系数、若干法线方向的辐照度、朝西/朝东比值
 6. 直射光扫描的**完整评分表**（用于看出「落回中心」）
@@ -1132,6 +1264,7 @@ bake   --scene X | --all   [--spp 16] [--vol-density 3] [--no-gi] [--sky <json|p
 check  --scene X [--threads 0]      只跑自检，不写盘
 report --scene X [--open]           只出预览
 diff   --scene X --against DIR      两次产物逐项对比
+gui    --scene X                    编辑器壳（§11.1）——只是把上面这些包了层界面
 ```
 
 `bake` 结束自动出 report。
@@ -1146,11 +1279,12 @@ diff   --scene X --against DIR      两次产物逐项对比
 | | 内容 | 完成判据 |
 |---|---|---|
 | P1 | `input` + **`trace`（独立组件）** + `sampling` + 契约测试 | 自检 #1 #2 **#4 #4b #4c** 绿。⚠ **P1 结束时 `trace.py` 就要是完成态**：后面 P2/P3 只准调它，不准改它的判据。真要改，改完必须重跑 P2/P3 的全部数值判据。**两个后端（编译核 + 参考实现）都在 P1 交付**，契约测试 6/7 绿；收工记一条基准进 §15（雾津街头 590k 射线 × 1 spp 墙钟，参考值 12 线程 ~0.2 s）——偏离一个数量级说明执行模型退化，先查再继续 |
-| P2 | `gather`（E/base/occ/vis_linear/**局部 AO**/直接光）+ `encode` | 自检 #3 #7 #8 绿；与现有 v5 产物逐项比对，**每处差异都要能解释**。AO 走 `trace(max_distance=AO_RANGE)`，与天穹遮蔽同一条判据；`exposure` 块进 meta（§5.11） |
-| P3 | `volume`（天穹 + AO + GI）+ validity/dilation | 自检 #5 #6 #9 绿；深遮蔽偏差 ≤ 0.06；贴墙不再压暗。**记 AO 那一趟的墙钟时间**（§5.8 的代价条） |
-| P4 | `report` | §11 全部面板 |
+| P2 | `gather`（E / 遮蔽矩 (a₀,a₁) / **局部 AO** / 直接光；**base 不落盘**）+ `encode` | 自检 #3（gi=1 逐字节）#7 #8 绿；与现有 v5 产物逐项比对，**每处差异都要能解释**。AO 走 `trace(max_distance=AO_RANGE)`；`exposure` 块进 meta（§5.11） |
+| P3 | `volume`（天穹 + AO + GI）+ validity/dilation | 自检 #5 #6 #9 **#13（极限一致性逐位）** 绿；深遮蔽偏差 ≤ 0.06；贴墙不再压暗。**记 AO 那一趟的墙钟时间**（§5.8 的代价条） |
+| P4 | `report` | §11.2 全部面板 |
 | P5 | `sky` | 自检 #10 绿；与 `skySh.ts` 逐系数对齐 |
-| P6 | `diff` + 全场景重烘 + 运行时接 v6 | 28/28 装载成功 |
+| P6 | `gui`（壳）+ §5.12 重估缓存 | 天空面板边调边看；自检 #12 绿（重估 ≡ 全新 bake 逐位）；存回走统一写盘出口 |
+| P7 | `diff` + 全场景重烘 + 运行时接 v6 | 28/28 装载成功。重烘前每个场景先在 GUI 里把 `bakeSky` 调定；**§6.3 遮蔽可视化 buffer 验收**：headless-runner 逐场景在标定测试点（必含深遮蔽点）截图，实体无缝隐没达门 |
 
 ---
 
@@ -1186,7 +1320,7 @@ GLSL ES 3.00 下编译失败——这个滤镜大概率一帧都没正常画出�
 
 | | 值 |
 |---|---|
-| p95 | **0.9130**（物理反照率上限 0.90 ⇒ **亮端准**） |
+| p95 | **0.9130**（gain 撞下限时的自然落点） |
 | p50 / p1 | 0.0681 / 0.00072 |
 | `< 0.03` 比例 | **36.4%**（比沥青还黑 ⇒ 暗端塌） |
 | `std(log2)` | **2.736 档**（合理 albedo 约 1.30 档 ⇒ 宽 2.1 倍） |
