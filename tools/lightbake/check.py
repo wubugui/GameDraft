@@ -348,10 +348,20 @@ def check_12_sky_reestimate(ctx: dict) -> dict:
     e1 = combine_e(cache, sky2)
     e2 = combine_e(cache, sky2)
     ok_b = bool(np.array_equal(e1, e2))
-    return _res('12', '天空重估 ≡ 全新 bake(march 半重跑逐位 + 组合半逐位)',
-                ok_a and ok_b,
+    # (c) 全链编排逐位:recombine_sky(同天空) ≡ 本次 bake 的最终 e ——
+    # 钉的是**编排**本身(combine→去噪→反解→compose→gain 的顺序只有一份;
+    # GUI 重估走同一函数,审查 [2]:手抄顺序的第二实现从此结构性不可能)。
+    from . import pipeline as pipeline_mod        # 延迟导入避免环
+    bp = ctx['bake_params']
+    rec = pipeline_mod.recombine_sky(
+        ctx, ctx['sky_spec'],
+        denoise_iters=(0 if not bp['denoise'] else bp['denoise_iters']))
+    ok_c = bool(np.array_equal(rec['e'], ctx['e']))
+    return _res('12', '天空重估 ≡ 全新 bake(march半逐位 + 组合半逐位 + 全链逐位)',
+                ok_a and ok_b and ok_c,
                 f'march半 {"逐位" if ok_a else "漂了!"}({len(idx)} 点重march)'
-                f' / 组合半 {"逐位" if ok_b else "漂了!"}')
+                f' / 组合半 {"逐位" if ok_b else "漂了!"}'
+                f' / 全链 {"逐位" if ok_c else "漂了!"}')
 
 
 def check_13_limit_consistency(ctx: dict) -> dict:

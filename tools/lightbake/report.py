@@ -272,6 +272,39 @@ def build_html(ctx: dict) -> str:
         f'<p>{found}</p>'
         f'<div class="scroll"><table><tr><th>仰角\\方位</th>{head}</tr>{trs}</table></div>')
 
+    # ---------------- 6b. 最终渲染预览(§6.1 镜像,无解析灯) ----------------
+    # 审查 [14]:preview.py 的「唯一实现」必须同时喂视口与存档 —— report 没有
+    # 最终渲染时,§11.1「视口与 report 渲的是同一份数据」只对了一半。
+    from .preview import TIME_PRESETS, base_of_ctx, identity_check, shade_final
+    base_rgb, _bg = base_of_ctx(ctx)
+    a0f_r, a1f_r = ctx['moments_smooth']
+    figs_r = ''
+    for name, sky_def, sun_dir, ev in TIME_PRESETS:
+        img_r = shade_final(base_rgb, ctx['e_q'], a0f_r, a1f_r,
+                            ctx['inp'].normal, sky_def, sun_dir,
+                            gi=0.15, ev=ev)
+        figs_r += _fig(f'{name}(gi=0.15, ev{ev:+.1f})', _rgb01(img_r))
+    scene_sky = None
+    try:
+        import json as _json
+        _sc = _json.loads(ctx['inp'].scene_json.read_text(encoding='utf-8'))
+        scene_sky = (_sc.get('lighting') or {}).get('sky')
+    except Exception:                                  # noqa: BLE001
+        pass
+    if scene_sky and scene_sky.get('intensity'):
+        sun_dir_s = ctx['sun'].get('dir') if ctx['sun'].get('found') else None
+        figs_r += _fig('场景自身 lighting.sky(gi=0.15)',
+                       _rgb01(shade_final(base_rgb, ctx['e_q'], a0f_r, a1f_r,
+                                          ctx['inp'].normal, scene_sky,
+                                          sun_dir_s, gi=0.15)))
+    ident_diff = identity_check(ctx)
+    parts.append(
+        '<h2>6b · 最终渲染预览(§6.1 镜像,无解析灯;与 GUI 视口同一份 '
+        'preview.shade_final)</h2>'
+        f'<p class="dim">恒等锚:gi=1 + 天光 0 与原画的字节差 = {ident_diff}'
+        '(应为 0 或仅 255 饱和位;逐字节权威判定在自检 #3)</p>'
+        f'<div class="figs">{figs_r}</div>')
+
     # ---------------- 7. 自检表 ----------------
     mark = {'pass': ('✓', 'ok'), 'warn': ('⚠', 'warn'), 'fail': ('✗', 'bad')}
     chk = ''.join(

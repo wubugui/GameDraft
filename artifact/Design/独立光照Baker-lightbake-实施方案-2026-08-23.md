@@ -1207,7 +1207,7 @@ GUI 里每一个按钮背后都是 CLI 也能调到的同一个库函数，**GUI
 6. 直射光扫描的**完整评分表**（用于看出「落回中心」）
 7. 自检表（绿/红）
 
-`--serve` 可选，只是把这个文件用 `Cache-Control: no-store` 吐出去，**不是另一套渲染**。
+（`--serve` 未实装 —— 单文件 HTML 直接本地打开即可;2026-08-25 一致性审查记录。）
 
 ---
 
@@ -1218,17 +1218,22 @@ sh scripts/py.sh -m tools.lightbake bake --scene 雾津街头
 ```
 
 ```
-bake   --scene X | --all   [--spp 16] [--vol-density 3] [--no-gi] [--sky <json|path>] [--threads 0]
-check  --scene X [--threads 0]      只跑自检，不写盘
-report --scene X [--open]           只出预览
-diff   --scene X --against DIR      两次产物逐项对比
-gui    --scene X                    编辑器壳（§11.1）——只是把上面这些包了层界面
+bake   --scene X | --all  [质量参数组] [--out-root DIR] [--threads 0] [--quiet]
+check  --scene X [质量参数组]           只跑自检（含重档双烘），不写盘
+report --scene X [质量参数组] [--open]   只出预览
+diff   --scene X --against DIR         两次产物逐项对比
+gui    --scene X                       编辑器壳（§11.1）——只是把上面这些包了层界面
+
+质量参数组（bake/check/report 三个子命令共享，GUI 面板一一镜像；缺省见 --help）：
+  --work-w --spp --moment-spp --ao-spp --vol-spp
+  --vol-density --vol-max-cells --no-gi
+  --no-nee --clamp-indirect --no-denoise --denoise-iters --sky
 ```
 
 `bake` 结束自动出 report。
 
 `--threads` 只影响速度（0 = 全部逻辑核，经 `numba.set_num_threads` 全局设一次）：
-**任何取值产物同字节**（§5.4 契约测试 7）。
+**任何取值产物同字节**（§5.4 契约测试 6；2026-08-25 审查纠正编号）。
 
 ---
 
@@ -1595,6 +1600,9 @@ gi=1 时被 base 的现算除法**精确抵消**（默认画面无感）,只在�
   `--vol-spp`(体 AO/GI)/`--vol-max-cells`(放开 200k 上限)/
   `--denoise-iters`(0=关)+ 既有 `--vol-density / --no-nee /
   --clamp-indirect / --no-denoise / --no-gi / --sky / --threads`。
-  全部进 bake_params 与 meta.gather,回溯零猜测。推荐终参口径:
+  全部进 bake_params(纯 kwargs,可原样回灌 bake_scene —— #8 重档靠它);
+  meta 分记 gather 块(spp/矩/AO/NEE/clamp/去噪与趟数)与 volume 块
+  (vol_spp/cells_xz/max_cells/no_gi),回溯零猜测。质量参数组同时挂在
+  bake/check/report 三个子命令上。推荐终参口径:
   `--spp 64 --moment-spp 256 --ao-spp 128 --vol-spp 256`
   (雾津街头终参 showcase 见交付页)。

@@ -56,11 +56,11 @@ def base_of_ctx(ctx: dict) -> tuple[np.ndarray, np.ndarray]:
     return base.astype(np.float32), bg
 
 
-def shade_final(base_rgb: np.ndarray, e_bake: np.ndarray, a0f: np.ndarray,
-                a1f: np.ndarray, normal: np.ndarray, sky_def: dict,
-                sun_dir=None, gi: float = 0.15, ev: float = 0.0) -> np.ndarray:
-    """§6.1 静态半镜像,返回显示域 sRGB [0,1]。V/Bdir/SH 全部走库内
-    唯一实现(vis_of_normal / bent_of_moments / sky_irradiance_sh)。"""
+def sky_response(a0f: np.ndarray, a1f: np.ndarray, normal: np.ndarray,
+                 sky_def: dict, sun_dir=None) -> np.ndarray:
+    """E_天光 = SkySH(mix(Bdir,N,w))·V —— shade 的贵半(SH 基逐像素求值),
+    与 gi/ev 无关,GUI 按 preset 缓存它(审查 [6]:174ms/帧全压在这半,
+    gi/ev 滑条本不该重付)。"""
     sh_c = sky_irradiance_sh(dict(sky_def), sun_dir)          # (9,3)
     V = vis_of_normal(a0f, a1f, normal)
     wgt = 1.0 - (1.0 - V) ** 2
@@ -73,9 +73,25 @@ def shade_final(base_rgb: np.ndarray, e_bake: np.ndarray, a0f: np.ndarray,
                  nmix[..., 1].ravel().astype(np.float64),
                  nmix[..., 2].ravel().astype(np.float64))     # (9, N)
     e_sky = np.maximum(np.asarray(b).T @ sh_c, 0.0).reshape(h, w, 3)
-    e_sky = (e_sky * V[..., None]).astype(np.float32)
+    return (e_sky * V[..., None]).astype(np.float32)
+
+
+def compose_final(base_rgb: np.ndarray, e_bake: np.ndarray,
+                  e_sky: np.ndarray, gi: float = 0.15,
+                  ev: float = 0.0) -> np.ndarray:
+    """shade 的便宜半:out = base·(gi·E + E_天光)·2^ev → 显示域。毫秒级。"""
     e_target = (np.float32(gi) * e_bake + e_sky) * np.float32(2.0 ** ev)
     return linear_to_srgb(from_hdr(base_rgb * e_target))
+
+
+def shade_final(base_rgb: np.ndarray, e_bake: np.ndarray, a0f: np.ndarray,
+                a1f: np.ndarray, normal: np.ndarray, sky_def: dict,
+                sun_dir=None, gi: float = 0.15, ev: float = 0.0) -> np.ndarray:
+    """§6.1 静态半镜像,返回显示域 sRGB [0,1]。= compose_final(sky_response)。
+    V/Bdir/SH 全部走库内唯一实现。"""
+    return compose_final(base_rgb, e_bake,
+                         sky_response(a0f, a1f, normal, sky_def, sun_dir),
+                         gi, ev)
 
 
 def identity_check(ctx: dict) -> int:

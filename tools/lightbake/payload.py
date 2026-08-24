@@ -90,15 +90,18 @@ def build_meta(ctx: dict) -> dict:
                    # NEE+MIS(无偏)与 clamp(有偏)的采样配置 —— 回溯 firefly
                    # 口径必看(§5.4 采样扩展)
                    'nee': ctx['bake_params']['nee'],
-                   'nee_emitters': ctx['bake_params']['nee_emitters'],
+                   'nee_emitters': ctx['nee_emitters'],
                    'clamp_indirect': ctx['bake_params']['clamp_indirect'],
-                   'denoise': ctx['bake_params']['denoise']},
+                   'denoise': ctx['bake_params']['denoise'],
+                   'denoise_iters': ctx['bake_params']['denoise_iters']},
         'haze': ctx['haze'],
         'sun': ctx['sun'],
         'volume': {
             'file': 'char_volume.bin',
             'format': 'u8 RGBA, C order (channel, x, y, z, rgba)',
             'channels': vol['channels'],
+            'cells_xz': vol['cells_xz'],
+            'max_cells': vol['max_cells'],
             'encoding': {
                 'sky_moments': 'R=2*a0, GBA=a1+0.5 (same as sky_moments.png)',
                 'ao_moments': 'R=a0 (full-sphere M0/4pi in [0,1]), GBA=a1+0.5; '

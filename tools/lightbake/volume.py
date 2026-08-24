@@ -349,6 +349,10 @@ def bake_volume(world: np.ndarray, R: np.ndarray, field: DepthField,
         'residual_invalid': residual_invalid,
         'dilation_iters': dil_iters,
         'spp': spp, 'moment_spp': moment_spp,
+        # 密度与格数上限进产物 —— 红场景放开 200k 这类决定必须可回溯(审查补)
+        'cells_xz': float(cells_xz),
+        'max_cells': int(max_cells) if max_cells is not None
+        else CHAR_VOL_MAX_CELLS,
         'no_gi': bool(no_gi),
         'selfcheck': selfcheck,
         # 未打包的原始矩(check.py 与 report 用;不落盘)

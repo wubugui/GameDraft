@@ -1,12 +1,16 @@
 """CLI(方案 §12)。GUI 只是壳:`gui` 子命令背后与这里同一条函数链。
 
     sh scripts/py.sh -m tools.lightbake bake --scene 雾津街头
-    bake   --scene X | --all  [--spp 16] [--vol-density 3] [--no-gi]
-                              [--sky <json|path>] [--threads 0]
-    check  --scene X [--threads 0]      只跑自检(含重档 #8 双烘对比),不写盘
-    report --scene X [--open]           只出预览
+    bake   --scene X | --all  [质量参数组] [--out-root DIR] [--threads 0] [--quiet]
+    check  --scene X [质量参数组]        只跑自检(含重档 #8 双烘对比),不写盘
+    report --scene X [质量参数组] [--open]  只出预览
     diff   --scene X --against DIR      两次产物逐项对比
     gui    --scene X                    编辑器壳(§11.1)
+
+质量参数组(bake / check / report 三个子命令共享,GUI 面板与之一一镜像):
+    --work-w --spp --moment-spp --ao-spp --vol-spp
+    --vol-density --vol-max-cells --no-gi
+    --no-nee --clamp-indirect --no-denoise --denoise-iters --sky
 """
 from __future__ import annotations
 
@@ -34,11 +38,76 @@ def _set_threads(n: int) -> None:
     set_threads(n)
 
 
+def _positive(name: str):
+    def conv(v: str) -> float:
+        f = float(v)
+        if f <= 0:
+            raise argparse.ArgumentTypeError(f'{name} 必须 > 0')
+        return f
+    return conv
+
+
+def _quality_flags(p) -> None:
+    """质量参数组 —— bake/check/report 共享同一组旗标(审查纠正:此前只有
+    bake 有,check/report 无法复现非缺省参数烘出的场景)。"""
+    from tools.lightbake.const import (AO_SPP, CELLS_PER_CHAR_XZ, CHAR_VOL_SPP,
+                                       GATHER_SPP, MOMENT_SPP, WORK_W)
+    p.add_argument('--work-w', type=int, default=WORK_W,
+                   help=f'烘焙工作分辨率宽(缺省 {WORK_W};实际生效为 '
+                        'min(work_w, 原画宽),meta.work 记生效值)')
+    p.add_argument('--spp', type=int, default=GATHER_SPP,
+                   help=f'场景 E gather 的每像素样本数(缺省 {GATHER_SPP};'
+                        '室内建议 64)')
+    p.add_argument('--moment-spp', type=int, default=MOMENT_SPP,
+                   help=f'遮蔽矩 spp(缺省 {MOMENT_SPP})。像素侧与体侧'
+                        '**同值双接线**(§5.9 铁律 3);256 只多秒级耗时,'
+                        '杀 #5 的噪声份额')
+    p.add_argument('--ao-spp', type=int, default=AO_SPP,
+                   help=f'场景局部 AO spp(缺省 {AO_SPP})')
+    p.add_argument('--vol-spp', type=int, default=CHAR_VOL_SPP,
+                   help=f'体 AO/GI 共享 trace 的 spp(缺省 {CHAR_VOL_SPP})')
+    p.add_argument('--vol-density', type=_positive('--vol-density'),
+                   default=None,
+                   help=f'每角色高几格(横向;纵向自动 2 倍),缺省 '
+                        f'{CELLS_PER_CHAR_XZ:g};室内场景实测需 4')
+    p.add_argument('--vol-max-cells', type=int, default=None,
+                   help='体网格总格数上限(缺省 200k;红场景提密度时放开)')
+    p.add_argument('--no-gi', action='store_true',
+                   help='不烘体 GI 通道(2..4 写显式零码字,运行时凭 '
+                        'meta.no_gi 跳过;§5.9)')
+    p.add_argument('--no-nee', action='store_true',
+                   help='关闭 NEE+MIS 光源采样(firefly 的无偏解,缺省开)')
+    p.add_argument('--clamp-indirect', type=_positive('--clamp-indirect'),
+                   default=None,
+                   help='单样本间接贡献的亮度上限(Cycles 系,有偏;缺省关。'
+                        '必须 > 0 —— 0 会把间接光整段清零,故直接拒收)')
+    p.add_argument('--no-denoise', action='store_true',
+                   help='关闭 E间接 的引导去噪(à-trous 联合双边,缺省开)')
+    p.add_argument('--denoise-iters', type=int, default=None,
+                   help='E间接 引导去噪的 à-trous 趟数(缺省 3;0 = 关,'
+                        '等价 --no-denoise;越多越柔)')
+    p.add_argument('--sky', help='烘焙期天空:内联 JSON 或 json 文件路径'
+                                 '(覆写场景 lighting.bakeSky)')
+
+
+def _quality_kwargs(args) -> dict:
+    """质量旗标 → bake_scene kwargs(纯 kwargs,与 GUI._bake_kwargs 同族)。"""
+    return dict(work_w=args.work_w, spp=args.spp, moment_spp=args.moment_spp,
+                ao_spp=args.ao_spp, vol_spp=args.vol_spp,
+                vol_density=args.vol_density,
+                vol_max_cells=args.vol_max_cells, no_gi=args.no_gi,
+                nee=not args.no_nee, clamp_indirect=args.clamp_indirect,
+                denoise=not args.no_denoise, denoise_iters=args.denoise_iters,
+                sky_override=_parse_sky(args.sky))
+
+
+_THREADS_HELP = '0 = 全部逻辑核;任何取值产物同字节(契约 6)'
+
+
 def cmd_bake(args) -> int:
     from tools.lightbake import input as input_mod
     from tools.lightbake.pipeline import bake_scene
     _set_threads(args.threads)
-    sky = _parse_sky(args.sky)
     ids = args.scene or (input_mod.list_bakeable() if getattr(args, 'all', False)
                          else None)
     if not ids:
@@ -47,16 +116,10 @@ def cmd_bake(args) -> int:
     rc = 0
     for sid in ids:
         try:
-            ctx = bake_scene(sid, spp=args.spp, moment_spp=args.moment_spp,
-                             ao_spp=args.ao_spp, vol_spp=args.vol_spp,
-                             vol_max_cells=args.vol_max_cells,
-                             sky_override=sky,
-                             no_gi=args.no_gi, vol_density=args.vol_density,
-                             nee=not args.no_nee,
-                             clamp_indirect=args.clamp_indirect,
-                             denoise=not args.no_denoise,
-                             denoise_iters=args.denoise_iters,
-                             quiet=args.quiet)
+            ctx = bake_scene(sid,
+                             out_root=(Path(args.out_root) if args.out_root
+                                       else None),
+                             quiet=args.quiet, **_quality_kwargs(args))
         except Exception as exc:                       # noqa: BLE001 — 单场景失败不拖垮全烘
             print(f'  [{sid}] 失败: {type(exc).__name__}: {exc}', file=sys.stderr)
             rc = 1
@@ -70,14 +133,15 @@ def cmd_check(args) -> int:
     from tools.lightbake.pipeline import bake_scene
     _set_threads(args.threads)
     ctx = bake_scene(args.scene, write=False, make_report=False,
-                     heavy_checks=True, quiet=False)
+                     heavy_checks=True, quiet=False, **_quality_kwargs(args))
     return 1 if ctx.get('failed') else 0
 
 
 def cmd_report(args) -> int:
     from tools.lightbake.pipeline import bake_scene
     _set_threads(args.threads)
-    ctx = bake_scene(args.scene, write=False, make_report=True, quiet=False)
+    ctx = bake_scene(args.scene, write=False, make_report=True, quiet=False,
+                     **_quality_kwargs(args))
     # 自检红更要看 report —— 它就是判读失败的工具(复审纠正:此前红反而不开)
     rp = ctx['out_dir'] / 'preview' / 'report.html'
     if args.open and rp.exists():
@@ -137,16 +201,13 @@ def cmd_diff(args) -> int:
 def cmd_gui(args) -> int:
     _set_threads(args.threads)
     from tools.lightbake.gui.app import run_gui
-    return run_gui(args.scene)
+    # numba 线程数是线程局部的 —— GUI 的工作线程各自再设(审查 [3])
+    return run_gui(args.scene, threads=args.threads)
 
 
-def main(argv: list[str] | None = None) -> int:
-    # GBK 控制台防线(§14):中文/符号日志不许炸掉命令 —— CLI 入口统一转 utf-8
-    for stream in (sys.stdout, sys.stderr):
-        try:
-            stream.reconfigure(encoding='utf-8', errors='replace')
-        except Exception:                              # noqa: BLE001 — 非 tty 等
-            pass
+def build_parser() -> argparse.ArgumentParser:
+    """构造完整 parser(独立出来给测试用:旗标 ↔ bake_scene kwargs 的
+    镜像由 tests/test_cli_parity.py 钉住)。"""
     ap = argparse.ArgumentParser(prog='tools.lightbake',
                                  description='独立光照 Baker(方案 §12)')
     sub = ap.add_subparsers(dest='cmd', required=True)
@@ -154,58 +215,27 @@ def main(argv: list[str] | None = None) -> int:
     def common(p, scene_required=True):
         if scene_required:
             p.add_argument('--scene', required=True)
-        p.add_argument('--threads', type=int, default=0,
-                       help='0 = 全部逻辑核;任何取值产物同字节(契约 6)')
-
-    from tools.lightbake.const import CELLS_PER_CHAR_XZ, GATHER_SPP
+        p.add_argument('--threads', type=int, default=0, help=_THREADS_HELP)
 
     p = sub.add_parser('bake', help='烘焙(结束自动出 report)')
     p.add_argument('--scene', action='append')
     p.add_argument('--all', action='store_true')
-    p.add_argument('--spp', type=int, default=GATHER_SPP,
-                   help=f'场景 E gather 的每像素样本数(缺省 {GATHER_SPP};'
-                        '室内建议 64)')
-    from tools.lightbake.const import AO_SPP, CHAR_VOL_SPP, MOMENT_SPP
-    p.add_argument('--moment-spp', type=int, default=MOMENT_SPP,
-                   help=f'遮蔽矩 spp(缺省 {MOMENT_SPP})。像素侧与体侧'
-                        '**同值双接线**(§5.9 铁律 3);256 只多秒级耗时,'
-                        '杀 #5 的噪声份额')
-    p.add_argument('--ao-spp', type=int, default=AO_SPP,
-                   help=f'场景局部 AO spp(缺省 {AO_SPP})')
-    p.add_argument('--vol-spp', type=int, default=CHAR_VOL_SPP,
-                   help=f'体 AO/GI 共享 trace 的 spp(缺省 {CHAR_VOL_SPP})')
-    p.add_argument('--vol-max-cells', type=int, default=None,
-                   help='体网格总格数上限(缺省 200k;红场景提密度时放开)')
-    p.add_argument('--denoise-iters', type=int, default=None,
-                   help='E间接 引导去噪的 à-trous 趟数(缺省 3;0 = 关,'
-                        '等价 --no-denoise;越多越柔)')
-
-    def _density(v: str) -> float:
-        f = float(v)
-        if f <= 0:
-            raise argparse.ArgumentTypeError('--vol-density 必须 > 0')
-        return f
-    p.add_argument('--vol-density', type=_density, default=None,
-                   help=f'每角色高几格(横向;纵向自动 2 倍),缺省 '
-                        f'{CELLS_PER_CHAR_XZ:g};室内场景实测需 4')
-    p.add_argument('--no-gi', action='store_true')
-    p.add_argument('--no-nee', action='store_true',
-                   help='关闭 NEE+MIS 光源采样(firefly 的无偏解,缺省开)')
-    p.add_argument('--clamp-indirect', type=float, default=None,
-                   help='单样本间接贡献的亮度上限(Cycles 系,有偏;缺省关)')
-    p.add_argument('--no-denoise', action='store_true',
-                   help='关闭 E间接 的引导去噪(à-trous 联合双边,缺省开)')
-    p.add_argument('--sky', help='烘焙期天空:内联 JSON 或 json 文件路径(覆写场景值)')
-    p.add_argument('--threads', type=int, default=0)
+    _quality_flags(p)
+    p.add_argument('--out-root', default=None,
+                   help='替代输出根(验证/实验用;缺省 = 正式路径 '
+                        'public/resources/runtime/scenes/<sid>/lighting3)')
+    p.add_argument('--threads', type=int, default=0, help=_THREADS_HELP)
     p.add_argument('--quiet', action='store_true')
     p.set_defaults(fn=cmd_bake)
 
     p = sub.add_parser('check', help='只跑自检(含重档双烘对比),不写盘')
     common(p)
+    _quality_flags(p)
     p.set_defaults(fn=cmd_check)
 
     p = sub.add_parser('report', help='只出预览(重算,不写载荷)')
     common(p)
+    _quality_flags(p)
     p.add_argument('--open', action='store_true')
     p.set_defaults(fn=cmd_report)
 
@@ -217,8 +247,17 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser('gui', help='编辑器壳(§11.1)')
     common(p)
     p.set_defaults(fn=cmd_gui)
+    return ap
 
-    args = ap.parse_args(argv)
+
+def main(argv: list[str] | None = None) -> int:
+    # GBK 控制台防线(§14):中文/符号日志不许炸掉命令 —— CLI 入口统一转 utf-8
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding='utf-8', errors='replace')
+        except Exception:                              # noqa: BLE001 — 非 tty 等
+            pass
+    args = build_parser().parse_args(argv)
     return args.fn(args)
 
 

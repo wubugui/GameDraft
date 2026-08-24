@@ -17,7 +17,7 @@ from scipy.ndimage import gaussian_filter
 from . import check as check_mod
 from . import input as input_mod
 from . import payload
-from .denoise import denoise_e
+from .denoise import ATROUS_ITERS, denoise_e
 from .const import (AO_RANGE, AO_SPP, CHAR_VOL_SPP, GATHER_SEED, GATHER_SPP,
                     HDR_MAX, MOMENT_SPP, WORK_W)
 from .encode import (decode_log_hdr, encode_log_hdr, pick_log_params, resize_rgb,
@@ -58,6 +58,40 @@ def _progress(quiet: bool):
     return cb
 
 
+def recombine_sky(ctx_like: dict, sky_spec: dict,
+                  denoise_iters: int | None = None, progress=None,
+                  on_partial=None) -> dict:
+    """§5.12「重估 ≡ 全新 bake」的**唯一编排**:
+    combine → 去噪 → 直射光反解 → compose → gain。
+    bake_scene 与 GUI 的 Recombine 都调这里 —— 顺序只此一份,pipeline 里
+    任何插步/换序自动带着 GUI 走(审查 [2]:此前 GUI 手抄了这条顺序,
+    单函数虽共用、编排却是第二份实现)。自检 #12(c) 钉全链逐位。
+
+    `ctx_like` 需含 inp / cache / moments_smooth / hdr_work。
+    `denoise_iters`:None = 缺省趟数,0 = 关。`on_partial(e_ind)` 给 GUI
+    的两段式回帧用(E 先出,太阳几秒后跟上)。
+    返回 {'e_ind'(pre-gain), 'sun', 'gain', 'e'(post-gain f32), 'sky_of'}。"""
+    inp = ctx_like['inp']
+    sky_of = make_sky_sampler(sky_spec, ROOT)
+    e_ind = combine_e(ctx_like['cache'], sky_of)
+    it = ATROUS_ITERS if denoise_iters is None else int(denoise_iters)
+    if it > 0:
+        # 重建层(§15):引导去噪只动 E间接;纯函数、确定性 ⇒ 构造性不破
+        e_ind = denoise_e(e_ind, inp.normal, inp.depth, iters=it)
+    if on_partial is not None:
+        on_partial(e_ind)
+    a0f, a1f = ctx_like['moments_smooth']
+    sun = solve_direct_light(inp.normal, a0f, a1f, ctx_like['hdr_work'],
+                             e_ind, progress=progress)
+    # ⚠ meta 里的 sun.radiance 是**乘 gain 之前**的量(其余辐射量都是
+    #   post-gain),标记出来免得消费者拿错尺度。
+    sun['radiance_scale'] = 'pre-gain(烘入 E 的实际量还要 ×gather.gain)'
+    e = compose_sun_e(e_ind, inp.normal, a0f, a1f, sun)
+    gain = gather_gain_of(ctx_like['hdr_work'], e)
+    return {'e_ind': e_ind, 'sun': sun, 'gain': gain,
+            'e': (e * gain).astype(np.float32), 'sky_of': sky_of}
+
+
 def bake_scene(sid: str, *, work_w: int = WORK_W, spp: int = GATHER_SPP,
                moment_spp: int = MOMENT_SPP, ao_spp: int = AO_SPP,
                vol_spp: int = CHAR_VOL_SPP,
@@ -69,7 +103,8 @@ def bake_scene(sid: str, *, work_w: int = WORK_W, spp: int = GATHER_SPP,
                out_root: Path | None = None,
                write: bool = True, run_checks: bool = True,
                heavy_checks: bool = False, make_report: bool = True,
-               with_volume: bool = True, quiet: bool = False) -> dict:
+               with_volume: bool = True, quiet: bool = False,
+               progress_cb=None) -> dict:
     """烘一个场景。返回 ctx(meta + 全部中间量,check/report/GUI 共用)。
 
     `out_root`:验证/实验用的替代输出根(缺省 = 正式路径
@@ -80,7 +115,8 @@ def bake_scene(sid: str, *, work_w: int = WORK_W, spp: int = GATHER_SPP,
     if not with_volume:
         write = run_checks = make_report = False
     t_start = time.time()
-    prog = _progress(quiet)
+    # progress_cb:GUI/外部注入的进度回调(stage, i, n);缺省沿用打印版
+    prog = progress_cb if progress_cb is not None else _progress(quiet)
     t0 = time.time()
     inp = input_mod.load(sid, work_w)
     t_load = time.time() - t0
@@ -100,8 +136,8 @@ def bake_scene(sid: str, *, work_w: int = WORK_W, spp: int = GATHER_SPP,
     hdr_work = to_hdr(lin_dehazed)
 
     # ---- §5.3 烘焙期天空(GUI 里调、存回场景 JSON;CLI 读同一份)----
+    # sky_of 由 recombine_sky 统一构造(§5.12 唯一编排)
     sky_spec = input_mod.resolve_sky_spec(inp, sky_override)
-    sky_of = make_sky_sampler(sky_spec, ROOT)
 
     # ---- §5.5 E gather:march 半(缓存)+ 天空半(§5.12 的重估结构)----
     if sky_spec.get('_source') == 'default' and not quiet:
@@ -116,13 +152,6 @@ def bake_scene(sid: str, *, work_w: int = WORK_W, spp: int = GATHER_SPP,
     cache = gather_scene_e(Q, N, inp.R, field, hdr_work, spp, (h, w),
                            progress=prog, nee_ctx=nee_ctx,
                            clamp=clamp_indirect)
-    e_ind = combine_e(cache, sky_of)
-    if denoise and (denoise_iters is None or denoise_iters > 0):
-        # 重建层(§15 2026-08-25):引导去噪只动 E间接;GUI 重估调同一份
-        # denoise_e ⇒ 重估 ≡ 全新 bake 的构造性不破(纯函数、确定性)
-        e_ind = denoise_e(e_ind, inp.normal, inp.depth,
-                          **({} if denoise_iters is None
-                             else {'iters': denoise_iters}))
     t_gather = time.time() - t0
 
     # ---- §5.5 遮蔽矩(与实体侧同一个估计器,独立一趟,不搭余弦射线便车)----
@@ -142,18 +171,21 @@ def bake_scene(sid: str, *, work_w: int = WORK_W, spp: int = GATHER_SPP,
     ao = np.clip(ao, 0.0, 1.0).astype(np.float32)
     t_ao = time.time() - t0
 
-    # ---- §5.6 直射光反解(方向遮蔽由矩闭式导出;组合走单一实现)----
+    # ---- §5.12 唯一编排:combine → 去噪 → 反解太阳 → compose → gain ----
+    # (GUI 的 Recombine 调的就是这同一个函数;自检 #12(c) 钉全链逐位)
     t0 = time.time()
-    sun = solve_direct_light(inp.normal, a0f, a1f, hdr_work, e_ind, progress=prog)
+    rec = recombine_sky(
+        {'inp': inp, 'cache': cache, 'moments_smooth': (a0f, a1f),
+         'hdr_work': hdr_work},
+        sky_spec,
+        denoise_iters=(0 if not denoise else denoise_iters),
+        progress=prog)
+    e_ind = rec['e_ind']
+    sun = rec['sun']
+    gain = rec['gain']
+    e = rec['e']
+    sky_of = rec['sky_of']
     t_sun = time.time() - t0
-    # ⚠ meta 里的 sun.radiance 是**乘 gain 之前**的量(其余辐射量都是 post-gain),
-    #   标记出来免得消费者拿错尺度。
-    sun['radiance_scale'] = 'pre-gain(烘入 E 的实际量还要 ×gather.gain)'
-    e = compose_sun_e(e_ind, inp.normal, a0f, a1f, sun)
-
-    # ---- §5.7 整体增益(尺度约定)+ §5.11 曝光标定 ----
-    gain = gather_gain_of(hdr_work, e)
-    e = (e * gain).astype(np.float32)
     exposure = exposure_of(e)
 
     # ---- §5.10 编码(先量化 E;base 不落盘,运行时由原画 ÷ E_q 现算)----
@@ -190,9 +222,10 @@ def bake_scene(sid: str, *, work_w: int = WORK_W, spp: int = GATHER_SPP,
                         'denoise_iters': denoise_iters,
                         'sky_override': sky_override, 'no_gi': no_gi,
                         'vol_density': vol_density, 'nee': nee,
-                        'clamp_indirect': clamp_indirect, 'denoise': denoise,
-                        'nee_emitters': (int(len(nee_ctx.yx))
-                                         if nee_ctx is not None else 0)},
+                        'clamp_indirect': clamp_indirect, 'denoise': denoise},
+        # ⚠ 派生量不进 bake_params —— 它必须保持「可原样 ** 回灌 bake_scene
+        # 的纯 kwargs」不变量(#8 重档二次 bake 靠它;审查抓过 TypeError 整场崩)
+        'nee_emitters': int(len(nee_ctx.yx)) if nee_ctx is not None else 0,
         'nee_ctx': nee_ctx, 'clamp_indirect': clamp_indirect,
         # trans_floor:apply_dehaze 的透射率下限(恢复步 /max(trans, 0.15),
         # 与被替换的现役实现同式)—— 记进 meta,回溯可查
