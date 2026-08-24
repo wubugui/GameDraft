@@ -313,8 +313,6 @@ class Win(QMainWindow):
         side.addWidget(self.cancel_btn)
         side.addWidget(QLabel('等价 CLI:'))
         side.addWidget(self.cli_line)
-        side.addWidget(self.pbar)
-        side.addWidget(self.status)
         side.addStretch(1)
 
         panel = QWidget()
@@ -323,9 +321,14 @@ class Win(QMainWindow):
         scroll.setWidget(panel)
         scroll.setWidgetResizable(True)
         scroll.setFixedWidth(340)
+        # 进度条与状态**常驻视口下方**(不进右侧滚动面板 —— 实测会被
+        # 四十行控件顶出可视区,等于没有;制作人抓的)
+        self.pbar.setMinimumHeight(22)
         view_col = QVBoxLayout()
         view_col.addWidget(self.view, 1)
         view_col.addWidget(self.note)
+        view_col.addWidget(self.pbar)
+        view_col.addWidget(self.status)
         vc = QWidget()
         vc.setLayout(view_col)
         lay = QHBoxLayout()
