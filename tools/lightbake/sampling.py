@@ -77,6 +77,20 @@ def _u01(keys: np.ndarray, salt: np.uint64, ctr: int) -> np.ndarray:
             * np.float32(1.0 / 16777216.0))
 
 
+def _fib_phi01(keys: np.ndarray, salt: np.uint64, s: int) -> np.ndarray:
+    """低差异方位角(∈[0,1),×2π 即 φ):frac(s·(1/φ黄金比) + ρ(点))。
+
+    QMC(§5.4 采样扩展,2026-08-25):μ 保持逐 s 分层,φ 从纯随机换成
+    斐波那契增量 + 逐点 Cranley-Patterson 旋转 ρ —— 旋转保**无偏性**与
+    逐点确定性(位置哈希,ctr=2³²,与逐 s 的 ξ 流不撞),序列保低差异。
+    实测(mountain_pass 6000 格点,a₀ 对 4096spp 参考):64spp 的 p95
+    从 0.0313 降到 0.0157 ≈ 旧采样 256spp —— 同成本白捡 ~4× 等效 spp。
+    s·0.618… 用 f64 求模再降 f32(s 大时 f32 尾数不够,φ 会量化)。"""
+    rot = _u01(keys, salt, 1 << 32).astype(np.float64)
+    v = (np.float64(s) * 0.6180339887498949) % 1.0
+    return ((v + rot) % 1.0).astype(np.float32)
+
+
 def tangent_basis(normals: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """逐点切线基(世界系,法线为 +Z)。只依赖法线 —— 多 spp 的循环里
     重复算它是纯浪费(效率审查:gather 一趟白扔 ~0.75s),调用方算一次传入。"""
@@ -102,11 +116,10 @@ def cosine_hemisphere(normals: np.ndarray, keys: np.ndarray,
     """
     N = normals
     xi1 = _u01(keys, _SALT_COSINE, 2 * s)
-    xi2 = _u01(keys, _SALT_COSINE, 2 * s + 1)
     u1 = (np.float32(s) + xi1) / np.float32(spp)
     ta, tb = basis if basis is not None else tangent_basis(N)
     r = np.sqrt(u1)
-    phi = _TWO_PI * xi2
+    phi = _TWO_PI * _fib_phi01(keys, _SALT_COSINE, s)
     dirs = (ta * (r * np.cos(phi))[:, None]
             + tb * (r * np.sin(phi))[:, None]
             + N * np.sqrt(np.maximum(1.0 - u1, 0.0))[:, None]).astype(np.float32)
@@ -123,10 +136,9 @@ def uniform_upper_hemisphere(keys: np.ndarray, s: int,
     分层 + 抖动。空间点没有法线、矩要对任意运行时法线求值,所以必须法线无关。
     """
     xi1 = _u01(keys, _SALT_UPPER, 2 * s)
-    xi2 = _u01(keys, _SALT_UPPER, 2 * s + 1)
     mu = (np.float32(s) + xi1) / np.float32(spp)
     sr = np.sqrt(np.maximum(1.0 - mu * mu, 0.0))
-    phi = _TWO_PI * xi2
+    phi = _TWO_PI * _fib_phi01(keys, _SALT_UPPER, s)
     dirs = np.stack([sr * np.cos(phi), mu, sr * np.sin(phi)], 1).astype(np.float32)
     pdf = np.full(len(keys), _INV_2PI, np.float32)
     return dirs, pdf
@@ -147,10 +159,9 @@ def uniform_sphere(keys: np.ndarray, s: int,
     """全球面均匀。pdf = 1/4π。μ ∈ [-1,1] 均匀(AO / 实体 GI:绕表面自己的
     法线积,而法线朝哪都有可能)。"""
     xi1 = _u01(keys, _SALT_SPHERE, 2 * s)
-    xi2 = _u01(keys, _SALT_SPHERE, 2 * s + 1)
     mu = ((np.float32(s) + xi1) / np.float32(spp)) * np.float32(2.0) - np.float32(1.0)
     sr = np.sqrt(np.maximum(1.0 - mu * mu, 0.0))
-    phi = _TWO_PI * xi2
+    phi = _TWO_PI * _fib_phi01(keys, _SALT_SPHERE, s)
     dirs = np.stack([sr * np.cos(phi), mu, sr * np.sin(phi)], 1).astype(np.float32)
     pdf = np.full(len(keys), _INV_4PI, np.float32)
     return dirs, pdf

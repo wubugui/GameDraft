@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QDoubleSpinBox,  # noqa:
 
 from tools.lightbake import input as input_mod                  # noqa: E402
 from tools.lightbake.const import GATHER_SPP                    # noqa: E402
+from tools.lightbake.denoise import denoise_e                   # noqa: E402
 from tools.lightbake.encode import LUMA, from_hdr, linear_to_srgb  # noqa: E402
 from tools.lightbake.gather import (bent_of_moments, combine_e,     # noqa: E402
                                     compose_sun_e, gather_gain_of,
@@ -85,6 +86,8 @@ class Recombine(QThread):
         inp = ctx['inp']
         sky_of = make_sky_sampler(self.spec, _ROOT)
         e_ind = combine_e(ctx['cache'], sky_of)
+        # 与 pipeline 同一份 denoise_e(重估 ≡ 全新 bake 的构造性,§15)
+        e_ind = denoise_e(e_ind, inp.normal, inp.depth)
         self.partial.emit({'e': e_ind, 'sun': {'found': False},
                            'gain': 1.0, 'spec': self.spec})
         a0f, a1f = ctx['moments_smooth']

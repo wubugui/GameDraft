@@ -17,6 +17,7 @@ from scipy.ndimage import gaussian_filter
 from . import check as check_mod
 from . import input as input_mod
 from . import payload
+from .denoise import denoise_e
 from .const import (AO_RANGE, AO_SPP, CHAR_VOL_SPP, GATHER_SEED, GATHER_SPP,
                     HDR_MAX, MOMENT_SPP, WORK_W)
 from .encode import (decode_log_hdr, encode_log_hdr, pick_log_params, resize_rgb,
@@ -61,6 +62,7 @@ def bake_scene(sid: str, *, work_w: int = WORK_W, spp: int = GATHER_SPP,
                sky_override: dict | None = None, no_gi: bool = False,
                vol_density: float | None = None,
                nee: bool = True, clamp_indirect: float | None = None,
+               denoise: bool = True,
                out_root: Path | None = None,
                write: bool = True, run_checks: bool = True,
                heavy_checks: bool = False, make_report: bool = True,
@@ -112,6 +114,10 @@ def bake_scene(sid: str, *, work_w: int = WORK_W, spp: int = GATHER_SPP,
                            progress=prog, nee_ctx=nee_ctx,
                            clamp=clamp_indirect)
     e_ind = combine_e(cache, sky_of)
+    if denoise:
+        # 重建层(§15 2026-08-25):引导去噪只动 E间接;GUI 重估调同一份
+        # denoise_e ⇒ 重估 ≡ 全新 bake 的构造性不破(纯函数、确定性)
+        e_ind = denoise_e(e_ind, inp.normal, inp.depth)
     t_gather = time.time() - t0
 
     # ---- §5.5 遮蔽矩(与实体侧同一个估计器,独立一趟,不搭余弦射线便车)----
@@ -173,7 +179,7 @@ def bake_scene(sid: str, *, work_w: int = WORK_W, spp: int = GATHER_SPP,
         'bake_params': {'work_w': work_w, 'spp': spp,
                         'sky_override': sky_override, 'no_gi': no_gi,
                         'vol_density': vol_density, 'nee': nee,
-                        'clamp_indirect': clamp_indirect,
+                        'clamp_indirect': clamp_indirect, 'denoise': denoise,
                         'nee_emitters': (int(len(nee_ctx.yx))
                                          if nee_ctx is not None else 0)},
         'nee_ctx': nee_ctx, 'clamp_indirect': clamp_indirect,

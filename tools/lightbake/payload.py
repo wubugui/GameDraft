@@ -91,7 +91,8 @@ def build_meta(ctx: dict) -> dict:
                    # 口径必看(§5.4 采样扩展)
                    'nee': ctx['bake_params']['nee'],
                    'nee_emitters': ctx['bake_params']['nee_emitters'],
-                   'clamp_indirect': ctx['bake_params']['clamp_indirect']},
+                   'clamp_indirect': ctx['bake_params']['clamp_indirect'],
+                   'denoise': ctx['bake_params']['denoise']},
         'haze': ctx['haze'],
         'sun': ctx['sun'],
         'volume': {
