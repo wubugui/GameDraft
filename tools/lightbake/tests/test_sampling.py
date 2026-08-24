@@ -207,16 +207,23 @@ def test_phi_cross_sampler_not_rigidly_coupled():
     keys = point_keys(pts)
     spp = 16
     N = np.tile(np.array([[0.0, 1.0, 0.0]], np.float32), (len(keys), 1))
-    deltas = []
+    d_cu, d_cs = [], []
     for s in range(8):
         dc, _ = cosine_hemisphere(N, keys, s, spp)
         du, _ = uniform_upper_hemisphere(keys, s, spp)
+        ds_, _ = uniform_sphere(keys, s, spp)
         pc = (np.arctan2(dc[:, 0], dc[:, 2]) / (2 * math.pi)) % 1.0
-        pu = (np.arctan2(du[:, 0], du[:, 2]) / (2 * math.pi)) % 1.0
-        deltas.append((pc - pu) % 1.0)
-    deltas = np.stack(deltas, 0)               # (s, n)
-    spread = deltas.std(axis=0)
-    assert float(spread.min()) > 1e-3, '跨采样器 φ 仍是刚性旋转(S-1)'
+        # ⚠ upper/sphere 的 dirs=[sr·cosφ, μ, sr·sinφ] ⇒ 反解必须归一到
+        # 同一空间(_xi_streams 的老坑;复核轮 R-1:裸 arctan2 得到的是
+        # 0.25−φ,「差」变成「和」,增量相同也随 s 变 —— 钉子空转。
+        # 归一后实测:同增量变异 spread.min = 2.1e-8 ⇒ 红,钉子生效)
+        pu = (0.25 - np.arctan2(du[:, 0], du[:, 2]) / (2 * math.pi)) % 1.0
+        ps = (0.25 - np.arctan2(ds_[:, 0], ds_[:, 2]) / (2 * math.pi)) % 1.0
+        d_cu.append((pc - pu) % 1.0)
+        d_cs.append((pc - ps) % 1.0)
+    for name, deltas in (('cos↔upper', d_cu), ('cos↔sphere', d_cs)):
+        spread = np.stack(deltas, 0).std(axis=0)
+        assert float(spread.min()) > 1e-3, f'{name} φ 仍是刚性旋转(S-1)'
 
 
 def test_salt_registry_min_circular_distance():

@@ -323,10 +323,21 @@ def test_pdf_light_matches_independent_slab_integrator():
     n = 300
     o = np.stack([rng.uniform(-0.6, 0.6, n), rng.uniform(-0.4, 0.4, n),
                   rng.uniform(6.0, 9.0, n)], 1).astype(np.float32)
-    d = rng.normal(size=(n, 3))
-    d = (d / np.linalg.norm(d, axis=1, keepdims=True)).astype(np.float32)
+    # ⚠ 复核轮 R-2:纯随机方向命中 0.15q 的发光块概率 ≈ 0.001 —— 300 条
+    # 全零,allclose 比的是 0==0。改成**瞄准发光块 + 抖动**(±3 半格,
+    # 自带出界的零支撑样本),并断言非零对照数下限。
+    j = rng.integers(0, len(ctx.p_sel), n)
+    tgt = ctx.center[j].copy()
+    tgt[:, 0] += rng.uniform(-3.0, 3.0, n) * ctx.half_px
+    tgt[:, 1] += rng.uniform(-3.0, 3.0, n) * ctx.half_px
+    tgt[:, 2] = ctx.z0[j] + rng.uniform(0.0, 1.0, n) * (ctx.z1[j] - ctx.z0[j])
+    dv = tgt - o.astype(np.float64)
+    d = (dv / np.linalg.norm(dv, axis=1, keepdims=True)).astype(np.float32)
     pl = pdf_light(ctx, o, d)
     ref = _slab_pdf_reference(ctx, o, d)
+    nz = ref > 0
+    assert int(nz.sum()) >= 150, int(nz.sum())          # 对照必须真有非零
+    assert np.array_equal(pl > 0, nz)                   # 支撑逐条一致
     assert np.allclose(pl, ref, rtol=1e-5, atol=1e-12), \
         float(np.abs(pl - ref).max())
     # 池化:与发光块同层的横向射线穿过 6 连箱 —— 总密度必须显著大于

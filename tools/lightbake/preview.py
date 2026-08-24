@@ -53,8 +53,11 @@ def base_of_ctx(ctx: dict) -> tuple[np.ndarray, np.ndarray]:
     bg = (resize_rgb(inp.bg_srgb, (w, h)) if (w, h) != inp.native
           else inp.bg_srgb)
     # 纯除法,无钳位、无上界(§5.7 铁令;对抗审查 P-2:1e-6 地板会在极暗
-    # 场景破坏恒等锚)。log 编解码的 E_q 严格 > 0,除法安全。
-    base = to_hdr(srgb_to_linear(bg)) / ctx['e_q']
+    # 场景破坏恒等锚)。前提是 log 编解码的 E_q 严格 > 0 —— 注释不算数,
+    # 断言算数(复核轮 R-5)。
+    e_q = ctx['e_q']
+    assert bool((e_q > 0).all()), 'E_q 必须严格 > 0(log 码保证;#7 往返)'
+    base = to_hdr(srgb_to_linear(bg)) / e_q
     return base.astype(np.float32), bg
 
 
@@ -108,6 +111,8 @@ def identity_check(ctx: dict) -> int:
                       {'intensity': 0.0, 'profile': 1.0}, None, 1.0, 0.0)
     got = np.round(np.clip(img, 0, 1) * 255).astype(np.int16)
     ref = np.round(np.clip(bg, 0, 1) * 255).astype(np.int16)
-    # 255 饱和位除外(P-1:Reinhard 界数学上强制 255→254,#3 同口径豁免)
-    sat = ref >= 254
-    return int((got[~sat] != ref[~sat]).sum())
+    # #3 同口径豁免:**只**豁免「ref==255 且 got==254」的 Reinhard 强制位
+    # (复核轮 R-4:ref>=254 整位豁免会把 254 位上的真实失配也藏掉)
+    diff = got != ref
+    sat = (ref == 255) & (got == 254)
+    return int((diff & ~sat).sum())

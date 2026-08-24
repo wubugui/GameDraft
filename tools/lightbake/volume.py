@@ -204,7 +204,7 @@ def bake_volume(world: np.ndarray, R: np.ndarray, field: DepthField,
             if nee_ctx is not None:
                 # BSDF 命中发光体 → 按壳箱弦 MIS 降权(pdf_b = 采样器逐行 pdf,
                 # 均匀球 1/4π;配对类判据见 gather.nee_mis_downweight,单一实现)
-                nee_mis_downweight(contrib, nee_ctx, res, hit, pts_act, d_q,
+                nee_mis_downweight(contrib, nee_ctx, hit, pts_act, d_q,
                                    pdf)
                 # 光源样本:积分核 = L(空间点无法线,无余弦);方向矩必须用
                 # 样本**自己的** ω(世界系,与 BSDF 侧 d64 同系),不许借道 d64。

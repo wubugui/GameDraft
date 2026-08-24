@@ -120,7 +120,7 @@ def clamp_rows(contrib: np.ndarray, clamp: float | None) -> np.ndarray:
     return contrib * f[:, None]
 
 
-def nee_mis_downweight(contrib: np.ndarray, nee_ctx: NeeContext, res,
+def nee_mis_downweight(contrib: np.ndarray, nee_ctx: NeeContext,
                        hit: np.ndarray, origins_q: np.ndarray,
                        d_q: np.ndarray, pdf_b: np.ndarray) -> None:
     """BSDF 命中样本的 balance-heuristic 降权(原地)。场景与体 GI 共用的
@@ -216,7 +216,7 @@ def gather_scene_e(q_pts: np.ndarray, normals: np.ndarray, R: np.ndarray,
         contrib = np.zeros((n, 3), np.float64)
         contrib[hit] = hdr[res.hit_yx[hit, 0], res.hit_yx[hit, 1]]
         if nee_ctx is not None:
-            nee_mis_downweight(contrib, nee_ctx, res, hit, q_pts, d_q, pdf)
+            nee_mis_downweight(contrib, nee_ctx, hit, q_pts, d_q, pdf)
             light = _nee_scene_light(nee_ctx, q_pts, normals, keys, s, spp,
                                      R, field, hdr)
             hit_sum += clamp_rows(light, clamp)
