@@ -57,6 +57,46 @@ def test_gui_offscreen_construct_and_render():
     assert abs(spec['intensity'] - 0.7) < 1e-9
 
 
+def test_gui_bake_kwargs_mirror_cli():
+    """壳公理的机器验证:面板 kwargs ↔ 等价 CLI 行互为镜像 ——
+    每个重烘级旋钮都必须能在 CLI 行里看到自己(或以缺省身份隐去)。"""
+    pytest.importorskip('PySide6')
+    import os
+    os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+    from tools.lightbake.gui.app import create_window
+    _app, win = create_window('雾津街头', autobake=False)
+    win.spp.setValue(64)
+    win.moment_spp.setValue(256)
+    win.ao_spp.setValue(128)
+    win.vol_spp.setValue(256)
+    win.vol_density.setValue(8.0)
+    win.vol_max_cells.setValue(1_000_000)
+    win.nee_on.setChecked(False)
+    win.clamp.setValue(10.0)
+    win.denoise_on.setChecked(True)
+    win.denoise_iters.setValue(2)
+    kw = win._bake_kwargs()
+    assert kw == {'spp': 64, 'moment_spp': 256, 'ao_spp': 128,
+                  'vol_spp': 256, 'nee': False, 'denoise': True,
+                  'denoise_iters': 2, 'vol_density': 8.0,
+                  'vol_max_cells': 1_000_000, 'clamp_indirect': 10.0}
+    line = win._cli_line_text()
+    for frag in ('--spp 64', '--moment-spp 256', '--ao-spp 128',
+                 '--vol-spp 256', '--vol-density 8', '--vol-max-cells 1000000',
+                 '--no-nee', '--clamp-indirect 10', '--denoise-iters 2'):
+        assert frag in line, (frag, line)
+    # 缺省态:CLI 行只剩缺省 spp 组,没有任何开关残留
+    win.vol_density.setValue(0.0)
+    win.vol_max_cells.setValue(0)
+    win.nee_on.setChecked(True)
+    win.clamp.setValue(0.0)
+    win.denoise_iters.setValue(3)
+    line2 = win._cli_line_text()
+    for frag in ('--no-nee', '--clamp', '--vol-density', '--vol-max-cells',
+                 '--denoise-iters', '--no-denoise'):
+        assert frag not in line2, (frag, line2)
+
+
 def test_gui_source_has_no_bake_logic():
     """壳纪律:gui/ 不许出现烘焙逻辑的直接实现 —— 不只是 tracer,
     太阳合成/闭式系数/矩归约这类公式也不许手抄(审查:此前只挡 tracer,
