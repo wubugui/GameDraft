@@ -59,10 +59,13 @@ def _progress(quiet: bool):
 
 
 def bake_scene(sid: str, *, work_w: int = WORK_W, spp: int = GATHER_SPP,
+               moment_spp: int = MOMENT_SPP, ao_spp: int = AO_SPP,
+               vol_spp: int = CHAR_VOL_SPP,
+               vol_max_cells: int | None = None,
                sky_override: dict | None = None, no_gi: bool = False,
                vol_density: float | None = None,
                nee: bool = True, clamp_indirect: float | None = None,
-               denoise: bool = True,
+               denoise: bool = True, denoise_iters: int | None = None,
                out_root: Path | None = None,
                write: bool = True, run_checks: bool = True,
                heavy_checks: bool = False, make_report: bool = True,
@@ -114,15 +117,19 @@ def bake_scene(sid: str, *, work_w: int = WORK_W, spp: int = GATHER_SPP,
                            progress=prog, nee_ctx=nee_ctx,
                            clamp=clamp_indirect)
     e_ind = combine_e(cache, sky_of)
-    if denoise:
+    if denoise and (denoise_iters is None or denoise_iters > 0):
         # 重建层(§15 2026-08-25):引导去噪只动 E间接;GUI 重估调同一份
         # denoise_e ⇒ 重估 ≡ 全新 bake 的构造性不破(纯函数、确定性)
-        e_ind = denoise_e(e_ind, inp.normal, inp.depth)
+        e_ind = denoise_e(e_ind, inp.normal, inp.depth,
+                          **({} if denoise_iters is None
+                             else {'iters': denoise_iters}))
     t_gather = time.time() - t0
 
     # ---- §5.5 遮蔽矩(与实体侧同一个估计器,独立一趟,不搭余弦射线便车)----
     t0 = time.time()
-    a0_raw_f, a1_raw_f = sky_moments(Q, inp.R, field, spp=MOMENT_SPP, progress=prog)
+    # ⚠ moment_spp 像素侧与体侧**必须同值**(§5.9 铁律 3/自检 #13)——
+    # 单参数双接线,这里与 bake_volume 都吃同一个 moment_spp
+    a0_raw_f, a1_raw_f = sky_moments(Q, inp.R, field, spp=moment_spp, progress=prog)
     a0_raw = a0_raw_f.reshape(h, w)
     a1_raw = a1_raw_f.reshape(h, w, 3)
     a0f, a1f = smooth_moments(a0_raw, a1_raw)
@@ -130,7 +137,7 @@ def bake_scene(sid: str, *, work_w: int = WORK_W, spp: int = GATHER_SPP,
 
     # ---- §5.8 局部 AO ----
     t0 = time.time()
-    ao_flat = local_ao(Q, N, inp.R, field, spp=AO_SPP, progress=prog)
+    ao_flat = local_ao(Q, N, inp.R, field, spp=ao_spp, progress=prog)
     ao = gaussian_filter(ao_flat.reshape(h, w), 0.8)
     ao = np.clip(ao, 0.0, 1.0).astype(np.float32)
     t_ao = time.time() - t0
@@ -165,7 +172,8 @@ def bake_scene(sid: str, *, work_w: int = WORK_W, spp: int = GATHER_SPP,
         vol = bake_volume(
             inp.world, inp.R, field, hdr_gained,
             lambda dw, f=sky_of, g=gain: np.asarray(f(dw), np.float32) * g,
-            inp.char_wu, inp.band, spp=CHAR_VOL_SPP, no_gi=no_gi,
+            inp.char_wu, inp.band, spp=vol_spp, moment_spp=moment_spp,
+            max_cells=vol_max_cells, no_gi=no_gi,
             **({'cells_xz': vol_density} if vol_density is not None else {}),
             nee_ctx=nee_ctx, clamp=clamp_indirect,
             progress=prog)
@@ -177,6 +185,9 @@ def bake_scene(sid: str, *, work_w: int = WORK_W, spp: int = GATHER_SPP,
     ctx = {
         'sid': sid, 'inp': inp, 'field': field, 'keys': keys,
         'bake_params': {'work_w': work_w, 'spp': spp,
+                        'moment_spp': moment_spp, 'ao_spp': ao_spp,
+                        'vol_spp': vol_spp, 'vol_max_cells': vol_max_cells,
+                        'denoise_iters': denoise_iters,
                         'sky_override': sky_override, 'no_gi': no_gi,
                         'vol_density': vol_density, 'nee': nee,
                         'clamp_indirect': clamp_indirect, 'denoise': denoise,
@@ -194,8 +205,8 @@ def bake_scene(sid: str, *, work_w: int = WORK_W, spp: int = GATHER_SPP,
         'ao': ao, 'normal': inp.normal,
         'sun': sun, 'gain': gain, 'exposure': exposure,
         'volume': vol,
-        'spp': spp, 'seed': GATHER_SEED, 'moment_spp': MOMENT_SPP,
-        'ao_spp': AO_SPP, 'ao_range': AO_RANGE, 'hdr_max': HDR_MAX,
+        'spp': spp, 'seed': GATHER_SEED, 'moment_spp': moment_spp,
+        'ao_spp': ao_spp, 'ao_range': AO_RANGE, 'hdr_max': HDR_MAX,
         'timing': {'load_s': round(t_load, 2),
                    'encode_s': round(t_encode, 3),
                    'gather_s': round(t_gather, 2),

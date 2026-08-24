@@ -373,7 +373,7 @@ def check_13_limit_consistency(ctx: dict) -> dict:
     rng = np.random.default_rng(20260823)
     idx = rng.choice(len(Q), 2000, replace=False)
     a0v, a1v = sky_moments(np.ascontiguousarray(Q[idx]), inp.R, ctx['field'],
-                           spp=MOMENT_SPP)
+                           spp=ctx['moment_spp'])
     n_a0 = int((a0v != a0_raw.ravel()[idx]).sum())
     n_a1 = int((a1v != a1_raw.reshape(-1, 3)[idx]).any(1).sum())
     ok_b = n_a0 == 0 and n_a1 == 0

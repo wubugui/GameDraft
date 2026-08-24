@@ -47,11 +47,15 @@ def cmd_bake(args) -> int:
     rc = 0
     for sid in ids:
         try:
-            ctx = bake_scene(sid, spp=args.spp, sky_override=sky,
+            ctx = bake_scene(sid, spp=args.spp, moment_spp=args.moment_spp,
+                             ao_spp=args.ao_spp, vol_spp=args.vol_spp,
+                             vol_max_cells=args.vol_max_cells,
+                             sky_override=sky,
                              no_gi=args.no_gi, vol_density=args.vol_density,
                              nee=not args.no_nee,
                              clamp_indirect=args.clamp_indirect,
                              denoise=not args.no_denoise,
+                             denoise_iters=args.denoise_iters,
                              quiet=args.quiet)
         except Exception as exc:                       # noqa: BLE001 — 单场景失败不拖垮全烘
             print(f'  [{sid}] 失败: {type(exc).__name__}: {exc}', file=sys.stderr)
@@ -158,7 +162,23 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser('bake', help='烘焙(结束自动出 report)')
     p.add_argument('--scene', action='append')
     p.add_argument('--all', action='store_true')
-    p.add_argument('--spp', type=int, default=GATHER_SPP)
+    p.add_argument('--spp', type=int, default=GATHER_SPP,
+                   help=f'场景 E gather 的每像素样本数(缺省 {GATHER_SPP};'
+                        '室内建议 64)')
+    from tools.lightbake.const import AO_SPP, CHAR_VOL_SPP, MOMENT_SPP
+    p.add_argument('--moment-spp', type=int, default=MOMENT_SPP,
+                   help=f'遮蔽矩 spp(缺省 {MOMENT_SPP})。像素侧与体侧'
+                        '**同值双接线**(§5.9 铁律 3);256 只多秒级耗时,'
+                        '杀 #5 的噪声份额')
+    p.add_argument('--ao-spp', type=int, default=AO_SPP,
+                   help=f'场景局部 AO spp(缺省 {AO_SPP})')
+    p.add_argument('--vol-spp', type=int, default=CHAR_VOL_SPP,
+                   help=f'体 AO/GI 共享 trace 的 spp(缺省 {CHAR_VOL_SPP})')
+    p.add_argument('--vol-max-cells', type=int, default=None,
+                   help='体网格总格数上限(缺省 200k;红场景提密度时放开)')
+    p.add_argument('--denoise-iters', type=int, default=None,
+                   help='E间接 引导去噪的 à-trous 趟数(缺省 3;0 = 关,'
+                        '等价 --no-denoise;越多越柔)')
 
     def _density(v: str) -> float:
         f = float(v)

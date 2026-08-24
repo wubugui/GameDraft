@@ -50,7 +50,9 @@ class VolumeGiCache:
 
 def char_grid_for(world: np.ndarray, char_wu: float, band: float,
                   cells_xz: float = CELLS_PER_CHAR_XZ,
-                  cells_y: float | None = None) -> tuple[tuple[int, int, int], dict]:
+                  cells_y: float | None = None,
+                  max_cells: int | None = None
+                  ) -> tuple[tuple[int, int, int], dict]:
     """按角色高度定格密度(§5.9)。返回 ((nx,ny,nz), bounds)。
 
     `cells_xz` 即 CLI `--vol-density`(每角色高几格,横向);纵向缺省取 2 倍
@@ -68,9 +70,10 @@ def char_grid_for(world: np.ndarray, char_wu: float, band: float,
     nx = max(4, int(round((x1 - x0) / cell_xz)))
     nz = max(4, int(round((z1 - z0) / cell_xz)))
     ny = max(4, int(round((y1 - y0) / cell_y)))
+    cap = CHAR_VOL_MAX_CELLS if max_cells is None else int(max_cells)
     total = nx * ny * nz
-    if total > CHAR_VOL_MAX_CELLS:
-        s = (CHAR_VOL_MAX_CELLS / total) ** (1.0 / 3.0)
+    if total > cap:
+        s = (cap / total) ** (1.0 / 3.0)
         nx = max(4, int(nx * s))
         ny = max(4, int(ny * s))
         nz = max(4, int(nz * s))
@@ -134,15 +137,18 @@ def _neighbor_fill(valid: np.ndarray, fields: list[np.ndarray],
 
 def bake_volume(world: np.ndarray, R: np.ndarray, field: DepthField,
                 hdr_gained: np.ndarray, sky_of_gained, char_wu: float, band: float,
-                *, spp: int = CHAR_VOL_SPP, no_gi: bool = False,
+                *, spp: int = CHAR_VOL_SPP, moment_spp: int = MOMENT_SPP,
+                no_gi: bool = False,
                 cells_xz: float = CELLS_PER_CHAR_XZ,
+                max_cells: int | None = None,
                 want_cache: bool = False,
                 nee_ctx=None, clamp: float | None = None,
                 progress=None) -> dict:
     """烘一份实体空间数据。`hdr_gained` / `sky_of_gained` 必须已整体乘
     `gather_gain` —— 辐射场要和场景侧同一个尺度(§5.9:gain 逐场景 1–12,
     只乘一半会让角色逐场景偏亮/偏暗,极难查)。"""
-    grid, bounds = char_grid_for(world, char_wu, band, cells_xz=cells_xz)
+    grid, bounds = char_grid_for(world, char_wu, band, cells_xz=cells_xz,
+                                 max_cells=max_cells)
     nx, ny, nz = grid
     pts_w = grid_points(grid, bounds)
     pts_q = np.ascontiguousarray(pts_w @ R, np.float32)   # R 正交,转置即逆
@@ -158,11 +164,11 @@ def bake_volume(world: np.ndarray, R: np.ndarray, field: DepthField,
     n_act = len(pts_act)
 
     # ---- 通道 0:天穹矩 —— 与场景逐像素**同一个函数**(极限一致性铁律) ----
-    # ⚠ spp 钉死 MOMENT_SPP(铁律 3:场景逐像素与体格点必须同值),
-    #   形参 spp 只管 AO/GI 那趟。
+    # ⚠ moment_spp 必须与场景像素侧同值(铁律 3,自检 #13)—— pipeline 单参数
+    #   双接线保证;形参 spp 只管 AO/GI 那趟。
     sky_a0 = np.zeros(n, np.float32)
     sky_a1 = np.zeros((n, 3), np.float32)
-    sky_a0[act], sky_a1[act] = sky_moments(pts_act, R, field, spp=MOMENT_SPP,
+    sky_a0[act], sky_a1[act] = sky_moments(pts_act, R, field, spp=moment_spp,
                                            progress=progress)
 
     # ---- 通道 1 + 2..4:一次全球面全记录 trace,AO/GI 同时带回 ----
@@ -342,7 +348,7 @@ def bake_volume(world: np.ndarray, R: np.ndarray, field: DepthField,
         'validity_coverage': validity_coverage,
         'residual_invalid': residual_invalid,
         'dilation_iters': dil_iters,
-        'spp': spp, 'moment_spp': MOMENT_SPP,
+        'spp': spp, 'moment_spp': moment_spp,
         'no_gi': bool(no_gi),
         'selfcheck': selfcheck,
         # 未打包的原始矩(check.py 与 report 用;不落盘)

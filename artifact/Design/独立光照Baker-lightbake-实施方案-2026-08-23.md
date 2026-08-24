@@ -1589,3 +1589,12 @@ gi=1 时被 base 的现算除法**精确抵消**（默认画面无感）,只在�
   基线已含 QMC 增益(旧采样器同口径 0.0058,QMC 单刀 −26%)。
   teahouse 全量 bake(d4)14 项自检全绿,总耗时 129s
   (gather 52s,含 NEE 的 DDA 池化密度与三趟去噪)。
+- **质量参数全面上 CLI(2026-08-25,制作人指令)**:`--spp`(场景 E)/
+  `--moment-spp`(遮蔽矩 —— 像素侧与体侧**同值双接线**,铁律 3 由单参数
+  结构保证,自检 #13 与体侧 sky_moments 都吃 ctx 值)/`--ao-spp`/
+  `--vol-spp`(体 AO/GI)/`--vol-max-cells`(放开 200k 上限)/
+  `--denoise-iters`(0=关)+ 既有 `--vol-density / --no-nee /
+  --clamp-indirect / --no-denoise / --no-gi / --sky / --threads`。
+  全部进 bake_params 与 meta.gather,回溯零猜测。推荐终参口径:
+  `--spp 64 --moment-spp 256 --ao-spp 128 --vol-spp 256`
+  (雾津街头终参 showcase 见交付页)。
