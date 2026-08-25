@@ -121,5 +121,23 @@ def test_chroma_clamp_e_properties():
     assert float(np.abs(ct - 1).mean()) < float(np.abs(c - 1).mean()) + 1e-9
 
 
+def test_demodulate_e_two_modes():
+    """双模分发(2026-08-25):luminance = E 退灰且亮度精确保持;
+    chroma_clamp 走钳;未知模式硬错。"""
+    from tools.lightbake.encode import LUMA
+    from tools.lightbake.gather import demodulate_e
+    rng = np.random.default_rng(3)
+    e = rng.uniform(0.05, 3.0, (16, 20, 3)).astype(np.float32)
+    g = demodulate_e(e, 'luminance', None)
+    assert np.allclose(g[..., 0], g[..., 1]) and np.allclose(g[..., 1],
+                                                             g[..., 2])
+    assert np.allclose(g @ LUMA, e @ LUMA, rtol=1e-5)   # 亮度保持
+    c = demodulate_e(e, 'chroma_clamp', 0.2)
+    assert np.allclose(c @ LUMA, e @ LUMA, rtol=1e-5)
+    assert demodulate_e(e, None, None) is e             # 缺省+关钳 = 原对象
+    with pytest.raises(ValueError, match='demod_mode'):
+        demodulate_e(e, 'albedo', None)
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

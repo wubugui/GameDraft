@@ -137,7 +137,8 @@ def test_gui_bake_kwargs_mirror_cli():
     assert kw == {'work_w': 512, 'spp': 64, 'moment_spp': 256, 'ao_spp': 128,
                   'vol_spp': 256, 'no_gi': True, 'nee': False,
                   'denoise': True, 'denoise_iters': 2, 'vol_density': 8.0,
-                  'vol_max_cells': 1_000_000, 'clamp_indirect': 10.0}
+                  'vol_max_cells': 1_000_000, 'clamp_indirect': 10.0,
+                  'demod_mode': 'chroma_clamp', 'e_chroma_clamp': 0.2}
     # 每个键都必须是 bake_scene 的真形参(壳公理:kwargs 可原样回灌)
     import inspect
     from tools.lightbake.pipeline import bake_scene
@@ -179,7 +180,7 @@ def test_cli_flags_all_have_gui_controls():
                'gi': 'no_gi', 'nee': 'nee_on',
                'clamp_indirect': 'clamp', 'denoise': 'denoise_on',
                'denoise_iters': 'denoise_iters',
-               'e_chroma_clamp': 'e_chroma',
+               'e_chroma_clamp': 'e_chroma', 'demod_mode': 'demod_combo',
                'sky': 'mode'}                     # 天空 = 整个天空面板
     workflow_whitelist = {'scene', 'all', 'threads', 'quiet', 'out_root',
                           'help', 'cmd'}

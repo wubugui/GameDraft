@@ -219,13 +219,16 @@ _BP_CAMEL = {'workW': 'work_w', 'spp': 'spp', 'momentSpp': 'moment_spp',
              'volDensity': 'vol_density', 'volMaxCells': 'vol_max_cells',
              'noGi': 'no_gi', 'nee': 'nee', 'clampIndirect': 'clamp_indirect',
              'denoise': 'denoise', 'denoiseIters': 'denoise_iters',
-             'eChromaClamp': 'e_chroma_clamp'}
+             'eChromaClamp': 'e_chroma_clamp', 'demodMode': 'demod_mode'}
 _BP_SNAKE = {v: k for k, v in _BP_CAMEL.items()}
 _BP_TYPES = {'work_w': int, 'spp': int, 'moment_spp': int, 'ao_spp': int,
              'vol_spp': int, 'vol_density': (int, float),
              'vol_max_cells': int, 'no_gi': bool, 'nee': bool,
              'clamp_indirect': (int, float), 'denoise': bool,
-             'denoise_iters': int, 'e_chroma_clamp': (int, float)}
+             'denoise_iters': int, 'e_chroma_clamp': (int, float),
+             'demod_mode': str}
+
+_DEMOD_MODES = ('chroma_clamp', 'luminance')
 
 
 def parse_bake_params(raw) -> dict:
@@ -249,6 +252,9 @@ def parse_bake_params(raw) -> dict:
         if not isinstance(v, t):
             raise ValueError(f'bakeParams.{k} 类型错:期望 {t},'
                              f'拿到 {type(v).__name__}')
+        if sk == 'demod_mode' and v not in _DEMOD_MODES:
+            raise ValueError(f'bakeParams.demodMode 未知值 {v!r};'
+                             f'允许:{list(_DEMOD_MODES)}')
         out[sk] = v
     return out
 

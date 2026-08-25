@@ -1686,6 +1686,16 @@ gi/ev 走缓存毫秒级;⑨富 ctx 全通道非占位断言 + CLI→GUI 反向 
 留在 base(= 原画自己的橙),中性重打光不再反色;代价 = E 的彩色重打光
 表现力按 τ 折。测试:亮度保持/界/单调/关闭原对象 4 断言 + 全套 115+1。
 
+**双模并存(制作人 2026-08-25 终拍)**:`demod_mode ∈ {chroma_clamp(缺省),
+luminance}`,分发点 `gather.demodulate_e`(recombine_sky 内,唯一编排)。
+chroma_clamp 缺省 τ 定 **0.2**(τ 梯度页:反噬 0.549→0.107~0.135,
+0.15~0.25 甜点区;0 = 显式关钳);luminance = E 退亮度灰,base 色度 ≡ 原画,
+反色数学上不存在,重打光 = 亮度重打 + 光色直乘原画色度。两模式 gi=1 恒等
+均逐字节成立(τ 梯度页全档字节差 0 实证)。全链旋钮:`--demod-mode` /
+bakeParams `demodMode`(值校验硬错)/ GUI「base 解调」下拉(重估级实调);
+meta.gather 记 demod_mode + e_chroma_clamp。体侧 GI 保彩不受影响
+(角色不做除法,无反噬)。
+
 **方案 B(emissive mask)= 制作人明令永久禁止**(「禁止一切发光体 mask」,
 重申级)—— 记档:发光体表只许作 NEE 采样器内部机制,不得进入任何
 着色/遮罩通道;后续方案不得再提。

@@ -87,18 +87,21 @@ class Recombine(QThread):
     done = Signal(dict)
 
     def __init__(self, ctx: dict, spec: dict, denoise_iters: int,
-                 threads: int, e_chroma_clamp: float | None = None):
+                 threads: int, e_chroma_clamp: float | None = None,
+                 demod_mode: str | None = None):
         super().__init__()
         self.ctx, self.spec = ctx, spec
         self.denoise_iters = denoise_iters
         self.threads = threads
         self.e_chroma_clamp = e_chroma_clamp
+        self.demod_mode = demod_mode
 
     def run(self) -> None:
         try:
             set_threads(self.threads)                  # numba 线程数是线程局部的
             rec = recombine_sky(
                 self.ctx, self.spec, denoise_iters=self.denoise_iters,
+                demod_mode=self.demod_mode,
                 e_chroma_clamp=self.e_chroma_clamp,
                 on_partial=lambda e_ind: self.partial.emit(
                     {'e': e_ind, 'e_ind': e_ind, 'sun': {'found': False},
@@ -226,7 +229,10 @@ class Win(QMainWindow):
         self.denoise_on = QCheckBox('引导去噪(à-trous)')
         self.denoise_on.setChecked(True)
         self.denoise_iters = self._ispin(ATROUS_ITERS, 0, 8)
-        self.e_chroma = self._dspin(0.0, step=0.05, hi=4.0)   # 0 = 关(方案 A)
+        self.demod_combo = QComboBox()
+        self.demod_combo.addItem('色度钳制(缺省)', 'chroma_clamp')
+        self.demod_combo.addItem('亮度解调', 'luminance')
+        self.e_chroma = self._dspin(0.2, step=0.05, hi=4.0)   # 0 = 显式关钳
 
         # ---------------- 采样质量组(重烘级) ----------------
         self.spp = self._ispin(GATHER_SPP, 1, 4096)
@@ -296,7 +302,8 @@ class Win(QMainWindow):
             ('强度', self.inten), (None, pick), (None, self.sky_file)])
         group('重建/色度(重估级)', [(None, self.denoise_on),
                                      ('去噪趟数', self.denoise_iters),
-                                     ('E 色度钳 τ(0=关)', self.e_chroma)])
+                                     ('base 解调', self.demod_combo),
+                                     ('E 色度钳 τ(0=关钳)', self.e_chroma)])
         group('采样质量(重烘级)', [
             ('工作分辨率宽', self.work_w),
             ('场景 E spp', self.spp), ('遮蔽矩 spp(双侧同值)', self.moment_spp),
@@ -363,6 +370,8 @@ class Win(QMainWindow):
             w_.valueChanged.connect(self.debounce.start)
         self.mode.currentIndexChanged.connect(self.debounce.start)
         self.denoise_on.stateChanged.connect(self.debounce.start)
+        self.demod_combo.currentIndexChanged.connect(self.debounce.start)
+        self.demod_combo.currentIndexChanged.connect(self._refresh_cli)
         self.channel.currentIndexChanged.connect(self._render)
         self.preset.currentIndexChanged.connect(self._apply_preset)
         for w_ in (self.rt_inten, self.rt_profile, self.rt_kelvin,
@@ -426,8 +435,8 @@ class Win(QMainWindow):
             kw['vol_max_cells'] = self.vol_max_cells.value()
         if self.clamp.value() > 0:
             kw['clamp_indirect'] = self.clamp.value()
-        if self.e_chroma.value() > 0:
-            kw['e_chroma_clamp'] = self.e_chroma.value()
+        kw['demod_mode'] = self.demod_combo.currentData()
+        kw['e_chroma_clamp'] = self.e_chroma.value()   # 0 = 显式关钳
         return kw
 
     def _cli_line_text(self) -> str:
@@ -451,7 +460,9 @@ class Win(QMainWindow):
             parts.append('--no-denoise')
         elif kw['denoise_iters'] != ATROUS_ITERS:
             parts.append(f"--denoise-iters {kw['denoise_iters']}")
-        if 'e_chroma_clamp' in kw:
+        if kw['demod_mode'] != 'chroma_clamp':
+            parts.append(f"--demod-mode {kw['demod_mode']}")
+        if kw['e_chroma_clamp'] != 0.2:                # 库缺省 0.2
             parts.append(f"--e-chroma-clamp {kw['e_chroma_clamp']:g}")
         # 天空必须进等价行:GUI 的 bake 无条件带 sky_override(§11.1「肉眼可查」)
         parts.append("--sky '" + json.dumps(self._spec(), ensure_ascii=False,
@@ -689,7 +700,13 @@ class Win(QMainWindow):
             self.denoise_on.setChecked(bool(bp.get('denoise', True)))
             it = bp.get('denoise_iters')
             self.denoise_iters.setValue(ATROUS_ITERS if it is None else int(it))
-            self.e_chroma.setValue(float(bp.get('e_chroma_clamp') or 0.0))
+            self.e_chroma.setValue(float(bp.get('e_chroma_clamp')
+                                         if bp.get('e_chroma_clamp')
+                                         is not None else 0.2))
+            with QSignalBlocker(self.demod_combo):
+                di = self.demod_combo.findData(
+                    bp.get('demod_mode') or 'chroma_clamp')
+                self.demod_combo.setCurrentIndex(max(di, 0))
             del blk2
         self.result = {'e': ctx.get('e'), 'e_ind': ctx.get('e_ind'),
                        'sun': ctx.get('sun', {'found': False}),
@@ -725,9 +742,9 @@ class Win(QMainWindow):
             return
         iters = (self.denoise_iters.value()
                  if self.denoise_on.isChecked() else 0)
-        tau = self.e_chroma.value() if self.e_chroma.value() > 0 else None
         self.worker = Recombine(self.ctx, self._spec(), iters, self._threads,
-                                tau)
+                                self.e_chroma.value(),
+                                self.demod_combo.currentData())
         self.worker.partial.connect(self._on_done)
         self.worker.done.connect(self._on_done)
         self._launch(self.worker)

@@ -94,6 +94,7 @@ def build_meta(ctx: dict) -> dict:
                    'clamp_indirect': ctx['bake_params']['clamp_indirect'],
                    'denoise': ctx['bake_params']['denoise'],
                    'denoise_iters': ctx['bake_params']['denoise_iters'],
+                   'demod_mode': ctx['bake_params']['demod_mode'],
                    'e_chroma_clamp': ctx['bake_params']['e_chroma_clamp']},
         'haze': ctx['haze'],
         'sun': ctx['sun'],

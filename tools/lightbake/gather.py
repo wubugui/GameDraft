@@ -139,6 +139,24 @@ def chroma_clamp_e(e: np.ndarray, tau: float | None) -> np.ndarray:
     return (lum * c).astype(np.float32)
 
 
+def demodulate_e(e: np.ndarray, mode: str | None,
+                 tau: float | None) -> np.ndarray:
+    """base 解调预处理的**唯一分发点**(2026-08-25 制作人:双模并存、
+    用户可选、缺省色度钳制):
+
+    - 'chroma_clamp'(缺省)→ `chroma_clamp_e(e, τ)`:E 保彩,色度向中性
+      钳 τ;彩色重打光保留,反色按 τ 压制;
+    - 'luminance' → E 退成亮度灰:base 色度 ≡ 原画色度,反色在数学上不存在;
+      重打光 = 亮度重打 + 光色直乘原画色度(albedo 式)。
+    两种模式 gi=1 恒等都逐字节成立(存储 E 单份,双侧同物)。未知模式硬错。"""
+    if mode in (None, 'chroma_clamp'):
+        return chroma_clamp_e(e, tau)
+    if mode == 'luminance':
+        lum = np.maximum(e @ LUMA, 1e-9)
+        return np.repeat(lum[..., None], 3, -1).astype(np.float32)
+    raise ValueError(f'未知 demod_mode {mode!r}(chroma_clamp | luminance)')
+
+
 def nee_mis_downweight(contrib: np.ndarray, nee_ctx: NeeContext,
                        hit: np.ndarray, origins_q: np.ndarray,
                        d_q: np.ndarray, pdf_b: np.ndarray) -> None:
