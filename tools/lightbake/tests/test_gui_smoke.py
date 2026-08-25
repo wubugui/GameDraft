@@ -352,6 +352,17 @@ def test_gui_free_drag_probe_and_char():
     win._on_view_click(*v(2, 2))
     assert win._probe_px == (2, 2) and win._drag_target == 'probe'
     win._on_view_release()
+    # ⑤ 什么模式都没勾:左键缺省放探针(点了必有东西,不许静默吞点击)
+    win.probe_on.setChecked(False)
+    win._render()
+    win._on_view_click(*v(5, 5))
+    assert win.probe_on.isChecked() and win._probe_px == (5, 5)
+    assert '缺省' in win.status.text()
+    win._on_view_release()
+    # ⑥ 首帧未烘完:点视口给提示,不再静默
+    _app2, win2 = create_window('雾津街头', autobake=False)
+    win2._on_view_click(100.0, 100.0)
+    assert '首帧还在烘' in win2.status.text()
 
 
 def test_gui_char_error_note_not_clobbered(monkeypatch):

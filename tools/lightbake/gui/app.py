@@ -1594,6 +1594,10 @@ class Win(QMainWindow):
         return int(ix), int(iy)
 
     def _on_view_click(self, vx: float, vy: float) -> None:
+        # 视口点击**永远有反馈**(制作人实测:静默=「根本无法放置」)
+        if self.ctx is None or self.result is None:
+            self.status.setText('首帧还在烘 —— 进度条走完后视口才可交互。')
+            return
         pt = self._img_xy(vx, vy)
         if pt is None:
             return
@@ -1640,7 +1644,13 @@ class Win(QMainWindow):
             self._render()
             return
         if not self.probe_on.isChecked():
-            return
+            # 没勾任何放置模式:左键缺省放**探针球**(零副作用,点了必有
+            # 东西),顺带把三种放置模式说清楚 —— 不许静默吞点击
+            with QSignalBlocker(self.probe_on):
+                self.probe_on.setChecked(True)
+            self.status.setText('已放探针球(左键缺省)。放灯勾「点视口放置'
+                                '选中灯」;放立绘勾「放角色立绘」(final 系'
+                                '通道);按住球/立绘可直接拖走。')
         self._probe_px = (ix, iy)
         self._drag_target = 'probe'
         self._drag_off = (0, 0)
