@@ -320,15 +320,20 @@ def test_gui_free_drag_probe_and_char():
     def v(ix, iy):
         return (ix * s + offx, iy * s + offy)
 
-    # ① 抓球:按在球心 → target=probe;拖 + 偏移保持;松手落点正确
+    # ① 抓球拖动 = 世界锚在**初始水平面**内滑动(2026-08-26 范式:像素锚
+    # 会因表面跳变让实体伪世界瞬移):R=I 的假 ctx 里深度在图像不可见 ⇒
+    # 解算退化为只动 x;世界 z **必须纹丝不动**(无瞬移钉)。
     cx, cy, r = win._probe_hit
+    gx0, gy0 = win._probe_px
     win._on_view_click(*v(cx, cy))
     assert win._drag_target == 'probe'
-    off = win._drag_off
+    z0 = float(win._probe_w[2])
     win._on_view_drag(*v(cx + 4, cy + 3))
     win._on_view_release()
-    assert win._probe_px == (cx + 4 + off[0], cy + 3 + off[1])
     assert win._drag_target is None
+    win._render()
+    assert win._probe_px == (gx0 + 4, gy0)         # x 跟手,y(=深度轴)锁定
+    assert abs(float(win._probe_w[2]) - z0) < 1e-9  # 世界 z 不许瞬移
     # ② 抓优先于放:char_on 也开着,按在球上仍然抓球、不放角色
     if win.char_combo.count() > 0:
         win.char_on.setChecked(True)
@@ -338,17 +343,19 @@ def test_gui_free_drag_probe_and_char():
         win._on_view_click(*v(bx, by))
         assert win._drag_target == 'probe'
         win._on_view_release()
-        # ③ 抓角色:按进立绘命中矩形 → 拖走
+        # ③ 抓角色:同一水平面滑动语义(x 跟手、世界 z 锁定)
         assert win._char_hit is not None
         x0, y0, x1, y1 = win._char_hit
         mx, my = (x0 + x1) // 2, (y0 + y1) // 2
+        f0 = win._char_foot
         win._on_view_click(*v(mx, my))
         assert win._drag_target == 'char'
-        off = win._drag_off
+        cz0 = float(win._char_w[2])
         win._on_view_drag(*v(mx + 3, my + 1))
         win._on_view_release()
-        assert win._char_foot == (min(mx + 3 + off[0], w - 1),
-                                  min(my + 1 + off[1], h - 1))
+        win._render()
+        assert win._char_foot == (f0[0] + 3, f0[1])
+        assert abs(float(win._char_w[2]) - cz0) < 1e-9
         win.char_on.setChecked(False)
     # ④ 空白处点击 = 放置并立刻抓住(放下即拖)
     win._render()

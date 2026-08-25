@@ -655,9 +655,13 @@ class Win(QMainWindow):
         # 自由移动:按在球/角色身上直接拖(命中矩形每帧由 overlay 回填);
         # Shift+按 = 高度模式(沿世界竖直,写进抬高旋钮)
         self._drag_target: str | None = None     # 'probe' | 'char'
-        self._drag_mode: str = 'move'            # 'move' | 'height'
-        self._drag_last_vy: float = 0.0
-        self._drag_off: tuple = (0, 0)
+        self._drag_mode: str = 'move'            # 'move' | 'height' | 'scale'
+        self._drag_last_v: tuple = (0.0, 0.0)
+        # 实体锚 = **世界坐标**(制作人 2026-08-26:像素锚在拖动时会因
+        # 表面跳变而让实体在伪世界瞬移 1.4q,看起来像「遮挡熄灯」——
+        # 放置取表面点,拖动在初始水平面内解算,光照只取决于世界位置)
+        self._probe_w: np.ndarray | None = None
+        self._char_w: np.ndarray | None = None
         self._last_drag_t: float = 0.0
         self._probe_hit: tuple | None = None     # (cx, cy, r) 图像坐标
         self._char_hit: tuple | None = None      # (x0, y0, x1, y1)
@@ -1183,6 +1187,10 @@ class Win(QMainWindow):
         self._zoom = 1.0                          # 换场景复位视图
         self._view_center = None
         self._pm_full = None
+        self._probe_w = None                      # 世界锚跨场景无意义
+        self._char_w = None
+        self._probe_px = None
+        self._char_foot = None
         self.view.setText(f'打开 {sid},烘首帧(含体积)……')
         self._refresh_cli()
         self._start_bake(use_panel=False, with_volume=True,
@@ -1276,7 +1284,7 @@ class Win(QMainWindow):
                     self.c_gi.setValue(float(cg))
         except Exception:                           # noqa: BLE001 — 假 ctx 降级
             pass
-        self._char_foot = None
+        # 同场景重烘**保留**实体世界锚(锚是世界坐标,不随烘焙失效)
         self._vol_m = None
         self._gi_slice_range = None
         spec = dict(ctx.get('sky_spec') or {})
@@ -1625,15 +1633,21 @@ class Win(QMainWindow):
             return img
         inp = self.ctx['inp']
         h, w = img.shape[:2]
-        ix, iy = self._char_foot
-        ix = int(np.clip(ix, 0, w - 1))
-        iy = int(np.clip(iy, 0, h - 1))
+        if self._char_w is None:                   # 测试直插像素的兼容物化
+            jx = int(np.clip(self._char_foot[0], 0, w - 1))
+            jy = int(np.clip(self._char_foot[1], 0, h - 1))
+            self._char_w = inp.world[jy, jx].astype(np.float64).copy()
+        Rg = np.asarray(inp.R, np.float64)
+        qg = self._char_w @ Rg
+        ix = int(np.clip(round(inp.cx + qg[0] * inp.ppu), 0, w - 1))
+        iy = int(np.clip(round(inp.cy - qg[1] * inp.ppu), 0, h - 1))
+        self._char_foot = (ix, iy)                 # 派生像素(读数/兼容)
         ch_notes: list = []
         try:
             if self._char_sprite is None:
                 self._char_sprite = char_mod.load_character(
                     self.char_combo.currentText(), self.c_frame.value())
-            foot = inp.world[iy, ix].astype(np.float64).copy()
+            foot = self._char_w.astype(np.float64).copy()
             foot[1] += self.c_h.value() / float(inp.scene_per_wu)
             crgb, ca, comps = char_mod.shade_character(
                 self.ctx, self._char_sprite, foot,
@@ -1694,8 +1708,8 @@ class Win(QMainWindow):
             spw = float(inp.scene_per_wu)
             r_q = (self._char_sprite.world_w_wu * self.c_dsf.value()
                    / 2.0 / spw)
-            gnd = inp.world[iy, ix].astype(np.float64)
-            self._gz_ground_ellipse(out, inp, gnd, r_q, _CHAR_COL)  # ③
+            self._gz_ground_ellipse(out, inp, self._char_w, r_q,
+                                    _CHAR_COL)                      # ③
             _gz_cross(out, ix, iy, _CHAR_COL)                       # ①
             h_wu = self.c_h.value()
             if abs(h_wu) >= 0.5:                      # ② 世界 up 拉杆
@@ -1728,12 +1742,19 @@ class Win(QMainWindow):
             return img
         inp = self.ctx['inp']
         h, w = img.shape[:2]
-        ix, iy = self._probe_px
-        ix = int(np.clip(ix, 0, w - 1))
-        iy = int(np.clip(iy, 0, h - 1))
         spw = float(inp.scene_per_wu)
         r_q = self.probe_d.value() / 2.0 / spw     # 直径旋钮(Ctrl+拖)
-        ground = inp.world[iy, ix].astype(np.float64)
+        # 世界锚是唯一真相;测试直插像素时按需物化一次
+        if self._probe_w is None:
+            jx = int(np.clip(self._probe_px[0], 0, w - 1))
+            jy = int(np.clip(self._probe_px[1], 0, h - 1))
+            self._probe_w = inp.world[jy, jx].astype(np.float64).copy()
+        ground = self._probe_w
+        Rg = np.asarray(inp.R, np.float64)
+        qg = ground @ Rg
+        ix = int(np.clip(round(inp.cx + qg[0] * inp.ppu), 0, w - 1))
+        iy = int(np.clip(round(inp.cy - qg[1] * inp.ppu), 0, h - 1))
+        self._probe_px = (ix, iy)                  # 派生像素(读数/兼容)
         center = ground + np.array(
             [0.0, r_q + self.probe_h.value() / spw, 0.0])
         sample = preview_mod.sample_volume_probe(self.ctx, center)  # §6.3 读数
@@ -1963,18 +1984,22 @@ class Win(QMainWindow):
             if x0 <= ix < x1 and y0 <= iy < y1:
                 self._drag_target = 'char'
                 self._drag_mode = grab_mode
-                self._drag_last_vy = vy
-                self._drag_off = (self._char_foot[0] - ix,
-                                  self._char_foot[1] - iy)
+                self._drag_last_v = (vx, vy)
+                if self._char_w is None:          # 测试直插像素的兼容物化
+                    self._char_w = self.ctx['inp'].world[
+                        self._char_foot[1], self._char_foot[0]
+                    ].astype(np.float64).copy()
                 return
         if self._probe_hit is not None and self._probe_px is not None:
             cx, cy, r = self._probe_hit
             if (ix - cx) ** 2 + (iy - cy) ** 2 <= r * r:
                 self._drag_target = 'probe'
                 self._drag_mode = grab_mode
-                self._drag_last_vy = vy
-                self._drag_off = (self._probe_px[0] - ix,
-                                  self._probe_px[1] - iy)
+                self._drag_last_v = (vx, vy)
+                if self._probe_w is None:
+                    self._probe_w = self.ctx['inp'].world[
+                        self._probe_px[1], self._probe_px[0]
+                    ].astype(np.float64).copy()
                 return
         # ---- 空白处:放置(放灯 > 放角色 > 放探针),放下即可接着拖 ----
         l = self._light_sel()
@@ -1997,10 +2022,11 @@ class Win(QMainWindow):
             # 立绘在实体联动通道集内都有画面(延迟渲染式 buffer 视图);
             # 集外通道这勾不吞点击(探针放置不被饿死)
             self._char_foot = (ix, iy)
+            self._char_w = self.ctx['inp'].world[iy, ix].astype(
+                np.float64).copy()                # 放置=取表面点(世界锚)
             self._drag_target = 'char'
             self._drag_mode = 'move'
-            self._drag_last_vy = vy
-            self._drag_off = (0, 0)
+            self._drag_last_v = (vx, vy)
             self._render()
             return
         if not self.probe_on.isChecked():
@@ -2012,25 +2038,45 @@ class Win(QMainWindow):
                                 '选中灯」;放立绘勾「放角色立绘」(final 系'
                                 '通道);按住球/立绘可直接拖走。')
         self._probe_px = (ix, iy)
+        self._probe_w = self.ctx['inp'].world[iy, ix].astype(
+            np.float64).copy()                    # 放置=取表面点(世界锚)
         self._drag_target = 'probe'
         self._drag_mode = 'move'
-        self._drag_last_vy = vy
-        self._drag_off = (0, 0)
+        self._drag_last_v = (vx, vy)
         self._render()
+
+    def _drag_plane_delta(self, dvx: float, dvy: float):
+        """视口位移 → **初始锚点水平面**内的世界位移 (Δx, Δz)。
+        图像是伪世界的线性投影,水平面内是 2×2 可逆系;近奇异
+        (正交视角 R≈I,深度在图像里不可见)退化为只动 x。"""
+        s = self._view_map[0]
+        inp = self.ctx['inp']
+        Rm = np.asarray(inp.R, np.float64)
+        ppu = float(inp.ppu)
+        dix, diy = dvx / max(s, 1e-9), dvy / max(s, 1e-9)
+        # px = cx + (w@R)_x·ppu ⇒ ∂px/∂wx=R[0,0]·ppu, ∂px/∂wz=R[2,0]·ppu
+        # py = cy − (w@R)_y·ppu ⇒ ∂py/∂wx=−R[0,1]·ppu, ∂py/∂wz=−R[2,1]·ppu
+        a11, a12 = Rm[0, 0] * ppu, Rm[2, 0] * ppu
+        a21, a22 = -Rm[0, 1] * ppu, -Rm[2, 1] * ppu
+        det = a11 * a22 - a12 * a21
+        if abs(det) < 1e-6 * ppu * ppu:
+            return dix / max(a11, 1e-9), 0.0
+        return ((dix * a22 - diy * a12) / det,
+                (diy * a11 - dix * a21) / det)
 
     def _on_view_drag(self, vx: float, vy: float) -> None:
         if self._drag_target is None or self._view_map is None:
             return
         import time as _time
-        s, offx, offy, w, h = self._view_map
+        s = self._view_map[0]
+        if self.ctx is None or self.ctx.get('inp') is None:
+            return
+        inp = self.ctx['inp']
         if self._drag_mode in ('height', 'scale'):
             # Shift+拖=高度 / Ctrl+拖=缩放:纵向位移折成 wu 写进对应旋钮
-            if self.ctx is None or self.ctx.get('inp') is None:
-                return
-            inp = self.ctx['inp']
-            d_wu = ((self._drag_last_vy - vy) / max(s, 1e-9) / inp.ppu
+            d_wu = ((self._drag_last_v[1] - vy) / max(s, 1e-9) / inp.ppu
                     * float(inp.scene_per_wu))
-            self._drag_last_vy = vy
+            self._drag_last_v = (vx, vy)
             if self._drag_mode == 'height':
                 spin = self.probe_h if self._drag_target == 'probe' \
                     else self.c_h
@@ -2048,18 +2094,16 @@ class Win(QMainWindow):
             self._last_drag_t = now
             self._render()
             return
-        ix = int(np.clip((vx - offx) / max(s, 1e-9) + self._drag_off[0],
-                         0, w - 1))
-        iy = int(np.clip((vy - offy) / max(s, 1e-9) + self._drag_off[1],
-                         0, h - 1))
-        if self._drag_target == 'char':
-            if self._char_foot == (ix, iy):
-                return
-            self._char_foot = (ix, iy)
-        else:
-            if self._probe_px == (ix, iy):
-                return
-            self._probe_px = (ix, iy)
+        # 普通拖 = 世界锚在**初始水平面**内连续滑动(不换表面、不瞬移 ——
+        # 光照只取决于世界位置,与任何像素被不被遮挡无关)
+        dx, dz = self._drag_plane_delta(vx - self._drag_last_v[0],
+                                        vy - self._drag_last_v[1])
+        self._drag_last_v = (vx, vy)
+        anchor = self._probe_w if self._drag_target == 'probe' else self._char_w
+        if anchor is None:
+            return
+        anchor[0] += dx
+        anchor[2] += dz
         now = _time.monotonic()
         if now - self._last_drag_t < 0.03:        # 拖动节流:~33fps 重渲
             return
