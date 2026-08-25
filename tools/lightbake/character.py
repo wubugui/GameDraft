@@ -47,11 +47,7 @@ import numpy as np
 from PIL import Image
 
 from .encode import from_hdr, linear_to_srgb, srgb_to_linear
-from .lights import (SUN_SHADOW_STRENGTH, _char_lamp_visibility_batch,
-                     _char_sun_visibility_batch, _directional_e, _norm_kind,
-                     _one_lamp_e, _rest_lights, direction_from_angles,
-                     sun_light_of)
-from .const import (DEFAULT_SHADOW_BIAS_WU, DEFAULT_SHADOW_THICKNESS_WU)
+from .lights import eval_entity_lights
 from .sky import sh_basis, sky_irradiance_sh
 
 ANIM_ROOT = (Path(__file__).resolve().parents[2] / 'public' / 'resources'
@@ -171,6 +167,30 @@ def _grid_corners(vol: dict, P: np.ndarray):
     return corners, weights
 
 
+def sample_entity_volume(vol: dict, P: np.ndarray, n: np.ndarray):
+    """实体口径体采样 —— `ucSkyAt` 的唯一 Python 实现(立绘与探针共用):
+    天穹通道**系数插值后**求值(运行时唯一这么做的通道);AO/GI **逐角点**
+    max(a0+a1·N,0) 后再按权重插值(二审 P1-2 口径)。
+    P: (n,3) 世界;n: (n,3) 法线。返回 (sky_c (n,4), ao (n,), gi (n,3))。"""
+    raw = vol['raw']
+    corners, weights = _grid_corners(vol, P)
+    m = P.shape[0]
+    sky_c = np.zeros((m, 4), np.float32)
+    ao = np.zeros(m, np.float32)
+    gi = np.zeros((m, 3), np.float32)
+    ao_a0, ao_a1 = raw['ao_a0'], raw['ao_a1']
+    gi_a0, gi_a1 = raw['gi_a0'], raw['gi_a1']
+    sky_a0, sky_a1 = raw['sky_a0'], raw['sky_a1']
+    for ci, wi in zip(corners, weights):
+        sky_c[:, 0] += wi * sky_a0[ci]
+        sky_c[:, 1:] += wi[:, None] * sky_a1[ci]
+        ao += wi * np.maximum(ao_a0[ci]
+                              + np.einsum('nd,nd->n', ao_a1[ci], n), 0.0)
+        gi += wi[:, None] * np.maximum(
+            gi_a0[ci] + np.einsum('ncd,nd->nc', gi_a1[ci], n), 0.0)
+    return sky_c, ao, gi
+
+
 def shade_character(ctx: dict, sprite: CharSprite, foot_world,
                     sky_def: dict, sun_dir, gi: float, ev: float,
                     env_rgb, env_gain: float,
@@ -251,24 +271,8 @@ def shade_character(ctx: dict, sprite: CharSprite, foot_world,
     q_pix[:, 2] -= ne[:, 3] * float(bulge)
     P = q_pix @ Rm.T                      # q→世界(R 正交)
 
-    # ---- 体数据逐像素三线性(ucSkyAt 口径,二审 P1-2) ----
-    # 天穹:**系数插值后**求值(运行时唯一这么做的通道);
-    # AO/GI:**逐角点** max(a0+a1·N,0) 后再按权重插值。
-    raw = vol['raw']
-    corners, weights = _grid_corners(vol, P)
-    sky_c = np.zeros((idx.size, 4), np.float32)
-    ao = np.zeros(idx.size, np.float32)
-    gi_e = np.zeros((idx.size, 3), np.float32)
-    ao_a0, ao_a1 = raw['ao_a0'], raw['ao_a1']
-    gi_a0, gi_a1 = raw['gi_a0'], raw['gi_a1']
-    sky_a0, sky_a1 = raw['sky_a0'], raw['sky_a1']
-    for ci, wi in zip(corners, weights):
-        sky_c[:, 0] += wi * sky_a0[ci]
-        sky_c[:, 1:] += wi[:, None] * sky_a1[ci]
-        ao += wi * np.maximum(ao_a0[ci]
-                              + np.einsum('nd,nd->n', ao_a1[ci], n), 0.0)
-        gi_e += wi[:, None] * np.maximum(
-            gi_a0[ci] + np.einsum('ncd,nd->nc', gi_a1[ci], n), 0.0)
+    # ---- 体数据逐像素三线性(ucSkyAt 口径,唯一实现 sample_entity_volume) ----
+    sky_c, ao, gi_e = sample_entity_volume(vol, P, n)
     t0 = np.maximum(sky_c[:, 0]
                     + np.einsum('nd,nd->n', sky_c[:, 1:], n), 0.0)
     cap0 = np.maximum((1.0 + n[:, 1]) * 0.5, 1.0 / 255.0)
@@ -289,41 +293,9 @@ def shade_character(ctx: dict, sprite: CharSprite, foot_world,
              * np.clip(0.28 + 0.72 * ao, 0.0, 1.2)[:, None])
     gi_e = gi_e * np.float32(char_gi)
 
-    # ---- 太阳 + 灯(与场景同一份数据、同一批 lc*、角色口径 march) ----
-    direct_e = np.zeros((idx.size, 3), np.float32)
-    lights = lights or []
-    qu = 1.0 / spw
-    sb = getattr(inp, 'shadow_bias', None) or (DEFAULT_SHADOW_BIAS_WU,
-                                               DEFAULT_SHADOW_THICKNESS_WU)
-    bias0_q, thick_q = float(sb[0]) * qu, float(sb[1]) * qu
-    sun = sun_light_of(lights)
-    if sun is not None and float(sun.get('intensity', 0.0)) > 0.0:
-        sdir = direction_from_angles(float(sun.get('elevationDeg', 45.0)),
-                                     float(sun.get('azimuthDeg', 180.0)))
-        strength = SUN_SHADOW_STRENGTH if sun.get('castShadow', True) else 0.0
-        sun_vis = 1.0
-        if strength > 0.0:
-            dq = np.asarray(sdir, np.float64)
-            dq /= max(float(np.linalg.norm(dq)), 1e-9)   # 世界向量当 q 方向(照抄)
-            blocked = _char_sun_visibility_batch(inp, q_pix, dq,
-                                                 bias0_q, thick_q)
-            sun_vis = 1.0 - strength * (1.0 - blocked)
-        direct_e += _directional_e(sun, n.astype(np.float32), sun_vis)
-    for l in _rest_lights(lights, sun, notes):
-        kind = _norm_kind(l, notes)
-        if kind == 'directional':
-            if float(l.get('intensity', 0.0)) > 0.0:
-                direct_e += _directional_e(l, n.astype(np.float32), 1.0)
-            continue
-        vis = 1.0
-        if l.get('castShadow', False) and float(l.get('intensity', 0)) > 0:
-            lq = (np.asarray(l.get('pos') or [0, 0, 0], np.float64) * qu) @ Rm
-            vis = _char_lamp_visibility_batch(inp, q_pix, lq,
-                                              bias0_q, thick_q)
-        contrib = _one_lamp_e(l, kind, P, n.astype(np.float32), qu, vis,
-                              cut_gate=False)
-        if contrib is not None:
-            direct_e += contrib.reshape(-1, 3)
+    # ---- 太阳 + 灯:实体逐像素解析灯的**唯一实现**(与探针共用) ----
+    direct_e = eval_entity_lights(lights or [], P, n.astype(np.float32),
+                                  inp, notes=notes)
 
     # ---- 比例基底 + sc3Shade + 形体 AO + 预览显示链 ----
     # ⚠ 直通图集**不再除 α**(二审 P0-2:运行时 shader 的 /max(a,1e-4) 是

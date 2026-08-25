@@ -502,6 +502,57 @@ def eval_scene_lights(lights: list[dict], inp, a0f: np.ndarray,
 
 # ------------------------------------------------ 角色侧(UnifiedCharacterShader 镜像)
 
+def eval_entity_lights(lights: list[dict], P: np.ndarray, N: np.ndarray,
+                       inp, notes: list | None = None) -> np.ndarray:
+    """实体(立绘/探针)**逐像素**解析灯 —— UnifiedCharacterShader 灯循环
+    的唯一实现(character 与 probe 共用,别各抄一遍):
+
+    - 太阳:逐像素 march(48 步/len 3.5,方向 = 世界 ω **不过 R**,照抄)
+    - 点/聚/面:castShadow ⇒ 逐像素 ucLightVisibility 批量 march
+    - 无 pass 级 cut 早退(角色循环没有);>24 盏截断同一份打包
+
+    P/N: (n,3) 世界(q 尺度)与法线。返回 (n,3) 线性辐照。"""
+    e = np.zeros(P.shape, np.float32)
+    if not lights:
+        return e
+    qu = 1.0 / float(inp.scene_per_wu)
+    sb = getattr(inp, 'shadow_bias', None) or (DEFAULT_SHADOW_BIAS_WU,
+                                               DEFAULT_SHADOW_THICKNESS_WU)
+    bias0_q, thick_q = float(sb[0]) * qu, float(sb[1]) * qu
+    Rm = np.asarray(inp.R, np.float64)
+    q_pix = np.asarray(P, np.float64) @ Rm
+    sun = sun_light_of(lights)
+    if sun is not None and float(sun.get('intensity', 0.0)) > 0.0:
+        sdir = direction_from_angles(float(sun.get('elevationDeg', 45.0)),
+                                     float(sun.get('azimuthDeg', 180.0)))
+        strength = SUN_SHADOW_STRENGTH if sun.get('castShadow', True) else 0.0
+        sun_vis: object = 1.0
+        if strength > 0.0:
+            dq = np.asarray(sdir, np.float64)
+            dq /= max(float(np.linalg.norm(dq)), 1e-9)
+            blocked = _char_sun_visibility_batch(inp, q_pix, dq,
+                                                 bias0_q, thick_q)
+            sun_vis = 1.0 - strength * (1.0 - blocked)
+        e += _directional_e(sun, np.asarray(N, np.float32), sun_vis)
+    for l in _rest_lights(lights, sun, notes):
+        kind = _norm_kind(l, notes)
+        if kind == 'directional':
+            if float(l.get('intensity', 0.0)) > 0.0:
+                e += _directional_e(l, np.asarray(N, np.float32), 1.0)
+            continue
+        vis: object = 1.0
+        if l.get('castShadow', False) and float(l.get('intensity', 0)) > 0:
+            lq = (np.asarray(l.get('pos') or [0, 0, 0], np.float64) * qu) @ Rm
+            vis = _char_lamp_visibility_batch(inp, q_pix, lq,
+                                              bias0_q, thick_q)
+        contrib = _one_lamp_e(l, kind, np.asarray(P, np.float64),
+                              np.asarray(N, np.float32), qu, vis,
+                              cut_gate=False)
+        if contrib is not None:
+            e += contrib.reshape(-1, 3)
+    return e
+
+
 def eval_probe_lights(lights: list[dict], N: np.ndarray, center_world,
                       inp, notes: list | None = None) -> np.ndarray:
     """探针球(实体口径)的 E_太阳 + E_灯 —— UnifiedCharacterShader 镜像:
@@ -515,42 +566,10 @@ def eval_probe_lights(lights: list[dict], N: np.ndarray, center_world,
       探针中心 march 一次(标量 vis);**没有 slab-8 缩水**(角色 march 不走
       线扫),但 24 盏截断同样生效(同一份打包)
 
-    N: (h,w,3) 球面法线;center_world: 探针中心(q 尺度世界坐标)。"""
-    e = np.zeros(N.shape, np.float32)
-    if not lights:
-        return e
-    qu = 1.0 / float(inp.scene_per_wu)
-    sb = getattr(inp, 'shadow_bias', None) or (DEFAULT_SHADOW_BIAS_WU,
-                                               DEFAULT_SHADOW_THICKNESS_WU)
-    bias0_q, thick_q = float(sb[0]) * qu, float(sb[1]) * qu
-    Rm = np.asarray(inp.R, np.float64)
-    center = np.asarray(center_world, np.float64)
-    q0 = center @ Rm                       # 世界→q(R 正交,转置即逆)
-    sun = sun_light_of(lights)
-    if sun is not None and float(sun.get('intensity', 0.0)) > 0.0:
-        sdir = direction_from_angles(float(sun.get('elevationDeg', 45.0)),
-                                     float(sun.get('azimuthDeg', 180.0)))
-        strength = SUN_SHADOW_STRENGTH if sun.get('castShadow', True) else 0.0
-        sun_vis = 1.0
-        if strength > 0.0:
-            dir_q = np.asarray(sdir, np.float64)
-            dir_q = dir_q / max(float(np.linalg.norm(dir_q)), 1e-9)
-            blocked = _lc_march_visibility(inp, q0, dir_q, SUN_MARCH_STEPS,
-                                           SUN_MARCH_LEN_Q, bias0_q, thick_q)
-            sun_vis = 1.0 - strength * (1.0 - blocked)
-        e += _directional_e(sun, N, sun_vis)
-    P = np.broadcast_to(center.astype(np.float64), N.shape)
-    for l in _rest_lights(lights, sun, notes):
-        kind = _norm_kind(l, notes)
-        if kind == 'directional':
-            if float(l.get('intensity', 0.0)) > 0.0:
-                e += _directional_e(l, N, 1.0)
-            continue
-        vis = 1.0
-        if l.get('castShadow', False) and float(l.get('intensity', 0)) > 0:
-            lq = (np.asarray(l.get('pos') or [0, 0, 0], np.float64) * qu) @ Rm
-            vis = _char_lamp_visibility(inp, q0, lq, bias0_q, thick_q)
-        contrib = _one_lamp_e(l, kind, P, N, qu, vis, cut_gate=False)
-        if contrib is not None:
-            e += contrib.reshape(N.shape)
-    return e
+    N: (h,w,3) 球面法线;center_world: 探针中心(q 尺度世界坐标)。
+    单点位形的薄包装 —— 逐像素位形走 `eval_entity_lights`(唯一实现)。"""
+    n_flat = np.asarray(N, np.float32).reshape(-1, 3)
+    P = np.broadcast_to(np.asarray(center_world, np.float64),
+                        n_flat.shape).copy()
+    return eval_entity_lights(lights, P, n_flat, inp,
+                              notes=notes).reshape(N.shape)

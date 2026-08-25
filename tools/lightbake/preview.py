@@ -130,45 +130,61 @@ def sample_volume_probe(ctx: dict, pos_world) -> dict:
             'gi_a1': t[11:20].reshape(3, 3).astype(np.float32)}
 
 
-def shade_probe_ball(sample: dict, R: np.ndarray, sky_def: dict, sun_dir,
+def shade_probe_ball(ctx: dict, center_world, sky_def: dict, sun_dir,
                      gi: float, ev: float, env_rgb, env_gain: float,
-                     radius_px: int, albedo: float = 0.5,
+                     radius_px: int, radius_q: float, albedo: float = 0.5,
                      occlusion_only: bool = False,
-                     lights_of_n=None, components: bool = False):
-    """探针球 = 实体着色口径的 §6.1 镜像(角色融入度目视):
+                     lights: list | None = None, components: bool = False):
+    """探针球 = 实体着色口径的 §6.1 镜像(角色融入度目视)。
 
-        E_目标 = gi·E_GI(N) + SkySH(mix(Bdir,N,w))·V(N) + E_环境(AO(N))
+    **逐像素位形**(制作人 2026-08-26 抓的:此前只在球心采一次体 + 逐像素
+    法线,灯也拿球心算 —— 贴灯放球看不到球面梯度):球面每个像素的伪世界
+    位置 P = center + radius_q·N,进 `sample_entity_volume`(ucSkyAt 唯一
+    实现,天穹系数插值/AO·GI 逐角点 max0)与 `eval_entity_lights`(实体
+    灯循环唯一实现,与立绘共用)。
+
+        E_目标 = gi·E_GI(P,N) + SkySH(mix(Bdir,N,w))·V + E_环境(AO) + E_灯
         out    = albedo · E_目标 · 2^ev  → 同一显示变换
 
-    V/Bdir 走库内闭式唯一实现(vis_of_normal/bent_of_moments,来源 =
-    体采样的 (a₀,a₁));GI/AO 矩按 E(N)=a₀+a₁·N 求值。
-    `occlusion_only`(§6.3 验收口径):平盘 2·a₀ —— 与场景 2·a₀ 场同一
-    公式、固定口径,实体必须无缝隐没其中(制作人验收铁令)。
-    `lights_of_n`:可选回调 N(h,w,3)→E_灯(h,w,3)(实体口径的解析灯,
-    lights.eval_probe_lights 包一层;None = 无灯)。
-    返回 (rgb, alpha),alpha 为圆形掩码。
-    `components=True` 额外返回中间量字典(延迟渲染式 buffer 联动:GUI 的
-    G-buffer 通道画实体口径同名量,与运行时 sc3DebugView「实体与场景同一
-    套编号」同旨):normal/V/vis_up/bent/ao/a0/a1/gi/e_sky/e_lights。"""
-    from .gather import bent_of_moments, vis_of_normal
+    `occlusion_only`(§6.3 验收口径):平盘 2·a₀(球心采样)。
+    返回 (rgb, alpha);`components=True` 额外返回中间量字典
+    (normal/V/vis_up/bent/ao/a0/a1/gi/e_sky/e_lights/qz,全逐像素)。"""
+    from .character import sample_entity_volume
+    from .lights import eval_entity_lights
+    inp = ctx['inp']
+    vol = ctx.get('volume')
+    if not vol:
+        raise ValueError('探针需要体数据(重烘时勾「含体积数据」)')
+    R = np.asarray(inp.R, np.float64)
     r = int(max(radius_px, 4))
     yy, xx = np.mgrid[-r:r + 1, -r:r + 1].astype(np.float32) / float(r)
     mask = (xx ** 2 + yy ** 2) <= 1.0
     if occlusion_only:
+        sample = sample_volume_probe(ctx, center_world)
         val = float(np.clip(2.0 * sample['sky_a0'], 0.0, 1.0))
         rgb = np.full(mask.shape + (3,), val, np.float32)
         return rgb, mask.astype(np.float32)
     nz = np.sqrt(np.maximum(1.0 - xx ** 2 - yy ** 2, 0.0))
     # 屏幕基 → 世界:屏幕右 = R[:,0],屏幕上 = R[:,1](yy 向下为正取负),
     # 朝观者 = −R[:,2](q = w@R 的列即三根轴)
-    N = (xx[..., None] * R[:, 0] + (-yy)[..., None] * R[:, 1]
-         + nz[..., None] * (-R[:, 2]))
+    N = (xx[..., None] * R[:, 0].astype(np.float32)
+         + (-yy)[..., None] * R[:, 1].astype(np.float32)
+         + nz[..., None] * (-R[:, 2]).astype(np.float32))
     N = (N / np.maximum(np.linalg.norm(N, axis=-1, keepdims=True), 1e-6)
          ).astype(np.float32)
-    a0g = np.full(mask.shape, sample['sky_a0'], np.float32)
-    a1g = np.broadcast_to(sample['sky_a1'], mask.shape + (3,)).copy()
-    V = vis_of_normal(a0g, a1g, N)
-    bent = bent_of_moments(a1g, N)
+    n_flat = N.reshape(-1, 3)
+    # 逐像素伪世界位置:球面点(不是球心!)
+    P = (np.asarray(center_world, np.float64)[None, :]
+         + np.float64(radius_q) * n_flat.astype(np.float64))
+    sky_c, ao_f, gi_f = sample_entity_volume(vol, P, n_flat)
+    t0 = np.maximum(sky_c[:, 0]
+                    + np.einsum('nd,nd->n', sky_c[:, 1:], n_flat), 0.0)
+    cap0 = np.maximum((1.0 + n_flat[:, 1]) * 0.5, 1.0 / 255.0)
+    V = np.clip(t0 / cap0, 0.0, 1.0).reshape(mask.shape)
+    bent_f = sky_c[:, 1:] + 1e-6
+    bent_f = bent_f / np.maximum(
+        np.linalg.norm(bent_f, axis=-1, keepdims=True), 1e-12)
+    bent = bent_f.reshape(mask.shape + (3,)).astype(np.float32)
     w = 1.0 - (1.0 - V) ** 2
     nmix = bent * (1.0 - w[..., None]) + N * w[..., None]
     nmix = nmix + np.float32(1e-6)
@@ -179,35 +195,39 @@ def shade_probe_ball(sample: dict, R: np.ndarray, sky_def: dict, sun_dir,
                             nmix[..., 2].ravel().astype(np.float64)))
     e_sky = (np.maximum(b.T @ sh, 0.0).reshape(mask.shape + (3,))
              * V[..., None]).astype(np.float32)
-    e_gi = np.maximum(sample['gi_a0'][None, None, :]
-                      + np.einsum('cd,hwd->hwc', sample['gi_a1'], N), 0.0)
-    ao = np.clip(sample['ao_a0']
-                 + np.einsum('d,hwd->hw', sample['ao_a1'], N), 0.0, 1.0)
+    e_gi = gi_f.reshape(mask.shape + (3,))
+    ao = ao_f.reshape(mask.shape)
     e_env = 0.0
     if env_gain and env_gain > 0:
         mod = np.clip(0.28 + 0.72 * ao, 0.0, 1.2)
         e_env = (np.asarray(env_rgb, np.float32).reshape(1, 1, 3)
                  * np.float32(env_gain) * mod[..., None])
-    e_lights = (lights_of_n(N) if lights_of_n is not None
-                else np.zeros(N.shape, np.float32))
+    e_lights = eval_entity_lights(lights or [], P, n_flat, inp
+                                  ).reshape(mask.shape + (3,))
     e_t = (np.float32(gi) * e_gi + e_sky + e_env + e_lights) \
         * np.float32(2.0 ** ev)
     rgb = linear_to_srgb(from_hdr(np.float32(albedo) * e_t))
     if not components:
         return rgb, mask.astype(np.float32)
+    up = np.broadcast_to(np.array([0, 1, 0], np.float32),
+                         n_flat.shape).copy()
+    t0_up = np.maximum(sky_c[:, 0]
+                       + np.einsum('nd,nd->n', sky_c[:, 1:], up), 0.0)
+    vis_up = np.clip(t0_up / np.maximum((1.0 + up[:, 1]) * 0.5, 1.0 / 255.0),
+                     0.0, 1.0)
+    qz = (P @ R)[:, 2]
     comps = {
         'normal': N.astype(np.float32),
         'V': V.astype(np.float32),
-        'vis_up': vis_of_normal(
-            a0g, a1g, np.broadcast_to(
-                np.array([0, 1, 0], np.float32), N.shape).copy()),
-        'bent': bent.astype(np.float32),
-        'ao': ao.astype(np.float32),
-        'a0': a0g.astype(np.float32),
-        'a1': a1g.astype(np.float32),
+        'vis_up': vis_up.reshape(mask.shape).astype(np.float32),
+        'bent': bent,
+        'ao': np.clip(ao, 0.0, 1.0).astype(np.float32),
+        'a0': sky_c[:, 0].reshape(mask.shape),
+        'a1': sky_c[:, 1:].reshape(mask.shape + (3,)),
         'gi': e_gi.astype(np.float32),
         'e_sky': e_sky,
         'e_lights': e_lights.astype(np.float32),
+        'qz': qz.reshape(mask.shape).astype(np.float32),
     }
     return rgb, mask.astype(np.float32), comps
 

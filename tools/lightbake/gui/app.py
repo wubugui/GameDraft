@@ -280,7 +280,8 @@ class Win(QMainWindow):
         self.view.pan_released.connect(self._on_pan_release)
         self.view.wheeled.connect(self._on_wheel)
         self.view.view_reset.connect(self._on_view_reset)
-        self.view.setToolTip('左键=放置/抓取拖动 · 滚轮=缩放(光标为锚) · '
+        self.view.setToolTip('左键=放置/抓取拖动 · Shift+拖=实体高度 · '
+                             'Ctrl+拖=实体缩放 · 滚轮=画布缩放(光标为锚) · '
                              '中/右键拖=平移 · 双击右键=复位视图')
         self.note = QLabel('')                # 通道级提示(占位原因/立绘告警)
         self.note.setStyleSheet('color:#997; font-size: 11px;')
@@ -313,6 +314,8 @@ class Win(QMainWindow):
         self.probe_occl = QCheckBox('§6.3 遮蔽口径(平盘 2·a₀,验收铁令)')
         self.probe_h = self._dspin(0.0, step=10.0, lo=-10000.0, hi=20000.0,
                                    decimals=1)     # Shift+拖 也能调
+        self.probe_d = self._dspin(150.0, step=10.0, lo=10.0, hi=2000.0,
+                                   decimals=0)     # Ctrl+拖 也能调
         self.gizmo_on = QCheckBox('显示定位标记(落点/拉杆/地面圈/X-Ray)')
         self.gizmo_on.setChecked(True)
 
@@ -490,6 +493,7 @@ class Win(QMainWindow):
         group('视口', [('通道', self.channel), ('体切片 y%', self.vol_slice),
                        (None, self.probe_on), (None, self.probe_occl),
                        ('探针抬高(wu,Shift+拖)', self.probe_h),
+                       ('探针直径(wu,Ctrl+拖)', self.probe_d),
                        (None, self.gizmo_on)])
         group('运行时天空 + 环境(实时,§6.1 预览)', [
             ('预设(初始化器)', self.preset),
@@ -641,7 +645,7 @@ class Win(QMainWindow):
         self.c_gi_follow.stateChanged.connect(self._render)
         for w_ in (self.c_flatten, self.c_bulge, self.c_aoc, self.c_aof,
                    self.c_gi, self.c_ref, self.c_dsf, self.c_h,
-                   self.probe_h):
+                   self.probe_h, self.probe_d):
             w_.valueChanged.connect(self._render)
         self.c_state.currentTextChanged.connect(self._on_char_state_changed)
         self.c_frame.valueChanged.connect(self._on_char_frame_changed)
@@ -1727,32 +1731,29 @@ class Win(QMainWindow):
         ix, iy = self._probe_px
         ix = int(np.clip(ix, 0, w - 1))
         iy = int(np.clip(iy, 0, h - 1))
+        spw = float(inp.scene_per_wu)
+        r_q = self.probe_d.value() / 2.0 / spw     # 直径旋钮(Ctrl+拖)
         ground = inp.world[iy, ix].astype(np.float64)
         center = ground + np.array(
-            [0.0, inp.char_wu / 2.0
-             + self.probe_h.value() / float(inp.scene_per_wu), 0.0])
-        sample = preview_mod.sample_volume_probe(self.ctx, center)
-        radius_px = max(4, int(round(inp.char_wu / 2.0 * inp.ppu)))
+            [0.0, r_q + self.probe_h.value() / spw, 0.0])
+        sample = preview_mod.sample_volume_probe(self.ctx, center)  # §6.3 读数
+        radius_px = max(4, int(round(r_q * inp.ppu)))
         occl = self.probe_occl.isChecked() or key == 'a0'
-        def _probe_lights_cb(N, _c=center):
-            return lights_mod.eval_probe_lights(self._lights, N, _c, inp)
-        lights_cb = (_probe_lights_cb
-                     if (self.lights_on.isChecked() and self._lights
-                         and float(getattr(inp, 'scene_per_wu', 0) or 0) > 0)
-                     else None)
+        ent_lights = (self._lights if self.lights_on.isChecked() else [])
         if occl:
             rgb, alpha = preview_mod.shade_probe_ball(
-                sample, inp.R, self._runtime_sky_def(), self._runtime_sun(),
-                self.gi.value(), self.ev.value(),
+                self.ctx, center, self._runtime_sky_def(),
+                self._runtime_sun(), self.gi.value(), self.ev.value(),
                 [self.env_r.value(), self.env_g.value(), self.env_b.value()],
-                self.env_gain.value(), radius_px, occlusion_only=True)
+                self.env_gain.value(), radius_px, r_q, occlusion_only=True)
+            comps = None
         else:
             rgb, alpha, comps = preview_mod.shade_probe_ball(
-                sample, inp.R, self._runtime_sky_def(), self._runtime_sun(),
-                self.gi.value(), self.ev.value(),
+                self.ctx, center, self._runtime_sky_def(),
+                self._runtime_sun(), self.gi.value(), self.ev.value(),
                 [self.env_r.value(), self.env_g.value(), self.env_b.value()],
-                self.env_gain.value(), radius_px, occlusion_only=False,
-                lights_of_n=lights_cb, components=True)
+                self.env_gain.value(), radius_px, r_q, occlusion_only=False,
+                lights=ent_lights, components=True)
             rgb = self._entity_view(key, comps, rgb)
         # 球心从**世界坐标投影**(抬高后画面位置跟着走,与受光一致)
         Rm = np.asarray(inp.R, np.float64)
@@ -1770,9 +1771,13 @@ class Win(QMainWindow):
         out = img.copy()
         a = alpha[sy0:sy0 + (y1 - y0), sx0:sx0 + (x1 - x0), None]
         rgb_r = rgb[sy0:sy0 + (y1 - y0), sx0:sx0 + (x1 - x0)]
-        # ⑤ 深度 X-Ray:球心 q.z 与场景深度逐像素比,被场景挡住的部分
-        #   半透明 + 虚线描边(「看不见 = 不知道去哪了」的正解)
-        occ = inp.depth[y0:y1, x0:x1] < (float(qc[2]) - 1e-4)
+        # ⑤ 深度 X-Ray:球面**逐像素** q.z(components)对场景深度;
+        #   §6.3 平盘模式无 comps 时退回球心
+        if comps is not None:
+            qz_r = comps['qz'][sy0:sy0 + (y1 - y0), sx0:sx0 + (x1 - x0)]
+            occ = inp.depth[y0:y1, x0:x1] < (qz_r - 1e-4)
+        else:
+            occ = inp.depth[y0:y1, x0:x1] < (float(qc[2]) - 1e-4)
         a_eff = a * np.where(occ[..., None], 0.35, 1.0)
         out[y0:y1, x0:x1] = (out[y0:y1, x0:x1] * (1 - a_eff) + rgb_r * a_eff)
         if self.gizmo_on.isChecked():
@@ -1783,9 +1788,8 @@ class Win(QMainWindow):
             region[ey[keep], ex[keep]] = _PROBE_COL
             if self._drag_target == 'probe':          # ⑥ 拖动高亮
                 region[_gz_edge(a[..., 0] > 0.5)] = _SEL_COL
-            # ③ 地面圈(落点世界水平圆的透视投影,标定自证)
-            self._gz_ground_ellipse(out, inp, ground, inp.char_wu / 2.0,
-                                    _PROBE_COL)
+            # ③ 地面圈(落点世界水平圆的透视投影,标定自证;随直径走)
+            self._gz_ground_ellipse(out, inp, ground, r_q, _PROBE_COL)
             _gz_cross(out, ix, iy, _PROBE_COL)        # ① 落点十字
             h_wu = self.probe_h.value()
             if abs(h_wu) >= 0.5:                      # ② 世界 up 拉杆
@@ -1951,7 +1955,9 @@ class Win(QMainWindow):
              f'chan={self.channel.currentData()}')
         # ---- 自由移动:按在已画出的立绘/探针球身上 = 抓起来拖 ----
         # (抓取优先于一切放置模式 —— 移动现有对象不需要切勾)
-        grab_mode = 'height' if (_mods() & Qt.ShiftModifier) else 'move'
+        m = _mods()
+        grab_mode = ('scale' if (m & Qt.ControlModifier)
+                     else 'height' if (m & Qt.ShiftModifier) else 'move')
         if self._char_hit is not None and self._char_foot is not None:
             x0, y0, x1, y1 = self._char_hit
             if x0 <= ix < x1 and y0 <= iy < y1:
@@ -2017,17 +2023,25 @@ class Win(QMainWindow):
             return
         import time as _time
         s, offx, offy, w, h = self._view_map
-        if self._drag_mode == 'height':
-            # Shift+拖:沿世界竖直调高度,写进对应「抬高(wu)」旋钮
+        if self._drag_mode in ('height', 'scale'):
+            # Shift+拖=高度 / Ctrl+拖=缩放:纵向位移折成 wu 写进对应旋钮
             if self.ctx is None or self.ctx.get('inp') is None:
                 return
             inp = self.ctx['inp']
-            dh_wu = ((self._drag_last_vy - vy) / max(s, 1e-9) / inp.ppu
-                     * float(inp.scene_per_wu))
+            d_wu = ((self._drag_last_vy - vy) / max(s, 1e-9) / inp.ppu
+                    * float(inp.scene_per_wu))
             self._drag_last_vy = vy
-            spin = self.probe_h if self._drag_target == 'probe' else self.c_h
-            with QSignalBlocker(spin):
-                spin.setValue(spin.value() + dh_wu)
+            if self._drag_mode == 'height':
+                spin = self.probe_h if self._drag_target == 'probe' \
+                    else self.c_h
+                with QSignalBlocker(spin):
+                    spin.setValue(spin.value() + d_wu)
+            elif self._drag_target == 'probe':
+                with QSignalBlocker(self.probe_d):
+                    self.probe_d.setValue(self.probe_d.value() + d_wu)
+            else:                                  # 立绘缩放 = dsf(150wu=1×)
+                with QSignalBlocker(self.c_dsf):
+                    self.c_dsf.setValue(self.c_dsf.value() + d_wu / 150.0)
             now = _time.monotonic()
             if now - self._last_drag_t < 0.03:
                 return

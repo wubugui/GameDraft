@@ -455,6 +455,55 @@ def test_char_eref_uses_normal_y_quantitative():
     assert abs(ratio - ratio_expect) < 0.03, (ratio, ratio_expect)
 
 
+def test_probe_per_pixel_positional_sampling():
+    """制作人抓的(2026-08-26):探针此前只在球心采一次体数据。现在球面
+    每个像素的伪世界位置 P=center+r·N 进体采样 —— GI 沿 x 两层
+    0.2/0.8 时,球左右两侧必须吃到不同的值(旧实现左右恒等)。"""
+    from tools.lightbake import preview as P
+    inp = _Inp()
+    ctx = _uniform_ctx(sky_a0=0.0, inp=inp)
+    v = ctx['volume']
+    g0 = np.zeros((8, 3), 'float32')
+    for ix in range(2):
+        for iy in range(2):
+            for iz in range(2):
+                g0[(ix * 2 + iy) * 2 + iz] = 0.8 if ix == 1 else 0.2
+    v['raw']['gi_a0'] = g0
+    v['bounds']['x0'], v['bounds']['x1'] = -0.6, 0.6   # 梯度够陡才可观测
+    rgb, a = P.shade_probe_ball(ctx, [0.0, 0.0, 0.5], _NO_SKY, None,
+                                gi=1.0, ev=0.0, env_rgb=[0, 0, 0],
+                                env_gain=0.0, radius_px=12, radius_q=0.4)
+    m = a > 0.5
+    h, w = m.shape
+    left = float(rgb[:, :w // 3][m[:, :w // 3]].mean())
+    right = float(rgb[:, -w // 3:][m[:, -w // 3:]].mean())
+    assert right > left * 1.15, (left, right)      # 旧实现:恒等
+    # 中心像素定量:N=(0,0,−1) ⇒ P.x=0 ⇒ 层间 fr=0.5 ⇒ g=0.5
+    got = float(rgb[h // 2, w // 2, 0])
+    expect = float(linear_to_srgb(from_hdr(np.float32(0.5 * 0.5))))
+    assert abs(got - expect) < 3e-3, (got, expect)
+
+
+def test_probe_per_pixel_lamp_gradient():
+    """贴灯放球必须看到球面梯度(旧实现灯拿球心位置算,左右恒等):
+    白点光在球左侧、无阴影,左半球列均值 > 右半球。"""
+    from tools.lightbake import preview as P
+    inp = _Inp()
+    ctx = _uniform_ctx(sky_a0=0.0, gi=0.0, inp=inp)
+    lamp = [{'kind': 'point', 'intensity': 4.0, 'color': _WHITE,
+             'pos': [-180.0, 75.0, 75.0], 'range': 450.0,
+             'softeningRadius': 15.0, 'castShadow': False}]
+    rgb, a = P.shade_probe_ball(ctx, [0.0, 0.5, 0.5], _NO_SKY, None,
+                                gi=0.0, ev=0.0, env_rgb=[0, 0, 0],
+                                env_gain=0.0, radius_px=12, radius_q=0.4,
+                                lights=lamp)
+    m = a > 0.5
+    _h, w = m.shape
+    left = float(rgb[:, :w // 3][m[:, :w // 3]].mean())
+    right = float(rgb[:, -w // 3:][m[:, -w // 3:]].mean())
+    assert left > right * 1.15, (left, right)
+
+
 def test_list_and_load_player_atlas():
     chars = C.list_characters()
     if 'player_anim' not in chars:

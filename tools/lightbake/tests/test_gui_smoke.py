@@ -460,6 +460,25 @@ def test_gui_entity_height_and_buffer_views(monkeypatch):
     win._on_view_release()
     assert win.probe_h.value() > h_before
     monkeypatch.setattr(app_mod, '_mods', lambda: Qt.NoModifier)
+    # ①c 缩放:直径旋钮改命中半径;Ctrl+拖 = 调直径(制作人:「不能缩放!」)
+    win.probe_h.setValue(0.0)
+    win.probe_d.setValue(150.0)
+    win._render()
+    r150 = win._probe_hit[2]
+    win.probe_d.setValue(300.0)
+    win._render()
+    assert win._probe_hit[2] >= r150 * 1.8
+    monkeypatch.setattr(app_mod, '_mods', lambda: Qt.ControlModifier)
+    s, offx, offy, *_ = win._view_map
+    bx, by, br = win._probe_hit
+    win._on_view_click(bx * s + offx, by * s + offy)
+    assert win._drag_target == 'probe' and win._drag_mode == 'scale'
+    d_before = win.probe_d.value()
+    win._on_view_drag(bx * s + offx, by * s + offy - 25.0)
+    win._on_view_release()
+    assert win.probe_d.value() > d_before
+    monkeypatch.setattr(app_mod, '_mods', lambda: Qt.NoModifier)
+    win.probe_d.setValue(150.0)
     # ② buffer 联动:实体联动通道集内,球都画自己的同名量(像素真变)
     win.probe_h.setValue(0.0)
     for key in _ENTITY_CHANNELS:
