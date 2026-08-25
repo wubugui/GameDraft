@@ -154,13 +154,24 @@ _CHANNELS = [
 
 
 class _ViewLabel(QLabel):
-    """视口:把鼠标点击回报给宿主(角色探针放置用)。"""
+    """视口:把按下/拖动/松开回报给宿主(探针球与立绘的自由移动用;
+    Qt 在按住期间会持续派发 move,不需要 mouseTracking)。"""
 
     pressed = Signal(float, float)
+    dragged = Signal(float, float)
+    released = Signal()
 
     def mousePressEvent(self, ev) -> None:              # noqa: N802 — Qt 命名
         self.pressed.emit(float(ev.position().x()), float(ev.position().y()))
         super().mousePressEvent(ev)
+
+    def mouseMoveEvent(self, ev) -> None:               # noqa: N802 — Qt 命名
+        self.dragged.emit(float(ev.position().x()), float(ev.position().y()))
+        super().mouseMoveEvent(ev)
+
+    def mouseReleaseEvent(self, ev) -> None:            # noqa: N802 — Qt 命名
+        self.released.emit()
+        super().mouseReleaseEvent(ev)
 
 
 class Win(QMainWindow):
@@ -176,6 +187,8 @@ class Win(QMainWindow):
         self.view.setAlignment(Qt.AlignCenter)
         self.view.setMinimumSize(720, 405)
         self.view.pressed.connect(self._on_view_click)
+        self.view.dragged.connect(self._on_view_drag)
+        self.view.released.connect(self._on_view_release)
         self.note = QLabel('')                # 通道级提示(占位原因等)
         self.note.setStyleSheet('color:#997; font-size: 11px;')
         self.status = QLabel('')
@@ -517,6 +530,12 @@ class Win(QMainWindow):
             w_.valueChanged.connect(self._render)
         self._char_foot: tuple | None = None
         self._char_sprite = None
+        # 自由移动:按在球/角色身上直接拖(命中矩形每帧由 overlay 回填)
+        self._drag_target: str | None = None     # 'probe' | 'char'
+        self._drag_off: tuple = (0, 0)
+        self._last_drag_t: float = 0.0
+        self._probe_hit: tuple | None = None     # (cx, cy, r) 图像坐标
+        self._char_hit: tuple | None = None      # (x0, y0, x1, y1)
         self.light_combo.currentIndexChanged.connect(self._on_light_selected)
         self.l_kind.currentIndexChanged.connect(self._on_light_retype)
         # 逐键回写(审查 P0-2/P1-9):只写被动过的语义组 —— 没动过的键在
@@ -1420,6 +1439,7 @@ class Win(QMainWindow):
         out[y0:y2, x0:x2] = (out[y0:y2, x0:x2] * (1 - a)
                              + crgb[sy0:sy0 + (y2 - y0),
                                     sx0:sx0 + (x2 - x0)] * a)
+        self._char_hit = (x0, y0, x2, y2)         # 抓取命中区(自由移动)
         return out
 
     def _overlay_probe(self, img: np.ndarray) -> np.ndarray:
@@ -1453,6 +1473,7 @@ class Win(QMainWindow):
             self.env_gain.value(), radius_px, occlusion_only=occl,
             lights_of_n=lights_cb)
         cy = iy - radius_px                    # 球心 = 脚下抬 char_wu/2
+        self._probe_hit = (ix, cy, radius_px)  # 抓取命中区(自由移动)
         y0, y1 = cy - radius_px, cy + radius_px + 1
         x0, x1 = ix - radius_px, ix + radius_px + 1
         sy0, sx0 = max(0, -y0), max(0, -x0)
@@ -1477,6 +1498,8 @@ class Win(QMainWindow):
     def _render(self, *_a) -> None:
         if self.ctx is None or self.result is None:
             return
+        self._probe_hit = None                # overlay 画了才有命中区
+        self._char_hit = None
         try:
             img = self._channel_img()
             img = self._overlay_char(img)
@@ -1496,16 +1519,38 @@ class Win(QMainWindow):
         self._view_map = (s, offx, offy, w, h)
         self.view.setPixmap(pm)
 
-    def _on_view_click(self, vx: float, vy: float) -> None:
+    def _img_xy(self, vx: float, vy: float) -> tuple | None:
         if self._view_map is None:
-            return
+            return None
         s, offx, offy, w, h = self._view_map
         ix = (vx - offx) / max(s, 1e-9)
         iy = (vy - offy) / max(s, 1e-9)
         if not (0 <= ix < w and 0 <= iy < h):
+            return None
+        return int(ix), int(iy)
+
+    def _on_view_click(self, vx: float, vy: float) -> None:
+        pt = self._img_xy(vx, vy)
+        if pt is None:
             return
-        ix, iy = int(ix), int(iy)
-        # 放灯优先于放探针(两个勾都开时,点视口先服务正在编辑的灯)
+        ix, iy = pt
+        # ---- 自由移动:按在已画出的立绘/探针球身上 = 抓起来拖 ----
+        # (抓取优先于一切放置模式 —— 移动现有对象不需要切勾)
+        if self._char_hit is not None and self._char_foot is not None:
+            x0, y0, x1, y1 = self._char_hit
+            if x0 <= ix < x1 and y0 <= iy < y1:
+                self._drag_target = 'char'
+                self._drag_off = (self._char_foot[0] - ix,
+                                  self._char_foot[1] - iy)
+                return
+        if self._probe_hit is not None and self._probe_px is not None:
+            cx, cy, r = self._probe_hit
+            if (ix - cx) ** 2 + (iy - cy) ** 2 <= r * r:
+                self._drag_target = 'probe'
+                self._drag_off = (self._probe_px[0] - ix,
+                                  self._probe_px[1] - iy)
+                return
+        # ---- 空白处:放置(放灯 > 放角色 > 放探针),放下即可接着拖 ----
         l = self._light_sel()
         if (self.l_place.isChecked() and l is not None
                 and l.get('kind') != 'directional'
@@ -1521,14 +1566,46 @@ class Win(QMainWindow):
                 self._load_light_fields()
                 self._lights_dirty()
                 return
-        if self.char_on.isChecked():                # 放角色优先于放探针
+        if self.char_on.isChecked():
             self._char_foot = (ix, iy)
+            self._drag_target = 'char'
+            self._drag_off = (0, 0)
             self._render()
             return
         if not self.probe_on.isChecked():
             return
         self._probe_px = (ix, iy)
+        self._drag_target = 'probe'
+        self._drag_off = (0, 0)
         self._render()
+
+    def _on_view_drag(self, vx: float, vy: float) -> None:
+        if self._drag_target is None or self._view_map is None:
+            return
+        import time as _time
+        s, offx, offy, w, h = self._view_map
+        ix = int(np.clip((vx - offx) / max(s, 1e-9) + self._drag_off[0],
+                         0, w - 1))
+        iy = int(np.clip((vy - offy) / max(s, 1e-9) + self._drag_off[1],
+                         0, h - 1))
+        if self._drag_target == 'char':
+            if self._char_foot == (ix, iy):
+                return
+            self._char_foot = (ix, iy)
+        else:
+            if self._probe_px == (ix, iy):
+                return
+            self._probe_px = (ix, iy)
+        now = _time.monotonic()
+        if now - self._last_drag_t < 0.03:        # 拖动节流:~33fps 重渲
+            return
+        self._last_drag_t = now
+        self._render()
+
+    def _on_view_release(self) -> None:
+        if self._drag_target is not None:
+            self._drag_target = None
+            self._render()                        # 收尾补一帧(节流可能吞了末帧)
 
     def resizeEvent(self, event) -> None:               # noqa: N802 — Qt 命名
         super().resizeEvent(event)

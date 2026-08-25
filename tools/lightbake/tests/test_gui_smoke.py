@@ -289,6 +289,67 @@ def test_gui_lights_editor_roundtrip():
     assert win._channel_img().shape[:2] == (90, 160)
 
 
+def test_gui_free_drag_probe_and_char():
+    """自由移动(制作人 2026-08-26):按在探针球/立绘上直接拖走 ——
+    抓取优先于一切放置模式;空白处点击 = 放置并立刻可拖;松手补帧。"""
+    pytest.importorskip('PySide6')
+    import os
+    os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+    from tools.lightbake.gui.app import create_window
+    h, w = 24, 32
+    ctx = _rich_fake_ctx(h, w)
+    _app, win = create_window('雾津街头', autobake=False)
+    win.set_ctx(ctx)
+    _settle_lights(_app, win)
+    win.channel.setCurrentIndex(
+        [win.channel.itemData(i) for i in range(win.channel.count())
+         ].index('final'))
+    win.probe_on.setChecked(True)
+    win._probe_px = (16, 12)
+    win._render()
+    assert win._view_map is not None and win._probe_hit is not None
+    s, offx, offy, _w, _h = win._view_map
+
+    def v(ix, iy):
+        return (ix * s + offx, iy * s + offy)
+
+    # ① 抓球:按在球心 → target=probe;拖 + 偏移保持;松手落点正确
+    cx, cy, r = win._probe_hit
+    win._on_view_click(*v(cx, cy))
+    assert win._drag_target == 'probe'
+    off = win._drag_off
+    win._on_view_drag(*v(cx + 4, cy + 3))
+    win._on_view_release()
+    assert win._probe_px == (cx + 4 + off[0], cy + 3 + off[1])
+    assert win._drag_target is None
+    # ② 抓优先于放:char_on 也开着,按在球上仍然抓球、不放角色
+    if win.char_combo.count() > 0:
+        win.char_on.setChecked(True)
+        win._char_foot = (6, h - 2)
+        win._render()
+        bx, by, br = win._probe_hit
+        win._on_view_click(*v(bx, by))
+        assert win._drag_target == 'probe'
+        win._on_view_release()
+        # ③ 抓角色:按进立绘命中矩形 → 拖走
+        assert win._char_hit is not None
+        x0, y0, x1, y1 = win._char_hit
+        mx, my = (x0 + x1) // 2, (y0 + y1) // 2
+        win._on_view_click(*v(mx, my))
+        assert win._drag_target == 'char'
+        off = win._drag_off
+        win._on_view_drag(*v(mx + 3, my + 1))
+        win._on_view_release()
+        assert win._char_foot == (min(mx + 3 + off[0], w - 1),
+                                  min(my + 1 + off[1], h - 1))
+        win.char_on.setChecked(False)
+    # ④ 空白处点击 = 放置并立刻抓住(放下即拖)
+    win._render()
+    win._on_view_click(*v(2, 2))
+    assert win._probe_px == (2, 2) and win._drag_target == 'probe'
+    win._on_view_release()
+
+
 def test_gui_lights_stale_ctx_dropped():
     """复核 P0 回归钉:重烘落地(set_ctx)后,在飞 worker 端上来的**旧 ctx**
     结果必须被丢弃(缓存键不含 ctx 身份,写进去会被下一帧端出 —— 二审用
