@@ -1766,3 +1766,41 @@ R-1 跨采样器 φ 钉子因反解未归一而空转(「差」变「和」,增�
 - 测试 +20(136 过 + 1 xfail):方向约定 z=+cos·cos 钉、点/聚手算值、面光
   半球解析锚 E→1、单/双面、sunVis 手算、两侧阴影判据分歧钉、vis 缓存复用/
   失效、探针=场景同式、default/retype 卫生、GUI 灯编辑往返冒烟。
+
+
+### §15 追记:解析灯镜像的独立审查与修复轮(2026-08-26)
+
+opus 独立审查(逐式对账 + 42 个突变的空心度测量)结论:公式本体与单位链
+干净,但外围 2 个 P0、7 个 P1、4 个 P2,且 test_lights 31/42 突变不红
+(构造性缺陷:常数深度场/夹具 bias 恰等缺省/字段全显式/回环与绕行)。
+全部修复:
+
+- **P0-1** 面光取值序改回 packLights 的 **dir??orientation**(反了会照亮
+  相反的一面,实测 0.0915 vs 0);GUI 写 orientation 时清 dir(写 dir 清
+  orientation),双份并存必分叉。
+- **P0-2** GUI 灯字段改**逐键回写**(partial 按语义组连接):没动过的键
+  不物化 —— 「动一下强度=静默把太阳阴影关掉存盘」根除;castShadow 显示
+  缺省与求值同一条决议(太阳 ??true,其余 false)。
+- **P0-3/P2-11** 场景阴影 march 重做:活像素(cut≥1e-4)先筛、投影仿射
+  预折(px(t)=px₀+t·Δpx)、float32、**径向 1px 自适应步进**(夹 [64,768],
+  沿像素均匀 ⇒ shadowPrefix 否掉的定步长走样消掉大半);GUI 挪到后台线程
+  (FnWorker 单飞 + done→rekick 最终一致),雾津街头冷 29.2s→12.4s 且不再
+  冻界面,暖 0.78s。vis 缓存键补 range(活像素域随 range 走)。
+- **P1-4** 探针太阳从体积 V_dir 改成**角色口径 march**(lcMarchVisibility
+  48 步/len 3.5/bias 增长/thick 窗)——含运行时的既定怪癖:世界系 uSunDir
+  **不过 R** 直接当 q 方向,逐字照抄不修。
+- **P1-5** 双截断镜像:>24 盏丢弃、castShadow 打包下标 ≥8 强制不投影
+  (线扫两张 slab),notes 出声进 GUI note。
+- **P1-6** smoothstep 照 GLSL 原式(不再 max 掩盖反向边界);GUI
+  inner/outer 联动钳制。**P1-7** softeningRadius 只随点/聚(lightDefaults.
+  retype 口径);default_light 面光不再带它。**P1-8** 存回前过桌面编辑器同
+  一套 validate_lights;加灯扫描已用 id。**P1-9** 方向分量/方位角/色温量程
+  放开(夹 [-1,1] 是转向不是缩放)。**P1-10** 未知 kind 回落点光+出声
+  (运行时 ??0 同行为)。**P2-12** 探针无 pass 级 cut 早退。**P2-13** 太阳
+  单实现(_directional_e)。**P2-14** 缓存键按矩来源分桶。
+- **测试夹具三戒**(写进 test_lights 头注):阴影测试深度场必须结构化;
+  夹具 bias 不等于库缺省;缺省值有专项。新增:R≠I 的世界→q 钉、投影可观测
+  条带、面光全链 vs 独立积分(size×0.5/×qu/roll 全覆盖)、聚光缺省 25/**40**
+  专项、太阳缺省(el/az/castShadow)专项、char march 三参数逐个钉、两侧判据
+  甄别(场景无 thick vs 角色 thick 窗,探针必须走角色侧)、cut 阈贴 1e-4、
+  V_dir 钳制、双截断、缓存 range 失效。招牌突变抽查全部转红。

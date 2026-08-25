@@ -6,6 +6,8 @@
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 
 
@@ -19,6 +21,24 @@ def test_editor_write_exit_available():
     """存回 bakeSky 必须走编辑器统一写盘出口(editor-tools norms 第一戒)。"""
     from tools.editor.file_io import read_json, write_json
     assert callable(read_json) and callable(write_json)
+
+
+def _settle_lights(app, win):
+    """E_灯 在后台线程算(审查 P0-3),设计是**最终一致**:done→_render 可能
+    对新 key 再补一枪(单飞守卫下 key 变更要第二轮收敛)。循环 等待+派发
+    直到没有在跑的 worker 为止(离屏测试用)。"""
+    for _ in range(8):
+        w = win._lights_worker
+        if w is not None and w.isRunning():
+            assert w.wait(30000)
+        app.processEvents()
+        w2 = win._lights_worker
+        if w2 is None or not w2.isRunning():
+            app.processEvents()
+            if win._lights_worker is w2 and \
+                    (w2 is None or not w2.isRunning()):
+                return
+    raise AssertionError('E_灯 worker 未在 8 轮内收敛')
 
 
 class _FakeInp:
@@ -115,6 +135,9 @@ def test_gui_offscreen_construct_and_render():
     for i in range(win.channel.count()):
         win.channel.setCurrentIndex(i)
         img = win._channel_img()
+        if win._lights_worker is not None:          # E_灯 后台算完再取一帧
+            _settle_lights(_app, win)
+            img = win._channel_img()
         key = win.channel.currentData()
         assert img.shape[:2] != (90, 160), f'通道 {key} 落进了占位灰底'
         win._render()
@@ -170,6 +193,23 @@ def test_gui_lights_editor_roundtrip():
     # 装载:4 盏灯全进列表
     assert win.light_combo.count() == 4
     assert len(win._lights) == 4
+    # 往返恒等(审查 P1-9 的那条断言):装载→逐盏选中→什么都不动 ⇒
+    # dict 逐键相同 —— 面板量程/精度/缺省物化都不许污染数据
+    snap = json.dumps(win._lights, sort_keys=True)
+    for i in range(4):
+        win.light_combo.setCurrentIndex(i)
+    assert json.dumps(win._lights, sort_keys=True) == snap
+    # 太阳(idx 0,directional):castShadow **缺省缺席**时显示 = true
+    # (packLights `?? true`,审查 P0-2);动 intensity 不许物化 castShadow /
+    # 不许写 pos —— 「动一下强度=静默关掉太阳阴影并存盘」就是这么来的
+    win.light_combo.setCurrentIndex(0)
+    win._lights[0].pop('castShadow', None)      # 模拟场景 JSON 未写该键
+    win._load_light_fields()
+    assert win.l_shadow.isChecked()             # 显示口径 = 求值口径 = true
+    win.l_inten.setValue(1.5)
+    assert win._lights[0]['intensity'] == 1.5
+    assert 'castShadow' not in win._lights[0]   # 逐键回写:没动就不物化
+    assert 'pos' not in win._lights[0]
     # 字段往返:选 lamp_1(点光),改 intensity/castShadow → dict 同步
     win.light_combo.setCurrentIndex(1)
     win.l_inten.setValue(4.25)
@@ -180,14 +220,22 @@ def test_gui_lights_editor_roundtrip():
     assert win.l_px.isEnabled() and win.l_soft.isEnabled()
     assert not win.l_dx.isEnabled() and not win.l_inner.isEnabled()
     assert not win.l_sw.isEnabled() and not win.l_el.isEnabled()
-    # E_灯 通道:真渲染(带 castShadow 太阳 + 三种灯),不落占位灰底
+    # 面光编辑方向 → 写 orientation 且**清掉 dir**(打包 dir 优先,P0-1)
+    win._lights[3]['dir'] = [0, 0, -1]
+    win.light_combo.setCurrentIndex(3)
+    win.l_dx.setValue(0.5)
+    assert 'dir' not in win._lights[3]
+    assert win._lights[3]['orientation'][0] == 0.5
+    # E_灯 通道:后台算完 → 真渲染(castShadow 太阳 march + 三种灯)
     win.channel.setCurrentIndex(
         [win.channel.itemData(i) for i in range(win.channel.count())
          ].index('e_lights'))
+    win._channel_img()
+    _settle_lights(_app, win)
     img = win._channel_img()
     assert img.shape[:2] == (h, w)
     assert float(np.abs(img).max()) > 0.0
-    # final 通道合成 E_灯(compose_final 的 e_lights 口)
+    # final 通道合成 E_灯(compose_final 的 e_lights 口,缓存同源共享)
     win.channel.setCurrentIndex(
         [win.channel.itemData(i) for i in range(win.channel.count())
          ].index('final'))
@@ -197,15 +245,18 @@ def test_gui_lights_editor_roundtrip():
     win._probe_px = (w // 2, h // 2)
     out = win._overlay_probe(win._channel_img())
     assert out.shape == (h, w, 3)
-    # 换型:point → area,字段卫生(dir 类清掉,area 专属补上)
+    # 换型:point → area,字段卫生(dir/锥角清掉,area 专属补上,软化不进面光)
     win.light_combo.setCurrentIndex(1)
     win.l_kind.setCurrentText('area')
     assert win._lights[1]['kind'] == 'area'
     assert 'size' in win._lights[1] and 'innerAngleDeg' not in win._lights[1]
-    # 加/删
+    assert 'softeningRadius' not in win._lights[1]
+    # 加/删 + 唯一 id(审查 P1-8)
     win.light_kind_new.setCurrentText('spot')
     win._add_light()
     assert len(win._lights) == 5 and win._lights[-1]['kind'] == 'spot'
+    new_id = win._lights[-1]['id']
+    assert [l['id'] for l in win._lights].count(new_id) == 1
     win.light_combo.setCurrentIndex(4)
     win._del_light()
     assert len(win._lights) == 4
