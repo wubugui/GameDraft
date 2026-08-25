@@ -26,6 +26,9 @@ class _FakeInp:
         import numpy as np
         self.work = (w, h)
         self.native = (w, h)
+        self.char_wu = 0.4
+        self.ppu = 20.0
+        self.R = np.eye(3, dtype='float32')
         self.bg_srgb = rng.uniform(0.05, 0.9, (h, w, 3)).astype('float32')
         self.depth = rng.uniform(2.0, 8.0, (h, w)).astype('float32')
         self.scene_json = None            # 场景 sky 预设按缺失优雅降级
@@ -49,7 +52,9 @@ def _rich_fake_ctx(h=24, w=32):
            'raw': {'sky_a0': rng.uniform(0, .5, n).astype('float32'),
                    'sky_a1': rng.uniform(-.3, .3, (n, 3)).astype('float32'),
                    'ao_a0': rng.uniform(0, 1, n).astype('float32'),
+                   'ao_a1': rng.uniform(-.3, .3, (n, 3)).astype('float32'),
                    'gi_a0': rng.uniform(0, 2, (n, 3)).astype('float32'),
+                   'gi_a1': rng.uniform(-.2, .2, (n, 3, 3)).astype('float32'),
                    'invalid': rng.random(n) < 0.3}}
     return {
         'sky_spec': {'mode': 'color', 'color': [1, 1, 1], 'intensity': 0.05,
@@ -90,6 +95,18 @@ def test_gui_offscreen_construct_and_render():
         assert img.shape[:2] != (90, 160), f'通道 {key} 落进了占位灰底'
         win._render()
         assert win.view.pixmap() is not None and not win.view.pixmap().isNull()
+    # 角色探针:点视口放置 → final/a0/final_vol 上合成实体口径球,不许炸
+    win.probe_on.setChecked(True)
+    win._probe_px = (w // 2, h // 2)
+    for k in ('final', 'final_vol', 'a0'):
+        win.channel.setCurrentIndex(
+            [win.channel.itemData(i) for i in range(win.channel.count())
+             ].index(k))
+        img = win._channel_img()
+        out = win._overlay_probe(img)
+        assert out.shape == img.shape
+    win.probe_occl.setChecked(True)
+    win._render()
     # 天空往返保真:GUI 不认识的键必须原样活着(往返铁律,审查 [10])
     spec = win._spec()
     assert spec.get('authorNote') == '往返保真探针'

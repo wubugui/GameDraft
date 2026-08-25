@@ -149,6 +149,16 @@ _CHANNELS = [
 ]
 
 
+class _ViewLabel(QLabel):
+    """视口:把鼠标点击回报给宿主(角色探针放置用)。"""
+
+    pressed = Signal(float, float)
+
+    def mousePressEvent(self, ev) -> None:              # noqa: N802 — Qt 命名
+        self.pressed.emit(float(ev.position().x()), float(ev.position().y()))
+        super().mousePressEvent(ev)
+
+
 class Win(QMainWindow):
     progressed = Signal(str, int, int)
 
@@ -158,9 +168,10 @@ class Win(QMainWindow):
         self.sid = sid
         self._threads = int(threads)
         self.setWindowTitle(f'lightbake · {sid}')
-        self.view = QLabel('选场景后自动烘首帧(不冻界面)……')
+        self.view = _ViewLabel('选场景后自动烘首帧(不冻界面)……')
         self.view.setAlignment(Qt.AlignCenter)
         self.view.setMinimumSize(720, 405)
+        self.view.pressed.connect(self._on_view_click)
         self.note = QLabel('')                # 通道级提示(占位原因等)
         self.note.setStyleSheet('color:#997; font-size: 11px;')
         self.status = QLabel('')
@@ -185,6 +196,8 @@ class Win(QMainWindow):
         self.vol_slice = QSlider(Qt.Horizontal)
         self.vol_slice.setRange(0, 100)
         self.vol_slice.setValue(12)
+        self.probe_on = QCheckBox('角色探针(点视口放置,实体口径吃 volume)')
+        self.probe_occl = QCheckBox('§6.3 遮蔽口径(平盘 2·a₀,验收铁令)')
 
         # ---------------- 运行时天空(实时,§6.1 预览) ----------------
         self.preset = QComboBox()
@@ -281,7 +294,8 @@ class Win(QMainWindow):
             side.addWidget(gb)
 
         group('场景', [('打开', self.scene_combo)])
-        group('视口', [('通道', self.channel), ('体切片 y%', self.vol_slice)])
+        group('视口', [('通道', self.channel), ('体切片 y%', self.vol_slice),
+                       (None, self.probe_on), (None, self.probe_occl)])
         group('运行时天空 + 环境(实时,§6.1 预览)', [
             ('预设(初始化器)', self.preset),
             ('intensity', self.rt_inten), ('profile', self.rt_profile),
@@ -385,6 +399,10 @@ class Win(QMainWindow):
                    self.env_gain):
             w_.valueChanged.connect(self._render)
         self.vol_slice.valueChanged.connect(self._render)
+        self.probe_on.stateChanged.connect(self._render)
+        self.probe_occl.stateChanged.connect(self._render)
+        self._probe_px: tuple | None = None
+        self._view_map: tuple | None = None   # (scale, offx, offy, w, h)
         for w_ in (self.spp, self.moment_spp, self.ao_spp, self.vol_spp,
                    self.vol_max_cells, self.denoise_iters, self.work_w):
             w_.valueChanged.connect(self._refresh_cli)
@@ -899,19 +917,82 @@ class Win(QMainWindow):
             return self._vol_slice_img(key)
         return self._placeholder(f'未知通道 {key}')
 
+    def _overlay_probe(self, img: np.ndarray) -> np.ndarray:
+        """把角色探针球合成进视口图(实体口径吃 volume;§6.1/§6.3 镜像)。"""
+        key = self.channel.currentData()
+        if (not self.probe_on.isChecked() or self._probe_px is None
+                or key not in ('final', 'final_vol', 'a0')
+                or not (self.ctx or {}).get('volume')
+                or self.ctx.get('inp') is None):
+            return img
+        inp = self.ctx['inp']
+        h, w = img.shape[:2]
+        ix, iy = self._probe_px
+        ix = int(np.clip(ix, 0, w - 1))
+        iy = int(np.clip(iy, 0, h - 1))
+        ground = inp.world[iy, ix].astype(np.float64)
+        center = ground + np.array([0.0, inp.char_wu / 2.0, 0.0])
+        sample = preview_mod.sample_volume_probe(self.ctx, center)
+        radius_px = max(4, int(round(inp.char_wu / 2.0 * inp.ppu)))
+        occl = self.probe_occl.isChecked() or key == 'a0'
+        rgb, alpha = preview_mod.shade_probe_ball(
+            sample, inp.R, self._runtime_sky_def(), self._runtime_sun(),
+            self.gi.value(), self.ev.value(),
+            [self.env_r.value(), self.env_g.value(), self.env_b.value()],
+            self.env_gain.value(), radius_px, occlusion_only=occl)
+        cy = iy - radius_px                    # 球心 = 脚下抬 char_wu/2
+        y0, y1 = cy - radius_px, cy + radius_px + 1
+        x0, x1 = ix - radius_px, ix + radius_px + 1
+        sy0, sx0 = max(0, -y0), max(0, -x0)
+        y0, x0 = max(0, y0), max(0, x0)
+        y1, x1 = min(h, y1), min(w, x1)
+        if y1 <= y0 or x1 <= x0:
+            return img
+        out = img.copy()
+        a = alpha[sy0:sy0 + (y1 - y0), sx0:sx0 + (x1 - x0), None]
+        out[y0:y1, x0:x1] = (out[y0:y1, x0:x1] * (1 - a)
+                             + rgb[sy0:sy0 + (y1 - y0),
+                                   sx0:sx0 + (x1 - x0)] * a)
+        # §6.3 定量读数:探针体 2a₀ vs 脚下场景 2a₀(值一致 ⇒ 无缝隐没)
+        a0f, _ = self.ctx['moments_smooth']
+        scene_v = float(np.clip(2.0 * a0f[iy, ix], 0, 1))
+        probe_v = float(np.clip(2.0 * sample['sky_a0'], 0, 1))
+        self.note.setText(f'探针@({ix},{iy}) 体 2a₀={probe_v:.3f} vs '
+                          f'场景 2a₀={scene_v:.3f}(|Δ|={abs(probe_v - scene_v):.3f},'
+                          '§6.3 门:中位≤0.03)')
+        return out
+
     def _render(self, *_a) -> None:
         if self.ctx is None or self.result is None:
             return
         try:
             img = self._channel_img()
+            img = self._overlay_probe(img)
         except Exception as exc:                       # noqa: BLE001 — 显示不许炸
             img = self._placeholder(f'渲染失败:{type(exc).__name__}: {exc}')
         u8 = np.ascontiguousarray(
             np.round(np.clip(img, 0, 1) * 255).astype(np.uint8))
         h, w = u8.shape[:2]
         qi = QImage(u8.data, w, h, w * 3, QImage.Format_RGB888)
-        self.view.setPixmap(QPixmap.fromImage(qi).scaled(
-            self.view.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        pm = QPixmap.fromImage(qi).scaled(
+            self.view.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        # 记录 视口→图像 的映射(点击放置探针要反算)
+        s = pm.width() / float(w)
+        offx = (self.view.width() - pm.width()) / 2.0
+        offy = (self.view.height() - pm.height()) / 2.0
+        self._view_map = (s, offx, offy, w, h)
+        self.view.setPixmap(pm)
+
+    def _on_view_click(self, vx: float, vy: float) -> None:
+        if not self.probe_on.isChecked() or self._view_map is None:
+            return
+        s, offx, offy, w, h = self._view_map
+        ix = (vx - offx) / max(s, 1e-9)
+        iy = (vy - offy) / max(s, 1e-9)
+        if not (0 <= ix < w and 0 <= iy < h):
+            return
+        self._probe_px = (int(ix), int(iy))
+        self._render()
 
     def resizeEvent(self, event) -> None:               # noqa: N802 — Qt 命名
         super().resizeEvent(event)

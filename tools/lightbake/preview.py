@@ -105,6 +105,86 @@ def ambient_env(ao: np.ndarray, ambient_rgb, gain: float) -> np.ndarray:
     return (c * np.float32(gain) * mod[..., None]).astype(np.float32)
 
 
+def sample_volume_probe(ctx: dict, pos_world) -> dict:
+    """在任意世界点三线性采一份**实体口径**的体数据(天穹矩/AO矩/GI矩)——
+    与运行时实体采 char_volume 同一插值、同一表示(§6.1:两侧只差
+    G-buffer 怎么填)。"""
+    from .check import _trilinear
+    vol = ctx.get('volume')
+    if not vol:
+        raise ValueError('ctx 无体数据(重烘时勾「含体积数据」)')
+    raw = vol['raw']
+    n = len(raw['sky_a0'])
+    M = np.concatenate([raw['sky_a0'][:, None], raw['sky_a1'],
+                        raw['ao_a0'][:, None], raw['ao_a1'],
+                        raw['gi_a0'], raw['gi_a1'].reshape(n, 9)], 1
+                       ).astype(np.float32)
+    t = _trilinear(M, vol['bounds'], vol['grid'],
+                   np.asarray([pos_world], np.float64))[0]
+    return {'sky_a0': float(t[0]), 'sky_a1': t[1:4].astype(np.float32),
+            'ao_a0': float(t[4]), 'ao_a1': t[5:8].astype(np.float32),
+            'gi_a0': t[8:11].astype(np.float32),
+            'gi_a1': t[11:20].reshape(3, 3).astype(np.float32)}
+
+
+def shade_probe_ball(sample: dict, R: np.ndarray, sky_def: dict, sun_dir,
+                     gi: float, ev: float, env_rgb, env_gain: float,
+                     radius_px: int, albedo: float = 0.5,
+                     occlusion_only: bool = False
+                     ) -> tuple[np.ndarray, np.ndarray]:
+    """探针球 = 实体着色口径的 §6.1 镜像(角色融入度目视):
+
+        E_目标 = gi·E_GI(N) + SkySH(mix(Bdir,N,w))·V(N) + E_环境(AO(N))
+        out    = albedo · E_目标 · 2^ev  → 同一显示变换
+
+    V/Bdir 走库内闭式唯一实现(vis_of_normal/bent_of_moments,来源 =
+    体采样的 (a₀,a₁));GI/AO 矩按 E(N)=a₀+a₁·N 求值。
+    `occlusion_only`(§6.3 验收口径):平盘 2·a₀ —— 与场景 2·a₀ 场同一
+    公式、固定口径,实体必须无缝隐没其中(制作人验收铁令)。
+    返回 (rgb, alpha),alpha 为圆形掩码。"""
+    from .gather import bent_of_moments, vis_of_normal
+    r = int(max(radius_px, 4))
+    yy, xx = np.mgrid[-r:r + 1, -r:r + 1].astype(np.float32) / float(r)
+    mask = (xx ** 2 + yy ** 2) <= 1.0
+    if occlusion_only:
+        val = float(np.clip(2.0 * sample['sky_a0'], 0.0, 1.0))
+        rgb = np.full(mask.shape + (3,), val, np.float32)
+        return rgb, mask.astype(np.float32)
+    nz = np.sqrt(np.maximum(1.0 - xx ** 2 - yy ** 2, 0.0))
+    # 屏幕基 → 世界:屏幕右 = R[:,0],屏幕上 = R[:,1](yy 向下为正取负),
+    # 朝观者 = −R[:,2](q = w@R 的列即三根轴)
+    N = (xx[..., None] * R[:, 0] + (-yy)[..., None] * R[:, 1]
+         + nz[..., None] * (-R[:, 2]))
+    N = (N / np.maximum(np.linalg.norm(N, axis=-1, keepdims=True), 1e-6)
+         ).astype(np.float32)
+    a0g = np.full(mask.shape, sample['sky_a0'], np.float32)
+    a1g = np.broadcast_to(sample['sky_a1'], mask.shape + (3,)).copy()
+    V = vis_of_normal(a0g, a1g, N)
+    bent = bent_of_moments(a1g, N)
+    w = 1.0 - (1.0 - V) ** 2
+    nmix = bent * (1.0 - w[..., None]) + N * w[..., None]
+    nmix = nmix + np.float32(1e-6)
+    nmix = nmix / np.linalg.norm(nmix, axis=-1, keepdims=True)
+    sh = sky_irradiance_sh(dict(sky_def), sun_dir)
+    b = np.asarray(sh_basis(nmix[..., 0].ravel().astype(np.float64),
+                            nmix[..., 1].ravel().astype(np.float64),
+                            nmix[..., 2].ravel().astype(np.float64)))
+    e_sky = (np.maximum(b.T @ sh, 0.0).reshape(mask.shape + (3,))
+             * V[..., None]).astype(np.float32)
+    e_gi = np.maximum(sample['gi_a0'][None, None, :]
+                      + np.einsum('cd,hwd->hwc', sample['gi_a1'], N), 0.0)
+    ao = np.clip(sample['ao_a0']
+                 + np.einsum('d,hwd->hw', sample['ao_a1'], N), 0.0, 1.0)
+    e_env = 0.0
+    if env_gain and env_gain > 0:
+        mod = np.clip(0.28 + 0.72 * ao, 0.0, 1.2)
+        e_env = (np.asarray(env_rgb, np.float32).reshape(1, 1, 3)
+                 * np.float32(env_gain) * mod[..., None])
+    e_t = (np.float32(gi) * e_gi + e_sky + e_env) * np.float32(2.0 ** ev)
+    rgb = linear_to_srgb(from_hdr(np.float32(albedo) * e_t))
+    return rgb, mask.astype(np.float32)
+
+
 def volume_sky_at_surface(ctx: dict) -> tuple[np.ndarray, np.ndarray]:
     """体矩在**表面**三线性重建 (a₀,a₁)(自检 #5 的口径)—— 用它替换逐像素
     矩去着色,就是「角色/实体从体数据受光」的一致性直接可视化。"""
