@@ -251,15 +251,19 @@ def test_gui_lights_editor_roundtrip():
     win._probe_px = (w // 2, h // 2)
     out = win._overlay_probe(win._channel_img())
     assert out.shape == (h, w, 3)
-    # 立绘覆盖:真图集走运行时角色管线(character.py),合成不炸且真动像素
+    # 立绘覆盖:真图集走运行时角色管线 —— 走 **_render 全路径**(二审
+    # P2-4:直调 _overlay_char 的守卫在真实路径上不成立);探针读数走
+    # note2 专线,立绘的 note 不被覆盖
     if win.char_combo.count() > 0:
         win.char_on.setChecked(True)
         win._char_foot = (w // 2, h - 2)
         base_img = win._channel_img()
         out2 = win._overlay_char(base_img)
         assert out2.shape == (h, w, 3)
-        assert '立绘着色失败' not in win.note.text()
         assert float(np.abs(out2 - base_img).max()) > 0.0
+        win._render()
+        assert '立绘着色失败' not in win.note.text()
+        assert '探针@' in win.note2.text()          # 读数在专线上
         win.char_on.setChecked(False)
     # 换型:point → area,字段卫生(dir/锥角清掉,area 专属补上,软化不进面光)
     win.light_combo.setCurrentIndex(1)
@@ -347,6 +351,63 @@ def test_gui_free_drag_probe_and_char():
     win._render()
     win._on_view_click(*v(2, 2))
     assert win._probe_px == (2, 2) and win._drag_target == 'probe'
+    win._on_view_release()
+
+
+def test_gui_char_error_note_not_clobbered(monkeypatch):
+    """二审 P2-4 回归:立绘着色抛异常时,报错必须在 note 上活到帧尾 ——
+    探针读数走 note2,不许当场覆盖。"""
+    pytest.importorskip('PySide6')
+    import os
+    os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+    from tools.lightbake.gui import app as app_mod
+    from tools.lightbake.gui.app import create_window
+    h, w = 24, 32
+    ctx = _rich_fake_ctx(h, w)
+    _app, win = create_window('雾津街头', autobake=False)
+    win.set_ctx(ctx)
+    _settle_lights(_app, win)
+    if win.char_combo.count() == 0:
+        pytest.skip('本机无立绘图集')
+    win.channel.setCurrentIndex(
+        [win.channel.itemData(i) for i in range(win.channel.count())
+         ].index('final'))
+    win.probe_on.setChecked(True)
+    win._probe_px = (w // 2, h // 2)
+    win.char_on.setChecked(True)
+    win._char_foot = (w // 2, h - 2)
+
+    def boom(*_a, **_k):
+        raise RuntimeError('炸给你看')
+
+    monkeypatch.setattr(app_mod.char_mod, 'shade_character', boom)
+    win._render()
+    assert '立绘着色失败' in win.note.text()
+    assert '探针@' in win.note2.text()
+
+
+def test_gui_char_placement_gated_to_final_channels():
+    """二审 P2-5 回归:非 final 系通道下 char_on 不吞点击 —— a0 通道
+    点击照常放探针。"""
+    pytest.importorskip('PySide6')
+    import os
+    os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+    from tools.lightbake.gui.app import create_window
+    h, w = 24, 32
+    ctx = _rich_fake_ctx(h, w)
+    _app, win = create_window('雾津街头', autobake=False)
+    win.set_ctx(ctx)
+    _settle_lights(_app, win)
+    win.channel.setCurrentIndex(
+        [win.channel.itemData(i) for i in range(win.channel.count())
+         ].index('a0'))
+    win.char_on.setChecked(True)
+    win.probe_on.setChecked(True)
+    win._render()
+    s, offx, offy, _w, _h = win._view_map
+    win._on_view_click(3 * s + offx, 3 * s + offy)
+    assert win._char_foot is None                   # 角色没被放
+    assert win._probe_px == (3, 3)                  # 探针照常
     win._on_view_release()
 
 

@@ -5,26 +5,37 @@
 - `src/rendering/lighting/UnifiedCharacterShader.ts` fragment main:
     法线解码 `n = normalize(−(ne.r·2−1), −(ne.g·2−1), −max(ne.b,0.05))`
     (mirror 只翻 x;flatten 向 (0,0,−1) mix 后再归一);
-    q = 脚点 + 高度沿**竖直方向**上抬 − ne.a·bulge(运行时是
-    (0, h·cosT, −h·sinT) —— 即世界 up 在 q 里的方向 R[1,:] 的无 roll 特例,
-    这里用 R[1,:] 全式);天穹/AO/GI 逐像素三线性(ucSkyAt,按**角色自己的
-    法线**求值);太阳与灯 = 与场景**同一份**打包、同一批 lc*、角色口径
-    march(灯 16 步 / 太阳 48 步,thick 窗);形体 AO(contact/form);
-    显示变换走预览统一链(from_hdr·2^ev,与 compose_final 同)。
+    q = 脚点 + **屏幕 Δy/(cosT·ppu)** 沿世界 up(R[1,:])上抬 − ne.a·bulge
+    (二审 P0-1:此前少除 cosT,θ=32° 的场景整个矮 15%);
+    天穹/AO/GI 逐像素三线性(ucSkyAt)—— **AO 与 GI 逐角点 max(a0+a1·N,0)
+    后再插值**,只有天穹通道是系数插值后再求值(二审 P1-2:次序反了会让
+    背光侧 GI 被邻角正值抵消);太阳与灯 = 与场景**同一份**打包、同一批
+    lc*、角色口径 march(灯 16 步 / 太阳 48 步,thick 窗);
+    `if (color.a < 0.03) discard` 同阈;形体 AO(contact/form);
+    显示走预览统一链(from_hdr·2^ev,与 compose_final 同)。
 - `src/rendering/lighting/shadeCore3.glsl`:
-    sc3CharBase:`alb = srgb→linear(图集/α) / max((1+N.y)/2·refIntensity,1e-4)`
-    (「基底不是 albedo」—— 比例式提出来的中间因子);
-    sc3SkyIrradiance / sc3AmbientTerm / sc3Shade(base·(skyE+ambE+directE+gi));
-    角色侧 V(N) = clamp(t₀/cap₀, 0, 1),t₀ = max(a₀+a₁·N, 0),
-    cap₀ = max((1+N.y)/2, 1/255) —— 与 gather.vis_of_normal 同口径。
-- charGi 缺省**跟随场景 gi**(不是恒 1;运行时注释:两个旋钮各管一边是坑);
-  flatten 缺省 0、bulge 缺省 0.22(characterShape);
-  charRefIntensity 来自场景 lighting.charRefIntensity。
+    sc3CharBase:`alb = srgb→linear(直通图集) / max((1+N.y)/2·refIntensity,1e-4)`;
+    sc3SkyIrradiance / sc3AmbientTerm(入参 ao **不设上界**,1.2 天花板在
+    环境项里)/ sc3Shade(base·(skyE+directE+gi));角色侧
+    V(N) = clip(t₀/cap₀),cap₀ = max((1+N.y)/2, 1/255)。
+- 图集 α 口径(二审 P0-2 验尸):浏览器对**彩色图集**在解码期预乘
+  (AssetManager 默认路径),shader 里 `/max(a,1e-4)` 是**还原**直通值;
+  PIL 读到的本来就是直通 α ⇒ 这里**不再除 α**。双线性采样 GPU 在
+  **预乘域**做 ⇒ 彩色缩放先乘 α、缩后除回;法线图集运行时走
+  premultiplied-alpha 模式保原字节 ⇒ 直通缩放。全程 float(PIL 'F')。
+- 尺寸:高 = worldHeight、宽 = **worldWidth**(SpriteEntity 两轴独立系数,
+  二审 P1-1:用格子长宽比 player 会宽 8.65%);`scale_mul` 对应运行时的
+  depthScaleFactor(预览不知深度缩放曲线,给旋钮)。
+- charGi 缺省跟随场景 gi;flatten 0 / bulge 0.22;charRefIntensity 来自
+  场景 lighting.charRefIntensity。
 
-图集来源:`public/resources/runtime/animation/<name>/`(atlas.png +
-atlas.normal.png + anim.json 的 cols/rows/cellWidth/cellHeight/worldHeight/
-states)。烘焙侧 GI 直接吃 ctx['volume'] 的浮点原值,无对数编解码
-(uGiScale/uGiLogSpan 是 8-bit 载荷那条路的事)。
+已知与运行时的**残余差**(有意保留,二审登记):
+- 体数据吃 ctx['volume'] 浮点原值,绕过 8-bit 载荷的对数量化与 ±2a0 截断
+  (uGiScale/uGiLogSpan 那条路)—— 预览比真机"更准"一档,P7 接线后若要
+  逐位对账需补编解码回环;
+- 无雾项(场景侧 compose_final 同样无雾,两侧对称;fog.sigma>0 的场景
+  预览整体与真机差一层雾);
+- 无 depthScaleFactor 曲线(scale_mul 手动)。
 """
 from __future__ import annotations
 
@@ -53,9 +64,10 @@ __all__ = ['list_characters', 'load_character', 'shade_character']
 class CharSprite:
     name: str
     frame: int
-    rgba: np.ndarray        # (h,w,4) float32 0..1,单帧
+    rgba: np.ndarray        # (h,w,4) float32 0..1,单帧,直通 α
     nrm: np.ndarray         # (h,w,4) float32 0..1,与 color 逐 texel 对齐
     world_h_wu: float       # anim.json worldHeight(玩家 = 150,尺度锚)
+    world_w_wu: float       # anim.json worldWidth(两轴独立,非格子长宽比)
     states: dict
 
 
@@ -72,6 +84,13 @@ def list_characters() -> list[str]:
     return out
 
 
+def state_first_frame(states: dict, state: str) -> int | None:
+    v = states.get(state)
+    frames = (v.get('frames') if isinstance(v, dict) else v) \
+        if v is not None else None
+    return int(frames[0]) if frames else None
+
+
 def load_character(name: str, frame: int | None = None) -> CharSprite:
     """装一帧立绘(缺省 = idle 首帧;无 idle 取第 0 帧)。"""
     d = ANIM_ROOT / name
@@ -80,10 +99,7 @@ def load_character(name: str, frame: int | None = None) -> CharSprite:
     cw, ch = int(a['cellWidth']), int(a['cellHeight'])
     states = a.get('states') or {}
     if frame is None:
-        idle = states.get('idle')
-        frames = (idle.get('frames') if isinstance(idle, dict) else idle) \
-            if idle is not None else None
-        frame = int(frames[0]) if frames else 0
+        frame = state_first_frame(states, 'idle') or 0
     col, row = frame % cols, frame // cols
     if row >= rows:
         raise ValueError(f'{name}: 帧 {frame} 超出网格 {cols}x{rows}')
@@ -92,24 +108,67 @@ def load_character(name: str, frame: int | None = None) -> CharSprite:
         img = np.asarray(Image.open(p).convert('RGBA'), np.float32) / 255.0
         return img[row * ch:(row + 1) * ch, col * cw:(col + 1) * cw]
 
+    world_h = float(a.get('worldHeight') or 150.0)
+    world_w = float(a.get('worldWidth') or (world_h * cw / ch))
     return CharSprite(name=name, frame=frame,
                       rgba=cut(d / 'atlas.png'),
                       nrm=cut(d / 'atlas.normal.png'),
-                      world_h_wu=float(a.get('worldHeight') or 150.0),
+                      world_h_wu=world_h, world_w_wu=world_w,
                       states=states)
 
 
-def _resize_rgba(img: np.ndarray, w: int, h: int) -> np.ndarray:
-    """直通(非预乘)双线性缩放 —— 与 GPU 采样口径一致。
-    ⚠ 不许整张按 RGBA 交给 PIL:PIL ≥12 对 RGBA resize **预乘 α**,
-    α=0 的纹素 RGB 被抹零 —— 法线图集(α 是 bulge 高度,常为 0)会被
-    整张解码成 normalize(1,1,−0.05),色图边缘也会出预乘 halo(实测)。"""
-    u8 = np.round(np.clip(img, 0, 1) * 255).astype('uint8')
-    rgb = np.asarray(Image.fromarray(u8[..., :3], 'RGB')
-                     .resize((w, h), Image.BILINEAR), np.float32) / 255.0
-    a = np.asarray(Image.fromarray(u8[..., 3], 'L')
-                   .resize((w, h), Image.BILINEAR), np.float32) / 255.0
-    return np.dstack([rgb, a])
+def _resize_channel(ch2d: np.ndarray, w: int, h: int) -> np.ndarray:
+    return np.asarray(Image.fromarray(np.ascontiguousarray(ch2d, np.float32),
+                                      'F').resize((w, h), Image.BILINEAR),
+                      np.float32)
+
+
+def _resize_rgba(img: np.ndarray, w: int, h: int,
+                 premultiplied: bool) -> np.ndarray:
+    """双线性缩放,α 口径按运行时采样域(二审 P0-2):
+    - `premultiplied=True`(彩色图集):GPU 解码期预乘 ⇒ 双线性在**预乘域**
+      做,缩后除回直通 —— 否则透明邻域的 RGB 会渗进轮廓;
+    - `premultiplied=False`(法线图集,premultiplied-alpha 模式保原字节):
+      直通逐通道缩放。⚠ 不许整张 RGBA 交给 PIL:PIL≥12 对 RGBA resize
+      自作主张预乘 α,法线图集(α=bulge 高度,常为 0)整张被抹零。
+    全程 float('F' 模式),无 uint8 往返。"""
+    a = _resize_channel(img[..., 3], w, h)
+    if premultiplied:
+        rgb = np.stack([_resize_channel(img[..., i] * img[..., 3], w, h)
+                        for i in range(3)], -1)
+        rgb = rgb / np.maximum(a[..., None], 1e-4)
+    else:
+        rgb = np.stack([_resize_channel(img[..., i], w, h)
+                        for i in range(3)], -1)
+    return np.dstack([np.clip(rgb, 0.0, 1.0), a])
+
+
+def _grid_corners(vol: dict, P: np.ndarray):
+    """体网格三线性的角点索引与权重(布局与 check._trilinear 同:
+    flat = (ix·ny + iy)·nz + iz,C-order (nx,ny,nz))。"""
+    g, bnd = vol['grid'], vol['bounds']
+    nx, ny_, nz = int(g['nx']), int(g['ny']), int(g['nz'])
+    lo = np.array([bnd['x0'], bnd['y0'], bnd['z0']], np.float64)
+    hi = np.array([bnd['x1'], bnd['y1'], bnd['z1']], np.float64)
+    t = np.clip((P - lo) / np.maximum(hi - lo, 1e-9), 0.0, 1.0) \
+        * (np.array([nx, ny_, nz]) - 1)
+    i0 = np.clip(np.floor(t).astype(np.int64), 0,
+                 np.array([nx - 1, ny_ - 1, nz - 1]))
+    fr = (t - i0).astype(np.float32)
+    i1 = np.minimum(i0 + 1, np.array([nx - 1, ny_ - 1, nz - 1]))
+    corners, weights = [], []
+    for dx in (0, 1):
+        wx = (1 - fr[:, 0]) if dx == 0 else fr[:, 0]
+        ix = i0[:, 0] if dx == 0 else i1[:, 0]
+        for dy in (0, 1):
+            wy = (1 - fr[:, 1]) if dy == 0 else fr[:, 1]
+            iy = i0[:, 1] if dy == 0 else i1[:, 1]
+            for dz in (0, 1):
+                wz = (1 - fr[:, 2]) if dz == 0 else fr[:, 2]
+                iz = i0[:, 2] if dz == 0 else i1[:, 2]
+                corners.append((ix * ny_ + iy) * nz + iz)
+                weights.append(wx * wy * wz)
+    return corners, weights
 
 
 def shade_character(ctx: dict, sprite: CharSprite, foot_world,
@@ -120,40 +179,42 @@ def shade_character(ctx: dict, sprite: CharSprite, foot_world,
                     char_ref_intensity: float = 1.0,
                     flatten: float = 0.0, bulge: float = 0.22,
                     ao_contact: float = 0.0, ao_form: float = 0.0,
-                    mirror: bool = False,
+                    mirror: bool = False, scale_mul: float = 1.0,
                     notes: list | None = None
                     ) -> tuple[np.ndarray, np.ndarray]:
     """把一帧立绘按运行时角色管线着色,返回 (显示域 sRGB rgb, alpha),
-    分辨率 = 该角色在画面上的实际显示大小(worldHeight → q → ×ppu)。
+    分辨率 = 该角色在画面上的实际显示大小(world 尺寸·scale_mul → q → ×ppu)。
 
     E_目标逐像素 = skyE(体天穹×自己法线) + ambientE(体AO) + giE·charGi
                    + sunE + lampE(与场景同一份灯、角色口径 march)
     out = sc3CharBase(图集) · E_目标 → 形体AO → from_hdr·2^ev(预览统一链)。
-    `char_gi` None ⇒ 跟随 gi(运行时缺省口径);`sun_dir`/`sky_def` 是预览的
-    运行时天空面板(与场景侧同一份)。"""
-    from .check import _trilinear
+    `char_gi` None ⇒ 跟随 gi(运行时缺省口径);`scale_mul` 对应运行时的
+    depthScaleFactor(透视缩放,预览手动)。α<0.03 的像素按运行时 discard
+    口径丢弃(alpha 归零)。"""
     inp = ctx['inp']
     vol = ctx.get('volume')
     if not vol:
         raise ValueError('立绘着色需要体数据(重烘勾「含体积数据」)')
     if char_gi is None:
         char_gi = gi                     # uCharGi = def.charGi ?? def.gi
-    qu_h = sprite.world_h_wu / float(inp.scene_per_wu)   # 角色高(q 单位)
+    spw = float(inp.scene_per_wu)
+    qu_h = sprite.world_h_wu * float(scale_mul) / spw    # 角色高(q)
+    qu_w = sprite.world_w_wu * float(scale_mul) / spw    # 角色宽(q,独立轴)
     out_h = max(12, int(round(qu_h * inp.ppu)))
-    out_w = max(6, int(round(out_h * sprite.rgba.shape[1]
-                             / sprite.rgba.shape[0])))
-    rgba = _resize_rgba(sprite.rgba, out_w, out_h)
-    nrm = _resize_rgba(sprite.nrm, out_w, out_h)
+    out_w = max(6, int(round(qu_w * inp.ppu)))
+    rgba = _resize_rgba(sprite.rgba, out_w, out_h, premultiplied=True)
+    nrm = _resize_rgba(sprite.nrm, out_w, out_h, premultiplied=False)
     if mirror:
         rgba = rgba[:, ::-1]
         nrm = nrm[:, ::-1]
     alpha = rgba[..., 3]
-    live = alpha > 1e-3
+    live = alpha >= 0.03                 # 运行时 `if (color.a < 0.03) discard`
+    alpha_out = np.where(live, alpha, 0.0).astype(np.float32)
     idx = np.nonzero(live.ravel())[0]
     h, w = out_h, out_w
     rgb_out = np.zeros((h, w, 3), np.float32)
     if idx.size == 0:
-        return rgb_out, alpha.astype(np.float32)
+        return rgb_out, alpha_out
 
     # ---- 法线解码(shader 逐字;mirror 只翻方向分量) ----
     ne = nrm.reshape(-1, 4)[idx]
@@ -166,31 +227,44 @@ def shade_character(ctx: dict, sprite: CharSprite, foot_world,
         n = n * (1.0 - flatten) + np.array([0.0, 0.0, -1.0]) * flatten
         n /= np.maximum(np.linalg.norm(n, axis=-1, keepdims=True), 1e-9)
 
-    # ---- 逐像素 q / P:脚点 + 高度沿世界 up(R[1,:] 即 (0,cosT,−sinT) 的
-    #      全式)上抬,横向沿 q 的 x̂(运行时 qx 直接按像素算),z 再减
-    #      ne.a·bulge(伪 3d 鼓包) ----
+    # ---- 逐像素 q / P ----
+    # 运行时:h_世界 = 屏幕 Δy / (cosT·ppu)(二审 P0-1:少除 cosT 会矮 15%),
+    # 竖直方向 = 世界 up 过 R(R[1,:] 即 (0,cosT,−sinT) 的全式);
+    # 横向沿 q x̂ 按输出列(锚 = 底边中点,列 w//2 对齐脚点像素)。
     Rm = np.asarray(inp.R, np.float64)
+    cos_t = max(float(Rm[1, 1]), 1e-6)
     q_f = np.asarray(foot_world, np.float64) @ Rm
     rr, cc = np.divmod(idx, w)
-    hy = (h - 1 - rr) / max(h - 1, 1) * qu_h
-    up_q = Rm[1, :]                       # 世界 up 在 q 中的方向(行向量约定)
+    hy = (h - 1 - rr).astype(np.float64) / (cos_t * float(inp.ppu))
+    up_q = Rm[1, :]
     q_pix = (q_f[None, :] + hy[:, None] * up_q[None, :])
-    q_pix[:, 0] += (cc - (w - 1) / 2.0) / float(inp.ppu)
+    q_pix[:, 0] += (cc - w // 2) / float(inp.ppu)
     q_pix[:, 2] -= ne[:, 3] * float(bulge)
     P = q_pix @ Rm.T                      # q→世界(R 正交)
 
-    # ---- 体数据逐像素三线性(ucSkyAt:天穹 SH-L1 / AO / GI,吃自己的法线) ----
+    # ---- 体数据逐像素三线性(ucSkyAt 口径,二审 P1-2) ----
+    # 天穹:**系数插值后**求值(运行时唯一这么做的通道);
+    # AO/GI:**逐角点** max(a0+a1·N,0) 后再按权重插值。
     raw = vol['raw']
-    nvox = len(raw['sky_a0'])
-    M = np.concatenate([raw['sky_a0'][:, None], raw['sky_a1'],
-                        raw['ao_a0'][:, None], raw['ao_a1'],
-                        raw['gi_a0'], raw['gi_a1'].reshape(nvox, 9)], 1
-                       ).astype(np.float32)
-    t = _trilinear(M, vol['bounds'], vol['grid'], P)
-    t0 = np.maximum(t[:, 0] + np.einsum('nd,nd->n', t[:, 1:4], n), 0.0)
+    corners, weights = _grid_corners(vol, P)
+    sky_c = np.zeros((idx.size, 4), np.float32)
+    ao = np.zeros(idx.size, np.float32)
+    gi_e = np.zeros((idx.size, 3), np.float32)
+    ao_a0, ao_a1 = raw['ao_a0'], raw['ao_a1']
+    gi_a0, gi_a1 = raw['gi_a0'], raw['gi_a1']
+    sky_a0, sky_a1 = raw['sky_a0'], raw['sky_a1']
+    for ci, wi in zip(corners, weights):
+        sky_c[:, 0] += wi * sky_a0[ci]
+        sky_c[:, 1:] += wi[:, None] * sky_a1[ci]
+        ao += wi * np.maximum(ao_a0[ci]
+                              + np.einsum('nd,nd->n', ao_a1[ci], n), 0.0)
+        gi_e += wi[:, None] * np.maximum(
+            gi_a0[ci] + np.einsum('ncd,nd->nc', gi_a1[ci], n), 0.0)
+    t0 = np.maximum(sky_c[:, 0]
+                    + np.einsum('nd,nd->n', sky_c[:, 1:], n), 0.0)
     cap0 = np.maximum((1.0 + n[:, 1]) * 0.5, 1.0 / 255.0)
     V = np.clip(t0 / cap0, 0.0, 1.0)
-    bent = t[:, 1:4] + 1e-6
+    bent = sky_c[:, 1:] + 1e-6
     bent /= np.maximum(np.linalg.norm(bent, axis=-1, keepdims=True), 1e-12)
     wgt = 1.0 - (1.0 - V) ** 2
     nmix = bent * (1.0 - wgt[:, None]) + n * wgt[:, None] + 1e-6
@@ -200,17 +274,16 @@ def shade_character(ctx: dict, sprite: CharSprite, foot_world,
                             nmix[:, 1].astype(np.float64),
                             nmix[:, 2].astype(np.float64)))
     sky_e = np.maximum(b.T @ sh, 0.0) * V[:, None]
-    ao = np.clip(t[:, 4] + np.einsum('nd,nd->n', t[:, 5:8], n), 0.0, 1.0)
+    # ⚠ ao 只有下钳(sc3SHTransfer 的 max0);1.2 天花板在环境项里,
+    #   入参预先压到 ≤1 会让开阔地那 20% 永远够不到(二审 P2-1)
     amb_e = (np.asarray(env_rgb, np.float32)[None, :] * float(env_gain)
              * np.clip(0.28 + 0.72 * ao, 0.0, 1.2)[:, None])
-    gi_e = np.maximum(t[:, 8:11] + np.einsum('ncd,nd->nc',
-                                             t[:, 11:20].reshape(-1, 3, 3), n),
-                      0.0) * np.float32(char_gi)
+    gi_e = gi_e * np.float32(char_gi)
 
     # ---- 太阳 + 灯(与场景同一份数据、同一批 lc*、角色口径 march) ----
     direct_e = np.zeros((idx.size, 3), np.float32)
     lights = lights or []
-    qu = 1.0 / float(inp.scene_per_wu)
+    qu = 1.0 / spw
     sb = getattr(inp, 'shadow_bias', None) or (DEFAULT_SHADOW_BIAS_WU,
                                                DEFAULT_SHADOW_THICKNESS_WU)
     bias0_q, thick_q = float(sb[0]) * qu, float(sb[1]) * qu
@@ -244,9 +317,11 @@ def shade_character(ctx: dict, sprite: CharSprite, foot_world,
             direct_e += contrib.reshape(-1, 3)
 
     # ---- 比例基底 + sc3Shade + 形体 AO + 预览显示链 ----
+    # ⚠ 直通图集**不再除 α**(二审 P0-2:运行时 shader 的 /max(a,1e-4) 是
+    #   在还原浏览器解码期的预乘;PIL 读到的本来就是直通值,再除 = 边缘
+    #   1.8× 亮边 —— player 图集 15.4% 可见像素是部分 α)
     col_rgb = rgba.reshape(-1, 4)[idx]
-    alb = srgb_to_linear(col_rgb[:, :3]
-                         / np.maximum(col_rgb[:, 3:4], 1e-4))
+    alb = srgb_to_linear(col_rgb[:, :3])
     e_ref = np.maximum((1.0 + n[:, 1]) * 0.5 * float(char_ref_intensity),
                        1e-4)
     alb = alb / e_ref[:, None]
@@ -259,4 +334,4 @@ def shade_character(ctx: dict, sprite: CharSprite, foot_world,
     out = linear_to_srgb(from_hdr(np.float32(lin)
                                   * np.float32(2.0 ** ev)))
     rgb_out.reshape(-1, 3)[idx] = out
-    return rgb_out, alpha.astype(np.float32)
+    return rgb_out, alpha_out

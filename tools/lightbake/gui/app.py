@@ -189,8 +189,11 @@ class Win(QMainWindow):
         self.view.pressed.connect(self._on_view_click)
         self.view.dragged.connect(self._on_view_drag)
         self.view.released.connect(self._on_view_release)
-        self.note = QLabel('')                # 通道级提示(占位原因等)
+        self.note = QLabel('')                # 通道级提示(占位原因/立绘告警)
         self.note.setStyleSheet('color:#997; font-size: 11px;')
+        self.note2 = QLabel('')               # 探针读数专线(二审 P2-4:
+        self.note2.setStyleSheet(            # 不许把立绘报错当场覆盖掉)
+            'color:#799; font-size: 11px;')
         self.status = QLabel('')
         self.status.setWordWrap(True)
         self.pbar = QProgressBar()
@@ -312,6 +315,9 @@ class Win(QMainWindow):
         self.c_gi_follow.setChecked(True)
         self.c_gi = self._dspin(1.0, step=0.05, hi=4.0)
         self.c_ref = self._dspin(1.0, step=0.02, hi=8.0, decimals=4)
+        self.c_dsf = self._dspin(1.0, step=0.1, lo=0.1, hi=4.0)
+        self.c_state = QComboBox()
+        self.c_frame = self._ispin(0, 0, 4096)
 
         # ---------------- 烘焙期天空组(重估级) ----------------
         self.mode = QComboBox()
@@ -420,7 +426,9 @@ class Win(QMainWindow):
             ('flatten', self.c_flatten), ('bulge', self.c_bulge),
             ('形体AO contact', self.c_aoc), ('形体AO form', self.c_aof),
             (None, self.c_gi_follow), ('charGi(不跟随时)', self.c_gi),
-            ('charRefIntensity', self.c_ref)])
+            ('charRefIntensity', self.c_ref),
+            ('透视缩放 dsf', self.c_dsf),
+            ('状态', self.c_state), ('帧', self.c_frame)])
         group('烘焙期天空(重估级,喂 gather 的那份)', [
             ('模式', self.mode), ('R', self.r), ('G', self.g), ('B', self.b),
             ('强度', self.inten), (None, pick), (None, self.sky_file)])
@@ -458,6 +466,7 @@ class Win(QMainWindow):
         view_col = QVBoxLayout()
         view_col.addWidget(self.view, 1)
         view_col.addWidget(self.note)
+        view_col.addWidget(self.note2)
         view_col.addWidget(self.pbar)
         view_col.addWidget(self.status)
         vc = QWidget()
@@ -526,10 +535,13 @@ class Win(QMainWindow):
         self.c_mirror.stateChanged.connect(self._render)
         self.c_gi_follow.stateChanged.connect(self._render)
         for w_ in (self.c_flatten, self.c_bulge, self.c_aoc, self.c_aof,
-                   self.c_gi, self.c_ref):
+                   self.c_gi, self.c_ref, self.c_dsf):
             w_.valueChanged.connect(self._render)
+        self.c_state.currentTextChanged.connect(self._on_char_state_changed)
+        self.c_frame.valueChanged.connect(self._on_char_frame_changed)
         self._char_foot: tuple | None = None
         self._char_sprite = None
+        self._populate_char_states()
         # 自由移动:按在球/角色身上直接拖(命中矩形每帧由 overlay 回填)
         self._drag_target: str | None = None     # 'probe' | 'char'
         self._drag_off: tuple = (0, 0)
@@ -1127,8 +1139,9 @@ class Win(QMainWindow):
         try:
             sc = json.loads(ctx['inp'].scene_json.read_text(encoding='utf-8'))
             lt = sc.get('lighting') or {}
+            cri = lt.get('charRefIntensity')       # ?? 语义:0 是合法值
             with QSignalBlocker(self.c_ref):
-                self.c_ref.setValue(float(lt.get('charRefIntensity') or 1.0))
+                self.c_ref.setValue(1.0 if cri is None else float(cri))
             cg = lt.get('charGi')
             with QSignalBlocker(self.c_gi_follow), QSignalBlocker(self.c_gi):
                 self.c_gi_follow.setChecked(cg is None)
@@ -1384,7 +1397,50 @@ class Win(QMainWindow):
             return self._vol_slice_img(key)
         return self._placeholder(f'未知通道 {key}')
 
+    def _populate_char_states(self) -> None:
+        """按选中立绘填状态/帧(anim.json 的 states;数据读取,零算法)。"""
+        name = self.char_combo.currentText()
+        states: dict = {}
+        if name:
+            try:
+                a = json.loads((char_mod.ANIM_ROOT / name / 'anim.json'
+                                ).read_text(encoding='utf-8'))
+                states = a.get('states') or {}
+            except Exception:                       # noqa: BLE001 — 缺档降级
+                pass
+        with QSignalBlocker(self.c_state), QSignalBlocker(self.c_frame):
+            self.c_state.clear()
+            for k in states:
+                self.c_state.addItem(k)
+            pick = 'idle' if 'idle' in states else \
+                (next(iter(states)) if states else '')
+            if pick:
+                self.c_state.setCurrentText(pick)
+                self.c_frame.setValue(
+                    char_mod.state_first_frame(states, pick) or 0)
+
     def _on_char_changed(self, _t: str) -> None:
+        self._char_sprite = None
+        self._populate_char_states()
+        self._render()
+
+    def _on_char_state_changed(self, state: str) -> None:
+        name = self.char_combo.currentText()
+        if not name or not state:
+            return
+        try:
+            a = json.loads((char_mod.ANIM_ROOT / name / 'anim.json'
+                            ).read_text(encoding='utf-8'))
+            f = char_mod.state_first_frame(a.get('states') or {}, state)
+        except Exception:                           # noqa: BLE001
+            f = None
+        if f is not None:
+            with QSignalBlocker(self.c_frame):
+                self.c_frame.setValue(f)
+        self._char_sprite = None
+        self._render()
+
+    def _on_char_frame_changed(self, _v: int) -> None:
         self._char_sprite = None
         self._render()
 
@@ -1404,10 +1460,11 @@ class Win(QMainWindow):
         ix, iy = self._char_foot
         ix = int(np.clip(ix, 0, w - 1))
         iy = int(np.clip(iy, 0, h - 1))
+        ch_notes: list = []
         try:
             if self._char_sprite is None:
                 self._char_sprite = char_mod.load_character(
-                    self.char_combo.currentText())
+                    self.char_combo.currentText(), self.c_frame.value())
             crgb, ca = char_mod.shade_character(
                 self.ctx, self._char_sprite,
                 inp.world[iy, ix].astype(np.float64),
@@ -1422,13 +1479,20 @@ class Win(QMainWindow):
                 char_ref_intensity=self.c_ref.value(),
                 flatten=self.c_flatten.value(), bulge=self.c_bulge.value(),
                 ao_contact=self.c_aoc.value(), ao_form=self.c_aof.value(),
-                mirror=self.c_mirror.isChecked())
+                mirror=self.c_mirror.isChecked(),
+                scale_mul=self.c_dsf.value(), notes=ch_notes)
         except Exception as exc:                    # noqa: BLE001 — 显示不许炸
             self.note.setText(f'立绘着色失败:{type(exc).__name__}: {exc}')
             return img
+        # 立绘侧告警出声(24 盏截断/未知 kind/脚点疑似墙面,二审 P2-2/P2-8)
+        if abs(float(self.ctx['normal'][iy, ix][1])) < 0.5:
+            ch_notes.insert(0, '脚点疑似墙面(运行时脚深取行走面 ground 场,'
+                               '这里取的是该像素表面)')
+        if ch_notes:
+            self.note.setText('立绘: ' + ';'.join(ch_notes))
         ch, cw = crgb.shape[:2]
-        y1, x0 = iy, ix - cw // 2                   # 脚点 = 底边中点
-        y0 = y1 - ch
+        y1, x0 = iy + 1, ix - cw // 2               # 脚点 = 底边中点,
+        y0 = y1 - ch                                # 底行画在脚点行本身
         sy0, sx0 = max(0, -y0), max(0, -x0)
         y0, x0 = max(0, y0), max(0, x0)
         y2, x2 = min(h, y1), min(w, x0 + (cw - sx0))
@@ -1490,9 +1554,9 @@ class Win(QMainWindow):
         a0f, _ = self.ctx['moments_smooth']
         scene_v = float(np.clip(2.0 * a0f[iy, ix], 0, 1))
         probe_v = float(np.clip(2.0 * sample['sky_a0'], 0, 1))
-        self.note.setText(f'探针@({ix},{iy}) 体 2a₀={probe_v:.3f} vs '
-                          f'场景 2a₀={scene_v:.3f}(|Δ|={abs(probe_v - scene_v):.3f},'
-                          '§6.3 门:中位≤0.03)')
+        self.note2.setText(f'探针@({ix},{iy}) 体 2a₀={probe_v:.3f} vs '
+                           f'场景 2a₀={scene_v:.3f}(|Δ|={abs(probe_v - scene_v):.3f},'
+                           '§6.3 门:中位≤0.03)')
         return out
 
     def _render(self, *_a) -> None:
@@ -1566,7 +1630,10 @@ class Win(QMainWindow):
                 self._load_light_fields()
                 self._lights_dirty()
                 return
-        if self.char_on.isChecked():
+        if self.char_on.isChecked() and \
+                self.channel.currentData() in ('final', 'final_vol'):
+            # 二审 P2-5:立绘只在 final 系通道有画面 —— 其它通道下这勾
+            # 不该把探针放置饿死(a0 通道本来支持探针)
             self._char_foot = (ix, iy)
             self._drag_target = 'char'
             self._drag_off = (0, 0)
