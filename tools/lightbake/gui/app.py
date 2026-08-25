@@ -25,9 +25,19 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import sys
 from functools import partial
 from pathlib import Path
+
+#: 输入链路调试(制作人实机「点了没反应」二连,离屏 QTest 却通 ——
+#: 打开后每次鼠标事件与分支走向都进控制台,拿实锤别猜)
+_DEBUG_INPUT = bool(os.environ.get('LIGHTBAKE_DEBUG_INPUT'))
+
+
+def _dbg(msg: str) -> None:
+    if _DEBUG_INPUT:
+        print(f'[input] {msg}', flush=True)
 
 import numpy as np
 
@@ -169,6 +179,8 @@ class _ViewLabel(QLabel):
 
     def mousePressEvent(self, ev) -> None:              # noqa: N802 — Qt 命名
         p = ev.position()
+        _dbg(f'label press btn={ev.button()} at=({p.x():.0f},{p.y():.0f}) '
+             f'size={self.width()}x{self.height()}')
         if ev.button() == Qt.LeftButton:
             self.pressed.emit(float(p.x()), float(p.y()))
         elif ev.button() in (Qt.MiddleButton, Qt.RightButton):
@@ -382,7 +394,9 @@ class Win(QMainWindow):
         self.nee_on = QCheckBox('NEE+MIS 光源采样')
         self.nee_on.setChecked(True)
         self.clamp = self._dspin(0.0, step=0.5, hi=1e6)          # 0 = 关
-        self.with_volume = QCheckBox('含体积数据(预览重烘也算体)')
+        self.with_volume = QCheckBox('含体积数据(预览重烘也算体;'
+                                     '探针/立绘依赖它)')
+        self.with_volume.setChecked(True)
         self.work_w = self._ispin(WORK_W, 128, 4096)
         self.no_gi = QCheckBox('不烘体 GI(--no-gi)')
         self.heavy_on = QCheckBox('全量 bake 跑重档自检(#8 双烘逐位,加倍耗时)')
@@ -1071,9 +1085,11 @@ class Win(QMainWindow):
 
     # ---------------- 数据流 ----------------
     def _initial_bake(self) -> None:
-        self._start_bake(use_panel=False, with_volume=False,
+        # ⚠ 首帧必须带体积:探针球/立绘吃 char_volume,没有它 overlay 画
+        #   不出来 —— 制作人三轮「点了没反应」的根因(输入链一直是通的)
+        self._start_bake(use_panel=False, with_volume=True,
                          label=f'打开场景 {self.sid}(按场景 bakeParams 决议'
-                               '烘首帧)……')
+                               '烘首帧,含体积)……')
 
     def _on_scene_changed(self, sid: str) -> None:
         if not sid or sid == self.sid:
@@ -1099,10 +1115,10 @@ class Win(QMainWindow):
         self._zoom = 1.0                          # 换场景复位视图
         self._view_center = None
         self._pm_full = None
-        self.view.setText(f'打开 {sid},烘首帧……')
+        self.view.setText(f'打开 {sid},烘首帧(含体积)……')
         self._refresh_cli()
-        self._start_bake(use_panel=False, with_volume=False,
-                         label=f'打开场景 {sid}……')
+        self._start_bake(use_panel=False, with_volume=True,
+                         label=f'打开场景 {sid}(含体积)……')
 
     def _preview_rebake(self) -> None:
         self._start_bake(use_panel=True,
@@ -1493,10 +1509,13 @@ class Win(QMainWindow):
         key = self.channel.currentData()
         if (not self.char_on.isChecked() or self._char_foot is None
                 or key not in ('final', 'final_vol')
-                or not (self.ctx or {}).get('volume')
                 or self.ctx.get('inp') is None
                 or float(getattr(self.ctx['inp'], 'scene_per_wu', 0) or 0) <= 0
                 or not self.char_combo.currentText()):
+            return img
+        if not (self.ctx or {}).get('volume'):
+            self.note.setText('立绘需要**体积数据** —— 这份 ctx 没有:'
+                              '点「重烘场景侧」(「含体积数据」已默认勾上)')
             return img
         inp = self.ctx['inp']
         h, w = img.shape[:2]
@@ -1554,8 +1573,12 @@ class Win(QMainWindow):
         key = self.channel.currentData()
         if (not self.probe_on.isChecked() or self._probe_px is None
                 or key not in ('final', 'final_vol', 'a0')
-                or not (self.ctx or {}).get('volume')
                 or self.ctx.get('inp') is None):
+            return img
+        if not (self.ctx or {}).get('volume'):
+            # 静默跳过 = 制作人眼里的「点了没反应」—— 必须出声
+            self.note.setText('探针球需要**体积数据** —— 这份 ctx 没有:'
+                              '点「重烘场景侧」(「含体积数据」已默认勾上)')
             return img
         inp = self.ctx['inp']
         h, w = img.shape[:2]
@@ -1708,13 +1731,20 @@ class Win(QMainWindow):
 
     def _on_view_click(self, vx: float, vy: float) -> None:
         # 视口点击**永远有反馈**(制作人实测:静默=「根本无法放置」)
+        _dbg(f'click v=({vx:.0f},{vy:.0f}) ctx={self.ctx is not None} '
+             f'map={self._view_map}')
         if self.ctx is None or self.result is None:
             self.status.setText('首帧还在烘 —— 进度条走完后视口才可交互。')
             return
         pt = self._img_xy(vx, vy)
         if pt is None:
+            _dbg('click 落在图像范围外')
             return
         ix, iy = pt
+        _dbg(f'click img=({ix},{iy}) probe_on={self.probe_on.isChecked()} '
+             f'char_on={self.char_on.isChecked()} '
+             f'l_place={self.l_place.isChecked()} '
+             f'chan={self.channel.currentData()}')
         # ---- 自由移动:按在已画出的立绘/探针球身上 = 抓起来拖 ----
         # (抓取优先于一切放置模式 —— 移动现有对象不需要切勾)
         if self._char_hit is not None and self._char_foot is not None:

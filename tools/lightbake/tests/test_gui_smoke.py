@@ -417,6 +417,41 @@ def test_gui_canvas_zoom_pan():
     assert win._zoom >= 0.25
 
 
+def test_gui_no_volume_never_silent(monkeypatch):
+    """制作人三轮「点了没反应」的根因回归:首帧必须**带体积**
+    (探针/立绘吃 char_volume);ctx 无体积时 overlay 不许静默跳过。"""
+    pytest.importorskip('PySide6')
+    import os
+    os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+    from tools.lightbake.gui.app import create_window
+    h, w = 24, 32
+    _app, win = create_window('雾津街头', autobake=False)
+    # ① 首帧/换场景的烘焙必须 with_volume=True
+    calls = []
+    monkeypatch.setattr(win, '_start_bake',
+                        lambda **kw: calls.append(kw))
+    win._initial_bake()
+    assert calls and calls[-1]['with_volume'] is True
+    # ② 无体积 ctx:放探针/立绘 → note 出声,不静默
+    ctx = _rich_fake_ctx(h, w)
+    ctx.pop('volume')
+    win2 = create_window('雾津街头', autobake=False)[1]
+    win2.set_ctx(ctx)
+    _settle_lights(_app, win2)
+    win2.probe_on.setChecked(True)
+    win2._probe_px = (w // 2, h // 2)
+    win2._render()
+    assert '体积数据' in win2.note.text()
+    if win2.char_combo.count() > 0:
+        win2.char_on.setChecked(True)
+        win2._char_foot = (w // 2, h - 2)
+        win2.probe_on.setChecked(False)
+        win2._render()
+        assert '体积数据' in win2.note.text()
+    # ③ 重烘复选框缺省就是勾上的
+    assert win2.with_volume.isChecked()
+
+
 def test_gui_char_error_note_not_clobbered(monkeypatch):
     """二审 P2-4 回归:立绘着色抛异常时,报错必须在 note 上活到帧尾 ——
     探针读数走 note2,不许当场覆盖。"""
