@@ -86,14 +86,17 @@ def sky_response(a0f: np.ndarray, a1f: np.ndarray, normal: np.ndarray,
 
 def compose_final(base_rgb: np.ndarray, e_bake: np.ndarray,
                   e_sky: np.ndarray, gi: float = 0.15,
-                  ev: float = 0.0, e_env: np.ndarray | None = None
-                  ) -> np.ndarray:
-    """shade 的便宜半:out = base·(gi·E + E_天光 [+ E_环境])·2^ev → 显示域。
-    E_环境 = 环境色·强度·clamp(0.28+0.72·AO, 0, 1.2)(§6.1 静态半的第三项;
-    见 ambient_env)。毫秒级。"""
+                  ev: float = 0.0, e_env: np.ndarray | None = None,
+                  e_lights: np.ndarray | None = None) -> np.ndarray:
+    """shade 的便宜半:out = base·(gi·E + E_天光 [+ E_环境 + E_灯])·2^ev →
+    显示域。E_环境 = 环境色·强度·clamp(0.28+0.72·AO, 0, 1.2)(§6.1 静态半的
+    第三项;见 ambient_env);E_灯 = lights.eval_scene_lights(运行时解析灯
+    镜像,§6.1 的 E_太阳+E_灯 两项)。毫秒级。"""
     e_target = np.float32(gi) * e_bake + e_sky
     if e_env is not None:
         e_target = e_target + e_env
+    if e_lights is not None:
+        e_target = e_target + e_lights
     return linear_to_srgb(from_hdr(base_rgb
                                    * (e_target * np.float32(2.0 ** ev))))
 
@@ -130,8 +133,8 @@ def sample_volume_probe(ctx: dict, pos_world) -> dict:
 def shade_probe_ball(sample: dict, R: np.ndarray, sky_def: dict, sun_dir,
                      gi: float, ev: float, env_rgb, env_gain: float,
                      radius_px: int, albedo: float = 0.5,
-                     occlusion_only: bool = False
-                     ) -> tuple[np.ndarray, np.ndarray]:
+                     occlusion_only: bool = False,
+                     lights_of_n=None) -> tuple[np.ndarray, np.ndarray]:
     """探针球 = 实体着色口径的 §6.1 镜像(角色融入度目视):
 
         E_目标 = gi·E_GI(N) + SkySH(mix(Bdir,N,w))·V(N) + E_环境(AO(N))
@@ -141,6 +144,8 @@ def shade_probe_ball(sample: dict, R: np.ndarray, sky_def: dict, sun_dir,
     体采样的 (a₀,a₁));GI/AO 矩按 E(N)=a₀+a₁·N 求值。
     `occlusion_only`(§6.3 验收口径):平盘 2·a₀ —— 与场景 2·a₀ 场同一
     公式、固定口径,实体必须无缝隐没其中(制作人验收铁令)。
+    `lights_of_n`:可选回调 N(h,w,3)→E_灯(h,w,3)(实体口径的解析灯,
+    lights.eval_probe_lights 包一层;None = 无灯)。
     返回 (rgb, alpha),alpha 为圆形掩码。"""
     from .gather import bent_of_moments, vis_of_normal
     r = int(max(radius_px, 4))
@@ -180,7 +185,10 @@ def shade_probe_ball(sample: dict, R: np.ndarray, sky_def: dict, sun_dir,
         mod = np.clip(0.28 + 0.72 * ao, 0.0, 1.2)
         e_env = (np.asarray(env_rgb, np.float32).reshape(1, 1, 3)
                  * np.float32(env_gain) * mod[..., None])
-    e_t = (np.float32(gi) * e_gi + e_sky + e_env) * np.float32(2.0 ** ev)
+    e_t = np.float32(gi) * e_gi + e_sky + e_env
+    if lights_of_n is not None:
+        e_t = e_t + lights_of_n(N)
+    e_t = e_t * np.float32(2.0 ** ev)
     rgb = linear_to_srgb(from_hdr(np.float32(albedo) * e_t))
     return rgb, mask.astype(np.float32)
 

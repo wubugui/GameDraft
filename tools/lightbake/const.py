@@ -85,3 +85,11 @@ CHAR_SCENE_H = 150.0
 
 #: 逃逸辐射的缺省取法(烘焙期输入,不进运行时载荷,§5.3)。
 DEFAULT_SKY = {'mode': 'color', 'color': [1.0, 1.0, 1.0], 'intensity': 0.05}
+
+# 运行时阴影 bias 缺省(lightPacking.DEFAULT_SHADOW_BIAS_WU/_THICKNESS_WU 镜像,wu)
+DEFAULT_SHADOW_BIAS_WU = 30.8
+DEFAULT_SHADOW_THICKNESS_WU = 264.0
+
+# 灯缺省(lightPacking 镜像,wu):作用半径 3 个人高;发光体半径 1/15 个人高
+DEFAULT_LIGHT_RANGE_WU = 450.0
+DEFAULT_LAMP_RADIUS_WU = 10.0

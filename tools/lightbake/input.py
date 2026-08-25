@@ -15,7 +15,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from .const import CHAR_SCENE_H, DEFAULT_SKY, WORK_W
+from .const import (CHAR_SCENE_H, DEFAULT_SHADOW_BIAS_WU,
+                    DEFAULT_SHADOW_THICKNESS_WU, DEFAULT_SKY, WORK_W)
 from .encode import resize_f
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -41,6 +42,8 @@ class SceneInput:
     band: float
     scene_per_wu: float
     bake_sky: dict | None            # 场景 JSON lighting.bakeSky(无则 None)
+    lights: list                     # 场景 JSON lighting.lights(运行时解析灯,wu)
+    shadow_bias: tuple               # (bias_wu, thickness_wu),lighting.shadowBias 决议值
     bg_name: str
     scene_json: Path
     rt_dir: Path
@@ -168,7 +171,13 @@ def load(sid: str, work_w: int = WORK_W) -> SceneInput:
     char_wu = CHAR_SCENE_H / scene_per_wu
     band = char_wu * 1.15
 
-    bake_sky = (data.get('lighting') or {}).get('bakeSky')
+    lighting = data.get('lighting') or {}
+    bake_sky = lighting.get('bakeSky')
+    lights = [dict(l) for l in (lighting.get('lights') or [])
+              if isinstance(l, dict)]
+    sb = lighting.get('shadowBias') or {}
+    shadow_bias = (float(sb.get('bias', DEFAULT_SHADOW_BIAS_WU)),
+                   float(sb.get('thickness', DEFAULT_SHADOW_THICKNESS_WU)))
 
     return SceneInput(
         sid=sid, native=native, work=(w, h), bg_srgb=bg_srgb,
@@ -176,6 +185,7 @@ def load(sid: str, work_w: int = WORK_W) -> SceneInput:
         q=q, R=R, ppu=ppu, cx=cx, cy=cy,
         char_wu=char_wu, band=band, scene_per_wu=scene_per_wu,
         bake_sky=dict(bake_sky) if bake_sky else None,
+        lights=lights, shadow_bias=shadow_bias,
         bg_name=bg_name, scene_json=j, rt_dir=rt_dir,
     )
 
@@ -275,6 +285,18 @@ def save_runtime_sky(sid: str, sky: dict) -> Path:
     clean = {k: v for k, v in sky.items() if not k.startswith('_')}
     data = read_json(j)
     data.setdefault('lighting', {})['sky'] = clean
+    write_json(j, data)
+    return j
+
+
+def save_lights(sid: str, lights: list) -> Path:
+    """把解析灯列表写回场景 JSON `lighting.lights`(运行时消费的那份 ——
+    GUI 灯光编辑组与桌面编辑器 scene_lights 同一目的地、同一 schema)。
+    统一写盘出口,同 save_bake_sky。"""
+    from tools.editor.file_io import read_json, write_json
+    j = SCENES_JSON / f'{sid}.json'
+    data = read_json(j)
+    data.setdefault('lighting', {})['lights'] = [dict(l) for l in lights]
     write_json(j, data)
     return j
 

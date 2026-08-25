@@ -1732,3 +1732,37 @@ R-1 跨采样器 φ 钉子因反解未归一而空转(「差」变「和」,增�
 数字随几何)。
   `--spp 64 --moment-spp 256 --ao-spp 128 --vol-spp 256`
   (雾津街头终参 showcase 见交付页)。
+
+
+### §15 追记:运行时等价解析灯进 GUI(2026-08-25)
+
+需求原话:「还要支持和运行时等价的打上几种灯光(平行光,点光,聚光,面积光)啊,应该编辑模式和计算都和运行时一样啊」。
+
+- 新模块 `lights.py` = 运行时**逐式镜像**(对照源逐个记在模块头):四种灯照抄
+  `lightingCore.glsl`;单位链 = 作者面 wu、求值 q,`quPerWu = 1/scene_per_wu`
+  只在入口折一次(packLights 同口径);太阳 = **第一盏 enabled directional**
+  (sunLightOf),遮蔽走线性重建 `1 − 0.9·(1−V_dir(ω))`(vdir_coeffs,不
+  march —— 运行时原话「换太阳方向不用重烘」);额外 directional vis≡1;
+  cut<1e-4 整像素早退(lcAreaLight 同阈);聚光缺省锥角 25°/40°(packLights,
+  非 lightDefaults 的 45)。
+- **阴影两侧两套,分歧被测试钉死**:场景侧 = shadowPrefix 判据
+  「∃采样点 z−d > bias,**无 thick**」(prefix 是该判据的精确解;CPU 镜像用
+  192 步密集采样逼近,shadowPrefix.ts 实测 128 步与真值不符 0.15–0.71%);
+  角色/探针侧 = ucLightVisibility 逐字(16 步、len·0.92、bias0+0.02·st·i、
+  **thick 窗**——pen 超窗不算挡)。bias 决议 lighting.shadowBias,缺省
+  30.8/264 wu(lightPacking 镜像进 const.py)。
+- **面光裁决**:回归几何(面板 (950,357,0)、半轴 150×100、法线朝下、地面点
+  N=up)闭式 = 0.128340,与独立数值积分(4000² 网格 ∫cosθ_P·cosθ_L/(πr²)dA)
+  **逐位一致**;lightingCore 注释里的 0.1328 是四舍五入的实测口径(差 3.5‰),
+  镜像无误。绕向修正(从正面看逆时针)已带过来并有符号回归。
+- GUI 灯光编辑组(壳:数据 = lighting.lights,算法全在 lights.py):打开场景
+  自动装载;列表/加删/换型(retype 字段卫生同口径)/逐字段编辑(kind 使能
+  矩阵);点视口放灯(表面点+75wu,放灯优先于放探针);存回走
+  `input.save_lights`(统一写盘出口,与桌面 scene_lights 同一份数据)。
+  新通道 `E_灯+E_太阳`;final/final_vol 经 compose_final 的 e_lights 口合成;
+  探针球加 eval_probe_lights(实体口径,同一批 lc*)。缓存两级:E_灯图按
+  (通道口径,灯列表),逐灯阴影图按**灯位**——调强度/色温零重算,挪灯才重
+  march(雾津街头 9 盏灯 5 张阴影图:冷 2.58s,暖 0.096s)。
+- 测试 +20(136 过 + 1 xfail):方向约定 z=+cos·cos 钉、点/聚手算值、面光
+  半球解析锚 E→1、单/双面、sunVis 手算、两侧阴影判据分歧钉、vis 缓存复用/
+  失效、探针=场景同式、default/retype 卫生、GUI 灯编辑往返冒烟。

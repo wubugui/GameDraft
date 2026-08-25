@@ -45,6 +45,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox,  # noqa: E402
                                QWidget)
 
 from tools.lightbake import input as input_mod                  # noqa: E402
+from tools.lightbake import lights as lights_mod                # noqa: E402
 from tools.lightbake import preview as preview_mod              # noqa: E402
 from tools.lightbake.const import (AO_SPP, CHAR_VOL_SPP, GATHER_SPP,  # noqa: E402
                                    MOMENT_SPP, WORK_W)
@@ -131,6 +132,7 @@ _CHANNELS = [
     ('e_rgb', 'E(最终,彩色)'),
     ('e_ind', 'E间接'),
     ('e_dir', 'E直接(太阳反解)'),
+    ('e_lights', 'E_灯+E_太阳(运行时解析灯)'),
     ('base_rgb', 'base(彩色,Reinhard 显示)'),
     ('base_lum', 'base 亮度(log2)'),
     ('base_chroma', 'base 色度'),
@@ -227,6 +229,56 @@ class Win(QMainWindow):
         save_rt = QPushButton('存回场景 JSON(lighting.sky 运行时天空)')
         save_rt.clicked.connect(self._save_runtime_sky)
 
+        # ---------------- 灯光(运行时等价解析灯,§6.1 E_太阳+E_灯) ----------------
+        self.lights_on = QCheckBox('E_灯 参与预览(场景 + 探针)')
+        self.lights_on.setChecked(True)
+        self.light_combo = QComboBox()
+        self.light_kind_new = QComboBox()
+        self.light_kind_new.addItems(list(lights_mod.LIGHT_KINDS))
+        add_light = QPushButton('加灯')
+        add_light.clicked.connect(self._add_light)
+        del_light = QPushButton('删灯')
+        del_light.clicked.connect(self._del_light)
+        lrow = QHBoxLayout()
+        for w_ in (self.light_kind_new, add_light, del_light):
+            lrow.addWidget(w_)
+        lrow_w = QWidget()
+        lrow_w.setLayout(lrow)
+        self.l_enabled = QCheckBox('enabled')
+        self.l_kind = QComboBox()
+        self.l_kind.addItems(list(lights_mod.LIGHT_KINDS))
+        self.l_inten = self._dspin(2.5, step=0.1, hi=64.0)
+        self.l_kelvin = self._dspin(2400, step=100, lo=1000, hi=20000)
+        self.l_color_on = QCheckBox('显式 color(优先于 kelvin)')
+        self.l_cr = self._dspin(1.0, step=0.05, hi=8.0)
+        self.l_cg = self._dspin(1.0, step=0.05, hi=8.0)
+        self.l_cb = self._dspin(1.0, step=0.05, hi=8.0)
+        self.l_shadow = QCheckBox('castShadow(阴影,运行时同判据)')
+        self.l_px = self._dspin(0.0, step=10.0, lo=-100000.0, hi=100000.0,
+                                decimals=1)
+        self.l_py = self._dspin(0.0, step=10.0, lo=-100000.0, hi=100000.0,
+                                decimals=1)
+        self.l_pz = self._dspin(0.0, step=10.0, lo=-100000.0, hi=100000.0,
+                                decimals=1)
+        self.l_range = self._dspin(450.0, step=10.0, lo=1.0, hi=20000.0,
+                                   decimals=1)
+        self.l_soft = self._dspin(10.0, step=1.0, hi=1000.0, decimals=1)
+        self.l_dx = self._dspin(0.0, step=0.05, lo=-1.0, hi=1.0)
+        self.l_dy = self._dspin(-1.0, step=0.05, lo=-1.0, hi=1.0)
+        self.l_dz = self._dspin(0.3, step=0.05, lo=-1.0, hi=1.0)
+        self.l_inner = self._dspin(25.0, step=1.0, hi=89.0, decimals=1)
+        self.l_outer = self._dspin(40.0, step=1.0, hi=90.0, decimals=1)
+        self.l_sw = self._dspin(135.0, step=5.0, lo=1.0, hi=5000.0, decimals=1)
+        self.l_sh = self._dspin(90.0, step=5.0, lo=1.0, hi=5000.0, decimals=1)
+        self.l_roll = self._dspin(0.0, step=5.0, lo=-360.0, hi=360.0,
+                                  decimals=1)
+        self.l_two = QCheckBox('twoSided(双面发光)')
+        self.l_el = self._dspin(45.0, step=1.0, lo=-90.0, hi=90.0, decimals=1)
+        self.l_az = self._dspin(180.0, step=5.0, hi=360.0, decimals=1)
+        self.l_place = QCheckBox('点视口放置选中灯(表面点上方 75wu)')
+        save_lt = QPushButton('存回场景 JSON(lighting.lights 运行时灯)')
+        save_lt.clicked.connect(self._save_lights)
+
         # ---------------- 烘焙期天空组(重估级) ----------------
         self.mode = QComboBox()
         self.mode.addItems(['color', 'skybox'])
@@ -311,6 +363,23 @@ class Win(QMainWindow):
             ('环境色 B', self.env_b), ('环境强度(吃 AO)', self.env_gain),
             ('gi', self.gi), ('ev', self.ev),
             (None, save_rt)])
+        group('灯光(运行时等价:平行/点/聚/面)', [
+            (None, self.lights_on), ('灯', self.light_combo), (None, lrow_w),
+            (None, self.l_enabled), ('kind', self.l_kind),
+            ('intensity', self.l_inten), ('kelvin', self.l_kelvin),
+            (None, self.l_color_on), ('color R', self.l_cr),
+            ('color G', self.l_cg), ('color B', self.l_cb),
+            (None, self.l_shadow),
+            ('pos x(wu)', self.l_px), ('pos y(wu)', self.l_py),
+            ('pos z(wu)', self.l_pz),
+            ('range(wu)', self.l_range), ('softening 半径(wu)', self.l_soft),
+            ('方向 x', self.l_dx), ('方向 y', self.l_dy),
+            ('方向 z', self.l_dz),
+            ('inner°', self.l_inner), ('outer°', self.l_outer),
+            ('尺寸 宽(wu)', self.l_sw), ('尺寸 高(wu)', self.l_sh),
+            ('roll°', self.l_roll), (None, self.l_two),
+            ('仰角°', self.l_el), ('方位°', self.l_az),
+            (None, self.l_place), (None, save_lt)])
         group('烘焙期天空(重估级,喂 gather 的那份)', [
             ('模式', self.mode), ('R', self.r), ('G', self.g), ('B', self.b),
             ('强度', self.inten), (None, pick), (None, self.sky_file)])
@@ -368,6 +437,10 @@ class Win(QMainWindow):
         self._base_cache: tuple | None = None
         self._sky_raw: dict = {}
         self._sky_cache: dict = {}
+        self._lights: list = []
+        self._light_idx: int = -1
+        self._lights_cache: dict = {}     # (通道口径, 灯列表哈希) → E_灯 图
+        self._lamp_vis: dict = {}         # 逐灯阴影图缓存(键含灯位,挪灯才重 march)
         self._vol_m: tuple | None = None
         self._gi_slice_range: tuple | None = None
         self.progressed.connect(self._on_progress)
@@ -379,6 +452,10 @@ class Win(QMainWindow):
         self.sky_timer.setSingleShot(True)
         self.sky_timer.setInterval(150)
         self.sky_timer.timeout.connect(self._rt_sky_dirty)
+        self.lights_timer = QTimer(self)
+        self.lights_timer.setSingleShot(True)
+        self.lights_timer.setInterval(300)
+        self.lights_timer.timeout.connect(self._lights_dirty)
         for w_ in (self.r, self.g, self.b, self.inten, self.denoise_iters,
                    self.e_chroma):
             w_.valueChanged.connect(self.debounce.start)
@@ -401,6 +478,17 @@ class Win(QMainWindow):
         self.vol_slice.valueChanged.connect(self._render)
         self.probe_on.stateChanged.connect(self._render)
         self.probe_occl.stateChanged.connect(self._render)
+        self.lights_on.stateChanged.connect(self._render)
+        self.light_combo.currentIndexChanged.connect(self._on_light_selected)
+        self.l_kind.currentIndexChanged.connect(self._on_light_retype)
+        for w_ in (self.l_inten, self.l_kelvin, self.l_cr, self.l_cg,
+                   self.l_cb, self.l_px, self.l_py, self.l_pz, self.l_range,
+                   self.l_soft, self.l_dx, self.l_dy, self.l_dz, self.l_inner,
+                   self.l_outer, self.l_sw, self.l_sh, self.l_roll, self.l_el,
+                   self.l_az):
+            w_.valueChanged.connect(self._on_light_field)
+        for w_ in (self.l_enabled, self.l_color_on, self.l_shadow, self.l_two):
+            w_.stateChanged.connect(self._on_light_field)
         self._probe_px: tuple | None = None
         self._view_map: tuple | None = None   # (scale, offx, offy, w, h)
         for w_ in (self.spp, self.moment_spp, self.ao_spp, self.vol_spp,
@@ -587,6 +675,181 @@ class Win(QMainWindow):
                                 f'已存回 {j.name} 的 lighting.sky(运行时'
                                 '着色消费的那份;bakeSky 是另一份)。')
 
+    # ---------------- 灯光编辑(壳:数据是 lighting.lights,算法在 lights.py) ----------------
+    def _light_sel(self) -> dict | None:
+        i = self.light_combo.currentIndex()
+        if 0 <= i < len(self._lights):
+            self._light_idx = i
+            return self._lights[i]
+        return None
+
+    def _rebuild_light_combo(self, keep: int = -1) -> None:
+        with QSignalBlocker(self.light_combo):
+            self.light_combo.clear()
+            for l in self._lights:
+                self.light_combo.addItem(
+                    f"{l.get('id', '?')} · {l.get('kind', '?')}")
+            if self._lights:
+                self.light_combo.setCurrentIndex(
+                    keep if 0 <= keep < len(self._lights)
+                    else len(self._lights) - 1)
+        self._load_light_fields()
+
+    def _on_light_selected(self, _i: int) -> None:
+        self._load_light_fields()
+
+    def _load_light_fields(self) -> None:
+        l = self._light_sel()
+        kind = (l or {}).get('kind', 'point')
+        ed = l is not None
+        en = {'pos': ed and kind != 'directional',
+              'range': ed and kind != 'directional',
+              'soft': ed and kind in ('point', 'spot'),
+              'dir': ed and kind in ('spot', 'area'),
+              'cone': ed and kind == 'spot',
+              'size': ed and kind == 'area',
+              'ang': ed and kind == 'directional'}
+        for w_ in (self.l_enabled, self.l_kind, self.l_inten, self.l_kelvin,
+                   self.l_color_on, self.l_cr, self.l_cg, self.l_cb,
+                   self.l_shadow):
+            w_.setEnabled(ed)
+        for w_, k in ((self.l_px, 'pos'), (self.l_py, 'pos'),
+                      (self.l_pz, 'pos'), (self.l_range, 'range'),
+                      (self.l_soft, 'soft'), (self.l_dx, 'dir'),
+                      (self.l_dy, 'dir'), (self.l_dz, 'dir'),
+                      (self.l_inner, 'cone'), (self.l_outer, 'cone'),
+                      (self.l_sw, 'size'), (self.l_sh, 'size'),
+                      (self.l_roll, 'size'), (self.l_two, 'size'),
+                      (self.l_el, 'ang'), (self.l_az, 'ang')):
+            w_.setEnabled(en[k])
+        if not ed:
+            return
+        blk = [QSignalBlocker(w) for w in
+               (self.l_enabled, self.l_kind, self.l_inten, self.l_kelvin,
+                self.l_color_on, self.l_cr, self.l_cg, self.l_cb,
+                self.l_shadow, self.l_px, self.l_py, self.l_pz, self.l_range,
+                self.l_soft, self.l_dx, self.l_dy, self.l_dz, self.l_inner,
+                self.l_outer, self.l_sw, self.l_sh, self.l_roll, self.l_two,
+                self.l_el, self.l_az)]
+        self.l_enabled.setChecked(bool(l.get('enabled', True)))
+        self.l_kind.setCurrentText(kind)
+        self.l_inten.setValue(float(l.get('intensity', 0.0)))
+        self.l_kelvin.setValue(float(l.get('kelvin', 6500.0)))
+        c = l.get('color')
+        self.l_color_on.setChecked(c is not None)
+        if c is not None:
+            self.l_cr.setValue(float(c[0]))
+            self.l_cg.setValue(float(c[1]))
+            self.l_cb.setValue(float(c[2]))
+        self.l_shadow.setChecked(bool(l.get('castShadow', False)))
+        p = l.get('pos') or [0.0, 0.0, 0.0]
+        self.l_px.setValue(float(p[0]))
+        self.l_py.setValue(float(p[1]))
+        self.l_pz.setValue(float(p[2]))
+        self.l_range.setValue(float(l.get('range', 450.0)))
+        self.l_soft.setValue(float(l.get('softeningRadius', 10.0)))
+        d = l.get('dir') or l.get('orientation') or [0.0, 0.0, -1.0]
+        self.l_dx.setValue(float(d[0]))
+        self.l_dy.setValue(float(d[1]))
+        self.l_dz.setValue(float(d[2]))
+        self.l_inner.setValue(float(l.get('innerAngleDeg', 25.0)))
+        self.l_outer.setValue(float(l.get('outerAngleDeg', 40.0)))
+        s = l.get('size') or [135.0, 90.0]
+        self.l_sw.setValue(float(s[0]))
+        self.l_sh.setValue(float(s[1]))
+        self.l_roll.setValue(float(l.get('rollDeg', 0.0)))
+        self.l_two.setChecked(bool(l.get('twoSided', False)))
+        self.l_el.setValue(float(l.get('elevationDeg', 45.0)))
+        self.l_az.setValue(float(l.get('azimuthDeg', 180.0)))
+        del blk
+
+    def _on_light_field(self, *_a) -> None:
+        l = self._light_sel()
+        if l is None:
+            return
+        kind = l.get('kind', 'point')
+        l['enabled'] = self.l_enabled.isChecked()
+        l['intensity'] = self.l_inten.value()
+        l['kelvin'] = self.l_kelvin.value()
+        if self.l_color_on.isChecked():
+            l['color'] = [self.l_cr.value(), self.l_cg.value(),
+                          self.l_cb.value()]
+        else:
+            l.pop('color', None)
+        l['castShadow'] = self.l_shadow.isChecked()
+        if kind != 'directional':
+            l['pos'] = [self.l_px.value(), self.l_py.value(),
+                        self.l_pz.value()]
+            l['range'] = self.l_range.value()
+        if kind in ('point', 'spot'):
+            l['softeningRadius'] = self.l_soft.value()
+        if kind == 'spot':
+            l['dir'] = [self.l_dx.value(), self.l_dy.value(),
+                        self.l_dz.value()]
+            l['innerAngleDeg'] = self.l_inner.value()
+            l['outerAngleDeg'] = self.l_outer.value()
+        elif kind == 'area':
+            l['orientation'] = [self.l_dx.value(), self.l_dy.value(),
+                                self.l_dz.value()]
+            l['size'] = [self.l_sw.value(), self.l_sh.value()]
+            l['rollDeg'] = self.l_roll.value()
+            l['twoSided'] = self.l_two.isChecked()
+        elif kind == 'directional':
+            l['elevationDeg'] = self.l_el.value()
+            l['azimuthDeg'] = self.l_az.value()
+        self._lights_cache.clear()
+        self.lights_timer.start()
+
+    def _on_light_retype(self, _i: int) -> None:
+        l = self._light_sel()
+        if l is None:
+            return
+        kind = self.l_kind.currentText()
+        if kind == l.get('kind'):
+            return
+        self._lights[self._light_idx] = lights_mod.retype_light(l, kind)
+        self._rebuild_light_combo(self._light_idx)
+        self._lights_dirty()
+
+    def _add_light(self) -> None:
+        self._lights.append(lights_mod.default_light(
+            len(self._lights) + 1, self.light_kind_new.currentText()))
+        self._rebuild_light_combo(len(self._lights) - 1)
+        self._lights_dirty()
+
+    def _del_light(self) -> None:
+        i = self.light_combo.currentIndex()
+        if 0 <= i < len(self._lights):
+            self._lights.pop(i)
+            self._rebuild_light_combo(min(i, len(self._lights) - 1))
+            self._lights_dirty()
+
+    def _lights_dirty(self) -> None:
+        self._lights_cache.clear()
+        self._render()
+
+    def _lights_term(self, kind_key: str, a0u, a1u):
+        """当前灯列表在给定遮蔽口径上的 E_太阳+E_灯(lights.py 唯一实现;
+        缓存键含通道口径与灯列表内容)。无灯/未启用/ctx 不全 → None。"""
+        if (not self.lights_on.isChecked() or not self._lights
+                or self.ctx is None or self.ctx.get('inp') is None
+                or float(getattr(self.ctx['inp'], 'scene_per_wu', 0) or 0) <= 0):
+            return None
+        key = (kind_key, json.dumps(self._lights, sort_keys=True,
+                                    default=float))
+        if key not in self._lights_cache:
+            self._lights_cache[key] = lights_mod.eval_scene_lights(
+                self._lights, self.ctx['inp'], a0u, a1u, self.ctx['normal'],
+                vis_cache=self._lamp_vis)
+        return self._lights_cache[key]
+
+    def _save_lights(self) -> None:
+        j = input_mod.save_lights(self.sid, self._lights)
+        QMessageBox.information(self, 'lightbake',
+                                f'已存回 {j.name} 的 lighting.lights(运行时'
+                                '消费的解析灯;与桌面编辑器 scene_lights 同'
+                                '一份数据)。')
+
     # ---------------- 数据流 ----------------
     def _initial_bake(self) -> None:
         self._start_bake(use_panel=False, with_volume=False,
@@ -608,6 +871,9 @@ class Win(QMainWindow):
         self.result = None
         self._base_cache = None
         self._sky_cache.clear()
+        self._lights = []
+        self._lights_cache.clear()
+        self._lamp_vis.clear()
         self._vol_m = None
         self._gi_slice_range = None
         self.view.setText(f'打开 {sid},烘首帧……')
@@ -681,6 +947,12 @@ class Win(QMainWindow):
         self.ctx = ctx
         self._base_cache = None
         self._sky_cache.clear()
+        self._lights_cache.clear()
+        self._lamp_vis.clear()
+        # 灯列表 = 场景 JSON lighting.lights 的可编辑副本(装载走 input.load)
+        self._lights = [dict(l) for l in
+                        (getattr(ctx.get('inp'), 'lights', None) or [])]
+        self._rebuild_light_combo(0)
         self._vol_m = None
         self._gi_slice_range = None
         spec = dict(ctx.get('sky_spec') or {})
@@ -842,7 +1114,8 @@ class Win(QMainWindow):
             e_sky = self._sky_cached(key, a0u, a1u, ctx['normal'])
             return preview_mod.compose_final(
                 base, ctx['e_q'], e_sky, gi=self.gi.value(),
-                ev=self.ev.value(), e_env=self._env_term())
+                ev=self.ev.value(), e_env=self._env_term(),
+                e_lights=self._lights_term(key, a0u, a1u))
         if key == 'painting':
             if missing('e_q', 'inp'):
                 return self._placeholder('原画需要完整 ctx')
@@ -873,6 +1146,14 @@ class Win(QMainWindow):
             d = np.maximum(
                 (res['e'] - e_ind * res.get('gain', 1.0)) @ LUMA, 0)
             return _g2c(d, 0, max(float(np.percentile(d, 99)), 1e-6))
+        if key == 'e_lights':
+            if missing('inp', 'normal'):
+                return self._placeholder('E_灯 需要完整 ctx')
+            el = self._lights_term('e_lights', a0f, a1f)
+            if el is None:
+                return self._placeholder('无灯/未启用 —— 灯光组勾选 + 加灯'
+                                         '(或场景 lighting.lights)')
+            return linear_to_srgb(from_hdr(el))
         if key == 'base_rgb':
             if missing('e_q', 'inp'):
                 return self._placeholder('base 需要完整 ctx')
@@ -935,11 +1216,19 @@ class Win(QMainWindow):
         sample = preview_mod.sample_volume_probe(self.ctx, center)
         radius_px = max(4, int(round(inp.char_wu / 2.0 * inp.ppu)))
         occl = self.probe_occl.isChecked() or key == 'a0'
+        def _probe_lights_cb(N, _c=center, _s=sample):
+            return lights_mod.eval_probe_lights(
+                self._lights, N, _c, inp, _s['sky_a0'], _s['sky_a1'])
+        lights_cb = (_probe_lights_cb
+                     if (self.lights_on.isChecked() and self._lights
+                         and float(getattr(inp, 'scene_per_wu', 0) or 0) > 0)
+                     else None)
         rgb, alpha = preview_mod.shade_probe_ball(
             sample, inp.R, self._runtime_sky_def(), self._runtime_sun(),
             self.gi.value(), self.ev.value(),
             [self.env_r.value(), self.env_g.value(), self.env_b.value()],
-            self.env_gain.value(), radius_px, occlusion_only=occl)
+            self.env_gain.value(), radius_px, occlusion_only=occl,
+            lights_of_n=lights_cb)
         cy = iy - radius_px                    # 球心 = 脚下抬 char_wu/2
         y0, y1 = cy - radius_px, cy + radius_px + 1
         x0, x1 = ix - radius_px, ix + radius_px + 1
@@ -984,14 +1273,33 @@ class Win(QMainWindow):
         self.view.setPixmap(pm)
 
     def _on_view_click(self, vx: float, vy: float) -> None:
-        if not self.probe_on.isChecked() or self._view_map is None:
+        if self._view_map is None:
             return
         s, offx, offy, w, h = self._view_map
         ix = (vx - offx) / max(s, 1e-9)
         iy = (vy - offy) / max(s, 1e-9)
         if not (0 <= ix < w and 0 <= iy < h):
             return
-        self._probe_px = (int(ix), int(iy))
+        ix, iy = int(ix), int(iy)
+        # 放灯优先于放探针(两个勾都开时,点视口先服务正在编辑的灯)
+        l = self._light_sel()
+        if (self.l_place.isChecked() and l is not None
+                and l.get('kind') != 'directional'
+                and self.ctx is not None
+                and self.ctx.get('inp') is not None):
+            inp = self.ctx['inp']
+            if float(getattr(inp, 'scene_per_wu', 0) or 0) > 0:
+                wpt = (inp.world[iy, ix].astype(np.float64)
+                       * float(inp.scene_per_wu))     # q 尺度 → 作者面 wu
+                l['pos'] = [round(float(wpt[0]), 1),
+                            round(float(wpt[1]) + 75.0, 1),
+                            round(float(wpt[2]), 1)]
+                self._load_light_fields()
+                self._lights_dirty()
+                return
+        if not self.probe_on.isChecked():
+            return
+        self._probe_px = (ix, iy)
         self._render()
 
     def resizeEvent(self, event) -> None:               # noqa: N802 — Qt 命名

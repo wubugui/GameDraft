@@ -28,6 +28,8 @@ class _FakeInp:
         self.native = (w, h)
         self.char_wu = 0.4
         self.ppu = 20.0
+        self.cx = w / 2.0
+        self.cy = h / 2.0
         self.R = np.eye(3, dtype='float32')
         self.bg_srgb = rng.uniform(0.05, 0.9, (h, w, 3)).astype('float32')
         self.depth = rng.uniform(2.0, 8.0, (h, w)).astype('float32')
@@ -36,6 +38,28 @@ class _FakeInp:
                              np.linspace(-1, 1, h, dtype='float32'))
         self.world = np.stack(
             [xx, yy, rng.uniform(0.0, 1.0, (h, w)).astype('float32')], -1)
+        self.q = self.world.copy()        # R=I ⇒ q ≡ world
+        # 解析灯(运行时等价):char 高 150wu ↔ char_wu=0.4 ⇒ 375 wu/单位
+        self.scene_per_wu = 375.0
+        self.shadow_bias = (30.8, 264.0)
+        self.lights = [
+            {'id': 'sun', 'kind': 'directional', 'enabled': True,
+             'intensity': 1.0, 'kelvin': 6500, 'elevationDeg': 50.0,
+             'azimuthDeg': 120.0, 'castShadow': True},
+            {'id': 'lamp_1', 'kind': 'point', 'enabled': True,
+             'intensity': 2.5, 'kelvin': 2200, 'pos': [0.0, 200.0, -100.0],
+             'range': 450.0, 'softeningRadius': 10.0, 'castShadow': True},
+            {'id': 'lamp_2', 'kind': 'spot', 'enabled': True,
+             'intensity': 3.0, 'kelvin': 2400, 'pos': [100.0, 250.0, 0.0],
+             'dir': [0, -1, 0.3], 'innerAngleDeg': 25.0,
+             'outerAngleDeg': 45.0, 'range': 450.0, 'softeningRadius': 10.0,
+             'castShadow': False},
+            {'id': 'panel', 'kind': 'area', 'enabled': True,
+             'intensity': 2.0, 'kelvin': 2700, 'pos': [-150.0, 220.0, 50.0],
+             'orientation': [0, 0, -1], 'size': [150.0, 100.0],
+             'rollDeg': 15.0, 'twoSided': False, 'range': 450.0,
+             'castShadow': False},
+        ]
 
 
 def _rich_fake_ctx(h=24, w=32):
@@ -128,6 +152,69 @@ def test_gui_offscreen_construct_and_render():
     assert spec['mode'] == 'color'
     assert abs(spec['color'][0] - 0.3) < 1e-9
     assert abs(spec['intensity'] - 0.7) < 1e-9
+
+
+def test_gui_lights_editor_roundtrip():
+    """灯光编辑组(运行时等价解析灯):装载 lighting.lights → 面板往返 →
+    改字段落回 dict → 加/换型/删 → E_灯 通道真渲染 → 探针吃灯不炸。
+    算法零抄 —— 组内只调 lights.py(壳公理在灯上的那半)。"""
+    pytest.importorskip('PySide6')
+    import os
+    os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+    import numpy as np
+    from tools.lightbake.gui.app import create_window
+    h, w = 24, 32
+    ctx = _rich_fake_ctx(h, w)
+    _app, win = create_window('雾津街头', autobake=False)
+    win.set_ctx(ctx)
+    # 装载:4 盏灯全进列表
+    assert win.light_combo.count() == 4
+    assert len(win._lights) == 4
+    # 字段往返:选 lamp_1(点光),改 intensity/castShadow → dict 同步
+    win.light_combo.setCurrentIndex(1)
+    win.l_inten.setValue(4.25)
+    assert win._lights[1]['intensity'] == 4.25
+    win.l_shadow.setChecked(False)
+    assert win._lights[1]['castShadow'] is False
+    # kind 专属字段使能矩阵:点光禁 dir/锥角/尺寸/仰角
+    assert win.l_px.isEnabled() and win.l_soft.isEnabled()
+    assert not win.l_dx.isEnabled() and not win.l_inner.isEnabled()
+    assert not win.l_sw.isEnabled() and not win.l_el.isEnabled()
+    # E_灯 通道:真渲染(带 castShadow 太阳 + 三种灯),不落占位灰底
+    win.channel.setCurrentIndex(
+        [win.channel.itemData(i) for i in range(win.channel.count())
+         ].index('e_lights'))
+    img = win._channel_img()
+    assert img.shape[:2] == (h, w)
+    assert float(np.abs(img).max()) > 0.0
+    # final 通道合成 E_灯(compose_final 的 e_lights 口)
+    win.channel.setCurrentIndex(
+        [win.channel.itemData(i) for i in range(win.channel.count())
+         ].index('final'))
+    assert win._channel_img().shape[:2] == (h, w)
+    # 探针吃灯(实体口径 eval_probe_lights 回调)不炸
+    win.probe_on.setChecked(True)
+    win._probe_px = (w // 2, h // 2)
+    out = win._overlay_probe(win._channel_img())
+    assert out.shape == (h, w, 3)
+    # 换型:point → area,字段卫生(dir 类清掉,area 专属补上)
+    win.light_combo.setCurrentIndex(1)
+    win.l_kind.setCurrentText('area')
+    assert win._lights[1]['kind'] == 'area'
+    assert 'size' in win._lights[1] and 'innerAngleDeg' not in win._lights[1]
+    # 加/删
+    win.light_kind_new.setCurrentText('spot')
+    win._add_light()
+    assert len(win._lights) == 5 and win._lights[-1]['kind'] == 'spot'
+    win.light_combo.setCurrentIndex(4)
+    win._del_light()
+    assert len(win._lights) == 4
+    # 关总开关 → E_灯 通道回占位
+    win.lights_on.setChecked(False)
+    win.channel.setCurrentIndex(
+        [win.channel.itemData(i) for i in range(win.channel.count())
+         ].index('e_lights'))
+    assert win._channel_img().shape[:2] == (90, 160)
 
 
 def test_gui_bake_kwargs_mirror_cli():
