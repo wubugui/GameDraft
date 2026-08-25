@@ -39,6 +39,19 @@ def _dbg(msg: str) -> None:
     if _DEBUG_INPUT:
         print(f'[input] {msg}', flush=True)
 
+
+def _mods():
+    """当前键盘修饰键(独立函数便于测试注入)。"""
+    from PySide6.QtGui import QGuiApplication
+    return QGuiApplication.keyboardModifiers()
+
+
+#: 实体(探针球/立绘)有对应口径视图的通道 —— 延迟渲染式 buffer 联动:
+#: 切到哪个 G-buffer 就画实体的同名量(与运行时 sc3DebugView
+#: 「实体与场景同一套编号」同旨)。不在表里的通道没有实体类比,不画。
+_ENTITY_CHANNELS = ('final', 'final_vol', 'a0', 'vis_up', 'bent', 'a1',
+                    'ao', 'normal', 'e_lights', 'e_rgb', 'e_lum')
+
 import numpy as np
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -263,6 +276,8 @@ class Win(QMainWindow):
         self.vol_slice.setValue(12)
         self.probe_on = QCheckBox('角色探针(点视口放置,实体口径吃 volume)')
         self.probe_occl = QCheckBox('§6.3 遮蔽口径(平盘 2·a₀,验收铁令)')
+        self.probe_h = self._dspin(0.0, step=10.0, lo=-10000.0, hi=20000.0,
+                                   decimals=1)     # Shift+拖 也能调
 
         # ---------------- 运行时天空(实时,§6.1 预览) ----------------
         self.preset = QComboBox()
@@ -361,6 +376,8 @@ class Win(QMainWindow):
         self.c_gi = self._dspin(1.0, step=0.05, hi=4.0)
         self.c_ref = self._dspin(1.0, step=0.02, hi=8.0, decimals=4)
         self.c_dsf = self._dspin(1.0, step=0.1, lo=0.1, hi=4.0)
+        self.c_h = self._dspin(0.0, step=10.0, lo=-10000.0, hi=20000.0,
+                               decimals=1)         # Shift+拖 也能调
         self.c_state = QComboBox()
         self.c_frame = self._ispin(0, 0, 4096)
 
@@ -434,7 +451,8 @@ class Win(QMainWindow):
 
         group('场景', [('打开', self.scene_combo)])
         group('视口', [('通道', self.channel), ('体切片 y%', self.vol_slice),
-                       (None, self.probe_on), (None, self.probe_occl)])
+                       (None, self.probe_on), (None, self.probe_occl),
+                       ('探针抬高(wu,Shift+拖)', self.probe_h)])
         group('运行时天空 + 环境(实时,§6.1 预览)', [
             ('预设(初始化器)', self.preset),
             ('intensity', self.rt_inten), ('profile', self.rt_profile),
@@ -475,6 +493,7 @@ class Win(QMainWindow):
             (None, self.c_gi_follow), ('charGi(不跟随时)', self.c_gi),
             ('charRefIntensity', self.c_ref),
             ('透视缩放 dsf', self.c_dsf),
+            ('脚部抬高(wu,Shift+拖)', self.c_h),
             ('状态', self.c_state), ('帧', self.c_frame)])
         group('烘焙期天空(重估级,喂 gather 的那份)', [
             ('模式', self.mode), ('R', self.r), ('G', self.g), ('B', self.b),
@@ -582,15 +601,19 @@ class Win(QMainWindow):
         self.c_mirror.stateChanged.connect(self._render)
         self.c_gi_follow.stateChanged.connect(self._render)
         for w_ in (self.c_flatten, self.c_bulge, self.c_aoc, self.c_aof,
-                   self.c_gi, self.c_ref, self.c_dsf):
+                   self.c_gi, self.c_ref, self.c_dsf, self.c_h,
+                   self.probe_h):
             w_.valueChanged.connect(self._render)
         self.c_state.currentTextChanged.connect(self._on_char_state_changed)
         self.c_frame.valueChanged.connect(self._on_char_frame_changed)
         self._char_foot: tuple | None = None
         self._char_sprite = None
         self._populate_char_states()
-        # 自由移动:按在球/角色身上直接拖(命中矩形每帧由 overlay 回填)
+        # 自由移动:按在球/角色身上直接拖(命中矩形每帧由 overlay 回填);
+        # Shift+按 = 高度模式(沿世界竖直,写进抬高旋钮)
         self._drag_target: str | None = None     # 'probe' | 'char'
+        self._drag_mode: str = 'move'            # 'move' | 'height'
+        self._drag_last_vy: float = 0.0
         self._drag_off: tuple = (0, 0)
         self._last_drag_t: float = 0.0
         self._probe_hit: tuple | None = None     # (cx, cy, r) 图像坐标
@@ -1503,12 +1526,36 @@ class Win(QMainWindow):
         self._char_sprite = None
         self._render()
 
+    def _entity_view(self, key: str, comps: dict,
+                     rgb_final: np.ndarray) -> np.ndarray:
+        """实体(球/立绘)在当前通道下的口径视图 —— 与场景通道同一编码
+        (延迟渲染式联动;数据全来自库端 components,壳只做显示映射)。"""
+        if key == 'vis_up':
+            return _g2c(comps['vis_up'])
+        if key == 'bent':
+            return np.clip(comps['bent'] * 0.5 + 0.5, 0, 1)
+        if key == 'a1':
+            return np.clip(comps['a1'] + 0.5, 0, 1)
+        if key == 'ao':
+            return _g2c(comps['ao'])
+        if key == 'normal':
+            return np.clip(comps['normal'] * 0.5 + 0.5, 0, 1)
+        if key == 'a0':
+            return _g2c(comps['a0'] * 2.0)
+        if key == 'e_lights':
+            return linear_to_srgb(from_hdr(comps['e_lights']))
+        if key == 'e_rgb':
+            return linear_to_srgb(from_hdr(comps['gi']))
+        if key == 'e_lum':
+            return _g2c(from_hdr(comps['gi'] @ LUMA))
+        return rgb_final
+
     def _overlay_char(self, img: np.ndarray) -> np.ndarray:
         """把立绘按运行时角色管线着色后合成进视口(character.py 唯一实现,
         壳零算法)。需要体数据(角色吃 char_volume,§6.1 实体口径)。"""
         key = self.channel.currentData()
         if (not self.char_on.isChecked() or self._char_foot is None
-                or key not in ('final', 'final_vol')
+                or key not in _ENTITY_CHANNELS
                 or self.ctx.get('inp') is None
                 or float(getattr(self.ctx['inp'], 'scene_per_wu', 0) or 0) <= 0
                 or not self.char_combo.currentText()):
@@ -1527,9 +1574,10 @@ class Win(QMainWindow):
             if self._char_sprite is None:
                 self._char_sprite = char_mod.load_character(
                     self.char_combo.currentText(), self.c_frame.value())
-            crgb, ca = char_mod.shade_character(
-                self.ctx, self._char_sprite,
-                inp.world[iy, ix].astype(np.float64),
+            foot = inp.world[iy, ix].astype(np.float64).copy()
+            foot[1] += self.c_h.value() / float(inp.scene_per_wu)
+            crgb, ca, comps = char_mod.shade_character(
+                self.ctx, self._char_sprite, foot,
                 self._runtime_sky_def(), self._runtime_sun(),
                 gi=self.gi.value(), ev=self.ev.value(),
                 env_rgb=[self.env_r.value(), self.env_g.value(),
@@ -1542,7 +1590,8 @@ class Win(QMainWindow):
                 flatten=self.c_flatten.value(), bulge=self.c_bulge.value(),
                 ao_contact=self.c_aoc.value(), ao_form=self.c_aof.value(),
                 mirror=self.c_mirror.isChecked(),
-                scale_mul=self.c_dsf.value(), notes=ch_notes)
+                scale_mul=self.c_dsf.value(), notes=ch_notes,
+                components=True)
         except Exception as exc:                    # noqa: BLE001 — 显示不许炸
             self.note.setText(f'立绘着色失败:{type(exc).__name__}: {exc}')
             return img
@@ -1552,9 +1601,15 @@ class Win(QMainWindow):
                                '这里取的是该像素表面)')
         if ch_notes:
             self.note.setText('立绘: ' + ';'.join(ch_notes))
+        crgb = self._entity_view(key, comps, crgb)
         ch, cw = crgb.shape[:2]
-        y1, x0 = iy + 1, ix - cw // 2               # 脚点 = 底边中点,
-        y0 = y1 - ch                                # 底行画在脚点行本身
+        # 锚点从**世界坐标投影**(抬高后画面位置跟着走,与受光一致)
+        Rm = np.asarray(inp.R, np.float64)
+        qf = foot @ Rm
+        fpx = int(round(inp.cx + qf[0] * inp.ppu))
+        fpy = int(round(inp.cy - qf[1] * inp.ppu))
+        y1, x0 = fpy + 1, fpx - cw // 2             # 脚点 = 底边中点
+        y0 = y1 - ch
         sy0, sx0 = max(0, -y0), max(0, -x0)
         y0, x0 = max(0, y0), max(0, x0)
         y2, x2 = min(h, y1), min(w, x0 + (cw - sx0))
@@ -1572,7 +1627,7 @@ class Win(QMainWindow):
         """把角色探针球合成进视口图(实体口径吃 volume;§6.1/§6.3 镜像)。"""
         key = self.channel.currentData()
         if (not self.probe_on.isChecked() or self._probe_px is None
-                or key not in ('final', 'final_vol', 'a0')
+                or key not in _ENTITY_CHANNELS
                 or self.ctx.get('inp') is None):
             return img
         if not (self.ctx or {}).get('volume'):
@@ -1586,7 +1641,9 @@ class Win(QMainWindow):
         ix = int(np.clip(ix, 0, w - 1))
         iy = int(np.clip(iy, 0, h - 1))
         ground = inp.world[iy, ix].astype(np.float64)
-        center = ground + np.array([0.0, inp.char_wu / 2.0, 0.0])
+        center = ground + np.array(
+            [0.0, inp.char_wu / 2.0
+             + self.probe_h.value() / float(inp.scene_per_wu), 0.0])
         sample = preview_mod.sample_volume_probe(self.ctx, center)
         radius_px = max(4, int(round(inp.char_wu / 2.0 * inp.ppu)))
         occl = self.probe_occl.isChecked() or key == 'a0'
@@ -1596,16 +1653,28 @@ class Win(QMainWindow):
                      if (self.lights_on.isChecked() and self._lights
                          and float(getattr(inp, 'scene_per_wu', 0) or 0) > 0)
                      else None)
-        rgb, alpha = preview_mod.shade_probe_ball(
-            sample, inp.R, self._runtime_sky_def(), self._runtime_sun(),
-            self.gi.value(), self.ev.value(),
-            [self.env_r.value(), self.env_g.value(), self.env_b.value()],
-            self.env_gain.value(), radius_px, occlusion_only=occl,
-            lights_of_n=lights_cb)
-        cy = iy - radius_px                    # 球心 = 脚下抬 char_wu/2
-        self._probe_hit = (ix, cy, radius_px)  # 抓取命中区(自由移动)
-        y0, y1 = cy - radius_px, cy + radius_px + 1
-        x0, x1 = ix - radius_px, ix + radius_px + 1
+        if occl:
+            rgb, alpha = preview_mod.shade_probe_ball(
+                sample, inp.R, self._runtime_sky_def(), self._runtime_sun(),
+                self.gi.value(), self.ev.value(),
+                [self.env_r.value(), self.env_g.value(), self.env_b.value()],
+                self.env_gain.value(), radius_px, occlusion_only=True)
+        else:
+            rgb, alpha, comps = preview_mod.shade_probe_ball(
+                sample, inp.R, self._runtime_sky_def(), self._runtime_sun(),
+                self.gi.value(), self.ev.value(),
+                [self.env_r.value(), self.env_g.value(), self.env_b.value()],
+                self.env_gain.value(), radius_px, occlusion_only=False,
+                lights_of_n=lights_cb, components=True)
+            rgb = self._entity_view(key, comps, rgb)
+        # 球心从**世界坐标投影**(抬高后画面位置跟着走,与受光一致)
+        Rm = np.asarray(inp.R, np.float64)
+        qc = center @ Rm
+        pcx = int(round(inp.cx + qc[0] * inp.ppu))
+        pcy = int(round(inp.cy - qc[1] * inp.ppu))
+        self._probe_hit = (pcx, pcy, radius_px)  # 抓取命中区(自由移动)
+        y0, y1 = pcy - radius_px, pcy + radius_px + 1
+        x0, x1 = pcx - radius_px, pcx + radius_px + 1
         sy0, sx0 = max(0, -y0), max(0, -x0)
         y0, x0 = max(0, y0), max(0, x0)
         y1, x1 = min(h, y1), min(w, x1)
@@ -1616,7 +1685,8 @@ class Win(QMainWindow):
         out[y0:y1, x0:x1] = (out[y0:y1, x0:x1] * (1 - a)
                              + rgb[sy0:sy0 + (y1 - y0),
                                    sx0:sx0 + (x1 - x0)] * a)
-        # §6.3 定量读数:探针体 2a₀ vs 脚下场景 2a₀(值一致 ⇒ 无缝隐没)
+        # §6.3 定量读数(任何通道都给:体 2a₀ vs 脚下场景 2a₀ 的差
+        # 就是「无缝隐没」的量化口径,顺带报当前抬高)
         a0f, _ = self.ctx['moments_smooth']
         scene_v = float(np.clip(2.0 * a0f[iy, ix], 0, 1))
         probe_v = float(np.clip(2.0 * sample['sky_a0'], 0, 1))
@@ -1747,10 +1817,13 @@ class Win(QMainWindow):
              f'chan={self.channel.currentData()}')
         # ---- 自由移动:按在已画出的立绘/探针球身上 = 抓起来拖 ----
         # (抓取优先于一切放置模式 —— 移动现有对象不需要切勾)
+        grab_mode = 'height' if (_mods() & Qt.ShiftModifier) else 'move'
         if self._char_hit is not None and self._char_foot is not None:
             x0, y0, x1, y1 = self._char_hit
             if x0 <= ix < x1 and y0 <= iy < y1:
                 self._drag_target = 'char'
+                self._drag_mode = grab_mode
+                self._drag_last_vy = vy
                 self._drag_off = (self._char_foot[0] - ix,
                                   self._char_foot[1] - iy)
                 return
@@ -1758,6 +1831,8 @@ class Win(QMainWindow):
             cx, cy, r = self._probe_hit
             if (ix - cx) ** 2 + (iy - cy) ** 2 <= r * r:
                 self._drag_target = 'probe'
+                self._drag_mode = grab_mode
+                self._drag_last_vy = vy
                 self._drag_off = (self._probe_px[0] - ix,
                                   self._probe_px[1] - iy)
                 return
@@ -1778,11 +1853,13 @@ class Win(QMainWindow):
                 self._lights_dirty()
                 return
         if self.char_on.isChecked() and \
-                self.channel.currentData() in ('final', 'final_vol'):
-            # 二审 P2-5:立绘只在 final 系通道有画面 —— 其它通道下这勾
-            # 不该把探针放置饿死(a0 通道本来支持探针)
+                self.channel.currentData() in _ENTITY_CHANNELS:
+            # 立绘在实体联动通道集内都有画面(延迟渲染式 buffer 视图);
+            # 集外通道这勾不吞点击(探针放置不被饿死)
             self._char_foot = (ix, iy)
             self._drag_target = 'char'
+            self._drag_mode = 'move'
+            self._drag_last_vy = vy
             self._drag_off = (0, 0)
             self._render()
             return
@@ -1796,6 +1873,8 @@ class Win(QMainWindow):
                                 '通道);按住球/立绘可直接拖走。')
         self._probe_px = (ix, iy)
         self._drag_target = 'probe'
+        self._drag_mode = 'move'
+        self._drag_last_vy = vy
         self._drag_off = (0, 0)
         self._render()
 
@@ -1804,6 +1883,23 @@ class Win(QMainWindow):
             return
         import time as _time
         s, offx, offy, w, h = self._view_map
+        if self._drag_mode == 'height':
+            # Shift+拖:沿世界竖直调高度,写进对应「抬高(wu)」旋钮
+            if self.ctx is None or self.ctx.get('inp') is None:
+                return
+            inp = self.ctx['inp']
+            dh_wu = ((self._drag_last_vy - vy) / max(s, 1e-9) / inp.ppu
+                     * float(inp.scene_per_wu))
+            self._drag_last_vy = vy
+            spin = self.probe_h if self._drag_target == 'probe' else self.c_h
+            with QSignalBlocker(spin):
+                spin.setValue(spin.value() + dh_wu)
+            now = _time.monotonic()
+            if now - self._last_drag_t < 0.03:
+                return
+            self._last_drag_t = now
+            self._render()
+            return
         ix = int(np.clip((vx - offx) / max(s, 1e-9) + self._drag_off[0],
                          0, w - 1))
         iy = int(np.clip((vy - offy) / max(s, 1e-9) + self._drag_off[1],

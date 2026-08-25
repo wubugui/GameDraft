@@ -54,10 +54,13 @@ class _FakeInp:
         self.bg_srgb = rng.uniform(0.05, 0.9, (h, w, 3)).astype('float32')
         self.depth = rng.uniform(2.0, 8.0, (h, w)).astype('float32')
         self.scene_json = None            # 场景 sky 预设按缺失优雅降级
-        xx, yy = np.meshgrid(np.linspace(-1, 1, w, dtype='float32'),
-                             np.linspace(-1, 1, h, dtype='float32'))
+        # world 从像素映射构造(px=cx+x·ppu, py=cy−y·ppu)—— 与投影锚点
+        # 自洽(实体抬高后按世界坐标投影回画面)
+        px = np.arange(w, dtype='float32')[None, :].repeat(h, 0)
+        py = np.arange(h, dtype='float32')[:, None].repeat(w, 1)
         self.world = np.stack(
-            [xx, yy, rng.uniform(0.0, 1.0, (h, w)).astype('float32')], -1)
+            [(px - self.cx) / self.ppu, (self.cy - py) / self.ppu,
+             rng.uniform(0.0, 1.0, (h, w)).astype('float32')], -1)
         self.q = self.world.copy()        # R=I ⇒ q ≡ world
         # 解析灯(运行时等价):char 高 150wu ↔ char_wu=0.4 ⇒ 375 wu/单位
         self.scene_per_wu = 375.0
@@ -417,6 +420,84 @@ def test_gui_canvas_zoom_pan():
     assert win._zoom >= 0.25
 
 
+def test_gui_entity_height_and_buffer_views(monkeypatch):
+    """制作人 2026-08-26 两条:①放置能调**高度**(旋钮 + Shift拖,
+    锚点按世界坐标投影 ⇒ 抬高后画面位置跟着升);②延迟渲染式联动 ——
+    切到哪个 G-buffer 通道,球/立绘就画实体口径的同名量。"""
+    pytest.importorskip('PySide6')
+    import os
+    os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+    import numpy as np
+    from PySide6.QtCore import Qt
+    from tools.lightbake.gui import app as app_mod
+    from tools.lightbake.gui.app import _ENTITY_CHANNELS, create_window
+    h, w = 24, 32
+    ctx = _rich_fake_ctx(h, w)
+    _app, win = create_window('雾津街头', autobake=False)
+    win.set_ctx(ctx)
+    _settle_lights(_app, win)
+    win.channel.setCurrentIndex(
+        [win.channel.itemData(i) for i in range(win.channel.count())
+         ].index('final'))
+    win.probe_on.setChecked(True)
+    win._probe_px = (16, 14)
+    win._render()
+    assert win._probe_hit is not None
+    _, py0, _r = win._probe_hit
+    # ① 抬高旋钮:球心投影位置上移(80wu / spw375 · ppu20 ≈ 4.3px)
+    win.probe_h.setValue(80.0)
+    win._render()
+    _, py1, _r = win._probe_hit
+    assert py0 - py1 >= 3, (py0, py1)
+    # ①b Shift+拖 = 调高度(写回旋钮)
+    monkeypatch.setattr(app_mod, '_mods', lambda: Qt.ShiftModifier)
+    s, offx, offy, *_ = win._view_map
+    cx0, cy0, _rr = win._probe_hit
+    win._on_view_click(cx0 * s + offx, cy0 * s + offy)
+    assert win._drag_target == 'probe' and win._drag_mode == 'height'
+    h_before = win.probe_h.value()
+    win._on_view_drag(cx0 * s + offx, cy0 * s + offy - 30.0)   # 往上拖
+    win._on_view_release()
+    assert win.probe_h.value() > h_before
+    monkeypatch.setattr(app_mod, '_mods', lambda: Qt.NoModifier)
+    # ② buffer 联动:实体联动通道集内,球都画自己的同名量(像素真变)
+    win.probe_h.setValue(0.0)
+    for key in _ENTITY_CHANNELS:
+        win.channel.setCurrentIndex(
+            [win.channel.itemData(i) for i in range(win.channel.count())
+             ].index(key))
+        base = win._channel_img()
+        if win._lights_worker is not None:
+            _settle_lights(_app, win)
+            base = win._channel_img()
+        out = win._overlay_probe(base)
+        assert out.shape == base.shape
+        assert float(np.abs(out - base).max()) > 0.0, key
+    # ②b 立绘同样联动(抽 normal 与 e_lights 两个非 final 通道)
+    if win.char_combo.count() > 0:
+        win.char_on.setChecked(True)
+        win._char_foot = (16, h - 2)
+        for key in ('normal', 'e_lights'):
+            win.channel.setCurrentIndex(
+                [win.channel.itemData(i) for i in range(win.channel.count())
+                 ].index(key))
+            base = win._channel_img()
+            out = win._overlay_char(base)
+            assert float(np.abs(out - base).max()) > 0.0, key
+        # 立绘抬高:锚点上移
+        win.channel.setCurrentIndex(
+            [win.channel.itemData(i) for i in range(win.channel.count())
+             ].index('final'))
+        win.c_h.setValue(0.0)
+        win._render()
+        y1a = win._char_hit[3] if win._char_hit else None
+        win.c_h.setValue(120.0)
+        win._render()
+        y1b = win._char_hit[3] if win._char_hit else None
+        assert y1a is not None and y1b is not None and y1a - y1b >= 4
+        win.char_on.setChecked(False)
+
+
 def test_gui_no_volume_never_silent(monkeypatch):
     """制作人三轮「点了没反应」的根因回归:首帧必须**带体积**
     (探针/立绘吃 char_volume);ctx 无体积时 overlay 不许静默跳过。"""
@@ -484,13 +565,14 @@ def test_gui_char_error_note_not_clobbered(monkeypatch):
     assert '探针@' in win.note2.text()
 
 
-def test_gui_char_placement_gated_to_final_channels():
-    """二审 P2-5 回归:非 final 系通道下 char_on 不吞点击 —— a0 通道
-    点击照常放探针。"""
+def test_gui_char_placement_gated_to_entity_channels():
+    """二审 P2-5 口径升级:char_on 只在**实体联动通道集**内吞点击 ——
+    集外通道(depth 这类没有实体类比的)点击照常放探针。"""
     pytest.importorskip('PySide6')
     import os
     os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
-    from tools.lightbake.gui.app import create_window
+    from tools.lightbake.gui.app import _ENTITY_CHANNELS, create_window
+    assert 'depth' not in _ENTITY_CHANNELS
     h, w = 24, 32
     ctx = _rich_fake_ctx(h, w)
     _app, win = create_window('雾津街头', autobake=False)
@@ -498,7 +580,7 @@ def test_gui_char_placement_gated_to_final_channels():
     _settle_lights(_app, win)
     win.channel.setCurrentIndex(
         [win.channel.itemData(i) for i in range(win.channel.count())
-         ].index('a0'))
+         ].index('depth'))
     win.char_on.setChecked(True)
     win.probe_on.setChecked(True)
     win._render()

@@ -134,7 +134,7 @@ def shade_probe_ball(sample: dict, R: np.ndarray, sky_def: dict, sun_dir,
                      gi: float, ev: float, env_rgb, env_gain: float,
                      radius_px: int, albedo: float = 0.5,
                      occlusion_only: bool = False,
-                     lights_of_n=None) -> tuple[np.ndarray, np.ndarray]:
+                     lights_of_n=None, components: bool = False):
     """探针球 = 实体着色口径的 §6.1 镜像(角色融入度目视):
 
         E_目标 = gi·E_GI(N) + SkySH(mix(Bdir,N,w))·V(N) + E_环境(AO(N))
@@ -146,7 +146,10 @@ def shade_probe_ball(sample: dict, R: np.ndarray, sky_def: dict, sun_dir,
     公式、固定口径,实体必须无缝隐没其中(制作人验收铁令)。
     `lights_of_n`:可选回调 N(h,w,3)→E_灯(h,w,3)(实体口径的解析灯,
     lights.eval_probe_lights 包一层;None = 无灯)。
-    返回 (rgb, alpha),alpha 为圆形掩码。"""
+    返回 (rgb, alpha),alpha 为圆形掩码。
+    `components=True` 额外返回中间量字典(延迟渲染式 buffer 联动:GUI 的
+    G-buffer 通道画实体口径同名量,与运行时 sc3DebugView「实体与场景同一
+    套编号」同旨):normal/V/vis_up/bent/ao/a0/a1/gi/e_sky/e_lights。"""
     from .gather import bent_of_moments, vis_of_normal
     r = int(max(radius_px, 4))
     yy, xx = np.mgrid[-r:r + 1, -r:r + 1].astype(np.float32) / float(r)
@@ -185,12 +188,28 @@ def shade_probe_ball(sample: dict, R: np.ndarray, sky_def: dict, sun_dir,
         mod = np.clip(0.28 + 0.72 * ao, 0.0, 1.2)
         e_env = (np.asarray(env_rgb, np.float32).reshape(1, 1, 3)
                  * np.float32(env_gain) * mod[..., None])
-    e_t = np.float32(gi) * e_gi + e_sky + e_env
-    if lights_of_n is not None:
-        e_t = e_t + lights_of_n(N)
-    e_t = e_t * np.float32(2.0 ** ev)
+    e_lights = (lights_of_n(N) if lights_of_n is not None
+                else np.zeros(N.shape, np.float32))
+    e_t = (np.float32(gi) * e_gi + e_sky + e_env + e_lights) \
+        * np.float32(2.0 ** ev)
     rgb = linear_to_srgb(from_hdr(np.float32(albedo) * e_t))
-    return rgb, mask.astype(np.float32)
+    if not components:
+        return rgb, mask.astype(np.float32)
+    comps = {
+        'normal': N.astype(np.float32),
+        'V': V.astype(np.float32),
+        'vis_up': vis_of_normal(
+            a0g, a1g, np.broadcast_to(
+                np.array([0, 1, 0], np.float32), N.shape).copy()),
+        'bent': bent.astype(np.float32),
+        'ao': ao.astype(np.float32),
+        'a0': a0g.astype(np.float32),
+        'a1': a1g.astype(np.float32),
+        'gi': e_gi.astype(np.float32),
+        'e_sky': e_sky,
+        'e_lights': e_lights.astype(np.float32),
+    }
+    return rgb, mask.astype(np.float32), comps
 
 
 def volume_sky_at_surface(ctx: dict) -> tuple[np.ndarray, np.ndarray]:

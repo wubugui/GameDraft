@@ -180,8 +180,7 @@ def shade_character(ctx: dict, sprite: CharSprite, foot_world,
                     flatten: float = 0.0, bulge: float = 0.22,
                     ao_contact: float = 0.0, ao_form: float = 0.0,
                     mirror: bool = False, scale_mul: float = 1.0,
-                    notes: list | None = None
-                    ) -> tuple[np.ndarray, np.ndarray]:
+                    notes: list | None = None, components: bool = False):
     """把一帧立绘按运行时角色管线着色,返回 (显示域 sRGB rgb, alpha),
     分辨率 = 该角色在画面上的实际显示大小(world 尺寸·scale_mul → q → ×ppu)。
 
@@ -190,7 +189,11 @@ def shade_character(ctx: dict, sprite: CharSprite, foot_world,
     out = sc3CharBase(图集) · E_目标 → 形体AO → from_hdr·2^ev(预览统一链)。
     `char_gi` None ⇒ 跟随 gi(运行时缺省口径);`scale_mul` 对应运行时的
     depthScaleFactor(透视缩放,预览手动)。α<0.03 的像素按运行时 discard
-    口径丢弃(alpha 归零)。"""
+    口径丢弃(alpha 归零)。
+    `components=True` 额外返回中间量字典(延迟渲染式 buffer 联动,与
+    运行时 sc3DebugView「实体与场景同一套编号」同旨):
+    normal/V/vis_up/bent/ao/a0/a1/gi/e_sky/e_lights,全分辨率散射,
+    掩码外为 0。"""
     inp = ctx['inp']
     vol = ctx.get('volume')
     if not vol:
@@ -214,6 +217,12 @@ def shade_character(ctx: dict, sprite: CharSprite, foot_world,
     h, w = out_h, out_w
     rgb_out = np.zeros((h, w, 3), np.float32)
     if idx.size == 0:
+        if components:
+            z1 = np.zeros((h, w), np.float32)
+            z3 = np.zeros((h, w, 3), np.float32)
+            return rgb_out, alpha_out, {
+                'normal': z3, 'V': z1, 'vis_up': z1, 'bent': z3, 'ao': z1,
+                'a0': z1, 'a1': z3, 'gi': z3, 'e_sky': z3, 'e_lights': z3}
         return rgb_out, alpha_out
 
     # ---- 法线解码(shader 逐字;mirror 只翻方向分量) ----
@@ -334,4 +343,34 @@ def shade_character(ctx: dict, sprite: CharSprite, foot_world,
     out = linear_to_srgb(from_hdr(np.float32(lin)
                                   * np.float32(2.0 ** ev)))
     rgb_out.reshape(-1, 3)[idx] = out
-    return rgb_out, alpha_out
+    if not components:
+        return rgb_out, alpha_out
+
+    def _scat1(v):
+        z = np.zeros((h, w), np.float32)
+        z.reshape(-1)[idx] = v
+        return z
+
+    def _scat3(v):
+        z = np.zeros((h, w, 3), np.float32)
+        z.reshape(-1, 3)[idx] = v
+        return z
+
+    up = np.broadcast_to(np.array([0, 1, 0], np.float32), n.shape).copy()
+    t0_up = np.maximum(sky_c[:, 0]
+                       + np.einsum('nd,nd->n', sky_c[:, 1:], up), 0.0)
+    vis_up = np.clip(t0_up / np.maximum((1.0 + up[:, 1]) * 0.5, 1.0 / 255.0),
+                     0.0, 1.0)
+    comps = {
+        'normal': _scat3(n.astype(np.float32)),
+        'V': _scat1(V.astype(np.float32)),
+        'vis_up': _scat1(vis_up.astype(np.float32)),
+        'bent': _scat3(bent.astype(np.float32)),
+        'ao': _scat1(np.clip(ao, 0.0, 1.0).astype(np.float32)),
+        'a0': _scat1(sky_c[:, 0]),
+        'a1': _scat3(sky_c[:, 1:]),
+        'gi': _scat3(gi_e.astype(np.float32)),
+        'e_sky': _scat3(sky_e.astype(np.float32)),
+        'e_lights': _scat3(direct_e.astype(np.float32)),
+    }
+    return rgb_out, alpha_out, comps
