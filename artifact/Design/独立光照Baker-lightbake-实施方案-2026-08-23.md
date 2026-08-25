@@ -1836,3 +1836,35 @@ prefix(含端点)、`_lc_march_visibility` 循环边界/严格不等号、双截
 下标口径、缓存键完备性(depth 随 inp 走)、float32 精度余量、
 `_settle` 收敛性。遗留登记:768 步上限在 2048 宽对角灯位下 ~3px 步进
 (docstring 已记);spinbox decimals 对**被编辑键**的量化是固有代价。
+
+
+### §15 追记:立绘进预览 —— 运行时角色管线镜像(2026-08-26)
+
+制作人问「角色加进去了吗?」—— 此前只有探针球(实体口径),真立绘补上:
+
+- 新模块 `character.py` = `UnifiedCharacterShader` 逐式镜像:
+  比例基底 `sc3CharBase`(图集 srgb→linear ÷α ÷ `max((1+N.y)/2·charRefIntensity,1e-4)`,
+  「基底不是 albedo」);法线图集解码 `n=normalize(−(2r−1),−(2g−1),−max(b,.05))`
+  (mirror 只翻 x,flatten 向 (0,0,−1) mix,ne.a·bulge 压进 q.z);
+  quad 竖直方向 = 世界 up 过 R(运行时 `(0,h·cosT,−h·sinT)` 的无 roll 全式),
+  横向沿 q x̂ 按像素;逐像素三线性吃体数据(ucSkyAt:天穹 SH-L1 / AO / GI
+  都按**角色自己的法线**求值,`V=clip(t₀/cap₀)`、cap₀=(1+N.y)/2 与
+  gather.cap0 同式);太阳+灯与场景**同一份**数据、同一批 lc*,角色口径
+  march 的**逐像素批量版**(`lights._char_lamp_visibility_batch` 16 步 /
+  `_char_sun_visibility_batch` 48 步,语义与标量版逐字同);
+  `charGi` 缺省跟随 gi(运行时 `def.charGi ?? def.gi`);形体 AO
+  (contact/form,缺省 0);显示走预览统一链。着色 0.03s/帧。
+- 图集来源 `public/resources/runtime/animation/<name>/`(atlas + atlas.normal
+  + anim.json;**法线图集是准入硬依赖**);缺省 player_anim idle 首帧,
+  worldHeight=150 是尺度锚。
+- **PIL 陷阱(实测验尸)**:PIL ≥12 对 RGBA `resize` **预乘 α** ——
+  法线图集 α 通道是 bulge 高度(常为 0),整张 RGB 被抹零,解码成
+  normalize(1,1,−0.05)(ny=0.7067,逐位对上)。修:RGB 与 A 分通道
+  直通双线性(与 GPU 采样口径一致),色图边缘的预乘 halo 一并消除。
+- GUI 角色组:选立绘/点视口放脚点(放灯 > 放角色 > 放探针)/镜像/
+  flatten/bulge/形体AO/charGi 跟随开关/charRefIntensity(set_ctx 回填场景
+  值,雾津街头 = 0.6864);合成进 final/final_vol。
+- 测试 +5(全链手算钉:基底×(amb+gi·charGi) 恒等、E_ref 随 N.y、角色侧
+  天光链全链独立复算(t₀/cap₀/w/n_mix/SH·V)、mirror 翻 x 的侧光观测、
+  真图集装载);GUI 冒烟加立绘覆盖。全套 170+1。
+- 视觉验收:player_anim 站雾津街头夜景门洞,亮度贴场景走(取证图已交)。

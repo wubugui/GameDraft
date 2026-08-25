@@ -45,6 +45,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox,  # noqa: E402
                                QScrollArea, QSlider, QSpinBox, QVBoxLayout,
                                QWidget)
 
+from tools.lightbake import character as char_mod               # noqa: E402
 from tools.lightbake import input as input_mod                  # noqa: E402
 from tools.lightbake import lights as lights_mod                # noqa: E402
 from tools.lightbake import preview as preview_mod              # noqa: E402
@@ -282,6 +283,23 @@ class Win(QMainWindow):
         save_lt = QPushButton('存回场景 JSON(lighting.lights 运行时灯)')
         save_lt.clicked.connect(self._save_lights)
 
+        # ---------------- 角色立绘(运行时角色管线镜像,character.py) ----------------
+        self.char_on = QCheckBox('放角色立绘(点视口放脚点,吃体数据)')
+        self.char_combo = QComboBox()
+        for c in char_mod.list_characters():
+            self.char_combo.addItem(c)
+        if self.char_combo.findText('player_anim') >= 0:
+            self.char_combo.setCurrentText('player_anim')
+        self.c_mirror = QCheckBox('镜像(朝左)')
+        self.c_flatten = self._dspin(0.0, step=0.05, hi=1.0)
+        self.c_bulge = self._dspin(0.22, step=0.02, hi=2.0)
+        self.c_aoc = self._dspin(0.0, step=0.05, hi=1.0)
+        self.c_aof = self._dspin(0.0, step=0.05, hi=1.0)
+        self.c_gi_follow = QCheckBox('charGi 跟随 gi(运行时缺省)')
+        self.c_gi_follow.setChecked(True)
+        self.c_gi = self._dspin(1.0, step=0.05, hi=4.0)
+        self.c_ref = self._dspin(1.0, step=0.02, hi=8.0, decimals=4)
+
         # ---------------- 烘焙期天空组(重估级) ----------------
         self.mode = QComboBox()
         self.mode.addItems(['color', 'skybox'])
@@ -383,6 +401,13 @@ class Win(QMainWindow):
             ('roll°', self.l_roll), (None, self.l_two),
             ('仰角°', self.l_el), ('方位°', self.l_az),
             (None, self.l_place), (None, save_lt)])
+        group('角色立绘(运行时角色管线:基底÷E_ref+体天穹/GI+灯march)', [
+            (None, self.char_on), ('立绘', self.char_combo),
+            (None, self.c_mirror),
+            ('flatten', self.c_flatten), ('bulge', self.c_bulge),
+            ('形体AO contact', self.c_aoc), ('形体AO form', self.c_aof),
+            (None, self.c_gi_follow), ('charGi(不跟随时)', self.c_gi),
+            ('charRefIntensity', self.c_ref)])
         group('烘焙期天空(重估级,喂 gather 的那份)', [
             ('模式', self.mode), ('R', self.r), ('G', self.g), ('B', self.b),
             ('强度', self.inten), (None, pick), (None, self.sky_file)])
@@ -483,6 +508,15 @@ class Win(QMainWindow):
         self.probe_on.stateChanged.connect(self._render)
         self.probe_occl.stateChanged.connect(self._render)
         self.lights_on.stateChanged.connect(self._render)
+        self.char_on.stateChanged.connect(self._render)
+        self.char_combo.currentTextChanged.connect(self._on_char_changed)
+        self.c_mirror.stateChanged.connect(self._render)
+        self.c_gi_follow.stateChanged.connect(self._render)
+        for w_ in (self.c_flatten, self.c_bulge, self.c_aoc, self.c_aof,
+                   self.c_gi, self.c_ref):
+            w_.valueChanged.connect(self._render)
+        self._char_foot: tuple | None = None
+        self._char_sprite = None
         self.light_combo.currentIndexChanged.connect(self._on_light_selected)
         self.l_kind.currentIndexChanged.connect(self._on_light_retype)
         # 逐键回写(审查 P0-2/P1-9):只写被动过的语义组 —— 没动过的键在
@@ -1070,6 +1104,20 @@ class Win(QMainWindow):
         self._lights = [dict(l) for l in
                         (getattr(ctx.get('inp'), 'lights', None) or [])]
         self._rebuild_light_combo(0)
+        # charRefIntensity/charGi 回填场景值(运行时角色链的两个作者参数)
+        try:
+            sc = json.loads(ctx['inp'].scene_json.read_text(encoding='utf-8'))
+            lt = sc.get('lighting') or {}
+            with QSignalBlocker(self.c_ref):
+                self.c_ref.setValue(float(lt.get('charRefIntensity') or 1.0))
+            cg = lt.get('charGi')
+            with QSignalBlocker(self.c_gi_follow), QSignalBlocker(self.c_gi):
+                self.c_gi_follow.setChecked(cg is None)
+                if cg is not None:
+                    self.c_gi.setValue(float(cg))
+        except Exception:                           # noqa: BLE001 — 假 ctx 降级
+            pass
+        self._char_foot = None
         self._vol_m = None
         self._gi_slice_range = None
         spec = dict(ctx.get('sky_spec') or {})
@@ -1317,6 +1365,63 @@ class Win(QMainWindow):
             return self._vol_slice_img(key)
         return self._placeholder(f'未知通道 {key}')
 
+    def _on_char_changed(self, _t: str) -> None:
+        self._char_sprite = None
+        self._render()
+
+    def _overlay_char(self, img: np.ndarray) -> np.ndarray:
+        """把立绘按运行时角色管线着色后合成进视口(character.py 唯一实现,
+        壳零算法)。需要体数据(角色吃 char_volume,§6.1 实体口径)。"""
+        key = self.channel.currentData()
+        if (not self.char_on.isChecked() or self._char_foot is None
+                or key not in ('final', 'final_vol')
+                or not (self.ctx or {}).get('volume')
+                or self.ctx.get('inp') is None
+                or float(getattr(self.ctx['inp'], 'scene_per_wu', 0) or 0) <= 0
+                or not self.char_combo.currentText()):
+            return img
+        inp = self.ctx['inp']
+        h, w = img.shape[:2]
+        ix, iy = self._char_foot
+        ix = int(np.clip(ix, 0, w - 1))
+        iy = int(np.clip(iy, 0, h - 1))
+        try:
+            if self._char_sprite is None:
+                self._char_sprite = char_mod.load_character(
+                    self.char_combo.currentText())
+            crgb, ca = char_mod.shade_character(
+                self.ctx, self._char_sprite,
+                inp.world[iy, ix].astype(np.float64),
+                self._runtime_sky_def(), self._runtime_sun(),
+                gi=self.gi.value(), ev=self.ev.value(),
+                env_rgb=[self.env_r.value(), self.env_g.value(),
+                         self.env_b.value()],
+                env_gain=self.env_gain.value(),
+                lights=(self._lights if self.lights_on.isChecked() else []),
+                char_gi=(None if self.c_gi_follow.isChecked()
+                         else self.c_gi.value()),
+                char_ref_intensity=self.c_ref.value(),
+                flatten=self.c_flatten.value(), bulge=self.c_bulge.value(),
+                ao_contact=self.c_aoc.value(), ao_form=self.c_aof.value(),
+                mirror=self.c_mirror.isChecked())
+        except Exception as exc:                    # noqa: BLE001 — 显示不许炸
+            self.note.setText(f'立绘着色失败:{type(exc).__name__}: {exc}')
+            return img
+        ch, cw = crgb.shape[:2]
+        y1, x0 = iy, ix - cw // 2                   # 脚点 = 底边中点
+        y0 = y1 - ch
+        sy0, sx0 = max(0, -y0), max(0, -x0)
+        y0, x0 = max(0, y0), max(0, x0)
+        y2, x2 = min(h, y1), min(w, x0 + (cw - sx0))
+        if y2 <= y0 or x2 <= x0:
+            return img
+        out = img.copy()
+        a = ca[sy0:sy0 + (y2 - y0), sx0:sx0 + (x2 - x0), None]
+        out[y0:y2, x0:x2] = (out[y0:y2, x0:x2] * (1 - a)
+                             + crgb[sy0:sy0 + (y2 - y0),
+                                    sx0:sx0 + (x2 - x0)] * a)
+        return out
+
     def _overlay_probe(self, img: np.ndarray) -> np.ndarray:
         """把角色探针球合成进视口图(实体口径吃 volume;§6.1/§6.3 镜像)。"""
         key = self.channel.currentData()
@@ -1374,6 +1479,7 @@ class Win(QMainWindow):
             return
         try:
             img = self._channel_img()
+            img = self._overlay_char(img)
             img = self._overlay_probe(img)
         except Exception as exc:                       # noqa: BLE001 — 显示不许炸
             img = self._placeholder(f'渲染失败:{type(exc).__name__}: {exc}')
@@ -1415,6 +1521,10 @@ class Win(QMainWindow):
                 self._load_light_fields()
                 self._lights_dirty()
                 return
+        if self.char_on.isChecked():                # 放角色优先于放探针
+            self._char_foot = (ix, iy)
+            self._render()
+            return
         if not self.probe_on.isChecked():
             return
         self._probe_px = (ix, iy)

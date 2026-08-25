@@ -251,6 +251,16 @@ def test_gui_lights_editor_roundtrip():
     win._probe_px = (w // 2, h // 2)
     out = win._overlay_probe(win._channel_img())
     assert out.shape == (h, w, 3)
+    # 立绘覆盖:真图集走运行时角色管线(character.py),合成不炸且真动像素
+    if win.char_combo.count() > 0:
+        win.char_on.setChecked(True)
+        win._char_foot = (w // 2, h - 2)
+        base_img = win._channel_img()
+        out2 = win._overlay_char(base_img)
+        assert out2.shape == (h, w, 3)
+        assert '立绘着色失败' not in win.note.text()
+        assert float(np.abs(out2 - base_img).max()) > 0.0
+        win.char_on.setChecked(False)
     # 换型:point → area,字段卫生(dir/锥角清掉,area 专属补上,软化不进面光)
     win.light_combo.setCurrentIndex(1)
     win.l_kind.setCurrentText('area')

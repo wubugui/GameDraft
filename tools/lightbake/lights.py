@@ -256,6 +256,54 @@ def _char_lamp_visibility(inp, q0: np.ndarray, lq: np.ndarray,
                                 bias0_q, thick_q)
 
 
+def _char_lamp_visibility_batch(inp, q_pix: np.ndarray, lq: np.ndarray,
+                                bias0_q: float, thick_q: float) -> np.ndarray:
+    """`ucLightVisibility` 的逐像素批量版(立绘着色:每个 sprite 像素的 q
+    不同,各自朝灯 march)。语义与标量版逐字同:16 步、len·0.92、
+    bias0+0.02·st·i、thick 窗、len<1e-5 ⇒ 1。q_pix: (n,3)。"""
+    h, w = inp.depth.shape
+    d = lq[None, :] - q_pix
+    ln = np.linalg.norm(d, axis=-1)
+    act = ln >= 1e-5
+    dirn = d / np.maximum(ln, 1e-12)[:, None]
+    st = ln * 0.92 / 16.0
+    occ = np.zeros(q_pix.shape[0], bool)
+    depth = inp.depth
+    for i in range(1, 17):
+        qm = q_pix + dirn * (st * i)[:, None]
+        px = inp.cx + qm[:, 0] * inp.ppu
+        py = inp.cy - qm[:, 1] * inp.ppu
+        inside = (px >= 0) & (px <= w - 1) & (py >= 0) & (py <= h - 1)
+        xi = np.clip(np.rint(px).astype(np.int32), 0, w - 1)
+        yi = np.clip(np.rint(py).astype(np.int32), 0, h - 1)
+        pen = qm[:, 2] - depth[yi, xi]
+        bias = bias0_q + 0.02 * st * i
+        occ |= inside & (pen > bias) & (pen < thick_q)
+    return np.where(act, (~occ).astype(np.float32), np.float32(1.0))
+
+
+def _char_sun_visibility_batch(inp, q_pix: np.ndarray,
+                               dir_q: np.ndarray, bias0_q: float,
+                               thick_q: float) -> np.ndarray:
+    """角色侧太阳 march 的逐像素批量版(48 步、len 3.5、方向恒定 ——
+    运行时把世界系 uSunDir 直接当 q 方向,照抄)。返回 blocked∈{0,1}。"""
+    h, w = inp.depth.shape
+    st = SUN_MARCH_LEN_Q / SUN_MARCH_STEPS
+    occ = np.zeros(q_pix.shape[0], bool)
+    depth = inp.depth
+    for i in range(1, SUN_MARCH_STEPS + 1):
+        qm = q_pix + dir_q[None, :] * (st * i)
+        px = inp.cx + qm[:, 0] * inp.ppu
+        py = inp.cy - qm[:, 1] * inp.ppu
+        inside = (px >= 0) & (px <= w - 1) & (py >= 0) & (py <= h - 1)
+        xi = np.clip(np.rint(px).astype(np.int32), 0, w - 1)
+        yi = np.clip(np.rint(py).astype(np.int32), 0, h - 1)
+        pen = qm[:, 2] - depth[yi, xi]
+        bias = bias0_q + 0.02 * st * i
+        occ |= inside & (pen > bias) & (pen < thick_q)
+    return (~occ).astype(np.float32)
+
+
 # ------------------------------------------------ 单盏灯的 E(N 任意形状)
 
 def _one_lamp_e(l: dict, kind: str, P: np.ndarray, N: np.ndarray, qu: float,
