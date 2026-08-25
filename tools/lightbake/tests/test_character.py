@@ -504,6 +504,105 @@ def test_probe_per_pixel_lamp_gradient():
     assert left > right * 1.15, (left, right)
 
 
+# ------------------------------------------------ GI SH-L2(收敛公理,2026-08-27)
+
+_Y00 = 0.2820948
+
+
+def _vol_with_sh(c_sh):
+    """2×2×2 均匀体,gi_sh 八角同值(插值恒等 ⇒ 纯测求值核)。"""
+    n8 = 8
+    vol = {'grid': {'nx': 2, 'ny': 2, 'nz': 2},
+           'bounds': {'x0': -3.0, 'x1': 3.0, 'y0': -0.5, 'y1': 2.0,
+                      'z0': -3.0, 'z1': 3.0},
+           'raw': {'sky_a0': np.zeros(n8, 'float32'),
+                   'sky_a1': np.zeros((n8, 3), 'float32'),
+                   'ao_a0': np.full(n8, 0.4, 'float32'),
+                   'ao_a1': np.zeros((n8, 3), 'float32'),
+                   'gi_a0': np.zeros((n8, 3), 'float32'),
+                   'gi_a1': np.zeros((n8, 3, 3), 'float32'),
+                   'gi_sh': np.broadcast_to(
+                       np.asarray(c_sh, 'float32'), (n8, 9, 3)).copy()}}
+    return vol
+
+
+def test_gi_l2_uniform_radiance_anchor():
+    """均匀辐射 L₀ ⇒ E(N) ≡ L₀(任意法线,解析锚):c00 = L₀/Y00,其余 0。"""
+    L0 = np.array([0.7, 0.4, 0.2], 'float32')
+    c = np.zeros((9, 3), 'float32')
+    c[0] = L0 / _Y00
+    vol = _vol_with_sh(c)
+    rng = np.random.default_rng(3)
+    n = rng.normal(size=(64, 3)).astype('float32')
+    n /= np.linalg.norm(n, axis=-1, keepdims=True)
+    P = np.zeros((64, 3))
+    _s, _a, gi = C.sample_entity_volume(vol, P, n)
+    assert np.allclose(gi, L0[None, :], atol=1e-5), gi[:2]
+
+
+def test_gi_l2_beam_beats_l1():
+    """定向束流(通量 Φ,方向 ω₀)的解析钳位余弦 E(N)=Φ·max(N·ω₀,0)/π:
+    **L2 求值必须严格比 L1 更贴解析**(整个升级的存在理由;回退即红)。
+    L1 的 (a₀,a₁)=(Φ/4π, Φω₀/2π) 与 L2 的 c=Φ·Y(ω₀) 来自同一束流。"""
+    from tools.lightbake.sky import sh_basis
+    w0 = np.array([0.3, 0.8, 0.52])
+    w0 /= np.linalg.norm(w0)
+    phi = 2.0
+    y0 = np.asarray(sh_basis(np.array([w0[0]]), np.array([w0[1]]),
+                             np.array([w0[2]])))[:, 0]
+    c = np.repeat((phi * y0)[:, None], 3, 1).astype('float32')
+    vol = _vol_with_sh(c)
+    a0 = phi / (4 * math.pi)
+    a1 = phi * w0 / (2 * math.pi)
+    rng = np.random.default_rng(11)
+    N = rng.normal(size=(256, 3))
+    N /= np.linalg.norm(N, axis=-1, keepdims=True)
+    P = np.zeros((256, 3))
+    _s, _a, gi2 = C.sample_entity_volume(vol, P, N.astype('float32'))
+    ana = phi * np.maximum(N @ w0, 0.0) / math.pi
+    e2 = np.abs(gi2[:, 0] - ana)
+    e1 = np.abs(np.maximum(a0 + N @ a1, 0.0) - ana)
+    assert e2.mean() < 0.55 * e1.mean(), (e2.mean(), e1.mean())
+    assert np.percentile(e2, 95) < np.percentile(e1, 95)
+
+
+def test_gi_l1_fallback_without_sh():
+    """旧 ctx(无 gi_sh)必须走 L1 老口径:E=max(a₀+a₁·N,0) 逐角点。"""
+    vol = _vol_with_sh(np.zeros((9, 3), 'float32'))
+    del vol['raw']['gi_sh']
+    vol['raw']['gi_a0'] = np.full((8, 3), 0.3, 'float32')
+    a1 = np.zeros((8, 3, 3), 'float32')
+    a1[:, :, 1] = 0.2                               # a1y=0.2
+    vol['raw']['gi_a1'] = a1
+    N = np.array([[0, 1, 0], [0, -1, 0]], 'float32')
+    _s, _a, gi = C.sample_entity_volume(vol, np.zeros((2, 3)), N)
+    assert np.allclose(gi[0], 0.5, atol=1e-6)       # 0.3+0.2
+    assert np.allclose(gi[1], 0.1, atol=1e-6)       # max(0.3−0.2,0)
+
+
+def test_scene_volume_gi_reconstruction():
+    """场景表面重建通道(preview.volume_gi_at_surface):均匀 L₀ 场 ⇒
+    整幅 ≡ L₀(与法线无关的解析锚);形状 = 工作分辨率。"""
+    from tools.lightbake import preview as P
+    L0 = np.array([0.5, 0.3, 0.1], 'float32')
+    c = np.zeros((9, 3), 'float32')
+    c[0] = L0 / _Y00
+    ctx = _uniform_ctx()
+    ctx['volume'] = _vol_with_sh(c)
+    h, w = 6, 8
+    inp = ctx['inp']
+    inp.world = np.zeros((h, w, 3), 'float32')
+    rng = np.random.default_rng(5)
+    nrm = rng.normal(size=(h, w, 3)).astype('float32')
+    nrm /= np.linalg.norm(nrm, axis=-1, keepdims=True)
+    ctx['normal'] = nrm
+    ctx['moments_smooth'] = (np.zeros((h, w), 'float32'),
+                             np.zeros((h, w, 3), 'float32'))
+    gv = P.volume_gi_at_surface(ctx)
+    assert gv.shape == (h, w, 3)
+    assert np.allclose(gv, L0[None, None, :], atol=1e-5)
+
+
 def test_list_and_load_player_atlas():
     chars = C.list_characters()
     if 'player_anim' not in chars:

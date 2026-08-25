@@ -85,7 +85,8 @@ def _gz_edge(mask):
 #: 切到哪个 G-buffer 就画实体的同名量(与运行时 sc3DebugView
 #: 「实体与场景同一套编号」同旨)。不在表里的通道没有实体类比,不画。
 _ENTITY_CHANNELS = ('final', 'final_vol', 'a0', 'vis_up', 'bent', 'a1',
-                    'ao', 'normal', 'e_lights', 'e_rgb', 'e_lum')
+                    'ao', 'normal', 'e_lights', 'e_rgb', 'e_lum',
+                    'e_givol', 'final_givol')
 
 import numpy as np
 
@@ -193,6 +194,8 @@ _CHANNELS = [
     ('e_ind', 'E间接'),
     ('e_dir', 'E直接(太阳反解)'),
     ('e_lights', 'E_灯+E_太阳(运行时解析灯)'),
+    ('e_givol', 'E·体GI重建(场景/实体同吃 GI volume)'),
+    ('final_givol', '最终·只吃体GI(base·E_GIvol)'),
     ('base_rgb', 'base(彩色,Reinhard 显示)'),
     ('base_lum', 'base 亮度(log2)'),
     ('base_chroma', 'base 色度'),
@@ -601,6 +604,7 @@ class Win(QMainWindow):
         self._lamp_vis: dict = {}         # 逐灯阴影图缓存(键含灯位/range/bias)
         self._lights_worker: FnWorker | None = None
         self._vol_m: tuple | None = None
+        self._givol_c: np.ndarray | None = None   # 体GI 表面重建缓存
         self._gi_slice_range: tuple | None = None
         self.progressed.connect(self._on_progress)
         self.debounce = QTimer(self)
@@ -1183,6 +1187,7 @@ class Win(QMainWindow):
         self._lights_cache = {}
         self._lamp_vis = {}
         self._vol_m = None
+        self._givol_c = None
         self._gi_slice_range = None
         self._zoom = 1.0                          # 换场景复位视图
         self._view_center = None
@@ -1286,6 +1291,7 @@ class Win(QMainWindow):
             pass
         # 同场景重烘**保留**实体世界锚(锚是世界坐标,不随烘焙失效)
         self._vol_m = None
+        self._givol_c = None
         self._gi_slice_range = None
         spec = dict(ctx.get('sky_spec') or {})
         spec.pop('_source', None)
@@ -1478,6 +1484,31 @@ class Win(QMainWindow):
             d = np.maximum(
                 (res['e'] - e_ind * res.get('gain', 1.0)) @ LUMA, 0)
             return _g2c(d, 0, max(float(np.percentile(d, 99)), 1e-6))
+        if key in ('e_givol', 'final_givol'):
+            if not ctx.get('volume'):
+                return self._placeholder('需要体数据 —— 勾「含体积」重烘')
+            if missing('inp', 'normal'):
+                return self._placeholder('体GI重建需要完整 ctx')
+            if self._givol_c is None:
+                self._givol_c = preview_mod.volume_gi_at_surface(ctx)
+            gv = self._givol_c
+            # 收敛公理的现场读数:体GI重建 vs 逐像素 E间接·gain
+            ref = (res or {}).get('e_ind')
+            if ref is not None:
+                r = (ref * (res or {}).get('gain', 1.0)) @ LUMA
+                g = gv @ LUMA
+                mask = r > max(float(np.percentile(r, 20)), 1e-5)
+                rel = np.abs(g[mask] - r[mask]) / np.maximum(r[mask], 1e-5)
+                self.note.setText(
+                    f'体GI重建 vs E间接·gain:中位 {np.median(rel):.3f} / '
+                    f'p95 {np.percentile(rel, 95):.3f}'
+                    '(L2 核截断理论底 ~1.6%,分辨率越高越贴)')
+            if key == 'e_givol':
+                return linear_to_srgb(from_hdr(gv))
+            base, _bg = self._ensure_base()
+            zero = np.zeros_like(gv)
+            return preview_mod.compose_final(base, gv, zero, gi=1.0,
+                                             ev=self.ev.value())
         if key == 'e_lights':
             if missing('inp', 'normal'):
                 return self._placeholder('E_灯 需要完整 ctx')
@@ -1611,7 +1642,9 @@ class Win(QMainWindow):
             return _g2c(comps['a0'] * 2.0)
         if key == 'e_lights':
             return linear_to_srgb(from_hdr(comps['e_lights']))
-        if key == 'e_rgb':
+        if key in ('e_rgb', 'e_givol', 'final_givol'):
+            # 实体的「E/只吃GI」类比 = 它吃到的体 GI 场(final_givol 下实体
+            # 同样只展示 GI 项 —— 与场景侧「只吃体GI」同一口径)
             return linear_to_srgb(from_hdr(comps['gi']))
         if key == 'e_lum':
             return _g2c(from_hdr(comps['gi'] @ LUMA))

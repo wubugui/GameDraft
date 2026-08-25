@@ -249,6 +249,23 @@ def volume_sky_at_surface(ctx: dict) -> tuple[np.ndarray, np.ndarray]:
             t[:, 1:4].reshape(h, w, 3).astype(np.float32))
 
 
+def volume_gi_at_surface(ctx: dict) -> np.ndarray:
+    """体 GI 在**表面**重建 E(制作人 2026-08-27「场景只吃 GI volume」的
+    buffer)。采样与实体同一实现(sample_entity_volume:SH-L2 钳位余弦,
+    AO/GI 逐角点 max0)。收敛公理:分辨率→∞ 时 → 逐像素 E间接·gain
+    (L2 核截断 ~1.6%;L1 有 ~23% 钳位余弦核截断底,见 §15)。"""
+    from .character import sample_entity_volume
+    vol = ctx.get('volume')
+    if not vol:
+        raise ValueError('ctx 无体数据(重烘时勾「含体积数据」)')
+    inp = ctx['inp']
+    h, w = ctx['moments_smooth'][0].shape
+    P = inp.world.reshape(-1, 3).astype(np.float64)
+    nrm = ctx['normal'].reshape(-1, 3).astype(np.float32)
+    _sky, _ao, gi = sample_entity_volume(vol, P, nrm)
+    return gi.reshape(h, w, 3)
+
+
 def shade_final(base_rgb: np.ndarray, e_bake: np.ndarray, a0f: np.ndarray,
                 a1f: np.ndarray, normal: np.ndarray, sky_def: dict,
                 sun_dir=None, gi: float = 0.15, ev: float = 0.0) -> np.ndarray:

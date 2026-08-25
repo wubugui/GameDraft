@@ -53,6 +53,11 @@ from .sky import sh_basis, sky_irradiance_sh
 ANIM_ROOT = (Path(__file__).resolve().parents[2] / 'public' / 'resources'
              / 'runtime' / 'animation')
 
+#: 钳位余弦 ZH 权(Â_l = π, 2π/3, π/4,再按 §5.5 的 ÷π 约定)——
+#: SH-L2 辐射系数 → E(N)/π 的求值核(2026-08-27 GI L2 升级)。
+_K_CLAMPED_COS = np.array([1.0, 2.0 / 3, 2.0 / 3, 2.0 / 3,
+                           0.25, 0.25, 0.25, 0.25, 0.25], np.float32)
+
 __all__ = ['list_characters', 'load_character', 'shade_character']
 
 
@@ -179,15 +184,29 @@ def sample_entity_volume(vol: dict, P: np.ndarray, n: np.ndarray):
     ao = np.zeros(m, np.float32)
     gi = np.zeros((m, 3), np.float32)
     ao_a0, ao_a1 = raw['ao_a0'], raw['ao_a1']
-    gi_a0, gi_a1 = raw['gi_a0'], raw['gi_a1']
     sky_a0, sky_a1 = raw['sky_a0'], raw['sky_a1']
+    gi_sh = raw.get('gi_sh')
+    if gi_sh is not None:
+        # GI SH-L2 求值(2026-08-27 收敛公理):E(N)/π = Σ c·k_l·Y(N),
+        # 逐角点求值后 max0 再插值(ucGridFetch 次序不变)
+        from .sky import sh_basis
+        yk = (np.asarray(sh_basis(n[:, 0].astype(np.float64),
+                                  n[:, 1].astype(np.float64),
+                                  n[:, 2].astype(np.float64))).T
+              * _K_CLAMPED_COS[None, :]).astype(np.float32)
+    else:                                   # 旧 ctx(仅 L1)回落
+        gi_a0, gi_a1 = raw['gi_a0'], raw['gi_a1']
     for ci, wi in zip(corners, weights):
         sky_c[:, 0] += wi * sky_a0[ci]
         sky_c[:, 1:] += wi[:, None] * sky_a1[ci]
         ao += wi * np.maximum(ao_a0[ci]
                               + np.einsum('nd,nd->n', ao_a1[ci], n), 0.0)
-        gi += wi[:, None] * np.maximum(
-            gi_a0[ci] + np.einsum('ncd,nd->nc', gi_a1[ci], n), 0.0)
+        if gi_sh is not None:
+            gi += wi[:, None] * np.maximum(
+                np.einsum('mk,mkc->mc', yk, gi_sh[ci]), 0.0)
+        else:
+            gi += wi[:, None] * np.maximum(
+                gi_a0[ci] + np.einsum('ncd,nd->nc', gi_a1[ci], n), 0.0)
     return sky_c, ao, gi
 
 

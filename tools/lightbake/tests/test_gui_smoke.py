@@ -362,6 +362,16 @@ def test_gui_free_drag_probe_and_char():
     win._on_view_click(*v(2, 2))
     assert win._probe_px == (2, 2) and win._drag_target == 'probe'
     win._on_view_release()
+    # ④b 体GI 通道:场景表面重建 + 现场收敛读数(vs E间接·gain)
+    win.channel.setCurrentIndex(
+        [win.channel.itemData(i) for i in range(win.channel.count())
+         ].index('e_givol'))
+    img_gv = win._channel_img()
+    assert img_gv.shape[:2] != (90, 160)
+    assert '体GI重建' in win.note.text()
+    win.channel.setCurrentIndex(
+        [win.channel.itemData(i) for i in range(win.channel.count())
+         ].index('final'))
     # ⑤ 什么模式都没勾:左键缺省放探针(点了必有东西,不许静默吞点击)
     win.probe_on.setChecked(False)
     win._render()

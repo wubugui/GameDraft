@@ -22,6 +22,7 @@ from .const import (AO_RANGE, CELLS_PER_CHAR_XZ, CELLS_PER_CHAR_Y,
                     CHAR_VOL_MAX_CELLS, CHAR_VOL_SPP, MOMENT_SPP)
 from .encode import decode_log_hdr, encode_log_hdr, encode_moments, pick_log_params
 from .gather import clamp_rows, nee_mis_downweight, sky_moments
+from .sky import sh_basis
 from .nee import sample_light
 from .sampling import point_keys, uniform_sphere
 from .trace import DepthField, buried, trace
@@ -179,6 +180,13 @@ def bake_volume(world: np.ndarray, R: np.ndarray, field: DepthField,
     gi_m1_hit = np.zeros((n_act, 3, 3), np.float64)
     gi_m0_sky = np.zeros((n_act, 3), np.float64)
     gi_m1_sky = np.zeros((n_act, 3, 3), np.float64)
+    # GI 的 SH-L2 辐射系数(2026-08-27,制作人收敛公理):钳位余弦的球谐
+    # 能量 L0≈25%/L1≈50%/L2≈23.4%/余~1.6% —— L1 的 (a₀,a₁) 有不随分辨率
+    # 消失的 ~23% 核截断底,商业引擎(UE Volumetric Lightmap / Unity
+    # Light Probes)因此都用 L2。c_lm = ∫L·Y_lm dω,与 m0/m1 同一批样本、
+    # 同一 1/pdf;三个贡献源(BSDF 命中 / NEE 光源样本 / 天空逃逸)各按
+    # **自己的方向**投影。(a₀,a₁) 保留 —— 它是 L2 的代数子集(c00·Y00=a₀)。
+    gi_sh_m = np.zeros((n_act, 9, 3), np.float64)
     esc_mask = np.empty((n_act, spp), np.bool_)
     for s in range(spp):
         dirs, pdf = uniform_sphere(keys, s, spp)
@@ -229,9 +237,14 @@ def bake_volume(world: np.ndarray, R: np.ndarray, field: DepthField,
                         dl_w = (dl_q @ R.T).astype(np.float64)
                         gi_m0_hit += lc
                         gi_m1_hit += lc[:, :, None] * dl_w[:, None, :]
+                        yl = np.asarray(sh_basis(dl_w[:, 0], dl_w[:, 1],
+                                                 dl_w[:, 2]))
+                        gi_sh_m += yl.T[:, :, None] * lc[:, None, :]
             contrib = clamp_rows(contrib, clamp)
             gi_m0_hit += contrib
             gi_m1_hit += contrib[:, :, None] * d64[:, None, :]
+            yb = np.asarray(sh_basis(d64[:, 0], d64[:, 1], d64[:, 2]))
+            gi_sh_m += yb.T[:, :, None] * contrib[:, None, :]
             if res.escaped.any():
                 srad = np.zeros((n_act, 3), np.float64)
                 srad[res.escaped] = np.asarray(
@@ -239,6 +252,7 @@ def bake_volume(world: np.ndarray, R: np.ndarray, field: DepthField,
                 scontrib = srad * inv_pdf[:, None]
                 gi_m0_sky += scontrib
                 gi_m1_sky += scontrib[:, :, None] * d64[:, None, :]
+                gi_sh_m += yb.T[:, :, None] * scontrib[:, None, :]
         if progress:
             progress('volume', s + 1, spp)
 
@@ -255,6 +269,17 @@ def bake_volume(world: np.ndarray, R: np.ndarray, field: DepthField,
                   ).astype(np.float32)
     gi_a1[act] = ((gi_m1_hit + gi_m1_sky) / spp / (2.0 * math.pi)
                   ).astype(np.float32)
+    # SH-L2 系数:样本项已含 1/pdf ⇒ /spp 即 c_lm = ∫L·Y_lm 的 MC 估计。
+    # 求值端 E(N)/π = Σ c_lm·k_l·Y_lm(N),k=(1, 2/3, 1/4)(钳位余弦 ZH
+    # Â_l=π,2π/3,π/4 再按 §5.5 的 ÷π 约定)。均匀辐射 L₀ ⇒ E≡L₀(锚)。
+    gi_sh = np.zeros((n, 9, 3), np.float32)
+    gi_sh[act] = (gi_sh_m / spp).astype(np.float32)
+    # 构造性自检:c00·Y00 ≡ a₀ 是逐样本的代数恒等(两者都是 ⟨L⟩ 的同一批
+    # 样本均值)—— 破了说明投影与矩用了不同的样本/权重。
+    if n_act:
+        assert np.allclose(gi_sh[act][:, 0, :] * np.float32(0.2820948),
+                           gi_a0[act], atol=1e-4), \
+            'GI SH-L2 c00·Y00 与 a₀ 失配(同批样本的代数恒等)'
 
     # ---- dilation(必做,§5.9)----
     valid3 = (~inv).reshape(nx, ny, nz)
@@ -266,8 +291,9 @@ def bake_volume(world: np.ndarray, R: np.ndarray, field: DepthField,
     f_ao1 = ao_a1.reshape(nx, ny, nz, 3).astype(np.float64)
     f_gi0 = gi_a0.reshape(nx, ny, nz, 3).astype(np.float64)
     f_gi1 = gi_a1.reshape(nx, ny, nz, 3, 3).astype(np.float64).reshape(nx, ny, nz, 9)
+    f_gsh = gi_sh.reshape(nx, ny, nz, 27).astype(np.float64)
     valid_after, dil_iters = _neighbor_fill(
-        valid3, [f_sky0, f_sky1, f_ao0, f_ao1, f_gi0, f_gi1])
+        valid3, [f_sky0, f_sky1, f_ao0, f_ao1, f_gi0, f_gi1, f_gsh])
     # dilation 撞迭代上限时残留的 invalid 不许无声漏进产物(审查纠正):
     # 记进 meta,check #6 据此报警。
     residual_invalid = float(1.0 - valid_after.mean())
@@ -277,6 +303,7 @@ def bake_volume(world: np.ndarray, R: np.ndarray, field: DepthField,
     ao_a1d = f_ao1.reshape(-1, 3).astype(np.float32)
     gi_a0d = f_gi0.reshape(-1, 3).astype(np.float32)
     gi_a1d = f_gi1.reshape(-1, 3, 3).astype(np.float32)
+    gi_shd = f_gsh.reshape(-1, 9, 3).astype(np.float32)
 
     # ---- 打包:5 通道 × RGBA8,C 序 (channel, x, y, z, rgba) ----
     packed = np.empty((len(CHANNELS), n, 4), np.uint8)
@@ -359,6 +386,7 @@ def bake_volume(world: np.ndarray, R: np.ndarray, field: DepthField,
         'raw': {'sky_a0': sky_a0d, 'sky_a1': sky_a1d,
                 'ao_a0': ao_a0d, 'ao_a1': ao_a1d,
                 'gi_a0': gi_a0d, 'gi_a1': gi_a1d,
+                'gi_sh': gi_shd,          # SH-L2 辐射系数(收敛公理,§15)
                 'pts_q': pts_q, 'invalid': inv},
         # §5.12 的体侧缓存机制留有结构(VolumeGiCache),GUI 目前只重估场景 E,
         # 默认不驻留 ~17MB 的死数据(want_cache 开)。
