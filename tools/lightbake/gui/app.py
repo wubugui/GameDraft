@@ -86,7 +86,7 @@ def _gz_edge(mask):
 #: 「实体与场景同一套编号」同旨)。不在表里的通道没有实体类比,不画。
 _ENTITY_CHANNELS = ('final', 'final_vol', 'a0', 'vis_up', 'bent', 'a1',
                     'ao', 'normal', 'e_lights', 'e_rgb', 'e_lum',
-                    'e_givol', 'final_givol')
+                    'e_givol', 'final_givol', 'ao_vol')
 
 import numpy as np
 
@@ -196,6 +196,7 @@ _CHANNELS = [
     ('e_lights', 'E_灯+E_太阳(运行时解析灯)'),
     ('e_givol', 'E·体GI重建(场景/实体同吃 GI volume)'),
     ('final_givol', '最终·只吃体GI(base·E_GIvol)'),
+    ('ao_vol', '场景·体AO重建(与体GI同型走样的对照)'),
     ('base_rgb', 'base(彩色,Reinhard 显示)'),
     ('base_lum', 'base 亮度(log2)'),
     ('base_chroma', 'base 色度'),
@@ -1484,6 +1485,19 @@ class Win(QMainWindow):
             d = np.maximum(
                 (res['e'] - e_ind * res.get('gain', 1.0)) @ LUMA, 0)
             return _g2c(d, 0, max(float(np.percentile(d, 99)), 1e-6))
+        if key == 'ao_vol':
+            if not ctx.get('volume'):
+                return self._placeholder('需要体数据 —— 勾「含体积」重烘')
+            if missing('inp', 'normal', 'ao'):
+                return self._placeholder('体AO重建需要完整 ctx')
+            av = preview_mod.volume_ao_at_surface(ctx)
+            rel = np.abs(av - ctx['ao'])[ctx['ao'] > 0.05] \
+                / np.maximum(ctx['ao'][ctx['ao'] > 0.05], 0.05)
+            self.note.setText(
+                f'体AO重建 vs 逐像素AO:中位 {np.median(rel):.3f} / '
+                f'p95 {np.percentile(rel, 95):.3f} —— 与体GI同型的'
+                '矩体+三线性固有走样(对照通道)')
+            return _g2c(av)
         if key in ('e_givol', 'final_givol'):
             if not ctx.get('volume'):
                 return self._placeholder('需要体数据 —— 勾「含体积」重烘')
@@ -1634,7 +1648,7 @@ class Win(QMainWindow):
             return np.clip(comps['bent'] * 0.5 + 0.5, 0, 1)
         if key == 'a1':
             return np.clip(comps['a1'] + 0.5, 0, 1)
-        if key == 'ao':
+        if key in ('ao', 'ao_vol'):
             return _g2c(comps['ao'])
         if key == 'normal':
             return np.clip(comps['normal'] * 0.5 + 0.5, 0, 1)

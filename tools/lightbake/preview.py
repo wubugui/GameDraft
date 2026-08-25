@@ -249,6 +249,22 @@ def volume_sky_at_surface(ctx: dict) -> tuple[np.ndarray, np.ndarray]:
             t[:, 1:4].reshape(h, w, 3).astype(np.float32))
 
 
+def volume_ao_at_surface(ctx: dict) -> np.ndarray:
+    """体 AO 在**表面**重建(2026-08-26:「AO 重建没走样」的对照通道 ——
+    此前 GUI 只有逐像素 AO,没有从体重建的 AO 可看;实测两者走样形态
+    与 GI 体完全同型,这是矩体+三线性的固有长相,不是 GI 特有)。"""
+    from .character import sample_entity_volume
+    vol = ctx.get('volume')
+    if not vol:
+        raise ValueError('ctx 无体数据(重烘时勾「含体积数据」)')
+    inp = ctx['inp']
+    h, w = ctx['moments_smooth'][0].shape
+    P = inp.world.reshape(-1, 3).astype(np.float64)
+    nrm = ctx['normal'].reshape(-1, 3).astype(np.float32)
+    _sky, ao, _gi = sample_entity_volume(vol, P, nrm)
+    return np.clip(ao, 0.0, 1.0).reshape(h, w)
+
+
 def volume_gi_at_surface(ctx: dict) -> np.ndarray:
     """体 GI 在**表面**重建 E(制作人 2026-08-27「场景只吃 GI volume」的
     buffer)。采样与实体同一实现(sample_entity_volume:SH-L2 钳位余弦,
