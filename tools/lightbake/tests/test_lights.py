@@ -391,19 +391,20 @@ def test_scene_shadow_criterion_no_thick():
 
 def test_scene_shadow_projection_observable():
     """结构化深度场钉投影公式(突变审查:常数场下 py 翻号/丢 ppu/xy 互换
-    全体存活)。遮挡块贴在**像素端**(rows 3..5 × cols 14..16):正确路径
-    (row4 · cols8..16)在 t→0 就撞上;py 翻号的路径从 row12 斜向灯端、
-    经过 cols14..16 时还在 rows 10..12,永远够不着遮挡块 —— 翻号/丢 ppu/
-    xy 互换全部漏挡(灯端公式是另一条,故意做成非对称几何)。"""
+    全体存活)。遮挡块贴在**像素端**(rows 3..5 × cols 17..18,像素 px=18
+    起步,q.x=0.5 —— 复核:此前 q.x=0 让「px 项丢 ppu」乘零逃逸):
+    正确路径(row4 · cols8..18)t→0 就撞上;py 翻号的对角路径进 rows≤5 时
+    px 已 <10;px 项丢 ppu 起点缩到 16.5 够不着 cols17..18;py 项丢 ppu 起
+    在 row7 斜下、进 rows≤5 时 px<13;xy 互换起点跑到 (20,6) 方向全错。"""
     depth = np.full((16, 32), 10.0, 'float32')
-    depth[3:6, 14:17] = 0.2
+    depth[3:6, 17:19] = 0.2
     inp = _Inp(depth=depth)
-    q_flat = np.array([[0.0, 1.0, 3.0]])            # px=16, py=8−4=4
+    q_flat = np.array([[0.5, 1.0, 3.0]])            # px=18, py=8−4=4
     lq = np.array([-2.0, 1.0, 3.0])                 # px=8, 同 row
     assert L._scene_lamp_visibility(inp, q_flat, lq, 30.8 / 150.0)[0] == 0.0
-    # 控制组:遮挡块挪到 rows 9..12(翻号那条路径才会撞上)⇒ 不挡
+    # 控制组:遮挡块挪到 rows 9..12(翻号那条路径起步区)⇒ 正确路径不挡
     depth2 = np.full((16, 32), 10.0, 'float32')
-    depth2[9:13, 14:17] = 0.2
+    depth2[9:13, 17:19] = 0.2
     inp2 = _Inp(depth=depth2)
     assert L._scene_lamp_visibility(inp2, q_flat, lq, 30.8 / 150.0)[0] == 1.0
 
@@ -647,11 +648,13 @@ def test_default_light_mirror():
     assert d['id'] == 'light_3' and d['innerAngleDeg'] == 25.0 \
         and d['outerAngleDeg'] == 45.0 and d['range'] == 450.0
     dd = L.default_light(1, 'directional')
-    assert 'pos' not in dd and dd['intensity'] == 0.4 and dd['kelvin'] == 7000.0
+    assert 'pos' not in dd and 'softeningRadius' not in dd \
+        and dd['intensity'] == 0.4 and dd['kelvin'] == 7000.0
     da = L.default_light(1, 'area')
     assert da['size'] == [135.0, 90.0] and da['twoSided'] is False
-    # 面光不吃软化(C.y 装自转角)—— 缺省就不该带,免得作者以为自己调了
-    assert 'softeningRadius' not in da
+    # makeLight 逐字:非 directional **都带** softeningRadius(面光那份是
+    # 惰性字段,retype 才删)+ 面光带 rollDeg=0(复核纠正的两处)
+    assert da['softeningRadius'] == 10.0 and da['rollDeg'] == 0.0
 
 
 def test_retype_field_hygiene():
@@ -671,3 +674,187 @@ def test_retype_field_hygiene():
     assert 'pos' not in d and 'range' not in d and d['intensity'] == 3.3
     back = L.retype_light(area, 'point')
     assert 'softeningRadius' in back                 # 回点光补缺省
+    # default 面光带惰性软化,但 retype **换成**面光必须删(两条口径并存:
+    # makeLight 写、retype 删 —— 都逐字)
+    pt = {'id': 'p', 'kind': 'point', 'intensity': 1.0,
+          'softeningRadius': 33.0}
+    assert 'softeningRadius' not in L.retype_light(pt, 'area')
+
+
+# ------------------------------------------------ 复核轮补钉(2026-08-26 二审)
+
+def test_smoothstep_glsl_parity_pins():
+    """_smoothstep 三区独立字面值钉(复核:整条 P1-6 修复可回退不红):
+    正常区 / 反向边界(e0>e1 给反向斜坡,不是硬阶跃)/ e0==e1 阶跃。"""
+    # 正常区:e0=0.2,e1=0.8,x=0.65 ⇒ t=0.75,t²(3−2t)=0.84375
+    assert abs(float(L._smoothstep(0.2, 0.8, np.float64(0.65))) - 0.84375) \
+        < 1e-9
+    # 反向边界:e0=0.8,e1=0.2,x=0.65 ⇒ t=(0.65−0.8)/(−0.6)=0.25 ⇒ 0.15625
+    # (回退成 max(e1−e0,1e-9) 的硬阶跃会给 1.0)
+    assert abs(float(L._smoothstep(0.8, 0.2, np.float64(0.65))) - 0.15625) \
+        < 1e-9
+    # e0==e1:阶跃
+    assert float(L._smoothstep(0.5, 0.5, np.float64(0.4999))) == 0.0
+    assert float(L._smoothstep(0.5, 0.5, np.float64(0.5))) == 1.0
+
+
+def test_spot_dir_priority_decoy():
+    """spot 侧 dir??orientation 取值序(复核:area 有诱饵测试,spot 没有):
+    dir 朝目标(正确)、orientation 反向(诱饵)—— 取反序 cone=ss(−1)=0。"""
+    inp, a0, a1, nrm = _one_px()
+    base = {'intensity': 2.0, 'color': _WHITE, 'pos': [0.0, 300.0, 0.0],
+            'range': 450.0, 'softeningRadius': 15.0}
+    p = L.eval_scene_lights([{**base, 'kind': 'point'}], inp, a0, a1, nrm)
+    s = L.eval_scene_lights([{**base, 'kind': 'spot', 'dir': [0, -1, 0],
+                              'orientation': [0, 1, 0],
+                              'innerAngleDeg': 25.0, 'outerAngleDeg': 40.0}],
+                            inp, a0, a1, nrm)
+    assert float(s.max()) > 0.0
+    assert np.allclose(p, s, rtol=1e-6)
+
+
+def test_spot_dir_need_not_be_normalized():
+    """dir 只要求方向不要求归一(P1-9 放开量程的正当性):[0,−7,0]≡[0,−1,0]。"""
+    inp, a0, a1, nrm = _one_px()
+    base = {'kind': 'spot', 'intensity': 2.0, 'color': _WHITE,
+            'pos': [0.0, 300.0, 0.0], 'range': 450.0, 'softeningRadius': 15.0,
+            'innerAngleDeg': 25.0, 'outerAngleDeg': 40.0}
+    e1 = L.eval_scene_lights([{**base, 'dir': [0.0, -1.0, 0.0]}],
+                             inp, a0, a1, nrm)
+    e2 = L.eval_scene_lights([{**base, 'dir': [0.0, -7.0, 0.0]}],
+                             inp, a0, a1, nrm)
+    assert np.array_equal(e1, e2)
+
+
+def test_area_size_default_in_eval():
+    """求值侧面光缺省 size = [range·0.3, range·0.2](packLights:174)——
+    省略 size 必须与显式 [135,90](range 450)逐位同。"""
+    inp, a0, a1, nrm = _one_px()
+    base = {'kind': 'area', 'intensity': 1.5, 'color': _WHITE,
+            'pos': [0.0, 300.0, 0.0], 'range': 450.0,
+            'orientation': [0, -1, 0]}
+    e1 = L.eval_scene_lights([dict(base)], inp, a0, a1, nrm)
+    e2 = L.eval_scene_lights([{**base, 'size': [135.0, 90.0]}],
+                             inp, a0, a1, nrm)
+    assert float(e1.max()) > 0.0 and np.array_equal(e1, e2)
+
+
+def test_disabled_light_filtered():
+    """_rest_lights 的 enabled 过滤(复核:该突变存活)。"""
+    inp, a0, a1, nrm = _one_px()
+    lamp = {'kind': 'point', 'enabled': False, 'intensity': 100.0,
+            'color': _WHITE, 'pos': [0.0, 300.0, 0.0], 'range': 450.0,
+            'softeningRadius': 15.0}
+    assert float(np.abs(L.eval_scene_lights([lamp], inp, a0, a1, nrm)).max()) \
+        == 0.0
+    N = np.array([0, 1, 0], 'float32').reshape(1, 1, 3)
+    assert float(np.abs(
+        L.eval_probe_lights([lamp], N, [0, 0, 0], _Inp())).max()) == 0.0
+
+
+def test_eval_adaptive_shadow_steps():
+    """eval 主路径的自适应步进(复核:此前只有 `_scene_lamp_visibility`
+    直调被钉,eval 里的 steps 钉死 4 全套仍绿):薄墙(段前 3%–16%,
+    cols14..15)必须被 ≥64 步抓住;塌到 4 步(t=.25/.5/.75 → px 12/8/4)漏。"""
+    depth = np.full((16, 32), 10.0, 'float32')
+    depth[:, 14:16] = 0.2                           # 薄墙
+    depth[8, 16] = 3.0                              # 目标像素表面
+    inp = _Inp(depth=depth)
+    lamp = {'id': 'l', 'kind': 'point', 'intensity': 5.0, 'color': _WHITE,
+            'pos': [-600.0, 0.0, 450.0], 'range': 450.0,   # q=(−4,0,3)
+            'softeningRadius': 15.0, 'castShadow': True}
+    a0 = np.full((16, 32), 0.4, 'float32')
+    a1 = np.zeros((16, 32, 3), 'float32')
+    nrm = np.tile(np.array([-1, 0, 0], 'float32'), (16, 32, 1))
+    e = L.eval_scene_lights([lamp], inp, a0, a1, nrm)
+    assert float(e[8, 16].max()) == 0.0             # 薄墙必须被抓住
+    depth2 = depth.copy()
+    depth2[:, 14:16] = 10.0                         # 拆墙 ⇒ 亮(自检)
+    e2 = L.eval_scene_lights([lamp], _Inp(depth=depth2), a0, a1, nrm)
+    assert float(e2[8, 16].max()) > 0.0
+
+
+def test_char_march_bias_coefficient_is_002():
+    """bias 增长**系数**上钉(复核:0.02→0.04 存活;既有测试只证有增长):
+    i=1 处 pen=0.222 —— 0.02 系数窗下沿 0.2167 ⇒ 挡;0.04 系数 0.2283 ⇒
+    放。与既有 pen=0.21⇒放(杀系数 0)成对,把 0.02 上下夹逼。"""
+    st_z = 10.0 * 0.92 / 16                         # i=1 的射线深度增量
+    depth = np.full((16, 32), 10.0, 'float32')
+    depth[8, 16] = np.float32(st_z - 0.222)
+    inp = _Inp(depth=depth, shadow_bias=(30.8, 264.0))
+    q0 = np.array([0.0, 0.0, 0.0])
+    lq = np.array([2.0, 0.0, 10.0])
+    assert L._char_lamp_visibility(inp, q0, lq, 30.8 / 150.0,
+                                   264.0 / 150.0) == 0.0
+
+
+def test_probe_sun_march_steps_and_len():
+    """太阳 march 的招牌参数(复核:48/3.5 都可改而不红):遮挡带只在
+    march 距离 (1.125,1.375](row3)—— 48 步(st=0.0729,i=16..18)采到;
+    LEN→1.0 够不着;STEPS→4(样本 0.875/1.75/2.625/3.5 → rows 4/1/幅外)
+    全漏。blocked ⇒ e = 2·0.1 = 0.2。"""
+    depth = np.full((16, 32), 10.0, 'float32')
+    depth[3, 16] = 2.0                              # pen=1 ∈ 窗
+    inp = _Inp(depth=depth, shadow_bias=(30.8, 264.0))
+    sun = {'kind': 'directional', 'enabled': True, 'intensity': 2.0,
+           'color': _WHITE, 'elevationDeg': 90.0, 'azimuthDeg': 0.0}
+    N = np.array([0, 1, 0], 'float32').reshape(1, 1, 3)
+    probe = L.eval_probe_lights([sun], N, [0.0, 0.0, 3.0], inp)
+    assert np.allclose(probe[0, 0], [0.2] * 3, rtol=1e-5), probe[0, 0]
+
+
+def test_probe_sun_dir_not_rotated_and_q0_transform():
+    """运行时怪癖钉死:太阳 march 方向 = **世界系 ω 不过 R**(复核:过 R
+    的突变存活)+ 探针世界→q 用 Rm 不用 Rm.T。R=绕 x 90°:正确路径沿
+    py 下行撞 rows0..3 的遮挡(row4 留空);「过 R」的突变变成沿 −z、
+    钉在 row4 ⇒ 永不挡;「q0 用 R.T」起点跑到 row12 ⇒ 也不挡。"""
+    R = np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]], 'float32')
+    depth = np.full((16, 32), 10.0, 'float32')
+    depth[0:4, 16] = 1.0                            # rows0..3;row4 留空
+    inp = _Inp(depth=depth, R=R, shadow_bias=(30.8, 264.0))
+    sun = {'kind': 'directional', 'enabled': True, 'intensity': 2.0,
+           'color': _WHITE, 'elevationDeg': 90.0, 'azimuthDeg': 0.0}
+    # 世界点 w0=(0,−2,1) ⇒ q0 = w0@R = (0,1,2)(px16, py4)
+    N = np.array([0, 1, 0], 'float32').reshape(1, 1, 3)
+    probe = L.eval_probe_lights([sun], N, [0.0, -2.0, 1.0], inp)
+    assert np.allclose(probe[0, 0], [0.2] * 3, rtol=1e-5), probe[0, 0]
+
+
+def test_probe_lamp_pos_transform_uses_R():
+    """探针灯位世界→q 也必须走 @Rm(复核:该行 @Rm.T 突变存活):
+    R=绕 x 90°,灯在 +x 方向,march 撞 [4,20] 的窗内遮挡 ⇒ 黑;
+    用 R.T 的突变把灯投去 (2,−1,−2),路径斜出 row4 ⇒ 亮。"""
+    R = np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]], 'float32')
+    depth = np.full((16, 32), 10.0, 'float32')
+    depth[4, 20] = 1.0                              # pen=1 ∈ 窗
+    inp = _Inp(depth=depth, R=R, shadow_bias=(30.8, 264.0))
+    lamp = {'kind': 'point', 'intensity': 2.0, 'color': _WHITE,
+            'pos': [300.0, -300.0, 150.0],          # w=(2,−2,1) ⇒ lq=(2,1,2)
+            'range': 450.0, 'softeningRadius': 15.0, 'castShadow': True}
+    N = np.array([1, 0, 0], 'float32').reshape(1, 1, 3)
+    probe = L.eval_probe_lights([lamp], N, [0.0, -2.0, 1.0], inp)
+    assert float(np.abs(probe).max()) == 0.0
+
+
+def test_probe_no_shadow_slab_but_has_cap():
+    """角色侧:**不缩** slab-8(第 9 盏照样 march 出影 ⇒ 黑),但 24 盏
+    截断同样生效(同一份打包)。"""
+    inp = _Inp()
+    inp.depth[:] = 0.2                              # 全遮几何(char 窗内)
+    lamps = [{'id': f'c{i}', 'kind': 'point', 'intensity': 2.0,
+              'color': _WHITE, 'pos': [0.0, 0.0, 450.0], 'range': 1200.0,
+              'softeningRadius': 15.0, 'castShadow': True}
+             for i in range(9)]
+    N = np.array([0, 0, 1], 'float32').reshape(1, 1, 3)
+    probe = L.eval_probe_lights(lamps, N, [0.0, 0.0, 0.0], inp)
+    assert float(np.abs(probe).max()) == 0.0        # 第 9 盏也被自己的影挡
+    # 24 截断:24 盏零强度垫底,第 25 盏大灯必须被丢
+    inp2 = _Inp()
+    dummies = [{'id': f'd{i}', 'kind': 'point', 'intensity': 0.0,
+                'pos': [0, 300, 0]} for i in range(24)]
+    big = {'id': 'late', 'kind': 'point', 'intensity': 100.0,
+           'color': _WHITE, 'pos': [0.0, 300.0, 0.0], 'range': 450.0,
+           'softeningRadius': 15.0}
+    N2 = np.array([0, 1, 0], 'float32').reshape(1, 1, 3)
+    probe2 = L.eval_probe_lights(dummies + [big], N2, [0, 0, 0], inp2)
+    assert float(np.abs(probe2).max()) == 0.0

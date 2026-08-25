@@ -210,6 +210,12 @@ def test_gui_lights_editor_roundtrip():
     assert win._lights[0]['intensity'] == 1.5
     assert 'castShadow' not in win._lights[0]   # 逐键回写:没动就不物化
     assert 'pos' not in win._lights[0]
+    # enabled 切换会改变「谁是太阳」⇒ castShadow 显示缺省跟着求值口径刷新
+    # (复核残余分家项)
+    win.l_enabled.setChecked(False)
+    assert not win.l_shadow.isChecked()
+    win.l_enabled.setChecked(True)
+    assert win.l_shadow.isChecked()
     # 字段往返:选 lamp_1(点光),改 intensity/castShadow → dict 同步
     win.light_combo.setCurrentIndex(1)
     win.l_inten.setValue(4.25)
@@ -251,14 +257,19 @@ def test_gui_lights_editor_roundtrip():
     assert win._lights[1]['kind'] == 'area'
     assert 'size' in win._lights[1] and 'innerAngleDeg' not in win._lights[1]
     assert 'softeningRadius' not in win._lights[1]
-    # 加/删 + 唯一 id(审查 P1-8)
+    # 加/删 + 唯一 id 的**真冲突**(复核:light_N 与夹具 id 撞不上 = 空心):
+    # 先手植 light_1,加灯必须跳到 light_2
     win.light_kind_new.setCurrentText('spot')
+    win._lights.append({'id': 'light_1', 'kind': 'point', 'intensity': 1.0,
+                        'pos': [0, 100, 0]})
+    win._rebuild_light_combo(len(win._lights) - 1)
     win._add_light()
-    assert len(win._lights) == 5 and win._lights[-1]['kind'] == 'spot'
-    new_id = win._lights[-1]['id']
-    assert [l['id'] for l in win._lights].count(new_id) == 1
-    win.light_combo.setCurrentIndex(4)
-    win._del_light()
+    assert len(win._lights) == 6 and win._lights[-1]['kind'] == 'spot'
+    assert win._lights[-1]['id'] == 'light_2'
+    ids = [l['id'] for l in win._lights]
+    assert len(ids) == len(set(ids))
+    win._del_light()                                # 删 light_2(当前选中)
+    win._del_light()                                # 删 light_1
     assert len(win._lights) == 4
     # 关总开关 → E_灯 通道回占位
     win.lights_on.setChecked(False)
@@ -266,6 +277,32 @@ def test_gui_lights_editor_roundtrip():
         [win.channel.itemData(i) for i in range(win.channel.count())
          ].index('e_lights'))
     assert win._channel_img().shape[:2] == (90, 160)
+
+
+def test_gui_lights_stale_ctx_dropped():
+    """复核 P0 回归钉:重烘落地(set_ctx)后,在飞 worker 端上来的**旧 ctx**
+    结果必须被丢弃(缓存键不含 ctx 身份,写进去会被下一帧端出 —— 二审用
+    离屏 repro 实证过)。同 ctx 的 done 才落缓存。"""
+    pytest.importorskip('PySide6')
+    import os
+    os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+    import numpy as np
+    from tools.lightbake.gui.app import create_window
+    ctx1 = _rich_fake_ctx(24, 32)
+    ctx2 = _rich_fake_ctx(24, 32)
+    _app, win = create_window('雾津街头', autobake=False)
+    win.set_ctx(ctx2)
+    _settle_lights(_app, win)           # set_ctx 自触发的 final 计算先收干净
+    win._lights_cache = {}
+    arr = np.zeros((24, 32, 3), 'float32')
+    win._on_lights_done({'key': ('px', 'stale'), 'e': arr, 'notes': [],
+                         'ctx': ctx1})          # 旧 ctx ⇒ 丢弃
+    _settle_lights(_app, win)           # 丢弃分支的 _render 可能补一枪,收掉
+    assert ('px', 'stale') not in win._lights_cache
+    win._on_lights_done({'key': ('px', 'fresh'), 'e': arr, 'notes': [],
+                         'ctx': win.ctx})       # 同 ctx ⇒ 落缓存
+    assert ('px', 'fresh') in win._lights_cache
+    _settle_lights(_app, win)
 
 
 def test_gui_bake_kwargs_mirror_cli():

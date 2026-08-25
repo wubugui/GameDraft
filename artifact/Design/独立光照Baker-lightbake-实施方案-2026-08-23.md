@@ -1804,3 +1804,35 @@ opus 独立审查(逐式对账 + 42 个突变的空心度测量)结论:公式本
   专项、太阳缺省(el/az/castShadow)专项、char march 三参数逐个钉、两侧判据
   甄别(场景无 thick vs 角色 thick 窗,探针必须走角色侧)、cut 阈贴 1e-4、
   V_dir 钳制、双截断、缓存 range 失效。招牌突变抽查全部转红。
+
+
+### §15 追记:解析灯二审(复核轮,2026-08-26)
+
+对修复轮的独立复核(逐字对源 + 51 个内存突变 + 离屏线程 repro)裁决:
+13 条里 12 条修复正确且经得起证伪;**新开一条 P0** 并当场修掉:
+
+- **staleness P0**:重烘落地(set_ctx)与在飞灯 worker 竞速 —— 旧 ctx 算出
+  的 E_灯/阴影图会写进刚清空的缓存且键不含 ctx 身份,被下一帧原样端出
+  (复核离屏 repro 实证)。修法:done 结果带 ctx 身份、`_on_lights_done`
+  对非当前 ctx **整体丢弃**(并 _render 补枪);set_ctx/换场景把
+  `_lamp_vis`/`_lights_cache` **换新对象**而非 clear(在飞 worker 只会写
+  它闭包里的旧 dict)。GUI 冒烟加了 stale-dropped 回归钉。
+- **覆盖真空补钉**(复核:三块修复可整段回退不红):eval 主路径自适应
+  步进(薄墙 vs 步数夹死 4)、太阳 march 48/3.5(遮挡带只在距离
+  (1.125,1.375])、「世界 ω 不过 R」与探针世界→q 两处 @Rm(R=绕 x 90° 的
+  非平凡几何)、spot 侧 dir??orientation 诱饵、smoothstep 三区字面值
+  (反向斜坡 0.15625 ≠ 硬阶跃 1.0)、bias 增长系数 0.02 上下夹逼、
+  探针无 slab-8 但有 24 截断、enabled 过滤、面光缺省 size 求值侧、
+  投影 px 项丢 ppu(q.x=0.5 破掉乘零逃逸)、GUI 唯一 id 真冲突。
+  **二审突变 13/13 全部转红**(sed 落盘验证,含未命中自检)。
+- 口径纠正:default_light 对齐 makeLight **逐字**(非 directional 全带
+  softeningRadius 惰性字段 + 面光 rollDeg=0;retype 才删 —— 此前注释把
+  锅错扣给桌面编辑器);V_dir 闭式改走 gather.vis_of_dir(唯一表达);
+  enabled 切换刷新「谁是太阳」的 castShadow 显示口径;color spins 切灯
+  残留复位。全套 165+1。
+
+复核确认无误面(抽样):lc* 七式逐字、单位链逐项、场景判据代数等价
+prefix(含端点)、`_lc_march_visibility` 循环边界/严格不等号、双截断
+下标口径、缓存键完备性(depth 随 inp 走)、float32 精度余量、
+`_settle` 收敛性。遗留登记:768 步上限在 2048 宽对角灯位下 ~3px 步进
+(docstring 已记);spinbox decimals 对**被编辑键**的量化是固有代价。

@@ -760,6 +760,12 @@ class Win(QMainWindow):
             self.l_cr.setValue(float(c[0]))
             self.l_cg.setValue(float(c[1]))
             self.l_cb.setValue(float(c[2]))
+        else:
+            # 复位:否则切到无 color 的灯再勾「显式 color」,写进去的是
+            # **上一盏灯**的颜色(复核顺带项)
+            self.l_cr.setValue(1.0)
+            self.l_cg.setValue(1.0)
+            self.l_cb.setValue(1.0)
         # castShadow 的显示缺省与求值同一条决议(审查 P0-2):太阳(第一盏
         # enabled directional)缺省 **true**(packLights `?? true` ⇒ 0.9),
         # 其余缺省 false —— 显示口径与求值口径分家会让"动一下强度"变成
@@ -796,6 +802,9 @@ class Win(QMainWindow):
         kind = l.get('kind', 'point')
         if key == 'enabled':
             l['enabled'] = self.l_enabled.isChecked()
+            # 「谁是太阳」可能因此改变 ⇒ castShadow 的显示缺省要跟着求值
+            # 口径刷新(复核:is_sun 只在装载时求一次的残余分家)
+            self._load_light_fields()
         elif key == 'intensity':
             l['intensity'] = self.l_inten.value()
         elif key == 'kelvin':
@@ -913,7 +922,7 @@ class Win(QMainWindow):
             arr = lights_mod.eval_scene_lights(
                 lights_snap, ctx['inp'], a0u, a1u, ctx['normal'],
                 vis_cache=lamp_vis, notes=notes)
-            return {'key': key, 'e': arr, 'notes': notes}
+            return {'key': key, 'e': arr, 'notes': notes, 'ctx': ctx}
 
         self._lights_worker = FnWorker(job)
         self._lights_worker.done.connect(self._on_lights_done)
@@ -924,6 +933,13 @@ class Win(QMainWindow):
     def _on_lights_done(self, res: dict) -> None:
         if res.get('error'):
             self.note.setText(f'E_灯 计算失败:{res["error"]}')
+            return
+        if res.get('ctx') is not self.ctx:
+            # 复核红(2026-08-26):重烘落地(set_ctx)时在飞 worker 端上来的
+            # 是**旧 ctx** 的 E_灯 —— 缓存键不含 ctx 身份,写进去会被下一帧
+            # 原样端出。陈旧结果整体丢弃;_render→_lights_term 会用新 ctx
+            # 重新起一枪(set_ctx 已把 _lamp_vis 换成新对象,旧图进不来)。
+            self._render()
             return
         self._lights_cache[res['key']] = (res['e'], res['notes'])
         self._render()
@@ -971,8 +987,8 @@ class Win(QMainWindow):
         self._base_cache = None
         self._sky_cache.clear()
         self._lights = []
-        self._lights_cache.clear()
-        self._lamp_vis.clear()
+        self._lights_cache = {}
+        self._lamp_vis = {}
         self._vol_m = None
         self._gi_slice_range = None
         self.view.setText(f'打开 {sid},烘首帧……')
@@ -1046,8 +1062,10 @@ class Win(QMainWindow):
         self.ctx = ctx
         self._base_cache = None
         self._sky_cache.clear()
-        self._lights_cache.clear()
-        self._lamp_vis.clear()
+        # 换**新对象**而不是 clear:在飞的灯 worker 闭包持有旧 dict,
+        # 只会继续写旧的 —— 旧 ctx 的阴影图永远进不了新一轮缓存(复核红)
+        self._lights_cache = {}
+        self._lamp_vis = {}
         # 灯列表 = 场景 JSON lighting.lights 的可编辑副本(装载走 input.load)
         self._lights = [dict(l) for l in
                         (getattr(ctx.get('inp'), 'lights', None) or [])]

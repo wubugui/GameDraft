@@ -70,24 +70,23 @@ _SHADOW_STEPS_MIN, _SHADOW_STEPS_MAX = 64, 768
 
 
 def default_light(index: int, kind: str = 'point') -> dict:
-    """一盏新灯的缺省值(编辑面,`lightDefaults.makeLight` 口径:长度一律
-    **wu**;`softeningRadius` 只属于点/聚 —— 面光的 C.y 装的是自转角)。
-    桌面编辑器 `scene_lights.default_light` 给面光也带了 softeningRadius,
-    那是它的字段卫生 bug,这里跟运行时不跟它。"""
+    """一盏新灯的缺省值(编辑面,`lightDefaults.makeLight` 逐字口径:长度
+    一律 **wu**;makeLight 对**所有非 directional** 都写 softeningRadius
+    (面光那份是惰性字段,求值不吃 —— `retype` 换型时才删),面光另带
+    rollDeg=0。复核 2026-08-26 纠正:此前少了这两处。"""
     base: dict = {'id': f'light_{index}', 'kind': kind, 'pos': [0.0, 0.0, 0.0],
                   'kelvin': 2400.0, 'intensity': 2.5,
                   'range': float(DEFAULT_LIGHT_RANGE_WU),
+                  'softeningRadius': float(DEFAULT_LAMP_RADIUS_WU),
                   'castShadow': False, 'enabled': True}
-    if kind in ('point', 'spot'):
-        base['softeningRadius'] = float(DEFAULT_LAMP_RADIUS_WU)
     if kind == 'spot':
         base.update(dir=[0.0, -1.0, 0.3], innerAngleDeg=25.0,
                     outerAngleDeg=45.0)
     elif kind == 'area':
         base.update(size=[135.0, 90.0], orientation=[0.0, 0.0, -1.0],
-                    twoSided=False)
+                    rollDeg=0.0, twoSided=False)
     elif kind == 'directional':
-        for k in ('pos', 'range'):
+        for k in ('pos', 'range', 'softeningRadius'):
             base.pop(k, None)
         base.update(elevationDeg=45.0, azimuthDeg=180.0,
                     intensity=0.4, kelvin=7000.0)
@@ -100,6 +99,8 @@ def retype_light(l: dict, kind: str) -> dict:
     点/聚**(面光不吃软化 —— 留着会静默失效,作者以为自己调了)。
     list 字段拷一层,不共享引用。"""
     out = default_light(0, kind)
+    if kind not in ('point', 'spot'):
+        out.pop('softeningRadius', None)   # retype 口径:面光删软化(惰性字段)
     out['id'] = l.get('id', out['id'])
     for k in ('enabled', 'intensity', 'kelvin', 'castShadow'):
         if k in l:
@@ -137,7 +138,7 @@ def direction_from_angles(elevation_deg: float, azimuth_deg: float
 
 def _smoothstep(e0: float, e1: float, x: np.ndarray) -> np.ndarray:
     """GLSL smoothstep 逐字:t = clamp((x−e0)/(e1−e0), 0, 1)。
-    e0>e1(inner≥outer 的病态填法)时 GLSL 未定义、实测给反向斜坡 ——
+    e0>e1(outer<inner 的病态填法)时 GLSL 未定义、实测给反向斜坡 ——
     这里同样**不掩盖**(审查 P1-6:此前 max(…,1e-9) 把它变成硬阶跃,
     与 GPU 行为分叉);只有 e0==e1 才退化成阶跃。"""
     denom = e1 - e0
@@ -388,7 +389,7 @@ def eval_scene_lights(lights: list[dict], inp, a0f: np.ndarray,
     e = np.zeros((h, w, 3), np.float32)
     if not lights:
         return e
-    from .gather import vdir_coeffs
+    from .gather import vis_of_dir
     qu = 1.0 / float(inp.scene_per_wu)
     sb = getattr(inp, 'shadow_bias', None) or (DEFAULT_SHADOW_BIAS_WU,
                                                DEFAULT_SHADOW_THICKNESS_WU)
@@ -398,8 +399,8 @@ def eval_scene_lights(lights: list[dict], inp, a0f: np.ndarray,
         sdir = direction_from_angles(float(sun.get('elevationDeg', 45.0)),
                                      float(sun.get('azimuthDeg', 180.0)))
         strength = SUN_SHADOW_STRENGTH if sun.get('castShadow', True) else 0.0
-        alpha, beta = vdir_coeffs(a0f, a1f)
-        vdir = np.clip(alpha + beta @ sdir, 0.0, 1.0)
+        # V_dir 闭式走库内唯一表达(gather.vis_of_dir 明令不许各抄一遍)
+        vdir = vis_of_dir(a0f, a1f, sdir)
         e += _directional_e(sun, normal, 1.0 - strength * (1.0 - vdir))
     P = inp.world.astype(np.float64)
     world_flat = inp.world.reshape(-1, 3).astype(np.float64)
