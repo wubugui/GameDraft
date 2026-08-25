@@ -30,6 +30,8 @@ import sys
 from functools import partial
 from pathlib import Path
 
+import numpy as np
+
 #: 输入链路调试(制作人实机「点了没反应」二连,离屏 QTest 却通 ——
 #: 打开后每次鼠标事件与分支走向都进控制台,拿实锤别猜)
 _DEBUG_INPUT = bool(os.environ.get('LIGHTBAKE_DEBUG_INPUT'))
@@ -44,6 +46,39 @@ def _mods():
     """当前键盘修饰键(独立函数便于测试注入)。"""
     from PySide6.QtGui import QGuiApplication
     return QGuiApplication.keyboardModifiers()
+
+
+# ---------------- 定位 gizmo(纯显示叠加,零算法) ----------------
+_PROBE_COL = np.array([0.35, 0.90, 0.95], np.float32)   # 探针 = 青
+_CHAR_COL = np.array([1.00, 0.68, 0.25], np.float32)    # 立绘 = 橙
+_SEL_COL = np.array([1.0, 1.0, 1.0], np.float32)        # 拖动高亮 = 白
+
+
+def _gz_seg(img, p0, p1, color, dashed=False, alpha=0.9):
+    """图像上画一段线(可虚线)。"""
+    h, w = img.shape[:2]
+    n = int(max(abs(p1[0] - p0[0]), abs(p1[1] - p0[1]), 1))
+    t = np.linspace(0.0, 1.0, n + 1)
+    xs = np.clip(np.rint(p0[0] + (p1[0] - p0[0]) * t).astype(int), 0, w - 1)
+    ys = np.clip(np.rint(p0[1] + (p1[1] - p0[1]) * t).astype(int), 0, h - 1)
+    if dashed:
+        keep = (np.arange(t.size) % 7) < 4
+        xs, ys = xs[keep], ys[keep]
+    img[ys, xs] = img[ys, xs] * (1 - alpha) + color * alpha
+
+
+def _gz_cross(img, x, y, color, r=3):
+    h, w = img.shape[:2]
+    x = int(np.clip(x, 0, w - 1))
+    y = int(np.clip(y, 0, h - 1))
+    _gz_seg(img, (x - r, y), (x + r, y), color, alpha=1.0)
+    _gz_seg(img, (x, y - r), (x, y + r), color, alpha=1.0)
+
+
+def _gz_edge(mask):
+    """掩码的 1px 边缘。"""
+    return mask & ~(np.roll(mask, 1, 0) & np.roll(mask, -1, 0)
+                    & np.roll(mask, 1, 1) & np.roll(mask, -1, 1))
 
 
 #: 实体(探针球/立绘)有对应口径视图的通道 —— 延迟渲染式 buffer 联动:
@@ -278,6 +313,8 @@ class Win(QMainWindow):
         self.probe_occl = QCheckBox('§6.3 遮蔽口径(平盘 2·a₀,验收铁令)')
         self.probe_h = self._dspin(0.0, step=10.0, lo=-10000.0, hi=20000.0,
                                    decimals=1)     # Shift+拖 也能调
+        self.gizmo_on = QCheckBox('显示定位标记(落点/拉杆/地面圈/X-Ray)')
+        self.gizmo_on.setChecked(True)
 
         # ---------------- 运行时天空(实时,§6.1 预览) ----------------
         self.preset = QComboBox()
@@ -452,7 +489,8 @@ class Win(QMainWindow):
         group('场景', [('打开', self.scene_combo)])
         group('视口', [('通道', self.channel), ('体切片 y%', self.vol_slice),
                        (None, self.probe_on), (None, self.probe_occl),
-                       ('探针抬高(wu,Shift+拖)', self.probe_h)])
+                       ('探针抬高(wu,Shift+拖)', self.probe_h),
+                       (None, self.gizmo_on)])
         group('运行时天空 + 环境(实时,§6.1 预览)', [
             ('预设(初始化器)', self.preset),
             ('intensity', self.rt_inten), ('profile', self.rt_profile),
@@ -595,6 +633,7 @@ class Win(QMainWindow):
         self.vol_slice.valueChanged.connect(self._render)
         self.probe_on.stateChanged.connect(self._render)
         self.probe_occl.stateChanged.connect(self._render)
+        self.gizmo_on.stateChanged.connect(self._render)
         self.lights_on.stateChanged.connect(self._render)
         self.char_on.stateChanged.connect(self._render)
         self.char_combo.currentTextChanged.connect(self._on_char_changed)
@@ -625,6 +664,8 @@ class Win(QMainWindow):
         self._img_wh: tuple = (0, 0)
         self._pan_snap: tuple | None = None
         self._last_pan_t: float = 0.0
+        self._gizmo_texts: list = []             # (img_x, img_y, 文本, 颜色)
+        self._readout: dict = {}                 # note2 读数 {'probe':…,'char':…}
         self.light_combo.currentIndexChanged.connect(self._on_light_selected)
         self.l_kind.currentIndexChanged.connect(self._on_light_retype)
         # 逐键回写(审查 P0-2/P1-9):只写被动过的语义组 —— 没动过的键在
@@ -1526,6 +1567,20 @@ class Win(QMainWindow):
         self._char_sprite = None
         self._render()
 
+    def _gz_ground_ellipse(self, img, inp, ground_world, r_q, color) -> None:
+        """世界水平面上的圆经透视投影成椭圆(24 段折线)——「站在地面
+        哪一格」+ 相机标定的免费自检(投影错了圈就歪)。"""
+        Rm = np.asarray(inp.R, np.float64)
+        th = np.linspace(0.0, 2.0 * np.pi, 25)
+        pts = np.asarray(ground_world, np.float64)[None, :] + np.stack(
+            [np.cos(th) * r_q, np.zeros_like(th), np.sin(th) * r_q], -1)
+        q = pts @ Rm
+        xs = inp.cx + q[:, 0] * inp.ppu
+        ys = inp.cy - q[:, 1] * inp.ppu
+        for i in range(24):
+            _gz_seg(img, (xs[i], ys[i]), (xs[i + 1], ys[i + 1]), color,
+                    alpha=0.75)
+
     def _entity_view(self, key: str, comps: dict,
                      rgb_final: np.ndarray) -> np.ndarray:
         """实体(球/立绘)在当前通道下的口径视图 —— 与场景通道同一编码
@@ -1617,10 +1672,42 @@ class Win(QMainWindow):
             return img
         out = img.copy()
         a = ca[sy0:sy0 + (y2 - y0), sx0:sx0 + (x2 - x0), None]
-        out[y0:y2, x0:x2] = (out[y0:y2, x0:x2] * (1 - a)
-                             + crgb[sy0:sy0 + (y2 - y0),
-                                    sx0:sx0 + (x2 - x0)] * a)
+        crgb_r = crgb[sy0:sy0 + (y2 - y0), sx0:sx0 + (x2 - x0)]
+        # ⑤ 深度 X-Ray:立绘**逐像素** q.z(components)对场景深度
+        qz_r = comps['qz'][sy0:sy0 + (y2 - y0), sx0:sx0 + (x2 - x0)]
+        occ = (inp.depth[y0:y2, x0:x2] < (qz_r - 1e-4)) & (a[..., 0] > 0.03)
+        a_eff = a * np.where(occ[..., None], 0.35, 1.0)
+        out[y0:y2, x0:x2] = (out[y0:y2, x0:x2] * (1 - a_eff) + crgb_r * a_eff)
         self._char_hit = (x0, y0, x2, y2)         # 抓取命中区(自由移动)
+        if self.gizmo_on.isChecked():
+            region = out[y0:y2, x0:x2]
+            occ_edge = _gz_edge(occ)
+            ey, ex = np.nonzero(occ_edge)
+            keep = ((ex + ey) % 6) < 3
+            region[ey[keep], ex[keep]] = _CHAR_COL
+            if self._drag_target == 'char':           # ⑥ 拖动高亮
+                region[_gz_edge(a[..., 0] > 0.03)] = _SEL_COL
+            spw = float(inp.scene_per_wu)
+            r_q = (self._char_sprite.world_w_wu * self.c_dsf.value()
+                   / 2.0 / spw)
+            gnd = inp.world[iy, ix].astype(np.float64)
+            self._gz_ground_ellipse(out, inp, gnd, r_q, _CHAR_COL)  # ③
+            _gz_cross(out, ix, iy, _CHAR_COL)                       # ①
+            h_wu = self.c_h.value()
+            if abs(h_wu) >= 0.5:                      # ② 世界 up 拉杆
+                hl = (self._drag_target == 'char'
+                      and self._drag_mode == 'height')
+                _gz_seg(out, (ix, iy), (fpx, fpy),
+                        _SEL_COL if hl else _CHAR_COL,
+                        dashed=not hl, alpha=1.0 if hl else 0.9)
+                self._gizmo_texts.append(
+                    (fpx + cw // 2 + 4, (iy + fpy) // 2,
+                     f'{h_wu:+.0f}wu', _CHAR_COL))
+        # ④ 坐标读数常驻
+        fw = foot * float(inp.scene_per_wu)
+        self._readout['char'] = (
+            f'立绘@w({fw[0]:.0f},{fw[1]:.0f},{fw[2]:.0f})wu '
+            f'↑{self.c_h.value():+.0f} q.z={float(qf[2]):.2f}')
         return out
 
     def _overlay_probe(self, img: np.ndarray) -> np.ndarray:
@@ -1682,17 +1769,44 @@ class Win(QMainWindow):
             return img
         out = img.copy()
         a = alpha[sy0:sy0 + (y1 - y0), sx0:sx0 + (x1 - x0), None]
-        out[y0:y1, x0:x1] = (out[y0:y1, x0:x1] * (1 - a)
-                             + rgb[sy0:sy0 + (y1 - y0),
-                                   sx0:sx0 + (x1 - x0)] * a)
-        # §6.3 定量读数(任何通道都给:体 2a₀ vs 脚下场景 2a₀ 的差
-        # 就是「无缝隐没」的量化口径,顺带报当前抬高)
+        rgb_r = rgb[sy0:sy0 + (y1 - y0), sx0:sx0 + (x1 - x0)]
+        # ⑤ 深度 X-Ray:球心 q.z 与场景深度逐像素比,被场景挡住的部分
+        #   半透明 + 虚线描边(「看不见 = 不知道去哪了」的正解)
+        occ = inp.depth[y0:y1, x0:x1] < (float(qc[2]) - 1e-4)
+        a_eff = a * np.where(occ[..., None], 0.35, 1.0)
+        out[y0:y1, x0:x1] = (out[y0:y1, x0:x1] * (1 - a_eff) + rgb_r * a_eff)
+        if self.gizmo_on.isChecked():
+            region = out[y0:y1, x0:x1]
+            occ_edge = _gz_edge(occ & (a[..., 0] > 0.5))
+            ey, ex = np.nonzero(occ_edge)
+            keep = ((ex + ey) % 6) < 3
+            region[ey[keep], ex[keep]] = _PROBE_COL
+            if self._drag_target == 'probe':          # ⑥ 拖动高亮
+                region[_gz_edge(a[..., 0] > 0.5)] = _SEL_COL
+            # ③ 地面圈(落点世界水平圆的透视投影,标定自证)
+            self._gz_ground_ellipse(out, inp, ground, inp.char_wu / 2.0,
+                                    _PROBE_COL)
+            _gz_cross(out, ix, iy, _PROBE_COL)        # ① 落点十字
+            h_wu = self.probe_h.value()
+            if abs(h_wu) >= 0.5:                      # ② 世界 up 拉杆
+                hl = (self._drag_target == 'probe'
+                      and self._drag_mode == 'height')
+                _gz_seg(out, (ix, iy), (pcx, pcy + radius_px),
+                        _SEL_COL if hl else _PROBE_COL,
+                        dashed=not hl, alpha=1.0 if hl else 0.9)
+                self._gizmo_texts.append(
+                    (pcx + radius_px + 4, (iy + pcy) // 2,
+                     f'{h_wu:+.0f}wu', _PROBE_COL))
+        # ④ 坐标读数常驻(§6.3 量化口径并入)
         a0f, _ = self.ctx['moments_smooth']
         scene_v = float(np.clip(2.0 * a0f[iy, ix], 0, 1))
         probe_v = float(np.clip(2.0 * sample['sky_a0'], 0, 1))
-        self.note2.setText(f'探针@({ix},{iy}) 体 2a₀={probe_v:.3f} vs '
-                           f'场景 2a₀={scene_v:.3f}(|Δ|={abs(probe_v - scene_v):.3f},'
-                           '§6.3 门:中位≤0.03)')
+        cw_wu = center * float(inp.scene_per_wu)
+        self._readout['probe'] = (
+            f'探针@w({cw_wu[0]:.0f},{cw_wu[1]:.0f},{cw_wu[2]:.0f})wu '
+            f'↑{self.probe_h.value():+.0f} q.z={float(qc[2]):.2f} '
+            f'体2a₀={probe_v:.3f} Δ={abs(probe_v - scene_v):.3f}'
+            '(§6.3 门≤0.03)')
         return out
 
     def _render(self, *_a) -> None:
@@ -1700,10 +1814,16 @@ class Win(QMainWindow):
             return
         self._probe_hit = None                # overlay 画了才有命中区
         self._char_hit = None
+        self._gizmo_texts = []
+        self._readout = {}
         try:
             img = self._channel_img()
             img = self._overlay_char(img)
             img = self._overlay_probe(img)
+            parts = [self._readout[k] for k in ('probe', 'char')
+                     if k in self._readout]
+            if parts:
+                self.note2.setText('  ·  '.join(parts))
         except Exception as exc:                       # noqa: BLE001 — 显示不许炸
             img = self._placeholder(f'渲染失败:{type(exc).__name__}: {exc}')
         u8 = np.ascontiguousarray(
@@ -1738,6 +1858,20 @@ class Win(QMainWindow):
         p.setRenderHint(QPainter.SmoothPixmapTransform, self._zoom < 4.0)
         p.drawPixmap(QRectF(0, 0, vw, vh), self._pm_full,
                      QRectF(sx, sy, sw, sh))
+        # gizmo 文本(拉杆的 ±wu 标注等):blit 期按视口坐标画,任意缩放下清晰
+        if self._gizmo_texts:
+            from PySide6.QtGui import QFont
+            f = QFont('Consolas')
+            f.setPixelSize(11)
+            p.setFont(f)
+            for gx, gy, txt, col in self._gizmo_texts:
+                tvx, tvy = (gx - sx) * s, (gy - sy) * s
+                if -60 < tvx < vw + 60 and -20 < tvy < vh + 20:
+                    p.setPen(QColor(0, 0, 0))
+                    p.drawText(int(tvx) + 1, int(tvy) + 1, txt)
+                    p.setPen(QColor(int(col[0] * 255), int(col[1] * 255),
+                                    int(col[2] * 255)))
+                    p.drawText(int(tvx), int(tvy), txt)
         p.end()
         self._view_map = (s, -sx * s, -sy * s, w, h)
         self.view.setPixmap(out)

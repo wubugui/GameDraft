@@ -372,5 +372,6 @@ def shade_character(ctx: dict, sprite: CharSprite, foot_world,
         'gi': _scat3(gi_e.astype(np.float32)),
         'e_sky': _scat3(sky_e.astype(np.float32)),
         'e_lights': _scat3(direct_e.astype(np.float32)),
+        'qz': _scat1(q_pix[:, 2].astype(np.float32)),   # 伪世界深度(X-Ray)
     }
     return rgb_out, alpha_out, comps
