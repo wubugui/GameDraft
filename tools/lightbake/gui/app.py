@@ -35,9 +35,9 @@ _ROOT = Path(__file__).resolve().parents[3]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from PySide6.QtCore import (Qt, QSignalBlocker, QThread, QTimer,  # noqa: E402
-                            Signal)
-from PySide6.QtGui import QImage, QPixmap                       # noqa: E402
+from PySide6.QtCore import (QRectF, Qt, QSignalBlocker, QThread,  # noqa: E402
+                            QTimer, Signal)
+from PySide6.QtGui import QColor, QImage, QPainter, QPixmap     # noqa: E402
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox,  # noqa: E402
                                QDoubleSpinBox, QFileDialog, QFormLayout,
                                QGroupBox, QHBoxLayout, QLabel, QMainWindow,
@@ -154,24 +154,50 @@ _CHANNELS = [
 
 
 class _ViewLabel(QLabel):
-    """视口:把按下/拖动/松开回报给宿主(探针球与立绘的自由移动用;
-    Qt 在按住期间会持续派发 move,不需要 mouseTracking)。"""
+    """视口:左键 = 放置/抓取拖动;中键或右键拖 = 平移;滚轮 = 缩放
+    (光标为锚);双击右键/中键 = 复位视图。Qt 在按住期间持续派发 move,
+    不需要 mouseTracking。"""
 
     pressed = Signal(float, float)
     dragged = Signal(float, float)
     released = Signal()
+    pan_pressed = Signal(float, float)
+    pan_dragged = Signal(float, float)
+    pan_released = Signal()
+    wheeled = Signal(float, float, float)     # (angleDelta.y, vx, vy)
+    view_reset = Signal()
 
     def mousePressEvent(self, ev) -> None:              # noqa: N802 — Qt 命名
-        self.pressed.emit(float(ev.position().x()), float(ev.position().y()))
+        p = ev.position()
+        if ev.button() == Qt.LeftButton:
+            self.pressed.emit(float(p.x()), float(p.y()))
+        elif ev.button() in (Qt.MiddleButton, Qt.RightButton):
+            self.pan_pressed.emit(float(p.x()), float(p.y()))
         super().mousePressEvent(ev)
 
     def mouseMoveEvent(self, ev) -> None:               # noqa: N802 — Qt 命名
-        self.dragged.emit(float(ev.position().x()), float(ev.position().y()))
+        p = ev.position()
+        if ev.buttons() & Qt.LeftButton:
+            self.dragged.emit(float(p.x()), float(p.y()))
+        elif ev.buttons() & (Qt.MiddleButton | Qt.RightButton):
+            self.pan_dragged.emit(float(p.x()), float(p.y()))
         super().mouseMoveEvent(ev)
 
     def mouseReleaseEvent(self, ev) -> None:            # noqa: N802 — Qt 命名
-        self.released.emit()
+        if ev.button() == Qt.LeftButton:
+            self.released.emit()
+        else:
+            self.pan_released.emit()
         super().mouseReleaseEvent(ev)
+
+    def wheelEvent(self, ev) -> None:                   # noqa: N802 — Qt 命名
+        self.wheeled.emit(float(ev.angleDelta().y()),
+                          float(ev.position().x()), float(ev.position().y()))
+
+    def mouseDoubleClickEvent(self, ev) -> None:        # noqa: N802 — Qt 命名
+        if ev.button() in (Qt.MiddleButton, Qt.RightButton):
+            self.view_reset.emit()
+        super().mouseDoubleClickEvent(ev)
 
 
 class Win(QMainWindow):
@@ -189,6 +215,13 @@ class Win(QMainWindow):
         self.view.pressed.connect(self._on_view_click)
         self.view.dragged.connect(self._on_view_drag)
         self.view.released.connect(self._on_view_release)
+        self.view.pan_pressed.connect(self._on_pan_press)
+        self.view.pan_dragged.connect(self._on_pan_drag)
+        self.view.pan_released.connect(self._on_pan_release)
+        self.view.wheeled.connect(self._on_wheel)
+        self.view.view_reset.connect(self._on_view_reset)
+        self.view.setToolTip('左键=放置/抓取拖动 · 滚轮=缩放(光标为锚) · '
+                             '中/右键拖=平移 · 双击右键=复位视图')
         self.note = QLabel('')                # 通道级提示(占位原因/立绘告警)
         self.note.setStyleSheet('color:#997; font-size: 11px;')
         self.note2 = QLabel('')               # 探针读数专线(二审 P2-4:
@@ -548,6 +581,13 @@ class Win(QMainWindow):
         self._last_drag_t: float = 0.0
         self._probe_hit: tuple | None = None     # (cx, cy, r) 图像坐标
         self._char_hit: tuple | None = None      # (x0, y0, x1, y1)
+        # 画布缩放/平移:合成一次(_pm_full),blit 随便动(不重算通道)
+        self._zoom: float = 1.0                  # 1.0 = 适配窗口
+        self._view_center: tuple | None = None   # 视中心的图像坐标(None=居中)
+        self._pm_full: QPixmap | None = None
+        self._img_wh: tuple = (0, 0)
+        self._pan_snap: tuple | None = None
+        self._last_pan_t: float = 0.0
         self.light_combo.currentIndexChanged.connect(self._on_light_selected)
         self.l_kind.currentIndexChanged.connect(self._on_light_retype)
         # 逐键回写(审查 P0-2/P1-9):只写被动过的语义组 —— 没动过的键在
@@ -1056,6 +1096,9 @@ class Win(QMainWindow):
         self._lamp_vis = {}
         self._vol_m = None
         self._gi_slice_range = None
+        self._zoom = 1.0                          # 换场景复位视图
+        self._view_center = None
+        self._pm_full = None
         self.view.setText(f'打开 {sid},烘首帧……')
         self._refresh_cli()
         self._start_bake(use_panel=False, with_volume=False,
@@ -1574,14 +1617,84 @@ class Win(QMainWindow):
             np.round(np.clip(img, 0, 1) * 255).astype(np.uint8))
         h, w = u8.shape[:2]
         qi = QImage(u8.data, w, h, w * 3, QImage.Format_RGB888)
-        pm = QPixmap.fromImage(qi).scaled(
-            self.view.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        # 记录 视口→图像 的映射(点击放置探针要反算)
-        s = pm.width() / float(w)
-        offx = (self.view.width() - pm.width()) / 2.0
-        offy = (self.view.height() - pm.height()) / 2.0
-        self._view_map = (s, offx, offy, w, h)
-        self.view.setPixmap(pm)
+        self._pm_full = QPixmap.fromImage(qi)     # fromImage 拷贝,u8 可回收
+        self._img_wh = (w, h)
+        self._blit()
+
+    def _blit(self) -> None:
+        """把全分辨率合成图按当前缩放/平移裁贴进视口,并更新
+        视口→图像映射(`_view_map` 的消费者口径不变)。"""
+        if self._pm_full is None:
+            return
+        w, h = self._img_wh
+        vw = max(self.view.width(), 8)
+        vh = max(self.view.height(), 8)
+        fit = min(vw / w, vh / h)
+        s = fit * self._zoom
+        if self._view_center is None:
+            cx, cy = w / 2.0, h / 2.0
+        else:
+            cx = min(max(self._view_center[0], 0.0), float(w))
+            cy = min(max(self._view_center[1], 0.0), float(h))
+        sw, sh = vw / s, vh / s
+        sx, sy = cx - sw / 2.0, cy - sh / 2.0
+        out = QPixmap(vw, vh)
+        out.fill(QColor(22, 22, 25))
+        p = QPainter(out)
+        # 高倍下用最近邻 —— 像素级检查不许被平滑糊掉
+        p.setRenderHint(QPainter.SmoothPixmapTransform, self._zoom < 4.0)
+        p.drawPixmap(QRectF(0, 0, vw, vh), self._pm_full,
+                     QRectF(sx, sy, sw, sh))
+        p.end()
+        self._view_map = (s, -sx * s, -sy * s, w, h)
+        self.view.setPixmap(out)
+
+    # ---------------- 画布缩放/平移(纯 blit,零重算) ----------------
+    def _on_wheel(self, delta: float, vx: float, vy: float) -> None:
+        if self._view_map is None:
+            return
+        s, offx, offy, w, h = self._view_map
+        z = min(max(self._zoom * (1.25 ** (delta / 120.0)), 0.25), 32.0)
+        if abs(z - self._zoom) < 1e-9:
+            return
+        px = (vx - offx) / s                      # 光标锚点(图像坐标)
+        py = (vy - offy) / s
+        vw = max(self.view.width(), 8)
+        vh = max(self.view.height(), 8)
+        s2 = min(vw / w, vh / h) * z
+        self._view_center = (px - (vx - vw / 2.0) / s2,
+                             py - (vy - vh / 2.0) / s2)
+        self._zoom = z
+        self._blit()
+
+    def _on_pan_press(self, vx: float, vy: float) -> None:
+        if self._view_map is None:
+            return
+        w, h = self._img_wh
+        c = self._view_center or (w / 2.0, h / 2.0)
+        self._pan_snap = (vx, vy, c[0], c[1], self._view_map[0])
+
+    def _on_pan_drag(self, vx: float, vy: float) -> None:
+        if self._pan_snap is None:
+            return
+        import time as _time
+        x0, y0, cx0, cy0, s = self._pan_snap
+        self._view_center = (cx0 - (vx - x0) / s, cy0 - (vy - y0) / s)
+        now = _time.monotonic()
+        if now - self._last_pan_t < 0.016:
+            return
+        self._last_pan_t = now
+        self._blit()
+
+    def _on_pan_release(self) -> None:
+        if self._pan_snap is not None:
+            self._pan_snap = None
+            self._blit()
+
+    def _on_view_reset(self) -> None:
+        self._zoom = 1.0
+        self._view_center = None
+        self._blit()
 
     def _img_xy(self, vx: float, vy: float) -> tuple | None:
         if self._view_map is None:
@@ -1686,7 +1799,10 @@ class Win(QMainWindow):
 
     def resizeEvent(self, event) -> None:               # noqa: N802 — Qt 命名
         super().resizeEvent(event)
-        self._render()
+        if self._pm_full is not None:
+            self._blit()                          # 合成图还在,重贴即可
+        else:
+            self._render()
 
     # ---------------- 动作 ----------------
     def _pick_file(self) -> None:

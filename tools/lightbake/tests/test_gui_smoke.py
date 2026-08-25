@@ -365,6 +365,58 @@ def test_gui_free_drag_probe_and_char():
     assert '首帧还在烘' in win2.status.text()
 
 
+def test_gui_canvas_zoom_pan():
+    """画布缩放/平移(制作人 2026-08-26):滚轮=缩放且**光标为锚**;
+    中/右键拖=平移(内容跟手);双击右键=复位;缩放平移下点击放置的
+    反算必须仍然正确(_view_map 消费者口径不变)。"""
+    pytest.importorskip('PySide6')
+    import os
+    os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+    from tools.lightbake.gui.app import create_window
+    h, w = 24, 32
+    ctx = _rich_fake_ctx(h, w)
+    _app, win = create_window('雾津街头', autobake=False)
+    win.set_ctx(ctx)
+    _settle_lights(_app, win)
+    win.channel.setCurrentIndex(
+        [win.channel.itemData(i) for i in range(win.channel.count())
+         ].index('final'))
+    win.probe_on.setChecked(True)
+    win._render()
+    map0 = win._view_map
+    s0, ox0, oy0, _w, _h = map0
+    # ① 滚轮放大:光标锚点(图像 (10,8))在缩放前后指向同一图像像素
+    ax, ay = 10.0, 8.0
+    vx, vy = ax * s0 + ox0, ay * s0 + oy0
+    win._on_wheel(240.0, vx, vy)                    # 两档 → ×1.5625
+    s1, ox1, oy1, _w, _h = win._view_map
+    assert s1 > s0 * 1.5
+    assert abs((vx - ox1) / s1 - ax) < 0.05
+    assert abs((vy - oy1) / s1 - ay) < 0.05
+    # ② 缩放态下点击放置:反算仍然正确
+    tx, ty = 6, 20
+    win._on_view_click(tx * s1 + ox1 + 0.5 * s1, ty * s1 + oy1 + 0.5 * s1)
+    assert win._probe_px == (tx, ty)
+    win._on_view_release()
+    # ③ 平移:内容跟手(鼠标 +30/−20 ⇒ offx +30 / offy −20)
+    s2, ox2, oy2, _w, _h = win._view_map
+    win._on_pan_press(100.0, 100.0)
+    win._on_pan_drag(130.0, 80.0)
+    win._on_pan_release()
+    s3, ox3, oy3, _w, _h = win._view_map
+    assert abs(s3 - s2) < 1e-9
+    assert abs((ox3 - ox2) - 30.0) < 0.5
+    assert abs((oy3 - oy2) + 20.0) < 0.5
+    # ④ 复位:回到适配视图
+    win._on_view_reset()
+    s4, ox4, oy4, _w, _h = win._view_map
+    assert abs(s4 - s0) < 1e-9
+    assert abs(ox4 - ox0) < 1e-6 and abs(oy4 - oy0) < 1e-6
+    # ⑤ 缩小有下限(0.25×),不会缩没
+    win._on_wheel(-240.0 * 20, 10.0, 10.0)
+    assert win._zoom >= 0.25
+
+
 def test_gui_char_error_note_not_clobbered(monkeypatch):
     """二审 P2-4 回归:立绘着色抛异常时,报错必须在 note 上活到帧尾 ——
     探针读数走 note2,不许当场覆盖。"""
