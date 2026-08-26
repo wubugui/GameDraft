@@ -219,6 +219,8 @@ def shade_character(ctx: dict, sprite: CharSprite, foot_world,
                     flatten: float = 0.0, bulge: float = 0.22,
                     ao_contact: float = 0.0, ao_form: float = 0.0,
                     mirror: bool = False, scale_mul: float = 1.0,
+                    sky_k: float = 1.0, env_k: float = 1.0,
+                    lights_k: float = 1.0,
                     notes: list | None = None, components: bool = False):
     """把一帧立绘按运行时角色管线着色,返回 (显示域 sRGB rgb, alpha),
     分辨率 = 该角色在画面上的实际显示大小(world 尺寸·scale_mul → q → ×ppu)。
@@ -305,16 +307,19 @@ def shade_character(ctx: dict, sprite: CharSprite, foot_world,
     b = np.asarray(sh_basis(nmix[:, 0].astype(np.float64),
                             nmix[:, 1].astype(np.float64),
                             nmix[:, 2].astype(np.float64)))
-    sky_e = np.maximum(b.T @ sh, 0.0) * V[:, None]
+    # 每个加项独立系数(sky_k/env_k/lights_k + charGi,制作人 2026-08-26
+    # 「自由获取效果」;在定义处乘 ⇒ e_sky/e_lights buffer 联动显示实际值)
+    sky_e = np.maximum(b.T @ sh, 0.0) * V[:, None] * np.float32(sky_k)
     # ⚠ ao 只有下钳(sc3SHTransfer 的 max0);1.2 天花板在环境项里,
     #   入参预先压到 ≤1 会让开阔地那 20% 永远够不到(二审 P2-1)
-    amb_e = (np.asarray(env_rgb, np.float32)[None, :] * float(env_gain)
+    amb_e = (np.asarray(env_rgb, np.float32)[None, :]
+             * float(env_gain) * float(env_k)
              * np.clip(0.28 + 0.72 * ao, 0.0, 1.2)[:, None])
     gi_e = gi_e * np.float32(char_gi)
 
     # ---- 太阳 + 灯:实体逐像素解析灯的**唯一实现**(与探针共用) ----
     direct_e = eval_entity_lights(lights or [], P, n.astype(np.float32),
-                                  inp, notes=notes)
+                                  inp, notes=notes) * np.float32(lights_k)
 
     # ---- 比例基底 + sc3Shade + 形体 AO + 预览显示链 ----
     # ⚠ 直通图集**不再除 α**(二审 P0-2:运行时 shader 的 /max(a,1e-4) 是

@@ -87,16 +87,19 @@ def sky_response(a0f: np.ndarray, a1f: np.ndarray, normal: np.ndarray,
 def compose_final(base_rgb: np.ndarray, e_bake: np.ndarray,
                   e_sky: np.ndarray, gi: float = 0.15,
                   ev: float = 0.0, e_env: np.ndarray | None = None,
-                  e_lights: np.ndarray | None = None) -> np.ndarray:
-    """shade 的便宜半:out = base·(gi·E + E_天光 [+ E_环境 + E_灯])·2^ev →
-    显示域。E_环境 = 环境色·强度·clamp(0.28+0.72·AO, 0, 1.2)(§6.1 静态半的
-    第三项;见 ambient_env);E_灯 = lights.eval_scene_lights(运行时解析灯
-    镜像,§6.1 的 E_太阳+E_灯 两项)。毫秒级。"""
-    e_target = np.float32(gi) * e_bake + e_sky
+                  e_lights: np.ndarray | None = None,
+                  sky_k: float = 1.0, lights_k: float = 1.0) -> np.ndarray:
+    """shade 的便宜半:out = base·(gi·E + sky_k·E_天光 [+ E_环境
+    + lights_k·E_灯])·2^ev → 显示域。E_环境 = 环境色·强度·
+    clamp(0.28+0.72·AO, 0, 1.2)(§6.1 静态半的第三项;见 ambient_env,
+    环境的系数 = 里面的 gain);E_灯 = lights.eval_scene_lights(运行时解析
+    灯镜像,§6.1 的 E_太阳+E_灯 两项)。每个加项独立系数(制作人
+    2026-08-26:自由获取效果),缺省 1.0 = 原行为。毫秒级。"""
+    e_target = np.float32(gi) * e_bake + np.float32(sky_k) * e_sky
     if e_env is not None:
         e_target = e_target + e_env
     if e_lights is not None:
-        e_target = e_target + e_lights
+        e_target = e_target + np.float32(lights_k) * e_lights
     return linear_to_srgb(from_hdr(base_rgb
                                    * (e_target * np.float32(2.0 ** ev))))
 
@@ -134,7 +137,9 @@ def shade_probe_ball(ctx: dict, center_world, sky_def: dict, sun_dir,
                      gi: float, ev: float, env_rgb, env_gain: float,
                      radius_px: int, radius_q: float, albedo: float = 0.5,
                      occlusion_only: bool = False,
-                     lights: list | None = None, components: bool = False):
+                     lights: list | None = None, components: bool = False,
+                     sky_k: float = 1.0, env_k: float = 1.0,
+                     lights_k: float = 1.0):
     """探针球 = 实体着色口径的 §6.1 镜像(角色融入度目视)。
 
     **逐像素位形**(制作人 2026-08-26 抓的:此前只在球心采一次体 + 逐像素
@@ -193,17 +198,20 @@ def shade_probe_ball(ctx: dict, center_world, sky_def: dict, sun_dir,
     b = np.asarray(sh_basis(nmix[..., 0].ravel().astype(np.float64),
                             nmix[..., 1].ravel().astype(np.float64),
                             nmix[..., 2].ravel().astype(np.float64)))
+    # 每个加项独立系数(sky_k/env_k/lights_k,与立绘同一组实体系数;
+    # 在定义处乘 ⇒ components 联动的 buffer 显示的就是加系数后的值)
     e_sky = (np.maximum(b.T @ sh, 0.0).reshape(mask.shape + (3,))
-             * V[..., None]).astype(np.float32)
+             * V[..., None]).astype(np.float32) * np.float32(sky_k)
     e_gi = gi_f.reshape(mask.shape + (3,))
     ao = ao_f.reshape(mask.shape)
     e_env = 0.0
-    if env_gain and env_gain > 0:
+    if env_gain and env_gain > 0 and env_k > 0:
         mod = np.clip(0.28 + 0.72 * ao, 0.0, 1.2)
         e_env = (np.asarray(env_rgb, np.float32).reshape(1, 1, 3)
-                 * np.float32(env_gain) * mod[..., None])
-    e_lights = eval_entity_lights(lights or [], P, n_flat, inp
-                                  ).reshape(mask.shape + (3,))
+                 * np.float32(env_gain) * np.float32(env_k) * mod[..., None])
+    e_lights = (eval_entity_lights(lights or [], P, n_flat, inp
+                                   ).reshape(mask.shape + (3,))
+                * np.float32(lights_k))
     e_t = (np.float32(gi) * e_gi + e_sky + e_env + e_lights) \
         * np.float32(2.0 ** ev)
     rgb = linear_to_srgb(from_hdr(np.float32(albedo) * e_t))

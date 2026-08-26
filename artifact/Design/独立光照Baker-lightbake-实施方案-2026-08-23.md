@@ -2046,3 +2046,21 @@ e2e(雾津街头,密度4/vol128/ref spp48):体GI重建 vs **全E** ——
 **med=10.5%**;76.8% 像素收到注入,反解 C≈(1.28,1.21,1.14)。
 p95=78.7% 残差集中在**影界**:解析 V_dir 是 L1 软影,原画是硬影界 ——
 记档(硬影界要靠更高阶可见性/逐点 march,P7+ 候选)。全套 194+1。
+
+### §15 追记:逐加项独立系数(场景侧 + 实体侧,2026-08-26)
+
+制作人:「角色的每个光照部分的强度都要独立系数可以调节,场景也是」。
+显示期系数(改了即时重合成,不进 bakeParams/CLI):
+
+- 场景 compose_final:E = gi·E_bake + sky_k·E_天光 + E_环境 + lights_k·E_灯
+  (环境的系数 = env_gain 本身,GI 的系数 = gi 本身,新增 sky_k/lights_k)。
+- 实体(立绘+探针共用同一组):sky_k·skyE + env_k·ambE + charGi·giE
+  + lights_k·directE(shade_character / shade_probe_ball 同名 kwargs)。
+- 系数在**定义处**乘 ⇒ e_sky/e_lights 等 buffer 通道联动显示的就是加系数
+  后的值;缺省全 1.0 = 原行为(全套既有钉即回归)。
+- GUI:天空组「场景 E_天光 系数」、灯光组「场景 E_灯 系数」、角色面板
+  「实体 天光/环境/灯 系数」三枚(探针同吃)。
+- 钉:立绘三系数精确线性(components 倍乘 + env_k≡env_gain 等价)、探针
+  sky_k、compose_final 线性恒等、GUI 五旋钮在位缺省 1.0。夹具教训:
+  角色平面法线朝 −z,灯要放 −z 侧,+z/侧向灯 n·L≤0 全零假夹具。
+全套 198 过 + 1 xfail。

@@ -348,6 +348,10 @@ class Win(QMainWindow):
         self.env_gain = self._dspin(0.0, step=0.02, hi=4.0)
         self.gi = self._dspin(0.15, step=0.05, hi=1.0)
         self.ev = self._dspin(0.0, step=0.5, lo=-6.0, hi=8.0)
+        # 场景侧逐加项独立系数(制作人 2026-08-26「自由获取效果」;
+        # 环境的系数 = env_gain 本身,gi 的系数 = gi 本身)
+        self.sky_k = self._dspin(1.0, step=0.05, hi=8.0)
+        self.lights_k = self._dspin(1.0, step=0.05, hi=8.0)
         save_rt = QPushButton('存回场景 JSON(lighting.sky 运行时天空)')
         save_rt.clicked.connect(self._save_runtime_sky)
 
@@ -419,6 +423,10 @@ class Win(QMainWindow):
         self.c_gi_follow.setChecked(True)
         self.c_gi = self._dspin(1.0, step=0.05, hi=4.0)
         self.c_ref = self._dspin(1.0, step=0.02, hi=8.0, decimals=4)
+        # 实体侧(角色+探针共用)逐加项独立系数;GI 的系数 = charGi
+        self.c_sky_k = self._dspin(1.0, step=0.05, hi=8.0)
+        self.c_env_k = self._dspin(1.0, step=0.05, hi=8.0)
+        self.c_lights_k = self._dspin(1.0, step=0.05, hi=8.0)
         self.c_dsf = self._dspin(1.0, step=0.1, lo=0.1, hi=4.0)
         self.c_h = self._dspin(0.0, step=10.0, lo=-10000.0, hi=20000.0,
                                decimals=1)         # Shift+拖 也能调
@@ -515,9 +523,12 @@ class Win(QMainWindow):
             ('环境色 R', self.env_r), ('环境色 G', self.env_g),
             ('环境色 B', self.env_b), ('环境强度(吃 AO)', self.env_gain),
             ('gi', self.gi), ('ev', self.ev),
+            ('场景 E_天光 系数', self.sky_k),
             (None, save_rt)])
         group('灯光(运行时等价:平行/点/聚/面)', [
-            (None, self.lights_on), ('灯', self.light_combo), (None, lrow_w),
+            (None, self.lights_on),
+            ('场景 E_灯 系数', self.lights_k),
+            ('灯', self.light_combo), (None, lrow_w),
             (None, self.l_enabled), ('kind', self.l_kind),
             ('intensity', self.l_inten), ('kelvin', self.l_kelvin),
             (None, self.l_color_on), ('color R', self.l_cr),
@@ -540,6 +551,9 @@ class Win(QMainWindow):
             ('形体AO contact', self.c_aoc), ('形体AO form', self.c_aof),
             (None, self.c_gi_follow), ('charGi(不跟随时)', self.c_gi),
             ('charRefIntensity', self.c_ref),
+            ('实体 天光 系数', self.c_sky_k),
+            ('实体 环境 系数', self.c_env_k),
+            ('实体 灯 系数', self.c_lights_k),
             ('透视缩放 dsf', self.c_dsf),
             ('脚部抬高(wu,Shift+拖)', self.c_h),
             ('状态', self.c_state), ('帧', self.c_frame)])
@@ -639,7 +653,7 @@ class Win(QMainWindow):
             w_.valueChanged.connect(self.sky_timer.start)
         self.sun_on.stateChanged.connect(self.sky_timer.start)
         for w_ in (self.gi, self.ev, self.env_r, self.env_g, self.env_b,
-                   self.env_gain):
+                   self.env_gain, self.sky_k, self.lights_k):
             w_.valueChanged.connect(self._render)
         self.vol_slice.valueChanged.connect(self._render)
         self.probe_on.stateChanged.connect(self._render)
@@ -652,6 +666,7 @@ class Win(QMainWindow):
         self.c_gi_follow.stateChanged.connect(self._render)
         for w_ in (self.c_flatten, self.c_bulge, self.c_aoc, self.c_aof,
                    self.c_gi, self.c_ref, self.c_dsf, self.c_h,
+                   self.c_sky_k, self.c_env_k, self.c_lights_k,
                    self.probe_h, self.probe_d):
             w_.valueChanged.connect(self._render)
         self.c_state.currentTextChanged.connect(self._on_char_state_changed)
@@ -1461,7 +1476,8 @@ class Win(QMainWindow):
             return preview_mod.compose_final(
                 base, ctx['e_q'], e_sky, gi=self.gi.value(),
                 ev=self.ev.value(), e_env=self._env_term(),
-                e_lights=self._lights_term(key, a0u, a1u))
+                e_lights=self._lights_term(key, a0u, a1u),
+                sky_k=self.sky_k.value(), lights_k=self.lights_k.value())
         if key == 'painting':
             if missing('e_q', 'inp'):
                 return self._placeholder('原画需要完整 ctx')
@@ -1726,7 +1742,9 @@ class Win(QMainWindow):
                 flatten=self.c_flatten.value(), bulge=self.c_bulge.value(),
                 ao_contact=self.c_aoc.value(), ao_form=self.c_aof.value(),
                 mirror=self.c_mirror.isChecked(),
-                scale_mul=self.c_dsf.value(), notes=ch_notes,
+                scale_mul=self.c_dsf.value(),
+                sky_k=self.c_sky_k.value(), env_k=self.c_env_k.value(),
+                lights_k=self.c_lights_k.value(), notes=ch_notes,
                 components=True)
         except Exception as exc:                    # noqa: BLE001 — 显示不许炸
             self.note.setText(f'立绘着色失败:{type(exc).__name__}: {exc}')
@@ -1837,7 +1855,9 @@ class Win(QMainWindow):
                 self._runtime_sun(), self.gi.value(), self.ev.value(),
                 [self.env_r.value(), self.env_g.value(), self.env_b.value()],
                 self.env_gain.value(), radius_px, r_q, occlusion_only=False,
-                lights=ent_lights, components=True)
+                lights=ent_lights, components=True,
+                sky_k=self.c_sky_k.value(), env_k=self.c_env_k.value(),
+                lights_k=self.c_lights_k.value())
             rgb = self._entity_view(key, comps, rgb)
         # 球心从**世界坐标投影**(抬高后画面位置跟着走,与受光一致)
         Rm = np.asarray(inp.R, np.float64)

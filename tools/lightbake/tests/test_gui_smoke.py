@@ -710,6 +710,22 @@ def test_gui_bake_kwargs_mirror_cli():
     win.gi_sun.setChecked(False)
 
 
+def test_term_coefficient_spins_present():
+    """逐加项独立系数旋钮(制作人 2026-08-26):场景侧 sky_k/lights_k、
+    实体侧 c_sky_k/c_env_k/c_lights_k 都在、缺省 1.0(=原行为)、
+    场景/实体是**两组独立**控件(系数数学钉在 test_character 库级)。"""
+    pytest.importorskip('PySide6')
+    import os
+    os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+    from tools.lightbake.gui.app import create_window
+    _app, win = create_window('雾津街头', autobake=False)
+    spins = [win.sky_k, win.lights_k,
+             win.c_sky_k, win.c_env_k, win.c_lights_k]
+    assert len({id(s) for s in spins}) == 5          # 五个独立控件
+    for s in spins:
+        assert abs(s.value() - 1.0) < 1e-9
+
+
 def test_cli_flags_all_have_gui_controls():
     """反向 parity(审查 [18]:此前只验 GUI→CLI,漏掉 --no-gi 这类
     CLI 有 GUI 无):遍历 bake 子命令的每个 dest,都必须映射到 GUI 控件,

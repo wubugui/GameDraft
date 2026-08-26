@@ -603,6 +603,82 @@ def test_scene_volume_gi_reconstruction():
     assert np.allclose(gv, L0[None, None, :], atol=1e-5)
 
 
+def test_entity_term_coefficients():
+    """逐加项独立系数钉(制作人 2026-08-26「自由获取效果」):
+    sky_k/env_k/lights_k 精确线性作用在各自加项上(在**定义处**乘 ⇒
+    components 的 e_sky/e_lights 显示的就是加系数后的值);缺省 1.0 = 原行为
+    (全套其余钉不带系数跑就是回归)。"""
+    sky = {'mode': 'color', 'color': [1, 1, 1], 'intensity': 1.0,
+           'profile': 0.0}
+    ctx = _uniform_ctx()
+    sp = _flat_sprite()
+    kw = dict(gi=0.0, ev=0.0, env_rgb=[1, 1, 1], env_gain=0.0, lights=[],
+              components=True)
+    r1, _, c1 = C.shade_character(ctx, sp, [0, 0, 0.5], sky, None, **kw)
+    r2, _, c2 = C.shade_character(ctx, sp, [0, 0, 0.5], sky, None,
+                                  sky_k=2.0, **kw)
+    m = c1['e_sky'][..., 0] > 0
+    assert m.any()
+    assert np.allclose(c2['e_sky'][m], 2.0 * c1['e_sky'][m], rtol=1e-6)
+    assert float(np.abs(r2 - r1).max()) > 1e-3      # 显示域真的动了
+    # env_k 与 env_gain 严格等价(乘积进同一标量)
+    ra, _, _ = C.shade_character(ctx, sp, [0, 0, 0.5], _NO_SKY, None,
+                                 gi=0.0, ev=0.0, env_rgb=[1, 1, 1],
+                                 env_gain=0.3, env_k=2.0, lights=[],
+                                 components=True)
+    rb, _, _ = C.shade_character(ctx, sp, [0, 0, 0.5], _NO_SKY, None,
+                                 gi=0.0, ev=0.0, env_rgb=[1, 1, 1],
+                                 env_gain=0.6, lights=[], components=True)
+    assert np.allclose(ra, rb, atol=1e-7)
+    # lights_k 精确倍乘 e_lights(灯自身口径一个字不动)。灯放 **−z 侧**:
+    # 角色平面法线朝 −z,+z/侧向的灯 n·L≤0 全零(实测甄别过,别改回去)
+    lamp = [{'kind': 'point', 'intensity': 3.0, 'color': _WHITE,
+             'pos': [0.0, 0.0, -600.0], 'range': 1200.0,
+             'softeningRadius': 15.0, 'castShadow': False}]
+    _, _, cl1 = C.shade_character(ctx, sp, [0, 0, 1.0], _NO_SKY, None,
+                                  gi=0.0, ev=0.0, env_rgb=[0, 0, 0],
+                                  env_gain=0.0, lights=lamp, components=True)
+    _, _, cl2 = C.shade_character(ctx, sp, [0, 0, 1.0], _NO_SKY, None,
+                                  gi=0.0, ev=0.0, env_rgb=[0, 0, 0],
+                                  env_gain=0.0, lights=lamp, lights_k=3.0,
+                                  components=True)
+    ml = cl1['e_lights'][..., 0] > 0
+    assert ml.any()
+    assert np.allclose(cl2['e_lights'][ml], 3.0 * cl1['e_lights'][ml],
+                       rtol=1e-6)
+
+
+def test_probe_term_coefficients():
+    """探针与立绘共用同一组实体系数(sky_k/env_k/lights_k 同名同义)。"""
+    from tools.lightbake import preview as P
+    ctx = _uniform_ctx(sky_a0=0.25, gi=0.0)
+    sky = {'mode': 'color', 'color': [1, 1, 1], 'intensity': 1.0,
+           'profile': 0.0}
+    kwp = dict(gi=0.0, ev=0.0, env_rgb=[1, 1, 1], env_gain=0.0,
+               radius_px=10, radius_q=0.3, lights=[], components=True)
+    _, _, c1 = P.shade_probe_ball(ctx, [0, 0.5, 0.5], sky, None, **kwp)
+    _, _, c2 = P.shade_probe_ball(ctx, [0, 0.5, 0.5], sky, None,
+                                  sky_k=2.0, **kwp)
+    m = c1['e_sky'][..., 0] > 0
+    assert m.any()
+    assert np.allclose(c2['e_sky'][m], 2.0 * c1['e_sky'][m], rtol=1e-6)
+
+
+def test_compose_final_coefficients():
+    """场景侧 compose_final 的 sky_k/lights_k = 精确线性(k·项 ≡ 预乘项)。"""
+    from tools.lightbake import preview as P
+    rng = np.random.default_rng(7)
+    base = rng.uniform(0.2, 1.0, (4, 5, 3)).astype(np.float32)
+    e = rng.uniform(0.1, 1.5, (4, 5, 3)).astype(np.float32)
+    s = rng.uniform(0.0, 0.8, (4, 5, 3)).astype(np.float32)
+    li = rng.uniform(0.0, 0.8, (4, 5, 3)).astype(np.float32)
+    a = P.compose_final(base, e, s, gi=0.4, ev=0.5, e_lights=li,
+                        sky_k=2.0, lights_k=3.0)
+    b = P.compose_final(base, e, (np.float32(2.0) * s), gi=0.4, ev=0.5,
+                        e_lights=(np.float32(3.0) * li))
+    assert np.allclose(a, b, atol=1e-6)
+
+
 def test_gi_sun_injection():
     """「GI 含反解太阳 = 融入原画」注入的三层一致钉(2026-08-26):
     Δa₀=C·V/4、Δa₁=C·V·ω/2、Δc=π·C·V·Y(ω);V 用**逐点自己的**天穹矩
