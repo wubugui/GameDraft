@@ -1303,7 +1303,7 @@ function NarrativeEditorInner() {
       updateData((next) => {
         const comp = getComposition(next, composition?.id ?? compositionId);
         const element = comp?.elements?.find((el) => el.id === inlineElementId);
-        if (element?.graph) newId = createState(element.graph);
+        if (element?.graph) newId = createState(element.graph, next);
       });
       if (newId) {
         setSelectedId(inlineSubgraphStateId(inlineElementId, newId));
@@ -1311,7 +1311,7 @@ function NarrativeEditorInner() {
       }
       return;
     }
-    updateCurrentGraph((g) => { newId = createState(g); });
+    updateCurrentGraph((g, next) => { newId = createState(g, next); });
     if (newId) {
       setSelectedId(`state:${newId}`);
       setStatus(`已创建状态 ${newId}`);
