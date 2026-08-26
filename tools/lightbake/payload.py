@@ -95,7 +95,8 @@ def build_meta(ctx: dict) -> dict:
                    'denoise': ctx['bake_params']['denoise'],
                    'denoise_iters': ctx['bake_params']['denoise_iters'],
                    'demod_mode': ctx['bake_params']['demod_mode'],
-                   'e_chroma_clamp': ctx['bake_params']['e_chroma_clamp']},
+                   'e_chroma_clamp': ctx['bake_params']['e_chroma_clamp'],
+                   'gi_sun': ctx['bake_params']['gi_sun']},
         'haze': ctx['haze'],
         'sun': ctx['sun'],
         'volume': {
@@ -104,6 +105,9 @@ def build_meta(ctx: dict) -> dict:
             'channels': vol['channels'],
             'cells_xz': vol['cells_xz'],
             'max_cells': vol['max_cells'],
+            # GI 是否已含反解太阳(融入原画口径)—— 运行时/角色消费方据此
+            # 决定是否再加解析 E_太阳(开了它就不要再加,双计)
+            'sun_injected': bool(vol.get('sun_injected', False)),
             'encoding': {
                 'sky_moments': 'R=2*a0, GBA=a1+0.5 (same as sky_moments.png)',
                 'ao_moments': 'R=a0 (full-sphere M0/4pi in [0,1]), GBA=a1+0.5; '

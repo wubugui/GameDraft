@@ -29,7 +29,7 @@ from .nee import build_nee
 from .sampling import point_keys
 from .sky import make_sky_sampler
 from .trace import DepthField
-from .volume import bake_volume
+from .volume import bake_volume, inject_sun_into_gi
 
 ROOT = input_mod.ROOT
 
@@ -102,7 +102,8 @@ _BP_DEFAULTS = dict(work_w=WORK_W, spp=GATHER_SPP, moment_spp=MOMENT_SPP,
                     ao_spp=AO_SPP, vol_spp=CHAR_VOL_SPP, vol_density=None,
                     vol_max_cells=None, no_gi=False, nee=True,
                     clamp_indirect=None, denoise=True, denoise_iters=None,
-                    demod_mode='chroma_clamp', e_chroma_clamp=0.2)
+                    demod_mode='chroma_clamp', e_chroma_clamp=0.2,
+                    gi_sun=False)
 
 
 def _resolve_bp(explicit: dict, scene: dict) -> dict:
@@ -129,6 +130,7 @@ def bake_scene(sid: str, *, work_w: int | None = None, spp: int | None = None,
                denoise: bool | None = None, denoise_iters: int | None = None,
                demod_mode: str | None = None,
                e_chroma_clamp: float | None = None,
+               gi_sun: bool | None = None,
                out_root: Path | None = None,
                write: bool = True, run_checks: bool = True,
                heavy_checks: bool = False, make_report: bool = True,
@@ -153,7 +155,7 @@ def bake_scene(sid: str, *, work_w: int | None = None, spp: int | None = None,
              vol_max_cells=vol_max_cells, no_gi=no_gi, nee=nee,
              clamp_indirect=clamp_indirect, denoise=denoise,
              denoise_iters=denoise_iters, demod_mode=demod_mode,
-             e_chroma_clamp=e_chroma_clamp),
+             e_chroma_clamp=e_chroma_clamp, gi_sun=gi_sun),
         input_mod.read_bake_params(sid))
     work_w = _bp['work_w']
     spp = _bp['spp']
@@ -169,6 +171,7 @@ def bake_scene(sid: str, *, work_w: int | None = None, spp: int | None = None,
     denoise_iters = _bp['denoise_iters']
     demod_mode = _bp['demod_mode']
     e_chroma_clamp = _bp['e_chroma_clamp']
+    gi_sun = _bp['gi_sun']
     t0 = time.time()
     inp = input_mod.load(sid, work_w)
     t_load = time.time() - t0
@@ -264,6 +267,15 @@ def bake_scene(sid: str, *, work_w: int | None = None, spp: int | None = None,
             progress=prog)
     else:
         vol = None
+    if vol is not None and gi_sun and sun.get('found'):
+        # 「GI 含反解太阳」(融入原画口径,制作人 2026-08-26):post-gain C
+        # (sun.radiance 是 pre-gain,meta 明示),逐点 V_dir 三层一致注入。
+        # 场景配了运行时太阳灯别开 —— 实体侧另有解析 E_太阳,会双计。
+        inject_sun_into_gi(
+            vol['raw'],
+            np.asarray(sun['radiance'], np.float32) * np.float32(gain),
+            sun['dir'])
+        vol['sun_injected'] = True
     t_volume = time.time() - t0
 
     from .const import HAZE_KEEP
@@ -277,7 +289,8 @@ def bake_scene(sid: str, *, work_w: int | None = None, spp: int | None = None,
                         'vol_density': vol_density, 'nee': nee,
                         'clamp_indirect': clamp_indirect, 'denoise': denoise,
                         'demod_mode': demod_mode,
-                        'e_chroma_clamp': e_chroma_clamp},
+                        'e_chroma_clamp': e_chroma_clamp,
+                        'gi_sun': gi_sun},
         # ⚠ 派生量不进 bake_params —— 它必须保持「可原样 ** 回灌 bake_scene
         # 的纯 kwargs」不变量(#8 重档二次 bake 靠它;审查抓过 TypeError 整场崩)
         'nee_emitters': int(len(nee_ctx.yx)) if nee_ctx is not None else 0,

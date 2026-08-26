@@ -79,6 +79,10 @@ def _quality_flags(p) -> None:
     p.add_argument('--gi', action=argparse.BooleanOptionalAction, default=None,
                    help='烘不烘体 GI 通道(--no-gi 关:2..4 写显式零码字,'
                         '运行时凭 meta.no_gi 跳过;§5.9)')
+    p.add_argument('--gi-sun', action=argparse.BooleanOptionalAction,
+                   default=None, dest='gi_sun',
+                   help='GI 含反解太阳(角色只吃 GI = 融入原画口径;'
+                        '场景配了运行时太阳灯别开,双计)')
     p.add_argument('--nee', action=argparse.BooleanOptionalAction,
                    default=None,
                    help='NEE+MIS 光源采样(firefly 无偏解,库缺省开;'
@@ -114,6 +118,7 @@ def _quality_kwargs(args) -> dict:
                 vol_density=args.vol_density,
                 vol_max_cells=args.vol_max_cells,
                 no_gi=(None if args.gi is None else (not args.gi)),
+                gi_sun=args.gi_sun,
                 nee=args.nee, clamp_indirect=args.clamp_indirect,
                 denoise=args.denoise, denoise_iters=args.denoise_iters,
                 demod_mode=args.demod_mode,

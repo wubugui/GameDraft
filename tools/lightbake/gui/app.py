@@ -460,6 +460,8 @@ class Win(QMainWindow):
         self.with_volume.setChecked(True)
         self.work_w = self._ispin(WORK_W, 128, 4096)
         self.no_gi = QCheckBox('不烘体 GI(--no-gi)')
+        self.gi_sun = QCheckBox('GI 含反解太阳(角色只吃GI=融入原画;'
+                                '配太阳灯别开,双计)')
         self.heavy_on = QCheckBox('全量 bake 跑重档自检(#8 双烘逐位,加倍耗时)')
 
         # ---------------- 动作 ----------------
@@ -555,8 +557,8 @@ class Win(QMainWindow):
             ('体密度(0=缺省)', self.vol_density),
             ('体格数上限(0=缺省)', self.vol_max_cells),
             (None, self.nee_on), ('clamp(0=关)', self.clamp),
-            (None, self.no_gi), (None, self.with_volume),
-            (None, self.heavy_on)])
+            (None, self.no_gi), (None, self.gi_sun),
+            (None, self.with_volume), (None, self.heavy_on)])
         side.addWidget(self.rebake_btn)
         side.addWidget(save)
         side.addWidget(save_bp)
@@ -757,6 +759,7 @@ class Win(QMainWindow):
             kw['clamp_indirect'] = self.clamp.value()
         kw['demod_mode'] = self.demod_combo.currentData()
         kw['e_chroma_clamp'] = self.e_chroma.value()   # 0 = 显式关钳
+        kw['gi_sun'] = self.gi_sun.isChecked()
         return kw
 
     def _cli_line_text(self) -> str:
@@ -780,6 +783,8 @@ class Win(QMainWindow):
             parts.append('--no-denoise')
         elif kw['denoise_iters'] != ATROUS_ITERS:
             parts.append(f"--denoise-iters {kw['denoise_iters']}")
+        if kw['gi_sun']:
+            parts.append('--gi-sun')
         if kw['demod_mode'] != 'chroma_clamp':
             parts.append(f"--demod-mode {kw['demod_mode']}")
         if kw['e_chroma_clamp'] != 0.2:                # 库缺省 0.2
@@ -1326,6 +1331,8 @@ class Win(QMainWindow):
             self.nee_on.setChecked(bool(bp.get('nee', True)))
             self.clamp.setValue(float(bp.get('clamp_indirect') or 0.0))
             self.no_gi.setChecked(bool(bp.get('no_gi', False)))
+            with QSignalBlocker(self.gi_sun):
+                self.gi_sun.setChecked(bool(bp.get('gi_sun', False)))
             self.denoise_on.setChecked(bool(bp.get('denoise', True)))
             it = bp.get('denoise_iters')
             self.denoise_iters.setValue(ATROUS_ITERS if it is None else int(it))
@@ -1506,15 +1513,24 @@ class Win(QMainWindow):
             if self._givol_c is None:
                 self._givol_c = preview_mod.volume_gi_at_surface(ctx)
             gv = self._givol_c
-            # 收敛公理的现场读数:体GI重建 vs 逐像素 E间接·gain
-            ref = (res or {}).get('e_ind')
-            if ref is not None:
-                r = (ref * (res or {}).get('gain', 1.0)) @ LUMA
+            # 收敛公理的现场读数:GI 含反解太阳(融入原画口径)时对**全 E**,
+            # 否则对 E间接·gain
+            injected = bool((ctx.get('volume') or {}).get('sun_injected'))
+            if injected:
+                ref_full = (res or {}).get('e')
+                r = (ref_full @ LUMA) if ref_full is not None else None
+                tag = '全E(融入原画口径)'
+            else:
+                ref = (res or {}).get('e_ind')
+                r = ((ref * (res or {}).get('gain', 1.0)) @ LUMA
+                     if ref is not None else None)
+                tag = 'E间接·gain'
+            if r is not None:
                 g = gv @ LUMA
                 mask = r > max(float(np.percentile(r, 20)), 1e-5)
                 rel = np.abs(g[mask] - r[mask]) / np.maximum(r[mask], 1e-5)
                 self.note.setText(
-                    f'体GI重建 vs E间接·gain:中位 {np.median(rel):.3f} / '
+                    f'体GI重建 vs {tag}:中位 {np.median(rel):.3f} / '
                     f'p95 {np.percentile(rel, 95):.3f}'
                     '(L2 核截断理论底 ~1.6%,分辨率越高越贴)')
             if key == 'e_givol':

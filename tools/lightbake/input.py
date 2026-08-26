@@ -229,14 +229,15 @@ _BP_CAMEL = {'workW': 'work_w', 'spp': 'spp', 'momentSpp': 'moment_spp',
              'volDensity': 'vol_density', 'volMaxCells': 'vol_max_cells',
              'noGi': 'no_gi', 'nee': 'nee', 'clampIndirect': 'clamp_indirect',
              'denoise': 'denoise', 'denoiseIters': 'denoise_iters',
-             'eChromaClamp': 'e_chroma_clamp', 'demodMode': 'demod_mode'}
+             'eChromaClamp': 'e_chroma_clamp', 'demodMode': 'demod_mode',
+             'giSun': 'gi_sun'}
 _BP_SNAKE = {v: k for k, v in _BP_CAMEL.items()}
 _BP_TYPES = {'work_w': int, 'spp': int, 'moment_spp': int, 'ao_spp': int,
              'vol_spp': int, 'vol_density': (int, float),
              'vol_max_cells': int, 'no_gi': bool, 'nee': bool,
              'clamp_indirect': (int, float), 'denoise': bool,
              'denoise_iters': int, 'e_chroma_clamp': (int, float),
-             'demod_mode': str}
+             'demod_mode': str, 'gi_sun': bool}
 
 _DEMOD_MODES = ('chroma_clamp', 'luminance')
 

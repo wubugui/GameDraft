@@ -678,7 +678,8 @@ def test_gui_bake_kwargs_mirror_cli():
                   'vol_spp': 256, 'no_gi': True, 'nee': False,
                   'denoise': True, 'denoise_iters': 2, 'vol_density': 8.0,
                   'vol_max_cells': 1_000_000, 'clamp_indirect': 10.0,
-                  'demod_mode': 'chroma_clamp', 'e_chroma_clamp': 0.2}
+                  'demod_mode': 'chroma_clamp', 'e_chroma_clamp': 0.2,
+                  'gi_sun': False}
     # 每个键都必须是 bake_scene 的真形参(壳公理:kwargs 可原样回灌)
     import inspect
     from tools.lightbake.pipeline import bake_scene
@@ -699,9 +700,14 @@ def test_gui_bake_kwargs_mirror_cli():
     win.work_w.setValue(1024)
     line2 = win._cli_line_text()
     for frag in ('--no-nee', '--clamp', '--vol-density', '--vol-max-cells',
-                 '--denoise-iters', '--no-denoise', '--no-gi', '--work-w'):
+                 '--denoise-iters', '--no-denoise', '--no-gi', '--work-w',
+                 '--gi-sun'):
         assert frag not in line2, (frag, line2)
     assert '--sky ' in line2                      # 天空无条件进等价行
+    # gi_sun 勾上 ⇒ 等价行必须现身(融入原画口径是重烘级实参)
+    win.gi_sun.setChecked(True)
+    assert '--gi-sun' in win._cli_line_text()
+    win.gi_sun.setChecked(False)
 
 
 def test_cli_flags_all_have_gui_controls():
@@ -721,6 +727,7 @@ def test_cli_flags_all_have_gui_controls():
                'clamp_indirect': 'clamp', 'denoise': 'denoise_on',
                'denoise_iters': 'denoise_iters',
                'e_chroma_clamp': 'e_chroma', 'demod_mode': 'demod_combo',
+               'gi_sun': 'gi_sun',
                'sky': 'mode'}                     # 天空 = 整个天空面板
     workflow_whitelist = {'scene', 'all', 'threads', 'quiet', 'out_root',
                           'help', 'cmd'}

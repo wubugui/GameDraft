@@ -49,6 +49,37 @@ class VolumeGiCache:
     spp: int
 
 
+def inject_sun_into_gi(raw: dict, sun_radiance_gained, sdir) -> None:
+    """把**反解太阳**解析注入 GI 体(原地,零 trace)——「角色只吃 GI 就
+    完美融合原画」选项(制作人 2026-08-26)的核心一步。
+
+    逐格点:V = V_dir(ω_s)(该点自己的天穹矩闭式,gather.vis_of_dir);
+    定向束流 Φ_c = π·C_c·V(E(N)=Φ·max(N·ω)/π 约定)三层一致注入:
+
+        a₀ += C·V/4        a₁ += C·V·ω/2        c_lm += π·C·V·Y(ω)
+
+    (与 §5.6 compose_sun_e 的逐像素式同源:E_sun(N)=C·(N·ω)₊·V_dir;
+    c00·Y00≡a₀ 恒等注入后保持。)C 必须是 **post-gain** 辐亮度
+    (sun['radiance']·gain —— meta 明示 radiance 是 pre-gain)。
+
+    ⚠ 语义:开了它,GI = 原画完整 E 的体版。运行时实体另有解析 E_太阳项 /
+    场景配了太阳灯的,**不要开**(双计)。"""
+    from .gather import vis_of_dir
+    C = np.asarray(sun_radiance_gained, np.float64)
+    w = np.asarray(sdir, np.float64)
+    w = w / max(float(np.linalg.norm(w)), 1e-9)
+    V = vis_of_dir(raw['sky_a0'], raw['sky_a1'],
+                   w.astype(np.float32)).astype(np.float64)   # (n,)
+    cv = V[:, None] * C[None, :]                              # (n,3)
+    raw['gi_a0'] += (cv / 4.0).astype(np.float32)
+    raw['gi_a1'] += (cv[:, :, None] / 2.0
+                     * w[None, None, :]).astype(np.float32)
+    y = np.asarray(sh_basis(np.array([w[0]]), np.array([w[1]]),
+                            np.array([w[2]])))[:, 0]           # (9,)
+    raw['gi_sh'] += (math.pi * cv[:, None, :]
+                     * y[None, :, None]).astype(np.float32)
+
+
 def char_grid_for(world: np.ndarray, char_wu: float, band: float,
                   cells_xz: float = CELLS_PER_CHAR_XZ,
                   cells_y: float | None = None,

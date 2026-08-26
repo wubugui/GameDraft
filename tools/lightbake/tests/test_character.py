@@ -603,6 +603,37 @@ def test_scene_volume_gi_reconstruction():
     assert np.allclose(gv, L0[None, None, :], atol=1e-5)
 
 
+def test_gi_sun_injection():
+    """「GI 含反解太阳 = 融入原画」注入的三层一致钉(2026-08-26):
+    Δa₀=C·V/4、Δa₁=C·V·ω/2、Δc=π·C·V·Y(ω);V 用**逐点自己的**天穹矩
+    (vis_of_dir 闭式);c00·Y00≡a₀ 恒等注入后保持;V=0 的点零注入。"""
+    from tools.lightbake.volume import inject_sun_into_gi
+    from tools.lightbake.sky import sh_basis
+    n2 = 2
+    raw = {'sky_a0': np.array([0.5, 0.05], 'float32'),
+           'sky_a1': np.array([[0, 0.5, 0], [0, 0, 0]], 'float32'),
+           'gi_a0': np.zeros((n2, 3), 'float32'),
+           'gi_a1': np.zeros((n2, 3, 3), 'float32'),
+           'gi_sh': np.zeros((n2, 9, 3), 'float32')}
+    # 点0:α=8·.5−6·.5=1,β_y=0 ⇒ V(up)=1;点1:α=0.4,β_y=−0.6 ⇒ V=0
+    C = np.array([2.0, 1.0, 0.5], 'float32')
+    w = np.array([0.0, 1.0, 0.0])
+    inject_sun_into_gi(raw, C, w)
+    assert np.allclose(raw['gi_a0'][0], C / 4, atol=1e-6)
+    assert np.allclose(raw['gi_a1'][0, :, 1], C / 2, atol=1e-6)
+    assert float(np.abs(raw['gi_a0'][1]).max()) == 0.0    # V=0 ⇒ 零注入
+    assert float(np.abs(raw['gi_sh'][1]).max()) == 0.0
+    y = np.asarray(sh_basis(np.array([0.0]), np.array([1.0]),
+                            np.array([0.0])))[:, 0]
+    assert np.allclose(raw['gi_sh'][0],
+                       math.pi * y[:, None] * C[None, :], atol=1e-5)
+    # c00·Y00 ≡ a₀ 注入后保持(体烘自检的同一恒等)
+    assert np.allclose(raw['gi_sh'][:, 0, :] * _Y00, raw['gi_a0'], atol=1e-5)
+    # bakeParams 面:giSun 解析进 snake kwargs
+    from tools.lightbake import input as input_mod
+    assert input_mod.parse_bake_params({'giSun': True}) == {'gi_sun': True}
+
+
 def test_list_and_load_player_atlas():
     chars = C.list_characters()
     if 'player_anim' not in chars:

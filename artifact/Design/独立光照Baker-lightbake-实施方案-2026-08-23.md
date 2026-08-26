@@ -2024,3 +2024,25 @@ probe-vs-surface 经典签名,开阔面 <10%。首次审计曾被 vol_max_cells 
 3. 补对照通道 ao_vol(场景·体AO重建,note 带 vs 逐像素AO 的中位/p95),
    实体在该通道画自己的 AO —— 苹果对苹果可在 GUI 内自证。
 4. 视觉密度走样的正解 = 提密度(8 ⇒ 格≈25wu,需显式抬 vol_max_cells)。
+
+### §15 追记:「GI 含反解太阳」选项 —— 角色只吃 GI 融入原画(2026-08-26)
+
+制作人立法:要有一个选项,开了之后角色吃了 GI 就能**完美融合到原画**。
+语义判定:GI 必须成为**原画完整 E 的体版**(E_烘焙 = 间接+烘焙天空+反解
+太阳;体 GI 此前缺太阳项)。实现 = 解析注入,零 trace:
+
+- inject_sun_into_gi(volume.py):逐格点 V=V_dir(ω_s)(该点自己的天穹矩
+  闭式),Φ=π·C·V 三层一致注入 a0+=CV/4、a1+=CVω/2、c+=πCV·Y(ω);
+  C = sun.radiance·gain(radiance 是 pre-gain,meta 明示);
+  c00·Y00≡a0 恒等注入后保持(有钉)。
+- 旗标全链:--gi-sun / bakeParams.giSun / GUI 复选框(重烘级)/ 
+  bake meta.gi_sun / volume meta.sun_injected。
+- ⚠ 双计边界:§6.1 实体侧另有解析 E_太阳,场景配了运行时太阳灯**别开**
+  (payload meta.sun_injected 供运行时消费方判定)。
+- e_givol 通道读数自动换对照:注入后 vs 全E,未注入 vs E间接·gain。
+
+e2e(雾津街头,密度4/vol128/ref spp48):体GI重建 vs **全E** ——
+不注入 med=84.3%(日光主导场景,GI 缺太阳根本融不进);注入后
+**med=10.5%**;76.8% 像素收到注入,反解 C≈(1.28,1.21,1.14)。
+p95=78.7% 残差集中在**影界**:解析 V_dir 是 L1 软影,原画是硬影界 ——
+记档(硬影界要靠更高阶可见性/逐点 march,P7+ 候选)。全套 194+1。
