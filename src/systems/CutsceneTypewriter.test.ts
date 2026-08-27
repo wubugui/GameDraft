@@ -22,10 +22,9 @@ function makeRig() {
   /** 屏上还有没打完的台词吗——测点击语义时由用例摆布 */
   let pending = false;
   const renderer = {
-    showDialogueBox: (
-      _t: string, _s: unknown, _p: unknown, _side: unknown, _self: unknown, typewriter: boolean,
-    ) => {
-      dialogueFlags.push(typewriter);
+    // ⚠ 入参是 options 对象（不是位置参数）：位置参数错位不报错、只是画错，故已收口
+    showDialogueBox: (o: { typewriter?: boolean }) => {
+      dialogueFlags.push(o.typewriter as boolean);
       return { box: true };
     },
     dismissDialogueBox: vi.fn(),

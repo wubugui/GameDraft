@@ -184,6 +184,7 @@ class GraphDocumentModel(QObject):
         title: str,
         scenario_id: str,
         preconditions: list[Any],
+        default_layout: str,
         schema_version_present: bool,
         meta_present: bool,
         preconditions_present: bool,
@@ -228,6 +229,13 @@ class GraphDocumentModel(QObject):
             patch["preconditions"] = []
         else:
             delete_keys.append("preconditions")
+
+        # 图级版式缺省档：非缺省才写。缺省档一律删键——它与运行时行为完全等价，
+        # 留一个 "bottom" 只是噪音（与 typewriter/disabled 的「只写偏离值」同口径）。
+        if default_layout:
+            patch["defaultLayout"] = default_layout
+        else:
+            delete_keys.append("defaultLayout")
 
         self.apply_meta_patch(patch, delete_keys=delete_keys)
 

@@ -12,7 +12,10 @@ import type { AssetManager } from '../core/AssetManager';
 import type {
   DialogueLine, DialogueChoice, DialoguePortraitRef, ITextDisplaySettingsProvider,
 } from '../data/types';
-import { DEFAULT_SPEAKER_SIDE, resolveSpeakerSide, type SpeakerSide } from '../utils/dialogueSpeakerSide';
+import {
+  DEFAULT_DIALOGUE_LAYOUT, DEFAULT_SPEAKER_SIDE, resolveSpeakerSide,
+  type DialogueLayoutStyle, type SpeakerSide,
+} from '../utils/dialogueSpeakerSide';
 import { createStyledText, setStyledReveal, setStyledText } from '../core/styledText';
 import { plainTextLength } from '../core/textStyle';
 import { getClueAccess } from './clueAccess';
@@ -84,6 +87,15 @@ const CHOICE_PAD_Y = UITheme.spacing.md;
 const CHOICE_PREFIX_GAP = UITheme.spacing.md;
 /** 选项按钮的木条厚度（= SKINS.nameplate 的 wood）：选中琥珀铺光按此内缩，正好落在木框里侧 */
 const CHOICE_FRAME = 5;
+/**
+ * 选项摞底沿距**屏幕下沿**的距离。展开自旧式 `boxY - PLATE_RISE - spacing.sm`
+ * （boxY = screenHeight - BOX_HEIGHT - BOX_MARGIN），数值逐像素不变。
+ *
+ * 脱离 boxY 是有意的：选项位置**不跟对话框版式走**。框挪到顶部或换成头顶气泡时，
+ * 选项仍留在这里——否则「框在顶部」要把整摞按钮翻到框下方、气泡档更是跟着走动的
+ * NPC 飘，两种都点不准。
+ */
+const CHOICES_BOTTOM_INSET = BOX_HEIGHT + BOX_MARGIN + PLATE_RISE + UITheme.spacing.sm;
 
 /** VN 式半身像：方形立绘显示边长；出现时正文/名牌/选项向右让出的横向宽度。
  * 立绘压在面板前景、底边伸出画面底边之外（裁切边永不可见）；脸部允许覆在面板上（前景不遮挡）。 */
@@ -93,6 +105,17 @@ const PORTRAIT_INSET = 248;
 const PORTRAIT_BOTTOM_OVERHANG = 4;
 /** 立绘整体上移量（y 方向）。调这一个数就能上下挪立绘。 */
 const PORTRAIT_LIFT = 0;
+
+/**
+ * 气泡档的正文宽度。**恒定屏幕像素**——对白气泡挂 UI 层、不随相机缩放变字号
+ * （老的 EmoteBubbleManager 气泡挂 entityLayer 世界空间，是另一套，别拿来类比）。
+ * 比整屏框窄得多，因为它要浮在一个人头上而不是横贯画面。
+ */
+const BUBBLE_WIDTH = 560;
+/** 气泡底沿距锚点（说话人头顶）的净空 */
+const BUBBLE_ABOVE_GAP = 18;
+/** 气泡贴边留白：整块不许越出画面（说话人走到屏幕边缘时把气泡顶回来） */
+const BUBBLE_EDGE_MARGIN = 16;
 
 /** 头像文件路径（编辑器可视化选择器写入 slug/emotion，运行时直接拼路径加载）。 */
 function portraitPath(ref: DialoguePortraitRef): string {
@@ -136,6 +159,34 @@ export class DialogueUI {
   /** 当前行立绘/名牌所在边（主角在右、其余在左；见 utils/dialogueSpeakerSide） */
   private currentSide: SpeakerSide = DEFAULT_SPEAKER_SIDE;
   /**
+   * 当前行版式档。整行负载下发（与 portrait / speakerSide 同范式）；不设 = bottom。
+   * 只影响**位置**：推进、打字机、选项、日志、富文本命中在三档下完全一致。
+   */
+  private currentLayout: DialogueLayoutStyle = DEFAULT_DIALOGUE_LAYOUT;
+  /**
+   * `layoutFrame()` 上一次是按哪一档画的。**逐行切档时框必须跟着重排**——
+   * layoutFrame 只在开框与 resize 时跑，不补这一笔就会出现「名牌和立绘挪了、
+   * 框还在原处」的半瘫。整层重建有代价（木框是 Sprite），故只在档位真变了时跑。
+   */
+  private framedLayout: DialogueLayoutStyle | null = null;
+  /**
+   * 随框平移的两层，**夹着立绘**以保住既有 z 序（面板 → 立绘 → 名牌/正文/点捺）。
+   * bottom / top 档恒在 (0,0)，几何算式给的就是绝对屏幕坐标；
+   * 气泡档两层每帧一起挪到说话人头顶，几何算式给的是层内局部坐标。
+   * 分两层而不是一层：立绘必须压在面板之上、正文之下，合成一层就会把它挤到某一侧。
+   */
+  private frameLayer: Container | null = null;
+  private textLayer: Container | null = null;
+  /**
+   * 说话人 → **屏幕坐标**的解析回调（由 Game 注入，见 setSpeakerScreenAnchorResolver）。
+   * 返回气泡底边应对齐的那个点；解析不出（旁白/不在场）→ null → 落屏幕正中。
+   * 刻意要屏幕坐标而不是世界锚点：世界→屏幕的换算要相机，那是 Game 的知识。
+   */
+  private speakerScreenAnchorResolver:
+    ((entity: DialogueLine['speakerEntity']) => { x: number; y: number } | null) | null = null;
+  /** 当前行的说话实体（气泡档每帧拿它重新问位置） */
+  private currentSpeakerEntity: DialogueLine['speakerEntity'] = undefined;
+  /**
    * 当前行是不是主角说的。与 currentSide 刻意分开：side 可被数据覆盖（两个 NPC 各占一边），
    * 而「这是你说的」这个标记只认说话实体，不能被站位带偏。
    */
@@ -172,6 +223,81 @@ export class DialogueUI {
   private dialoguePrepareBeatCb: () => void;
   private dialogueHidePanelCb: () => void;
   private dialogueAutoAdvanceCb: () => void;
+
+  /**
+   * 对白框左上角的 y。**唯一来源**——此前这一式在 6 处就地重算（名牌/正文/命中框/
+   * 边框/重排/选项），改版式时漏一处就是"框挪了、名牌没挪"这种半瘫。
+   * 后续加"框在顶部"档时只改这一个 getter。
+   */
+  private get boxY(): number {
+    // 气泡档：几何一律按层内局部坐标算，整层再由 update() 挪到说话人头顶。
+    if (this.currentLayout === 'bubble') return 0;
+    return this.currentLayout === 'top'
+      ? BOX_MARGIN
+      : this.renderer.screenHeight - BOX_HEIGHT - BOX_MARGIN;
+  }
+
+  /** 框/气泡左沿的 x。气泡档同理走层内局部坐标。 */
+  private get boxX(): number {
+    return this.currentLayout === 'bubble' ? 0 : BOX_MARGIN;
+  }
+
+  /** 框/气泡的宽度。 */
+  private get boxWidth(): number {
+    return this.currentLayout === 'bubble'
+      ? BUBBLE_WIDTH
+      : this.renderer.screenWidth - BOX_MARGIN * 2;
+  }
+
+  /**
+   * 名牌左上角的 y。骑在框的**外沿**上：bottom 档骑框顶、top 档骑框底（上下镜像）。
+   * 两档下"凸出到框外 PLATE_RISE、其余压在木条里"这条几何完全相同。
+   */
+  private get plateY(): number {
+    const boxY = this.boxY;
+    return this.currentLayout === 'top'
+      ? boxY + BOX_HEIGHT + PLATE_RISE - PLATE_HEIGHT
+      : boxY - PLATE_RISE;
+  }
+
+  /**
+   * 注入「说话实体 → 屏幕坐标」的解析（由 Game 装配期调用一次）。
+   * 只有 `layout: 'bubble'` 用得到；没注入时气泡一律落屏幕正中（不会崩，只是不跟人）。
+   */
+  setSpeakerScreenAnchorResolver(
+    fn: ((entity: DialogueLine['speakerEntity']) => { x: number; y: number } | null) | null,
+  ): void {
+    this.speakerScreenAnchorResolver = fn;
+  }
+
+  /**
+   * 气泡档每帧把两层挪到说话人头顶。**逐帧只改 position，不重排、不重建面板**——
+   * layoutFrame 是整层 Sprite 重建，放进每帧就是每帧重建一次木框。
+   * 解析不出实体（旁白 / 不在场 / 没注入解析器）→ 落屏幕正中，这是定好的降级。
+   */
+  private followBubbleAnchor(): void {
+    if (this.currentLayout !== 'bubble' || !this.frameLayer || !this.textLayer) return;
+    const sw = this.renderer.screenWidth;
+    const sh = this.renderer.screenHeight;
+    const anchor = this.speakerScreenAnchorResolver?.(this.currentSpeakerEntity) ?? null;
+    let x: number;
+    let y: number;
+    if (anchor) {
+      x = anchor.x - BUBBLE_WIDTH / 2;
+      y = anchor.y - BUBBLE_ABOVE_GAP - BOX_HEIGHT;
+    } else {
+      // 旁白档：屏幕正中
+      x = (sw - BUBBLE_WIDTH) / 2;
+      y = (sh - BOX_HEIGHT) / 2;
+    }
+    // 整块不许越出画面：说话人走到边缘时把气泡顶回来（名牌已隐，无需为它留额外余量）
+    const maxX = sw - BUBBLE_WIDTH - BUBBLE_EDGE_MARGIN;
+    const maxY = sh - BOX_HEIGHT - BUBBLE_EDGE_MARGIN;
+    x = Math.round(Math.min(Math.max(x, BUBBLE_EDGE_MARGIN), Math.max(BUBBLE_EDGE_MARGIN, maxX)));
+    y = Math.round(Math.min(Math.max(y, BUBBLE_EDGE_MARGIN), Math.max(BUBBLE_EDGE_MARGIN, maxY)));
+    this.frameLayer.position.set(x, y);
+    this.textLayer.position.set(x, y);
+  }
 
   /** 对白框此刻是否在屏上（屏底那一条被占着）。供屏底提示语让位，避免横穿它的木框。 */
   get isVisible(): boolean {
@@ -246,20 +372,26 @@ export class DialogueUI {
    */
   private layoutSpeaker(): void {
     if (!this.speakerPlate || !this.speakerText) return;
-    const boxY = this.renderer.screenHeight - BOX_HEIGHT - BOX_MARGIN;
+    const boxY = this.boxY;
     DialogueUI.resetLayer(this.speakerPlate);
     if (!this.speakerText.text) {
       this.speakerPlate.visible = false;
       this.speakerText.visible = false;
       return;
     }
+    // 气泡档没有名牌：气泡直接指着那个人，名字是冗余；旁白居中档本来也没有名字
+    if (this.currentLayout === 'bubble') {
+      this.speakerPlate.visible = false;
+      this.speakerText.visible = false;
+      return;
+    }
     this.speakerPlate.visible = true;
     this.speakerText.visible = true;
-    // 骑边：牌子上沿抬到框顶之上 PLATE_RISE，下沿压在木条里侧
-    const plateY = boxY - PLATE_RISE;
-    const maxW = this.renderer.screenWidth - BOX_MARGIN * 2 - PLATE_INSET_X * 2 - this.currentInset;
+    // 骑边：牌子凸出到框外沿之上 PLATE_RISE，其余压在木条里侧（top 档整体镜像到框底）
+    const plateY = this.plateY;
+    const maxW = this.boxWidth - PLATE_INSET_X * 2 - this.currentInset;
     const plateW = Math.min(this.speakerText.width + PLATE_PAD_X * 2, maxW);
-    const plateX = BOX_MARGIN + PLATE_INSET_X + this.insetLeft();
+    const plateX = this.boxX + PLATE_INSET_X + this.insetLeft();
     // 主角行：名牌与名字色一起提亮，与右侧站位互为冗余（无立绘时分边信号太弱）
     this.speakerPlate.addChild(createPanel(
       plateX, plateY, plateW, PLATE_HEIGHT,
@@ -275,9 +407,9 @@ export class DialogueUI {
   /** 正文区（正文位置/换行宽度/裁剪遮罩）随头像 inset 重排；立绘在右时正文不左移、只收窄。 */
   private relayout(): void {
     if (!this.container || !this.bodyText || !this.bodyMask) return;
-    const boxWidth = this.renderer.screenWidth - BOX_MARGIN * 2;
-    const boxY = this.renderer.screenHeight - BOX_HEIGHT - BOX_MARGIN;
-    const left = BOX_MARGIN + TEXT_PADDING + this.insetLeft();
+    const boxWidth = this.boxWidth;
+    const boxY = this.boxY;
+    const left = this.boxX + TEXT_PADDING + this.insetLeft();
     const wrapW = Math.max(80, boxWidth - TEXT_PADDING * 2 - this.currentInset);
     this.bodyText.x = left;
     this.bodyText.y = boxY + BODY_TOP;
@@ -314,7 +446,7 @@ export class DialogueUI {
     if (spans.length === 0) return;
 
     // 越过遮罩下沿的行是被裁掉的，别给看不见的字挂命中框
-    const boxY = this.renderer.screenHeight - BOX_HEIGHT - BOX_MARGIN;
+    const boxY = this.boxY;
     const maskBottom = boxY + BOX_HEIGHT - BODY_MASK_BOTTOM_INSET;
     const maxLocalY = maskBottom - body.y;
 
@@ -322,9 +454,10 @@ export class DialogueUI {
     layer.x = body.x;
     layer.y = body.y;
     this.clueLayer = layer;
-    // 命中层必须压在正文之上；`container` 的子序里正文之后就是遮罩与「继续」点捺，
+    // 命中层必须压在正文之上；正文层的子序里正文之后就是遮罩与「继续」点捺，
     // 加在末尾即可（两者都是 eventMode:'none'，不会抢指针）。
-    this.container.addChild(layer);
+    // 必须进 textLayer 而不是 container：气泡档整层每帧平移，落在外面命中框就跟正文脱节。
+    this.textLayer!.addChild(layer);
 
     for (const span of spans) {
       // 没在 clues.json 登记的 id 不画成可点：那是内容写错了，不该骗玩家去点
@@ -410,10 +543,12 @@ export class DialogueUI {
    */
   private layoutFrame(): void {
     if (!this.sceneDim || !this.boxBg || !this.continueMark) return;
+    this.framedLayout = this.currentLayout;
     const sw = this.renderer.screenWidth;
     const sh = this.renderer.screenHeight;
-    const boxWidth = sw - BOX_MARGIN * 2;
-    const boxY = sh - BOX_HEIGHT - BOX_MARGIN;
+    const boxWidth = this.boxWidth;
+    const boxX = this.boxX;
+    const boxY = this.boxY;
 
     this.sceneDim.clear();
     this.sceneDim.rect(0, 0, sw, sh);
@@ -421,13 +556,13 @@ export class DialogueUI {
 
     // 木框 + 内金线 + 暗角是 Sprite/渐变，画不进 Graphics：整层重建
     DialogueUI.resetLayer(this.boxBg);
-    this.boxBg.addChild(createPanel(BOX_MARGIN, boxY, boxWidth, BOX_HEIGHT, SKINS.dialogue));
+    this.boxBg.addChild(createPanel(boxX, boxY, boxWidth, BOX_HEIGHT, SKINS.dialogue));
 
     // 只重画几何：visible / alpha 由 update() 的脉动逻辑持有，clear() 不动它们
     // 「继续」点捺**居中**，不靠右下角：立绘左右两边都可能站人（resolveSpeakerSide 决定），
     // 钉在右下角必然被右侧立绘压住（真机实拍过：点捺正好落在人物胸口）。
     // 居中是唯一两侧都不撞的位置。
-    const ax = BOX_MARGIN + boxWidth / 2;
+    const ax = boxX + boxWidth / 2;
     const ay = boxY + BOX_HEIGHT - ARROW_INSET_Y;
     this.continueMark.setPosition(ax, ay);
   }
@@ -442,7 +577,14 @@ export class DialogueUI {
     s.x = this.currentSide === 'right'
       ? this.renderer.screenWidth - BOX_MARGIN - PORTRAIT_SIZE / 2
       : BOX_MARGIN + PORTRAIT_SIZE / 2;
-    s.y = this.renderer.screenHeight + PORTRAIT_BOTTOM_OVERHANG - PORTRAIT_LIFT;
+    // bottom 档锚底边、贴屏幕下沿；top 档整个镜像：锚顶边、贴屏幕上沿。
+    if (this.currentLayout === 'top') {
+      s.anchor.set(0.5, 0);
+      s.y = -PORTRAIT_BOTTOM_OVERHANG + PORTRAIT_LIFT;
+    } else {
+      s.anchor.set(0.5, 1);
+      s.y = this.renderer.screenHeight + PORTRAIT_BOTTOM_OVERHANG - PORTRAIT_LIFT;
+    }
   }
 
   /** 画布尺寸变化：整框 + 名牌 + 正文 + 立绘 + 选项全部按新尺寸重排。 */
@@ -468,7 +610,8 @@ export class DialogueUI {
    */
   private showPortrait(ref?: DialoguePortraitRef): void {
     const token = ++this.portraitToken;
-    if (!ref || !ref.slug || !ref.emotion) {
+    // 气泡档没有立绘（拍板项）：连横向让位也一并取消，否则正文白缩掉 248px
+    if (this.currentLayout === 'bubble' || !ref || !ref.slug || !ref.emotion) {
       this.currentInset = 0;
       if (this.portraitSprite) this.portraitSprite.visible = false;
       return;
@@ -507,8 +650,8 @@ export class DialogueUI {
 
     this.container = new Container();
 
-    const boxWidth = this.renderer.screenWidth - BOX_MARGIN * 2;
-    const boxY = this.renderer.screenHeight - BOX_HEIGHT - BOX_MARGIN;
+    const boxWidth = this.boxWidth;
+    const boxY = this.boxY;
 
     // 压暗背景（可选项）：startDialogueGraph 动作带 dimBackground=true 的对话才压，默认不压
     this.sceneDim = new Graphics();
@@ -516,8 +659,11 @@ export class DialogueUI {
     this.sceneDim.visible = false;
     this.container.addChild(this.sceneDim);
 
+    // 面板层（随框平移的下半）
+    this.frameLayer = new Container();
+    this.container.addChild(this.frameLayer);
     this.boxBg = new Container();
-    this.container.addChild(this.boxBg);
+    this.frameLayer.addChild(this.boxBg);
 
     // 立绘层压在面板**之上**（前景）：人物从屏底「长」出来、底边出画所以永远没有裁切边。
     // ⚠ 别再试着把它挪到框下面——那样身子会被框整个吃掉，只剩一颗头浮在框上。
@@ -526,9 +672,13 @@ export class DialogueUI {
     this.portraitSprite.visible = false;
     this.container.addChild(this.portraitSprite);
 
-    // 说话人名牌：骑在框上沿的一块独立小木牌（尺寸随名字在 layoutSpeaker 里定）
+    // 正文层（随框平移的上半）：立绘之后入队，保住「面板 → 立绘 → 名牌/正文」的 z 序
+    this.textLayer = new Container();
+    this.container.addChild(this.textLayer);
+
+    // 说话人名牌：骑在框外沿的一块独立小木牌（尺寸随名字在 layoutSpeaker 里定）
     this.speakerPlate = new Container();
-    this.container.addChild(this.speakerPlate);
+    this.textLayer.addChild(this.speakerPlate);
 
     this.speakerText = createStyledText({
       text: '',
@@ -540,7 +690,7 @@ export class DialogueUI {
         letterSpacing: UITheme.letterSpacing.title,
       },
     });
-    this.container.addChild(this.speakerText);
+    this.textLayer.addChild(this.speakerText);
 
     this.bodyText = createStyledText({
       text: '',
@@ -557,17 +707,18 @@ export class DialogueUI {
         lineHeight: BODY_LINE_HEIGHT,
       },
     });
-    this.bodyText.x = BOX_MARGIN + TEXT_PADDING;
+    this.bodyText.x = this.boxX + TEXT_PADDING;
     this.bodyText.y = boxY + BODY_TOP;
-    this.container.addChild(this.bodyText);
+    this.textLayer.addChild(this.bodyText);
 
+    // 遮罩必须与被遮的正文同层，否则平移时两者错位、字被凭空削掉
     this.bodyMask = new Graphics();
-    this.container.addChild(this.bodyMask);
+    this.textLayer.addChild(this.bodyMask);
     this.bodyText.mask = this.bodyMask;
 
     // 「继续」小三角：台词显示完、等待推进时在右下角脉动提示（功能性提示，非装饰）
     this.continueMark = new ContinueIndicator();
-    this.container.addChild(this.continueMark.container);
+    this.textLayer.addChild(this.continueMark.container);
 
     // 压暗层 / 面板底 / 三角几何 / 正文遮罩统一由这两处按当前屏幕尺寸画出
     this.layoutFrame();
@@ -596,6 +747,18 @@ export class DialogueUI {
     setStyledText(this.speakerText!, line.speaker);
     if (this.sceneDim) this.sceneDim.visible = line.dim === true;
     // 分边与「是不是你说的」必须先于立绘/名牌/正文布局定下——三者都读它
+    // 版式必须在立绘/名牌定位之前落定：两者的锚点都读它
+    this.currentLayout = line.layout ?? DEFAULT_DIALOGUE_LAYOUT;
+    // 档位变了就把框也重排一次（只在真变时；见 framedLayout）
+    if (this.framedLayout !== null && this.framedLayout !== this.currentLayout) {
+      this.layoutFrame();
+    }
+    // 非气泡档两层恒在原点（几何算式给的就是绝对屏幕坐标）；切回来时必须复位
+    if (this.currentLayout !== 'bubble') {
+      this.frameLayer?.position.set(0, 0);
+      this.textLayer?.position.set(0, 0);
+    }
+    this.currentSpeakerEntity = line.speakerEntity;
     this.currentSide = resolveSpeakerSide(line.speakerEntity, line.speakerSide);
     this.currentIsSelf = line.speakerEntity?.kind === 'player';
     this.showPortrait(line.portrait);
@@ -642,8 +805,8 @@ export class DialogueUI {
     this.currentChoices = choices;
     const focusItems: FocusItem[] = [];
 
+    // 选项恒定按**整屏**排（固定位置、不随版式变窄），故这里不走 this.boxWidth
     const boxWidth = this.renderer.screenWidth - BOX_MARGIN * 2;
-    const boxY = this.renderer.screenHeight - BOX_HEIGHT - BOX_MARGIN;
     const availX = BOX_MARGIN + this.insetLeft();
     const availW = Math.max(120, boxWidth - this.currentInset);
     const rowWidth = Math.min(availW, CHOICE_MAX_W);
@@ -785,7 +948,7 @@ export class DialogueUI {
     const stackHeight = Math.max(0, cursorY - CHOICE_GAP);
     this.choicesContainer.x = Math.round(availX + (availW - rowWidth) / 2);
     // 底沿让开骑边名牌凸出的那一截，免得长名字的牌子顶到最后一个按钮
-    this.choicesContainer.y = boxY - PLATE_RISE - UITheme.spacing.sm - stackHeight;
+    this.choicesContainer.y = this.renderer.screenHeight - CHOICES_BOTTOM_INSET - stackHeight;
 
     this.container!.addChild(this.choicesContainer);
 
@@ -817,6 +980,9 @@ export class DialogueUI {
 
   update(dt: number): void {
     if (!this.container) return;
+
+    // 跟随必须在任何 early return 之前：打字机播完、等推进、选项期，气泡都得继续跟着人走
+    this.followBubbleAnchor();
 
     // 「继续」点捺：台词打完、等待推进（且不在选项里）时才浮现
     if (this.continueMark) {
@@ -928,6 +1094,12 @@ export class DialogueUI {
   }
 
   hide(): void {
+    // 框已拆：下一场对话要重新按新档画框，别拿上一场的档做比对
+    this.framedLayout = null;
+    // 两层挂在 container 上、随它一起销毁；这里只摘句柄，免得留指向死容器的引用
+    this.frameLayer = null;
+    this.textLayer = null;
+    this.currentSpeakerEntity = undefined;
     this.clearChoices();
     // 命中层挂在 container 上，随它一起销毁；这里先把句柄摘掉，免得留一个指向死容器的引用
     this.clueLayer = null;

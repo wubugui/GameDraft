@@ -861,6 +861,7 @@ class StepWidget(QFrame):
                 voice=self._step_data.get("voice"),
                 auto_advance=self._step_data.get("autoAdvance"),
                 typewriter=self._step_data.get("typewriter"),
+                layout=self._step_data.get("layout"),
             )
             self._widgets["__showDialogue__"] = wdg
             self._present_params_layout.addRow(wdg)

@@ -1194,6 +1194,26 @@ export class Game {
     this.dialogueUI = new DialogueUI(
       this.renderer, this.eventBus, this.stringsProvider, this.assetManager, this.textDisplaySettings,
     );
+    /**
+     * `layout: 'bubble'` 档的跟随源：说话实体 → **屏幕坐标**（气泡底边应落的那个点）。
+     * 世界→屏幕的换算要相机，那是这一层的知识，不下放给 UI。
+     *
+     * 锚点世界点的口径与 EmoteBubbleManager 的跟随**逐字一致**
+     * （`displayObj.x` / `displayObj.y + anchorLocalY`）——两套气泡指向同一个头顶，
+     * 否则同一句话的「…」小气泡与对白气泡会各指一处。
+     * 解析不出（旁白 / 不在场）→ null，UI 侧落屏幕正中。
+     */
+    this.dialogueUI.setSpeakerScreenAnchorResolver((entity) => {
+      if (!entity) return null;
+      const anchor = this.resolveEmoteTarget(entity.kind === 'player' ? 'player' : entity.npcId);
+      if (!anchor) return null;
+      const displayObj = anchor.getDisplayObject() as { x?: number; y?: number } | null;
+      if (!displayObj || typeof displayObj.x !== 'number' || typeof displayObj.y !== 'number') return null;
+      return this.camera.worldToScreen(
+        displayObj.x,
+        displayObj.y + anchor.getEmoteBubbleAnchorLocalY(),
+      );
+    });
     // 说话中「…」气泡：当前行说话实体头顶挂常驻气泡（与对话大头像并存指示说话对象），
     // 换行随说话人移动、旁白无实体则收起、对话结束即撤。
     const SPEAKING_BUBBLE_OWNER = 'dialogue-speaking';
@@ -6363,6 +6383,8 @@ export class Game {
     this.cutsceneRenderer.tickDialogueMarks(dt);
     // 过场台词的逐字显示，同理不挂状态分支
     this.cutsceneRenderer.tickTypewriters(dt);
+    // 气泡档过场对白框跟随说话人（与 tickTypewriters 并列，恒每帧跑）
+    this.cutsceneRenderer.tickDialogueBubbles();
 
     if (this.stateController.currentState === GameState.Dialogue) {
       this.dialogueUI.update(dt);

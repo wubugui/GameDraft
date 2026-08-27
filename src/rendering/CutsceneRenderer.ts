@@ -5,10 +5,13 @@ import { createOverlayBlendMesh } from './overlayBlendShader';
 import type { AssetManager } from '../core/AssetManager';
 import type {
   CutsceneKenBurns, AnimationSetDef, ParallaxSceneDef, ParallaxLayerDef, ParallaxKeyframe,
-  ITextDisplaySettingsProvider,
+  ITextDisplaySettingsProvider, IEmoteBubbleAnchor,
 } from '../data/types';
 import { CUTSCENE_ANON_SHOT_ID } from '../data/types';
-import { DEFAULT_SPEAKER_SIDE, type SpeakerSide } from '../utils/dialogueSpeakerSide';
+import {
+  DEFAULT_DIALOGUE_LAYOUT, DEFAULT_SPEAKER_SIDE,
+  type DialogueLayoutStyle, type SpeakerSide,
+} from '../utils/dialogueSpeakerSide';
 import { createStyledText, setStyledReveal, styledPlainLength } from '../core/styledText';
 import { plainTextLength, sliceStyledMarkup } from '../core/textStyle';
 
@@ -18,6 +21,27 @@ import { plainTextLength, sliceStyledMarkup } from '../core/textStyle';
  * 与 `setResolveDisplay` 一样走注入，皮肤绘制(drawPanelBase/SKINS)与主题色(UITheme)
  * 都在 Game 里绑好再传进来。未注入时 showDialogueBox 走朴素兜底底框(测试/未接线场景)。
  */
+/**
+ * `showDialogueBox` 的入参。**刻意用对象而不是位置参数**：这个调用曾经有 6 个位置参数、
+ * 上游 `showDialogueText` 有 10 个，再加版式就是 8/12——位置参数错位不报错、只是画错，
+ * 是最难自证的一类回归。
+ */
+export interface CutsceneDialogueBoxOptions {
+  text: string;
+  speaker?: string;
+  portrait?: { slug: string; emotion: string };
+  side?: SpeakerSide;
+  isSelf?: boolean;
+  typewriter?: boolean;
+  /** 版式档；不设 = `bottom` = 现行的屏底对话框，逐像素不变 */
+  layout?: DialogueLayoutStyle;
+  /**
+   * 仅 `layout: 'bubble'` 用：说话人头顶锚点。整块每帧跟着它走
+   * （见 tickDialogueBubbles）。为 null / 不给 → 落屏幕正中（旁白档）。
+   */
+  bubbleAnchor?: IEmoteBubbleAnchor | null;
+}
+
 export interface CutsceneDialoguePanelStyle {
   /**
    * 建对话框底：与常规对话框同皮(SKINS.dialogue)。
@@ -126,6 +150,11 @@ export class CutsceneRenderer {
   private dialoguePanelStyle: CutsceneDialoguePanelStyle | null = null;
   private renderer: Renderer;
   private camera: Camera;
+  /**
+   * 气泡档在飞的对白框 → 它跟随的锚点（null = 旁白，落屏幕正中）。
+   * 生命周期跟着 box：destroyed 时清（tickDialogueBubbles 里顺手扫）。
+   */
+  private dialogueBubbles = new Map<Container, IEmoteBubbleAnchor | null>();
   private assetManager: AssetManager;
 
   private fadeOverlay: Graphics | null = null;
@@ -226,6 +255,46 @@ export class CutsceneRenderer {
    * 每帧推进过场台词的打字机。与 `tickDialogueMarks` 同一处驱动——同样**不能挂进状态分支**，
    * 台词框在状态刚切换的那一帧也可能在屏上。
    */
+  /**
+   * 气泡档对白框每帧跟随说话人。**逐帧只改 position，不重建**——底框是九宫格 Sprite。
+   * 锚点世界点口径与 EmoteBubbleManager / DialogueUI 逐字一致
+   * （displayObj.x / displayObj.y + anchorLocalY），三处气泡指向同一个头顶。
+   * 由 Game 每帧调用，与 tickTypewriters 并列。
+   */
+  tickDialogueBubbles(): void {
+    if (this.dialogueBubbles.size === 0) return;
+    const sw = this.screenWidth;
+    const sh = this.screenHeight;
+    /** 与 DialogueUI 的 BUBBLE_* 同值（⚠ parity 测试逐项比对） */
+    const BUBBLE_WIDTH = 560;
+    const BUBBLE_ABOVE_GAP = 18;
+    const BUBBLE_EDGE_MARGIN = 16;
+    const BOX_HEIGHT = 206;
+    for (const [box, anchor] of Array.from(this.dialogueBubbles)) {
+      if (box.destroyed) { this.dialogueBubbles.delete(box); continue; }
+      let x: number;
+      let y: number;
+      const displayObj = anchor?.getDisplayObject() as { x?: number; y?: number } | null | undefined;
+      if (anchor && displayObj && typeof displayObj.x === 'number' && typeof displayObj.y === 'number') {
+        const p = this.camera.worldToScreen(
+          displayObj.x,
+          displayObj.y + anchor.getEmoteBubbleAnchorLocalY(),
+        );
+        x = p.x - BUBBLE_WIDTH / 2;
+        y = p.y - BUBBLE_ABOVE_GAP - BOX_HEIGHT;
+      } else {
+        x = (sw - BUBBLE_WIDTH) / 2;
+        y = (sh - BOX_HEIGHT) / 2;
+      }
+      const maxX = sw - BUBBLE_WIDTH - BUBBLE_EDGE_MARGIN;
+      const maxY = sh - BOX_HEIGHT - BUBBLE_EDGE_MARGIN;
+      box.position.set(
+        Math.round(Math.min(Math.max(x, BUBBLE_EDGE_MARGIN), Math.max(BUBBLE_EDGE_MARGIN, maxX))),
+        Math.round(Math.min(Math.max(y, BUBBLE_EDGE_MARGIN), Math.max(BUBBLE_EDGE_MARGIN, maxY))),
+      );
+    }
+  }
+
   tickTypewriters(dt: number): void {
     if (this.typewriters.size === 0) return;
     // 打到一半玩家把逐字关掉（设置页与过场并存）或偏好根本没注入：这一帧直接补完，与 DialogueUI 同口径
@@ -477,14 +546,16 @@ export class CutsceneRenderer {
    * 名牌恒定贴左，主角身份改由 isSelf 的名牌配色表达。
    * `typewriter` = 本拍编排要不要逐字（默认由 CutsceneManager 按台词面定）；玩家关了逐字则一律整句。
    */
-  showDialogueBox(
-    text: string,
-    speaker?: string,
-    portrait?: { slug: string; emotion: string },
-    side: SpeakerSide = DEFAULT_SPEAKER_SIDE,
-    isSelf: boolean = false,
-    typewriter: boolean = false,
-  ): Container {
+  showDialogueBox(opts: CutsceneDialogueBoxOptions): Container {
+    const {
+      text,
+      speaker,
+      portrait,
+      side = DEFAULT_SPEAKER_SIDE,
+      isSelf = false,
+      typewriter = false,
+      layout = DEFAULT_DIALOGUE_LAYOUT,
+    } = opts;
     const sw = this.screenWidth;
     const sh = this.screenHeight;
 
@@ -511,10 +582,16 @@ export class CutsceneRenderer {
     const PORTRAIT_INSET = 248;
     /** 立绘上移量，与 DialogueUI 的 PORTRAIT_LIFT 同值（那边改了这里要跟） */
     const PORTRAIT_LIFT = 0;
-    const boxWidth = sw - BOX_MARGIN * 2;
-    const boxY = sh - BOX_HEIGHT - BOX_MARGIN;
+    /** 气泡档几何（与 DialogueUI 的 BUBBLE_* 同值；⚠ 那边改了这里要跟，parity 测试逐项比对） */
+    const BUBBLE_WIDTH = 560;
+    const isBubble = layout === 'bubble';
+    // 气泡档一律按**层内局部坐标**画，整块再由 tickDialogueBubbles 每帧挪到说话人头顶
+    const boxX = isBubble ? 0 : BOX_MARGIN;
+    const boxWidth = isBubble ? BUBBLE_WIDTH : sw - BOX_MARGIN * 2;
+    const boxY = isBubble ? 0 : (layout === 'top' ? BOX_MARGIN : sh - BOX_HEIGHT - BOX_MARGIN);
 
-    const hasPortrait = !!(portrait && portrait.slug && portrait.emotion);
+    // 气泡档没有立绘（拍板项）：连横向让位也一并取消
+    const hasPortrait = !isBubble && !!(portrait && portrait.slug && portrait.emotion);
     const inset = hasPortrait ? PORTRAIT_INSET : 0;
     /** 立绘只压自己那一侧：在右时正文不左移、只收窄。 */
     const insetLeft = side === 'left' ? inset : 0;
@@ -529,11 +606,11 @@ export class CutsceneRenderer {
     const box = new Container();
 
     if (style) {
-      box.addChild(style.buildBox(BOX_MARGIN, boxY, boxWidth, BOX_HEIGHT));
+      box.addChild(style.buildBox(boxX, boxY, boxWidth, BOX_HEIGHT));
     } else {
       // 未注入(测试/未接线)：朴素兜底底框，非皮肤系统的复制
       const bg = new Graphics();
-      bg.roundRect(BOX_MARGIN, boxY, boxWidth, BOX_HEIGHT, 4).fill({ color: 0x1a1526, alpha: 0.92 });
+      bg.roundRect(boxX, boxY, boxWidth, BOX_HEIGHT, 4).fill({ color: 0x1a1526, alpha: 0.92 });
       box.addChild(bg);
     }
 
@@ -548,13 +625,14 @@ export class CutsceneRenderer {
       const place = (tex: Texture): void => {
         if (sprite.destroyed || !sprite.parent) return; // 对白框已 dismiss：放弃在途贴图
         sprite.texture = tex;
-        sprite.anchor.set(0.5, 1);
+        // bottom 档锚底边贴屏幕下沿；top 档整个镜像（与 DialogueUI 同口径）
+        sprite.anchor.set(0.5, layout === 'top' ? 0 : 1);
         sprite.width = PORTRAIT_SIZE;
         sprite.height = PORTRAIT_SIZE;
         sprite.x = side === 'right'
           ? sw - BOX_MARGIN - PORTRAIT_SIZE / 2
           : BOX_MARGIN + PORTRAIT_SIZE / 2;
-        sprite.y = sh + 4 - PORTRAIT_LIFT;
+        sprite.y = layout === 'top' ? -4 + PORTRAIT_LIFT : sh + 4 - PORTRAIT_LIFT;
         sprite.visible = true;
       };
       const cached = this.assetManager.getTexture(path);
@@ -565,7 +643,8 @@ export class CutsceneRenderer {
       }
     }
 
-    const speakerR = speaker ? this.r(speaker) : '';
+    // 气泡档不画名牌：气泡直接指着那个人，名字是冗余（与 DialogueUI 同口径）
+    const speakerR = !isBubble && speaker ? this.r(speaker) : '';
     if (speakerR) {
       const spText = createStyledText({
         text: speakerR,
@@ -575,12 +654,15 @@ export class CutsceneRenderer {
           fontFamily: style?.displayFontFamily ?? fontFamily,
         },
       });
-      // 骑边：牌子上沿抬到框顶之上，下沿压在木条里侧（与 DialogueUI 同口径）
-      const plateY = boxY - PLATE_RISE;
-      const maxW = sw - BOX_MARGIN * 2 - PLATE_INSET_X * 2 - inset;
+      // 骑边：牌子凸出到框外沿之上，其余压在木条里侧（与 DialogueUI 同口径）
+      // top 档整体镜像到框底；气泡档不画名牌（在下面的 if 里已排除）
+      const plateY = layout === 'top'
+        ? boxY + BOX_HEIGHT + PLATE_RISE - PLATE_HEIGHT
+        : boxY - PLATE_RISE;
+      const maxW = boxWidth - PLATE_INSET_X * 2 - inset;
       const plateW = Math.min(spText.width + PLATE_PAD_X * 2, maxW);
       // 名牌恒定贴左（只让开左侧立绘）——与 DialogueUI 同口径，避免底栏名字左右跳
-      const plateX = BOX_MARGIN + PLATE_INSET_X + insetLeft;
+      const plateX = boxX + PLATE_INSET_X + insetLeft;
       if (style) {
         const buildPlate = isSelf ? style.buildSelfSpeakerPlate : style.buildSpeakerPlate;
         box.addChild(buildPlate(plateX, plateY, plateW, PLATE_HEIGHT));
@@ -606,14 +688,14 @@ export class CutsceneRenderer {
         lineHeight: BODY_LINE_HEIGHT,
       },
     });
-    bodyText.x = BOX_MARGIN + TEXT_PADDING + insetLeft;
+    bodyText.x = boxX + TEXT_PADDING + insetLeft;
     bodyText.y = boxY + BODY_TOP;
     box.addChild(bodyText);
 
     // 「继续」点捺：框底**居中**。两侧都可能站立绘（side 由数据决定），
     // 钉在右下角必然被右侧立绘压住——与 DialogueUI 同一口径。
     const mk = style?.buildContinueMark?.(
-      BOX_MARGIN + boxWidth / 2,
+      boxX + boxWidth / 2,
       boxY + BOX_HEIGHT - TEXT_PADDING - 18,
     );
     if (mk) {
@@ -632,6 +714,12 @@ export class CutsceneRenderer {
     }
 
     this.renderer.uiLayer.addChild(box);
+    if (isBubble) {
+      // 先摆一次再交给每帧跟随，免得第一帧闪在原点
+      this.dialogueBubbles.set(box, opts.bubbleAnchor ?? null);
+      this.tickDialogueBubbles();
+      box.once('destroyed', () => { this.dialogueBubbles.delete(box); });
+    }
     // 记账：生命周期归 CutsceneManager，这里只在它被销毁时把计数减回去
     this.liveDialogueBoxes += 1;
     box.once('destroyed', () => { this.liveDialogueBoxes = Math.max(0, this.liveDialogueBoxes - 1); });

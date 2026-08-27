@@ -53,7 +53,7 @@ import { GameState } from '../data/types';
 import type { SceneEntityKind, RuntimeFieldValue } from '../data/EntityRuntimeFieldSchema';
 import { applyDialogueColonSpeakerFromResolvedText } from './resolveText';
 import { ACTION_PARAM_MANIFEST } from './actionParamManifest';
-import { isSpeakerSide } from '../utils/dialogueSpeakerSide';
+import { isSpeakerSide, resolveDialogueLayout } from '../utils/dialogueSpeakerSide';
 
 /**
  * playScriptedDialogue 行内 `portrait` 字段的宽松解析：需带非空 `emotion` 才生效，`slug` 可选（缺省=跟随说话人）。
@@ -1807,6 +1807,8 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     }
     const scriptedNpcId = String(p.scriptedNpcId ?? '').trim();
     const dim = p.dimBackground === true;
+    /** 动作级版式：作各行默认；行内 `layout` 覆盖之（与 portrait 同范式）。不写 = bottom。 */
+    const actionLayout = p.layout !== undefined ? resolveDialogueLayout(p.layout) : undefined;
     const narrKey = d.stringsProvider.get('dialogue', 'narratorLabel');
     const narratorFallback = narrKey && narrKey !== 'narratorLabel' ? narrKey : '旁白';
     const narratorBaselineResolved = d.resolveRichTextForPlayScripted(narratorFallback, scriptedNpcId);
@@ -1848,6 +1850,9 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
           ? { autoAdvance: o.autoAdvance as DialogueLine['autoAdvance'] }
           : {}),
         ...(dim ? { dim: true } : {}),
+        ...(o.layout !== undefined
+          ? { layout: resolveDialogueLayout(o.layout) }
+          : (actionLayout !== undefined ? { layout: actionLayout } : {})),
       });
     }
     if (lines.length === 0) {
@@ -1855,7 +1860,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       return;
     }
     return d.playScriptedDialogue(lines);
-  }, ['lines']);
+  }, ['lines', 'layout']);
 
   executor.register('waitMs', async (p) => {
     const durRaw = p.durationMs ?? 600;

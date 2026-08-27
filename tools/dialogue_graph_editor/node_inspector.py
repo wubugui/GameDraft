@@ -1076,6 +1076,17 @@ class NodeInspector(QWidget):
 
     # --- line ---
     def _build_line(self, data: dict[str, Any]):
+        from tools.editor.shared.action_editor import _make_dialogue_layout_combo
+        # 节点级版式：作各拍默认，拍内 lines[].layout 覆盖之（与 portrait 同范式）
+        layout_cb = _make_dialogue_layout_combo(self._body, data.get("layout"))
+        layout_cb.currentIndexChanged.connect(self._emit_changed)
+        self._body_layout.addWidget(layout_cb)
+        # 节点级分边：同样作各拍默认。三态里的空既是「自动推导」也是「跟随上层」——
+        # 两个含义在这儿重合（上层不设时运行时就是自动推导），故复用同一个三态件。
+        from tools.editor.shared.action_editor import _make_speaker_side_combo
+        side_cb = _make_speaker_side_combo(self._body, data.get("speakerSide"))
+        side_cb.currentIndexChanged.connect(self._emit_changed)
+        self._body_layout.addWidget(side_cb)
         lines_raw = data.get("lines")
         use_multi = isinstance(lines_raw, list) and len(lines_raw) > 0
         _lines_good, _lines_junk = _split_dict_items(lines_raw)
@@ -1221,6 +1232,27 @@ class NodeInspector(QWidget):
             o_fl.addRow(_lb_t, tx_plain)
             _lb_tk = QLabel("文本键（可选）", content); _lb_tk.setToolTip("JSON 字段 textKey：走 strings 表时填")
             o_fl.addRow(_lb_tk, tked)
+            # 拍级版式：缺省「跟随上层」= 用节点级那一档。这就是「统一设置」的落点——
+            # 节点级设一次，各拍留在跟随即全体统一；某一拍要破例才在这里改。
+            # 注意子层口径：显式选屏底是对节点级的**真覆盖**（节点可能是屏顶），要写出来。
+            from tools.editor.shared.action_editor import _make_dialogue_layout_combo
+            beat_layout = _make_dialogue_layout_combo(
+                content,
+                (beat or {}).get("layout") if isinstance(beat, dict) else None,
+                allow_inherit=True,
+            )
+            beat_layout.currentIndexChanged.connect(self._emit_changed)
+            _lb_bl = QLabel("版式（可选）", content)
+            _lb_bl.setToolTip("JSON 字段 layout：不设则跟随节点级")
+            o_fl.addRow(_lb_bl, beat_layout)
+            from tools.editor.shared.action_editor import _make_speaker_side_combo
+            beat_side = _make_speaker_side_combo(
+                content, (beat or {}).get("speakerSide") if isinstance(beat, dict) else None,
+            )
+            beat_side.currentIndexChanged.connect(self._emit_changed)
+            _lb_bs = QLabel("分边（可选）", content)
+            _lb_bs.setToolTip("JSON 字段 speakerSide：不设则跟随节点级／按说话实体自动推导")
+            o_fl.addRow(_lb_bs, beat_side)
             # 拍级配音：与立绘/气泡锚不同，**必须逐拍可编**——各拍的配音必然各是一条，
             # 节点级默认在这里没有意义（继承只会让同一条声音每拍重播）。
             beat_voice = VoiceSpecField(
@@ -1239,6 +1271,8 @@ class NodeInspector(QWidget):
             beat_voice_sec.set_header_tool_tip(_GRAPH_VOICE_TIP)
             beat_voice_sec.add_body(beat_voice)
             o_fl.addRow(beat_voice_sec)
+            row["layout_cb"] = beat_layout
+            row["side_cb"] = beat_side
 
             def flip_collapse() -> None:
                 row["collapsed"] = not row["collapsed"]
@@ -1763,6 +1797,22 @@ class NodeInspector(QWidget):
                     b["bubbleAnchorY"] = r["bubbleAnchorY"]
                 if r.get("bubbleScale") is not None:
                     b["bubbleScale"] = r["bubbleScale"]
+                side_cb_r = r.get("side_cb")
+                if side_cb_r is not None:
+                    sd = str(side_cb_r.currentData() or "").strip()
+                    if sd in ("left", "right"):
+                        b["speakerSide"] = sd
+                elif r.get("speakerSide") is not None:
+                    b["speakerSide"] = r["speakerSide"]
+                lay_cb = r.get("layout_cb")
+                if lay_cb is not None:
+                    from tools.editor.shared.action_editor import _layout_combo_value
+                    lay = _layout_combo_value(lay_cb, allow_inherit=True)
+                    if lay:
+                        b["layout"] = lay
+                elif r.get("layout") is not None:
+                    # 没建控件的路径（若有）照旧透传，别吃键
+                    b["layout"] = r["layout"]
                 vf = r.get("voice_field")
                 if vf is not None:
                     vf.apply_to(b)
@@ -1778,6 +1828,19 @@ class NodeInspector(QWidget):
         _orig_has_speaker = "speaker" in data
         _orig_speaker = copy.deepcopy(data.get("speaker"))
         _orig_empty_lines = isinstance(data.get("lines"), list) and not data.get("lines")
+
+        def _apply_side(out: dict[str, Any]) -> None:
+            """空 = 自动推导，不写进 JSON（写死一边会把默认推导按掉）。"""
+            sd = str(side_cb.currentData() or "").strip()
+            if sd in ("left", "right"):
+                out["speakerSide"] = sd
+
+        def _apply_layout(out: dict[str, Any]) -> None:
+            """缺省档不写进 JSON：默认行为不该在数据里留噪音（同 typewriter/disabled 口径）。"""
+            from tools.editor.shared.action_editor import DIALOGUE_LAYOUT_DEFAULT
+            lay = str(layout_cb.currentData() or "").strip()
+            if lay and lay != DIALOGUE_LAYOUT_DEFAULT:
+                out["layout"] = lay
 
         def getter():
             nxt = next_edit.text().strip()
@@ -1812,6 +1875,8 @@ class NodeInspector(QWidget):
                 bsc = bub_field.scale_value()
                 if bsc is not None:
                     out["bubbleScale"] = bsc
+                _apply_layout(out)
+                _apply_side(out)
                 # 多拍：配音只在各拍上（顶层不写，避免"节点级默认"这个会重播的错觉）
                 return out
             k = kind_cb.currentData()
@@ -1838,6 +1903,8 @@ class NodeInspector(QWidget):
             bsc = bub_field.scale_value()
             if bsc is not None:
                 out["bubbleScale"] = bsc
+            _apply_layout(out)
+            _apply_side(out)
             legacy_voice.apply_to(out)
             return out
 
@@ -2055,6 +2122,12 @@ class NodeInspector(QWidget):
         _lb_ptk = QLabel("文本键（可选）", prompt_box); _lb_ptk.setToolTip("JSON 字段 textKey")
         pfl.addRow(_lb_ptk, pl_text_key)
         pfl.addRow("立绘（可选）", pl_portrait)
+        # promptLine 也是一拍台词：版式与配音语义都与 line 拍完全一致。
+        # 版式必须在这儿开——整场设了屏顶而这句没设，它会独自掉回屏底。
+        from tools.editor.shared.action_editor import _make_dialogue_layout_combo
+        pl_layout = _make_dialogue_layout_combo(prompt_box, (pl or {}).get("layout"))
+        pl_layout.currentIndexChanged.connect(self._emit_changed)
+        pfl.addRow("layout（版式）", pl_layout)
         # promptLine 也是一拍台词：配音语义与 line 拍完全一致
         pl_voice = VoiceSpecField(
             prompt_box,
@@ -2573,6 +2646,11 @@ class NodeInspector(QWidget):
                 pl_por = pl_portrait.to_ref()
                 if pl_por:
                     pl_out["portrait"] = pl_por
+                from tools.editor.shared.action_editor import DIALOGUE_LAYOUT_DEFAULT
+                pl_lay = str(pl_layout.currentData() or "").strip()
+                # 缺省档不写：默认行为不该在数据里留噪音
+                if pl_lay and pl_lay != DIALOGUE_LAYOUT_DEFAULT:
+                    pl_out["layout"] = pl_lay
                 pl_voice.apply_to(pl_out)
                 out["promptLine"] = pl_out
             return out
