@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   blockingValidationErrors,
+  createComposition,
+  createElement,
+  createState,
   createTransition,
   liftSubgraphForTemplate,
   mergeValidationIssues,
@@ -9,6 +12,7 @@ import {
   renameStateInGraph,
   simulateRunLifecycle,
   simulateSignalImpact,
+  uniqueGraphId,
   validateNarrativeData,
 } from './editorModel';
 import { focusValidationIssue, issueBelongsToActiveGraph, resolveValidationIssueFocus } from './focusIssueResolution';
@@ -1117,5 +1121,80 @@ describe('liftSubgraphForTemplate', () => {
   it('非子图元素（blackbox）回落母作曲', () => {
     const c = comp();
     expect(liftSubgraphForTemplate(c, 'element:blackbox_1')).toBe(c);
+  });
+});
+describe('id 分配器避让迁移表墓碑', () => {
+  // 墓碑 = `migrations` 里被指名的旧 id：它已不是任何活图/活状态，但读档时仍会被重定向。
+  // 分配器只看活 id 就会把它当空号段重发，新图的存档条目在读档时被迁移抢走（校验只给 warning）。
+  function fileWithTombstones(): NarrativeGraphsFileDef {
+    return {
+      schemaVersion: 3,
+      compositions: [
+        {
+          id: 'composition_1',
+          mainGraph: {
+            id: 'flow_2',
+            ownerType: 'flow',
+            initialState: 'initial',
+            states: { initial: { id: 'initial' }, state_2: { id: 'state_2' } },
+            transitions: [],
+          },
+          elements: [
+            {
+              id: 'wrapper_1',
+              kind: 'wrapperGraph',
+              ownerType: 'npc',
+              ownerId: 'NPC_A',
+              graph: {
+                id: 'wrapper_graph_1',
+                ownerType: 'npc',
+                initialState: 'initial',
+                states: { initial: { id: 'initial' } },
+                transitions: [],
+              },
+            },
+          ],
+        },
+      ],
+      migrations: {
+        graphs: { flow_1: '主线_交互点', wrapper_graph_2: '街巷_赌坊' },
+        states: { flow_2: { state_1: '开局' } },
+      },
+    };
+  }
+
+  it('uniqueGraphId 跳过被迁移表指名的旧图 id', () => {
+    // flow_1 是墓碑、flow_2 是活图 → 必须跳到 flow_3
+    expect(uniqueGraphId(fileWithTombstones(), 'flow')).toBe('flow_3');
+  });
+
+  it('新建作曲的主图 id 跳过墓碑', () => {
+    expect(createComposition(fileWithTombstones()).mainGraph.id).toBe('flow_3');
+  });
+
+  it('新建 wrapper 子图 id 跳过墓碑', () => {
+    // wrapper_graph_1 活着、wrapper_graph_2 是墓碑 → wrapper_graph_3
+    const data = fileWithTombstones();
+    const el = createElement(data.compositions![0], 'wrapperGraph', data);
+    expect(el.graph?.id).toBe('wrapper_graph_3');
+  });
+
+  it('createState 跳过该图自己的状态墓碑', () => {
+    // flow_2 的 state_1 是墓碑、state_2 活着 → state_3
+    const data = fileWithTombstones();
+    expect(createState(data.compositions![0].mainGraph, data)).toBe('state_3');
+  });
+
+  it('状态墓碑按图隔离，不误伤别的图', () => {
+    // 墓碑只登记在 flow_2 名下；wrapper_graph_1 的 state_1 仍可用
+    const data = fileWithTombstones();
+    const wrapperGraph = data.compositions![0].elements![0].graph!;
+    expect(createState(wrapperGraph, data)).toBe('state_1');
+  });
+
+  it('没有 migrations 时行为与从前一致', () => {
+    const data = fileWithTombstones();
+    delete data.migrations;
+    expect(uniqueGraphId(data, 'flow')).toBe('flow_1');
   });
 });

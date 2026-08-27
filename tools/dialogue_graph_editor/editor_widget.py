@@ -179,6 +179,12 @@ class _GraphStructureSnapshotCmd(QUndoCommand):
         self._widget._apply_structure_snapshot(self._before_data, self._before_positions)
 
 
+def _layout_combo_value(cb):
+    """转调共用件，避免在模块顶层 import action_editor（循环引用）。"""
+    from tools.editor.shared.action_editor import _layout_combo_value as _impl
+    return _impl(cb)
+
+
 def _graph_preconditions_for_editor(pre: object) -> list[dict[str, Any]]:
     return _split_graph_preconditions_for_editor(pre)[0]
 
@@ -526,6 +532,11 @@ class DialogueGraphEditorWidget(QWidget):
         self._btn_pick_entry = QPushButton("选")
         self._btn_pick_entry.clicked.connect(self._on_pick_entry_clicked)
         self._edit_title = QLineEdit()
+        # 图级版式缺省：层级最外一层（拍 > 节点 > 图 > 运行时缺省 bottom）。
+        # 一场戏整体换版式在这里写一次，不必逐节点、逐 promptLine 设。
+        from tools.editor.shared.action_editor import _make_dialogue_layout_combo
+        self._edit_default_layout = _make_dialogue_layout_combo(self, None)
+        self._edit_default_layout.currentIndexChanged.connect(self._on_graph_meta_changed)
         self._pre_cond_ed = ConditionEditor(
             "preconditions（结构化条件）",
             parent=self,
@@ -550,6 +561,14 @@ class DialogueGraphEditorWidget(QWidget):
         gform.addRow(
             _graph_form_label("标题", tip="写入 meta.title"),
             self._edit_title,
+        )
+        gform.addRow(
+            _graph_form_label(
+                "版式缺省",
+                tip="写入顶层 defaultLayout：整张图没单独指定版式的拍都用这一档。"
+                    "节点级与拍级可各自覆盖。缺省档不写进 JSON。",
+            ),
+            self._edit_default_layout,
         )
         self._edit_meta_scenario = QComboBox()
         self._edit_meta_scenario.setEditable(False)
@@ -2734,6 +2753,11 @@ class DialogueGraphEditorWidget(QWidget):
             self._edit_entry.setText(str(self._data.get("entry", "")))
             meta = self._data.get("meta") or {}
             self._edit_title.setText(str(meta.get("title", "")))
+            _dl = self._edit_default_layout
+            _dl.blockSignals(True)
+            _dl_idx = _dl.findData(str(self._data.get("defaultLayout", "") or "").strip())
+            _dl.setCurrentIndex(_dl_idx if _dl_idx >= 0 else 0)
+            _dl.blockSignals(False)
             _ch = self._derive_chapter_key_for_data(self._data)
             _disp = "（未归属）" if not _ch else ("常驻 / 无章节" if _ch == "__resident__" else _ch)
             self._edit_meta_scenario.clear()
@@ -2799,6 +2823,7 @@ class DialogueGraphEditorWidget(QWidget):
             title=self._edit_title.text().strip(),
             scenario_id="",  # 叙事归属已改自动推导，不再写 meta.scenarioId（与旧空值字节等价）
             preconditions=merged_preconditions,
+            default_layout=_layout_combo_value(self._edit_default_layout),
             schema_version_present=getattr(
                 self, "_orig_schema_version_present", "schemaVersion" in self._data
             ),

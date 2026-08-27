@@ -266,6 +266,7 @@ class CutsceneShowDialogueFields(QWidget):
         voice: object = None,
         auto_advance: object = None,
         typewriter: object = None,
+        layout: object = None,
     ) -> None:
         super().__init__(parent)
         self._model = model
@@ -364,6 +365,12 @@ class CutsceneShowDialogueFields(QWidget):
         )
         self._typewriter.toggled.connect(lambda _v: on_change())
         form.addRow(self._typewriter)
+
+        # 版式档：与 playScriptedDialogue / 图对话 line 节点同一个控件同一套语义
+        from .action_editor import _make_dialogue_layout_combo  # 局部 import 避免模块级循环引用
+        self._layout_cb = _make_dialogue_layout_combo(self, layout)
+        self._layout_cb.currentIndexChanged.connect(lambda _i: on_change())
+        form.addRow("layout（版式）", self._layout_cb)
         root.addLayout(form)
 
     def _bubble_actor(self) -> BubbleAnchorActor:
@@ -406,4 +413,9 @@ class CutsceneShowDialogueFields(QWidget):
         # 与 disabled「只写偏离值」同口径——否则 187 拍平白多一行噪声。
         if not self._typewriter.isChecked():
             d["typewriter"] = False
+        from .action_editor import _layout_combo_value
+        # 过场步骤是顶层（没有上层可继承）：不写 = 运行时缺省 bottom
+        lay = _layout_combo_value(self._layout_cb)
+        if lay:
+            d["layout"] = lay
         return d

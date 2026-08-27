@@ -32,6 +32,7 @@ class TestChapterGrouping(unittest.TestCase):
         cls._app = QApplication.instance() or QApplication(sys.argv)
         # **必须显式 utf-8**：Windows 上 `open()` 缺省用系统 ANSI 码页（GBK），
         # 读带中文的 JSON 直接 UnicodeDecodeError —— 这四条用例在本平台从来没跑起来过。
+        # （master 的 3636a83 独立修了同一处；这里保留 read_text 版本，它不留悬空文件句柄。）
         cls._ng = json.loads(
             (_ROOT / "public/assets/data/narrative_graphs.json").read_text("utf-8"))
 

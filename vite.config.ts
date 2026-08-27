@@ -659,8 +659,26 @@ export default defineConfig({
   },
   server: {
     port: 5173,
-    // Editor embed: bind explicitly so Local: URL matches WebEngine (127.0.0.1).
-    host: process.env.GAMEDRAFT_EDITOR_EMBED === '1' ? '127.0.0.1' : undefined,
+    /**
+     * **端口不许漂**。默认行为是「5173 被占就静默退到 5174」，而编辑器内嵌预览
+     * 写死加载 `http://127.0.0.1:5173/`——于是你会在毫无提示的情况下
+     * 玩到**另一个检出**正在提供的那份游戏（多 worktree 并行时极易发生）。
+     * 宁可起不来报错，也不要跑到别人的端口上去。
+     */
+    strictPort: true,
+    /**
+     * **恒定绑 127.0.0.1，两条路走同一个 origin。**
+     *
+     * `localStorage` 按 origin 隔离，而 `localhost` 与 `127.0.0.1` 是**两个不同的
+     * origin**（端口相同也一样）。存档走 localStorage（`SaveManager` 的
+     * `gamedraft_save_*`），所以以前：编辑器内嵌预览存的档（127.0.0.1:5173）
+     * 用浏览器打开（localhost:5173）就"消失"了，反之亦然——数据其实一直在，
+     * 只是另一个 origin 名下。
+     *
+     * 原来只在内嵌时绑 127.0.0.1（为了让 vite 打印的 Local: 与 WebEngine 对上），
+     * 非内嵌时 host 留 undefined → 掉回 localhost，两半就此分家。现在统一。
+     */
+    host: '127.0.0.1',
     // Editor embed / agent 启动(scripts/dev_agent.cjs):do not open external browser.
     open: process.env.GAMEDRAFT_EDITOR_EMBED !== '1' && process.env.GAMEDRAFT_NO_OPEN !== '1',
     // 追加在 Vite 内建排除项（.git / node_modules / test-results / cacheDir / outDir）之后

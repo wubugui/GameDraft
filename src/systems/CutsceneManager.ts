@@ -17,7 +17,9 @@ import {
   type VoiceSpec,
   type VoiceAdvanceSpec,
 } from './VoiceChannel';
-import { DEFAULT_SPEAKER_SIDE, type SpeakerSide } from '../utils/dialogueSpeakerSide';
+import { DEFAULT_SPEAKER_SIDE, type SpeakerSide,
+  DEFAULT_DIALOGUE_LAYOUT, resolveDialogueLayout, type DialogueLayoutStyle,
+} from '../utils/dialogueSpeakerSide';
 import { TEXT_URLS } from '../core/projectPaths';
 
 export type EntityResolver = (id: string) => ICutsceneActor | null;
@@ -206,6 +208,22 @@ interface CutsceneSnapshot {
   /** 过场前音频基线：当前 BGM id（无则 null）与活跃环境层 id 列表，供同场景过场结束后还原。 */
   bgmId: string | null;
   ambientIds: string[];
+}
+
+/** {@link CutsceneManager.showDialogueText} 的入参（对象而非位置参数，见该方法注释）。 */
+interface ShowDialogueTextOptions {
+  text: string;
+  speaker?: string;
+  portrait?: { slug: string; emotion: string };
+  speakingAnchor?: IEmoteBubbleAnchor | null;
+  bubbleOpts?: EmoteBubbleOffsetOpts;
+  side?: SpeakerSide;
+  isSelf?: boolean;
+  voice?: VoiceSpec | null;
+  autoAdvance?: VoiceAdvanceSpec | null;
+  typewriter?: boolean;
+  /** 版式档；不设 = `bottom` = 现行行为 */
+  layout?: DialogueLayoutStyle;
 }
 
 export class CutsceneManager implements IGameSystem {
@@ -1155,12 +1173,19 @@ export class CutsceneManager implements IGameSystem {
           : false;
         const merged = this.mergePresentShowDialogueLine(step.text as string, speakerOut);
         const stepRec = step as Record<string, unknown>;
-        await this.showDialogueText(
-          merged.text, merged.speaker, portrait, speakingAnchor,
-          parsePresentBubbleOpts(step), side, isSelf,
-          readVoiceSpec(stepRec), readVoiceAdvanceSpec(stepRec),
-          readTypewriterFlag(stepRec, true),
-        );
+        await this.showDialogueText({
+          text: merged.text,
+          speaker: merged.speaker,
+          portrait,
+          speakingAnchor,
+          bubbleOpts: parsePresentBubbleOpts(step),
+          side,
+          isSelf,
+          voice: readVoiceSpec(stepRec),
+          autoAdvance: readVoiceAdvanceSpec(stepRec),
+          typewriter: readTypewriterFlag(stepRec, true),
+          layout: resolveDialogueLayout(stepRec.layout),
+        });
         break;
       }
       case 'showImg': {
@@ -1356,19 +1381,22 @@ export class CutsceneManager implements IGameSystem {
     return { speaker: speakerR, text: textR };
   }
 
-  private async showDialogueText(
-    text: string,
-    speaker?: string,
-    portrait?: { slug: string; emotion: string },
-    speakingAnchor?: IEmoteBubbleAnchor | null,
-    bubbleOpts?: EmoteBubbleOffsetOpts,
-    side: SpeakerSide = DEFAULT_SPEAKER_SIDE,
-    isSelf: boolean = false,
-    voice: VoiceSpec | null = null,
-    autoAdvance: VoiceAdvanceSpec | null = null,
-    typewriter: boolean = true,
-  ): Promise<void> {
-    const box = this.cutsceneRenderer.showDialogueBox(text, speaker, portrait, side, isSelf, typewriter);
+  /**
+   * `showDialogueText` 的入参。对象而非位置参数：原来 10 个位置参数，加版式就 12 个，
+   * 错位不报错只是画错——这类回归最难自证。
+   */
+  private async showDialogueText(o: ShowDialogueTextOptions): Promise<void> {
+    const {
+      text, speaker, portrait, speakingAnchor, bubbleOpts,
+      side = DEFAULT_SPEAKER_SIDE, isSelf = false,
+      voice = null, autoAdvance = null, typewriter = true,
+      layout = DEFAULT_DIALOGUE_LAYOUT,
+    } = o;
+    const box = this.cutsceneRenderer.showDialogueBox({
+      text, speaker, portrait, side, isSelf, typewriter, layout,
+      // 气泡档跟随同一个头顶锚：与本步的「……」小气泡同源，两者不会各指一处
+      bubbleAnchor: speakingAnchor ?? null,
+    });
     /** 说话人头顶「……」气泡：与本步同生命周期,finally 撤;skip/读档/拆除经 cleanup 定向清 CUTSCENE_EMOTE_OWNER 兜底。 */
     const dismissSpeakingBubble = speakingAnchor && this.emoteBubbleProvider
       ? this.emoteBubbleProvider.showSticky(speakingAnchor, '……', bubbleOpts, CUTSCENE_EMOTE_OWNER)

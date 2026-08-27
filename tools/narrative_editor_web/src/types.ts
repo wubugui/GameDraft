@@ -151,10 +151,23 @@ export interface SignalEmitterRefDef {
   detail: string;
 }
 
+/**
+ * 旧存档改名映射（顶层 `migrations`）。权威定义在 `src/core/NarrativeStateManager.ts`
+ * 的 `NarrativeSaveMigrations`，登记由 Python 侧改名重构（`shared/signal_refactor.py`）
+ * 负责——网页只读不写，声明在此仅为让 id 分配器能避让墓碑。
+ */
+export interface NarrativeSaveMigrationsDef {
+  /** 旧图 id → 新图 id */
+  graphs?: Record<string, string>;
+  /** 图 id（当前名）→ { 旧 state id → 新 state id } */
+  states?: Record<string, Record<string, string>>;
+}
+
 export interface NarrativeGraphsFileDef {
   schemaVersion?: number;
   signals?: NarrativeAuthorSignalDef[];
   compositions?: NarrativeCompositionDef[];
+  migrations?: NarrativeSaveMigrationsDef;
 }
 
 /**

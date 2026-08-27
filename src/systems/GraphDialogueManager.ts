@@ -11,7 +11,7 @@ import type { StringsProvider } from '../core/StringsProvider';
 import type { ScenarioStateManager } from '../core/ScenarioStateManager';
 import { dialogueGraphJsonUrl } from '../core/projectPaths';
 import { makeOwnerOrigin } from '../core/actionOrigin';
-import { isSpeakerSide } from '../utils/dialogueSpeakerSide';
+import { isSpeakerSide, resolveDialogueLayout } from '../utils/dialogueSpeakerSide';
 import type {
   ActionDef,
   DialogueChoice,
@@ -1052,12 +1052,17 @@ export class GraphDialogueManager implements IGameSystem {
   ): DialogueLinePayload[] {
     const lines = node.lines;
     if (Array.isArray(lines) && lines.length > 0) {
-      // 节点级 portrait / bubbleAnchorY 作为各拍默认，拍内自带的覆盖之
+      // 节点级 portrait / bubbleAnchorY / layout 作为各拍默认，拍内自带的覆盖之
       if (node.portrait === undefined && node.bubbleAnchorY === undefined
-          && node.bubbleScale === undefined) return lines;
+          && node.bubbleScale === undefined && node.layout === undefined
+          && node.speakerSide === undefined) return lines;
       return lines.map((p) => {
         const out = { ...p };
         if (out.portrait === undefined && node.portrait !== undefined) out.portrait = node.portrait;
+        if (out.layout === undefined && node.layout !== undefined) out.layout = node.layout;
+        if (out.speakerSide === undefined && node.speakerSide !== undefined) {
+          out.speakerSide = node.speakerSide;
+        }
         if (out.bubbleAnchorY === undefined && node.bubbleAnchorY !== undefined) {
           out.bubbleAnchorY = node.bubbleAnchorY;
         }
@@ -1078,6 +1083,8 @@ export class GraphDialogueManager implements IGameSystem {
       bubbleScale: node.bubbleScale,
       voice: node.voice,
       autoAdvance: node.autoAdvance,
+      layout: node.layout,
+      speakerSide: node.speakerSide,
     }];
   }
 
@@ -1107,6 +1114,16 @@ export class GraphDialogueManager implements IGameSystem {
       /** 配音 / 推进方式原样透传给 DialogueVoiceDirector（本管理器不碰音频，见分层不变量） */
       ...(p.voice !== undefined && p.voice !== null ? { voice: p.voice } : {}),
       ...(p.autoAdvance !== undefined && p.autoAdvance !== null ? { autoAdvance: p.autoAdvance } : {}),
+      /**
+       * 版式档，四层里的后两层在此收口：
+       *   拍级 / 节点级（已由 lineBeatsFor 下发到 p.layout）> 图级 defaultLayout > 缺省 bottom。
+       * promptLine 不经 lineBeatsFor，直接走这里——所以图级对它同样生效。
+       */
+      ...(p.layout !== undefined
+        ? { layout: resolveDialogueLayout(p.layout) }
+        : (this.graph?.defaultLayout !== undefined
+          ? { layout: resolveDialogueLayout(this.graph.defaultLayout) }
+          : {})),
       dim: this.dimBackground || undefined,
     };
   }

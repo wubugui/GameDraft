@@ -326,6 +326,101 @@ ACTION_TYPES = [
     "setGroupEnabled", "moveGroupBy",
 ]
 
+# ---------------------------------------------------------------------------
+# 对白版式档（与 src/utils/dialogueSpeakerSide.ts 的 DialogueLayoutStyle 逐字对应）
+# ⚠ 手工镜像：那边加档这里要跟，否则策划在编辑器里选不到。
+# 缺省档**不写进 JSON**——默认行为不该在数据里留噪音。
+# ---------------------------------------------------------------------------
+DIALOGUE_LAYOUT_DEFAULT = "bottom"
+DIALOGUE_LAYOUT_CHOICES: list[tuple[str, str, str]] = [
+    ("bottom", "屏底对话框（默认）", "现行行为：框在画面底部，带立绘与说话人名牌。"),
+    ("top", "屏顶对话框", "整套上下镜像：框在顶部、立绘贴上沿、名牌骑框底沿。功能与屏底档完全一致。"),
+    ("bubble", "说话人头顶气泡",
+     "正文浮在说话人头顶并实时跟随；无立绘、无名牌。"
+     "解析不出在场实体的行（旁白）自动落到屏幕正中。"
+     "推进方式与选项位置与另两档完全一致。"),
+]
+
+
+def _make_dialogue_layout_combo(
+    parent, current: object, *, allow_inherit: bool = False,
+) -> QComboBox:
+    """版式下拉。按「下拉 vs 弹窗」拍板走下拉（弹窗留给需要搜索的引用字段）。
+
+    `allow_inherit=True` 用于**子层**（多拍节点的各拍 / 动作的各行）：多一个
+    「跟随上层」档且是缺省，值为空串、不写进 JSON。这是「统一设置」的落点——
+    上层设一次，各拍留在「跟随上层」即全体统一；某一拍要破例就在那一拍改。
+
+    不带该参数则是**顶层**（line 节点 / choice.promptLine / 动作 / 过场步骤）：
+    那里的「不写」在运行时就等于 bottom，所以缺省档直接是屏底。
+    """
+    cb = QComboBox(parent)
+    if allow_inherit:
+        cb.addItem("跟随上层（默认）", "")
+        cb.setItemData(
+            0,
+            "不单独指定：用所在节点／动作设的版式。整段统一时保持这个档，"
+            "只在需要破例的那一拍改。",
+            Qt.ToolTipRole,
+        )
+    for value, label, tip in DIALOGUE_LAYOUT_CHOICES:
+        cb.addItem(label, value)
+        cb.setItemData(cb.count() - 1, tip, Qt.ToolTipRole)
+    cur = str(current or "").strip()
+    if not cur:
+        cur = "" if allow_inherit else DIALOGUE_LAYOUT_DEFAULT
+    idx = cb.findData(cur)
+    cb.setCurrentIndex(idx if idx >= 0 else 0)
+    cb.setToolTip("对白的版式档。只改**位置与外观**——推进方式、选项位置、打字机、"
+                  "对话记录在三档下完全一致。"
+                  + ("不设 = 跟随所在节点／动作。" if allow_inherit else "不设 = 屏底对话框。"))
+    return cb
+
+
+def _layout_combo_value(cb: QComboBox, *, allow_inherit: bool = False) -> str:
+    """取下拉的落盘值；返回空串表示**不写这个键**。
+
+    两层的口径不同，混用会写错数据：
+
+    * 顶层（无继承）：bottom 就是运行时缺省，写它只是噪音 → 不写。
+    * 子层（有继承）：父层可能是 top，此时子层显式选 bottom 是**真覆盖**，
+      必须写出来；只有「跟随上层」那一档才不写。
+    """
+    v = str(cb.currentData() or "").strip()
+    if not v:
+        return ""
+    if not allow_inherit and v == DIALOGUE_LAYOUT_DEFAULT:
+        return ""
+    return v
+
+
+# ---------------------------------------------------------------------------
+# 立绘/名牌分边（对应 src/utils/dialogueSpeakerSide.ts 的 SpeakerSide）
+# **三态**，与版式档不同：不写 = 运行时按说话实体自动推导（主角在右、其余在左），
+# 只有两个 NPC 对谈也想各占一边这类场合才显式覆盖。
+# 所以「自动」必须是空值而不是某个具体档——写死一边会把默认推导按掉。
+# ---------------------------------------------------------------------------
+SPEAKER_SIDE_CHOICES: list[tuple[str, str, str]] = [
+    ("", "跟随说话人（默认）", "按说话实体自动推导：主角在右、其余在左。绝大多数台词用这个。"),
+    ("left", "强制靠左", "无视推导，本行立绘与名牌固定在左侧。"),
+    ("right", "强制靠右", "无视推导，本行立绘与名牌固定在右侧。"),
+]
+
+
+def _make_speaker_side_combo(parent, current: object) -> QComboBox:
+    """三态分边下拉。空值 = 不写进 JSON = 运行时自动推导。"""
+    cb = QComboBox(parent)
+    for value, label, tip in SPEAKER_SIDE_CHOICES:
+        cb.addItem(label, value)
+        cb.setItemData(cb.count() - 1, tip, Qt.ToolTipRole)
+    cur = str(current or "").strip()
+    idx = cb.findData(cur if cur in ("left", "right") else "")
+    cb.setCurrentIndex(idx if idx >= 0 else 0)
+    cb.setToolTip("这一行的立绘与名牌站哪边。默认按说话实体推导，"
+                  "两个 NPC 对谈想各占一边时才显式指定。")
+    return cb
+
+
 DEBUG_ONLY_ACTION_TYPES = {"setNarrativeState"}
 # Legacy：旧扣血/回血。新内容统一用 decHealth/incHealth（编排控值）+ triggerDeathTether（系绳）。
 # 仍保留在 ACTION_TYPES（兼容历史数据、校验通过、运行时可用），但从编辑器内容下拉中移除。
@@ -4881,6 +4976,11 @@ class ActionRow(QWidget):
             self._param_widgets["dimBackground"] = dim_cb
             self._params_layout.addRow("dimBackground", dim_cb)
 
+            layout_cb = _make_dialogue_layout_combo(self, params.get("layout"))
+            layout_cb.currentIndexChanged.connect(self.changed)
+            self._param_widgets["layout"] = layout_cb
+            self._params_layout.addRow("layout（版式）", layout_cb)
+
             raw_lines = params.get("lines", [])
             ed = ScriptedLinesEditor(
                 list(raw_lines) if isinstance(raw_lines, list) else [],
@@ -6265,6 +6365,12 @@ class ActionRow(QWidget):
         dim_w = self._param_widgets.get("dimBackground")
         if isinstance(dim_w, QCheckBox) and dim_w.isChecked():
             prm["dimBackground"] = True
+        lay_w = self._param_widgets.get("layout")
+        if isinstance(lay_w, QComboBox):
+            # 动作级是顶层：不写 = 运行时缺省 bottom
+            lay = _layout_combo_value(lay_w)
+            if lay:
+                prm["layout"] = lay
         return {"type": "playScriptedDialogue", "params": prm}
 
     def _to_dict_set_player_avatar(self) -> dict:

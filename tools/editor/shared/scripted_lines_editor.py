@@ -145,6 +145,24 @@ class ScriptedLinesEditor(QWidget):
         portrait = PortraitRefField(proot, data.get("portrait") if isinstance(data, dict) else None)
         portrait.changed.connect(self.changed.emit)
         bl.addWidget(portrait)
+        # 逐行版式：覆盖动作级的默认档。**必须在这儿开**——to_list() 是整条重建，
+        # 不认识的键存一次就丢（既有同型：speakerSide 运行时读得到、这里丢得掉）。
+        from .action_editor import _make_dialogue_layout_combo  # 局部 import 避免模块级循环引用
+        # 逐行是**子层**：缺省是「跟随上层」（= 动作级那一档），不是 bottom。
+        # 这就是「统一设置」的落点——动作级设一次，各行留在跟随即全体统一。
+        layout_cb = _make_dialogue_layout_combo(
+            box, data.get("layout") if isinstance(data, dict) else None, allow_inherit=True,
+        )
+        layout_cb.currentIndexChanged.connect(self.changed.emit)
+        bl.addWidget(layout_cb)
+        # 逐行立绘分边：同样是 to_list() 整条重建下的必开项——运行时读得到
+        # （ActionRegistry 的 isSpeakerSide(o.speakerSide)），不在这儿开就存一次丢一次。
+        from .action_editor import _make_speaker_side_combo
+        side_cb = _make_speaker_side_combo(
+            box, data.get("speakerSide") if isinstance(data, dict) else None,
+        )
+        side_cb.currentIndexChanged.connect(self.changed.emit)
+        bl.addWidget(side_cb)
         # 逐行配音 / 推进方式：与过场字幕、过场对话框、图对话拍同一个控件同一套语义。
         # 折叠默认收起——绝大多数台词没有配音，展开会把这一列撑得很长。
         voice = VoiceSpecField(
@@ -165,7 +183,7 @@ class ScriptedLinesEditor(QWidget):
         voice_sec.add_body(voice)
         bl.addWidget(voice_sec)
         rec = {"box": box, "speaker": sp, "text": tx, "portrait": portrait, "voice": voice,
-               "btn_up": up, "btn_down": dn}
+               "layout": layout_cb, "speakerSide": side_cb, "btn_up": up, "btn_down": dn}
         rm.clicked.connect(lambda: self._remove_row(rec))
         up.clicked.connect(lambda: self._move_row(rec, -1))
         dn.clicked.connect(lambda: self._move_row(rec, 1))
@@ -187,9 +205,21 @@ class ScriptedLinesEditor(QWidget):
             por = r["portrait"].to_ref()
             vf = r.get("voice")
             has_voice = bool(vf is not None and vf.has_content())
+            # 版式 / 分边的默认选项都是「不写」，所以非默认必然是用户主动改的——
+            # 算进「这行有内容」，否则只调了下拉没写正文的行会被下面的空行判定静默吃掉
+            # （与那条 P3 注释同一条原则：不许默默吃掉编辑）。
+            from .action_editor import _layout_combo_value
+            lay_w0 = r.get("layout")
+            side_w0 = r.get("speakerSide")
+            has_layout = bool(
+                lay_w0 is not None and _layout_combo_value(lay_w0, allow_inherit=True)
+            )
+            has_side = bool(
+                side_w0 is not None and str(side_w0.currentData() or "").strip() in ("left", "right")
+            )
             # 空正文行：过去无条件静默丢弃，会连带丢掉已配好的 speaker / 立绘（审查 P3）。
             # 只丢「全空」的纯空行；已配 speaker / 立绘 / 配音的空文本行保留，避免默默吃掉编辑。
-            if not t and not sp_txt and not por and not has_voice:
+            if not t and not sp_txt and not por and not has_voice and not has_layout and not has_side:
                 continue
             rec: dict = {
                 "speaker": sp_txt,
@@ -197,6 +227,19 @@ class ScriptedLinesEditor(QWidget):
             }
             if por:
                 rec["portrait"] = por
+            side_w = r.get("speakerSide")
+            if side_w is not None:
+                sd = str(side_w.currentData() or "").strip()
+                # 空 = 自动推导，不写进 JSON（写了就把默认推导按死了）
+                if sd in ("left", "right"):
+                    rec["speakerSide"] = sd
+            lay_w = r.get("layout")
+            if lay_w is not None:
+                from .action_editor import _layout_combo_value
+                # 子层口径：显式选 bottom 是对动作级的真覆盖，要写；只有「跟随上层」不写
+                lay = _layout_combo_value(lay_w, allow_inherit=True)
+                if lay:
+                    rec["layout"] = lay
             if vf is not None:
                 vf.apply_to(rec)
             out.append(rec)

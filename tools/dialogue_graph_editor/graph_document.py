@@ -523,10 +523,30 @@ def _validate_owner_context_state_nodes(
                 if gid:
                     warnings.append(f"节点 {nid}: 无法校验 contextState graphId（缺少项目上下文）")
                 continue
-            from tools.editor.shared.narrative_catalog import graph_states, is_context_graph_allowed
+            from tools.editor.shared.narrative_catalog import (
+                CONTEXT_GRAPH_CROSS_ENTITY,
+                CONTEXT_GRAPH_MISSING,
+                classify_context_graph,
+                graph_states,
+            )
 
-            if gid and not is_context_graph_allowed(project_root, gid):
-                errors.append(f"节点 {nid}: contextState graphId {gid!r} 不允许读取（不能选择 npc/hotspot wrapper）")
+            if gid:
+                verdict, owner_type = classify_context_graph(project_root, gid)
+                if verdict == CONTEXT_GRAPH_MISSING:
+                    # 悬垂引用才是 error，而且消息要说实话——旧口径把「图不存在」和
+                    # 「读的是实体 wrapper」压成同一句 wrapper 措辞，真毛病被盖住。
+                    errors.append(
+                        f"节点 {nid}: contextState graphId {gid!r} 在 narrative_graphs 中不存在",
+                    )
+                elif verdict == CONTEXT_GRAPH_CROSS_ENTITY:
+                    # 跨实体读 wrapper 合法（运行时不查归属，switch 的 narrative 条件叶子
+                    # 更是完全免检）——提醒即可，报 error 就是 Python 兜底比 TS 权威更严。
+                    warnings.append(
+                        f"节点 {nid}: contextState 读的是实体 wrapper {gid!r}"
+                        f"（ownerType={owner_type or '未知'}），"
+                        "确认这是有意的跨实体读取；读「当前对话 owner 自己的状态」"
+                        "请改用 ownerState 节点或 @owner 相对 token",
+                    )
             known = {str(s).strip() for s in graph_states(project_root, gid) if str(s).strip()}
             for i, case in enumerate(_as_list(raw.get("cases"))):
                 if not isinstance(case, dict):

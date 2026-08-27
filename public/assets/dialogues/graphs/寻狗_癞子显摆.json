@@ -1,0 +1,555 @@
+{
+  "schemaVersion": 1,
+  "id": "寻狗_癞子显摆",
+  "entry": "open",
+  "meta": {
+    "title": "寻狗Demo·①.5雾津街头·癞子显摆（zone 一次性·三选支·对白待审）"
+  },
+  "defaultLayout": "top",
+  "nodes": {
+    "open": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "next": "q",
+      "lines": [
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "旁白"
+          },
+          "text": "癞子在檐坎前头那两步路上来回来去。走到头就掉头，一刻不停。那块地他今天翻了不晓得多少遍了，还在翻。"
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "癞子。",
+          "portrait": {
+            "emotion": "smirk"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "旁白"
+          },
+          "text": "癞子没抬头。走到头，掉头，又走回来。"
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "喂——癞子！",
+          "portrait": {
+            "emotion": "calm"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "……啊？"
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "你又在刨啥子？",
+          "portrait": {
+            "emotion": "smirk"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "找钱。"
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "这点找得到钱？",
+          "portrait": {
+            "emotion": "calm"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "前天在这点捡到一个。"
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "……一个。",
+          "portrait": {
+            "emotion": "laugh"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "收到起吧。今天老子接了个大活路。",
+          "portrait": {
+            "emotion": "laugh"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "哦。"
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "……二哥，好多钱嘛？"
+        }
+      ],
+      "text": "癞子在檐坎前头那两步路上来回来去。走到头就掉头，一刻不停。那块地他今天翻了不晓得多少遍了，还在翻。"
+    },
+    "branch_count": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "next": "join_taboo",
+      "lines": [
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "旁白"
+          },
+          "text": "关二狗把那包钱抖出来，当着癞子的面数。"
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "一……二……三……看到没得？",
+          "portrait": {
+            "emotion": "laugh"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "……二哥。"
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "这个钱，边边上毛起的。"
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "啥子？",
+          "portrait": {
+            "emotion": "calm"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "毛起的。私铸的。"
+        },
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "旁白"
+          },
+          "text": "癞子成天在地上摸铜板，啥子钱一上手他就晓得。这个他不会认错。"
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "……老子晓得。算了算了，算它一个。",
+          "portrait": {
+            "emotion": "calm"
+          }
+        }
+      ],
+      "text": "关二狗把那包钱抖出来，当着癞子的面数。"
+    },
+    "branch_brag": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "join_taboo",
+      "lines": [
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "钱嘛，先不忙给你看。老子先问你——牛头梁梁，你晓得在哪点不？",
+          "portrait": {
+            "emotion": "smirk"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "旁白"
+          },
+          "text": "癞子走到头，掉头，走回来，才开口。"
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "……晓得。从跑马梁上去。"
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "二哥，你问那个凼凼做啥子？"
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "有人喊老子去那点，背个人下来。",
+          "portrait": {
+            "emotion": "smirk"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "……"
+        }
+      ],
+      "text": "钱嘛，先不忙给你看。老子先问你——牛头梁梁，你晓得在哪点不？"
+    },
+    "branch_invite": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "join_taboo",
+      "lines": [
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "一个人背不动。你跟老子一路去，五五。",
+          "portrait": {
+            "emotion": "laugh"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "要得。"
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "……",
+          "portrait": {
+            "emotion": "smirk"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "去哪点嘛？"
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "牛头梁梁。三更。",
+          "portrait": {
+            "emotion": "calm"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "旁白"
+          },
+          "text": "癞子停下来。他站着没动。"
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "二哥。"
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "……我不去。"
+        }
+      ],
+      "text": "一个人背不动。你跟老子一路去，五五。"
+    },
+    "join_taboo": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "hard_talk",
+      "lines": [
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "牛头凼那个地方，我听人说过。"
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "听哪个说的？",
+          "portrait": {
+            "emotion": "calm"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "……去年，茶馆门口有个人说的。"
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "哪个人嘛？",
+          "portrait": {
+            "emotion": "smirk"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "……我不认得。"
+        },
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "旁白"
+          },
+          "text": "癞子走了个来回。"
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "他说，喊你莫回头、莫灭灯、有人喊你莫张视的那个人……"
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "……不是喊你去背人。"
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "……啥子意思？",
+          "portrait": {
+            "emotion": "calm"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "我不晓得。"
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "那个人后头就没得了。"
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "没得了是啥子意思？",
+          "portrait": {
+            "emotion": "calm"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "……就是没得了噻。"
+        }
+      ],
+      "text": "牛头凼那个地方，我听人说过。"
+    },
+    "q": {
+      "type": "choice",
+      "promptLine": {
+        "speaker": {
+          "kind": "literal",
+          "name": "旁白"
+        },
+        "text": "怀里那包钱还带着体温。"
+      },
+      "options": [
+        {
+          "id": "count",
+          "text": "〔把钱掏出来数给他看〕",
+          "next": "branch_count"
+        },
+        {
+          "id": "brag",
+          "text": "〔先不露钱，光吹〕",
+          "next": "branch_brag"
+        },
+        {
+          "id": "invite",
+          "text": "〔喊他一起去，五五分〕",
+          "next": "branch_invite"
+        }
+      ]
+    },
+    "fin": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "私有事件完结",
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_癞子显摆"
+          }
+        },
+        {
+          "type": "persistZoneEnabled",
+          "params": {
+            "sceneId": "雾津街头",
+            "zoneId": "Zone_癞子第一次出现",
+            "enabled": false
+          }
+        }
+      ],
+      "next": "done"
+    },
+    "done": {
+      "type": "end"
+    },
+    "hard_talk": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "farewell",
+      "lines": [
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "锤子哦。",
+          "portrait": {
+            "emotion": "smirk"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "五百文嘛。老子胆子比那个梁梁还高。",
+          "portrait": {
+            "emotion": "laugh"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "旁白"
+          },
+          "text": "话是这么说，关二狗把那包钱又往怀头塞深了两寸。"
+        }
+      ],
+      "text": "锤子哦。"
+    },
+    "farewell": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "fin",
+      "lines": [
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "……二哥，你早点去，早点回。"
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "另外那一半，你到义庄找哪个拿？"
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "他说到了有人晓得。",
+          "portrait": {
+            "emotion": "calm"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "……哦。"
+        },
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "旁白"
+          },
+          "text": "癞子转身，走回那两步路上去了。走到头，掉头，又走回来。"
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "二哥。"
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "你早点回来。"
+        }
+      ],
+      "text": "……二哥，你早点去，早点回。"
+    }
+  }
+}

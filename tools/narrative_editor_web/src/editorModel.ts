@@ -301,8 +301,12 @@ export function setStateEditorPosition(state: NarrativeStateNodeDef, x: number, 
   };
 }
 
-export function createState(graph: NarrativeGraphDef): string {
-  const id = uniqueId('state', Object.keys(graph.states ?? {}));
+export function createState(graph: NarrativeGraphDef, data?: NarrativeGraphsFileDef): string {
+  // data 可选只为兼容无文档上下文的调用；有文档时必须传，否则避不开状态墓碑（见 tombstoneStateIds）。
+  const id = uniqueId('state', [
+    ...Object.keys(graph.states ?? {}),
+    ...tombstoneStateIds(data, String(graph.id ?? '')),
+  ]);
   // 不播 label=id（显示名回退到 id；磁盘 182 个状态 0 个 label==id——默认键注入是字节噪音）
   graph.states[id] = {
     id,
@@ -1007,8 +1011,26 @@ export function uniqueId(prefix: string, existing: string[]): string {
   return id;
 }
 
+/** 迁移表里被指名的旧 id 是**墓碑**：改名后它虽然不再是任何活图，但 `migrations` 仍记着
+ *  「读到这个 id 就重定向到新名」。把墓碑当空号段重新发出去，新图的存档条目会在读档时
+ *  被迁移抢走、塞进那个不相干的新名里——而校验只给 warning，不拦保存。
+ *  踩过：`wrapper_graph_3` 改名成 `街巷_赌坊` 后号段空出，新建 wrapper 又拿到它
+ *  （同一份数据里 `flow_1` 也已空出、同样待触发）。分配器必须连墓碑一起避让。 */
+export function tombstoneGraphIds(data: NarrativeGraphsFileDef | undefined): string[] {
+  return Object.keys(data?.migrations?.graphs ?? {});
+}
+
+/** 状态 id 的墓碑同理；`migrations.states` 的外层键是**改名之后**的图 id。 */
+export function tombstoneStateIds(data: NarrativeGraphsFileDef | undefined, graphId: string): string[] {
+  if (!graphId) return [];
+  return Object.keys(data?.migrations?.states?.[graphId] ?? {});
+}
+
 export function uniqueGraphId(data: NarrativeGraphsFileDef, prefix: string): string {
-  return uniqueId(prefix, compileGraphs(data).map(({ graph }) => graph.id));
+  return uniqueId(prefix, [
+    ...compileGraphs(data).map(({ graph }) => graph.id),
+    ...tombstoneGraphIds(data),
+  ]);
 }
 
 function cleanId(value: string): string {

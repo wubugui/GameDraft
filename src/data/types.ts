@@ -23,7 +23,7 @@ import type { EventBus } from '../core/EventBus';
 import type { StringsProvider } from '../core/StringsProvider';
 import type { FlagStore } from '../core/FlagStore';
 import type { AssetManager } from '../core/AssetManager';
-import type { SpeakerSide } from '../utils/dialogueSpeakerSide';
+import type { DialogueLayoutStyle, SpeakerSide } from '../utils/dialogueSpeakerSide';
 
 import cutsceneActionAllowlist from './cutscene_action_allowlist.json';
 
@@ -1097,6 +1097,11 @@ export interface DialogueLinePayload {
    * 缺省 = 等玩家点击。两种自动模式下点击仍可提前推进。
    */
   autoAdvance?: VoiceAdvanceData;
+  /**
+   * 可选：本拍版式档（`bottom` 默认 / `top` / `bubble`）。不设 = 屏底对话框（现行行为）。
+   * 与 portrait 同范式：节点级作各拍默认，拍内自带的覆盖之。
+   */
+  layout?: DialogueLayoutStyle;
 }
 
 /**
@@ -1148,6 +1153,10 @@ export type DialogueGraphNodeDef =
       voice?: VoiceSpecData;
       /** 可选：本节点推进方式（同上，仅单拍节点生效） */
       autoAdvance?: VoiceAdvanceData;
+      /** 可选：本节点版式档（各拍默认；拍内 `lines[].layout` 覆盖之） */
+      layout?: DialogueLayoutStyle;
+      /** 可选：本节点立绘/名牌分边（各拍默认；拍内 `lines[].speakerSide` 覆盖之） */
+      speakerSide?: SpeakerSide;
       /** 多拍连续对白（每拍仍需点击继续）；若存在则按顺序播放，且首拍应与 speaker/text/textKey 一致（可由编辑器镜像） */
       lines?: DialogueLinePayload[];
       next: string;
@@ -1203,6 +1212,15 @@ export interface DialogueGraphFile {
   preconditions?: ConditionExpr[];
   nodes: Record<string, DialogueGraphNodeDef>;
   meta?: { title?: string; scenarioId?: string };
+  /**
+   * 整张图的版式缺省档（`bottom` / `top` / `bubble`）。**层级的最外一层**：
+   *
+   *     拍级 layout  >  节点级 layout  >  本字段  >  运行时缺省 bottom
+   *
+   * 一场戏整体换版式时在这里写一次即可，不必逐节点、逐 promptLine 设。
+   * 不设 = 屏底对话框，与现行行为逐像素一致。
+   */
+  defaultLayout?: DialogueLayoutStyle;
 }
 
 /** 文档揭示配置（document_reveals.json） */
@@ -2090,6 +2108,11 @@ export interface DialogueLine {
   voice?: VoiceSpecData;
   /** 本行推进方式（同上）；`"voice"` 由 DialogueVoiceDirector 驱动自动推进 */
   autoAdvance?: VoiceAdvanceData;
+  /**
+   * 本行版式档（`bottom` 默认 / `top` / `bubble`）。不设 = 现行的屏底对话框。
+   * 与 portrait / speakerSide 同范式：整行负载下发，节点级作各拍默认、拍内自带的覆盖之。
+   */
+  layout?: DialogueLayoutStyle;
 }
 
 /** `dialogue:start` / `dialogue:end` 事件来源：脚本台词（DialogueManager）或图对话（GraphDialogueManager） */

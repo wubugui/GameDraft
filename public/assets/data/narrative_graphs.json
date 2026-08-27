@@ -5,15 +5,20 @@
       "flow_1": "主线_交互点",
       "雾津_主线_交互点": "主线_交互点",
       "主线_藏钱交互点": "主线_交互点",
-      "wrapper_graph_3": "街巷_赌坊"
+      "wrapper_graph_3": "街巷_赌坊",
+      "癞子NPC": "npcall"
     },
     "states": {
-      "癞子NPC": {
-        "state_1": "在捡钱"
-      },
       "街巷_赌坊": {
         "initial": "赌场正常状态",
         "state_1": "初始状态"
+      },
+      "wrap_癞子": {
+        "state_1": "捡钱"
+      },
+      "npcall": {
+        "state_1": "initial",
+        "在捡钱": "initial"
       }
     }
   },
@@ -668,8 +673,8 @@
             "id": "state_3",
             "meta": {
               "editor": {
-                "x": 272,
-                "y": 117
+                "x": 270,
+                "y": 155
               }
             },
             "label": "主线开局闲逛B"
@@ -679,7 +684,7 @@
             "meta": {
               "editor": {
                 "x": 500,
-                "y": 96
+                "y": 39
               }
             },
             "label": "去赌坊"
@@ -5807,21 +5812,12 @@
     {
       "id": "composition_1",
       "mainGraph": {
-        "id": "癞子NPC",
+        "id": "npcall",
         "ownerType": "flow",
         "initialState": "initial",
         "states": {
           "initial": {
             "id": "initial",
-            "meta": {
-              "editor": {
-                "x": -398,
-                "y": 53
-              }
-            }
-          },
-          "在捡钱": {
-            "id": "在捡钱",
             "meta": {
               "editor": {
                 "x": 52,
@@ -5830,23 +5826,68 @@
             }
           }
         },
-        "transitions": [
-          {
-            "id": "t_1",
-            "from": "initial",
-            "to": "在捡钱",
-            "signal": "崖墓任务_发布完成"
-          },
-          {
-            "id": "t_2",
-            "from": "在捡钱",
-            "to": "initial",
-            "signal": "__draft__"
-          }
-        ],
-        "label": "癞子NPC"
+        "transitions": [],
+        "label": "NPC"
       },
-      "elements": []
+      "elements": [
+        {
+          "id": "wrapper_1",
+          "kind": "wrapperGraph",
+          "refId": "",
+          "x": -144,
+          "y": 162,
+          "meta": {
+            "emits": [],
+            "reads": [],
+            "commands": []
+          },
+          "ownerType": "npc",
+          "ownerId": "NPC_癞子",
+          "graph": {
+            "id": "wrap_癞子",
+            "ownerType": "npc",
+            "initialState": "initial",
+            "states": {
+              "initial": {
+                "id": "initial",
+                "meta": {
+                  "editor": {
+                    "x": 17,
+                    "y": 148
+                  }
+                }
+              },
+              "捡钱": {
+                "id": "捡钱",
+                "meta": {
+                  "editor": {
+                    "x": 310,
+                    "y": 147
+                  }
+                },
+                "label": "捡钱"
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_1",
+                "from": "initial",
+                "to": "捡钱",
+                "signal": "崖墓任务_发布完成"
+              },
+              {
+                "id": "t_2",
+                "from": "捡钱",
+                "to": "initial",
+                "signal": "私有事件完结"
+              }
+            ],
+            "ownerId": "NPC_癞子",
+            "label": "npc癞子状态机"
+          },
+          "label": "npc癞子状态机"
+        }
+      ]
     },
     {
       "id": "composition_2",
