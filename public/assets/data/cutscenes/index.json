@@ -4129,7 +4129,7 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "text": "哎呀，不是不敢撒。这个晚上背人，价钱和白天不一样哦。",
+        "text": "哎呀，不是不敢撒。这个晚上的活路，价钱和白天不一样哦。",
         "scriptedNpcId": "player",
         "portrait": {
           "emotion": "smirk"
@@ -4474,16 +4474,6 @@
       }
     ],
     "targetScene": "test_room_b",
-    "restoreState": false
-  },
-  {
-    "id": "主线_赌场输钱",
-    "steps": [
-      {
-        "kind": "present",
-        "type": "waitClick"
-      }
-    ],
     "restoreState": false
   },
   {

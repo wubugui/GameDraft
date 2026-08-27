@@ -1038,7 +1038,7 @@
       "initialAnimState": "idle"
     },
     {
-      "id": "new_npc_0",
+      "id": "NPC_癞子",
       "x": 990.8,
       "y": 2171.1,
       "interactionRange": 50,
@@ -1061,8 +1061,9 @@
       },
       "conditions": [
         {
-          "narrative": "癞子NPC",
-          "state": "在捡钱"
+          "narrative": "wrap_癞子",
+          "state": "捡钱",
+          "reached": true
         }
       ],
       "conditionHidesEntity": true
@@ -1610,6 +1611,44 @@
           "params": {
             "graphId": "寻狗_找活"
           }
+        }
+      ]
+    },
+    {
+      "id": "Zone_癞子第一次出现",
+      "polygon": [
+        {
+          "x": 918.4,
+          "y": 2139.8
+        },
+        {
+          "x": 1018.3,
+          "y": 2076.4
+        },
+        {
+          "x": 1131.7,
+          "y": 2233.1
+        },
+        {
+          "x": 919.2,
+          "y": 2244.8
+        }
+      ],
+      "onInteract": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "寻狗_癞子显摆",
+            "npcId": "NPC_癞子",
+            "ownerType": "npc",
+            "ownerId": "NPC_癞子"
+          }
+        }
+      ],
+      "conditions": [
+        {
+          "narrative": "wrap_癞子",
+          "state": "捡钱"
         }
       ]
     }
