@@ -30,10 +30,10 @@ class TestChapterGrouping(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls._app = QApplication.instance() or QApplication(sys.argv)
-        cls._ng = json.load(open(_ROOT / "public/assets/data/narrative_graphs.json"))
+        cls._ng = json.load(open(_ROOT / "public/assets/data/narrative_graphs.json", encoding="utf-8"))
 
     def _dlg(self, gid: str) -> dict:
-        return json.load(open(_ROOT / f"public/assets/dialogues/graphs/{gid}.json"))
+        return json.load(open(_ROOT / f"public/assets/dialogues/graphs/{gid}.json", encoding="utf-8"))
 
     def test_pure_derive_owner(self) -> None:
         owners = build_narrative_signal_owners(self._ng)
