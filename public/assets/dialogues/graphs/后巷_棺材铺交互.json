@@ -21,14 +21,10 @@
         {
           "state": "initial",
           "next": "n_start"
-        },
-        {
-          "state": "initial",
-          "next": "n_2"
         }
       ],
       "defaultNext": "n_2",
-      "graphId": "后巷_街边店铺"
+      "graphId": "@owner"
     },
     "n_2": {
       "type": "end"

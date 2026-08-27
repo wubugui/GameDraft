@@ -10,8 +10,9 @@ from tools.editor.shared.project_paths import ProjectPaths
 from .character_dialogue import resolve_npc_dialogue_graph
 
 _ENTITY_WRAPPER_OWNER_TYPES = frozenset({"npc", "hotspot", "zone", "quest", "scene"})
+#: contextState 读起来「天经地义」的上层编排图；其余归 crossEntity（提醒，不拦），
+#: 见 `classify_context_graph`。
 _CONTEXT_READABLE_OWNER_TYPES = frozenset({"flow", "scenario", "scene"})
-_FORBIDDEN_CONTEXT_OWNER_TYPES = frozenset({"npc", "hotspot", "zone", "quest", "dialogue"})
 
 # 派生广播信号前缀，镜像 narrative_state_editor.DERIVED_STATE_SIGNAL_PREFIX（:48）/
 # 运行时 stateEnteredSignalKey。此处独立定义以免 shared 反向依赖 editors 层。
@@ -635,40 +636,100 @@ def list_entity_wrapper_graphs(project_root: Path) -> list[dict[str, Any]]:
     return out
 
 
-def list_context_readable_graphs(project_root: Path) -> list[dict[str, str]]:
-    """flow/scenario 类图，供 ContextStateNode graphId 下拉。"""
+#: `classify_context_graph` 的三分判定值。
+CONTEXT_GRAPH_OK = "ok"
+CONTEXT_GRAPH_CROSS_ENTITY = "crossEntity"
+CONTEXT_GRAPH_MISSING = "missing"
+
+
+def _context_graph_verdict(owner_type: str, kind: str) -> str:
+    """已知存在的图 → ok / crossEntity。**判定只此一处**：选择器与校验必须同口径，
+    分成两份镜像就会出现「选择器不标黄、保存却报 warning」这类打架。"""
+    if kind == "scenarioSubgraph" or owner_type in _CONTEXT_READABLE_OWNER_TYPES:
+        return CONTEXT_GRAPH_OK
+    return CONTEXT_GRAPH_CROSS_ENTITY
+
+
+#: contextState graphId 选择器里的分组顺序：上层编排图在前，实体 wrapper 在后。
+#: 不在表内的 ownerType 跟 wrapper 一样排后面（未知归属不假装是主线图）。
+_CONTEXT_GRAPH_GROUP_ORDER = {"flow": 0, "scenario": 1, "scene": 2}
+
+#: ownerType → 选择器里给人看的归属说明。
+_CONTEXT_GRAPH_OWNER_LABEL = {
+    "flow": "主线/流程图",
+    "scenario": "拍子图",
+    "scene": "场景 wrapper",
+    "npc": "NPC wrapper",
+    "hotspot": "热区 wrapper",
+    "zone": "区域 wrapper",
+    "quest": "任务 wrapper",
+    "dialogue": "对话 wrapper",
+}
+
+
+def list_context_state_graphs(project_root: Path) -> list[dict[str, str]]:
+    """contextState graphId 选择器的候选：**所有**叙事图，按归属分组排序。
+
+    2026-08-27 起不再过滤实体 wrapper（旧名 ``list_context_readable_graphs`` 只放
+    flow/scenario 元素出来，连 ``scene`` 都漏了——校验放行、选择器却不列，策划只能
+    手打）。跨实体读 wrapper 是正当需求，藏起来只会让人去 switch 的条件叶子里绕，
+    那边一个 wrapper 都没滤。判定与提醒统一走 `classify_context_graph`。
+
+    每行给 ``graphId`` / ``label``（纯名字，不拼 id——选择器自己按 ``名字 [id]``
+    渲染）/ ``detail``（归属说明）/ ``ownerType`` / ``verdict``。
+    """
     narrative = load_narrative_graphs(project_root)
     if not narrative:
         return []
-    out: list[dict[str, str]] = []
+    rows: list[dict[str, str]] = []
     seen: set[str] = set()
+
+    def _add(graph: dict[str, Any], gid: str, owner_type: str, kind: str, fallback: str) -> None:
+        if not gid or gid in seen:
+            return
+        seen.add(gid)
+        verdict = _context_graph_verdict(owner_type, kind)
+        owner_label = _CONTEXT_GRAPH_OWNER_LABEL.get(owner_type, owner_type or "归属未知")
+        rows.append({
+            "graphId": gid,
+            "label": _graph_name(graph, fallback) or gid,
+            "detail": (
+                owner_label if verdict == CONTEXT_GRAPH_OK
+                else f"{owner_label}（跨实体读取）"
+            ),
+            "ownerType": owner_type,
+            "verdict": verdict,
+        })
+
     for comp in narrative.get("compositions", []) or []:
         if not isinstance(comp, dict):
             continue
         main = comp.get("mainGraph")
         if isinstance(main, dict):
             gid = str(main.get("id", "")).strip()
-            otype = str(main.get("ownerType", "")).strip()
-            if gid and gid not in seen and otype in _CONTEXT_READABLE_OWNER_TYPES:
-                seen.add(gid)
-                label = _display_ref(_graph_name(main, gid), gid)
-                out.append({"graphId": gid, "label": f"{label} (main/{otype})"})
+            _add(main, gid, str(main.get("ownerType", "")).strip(), "mainGraph", gid)
         for element in comp.get("elements", []) or []:
             if not isinstance(element, dict):
                 continue
-            kind = str(element.get("kind", "")).strip()
             graph = element.get("graph") if isinstance(element.get("graph"), dict) else {}
             gid = str(graph.get("id", "")).strip()
-            if not gid or gid in seen:
-                continue
-            otype = str(element.get("ownerType") or graph.get("ownerType") or "").strip()
-            if kind == "scenarioSubgraph" or otype == "scenario":
-                seen.add(gid)
-                out.append({"graphId": gid, "label": f"{_display_ref(_graph_name(graph, str(element.get('label', '') or gid)), gid)} (scenario)"})
-            elif otype == "flow":
-                seen.add(gid)
-                out.append({"graphId": gid, "label": f"{_display_ref(_graph_name(graph, gid), gid)} (flow)"})
-    return out
+            _add(
+                graph,
+                gid,
+                str(element.get("ownerType") or graph.get("ownerType") or "").strip(),
+                str(element.get("kind", "")).strip(),
+                str(element.get("label", "") or gid),
+            )
+    # 顶层 `graphs`（历史形状）：`graph_states` 一直认它，选择器不认就是「状态选得出、
+    # 图选不出」的半截状态。
+    for graph in narrative.get("graphs", []) or []:
+        if not isinstance(graph, dict):
+            continue
+        gid = str(graph.get("id", "")).strip()
+        _add(graph, gid, str(graph.get("ownerType", "")).strip(), "legacyGraph", gid)
+
+    rows.sort(key=lambda r: _CONTEXT_GRAPH_GROUP_ORDER.get(r["ownerType"], 9))
+    return rows
 
 
 def graph_states(project_root: Path, graph_id: str) -> list[str]:
@@ -1121,27 +1182,37 @@ def build_task_index(model: Any, composition_id: str) -> dict[str, Any]:
     return result
 
 
-def is_context_graph_allowed(project_root: Path, graph_id: str) -> bool:
-    narrative = load_narrative_graphs(project_root)
-    if not narrative:
-        return False
-    graph_id = str(graph_id or "").strip()
-    for comp in narrative.get("compositions", []) or []:
-        if not isinstance(comp, dict):
-            continue
-        main = comp.get("mainGraph")
-        if isinstance(main, dict) and str(main.get("id", "")).strip() == graph_id:
-            otype = str(main.get("ownerType", "")).strip()
-            return otype in _CONTEXT_READABLE_OWNER_TYPES
-        for element in comp.get("elements", []) or []:
-            if not isinstance(element, dict):
-                continue
-            graph = element.get("graph") if isinstance(element.get("graph"), dict) else {}
-            if str(graph.get("id", "")).strip() != graph_id:
-                continue
-            otype = str(element.get("ownerType") or graph.get("ownerType") or "").strip()
-            kind = str(element.get("kind", "")).strip()
-            if otype in _FORBIDDEN_CONTEXT_OWNER_TYPES:
-                return False
-            return kind == "scenarioSubgraph" or otype in _CONTEXT_READABLE_OWNER_TYPES
-    return False
+def classify_context_graph(project_root: Path, graph_id: str) -> tuple[str, str]:
+    """contextState 的 graphId 判定，返回 ``(verdict, ownerType)``。
+
+    - ``missing``     图册里根本没有这张图 → 悬垂引用，**error**。
+    - ``crossEntity`` 图存在，但属于某个实体的 wrapper（npc/hotspot/zone/quest/…）
+      → **warning，不是 error**。
+    - ``ok``          flow / scenario / scene 这类上层编排图。
+
+    2026-08-27 从布尔 ``is_context_graph_allowed`` 改成三分，原因三条：
+
+    1. **两种毛病压成同一个 False**，于是悬垂引用被报成「不能选择 npc/hotspot
+       wrapper」——真正的问题（图没了）被措辞盖住。踩过：`后巷_棺材铺交互` 的
+       `后巷_街边店铺` 从来就不存在，却顶着一条 wrapper 措辞的 error 挂了很久。
+    2. **拦不住任何东西**：同一个 `getActiveState` 读取换成 switch 的 narrative
+       条件叶子完全免检（候选见 `condition_expr_tree._narrative_graph_entries`，
+       wrapper 一个不漏），实测对话图里 97 处 narrative 读取只有 3 处走 contextState，
+       其中两处已在用 switch 读 npc wrapper。把 error 加在少数派身上，只是把作者
+       推去用另一个节点。
+    3. **比 TS 权威更严**：运行时 `GraphDialogueManager.evalContextState` 不查任何
+       归属表，TS 侧也没有对应校验——Python 兜底报 error 即 editor-tools-norms 红线
+       「Python 兜底比 TS 权威更严」。
+
+    跨实体读 wrapper 本身是正当需求（甲的对话按乙的状态分支，ownerState 在这里根本
+    不可用）；值得提醒的只是「读当前 owner 自己的状态」该用 ownerState 或 ``@owner``
+    相对 token，别把对话图焊死到一个具体实体 id 上。
+    """
+    info = graph_info(project_root, graph_id)
+    if not info:
+        return (CONTEXT_GRAPH_MISSING, "")
+    owner_type = str(info.get("ownerType", "")).strip()
+    return (
+        _context_graph_verdict(owner_type, str(info.get("kind", "")).strip()),
+        owner_type,
+    )

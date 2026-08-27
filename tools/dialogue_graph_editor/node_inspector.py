@@ -35,6 +35,7 @@ from tools.editor.shared.portrait_catalog import (
     portrait_image_path,
 )
 from tools.editor.shared.portrait_ref_field import PortraitRefField
+from tools.editor.shared.reference_picker import ReferencePickerField
 from tools.editor.shared.bubble_anchor_field import (
     BubbleAnchorPickField,
     actor_for_dialogue_speaker,
@@ -861,7 +862,11 @@ class NodeInspector(QWidget):
                 if isinstance(mn, QLineEdit):
                     mn.setText(str(node_data.get("missingWrapperNext", "")))
                 gid = refs.get("graph_id_edit")
-                if isinstance(gid, QComboBox):
+                if isinstance(gid, ReferencePickerField):
+                    # 程序性 set_value 不发 value_changed —— 画布改连线不该被算成
+                    # 「用户改了 graphId」而标脏。
+                    gid.set_value(str(node_data.get("graphId", "")))
+                elif isinstance(gid, QComboBox):
                     gid.setCurrentText(str(node_data.get("graphId", "")))
                 wid = refs.get("wrapper_graph_id_edit")
                 if isinstance(wid, QComboBox):
@@ -4560,65 +4565,64 @@ class NodeInspector(QWidget):
 
     def _build_context_state(self, data: dict[str, Any]) -> None:
         from tools.editor.shared.narrative_catalog import (
+            CONTEXT_GRAPH_CROSS_ENTITY,
+            CONTEXT_GRAPH_MISSING,
+            classify_context_graph,
             graph_states,
-            is_context_graph_allowed,
-            list_context_readable_graphs,
+            list_context_state_graphs,
         )
 
-        hint = _help_marker(
-            "读取显式声明的上层 flow/scenario 叙事图状态（不可选择 npc/hotspot wrapper）。",
-            self._body,
+        _CONTEXT_BASE_TIP = (
+            "按另一张叙事图的当前状态分支。\n"
+            "flow / scenario / scene 这类上层编排图随便读；\n"
+            "读实体 wrapper（NPC/热区/区域/任务）也允许——那是「甲的对话按乙的状态分支」，"
+            "但读「当前对话 owner 自己的状态」用 ownerState 节点或 @owner 更稳，"
+            "免得把这张对话图焊死到一个具体实体 id 上。"
         )
+        hint = _help_marker(_CONTEXT_BASE_TIP, self._body)
         self._body_layout.addWidget(hint)
 
-        graphs = list_context_readable_graphs(self._project_root)
-        graph_ids = {
-            str(g.get("graphId", "") or "").strip()
-            for g in graphs
-            if str(g.get("graphId", "") or "").strip()
-        }
-        gid_cb = QComboBox(self._body)
-        gid_cb.setEditable(True)
-        gid_cb.addItem("")
-        # 相对 token：运行时按当前 owner/场景解析（@owner=当前对话 owner 主 wrapper，@scene=本场景 wrapper）
-        gid_cb.addItem("@owner（当前 owner 的主 wrapper）", "@owner")
-        gid_cb.addItem("@scene（本场景 wrapper）", "@scene")
-        for g in graphs:
-            gid = str(g.get("graphId", "") or "")
-            gid_cb.addItem(str(g.get("label", "") or gid), gid)
-        saved_gid = str(data.get("graphId", "") or "")
-        idx = gid_cb.findData(saved_gid)
-        if idx >= 0:
-            gid_cb.setCurrentIndex(idx)
-        else:
-            gid_cb.setCurrentText(saved_gid)
-        row_gid = QHBoxLayout()
+        # 引用字段一律走弹窗选择器（editor-tools-norms 选择器铁律 §5 +
+        # decisions/2026-07-11-dropdown-vs-popup-selector）：候选 40+ 且跨文件，
+        # 长下拉本就是明令禁止的形状。附带修掉旧实现的两个真 bug——
+        # ① 可编辑下拉逼出一套「按当前显示文本反查 itemData」的解析（
+        #    production-tooling-requirements.md:301 记的「保存时用了当前显示的
+        #    graphId」就是它），标签与真 id 对不上就写坏数据；
+        # ② `currentTextChanged` 连 `_emit_changed`，程序性填值也会标脏。
+        def _graph_rows() -> list[tuple[str, str, str]]:
+            rows: list[tuple[str, str, str]] = [
+                ("@owner", "当前对话 owner 的主 wrapper",
+                 "相对 token：运行时按 owner 解析，不写死 id"),
+                ("@scene", "本场景的 wrapper",
+                 "相对 token：运行时按当前场景解析，不写死 id"),
+            ]
+            for g in list_context_state_graphs(self._project_root):
+                gid = str(g.get("graphId", "") or "").strip()
+                if gid:
+                    rows.append((
+                        gid,
+                        str(g.get("label", "") or gid),
+                        str(g.get("detail", "") or ""),
+                    ))
+            return rows
+
+        gid_field = ReferencePickerField(
+            _graph_rows,
+            self._body,
+            allow_empty=True,
+            title="选择叙事图",
+            geometry_key="dialogue_context_state_graph_picker",
+        )
+        gid_field.setToolTip("JSON 字段 graphId：按这张叙事图的当前状态分支")
+        gid_field.set_value(str(data.get("graphId", "") or ""))
         _lbl_gid = QLabel("读哪张叙事图", self._body)
         _lbl_gid.setToolTip("JSON 字段 graphId：按这张叙事图的当前状态分支")
-        row_gid.addWidget(_lbl_gid)
-        row_gid.addWidget(gid_cb, 1)
-        self._body_layout.addLayout(row_gid)
+        # 竖排而不是「标签 + 控件」一行：检查器只有 280px 预算，弹窗选择器本身就是
+        # 只读框 + 三颗按钮，再挤个标签进去就把「清空」顶出可视区（界面硬契约 §15）。
+        self._body_layout.addWidget(_lbl_gid)
+        self._body_layout.addWidget(gid_field)
 
-        def _current_graph_id() -> str:
-            text = gid_cb.currentText().strip()
-            data_value = gid_cb.currentData()
-            data_id = str(data_value).strip() if data_value is not None else ""
-            current_index = gid_cb.currentIndex()
-            current_label = gid_cb.itemText(current_index).strip() if current_index >= 0 else ""
-            if text and text in graph_ids:
-                return text
-            if text and current_index >= 0 and text == current_label and data_id:
-                return data_id
-            if text:
-                for idx in range(gid_cb.count()):
-                    if gid_cb.itemText(idx).strip() == text:
-                        item_data = gid_cb.itemData(idx)
-                        item_id = str(item_data).strip() if item_data is not None else ""
-                        return item_id or text
-                return text
-            return data_id
-
-        state_options = graph_states(self._project_root, _current_graph_id())
+        state_options = graph_states(self._project_root, gid_field.current_value())
 
         case_rows, dn, _missing, build_getter = self._make_state_branch_rows(
             data,
@@ -4626,8 +4630,37 @@ class NodeInspector(QWidget):
             include_missing=False,
         )
 
-        def on_graph_changed(_t: str = "") -> None:
-            gid = _current_graph_id()
+        def _refresh_graph_verdict() -> None:
+            """把 graphId 的判定画到「ⓘ 说明」上：缺失=红，跨实体=黄，其余=常态。
+
+            光变颜色不够——说明本身收在 tooltip 里（布局纪律），所以判定也要写进
+            tooltip，否则策划看见黄字却无从知道黄在哪。
+            """
+            gid = gid_field.current_value().strip()
+            verdict = ""
+            owner_type = ""
+            if gid and not gid.startswith("@"):
+                verdict, owner_type = classify_context_graph(self._project_root, gid)
+            if verdict == CONTEXT_GRAPH_MISSING:
+                hint.setStyleSheet(app_theme.semantic_text_css("error"))
+                hint.setToolTip(
+                    f"⛔ {gid} 不在 narrative_graphs 里——悬垂引用，保存时会报 error。\n\n"
+                    f"{_CONTEXT_BASE_TIP}",
+                )
+            elif verdict == CONTEXT_GRAPH_CROSS_ENTITY:
+                hint.setStyleSheet(app_theme.semantic_text_css("warn"))
+                hint.setToolTip(
+                    f"⚠ 这是跨实体读取：{gid} 是 {owner_type or '未知归属'} 的 wrapper。\n"
+                    "有意为之就没问题（保存不拦，只提醒）；\n"
+                    "要读的其实是「当前对话 owner 自己」的话，改用 ownerState 节点或 @owner。\n\n"
+                    f"{_CONTEXT_BASE_TIP}",
+                )
+            else:
+                hint.setStyleSheet(app_theme.semantic_text_css("faint"))
+                hint.setToolTip(_CONTEXT_BASE_TIP)
+
+        def on_graph_changed(_value: str = "") -> None:
+            gid = gid_field.current_value()
             ids = graph_states(self._project_root, gid)
             for row in case_rows:
                 cb = row.get("state_edit")
@@ -4643,24 +4676,23 @@ class NodeInspector(QWidget):
                     cb.setCurrentText(cur)
                 finally:
                     cb.blockSignals(False)
-            if gid and not gid.startswith("@") and not is_context_graph_allowed(self._project_root, gid):
-                hint.setStyleSheet(app_theme.semantic_text_css("error"))
-            else:
-                hint.setStyleSheet(app_theme.semantic_text_css("faint"))
+            _refresh_graph_verdict()
             self._emit_changed()
 
-        gid_cb.currentTextChanged.connect(on_graph_changed)
+        # 只有真实用户选择才走这里（ReferencePickerField 的程序性 set_value /
+        # refresh_display 从不发 value_changed）。
+        gid_field.value_changed.connect(on_graph_changed)
+        _refresh_graph_verdict()
 
         self._topology_refs = {
             "type": "contextState",
             "case_rows": case_rows,
             "default_next": dn,
-            "graph_id_edit": gid_cb,
+            "graph_id_edit": gid_field,
         }
 
         def getter() -> dict[str, Any]:
-            gid = _current_graph_id()
-            base = build_getter("contextState", gid)()
+            base = build_getter("contextState", gid_field.current_value())()
             return base
 
         self._getter = getter

@@ -7,7 +7,11 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QPushButton
+
+from tools.editor.shared.reference_picker import ReferencePickerField
 
 from tools.dialogue_graph_editor.graph_document import (
     default_node,
@@ -50,6 +54,36 @@ from tools.dialogue_graph_editor.oden_dialogue_nodes import (
     pn_owner_state_case,
     pn_switch_case,
 )
+
+
+def _pick_reference(case: unittest.TestCase, field: ReferencePickerField, value: str) -> None:
+    """从最外层用户入口驱动弹窗选择器：点「选择…」→ 在弹窗里选中 → 确定。
+
+    护栏必须发真实用户事件（editor-tools-norms 过程义务 §3）——直接调 `set_value`
+    连 `value_changed` 都不发（那是程序性路径的正确行为），根本测不到「用户选了图之后
+    表单有没有跟上」这条路。弹窗本体的交互由
+    `tools/editor/tests/test_dialogue_reference_picker.py` 用真键鼠事件守着，
+    这里只替换弹窗的返回值。
+    """
+    class _AcceptingDialog:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def exec(self) -> QDialog.DialogCode:
+            return QDialog.DialogCode.Accepted
+
+        def selected_value(self) -> str:
+            return value
+
+    button = next(
+        b for b in field.findChildren(QPushButton) if b.text() == "选择…"
+    )
+    with patch(
+        "tools.editor.shared.reference_picker.ReferencePickerDialog",
+        _AcceptingDialog,
+    ):
+        QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+    case.assertEqual(field.current_value(), value)
 
 
 class OwnerContextNodeTests(unittest.TestCase):
@@ -366,18 +400,20 @@ class OwnerContextNodeTests(unittest.TestCase):
 
         inspector.set_change_callback(mark_changed)
 
-        with patch("tools.editor.shared.narrative_catalog.list_context_readable_graphs") as list_graphs, \
+        with patch("tools.editor.shared.narrative_catalog.list_context_state_graphs") as list_graphs, \
              patch("tools.editor.shared.narrative_catalog.graph_states") as graph_states, \
-             patch("tools.editor.shared.narrative_catalog.is_context_graph_allowed") as is_allowed:
+             patch("tools.editor.shared.narrative_catalog.classify_context_graph") as classify:
             list_graphs.return_value = [
-                {"graphId": "flow_a", "label": "Flow A"},
-                {"graphId": "flow_b", "label": "Flow B"},
+                {"graphId": "flow_a", "label": "Flow A", "detail": "主线/流程图",
+                 "ownerType": "flow", "verdict": "ok"},
+                {"graphId": "flow_b", "label": "Flow B", "detail": "主线/流程图",
+                 "ownerType": "flow", "verdict": "ok"},
             ]
             graph_states.side_effect = lambda _root, gid: {
                 "flow_a": ["ready"],
                 "flow_b": ["done"],
             }.get(gid, [])
-            is_allowed.return_value = True
+            classify.return_value = ("ok", "flow")
 
             inspector.set_node(
                 "root",
@@ -389,8 +425,9 @@ class OwnerContextNodeTests(unittest.TestCase):
                 },
             )
             refs = inspector._topology_refs
-            gid_cb = refs["graph_id_edit"]
-            gid_cb.setCurrentText("flow_b")
+            gid_field = refs["graph_id_edit"]
+            self.assertIsInstance(gid_field, ReferencePickerField)
+            _pick_reference(self, gid_field, "flow_b")
 
             node = inspector.get_node()
             self.assertEqual(node["type"], "contextState")
@@ -398,6 +435,88 @@ class OwnerContextNodeTests(unittest.TestCase):
             self.assertGreaterEqual(changes, 1)
 
         inspector.deleteLater()
+
+    def test_context_state_graph_field_is_popup_picker_not_dropdown(self) -> None:
+        """引用字段禁止长下拉（editor-tools-norms 选择器铁律 / 2026-07-11 拍板）。
+
+        旧实现是可编辑 QComboBox，候选 40+ 且跨文件；它还逼出一套「按当前显示文本
+        反查 itemData」的解析——标签与真 graphId 对不上就静默写坏数据。
+        """
+        root = Path(__file__).resolve().parents[3]
+        inspector = NodeInspector(lambda: ["root", "hit"], project_root=root)
+        inspector.set_node(
+            "root",
+            {"type": "contextState", "graphId": "wrap_读人_儿子",
+             "cases": [{"state": "s", "next": "hit"}], "defaultNext": "hit"},
+        )
+        gid_field = inspector._topology_refs["graph_id_edit"]
+        self.assertIsInstance(gid_field, ReferencePickerField)
+        self.assertNotIsInstance(gid_field, QComboBox)
+        inspector.deleteLater()
+
+    def test_context_state_keeps_dangling_graph_id_verbatim(self) -> None:
+        """悬垂 graphId 必须保值（共享控件保值铁律）——不静默清空、不顶替成第一项。"""
+        root = Path(__file__).resolve().parents[3]
+        inspector = NodeInspector(lambda: ["root", "hit"], project_root=root)
+        inspector.set_node(
+            "root",
+            {"type": "contextState", "graphId": "根本不存在的图",
+             "cases": [{"state": "s", "next": "hit"}], "defaultNext": "hit"},
+        )
+        gid_field = inspector._topology_refs["graph_id_edit"]
+        self.assertEqual(gid_field.current_value(), "根本不存在的图")
+        self.assertEqual(inspector.get_node()["graphId"], "根本不存在的图")
+        inspector.deleteLater()
+
+    def test_context_state_accepts_entity_wrapper_without_error(self) -> None:
+        """contextState 读实体 wrapper：warning 而不是 error（2026-08-26 放开）。
+
+        同一个 `getActiveState` 读取换成 switch 的 narrative 条件叶子完全免检，
+        运行时 `evalContextState` 也不查归属——在这里报 error 就是 Python 兜底
+        比 TS 权威更严（editor-tools-norms 红线），且拦不住任何东西。
+        """
+        root = Path(__file__).resolve().parents[3]
+        graph = {
+            "id": "g", "entry": "n_ctx",
+            "nodes": {
+                "n_ctx": {
+                    "type": "contextState", "graphId": "wrap_读人_儿子",
+                    "cases": [], "defaultNext": "n_end",
+                },
+                "n_end": {"type": "end"},
+            },
+        }
+        errors, warns = validate_graph_tiered(graph, project_root=root)
+        self.assertEqual([e for e in errors if "wrap_读人_儿子" in e], [])
+        self.assertTrue(
+            any("wrap_读人_儿子" in w and "跨实体" in w for w in warns),
+            f"应给一条跨实体读取的提醒，实际 warnings={warns}",
+        )
+
+    def test_context_state_dangling_graph_id_says_it_is_missing(self) -> None:
+        """悬垂 graphId 报「不存在」，不再借 wrapper 的措辞。
+
+        踩过：`后巷_棺材铺交互` 指向从来不存在的 `后巷_街边店铺`，却报成
+        「不允许读取（不能选择 npc/hotspot wrapper）」——真毛病被措辞盖住。
+        """
+        root = Path(__file__).resolve().parents[3]
+        graph = {
+            "id": "g", "entry": "n_ctx",
+            "nodes": {
+                "n_ctx": {
+                    "type": "contextState", "graphId": "从来没有过这张图",
+                    "cases": [], "defaultNext": "n_end",
+                },
+                "n_end": {"type": "end"},
+            },
+        }
+        errors, _warns = validate_graph_tiered(graph, project_root=root)
+        hits = [e for e in errors if "从来没有过这张图" in e]
+        self.assertTrue(hits, f"悬垂 graphId 应报 error，实际 errors={errors}")
+        self.assertTrue(
+            all("不存在" in e for e in hits),
+            f"消息要说「不存在」而不是 wrapper 措辞：{hits}",
+        )
 
     def test_switch_condition_expr_uses_structured_tree_not_json_editor(self) -> None:
         class FakeProjectModel:
@@ -582,7 +701,12 @@ class OwnerContextNodeTests(unittest.TestCase):
         self.assertTrue(any("setNarrativeState" in e for e in errors))
         self.assertFalse(any("setNarrativeState" in w for w in warnings))
 
-    def test_rejects_forbidden_context_graph_without_project(self) -> None:
+    def test_context_graph_pointing_at_npc_wrapper_warns_but_does_not_block(self) -> None:
+        """曾是 `test_rejects_forbidden_context_graph_without_project`（断言 error
+        「不允许读取」）。2026-08-26 降级为 warning——理由见
+        `narrative_catalog.classify_context_graph` 的文档串：拦不住（同一读取走
+        switch 的 narrative 条件叶子完全免检）、运行时不查、且比 TS 权威更严。
+        """
         data = {
             "schemaVersion": 1,
             "id": "t",
@@ -597,8 +721,14 @@ class OwnerContextNodeTests(unittest.TestCase):
                 "end": {"type": "end"},
             },
         }
-        errors, _ = validate_graph_tiered(data, project_root=Path(__file__).resolve().parents[3])
-        self.assertTrue(any("不允许读取" in e for e in errors))
+        errors, warnings = validate_graph_tiered(
+            data, project_root=Path(__file__).resolve().parents[3],
+        )
+        self.assertEqual([e for e in errors if "npc_ringboy" in e], [])
+        self.assertTrue(
+            any("npc_ringboy" in w and "跨实体" in w for w in warnings),
+            f"应给一条跨实体读取的提醒，实际 warnings={warnings}",
+        )
 
     def test_owner_state_warns_when_multi_wrapper_without_wrapper_graph_id(self) -> None:
         data = {
