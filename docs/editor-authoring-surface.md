@@ -36,15 +36,17 @@
 ## 场景 / 世界(`scene_editor.py`)
 
 > 位面归属:hotspot/NPC/zone 详情面板均有「位面归属」行(多选自 planes.json,缺省=存在于所有位面;含保值孤儿项)。
+> 时段归属:hotspot/NPC/zone **以及场景分组**四处详情面板均有「时段归属」行(多选自 `game_config.dayNight.phases`,写 `phases` 字段;**只在场景勾了「参与日夜循环」时生效**)。缺省是**三级就近取用**——成员自己写的 → 所属分组写的 → 种类缺省(NPC=只在勾了 daylight「街上有人」的那几段;热点/区域=所有时段都在);成员与分组都写了则取**交集**。分组自己缺省=不施加限制(它是异构容器,可能同时装着人和门,不套用 NPC 那条「只在白日」)。**别再用 `conditions` 里的 `{timePhase:…}` 表达分组的时间**——那条在另一层、不吃日夜总闸,且与成员的 NPC 缺省纯 AND 对撞(2026-08-26 前雾津送葬队伍 13 人就是这么死的)。
 > 2026-07-18 起:场景编辑器支持撤销/重做(Ctrl+Z,场景内增删改/拖动/gizmo/分组各为一条命令;跨文件重构仍走「重构→撤销上次重构」)、左栏实体树(类型/分组视图+过滤,与画布双向同步)、多选(树 Ctrl/Shift+画布框选;批量拖动/删除/复制/指派分组)。
-> 组动作 setGroupEnabled/moveGroupBy 按 group 标签寻址,首期只作用于当前场景的 NPC/热区(zone 可挂 group 标签但暂不被组动作消费)。
+> 组动作 setGroupEnabled/moveGroupBy 按 group 寻址,作用于当前场景的 NPC / 热区 / **区域三类**——zone 已被消费:`setGroupEnabled` 走组会话通道,zone 随之从 ZoneSystem 注册/反注册(`SceneManager.shouldRegisterZoneWithZoneSystem`);`moveGroupBy` 整体平移 zone 的 polygon(`SceneManager.moveCurrentSceneGroupBy`)。
 
 | 实体 | 可编辑字段 | 操作 |
 |---|---|---|
 | **场景顶层** | name / worldWidth / worldHeight(可锁宽高比) / worldScale / bgm / filterId / camera.zoom / camera.pixelsPerUnit / playerWalkSpeed / playerRunSpeed / ambientSounds / onEnter(场景级动作) / depthConfig.depth_tolerance + floor_offset / **perspectiveScale(透视缩放:启用开关+近/远端缩放+midStops 中途点表+affectsSpeed;画布橙色箭头拖两端设深度轴,任意方向;缺省不写键=不缩放)** | 无"新建场景"入口 |
-| **热区 hotspot** | 通用:id / type(inspect/pickup/transition/npc/encounter) / label(富文本) / x / y / interactionRange / **scale / rotation(实例 transform,quad 级真变换;缺省 1/0 不写键;画布 gizmo 可拖)** / **perspectiveScaleEnabled(透视缩放参与,三态下拉;热区缺省不参与)** / **group(分组标签,树右键/多选页指派)** / autoTrigger / cutsceneIds / cutsceneOnly / conditions / conditionHidesEntity / displayImage / collisionPolygon。data 见下 | 增/删、画布拖位置+拖碰撞多边形+transform gizmo |
-| **区域 zone** | id / zoneKind(standard/depth_floor) / floorOffsetBoost(仅 depth_floor) / polygon(画布画/拖/插删点) / **group(分组标签)** / conditions / onEnter / onStay / onExit(均仅 standard) | 增/删、画布编辑多边形 |
-| **NPC** | id / name / x / y / initialFacing / dialogueGraphId / dialogueGraphEntry / dialogueCameraZoom / interactionRange / **scale / rotation(实例 transform,同热区)** / **perspectiveScaleEnabled(透视缩放参与,三态下拉;NPC 缺省参与、renderRaw 缺省不参与)** / **group(分组标签)** / cutsceneIds / cutsceneOnly / conditions / conditionHidesEntity / animFile / initialAnimState / initialAnimPlayback(speed/reverse/holdFrame/startFrame,进场起播一次性生效,-1=未设) / patrol / collisionPolygon | 增/删、画布拖位置+巡逻折线+transform gizmo |
+| **热区 hotspot** | 通用:id / type(inspect/pickup/transition/npc/encounter) / label(富文本) / x / y / interactionRange / **scale / rotation(实例 transform,quad 级真变换;缺省 1/0 不写键;画布 gizmo 可拖)** / **perspectiveScaleEnabled(透视缩放参与,三态下拉;热区缺省不参与)** / **group(分组标签,树右键/多选页指派)** / **planes(位面归属)** / **phases(时段归属;缺省=所有时段都在)** / autoTrigger / cutsceneIds / cutsceneOnly / conditions / conditionHidesEntity / displayImage / collisionPolygon。data 见下 | 增/删、画布拖位置+拖碰撞多边形+transform gizmo |
+| **区域 zone** | id / zoneKind(standard/depth_floor) / floorOffsetBoost(仅 depth_floor) / polygon(画布画/拖/插删点) / **group(分组标签)** / **planes(位面归属)** / **phases(时段归属;缺省=所有时段都在)** / conditions / onEnter / onStay / onExit(均仅 standard) | 增/删、画布编辑多边形 |
+| **NPC** | id / name / x / y / initialFacing / dialogueGraphId / dialogueGraphEntry / dialogueCameraZoom / interactionRange / **scale / rotation(实例 transform,同热区)** / **perspectiveScaleEnabled(透视缩放参与,三态下拉;NPC 缺省参与、renderRaw 缺省不参与)** / **group(分组标签)** / **planes(位面归属)** / **phases(时段归属;缺省=只在勾了 daylight「街上有人」的那几段——与热点/区域不同,别照抄)** / cutsceneIds / cutsceneOnly / conditions / conditionHidesEntity / animFile / initialAnimState / initialAnimPlayback(speed/reverse/holdFrame/startFrame,进场起播一次性生效,-1=未设) / patrol / collisionPolygon | 增/删、画布拖位置+巡逻折线+transform gizmo |
+| **场景分组 entityGroups** | id / label / **phases(时段归属;缺省=不施加限制,成员各回各自缺省)** / conditions(「整体显影条件」,叙事/任务状态用它;**时间不要写在这里**) / 位置与整体位移(Δx/Δy——分组自身没有坐标,偏移直接烘进每个成员) / 成员列表(只读,由成员的 group 字段派生) | 增/删、画布整组拖动;旧场景只有成员 group 标签时不写 entityGroups,编辑并 Apply 后才升格为显式分组实体 |
 | **出生点** | key(default 只读) / x / y | 增/删(default 不可删) |
 
 **热区每种 type 的 `data`(均整体重建)**:

@@ -1680,6 +1680,10 @@ export class Game {
           sid,
           this.stateController.currentState === GameState.Exploring,
         );
+        // 派生基底那一半上面刷完了，条件那一半（成员条件 + 分组整体显影条件）由
+        // InteractionSystem 持有。它的 update 只在探索态跑，而时刻多半是在过场/对话里推进的，
+        // 不在这儿补一刀就会跨时段时半条街按新时辰走、另半条停在旧时辰。
+        this.interactionSystem.refreshVisibilityChannels();
       },
     });
     this.sceneManager.setNpcSchedulePresenceGetter((def) =>
@@ -6734,6 +6738,10 @@ export class Game {
       // 「嗅」键（KeyQ）：主动闻一下当前气味，HUD 气缕短暂拔高变清。
       if (this.inputManager.wasKeyJustPressed('KeyQ')) this.smellSystem.sniff();
       this.interactionSystem.update(dt);
+      // 非探索态跨时段时挂起的 zone 重注册在此补刷，且必须赶在 zoneSystem.update 之前——
+      // 晚于它，过期的 zone 集合会以旧集合多跑一帧 enter/stay（与位面那条补刷同一个理由，
+      // 见 planeReconciler.update 的排序注释）。没挂起时只是一次判空。
+      this.sceneManager.flushPendingTimeZoneRefresh();
       this.zoneSystem.update(dt);
       for (const npc of this.sceneManager.getCurrentNpcs()) {
         npc.cutsceneUpdate(dt);

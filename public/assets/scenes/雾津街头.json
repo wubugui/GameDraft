@@ -1875,10 +1875,8 @@
     {
       "id": "雾津送葬队伍",
       "label": "雾津送葬队伍",
-      "conditions": [
-        {
-          "timePhase": "夜"
-        }
+      "phases": [
+        "夜"
       ]
     },
     {

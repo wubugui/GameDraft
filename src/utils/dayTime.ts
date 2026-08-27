@@ -192,6 +192,37 @@ export function isEntityInPhase(
   return list.includes(currentPhase);
 }
 
+/**
+ * 实体的**有效时段判定**：三级就近取用 + 所属分组作为整体限制。
+ * 玩法定调见 `docs/玩法功能需求清单.md` H4（2026-08-26 补）。
+ *
+ * - 实体自己写了 → 实体的时段 **∩** 分组的时段
+ * - 实体没写、分组写了 → **跟分组走**（分组的时段就是成员的缺省来源，
+ *   此时**不再**回落到 `kindFallback`——正因为回落才会出事：给整队人配一次"夜里出现"，
+ *   队里没单独勾的 NPC 却拿到"只在白日"的种类缺省，两者纯 AND = 这个人永远不出现）
+ * - 都没写 → `kindFallback`（NPC 传 daylight 清单；热点/zone 不传 = 全时段）
+ * - 分组自己不写 = 不施加限制（分组是异构容器，可能同时装着人和门，
+ *   借用 NPC 的 daylight 缺省会让一个装着门和路牌的组夜里整组消失）
+ *
+ * 实现刻意就是**两次 {@link isEntityInPhase}**：它的三重 fail-open（空数组按未写、
+ * 缺省清单为空不限制、`currentPhase` 取不到一律通过）必须原样继承，
+ * 在这里另写一套白名单比对迟早会漏掉其中一条。
+ *
+ * ⚠ 本函数**不管**「场景有没有开日夜」，那道总闸在 `SceneManager.entityInPhase`。
+ * ⚠ 编辑器画布的时段视图镜像的就是这条公式（`tools/editor/shared/scene_view_filters.py`），
+ *   改这里必须同步改那边，否则就是"编辑器骗人"。
+ */
+export function isEntityInPhaseWithGroup(
+  entityPhases: readonly string[] | undefined,
+  groupPhases: readonly string[] | undefined,
+  currentPhase: string,
+  kindFallback?: readonly string[],
+): boolean {
+  const group = Array.isArray(groupPhases) && groupPhases.length > 0 ? groupPhases : undefined;
+  return isEntityInPhase(entityPhases, currentPhase, group ?? kindFallback)
+      && isEntityInPhase(group, currentPhase, undefined);
+}
+
 /** 从 `fromMinutes` 前进到 `toMinutes` 需要的分钟数（跨零点按绕一圈算；相等返回 0）。 */
 export function forwardDistance(fromMinutes: number, toMinutes: number): number {
   const from = normalizeMinutes(fromMinutes);

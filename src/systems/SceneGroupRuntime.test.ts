@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { composeSceneEntityConditionState } from './InteractionSystem';
+import { InteractionSystem, composeSceneEntityConditionState } from './InteractionSystem';
 import { ZoneSystem } from './ZoneSystem';
 import { resolveDepthFloorOffsetBoost } from '../utils/depthFloorZones';
 import type { ZoneDef } from '../data/types';
@@ -75,5 +75,49 @@ describe('scene entity group runtime semantics', () => {
     expect(resolveDepthFloorOffsetBoost(
       zones, 10, 10, flagStore as never, undefined, groupConditions,
     )).toBe(12);
+  });
+
+  it('refreshVisibilityChannels 在交互循环整个不跑时也能重贴条件通道', () => {
+    // 为什么要有这条：`update` 只挂在 Game.tick 的 Exploring 分支里，而时刻多半是在
+    // 过场/对话里推进的。那时派生基底被 SceneManager 当场重贴了、条件通道却停在上一帧，
+    // 跨时段时就成了半条街按新时辰走、另半条留在旧时辰。
+    // 判据刻意选「连 playerPosGetter 都没注入」——此时 `update` 第一行就 return，
+    // 所以下面能通过就证明补刷这条路与交互循环完全无关。
+    let groupOpen = false;
+    const flagStore = { checkConditions: vi.fn(() => groupOpen) };
+    const system = new InteractionSystem(
+      { emit: vi.fn(), on: vi.fn(), off: vi.fn() } as never,
+      flagStore as never,
+      { wasKeyJustPressed: vi.fn(() => false) } as never,
+    );
+    system.setEntityGroupConditionReader((gid) =>
+      gid === 'g' ? [{ flag: 'group.open' } as never] : undefined,
+    );
+
+    const hsCond: boolean[] = [];
+    const npcCond: boolean[] = [];
+    system.setHotspots([{
+      def: { id: 'h', group: 'g' },
+      setDerivedBaseEnabled: vi.fn(),
+      setConditionEnabled: (v: boolean) => hsCond.push(v),
+    } as never]);
+    system.setNpcs([{
+      def: { id: 'n', group: 'g' },
+      setDerivedBaseVisible: vi.fn(),
+      setConditionVisible: (v: boolean) => npcCond.push(v),
+    } as never]);
+
+    system.update(0);                      // 没有 playerPosGetter：整个交互循环不跑
+    expect(hsCond).toEqual([]);
+    expect(npcCond).toEqual([]);
+
+    system.refreshVisibilityChannels();    // 组条件为假 ⇒ 整组隐藏
+    expect(hsCond).toEqual([false]);
+    expect(npcCond).toEqual([false]);
+
+    groupOpen = true;
+    system.refreshVisibilityChannels();    // 时刻走到组允许的那一段 ⇒ 当场放出来
+    expect(hsCond).toEqual([false, true]);
+    expect(npcCond).toEqual([false, true]);
   });
 });

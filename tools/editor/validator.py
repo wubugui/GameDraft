@@ -1353,6 +1353,86 @@ def _parse_clock_minutes(raw: object) -> int | None:
     return int(m.group(1)) * 60 + int(m.group(2))
 
 
+def _phase_set_and(a: set[str] | None, b: set[str] | None) -> set[str] | None:
+    """时段集合的「与」；`None` = 不施加约束（全时段），与 `isEntityInPhase` 的空表语义一致。"""
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return a & b
+
+
+def _check_phases_field(
+    issues: list[Issue],
+    scene_id: str,
+    label: str,
+    raw: object,
+    known_phases: set[str],
+    scene_daynight_on: bool,
+) -> tuple[bool, set[str]]:
+    """「时段归属」字段的形状 + id 登记 + 「配了但没开日夜」三连校验。
+
+    实体（hotspot/npc/zone）与场景分组（entityGroups）共用这一份——两边字段同构，
+    分开写两份 id 比对迟早会漂。
+
+    返回 `(值可信, 写下的时段集合)`：形状错或含未登记 id 时第一位为 `False`，
+    调用方据此**跳过**后续的语义推理（空交集判定），免得在坏数据上叠报第二条错。
+    """
+    if raw is None:
+        return True, set()
+    if not isinstance(raw, list):
+        issues.append(Issue("error", "scene", scene_id, f"{label} 的 phases 须为数组"))
+        return False, set()
+    clean = True
+    out: set[str] = set()
+    for v in raw:
+        pv = str(v).strip()
+        if not pv or pv not in known_phases:
+            clean = False
+            issues.append(Issue(
+                "error", "scene", scene_id,
+                f"{label} 的 phases 含未登记时段 {pv!r}"
+                f"（可用：{'、'.join(sorted(known_phases))}）",
+            ))
+            continue
+        out.add(pv)
+    if raw and not scene_daynight_on:
+        issues.append(Issue(
+            "warning", "scene", scene_id,
+            f"{label} 配了 phases 但本场景没开 dayNight.enabled——该归属不会生效",
+        ))
+    return clean, out
+
+
+def _hard_time_phase_set(conds: object) -> set[str] | None:
+    """条件数组里**必然要成立**的 `{timePhase:…}` 约束交集；没有这类叶返回 `None`。
+
+    顶层数组与 `all` 都是「与」，其中的 timePhase 叶是硬约束；`any` / `not` 底下的不是
+    （可能由别的分支满足），一律不算——这条判定要拿来报 error，宁可漏报不可误报。
+    """
+    def of_expr(expr: object) -> set[str] | None:
+        if not isinstance(expr, dict):
+            return None
+        want = expr.get("timePhase")
+        if isinstance(want, str):
+            w = want.strip()
+            return {w} if w else None
+        children = expr.get("all")
+        if isinstance(children, list):
+            acc: set[str] | None = None
+            for child in children:
+                acc = _phase_set_and(acc, of_expr(child))
+            return acc
+        return None
+
+    if not isinstance(conds, list):
+        return None
+    acc: set[str] | None = None
+    for cond in conds:
+        acc = _phase_set_and(acc, of_expr(cond))
+    return acc
+
+
 def _validate_npc_schedules(model: ProjectModel, issues: list[Issue]) -> None:
     """NPC 日程表（npc_schedules.json）+ 场景侧 exitAnchors / dayNight。
 
@@ -1495,26 +1575,121 @@ def _validate_npc_schedules(model: ProjectModel, issues: list[Issue]) -> None:
             for ent in scene.get(kind) or []:
                 if not isinstance(ent, dict):
                     continue
+                if ent.get("phases") is None:
+                    continue
+                _check_phases_field(
+                    issues, sid, str(ent.get("id") or "(无 id)"), ent.get("phases"),
+                    known_phases, scene_daynight_on,
+                )
+
+        _validate_scene_group_phases(model, issues, sid, scene, known_phases, scene_daynight_on)
+
+
+def _validate_scene_group_phases(
+    model: ProjectModel,
+    issues: list[Issue],
+    sid: str,
+    scene: dict,
+    known_phases: set[str],
+    scene_daynight_on: bool,
+) -> None:
+    """场景分组的「时段归属」：与实体同构的 id/开关校验，外加「组 ∩ 成员 = 空」的死内容判定。
+
+    有效在场的唯一公式（镜像 `SceneManager`，玩法定义见 `docs/玩法功能需求清单.md` H3/H4）：
+
+        isEntityInPhase(实体.phases, 当前时段, 组.phases ?? 种类缺省)
+        && isEntityInPhase(组.phases,   当前时段, 无)
+
+    展开成集合就是「三级就近取用 + 组是整体限制」：成员写了看成员、成员没写跟组走、
+    组也没写才回落**种类缺省**（NPC = 标了 daylight 的那几段；热点/区域 = 全时段）。
+    分组自身的缺省是「不施加限制」——它是异构容器，可能同时装人和门，没有 NPC 那条白日缺省。
+
+    为什么非报 error 不可：组要夜、成员按 NPC 缺省只在白日，两者是纯「与」，
+    结果是那些成员**一天 24 小时都不出现**，而画面上「条件为假」和「设计如此」长得一模一样。
+    2026-08-26 立此条时，雾津街头的「雾津送葬队伍」13 个 NPC 正是这个形状。
+    """
+    groups_raw = scene.get("entityGroups")
+    if not isinstance(groups_raw, list) or not groups_raw:
+        return
+    # NPC 的种类缺省：只认 daylight 语义角色，不认任何时段 id（2026-08-18 事故后的硬契约）。
+    # 一段都没标 = 运行时 fail-open 全时段（另有 _validate_day_night 的告警），这里同口径。
+    npc_default = {p for p in model.daylight_phase_ids() if p in known_phases}
+    # 报文里的时段按时段表顺序列，不按字典序——策划读的是「辰、午」不是「午、辰」。
+    _order = [pid for pid, _ in model.all_time_phase_ids()]
+
+    def fmt(ps: set[str]) -> str:
+        def rank(p: str) -> tuple[int, str]:
+            return (_order.index(p) if p in _order else len(_order), p)
+        return "、".join(sorted(ps, key=rank))
+
+    for group in groups_raw:
+        if not isinstance(group, dict):
+            continue
+        gid = str(group.get("id") or "").strip()
+        if not gid:
+            continue
+        g_clean, g_phases = _check_phases_field(
+            issues, sid, f"场景分组 {gid!r}", group.get("phases"),
+            known_phases, scene_daynight_on,
+        )
+        # 组的 phases 吃场景日夜总闸（与实体同闸）；组的 conditions 里的 timePhase **不吃**，
+        # 而且不给成员当缺省——这正是两条路不等价的地方，也是死内容的来源。
+        gate = g_phases if (g_clean and g_phases and scene_daynight_on) else None
+        cond_phases = _hard_time_phase_set(group.get("conditions"))
+        if cond_phases is not None and not cond_phases <= known_phases:
+            cond_phases = None  # 含未登记时段 id：条件叶那边已单独报错，这里不叠第二条
+        group_present = _phase_set_and(gate, cond_phases)
+        if group_present is None:
+            continue  # 组根本没有时段约束 → 不可能把任何成员挤空
+        if gate is not None and cond_phases is not None:
+            gate_src = "分组的「时段归属」与 conditions 里的 timePhase 共同限定"
+        elif gate is not None:
+            gate_src = "来自分组的「时段归属」"
+        else:
+            gate_src = "来自 conditions 里的 timePhase——那条不给成员当缺省"
+        if group_present:
+            head = f"场景分组 {gid!r} 只在 {fmt(group_present)} 在场（{gate_src}）"
+        else:
+            head = f"场景分组 {gid!r} 的时段约束（{gate_src}）自相矛盾，没有任何时段成立"
+
+        for kind, kind_cn in (("hotspots", "热点"), ("npcs", "NPC"), ("zones", "区域")):
+            for ent in scene.get(kind) or []:
+                if not isinstance(ent, dict):
+                    continue
+                if str(ent.get("group") or "").strip() != gid:
+                    continue
                 raw = ent.get("phases")
-                if raw is None:
+                own: set[str] | None = None
+                if scene_daynight_on and isinstance(raw, list) and raw:
+                    own = {str(v).strip() for v in raw}
+                    if not own <= known_phases:
+                        continue  # 成员的 phases 含未登记 id：已单独报错，不在这里叠报
+                if own:
+                    member: set[str] | None = own
+                    why = f"它自己的「时段归属」是 {fmt(own)}"
+                elif gate is not None:
+                    member = set(gate)  # 没写 → 跟组走（组的时段就是成员的缺省来源）
+                    why = "它没写「时段归属」，按契约跟组走"
+                elif scene_daynight_on and kind == "npcs" and npc_default:
+                    member = set(npc_default)
+                    why = (
+                        f"它没写「时段归属」，而 NPC 的种类缺省是只在标了 daylight 的"
+                        f"{fmt(npc_default)} 出没"
+                        f"（热点 / 区域的缺省才是全时段，别按那个想）"
+                    )
+                else:
+                    member = None  # 缺省不施加限制
+                    why = "它没写「时段归属」，缺省是全时段"
+                if _phase_set_and(member, group_present):
                     continue
                 eid = str(ent.get("id") or "(无 id)")
-                if not isinstance(raw, list):
-                    issues.append(Issue("error", "scene", sid, f"{eid} 的 phases 须为数组"))
-                    continue
-                for v in raw:
-                    pv = str(v).strip()
-                    if not pv or pv not in known_phases:
-                        issues.append(Issue(
-                            "error", "scene", sid,
-                            f"{eid} 的 phases 含未登记时段 {pv!r}"
-                            f"（可用：{'、'.join(sorted(known_phases))}）",
-                        ))
-                if raw and not scene_daynight_on:
-                    issues.append(Issue(
-                        "warning", "scene", sid,
-                        f"{eid} 配了 phases 但本场景没开 dayNight.enabled——该归属不会生效",
-                    ))
+                issues.append(Issue(
+                    "error", "scene", sid,
+                    f"{head}，而成员 {kind_cn} {eid!r} 与之没有交集：{why}。"
+                    f"组与成员是纯「与」，所以这个实体永远不会出现（一天 24 小时都不在场）。"
+                    f"二选一：把组的时段写进分组的「时段归属」让成员跟组走，"
+                    f"或给成员补上与组一致的「时段归属」",
+                ))
 
 
 def _validate_entity_reachability(model: ProjectModel, issues: list[Issue]) -> None:
@@ -5145,6 +5320,18 @@ def _scan_condition_expr(
                 "error", data_type, item_id,
                 f"timePhase 条件 {want!r} 未登记于 game_config.dayNight.phases"
                 f"（可用：{'、'.join(sorted(known))}）",
+            ))
+        # 时段本身是内容侧的通用条件叶（对话分支、叙事图都要用），不禁；
+        # 但**场景分组**有专门的「时段归属」字段，用条件表达时段是错的工具：
+        # 那条不吃场景的 dayNight 总开关、也不给成员当缺省，与成员的种类缺省纯「与」，
+        # 结果就是成员一天都不出现（雾津送葬队伍 13 人）。只提醒，不拦。
+        if data_type == "sceneGroup":
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                f"场景分组用 conditions 的 timePhase {want!r} 表达时段：请改用分组的"
+                "「时段归属」（phases）。两者不等价——条件这条不吃场景的 dayNight.enabled "
+                "总开关，也不会成为组内成员的时段缺省，组要这一段、成员按种类缺省只在别的段，"
+                "两边纯「与」会让成员永远不出现",
             ))
         return
     issues.append(Issue(

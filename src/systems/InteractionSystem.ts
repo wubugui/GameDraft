@@ -225,6 +225,23 @@ export class InteractionSystem implements IGameSystem {
     return state.interactableByConditions;
   }
 
+  /**
+   * 只重贴显隐两条通道（派生基底 + 条件），**不选目标、不触发任何交互**。
+   *
+   * `update` 只挂在 Game.tick 的 Exploring 分支里，而时刻可以在过场/对话里推进：那时实体的
+   * 派生基底已由 `SceneManager.refreshForTimeChange` 当场重贴，条件通道却停在上一帧的结论，
+   * 跨时段时就成了半条街按新时辰走、另半条留在旧时辰（分组的整体显影条件尤其明显，
+   * 它是整组一起显隐）。组装层在时刻变化时调这里补齐另一半。
+   *
+   * 刻意不带 autoTrigger 的范围判定：那是 `update` 的活，补刷不得产生任何触发副作用。
+   */
+  refreshVisibilityChannels(): void {
+    if (this.hotspots.length === 0 && this.npcs.length === 0) return;
+    const ctx = this.conditionCtxFactory?.() ?? null;
+    for (const hotspot of this.hotspots) this.applyHotspotVisibilityAndBase(hotspot, ctx);
+    for (const npc of this.npcs) this.applyNpcVisibilityAndBase(npc, ctx);
+  }
+
   update(_dt: number): void {
     if (!this.playerPosGetter) return;
     // 场景里一个可交互实体都没有时仍要跑区域级 E 那条（zone 不是实体，不在这两个数组里）。

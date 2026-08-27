@@ -614,6 +614,21 @@ export interface SceneEntityGroupDef {
   label?: string;
   conditions?: ConditionExpr[];
   /**
+   * 整组的**时段归属**（玩法定义见 `docs/玩法功能需求清单.md` H3/H4，2026-08-26 补）。
+   * 与成员身上的同名字段同构、同吃场景的 `dayNight.enabled` 总闸。
+   *
+   * 三级**就近取用**：成员自己写的 → 本组写的 → 种类缺省
+   * （NPC = 标了 `daylight` 的那几段；热点/zone = 全时段）。所以给整队人配一次"夜里出现"，
+   * 队里没单独配的成员就都跟着走，**不必再逐个勾一遍**——漏勾一个就是一份永不出现的死内容
+   * （2026-08-26 前雾津送葬队伍 13 人就是这么死的，见 day-night-npc-schedule 卡的已知坑）。
+   *
+   * 成员**显式**写了时段时与本组取**交集**（分组是整体限制，与 `conditions` 同方向）。
+   *
+   * 不写 / 空数组 = 不施加限制。分组**没有** NPC 那条"只在白日"的缺省：它是异构容器，
+   * 可能同时装着人和门，借用 NPC 的缺省会让一个装着门和路牌的组夜里整组消失。
+   */
+  phases?: string[];
+  /**
    * 编辑器工作态：**运行时完全忽略**（与 parallaxScene 的 camera/depth 同语义）。
    * 分组本身没有坐标——整组位移由编辑器把偏移烘进每个成员自己的坐标，
    * 这里只保存"怎么在编辑器里摆弄这个组"的作者态偏好。
@@ -785,18 +800,15 @@ export interface HotspotDef {
    */
   planes?: string[];
   /**
-   * 时段归属（与 `planes` 同构的白名单）。**缺省 = 只在标了 `daylight` 的那几段出没**
-   * ——这个世界的人白天做事、天一擦黑就归家，「街上有人」是特例不是常态。
-   * 哪几段算白天由内容侧在 `game_config.dayNight.phases[].daylight` 上标，代码不预设
-   * 任何时段 id（这条缺省的解析在 `dayTime.daylightPhaseIds`）。
-   *
-   * 要让他在别的时段也在，显式写上那几段的 id（如 `["辰","午","暮"]`）；
-   * 要昼夜常驻就把所有段写全。用于「整条街的群演」这类批量表达——有作息的具名角色
-   * 请用 NPC 日程表（npc_schedules.json），两者正交。
+   * 时段归属（与 `planes` 同构的白名单）：**缺省 = 全时段都在**——门、路牌、可拾取物
+   * 夜里当然还在。有值时仅当前时段被列出才存在。
    * 值须是 `game_config.dayNight.phases` 里的 id。
    *
+   * 未写时若**所属分组**写了 `phases`，则跟分组走（三级就近取用：自己 → 组 → 种类缺省）；
+   * 自己写了则与组取交集。见 {@link SceneEntityGroupDef.phases}。
+   *
    * ⚠ 只在场景 `dayNight.enabled` 时生效；没开日夜的场景完全不走时段过滤。
-   * ⚠ 热点与 zone 的同名字段**不吃这个缺省**（它们缺省仍是全时段都在）。
+   * ⚠ NPC 的同名字段**缺省不同**（缺省是"只在标了 `daylight` 的那几段"，见 {@link NpcDef.phases}）。
    */
   phases?: string[];
   /** 关联一个或多个过场；有值时默认作为仅过场实体，除非 cutsceneOnly 显式为 false。 */
@@ -1377,10 +1389,21 @@ export interface NpcDef {
    */
   planes?: string[];
   /**
-   * 时段归属（与 `planes` 同构的白名单）：缺省 = 所有时段都在（旧数据零影响）；
-   * 有值时仅当前时段被列出才存在。用于「整条街的群演白天在、夜里没」这类批量表达——
-   * 有作息的具名角色请用 NPC 日程表（npc_schedules.json），两者正交。
-   * 值须是 `game_config.dayNight.phases` 里的 id。
+   * 时段归属（与 `planes` 同构的白名单）。**缺省 = 只在标了 `daylight` 的那几段出没**
+   * ——这个世界的人白天做事、天一擦黑就归家，「街上有人」是特例不是常态。
+   * 哪几段算白天由内容侧在 `game_config.dayNight.phases[].daylight` 上标，代码不预设
+   * 任何时段 id（这条缺省的解析在 `dayTime.daylightPhaseIds`）。
+   *
+   * 要让他在别的时段也在，显式写上那几段的 id；要昼夜常驻就把所有段写全。
+   * 用于「整条街的群演」这类批量表达——有作息的具名角色请用 NPC 日程表
+   * （npc_schedules.json），两者正交。值须是 `game_config.dayNight.phases` 里的 id。
+   *
+   * 未写时若**所属分组**写了 `phases`，则跟分组走、**不再吃上面那条 daylight 缺省**
+   * （三级就近取用：自己 → 组 → 种类缺省）；自己写了则与组取交集。
+   * 见 {@link SceneEntityGroupDef.phases}。
+   *
+   * ⚠ 只在场景 `dayNight.enabled` 时生效；没开日夜的场景完全不走时段过滤。
+   * ⚠ 热点与 zone 的同名字段**不吃这个缺省**（它们缺省仍是全时段都在）。
    */
   phases?: string[];
   /** 关联一个或多个过场；有值时默认作为仅过场实体，除非 cutsceneOnly 显式为 false。 */
@@ -2706,9 +2729,15 @@ export interface ZoneDef {
   planes?: string[];
   /**
    * 时段归属（与 `planes` 同构的白名单）：缺省 = 所有时段都在（旧数据零影响）；
-   * 有值时仅当前时段被列出才存在。用于「整条街的群演白天在、夜里没」这类批量表达——
-   * 有作息的具名角色请用 NPC 日程表（npc_schedules.json），两者正交。
+   * 有值时仅当前时段被列出才注册进 ZoneSystem。
    * 值须是 `game_config.dayNight.phases` 里的 id。
+   *
+   * 未写时若**所属分组**写了 `phases`，则跟分组走；自己写了则与组取交集。
+   * 见 {@link SceneEntityGroupDef.phases}。
+   *
+   * ⚠ 只在场景 `dayNight.enabled` 时生效。
+   * ⚠ `zoneKind: 'depth_floor'` 的 zone **不吃这一条**：深度地板偏移由 `Game.tick` 直读
+   *   场景 zones 消费（见 `utils/depthFloorZones.ts`），那条路径只过位面与分组会话开关。
    */
   phases?: string[];
   /** 缺省为 standard（与未写字段的老数据兼容） */

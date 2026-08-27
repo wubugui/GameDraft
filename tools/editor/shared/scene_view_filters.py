@@ -21,8 +21,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 __all__ = ["FILTERED_KINDS", "ViewAxes", "norm_id_list", "entity_cutscene_ids",
-           "entity_is_cutscene_only", "passes_cutscene", "passes_plane", "passes_phase",
-           "passes_view_filters"]
+           "entity_is_cutscene_only", "group_phases", "in_phase", "passes_cutscene",
+           "passes_plane", "passes_phase", "passes_group_box_filters",
+           "passes_view_filters", "scene_day_night_enabled"]
 
 #: **受三条轴管辖的实体族**。名单之外的一律恒显。
 #:
@@ -45,6 +46,21 @@ def norm_id_list(raw: object) -> list[str] | None:
         return None
     xs = [str(p).strip() for p in raw if str(p).strip()]
     return xs or None
+
+
+def scene_day_night_enabled(scene: object) -> bool:
+    """时段轴的**场景总闸**：`scene.dayNight.enabled` 是不是恰好为 `True`。
+
+    口径抄自运行时 `SceneManager.entityInPhase` 的首行
+    （`this.currentScene?.dayNight?.enabled !== true` 就直接放行）：
+    **只有显式 `true` 才算开**，缺键 / `{}` / 任何真值字符串都算没开
+    ——否则旧场景一到夜里就空了。
+
+    两套画布共用这一份，各写各的读法就会漂（一边认 truthy 一边认 `is True`，
+    表现为同一份场景在两个画布上时段过滤一个生效一个不生效）。
+    """
+    dn = (scene if isinstance(scene, dict) else {}).get("dayNight")
+    return isinstance(dn, dict) and dn.get("enabled") is True
 
 
 def entity_cutscene_ids(ent: object) -> tuple[str, ...]:
@@ -88,6 +104,14 @@ class ViewAxes:
     #: 「街上有人」的那几段（`ProjectModel.daylight_phase_ids()`），
     #: 即未写 phases 的 NPC 的缺省归属
     npc_default_phases: tuple[str, ...] = field(default=())
+    #: **场景总闸**：当前场景的 `scene.dayNight.enabled` 是否为 `true`。
+    #: 为假时整套时段判定不生效、恒显 —— 口径抄自运行时
+    #: `SceneManager.entityInPhase` 的首行（那道闸在实体/分组两级判定**之前**）。
+    #:
+    #: 缺省必须是 `True` 而不是 `False`：传 `False` 会让所有没显式传这个字段的
+    #: 既有调用方瞬间失去时段过滤，那是静默行为翻转。缺省 `True` = 与本字段
+    #: 加入之前逐字一致。
+    day_night_enabled: bool = True
 
     @property
     def any_active(self) -> bool:
@@ -119,33 +143,109 @@ def passes_plane(ent: object, axes: ViewAxes) -> bool:
     return axes.plane_id in planes
 
 
-def passes_phase(kind: str, ent: object, axes: ViewAxes) -> bool:
-    """时段轴。**缺省按实体种类分叉**，这是与位面轴唯一的形状差别：
+def in_phase(phase_id: str, phases: list[str] | None,
+             fallback: object = None) -> bool:
+    """`src/utils/dayTime.ts` 的 `isEntityInPhase` 的**逐条镜像**，别在别处另写一份。
 
-    - NPC 未写 phases → 只在「街上有人」的段。该清单为空时**不施加限制**
-      （与运行时 fail-open 同口径：宁可多显示，绝不静默清空整场景）。
-    - 热点 / 区域未写 phases → 全时段都在（门、路牌夜里当然还在）。
+    三重 fail-open 必须原样继承（写白名单比对时最容易漏掉后两条）：
+
+    - `phases` 空 / 未写 → 用 `fallback`；
+    - `fallback` 也空 → 恒 `True`（不施加限制，不是"全部隐藏"）；
+    - `phase_id` 取不到 → 恒 `True`（宁可画布上多几个，绝不静默清空整场景）。
     """
+    lst = phases if phases else fallback
+    if not lst:
+        return True
+    if not phase_id:
+        return True
+    return phase_id in lst
+
+
+def group_phases(group: object) -> list[str] | None:
+    """所属分组的「时段归属」。无组 / 组无定义 / 空数组一律 `None`（= 不施加限制）。
+
+    口径抄自运行时 `SceneManager.currentSceneGroupPhases`：只认 `entityGroups`
+    里的显式定义；**只在成员身上出现的兼容标签组没有定义，按无条件组处理**。
+    """
+    return norm_id_list((group if isinstance(group, dict) else {}).get("phases"))
+
+
+def passes_phase(kind: str, ent: object, axes: ViewAxes,
+                 group: object = None) -> bool:
+    """时段轴。判定与运行时 `SceneManager.entityInPhase` 同式：
+
+        in_phase(实体.phases, 当前时段, 组.phases ?? 种类缺省)
+        and in_phase(组.phases, 当前时段, 无)
+
+    展开成人话 = **三级就近取用（自己 → 组 → 种类缺省）+ 组是整体限制**：
+
+    - 实体自己写了 phases → 实体的 ∩ 组的（组仍是一道整体闸，取交集）；
+    - 实体没写、组写了 → 跟组走（组的时段就是成员的缺省来源）；
+    - 都没写 → **种类缺省，这是与位面轴唯一的形状差别**：
+      NPC = 「街上有人」的那几段（清单为空时不施加限制）；热点 / 区域 = 全时段
+      （门、路牌夜里当然还在）。
+    - 分组自己的缺省 = **不施加限制**。分组是异构容器，可能同时装着人和门，
+      借用 NPC 那条「只在白日」的缺省会让一个装着门和路牌的组夜里整组消失。
+
+    `group` 传 `None`（调用方拿不到分组信息）时行为与"没有分组这回事"完全一致 ——
+    第二个 `in_phase` 恒 `True`，第一个的 fallback 落回种类缺省。
+
+    最前面还有一道**场景总闸**（`axes.day_night_enabled`）：场景没开日夜时整套时段
+    判定不生效、恒显，与运行时 `SceneManager.entityInPhase` 的首行同位置。少了它就是
+    「没开日夜的场景里配了 phases，画布按时段藏、运行时恒显」——又一处画布骗人。
+
+    ⚠ 本函数里**不许出现时段 id 字面量**（'夜' / 'night' 之类）。哪几段算「白天有人」
+    由内容侧在 `game_config.dayNight.phases[].daylight` 上标，代码只认这个语义角色
+    （2026-08-18「整条街一个人都没有」事故后的硬契约）。
+    """
+    if not axes.day_night_enabled:
+        return True
     if axes.phase_id is None:
         return True
-    phases = norm_id_list((ent if isinstance(ent, dict) else {}).get("phases"))
-    if phases is None:
-        if str(kind).strip().lower() != "npc":
-            return True
-        return (not axes.npc_default_phases) or axes.phase_id in axes.npc_default_phases
-    return axes.phase_id in phases
+    own = norm_id_list((ent if isinstance(ent, dict) else {}).get("phases"))
+    grp = group_phases(group)
+    kind_default = (axes.npc_default_phases
+                    if str(kind).strip().lower() == "npc" else None)
+    return (in_phase(axes.phase_id, own, grp if grp is not None else kind_default)
+            and in_phase(axes.phase_id, grp, None))
 
 
-def passes_view_filters(kind: str, ent: object, axes: ViewAxes) -> bool:
+def passes_group_box_filters(group: object, axes: ViewAxes) -> bool:
+    """画布上那个**分组框自己**显不显。**只有时段这一条轴管它。**
+
+    为什么框也要吃时段轴：组切到自己时段之外时成员会整批隐去，框却还在，
+    画布上留一个"框在、人没了"的空框 —— 用户会以为成员数据丢了。
+
+    为什么位面轴与过场轴**不许**管它：分组 dict 里没有 `planes` / `cutsceneIds`，
+    走 `passes_plane` 就落进「缺省实体」那一支，在 exclusive（独立世界型）位面视图下
+    判为不存在 —— 一切到梦境位面，全场分组框集体消失，而整组位移的唯一入口就是这个框。
+    这正是 `FILTERED_KINDS` 那段注释警告的坑，别顺手把它并进 `passes_view_filters`。
+
+    场景总闸同样管它：`dayNight.enabled` 不为真时组的 `phases` 一个字都不生效
+    （成员在这种场景里恒显，框自然也不该消失），与 `passes_phase` 首行同源。
+    """
+    if not axes.day_night_enabled:
+        return True
+    if axes.phase_id is None:
+        return True
+    return in_phase(axes.phase_id, group_phases(group), None)
+
+
+def passes_view_filters(kind: str, ent: object, axes: ViewAxes,
+                        group: object = None) -> bool:
     """**合成一个判定**。三条轴串成一串 and，顺序照抄运行时。
 
     过场绑定判定排在时段/位面**之后**，故仅过场实体**同样吃**时段与位面过滤 ——
     画布不得为了"方便编辑"擅自放行。
+
+    `group` = 该实体所属分组的 dict（`entityGroups` 里那一条），拿不到就传 `None`。
+    分组的时段归属**并进时段轴这一个判定**里（见 `passes_phase`），不另开一条并行的
+    apply —— 再加一条轴时同样并进来。
 
     `kind` 不在 `FILTERED_KINDS` 里的一律放行（理由见该常量）。
     """
     if str(kind).strip().lower() not in FILTERED_KINDS:
         return True
     return (passes_plane(ent, axes)
-            and passes_phase(kind, ent, axes)
+            and passes_phase(kind, ent, axes, group)
             and passes_cutscene(ent, axes))

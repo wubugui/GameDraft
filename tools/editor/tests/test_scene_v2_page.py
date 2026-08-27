@@ -27,6 +27,10 @@ _SCENE = "新画布街"
 def _scene() -> dict:
     return {
         "id": _SCENE, "name": _SCENE, "worldWidth": 800, "worldHeight": 600,
+        # 时段轴前面有一道场景总闸：没写 dayNight.enabled 的场景**整条时段轴都不生效**
+        # （运行时 SceneManager.entityInPhase 首行同此）。这份夹具要测时段分叉，
+        # 就得像真实数据那样先开日夜——不开而仍指望过滤生效，测的就不是运行时的形状。
+        "dayNight": {"enabled": True},
         "hotspots": [
             {"id": "h1", "type": "inspect", "x": 100, "y": 100},
             {"id": "h_yin", "type": "inspect", "x": 200, "y": 100, "planes": ["yin"]},
@@ -157,6 +161,31 @@ class ViewAxesWiringTests(_Base):
         self.assertTrue(hs and all(i.isVisible() for i in hs))
         night = self.page.view.items_of(EntityRef("npc", "n_night"))
         self.assertTrue(night and all(i.isVisible() for i in night))
+
+    def test_the_day_night_gate_is_derived_from_the_scene_not_the_caller(self) -> None:
+        """总闸跟场景走，不跟调用方走。
+
+        `set_view_axes` 照收传进来的 `day_night_enabled` 就等于给了调用方一个开关：
+        可以在一个**没开日夜**的场景上按时段把实体藏起来，而运行时那边它们恒显 ——
+        正是 scene-view-filter-axes 卡要消灭的「编辑器骗人」。
+        """
+        sc = self.model.scenes[_SCENE]
+        sc.pop("dayNight", None)
+        self.page.reload_from_model()
+        # 调用方硬塞 True 也不算数：场景没开日夜 → 整条时段轴不生效
+        self.page.set_view_axes(ViewAxes(
+            phase_id="夜", npc_default_phases=("辰", "午"), day_night_enabled=True))
+        self.assertFalse(self.page._axes.day_night_enabled)
+        npc = self.page.view.items_of(EntityRef("npc", "n1"))
+        self.assertTrue(npc and all(i.isVisible() for i in npc))
+        # 反向：场景开了日夜，调用方硬塞 False 同样不算数
+        sc["dayNight"] = {"enabled": True}
+        self.page.reload_from_model()
+        self.page.set_view_axes(ViewAxes(
+            phase_id="夜", npc_default_phases=("辰", "午"), day_night_enabled=False))
+        self.assertTrue(self.page._axes.day_night_enabled)
+        npc = self.page.view.items_of(EntityRef("npc", "n1"))
+        self.assertTrue(npc and all(not i.isVisible() for i in npc))
 
     def test_spawn_points_survive_an_exclusive_plane_view(self) -> None:
         """出生点在**独立世界型**位面视图下必须照样在。

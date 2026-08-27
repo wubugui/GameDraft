@@ -10,6 +10,7 @@ import {
   daylightPhaseIds,
   forwardDistance,
   isEntityInPhase,
+  isEntityInPhaseWithGroup,
   isWithinRange,
   parseClock,
   phaseAt,
@@ -85,6 +86,53 @@ describe('dayTime 时刻工具', () => {
     expect(isEntityInPhase([], 'night')).toBe(true);
     // 显式写了就覆盖缺省
     expect(isEntityInPhase(['night'], 'night', npcDefault)).toBe(true);
+  });
+
+  it('分组时段：成员没写就跟组走，且**不再**回落 NPC 的白日缺省', () => {
+    const npcDefault = daylightPhaseIds(resolvePhases(undefined)); // ['day']
+    // 这一条就是「雾津送葬队伍 13 人永不出现」的回归：组要 night、成员什么都没写。
+    // 改动前成员拿到 npcDefault=['day']，与组的 night 纯 AND ⇒ 全时段恒假。
+    expect(isEntityInPhaseWithGroup(undefined, ['night'], 'night', npcDefault)).toBe(true);
+    expect(isEntityInPhaseWithGroup(undefined, ['night'], 'day', npcDefault)).toBe(false);
+    expect(isEntityInPhaseWithGroup(undefined, ['night'], 'dusk', npcDefault)).toBe(false);
+    // 空数组按"没写"处理，与 isEntityInPhase 同口径
+    expect(isEntityInPhaseWithGroup([], ['night'], 'night', npcDefault)).toBe(true);
+  });
+
+  it('分组时段：成员显式写了就与组取交集；交集为空 = 这个实体永远不出现', () => {
+    const npcDefault = daylightPhaseIds(resolvePhases(undefined));
+    // 交集内
+    expect(isEntityInPhaseWithGroup(['dusk', 'night'], ['night'], 'night', npcDefault)).toBe(true);
+    // 成员允许、组不允许
+    expect(isEntityInPhaseWithGroup(['dusk', 'night'], ['night'], 'dusk', npcDefault)).toBe(false);
+    // 组允许、成员不允许
+    expect(isEntityInPhaseWithGroup(['dusk'], ['dusk', 'night'], 'night', npcDefault)).toBe(false);
+    // 空交集：作者写岔了，四个时段一个都不在（校验器负责当场报出来）
+    for (const cur of ['dawn', 'day', 'dusk', 'night']) {
+      expect(isEntityInPhaseWithGroup(['day'], ['night'], cur, npcDefault)).toBe(false);
+    }
+  });
+
+  it('分组没写时段 = 不施加限制，行为与改动前逐字一致', () => {
+    const npcDefault = daylightPhaseIds(resolvePhases(undefined));
+    for (const group of [undefined, [] as string[]]) {
+      for (const cur of ['dawn', 'day', 'dusk', 'night']) {
+        // NPC 缺省（传 fallback）
+        expect(isEntityInPhaseWithGroup(undefined, group, cur, npcDefault))
+          .toBe(isEntityInPhase(undefined, cur, npcDefault));
+        // 热点 / zone 缺省（不传 fallback）
+        expect(isEntityInPhaseWithGroup(undefined, group, cur))
+          .toBe(isEntityInPhase(undefined, cur));
+        // 成员显式写了
+        expect(isEntityInPhaseWithGroup(['dusk'], group, cur, npcDefault))
+          .toBe(isEntityInPhase(['dusk'], cur, npcDefault));
+      }
+    }
+  });
+
+  it('分组时段同样吃 fail-open：时段取不到一律通过', () => {
+    expect(isEntityInPhaseWithGroup(undefined, ['night'], '', ['day'])).toBe(true);
+    expect(isEntityInPhaseWithGroup(['day'], ['night'], '', ['day'])).toBe(true);
   });
 
   it('daylightPhaseIds 只认真布尔，且内置表就是原来那个 [day]', () => {

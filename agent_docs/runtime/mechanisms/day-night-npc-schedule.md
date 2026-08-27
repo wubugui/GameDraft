@@ -3,22 +3,23 @@ id: day-night-npc-schedule
 title: 日夜循环与 NPC 日程(时刻不自流逝 · 离场宽限集)
 domain: runtime
 type: mechanism
-summary: 时刻只由动作推进;transition 决定 NPC 换班演不演离场;leaving/arriving 宽限集是"绝不当着玩家的面消失"的唯一实现,判定点只挂 NPC 不进 entityInPlane
+summary: 时刻只由动作推进;phases 三级就近取用(实体→分组→种类缺省)且分组不套 NPC 的白日缺省;transition 决定 NPC 换班演不演离场;leaving/arriving 宽限集是"绝不当着玩家的面消失"的唯一实现,判定点只挂 NPC 不进 entityInPlane
 status: active
 authority:
   - src/systems/DayManager.ts
   - src/systems/NpcScheduleSystem.ts
+  - src/systems/SceneManager.ts
   - src/utils/dayTime.ts
   - public/assets/data/npc_schedules.json
 triggers:
-  paths: ["src/systems/DayManager.ts", "src/systems/NpcScheduleSystem.ts", "src/utils/dayTime.ts", "public/assets/data/npc_schedules.json"]
+  paths: ["src/systems/DayManager.ts", "src/systems/NpcScheduleSystem.ts", "src/systems/SceneManager.ts", "src/utils/dayTime.ts", "public/assets/data/npc_schedules.json"]
   topics: [日夜, 时段, timePhase, daylight, 街上有人, 时刻, NPC日程, 离场, 出口锚点, exitAnchors]
   tasks: [做日夜, 改时段, 配NPC作息, 加日程]
 verified_by:
   - src/systems/DayNightSchedule.test.ts
   - tools/editor/tests/test_day_night_parity.py
   - tools/editor/tests/test_day_night_daylight_gate.py
-last_governed: 2026-08-18
+last_governed: 2026-08-26
 ---
 
 ## 是什么(一句话)
@@ -51,10 +52,28 @@ last_governed: 2026-08-18
 - **场景没写 `dayNight.enabled` = 完全不参与**:旧场景逐帧不变(日程与 `phases` 两条都不生效)。
   没 `characterId` 或没配日程表的 NPC 同样不受日程管——这些缺省闸门是"旧数据零影响"的保证,
   别为图省事去掉。
-- **`phases` 缺省按实体种类分叉,不是统一的"全时段"**(2026-08-12 内容定调):
-  **NPC 未写 = 只在标了 `daylight` 的那几段出没**,热点与 zone 未写 = 全时段都在。
-  理由:这个世界的人白天做事、天黑归家,"街上有人"是特例;而门、路牌、可拾取物夜里当然还在。
-  改这个缺省会静默改变**所有**已开日夜场景的夜间人口,动之前先想清楚。
+- **`phases` 是三级就近取用,缺省按实体种类分叉,不是统一的"全时段"**
+  (2026-08-12 内容定调;2026-08-26 补入分组这一级)。判定的唯一公式(权威在
+  `SceneManager` 的派生基底口,`utils/dayTime.isEntityInPhase` 是纯函数):
+
+      有效在场 = isEntityInPhase(实体.phases, 当前时段, 组.phases ?? 种类缺省)
+              && isEntityInPhase(组.phases,   当前时段, 无)
+
+  展开成人话——**就近的那一层说了算,分组是加在全体成员之上的整体限制**:
+  - 实体自己写了 `phases` → 与组的取**交集**(交集为空 = 这些成员一天都不出现)。
+  - 实体没写、所属组写了 → **跟组走**:组的清单就是成员的缺省来源。
+    给整队人配一次"夜里出现"即可,**不必再逐个勾**——漏勾一个就是一份永不出现的死内容。
+  - 都没写 → **种类缺省**:**NPC = 只在标了 `daylight` 的那几段出没**,热点与 zone = 全时段都在。
+    理由:这个世界的人白天做事、天黑归家,"街上有人"是特例;而门、路牌、可拾取物夜里当然还在。
+  - **分组自己的缺省 = 不施加限制**,它**没有** NPC 那条"只在白日"。理由:分组是**异构容器**,
+    一个组可能同时装着人和门;借用 NPC 的缺省会让一个装着门和路牌的组夜里整组消失。
+    ——所以"组没配时段"与"组配了时段"是两件事,别把前者当成"组=白日"。
+  - **分组的时间一律写 `phases`,不许写 `conditions` 里的 `{timePhase:…}`**:
+    条件在另一层(`InteractionSystem` 的条件通道),**不吃场景日夜总闸**、刷新时机也不同,
+    且与成员的 NPC daylight 缺省是纯 AND —— 这正是下面那条已知坑的根因。
+  改这些缺省会静默改变**所有**已开日夜场景的夜间人口,动之前先想清楚。
+- **场景级总闸对分组一视同仁**:`scene.dayNight.enabled !== true` 时整套时段判定不生效(恒显),
+  组的 `phases` 同样不生效。别在没开日夜的场景里靠组的 `phases` 藏东西——那儿它是死字段。
 - **代码里不许出现时段 id 字面量**(2026-08-18 事故后定): 哪几段算"白天有人"由内容侧在
   `game_config.dayNight.phases[].daylight` 上标,运行时只认这个语义角色
   (`dayTime.daylightPhaseIds` → `DayManager.daylightPhases` → `SceneManager` 注入口)。
@@ -66,6 +85,17 @@ last_governed: 2026-08-18
 
 ## 已知坑
 
+- **2026-08-26「雾津送葬队伍 13 人永不出现」**:`雾津街头.json` 的分组「雾津送葬队伍」
+  想表达"夜里出殡",但当时**分组身上没有 `phases` 这一格**——策划只能退而求其次,
+  在组的 `conditions` 里写 `{timePhase:"夜"}`。而它的 13 个 NPC 成员都没写 `phases`,
+  于是各自拿到 NPC 的种类缺省白名单 `[辰,午]`(只白日)。两者是**纯 AND**:
+  组要"夜"、成员只"白天",**交集恒空 → 这 13 个人一天 24 小时都不会出现**。
+  而且**校验器全绿**:两边单看都是合法配置,没有任何一层看得见"合起来恒假"。
+  修法是给分组补 `phases`(2026-08-26 落地),数据侧把那条 `timePhase` 条件迁成
+  `"phases": ["夜"]`,成员继续不写、跟组走。
+  **教训**:同一个语义(时间)在两条不同的通道上各有一半表达能力时,内容侧一定会
+  用错的那条把自己写死;正确的收敛方向是**把缺的那一格补上**,而不是在文档里嘱咐
+  "记得两边都要配"——恒假的配置没有任何红字,只是"没人出现",肉眼分不出是不是设计如此。
 - **2026-08-18「整条街一个人都没有」**:内容侧 8/7 起就在生态图里用中文时段 id,
   8/13 日夜落地时代码带了英文内置兜底表,8/14 一个叫「打字机文本设置」的提交
   顺手塞进 `NPC_DEFAULT_PHASES = ['day']`——当时 `Game` 的逐键白名单还漏着 `dayNight`,

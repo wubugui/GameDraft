@@ -57,7 +57,13 @@ from ..shared.scene_migrations import (
     collision_polygon_world_to_local,
     migrate_scene_collision_to_local,
 )
-from ..shared.scene_view_filters import ViewAxes, passes_phase, passes_plane
+from ..shared.scene_view_filters import (
+    ViewAxes,
+    passes_group_box_filters,
+    passes_phase,
+    passes_plane,
+    scene_day_night_enabled as _scene_day_night_enabled,
+)
 from ..shared.entity_sort_math import (
     entity_sort_z,
     hotspot_sort_band_of,
@@ -2447,10 +2453,25 @@ class SceneCanvas(QGraphicsView):
         # 与运行时 SceneManager.getNpcBaseVisibleForInteraction / getHotspotBase… 同口径。
         self._phase_filter: str | None = None
         self._phase_npc_default: list[str] = []
-        # 两条过滤共用一份登记：`kind:id` → (planes, phases)。**必须合一**——各存各的
+        # 时段轴的**场景总闸**：当前场景 scene.dayNight.enabled 是否为 true。
+        # 为假时整套时段判定不生效、恒显，与运行时 SceneManager.entityInPhase 首行同源。
+        # 缺省 True = 未接线的调用方行为不变（接线点见 SceneEditor._load_scene_body）。
+        self._day_night_enabled: bool = True
+        # `gid -> entityGroups 里那一条`。时段轴要按成员的 group 标签取组的「时段归属」，
+        # **先建一次映射再遍历**——在每个实体上线性搜 entityGroups 会把显隐这趟变成
+        # O(实体×分组)，而它在每次切轴、每次 Apply 上都要跑一遍。
+        self._group_defs: dict[str, dict] = {}
+        # 上一次落定的「组 → 时段归属」快照，只用于脏检查：组框刷新是高频路径
+        # （每次缩放都刷一遍），组的时段没变时不该把全场实体的显隐重贴一遍。
+        # 比 dict 身份可靠——组的 phases 常常是**就地改**的，对象没换。
+        self._group_phase_sig: dict[str, tuple[str, ...]] = {}
+        # 三条过滤共用一份登记：`kind:id` → (planes, phases, group)。**必须合一**——各存各的
         # 就会各自 set_entity_visible，后跑的那条把前一条的判定冲掉（切位面会让被时段
         # 藏起来的实体冒出来）。判定见 _entity_visible_under_view_filters。
-        self._entity_view_meta: dict[str, tuple[list[str] | None, list[str] | None]] = {}
+        # group 存的是**标签**不是组 dict：组的时段随时可能被改，判定时现查 _group_defs
+        # 才拿得到最新的那份（存 dict 就等于把一份快照钉死在登记表里）。
+        self._entity_view_meta: dict[
+            str, tuple[list[str] | None, list[str] | None, str]] = {}
         self._patrol_overlays: dict[str, _NpcPatrolPolyline] = {}
         # 不住 _entity_items 的 part 的适配器（见 scene_canvas_model.EXTERNAL_PARTS）。
         # 巡逻折线由画布自己登记；NPC 动画精灵由 SceneEditor 登记（它才持有 runtime）。
@@ -2518,6 +2539,10 @@ class SceneCanvas(QGraphicsView):
         self._entity_items.clear()
         self._group_boxes.clear()  # 图元已随 _gfx.clear() 析构；选中组由调用方重设
         # _plane_filter / _phase_filter 保留：切场景后按同一视图重贴
+        # _group_defs / _day_night_enabled 是**场景级**的，跟着场景走：由
+        # SceneEditor._load_scene_body 在建实体图元之前重新灌（见那里的注释）。
+        self._group_defs = {}
+        self._group_phase_sig = {}
         self._entity_view_meta.clear()
         self._patrol_overlays.clear()
         self._lightcurve_overlay = None
@@ -2959,7 +2984,7 @@ class SceneCanvas(QGraphicsView):
             item.setZValue(
                 _Z_DECOR_GROUP_BOX + 1.0 / (1.0 + area / 1_000_000.0)
                 + len(wanted) * 1e-4)
-            item.setVisible(self._group_boxes_visible)
+            item.setVisible(self._group_box_should_show(gid))
             self._entity_items[f"group:{gid}"] = item
         for gid in [g for g in self._group_boxes if g not in wanted]:
             self.remove_group_box(gid)
@@ -2973,10 +2998,31 @@ class SceneCanvas(QGraphicsView):
         if self._selected_group == str(gid):
             self._selected_group = None
 
+    def _group_box_should_show(self, gid: str) -> bool:
+        """一个分组框显不显 = **用户总开关 ∧ 时段轴**，合成一个判定再落。
+
+        位面轴与过场轴刻意不参与（`passes_group_box_filters` 里有理由）：组 dict
+        里根本没有 `planes`，并进去会在 exclusive（独立世界型）位面视图下让全场组框
+        集体消失，而整组位移的唯一入口就是这个框。
+        """
+        return self._group_boxes_visible and passes_group_box_filters(
+            self._group_def(gid), self._view_axes())
+
+    def _apply_group_box_presence(self) -> None:
+        """按「总开关 ∧ 时段轴」重贴全部分组框。
+
+        为什么框也要吃时段轴：组切到自己时段之外时成员会整批隐去，框却还在，
+        画布上留一个"框在、人没了"的空框——用户会以为成员数据丢了。
+        """
+        for gid, item in self._group_boxes.items():
+            item.setVisible(self._group_box_should_show(gid))
+
     def set_group_boxes_visible(self, visible: bool) -> None:
+        """「分组框」总开关。**注意它不是无条件点亮**——被时段轴藏起来的空框不许
+        因为拨了一下总开关就冒出来（显隐合成一次再落，见 `_group_box_should_show`）。
+        """
         self._group_boxes_visible = bool(visible)
-        for item in self._group_boxes.values():
-            item.setVisible(self._group_boxes_visible)
+        self._apply_group_box_presence()
 
     def group_boxes_visible(self) -> bool:
         return self._group_boxes_visible
@@ -3329,35 +3375,86 @@ class SceneCanvas(QGraphicsView):
             plane_exclusive=self._plane_filter_exclusive,
             phase_id=self._phase_filter,
             npc_default_phases=tuple(self._phase_npc_default),
+            day_night_enabled=self._day_night_enabled,
         )
+
+    def set_day_night_enabled(self, enabled: bool) -> None:
+        """写入时段轴的**场景总闸**（`scene.dayNight.enabled is True`）。
+
+        必须在 `add_*` 之前灌：`_record_entity_view` 当场就按当前轴判一次显隐。
+        变了才重贴——本方法在组框刷新那条高频路径上也会被调到。
+        """
+        want = bool(enabled)
+        if want == self._day_night_enabled:
+            return
+        self._day_night_enabled = want
+        self._apply_entity_view_filters()
+
+    def set_group_definitions(self, groups: object) -> None:
+        """登记 `gid -> entityGroups 条目`，供时段轴按成员的 `group` 标签查表。
+
+        只认 `entityGroups` 里的显式条目——与运行时 `currentSceneGroupPhases` 同口径：
+        只在成员身上出现的兼容标签组没有定义，按无条件组处理（它照样有框、能拖，
+        只是不施加时段限制）。
+
+        **组的时段没变就不重贴**：本方法挂在 `_refresh_group_boxes` 上，而后者每次
+        画布缩放都要跑一遍；不做脏检查就是每滚一格滚轮把全场实体的显隐重算一次。
+        """
+        index: dict[str, dict] = {}
+        for g in groups if isinstance(groups, list) else []:
+            if not isinstance(g, dict):
+                continue
+            gid = str(g.get("id", "") or "").strip()
+            if gid and gid not in index:   # 撞名取第一条，与运行时的 find 一致
+                index[gid] = g
+        sig = {gid: tuple(self._norm_id_list(g.get("phases")) or ())
+               for gid, g in index.items()}
+        self._group_defs = index
+        if sig == self._group_phase_sig:
+            return
+        self._group_phase_sig = sig
+        self._apply_entity_view_filters()
+
+    def _group_def(self, group_id: object) -> dict | None:
+        return self._group_defs.get(str(group_id or "").strip())
 
     def _entity_visible_under_plane_filter(self, planes: list[str] | None) -> bool:
         return passes_plane({"planes": planes}, self._view_axes())
 
-    def _entity_visible_under_phase_filter(self, kind: str, phases: list[str] | None) -> bool:
-        return passes_phase(kind, {"phases": phases}, self._view_axes())
+    def _entity_visible_under_phase_filter(
+        self, kind: str, phases: list[str] | None, group_id: str = "",
+    ) -> bool:
+        return passes_phase(kind, {"phases": phases}, self._view_axes(),
+                            self._group_def(group_id))
 
     def _entity_visible_under_view_filters(
         self, kind: str, planes: list[str] | None, phases: list[str] | None,
+        group_id: str = "",
     ) -> bool:
         """判定实现在 `shared/scene_view_filters.py`，**新老画布共用同一份**。
 
         那张机制卡反复强调"后置显隐轴必须合成一个判定"——如果新画布自己再写一份，
         这件事就会变成两份实现各自维护，正是本次重建要消灭的东西。
+
+        `group_id` = 成员身上的 `group` 标签；组的「时段归属」**并进时段轴这一个判定**
+        （见 `passes_phase`），不另开一条并行的 apply。查不到定义时传下去的是 `None`，
+        行为与"没有分组这回事"完全一致。
         """
         axes = self._view_axes()
         ent = {"planes": planes, "phases": phases}
-        return passes_plane(ent, axes) and passes_phase(kind, ent, axes)
+        return (passes_plane(ent, axes)
+                and passes_phase(kind, ent, axes, self._group_def(group_id)))
 
     def _record_entity_view(self, key: str, ent: object) -> None:
-        """add_* 登记实体的位面/时段归属并按当前视图即时套用
+        """add_* 登记实体的位面/时段/分组归属并按当前视图即时套用
         （新图元默认可见，故只需隐藏被过滤掉的）。"""
         d = ent if isinstance(ent, dict) else {}
         planes = self._norm_id_list(d.get("planes"))
         phases = self._norm_id_list(d.get("phases"))
-        self._entity_view_meta[key] = (planes, phases)
+        gid = str(d.get("group", "") or "").strip()
+        self._entity_view_meta[key] = (planes, phases, gid)
         kind, _, eid = key.partition(":")
-        if not self._entity_visible_under_view_filters(kind, planes, phases):
+        if not self._entity_visible_under_view_filters(kind, planes, phases, gid):
             self.set_entity_visible(kind, eid, False)
 
     def set_plane_filter(self, plane_id: str | None, exclusive: bool = False) -> None:
@@ -3382,10 +3479,15 @@ class SceneCanvas(QGraphicsView):
         self._apply_entity_view_filters()
 
     def _apply_entity_view_filters(self) -> None:
-        """按位面 ∧ 时段重贴全部已登记实体。两轴合一次算，不许分开各贴各的。"""
+        """按位面 ∧ 时段重贴全部已登记实体。两轴合一次算，不许分开各贴各的。
+
+        分组框跟着一起刷：它只吃时段这一条轴（`_apply_group_box_presence`），
+        但同样是"合成一次再落显隐"，不另开一条并行的 apply。
+        """
         for key in list(self._entity_view_meta):
             kind, _, eid = key.partition(":")
             self.refresh_entity_presence(kind, eid)
+        self._apply_group_box_presence()
 
     def refresh_entity_presence(self, kind: str, entity_id: str) -> None:
         """按当前视图轴重贴**单个**实体的显隐。
@@ -3399,9 +3501,9 @@ class SceneCanvas(QGraphicsView):
         meta = self._entity_view_meta.get(f"{k}:{eid}")
         if meta is None:
             return
-        planes, phases = meta
+        planes, phases, gid = meta
         self.set_entity_visible(
-            k, eid, self._entity_visible_under_view_filters(k, planes, phases))
+            k, eid, self._entity_visible_under_view_filters(k, planes, phases, gid))
 
     def update_hotspot_type_color(self, entity_id: str, hs_type: str) -> None:
         hid = str(entity_id).strip()
@@ -3843,7 +3945,10 @@ class SceneCanvas(QGraphicsView):
         if (
             self._selected_group
             and self._selected_group in self._group_boxes
-            and self._group_boxes_visible
+            # 看**这一个框**在不在，而不是总开关：时段轴可以单独藏掉某一个组的框，
+            # 那时它同样不该还是方向键的操作靶——用户按着方向键，画布上一个动的
+            # 东西都没有，整组坐标却在改。
+            and self._group_boxes[self._selected_group].isVisible()
             and event.key() in (
                 Qt.Key.Key_Left, Qt.Key.Key_Right, Qt.Key.Key_Up, Qt.Key.Key_Down,
             )
@@ -4709,6 +4814,9 @@ class ScenePropertyPanel(QScrollArea):
         self._hs_phase_ids_pending: list[str] = []
         self._npc_phase_ids_pending: list[str] = []
         self._zn_phase_ids_pending: list[str] = []
+        # 分组也有 phases：语义与实体同构，但缺省是「不施加限制」（组是异构容器，
+        # 可能同时装人和门，故没有 NPC 那条「只在白日」的缺省）。
+        self._grp_phase_ids_pending: list[str] = []
         self._spawn_flush_scene: dict | None = None
         self._editing_scene_id: str = ""
         self._zn_poly_updating: bool = False
@@ -7183,18 +7291,22 @@ class ScenePropertyPanel(QScrollArea):
         # 空＝缺省，但 NPC 与 热点/zone 的缺省不同，故不写死"所有时段"
         return "、".join(ids) if ids else "（缺省）"
 
-    def _pick_phase_ids(self, current: list[str]) -> list[str] | None:
+    def _pick_phase_ids(
+        self, current: list[str], hint_text: str | None = None,
+    ) -> list[str] | None:
         dlg = QDialog(self)
         dlg.setWindowTitle("选择时段归属")
         dlg.resize(420, 420)
         lay = QVBoxLayout(dlg)
         hint = QLabel(
-            "可多选。写入实体的 phases 字段：实体只在所选时段存在。候选来自 "
-            "game_config.dayNight.phases。\n"
-            "全不选（清空）= 缺省 —— NPC 缺省是「只在勾了『街上有人』的那几段出没」"
-            "（在 Config 页的日夜循环里勾），热点/区域缺省是「所有时段都在」。\n"
-            "只在场景勾了「参与日夜循环」时才生效。\n"
-            "注意：这是瞬时存在性开关，不会演离场——要 NPC 走到出口再消失，请改用 NPC 日程表。",
+            hint_text or (
+                "可多选。写入实体的 phases 字段：实体只在所选时段存在。候选来自 "
+                "game_config.dayNight.phases。\n"
+                "全不选（清空）= 缺省 —— NPC 缺省是「只在勾了『街上有人』的那几段出没」"
+                "（在 Config 页的日夜循环里勾），热点/区域缺省是「所有时段都在」。\n"
+                "只在场景勾了「参与日夜循环」时才生效。\n"
+                "注意：这是瞬时存在性开关，不会演离场——要 NPC 走到出口再消失，请改用 NPC 日程表。"
+            ),
         )
         hint.setWordWrap(True)
         lay.addWidget(hint)
@@ -7227,26 +7339,41 @@ class ScenePropertyPanel(QScrollArea):
             return None
         return [str(it.data(Qt.ItemDataRole.UserRole)) for it in lw.selectedItems()]
 
-    def _make_phase_ids_row(self, label_attr: str, on_pick, on_clear) -> QWidget:
-        """「只读 label + 选择时段… + 清除」行（hotspot/npc/zone 共用）。"""
+    def _make_phase_ids_row(
+        self,
+        label_attr: str,
+        on_pick,
+        on_clear,
+        tool_tip: str | None = None,
+        pick_tip: str | None = None,
+        clear_tip: str | None = None,
+    ) -> QWidget:
+        """「只读 label + 选择时段… + 清除」行（hotspot/npc/zone/group 共用）。
+
+        三个 tip 可选覆盖：分组的缺省语义与实体不同（分组＝不施加限制），
+        照抄实体的措辞会把策划指向错误的缺省。
+        """
         row = QWidget()
         rl = QHBoxLayout(row)
         rl.setContentsMargins(0, 0, 0, 0)
         lbl = QLabel(self._format_phase_ids_label([]))
         lbl.setWordWrap(True)
         lbl.setToolTip(
-            "时段归属：实体只在所列时段存在。\n"
-            "缺省（空）——NPC＝只在勾了「街上有人」的那几段出没；热点/区域＝所有时段都在。\n"
-            "候选来自 game_config.dayNight.phases（Config 页维护）；"
-            "只在场景开了日夜循环时生效。",
+            tool_tip or (
+                "时段归属：实体只在所列时段存在。\n"
+                "缺省（空）——NPC＝只在勾了「街上有人」的那几段出没；热点/区域＝所有时段都在。\n"
+                "候选来自 game_config.dayNight.phases（Config 页维护）；"
+                "只在场景开了日夜循环时生效。"
+            ),
         )
         setattr(self, label_attr, lbl)
         btn_pick = QPushButton("选择时段…")
-        btn_pick.setToolTip("多选该实体存在的时段（写入 phases 字段）")
+        btn_pick.setToolTip(pick_tip or "多选该实体存在的时段（写入 phases 字段）")
         btn_pick.clicked.connect(on_pick)
         btn_clear = QPushButton("清除")
         btn_clear.setToolTip(
-            "清空 phases（回到缺省：NPC=只在「街上有人」的段；热点/区域=所有时段都在）"
+            clear_tip
+            or "清空 phases（回到缺省：NPC=只在「街上有人」的段；热点/区域=所有时段都在）"
         )
         btn_clear.clicked.connect(on_clear)
         rl.addWidget(lbl, 1)
@@ -7292,6 +7419,44 @@ class ScenePropertyPanel(QScrollArea):
         self._zn_phase_ids_pending = []
         self._zn_phase_ids_label.setText(self._format_phase_ids_label([]))
         self._emit_props_changed()
+
+    #: 分组时段归属的三段文案：与实体同构，但缺省不同（组＝不施加限制），
+    #: 且要把「成员跟着组走」这条就近取用讲清楚。
+    _GRP_PHASE_TIP = (
+        "时段归属（整组）：整组只在所列时段存在——这是加在全体成员之上的整体限制。\n"
+        "组配了时段，组里没单独配时段的成员就跟着组走，不用再逐个勾；\n"
+        "成员自己也配了时段的，取两者交集（成员的 ∩ 组的）——交集为空 = 这些成员一天都不出现。\n"
+        "缺省（空）＝不施加限制，成员各回各自的缺省（NPC＝只在勾了「街上有人」的那几段；"
+        "热点/区域＝所有时段都在）。组不套用 NPC 那条缺省，因为一个组里可能同时装着人和门。\n"
+        "候选来自 game_config.dayNight.phases（Config 页维护）；"
+        "只在场景开了日夜循环时生效。"
+    )
+    _GRP_PHASE_PICK_TIP = "多选整组存在的时段（写入分组的 phases 字段）"
+    _GRP_PHASE_CLEAR_TIP = (
+        "清空 phases（回到缺省：组不施加时段限制，成员各回各自的缺省）"
+    )
+    _GRP_PHASE_DIALOG_HINT = (
+        "可多选。写入分组的 phases 字段：整组只在所选时段存在，"
+        "是加在全体成员之上的整体限制。候选来自 game_config.dayNight.phases。\n"
+        "组里没单独配时段的成员跟着组走（不用再逐个勾）；成员自己配了时段的，取两者交集。\n"
+        "全不选（清空）= 缺省 —— 组不施加时段限制，成员各回各自的缺省。\n"
+        "只在场景勾了「参与日夜循环」时才生效。"
+    )
+
+    def _open_grp_phase_ids_picker(self) -> None:
+        picked = self._pick_phase_ids(
+            self._grp_phase_ids_pending, self._GRP_PHASE_DIALOG_HINT,
+        )
+        if picked is None:
+            return
+        self._grp_phase_ids_pending = picked
+        self._grp_phase_ids_label.setText(self._format_phase_ids_label(picked))
+        self._on_group_props_changed()
+
+    def _clear_grp_phase_ids(self) -> None:
+        self._grp_phase_ids_pending = []
+        self._grp_phase_ids_label.setText(self._format_phase_ids_label([]))
+        self._on_group_props_changed()
 
     def _make_plane_ids_row(self, label_attr: str, on_pick, on_clear) -> QWidget:
         """「只读 label + 选择位面… + 清除」行（hotspot/npc/zone 共用）。"""
@@ -10822,6 +10987,14 @@ class ScenePropertyPanel(QScrollArea):
         self._grp_label.setPlaceholderText("可选显示名")
         self._grp_label.textChanged.connect(self._on_group_props_changed)
         form.addRow("label", self._grp_label)
+        form.addRow("时段归属", self._make_phase_ids_row(
+            "_grp_phase_ids_label",
+            self._open_grp_phase_ids_picker,
+            self._clear_grp_phase_ids,
+            tool_tip=self._GRP_PHASE_TIP,
+            pick_tip=self._GRP_PHASE_PICK_TIP,
+            clear_tip=self._GRP_PHASE_CLEAR_TIP,
+        ))
         self._grp_legacy_note = QLabel()
         self._grp_legacy_note.setWordWrap(True)
         self._grp_legacy_note.setToolTip(
@@ -11004,6 +11177,10 @@ class ScenePropertyPanel(QScrollArea):
                 "显式 entityGroups 实体" if source is not None
                 else "兼容旧标签（仅查看不迁移；编辑并应用才升级）"
             )
+            self._grp_phase_ids_pending = self._entity_phase_ids_from_data(st)
+            self._grp_phase_ids_label.setText(
+                self._format_phase_ids_label(self._grp_phase_ids_pending),
+            )
             self._grp_cond.set_flag_pattern_context(self._model, self._editing_scene_id or None)
             conds = st.get("conditions")
             self._grp_cond.set_data(conds if isinstance(conds, list) else [])
@@ -11038,6 +11215,11 @@ class ScenePropertyPanel(QScrollArea):
             group["label"] = label
         else:
             group.pop("label", None)
+        grp_phases = [x for x in self._grp_phase_ids_pending if str(x).strip()]
+        if grp_phases:
+            group["phases"] = grp_phases
+        else:
+            group.pop("phases", None)  # 缺省=组不施加时段限制（成员各回各自的缺省）
         conds = self._grp_cond.to_list()
         if conds:
             group["conditions"] = conds
@@ -12527,6 +12709,12 @@ class SceneEditor(QWidget):
         self._clear_scene_npc_anim_layers()
         self._canvas.clear_scene()
 
+        # 时段轴的两个**场景级**输入必须在建实体图元之前灌进画布：`add_*` 里的
+        # `_record_entity_view` 当场就按当前轴判一次显隐，晚一步就是"先按错的判一次、
+        # 后面某趟刷新才纠正"——中间那几帧画布是骗人的。
+        self._canvas.set_day_night_enabled(_scene_day_night_enabled(sc))
+        self._canvas.set_group_definitions(sc.get("entityGroups"))
+
         img_path = _scene_background_disk_path(self._model, scene_id, sc)
 
         world_w, world_h = resolve_world_size_for_scene_json(sc, img_path)
@@ -13164,9 +13352,15 @@ class SceneEditor(QWidget):
             return
         sc = self._model.scenes.get(self._current_scene_id or "")
         if not isinstance(sc, dict):
+            self._canvas.set_group_definitions(None)
             self._canvas.sync_group_boxes([])
             self._refresh_group_bounds_note()
             return
+        # 组的「时段归属」与场景的日夜总闸都可能刚被改过（组面板 Apply、撤销回放、
+        # 场景属性页的「启用日夜」）。这条路是它们改完之后的公共汇合点，故在这里
+        # 重灌一次；两个 setter 都自带脏检查，缩放那条高频路径不会因此重贴全场。
+        self._canvas.set_day_night_enabled(_scene_day_night_enabled(sc))
+        self._canvas.set_group_definitions(sc.get("entityGroups"))
         rows: list[dict] = []
         for gid, label in self._model.scene_group_ids_for_scene(self._current_scene_id):
             rect, anchor, total, hidden = self._group_geometry(sc, gid)

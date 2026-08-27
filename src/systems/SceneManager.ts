@@ -41,7 +41,7 @@ import {
 } from '../data/EntityRuntimeFieldSchema';
 import type { ActivePlaneSnapshot } from './plane/types';
 import { createStyledText } from '../core/styledText';
-import { isEntityInPhase } from '../utils/dayTime';
+import { isEntityInPhaseWithGroup } from '../utils/dayTime';
 
 /** applyDebugWorldSize 成功时的返回值，供深度系统与碰撞比例同步 */
 export type ApplyDebugWorldSizeResult =
@@ -96,6 +96,12 @@ export class SceneManager implements IGameSystem {
 
   /** 场景分组的会话级禁用桶（按 sceneId 分桶，不写档）；与成员自己的覆盖通道正交。 */
   private groupSessionDisabled: Map<string, Set<string>> = new Map();
+
+  /**
+   * 非探索态跨时段时挂起的 zone 重注册（存 sceneId；null = 没挂起）。
+   * 见 {@link refreshForTimeChange} / {@link flushPendingTimeZoneRefresh}。
+   */
+  private pendingTimeZoneRefresh: string | null = null;
 
   /** 场景世代号：unloadScene 自增。跨 await 持有实体/场景引用的流程以此判废，防并发卸载竞态产生孤儿容器 */
   private sceneEpoch = 0;
@@ -363,11 +369,37 @@ export class SceneManager implements IGameSystem {
   /**
    * 时段推进后重贴显隐。实体侧纯显隐、无副作用，任何 GameState 都能刷；
    * zone 侧的差分注销会跑 onExit 动作批，故与切位面同规矩——**只在 Exploring 时刷**
-   * （`exploringOnly` 由调用方给出），非探索态留给回到探索态后的下一次刷新兜底。
+   * （`canRefreshZones` 由调用方给出），非探索态挂起、回到探索态由
+   * {@link flushPendingTimeZoneRefresh} 补刷。
+   *
+   * ⚠ 这里必须有自己的挂起位：位面那条路的 `pendingZoneRefresh` 是 `PlaneReconciler`
+   * 私有的，只有位面对账会置位。2026-08-26 前本函数的注释声称"留给回到探索态后的下一次
+   * 刷新兜底"，而时刻这条路径上**没有任何人置位**——于是过场里跨时段时 zone 的重注册
+   * 直接丢失（该消失的区域仍会触发 enter/stay，该出现的区域压根不存在），
+   * 一直要等到下一次切位面或重进场景才纠正。
    */
   refreshForTimeChange(sceneId: string, canRefreshZones: boolean): void {
     this.refreshEntitiesForPlaneChange(sceneId);
-    if (canRefreshZones) this.refreshZonesForPlaneChange(sceneId);
+    if (canRefreshZones) {
+      this.pendingTimeZoneRefresh = null;
+      this.refreshZonesForPlaneChange(sceneId);
+    } else {
+      this.pendingTimeZoneRefresh = sceneId;
+    }
+  }
+
+  /**
+   * 补刷非探索态期间挂起的 zone 重注册。由组装层在**探索态、且在 `ZoneSystem.update` 之前**
+   * 每帧调一次——晚于它就会让过期集合多跑一帧 enter/stay（与位面那条补刷的排序理由相同）。
+   * 没挂起时只是一次判空，零成本。
+   */
+  flushPendingTimeZoneRefresh(): void {
+    const sid = this.pendingTimeZoneRefresh;
+    if (!sid) return;
+    this.pendingTimeZoneRefresh = null;
+    // 场景已经换过了：挂起的那一次针对的是旧场景，新场景进场时已按当前时刻整体建过集合。
+    if (this.currentScene?.id !== sid) return;
+    this.refreshZonesForPlaneChange(sid);
   }
 
   /**
@@ -395,6 +427,14 @@ export class SceneManager implements IGameSystem {
    * 实体/zone 是否存在于当前时段。与 `planes` 完全同构的**白名单**语义：
    * 缺省（无 phases 字段/空数组）= 所有时段都在（旧数据零影响）。
    *
+   * **三级就近取用**（玩法定调见 `docs/玩法功能需求清单.md` H4，2026-08-26 补）：
+   * 实体自己写的 → 所属分组写的 → 种类缺省（NPC 传 daylight 清单，热点/zone 不传）。
+   * 成员显式写了时再与分组取**交集**（分组是整体限制，与它的 `conditions` 同方向）。
+   *
+   * 分组这一层是补上来的：在此之前分组只能靠 `conditions` 里的 `{timePhase:…}` 表达时间，
+   * 而那条路在条件层、不吃下面那道场景总闸、刷新时机也不同——雾津送葬队伍 13 个 NPC
+   * 因此与 NPC 的 daylight 缺省纯 AND 对撞，全天不可见且校验全绿。
+   *
    * 与 NPC 日程的分工：日程管「这个**角色**此刻该在哪个场景」（有作息的具名角色），
    * phases 管「这个**实体**在哪些时段存在」（整条街的群演、夜里收走的摊子热点）。
    * 群演用日程表要给每个路人造 characterId + 一张表，那是拿错工具。
@@ -402,10 +442,30 @@ export class SceneManager implements IGameSystem {
    * 注意本判定**没有**离场宽限：它是瞬时的存在性开关，配合有遮挡的推进用。
    * 要让 NPC 走出去再消失，那是日程的活。
    */
-  private entityInPhase(def: { phases?: string[] }, fallback?: readonly string[]): boolean {
+  private entityInPhase(
+    def: { phases?: string[]; group?: string },
+    fallback?: readonly string[],
+  ): boolean {
     // 场景没开日夜 = 时段归属整套不生效（否则旧场景一到夜里就空了）
     if (this.currentScene?.dayNight?.enabled !== true) return true;
-    return isEntityInPhase(def.phases, this.currentPhaseGetter?.() ?? '', fallback);
+    // 三级就近取用（自己 → 组 → 种类缺省）+ 组是整体限制。公式是纯函数，编辑器镜像同一份。
+    return isEntityInPhaseWithGroup(
+      def.phases,
+      this.currentSceneGroupPhases(def.group),
+      this.currentPhaseGetter?.() ?? '',
+      fallback,
+    );
+  }
+
+  /**
+   * 所属分组的时段归属；无组 / 组无定义 / 空数组一律 `undefined`（= 不施加限制）。
+   *
+   * 分组**没有** NPC 那条「只在 daylight 段」的缺省：它是异构容器，可能同时装着人和门，
+   * 借用 NPC 的缺省会让一个装着门和路牌的组夜里整组消失。
+   */
+  private currentSceneGroupPhases(groupId: string | undefined): string[] | undefined {
+    const raw = this.getCurrentSceneGroup(groupId ?? '')?.phases;
+    return Array.isArray(raw) && raw.length > 0 ? raw : undefined;
   }
 
   /** 由 Game 注入当前时段 id（DayManager 派生）；未注入时 phases 归属不生效。 */
@@ -2127,6 +2187,7 @@ export class SceneManager implements IGameSystem {
     this.zoneSessionDisabled.clear();
     this.entitySessionOverrides.clear();
     this.groupSessionDisabled.clear();
+    this.pendingTimeZoneRefresh = null;
     for (const [sceneId, mem] of Object.entries(data.memory)) {
       const base = mem.entityOverrides ?? this.emptyEntityOverrides();
       const entityOverrides: SceneEntityRuntimeOverrides = {
@@ -2159,6 +2220,7 @@ export class SceneManager implements IGameSystem {
     this.zoneSessionDisabled.clear();
     this.entitySessionOverrides.clear();
     this.groupSessionDisabled.clear();
+    this.pendingTimeZoneRefresh = null;
     this.pendingReentrantSwitch = null;
     // 铁律 8：重 init() 行为须与首次一致——调试开关不得跨销毁残留
     this.authoringMarkersVisible = false;

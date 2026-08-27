@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 
 from PySide6.QtCore import QPointF, Qt, QTimer
 from PySide6.QtGui import QActionGroup, QPixmap
@@ -51,11 +52,17 @@ from ...shared.move_entity_map_picker import (
     resolve_world_size_for_scene_json,
     scene_background_disk_path,
 )
-from ...shared.scene_view_filters import ViewAxes, passes_view_filters
+from ...shared.scene_view_filters import (
+    ViewAxes,
+    passes_group_box_filters,
+    passes_view_filters,
+    scene_day_night_enabled,
+)
 from .changes import (
     EntitiesAdded,
     EntitiesChanged,
     EntitiesRemoved,
+    EntityProperty,
     EntityRef,
     SceneReloaded,
     SelectionChanged,
@@ -99,6 +106,20 @@ _ANIM_TICK_MS = 33
 __all__ = ["SceneEditorV2"]
 
 
+def _presence_predicate(axes: ViewAxes, group_index: dict):
+    """造一个 `(ref, ent) -> 显不显` 给视图。
+
+    **刻意是模块级函数、不捏 `self`**：这个闭包会被视图长期持有，捏住页就是
+    页↔视图的引用环。它捏的 `group_index` 是页那本名册**本身**（页就地改它），
+    所以组的时段一变、成员改归属，下一次判定读到的就是新的。
+    """
+    def _passes(ref, ent) -> bool:
+        gid = str((ent or {}).get("group", "") or "") if isinstance(ent, dict) else ""
+        return passes_view_filters(ref.kind, ent, axes, group_index.get(gid))
+
+    return _passes
+
+
 class SceneEditorV2(QWidget):
     """场景编辑器（新画布）。"""
 
@@ -108,6 +129,15 @@ class SceneEditorV2(QWidget):
         self._doc: SceneDocument | None = None
         self._view: SceneView | None = None
         self._axes = ViewAxes()
+        #: `gid -> entityGroups 里那一条`。时段轴要按成员的 `group` 标签取组的
+        #: 「时段归属」，**先建一次映射再遍历** —— 在每个实体上线性搜 entityGroups
+        #: 会把显隐这趟变成 O(实体×分组)，而它在每次拖动、每次重投影上都要跑一遍。
+        #: **就地改（clear/update），不换对象**：判定闭包捏着的就是这个 dict，
+        #: 换掉它闭包就永远看着一份旧名册。
+        self._group_index: dict[str, dict] = {}
+        #: 「分组框」总开关的用户选择。框的显隐 = **这个开关 ∧ 时段轴**，
+        #: 合成一次再落 setVisible；分头各写各的就会互相冲掉。
+        self._group_boxes_on = True
         self._content_z_key: tuple | None = None
         #: 贴图与动画包解析结果的缓存。不缓存的话拖一次实体要重读几十次盘
         #: （老画布的 `_disp_sig` 签名缓存是同一个教训：perf-reload）。
@@ -266,6 +296,9 @@ class SceneEditorV2(QWidget):
         self._view.set_sprite_frame_provider(self._anim_bank.frame_pixmap)
         self._refresh_background()
         self._install_tools()
+        # 轴的选择跨场景保留（机制卡「已知坑」第一条），但**总闸不是选择**：
+        # 换场景就得换成新场景自己的 dayNight.enabled，再按当前轴重贴。
+        self._sync_day_night_gate()
         self._apply_view_axes()
         self._doc.changed.connect(self._on_doc_changed)
         self._view.content_resort_requested.connect(self.resort_content_z)
@@ -615,6 +648,8 @@ class SceneEditorV2(QWidget):
                 plane and self._model.plane_membership(plane) == "exclusive"),
             phase_id=str(combos["phase"].currentData() or "") or None,
             npc_default_phases=tuple(self._model.daylight_phase_ids()),
+            # 场景总闸：没开日夜的场景里 phases 一个字都不生效（运行时恒显）
+            day_night_enabled=self._scene_day_night_enabled(),
         ))
 
     def _rebuild_toolbar(self, view) -> None:
@@ -655,7 +690,7 @@ class SceneEditorV2(QWidget):
         act_boxes = self._toolbar.addAction("分组框")
         act_boxes.setCheckable(True)
         act_boxes.setChecked(True)
-        act_boxes.toggled.connect(view.set_group_boxes_visible)
+        act_boxes.toggled.connect(self._on_group_boxes_toggled)
         # 视图动作：缩放 / 适配 / 撤销 / 重做。老画布工具栏上都有；
         # 没有"适配"时视口一旦跑偏只能靠滚轮一格一格摇回来。
         for text, tip, slot in (
@@ -863,18 +898,102 @@ class SceneEditorV2(QWidget):
     # ---- 视图轴与 z 序 -----------------------------------------------------
 
     def set_view_axes(self, axes: ViewAxes) -> None:
-        self._axes = axes
+        """设置三条视图轴。**日夜总闸那一格不收调用方的**，一律从当前场景重新派生。
+
+        机制卡 scene-view-filter-axes 的硬契约：「总闸跟场景走，不跟轴选择走」。
+        照收传进来的值就等于给了调用方一个开关，可以在一个没开日夜的场景上按时段
+        把实体藏起来——而运行时那边它们恒显，正是这张卡要消灭的「编辑器骗人」。
+        三个组装点（时段下拉 / 装载场景 / 场景属性变更）填的值与这里派生的一致，
+        所以它们经过这条路不会被改写。
+        """
+        self._axes = replace(axes, day_night_enabled=self._scene_day_night_enabled())
         self._apply_view_axes()
+
+    def _scene_day_night_enabled(self) -> bool:
+        """当前场景的时段总闸。装载/切场景时要重新取——轴的选择跨场景保留，
+        而"这个场景开没开日夜"是场景自己的事，不跟着选择走。"""
+        return scene_day_night_enabled(
+            self._doc.scene() if self._doc is not None else None)
+
+    def _sync_day_night_gate(self) -> bool:
+        """把当前场景的总闸并回轴状态，返回"变了没有"。
+
+        装载新场景 / 场景属性改了「启用日夜」时调：轴的其余几格保留用户选择，
+        只有这一格必须换成新场景自己的——不换的话，从开了日夜的场景切到没开的，
+        时段过滤会继续按上一个场景的闸把实体藏着，而运行时那边它们恒显。
+        """
+        want = self._scene_day_night_enabled()
+        if self._axes.day_night_enabled == want:
+            return False
+        self._axes = replace(self._axes, day_night_enabled=want)
+        return True
+
+    def _rebuild_group_index(self) -> None:
+        """重建 `gid -> 组定义` 映射。**就地改**，理由见 `_group_index` 的注释。
+
+        只认 `entityGroups` 里的显式条目 —— 与运行时
+        `SceneManager.currentSceneGroupPhases` 同口径：只在成员身上出现的兼容标签组
+        没有定义，按无条件组处理（它照样有框、能拖，只是不施加时段限制）。
+        """
+        index = self._group_index
+        index.clear()
+        sc = (self._doc.scene() if self._doc is not None else None) or {}
+        for g in sc.get("entityGroups") or []:
+            if not isinstance(g, dict):
+                continue
+            gid = str(g.get("id", "") or "").strip()
+            if gid and gid not in index:      # 撞名取第一条，与运行时的 find 一致
+                index[gid] = g
 
     def _apply_view_axes(self) -> None:
         if self._view is None:
             return
         axes = self._axes
+        self._rebuild_group_index()
+        # 分组框只吃时段这一条轴，但它同样是"合成一次再落显隐"，所以跟实体一起刷
+        self._apply_group_box_presence()
         if not axes.any_active:
             self._view.set_presence_filter(None)
             return
-        self._view.set_presence_filter(
-            lambda ref, ent: passes_view_filters(ref.kind, ent, axes))
+        self._view.set_presence_filter(_presence_predicate(axes, self._group_index))
+
+    def _apply_group_box_presence(self) -> None:
+        """分组框的显隐：**用户总开关 ∧ 时段轴**，合成一个判定再落。
+
+        位面轴与过场轴刻意不参与，理由见 `passes_group_box_filters` ——
+        并进去会让 exclusive 位面视图下全场分组框消失。
+
+        **藏起来的框同时要退出命中册子**：`GroupBoxTool._box_at` 只比几何、
+        不看 `isVisible`，留在册子里就是一个看不见的点击靶 —— 用户以为点的是空白，
+        实际选中了一个组，再按方向键（很多人用方向键的肌肉记忆）就把整组坐标改了，
+        而画布上一个动的东西都没有。
+        """
+        if self._view is None:
+            return
+        visible: dict[str, object] = {}
+        for gid, box in self._view.group_boxes.items():
+            on = self._group_boxes_on and passes_group_box_filters(
+                self._group_index.get(gid), self._axes)
+            box.setVisible(on)
+            if on:
+                visible[gid] = box
+            else:
+                box.set_selected(False)
+        tool = getattr(self, "group_box_tool", None)
+        if tool is None:
+            return
+        if tool.selected_gid and tool.selected_gid not in visible:
+            tool.select_group("")
+        tool.set_boxes(visible)
+
+    def _on_group_boxes_toggled(self, on: bool) -> None:
+        """「分组框」总开关。**不能直接接到 `view.set_group_boxes_visible`** ——
+        那条路无条件把每个框都点亮，会把时段轴藏起来的空框放出来。"""
+        self._group_boxes_on = bool(on)
+        if self._view is not None:
+            # 视图自己的标志仍要跟着走：新建的框以它为初值
+            self._view.set_group_boxes_visible(self._group_boxes_on)
+        self._apply_group_box_presence()
 
     def resort_content_z(self) -> None:
         if self._doc is None or self._view is None:
@@ -887,6 +1006,7 @@ class SceneEditorV2(QWidget):
         被藏起来的成员照样算进去，否则框会随着切视图忽大忽小而成员一个没少。"""
         if self._doc is None or self._view is None:
             return
+        self._rebuild_group_index()
         sc = self._doc.scene() or {}
         labels = {str(g.get("id", "")): str(g.get("label", "") or "").strip()
                   for g in sc.get("entityGroups") or [] if isinstance(g, dict)}
@@ -915,7 +1035,10 @@ class SceneEditorV2(QWidget):
                 except (TypeError, ValueError):
                     pass
             box.set_anchor(None)
-        self.group_box_tool.set_boxes(self._view.group_boxes)
+        # 新建的框默认按总开关可见 —— 时段轴要在这里补贴一次，
+        # 否则"框在、人没了"的空框会在每次刷新后冒回来（重建丢显隐那一族）。
+        # 它同时是把框交给命中册子的**唯一出口**（藏起来的不交）。
+        self._apply_group_box_presence()
 
     def refresh_perspective_axis(self) -> None:
         if self._doc is None or self._view is None:
@@ -1081,8 +1204,21 @@ class SceneEditorV2(QWidget):
                 isinstance(event, EntitiesChanged)
                 and any(r.kind == "scene" for r in event.refs)):
             self._refresh_background()
+            # 场景属性页可能刚拨了「启用日夜」：时段轴的总闸跟着换，并当场重贴。
+            # 不接的话，关掉日夜之后画布还按时段藏着实体，而运行时已经恒显了。
+            if self._sync_day_night_gate():
+                self._apply_view_axes()
         if isinstance(event, (EntitiesAdded, EntitiesRemoved, SceneReloaded)):
             self.refresh_entity_tree()
+        # **组的时段归属改了、成员换了组、整份场景被换掉 → 重贴显隐。**
+        # 视图收到变更时是拿着旧名册判的（它的 `changed` 订阅早于本页），
+        # 不补这一趟的话：改完组的「时段归属」画布纹丝不动，用户会以为没生效
+        # 而去改数据；撤销回灌（SceneReloaded）之后更是拿上一份场景的分组在判。
+        if isinstance(event, (EntitiesAdded, EntitiesRemoved, SceneReloaded)) or (
+                isinstance(event, EntitiesChanged)
+                and event.properties & (EntityProperty.GROUPING
+                                        | EntityProperty.PRESENCE)):
+            self._apply_view_axes()
 
     # ---- 编辑动作（供快捷键/菜单接线）--------------------------------------
 

@@ -552,6 +552,8 @@
     {
       "glob": "src/systems/SceneManager.ts",
       "docs": [
+        "day-night-npc-schedule",
+        "entity-visibility-channels",
         "scene-onenter-reveal-timing"
       ]
     },
@@ -941,6 +943,12 @@
       "glob": "tools/editor/shared/rich_text_field.py",
       "docs": [
         "text-ref-tag-system"
+      ]
+    },
+    {
+      "glob": "tools/editor/shared/scene_view_filters.py",
+      "docs": [
+        "scene-view-filter-axes"
       ]
     },
     {
