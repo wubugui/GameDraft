@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "id": "未接_生态_翻_阎王岭_界碑",
+  "entry": "root",
+  "meta": {
+    "title": "翻检 · 阎王岭路边界碑（眼尖 / 夜 / 常态 三态；未挂 eco_点_* 持久态）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "narrative": "eco_眼力",
+              "state": "眼尖",
+              "reached": true
+            }
+          ],
+          "next": "deep"
+        },
+        {
+          "conditions": [
+            {
+              "timePhase": "夜"
+            }
+          ],
+          "next": "night"
+        }
+      ],
+      "defaultNext": "first"
+    },
+    "first": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "碑面叫风啃掉半边，剩下三个字还认得出——阎王岭。凿口是新的，有人拿凿子把它加深过。",
+      "next": "act"
+    },
+    "night": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "夜头摸碑，石头比风还凉。指头顺着凿口走到底，是一个没磨圆的新茬。",
+      "next": "act"
+    },
+    "deep": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "碑背贴地那一截还刻着一行小字：往北三里，莫夜行。一刀深一刀浅，凿的人不是石匠——是拿命换来的话，才刻得这样歪。",
+      "next": "act_deep"
+    },
+    "act": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "playNpcAnimation",
+          "params": {
+            "target": "eco_ywl_队狗",
+            "state": "stretch",
+            "loop": false,
+            "thenState": "slow_walk",
+            "speed": 0.9
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "act_deep": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "playNpcAnimation",
+          "params": {
+            "target": "eco_ywl_队狗",
+            "state": "bark",
+            "loop": false,
+            "thenState": "slow_walk",
+            "speed": 1.25
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "end": {
+      "type": "end"
+    }
+  }
+}

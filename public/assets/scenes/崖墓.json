@@ -141,7 +141,7 @@
         {
           "type": "startDialogueGraph",
           "params": {
-            "graphId": "寻狗_鬼打墙"
+            "graphId": "线外_寻狗_鬼打墙"
           }
         }
       ]
@@ -189,7 +189,7 @@
       ],
       "collisionPolygonLocal": true,
       "data": {
-        "graphId": "寻狗_背尸"
+        "graphId": "线外_寻狗_背尸"
       }
     },
     {
@@ -200,7 +200,7 @@
       "y": 215.0,
       "interactionRange": 64.0,
       "data": {
-        "graphId": "寻狗_崖墓壁龛"
+        "graphId": "线外_寻狗_崖墓壁龛"
       }
     },
     {

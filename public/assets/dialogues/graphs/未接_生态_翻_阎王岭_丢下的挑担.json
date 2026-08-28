@@ -1,0 +1,102 @@
+{
+  "schemaVersion": 1,
+  "id": "未接_生态_翻_阎王岭_丢下的挑担",
+  "entry": "root",
+  "meta": {
+    "title": "翻检 · 阎王岭路边丢下的挑担（眼尖 / 夜 / 常态 三态；未挂 eco_点_* 持久态）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "narrative": "eco_眼力",
+              "state": "眼尖",
+              "reached": true
+            }
+          ],
+          "next": "deep"
+        },
+        {
+          "conditions": [
+            {
+              "timePhase": "夜"
+            }
+          ],
+          "next": "night"
+        }
+      ],
+      "defaultNext": "first"
+    },
+    "first": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "一副挑担撂在路坎上，绳子还捆得好好的，两头的筐是空的。人没影。",
+      "next": "act"
+    },
+    "night": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "夜头这副挑子的影子拉得老长，长到路那头去了。走过去看，路那头啥子都没得。",
+      "next": "act"
+    },
+    "deep": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "扁担中段磨得发亮，是常年上肩的老家什。可绳结打的是活扣——挑东西的人不打活扣，除非他随时预备着撂下就跑。",
+      "next": "act_deep"
+    },
+    "act": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "showEmote",
+          "params": {
+            "target": "eco_ywl_挑担",
+            "emote": "…",
+            "duration": 2000
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "act_deep": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "showEmote",
+          "params": {
+            "target": "eco_ywl_挑担",
+            "emote": "!",
+            "duration": 1200
+          }
+        },
+        {
+          "type": "playNpcAnimation",
+          "params": {
+            "target": "eco_ywl_队狗",
+            "state": "bark",
+            "loop": false,
+            "thenState": "slow_walk",
+            "speed": 1.3
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "end": {
+      "type": "end"
+    }
+  }
+}

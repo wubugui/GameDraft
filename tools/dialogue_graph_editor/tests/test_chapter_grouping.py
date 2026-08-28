@@ -43,10 +43,10 @@ class TestChapterGrouping(unittest.TestCase):
     def test_pure_derive_owner(self) -> None:
         owners = build_narrative_signal_owners(self._ng)
         # 听书开场喷 tingshu_kicked，被 scenario_听书 监听
-        self.assertIn("tingshu_kicked", collect_emitted_signals(self._dlg("寻狗_听书开场")))
-        self.assertEqual(derive_dialogue_owner(self._dlg("寻狗_听书开场"), owners), "scenario_听书")
+        self.assertIn("tingshu_kicked", collect_emitted_signals(self._dlg("序章_寻狗_听书开场")))
+        self.assertEqual(derive_dialogue_owner(self._dlg("序章_寻狗_听书开场"), owners), "scenario_听书")
         # 纯闲聊不喷叙事信号 → 无 owner
-        self.assertEqual(derive_dialogue_owner(self._dlg("茶馆小二"), owners), "")
+        self.assertEqual(derive_dialogue_owner(self._dlg("序章_茶馆小二"), owners), "")
         # __draft__ / state:* 派生广播不进 owner 索引
         self.assertNotIn("__draft__", owners)
         self.assertFalse(any(k.startswith("state:") for k in owners))
@@ -55,7 +55,7 @@ class TestChapterGrouping(unittest.TestCase):
         owners = build_narrative_signal_owners(self._ng)
         pkg_map = build_graph_package_map(self._ng)
         # 镇尸小交互 → owner 是 wrap/scenario 级 → 卷到 章节_义庄
-        owner = derive_dialogue_owner(self._dlg("寻狗_镇尸_剪子"), owners)
+        owner = derive_dialogue_owner(self._dlg("线外_寻狗_镇尸_剪子"), owners)
         self.assertTrue(owner, "镇尸_剪子 应能推导出 owner")
         self.assertEqual(pkg_map.get(owner), "章节_义庄")
 
@@ -88,10 +88,10 @@ class TestChapterGrouping(unittest.TestCase):
             # 字段只读（自动推导，禁止手填）
             self.assertFalse(w._edit_meta_scenario.isEditable())
             self.assertFalse(w._edit_meta_scenario.isEnabled())
-            w._data = self._dlg("寻狗_听书开场")
+            w._data = self._dlg("序章_寻狗_听书开场")
             w._apply_data_to_widgets()
             self.assertEqual(w._edit_meta_scenario.currentText(), "章节_听书")
-            w._data = self._dlg("茶馆小二")
+            w._data = self._dlg("序章_茶馆小二")
             w._apply_data_to_widgets()
             self.assertEqual(w._edit_meta_scenario.currentText(), "（未归属）")
         finally:

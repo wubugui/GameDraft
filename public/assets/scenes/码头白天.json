@@ -135,7 +135,7 @@
       "interactionRange": 63.0,
       "animFile": "/resources/runtime/animation/npc_lifu_anim/anim.json",
       "initialAnimState": "lifu_stand",
-      "dialogueGraphId": "码头_脚帮帮众看板对话",
+      "dialogueGraphId": "线外_码头_脚帮帮众看板对话",
       "collisionPolygon": [
         {
           "x": -25.8,
@@ -161,7 +161,7 @@
       "animFile": "/resources/runtime/animation/guanchai_anim/anim.json",
       "initialAnimState": "guanchai_sleep",
       "initialFacing": "left",
-      "dialogueGraphId": "码头看板官差",
+      "dialogueGraphId": "线外_码头看板官差",
       "collisionPolygon": [
         {
           "x": -20.3,
@@ -312,7 +312,7 @@
       "y": 1197.2,
       "interactionRange": 60.0,
       "data": {
-        "graphId": "码头看板"
+        "graphId": "线外_码头看板"
       }
     },
     {
@@ -582,7 +582,7 @@
       "y": 436.3,
       "interactionRange": 50,
       "data": {
-        "graphId": "主线_藏钱",
+        "graphId": "序章_主线_藏钱",
         "entry": "n_2",
         "text": ""
       },
@@ -873,7 +873,7 @@
         {
           "type": "startDialogueGraph",
           "params": {
-            "graphId": "寻狗_码头选择"
+            "graphId": "线外_寻狗_码头选择"
           }
         },
         {

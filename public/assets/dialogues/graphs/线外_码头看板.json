@@ -1,0 +1,135 @@
+{
+  "schemaVersion": 1,
+  "id": "线外_码头看板",
+  "entry": "n_1",
+  "meta": {
+    "title": "码头看板"
+  },
+  "preconditions": [],
+  "nodes": {
+    "n_board": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "showOverlayImage",
+          "params": {
+            "id": "水猴子告示X",
+            "image": "/resources/runtime/images/illustrations/告示-抓水猴子X.png",
+            "xPercent": 50.0,
+            "yPercent": 50.0,
+            "widthPercent": 40.0
+          }
+        },
+        {
+          "type": "waitClickContinue",
+          "params": {
+            "text": ""
+          }
+        },
+        {
+          "type": "playScriptedDialogue",
+          "params": {
+            "lines": [
+              {
+                "speaker": "你",
+                "text": "女......"
+              },
+              {
+                "speaker": "你",
+                "text": "子......"
+              }
+            ]
+          }
+        },
+        {
+          "type": "playScriptedDialogue",
+          "params": {
+            "lines": [
+              {
+                "speaker": "你",
+                "text": "哪家的婆娘能有恁个戳，勒个啥鸡毛丑八怪！"
+              }
+            ]
+          }
+        },
+        {
+          "type": "playScriptedDialogue",
+          "params": {
+            "lines": [
+              {
+                "speaker": "你",
+                "text": "三......五......"
+              },
+              {
+                "speaker": "你",
+                "text": "钱？！"
+              }
+            ]
+          }
+        },
+        {
+          "type": "hideOverlayImage",
+          "params": {
+            "id": "水猴子告示X"
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "dock_board",
+            "signal": "board_read_done"
+          }
+        }
+      ],
+      "next": "e_end"
+    },
+    "e_end": {
+      "type": "end"
+    },
+    "n_1": {
+      "type": "switch",
+      "cases": [
+        {
+          "next": "n_2",
+          "conditions": [
+            {
+              "flag": "码头水鬼真相已揭示",
+              "op": "==",
+              "value": true
+            }
+          ]
+        }
+      ],
+      "defaultNext": "n_board"
+    },
+    "n_2": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "showOverlayImage",
+          "params": {
+            "id": "临时",
+            "image": "/resources/runtime/images/illustrations/告示-抓水猴子.png",
+            "xPercent": 50.0,
+            "yPercent": 50.0,
+            "widthPercent": 40.0
+          }
+        },
+        {
+          "type": "waitClickContinue",
+          "params": {
+            "text": ""
+          }
+        },
+        {
+          "type": "hideOverlayImage",
+          "params": {
+            "id": "临时"
+          }
+        }
+      ],
+      "next": "e_end"
+    }
+  }
+}

@@ -1,0 +1,171 @@
+{
+  "schemaVersion": 1,
+  "id": "线外_寻狗_婆子",
+  "entry": "root",
+  "meta": {
+    "title": "寻狗Demo·第一单（婆子上门）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "plane": "背尸"
+            }
+          ],
+          "next": "beishi_busy"
+        },
+        {
+          "conditions": [
+            {
+              "narrative": "scenario_婆子家",
+              "state": "paid",
+              "reached": true
+            }
+          ],
+          "next": "done_1"
+        }
+      ],
+      "defaultNext": "n1"
+    },
+    "done_1": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "小先生的恩，老婆子记到起的。",
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "n1": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "可算寻到你了！你就是……李天狗那一脉的小先生迈？",
+      "next": "n2",
+      "portrait": {
+        "emotion": "sad"
+      }
+    },
+    "n2": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "（李天狗那一脉？……哦。说的我。）正是。",
+      "next": "n3",
+      "portrait": {
+        "emotion": "smirk"
+      }
+    },
+    "n3": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "我屋头院坝头，夜夜都有响动！鸡也不下蛋了，狗叫到大半夜——钱，老婆子拍这点了！你总要给我看哈嘛！",
+      "next": "c1",
+      "portrait": {
+        "emotion": "fear"
+      }
+    },
+    "c1": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "jie",
+          "text": "「走。带老子去看。」",
+          "next": "c_jie"
+        },
+        {
+          "id": "tai",
+          "text": "〔抬抬价〕「这种活路……一般先生可不接哦。」",
+          "next": "c_tai"
+        }
+      ]
+    },
+    "c_tai": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "（一咬牙）再加十文！真的不能再多了，小先生！",
+      "next": "c_tai_pay",
+      "portrait": {
+        "emotion": "sad"
+      }
+    },
+    "c_tai_pay": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "giveCurrency",
+          "params": {
+            "amount": 10
+          }
+        }
+      ],
+      "next": "n4"
+    },
+    "c_jie": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "哎！哎！小先生这边走嘛——",
+      "next": "n4",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "n4": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "这是头一个主动找上门的活路。关二狗跟着婆子出城，一路把说书先生的词在肚子里又过了一遍。",
+      "next": "n_go"
+    },
+    "n_go": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_婆子",
+            "signal": "pozi_hired"
+          }
+        },
+        {
+          "type": "switchScene",
+          "params": {
+            "targetScene": "婆子家院",
+            "targetSpawnPoint": "entry"
+          }
+        }
+      ],
+      "next": "end1"
+    },
+    "end1": {
+      "type": "end"
+    },
+    "beishi_busy": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "哎哟你背个死人子站到我跟前做啥子嘛！快送切快送切，回头再说！",
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
+    }
+  }
+}

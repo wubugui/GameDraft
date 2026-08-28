@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "id": "未接_生态_翻_雾津_空摊架",
+  "entry": "root",
+  "meta": {
+    "title": "翻检 · 雾津西口空摊架（眼尖 / 夜 / 常态 三态）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "narrative": "eco_眼力",
+              "state": "眼尖",
+              "reached": true
+            }
+          ],
+          "next": "deep"
+        },
+        {
+          "conditions": [
+            {
+              "timePhase": "夜"
+            }
+          ],
+          "next": "night"
+        }
+      ],
+      "defaultNext": "first"
+    },
+    "first": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "一副空摊架支在布棚底下，板子上积了一层灰。灰上头没得脚印，也没得手印——这摊子收了不止一天咯。",
+      "next": "act_first"
+    },
+    "night": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "夜头看更像副空担架。布棚兜着雨水，一滴一滴往板子上砸。",
+      "next": "end"
+    },
+    "deep": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "板缝里卡着半张油纸，还沾得有芝麻。是卖炒货的。人走咯，摊架却没人来收——走得急。",
+      "next": "act_deep"
+    },
+    "act_first": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "playNpcAnimation",
+          "params": {
+            "target": "npc_街头土狗",
+            "state": "stretch",
+            "loop": false,
+            "thenState": "idle",
+            "speed": 0.9
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "act_deep": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "playNpcAnimation",
+          "params": {
+            "target": "npc_街头土狗",
+            "state": "bark",
+            "loop": false,
+            "thenState": "idle",
+            "speed": 1.0
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "end": {
+      "type": "end"
+    }
+  }
+}

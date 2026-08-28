@@ -182,7 +182,7 @@
         {
           "type": "startDialogueGraph",
           "params": {
-            "graphId": "寻狗_河边递纸"
+            "graphId": "线外_寻狗_河边递纸"
           }
         }
       ]

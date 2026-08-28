@@ -163,7 +163,7 @@
       "y": 893.8,
       "interactionRange": 60.0,
       "data": {
-        "graphId": "寻狗_街头闲话"
+        "graphId": "线外_寻狗_街头闲话"
       },
       "planes": [
         "normal"
@@ -356,7 +356,7 @@
       ],
       "conditionHidesEntity": true,
       "data": {
-        "graphId": "寻狗_淘道袍"
+        "graphId": "线外_寻狗_淘道袍"
       },
       "planes": [
         "normal"
@@ -384,7 +384,7 @@
       ],
       "conditionHidesEntity": true,
       "data": {
-        "graphId": "寻狗_淘罗盘"
+        "graphId": "线外_寻狗_淘罗盘"
       },
       "planes": [
         "normal"
@@ -412,7 +412,7 @@
       ],
       "conditionHidesEntity": true,
       "data": {
-        "graphId": "寻狗_淘桃木"
+        "graphId": "线外_寻狗_淘桃木"
       },
       "planes": [
         "normal"
@@ -445,7 +445,7 @@
           {
             "type": "startDialogueGraph",
             "params": {
-              "graphId": "寻狗_淹尸验尸"
+              "graphId": "线外_寻狗_淹尸验尸"
             }
           }
         ]
@@ -460,7 +460,7 @@
       "y": 1780.5,
       "interactionRange": 56.0,
       "data": {
-        "graphId": "寻狗_踩铜板"
+        "graphId": "线外_寻狗_踩铜板"
       },
       "castShadow": false,
       "conditions": [
@@ -483,7 +483,7 @@
       "y": 1550.0,
       "interactionRange": 64.0,
       "data": {
-        "graphId": "寻狗_摸橘子"
+        "graphId": "线外_寻狗_摸橘子"
       },
       "castShadow": false,
       "conditions": [
@@ -530,7 +530,7 @@
       "y": 606.5,
       "interactionRange": 50,
       "data": {
-        "graphId": "主线_藏钱",
+        "graphId": "序章_主线_藏钱",
         "entry": "n_start",
         "text": ""
       },
@@ -550,7 +550,7 @@
       "y": 871.4,
       "interactionRange": 50,
       "data": {
-        "graphId": "街巷_主线吃饭点",
+        "graphId": "序章_街巷_主线吃饭点",
         "entry": "n_start",
         "text": ""
       },
@@ -749,7 +749,7 @@
       "interactionRange": 64.0,
       "animFile": "/resources/runtime/animation/npc_coolie_c_anim/anim.json",
       "initialAnimState": "idle",
-      "dialogueGraphId": "寻狗_零工接活",
+      "dialogueGraphId": "线外_寻狗_零工接活",
       "dialogueCameraZoom": 1.5,
       "conditions": [
         {
@@ -769,7 +769,7 @@
       "animFile": "/resources/runtime/animation/npc_coolie_c_anim/anim.json",
       "initialAnimState": "idle",
       "initialFacing": "left",
-      "dialogueGraphId": "寻狗_庄家来人",
+      "dialogueGraphId": "线外_寻狗_庄家来人",
       "dialogueCameraZoom": 1.5,
       "conditions": [
         {
@@ -806,7 +806,7 @@
       "animFile": "/resources/runtime/animation/npc_popo_anim/anim.json",
       "initialAnimState": "idle",
       "initialFacing": "left",
-      "dialogueGraphId": "寻狗_婆子",
+      "dialogueGraphId": "线外_寻狗_婆子",
       "dialogueCameraZoom": 1.5,
       "conditions": [
         {
@@ -825,7 +825,7 @@
       "animFile": "/resources/runtime/animation/npc_coolie_b_anim/anim.json",
       "initialAnimState": "idle",
       "initialFacing": "right",
-      "dialogueGraphId": "寻狗_枯井街坊",
+      "dialogueGraphId": "线外_寻狗_枯井街坊",
       "dialogueCameraZoom": 1.5,
       "conditions": [
         {
@@ -844,7 +844,7 @@
       "animFile": "/resources/runtime/animation/npc_employer_anim/anim.json",
       "initialAnimState": "idle",
       "initialFacing": "left",
-      "dialogueGraphId": "寻狗_送货雇主",
+      "dialogueGraphId": "线外_寻狗_送货雇主",
       "dialogueCameraZoom": 1.5,
       "conditions": [
         {
@@ -863,7 +863,7 @@
       "animFile": "/resources/runtime/animation/npc_yizhuang_keeper_anim/anim.json",
       "initialAnimState": "idle",
       "initialFacing": "left",
-      "dialogueGraphId": "寻狗_义庄管事",
+      "dialogueGraphId": "线外_寻狗_义庄管事",
       "dialogueCameraZoom": 1.5,
       "conditions": [
         {
@@ -882,7 +882,7 @@
       "interactionRange": 70.0,
       "initialAnimState": "克拉拉_走路",
       "initialFacing": "left",
-      "dialogueGraphId": "寻狗_克拉拉招募",
+      "dialogueGraphId": "线外_寻狗_克拉拉招募",
       "dialogueCameraZoom": 1.5,
       "conditions": [
         {
@@ -902,7 +902,7 @@
       "animFile": "/resources/runtime/animation/npc_coolie_a_anim/anim.json",
       "initialAnimState": "idle",
       "initialFacing": "left",
-      "dialogueGraphId": "寻狗_街头吹牛",
+      "dialogueGraphId": "线外_寻狗_街头吹牛",
       "dialogueCameraZoom": 1.5,
       "group": "线外_归档"
     },
@@ -927,7 +927,7 @@
       "animFile": "/resources/runtime/animation/npc_blind_li_anim/anim.json",
       "initialAnimState": "idle",
       "initialFacing": "left",
-      "dialogueGraphId": "寻狗_瞎子李算命",
+      "dialogueGraphId": "线外_寻狗_瞎子李算命",
       "dialogueCameraZoom": 1.5,
       "group": "线外_归档"
     },
@@ -940,7 +940,7 @@
       "animFile": "/resources/runtime/animation/npc_coolie_b_anim/anim.json",
       "initialAnimState": "idle",
       "initialFacing": "right",
-      "dialogueGraphId": "寻狗_叫花子斗嘴",
+      "dialogueGraphId": "线外_寻狗_叫花子斗嘴",
       "dialogueCameraZoom": 1.5,
       "group": "线外_归档"
     },
@@ -953,7 +953,7 @@
       "animFile": "/resources/runtime/animation/chicken_anim/anim.json",
       "initialAnimState": "idle",
       "initialFacing": "left",
-      "dialogueGraphId": "寻狗_偷鸡",
+      "dialogueGraphId": "线外_寻狗_偷鸡",
       "dialogueCameraZoom": 1.5,
       "group": "线外_归档"
     },
@@ -966,7 +966,7 @@
       "animFile": "/resources/runtime/animation/dog_anim/anim.json",
       "initialAnimState": "idle",
       "initialFacing": "left",
-      "dialogueGraphId": "寻狗_踢狗",
+      "dialogueGraphId": "线外_寻狗_踢狗",
       "dialogueCameraZoom": 1.5,
       "group": "线外_归档"
     },
@@ -979,7 +979,7 @@
       "animFile": "/resources/runtime/animation/cat_anim/anim.json",
       "initialAnimState": "idle",
       "initialFacing": "left",
-      "dialogueGraphId": "寻狗_踢猫",
+      "dialogueGraphId": "线外_寻狗_踢猫",
       "dialogueCameraZoom": 1.5,
       "group": "线外_归档"
     },
@@ -992,7 +992,7 @@
       "animFile": "/resources/runtime/animation/guanchai_anim/anim.json",
       "initialAnimState": "idle",
       "initialFacing": "left",
-      "dialogueGraphId": "寻狗_袍哥秒怂",
+      "dialogueGraphId": "线外_寻狗_袍哥秒怂",
       "dialogueCameraZoom": 1.5,
       "conditions": [
         {
@@ -1015,7 +1015,7 @@
       "animFile": "/resources/runtime/animation/npc_employer_anim/anim.json",
       "initialAnimState": "idle",
       "initialFacing": "left",
-      "dialogueGraphId": "寻狗_壮汉撞人",
+      "dialogueGraphId": "线外_寻狗_壮汉撞人",
       "dialogueCameraZoom": 1.5,
       "conditions": [
         {
@@ -1038,7 +1038,7 @@
       "animFile": "/resources/runtime/animation/npc_employer_anim/anim.json",
       "initialAnimState": "idle",
       "initialFacing": "left",
-      "dialogueGraphId": "寻狗_挑衅蹲坑",
+      "dialogueGraphId": "线外_寻狗_挑衅蹲坑",
       "dialogueCameraZoom": 1.5,
       "conditions": [
         {
@@ -1058,7 +1058,7 @@
       "animFile": "/resources/runtime/animation/npc_coolie_a_anim/anim.json",
       "initialAnimState": "idle",
       "portraitSlug": "npc_coolie_a_anim",
-      "dialogueGraphId": "街巷_赌坊门卫"
+      "dialogueGraphId": "序章_街巷_赌坊门卫"
     },
     {
       "id": "npc_送葬_法师",
@@ -1223,7 +1223,7 @@
       "x": 1927.8,
       "y": 2087.2,
       "animFile": "/resources/runtime/animation/wujin_onlookers_anim/anim.json",
-      "dialogueGraphId": "寻狗_围观竞争",
+      "dialogueGraphId": "线外_寻狗_围观竞争",
       "interactionRange": 70,
       "spriteSort": "back",
       "renderRaw": true,
@@ -1255,7 +1255,7 @@
       "interactionRange": 50,
       "characterId": "癞子",
       "initialAnimState": "idle",
-      "dialogueGraphId": "NPC癞子",
+      "dialogueGraphId": "序章_NPC癞子",
       "patrol": {
         "route": [
           {
@@ -1323,7 +1323,7 @@
         {
           "type": "startDialogueGraph",
           "params": {
-            "graphId": "寻狗_找活"
+            "graphId": "线外_寻狗_找活"
           }
         }
       ],
@@ -1774,7 +1774,7 @@
         {
           "type": "startDialogueGraph",
           "params": {
-            "graphId": "寻狗_袍哥秒怂"
+            "graphId": "线外_寻狗_袍哥秒怂"
           }
         }
       ],
@@ -1822,7 +1822,7 @@
         {
           "type": "startDialogueGraph",
           "params": {
-            "graphId": "寻狗_找活"
+            "graphId": "线外_寻狗_找活"
           }
         }
       ],
@@ -1852,7 +1852,7 @@
         {
           "type": "startDialogueGraph",
           "params": {
-            "graphId": "寻狗_癞子显摆",
+            "graphId": "序章_寻狗_癞子显摆",
             "npcId": "NPC_癞子",
             "ownerType": "npc",
             "ownerId": "NPC_癞子"

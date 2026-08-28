@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "id": "未接_生态_看_码头_酒坛",
+  "entry": "root",
+  "meta": {
+    "title": "摊子边的坛子（白日/暮 两态；一拍：看摊鹅伸脖子）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "timePhase": "暮"
+            }
+          ],
+          "next": "mu1"
+        },
+        {
+          "conditions": [
+            {
+              "timePhase": "夜"
+            }
+          ],
+          "next": "mu1"
+        }
+      ],
+      "defaultNext": "ri1"
+    },
+    "ri1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "坛口拿油纸封起，绳扣打得死紧。凑拢去闻——是泡菜水的酸气，不是酒。",
+      "next": "act_ri"
+    },
+    "act_ri": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "faceEntity",
+          "params": {
+            "target": "eco_dk_看摊鹅",
+            "faceTarget": "player"
+          }
+        },
+        {
+          "type": "playNpcAnimation",
+          "params": {
+            "target": "eco_dk_看摊鹅",
+            "state": "honk_stand"
+          }
+        },
+        {
+          "type": "showEmote",
+          "params": {
+            "target": "eco_dk_看摊鹅",
+            "emote": "!",
+            "duration": 1400
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "mu1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "坛子搬进屋去咯一半，剩下这两个空的扣在墙根，坛底还在滴酸水。",
+      "next": "end"
+    },
+    "end": {
+      "type": "end"
+    }
+  }
+}

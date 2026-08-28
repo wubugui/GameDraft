@@ -183,7 +183,7 @@
       ],
       "conditionHidesEntity": true,
       "data": {
-        "graphId": "寻狗_茶馆吹牛"
+        "graphId": "线外_寻狗_茶馆吹牛"
       }
     },
     {
@@ -205,7 +205,7 @@
       ],
       "conditionHidesEntity": true,
       "data": {
-        "graphId": "寻狗_向导传闻"
+        "graphId": "线外_寻狗_向导传闻"
       }
     }
   ],
@@ -215,7 +215,7 @@
       "name": "说书人张叨叨",
       "x": 363.9,
       "y": 490.7,
-      "dialogueGraphId": "寻狗_说书人",
+      "dialogueGraphId": "序章_寻狗_说书人",
       "interactionRange": 40.0,
       "animFile": "/resources/runtime/animation/npc_storyteller_anim/anim.json",
       "initialAnimState": "idle",
@@ -231,7 +231,7 @@
       "name": "瞎子李",
       "x": 154.8,
       "y": 307.2,
-      "dialogueGraphId": "茶馆瞎子李",
+      "dialogueGraphId": "序章_茶馆瞎子李",
       "interactionRange": 71.4,
       "animFile": "/resources/runtime/animation/npc_blind_li_anim/anim.json",
       "initialAnimState": "crouch",
@@ -248,14 +248,14 @@
       "interactionRange": 64.0,
       "animFile": "/resources/runtime/animation/npc_teahouse_owner_anim/anim.json",
       "initialAnimState": "idle",
-      "dialogueGraphId": "寻狗_茶馆掌柜"
+      "dialogueGraphId": "线外_寻狗_茶馆掌柜"
     },
     {
       "id": "waiter_xiaoer",
       "name": "小二",
       "x": 81.1,
       "y": 256.8,
-      "dialogueGraphId": "茶馆小二",
+      "dialogueGraphId": "序章_茶馆小二",
       "interactionRange": 64.3,
       "animFile": "/resources/runtime/animation/npc_lifu_anim/anim.json",
       "initialAnimState": "crouch",
@@ -532,7 +532,7 @@
     {
       "type": "startDialogueGraph",
       "params": {
-        "graphId": "寻狗_听书开场"
+        "graphId": "序章_寻狗_听书开场"
       }
     }
   ],

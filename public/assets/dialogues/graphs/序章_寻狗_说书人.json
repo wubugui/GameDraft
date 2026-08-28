@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "id": "序章_寻狗_说书人",
+  "entry": "root",
+  "meta": {
+    "title": "寻狗Demo·茶馆说书人（返场：背尸后飞僵段 / 平日请早）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "narrative": "flow_xungou_main",
+              "state": "s02_beishi"
+            }
+          ],
+          "next": "feijiang_1"
+        }
+      ],
+      "defaultNext": "ret_1"
+    },
+    "ret_1": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "今天这书讲完了。明天请早——明天讲飞僵，白僵紫僵都得靠边站的那种。",
+      "next": "end1",
+      "portrait": {
+        "emotion": "smirk"
+      }
+    },
+    "feijiang_1": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "（醒木一拍）——要说这僵尸，白僵不算凶，紫僵才开荤。最毒的是飞僵！飞天遁地，米山符海都拦不住！",
+      "next": "feijiang_2",
+      "portrait": {
+        "emotion": "laugh"
+      }
+    },
+    "feijiang_2": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "满堂听客大气不敢出。关二狗缩在人堆后头，捂着还在发酸的腰杆——他刚从一具「不对劲」底下逃回来，这书听着比往常扎耳朵多了。",
+      "next": "end1"
+    },
+    "end1": {
+      "type": "end"
+    }
+  }
+}

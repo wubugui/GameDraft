@@ -139,7 +139,7 @@
         {
           "type": "startDialogueGraph",
           "params": {
-            "graphId": "梦_段D_里屋"
+            "graphId": "线外_梦_段D_里屋"
           }
         }
       ]

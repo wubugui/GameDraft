@@ -1,0 +1,177 @@
+{
+  "schemaVersion": 1,
+  "id": "线外_寻狗_背尸",
+  "entry": "root",
+  "meta": {
+    "title": "寻狗Demo·夜背崖墓尸（背尸力学 + 香粉 + 不唱魂 → 交控权走鬼打墙）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "narrative": "scenario_背尸",
+              "state": "fled",
+              "reached": true
+            }
+          ],
+          "next": "done_1"
+        },
+        {
+          "conditions": [
+            {
+              "flag": "beishi_carrying",
+              "value": true
+            }
+          ],
+          "next": "done_carry"
+        }
+      ],
+      "defaultNext": "n1"
+    },
+    "done_1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "不看了。这辈子都不想再上那座崖墓。",
+      "next": "end1"
+    },
+    "done_carry": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "（尸都背身上了，还看啥子……找路下崖嘛。）",
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "n1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "夜里。临江绝壁上一座崖墓，头七还没过，雇主却要把里头那具尸背下去送义庄。关二狗心头打鼓，可工钱在前——他哦了两句，摸黑上了崖。墓室里那具尸停着，蒙着布。",
+      "next": "n_pouch"
+    },
+    "n_pouch": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "尸边上随葬一个旧帕子包，鼓鼓囊囊像裹着值钱货。扒尸捡物的老手，他贪心一把抄进怀里——破是破，没舍得扔。",
+      "next": "n_pouch_give"
+    },
+    "n_pouch_give": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "giveItem",
+          "params": {
+            "id": "old_cloth_pouch",
+            "count": 1
+          }
+        }
+      ],
+      "next": "n_pouch_scent"
+    },
+    "n_pouch_scent": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "揣上那一刻，一缕味浮起来——浆洗棉布、线头，和一点……廉价香粉。不晓得打哪点来，散不掉。他啐口唾沫搓搓手，上前过肩搭手，架起那具尸。",
+      "next": "n_hold"
+    },
+    "n_hold": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startPressureHold",
+          "params": {
+            "id": "carry_bride_corpse"
+          }
+        }
+      ],
+      "next": "n2"
+    },
+    "n2": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "刚架上肩，他就越背越觉出不对——这一具，跟他背过的八百具哪一具都不一样。心头刚念一句“咋个这么沉”，那尸登时沉得像背了座山。",
+      "next": "n_chant"
+    },
+    "n_chant": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "凉是凉的，沉是沉的，该是啥子——",
+      "next": "n_chant2",
+      "portrait": {
+        "emotion": "fear"
+      }
+    },
+    "n_chant2": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "那句背了八百回、念顺了的话，卡在了喉咙里。凉透骨、重得邪门，停了多日像才刚停下。这尸，哪样都不对劲。头皮一层一层麻上来。",
+      "next": "n_cue"
+    },
+    "n_cue": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_背尸",
+            "signal": "beishi_scent"
+          }
+        }
+      ],
+      "next": "n_carry_flag"
+    },
+    "n_carry_flag": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "beishi_carrying",
+            "value": true
+          }
+        }
+      ],
+      "next": "n_descend"
+    },
+    "n_descend": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "（莫管它邪门不邪门，工钱在前。背起就走——下崖那截窄道，自己摸黑下去。）",
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "end1": {
+      "type": "end"
+    }
+  }
+}

@@ -83,7 +83,7 @@
       "interactionRange": 101.74,
       "initialAnimState": "埃德加_走路",
       "initialFacing": "left",
-      "dialogueGraphId": "寻狗_城门汇合",
+      "dialogueGraphId": "线外_寻狗_城门汇合",
       "dialogueCameraZoom": 1.45
     },
     {
@@ -94,7 +94,7 @@
       "interactionRange": 101.74,
       "initialAnimState": "克拉拉_走路",
       "initialFacing": "left",
-      "dialogueGraphId": "寻狗_城门汇合",
+      "dialogueGraphId": "线外_寻狗_城门汇合",
       "dialogueCameraZoom": 1.45
     }
   ],

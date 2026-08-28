@@ -217,7 +217,7 @@
         {
           "type": "startDialogueGraph",
           "params": {
-            "graphId": "寻狗_崖墓任务发布",
+            "graphId": "序章_寻狗_崖墓任务发布",
             "npcId": "崖墓任务发布者"
           }
         }
@@ -247,7 +247,7 @@
         {
           "type": "startDialogueGraph",
           "params": {
-            "graphId": "后巷_棺材铺交互"
+            "graphId": "线外_后巷_棺材铺交互"
           }
         }
       ]

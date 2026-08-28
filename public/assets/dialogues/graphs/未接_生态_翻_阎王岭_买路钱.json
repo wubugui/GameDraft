@@ -1,0 +1,104 @@
+{
+  "schemaVersion": 1,
+  "id": "未接_生态_翻_阎王岭_买路钱",
+  "entry": "root",
+  "meta": {
+    "title": "翻检 · 阎王岭碑脚下的买路钱（眼尖 / 夜 / 常态 三态；未挂 eco_点_* 持久态）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "narrative": "eco_眼力",
+              "state": "眼尖",
+              "reached": true
+            }
+          ],
+          "next": "deep"
+        },
+        {
+          "conditions": [
+            {
+              "timePhase": "夜"
+            }
+          ],
+          "next": "night"
+        }
+      ],
+      "defaultNext": "first"
+    },
+    "first": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "一叠黄纸让石头压在碑脚下，边上烧过一撮，灰还没让风刮散。过岭的人在这儿买过路。",
+      "next": "act"
+    },
+    "night": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "夜头那叠纸让风翻得哗哗响，压石头的那半边却纹丝不动。",
+      "next": "act"
+    },
+    "deep": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "纸是新的，石头底下的灰却积了三层——同一块石头，同一个位置，压过不晓得多少回。这条路上年年有人要买，年年买不脱。",
+      "next": "act_deep"
+    },
+    "act": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "playNpcAnimation",
+          "params": {
+            "target": "eco_ywl_队狗",
+            "state": "bark",
+            "loop": false,
+            "thenState": "slow_walk",
+            "speed": 1.05
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "act_deep": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "playNpcAnimation",
+          "params": {
+            "target": "eco_ywl_驮驴",
+            "state": "kick",
+            "loop": false,
+            "thenState": "idle",
+            "speed": 0.85
+          }
+        },
+        {
+          "type": "showEmote",
+          "params": {
+            "target": "eco_ywl_驮驴",
+            "emote": "!",
+            "duration": 900
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "end": {
+      "type": "end"
+    }
+  }
+}

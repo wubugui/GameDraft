@@ -1,0 +1,115 @@
+{
+  "schemaVersion": 1,
+  "id": "未接_生态_翻_河边_石缝",
+  "entry": "root",
+  "meta": {
+    "title": "翻检 · 河边石缝里塞的干草（夜 / 眼尖 / 常态 三态；未挂 eco_点_* 持久态）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "timePhase": "夜"
+            }
+          ],
+          "next": "night"
+        },
+        {
+          "conditions": [
+            {
+              "narrative": "eco_眼力",
+              "state": "眼尖",
+              "reached": true
+            }
+          ],
+          "next": "deep"
+        }
+      ],
+      "defaultNext": "first"
+    },
+    "first": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "石缝里塞着一把干草，压得实实的——挑水的歇脚，垫过屁股。草底下还压着半截烧过的香。",
+      "next": "act"
+    },
+    "deep": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "香根是新的，插过的地方三个小孔，一样深浅。有人隔些日子就来这河边上一回香：不是路过，是还愿，要不就是赔罪。",
+      "next": "act_deep"
+    },
+    "night": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "夜里摸那石缝，指头先碰到一手冰凉的湿灰。香灰是湿的——今黑才有人来过。",
+      "next": "act_night"
+    },
+    "act": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "playNpcAnimation",
+          "params": {
+            "target": "eco_hb_鸭乙",
+            "state": "slow_walk",
+            "loop": false,
+            "thenState": "idle",
+            "speed": 0.8
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "act_deep": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "faceEntity",
+          "params": {
+            "target": "eco_hb_鸭甲",
+            "direction": "right"
+          }
+        },
+        {
+          "type": "playNpcAnimation",
+          "params": {
+            "target": "eco_hb_鸭甲",
+            "state": "crouch",
+            "reverse": true,
+            "loop": false,
+            "thenState": "idle"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "act_night": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "playSfx",
+          "params": {
+            "id": "sfx_yinfeng_gust"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "end": {
+      "type": "end"
+    }
+  }
+}

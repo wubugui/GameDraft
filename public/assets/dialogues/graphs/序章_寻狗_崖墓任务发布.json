@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "id": "序章_寻狗_崖墓任务发布",
+  "entry": "n_1",
+  "meta": {
+    "title": "崖墓任务发布"
+  },
+  "preconditions": [],
+  "nodes": {
+    "n_1": {
+      "type": "ownerState",
+      "cases": [
+        {
+          "state": "state_1",
+          "next": "n_4"
+        },
+        {
+          "state": "initial",
+          "next": "n_2"
+        },
+        {
+          "state": "state_2",
+          "next": "n_2"
+        }
+      ],
+      "defaultNext": "n_2",
+      "missingWrapperNext": "n_2",
+      "wrapperGraphId": "wrapper_主线_崖墓任务发布"
+    },
+    "n_2": {
+      "type": "end"
+    },
+    "n_3": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "崖墓任务_发布完成"
+          }
+        }
+      ],
+      "next": "n_2"
+    },
+    "n_4": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startCutscene",
+          "params": {
+            "id": "崖墓尸任务发布"
+          }
+        },
+        {
+          "type": "addFlagValue",
+          "params": {
+            "key": "coins",
+            "delta": 20.0
+          }
+        }
+      ],
+      "next": "n_3"
+    }
+  }
+}

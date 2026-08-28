@@ -103,7 +103,7 @@
           "id": "dialogue_dock_board",
           "kind": "dialogueBlackbox",
           "label": "码头看板",
-          "refId": "码头看板",
+          "refId": "线外_码头看板",
           "x": 24,
           "y": -96,
           "meta": {
@@ -247,7 +247,7 @@
           "id": "dialogue_ringboy",
           "kind": "dialogueBlackbox",
           "label": "滚铁环小孩对话",
-          "refId": "滚铁环小孩",
+          "refId": "线外_滚铁环小孩",
           "x": 24,
           "y": -186,
           "meta": {
@@ -797,7 +797,7 @@
           "id": "dlg_01",
           "kind": "dialogueBlackbox",
           "label": "寻狗_说书人",
-          "refId": "寻狗_说书人",
+          "refId": "序章_寻狗_说书人",
           "x": 24,
           "y": -140,
           "meta": {
@@ -869,7 +869,7 @@
           "id": "dlg_听书开场",
           "kind": "dialogueBlackbox",
           "label": "寻狗_听书开场",
-          "refId": "寻狗_听书开场",
+          "refId": "序章_寻狗_听书开场",
           "x": -157,
           "y": -221,
           "meta": {
@@ -981,7 +981,7 @@
           "id": "dlg_02",
           "kind": "dialogueBlackbox",
           "label": "寻狗_背尸",
-          "refId": "寻狗_背尸",
+          "refId": "线外_寻狗_背尸",
           "x": 264,
           "y": -140,
           "meta": {
@@ -998,7 +998,7 @@
           "id": "dlg_guidaoqiang",
           "kind": "dialogueBlackbox",
           "label": "寻狗_鬼打墙",
-          "refId": "寻狗_鬼打墙",
+          "refId": "线外_寻狗_鬼打墙",
           "x": 264,
           "y": -40,
           "meta": {
@@ -1013,7 +1013,7 @@
           "id": "dlg_03",
           "kind": "dialogueBlackbox",
           "label": "寻狗_茶馆吹牛",
-          "refId": "寻狗_茶馆吹牛",
+          "refId": "线外_寻狗_茶馆吹牛",
           "x": 504,
           "y": -140,
           "meta": {
@@ -1031,7 +1031,7 @@
           "id": "dlg_04",
           "kind": "dialogueBlackbox",
           "label": "寻狗_读人_婆子",
-          "refId": "寻狗_读人_婆子",
+          "refId": "线外_寻狗_读人_婆子",
           "x": 744,
           "y": -140,
           "meta": {
@@ -1048,7 +1048,7 @@
           "id": "dlg_05",
           "kind": "dialogueBlackbox",
           "label": "寻狗_读人_儿子",
-          "refId": "寻狗_读人_儿子",
+          "refId": "线外_寻狗_读人_儿子",
           "x": 984,
           "y": -140,
           "meta": {
@@ -1065,7 +1065,7 @@
           "id": "dlg_06",
           "kind": "dialogueBlackbox",
           "label": "寻狗_婆子家宣布",
-          "refId": "寻狗_婆子家宣布",
+          "refId": "线外_寻狗_婆子家宣布",
           "x": 1224,
           "y": -140,
           "meta": {
@@ -1083,7 +1083,7 @@
           "id": "dlg_07",
           "kind": "dialogueBlackbox",
           "label": "寻狗_河边递纸",
-          "refId": "寻狗_河边递纸",
+          "refId": "线外_寻狗_河边递纸",
           "x": 1464,
           "y": -140,
           "meta": {
@@ -1103,7 +1103,7 @@
           "id": "dlg_08",
           "kind": "dialogueBlackbox",
           "label": "寻狗_码头选择",
-          "refId": "寻狗_码头选择",
+          "refId": "线外_寻狗_码头选择",
           "x": 1704,
           "y": -140,
           "meta": {
@@ -1123,7 +1123,7 @@
           "id": "dlg_09",
           "kind": "dialogueBlackbox",
           "label": "寻狗_枯井往下看",
-          "refId": "寻狗_枯井往下看",
+          "refId": "线外_寻狗_枯井往下看",
           "x": 24,
           "y": -230,
           "meta": {
@@ -1142,7 +1142,7 @@
           "id": "dlg_10",
           "kind": "dialogueBlackbox",
           "label": "寻狗_向导传闻",
-          "refId": "寻狗_向导传闻",
+          "refId": "线外_寻狗_向导传闻",
           "x": 264,
           "y": -230,
           "meta": {
@@ -1159,7 +1159,7 @@
           "id": "dlg_11",
           "kind": "dialogueBlackbox",
           "label": "寻狗_围观竞争",
-          "refId": "寻狗_围观竞争",
+          "refId": "线外_寻狗_围观竞争",
           "x": 504,
           "y": -230,
           "meta": {
@@ -1177,7 +1177,7 @@
           "id": "dlg_12",
           "kind": "dialogueBlackbox",
           "label": "寻狗_送货雇主",
-          "refId": "寻狗_送货雇主",
+          "refId": "线外_寻狗_送货雇主",
           "x": 744,
           "y": -230,
           "meta": {
@@ -1194,7 +1194,7 @@
           "id": "dlg_13",
           "kind": "dialogueBlackbox",
           "label": "寻狗_送包袱到棚",
-          "refId": "寻狗_送包袱到棚",
+          "refId": "线外_寻狗_送包袱到棚",
           "x": 984,
           "y": -230,
           "meta": {
@@ -1211,7 +1211,7 @@
           "id": "dlg_14",
           "kind": "dialogueBlackbox",
           "label": "寻狗_看进山路",
-          "refId": "寻狗_看进山路",
+          "refId": "线外_寻狗_看进山路",
           "x": 1224,
           "y": -230,
           "meta": {
@@ -1238,7 +1238,7 @@
           "id": "dlg_15",
           "kind": "dialogueBlackbox",
           "label": "寻狗_镇尸_撒米",
-          "refId": "寻狗_镇尸_撒米",
+          "refId": "线外_寻狗_镇尸_撒米",
           "x": 1464,
           "y": -230,
           "meta": {
@@ -1255,7 +1255,7 @@
           "id": "dlg_16",
           "kind": "dialogueBlackbox",
           "label": "寻狗_镇尸_墨斗",
-          "refId": "寻狗_镇尸_墨斗",
+          "refId": "线外_寻狗_镇尸_墨斗",
           "x": 1704,
           "y": -230,
           "meta": {
@@ -1272,7 +1272,7 @@
           "id": "dlg_17",
           "kind": "dialogueBlackbox",
           "label": "寻狗_镇尸_石子",
-          "refId": "寻狗_镇尸_石子",
+          "refId": "线外_寻狗_镇尸_石子",
           "x": 24,
           "y": -320,
           "meta": {
@@ -1289,7 +1289,7 @@
           "id": "dlg_18",
           "kind": "dialogueBlackbox",
           "label": "寻狗_镇尸_剪子",
-          "refId": "寻狗_镇尸_剪子",
+          "refId": "线外_寻狗_镇尸_剪子",
           "x": 264,
           "y": -320,
           "meta": {
@@ -1306,7 +1306,7 @@
           "id": "dlg_19",
           "kind": "dialogueBlackbox",
           "label": "寻狗_克拉拉招募",
-          "refId": "寻狗_克拉拉招募",
+          "refId": "线外_寻狗_克拉拉招募",
           "x": 504,
           "y": -320,
           "meta": {
@@ -1323,7 +1323,7 @@
           "id": "dlg_20",
           "kind": "dialogueBlackbox",
           "label": "寻狗_守夜续油",
-          "refId": "寻狗_守夜续油",
+          "refId": "线外_寻狗_守夜续油",
           "x": 744,
           "y": -320,
           "meta": {
@@ -1340,7 +1340,7 @@
           "id": "dlg_21",
           "kind": "dialogueBlackbox",
           "label": "寻狗_守夜坐下",
-          "refId": "寻狗_守夜坐下",
+          "refId": "线外_寻狗_守夜坐下",
           "x": 984,
           "y": -320,
           "meta": {
@@ -1358,7 +1358,7 @@
           "id": "dlg_22",
           "kind": "dialogueBlackbox",
           "label": "寻狗_城门汇合",
-          "refId": "寻狗_城门汇合",
+          "refId": "线外_寻狗_城门汇合",
           "x": 1224,
           "y": -320,
           "meta": {
@@ -2542,7 +2542,7 @@
           "id": "dlg_beishi_hire",
           "kind": "dialogueBlackbox",
           "label": "寻狗_庄家来人",
-          "refId": "寻狗_庄家来人",
+          "refId": "线外_寻狗_庄家来人",
           "x": 24,
           "y": -450,
           "meta": {
@@ -3696,7 +3696,7 @@
                   {
                     "type": "startDialogueGraph",
                     "params": {
-                      "graphId": "寻狗_李天狗"
+                      "graphId": "线外_寻狗_李天狗"
                     }
                   },
                   {
@@ -4354,7 +4354,7 @@
           "id": "dlg_meng",
           "kind": "dialogueBlackbox",
           "label": "寻狗_梦待死之礼",
-          "refId": "寻狗_梦待死之礼",
+          "refId": "线外_寻狗_梦待死之礼",
           "x": 544,
           "y": -450,
           "meta": {
@@ -4377,7 +4377,7 @@
           "id": "dlg_hanming_x2",
           "kind": "dialogueBlackbox",
           "label": "寻狗_喊名_点二",
-          "refId": "寻狗_喊名_点二",
+          "refId": "线外_寻狗_喊名_点二",
           "x": 744,
           "y": -450,
           "meta": {
@@ -4397,7 +4397,7 @@
           "id": "dlg_hanming_x3",
           "kind": "dialogueBlackbox",
           "label": "寻狗_喊名_点三",
-          "refId": "寻狗_喊名_点三",
+          "refId": "线外_寻狗_喊名_点三",
           "x": 984,
           "y": -450,
           "meta": {
@@ -4417,7 +4417,7 @@
           "id": "dlg_extra_婆子",
           "kind": "dialogueBlackbox",
           "label": "寻狗_婆子",
-          "refId": "寻狗_婆子",
+          "refId": "线外_寻狗_婆子",
           "x": 25,
           "y": -450,
           "meta": {
@@ -4434,7 +4434,7 @@
           "id": "dlg_extra_街坊",
           "kind": "dialogueBlackbox",
           "label": "寻狗_枯井街坊",
-          "refId": "寻狗_枯井街坊",
+          "refId": "线外_寻狗_枯井街坊",
           "x": 264,
           "y": -450,
           "meta": {
@@ -5145,7 +5145,7 @@
           "id": "dlg_beishi_jiehuo",
           "kind": "dialogueBlackbox",
           "label": "工头派活",
-          "refId": "寻狗_零工接活",
+          "refId": "线外_寻狗_零工接活",
           "x": 12,
           "y": 115,
           "meta": {
@@ -5191,7 +5191,7 @@
           "id": "dlg_beishi_jiaoshi",
           "kind": "dialogueBlackbox",
           "label": "义庄交尸",
-          "refId": "寻狗_管事义庄内",
+          "refId": "线外_寻狗_管事义庄内",
           "x": 1506,
           "y": 12,
           "meta": {
@@ -5355,7 +5355,7 @@
           "id": "dlg_seek",
           "kind": "dialogueBlackbox",
           "label": "打哈欠找活",
-          "refId": "寻狗_找活",
+          "refId": "线外_寻狗_找活",
           "x": 49,
           "y": 241,
           "meta": {
@@ -5370,7 +5370,7 @@
           "id": "dlg_accept",
           "kind": "dialogueBlackbox",
           "label": "义庄门口拦活",
-          "refId": "寻狗_义庄门口拦活",
+          "refId": "线外_寻狗_义庄门口拦活",
           "x": 492,
           "y": 41,
           "meta": {
@@ -5415,7 +5415,7 @@
           "id": "dlg_deliver",
           "kind": "dialogueBlackbox",
           "label": "义庄结钱",
-          "refId": "寻狗_管事义庄内",
+          "refId": "线外_寻狗_管事义庄内",
           "x": 1974,
           "y": 12,
           "meta": {
@@ -5549,7 +5549,7 @@
           "id": "dlg_yanshi",
           "kind": "dialogueBlackbox",
           "label": "破屋验缢死尸",
-          "refId": "寻狗_验缢死尸",
+          "refId": "线外_寻狗_验缢死尸",
           "x": 620,
           "y": -320,
           "meta": {

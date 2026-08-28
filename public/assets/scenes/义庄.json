@@ -211,7 +211,7 @@
       ],
       "collisionPolygonLocal": true,
       "data": {
-        "graphId": "寻狗_看两尸"
+        "graphId": "线外_寻狗_看两尸"
       },
       "conditions": [
         {
@@ -251,7 +251,7 @@
         }
       ],
       "data": {
-        "graphId": "寻狗_镇尸_撒米"
+        "graphId": "线外_寻狗_镇尸_撒米"
       },
       "planes": [
         "normal"
@@ -283,7 +283,7 @@
         }
       ],
       "data": {
-        "graphId": "寻狗_镇尸_墨斗"
+        "graphId": "线外_寻狗_镇尸_墨斗"
       },
       "planes": [
         "normal"
@@ -315,7 +315,7 @@
         }
       ],
       "data": {
-        "graphId": "寻狗_镇尸_石子"
+        "graphId": "线外_寻狗_镇尸_石子"
       },
       "planes": [
         "normal"
@@ -347,7 +347,7 @@
         }
       ],
       "data": {
-        "graphId": "寻狗_镇尸_剪子"
+        "graphId": "线外_寻狗_镇尸_剪子"
       },
       "planes": [
         "normal"
@@ -406,7 +406,7 @@
           {
             "type": "startDialogueGraph",
             "params": {
-              "graphId": "义庄_背尸落凳"
+              "graphId": "线外_义庄_背尸落凳"
             }
           }
         ]
@@ -423,7 +423,7 @@
       "animFile": "/resources/runtime/animation/npc_coolie_c_anim/anim.json",
       "initialAnimState": "idle",
       "initialFacing": "left",
-      "dialogueGraphId": "寻狗_义庄门口拦活",
+      "dialogueGraphId": "线外_寻狗_义庄门口拦活",
       "dialogueCameraZoom": 1.5,
       "conditions": [
         {
@@ -469,7 +469,7 @@
       "interactionRange": 64.0,
       "animFile": "/resources/runtime/animation/npc_yizhuang_keeper_anim/anim.json",
       "initialAnimState": "idle",
-      "dialogueGraphId": "寻狗_管事义庄内",
+      "dialogueGraphId": "线外_寻狗_管事义庄内",
       "dialogueCameraZoom": 1.45
     }
   ],

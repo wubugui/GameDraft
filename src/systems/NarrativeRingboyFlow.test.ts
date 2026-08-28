@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import narrativeGraphsData from '../../public/assets/data/narrative_graphs.json';
-import ringboyDialogueData from '../../public/assets/dialogues/graphs/滚铁环小孩.json';
+import ringboyDialogueData from '../../public/assets/dialogues/graphs/线外_滚铁环小孩.json';
 import { ActionExecutor } from '../core/ActionExecutor';
 import { EventBus } from '../core/EventBus';
 import { FlagStore } from '../core/FlagStore';

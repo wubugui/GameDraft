@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "未接_码头_看热闹的路人",
+  "entry": "n_start",
+  "meta": {
+    "title": "new_dialogue"
+  },
+  "preconditions": [],
+  "nodes": {
+    "n_start": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "",
+      "text": ""
+    }
+  }
+}

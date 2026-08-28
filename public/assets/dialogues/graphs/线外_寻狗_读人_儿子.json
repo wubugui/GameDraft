@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "id": "线外_寻狗_读人_儿子",
+  "entry": "root",
+  "meta": {
+    "title": "寻狗Demo·读人（她儿子）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "narrative": "wrap_读人_儿子",
+              "state": "read"
+            }
+          ],
+          "next": "again_1"
+        }
+      ],
+      "defaultNext": "n1"
+    },
+    "again_1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "后生还倚在门框上，眼神躲着人。看过了。",
+      "next": "end1"
+    },
+    "n1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "后生倚着门框，手杆抱在胸前。你一进院坝他眼皮就跳；他娘一开腔，他先去看她——一句话都还没轮到他说。",
+      "next": "n2"
+    },
+    "n2": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "（这院坝里头的「动静」，多半跟这崽儿脱不到爪爪。……管他锤子，钱照收，戏照做。）",
+      "next": "n_flag",
+      "portrait": {
+        "emotion": "smirk"
+      }
+    },
+    "n_flag": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "寻狗_读人_儿子",
+            "signal": "pozi_read_son"
+          }
+        }
+      ],
+      "next": "end1"
+    },
+    "end1": {
+      "type": "end"
+    }
+  }
+}

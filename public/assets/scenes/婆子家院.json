@@ -139,7 +139,7 @@
       ],
       "conditionHidesEntity": true,
       "data": {
-        "graphId": "寻狗_婆子家宣布"
+        "graphId": "线外_寻狗_婆子家宣布"
       }
     },
     {
@@ -185,7 +185,7 @@
       "animFile": "/resources/runtime/animation/npc_popo_anim/anim.json",
       "initialAnimState": "idle",
       "initialFacing": "right",
-      "dialogueGraphId": "寻狗_读人_婆子",
+      "dialogueGraphId": "线外_寻狗_读人_婆子",
       "dialogueCameraZoom": 1.5
     },
     {
@@ -197,7 +197,7 @@
       "animFile": "/resources/runtime/animation/npc_coolie_a_anim/anim.json",
       "initialAnimState": "idle",
       "initialFacing": "left",
-      "dialogueGraphId": "寻狗_读人_儿子",
+      "dialogueGraphId": "线外_寻狗_读人_儿子",
       "dialogueCameraZoom": 1.5
     }
   ],

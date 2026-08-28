@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "id": "序章_NPC癞子",
+  "entry": "n_1",
+  "meta": {
+    "title": "癞子·常规搭话（按 wrap_癞子 状态分流；捡钱＝显摆前，initial＝显摆后）"
+  },
+  "nodes": {
+    "n_1": {
+      "type": "ownerState",
+      "cases": [
+        {
+          "state": "捡钱",
+          "next": "k_busy"
+        },
+        {
+          "state": "initial",
+          "next": "k_after"
+        }
+      ],
+      "defaultNext": "k_end",
+      "missingWrapperNext": "k_end",
+      "wrapperGraphId": "wrap_癞子"
+    },
+    "k_busy": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "……前天在这点捡到一个。",
+      "next": "k_end"
+    },
+    "k_after": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "二哥。",
+      "next": "k_after2"
+    },
+    "k_after2": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "你早点回来。",
+      "next": "k_end"
+    },
+    "k_end": {
+      "type": "end"
+    }
+  }
+}

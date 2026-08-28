@@ -1,0 +1,103 @@
+{
+  "schemaVersion": 1,
+  "id": "未接_生态_翻_枯井_井台水桶",
+  "entry": "root",
+  "meta": {
+    "title": "翻检 · 枯井井台边丢下的空水桶（眼尖 / 夜 / 常态 三态；未挂 eco_点_* 持久态）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "narrative": "eco_眼力",
+              "state": "眼尖",
+              "reached": true
+            }
+          ],
+          "next": "deep"
+        },
+        {
+          "conditions": [
+            {
+              "timePhase": "夜"
+            }
+          ],
+          "next": "night"
+        }
+      ],
+      "defaultNext": "first"
+    },
+    "first": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "一只木桶歪在井台边，桶箍锈死了，桶底结着一圈干泥。放下就没得人再提起来过。",
+      "next": "act"
+    },
+    "night": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "夜头桶里积了小半桶露水。井是枯的，桶倒是满的。",
+      "next": "act"
+    },
+    "deep": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "桶沿有道新勒痕，绳子是往上勒的——往上勒，那是从井头提东西的人使的劲。可这口井，早就没得水咯。",
+      "next": "act_deep"
+    },
+    "act": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "playNpcAnimation",
+          "params": {
+            "target": "eco_kj_野狗",
+            "state": "stretch",
+            "loop": false,
+            "thenState": "slow_walk",
+            "speed": 0.9
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "act_deep": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "faceEntity",
+          "params": {
+            "target": "eco_kj_野狗",
+            "direction": "right"
+          }
+        },
+        {
+          "type": "playNpcAnimation",
+          "params": {
+            "target": "eco_kj_野狗",
+            "state": "bark",
+            "loop": false,
+            "thenState": "slow_walk",
+            "speed": 1.3
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "end": {
+      "type": "end"
+    }
+  }
+}

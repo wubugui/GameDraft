@@ -136,7 +136,7 @@
       ],
       "collisionPolygonLocal": true,
       "data": {
-        "graphId": "寻狗_守夜看女尸"
+        "graphId": "线外_寻狗_守夜看女尸"
       }
     },
     {
@@ -147,7 +147,7 @@
       "y": 300.0,
       "interactionRange": 70.0,
       "data": {
-        "graphId": "寻狗_守夜续油"
+        "graphId": "线外_寻狗_守夜续油"
       }
     },
     {
@@ -158,7 +158,7 @@
       "y": 240.0,
       "interactionRange": 70.0,
       "data": {
-        "graphId": "寻狗_城隍庙供桌"
+        "graphId": "线外_寻狗_城隍庙供桌"
       }
     },
     {
@@ -176,7 +176,7 @@
       ],
       "conditionHidesEntity": true,
       "data": {
-        "graphId": "寻狗_守夜坐下"
+        "graphId": "线外_寻狗_守夜坐下"
       }
     },
     {

@@ -1,0 +1,405 @@
+{
+  "schemaVersion": 1,
+  "id": "线外_滚铁环小孩",
+  "entry": "root",
+  "meta": {},
+  "nodes": {
+    "root": {
+      "type": "ownerState",
+      "wrapperGraphId": "npc_ringboy",
+      "cases": [
+        {
+          "state": "before_event",
+          "next": "before_evt_1"
+        },
+        {
+          "state": "after_event",
+          "next": "after_evt_choice"
+        },
+        {
+          "state": "ring_taken",
+          "next": "has_ring_1"
+        },
+        {
+          "state": "ring_returned",
+          "next": "returned_line"
+        }
+      ],
+      "defaultNext": "anim_branch",
+      "missingWrapperNext": "anim_branch"
+    },
+    "has_ring_1": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "return_ring_actions",
+      "lines": [
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "勒死麻批娃儿才混哦~好，还给你还给你。",
+          "portrait": {
+            "emotion": "angry"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "哇哇哇哇哇哇哇哇哇哇哇哇......",
+          "portrait": {
+            "emotion": "cry"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "旁白"
+          },
+          "text": "不理你......"
+        }
+      ],
+      "text": "勒死麻批娃儿才混哦~好，还给你还给你。",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "return_ring_actions": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "removeItem",
+          "params": {
+            "id": "iron_hoop",
+            "count": 1
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "rolling_ring_boy",
+            "signal": "ring_returned"
+          }
+        }
+      ],
+      "next": "end1"
+    },
+    "end1": {
+      "type": "end"
+    },
+    "anim_branch": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "playNpcAnimation",
+          "params": {
+            "target": "npc_ringboy",
+            "state": "boy_stand_ring"
+          }
+        }
+      ],
+      "next": "before_evt_1"
+    },
+    "returned_line": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "end1",
+      "text": "谢谢你帮我把铁环捡回来嘛！",
+      "portrait": {
+        "emotion": "laugh"
+      }
+    },
+    "before_evt_1": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "before_evt_2",
+      "text": "小娃儿，这圈圈有点东西，借给老子耍哈撒。",
+      "portrait": {
+        "emotion": "smirk"
+      }
+    },
+    "before_evt_2": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "before_evt_3",
+      "text": "你哪个嘛？不给......",
+      "portrait": {
+        "emotion": "angry"
+      }
+    },
+    "before_evt_3": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "sw_archive_ring",
+      "text": "（嗤笑）切~个破铁环当传家宝，送老子，老子都不要！",
+      "portrait": {
+        "emotion": "smirk"
+      }
+    },
+    "sw_archive_ring": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "flag": "archive_book_entry_erta_geo_iron_ring",
+              "value": false
+            }
+          ],
+          "next": "grant_book_entry"
+        }
+      ],
+      "defaultNext": "end1"
+    },
+    "grant_book_entry": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "addArchiveEntry",
+          "params": {
+            "bookType": "bookEntry",
+            "entryId": "erta_geo_iron_ring"
+          }
+        }
+      ],
+      "next": "end1"
+    },
+    "after_evt_choice": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "ask",
+          "text": "要铁环。",
+          "next": "opt_ask_1"
+        },
+        {
+          "id": "snatch",
+          "text": "抢铁环。",
+          "next": "opt_snatch_1"
+        }
+      ],
+      "promptLine": {
+        "speaker": {
+          "kind": "literal",
+          "name": "旁白"
+        },
+        "text": "小孩护着铁环看着你，不知道你要干什么......"
+      }
+    },
+    "opt_ask_1": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "小娃儿，这圈圈你滚了一天，也该刹一脚歇哈了。\n让老子滚一哈撒。",
+      "next": "opt_ask_2",
+      "portrait": {
+        "emotion": "smirk"
+      }
+    },
+    "opt_ask_2": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "opt_ask_fade",
+      "text": "......",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "opt_ask_fade": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "persistNpcDisablePatrol",
+          "params": {
+            "npcId": "npc_ringboy"
+          }
+        },
+        {
+          "type": "fadeWorldToBlack",
+          "params": {
+            "durationMs": 550
+          }
+        },
+        {
+          "type": "waitMs",
+          "params": {
+            "durationMs": 500
+          }
+        }
+      ],
+      "next": "opt_ask_narr"
+    },
+    "opt_ask_narr": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "next": "opt_ask_resolve",
+      "text": "（小孩丢下铁环跑了......）"
+    },
+    "opt_ask_resolve": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "persistNpcEntityEnabled",
+          "params": {
+            "target": "npc_ringboy",
+            "enabled": false
+          }
+        },
+        {
+          "type": "fadeWorldFromBlack",
+          "params": {
+            "durationMs": 550
+          }
+        },
+        {
+          "type": "giveItem",
+          "params": {
+            "id": "iron_hoop",
+            "count": 1
+          }
+        },
+        {
+          "type": "appendFlag",
+          "params": {
+            "key": "书籍_风物志_铁环标注",
+            "text": "捡了一个铁环。"
+          }
+        },
+        {
+          "type": "showNotification",
+          "params": {
+            "text": "获得铁环",
+            "type": "item"
+          }
+        },
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "铁环小孩_已经获得铁环",
+            "value": true
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "rolling_ring_boy",
+            "signal": "ring_taken"
+          }
+        },
+        {
+          "type": "updateQuest",
+          "params": {
+            "id": "支线-归还小孩铁环-归还铁环"
+          }
+        }
+      ],
+      "next": "end1"
+    },
+    "opt_snatch_1": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "opt_snatch_2",
+      "text": "喂！这圈圈老子玩玩！",
+      "portrait": {
+        "emotion": "laugh"
+      }
+    },
+    "opt_snatch_2": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "next": "opt_snatch_actions",
+      "text": "你伸手一把夺过铁环，恶狠狠地向小孩呸了一口。"
+    },
+    "opt_snatch_actions": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "giveItem",
+          "params": {
+            "id": "iron_hoop",
+            "count": 1
+          }
+        },
+        {
+          "type": "appendFlag",
+          "params": {
+            "key": "书籍_风物志_铁环标注",
+            "text": "你从小孩手头抢了一个铁环。"
+          }
+        },
+        {
+          "type": "showNotification",
+          "params": {
+            "text": "获得铁环",
+            "type": "item"
+          }
+        },
+        {
+          "type": "persistNpcDisablePatrol",
+          "params": {
+            "npcId": "npc_ringboy"
+          }
+        },
+        {
+          "type": "persistNpcAnimState",
+          "params": {
+            "target": "npc_ringboy",
+            "state": "boy_cry"
+          }
+        },
+        {
+          "type": "waitMs",
+          "params": {
+            "durationMs": 500
+          }
+        },
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "铁环小孩_已经获得铁环",
+            "value": true
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "sourceType": "dialogue",
+            "sourceId": "rolling_ring_boy",
+            "signal": "ring_taken"
+          }
+        },
+        {
+          "type": "updateQuest",
+          "params": {
+            "id": "支线-归还小孩铁环-归还铁环"
+          }
+        }
+      ],
+      "next": "end1"
+    }
+  },
+  "preconditions": []
+}

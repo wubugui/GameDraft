@@ -1,0 +1,120 @@
+{
+  "schemaVersion": 1,
+  "id": "未接_生态_翻_雾津_西口灯柱",
+  "entry": "root",
+  "meta": {
+    "title": "翻检 · 雾津西口灯柱（眼尖 / 夜 / 常态 三态）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "narrative": "eco_眼力",
+              "state": "眼尖",
+              "reached": true
+            }
+          ],
+          "next": "deep"
+        },
+        {
+          "conditions": [
+            {
+              "timePhase": "夜"
+            }
+          ],
+          "next": "night"
+        }
+      ],
+      "defaultNext": "first"
+    },
+    "first": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "一根杉木杆子栽在街心，横担上挑两盏纸灯。杆身让人拴绳子勒出一圈一圈的深印，最下头那圈是新的。",
+      "next": "act_first"
+    },
+    "night": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "灯点起咯，火苗小得很，照得到的地方只有杆子脚下这一圈。圈外头有啥子，看不到。",
+      "next": "act_night"
+    },
+    "deep": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "杆子背阴那面刻着几道横杠，一道压一道，新的压旧的。这不是随手划的——是有人蹲在这儿数过啥子东西过路。",
+      "next": "act_deep"
+    },
+    "act_first": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "playNpcAnimation",
+          "params": {
+            "target": "npc_街头土狗",
+            "state": "bark",
+            "loop": false,
+            "thenState": "idle",
+            "speed": 1.1
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "act_night": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "playNpcAnimation",
+          "params": {
+            "target": "npc_街头土狗",
+            "state": "bark",
+            "loop": false,
+            "thenState": "idle",
+            "speed": 0.9
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "act_deep": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "playNpcAnimation",
+          "params": {
+            "target": "npc_街头土狗",
+            "state": "bark",
+            "loop": false,
+            "thenState": "idle",
+            "speed": 0.85
+          }
+        },
+        {
+          "type": "showEmote",
+          "params": {
+            "target": "npc_街头土狗",
+            "emote": "!",
+            "duration": 900
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "end": {
+      "type": "end"
+    }
+  }
+}

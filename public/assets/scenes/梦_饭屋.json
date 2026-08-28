@@ -146,7 +146,7 @@
         {
           "type": "startDialogueGraph",
           "params": {
-            "graphId": "梦_段C_饭屋"
+            "graphId": "线外_梦_段C_饭屋"
           }
         }
       ]

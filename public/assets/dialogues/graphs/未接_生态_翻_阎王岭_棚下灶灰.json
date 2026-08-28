@@ -1,0 +1,102 @@
+{
+  "schemaVersion": 1,
+  "id": "未接_生态_翻_阎王岭_棚下灶灰",
+  "entry": "root",
+  "meta": {
+    "title": "翻检 · 阎王岭歇脚棚灶灰（眼尖 / 夜 / 常态 三态；未挂 eco_点_* 持久态）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "narrative": "eco_眼力",
+              "state": "眼尖",
+              "reached": true
+            }
+          ],
+          "next": "deep"
+        },
+        {
+          "conditions": [
+            {
+              "timePhase": "夜"
+            }
+          ],
+          "next": "night"
+        }
+      ],
+      "defaultNext": "first"
+    },
+    "first": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "灶膛里的灰还是温的，上头搭着半把没烧完的松枝。前头那拨人走脱没得好久。",
+      "next": "act"
+    },
+    "night": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "夜头灰底下还剩火星。有人拿湿泥把它盖住了——不是灭火，是留给后头来的人。",
+      "next": "act"
+    },
+    "deep": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "灰上压着三副挑子的脚印，还有第四处：一个人坐了很久，起身时拿手在灰里撑了一把——五个指头印，中指那个短一节。",
+      "next": "act_deep"
+    },
+    "act": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "showEmote",
+          "params": {
+            "target": "eco_ywl_驮夫",
+            "emote": "?",
+            "duration": 1100
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "act_deep": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "showEmote",
+          "params": {
+            "target": "eco_ywl_驮夫",
+            "emote": "…",
+            "duration": 2000
+          }
+        },
+        {
+          "type": "playNpcAnimation",
+          "params": {
+            "target": "eco_ywl_队狗",
+            "state": "stretch",
+            "loop": false,
+            "thenState": "slow_walk",
+            "speed": 0.95
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "end": {
+      "type": "end"
+    }
+  }
+}

@@ -191,7 +191,7 @@
         {
           "type": "startDialogueGraph",
           "params": {
-            "graphId": "寻狗_野道岔路"
+            "graphId": "线外_寻狗_野道岔路"
           }
         }
       ]

@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "id": "未接_生态_看_码头_黄包车闲",
+  "entry": "root",
+  "meta": {
+    "title": "空着的黄包车（白日/夜 两态；一拍：等活的抬眼）"
+  },
+  "nodes": {
+    "root": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "timePhase": "夜"
+            }
+          ],
+          "next": "ye1"
+        }
+      ],
+      "defaultNext": "ri1"
+    },
+    "ri1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "车杠上搭起一条湿帕子，还在滴水。拉车的人不晓得钻哪个茶铺躲太阳去咯。",
+      "next": "act_ri"
+    },
+    "act_ri": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "faceEntity",
+          "params": {
+            "target": "eco_dk_候工丙",
+            "faceTarget": "player"
+          }
+        },
+        {
+          "type": "showEmote",
+          "params": {
+            "target": "eco_dk_候工丙",
+            "emote": "?",
+            "duration": 1200
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "ye1": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "夜里头车还杵在这儿，帕子干得起壳。拉车的要么醉倒在哪个角落，要么就是没回来。",
+      "next": "end"
+    },
+    "end": {
+      "type": "end"
+    }
+  }
+}
