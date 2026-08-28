@@ -57,6 +57,10 @@
     "from_a": {
       "x": 179.26,
       "y": 426.78
+    },
+    "from_wujin": {
+      "x": 1150.0,
+      "y": 240.0
     }
   },
   "hotspots": [
@@ -185,6 +189,18 @@
       "planes": [
         "normal"
       ]
+    },
+    {
+      "id": "T_回雾津街头",
+      "type": "transition",
+      "label": "回街上",
+      "x": 1230.0,
+      "y": 160.0,
+      "interactionRange": 60.0,
+      "data": {
+        "targetScene": "雾津街头",
+        "targetSpawnPoint": "from_houxiang"
+      }
     }
   ],
   "zones": [

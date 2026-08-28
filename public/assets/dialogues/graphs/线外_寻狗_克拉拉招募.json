@@ -141,7 +141,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_克拉拉招募",
+            "sourceId": "线外_寻狗_克拉拉招募",
             "signal": "zhaomu_recruited"
           }
         }

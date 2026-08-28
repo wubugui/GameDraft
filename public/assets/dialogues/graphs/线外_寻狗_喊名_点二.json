@@ -93,7 +93,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_喊名_点二",
+            "sourceId": "线外_寻狗_喊名_点二",
             "signal": "hanming_x2_right"
           }
         },
@@ -101,7 +101,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_喊名_点二",
+            "sourceId": "线外_寻狗_喊名_点二",
             "signal": "hanming_x2_done"
           }
         }
@@ -135,7 +135,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_喊名_点二",
+            "sourceId": "线外_寻狗_喊名_点二",
             "signal": "hanming_x2_wrong"
           }
         },
@@ -143,7 +143,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_喊名_点二",
+            "sourceId": "线外_寻狗_喊名_点二",
             "signal": "hanming_x2_done"
           }
         }
@@ -166,7 +166,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_喊名_点二",
+            "sourceId": "线外_寻狗_喊名_点二",
             "signal": "hanming_x2_skipped"
           }
         },
@@ -174,7 +174,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_喊名_点二",
+            "sourceId": "线外_寻狗_喊名_点二",
             "signal": "hanming_x2_done"
           }
         }

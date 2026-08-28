@@ -87,7 +87,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_验缢死尸",
+            "sourceId": "线外_寻狗_验缢死尸",
             "signal": "yan_neck_seen"
           }
         }
@@ -153,7 +153,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_验缢死尸",
+            "sourceId": "线外_寻狗_验缢死尸",
             "signal": "beishi_guiju_shou"
           }
         },
@@ -161,7 +161,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_验缢死尸",
+            "sourceId": "线外_寻狗_验缢死尸",
             "signal": "beishi_corpse_inspected"
           }
         }
@@ -186,7 +186,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_验缢死尸",
+            "sourceId": "线外_寻狗_验缢死尸",
             "signal": "beishi_tanquai"
           }
         },
@@ -194,7 +194,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_验缢死尸",
+            "sourceId": "线外_寻狗_验缢死尸",
             "signal": "beishi_corpse_inspected"
           }
         }

@@ -31,7 +31,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_送包袱到棚",
+            "sourceId": "线外_寻狗_送包袱到棚",
             "signal": "songhuo_delivered"
           }
         }

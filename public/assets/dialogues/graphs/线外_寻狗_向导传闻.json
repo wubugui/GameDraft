@@ -67,7 +67,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_向导传闻",
+            "sourceId": "线外_寻狗_向导传闻",
             "signal": "xiangdao_notice_read"
           }
         }

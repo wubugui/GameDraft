@@ -42,7 +42,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_婆子家宣布",
+            "sourceId": "线外_寻狗_婆子家宣布",
             "signal": "pozi_performed"
           }
         }
@@ -77,7 +77,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_婆子家宣布",
+            "sourceId": "线外_寻狗_婆子家宣布",
             "signal": "pozi_paid"
           }
         }

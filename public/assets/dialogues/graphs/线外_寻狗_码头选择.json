@@ -87,7 +87,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_码头选择",
+            "sourceId": "线外_寻狗_码头选择",
             "signal": "dock_chose_a"
           }
         },
@@ -271,7 +271,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_码头选择",
+            "sourceId": "线外_寻狗_码头选择",
             "signal": "dock_chose_b"
           }
         }
@@ -324,7 +324,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_码头选择",
+            "sourceId": "线外_寻狗_码头选择",
             "signal": "dock_chose_c"
           }
         }
@@ -356,7 +356,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_码头选择",
+            "sourceId": "线外_寻狗_码头选择",
             "signal": "dock_resolved"
           }
         }

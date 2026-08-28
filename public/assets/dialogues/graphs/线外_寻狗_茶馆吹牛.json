@@ -151,7 +151,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_茶馆吹牛",
+            "sourceId": "线外_寻狗_茶馆吹牛",
             "signal": "chuiniu_seed"
           }
         }
@@ -177,7 +177,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_茶馆吹牛",
+            "sourceId": "线外_寻狗_茶馆吹牛",
             "signal": "chuiniu_spread"
           }
         }

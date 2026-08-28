@@ -80,7 +80,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_围观竞争",
+            "sourceId": "线外_寻狗_围观竞争",
             "signal": "xiangdao_watched"
           }
         }
@@ -125,7 +125,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_围观竞争",
+            "sourceId": "线外_寻狗_围观竞争",
             "signal": "outfit_bought"
           }
         }

@@ -205,7 +205,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_鬼打墙",
+            "sourceId": "线外_寻狗_鬼打墙",
             "signal": "beishi_fled"
           }
         },

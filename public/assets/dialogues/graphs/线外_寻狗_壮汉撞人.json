@@ -42,7 +42,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_壮汉撞人",
+            "sourceId": "线外_寻狗_壮汉撞人",
             "signal": "zhuanghan_chuang"
           }
         }

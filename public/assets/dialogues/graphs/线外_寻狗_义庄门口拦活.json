@@ -81,7 +81,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_义庄门口拦活",
+            "sourceId": "线外_寻狗_义庄门口拦活",
             "signal": "beishi_lg_accepted"
           }
         }

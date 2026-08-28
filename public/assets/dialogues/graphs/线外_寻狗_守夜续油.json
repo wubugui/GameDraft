@@ -88,7 +88,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_守夜续油",
+            "sourceId": "线外_寻狗_守夜续油",
             "signal": "shouye_oil_added"
           }
         }

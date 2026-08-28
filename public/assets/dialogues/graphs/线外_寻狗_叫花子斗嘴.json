@@ -58,7 +58,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_叫花子斗嘴",
+            "sourceId": "线外_寻狗_叫花子斗嘴",
             "signal": "qiangbing_done"
           }
         }

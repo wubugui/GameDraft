@@ -83,7 +83,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_街头闲话",
+            "sourceId": "线外_寻狗_街头闲话",
             "signal": "jietou_xianhua_heard"
           }
         }

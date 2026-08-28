@@ -34,7 +34,7 @@
           "params": {
             "signal": "私有事件完结",
             "sourceType": "dialogue",
-            "sourceId": "主线_藏钱",
+            "sourceId": "序章_主线_藏钱",
             "ownerType": "hotspot",
             "ownerId": "主线s1藏钱点A"
           }

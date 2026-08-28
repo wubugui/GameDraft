@@ -28,7 +28,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_踩铜板",
+            "sourceId": "线外_寻狗_踩铜板",
             "signal": "tabanban_taken"
           }
         }

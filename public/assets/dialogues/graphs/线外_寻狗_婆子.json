@@ -139,7 +139,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_婆子",
+            "sourceId": "线外_寻狗_婆子",
             "signal": "pozi_hired"
           }
         },

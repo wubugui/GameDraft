@@ -129,7 +129,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_城门汇合",
+            "sourceId": "线外_寻狗_城门汇合",
             "signal": "chufa_departed"
           }
         }

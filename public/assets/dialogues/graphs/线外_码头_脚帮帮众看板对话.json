@@ -168,7 +168,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "码头_脚帮帮众看板对话",
+            "sourceId": "线外_码头_脚帮帮众看板对话",
             "signal": "dock_truth_revealed"
           }
         },
@@ -200,7 +200,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "码头_脚帮帮众看板对话",
+            "sourceId": "线外_码头_脚帮帮众看板对话",
             "signal": "dock_truth_jiaobang"
           }
         },

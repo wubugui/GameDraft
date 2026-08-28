@@ -276,7 +276,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "码头看板官差",
+            "sourceId": "线外_码头看板官差",
             "signal": "dock_truth_revealed"
           }
         }
@@ -301,7 +301,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "码头看板官差",
+            "sourceId": "线外_码头看板官差",
             "signal": "dock_guanchai_rapport_reset"
           }
         },
@@ -440,7 +440,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "码头看板官差",
+            "sourceId": "线外_码头看板官差",
             "signal": "dock_guanchai_rapport_done"
           }
         }

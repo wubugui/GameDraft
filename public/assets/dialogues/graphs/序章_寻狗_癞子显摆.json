@@ -443,7 +443,15 @@
           "params": {
             "signal": "私有事件完结",
             "sourceType": "dialogue",
-            "sourceId": "寻狗_癞子显摆"
+            "sourceId": "序章_寻狗_癞子显摆"
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "主线_去赌坊_条件达成",
+            "sourceType": "dialogue",
+            "sourceId": "序章_寻狗_癞子显摆"
           }
         },
         {

@@ -52,7 +52,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_梦待死之礼",
+            "sourceId": "线外_寻狗_梦待死之礼",
             "signal": "meng_lying"
           }
         },
@@ -123,7 +123,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_梦待死之礼",
+            "sourceId": "线外_寻狗_梦待死之礼",
             "signal": "meng_paper_stopped"
           }
         },
@@ -149,7 +149,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_梦待死之礼",
+            "sourceId": "线外_寻狗_梦待死之礼",
             "signal": "meng_tune"
           }
         },

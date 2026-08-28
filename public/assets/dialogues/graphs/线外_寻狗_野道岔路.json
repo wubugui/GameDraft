@@ -35,7 +35,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_野道岔路",
+            "sourceId": "线外_寻狗_野道岔路",
             "signal": "yedao_chalu_done"
           }
         }
@@ -64,7 +64,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_野道岔路",
+            "sourceId": "线外_寻狗_野道岔路",
             "signal": "yedao_chalu_done"
           }
         }

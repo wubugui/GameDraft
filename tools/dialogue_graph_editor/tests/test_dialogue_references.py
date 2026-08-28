@@ -123,7 +123,7 @@ class ReferrersPanelSmokeTest(unittest.TestCase):
         from tools.dialogue_graph_editor.editor_widget import DialogueGraphEditorWidget
         from tools.dialogue_graph_editor.graph_document import graphs_dir
 
-        target = graphs_dir(_PROJECT_ROOT) / "寻狗_义庄门口拦活.json"
+        target = graphs_dir(_PROJECT_ROOT) / "线外_寻狗_义庄门口拦活.json"
         if not target.is_file():
             self.skipTest("样例被引用图缺失（内容已变）")
 

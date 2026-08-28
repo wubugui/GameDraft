@@ -50,6 +50,10 @@
     "spawn_0": {
       "x": 3194.3,
       "y": 1367.9
+    },
+    "from_houxiang": {
+      "x": 2470.0,
+      "y": 1015.0
     }
   },
   "hotspots": [
@@ -555,6 +559,21 @@
         "text": ""
       },
       "group": "主线_吃饭点"
+    },
+    {
+      "id": "T_去后巷",
+      "type": "transition",
+      "label": "钻进后巷",
+      "x": 2520.0,
+      "y": 985.0,
+      "interactionRange": 60.0,
+      "data": {
+        "targetScene": "test_room_b",
+        "targetSpawnPoint": "from_wujin"
+      },
+      "planes": [
+        "normal"
+      ]
     }
   ],
   "lighting": {

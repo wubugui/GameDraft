@@ -67,7 +67,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_看进山路",
+            "sourceId": "线外_寻狗_看进山路",
             "signal": "songhuo_gazed"
           }
         },
@@ -108,7 +108,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_看进山路",
+            "sourceId": "线外_寻狗_看进山路",
             "signal": "hanming_ret_p3"
           }
         }
@@ -243,7 +243,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_看进山路",
+            "sourceId": "线外_寻狗_看进山路",
             "signal": "hanming_awakening"
           }
         }
@@ -257,7 +257,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_看进山路",
+            "sourceId": "线外_寻狗_看进山路",
             "signal": "hanming_ret_p2"
           }
         }
@@ -374,7 +374,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_看进山路",
+            "sourceId": "线外_寻狗_看进山路",
             "signal": "hanming_awakening"
           }
         }
@@ -388,7 +388,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_看进山路",
+            "sourceId": "线外_寻狗_看进山路",
             "signal": "hanming_ret_p1"
           }
         }
@@ -475,7 +475,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_看进山路",
+            "sourceId": "线外_寻狗_看进山路",
             "signal": "hanming_awakening"
           }
         }
@@ -489,7 +489,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_看进山路",
+            "sourceId": "线外_寻狗_看进山路",
             "signal": "hanming_climax"
           }
         }
@@ -618,7 +618,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_看进山路",
+            "sourceId": "线外_寻狗_看进山路",
             "signal": "songhuo_returned"
           }
         },
@@ -720,7 +720,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_看进山路",
+            "sourceId": "线外_寻狗_看进山路",
             "signal": "songhuo_returned"
           }
         },

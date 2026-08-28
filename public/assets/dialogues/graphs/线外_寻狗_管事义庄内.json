@@ -172,7 +172,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_管事义庄内",
+            "sourceId": "线外_寻狗_管事义庄内",
             "signal": "beishi_yan_delivered"
           }
         },
@@ -282,7 +282,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_管事义庄内",
+            "sourceId": "线外_寻狗_管事义庄内",
             "signal": "beishi_yan_delivered"
           }
         },
@@ -333,7 +333,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_管事义庄内",
+            "sourceId": "线外_寻狗_管事义庄内",
             "signal": "beishi_lg_delivered"
           }
         },

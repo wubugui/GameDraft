@@ -51,7 +51,7 @@
                     "type": "emitNarrativeSignal",
                     "params": {
                       "sourceType": "dialogue",
-                      "sourceId": "寻狗_梦待死之礼",
+                      "sourceId": "线外_寻狗_梦待死之礼",
                       "signal": "meng_ate"
                     }
                   }
@@ -114,7 +114,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_梦待死之礼",
+            "sourceId": "线外_寻狗_梦待死之礼",
             "signal": "meng_clothed"
           }
         },

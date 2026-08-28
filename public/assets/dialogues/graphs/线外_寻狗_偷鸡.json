@@ -56,7 +56,7 @@
                 "type": "emitNarrativeSignal",
                 "params": {
                   "sourceType": "dialogue",
-                  "sourceId": "寻狗_偷鸡",
+                  "sourceId": "线外_寻狗_偷鸡",
                   "signal": "touji_win"
                 }
               }
@@ -72,7 +72,7 @@
                 "type": "emitNarrativeSignal",
                 "params": {
                   "sourceType": "dialogue",
-                  "sourceId": "寻狗_偷鸡",
+                  "sourceId": "线外_寻狗_偷鸡",
                   "signal": "touji_lose"
                 }
               }

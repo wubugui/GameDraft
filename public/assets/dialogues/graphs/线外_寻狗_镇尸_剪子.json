@@ -49,7 +49,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_镇尸_剪子",
+            "sourceId": "线外_寻狗_镇尸_剪子",
             "signal": "zhenshi_scissors_done"
           }
         }

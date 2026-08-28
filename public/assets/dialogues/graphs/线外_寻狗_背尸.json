@@ -139,7 +139,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_背尸",
+            "sourceId": "线外_寻狗_背尸",
             "signal": "beishi_scent"
           }
         }

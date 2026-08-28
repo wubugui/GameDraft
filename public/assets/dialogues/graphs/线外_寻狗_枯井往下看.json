@@ -47,7 +47,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_枯井往下看",
+            "sourceId": "线外_寻狗_枯井往下看",
             "signal": "kujing_looked"
           }
         }
@@ -137,7 +137,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_枯井往下看",
+            "sourceId": "线外_寻狗_枯井往下看",
             "signal": "kujing_stared"
           }
         }
@@ -180,7 +180,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_枯井往下看",
+            "sourceId": "线外_寻狗_枯井往下看",
             "signal": "kujing_fled"
           }
         },

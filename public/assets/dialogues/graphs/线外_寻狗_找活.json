@@ -33,7 +33,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_找活",
+            "sourceId": "线外_寻狗_找活",
             "signal": "beishi_lg_seek"
           }
         }

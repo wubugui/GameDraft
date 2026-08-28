@@ -69,7 +69,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_守夜坐下",
+            "sourceId": "线外_寻狗_守夜坐下",
             "signal": "shouye_lamp_steady"
           }
         }
@@ -101,7 +101,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_守夜坐下",
+            "sourceId": "线外_寻狗_守夜坐下",
             "signal": "shouye_sit_done"
           }
         }

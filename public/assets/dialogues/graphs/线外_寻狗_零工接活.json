@@ -120,7 +120,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_零工接活",
+            "sourceId": "线外_寻狗_零工接活",
             "signal": "beishi_lg_accepted"
           }
         }
@@ -169,7 +169,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_零工接活",
+            "sourceId": "线外_寻狗_零工接活",
             "signal": "beishi_yan_accepted"
           }
         }

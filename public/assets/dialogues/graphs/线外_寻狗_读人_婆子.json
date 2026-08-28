@@ -57,7 +57,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_读人_婆子",
+            "sourceId": "线外_寻狗_读人_婆子",
             "signal": "pozi_read_pozi"
           }
         }

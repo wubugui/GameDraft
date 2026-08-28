@@ -28,7 +28,7 @@ class GroupColorCollapseTests(unittest.TestCase):
     def _load_multi_node_graph(self, w):
         from tools.dialogue_graph_editor.graph_document import graphs_dir
 
-        target = graphs_dir(_PROJECT_ROOT) / "寻狗_义庄门口拦活.json"
+        target = graphs_dir(_PROJECT_ROOT) / "线外_寻狗_义庄门口拦活.json"
         if not target.is_file():
             self.skipTest("样例图缺失")
         w.load_path(target)

@@ -58,7 +58,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_河边递纸",
+            "sourceId": "线外_寻狗_河边递纸",
             "signal": "hebian_handed"
           }
         }
@@ -114,7 +114,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_河边递纸",
+            "sourceId": "线外_寻狗_河边递纸",
             "signal": "hebian_took"
           }
         }
@@ -150,7 +150,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_河边递纸",
+            "sourceId": "线外_寻狗_河边递纸",
             "signal": "hebian_realized"
           }
         }
@@ -182,7 +182,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_河边递纸",
+            "sourceId": "线外_寻狗_河边递纸",
             "signal": "hebian_fled"
           }
         }

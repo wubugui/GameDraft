@@ -67,7 +67,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_梦待死之礼",
+            "sourceId": "线外_寻狗_梦待死之礼",
             "signal": "meng_house"
           }
         }
@@ -188,7 +188,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_梦待死之礼",
+            "sourceId": "线外_寻狗_梦待死之礼",
             "signal": "meng_clothed"
           }
         }
@@ -250,7 +250,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_梦待死之礼",
+            "sourceId": "线外_寻狗_梦待死之礼",
             "signal": "meng_lying"
           }
         }
@@ -309,7 +309,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_梦待死之礼",
+            "sourceId": "线外_寻狗_梦待死之礼",
             "signal": "meng_paper_stopped"
           }
         },
@@ -329,7 +329,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_梦待死之礼",
+            "sourceId": "线外_寻狗_梦待死之礼",
             "signal": "meng_tune"
           }
         }
@@ -411,7 +411,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_梦待死之礼",
+            "sourceId": "线外_寻狗_梦待死之礼",
             "signal": "meng_woken"
           }
         },
@@ -434,7 +434,7 @@
           "type": "emitNarrativeSignal",
           "params": {
             "sourceType": "dialogue",
-            "sourceId": "寻狗_梦待死之礼",
+            "sourceId": "线外_寻狗_梦待死之礼",
             "signal": "meng_ate"
           }
         }
