@@ -886,15 +886,24 @@ export class MenuUI {
    *  覆盖已有存档 / 游戏中读档都是不可逆操作（审查 P1 零确认路径），先过确认框。 */
   private commitSlot(action: 'save' | 'load', slot: number): void {
     if (action === 'save') {
+      // 写盘是异步的：等 SaveManager 真写成了再提示、再刷新槽位卡片。
+      // 乐观提示会让"没存上"看起来像存上了——存档这条路上最不能撒的谎。
       const doSave = (): void => {
-        const ok = this.saveData.save(slot);
-        this.eventBus.emit('notification:show', {
-          text: ok
-            ? this.strings.get('menu', 'saveSlot', { slot: slot + 1 })
-            : this.strings.get('menu', 'saveFailed'),
-          type: ok ? 'info' : 'error',
+        void this.saveData.save(slot).then((ok) => {
+          // 后端是内存降级时，「保存成功」是真的（这一局内读得回来），但**关掉就没**。
+          // 开局那条横幅可能早被关掉了，而点保存正是玩家最需要知道这件事的时刻——
+          // 让他以为存住了才是最坏的结果。
+          const ephemeral = ok && !this.saveData.isPersistent();
+          this.eventBus.emit('notification:show', {
+            text: ok
+              ? (ephemeral
+                ? `${this.strings.get('menu', 'saveSlot', { slot: slot + 1 })}（仅本次会话有效：找不到存档后端，关掉页面即失）`
+                : this.strings.get('menu', 'saveSlot', { slot: slot + 1 }))
+              : this.strings.get('menu', 'saveFailed'),
+            type: ok ? (ephemeral ? 'error' : 'info') : 'error',
+          });
+          this.build();
         });
-        this.build();
       };
       if (this.saveData.hasSave(slot)) {
         void openConfirmDialog(this.renderer, {
@@ -960,7 +969,7 @@ export class MenuUI {
     input.style.display = 'none';
     input.onchange = async () => {
       const file = input.files?.[0];
-      const ok = file ? this.saveData.importSlotPayload(slot, await file.text()) : false;
+      const ok = file ? await this.saveData.importSlotPayload(slot, await file.text()) : false;
       input.remove();
       this.eventBus.emit('notification:show', {
         text: ok ? this.strings.get('menu', 'loadSlot', { slot: slot + 1 }) : this.strings.get('menu', 'loadFailed'),

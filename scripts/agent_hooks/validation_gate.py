@@ -82,7 +82,13 @@ def main() -> int:
             return 1
         with open(marker_path(sid), "w", encoding="utf-8") as f:
             f.write(datetime.now().isoformat())
-        print(f"✓ 会话 {sid} 已标记验证完成,收尾门放行")
+        # Windows 控制台默认 GBK，`✓` 编不出去会抛 UnicodeEncodeError——标记其实已经写成了
+        # （就在上面两行），但调用方看到一个 traceback 只会以为失败，然后重跑或去手工找原因。
+        # 打印失败不该改变结果，所以吞掉它。
+        try:
+            print(f"[OK] 会话 {sid} 已标记验证完成,收尾门放行")
+        except UnicodeEncodeError:
+            pass
         return 0
 
     try:

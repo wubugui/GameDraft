@@ -109,7 +109,7 @@ function deps() {
       debugDrag: async (fromX: number, fromY: number, toX: number, toY: number, durationMs: number) => {
         calls.push(`drag:${fromX}:${fromY}:${toX}:${toY}:${durationMs}`);
       },
-      debugSaveGame: (slot: number) => {
+      debugSaveGame: async (slot: number) => {
         calls.push(`save:${slot}`);
         return slot === 2;
       },
@@ -369,7 +369,7 @@ describe('applyDevRuntimeCommand', () => {
     const ctx = deps();
     const result = await applyDevRuntimeCommand(
       { type: 'debugSaveGame', slot: 1 },
-      { ...ctx.deps, debugSaveGame: () => false },
+      { ...ctx.deps, debugSaveGame: async () => false },
     );
     expect(result.ok).toBe(false);
     expect(result.message).toContain('failed to write');

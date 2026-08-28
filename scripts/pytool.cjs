@@ -6,12 +6,17 @@ const { spawnSync } = require("child_process");
 const repoRoot = path.resolve(__dirname, "..");
 
 function resolvePython() {
-  const candidates = [path.join(repoRoot, ".tools", "venv", "bin", "python")];
+  // Windows 的 venv 布局是 Scripts/python.exe，不是 bin/python。少了这一条，
+  // Windows 上会一路掉到 PATH 上的 `python3`——而那通常是微软商店的 stub：
+  // 它不报错、不执行、直接退出，于是工具"跑过了"但什么都没发生。
+  const candidates = [
+    path.join(repoRoot, ".tools", "venv", "bin", "python"),
+    path.join(repoRoot, ".tools", "venv", "Scripts", "python.exe"),
+  ];
   for (const c of candidates) {
     if (fs.existsSync(c)) return c;
   }
-  // Fall back to a system interpreter on PATH.
-  return "python3";
+  return process.platform === "win32" ? "python" : "python3";
 }
 
 const [, , moduleName, ...rest] = process.argv;

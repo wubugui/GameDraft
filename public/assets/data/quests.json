@@ -177,7 +177,13 @@
     "type": "main",
     "title": "听先生说书",
     "description": "茶馆里先生正说到「大旱魃」。挤进人缝，把「李天狗」「神仙顶」这两个词听明白。",
-    "preconditions": [],
+    "preconditions": [
+      {
+        "narrative": "flow_xungou_main",
+        "state": "initial",
+        "reached": true
+      }
+    ],
     "completionConditions": [
       {
         "narrative": "flow_xungou_main",
@@ -188,7 +194,7 @@
     "rewards": [],
     "nextQuests": [
       {
-        "questId": "xg02_beishi",
+        "questId": "主线_闲逛阶段A",
         "conditions": []
       }
     ]
@@ -199,7 +205,13 @@
     "type": "main",
     "title": "夜背崖墓尸",
     "description": "面生的雇主寻来找「背尸的」。那具尸恶名在外，正经班子全推了，可工钱已经勾住了你的脚。",
-    "preconditions": [],
+    "preconditions": [
+      {
+        "narrative": "wrapper_主线_崖墓任务发布",
+        "state": "state_2",
+        "reached": true
+      }
+    ],
     "completionConditions": [
       {
         "narrative": "flow_xungou_main",
@@ -500,22 +512,40 @@
     "preconditions": [
       {
         "narrative": "flow_xungou_main",
-        "state": "state_2"
+        "state": "state_2",
+        "reached": true
       }
     ],
     "completionConditions": [
       {
         "narrative": "flow_xungou_main",
-        "state": "state_3"
+        "state": "state_3",
+        "reached": true
       }
     ],
     "acceptActions": [],
     "rewards": [],
-    "nextQuests": [],
+    "nextQuests": [
+      {
+        "questId": "主线_找人显摆",
+        "conditions": []
+      },
+      {
+        "questId": "xg02_beishi",
+        "conditions": []
+      }
+    ],
     "objectives": [
       {
         "id": "obj1",
         "text": "包子铺看看",
+        "completeWhen": [
+          {
+            "narrative": "wrapper_主线_崖墓任务发布",
+            "state": "state_1",
+            "reached": true
+          }
+        ],
         "guidance": [
           {
             "kind": "worldMarker",
@@ -527,9 +557,65 @@
             "showDistance": true
           }
         ]
+      },
+      {
+        "id": "obj2",
+        "text": "吃饱了，四处转转，寻个来钱的路数"
       }
     ],
     "announce": "banner",
     "autoFocus": true
+  },
+  {
+    "id": "主线_找人显摆",
+    "group": "xungou",
+    "type": "main",
+    "title": "找人显摆",
+    "description": "定钱揣热了。街上寻个熟脸的，把这桩夜活抖出来，看他啥子脸色。",
+    "preconditions": [
+      {
+        "narrative": "flow_xungou_main",
+        "state": "state_3",
+        "reached": true
+      }
+    ],
+    "completionConditions": [
+      {
+        "narrative": "flow_xungou_main",
+        "state": "state_4",
+        "reached": true
+      }
+    ],
+    "acceptActions": [],
+    "rewards": [],
+    "nextQuests": [],
+    "announce": "banner",
+    "autoFocus": true
+  },
+  {
+    "id": "主线_藏定钱",
+    "group": "xungou",
+    "type": "side",
+    "sideType": "errand",
+    "title": "藏起定钱",
+    "description": "定钱揣身上晃眼。寻个只有自己晓得的地方塞起，免得哪天挨摸了。",
+    "preconditions": [
+      {
+        "narrative": "wrapper_graph_2",
+        "state": "state_1"
+      }
+    ],
+    "completionConditions": [
+      {
+        "narrative": "wrapper_graph_2",
+        "state": "state_2",
+        "reached": true
+      }
+    ],
+    "acceptActions": [],
+    "rewards": [],
+    "nextQuests": [],
+    "announce": "toast",
+    "autoFocus": false
   }
 ]

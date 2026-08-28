@@ -3,7 +3,7 @@ id: debug-ui-persistence
 title: 调试/游戏内 UI 偏好持久化范式
 domain: runtime
 type: mechanism
-summary: 调试/编辑器 UI 的用户偏好必须落工程文件;传输两种:vite 中间件(游戏内)/QWebChannel bridge(内嵌编辑器);localStorage-only 被用户明确否决(2026-07-07)
+summary: 调试/编辑器 UI 的用户偏好必须落工程文件;传输两种:vite 中间件(游戏内)/QWebChannel bridge(内嵌编辑器);localStorage 已在 2026-08-28 从运行时彻底清退,连首帧种子都不留
 status: active
 authority:
   - vite.config.ts#debugDockPinsApi
@@ -30,9 +30,15 @@ UI 要记住用户偏好(pin/收藏/布局)时的合规范式:**持久化一律�
 
 ## 硬契约
 
-- **禁止只用 localStorage**(2026-07-07 用户拍板)。原因:项目在多个端口与编辑器内嵌 Qt WebEngine
-  里开游戏,localStorage 按 origin 隔离、WebEngine 可能不落盘——换端口/重启即"失忆"。
-  它只许作首帧种子或无 bridge 纯 Web 态的降级,绝不作权威。**也不要先做 localStorage 版再返工。**
+- **禁止使用 localStorage**(2026-07-07 用户拍板;2026-08-28 收紧成"一点都不留")。
+  原因:项目在多个端口与编辑器内嵌 Qt WebEngine 里开游戏,localStorage 按 origin 隔离、
+  WebEngine 可能不落盘——换端口/重启即"失忆"。**也不要先做 localStorage 版再返工。**
+  > 2026-08-28 起连"首帧种子"这个豁免也取消了(`narrativeDebugBridge` 的端口种子已删):
+  > 权威本来就是工程文件,那条路无论如何都要 fetch 一次,省不下什么,却多留一处会失忆的存储。
+  > 运行时代码里现在只剩两处 localStorage **读取**,都是一次性旧数据迁移。
+- **玩家可见的持久化不走这张卡**。存档与玩家设置落 `local/gamedata/`,
+  见 [runtime-persistence](runtime-persistence.md)。本卡只管**调试/编辑器**偏好
+  (落 `resources/editor_projects/editor_data/`,运行时永不加载)。两个存放面不要混。
 - 构造时 + 每次打开面板时 GET 同步;改动即 POST;非 dev 构建降级为内存并 log 提示。
 - 这类偏好/布局 sidecar 运行时(`src/`)永不加载,与游戏数据文件严格隔离。
 

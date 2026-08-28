@@ -238,6 +238,42 @@
       ]
     },
     {
+      "glob": "scripts/lib/**",
+      "docs": [
+        "build-pipeline"
+      ]
+    },
+    {
+      "glob": "scripts/package.mjs",
+      "docs": [
+        "build-pipeline"
+      ]
+    },
+    {
+      "glob": "scripts/release.mjs",
+      "docs": [
+        "build-pipeline"
+      ]
+    },
+    {
+      "glob": "scripts/verify_build.mjs",
+      "docs": [
+        "build-pipeline"
+      ]
+    },
+    {
+      "glob": "src-tauri/**",
+      "docs": [
+        "build-pipeline"
+      ]
+    },
+    {
+      "glob": "src-tauri/src/gamedata.rs",
+      "docs": [
+        "runtime-persistence"
+      ]
+    },
+    {
       "glob": "src/**",
       "docs": [
         "runtime-norms"
@@ -301,6 +337,7 @@
     {
       "glob": "src/core/SaveManager.ts",
       "docs": [
+        "runtime-persistence",
         "save-restore-contracts"
       ]
     },
@@ -315,6 +352,12 @@
       "docs": [
         "coordinate-spaces",
         "entity-lighting"
+      ]
+    },
+    {
+      "glob": "src/core/TextDisplaySettings.ts",
+      "docs": [
+        "runtime-persistence"
       ]
     },
     {
@@ -346,6 +389,13 @@
       "glob": "src/core/resolveText.ts",
       "docs": [
         "text-ref-tag-system"
+      ]
+    },
+    {
+      "glob": "src/core/storage/**",
+      "docs": [
+        "runtime-persistence",
+        "save-restore-contracts"
       ]
     },
     {
@@ -738,6 +788,12 @@
       ]
     },
     {
+      "glob": "tools/build/**",
+      "docs": [
+        "build-pipeline"
+      ]
+    },
+    {
       "glob": "tools/character_lighting_lab/**",
       "docs": [
         "character-lighting",
@@ -1014,9 +1070,11 @@
     {
       "glob": "vite.config.ts",
       "docs": [
+        "build-pipeline",
         "debug-ui-persistence",
         "optional-asset-probe",
-        "runtime-command-channel"
+        "runtime-command-channel",
+        "runtime-persistence"
       ]
     }
   ]

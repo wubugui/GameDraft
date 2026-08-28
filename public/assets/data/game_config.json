@@ -4,7 +4,8 @@
   "fallbackScene": "teahouse",
   "startupFlags": {
     "archive_book_book_erta_guide": true,
-    "GameConfig_Demo主线剧情": true
+    "GameConfig_Demo主线剧情": true,
+    "GameConfig_线外内容": false
   },
   "viewport": {
     "width": 1024,

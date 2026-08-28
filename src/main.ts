@@ -1,16 +1,38 @@
 import { installResizeObserverQuiet } from './utils/resizeObserverQuiet';
 import { Game } from './core/Game';
-import { LOAD_SLOT_PARAM, TITLE_BOOT_PARAM } from './core/EventBridge';
+import { LOAD_SLOT_PARAM, NEW_GAME_PARAM, TITLE_BOOT_PARAM } from './core/EventBridge';
+import { runEntryGuard } from './core/entryGuard';
+import { resolveBootParams } from './core/bootParams';
 
 installResizeObserverQuiet();
 
-const urlParams = new URLSearchParams(window.location.search);
+/**
+ * 启动参数 = 地址栏 ∪ 打包时烘进来的缺省（后者只在地址栏没给引导参数时才生效）。
+ * 详见 `core/bootParams.ts`。dev server 上没有烘进来的东西，行为与以前逐字节相同。
+ */
+const urlParams = resolveBootParams(
+  window.location.search,
+  (globalThis as { __GAMEDRAFT_BOOT_QUERY__?: unknown }).__GAMEDRAFT_BOOT_QUERY__,
+);
 /**
  * dev 直达参数族只在 dev 构建生效：`?mode=dev` 能开 DevModeUI 任意跳场景，
  * `devScene` / `narrativeWarp` / `play_cutscene` / 各预览同样是绕过正常开局的直达通道。
  * 生产构建里玩家改 URL 不该拿到任何一条（发行阻断项，2026-08-17 审查批0）。
  */
 const isDevBuild = import.meta.env.DEV;
+/**
+ * 把编译期档位**显式暴露出来**，给打包验收门与现场排障用。
+ *
+ * 起因是踩过一次：dev 档只给了 `vite build --mode development` 而没设
+ * `NODE_ENV=development`，`import.meta.env.DEV` 仍编译成 false，整批调试设施被剔除，
+ * 打出来的 dev 包跟发行档一模一样、连显式 `?mode=dev` 都不认——**而且没有任何报错**。
+ *
+ * 想从字节层面判断一个包到底是哪档，其它标记都不可靠：类名被 esbuild 压掉、
+ * `__gameDevAPI` 之类的全局在 destroy 清理路径里两档都有、`import.meta.env` 早被替换掉。
+ * 这一行的三元会被常量折叠成一个字面量字符串，`"dev"` / `"release"` 原样留在产物里，
+ * 于是 `scripts/verify_build.mjs` 能静态判死。
+ */
+(globalThis as { __GAMEDRAFT_BUILD__?: string }).__GAMEDRAFT_BUILD__ = isDevBuild ? 'dev' : 'release';
 /** 开发面板等；另见 `?cutsceneDebug` 可在非 dev 时显示过场当前 step HUD */
 const devMode = isDevBuild && urlParams.get('mode') === 'dev';
 const playCutscene = (isDevBuild && urlParams.get('play_cutscene')) || undefined;
@@ -126,11 +148,24 @@ const skipStartGate = Boolean(
   // 都会整页重启一次、那一次照常有门。多加一道只是让"回主菜单"多点一下。
   || startAtTitle,
 );
-if (skipStartGate) {
-  startGame();
-} else {
-  showStartGateThenStart();
-}
+/**
+ * 先过入口卫兵再决定要不要起游戏：`file://` 这类根本跑不起来的当场说清楚，
+ * 存档后端不可用的挂一条横幅（"这次的进度不会留下"），别让人存完档才发现。
+ * 卫兵自己不抛——它出问题不该顶掉整个开局。
+ */
+void runEntryGuard(isDevBuild)
+  .catch((e) => {
+    console.warn('main: 入口检查失败，按正常流程启动', e);
+    return true;
+  })
+  .then((ok) => {
+    if (!ok) return;
+    if (skipStartGate) {
+      startGame();
+    } else {
+      showStartGateThenStart();
+    }
+  });
 
 function destroyGame(): void {
   window.removeEventListener('beforeunload', onBeforeUnload);

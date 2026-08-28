@@ -1,0 +1,38 @@
+{
+  "_说明": [
+    "**构建档位配置**：同一份游戏内容，按档位打出来的产物有哪些不同。",
+    "",
+    "与 game_config.json 的分工，这条线要划清楚：",
+    "  game_config.json（编辑器「数据编辑 → 工程与全局 → Config」页）是**游戏设计参数**",
+    "    ——initialScene / initialQuest / dayNight / playerActs / textPalette 这些，",
+    "    定义『这个游戏是什么』，每个档位完全一样，属于游戏数据。",
+    "  本文件是**构建参数**——定义『这一次打出来的包有什么不同』，不是游戏数据，",
+    "    不该混进 game_config.json（那会让游戏数据带上构建期的概念）。",
+    "",
+    "bootQuery：产物首次加载时套用的启动参数（等价于在地址栏上带的那串 query）。",
+    "  它只作**缺省**：真的带了启动参数（?screen_title / ?load_slot / ?new_game / dev 直达族）",
+    "  时以那个为准。所以玩家点「新游戏 / 继续 / 返回主菜单」的整页重启不受影响。",
+    "  留空字符串 = 不套用任何缺省（等于旧行为：直接进 initialScene 开新局）。"
+  ],
+
+  "targets": {
+    "dev": {
+      "bootQuery": "mode=dev&devScene=dev_room",
+      "_bootQuery说明": [
+        "dev 档进 dev 直达路由。**`devScene` 单独给不够**——`src/main.ts` 里 devScene 的",
+        "读取被 `isDevBuild &&` 守着，而真正让 Game 走 dev 分支的是 `mode=dev`",
+        "（Game.ts 的 `isDevMode = !!options.devMode`），两个都要带。",
+        "换成别的场景：把 devScene 改掉即可，值是场景 id（public/assets/scenes/<id>.json）。",
+        "也可以换成 narrativeWarp=<锚点>，它在 dev 路由里优先级高于 devScene。"
+      ]
+    },
+    "release": {
+      "bootQuery": "screen_title=1",
+      "_bootQuery说明": [
+        "发行档停在标题界面。**这条是发行阻断项**：不带的话每次启动都直接开一局新游戏，",
+        "玩家走不到标题上那个「继续」，存档存在却没有入口去读，看起来就像存档没了。",
+        "（`screen_title` 没有 dev 门，发行版认这个参数——见 src/main.ts 的 startAtTitle。）"
+      ]
+    }
+  }
+}

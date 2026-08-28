@@ -92,6 +92,12 @@ class AuditReport:
     map_scene_count: int = 0
     overlay_images: dict[str, str] = field(default_factory=dict)
     issues: list[AssetIssue] = field(default_factory=list)
+    # 反向能力：审计过程中**成功解析到磁盘且确实存在**的引用目标。
+    # 审计本身只关心"引用的文件在不在"，这两个集合把"哪些文件被引用到了"也留下来，
+    # 供打包抽取清单（tools/build/asset_manifest.py）使用——同一套引用语义，
+    # 不让打包侧另写一份会漂的扫描器。
+    resolved_media: set[Path] = field(default_factory=set)
+    resolved_text: set[Path] = field(default_factory=set)
     _issue_keys: set[tuple[str, str, str, str]] = field(default_factory=set, repr=False)
 
     def add_issue(self, issue: AssetIssue) -> None:
@@ -183,6 +189,8 @@ def _check_media_value(
                 reason=f"媒体文件不存在：{disk}",
             ),
         )
+        return
+    report.resolved_media.add(disk)
 
 
 def _check_text_value(
@@ -209,6 +217,8 @@ def _check_text_value(
                 reason=f"配置文件不存在：{disk}",
             ),
         )
+        return
+    report.resolved_text.add(disk)
 
 
 def _audit_one_file(

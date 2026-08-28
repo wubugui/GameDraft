@@ -1,0 +1,30 @@
+[package]
+name = "gamedraft"
+version = "0.1.0"
+description = "GameDraft"
+edition = "2021"
+rust-version = "1.77"
+
+# 产物就叫 GameDraft.exe（Windows 上大小写照写）
+[[bin]]
+name = "gamedraft"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[features]
+# Tauri 约定：release 构建关掉开发者工具等
+default = []
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

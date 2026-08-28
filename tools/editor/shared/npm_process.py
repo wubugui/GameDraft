@@ -19,7 +19,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QProcessEnvironment
 
-from tools.dev.paths import env_with_node_path, npm_command
+from tools.dev.paths import env_with_node_path, node_command, npm_command
 
 
 def augment_env_for_nodejs(env: QProcessEnvironment) -> None:
@@ -86,6 +86,21 @@ def npm_run_command(*args: str) -> tuple[str, list[str]]:
         comspec = os.environ.get("ComSpec") or "cmd.exe"
         return comspec, ["/d", "/c", npm, *args]
     return npm, list(args)
+
+
+def node_script_command(script_rel: str, *args: str) -> tuple[str, list[str]]:
+    """直接用 node 跑仓库里的一个脚本的 (program, args)。
+
+    与 :func:`npm_run_command` 的区别：**不经 cmd、不经 npm**。
+
+    Windows 上 `npm` 是批处理，只能交给 `cmd /d /c` 解释，于是参数要过一遍 cmd 的
+    引号规则——**带空格的路径**（`--out-dir "D:\\我的 构建"`）在这一层极易被拆错，
+    而且拆错的表现是"跑起来了但去了别的目录"，比直接报错难查得多。
+    直接调 node 就没有这一层：QProcess 自己按 Windows 的参数规则转义。
+
+    需要传路径参数的调用一律走这条；`npm run <script>` 那条留给不带参数的固定任务。
+    """
+    return node_command(), [script_rel, *args]
 
 
 def node_process_environment() -> QProcessEnvironment:

@@ -1,0 +1,104 @@
+{
+  "_说明": [
+    "打包抽取规则。路径是相对 public/ 的 glob（fnmatch 语义）。",
+    "这份文件只影响『抽取哪些文件进产物』，绝不影响开发树——没被抽取的文件原样留在原地。",
+    "",
+    "always_extract：静态扫描抓不到、但运行时确实要读的资源。分三类：",
+    "  (a) 代码里写死路径的常量（UI 贴图、检视托底图、主菜单背景）；",
+    "  (b) 运行期由 id/slug 拼出来的（对话立绘 <slug>_<emotion>.png、扎纸部件 <part.id>.png）；",
+    "  (c) 场景 id + 固定子路径（两代光照载荷）。",
+    "  每一条后面都注明了 src 里的唯一实现源，改代码时照着这里对。",
+    "",
+    "never_extract：明确不进包的 authoring-only 内容。兜底用——正常情况下它们本来",
+    "  就没被引用到，不会进清单；写在这里是防止哪天被某条 JSON 误引用后悄悄进包。",
+    "",
+    "targets：在公共规则之上叠加。dev 与 release 的**游戏内容完全一致**，",
+    "  差别只在调试设施（F2 光影切档的体积档，每场景 20-27MB）。"
+  ],
+
+  "always_extract": [
+    "resources/runtime/scenes/*/lighting2/*",
+
+    "resources/runtime/scenes/*/lighting/lighting.json",
+    "resources/runtime/scenes/*/lighting/probes_valid.bin",
+    "resources/runtime/scenes/*/lighting/ground_d.png",
+    "resources/runtime/scenes/*/lighting/atlas_l1.bin",
+    "resources/runtime/scenes/*/lighting/atlas_l2.bin",
+
+    "resources/runtime/images/dialogue_portraits/*/*.png",
+
+    "resources/runtime/images/ui/*",
+    "resources/runtime/images/ui/**/*",
+    "resources/runtime/images/icons/*",
+    "resources/runtime/images/icons/**/*",
+    "resources/runtime/images/ui_vfx/*",
+    "resources/runtime/images/ui_vfx/**/*",
+    "resources/runtime/images/backgrounds/menu_wujin_dock.png",
+
+    "resources/runtime/images/examine/critters/*.png",
+    "resources/runtime/images/examine/marks/*.png",
+    "resources/runtime/images/examine/backgrounds/*.png",
+
+    "resources/runtime/images/minigames/paper_craft/parts/*.png"
+  ],
+
+  "_always_extract_出处": {
+    "scenes/*/lighting2/*": "SceneLightingSystem.ts:219,327,341,342,421 —— 统一光影，进场景必读",
+    "scenes/*/lighting/*": "CharacterLightingSystem.ts:496,499,533,534 —— 角色照明，进场景必读；atlas_l1/l2 按 lighting.json 的 shading.mode 二选一（实测 27 场 l2、1 场 l1），两个都带",
+    "images/dialogue_portraits/*/*.png": "DialogueUI.ts:122、CutsceneRenderer.ts:624、CharacterBookUI.ts:68 —— 路径 = <slug>/<slug>_<emotion>.png，JSON 里只有 slug 和 emotion，没有路径。同目录的 *_portrait_meta.json / *_qa_contact_sheet.png 运行时不读，故只带 png 且由下面的 never 兜底",
+    "images/ui/**": "UITextures.ts:14-19（frame_wood/paper_tile）、UIIcons.ts:14-24（ICON_FILES 名单写死）",
+    "images/backgrounds/menu_wujin_dock.png": "MenuUI.ts:95,1412 —— 主菜单背景，硬编码，public/assets 里零引用",
+    "images/examine/**": "objectExamine/types.ts:221-226（critters）、:292-293（marks）、:900-909（backgrounds preset，无自定义图时兜底 softGlow）",
+    "images/minigames/paper_craft/parts/*.png": "PaperCraftMinigameScene.ts:35,985-988 —— 兜底拼 <part.id>.png；实测数据里 15 个 part 一个 image 字段都没写，100% 走这条路径"
+  },
+
+  "never_extract": [
+    "resources/runtime/scenes/*/preview/*",
+    "resources/runtime/scenes/*/preview/**/*",
+    "resources/runtime/scenes/*/lighting/lighting.json.bak",
+    "resources/runtime/scene_background_backups/*",
+    "resources/runtime/scene_background_backups/**/*",
+    "resources/runtime/character_setup_refs/*",
+    "resources/runtime/character_setup_refs/**/*",
+
+    "resources/runtime/images/dialogue_portraits/*/*_qa_contact_sheet.png",
+
+    "**/*.py",
+    "**/*.jsonl",
+    "**/*.npy",
+    "**/*.dvc",
+    "**/*.bak",
+    "**/*.bak-*",
+    "**/.gitignore",
+    "**/atlas.meta.json"
+  ],
+
+  "_never_extract_出处": {
+    "atlas.meta.json": "烘包期产物（packMode / sourceProvenance 等），全 src grep 零引用",
+    "*_qa_contact_sheet.png": "立绘质检拼版图，运行时不读；被上面 dialogue_portraits/*.png 通配捞进来，这里排掉",
+    "preview / backups / setup_refs": "编辑器预览、背景备份、角色配置参考图，运行时零引用"
+  },
+
+  "targets": {
+    "dev": {
+      "always_extract": [
+        "resources/runtime/scenes/*/lighting/atlas_bin.bin",
+        "resources/runtime/scenes/*/lighting/vol_rad.bin",
+        "resources/runtime/scenes/*/lighting/vol_emit.bin"
+      ],
+      "never_extract": []
+    },
+    "release": {
+      "always_extract": [],
+      "never_extract": [
+        "resources/runtime/scenes/*/lighting/atlas_bin.bin",
+        "resources/runtime/scenes/*/lighting/vol_rad.bin",
+        "resources/runtime/scenes/*/lighting/vol_emit.bin"
+      ]
+    }
+  },
+
+  "_targets_出处": {
+    "atlas_bin / vol_rad / vol_emit": "只有 F2 调试面板切档时才读（Game.ts:4840,4846 → CharacterLightingSystem.ts:355-356,450）。正常游玩路径不碰。发行包排除；dev 包保留，否则 F2 切档会静默失败（代码只 depthPanel.log 一行，不弹错）"
+  }
+}

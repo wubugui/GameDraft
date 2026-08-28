@@ -35,6 +35,7 @@ from .shared.npm_process import (
     augment_env_for_nodejs as _augment_env_for_nodejs,
     copy_env_to_qprocess as _copy_env_to_qprocess,
     npm_run_command as _npm_run_command,
+    node_script_command as _node_script_command,
 )
 
 # Vite 就绪行示例:  Local:   http://127.0.0.1:5173/
@@ -377,7 +378,7 @@ class MainWindow(QMainWindow):
         a_stop.triggered.connect(self._stop_game)
         run_menu.addAction(a_stop)
         run_menu.addSeparator()
-        self._act(run_menu, "Build (Export)", self._build_game)
+        self._act(run_menu, "打包（dev / 发行）…", self._build_game)
 
         tools_menu = mb.addMenu("Tools")
         self._act(tools_menu, "Validate Data", self._validate)
@@ -1610,6 +1611,7 @@ class MainWindow(QMainWindow):
         from .editors.string_editor import StringEditor
         from .editors.character_registry_editor import CharacterRegistryEditor
         from .editors.game_config_editor import GameConfigEditor
+        from .editors.build_config_editor import BuildConfigEditor
         from .editors.player_avatar_editor import PlayerAvatarEditor
         from .editors.flag_registry_editor import FlagRegistryEditor
         from .editors.filter_editor import FilterEditor
@@ -1674,6 +1676,7 @@ class MainWindow(QMainWindow):
             (["数据编辑", "资源与本地化"], "文档揭示", DocumentRevealsEditor),
             (["数据编辑", "资源与本地化"], "气味Profile", SmellProfileEditor),
             (["数据编辑", "工程与全局"], "Config", GameConfigEditor),
+            (["数据编辑", "工程与全局"], "构建", BuildConfigEditor),
             (["运行与预览"], "Game", _GAME_BROWSER_SENTINEL),
         ]
 
@@ -2827,17 +2830,69 @@ class MainWindow(QMainWindow):
             self._status.showMessage("Game stopped.", 3000)
         self._refresh_status_chips()
 
+    #: 上次的发布输出目录记在 QSettings（**编辑器本机偏好**，不是配置文件、更不是游戏数据）。
+    #: 输出目录刻意不进任何配置文件——它不是"这个项目怎么构建"的一部分，
+    #: 而是"这一次把结果放哪"。构建脚本因此每次都要求显式传入：
+    #: 编辑器每次传同一个（覆盖上一次），自动化每次传新的（全部留档）。
+    _BUILD_OUT_DIR_KEY = "build/lastOutputDir"
+
     def _build_game(self) -> None:
-        """异步 QProcess 构建：不再同步 subprocess.run 冻结整个编辑器；
-        并与 dev server 一致走 _npm_run_command + PATH 补全（Dock/Finder 启动也找得到 npm）。"""
+        """异步 QProcess 发布构建：不再同步 subprocess.run 冻结整个编辑器；
+        并与 dev server 一致走 _npm_run_command + PATH 补全（Dock/Finder 启动也找得到 npm）。
+
+        走的是 `scripts/release.mjs`——**与自动化流水线同一个入口**，
+        区别只有传进去的输出目录。档位差异（从哪个场景起、带不带调试设施）在
+        `tools/build/build_config.json` 里，那份是存盘的，脱离编辑器也能独立构建。
+
+        两个档位：
+
+        * **dev**：调试设施齐全（F2 面板、命令通道、光影切档载荷），从配置的 devScene 起。
+        * **发行**：剥掉 dev 直达后门、按抽取清单裁素材、音频转 ogg，开局停在标题界面。
+          发行档要求本机有 ffmpeg，否则会**直接报错**——带着 wav 发出去等于
+          悄悄改了交付内容，不如当场停下。
+
+        构建只从开发树**读**，开发数据一个字节都不动。
+        """
         if self._model.project_path is None:
             return
         if not self._save_all():
             return
         if getattr(self, "_build_proc", None) is not None:
-            QMessageBox.information(self, "Build", "已有构建在进行中。")
+            QMessageBox.information(self, "构建", "已有构建在进行中。")
             return
-        program, args = _npm_run_command("run", "build")
+
+        box = QMessageBox(self)
+        box.setWindowTitle("构建发布包")
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setText("要打哪个档？")
+        box.setInformativeText(
+            "dev —— 调试设施齐全、从配置的 devScene 起，自己跑与测试用。\n"
+            "发行 —— 剥调试后门、裁素材、音频转 ogg（需要 ffmpeg）、开局停在标题界面。\n\n"
+            "产出绿色版（exe + game/），双击即玩，不打安装包。"
+        )
+        dev_btn = box.addButton("dev 档", QMessageBox.ButtonRole.AcceptRole)
+        rel_btn = box.addButton("发行档", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("取消", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is dev_btn:
+            target = "dev"
+        elif clicked is rel_btn:
+            target = "release"
+        else:
+            return
+
+        out_dir = self._pick_build_output_dir(target)
+        if not out_dir:
+            return
+
+        self._build_target = target
+        self._build_out_dir = out_dir
+        # 直接调 node，不经 npm/cmd：输出目录可能带空格，cmd 那层的引号规则很容易把它拆错，
+        # 而拆错的表现是"跑起来了但去了别的目录"。见 npm_process.node_script_command。
+        program, args = _node_script_command(
+            "scripts/release.mjs", "--target", target, "--out-dir", out_dir,
+        )
         proc = QProcess(self)
         proc.setWorkingDirectory(str(self._model.project_path))
         proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
@@ -2853,17 +2908,25 @@ class MainWindow(QMainWindow):
             _on_out()
             self._build_proc = None
             self._status.showMessage("", 1)
+            tgt = getattr(self, "_build_target", "release")
             if code == 0:
-                QMessageBox.information(self, "Build", "Build successful!\nOutput: dist/")
+                QMessageBox.information(
+                    self, "构建完成",
+                    self._format_build_summary(tgt),
+                )
             else:
-                tail = "\n".join(self._build_log.splitlines()[-40:])
-                QMessageBox.critical(self, "Build Error", tail or f"npm run build 退出码 {code}")
+                # 失败原因（缺 ffmpeg、验收不通过、输出目录被拒、缺 Rust 工具链）都在尾部，
+                # 给足 60 行——这些报错通常带着一段可照做的处置说明。
+                tail = "\n".join(self._build_log.splitlines()[-60:])
+                QMessageBox.critical(
+                    self, "构建失败", tail or f"npm run release（{tgt} 档）退出码 {code}",
+                )
 
         proc.readyReadStandardOutput.connect(_on_out)
         proc.finished.connect(_on_done)
         proc.errorOccurred.connect(
             lambda _e: QMessageBox.critical(
-                self, "Build Error",
+                self, "构建失败",
                 "未找到 npm，请确认已安装 Node.js 且 npm 在 PATH 中。",
             ) if proc.error() == QProcess.ProcessError.FailedToStart else None,
         )
@@ -2873,7 +2936,56 @@ class MainWindow(QMainWindow):
             proc.deleteLater()
             return
         self._build_proc = proc
-        self._status.showMessage("正在后台构建（npm run build）…", 10000)
+        self._status.showMessage(f"正在后台构建（{target} 档 → {out_dir}）…", 10000)
+
+    def _pick_build_output_dir(self, target: str) -> str | None:
+        """选这一次的输出目录；默认沿用上一次，直接回车即覆盖。
+
+        **手动构建的常态是"输出目录一直不变、直接覆盖老的"**，所以这里预填上次那个、
+        按确定就走。想留档到别处时改一下路径即可——自动化那条线也是靠传不同路径实现的，
+        两边同一个机制。
+        """
+        remembered = str(self._settings.value(self._BUILD_OUT_DIR_KEY, "") or "")
+        default = remembered or (
+            str(Path(self._model.project_path) / "release" / "ship" / target)
+            if self._model.project_path else ""
+        )
+        chosen = QFileDialog.getExistingDirectory(
+            self, f"{target} 档输出到哪个目录（会被整体覆盖）", default,
+        )
+        if not chosen:
+            return None
+        chosen = str(Path(chosen))
+        # 记住的是**编辑器本机偏好**，不写进任何配置文件（见 _BUILD_OUT_DIR_KEY 的注释）
+        self._settings.setValue(self._BUILD_OUT_DIR_KEY, chosen)
+        return chosen
+
+    def _format_build_summary(self, target: str) -> str:
+        """读输出目录里的构建标记报体积账；读不到就只报路径，不编数字。"""
+        out_dir = getattr(self, "_build_out_dir", None)
+        lines = [f"档位：{target}"]
+        marker = (Path(out_dir) / ".gamedraft-build.json") if out_dir else None
+        if marker is not None and marker.is_file():
+            try:
+                data = json.loads(marker.read_text(encoding="utf-8"))
+                total = float(data.get("totalBytes") or 0) / 1024 / 1024
+                lines.append(f"文件：{data.get('fileCount', '?')} 个")
+                lines.append(f"体积：{total:.1f} MB")
+                audio = ((data.get("package") or {}).get("audio")) or {}
+                if audio.get("skipped"):
+                    lines.append("⚠ 音频未转码：产物里仍是 wav")
+                elif audio.get("transcoded"):
+                    saved = float(audio.get("savedBytes") or 0) / 1024 / 1024
+                    lines.append(f"音频：转了 {audio['transcoded']} 个 wav→ogg，省 {saved:.1f} MB")
+                if not data.get("verified", True):
+                    lines.append("⚠ 跳过了验收")
+            except (OSError, ValueError, TypeError):
+                lines.append("（构建标记读不出来）")
+        if out_dir:
+            lines.append("")
+            lines.append(f"输出：{out_dir}")
+            lines.append(f"双击 {Path(out_dir) / 'gamedraft.exe'} 即可运行。")
+        return "\n".join(lines)
 
     # ---- validation -------------------------------------------------------
 

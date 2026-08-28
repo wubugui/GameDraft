@@ -10,9 +10,20 @@ config/bootstrap-oss.json
 
 # Build and cache
 dist/
-build/
+# 无锚定的 `build/` 会匹配**任意层级**上叫 build 的目录——包括打包管线自己的
+# tools/build/（那是源码，必须入库）。锚到仓库根，再显式放行工具目录。
+/build/
+!tools/build/
 coverage/
 .vite/
+# 打包管线的中间产物与产物根（抽取清单、staging、发行包）
+.build/
+release/
+# Rust/Tauri 的编译产物（src-tauri 下的源码与配置要入库，target/ 不要）
+src-tauri/target/
+src-tauri/gen/
+# 运行时持久化：存档、玩家设置、调试偏好。**不是游戏数据**，是这台机器上这一份进度。
+local/
 artifact/content_pipeline/
 artifact/Experiments/
 *.log

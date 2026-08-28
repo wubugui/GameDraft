@@ -14,6 +14,14 @@ import { FlagKeys } from './FlagKeys';
  */
 export const TITLE_BOOT_PARAM = 'screen_title';
 export const LOAD_SLOT_PARAM = 'load_slot';
+/**
+ * 「就是要开新局」。玩家在标题点「新游戏」时由 `restartPageForNewGame` 写入。
+ *
+ * 它本身不改变启动行为（开新局本来就是缺省路径），存在的意义是**把"首次启动"
+ * 和"重启开新局"区分开**——打包产物会烘一份启动缺省进来（见 `core/bootParams.ts`），
+ * 没有这个标记的话，两者都表现为"干净地址栏"，缺省会把点了新游戏的玩家送回标题。
+ */
+export const NEW_GAME_PARAM = 'new_game';
 
 export interface EventBridgeDeps {
   dialogueManager: DialogueManager;
@@ -231,7 +239,12 @@ export class EventBridge {
   private restartPageForNewGame(): void {
     // 新游戏＝干净地重走一遍启动引导：既不带标题标记（否则重启后又停在标题），
     // 也不带读档标记（那会读回旧局）。
-    this.restartPage();
+    //
+    // **但要带一个显式的「就是要开新局」标记。** 以前这条是靠"什么参数都不带"表达的，
+    // 而打包产物会烘一份启动缺省进来（发行档 = 停标题，见 core/bootParams.ts）——
+    // 靠参数缺席表达的话，玩家点「新游戏」后 URL 被清空，缺省又把他送回标题，死循环。
+    // 有了这个标记，"干净地址栏"就只剩一个含义：**首次启动**。
+    this.restartPage({ [NEW_GAME_PARAM]: '1' });
   }
 
   /**
@@ -255,6 +268,7 @@ export class EventBridge {
         // 引导标记本身也是一次性的：不清掉的话，从标题进游戏后刷新页面又会弹回标题
         TITLE_BOOT_PARAM,
         LOAD_SLOT_PARAM,
+        NEW_GAME_PARAM,
       ];
       for (const key of oneShotParams) url.searchParams.delete(key);
       for (const [k, v] of Object.entries(params ?? {})) url.searchParams.set(k, v);

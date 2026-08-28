@@ -167,7 +167,8 @@
       },
       "planes": [
         "normal"
-      ]
+      ],
+      "group": "线外_归档"
     },
     {
       "id": "T_去崖墓",
@@ -471,7 +472,8 @@
           }
         }
       ],
-      "conditionHidesEntity": true
+      "conditionHidesEntity": true,
+      "group": "线外_归档"
     },
     {
       "id": "hs_摸橘子",
@@ -493,7 +495,8 @@
           }
         }
       ],
-      "conditionHidesEntity": true
+      "conditionHidesEntity": true,
+      "group": "线外_归档"
     },
     {
       "id": "T_去破屋",
@@ -534,8 +537,8 @@
       "conditionHidesEntity": true,
       "conditions": [
         {
-          "narrative": "flow_xungou_main",
-          "state": "state_3"
+          "narrative": "wrapper_graph_2",
+          "state": "state_1"
         }
       ]
     },
@@ -900,7 +903,8 @@
       "initialAnimState": "idle",
       "initialFacing": "left",
       "dialogueGraphId": "寻狗_街头吹牛",
-      "dialogueCameraZoom": 1.5
+      "dialogueCameraZoom": 1.5,
+      "group": "线外_归档"
     },
     {
       "id": "npc_街头瞎子李",
@@ -924,7 +928,8 @@
       "initialAnimState": "idle",
       "initialFacing": "left",
       "dialogueGraphId": "寻狗_瞎子李算命",
-      "dialogueCameraZoom": 1.5
+      "dialogueCameraZoom": 1.5,
+      "group": "线外_归档"
     },
     {
       "id": "npc_街头叫花子",
@@ -936,7 +941,8 @@
       "initialAnimState": "idle",
       "initialFacing": "right",
       "dialogueGraphId": "寻狗_叫花子斗嘴",
-      "dialogueCameraZoom": 1.5
+      "dialogueCameraZoom": 1.5,
+      "group": "线外_归档"
     },
     {
       "id": "npc_街头肥鸡",
@@ -948,7 +954,8 @@
       "initialAnimState": "idle",
       "initialFacing": "left",
       "dialogueGraphId": "寻狗_偷鸡",
-      "dialogueCameraZoom": 1.5
+      "dialogueCameraZoom": 1.5,
+      "group": "线外_归档"
     },
     {
       "id": "npc_街头土狗",
@@ -960,7 +967,8 @@
       "initialAnimState": "idle",
       "initialFacing": "left",
       "dialogueGraphId": "寻狗_踢狗",
-      "dialogueCameraZoom": 1.5
+      "dialogueCameraZoom": 1.5,
+      "group": "线外_归档"
     },
     {
       "id": "npc_街头瘦猫",
@@ -972,7 +980,8 @@
       "initialAnimState": "idle",
       "initialFacing": "left",
       "dialogueGraphId": "寻狗_踢猫",
-      "dialogueCameraZoom": 1.5
+      "dialogueCameraZoom": 1.5,
+      "group": "线外_归档"
     },
     {
       "id": "npc_街头袍哥",
@@ -994,7 +1003,8 @@
           }
         }
       ],
-      "conditionHidesEntity": true
+      "conditionHidesEntity": true,
+      "group": "线外_归档"
     },
     {
       "id": "npc_街头壮汉",
@@ -1016,7 +1026,8 @@
           }
         }
       ],
-      "conditionHidesEntity": true
+      "conditionHidesEntity": true,
+      "group": "线外_归档"
     },
     {
       "id": "npc_茅厕壮汉",
@@ -1315,7 +1326,8 @@
             "graphId": "寻狗_找活"
           }
         }
-      ]
+      ],
+      "group": "线外_归档"
     },
     {
       "id": "z_梦待死之礼",
@@ -1765,7 +1777,8 @@
             "graphId": "寻狗_袍哥秒怂"
           }
         }
-      ]
+      ],
+      "group": "线外_归档"
     },
     {
       "id": "z_找活",
@@ -1812,7 +1825,8 @@
             "graphId": "寻狗_找活"
           }
         }
-      ]
+      ],
+      "group": "线外_归档"
     },
     {
       "id": "Zone_癞子第一次出现",
@@ -1932,6 +1946,16 @@
               "questStatus": "Active"
             }
           ]
+        }
+      ]
+    },
+    {
+      "id": "线外_归档",
+      "label": "线外内容（自动生成·暂封存）",
+      "conditions": [
+        {
+          "flag": "GameConfig_线外内容",
+          "value": true
         }
       ]
     }

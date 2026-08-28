@@ -115,8 +115,6 @@ const PLAYER_ACTION_TYPES: Record<string, string> = {
 
 /** 工程文件读写口（dev 服中间件，见 vite.config.ts 的 narrativeDebugBridgeApi） */
 export const NARRATIVE_DEBUG_PREF_API = '/__gamedraft-api/narrative-debug';
-const LS_ENABLED_KEY = 'gamedraft.ndbg';
-const LS_PORT_KEY = 'gamedraft.ndbg_port';
 
 export interface NarrativeDebugPref {
   enabled: boolean;
@@ -152,17 +150,9 @@ function urlPort(): number {
   } catch {
     /* ignore */
   }
-  return seedPort();
-}
-
-/** 首帧种子：localStorage 只用来省掉"等一次 fetch"的空窗，权威永远是工程文件。 */
-function seedPort(): number {
-  try {
-    const parsed = Number(window.localStorage.getItem(LS_PORT_KEY));
-    if (Number.isFinite(parsed) && parsed > 0) return parsed;
-  } catch {
-    /* ignore */
-  }
+  // 地址栏没给端口就用缺省。**不再拿 localStorage 当首帧种子**：它按 origin 隔离，
+  // 换端口/换壳就"失忆"，省掉的那一次 fetch 不值得再留一处浏览器存储——权威本来
+  // 就是工程文件，`mode:'pref'` 那条路无论如何都要去问它一次。
   return DEFAULT_PORT;
 }
 
@@ -183,16 +173,10 @@ export async function fetchNarrativeDebugPref(): Promise<NarrativeDebugPref | nu
 }
 
 /**
- * 记住这次的勾。先写 localStorage 种子（同步，重启后首帧就有），再写工程文件（权威）。
+ * 记住这次的勾：只写工程文件（唯一权威）。
  * 写盘失败只警告不抛：调试开关写不进去不该把游戏带崩。
  */
 export function saveNarrativeDebugPref(pref: NarrativeDebugPref): void {
-  try {
-    window.localStorage.setItem(LS_ENABLED_KEY, pref.enabled ? '1' : '0');
-    window.localStorage.setItem(LS_PORT_KEY, String(pref.port));
-  } catch {
-    /* 无痕模式 / 存储满：种子没了就多等一次 fetch，不影响正确性 */
-  }
   void fetch(NARRATIVE_DEBUG_PREF_API, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

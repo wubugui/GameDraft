@@ -1,6 +1,6 @@
 import { defineConfig, type Plugin } from 'vite';
 import { resolve, dirname } from 'path';
-import { mkdir, readdir, readFile, stat, unlink, writeFile } from 'fs/promises';
+import { mkdir, readdir, readFile, rename, stat, unlink, writeFile } from 'fs/promises';
 
 /** 开发服：读写 resources/editor_projects/editor_data/debug_flag_favorites.json，供 F2 Flag 收藏持久化（不使用 localStorage）。 */
 function debugFlagFavoritesApi(): Plugin {
@@ -630,8 +630,204 @@ const DEV_WATCH_IGNORED = [
   '**/asset-backups/**',
 ];
 
+/**
+ * 开发服：运行时持久化的**文件后端**（存档、玩家设置、调试偏好）。
+ *
+ * 落在 `local/gamedata/<namespace>/<key>.json`，一个键一个文件——存档因此是一份
+ * 人能直接拷走、直接看的 JSON，而不是躺在某个浏览器 profile 的 leveldb 里。
+ *
+ * ## 为什么必须是文件
+ *
+ * `localStorage` 按 origin 隔离，而游戏会在**三种壳**里跑：编辑器内嵌 QtWebEngine、
+ * 外部浏览器、打包后的 Tauri exe。三者是物理上互不相通的存储，同 origin 也不共享
+ * ——"编辑器里存的档换浏览器就没了"就是这么来的。换成文件后三边读同一批档。
+ *
+ * ⚠ 这**不是**游戏数据：只写 `local/gamedata/`（已 gitignore）。`public/assets`、
+ * `public/resources` 与 `resources/editor_projects` 一个字节都不碰。
+ *
+ * 打包产物里没有 dev server，那一侧由 Tauri 的 Rust 后端提供同样的目录语义
+ * （见 `src-tauri/src/gamedata.rs`），两边同一套 JSON 格式，存档可以互拷。
+ */
+function persistentStoreApi(): Plugin {
+  const NAME_RE = /^[A-Za-z0-9_-]+$/;
+  const PREFIX = '/__gamedraft-api/store';
+  return {
+    name: 'gamedraft-persistent-store-api',
+    configureServer(server) {
+      server.middlewares.use(async (req, res, next) => {
+        const pathOnly = (req.url ?? '').split('?')[0] ?? '';
+        if (pathOnly !== PREFIX && !pathOnly.startsWith(`${PREFIX}/`)) {
+          next();
+          return;
+        }
+        const bad = (code: number, msg: string): void => {
+          res.statusCode = code;
+          res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+          res.end(msg);
+        };
+        /**
+         * **这个处理器绝不许抛出去。**
+         *
+         * connect 不 await 中间件返回的 Promise，抛出去只会变成一条 unhandledRejection，
+         * 而**响应永远不 end**。于是玩家点「保存」之后 `SaveManager.save()` 的 Promise
+         * 永不 settle：不弹成功、也不弹失败、槽位卡片不刷新——比明确报错糟得多，
+         * 而这次改动的核心承诺恰恰是"等真写成了才回报成败"。
+         *
+         * 真实触发路径不止一条：`decodeURIComponent` 撞上畸形转义（`%ZZ`）抛 URIError、
+         * 磁盘满/无权限时 `writeFile` 抛 ENOSPC/EACCES、客户端中途断开时读 body 抛。
+         */
+        try {
+          await handleStoreRequest(server, req, res, pathOnly, bad);
+        } catch (e) {
+          console.error('[persistentStore] 处理请求时抛错', e);
+          try {
+            bad(500, `store error: ${e instanceof Error ? e.message : String(e)}`);
+          } catch { /* 响应已经发出去一半就没救了，至少别再抛 */ }
+        }
+      });
+
+      async function handleStoreRequest(
+        srv: typeof server,
+        req: Parameters<Parameters<typeof server.middlewares.use>[0]>[0],
+        res: Parameters<Parameters<typeof server.middlewares.use>[0]>[1],
+        pathOnly: string,
+        bad: (code: number, msg: string) => void,
+      ): Promise<void> {
+        let segs: string[];
+        try {
+          segs = pathOnly.slice(PREFIX.length).split('/').filter(Boolean).map(decodeURIComponent);
+        } catch {
+          // `%ZZ` 之类的畸形转义：这是一个坏请求，不是服务器故障
+          bad(400, 'malformed url escape');
+          return;
+        }
+        const root = srv.config.root;
+        if (segs.length === 0 || !NAME_RE.test(segs[0])) {
+          bad(400, 'bad namespace');
+          return;
+        }
+        const ns = segs[0];
+        const nsDir = resolve(root, 'local/gamedata', ns);
+
+        // GET /<ns> —— 一次读出整个命名空间，供启动水化
+        if (segs.length === 1 && req.method === 'GET') {
+          const out: Record<string, string> = {};
+          try {
+            for (const name of await readdir(nsDir)) {
+              if (!name.endsWith('.json')) continue;
+              const key = name.slice(0, -'.json'.length);
+              if (!NAME_RE.test(key)) continue;
+              try {
+                out[key] = await readFile(resolve(nsDir, name), 'utf-8');
+              } catch { /* 单个文件读不了不该拖垮整次水化 */ }
+            }
+          } catch { /* 目录还不存在 = 空 */ }
+          res.setHeader('Content-Type', 'application/json');
+          res.setHeader('Cache-Control', 'no-store');
+          res.end(JSON.stringify(out));
+          return;
+        }
+
+        if (segs.length !== 2 || !NAME_RE.test(segs[1])) {
+          bad(400, 'bad key');
+          return;
+        }
+        const filePath = resolve(nsDir, `${segs[1]}.json`);
+
+        if (req.method === 'GET') {
+          try {
+            const raw = await readFile(filePath, 'utf-8');
+            res.setHeader('Content-Type', 'application/json');
+            res.setHeader('Cache-Control', 'no-store');
+            res.end(raw);
+          } catch {
+            bad(404, 'not found');
+          }
+          return;
+        }
+        if (req.method === 'PUT' || req.method === 'POST') {
+          const chunks: Buffer[] = [];
+          for await (const ch of req) chunks.push(ch as Buffer);
+          const body = Buffer.concat(chunks).toString('utf-8');
+          try {
+            JSON.parse(body);
+          } catch {
+            bad(400, 'invalid json');
+            return;
+          }
+          await mkdir(nsDir, { recursive: true });
+          /**
+           * **先写临时文件再原子改名**，与打包侧（`src-tauri/src/gamedata.rs`）同一语义。
+           *
+           * 直接覆写时写到一半被打断，玩家拿到的是一个被截断的存档——比没存上更糟，
+           * 因为它看起来存在。开发期这份档还是 agent 验证链与编辑器内嵌预览共同的基准面，
+           * 坏在这里会被当成"存档系统就是这样"。
+           */
+          const tmpPath = `${filePath}.tmp`;
+          const payload = body.endsWith('\n') ? body : `${body}\n`;
+          try {
+            await writeFile(tmpPath, payload, 'utf-8');
+            await rename(tmpPath, filePath);
+          } catch (e) {
+            await unlink(tmpPath).catch(() => {});
+            throw e;
+          }
+          res.setHeader('Content-Type', 'application/json');
+          res.end('{"ok":true}');
+          return;
+        }
+        if (req.method === 'DELETE') {
+          try {
+            await unlink(filePath);
+          } catch { /* 本来就没有 = 成功 */ }
+          res.setHeader('Content-Type', 'application/json');
+          res.end('{"ok":true}');
+          return;
+        }
+        bad(405, 'method not allowed');
+      }
+    },
+  };
+}
+
+/**
+ * 开发服：**游戏内容一律不缓存**。
+ *
+ * 这是个内容驱动的项目：改一张背景、重烘一次光照、编辑器 save_all 写一批 JSON，
+ * 期望是「刷新就看到」。浏览器（尤其编辑器内嵌的 WebEngine，它连的是磁盘 HTTP 缓存）
+ * 把 `/resources/runtime/**` 的图和 `.bin` 缓存住之后，你会对着**旧素材**调参数，
+ * 而且毫无提示——这类"改了没反应"的时间全花在找错地方上。
+ *
+ * ## 为什么不用 `server.headers`
+ *
+ * 那是**全局**的，会一并盖掉 Vite 给 `node_modules/.vite/` 依赖预打包发的长缓存头。
+ * 那批文件（pixi.js 那一坨）内容按哈希定死、本来就该缓存；给它们发 no-store 等于
+ * 每次刷新重下重解析，dev 迭代肉眼可见地变慢——为了素材新鲜度赔上启动速度不划算。
+ *
+ * 所以只掐游戏内容这两棵树，其余按 Vite 自己的策略走。
+ */
+function noStoreForGameContent(): Plugin {
+  const NO_CACHE = /^\/(assets|resources)\//;
+  return {
+    name: 'gamedraft-no-store-game-content',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const pathOnly = (req.url ?? '').split('?')[0] ?? '';
+        if (NO_CACHE.test(pathOnly)) {
+          res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+          res.setHeader('Pragma', 'no-cache');
+          res.setHeader('Expires', '0');
+        }
+        next();
+      });
+    },
+  };
+}
+
 export default defineConfig({
   plugins: [
+    noStoreForGameContent(),
+    persistentStoreApi(),
     debugFlagFavoritesApi(),
     debugDockPinsApi(),
     runtimeLightingApi(),
@@ -641,6 +837,22 @@ export default defineConfig({
     sceneListApi(),
   ],
   base: './',
+  build: {
+    /**
+     * **public/ 不由 vite 拷。**
+     *
+     * vite 默认把整个 `publicDir` 原样搬进 dist——这里是 2.9 GB，里面混着编辑器预览图、
+     * 背景备份、角色参考图、烘包中间产物和生成脚本。那不是一个能发的游戏，是一次目录转储。
+     *
+     * 改由 `scripts/package.mjs` 按**抽取清单**逐个拷（清单见
+     * `tools/build/asset_manifest.py`：JSON 引用闭包 + 代码派生 + 显式规则）。
+     * 于是 `vite build` 只产出 JS/CSS/index.html，素材由打包器决定。
+     *
+     * ⚠ 直接跑 `vite build` 得到的 dist/ **不能单独当游戏跑**（没有素材）。
+     * 要可运行的产物走 `npm run package:dev` / `npm run package:release`。
+     */
+    copyPublicDir: false,
+  },
   optimizeDeps: {
     // 只认根目录这几个真入口（index.html + 几个 demo 页），不再全树找 html。
     entries: ['*.html'],
@@ -650,7 +862,15 @@ export default defineConfig({
     environment: 'node',
     // **/.claude/** 必须排除：Claude Code 的隐藏工作树（.claude/worktrees/<name>/）带着
     // 全套旧测试副本，扫进来会把文件数翻倍并用过期代码假绿/假红。
-    exclude: ['**/node_modules/**', '**/dist/**', '**/.claude/**'],
+    //
+    // tools/anim_preview/*.test.mjs 是 **node:test 风格**（`import test from 'node:test'`），
+    // 由 `npm run test:anim-preview` 用 `node --test` 跑。vitest 的默认 include 会把它们
+    // 捡起来，然后报 "No test suite found in file" —— 用例其实全绿，但 vitest 进程退出码
+    // 非零，于是"跑一次 vitest"恒红。排掉它们，两套框架各跑各的。
+    exclude: [
+      '**/node_modules/**', '**/dist/**', '**/.claude/**',
+      'tools/anim_preview/*.test.mjs',
+    ],
   },
   resolve: {
     alias: {

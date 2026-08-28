@@ -32,7 +32,11 @@
         {
           "type": "emitNarrativeSignal",
           "params": {
-            "signal": ""
+            "signal": "私有事件完结",
+            "sourceType": "dialogue",
+            "sourceId": "主线_藏钱",
+            "ownerType": "hotspot",
+            "ownerId": "主线s1藏钱点A"
           }
         }
       ],

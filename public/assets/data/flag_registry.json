@@ -367,6 +367,10 @@
     {
       "key": "零工背尸_done",
       "valueType": "bool"
+    },
+    {
+      "key": "GameConfig_线外内容",
+      "valueType": "bool"
     }
   ],
   "patterns": [

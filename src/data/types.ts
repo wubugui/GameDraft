@@ -3268,13 +3268,19 @@ export interface ICutsceneAudioPlayer {
 }
 
 export interface ISaveDataProvider {
-  /** 返回是否成功写入（localStorage 失败 / canSave 拒绝时 false），UI 按成败分支提示 */
-  save(slot: number): boolean;
+  /**
+   * 返回是否真正写盘成功（写失败 / 无后端 / canSave 拒绝时 false），UI 按成败分支提示。
+   * 落盘是文件 I/O，所以是异步的——等真写成了才回报成功，不许乐观返回。
+   */
+  save(slot: number): Promise<boolean>;
   load(slot: number): Promise<boolean>;
+  /** 以下查询走内存镜像（启动时 hydrate 一次），保持同步，供菜单渲染路径逐帧调用。 */
   getSlotMeta(slot: number): SaveSlotMeta | null;
   hasSave(slot: number): boolean;
   hasAnySave(): boolean;
+  /** 当前后端是否真的会把存档留下来。false = 内存降级，UI 应当告诉玩家。 */
+  isPersistent(): boolean;
   /** 跨运行壳互通：导出/导入原始 v1 JSON 信封；不改变 systems 桶。 */
   exportSlotPayload(slot: number): string | null;
-  importSlotPayload(slot: number, raw: string): boolean;
+  importSlotPayload(slot: number, raw: string): Promise<boolean>;
 }

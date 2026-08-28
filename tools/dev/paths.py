@@ -131,6 +131,18 @@ def npm_command() -> str:
     return names[0]
 
 
+def node_command() -> str:
+    """Full node invocation path when resolvable, else bare command name."""
+    d = node_dir()
+    names = ("node.exe", "node") if platform.system() == "Windows" else ("node",)
+    if d is not None:
+        for name in names:
+            candidate = d / name
+            if candidate.is_file():
+                return str(candidate)
+    return "node"
+
+
 def env_with_node_path(base: dict[str, str] | None = None) -> dict[str, str]:
     """Copy of the environment with node's directory prepended to PATH."""
     env = dict(os.environ if base is None else base)

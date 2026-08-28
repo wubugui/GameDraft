@@ -1,0 +1,14 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>GameDraft</title>
+<!--
+  占位。真正的 index.html 由打包管线（scripts/package.mjs）抽取到
+  release/<target>/game/ 下，运行时经 gamedraft:// 协议从 exe 旁读取。
+
+  这个文件只是为了满足 Tauri 构建期对 frontendDist 的存在性检查；
+  窗口的 url 指向 gamedraft://localhost/index.html，不会加载到这里。
+  如果你真的看到了这一页，说明 game/ 目录没被装到 exe 旁边。
+-->
+<body style="background:#0b0d10;color:#e8d9b0;font:14px/1.8 system-ui,sans-serif;padding:24px">
+游戏内容目录（exe 旁的 <code>game/</code>）没找到。请重新安装，或从项目根跑 <code>npm run package:release</code> 后再打包。
+</body>

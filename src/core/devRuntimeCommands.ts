@@ -137,7 +137,8 @@ export type RuntimeCommandDeps = {
   debugMovePlayerTo(x: number, y: number, speed: number, snapCamera: boolean): Promise<void>;
   debugClick(x: number, y: number): Promise<void>;
   debugDrag(fromX: number, fromY: number, toX: number, toY: number, durationMs: number): Promise<void>;
-  debugSaveGame(slot: number): boolean;
+  /** 存档落盘是文件 I/O，异步；等真写成了才回报，不许乐观返回。 */
+  debugSaveGame(slot: number): Promise<boolean>;
   debugLoadGame(slot: number): Promise<boolean>;
   debugReloadScene(sceneId?: string): Promise<void>;
   // 玩家输入：同步注入到真实输入路径、即发即走（不 await 游戏逻辑，理论上不会卡死游戏）
@@ -391,7 +392,7 @@ export async function applyDevRuntimeCommand(
       }
       case 'debugSaveGame': {
         const slot = coerceSaveSlot(command.slot, 2);
-        if (!deps.debugSaveGame(slot)) {
+        if (!(await deps.debugSaveGame(slot))) {
           throw new Error(`save slot failed to write: ${slot}`);
         }
         await deps.captureSnapshot(optionalString(command.reason) || `runtime-command:debugSaveGame:${slot}`);

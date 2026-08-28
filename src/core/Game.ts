@@ -179,6 +179,7 @@ import { hotspotCollisionPolygonToWorld, npcCollisionPolygonToWorld } from '../u
 import { depthLog, depthError } from './depthLog';
 import { DevModeUI } from '../ui/DevModeUI';
 import { resolveText, type ResolveContext } from './resolveText';
+import { mergeGameConfig } from './gameConfigMerge';
 import { BubbleChatterSystem, type BubbleSpeakerRef } from '../systems/BubbleChatterSystem';
 import { PlayerIdleBehaviorSystem } from '../systems/PlayerIdleBehaviorSystem';
 import { setTextPalette, stripStyleMarkup } from './textStyle';
@@ -670,7 +671,8 @@ export class Game {
     this.voiceChannel.setAudioPlayer(this.audioManager);
     this.dialogueVoiceDirector = new DialogueVoiceDirector(this.eventBus, this.voiceChannel);
     this.dialogueVoiceDirector.init();
-    // 偏好在构造期就从 localStorage 读回来：首句台词可能早于任何一次开菜单
+    // 构造期只立起缺省值；真正的偏好在 start() 里 hydrate（文件读盘是异步的），
+    // 落点早于任何一次开菜单与首句台词。
     this.textDisplaySettings = new TextDisplaySettings();
     this.dayManager = new DayManager(this.eventBus, this.flagStore, this.actionExecutor);
     this.waterMinigameManager = new WaterMinigameManager();
@@ -1503,6 +1505,13 @@ export class Game {
       this.stringsProvider,
       this.gameConfig.fallbackScene,
     );
+    // 存档现在落在文件里（见 storage/persistentStore.ts），读盘是异步的，而
+    // `hasAnySave()` / `getSlotMeta()` 被紧接着构造的 MenuUI 在**同步渲染路径**里调用
+    // ——标题页要靠它决定「继续」按不按得亮。所以必须在 MenuUI 之前把三个槽水化进内存镜像。
+    // hydrate 自己不抛：后端不可用时降级成"无档"，游戏照常起得来。
+    await this.saveManager.hydrate();
+    // 玩家偏好同一个存放面，同样要赶在 UI 与首句台词之前落位。
+    await this.textDisplaySettings.hydrate();
     // 仅在探索 / UI 覆盖层（暂停菜单打开）可存档；对话/遭遇/演出/小游戏等在途态拒绝存档，
     // 避免半态存档（这些系统不持久化在途状态，读档会丢失或半执行）。
     // 叙事编排排空在飞时同样拒绝：队列/在飞广播不入档，级联中途的档读回后
@@ -3071,6 +3080,7 @@ export class Game {
       getSlotMeta: (slot) => sm.getSlotMeta(slot),
       hasSave: (slot) => sm.hasSave(slot),
       hasAnySave: () => sm.hasAnySave(),
+      isPersistent: () => sm.isPersistent(),
       exportSlotPayload: (slot) => sm.exportSlotPayload(slot),
       importSlotPayload: (slot, raw) => sm.importSlotPayload(slot, raw),
     };
@@ -3104,12 +3114,20 @@ export class Game {
   private async loadGameConfig(): Promise<void> {
     try {
       const cfg = await this.assetManager.loadJson<Partial<GameConfig>>(TEXT_URLS.gameConfig);
-      if (cfg.initialScene) this.gameConfig.initialScene = cfg.initialScene;
-      if (cfg.initialQuest) this.gameConfig.initialQuest = cfg.initialQuest;
-      if (cfg.fallbackScene) this.gameConfig.fallbackScene = cfg.fallbackScene;
-      if (cfg.initialCutscene !== undefined) this.gameConfig.initialCutscene = cfg.initialCutscene;
-      if (cfg.initialCutsceneDoneFlag !== undefined) {
-        this.gameConfig.initialCutsceneDoneFlag = cfg.initialCutsceneDoneFlag;
+      /**
+       * **整包合并**，不是逐键白名单——见 `gameConfigMerge.ts` 的长注释。
+       *
+       * 白名单那个形状把正确性押在"有人记得来这里加一行"上，而漏掉是完全静默的：
+       * 类型有、编辑器有、校验器有、消费端也有，唯独值没被搬进来，作者配了半天
+       * 一点反应都没有。记录在案漏过四次（dayNight / playerAvatar.portraitSlug /
+       * playerActs / emoteBubbleScale），换成合并后新字段自动生效。
+       */
+      const { rejected } = mergeGameConfig(this.gameConfig, cfg);
+      if (rejected.length > 0) {
+        // "配了但形状不对"以前是静默忽略的，和"没配"长得一模一样
+        console.warn(
+          `[Game] game_config.json 里这些键的值形状不对，已忽略（保持缺省）：${rejected.join(', ')}`,
+        );
       }
       // startupFlags = **发行版新开一局**的初始世界状态，只喂正式开局。
       // dev 外壳（mode=dev / 直达场景 / warp / 各预览）刻意不吃：开发时要能从"一张白纸"
@@ -3128,54 +3146,6 @@ export class Game {
             this.flagStore.set(k, v as boolean | number);
           }
         }
-      }
-      // 本方法是**逐键白名单**拷贝，漏一个键 = 那份配置永远读不到、且毫无动静。
-      // dayNight 此前就漏在这儿：`GameConfig.dayNight` 有类型、`DayManager.configure`
-      // 有实现、校验器还拿 `game_config.dayNight.phases` 校验 timePhase 条件——
-      // 唯独没人把它从 JSON 搬进来，于是 configure() 恒收 undefined、时段表恒是
-      // DEFAULT_PHASES，作者配了自定义时段却一点反应都没有。
-      if (cfg.dayNight) this.gameConfig.dayNight = cfg.dayNight;
-      if (cfg.viewport) this.gameConfig.viewport = cfg.viewport;
-      if (cfg.windowSize) this.gameConfig.windowSize = cfg.windowSize;
-      if (cfg.playerAvatar !== undefined) {
-        const pa = cfg.playerAvatar;
-        this.gameConfig.playerAvatar = {
-          animManifest: pa.animManifest ?? this.gameConfig.playerAvatar?.animManifest,
-          stateMap: pa.stateMap ? { ...pa.stateMap } : this.gameConfig.playerAvatar?.stateMap,
-          // portraitSlug 此前漏拷：JSON 里配了主角立绘集也永远读不到，
-          // 运行时只能靠 animFile 包名推导（applyPlayerAvatarFromAction 的兜底），
-          // 于是「主角换了装扮立绘集」这条配置一直是死的。
-          portraitSlug: pa.portraitSlug ?? this.gameConfig.playerAvatar?.portraitSlug,
-        };
-      }
-      // playerActs / emoteBubbleScale 同为漏拷：两处消费端（PlayerActionSystem.setConfig、
-      // EmoteBubbleManager.setDefaultScale）读的一直是 undefined，配了等于没配。
-      if (cfg.playerActs && typeof cfg.playerActs === 'object') {
-        this.gameConfig.playerActs = { ...cfg.playerActs };
-      }
-      if (typeof cfg.emoteBubbleScale === 'number' && Number.isFinite(cfg.emoteBubbleScale)) {
-        this.gameConfig.emoteBubbleScale = cfg.emoteBubbleScale;
-      }
-      if (typeof cfg.entityPixelDensityMatch === 'boolean') {
-        this.gameConfig.entityPixelDensityMatch = cfg.entityPixelDensityMatch;
-      }
-      if (
-        typeof cfg.entityPixelDensityMatchBlurScale === 'number' &&
-        Number.isFinite(cfg.entityPixelDensityMatchBlurScale) &&
-        cfg.entityPixelDensityMatchBlurScale > 0
-      ) {
-        this.gameConfig.entityPixelDensityMatchBlurScale = cfg.entityPixelDensityMatchBlurScale;
-      }
-      if (cfg.entityLighting && typeof cfg.entityLighting === 'object') {
-        this.gameConfig.entityLighting = cfg.entityLighting;
-      }
-      if (cfg.health && typeof cfg.health === 'object') {
-        this.gameConfig.health = { ...cfg.health };
-      }
-      // ⚠ 本函数是**白名单**拷贝，不是整包赋值：新加的 game_config 键不在这里登记一行，
-      // 运行时读到的永远是 undefined（页面里 gameConfig 少了这个键，排查时极易误判成"没写进 JSON"）。
-      if (Array.isArray(cfg.textPalette)) {
-        this.gameConfig.textPalette = cfg.textPalette.map((e) => ({ ...e }));
       }
     } catch {
       console.warn('Game: game_config.json not found, using defaults');
