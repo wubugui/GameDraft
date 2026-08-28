@@ -532,7 +532,7 @@
     {
       "id": "xungou_demo_main",
       "label": "寻狗记Demo · 主线",
-      "description": "分镜主线（14里程碑，含①.5梦）+ 实体wrapper（区域/NPC/热区）+ beat scenario（镇尸/送货两段式/守夜/梦待死之礼）。流程逻辑全部走信号与状态，无内容侧 setFlag。",
+      "description": "序章·已确认的编排：茶馆听书 → 被赶出门 → 街上找吃的 → 后巷神秘人发崖墓活 → 第二阶段闲逛（癞子显摆 / 藏钱）→ 赌坊输光。主图 flow_xungou_main 的 state_1/initial/state_2/state_3/state_4 是这一段；s02_beishi 之后的 10 个状态属自动生成，其戏已搬到「线外·自动生成（待清理）」画布。",
       "mainGraph": {
         "id": "flow_xungou_main",
         "ownerType": "flow",
@@ -808,6 +808,175 @@
             "commands": []
           }
         },
+        {
+          "id": "el_scenario_听书",
+          "kind": "wrapperGraph",
+          "label": "听书（场景0·开端）",
+          "ownerType": "scenario",
+          "ownerId": "寻狗_听书",
+          "x": 24,
+          "y": 700,
+          "meta": {
+            "emits": [],
+            "reads": [],
+            "commands": []
+          },
+          "graph": {
+            "id": "scenario_听书",
+            "ownerType": "scenario",
+            "ownerId": "寻狗_听书",
+            "label": "听书（场景0·开端）",
+            "initialState": "listening",
+            "entryState": "listening",
+            "exitStates": [
+              "kicked_out"
+            ],
+            "states": {
+              "listening": {
+                "id": "listening",
+                "meta": {
+                  "editor": {
+                    "x": 30,
+                    "y": 20
+                  }
+                },
+                "label": "听书中（没点茶）"
+              },
+              "kicked_out": {
+                "id": "kicked_out",
+                "meta": {
+                  "editor": {
+                    "x": 450,
+                    "y": 20
+                  }
+                },
+                "label": "被赶出门（beat完成）",
+                "broadcastOnEnter": false
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_kicked",
+                "from": "listening",
+                "to": "kicked_out",
+                "signal": "tingshu_kicked"
+              }
+            ]
+          },
+          "package": "章节_听书"
+        },
+        {
+          "id": "dlg_听书开场",
+          "kind": "dialogueBlackbox",
+          "label": "寻狗_听书开场",
+          "refId": "寻狗_听书开场",
+          "x": -157,
+          "y": -221,
+          "meta": {
+            "emits": [
+              "tingshu_kicked",
+              "主线_开局被赶出茶馆"
+            ],
+            "reads": [
+              "scenario_听书"
+            ],
+            "commands": []
+          }
+        },
+        {
+          "id": "wrapper_1",
+          "kind": "wrapperGraph",
+          "label": "主线_崖墓任务发布",
+          "refId": "",
+          "x": -350,
+          "y": 318,
+          "meta": {
+            "emits": [],
+            "reads": [],
+            "commands": []
+          },
+          "ownerType": "npc",
+          "ownerId": "崖墓任务发布者",
+          "graph": {
+            "id": "wrapper_主线_崖墓任务发布",
+            "label": "主线_崖墓任务发布",
+            "ownerType": "npc",
+            "initialState": "initial",
+            "states": {
+              "initial": {
+                "id": "initial",
+                "meta": {
+                  "editor": {
+                    "x": -5,
+                    "y": 175
+                  }
+                },
+                "label": "未开始"
+              },
+              "state_1": {
+                "id": "state_1",
+                "meta": {
+                  "editor": {
+                    "x": 198,
+                    "y": 114
+                  }
+                },
+                "label": "准备发布任务"
+              },
+              "state_2": {
+                "id": "state_2",
+                "meta": {
+                  "editor": {
+                    "x": 347,
+                    "y": 254
+                  }
+                },
+                "label": "离开"
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_1",
+                "from": "initial",
+                "to": "state_1",
+                "signal": "主线_第一阶段闲逛完成"
+              },
+              {
+                "id": "t_2",
+                "from": "state_1",
+                "to": "state_2",
+                "signal": "崖墓任务_发布完成"
+              }
+            ],
+            "ownerId": "崖墓任务发布者"
+          }
+        }
+      ]
+    },
+    {
+      "id": "xungou_auto_archive",
+      "label": "线外·自动生成（待清理）",
+      "description": "从「寻狗记Demo · 主线」搬出的自动生成编排：赌场之后的里程碑戏（背尸/梦/吹牛/婆子家/河边/码头/枯井/向导/送货/招募/终幕/义庄镇尸/守夜）与 ①.5 街头小互动。**一张图都没删改**，元素相对位置与原画布一致。画布归属不影响运行时——图册加载时会摊平注册（NarrativeStateManager 约 2411 行）。",
+      "mainGraph": {
+        "id": "线外归档_容器",
+        "ownerType": "flow",
+        "initialState": "initial",
+        "states": {
+          "initial": {
+            "id": "initial",
+            "meta": {
+              "editor": {
+                "x": -321,
+                "y": -1520
+              }
+            },
+            "label": "容器（不参与流程）"
+          }
+        },
+        "transitions": [],
+        "label": "线外归档"
+      },
+      "elements": [
         {
           "id": "dlg_02",
           "kind": "dialogueBlackbox",
@@ -2386,63 +2555,6 @@
             ],
             "commands": []
           }
-        },
-        {
-          "id": "el_scenario_听书",
-          "kind": "wrapperGraph",
-          "label": "听书（场景0·开端）",
-          "ownerType": "scenario",
-          "ownerId": "寻狗_听书",
-          "x": 24,
-          "y": 700,
-          "meta": {
-            "emits": [],
-            "reads": [],
-            "commands": []
-          },
-          "graph": {
-            "id": "scenario_听书",
-            "ownerType": "scenario",
-            "ownerId": "寻狗_听书",
-            "label": "听书（场景0·开端）",
-            "initialState": "listening",
-            "entryState": "listening",
-            "exitStates": [
-              "kicked_out"
-            ],
-            "states": {
-              "listening": {
-                "id": "listening",
-                "meta": {
-                  "editor": {
-                    "x": 30,
-                    "y": 20
-                  }
-                },
-                "label": "听书中（没点茶）"
-              },
-              "kicked_out": {
-                "id": "kicked_out",
-                "meta": {
-                  "editor": {
-                    "x": 450,
-                    "y": 20
-                  }
-                },
-                "label": "被赶出门（beat完成）",
-                "broadcastOnEnter": false
-              }
-            },
-            "transitions": [
-              {
-                "id": "t_kicked",
-                "from": "listening",
-                "to": "kicked_out",
-                "signal": "tingshu_kicked"
-              }
-            ]
-          },
-          "package": "章节_听书"
         },
         {
           "id": "el_scenario_吹牛",
@@ -4336,24 +4448,6 @@
           }
         },
         {
-          "id": "dlg_听书开场",
-          "kind": "dialogueBlackbox",
-          "label": "寻狗_听书开场",
-          "refId": "寻狗_听书开场",
-          "x": -157,
-          "y": -221,
-          "meta": {
-            "emits": [
-              "tingshu_kicked",
-              "主线_开局被赶出茶馆"
-            ],
-            "reads": [
-              "scenario_听书"
-            ],
-            "commands": []
-          }
-        },
-        {
           "id": "el_wrap_瞎子李算命",
           "kind": "wrapperGraph",
           "label": "①.5瞎子李算命（少走夜路伏笔）",
@@ -4938,74 +5032,6 @@
             "emits": [],
             "reads": [],
             "commands": []
-          }
-        },
-        {
-          "id": "wrapper_1",
-          "kind": "wrapperGraph",
-          "label": "主线_崖墓任务发布",
-          "refId": "",
-          "x": -350,
-          "y": 318,
-          "meta": {
-            "emits": [],
-            "reads": [],
-            "commands": []
-          },
-          "ownerType": "npc",
-          "ownerId": "崖墓任务发布者",
-          "graph": {
-            "id": "wrapper_主线_崖墓任务发布",
-            "label": "主线_崖墓任务发布",
-            "ownerType": "npc",
-            "initialState": "initial",
-            "states": {
-              "initial": {
-                "id": "initial",
-                "meta": {
-                  "editor": {
-                    "x": -5,
-                    "y": 175
-                  }
-                },
-                "label": "未开始"
-              },
-              "state_1": {
-                "id": "state_1",
-                "meta": {
-                  "editor": {
-                    "x": 198,
-                    "y": 114
-                  }
-                },
-                "label": "准备发布任务"
-              },
-              "state_2": {
-                "id": "state_2",
-                "meta": {
-                  "editor": {
-                    "x": 347,
-                    "y": 254
-                  }
-                },
-                "label": "离开"
-              }
-            },
-            "transitions": [
-              {
-                "id": "t_1",
-                "from": "initial",
-                "to": "state_1",
-                "signal": "主线_第一阶段闲逛完成"
-              },
-              {
-                "id": "t_2",
-                "from": "state_1",
-                "to": "state_2",
-                "signal": "崖墓任务_发布完成"
-              }
-            ],
-            "ownerId": "崖墓任务发布者"
           }
         }
       ]
@@ -5811,6 +5837,8 @@
     },
     {
       "id": "composition_1",
+      "label": "序章·癞子",
+      "description": "NPC_癞子 的两态机：崖墓任务发布后现身「捡钱」，显摆完回 initial 并换常态搭话。",
       "mainGraph": {
         "id": "npcall",
         "ownerType": "flow",
@@ -5891,6 +5919,8 @@
     },
     {
       "id": "composition_2",
+      "label": "后巷·棺材铺交互",
+      "description": "test_room_b（后巷）棺材铺门口的 zone 交互点。迁移信号仍是 __draft__，未接。",
       "mainGraph": {
         "id": "后巷_交互点",
         "ownerType": "flow",
@@ -5964,6 +5994,8 @@
     },
     {
       "id": "composition_3",
+      "label": "序章·街面交互点",
+      "description": "藏钱点（雾津/码头两处共用同一台状态机）与赌坊看场的 wrapper。",
       "mainGraph": {
         "id": "主线_交互点",
         "ownerType": "flow",
