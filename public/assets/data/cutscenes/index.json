@@ -2126,7 +2126,7 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "text": "昨天你说的是牵头驴啊，哈哈哈",
+        "text": "昨天你说的是牵匹骡子啊，哈哈哈",
         "scriptedNpcId": "npc_掌柜",
         "portrait": {
           "emotion": "laugh"
@@ -2690,7 +2690,7 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "text": "想对付旱魃？莫说桃木剑和几张符，墨斗和黑驴蹄子都不一定得行。",
+        "text": "想对付旱魃？莫说桃木剑和几张符，墨斗和黑狗血都不一定得行。",
         "scriptedNpcId": "blind_li",
         "portrait": {
           "emotion": "calm"
@@ -2788,7 +2788,7 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "text": "昨天你说的是牵头驴啊，哈哈哈",
+        "text": "昨天你说的是牵匹骡子啊，哈哈哈",
         "scriptedNpcId": "npc_掌柜",
         "portrait": {
           "emotion": "laugh"
@@ -3535,7 +3535,7 @@
         "kind": "present",
         "type": "showDialogue",
         "speaker": "旁白",
-        "text": "三人一驴，过了城门。雾把路吞到第十步开外。"
+        "text": "三人一骡，过了城门。雾把路吞到第十步开外。"
       },
       {
         "kind": "present",

@@ -63,14 +63,14 @@
         {
           "type": "faceEntity",
           "params": {
-            "target": "eco_wj_拴驴",
+            "target": "eco_wj_拴骡",
             "direction": "right"
           }
         },
         {
           "type": "showEmote",
           "params": {
-            "target": "eco_wj_拴驴",
+            "target": "eco_wj_拴骡",
             "emote": "?",
             "duration": 1100
           }

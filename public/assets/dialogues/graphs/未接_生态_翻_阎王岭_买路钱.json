@@ -79,7 +79,7 @@
         {
           "type": "playNpcAnimation",
           "params": {
-            "target": "eco_ywl_驮驴",
+            "target": "eco_ywl_驮骡",
             "state": "kick",
             "loop": false,
             "thenState": "idle",
@@ -89,7 +89,7 @@
         {
           "type": "showEmote",
           "params": {
-            "target": "eco_ywl_驮驴",
+            "target": "eco_ywl_驮骡",
             "emote": "!",
             "duration": 900
           }

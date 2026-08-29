@@ -63,7 +63,7 @@
         {
           "type": "playNpcAnimation",
           "params": {
-            "target": "eco_wj_拴驴",
+            "target": "eco_wj_拴骡",
             "state": "kick",
             "loop": false,
             "thenState": "idle",
@@ -73,7 +73,7 @@
         {
           "type": "showEmote",
           "params": {
-            "target": "eco_wj_拴驴",
+            "target": "eco_wj_拴骡",
             "emote": "!",
             "duration": 900
           }

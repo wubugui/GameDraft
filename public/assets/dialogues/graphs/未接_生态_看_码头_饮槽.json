@@ -3,7 +3,7 @@
   "id": "未接_生态_看_码头_饮槽",
   "entry": "ri1",
   "meta": {
-    "title": "石槽（单态；一拍：拴驴以为要牵它去饮水）"
+    "title": "石槽（单态；一拍：拴骡以为要牵它去饮水）"
   },
   "nodes": {
     "ri1": {
@@ -21,14 +21,14 @@
         {
           "type": "faceEntity",
           "params": {
-            "target": "eco_dk_拴驴",
+            "target": "eco_dk_拴骡",
             "faceTarget": "player"
           }
         },
         {
           "type": "showEmote",
           "params": {
-            "target": "eco_dk_拴驴",
+            "target": "eco_dk_拴骡",
             "emote": "?",
             "duration": 1300
           }
@@ -36,7 +36,7 @@
         {
           "type": "playNpcAnimation",
           "params": {
-            "target": "eco_dk_拴驴",
+            "target": "eco_dk_拴骡",
             "state": "kick",
             "loop": false,
             "thenState": "idle"
