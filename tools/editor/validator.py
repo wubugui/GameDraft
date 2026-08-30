@@ -1291,8 +1291,25 @@ def _lighting2_issues(sid: str) -> list[tuple[str, str]]:
     校验器另立一套 = 把 error 通道淹掉。这里的每个数都能在消费端逐字找到出处。
     """
     from pathlib import Path
+    import json as _json
     root = Path(__file__).resolve().parents[2]
-    d = root / "public" / "resources" / "runtime" / "scenes" / sid / "lighting2"
+    scene_rt = root / "public" / "resources" / "runtime" / "scenes" / sid
+    # 2026-08-30 起几何场按背景图名分目录(「背景与烘焙绑死」);迁移期回落扁平布局。
+    # 图名口径与运行时 bakeKeyFromBackground / migrate_bake_by_background.py 一致。
+    key = None
+    sj = root / "public" / "assets" / "scenes" / f"{sid}.json"
+    if sj.exists():
+        try:
+            bgs = (_json.loads(sj.read_text(encoding="utf-8")).get("backgrounds") or [])
+            img = bgs[0].get("image") if bgs and isinstance(bgs[0], dict) else None
+            if isinstance(img, str) and img.strip():
+                base = img.strip().replace("\\", "/").split("/")[-1]
+                key = base[:base.rfind(".")] if base.rfind(".") > 0 else base
+        except Exception:  # noqa: BLE001 — 场景 JSON 的问题由别的校验报,这里只是取不到名
+            key = None
+    d = scene_rt / "lighting2" / key if key else scene_rt / "lighting2"
+    if not (d / "meta.json").exists():
+        d = scene_rt / "lighting2"        # 回落扁平布局
     meta_p = d / "meta.json"
     if not meta_p.exists():
         return [("warning",
@@ -1583,6 +1600,88 @@ def _validate_npc_schedules(model: ProjectModel, issues: list[Issue]) -> None:
                 )
 
         _validate_scene_group_phases(model, issues, sid, scene, known_phases, scene_daynight_on)
+
+        # ---- timeVariants(时段外观)校验(2026-08-30) ----
+        #
+        # 这一整块原本零校验:时段 key 写错、变体背景没烘 bake、各时段背景尺寸不一致,
+        # 三种都只在跑起来时表现为"夜里不对劲",作者根本无从下手。
+        tv = scene.get("timeVariants")
+        if tv is not None and not isinstance(tv, dict):
+            issues.append(Issue("error", "scene", sid, "timeVariants 须为对象(键=时段 id)"))
+            tv = None
+        for ph, variant in (tv or {}).items():
+            tag = f"timeVariants[{ph}]"
+            if ph not in known_phases:
+                issues.append(Issue(
+                    "error", "scene", sid,
+                    f"{tag}: 时段 {ph!r} 未在 game_config.dayNight.phases 登记"
+                    f"(可用:{'、'.join(sorted(known_phases))})——运行时永远命中不到"))
+            if not scene_daynight_on:
+                issues.append(Issue(
+                    "warning", "scene", sid,
+                    f"{tag}: 配了时段外观但本场景没开 dayNight.enabled——整块不生效"))
+            if not isinstance(variant, dict):
+                issues.append(Issue("error", "scene", sid, f"{tag} 须为对象"))
+                continue
+            if "lights" in (variant.get("lighting") or {}):
+                issues.append(Issue(
+                    "error", "scene", sid,
+                    f"{tag}.lighting 不许含 lights——灯按各自的 phases 过滤,"
+                    "在这儿换整组会有两个真相源(运行时也不读它)"))
+            bgs = variant.get("backgrounds")
+            if bgs is None:
+                continue
+            if not isinstance(bgs, list) or not bgs or not isinstance(bgs[0], dict):
+                issues.append(Issue("error", "scene", sid, f"{tag}.backgrounds 须为非空数组"))
+                continue
+            img = bgs[0].get("image")
+            if not isinstance(img, str) or not img.strip():
+                issues.append(Issue("error", "scene", sid, f"{tag}.backgrounds[0].image 缺失"))
+                continue
+            scene_rt = (Path(__file__).resolve().parents[2]
+                        / "public" / "resources" / "runtime" / "scenes" / sid)
+            if not (scene_rt / img).exists():
+                issues.append(Issue("error", "scene", sid, f"{tag} 的背景图 {img} 不在磁盘上"))
+                continue
+            # 该时段背景有没有自己的烘焙?没有 = 进这个时段角色就没有 probe 底光。
+            key = img[:img.rfind(".")] if img.rfind(".") > 0 else img
+            if not (scene_rt / "lighting" / key / "lighting.json").exists():
+                issues.append(Issue(
+                    "warning", "scene", sid,
+                    f"{tag} 的背景 {img} 没有烘焙数据(lighting/{key}/)——"
+                    f"进这个时段角色会失去 probe 底光。跑 "
+                    f"`python -m tools.character_lighting_lab --build "
+                    f"public/resources/runtime/scenes/{sid}/{img} --name {sid} "
+                    f"--background {img} --export-runtime`"))
+            # 各时段背景必须同尺寸:collision/raw_depth 是逐场景的玩法几何,
+            # 尺寸一变 worldToPixel 就漂,出生点会"白天能走、夜里卡墙"(实测撞过)。
+            base_img = ((scene.get("backgrounds") or [{}])[0] or {}).get("image")
+            if isinstance(base_img, str) and (scene_rt / base_img).exists():
+                try:
+                    from PIL import Image as _Im
+                    with _Im.open(scene_rt / base_img) as a, _Im.open(scene_rt / img) as b:
+                        if a.size != b.size:
+                            issues.append(Issue(
+                                "error", "scene", sid,
+                                f"{tag} 的背景 {img} 尺寸 {b.size} ≠ 白天 {base_img} {a.size}"
+                                "——各时段必须共享几何,否则碰撞查表会漂"))
+                except Exception:  # noqa: BLE001 — 读图失败由素材审计负责
+                    pass
+
+        # 灯的时段归属(2026-08-30「灯就是实体,和其他实体一样配 phase」)。
+        # 与热点/NPC/zone 走同一条校验:值须登记、写了但场景没开日夜 = 配了不生效。
+        lit = scene.get("lighting")
+        if isinstance(lit, dict):
+            for lamp in lit.get("lights") or []:
+                if not isinstance(lamp, dict) or lamp.get("phases") is None:
+                    continue
+                _check_phases_field(
+                    issues, sid, f"灯 {lamp.get('id') or '(无 id)'}", lamp.get("phases"),
+                    known_phases, scene_daynight_on,
+                )
+
+
+from pathlib import Path
 
 
 def _validate_scene_group_phases(

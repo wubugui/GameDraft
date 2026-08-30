@@ -444,7 +444,12 @@ def bake(sid: str, grid: tuple[int, int, int] = DEFAULT_GRID,
     if band is None:
         band = scale['band']
 
-    out = scene.rt_dir / 'lighting2'
+    # 2026-08-30「背景与烘焙绑死」:几何场也按背景图名分目录,与 lighting/ 同口径。
+    # 漏了这一步的后果是:夜背景没有自己的几何场,运行时回落到扁平那份 ——
+    # **静默拿白天的法线/天穹可见性去照夜原画**,光的走向全错而画面上只是"不太对"。
+    _stem = scene.bg_name
+    _dot = _stem.rfind('.')
+    out = scene.rt_dir / 'lighting2' / (_stem[:_dot] if _dot > 0 else _stem)
 
     # ---- 法线 ----
     n = geo['normal']

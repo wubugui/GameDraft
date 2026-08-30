@@ -113,6 +113,7 @@ function runtimeLightingApi(): Plugin {
           for await (const ch of req) chunks.push(ch as Buffer);
           let parsed: {
             sceneId?: unknown; lighting?: unknown; writer?: unknown; selectedId?: unknown;
+            phase?: unknown;
           };
           try {
             parsed = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
@@ -144,6 +145,9 @@ function runtimeLightingApi(): Plugin {
             //   对不上就等于没法找灯。这是**会话态**不是策划数据 —— 它跟 rev/writer
             //   一样住在文档层，**不进 `lighting`**，所以 Save All 落盘时带不出去。
             selectedId: typeof parsed.selectedId === 'string' ? parsed.selectedId : null,
+            // 这份 lighting 属于哪个时段。空串 = 场景顶层基底；非空 = 合并结果，
+            // 编辑器拉取时据此拒绝写回顶层（见 scene_lights.validate_pulled_lighting）。
+            phase: typeof parsed.phase === 'string' ? parsed.phase : '',
           };
           await mkdir(dirname(filePath), { recursive: true });
           await writeFile(filePath, `${JSON.stringify(payload, null, 2)}

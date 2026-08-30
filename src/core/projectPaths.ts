@@ -137,6 +137,39 @@ export function sceneRuntimeDirUrl(sceneId: string): string {
 }
 
 /**
+ * 一张背景图的**烘焙产物基名**：去掉目录与扩展名后的裸名。
+ *
+ * 制作人 2026-08-30 定的规矩：**场景背景与它的烘焙数据绑死**，运行时直接拿背景图名
+ * 当 key 去找。于是 `background.png` → `background`、`background_relight_夜.png` →
+ * `background_relight_夜`，一张图一套派生数据，换背景即连带换烘焙，不可能错配。
+ *
+ * ⚠ 只取基名不做别的：图名里的中文、下划线原样保留（目录名就是它）。
+ */
+export function bakeKeyFromBackground(image: string): string {
+  const raw = (image ?? '').trim();
+  if (!raw) throw new Error('bakeKeyFromBackground: image required');
+  const base = raw.split(/[\\/]/).pop() ?? raw;
+  const dot = base.lastIndexOf('.');
+  const key = dot > 0 ? base.slice(0, dot) : base;
+  if (!key) throw new Error(`bakeKeyFromBackground: 取不出基名: ${image}`);
+  return key;
+}
+
+/**
+ * 某张背景图的烘焙产物目录 URL：`<scene_runtime_dir>/<family>/<背景基名>`。
+ *
+ * `family` 取 `lighting`（角色 probe 载荷，character_lighting_lab 出）或
+ * `lighting2`（几何场：法线/天穹可见性，scene_relight/bake.py 出）——两者都是**同一张
+ * 背景图**的派生物（两边的 `background_sha1` 逐字相同），所以一起按图名分。
+ *
+ * 缺这个目录**不是错误**：制作人定的口径是「烘焙数据可以缺省，缺省不能影响运行」。
+ * 调用方拿不到就优雅降级（角色少一层光），不要因此把场景搞坏。
+ */
+export function sceneBakeDirUrl(sceneId: string, image: string, family: 'lighting' | 'lighting2'): string {
+  return `${sceneRuntimeDirUrl(sceneId)}/${family}/${bakeKeyFromBackground(image)}`;
+}
+
+/**
  * 把场景 JSON 中相对资源（短文件名或子路径）解析成完整媒体 URL：
  * `<scene_runtime_dir>/<ref>`。当 ref 是完整 URL（`/resources/...`、绝对 http(s)
  * 或本地绝对路径）时原样返回。

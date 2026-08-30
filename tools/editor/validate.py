@@ -74,9 +74,13 @@ def _json_lang_issues(project_root: Path) -> list[Issue]:
 def _lighting_payload_issues(project_root: Path) -> list[Issue]:
     """角色照明烘焙载荷防腐门(character_lighting_lab 导出物,P1 数据通道)。
 
-    只对存在 lighting/ 目录的场景生效:①lighting.json 结构齐全(v2 含 vol 块);
-    ②probe 图集/valid/体素卷/ground_d.png 在盘且尺寸吻合网格;③背景内容哈希
-    一致——背景重画而烘焙未跟上时记 error(运行时同样据此禁用,防静默过期)。"""
+    ①lighting.json 结构齐全(v2 含 vol 块);②probe 图集/valid/体素卷/ground_d.png
+    在盘且尺寸吻合网格;③背景内容哈希一致。
+
+    ⚠ 2026-08-30 起烘焙产物**按背景图名分目录**(`lighting/<背景基名>/`,制作人定的
+    「背景与烘焙绑死」)。所以哈希对的是**该份 bake 所属的那张图**,不再是写死的
+    background.png —— 一个场景可以有白天/夜里各一份,各自对各自的图。
+    迁移期同时认旧的扁平布局(`lighting/lighting.json`),按场景 backgrounds[0] 对哈希。"""
     import hashlib
     import json as _json
 
@@ -86,9 +90,15 @@ def _lighting_payload_issues(project_root: Path) -> list[Issue]:
         return out
     required = {"version", "background_sha1", "work", "cal", "world",
                 "probes", "vol", "ambient_sh", "lights", "ground_d", "shading"}
-    for lj in sorted(scenes_dir.glob("*/lighting/lighting.json")):
-        scene = lj.parent.parent.name
-        tag = f"scenes/{scene}/lighting"
+    # 新布局 `<场景>/lighting/<图名>/lighting.json` + 迁移期的旧扁平布局
+    payloads = sorted(scenes_dir.glob("*/lighting/*/lighting.json"))
+    payloads += sorted(scenes_dir.glob("*/lighting/lighting.json"))
+    for lj in payloads:
+        flat = lj.parent.name == "lighting"
+        scene = (lj.parent.parent if flat else lj.parent.parent.parent).name
+        # 该份 bake 属于哪张背景图:新布局取目录名,旧布局回落场景的 backgrounds[0]
+        bake_key = None if flat else lj.parent.name
+        tag = f"scenes/{scene}/lighting" + ("" if flat else f"/{bake_key}")
         try:
             payload = _json.loads(lj.read_text())
         except Exception as exc:  # noqa: BLE001
@@ -123,9 +133,15 @@ def _lighting_payload_issues(project_root: Path) -> list[Issue]:
                                  f"{fname} 尺寸 {f.stat().st_size} != 期望 {size}(probe 网格不匹配)"))
         if not (lj.parent / "ground_d.png").exists():
             out.append(Issue("error", "lighting-bake", tag, "缺文件 ground_d.png"))
-        bg = lj.parent.parent / "background.png"
+        scene_rt = lj.parent.parent if flat else lj.parent.parent.parent
+        if bake_key:
+            # 目录名就是图名(去了扩展名);扩展名不在目录里,按场景实际文件找回来
+            cands = [p for p in scene_rt.glob(f"{bake_key}.*") if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp")]
+            bg = cands[0] if cands else scene_rt / f"{bake_key}.png"
+        else:
+            bg = scene_rt / "background.png"
         if not bg.exists():
-            out.append(Issue("error", "lighting-bake", tag, "场景缺 background.png"))
+            out.append(Issue("error", "lighting-bake", tag, f"找不到这份 bake 对应的背景图 {bg.name}"))
         else:
             h = hashlib.sha1(bg.read_bytes()).hexdigest()[:12]
             if h != payload["background_sha1"]:

@@ -8,7 +8,7 @@ import type { PackedLights } from '../rendering/lighting/lightPacking';
 import { resolveDepthPerSy } from '../utils/worldReconstruct';
 import type { AssetManager } from './AssetManager';
 import { depthError, depthLog } from './depthLog';
-import { sceneRuntimeAssetUrl } from './projectPaths';
+import { sceneBakeDirUrl, sceneRuntimeAssetUrl } from './projectPaths';
 
 const T = 'SceneLighting';
 
@@ -216,7 +216,7 @@ export class SceneLightingSystem {
     if (!radiance) return;
     let bytes: ArrayBuffer;
     try {
-      const res = await fetch(sceneRuntimeAssetUrl(sceneId, 'lighting2/gi_hitmap.bin'));
+      const res = await fetch(`${this.bake2Base}/gi_hitmap.bin`);
       // ⚠ 本仓库 dev server 上文件不存在返回 **200 + HTML**，判据必须看 content-type
       if (!res.ok || (res.headers.get('content-type') ?? '').includes('text/html')) return;
       bytes = await res.arrayBuffer();
@@ -303,6 +303,35 @@ export class SceneLightingSystem {
    * 装载一个场景的光影。任何一步缺料都**安静地不启用**（返回 false），不打扰玩家；
    * dev 下留日志便于排查（构建期严于运行时，运行时对内容错误容错跳过）。
    */
+  /**
+   * 本场景几何场（lighting2）的实际目录。按背景图名索引，迁移期可能回落到扁平布局。
+   * 各处按需加载复用它 —— 再解析一遍就是第二个真相源，换背景后可能指向不同目录。
+   */
+  private bake2Base = '';
+  /** 本场景是否参与日夜（灯的时段过滤要吃这道总闸；未装载时为 false）。 */
+  private dayNightOn = false;
+  /**
+   * 当前时段 id 的取用口（由 Game 注入 DayManager）。灯按 `LightDef.phases` 过滤要用它。
+   * 未注入 = 空串 = 不过滤，旧行为零变化。
+   */
+  private phaseGetter: (() => string) | null = null;
+
+  /** 由 Game 注入当前时段（与 SceneManager.setCurrentPhaseGetter 同一个来源）。 */
+  setPhaseGetter(fn: (() => string) | null): void { this.phaseGetter = fn; }
+
+  /**
+   * 灯的时段过滤该用哪个时段。**没开 `dayNight.enabled` 的场景恒返回空串**（= 不过滤）。
+   *
+   * 2026-08-30 审查抓到：灯的过滤原本不吃这道总闸，与实体归属（SceneManager.entityInPhase
+   * 第一行就是 `dayNight.enabled !== true → return true`）、LightDef.phases 的类型注释、
+   * 以及校验器的「配了 phases 但没开日夜 = 不生效」三处口径全对不上 ——
+   * 于是同一个 phases 字段在灯上生效、在热点上不生效，作者无从预期。
+   */
+  private filterPhase(): string {
+    if (!this.dayNightOn) return '';
+    return this.phaseGetter?.() ?? '';
+  }
+
   async load(
     sceneId: string,
     sceneData: SceneData,
@@ -310,6 +339,11 @@ export class SceneLightingSystem {
     paintingTexture: Texture,
   ): Promise<boolean> {
     this.unload();
+    // 几何场按**当前生效的第一层背景**索引（2026-08-30「背景与烘焙绑死」）。
+    // 迁移期两条布局都认：先找 lighting2/<图名>/，没有就回落扁平 lighting2/。
+    this.bake2Base = sceneBakeDirUrl(
+      sceneId, sceneData.backgrounds?.[0]?.image ?? 'background.png', 'lighting2');
+    this.dayNightOn = sceneData.dayNight?.enabled === true;
     const def = sceneData.lighting;
     if (!def) {
       depthLog(T, `${sceneId}: 场景未配 lighting 块，走旧路径`);
@@ -323,12 +357,54 @@ export class SceneLightingSystem {
 
     // ⚠ 走 loadOptionalJson 不走 loadJson：本仓库 dev server 上文件不存在返回的是
     //   **200 + HTML** 而不是 404，判据必须看 content-type（optional-asset-probe 机制卡）。
-    const meta = await assetManager.loadOptionalJson<LightingGeometryMeta>(
-      sceneRuntimeAssetUrl(sceneId, 'lighting2/meta.json'),
+    let meta = await assetManager.loadOptionalJson<LightingGeometryMeta>(
+      `${this.bake2Base}/meta.json`,
     );
+    let fellBackToFlat = false;
+    if (!meta) {
+      // 回落旧的扁平布局（迁移期）
+      this.bake2Base = sceneRuntimeAssetUrl(sceneId, 'lighting2');
+      meta = await assetManager.loadOptionalJson<LightingGeometryMeta>(
+        `${this.bake2Base}/meta.json`,
+      );
+      fellBackToFlat = true;
+    }
     if (!meta) {
       depthLog(T, `${sceneId}: 没烘 lighting2/（跑 \`--bake --scene ${sceneId}\`）`);
       return false;
+    }
+    // ---- 几何场的防腐门（2026-08-30 审查抓到：这一层原本**完全没有**）----
+    //
+    // lighting/ 那份 probe 载荷一直有 background_sha1 门，lighting2/ 却没有。
+    // 配上「按图名找不到就回落扁平」之后，后果是**静默拿白天的几何去照夜的原画**：
+    // 法线、天穹可见性、GI 命中图全是白天那张图的，而画面上只表现为"夜里光的走向
+    // 不太对"，作者根本无从下手。
+    //
+    // 与角色侧同口径：**不整份禁用**（烘焙数据可以缺省，缺省不能影响运行），
+    // 而是照常装载 + dev 大声报。回落到扁平布局时尤其要报——那份多半是白天的。
+    {
+      const want = (sceneData.backgrounds?.[0]?.image ?? '').split('/').pop() ?? '';
+      const sha = (meta as { background_sha1?: unknown }).background_sha1;
+      if (typeof sha === 'string' && sha) {
+        try {
+          const r = await fetch(sceneRuntimeAssetUrl(sceneId, want));
+          const buf = await r.arrayBuffer();
+          const dg = await crypto.subtle.digest('SHA-1', buf);
+          const hex = Array.from(new Uint8Array(dg))
+            .map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 12);
+          if (hex !== sha) {
+            depthError(T, `${sceneId}: lighting2 几何场与当前背景 ${want} 对不上`
+              + `(烘焙 ${sha} vs 现况 ${hex})`
+              + (fellBackToFlat ? ' —— 且回落到了扁平布局，那份多半是白天的几何' : '')
+              + '。法线/天穹可见性/GI 命中图都属于另一张图，光的走向会不对。'
+              + `请跑 \`python -m tools.scene_relight.bake --scene ${sceneId}\` 重烘。`);
+          }
+        } catch (e) {
+          depthError(T, `${sceneId}: lighting2 哈希门跑不起来`, e);
+        }
+      } else if (fellBackToFlat) {
+        depthLog(T, `${sceneId}: lighting2 用了扁平布局且该载荷没记 background_sha1，无法校验`);
+      }
     }
     if (meta.version !== LIGHTING2_VERSION) {
       depthError(T, `${sceneId}: lighting2 载荷版本 ${meta.version} ≠ ${LIGHTING2_VERSION}，整包忽略`);
@@ -338,8 +414,8 @@ export class SceneLightingSystem {
     let normal: Texture;
     let skyvis: Texture;
     try {
-      normal = await assetManager.loadTexture(sceneRuntimeAssetUrl(sceneId, 'lighting2/normal.png'));
-      skyvis = await assetManager.loadTexture(sceneRuntimeAssetUrl(sceneId, 'lighting2/skyvis.png'));
+      normal = await assetManager.loadTexture(`${this.bake2Base}/normal.png`);
+      skyvis = await assetManager.loadTexture(`${this.bake2Base}/skyvis.png`);
     } catch (e) {
       depthError(T, `${sceneId}: lighting2 贴图装载失败`, e);
       return false;
@@ -397,7 +473,7 @@ export class SceneLightingSystem {
     this.meta = meta;
     this.def = def;
     this.pass = new SceneLightingPass(paintingTexture, geo);
-    this.pass.applyParams(def, meta.day_hemi);
+    this.pass.applyParams(def, meta.day_hemi, this.filterPhase());
     this.pass.markDirty();
 
     // LitBackground 采样 pass 的 RT，所以必须先让 pass 建出 RT
@@ -418,7 +494,7 @@ export class SceneLightingSystem {
 
     // 3D 天穹可见性网格（角色侧 P3 用）；缺了不致命
     try {
-      const url = sceneRuntimeAssetUrl(sceneId, 'lighting2/skyvis_grid.bin');
+      const url = `${this.bake2Base}/skyvis_grid.bin`;
       const buf = await (await fetch(url)).arrayBuffer();
       const expect = meta.grid.nx * meta.grid.ny * meta.grid.nz;
       const arr = new Float32Array(buf);
@@ -439,10 +515,20 @@ export class SceneLightingSystem {
     return true;
   }
 
-  /** 改了光照参数：写进 uniform 并标脏。下一帧 update 时重算缓存。 */
+  /**
+   * 改了光照参数：写进 uniform 并标脏。下一帧 update 时重算缓存。
+   *
+   * ⚠ **这是低层的一半，只管场景**。灯还要推给角色侧（`CharacterLightingSystem.applyLights`
+   * 吃的是**同一份** `packedLights`，「一视同仁」靠的就是这个），所以外部一律走
+   * `Game.applySceneLightingParams` —— 它是唯一同时推两边的口。
+   *
+   * 直接调这个的后果不是报错，是**两边悄悄不同步**：场景的灯灭了、角色身上还亮着。
+   * 2026-08-30 我在 devtools 里就是从这个口做 A/B，得出「灯灭了角色还是白的 ⇒
+   * 不是灯的锅」这个**完全错误**的结论，绕了一大圈。取证也要走正式入口。
+   */
   applyParams(def: SceneLightingDef): void {
     this.def = def;
-    this.pass?.applyParams(def, this.meta?.day_hemi);
+    this.pass?.applyParams(def, this.meta?.day_hemi, this.filterPhase());
     this.pass?.markDirty();
     this.litBg?.applyParams(def);
   }
@@ -473,6 +559,10 @@ export class SceneLightingSystem {
     this.pass = null;
     this.meta = null;
     this.def = null;
+    // 跨场景残留会让新场景吃到旧场景的口径：bake2Base 会让按需加载去拉上一个场景的
+    // 目录，dayNightOn 会让没开日夜的场景照旧过滤灯（=某些灯莫名不亮）。
+    this.bake2Base = '';
+    this.dayNightOn = false;
     this.skyvisGrid = null;
     this.giPass?.destroy();
     this.giPass = null;

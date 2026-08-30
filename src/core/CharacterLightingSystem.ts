@@ -1,6 +1,6 @@
 import { BufferImageSource, type Shader, type TextureSource, type UniformGroup } from 'pixi.js';
-import type { IGameSystem, GameContext } from '../data/types';
-import { sceneRuntimeAssetUrl } from './projectPaths';
+import type { IGameSystem, GameContext, SceneLightingDef } from '../data/types';
+import { sceneBakeDirUrl, sceneRuntimeAssetUrl } from './projectPaths';
 import { depthLog, depthError } from './depthLog';
 import { sampleGroundField, type GroundDepthField } from '../utils/groundDepthField';
 import type {
@@ -10,10 +10,14 @@ import type {
 } from '../rendering/CharacterShadingFilter';
 import {
   createFrameLitUniforms,
+  applyCharDisplay,
+  applyCharLights,
+  createCharLightUniforms,
   createLitShader,
   createSceneLitUniforms,
   setLitShaderTexture,
 } from '../rendering/CharacterLitSprite';
+import type { PackedLights } from '../rendering/lighting/lightPacking';
 
 const T = 'CharLighting';
 
@@ -98,8 +102,13 @@ export interface CharShadingEntityInfo {
  * 职责边界(2026-07-22 拍板):对齐预览(实验室查看器)与运行时——
  * 载入 v2 全量载荷(probe 三基图集四分账 + 体素卷平铺图集 + valid + ground_d),
  * 建 GPU 纹理,供 CharacterShadingFilter 逐像素 albedo×E 着色;本系统不再有
- * 任何自创亮度模型(旧 tint 归一化/clamp 已删)。无载荷/哈希失配场景回落旧管线
- * (光环境曲线保留)。所有照明参数 F2 运行时可调,不入存档。
+ * 任何自创亮度模型(旧 tint 归一化/clamp 已删)。**无载荷**的场景回落旧管线
+ * (光环境曲线保留);**哈希失配**的场景自 2026-08-30 起不再整份禁用,改为分级降级
+ * (几何项照用、光照项标 stale + dev 大声报,见 loadScene)。
+ * 所有照明参数 F2 运行时可调,不入存档。
+ *
+ * 2026-08-30「原画 + 加性灯」模型下,本系统给角色的 E 是**probe 烘焙的 GI 底光**,
+ * 场景实体灯由 applyLights 加性叠加(与场景吃同一次 packLights)。
  */
 export class CharacterLightingSystem implements IGameSystem {
   private epoch = 0;
@@ -119,6 +128,11 @@ export class CharacterLightingSystem implements IGameSystem {
   private staleVolTextures: TextureSource[] = [];
   /** 当前载荷所属场景 id;ensureVolumes 按它拼 URL,也用于跨场景丢弃 */
   private loadedSceneId: string | null = null;
+  /**
+   * 本次载荷**实际命中**的烘焙目录（按背景图名索引的新布局，或迁移期回落的扁平布局）。
+   * 体素卷/probe 图集的按需加载复用它 —— 各自再解析一遍就是第二个真相源。
+   */
+  private loadedBakeBase: string | null = null;
   /** 在途的体素卷拉取(去重并发调用);epoch 变化即作废 */
   private volInflight: Promise<boolean> | null = null;
   /**
@@ -144,6 +158,22 @@ export class CharacterLightingSystem implements IGameSystem {
   // sceneLit 每场景重建。litShaders 用于体素卷/probe 图集热替换时就地重绑纹理。
   private readonly frameLit: UniformGroup = createFrameLitUniforms();
   private sceneLit: UniformGroup | null = null;
+  /**
+   * 场景实体灯（角色侧）。跨场景常驻:灯是**逐场景数据**没错,但这一组是就地改数组、
+   * 不重建,所以不随 sceneLit 一起置 null——换场景由 applyLights 覆盖或清零。
+   */
+  private readonly charLights: UniformGroup = createCharLightUniforms();
+  /** 最后一次收到的实体灯打包;等 shadowBasis 到位后重放(两者到达顺序不保证)。 */
+  private pendingLights: PackedLights | null = null;
+  /**
+   * 当前载荷的背景哈希是否已失配(背景重画了但没重烘)。
+   *
+   * true 时几何项仍在用、光照项(probe/体素)是旧画面的光。**不影响运行**,
+   * 只用于 dev 面板显式标注 —— 见 loadScene 的分级降级注释。
+   */
+  private payloadStale = false;
+  /** 载荷是否过期(F2/调试面板读它标注"这个场景的角色光是旧的")。 */
+  get isPayloadStale(): boolean { return this.payloadStale; }
   private readonly litShaders = new Set<Shader>();
   private groundRange: [number, number] = [0, 1];
   private aoContact = 0;
@@ -212,6 +242,11 @@ export class CharacterLightingSystem implements IGameSystem {
     this._hasVolumes = false;
     this.volInflight = null;
     this.loadedSceneId = null;
+    // 生命周期对称（运行时不变量 5）：destroy 后再 init 行为必须与首次一致。
+    // 漏了这三个 → 重启后新场景会吃到旧场景的烘焙目录、旧的灯、以及一个假的 stale 标记。
+    this.loadedBakeBase = null;
+    this.pendingLights = null;
+    this.payloadStale = false;
     this.parkLitShaders();
     for (const t of this.ownedTextures) t.destroy();
     this.ownedTextures = [];
@@ -231,6 +266,9 @@ export class CharacterLightingSystem implements IGameSystem {
   /** Game 在场景 ready 时注入深度基(ShadowSceneContext r00..r22);null=清除 */
   setShadowBasis(r: number[] | null): void {
     this.shadowBasis = r ? new Float32Array(r) : null;
+    // 基与灯的到达顺序不保证(灯来自 lightingLoader,基来自 rebuildEntityShadows)。
+    // 缓存住最后一次的灯,基一到就重放 —— 不赌顺序,少一次就是"灯照场景不照人"。
+    if (this.pendingLights) this.applyLights(this.pendingLights);
   }
 
   /**
@@ -240,6 +278,49 @@ export class CharacterLightingSystem implements IGameSystem {
    */
   get shadowBasisRows(): Float32Array | null {
     return this.shadowBasis;
+  }
+
+  /**
+   * 把场景实体灯喂给角色着色（2026-08-30「原画 + 加性灯」模型）。
+   *
+   * `packed` 必须是 `SceneLightingPass` 用的**同一次** `packLights` 结果——角色与场景
+   * 吃同一份数据，「灯对角色和场景一视同仁」才是构造性的。传 null = 本场景没有实体灯
+   * （角色只剩 probe 的 GI 底光，与改动前逐像素一致）。
+   *
+   * q→M-world 的三行直接复用 `shadowBasis`：它本来就是 depthConfig 的 **det=+1** 基，
+   * 与着色要的是同一个（两个 M 不许混，见 coordinate-spaces 铁律 3）。基还没注入时
+   * 当作没有灯——宁可少一层光，也不要拿错矩阵把灯打到镜像位置去。
+   */
+  /** 场景显示变换 → 角色(与背景同一组数)。def 为空 = 恒等,旧行为零变化。 */
+  applyDisplay(display: SceneLightingDef['display'] | null): void {
+    applyCharDisplay(this.charLights, display);
+  }
+
+  /**
+   * 打包这批灯时用的 `wuPerQUnit`（铁律 0：灯位与 P 都要是 wu，两者才能相减）。
+   * 由 `applyLights` 的调用方随灯一起给 —— 它与 `SceneLightingSystem.wuPerQUnit`
+   * 必须是同一个数，否则角色的 P 与灯位差一个场景相关的比例，灯会打到天边去。
+   */
+  private lightWuPerQUnit = 1;
+
+  applyLights(packed: PackedLights | null, wuPerQUnit = 1): void {
+    this.pendingLights = packed;
+    this.lightWuPerQUnit = wuPerQUnit > 0 ? wuPerQUnit : 1;
+    const b = this.shadowBasis;
+    if (!packed || !b || b.length < 9) {
+      // 基还没到 = **进场景时的正常暂态**（灯来自 lightingLoader，基来自随后的
+      // rebuildEntityShadows）。不报错：setShadowBasis 会拿 pendingLights 重放一次。
+      // 真正的失败是"重放也没来"，那种情况下面这行不会有后继的 ok 日志，dev 一眼可辨。
+      if (packed && packed.count > 0) {
+        depthLog(T, `角色实体灯暂缓：${packed.count} 盏已打包，等 depthConfig 基注入后重放`);
+      }
+      applyCharLights(this.charLights, null, null);
+      return;
+    }
+    depthLog(T, `角色实体灯：${packed.count} 盏已喂给 probe 着色`);
+    applyCharLights(this.charLights, packed, [
+      [b[0], b[1], b[2]], [b[3], b[4], b[5]], [b[6], b[7], b[8]],
+    ], this.lightWuPerQUnit);
   }
 
   /**
@@ -347,7 +428,9 @@ export class CharacterLightingSystem implements IGameSystem {
     if (!meta || !sceneId || !this.resources) return false;
 
     const myEpoch = this.epoch;
-    const base = sceneRuntimeAssetUrl(sceneId, 'lighting');
+    // 复用 load() 解析好的烘焙目录（按背景图名索引，或迁移期回落的扁平布局）——
+    // 这里再解析一遍就会有第二个真相源，换背景后两处可能指向不同目录。
+    const base = this.loadedBakeBase ?? sceneRuntimeAssetUrl(sceneId, 'lighting');
     const V = meta.vol;
     const task = (async (): Promise<boolean> => {
       try {
@@ -442,7 +525,7 @@ export class CharacterLightingSystem implements IGameSystem {
     const sceneId = this.loadedSceneId;
     if (!meta || !sceneId || !this.resources) return false;
     const myEpoch = this.epoch;
-    const base = sceneRuntimeAssetUrl(sceneId, 'lighting');
+    const base = this.loadedBakeBase ?? sceneRuntimeAssetUrl(sceneId, 'lighting');
     const rows = meta.probes.nx * meta.probes.ny * meta.probes.nz;
     const cfg = CharacterLightingSystem.probeCfg(m);
     const task = (async (): Promise<boolean> => {
@@ -474,11 +557,24 @@ export class CharacterLightingSystem implements IGameSystem {
     sceneId: string,
     worldW: number,
     worldH: number,
+    /**
+     * 本场景**当前生效**的第一层背景图名（如 `background.png`）。
+     *
+     * 烘焙产物按它索引（制作人 2026-08-30：背景与烘焙绑死，图名即 key），
+     * 防腐门也对它算哈希 —— 从此换背景连带换烘焙，不可能错配。
+     * 不传 = 老口径 `background.png`，旧调用零影响。
+     */
+    backgroundImage = 'background.png',
   ): Promise<void> {
     const myEpoch = ++this.epoch;
     this._hasVolumes = false;
     this.volInflight = null;   // 旧场景的在途拉取作废(epoch 已变,回来也写不进)
     this.loadedSceneId = null;
+    this.loadedBakeBase = null;
+    // 跨场景残留：pendingLights 会被下一个场景的 setShadowBasis 重放，
+    // 把**上一个场景的灯**打到新场景角色身上（审查抓到）。
+    this.pendingLights = null;
+    this.payloadStale = false;
     this.meta = null; this.groundD = null; this.resources = null; this.probeViz = null;
     this.probeAtlasU16 = null; this.validU8 = null;
     this.parkLitShaders();      // 活 shader 先退白图,再销毁旧纹理(防 BindGroup 自毁)
@@ -493,11 +589,20 @@ export class CharacterLightingSystem implements IGameSystem {
     this.loadedProbeMode = 0;
     this.probeInflight = null;
     this.sceneWorldW = worldW; this.sceneWorldH = worldH;
-    const base = sceneRuntimeAssetUrl(sceneId, 'lighting');
+    // 按背景图名索引；找不到就回落到旧的扁平布局（迁移期两条都认，缺省不影响运行）。
+    const perBg = sceneBakeDirUrl(sceneId, backgroundImage, 'lighting');
+    const legacy = sceneRuntimeAssetUrl(sceneId, 'lighting');
+    let base = perBg;
     let meta: LightingPayloadMeta;
     try {
-      const r = await fetch(`${base}/lighting.json`);
+      let r = await fetch(`${base}/lighting.json`);
+      if (!r.ok) {
+        base = legacy;
+        r = await fetch(`${base}/lighting.json`);
+        if (r.ok) depthLog(T, sceneId, `: 用旧的扁平烘焙布局(${legacy});迁移后可摘`);
+      }
       if (!r.ok) { depthLog(T, sceneId, ': no lighting payload'); return; }
+      this.loadedBakeBase = base;
       meta = await r.json();
       // vite dev 的 SPA fallback 会给缺失文件回 200+HTML;json() 抛错走 catch,
       // 但反序列化侥幸成功的畸形体也要挡:验证载荷形状。
@@ -510,16 +615,36 @@ export class CharacterLightingSystem implements IGameSystem {
     } catch { depthLog(T, sceneId, ': no lighting payload'); return; }
     if (myEpoch !== this.epoch) return;
 
-    // 防腐门:背景内容哈希(与 validator 同一契约);失配即禁用并可见告警
+    // 防腐门:背景内容哈希(与 validator 同一契约)。
+    //
+    // ⚠ 2026-08-30 从「失配即整份禁用」改为**分级降级**(制作人口径:烘焙数据可以缺省,
+    //   缺省不能把别的搞坏)。整份丢的实际后果今天实测过:失配时连纯几何的 ground_d
+    //   一起没了,而**两条角色着色路都要它** —— 于是整个场景的角色退成不打光的裸 sprite,
+    //   雾津街头(序章主场景)就是这么黑着的。
+    //
+    //   分级依据是载荷里混着两类东西:
+    //   · 几何/标定(work/cal/world/ground_d) —— 背景重画后仍近似成立(尤其只是 relight
+    //     换色的情况,几何逐像素不变),丢了代价极大;
+    //   · 光照项(probe 图集/体素卷/烘焙反解光源) —— 烘死的是**那一版画面的光**,失配即过期。
+    //
+    //   所以失配时**照常装载**,但标记 stale 并在 dev 大声报 —— 「失败不得伪装成功」由
+    //   这条可见告警承担,而不是靠把画面搞坏来提醒作者。
+    let stale = false;
     try {
-      const bg = await fetch(sceneRuntimeAssetUrl(sceneId, 'background.png'));
+      const bg = await fetch(sceneRuntimeAssetUrl(sceneId, backgroundImage));
       const digest = await crypto.subtle.digest('SHA-1', await bg.arrayBuffer());
       const hex = Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 12);
       if (hex !== meta.background_sha1) {
-        depthError(T, sceneId, `: 照明烘焙过期(bake ${meta.background_sha1} vs bg ${hex}),已禁用`);
-        return;
+        stale = true;
+        depthError(T, sceneId,
+          `: 照明烘焙过期(bake ${meta.background_sha1} vs bg ${hex}) —— 几何项仍用,`
+          + '光照项(probe/体素)已是旧画面的光,请在角色照明实验室重烘并重新导出');
       }
-    } catch (e) { depthError(T, 'hash gate failed', e); return; }
+    } catch (e) {
+      stale = true;
+      depthError(T, 'hash gate failed(按过期处理,几何项仍用)', e);
+    }
+    this.payloadStale = stale;
     if (myEpoch !== this.epoch) return;
 
     try {
@@ -860,7 +985,7 @@ export class CharacterLightingSystem implements IGameSystem {
   createEntityLitShader(colorTex: TextureSource, nrm: TextureSource | null): Shader | null {
     const r = this.resources;
     if (!r || !this.sceneLit || !this.groundTex || !this.enabled) return null;
-    const sh = createLitShader(this.sceneLit, this.frameLit, {
+    const sh = createLitShader(this.sceneLit, this.frameLit, this.charLights, {
       colorTex, nrm, ground: this.groundTex,
       atlasL1: r.atlasL1, atlasL2: r.atlasL2, atlasBin: r.atlasBin,
       valid: r.valid, volRad: r.volRad, volEmit: r.volEmit,

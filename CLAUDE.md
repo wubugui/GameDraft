@@ -11,6 +11,14 @@
 > (`docs/游戏架构设计文档.md`)里的清单会漂,不要照抄任何文档里的表。
 >
 > **光影现在有新旧两套并存**(2026-08-21):场景配了 `lighting` 块的走统一光影(`src/rendering/lighting/`),没配的走旧的 `lightEnv`/probe。28 个场景已全部接进新管线,但其中 27 个是**恒等占位**(`lighting.placeholder: true`)——背景零变化、角色仍走旧 probe。判断某个场景走哪条,看 `placeholder` 这个键,别看文档。
+>
+> **🔴 铁律 0 · 光照一律在世界空间算**(制作人 2026-08-30 定死,无例外):
+> **所有的光照必须在世界空间计算;任何 q 空间的量都必须先转换到世界空间,再参与光照计算。**
+> 法线、灯位、灯的方向、`N·L`、`1/r²` —— 进 `lc*Light` 之前必须已在 M-world。
+> 混用**一律不报错**,只是画面不对:实测场景侧曾拿 q 空间法线配 M-world 灯位,
+> 灯正下方 `N·L` 恒为 0,一盏灯只剩不走 N·L 的光晕看得见(白饼里站个黑人)。
+> 正文、落地清单、当前欠账、验收判据全在
+> `agent_docs/runtime/mechanisms/coordinate-spaces.md` 的「铁律 0」一节。
 
 <!-- agent-docs-gate:begin (由 agent_docs/_meta/cli.py install 维护,勿手改) -->
 ## §A 开工先查公共知识库(agent_docs)

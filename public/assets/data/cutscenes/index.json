@@ -5365,6 +5365,13 @@
       },
       {
         "kind": "action",
+        "type": "showBlackout",
+        "params": {
+          "durationMs": 900
+        }
+      },
+      {
+        "kind": "action",
         "type": "teleportEntityTo",
         "params": {
           "target": "player",
@@ -5501,7 +5508,8 @@
       },
       {
         "kind": "present",
-        "type": "waitClick"
+        "type": "waitClick",
+        "disabled": true
       }
     ],
     "targetSpawnPoint": "spawn_0"

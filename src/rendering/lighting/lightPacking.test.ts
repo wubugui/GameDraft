@@ -17,7 +17,7 @@ import {
   packLights,
   packShadowBias,
   shadowLightCount,
-  softeningQ2,
+  softeningWu2,
 } from './lightPacking';
 
 /**
@@ -72,14 +72,20 @@ describe('directionFromAngles', () => {
 });
 
 describe('packLights · 日月专用槽', () => {
-  it('第一盏 enabled 的 directional 走专用槽，不进数组', () => {
+  it('directional **不再**走专用槽，与其它灯一样进数组（2026-08-30 契约变更）', () => {
+    // 变更缘由：「原画即光照」模型删掉了 SceneLightingPass 里消费 sun 槽的那一整段，
+    // 而唯一另一个消费者（统一角色 shader）也被 UNIFIED_CHAR_PATH_ENABLED 关死。
+    // 继续抽 sun 槽 = 那盏灯背景不吃、角色也不吃、dropped 还不计它、日志一声不响
+    // ——「失败不得伪装成功」在这条上是破的。现在它走 shader 里本来就在的
+    // LC_DIRECTIONAL 分支。⚠ 代价：数组里的 directional **不投影**（那条 march 挂在
+    // 已废弃的 uShadow 上），月光要影子得另立设计。
     const p = packLights(def([
       { id: 'moon', kind: 'directional', intensity: 0.4, elevationDeg: 60, azimuthDeg: 200 },
       point(),
     ]), MPQ);
-    expect(p.sunIntensity).toBe(0.4);
-    expect(p.count).toBe(1);                       // 只剩那盏点光
-    expect(p.a[3]).toBe(LIGHT_KIND_CODE.point);
+    expect(p.sunIntensity).toBe(0);                // 槽恒为"无太阳"
+    expect(p.count).toBe(2);                       // 两盏都在数组里
+    expect(p.a[3]).toBe(LIGHT_KIND_CODE.directional);
   });
 
   it('没有 directional 时日月槽关掉（强度 0、投影 0）', () => {
@@ -97,15 +103,14 @@ describe('packLights · 日月专用槽', () => {
     expect(p.count).toBe(1);
   });
 
-  it('第二盏起的 directional 落进数组（kind=3）', () => {
+  it('多盏 directional 全部落进数组（kind=3），方向走同一个角度换算', () => {
     const p = packLights(def([
       { id: 'a', kind: 'directional', intensity: 1 },
       { id: 'b', kind: 'directional', intensity: 0.2, elevationDeg: 10, azimuthDeg: 90 },
     ]), MPQ);
-    expect(p.count).toBe(1);
+    expect(p.count).toBe(2);
     expect(p.a[3]).toBe(LIGHT_KIND_CODE.directional);
-    // 数组里的 directional 方向也走同一个角度换算
-    expect(p.d[0]).toBeCloseTo(Math.cos(Math.PI / 18), 5);
+    expect(p.d[4]).toBeCloseTo(Math.cos(Math.PI / 18), 5);
   });
 });
 
@@ -156,7 +161,7 @@ describe('packLights · C.y 按 kind 复用', () => {
 
   it('点光的 C.y 仍然是软化²，没被自转抢走', () => {
     const out = packLights(def([point({ softeningRadius: 12 })]), MPQ);
-    expect(out.c[1]).toBeCloseTo(softeningQ2(12, 1 / MPQ), 9);
+    expect(out.c[1]).toBeCloseTo(softeningWu2(12), 9);
   });
 
   it('聚光的 C.y 也仍然是软化²', () => {
@@ -164,7 +169,7 @@ describe('packLights · C.y 按 kind 复用', () => {
       id: 's', kind: 'spot', intensity: 1, pos: [0, 1, 0],
       dir: [0, -1, 0], softeningRadius: 9,
     }]), MPQ);
-    expect(out.c[1]).toBeCloseTo(softeningQ2(9, 1 / MPQ), 9);
+    expect(out.c[1]).toBeCloseTo(softeningWu2(9), 9);
   });
 
   it('自转是角度，换个 wuPerQUnit 一个字都不动（它不是长度）', () => {
@@ -194,9 +199,12 @@ describe('packLights · 投影标志', () => {
     expect(packLights(def([point({ castShadow: true })]), MPQ).d[3]).toBe(1);
   });
 
-  it('日月槽的 castShadow 缺省是**开**的（它是主光，没影子等于没打光）', () => {
+  it('日月槽已停用：shadow 恒为关（2026-08-30；防回退）', () => {
+    // 这条原来锁的是「日月是主光，castShadow 缺省开」。sun 槽不再被任何消费者读之后，
+    // 那个缺省只会误导人以为月光有影子。锁成"恒关"是为了让回退可见。
     const p = packLights(def([{ id: 's', kind: 'directional', intensity: 1 }]), MPQ);
-    expect(p.shadow[0]).toBeGreaterThan(0);
+    expect(p.shadow[0]).toBe(0);
+    expect(p.sunIntensity).toBe(0);
   });
 });
 
@@ -205,13 +213,15 @@ describe('packEmissive', () => {
     expect(packEmissive(def([]), MPQ)[0]).toBe(0);
   });
 
-  it('灯体/光晕半径从 wu 折进 q', () => {
+  it('灯体/光晕半径**原样是 wu**（铁律 0，2026-08-30 翻的口径）', () => {
+    // 原来这里锁的是「折进 q」（176/880 → 0.2/1.0）。折算已移到 shader：
+    // 光晕的视线积分把像素乘 uWuPerQUnit 变成 qw，于是这两个半径就是作者面那把 wu 尺。
     const e = packEmissive(def([], {
       emissive: { gain: 1, coreRadius: 176, haloRadius: 880, haloGain: 0.3 },
     }), MPQ);
     expect(e[0]).toBe(1);
-    expect(e[1]).toBeCloseTo(0.2, 9);
-    expect(e[2]).toBeCloseTo(1.0, 9);
+    expect(e[1]).toBeCloseTo(176, 9);
+    expect(e[2]).toBeCloseTo(880, 9);
     expect(e[3]).toBe(0.3);
   });
 });
@@ -277,41 +287,47 @@ describe('作者面 wu → 伪世界 q：只在打包处折一次', () => {
     expect(DEFAULT_SHADOW_THICKNESS_WU / 880).toBeCloseTo(0.3, 12);
   });
 
-  it('作用半径按 wuPerQUnit 折进 q', () => {
+  // ⚠ 下面这一组在 2026-08-30 **整体翻了口径**（制作人定死铁律 0：
+  //   光照一律在世界空间、单位 wu）。它们原本锁的是「作用半径/位置/尺寸按
+  //   wuPerQUnit 折进 q」，现在锁的是**不折** —— 折算移到 shader 一侧，
+  //   由 `P = R·q × uWuPerQUnit` 一次把 q 转到 wu 世界。
+  //   改这几条时请连同 coordinate-spaces.md 的铁律 0 一起看，别单看测试。
+
+  it('作用半径**原样是 wu，不折**（铁律 0）', () => {
     const p = packLights(def([point({ range: 528 })]), MPQ);
-    expect(p.c[0]).toBeCloseTo(528 / MPQ, 6);
+    expect(p.c[0]).toBeCloseTo(528, 6);
   });
 
-  it('位置也折，且**原点不动**（只换尺度，不平移）', () => {
+  it('位置**原样是 wu**，且原点仍是原点', () => {
     const p = packLights(def([point({ pos: [880, -440, 220] })]), MPQ);
-    expect(p.a[0]).toBeCloseTo(1, 6);
-    expect(p.a[1]).toBeCloseTo(-0.5, 6);
-    expect(p.a[2]).toBeCloseTo(0.25, 6);
-    // 零点仍是零点
+    expect(p.a[0]).toBeCloseTo(880, 6);
+    expect(p.a[1]).toBeCloseTo(-440, 6);
+    expect(p.a[2]).toBeCloseTo(220, 6);
     const z = packLights(def([point({ pos: [0, 0, 0] })]), MPQ);
     expect([z.a[0], z.a[1], z.a[2]]).toEqual([0, 0, 0]);
   });
 
-  it('softening 作者填的是**半径**，折进 q 之后才平方', () => {
-    expect(softeningQ2(88, 1 / MPQ)).toBeCloseTo(0.01, 9);
-    expect(softeningQ2(undefined, 1 / MPQ))
-      .toBeCloseTo((DEFAULT_LAMP_RADIUS_WU / MPQ) ** 2, 12);
+  it('softening 作者填的是**半径**，直接平方（wu²）', () => {
+    expect(softeningWu2(88)).toBeCloseTo(88 * 88, 9);
+    expect(softeningWu2(undefined)).toBeCloseTo(DEFAULT_LAMP_RADIUS_WU ** 2, 12);
   });
 
-  it('面光半宽半高同样折', () => {
+  it('面光半宽半高也是 wu', () => {
     const p = packLights(def([
       { id: 'a', kind: 'area', intensity: 1, size: [880, 440], dir: [0, 0, -1] },
     ]), MPQ);
-    expect(p.c[2]).toBeCloseTo(0.5, 6);
-    expect(p.c[3]).toBeCloseTo(0.25, 6);
+    expect(p.c[2]).toBeCloseTo(440, 6);
+    expect(p.c[3]).toBeCloseTo(220, 6);
   });
 
-  it('同一份灯参在两个尺度不同的场景里，打出的 q 值差 wuPerQUnit 的比', () => {
-    // 这正是 transform 生效的判据：作者写同一个 wu 数，两个场景的 q 载荷不同
-    const d = def([point({ range: 450 })]);
+  it('**载荷不再随场景尺度变**：同一份灯参在两个场景里打出逐位相同的数', () => {
+    // 这是铁律 0 最直接的判据。折算既然移到了 shader，打包就该与场景无关 ——
+    // 换句话说：作者写 450 wu，载荷里就是 450，不管这个场景 ppu 是多少。
+    const d = def([point({ range: 450, pos: [880, -440, 220] })]);
     const wujin = packLights(d, 880);     // 雾津街头
     const teahouse = packLights(d, 154);  // teahouse
-    expect(teahouse.c[0] / wujin.c[0]).toBeCloseTo(880 / 154, 4);
+    expect(teahouse.c[0]).toBe(wujin.c[0]);
+    expect([...teahouse.a.slice(0, 3)]).toEqual([...wujin.a.slice(0, 3)]);
   });
 
   it('packShadowBias 缺省是 wu，折进 q 后厚度窗远小于场景纵深', () => {
@@ -371,5 +387,52 @@ describe('D.w 位标志', () => {
       expect(src).not.toContain('D.w > 0.5');
       expect(src).not.toContain('C.x, false, vis');
     }
+  });
+});
+
+describe('灯的时段归属（2026-08-30「灯就是实体」）', () => {
+  const def = (lights: unknown[]) => ({
+    sky: { kelvin: 6500, intensity: 1, hemi: 0.9 },
+    day: { sunIntensity: 0, sunElevationDeg: 45, sunAzimuthDeg: 180 },
+    display: { ev: 0, tonemap: 'none' },
+    lights,
+  }) as never;
+
+  it('缺省全时段 —— 旧数据零影响', () => {
+    const d = def([{ id: 'a', kind: 'point', intensity: 1, pos: [0, 0, 0] }]);
+    expect(packLights(d, 880, '夜').count).toBe(1);
+    expect(packLights(d, 880, '辰').count).toBe(1);
+    expect(packLights(d, 880, '').count).toBe(1);
+  });
+
+  it('写了 phases 就只在那些时段亮', () => {
+    const d = def([
+      { id: 'day', kind: 'point', intensity: 1, pos: [0, 0, 0], phases: ['辰', '午'] },
+      { id: 'night', kind: 'point', intensity: 1, pos: [0, 0, 0], phases: ['夜'] },
+    ]);
+    expect(packLights(d, 880, '午').count).toBe(1);
+    expect(packLights(d, 880, '夜').count).toBe(1);
+    expect(packLights(d, 880, '暮').count).toBe(0);
+  });
+
+  it('时段为空串 = 不过滤（场景没开日夜时的安全默认：宁可多亮，不要全黑）', () => {
+    const d = def([
+      { id: 'day', kind: 'point', intensity: 1, pos: [0, 0, 0], phases: ['辰'] },
+      { id: 'night', kind: 'point', intensity: 1, pos: [0, 0, 0], phases: ['夜'] },
+    ]);
+    expect(packLights(d, 880, '').count).toBe(2);
+  });
+
+  it('directional 也吃时段 —— 月亮不该在白天挂着', () => {
+    const d = def([
+      { id: 'moon', kind: 'directional', intensity: 2, elevationDeg: 35, phases: ['夜'] },
+    ]);
+    expect(packLights(d, 880, '夜').count).toBe(1);
+    expect(packLights(d, 880, '午').count).toBe(0);
+  });
+
+  it('空 phases 数组当作没写（不是"一个时段都不亮"）', () => {
+    const d = def([{ id: 'a', kind: 'point', intensity: 1, pos: [0, 0, 0], phases: [] }]);
+    expect(packLights(d, 880, '夜').count).toBe(1);
   });
 });

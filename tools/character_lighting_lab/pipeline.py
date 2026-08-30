@@ -1149,10 +1149,67 @@ def save_audit(out_dir, img_rgb, cal, lay, vol, walk):
     canvas.save(out_dir / 'audit.png')
 
 
+def work_dir(name: str, background: str | None = None) -> Path:
+    """烘焙工作目录:`out/<场景>/<背景基名>/`。
+
+    2026-08-30 起**背景是烘焙的一等参数**(制作人:要能自由烘同一场景的白天与夜晚)。
+    原来是 `out/<场景>/`,烘第二张背景会把第一张的中间产物(深度缓存、物体分割、
+    manifest)**整个覆盖**掉 —— 于是"同一场景两份光照数据"根本存不住。
+
+    `background` 不传时取场景 JSON 的 backgrounds[0];仍找不到就退回老口径
+    `out/<场景>/`,旧工作目录零影响。
+    """
+    if background is None:
+        background = scene_background(name)
+    key = _bake_key(background) if background else None
+    if not key:
+        return OUT / name
+    per_bg = OUT / name / key
+    # 真回落(2026-08-30 审查抓到:原来只在 key 为空时回落,而 key 永远非空 ——
+    # docstring 声称的回落是假的,存量扁平工作目录一律 FileNotFoundError)。
+    # 判据用 manifest.json:它是 build 的产物清单,三个导出函数都读它。
+    if not (per_bg / 'manifest.json').exists() and (OUT / name / 'manifest.json').exists():
+        return OUT / name
+    return per_bg
+
+
+def scene_background(name: str) -> str:
+    """场景 JSON 的 backgrounds[0].image;取不到则老口径 background.png。"""
+    import json as _json
+    f = ROOT / 'public' / 'assets' / 'scenes' / f'{name}.json'
+    if f.exists():
+        try:
+            bgs = (_json.loads(f.read_text(encoding='utf-8')).get('backgrounds') or [])
+            img = bgs[0].get('image') if bgs and isinstance(bgs[0], dict) else None
+            if isinstance(img, str) and img.strip():
+                return img
+        except Exception:
+            pass
+    return 'background.png'
+
+
+def _bake_key(image: str) -> str:
+    """图名 → 烘焙目录基名。与运行时 bakeKeyFromBackground / 校验器同口径。
+
+    ⚠ 先 strip:TS 版对输入 trim 过,不跟着做就会把 '   ' 当成合法目录名
+    (parity 测试抓到的真实漂移)。空值必须抛错 —— 静默返回 '' 会让路径塌成
+    `<场景>/lighting/`,恰好命中**旧的扁平布局**,把"图名错了"伪装成"加载成功"。
+    """
+    image = (image or '').strip()
+    base = image.replace(chr(92), '/').split('/')[-1]
+    dot = base.rfind('.')
+    key = base[:dot] if dot > 0 else base
+    if not key:
+        raise ValueError(f'取不出烘焙基名: {image!r}')
+    return key
+
+
 # ---------------------------------------------------------------- main build
-def build(img_path: Path, name: str, params: dict):
+def build(img_path: Path, name: str, params: dict, background: str | None = None):
+    """烘一张背景。`background` 指明这是该场景的哪张图(缺省=场景当前 backgrounds[0])，
+    决定工作目录落在 `out/<场景>/<图名>/` —— 白天与夜晚各一份，互不覆盖。"""
     P = {**DEFAULTS, **params}
-    out_dir = OUT / name
+    out_dir = work_dir(name, background if background is not None else img_path.name)
     out_dir.mkdir(parents=True, exist_ok=True)
     h = img_hash(img_path)
 
@@ -1316,7 +1373,10 @@ def export_shading_params(name: str, shading: dict | None = None) -> Path:
       3. 改了 nee/amb/miss_mode——它们已烤进固化 E(见 BAKED_INTO_ATLAS),
          只有重导出照明才能真正生效。
     """
-    dest = ROOT / 'public' / 'resources' / 'runtime' / 'scenes' / name / 'lighting'
+    dest = (ROOT / 'public' / 'resources' / 'runtime' / 'scenes' / name / 'lighting'
+            / _bake_key(scene_background(name)))
+    if not (dest / 'lighting.json').exists():          # 迁移期回落扁平布局
+        dest = ROOT / 'public' / 'resources' / 'runtime' / 'scenes' / name / 'lighting'
     f = dest / 'lighting.json'
     if not f.exists():
         raise RuntimeError(f'{name} 还没导出过照明——先点「导出照明」完整导一次')
@@ -1338,7 +1398,10 @@ def export_shading_params(name: str, shading: dict | None = None) -> Path:
     return f
 
 
-def export_runtime(name: str, shading: dict | None = None) -> Path:
+
+
+def export_runtime(name: str, shading: dict | None = None,
+                   background: str | None = None) -> Path:
     """数据通道:把实验室烘焙结果变换成游戏运行时载荷,写入
     public/resources/runtime/scenes/<name>/lighting/。纯文件变换,不重烘。
 
@@ -1352,10 +1415,13 @@ def export_runtime(name: str, shading: dict | None = None) -> Path:
       vol_rad.bin|vol_emit.bin  体素卷 Z 切片平铺 2D 图集,f16 RGBA
                              (行=y,列=x,切片按 tiles_x 横排;alpha=占据/0)
       ground_d.png           行走面深度场,RG16 编码,work-res"""
-    src_dir = OUT / name
+    src_dir = work_dir(name, background)
     man = json.loads((src_dir / 'manifest.json').read_text())
     scene_dir = ROOT / 'public' / 'resources' / 'runtime' / 'scenes' / name
-    game_bg = scene_dir / 'background.png'
+    # 2026-08-30「背景与烘焙绑死」:产物落 lighting/<背景基名>/,哈希也对这张图算。
+    # 入参优先 —— 烘夜景时场景当前背景仍是白天那张,读场景会导错落点。
+    bg_name = background or scene_background(name)
+    game_bg = scene_dir / bg_name
     bg_hash = man['hash']
     if game_bg.exists():
         # the lab copy is a PIL re-encode (bytes differ, pixels must not):
@@ -1367,7 +1433,7 @@ def export_runtime(name: str, shading: dict | None = None) -> Path:
                 f'游戏背景 {game_bg} 与实验室烘焙输入像素不一致——'
                 f'背景已改动,先在实验室重烘该场景再导出')
         bg_hash = img_hash(game_bg)
-    dest = scene_dir / 'lighting'
+    dest = scene_dir / 'lighting' / _bake_key(bg_name)
     dest.mkdir(parents=True, exist_ok=True)
     # v1 遗留文件清理(被 atlas_*.bin 取代)
     for f in ('probes_l2.bin', 'probes_l2amb.bin', 'probes_l2nee.bin'):
@@ -1454,7 +1520,7 @@ def export_runtime(name: str, shading: dict | None = None) -> Path:
     return dest
 
 
-def terrain_preview(name: str) -> dict:
+def terrain_preview(name: str, background: str | None = None) -> dict:
     """秒级地形预览 + 站位体检 —— 圈两笔就能看结果,不用陪跑整条烘焙管线。
 
     为什么能秒级:视差→深度那两个参数 (a,b) 已在 manifest 里,**不必重跑网格搜索**——
@@ -1470,7 +1536,7 @@ def terrain_preview(name: str) -> dict:
       脚点深度 − 0.045)算"角色站这儿被吃掉几成",绿→红。地形对不对不是目的,
       遮挡对不对才是。
     """
-    src_dir = OUT / name
+    src_dir = work_dir(name, background)
     man = json.loads((src_dir / 'manifest.json').read_text())
     P = {**DEFAULTS, **man['params']}
     scene_json = ROOT / 'public' / 'assets' / 'scenes' / f'{name}.json'
@@ -1561,17 +1627,17 @@ def terrain_preview(name: str) -> dict:
     return stats
 
 
-def export_scene_depth(name: str) -> dict:
+def export_scene_depth(name: str, background: str | None = None) -> dict:
     """接管旧场景深度工具:把实验室的有效深度(标定+起伏+笔刷编辑)导出为
     游戏运行时消费的 depthConfig 契约 —— RG16 深度图 + M(游戏 det+1 约定)+
     depth_mapping + 最佳拟合 floor 线 + 方形 cell 碰撞网格;既有手调参数保值。"""
-    src_dir = OUT / name
+    src_dir = work_dir(name, background)
     man = json.loads((src_dir / 'manifest.json').read_text())
     scene_media = ROOT / 'public' / 'resources' / 'runtime' / 'scenes' / name
     scene_json_path = ROOT / 'public' / 'assets' / 'scenes' / f'{name}.json'
     if not scene_json_path.exists():
         raise RuntimeError(f'场景 JSON 不存在: {scene_json_path}(先在主编辑器建场景)')
-    game_bg = scene_media / 'background.png'
+    game_bg = scene_media / (background or scene_background(name))
     if game_bg.exists():
         a = np.asarray(Image.open(game_bg).convert('RGB'))
         b = np.asarray(Image.open(src_dir / 'background.png').convert('RGB'))
@@ -1607,7 +1673,9 @@ def export_scene_depth(name: str) -> dict:
 
     # ---- 碰撞:实验室世界网格 → 游戏方形 cell 网格(注意 lab Z 翻转还原) ----
     wk = man['walk']
-    mask_img = np.asarray(Image.open(src_dir.parent / name / 'walk_mask.png').convert('L'), np.uint8)
+    # ⚠ 曾经写的是 `src_dir.parent / name` —— 那在扁平布局下恰好等于 src_dir,
+    #   按背景分目录之后会解析成 out/<场景>/<场景>/，必崩。直接用 src_dir。
+    mask_img = np.asarray(Image.open(src_dir / 'walk_mask.png').convert('L'), np.uint8)
     walk = mask_img > 127                              # (nz, nx) lab-world grid
     cell = float(max(wk['dx'], wk['dz']))
     z_lab_min, z_lab_max = wk['z0'], wk['z0'] + (wk['nz'] - 1) * wk['dz']
@@ -1662,14 +1730,23 @@ def main():
     ap.add_argument('--name', default=None)
     ap.add_argument('--export-runtime', action='store_true',
                     help='烘焙后同时导出游戏运行时载荷')
+    ap.add_argument('--export-depth', action='store_true',
+                    help='同时导出深度/碰撞(depthConfig)。⚠ 重烘后**必须**跟着导，'
+                         '否则新 ground_d 配旧 collision.png,出生点会落进墙里')
+    ap.add_argument('--background', default=None,
+                    help='这是该场景的哪张背景(如 background_relight_夜.png);'
+                         '缺省=场景当前 backgrounds[0]。决定工作目录与导出落点')
     for k, v in DEFAULTS.items():
         ap.add_argument(f'--{k}', type=type(v), default=None)
     args = ap.parse_args()
     params = {k: getattr(args, k) for k in DEFAULTS if getattr(args, k) is not None}
     name = args.name or args.image.stem
-    build(args.image.resolve(), name, params)
+    bg = args.background or args.image.name
+    build(args.image.resolve(), name, params, background=bg)
     if args.export_runtime:
-        export_runtime(name)
+        export_runtime(name, background=bg)
+    if args.export_depth:
+        export_scene_depth(name, background=bg)
 
 
 if __name__ == '__main__':

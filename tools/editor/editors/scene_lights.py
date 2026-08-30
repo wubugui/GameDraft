@@ -322,9 +322,12 @@ def retype(src: dict, kind: str) -> dict:
     """
     out = default_light(1, kind)
     out['id'] = src.get('id') or out['id']
-    for k in ('intensity', 'kelvin', 'castShadow', 'enabled'):
+    # ⚠ 'phases' 必须在这份白名单里:它是**与类型无关的作者意图**(这盏灯在哪些时段亮),
+    #   换个灯型不该把它丢掉。2026-08-30 审查抓到 —— 新字段加进数据契约时忘了同步这里,
+    #   症状是"把点光换成聚光,夜里那组灯就全天亮了",而且换型那一刻画面上看不出来。
+    for k in ('intensity', 'kelvin', 'castShadow', 'enabled', 'phases'):
         if k in src:
-            out[k] = src[k]
+            out[k] = list(src[k]) if isinstance(src[k], list) else src[k]
     if src.get('color'):
         out['color'] = src['color']
     if kind != 'directional':
@@ -352,6 +355,32 @@ def shadow_budget_status(lights: list[dict]) -> tuple[int, int, bool]:
             if l.get('castShadow') and l.get('enabled', True)
             and l.get('kind') != 'directional')
     return n, SHADOW_LIGHT_BUDGET, n > SHADOW_LIGHT_BUDGET
+
+
+def lights_in_phase(lights: list[dict], phase: str | None) -> list[dict]:
+    """按时段过滤灯。`phase` 为空 = 不过滤。
+
+    缺省全时段 —— 与热点/zone 同缺省,**不是** NPC 那条「只在 daylight 段」。
+    口径与运行时 `lightPacking.packLights` 的 inPhase 逐字一致。
+    """
+    if not phase:
+        return list(lights)
+    out = []
+    for l in lights:
+        ph = l.get('phases')
+        if not ph or phase in ph:
+            out.append(l)
+    return out
+
+
+def phases_of(lights: list[dict]) -> list[str]:
+    """这批灯一共出现过哪些时段(用于逐时段跑预算)。空 = 没有任何灯配了时段。"""
+    seen: list[str] = []
+    for l in lights:
+        for p in (l.get('phases') or []):
+            if p not in seen:
+                seen.append(p)
+    return seen
 
 
 def validate_lights(lights: list[dict]) -> list[str]:
@@ -410,11 +439,20 @@ def validate_lights(lights: list[dict]) -> list[str]:
         sm = l.get('softeningRadius')
         if sm is not None and (not isinstance(sm, (int, float)) or sm <= 0):
             issues.append(f'{lid}: softeningRadius 必须 > 0(发光体**半径**,单位 wu)')
-    if len(lights) > MAX_LIGHTS:
-        issues.append(f'灯数 {len(lights)} 超过运行时上限 {MAX_LIGHTS}，多出的会被丢弃')
-    n, budget, over = shadow_budget_status(lights)
-    if over:
-        issues.append(f'带阴影的灯 {n} 盏超过预算 {budget}（GTX 970 上会掉帧）')
+    # ---- 预算按**当前时段激活的那些**算,不是按文件里写了几盏(2026-08-30)----
+    #
+    # 「灯就是实体,和其他实体一样配 phase」之后,白天一组 + 夜里一组写在同一个
+    # lights[] 里是**正常形态**,总数超上限并不代表运行时会超 —— 运行时打包前先按
+    # 时段过滤过了。按总数判会满屏误报红,作者就会开始忽略这条警告。
+    phases = phases_of(lights)
+    buckets = [(p, lights_in_phase(lights, p)) for p in phases] or [('', list(lights))]
+    for ph, act in buckets:
+        tag = f'时段「{ph}」: ' if ph else ''
+        if len(act) > MAX_LIGHTS:
+            issues.append(f'{tag}灯数 {len(act)} 超过运行时上限 {MAX_LIGHTS}，多出的会被丢弃')
+        n, budget, over = shadow_budget_status(act)
+        if over:
+            issues.append(f'{tag}带阴影的灯 {n} 盏超过预算 {budget}（GTX 970 上会掉帧）')
     return issues
 
 
@@ -897,4 +935,13 @@ def validate_pulled_lighting(payload: Any, expect_scene_id: str) -> tuple[dict |
         return None, 'lighting 块缺少必需键 %s——半个对象不能覆盖已调好的参数' % (missing,)
     if not isinstance(lit.get('lights'), list):
         return None, 'lighting.lights 不是数组'
+    # 时段闸(2026-08-30 审查抓到):游戏在非基底时段发布的 lighting 是
+    # 「顶层基底 ⊕ timeVariants[该时段].lighting」的**合并结果**。拉回来写进场景顶层
+    # 就等于把夜的天光/雾/显示变换灌进白天基底,Save All 落盘即污染,而且弹窗上
+    # 完全看不出来 —— 必须在这儿拦。
+    ph = payload.get('phase')
+    if isinstance(ph, str) and ph:
+        return None, ('游戏当前在「%s」时段，它发布的是**合并后**的光照——'
+                      '拉回来会把该时段的值写进场景的白天基底，已拒绝。'
+                      '先在游戏里把时刻推回基底时段再拉。' % (ph,))
     return lit, ''

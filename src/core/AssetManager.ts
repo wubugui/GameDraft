@@ -580,20 +580,44 @@ export class AssetManager {
     const cached = await this.loadJson<SceneDataRaw>(sceneJsonUrl(sceneId));
     const raw = JSON.parse(JSON.stringify(cached)) as SceneDataRaw;
 
-    // 背景图文件名强约束：场景主背景只能叫 background.png。名字不对直接报错、不加载，
-    // 避免带着错误资源引用半死不活地跑（编辑器导入背景时统一迁入并命名为 background.png）。
+    // 背景图文件名强约束：主背景只能叫 `background.png`，**或该场景自己在
+    // `timeVariants` 里声明过的那张时段背景**。名字不对直接报错、不加载，
+    // 避免带着错误资源引用半死不活地跑（编辑器导入背景时统一迁入并命名）。
+    //
+    // 2026-08-30 放宽这一条：日夜靠**换整张原画**实现（原画即最终光照），
+    // 夜的主背景本来就该是另一个名字。但护栏的用意保住 —— 只认场景自己声明过的，
+    // 任意名字照旧拒绝：白名单从数据里来，不是把闸门拆了。
     if (raw.backgrounds && raw.backgrounds.length > 0) {
       const primaryImage = raw.backgrounds[0]?.image;
-      if (primaryImage !== 'background.png') {
+      const declared = new Set<string>(['background.png']);
+      for (const v of Object.values(raw.timeVariants ?? {})) {
+        const img = (v as { backgrounds?: Array<{ image?: string }> } | undefined)
+          ?.backgrounds?.[0]?.image;
+        if (typeof img === 'string' && img.trim()) declared.add(img.trim());
+      }
+      if (!primaryImage || !declared.has(primaryImage)) {
         throw new Error(
-          `场景 "${sceneId}" 的背景图文件名必须是 background.png，实际为 "${primaryImage}"。` +
-          `请在编辑器中重新导入背景图。`,
+          `场景 "${sceneId}" 的主背景只能是 background.png 或它在 timeVariants 里声明过的时段背景，`
+          + `实际为 "${primaryImage}"。请在编辑器中重新导入背景图，或先把它配进对应时段。`,
         );
       }
     }
 
     if (raw.backgrounds) {
       for (const layer of raw.backgrounds) {
+        layer.image = this.resolveSceneAssetPath(sceneId, layer.image);
+      }
+    }
+    // 时段变体里的背景**同样要解析**（2026-08-30 审查抓到）。
+    //
+    // 漏了这一步的症状极隐蔽：`applySceneAppearance` 把变体的 backgrounds 整个换上去，
+    // 于是 `backgrounds[0].image` 成了**裸文件名**（'background-night.png'）而不是
+    // '/resources/runtime/scenes/<场景>/background-night.png' —— 纹理请求打到站点根，
+    // 夜里整层背景不显示。白天那条因为在这儿解析过所以是好的，两边不一致更难看出来。
+    for (const v of Object.values(raw.timeVariants ?? {})) {
+      const layers = (v as { backgrounds?: Array<{ image: string }> } | undefined)?.backgrounds;
+      if (!layers) continue;
+      for (const layer of layers) {
         layer.image = this.resolveSceneAssetPath(sceneId, layer.image);
       }
     }

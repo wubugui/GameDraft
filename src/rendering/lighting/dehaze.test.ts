@@ -100,10 +100,17 @@ describe('机械契约：GLSL 与这份镜像不许分家', () => {
     expect(SCENE_PASS).not.toContain('max(painting - uHazeColor');
   });
 
-  it('去霾整段仍被 uHaze.y > 0 守着——占位场景 dehaze=0 必须整段跳过', () => {
-    // 这是 27 个占位场景"背景逐像素零变化"的前提
-    const i = SCENE_PASS.indexOf('if (uHaze.y > 0.0) {');
+  it('去霾整段已停用（2026-08-30「原画就是最终光照」）', () => {
+    // 契约变更：去霾原本是"整体重打光"那套的配套件 —— 它的存在理由是把**白天原画**
+    // 改造成夜晚（原注释：远处一片亮灰是大脑判定"这是白天"最强的信号）。
+    // 制作人定调原画即最终光照后，夜靠换夜原画得到，去霾就成了凭空篡改原画：
+    // 实测表现是"不被灯覆盖的地方与原画对不上、画面发灰发白"，当场被抓。
+    //
+    // 守卫条件保留在 false && 后面（代码不删，将来做"运行时加雾"是加法、另起一段），
+    // 所以这里锁的是**它确实进不去**，而不是它不存在。
+    const i = SCENE_PASS.indexOf('if (false && uHaze.y > 0.0) {');
     expect(i).toBeGreaterThan(0);
+    // 且原来那句下限法仍在（没被顺手删掉，回退时不必重写）
     const j = SCENE_PASS.indexOf('HAZE_KEEP', i);
     expect(j).toBeGreaterThan(i);
   });

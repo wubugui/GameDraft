@@ -23,7 +23,8 @@ from dataclasses import dataclass, field
 __all__ = ["FILTERED_KINDS", "ViewAxes", "norm_id_list", "entity_cutscene_ids",
            "entity_is_cutscene_only", "group_phases", "in_phase", "passes_cutscene",
            "passes_plane", "passes_phase", "passes_group_box_filters",
-           "passes_view_filters", "scene_day_night_enabled"]
+           "passes_view_filters", "scene_day_night_enabled",
+           "phase_backgrounds", "phase_primary_background", "declared_background_images"]
 
 #: **受三条轴管辖的实体族**。名单之外的一律恒显。
 #:
@@ -249,3 +250,72 @@ def passes_view_filters(kind: str, ent: object, axes: ViewAxes,
     return (passes_plane(ent, axes)
             and passes_phase(kind, ent, axes, group)
             and passes_cutscene(ent, axes))
+
+
+# ---------------------------------------------------------------------------
+# 时段外观（背景那一半）
+#
+# 三条轴管的是「实体显不显」,这一段管的是「**背景是哪张**」——同一个时段视图的另一半。
+# 制作人 2026-08-30 定的模型是**夜靠换一张夜原画**得到,所以切到夜视图只藏实体、
+# 背景还是白天那张 = 画布上是「白天的街 + 夜里的人」,那种画面策划照着排位必然排歪。
+#
+# 口径必须与运行时 `src/utils/sceneAppearance.ts::resolveSceneAppearance` 逐字一致
+# （对账测试:`tools/editor/tests/test_phase_background_parity.py`）。
+# ---------------------------------------------------------------------------
+
+def phase_backgrounds(scene: object, phase_id: str) -> list:
+    """场景在 `phase_id` 时段的背景层列表。
+
+    与运行时同式:变体的 `backgrounds` **非空**才顶掉基底(空数组 = 没配 = 沿用白天),
+    场景总闸没开或该时段没配变体时直接返回顶层那份。
+    """
+    base = scene.get("backgrounds") if isinstance(scene, dict) else None
+    base = base if isinstance(base, list) else []
+    pid = str(phase_id or "").strip()
+    if not pid or not scene_day_night_enabled(scene):
+        return base
+    tv = scene.get("timeVariants") if isinstance(scene, dict) else None
+    v = tv.get(pid) if isinstance(tv, dict) else None
+    if not isinstance(v, dict):
+        return base
+    over = v.get("backgrounds")
+    return over if isinstance(over, list) and over else base
+
+
+def phase_primary_background(scene: object, phase_id: str) -> str:
+    """该时段的**主背景图名** —— 烘焙产物按它索引（见 `bakeKeyFromBackground`）。
+
+    取不到时回落 `background.png`,与运行时 `primaryBackgroundImage` 的缺省同口径。
+    """
+    layers = phase_backgrounds(scene, phase_id)
+    first = layers[0] if layers else None
+    img = first.get("image") if isinstance(first, dict) else None
+    if isinstance(img, str) and img.strip():
+        return img.strip()
+    base = scene.get("backgrounds") if isinstance(scene, dict) else None
+    b0 = base[0] if isinstance(base, list) and base else None
+    img0 = b0.get("image") if isinstance(b0, dict) else None
+    return img0.strip() if isinstance(img0, str) and img0.strip() else "background.png"
+
+
+def declared_background_images(scene: object) -> set[str]:
+    """这个场景**允许**出现的主背景图名白名单。
+
+    镜像运行时 `AssetManager.loadSceneData` 的那道闸:`background.png` 恒在,
+    再加上场景自己在 `timeVariants` 里声明过的时段背景。**不是把闸拆了** ——
+    白名单从数据里来,任意文件名照旧拒绝。
+
+    编辑器这边少了这一条的症状:夜背景在游戏里加载得好好的,画布却判它"名字不对"
+    而画一张占位灰底 —— 编辑器骗人的一种。
+    """
+    out = {"background.png"}
+    tv = scene.get("timeVariants") if isinstance(scene, dict) else None
+    for v in (tv or {}).values() if isinstance(tv, dict) else ():
+        if not isinstance(v, dict):
+            continue
+        layers = v.get("backgrounds")
+        b0 = layers[0] if isinstance(layers, list) and layers else None
+        img = b0.get("image") if isinstance(b0, dict) else None
+        if isinstance(img, str) and img.strip():
+            out.add(img.strip())
+    return out

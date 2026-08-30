@@ -32,11 +32,13 @@ export const DEFAULT_LAMP_RADIUS_WU = 10;
 export const DEFAULT_LIGHT_RANGE_WU = 450;
 
 /**
- * 发光体半径（**wu**）→ `1/(r²+c)` 里的 `c`（**q 空间平方**）。
- * 作者填半径，这里先折进 q 再平方。
+ * 发光体半径（**wu**）→ `1/(r²+c)` 里的 `c`（**wu 平方**）。
+ *
+ * 铁律 0（2026-08-30）：光照的长度一律 wu，这里**不再折进 q**。
+ * 名字里的 Wu2 就是类型系统 —— 改回 q 就该改名字，改了名字调用方会红。
  */
-export function softeningQ2(radiusWu: number | undefined, quPerWu: number): number {
-  const r = (radiusWu ?? DEFAULT_LAMP_RADIUS_WU) * quPerWu;
+export function softeningWu2(radiusWu: number | undefined): number {
+  const r = radiusWu ?? DEFAULT_LAMP_RADIUS_WU;
   return r * r;
 }
 
@@ -100,9 +102,32 @@ export function directionFromAngles(elevationDeg: number, azimuthDeg: number): [
  * ⚠ 别再把 q 单位叫成 wu —— 那是两个空间。q 的尺度随相机标定走，
  *   wu 不随；角色在 q 里从 0.17 变到 0.97，在 wu 里**恒为 150**。
  */
-export function packLights(def: SceneLightingDef, wuPerQUnit: number): PackedLights {
-  const quPerWu = 1 / Math.max(wuPerQUnit, 1e-9);
-  const sun = def.lights.find((l) => l.kind === 'directional' && (l.enabled ?? true));
+export function packLights(
+  def: SceneLightingDef,
+  wuPerQUnit: number,
+  /**
+   * 当前时段 id。传空串 = 不做时段过滤（场景没开日夜、或调用方拿不到时刻）。
+   *
+   * 灯的 `phases` 缺省是**全时段**，所以不传等价于全放行，旧调用零影响。
+   */
+  phase = '',
+): PackedLights {
+  // 时段过滤（2026-08-30「灯就是实体，和其他实体一样配 phase」）。
+  // 缺省全时段 —— 与热点/zone 同缺省，**不是** NPC 那条「只在 daylight 段」。
+  const inPhase = (l: { phases?: string[] }): boolean =>
+    !phase || !l.phases || l.phases.length === 0 || l.phases.includes(phase);
+  const lights = def.lights.filter(inPhase);
+  // ⛔ 2026-08-30 起**不再单独抽 sun 槽**。
+  //
+  // 原来第一盏 enabled 的 directional 会被抽进 out.sunColor/sunIntensity/sunDir/shadow，
+  // 并从 rest 数组里排除。但「原画即光照」模型删掉了 SceneLightingPass 里消费 sun 槽的
+  // 那一整段，同时统一角色路径（唯一另一个消费者）也被 UNIFIED_CHAR_PATH_ENABLED 关死
+  // —— 于是那盏灯**背景不吃、角色也不吃**，dropped 还不计它，控制台一声不响。
+  // 症状极难反推：作者把 moon 调亮毫无反应，再复制一盏 moon2 反倒亮了（第二盏进了数组）。
+  //
+  // 现在 directional 老老实实进数组，走 shader 里本来就在的 LC_DIRECTIONAL 分支。
+  // sun 槽字段保留但恒为"无太阳"，等统一光影那套要不要回来时再说。
+  const sun = null as (typeof lights)[number] | null;
 
   const out: PackedLights = {
     sunColor: [1, 1, 1],
@@ -124,7 +149,7 @@ export function packLights(def: SceneLightingDef, wuPerQUnit: number): PackedLig
     out.shadow = [(sun.castShadow ?? true) ? 0.9 : 0, 3.5, 48, 2];
   }
 
-  const rest = def.lights.filter((l) => (l.enabled ?? true) && l !== sun);
+  const rest = lights.filter((l) => (l.enabled ?? true) && l !== sun);
   const n = Math.min(rest.length, MAX_STATIC_LIGHTS);
   out.dropped = rest.length - n;
 
@@ -132,31 +157,32 @@ export function packLights(def: SceneLightingDef, wuPerQUnit: number): PackedLig
     const l = rest[i];
     const o = i * 4;
     const kind = LIGHT_KIND_CODE[l.kind] ?? 0;
-    // 位置：作者面是世界空间 wu，march 在 q 空间 —— 这里折一次，原点不动
+    // 位置：作者面就是世界空间 wu，**原样进载荷不做任何缩放**（铁律 0）。
+    // shader 侧把 q 一次转到 wu 世界（P = R·q × wuPerQUnit）再与它相减。
     const p = l.pos ?? [0, 0, 0];
-    out.a[o] = p[0] * quPerWu;
-    out.a[o + 1] = p[1] * quPerWu;
-    out.a[o + 2] = p[2] * quPerWu;
+    out.a[o] = p[0];
+    out.a[o + 1] = p[1];
+    out.a[o + 2] = p[2];
     out.a[o + 3] = kind;
 
     const col = resolveLightColor(l.color, l.kelvin);
     out.b[o] = col[0]; out.b[o + 1] = col[1]; out.b[o + 2] = col[2]; out.b[o + 3] = l.intensity;
 
-    out.c[o] = (l.range ?? DEFAULT_LIGHT_RANGE_WU) * quPerWu;
+    out.c[o] = l.range ?? DEFAULT_LIGHT_RANGE_WU;   // wu，不缩放（铁律 0）
     // ⚠ C.y 是**按 kind 复用**的一格：
     //   点/聚光 = 软化半径²；面光 = **自转角（弧度）**。
     //   面光不吃软化（`lcAreaLight` 的参数表里没有软化项），那一格本来就空着 ——
     //   自转塞在这儿，就不必为它再开一组 vec4（四组已排满，加一组要动所有 shader）。
     out.c[o + 1] = l.kind === 'area'
       ? ((l.rollDeg ?? 0) * Math.PI) / 180
-      : softeningQ2(l.softeningRadius, quPerWu);
+      : softeningWu2(l.softeningRadius);
     if (l.kind === 'spot') {
       out.c[o + 2] = Math.cos(((l.innerAngleDeg ?? 25) * Math.PI) / 180);
       out.c[o + 3] = Math.cos(((l.outerAngleDeg ?? 40) * Math.PI) / 180);
     } else if (l.kind === 'area') {
       const s = l.size ?? [DEFAULT_LIGHT_RANGE_WU * 0.3, DEFAULT_LIGHT_RANGE_WU * 0.2];
-      out.c[o + 2] = s[0] * 0.5 * quPerWu;
-      out.c[o + 3] = s[1] * 0.5 * quPerWu;
+      out.c[o + 2] = s[0] * 0.5;                  // wu 半宽
+      out.c[o + 3] = s[1] * 0.5;                  // wu 半高
     }
 
     const dir = l.kind === 'directional'
@@ -209,13 +235,12 @@ export function packShadowBias(def: SceneLightingDef, quPerWu: number): [number,
 export function packEmissive(
   def: SceneLightingDef, wuPerQUnit: number,
 ): [number, number, number, number] {
-  const quPerWu = 1 / Math.max(wuPerQUnit, 1e-9);
   const e = def.emissive;
-  if (!e) return [0, DEFAULT_LAMP_RADIUS_WU * quPerWu, 50 * quPerWu, 0.25];
+  if (!e) return [0, DEFAULT_LAMP_RADIUS_WU, 50, 0.25];
   return [
     e.gain,
-    (e.coreRadius ?? DEFAULT_LAMP_RADIUS_WU * 3) * quPerWu,
-    (e.haloRadius ?? DEFAULT_LAMP_RADIUS_WU * 14) * quPerWu,
+    e.coreRadius ?? DEFAULT_LAMP_RADIUS_WU * 3,
+    e.haloRadius ?? DEFAULT_LAMP_RADIUS_WU * 14,
     e.haloGain ?? 0.25,
   ];
 }

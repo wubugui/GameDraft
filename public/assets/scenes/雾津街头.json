@@ -620,11 +620,14 @@
           -264
         ],
         "kelvin": 2200,
-        "intensity": 2.8787063689022983,
+        "intensity": 8.636119106706895,
         "castShadow": true,
         "enabled": true,
         "range": 529.4115066528,
-        "softeningRadius": 10.5881602252
+        "softeningRadius": 10.5881602252,
+        "phases": [
+          "夜"
+        ]
       },
       {
         "id": "lamp_2",
@@ -635,11 +638,14 @@
           -1423.1
         ],
         "kelvin": 2200,
-        "intensity": 0.1,
+        "intensity": 0.30000000000000004,
         "castShadow": true,
         "enabled": true,
         "range": 200,
-        "softeningRadius": 1
+        "softeningRadius": 1,
+        "phases": [
+          "夜"
+        ]
       },
       {
         "id": "lamp_3",
@@ -650,11 +656,14 @@
           484
         ],
         "kelvin": 2200,
-        "intensity": 2.8787063689022983,
+        "intensity": 8.636119106706895,
         "castShadow": true,
         "enabled": true,
         "range": 529.4115066528,
-        "softeningRadius": 10.5881602252
+        "softeningRadius": 10.5881602252,
+        "phases": [
+          "夜"
+        ]
       },
       {
         "id": "lamp_4",
@@ -669,7 +678,10 @@
           -756.0350276826549
         ],
         "range": 200,
-        "softeningRadius": 7
+        "softeningRadius": 7,
+        "phases": [
+          "夜"
+        ]
       },
       {
         "id": "lamp_5",
@@ -680,7 +692,7 @@
           -44
         ],
         "kelvin": 2200,
-        "intensity": 4.605930190243678,
+        "intensity": 13.817790570731033,
         "castShadow": true,
         "enabled": true,
         "dir": [
@@ -691,7 +703,10 @@
         "innerAngleDeg": 22,
         "outerAngleDeg": 48,
         "range": 529.4115066528,
-        "softeningRadius": 10.5881602252
+        "softeningRadius": 10.5881602252,
+        "phases": [
+          "夜"
+        ]
       },
       {
         "id": "lamp_6",
@@ -702,7 +717,7 @@
           -176
         ],
         "kelvin": 2400,
-        "intensity": 3.454447642682759,
+        "intensity": 10.363342928048278,
         "castShadow": true,
         "enabled": true,
         "orientation": [
@@ -715,7 +730,10 @@
           194.1174387932,
           141.1766421795
         ],
-        "softeningRadius": 10.5881602252
+        "softeningRadius": 10.5881602252,
+        "phases": [
+          "夜"
+        ]
       },
       {
         "id": "light_1",
@@ -748,13 +766,13 @@
       "baseHeight": 0
     },
     "display": {
-      "ev": 3.3175638002432013,
-      "tonemap": "filmic",
-      "whiteKelvin": 7200,
-      "contrast": 0.7000000000000002,
-      "saturation": 0.85,
-      "lift": 0.02,
-      "liftKelvin": 9000
+      "ev": 0.0,
+      "tonemap": "none",
+      "whiteKelvin": 6500,
+      "contrast": 1.0,
+      "saturation": 1.0,
+      "lift": 0.0,
+      "liftKelvin": 6500
     },
     "aoStrength": 1,
     "ratioMax": 6,
@@ -764,7 +782,7 @@
       "coreRadius": 30.8827203512,
       "haloRadius": 141.1766421795
     },
-    "dehaze": 1,
+    "dehaze": 0,
     "giGain": 1
   },
   "playerShadowBindings": [
@@ -1912,11 +1930,11 @@
         [
           0.0,
           0.7071067811865476,
-          -0.7071067811865475
+          -0.7071067811865476
         ],
         [
           0.0,
-          0.7071067811865475,
+          0.7071067811865476,
           0.7071067811865476
         ]
       ],
@@ -1926,18 +1944,18 @@
     },
     "depth_mapping": {
       "invert": false,
-      "scale": 3.8529935743331913,
-      "offset": -2.26799402961731
+      "scale": 3.5937376882553105,
+      "offset": -2.1707695556640627
     },
     "shader": {
       "depth_per_sy": 0.002219460227272727
     },
     "collision": {
       "x_min": -2.2727272510528564,
-      "z_min": -2.0140991824164134,
-      "cell_size": 0.028557741371532004,
+      "z_min": -2.1049800103919694,
+      "cell_size": 0.02853192923203954,
       "grid_width": 160,
-      "grid_height": 137,
+      "grid_height": 139,
       "height_offset": 0.1
     },
     "depth_tolerance": 0.05,
@@ -2014,5 +2032,16 @@
       "y": 1790.0,
       "kind": "door"
     }
-  ]
+  ],
+  "timeVariants": {
+    "夜": {
+      "backgrounds": [
+        {
+          "image": "background-night.png",
+          "x": 0,
+          "y": 0
+        }
+      ]
+    }
+  }
 }

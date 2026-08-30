@@ -27,6 +27,23 @@ TOOL = Path(__file__).resolve().parent
 ROOT = TOOL.parents[1]
 SCENES_JSON = ROOT / 'public' / 'assets' / 'scenes'
 SCENES_RT = ROOT / 'public' / 'resources' / 'runtime' / 'scenes'
+
+def _exported_lighting_json(sid: str):
+    """该场景**当前背景**对应的已导出载荷路径(2026-08-30 起按图名分目录);
+    回落扁平布局。找不到时返回按图名的那条(供 exists() 判否)。"""
+    from tools.character_lighting_lab.pipeline import _bake_key, scene_background
+    base = SCENES_RT / sid / 'lighting'
+    try:
+        k = _bake_key(scene_background(sid))
+    except Exception:
+        k = None
+    if k and (base / k / 'lighting.json').exists():
+        return base / k / 'lighting.json'
+    if (base / 'lighting.json').exists():
+        return base / 'lighting.json'
+    return (base / k / 'lighting.json') if k else (base / 'lighting.json')
+
+
 PORT = 5311
 
 REBUILD_KEYS = {'pitch_deg', 'azimuth_deg', 'ppu_ratio', 'ev', 'max_gain_ev',
@@ -129,7 +146,7 @@ def _scene_index() -> list[dict]:
             # 背景重画过 → 烘焙输入过期,得重烘(游戏侧 validator 也会拦导出的载荷)
             'bg_stale': bool(man_p.exists() and bg and bg.exists()
                              and lab_bg.exists() and _bg_stale(bg, lab_bg)),
-            'lighting': (SCENES_RT / sid / 'lighting' / 'lighting.json').exists(),
+            'lighting': _exported_lighting_json(sid).exists(),
             'depth': 'depthConfig' in data,
         })
     # 实验室里有、游戏里没有的:多半是历史错位命名,列出来别让它藏着
@@ -392,7 +409,7 @@ class H(SimpleHTTPRequestHandler):
             # 写死的初值 —— 后果不只是"看不到真值":刷新/切场景后再点「只存着色参数」,
             # 会拿面板上的默认值把之前调好的悄悄覆盖掉(真踩过:teahouse 的 eChroma 被写回 0)。
             name = q.get('scene', [''])[0]
-            f = SCENES_RT / name / 'lighting' / 'lighting.json'
+            f = _exported_lighting_json(name)
             if not (name and f.exists()):
                 return self._json({'ok': True, 'shading': None})
             try:

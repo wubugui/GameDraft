@@ -232,6 +232,19 @@ export type LightKind = 'point' | 'spot' | 'area' | 'directional';
 export interface LightDef {
   id: string;
   kind: LightKind;
+  /**
+   * 时段归属（2026-08-30）。**缺省 = 全时段亮着**，与热点 / zone 同缺省，
+   * **不是** NPC 那条「只在标了 daylight 的段」—— 旧数据零影响是硬要求。
+   *
+   * 制作人口径：「灯就是实体，和其他实体一样配 phase」。于是白天挂白天那组、
+   * 夜里挂夜里那组，时段一变自然换掉，不必在时段变体里整组替换 `lights`
+   * （那样就有两个真相源了，见 `SceneTimeVariant.lighting` 的注释）。
+   *
+   * ⚠ 值须是 `game_config.dayNight.phases` 里的 id；只在场景 `dayNight.enabled` 时生效。
+   * ⚠ 灯数与阴影预算按**当前时段激活的那些**算，不是按文件里写了几盏 ——
+   *   白天一组 + 夜里一组写在同一个 `lights[]` 里，总数超上限是正常的。
+   */
+  phases?: string[];
   /** **世界坐标** [x,y,z]（**wu**，原点 = 世界原点）。`directional` 忽略本字段。 */
   pos?: [number, number, number];
   /** 色温 K。与 `color` 二选一；两者都写时 `color` 赢。 */
@@ -2946,10 +2959,15 @@ export interface GameConfig {
 // ============================================================
 
 /**
- * 推进时刻时的表现档，决定 **NPC 换班走不走离场演出**（见 `NpcScheduleSystem`）：
+ * 推进时刻时的表现档，决定 **NPC 换班走不走离场演出**（见 `NpcScheduleSystem`）
+ * 与 **时段换装遮不遮幕**（见 `Game.drainPendingPhaseSwap`）：
  * - `seamless`：画面不遮挡，NPC 必须走到出口才隐去（「无缝切换」主力，也是唯一会演离场的档）
  * - `timelapse` / `fade`：有画面遮挡（延时演出 / 黑场），遮挡期间直接重贴，不演离场
  * - `cut`：无过渡，仅调试与演出内部使用
+ *
+ * ⚠ 「有遮挡」这句话此前**没人兑现**（2026-08-30 补）：它只被 NPC 日程读去决定
+ * 要不要演离场，而黑幕本身谁都没盖。于是配了 `fade` 的时段推进照样硬切 ——
+ * 白天的街一帧变成夜里的街。现在换装那一路按本档自己盖幕/揭幕。
  */
 export type TimeTransition = 'seamless' | 'timelapse' | 'fade' | 'cut';
 
@@ -3010,6 +3028,29 @@ export interface SceneTimeVariant {
   backgrounds?: BackgroundLayer[];
   ambientSounds?: string[];
   bgm?: string;
+  /**
+   * 该时段的**环境参数覆盖**，合并到场景顶层 `lighting` 之上（2026-08-30）。
+   *
+   * **部分覆盖**：只写与白天不同的项，没写的沿用顶层——与本结构其余字段同语义。
+   * 加它的理由：雾、天光、显示变换这些住在 `scene.lighting` 里，而本结构原来只有
+   * 旧的 `lightEnv`，夜的环境参数根本没有地方写。
+   *
+   * ⚠ **不含 `lights`**。灯是实体，按各自的 `phases` 时段归属过滤（见
+   * `SceneLightDef.phases`），不在这里整组替换 —— 两条路都能改灯就会有两个真相源。
+   */
+  lighting?: Partial<Omit<SceneLightingDef, 'lights'>>;
+  /**
+   * 该时段的深度/碰撞配置覆盖。
+   *
+   * ⚠ **同一场景各时段的背景必须共享几何**（2026-08-30 实测定的口径）：
+   * `collision.png` / `raw_depth_rg.png` 是逐场景的玩法几何，而烘焙目录里的
+   * `ground_d.png` 跟着背景走。两者不一致会让出生点"白天能走、夜里卡墙"——
+   * 重烘一次雾津街头就撞出过 5 个出生点落进阻挡格。
+   *
+   * 所以本字段只服务于「夜是**完全另一张图**」那种情形（连碰撞一起换）。
+   * relight 出来的夜景（同一张照片换色）**不该写它**，写了反而引入不一致。
+   */
+  depthConfig?: SceneDepthConfig;
 }
 
 // ============================================================

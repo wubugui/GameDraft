@@ -119,6 +119,8 @@ uniform vec3  uDepthMap;        // invert, scale, offset
 
 // M 三行（**det = +1** 的游戏约定矩阵）
 uniform vec3  uMRow0;
+/** 1 个 q 单位 = 多少 wu。铁律 0：光照的长度一律 wu，q 进来先乘它。 */
+uniform float uWuPerQUnit;
 uniform vec3  uMRow1;
 uniform vec3  uMRow2;
 
@@ -247,7 +249,8 @@ float ucLightVisibility(vec3 q, vec3 lightPosWorld) {
     vec3 lq = vec3(
         uMRow0.x * lightPosWorld.x + uMRow1.x * lightPosWorld.y + uMRow2.x * lightPosWorld.z,
         uMRow0.y * lightPosWorld.x + uMRow1.y * lightPosWorld.y + uMRow2.y * lightPosWorld.z,
-        uMRow0.z * lightPosWorld.x + uMRow1.z * lightPosWorld.y + uMRow2.z * lightPosWorld.z);
+        uMRow0.z * lightPosWorld.x + uMRow1.z * lightPosWorld.y + uMRow2.z * lightPosWorld.z)
+        / max(uWuPerQUnit, 1e-9);   // 灯位是 wu，march 在 q ⇒ 除回 q（豁免①：深度域）
     vec3 d = lq - q;
     float len = length(d);
     if (len < 1e-5) return 1.0;
@@ -306,7 +309,13 @@ void main(void) {
     n = normalize(mix(n, vec3(0., 0., -1.), uFlatten));
 
     vec3 q = vec3(qx, qyF + h * uCosT, footD - h * uSinT - ne.a * uBulge);
-    vec3 P = wrQToWorld(uMRow0, uMRow1, uMRow2, q);
+    // 铁律 0（制作人 2026-08-30 定死）：光照一律在**世界空间、单位 wu**。
+    // 朝向过 R、尺度过 uWuPerQUnit，一次转到底 —— 不许停在「世界朝向 + q 尺度」
+    // 那个没有名字的中间态：那会让 range / 软化半径 / 面光尺寸在 shader 里不是 wu，
+    // 而作者面明明按 wu 填，读代码的人无法判断某个长度是哪把尺。
+    vec3 P = wrQToWorld(uMRow0, uMRow1, uMRow2, q) * uWuPerQUnit;
+    // 角色法线**已经是世界法线**（直立 quad + 图像空间烘的剪影法线，轴向恰好是
+    // 世界 X/Y/−Z），灯直接用 n。probe/体素查表那一侧才需要转回 q。
 
     // ---------- ① 天光 × 天穹可见性：决定角色"该多暗" ----------
     // ★ 这一项承重。制作人的原话是「角色首要目标是与场景明暗一致，必须吃天光遮蔽」——
@@ -420,6 +429,8 @@ export interface UnifiedCharGeometry {
   depthCal: [number, number, number];
   depthMapping: [number, number, number];
   mRows: [number[], number[], number[]];
+  /** 1 个 q 单位 = 多少 wu。铁律 0：光照的长度一律 wu（P = R·q × 它）。 */
+  wuPerQUnit: number;
   grid: { n: [number, number, number]; min: [number, number, number]; max: [number, number, number] };
 }
 
@@ -434,6 +445,7 @@ export function createUnifiedCharGeometryGroup(g: UnifiedCharGeometry): UniformG
     uDepthTexSize: { value: new Float32Array(g.depthSize), type: 'vec2<f32>' },
     uDepthCal: { value: new Float32Array(g.depthCal), type: 'vec3<f32>' },
     uDepthMap: { value: new Float32Array(g.depthMapping), type: 'vec3<f32>' },
+    uWuPerQUnit: { value: g.wuPerQUnit, type: 'f32' },
     uMRow0: { value: new Float32Array(g.mRows[0]), type: 'vec3<f32>' },
     uMRow1: { value: new Float32Array(g.mRows[1]), type: 'vec3<f32>' },
     uMRow2: { value: new Float32Array(g.mRows[2]), type: 'vec3<f32>' },
@@ -515,6 +527,8 @@ export function applyUnifiedCharLight(
   vec('uShadow', packed.shadow);
   // 与场景 pass 读同一个函数：同一堵墙的厚度窗对地面和对角色必须是一个数
   vec('uShadowBias', packShadowBias(def, 1 / Math.max(wuPerQUnit, 1e-9)));
+  // 铁律 0：光照的长度一律 wu ⇒ shader 里 P = R·q × wuPerQUnit。
+  num('uWuPerQUnit', wuPerQUnit > 0 ? wuPerQUnit : 1);
   vec('uLightA', packed.a);
   vec('uLightB', packed.b);
   vec('uLightC', packed.c);
@@ -533,7 +547,7 @@ export function applyUnifiedCharLight(
   // 没烘 gi_hitmap 的场景传 0：白图占位不会被读进结果
   num('uGiGain', giGain);
 
-  // 雾全程 wu：σ 的量纲是 1/wu，两个高度是 wu。与 `LitBackground.applyParams`
+  // 雾全程 wu：σ 的量纲是 1/wu，两个高度是 wu。与 LitBackground.applyParams
   // 逐位一致——两边分家会让角色与背景的雾在同一深度处浓度不同，穿帮得很难查。
   const f = def.fog;
   if (f && f.sigma > 0) {

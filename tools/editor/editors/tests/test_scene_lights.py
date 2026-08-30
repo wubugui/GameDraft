@@ -248,7 +248,9 @@ def test_角色高度在所有场景都是_150_wu() -> None:
     import json
     rt = _ROOT / 'public' / 'resources' / 'runtime' / 'scenes'
     heights = []
-    for meta in rt.glob('*/lighting2/meta.json'):
+    # 烘焙产物按背景图名分目录（2026-08-30「背景与烘焙绑死」）；
+    # 两条布局都收，迁移期不漏。
+    for meta in [*rt.glob('*/lighting2/*/meta.json'), *rt.glob('*/lighting2/meta.json')]:
         sc = json.loads(meta.read_text('utf-8')).get('scale') or {}
         if sc.get('char_wu') and sc.get('scene_per_wu'):
             heights.append(sc['char_wu'] * sc['scene_per_wu'])
@@ -584,3 +586,27 @@ def test_transport_status_line_makes_disconnection_visible():
     line = t.status_line(6000.0)
     assert '已断' in line and '重连' in line
 
+
+
+def test_换灯型不丢时段归属() -> None:
+    """`phases` 是与类型无关的作者意图（这盏灯在哪些时段亮），换型必须跟着走。
+
+    漏了它的症状：把点光换成聚光，夜里那组灯就全天亮了，而换型那一刻画面上看不出来。
+    """
+    from tools.editor.editors.scene_lights import retype
+    src = {'id': 'lamp_1', 'kind': 'point', 'intensity': 2.0,
+           'pos': [1, 2, 3], 'phases': ['夜']}
+    for kind in ('spot', 'area', 'directional', 'point'):
+        got = retype(src, kind)
+        assert got.get('phases') == ['夜'], f'换成 {kind} 后丢了 phases: {got.get("phases")!r}'
+    # 拷贝而不是共享引用：改新灯的 phases 不该动到旧灯
+    got = retype(src, 'spot')
+    got['phases'].append('暮')
+    assert src['phases'] == ['夜']
+
+
+def test_没配时段的灯换型后仍然没有这个键() -> None:
+    """缺省=全时段。换型不该凭空造出一个空数组（那会让人以为"配过了"）。"""
+    from tools.editor.editors.scene_lights import retype
+    got = retype({'id': 'a', 'kind': 'point', 'intensity': 1}, 'spot')
+    assert 'phases' not in got

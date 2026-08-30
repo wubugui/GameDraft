@@ -80,15 +80,10 @@
           }
         },
         {
-          "type": "playScriptedDialogue",
+          "type": "advanceTimeTo",
           "params": {
-            "lines": [
-              {
-                "speaker": "",
-                "text": "???"
-              }
-            ],
-            "scriptedNpcId": "player"
+            "phase": "夜",
+            "transition": "fade"
           }
         }
       ],

@@ -23,6 +23,25 @@ ROOT = Path(__file__).resolve().parents[2]
 SCENES = ROOT / 'public' / 'assets' / 'scenes'
 RUNTIME = ROOT / 'public' / 'resources' / 'runtime' / 'scenes'
 
+def _bake_dir(scene_id, runtime_root, scenes_root):
+    """该场景当前背景对应的烘焙目录(2026-08-30「背景与烘焙绑死」);找不到回落扁平布局。"""
+    import json as _json
+    from pathlib import PurePosixPath
+    d = runtime_root / scene_id / 'lighting'
+    sj = scenes_root / (str(scene_id) + '.json')
+    if sj.exists():
+        try:
+            bgs = (_json.loads(sj.read_text(encoding='utf-8')).get('backgrounds') or [])
+            img = bgs[0].get('image') if bgs and isinstance(bgs[0], dict) else None
+            if isinstance(img, str) and img.strip():
+                k = PurePosixPath(img.replace(chr(92), '/')).stem
+                if k and (d / k / 'lighting.json').exists():
+                    return d / k
+        except Exception:
+            pass
+    return d
+
+
 # --suggest：给每个阻挡落点附一个最近可走点。**只报不改**——落点是内容，
 # NPC 站在"墙里"有时是有意的（站台阶上、碰撞格粗），批量吸附会把摆好的人打散。
 SUGGEST = False
@@ -34,8 +53,8 @@ LIST_NPC = False
 
 def _ground_sampler(scene_id: str):
     """lighting/ground_d.png (RG16) → f(u,v)->depth；无载荷返回 None"""
-    meta_p = RUNTIME / scene_id / 'lighting' / 'lighting.json'
-    png_p = RUNTIME / scene_id / 'lighting' / 'ground_d.png'
+    meta_p = _bake_dir(scene_id, RUNTIME, SCENES) / 'lighting.json'
+    png_p = _bake_dir(scene_id, RUNTIME, SCENES) / 'ground_d.png'
     if not (meta_p.exists() and png_p.exists()):
         return None
     meta = json.loads(meta_p.read_text(encoding='utf-8'))

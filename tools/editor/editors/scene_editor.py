@@ -4987,6 +4987,191 @@ class ScenePropertyPanel(QScrollArea):
     def _section(title: str, *, start_open: bool = True) -> CollapsibleSection:
         return CollapsibleSection(title, start_open=start_open)
 
+    # ---- 时段外观（timeVariants，日夜块）----
+    #
+    # 编辑落在工作副本 `self._time_variants` 上，随 props 的 pending/Apply 一起提交
+    # —— 与出口锚点同一套路，不另开写盘口。
+
+    def _scene_bg_candidates(self) -> list[str]:
+        """本场景运行时目录里的候选背景图（按名字排，白天那张置顶）。
+
+        只列图片、且**排掉派生产物**（碰撞图/深度图不是背景）—— 选到它们不会报错，
+        只会在跑起来时整张画变成一张深度图，作者很难反推。
+        """
+        sid = str(self._scene_id or "").strip()
+        if not sid:
+            return []
+        d = (Path(__file__).resolve().parents[3]
+             / "public" / "resources" / "runtime" / "scenes" / sid)
+        if not d.is_dir():
+            return []
+        skip = {"collision", "raw_depth_rg"}
+        out = []
+        for f in sorted(d.iterdir()):
+            if not f.is_file() or f.suffix.lower() not in (".png", ".jpg", ".jpeg", ".webp"):
+                continue
+            if f.stem in skip or f.stem.startswith("raw_depth"):
+                continue
+            out.append(f.name)
+        out.sort(key=lambda n: (n != "background.png", n))
+        return out
+
+    def _on_tv_add(self) -> None:
+        pairs = [(pid, label) for pid, label in self._model.all_time_phase_ids() if pid]
+        if not pairs:
+            QMessageBox.information(
+                self, "没有可选时段",
+                "game_config.dayNight.phases 里一个时段都没登记——先去 Config 页配时段表。")
+            return
+        cands = self._scene_bg_candidates()
+        if not cands:
+            QMessageBox.information(
+                self, "没有候选背景",
+                "本场景的运行时目录里没有可用的背景图。\n"
+                "夜景图怎么来不限（重画 / relight 都行），放进 "
+                "public/resources/runtime/scenes/<场景>/ 即可。")
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle("时段外观")
+        lay = QVBoxLayout(dlg)
+        tip = QLabel(
+            "选一个时段，再选它用哪张背景原画。\n"
+            "⚠ 必须与白天那张**同尺寸**：碰撞与深度是逐场景的，尺寸一变走位就会漂。")
+        tip.setWordWrap(True)
+        lay.addWidget(tip)
+        ph = QComboBox(dlg)
+        for pid, label in pairs:
+            ph.addItem(pid if (not label or label == pid) else f"{pid} — {label}", pid)
+        lay.addWidget(ph)
+        bg = QComboBox(dlg)
+        for name in cands:
+            bg.addItem(name + ("（白天那张）" if name == "background.png" else ""), name)
+        lay.addWidget(bg)
+        bbox = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        bbox.accepted.connect(dlg.accept)
+        bbox.rejected.connect(dlg.reject)
+        lay.addWidget(bbox)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        pid = str(ph.currentData() or "")
+        img = str(bg.currentData() or "")
+        if not pid or not img:
+            return
+        v = self._time_variants.setdefault(pid, {})
+        v["backgrounds"] = [{"image": img, "x": 0, "y": 0}]
+        self._refresh_tv_table()
+        self._emit_props_changed()
+
+    #: 可以逐时段覆盖的环境块。**刻意不含 `lights`** —— 灯按各自的 phases 过滤，
+    #: 在这儿换整组就有两个真相源（运行时也不读变体里的 lights，校验器会报 error）。
+    _TV_ENV_BLOCKS = (
+        ('sky', '天光（色温/强度/半球权重）'),
+        ('fog', '雾（σ/高度衰减/颜色）'),
+        ('display', '显示变换（曝光/tonemap/调色）'),
+        ('dehaze', '去霾（已停用，留作回退）'),
+        ('giGain', 'GI 反弹增益'),
+        ('aoStrength', 'AO 强度'),
+        ('emissive', '灯体自发光/光晕'),
+    )
+
+    def _on_tv_env(self) -> None:
+        """把当前场景光照的某几块快照成选中时段的覆盖。
+
+        为什么是「快照」而不是另建一套表单：作者实际的工作流是在游戏里 F2 实时调、
+        经同步槽回到编辑器的场景光照上。再造一份逐时段的完整光照表单，等于让他在
+        两个地方调同一批参数 —— 而且那份表单没有实时预览，调不准。
+        """
+        r = self._sc_tv_table.currentRow()
+        if r < 0:
+            QMessageBox.information(self, "先选一个时段", "在上面的表里选中要配环境的那一行。")
+            return
+        it = self._sc_tv_table.item(r, 0)
+        pid = str(it.data(Qt.ItemDataRole.UserRole) or "") if it else ""
+        if not pid:
+            return
+        base = self._sc_lighting or {}
+        if not base:
+            QMessageBox.information(
+                self, "本场景还没有光照块",
+                "先在「场景光照」里配好白天那份，再把某几块快照给某个时段。")
+            return
+        cur = dict(((self._time_variants.get(pid) or {}).get("lighting") or {}))
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"时段「{pid}」的环境覆盖")
+        lay = QVBoxLayout(dlg)
+        tip = QLabel(
+            "勾上的块会**从当前场景光照取一份快照**，作为这个时段的覆盖；"
+            "没勾的沿用白天那份。\n"
+            "⚠ 灯不在这里 —— 灯按各自的「时段归属」过滤（在灯面板上配）。"
+        )
+        tip.setWordWrap(True)
+        lay.addWidget(tip)
+        boxes = {}
+        for key, label in self._TV_ENV_BLOCKS:
+            cb = QCheckBox(f"{label}　[{key}]")
+            cb.setChecked(key in cur)
+            cb.setEnabled(key in base)
+            if key not in base:
+                cb.setToolTip(f"当前场景光照里没有 {key}，没得可快照")
+            boxes[key] = cb
+            lay.addWidget(cb)
+        bbox = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        bbox.accepted.connect(dlg.accept)
+        bbox.rejected.connect(dlg.reject)
+        lay.addWidget(bbox)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        out = {}
+        for key, _label in self._TV_ENV_BLOCKS:
+            if not boxes[key].isChecked() or key not in base:
+                continue
+            v = base[key]
+            out[key] = copy.deepcopy(v) if isinstance(v, (dict, list)) else v
+        v = self._time_variants.setdefault(pid, {})
+        if out:
+            v["lighting"] = out
+        else:
+            v.pop("lighting", None)
+        self._refresh_tv_table()
+        self._emit_props_changed()
+
+    def _on_tv_del(self) -> None:
+        r = self._sc_tv_table.currentRow()
+        if r < 0 or r >= self._sc_tv_table.rowCount():
+            return
+        it = self._sc_tv_table.item(r, 0)
+        pid = str(it.data(Qt.ItemDataRole.UserRole) or "") if it else ""
+        if pid and pid in self._time_variants:
+            del self._time_variants[pid]
+        self._refresh_tv_table()
+        self._emit_props_changed()
+
+    def _refresh_tv_table(self) -> None:
+        t = self._sc_tv_table
+        t.setRowCount(0)
+        for pid, v in sorted((self._time_variants or {}).items()):
+            img = ""
+            bgs = (v or {}).get("backgrounds") or []
+            if bgs and isinstance(bgs[0], dict):
+                img = str(bgs[0].get("image") or "")
+            r = t.rowCount()
+            t.insertRow(r)
+            a = QTableWidgetItem(pid)
+            a.setData(Qt.ItemDataRole.UserRole, pid)
+            t.setItem(r, 0, a)
+            # 变体里除背景外还有别的键时标出来 —— 那些暂时只能手写，别让人以为没配
+            t.setItem(r, 1, QTableWidgetItem(img))
+            lit = (v or {}).get("lighting") or {}
+            other = [k for k in (v or {}) if k not in ("backgrounds", "lighting")]
+            cell = "、".join(sorted(lit)) if lit else "—"
+            if other:
+                cell += f"　(另有 {'/'.join(sorted(other))})"
+            t.setItem(r, 2, QTableWidgetItem(cell))
+
     # ---- 出口锚点（日夜块）----
     # 编辑落在工作副本 self._exit_anchors 上，随 props 的 pending/Apply 一起提交，
     # 与场景其它属性同一条路径——不即时改 model，避免"改了没 Apply 却已落盘"。
@@ -5301,6 +5486,48 @@ class ScenePropertyPanel(QScrollArea):
         )
         self._sc_daynight.toggled.connect(lambda _v: self._emit_props_changed())
         dn_lay.addWidget(self._sc_daynight)
+        # ---- 时段外观（timeVariants）：这个场景在某个时段换成哪张原画 ----
+        #
+        # 模型（2026-08-30 制作人定）：**原画就是最终的光照**，夜靠换一张夜原画得到，
+        # 不靠调暗天光。所以这张表就是「日夜」在数据上的落点。
+        #
+        # ⚠ 各时段的背景**必须同尺寸**：collision/raw_depth 是逐场景的玩法几何，
+        #   尺寸一变碰撞查表就漂，出生点会"白天能走、夜里卡墙"（实测撞过）。校验器有闸。
+        tv_hint = QLabel(
+            "时段外观：某个时段换成哪张背景原画（烘焙数据按图名自动配套）。\n"
+            "不配＝该时段沿用白天那张。各时段背景必须同尺寸，否则碰撞会漂。"
+        )
+        tv_hint.setWordWrap(True)
+        tv_hint.setStyleSheet("color:#888;")
+        dn_lay.addWidget(tv_hint)
+        self._sc_tv_table = QTableWidget(0, 3)
+        self._sc_tv_table.setHorizontalHeaderLabels(["时段", "背景图", "环境覆盖"])
+        self._sc_tv_table.horizontalHeader().setStretchLastSection(True)
+        self._sc_tv_table.verticalHeader().setVisible(False)
+        self._sc_tv_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._sc_tv_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._sc_tv_table.setMaximumHeight(140)
+        dn_lay.addWidget(self._sc_tv_table)
+        tv_btns = QHBoxLayout()
+        tv_add = QPushButton("+ 时段外观…")
+        tv_add.setToolTip("给某个时段指定一张背景原画（候选＝本场景运行时目录里的图）")
+        tv_add.clicked.connect(self._on_tv_add)
+        tv_env = QPushButton("环境覆盖…")
+        tv_env.setToolTip(
+            "把当前场景光照的某几块快照成该时段的覆盖（雾/天光/显示变换…）。\n"
+            "没勾的块沿用白天那份 —— 只写差异，不整块复制。"
+        )
+        tv_env.clicked.connect(self._on_tv_env)
+        tv_btns_extra = tv_env
+        tv_del = QPushButton("− 删除选中")
+        tv_del.setToolTip("删掉该时段的外观配置（该时段回到沿用白天）")
+        tv_del.clicked.connect(self._on_tv_del)
+        tv_btns.addWidget(tv_add)
+        tv_btns.addWidget(tv_btns_extra)
+        tv_btns.addWidget(tv_del)
+        tv_btns.addStretch(1)
+        dn_lay.addLayout(tv_btns)
+
         exit_hint = QLabel(
             "出口锚点＝NPC 走到这里才隐去（反过来入场从这里走进来）。\n"
             "一个都不配也不会「当面消失」——那时自动走到场景边界外，只是不够好看。",
@@ -5744,6 +5971,26 @@ class ScenePropertyPanel(QScrollArea):
         cbw.setLayout(cb)
         form.addRow("", cbw)
 
+        # 时段归属（2026-08-30「灯就是实体，和其他实体一样配 phase」）。
+        # 缺省与热点/区域一致=全时段亮着，**不是** NPC 那条「只在街上有人的段」——
+        # 旧数据零影响是硬要求，所以缺省不能收窄。
+        self._sl_phase_ids_pending: list[str] = []
+        form.addRow("时段归属", self._make_phase_ids_row(
+            label_attr="_sl_phase_ids_label",
+            on_pick=self._open_sl_phase_ids_picker,
+            on_clear=self._clear_sl_phase_ids,
+            tool_tip=(
+                "时段归属：这盏灯只在所列时段亮。\n"
+                "缺省（空）＝全时段亮着（与热点/区域同缺省，不是 NPC 那条「只在白日」）。\n"
+                "典型用法：白天那组挂「辰/午」、夜里那组挂「夜」，时段一变自然换掉。\n"
+                "⚠ 灯数与阴影预算按**当前时段激活的那些**算，所以两组写在同一个场景里"
+                "总数超上限是正常的。\n"
+                "只在场景开了日夜循环时生效。"
+            ),
+            pick_tip="多选这盏灯亮着的时段（写入 phases 字段）",
+            clear_tip="清空 phases（回到缺省：全时段亮着）",
+        ))
+
         def spin(lo: float, hi: float, step: float, dec: int) -> QDoubleSpinBox:
             s = QDoubleSpinBox()
             s.setRange(lo, hi)
@@ -5940,6 +6187,12 @@ class ScenePropertyPanel(QScrollArea):
             self._sc_daynight.blockSignals(True)
             self._sc_daynight.setChecked(isinstance(dn, dict) and dn.get("enabled") is True)
             self._sc_daynight.blockSignals(False)
+            # 时段外观：整块深拷进工作副本。**深拷是必须的** —— 面板里改的是它，
+            # 直接引用磁盘对象等于绕过 pending/Apply，取消也退不回去。
+            raw_tv = st.get("timeVariants")
+            self._time_variants = (copy.deepcopy(raw_tv)
+                                   if isinstance(raw_tv, dict) else {})
+            self._refresh_tv_table()
             raw_anchors = st.get("exitAnchors")
             self._exit_anchors = [
                 copy.deepcopy(a) for a in raw_anchors if isinstance(a, dict)
@@ -6498,6 +6751,14 @@ class ScenePropertyPanel(QScrollArea):
             dn["enabled"] = True
         elif "dayNight" in sc:
             del sc["dayNight"]
+        # 时段外观：空 = 不落键（缺省就是"各时段都用白天那张"，旧场景零字节变化）。
+        # ⚠ 整块透传：面板目前只编背景，变体里手写的 lighting/depthConfig/ambientSounds
+        #   等键必须原样带回去 —— 编辑器不认识的键被吞掉就是"打开保存一次数据就少一半"。
+        tv = {k: v for k, v in (getattr(self, "_time_variants", {}) or {}).items() if v}
+        if tv:
+            sc["timeVariants"] = copy.deepcopy(tv)
+        elif "timeVariants" in sc:
+            del sc["timeVariants"]
         anchors = [a for a in getattr(self, "_exit_anchors", []) if str(a.get("id", "")).strip()]
         if anchors:
             sc["exitAnchors"] = copy.deepcopy(anchors)
@@ -6588,10 +6849,28 @@ class ScenePropertyPanel(QScrollArea):
 
     def _sync_sl_status(self) -> None:
         ls = self._sl_lights()
-        n, budget, over = scene_lights.shadow_budget_status(ls)
+        # 预算按**时段**报（2026-08-30）：白天一组 + 夜里一组写在同一个 lights[] 是正常
+        # 形态，按总数判会满屏误报红、作者就会开始忽略这条警告。取各时段里最吃紧的那个
+        # ——问题列表也是这么算的，两处口径必须一致，否则状态栏与列表互相打脸。
+        phases = scene_lights.phases_of(ls)
+        if phases:
+            worst = max(
+                ((p, *scene_lights.shadow_budget_status(scene_lights.lights_in_phase(ls, p)))
+                 for p in phases),
+                key=lambda r: r[1],
+            )
+            worst_phase, n, budget, over = worst
+            active = len(scene_lights.lights_in_phase(ls, worst_phase))
+            count_txt = f"灯 {len(ls)} 盏（时段「{worst_phase}」最多 {active} 盏）"
+        else:
+            worst_phase = ""
+            n, budget, over = scene_lights.shadow_budget_status(ls)
+            active = len(ls)
+            count_txt = f"灯 {len(ls)} 盏"
         issues = scene_lights.validate_lights(ls)
         ww = self._sl_space.world_w if self._sl_space else 0.0
-        head = (f"灯 {len(ls)} 盏　带影 <b>{n}/{budget}</b>"
+        head = (f"{count_txt}　带影 <b>{n}/{budget}</b>"
+                + (f"（时段「{worst_phase}」）" if worst_phase else "")
                 + ("　<span style='color:#e06c4a'>⚠ 超预算,跑起来会掉帧</span>" if over else "")
                 + (f"　世界宽 {ww:.0f} wu　角色高 {scene_lights.CHARACTER_HEIGHT_WU} wu"
                    if ww else "　⚠ 场景缺 worldWidth"))
@@ -6613,6 +6892,9 @@ class ScenePropertyPanel(QScrollArea):
             self._sl_id.setText(str(l.get("id", "")))
             self._sl_enabled.setChecked(bool(l.get("enabled", True)))
             self._sl_cast.setChecked(bool(l.get("castShadow")))
+            self._sl_phase_ids_pending = SceneCanvas._norm_id_list(l.get("phases")) or []
+            self._sl_phase_ids_label.setText(
+                self._format_phase_ids_label(self._sl_phase_ids_pending))
             self._sl_intensity.setValue(float(l.get("intensity", 0) or 0))
             self._sl_kelvin.setValue(float(l.get("kelvin", 2400) or 2400))
             self._sl_range.setValue(float(
@@ -6735,6 +7017,12 @@ class ScenePropertyPanel(QScrollArea):
         l["id"] = self._sl_id.text().strip() or l.get("id", "light")
         l["enabled"] = self._sl_enabled.isChecked()
         l["castShadow"] = self._sl_cast.isChecked()
+        # 空 = **不写键**。写成 [] 与"缺省"在运行时同义（packLights 的 inPhase 把空数组
+        # 当没写），但留在数据里会让人以为"配过了、就是一个时段都不亮"。
+        if self._sl_phase_ids_pending:
+            l["phases"] = list(self._sl_phase_ids_pending)
+        else:
+            l.pop("phases", None)
         l["intensity"] = round(self._sl_intensity.value(), 3)
         l["kelvin"] = round(self._sl_kelvin.value(), 1)
         if kind != "directional":
@@ -7393,6 +7681,19 @@ class ScenePropertyPanel(QScrollArea):
         self._hs_phase_ids_pending = []
         self._hs_phase_ids_label.setText(self._format_phase_ids_label([]))
         self._emit_props_changed()
+
+    def _open_sl_phase_ids_picker(self) -> None:
+        picked = self._pick_phase_ids(self._sl_phase_ids_pending)
+        if picked is None:
+            return
+        self._sl_phase_ids_pending = picked
+        self._sl_phase_ids_label.setText(self._format_phase_ids_label(picked))
+        self._on_sl_field_changed()
+
+    def _clear_sl_phase_ids(self) -> None:
+        self._sl_phase_ids_pending = []
+        self._sl_phase_ids_label.setText(self._format_phase_ids_label([]))
+        self._on_sl_field_changed()
 
     def _open_npc_phase_ids_picker(self) -> None:
         picked = self._pick_phase_ids(self._npc_phase_ids_pending)
@@ -11896,13 +12197,42 @@ class SceneEditor(QWidget):
         # 候选变化后按当前选中重贴一次（选中时段被删则回落到全部=显示全部）。
         self._apply_phase_view_to_canvas(w.committed_type().strip())
 
+    def _phase_view_id(self) -> str:
+        """当前时段视图选中的段 id（空 = 全部时段 = 用白天基底）。"""
+        w = getattr(self, "_combo_phase_view", None)
+        return w.committed_type().strip() if isinstance(w, FilterableTypeCombo) else ""
+
     def _apply_phase_view_to_canvas(self, pid: str) -> None:
         self._canvas.set_phase_filter(
             pid or None, npc_default_phases=list(self._model.daylight_phase_ids()))
+        self._apply_phase_background(pid)
+
+    def _apply_phase_background(self, pid: str) -> None:
+        """时段视图的另一半：**底图跟着换**。
+
+        制作人 2026-08-30 定的模型是「夜靠换一张夜原画」，所以只藏实体不换底图的
+        时段视图是半个 —— 画布上会是「白天的街 + 夜里的人」，策划照着那张图排位必歪。
+
+        只换像素，**不动世界尺寸**：各时段的背景必须同尺寸（校验器有闸拦住，
+        因为碰撞/深度是共享的），世界尺寸跟着底图变就等于承认它们可以不同。
+        解析不到（该时段没配变体、图没落盘）就回落白天那张，不留空画布。
+        """
+        sc = self._model.scenes.get(self._current_scene_id or "")
+        if not isinstance(sc, dict):
+            return
+        img_path = _scene_background_disk_path(
+            self._model, self._current_scene_id, sc, pid)
+        if img_path is None:
+            img_path = _scene_background_disk_path(
+                self._model, self._current_scene_id, sc)
+        ww, wh = self._last_canvas_world if getattr(self, "_last_canvas_world", None) \
+            else resolve_world_size_for_scene_json(sc, img_path)
+        self._canvas.clear_background()
+        if img_path:
+            self._canvas.load_background(img_path, ww, wh)
 
     def _on_phase_view_changed(self, _t: str = "") -> None:
-        w = getattr(self, "_combo_phase_view", None)
-        pid = w.committed_type().strip() if isinstance(w, FilterableTypeCombo) else ""
+        pid = self._phase_view_id()
         self._apply_phase_view_to_canvas(pid)
         # 与位面视图同理：只改可见性、不改数据，但"画布不可见成员数"要跟着更新
         self._refresh_group_bounds_note()
@@ -12715,7 +13045,10 @@ class SceneEditor(QWidget):
         self._canvas.set_day_night_enabled(_scene_day_night_enabled(sc))
         self._canvas.set_group_definitions(sc.get("entityGroups"))
 
-        img_path = _scene_background_disk_path(self._model, scene_id, sc)
+        # 背景也吃时段轴：夜是**换整张原画**得到的，切场景时若时段视图停在「夜」，
+        # 底图必须一步就是夜那张。先画白天再纠正 = 中间那几帧画布骗人（同上一段的理由）。
+        img_path = _scene_background_disk_path(
+            self._model, scene_id, sc, self._phase_view_id())
 
         world_w, world_h = resolve_world_size_for_scene_json(sc, img_path)
         self._canvas.setup_world(world_w, world_h)

@@ -117,8 +117,8 @@ describe('光晕是沿视线积分，不是表面点距离', () => {
   it('用的是 airlight 闭式解，不是 exp(-表面点距离)', () => {
     // 制作人 2026-08-21 一眼看出的两个症状：光晕不完整、阴影区没有光晕。
     // 根因是拿「该像素表面点到灯的三维距离」当光晕 —— 一遇深度断层就被切。
-    expect(SCENE).toContain('float ac = (atan((q.z - lq.z) / rc) - atan((dNear - lq.z) / rc)) / rc;');
-    expect(SCENE).toContain('float ah = (atan((q.z - lq.z) / rh) - atan((dNear - lq.z) / rh)) / rh;');
+    expect(SCENE).toContain('float ac = (atan((qw.z - lq.z) / rc) - atan((dNear - lq.z) / rc)) / rc;');
+    expect(SCENE).toContain('float ah = (atan((qw.z - lq.z) / rh) - atan((dNear - lq.z) / rh)) / rh;');
     // 防回退：旧的表面点写法必须已经不在
     expect(SCENE).not.toContain('float dd = dot(P - A.xyz, P - A.xyz);');
   });
@@ -126,7 +126,7 @@ describe('光晕是沿视线积分，不是表面点距离', () => {
   it('积分上限是该像素的真实表面深度——挡在灯前面的东西仍然遮得住光晕', () => {
     // 上限用 q.z（= 该像素的真实深度）而不是一个常数，遮挡才成立。
     // 若有人把它换成固定值，光晕会穿墙。
-    expect(SCENE).toContain('atan((q.z - lq.z)');
+    expect(SCENE).toContain('atan((qw.z - lq.z)');
   });
 
   it('积分必须配高斯包络——否则 1/r⊥ 长尾把整张画淹了', () => {
@@ -139,6 +139,6 @@ describe('光晕是沿视线积分，不是表面点距离', () => {
 
   it('灯位先折进 q 才算垂距（不是拿 M-world 的 xy 当屏幕坐标）', () => {
     expect(SCENE).toContain('vec3 lq = wrWorldToQ(uMRow0, uMRow1, uMRow2, A.xyz);');
-    expect(SCENE).toContain('float r2 = dot(q.xy - lq.xy, q.xy - lq.xy);');
+    expect(SCENE).toContain('float r2 = dot(qw.xy - lq.xy, qw.xy - lq.xy);');
   });
 });

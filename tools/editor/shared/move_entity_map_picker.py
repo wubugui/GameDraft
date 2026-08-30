@@ -4,6 +4,11 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
+from .scene_view_filters import (
+    declared_background_images as _declared_background_images,
+    phase_primary_background as _phase_primary_background,
+)
+
 from PySide6.QtWidgets import (
     QGraphicsView,
     QGraphicsScene,
@@ -69,12 +74,21 @@ def resolve_world_size_for_scene_json(
     return (800, 800 * aspect)
 
 
-def scene_background_disk_path(model, scene_id: str, sc: dict) -> Path | None:
-    """场景 JSON 背景项 → ``public/resources/runtime/scenes/<id>/background.png``。
+def scene_background_disk_path(model, scene_id: str, sc: dict,
+                               phase_id: str = "") -> Path | None:
+    """场景 JSON 背景项 → ``public/resources/runtime/scenes/<id>/<图名>.png``。
 
-    **文件名强约束**:场景主背景只能叫 ``background.png``。名字不对直接拒绝解析,
-    与运行时 AssetManager / 校验器一致 —— 容忍任意文件名会让编辑器显示一张
-    **游戏里根本不会加载**的背景,是"编辑器骗人"里最难查的一类。
+    **文件名强约束**:主背景只能是 ``background.png``,**或该场景自己在 `timeVariants`
+    里声明过的那张时段背景**。名字不对直接拒绝解析,与运行时 AssetManager / 校验器
+    一致 —— 容忍任意文件名会让编辑器显示一张**游戏里根本不会加载**的背景,
+    是"编辑器骗人"里最难查的一类。
+
+    2026-08-30 随日夜放宽:夜靠**换整张原画**实现,夜的主背景本来就该是另一个名字。
+    护栏的用意保住 —— 白名单从数据里来(见 `declared_background_images`),不是把闸拆了。
+    这一条与运行时同时改;编辑器这边不跟,症状是夜视图画布画一张占位灰底,
+    而游戏里那张图加载得好好的。
+
+    ``phase_id`` 非空时按该时段解析(时段视图用);空 = 顶层基底(白天那份)。
 
     此前主画布与坐标点选器各写一份:主画布严格,点选器却拿 ``backgrounds[0]`` 的
     任意文件名去加载。同一个场景在两处长相不同,而两处都不报错。
@@ -82,10 +96,11 @@ def scene_background_disk_path(model, scene_id: str, sc: dict) -> Path | None:
     bgs = sc.get("backgrounds", [])
     if not bgs or not isinstance(bgs[0], dict):
         return None
-    if bgs[0].get("image", "") != "background.png":
+    img = _phase_primary_background(sc, phase_id)
+    if img not in _declared_background_images(sc):
         return None
     try:
-        return model.paths.scene_runtime_asset(scene_id, "background.png")
+        return model.paths.scene_runtime_asset(scene_id, img)
     except ValueError:
         return None
 

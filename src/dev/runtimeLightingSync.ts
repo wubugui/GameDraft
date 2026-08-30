@@ -77,6 +77,14 @@ export interface LightingSyncDoc {
   sceneId: string;
   lighting: SceneLightingDef;
   /**
+   * 这份 lighting 属于哪个**时段**。空串 = 场景顶层基底（白天）。
+   *
+   * 非空时它是 `基底 ⊕ timeVariants[该时段].lighting` 的**合并结果** —— 编辑器
+   * 若把它拉回去写进场景顶层，就等于**把夜的值灌进白天基底**，Save All 落盘即污染。
+   * 所以编辑器侧据此拒绝拉取（2026-08-30 审查抓到）。
+   */
+  phase?: string;
+  /**
    * 当前选中的灯 id。**会话态，不是策划数据** —— 住在文档层，不进 `lighting`，
    * 所以编辑器 Save All 落盘时带不出去。
    *
@@ -154,6 +162,11 @@ export interface RuntimeLightingSyncDeps {
   exportFixup: (def: SceneLightingDef) => SceneLightingDef;
   /** 本侧当前选中的灯 id（没有选中返回 null） */
   getSelectedId: () => string | null;
+  /**
+   * 当前时段 id（空串 = 顶层基底）。随发布带出去，让编辑器能认出
+   * 「这份 lighting 是夜的合并结果，不能写回白天基底」。
+   */
+  getPhase?: () => string;
   /** 套用对面的选中。与灯参分开走 —— 选中变化不该触发重打光。 */
   setSelectedId: (id: string | null) => void;
   log: (msg: string) => void;
@@ -399,6 +412,7 @@ export class RuntimeLightingSync {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         sceneId, writer: this.writerId, lighting: fixed, selectedId: sel,
+        phase: this.deps.getPhase?.() ?? '',
       }),
     }) as { rev?: number };
     if (typeof body?.rev === 'number') this.lastSeenRev = Math.max(this.lastSeenRev, body.rev);

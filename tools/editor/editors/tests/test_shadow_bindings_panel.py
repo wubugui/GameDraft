@@ -246,7 +246,12 @@ class TestLighting2PayloadValidation:
         from tools.editor import validator as V
         src = Path(V.__file__).resolve().parents[2] / \
             'public/resources/runtime/scenes/teahouse/lighting2'
-        if not src.exists():
+        # 2026-08-30 起烘焙产物按背景图名分目录，`lighting2/` 下只剩子目录；
+        # 取真正装着 meta.json 的那一层当拷贝源（迁移期扁平布局也照样命中）。
+        if src.exists() and not (src / 'meta.json').exists():
+            subs = [d for d in src.iterdir() if d.is_dir() and (d / 'meta.json').exists()]
+            src = subs[0] if subs else src
+        if not (src / 'meta.json').exists():
             pytest.skip('teahouse 载荷不在（DVC 未拉取）')
         dst = tmp_path / 'public' / 'resources' / 'runtime' / 'scenes' / 'X' / 'lighting2'
         dst.parent.mkdir(parents=True)
@@ -264,7 +269,12 @@ class TestLighting2PayloadValidation:
         from tools.editor import validator as V
         src = Path(V.__file__).resolve().parents[2] / \
             'public/resources/runtime/scenes/teahouse/lighting2'
-        if not src.exists():
+        # 2026-08-30 起烘焙产物按背景图名分目录，`lighting2/` 下只剩子目录；
+        # 取真正装着 meta.json 的那一层当拷贝源（迁移期扁平布局也照样命中）。
+        if src.exists() and not (src / 'meta.json').exists():
+            subs = [d for d in src.iterdir() if d.is_dir() and (d / 'meta.json').exists()]
+            src = subs[0] if subs else src
+        if not (src / 'meta.json').exists():
             pytest.skip('teahouse 载荷不在（DVC 未拉取）')
         dst = tmp_path / 'public' / 'resources' / 'runtime' / 'scenes' / 'X' / 'lighting2'
         dst.parent.mkdir(parents=True)

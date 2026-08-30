@@ -42,6 +42,10 @@ import {
 import type { ActivePlaneSnapshot } from './plane/types';
 import { createStyledText } from '../core/styledText';
 import { isEntityInPhaseWithGroup } from '../utils/dayTime';
+import {
+  applySceneAppearance, resolveSceneAppearance, sameAppearance,
+  type ResolvedSceneAppearance,
+} from '../utils/sceneAppearance';
 
 /** applyDebugWorldSize 成功时的返回值，供深度系统与碰撞比例同步 */
 export type ApplyDebugWorldSizeResult =
@@ -148,6 +152,13 @@ export class SceneManager implements IGameSystem {
   private npcSchedulePresence: ((def: NpcDef) => boolean) | null = null;
   /** 由 Game 注入：当前时段 id（实体 phases 归属判定用）；未注入时不施加限制。 */
   private currentPhaseGetter: (() => string) | null = null;
+  /**
+   * 本场景**未经时段覆盖**的外观基底 + 时段表。
+   *
+   * `applySceneAppearance` 是就地改 `sceneData` 的，改完再解析一次会拿夜的背景当基底
+   * （越切越偏）。所以进场时先把基底留一份，时段变化时永远从它出发算。
+   */
+  private appearanceBase: { scene: SceneData; applied: ResolvedSceneAppearance } | null = null;
   /**
    * 由 Game 注入：NPC 未写 `phases` 时的缺省归属（DayManager 从 `phases[].daylight` 派生）。
    * 未注入时不施加限制——本层**刻意不预设任何时段 id**，那正是 2026-08-18
@@ -471,6 +482,19 @@ export class SceneManager implements IGameSystem {
   /** 由 Game 注入当前时段 id（DayManager 派生）；未注入时 phases 归属不生效。 */
   setCurrentPhaseGetter(fn: (() => string) | null): void {
     this.currentPhaseGetter = fn;
+  }
+
+  /**
+   * 切到 `nextPhase` 后，本场景的外观**会不会真的变**。
+   *
+   * 用来决定要不要为一次时段推进付一次场景重载。两个时段配了同一张图、同一份环境时
+   * 返回 false —— 不为「时段名变了」白白重载一次背景纹理与烘焙载荷。
+   * 没开日夜 / 没进过场景一律 false。
+   */
+  appearanceChangesWithPhase(nextPhase: string): boolean {
+    const b = this.appearanceBase;
+    if (!b) return false;
+    return !sameAppearance(b.applied, resolveSceneAppearance(b.scene, nextPhase));
   }
 
   /**
@@ -1469,6 +1493,32 @@ export class SceneManager implements IGameSystem {
   ): Promise<void> {
     onLoadProgress?.(0, `场景 JSON · ${sceneId}`);
     const sceneData = await this.assetManager.loadSceneData(sceneId);
+    // ---- 时段外观：**在装任何资源之前**就把该时段的那一份定下来 ----
+    //
+    // 必须在这儿而不是装完再换：读档回到夜、或切场景时已经是夜，都要**一步落到正确
+    // 那份**。先装白天再换等于多一次背景纹理 + 烘焙载荷的白加载，而且揭幕那一帧会闪
+    // 一下白天的画面。
+    //
+    // ⚠ 直接改 sceneData 上的字段：`loadSceneData` 返回的是 JSON 深拷贝（见其实现），
+    //   改它不会污染 AssetManager 的 JSON 缓存；这样下游（manifest / 背景 / 深度 /
+    //   光照四个消费点）不必各自再解析一遍时段，也就不会有第二个真相源。
+    const phase0 = this.currentPhaseGetter?.() ?? '';
+    // 基底留档要在**改之前**：只留外观相关的几个字段 + 时段表，够重算就行。
+    const baseSnapshot = {
+      backgrounds: JSON.parse(JSON.stringify(sceneData.backgrounds ?? [])),
+      lighting: sceneData.lighting ? JSON.parse(JSON.stringify(sceneData.lighting)) : undefined,
+      depthConfig: sceneData.depthConfig
+        ? JSON.parse(JSON.stringify(sceneData.depthConfig)) : undefined,
+      ambientSounds: sceneData.ambientSounds ? [...sceneData.ambientSounds] : undefined,
+      filterId: sceneData.filterId,
+      dayNight: sceneData.dayNight,
+      timeVariants: sceneData.timeVariants,
+    } as unknown as SceneData;
+    applySceneAppearance(sceneData, phase0);
+    this.appearanceBase = {
+      scene: baseSnapshot,
+      applied: resolveSceneAppearance(baseSnapshot, phase0),
+    };
     this.currentScene = sceneData;
     const manifest = await this.buildSceneResourceManifest(sceneId, sceneData);
 

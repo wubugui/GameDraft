@@ -168,6 +168,7 @@ import { PlanarEntityShadow } from '../rendering/EntityShadow';
 import type { ShadowSource, IEntityShadow } from '../rendering/entityShadowTypes';
 import { UniformShadowField, type ShadowProjectionField } from '../rendering/shadowField';
 import { resolveDepthFloorOffsetBoost } from '../utils/depthFloorZones';
+import { transitionIsCovered } from '../utils/sceneAppearance';
 import {
   createPerspectiveScaleResolver,
   type PerspectiveScaleResolver as ScenePerspectiveScaleResolver,
@@ -289,6 +290,18 @@ declare global {
 
 /** 编辑器气泡锚预览气泡的归属标记：只清自己这一路，不误伤对话/过场的气泡。 */
 const BUBBLE_ANCHOR_PREVIEW_OWNER = 'editor-bubble-anchor-preview';
+
+/**
+ * 统一角色光影路径的总闸。**2026-08-30 起常关。**
+ *
+ * 制作人定调「原画就是最终的光照」，场景侧已去掉整体重打光；统一角色 shader 的环境项
+ * 是合成天光 × 天穹可见性，那是给"被重打光的场景"配套的，原画不再重打光之后它不对应
+ * 任何东西。角色一律走 probe（同一张原画烘出来的 GI 底光）+ 实体灯加性叠加。
+ *
+ * 代码不删：统一光影的几何半（3D 天穹网格 / GI 反弹）后面可能还要用。
+ */
+const UNIFIED_CHAR_PATH_ENABLED = false;
+
 
 /** dev 菜单「叙事」跳转配置（public/assets/data/dev_narrative_warps.json）。 */
 type DevNarrativeWarp = {
@@ -447,6 +460,16 @@ export class Game {
   private sceneLighting: SceneLightingSystem;
   /** 角色并入统一光影的那一路。未启用时实体回落 `characterLighting` 的 probe 路径。 */
   private readonly unifiedCharLighting = new UnifiedCharacterLighting();
+  /**
+   * 时段变了、外观还没换。**不在 phaseChanged 那一拍换**：advanceTimeTo 多半是从
+   * 对话/过场里发出的，当场拆场景等于拆掉正在播的那场演出（连同发出这条命令的它自己）。
+   * 由 tick 在探索态且没有切场在途时消费，见 `drainPendingPhaseSwap`。
+   */
+  private pendingPhaseSwap = false;
+  /** 上条 `phaseChanged` 声明的表现档；决定换装那一拍遮不遮幕（见 `TimeTransition`）。 */
+  private pendingPhaseSwapTransition: TimeTransition = 'timelapse';
+  /** 换装重载（含遮幕淡入淡出）在途；期间不受理第二次，见 `drainPendingPhaseSwap` 第 ④ 闸。 */
+  private phaseSwapInFlight = false;
   private waterMinigameManager: WaterMinigameManager;
   private sugarWheelMinigameManager: SugarWheelMinigameManager;
   private paperCraftMinigameManager: PaperCraftMinigameManager;
@@ -1720,8 +1743,28 @@ export class Game {
     );
     // 实体级时段归属（phases）：与日程正交，判定挂在同一批派生基底口上
     this.sceneManager.setCurrentPhaseGetter(() => this.dayManager.currentPhase);
+    // 灯也按时段过滤（「灯就是实体」）——与实体归属同一个时刻来源
+    this.sceneLighting.setPhaseGetter(() => this.dayManager.currentPhase);
     // NPC 未写 phases 时的缺省归属，由内容侧时段表的 daylight 标记派生（代码不认时段 id）
     this.sceneManager.setNpcDefaultPhasesGetter(() => this.dayManager.daylightPhases);
+
+    // ---- 时段换装（2026-08-30）：背景/环境/烘焙随时段整套换 ----
+    //
+    // 走**整场景重载**而不是手搓局部替换：换装要同时动背景纹理、深度/碰撞、角色烘焙
+    // 载荷、环境音四处，各自都有生命周期与在途保护（epoch）。分头替换等于把那四套
+    // 保证各重写一遍，而重载把它们原样复用。时段推进是作者驱动的低频事件（advanceTime
+    // 系列），且按 transition 语义**遮挡由作者给**，重载的代价可以接受。
+    //
+    // ⚠ 只在外观**真的会变**时才重载：两个时段配了同一张图、同一份环境时，
+    //   为「时段名变了」白白重载一次是纯浪费（还会打断玩家）。
+    this.eventBus.on('time:phaseChanged', (e) => {
+      // ⚠ **只登记，不当场换**。`advanceTimeTo` 常常正是从对话/过场里发出的
+      //（赌坊那一拍就是），当场 unloadScene 会把**正在播的那场演出连同自己**一起拆掉。
+      // 真正的换装挂在 tick 的安全窗口（见 drainPendingPhaseSwap）。
+      this.pendingPhaseSwap = true;
+      // 作者声明的表现档要带到换装那一拍 —— 它决定遮不遮幕。事件对象在那时已经没了。
+      this.pendingPhaseSwapTransition = (e as { transition?: TimeTransition })?.transition ?? 'timelapse';
+    });
 
     this.documentRevealManager.setBlendExecutor((id, from, to, x, y, w, dur, delay) =>
       this.cutsceneManager.blendOverlayImage(id, from, to, x, y, w, dur, delay));
@@ -2179,6 +2222,9 @@ export class Game {
         // 选中态过同步：编辑器选哪盏，画面就高亮哪盏，反之亦然
         getSelectedId: () => this.lightingSyncHooks?.getSelectedId() ?? null,
         setSelectedId: (id) => this.lightingSyncHooks?.setSelectedId(id),
+        // 时段一起发：非空 = 这份 lighting 是「基底 ⊕ 该时段覆盖」的合并结果，
+        // 编辑器据此拒绝把它写回场景顶层（否则夜的值会污染白天基底）。
+        getPhase: () => this.dayManager.currentPhase,
         log: (m) => this.debugPanelUI?.log(m),
       }, `game:${this.runtimeBootId}`);
       this.lightingSync.start();
@@ -3618,7 +3664,12 @@ export class Game {
       // 角色照明烘焙载荷:**必须 await 纳入加载门**——否则进度条/黑屏已撤,这批图集
       // 还在后台 fetch+解码,进场景后卡顿(哈希门失配自动禁用,内部 epoch 防旧时间线写回)。
       // 体素卷(RT gather 用,20–27MB/场景)不在此列:进场景恒不加载,F2 开 RT 时才现拉。
-      await this.characterLighting.load(sceneId, sceneData.worldWidth, sceneData.worldHeight);
+      await this.characterLighting.load(
+        sceneId, sceneData.worldWidth, sceneData.worldHeight,
+        // 烘焙按**当前生效的第一层背景**索引（背景与烘焙绑死）。缺 backgrounds 时
+        // 退回 background.png，与旧数据同口径。
+        sceneData.backgrounds?.[0]?.image ?? 'background.png',
+      );
       this.refreshPlayerWorldCollision();
     });
 
@@ -3632,6 +3683,12 @@ export class Game {
       //   于是 GI 增益被压成 0 —— 表现为"这个场景没有反弹光"，而且不报错。
       //   这一次渲染本来也必须做：免得揭幕那一帧背景是空的。
       this.sceneLighting.update(this.renderer.app.renderer);
+      // 角色侧的实体灯：与场景吃**同一次** packLights（2026-08-30「原画 + 加性灯」）。
+      // 必须挂在这儿而不是 setupUnifiedCharacterLighting 里 —— 那个函数在统一角色路径
+      // 停用后整体早退，放进去就是死代码（本次就踩过：日志一条不出）。
+      this.characterLighting.applyDisplay(this.sceneLighting.params?.display ?? null);
+      this.characterLighting.applyLights(
+        this.sceneLighting.packedLights ?? null, this.sceneLighting.wuPerQUnit);
       this.setupUnifiedCharacterLighting();
       return this.sceneLighting.backgroundMesh;
     });
@@ -3712,10 +3769,20 @@ export class Game {
    * 任一半缺料就不启用，实体回落 probe 路径。**必须在 sceneLighting.load 成功之后调**。
    */
   private setupUnifiedCharacterLighting(): void {
-    // 恒等占位场景：背景已接进新管线（画面零变化），但**角色不动**。
-    // 恒等只对背景成立——旧路径给角色的是烘焙出来的 3D 辐射场，新路径给的是一个
-    // 标量天光项，两者不可能相等。硬切会让所有占位场景的角色一起从"有方向、有颜色的
-    // 烘焙光"变成平光，那不叫零变化。等作者真给这个场景摆了灯（删掉 placeholder）再切。
+    // ⛔ 2026-08-30 起**整条统一角色路径停用**，所有场景一律走 probe + 加性灯。
+    //
+    // 理由：制作人定调「原画就是最终的光照」，场景侧已去掉整体重打光。统一角色 shader
+    // 的环境项是**合成天光 × 天穹可见性**——那是给"重打光后的场景"配套的，原画不再被
+    // 重打光之后它不对应任何东西。角色的底光只能来自 probe（同一张原画烘出来的 GI），
+    // 灯在其上加性叠加（见 CharacterLitSprite 的实体灯段）。
+    //
+    // 保留这个函数与 UnifiedCharacterLighting 的代码不删：统一光影那套的几何半
+    // （3D 天穹网格、GI 反弹）后面可能还要用，等日夜整条线跑通再决定去留。
+    if (!UNIFIED_CHAR_PATH_ENABLED) {
+      this.unifiedCharLighting.teardown();
+      this.rebuildEntityLitShaders();
+      return;
+    }
     if (this.sceneLighting.params?.placeholder) {
       this.unifiedCharLighting.teardown();
       this.rebuildEntityLitShaders();
@@ -3737,6 +3804,8 @@ export class Game {
       depthCal: half.depthCal,
       depthMapping: half.depthMapping,
       mRows: half.mRows,
+      // 铁律 0：光照的长度一律 wu ⇒ shader 里 P = R·q × wuPerQUnit
+      wuPerQUnit: this.sceneLighting.wuPerQUnit,
       grid: half.grid,
     }, {
       ground: charGeo.ground,
@@ -3747,6 +3816,7 @@ export class Game {
 
     const def = this.sceneLighting.params;
     const packed = this.sceneLighting.packedLights;
+    this.characterLighting.applyLights(packed ?? null, this.sceneLighting.wuPerQUnit);
     if (def && packed) {
       this.unifiedCharLighting.applyParams(
         def, packed, this.sceneLighting.wuPerQUnit, this.sceneLighting.radianceScale);
@@ -3805,6 +3875,10 @@ export class Game {
   private applySceneLightingParams(def: SceneLightingDef): void {
     this.sceneLighting.applyParams(def);
     const packed = this.sceneLighting.packedLights;
+    // 角色侧吃**同一份**打包（2026-08-30「原画 + 加性灯」）：灯在 probe 的 GI 底光上
+    // 直接加。与场景共用一次 packLights 是「一视同仁」的构造性保证。
+    this.characterLighting.applyDisplay(def.display ?? null);
+    this.characterLighting.applyLights(packed ?? null, this.sceneLighting.wuPerQUnit);
     if (packed) {
       this.unifiedCharLighting.applyParams(
         def, packed, this.sceneLighting.wuPerQUnit, this.sceneLighting.radianceScale);
@@ -5859,6 +5933,83 @@ export class Game {
     return out;
   }
 
+  /**
+   * 消费挂起的时段换装。**三道闸缺一不可**：
+   * ① 探索态才换 —— 对话/过场/遭遇/小游戏进行中拆场景 = 拆掉正在播的演出；
+   * ② 切场在途不换 —— 与 switchScene 并发会让两条加载互相踩（旧时间线写新状态）；
+   * ③ 外观真的会变才换 —— 两个时段同图同环境时白重载一次是纯浪费还打断玩家。
+   *
+   * 判定放在 tick：本项目的状态控制器没有变更事件，等安全窗口只能逐帧看。
+   */
+  private drainPendingPhaseSwap(): void {
+    if (!this.pendingPhaseSwap) return;
+    if (this.stateController.currentState !== GameState.Exploring) return;
+    if (this.sceneManager.switching) return;
+    // ④ 上一次换装还在途不换。遮幕淡入那 500ms 里 tick 照跑、状态仍是探索态，
+    //    此时再来一次时段推进会起第二条重载 —— 两条加载互相踩，且黑幕会被先完成
+    //    的那条揭掉，露出还没换完的场景。`switching` 盖不住这一条：换装走的是
+    //    unloadScene + loadScene，不是 switchScene。
+    if (this.phaseSwapInFlight) return;
+    const to = this.dayManager.currentPhase;
+    const sceneId = this.sceneManager.currentSceneData?.id;
+    // 无论换不换，这一拍都算消费掉：不然没配夜的场景会每帧重试。
+    this.pendingPhaseSwap = false;
+    if (!to || !sceneId) return;
+    if (!this.sceneManager.appearanceChangesWithPhase(to)) {
+      // 外观不变**不等于灯不变**（2026-08-30 审查抓到）：灯走 LightDef.phases，
+      // 刻意不进时段变体（进了就有两个真相源），所以 appearanceChangesWithPhase 看不见它。
+      // 「只换灯不换背景」是最常见的配法（同一张画，白天灭灯、夜里点灯），
+      // 漏了这条就是「时段变了灯永远不换」——而且画面上完全看不出为什么。
+      //
+      // 这一路不必重载场景：重新 applyParams 即可，灯的时段过滤在 packLights 里。
+      const def = this.sceneLighting.params;
+      if (def) this.applySceneLightingParams(def);
+      return;
+    }
+    // 保住站位：换的是"这个场景此刻长什么样"，不是把人送去别处。
+    const pl = this.player;
+    this.pendingRestorePlayerPosition = pl ? { x: pl.x, y: pl.y } : null;
+    void this.reloadSceneForPhase(sceneId, this.pendingPhaseSwapTransition);
+  }
+
+  /** `timelapse`/`fade` 声明「有遮挡」时，黑幕淡入淡出的时长。 */
+  private static readonly PHASE_SWAP_FADE_MS = 500;
+
+  /**
+   * 时段换装的重载 + **按作者声明的表现档遮幕**。
+   *
+   * `TimeTransition` 早就写着 `timelapse`/`fade` = 「有画面遮挡」，但那句话此前只被
+   * NPC 日程读去决定要不要演离场 —— 黑幕谁都没盖。于是白天的街会**硬切**成夜里的街。
+   * 换装是这条链上唯一知道"遮挡该盖多久"的一环，所以由它兑现。
+   *
+   * **画面已经被遮住时不再盖第二层**（`viewObscured`）：赌坊那一拍就是这个形状 ——
+   * 过场末尾自己 `showBlackout` 交接一块黑幕，换装接手、重载完再揭幕，于是玩家
+   * 从黑场里睁眼直接就是夜里的街，中间一帧白天都看不到。
+   *
+   * 揭幕放在 `finally`：重载失败也必须揭，否则玩家卡在纯黑屏里，比看到硬切糟得多。
+   */
+  private async reloadSceneForPhase(sceneId: string, transition: TimeTransition): Promise<void> {
+    const covered = transitionIsCovered(transition);
+    const ms = Game.PHASE_SWAP_FADE_MS;
+    this.phaseSwapInFlight = true;
+    try {
+      if (covered && !this.sceneManager.viewObscured) {
+        await this.sceneManager.showBlackout(ms);
+      }
+      try {
+        await this.reloadScene(sceneId);
+      } catch (e) {
+        // 失败必须响，且不能把待落位留给下一次真正的读档（会把人送回旧坐标）。
+        this.pendingRestorePlayerPosition = null;
+        console.error('[Game] 时段换装失败', e);
+      } finally {
+        if (covered) await this.sceneManager.hideBlackout(ms);
+      }
+    } finally {
+      this.phaseSwapInFlight = false;
+    }
+  }
+
   private async reloadScene(sceneId: string): Promise<void> {
     this.sceneManager.unloadScene();
     /** 读档落位：存档里的玩家坐标覆盖出生点。走 loadScene 的位置覆盖参数（与 changeScene 的
@@ -6701,6 +6852,8 @@ export class Game {
     // 位面对账先于 Exploring 分支：回 Exploring 边沿挂起的 zone 重注册（pendingZoneRefresh）
     // 必须在本帧 zoneSystem.update 之前补刷，否则旧位面 zone 会以过期集合多跑一帧 enter/stay。
     this.planeReconciler.update(dt);
+    // 时段换装：等一个"没人在演、也没在切场"的安全窗口再动场景（见 pendingPhaseSwap）。
+    this.drainPendingPhaseSwap();
     // 日程演出（离场/入场走位）：内部自判探索态，非探索态原地挂起。
     this.npcScheduleSystem.update(dt);
 

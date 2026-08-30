@@ -320,11 +320,19 @@ class SceneEditorV2(QWidget):
 
     def _refresh_background(self) -> None:
         """场景背景。**文件名强约束走共享出口** —— 与老画布、坐标点选器同一份
-        解析（只认 `background.png`），否则会显示一张游戏根本不加载的背景。"""
+        解析（`background.png` 或该场景自己声明过的时段背景），否则会显示一张
+        游戏根本不加载的背景。
+
+        底图**吃时段轴**：夜靠换整张原画得到，只按时段藏实体而不换底图，
+        画布上就是「白天的街 + 夜里的人」。解析不到就回落白天那张。
+        """
         if self._doc is None or self._view is None:
             return
         sc = self._doc.scene() or {}
-        path = scene_background_disk_path(self._model, self._doc.scene_id, sc)
+        path = scene_background_disk_path(
+            self._model, self._doc.scene_id, sc, self._phase_view_id())
+        if path is None:
+            path = scene_background_disk_path(self._model, self._doc.scene_id, sc)
         world_w, world_h = resolve_world_size_for_scene_json(
             sc, path if path and path.is_file() else None)
         pix = None
@@ -334,7 +342,8 @@ class SceneEditorV2(QWidget):
             if pix.isNull():
                 pix, note = None, f"{self._doc.scene_id}\n（背景图加载失败）"
         elif sc.get("backgrounds"):
-            note = f"{self._doc.scene_id}\n（背景图缺失或文件名不是 background.png）"
+            note = (f"{self._doc.scene_id}\n"
+                    "（背景图缺失，或图名既不是 background.png 也没配进 timeVariants）")
         else:
             note = f"{self._doc.scene_id}\n（本场景无背景图）"
         self._view.sync_background(pix, world_w, world_h, note)
@@ -635,10 +644,20 @@ class SceneEditorV2(QWidget):
             combo.blockSignals(False)
         self._on_axis_combo_changed(None)
 
+    def _phase_view_id(self) -> str:
+        """时段视图选中的段 id（空 = 全部时段 = 白天基底）。"""
+        combos = getattr(self, "_axis_combos", None)
+        if not combos or "phase" not in combos:
+            return ""
+        return str(combos["phase"].currentData() or "")
+
     def _on_axis_combo_changed(self, _key) -> None:
         combos = getattr(self, "_axis_combos", None)
         if not combos:
             return
+        # 时段轴还管底图（夜 = 换整张原画）。放在设轴之前/之后都行，但**必须有**：
+        # 漏了它，切到夜只藏了人、街还是白天那张。
+        self._refresh_background()
         plane = str(combos["plane"].currentData() or "")
         self.set_view_axes(ViewAxes(
             cutscene_id=str(combos["cutscene"].currentData() or ""),

@@ -15,12 +15,25 @@ import LIGHTING_CORE from './lightingCore.glsl?raw';
 import WORLD_RECONSTRUCT from './worldReconstruct.glsl?raw';
 
 /**
- * 场景光照 pass —— 把原画重打光成「当前时刻自然光下的样子」，产出**线性 HDR 辐射场**。
+ * 场景光照 pass —— 把实体灯加到原画上，产出**线性 HDR 辐射场**。
+ *
+ * ## 模型（2026-08-30 制作人定调，取代原先的整体重打光）
+ *
+ * **原画就是最终的光照结果**，运行时不再动它。灯是加上去的：
+ *
+ * ```
+ * surf = painting + (painting / S_day) × Σ实体灯
+ * ```
+ *
+ * 没有灯时 surf 恒等于 painting，原画分毫不动。`S_day`（原画自带的自然光）
+ * 只剩一个用途：把 albedo 反解出来。**不能**直接 painting + 灯 —— 灯返回的是
+ * 辐照度、painting 是辐射亮度（已含 albedo），直接加等于不乘反照率，黑石板会
+ * 被照成白墙。「夜」不靠调暗天光实现，靠换一张夜原画 + 夜的 probe + 该时段的灯。
  *
  * ## 两级结构（效率的关键）
  *
  * ```
- * ①【脏时重算】原画 × (S_new / S_day) → RGBA16F 缓存 RT
+ * ①【脏时重算】原画 + albedo×灯 → RGBA16F 缓存 RT
  * ②【逐帧】    采样① → 雾 → 显示变换 → 屏幕
  * ```
  *
@@ -35,9 +48,9 @@ import WORLD_RECONSTRUCT from './worldReconstruct.glsl?raw';
  *
  * ## 干活的是什么
  *
- * `S_day` 与 `S_new` 都由**天穹可见性场**（烘出来的几何项）与**定向光的深度场投影**构成；
- * 除/乘只是最后一步算术。
- * ⚠ **被否**（2026-08-20 制作人当场否决）：S 只用法线朝上项、不做任何 march 的写法
+ * `S_day` 由**天穹可见性场**（烘出来的几何项）与**定向光的 N·L** 构成，只当 albedo 除数。
+ * 灯的遮挡走线扫前缀最小（`lightVisibilityPrefix`），不是逐像素 march。
+ * ⚠ **被否**（2026-08-20 制作人当场否决）：S 只用法线朝上项、不做任何遮蔽的写法
  * ——那是逐像素调色，画不出巷道与屋檐下的遮蔽结构，看着就是贴滤镜。勿回退。
  */
 
@@ -85,10 +98,9 @@ void main(void) {
 `;
 
 /**
- * 重打光 shader。**只产线性 HDR 辐射，不做雾、不做显示变换**——那两样在逐帧那一级。
+ * 光照 shader。**只产线性 HDR 辐射，不做雾、不做显示变换**——那两样在逐帧那一级。
  * 一个像素的完整链路：
- *   原画 → 线性化 → 除以 S_day → 乘上 S_new → 输出
- * S_day / S_new 同式（天穹可见性 + 定向光×N·L×投影），只是取不同参数。
+ *   原画 → 线性化 →（去霾）→ + (原画/S_day) × Σ实体灯 → + 灯体自发光 → 输出
  */
 // 与 lightingCore.glsl 的 LC_* 宏同值，拼进 shader 时做常量替换
 const LC_POINT = 0;
@@ -114,6 +126,8 @@ uniform vec3  uDepthMap;         // invert, scale, offset
 uniform vec3  uMRow0;
 uniform vec3  uMRow1;
 uniform vec3  uMRow2;
+/** 1 个 q 单位 = 多少 wu。铁律 0：光照的长度一律 wu，q 进来先乘它。 */
+uniform float uWuPerQUnit;
 
 uniform vec3  uSkyColor;
 uniform float uSkyIntensity;
@@ -131,7 +145,7 @@ uniform vec4  uShadow;           // strength, len, steps, soft(未用于 march)
 uniform vec2  uShadowBias;       // bias0, thick
 
 uniform float uRatioMax;
-/** 0=正常 1=天穹可见性 2=法线 3=S_day 4=S_new 5=比值。调试可视化，F2 也用它。 */
+/** 0=正常 1=天穹可见性 2=法线 3=S_day 4=灯的辐照度 5=反解 albedo。调试可视化，F2 也用它。 */
 uniform int   uDebug;
 
 // ---- 灯（静态的进这一级缓存；动态的在逐帧那级）----
@@ -247,13 +261,29 @@ void main(void) {
     float d = wrDecodeSceneDepth(texture(uDepth, vUv), uDepthMap.x, uDepthMap.y, uDepthMap.z);
     vec3 q = wrPixelToQ(px, uCal.x, uCal.y, uCal.z, d);
 
-    // ---- 去掉画里的**白天大气散射** ----
-    // 原画 = 表面辐射 × T(d) + 白天的霾 × (1−T(d))。霾不是表面，是被日光照亮的空气；
-    // 若不除掉，它在夜里照样亮着 —— "远处一片亮灰"正是大脑判定"这是白天"最强的信号。
-    // 与表面项的「除掉白天光」严格对称：这是「除掉白天的散射」。
-    // 夜的雾另在显示级按 σ 加回（LitBackground）。
-    // dn 是归一视深，T 是白天的透射率。
-    if (uHaze.y > 0.0) {
+    // ---- 铁律 0：光照一律在世界空间、单位 wu ----
+    //
+    // 场景法线**已经是世界法线**，不要再转：tools/scene_relight/geometry.py:183-190
+    // 是拿 pos = q @ R.T（世界位置）的梯度叉积算的，烘出来就在 M-world。
+    // 坐标卡硬契约第 3 条也写着这句。
+    //
+    // ⚠ 2026-08-30 我一度在这里加了 nW = R·n，那是把已是世界的法线**又转了 45°**，
+    //   是回归不是修复；当时拿来佐证的「关掉 emissive 就看见受光」那张图是改完之后拍的，
+    //   没有改之前的对照，证明不了任何事。已回退。
+
+    // ⛔ 去霾整段停用（2026-08-30）。
+    //
+    // 它存在的唯一理由写在下面原注释里：「若不除掉，它在夜里照样亮着 —— 远处一片亮灰
+    // 正是大脑判定『这是白天』最强的信号」。也就是说，**它是为了把白天原画改造成夜晚**，
+    // 是整体重打光那套的配套件。
+    //
+    // 制作人定调「原画就是最终的光照」之后，夜靠**换一张夜原画**得到，去霾就从"必要的
+    // 一环"变成了"凭空篡改原画"——实测表现正是制作人当场指出的那条：不被灯覆盖的地方
+    // 与原画对不上（画面发灰发白）。
+    //
+    // 保留代码不删：uHaze / uHazeColor 仍由 applyParams 填，将来若要做"运行时加雾"
+    // 是加法而不是这里的减法，届时另起一段。
+    if (false && uHaze.y > 0.0) {
         float dn = clamp((d - uHaze.z) / max(uHaze.w - uHaze.z, 1e-5), 0.0, 1.0);
         float T = exp(-uHaze.x * dn);
         vec3 hazeAmt = uHazeColor * (uHaze.y * (1.0 - T));
@@ -273,30 +303,34 @@ void main(void) {
         painting = (painting - min(hazeAmt, painting * (1.0 - HAZE_KEEP))) / max(T, 0.15);
     }
 
-    // ---- S_day：白天参考光。与 S_new 同式，只是参数不同 ----
+    // ---- S_day：原画自带的自然光。**只用作 albedo 除数**（2026-08-30 起）----
+    //
+    // 制作人定调：原画就是最终的光照结果，运行时不再重打光。于是这一项不再有
+    // 「参考光 vs 当前光」的比值语义，只剩一个用途——把 albedo 从原画里反解出来：
+    //
+    //     albedo ≈ painting / S_day
+    //
+    // 为什么非要它：lcPointLight 这些返回的是**辐照度**，而 painting 是**辐射亮度**
+    // （已经是 albedo × 光）。直接把灯加到 painting 上就是不乘 albedo——黑石板会
+    // 被照得像白墙。反解出 albedo 再乘灯，黑的地方才还是黑。
+    //
+    // 太阳项的 n 与 uDaySunDir 同为世界量（后者由 directionFromAngles 按 +Y=世界上
+    // 构造），点乘合法。半球项 sDayHemi 不吃法线。
     float sDayHemi = (1.0 - uDayHemi) + uDayHemi * skyvis;
     float sDay = sDayHemi + uDaySunIntensity * max(dot(n, uDaySunDir), 0.0);
 
-    // ---- S_new：当前时刻的自然光 ----
-    // ⚠ lcSkyLight 已含半球项，这里**不要再乘一遍**（踩过：整场景暗到 0.6 倍）
-    vec3 sNew = lcSkyLight(uSkyColor, uSkyIntensity, skyvis, uSkyHemi, uAoStrength);
-    if (uSunIntensity > 0.0) {
-        float vis = 1.0;
-        if (uShadow.x > 0.0) {
-            // 沿光方向 march 深度场（伪世界空间，铁律 S12）
-            vec3 dirQ = normalize(vec3(uSunDir.x, uSunDir.y, uSunDir.z));
-            float blockedVis = lcMarchVisibility(
-                uDepth, uDepthTexSize, uCal.x, uCal.y, uCal.z,
-                uDepthMap.x, uDepthMap.y, uDepthMap.z,
-                q, dirQ, int(uShadow.z), uShadow.y,
-                uShadowBias.x, uShadowBias.y);
-            vis = 1.0 - uShadow.x * (1.0 - blockedVis);
-        }
-        sNew += lcDirectionalLight(n, uSunDir, uSunColor, uSunIntensity, vis);
-    }
+    // ---- 实体灯的辐照度累加（天光/太阳的运行时项已删）----
+    //
+    // ⚠ 这里**不再**累加天光与太阳。原画自带自然光，运行时再算一遍就是重复计光。
+    // 「夜」不靠调暗天光实现，靠换一张夜原画 + 夜的 probe + 该时段的灯。
+    vec3 lampE = vec3(0.0);
 
-    // ---- 灯（点/聚/面/平行）。全在**伪世界空间**求值（铁律 S12）----
-    vec3 P = wrQToWorld(uMRow0, uMRow1, uMRow2, q);
+    // ---- 灯（点/聚/面/平行）----
+    // 铁律 0（制作人 2026-08-30 定死）：光照一律在**世界空间、单位 wu**。
+    // 朝向过 R、尺度过 uWuPerQUnit，一次转到底 —— 不许停在「世界朝向 + q 尺度」
+    // 那个没有名字的中间态：那会让 range / 软化半径 / 面光尺寸在 shader 里不是 wu，
+    // 而作者面明明按 wu 填，读代码的人无法判断某个长度是哪把尺。
+    vec3 P = wrQToWorld(uMRow0, uMRow1, uMRow2, q) * uWuPerQUnit;
     // 灯体自发光：灯**本身是看得见的发光体**。这一项不乘 albedo（发光不是反射），
     // 所以单独累加、最后加到结果上。
     // ★ 这是"这是夜晚"最强的视觉信号——白天的原画里根本没有发光体，
@@ -333,16 +367,16 @@ void main(void) {
             vis = lightVisibilityPrefix(i, px, d);
         }
         if (kind == ${LC_POINT}) {
-            sNew += lcPointLight(P, n, A.xyz, B.rgb, B.w, C.x, C.y, vis);
+            lampE += lcPointLight(P, n, A.xyz, B.rgb, B.w, C.x, C.y, vis);
         } else if (kind == ${LC_SPOT}) {
-            sNew += lcSpotLight(P, n, A.xyz, D.xyz, B.rgb, B.w, C.x, C.y, C.z, C.w, vis);
+            lampE += lcSpotLight(P, n, A.xyz, D.xyz, B.rgb, B.w, C.x, C.y, C.z, C.w, vis);
         } else if (kind == ${LC_AREA}) {
             vec3 hu, hv;
             areaAxes(normalize(D.xyz), C.z, C.w, C.y, hu, hv);
-            sNew += lcAreaLight(P, n, A.xyz, hu, hv, B.rgb, B.w, C.x, (flags & 2) != 0, vis);
+            lampE += lcAreaLight(P, n, A.xyz, hu, hv, B.rgb, B.w, C.x, (flags & 2) != 0, vis);
         } else {
             // directional：方向光的遮挡走 uShadow 那条（与日月同一套），这里不再 march
-            sNew += lcDirectionalLight(n, D.xyz, B.rgb, B.w, 1.0);
+            lampE += lcDirectionalLight(n, D.xyz, B.rgb, B.w, 1.0);
         }
         // ---- 灯体 + 大气光晕：沿**视线**积分，不是拿表面点到灯的距离 ----
         //
@@ -363,15 +397,20 @@ void main(void) {
         // ★ 这不是屏幕空间效果：r⊥ 是伪世界里灯到视线的**垂距**，积分沿真实视线走，
         //   上限是真实表面深度。深度分离是精确的，不是"屏幕上糊一圈"。
         if (kind != ${LC_DIRECTIONAL} && uCore.x > 0.0) {
+            // 豁免③：大气光晕积的是**沿视线的路径**，不是表面着色，所以留在
+            // q 的朝向里（视线恰好是 q 的 z 轴，闭式解才成立）。但**长度统一成 wu**
+            // ——像素乘 uWuPerQUnit、灯位 A.xyz 本来就是 wu（wrWorldToQ 只转朝向不改尺度），
+            // 于是 uCore 的灯体/光晕半径就是作者面那把 wu 尺。
+            vec3 qw = q * uWuPerQUnit;
             vec3 lq = wrWorldToQ(uMRow0, uMRow1, uMRow2, A.xyz);
-            float r2 = dot(q.xy - lq.xy, q.xy - lq.xy);
+            float r2 = dot(qw.xy - lq.xy, qw.xy - lq.xy);
             // 近平面：深度的解码值域是 [offset, offset+scale]，取小的那端
-            float dNear = min(uDepthMap.z, uDepthMap.z + uDepthMap.y);
+            float dNear = min(uDepthMap.z, uDepthMap.z + uDepthMap.y) * uWuPerQUnit;
             // 灯体半径当软化：视线正穿过灯心时 1/r⊥ 会发散，物理上灯有大小
             float rc = sqrt(r2 + uCore.y * uCore.y);
             float rh = sqrt(r2 + uCore.z * uCore.z);
-            float ac = (atan((q.z - lq.z) / rc) - atan((dNear - lq.z) / rc)) / rc;
-            float ah = (atan((q.z - lq.z) / rh) - atan((dNear - lq.z) / rh)) / rh;
+            float ac = (atan((qw.z - lq.z) / rc) - atan((dNear - lq.z) / rc)) / rc;
+            float ah = (atan((qw.z - lq.z) / rh) - atan((dNear - lq.z) / rh)) / rh;
             // 视线积分归一到 0..1。它负责的是**深度正确的截断与遮挡**：
             // 挡在灯前面的东西把积分上限拉到自己那儿，光晕就被压暗。
             float visC = clamp(ac * uCore.y / 3.14159265, 0.0, 1.0);
@@ -394,8 +433,8 @@ void main(void) {
     if (uDebug == 1) { fragColor = vec4(vec3(skyvis), 1.0); return; }
     if (uDebug == 2) { fragColor = vec4(n * 0.5 + 0.5, 1.0); return; }
     if (uDebug == 3) { fragColor = vec4(vec3(sDay), 1.0); return; }
-    if (uDebug == 4) { fragColor = vec4(sNew, 1.0); return; }
-    if (uDebug == 5) { fragColor = vec4(clamp(sNew / max(sDay, 1e-4), 0.0, 1.0), 1.0); return; }
+    if (uDebug == 4) { fragColor = vec4(lampE, 1.0); return; }
+    if (uDebug == 5) { fragColor = vec4(clamp(painting / max(sDay, 1e-4), 0.0, 1.0), 1.0); return; }
     if (uDebug == 6) { fragColor = vec4(painting, 1.0); return; }
 
     // 发光体不乘 albedo（发光不是反射），所以加在重打光结果之外。
@@ -406,7 +445,18 @@ void main(void) {
     //   的区域就跟着变大，把本该采到的反弹光一起挡掉——症状是"GI 不跟着灯变"。
     //   比例是尺度无关的，灯怎么调，判据都成立。
     // 显示端（LitBackground）只读 .rgb，不受影响。
-    vec3 surf = lcRelightScene(painting, vec3(max(sDay, 1e-4)), sNew, uRatioMax);
+    // ---- 合成：原画原样 + 反解 albedo × 实体灯（2026-08-30 起，取代整体重打光）----
+    //
+    //     surf = painting + (painting / S_day) × lampE
+    //
+    // 没有灯时 lampE == 0 ⇒ **surf 恒等于 painting**，原画分毫不动——这是制作人
+    // 定的口径「原画就是最终的光照」。有灯时 painting / S_day 把 albedo 反解出来，
+    // 灯才乘在正确的反照率上：黑石板照样是黑的，不会被照成白墙。
+    //
+    // ⚠ 反解出的 albedo 要钳。原画暗部除以一个小 sDay 会炸出巨大的假反照率，
+    //   一盏灯扫过去就是一片过曝。上限 1.0 = 物理上反照率不可能超过 1。
+    vec3 albedo = clamp(painting / max(sDay, 1e-4), 0.0, 1.0);
+    vec3 surf = painting + albedo * lampE;
     float emitLum = dot(emissive, LC_LUMA);
     float emitFrac = emitLum / max(emitLum + dot(surf, LC_LUMA), 1e-6);
     fragColor = vec4(surf + emissive, emitFrac);
@@ -529,6 +579,7 @@ export class SceneLightingPass {
           uShadowBias: { value: new Float32Array([0.035, 2]), type: 'vec2<f32>' },
           uRatioMax: { value: 8, type: 'f32' },
           uDebug: { value: 0, type: 'i32' },
+          uWuPerQUnit: { value: 1, type: 'f32' },
           uMRow0: { value: new Float32Array(3), type: 'vec3<f32>' },
           uMRow1: { value: new Float32Array(3), type: 'vec3<f32>' },
           uMRow2: { value: new Float32Array(3), type: 'vec3<f32>' },
@@ -562,7 +613,11 @@ export class SceneLightingPass {
    * 把场景光照参数写进 uniform。**不触发重算**，调用方随后 markDirty。
    * @param bakedDayHemi 烘焙期拟合出的原画遮蔽响应，`def.day.hemi` 缺省时用它。
    */
-  applyParams(def: SceneLightingDef, bakedDayHemi?: number): void {
+  /**
+   * `phase` = 当前时段 id，用于按 `LightDef.phases` 过滤灯（缺省全时段）。
+   * 传空串 = 不过滤（场景没开日夜，或调用方拿不到时刻）。
+   */
+  applyParams(def: SceneLightingDef, bakedDayHemi?: number, phase = ''): void {
     this.ensure();
     const u = this.shader?.resources.sceneLight?.uniforms;
     if (!u) return;
@@ -579,14 +634,15 @@ export class SceneLightingPass {
     u.uDaySunIntensity = def.day.sunIntensity;
     u.uDaySunDir.set(directionFromAngles(def.day.sunElevationDeg, def.day.sunAzimuthDeg));
 
+    u.uWuPerQUnit = this.geo.wuPerQUnit;
     const M = this.geo.mRows;
     u.uMRow0.set(M[0]);
     u.uMRow1.set(M[1]);
     u.uMRow2.set(M[2]);
 
-    // ★ 灯的打包走 `packLights` —— 角色侧读的是**同一次调用的结果**（见 `this.packed`），
+    // ★ 灯的打包走 packLights —— 角色侧读的是**同一次调用的结果**（见 this.packed），
     //   所以「角色与场景明暗一致」在构造上就成立，不靠两处代码碰巧写得一样。
-    const packed = packLights(def, this.geo.wuPerQUnit);
+    const packed = packLights(def, this.geo.wuPerQUnit, phase);
     this.packed = packed;
     if (packed.dropped > 0) {
       console.warn(

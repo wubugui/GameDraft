@@ -25,6 +25,30 @@ if str(_ROOT) not in sys.path:
 _SCENES = _ROOT / "public" / "assets" / "scenes"
 _RUNTIME = _ROOT / "public" / "resources" / "runtime" / "scenes"
 
+def _bake_dir(stem, family):
+    """该场景当前背景对应的烘焙目录。
+
+    2026-08-30 起烘焙产物按背景图名分目录(制作人定的「背景与烘焙绑死」:运行时拿
+    当前生效的背景图名当 key 找同名 bake,这样白天/夜里各一份不会错配)。口径与
+    `src/core/projectPaths.ts` 的 bakeKeyFromBackground 一致;迁移期回落扁平布局。
+    """
+    import json as _json
+    from pathlib import PurePosixPath
+    d = _RUNTIME / stem / family
+    sj = _SCENES / (str(stem) + '.json')
+    if sj.exists():
+        try:
+            bgs = (_json.loads(sj.read_text(encoding='utf-8')).get('backgrounds') or [])
+            img = bgs[0].get('image') if bgs and isinstance(bgs[0], dict) else None
+            if isinstance(img, str) and img.strip():
+                k = PurePosixPath(img.replace(chr(92), '/')).stem
+                if k and (d / k).is_dir():
+                    return d / k
+        except Exception:
+            pass
+    return d
+
+
 #: 角色身高(**wu**)。这是全项目的尺度锚,28 个场景恒定。
 CHARACTER_HEIGHT_WU = 150
 
@@ -63,7 +87,7 @@ def test_游戏约定的_R_行列式恒为正一() -> None:
 def test_实验室_M_行列式恒为负一() -> None:
     seen = 0
     for f in _scene_files():
-        p = _RUNTIME / f.stem / "lighting" / "lighting.json"
+        p = _bake_dir(f.stem, "lighting") / "lighting.json"
         if not p.is_file():
             continue
         M = (_load(p).get("world") or {}).get("M")
@@ -100,7 +124,7 @@ def test_两套像素栅格各自自洽() -> None:
     """
     seen = 0
     for f in _scene_files():
-        meta = _RUNTIME / f.stem / "lighting2" / "meta.json"
+        meta = _bake_dir(f.stem, "lighting2") / "meta.json"
         if not meta.is_file():
             continue
         cfg = ((_load(f).get("depthConfig") or {}).get("M") or {})
@@ -123,7 +147,7 @@ def test_native_work_比例不是恒定的四倍() -> None:
     """
     ratios = []
     for f in _scene_files():
-        meta = _RUNTIME / f.stem / "lighting2" / "meta.json"
+        meta = _bake_dir(f.stem, "lighting2") / "meta.json"
         if not meta.is_file():
             continue
         m = _load(meta)
@@ -135,6 +159,20 @@ def test_native_work_比例不是恒定的四倍() -> None:
 
 # ---------------------------------------------------------------- 尺度锚
 
+def _all_lighting2_metas():
+    """全部几何场 meta.json:新布局 `<场景>/lighting2/<图名>/` + 迁移期的扁平布局。"""
+    out = sorted(_RUNTIME.glob('*/lighting2/*/meta.json'))
+    out += sorted(_RUNTIME.glob('*/lighting2/meta.json'))
+    return out
+
+
+def _scene_of(meta):
+    """从 meta.json 路径倒推场景 id(两种布局层数不同,不能写死 parts[-3])。"""
+    for parent in meta.parents:
+        if parent.parent == _RUNTIME:
+            return parent.name
+    return meta.parts[-3]
+
 def test_角色身高在所有场景都是_150_wu() -> None:
     """**wu 一致的判据**。
 
@@ -143,21 +181,21 @@ def test_角色身高在所有场景都是_150_wu() -> None:
     必须恒定 —— 曾经拿 `char_wu` 当尺度参照,得出"同一个 wu 差 5.7 倍"的错误结论。
     """
     seen = 0
-    for meta in sorted(_RUNTIME.glob("*/lighting2/meta.json")):
+    for meta in _all_lighting2_metas():
         sc = _load(meta).get("scale") or {}
         if not (sc.get("char_wu") and sc.get("scene_per_wu")):
             continue
         seen += 1
         h = sc["char_wu"] * sc["scene_per_wu"]
-        assert h == pytest.approx(CHARACTER_HEIGHT_WU, abs=0.5), f"{meta.parts[-3]}: {h}"
+        assert h == pytest.approx(CHARACTER_HEIGHT_WU, abs=0.5), f"{_scene_of(meta)}: {h}"
     assert seen >= 20, seen
 
 
 def test_烘焙产物里没有造出来的单位() -> None:
     """防回退:`meters_per_wu = 1.7 / char_wu` 那一层已经删了,别再加回来。"""
-    for meta in sorted(_RUNTIME.glob("*/lighting2/meta.json")):
+    for meta in _all_lighting2_metas():
         sc = _load(meta).get("scale") or {}
-        assert "meters_per_wu" not in sc, f"{meta.parts[-3]} 又出现了造出来的单位"
+        assert "meters_per_wu" not in sc, f"{_scene_of(meta)} 又出现了造出来的单位"
 
 
 def test_背景世界宽度等于_worldWidth() -> None:
@@ -168,7 +206,7 @@ def test_背景世界宽度等于_worldWidth() -> None:
     """
     seen = 0
     for f in _scene_files():
-        meta = _RUNTIME / f.stem / "lighting2" / "meta.json"
+        meta = _bake_dir(f.stem, "lighting2") / "meta.json"
         if not meta.is_file():
             continue
         d = _load(f)
@@ -196,7 +234,7 @@ def test_地面法线在_M_world_里朝上() -> None:
     np = pytest.importorskip("numpy")
     Image = pytest.importorskip("PIL.Image", reason="需要 Pillow")
 
-    p = _RUNTIME / "雾津街头" / "lighting2" / "normal.png"
+    p = _bake_dir("雾津街头", "lighting2") / "normal.png"
     if not p.is_file():
         pytest.skip("雾津街头 没烘 lighting2/(DVC 没拉)")
 
