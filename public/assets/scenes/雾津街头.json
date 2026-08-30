@@ -208,8 +208,8 @@
       "id": "T_去婆子家院",
       "type": "transition",
       "label": "去婆子家小院",
-      "x": 143.6,
-      "y": 2170.3,
+      "x": 396.5,
+      "y": 1051.4,
       "interactionRange": 60.0,
       "conditions": [
         {
@@ -574,6 +574,19 @@
       "planes": [
         "normal"
       ]
+    },
+    {
+      "id": "T_去后巷子",
+      "x": 137.6,
+      "y": 2182.7,
+      "type": "transition",
+      "label": "后巷",
+      "interactionRange": 50,
+      "data": {
+        "targetScene": "test_room_b",
+        "targetSpawnPoint": "from_wujin",
+        "text": ""
+      }
     }
   ],
   "lighting": {
@@ -1269,8 +1282,8 @@
     },
     {
       "id": "NPC_癞子",
-      "x": 990.8,
-      "y": 2171.1,
+      "x": 1000.8,
+      "y": 2168.6,
       "interactionRange": 50,
       "characterId": "癞子",
       "initialAnimState": "idle",
@@ -1851,20 +1864,20 @@
       "id": "Zone_癞子第一次出现",
       "polygon": [
         {
-          "x": 918.4,
-          "y": 2139.8
+          "x": 806.0,
+          "y": 2067.6
         },
         {
-          "x": 1018.3,
-          "y": 2076.4
+          "x": 958.2,
+          "y": 1948.7
         },
         {
-          "x": 1131.7,
-          "y": 2233.1
+          "x": 1051.3,
+          "y": 2022.5
         },
         {
-          "x": 919.2,
-          "y": 2244.8
+          "x": 878.6,
+          "y": 2152.7
         }
       ],
       "onInteract": [
