@@ -58,14 +58,21 @@ def audit_scene(scene_json: Path) -> tuple[str, list[str]]:
     elif col:
         issues.append('缺碰撞图')
 
-    lighting = base / 'lighting' / 'lighting.json'
+    # 烘焙产物按**当前生效的第一层背景**分目录(与运行时 bakeKeyFromBackground 同口径)。
+    # ⚠ 这里一度写死成扁平的 `lighting/lighting.json`;2026-08-30 分目录之后就再也命中
+    #   不了,于是本审计对 **28/28** 个场景一律报「缺 lighting/」—— 全量误报等于没有门。
+    _bgs = (data.get('backgrounds') or [])
+    _img = (_bgs[0].get('image') if _bgs and isinstance(_bgs[0], dict) else None) or 'background.png'
+    _b = str(_img).replace(chr(92), '/').rsplit('/', 1)[-1]
+    bake_dir = base / 'lighting' / (_b[:_b.rfind('.')] if _b.rfind('.') > 0 else _b)
+    lighting = bake_dir / 'lighting.json'
     if not lighting.exists():
-        issues.append('缺 lighting/ —— 无行走面场,运行时遮挡整体关闭')
+        issues.append(f'缺 {bake_dir.name}/ 的照明载荷 —— 无行走面场,运行时遮挡整体关闭')
     else:
         meta = json.loads(lighting.read_text())
         if meta.get('version', 0) < 2:
             issues.append(f"照明载荷 v{meta.get('version')} (<2 会被运行时整包丢弃)")
-        if not (base / 'lighting' / 'ground_d.png').exists():
+        if not (bake_dir / 'ground_d.png').exists():
             issues.append('缺 ground_d.png —— 遮挡脚点没有来源')
         if bg_path.exists():
             digest = hashlib.sha1(bg_path.read_bytes()).hexdigest()[:12]

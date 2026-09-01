@@ -945,14 +945,14 @@ def validate(model: ProjectModel) -> list[Issue]:
                 for _t in _shadow_bias_issues(lit.get("shadowBias")):
                     issues.append(Issue("error", "scene", sid, _t))
 
-        # lighting2/ 载荷。配了 lighting 块却没烘载荷 ⇒ 运行时**安静不启用**，
+        # 几何场载荷。配了 lighting 块却没烘载荷 ⇒ 运行时**安静不启用**，
         # 画面上只表现为"这个场景的光照没生效"，没有任何报错。
         #
         # ⚠ 期望值一律以**运行时消费端**为准（`SceneLightingSystem` / `GiBouncePass`）。
         #   2026-08-06 那次 lighting-bake 校验器自立口径多乘 4、把 28 个场景全量误报，
         #   教训是：校验器另立一套 = 把 error 通道淹掉。
         if isinstance(lit, dict):
-            _l2 = _lighting2_issues(sid)
+            _l2 = _lighting_geometry_issues(sid)
             for _sev, _t in _l2:
                 issues.append(Issue(_sev, "scene", sid, _t))
 
@@ -1233,9 +1233,10 @@ _CLOCK_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 
 
 
-#: `lighting2/` 载荷代次。改产物布局要同步 `bake.py#PAYLOAD_VERSION` 与
-#: `SceneLightingSystem.LIGHTING2_VERSION`——三处必须一致，否则运行时整包忽略。
-_LIGHTING2_VERSION = 1
+#: 几何场载荷代次。改产物布局要同步
+#: `character_lighting_lab/scene_fields.py#PAYLOAD_VERSION` 与
+#: `SceneLightingSystem.LIGHTING_GEOMETRY_VERSION`——三处必须一致，否则运行时整包忽略。
+_LIGHTING_GEOMETRY_VERSION = 3   # v3(2026-09-01):新增 skyao_probe.bin —— 每格 4 个 f32 的天穹遮蔽矩,角色按任意法线求值。旧的 skyvis_grid.bin 降为它的派生标量。
 
 
 def _shadow_bias_issues(sb: object) -> list[str]:
@@ -1271,8 +1272,8 @@ def _shadow_bias_issues(sb: object) -> list[str]:
     return out
 
 
-def _lighting2_issues(sid: str) -> list[tuple[str, str]]:
-    """校验一个场景的 `lighting2/` 烘焙载荷。返回 (severity, text) 列表。
+def _lighting_geometry_issues(sid: str) -> list[tuple[str, str]]:
+    """校验一个场景的**几何场**烘焙载荷（`lighting/<背景基名>/`）。返回 (severity, text)。
 
     ## 为什么必须校验
 
@@ -1283,7 +1284,7 @@ def _lighting2_issues(sid: str) -> list[tuple[str, str]]:
     ## 期望值从哪来
 
     一律以**运行时消费端**为准：
-    · 代次 `SceneLightingSystem.LIGHTING2_VERSION`
+    · 代次 `SceneLightingSystem.LIGHTING_GEOMETRY_VERSION`
     · `skyvis_grid.bin` = nx·ny·nz 个 f32 → 字节数 = 乘积 × 4
     · `gi_hitmap.bin`   = size[0] × size[1] × 4（RGBA8）
 
@@ -1307,58 +1308,122 @@ def _lighting2_issues(sid: str) -> list[tuple[str, str]]:
                 key = base[:base.rfind(".")] if base.rfind(".") > 0 else base
         except Exception:  # noqa: BLE001 — 场景 JSON 的问题由别的校验报,这里只是取不到名
             key = None
-    d = scene_rt / "lighting2" / key if key else scene_rt / "lighting2"
-    if not (d / "meta.json").exists():
-        d = scene_rt / "lighting2"        # 回落扁平布局
-    meta_p = d / "meta.json"
-    if not meta_p.exists():
-        return [("warning",
-                 f"配了 lighting 但没烘 lighting2/ 载荷 —— 运行时会**安静地不启用**，"
-                 f"画面上看着就像'光照没生效'。跑 "
-                 f"`python -m tools.scene_relight.bake --scene {sid}`")]
+    # 2026-08-31 收束：几何场与 probe 载荷同住 `lighting/<背景基名>/`，**没有回落布局**。
+    if not key:
+        return [("warning", f"取不到 backgrounds[0].image，无法定位 {sid} 的烘焙目录")]
     out: list[tuple[str, str]] = []
+    if not (scene_rt / "lighting" / key / "geometry.json").exists():
+        legacy = scene_rt / "lighting2"
+        hint = ("（旧的 lighting2/ 还在——跑 `python tools/migrate_lighting_payloads.py` 迁移）"
+                if legacy.exists() else "")
+        out.append(("warning",
+                    f"配了 lighting 但没烘几何场 —— 运行时会**安静地不启用**，"
+                    f"画面上看着就像'光照没生效'。跑 "
+                    f"`sh scripts/py.sh -m tools.character_lighting_lab.scene_fields "
+                    f"--scene {sid}`{hint}"))
+
+    # 深度现况哈希只算一次（时段变体共享同一张深度图）。
+    # ⚠ `cfg.get(...) or 默认名`：depth_map 显式写 null 时 get 的**默认值不生效**，
+    #   `scene_rt / None` 会 TypeError 带崩整个 validate（2026-08-31 审计抓的崩溃路径）。
+    import hashlib as _hl
     try:
-        meta = json.loads(meta_p.read_text(encoding="utf-8"))
-    except Exception as exc:
-        return [("error", f"lighting2/meta.json 解析失败：{exc}")]
+        cfg = (_json.loads(sj.read_text(encoding="utf-8")).get("depthConfig") or {})
+    except Exception:  # noqa: BLE001 — 场景 JSON 的问题由别的校验报
+        cfg = {}
+    dp = scene_rt / (cfg.get("depth_map") or "raw_depth_rg.png")
+    cur_sha: str | None = None
+    if dp.exists():
+        try:
+            cur_sha = _hl.sha1(dp.read_bytes()).hexdigest()[:12]
+        except OSError as exc:
+            out.append(("warning", f"深度图 {dp.name} 读不出来（{exc}），本轮跳过新鲜度门"))
 
-    ver = meta.get("version")
-    if ver != _LIGHTING2_VERSION:
-        out.append(("error",
-                    f"lighting2 载荷代次 {ver} ≠ 运行时认的 {_LIGHTING2_VERSION}，整包会被忽略"))
+    # 时段变体（background-night 等）各有一套完整载荷、运行时都会装——**全部**要过门。
+    # 2026-08-31 前这里只查 backgrounds[0] 那一个目录，夜间载荷从来没被校验过。
+    for meta_p in sorted((scene_rt / "lighting").glob("*/geometry.json")):
+        d = meta_p.parent
+        rel = f"lighting/{d.name}"
+        try:
+            meta = json.loads(meta_p.read_text(encoding="utf-8"))
+        except Exception as exc:
+            out.append(("error", f"{rel}/geometry.json 解析失败：{exc}"))
+            continue
 
-    for name in ("normal.png", "skyvis.png", "skyvis_grid.bin"):
-        if not (d / name).exists():
-            out.append(("error", f"lighting2/{name} 缺失"))
-
-    g = meta.get("grid") or {}
-    try:
-        n = int(g["nx"]) * int(g["ny"]) * int(g["nz"])
-    except Exception:
-        out.append(("error", "lighting2/meta.json 的 grid 缺 nx/ny/nz"))
-        n = 0
-    if n and (d / "skyvis_grid.bin").exists():
-        want = n * 4                      # f32
-        got = (d / "skyvis_grid.bin").stat().st_size
-        if got != want:
+        ver = meta.get("version")
+        if ver != _LIGHTING_GEOMETRY_VERSION:
             out.append(("error",
-                        f"skyvis_grid.bin {got} 字节 ≠ 网格声明的 {n} 个 f32（{want} 字节）"
-                        f" —— 运行时会拒绝装载"))
+                        f"{rel} 几何场载荷代次 {ver} ≠ 运行时认的 {_LIGHTING_GEOMETRY_VERSION}，"
+                        f"整包会被忽略"))
 
-    gi = meta.get("gi")
-    if gi:
-        f = d / "gi_hitmap.bin"
-        if not f.exists():
-            out.append(("error", "meta 里声明了 gi 但 gi_hitmap.bin 缺失 —— GI 不会启用"))
-        else:
+        for name in ("normal.png", "skyvis.png", "skyao_probe.bin",
+                     "skyvis_grid.bin", "gi_hitmap.bin"):
+            if not (d / name).exists():
+                out.append(("error", f"{rel}/{name} 缺失"))
+
+        # skyao probe:角色的天穹遮蔽体(乘在 GI 上)。字节数对不上 = 运行时按尺寸门
+        # 跳过整份 ⇒ **静默降级成不遮蔽**,画面上只是"角色有点太亮",不报任何错。
+        sp = meta.get("skyao_probe") or {}
+        if sp and (d / "skyao_probe.bin").exists():
             try:
-                want = int(gi["size"][0]) * int(gi["size"][1]) * 4      # RGBA8
-                got = f.stat().st_size
-                if got != want:
-                    out.append(("error",
-                                f"gi_hitmap.bin {got} 字节 ≠ 声明的 {gi['size']} × 4（{want}）"))
+                want = int(sp["atlas_w"]) * int(sp["atlas_h"]) * 4 * 2   # rgba16f
             except Exception:
-                out.append(("error", "meta.gi.size 不是 [宽, 高]"))
+                out.append(("error", f"{rel}/geometry.json 的 skyao_probe 缺 atlas_w/atlas_h"))
+                want = 0
+            got = (d / "skyao_probe.bin").stat().st_size
+            if want and got != want:
+                out.append(("error",
+                            f"{rel}/skyao_probe.bin {got} 字节 ≠ 图集 "
+                            f"{sp.get('atlas_w')}x{sp.get('atlas_h')} rgba16f 应有的 {want} —— "
+                            f"运行时会跳过,天穹遮蔽静默失效"))
+
+        # 深度重导过、几何场没跟着重烘 = **静默错**：法线与天穹可见性是从旧深度推的，
+        # 而运行时 march 的是新深度。画面上只表现为"光的走向有点怪"，没有任何报错。
+        dep_sha = meta.get("depth_sha1")
+        if isinstance(dep_sha, str) and dep_sha:
+            if cur_sha is not None and cur_sha != dep_sha:
+                out.append(("error",
+                            f"{rel} 几何场是从旧深度烘的（载荷 {dep_sha} vs 现况 {cur_sha}）—— "
+                            f"法线/天穹可见性与运行时 march 的深度对不上，光的走向会错而**不报错**。"
+                            f"重烘：`sh scripts/py.sh -m tools.character_lighting_lab.scene_fields "
+                            f"--scene {sid}`"))
+        else:
+            # ⚠ 没有 else 的年代：27/28 场景是 migrate 脚本迁来的 v2（有意不伪造哈希），
+            #   缺 key 静默跳过 ⇒ "version==2" 不再意味着"带新鲜度门"，且输出毫无痕迹。
+            out.append(("warning",
+                        f"{rel}/geometry.json 没有 depth_sha1（迁移载荷）—— 深度新鲜度门"
+                        f"对它**不生效**。重烘一次即可补上："
+                        f"`sh scripts/py.sh -m tools.character_lighting_lab.scene_fields "
+                        f"--scene {sid}`"))
+
+        g = meta.get("grid") or {}
+        try:
+            n = int(g["nx"]) * int(g["ny"]) * int(g["nz"])
+        except Exception:
+            out.append(("error", f"{rel}/geometry.json 的 grid 缺 nx/ny/nz"))
+            n = 0
+        if n and (d / "skyvis_grid.bin").exists():
+            want = n * 4                  # f32
+            got = (d / "skyvis_grid.bin").stat().st_size
+            if got != want:
+                out.append(("error",
+                            f"{rel}/skyvis_grid.bin {got} 字节 ≠ 网格声明的 {n} 个 f32"
+                            f"（{want} 字节） —— 运行时会拒绝装载"))
+
+        gi = meta.get("gi")
+        if gi:
+            f = d / "gi_hitmap.bin"
+            if not f.exists():
+                out.append(("error", f"{rel} meta 里声明了 gi 但 gi_hitmap.bin 缺失 —— GI 不会启用"))
+            else:
+                try:
+                    want = int(gi["size"][0]) * int(gi["size"][1]) * 4      # RGBA8
+                    got = f.stat().st_size
+                    if got != want:
+                        out.append(("error",
+                                    f"{rel}/gi_hitmap.bin {got} 字节 ≠ 声明的 {gi['size']} × 4"
+                                    f"（{want}）"))
+                except Exception:
+                    out.append(("error", f"{rel} meta.gi.size 不是 [宽, 高]"))
     return out
 
 

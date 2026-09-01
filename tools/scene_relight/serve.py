@@ -11,7 +11,6 @@
   POST /api/mask?scene=        body=PNG(原生分辨率)存发光 mask;body=CLEAR 删除
   POST /api/save_params?scene=&preset=   body=参数 JSON,只存不导出
   POST /api/export?scene=&preset=        body=参数 JSON,全分辨率导出变体+存参数
-  POST /api/bake?scene=                烘几何场(法线/天穹可见性/3D 网格/GI 命中图)
   POST /api/migrate?scene=[&force=1]   恒等迁移:接进统一光影且**画面零变化**
   POST /api/dump?name=                 运行时取证:游戏页 POST 像素过来落盘
 
@@ -38,7 +37,8 @@ from PIL import Image                                            # noqa: E402
 
 from tools.atomic_io import retry_transient                      # noqa: E402
 from tools.scene_relight import store                            # noqa: E402
-from tools.scene_relight.geometry import OUT, Scene, list_scenes  # noqa: E402
+from tools.character_lighting_lab.scene_geometry import Scene    # noqa: E402
+from tools.scene_relight.workspace import OUT, list_scenes       # noqa: E402
 from tools.scene_relight.presets import PRESETS                  # noqa: E402
 from tools.scene_relight.relight import DEFAULTS, merge_params, rig_from_time  # noqa: E402
 
@@ -49,7 +49,7 @@ _SCENE_CACHE_MAX = 4                                 # 原生几何一场景可�
 
 def _get_scene(sid: str) -> Scene:
     """按背景图 mtime 缓存 Scene(LRU 上限 4);游戏里重画背景后自动重载。"""
-    from tools.scene_relight.geometry import scene_paths
+    from tools.character_lighting_lab.scene_geometry import scene_paths
     bg = scene_paths(sid)['bg']
     mt = bg.stat().st_mtime
     hit = _scenes.get(sid)
@@ -148,13 +148,13 @@ class H(SimpleHTTPRequestHandler):
                 fname = {'skyvis': 'skyvis.png', 'normal': 'normal.png'}.get(kind)
                 if not fname:
                     return self._json({'ok': False, 'err': 'bad kind'}, 400)
-                f = _get_scene(sid).rt_dir / 'lighting2' / fname
+                f = _get_scene(sid).bake_dir / fname
                 if not f.exists():
-                    return self._json({'ok': False, 'err': '该场景还没烘几何场(--bake)'}, 404)
+                    return self._json({'ok': False, 'err': '该场景还没烘几何场(角色照明实验室 → 烘几何场)'}, 404)
                 return self._png(f.read_bytes())
             if u.path == '/api/bake_meta':
                 sid = q.get('scene', [''])[0]
-                f = _get_scene(sid).rt_dir / 'lighting2' / 'meta.json'
+                f = _get_scene(sid).bake_dir / 'geometry.json'
                 if not f.exists():
                     return self._json({'ok': True, 'meta': None})
                 return self._json({'ok': True, 'meta': json.loads(f.read_text(encoding='utf-8'))})
@@ -214,16 +214,6 @@ class H(SimpleHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(body)
                 return
-            if u.path == '/api/bake':
-                # 烘几何场（法线 / 天穹可见性 / 3D 网格 / GI 命中图）。
-                # ⚠ 同步跑，单场景约 2'40"–3'25"：这个服务是**本机单用户**的桌面壳后端，
-                #   开线程只会让"跑到哪了"更难看清，而且并发烘同一个场景会互相覆盖产物。
-                from .bake import bake as _bake
-                sid = q.get('scene', [''])[0]
-                _get_scene(sid)                      # 场景不存在时在这里就报，别烘一半才发现
-                r = _bake(sid)
-                return self._json({'ok': True, 'result': {
-                    k: v for k, v in r.items() if k != 'dest'}})
             if u.path == '/api/migrate':
                 # 恒等迁移：把场景接进统一光影且**画面零变化**。
                 # 不覆盖手调过的场景（migrate 自己判 already-configured）。

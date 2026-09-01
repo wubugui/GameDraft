@@ -19,25 +19,36 @@ sh scripts/py.sh -m tools.scene_relight --scene 码头白天 --preset 夜 --expo
 sh scripts/py.sh -m tools.scene_relight --all --preset 夜 --export   # 批量
 ```
 
-**接进游戏的两步**（离线导出变体图是旧路线，现在走运行时重打光）：
+**接进游戏**（2026-08-30 起模型是「原画 + 加性实体灯」，运行时**不再整体重打光**）：
+
+⚠ **离线导出变体图重新成了正路**。制作人定调「原画就是最终的光照」之后，
+「夜」不靠调暗天光、而是**换一张夜原画** —— 也就是本工具 `--export` 出的那张，
+配 `export_variant` 返回的 `timeVariants` snippet 贴进场景 JSON 即可生效
+（解析在 `src/utils/sceneAppearance.ts`）。**每张时段原画都要各烘一套载荷**，
+因为烘焙产物按第一层背景图名索引。
 
 ```bash
-# ① 烘几何场：法线 / 天穹可见性 / 3D 网格 / GI 命中图 → runtime/scenes/<id>/lighting2/
-sh scripts/py.sh -m tools.scene_relight.bake --scene 雾津街头
-sh scripts/py.sh -m tools.scene_relight.bake --all              # 全部（约 3 分钟/场景）
+# ① 烘几何场 —— ⚠ 2026-08-31 起**不在本工具里**，已收束进角色照明实验室
+#    （那边本来就是这条链的上游：深度与标定是它导出的）
+sh scripts/py.sh -m tools.character_lighting_lab.scene_fields --scene 雾津街头
+sh scripts/py.sh -m tools.character_lighting_lab.scene_fields --all   # 约 3 分钟/场景
 
-# ② 恒等迁移：把场景接进统一光影且**画面零变化**（S_new ≡ S_day）
+# ② 恒等迁移：写出场景的 lighting 基底且**画面零变化**（历史步骤，新场景可直接摆灯）
 sh scripts/py.sh -m tools.scene_relight.migrate --all
 sh scripts/py.sh -m tools.scene_relight.migrate --all --verify  # 只验不写
 ```
 
+本工具**只读**那些烘焙产物（预览里叠 `skyvis` / `normal` 给作者看"光照结构从哪来"），
+不再自己产。产物在 `runtime/scenes/<id>/lighting/<背景基名>/`，与 probe 载荷同住。
+
 ★ **烘的全是几何项**，与灯、时刻、天光无关——摆灯、调参、推进时刻**都不用重烘**。
 
-★ 恒等迁移写的是**占位**配置（`lighting.placeholder: true`）：背景已接新管线、
-画面逐像素不变，但**角色仍走旧 probe 路径**（恒等只对背景成立）。
-作者真给某个场景摆了灯之后，删掉 `placeholder` 键，那个场景的角色才切过来。
+★ ⛔ **`lighting.placeholder` 已无运行时消费者**（2026-08-30 关掉统一角色路径后，
+唯一判点落在早退之后）。恒等迁移当年写的占位配置留着无害，但**别再拿这个键
+判断"这个场景走哪条路"** —— 现在所有场景都走同一条：背景 = 原画 + 加性灯，
+角色 = probe 底光 + 同一批灯。没配灯的场景，背景就是原画本身、逐像素不变。
 
-两步也可以在桌面壳里点（`POST /api/bake?scene=` / `POST /api/migrate?scene=`）。
+恒等迁移也可以在桌面壳里点（`POST /api/migrate?scene=`）；烘几何场去角色照明实验室的页面（`GET /api/bake_fields?scene=`）。
 
 桌面壳零浏览器缓存(app.py,三层):off-the-record profile(纯内存,磁盘无缓存目录)
 + 显式 NoCache/NoPersistentCookies + 服务端全响应 `no-store`。F5/Ctrl+R 刷新。
@@ -58,6 +69,11 @@ mask」把灯笼/亮窗涂出来存掉 → 「保存参数」→ 「⇪ 导出�
 `world = R·[(sx-cx)/ppu, (cy-py)/ppu, d]`。
 
 ## 算法(一屏说完)
+
+> 下面讲的是**本工具离线导出变体图**用的算法(产出一张夜原画)。
+> **运行时不跑这套** —— 运行时的模型是「原画 + 加性实体灯」,见
+> `agent_docs/runtime/mechanisms/scene-lighting.md`。两者别混谈:
+> 这里的 `S_new/S_day` 是**离线**把白天画成夜晚的算术,不是运行时每帧在做的事。
 
 方法按承重顺序是三件事(2026-08-20 制作人验收口径):
 ①**天穹可见性**——逐像素向上半球 12 方向 march 深度场(`sky_field`),巷道深处/屋檐下

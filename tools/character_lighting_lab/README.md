@@ -7,9 +7,19 @@
 ## 用法
 
 ```bash
-./dev.sh char-lighting                      # → http://localhost:5311/(自动开浏览器)
-./dev.sh char-lighting -- --no-open --port 5311
+./dev.sh char-lighting                      # 开**独立窗口**(缺省)
+./dev.sh char-lighting -- --serve           # 只起 HTTP 服务,在真浏览器里调页面/开 devtools
+./dev.sh char-lighting -- --serve --port 5311 --no-open
 ```
+
+**它是个本地窗口程序**(2026-08-31),不是网页工具:双击即开、关窗即退、
+**端口由系统分配**(不会冲突、也不用你关心)、**禁止双开**(第二次启动把已有窗口
+提到前台就退出)。壳在 `tools/desktop_shell.py`,与场景重打光工作台共用一份。
+
+★ **不留残留**:HTTP 服务跑在 daemon 线程里随进程消失;烘焙那个 3 分钟的子进程
+(以及自动装 torch 的子进程)走 `tools/child_jobs.py` 的 Windows Job Object ——
+**父进程无论怎么死,内核都会杀光整棵进程树**。关窗口不会留下一个还在写产物的
+`pipeline.py`(那会导致下次重烘时两个进程并发写同一批产物且都合法)。
 
 **场景清单直接扫工程,不选文件**(2026-07-23 改):顶部下拉列出
 `public/assets/scenes/*.json` 里的**全部**游戏场景,每项带状态——
@@ -56,6 +66,39 @@ CLI 仅作脚本化备用:`./dev.sh char-lighting -- --build <图.png> --name �
 
 查看器:方向键/WASD 移动角色;Tab 循环 / 1‑4 直选照明模式;右侧全部参数实时;
 「重建参数」区改俯角/ppu/EV/凸出阈值后点重建(调用 /api/rebuild,秒级)。
+
+## 几何场烘焙(2026-08-31 从 tools/scene_relight 收束进来)
+
+**光照烘焙从此只有这一个工具、一个产物目录。** 此前场景受光要的法线与天穹可见性
+由另一个工具(`tools/scene_relight/bake.py`)烘、落在另一个目录(`lighting2/`)——
+而那条链其实是本实验室的**下游**:深度与标定本来就是这里导出的,几何却在那边
+又重建了一遍,中间还多一次磁盘往返。
+
+```bash
+# 一个场景的**全部时段原画**各烘一套(日夜项目的正确用法)
+sh scripts/py.sh -m tools.character_lighting_lab.scene_fields --scene 雾津街头
+sh scripts/py.sh -m tools.character_lighting_lab.scene_fields --all
+sh scripts/py.sh -m tools.character_lighting_lab.scene_fields --scene 雾津街头     --background background-night.png          # 只烘其中一张
+./dev.sh char-lighting -- --fields 雾津街头     # 同上(POSIX 机)
+```
+
+页内也能点(`GET /api/bake_fields?scene=`)。产物与 probe 载荷同住
+`runtime/scenes/<id>/lighting/<背景基名>/`:
+
+| 文件 | 谁在读 |
+|---|---|
+| `normal.png` | 场景光照 pass:每盏灯的 N·L 与 `S_day` |
+| `skyvis.png` | `S_day` 的半球项 |
+| `geometry.json` | 标定 / 网格 / `wuPerQUnit` / 拟合出的 day_hemi、haze、albedo / 两个哈希 |
+| `skyvis_grid.bin`、`gi_hitmap.bin` | ⛔ 当前无人读(统一角色路径已停用)。继续烘、不进发行包 |
+
+★ **顺序**:先「导出深度」再烘几何场。几何场是从 `raw_depth_rg.png` 推的 ——
+那是运行时实际 march 的那份**量化后**的深度,不是内部的 `front_depth.bin`。
+用未量化的源反而会与运行时对不上。深度重导后没重烘,`geometry.json` 的
+`depth_sha1` 会对不上,`validate-data` 报 error(画面上则只是"光的走向有点怪")。
+
+★ **烘的全是几何项**,与灯、时刻、天光无关——摆灯、调参、推进时刻都不用重烘;
+但**换一张时段原画就要各烘一套**(产物按背景图名分目录)。
 
 ## 四个照明模式
 

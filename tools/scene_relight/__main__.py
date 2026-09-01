@@ -2,8 +2,7 @@
 
   python -m tools.scene_relight                          # 桌面应用(默认;零浏览器缓存)
   python -m tools.scene_relight --serve [--port 5317]    # 仅起 HTTP 服务(浏览器/面板用)
-  python -m tools.scene_relight --bake --all             # 烘几何场(法线/天穹可见性/3D网格)
-  python -m tools.scene_relight --bake --scene 雾津街头
+  (几何场烘焙已迁至 tools.character_lighting_lab.scene_fields)
   python -m tools.scene_relight --list                   # 场景清单与状态
   python -m tools.scene_relight --scene 码头白天 --preset 夜 --export
   python -m tools.scene_relight --all --preset 夜 --export      # 批量(跳过缺背景的)
@@ -23,7 +22,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from tools.scene_relight import store                    # noqa: E402
-from tools.scene_relight.geometry import Scene, list_scenes  # noqa: E402
+from tools.character_lighting_lab.scene_geometry import Scene    # noqa: E402
+from tools.scene_relight.workspace import list_scenes            # noqa: E402
 from tools.scene_relight.presets import PRESETS          # noqa: E402
 
 
@@ -50,7 +50,7 @@ def main() -> None:
     ap.add_argument('--out', help='只写这个路径(试跑,不进工程)')
     ap.add_argument('--width', type=int, help='--out 时的预览宽度,缺省原生')
     ap.add_argument('--bake', action='store_true',
-                    help='烘几何场(法线 / 天穹可见性 / 3D 网格)到 lighting2/')
+                    help='已迁至角色照明实验室;跑本旗标会打印新命令后退出')
     ap.add_argument('--serve', action='store_true', help='仅起 HTTP 服务,不开桌面窗口')
     ap.add_argument('--smoke', action='store_true', help='桌面壳无头自检:load 完即退')
     ap.add_argument('--port', type=int, default=None)
@@ -64,22 +64,15 @@ def main() -> None:
         return
 
     if args.bake:
-        from tools.scene_relight.bake import bake
-        sids = ([s['id'] for s in list_scenes() if s['bg_ok'] and s['depth']]
-                if args.all else [args.scene] if args.scene else None)
-        if not sids:
-            raise SystemExit('--bake 需要 --scene <id> 或 --all')
-        for sid in sids:
-            try:
-                r = bake(sid)
-            except Exception as e:                   # noqa: BLE001
-                print(f'{sid}: 失败 {type(e).__name__}: {e}')
-                continue
-            sc, px = r['scale'], r['skyvis_px']
-            print(f"{sid}: → lighting2/ ({r['bytes'] / 1024:.0f} KB)  "
-                  f"角色 {sc['char_wu']:.3f} wu  "
-                  f"天穹可见性均 {px['mean']:.2f}")
-        return
+        # 2026-08-31:几何场烘焙已收束进角色照明实验室(它本来就是这条链的上游 ——
+        # 深度与标定是它导出的)。这里只留一句指路,不做转发:留转发就等于留了
+        # 第二个入口,正是这次收束要消灭的东西。
+        raise SystemExit(
+            '几何场烘焙已并入角色照明实验室,本工具不再提供 --bake。改跑:\n'
+            '  sh scripts/py.sh -m tools.character_lighting_lab.scene_fields '
+            f'--scene {args.scene or "<场景id>"}\n'
+            '  sh scripts/py.sh -m tools.character_lighting_lab.scene_fields --all\n'
+            '（产物落 runtime/scenes/<id>/lighting/<背景基名>/，与 probe 载荷同一个目录）')
 
     if args.scene or args.all:
         if not args.preset:

@@ -339,7 +339,7 @@ label.touched span.k{box-shadow:inset 2px 0 0 var(--acc);padding-left:5px}
       <button data-m="3" title="预烘焙 probe,8×8法线bin 纯数据,无球谐截断">BIN</button>
     </div>
     <div id="modeinfo"></div>
-    <label title="角色物理曝光(只乘角色,不乘背景),用于和背景对齐亮度。调各场景亮度的正确旋钮就是它(不是预览亮度)"><span class="tm now">●</span><span class="k">曝光 β(EV)</span><input type="range" id="beta" min="-2" max="4" step="0.1" value="0"><span class="v" id="beta_v"></span></label>
+    <label title="角色物理曝光(只乘角色,不乘背景),用于和背景对齐亮度。调各场景亮度的正确旋钮就是它(不是预览亮度)"><span class="tm now">●</span><span class="k">曝光 β(EV)</span><input type="range" id="beta" min="-2" max="6" step="0.1" value="0"><span class="v" id="beta_v"></span></label>
     <label title="E 色度权重:0=只借场景明暗(luma)、角色保留自己颜色不被场景色染(sprite 本就是着色后的 color,缺的是明暗);1=完整彩色 E(旧行为,场景色会二次染角色)。此值随导出写入场景配置"><span class="tm now">●</span><span class="k">E色度(融入)</span><input type="range" id="echroma" min="0" max="1" step="0.02" value="0"><span class="v" id="echroma_v"></span></label>
     <label title="脚下程序化软阴影强度(合成项,非物理)"><span class="tm lab" title="仅实验室预览,不写入游戏">◌</span><span class="k">接触阴影</span><input type="range" id="contact" min="0" max="1" step="0.05" value="0.55"><span class="v" id="contact_v"></span></label>
 

@@ -1,8 +1,8 @@
 """确定性重打光核心(纯 numpy,零随机,同输入必出同字节)。
 
 方法(2026-08-20 制作人验收口径,三件事按承重顺序):
-  ① 天穹可见性:逐像素向上半球 12 方向 march 深度场(`sky_field`)——巷道/檐下真遮蔽;
-  ② 定向光(日/月)投影:沿光方向 march 深度场(`screen_shadow`);
+  ① 天穹可见性:逐像素上半球**无偏蒙特卡洛**积分(`sky_field`)——巷道/檐下真遮蔽;
+  ② 定向光(日/月)投影:沿光方向走唯一 tracer(`screen_shadow`);
   ③ 先除掉白天光、再乘上新光(只是最后一步算术,S_day 与 S_new 都由 ①② 构成):
        out = bg_linear × clamp(S_new / S_day, 0, ratio_max)
 ⚠ 别把 ③ 当成方法的名字。**被否**:S_day/S_new 只用法线朝上项、不做 march 的写法
@@ -21,7 +21,12 @@ import math
 import numpy as np
 from scipy.ndimage import gaussian_filter
 
-from .geometry import Scene, linear_to_srgb, resize_rgb, srgb_to_linear
+from tools.character_lighting_lab.scene_geometry import (
+    Scene, blocked_along, blocked_toward, linear_to_srgb, resize_rgb, srgb_to_linear,
+)
+from tools.character_lighting_lab.scene_geometry import sky_field, sun_dir
+
+from .workspace import emissive_mask
 
 DEFAULTS: dict[str, float] = {
     # ---- 白天参考光(S_day 的半球权重;动它=重新解释原图,一般不动) ----
@@ -94,83 +99,17 @@ def smoothstep(e0: float, e1: float, x: np.ndarray) -> np.ndarray:
     return t * t * (3 - 2 * t)
 
 
-def sun_dir(elev_deg: float, azim_deg: float) -> np.ndarray:
-    """指向光源的世界方向。azim 0°=光从画面正前(+z 深处)射来,90°=从画面右侧。"""
-    e = math.radians(elev_deg)
-    a = math.radians(azim_deg)
-    return np.array([math.cos(e) * math.sin(a), math.sin(e), math.cos(e) * math.cos(a)],
-                    np.float32)
-
-
-def _march_blocked(geo: dict, L: np.ndarray, steps: int, length: float,
-                   bias0: float, thick: float) -> np.ndarray:
-    """沿世界方向 L march 深度场:落到可见壳背后(且在 thick 厚度窗内)即判挡。
-    返回 bool (h,w)。确定性:定步长,无抖动。"""
-    d = geo['depth']
-    h, w = d.shape
-    R, ppu = geo['R'], geo['ppu']
-    Lq = R.T @ L                                   # world → q(R 正交)
-    step = length / max(steps, 1)
-    dpx = float(Lq[0] * ppu * step)
-    dpy = float(-Lq[1] * ppu * step)
-    dd = float(Lq[2] * step)
-    px0 = np.arange(w, dtype=np.float32)[None, :]
-    py0 = np.arange(h, dtype=np.float32)[:, None]
-    blocked = np.zeros((h, w), bool)
-    for i in range(1, steps + 1):
-        px = px0 + dpx * i
-        py = py0 + dpy * i
-        z = d + dd * i
-        inside = (px >= 0) & (px < w) & (py >= 0) & (py < h)
-        xi = np.clip(px, 0, w - 1).astype(np.int32)
-        yi = np.clip(py, 0, h - 1).astype(np.int32)
-        pen = z - d[yi, xi]
-        bias = bias0 + 0.02 * step * i
-        blocked |= inside & (pen > bias) & (pen < thick)
-    return blocked
-
-
 def screen_shadow(geo: dict, L: np.ndarray, p: dict, px_scale: float) -> np.ndarray:
     """定向光(太阳/月亮)投影。返回 [0,1] 阴影系数(1=全亮)。"""
-    blocked = _march_blocked(geo, L, max(int(p['shadow_steps']), 4), p['shadow_len'],
-                             p['shadow_bias'], p['occ_thick'])
+    # 2026-09-01:走唯一 tracer,射线无限长。`shadow_steps/len/bias/occ_thick`
+    # 四个旧参数已无效 —— 步长/bias/厚度归 tracer 统一管,射程根本不该存在
+    # (旧值 2.5 wu 约半个画幅,街对面整排房子一根射线都挡不住)。
+    blocked = blocked_along(geo, L)
     shadow = 1.0 - blocked.astype(np.float32)
     soft = p['shadow_soft'] * px_scale
     if soft > 0:
         shadow = gaussian_filter(shadow, soft)
     return 1.0 - p['shadow_strength'] * (1.0 - np.clip(shadow, 0.0, 1.0))
-
-
-#: 天穹采样方向(固定、确定):6 方位 × 2 仰角。改这组常量会使全部缓存失效性地
-#: 改变光照结果,等同改算法版本。
-_SKY_ELEVS = (28.0, 58.0)
-_SKY_AZIMS = (0.0, 60.0, 120.0, 180.0, 240.0, 300.0)
-
-
-def sky_field(geo: dict, px_scale: float) -> np.ndarray:
-    """天穹辐照场 E_sky(x) ∈ [0,~1]:12 个上半球方向逐像素 march 遮蔽,
-    E = Σ vis_d·max(N·d,0) / Σ max(up·d,0)——开阔平地=1,巷道/屋檐下/立面按
-    真实遮蔽与朝向衰减。**这是"重打光"区别于"调色"的核心场**:同一份几何,
-    白天光除掉它、夜光重乘它(权重不同),光的空间结构才会真的变。
-    只依赖几何,按分辨率缓存进 geo(首算几秒,之后零成本)。"""
-    hit = geo.get('sky_e')
-    if hit is not None:
-        return hit
-    N = geo['normal']
-    h, w = geo['depth'].shape
-    E = np.zeros((h, w), np.float32)
-    norm = 0.0
-    for elev in _SKY_ELEVS:
-        for azim in _SKY_AZIMS:
-            dvec = sun_dir(elev, azim)
-            vis = 1.0 - _march_blocked(geo, dvec, steps=16, length=2.2,
-                                       bias0=0.05, thick=2.0).astype(np.float32)
-            E += vis * np.clip(N @ dvec, 0.0, 1.0)
-            norm += max(float(dvec[1]), 0.0)
-    E /= max(norm, 1e-6)
-    E = gaussian_filter(E, max(1.0, 1.0 * px_scale))
-    geo['sky_e'] = np.clip(E, 0.0, 1.5)
-    return geo['sky_e']
 
 
 def extract_lamps(mask: np.ndarray, geo: dict, bg_lin: np.ndarray, p: dict) -> list[dict]:
@@ -211,31 +150,16 @@ def extract_lamps(mask: np.ndarray, geo: dict, bg_lin: np.ndarray, p: dict) -> l
     return lamps
 
 
-def _lamp_visibility(dh: np.ndarray, ppu: float, cx: float, cy: float,
-                     lamp_q: np.ndarray, p: dict, steps: int = 24) -> np.ndarray:
-    """半分辨率:逐像素向灯的 q 位置 march 深度场,返回可见性 [0,1]。
-    跳过起点 12%(自身)与终点 10%(灯体),遮挡窗与太阳阴影同一套语义。"""
-    h, w = dh.shape
-    px0 = np.arange(w, dtype=np.float32)[None, :].repeat(h, 0)
-    py0 = np.arange(h, dtype=np.float32)[:, None].repeat(w, 1)
-    qx0 = (px0 - cx) / ppu
-    qy0 = (cy - py0) / ppu
-    dqx = lamp_q[0] - qx0
-    dqy = lamp_q[1] - qy0
-    dqz = lamp_q[2] - dh
-    blocked = np.zeros((h, w), bool)
-    for t in np.linspace(0.12, 0.9, steps, dtype=np.float32):
-        qx = qx0 + dqx * t
-        qy = qy0 + dqy * t
-        qz = dh + dqz * t
-        px = qx * ppu + cx
-        py = cy - qy * ppu
-        inside = (px >= 0) & (px < w) & (py >= 0) & (py < h)
-        xi = np.clip(px, 0, w - 1).astype(np.int32)
-        yi = np.clip(py, 0, h - 1).astype(np.int32)
-        pen = qz - dh[yi, xi]
-        blocked |= inside & (pen > 0.05 + 0.05 * t) & (pen < p['occ_thick'])
-    return 1.0 - blocked.astype(np.float32)
+def _lamp_visibility(geo: dict, lamp_q: np.ndarray, p: dict) -> np.ndarray:
+    """逐像素向灯的 q 位置的可见性 [0,1]。
+
+    2026-09-01 重写:走**唯一 tracer**(`scene_geometry.blocked_toward`)。
+    旧实现是本文件里第四处手写 march —— 半分辨率、24 个定步长、自己一套
+    bias(`0.05 + 0.05t`)与 `occ_thick` 窗,和太阳阴影、和天穹遮蔽三处判据全不一样。
+    半分辨率那道近似也一起删了:tracer 是 numba 多线程,全分辨率一盏灯约 15 万条射线,
+    量级 0.01 秒,没有理由再降采样。
+    """
+    return 1.0 - blocked_toward(geo, lamp_q).astype(np.float32)
 
 
 def lamp_irradiance(geo: dict, mask: np.ndarray, bg_lin: np.ndarray, p: dict) -> np.ndarray:
@@ -247,12 +171,6 @@ def lamp_irradiance(geo: dict, mask: np.ndarray, bg_lin: np.ndarray, p: dict) ->
         return E
     P, N = geo['pos'], geo['normal']
     use_vis = p['lamp_vis'] > 0.5
-    if use_vis:                                        # 可见性半分辨率算,双线性放回
-        hw, hh = max(w // 2, 8), max(h // 2, 8)
-        from .geometry import resize_f
-        dh = resize_f(geo['depth'], (hw, hh))
-        s = hw / w
-        ppu_h, cx_h, cy_h = geo['ppu'] * s, geo['cx'] * s, geo['cy'] * s
     for lamp in lamps:
         vec = lamp['pos'][None, None, :] - P
         r2 = np.sum(vec * vec, axis=-1)
@@ -261,9 +179,9 @@ def lamp_irradiance(geo: dict, mask: np.ndarray, bg_lin: np.ndarray, p: dict) ->
         contrib = np.minimum(lamp['I'] * ndl / (r2 + p['lamp_falloff']) * cutoff,
                              p['lamp_clamp'])
         if use_vis:
-            vis = _lamp_visibility(dh, ppu_h, cx_h, cy_h, lamp['q'], p)
-            vis = gaussian_filter(vis, 1.5)          # 半分辨率二值场先软化再放大,去块状边
-            contrib = contrib * resize_f(vis, (w, h))
+            vis = _lamp_visibility(geo, lamp['q'], p)
+            vis = gaussian_filter(vis, 1.5)          # 二值遮挡场软化一下,去锯齿边
+            contrib = contrib * vis
         E += contrib[..., None] * lamp['rgb'][None, None, :]
     return E
 
@@ -314,7 +232,7 @@ def relight(scene: Scene, params: dict | None = None, width: int | None = None) 
 
     # ---- 发光体(手绘 mask):灯体自亮 + 伪世界点光源照明 + 大气光晕 ----
     if p['emis_gain'] > 0 or p['lamp_int'] > 0:
-        mask = scene.emissive_mask((w, h))
+        mask = emissive_mask(scene.sid, (w, h))
         if mask is not None and mask.max() > 0:
             emis_rgb = kelvin_rgb(p['emis_kelvin'])
             src = mask[..., None] * emis_rgb[None, None, :] * p['emis_gain']

@@ -58,7 +58,7 @@ if str(_ROOT) not in sys.path:
 
 from tools.atomic_io import retry_transient          # noqa: E402
 
-from .geometry import SCENES_JSON, SCENES_RT         # noqa: E402
+from tools.character_lighting_lab.scene_geometry import SCENES_JSON, SCENES_RT  # noqa: E402
 
 
 def identity_lighting(day_hemi: float) -> dict:
@@ -105,7 +105,14 @@ MAX_SAFE_DAY_HEMI = 0.99
 
 
 def baked_day_hemi(sid: str) -> float | None:
-    p = SCENES_RT / sid / 'lighting2' / 'meta.json'
+    # 2026-08-31:几何场载荷改住 `lighting/<背景基名>/geometry.json`
+    #（原先是扁平的 `lighting2/meta.json`——那条路径连按图名分目录都没跟上，
+    # 换过背景的场景一直读不到，静默回落到"没烘"）。
+    from tools.character_lighting_lab.scene_geometry import Scene
+    try:
+        p = Scene(sid).bake_dir / 'geometry.json'
+    except Exception:                                # noqa: BLE001 — 缺背景等,按"没烘"处理
+        return None
     if not p.exists():
         return None
     try:
@@ -178,7 +185,7 @@ def verify_identity(sid: str) -> dict:
     问题就一定在渲染链的别处，排查面立刻缩小一个数量级。
     """
     import numpy as np
-    from .geometry import Scene
+    from tools.character_lighting_lab.scene_geometry import Scene
     path = SCENES_JSON / f'{sid}.json'
     data = json.loads(path.read_text(encoding='utf-8'))
     lit = data.get('lighting')

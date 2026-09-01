@@ -40,7 +40,9 @@ def _pip_install_depth_deps(status: StatusCallback | None) -> None:
     cmd = [sys.executable, "-m", "pip", "install", "--proxy", DEP_PROXY, *_DEPS]
     if status:
         status(f"缺少依赖，正在自动安装(代理 {DEP_PROXY})：{' '.join(_DEPS)} …可能需几分钟")
-    proc = subprocess.Popen(
+    # 走 child_jobs.spawn:装 torch 要几分钟,窗口中途关掉不该留一个孤儿 pip。
+    from tools.child_jobs import spawn
+    proc = spawn(
         cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, bufsize=1,
     )

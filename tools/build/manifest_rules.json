@@ -6,7 +6,7 @@
     "always_extract：静态扫描抓不到、但运行时确实要读的资源。分三类：",
     "  (a) 代码里写死路径的常量（UI 贴图、检视托底图、主菜单背景）；",
     "  (b) 运行期由 id/slug 拼出来的（对话立绘 <slug>_<emotion>.png、扎纸部件 <part.id>.png）；",
-    "  (c) 场景 id + 固定子路径（两代光照载荷）。",
+    "  (c) 场景 id + 背景图名 + 固定文件名（光照烘焙载荷 lighting/<背景基名>/…）。",
     "  每一条后面都注明了 src 里的唯一实现源，改代码时照着这里对。",
     "",
     "never_extract：明确不进包的 authoring-only 内容。兜底用——正常情况下它们本来",
@@ -17,13 +17,15 @@
   ],
 
   "always_extract": [
-    "resources/runtime/scenes/*/lighting2/*",
-
-    "resources/runtime/scenes/*/lighting/lighting.json",
-    "resources/runtime/scenes/*/lighting/probes_valid.bin",
-    "resources/runtime/scenes/*/lighting/ground_d.png",
-    "resources/runtime/scenes/*/lighting/atlas_l1.bin",
-    "resources/runtime/scenes/*/lighting/atlas_l2.bin",
+    "resources/runtime/scenes/*/lighting/*/lighting.json",
+    "resources/runtime/scenes/*/lighting/*/probes_valid.bin",
+    "resources/runtime/scenes/*/lighting/*/ground_d.png",
+    "resources/runtime/scenes/*/lighting/*/atlas_l1.bin",
+    "resources/runtime/scenes/*/lighting/*/atlas_l2.bin",
+    "resources/runtime/scenes/*/lighting/*/normal.png",
+    "resources/runtime/scenes/*/lighting/*/skyvis.png",
+    "resources/runtime/scenes/*/lighting/*/geometry.json",
+    "resources/runtime/scenes/*/lighting/*/skyao_probe.bin",
 
     "resources/runtime/images/dialogue_portraits/*/*.png",
 
@@ -43,8 +45,11 @@
   ],
 
   "_always_extract_出处": {
-    "scenes/*/lighting2/*": "SceneLightingSystem.ts:219,327,341,342,421 —— 统一光影，进场景必读",
-    "scenes/*/lighting/*": "CharacterLightingSystem.ts:496,499,533,534 —— 角色照明，进场景必读；atlas_l1/l2 按 lighting.json 的 shading.mode 二选一（实测 27 场 l2、1 场 l1），两个都带",
+    "scenes/*/lighting/*/<probe 那几个>": "CharacterLightingSystem.ts —— 角色照明，进场景必读；atlas_l1/l2 按 lighting.json 的 shading.mode 二选一（实测 27 场 l2、1 场 l1），两个都带",
+    "scenes/*/lighting/*/{normal,skyvis,geometry}": "SceneLightingSystem.ts —— 场景受光的几何场，进场景必读（S_day 与每盏灯的 N·L）",
+    "scenes/*/lighting/*/skyao_probe.bin": "CharacterLightingSystem.ts —— 角色的天穹遮蔽体（乘在 GI 上），进场景必读。⚠ 漏抽的后果是发行版 fetch 404、skyao **静默降级成不遮蔽**，画面上只是「角色有点太亮」而无任何报错（2026-09-01 接运行时时差点漏掉）。",
+    "⚠ 中间那个 * 是背景图名": "2026-08-30 起烘焙产物按背景图名分目录（lighting/<背景基名>/…）。规则少写这一层的话 fnmatch 接不上——2026-08-31 发现 probe 载荷因此**整整一批没进过包**。tools/build/tests 里有一条护栏对着真实磁盘布局验，别删。",
+    "⛔ skyvis_grid.bin / gi_hitmap.bin 刻意不抽": "gi_hitmap 服务于已停用的统一角色路径（Game.UNIFIED_CHAR_PATH_ENABLED = false），运行时不读。skyvis_grid.bin 是 skyao_probe.bin 的**派生标量** T(up)，按任意法线求值做不到（竖直面偏高约 50%），2026-09-01 起已被 skyao_probe.bin 取代，只等旧运行时代码改完就删。两者继续烘、不进包。",
     "images/dialogue_portraits/*/*.png": "DialogueUI.ts:122、CutsceneRenderer.ts:624、CharacterBookUI.ts:68 —— 路径 = <slug>/<slug>_<emotion>.png，JSON 里只有 slug 和 emotion，没有路径。同目录的 *_portrait_meta.json / *_qa_contact_sheet.png 运行时不读，故只带 png 且由下面的 never 兜底",
     "images/ui/**": "UITextures.ts:14-19（frame_wood/paper_tile）、UIIcons.ts:14-24（ICON_FILES 名单写死）",
     "images/backgrounds/menu_wujin_dock.png": "MenuUI.ts:95,1412 —— 主菜单背景，硬编码，public/assets 里零引用",
@@ -55,7 +60,10 @@
   "never_extract": [
     "resources/runtime/scenes/*/preview/*",
     "resources/runtime/scenes/*/preview/**/*",
-    "resources/runtime/scenes/*/lighting/lighting.json.bak",
+    "resources/runtime/scenes/*/lighting/*/lighting.json.bak",
+
+    "resources/runtime/scenes/*/lighting/*/skyvis_grid.bin",
+    "resources/runtime/scenes/*/lighting/*/gi_hitmap.bin",
     "resources/runtime/scene_background_backups/*",
     "resources/runtime/scene_background_backups/**/*",
     "resources/runtime/character_setup_refs/*",
@@ -82,18 +90,18 @@
   "targets": {
     "dev": {
       "always_extract": [
-        "resources/runtime/scenes/*/lighting/atlas_bin.bin",
-        "resources/runtime/scenes/*/lighting/vol_rad.bin",
-        "resources/runtime/scenes/*/lighting/vol_emit.bin"
+        "resources/runtime/scenes/*/lighting/*/atlas_bin.bin",
+        "resources/runtime/scenes/*/lighting/*/vol_rad.bin",
+        "resources/runtime/scenes/*/lighting/*/vol_emit.bin"
       ],
       "never_extract": []
     },
     "release": {
       "always_extract": [],
       "never_extract": [
-        "resources/runtime/scenes/*/lighting/atlas_bin.bin",
-        "resources/runtime/scenes/*/lighting/vol_rad.bin",
-        "resources/runtime/scenes/*/lighting/vol_emit.bin"
+        "resources/runtime/scenes/*/lighting/*/atlas_bin.bin",
+        "resources/runtime/scenes/*/lighting/*/vol_rad.bin",
+        "resources/runtime/scenes/*/lighting/*/vol_emit.bin"
       ]
     }
   },

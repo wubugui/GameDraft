@@ -25,8 +25,8 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 from tools.atomic_io import retry_transient        # noqa: E402
 
-from . import geometry                              # noqa: E402
-from .geometry import Scene                         # noqa: E402
+from . import workspace                             # noqa: E402
+from tools.character_lighting_lab.scene_geometry import Scene  # noqa: E402
 from .relight import merge_params, relight          # noqa: E402
 
 
@@ -54,7 +54,7 @@ def _atomic_write_bytes(dest: Path, data: bytes) -> None:
 def _backup_existing(sid: str, dest: Path) -> Path | None:
     if not dest.exists():
         return None
-    bdir = geometry.OUT / sid / 'backup'
+    bdir = workspace.OUT / sid / 'backup'
     bdir.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime('%Y%m%d-%H%M%S')
     bak = bdir / f'{dest.stem}.{stamp}{dest.suffix}'
@@ -64,20 +64,20 @@ def _backup_existing(sid: str, dest: Path) -> Path | None:
 
 def save_params(sid: str, preset: str, params: dict) -> Path:
     full = merge_params(params)                     # 校验 + 补全
-    f = geometry.OUT / sid / f'params_{preset}.json'
+    f = workspace.OUT / sid / f'params_{preset}.json'
     _atomic_write_bytes(f, json.dumps(full, ensure_ascii=False, indent=1).encode('utf-8'))
     return f
 
 
 def load_params(sid: str, preset: str) -> dict | None:
-    f = geometry.OUT / sid / f'params_{preset}.json'
+    f = workspace.OUT / sid / f'params_{preset}.json'
     if not f.exists():
         return None
     return json.loads(f.read_text(encoding='utf-8'))
 
 
 def saved_presets(sid: str) -> list[str]:
-    d = geometry.OUT / sid
+    d = workspace.OUT / sid
     if not d.is_dir():
         return []
     return sorted(p.stem[len('params_'):] for p in d.glob('params_*.json'))

@@ -60,8 +60,11 @@ REBUILD_KEYS = {'pitch_deg', 'azimuth_deg', 'ppu_ratio', 'ev', 'max_gain_ev',
 # 文件名)。由 id 一路推出四个落点,不再从"上传的文件名"猜:
 #   背景图      public/resources/runtime/scenes/<id>/<backgrounds[0].image>
 #   烘焙工作目录 tools/character_lighting_lab/out/<id>/
-#   导出照明    public/resources/runtime/scenes/<id>/lighting/
+#   导出照明    public/resources/runtime/scenes/<id>/lighting/<背景基名>/
 #   导出深度    public/assets/scenes/<id>.json (+ 同场景运行时目录)
+# 2026-08-31 起**几何场也落同一个** lighting/<背景基名>/(法线 / 天穹可见性 /
+# 3D 网格 / GI 命中图 / geometry.json),原先它在 tools/scene_relight 里、另开 lighting2/。
+# 本工具因此是光照烘焙的**唯一**出口:一个场景一张背景 = 一个目录,全在这儿。
 _hash_cache: dict[str, tuple[float, int, str]] = {}
 
 
@@ -128,8 +131,13 @@ def _scene_index() -> list[dict]:
     seen = set()
     for j in sorted(SCENES_JSON.glob('*.json')):
         try:
-            data = json.loads(j.read_text())
-        except Exception:                          # noqa: BLE001 — 坏 JSON 不该让清单挂掉
+            data = json.loads(j.read_text(encoding='utf-8'))
+        except Exception as e:                     # noqa: BLE001 — 坏 JSON 不该让清单挂掉
+            # ⚠ 但必须出声:2026-08-31 之前这里连 UnicodeDecodeError 一起咽,
+            #   裸 read_text() 在 GBK Windows 上把 27/29 个中文场景**静默**吞光,
+            #   清单只剩 dev_room/test_scene,看着像"没检测到场景"。
+            print(f'[scene-index] 读不了 {j.name}: {type(e).__name__}: {e}',
+                  file=sys.stderr, flush=True)
             continue
         sid = j.stem
         seen.add(sid)
@@ -167,7 +175,7 @@ def _stage_scene_bg(sid: str) -> Path:
     j = SCENES_JSON / f'{sid}.json'
     if not j.exists():
         raise FileNotFoundError(f'游戏里没有场景 {sid}(先在主编辑器建场景)')
-    ref, bg = _scene_bg(sid, json.loads(j.read_text()))
+    ref, bg = _scene_bg(sid, json.loads(j.read_text(encoding='utf-8')))
     if not bg or not bg.exists():
         raise FileNotFoundError(f'场景 {sid} 的背景图不在盘上: {bg}')
     dest_dir = TOOL / 'out' / sid
@@ -208,8 +216,12 @@ def _run_bake(job: dict) -> None:
         job['scene'] = scene
         job['stages'] = []                      # 本场景已出现过的阶段(有序、去重)
         job['stage'] = ''
-        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                             text=True, bufsize=1)
+        # ⚠ 走 child_jobs.spawn 不走裸 Popen:烘焙一跑 3 分钟,窗口关掉时这个子进程
+        #   **不会**跟着死(daemon 线程会,子进程不会)。后果是关了窗口还在写产物,
+        #   再开一次重烘同一个场景就是两个进程并发写、都合法、谁后写完谁赢。
+        from tools.child_jobs import spawn
+        p = spawn(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                  text=True, bufsize=1)
         for line in p.stdout:
             job['log'] = (job['log'] + line)[-12000:]
             m = _STAGE_RE.match(line)
@@ -306,7 +318,7 @@ class H(SimpleHTTPRequestHandler):
             scenes = []
             for m in sorted((TOOL / 'out').glob('*/manifest.json')):
                 try:
-                    scenes.append(json.loads(m.read_text()))
+                    scenes.append(json.loads(m.read_text(encoding='utf-8')))
                 except Exception:
                     pass
             return self._json(scenes)
@@ -342,7 +354,7 @@ class H(SimpleHTTPRequestHandler):
             mp = TOOL / 'out' / name / 'manifest.json'
             if not mp.exists():
                 return self._json({'ok': False, 'err': 'unknown scene'}, 400)
-            man = json.loads(mp.read_text())
+            man = json.loads(mp.read_text(encoding='utf-8'))
             sys.path.insert(0, str(TOOL.parents[1]))
             from tools.character_lighting_lab.pipeline import geometry_signature
             cur = geometry_signature(TOOL / 'out' / name, man['hash'],
@@ -368,7 +380,7 @@ class H(SimpleHTTPRequestHandler):
                 sys.path.insert(0, str(TOOL.parents[1]))
                 from tools.character_lighting_lab.pipeline import (
                     export_scene_depth, geometry_signature)
-                man = json.loads((TOOL / 'out' / name / 'manifest.json').read_text())
+                man = json.loads((TOOL / 'out' / name / 'manifest.json').read_text(encoding='utf-8'))
                 cur = geometry_signature(TOOL / 'out' / name, man['hash'], {**man['params']})
                 if cur != man.get('geometry_sig', ''):
                     return self._json({'ok': False,
@@ -377,9 +389,28 @@ class H(SimpleHTTPRequestHandler):
                 # 回带 depth_per_sy(直立 quad 的深度梯度)——旧的 floor_depth_A 已随最小二乘
                 # 拟合地面一起废除,再读就是 KeyError,而 KeyError 会被下面的 except 吞成
                 # 「导出失败」,让每一次深度导出都假报错。viewer 只看 ok,这里纯诊断用。
-                return self._json({'ok': True, 'depth_per_sy': cfg['shader']['depth_per_sy']})
+                # 深度一换,几何场(法线/天穹可见性)就与它对不上了 —— 必须重烘。
+                # 不在这里同步烘:那会让「导出深度」这个按钮卡 3 分钟。回带一面旗,
+                # 由查看器提示作者去点「烘几何场」;校验器另有 depth_sha1 兜底。
+                return self._json({'ok': True, 'depth_per_sy': cfg['shader']['depth_per_sy'],
+                                   'fields_stale': True})
             except Exception as e:                     # noqa: BLE001
                 return self._json({'ok': False, 'err': str(e)}, 500)
+        if u.path == '/api/bake_fields':
+            # 几何场烘焙(2026-08-31 从 tools/scene_relight 收束进来)。
+            # 读的是**已导出的** raw_depth_rg.png + depthConfig —— 与运行时 march 的
+            # 是同一份量化深度,所以必须先「导出深度」再烘,顺序反了就是拿旧深度烘新场。
+            # 同步跑(单场景约 3 分钟):本服务是本机单用户的桌面壳后端,并发烘同一场景
+            # 会互相覆盖产物,开线程只会让"跑到哪了"更难看清。
+            name = q.get('scene', [''])[0]
+            try:
+                sys.path.insert(0, str(TOOL.parents[1]))
+                from tools.character_lighting_lab.scene_fields import bake as _bake_fields
+                r = _bake_fields(name)
+                return self._json({'ok': True, 'result': {
+                    k: v for k, v in r.items() if k != 'dest'}})
+            except Exception as e:                     # noqa: BLE001
+                return self._json({'ok': False, 'err': f'{type(e).__name__}: {e}'}, 500)
         if u.path == '/api/export':
             name = q.get('scene', [''])[0]
             if not name or not (TOOL / 'out' / name / 'manifest.json').exists():
@@ -389,7 +420,7 @@ class H(SimpleHTTPRequestHandler):
             try:
                 sys.path.insert(0, str(TOOL.parents[1]))
                 from tools.character_lighting_lab.pipeline import geometry_signature as _gs
-                _man = json.loads((TOOL / 'out' / name / 'manifest.json').read_text())
+                _man = json.loads((TOOL / 'out' / name / 'manifest.json').read_text(encoding='utf-8'))
                 if _gs(TOOL / 'out' / name, _man['hash'], {**_man['params']}) != _man.get('geometry_sig', ''):
                     return self._json({'ok': False,
                                        'err': '几何已改动但未重烘——先重烘再导出'}, 409)
@@ -445,7 +476,7 @@ class H(SimpleHTTPRequestHandler):
             builds = []
             for m in sorted((TOOL / 'out').glob('*/manifest.json')):
                 try:
-                    man = json.loads(m.read_text())
+                    man = json.loads(m.read_text(encoding='utf-8'))
                 except Exception:
                     continue
                 per = list(extra)

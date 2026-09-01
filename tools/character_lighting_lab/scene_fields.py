@@ -1,15 +1,21 @@
 """几何场烘焙:法线 / 天穹可见性(逐像素 + 3D 网格)/ 命中图。
 
 **烘的全是几何项**——只依赖深度场与标定,与时刻、天气、灯全无关。
-光怎么变都不用重烘(需求 R1 的落地形式)。产物落 `runtime/scenes/<id>/lighting2/`。
+光怎么变都不用重烘。产物落 `runtime/scenes/<id>/lighting/<背景基名>/`,
+**与 probe 载荷同一个目录**(2026-08-31 收束前它在另一个工具、另一个 `lighting2/`)。
 
 | 产物 | 内容 | 消费方 |
 |---|---|---|
-| `normal.png` | 场景法线 RGB8(xy 映射到 0..1,z 取 \\|z\\|) | 场景光照 pass |
-| `skyvis.png` | 逐像素天穹可见性 R8 | 场景光照 pass |
-| `skyvis_grid.bin` | **3D** 天穹可见性,`(nx,ny,nz)` f32 C 序 | 角色照明(三线性插值) |
-| `gi_hitmap.bin` | **3D 网格逐方向的命中点**,RGBA8(u,v,命中标志,255) | GI gather(查当前重打光结果) |
-| `meta.json` | 网格参数 / 世界 AABB / M / 标定 / background_sha1 / 版本 | 两者 |
+| `normal.png` | 场景法线 RGB8(xy 映射到 0..1,z 取 \\|z\\|) | 场景光照 pass(灯的 N·L 与 S_day) |
+| `skyvis.png` | 逐像素天穹可见性 R8 | 场景光照 pass(S_day 的半球项) |
+| `skyao_probe.bin` | **skyao probe**:遮蔽矩 `(nx,ny,nz,4)` f32 = (a0,a1x,a1y,a1z) | 角色天穹遮蔽(⚠ 运行时尚未接) |
+| `skyvis_grid.bin` | ⛔ 已弃:上面那份矩的派生标量 `T(up)`,按任意法线求值做不到 | 旧运行时代码,改完即删 |
+| `gi_hitmap.bin` | **3D 网格逐方向的命中点**,RGBA8(u,v,命中标志,255) | ⛔ 当前无消费者(见下) |
+| `geometry.json` | 网格参数 / 世界 AABB / M / 标定 / 背景与深度哈希 / 版本 | 场景光照 + 摆灯 |
+
+⛔ **后两个当前零消费者**:它们服务的是统一角色路径(`Game.UNIFIED_CHAR_PATH_ENABLED`),
+该路径 2026-08-30 起整条关死。制作人 2026-08-31 定:**继续烘、运行时不读、不进发行包**
+——将来复活那条路时数据现成,不用把 28 个场景重烘一遍。别因为"没人读"就删掉这两段。
 
 3D 网格是角色"吃天光遮蔽"的落地(需求 R4):角色按自己的伪世界位置插值,
 头脚高度差天然被网格表达,不需要"脚点采样 + 高度补偿"那种近似。
@@ -37,11 +43,13 @@ if str(_ROOT) not in sys.path:
 
 from tools.atomic_io import retry_transient                      # noqa: E402
 
-from .geometry import Scene, resize_f, resize_rgb                # noqa: E402
-from .relight import _SKY_AZIMS, _SKY_ELEVS, sun_dir             # noqa: E402
+from .scene_geometry import Scene, resize_f, resize_rgb           # noqa: E402
+from .probe_layout import grid_points as grid_points_             # noqa: E402
+from .const import GATHER_SEED                                    # noqa: E402
+from .scene_geometry import sky_field  # noqa: E402
 
 #: 载荷代次。改任何产物布局都要 +1,并同步 validate.py 与运行时消费端。
-PAYLOAD_VERSION = 1
+PAYLOAD_VERSION = 3   # v3:新增 skyao_probe.bin(每格 4 个 f32 的遮蔽矩)
 
 #: 烘焙工作分辨率(宽);天穹可见性是低频量,不需要原生分辨率。
 WORK_W = 512
@@ -58,39 +66,20 @@ DEFAULT_CHAR_SCENE_H = 150.0
 #: 3D 网格分辨率。载荷极小(f32 标量),竖直方向给足
 DEFAULT_GRID = (24, 10, 16)
 
+#: 本模块产出的全部文件。**唯一清单**——校验器、打包规则、迁移脚本都对着它写,
+#: 别在三处各抄一份(probe 载荷与它同住一个目录,靠这张表区分谁是谁的产物)。
+FIELD_FILES = ('normal.png', 'skyvis.png', 'skyao_probe.bin', 'skyvis_grid.bin',
+               'gi_hitmap.bin', 'geometry.json')
+
+#: 其中**运行时当前真正读**的那几个。另外两个见模块头注释的 ⛔ 段。
+FIELD_FILES_LIVE = ('normal.png', 'skyvis.png', 'geometry.json')
+
 
 def _atomic_bytes(dest: Path, data: bytes) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(dest.suffix + '.tmp')
     tmp.write_bytes(data)
     retry_transient(os.replace, tmp, dest)
-
-
-def _march_blocked_from(q0: np.ndarray, dir_q: np.ndarray, depth: np.ndarray,
-                        ppu: float, cx: float, cy: float,
-                        steps: int, length: float,
-                        bias0: float, thick: float) -> np.ndarray:
-    """从**任意** q 空间起点沿 dir_q march 深度场,返回逐点 blocked 布尔。
-
-    与 `relight._march_blocked` 同一套判据,区别只在起点:那个从每个像素自己的
-    表面出发(逐像素),这个从空间中任意一批点出发(供 3D 网格用)。
-
-    q0: (N,3) 起点;dir_q: (3,) 方向(已归一,q 空间);depth: (h,w) 深度场。
-    """
-    h, w = depth.shape
-    step = length / max(steps, 1)
-    blocked = np.zeros(len(q0), bool)
-    for i in range(1, steps + 1):
-        q = q0 + dir_q[None, :] * (step * i)
-        px = q[:, 0] * ppu + cx
-        py = cy - q[:, 1] * ppu
-        inside = (px >= 0) & (px < w) & (py >= 0) & (py < h)
-        xi = np.clip(px, 0, w - 1).astype(np.int32)
-        yi = np.clip(py, 0, h - 1).astype(np.int32)
-        pen = q[:, 2] - depth[yi, xi]
-        bias = bias0 + 0.02 * step * i
-        blocked |= inside & (pen > bias) & (pen < thick)
-    return blocked
 
 
 #: GI gather 的方向数。16 个方向 × 3840 个网格点 = 61440 次 march，烘一次约 3 秒。
@@ -137,26 +126,20 @@ def bake_gi_hitmap(geo: dict, grid: tuple[int, int, int], bounds: dict) -> dict:
 
     返回 uint8 数组 `(ny*ndir, nx*nz, 4)`。
     """
+    from .trace import DepthField, trace
+
     nx, ny, nz = grid
     R = geo['R']
-    depth = geo['depth']
-    ppu, cx, cy = geo['ppu'], geo['cx'], geo['cy']
-    h, w = depth.shape
+    h, w = geo['depth'].shape
+    field = DepthField.from_geo(geo)
 
-    gx = np.linspace(bounds['x0'], bounds['x1'], nx)
-    gy = np.linspace(bounds['y0'], bounds['y1'], ny)
-    gz = np.linspace(bounds['z0'], bounds['z1'], nz)
-    X, Y, Z = np.meshgrid(gx, gy, gz, indexing='ij')
-    world = np.stack([X.ravel(), Y.ravel(), Z.ravel()], -1).astype(np.float32)
-    q0 = world @ R                                   # world → q
-
+    world = grid_points_(grid, bounds)
+    q0 = np.ascontiguousarray(world @ R, np.float32)          # world -> q
     dirs_w = _gi_directions()
     ndir = len(dirs_w)
-    steps, length, bias0, thick = 20, 2.6, 0.05, 2.0
-    step = length / steps
 
     def to_grid_rows(flat: np.ndarray) -> np.ndarray:
-        """(nx*ny*nz,) C 序 → (ny, nx*nz)，列 = x + z*nx（与 skyvis_grid 同规则）。"""
+        """(nx*ny*nz,) C 序 -> (ny, nx*nz),列 = x + z*nx(与 skyvis_grid 同规则)。"""
         a = flat.reshape(nx, ny, nz)
         packed = np.empty((ny, nx * nz), a.dtype)
         for z in range(nz):
@@ -166,31 +149,14 @@ def bake_gi_hitmap(geo: dict, grid: tuple[int, int, int], bounds: dict) -> dict:
     out = np.zeros((ny * ndir, nx * nz, 4), np.uint8)
     out[..., 3] = 255
     for di, d_w in enumerate(dirs_w):
-        d_q = (R.T @ d_w).astype(np.float32)
-        hit_px = np.full(len(q0), -1.0, np.float32)
-        hit_py = np.full(len(q0), -1.0, np.float32)
-        pending = np.ones(len(q0), bool)
-        for i in range(1, steps + 1):
-            q = q0 + d_q[None, :] * (step * i)
-            px = q[:, 0] * ppu + cx
-            py = cy - q[:, 1] * ppu
-            inside = (px >= 0) & (px < w) & (py >= 0) & (py < h)
-            xi = np.clip(px, 0, w - 1).astype(np.int32)
-            yi = np.clip(py, 0, h - 1).astype(np.int32)
-            pen = q[:, 2] - depth[yi, xi]
-            bias = bias0 + 0.02 * step * i
-            # **第一次**命中就定下来——沿光线最近的那面才是看得见的那面
-            newly = pending & inside & (pen > bias) & (pen < thick)
-            hit_px[newly] = px[newly]
-            hit_py[newly] = py[newly]
-            pending &= ~newly
-            if not pending.any():
-                break
-        got = hit_px >= 0
+        d_q = np.ascontiguousarray(
+            np.tile((d_w @ R).astype(np.float32), (len(q0), 1)))
+        res = trace(q0, d_q, field)          # ← 唯一 tracer,射线无限长
+        got = ~res.escaped
         u = np.zeros(len(q0), np.uint8)
         v = np.zeros(len(q0), np.uint8)
-        u[got] = np.clip(hit_px[got] / max(w - 1, 1) * 255.0, 0, 255).astype(np.uint8)
-        v[got] = np.clip(hit_py[got] / max(h - 1, 1) * 255.0, 0, 255).astype(np.uint8)
+        u[got] = np.clip(res.hit_yx[got, 1] / max(w - 1, 1) * 255.0, 0, 255).astype(np.uint8)
+        v[got] = np.clip(res.hit_yx[got, 0] / max(h - 1, 1) * 255.0, 0, 255).astype(np.uint8)
         r0 = di * ny
         out[r0:r0 + ny, :, 0] = to_grid_rows(u)
         out[r0:r0 + ny, :, 1] = to_grid_rows(v)
@@ -221,7 +187,7 @@ def fit_day_hemi(scene: Scene, sky: np.ndarray, size: tuple[int, int]) -> dict:
 
     实测雾津街头与码头白天**独立得到同一个值 0.90**(而拍脑袋的 0.35 残留相关性 0.31–0.35)。
     """
-    from .geometry import srgb_to_linear
+    from .scene_geometry import srgb_to_linear
     lum = np.array([0.2126, 0.7152, 0.0722], np.float32)
     bg = resize_rgb(scene.bg_srgb, size) if size != scene.native else scene.bg_srgb
     y = np.log(np.maximum(srgb_to_linear(bg) @ lum, 1e-4))
@@ -258,7 +224,7 @@ def fit_albedo_mean(scene: Scene, sky: np.ndarray, day_hemi: float,
     ⚠ 必须先去霾再反解。霾是空气不是表面,把它算进反射率会让远景反射率虚高,
     整个均值被拉偏(实测雾津街头远/近亮度比 4.32)。
     """
-    from .geometry import srgb_to_linear
+    from .scene_geometry import srgb_to_linear
     lum = np.array([0.2126, 0.7152, 0.0722], np.float32)
     bg = resize_rgb(scene.bg_srgb, size) if size != scene.native else scene.bg_srgb
     lin = srgb_to_linear(bg) @ lum
@@ -301,7 +267,7 @@ def fit_haze(scene: Scene, geo: dict, size: tuple[int, int]) -> dict:
     黑表面上剩下的就是霾。所以按视深分层取**暗通道的低分位**,
     拟合 `haze(d) = H·(1 − exp(−k·d))`。
     """
-    from .geometry import srgb_to_linear
+    from .scene_geometry import srgb_to_linear
     bg = resize_rgb(scene.bg_srgb, size) if size != scene.native else scene.bg_srgb
     lin = srgb_to_linear(bg)
     d = geo['depth']
@@ -371,69 +337,90 @@ def character_band_wu(scene: Scene, char_scene_h: float = DEFAULT_CHAR_SCENE_H) 
 
 
 def scene_json_path(scene: Scene) -> Path:
-    from .geometry import SCENES_JSON
+    from .scene_geometry import SCENES_JSON
     return SCENES_JSON / f'{scene.sid}.json'
 
 
-def bake_skyvis_grid(geo: dict, grid: tuple[int, int, int], band: float) -> dict:
-    """3D 天穹可见性网格。返回 {'data': (nx,ny,nz) f32, 'bounds': {...}}。
+def bake_skyao_probe(geo: dict, char_wu: float, band: float,
+                     dims: tuple[int, int, int] | None = None,
+                     cells_per_char_xz: float = 4.0,
+                     cells_per_char_y: float = 4.0,
+                     height_chars: float = 2.0,
+                     max_cells: int = 220_000,
+                     spp: int | None = None) -> dict:
+    """**skyao probe** —— 能直接给角色着色的天穹遮蔽体。
 
-    判据与逐像素版 `sky_field` **同源**(同一组方向、同一套 march),
-    这是"角色与场景吃同一个遮蔽场"的前半条保证。
+    制作人 2026-09-01:「我要的就是能够直接烘焙出 skyao probe」。
+
+    ## 为什么必须存矩,不能存标量
+
+    角色的法线是**逐像素在变**的。要按任意法线求值,每格至少要 4 个数:
+
+        a0 = M0/4pi     a1 = M1/2pi        (上半球均匀测度下 vis 的 0/1 阶矩)
+        V(N) = clamp(a0 + a1.N, 0, cap0(N)) ,  cap0(N) = (1+N.up)/2
+
+    只存一个标量 `T(up)` 就只能把每个点当「朝上的板」—— 实测竖直面**偏高约 50%**
+    (分支文档记的是 61%)。旧的 `skyvis_grid.bin` 就是那个标量:24x10x16=3840 格、
+    每格 1 个 f32、而且 `manifest_rules.json` 明确不进发行包。
+    **那不是一个能用的 skyao probe。**
+
+    ## 密度
+
+    与 probe 图集**同一条规则**(按角色高度定,不按场景尺寸定),这样角色在两个体里
+    拿到的分辨率一致 —— 「角色与场景吃同一个遮蔽场」才是构造性的。
+    旧的 3840 格是 probe 的 1/31。
+
+    返回 `{'moments': (nx,ny,nz,4) f32, 'legacy_scalar': (nx,ny,nz) f32,
+    'grid': (nx,ny,nz), 'bounds': {...}, 'coverage': ...}`。
+
+    `legacy_scalar` 是矩的**派生量** `T(up) = a0 + a1_y`,只为兼容还在读
+    `skyvis_grid.bin` 的旧运行时代码 —— 不是第二个真相源,将来那条路改完就删。
     """
-    nx, ny, nz = grid
-    pos = geo['pos']
+    from .estimators import sky_moments
+    from .probe_layout import build_layout, dilate_invalid
+    from .trace import DepthField, buried
+
     R = geo['R']
-    depth = geo['depth']
-    ppu, cx, cy = geo['ppu'], geo['cx'], geo['cy']
-
-    # 世界 AABB:x/z 取可见面的 1~99 分位(掐掉边缘外推的野值)
-    px_ = pos[..., 0].ravel()
-    py_ = pos[..., 1].ravel()
-    pz_ = pos[..., 2].ravel()
-    x0, x1 = np.percentile(px_, [1, 99])
-    z0, z1 = np.percentile(pz_, [1, 99])
-    # y:覆盖「最低地面 → 最高地面 + 角色带」。
-    # ⚠ 地面本身的起伏(p2..p60)常常比角色还高,必须一并覆盖,否则远处地面上的角色
-    #   会落到网格外被钳到边界层(旧 probe 系统踩过:远端角色有效插值权重为 0)。
-    y0 = float(np.percentile(py_, 2)) - 0.02
-    y1 = float(np.percentile(py_, 60)) + band
-    y1 = max(y1, y0 + band * 1.5)
-
-    gx = np.linspace(x0, x1, nx)
-    gy = np.linspace(y0, y1, ny)
-    gz = np.linspace(z0, z1, nz)
-    X, Y, Z = np.meshgrid(gx, gy, gz, indexing='ij')
-    world = np.stack([X.ravel(), Y.ravel(), Z.ravel()], -1).astype(np.float32)
-    q = world @ R                      # world → q(R 正交 ⇒ 转置即逆)
-
-    up_norm = 0.0
-    acc = np.zeros(len(q), np.float32)
-    for elev in _SKY_ELEVS:
-        for azim in _SKY_AZIMS:
-            d_w = sun_dir(elev, azim)
-            d_q = (R.T @ d_w).astype(np.float32)
-            blocked = _march_blocked_from(q, d_q, depth, ppu, cx, cy,
-                                          steps=16, length=2.2, bias0=0.05, thick=2.0)
-            # 网格点在空气中,没有自身法线 ⇒ 权重只用方向的向上分量(半球余弦)
-            wgt = max(float(d_w[1]), 0.0)
-            acc += (~blocked).astype(np.float32) * wgt
-            up_norm += wgt
-    vis = (acc / max(up_norm, 1e-6)).reshape(nx, ny, nz)
-    return {
-        'data': np.clip(vis, 0.0, 1.0).astype(np.float32),
-        'bounds': {'x0': float(x0), 'x1': float(x1),
-                   'y0': float(y0), 'y1': float(y1),
-                   'z0': float(z0), 'z1': float(z1)},
-    }
+    field = DepthField.from_geo(geo)
+    lay = build_layout('uniform_grid', geo['pos'].reshape(-1, 3), char_wu,
+                       band=band, dims=dims, cells_per_char_xz=cells_per_char_xz,
+                       cells_per_char_y=cells_per_char_y,
+                       height_chars=height_chars, max_probes=max_cells)
+    grid = lay.grid
+    q = np.ascontiguousarray(lay.world_pos @ R, np.float32)   # world -> q(R 正交)
+    act = ~buried(q, field)
+    n = len(q)
+    a0 = np.zeros(n, np.float32)
+    a1 = np.zeros((n, 3), np.float32)
+    s0, s1 = sky_moments(np.ascontiguousarray(q[act]), R, field, spp=_moment_spp(spp))
+    a0[act], a1[act] = s0, s1
+    # 埋在几何里的格点拿到的是**精确的 0**;不填的话三线性会把它借给邻格,
+    # 把贴墙的角色压暗(与 probe 侧同一道工序)。
+    dilate_invalid(act.reshape(grid), [a0.reshape(grid), a1.reshape(*grid, 3)])
+    mom = np.concatenate([a0[:, None], a1], -1).reshape(*grid, 4).astype(np.float32)
+    vis = np.clip(a0 + a1[:, 1], 0.0, 1.0).reshape(grid).astype(np.float32)
+    return {'moments': mom, 'legacy_scalar': vis, 'grid': grid,
+            'bounds': lay.bounds, 'coverage': float(act.mean()),
+            'cell': lay.cell_size(), 'note': lay.note}
 
 
-def bake(sid: str, grid: tuple[int, int, int] = DEFAULT_GRID,
-         band: float | None = DEFAULT_BAND, work_w: int = WORK_W) -> dict:
-    """烘一个场景的全部几何场。band 缺省由角色真实高度推出。"""
-    from .relight import sky_field
+def _moment_spp(spp: int | None) -> int:
+    from .const import MOMENT_SPP
+    return MOMENT_SPP if spp is None else int(spp)
 
-    scene = Scene(sid)
+
+def bake(sid: str, grid: tuple[int, int, int] | None = None,
+         band: float | None = DEFAULT_BAND, work_w: int = WORK_W,
+         background: str | None = None) -> dict:
+    """烘**一张背景图**的几何场。band 缺省由角色真实高度推出。
+
+    `background` 缺省 = 场景当前生效的第一层背景;日夜场景要把每张时段原画各烘一遍
+    (清单取 `scene_geometry.scene_backgrounds`,或直接用 `bake_scene`)。
+
+    ⚠ **前置**:场景必须已经导出过深度(`pipeline.export_scene_depth`)——本函数读的是
+    `raw_depth_rg.png` + `depthConfig`,即运行时实际 march 的那份量化深度。
+    """
+    scene = Scene(sid, background=background)
     nw, nh = scene.native
     w = min(work_w, nw)
     h = max(1, round(nh * w / nw))
@@ -444,12 +431,11 @@ def bake(sid: str, grid: tuple[int, int, int] = DEFAULT_GRID,
     if band is None:
         band = scale['band']
 
-    # 2026-08-30「背景与烘焙绑死」:几何场也按背景图名分目录,与 lighting/ 同口径。
-    # 漏了这一步的后果是:夜背景没有自己的几何场,运行时回落到扁平那份 ——
+    # 2026-08-30「背景与烘焙绑死」:几何场按背景图名分目录。
+    # 漏了这一步的后果是:夜背景没有自己的几何场,运行时回落到别人那份 ——
     # **静默拿白天的法线/天穹可见性去照夜原画**,光的走向全错而画面上只是"不太对"。
-    _stem = scene.bg_name
-    _dot = _stem.rfind('.')
-    out = scene.rt_dir / 'lighting2' / (_stem[:_dot] if _dot > 0 else _stem)
+    # 2026-08-31 起与 probe 载荷**同住** `lighting/<背景基名>/`(原先在 lighting2/)。
+    out = scene.bake_dir
 
     # ---- 法线 ----
     n = geo['normal']
@@ -477,9 +463,30 @@ def bake(sid: str, grid: tuple[int, int, int] = DEFAULT_GRID,
     # ---- 反解反射率（角色标定常数的地基，见 fit_albedo_mean）----
     alb = fit_albedo_mean(scene, sky, day['day_hemi'], haze, (w, h))
 
-    # ---- 3D 天穹可见性网格 ----
-    g = bake_skyvis_grid(geo, grid, band)
-    _atomic_bytes(out / 'skyvis_grid.bin', g['data'].tobytes())
+    # ---- skyao probe:能按**任意法线**求值的天穹遮蔽体 ----
+    # ⚠ `grid` 是**覆写**:缺省 None = 按角色高度推密度(与 probe 图集同一条规则)。
+    #   2026-09-01 一度改成无条件推导而**照收不误**这个参数 —— 调用方传了不生效,
+    #   看起来能用而实际静默失效,比报错坏得多。
+    g = bake_skyao_probe(geo, scale['char_wu'], band, dims=grid)
+    # 落盘布局 = **按 Z 切片横向平铺的 2D 图集,f16 RGBA** —— 与 `vol_rad.bin`
+    # 同一套。这样运行时 `new Uint16Array(buf)` 直接建 `rgba16float` 纹理、
+    # 复用着色器里已验证的 `sampleVol3` 平铺三线性,不必在 JS 里手搓 f32→f16。
+    # ⚠ 硬件线性过滤会跨切片边界串色,插值必须 texelFetch 自己算(平铺图集的经典坑)。
+    gx_, gy_, gz_ = g['grid']
+    tiles_x = int(math.ceil(math.sqrt(gz_)))
+    tiles_y = int(math.ceil(gz_ / tiles_x))
+    atlas = np.zeros((tiles_y * gy_, tiles_x * gx_, 4), np.float16)
+    for z in range(gz_):
+        ty, tx = divmod(z, tiles_x)
+        atlas[ty * gy_:(ty + 1) * gy_, tx * gx_:(tx + 1) * gx_] = \
+            g['moments'][:, :, z, :].transpose(1, 0, 2)      # (nx,ny,4) -> (ny,nx,4)
+    _atomic_bytes(out / 'skyao_probe.bin', atlas.tobytes())
+    g['tiles'] = (tiles_x, tiles_y)
+    g['atlas_size'] = (tiles_x * gx_, tiles_y * gy_)
+    # 旧标量文件:矩的**派生量** T(up),只为兼容还在读它的运行时代码。
+    # 不是第二个真相源;那条路改完就删(见 bake_skyao_probe 的 docstring)。
+    _atomic_bytes(out / 'skyvis_grid.bin', g['legacy_scalar'].tobytes())
+    grid = g['grid']
 
     # ---- GI 命中图（几何项，与光无关；运行时拿它查当前的重打光结果）----
     gi = bake_gi_hitmap(geo, grid, g['bounds'])
@@ -487,14 +494,41 @@ def bake(sid: str, grid: tuple[int, int, int] = DEFAULT_GRID,
 
     # ---- meta ----
     bg_sha1 = hashlib.sha1(scene_bg_bytes(scene)).hexdigest()[:12]
+    # 深度图的哈希:本载荷是从**这一份量化深度**推出来的。重导一次深度(改了笔刷编辑 /
+    # 换了模型 / 调了标定)而不重烘几何场,法线与天穹可见性就与运行时 march 的深度对不上
+    # ——症状是"光的走向有点怪"而**没有任何报错**。存下来,校验器才抓得住。
+    # (这类"文件都在、路径都对、唯独内容换了"的静默失效,2026-08-28 已经吃过一次亏。)
+    depth_sha1 = hashlib.sha1(scene_depth_bytes(scene)).hexdigest()[:12]
     meta = {
         'version': PAYLOAD_VERSION,
         'background_sha1': bg_sha1,
+        'depth_sha1': depth_sha1,
         'work': {'w': w, 'h': h},
         'native': {'w': nw, 'h': nh},
         'cal': {'ppu': geo['ppu'], 'cx': geo['cx'], 'cy': geo['cy']},
         'M': [[float(v) for v in row] for row in geo['R']],
         'grid': {'nx': grid[0], 'ny': grid[1], 'nz': grid[2], **g['bounds']},
+        # ★ skyao probe:**能给角色着色的那个**。每格 4 个 f32 = (a0, a1x, a1y, a1z),
+        #   C 序 (nx,ny,nz,4)。运行时按 V(N)=clamp(a0+a1.N, 0, (1+N.up)/2) 求值。
+        #   密度与 probe 图集同一条规则(按角色高度定)。
+        'skyao_probe': {
+            'file': 'skyao_probe.bin', 'channels': 4, 'dtype': 'float16',
+            'layout': 'Z 切片横向平铺的 2D 图集,行=y 列=x,切片按 tiles_x 横排;'
+                      'RGBA = a0,a1x,a1y,a1z',
+            'eval': 'V(N)=clamp(a0+a1.N, 0, (1+N.up)/2)  —— N 与 a1 都在 '
+                    'depthConfig 的 det=+1 世界系(不是 lighting.json 那个 det=-1 的 M)',
+            'frame': 'depthConfig.M.R (det=+1)',
+            'tiles_x': tiles_x, 'tiles_y': tiles_y,
+            'atlas_w': g['atlas_size'][0], 'atlas_h': g['atlas_size'][1],
+            'nx': grid[0], 'ny': grid[1], 'nz': grid[2], **g['bounds'],
+            'cell_wu': [float(v) for v in g['cell']],
+            'coverage': g['coverage'],
+            'cells_per_char_xz': 4.0, 'cells_per_char_y': 4.0, 'height_chars': 2.0,
+            'spp': _moment_spp(None)},
+        # ⛔ 旧标量场:上面那份矩的派生量 T(up)=a0+a1y。**按任意法线求值做不到**
+        #   (竖直面偏高约 50%),留着只为兼容还在读它的运行时代码,改完即删。
+        'skyvis_grid_deprecated': {'file': 'skyvis_grid.bin', 'channels': 1,
+                                   'derived_from': 'skyao_probe.bin'},
         'band': band,
         # 刻度链:角色在这张画里占多少 wu。**本项目唯一的尺度参照**——
         # 每张原画取景远近不同,同一个角色跨 28 个场景占 0.17–0.97 wu(差 5.7 倍),
@@ -512,7 +546,12 @@ def bake(sid: str, grid: tuple[int, int, int] = DEFAULT_GRID,
         #   （除数是角色图集的**实测**平均反射率 0.0381，不是教科书的 0.25）。
         #   缺它角色会**系统性**偏亮/偏暗，且怎么调灯都对不上——错的是尺度不是光。
         'albedo': alb,
-        'sky_dirs': {'elevs': list(_SKY_ELEVS), 'azims': list(_SKY_AZIMS)},
+        # 天穹遮蔽的真实估计口径。2026-09-01 之前这里写的是 `sky_dirs`
+        # (6 方位 x 2 仰角的固定方向组)—— 那组方向已随旧算法一起删掉,
+        # 继续写它就是**假的产物出处**:字段说用了这 12 个方向,实际根本没用。
+        'sky_sampling': {'estimator': 'mc_uniform_upper_hemisphere',
+                         'spp': _moment_spp(None), 'seed': GATHER_SEED,
+                         'tracer': 'trace.py(无射程,三条精确终止)'},
         # GI 命中图：3D 网格逐方向撞到的 work px（归一化 u16，miss=0xFFFF）。
         # ★ 与光**无关**的几何项——摆灯 / 改时刻 / 调天光都不用重烘。
         #   运行时拿它去查**当前**的重打光结果，就得到「角色如何被 relight 后的场景照亮」。
@@ -521,11 +560,12 @@ def bake(sid: str, grid: tuple[int, int, int] = DEFAULT_GRID,
                'hit_rate': gi['hit_rate']},
         'depth_range': list(geo['d_range']),
     }
-    _atomic_bytes(out / 'meta.json',
+    _atomic_bytes(out / 'geometry.json',
                   (json.dumps(meta, ensure_ascii=False, indent=1) + '\n').encode('utf-8'))
 
     return {
         'dest': str(out),
+        'key': out.name,
         'scale': scale,
         'band': band,
         'day': day,
@@ -535,16 +575,40 @@ def bake(sid: str, grid: tuple[int, int, int] = DEFAULT_GRID,
                'bytes': int(gi['data'].nbytes)},
         'skyvis_px': {'min': float(sky.min()), 'max': float(sky.max()),
                       'mean': float(sky.mean())},
-        'skyvis_grid': {'min': float(g['data'].min()), 'max': float(g['data'].max()),
-                        'mean': float(g['data'].mean()),
-                        'count': int(g['data'].size)},
+        'skyao_probe': {'grid': list(g['grid']), 'cells': int(np.prod(g['grid'])),
+                        'cell_wu': [float(v) for v in g['cell']],
+                        'coverage': g['coverage'],
+                        'a0_max': float(g['moments'][..., 0].max()),
+                        'note': g['note']},
+        'skyvis_grid': {'min': float(g['legacy_scalar'].min()),
+                        'max': float(g['legacy_scalar'].max()),
+                        'mean': float(g['legacy_scalar'].mean()),
+                        'count': int(g['legacy_scalar'].size)},
         'bounds': g['bounds'],
-        'bytes': sum(f.stat().st_size for f in out.iterdir() if f.is_file()),
+        # ⚠ 只统计**本次写的**五个文件。`out` 现在与 probe 载荷同住一个目录,
+        #   照旧 `iterdir()` 求和会把 atlas / 体素卷一起算进来(多报几十 MB)。
+        'bytes': sum((out / f).stat().st_size for f in FIELD_FILES if (out / f).exists()),
     }
+
+
+def bake_scene(sid: str, **kw) -> list[dict]:
+    """烘这个场景的**全部时段原画**(顶层 + timeVariants),每张一套产物。
+
+    这才是"烘一个场景"该有的语义:漏掉夜那张的话,夜里运行时就是"没烘载荷",
+    整套光照安静禁用 —— 而白天一切正常,极难联想到是烘漏了。
+    """
+    from .scene_geometry import scene_backgrounds
+    return [bake(sid, background=bg, **kw) for bg in scene_backgrounds(sid)]
 
 
 def scene_bg_bytes(scene: Scene) -> bytes:
     return (scene.rt_dir / scene.bg_name).read_bytes()
+
+
+def scene_depth_bytes(scene: Scene) -> bytes:
+    """本次烘焙实际读的那张深度图的原始字节(哈希门用)。"""
+    cfg = json.loads(scene_json_path(scene).read_text(encoding='utf-8')).get('depthConfig') or {}
+    return (scene.rt_dir / cfg.get('depth_map', 'raw_depth_rg.png')).read_bytes()
 
 
 def main() -> None:
@@ -552,15 +616,17 @@ def main() -> None:
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, 'reconfigure'):
             stream.reconfigure(encoding='utf-8', errors='replace')
-    ap = argparse.ArgumentParser(prog='scene_relight.bake')
+    ap = argparse.ArgumentParser(prog='character_lighting_lab.scene_fields')
     ap.add_argument('--scene')
     ap.add_argument('--all', action='store_true')
+    ap.add_argument('--background',
+                    help='只烘这一张背景图(缺省:该场景的**全部**时段原画各烘一套)')
     ap.add_argument('--band', type=float, default=None,
                     help='角色可达高度带(wu)。缺省由角色真实高度推出,别手填 1.6')
     ap.add_argument('--work-w', type=int, default=WORK_W)
     args = ap.parse_args()
 
-    from .geometry import list_scenes
+    from .scene_geometry import list_scenes
     if args.all:
         sids = [s['id'] for s in list_scenes() if s['bg_ok'] and s['depth']]
     elif args.scene:
@@ -568,24 +634,36 @@ def main() -> None:
     else:
         raise SystemExit('要 --scene <id> 还是 --all ?')
 
+    from .scene_geometry import scene_backgrounds
     for sid in sids:
         try:
-            r = bake(sid, band=args.band, work_w=args.work_w)
+            bgs = [args.background] if args.background else scene_backgrounds(sid)
         except Exception as e:                       # noqa: BLE001
-            print(f'{sid}: 失败 {type(e).__name__}: {e}')
+            print(f'{sid}: 取背景清单失败 {type(e).__name__}: {e}')
             continue
-        px = r['skyvis_px']
-        gr = r['skyvis_grid']
-        sc = r['scale']
-        print(f"{sid}: → lighting2/ ({r['bytes']/1024:.0f} KB)")
-        print(f"   刻度 角色 {sc['char_wu']:.3f} wu(摆灯的尺度参照)"
-              f"  角色带 {r['band']:.3f} wu")
-        hz = r['haze']
-        print(f"   逐像素天穹可见性 {px['min']:.2f}–{px['max']:.2f} 均 {px['mean']:.2f}"
-              f"  网格 {gr['count']} 点 均 {gr['mean']:.2f}")
-        print(f"   画内遮蔽响应 day_hemi={r['day']['day_hemi']:.2f}"
-              f"  白天大气散射 k={hz['k']:.2f} H={hz['strength']:.4f}")
-
+        if len(bgs) > 1:
+            print(f'{sid}: {len(bgs)} 张时段原画,各烘一套 —— ' + ', '.join(bgs))
+        for bg in bgs:
+            try:
+                r = bake(sid, band=args.band, work_w=args.work_w, background=bg)
+            except Exception as e:                   # noqa: BLE001
+                print(f'{sid} [{bg}]: 失败 {type(e).__name__}: {e}')
+                continue
+            px = r['skyvis_px']
+            gr = r['skyvis_grid']
+            sp = r['skyao_probe']
+            sc = r['scale']
+            hz = r['haze']
+            print(f"{sid}: → lighting/{r['key']}/ ({r['bytes']/1024:.0f} KB)")
+            print(f"   刻度 角色 {sc['char_wu']:.3f} wu(摆灯的尺度参照)"
+                  f"  角色带 {r['band']:.3f} wu")
+            print(f"   逐像素天穹可见性 {px['min']:.2f}–{px['max']:.2f} 均 {px['mean']:.2f}")
+            print(f"   skyao probe {sp['grid'][0]}x{sp['grid'][1]}x{sp['grid'][2]}"
+                  f" = {sp['cells']:,} 格 x4 f32  格边 {sp['cell_wu'][0]:.4f} wu"
+                  f"  有效 {sp['coverage']*100:.0f}%  a0上界 {sp['a0_max']:.3f}(无遮挡=0.5)")
+            print(f"   画内遮蔽响应 day_hemi={r['day']['day_hemi']:.2f}"
+                  f"  白天大气散射 k={hz['k']:.2f} H={hz['strength']:.4f}"
+                  f"  反解反射率中位 {r['albedo']['albedo_mean']:.4f}")
 
 if __name__ == '__main__':
     main()

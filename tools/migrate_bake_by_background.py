@@ -1,4 +1,8 @@
-"""烘焙产物迁移:扁平 `lighting/` `lighting2/` → 按背景图名分的 `<family>/<图名>/`。
+"""烘焙产物迁移(**一次性,已跑完**):扁平 → 按背景图名分的 `<family>/<图名>/`。
+
+⚠ 2026-08-31 起 `lighting2/` 这一族**已经不存在**了(几何场并进 `lighting/<图名>/`,
+  见 `tools/migrate_lighting_payloads.py`)。本脚本留作沿革,对 `lighting2` 那一半
+  已是空转;真要再迁扁平布局的话它对 `lighting/` 那一半仍然成立。
 
 ## 为什么
 

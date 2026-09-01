@@ -21,6 +21,7 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import sys
 import time
 from pathlib import Path
@@ -33,10 +34,46 @@ from scipy.ndimage import (
     maximum_filter,
 )
 
+
+# ---------------------------------------------------------------------------
+# 原子落盘(2026-08-31 审计必修):桌面壳把烘焙子进程塞进了 kill-on-close 的
+# Job Object,关窗 = 在**任意指令处** TerminateProcess。直接 write_bytes 先截断
+# 后写入,中途被杀会在 runtime/scenes/<id>/lighting/ 留下**长度不足但看着正常**
+# 的 .bin,无任何标记(改桌面壳之前,孤儿进程反而会把产物写完)。
+# 一切"游戏要读的产物"必须先写 .tmp 再 os.replace 就位——替换是原子的,
+# 被杀只留 .tmp,正式名下永远是完整旧版或完整新版。
+# ---------------------------------------------------------------------------
+def _awrite(dest: Path, data: bytes) -> None:
+    tmp = dest.with_suffix(dest.suffix + '.tmp')
+    tmp.write_bytes(data)
+    try:
+        from tools.atomic_io import retry_transient   # Windows 句柄占用退避(见该模块头注)
+        retry_transient(os.replace, tmp, dest)
+    except ImportError:                               # 裸脚本方式跑(无 repo root):os.replace 同样原子
+        os.replace(tmp, dest)
+
+
+def _awrite_text(dest: Path, text: str) -> None:
+    _awrite(dest, text.encode('utf-8'))
+
+
+def _asave(img, dest: Path, **kw) -> None:
+    """PIL 图的原子落盘:save 进内存 buffer 再 _awrite 就位。"""
+    import io
+    buf = io.BytesIO()
+    img.save(buf, format='PNG', **kw)
+    _awrite(dest, buf.getvalue())
+
+
 TOOL = Path(__file__).resolve().parent
 OUT = TOOL / 'out'
 ROOT = TOOL.parents[1]            # repo root (tools/character_lighting_lab/..)
 sys.path.insert(0, str(ROOT))
+
+# 蒙特卡洛烘焙(2026-09-01):tracer / 采样器 / 估计器都在同目录的独立模块里,
+# probe 与天穹遮蔽共用同一份 —— 判据只有一处,见 trace.py 的铁律。
+from tools.character_lighting_lab.const import PROBE_SPP        # noqa: E402
+from tools.character_lighting_lab.estimators import AK          # noqa: E402
 
 W_G = 512                 # working geometry resolution (width)
 MAX_GAIN_EV = math.log2(10.0)
@@ -56,12 +93,27 @@ DEFAULTS = dict(
     hdr_method=0,          # LDR→HDR 恢复法:0 emitter门 / 1 逆Reinhard / 2 gamma / 3 亮度扩展
     hdr_pa=0.7,            # 方法参数(1=展开硬度 / 2=gamma强度 / 3=起始亮度阈值)
     vol_nx=192, vol_nz=64, # voxel grid (ny derived from aspect)
-    probe_nx=20, probe_ny=6, probe_nz=14,  # WORLD-space probe grid (x, up, depth)
+    # ---- probe:分布与积分,2026-09-01 起都是烘焙期参数,不再是写死的常量 ----
+    probe_strategy='uniform_grid',   # 见 probe_layout.STRATEGIES('legacy_fixed' 供 A/B)
+    probe_dims=None,                 # None = 按角色高度推密度;给元组则显式指定格数
+    #: 横纵**解耦**(制作人 2026-09-01:「纵向 2 格够了,水平必须提起来」)。
+    probe_cells_per_char_xz=4.0,     # 横向:每个角色高几格
+    probe_cells_per_char_y=2.0,      # 纵向:每个角色高几格
+    #: probe 盒总高 = 角色身高 x 这个数。**不覆盖全场景最高点** —— 上面没有角色。
+    probe_height_chars=2.0,
+    probe_max=200_000,               # 格数上限(载荷体积护栏)
+    probe_spp=256,                   # 每颗 probe 的方向样本数(分层 QMC)
+    #: 逃逸辐射:射线跑出伪世界带走多少。**缺省纯黑**(制作人 2026-09-01)。
+    #: 可选 {'mode':'color'|'skybox'|'scene_derived', ...},见 escape.py。
+    escape={'mode': 'black'},
+    probe_band=None,       # 角色可达高度带(wu);None = 由角色实高推出(char_wu*1.15)。
+                           # ⚠ 旧值写死 1.6,建立在"角色高 1.5 wu"的假设上,而实测
+                           #   角色是 0.17~0.97 wu —— 6 层里有 5 层烘在够不着的空中。
+    # ⚠ 已废弃(留名只为读旧 manifest 不炸):probe_nx/ny/nz -> probe_dims、
+    #   probe_dirs -> probe_spp、fold -> 已删(见 stage_probes 的表)。
+    probe_nx=20, probe_ny=6, probe_nz=14,
     probe_dirs=196,
-    probe_band=1.6,        # **角色最大活动高度**(世界单位,中位地面往上)= probe 盒顶。
-                           # ≈ 角色身高 1.5 + 余量;人只在地上活动,头顶以上没人,
-                           # 烘上去就是稀释那 ny 层的竖直分辨率(实测见 world_bounds)。
-    fold=1,                # double-sided fold for camera-side rays (0/1)
+    fold=1,                # ⛔ 已无消费者:朝相机的射线不再镜像,老实逃逸
     semantic_gate=1,       # SAM3 object-gated emitter confidence (0/1)
     relief=1.8,            # structure depth gain relative to the pinned ground
                            # (compensates monocular vertical-contrast compression)
@@ -548,74 +600,12 @@ def stage_voxelize(cal: dict, lay: dict, base_front: np.ndarray, emit_front: np.
                 qz_min=qz_min, qz_max=qz_max)
 
 
-def _ray_box_enter(pos: np.ndarray, dirs_i: np.ndarray, N: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """把每条射线推进到体素盒 [0,N-1] 的入口(slab 求交),返回新起点与"能进盒"掩码。
-
-    为什么需要:伪世界只覆盖画面那一块 q 盒,**画面上边缘以上就没有数据了**。而世界里
-    "地面往上 1.5m"(角色头顶)对远处地面来说恰恰落在图外——实测 44~83% 的角色位置如此。
-    起点在盒外就一步出界的老写法会让这些 probe 全程 miss、被判废,角色上半身只能退回
-    全局环境。盒外是**未观测的空气**(closure 本来就用 J̄ 兜 miss),射线理应能从那儿飞进来
-    打到下面的几何——这与"把体素盒往上垫一层空体素"数学等价,但不花一分内存。"""
-    d = np.where(np.abs(dirs_i) < 1e-9, 1e-9, dirs_i)
-    lo = (0.0 - pos) / d
-    hi = ((N - 1).astype(np.float32) - pos) / d
-    t_near = np.maximum(np.minimum(lo, hi), 0.0).max(-1)      # 已在盒内 → 0
-    t_far = np.maximum(lo, hi).min(-1)
-    enters = t_far >= t_near
-    return pos + dirs_i * t_near[..., None], enters
-
-
-def _trace(vol: dict, origins: np.ndarray, dirs: np.ndarray, step=0.9, max_steps=220,
-           fold: bool = False):
-    """March rays in voxel index space. origins (P,3) index coords, dirs (D,3)
-    in q-space (will be scaled per-axis to index space). Returns radiance (P,D,3)
-    and hit mask (P,D).
-    origins 允许在盒外:先 _ray_box_enter 推进到入口再走(见该函数注释)。
-    fold: double-sided paper closure -- camera-side rays (dz<0) are traced with
-    the qz component mirrored, so they sample the local OBSERVED half instead
-    of exiting instantly. Misses after folding fall to the caller's ambient."""
-    if fold:
-        dirs = dirs.copy()
-        dirs[:, 2] = np.abs(dirs[:, 2])
-    Nx, Ny, Nz = vol['Nx'], vol['Ny'], vol['Nz']
-    scale = np.array([(Nx - 1) / (vol['qx_max'] - vol['qx_min']),
-                      (Ny - 1) / (vol['qy_max'] - vol['qy_min']),
-                      (Nz - 1) / (vol['qz_max'] - vol['qz_min'])], np.float32)
-    dirs_i = dirs[None, :, :] * scale[None, None, :]
-    dl = np.linalg.norm(dirs_i, axis=-1, keepdims=True)
-    dirs_i = dirs_i / np.maximum(dl, 1e-9)
-    Pn, Dn = origins.shape[0], dirs.shape[0]
-    pos = np.repeat(origins[:, None, :], Dn, axis=1).astype(np.float32)
-    pos, alive = _ray_box_enter(pos, np.broadcast_to(dirs_i, pos.shape),
-                                np.array([Nx, Ny, Nz], np.float32))
-    hit = np.zeros((Pn, Dn), bool)
-    hidx = np.full((Pn, Dn), -1, np.int64)     # flat voxel index of first hit
-    occ3 = vol['occ3']
-    for _ in range(max_steps):
-        if not alive.any():
-            break
-        pos += dirs_i * step * alive[..., None]
-        xi = np.round(pos[..., 0]).astype(np.int32)
-        yi = np.round(pos[..., 1]).astype(np.int32)
-        zi = np.round(pos[..., 2]).astype(np.int32)
-        inside = (xi >= 0) & (xi < Nx) & (yi >= 0) & (yi < Ny) & (zi >= 0) & (zi < Nz)
-        xic = np.clip(xi, 0, Nx - 1); yic = np.clip(yi, 0, Ny - 1); zic = np.clip(zi, 0, Nz - 1)
-        solid = occ3[zic, yic, xic] & inside & alive
-        if solid.any():
-            hidx[solid] = (zic[solid].astype(np.int64) * Ny + yic[solid]) * Nx + xic[solid]
-            hit |= solid
-        alive &= inside & ~solid
-    return hidx, hit
-
-
-def _gather_at(vol_field: np.ndarray, hidx: np.ndarray) -> np.ndarray:
-    """Sample a (Nz,Ny,Nx,3) field at flat hit indices; misses -> 0."""
-    flat = vol_field.reshape(-1, 3)
-    out = np.zeros((*hidx.shape, 3), np.float32)
-    m = hidx >= 0
-    out[m] = flat[hidx[m]]
-    return out
-
+# ---------------------------------------------------------------------------
+# 2026-09-01 删除:`_ray_box_enter` / `_trace` / `_gather_at` —— 体素 DDA 那一套。
+# probe gather 改走 `trace.py` 的唯一 tracer(直接 march 深度场,亚像素步长,
+# 三条精确终止),体素 index 空间里 0.9 步长 + round 采样会整段跳过 1 体素厚的墙。
+# 体素卷本身**没删**(`stage_voxelize` 照旧产 vol_rad/vol_emit),运行时 RT 模式还在读。
+# ---------------------------------------------------------------------------
 
 def stage_lights(cal: dict, lay: dict, emit_front: np.ndarray, wb: dict, P: dict,
                  luma_tau=2e-3, max_lights=48, split_wu=0.9) -> list[dict]:
@@ -683,59 +673,58 @@ def stage_lights(cal: dict, lay: dict, emit_front: np.ndarray, wb: dict, P: dict
     return surfels
 
 
-def stage_ambient(vol: dict, cal: dict, lay: dict, P: dict) -> dict:
-    """J-bar: gather at a few free points near character height around centre,
-    renormalized over hits, projected to SH L2 on radiance."""
-    theta = cal['theta']
-    dirs = fib_sphere(768)
-    # sample points: centre of walkable area at ~0.8 world units above ground
-    Hg, Wg = cal['d'].shape
-    ys, xs = np.where(cal['ground_mask'])
-    pts = []
-    for f in ((0.5, 0.5), (0.35, 0.6), (0.65, 0.6)):
-        j = int(len(xs) * f[0]) if len(xs) else 0
-        sx, sy = (xs[j], ys[j]) if len(xs) else (Wg // 2, int(Hg * 0.7))
-        qx = (sx - cal['cx']) / cal['ppu']; qyv = (cal['cy'] - sy) / cal['ppu']
-        dz = lay['d_walk'][sy, sx] - 0.8 * math.sin(theta) / 1.0  # lift ~0.8 wu toward camera
-        ix = (qx - vol['qx_min']) / (vol['qx_max'] - vol['qx_min']) * (vol['Nx'] - 1)
-        iy = (qyv + 0.8 * math.cos(theta) / 1.0 - vol['qy_min']) / (vol['qy_max'] - vol['qy_min']) * (vol['Ny'] - 1)
-        iz = (dz - vol['qz_min']) / (vol['qz_max'] - vol['qz_min']) * (vol['Nz'] - 1)
-        pts.append([ix, iy, iz])
-    hidx, hit = _trace(vol, np.array(pts, np.float32), dirs)
-    L = _gather_at(vol['rad3'], hidx) + _gather_at(vol['emi3'], hidx)   # J-bar sees FULL
-    hits = hit.reshape(-1)
-    Lf = L.reshape(-1, 3)[hits]
-    df = np.repeat(dirs[None], len(pts), 0).reshape(-1, 3)[hits]
-    if len(Lf) < 10:
-        sh = np.zeros((9, 3), np.float32); mean = np.zeros(3, np.float32)
-    else:
-        B = sh_basis(df)
-        sh = (B[:, :, None] * Lf[:, None, :]).mean(0) * (4.0 * math.pi)
-        mean = Lf.mean(0)
-    print(f'[ambient] hit fraction {hits.mean()*100:.1f}%, mean {mean.round(3)}')
-    return dict(sh=sh.astype(np.float32), mean=mean, hit_fraction=float(hits.mean()))
+def stage_ambient(escape_of, P: dict) -> dict:
+    """逃逸辐射的 SH-L2 投影 —— 运行时 `uAmbSH`(**辐亮度**系数,A_l 在着色器里乘)。
+
+    2026-09-01 重写。旧实现是 J̄:在 3 个点各射 768 条进体素卷,把命中到的辐射
+    平均成一个全局 SH,当作「miss 方向该收到多少光」。两个问题:
+
+    1. **它是从画面反推逃逸辐射的**。射线已经离开伪世界了,画面里没有任何东西
+       能回答它带走多少辐射。`lighting-rebuild` 的设计文档为这类做法记过一次
+       翻车(`estimate_sky_radiance`),明令不许以任何形式复活。
+    2. 命中率只有 60~70%,也就是**每颗 probe 有 30~40% 的方向吃同一个全局常数**,
+       叠上 SH-L2 的低频截断 ⇒ 平。
+
+    现在它就是 `escape.make_escape_sampler` 给的那个剖面的球谐投影 ——
+    逃逸辐射是**烘焙期的自由输入**(缺省纯黑),probe 与 RT 两条路吃同一份。
+    """
+    dirs = fib_sphere(4096)          # 纯求积节点,不 march
+    L = np.asarray(escape_of(dirs), np.float64)
+    B = sh_basis(dirs).astype(np.float64)
+    sh = (B[:, :, None] * L[:, None, :]).mean(0) * (4.0 * math.pi)
+    mean = L.mean(0)
+    print(f'[ambient] 逃逸辐射 {_escape_desc(P)}  mean {np.round(mean, 4)}')
+    return dict(sh=sh.astype(np.float32), mean=mean.astype(np.float32),
+                hit_fraction=0.0)
+
+
+def _escape_desc(P: dict) -> str:
+    from tools.character_lighting_lab.escape import describe
+    return describe(P.get('escape'))
 
 
 A_L = np.array([math.pi, 2.0 * math.pi / 3.0, math.pi / 4.0], np.float32)
 
 
-def world_bounds(cal: dict, lay: dict, P: dict) -> dict:
-    """WORLD-space AABB of the character-relevant band: ground .. ground+band.
+def world_bounds(cal: dict, lay: dict, P: dict, band: float | None = None,
+                 char_wu: float | None = None, height_chars: float = 2.0) -> dict:
+    """probe 盒的世界 AABB。x/z 取地面片的世界范围;**y 的高度 = 角色身高 x height_chars**。
 
-    这就是 probe 盒。x/z 取地面片的世界范围;y **由"人能到哪"定死**:
+    制作人 2026-09-01:「这个 probe 总高度就不应该覆盖全场景最高点,
+    而是只覆盖角色身高的 2 倍即可。」
 
-    - 下界:最低地面往下一点点(人站地面上,地下没人)。
-    - 上界:**中位地面 + 角色最大活动高度**(`probe_band`,默认 1.6 ≈ 角色身高 1.5 + 余量)。
-      人只在地上活动,头顶以上没人,烘上去纯浪费层数。
+    盒高是**显式的常数倍角色高**,不再由「地面起伏 + band」拼出来:后者在起伏大的
+    场景里会把盒子撑高,层距被稀释,而多出来的那一截**根本没有角色**。
+    `world_top`(画面最高点)只留作诊断打印,不参与定界。
 
-    别再按"地面 + 一个宽带"或"顶到画面/体素盒"去摊——实测(bridge,6 层,对角色
-    身上 0.1~1.55m 与射线真值比):盒顶 1.35~1.6 平均误差 8.4%,摊到 2.45/2.85 是
-    12.4%/11.1%(层距被稀释),压到世界最高点 1.10 又太紧(头顶被钳,17%)。
-    层数就那么几层,**盒顶贴着人的头顶**时最准。
-
-    地面起伏大时用 g98+0.3 兜底(站高处的人头顶也得有层);再套一道常识上界
-    "不超过世界最高点 3m"。盒**不必**整个落在体素盒(画面盒)内——盒外由 _trace
-    的射线-盒求交正常采样(见 _ray_box_enter),但那是兜底,不是往天上放 probe 的理由。"""
+    历史(别再走回去):
+    - 最早写死 `probe_band = 1.6 wu`,建立在「角色高 1.5 wu」的假设上,而实测
+      角色 **0.17~0.97 wu** —— 6 层里 5 层烘在够不着的空中(纵向跨 0.48 层);
+    - 接着改成 `g98 + band`,盒高变成「地面起伏 + 一个角色高」——比 1.6 好得多,
+      但仍然让起伏决定盒高,起伏大的场景照样稀释;
+    - 现在:盒高 = `height_chars x char_wu`,与场景起伏解耦。
+      起伏大到兜不住时**大声报**,不默默把上半身钳到顶层。
+    """
     theta = cal['theta']
     M = world_matrix(theta, math.radians(float(P.get('azimuth_deg', 0.0))))
     Hg, Wg = cal['d'].shape
@@ -753,13 +742,37 @@ def world_bounds(cal: dict, lay: dict, P: dict) -> dict:
     Yfront = (np.stack([qx, qyp, cal['d']], -1).reshape(-1, 3) @ M.T)[:, 1]
     world_top = float(np.percentile(Yfront, 99.9))
     g02, g50, g98 = (float(v) for v in np.percentile(Yg, [2, 50, 98]))
-    band = float(P['probe_band'])                 # 角色最大活动高度(地面往上)
-    y0 = g02 - 0.15
-    y1 = max(g50 + band, g98 + 0.30)              # 头顶为界;地面起伏大时抬一点兜底
-    y1 = min(y1, world_top + 3.0)                 # 常识上界:人不会比世界最高点还高 3m
-    y1 = max(y1, y0 + 0.80)                       # 别塌成一张饼
-    print(f'[bounds] 地面 P2/P50/P98 {g02:.2f}/{g50:.2f}/{g98:.2f}  世界最高点 {world_top:.2f}  '
-          f'角色活动高 {band}  → probe 盒 y[{y0:.2f},{y1:.2f}]')
+    # 角色最大活动高度(地面往上)。2026-09-01 起由调用方按**角色实高**推出后传进来;
+    # P['probe_band'] 只是显式覆写(缺省 None)。写死 1.6 的老路见 DEFAULTS 的警告。
+    if band is None:
+        band = P.get('probe_band')
+    if band is None:
+        raise ValueError('world_bounds: 缺 band —— 调用方要按角色实高推出再传进来'
+                         '(probe_layout 的语义),不许回落到写死的 1.6')
+    band = float(band)
+    # ⚠ 2026-09-01:这四个边界原本写死为 0.15 / 0.30 / 3.0 / 0.80 wu ——
+    #   与 `probe_band=1.6` 同源,全是按「角色高 1.5 wu」定的。角色实高 0.17~0.97 wu 时
+    #   它们**反而成为约束**:band 缩到 0.20 了,`y0+0.80` 那条硬地板又把盒子撑回 0.8 wu,
+    #   6 层里照样有 4 层烘在够不着的空中,密度旋钮被静默架空。
+    #   现在一律按 band 表达 —— 括号里是旧值除以旧 band(1.6)得到的同一比例。
+    # ---- 盒高 = **地面起伏 + 角色身高 x height_chars**(制作人 2026-09-01 定)----
+    # 上界跟的是**地面**(P98),不是画面最高点 —— 「不覆盖全场景最高点」的意图保住了;
+    # 但盒子必须把「站在最高地面上的人」整个装进去,否则他上半身落到网格外被钳到顶层
+    # (旧 probe 系统的原病)。
+    #
+    # ⚠ 纯 `height_chars x char` 的写法**不够**:实测 bridge_underpass 地面起伏
+    #   0.374 wu 已经超过「角色 0.170 x2 = 0.341」的盒高,站高处的角色整个人在盒外。
+    #   平地场景(雾津街头起伏 0.121)看不出来,有坡的场景直接翻车。
+    char_h = float(char_wu) if char_wu else float(band)
+    head_room = float(height_chars) * char_h      # 最高地面之上要留几个角色高
+    y0 = g02 - 0.05 * char_h                      # 脚下留一点(人站地面上,地下没人)
+    y1 = g98 + head_room
+    relief = g98 - g02
+    fits = '✓' if y1 >= g98 + char_h - 1e-6 else '⚠ 头顶仍被钳(不该发生,查 g98)'
+    print(f'[bounds] 地面 P2/P50/P98 {g02:.3f}/{g50:.3f}/{g98:.3f}  '
+          f'起伏 {relief:.3f}  世界最高点 {world_top:.2f}(仅诊断)')
+    print(f'[bounds] 盒高 = 起伏 {relief:.3f} + 角色 {char_h:.3f}x{height_chars:g} = '
+          f'{y1-y0:.3f} wu  → probe 盒 y[{y0:.3f},{y1:.3f}]  {fits}')
     return dict(M=M, x0=x0, x1=x1, y0=y0, y1=y1, z0=z0, z1=z1)
 
 
@@ -771,160 +784,177 @@ def _world_to_volidx(Xw: np.ndarray, wb: dict, vol: dict) -> np.ndarray:
     return np.stack([ix, iy, iz], -1).astype(np.float32)
 
 
-def _visible_to(vol: dict, origins_idx: np.ndarray, target_idx: np.ndarray,
-                step=0.9, eps_vox=1.8) -> np.ndarray:
-    """Per-origin visibility toward one target point (all in voxel index space)."""
-    delta = target_idx[None, :] - origins_idx
+def _nee_visible(pts_q: np.ndarray, light_q: np.ndarray, field) -> np.ndarray:
+    """(n,) bool:每颗 probe 到某个光源 surfel 的可见性。走**唯一 tracer**。
+
+    2026-09-01 取代 `_visible_to`(体素 index 空间里 0.9 体素步长 + round 采样,
+    1 体素厚的墙会被整段跳过)。与 gather 用的是同一套 bias/步长,不会出现
+    「gather 说挡了、NEE 说没挡」这种自相矛盾。
+
+    ⚠ **射线照样无限长**。「灯背后的东西挡不住这盏灯」是对 `t_hit` 的**事后过滤**,
+    不是给 tracer 传射程 —— tracer 没有射程参数,也不该有(见 trace.py)。
+    过滤写在这里、看得见;塞进 tracer 就变成了它的固有性质,下一个人抄走就错了。
+    """
+    from tools.character_lighting_lab.trace import trace as _tr
+    delta = light_q[None, :] - pts_q
     dist = np.linalg.norm(delta, axis=1)
-    dirn = delta / np.maximum(dist[:, None], 1e-6)
-    nmax = np.maximum(((dist - eps_vox) / step), 0).astype(np.int32)
-    pos = origins_idx.astype(np.float32).copy()
-    blocked = np.zeros(len(origins_idx), bool)
-    alive = nmax > 0
-    occ3 = vol['occ3']
-    Nx, Ny, Nz = vol['Nx'], vol['Ny'], vol['Nz']
-    for s in range(int(nmax.max()) if len(nmax) else 0):
-        act = alive & (s < nmax) & ~blocked
-        if not act.any():
-            break
-        pos[act] += dirn[act] * step
-        rx, ry, rz = (np.round(pos[act, i]).astype(np.int32) for i in (0, 1, 2))
-        # 盒外的采样点不算遮挡(老写法 clip 到盒面,会把盒面上的实心误判成挡光)
-        ins = ((rx >= 0) & (rx < Nx) & (ry >= 0) & (ry < Ny) & (rz >= 0) & (rz < Nz))
-        xi = np.clip(rx, 0, Nx - 1); yi = np.clip(ry, 0, Ny - 1); zi = np.clip(rz, 0, Nz - 1)
-        hitb = occ3[zi, yi, xi] & ins
-        idx = np.where(act)[0]
-        blocked[idx[hitb]] = True
-    return ~blocked
+    ok = dist > 1e-6
+    vis = np.ones(len(pts_q), bool)
+    if not ok.any():
+        return vis
+    d = np.ascontiguousarray(delta[ok] / dist[ok, None], np.float32)
+    res = _tr(np.ascontiguousarray(pts_q[ok]), d, field)
+    # 事后过滤:挡光的只算「在灯之前」命中的(0.98 留一点自遮蔽余量)
+    vis[ok] = res.escaped | (res.t_hit >= dist[ok] * 0.98)
+    return vis
 
 
-def stage_probes(vol: dict, amb: dict, wb: dict, lights: list[dict], P: dict) -> dict:
-    """WORLD-axis-aligned probe volume over the reachable band. Gathers happen
-    in the q voxel grid (isometric to world), interpolation axes are world."""
-    Nx, Ny, Nz = int(P['probe_nx']), int(P['probe_ny']), int(P['probe_nz'])
-    gx = np.linspace(wb['x0'], wb['x1'], Nx)
-    gy = np.linspace(wb['y0'], wb['y1'], Ny)
-    gz = np.linspace(wb['z0'], wb['z1'], Nz)
-    PX, PY, PZ = np.meshgrid(gx, gy, gz, indexing='ij')
-    world_pos = np.stack([PX, PY, PZ], -1).reshape(-1, 3)
-    origins = _world_to_volidx(world_pos, wb, vol)
-    occ = vol['occ3']
-    idx_near = distance_transform_edt(occ, return_distances=False, return_indices=True)
-    oi = origins.round().astype(np.int32)
-    zc = np.clip(oi[:, 2], 0, vol['Nz'] - 1)
-    yc = np.clip(oi[:, 1], 0, vol['Ny'] - 1)
-    xc = np.clip(oi[:, 0], 0, vol['Nx'] - 1)
-    off_grid = ((oi[:, 0] != np.clip(oi[:, 0], 0, vol['Nx'] - 1)) |
-                (oi[:, 1] != np.clip(oi[:, 1], 0, vol['Ny'] - 1)) |
-                (oi[:, 2] != np.clip(oi[:, 2], 0, vol['Nz'] - 1)))
-    # 实心吸附只对**盒内**的 probe 做:盒外的原点是合法的(角色带高过画面上沿),
-    # 拿盒面上的实心去判它"埋在墙里"再吸附,只会把它拽回盒里、丢掉真实位置。
-    inside_solid = occ[zc, yc, xc] & ~off_grid
-    nz_, ny_, nx_ = idx_near[0][zc, yc, xc], idx_near[1][zc, yc, xc], idx_near[2][zc, yc, xc]
-    do_snap = inside_solid
-    origins[do_snap, 0] = nx_[do_snap].astype(np.float32)
-    origins[do_snap, 1] = ny_[do_snap].astype(np.float32)
-    origins[do_snap, 2] = nz_[do_snap].astype(np.float32)
-    # 盒外 probe 不再判废:_trace 会把射线推进到盒入口再走,它们照样采到下方的几何,
-    # miss 由 closure 的 J̄ 兜住——这正是"画面上沿以上是开阔空气"的正确答案。
-    # valid 保留在载荷里(格式不变),现在恒为 1;着色器因此不再丢角、也不会突然掉回全局环境。
-    valid = np.ones(len(origins), bool)
+def stage_probes(cal: dict, lay: dict, hdr: dict, wb: dict, lights: list[dict],
+                 P: dict, escape_of, char_wu: float) -> dict:
+    """probe 体的方向化辐照度 —— 蒙特卡洛 gather + 唯一 tracer。
 
-    dirs = fib_sphere(int(P['probe_dirs']))
+    2026-09-01 重写。**载荷形式一字未动**(仍是 20 项 f16 图集 + valid + world_pos,
+    `export_runtime` 与运行时着色器都不用改),换的全是怎么算:
+
+    | | 旧 | 新 |
+    |---|---|---|
+    | 场景表示 | 192x107x64 占据体素(深度壳挤出的板) | 直接 march 深度场,亚像素步长 |
+    | 求交 | 0.9 体素定步长 + round 采样 | `trace.py` 唯一 tracer,三条精确终止 |
+    | 方向 | 196 条 Fibonacci,**所有 probe 共用同一批** | 分层 QMC + 位置哈希抖动 |
+    | 朝相机的射线 | `fold`:qz 取绝对值掰到背面 | 老实逃逸,取 `escape_of` |
+    | miss | 全局 J̄(从画面反推) | 逃逸辐射模块(缺省纯黑) |
+    | 埋在几何里的 probe | 吸附到最近实心 + `valid` 恒 1 | 剔除不 march + **dilation 填** |
+    | 分布 | 写死 20x6x14 / band 1.6 wu | `probe_layout` 模块,密度可调 |
+
+    ## 为什么删掉 `fold`
+
+    旧写法 `dirs[:,2] = abs(dirs[:,2])` 把朝相机那半球的射线全掰到背面,
+    于是「正面的光 = 背面的光镜像」。角色站在亮窗户前面,脸上是身后墙的颜色。
+    那不是近似,是编造 —— 伪世界确实不知道相机这一侧有什么,正确答案是
+    「按逃逸处理,拿烘焙期给定的逃逸辐射」,而不是照镜子。
+
+    ## 为什么不再做实心吸附
+
+    旧写法把埋在几何里的 probe **挪到**最近的空心格再采样,但载荷里记的还是
+    原格点的位置 —— 运行时三线性按原格点插值,拿到的却是别处采的值。
+    现在:埋了就不采(精确的 0),交给 `dilate_invalid` 用有效邻居填。
+    这是 AAA 探针体系的标准做法(Unity Dilation / UE validity)。
+    """
+    from tools.character_lighting_lab.estimators import gather_probe, sh_basis as _shb
+    from tools.character_lighting_lab.estimators import octa_bin_normals
+    from tools.character_lighting_lab.probe_layout import build_layout, dilate_invalid
+    from tools.character_lighting_lab.trace import DepthField, buried
+
+    M = wb['M']
+    field = DepthField.build(cal['d'], cal['ppu'], cal['cx'], cal['cy'])
+
+    # ---- 布点(策略可换;盒沿用 world_bounds 那一个,别在这再算第二份)----
+    Hg, Wg = cal['d'].shape
+    sxg, syg = np.meshgrid(np.arange(Wg, dtype=np.float32),
+                           np.arange(Hg, dtype=np.float32))
+    q_ground = np.stack([(sxg - cal['cx']) / cal['ppu'],
+                         (cal['cy'] - syg) / cal['ppu'],
+                         lay['d_walk']], -1).reshape(-1, 3)
+    world_surface = (q_ground @ M.T).astype(np.float32)
+    layout = build_layout(
+        str(P.get('probe_strategy', 'uniform_grid')), world_surface, char_wu,
+        dims=P.get('probe_dims'),
+        band=P.get('probe_band'),
+        bounds={k: float(wb[k]) for k in ('x0', 'x1', 'y0', 'y1', 'z0', 'z1')},
+        cells_per_char_xz=float(P.get('probe_cells_per_char_xz', 4.0)),
+        cells_per_char_y=float(P.get('probe_cells_per_char_y', 2.0)),
+        height_chars=float(P.get('probe_height_chars', 2.0)),
+        max_probes=int(P.get('probe_max', 200_000)))
+    Nx, Ny, Nz = layout.grid
+    world_pos = layout.world_pos
+    pts_q = np.ascontiguousarray(world_pos @ M, np.float32)   # world -> q(M 正交)
+
+    # ---- validity:埋在可见壳后面的格点根本不 march(算了也会被 dilation 覆盖)----
+    inv = buried(pts_q, field)
+    act = ~inv
+    n = len(pts_q)
+    spp = int(P.get('probe_spp', PROBE_SPP))
     t0 = time.time()
-    hidx, hit = _trace(vol, origins, dirs, fold=bool(P['fold']))
-    # FOUR-way split, all runtime-combinable without rebake:
-    #   E_base    -- cosine gather over the painting (all real bounces)
-    #   E_emitray -- cosine gather over the emissive delta (NEE OFF path)
-    #   E_nee     -- analytic per-light direct term with visibility (NEE ON path)
-    #   E_amb+cov -- closure machinery (unchanged semantics)
-    mdirs = dirs.copy(); mdirs[:, 2] = np.abs(mdirs[:, 2])
-    Bm = sh_basis(mdirs)
-    Lmiss = np.clip(Bm @ amb['sh'], 0, None)          # (D,3)
-    miss = (~hit).astype(np.float32)
-    hitf = hit.astype(np.float32)
-    L_base = _gather_at(vol['rad3'], hidx)
-    L_emit = _gather_at(vol['emi3'], hidx)
+    g = gather_probe(np.ascontiguousarray(pts_q[act]), M, field,
+                     {'base': hdr['base'], 'emit': hdr['emit']},
+                     escape_of, spp=spp)
 
-    dw = 4.0 * math.pi / dirs.shape[0]
-    B = sh_basis(dirs)                                # (D,9)
-    lofk = np.array([0, 1, 1, 1, 2, 2, 2, 2, 2])
-    Ak = A_L[lofk]
-    Esh_base = np.einsum('dk,pdc->pkc', B, L_base) * dw * Ak[None, :, None]
-    Esh_emit = np.einsum('dk,pdc->pkc', B, L_emit) * dw * Ak[None, :, None]
-    Esh_amb = np.einsum('dk,pd,dc->pkc', B, miss, Lmiss) * dw * Ak[None, :, None]
-    cov_sh = np.einsum('dk,pd->pk', B, hitf) * dw * Ak[None, :]      # (P,9)
+    nb = octa_bin_normals()
+    B = len(nb)
 
-    # bins basis
-    ob = 8
-    uu, vv = np.meshgrid((np.arange(ob) + 0.5) / ob * 2 - 1, (np.arange(ob) + 0.5) / ob * 2 - 1)
-    nz = 1.0 - np.abs(uu) - np.abs(vv)
-    nx = np.where(nz >= 0, uu, (1 - np.abs(vv)) * np.sign(uu))
-    ny = np.where(nz >= 0, vv, (1 - np.abs(uu)) * np.sign(vv))
-    nrm = np.stack([nx, ny, nz], -1).reshape(-1, 3)
-    nrm /= np.linalg.norm(nrm, axis=-1, keepdims=True)
-    cosw = np.clip(nrm @ dirs.T, 0, None) * dw        # (64,D)
-    Eb_base = np.einsum('nd,pdc->pnc', cosw, L_base)
-    Eb_emit = np.einsum('nd,pdc->pnc', cosw, L_emit)
-    Eb_amb = np.einsum('nd,pd,dc->pnc', cosw, miss, Lmiss)
-    cov_b = np.einsum('nd,pd->pn', cosw, hitf) / math.pi
+    def _scatter(a_act: np.ndarray) -> np.ndarray:
+        """活格子集的结果散回全量(被埋格留 0,随后由 dilation 填)。"""
+        out = np.zeros((n, *a_act.shape[1:]), np.float32)
+        out[act] = a_act
+        return out
 
-    # ---- NEE: analytic direct from light surfels, exact SH/bin projection ----
-    # probe world positions of the actual (snapped) gather points
-    snapped_q = np.stack([
-        origins[:, 0] / (vol['Nx'] - 1) * (vol['qx_max'] - vol['qx_min']) + vol['qx_min'],
-        origins[:, 1] / (vol['Ny'] - 1) * (vol['qy_max'] - vol['qy_min']) + vol['qy_min'],
-        origins[:, 2] / (vol['Nz'] - 1) * (vol['qz_max'] - vol['qz_min']) + vol['qz_min'],
-    ], -1)
-    snapped_world = snapped_q @ wb['M'].T
-    Pn = len(origins)
-    nee_sh = np.zeros((Pn, 9, 3), np.float32)
-    nee_bins = np.zeros((Pn, 64, 3), np.float32)
+    sh_base = _scatter(g['base']['sh'])
+    sh_emit = _scatter(g['emit']['sh'])
+    sh_amb = _scatter(g['esc']['sh'])
+    sh_cov = _scatter(g['cov']['sh'])
+    bn_base = _scatter(g['base']['bins'])
+    bn_emit = _scatter(g['emit']['bins'])
+    bn_amb = _scatter(g['esc']['bins'])
+    bn_cov = _scatter(g['cov']['bins'])
+
+    # ---- NEE:光源 surfel 的解析直射项(仍是分账,运行时 shading.nee 才启用)----
+    # ⚠ 2026-09-01 修:旧实现把**世界系**方向 `d_i` 投到与 base/emit 同一组
+    #   球谐上,而那组球谐是 **q 空间**的(着色器用 q 空间法线查)。两个空间混投
+    #   一律不报错,只是方向全拧。当前 28 个场景 `shading.nee=0` 走的是 emit 分账,
+    #   所以没暴露出来 —— 谁把 nee 打开就正中 CLAUDE.md 铁律 0 那一类。
+    nee_sh = np.zeros((n, 9, 3), np.float32)
+    nee_bins = np.zeros((n, B, 3), np.float32)
     for li in lights:
         lpos = np.array(li['pos'], np.float32)
-        lnrm = np.array(li['normal'], np.float32)
         Le = np.array(li['radiance'], np.float32)
-        delta = lpos[None] - snapped_world
+        delta = lpos[None] - world_pos
         r2 = np.maximum((delta ** 2).sum(1), 0.04)
-        d_i = delta / np.sqrt(r2)[:, None]
-        # ISOTROPIC surfels (flames/windows glow in all directions), matching the
-        # ray path where emissive voxels return radiance direction-independently.
-        # A one-sided Lambert cos_e killed flames whose height-field normal faces
-        # the camera; small-sphere cross-section A/r^2 is the consistent model.
-        lt_idx = _world_to_volidx(lpos[None], wb, vol)[0]
-        V = _visible_to(vol, origins, lt_idx).astype(np.float32)
-        W = (V * li['area'] / r2)[:, None] * Le[None]                 # (P,3)
-        Bi = sh_basis(d_i)                                            # (P,9)
-        nee_sh += (Bi * Ak[None, :])[:, :, None] * W[:, None, :]
-        cosb = np.clip(nrm @ d_i.T, 0, None)                          # (64,P)
-        nee_bins += cosb.T[:, :, None] * W[:, None, :]
+        d_w = delta / np.sqrt(r2)[:, None]                    # 世界方向
+        d_q = (d_w @ M).astype(np.float32)                    # -> q 空间(投影就在这)
+        vis = _nee_visible(pts_q, (lpos @ M).astype(np.float32), field).astype(np.float32)
+        # 各向同性 surfel(火焰/窗口朝各个方向发光),小球截面 A/r^2
+        W = (vis * li['area'] / r2)[:, None] * Le[None]
+        nee_sh += (_shb(d_q) * AK[None, :])[:, :, None] * W[:, None, :]
+        nee_bins += np.maximum(d_q @ nb.T, 0.0)[:, :, None] * W[:, None, :]
 
-    E_l1 = np.concatenate([Esh_base[:, :4], cov_sh[:, :4, None]], -1)   # (P,4,4)
-    E_l2 = np.concatenate([Esh_base, cov_sh[:, :, None]], -1)           # (P,9,4)
-    E_l1_amb = Esh_amb[:, :4]
-    E_l2_amb = Esh_amb
-    E_bins = np.concatenate([Eb_base, cov_b[..., None]], -1)            # (P,64,4)
-    E_bins_amb = Eb_amb
-    E_l1_emit, E_l2_emit, E_bins_emit = Esh_emit[:, :4], Esh_emit, Eb_emit
-    E_l1_nee, E_l2_nee, E_bins_nee = nee_sh[:, :4], nee_sh, nee_bins
+    # ---- dilation:被埋格点用 6-邻域有效格的均值填(必做,见 probe_layout)----
+    def _g3(a):
+        return a.reshape(Nx, Ny, Nz, *a.shape[1:])
+    fields = [_g3(x) for x in (sh_base, sh_emit, sh_amb, sh_cov,
+                               bn_base, bn_emit, bn_amb, bn_cov,
+                               nee_sh, nee_bins)]
+    filled, iters = dilate_invalid(act.reshape(Nx, Ny, Nz), fields)
+    coverage = float(act.mean())
+    valid = filled.reshape(-1)
 
-    print(f'[probes] {origins.shape[0]} world probes x {dirs.shape[0]} dirs '
-          f'(fold={int(bool(P["fold"]))}, lights={len(lights)}) in {time.time()-t0:.1f}s, '
-          f'nee mean {float(nee_sh[:, 0, :].mean()):.4f}')
-    print(f'[probes] box y[{wb["y0"]:.2f},{wb["y1"]:.2f}] band={float(P["probe_band"])} '
-          f'({(wb["y1"]-wb["y0"])/max(Ny-1,1):.2f}m/层)  盒外(画面外空气,靠射线-盒求交采样) '
-          f'{off_grid.mean()*100:.1f}%  实心吸附 {inside_solid.mean()*100:.1f}%  '
-          f'命中率 {hit.mean()*100:.1f}%')
-    return dict(nx=Nx, ny=Ny, nz=Nz, gx=gx, gy=gy, gz=gz, valid=valid,
-                world_pos=snapped_world.astype(np.float32),
+    # ---- 组装成载荷的 20 项(布局与旧版逐字段一致)----
+    E_l1 = np.concatenate([sh_base[:, :4], sh_cov[:, :4, None]], -1)     # (P,4,4)
+    E_l2 = np.concatenate([sh_base, sh_cov[:, :, None]], -1)             # (P,9,4)
+    E_bins = np.concatenate([bn_base, bn_cov[..., None]], -1)            # (P,B,4)
+
+    print(f'[probes] {n} 颗 x {spp}spp  {time.time()-t0:.1f}s  '
+          f'分布={layout.strategy}  {Nx}x{Ny}x{Nz}')
+    print(f'[probes] {layout.note}')
+    print(f'[probes] 命中率 {g["hit_rate"]*100:.1f}%  有效格 {coverage*100:.1f}% '
+          f'(dilation {iters} 轮补到 {valid.mean()*100:.1f}%)  '
+          f'逃逸辐射 {_escape_desc(P)}  灯 {len(lights)} 盏')
+    return dict(nx=Nx, ny=Ny, nz=Nz,
+                gx=np.linspace(layout.bounds['x0'], layout.bounds['x1'], Nx),
+                gy=np.linspace(layout.bounds['y0'], layout.bounds['y1'], Ny),
+                gz=np.linspace(layout.bounds['z0'], layout.bounds['z1'], Nz),
+                valid=valid, world_pos=world_pos.astype(np.float32),
+                layout=layout, hit_rate=g['hit_rate'], coverage=coverage,
                 l1=E_l1.astype(np.float16), l2=E_l2.astype(np.float16),
                 bins=E_bins.astype(np.float16),
-                l1amb=E_l1_amb.astype(np.float16), l2amb=E_l2_amb.astype(np.float16),
-                binsamb=E_bins_amb.astype(np.float16),
-                l1emit=E_l1_emit.astype(np.float16), l2emit=E_l2_emit.astype(np.float16),
-                binsemit=E_bins_emit.astype(np.float16),
-                l1nee=E_l1_nee.astype(np.float16), l2nee=E_l2_nee.astype(np.float16),
-                binsnee=E_bins_nee.astype(np.float16))
+                l1amb=sh_amb[:, :4].astype(np.float16),
+                l2amb=sh_amb.astype(np.float16),
+                binsamb=bn_amb.astype(np.float16),
+                l1emit=sh_emit[:, :4].astype(np.float16),
+                l2emit=sh_emit.astype(np.float16),
+                binsemit=bn_emit.astype(np.float16),
+                l1nee=nee_sh[:, :4].astype(np.float16),
+                l2nee=nee_sh.astype(np.float16),
+                binsnee=nee_bins.astype(np.float16))
 
 
 def stage_character(P: dict, out_dir: Path):
@@ -1173,6 +1203,34 @@ def work_dir(name: str, background: str | None = None) -> Path:
     return per_bg
 
 
+#: 角色在场景坐标里的固定高度(与 scene_fields.DEFAULT_CHAR_SCENE_H 同一约定)。
+CHAR_SCENE_H = 150.0
+
+
+def scene_char_wu(name: str, ppu_work: float, work_w: int = W_G) -> float | None:
+    """角色在这张画里占多少 **wu** —— probe 分布与盒高的唯一尺度参照。
+
+    刻度链:场景坐标 --(native_w / worldWidth)--> 背景像素 --(1/ppu)--> 世界单位。
+    ppu 随分辨率线性缩放,所以 `native_w / ppu_native == work_w / ppu_work`,
+    用工作分辨率那一对算是等价的。
+
+    取不到场景 JSON(实验室可以烘工程外的任意图)时返回 None,
+    调用方回落到显式 `probe_band`。
+    """
+    import json as _json
+    f = ROOT / 'public' / 'assets' / 'scenes' / f'{name}.json'
+    if not f.exists() or ppu_work <= 0:
+        return None
+    try:
+        world_w = float(_json.loads(f.read_text(encoding='utf-8')).get('worldWidth') or 0.0)
+    except Exception:                                # noqa: BLE001 — 坏 JSON 不拖垮烘焙
+        return None
+    if world_w <= 0:
+        return None
+    scene_per_wu = world_w / (work_w / ppu_work)     # 一个世界单位 = 多少场景坐标
+    return CHAR_SCENE_H / scene_per_wu
+
+
 def scene_background(name: str) -> str:
     """场景 JSON 的 backgrounds[0].image;取不到则老口径 background.png。"""
     import json as _json
@@ -1269,10 +1327,26 @@ def build(img_path: Path, name: str, params: dict, background: str | None = None
         print(f'[edit] depth brush applied, |delta| max {np.abs(edit).max():.3f} q, '
               f'edited px {(np.abs(edit) > 1e-3).sum()}')
     vol = stage_voxelize(cal, lay, hdr['base'], hdr['emit'], rad_bg, P)
-    wb = world_bounds(cal, lay, P)
+    # probe 盒高由**角色实高**推出(不是写死的 1.6);拿不到场景 JSON 才用显式覆写。
+    char_wu = scene_char_wu(name, cal['ppu'])
+    band = P.get('probe_band')
+    if band is None:
+        if char_wu is None:
+            raise RuntimeError(
+                f'{name}: 取不到 worldWidth,推不出角色高度 ⇒ probe 盒高无从谈起。'
+                f'显式传 --probe-band <wu>,或先把场景 JSON 的 worldWidth 补上。')
+        band = char_wu * 1.15                        # 头顶留一点余量
+    if char_wu is None:
+        char_wu = float(band) / 1.15                 # 只用于密度推导的回落
+    print(f'[scale] 角色 {char_wu:.3f} wu  probe 带 {float(band):.3f} wu')
+    wb = world_bounds(cal, lay, P, band=band, char_wu=char_wu,
+                      height_chars=float(P.get('probe_height_chars', 2.0)))
     lights = stage_lights(cal, lay, hdr['emit'], wb, P)
-    amb = stage_ambient(vol, cal, lay, P)
-    probes = stage_probes(vol, amb, wb, lights, P)
+    from tools.character_lighting_lab.escape import make_escape_sampler
+    escape_of = make_escape_sampler(P.get('escape'), root=ROOT,
+                                    hdr=hdr['base'], depth=cal['d'])
+    amb = stage_ambient(escape_of, P)
+    probes = stage_probes(cal, lay, hdr, wb, lights, P, escape_of, char_wu)
     walk = stage_walk_world(cal, lay, vol, wb, P,
                             col_edit=load_collision_edit(out_dir, cal['d'].shape))
     cloud = stage_pointcloud(cal, lay, rgb_srgb, wb)
@@ -1280,31 +1354,31 @@ def build(img_path: Path, name: str, params: dict, background: str | None = None
     stage_character(P, out_dir)
 
     # ---- write outputs
-    src.save(out_dir / 'background.png') if not (out_dir / 'background.png').exists() else None
-    (out_dir / 'front_depth.bin').write_bytes(cal['d'].astype(np.float32).tobytes())
-    (out_dir / 'walk_depth.bin').write_bytes(lay['d_walk'].astype(np.float32).tobytes())
-    Image.fromarray((walk['mask'] * 255).astype(np.uint8)).save(out_dir / 'walk_mask.png')
-    (out_dir / 'walk_y.bin').write_bytes(walk['y'].astype(np.float32).tobytes())
+    _asave(src, out_dir / 'background.png') if not (out_dir / 'background.png').exists() else None
+    _awrite(out_dir / 'front_depth.bin', cal['d'].astype(np.float32).tobytes())
+    _awrite(out_dir / 'walk_depth.bin', lay['d_walk'].astype(np.float32).tobytes())
+    _asave(Image.fromarray((walk['mask'] * 255).astype(np.uint8)), out_dir / 'walk_mask.png')
+    _awrite(out_dir / 'walk_y.bin', walk['y'].astype(np.float32).tobytes())
     rgba = np.concatenate([vol['rad3'], vol['occ3'][..., None].astype(np.float32)], -1)
-    (out_dir / 'volume.bin').write_bytes(rgba.astype(np.float16).tobytes())
+    _awrite(out_dir / 'volume.bin', rgba.astype(np.float16).tobytes())
     rgba_e = np.concatenate([vol['emi3'], np.zeros_like(vol['emi3'][..., :1])], -1)
-    (out_dir / 'volume_emit.bin').write_bytes(rgba_e.astype(np.float16).tobytes())
+    _awrite(out_dir / 'volume_emit.bin', rgba_e.astype(np.float16).tobytes())
     for k in ('l1', 'l2', 'bins', 'l1amb', 'l2amb', 'binsamb',
               'l1emit', 'l2emit', 'binsemit', 'l1nee', 'l2nee', 'binsnee'):
-        (out_dir / f'probes_{k}.bin').write_bytes(probes[k].tobytes())
-    (out_dir / 'probes_valid.bin').write_bytes((probes['valid'].astype(np.uint8) * 255).tobytes())
-    (out_dir / 'probes_pos.bin').write_bytes(probes['world_pos'].tobytes())
-    (out_dir / 'points.bin').write_bytes(cloud.tobytes())
-    (out_dir / 'mesh_verts.bin').write_bytes(mesh['verts'].tobytes())
-    (out_dir / 'mesh_idx.bin').write_bytes(mesh['idx'].tobytes())
+        _awrite(out_dir / f'probes_{k}.bin', probes[k].tobytes())
+    _awrite(out_dir / 'probes_valid.bin', (probes['valid'].astype(np.uint8) * 255).tobytes())
+    _awrite(out_dir / 'probes_pos.bin', probes['world_pos'].tobytes())
+    _awrite(out_dir / 'points.bin', cloud.tobytes())
+    _awrite(out_dir / 'mesh_verts.bin', mesh['verts'].tobytes())
+    _awrite(out_dir / 'mesh_idx.bin', mesh['idx'].tobytes())
     # gain map as 8-bit heat png (for the HDR overlay)
     g01 = np.clip(hdr['gain_ev'] / max(float(P['max_gain_ev']), 1e-6), 0, 1)
-    Image.fromarray((g01 * 255).astype(np.uint8)).save(out_dir / 'gain.png')
+    _asave(Image.fromarray((g01 * 255).astype(np.uint8)), out_dir / 'gain.png')
     # 语义 mask(纯 SAM3)8-bit:查看器「光源分割图」直接显示这张,分离直接光的依据
-    Image.fromarray((np.clip(hdr['mask'], 0, 1) * 255).astype(np.uint8)).save(out_dir / 'mask.png')
+    _asave(Image.fromarray((np.clip(hdr['mask'], 0, 1) * 255).astype(np.uint8)), out_dir / 'mask.png')
     # inpainted hidden-layer colour as display-sRGB texture (mesh skinning)
     hid8 = np.clip(np.power(np.clip(lay['c_bg'], 0, 1), 1 / 2.2) * 255, 0, 255).astype(np.uint8)
-    Image.fromarray(hid8).save(out_dir / 'hidden.png')
+    _asave(Image.fromarray(hid8), out_dir / 'hidden.png')
 
     manifest = dict(
         name=name, hash=h, params=P, work=dict(w=W_G, h=Hg),
@@ -1329,7 +1403,7 @@ def build(img_path: Path, name: str, params: dict, background: str | None = None
         mesh=dict(verts=int(len(mesh['verts'])), tris=int(len(mesh['idx']))),
         built=time.strftime('%Y-%m-%d %H:%M:%S'),
     )
-    (out_dir / 'manifest.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=1))
+    _awrite_text(out_dir / 'manifest.json', json.dumps(manifest, ensure_ascii=False, indent=1))
     save_audit(out_dir, rgb_srgb, cal, lay, vol, walk['mask'])
     print(f'[done] {out_dir}')
 
@@ -1345,6 +1419,9 @@ SHADING_DEFAULTS = dict(
     bulge=0.22, flatten=0.0,
     # E 色度权重:0=只借场景明暗(luma)、角色保留自己颜色不被场景色染;1=完整彩色 E
     eChroma=0.0,
+    # 角色 GI 底光增益(0~10):只乘 probe/RT 的 E,不乘实体灯与测试太阳——
+    # β 是"曝光"(乘一切),这个是"GI 有多强"(制作人 2026-09-01 点名要独立旋钮)
+    giStrength=1.0,
 )
 
 
@@ -1386,14 +1463,16 @@ def export_shading_params(name: str, shading: dict | None = None) -> Path:
             f'{name} 的载荷是旧版 v{meta.get("version")}(运行时已禁用)——'
             f'需点「导出照明」重导出为 v3 固化,单存参数救不回来')
     old = meta.get('shading') or {}
-    new = _normalize_shading(shading)
+    # 来路没带的键**保留现值**而不是打回默认——F2 侧新增的运行时键(如 giStrength)
+    # 实验室面板可能还没有;纯 _normalize_shading(shading) 会把它们静默重置。
+    new = _normalize_shading({**old, **(shading or {})})
     changed = [k for k in BAKED_INTO_ATLAS if old.get(k) != new[k]]
     if changed:
         raise RuntimeError(
             f'{"/".join(changed)} 已固化进 probe 图集,单存参数改不动它——'
             f'要改这些请点「导出照明」重导出')
     meta['shading'] = new
-    f.write_text(json.dumps(meta, ensure_ascii=False, indent=1) + '\n')
+    _awrite_text(f, json.dumps(meta, ensure_ascii=False, indent=1) + '\n')
     print(f'[export-params] {f}')
     return f
 
@@ -1459,19 +1538,17 @@ def export_runtime(name: str, shading: dict | None = None,
 
     def _atlas4(stem: str, K: int) -> None:
         """固化:base + (nee开?nee:emit) + amb×权重 → 单块最终 E 球谐(K 列 RGBA,α 未用)。"""
-        base = _read_probe(stem, K, 4)[:, :, :3].astype(np.float32)
-        amb = _read_probe(f'{stem}amb', K, 3).astype(np.float32)
-        emit = _read_probe(f'{stem}emit', K, 3).astype(np.float32)
-        nee = _read_probe(f'{stem}nee', K, 3).astype(np.float32)
-        final = base + (nee if _nee_on else emit) + amb * _amb_w
-        out = np.zeros((Pn, K, 4), np.float16)
-        out[:, :, :3] = final.astype(np.float16)
-        (dest / f'atlas_{"bin" if stem == "bins" else stem}.bin').write_bytes(out.tobytes())
+        out = compose_atlas(_read_probe(stem, K, 4)[:, :, :3],
+                            _read_probe(f'{stem}emit', K, 3),
+                            _read_probe(f'{stem}nee', K, 3),
+                            _read_probe(f'{stem}amb', K, 3),
+                            nee_on=_nee_on, amb_w=_amb_w)
+        _awrite(dest / f'atlas_{"bin" if stem == "bins" else stem}.bin', out.tobytes())
 
     _atlas4('l1', 4)
     _atlas4('l2', 9)
     _atlas4('bins', 64)
-    (dest / 'probes_valid.bin').write_bytes((src_dir / 'probes_valid.bin').read_bytes())
+    _awrite(dest / 'probes_valid.bin', (src_dir / 'probes_valid.bin').read_bytes())
 
     V = man['vol']
     Nx, Ny, Nz = int(V['Nx']), int(V['Ny']), int(V['Nz'])
@@ -1484,7 +1561,7 @@ def export_runtime(name: str, shading: dict | None = None,
         for z in range(Nz):
             ty, tx = divmod(z, tiles_x)
             atlas[ty * Ny:(ty + 1) * Ny, tx * Nx:(tx + 1) * Nx] = vol[z]
-        (dest / out_name).write_bytes(atlas.tobytes())
+        _awrite(dest / out_name, atlas.tobytes())
 
     _tile_volume('volume.bin', 'vol_rad.bin')
     _tile_volume('volume_emit.bin', 'vol_emit.bin')
@@ -1496,7 +1573,7 @@ def export_runtime(name: str, shading: dict | None = None,
     rg = np.zeros((Hh, W, 3), np.uint8)
     rg[..., 0] = n16 >> 8
     rg[..., 1] = n16 & 0xFF
-    Image.fromarray(rg).save(dest / 'ground_d.png', optimize=True)
+    _asave(Image.fromarray(rg), dest / 'ground_d.png', optimize=True)
 
     payload = dict(
         version=3,                             # v3:probe 图集为固化最终 E(单块球谐,非分账)
@@ -1514,8 +1591,8 @@ def export_runtime(name: str, shading: dict | None = None,
         baked_params=man['params'],
         built=man['built'],
     )
-    (dest / 'lighting.json').write_text(
-        json.dumps(payload, ensure_ascii=False, indent=1) + '\n')
+    _awrite_text(dest / 'lighting.json',
+                 json.dumps(payload, ensure_ascii=False, indent=1) + '\n')
     print(f'[export] {dest}')
     return dest
 
@@ -1664,7 +1741,7 @@ def export_scene_depth(name: str, background: str | None = None) -> dict:
     old_scene = json.loads(scene_json_path.read_text())
     old_cfg = old_scene.get('depthConfig') or {}
     depth_name = old_cfg.get('depth_map', 'raw_depth_rg.png')
-    Image.fromarray(rg).save(scene_media / depth_name, optimize=True)
+    _asave(Image.fromarray(rg), scene_media / depth_name, optimize=True)
 
     # ---- 直立 quad 的深度梯度(遮挡唯一还用的 shader 参数) ----
     # floor_depth_A/B 那条最小二乘拟合直线**已废除**:运行时的脚点深度一律取
@@ -1695,7 +1772,7 @@ def export_scene_depth(name: str, background: str | None = None) -> dict:
             ok = 0 <= zi < wk['nz'] and 0 <= xi < wk['nx'] and walk[zi, xi]
             col[gj, gi] = 0 if ok else 255            # 255 = blocked(红通道)
     col_name = old_cfg.get('collision_map', 'collision.png')
-    Image.fromarray(col).save(scene_media / col_name, optimize=True)
+    _asave(Image.fromarray(col), scene_media / col_name, optimize=True)
 
     # ---- depthConfig 写回场景 JSON(编辑器往返约定,手调参数保值) ----
     c, s = math.cos(theta), math.sin(theta)
@@ -1718,13 +1795,244 @@ def export_scene_depth(name: str, background: str | None = None) -> dict:
         'floor_offset': float(old_cfg.get('floor_offset', 0.0)),
     }
     old_scene['depthConfig'] = cfg
-    scene_json_path.write_text(json.dumps(old_scene, ensure_ascii=False, indent=2) + '\n')
+    _awrite_text(scene_json_path, json.dumps(old_scene, ensure_ascii=False, indent=2) + '\n')
     print(f'[export-depth] {scene_json_path.name}: depth {nw}x{nh}, '
           f'depth_per_sy={depth_per_sy:.6f}, collision {gw}x{gh} cell={cell:.3f}')
     return cfg
 
 
+def build_radiance_field(bg_path: Path, work_wh: tuple[int, int], P: dict) -> dict:
+    """烘焙用的辐射场 —— **唯一构造处**。烘焙与校验都必须调这里。
+
+    2026-09-01 制作人:「你要确保 ref 计算是正确的,输入的 radiance 源要和 baker
+    里一样的 HDR!必须要对齐,否则输入都不一样,对比无意义。」
+
+    ⚠ 这不是假想的风险:第一版 `rebake_lighting` 用 `Image.LANCZOS` 缩图,
+    而校验侧用 `resize_rgb`(**BILINEAR**)—— 两个不同的重采样出两个不同的辐射场,
+    于是「盘上的 E」和「参照 E」比的根本不是同一件事,而数字看着还挺像回事。
+    LANCZOS 还是整个实验室里的异类(`resize_rgb` / `resize_f` 一律 BILINEAR)。
+
+    所以:**只有这一个函数造辐射场**,两边共用。再加一道哈希门(见
+    `radiance_sha1`)—— 对齐这件事要能被**证明**,不能靠"我保证"。
+    """
+    from .scene_geometry import resize_rgb
+    img = Image.open(bg_path).convert('RGB')
+    rgb = np.asarray(img, np.float32) / 255.0
+    if img.size != tuple(work_wh):
+        rgb = resize_rgb(rgb, tuple(work_wh))
+    return stage_hdr(rgb, P, sem_gate=None)
+
+
+def radiance_sha1(rad: np.ndarray) -> str:
+    """辐射场的内容哈希。写进 `baked_params`,校验时复算比对 —— 不一致即拒绝比较。"""
+    return hashlib.sha1(np.ascontiguousarray(rad, np.float32).tobytes()).hexdigest()[:12]
+
+
+def compose_atlas(base: np.ndarray, emit: np.ndarray, nee: np.ndarray,
+                  amb: np.ndarray, *, nee_on: bool, amb_w: float) -> np.ndarray:
+    """四分账 → 运行时图集的**唯一**合成式:`base + (nee开?nee:emit) + amb*w`。
+
+    `export_runtime` 与 `rebake_lighting` 都调这里 —— 两处各抄一遍的话,
+    「只重烘光照」这条路就会悄悄产出和正规导出不一样的图集。
+    返回 (P,K,4) f16,alpha 未用(留 0,与旧版逐字节一致)。
+    """
+    final = (np.asarray(base, np.float32)
+             + np.asarray(nee if nee_on else emit, np.float32)
+             + np.asarray(amb, np.float32) * float(amb_w))
+    out = np.zeros((*final.shape[:2], 4), np.float16)
+    out[:, :, :3] = final.astype(np.float16)
+    return out
+
+
+def rebake_lighting(name: str, background: str | None = None,
+                    params: dict | None = None) -> Path:
+    """**只重烘光照**(probe 图集 + ambient),不重估深度、不重跑语义分割。
+
+    ## 为什么要有这条路
+
+    改的是光照算法时,重估深度是**错的**:`pipeline.build` 会用 Depth Anything
+    重新出一份深度,而 `scene_fields`(天穹遮蔽)读的是运行时那份量化过的
+    `raw_depth_rg.png`。两边一旦不是同一份深度,probe 与场景就吃着不同的几何 ——
+    这类失配没有任何报错,只是"光的走向有点怪"。
+
+    本函数从**已发行的运行时数据**反推所有几何输入,保证与 `scene_fields` 逐字同源:
+
+    - `cal.d`   <- `raw_depth_rg.png`(原生 RG16)按 depthConfig 解码后重采样到工作分辨率
+                   —— 与 `scene_geometry.Scene.geometry()` 同一条路;
+    - `d_walk`  <- `lighting/<key>/ground_d.png` + `lighting.json.ground_d.{min,max}`;
+    - `M/theta` <- `lighting.json.world.M` / `cal.theta`(实验室 det=-1 那套,查表用);
+    - 辐射     <- 运行时背景图 + `baked_params` 里原来那套 HDR 恢复参数。
+
+    ⚠ **不产语义门控**(SAM3 未装):`emit` 恒 0、`base` 拿到全部辐射。
+    合成式是 `base + emit + amb`,所以**图集逐位不受影响**;受影响的只有
+    `lighting.json.lights`(NEE 光源面元),因此这里**原样保留旧值**,
+    不把它清空 —— 那是 RT 调试档 `gatherRT` 在读的。
+
+    不碰:`vol_rad/vol_emit.bin`(体素卷,深度与背景没变则仍然有效)、
+    `ground_d.png`、`raw_depth_rg.png`、场景 JSON 的 `depthConfig`。
+    """
+    from tools.character_lighting_lab.escape import make_escape_sampler
+    from tools.character_lighting_lab.scene_geometry import Scene
+
+    scene_dir = ROOT / 'public' / 'resources' / 'runtime' / 'scenes' / name
+    bg_name = background or scene_background(name)
+    dest = scene_dir / 'lighting' / _bake_key(bg_name)
+    lj = dest / 'lighting.json'
+    if not lj.exists():
+        raise RuntimeError(f'{lj} 不存在 —— 本函数只重烘光照,'
+                           f'第一次烘请走完整的 build + export_runtime')
+    man = json.loads(lj.read_text(encoding='utf-8'))
+
+    # 沿用这张画原来的 HDR/曝光/几何口径,但**不许继承 probe 那几个**:
+    # 它们的语义 2026-09-01 变了(`probe_band=None` = 由角色实高推出),
+    # 而存量 `baked_params` 里躺着 `probe_band: 1.6` —— 整份继承会把要杀掉的
+    # 那个值**原地复活**,日志照打「角色活动高 1.600」而一切看着正常。
+    # (第一次跑就踩了:烘出来仍是「角色纵向跨 0.48 层」。)
+    _STALE = {'probe_band', 'probe_nx', 'probe_ny', 'probe_nz', 'probe_dirs',
+              'fold', 'probe_strategy', 'probe_dims', 'probe_spp',
+              'probe_cells_per_char_xz', 'probe_cells_per_char_y',
+              'probe_height_chars', 'probe_max', 'escape'}
+    P = dict(DEFAULTS)
+    P.update({k: v for k, v in (man.get('baked_params') or {}).items()
+              if k in DEFAULTS and k not in _STALE})
+    P.update(params or {})                           # 显式传参永远最高优先级
+    W, Hh = int(man['work']['w']), int(man['work']['h'])
+
+    # ---- 几何:一律从运行时那份量化深度反推(与 scene_fields 同源)----
+    sc = Scene(name, background=bg_name)
+    geo = sc.geometry((W, Hh))
+    if geo is None:
+        raise RuntimeError(f'{name} 没有 depthConfig / 深度图,无法只重烘光照')
+    theta = float(man['cal']['theta'])
+    M = np.asarray(man['world']['M'], np.float32)    # 实验室 det=-1 那套(查表用)
+    cal = {'d': np.ascontiguousarray(geo['depth'], np.float32),
+           'ppu': geo['ppu'], 'cx': geo['cx'], 'cy': geo['cy'], 'theta': theta}
+    sxg, syg = np.meshgrid(np.arange(W, dtype=np.float32),
+                           np.arange(Hh, dtype=np.float32))
+    cal['qy'] = ((cal['cy'] - syg) / cal['ppu']).astype(np.float32)
+    qx = ((sxg - cal['cx']) / cal['ppu']).astype(np.float32)
+
+    g = np.asarray(Image.open(dest / 'ground_d.png').convert('RGB'), np.float32)
+    n16 = g[..., 0] * 256.0 + g[..., 1]
+    gd = man['ground_d']
+    d_walk = (n16 / 65535.0 * (gd['max'] - gd['min']) + gd['min']).astype(np.float32)
+    if d_walk.shape != cal['d'].shape:
+        d_walk = resize_f(d_walk, (W, Hh))
+    q_ground = np.stack([qx, cal['qy'], d_walk], -1).reshape(-1, 3)
+    Yg = (q_ground @ M.T)[:, 1].reshape(Hh, W).astype(np.float32)
+    lay = {'d_walk': d_walk, 'Yg': Yg}
+    cal['Y'] = (cal['qy'] * math.cos(theta) - cal['d'] * math.sin(theta)).astype(np.float32)
+
+    # ---- 辐射:运行时那张背景 + 原来那套 HDR 恢复参数;无语义门控 ----
+    hdr = build_radiance_field(scene_dir / bg_name, (W, Hh), P)   # 唯一构造处
+    rad_sha = radiance_sha1(hdr['base'])
+    print(f'[radiance] 范围 {hdr["base"].min():.4f}~{hdr["base"].max():.3f}  sha1 {rad_sha}')
+
+    # ---- probe 盒:band 由**角色实高**推出(不是写死的 1.6)----
+    char_wu = scene_char_wu(name, cal['ppu'], W)
+    band = P.get('probe_band')
+    if band is None:
+        if char_wu is None:
+            raise RuntimeError(f'{name}: 取不到 worldWidth,推不出角色高度;'
+                               f'显式传 probe_band')
+        band = char_wu * 1.15
+    if char_wu is None:
+        char_wu = float(band) / 1.15
+    wb = world_bounds(cal, lay, P, band=band, char_wu=char_wu,
+                      height_chars=float(P.get('probe_height_chars', 2.0)))
+    wb['M'] = M                                      # 用发行版那份 M,别另生成一个
+    print(f'[scale] 角色 {char_wu:.3f} wu  probe 带 {float(band):.3f} wu')
+
+    escape_of = make_escape_sampler(P.get('escape'), root=ROOT,
+                                    hdr=hdr['base'], depth=cal['d'])
+    amb = stage_ambient(escape_of, P)
+    lights = man.get('lights') or []                 # 原样保留(见 docstring)
+    pr = stage_probes(cal, lay, hdr, wb, lights, P, escape_of, char_wu)
+
+    sh_c = _normalize_shading(man.get('shading'))
+    nee_on = sh_c['nee'] > 0
+    amb_w = float(sh_c['amb'])
+    for stem, K in (('l1', 4), ('l2', 9), ('bins', 64)):
+        out = compose_atlas(pr[stem][:, :, :3], pr[f'{stem}emit'], pr[f'{stem}nee'],
+                            pr[f'{stem}amb'], nee_on=nee_on, amb_w=amb_w)
+        _awrite(dest / f'atlas_{"bin" if stem == "bins" else stem}.bin', out.tobytes())
+    _awrite(dest / 'probes_valid.bin', (pr['valid'].astype(np.uint8) * 255).tobytes())
+
+    # ⚠ M **原样回写**,不许过一趟 float32 再 float() —— 那会把
+    #   0.7071067811865476 降成 0.7071067690849304。语义没变,但这是无谓的精度损失,
+    #   而且让每次重烘的 diff 都多出三行噪声(第一次跑就这么写错了)。
+    man['world'] = dict(M=man['world']['M'],
+                        x0=wb['x0'], x1=wb['x1'], y0=wb['y0'], y1=wb['y1'],
+                        z0=wb['z0'], z1=wb['z1'])
+    man['probes'] = {'nx': pr['nx'], 'ny': pr['ny'], 'nz': pr['nz']}
+    man['ambient_sh'] = amb['sh'].reshape(-1).tolist()
+    bp = dict(man.get('baked_params') or {})
+    bp.update({k: P[k] for k in ('probe_strategy', 'probe_dims', 'probe_spp',
+                                 'probe_cells_per_char_xz', 'probe_cells_per_char_y',
+                                 'probe_height_chars', 'probe_max')})
+    bp['probe_band'] = float(band)
+    bp['escape'] = P.get('escape')
+    bp['char_wu'] = float(char_wu)
+    bp['probe_hit_rate'] = pr['hit_rate']
+    # 辐射场的内容哈希:校验侧复算后必须逐位对上,否则"参照"和"盘上的"
+    # 根本不是同一个输入,比出来的数一律无意义(见 build_radiance_field)。
+    bp['radiance_sha1'] = rad_sha
+    # ⚠ **只许写 ASCII 的结构化数字,不许把人话塞进运行时载荷。**
+    #   第一版写了 `probe_layout_note`(带中文和 ⚠),而 `lighting.json` 历来是纯 ASCII,
+    #   `tools/editor/validator.py` 读它时没指定编码 => Windows 按 GBK 解 => 整份载荷
+    #   在校验器里报 "解析失败",而游戏侧(fetch + UTF-8)一切正常 —— 最难查的一类。
+    cell = pr['layout'].cell_size()
+    bp['probe_cell_wu'] = [float(v) for v in cell]
+    bp['probe_layers_per_char'] = float(char_wu / max(cell[1], 1e-9))
+    bp['probe_coverage'] = float(pr['coverage'])
+    man['baked_params'] = bp
+    bp.pop('probe_layout_note', None)                # 早期版本塞过人话,清掉(见上)
+    man['built'] = time.strftime('%Y-%m-%d %H:%M:%S')
+    man['rebaked_lighting_only'] = True              # 留痕:这份不是完整 build 产的
+    text = json.dumps(man, ensure_ascii=False, indent=1) + '\n'
+    # 硬闸:`lighting.json` 历来是纯 ASCII,而 validator 读它时没指定编码
+    # (Windows 按 GBK 解)。写进一个非 ASCII 字符就会让校验器报「解析失败」,
+    # 而游戏侧 fetch+UTF-8 一切正常 —— 与其等下次踩,不如在这里当场炸。
+    try:
+        text.encode('ascii')
+    except UnicodeEncodeError as exc:
+        raise RuntimeError(
+            f'lighting.json 里出现了非 ASCII 字符({exc.object[exc.start:exc.end]!r}) —— '
+            f'运行时载荷只放 ASCII 的结构化数据,人话写到日志或 geometry.json 去') from exc
+    _awrite_text(lj, text)
+    print(f'[rebake] {dest}')
+    return dest
+
+
+def _parse_escape(spec: str, intensity: float) -> dict:
+    """`--escape` 的取值 -> `escape.make_escape_sampler` 的 spec。
+
+    缺省是 black(制作人 2026-09-01)。`scene_derived` 是**显式**选项且带警告:
+    历史上从画面反推逃逸辐射翻过车,见 escape.py 的模块文档。
+    """
+    s = spec.strip()
+    low = s.lower()
+    if low == 'black':
+        return {'mode': 'black'}
+    if low == 'white':
+        return {'mode': 'color', 'color': [1.0, 1.0, 1.0], 'intensity': intensity}
+    if low == 'scene_derived':
+        return {'mode': 'scene_derived', 'intensity': intensity}
+    if ',' in s:
+        rgb = [float(v) for v in s.split(',')]
+        if len(rgb) != 3:
+            raise SystemExit(f'--escape 的颜色要三个数,收到 {spec!r}')
+        return {'mode': 'color', 'color': rgb, 'intensity': intensity}
+    return {'mode': 'skybox', 'file': s, 'intensity': intensity}
+
+
 def main():
+    # Windows 控制台默认 GBK,本模块的日志与帮助文本里有中文和 ⚠ —— 不 reconfigure
+    # 就会在 `--help` 或任意一条中文日志上抛 UnicodeEncodeError 而**整个烘焙中断**
+    # (与 scene_fields.main 同一处理)。
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, 'reconfigure'):
+            stream.reconfigure(encoding='utf-8', errors='replace')
     ap = argparse.ArgumentParser()
     ap.add_argument('image', type=Path)
     ap.add_argument('--name', default=None)
@@ -1736,10 +2044,47 @@ def main():
     ap.add_argument('--background', default=None,
                     help='这是该场景的哪张背景(如 background_relight_夜.png);'
                          '缺省=场景当前 backgrounds[0]。决定工作目录与导出落点')
+    # ⚠ 自动生成只对**标量**缺省有效。`probe_dims`(元组)/`escape`(字典)/
+    #   `probe_band`(None)三个的 `type=type(v)` 会分别变成 tuple/dict/NoneType,
+    #   传参当场炸 —— 它们下面显式声明。
+    _MANUAL = {'probe_dims', 'escape', 'probe_band'}
     for k, v in DEFAULTS.items():
+        if k in _MANUAL:
+            continue
         ap.add_argument(f'--{k}', type=type(v), default=None)
+
+    g = ap.add_argument_group('probe 分布(烘焙期可调,见 probe_layout.py)')
+    g.add_argument('--probe-dims', dest='probe_dims', default=None,
+                   help='显式格数 "nx,ny,nz"(缺省 20,6,14 = 现役载荷大小);'
+                        '传 auto 则按角色高度推密度')
+    g.add_argument('--probe-band', dest='probe_band', type=float, default=None,
+                   help='角色可达高度带(wu)。缺省由**角色实高**推出(char_wu*1.15)。'
+                        '⚠ 别再手填 1.6,那是"角色高 1.5 wu"的遗留假设,'
+                        '实测角色 0.17~0.97 wu')
+
+    e = ap.add_argument_group('逃逸辐射(射线跑出画外带走多少,见 escape.py)')
+    e.add_argument('--escape', default=None,
+                   help='black(缺省) | white | "r,g,b" | 某张 equirect 天空图路径 | '
+                        'scene_derived ⚠(从画面反推,慎用)')
+    e.add_argument('--escape-intensity', dest='escape_intensity', type=float,
+                   default=1.0)
+
     args = ap.parse_args()
-    params = {k: getattr(args, k) for k in DEFAULTS if getattr(args, k) is not None}
+    params = {k: getattr(args, k) for k in DEFAULTS
+              if k not in _MANUAL and getattr(args, k) is not None}
+
+    if args.probe_dims is not None:
+        if args.probe_dims.strip().lower() in ('auto', 'none', ''):
+            params['probe_dims'] = None          # 按 probe_cells_per_char_xz 推密度
+        else:
+            xs = [int(v) for v in args.probe_dims.replace('x', ',').split(',')]
+            if len(xs) != 3:
+                raise SystemExit(f'--probe-dims 要三个数,收到 {args.probe_dims!r}')
+            params['probe_dims'] = tuple(xs)
+    if args.probe_band is not None:
+        params['probe_band'] = args.probe_band
+    if args.escape is not None:
+        params['escape'] = _parse_escape(args.escape, args.escape_intensity)
     name = args.name or args.image.stem
     bg = args.background or args.image.name
     build(args.image.resolve(), name, params, background=bg)
