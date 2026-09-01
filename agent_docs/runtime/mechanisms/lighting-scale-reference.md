@@ -10,7 +10,7 @@ authority:
   - src/rendering/entityShadowBinding.ts
   - src/core/SceneLightingSystem.ts#wuPerQUnit
   - tools/editor/editors/scene_lights.py
-  - tools/scene_relight/bake.py
+  - tools/character_lighting_lab/scene_fields.py
 triggers:
   paths:
     - "src/rendering/lighting/**"
@@ -33,6 +33,9 @@ last_governed: 2026-08-21
 shader 里 march 走的是**伪世界 q**(深度重建出来的),两者差一个**逐场景的比例**,
 那次 transform 只在打包处折一次,作者不必知道。
 
+光照模型本身(原画 + 加性实体灯、S_day 只当 albedo 除数)见 [[scene-lighting]] ——
+本卡只管"参数住在哪个空间、用哪把尺"。
+
 ## 两个空间(定义见总表)
 
 空间本身的定义、原点、住户、以及两个 M / 两套像素栅格那几条铁律,
@@ -41,7 +44,7 @@ shader 里 march 走的是**伪世界 q**(深度重建出来的),两者差一个
 - 作者填 **wu**(世界空间,与 NPC 坐标同尺,角色高 150 wu)
 - shader 里 march 走 **q**,着色走 **M-world**
 - 两者差 `wuPerQUnit = worldWidth / (native_w / ppu)`,逐场景不同
-  (雾津街头 **880**、teahouse **154**),取自 `lighting2/meta.json` 的 `scale.scene_per_wu`
+  (雾津街头 **880**、teahouse **154**),取自 `lighting/<背景基名>/geometry.json` 的 `scale.scene_per_wu`
 - **那次 transform 只在打包处折一次**
 
 **判据:角色在 wu 里 28 个场景恒为 150。** 它在 q 里从 0.17 变到 0.97,
@@ -101,7 +104,7 @@ shader 里 march 走的是**伪世界 q**(深度重建出来的),两者差一个
 
 ### ④ 两套标定别混用:`meta.cal` 是 **work** 分辨率的
 
-`lighting2/meta.json` 里有两个分辨率:`work`(512×288)与 `native`(2048×1152),
+`geometry.json` 里有两个分辨率:`work`(512×288)与 `native`(2048×1152),
 而 `meta.cal` 是**给 work 用的**(雾津街头 ppu 112.64、cx 256、cy 144)。
 native 那套在 `depthConfig.M` 里(ppu 450.56、cx 1024、cy 576),shader 用的是它。
 

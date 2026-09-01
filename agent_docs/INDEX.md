@@ -14,7 +14,7 @@
 - [加 Action 四件套](runtime/mechanisms/action-registration-quadruple.md) — 新 action = 运行时 register + actionParamManifest(TS 权威) + 编辑器 ACTION_TYPES/_PARAM_SCHEMAS + validator 认可;参数含实体/场景引用另登记 ENTITY_REF_PARAMS(第五件);DEV 启动一致性审计兜底
 - [档案系统解锁语义](runtime/mechanisms/archive-unlock-semantics.md) — 人物档案解锁唯一入口=addArchiveEntry(幂等);lore/doc/book 走声明式条件;totalPages 只认 pages.length
 - [打包管线(只读抽取 · dev/发行双档 · 产物验收门)](runtime/mechanisms/build-pipeline.md) — 打包只从开发树只读抽取,绝不改动开发数据;裁剪一律写成"不抽取";清单=JSON引用闭包+传递闭包+id约定+显式规则;输出目录是每次传的参数、不进配置(编辑器与自动化共用 release.mjs);静态检查证明不了能玩,靠产物验收门真跑
-- [角色逐像素照明(probe·法线·着色核心)](runtime/mechanisms/character-lighting.md) — 两条路径——统一光影(角色与场景吃同一份 S,吃 3D 天穹遮蔽)优先,没配 lighting 的场景回落旧 probe;着色核心各自单一 GLSL 源;法线必须与 color 同 UV 采样、格边界与运行时 stride 对齐
+- [角色逐像素照明(probe 底光 + 加性实体灯)](runtime/mechanisms/character-lighting.md) — 只有一条活路径——probe 烘死的 GI 底光 + 与场景同一次打包的加性实体灯 + 与背景同一组显示变换;统一角色路径被 Game 里的常量开关整条关死(留码不删);着色核心单一 GLSL 源,法线必须与 color 同 UV 采样、格边界与运行时 stride 对齐
 - [角色注册表(characterId 合并)](runtime/mechanisms/character-registry.md) — 角色身份(name/animFile/portraitSlug)一处定义,NpcDef.characterId 引用,实例化时合并且 own 字段赢过注册表
 - [坐标空间总表(屏幕→场景 wu→像素栅格→伪世界 q→M-world)](runtime/mechanisms/coordinate-spaces.md) — 全项目六个坐标空间的单位/原点/住户/权威源与逐条可验判据;两个 M(det ±1)、两套像素栅格(比例非恒定 4)、着色在 M-world 而 march 在 q——混用一律不报错只是效果不对
 - [过场音频回收契约](runtime/mechanisms/cutscene-audio-reclamation.md) — 过场 SFX 作用域捕获 + 快照音频基线;中断路径停尾音、自然播完保留末拍——cleanup 布尔语义勿回退
@@ -42,6 +42,7 @@
 - [运行时持久化(存档/玩家设置)落文件,不落浏览器存储](runtime/mechanisms/runtime-persistence.md) — 存档与玩家偏好一律经 PersistentStore 落本地文件;三后端 Tauri>dev server>内存;localStorage 只剩一次性迁移读取;内存降级必须让 UI 说实话
 - [存读档硬契约](runtime/mechanisms/save-restore-contracts.md) — load 坏档先拒+快照回滚、save 返 Promise<boolean>(落盘是文件 I/O);查询走内存镜像保持同步;读档静默清 zone、清位面 manual override;新游戏=净化 URL 整页 reload
 - [scenarios.json 运行时消费语义(退役中)](runtime/mechanisms/scenario-catalog-semantics.md) — 一等公民 scenario 已数据侧退役、零数据喂养;新内容一律走 narrative scenario_* 子图,别把活儿写进 Scenarios 面板
+- [场景背景受光(原画 + 加性实体灯)](runtime/mechanisms/scene-lighting.md) — 原画就是最终的光照,运行时只把作者摆的实体灯加上去(先反解 albedo 再乘);天光与太阳的运行时加光项已删,「夜」靠换一张夜原画;两级 RT 缓存,稳态每帧零光照计算
 - [场景 onEnter 揭幕时机契约](runtime/mechanisms/scene-onenter-reveal-timing.md) — loadScene 尾序=scene:ready → 揭幕(onReveal) → onEnter;初始进场同样先遮罩后揭幕;主 tick 必须先于任何场景装载挂载
 - [气味系统(双层 action/zone)](runtime/mechanisms/smell-system.md) — action 层永远压过 zone 层;zone 气味声明式挂 ZoneDef.smell,SmellSystem 听 zone:enter 驱动,ZoneSystem 不动
 - [首启手势门 + 音频解锁快路径](runtime/mechanisms/start-gate-audio-unlock.md) — 「点击开始」遮罩给页面 sticky 激活;AudioManager init 时按 hasBeenActive 直接解锁——救开场首句配音音画同步
@@ -59,7 +60,7 @@
 - [曝光逐场景独立调,不做全局对齐](runtime/decisions/2026-08-21-per-scene-exposure.md) — display（ev/tonemap/对比/饱和/lift）留在场景 JSON 里逐场景调;不把 albedo 标定接进背景、不提全局曝光层——精度不是这个项目要的东西
 - [位面基建 v3 模型拍板](runtime/decisions/2026-07-05-plane-v3-model.md) — 位面=全局一等资产+实体归属+叙事只点名+对账器重派生;v1(绑任务图)/v2(实体变体表)/接管式小游戏均被否
 - [scenarios.json 一等公民系统退役](runtime/decisions/2026-07-15-scenario-firstclass-retirement.md) — 2026-07-13 拍板退役一等公民 scenario 系统;stage-1 数据侧已落地(scenarios.json 清空、码头两线迁 narrative),stage-2 代码删除待做(届时 6→4 条件叶为 approval①)
-- [二维场景辐射度还原与发光增益管线定稿](runtime/decisions/2026-07-21-scene-radiance-restoration-pipeline.md) — 【2026-08-21 已被统一光影取代】原「离线还原绝对辐射度 + 语义 mask 一刀两断」不再是新场景的路线;新路线是先除掉画里的白天光再乘新光,离线只烘几何项
+- [场景光照路线定稿(三代沿革:辐射还原 → 统一光影 → 原画 + 加性灯)](runtime/decisions/2026-07-21-scene-radiance-restoration-pipeline.md) — 【2026-08-30 现行】原画就是最终的光照,运行时只加实体灯,夜靠换夜原画;前两代(离线绝对辐射还原 / 整体运行时重打光)均已被否,理由与仍然继承的几条都在本卡
 - [UI 面板美学方向定稿](runtime/decisions/2026-07-05-ui-panel-skin-direction.md) — 民俗草根·做旧木框——纸纹底+厚木条外框+内侧暗金细线;标题界面是海报、不走这套皮
 
 ## editor-tools

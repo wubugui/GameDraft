@@ -10,7 +10,9 @@
 > `src/systems/graphDialogue/evaluateGraphCondition.ts`。架构文档
 > (`docs/游戏架构设计文档.md`)里的清单会漂,不要照抄任何文档里的表。
 >
-> **光影现在有新旧两套并存**(2026-08-21):场景配了 `lighting` 块的走统一光影(`src/rendering/lighting/`),没配的走旧的 `lightEnv`/probe。28 个场景已全部接进新管线,但其中 27 个是**恒等占位**(`lighting.placeholder: true`)——背景零变化、角色仍走旧 probe。判断某个场景走哪条,看 `placeholder` 这个键,别看文档。
+> **光影是「原画 + 加性实体灯」**(2026-08-30 制作人定调,取代 08-20 的统一光影重打光):**原画就是最终的光照**,运行时不重新照亮场景,只把作者摆的实体灯加上去(加之前先从原画反解 albedo)。**「夜」靠换一张夜原画**(`timeVariants` 整套时段外观)+ 该时段的 probe + 该时段的灯,不靠调暗天光——天光与太阳的**运行时加光项已删**。角色一律走 probe 底光 + 与场景**同一次打包**的加性灯。⚠ 统一角色路径已被 `Game.UNIFIED_CHAR_PATH_ENABLED = false` 整条关死,`UnifiedCharacterShader` / GI 反弹 / 3D 天穹可见性网格 / `lighting.placeholder` / `radianceScale` **全部无消费者**(留码不删,读代码别被它们误导;`placeholder` 尤其不能再拿来判断"这个场景走哪条")。正文见 `agent_docs/runtime/mechanisms/scene-lighting.md`。
+>
+> **光照烘焙只有一个工具、一个目录**(制作人 2026-08-31 收束):`tools/character_lighting_lab` 产出一张背景图的**全部**派生物(深度/标定/probe/体素/行走面 + 法线/天穹可见性),统一落 `runtime/scenes/<id>/lighting/<背景基名>/`。烘几何场:`sh scripts/py.sh -m tools.character_lighting_lab.scene_fields --scene <id>`。⚠ 别再另起 baker 或另开目录——同一份东西分两处放,打包规则/校验器/审计各写一套路径,少写一层就是**整批静默失效**(已发生过四次)。
 >
 > **🔴 铁律 0 · 光照一律在世界空间算**(制作人 2026-08-30 定死,无例外):
 > **所有的光照必须在世界空间计算;任何 q 空间的量都必须先转换到世界空间,再参与光照计算。**
@@ -41,7 +43,7 @@
 | 不改玩法的技术改动(重构、架构修复、性能、UI 实现、工具、修 bug) | `agent_docs/runtime/norms.md` | 分层反向依赖;`destroy` 留残留 |
 | 改编辑器 / 策划工具(`tools/editor`、`tools/*_editor` 等 PyQt) | 叠加 `agent_docs/editor-tools/norms.md` | 裸 `QLineEdit` 承载引用字段;绕过统一写盘出口 |
 | 产素材(抠图、动画、立绘、配音、音效、视差) | `agent_docs/asset-pipeline/norms.md` | 重扣源 ≠ 游戏当前实际源 |
-| 改光影(场景重打光、灯、雾、角色受光、阴影) | `agent_docs/runtime/mechanisms/character-lighting.md` + `entity-lighting.md` | 用**旧的** probe/lightEnv 那套去改新场景 |
+| 改光影(场景灯光、夜景、雾、角色受光、阴影) | `agent_docs/runtime/mechanisms/scene-lighting.md` + `character-lighting.md` + `entity-lighting.md` | 照着**已停用**的统一光影那套改(重打光 / placeholder / 角色吃天光) |
 | 跨域 / 拿不准 / 系统设计 | `agent_docs/meta/norms.md` | 四个存放面混放 |
 
 两个例外流程:

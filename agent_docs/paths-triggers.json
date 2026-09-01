@@ -355,6 +355,12 @@
       ]
     },
     {
+      "glob": "src/core/SceneLightingSystem.ts",
+      "docs": [
+        "scene-lighting"
+      ]
+    },
+    {
       "glob": "src/core/TextDisplaySettings.ts",
       "docs": [
         "runtime-persistence"
@@ -514,7 +520,9 @@
       "docs": [
         "character-lighting",
         "coordinate-spaces",
-        "lighting-scale-reference"
+        "lighting-scale-reference",
+        "scene-lighting",
+        "scene-radiance-restoration-pipeline"
       ]
     },
     {
@@ -725,6 +733,12 @@
       "glob": "src/utils/dayTime.ts",
       "docs": [
         "day-night-npc-schedule"
+      ]
+    },
+    {
+      "glob": "src/utils/sceneAppearance.ts",
+      "docs": [
+        "scene-lighting"
       ]
     },
     {
@@ -1058,6 +1072,7 @@
       "docs": [
         "coordinate-spaces",
         "lighting-scale-reference",
+        "scene-lighting",
         "scene-radiance-restoration-pipeline"
       ]
     },

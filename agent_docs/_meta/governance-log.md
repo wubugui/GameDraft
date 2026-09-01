@@ -43,6 +43,29 @@
   (含主脑自己删的 3 条),全部补回。**总信息量 436KB→347KB(-21%),CLAUDE.md 11.7KB→3.8KB(-67%)**。
   详见下节。
 
+- **08-31 定点治理(光影一域)** — 制作人指出库里的光影模型与代码不符,盲重建对账后确认:
+  2026-08-30「原画就是最终的光照」已取代统一光影的整体重打光,统一角色路径被
+  `Game.UNIFIED_CHAR_PATH_ENABLED = false` 整条关死。新卡 `scene-lighting`;
+  重写 `character-lighting`;`2026-07-21-scene-radiance-restoration-pipeline` 就地取代成三代沿革;
+  `per-scene-exposure` / `coordinate-spaces` / `entity-lighting` / `lighting-scale-reference` 订正;
+  CLAUDE.md 光影段与 §0 路由行改写;两份 artifact 设计文档立"已被取代"横幅;
+  `tools/scene_relight/README.md` 订正(离线导出变体图**重新成了正路**);inbox 清 3 条、收窄 1 条。
+
+- **08-31 光照烘焙收束(制作人指令)** — 「整个光照烘焙管线收束到一个统一的工具」。
+  `scene_relight/bake.py` + `geometry.py` 的几何部分并入角色照明实验室
+  (`scene_fields.py` / `scene_geometry.py`),产物从 `lighting2/<图名>/meta.json` 迁到
+  `lighting/<图名>/geometry.json`,与 probe 载荷同住;载荷代次 v2,新增 `depth_sha1`。
+  **搬家已验为恒等**:四个二进制产物逐字节相同,meta 只差有意改的 `version`。
+  顺带修掉同一形态的四处路径缺陷(见 inbox 的 bake-path-missing-one-level),
+  其中打包规则那处意味着 **probe 载荷此前一直没进过发行包**。
+
+- **08-31 光照实验室转本地窗口程序(制作人指令)** — 「禁止双开、关窗即退、不要端口冲突」。
+  壳提成共用 `tools/desktop_shell.py`(临时端口 / daemon 服务线程 / QLocalServer 单实例 /
+  三层灭缓存),两个工具同用;新增 `tools/child_jobs.py`(Windows Job Object)让烘焙与
+  装依赖的**子进程随父进程一起死** —— 那是这个工具独有的残留源,重打光工具没有。
+  `scene_fields` 补 `--background` / `bake_scene`:一个场景的**全部时段原画各烘一套**
+  (此前只烘得到当前生效那张,夜原画的几何场没有入口)。
+
 ## §2.1 本轮(2026-08-05)明细
 
 **范围**:五域全库写作高度裁剪 + 管线 B 全量蒸馏。**管线 A 盲重建仍未跑**(欠五轮),
@@ -102,6 +125,15 @@
     实际音频资产在 `public/resources/runtime/audio/`(一次性工具 bug,非契约;
     修 BASE_DIR 或改参数化输出目录)。
 
+12. **光影的"死料"已有处置口径**(制作人 08-31 拍板:继续烘、运行时不读、不进发行包;运行时装载与打包抽取都已摘掉)。**剩下的是代码本身**:`UnifiedCharacterShader.ts` /
+    `UnifiedCharacterLighting.ts` 整份、`GiBouncePass`(仍在脏时算 3840×16 次取样但无人读)、
+    `lighting2/skyvis_grid.bin` 与 `gi_hitmap.bin`(仍装载)、`SceneLightingDef` 的
+    `radianceScale`/`characterShape`/`giGain`、`lighting.placeholder`(零消费者)、
+    以及 F2 里对应的旋钮 —— 全部"接着但没人读"。删还是留(等日夜整条线跑通再决定)要人拍板。
+13. **角色不吃雾**:雾目前只在背景那一级,角色侧的雾实现只存在于已停用的统一角色 shader 里。
+    开雾场景里角色会"贴"在雾前面。是补进 probe 路径还是接受,要人拍板。
+14. **一批说"统一光影/重打光"的代码注释已与实现不符**(`GiBouncePass` 头注释、
+    `lightingCore.glsl` 的"四方共用"、`LitBackground` 的"P3 接角色"等)。文档已改,注释未动。
 ## §4 intake 收编史(一行一次)
 
 - 07-11 收2/改1 —— 对抗验收抠图法、对抗验收拆帧法两张正交原语 method;character-animation-production 改挂向下指针。

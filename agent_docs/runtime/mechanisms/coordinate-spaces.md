@@ -9,7 +9,7 @@ authority:
   - src/rendering/lighting/worldReconstruct.glsl
   - src/utils/worldReconstruct.ts#WR_CONTRACT
   - src/systems/SceneManager.ts
-  - tools/scene_relight/geometry.py
+  - tools/character_lighting_lab/scene_geometry.py
   - tools/editor/editors/scene_lights.py
 triggers:
   paths:
@@ -38,7 +38,7 @@ last_governed: 2026-08-21
 ```
 屏幕像素
   │  (screen − worldContainer.pos) / projectionScale        ← 相机变换
-场景坐标 = 世界空间,单位 wu   ← NPC / 热区 / spawn / 碰撞 / 灯的作者面
+场景坐标 = 世界空间,单位 wu   ← NPC / 热区 / spawn / 碰撞
   │  × native.w/worldWidth              │  × work.w/worldWidth
 native px ─────────────┐                └──> work px
   │  ((px−cx)/ppu, (cy−py)/ppu, d)   ← ⚠ 翻 Y 就在这里(cy−py)
@@ -50,11 +50,18 @@ native px ─────────────┐                └──> w
 | 空间 | 单位 | 原点 | 谁住在里面 |
 |---|---|---|---|
 | 屏幕 | 屏幕像素 | 画布左上 | 只有最终合成 |
-| **场景坐标(世界空间)** | **wu** | 画布左上 | NPC/热区/spawn/碰撞/**灯的作者面** |
+| **场景坐标(世界空间)** | **wu** | 画布左上 | NPC/热区/spawn/碰撞 |
 | native px | 像素 | 图左上 | `background.png` / `raw_depth_rg.png` |
-| work px | 像素 | 图左上 | 照明载荷(`lighting2/`、probe) |
+| work px | 像素 | 图左上 | 照明载荷(`lighting/<背景基名>/`:probe + 几何场) |
 | **伪世界 q** | q(无名) | 画面中心、深度 0 | 深度场、march |
 | **M-world** | 同 q | 同 q | 着色:法线、N·L、1/r²、天光半球 |
+| **灯的作者面** | **wu** | **画面中心**、Y 朝上 | `LightDef.pos` / `range` / 面光 `size` |
+
+⚠ **灯的作者面与 NPC 坐标只共用「wu」这把尺,不共用原点与朝向。**
+`q_to_world`(编辑器)与 `packLights`(运行时)都是**纯旋转 + 缩放、零平移**,
+所以灯的零点是**画面中心**、Y 朝上、Z 是纵深。把 `light.pos` 当 NPC 坐标用,
+灯会整体偏掉半张图**而且不报任何错**(实测雾津街头:`scene_x = 2000 + pos[0]`,世界宽 4000)。
+两个方向的现成实现在 `src/authoring/lightSpace.ts`(含单测)。
 
 **尺度锚:角色高 150 wu**,28 个场景恒定——这是 wu 一致的判据。
 `worldWidth` 逐场景 700–4000 wu;`ppu` 逐场景 220–573(相机标定,不是世界单位在变)。
@@ -129,7 +136,7 @@ q ↔ M-world 之间就是一个**纯旋转 R**,这一点全项目逐场景验�
 
 | 法线 | 怎么烘的 | 结论 |
 |---|---|---|
-| 场景 `lighting2/normal.png` | `tools/scene_relight/geometry.py:183-190`:`pos = q @ R.T` 得**世界位置**,再取梯度叉积 | **已在 M-world** |
+| 场景 `lighting/<图名>/normal.png` | `character_lighting_lab/scene_geometry.py` 的 `Scene.geometry`:`pos = q @ R.T` 得**世界位置**,再取梯度叉积 | **已在 M-world** |
 | 角色 `atlas.normal.png` | `tools/animation_pipeline/bake_normal_atlas.py`:从剪影 alpha 推高度场,在**图像像素空间**取梯度 `(gx, -gy, -6)` | **已在世界空间** —— 角色是**直立 quad**(沿精灵上移 h,过 R 之后在世界里就是正上方 h,零前后偏移),其局部轴恰好是世界 X / Y / −Z |
 
 ⇒ **灯循环直接用 `n`。再乘一次 R = 把法线整体仰起一个俯角**(雾津街头 45°),

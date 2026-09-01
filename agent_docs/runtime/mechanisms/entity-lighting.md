@@ -23,7 +23,9 @@ last_governed: 2026-08-21
 ## 是什么(一句话)
 
 场景侧的实体受光表现:投影阴影 + 场景色调融入 / AO + 深度遮挡(角色被场景前景挡住);
-角色本体的逐像素受光是另一套,见 [character-lighting](character-lighting.md)。
+角色本体的逐像素受光是另一套,见 [character-lighting](character-lighting.md);
+背景本身怎么被灯照亮见 [scene-lighting](scene-lighting.md)。本卡这一套(lightEnv 色调 / AO /
+planar 阴影 / 深度遮挡)与它们并存,2026-08-30 的「原画 + 加性灯」改动没有动它。
 总开关 `game_config.json` 的 `entityLighting.enabled`。
 
 ## 权威源(读代码从哪进)
