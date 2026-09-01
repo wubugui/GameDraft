@@ -35,3 +35,16 @@ PROBE_SPP = 256
 
 #: à-trous 引导去噪的趟数(0=关)。只作用于 2D 场(skyvis)，probe 走 dilation。
 DENOISE_ITERS = 3
+
+#: ---- NEE + MIS(发光体方差的无偏解;实现在 nee.py,lighting-rebuild 分支搬运)----
+#: 发光体判定阈:展开后 HDR 亮度超过它的画面像素进光源表(灯芯/窗光 ~200-1200,
+#: 普通反射面 <1;实测 4.0 之下光源表被大片亮墙灌爆、选取密度被稀释)。
+NEE_EMITTER_MIN = 4.0
+NEE_MAX_EMITTERS = 65536
+#: Cycles「Clamp Indirect」同款逐样本亮度钳(有偏,压萤火虫)。None = 关。
+#: probe gather 的缺省值 —— NEE 开着时大尖刺已被光源采样接走,钳只兜极端余量。
+CLAMP_INDIRECT_DEFAULT = None
+#: probe 体重建层(3D 联合双边 a-trous)的趟数与亮度权尺度(x 有效格 DC 亮度标准差)。
+#: 0 趟 = 关。与 2D denoise 同一门风:确定性、字节可复现。
+PROBE_FILTER_ITERS = 2
+PROBE_FILTER_SIGMA_LUM = 4.0

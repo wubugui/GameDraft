@@ -38,11 +38,12 @@ import numpy as np
 from .const import GATHER_SEED
 
 __all__ = ['point_keys', 'tangent_basis', 'cosine_hemisphere',
-           'uniform_upper_hemisphere', 'uniform_sphere']
+           'uniform_upper_hemisphere', 'uniform_sphere', 'nee_uniforms']
 
 _SALT_COSINE = np.uint64(0x9E37_0001)
 _SALT_UPPER = np.uint64(0x9E37_0002)
 _SALT_SPHERE = np.uint64(0x9E37_0003)
+_SALT_NEE = np.uint64(0x9E37_0004)
 
 _TWO_PI = np.float32(2.0 * math.pi)
 _INV_2PI = np.float32(1.0 / (2.0 * math.pi))
@@ -179,3 +180,14 @@ def uniform_sphere(keys: np.ndarray, s: int,
     dirs = np.stack([sr * np.cos(phi), mu, sr * np.sin(phi)], 1).astype(np.float32)
     pdf = np.full(len(keys), _INV_4PI, np.float32)
     return dirs, pdf
+
+
+def nee_uniforms(keys: np.ndarray, s: int
+                 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """NEE 光源样本的四条均匀流(选灯 xi、壳箱内 u、v、w)。盐独立于方向采样器
+    (盐注册表在本文件,别处不许自造 —— 跨采样器流独立的承诺只此一处兑现)。
+    从 lighting-rebuild 分支 tools/lightbake/sampling.py 逐字搬运(2026-09-01)。"""
+    return (_u01(keys, _SALT_NEE, 4 * s),
+            _u01(keys, _SALT_NEE, 4 * s + 1),
+            _u01(keys, _SALT_NEE, 4 * s + 2),
+            _u01(keys, _SALT_NEE, 4 * s + 3))

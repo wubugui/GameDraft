@@ -260,15 +260,26 @@ def verify_probe(sid: str, background: str | None = None, spp: int = 512,
     n_q /= np.maximum(np.linalg.norm(n_q, axis=1, keepdims=True), 1e-9)
     from . import pipeline as PL
     rad_sha = PL.radiance_sha1(rad)
-    if ref_cache is not None and ref_cache.get('sha') == rad_sha \
-            and ref_cache.get('spp') == spp and ref_cache.get('ref') is not None:
+    # 参照与烘焙同一套降方差配置:NEE 按同一张辐射场建表(判据同 bake),
+    # clamp 跟 baked_params(有偏项必须两侧同钳,否则 parity 比的是两种偏差)。
+    bp = pay['lighting'].get('baked_params') or {}
+    _cl = bp.get('probe_clamp')
+    _cl = float(_cl) if _cl is not None else None
+    from .nee import build_nee
+    dfield = DepthField.from_geo(geo)
+    nee_ctx = (build_nee(np.asarray(rad, np.float32), dfield,
+                         threshold=float(bp.get('probe_nee_threshold', 1.0)))
+               if bool(bp.get('probe_nee', True)) else None)
+    ckey = (rad_sha, spp, _cl, nee_ctx is not None)
+    if ref_cache is not None and ref_cache.get('key') == ckey and ref_cache.get('ref') is not None:
         ref = ref_cache['ref']
         print(f'  参照 E:复用缓存(辐射场哈希 {rad_sha} 一致)')
     else:
-        ref = gather_scene_e(surface_points_q(geo), n_q, R, DepthField.from_geo(geo),
-                             rad, esc, spp).reshape(h, w, 3)
+        ref = gather_scene_e(surface_points_q(geo), n_q, R, dfield,
+                             rad, esc, spp,
+                             nee_ctx=nee_ctx, clamp=_cl).reshape(h, w, 3)
         if ref_cache is not None:
-            ref_cache.update({'sha': rad_sha, 'spp': spp, 'ref': ref})
+            ref_cache.update({'key': ckey, 'ref': ref})
 
     # ⚠ probe 用的是**实验室 det=-1 的 M**(lighting.json.world.M),与
     #   depthConfig 的 det=+1 不是一个矩阵。世界位置要用它那套反推。

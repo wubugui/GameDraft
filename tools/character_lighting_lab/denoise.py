@@ -132,3 +132,96 @@ def denoise_scalar(a: np.ndarray, normal: np.ndarray, depth: np.ndarray,
                      float(ATROUS_SIGMA_DEPTH), sig_l, _K5, dst)
         src, dst = dst, src
     return np.ascontiguousarray(src[..., 0], np.float32)
+
+
+# ==================================================== probe 体重建层(3D)
+
+def _sl_pair(o, n, step):
+    """返回 (dst, src) 切片对:dst 区域接收来自 src(偏移 o*step)的邻居。"""
+    d = o * step
+    if d >= 0:
+        return slice(0, n - d), slice(d, n)
+    return slice(-d, n), slice(0, n + d)
+
+
+
+def filter_probe_grid(fields: list, guide_lum, act, grid,
+                      iters: int | None = None,
+                      sigma_lum: float | None = None,
+                      dc_var=None) -> list:
+    """probe 体的重建层:3D a-trous 联合双边,SVGF 式**逐格方差**调 sigma
+    (2026-09-01;lighting-rebuild 分支去噪器在 3D 网格上的对应物)。
+
+    - 核:可分 [1,2,1]^3(27 邻域),步距 1,2,...(a-trous 翻倍);
+    - 亮度权:exp(-(dL/sigma_cell)^2),sigma_cell = sigma_lum x sqrt(var~) + eps。
+      var~ = 逐格 DC 方差的 3^3 valid 加权预平滑(gather 顺带累计,零额外 trace)。
+      噪声大 => sigma 宽 => 亮度权趋常数,权重与取值解耦(线性平均保住无偏);
+      干净 => sigma 窄 => 真边缘/真热点分毫不动。
+      定 sigma 的三条死路都试过(全局线性 std / log 域全局 std / 预平滑引导):
+      分别是热格撑爆 sigma 退化普通模糊(能量+8%)、含噪引导权重与噪声相关
+      (能量+4~8%)、单格真热点被平均进引导(热点 50->10)。
+    - **只重写有效格**;无效格不参与也不被改(其后由 dilation 填)。
+    - 确定性纯 numpy,字节可复现。
+
+    fields: [(nx,ny,nz,...) f32];guide_lum: (P,) 主 E 的 DC 亮度;
+    dc_var: (P,) DC 均值方差(None = 0 => sigma 只剩 eps,滤波近似恒等)。
+    """
+    import numpy as np
+    from .const import PROBE_FILTER_ITERS, PROBE_FILTER_SIGMA_LUM
+    if iters is None:
+        iters = PROBE_FILTER_ITERS
+    if sigma_lum is None:
+        sigma_lum = PROBE_FILTER_SIGMA_LUM
+    if iters <= 0 or not act.any():
+        return [np.array(x, copy=True) for x in fields]
+    nx, ny, nz = grid
+    K1 = (1.0, 2.0, 1.0)
+    lum = np.maximum(np.asarray(guide_lum, np.float64), 0.0).reshape(nx, ny, nz)
+    val = act.reshape(nx, ny, nz).astype(np.float64)
+    var = (np.zeros((nx, ny, nz), np.float64) if dc_var is None
+           else np.maximum(np.asarray(dc_var, np.float64), 0.0).reshape(nx, ny, nz))
+    # 方差预平滑(3^3 valid 加权):SVGF 同款,免得 sigma 自己也是噪声
+    vnum = np.zeros_like(var)
+    vden = np.zeros((nx, ny, nz), np.float64)
+    for ox in (-1, 0, 1):
+        ax_d, ax_s = _sl_pair(ox, nx, 1)
+        for oy in (-1, 0, 1):
+            ay_d, ay_s = _sl_pair(oy, ny, 1)
+            for oz in (-1, 0, 1):
+                az_d, az_s = _sl_pair(oz, nz, 1)
+                kk = K1[ox + 1] * K1[oy + 1] * K1[oz + 1]
+                w = kk * val[ax_s, ay_s, az_s]
+                vnum[ax_d, ay_d, az_d] += w * var[ax_s, ay_s, az_s]
+                vden[ax_d, ay_d, az_d] += w
+    var = np.where(vden > 1e-12, vnum / np.maximum(vden, 1e-12), var)
+    sig = float(sigma_lum) * np.sqrt(var) + 1e-9
+    out = [np.asarray(x, np.float64).reshape(nx, ny, nz, -1).copy() for x in fields]
+    shapes = [x.shape for x in fields]
+    for it in range(int(iters)):
+        step = 1 << it
+        num = [np.zeros_like(a) for a in out]
+        den = np.zeros((nx, ny, nz), np.float64)
+        for ox in (-1, 0, 1):
+            dx_dst, dx_src = _sl_pair(ox, nx, step)
+            for oy in (-1, 0, 1):
+                dy_dst, dy_src = _sl_pair(oy, ny, step)
+                for oz in (-1, 0, 1):
+                    dz_dst, dz_src = _sl_pair(oz, nz, step)
+                    kk = K1[ox + 1] * K1[oy + 1] * K1[oz + 1]
+                    dl = ((lum[dx_src, dy_src, dz_src]
+                           - lum[dx_dst, dy_dst, dz_dst])
+                          / sig[dx_dst, dy_dst, dz_dst])
+                    w = (kk * val[dx_src, dy_src, dz_src]
+                         * np.exp(-dl * dl))
+                    den[dx_dst, dy_dst, dz_dst] += w
+                    for a, nacc in zip(out, num):
+                        nacc[dx_dst, dy_dst, dz_dst] += (
+                            w[..., None] * a[dx_src, dy_src, dz_src])
+        ok = (den > 1e-12) & (val > 0.5)
+        inv = np.where(ok, 1.0 / np.maximum(den, 1e-12), 0.0)
+        for a, nacc in zip(out, num):
+            a[ok] = nacc[ok] * inv[ok][..., None]
+    res = []
+    for a, shp in zip(out, shapes):
+        res.append(a.reshape(shp).astype(np.float32))
+    return res

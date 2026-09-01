@@ -204,9 +204,22 @@ def bent_of_moments(a1: np.ndarray, normals: np.ndarray) -> np.ndarray:
 
 # =================================== 逐像素 E(reference,**不进游戏**)
 
+def clamp_rows(contrib: np.ndarray, clamp: float | None) -> np.ndarray:
+    """Cycles「Clamp Indirect」同款(有偏,可开关):单样本贡献的**亮度**上限,
+    超限整行等比缩(保色度)。clamp=None 原样返回 —— 关闭路径逐位不变。
+    (lighting-rebuild 分支 gather.clamp_rows 逐字搬运。)"""
+    if clamp is None:
+        return contrib
+    from .nee import LUMA
+    lum = contrib @ LUMA.astype(np.float64)
+    fmul = np.minimum(1.0, clamp / np.maximum(lum, 1e-9))
+    return contrib * fmul[:, None]
+
+
 def gather_scene_e(q_pts: np.ndarray, normals_q: np.ndarray, R: np.ndarray,
                    field: DepthField, hdr: np.ndarray, escape_of,
-                   spp: int, progress=None) -> np.ndarray:
+                   spp: int, progress=None,
+                   nee_ctx=None, clamp: float | None = None) -> np.ndarray:
     """逐像素 final gather。**只作为 probe 的 parity 参照,不进运行时载荷。**
 
         E(x,N) = integral L_in(x,w) * (N.w)+ dw
@@ -232,14 +245,48 @@ def gather_scene_e(q_pts: np.ndarray, normals_q: np.ndarray, R: np.ndarray,
                 '换了采样器要改回 sum f/pdf/n 的通式')
         res = trace(q_pts, np.ascontiguousarray(dirs), field)
         hit = ~res.escaped
-        L = np.zeros((n, 3), np.float64)
+        # f_hit 与 f_esc 分账:MIS 只作用于 march 半;天空半单策略全权(分支同口径)
+        Lh = np.zeros((n, 3), np.float64)
         if hit.any():
-            L[hit] = hdr[res.hit_yx[hit, 0], res.hit_yx[hit, 1]]
+            Lh[hit] = hdr[res.hit_yx[hit, 0], res.hit_yx[hit, 1]]
+        if nee_ctx is not None and hit.any():
+            from .nee import pdf_light
+            hit_idx = np.where(hit)[0]
+            pl = pdf_light(nee_ctx, q_pts[hit_idx], dirs[hit_idx])
+            nz = pl > 0.0
+            if nz.any():
+                rows = hit_idx[nz]
+                pb = pdf[rows].astype(np.float64)
+                Lh[rows] *= (pb / np.maximum(pb + pl[nz], 1e-300))[:, None]
+        Le = np.zeros((n, 3), np.float64)
         if res.escaped.any():
             # 逃逸方向要给世界系的取样器(天空盒按世界方向查)
             dw = dirs[res.escaped] @ R.T
-            L[res.escaped] = np.asarray(escape_of(dw), np.float64)
-        acc += L
+            Le[res.escaped] = np.asarray(escape_of(dw), np.float64)
+        acc += clamp_rows(Lh, clamp) + Le
+        if nee_ctx is not None:
+            # 光源样本:第二方向采样器,march 打到哪取哪(逃逸=合法零样本)。
+            # 量纲:本函数尾部 xpi,BSDF 样本贡献=L ⇒ 光源样本= w_L*L*cos/(pi*pdf_L)。
+            from .nee import sample_light
+            _j, dl, _r, pl = sample_light(nee_ctx, q_pts, keys, s, spp)
+            cos_r = np.maximum(np.einsum('ij,ij->i', dl, normals_q), 0.0
+                               ).astype(np.float64)
+            ok = (pl > 0.0) & (cos_r > 0.0)
+            if ok.any():
+                idx = np.where(ok)[0]
+                vres = trace(np.ascontiguousarray(q_pts[idx]),
+                             np.ascontiguousarray(dl[idx]), field)
+                vis = ~vres.escaped
+                if vis.any():
+                    rows = idx[vis]
+                    Ll = hdr[vres.hit_yx[vis, 0], vres.hit_yx[vis, 1]
+                             ].astype(np.float64)
+                    pb = cos_r[rows] / math.pi
+                    w_l = pl[rows] / np.maximum(pl[rows] + pb, 1e-300)
+                    light = np.zeros((n, 3), np.float64)
+                    light[rows] = Ll * (w_l * cos_r[rows]
+                                        / (math.pi * pl[rows]))[:, None]
+                    acc += clamp_rows(light, clamp)
         if progress:
             progress('scene_e', s + 1, spp)
     return (acc / spp * math.pi).astype(np.float32)
@@ -250,7 +297,9 @@ def gather_scene_e(q_pts: np.ndarray, normals_q: np.ndarray, R: np.ndarray,
 def gather_probe(pts_q: np.ndarray, R: np.ndarray, field: DepthField,
                  rad_fields: dict, escape_of, spp: int = PROBE_SPP,
                  bin_normals: np.ndarray | None = None,
-                 progress=None) -> dict:
+                 progress=None,
+                 nee_ctx=None, clamp: float | None = None,
+                 seed: int | None = None) -> dict:
     """一批 probe 点的 SH-L2 / 八面体 bin 投影。
 
     `rad_fields` = {名字: (h,w,3) 辐射图},一次 trace 同时投影多张
@@ -273,11 +322,14 @@ def gather_probe(pts_q: np.ndarray, R: np.ndarray, field: DepthField,
     names = list(rad_fields)
     nb = octa_bin_normals() if bin_normals is None else bin_normals
     B = len(nb)
-    keys = point_keys(pts_q)
+    keys = point_keys(pts_q) if seed is None else point_keys(pts_q, seed=seed)
     sh = {k: np.zeros((n, 9, 3), np.float64) for k in [*names, 'esc']}
     bins = {k: np.zeros((n, B, 3), np.float64) for k in [*names, 'esc']}
     cov_sh = np.zeros((n, 9), np.float64)
     cov_bin = np.zeros((n, B), np.float64)
+    # base 流 DC 亮度的逐样本一阶/二阶累计 -> 均值方差(重建层的 SVGF 引导)
+    dc_s1 = np.zeros(n, np.float64)
+    dc_s2 = np.zeros(n, np.float64)
     hits = 0
     for s in range(spp):
         dirs, pdf = uniform_sphere(keys, s, spp)   # q 空间(probe 的 SH 就在 q 空间)
@@ -288,12 +340,58 @@ def gather_probe(pts_q: np.ndarray, R: np.ndarray, field: DepthField,
         Y = sh_basis(dirs).astype(np.float64) * inv_pdf[:, None]        # (n,9)
         C = (np.maximum(dirs @ nb.T, 0.0).astype(np.float64)
              * inv_pdf[:, None])                                        # (n,B)
+        # MIS:BSDF 命中射线按光源池化密度降权(full-MIS,对每根命中射线求,
+        # 不按命中像素过滤 —— 分支验尸:过滤=阴影区 +15% 漏光)。
+        w_mis = np.ones(n, np.float64)
+        if nee_ctx is not None and hit.any():
+            from .nee import pdf_light
+            hit_idx = np.where(hit)[0]
+            pl_b = pdf_light(nee_ctx, pts_q[hit_idx], dirs[hit_idx])
+            nz = pl_b > 0.0
+            if nz.any():
+                pb = pdf[hit_idx[nz]].astype(np.float64)      # = 1/4pi
+                w_mis[hit_idx[nz]] = pb / np.maximum(pb + pl_b[nz], 1e-300)
         for k in names:
             L = np.zeros((n, 3), np.float64)
             if hit.any():
                 L[hit] = rad_fields[k][res.hit_yx[hit, 0], res.hit_yx[hit, 1]]
+            L = clamp_rows(L, clamp) * w_mis[:, None]
             sh[k] += Y[:, :, None] * L[:, None, :]
             bins[k] += C[:, :, None] * L[:, None, :]
+            if k == 'base':
+                from .nee import LUMA as _LU
+                dc_smp = Y[:, 0] * (L @ _LU.astype(np.float64))
+                dc_s1 += dc_smp
+                dc_s2 += dc_smp * dc_smp
+        if nee_ctx is not None:
+            # 光源样本:同一根射线服务所有辐射流(MIS 权只看 pdf,与流无关)。
+            # 逃逸的光源样本 = f_hit 的合法零样本;esc 流不吃光源样本(单策略)。
+            from .nee import sample_light
+            _j, dl, _r, pl = sample_light(nee_ctx, pts_q, keys, s, spp)
+            ok = pl > 0.0
+            if ok.any():
+                idx = np.where(ok)[0]
+                vres = trace(np.ascontiguousarray(pts_q[idx]),
+                             np.ascontiguousarray(dl[idx]), field)
+                vis = ~vres.escaped
+                if vis.any():
+                    rows = idx[vis]
+                    pb_l = np.float64(1.0 / (4.0 * math.pi))
+                    w_l = pl[rows] / (pl[rows] + pb_l)
+                    fw = (w_l / pl[rows])                     # f/pdf 权
+                    Yl = sh_basis(dl[rows]).astype(np.float64)
+                    Cl = np.maximum(dl[rows] @ nb.T, 0.0).astype(np.float64)
+                    for k in names:
+                        Lk = rad_fields[k][vres.hit_yx[vis, 0],
+                                           vres.hit_yx[vis, 1]].astype(np.float64)
+                        Lk = clamp_rows(Lk, clamp) * fw[:, None]
+                        sh[k][rows] += Yl[:, :, None] * Lk[:, None, :]
+                        bins[k][rows] += Cl[:, :, None] * Lk[:, None, :]
+                        if k == 'base':
+                            from .nee import LUMA as _LU
+                            dc_l = Yl[:, 0] * (Lk @ _LU.astype(np.float64))
+                            dc_s1[rows] += dc_l
+                            dc_s2[rows] += dc_l * dc_l
         Le = np.zeros((n, 3), np.float64)
         if res.escaped.any():
             dw = dirs[res.escaped] @ R.T          # q -> world,给天空盒查
@@ -314,6 +412,11 @@ def gather_probe(pts_q: np.ndarray, R: np.ndarray, field: DepthField,
     out['cov'] = {'sh': (cov_sh / spp * AK[None, :]).astype(np.float32),
                   'bins': (cov_bin / spp / math.pi).astype(np.float32)}
     out['hit_rate'] = float(hits) / max(n * spp, 1)
+    # 均值的方差(x AK0^2 与 sh 系数同尺度):Var(mean) = (E[x^2]-E[x]^2)/(spp-1)
+    m1 = dc_s1 / spp
+    m2 = dc_s2 / spp
+    out['dc_var'] = (np.maximum(m2 - m1 * m1, 0.0) / max(spp - 1, 1)
+                     * float(AK[0]) ** 2).astype(np.float64)
     return out
 
 

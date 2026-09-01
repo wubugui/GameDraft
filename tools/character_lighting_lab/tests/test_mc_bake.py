@@ -425,3 +425,188 @@ def test_被埋的probe被邻居填过而不是留着精确的0():
              + pr['l2emit'].astype(np.float32) + pr['l2amb'].astype(np.float32))
     lum = final[:, 0, :].sum(1)
     assert (lum > 0).all(), f'仍有 {(lum <= 0).mean()*100:.0f}% 的 probe 合成后是全 0'
+
+
+# ==================================================== NEE + MIS(2026-09-01 补课)
+
+def _emitter_scene():
+    """平地 + 一个亮 texel(发光体)的合成场。返回 (field, hdr, R)。"""
+    import numpy as np
+    from tools.character_lighting_lab.trace import DepthField
+    h, w = 96, 128
+    depth = np.full((h, w), 3.0, np.float32)
+    # ⚠ 近景边柱把 d_min 拉低:tracer 对 qz<=d_min 一律判前穿逃逸,
+    #   probe 点必须落在场景深度范围**之内**(真实场景天然如此)。
+    depth[:, :2] = 0.3
+    ppu, cx, cy = 24.0, w / 2, h / 2
+    hdr = np.full((h, w, 3), 0.05, np.float32)
+    hdr[40:44, 60:64] = 900.0            # 灯芯:比普通面亮 4 个数量级
+    return DepthField.build(depth, ppu, cx, cy), hdr, np.eye(3, dtype=np.float32)
+
+
+def test_nee_无偏_与纯BSDF高spp同均值():
+    """MIS 组合无偏:NEE 与纯 BSDF 各自高 spp 双流均值必须重合(<3%)。
+    (实测本构造 BSDF@32768 真值 ~89.3;NEE@16384 收敛到 89.1~90.4。
+    低 spp 的近灯点噪声属于方差问题,由下一条测试管,别在这条卡。)"""
+    import numpy as np
+    from tools.character_lighting_lab.estimators import gather_probe
+    from tools.character_lighting_lab.nee import build_nee
+    field, hdr, R = _emitter_scene()
+    ctx = build_nee(hdr, field)
+    assert ctx is not None and len(ctx.p_sel) == 16
+    pts = np.array([[-0.08, 0.25, 2.55]], np.float32)
+    esc = lambda dw: np.zeros((len(dw), 3), np.float32)
+    def dc(spp, ctx_, off=0.0):
+        g = gather_probe(np.ascontiguousarray(pts + off), R, field,
+                         {'base': hdr}, esc, spp=spp, nee_ctx=ctx_)
+        return float(g['base']['sh'][0, 0, 0])
+    truth = 0.5 * (dc(16384, None) + dc(16384, None, 1e-4))
+    got = 0.5 * (dc(8192, ctx) + dc(8192, ctx, 1e-4))
+    rel = abs(got - truth) / max(abs(truth), 1e-9)
+    assert rel < 0.03, f'NEE 均值偏离纯 BSDF 真值 {rel*100:.1f}%(got={got:.2f} truth={truth:.2f})'
+
+
+def test_nee_低spp方差显著低于纯BSDF():
+    """收敛性:方差全部来自发光体的构造下(底色=0),同 spp 的 NEE 双流差
+    必须远小于纯 BSDF —— 这正是补课的理由。"""
+    import numpy as np
+    from tools.character_lighting_lab.trace import DepthField
+    from tools.character_lighting_lab.estimators import gather_probe
+    from tools.character_lighting_lab.nee import build_nee
+    h, w = 96, 128
+    depth = np.full((h, w), 3.0, np.float32)
+    depth[:, :2] = 0.3                   # 同 _emitter_scene:让 probe 点落在深度范围内
+    hdr = np.zeros((h, w, 3), np.float32)
+    hdr[40:44, 60:64] = 900.0
+    field = DepthField.build(depth, 24.0, w / 2, h / 2)
+    R = np.eye(3, dtype=np.float32)
+    ctx = build_nee(hdr, field)
+    rng = np.random.default_rng(11)
+    pts = rng.uniform([-1.0, -0.3, 1.8], [1.0, 0.6, 2.8], (48, 3)).astype(np.float32)
+    esc = lambda dw: np.zeros((len(dw), 3), np.float32)
+    def spread(ctx_):
+        a = gather_probe(pts, R, field, {'base': hdr}, esc, spp=128,
+                         nee_ctx=ctx_)['base']['sh'][:, 0, 0]
+        b = gather_probe(pts + 1e-4, R, field, {'base': hdr}, esc, spp=128,
+                         nee_ctx=ctx_)['base']['sh'][:, 0, 0]
+        m = np.maximum(np.abs(a + b) / 2, 1e-9)
+        return float(np.percentile(np.abs(a - b) / m, 90))
+    p90_bsdf = spread(None)
+    p90_nee = spread(ctx)
+    assert p90_bsdf > 0.2, f'构造失败:纯 BSDF 双流差才 {p90_bsdf*100:.1f}%,测不出对比'
+    assert p90_nee < p90_bsdf * 0.35, (
+        f'NEE p90 {p90_nee*100:.1f}% 未显著低于纯 BSDF {p90_bsdf*100:.1f}%')
+
+
+def test_nee_全遮挡发光体零能量注入():
+    """钉子:发光体被墙完全挡住的点,NEE 不许注入能量(可见性在被积函数里)。"""
+    import numpy as np
+    from tools.character_lighting_lab.trace import DepthField
+    from tools.character_lighting_lab.estimators import gather_probe
+    from tools.character_lighting_lab.nee import build_nee
+    h, w = 96, 128
+    depth = np.full((h, w), 3.0, np.float32)
+    depth[:, :2] = 0.3                   # 近景边柱压低 d_min(见 _emitter_scene)
+    # 墙的壳窗要罩住「点->灯」走廊:点 z=1.5,灯壳 z≈3.0+,走廊过墙列时 z≈2.2-2.5
+    depth[:, 70:74] = 2.0                # 壳窗 (2.02, 2.75)
+    hdr = np.zeros((h, w, 3), np.float32)
+    hdr[40:44, 100:104] = 900.0          # 灯在墙右侧
+    field = DepthField.build(depth, 24.0, w / 2, h / 2)
+    R = np.eye(3, dtype=np.float32)
+    ctx = build_nee(hdr, field)
+    # 点在墙左侧、灯的正对面:朝灯的每根光源样本都会先撞墙(墙辐射=0)
+    pts = np.array([[-1.0, 0.0, 1.5]], np.float32)
+    esc = lambda dw: np.zeros((len(dw), 3), np.float32)
+    g = gather_probe(pts, R, field, {'base': hdr}, esc, spp=512, nee_ctx=ctx)
+    assert float(np.abs(g['base']['sh'][0, 0]).max()) < 1e-3, '被挡发光体漏光'
+
+
+def test_nee_字节可复现():
+    import numpy as np
+    from tools.character_lighting_lab.estimators import gather_probe
+    from tools.character_lighting_lab.nee import build_nee
+    field, hdr, R = _emitter_scene()
+    ctx = build_nee(hdr, field)
+    pts = np.array([[0.2, 0.1, 1.2]], np.float32)
+    esc = lambda dw: np.zeros((len(dw), 3), np.float32)
+    a = gather_probe(pts, R, field, {'base': hdr}, esc, spp=64, nee_ctx=ctx)
+    b = gather_probe(pts, R, field, {'base': hdr}, esc, spp=64, nee_ctx=ctx)
+    assert np.array_equal(a['base']['sh'], b['base']['sh'])
+
+
+def test_clamp_压尖刺且不动暗部():
+    import numpy as np
+    from tools.character_lighting_lab.estimators import clamp_rows
+    c = np.array([[0.1, 0.1, 0.1], [500.0, 100.0, 50.0]], np.float64)
+    out = clamp_rows(c.copy(), 2.0)
+    assert np.allclose(out[0], c[0])                       # 暗行原样
+    from tools.character_lighting_lab.nee import LUMA
+    assert out[1] @ LUMA.astype(np.float64) <= 2.0 + 1e-9  # 亮行钳到上限
+    assert np.allclose(out[1] / out[1].max(), c[1] / c[1].max())  # 保色度
+    assert clamp_rows(c, None) is c                        # 关闭 = 原对象直通
+
+
+# ==================================================== probe 体重建层(3D)
+
+def test_重建层_常量场精确保持():
+    import numpy as np
+    from tools.character_lighting_lab.denoise import filter_probe_grid
+    grid = (6, 5, 7)
+    P = 6 * 5 * 7
+    f0 = np.full((P, 9, 3), 1.7, np.float32)
+    act = np.ones(P, bool)
+    guide = np.full(P, 0.5, np.float64)
+    out, = filter_probe_grid([f0.reshape(6, 5, 7, 9, 3)], guide, act, grid)
+    assert np.allclose(out.reshape(P, 9, 3), 1.7, atol=1e-6)
+
+
+def test_重建层_不借无效格也不动无效格():
+    import numpy as np
+    from tools.character_lighting_lab.denoise import filter_probe_grid
+    grid = (5, 5, 5)
+    P = 125
+    f0 = np.ones((P, 1, 3), np.float32)
+    act = np.ones(P, bool)
+    mid = 2 * 25 + 2 * 5 + 2
+    act[mid] = False
+    f0[mid] = 999.0                      # 无效格塞个毒值
+    guide = np.ones(P, np.float64)
+    out, = filter_probe_grid([f0.reshape(5, 5, 5, 1, 3)], guide, act, grid)
+    out = out.reshape(P, 1, 3)
+    assert np.allclose(out[act], 1.0, atol=1e-6), '毒值渗进了有效格'
+    assert np.allclose(out[mid], 999.0), '无效格被改写(该留给 dilation)'
+
+
+def test_重建层_确定性():
+    import numpy as np
+    from tools.character_lighting_lab.denoise import filter_probe_grid
+    rng = np.random.default_rng(5)
+    grid = (8, 6, 9)
+    P = 8 * 6 * 9
+    f0 = rng.random((P, 4, 3)).astype(np.float32)
+    act = rng.random(P) > 0.2
+    guide = rng.random(P)
+    a, = filter_probe_grid([f0.reshape(8, 6, 9, 4, 3)], guide, act, grid)
+    b, = filter_probe_grid([f0.reshape(8, 6, 9, 4, 3)], guide, act, grid)
+    assert np.array_equal(a, b)
+
+
+def test_重建层_log引导_热点不被抹平():
+    """大动态范围下热点必须保得住:线性域 sigma 会被热格撑爆退化成普通模糊
+    (破屋实测比值中位 1.02->0.90),log 域引导钉住这一点。"""
+    import numpy as np
+    from tools.character_lighting_lab.denoise import filter_probe_grid
+    grid = (9, 3, 9)
+    P = 9 * 3 * 9
+    base = np.full(P, 0.01, np.float64)
+    hot = 4 * 27 + 1 * 9 + 4              # 中心格
+    base[hot] = 50.0                      # 5000x 动态范围
+    f0 = np.repeat(base[:, None], 3, 1).astype(np.float32).reshape(P, 1, 3)
+    act = np.ones(P, bool)
+    out, = filter_probe_grid([f0.reshape(9, 3, 9, 1, 3)], base, act, grid, iters=2)
+    out = out.reshape(P, 1, 3)
+    # 热点自身至少保住 8 成能量(核里自权 8/64,但 log 亮度差巨大 => 邻居权趋零)
+    assert out[hot, 0, 0] > 0.8 * 50.0, f'热点被抹平: {out[hot,0,0]:.2f}'
+    # 远处暗格不被热点污染
+    far = 0
+    assert out[far, 0, 0] < 0.02, f'热点渗漏到远格: {out[far,0,0]:.4f}'

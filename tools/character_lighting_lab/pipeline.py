@@ -103,6 +103,24 @@ DEFAULTS = dict(
     probe_height_chars=2.0,
     probe_max=200_000,               # 格数上限(载荷体积护栏)
     probe_spp=256,                   # 每颗 probe 的方向样本数(分层 QMC)
+    #: NEE+MIS(发光体第二采样器,无偏,2026-09-01 从 lighting-rebuild 分支补课):
+    #: 缺省开;画面没有阈上发光体时 build_nee 返回 None,自动退纯 BSDF 老路。
+    probe_nee=True,
+    #: 发光体判定阈(本管线辐射标度:恢复上限 maxEV=5,全场最亮 ~30;
+    #: 分支的 4.0 是它 200-1200 标度下的值,直接用会漏中亮像素。实测 破屋
+    #: 4.0->1.0: 256spp p90 33%->27%,1024spp 12.7%->8.8%;0.25 无进一步增益)。
+    probe_nee_threshold=1.0,
+    #: Cycles 系逐样本亮度钳(有偏)。None=关;NEE 开着时只兜极端余量。
+    probe_clamp=None,
+    #: probe 体重建层(3D 联合双边)趟数。**缺省关**:实测三版 sigma 口径
+    #: (线性/log/SVGF方差)在极端动态范围场上要么偏能量要么加跑间方差,
+    #: 收敛正路是下面的自适应细化;滤波仅留作应急选项。
+    probe_filter_iters=0,
+    #: 自适应细化(无偏):第一轮后挑 DC 相对噪声 > rel 阈的格,以 mult x spp
+    #: 独立随机流重采,按样本数加权合并。挑格上限 frac(时间护栏)。
+    probe_refine_rel=0.05,
+    probe_refine_mult=4,
+    probe_refine_frac=0.15,
     #: 逃逸辐射:射线跑出伪世界带走多少。**缺省纯黑**(制作人 2026-09-01)。
     #: 可选 {'mode':'color'|'skybox'|'scene_derived', ...},见 escape.py。
     escape={'mode': 'black'},
@@ -840,6 +858,7 @@ def stage_probes(cal: dict, lay: dict, hdr: dict, wb: dict, lights: list[dict],
     现在:埋了就不采(精确的 0),交给 `dilate_invalid` 用有效邻居填。
     这是 AAA 探针体系的标准做法(Unity Dilation / UE validity)。
     """
+    from tools.character_lighting_lab.const import GATHER_SEED
     from tools.character_lighting_lab.estimators import gather_probe, sh_basis as _shb
     from tools.character_lighting_lab.estimators import octa_bin_normals
     from tools.character_lighting_lab.probe_layout import build_layout, dilate_invalid
@@ -875,9 +894,50 @@ def stage_probes(cal: dict, lay: dict, hdr: dict, wb: dict, lights: list[dict],
     n = len(pts_q)
     spp = int(P.get('probe_spp', PROBE_SPP))
     t0 = time.time()
+    # NEE 光源表:base+emit 合并亮度建表(发光能量在哪张图里都被选取密度覆盖);
+    # 没有阈上发光体 → None → 纯 BSDF 老路,逐位不变。
+    nee_ctx = None
+    if bool(P.get('probe_nee', True)):
+        from tools.character_lighting_lab.nee import build_nee
+        nee_ctx = build_nee(np.asarray(hdr['base'], np.float32)
+                            + np.asarray(hdr['emit'], np.float32), field,
+                            threshold=float(P.get('probe_nee_threshold', 1.0)))
+    clamp = P.get('probe_clamp')
+    clamp = float(clamp) if clamp is not None else None
     g = gather_probe(np.ascontiguousarray(pts_q[act]), M, field,
                      {'base': hdr['base'], 'emit': hdr['emit']},
-                     escape_of, spp=spp)
+                     escape_of, spp=spp, nee_ctx=nee_ctx, clamp=clamp)
+
+    # ---- 自适应细化(无偏):高方差格独立流重采,按样本数加权合并 ----
+    refine_rel = float(P.get('probe_refine_rel', 0.05))
+    refine_mult = int(P.get('probe_refine_mult', 4))
+    refine_frac = float(P.get('probe_refine_frac', 0.15))
+    n_ref = 0
+    if refine_rel > 0 and refine_mult > 1:
+        from tools.character_lighting_lab.nee import LUMA as _LU
+        dc_act = np.maximum(g['base']['sh'][:, 0, :] @ _LU, 1e-6)
+        rel = np.sqrt(np.maximum(g['dc_var'], 0.0)) / dc_act
+        sel = rel > refine_rel
+        cap = max(1, int(refine_frac * len(dc_act)))
+        if int(sel.sum()) > cap:
+            thr = np.partition(rel, -cap)[-cap]
+            sel = rel >= thr
+        n_ref = int(sel.sum())
+        if n_ref:
+            pts_sel = np.ascontiguousarray(pts_q[act][sel])
+            spp2 = spp * (refine_mult - 1)      # 合并后总样本 = spp*mult
+            g2 = gather_probe(pts_sel, M, field,
+                              {'base': hdr['base'], 'emit': hdr['emit']},
+                              escape_of, spp=spp2, nee_ctx=nee_ctx,
+                              clamp=clamp, seed=GATHER_SEED ^ 0x9E3779B9)
+            w1 = spp / (spp + spp2)
+            w2 = spp2 / (spp + spp2)
+            for k in ('base', 'emit', 'esc', 'cov'):
+                for part in ('sh', 'bins'):
+                    g[k][part][sel] = (w1 * g[k][part][sel]
+                                       + w2 * g2[k][part])
+            g['dc_var'][sel] = (w1 * w1 * g['dc_var'][sel]
+                                + w2 * w2 * g2['dc_var'])
 
     nb = octa_bin_normals()
     B = len(nb)
@@ -896,6 +956,23 @@ def stage_probes(cal: dict, lay: dict, hdr: dict, wb: dict, lights: list[dict],
     bn_emit = _scatter(g['emit']['bins'])
     bn_amb = _scatter(g['esc']['bins'])
     bn_cov = _scatter(g['cov']['bins'])
+    dc_var = np.zeros(n, np.float64)
+    dc_var[act] = g['dc_var']
+
+    # ---- 重建层:3D 联合双边(只滤有效格,引导=主 E 的 DC 亮度;cov/解析灯不滤)----
+    fit = int(P.get('probe_filter_iters', 2))
+    if fit > 0 and act.any():
+        from tools.character_lighting_lab.denoise import filter_probe_grid
+        from tools.character_lighting_lab.nee import LUMA as _LUMA
+        guide = (sh_base[:, 0, :] @ _LUMA).astype(np.float64)
+        (sh_base, sh_emit, sh_amb,
+         bn_base, bn_emit, bn_amb) = filter_probe_grid(
+            [x.reshape(Nx, Ny, Nz, *x.shape[1:]) for x in
+             (sh_base, sh_emit, sh_amb, bn_base, bn_emit, bn_amb)],
+            guide, act, (Nx, Ny, Nz), iters=fit, dc_var=dc_var)
+        (sh_base, sh_emit, sh_amb, bn_base, bn_emit, bn_amb) = [
+            x.reshape(n, *x.shape[3:]) for x in
+            (sh_base, sh_emit, sh_amb, bn_base, bn_emit, bn_amb)]
 
     # ---- NEE:光源 surfel 的解析直射项(仍是分账,运行时 shading.nee 才启用)----
     # ⚠ 2026-09-01 修:旧实现把**世界系**方向 `d_i` 投到与 base/emit 同一组
@@ -933,7 +1010,8 @@ def stage_probes(cal: dict, lay: dict, hdr: dict, wb: dict, lights: list[dict],
     E_bins = np.concatenate([bn_base, bn_cov[..., None]], -1)            # (P,B,4)
 
     print(f'[probes] {n} 颗 x {spp}spp  {time.time()-t0:.1f}s  '
-          f'分布={layout.strategy}  {Nx}x{Ny}x{Nz}')
+          f'分布={layout.strategy}  {Nx}x{Ny}x{Nz}  '
+          f'NEE={"开" if nee_ctx is not None else "关"}  细化 {n_ref} 格')
     print(f'[probes] {layout.note}')
     print(f'[probes] 命中率 {g["hit_rate"]*100:.1f}%  有效格 {coverage*100:.1f}% '
           f'(dilation {iters} 轮补到 {valid.mean()*100:.1f}%)  '
