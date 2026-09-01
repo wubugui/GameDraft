@@ -56,8 +56,8 @@ export const SOCKET_DEBUG_SECTION_ID = '挂点';
 /** 统一光影 Tab：灯的增删改 + 场景光照参数。**独立一页**，不塞进「工具」页的 section 列表
  *  —— 摆灯要反复对着画面调，挤在一列 section 里根本用不了。 */
 export const LIGHTING_DEBUG_SECTION_ID = '光影';
-/** 场景级光照参数(雾/去霾/AO/角色标定/调试视图)。与灯的工作台**同一页**,排在它下面。 */
-export const LIGHTING_SCENE_SECTION_ID = '统一光影（场景）';
+/** 照明参数(场景+角色+共用,2026-08-31 三 tab 合一)。与灯的工作台**同一页**,排在它下面。 */
+export const LIGHTING_SCENE_SECTION_ID = '照明（场景·角色·共用）';
 
 function isDedicatedTabSection(id: string): boolean {
   return (

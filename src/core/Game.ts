@@ -268,6 +268,13 @@ declare global {
       debugSetNarrativeState(graphId: string, stateId: string): Promise<void>;
       setNarrativeState(graphId: string, stateId: string): Promise<void>;
       setDepthDebug(enabled: boolean): void;
+      /** skyao（天穹遮蔽，乘在角色 GI 上）与全白的 blend：0=不遮蔽 1=完整。 */
+      setSkyaoBlend(v: number): void;
+      getSkyaoBlend(): number | null;
+      /** skyao 载荷实况:没载上时 on=false,此时 blend 拨到哪都没效果。 */
+      getSkyaoInfo(): { on: boolean; n?: number[]; tiles?: number[]; blend: number } | null;
+      /** 角色调试视图:0=正常 1=法线 2=skyao 的 V(灰度)。 */
+      setCharDebugView(mode: number): void;
       clearWorldFilter(): void;
       setWorldFadeAlpha(alpha: number): void;
       completeDialogueText(): void;
@@ -586,6 +593,22 @@ export class Game {
   private readonly runtimeBootId = Math.random().toString(36).slice(2, 10);
   private runtimeDebugSnapshotErrorLogged = false;
   private runtimeDebugSnapshotOversizeLogged = false;
+  /** 「GI体」调试视图(场景光照 uDebug==7)当前是否开着,及进入前的角色太阳开关。 */
+  private giVolumeDebugOn = false;
+  private giVolumeDebugSunWas = false;
+
+  /**
+   * GI体档诊断参数落地:定法线(两侧同喂)+ 主角 quad 放大(把角色变成一扇
+   * "探进 probe 场的窗户"——container.scale 只影响显示与 lit mesh 的世界变换,
+   * 脚点/碰撞/游戏逻辑不吃它;lit mesh 的 q 由世界变换现推,放大 = 真放大采样窗口)。
+   */
+  private setGiDiagnostics(fixedN: number, quadScale: number): void {
+    const n = Math.max(0, Math.min(2, fixedN | 0));
+    this.characterLighting.giDiagFixedN = n;
+    this.sceneLighting.setGiFixedN(n);
+    const s = Math.max(1, Math.min(6, Number.isFinite(quadScale) ? quadScale : 1));
+    this.player?.sprite.container.scale.set(s, s);
+  }
   private fixedTickMode = false;
   /**
    * 冻主 tick 的**原因集合**（叙事断点命中 / 运行时编辑模式）。非空即冻：
@@ -2368,6 +2391,20 @@ export class Game {
           }
         }
         if (patch.shadowStyle) Object.assign(cl.shadowStyle, patch.shadowStyle);
+        // GI体视图开着时,β/mode/ambStrength 的改动要**同步刷给场景侧**——
+        // 角色侧 syncFrame 每帧活读 params,场景侧只在开档那一刻喂过一次,
+        // 不刷的话拖曝光滑块只有人变亮、地面纹丝不动,像 bug 又查不出错。
+        if (this.giVolumeDebugOn && patch.params) {
+          const r = cl.shadingResources;
+          if (r) {
+            this.sceneLighting.setProbeResources({
+              atlasL1: r.atlasL1, atlasL2: r.atlasL2, atlasBin: r.atlasBin, valid: r.valid,
+              mCol: r.mCol, wMin: r.wMin, wScale: r.wScale, pn: r.pn, probeT: r.probeT, ambSH: r.ambSH,
+              skyao: r.skyao ?? null,
+              mode: cl.params.mode, ambStrength: cl.params.ambStrength, beta: cl.params.beta, fold: cl.params.fold ? 1 : 0,
+            });
+          }
+        }
       },
       // ---- 统一光影（lighting-rebuild）。与上面的角色照明是两代系统，刻意分开 ----
       getSceneLighting: () => {
@@ -2397,7 +2434,50 @@ export class Game {
         // 其余档是场景重打光的中间量，角色回正常显示。
         this.unifiedCharLighting.setDebug(
           mode === 1 || mode === 2 || mode === 5 ? mode : 0);
+        // ---- 7=「GI体」:场景与角色同吃 probe 体,肉眼对账 GI 数据 ----
+        //
+        // 场景侧要角色的 probe 图集(按需加载、可热替换),所以**开启那一刻现取现喂**,
+        // 关闭即退回占位——不做常驻绑定,免得跟角色纹理生命周期耦合。
+        // 角色侧掐掉实体灯与太阳(纯 probe E),场景侧本来就只画 albedo×probeE:
+        // 两边只剩同一份体的光,哪里对不上哪里就是体数据的问题。
+        // 7=albedo×E 8=纯E(albedo≡1) 9=纯E×probe棋盘 10=最近邻原始值 —— 四档同一套
+        // probe 装配,只是 shader 端展示不同;8/9/10 额外让角色也 albedo≡1(uEOnly)。
+        const wantGiVol = mode >= 7 && mode <= 11;
+        // 11=「skyao体」:场景直采 skyao probe 只算 AO;角色同步切 V 灰度档 ——
+        // 人与场景同一份数据同一个式子,灰度无缝续接才算 AO 数据对。
+        this.characterLighting.setCharDebugView(mode === 11 ? 2 : 0);
+        this.characterLighting.eOnlyDebug = mode >= 8 && mode <= 10;
+        // 棋盘档角色同画(诊断判据:格边穿脚连续/走动同帧翻转/竖向格高与邻墙一致)
+        this.characterLighting.eCheckerDebug = mode === 9;
+        // 离开 GI体档:诊断参数(定法线/quad放大)必须自动复位——它们只该在诊断时活着
+        if (!wantGiVol) this.setGiDiagnostics(0, 1);
+        if (wantGiVol !== this.giVolumeDebugOn) {
+          this.giVolumeDebugOn = wantGiVol;
+          const cl = this.characterLighting;
+          if (wantGiVol) {
+            const r = cl.shadingResources;
+            if (r) {
+              this.sceneLighting.setProbeResources({
+                atlasL1: r.atlasL1, atlasL2: r.atlasL2, atlasBin: r.atlasBin, valid: r.valid,
+                mCol: r.mCol, wMin: r.wMin, wScale: r.wScale, pn: r.pn, probeT: r.probeT, ambSH: r.ambSH,
+                skyao: r.skyao ?? null,
+              mode: cl.params.mode, ambStrength: cl.params.ambStrength, beta: cl.params.beta, fold: cl.params.fold ? 1 : 0,
+              });
+            } else {
+              this.debugPanelUI?.log('GI体视图:本场景没有角色 probe 载荷,场景侧只会是黑的');
+            }
+            this.giVolumeDebugSunWas = cl.params.sunEnabled;
+            cl.params.sunEnabled = false;
+            cl.applyLights(null);
+          } else {
+            this.sceneLighting.setProbeResources(null);
+            cl.params.sunEnabled = this.giVolumeDebugSunWas;
+            cl.applyLights(this.sceneLighting.packedLights ?? null, this.sceneLighting.wuPerQUnit);
+          }
+        }
       },
+      // GI体档的诊断参数(F2 诊断组,只在 7-10 档显示):定法线 + 主角 quad 放大
+      setGiDiagnostics: (fixedN, quadScale) => this.setGiDiagnostics(fixedN, quadScale),
       setLightingSyncHooks: (hooks) => { this.lightingSyncHooks = hooks; },
       // 同步连接状态：断了必须在界面上看得见，不能只在 console 里
       getLightingSyncStatus: () => this.lightingSync?.statusLine() ?? '',
@@ -3674,7 +3754,7 @@ export class Game {
     });
 
     // 统一光影（lighting-rebuild）。装载在 depthLoader **之后**——它要用深度纹理。
-    // 场景没配 lighting 块、或没烘 lighting2/ 载荷时安静地不启用，背景照旧走 Sprite。
+    // 场景没配 lighting 块、或没烘几何场载荷时安静地不启用，背景照旧走 Sprite。
     this.sceneManager.setLightingLoader(async (sceneId, sceneData, primary) => {
       const ok = await this.sceneLighting.load(sceneId, sceneData, this.assetManager, primary);
       if (!ok) return null;
@@ -5245,6 +5325,11 @@ export class Game {
       setNarrativeState: (graphId, stateId) =>
         this.narrativeStateManager.debugSetNarrativeState(String(graphId ?? '').trim(), String(stateId ?? '').trim()),
       setDepthDebug: (enabled) => this.sceneDepthSystem.setDebugOnFilters(enabled),
+      /** skyao(天穹遮蔽,乘在角色 GI 上)与全白的 blend:0=不遮蔽 1=完整。 */
+      setSkyaoBlend: (v: number) => { this.characterLighting?.setSkyaoBlend(v); },
+      getSkyaoBlend: () => this.characterLighting?.skyaoBlendValue ?? null,
+      getSkyaoInfo: () => this.characterLighting?.skyaoInfo ?? null,
+      setCharDebugView: (m: number) => { this.characterLighting?.setCharDebugView(m); },
       clearWorldFilter: () => this.renderer.clearWorldFilter(),
       setWorldFadeAlpha: (alpha) => this.cutsceneRenderer.setDebugWorldFadeAlpha(alpha),
       completeDialogueText: () => this.dialogueUI.debugCompleteText(),

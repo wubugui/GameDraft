@@ -39,24 +39,20 @@ describe('bakeKeyFromBackground：图名 → 烘焙基名', () => {
   });
 });
 
-describe('sceneBakeDirUrl：两套烘焙产物按同一个 key 分', () => {
-  it('lighting（角色 probe 载荷）', () => {
-    expect(sceneBakeDirUrl('雾津街头', 'background.png', 'lighting'))
+describe('sceneBakeDirUrl：一张背景图 = 一个烘焙目录', () => {
+  it('probe 载荷与几何场同住一个目录', () => {
+    // 2026-08-31 收束：probe 图集/体素卷（角色受光）与法线/天穹可见性（场景受光）
+    // 都是**同一张背景图**的派生物（实测两边 background_sha1 逐字相同），
+    // 由同一个工具（character_lighting_lab）产出，所以住同一个目录。
+    // 此前几何场另住 `lighting2/`，是同一份东西被切成两半放。
+    expect(sceneBakeDirUrl('雾津街头', 'background.png'))
       .toBe('/resources/runtime/scenes/雾津街头/lighting/background');
   });
 
-  it('lighting2（几何场）—— 与 lighting 同一个 key', () => {
-    // 两者是**同一张背景图**的派生物（实测两边 lighting.json / meta.json 的
-    // background_sha1 逐字相同），所以必须按同一个名字分，不能各分各的。
-    expect(sceneBakeDirUrl('雾津街头', 'background.png', 'lighting2'))
-      .toBe('/resources/runtime/scenes/雾津街头/lighting2/background');
-  });
-
   it('换背景 = 换目录（这条就是整个设计的目的）', () => {
-    const day = sceneBakeDirUrl('雾津街头', 'background.png', 'lighting');
-    const night = sceneBakeDirUrl('雾津街头', 'background_relight_夜.png', 'lighting');
+    const day = sceneBakeDirUrl('雾津街头', 'background.png');
+    const night = sceneBakeDirUrl('雾津街头', 'background_relight_夜.png');
     expect(day).not.toBe(night);
-    expect(night).toBe('/resources/runtime/scenes/雾津街头/lighting2/background_relight_夜'
-      .replace('lighting2', 'lighting'));
+    expect(night).toBe('/resources/runtime/scenes/雾津街头/lighting/background_relight_夜');
   });
 });

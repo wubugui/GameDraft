@@ -55,8 +55,10 @@ uniform mat3 uProjectionMatrix;        // Pixi global group(自动绑)
 uniform mat3 uWorldTransformMatrix;    // Pixi global group
 uniform mat3 uTransformMatrix;         // Pixi local group:mesh 世界变换
 uniform vec4 uColor;                   // Pixi local group:world alpha/tint(预乘)
-uniform vec2  uWCPos;                  // worldContainer 屏幕位置(共享帧组)
-uniform float uWCScale;                // projectionScale(共享帧组)
+uniform vec2  uWCPos;                  // worldContainer 屏幕位置(共享帧组;世界重建已不用,留给别处)
+uniform float uWCScale;                // projectionScale(共享帧组;同上)
+uniform vec3  uL2W0;                   // local→sceneWorld 仿射第一行 (a, c, tx)(entityShade,CPU 每帧喂)
+uniform vec3  uL2W1;                   // local→sceneWorld 仿射第二行 (b, d, ty)
 
 out vec2 vUV;
 out vec2 vLocal;
@@ -71,13 +73,19 @@ void main(void) {
     gl_Position = vec4((uProjectionMatrix * vec3(screen, 1.0)).xy, 0.0, 1.0);
     vUV = aUV;
     vLocal = aLocal;
-    float S = max(uWCScale, 1e-6);
-    vWorld = (screen - uWCPos) / S;
-    vec2 footScreen = (model * vec3(0.0, 0.0, 1.0)).xy;   // 锚点(0.5,1) → local 原点=脚底
-    vFootWorld = (footScreen - uWCPos) / S;
-    // 镜像判定:2x2 行列式。model 不含投影,画到屏幕还是 RT 都不影响符号;
-    // sprite.scale.x<0 → det<0。翻转朝向连一个 uniform 都不需要。
-    float det = model[0][0] * model[1][1] - model[0][1] * model[1][0];
+    // ---- 世界坐标:CPU 喂的 local→sceneWorld 仿射,**不再从 screen 反推** ----
+    //
+    // ⚠ 2026-09-01 根因修复:mesh 挂在带滤镜(DepthOcclusionFilter)的 container 里,
+    //   Pixi 滤镜先把子树渲进**按包围盒对齐的临时 RT** —— 那一趟里 screen 是
+    //   临时 RT 局部坐标,不是真屏幕。gl_Position 不受影响(画面位置一直是对的),
+    //   但 (screen-uWCPos)/uWCScale 的世界重建被整体平移:实测雾津街头脚点世界坐标
+    //   错出 500+ wu,probe 全在错的位置采样,且误差随镜头/包围盒漂——"强度怎么调
+    //   都对不齐"的全部来历。世界坐标只能由 CPU 按场景图真值喂(见 setWorldTransform)。
+    vWorld = vec2(uL2W0.x * aPosition.x + uL2W0.y * aPosition.y + uL2W0.z,
+                  uL2W1.x * aPosition.x + uL2W1.y * aPosition.y + uL2W1.z);
+    vFootWorld = vec2(uL2W0.z, uL2W1.z);                  // local 原点(锚点=脚底)的世界坐标
+    // 镜像判定:仿射 2x2 行列式,scale.x<0 → det<0(语义与旧 model 判定一致)
+    float det = uL2W0.x * uL2W1.y - uL2W1.x * uL2W0.y;
     vMirror = det < 0.0 ? 1.0 : 0.0;
     vColor = uColor;
 }
@@ -105,6 +113,7 @@ uniform sampler2D uPL1;
 uniform sampler2D uPL2;
 uniform sampler2D uPBin;
 uniform sampler2D uValid;
+uniform sampler2D uSkyaoTex;   // skyao probe(共用块里用,sampler 由宿主声明)
 uniform sampler2D uVolRad;
 uniform sampler2D uVolEmit;
 uniform float uHasNrm;
@@ -184,31 +193,66 @@ void main(void) {
 
     vec3 q = vec3(qx, qyF + h * uCosT, footD - h * uSinT - ne.a * uBulge);
 
-    if (uShowN > 0.5) { finalColor = vec4((n*.5+.5) * color.a, color.a) * vColor; return; }
+    // 法线档必须是**独占区间**:uShowN=2 是 skyao 档,写成 >0.5 会被这条
+    // 先接住并 return,于是「看 skyao」看到的是法线(2026-09-01 踩过)。
+    if (uShowN > 0.5 && uShowN < 1.5) { finalColor = vec4((n*.5+.5) * color.a, color.a) * vColor; return; }
 
-    // ---------- 法线的两个空间：灯用世界、probe 用 q ----------
+    // ---------- 法线有两种用法，各自的空间都是定死的 ----------
     //
-    // 上面那个 n **已经是世界法线**。角色是一块**直立 quad**（见下面 q 的构造：
-    // 沿精灵上移 h 在世界里就是正上方 h，一点前后偏移都没有），而法线图是
-    // tools/animation_pipeline/bake_normal_atlas.py 从剪影 alpha 推的高度场、
-    // 在**图像像素空间**取梯度（gx, -gy, -6）—— 那三个轴恰好就是这块直立 quad 的
-    // 世界 X / Y / −Z。所以灯直接用 n，**不要再乘 R**。
+    // 上面那个 n 是**世界法线**，而且中性法线是**水平的**（制作人 2026-08-31
+    // 点破的几何事实）：角色是一块直立 quad，直立面的面法线只能水平。法线图是
+    // bake_normal_atlas.py 在图像像素空间取梯度（gx, -gy, -6），贴上直立 quad 后
+    // 那三个轴恰好就是世界 X / Y / −Z —— 中性 (0,0,-1) = 水平朝相机。
     //
-    // ⚠ 2026-08-30 我一度在这里加了 nW = R·n，等于把每个角色法线整体仰起 45°，
-    //   头顶的灯会过亮、水平方向来的灯会偏暗。已回退。
+    // · **灯循环直接用 n**（世界对世界，铁律 0）——乘 R 等于把法线整体仰起 45°，
+    //   头顶的灯过亮、水平来的灯偏暗（2026-08-30 踩过）。
+    // · **probe / RT / 太阳查表用 nQ = R^T·n**：SH 载荷的方向基是 q 空间
+    //   （pipeline.py _trace 明文 "dirs in q-space"，且逐轴各向异性缩放坐实），
+    //   查表方向必须转到同一基。与场景侧 SceneLightingPass 的 GI 体视图同口径。
     //
-    // 但 **probe 是严格烘在 q 空间的**（图集按 q 法线烘的球谐），所以查表时必须把
-    // 世界法线转回 q：n_q = Rᵀ·n。R 正交 ⇒ 转置即逆，按**列**点乘。
+    // ⚠ 2026-08-31 曾以"实验室查看器原样传"为由把这里改成 probeE(q, n)，当天
+    //   被审计钉死为回归：同一个 probeE，场景侧转 R^T、角色侧不转，两种读法
+    //   各取一半；实测把角色底光压暗 23%（55→43）。实验室 CHAR_FS 把图集法线
+    //   当 q 用是**实验室侧的既有分歧**（inbox 立案，改实验室不改这里），
+    //   不构成运行时改约定的依据。beta=4.2 是在 R^T 口径下标定的。
     vec3 nQ = normalize(wrWorldToQ(uSMRow0, uSMRow1, uSMRow2, n));
+    // 诊断·定法线(F2 GI体档的诊断组):双方强制同一查表方向后,人与场景的亮度差
+    // 100% 是**位置**差——把方向变量归零,专查采样位置。只改 probe/RT 查表,不碰灯循环。
+    if (uFixedNQ > 0.5) {
+        // 定法线一律用 **q 空间常量**:1=朝相机 q(0,0,-1),2=世界向上 q(0,cosT,-sinT)。
+        // 旧写法把 world(0,0,-1) 各自过自家矩阵 —— det=+1(角色)与 det=-1(场景)两个
+        // 世界里это两个**相反**的方向,「定法线=朝相机」两侧各查各的,一亮一黑还以为
+        // 是数据坏了(2026-09-01 复盘)。q 是两侧共用的约定,常量即构造性同值。
+        nQ = uFixedNQ > 1.5 ? normalize(vec3(0., uCosT, -uSinT)) : vec3(0., 0., -1.);
+    }
 
     // ---------- E:RT gather 或 probe 图集(公共块) ----------
-    vec3 E = (uMode < 0.5) ? gatherRT(q + nQ*0.02, nQ) : probeE(q, nQ);
+    // uGiStrength 只乘这里的 GI 底光,不乘下面的测试太阳与实体灯——β 是曝光(乘一切),
+    // 这个旋钮回答的是"GI 有多强"(制作人 2026-09-01 点名要独立参数,0~10)。
+    vec3 E = ((uMode < 0.5) ? gatherRT(q + nQ*0.02, nQ) : probeE(q, nQ)) * uGiStrength;
+    vec3 EgiPure = E;   // 纯E 审计快照:GI体 档与场景 uDebug==8 同式 —— 不含 skyao/太阳/灯
+    // ---- skyao:**乘在 GI 上**,与全白 blend(制作人 2026-09-01)----
+    // 天穹遮蔽是几何项,只该衰减 GI 底光;太阳是独立解析直射,不吃它
+    // (太阳自己的遮蔽将来要走 V_dir(w) 那条闭式,不是这个各向同性的 V)。
+    E *= mix(1.0, skyaoAt(q, nQ), clamp(uSkyaoBlend, 0.0, 1.0));
+    // 调试档:uShowN==2 => 直接把 skyao 的 V 画成灰度(1=不遮蔽 0=全遮)。
+    // 判「这一项到底生没生效」只能看它 —— 角色在 800x450 里只有几十像素,
+    // 靠肉眼比两张截图分不出 3 倍的 GI 差异(2026-09-01 实测走过这个弯路)。
+    if (uShowN > 4.5) { finalColor = vec4(skyaoBand(q, nQ) * color.a, color.a); return; }
+    if (uShowN > 3.5) { finalColor = vec4(skyaoRaw(q) * color.a, color.a); return; }
+    if (uShowN > 2.5) { finalColor = vec4(skyaoBox(q) * color.a, color.a); return; }
+    if (uShowN > 1.5) {
+      // 同 eOnly 那课:必须过与场景同一条显示链,否则与 uDebug==11 对看时角色凭空
+      // 暗一档、半透明边缘一圈黑边(2026-09-01)。3/4/5 取证子档刻意保持裸值(读数用)。
+      float v = skyaoAt(q, nQ);
+      vec3 vd = clamp(lcDisplayTransform(vec3(v),
+          uDispEv, uDispTonemap, uDispWhite,
+          uDispSaturation, uDispContrast, uDispLift, uDispLiftColor), 0.0, 1.0);
+      finalColor = vec4(vd * color.a, color.a);
+      return;
+    }
     if (uSunOn > 0.5) {
-        // 铁律 0：光照一律在世界空间算。uSunDirQ 与 n 原来都是 q，点乘**自洽**、
-        // 数值没错 —— 但 R 正交 ⇒ (Rn)·(Rl) = n·l，转过去是**零行为变化**，
-        // 转了才能机械审计出「有没有人拿 q 的量去配世界的量」。probeE / gatherRT
-        // 不动：那是**查表**不是着色，载荷本来就按 q 烘（见铁律 0 的三类豁免）。
-        // 这一项与 probe 同源（同一份 q 空间的烘焙载荷），所以在 q 里点乘。
+        // F2 的测试太阳（实验室没有这一项）。uSunDirQ 是 q 空间方向，与 nQ 同基。
         E += uSunColor * max(dot(nQ, uSunDirQ), 0.0);
     }
 
@@ -226,18 +270,16 @@ void main(void) {
     // 那个没有名字的中间态：那会让 range / 软化半径 / 面光尺寸在 shader 里不是 wu，
     // 而作者面明明按 wu 填，读代码的人无法判断某个长度是哪把尺。
         vec3 P = wrQToWorld(uSMRow0, uSMRow1, uSMRow2, q) * uSMWuPerQUnit;
-        // ★ **法线也必须转到 M-world**，否则 N 在 q、L 在 M-world，N·L 跨空间（2026-08-30 审查抓到）。
+        // 法线直接用 n：它**已经是世界法线**（中性=水平，见上面"法线只有一个约定"段），
+        // 灯位/P 也在世界 wu —— 世界对世界，谁都不用转。
         //
-        // 上面那个 n 是**精灵法线**，z 恒指向相机（烘焙侧注释 "z toward camera"），是 q 空间的量 ——
-        // probeE / gatherRT / uSunDirQ 三处的载荷都按 q 烘，所以**它们继续用 q 的 n，不能一起换**。
-        // 但灯位 A.xyz 经 scene_lights.q_to_world 存的是 M-world（packLights 只折尺度不折朝向），
-        // P 也已转过去，于是这里的 N 必须同步转。
-        //
-        // 实测代价（雾津街头 R = 绕 X 轴 45°）：角色正面 n_q=(0,0,−1) 的真实世界朝向是
-        // (0,+0.707,−0.707)；站在头顶灯笼正下方时 L≈(0,1,0)，正确 N·L=0.707，跨空间算出 **0**
-        // —— 身体一点灯光都收不到，而脚下地面被同一盏灯正常照亮。
-        //
-        // R 正交，对方向量再走一次同样的行乘即可（不需要逆转置）。
+        // ⚠ 这里曾留过一段相反的注释（"n 是 q 空间的量、必须转到 M-world、正面的
+        //   世界朝向是 (0,+0.707,−0.707)"）—— 那是错的：把中性法线说成上仰 45° 意味着
+        //   直立的人像躺着的地面一样迎接头顶光、又拒收水平来的灯光。直立 quad 的
+        //   面法线是**水平**的（制作人 2026-08-31 点破），worldSpaceShading 测试锁的
+        //   就是这一约定。那段错注释误导过一整轮排查（照它摆的"贴脸灯"全在法线
+        //   背面），删除防再骗。几何推论：**低于人的灯照不亮躯干正面是错觉**——
+        //   水平法线下只要灯在 quad 平面靠相机一侧，脚边的火同样照亮胸口。
         for (int i = 0; i < ${MAX_STATIC_LIGHTS}; i++) {
             if (i >= uSceneLightCount) break;
             vec4 A = uSceneLightA[i], B = uSceneLightB[i];
@@ -259,6 +301,59 @@ void main(void) {
                 E += lcDirectionalLight(n, D.xyz, B.rgb, B.w, 1.0);
             }
         }
+    }
+    // ---- 「GI体·纯E」调试(F2 循环 8/9 档):albedo≡1,输出 E×2^β ----
+    // 与场景侧 uDebug==8 逐字同式(不走 /π、eChroma 与显示变换):这是校验 probe 体
+    // 的尺子,不是美术视图 —— 两边同式,人与地面的 E 才能逐像素直接比。
+    if (uEOnly > 0.5) {
+        // ---- 取证子档(2026-09-01 单点双管线对测,console 直设 eOnlyDebug=2/3/4) ----
+        // 2=raw probeE(线性直出,无β无显示链) 3=probeGridT/PN 染色 4=valid 角数/8
+        if (uEOnly > 1.5 && uEOnly < 2.5) {
+            finalColor = vec4(probeE(q, nQ) * color.a, color.a) * vColor; return;
+        }
+        if (uEOnly > 2.5 && uEOnly < 3.5) {
+            finalColor = vec4((probeGridT(q) / uPN) * color.a, color.a) * vColor; return;
+        }
+        // 5=脚点q((q-uQMin)/(uQMax-uQMin),整quad同值,采哪都行) 6=vFootWorld/uSceneWorld
+        if (uEOnly > 4.5 && uEOnly < 5.5) {
+            vec3 qF = vec3(qxF, qyF, footD);
+            finalColor = vec4(clamp((qF - uQMin) / max(uQMax - uQMin, vec3(1e-5)), 0., 1.) * color.a, color.a) * vColor;
+            return;
+        }
+        if (uEOnly > 5.5) {
+            finalColor = vec4(vec3(clamp(vFootWorld / max(uSceneWorld, vec2(1e-5)), 0., 1.), 0.5) * color.a, color.a) * vColor;
+            return;
+        }
+        if (uEOnly > 3.5) {
+            vec3 tv = probeGridT(q);
+            ivec3 b0v = ivec3(tv);
+            ivec3 pnv = ivec3(uPN + .5);
+            float cnt = 0.;
+            for (int c = 0; c < 8; c++) {
+                ivec3 off = ivec3(c & 1, (c >> 1) & 1, (c >> 2) & 1);
+                ivec3 pi = min(b0v + off, pnv - 1);
+                int fl = pi.x * (pnv.y * pnv.z) + pi.y * pnv.z + pi.z;
+                cnt += step(.002, texelFetch(uValid, probeTexel(fl, 1, 0), 0).r);
+            }
+            finalColor = vec4(vec3(cnt / 8.) * color.a, color.a) * vColor; return;
+        }
+        // ⚠ 用**乘 skyao 之前**的 E:场景侧 uDebug==8 是纯 E,这边拿乘过 V 的 E 去比
+        // 就是双重衰减 —— 白天开阔处 V≈0.9 看不出,夜里墙边直接把人压黑(2026-09-01)。
+        vec3 pe = EgiPure * uBeta;
+        // 诊断:角色也画 probe 棋盘(cell 奇偶与场景 uDebug==9 同一套 probeGridT)。
+        // 判据:格边必须笔直穿过脚点、走动时与地面棋盘同帧翻转、竖向格高与邻墙一致。
+        if (uEChecker > 0.5) {
+            ivec3 cc = ivec3(probeGridT(q));
+            pe *= mix(0.45, 1.0, float((cc.x + cc.y + cc.z) & 1));
+        }
+        // ⚠ 必须过与场景**同一条显示链**:场景的调试输出写进 RT 后仍要被 LitBackground
+        //   做显示变换(EV/tonemap/sRGB 收尾),角色直出线性值会平白暗一大截——
+        //   2026-09-01 实测这口"假位置差"就有 ~3×(sRGB)+tonemap 的成分。
+        vec3 peDisp = clamp(lcDisplayTransform(pe,
+            uDispEv, uDispTonemap, uDispWhite,
+            uDispSaturation, uDispContrast, uDispLift, uDispLiftColor), 0.0, 1.0);
+        finalColor = vec4(peDisp * color.a, color.a) * vColor;
+        return;
     }
     vec3 alb = color.rgb / max(color.a, 1e-4);   // Pixi 预乘 → 直通 albedo
     // ★ 与背景同一份显示变换（lcDisplayTransform 收尾自带 sRGB，所以不再 lin2srgb）。
@@ -299,12 +394,18 @@ export function createFrameLitUniforms(): UniformGroup {
     uBulge: { value: 0.22, type: 'f32' },
     uFlatten: { value: 0, type: 'f32' },
     uShowN: { value: 0, type: 'f32' },
+    uEOnly: { value: 0, type: 'f32' },
+    uGiStrength: { value: 1, type: 'f32' },
+    uFixedNQ: { value: 0, type: 'f32' },
+    uEChecker: { value: 0, type: 'f32' },
     uSunOn: { value: 0, type: 'f32' },
     uSunDirQ: { value: new Float32Array([0, 1, 0]), type: 'vec3<f32>' },
     uSunColor: { value: new Float32Array([0, 0, 0]), type: 'vec3<f32>' },
     uEChroma: { value: 0, type: 'f32' },
     uAOContact: { value: 0, type: 'f32' },
     uAOForm: { value: 0, type: 'f32' },
+    // skyao 与全白的 blend:0=完全不遮蔽 1=完整遮蔽。运行时可调。
+    uSkyaoBlend: { value: 1, type: 'f32' },
   });
 }
 
@@ -321,6 +422,8 @@ export interface LitSceneStatics {
   wMin: [number, number, number];
   wScale: [number, number, number];
   pn: [number, number, number];
+  /** probe 图集平铺:每行多少颗(与 filter 侧 probeT 同值同义) */
+  probeT: number;
   ambSH: Float32Array;
   lightsQ: Float32Array;
   lightsE: Float32Array;
@@ -331,6 +434,21 @@ export interface LitSceneStatics {
   sceneWorldH: number;
   workW: number;
   workH: number;
+  /**
+   * skyao probe(`lighting/<背景基名>/skyao_probe.bin`):天穹遮蔽矩,乘在 GI 上。
+   *
+   * ⚠ `mCol` 是 **depthConfig 的 det=+1 世界系**(矩就是用它烘的),
+   *   与 probe 图集那套 `lighting.json.world.M`(det=-1)**不是一个矩阵**。
+   *   混用不报错,只是 `a1·N` 的方向整个镜像。
+   */
+  skyao?: {
+    tex: TextureSource;
+    n: [number, number, number];
+    tiles: [number, number];
+    wMin: [number, number, number];
+    wScale: [number, number, number];
+    mCol: Float32Array;
+  } | null;
 }
 
 export function createSceneLitUniforms(s: LitSceneStatics): UniformGroup {
@@ -348,12 +466,21 @@ export function createSceneLitUniforms(s: LitSceneStatics): UniformGroup {
     uWMin: { value: new Float32Array(s.wMin), type: 'vec3<f32>' },
     uWScale: { value: new Float32Array(s.wScale), type: 'vec3<f32>' },
     uPN: { value: new Float32Array(s.pn), type: 'vec3<f32>' },
+    uProbeT: { value: s.probeT, type: 'f32' },
     uAmbSH: { value: s.ambSH, type: 'vec3<f32>', size: 9 },
     uLightQ: { value: s.lightsQ, type: 'vec4<f32>', size: 48 },
     uLightE: { value: s.lightsE, type: 'vec4<f32>', size: 48 },
     uLightCount: { value: s.lightCount, type: 'f32' },
     uGroundRange: { value: new Float32Array([s.groundMin, s.groundMax]), type: 'vec2<f32>' },
     uSceneWorld: { value: new Float32Array([s.sceneWorldW, s.sceneWorldH]), type: 'vec2<f32>' },
+    // ---- skyao probe。没有载荷时 uSkyaoOn=0,shader 里恒返回 1(不遮蔽)----
+    uSkyaoN: { value: new Float32Array(s.skyao?.n ?? [1, 1, 1]), type: 'vec3<f32>' },
+    uSkyaoTiles: { value: new Float32Array(s.skyao?.tiles ?? [1, 1]), type: 'vec2<f32>' },
+    uSkyaoMin: { value: new Float32Array(s.skyao?.wMin ?? [0, 0, 0]), type: 'vec3<f32>' },
+    uSkyaoScale: { value: new Float32Array(s.skyao?.wScale ?? [0, 0, 0]), type: 'vec3<f32>' },
+    uSkyaoM: { value: s.skyao?.mCol ?? new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]),
+               type: 'mat3x3<f32>' },
+    uSkyaoOn: { value: s.skyao ? 1 : 0, type: 'f32' },
   });
 }
 
@@ -454,6 +581,13 @@ export function applyCharLights(
 }
 
 export interface LitShaderTextures {
+  /**
+   * skyao probe(天穹遮蔽矩)。**必须绑** —— `uSkyaoOn` 由 sceneShade 决定,
+   * 载荷在而 sampler 没绑,着色器就会去采一个未绑定的 sampler:采回 (0,0,0,1)
+   * ⇒ V=0 ⇒ GI 被整段乘成 0,角色全黑,而**没有任何报错**。
+   * 2026-09-01 接线时就漏过一次(uSkyaoOn 置了 1,这张表没跟上)。
+   */
+  skyao?: TextureSource | null;
   colorTex: TextureSource;
   nrm: TextureSource | null;      // null = 无法线图集 → 平面法线兜底
   ground: TextureSource;
@@ -479,6 +613,9 @@ export function createLitShader(
       charLights: lightGroup,
       entityShade: new UniformGroup({
         uHasNrm: { value: tex.nrm ? 1 : 0, type: 'f32' },
+        // local→sceneWorld 仿射(setWorldTransform 每帧喂;缺省恒等防黑屏)
+        uL2W0: { value: new Float32Array([1, 0, 0]), type: 'vec3<f32>' },
+        uL2W1: { value: new Float32Array([0, 1, 0]), type: 'vec3<f32>' },
       }),
       uColorTex: tex.colorTex,
       uNrm: tex.nrm ?? Texture.WHITE.source,
@@ -489,6 +626,8 @@ export function createLitShader(
       uValid: tex.valid,
       uVolRad: tex.volRad,
       uVolEmit: tex.volEmit,
+      // ⚠ 漏绑 = 采未绑定 sampler = V 恒 0 = 角色全黑且不报错(2026-09-01 踩过)
+      uSkyaoTex: tex.skyao ?? Texture.WHITE.source,
     },
   });
 }
@@ -531,6 +670,22 @@ export class LitSpriteQuad {
     this.posBuf = this.geometry.getAttribute('aPosition').buffer as Buffer;
     this.uvBuf = this.geometry.getAttribute('aUV').buffer as Buffer;
     this.mesh = new Mesh({ geometry: this.geometry, shader });
+  }
+
+  /**
+   * 喂 local→sceneWorld 仿射(uL2W0/uL2W1)。**世界坐标唯一真相源**——VERT 不再从
+   * screen 反推(滤镜的临时 RT 会把 screen 变成局部坐标,见 VERT 内 2026-09-01 注释)。
+   *
+   * 参数:容器场景坐标 (cx,cy) 与缩放 (csx,csy);mesh 局部 position/scale/rotation。
+   * 组合:world = (cx,cy) + cs·( R(rot)·(scale·p) + (px,py) )。
+   */
+  setWorldTransform(cx: number, cy: number, csx: number, csy: number,
+                    px: number, py: number, sx: number, sy: number, rot: number): void {
+    const cosR = Math.cos(rot), sinR = Math.sin(rot);
+    const a = cosR * sx, b = sinR * sx, c = -sinR * sy, d = cosR * sy;
+    const u = (this.mesh.shader as Shader).resources.entityShade.uniforms as Record<string, Float32Array>;
+    u.uL2W0[0] = a * csx; u.uL2W0[1] = c * csx; u.uL2W0[2] = cx + px * csx;
+    u.uL2W1[0] = b * csy; u.uL2W1[1] = d * csy; u.uL2W1[2] = cy + py * csy;
   }
 
   /** 换帧同步:帧像素尺寸 + 锚点 → 顶点;texture.uvs → 图集 UV(与 color 同源)。 */

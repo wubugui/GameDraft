@@ -151,12 +151,28 @@ export class CharacterLightingSystem implements IGameSystem {
    * 1=完整彩色 E。sprite 本身是着色后的 color(自带颜色),缺的是场景明暗——默认只借明暗。
    */
   eChroma = 0;
+  /** 「GI体·纯E」调试(F2 的 8/9/10 档):角色 albedo≡1 输出 E×2^β,与场景侧同式。
+   *  取证扩展:直接给数字 2/3/4 走 shader 的取证子档(raw probeE/gridT染色/valid角数)。 */
+  eOnlyDebug: boolean | number = false;
+  /** 诊断·定法线(F2 GI体档诊断组):0=正常 1=强制世界水平 2=强制世界向上,只改查表方向。 */
+  giDiagFixedN = 0;
+  /** 诊断:棋盘档(9)时角色也画 probe cell 棋盘。 */
+  eCheckerDebug = false;
 
   // ---------------------------------------------------------------- mesh 着色(2026-07-25)
   // sprite 网格着色的共享 uniform 组与活 shader 注册表。frameLit 跨场景常驻、每帧同步一次
   // (syncFrame,由 Pixi ticker 驱动 —— **不经任何游戏状态分支**,Cutscene 里也照跑);
   // sceneLit 每场景重建。litShaders 用于体素卷/probe 图集热替换时就地重绑纹理。
   private readonly frameLit: UniformGroup = createFrameLitUniforms();
+  /**
+   * skyao 与全白的 blend 系数(制作人 2026-09-01:「加一个 blend 系数」)。
+   * 0 = 完全不遮蔽(全白) 1 = 完整天穹遮蔽。乘在 GI 上,不影响太阳与实体灯。
+   * ⚠ 逐帧同步进 frameLit,**不经任何游戏状态分支** —— filter 路径那次
+   *   「Cutscene 态整段驱动被跳过 ⇒ uniform 冻在默认值」的事故面在这里不存在。
+   */
+  private skyaoBlend = 1;
+  /** 调试:1=法线 2=skyao V 3=c01 4=原始矩 5=色带;null=听参数的。 */
+  private showNOverride: number | null = null;
   private sceneLit: UniformGroup | null = null;
   /**
    * 场景实体灯（角色侧）。跨场景常驻:灯是**逐场景数据**没错,但这一组是就地改数组、
@@ -183,7 +199,7 @@ export class CharacterLightingSystem implements IGameSystem {
   readonly params: CharShadingParams = {
     mode: 2, spp: 64, step: 0.9, msteps: 160,
     fold: true, missMode: false, nee: false,
-    beta: 0, ambStrength: 1,
+    beta: 0, ambStrength: 1, giStrength: 1,
     bulge: 0.22, flatten: 0, heightScale: 1, showNormals: false,
     sunEnabled: false, sunAzimuthDeg: 315, sunElevationDeg: 40,
     sunIntensity: 0.4, sunColor: [1.0, 0.93, 0.82],
@@ -268,7 +284,15 @@ export class CharacterLightingSystem implements IGameSystem {
     this.shadowBasis = r ? new Float32Array(r) : null;
     // 基与灯的到达顺序不保证(灯来自 lightingLoader,基来自 rebuildEntityShadows)。
     // 缓存住最后一次的灯,基一到就重放 —— 不赌顺序,少一次就是"灯照场景不照人"。
-    if (this.pendingLights) this.applyLights(this.pendingLights);
+    //
+    // ⚠ 重放**必须带上已存的 lightWuPerQUnit**。曾经写成 `applyLights(this.pendingLights)`,
+    //   第二参缺省 1 把首次调用存好的尺度(雾津街头 880)踩掉 ⇒ shader 里
+    //   `P = R·q × 1`,人的坐标缩在 q 尺度(±2)而灯位在 wu 尺度(±几百),
+    //   **每一盏带距离的灯(point/spot/area)对角色永远差 wuPerQUnit 倍距离** ——
+    //   自「原画 + 加性灯」落地起角色就没吃到过一盏点光,而 directional 不用距离、
+    //   probe 底光不经这条路,所以画面"看着都在工作",日志照打"N 盏已喂给 probe 着色"。
+    //   同族教训见 lighting-scale-reference 已知坑③:尺度错不报错,只是全灭。
+    if (this.pendingLights) this.applyLights(this.pendingLights, this.lightWuPerQUnit);
   }
 
   /**
@@ -475,10 +499,30 @@ export class CharacterLightingSystem implements IGameSystem {
     return { col: 9, file: 'atlas_l2.bin' };   // 2 及其它
   }
 
+  /**
+   * probe 平铺布局:P 颗 probe 摆成 T 颗/行 x H 行(图集每颗占 ncol 个 texel,valid 占 1)。
+   * 老布局「1 颗 1 行」在 P=11.9 万时高度直接超 GPU MAX_TEXTURE_SIZE(16384),
+   * Pixi **不报错**,采样静默全黑 —— 盘上 E 明明正常,实机角色漆黑(2026-09-01)。
+   * T 取 4 的倍数:valid 是 r8unorm,行字节数不 4 对齐会踩 UNPACK_ALIGNMENT。
+   * GLSL 侧的同一套映射见 CharacterShadingFilter 的 probeTexel。
+   */
+  static probeTiling(rows: number): { T: number; H: number } {
+    const T = Math.max(4, Math.ceil(Math.ceil(rows / 8192) / 4) * 4);
+    return { T, H: Math.max(1, Math.ceil(rows / T)) };
+  }
+
   /** probe 图集纹理工厂;登记在 probeTextures(可中途整批换掉),不进 ownedTextures。 */
   private makeProbeTexture(buf: ArrayBuffer, col: number, rows: number): TextureSource {
+    const { T, H } = CharacterLightingSystem.probeTiling(rows);
+    let data = new Uint16Array(buf);
+    const need = T * H * col * 4;
+    if (data.length < need) {          // 行尾补齐的哑 probe,shader 永远不索引到
+      const padded = new Uint16Array(need);
+      padded.set(data);
+      data = padded;
+    }
     const tex = new BufferImageSource({
-      resource: new Uint16Array(buf), width: col, height: rows,
+      resource: data, width: T * col, height: H,
       format: 'rgba16float', scaleMode: 'nearest',
       alphaMode: 'no-premultiply-alpha',
     });
@@ -590,7 +634,7 @@ export class CharacterLightingSystem implements IGameSystem {
     this.probeInflight = null;
     this.sceneWorldW = worldW; this.sceneWorldH = worldH;
     // 按背景图名索引；找不到就回落到旧的扁平布局（迁移期两条都认，缺省不影响运行）。
-    const perBg = sceneBakeDirUrl(sceneId, backgroundImage, 'lighting');
+    const perBg = sceneBakeDirUrl(sceneId, backgroundImage);
     const legacy = sceneRuntimeAssetUrl(sceneId, 'lighting');
     let base = perBg;
     let meta: LightingPayloadMeta;
@@ -653,10 +697,16 @@ export class CharacterLightingSystem implements IGameSystem {
       const shMode0 = (meta.shading as { mode?: number } | undefined)?.mode;
       const targetProbeMode = shMode0 === 1 || shMode0 === 3 ? shMode0 : 2;
       const probeCfg0 = CharacterLightingSystem.probeCfg(targetProbeMode);
-      const [atlasBuf, valid, groundBuf] = await Promise.all([
+      // skyao probe 的网格与坐标系在 **geometry.json**(几何场那侧产的),
+      // 不在 lighting.json 里 —— 两个文件同住一个目录,但由两条烘焙路径分别产出。
+      // 缺文件不算错(老载荷没有这一份):skyao 静默降级为「不遮蔽」。
+      const [atlasBuf, valid, groundBuf, geomRes, skyaoRes] = await Promise.all([
         fetch(`${base}/${probeCfg0.file}`).then((r) => r.arrayBuffer()),
         fetch(`${base}/probes_valid.bin`).then((r) => r.arrayBuffer()),
         fetch(`${base}/ground_d.png`).then((r) => r.blob()),
+        fetch(`${base}/geometry.json`).then((r) => (r.ok ? r.json() : null)).catch(() => null),
+        fetch(`${base}/skyao_probe.bin`).then((r) => (r.ok ? r.arrayBuffer() : null))
+          .catch(() => null),
       ]);
       if (myEpoch !== this.epoch) return;
 
@@ -668,8 +718,15 @@ export class CharacterLightingSystem implements IGameSystem {
       const atlasL2 = targetProbeMode === 2 ? realAtlas : phTex();
       const atlasBin = targetProbeMode === 3 ? realAtlas : phTex();
       this.loadedProbeMode = targetProbeMode;
+      const { T: vT, H: vH } = CharacterLightingSystem.probeTiling(P);
+      let validData = new Uint8Array(valid);
+      if (validData.length < vT * vH) {
+        const padded = new Uint8Array(vT * vH);   // 补齐位 = 0 = invalid,不参与插值
+        padded.set(validData);
+        validData = padded;
+      }
       const validTex = new BufferImageSource({
-        resource: new Uint8Array(valid), width: P, height: 1,
+        resource: validData, width: vT, height: vH,
         format: 'r8unorm', scaleMode: 'nearest',
         alphaMode: 'no-premultiply-alpha',
       });
@@ -719,6 +776,45 @@ export class CharacterLightingSystem implements IGameSystem {
         lightsE[i * 4 + 2] = li.radiance[2];
       }
 
+      // ---- skyao probe:rgba16f 平铺图集(a0,a1x,a1y,a1z)----
+      // ⚠⚠ 它的 M 是 geometry.json 的 **depthConfig det=+1**,与下面 probe 用的
+      //    meta.world.M(det=-1)**不是一个矩阵**。混用不报错,只是方向整个镜像。
+      let skyao: NonNullable<CharShadingSceneResources['skyao']> | null = null;
+      const sp = (geomRes as { skyao_probe?: Record<string, number>;
+                              M?: number[][] } | null)?.skyao_probe;
+      const spM = (geomRes as { M?: number[][] } | null)?.M;
+      if (sp && spM && skyaoRes) {
+        const want = sp.atlas_w * sp.atlas_h * 4 * 2;
+        if (skyaoRes.byteLength !== want) {
+          depthError(T, sceneId, `: skyao_probe.bin ${skyaoRes.byteLength} 字节 ≠ `
+            + `图集 ${sp.atlas_w}x${sp.atlas_h} rgba16f 应有的 ${want} —— 已跳过`);
+        } else {
+          const tex = new BufferImageSource({
+            resource: new Uint16Array(skyaoRes), width: sp.atlas_w, height: sp.atlas_h,
+            format: 'rgba16float', scaleMode: 'nearest',
+            alphaMode: 'no-premultiply-alpha',
+          });
+          this.ownedTextures.push(tex);
+          skyao = {
+            tex,
+            n: [sp.nx, sp.ny, sp.nz],
+            tiles: [sp.tiles_x, sp.tiles_y],
+            wMin: [sp.x0, sp.y0, sp.z0],
+            wScale: [
+              1 / Math.max(sp.x1 - sp.x0, 1e-5),
+              1 / Math.max(sp.y1 - sp.y0, 1e-5),
+              1 / Math.max(sp.z1 - sp.z0, 1e-5),
+            ],
+            mCol: new Float32Array([
+              spM[0][0], spM[1][0], spM[2][0],
+              spM[0][1], spM[1][1], spM[2][1],
+              spM[0][2], spM[1][2], spM[2][2],
+            ]),
+          };
+          depthLog(T, sceneId, `: skyao probe ${sp.nx}x${sp.ny}x${sp.nz} 已载入`);
+        }
+      }
+
       const w = meta.world;
       const pn = meta.probes;
       this.meta = meta;
@@ -750,8 +846,10 @@ export class CharacterLightingSystem implements IGameSystem {
           (pn.nz - 1) / Math.max(w.z1 - w.z0, 1e-5),
         ],
         pn: [pn.nx, pn.ny, pn.nz],
+        probeT: CharacterLightingSystem.probeTiling(P).T,
         ambSH: new Float32Array(meta.ambient_sh),
         lightsQ, lightsE, lightCount,
+        skyao,
       };
       // probe 点云可视化数据:规则晶格位置(=运行时插值实际用的格点)投回场景
       // 世界系;颜色取固化 E 的 DC 系数(coeff 0),与实验室查看器点云同配方(×0.9 → 1/2.2)。
@@ -799,6 +897,11 @@ export class CharacterLightingSystem implements IGameSystem {
           fold: sh.fold > 0, missMode: sh.miss_mode > 0, nee: sh.nee > 0,
           beta: sh.beta, ambStrength: sh.amb,
           bulge: sh.bulge, flatten: sh.flatten,
+          // 旧载荷没有 giStrength(2026-09-01 新增)——缺省 1 = 行为不变
+          giStrength: (() => {
+            const g = (sh as { giStrength?: unknown }).giStrength;
+            return typeof g === 'number' && Number.isFinite(g) ? g : 1;
+          })(),
         });
         // E 色度权重(实验室调色区导出;缺省 0=只借场景明暗)。F2 旋钮可临时覆盖测试。
         const ec = (sh as { eChroma?: number }).eChroma;
@@ -812,12 +915,13 @@ export class CharacterLightingSystem implements IGameSystem {
         worldToWorkX: this.resources.worldToWorkX, worldToWorkY: this.resources.worldToWorkY,
         cal: this.resources.cal, vol: this.resources.vol,
         mCol: this.resources.mCol, wMin: this.resources.wMin, wScale: this.resources.wScale,
-        pn: this.resources.pn, ambSH: this.resources.ambSH,
+        pn: this.resources.pn, probeT: this.resources.probeT, ambSH: this.resources.ambSH,
         lightsQ: this.resources.lightsQ, lightsE: this.resources.lightsE,
         lightCount: this.resources.lightCount,
         groundMin: this.groundRange[0], groundMax: this.groundRange[1],
         sceneWorldW: this.sceneWorldW, sceneWorldH: this.sceneWorldH,
         workW: this.resources.workW, workH: this.resources.workH,
+        skyao: this.resources.skyao ?? null,
       });
       this.loadedSceneId = sceneId;
       depthLog(T, sceneId, `: lighting v3 active, ${P} probes, ${lightCount} lights, `
@@ -904,6 +1008,13 @@ export class CharacterLightingSystem implements IGameSystem {
       );
     }
     filter.applyParams(this.params);
+    filter.applyDebugState(
+      this.showNOverride ?? (this.params.showNormals ? 1 : 0),
+      typeof this.eOnlyDebug === 'number' ? this.eOnlyDebug : (this.eOnlyDebug ? 1 : 0),
+      this.eCheckerDebug ? 1 : 0,
+      this.skyaoBlend,
+      typeof this.giDiagFixedN === 'number' ? this.giDiagFixedN : 0,
+    );
     filter.setEChroma(this.eChroma);
   }
 
@@ -958,9 +1069,18 @@ export class CharacterLightingSystem implements IGameSystem {
 
   /** 场景卸载/重载前把活 shader 的场景纹理全部退到白图 —— 防 BindGroup 绑到已销毁纹理自毁。 */
   private parkLitShaders(): void {
-    for (const sh of this.litShaders) {
-      for (const k of ['uPL1', 'uPL2', 'uPBin', 'uValid', 'uVolRad', 'uVolEmit', 'uGround', 'uNrm']) {
-        setLitShaderTexture(sh, k, null);
+    for (const sh of [...this.litShaders]) {
+      try {
+        for (const k of ['uPL1', 'uPL2', 'uPBin', 'uValid', 'uVolRad', 'uVolEmit', 'uGround', 'uNrm']) {
+          setLitShaderTexture(sh, k, null);
+        }
+      } catch {
+        // 已被销毁的 shader(实体拆除顺序在本系统 destroy 之后/之前都可能发生):
+        // BindGroup 内部已置空,setResource 会抛。抛了 = 它死了,从注册表剔除。
+        // ⚠ 不接这一层的代价不是"少退一张图",而是 park 半途炸掉 —— destroy()/load()
+        // 整个中断,下一场景的载荷装不上(2026-09-01:夜时段换装后 probes 恒 null,
+        // 角色照明整场安静失效,查了半天以为是夜载荷坏了)。
+        this.litShaders.delete(sh);
       }
     }
     this.sceneLit = null;
@@ -989,6 +1109,7 @@ export class CharacterLightingSystem implements IGameSystem {
       colorTex, nrm, ground: this.groundTex,
       atlasL1: r.atlasL1, atlasL2: r.atlasL2, atlasBin: r.atlasBin,
       valid: r.valid, volRad: r.volRad, volEmit: r.volEmit,
+      skyao: r.skyao?.tex ?? null,
     });
     this.litShaders.add(sh);
     return sh;
@@ -1017,6 +1138,34 @@ export class CharacterLightingSystem implements IGameSystem {
    * 由 Pixi ticker 直接驱动(Game 注册),**不经任何游戏状态分支** —— filter 路径那次
    * "Cutscene 态整段驱动被跳过 → uniform 冻在默认值"的事故面在这里结构上不存在。
    */
+  /** skyao 与全白的 blend:0=不遮蔽 1=完整。filter 路径同步走 setFilterSkyaoBlend。 */
+  setSkyaoBlend(v: number): void {
+    this.skyaoBlend = Math.max(0, Math.min(1, Number(v) || 0));
+    // filter 路径有自己的 uniform 组(不共用 frameLit),得逐个推
+    for (const f of this.litShaders) {
+      const u = (f as unknown as { resources?: Record<string, { uniforms?: Record<string, unknown> }> })
+        .resources;
+      const g = u?.['charShadeScene'] ?? u?.['sceneShade'];
+      if (g?.uniforms && 'uSkyaoBlend' in g.uniforms) g.uniforms['uSkyaoBlend'] = this.skyaoBlend;
+    }
+  }
+
+  get skyaoBlendValue(): number { return this.skyaoBlend; }
+
+  /** 调试视图:0=正常 1=法线 2=skyao V(灰度) 3=skyao 查表 c01 4=skyao 原始矩 a0 5=V 色带。 */
+  setCharDebugView(mode: number): void {
+    const m = Math.max(0, Math.min(5, Math.round(Number(mode) || 0)));
+    this.showNOverride = m === 0 ? null : m;
+  }
+
+  /** skyao 载荷的实况(诊断用):没载上就是 on=false —— 那时 blend 拨到哪都没效果。 */
+  get skyaoInfo(): { on: boolean; n?: number[]; tiles?: number[]; blend: number } {
+    const k = this.resources?.skyao;
+    return k
+      ? { on: true, n: [...k.n], tiles: [...k.tiles], blend: this.skyaoBlend }
+      : { on: false, blend: this.skyaoBlend };
+  }
+
   syncFrame(wcX: number, wcY: number, projectionScale: number): void {
     const u = this.frameLit.uniforms as Record<string, unknown>;
     const wc = u['uWCPos'] as Float32Array;
@@ -1026,7 +1175,11 @@ export class CharacterLightingSystem implements IGameSystem {
     u['uMode'] = p.mode; u['uSpp'] = p.spp; u['uMSteps'] = p.msteps;
     u['uFold'] = p.fold ? 1 : 0; u['uMissMode'] = p.missMode ? 1 : 0; u['uNEE'] = p.nee ? 1 : 0;
     u['uStep'] = p.step; u['uBeta'] = Math.pow(2, p.beta); u['uAmbStrength'] = p.ambStrength;
-    u['uBulge'] = p.bulge; u['uFlatten'] = p.flatten; u['uShowN'] = p.showNormals ? 1 : 0;
+    u['uBulge'] = p.bulge; u['uFlatten'] = p.flatten; u['uShowN'] = this.showNOverride ?? (p.showNormals ? 1 : 0);
+    u['uEOnly'] = typeof this.eOnlyDebug === 'number' ? this.eOnlyDebug : (this.eOnlyDebug ? 1 : 0);
+    u['uGiStrength'] = p.giStrength;
+    u['uFixedNQ'] = this.giDiagFixedN;
+    u['uEChecker'] = this.eCheckerDebug ? 1 : 0;
     u['uSunOn'] = p.sunEnabled ? 1 : 0;
     const az = (p.sunAzimuthDeg * Math.PI) / 180;
     const el = (p.sunElevationDeg * Math.PI) / 180;
@@ -1038,6 +1191,7 @@ export class CharacterLightingSystem implements IGameSystem {
     c[2] = p.sunColor[2] * p.sunIntensity;
     u['uEChroma'] = this.eChroma;
     u['uAOContact'] = this.aoContact; u['uAOForm'] = this.aoForm;
+    u['uSkyaoBlend'] = this.skyaoBlend;
     this.frameLit.update();
   }
 }

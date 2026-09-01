@@ -9,7 +9,7 @@
  *
  * 这一点反直觉，本会话为此走了一整圈弯路（先加了 `R·n`，再全部回退），所以钉在这儿：
  *
- * - **场景法线** `lighting2/normal.png`：`tools/scene_relight/geometry.py:183-190`
+ * - **场景法线** `lighting/<背景基名>/normal.png`：`tools/character_lighting_lab/scene_geometry.py`
  *   拿 `pos = q @ R.T`（**世界位置**）的梯度叉积算的 ⇒ 烘出来就在 M-world。
  * - **角色法线** `atlas.normal.png`：`tools/animation_pipeline/bake_normal_atlas.py`
  *   从剪影 alpha 推高度场、在**图像像素空间**取梯度 `(gx, -gy, -6)`。角色是一块
@@ -94,14 +94,32 @@ describe('铁律 0 · 光照一律在世界空间、单位 wu', () => {
     }
   });
 
-  it('角色 GI 查表必须把世界法线转回 q（probe 严格烘在 q）', () => {
-    expect(
-      /vec3\s+nQ\s*=\s*normalize\(wrWorldToQ\([^)]*,\s*n\)\)/.test(CHAR_SRC),
-      'CharacterLitSprite 里找不到 nQ = normalize(wrWorldToQ(..., n)) —— '
-      + 'probe 的球谐是按 q 法线烘的，喂世界法线进去等于整体偏一个俯角',
-    ).toBe(true);
+  it('角色 GI 查表法线必须先转回 q（nQ = Rᵀ·n），不许原样传世界法线', () => {
+    // ⚠ 本条 2026-08-31 被**翻转过一次又翻回来了**，历史钉在这儿防止第三次：
+    // 当天一度以"实验室查看器（CHAR_FS）拿图集法线原样查"为由改成 probeE(q, n)，
+    // 随即被审计钉死为回归 —— SH 载荷的方向基是 q 空间（pipeline.py _trace 明文
+    // "dirs in q-space"，逐轴各向异性缩放坐实），场景侧 SceneLightingPass 的
+    // GI 体视图也转 Rᵀ；同一个 probeE 两侧必须同一种读法。原样传把正面查表方向
+    // 从 (0,-0.707,-0.707)_q（= 世界水平的正确 q 坐标）错成 (0,0,-1)_q
+    // （= 世界上仰 45°），实测底光压暗 23%。实验室 CHAR_FS 当 q 用是实验室侧的
+    // 既有分歧（inbox 立案，改实验室那头），不构成运行时改约定的依据。
+    expect(CHAR_SRC).toContain('vec3 nQ = normalize(wrWorldToQ(uSMRow0, uSMRow1, uSMRow2, n));');
     expect(CHAR_SRC).toContain('probeE(q, nQ)');
     expect(CHAR_SRC).toContain('gatherRT(q + nQ*0.02, nQ)');
+    // 负向闸剥掉注释再查:文件注释里的历史记录合法地写着 probeE(q, n),不能算命中
+    const code = CHAR_SRC.split('\n')
+      .map((l) => l.replace(/\/\/.*$/, '')).join('\n');
+    expect(
+      /probeE\(q,\s*n\)/.test(code) || /gatherRT\(q \+ n\*0\.02,\s*n\)/.test(code),
+      '查表方向又被改成图集直出了 —— 那是把世界向量喂进 q 基的 SH，回看本条注释',
+    ).toBe(false);
+  });
+
+  it('probeE 的法线口径：场景侧与角色侧必须同为 Rᵀ 转 q（不许各取一半）', () => {
+    // 2026-08-31 的回归正是这道闸缺席才漏进来的：同一份 PROBE_SAMPLING_GLSL，
+    // 场景 GI 体视图 wrWorldToQ 转了、角色侧没转 —— 四种组合里唯一两边都错的那种。
+    expect(SCENE_SRC).toMatch(/wrWorldToQ\([^)]*\bn\)\)/);
+    expect(CHAR_SRC).toMatch(/wrWorldToQ\(uSMRow0, uSMRow1, uSMRow2, n\)/);
   });
 
   it('GLSL 模板字面量里不许出现反引号（会当场截断字符串）', () => {

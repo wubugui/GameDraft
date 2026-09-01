@@ -9,7 +9,7 @@ import { CHARACTER_HEIGHT_WU } from '../rendering/lighting/lightPacking';
  * 都不报错，只表现为"gizmo 与灯的光斑差一点"——那种偏差用眼睛调不回来。
  *
  * 几何取自 **雾津街头**（目前唯一真摆了灯的场景）的真实产物：
- * `lighting2/meta.json` 的 work/cal/scale + 场景 JSON 的 `depthConfig.M.R` 与世界宽高。
+ * `lighting/<背景基名>/geometry.json` 的 work/cal/scale + 场景 JSON 的 `depthConfig.M.R` 与世界宽高。
  */
 const WUJIN: Omit<LightSpaceGeometry, 'ground'> = {
   work: { w: 512, h: 288 },

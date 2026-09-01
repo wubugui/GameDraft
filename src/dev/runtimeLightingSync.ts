@@ -384,9 +384,20 @@ export class RuntimeLightingSync {
     this.syncedJson = this.baselineOf(doc.lighting, incomingSel);
     this.pendingSince = 0;
     this.appliedCount += 1;
-    this.deps.applyParams(doc.lighting);
-    // 选中放在灯参之后：applyParams 可能重建灯表，先设选中会被冲掉
-    this.deps.setSelectedId(incomingSel);
+    try {
+      this.deps.applyParams(doc.lighting);
+      // 选中放在灯参之后：applyParams 可能重建灯表，先设选中会被冲掉
+      this.deps.setSelectedId(incomingSel);
+    } catch (e) {
+      // 对面(编辑器)推来的 doc 应用炸了:必须带**收到的形状**出声,并且不许把
+      // 异常抛回轮询循环——那会变成每拍一炸的无栈刷屏(2026-09-01 排障教训)。
+      const lights = doc.lighting?.lights;
+      console.error(
+        `[lightingSync] 应用对面推来的灯参失败: ${(e as Error)?.stack ?? e}\n`
+        + `  doc.rev=${doc.rev} lights=${Array.isArray(lights) ? lights.length : typeof lights}`
+        + ` kinds=${Array.isArray(lights) ? lights.slice(0, 12).map((l) => l?.kind ?? '?').join(',') : '-'}`);
+      this.suppressed = '对面 doc 应用失败(见 console),本拍跳过';
+    }
   }
 
   private async pushOnce(sceneId: string): Promise<void> {

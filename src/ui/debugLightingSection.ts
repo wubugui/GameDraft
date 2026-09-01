@@ -128,7 +128,7 @@ export function createDebugLightingSection(deps: DebugLightingDeps): DebugLighti
     if (!p) {
       return {
         text: '这个场景没配 lighting 块,或统一光影没启用。\n'
-          + '（编辑器里给场景加 lighting 块 + 跑 `scene-relight --bake` 烘 lighting2/ 载荷）',
+          + '（编辑器里给场景加 lighting 块 + 在角色照明实验室烘几何场）',
       };
     }
     const lights = lightsOf(p);
@@ -493,8 +493,11 @@ export function createDebugLightingSection(deps: DebugLightingDeps): DebugLighti
     }
 
     // ---------------------------------------------------------------- 快捷旋钮
-    // 只放两个:制作人验收时最先要动的就是这两个。完整参数在下面那块「统一光影（场景）」。
-    hint('④ 快捷（完整参数见本页下方「统一光影（场景）」）');
+    // 只放两个:制作人验收时最先要动的就是这两个。完整参数在下面那块「照明（场景·角色·共用）」。
+    // ⚠ 2026-08-31 审计删掉了这里的"天光"旋钮:它的提示语"不打灯时有多黑"是谎——
+    //   天光运行时加光项已删,sky.intensity 唯一活消费者是实体影浓度分母,
+    //   现叫"影子环境照度"、放在照明 tab 的阴影组。
+    hint('④ 快捷（完整参数见本页下方「照明（场景·角色·共用）」）');
     const em = p.emissive ?? { gain: 0 };
     const d = p.display;
     const q = row();
@@ -509,10 +512,6 @@ export function createDebugLightingSection(deps: DebugLightingDeps): DebugLighti
     q.appendChild(label('EV', '32px'));
     q.appendChild(num(() => d.ev, (v) => deps.patch({ display: { ...d, ev: v } }), 0.1, '70px',
       'filmic 在高端是压缩的——EV 调过头会把高光压成同一个值，看着就是"过爆"'));
-    q.appendChild(label('天光', '38px'));
-    q.appendChild(num(() => p.sky.intensity,
-      (v) => deps.patch({ sky: { ...p.sky, intensity: v } }), 0.005, '76px',
-      '夜景基调：不打灯时有多黑'));
     wrap.appendChild(q);
 
     return {

@@ -136,8 +136,10 @@ export interface DebugToolsDeps {
     shadowStyle?: Partial<{ gain: number }>;
   }) => void;
   /**
-   * F2「统一光影」tab 的接口。场景未配 `lighting` 块或没烘 `lighting2/` 时返回 null。
-   * 与「角色照明（烘焙）」那一组是**两代**系统，刻意分开成两个 section，别混用。
+   * 场景照明参数接口。场景未配 `lighting` 块或没烘几何场时返回 null。
+   * 2026-08-31 起与角色受光参数同住一个「照明」tab(buildSceneLightingSection),
+   * 但数据源仍是两套:这套走 SceneLightingDef(可经编辑器落盘),角色那套走
+   * CharShadingParams(运行时测试,真值在实验室导出的 lighting.json)。
    */
   getSceneLighting: () => {
     active: boolean;
@@ -153,8 +155,10 @@ export interface DebugToolsDeps {
   } | null;
   /** 写参数（会标脏，下一帧重算缓存）。 */
   setSceneLighting: (patch: Partial<SceneLightingDef>) => void;
-  /** 调试可视化：0=正常 1=天穹可见性 2=法线 3=S_day 4=S_new 5=比值 6=线性化原画 */
+  /** 调试可视化：0=正常 1=天穹可见性 2=法线 3=S_day 4=S_new 5=比值 6=线性化原画 7-10=GI体族 */
   setSceneLightingDebug: (mode: number) => void;
+  /** GI体档诊断参数:定法线(0/1/2)+ 主角 quad 放大(1-6)。离开 GI 档 Game 会自动复位。 */
+  setGiDiagnostics: (fixedN: number, quadScale: number) => void;
   /**
    * F2「光影」页把两个钩子交给组装层，供光照双向同步用：
    * 「现在在不在独奏」（独奏中只发不收）与「交出去前把独奏还原」。
@@ -1383,27 +1387,39 @@ export class DebugTools {
     };
   }
 
-  /** F2「气味指示器（调试）」：左边驱动味种/浓度看效果，右边实时调所有味共用的烟形，底部读数可抄回 smell_profiles.json 的 form 块。 */
   /**
-   * F2「统一光影（场景）」。
+   * F2「照明」——**唯一**的照明参数 tab(制作人 2026-08-31 点名合并):
+   * 场景照明、角色受光、共用参数(β/显示变换/调试视图)全在这一页,不许再分家。
    *
-   * 与「角色照明（烘焙）」是**两代**系统：那一代烘辐射、光变必须重烘；这一代
-   * 只烘几何项（法线/天穹可见性），光全实时。两组刻意分开，别混着调。
+   * ⚠ 落盘口径两半不一样:**场景参数**(①②③与显示变换)能落盘——编辑器场景页
+   * 「从运行时拉取灯位」把它拿走入脏、Save All 写盘;**角色参数**(④⑤⑥)改动
+   * 只是运行时测试,场景重载回配置(真值在实验室「导出照明」的 lighting.json)。
    *
-   * ⚠ 这里改动**能落盘**，但不是游戏自己写：由编辑器在场景页点
-   * 「从运行时拉取灯位」把这份参数拿走入脏，再 Save All（工程唯一写盘出口）。
-   * 与角色照明那组「改动只是运行时测试、场景重载回配置」的口径**不同**。
+   * ## 收编史(为什么这里没有你记忆里的那些滑杆)
+   *
+   * 本页前身是「统一光影(场景)」+「角色照明(烘焙)」+「角色照明·RT 预览」三个 tab。
+   * 2026-08-31 审计逐参数核销后合并,**死参数一律删除**(全部经 grep 消费端证实):
+   * - 天光半球/天光色温/AO强度/比值上限 → uSkyColor/uSkyHemi/uAoStrength/uRatioMax
+   *   在 SceneLightingPass FRAG 里**零读取**(天光/太阳运行时加光项 2026-08-30 已删);
+   * - 去霾 → FRAG 里整段 `if (false && …)` 停用;
+   * - 角色标定 radianceScale / GI反弹增益 / 角色压平·鼓起(characterShape) →
+   *   唯一消费者是被 UNIFIED_CHAR_PATH_ENABLED=false 关死的统一角色路径。
+   * 天光强度(sky.intensity)**还活着但只剩一个消费者**:实体影子浓度自动解算的
+   * 环境照度分母(entityShadowBinding.ts),按现职能重标签放在阴影组。
+   * 死参数若要复活,先去 SceneLightingPass/CharacterLitSprite 里接上消费端再回来加滑杆。
    */
   private buildSceneLightingSection(): {
-    text: string; extra?: HTMLElement;
+    text: string;
+    extra?: HTMLElement;
     actions?: { label: string; fn: () => void; noRefresh?: boolean }[];
   } {
-    const s = this.deps.getSceneLighting();
-    if (!s) {
+    const sceneL = this.deps.getSceneLighting();
+    const charL = this.deps.getCharLightingDebug();
+    if (!sceneL && !charL) {
       return {
-        text: '本场景未启用统一光影。需要两样：①场景 JSON 里有 `lighting` 块；'
-          + '②烘过几何场（`python -m tools.scene_relight --bake --scene <id>`，'
-          + '产物在 runtime/scenes/<id>/lighting2/）。缺任一都安静回落到旧背景路径。',
+        text: '本场景两套照明都没启用。场景照明要:①场景 JSON 里有 `lighting` 块;'
+          + '②烘过几何场(`sh scripts/py.sh -m tools.character_lighting_lab.scene_fields --scene <id>`)。'
+          + '角色受光要:角色照明实验室烘焙并「导出照明」(runtime/scenes/<id>/lighting/<背景基名>/)。',
       };
     }
 
@@ -1411,36 +1427,43 @@ export class DebugTools {
     wrap.className = 'debug-dock__section-extra';
     const valLine = document.createElement('div');
     valLine.className = 'debug-dock__slider-hint';
-    let noteMsg = '';
 
     const P = (): SceneLightingDef => this.deps.getSceneLighting()!.params;
     const patch = (part: Partial<SceneLightingDef>): void => this.deps.setSceneLighting(part);
+    const cp = (): CharShadingParams => this.deps.getCharLightingDebug()!.params;
+    const cpatch = (part: Partial<CharShadingParams>): void =>
+      this.deps.setCharLighting({ params: part });
+    const MODE_NAMES = ['RT', 'L1', 'L2', 'BIN'];
 
     const sync = (): void => {
-      const cur = this.deps.getSceneLighting();
-      if (!cur) return;
-      const p = cur.params;
-      // ★ 带影灯数就是性能预算（GTX 970 上动态带影灯 4–6 盏是线）。超了标出来。
-      const over = cur.shadowLightCount > 6 ? '  ⚠超预算' : '';
-      valLine.textContent =
-        `灯 ${cur.lightCount} 盏（带影 ${cur.shadowLightCount}/6${over}）　世界宽 ${cur.backgroundWu.toFixed(0)} wu　角色高 150 wu\n`
-        + `天光 强度 ${p.sky.intensity.toFixed(3)}　半球 ${p.sky.hemi.toFixed(2)}　`
-        + `色温 ${Math.round(p.sky.kelvin ?? 6500)}K　AO ${(p.aoStrength ?? 1).toFixed(2)}\n`
-        + `画内遮蔽响应 day.hemi ${p.day.hemi === undefined ? '（用烘焙拟合值）' : p.day.hemi.toFixed(2)}　`
-        + `去霾 ${(p.dehaze ?? 1).toFixed(2)}\n`
-        + `灯体发光 ${(p.emissive?.gain ?? 0).toFixed(2)}　核心 ${(p.emissive?.coreRadius ?? 0).toFixed(1)}wu　`
-        + `光晕 ${(p.emissive?.haloRadius ?? 0).toFixed(1)}wu×${(p.emissive?.haloGain ?? 0).toFixed(2)}\n`
-        + `雾 σ ${(p.fog?.sigma ?? 0).toFixed(4)}/wu　高度尺度 ${(p.fog?.scaleHeight ?? 0).toFixed(0)}wu　`
-        + `基准 ${(p.fog?.baseHeight ?? 0).toFixed(0)}wu　散射 ${(p.fog?.scatter ?? 0).toFixed(2)}\n`
-        + `角色标定 ${cur.radianceScale.toFixed(3)}`
-        + `　压平 ${(p.characterShape?.flatten ?? 0).toFixed(2)}`
-        + `　鼓起 ${(p.characterShape?.bulge ?? 0.22).toFixed(2)}`
-        + `　GI ${cur.giReady ? `增益 ${(p.giGain ?? 1).toFixed(2)}` : '（本场景未烘命中图）'}`
-        + (p.radianceScale === undefined ? '（自动估）' : '（已手动写死）') + '\n'
-        + `显示 EV ${p.display.ev.toFixed(2)}　tonemap ${p.display.tonemap}　`
-        + `对比 ${p.display.contrast.toFixed(2)}　饱和 ${p.display.saturation.toFixed(2)}　`
-        + `白平衡 ${Math.round(p.display.whiteKelvin)}K`
-        + (noteMsg ? `\n${noteMsg}` : '');
+      const s = this.deps.getSceneLighting();
+      const c = this.deps.getCharLightingDebug();
+      const lines: string[] = [];
+      if (s) {
+        const p = s.params;
+        const over = s.shadowLightCount > 6 ? '  ⚠超预算' : '';
+        lines.push(
+          `场景:灯 ${s.lightCount} 盏(带影 ${s.shadowLightCount}/6${over})　世界宽 ${s.backgroundWu.toFixed(0)} wu　角色高 150 wu`,
+          `　albedo反解 day.hemi ${p.day.hemi === undefined ? '(烘焙拟合值)' : p.day.hemi.toFixed(2)}`
+          + `　灯体发光 ${(p.emissive?.gain ?? 0).toFixed(2)}　雾 σ ${(p.fog?.sigma ?? 0).toFixed(4)}/wu`,
+          `　显示 EV ${p.display.ev.toFixed(2)}　tonemap ${p.display.tonemap}　`
+          + `对比 ${p.display.contrast.toFixed(2)}　饱和 ${p.display.saturation.toFixed(2)}　`
+          + `白平衡 ${Math.round(p.display.whiteKelvin)}K`,
+        );
+      } else {
+        lines.push('场景照明:未启用(缺 lighting 块或几何场,见本区块注释)');
+      }
+      if (c) {
+        const pp = c.params;
+        lines.push(
+          `角色:着色 ${c.enabled ? '开' : '关'}(${c.active ? '生效' : '未生效'})　模式 ${MODE_NAMES[pp.mode] ?? pp.mode}　probe ${c.probes}　光源 ${c.lights}`,
+          `　★β 2^${pp.beta.toFixed(1)}　★E色度 ${this.deps.getCharEChroma().toFixed(2)}　`
+          + `隆起 ${pp.bulge.toFixed(2)}　压平 ${pp.flatten.toFixed(2)}　全局阴影 ${c.shadowStyle.gain.toFixed(2)}`,
+        );
+      } else {
+        lines.push('角色受光:本场景无烘焙载荷(实验室烘焙并「导出照明」后生效)');
+      }
+      valLine.textContent = lines.join('\n');
     };
 
     const mkSlider = (
@@ -1461,7 +1484,6 @@ export class DebugTools {
         const v = Number(range.value);
         set(v);
         span.textContent = fmt(v);
-        noteMsg = '';
         sync();
       });
       row.appendChild(range); row.appendChild(span);
@@ -1475,154 +1497,259 @@ export class DebugTools {
       wrap.appendChild(h);
     };
 
+    // 按钮一律**把当前值写在自己脸上**并点击自更新(制作人点名:不许把状态藏进日志)。
+    const mkBtn = (parent: HTMLElement, labelOf: () => string, onClick: () => void,
+      outlineOn?: () => boolean): HTMLButtonElement => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'debug-dock__btn';
+      b.style.whiteSpace = 'normal';
+      b.style.textAlign = 'left';
+      const paint = (): void => {
+        b.textContent = labelOf();
+        if (outlineOn) b.style.outline = outlineOn() ? '2px solid #c9a24a' : '';
+      };
+      paint();
+      b.addEventListener('click', () => { onClick(); paint(); sync(); });
+      parent.appendChild(b);
+      return b;
+    };
+    const btnRow = (): HTMLDivElement => {
+      const r = document.createElement('div');
+      r.className = 'debug-dock__actions';
+      wrap.appendChild(r);
+      return r;
+    };
+
     wrap.appendChild(valLine);
 
-    group('① 天光（经烘出来的天穹可见性调制。AO=遮蔽强度，可读性旋钮）');
-    wrap.appendChild(mkSlider('天光强度', 0, 1.5, 0.005,
-      () => P().sky.intensity, (v) => patch({ sky: { ...P().sky, intensity: v } }), 3));
-    wrap.appendChild(mkSlider('天光半球', 0, 1, 0.01,
-      () => P().sky.hemi, (v) => patch({ sky: { ...P().sky, hemi: v } })));
-    wrap.appendChild(mkSlider('天光色温K', 2000, 15000, 50,
-      () => P().sky.kelvin ?? 6500, (v) => patch({ sky: { ...P().sky, kelvin: v } }), 0));
-    wrap.appendChild(mkSlider('AO强度', 0, 1, 0.02,
-      () => P().aoStrength ?? 1, (v) => patch({ aoStrength: v })));
-    // 重打光是「原画 × S_new/S_day」，暗部 S_day→0 会让比值爆掉；这是那个夹子。
-    // 调小 = 暗部更保守（接近原画），调大 = 允许暗角被灯拉得更亮。
-    wrap.appendChild(mkSlider('比值上限', 1, 24, 0.25,
-      () => P().ratioMax ?? 8, (v) => patch({ ratioMax: v }), 2));
-    // 这两个曾经写死在两个 shader 的 uniform 初值里、没有任何写入方（F2 调不到、
-    // 场景 JSON 也写不了），而缺省 thick=2 世界单位在雾津街头 ≈ 19.9 m ——
-    // 厚度窗盖住一半场景深度，正是 lightingCore.glsl 注释里点名的「隔山打影」。
-    group('①b 阴影 march（世界空间 wu；角色高 150 wu。厚度窗太厚 = 远处的墙挡住近处的地）');
-    wrap.appendChild(mkSlider('影偏置wu', 0, 200, 1,
-      () => P().shadowBias?.bias ?? 30.8,
-      (v) => patch({ shadowBias: { ...(P().shadowBias ?? {}), bias: v } })));
-    wrap.appendChild(mkSlider('遮挡厚度wu', 10, 2000, 10,
-      () => P().shadowBias?.thickness ?? 264,
-      (v) => patch({ shadowBias: { ...(P().shadowBias ?? {}), thickness: v } }), 1));
+    // ---------------- ⓪ 共用:调试视图 / β / E色度 / 显示变换 ----------------
+    group('⓪ 共用(场景与角色同一把尺)');
+    const DEBUG_NAMES = ['正常', '天穹可见性', '法线', 'S_day', 'S_new', '比值', '线性化原画',
+      'GI体(场景=albedo×E·角色=color×E)',
+      'GI体·纯E(albedo≡1,场景与角色同式 E×2^β)',
+      'GI体·棋盘(纯E×probe cell 奇偶,校对采样位置)',
+      'GI体·最近邻(无插值,每像素=最近probe原始E,invalid=品红)',
+      'skyao体(场景+角色直采skyao probe,只算AO灰度,无载荷=全白)'];
+    const r0 = btnRow();
+    const dbgB = mkBtn(r0,
+      () => `调试视图: ${DEBUG_NAMES[this.sceneDebugViewMode]}(点击循环)`,
+      () => {
+        this.sceneDebugViewMode = (this.sceneDebugViewMode + 1) % DEBUG_NAMES.length;
+        this.deps.setSceneLightingDebug(this.sceneDebugViewMode);
+      },
+      () => this.sceneDebugViewMode !== 0);
 
-    group('② 灯体自发光（白天的画里没有发光体——这是"这是夜晚"最强的信号）');
-    wrap.appendChild(mkSlider('发光增益', 0, 6, 0.05,
-      () => P().emissive?.gain ?? 0,
-      (v) => patch({ emissive: { ...(P().emissive ?? { gain: 0 }), gain: v } })));
-    wrap.appendChild(mkSlider('灯体半径wu', 2, 300, 1,
-      () => P().emissive?.coreRadius ?? 30,
-      (v) => patch({ emissive: { ...(P().emissive ?? { gain: 0 }), coreRadius: v } })));
-    wrap.appendChild(mkSlider('光晕半径wu', 10, 1200, 5,
-      () => P().emissive?.haloRadius ?? 140,
-      (v) => patch({ emissive: { ...(P().emissive ?? { gain: 0 }), haloRadius: v } }), 1));
-    wrap.appendChild(mkSlider('光晕强度', 0, 1, 0.02,
-      () => P().emissive?.haloGain ?? 0.2,
-      (v) => patch({ emissive: { ...(P().emissive ?? { gain: 0 }), haloGain: v } })));
+    // ---------------- 🔬 诊断组:只在 GI体档(7-10)露头(制作人 2026-09-01 点名) ----------------
+    // 「quad放大」把主角变成一扇探进 probe 场的窗户:纯E 档下窗内图案该与周围场景
+    // 无缝续接,断层=位置错;「定法线」把方向变量归零,剩下的亮度差全是位置账。
+    // 切回非 GI 档:Game 复位运行时,这里同步归位 UI。
+    const diagWrap = document.createElement('div');
+    diagWrap.style.border = '1px solid #6b5a33';
+    diagWrap.style.padding = '4px';
+    diagWrap.style.margin = '4px 0';
+    const diagHint = document.createElement('div');
+    diagHint.className = 'debug-dock__slider-hint';
+    diagHint.textContent = '🔬 诊断(仅GI体档)。窗户判据:①定法线+纯E:人与脚下/邻墙逐像素续接,'
+      + '断层=位置错 ②棋盘档:格边笔直穿脚、走动同帧翻转 ③放大+走动:窗内图案与地面格边同步滑动';
+    diagWrap.appendChild(diagHint);
+    const FIXEDN_NAMES = ['正常(各用各的)', '定·世界水平朝相机', '定·世界向上'];
+    const pushDiag = (): void =>
+      this.deps.setGiDiagnostics(this.giDiagFixedN, this.giDiagQuadScale);
+    const diagRow = document.createElement('div');
+    diagRow.className = 'debug-dock__actions';
+    diagWrap.appendChild(diagRow);
+    const fixedBtn = document.createElement('button');
+    fixedBtn.type = 'button';
+    fixedBtn.className = 'debug-dock__btn';
+    fixedBtn.style.whiteSpace = 'normal';
+    const paintFixed = (): void => {
+      fixedBtn.textContent = `统一法线: ${FIXEDN_NAMES[this.giDiagFixedN]}(点击循环)`;
+      fixedBtn.style.outline = this.giDiagFixedN !== 0 ? '2px solid #c9a24a' : '';
+    };
+    paintFixed();
+    fixedBtn.addEventListener('click', () => {
+      this.giDiagFixedN = (this.giDiagFixedN + 1) % 3;
+      pushDiag();
+      paintFixed();
+    });
+    // 制作人 2026-09-01:「统一法线做成 F2 循环视图里的一个选项,默认不要开」——
+    // 提为与「调试视图」同行的一等循环项;非对照档(0-6)置灰并由 updateDiag 强制归零,
+    // 保证它永远不可能漏进正常渲染。
+    r0.appendChild(fixedBtn);
+    const scaleRow = mkSlider('quad放大×(窗户;脚点不动)', 1, 6, 0.5,
+      () => this.giDiagQuadScale,
+      (v) => { this.giDiagQuadScale = v; pushDiag(); }, 1);
+    diagWrap.appendChild(scaleRow);
+    wrap.appendChild(diagWrap);
+    const updateDiag = (): void => {
+      const gi = this.sceneDebugViewMode >= 7 && this.sceneDebugViewMode <= 11;
+      diagWrap.style.display = gi ? '' : 'none';
+      fixedBtn.disabled = !gi;
+      fixedBtn.style.opacity = gi ? '' : '0.4';
+      fixedBtn.title = gi ? '' : '仅 GI体/skyao体 对照档(7-11)可用;其余档强制「正常」';
+      if (!gi && (this.giDiagFixedN !== 0 || this.giDiagQuadScale !== 1)) {
+        this.giDiagFixedN = 0;
+        this.giDiagQuadScale = 1;
+        paintFixed();
+        const inp = scaleRow.querySelector('input');
+        if (inp) (inp as HTMLInputElement).value = '1';
+        const span = scaleRow.querySelector('.debug-dock__slider-value');
+        if (span) span.textContent = 'quad放大×(窗户;脚点不动) 1.0';
+      }
+    };
+    updateDiag();
+    // mkBtn 自己的监听先跑(先注册),这里后注册 → 触发时 mode 已推进
+    dbgB.addEventListener('click', updateDiag);
 
-    group('③ 去掉画里的白天散射（远景那片亮灰不除掉，夜里看着永远像"低亮度白天"）');
-    wrap.appendChild(mkSlider('去霾', 0, 1.5, 0.02,
-      () => P().dehaze ?? 1, (v) => patch({ dehaze: v })));
-
-    group('④ 雾（按消光系数 σ 定义，不是混合系数——将来上体积雾时参数继续有效）');
-    // ⚠ σ 的量纲是 **1/wu**。场景纵深就是 worldWidth 的量级（几千 wu），σ≈0.002 就已经把远端糊平了
-    //   （实测雾津街头 38 m：σ=0.05 时远端透射率 <0.15）。量程给 0–0.5 才有可用行程；
-    //   给 0–3 的话前 2% 的行程就是全部能用的范围，等于没有旋钮。
-    wrap.appendChild(mkSlider('雾 σ /wu', 0, 0.006, 0.00002,
-      () => P().fog?.sigma ?? 0,
-      (v) => patch({
-        fog: {
-          ...(P().fog ?? { sigma: 0, scaleHeight: 6, baseHeight: 0, scatter: 0.2 }),
-          sigma: v,
-        },
-      })));
-    wrap.appendChild(mkSlider('雾高度尺度wu', 50, 6000, 25,
-      () => P().fog?.scaleHeight ?? 530,
-      (v) => patch({
-        fog: {
-          ...(P().fog ?? { sigma: 0, scaleHeight: 6, baseHeight: 0, scatter: 0.2 }),
-          scaleHeight: v,
-        },
-      }), 1));
-    wrap.appendChild(mkSlider('雾基准高度wu', -500, 3000, 25,
-      () => P().fog?.baseHeight ?? 0,
-      (v) => patch({
-        fog: {
-          ...(P().fog ?? { sigma: 0, scaleHeight: 6, baseHeight: 0, scatter: 0.2 }),
-          baseHeight: v,
-        },
-      }), 1));
-    // 散射 = 雾**自身的亮度**。σ 决定看不看得见远处，scatter 决定雾是白的还是黑的；
-    // 只调 σ 不调 scatter 会得到"越远越黑"的隧道感，那不是雾。
-    wrap.appendChild(mkSlider('雾散射', 0, 1, 0.01,
-      () => P().fog?.scatter ?? 0.2,
-      (v) => patch({
-        fog: {
-          ...(P().fog ?? { sigma: 0, scaleHeight: 6, baseHeight: 0, scatter: 0.2 }),
-          scatter: v,
-        },
-      })));
-    wrap.appendChild(mkSlider('雾色温K', 2000, 15000, 50,
-      () => P().fog?.kelvin ?? 6500,
-      (v) => patch({
-        fog: {
-          ...(P().fog ?? { sigma: 0, scaleHeight: 6, baseHeight: 0, scatter: 0.2 }),
-          kelvin: v,
-        },
-      }), 0));
-
-    group('④b 角色标定（角色 albedo 尺度 ↔ 场景辐射尺度）');
-    // ⚠ 缺省是**烘焙期反解出来的**（场景反解反射率 ÷ 角色图集实测反射率 0.0381）。
-    //   这个数描述的是这张原画的性质、不是美术意图，正常不该手动写死。
-    //   拖动本滑杆会把它固化进场景 JSON，之后换背景 / 重烘都不再自动跟随。
-    wrap.appendChild(mkSlider('角色标定 radianceScale', 0, 3, 0.01,
-      () => P().radianceScale ?? this.deps.getSceneLighting()?.radianceScale ?? 1,
-      (v) => patch({ radianceScale: v })));
-    // GI = 「角色如何被 relighting 后的场景照亮」（制作人 2026-08-20 的定义），
-    // 不做多次反弹。**只作用于角色**——背景的间接光已经画在原画里了，
-    // 再给背景加一遍就是重复计光。场景没烘 gi_hitmap 时本旋钮无效（增益被强制 0）。
-    wrap.appendChild(mkSlider('GI 反弹增益(仅角色)', 0, 3, 0.05,
-      () => P().giGain ?? 1,
-      (v) => patch({ giGain: v })));
-    // ⚠ 这两个是**统一光影自己的**形体参数，不是旧 probe 载荷里那对同名值。
-    //   旧载荷那对是给旧着色模型调的：那边 flatten 只是让 probe 的 SH 辐照更均匀，
-    //   这边 flatten 直接压掉每盏灯的 N·L —— 压到 1 就等于"左边的灯和右边的灯一样亮"。
-    wrap.appendChild(mkSlider('角色压平 flatten', 0, 1, 0.05,
-      () => P().characterShape?.flatten ?? 0,
-      (v) => patch({ characterShape: { ...(P().characterShape ?? {}), flatten: v } })));
-    wrap.appendChild(mkSlider('角色鼓起 bulge', 0, 1, 0.01,
-      () => P().characterShape?.bulge ?? 0.22,
-      (v) => patch({ characterShape: { ...(P().characterShape ?? {}), bulge: v } })));
-
-    group('⑤ 显示变换（**同时作用于场景与角色**，这是两者亮度永远一致的结构性保证）');
-    wrap.appendChild(mkSlider('EV', -6, 6, 0.05, () => P().display.ev,
-      (v) => patch({ display: { ...P().display, ev: v } })));
-    wrap.appendChild(mkSlider('对比', 0.4, 1.6, 0.01, () => P().display.contrast,
-      (v) => patch({ display: { ...P().display, contrast: v } })));
-    wrap.appendChild(mkSlider('饱和', 0, 1.6, 0.02, () => P().display.saturation,
-      (v) => patch({ display: { ...P().display, saturation: v } })));
-    wrap.appendChild(mkSlider('白平衡K', 2000, 15000, 50, () => P().display.whiteKelvin,
-      (v) => patch({ display: { ...P().display, whiteKelvin: v } }), 0));
-
-    sync();
-
-    const btn = (label: string, fn: () => void) => ({ label, noRefresh: true, fn: () => { fn(); sync(); } });
-    const TONEMAPS: SceneLightingDef['display']['tonemap'][] = ['none', 'reinhard', 'filmic'];
-    const DEBUG_NAMES = ['正常', '天穹可见性', '法线', 'S_day', 'S_new', '比值', '线性化原画'];
-    let dbg = 0;
-
-    return {
-      text: '',
-      extra: wrap,
-      actions: [
-        btn('tonemap 循环', () => {
+    if (charL) {
+      // ★曝光β:上限 6(雾津街头落盘 4.2,旧上限 3 会把 thumb 钳住、一碰滑块静默写回 3)。
+      // GI体档开着时 Game.setCharLighting 会把新 β 同步喂给场景侧,人和地面一起变。
+      wrap.appendChild(mkSlider('★曝光β(2^β·角色+GI体同尺)', -3, 6, 0.1,
+        () => cp().beta, (v) => cpatch({ beta: v }), 1));
+      wrap.appendChild(mkSlider('★E色度(0=只借明暗 1=彩色E)', 0, 1, 0.02,
+        () => this.deps.getCharEChroma(), (v) => this.deps.setCharEChroma(v)));
+    }
+    if (sceneL) {
+      const TONEMAPS: SceneLightingDef['display']['tonemap'][] = ['none', 'reinhard', 'filmic'];
+      mkBtn(r0,
+        () => `tonemap: ${P().display.tonemap}(点击循环)`,
+        () => {
           const i = TONEMAPS.indexOf(P().display.tonemap);
           patch({ display: { ...P().display, tonemap: TONEMAPS[(i + 1) % TONEMAPS.length] } });
-        }),
-        btn('调试视图 循环', () => {
-          dbg = (dbg + 1) % DEBUG_NAMES.length;
-          this.deps.setSceneLightingDebug(dbg);
-          noteMsg = `调试视图：${DEBUG_NAMES[dbg]}`;
-        }),
-      ],
-    };
+        });
+      // 显示变换同时作用于场景(LitBackground)与角色(applyDisplay)——两者亮度一致的结构性保证
+      wrap.appendChild(mkSlider('EV', -6, 6, 0.05, () => P().display.ev,
+        (v) => patch({ display: { ...P().display, ev: v } })));
+      wrap.appendChild(mkSlider('对比', 0.4, 1.6, 0.01, () => P().display.contrast,
+        (v) => patch({ display: { ...P().display, contrast: v } })));
+      wrap.appendChild(mkSlider('饱和', 0, 1.6, 0.02, () => P().display.saturation,
+        (v) => patch({ display: { ...P().display, saturation: v } })));
+      wrap.appendChild(mkSlider('白平衡K', 2000, 15000, 50, () => P().display.whiteKelvin,
+        (v) => patch({ display: { ...P().display, whiteKelvin: v } }), 0));
+    }
+
+    if (sceneL) {
+      // ---------------- ① 场景:灯与阴影 ----------------
+      group('① 场景·灯阴影 march(世界空间 wu。厚度窗太厚 = 远处的墙挡住近处的地)');
+      wrap.appendChild(mkSlider('影偏置wu', 0, 200, 1,
+        () => P().shadowBias?.bias ?? 30.8,
+        (v) => patch({ shadowBias: { ...(P().shadowBias ?? {}), bias: v } })));
+      wrap.appendChild(mkSlider('遮挡厚度wu', 10, 2000, 10,
+        () => P().shadowBias?.thickness ?? 264,
+        (v) => patch({ shadowBias: { ...(P().shadowBias ?? {}), thickness: v } }), 1));
+
+      group('② 场景·灯体自发光(白天的画里没有发光体——这是"这是夜晚"最强的信号)');
+      wrap.appendChild(mkSlider('发光增益', 0, 6, 0.05,
+        () => P().emissive?.gain ?? 0,
+        (v) => patch({ emissive: { ...(P().emissive ?? { gain: 0 }), gain: v } })));
+      wrap.appendChild(mkSlider('灯体半径wu', 2, 300, 1,
+        () => P().emissive?.coreRadius ?? 30,
+        (v) => patch({ emissive: { ...(P().emissive ?? { gain: 0 }), coreRadius: v } })));
+      wrap.appendChild(mkSlider('光晕半径wu', 10, 1200, 5,
+        () => P().emissive?.haloRadius ?? 140,
+        (v) => patch({ emissive: { ...(P().emissive ?? { gain: 0 }), haloRadius: v } }), 1));
+      wrap.appendChild(mkSlider('光晕强度', 0, 1, 0.02,
+        () => P().emissive?.haloGain ?? 0.2,
+        (v) => patch({ emissive: { ...(P().emissive ?? { gain: 0 }), haloGain: v } })));
+
+      // ---------------- ③ 场景:高度雾(LitBackground) ----------------
+      group('③ 场景·雾(按消光系数 σ 定义;σ 量纲 1/wu,scatter 决定雾是白是黑)');
+      const fogBase = (): NonNullable<SceneLightingDef['fog']> =>
+        P().fog ?? { sigma: 0, scaleHeight: 6, baseHeight: 0, scatter: 0.2 };
+      wrap.appendChild(mkSlider('雾 σ /wu', 0, 0.006, 0.00002,
+        () => P().fog?.sigma ?? 0, (v) => patch({ fog: { ...fogBase(), sigma: v } }), 4));
+      wrap.appendChild(mkSlider('雾高度尺度wu', 50, 6000, 25,
+        () => P().fog?.scaleHeight ?? 530, (v) => patch({ fog: { ...fogBase(), scaleHeight: v } }), 1));
+      wrap.appendChild(mkSlider('雾基准高度wu', -500, 3000, 25,
+        () => P().fog?.baseHeight ?? 0, (v) => patch({ fog: { ...fogBase(), baseHeight: v } }), 1));
+      wrap.appendChild(mkSlider('雾散射', 0, 1, 0.01,
+        () => P().fog?.scatter ?? 0.2, (v) => patch({ fog: { ...fogBase(), scatter: v } })));
+      wrap.appendChild(mkSlider('雾色温K', 2000, 15000, 50,
+        () => P().fog?.kelvin ?? 6500, (v) => patch({ fog: { ...fogBase(), kelvin: v } }), 0));
+    }
+
+    if (charL) {
+      // ---------------- ④ 角色受光(probe 路径,syncFrame 每帧活读) ----------------
+      group('④ 角色受光(E=probe 图集三线性;sprite=albedo,色=albedo×E/π×β。'
+        + '参数初值=场景配置,此处改动纯测试、场景重载回配置)');
+      const r4 = btnRow();
+      mkBtn(r4, () => `着色: ${this.deps.getCharLightingDebug()?.enabled ? '开' : '关'}`,
+        () => this.deps.setCharLighting({ enabled: !this.deps.getCharLightingDebug()?.enabled }),
+        () => !!this.deps.getCharLightingDebug()?.enabled);
+      mkBtn(r4, () => `法线显示: ${cp().showNormals ? '开' : '关'}`,
+        () => cpatch({ showNormals: !cp().showNormals }),
+        () => cp().showNormals);
+      mkBtn(r4, () => `probe点云: ${this.deps.charProbeVizActive() ? '开' : '关'}`,
+        () => this.deps.toggleCharProbeViz(),
+        () => this.deps.charProbeVizActive());
+      // GI 底光的独立音量旋钮:只乘 probe/RT 的 E,不乘实体灯与测试太阳。
+      // 与 ★β 的分工:β=曝光(乘一切,对齐场景亮度的尺),这个=GI 有多强(创作旋钮)。
+      wrap.appendChild(mkSlider('★GI强度(只乘probe底光)', 0, 10, 0.1,
+        () => cp().giStrength, (v) => cpatch({ giStrength: v }), 1));
+      wrap.appendChild(mkSlider('隆起(查表点前推)', 0, 0.5, 0.01,
+        () => cp().bulge, (v) => cpatch({ bulge: v })));
+      wrap.appendChild(mkSlider('压平(E各向同性化)', 0, 1, 0.05,
+        () => cp().flatten, (v) => cpatch({ flatten: v })));
+
+      group('④b 角色·测试太阳(F2 专用,实验室没有这项。方位 0°右/90°纵深/180°左/270°朝镜头)');
+      const r4b = btnRow();
+      mkBtn(r4b, () => `测试太阳: ${cp().sunEnabled ? '开' : '关'}`,
+        () => cpatch({ sunEnabled: !cp().sunEnabled }),
+        () => cp().sunEnabled);
+      wrap.appendChild(mkSlider('日方位°', 0, 359, 1,
+        () => cp().sunAzimuthDeg, (v) => cpatch({ sunAzimuthDeg: v }), 0));
+      wrap.appendChild(mkSlider('日仰角°', 5, 85, 1,
+        () => cp().sunElevationDeg, (v) => cpatch({ sunElevationDeg: v }), 0));
+      wrap.appendChild(mkSlider('日强度', 0, 3, 0.05,
+        () => cp().sunIntensity, (v) => cpatch({ sunIntensity: v })));
+
+      group('⑤ 角色·投影(往哪儿投、多浓由实体自己的绑定决定,这里只有全局总控)');
+      wrap.appendChild(mkSlider('全局阴影强度', 0, 4, 0.1,
+        () => this.deps.getCharLightingDebug()!.shadowStyle.gain,
+        (v) => this.deps.setCharLighting({ shadowStyle: { gain: v } }), 1));
+      if (sceneL) {
+        // sky.intensity 的**唯一活消费者**:实体影浓度自动解算的环境照度分母
+        // (entityShadowBinding)。原名"天光强度"是谎——运行时天光加光项已删。
+        wrap.appendChild(mkSlider('影子环境照度(原天光,仅影浓度分母)', 0, 1.5, 0.005,
+          () => P().sky.intensity, (v) => patch({ sky: { ...P().sky, intensity: v } }), 3));
+      }
+
+      // ---------------- ⑥ RT 预览(仅手动开 RT 时消费,游戏走 cache 不吃) ----------------
+      group('⑥ RT 预览(⚠ 仅 F2 手动切到 RT 模式才消费;游戏进场景恒走 cache(L1/L2/BIN)。'
+        + 'RT 需 dev 体素卷,切到 RT 现拉 20-27MB、切离卸载)');
+      const r6 = btnRow();
+      mkBtn(r6, () => `模式: ${MODE_NAMES[cp().mode] ?? cp().mode}(点击循环;RT=实时)`,
+        () => cpatch({ mode: (cp().mode + 1) % 4 }),
+        () => cp().mode === 0);
+      mkBtn(r6, () => `折叠(仅RT): ${cp().fold ? '开' : '关'}`,
+        () => cpatch({ fold: !cp().fold }));
+      mkBtn(r6, () => `NEE(仅RT): ${cp().nee ? '开' : '关'}`,
+        () => cpatch({ nee: !cp().nee }));
+      mkBtn(r6, () => `miss不计入(仅RT): ${cp().missMode ? '开' : '关'}`,
+        () => cpatch({ missMode: !cp().missMode }));
+      wrap.appendChild(mkSlider('RT spp', 8, 192, 8,
+        () => cp().spp, (v) => cpatch({ spp: Math.round(v) }), 0));
+      wrap.appendChild(mkSlider('RT步长', 0.5, 2, 0.05,
+        () => cp().step, (v) => cpatch({ step: v })));
+      wrap.appendChild(mkSlider('RT步数', 40, 256, 8,
+        () => cp().msteps, (v) => cpatch({ msteps: Math.round(v) }), 0));
+      wrap.appendChild(mkSlider('miss强度(仅RT)', 0, 2, 0.05,
+        () => cp().ambStrength, (v) => cpatch({ ambStrength: v })));
+    }
+
+    sync();
+    return { text: '', extra: wrap };
   }
 
+  /** 场景光照调试视图当前档（F2 光照区块的循环按钮）。存字段：面板重建不归零。 */
+  private sceneDebugViewMode = 0;
+  /** 🔬 GI体档诊断:定法线(0=正常 1=世界水平 2=世界向上)。离开 GI 档自动复位。 */
+  private giDiagFixedN = 0;
+  /** 🔬 GI体档诊断:主角 quad 放大倍数(1-6,窗户模式)。离开 GI 档自动复位。 */
+  private giDiagQuadScale = 1;
+
+  /** F2「气味指示器（调试）」：左边驱动味种/浓度看效果，右边实时调所有味共用的烟形，底部读数可抄回 smell_profiles.json 的 form 块。 */
   private buildSmellDebugSection(): { text: string; extra?: HTMLElement; actions?: { label: string; fn: () => void; noRefresh?: boolean }[] } {
     const sd = this.deps.smellDebug;
     const form = sd.getForm();
@@ -2284,189 +2411,8 @@ export class DebugTools {
 
     debugPanelUI.addSection(LIGHTING_SCENE_SECTION_ID, () => this.buildSceneLightingSection());
 
-    debugPanelUI.addSection('角色照明（烘焙）', () => {
-      const s = this.deps.getCharLightingDebug();
-      if (!s) {
-        return { text: '本场景无照明烘焙载荷（scenes/<id>/lighting/ 缺失、版本过旧或哈希过期）。在角色照明实验室烘焙并「导出照明」后生效。' };
-      }
-      const MODE_NAMES = ['RT', 'L1', 'L2', 'BIN'];
-      const wrap = document.createElement('div');
-      wrap.className = 'debug-dock__section-extra';
-      const valLine = document.createElement('div');
-      valLine.className = 'debug-dock__slider-hint';
-      const p = (): CharShadingParams => this.deps.getCharLightingDebug()!.params;
-      const patch = (part: Partial<CharShadingParams>): void =>
-        this.deps.setCharLighting({ params: part });
-      const sync = (): void => {
-        const cur = this.deps.getCharLightingDebug();
-        if (!cur) return;
-        const pp = cur.params;
-        valLine.textContent =
-          `着色 ${cur.enabled ? '开' : '关'}(${cur.active ? '生效' : '未生效'})　模式 ${MODE_NAMES[pp.mode] ?? pp.mode}　probe ${cur.probes}　光源 ${cur.lights}\n`
-          + `★曝光 β 2^${pp.beta.toFixed(1)}　★E色度 ${this.deps.getCharEChroma().toFixed(2)}（0=只借明暗 1=彩色E）\n`
-          + `隆起 ${pp.bulge.toFixed(2)}　压平 ${pp.flatten.toFixed(2)}　probe点云 ${this.deps.charProbeVizActive() ? '开' : '关'}\n`
-          + `阴影绑定 手动（禁止自动 resolve）　全局强度 ${cur.shadowStyle.gain.toFixed(2)}
-`
-          + `太阳 ${pp.sunEnabled ? '开' : '关'}　方位 ${Math.round(pp.sunAzimuthDeg)}°　仰角 ${Math.round(pp.sunElevationDeg)}°　强度 ${pp.sunIntensity.toFixed(2)}`;
-      };
-      const hint = document.createElement('div');
-      hint.className = 'debug-dock__slider-hint';
-      hint.textContent =
-        '实验室 CHAR_FS 逐像素移植:sprite=albedo,色=albedo×E/π×β(角色曝光唯一旋钮;'
-        + '实验室预览亮度 pgain 不进游戏);E 来自 probe 图集三线性(L1/L2/BIN)或实时 RT gather'
-        + '(spp/步长/步数只作用于 RT)。法线由 alpha 轮廓运行时鼓包现算。参数初值=场景配置'
-        + '(实验室导出照明时的面板值),此处改动纯测试、场景重载回配置。关闭着色=回落旧曲线管线。'
-        + '太阳方位独立(0°右/90°纵深/180°左/270°朝镜头),与「投影阴影」不耦合。只改运行时,不动存档。';
-
-      const mkSlider = (
-        min: number, max: number, stepV: number, get: () => number,
-        set: (v: number) => void, fmt: (v: number) => string,
-      ): HTMLDivElement => {
-        const row = document.createElement('div');
-        row.className = 'debug-dock__slider-row';
-        const range = document.createElement('input');
-        range.type = 'range';
-        range.min = String(min); range.max = String(max); range.step = String(stepV);
-        range.value = String(get());
-        const span = document.createElement('span');
-        span.className = 'debug-dock__slider-value';
-        span.textContent = fmt(get());
-        range.addEventListener('input', () => {
-          set(Number(range.value));
-          span.textContent = fmt(Number(range.value));
-          sync();
-        });
-        row.appendChild(range); row.appendChild(span);
-        return row;
-      };
-      wrap.appendChild(valLine);
-      // ★核心调色(probe 与 RT 都生效,调色主力):曝光 + E色度融入。这两个最重要,置顶。
-      const coreHint = document.createElement('div');
-      coreHint.className = 'debug-dock__slider-hint';
-      coreHint.textContent =
-        '★核心调色(probe 与 RT 都用):曝光 β=角色整体亮度;E色度=融入度'
-        + '(0=只借场景明暗、角色保留自己颜色不被场景色染;1=完整彩色 E,场景色二次染)。';
-      wrap.appendChild(coreHint);
-      wrap.appendChild(mkSlider(-3, 3, 0.1, () => p().beta,
-        (v) => patch({ beta: v }), (v) => `★曝光β 2^${v.toFixed(1)}`));
-      wrap.appendChild(mkSlider(0, 1, 0.02, () => this.deps.getCharEChroma(),
-        (v) => this.deps.setCharEChroma(v), (v) => `★E色度(融入) ${v.toFixed(2)}`));
-      wrap.appendChild(hint);
-      // probe/cache 组合参数(进场景生效)
-      wrap.appendChild(mkSlider(0, 0.5, 0.01, () => p().bulge,
-        (v) => patch({ bulge: v }), (v) => `隆起 ${v.toFixed(2)}`));
-      wrap.appendChild(mkSlider(0, 1, 0.05, () => p().flatten,
-        (v) => patch({ flatten: v }), (v) => `压平 ${v.toFixed(2)}`));
-      wrap.appendChild(mkSlider(0, 359, 1, () => p().sunAzimuthDeg,
-        (v) => patch({ sunAzimuthDeg: v }), (v) => `日方位 ${Math.round(v)}°`));
-      wrap.appendChild(mkSlider(5, 85, 1, () => p().sunElevationDeg,
-        (v) => patch({ sunElevationDeg: v }), (v) => `日仰角 ${Math.round(v)}°`));
-      wrap.appendChild(mkSlider(0, 3, 0.05, () => p().sunIntensity,
-        (v) => patch({ sunIntensity: v }), (v) => `日强度 ${v.toFixed(2)}`));
-      // 阴影只剩**全局表现总控**:往哪儿投、多浓由实体自己的绑定决定
-      // (2026-08-20 制作人否决自动 resolve,槽数/环境稀释/时间平滑那三个旋钮随之作废)。
-      wrap.appendChild(mkSlider(0, 4, 0.1,
-        () => this.deps.getCharLightingDebug()!.shadowStyle.gain,
-        (v) => this.deps.setCharLighting({ shadowStyle: { gain: v } }),
-        (v) => `全局阴影强度 ${v.toFixed(1)}`));
-      sync();
-
-      const btn = (label: string, fn: () => void): { label: string; fn: () => void; noRefresh: boolean } => ({
-        label,
-        noRefresh: true,
-        fn: () => { fn(); sync(); },
-      });
-      return {
-        text: '',
-        extra: wrap,
-        actions: [
-          btn('着色 开/关', () => this.deps.setCharLighting({ enabled: !this.deps.getCharLightingDebug()?.enabled })),
-          btn('法线显示 开/关', () => patch({ showNormals: !p().showNormals })),
-          btn('probe点云 开/关', () => this.deps.toggleCharProbeViz()),
-          btn('太阳 开/关', () => patch({ sunEnabled: !p().sunEnabled })),
-        ],
-      };
-    });
-
-    // 仅 RT 才用到的参数 + 开 RT 的模式切换单独成组:进场景走 cache(L1/L2/BIN)不消费这些,
-    // 免得和上面 probe/游戏真正生效的参数混在一起扰乱视听。
-    debugPanelUI.addSection('角色照明 · RT 预览（不影响游戏）', () => {
-      const s = this.deps.getCharLightingDebug();
-      if (!s) return { text: '本场景无照明烘焙载荷。' };
-      const MODE_NAMES = ['RT', 'L1', 'L2', 'BIN'];
-      const wrap = document.createElement('div');
-      wrap.className = 'debug-dock__section-extra';
-      const p = (): CharShadingParams => this.deps.getCharLightingDebug()!.params;
-      const patch = (part: Partial<CharShadingParams>): void =>
-        this.deps.setCharLighting({ params: part });
-      const valLine = document.createElement('div');
-      valLine.className = 'debug-dock__slider-hint';
-      const sync = (): void => {
-        const cur = this.deps.getCharLightingDebug();
-        if (!cur) return;
-        const pp = cur.params;
-        valLine.textContent =
-          `模式 ${MODE_NAMES[pp.mode] ?? pp.mode}${cur.hasVolumes ? '（RT可选）' : '（RT需dev体素·仅缓存）'}　`
-          + `折叠 ${pp.fold ? '开' : '关'}　spp ${pp.spp}　步长 ${pp.step.toFixed(2)}　步数 ${pp.msteps}`;
-      };
-      const hint = document.createElement('div');
-      hint.className = 'debug-dock__slider-hint';
-      hint.textContent =
-        '⚠ 这些只作用于 F2 手动开的实时 RT(mode=0)——游戏进场景走 cache(L1/L2/BIN),不消费 spp/步长/步数/折叠。'
-        + 'RT 需 dev 体素卷(切到 RT 现拉 20–27MB、切离卸载)。「模式」按钮循环 RT↔L1↔L2↔BIN 用于同帧对比;'
-        + '游戏默认 L2,进场景 mode 恒钳到 ≥1(RT 只在此处手动开)。';
-      const mkSlider = (
-        min: number, max: number, stepV: number, get: () => number,
-        set: (v: number) => void, fmt: (v: number) => string,
-      ): HTMLDivElement => {
-        const row = document.createElement('div');
-        row.className = 'debug-dock__slider-row';
-        const range = document.createElement('input');
-        range.type = 'range';
-        range.min = String(min); range.max = String(max); range.step = String(stepV);
-        range.value = String(get());
-        const span = document.createElement('span');
-        span.className = 'debug-dock__slider-value';
-        span.textContent = fmt(get());
-        range.addEventListener('input', () => {
-          set(Number(range.value));
-          span.textContent = fmt(Number(range.value));
-          sync();
-        });
-        row.appendChild(range); row.appendChild(span);
-        return row;
-      };
-      wrap.appendChild(valLine);
-      wrap.appendChild(hint);
-      wrap.appendChild(mkSlider(8, 192, 8, () => p().spp,
-        (v) => patch({ spp: Math.round(v) }), (v) => `RT spp ${Math.round(v)}`));
-      wrap.appendChild(mkSlider(0.5, 2, 0.05, () => p().step,
-        (v) => patch({ step: v }), (v) => `RT步长 ${v.toFixed(2)}`));
-      wrap.appendChild(mkSlider(40, 256, 8, () => p().msteps,
-        (v) => patch({ msteps: Math.round(v) }), (v) => `RT步数 ${Math.round(v)}`));
-      // nee/miss_mode/amb 固化后 cache 不消费(已 compose 进 probe E),只 RT gather 实时用
-      wrap.appendChild(mkSlider(0, 2, 0.05, () => p().ambStrength,
-        (v) => patch({ ambStrength: v }), (v) => `miss强度(仅RT) ${v.toFixed(2)}`));
-      sync();
-      const btn = (label: string, fn: () => void): { label: string; fn: () => void; noRefresh: boolean } => ({
-        label,
-        noRefresh: true,
-        fn: () => { fn(); sync(); },
-      });
-      return {
-        text: '',
-        extra: wrap,
-        actions: [
-          btn('模式 RT/L1/L2/BIN（开RT）', () => {
-            // 切到 0(RT)由 Game 现拉体素卷、切离卸载;加载期间点击去重忽略。
-            patch({ mode: (p().mode + 1) % 4 });
-          }),
-          btn('折叠 开/关（仅RT）', () => patch({ fold: !p().fold })),
-          btn('NEE 开/关（仅RT）', () => patch({ nee: !p().nee })),
-          btn('miss不计入 开/关（仅RT）', () => patch({ missMode: !p().missMode })),
-        ],
-      };
-    });
+    // 「角色照明（烘焙）」与「角色照明 · RT 预览」两个 tab 已并入上面的照明 tab
+    // (LIGHTING_SCENE_SECTION_ID → buildSceneLightingSection,2026-08-31 制作人点名合并)。
 
     debugPanelUI.addSection('投影阴影（调试）', () => {
       const active = this.deps.entityShadowActive();

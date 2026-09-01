@@ -6,6 +6,30 @@ import { resolveBootParams } from './core/bootParams';
 
 installResizeObserverQuiet();
 
+// dev:未捕获错误必须带**堆栈**打进 console(编辑器把 console 转进日志面板)。
+// 没有这个钩子时,QWebEngine 只转发一行 message ——2026-09-01 那次
+// "Cannot read properties of null (reading '6')" 每帧刷屏却无从定位就是这么来的。
+// 去重计数:同一条不淹日志,但每 500 次报一声让人知道它还活着。
+if (import.meta.env.DEV) {
+  const seen = new Map<string, number>();
+  const report = (tag: string, msg: string, stack: string | undefined): void => {
+    const n = (seen.get(msg) ?? 0) + 1;
+    seen.set(msg, n);
+    if (n <= 3 || n % 500 === 0) {
+      console.error(`[${tag}#${n}] ${stack ?? msg}`);
+    }
+  };
+  window.addEventListener('error', (e) => {
+    report('uncaught', String(e.error?.message ?? e.message),
+      typeof e.error?.stack === 'string' ? e.error.stack : undefined);
+  });
+  window.addEventListener('unhandledrejection', (e) => {
+    const r = e.reason as { message?: string; stack?: string } | undefined;
+    report('unhandled-rejection', String(r?.message ?? e.reason),
+      typeof r?.stack === 'string' ? r.stack : undefined);
+  });
+}
+
 /**
  * 启动参数 = 地址栏 ∪ 打包时烘进来的缺省（后者只在地址栏没给引导参数时才生效）。
  * 详见 `core/bootParams.ts`。dev server 上没有烘进来的东西，行为与以前逐字节相同。

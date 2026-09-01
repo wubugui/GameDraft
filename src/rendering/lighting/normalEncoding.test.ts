@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import BAKE_PY from '../../../tools/scene_relight/bake.py?raw';
+import BAKE_PY from '../../../tools/character_lighting_lab/scene_fields.py?raw';
 import CHAR_SHADER from './UnifiedCharacterShader.ts?raw';
 import SCENE_PASS from './SceneLightingPass.ts?raw';
 
@@ -17,7 +17,7 @@ import SCENE_PASS from './SceneLightingPass.ts?raw';
  * n.z = -abs(n.z);
  * ```
  *
- * 而 `bake.py` 的 b 通道存的是 **|z| 直存 0..1**（只有 rg 存的是 `xy*0.5+0.5`）。
+ * 而烘焙侧（`scene_fields.py`）的 b 通道存的是 **|z| 直存 0..1**（只有 rg 存的是 `xy*0.5+0.5`）。
  * 两句合起来等于 `n.z = −|2b−1|` —— 一个**二对一的 V 形映射**：
  * b=1 侥幸对，b=0.5 解成 0（应为 −0.5），b=0 解成 −1（应为 0）。
  *

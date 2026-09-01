@@ -156,17 +156,20 @@ export function bakeKeyFromBackground(image: string): string {
 }
 
 /**
- * 某张背景图的烘焙产物目录 URL：`<scene_runtime_dir>/<family>/<背景基名>`。
+ * 某张背景图的**全部**烘焙产物目录 URL：`<scene_runtime_dir>/lighting/<背景基名>`。
  *
- * `family` 取 `lighting`（角色 probe 载荷，character_lighting_lab 出）或
- * `lighting2`（几何场：法线/天穹可见性，scene_relight/bake.py 出）——两者都是**同一张
- * 背景图**的派生物（两边的 `background_sha1` 逐字相同），所以一起按图名分。
+ * 一张背景图一个目录，里面装这张画派生出来的所有东西：
+ * probe 图集 / 体素卷 / 行走面深度（角色受光）+ 法线 / 天穹可见性 / 几何 meta（场景受光）。
+ * 全部由 `tools/character_lighting_lab` 一个工具产出。
+ *
+ * ⚠ 2026-08-31 之前几何场另住 `lighting2/`、由另一个工具（`tools/scene_relight`）烘。
+ * 那是同一张画的派生物被切成两半放，已收束；`lighting2/` 不再有任何消费者。
  *
  * 缺这个目录**不是错误**：制作人定的口径是「烘焙数据可以缺省，缺省不能影响运行」。
  * 调用方拿不到就优雅降级（角色少一层光），不要因此把场景搞坏。
  */
-export function sceneBakeDirUrl(sceneId: string, image: string, family: 'lighting' | 'lighting2'): string {
-  return `${sceneRuntimeDirUrl(sceneId)}/${family}/${bakeKeyFromBackground(image)}`;
+export function sceneBakeDirUrl(sceneId: string, image: string): string {
+  return `${sceneRuntimeDirUrl(sceneId)}/lighting/${bakeKeyFromBackground(image)}`;
 }
 
 /**

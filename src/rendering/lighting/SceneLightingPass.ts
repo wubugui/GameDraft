@@ -1,6 +1,6 @@
 import {
-  Mesh, MeshGeometry, RenderTexture, Shader,
-  type Renderer, type Texture,
+  Mesh, MeshGeometry, RenderTexture, Shader, Texture,
+  type Renderer,
 } from 'pixi.js';
 
 import type { SceneLightingDef } from '../../data/types';
@@ -11,6 +11,7 @@ import {
   packShadowBias,
 } from './lightPacking';
 import { LIGHTS_PER_SLAB, type PrefixLight, ShadowPrefixPass } from './shadowPrefix';
+import { PROBE_SAMPLING_GLSL, SKYAO_SAMPLING_GLSL } from '../CharacterShadingFilter';
 import LIGHTING_CORE from './lightingCore.glsl?raw';
 import WORLD_RECONSTRUCT from './worldReconstruct.glsl?raw';
 
@@ -115,8 +116,8 @@ in vec2 vUv;
 out vec4 fragColor;
 
 uniform sampler2D uPainting;     // 原画（sRGB）
-uniform sampler2D uNormal;       // lighting2/normal.png
-uniform sampler2D uSkyvis;       // lighting2/skyvis.png（R 通道）
+uniform sampler2D uNormal;       // lighting/<背景基名>/normal.png
+uniform sampler2D uSkyvis;       // lighting/<背景基名>/skyvis.png（R 通道）
 uniform sampler2D uDepth;        // raw_depth_rg.png
 
 uniform vec2  uDepthTexSize;
@@ -147,6 +148,7 @@ uniform vec2  uShadowBias;       // bias0, thick
 uniform float uRatioMax;
 /** 0=正常 1=天穹可见性 2=法线 3=S_day 4=灯的辐照度 5=反解 albedo。调试可视化，F2 也用它。 */
 uniform int   uDebug;
+uniform int   uGiFixedN;         // 诊断·定法线(GI体档):0=正常 1=世界水平 2=世界向上
 
 // ---- 灯（静态的进这一级缓存；动态的在逐帧那级）----
 // 打包成四组 vec4，省 uniform 槽位。一盏灯要么是 spot 要么是 area，
@@ -161,6 +163,16 @@ uniform vec4 uCore;
 // 每张 slab 打包 4 盏灯;通道 i%4 存该灯的 M = 前缀最小 g。
 uniform sampler2D uPrefix0;
 uniform sampler2D uPrefix1;
+
+// ---- 「GI体」调试视图(uDebug==7)专用:角色 probe 体的采样面 ----
+// 采样数学拼接自角色共用块(PROBE_SAMPLING_GLSL,单一真相源);这四张图集与角色
+// shader 绑的是**同一批纹理**(Game 在开启该视图时从 CharacterLightingSystem 现取现喂)。
+uniform sampler2D uPL1;
+uniform sampler2D uPL2;
+uniform sampler2D uPBin;
+uniform sampler2D uValid;
+uniform sampler2D uSkyaoTex;     // 「skyao体」视图(uDebug==11):与角色绑同一张遮蔽矩图集
+uniform float uProbeBeta;        // 2^β,与角色同一个曝光补偿 —— 两边同尺才可比
 // 每盏灯在**图像**上的位置 xy 与在 q 里的深度 z;w = 这盏灯有没有前缀解（0 = 回落）
 uniform vec4 uLightPx[${MAX_STATIC_LIGHTS}];
 /** 画里的大气霾：x=消光 k y=强度 H（去掉白天的散射用），zw 备用 */
@@ -186,6 +198,8 @@ uniform vec4 uLightD[${MAX_STATIC_LIGHTS}];
 
 ${WR_CORE}
 ${LC}
+${PROBE_SAMPLING_GLSL}
+${SKYAO_SAMPLING_GLSL}
 
 /**
  * 一盏灯的可见性（0=被挡）。**一次查表 + 一次比较，零步进。**
@@ -456,6 +470,47 @@ void main(void) {
     // ⚠ 反解出的 albedo 要钳。原画暗部除以一个小 sDay 会炸出巨大的假反照率，
     //   一盏灯扫过去就是一片过曝。上限 1.0 = 物理上反照率不可能超过 1。
     vec3 albedo = clamp(painting / max(sDay, 1e-4), 0.0, 1.0);
+    // ---- uDebug==7「GI体」:场景与角色吃同一套 probe 体,肉眼对账 GI 数据 ----
+    //
+    // 场景 = 反解 albedo × probeE(q, n_q) × 2^β;角色本来就是 color × probeE × 2^β
+    // (它的常规路径)。两边同一份体、同一把曝光尺 ⇒ 若 GI 体大体正确,此视图下
+    // 场景应当**近似回到原画**(E 重建出画里的光),角色与场景浑然一体;
+    // 哪里对不上,哪里就是体数据/尺度的问题。这同时是 E 绝对尺度的对账工具
+    // (2026-08-31 实测 probe E 偏暗 ~16×,beta 补偿 —— 见 inbox)。
+    //
+    // ⚠ probeE 查表吃 **q 空间法线**(载荷按 q 烘,铁律 0 的查表豁免);
+    //   场景法线 n 是 M-world,过 Rᵀ 转回去(wrWorldToQ,正交阵转置即逆)。
+    //   位置实参是**本像素**深度重建的 q(上面 wrPixelToQ 那行,march 用的同一个),
+    //   probeE 内部经 uM(det=−1 的 lighting.json world.M,与角色同一份 mCol)
+    //   映到 probe 网格做 8 角三线性 —— 逐像素插值,不是每 cell 一个色块。
+    if (uDebug >= 7 && uDebug <= 11) {
+        vec3 nQ = normalize(wrWorldToQ(uMRow0, uMRow1, uMRow2, n));
+        // 诊断·定法线:与角色侧 uFixedNQ 同一约定(0=正常 1=世界水平朝相机 2=世界向上)。
+        // 双方同方向后,人与场景的亮度差 100% 是采样位置差。
+        // 定法线=朝相机:直接用 q 常量(与角色两条路径同值)。旧写法过 det=-1 的 uMRow,
+        // 与角色侧 det=+1 转出来的方向整个相反 —— 「同一档两侧各查各的」(2026-09-01)。
+        if (uGiFixedN == 1) nQ = vec3(0., 0., -1.);
+        else if (uGiFixedN == 2) nQ = normalize(wrWorldToQ(uMRow0, uMRow1, uMRow2, vec3(0., 1., 0.)));
+        // 10=最近邻原始值:无插值,每个像素显示最近那颗 probe 的原始 E,数据糊在
+        // 采样它的表面上(固定视角下把点阵投到屏幕会自遮挡,这才是能看的原始值视图)。
+        // 与 8 档来回切 = 插值前后对照;invalid 格亮品红。
+        // 11=「skyao体」:场景直采**角色的 skyao probe**,只算 AO(V 灰度,不乘画)。
+        // 与角色 setCharDebugView(2) 同一份纹理、同一个 skyaoAt —— 灰度在人与
+        // 场景之间应无缝续接;对不上就是 AO 数据/装配的问题,与光照无关。
+        if (uDebug == 11) { fragColor = vec4(vec3(skyaoAt(q, nQ)), 1.0); return; }
+        if (uDebug == 10) { fragColor = vec4(probeENearest(q, nQ) * uProbeBeta, 1.0); return; }
+        vec3 Ep = probeE(q, nQ) * uProbeBeta;
+        if (uDebug == 7) { fragColor = vec4(albedo * Ep, 1.0); return; }
+        // 8=纯E:albedo≡1,直接看 E×2^β 的样子(角色侧同式,见 uEOnly)。
+        if (uDebug == 8) { fragColor = vec4(Ep, 1.0); return; }
+        // 9=纯E×probe棋盘:按 cell 奇偶压暗一半格子。用途是**校对采样位置**:
+        // 格边必须落在相邻 probe 正中间、格子尺寸/走向必须贴着几何透视缩放;
+        // 轴序错/尺度错/uM 喂错,棋盘立刻歪给你看。映射与采样共用 probeGridT,零漂移。
+        ivec3 cell = ivec3(probeGridT(q));
+        float par = float((cell.x + cell.y + cell.z) & 1);
+        fragColor = vec4(Ep * mix(0.45, 1.0, par), 1.0);
+        return;
+    }
     vec3 surf = painting + albedo * lampE;
     float emitLum = dot(emissive, LC_LUMA);
     float emitFrac = emitLum / max(emitLum + dot(surf, LC_LUMA), 1e-6);
@@ -464,9 +519,9 @@ void main(void) {
 `;
 
 export interface SceneLightingGeometry {
-  /** lighting2/normal.png */
+  /** lighting/<背景基名>/normal.png */
   normal: Texture;
-  /** lighting2/skyvis.png */
+  /** lighting/<背景基名>/skyvis.png */
   skyvis: Texture;
   /** raw_depth_rg.png（与 SceneDepthSystem 同一张） */
   depth: Texture;
@@ -561,6 +616,12 @@ export class SceneLightingPass {
         uNormal: this.geo.normal.source,
         uSkyvis: this.geo.skyvis.source,
         uDepth: this.geo.depth.source,
+        // 「GI体」视图的 probe 图集:创建期占位白图,开启视图时由 setProbeResources 换真图
+        uPL1: Texture.WHITE.source,
+        uPL2: Texture.WHITE.source,
+        uPBin: Texture.WHITE.source,
+        uValid: Texture.WHITE.source,
+        uSkyaoTex: Texture.WHITE.source,
         sceneLight: {
           uDepthTexSize: { value: new Float32Array(this.geo.depthSize), type: 'vec2<f32>' },
           uCal: { value: new Float32Array(this.geo.cal), type: 'vec3<f32>' },
@@ -579,6 +640,7 @@ export class SceneLightingPass {
           uShadowBias: { value: new Float32Array([0.035, 2]), type: 'vec2<f32>' },
           uRatioMax: { value: 8, type: 'f32' },
           uDebug: { value: 0, type: 'i32' },
+          uGiFixedN: { value: 0, type: 'i32' },
           uWuPerQUnit: { value: 1, type: 'f32' },
           uMRow0: { value: new Float32Array(3), type: 'vec3<f32>' },
           uMRow1: { value: new Float32Array(3), type: 'vec3<f32>' },
@@ -595,6 +657,24 @@ export class SceneLightingPass {
           uLightB: { value: new Float32Array(MAX_STATIC_LIGHTS * 4), type: 'vec4<f32>', size: MAX_STATIC_LIGHTS },
           uLightC: { value: new Float32Array(MAX_STATIC_LIGHTS * 4), type: 'vec4<f32>', size: MAX_STATIC_LIGHTS },
           uLightD: { value: new Float32Array(MAX_STATIC_LIGHTS * 4), type: 'vec4<f32>', size: MAX_STATIC_LIGHTS },
+          // ---- 「GI体」视图(uDebug==7) ----
+          uM: { value: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]), type: 'mat3x3<f32>' },
+          uWMin: { value: new Float32Array(3), type: 'vec3<f32>' },
+          uWScale: { value: new Float32Array([1, 1, 1]), type: 'vec3<f32>' },
+          uPN: { value: new Float32Array([1, 1, 1]), type: 'vec3<f32>' },
+          uProbeT: { value: 1, type: 'f32' },
+          uFold: { value: 1, type: 'f32' },
+          uAmbSH: { value: new Float32Array(27), type: 'vec3<f32>', size: 9 },
+          uMode: { value: 2, type: 'f32' },
+          uAmbStrength: { value: 1, type: 'f32' },
+          uProbeBeta: { value: 1, type: 'f32' },
+          // ---- 「skyao体」视图(uDebug==11) ----
+          uSkyaoN: { value: new Float32Array([1, 1, 1]), type: 'vec3<f32>' },
+          uSkyaoTiles: { value: new Float32Array([1, 1]), type: 'vec2<f32>' },
+          uSkyaoMin: { value: new Float32Array(3), type: 'vec3<f32>' },
+          uSkyaoScale: { value: new Float32Array([1, 1, 1]), type: 'vec3<f32>' },
+          uSkyaoM: { value: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]), type: 'mat3x3<f32>' },
+          uSkyaoOn: { value: 0, type: 'f32' },
         },
       },
     });
@@ -714,6 +794,79 @@ export class SceneLightingPass {
     if (!u) return;
     u.uDebug = mode | 0;
     this.dirty = true;
+  }
+
+  /** 诊断·定法线(GI体档):0=正常 1=世界水平 2=世界向上。与角色侧 uFixedNQ 同约定。 */
+  setGiFixedN(n: number): void {
+    this.ensure();
+    const u = this.shader?.resources.sceneLight?.uniforms;
+    if (!u) return;
+    u.uGiFixedN = n | 0;
+    this.dirty = true;
+  }
+
+  /**
+   * 喂「GI体」调试视图(uDebug==7)要的角色 probe 资源。传 null = 退回占位白图。
+   *
+   * 与角色 shader 绑**同一批 TextureSource**(单一数据源);probe 图集是按需加载、
+   * 可中途整批热替换的(CharacterLightingSystem.ensureProbeAtlas),所以每次**开启**
+   * 视图时现取现喂,不做常驻绑定 —— 常驻就得跟着角色系统的纹理生命周期走,
+   * 一个调试视图不值得那个耦合。
+   */
+  setProbeResources(res: {
+    atlasL1: import('pixi.js').TextureSource;
+    atlasL2: import('pixi.js').TextureSource;
+    atlasBin: import('pixi.js').TextureSource;
+    valid: import('pixi.js').TextureSource;
+    mCol: Float32Array;
+    wMin: [number, number, number];
+    wScale: [number, number, number];
+    pn: [number, number, number];
+    probeT: number;
+    /** skyao probe(可缺:老载荷没有,视图 11 显示全白) */
+    skyao: {
+      tex: import('pixi.js').TextureSource;
+      n: [number, number, number];
+      tiles: [number, number];
+      wMin: [number, number, number];
+      wScale: [number, number, number];
+      mCol: Float32Array;
+    } | null;
+    ambSH: Float32Array;
+    mode: number;
+    ambStrength: number;
+    beta: number;
+    fold: number;
+  } | null): void {
+    if (!this.shader) return;
+    const r = this.shader.resources as Record<string, unknown>;
+    r.uPL1 = res ? res.atlasL1 : Texture.WHITE.source;
+    r.uPL2 = res ? res.atlasL2 : Texture.WHITE.source;
+    r.uPBin = res ? res.atlasBin : Texture.WHITE.source;
+    r.uValid = res ? res.valid : Texture.WHITE.source;
+    r.uSkyaoTex = res?.skyao ? res.skyao.tex : Texture.WHITE.source;
+    const u = this.shader.resources.sceneLight?.uniforms;
+    if (!u || !res) return;
+    (u.uM as Float32Array).set(res.mCol);
+    (u.uWMin as Float32Array).set(res.wMin);
+    (u.uWScale as Float32Array).set(res.wScale);
+    (u.uPN as Float32Array).set(res.pn);
+    u.uProbeT = res.probeT;
+    (u.uAmbSH as Float32Array).set(res.ambSH);
+    // RT(0) 不是查表模式,probeE 里会落到 BIN 分支采到占位图 —— 钳到 L1..BIN
+    u.uMode = Math.min(Math.max(res.mode, 1), 3);
+    u.uAmbStrength = res.ambStrength;
+    u.uFold = res.fold;
+    u.uProbeBeta = Math.pow(2, res.beta);
+    // skyao:缺载荷 → uSkyaoOn=0,skyaoAt 恒 1(视图 11 全白,与角色降级口径一致)
+    u.uSkyaoOn = res.skyao ? 1 : 0;
+    if (res.skyao) {
+      (u.uSkyaoN as Float32Array).set(res.skyao.n);
+      (u.uSkyaoTiles as Float32Array).set(res.skyao.tiles);
+      (u.uSkyaoMin as Float32Array).set(res.skyao.wMin);
+      (u.uSkyaoScale as Float32Array).set(res.skyao.wScale);
+      (u.uSkyaoM as Float32Array).set(res.skyao.mCol);
+    }
   }
 
   /** 脏则重算缓存。返回是否真的重算了（供性能观测与测试断言）。 */

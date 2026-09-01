@@ -391,6 +391,42 @@ export class SpriteEntity {
     const m = this.litQuad.mesh;
     m.position.set(this.sprite.x, this.sprite.y);
     m.scale.set(this.sprite.scale.x, this.sprite.scale.y);
+    this.syncLitQuadWorld();
+  }
+
+  /**
+   * 喂 lit mesh 的 local→sceneWorld 仿射(世界坐标唯一真相源,滤镜/镜头免疫)。
+   * container.x/y 就是场景世界坐标(本类契约),container.scale 参与(诊断的 quad 放大)。
+   * 换帧(syncLitQuad)与走动(syncPosition)都要调——走动只动 container.x/y。
+   */
+  // ---- 外层实体容器(Npc.container)的场景世界仿射 ----
+  // 本类的老契约是「container.x/y 就是场景世界坐标」:Player 成立;**Npc 不成立**——
+  // Npc 把 sprite.container 挂在自己 container 下(local 恒 0,0),场景世界在外层。
+  // 2026-09-01 实测:漏了这层,全部 NPC 的 lit quad 都拿 (0,0) 当世界坐标去采 probe,
+  // E 采到场景左上角外 → 素色浮在画面上(赌坊门卫黑影);静态 NPC 永不换帧,连暴露的机会都没有。
+  private litParentX = 0; private litParentY = 0;
+  private litParentSX = 1; private litParentSY = 1; private litParentRot = 0;
+
+  /** 外层容器(实体级)世界仿射。Npc 在位置/缩放/旋转任一变化处推;Player 不用(恒等)。 */
+  setLitParentTransform(x: number, y: number, sx: number, sy: number, rot: number): void {
+    this.litParentX = x; this.litParentY = y;
+    this.litParentSX = sx; this.litParentSY = sy; this.litParentRot = rot;
+    this.syncLitQuadWorld();
+  }
+
+  private syncLitQuadWorld(): void {
+    if (!this.litQuad) return;
+    // 组合外层与本容器:平移过外层线性部。rot 传外层旋转(对角缩放与 R 在 rot=0 时
+    // 对易,实体旋转是罕见装饰字段,lit 采样取近似可接受;镜像符号经 det 正确传导)。
+    const pr = this.litParentRot;
+    const cos = Math.cos(pr), sin = Math.sin(pr);
+    const cx = this.litParentX + this.litParentSX * (cos * this.container.x - sin * this.container.y);
+    const cy = this.litParentY + this.litParentSY * (sin * this.container.x + cos * this.container.y);
+    this.litQuad.setWorldTransform(
+      cx, cy,
+      this.litParentSX * this.container.scale.x, this.litParentSY * this.container.scale.y,
+      this.sprite.x, this.sprite.y,
+      this.sprite.scale.x, this.sprite.scale.y, pr);
   }
 
   /**
@@ -521,6 +557,7 @@ export class SpriteEntity {
   private syncPosition(): void {
     this.container.x = this.x;
     this.container.y = this.y;
+    this.syncLitQuadWorld();
   }
 
   getCurrentState(): string {
@@ -890,6 +927,15 @@ export class SpriteEntity {
     m.position.set(view.x, view.y);
     m.scale.set(view.scale.x, view.scale.y);
     m.rotation = view.rotation;
+    // 与 syncLitQuadWorld 同一套外层合成 —— 裸用 container.x 在 Npc 上就是 (0,0)
+    const pr = this.litParentRot;
+    const cos = Math.cos(pr), sin = Math.sin(pr);
+    const cx = this.litParentX + this.litParentSX * (cos * this.container.x - sin * this.container.y);
+    const cy = this.litParentY + this.litParentSY * (sin * this.container.x + cos * this.container.y);
+    q.setWorldTransform(
+      cx, cy,
+      this.litParentSX * this.container.scale.x, this.litParentSY * this.container.scale.y,
+      view.x, view.y, view.scale.x, view.scale.y, view.rotation + pr);
   }
 
   /**

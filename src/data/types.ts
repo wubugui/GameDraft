@@ -318,7 +318,7 @@ export interface SkyLightDef {
  */
 export interface DayReferenceDef {
   /**
-   * 原画自己的**遮蔽响应**。缺省 = 用 `lighting2/meta.json` 里烘焙期拟合出来的值。
+   * 原画自己的**遮蔽响应**。缺省 = 用 `lighting/<背景基名>/geometry.json` 里烘焙期拟合出来的值。
    *
    * ⚠ **别手填**。填小了 → 画里的遮蔽没除净，夜里的 `sky.hemi` 再加一份，
    * 遮蔽被算两遍：角落黑得不合理、开阔地却几乎没变暗（症状是"地面还那么亮、
@@ -451,7 +451,7 @@ export interface SceneLightingDef {
    * ★ **只作用于角色**。场景背景自身不吃反弹——背景的间接光已经画在原画里了，
    * 再加一遍就是重复计光。这是设计如此，不是没接完。
    *
-   * 场景没烘 `lighting2/gi_hitmap.bin` 时本参数被忽略（增益强制 0）。
+   * ⛔ 当前**无消费者**：GI 反弹随统一角色路径一起停用，运行时不再装载 `gi_hitmap.bin`。
    */
   giGain?: number;
   /**

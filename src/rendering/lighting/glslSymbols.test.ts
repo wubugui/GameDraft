@@ -5,6 +5,7 @@ import LIT_BG from './LitBackground.ts?raw';
 import LIGHTING_CORE from './lightingCore.glsl?raw';
 import PREFIX from './shadowPrefix.ts?raw';
 import SCENE from './SceneLightingPass.ts?raw';
+import { PROBE_SAMPLING_GLSL, SKYAO_SAMPLING_GLSL } from '../CharacterShadingFilter';
 import WORLD_RECONSTRUCT from './worldReconstruct.glsl?raw';
 
 /**
@@ -116,7 +117,8 @@ const WR_CORE = slice(WORLD_RECONSTRUCT, 'WR_CORE');
 const LC = slice(LIGHTING_CORE, 'LIGHTING_CORE');
 
 const TARGETS: { name: string; own: string; deps: string[] }[] = [
-  { name: 'SceneLightingPass.ts', own: SCENE, deps: [WR_CORE, LC] },
+  // PROBE_SAMPLING:「GI体」调试视图拼进来的角色 probe 采样块(probeE 等)
+  { name: 'SceneLightingPass.ts', own: SCENE, deps: [WR_CORE, LC, PROBE_SAMPLING_GLSL, SKYAO_SAMPLING_GLSL] },
   { name: 'UnifiedCharacterShader.ts', own: CHAR, deps: [WORLD_RECONSTRUCT, LIGHTING_CORE] },
   { name: 'LitBackground.ts', own: LIT_BG, deps: [WR_CORE, LC] },
   // 线扫求解器是自洽的：不拼任何切片，所有函数都在自己的模板串里

@@ -67,7 +67,7 @@ export interface AuthoringDeps {
   getSceneId: () => string | null;
   /** 重载当前场景（只在“放弃未存改动”时用，见 exit） */
   reloadScene: (sceneId: string) => void;
-  /** 摆灯要的几何；没烘 `lighting2/` 或没有行走面场时返回 null */
+  /** 摆灯要的几何；没烘 `lighting/<背景基名>/` 或没有行走面场时返回 null */
   getLightSpaceGeometry: () => LightSpaceGeometry | null;
   getParams: () => SceneLightingDef | null;
   /** 打补丁（触发重算，实时预览） */

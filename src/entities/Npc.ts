@@ -190,6 +190,7 @@ export class Npc implements ICutsceneActor {
     const sx = this.container.scale.x < 0 ? -1 : 1;
     this.container.scale.set(sx * s, s);
     this.container.rotation = entityRotationRadOf(this.def);
+    this._pushLitParentTransform();
     this._syncOverlayCompensation();
     this._syncSortFootY();
   }
@@ -266,6 +267,7 @@ export class Npc implements ICutsceneActor {
     this.container.addChildAt(this.sprite.container, 0);
     this.sprite.container.x = 0;
     this.sprite.container.y = 0;
+    this._pushLitParentTransform();
     this.applyInitialFacing();
     // 精灵就位后重派生实例 transform 的尺寸派生量（构造时 sprite 为空、
     // entitySortFootY 按 0 尺寸算过一次；换动画包重载同理。审查 F4）。
@@ -334,9 +336,18 @@ export class Npc implements ICutsceneActor {
     this._syncSortFootY();
   }
 
+  /** lit quad 的世界坐标来自这里(SpriteEntity 只知道 local;见 setLitParentTransform)。 */
+  private _pushLitParentTransform(): void {
+    this.sprite?.setLitParentTransform(
+      this.container.x, this.container.y,
+      this.container.scale.x, this.container.scale.y,
+      this.container.rotation);
+  }
+
   private _syncContainerPosition(): void {
     this.container.x = this._x;
     this.container.y = this._y;
+    this._pushLitParentTransform();
     this._refreshDepthScale();
     const c = this.container as Container & { entitySortFootY?: number };
     if (c.entitySortFootY !== undefined) this._syncSortFootY();
@@ -506,6 +517,7 @@ export class Npc implements ICutsceneActor {
     const baseY = Math.abs(this.container.scale.y) || 1;
     this.container.scale.x = sx * baseX;
     this.container.scale.y = baseY;
+    this._pushLitParentTransform();
 
     // 标签/图标/占位圆的镜像抵消并入实例 transform 补偿（同一处、同一口径）
     this._syncOverlayCompensation();

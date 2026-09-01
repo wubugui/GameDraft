@@ -12,7 +12,7 @@ import { sceneBakeDirUrl, sceneRuntimeAssetUrl } from './projectPaths';
 
 const T = 'SceneLighting';
 
-/** `lighting2/meta.json` 的载荷。由 `tools/scene_relight/bake.py` 产出。 */
+/** `lighting/<背景基名>/geometry.json` 的载荷。由 `tools/character_lighting_lab/scene_fields.py` 产出。 */
 export interface LightingGeometryMeta {
   version: number;
   background_sha1: string;
@@ -86,8 +86,24 @@ export interface LightingGeometryMeta {
  */
 export const CHARACTER_ALBEDO_REFERENCE = 0.0381;
 
-/** 本系统认得的载荷代次。改产物布局必须 +1，并同步 `bake.py` 与 validate。 */
-export const LIGHTING2_VERSION = 1;
+/**
+ * 本系统认得的几何场载荷代次。改产物布局必须 +1，并同步
+ * `tools/character_lighting_lab/scene_fields.py#PAYLOAD_VERSION` 与 `validator.py`。
+ *
+ * v2（2026-08-31）：产物从 `lighting2/<图名>/meta.json` 改住
+ * `lighting/<图名>/geometry.json`（与 probe 载荷同目录，同一个工具产出），
+ * 并新增 `depth_sha1`（深度重导但几何场没重烘 = 静默错，靠它抓）。
+ */
+/**
+ * 几何场载荷代次。**三处必须一致**（这里 / `validator._LIGHTING_GEOMETRY_VERSION` /
+ * `scene_fields.PAYLOAD_VERSION`），否则运行时整包忽略。
+ *
+ * v3（2026-09-01）：新增 `skyao_probe.bin` —— 每格 4 个 f32 的天穹遮蔽矩
+ * `(a0, a1x, a1y, a1z)`，角色按**任意法线**求值 `V(N)=clamp((a0+a1·N)/cap0(N),0,1)`，
+ * 乘在 GI 上。旧的 `skyvis_grid.bin` 降级为它的派生标量 `T(up)`（按法线求值做不到，
+ * 竖直面偏高约 50%），只等旧代码改完就删。
+ */
+export const LIGHTING_GEOMETRY_VERSION = 3;
 
 /**
  * 统一光影系统的场景侧协调者。
@@ -99,7 +115,7 @@ export const LIGHTING2_VERSION = 1;
  * ②【逐帧】    LitBackground      → 雾 → 显示变换 → 屏幕
  * ```
  *
- * 场景没有 `lighting` 块、或没烘 `lighting2/` 载荷时，本系统**整体不启用**，
+ * 场景没有 `lighting` 块、或没烘几何场载荷时，本系统**整体不启用**，
  * 背景照旧走原来的 Sprite 路径（旧场景零影响）。
  */
 export class SceneLightingSystem {
@@ -216,7 +232,7 @@ export class SceneLightingSystem {
     if (!radiance) return;
     let bytes: ArrayBuffer;
     try {
-      const res = await fetch(`${this.bake2Base}/gi_hitmap.bin`);
+      const res = await fetch(`${this.bakeBase}/gi_hitmap.bin`);
       // ⚠ 本仓库 dev server 上文件不存在返回 **200 + HTML**，判据必须看 content-type
       if (!res.ok || (res.headers.get('content-type') ?? '').includes('text/html')) return;
       bytes = await res.arrayBuffer();
@@ -304,10 +320,10 @@ export class SceneLightingSystem {
    * dev 下留日志便于排查（构建期严于运行时，运行时对内容错误容错跳过）。
    */
   /**
-   * 本场景几何场（lighting2）的实际目录。按背景图名索引，迁移期可能回落到扁平布局。
+   * 本场景**当前背景**的烘焙产物目录 `lighting/<背景基名>/`（probe 与几何场同住）。
    * 各处按需加载复用它 —— 再解析一遍就是第二个真相源，换背景后可能指向不同目录。
    */
-  private bake2Base = '';
+  private bakeBase = '';
   /** 本场景是否参与日夜（灯的时段过滤要吃这道总闸；未装载时为 false）。 */
   private dayNightOn = false;
   /**
@@ -339,10 +355,11 @@ export class SceneLightingSystem {
     paintingTexture: Texture,
   ): Promise<boolean> {
     this.unload();
-    // 几何场按**当前生效的第一层背景**索引（2026-08-30「背景与烘焙绑死」）。
-    // 迁移期两条布局都认：先找 lighting2/<图名>/，没有就回落扁平 lighting2/。
-    this.bake2Base = sceneBakeDirUrl(
-      sceneId, sceneData.backgrounds?.[0]?.image ?? 'background.png', 'lighting2');
+    // 烘焙产物按**当前生效的第一层背景**索引（2026-08-30「背景与烘焙绑死」）。
+    // 2026-08-31 起几何场与 probe 载荷同住 `lighting/<背景基名>/`，由角色照明实验室
+    // 一个工具产出；**没有回落布局**——找不到就是没烘，让它明说，别静默拿别人的几何。
+    this.bakeBase = sceneBakeDirUrl(
+      sceneId, sceneData.backgrounds?.[0]?.image ?? 'background.png');
     this.dayNightOn = sceneData.dayNight?.enabled === true;
     const def = sceneData.lighting;
     if (!def) {
@@ -357,20 +374,12 @@ export class SceneLightingSystem {
 
     // ⚠ 走 loadOptionalJson 不走 loadJson：本仓库 dev server 上文件不存在返回的是
     //   **200 + HTML** 而不是 404，判据必须看 content-type（optional-asset-probe 机制卡）。
-    let meta = await assetManager.loadOptionalJson<LightingGeometryMeta>(
-      `${this.bake2Base}/meta.json`,
+    const meta = await assetManager.loadOptionalJson<LightingGeometryMeta>(
+      `${this.bakeBase}/geometry.json`,
     );
-    let fellBackToFlat = false;
     if (!meta) {
-      // 回落旧的扁平布局（迁移期）
-      this.bake2Base = sceneRuntimeAssetUrl(sceneId, 'lighting2');
-      meta = await assetManager.loadOptionalJson<LightingGeometryMeta>(
-        `${this.bake2Base}/meta.json`,
-      );
-      fellBackToFlat = true;
-    }
-    if (!meta) {
-      depthLog(T, `${sceneId}: 没烘 lighting2/（跑 \`--bake --scene ${sceneId}\`）`);
+      depthLog(T, `${sceneId}: 没烘几何场（跑 \`sh scripts/py.sh -m `
+        + `tools.character_lighting_lab.scene_fields --scene ${sceneId}\`）`);
       return false;
     }
     // ---- 几何场的防腐门（2026-08-30 审查抓到：这一层原本**完全没有**）----
@@ -393,31 +402,30 @@ export class SceneLightingSystem {
           const hex = Array.from(new Uint8Array(dg))
             .map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 12);
           if (hex !== sha) {
-            depthError(T, `${sceneId}: lighting2 几何场与当前背景 ${want} 对不上`
+            depthError(T, `${sceneId}: 几何场与当前背景 ${want} 对不上`
               + `(烘焙 ${sha} vs 现况 ${hex})`
-              + (fellBackToFlat ? ' —— 且回落到了扁平布局，那份多半是白天的几何' : '')
-              + '。法线/天穹可见性/GI 命中图都属于另一张图，光的走向会不对。'
-              + `请跑 \`python -m tools.scene_relight.bake --scene ${sceneId}\` 重烘。`);
+              + '。法线/天穹可见性属于另一张图，光的走向会不对。'
+              + `请重烘：\`sh scripts/py.sh -m `
+              + `tools.character_lighting_lab.scene_fields --scene ${sceneId}\``);
           }
         } catch (e) {
-          depthError(T, `${sceneId}: lighting2 哈希门跑不起来`, e);
+          depthError(T, `${sceneId}: 几何场哈希门跑不起来`, e);
         }
-      } else if (fellBackToFlat) {
-        depthLog(T, `${sceneId}: lighting2 用了扁平布局且该载荷没记 background_sha1，无法校验`);
       }
     }
-    if (meta.version !== LIGHTING2_VERSION) {
-      depthError(T, `${sceneId}: lighting2 载荷版本 ${meta.version} ≠ ${LIGHTING2_VERSION}，整包忽略`);
+    if (meta.version !== LIGHTING_GEOMETRY_VERSION) {
+      depthError(T, `${sceneId}: 几何场载荷版本 ${meta.version} ≠ ${LIGHTING_GEOMETRY_VERSION}，整包忽略`
+        + '（2026-08-31 起产物改住 lighting/<背景基名>/，跑 `python tools/migrate_lighting_payloads.py` 迁移）');
       return false;
     }
 
     let normal: Texture;
     let skyvis: Texture;
     try {
-      normal = await assetManager.loadTexture(`${this.bake2Base}/normal.png`);
-      skyvis = await assetManager.loadTexture(`${this.bake2Base}/skyvis.png`);
+      normal = await assetManager.loadTexture(`${this.bakeBase}/normal.png`);
+      skyvis = await assetManager.loadTexture(`${this.bakeBase}/skyvis.png`);
     } catch (e) {
-      depthError(T, `${sceneId}: lighting2 贴图装载失败`, e);
+      depthError(T, `${sceneId}: 几何场贴图装载失败`, e);
       return false;
     }
 
@@ -492,26 +500,22 @@ export class SceneLightingSystem {
     );
     this.litBg.applyParams(def);
 
-    // 3D 天穹可见性网格（角色侧 P3 用）；缺了不致命
-    try {
-      const url = `${this.bake2Base}/skyvis_grid.bin`;
-      const buf = await (await fetch(url)).arrayBuffer();
-      const expect = meta.grid.nx * meta.grid.ny * meta.grid.nz;
-      const arr = new Float32Array(buf);
-      this.skyvisGrid = arr.length === expect ? arr : null;
-      if (!this.skyvisGrid) {
-        depthError(T, `${sceneId}: skyvis_grid 长度 ${arr.length} ≠ 网格声明 ${expect}`);
-      }
-    } catch {
-      this.skyvisGrid = null;
-    }
-
-    // GI 命中图（P5）。缺了不致命：GI 增益会被压到 0，画面只是少一层反弹光。
-    await this.loadGiHitmap(sceneId, meta);
+    // ⛔ **3D 天穹可见性网格与 GI 命中图不再装载**（2026-08-31 制作人拍板）。
+    //
+    // 这两份载荷的唯一消费者是统一角色路径（`Game.UNIFIED_CHAR_PATH_ENABLED`），
+    // 那条路 2026-08-30 起整条关死。继续装载的代价是实打实的：每次进场景多两次
+    // fetch（gi_hitmap 单场景 240 KB），而 `GiBouncePass` 还会在**每次脏时**
+    // （推时刻 / 开关灯 / F2 调参）跑 3840 点 × 16 方向 = 61440 次纹理取样，
+    // 算出一张没有任何人读的反弹网格。
+    //
+    // 烘焙侧**照旧产出**这两个文件（重烘 28 个场景很贵，将来复活那条路要用），
+    // 只是运行时不读、打包不抽取。复活时把这一段还原即可：
+    // `skyvisGrid` ← skyvis_grid.bin、`loadGiHitmap()` ← gi_hitmap.bin，
+    // 两者的解析代码都原样留着（见 `loadGiHitmap` 与 `skyVisibilityTexture`）。
+    this.skyvisGrid = null;
 
     this.enabled = true;
-    depthLog(T, `${sceneId}: 统一光影已启用（角色高 ${meta.scale.char_wu.toFixed(3)} wu）`
-      + `${this.giPass ? '，GI 反弹已接' : ''}`);
+    depthLog(T, `${sceneId}: 场景光照已启用（角色高 ${meta.scale.char_wu.toFixed(3)} wu）`);
     return true;
   }
 
@@ -537,9 +541,21 @@ export class SceneLightingSystem {
     return this.def;
   }
 
-  /** 调试可视化：0=正常 1=天穹可见性 2=法线 3=S_day 4=S_new 5=比值 6=线性化原画。 */
+  /** 调试可视化：0=正常 1=天穹可见性 2=法线 3=S_day 4=S_new 5=比值 6=线性化原画 7=GI体。 */
   setDebug(mode: number): void {
     this.pass?.setDebug(mode);
+  }
+
+  /** 诊断·定法线转发(GI体档,F2 诊断组)。 */
+  setGiFixedN(n: number): void {
+    this.pass?.setGiFixedN(n);
+  }
+
+  /** 「GI体」视图(7/8/9)的 probe 资源转发;null = 退回占位。见 SceneLightingPass.setProbeResources。 */
+  setProbeResources(res: Parameters<SceneLightingPass['setProbeResources']>[0]): void {
+    this.pass?.setProbeResources(res);
+    // 喂完必须重算:视图开着时改 β/mode(F2 滑块)走的就是这条,不脏 RT 就冻着旧画面
+    this.pass?.markDirty();
   }
 
   /** 逐帧调。脏才重算，稳态零成本。返回是否真的重算了（供性能观测）。 */
@@ -559,9 +575,9 @@ export class SceneLightingSystem {
     this.pass = null;
     this.meta = null;
     this.def = null;
-    // 跨场景残留会让新场景吃到旧场景的口径：bake2Base 会让按需加载去拉上一个场景的
+    // 跨场景残留会让新场景吃到旧场景的口径：bakeBase 会让按需加载去拉上一个场景的
     // 目录，dayNightOn 会让没开日夜的场景照旧过滤灯（=某些灯莫名不亮）。
-    this.bake2Base = '';
+    this.bakeBase = '';
     this.dayNightOn = false;
     this.skyvisGrid = null;
     this.giPass?.destroy();
