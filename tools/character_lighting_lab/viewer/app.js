@@ -2953,11 +2953,16 @@ function rbParams(){
 // 烘焙目录、导照明、导深度四个落点全由它推出。曾经的「上传图片建新场景」按文件名
 // 猜场景名,真把 teahouse 的背景烘成了叫 "background" 的假场景 —— 已废除。
 function sceneMark(s){
+  // 两级状态,两个概念劈开(制作人 2026-09-01):
+  //   baked   = **这台机器的实验室工作台**(out/<id>/,本机产物、不进 git)
+  //   lighting= **游戏运行时载荷**(runtime/scenes/<id>/lighting/,游戏真读的那份)
+  // 旧文案只显示 baked,一换机器全场「未烘焙」,看着像游戏数据丢了 —— 其实
+  // 载荷都在,缺的只是本机工作台。
   if(s.orphan) return '⚠孤儿';
   if(!s.bg_ok) return '⚠缺背景';
   if(s.bg_stale) return '⚠背景已变';
-  if(!s.baked) return '○未烘焙';
-  return s.lighting ? '✓已导出' : '✓已烘焙';
+  if(!s.baked) return s.lighting ? '◐载荷在·无工作台' : '○全未烘';
+  return s.lighting ? '✓已导出' : '◑工作台在·未导出';
 }
 function sceneInfo(id){ return (S.gameScenes||[]).find(s=>s.id===id); }
 function bakedManifest(id){ return (S.scenes||[]).find(m=>m.name===id); }
@@ -2980,18 +2985,23 @@ function applySceneSelection(id){
   // C-2:去 emoji,统一动词。UI 文案里不再出现「重建」——只留「重烘」(跑完整管线)
   // 与「重算地形」(秒级快通道)两个词,免得三个近义动词混着记。
   btn.textContent=m ? '应用参数:重烘此场景'
-                    : '首次烘焙此场景(约 4~5 分钟)';
+                    : '构建本机工作台(全管线,约 4~5 分钟;不动游戏载荷)';
   if(info){
     if(!g){ info.textContent=''; }
     else if(g.orphan){
       info.innerHTML=`<span class="warn">⚠ 孤儿:游戏里没有 id=${g.id} 的场景</span>`+
         `——多半是历史错位命名,烘了也没法导出;去主编辑器建同名场景,或删掉 out/${g.id}/`;
     }else{
-      const bits=[`背景 <b>${g.bg}</b>`, g.baked?'已烘焙':'<b>未烘焙</b>',
-                  g.lighting?'已导照明':'未导照明', g.depth?'已有depthConfig':'无depthConfig'];
+      const bits=[`背景 <b>${g.bg}</b>`,
+                  g.baked?'本机工作台:已构建':'<b>本机工作台:未构建</b>',
+                  g.lighting?'游戏载荷:已导出':'<b>游戏载荷:未导出</b>',
+                  g.depth?'已有depthConfig':'无depthConfig'];
       info.innerHTML=bits.join(' · ')+
         (!g.bg_ok?'<br><span class="warn">⚠ 背景图不在盘上,无法烘焙</span>':'')+
-        (g.bg_stale?'<br><span class="warn">⚠ 背景已重画,烘焙输入过期——需重烘并重新导出</span>':'');
+        (g.bg_stale?'<br><span class="warn">⚠ 背景已重画,烘焙输入过期——需重烘并重新导出</span>':'')+
+        (!g.baked&&g.lighting?'<br><span class="warn">画布无内容:本机没有该场景的实验室工作台'+
+          '(out/ 是逐机器的本地产物)。游戏载荷完好,游戏不受影响;'+
+          '要在实验室里查看/调参,先点上面的「构建本机工作台」。</span>':'');
     }
   }
   return m;
