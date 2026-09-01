@@ -1004,6 +1004,12 @@ def stage_probes(cal: dict, lay: dict, hdr: dict, wb: dict, lights: list[dict],
     coverage = float(act.mean())
     valid = filled.reshape(-1)
 
+    # ---- 逐颗 SH 去环(Sloan 窗,见 dering.py):负瓣深的 probe 亮度解窗、
+    #      三通道同窗;治运行时逐通道截负翻出的翡翠伪色 + 格边界块状走样。
+    #      四个 SH 场各自去环(膨胀填充后做,补出来的格同样要非负)。----
+    from .dering import dering_sh
+    n_ring = sum(dering_sh(f) for f in (sh_base, sh_emit, sh_amb, nee_sh))
+
     # ---- 组装成载荷的 20 项(布局与旧版逐字段一致)----
     E_l1 = np.concatenate([sh_base[:, :4], sh_cov[:, :4, None]], -1)     # (P,4,4)
     E_l2 = np.concatenate([sh_base, sh_cov[:, :, None]], -1)             # (P,9,4)
@@ -1011,7 +1017,8 @@ def stage_probes(cal: dict, lay: dict, hdr: dict, wb: dict, lights: list[dict],
 
     print(f'[probes] {n} 颗 x {spp}spp  {time.time()-t0:.1f}s  '
           f'分布={layout.strategy}  {Nx}x{Ny}x{Nz}  '
-          f'NEE={"开" if nee_ctx is not None else "关"}  细化 {n_ref} 格')
+          f'NEE={"开" if nee_ctx is not None else "关"}  细化 {n_ref} 格  '
+          f'去环 {n_ring} 颗次')
     print(f'[probes] {layout.note}')
     print(f'[probes] 命中率 {g["hit_rate"]*100:.1f}%  有效格 {coverage*100:.1f}% '
           f'(dilation {iters} 轮补到 {valid.mean()*100:.1f}%)  '

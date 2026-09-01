@@ -610,3 +610,67 @@ def test_重建层_log引导_热点不被抹平():
     # 远处暗格不被热点污染
     far = 0
     assert out[far, 0, 0] < 0.02, f'热点渗漏到远格: {out[far,0,0]:.4f}'
+
+
+# ---------------------------------------------------------------- SH 去环
+
+
+def _ringy_sh(rng, P):
+    """一侧强光一侧全黑的 delta 投影 —— L2 环纹最深的构造。"""
+    import numpy as np
+    from tools.character_lighting_lab.dering import sh_min_dirs
+    from tools.character_lighting_lab.estimators import sh_basis
+    d = sh_min_dirs(P * 3)[rng.choice(P * 3, P, replace=False)]
+    amp = (0.5 + rng.random(P) * 4.0).astype(np.float32)
+    col = (0.2 + rng.random((P, 3)) * 0.8).astype(np.float32)
+    return (sh_basis(d)[:, :, None] * (amp[:, None] * col)[:, None, :]
+            ).astype(np.float32)
+
+
+def test_去环_重建严格非负():
+    import numpy as np
+    from tools.character_lighting_lab.dering import DERING_EPS, dering_sh, sh_min_dirs
+    from tools.character_lighting_lab.estimators import sh_basis
+    rng = np.random.default_rng(7)
+    sh = _ringy_sh(rng, 128)
+    n = dering_sh(sh)
+    assert n > 100, f'delta 投影几乎全该有环纹,只窗了 {n} 颗'
+    Y = sh_basis(sh_min_dirs(4096))
+    lum = sh @ np.array([0.2126, 0.7152, 0.0722], np.float32)
+    mn = (lum @ Y.T).min(1)
+    dc = np.maximum(lum[:, 0] * 0.282095, 1e-12)
+    assert (mn >= -(3 * DERING_EPS) * dc).all(), \
+        f'去环后仍有深负瓣: {(mn / dc).min():.4f}'
+
+
+def test_去环_干净probe一字节不动():
+    import numpy as np
+    from tools.character_lighting_lab.dering import dering_sh
+    rng = np.random.default_rng(11)
+    sh = np.zeros((64, 9, 3), np.float32)
+    sh[:, 0, :] = 1.0 + rng.random((64, 3)).astype(np.float32)
+    sh[:, 1:4, :] = (rng.random((64, 3, 3)).astype(np.float32) - 0.5) * 0.2
+    before = sh.tobytes()
+    assert dering_sh(sh) == 0
+    assert sh.tobytes() == before
+
+
+def test_去环_DC与其色度不动():
+    import numpy as np
+    from tools.character_lighting_lab.dering import dering_sh
+    rng = np.random.default_rng(13)
+    sh = _ringy_sh(rng, 64)
+    dc0 = sh[:, 0, :].copy()
+    dering_sh(sh)
+    assert np.array_equal(sh[:, 0, :], dc0), 'w0 必须恒 1,DC 一字节不动'
+
+
+def test_去环_字节级确定性():
+    import numpy as np
+    from tools.character_lighting_lab.dering import dering_sh
+    rng = np.random.default_rng(17)
+    a = _ringy_sh(rng, 96)
+    b = a.copy()
+    dering_sh(a)
+    dering_sh(b)
+    assert a.tobytes() == b.tobytes()
