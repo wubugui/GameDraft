@@ -248,9 +248,9 @@ def test_角色高度在所有场景都是_150_wu() -> None:
     import json
     rt = _ROOT / 'public' / 'resources' / 'runtime' / 'scenes'
     heights = []
-    # 烘焙产物按背景图名分目录（2026-08-30「背景与烘焙绑死」）；
-    # 两条布局都收，迁移期不漏。
-    for meta in [*rt.glob('*/lighting2/*/meta.json'), *rt.glob('*/lighting2/meta.json')]:
+    # 烘焙产物按背景图名分目录，probe 与几何场同住 lighting/<背景基名>/。
+
+    for meta in rt.glob('*/lighting/*/geometry.json'):
         sc = json.loads(meta.read_text('utf-8')).get('scale') or {}
         if sc.get('char_wu') and sc.get('scene_per_wu'):
             heights.append(sc['char_wu'] * sc['scene_per_wu'])

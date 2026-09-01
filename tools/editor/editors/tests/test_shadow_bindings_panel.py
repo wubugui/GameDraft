@@ -221,68 +221,112 @@ class TestNpcAndHotspotRoundTrip:
         assert out['shadowBindings'] == [{'source': 'light:lamp_1'}]
 
 
-class TestLighting2PayloadValidation:
-    """`lighting2/` 载荷校验。
+class TestLightingGeometryPayloadValidation:
+    """几何场载荷校验(`lighting/<背景基名>/`)。
 
-    载荷缺失 / 代次不符 / 尺寸对不上时，运行时是**安静地不启用**——不报错、不崩，
-    画面上只表现为"这个场景的光照没生效"。作者第一反应会去调参数，
-    而参数根本没被读。所以这一层必须由校验器拦。
+    载荷缺失 / 代次不符 / 尺寸对不上 / 深度换了没重烘时,运行时是**安静地不启用**
+    或**静默用错的几何**——不报错、不崩,画面上只表现为"光照没生效 / 光的走向有点怪"。
+    作者第一反应会去调参数,而参数根本没被读。所以这一层必须由校验器拦。
     """
 
-    def test_已烘的场景零问题(self) -> None:
-        from tools.editor.validator import _lighting2_issues
-        assert _lighting2_issues('teahouse') == []
+    @staticmethod
+    def _fake_project(tmp_path, key: str = "background"):
+        """在 tmp 里搭一个最小工程:场景 JSON + 从真实 teahouse 载荷拷来的产物。
 
-    def test_没烘的场景报警告(self) -> None:
-        from tools.editor.validator import _lighting2_issues
-        got = _lighting2_issues('这个场景不存在')
-        assert len(got) == 1 and got[0][0] == 'warning'
-        assert 'bake' in got[0][1], '提示里要给出怎么烘的命令，不然作者不知道下一步'
-
-    def test_grid尺寸对不上报error(self, tmp_path, monkeypatch) -> None:
-        """截短 8 个字节就该被抓到——这是"改了 M 或网格却没重烘"的典型形态。"""
-        import shutil
-        from pathlib import Path
-        from tools.editor import validator as V
-        src = Path(V.__file__).resolve().parents[2] / \
-            'public/resources/runtime/scenes/teahouse/lighting2'
-        # 2026-08-30 起烘焙产物按背景图名分目录，`lighting2/` 下只剩子目录；
-        # 取真正装着 meta.json 的那一层当拷贝源（迁移期扁平布局也照样命中）。
-        if src.exists() and not (src / 'meta.json').exists():
-            subs = [d for d in src.iterdir() if d.is_dir() and (d / 'meta.json').exists()]
-            src = subs[0] if subs else src
-        if not (src / 'meta.json').exists():
-            pytest.skip('teahouse 载荷不在（DVC 未拉取）')
-        dst = tmp_path / 'public' / 'resources' / 'runtime' / 'scenes' / 'X' / 'lighting2'
-        dst.parent.mkdir(parents=True)
-        shutil.copytree(src, dst)
-        raw = (dst / 'skyvis_grid.bin').read_bytes()
-        (dst / 'skyvis_grid.bin').write_bytes(raw[:-8])
-        monkeypatch.setattr(V, '__file__', str(tmp_path / 'tools' / 'editor' / 'validator.py'))
-        got = V._lighting2_issues('X')
-        assert any(s == 'error' and 'skyvis_grid.bin' in t for s, t in got), got
-
-    def test_代次不符报error(self, tmp_path, monkeypatch) -> None:
+        校验器按 `backgrounds[0].image` 推烘焙目录名,所以场景 JSON 必须有 ——
+        这正是收束后的口径:**没有扁平回落**,推不出名字就直接说推不出。
+        """
         import json as _json
         import shutil
         from pathlib import Path
         from tools.editor import validator as V
-        src = Path(V.__file__).resolve().parents[2] / \
-            'public/resources/runtime/scenes/teahouse/lighting2'
-        # 2026-08-30 起烘焙产物按背景图名分目录，`lighting2/` 下只剩子目录；
-        # 取真正装着 meta.json 的那一层当拷贝源（迁移期扁平布局也照样命中）。
-        if src.exists() and not (src / 'meta.json').exists():
-            subs = [d for d in src.iterdir() if d.is_dir() and (d / 'meta.json').exists()]
-            src = subs[0] if subs else src
-        if not (src / 'meta.json').exists():
-            pytest.skip('teahouse 载荷不在（DVC 未拉取）')
-        dst = tmp_path / 'public' / 'resources' / 'runtime' / 'scenes' / 'X' / 'lighting2'
+        real = Path(V.__file__).resolve().parents[2] / 'public/resources/runtime/scenes'
+        src = real / 'teahouse' / 'lighting' / 'background'
+        if not (src / 'geometry.json').exists():
+            pytest.skip('teahouse 几何场不在(DVC 未拉取或还没迁移)')
+        dst = tmp_path / 'public' / 'resources' / 'runtime' / 'scenes' / 'X' / 'lighting' / key
         dst.parent.mkdir(parents=True)
         shutil.copytree(src, dst)
-        m = dst / 'meta.json'
+        sj = tmp_path / 'public' / 'assets' / 'scenes'
+        sj.mkdir(parents=True)
+        (sj / 'X.json').write_text(_json.dumps(
+            {'id': 'X', 'backgrounds': [{'image': key + '.png'}]}, ensure_ascii=False),
+            encoding='utf-8')
+        return dst
+
+    def test_缺depth_sha1的载荷必须出警告且零error(self, tmp_path, monkeypatch) -> None:
+        """契约:没有 depth_sha1 的载荷(migrate 脚本迁来的那批,脚本有意不伪造哈希)
+        **必须**出一条 warning —— 重烘即消,但不许有任何 error。
+
+        2026-08-31 审计前这里断言 == [],那等于要求校验器对"新鲜度门不生效"闭嘴,
+        正是 27/28 场景静默失效没人知道的原因。
+
+        ⚠ 这条原来直接拿真实的 teahouse 当被测物,2026-09-01 全量重烘之后
+        teahouse 有了 depth_sha1 ⇒ 零问题 ⇒ 断言反而挂了。测**契约**不要测
+        磁盘上那份数据的临时状态:现在从真实载荷拷一份、把 depth_sha1 摘掉再验。
+        """
+        import json as _json
+        from tools.editor import validator as V
+        dst = self._fake_project(tmp_path)
+        meta = _json.loads((dst / 'geometry.json').read_text(encoding='utf-8'))
+        meta.pop('depth_sha1', None)
+        (dst / 'geometry.json').write_text(_json.dumps(meta, ensure_ascii=False),
+                                           encoding='utf-8')
+        monkeypatch.setattr(V, '__file__', str(tmp_path / 'tools' / 'editor' / 'validator.py'))
+        got = V._lighting_geometry_issues('X')
+        assert all(s == 'warning' for s, _ in got), got
+        assert got and all('depth_sha1' in t for _, t in got), got
+
+    def test_全量重烘后真实场景零问题(self) -> None:
+        """2026-09-01 全量重烘(v3 + skyao_probe)之后,29 个背景应当一条问题都没有。"""
+        from tools.editor.validator import _lighting_geometry_issues
+        for sid in ('teahouse', '雾津街头'):
+            assert _lighting_geometry_issues(sid) == [], sid
+
+    def test_新烘带哈希的场景零问题(self) -> None:
+        # 雾津街头 2026-08-31 重烘,日夜两套载荷都带 depth_sha1 且与现况深度一致。
+        from tools.editor.validator import _lighting_geometry_issues
+        assert _lighting_geometry_issues('雾津街头') == []
+
+    def test_没烘的场景报警告(self) -> None:
+        from tools.editor.validator import _lighting_geometry_issues
+        got = _lighting_geometry_issues('这个场景不存在')
+        assert len(got) == 1 and got[0][0] == 'warning'
+
+    def test_grid尺寸对不上报error(self, tmp_path, monkeypatch) -> None:
+        """截短 8 个字节就该被抓到——这是"改了 M 或网格却没重烘"的典型形态。"""
+        from tools.editor import validator as V
+        dst = self._fake_project(tmp_path)
+        raw = (dst / 'skyvis_grid.bin').read_bytes()
+        (dst / 'skyvis_grid.bin').write_bytes(raw[:-8])
+        monkeypatch.setattr(V, '__file__', str(tmp_path / 'tools' / 'editor' / 'validator.py'))
+        got = V._lighting_geometry_issues('X')
+        assert any(s == 'error' and 'skyvis_grid.bin' in t for s, t in got), got
+
+    def test_代次不符报error(self, tmp_path, monkeypatch) -> None:
+        import json as _json
+        from tools.editor import validator as V
+        dst = self._fake_project(tmp_path)
+        m = dst / 'geometry.json'
         j = _json.loads(m.read_text(encoding='utf-8'))
         j['version'] = 99
         m.write_text(_json.dumps(j, ensure_ascii=False), encoding='utf-8')
         monkeypatch.setattr(V, '__file__', str(tmp_path / 'tools' / 'editor' / 'validator.py'))
-        got = V._lighting2_issues('X')
+        got = V._lighting_geometry_issues('X')
         assert any(s == 'error' and '代次' in t for s, t in got), got
+
+    def test_深度换了没重烘报error(self, tmp_path, monkeypatch) -> None:
+        """v2 新增的门:法线/天穹可见性是从**旧深度**推的,而运行时 march 新深度。
+
+        画面上只表现为"光的走向有点怪",没有任何报错——只能靠哈希抓。
+        """
+        import json as _json
+        from tools.editor import validator as V
+        dst = self._fake_project(tmp_path)
+        j = _json.loads((dst / 'geometry.json').read_text(encoding='utf-8'))
+        if not j.get('depth_sha1'):
+            pytest.skip('该载荷是迁移过来的老载荷,没有 depth_sha1(重烘后才有)')
+        (dst.parent.parent / 'raw_depth_rg.png').write_bytes(b'not the baked depth')
+        monkeypatch.setattr(V, '__file__', str(tmp_path / 'tools' / 'editor' / 'validator.py'))
+        got = V._lighting_geometry_issues('X')
+        assert any(s == 'error' and '旧深度' in t for s, t in got), got

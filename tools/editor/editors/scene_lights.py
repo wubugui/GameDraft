@@ -122,6 +122,11 @@ class SceneLightSpace:
         self._depth: Any = None          # numpy 数组，惰性载入
         self._native = (0, 0)
         self._depth_name = cfg.get('depth_map') or 'raw_depth_rg.png'
+        # 烘焙产物按**当前生效的第一层背景**分目录(与运行时 bakeKeyFromBackground 同口径)
+        _bgs = scene_data.get('backgrounds') or []
+        _img = (_bgs[0].get('image') if _bgs and isinstance(_bgs[0], dict) else None)             or 'background.png'
+        _base = str(_img).replace('\\', '/').rsplit('/', 1)[-1]
+        self._bake_key = _base[:_base.rfind('.')] if _base.rfind('.') > 0 else _base
         self._wu_per_q = 0.0
 
     # ---------------------------------------------------------------- 载入
@@ -154,11 +159,16 @@ class SceneLightSpace:
         """**1 个伪世界 q 单位 = 多少 wu**。世界空间与深度重建空间之间的桥。
 
         `= worldWidth / (native_w / ppu)`,逐场景不同(雾津街头 880、teahouse 154)。
-        取自烘焙产物 `lighting2/meta.json` 的 `scale.scene_per_wu`。
+        取自烘焙产物 `lighting/<背景基名>/geometry.json` 的 `scale.scene_per_wu`。
+
+        ⚠ 这里一度写死成扁平的 `lighting2/meta.json`。2026-08-30 产物改成按背景图名
+        分目录之后那条路径就再也命中不了,于是**静默回落到 1.0** —— 而真值是
+        逐场景 154–880,差三个数量级,摆灯的位置全错且不报任何错。
+        路径少写一层的代价就是这个,别再写死。
         """
         if self._wu_per_q:
             return self._wu_per_q
-        f = self._rt_dir() / 'lighting2' / 'meta.json'
+        f = self._rt_dir() / 'lighting' / self._bake_key / 'geometry.json'
         try:
             meta = json.loads(f.read_text(encoding='utf-8'))
             self._wu_per_q = float(meta['scale']['scene_per_wu'])

@@ -119,6 +119,7 @@
         "scripts/py.sh",
         "-m",
         "tools.character_lighting_lab",
+        "--serve",
         "--port",
         "5311",
         "--no-open"

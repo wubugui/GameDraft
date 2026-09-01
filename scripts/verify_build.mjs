@@ -247,7 +247,7 @@ async function checkHygiene(relSet) {
  * `[CharLighting] ERROR: <场景> : 照明烘焙过期(bake X vs bg Y)，已禁用`，
  * 那个场景的角色光照被**整个关掉**，画面明显不对但没有任何一条报错指向根因。
  *
- * 判据与运行时逐字一致：`lighting/lighting.json` 的 `background_sha1`
+ * 判据与运行时逐字一致：`lighting/<背景基名>/lighting.json` 的 `background_sha1`
  * 是 `background.png` 的 SHA-1 前 12 位（见 src/core/CharacterLightingSystem.ts 的哈希门）。
  *
  * 放在验收门而不是打包器里：打 dev 包做测试不该被一条存量数据问题卡住，
@@ -255,17 +255,22 @@ async function checkHygiene(relSet) {
  */
 async function checkBakeFreshness(relSet) {
   step('内容一致性（光照烘焙 vs 背景图）');
-  const scenes = [...relSet]
-    .filter((r) => /^resources\/runtime\/scenes\/[^/]+\/lighting\/lighting\.json$/.test(r))
-    .map((r) => r.split('/')[3]);
-  if (scenes.length === 0) {
-    note('产物里没有角色光照载荷，跳过');
+  // ⚠ 路径里那一层**背景图名**不能漏（`lighting/<背景基名>/lighting.json`）。
+  //   2026-08-30 产物改成按背景图名分目录后，这个正则一直少一层 ⇒ 匹配到 0 条 ⇒
+  //   本门**静默空转**到 2026-08-31 才被发现。同一形态的漏写在打包规则、编辑器
+  //   尺度读取里各出过一次，都是"少一层目录、不报错、结果全错"。
+  const payloads = [...relSet]
+    .filter((r) => /^resources\/runtime\/scenes\/[^/]+\/lighting\/[^/]+\/lighting\.json$/.test(r));
+  if (payloads.length === 0) {
+    fail('产物里一个角色光照载荷都没有 —— 打包规则多半漏了 lighting/<背景基名>/ 那一层');
     return;
   }
   let stale = 0;
-  for (const scene of scenes) {
-    const lightJson = `resources/runtime/scenes/${scene}/lighting/lighting.json`;
-    const bgRel = `resources/runtime/scenes/${scene}/background.png`;
+  for (const lightJson of payloads) {
+    const scene = lightJson.split('/')[3];
+    // 烘焙与**它那张背景图**绑死：目录名就是图的基名（时段变体各有一份）。
+    const bakeKey = lightJson.split('/')[5];
+    const bgRel = `resources/runtime/scenes/${scene}/${bakeKey}.png`;
     if (!relSet.has(bgRel)) {
       note(`${scene}: 有光照载荷但产物里没有 background.png，跳过比对`);
       continue;
@@ -295,7 +300,7 @@ async function checkBakeFreshness(relSet) {
       stale++;
     }
   }
-  if (!stale) pass(`${scenes.length} 个场景的光照烘焙与背景图一致`);
+  if (!stale) pass(`${payloads.length} 份光照烘焙与各自的背景图一致`);
   else note('重烘那几个场景，或把 background.png 恢复到烘焙时那一版');
 }
 

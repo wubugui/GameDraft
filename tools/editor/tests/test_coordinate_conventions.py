@@ -25,16 +25,17 @@ if str(_ROOT) not in sys.path:
 _SCENES = _ROOT / "public" / "assets" / "scenes"
 _RUNTIME = _ROOT / "public" / "resources" / "runtime" / "scenes"
 
-def _bake_dir(stem, family):
-    """该场景当前背景对应的烘焙目录。
+def _bake_dir(stem):
+    """该场景当前背景对应的烘焙目录 `lighting/<背景基名>/`。
 
-    2026-08-30 起烘焙产物按背景图名分目录(制作人定的「背景与烘焙绑死」:运行时拿
-    当前生效的背景图名当 key 找同名 bake,这样白天/夜里各一份不会错配)。口径与
-    `src/core/projectPaths.ts` 的 bakeKeyFromBackground 一致;迁移期回落扁平布局。
+    2026-08-30「背景与烘焙绑死」:运行时拿当前生效的背景图名当 key 找同名 bake,
+    白天/夜里各一份不会错配。2026-08-31 收束:probe 载荷与几何场**同住这一个目录**,
+    由角色照明实验室一个工具产出(原先几何场在 `lighting2/`)。
+    口径与 `src/core/projectPaths.ts` 的 bakeKeyFromBackground 一致。
     """
     import json as _json
     from pathlib import PurePosixPath
-    d = _RUNTIME / stem / family
+    d = _RUNTIME / stem / 'lighting'
     sj = _SCENES / (str(stem) + '.json')
     if sj.exists():
         try:
@@ -87,7 +88,7 @@ def test_游戏约定的_R_行列式恒为正一() -> None:
 def test_实验室_M_行列式恒为负一() -> None:
     seen = 0
     for f in _scene_files():
-        p = _bake_dir(f.stem, "lighting") / "lighting.json"
+        p = _bake_dir(f.stem) / "lighting.json"
         if not p.is_file():
             continue
         M = (_load(p).get("world") or {}).get("M")
@@ -124,7 +125,7 @@ def test_两套像素栅格各自自洽() -> None:
     """
     seen = 0
     for f in _scene_files():
-        meta = _bake_dir(f.stem, "lighting2") / "meta.json"
+        meta = _bake_dir(f.stem) / "geometry.json"
         if not meta.is_file():
             continue
         cfg = ((_load(f).get("depthConfig") or {}).get("M") or {})
@@ -147,27 +148,25 @@ def test_native_work_比例不是恒定的四倍() -> None:
     """
     ratios = []
     for f in _scene_files():
-        meta = _bake_dir(f.stem, "lighting2") / "meta.json"
+        meta = _bake_dir(f.stem) / "geometry.json"
         if not meta.is_file():
             continue
         m = _load(meta)
         ratios.append(m["native"]["w"] / m["work"]["w"])
-    assert ratios, "没有 lighting2 载荷"
+    assert ratios, "没有几何场载荷"
     assert any(abs(r - 4.0) > 0.01 for r in ratios), (
         "所有场景的 native/work 都变成 4 了 —— 撤掉 coordinate-spaces 卡里那条警告")
 
 
 # ---------------------------------------------------------------- 尺度锚
 
-def _all_lighting2_metas():
-    """全部几何场 meta.json:新布局 `<场景>/lighting2/<图名>/` + 迁移期的扁平布局。"""
-    out = sorted(_RUNTIME.glob('*/lighting2/*/meta.json'))
-    out += sorted(_RUNTIME.glob('*/lighting2/meta.json'))
-    return out
+def _all_geometry_metas():
+    """全部几何场 `geometry.json`(`<场景>/lighting/<背景图名>/`)。"""
+    return sorted(_RUNTIME.glob('*/lighting/*/geometry.json'))
 
 
 def _scene_of(meta):
-    """从 meta.json 路径倒推场景 id(两种布局层数不同,不能写死 parts[-3])。"""
+    """从 geometry.json 路径倒推场景 id。"""
     for parent in meta.parents:
         if parent.parent == _RUNTIME:
             return parent.name
@@ -181,7 +180,7 @@ def test_角色身高在所有场景都是_150_wu() -> None:
     必须恒定 —— 曾经拿 `char_wu` 当尺度参照,得出"同一个 wu 差 5.7 倍"的错误结论。
     """
     seen = 0
-    for meta in _all_lighting2_metas():
+    for meta in _all_geometry_metas():
         sc = _load(meta).get("scale") or {}
         if not (sc.get("char_wu") and sc.get("scene_per_wu")):
             continue
@@ -193,7 +192,7 @@ def test_角色身高在所有场景都是_150_wu() -> None:
 
 def test_烘焙产物里没有造出来的单位() -> None:
     """防回退:`meters_per_wu = 1.7 / char_wu` 那一层已经删了,别再加回来。"""
-    for meta in _all_lighting2_metas():
+    for meta in _all_geometry_metas():
         sc = _load(meta).get("scale") or {}
         assert "meters_per_wu" not in sc, f"{_scene_of(meta)} 又出现了造出来的单位"
 
@@ -206,7 +205,7 @@ def test_背景世界宽度等于_worldWidth() -> None:
     """
     seen = 0
     for f in _scene_files():
-        meta = _bake_dir(f.stem, "lighting2") / "meta.json"
+        meta = _bake_dir(f.stem) / "geometry.json"
         if not meta.is_file():
             continue
         d = _load(f)
@@ -229,14 +228,14 @@ def test_地面法线在_M_world_里朝上() -> None:
     若不同尺,对 q 施加正交的 R 就没有意义,距离与夹角一起错 —— 而这不报错,
     只会让 1/r² 与 N·L 悄悄偏。判据:地面在 M-world 里应当朝上(0,1,0)。
 
-    法线是在 `pos = q @ R.T` 里烘的(`geometry.py`),所以它**已经是 M-world 的**。
+    法线是在 `pos = q @ R.T` 里烘的(`character_lighting_lab/scene_geometry.py`),所以它**已经是 M-world 的**。
     """
     np = pytest.importorskip("numpy")
     Image = pytest.importorskip("PIL.Image", reason="需要 Pillow")
 
-    p = _bake_dir("雾津街头", "lighting2") / "normal.png"
+    p = _bake_dir("雾津街头") / "normal.png"
     if not p.is_file():
-        pytest.skip("雾津街头 没烘 lighting2/(DVC 没拉)")
+        pytest.skip("雾津街头 没烘几何场(DVC 没拉)")
 
     nrm = np.asarray(Image.open(p).convert("RGB"), np.float32) / 255.0
     # 与两个 shader 同一套解码:rg 做 *2−1,b 是 |z| 直存

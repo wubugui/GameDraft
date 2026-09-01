@@ -592,7 +592,7 @@
   "lighting": {
     "sky": {
       "kelvin": 6500,
-      "intensity": 0.045,
+      "intensity": 0.27,
       "hemi": 0.92
     },
     "day": {
@@ -743,10 +743,10 @@
           98.34600000000002,
           748.2
         ],
-        "kelvin": 2400.0,
+        "kelvin": 2400,
         "intensity": 0.5,
-        "range": 450.0,
-        "softeningRadius": 10.0,
+        "range": 450,
+        "softeningRadius": 10,
         "castShadow": false,
         "enabled": true,
         "dir": [
@@ -754,8 +754,8 @@
           -1,
           0.3
         ],
-        "innerAngleDeg": 1.0,
-        "outerAngleDeg": 45.0
+        "innerAngleDeg": 1,
+        "outerAngleDeg": 45
       }
     ],
     "fog": {
@@ -766,12 +766,12 @@
       "baseHeight": 0
     },
     "display": {
-      "ev": 0.0,
-      "tonemap": "none",
+      "ev": -0.05,
+      "tonemap": "filmic",
       "whiteKelvin": 6500,
-      "contrast": 1.0,
-      "saturation": 1.0,
-      "lift": 0.0,
+      "contrast": 1,
+      "saturation": 1,
+      "lift": 0,
       "liftKelvin": 6500
     },
     "aoStrength": 1,
@@ -783,7 +783,10 @@
       "haloRadius": 141.1766421795
     },
     "dehaze": 0,
-    "giGain": 1
+    "giGain": 1,
+    "shadowBias": {
+      "bias": 30
+    }
   },
   "playerShadowBindings": [
     {
