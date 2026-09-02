@@ -15,6 +15,7 @@ import {
   createCharLightUniforms,
   createLitShader,
   createSceneLitUniforms,
+  LIT_SHADER_SCENE_TEXTURE_SLOTS,
   setLitShaderTexture,
 } from '../rendering/CharacterLitSprite';
 import type { PackedLights } from '../rendering/lighting/lightPacking';
@@ -47,7 +48,7 @@ interface LightingPayloadMeta {
   work: { w: number; h: number };
   cal: { theta: number; ppu: number; cx: number; cy: number };
   world: { M: number[][]; x0: number; x1: number; y0: number; y1: number; z0: number; z1: number };
-  probes: { nx: number; ny: number; nz: number };
+  probes: { nx: number; ny: number; nz: number; sh_lmax?: number; sh_k?: number; bin_ob?: number };
   vol: {
     nx: number; ny: number; nz: number; tiles_x: number; tiles_y: number;
     qx_min: number; qx_max: number; qy_min: number; qy_max: number;
@@ -197,7 +198,7 @@ export class CharacterLightingSystem implements IGameSystem {
 
   /** F2 可调照明参数(运行时,不入存档;默认值与实验室查看器一致,模式默认 L2) */
   readonly params: CharShadingParams = {
-    mode: 2, spp: 64, step: 0.9, msteps: 160,
+    mode: 3, spp: 64, step: 0.9, msteps: 160,   // 3=八面体(2026-09-02 正式档) 1=L1 Geomerics 2=SH 线性
     fold: true, missMode: false, nee: false,
     beta: 0, ambStrength: 1, giStrength: 1,
     bulge: 0.22, flatten: 0, heightScale: 1, showNormals: false,
@@ -488,15 +489,25 @@ export class CharacterLightingSystem implements IGameSystem {
     if (!this._hasVolumes) return;
     this.swapVolumeTextures(new Uint16Array(4).buffer, new Uint16Array(4).buffer, 1, 1);
     this._hasVolumes = false;
-    if (this.params.mode < 1) this.params.mode = 2;
+    if (this.params.mode < 1) this.params.mode = 3;
     depthLog(T, this.loadedSceneId ?? '?', ': RT 体素卷已卸');
   }
 
-  /** cache mode → probe 图集规格(v3 固化:L1=4列/L2=9列/BIN=64方向);越界回落 L2。 */
-  private static probeCfg(mode: number): { col: number; file: string } {
+  /** cache mode → probe 图集规格(v3 固化:L1=4列 / SH=shK 列(L2=9/L4=25) / BIN=binOb² 方向)。 */
+  private static probeCfg(mode: number, shK = 9, binOb = 8): { col: number; file: string } {
     if (mode === 1) return { col: 4, file: 'atlas_l1.bin' };
-    if (mode === 3) return { col: 64, file: 'atlas_bin.bin' };
-    return { col: 9, file: 'atlas_l2.bin' };   // 2 及其它
+    if (mode === 2) return { col: shK, file: 'atlas_l2.bin' };  // 'l2' 是槽名,列数按 probes.sh_k
+    return { col: binOb * binOb, file: 'atlas_bin.bin' };       // 3 及缺省 = 八面体(正式档)
+  }
+
+  /** 载荷的球谐系数数:老载荷没记 sh_k 就是 9(L2)。 */
+  private static shKOf(meta: { probes: { sh_k?: number } } | null | undefined): number {
+    return meta?.probes.sh_k ?? 9;
+  }
+
+  /** 载荷的八面体边长:老载荷没记 bin_ob 就是 8。 */
+  private static binObOf(meta: { probes: { bin_ob?: number } } | null | undefined): number {
+    return meta?.probes.bin_ob ?? 8;
   }
 
   /**
@@ -539,7 +550,8 @@ export class CharacterLightingSystem implements IGameSystem {
     if (!this.resources) return;
     this.staleProbeTextures.push(...this.probeTextures);
     this.probeTextures = [];
-    const cfg = CharacterLightingSystem.probeCfg(mode);
+    const cfg = CharacterLightingSystem.probeCfg(mode, CharacterLightingSystem.shKOf(this.meta),
+                                                 CharacterLightingSystem.binObOf(this.meta));
     const real = this.makeProbeTexture(buf, cfg.col, rows);
     const ph = (): TextureSource => this.makeProbeTexture(new Uint16Array(4).buffer, 1, 1);
     this.resources.atlasL1 = mode === 1 ? real : ph();
@@ -571,7 +583,8 @@ export class CharacterLightingSystem implements IGameSystem {
     const myEpoch = this.epoch;
     const base = this.loadedBakeBase ?? sceneRuntimeAssetUrl(sceneId, 'lighting');
     const rows = meta.probes.nx * meta.probes.ny * meta.probes.nz;
-    const cfg = CharacterLightingSystem.probeCfg(m);
+    const cfg = CharacterLightingSystem.probeCfg(m, CharacterLightingSystem.shKOf(meta),
+                                                 CharacterLightingSystem.binObOf(meta));
     const task = (async (): Promise<boolean> => {
       try {
         const buf = await fetch(`${base}/${cfg.file}`).then((r) => r.arrayBuffer());
@@ -695,8 +708,11 @@ export class CharacterLightingSystem implements IGameSystem {
       // probe 图集**按需加载**:进场景只拉当前 mode 那一种(游戏默认 L2=9列);另两种 F2 切档
       // 才由 ensureProbeAtlas 现拉。省掉白加载(尤其 BIN 那份;固化后 L2 仅 ~0.12MB)。
       const shMode0 = (meta.shading as { mode?: number } | undefined)?.mode;
-      const targetProbeMode = shMode0 === 1 || shMode0 === 3 ? shMode0 : 2;
-      const probeCfg0 = CharacterLightingSystem.probeCfg(targetProbeMode);
+      // 载荷 shading.mode 说了算(1=L1 Geomerics / 2=SH 线性 / 3=八面体);缺省八面体(2026-09-02 正式档)
+      const targetProbeMode = shMode0 === 1 || shMode0 === 2 ? shMode0 : 3;
+      const probeCfg0 = CharacterLightingSystem.probeCfg(targetProbeMode,
+                                                          CharacterLightingSystem.shKOf(meta),
+                                                          CharacterLightingSystem.binObOf(meta));
       // skyao probe 的网格与坐标系在 **geometry.json**(几何场那侧产的),
       // 不在 lighting.json 里 —— 两个文件同住一个目录,但由两条烘焙路径分别产出。
       // 缺文件不算错(老载荷没有这一份):skyao 静默降级为「不遮蔽」。
@@ -847,6 +863,8 @@ export class CharacterLightingSystem implements IGameSystem {
         ],
         pn: [pn.nx, pn.ny, pn.nz],
         probeT: CharacterLightingSystem.probeTiling(P).T,
+        shK: CharacterLightingSystem.shKOf(meta),
+        binOb: CharacterLightingSystem.binObOf(meta),
         ambSH: new Float32Array(meta.ambient_sh),
         lightsQ, lightsE, lightCount,
         skyao,
@@ -908,14 +926,16 @@ export class CharacterLightingSystem implements IGameSystem {
         this.eChroma = typeof ec === 'number' && Number.isFinite(ec) ? ec : 0;
       }
       // 进场景恒未载体素卷 → 强制 cache 着色(mode≥1),RT(mode 0)会采样占位卷得黑。
-      if (this.params.mode < 1) this.params.mode = 2;
+      if (this.params.mode < 1) this.params.mode = 3;
       // sprite 网格着色:场景静态组(mesh 路径与 filter 同源同值)
       this.groundRange = [meta.ground_d.min, meta.ground_d.max];
       this.sceneLit = createSceneLitUniforms({
         worldToWorkX: this.resources.worldToWorkX, worldToWorkY: this.resources.worldToWorkY,
         cal: this.resources.cal, vol: this.resources.vol,
         mCol: this.resources.mCol, wMin: this.resources.wMin, wScale: this.resources.wScale,
-        pn: this.resources.pn, probeT: this.resources.probeT, ambSH: this.resources.ambSH,
+        pn: this.resources.pn, probeT: this.resources.probeT, shK: this.resources.shK,
+        binOb: this.resources.binOb,
+        ambSH: this.resources.ambSH,
         lightsQ: this.resources.lightsQ, lightsE: this.resources.lightsE,
         lightCount: this.resources.lightCount,
         groundMin: this.groundRange[0], groundMax: this.groundRange[1],
@@ -1071,7 +1091,9 @@ export class CharacterLightingSystem implements IGameSystem {
   private parkLitShaders(): void {
     for (const sh of [...this.litShaders]) {
       try {
-        for (const k of ['uPL1', 'uPL2', 'uPBin', 'uValid', 'uVolRad', 'uVolEmit', 'uGround', 'uNrm']) {
+        // 槽位表的权威源在 CharacterLitSprite（与 createLitShader 的 resources 同处维护）——
+        // 手抄一份就会漏，漏一个槽位 = 那张纹理销毁时把整个 BindGroup 带走 = 卡死。
+        for (const k of LIT_SHADER_SCENE_TEXTURE_SLOTS) {
           setLitShaderTexture(sh, k, null);
         }
       } catch {

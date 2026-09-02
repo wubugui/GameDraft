@@ -227,16 +227,24 @@ class SceneDocument(QObject):
         return True
 
     def notice_external_scene_write(self, sid: str) -> None:
-        """别的画布改了这个场景 → 清掉本栈。
+        """别的画布 / 别的对话框改了这个场景 → 清掉本栈，**并按模型重投影**。
 
-        本文档的命令持的是**字段级** before/after，跨过外部直写做 undo 会把那次
-        直写连带撤掉（且 redo 找不回）。代价是"切画布 = 撤销栈清空"，
+        清栈：本文档的命令持的是**字段级** before/after，跨过外部直写做 undo 会把
+        那次直写连带撤掉（且 redo 找不回）。代价是"切画布 = 撤销栈清空"，
         语义诚实，好过两个栈互撤。
+
+        重投影：本文档的视图是**纯 push** 的 —— 图元账本只由本文档的变更事件驱动，
+        没有任何轮询。外部直写不经过本文档的命令层、不发事件，画布就照旧画着一个
+        已经不在数据里的实体：它还能点中、还能选中（`_apply_presence` 对查不到的实体
+        一律显示），再删它提示"没有此实体"，只有重开编辑器才消失。此前这里只清栈，
+        等于把"数据变了"只告诉了撤销栈、没告诉画面。`SceneReloaded` 走与切场景同一条
+        整份重建路（视图 / 实体树 / 分组框 / 背景），不另起一套"只补删除"的半份刷新。
         """
         if self.restoring or str(sid or "") != self._scene_id:
             return
         if self.undo_stack.count():
             self.undo_stack.clear()
+        self.notify_reloaded()
 
     def mark_dirty(self) -> None:
         """标记本场景为未保存。命令改完数据后调，**调用方不必再手写第二级脏标记**。"""

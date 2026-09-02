@@ -1,0 +1,508 @@
+{
+  "schemaVersion": 1,
+  "id": "序章_街巷_夜遇癞子",
+  "entry": "open",
+  "meta": {
+    "title": "序章·夜里撞见癞子：他还在老地方等那张铺（zone 一次性）"
+  },
+  "defaultLayout": "top",
+  "nodes": {
+    "open": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "next": "q_face",
+      "lines": [
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "旁白"
+          },
+          "text": "街上黑得很。灯就那么几盏，灯与灯当中全是黑的。"
+        },
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "旁白"
+          },
+          "text": "关二狗贴到墙根往回走。他脑壳头在编：明天啷个说。"
+        },
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "旁白"
+          },
+          "text": "拐过弯，那两步路上有个人。走到头，掉头，又走回来。"
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "……",
+          "portrait": {
+            "emotion": "calm"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "旁白"
+          },
+          "text": "他往后退了半步。"
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "二哥！"
+        },
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "旁白"
+          },
+          "text": "退不脱咯。"
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "我等到起的。"
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "二哥，那个铺……"
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "铺？",
+          "portrait": {
+            "emotion": "calm"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "你说今黑了请我睡张铺。"
+        },
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "旁白"
+          },
+          "text": "关二狗身上一文都没得。就那一枚，谁都不要的那一枚。"
+        }
+      ],
+      "text": "街上黑得很。灯就那么几盏，灯与灯当中全是黑的。"
+    },
+    "q_face": {
+      "type": "choice",
+      "promptLine": {
+        "speaker": {
+          "kind": "literal",
+          "name": "旁白"
+        },
+        "text": "癞子站到那点等他答话。"
+      },
+      "options": [
+        {
+          "id": "own",
+          "text": "〔认了：老子输完了〕",
+          "next": "b_own"
+        },
+        {
+          "id": "cover",
+          "text": "〔遮过去：钱在身上没得动〕",
+          "next": "b_cover"
+        },
+        {
+          "id": "turn",
+          "text": "〔反问：你站好久咯〕",
+          "next": "b_turn"
+        }
+      ]
+    },
+    "b_own": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "join",
+      "lines": [
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "……老子输完咯。",
+          "portrait": {
+            "emotion": "calm"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "哦。"
+        },
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "旁白"
+          },
+          "text": "癞子就哦了一声。他没得追问，也没得怪。"
+        },
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "旁白"
+          },
+          "text": "关二狗宁肯他骂两句。"
+        }
+      ],
+      "text": "……老子输完咯。"
+    },
+    "b_cover": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "join",
+      "lines": [
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "钱在身上，没得动。",
+          "portrait": {
+            "emotion": "smirk"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "……哦。"
+        },
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "旁白"
+          },
+          "text": "癞子看了一眼他扯烂的那半边衣裳，没得说话。"
+        }
+      ],
+      "text": "钱在身上，没得动。"
+    },
+    "b_turn": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "join",
+      "lines": [
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "你站这点好久咯？",
+          "portrait": {
+            "emotion": "calm"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "天黑就在咯。"
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "二哥你说了在这点。"
+        },
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "旁白"
+          },
+          "text": "关二狗把话咽回去了。"
+        }
+      ],
+      "text": "你站这点好久咯？"
+    },
+    "join": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "q_call",
+      "lines": [
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "铺算啥子。",
+          "portrait": {
+            "emotion": "smirk"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "老子等哈就把钱拿回来。",
+          "portrait": {
+            "emotion": "laugh"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "义庄还有二百五！",
+          "portrait": {
+            "emotion": "laugh"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "……"
+        },
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "旁白"
+          },
+          "text": "话一出口就收不回去咯。"
+        }
+      ],
+      "text": "铺算啥子。"
+    },
+    "q_call": {
+      "type": "choice",
+      "promptLine": {
+        "speaker": {
+          "kind": "literal",
+          "name": "旁白"
+        },
+        "text": "癞子还站到那点。"
+      },
+      "options": [
+        {
+          "id": "five",
+          "text": "〔喊他一路：五五分〕",
+          "next": "b_five"
+        },
+        {
+          "id": "alone",
+          "text": "〔不喊他，个人切〕",
+          "next": "b_alone"
+        }
+      ]
+    },
+    "b_five": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "refuse",
+      "lines": [
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "走走走，你跟老子一路。五五分。",
+          "portrait": {
+            "emotion": "laugh"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "我不去。"
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "你娃刚才还在这点等老子。",
+          "portrait": {
+            "emotion": "angry"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "……"
+        }
+      ],
+      "text": "走走走，你跟老子一路。五五分。"
+    },
+    "b_alone": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "refuse",
+      "lines": [
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "你在这点等到起。老子切去就回。",
+          "portrait": {
+            "emotion": "smirk"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "二哥。"
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "你莫去。"
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "啷个又是这句。",
+          "portrait": {
+            "emotion": "angry"
+          }
+        }
+      ],
+      "text": "你在这点等到起。老子切去就回。"
+    },
+    "refuse": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "end_walk",
+      "lines": [
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "二哥。"
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "那个钱想不得哟。"
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "锤子哦。",
+          "portrait": {
+            "emotion": "angry"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "你去不得。"
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "老子今黑了非要切。",
+          "portrait": {
+            "emotion": "angry"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "旁白"
+          },
+          "text": "癞子没得再说。他退回那两步路上去，走到头，掉头，又走回来。"
+        }
+      ],
+      "text": "二哥。"
+    },
+    "end_walk": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "fin",
+      "lines": [
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "二哥。"
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "你早点回来。"
+        },
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "旁白"
+          },
+          "text": "关二狗把那一文攥到手心头，转身朝城外走。"
+        },
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "旁白"
+          },
+          "text": "身后那两步路上，脚步声没得停。"
+        }
+      ],
+      "text": "二哥。"
+    },
+    "fin": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "夜遇癞子_应下",
+            "sourceType": "dialogue",
+            "sourceId": "序章_街巷_夜遇癞子"
+          }
+        },
+        {
+          "type": "persistZoneEnabled",
+          "params": {
+            "sceneId": "雾津街头",
+            "zoneId": "Zone_夜遇癞子",
+            "enabled": false
+          }
+        }
+      ],
+      "next": "done"
+    },
+    "done": {
+      "type": "end"
+    }
+  }
+}

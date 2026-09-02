@@ -30,6 +30,12 @@
  * 3. `widthScale`：**迎光截面**，侧光时把影子压窄到体厚，代替"换一张侧面剪影"。
  *
  * 这三条都不做逐像素求交，不撞上面那条红线。真正治本是烘方位相关剪影图集，未做。
+ *
+ * ## 这里不解接触斑
+ *
+ * 脚底接触斑与灯无关（制作人 2026-09-02 定死）：它由主 planar 实例按
+ * `env.shadow.contact` 常驻画，绑定只解**投影剪影**。曾经解过 `contact = darkness × 0.5`，
+ * 结果是离绑定灯远的角色整颗接触斑消失，已删。
  */
 import type { EntityShadowBinding, LightDef } from '../data/types';
 import {
@@ -76,8 +82,6 @@ export interface ShadowCastSolution {
   softness: number;
   /** planar reach 系数：影长 = 角色高 × length。**已含地面各向异性**（见 `groundScreenScale`）。 */
   length: number;
-  /** 接触斑强度 0..1。 */
-  contact: number;
   /** 头端半宽 ÷ 底边半宽（点光投影散开）；平行光 / 虚拟灯恒 1。 */
   spread: number;
   /** 底边半宽的横向系数（迎光截面）；见 `BODY_THICKNESS_RATIO`。 */
@@ -253,7 +257,6 @@ export function resolveBoundShadow(
       // ⚠ 这里**不乘**地面各向异性：作者给的是屏幕方向、调的是屏幕长度，
       //   系统再乘一个因子等于把作者盯着画面调出来的数偷偷改掉。
       length: v.length > 0 ? v.length : lengthFromElevation(el),
-      contact: clamp01(v.darkness) * 0.5,
       // 虚拟灯没有世界位置 → 当平行光看待，不散开。
       spread: 1,
       // 迎光截面按屏幕方位角近似：屏幕横向≈世界 X，屏幕纵向≈世界 Z（见 shadowScreenAngle）。
@@ -316,7 +319,6 @@ export function resolveBoundShadow(
     darkness,
     softness: binding.softness ?? softnessOf(light, dist === Infinity ? 1e3 : dist, ctx.wuPerQUnit),
     length: baseLen * (binding.lengthScale ?? 1),
-    contact: darkness * 0.5,
     spread: (1 + u) / (1 - u),
     widthScale: widthScaleFromGroundDir(lx, lz),
   };

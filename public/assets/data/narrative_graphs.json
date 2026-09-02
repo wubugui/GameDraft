@@ -688,6 +688,36 @@
               }
             },
             "label": "去赌坊"
+          },
+          "state_5": {
+            "id": "state_5",
+            "meta": {
+              "editor": {
+                "x": 700,
+                "y": -120
+              }
+            },
+            "label": "路遇·钱自己回来了"
+          },
+          "state_6": {
+            "id": "state_6",
+            "meta": {
+              "editor": {
+                "x": 920,
+                "y": -120
+              }
+            },
+            "label": "赌光·天黑"
+          },
+          "state_7": {
+            "id": "state_7",
+            "meta": {
+              "editor": {
+                "x": 1140,
+                "y": -120
+              }
+            },
+            "label": "夜遇癞子·应下上山"
           }
         },
         "transitions": [
@@ -788,6 +818,24 @@
             "from": "state_4",
             "to": "s02_beishi",
             "signal": "__draft__"
+          },
+          {
+            "id": "t_7",
+            "from": "state_4",
+            "to": "state_5",
+            "signal": "state:wrapper_序章_路遇私铸钱:钱回来了"
+          },
+          {
+            "id": "t_8",
+            "from": "state_5",
+            "to": "state_6",
+            "signal": "state:街巷_赌坊:输光"
+          },
+          {
+            "id": "t_9",
+            "from": "state_6",
+            "to": "state_7",
+            "signal": "state:wrap_癞子:应下"
           }
         ],
         "label": "寻狗Demo主线"
@@ -5894,6 +5942,29 @@
                   }
                 },
                 "label": "捡钱"
+              },
+              "夜等": {
+                "id": "夜等",
+                "meta": {
+                  "editor": {
+                    "x": 600,
+                    "y": 147
+                  }
+                },
+                "label": "夜等",
+                "description": "天黑、他输光之后，癞子还在老地方那两步路上等那张铺。"
+              },
+              "应下": {
+                "id": "应下",
+                "meta": {
+                  "editor": {
+                    "x": 880,
+                    "y": 147
+                  }
+                },
+                "label": "应下",
+                "broadcastOnEnter": true,
+                "description": "关二狗当场现编，喊他一路上山；癞子死活不去。"
               }
             },
             "transitions": [
@@ -5908,10 +5979,32 @@
                 "from": "捡钱",
                 "to": "initial",
                 "signal": "私有事件完结"
+              },
+              {
+                "id": "t_3",
+                "from": "initial",
+                "to": "夜等",
+                "signal": "__draft__",
+                "trigger": "reactive",
+                "conditions": [
+                  {
+                    "narrative": "flow_xungou_main",
+                    "state": "state_6"
+                  }
+                ]
+              },
+              {
+                "id": "t_4",
+                "from": "夜等",
+                "to": "应下",
+                "signal": "夜遇癞子_应下"
               }
             ],
             "ownerId": "NPC_癞子",
-            "label": "npc癞子状态机"
+            "label": "npc癞子状态机",
+            "exitStates": [
+              "应下"
+            ]
           },
           "label": "npc癞子状态机"
         }
@@ -5995,7 +6088,7 @@
     {
       "id": "composition_3",
       "label": "序章·街面交互点",
-      "description": "藏钱点（雾津/码头两处共用同一台状态机）与赌坊看场的 wrapper。",
+      "description": "藏钱点（雾津/码头两处共用同一台状态机）、赌坊看场、以及去赌坊路上那一拍「路遇私铸钱」的 wrapper。",
       "mainGraph": {
         "id": "主线_交互点",
         "ownerType": "flow",
@@ -6146,6 +6239,17 @@
                   }
                 },
                 "label": "初始状态"
+              },
+              "输光": {
+                "id": "输光",
+                "meta": {
+                  "editor": {
+                    "x": 560,
+                    "y": 79
+                  }
+                },
+                "label": "输光",
+                "broadcastOnEnter": true
               }
             },
             "transitions": [
@@ -6158,20 +6262,86 @@
                 "conditions": [
                   {
                     "narrative": "flow_xungou_main",
-                    "state": "state_4"
+                    "state": "state_5"
                   }
                 ]
               },
               {
                 "id": "t_1",
-                "from": "主线剧情状态",
+                "from": "输光",
                 "to": "赌场正常状态",
                 "signal": "主线_序章完结"
+              },
+              {
+                "id": "t_3",
+                "from": "主线剧情状态",
+                "to": "输光",
+                "signal": "赌坊_输光"
               }
             ],
-            "ownerId": "街巷_赌坊门卫"
+            "ownerId": "街巷_赌坊门卫",
+            "exitStates": [
+              "输光"
+            ]
           },
           "package": "章节_听书"
+        },
+        {
+          "id": "wrapper_3",
+          "kind": "wrapperGraph",
+          "label": "路遇私铸钱",
+          "refId": "",
+          "x": 300,
+          "y": 420,
+          "meta": {
+            "emits": [],
+            "reads": [],
+            "commands": []
+          },
+          "ownerType": "zone",
+          "ownerId": "Zone_路遇私铸钱",
+          "graph": {
+            "id": "wrapper_序章_路遇私铸钱",
+            "label": "路遇私铸钱",
+            "ownerType": "zone",
+            "initialState": "initial",
+            "states": {
+              "initial": {
+                "id": "initial",
+                "meta": {
+                  "editor": {
+                    "x": -40,
+                    "y": 150
+                  }
+                },
+                "label": "未撞上"
+              },
+              "钱回来了": {
+                "id": "钱回来了",
+                "meta": {
+                  "editor": {
+                    "x": 300,
+                    "y": 150
+                  }
+                },
+                "label": "钱回来了",
+                "broadcastOnEnter": true,
+                "description": "那一文自己滚走、怪人来过又走、回头钱在脚边。关二狗读成手气来了。"
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_1",
+                "from": "initial",
+                "to": "钱回来了",
+                "signal": "路遇私铸钱_完结"
+              }
+            ],
+            "exitStates": [
+              "钱回来了"
+            ],
+            "ownerId": "Zone_路遇私铸钱"
+          }
         }
       ]
     }
@@ -6671,6 +6841,21 @@
       "id": "主线_去赌坊_条件达成",
       "label": "主线·去赌坊条件达成（占位）",
       "notes": "占位接缝：最终应由「找人显摆」大任务的条件A + 撺掇关二狗那一拍发射（该处拟放第一个超自然事件，尚未设计）。当前临时挂在 序章_寻狗_癞子显摆 的收尾，只为让序章能一路走到赌场。想改时只需换发射点，t_5 不用动。"
+    },
+    {
+      "id": "路遇私铸钱_完结",
+      "label": "路遇私铸钱·那一拍演完",
+      "notes": "去赌坊路上：那一文自己滚走→怪人来过又走→回头钱在脚边。由 序章_街巷_路遇私铸钱 收尾发射，推 wrapper_序章_路遇私铸钱 到「钱回来了」。"
+    },
+    {
+      "id": "赌坊_输光",
+      "label": "赌坊·输光被赶出来",
+      "notes": "赌坊输钱过场跑完时由 序章_街巷_赌坊门卫 发射，推 街巷_赌坊 到「输光」，主图随之进 state_6（天已黑）。"
+    },
+    {
+      "id": "夜遇癞子_应下",
+      "label": "夜遇癞子·应下上山",
+      "notes": "夜里撞见癞子、当场现编「义庄还有二百五」并喊他一路（癞子死活不去）之后发射，推 wrap_癞子 到「应下」，主图进 state_7。"
     }
   ]
 }

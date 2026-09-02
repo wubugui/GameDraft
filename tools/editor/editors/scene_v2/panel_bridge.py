@@ -223,6 +223,12 @@ class PanelBridge(QObject):
 
     def _on_document_changed(self, event) -> None:
         if isinstance(event, SelectionChanged):
+            if self._committing:
+                # 本桥提交的命令改了 id 时，命令层会把选择集换成新 ref（撤销时换回来）。
+                # 这一下**不能**回灌面板：用户正在 id 框里打字，回灌会把控件重置、
+                # 光标跳走，还会掐断 `_gesture_open` —— 逐字敲的 id 就并不成一条撤销
+                # 记录。`_loaded` 由 `commit_panel_edits` 自己更新。
+                return
             self.sync_from_selection()
             return
         if isinstance(event, SceneReloaded):
@@ -402,12 +408,10 @@ class PanelBridge(QObject):
         if pushed:
             self._gesture_open = True
             if "id" in fields and fields["id"] is not _MISSING:
-                # id 改了：后续编辑要认新的那一行，否则第二次编辑定位不到
+                # id 改了：后续编辑要认新的那一行，否则第二次编辑定位不到。
+                # 选择集、画布图元、实体树由命令层自己跟随（`ChangeEntityFieldsCommand`
+                # 会把旧新两个 ref 都发出去，撤销时同样换回来）—— 桥这里不再另发一次。
                 self._loaded = EntityRef(ref.kind, str(fields["id"]))
-                # 选择也要跟着改名走，否则画布上那个实体当场"消失"
-                # （选择集里还是旧 ref，图元按新 id 重建、没人选中它），
-                # 而左侧实体树仍显示旧 id、点它选不中任何东西。
-                self._doc.rename_selection(ref, self._loaded)
         return pushed
 
     # ---- id 闸 -------------------------------------------------------------

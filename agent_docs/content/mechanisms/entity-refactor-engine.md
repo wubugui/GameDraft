@@ -72,6 +72,13 @@ NPC 缺省 true,引擎自动钉成 false)与摆位口径(热点把整幅矩形�
 - **speaker 引用通道漏扫过**:显式带 `npcId` 的说话人 kind 是 `sceneNpc` 而非裸 `npc`,
   引擎早期只认 `npc`、整条通道漏扫漏改且报 0 处引用;改动图节点 speaker 形状时同步
   `_SPEAKER_NPCID_KINDS` 与其 parity 探针。
+- **`data.npcId` 只对 `type == "npc"` 的热点算引用**:运行时先 `switch (def.type)`
+  才读它(`src/utils/hotspotInteraction.ts#hotspotOffersPlayerInteraction`),别的 type 上的
+  同名键没有任何消费者(场景编辑器 Apply 也会按 `_managed_data_keys` 清掉)。扫描侧与
+  改写侧曾各写一份判定(扫描不看 type、改写看),于是重构预览把这种残渣算进「改名会跟随
+  改写」的承诺里,而 `rename_entity` 实际不动它——**改完静默指空**,要等 `validate-data`
+  才发现。现两侧共用 `_npc_data_ref_hit` / `_visit_npc_data_refs`(同一次遍历、同一个
+  判定),parity 由 `test_scan_and_rename_agree_on_npc_data_refs` 锁死。
 
 ## 怎么验证
 

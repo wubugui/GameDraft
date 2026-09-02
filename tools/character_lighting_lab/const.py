@@ -48,3 +48,8 @@ CLAMP_INDIRECT_DEFAULT = None
 #: 0 趟 = 关。与 2D denoise 同一门风:确定性、字节可复现。
 PROBE_FILTER_ITERS = 2
 PROBE_FILTER_SIGMA_LUM = 4.0
+#: probe 查询点沿(q 空间)法线的偏移量,单位 = 网格最小格距(DDGI 的 self-shadow
+#: bias:0.75 x 格距 x B,B=0.7 实测全场净赢:漏光 梦_饭屋 3.99→3.43% / 码头 2.96→2.26%
+#: / 雾津街头 0.15→0.03%,亮度中位与 p95 同步小降,无副作用)。
+#: ⚠ 与 `CharacterShadingFilter.probeE` 里的同名字面量逐值对应,改一处必须改两处。
+PROBE_QUERY_NORMAL_BIAS = 0.525

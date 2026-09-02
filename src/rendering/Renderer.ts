@@ -1,7 +1,11 @@
 import { Application, Container, type Filter } from 'pixi.js';
 import { WorldFilterPipeline, loadFilter } from './filter';
 import { entitySortZ, type EntitySortBand } from './entitySortRule';
+import { describeError, reportDevError } from '../core/devErrorOverlay';
 import type { AssetManager } from '../core/AssetManager';
+
+/** 同一条渲染错误每复现多少帧打一次日志(它通常每帧都在,全打会把控制台冲爆) */
+const RENDER_ERROR_REPEAT_LOG_EVERY = 300;
 
 /** Pixi 类型未包含 null，运行时必须赋 null 以断开 auto-resize */
 function setAppResizeTo(app: Application, target: Window | HTMLElement | null): void {
@@ -48,11 +52,63 @@ export class Renderer {
     this.assetManager = assetManager;
   }
 
+  /**
+   * 渲染抛错不得打死主循环(审批红线「玩家输入可能永久锁死」)。
+   *
+   * Pixi 的 `Ticker._tick` 是这么写的:
+   * ```js
+   * this._requestId = null;
+   * if (this.started) {
+   *   this.update(time);                                        // ← render 在这里
+   *   if (this.started && this._requestId === null && ...)
+   *     this._requestId = requestAnimationFrame(this._tick);    // ← 抛了就永远走不到
+   * }
+   * ```
+   * 任何从 render 逃出来的异常都让"排下一帧"那行失效:`started` 仍是 true,却再没有
+   * 人申请 rAF。后果不是掉一帧,是整局死透 —— 画面定格、输入全无、在途的切场景
+   * (淡入淡出吃 ticker)永久悬住,只能刷页面。实测一次 BindGroup 自毁就够
+   * (2026-09-01,dev 模式跳场景)。
+   *
+   * 所以这里把异常按在 render 里:照旧大声报(dev 弹错误面 + 控制台),但绝不让它
+   * 逃到 ticker。丢一帧远好过丢一整局。**这是兜底,不是遮丑** —— 报出来的每一条
+   * 都仍是必须查的 bug。
+   */
+  private installRenderCrashGuard(): void {
+    const basePrototypeRender = Application.prototype.render;
+    let lastMessage = '';
+    let repeats = 0;
+    const guarded = function guardedRender(this: Application): void {
+      try {
+        basePrototypeRender.call(this);
+      } catch (e) {
+        const message = describeError(e);
+        if (message === lastMessage) {
+          // 同一条错误通常每帧都复现;折叠计数,别把控制台冲爆(也别掩盖掉它还在发生)
+          repeats++;
+          if (repeats % RENDER_ERROR_REPEAT_LOG_EVERY === 0) {
+            console.error(`[render] 渲染抛错已重复 ${repeats} 次(已拦下):${message}`, e);
+          }
+          return;
+        }
+        lastMessage = message;
+        repeats = 0;
+        console.error('[render] 渲染抛错,已拦下以免主循环停摆:', e);
+        reportDevError(`渲染抛错(已拦下,主循环继续):${message}`, '[render]');
+      }
+    };
+    (this.app as Application & { render: () => void }).render = guarded;
+  }
+
   async init(options: { resolution?: number } = {}): Promise<void> {
     const mount = document.getElementById('game-mount');
     const resolution = Number.isFinite(options.resolution) && (options.resolution ?? 0) > 0
       ? Number(options.resolution)
       : (window.devicePixelRatio || 1);
+
+    // ⚠ 必须在 app.init() **之前**装:TickerPlugin 在 init 里就把 `this.render` 的函数
+    // 引用交给 ticker 了(`ticker.add(this.render, this, LOW)`),init 之后再覆盖实例属性
+    // 就没有人看得见。
+    this.installRenderCrashGuard();
 
     await this.app.init({
       background: '#1a1a2e',

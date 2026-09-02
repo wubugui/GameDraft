@@ -5454,16 +5454,6 @@
         "disabled": true
       },
       {
-        "kind": "present",
-        "type": "showDialogue",
-        "text": "……义庄！还有二百五！",
-        "scriptedNpcId": "player",
-        "portrait": {
-          "emotion": "laugh"
-        },
-        "disabled": true
-      },
-      {
         "kind": "action",
         "type": "moveEntityTo",
         "params": {
@@ -5474,16 +5464,6 @@
           "moveAnimState": "walk",
           "arriveAnimState": "idle",
           "faceTowardMovement": true
-        },
-        "disabled": true
-      },
-      {
-        "kind": "present",
-        "type": "showDialogue",
-        "text": "妈卖批。就当白跑一趟嘛，反正就背个人。",
-        "scriptedNpcId": "player",
-        "portrait": {
-          "emotion": "smirk"
         },
         "disabled": true
       },

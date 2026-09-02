@@ -422,6 +422,68 @@ def test_rename_undo_replays_recorded_scope(model: FakeModel) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# data.npcId：扫描侧与改写侧必须同口径（不许一边看 type、一边不看）
+# --------------------------------------------------------------------------- #
+
+def test_stray_npcid_on_non_npc_hotspot_is_not_a_ref(model: FakeModel) -> None:
+    """非 npc 型热点上的 data.npcId 是残渣，不是引用。
+
+    运行时口径：`src/utils/hotspotInteraction.ts#hotspotOffersPlayerInteraction`
+    先 `switch (def.type)`，只有落到 `case 'npc'` 才读 `data.npcId`；inspect 型热点
+    上的同名键运行时没有任何消费者（场景编辑器 Apply 也会按 `_managed_data_keys`
+    把它清掉）。扫描侧若把它计进去，重构预览就是在承诺一件 rename_entity 不会做
+    的事——改完静默指空，要等 validate-data 才发现。
+    """
+    before = scan_entity_usages(model, "甲村", "npc", "npc_张三")["totalRefs"]
+    model.scenes["甲村"]["hotspots"].append(
+        {"id": "hs_残渣", "type": "inspect", "x": 0, "y": 0,
+         "data": {"text": "一块空招牌", "npcId": "npc_张三"}})
+
+    rep = scan_entity_usages(model, "甲村", "npc", "npc_张三")
+    assert rep["totalRefs"] == before
+    assert not any(h["id"] == "hs_残渣" for h in rep["sceneLocal"])
+
+    rename_entity(model, "甲村", "npc", "npc_张三", "npc_张三丰")
+    hotspots = {h["id"]: h for h in model.scenes["甲村"]["hotspots"]}
+    assert hotspots["hs_残渣"]["data"]["npcId"] == "npc_张三"     # 改写侧同样不碰
+    assert hotspots["hs_摊位"]["data"]["npcId"] == "npc_张三丰"   # npc 型照旧跟随
+
+
+@pytest.mark.parametrize("hotspot_type", ["npc", "inspect", "pickup", "encounter"])
+def test_scan_and_rename_agree_on_npc_data_refs(
+    model: FakeModel, hotspot_type: str,
+) -> None:
+    """扫描承诺本场景有几处，改名就必须真改几处——两侧同口径的结构性锁。
+
+    预览对话框上写着「改名会跟随改写」，所以 scan 报的本场景计数
+    （selfRefs + sceneLocal）必须恒等于 rename 实改的 counts["sceneLocal"]。
+    热点 type 逐档过一遍：只有 "npc" 那一档该多算出一处。
+    """
+    model.scenes["甲村"]["hotspots"].append(
+        {"id": "hs_口径", "type": hotspot_type, "x": 0, "y": 0,
+         "data": {"npcId": "npc_张三"}})
+
+    rep = scan_entity_usages(model, "甲村", "npc", "npc_张三")
+    promised = rep["selfRefs"] + sum(h["count"] for h in rep["sceneLocal"])
+    summary = rename_entity(model, "甲村", "npc", "npc_张三", "npc_张三丰")
+
+    assert summary["counts"]["sceneLocal"] == promised
+    # 基线 2 处（hs_摊位 的 data.npcId + z_门口 的 showSpeechBubble.target）
+    assert promised == (3 if hotspot_type == "npc" else 2)
+
+
+def test_delete_does_not_count_stray_npcid_as_dangling(model: FakeModel) -> None:
+    """删除路径的 danglingRefs 同源于 scan：残渣不该把无人引用的 npc 顶进 force 门。"""
+    model.scenes["甲村"]["npcs"].append({"id": "npc_乙", "x": 1, "y": 2})
+    model.scenes["甲村"]["hotspots"].append(
+        {"id": "hs_残渣", "type": "inspect", "x": 0, "y": 0,
+         "data": {"npcId": "npc_乙"}})
+
+    summary, _ops = delete_entity(model, "甲村", "npc", "npc_乙")   # 不给 force
+    assert summary["danglingRefs"] == 0
+
+
+# --------------------------------------------------------------------------- #
 # 安全删除
 # --------------------------------------------------------------------------- #
 

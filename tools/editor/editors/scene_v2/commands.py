@@ -36,6 +36,11 @@ __all__ = [
 #: `-1` 是 Qt 约定的"永不合并"。
 CMD_ID_TRANSFORM = 0x5C_E2_01
 
+#: 按 `id` 字段寻址的实体族：改了它们的 `id`，命令持的 ref 必须跟着变，否则撤销时
+#: 按旧 id 找不到人、静默什么都不做。（`scene` 的 id 是字典键、`spawn` 按名字寻址，
+#: 都不在此列。）
+_ID_ADDRESSED_KINDS = frozenset({"hotspot", "npc", "zone", "group"})
+
 
 class SceneCommand(QUndoCommand):
     """本画布全部命令的基类：持文档，并把"两个方向做同一件事"钉在结构上。
@@ -107,7 +112,10 @@ class ChangeEntityFieldsCommand(SceneCommand):
         mergeable: bool = False,
     ) -> None:
         super().__init__(document, label)
-        self._refs = tuple(refs)
+        #: 构造时的身份 —— 合并判据（来者是"对着谁"构造的）
+        self._built_refs = tuple(refs)
+        #: **当前**寻址用的身份 —— 改了 id 会跟着变，撤销 / 重做才找得到人
+        self._refs = list(refs)
         self._before = [dict(b) for b in before]
         self._after = [dict(a) for a in after]
         self._props = properties
@@ -134,7 +142,8 @@ class ChangeEntityFieldsCommand(SceneCommand):
         （写 None 会污染 JSON，黄金往返立刻红）。
         """
         touched: list[EntityRef] = []
-        for ref, vals in zip(self._refs, values):
+        for i, vals in enumerate(values):
+            ref = self._refs[i]
             target = self._doc.write_target(ref)
             if target is None:
                 continue
@@ -144,7 +153,30 @@ class ChangeEntityFieldsCommand(SceneCommand):
                 else:
                     target[key] = copy.deepcopy(value)
             touched.append(ref)
+            renamed = self._follow_identity(i, ref, target)
+            if renamed is not None:
+                touched.append(renamed)
         return tuple(touched)
+
+    def _follow_identity(self, i: int, ref: EntityRef, target: dict) -> EntityRef | None:
+        """写完之后实体若换了 id，命令与选择集都要认新身份；返回新 ref（没换返回 None）。
+
+        视图的图元账按 `kind:id` 建键，所以事件里**旧新两个 ref 都要带**：视图对旧 ref
+        `_sync_entity` 查不到 → 拆图元，对新 ref → 建图元。此前只带旧 ref：改完 id
+        画布上那个实体当场消失（数据是对的），要切页重投影才回来；撤销更糟 —— 按旧 id
+        `write_target` 拿到 None 就 `continue`，一个字节都不写、一个事件都不发。
+        """
+        if ref.kind not in _ID_ADDRESSED_KINDS:
+            return None
+        new_id = str(target.get("id", ""))
+        if not new_id or new_id == ref.id:
+            return None
+        new_ref = EntityRef(ref.kind, new_id)
+        self._refs[i] = new_ref
+        # 选择集跟着走：否则刚改完 id 的实体当场掉出选中态、面板挂在一个已经不存在的
+        # id 上。撤销时同样从这里换回来 —— 两个方向做的是同一件事。
+        self._doc.rename_selection(ref, new_ref)
+        return new_ref
 
     # ---- 合并（一次手势 = 一条撤销记录）------------------------------------
 
@@ -175,7 +207,10 @@ class ChangeEntityFieldsCommand(SceneCommand):
         # **查来者的标志位**：新手势的第一帧带 False，于是不会并进上一次手势
         if not other._mergeable:
             return False
-        if other._refs != self._refs or other._props != self._props:
+        # 来者是"对着本条**当前**身份"构造的才算同一批实体。Qt 先跑了来者的 redo，
+        # 它若改了 id，自己的 `_refs` 已经换成新身份，拿那个比永远不相等 ——
+        # 逐字敲 id 就会一键一条撤销记录。
+        if other._built_refs != tuple(self._refs) or other._props != self._props:
             return False
         # before 保持本条最早那份；after 换成最新的一帧
         merged_after: list[dict] = []
@@ -188,6 +223,9 @@ class ChangeEntityFieldsCommand(SceneCommand):
         for i in range(len(self._refs)):
             for key, old in other._before[i].items():
                 self._before[i].setdefault(key, old)
+        # 接过来者的当前身份（它的 redo 已经落地）：不接的话合并后撤销按合并前的 id
+        # 找不到人。Qt 合并完就销毁来者，所以必须在返回前拷走。
+        self._refs = list(other._refs)
         return True
 
 

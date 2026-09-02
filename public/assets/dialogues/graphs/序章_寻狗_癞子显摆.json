@@ -499,6 +499,51 @@
             "name": "旁白"
           },
           "text": "话是这么说，关二狗把那包钱又往怀头塞深了两寸。"
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "对咯——今黑了老子请你睡张铺。",
+          "portrait": {
+            "emotion": "laugh"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "……铺？"
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "有顶的那种。你莫在檐坎上蹲起咯。",
+          "portrait": {
+            "emotion": "smirk"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "……要得。"
+        },
+        {
+          "speaker": {
+            "kind": "npc"
+          },
+          "text": "在哪点等你？"
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "就这点。你莫跑。",
+          "portrait": {
+            "emotion": "laugh"
+          }
         }
       ],
       "text": "锤子哦。"

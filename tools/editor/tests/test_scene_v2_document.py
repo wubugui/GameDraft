@@ -325,5 +325,56 @@ class SceneV2DocumentTests(unittest.TestCase):
         self.assertEqual(EntityRef.parse("npc:n1"), ref)
 
 
+class IdentityFollowsTheCommandTests(SceneV2DocumentTests):
+    """改 id = 换身份：命令持的 ref 必须跟着变，事件里旧新两个 ref 都要带。
+
+    不跟的话两个方向都坏：正着改，视图只收到旧 ref（查不到 → 拆图元），新 id 没人建，
+    实体从画布上消失；撤销按旧 id `write_target` 拿到 None 就 `continue`，一个字节都不写、
+    一个事件都不发 —— Ctrl+Z 看着像坏了。
+    """
+
+    def test_changing_the_id_emits_both_refs_and_undo_finds_the_entity(self) -> None:
+        old, new = EntityRef("hotspot", "h1"), EntityRef("hotspot", "h9")
+        self.doc.set_selection([old])
+        self.rec.clear()
+        self.doc.push(build_change_fields_command(
+            self.doc, [old], [{"id": "h9"}], EntityProperty.IDENTITY, "改 id"))
+        self.assertEqual(self.rec.of(EntitiesChanged)[-1].refs, (old, new),
+                         "事件里必须同时带旧 ref（拆图元）与新 ref（建图元）")
+        self.assertEqual(self.doc.selection, (new,), "选择集没跟着新 id 走")
+        self.assertIsNone(self.doc.model_entity(old))
+        self.assertIsNotNone(self.doc.model_entity(new))
+
+        self.rec.clear()
+        self.doc.undo_stack.undo()
+        self.assertIsNotNone(self.doc.model_entity(old),
+                             "撤销按旧 id 找不到人，什么都没做")
+        self.assertIsNone(self.doc.model_entity(new))
+        self.assertEqual(self.rec.of(EntitiesChanged)[-1].refs, (new, old))
+        self.assertEqual(self.doc.selection, (old,), "撤销后选择集还指着新 id")
+
+    def test_consecutive_id_edits_merge_and_undo_in_one_step(self) -> None:
+        """第二条命令是对着第一条改出来的**新 id** 构造的，仍要并进同一条记录。"""
+        h1 = EntityRef("hotspot", "h1")
+        self.doc.push(build_change_fields_command(
+            self.doc, [h1], [{"id": "h1a"}], EntityProperty.IDENTITY, "改 id"))
+        self.doc.push(build_change_fields_command(
+            self.doc, [EntityRef("hotspot", "h1a")], [{"id": "h1ab"}],
+            EntityProperty.IDENTITY, "改 id", mergeable=True))
+        self.assertEqual(self.doc.undo_stack.count(), 1, "逐字敲 id 变成了一键一条撤销记录")
+        self.assertIsNotNone(self.doc.model_entity(EntityRef("hotspot", "h1ab")))
+        self.doc.undo_stack.undo()
+        self.assertIsNotNone(self.doc.model_entity(h1), "合并后撤销按合并前的 id 找不到人")
+        self.assertIsNone(self.doc.model_entity(EntityRef("hotspot", "h1ab")))
+
+    def test_scene_level_id_is_not_treated_as_an_identity_change(self) -> None:
+        """`scene` 的 id 是字典键，不是寻址字段 —— 不能把它当成改了实体身份。"""
+        ref = EntityRef("scene", "街")
+        self.doc.push(build_change_fields_command(
+            self.doc, [ref], [{"name": "新街"}], EntityProperty.IDENTITY, "改名"))
+        self.assertEqual(self.rec.of(EntitiesChanged)[-1].refs, (ref,))
+        self.assertIs(self.doc.model_entity(ref), self.model.scenes["街"])
+
+
 if __name__ == "__main__":
     unittest.main()

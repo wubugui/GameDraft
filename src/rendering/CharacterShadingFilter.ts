@@ -150,6 +150,8 @@ uniform vec3  uWMin;
 uniform vec3  uWScale;
 uniform vec3  uPN;               // probe 网格维度(float)
 uniform float uProbeT;           // probe 图集平铺:每行多少颗(P>8192 行时 GPU 纹理高度爆上限)
+uniform float uShK;              // 'l2' 图集每颗的球谐系数数:9(L2)/25(L4),来自 lighting.json probes.sh_k
+uniform float uBinOb;            // 八面体边长:8(64 方向)/16(256 方向),来自 lighting.json probes.bin_ob
 uniform float uFold;             // A7 摄像机侧折叠(RT 逐射线折;probe 折查询法线,见 probeQueryN)
 // ---- skyao probe(天穹遮蔽,乘在 GI 上)。sampler 由宿主声明,其余在这 ----
 uniform vec3  uSkyaoN;        // 网格 (nx,ny,nz)
@@ -162,18 +164,47 @@ uniform float uSkyaoBlend;    // 与全白 blend:0=全白(不遮蔽) 1=完整遮
 uniform vec3  uAmbSH[9];
 uniform float uMode;             // 0=RT 1=L1 2=L2 3=BIN
 uniform float uAmbStrength;      // miss 强度(J̄ 系数)
+// 实球谐基 l<=4(k=0..24),与 estimators.sh_basis 逐行同值同序(改一处必须改两处;
+// python 侧有 Gram 矩阵测试钉常数)。L4 的由来:贴壳 probe 99% 能量在下半球,
+// 朝上真值只占 0.6~1.8%,L2 在这个谷底只给 0.30(0~0.80),L4 0.79,L6 0.92。
 float shY(int k, vec3 n){
   if(k==0) return .282095;
   if(k==1) return .488603*n.y;  if(k==2) return .488603*n.z;  if(k==3) return .488603*n.x;
   if(k==4) return 1.092548*n.x*n.y; if(k==5) return 1.092548*n.y*n.z;
   if(k==6) return .315392*(3.*n.z*n.z-1.);
-  if(k==7) return 1.092548*n.x*n.z; return .546274*(n.x*n.x-n.y*n.y);
+  if(k==7) return 1.092548*n.x*n.z; if(k==8) return .546274*(n.x*n.x-n.y*n.y);
+  float x2=n.x*n.x, y2=n.y*n.y, z2=n.z*n.z;
+  if(k==9)  return .590044*n.y*(3.*x2-y2);
+  if(k==10) return 2.890611*n.x*n.y*n.z;
+  if(k==11) return .457046*n.y*(5.*z2-1.);
+  if(k==12) return .373176*n.z*(5.*z2-3.);
+  if(k==13) return .457046*n.x*(5.*z2-1.);
+  if(k==14) return 1.445306*n.z*(x2-y2);
+  if(k==15) return .590044*n.x*(x2-3.*y2);
+  if(k==16) return 2.503343*n.x*n.y*(x2-y2);
+  if(k==17) return 1.770131*n.y*n.z*(3.*x2-y2);
+  if(k==18) return .946175*n.x*n.y*(7.*z2-1.);
+  if(k==19) return .669047*n.y*n.z*(7.*z2-3.);
+  if(k==20) return .105786*(35.*z2*z2-30.*z2+3.);
+  if(k==21) return .669047*n.x*n.z*(7.*z2-3.);
+  if(k==22) return .473087*(x2-y2)*(7.*z2-1.);
+  if(k==23) return 1.770131*n.x*n.z*(x2-3.*y2);
+  return .625836*(x2*x2-6.*x2*y2+y2*y2);
 }
 vec3 ambIrr(vec3 n){
   float A[9]=float[9](3.141593,2.094395,2.094395,2.094395,.785398,.785398,.785398,.785398,.785398);
   vec3 E=vec3(0.);
   for(int k=0;k<9;k++) E+=uAmbSH[k]*A[k]*shY(k,n);
   return max(E,0.)*uAmbStrength;
+}
+// 八面体图的接缝环绕:越过边的 texel = 该边内侧沿边镜像的 texel(先 x 后 y,角落落到对角)。
+// ⚠ 缺这一步就会把边界抽头 clamp 到内部、取到球面上无关的方向:地板法线在 q 空间
+// 正好压在接缝上(n.x≈0、n.z<0),0.3° 抖动就让取值跳 1.77x(破屋平地板硬边斑驳,
+// 2026-09-02)。与 estimators.octa_wrap 同一套规则,改一处必须改两处。
+int octaIdx(ivec2 c, int ob){
+  if(c.x<0){ c.x=0; c.y=ob-1-c.y; } else if(c.x>ob-1){ c.x=ob-1; c.y=ob-1-c.y; }
+  if(c.y<0){ c.y=0; c.x=ob-1-c.x; } else if(c.y>ob-1){ c.y=ob-1; c.x=ob-1-c.x; }
+  return c.y*ob+c.x;
 }
 vec2 octaEnc(vec3 n){
   n/=(abs(n.x)+abs(n.y)+abs(n.z));
@@ -211,22 +242,50 @@ vec3 probeEvalFlat(int flat_, vec3 n){
   int mode = int(uMode + .5);
   vec3 E=vec3(0.);
   if(mode==1){
-    for(int k=0;k<4;k++) E+=texelFetch(uPL1, probeTexel(flat_,4,k),0).rgb*shY(k,n);
+    // L1 = Geomerics/Enlighten 非线性重建(Hazel;制作人 2026-09-02 定为正式档):
+    // 逐通道 R0=c0·Y00(E 的 DC),R1=½·Y1·(c_x,c_y,c_z),q=½(1+R̂1·n),r=|R1|/R0,
+    // p=1+2r,a=(1-r)/(1+r),E=R0·(a+(1-a)(p+1)q^p)。永不为负,无截负翻色。
+    // ⚠ 与 estimators.probe_eval_l1_geomerics 逐行同一公式,改一处必须改两处。
+    vec3 c0=texelFetch(uPL1, probeTexel(flat_,4,0),0).rgb;
+    vec3 c1=texelFetch(uPL1, probeTexel(flat_,4,1),0).rgb;   // y
+    vec3 c2=texelFetch(uPL1, probeTexel(flat_,4,2),0).rgb;   // z
+    vec3 c3=texelFetch(uPL1, probeTexel(flat_,4,3),0).rgb;   // x
+    for(int ch=0;ch<3;ch++){
+      float R0=max(c0[ch]*.282095, 1e-12);
+      vec3 R1=.5*.488603*vec3(c3[ch], c1[ch], c2[ch]);
+      float lenR1=length(R1)+1e-12;
+      float q=clamp(.5*(1.+dot(R1/lenR1, n)), 0., 1.);
+      float r=min(lenR1/R0, .9999);
+      float p=1.+2.*r;
+      float a=(1.-r)/(1.+r);
+      E[ch]=R0*(a+(1.-a)*(p+1.)*pow(q,p));
+    }
+    return E;
   } else if(mode==2){
-    for(int k=0;k<9;k++) E+=texelFetch(uPL2, probeTexel(flat_,9,k),0).rgb*shY(k,n);
+    // 'l2' 槽的列数 = uShK(L2=9 / L4=25),循环上限动态(GLSL ES 3.0 允许 break)
+    int K=int(uShK+.5);
+    for(int k=0;k<25;k++){ if(k>=K) break; E+=texelFetch(uPL2, probeTexel(flat_,K,k),0).rgb*shY(k,n); }
   } else {
-    vec2 ouv=octaEnc(n)*8.-.5;
-    ivec2 ob0=ivec2(clamp(floor(ouv),vec2(0.),vec2(6.)));
+    // 八面体分辨率由载荷 probes.bin_ob 决定(8=64 方向 / 16=256 方向)
+    int ob=int(uBinOb+.5), B=ob*ob;
+    vec2 ouv=octaEnc(n)*float(ob)-.5;
+    ivec2 ob0=ivec2(floor(ouv));                 // 可为 -1/ob-1,越界交给 octaIdx
     vec2 of=clamp(ouv-vec2(ob0),0.,1.);
-    ivec2 b00=probeTexel(flat_,64,ob0.y*8+ob0.x), b10=probeTexel(flat_,64,ob0.y*8+ob0.x+1);
-    ivec2 b01=probeTexel(flat_,64,(ob0.y+1)*8+ob0.x), b11=probeTexel(flat_,64,(ob0.y+1)*8+ob0.x+1);
+    ivec2 b00=probeTexel(flat_,B,octaIdx(ob0+ivec2(0,0),ob));
+    ivec2 b10=probeTexel(flat_,B,octaIdx(ob0+ivec2(1,0),ob));
+    ivec2 b01=probeTexel(flat_,B,octaIdx(ob0+ivec2(0,1),ob));
+    ivec2 b11=probeTexel(flat_,B,octaIdx(ob0+ivec2(1,1),ob));
     E=mix(mix(texelFetch(uPBin,b00,0).rgb,texelFetch(uPBin,b10,0).rgb,of.x),
           mix(texelFetch(uPBin,b01,0).rgb,texelFetch(uPBin,b11,0).rgb,of.x),of.y);
   }
   return max(E, vec3(0.));
 }
 vec3 probeE(vec3 q, vec3 n){
-  vec3 t = probeGridT(q);
+  // 查询点沿法线偏 0.525 x 最小格距(DDGI self-shadow bias 的 N 项,B=0.7):
+  // 薄面两侧 probe 混投的漏光实测降 25~80%,亮度中位/p95 同步小降。q↔世界 M 正交,
+  // 格距按 1/uWScale 现算即是 q 单位。⚠ 0.525 与 const.PROBE_QUERY_NORMAL_BIAS 同值。
+  float cellMin = min(min(1./uWScale.x, 1./uWScale.y), 1./uWScale.z);
+  vec3 t = probeGridT(q + n * (0.525 * cellMin));
   ivec3 b0=ivec3(t); vec3 f=t-vec3(b0);
   float wsum=0.;
   vec3 Esum=vec3(0.);
@@ -688,6 +747,10 @@ export interface CharShadingSceneResources {
   pn: [number, number, number];
   /** probe 图集平铺:每行多少颗(见 GLSL probeTexel;valid 图共用) */
   probeT: number;
+  /** 'l2' 图集每颗的球谐系数数(9=L2 / 25=L4),与 GLSL uShK 同义 */
+  shK: number;
+  /** 八面体边长(8 或 16),与 GLSL uBinOb 同义 */
+  binOb: number;
   ambSH: Float32Array;           // 27
   lightsQ: Float32Array;         // 48×4
   lightsE: Float32Array;         // 48×4
@@ -776,6 +839,8 @@ export class CharacterShadingFilter extends Filter implements IEntityShadingFilt
           uWScale: { value: new Float32Array(scene.wScale), type: 'vec3<f32>' },
           uPN: { value: new Float32Array(scene.pn), type: 'vec3<f32>' },
           uProbeT: { value: scene.probeT, type: 'f32' },
+          uShK: { value: scene.shK, type: 'f32' },
+          uBinOb: { value: scene.binOb, type: 'f32' },
           uAmbSH: { value: scene.ambSH, type: 'vec3<f32>', size: 9 },
           uLightQ: { value: scene.lightsQ, type: 'vec4<f32>', size: 48 },
           uLightE: { value: scene.lightsE, type: 'vec4<f32>', size: 48 },

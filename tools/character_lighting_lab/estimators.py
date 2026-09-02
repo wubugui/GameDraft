@@ -56,33 +56,80 @@ from .sampling import (cosine_hemisphere, point_keys, tangent_basis,
                        uniform_sphere, uniform_upper_hemisphere)
 from .trace import DepthField, trace
 
-__all__ = ['sh_basis', 'A_L', 'octa_bin_normals', 'sky_moments',
+__all__ = ['sh_basis', 'A_L', 'AK', 'ak_for', 'lmax_of_k', 'octa_bin_normals', 'sky_moments',
            'sky_vis_of_normal', 'cap0', 'vis_of_dir', 'bent_of_moments',
            'gather_scene_e', 'gather_probe']
 
 UP = np.array([0.0, 1.0, 0.0], np.float32)
 
-#: 卷积系数 A_l(Ramamoorthi & Hanrahan),l = 0,1,2。
-#: ⚠ 与 `CharacterShadingFilter` 的 `float A[9]` 逐值对应,改一处必须改两处。
-A_L = np.array([math.pi, 2.0 * math.pi / 3.0, math.pi / 4.0], np.float32)
+#: 卷积系数 A_l(Ramamoorthi & Hanrahan),l = 0..4:π, 2π/3, π/4, 0, -π/24。
+#: 奇数 l>=3 为 0(余弦叶的奇偶性),A_4 = -π/24 ≈ -0.1309。
+#: ⚠ 与 `CharacterShadingFilter` 的 `float A[9]`(ambIrr 只用到 l<=2)逐值对应,改一处必须改两处。
+A_L = np.array([math.pi, 2.0 * math.pi / 3.0, math.pi / 4.0, 0.0, -math.pi / 24.0], np.float32)
 _L_OF_K = np.array([0, 1, 1, 1, 2, 2, 2, 2, 2])
-AK = A_L[_L_OF_K]                                    # (9,)
+AK = A_L[_L_OF_K]                                    # (9,) —— L2 的老名字,别处还在用
 
 
-def sh_basis(dirs: np.ndarray) -> np.ndarray:
-    """实球谐基 l<=2,dirs (N,3) -> (N,9)。
+def lmax_of_k(k: int) -> int:
+    """系数个数 K=(l+1)^2 → 阶数 l。非平方数直接报错,不许猜。"""
+    l = int(round(math.sqrt(k))) - 1
+    if (l + 1) ** 2 != k or l < 0:
+        raise ValueError(f'球谐系数个数 {k} 不是 (l+1)^2')
+    return l
+
+
+def ak_for(k: int) -> np.ndarray:
+    """(K,) 每个系数对应的 A_l,支持 K=1/4/9/16/25。"""
+    l = lmax_of_k(k)
+    if l > 4:
+        raise ValueError(f'A_l 只备到 l=4,拿到 l={l}')
+    return np.array([A_L[ll] for ll in range(l + 1) for _ in range(2 * ll + 1)], np.float32)
+
+
+def sh_basis(dirs: np.ndarray, lmax: int = 2) -> np.ndarray:
+    """实球谐基 l<=lmax(2 或 4),dirs (N,3) -> (N,(lmax+1)^2)。
+
+    前 9 项(l<=2)与旧实现逐字相同;l=3/4 按标准实球谐笛卡尔表(Wikipedia
+    "Table of spherical harmonics" 实数形式,m 从 -l 到 l),常数与
+    `test_球谐基正交归一` 用 4096 方向的 Gram 矩阵钉死。
 
     ⚠ 系数与顺序必须与着色器的 `shY(int k, vec3 n)` 逐行一致 ——
     错一个顺序 = 光的方向整体拧了,画面上「有点怪」而不报任何错。
     """
     x, y, z = dirs[:, 0], dirs[:, 1], dirs[:, 2]
-    return np.stack([
+    cols = [
         np.full_like(x, 0.282095),
         0.488603 * y, 0.488603 * z, 0.488603 * x,
         1.092548 * x * y, 1.092548 * y * z,
         0.315392 * (3 * z * z - 1.0),
         1.092548 * x * z, 0.546274 * (x * x - y * y),
-    ], -1).astype(np.float32)
+    ]
+    if lmax >= 3:
+        x2, y2, z2 = x * x, y * y, z * z
+        cols += [
+            0.590044 * y * (3 * x2 - y2),          # l=3 m=-3
+            2.890611 * x * y * z,                  # m=-2
+            0.457046 * y * (5 * z2 - 1.0),         # m=-1
+            0.373176 * z * (5 * z2 - 3.0),         # m=0
+            0.457046 * x * (5 * z2 - 1.0),         # m=1
+            1.445306 * z * (x2 - y2),              # m=2
+            0.590044 * x * (x2 - 3 * y2),          # m=3
+        ]
+    if lmax >= 4:
+        cols += [
+            2.503343 * x * y * (x2 - y2),                       # l=4 m=-4
+            1.770131 * y * z * (3 * x2 - y2),                   # m=-3
+            0.946175 * x * y * (7 * z2 - 1.0),                  # m=-2
+            0.669047 * y * z * (7 * z2 - 3.0),                  # m=-1
+            0.105786 * (35 * z2 * z2 - 30 * z2 + 3.0),          # m=0
+            0.669047 * x * z * (7 * z2 - 3.0),                  # m=1
+            0.473087 * (x2 - y2) * (7 * z2 - 1.0),              # m=2
+            1.770131 * x * z * (x2 - 3 * y2),                   # m=3
+            0.625836 * (x2 * x2 - 6 * x2 * y2 + y2 * y2),       # m=4
+        ]
+    if lmax > 4 or lmax < 0:
+        raise ValueError(f'sh_basis 只备到 l=4,拿到 lmax={lmax}')
+    return np.stack(cols, -1).astype(np.float32)
 
 
 def octa_bin_normals(ob: int = 8) -> np.ndarray:
@@ -216,10 +263,37 @@ def clamp_rows(contrib: np.ndarray, clamp: float | None) -> np.ndarray:
     return contrib * fmul[:, None]
 
 
+def _fold_escaped(pts_q: np.ndarray, dirs: np.ndarray, res, field: DepthField):
+    """A7 折叠**只作用于逃逸射线**:qz 取绝对值掰回场景侧再追一次,命中就用镜像方向的
+    辐射(方向仍记原方向——"镜头背后 = 可见场景的镜像"),仍逃逸的才交给逃逸辐射。
+
+    返回 (hit, hit_yx, escaped):hit 含折叠命中,escaped 只剩真逃逸。
+    """
+    hit = ~res.escaped
+    hit_yx = res.hit_yx
+    escaped = res.escaped
+    if escaped.any():
+        e_idx = np.where(escaped)[0]
+        d2 = np.ascontiguousarray(dirs[e_idx])
+        d2[:, 2] = np.abs(d2[:, 2])
+        r2 = trace(np.ascontiguousarray(pts_q[e_idx]), d2, field)
+        h2 = ~r2.escaped
+        if h2.any():
+            hit = hit.copy()
+            hit_yx = hit_yx.copy()
+            escaped = escaped.copy()
+            rows = e_idx[h2]
+            hit[rows] = True
+            hit_yx[rows] = r2.hit_yx[h2]
+            escaped[rows] = False
+    return hit, hit_yx, escaped
+
+
 def gather_scene_e(q_pts: np.ndarray, normals_q: np.ndarray, R: np.ndarray,
                    field: DepthField, hdr: np.ndarray, escape_of,
                    spp: int, progress=None,
-                   nee_ctx=None, clamp: float | None = None) -> np.ndarray:
+                   nee_ctx=None, clamp: float | None = None,
+                   fold_escape: bool = False) -> np.ndarray:
     """逐像素 final gather。**只作为 probe 的 parity 参照,不进运行时载荷。**
 
         E(x,N) = integral L_in(x,w) * (N.w)+ dw
@@ -244,11 +318,14 @@ def gather_scene_e(q_pts: np.ndarray, normals_q: np.ndarray, R: np.ndarray,
                 'cosine_hemisphere 的 pdf != cos/pi —— E = pi*mean(L) 的特例失效,'
                 '换了采样器要改回 sum f/pdf/n 的通式')
         res = trace(q_pts, np.ascontiguousarray(dirs), field)
-        hit = ~res.escaped
+        if fold_escape:
+            hit, hit_yx, escaped = _fold_escaped(q_pts, dirs, res, field)
+        else:
+            hit, hit_yx, escaped = ~res.escaped, res.hit_yx, res.escaped
         # f_hit 与 f_esc 分账:MIS 只作用于 march 半;天空半单策略全权(分支同口径)
         Lh = np.zeros((n, 3), np.float64)
         if hit.any():
-            Lh[hit] = hdr[res.hit_yx[hit, 0], res.hit_yx[hit, 1]]
+            Lh[hit] = hdr[hit_yx[hit, 0], hit_yx[hit, 1]]
         if nee_ctx is not None and hit.any():
             from .nee import pdf_light
             hit_idx = np.where(hit)[0]
@@ -259,10 +336,10 @@ def gather_scene_e(q_pts: np.ndarray, normals_q: np.ndarray, R: np.ndarray,
                 pb = pdf[rows].astype(np.float64)
                 Lh[rows] *= (pb / np.maximum(pb + pl[nz], 1e-300))[:, None]
         Le = np.zeros((n, 3), np.float64)
-        if res.escaped.any():
+        if escaped.any():
             # 逃逸方向要给世界系的取样器(天空盒按世界方向查)
-            dw = dirs[res.escaped] @ R.T
-            Le[res.escaped] = np.asarray(escape_of(dw), np.float64)
+            dw = dirs[escaped] @ R.T
+            Le[escaped] = np.asarray(escape_of(dw), np.float64)
         acc += clamp_rows(Lh, clamp) + Le
         if nee_ctx is not None:
             # 光源样本:第二方向采样器,march 打到哪取哪(逃逸=合法零样本)。
@@ -299,8 +376,10 @@ def gather_probe(pts_q: np.ndarray, R: np.ndarray, field: DepthField,
                  bin_normals: np.ndarray | None = None,
                  progress=None,
                  nee_ctx=None, clamp: float | None = None,
-                 seed: int | None = None) -> dict:
-    """一批 probe 点的 SH-L2 / 八面体 bin 投影。
+                 seed: int | None = None, sh_k: int = 9,
+                 fold_escape: bool = False,
+                 bin_normals2: np.ndarray | None = None) -> dict:
+    """一批 probe 点的 SH(K=sh_k,9=L2 / 25=L4)/ 八面体 bin 投影。
 
     `rad_fields` = {名字: (h,w,3) 辐射图},一次 trace 同时投影多张
     (base / emit 走同一批射线,零额外成本 —— 旧实现也是一次 trace 两次取值)。
@@ -321,12 +400,22 @@ def gather_probe(pts_q: np.ndarray, R: np.ndarray, field: DepthField,
     n = len(pts_q)
     names = list(rad_fields)
     nb = octa_bin_normals() if bin_normals is None else bin_normals
+    # 第二套八面体方向(可选,如 16x16):**同一批射线**同时累计,分辨率对比才公平
+    nb2 = bin_normals2
     B = len(nb)
     keys = point_keys(pts_q) if seed is None else point_keys(pts_q, seed=seed)
-    sh = {k: np.zeros((n, 9, 3), np.float64) for k in [*names, 'esc']}
+    lmax = lmax_of_k(sh_k)
+    ak = ak_for(sh_k)
+    sh = {k: np.zeros((n, sh_k, 3), np.float64) for k in [*names, 'esc']}
     bins = {k: np.zeros((n, B, 3), np.float64) for k in [*names, 'esc']}
-    cov_sh = np.zeros((n, 9), np.float64)
+    B2 = len(nb2) if nb2 is not None else 0
+    # 第二套 bin 用 float32 累加:B2=256 时外积 (n,256,3) 是整条 gather 的带宽瓶颈,
+    # f32 减半带宽(1024 个同号项求和的相对误差 ~1e-5,远小于 MC 噪声)。
+    bins2 = ({k: np.zeros((n, B2, 3), np.float32) for k in [*names, 'esc']}
+             if nb2 is not None else None)
+    cov_sh = np.zeros((n, sh_k), np.float64)
     cov_bin = np.zeros((n, B), np.float64)
+    cov_bin2 = np.zeros((n, B2), np.float32) if nb2 is not None else None
     # base 流 DC 亮度的逐样本一阶/二阶累计 -> 均值方差(重建层的 SVGF 引导)
     dc_s1 = np.zeros(n, np.float64)
     dc_s2 = np.zeros(n, np.float64)
@@ -334,12 +423,17 @@ def gather_probe(pts_q: np.ndarray, R: np.ndarray, field: DepthField,
     for s in range(spp):
         dirs, pdf = uniform_sphere(keys, s, spp)   # q 空间(probe 的 SH 就在 q 空间)
         res = trace(pts_q, np.ascontiguousarray(dirs), field)
-        hit = ~res.escaped
+        if fold_escape:
+            hit, hit_yx, escaped = _fold_escaped(pts_q, dirs, res, field)
+        else:
+            hit, hit_yx, escaped = ~res.escaped, res.hit_yx, res.escaped
         hits += int(hit.sum())
         inv_pdf = (1.0 / pdf).astype(np.float64)              # = 4pi
-        Y = sh_basis(dirs).astype(np.float64) * inv_pdf[:, None]        # (n,9)
+        Y = sh_basis(dirs, lmax).astype(np.float64) * inv_pdf[:, None]  # (n,K)
         C = (np.maximum(dirs @ nb.T, 0.0).astype(np.float64)
              * inv_pdf[:, None])                                        # (n,B)
+        C2 = ((np.maximum(dirs @ nb2.T, 0.0) * inv_pdf[:, None].astype(np.float32))
+              if nb2 is not None else None)
         # MIS:BSDF 命中射线按光源池化密度降权(full-MIS,对每根命中射线求,
         # 不按命中像素过滤 —— 分支验尸:过滤=阴影区 +15% 漏光)。
         w_mis = np.ones(n, np.float64)
@@ -354,10 +448,12 @@ def gather_probe(pts_q: np.ndarray, R: np.ndarray, field: DepthField,
         for k in names:
             L = np.zeros((n, 3), np.float64)
             if hit.any():
-                L[hit] = rad_fields[k][res.hit_yx[hit, 0], res.hit_yx[hit, 1]]
+                L[hit] = rad_fields[k][hit_yx[hit, 0], hit_yx[hit, 1]]
             L = clamp_rows(L, clamp) * w_mis[:, None]
             sh[k] += Y[:, :, None] * L[:, None, :]
             bins[k] += C[:, :, None] * L[:, None, :]
+            if nb2 is not None:
+                bins2[k] += C2[:, :, None] * L.astype(np.float32)[:, None, :]
             if k == 'base':
                 from .nee import LUMA as _LU
                 dc_smp = Y[:, 0] * (L @ _LU.astype(np.float64))
@@ -379,61 +475,141 @@ def gather_probe(pts_q: np.ndarray, R: np.ndarray, field: DepthField,
                     pb_l = np.float64(1.0 / (4.0 * math.pi))
                     w_l = pl[rows] / (pl[rows] + pb_l)
                     fw = (w_l / pl[rows])                     # f/pdf 权
-                    Yl = sh_basis(dl[rows]).astype(np.float64)
+                    Yl = sh_basis(dl[rows], lmax).astype(np.float64)
                     Cl = np.maximum(dl[rows] @ nb.T, 0.0).astype(np.float64)
+                    Cl2 = (np.maximum(dl[rows] @ nb2.T, 0.0).astype(np.float32)
+                           if nb2 is not None else None)
                     for k in names:
                         Lk = rad_fields[k][vres.hit_yx[vis, 0],
                                            vres.hit_yx[vis, 1]].astype(np.float64)
                         Lk = clamp_rows(Lk, clamp) * fw[:, None]
                         sh[k][rows] += Yl[:, :, None] * Lk[:, None, :]
                         bins[k][rows] += Cl[:, :, None] * Lk[:, None, :]
+                        if nb2 is not None:
+                            bins2[k][rows] += Cl2[:, :, None] * Lk.astype(np.float32)[:, None, :]
                         if k == 'base':
                             from .nee import LUMA as _LU
                             dc_l = Yl[:, 0] * (Lk @ _LU.astype(np.float64))
                             dc_s1[rows] += dc_l
                             dc_s2[rows] += dc_l * dc_l
         Le = np.zeros((n, 3), np.float64)
-        if res.escaped.any():
-            dw = dirs[res.escaped] @ R.T          # q -> world,给天空盒查
-            Le[res.escaped] = np.asarray(escape_of(dw), np.float64)
+        if escaped.any():
+            dw = dirs[escaped] @ R.T              # q -> world,给天空盒查
+            Le[escaped] = np.asarray(escape_of(dw), np.float64)
         sh['esc'] += Y[:, :, None] * Le[:, None, :]
         bins['esc'] += C[:, :, None] * Le[:, None, :]
         hf = hit.astype(np.float64)
         cov_sh += Y * hf[:, None]
         cov_bin += C * hf[:, None]
+        if nb2 is not None:
+            bins2['esc'] += C2[:, :, None] * Le.astype(np.float32)[:, None, :]
+            cov_bin2 += C2 * hf[:, None].astype(np.float32)
         if progress:
             progress('probe', s + 1, spp)
     out: dict = {}
     for k in [*names, 'esc']:
         # SH 卷 A_l 成辐照度系数(与着色器 shY*coeff 的求值约定配套);
         # bins 存的直接就是余弦叶积分,不再卷。
-        out[k] = {'sh': (sh[k] / spp * AK[None, :, None]).astype(np.float32),
+        out[k] = {'sh': (sh[k] / spp * ak[None, :, None]).astype(np.float32),
                   'bins': (bins[k] / spp).astype(np.float32)}
-    out['cov'] = {'sh': (cov_sh / spp * AK[None, :]).astype(np.float32),
+        if nb2 is not None:
+            out[k]['bins2'] = (bins2[k] / spp).astype(np.float32)
+    out['cov'] = {'sh': (cov_sh / spp * ak[None, :]).astype(np.float32),
                   'bins': (cov_bin / spp / math.pi).astype(np.float32)}
+    if nb2 is not None:
+        out['cov']['bins2'] = (cov_bin2 / spp / math.pi).astype(np.float32)
     out['hit_rate'] = float(hits) / max(n * spp, 1)
     # 均值的方差(x AK0^2 与 sh 系数同尺度):Var(mean) = (E[x^2]-E[x]^2)/(spp-1)
     m1 = dc_s1 / spp
     m2 = dc_s2 / spp
     out['dc_var'] = (np.maximum(m2 - m1 * m1, 0.0) / max(spp - 1, 1)
-                     * float(AK[0]) ** 2).astype(np.float64)
+                     * float(ak[0]) ** 2).astype(np.float64)
     return out
+
+
+#: Geomerics 非线性 L1 用到的基常数(Y00 / Y1 的系数),与 sh_basis 前四项同值。
+_Y00 = 0.282095
+_Y1C = 0.488603
+
+
+def probe_eval_l1_geomerics(coeff: np.ndarray, normals: np.ndarray) -> np.ndarray:
+    """L1(4 系数,已卷 A_l)的 **Geomerics/Enlighten 非线性重建**(Hazel),逐通道:
+
+        R0 = c0·Y00(= E 的 DC),R1 = ½·Y1·(c_x, c_y, c_z)(= ½·E 的 L1 向量)
+        q = ½(1 + R̂1·n),r = |R1|/R0,p = 1+2r,a = (1−r)/(1+r)
+        E(n) = R0·(a + (1−a)(p+1)·q^p)
+
+    性质:常量环境精确给 π;单方向光 E(d)=1、E(−d)=0,平均误差 0.045(线性 L1 0.094);
+    **永不为负**,所以不存在截负翻色。代价:单叶模型,高频/强各向异性场会把能量摊平
+    (深潭绝地实测 p95 438%、漏光 20.7%,制作人 2026-09-02 拍板接受,理由是永不出暗绿)。
+    ⚠ 与着色器 `probeEvalFlat` mode 1 逐行同一公式,改一处必须改两处。
+    coeff (P,4,3),normals (P,3) 单位化;返回 (P,3)。
+    """
+    c = coeff.astype(np.float64)
+    n = normals.astype(np.float64)
+    out = np.zeros((len(n), 3), np.float64)
+    for ch in range(3):
+        R0 = np.maximum(c[:, 0, ch] * _Y00, 1e-12)
+        R1 = 0.5 * _Y1C * np.stack([c[:, 3, ch], c[:, 1, ch], c[:, 2, ch]], -1)   # (x,y,z)
+        lenR1 = np.linalg.norm(R1, axis=1) + 1e-12
+        q = np.clip(0.5 * (1.0 + np.einsum('pk,pk->p', R1 / lenR1[:, None], n)), 0.0, 1.0)
+        r = np.minimum(lenR1 / R0, 0.9999)
+        p = 1.0 + 2.0 * r
+        a = (1.0 - r) / (1.0 + r)
+        out[:, ch] = R0 * (a + (1.0 - a) * (p + 1.0) * q ** p)
+    return out.astype(np.float32)
 
 
 def probe_eval_sh(coeff: np.ndarray, normals: np.ndarray) -> np.ndarray:
     """按着色器 `probeEvalFlat` 的口径从 SH 系数重建 E。coeff (P,K,3)。
 
-    K=4 走 L1、K=9 走 L2。**parity 判据用它** —— 与运行时同一段数学,
+    K=4 走 L1 **Geomerics 非线性**(制作人 2026-09-02 定为正式档)、K=9 走 L2 线性、
+    K=25 走 L4 线性。**parity 判据用它** —— 与运行时同一段数学,
     自己另写一份就等于在验证两份代码碰巧写得一样,不是在验证 probe 对不对。
     """
     k = coeff.shape[1]
-    Y = sh_basis(normals)[:, :k]                        # (P,k)
+    if k == 4:
+        return probe_eval_l1_geomerics(coeff, normals)
+    Y = sh_basis(normals, max(2, lmax_of_k(k)))[:, :k]  # (P,k)
     return np.maximum(np.einsum('pk,pkc->pc', Y, coeff), 0.0)
 
 
+def octa_wrap(x: np.ndarray, y: np.ndarray, ob: int):
+    """八面体图的**接缝环绕**:越过某条边的 texel 等于该边内侧沿边镜像的 texel。
+
+    ⚠ 没有这一步,双线性在图边界上会被 clamp 到内部,取到球面上完全无关的方向:
+    地板法线在 q 空间恰好落在接缝上(世界"上"经 M 变换后 n.x≈0、n.z<0,折叠后
+    p=(±0.5, 1.0) 压在边上),像素间 0.32° 的法线抖动就让 n.x 翻号、采样点跳到
+    图的另一侧,单颗 probe 的取值跳 1.77x —— 破屋平地板那片硬边斑驳就是它
+    (2026-09-02 定位)。DDGI 用 1 texel 边框解决同一件事,我们直接在取样时环绕。
+    先 x 后 y:角落(两轴同时越界)经两次镜像落到对角,与八面体 -z 极点的展开一致。
+    """
+    x = np.asarray(x).copy()
+    y = np.asarray(y).copy()
+    lo = x < 0
+    hi = x > ob - 1
+    y[lo | hi] = ob - 1 - y[lo | hi]
+    x[lo] = 0
+    x[hi] = ob - 1
+    lo = y < 0
+    hi = y > ob - 1
+    x[lo | hi] = ob - 1 - x[lo | hi]
+    y[lo] = 0
+    y[hi] = ob - 1
+    return x, y
+
+
 def probe_eval_bins(coeff: np.ndarray, normals: np.ndarray,
-                    ob: int = 8) -> np.ndarray:
-    """按着色器的八面体双线性口径从 bin 系数重建 E。coeff (P,ob*ob,3)。"""
+                    ob: int | None = None) -> np.ndarray:
+    """按着色器的八面体双线性口径从 bin 系数重建 E。coeff (P,ob*ob,3)。
+
+    `ob=None` 时从系数个数反推(64→8、256→16)—— 图集列数就是分辨率的唯一真相,
+    调用方再传一个 ob 只会有机会传错。四个抽头过 `octa_wrap`(接缝环绕)。
+    """
+    if ob is None:
+        ob = int(round(math.sqrt(coeff.shape[1])))
+        if ob * ob != coeff.shape[1]:
+            raise ValueError(f'bin 系数个数 {coeff.shape[1]} 不是平方数')
     n = normals / np.maximum(np.linalg.norm(normals, axis=1, keepdims=True), 1e-9)
     a = np.abs(n).sum(1, keepdims=True)
     p = n[:, :2] / np.maximum(a, 1e-9)
@@ -441,10 +617,13 @@ def probe_eval_bins(coeff: np.ndarray, normals: np.ndarray,
     p[neg] = ((1.0 - np.abs(p[neg][:, ::-1]))
               * np.where(p[neg] >= 0, 1.0, -1.0))
     uv = (p * 0.5 + 0.5) * ob - 0.5
-    b0 = np.clip(np.floor(uv), 0, ob - 2).astype(np.int32)
+    b0 = np.floor(uv).astype(np.int32)          # 可为 -1 / ob-1,越界由 octa_wrap 环绕
     f = np.clip(uv - b0, 0.0, 1.0)
+    rows = np.arange(len(n))
+
     def tap(dx, dy):
-        return coeff[np.arange(len(n)), (b0[:, 1] + dy) * ob + (b0[:, 0] + dx)]
+        x, y = octa_wrap(b0[:, 0] + dx, b0[:, 1] + dy, ob)
+        return coeff[rows, y * ob + x]
     c = ((tap(0, 0) * (1 - f[:, :1]) + tap(1, 0) * f[:, :1]) * (1 - f[:, 1:2])
          + (tap(0, 1) * (1 - f[:, :1]) + tap(1, 1) * f[:, :1]) * f[:, 1:2])
     return np.maximum(c, 0.0)

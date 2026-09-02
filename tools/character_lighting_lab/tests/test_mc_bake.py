@@ -209,22 +209,63 @@ def test_八面体编解码与着色器口径一致():
 
 # ================================================ 逃逸辐射 / probe 分布
 
-def test_逃逸辐射缺省纯黑():
-    """制作人 2026-09-01:「默认就是黑色纯色」。"""
-    s = ESC.make_escape_sampler()
+def test_逃逸辐射缺省地板色():
+    """2026-09-02 缺省从纯黑改成 floor:场景辐射中位 x0.3、画面平均色度的常色。
+    半球反差 50x 下 L2 截断残差压过背光侧真值(深潭绝地取证),地板色是垫底。"""
+    assert ESC.DEFAULT_ESCAPE == {'mode': 'floor', 'frac': 0.3}
+    rng = np.random.default_rng(2)
+    hdr = (rng.random((40, 60, 3)) * np.array([1.0, 0.8, 0.5])).astype(np.float32)
+    s = ESC.make_escape_sampler(hdr=hdr)
     d = np.array([[0, 1, 0], [1, 0, 0]], np.float32)
-    assert np.allclose(s(d), 0.0)
-    assert hasattr(s, 'constant_rgb')          # 常色快路的标记
+    got = s(d)
+    lum = hdr.reshape(-1, 3) @ np.array([0.2126, 0.7152, 0.0722], np.float32)
+    want_l = float(np.median(lum)) * 0.3
+    assert np.allclose(got[0], got[1]) and hasattr(s, 'constant_rgb')
+    assert abs(float(got[0] @ np.array([0.2126, 0.7152, 0.0722])) - want_l) < 1e-5
+    # 色度 = 画面平均色度(偏暖),不是灰
+    assert got[0][0] > got[0][2]
+    with pytest.raises(ValueError):
+        ESC.make_escape_sampler()                  # floor 缺 hdr ⇒ 硬错,不许静默退黑
+
+
+def test_逃逸辐射floor解析后可复现且留痕():
+    """烘焙把 floor 解析成 color 写进 baked_params;校验侧按 color 复现,不重统计。"""
+    rng = np.random.default_rng(3)
+    hdr = rng.random((30, 30, 3)).astype(np.float32)
+    r = ESC.resolve_escape(None, hdr)
+    assert r['mode'] == 'color' and r['floor_frac'] == 0.3 and 'floor_median' in r
+    a = ESC.make_escape_sampler(r)(np.array([0, 1, 0], np.float32))
+    b = ESC.make_escape_sampler(hdr=hdr)(np.array([0, 1, 0], np.float32))
+    assert np.allclose(a, b)
+    assert 'floor' in ESC.describe(r)
+    # 显式黑 / 显式色不受 floor 影响,原样透传
+    assert ESC.resolve_escape({'mode': 'black'}, hdr) == {'mode': 'black'}
+    assert ESC.resolve_escape({'mode': 'color', 'color': [1, 2, 3]}, hdr)['color'] == [1, 2, 3]
+    # 全黑辐射场退化为纯黑,而不是除零
+    z = ESC.resolve_escape(None, np.zeros((8, 8, 3), np.float32))
+    assert z['mode'] == 'black'
 
 
 def test_逃逸辐射不许从画面上偷偷取值():
     """`scene_derived` 必须是**显式**选项。历史上 `estimate_sky_radiance` 拿
     `depth > p92` 的均值当天空,而室内那 8% 是后墙脚的地面(实测亮度与其余
-    毫无区别)。缺省绝不能是它。"""
-    assert ESC.DEFAULT_ESCAPE == {'mode': 'black'}
+    毫无区别)。缺省绝不能是它(floor 不挑像素、不看深度,是另一回事)。"""
+    assert ESC.DEFAULT_ESCAPE['mode'] != 'scene_derived'
     with pytest.raises(ValueError):
         ESC.make_escape_sampler({'mode': 'scene_derived'})     # 缺 hdr/depth ⇒ 硬错
     assert '慎用' in ESC.describe({'mode': 'scene_derived'})
+
+
+def test_查询法线偏移常量与着色器同值():
+    """parity 与 probeE 的偏移量必须同一个数:改一处必须改两处。"""
+    import re
+    from pathlib import Path
+    from tools.character_lighting_lab.const import PROBE_QUERY_NORMAL_BIAS
+    src = (Path(__file__).resolve().parents[3] / 'src' / 'rendering'
+           / 'CharacterShadingFilter.ts').read_text(encoding='utf-8')
+    m = re.search(r'probeGridT\(q \+ n \* \(([0-9.]+) \* cellMin\)\)', src)
+    assert m, 'probeE 里找不到法线偏移字面量'
+    assert abs(float(m.group(1)) - PROBE_QUERY_NORMAL_BIAS) < 1e-9
 
 
 def test_横纵密度必须解耦():
@@ -636,9 +677,9 @@ def test_去环_重建严格非负():
     n = dering_sh(sh)
     assert n > 100, f'delta 投影几乎全该有环纹,只窗了 {n} 颗'
     Y = sh_basis(sh_min_dirs(4096))
-    lum = sh @ np.array([0.2126, 0.7152, 0.0722], np.float32)
-    mn = (lum @ Y.T).min(1)
-    dc = np.maximum(lum[:, 0] * 0.282095, 1e-12)
+    # 逐通道判据:任一通道都不许有深负瓣(亮度非负挡不住单通道翻色)
+    mn = np.einsum('dk,pkc->pdc', Y, sh).min((1, 2))
+    dc = np.maximum(sh[:, 0, :].max(1) * 0.282095, 1e-12)
     assert (mn >= -(3 * DERING_EPS) * dc).all(), \
         f'去环后仍有深负瓣: {(mn / dc).min():.4f}'
 
@@ -674,3 +715,206 @@ def test_去环_字节级确定性():
     dering_sh(a)
     dering_sh(b)
     assert a.tobytes() == b.tobytes()
+
+
+# ---------------------------------------------------------------- 球谐 L4
+
+
+def test_球谐基正交归一():
+    """l<=4 的 25 个基在球面上正交归一:Gram 矩阵 ≈ I(常数/符号/顺序错一个都过不了)。"""
+    import numpy as np
+    from tools.character_lighting_lab.dering import sh_min_dirs
+    from tools.character_lighting_lab.estimators import sh_basis
+    d = sh_min_dirs(20000)
+    Y = sh_basis(d, 4).astype(np.float64)
+    G = Y.T @ Y * (4 * np.pi / len(d))
+    assert G.shape == (25, 25)
+    assert np.abs(G - np.eye(25)).max() < 2e-2, np.abs(G - np.eye(25)).max()
+    # 前 9 项与 L2 版逐字相同
+    assert np.array_equal(sh_basis(d, 2), Y[:, :9].astype(np.float32))
+
+
+def test_球谐L4_余弦卷积系数():
+    """A_l:π, 2π/3, π/4, 0, -π/24;各向同性辐射 L=1 在任意阶都重建出 E=π。"""
+    import numpy as np
+    from tools.character_lighting_lab.dering import sh_min_dirs
+    from tools.character_lighting_lab.estimators import A_L, ak_for, lmax_of_k, sh_basis
+    assert np.allclose(A_L, [np.pi, 2 * np.pi / 3, np.pi / 4, 0.0, -np.pi / 24])
+    assert lmax_of_k(25) == 4 and lmax_of_k(9) == 2 and ak_for(25).shape == (25,)
+    d = sh_min_dirs(20000)
+    coef = (sh_basis(d, 4).astype(np.float64).sum(0) * (4 * np.pi / len(d))) * ak_for(25)
+    n = sh_min_dirs(64)
+    E = sh_basis(n, 4).astype(np.float64) @ coef
+    assert np.abs(E - np.pi).max() < 2e-2, E
+
+
+def test_球谐L4_单方向光重建优于L2():
+    """delta 光(所有能量一根射线):L2 在背光方向溢出为正,L4 更接近 max(0,n·d)。"""
+    import numpy as np
+    from tools.character_lighting_lab.dering import sh_min_dirs
+    from tools.character_lighting_lab.estimators import ak_for, sh_basis
+    dlight = np.array([[0.0, 1.0, 0.0]], np.float32)
+    n = sh_min_dirs(512)
+    truth = np.maximum(n[:, 1], 0.0)
+    errs = {}
+    for lm in (2, 4):
+        k = (lm + 1) ** 2
+        coef = sh_basis(dlight, lm)[0].astype(np.float64) * ak_for(k)
+        E = np.maximum(sh_basis(n, lm).astype(np.float64) @ coef, 0)
+        errs[lm] = np.abs(E - truth).mean()
+    assert errs[4] < errs[2] * 0.7, errs
+
+
+def test_去环_L4_也能非负():
+    import numpy as np
+    from tools.character_lighting_lab.dering import DERING_EPS, dering_sh, sh_min_dirs
+    from tools.character_lighting_lab.estimators import sh_basis
+    rng = np.random.default_rng(23)
+    d = sh_min_dirs(300)[rng.choice(300, 64, replace=False)]
+    amp = (0.5 + rng.random(64) * 4).astype(np.float32)
+    sh = (sh_basis(d, 4)[:, :, None] * amp[:, None, None]).repeat(3, 2).astype(np.float32)
+    assert sh.shape == (64, 25, 3)
+    n = dering_sh(sh)
+    assert n > 50
+    Y = sh_basis(sh_min_dirs(4096), 4)
+    mn = np.einsum('dk,pkc->pdc', Y, sh).min((1, 2))
+    dc = np.maximum(sh[:, 0, :].max(1) * 0.282095, 1e-12)
+    assert (mn >= -(3 * DERING_EPS) * dc).all()
+
+
+# ---------------------------------------------------------------- L1 Geomerics
+
+
+def test_L1_Geomerics_常量环境给pi():
+    import numpy as np
+    from tools.character_lighting_lab.dering import sh_min_dirs
+    from tools.character_lighting_lab.estimators import ak_for, probe_eval_sh, sh_basis
+    d = sh_min_dirs(20000)
+    c = (sh_basis(d, 1)[:, :4].astype(np.float64).sum(0) * (4 * np.pi / len(d))) * ak_for(4)
+    n = sh_min_dirs(64)
+    E = probe_eval_sh(np.tile(c[None, :, None], (64, 1, 3)).astype(np.float32), n)
+    assert np.abs(E - np.pi).max() < 2e-3, (E.min(), E.max())
+
+
+def test_L1_Geomerics_单方向光():
+    """delta 光:E(d)=1、E(-d)=0、永不为负,平均误差好于线性 L1。"""
+    import numpy as np
+    from tools.character_lighting_lab.dering import sh_min_dirs
+    from tools.character_lighting_lab.estimators import (ak_for, probe_eval_l1_geomerics,
+                                                         sh_basis)
+    d0 = np.array([[0.0, 1.0, 0.0]], np.float32)
+    c = sh_basis(d0, 1)[0][:4].astype(np.float64) * ak_for(4)
+    C = lambda k: np.tile(c[None, :, None], (k, 1, 3)).astype(np.float32)
+    assert abs(float(probe_eval_l1_geomerics(C(1), d0)[0, 0]) - 1.0) < 1e-3
+    assert float(probe_eval_l1_geomerics(C(1), -d0)[0, 0]) < 1e-3
+    n = sh_min_dirs(512)
+    truth = np.maximum(n[:, 1], 0)
+    geo = probe_eval_l1_geomerics(C(512), n)[:, 0]
+    lin = np.maximum(sh_basis(n, 1)[:, :4].astype(np.float64) @ c, 0)
+    assert (geo >= 0).all()
+    assert np.abs(geo - truth).mean() < np.abs(lin - truth).mean() * 0.6
+
+
+def test_probe_eval_sh_K4走Geomerics():
+    import numpy as np
+    from tools.character_lighting_lab.estimators import probe_eval_l1_geomerics, probe_eval_sh
+    rng = np.random.default_rng(9)
+    c = rng.random((32, 4, 3)).astype(np.float32)
+    c[:, 1:] *= 0.3
+    n = rng.normal(size=(32, 3)).astype(np.float32)
+    n /= np.linalg.norm(n, axis=1, keepdims=True)
+    assert np.allclose(probe_eval_sh(c, n), probe_eval_l1_geomerics(c, n))
+
+
+# ---------------------------------------------------------------- 八面体接缝
+
+def test_八面体接缝连续():
+    """跨接缝的相邻方向不许跳:地板法线(q 空间 n.x≈0、n.z<0)恰好压在接缝上,
+    没有环绕时 0.3° 抖动就让取值跳 1.77x(破屋平地板硬边斑驳,2026-09-02)。"""
+    import numpy as np
+    from tools.character_lighting_lab.estimators import octa_bin_normals, probe_eval_bins
+    rng = np.random.default_rng(31)
+    ob = 8
+    coeff = rng.random((1, ob * ob, 3)).astype(np.float32) + 0.1   # 每个 bin 值都不同
+    # 绕 n.x=0 扫一圈:n = (sinθ, cos45, -sin45) 归一,θ 从 -2° 到 +2°
+    th = np.radians(np.linspace(-2, 2, 401))
+    n = np.stack([np.sin(th), np.full_like(th, np.cos(np.pi / 4)),
+                  np.full_like(th, -np.sin(np.pi / 4))], -1).astype(np.float32)
+    n /= np.linalg.norm(n, axis=1, keepdims=True)
+    E = probe_eval_bins(np.repeat(coeff, len(n), 0), n)[:, 0]
+    jump = np.abs(np.diff(np.log2(np.maximum(E, 1e-9)))).max()
+    assert jump < 0.05, f'接缝处仍有跳变 |Δlog2|={jump:.3f}'
+
+
+def test_八面体接缝环绕规则():
+    import numpy as np
+    from tools.character_lighting_lab.estimators import octa_wrap
+    ob = 8
+    for (x, y), want in (((-1, 3), (0, 4)), ((8, 3), (7, 4)), ((3, -1), (4, 0)),
+                         ((3, 8), (4, 7)), ((-1, -1), (7, 7)), ((2, 5), (2, 5))):
+        gx, gy = octa_wrap(np.array([x]), np.array([y]), ob)
+        assert (int(gx[0]), int(gy[0])) == want, ((x, y), (int(gx[0]), int(gy[0])), want)
+
+
+def test_八面体接缝_python与GLSL同规则():
+    import re
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[3] / 'src' / 'rendering'
+           / 'CharacterShadingFilter.ts').read_text(encoding='utf-8')
+    i = src.find('int octaIdx(ivec2 c, int ob){')
+    assert i > 0, '着色器里找不到 octaIdx'
+    body = src[i:i + 400]
+    for frag in ('c.x=0; c.y=ob-1-c.y;', 'c.x=ob-1; c.y=ob-1-c.y;',
+                 'c.y=0; c.x=ob-1-c.x;', 'c.y=ob-1; c.x=ob-1-c.x;'):
+        assert frag in body, frag
+
+
+# ---------------------------------------------------------------- 八面体档位
+
+def test_八面体档位只认8和16():
+    import numpy as np
+    import pytest as _pt
+    from tools.character_lighting_lab.estimators import octa_bin_normals, probe_eval_bins
+    for ob in (8, 16):
+        nb = octa_bin_normals(ob)
+        assert nb.shape == (ob * ob, 3)
+        # 各向同性:每个 bin 都是 π ⇒ 任意法线重建出 π(与档位无关)
+        coeff = np.full((16, ob * ob, 3), np.pi, np.float32)
+        rng = np.random.default_rng(5)
+        n = rng.normal(size=(16, 3)).astype(np.float32)
+        n /= np.linalg.norm(n, axis=1, keepdims=True)
+        assert np.abs(probe_eval_bins(coeff, n) - np.pi).max() < 1e-4
+    # 列数反推档位:64→8、256→16
+    from tools.character_lighting_lab.estimators import probe_eval_bins as ev
+    n = np.array([[0, 1, 0]], np.float32)
+    assert ev(np.full((1, 64, 3), 1.0, np.float32), n).shape == (1, 3)
+    assert ev(np.full((1, 256, 3), 1.0, np.float32), n).shape == (1, 3)
+    with _pt.raises(ValueError):
+        ev(np.full((1, 63, 3), 1.0, np.float32), n)
+
+
+def test_八面体16接缝也连续():
+    import numpy as np
+    from tools.character_lighting_lab.estimators import probe_eval_bins
+    rng = np.random.default_rng(41)
+    ob = 16
+    coeff = rng.random((1, ob * ob, 3)).astype(np.float32) + 0.1
+    th = np.radians(np.linspace(-2, 2, 401))
+    n = np.stack([np.sin(th), np.full_like(th, np.cos(np.pi / 4)),
+                  np.full_like(th, -np.sin(np.pi / 4))], -1).astype(np.float32)
+    n /= np.linalg.norm(n, axis=1, keepdims=True)
+    E = probe_eval_bins(np.repeat(coeff, len(n), 0), n)[:, 0]
+    assert np.abs(np.diff(np.log2(np.maximum(E, 1e-9)))).max() < 0.05
+
+
+def test_运行时缺省档是八面体():
+    """baker 写进 lighting.json 的 shading.mode 与运行时缺省都必须是 3(八面体)。"""
+    from pathlib import Path
+    from tools.character_lighting_lab.pipeline import DEFAULTS, SHADING_DEFAULTS
+    assert DEFAULTS['probe_bin_ob'] == 8
+    assert DEFAULTS['probe_runtime_mode'] == 3
+    assert SHADING_DEFAULTS['mode'] == 3
+    src = (Path(__file__).resolve().parents[3] / 'src' / 'core'
+           / 'CharacterLightingSystem.ts').read_text(encoding='utf-8')
+    assert 'mode: 3, spp: 64' in src, '运行时 params 缺省档不是 3'
+    assert 'if (this.params.mode < 1) this.params.mode = 3;' in src

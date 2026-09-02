@@ -424,6 +424,10 @@ export interface LitSceneStatics {
   pn: [number, number, number];
   /** probe 图集平铺:每行多少颗(与 filter 侧 probeT 同值同义) */
   probeT: number;
+  /** 'l2' 图集每颗的球谐系数数(9=L2 / 25=L4) */
+  shK: number;
+  /** 八面体边长(8 或 16) */
+  binOb: number;
   ambSH: Float32Array;
   lightsQ: Float32Array;
   lightsE: Float32Array;
@@ -467,6 +471,8 @@ export function createSceneLitUniforms(s: LitSceneStatics): UniformGroup {
     uWScale: { value: new Float32Array(s.wScale), type: 'vec3<f32>' },
     uPN: { value: new Float32Array(s.pn), type: 'vec3<f32>' },
     uProbeT: { value: s.probeT, type: 'f32' },
+    uShK: { value: s.shK, type: 'f32' },
+    uBinOb: { value: s.binOb, type: 'f32' },
     uAmbSH: { value: s.ambSH, type: 'vec3<f32>', size: 9 },
     uLightQ: { value: s.lightsQ, type: 'vec4<f32>', size: 48 },
     uLightE: { value: s.lightsE, type: 'vec4<f32>', size: 48 },
@@ -631,6 +637,24 @@ export function createLitShader(
     },
   });
 }
+
+/**
+ * 场景卸载前必须**逐个退回白图**的 sampler 槽位(见
+ * `CharacterLightingSystem.parkLitShaders`)。
+ *
+ * 为什么必须与上面 `createLitShader` 的 resources 表**同处维护**:这些槽位绑的是
+ * 按场景销毁的纹理,而 lit shader 挂在**跨场景长活**的角色(玩家)身上,不在任何
+ * unload 名单里。Pixi 的 BindGroup 见到所绑资源 `destroyed` 会当场把自己作废
+ * (`resources = null`),此后这个 shader 每次被渲染都抛 —— 而异常从 `Ticker._tick`
+ * 逃出去就再也不排下一帧,整局定格(2026-09-01:`uSkyaoTex` 接线时漏进这张表,
+ * dev 模式跳场景必卡死)。
+ *
+ * ⚠ 新增场景纹理槽位 = 同时加进这张表。`uColorTex` 故意不在表内 —— 那是角色自己的
+ * 图集,不随场景销毁,退成白图只会把角色刷白。
+ */
+export const LIT_SHADER_SCENE_TEXTURE_SLOTS = [
+  'uPL1', 'uPL2', 'uPBin', 'uValid', 'uVolRad', 'uVolEmit', 'uGround', 'uNrm', 'uSkyaoTex',
+] as const;
 
 /** 换法线/图集源(图集热替换、体素卷加载时用);同源短路。 */
 export function setLitShaderTexture(sh: Shader, key: string, src: TextureSource | null): void {

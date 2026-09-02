@@ -288,6 +288,74 @@ class SelectionDrivesThePanelTests(_Base):
                          self.ent("hotspot", "h1"))
 
 
+class IdChangeFollowsTheLedgerTests(_Base):
+    """改 id = 换身份。图元账按 `kind:id` 建键，命令必须把**旧新两个 ref** 都发出去。
+
+    此前只发旧 ref：视图对它查不到就拆图元，新 id 没人建 —— 在面板里改完 id，
+    画布上那个实体当场消失（数据是对的），要切页重投影才回来；撤销更糟，按旧 id
+    找不到人，一个字节都不写。
+    """
+
+    def _tree_refs(self) -> set[tuple[str, str]]:
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QTreeWidgetItemIterator
+        out: set[tuple[str, str]] = set()
+        it = QTreeWidgetItemIterator(self.page._tree)
+        while it.value():
+            data = it.value().data(0, Qt.ItemDataRole.UserRole)
+            if data is not None:
+                out.add(tuple(data))
+            it += 1
+        return out
+
+    def _ids(self) -> list[str]:
+        return [h["id"] for h in self.model.scenes[_SCENE]["hotspots"]]
+
+    def _type_id(self, text: str) -> None:
+        """老面板的 id 框：`textChanged` → `changed` → 桥提交。与用户敲键同一条路。"""
+        self.page._props._hs_id.setText(text)
+
+    def test_renaming_moves_the_canvas_item_to_the_new_id(self) -> None:
+        old, new = EntityRef("hotspot", "h1"), EntityRef("hotspot", "h1_new")
+        self.page.document.set_selection([old])
+        self._type_id("h1_new")
+        self.assertEqual(self._ids(), ["h1_new", "h2"])
+        self.assertEqual(self.page.view.items_of(old), [], "旧 id 的图元还留在画布上")
+        item = self.page.view.item_for(new, "handle")
+        self.assertIsNotNone(item, "新 id 的图元没建出来 —— 改完 id 实体从画布上消失")
+        self.assertTrue(item._selected, "新图元没带上选中态")
+        self.assertEqual(self.page.document.selection, (new,))
+        self.assertIn(("hotspot", "h1_new"), self._tree_refs(), "实体树没跟上新 id")
+        self.assertNotIn(("hotspot", "h1"), self._tree_refs(), "实体树还列着旧 id")
+
+    def test_undo_of_a_rename_restores_id_item_and_selection(self) -> None:
+        old, new = EntityRef("hotspot", "h1"), EntityRef("hotspot", "h1_new")
+        self.page.document.set_selection([old])
+        self._type_id("h1_new")
+        self.page.editor_undo()
+        self.assertEqual(self._ids(), ["h1", "h2"], "撤销改 id 什么都没做（按旧 id 找不到人）")
+        self.assertEqual(self.page.view.items_of(new), [])
+        self.assertIsNotNone(self.page.view.item_for(old, "handle"))
+        self.assertEqual(self.page.document.selection, (old,), "撤销后选择集还指着新 id")
+        self.assertIn(("hotspot", "h1"), self._tree_refs())
+        self.page.editor_redo()
+        self.assertEqual(self._ids(), ["h1_new", "h2"])
+        self.assertIsNotNone(self.page.view.item_for(new, "handle"))
+
+    def test_typing_an_id_is_one_undo_step(self) -> None:
+        """逐字敲 id 要并成一条撤销记录 —— 每一键的命令是对着上一键的新 id 构造的。"""
+        self.page.document.set_selection([EntityRef("hotspot", "h1")])
+        for text in ("h1_a", "h1_ab", "h1_abc"):
+            self._type_id(text)
+        self.assertEqual(self._ids(), ["h1_abc", "h2"])
+        self.assertEqual(self.page.document.undo_stack.count(), 1,
+                         "逐字敲 id 变成了一键一条撤销记录")
+        self.page.editor_undo()
+        self.assertEqual(self._ids(), ["h1", "h2"])
+        self.assertIsNotNone(self.page.view.item_for(EntityRef("hotspot", "h1"), "handle"))
+        self.assertEqual(self.page.view.items_of(EntityRef("hotspot", "h1_abc")), [])
+
+
 class NoStagingLayerMeansNoCommitPatchesTests(_Base):
     """没有第二层真相，那三条补丁就没有存在的理由。"""
 

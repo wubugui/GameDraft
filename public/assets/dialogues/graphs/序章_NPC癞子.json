@@ -3,7 +3,7 @@
   "id": "序章_NPC癞子",
   "entry": "n_1",
   "meta": {
-    "title": "癞子·常规搭话（按 wrap_癞子 状态分流；捡钱＝显摆前，initial＝显摆后）"
+    "title": "癞子·常规搭话（按 wrap_癞子 状态分流；捡钱＝显摆前，initial＝显摆后，夜等＝夜里等那张铺，应下＝他已经上山去了）"
   },
   "nodes": {
     "n_1": {
@@ -15,6 +15,14 @@
         },
         {
           "state": "initial",
+          "next": "k_after"
+        },
+        {
+          "state": "夜等",
+          "next": "k_night"
+        },
+        {
+          "state": "应下",
           "next": "k_after"
         }
       ],
@@ -48,6 +56,14 @@
     },
     "k_end": {
       "type": "end"
+    },
+    "k_night": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "二哥，我在这点等到起的。",
+      "next": "k_end"
     }
   }
 }

@@ -2399,7 +2399,7 @@ export class Game {
           if (r) {
             this.sceneLighting.setProbeResources({
               atlasL1: r.atlasL1, atlasL2: r.atlasL2, atlasBin: r.atlasBin, valid: r.valid,
-              mCol: r.mCol, wMin: r.wMin, wScale: r.wScale, pn: r.pn, probeT: r.probeT, ambSH: r.ambSH,
+              mCol: r.mCol, wMin: r.wMin, wScale: r.wScale, pn: r.pn, probeT: r.probeT, shK: r.shK, binOb: r.binOb, ambSH: r.ambSH,
               skyao: r.skyao ?? null,
               mode: cl.params.mode, ambStrength: cl.params.ambStrength, beta: cl.params.beta, fold: cl.params.fold ? 1 : 0,
             });
@@ -2459,7 +2459,7 @@ export class Game {
             if (r) {
               this.sceneLighting.setProbeResources({
                 atlasL1: r.atlasL1, atlasL2: r.atlasL2, atlasBin: r.atlasBin, valid: r.valid,
-                mCol: r.mCol, wMin: r.wMin, wScale: r.wScale, pn: r.pn, probeT: r.probeT, ambSH: r.ambSH,
+                mCol: r.mCol, wMin: r.wMin, wScale: r.wScale, pn: r.pn, probeT: r.probeT, shK: r.shK, binOb: r.binOb, ambSH: r.ambSH,
                 skyao: r.skyao ?? null,
               mode: cl.params.mode, ambStrength: cl.params.ambStrength, beta: cl.params.beta, fold: cl.params.fold ? 1 : 0,
               });
@@ -4344,6 +4344,18 @@ export class Game {
    *
    * 影子形状只能是**剪影**（角色 mask 经光向剪切，脚边钉住、头边偏移）——
    * 角色本身是一个片，deferred 逐像素与重建面求交会把形状啃烂，这条是用户红线。
+   *
+   * ## 接触斑与灯无关（制作人 2026-09-02 定死）
+   *
+   * 脚底接触斑是"角色坐进地面"的常驻效果，强度只认 `env.shadow.contact`
+   * （场景 / 全局 lightEnv，缺省 0.5），**不看有没有绑灯、绑的灯多远多亮**。
+   * 它永远由主 planar 实例（`entry.shadow`）画；绑定只接管**投影剪影**（extra 槽），
+   * extra 槽的接触斑恒 0。
+   *
+   * 2026-08-22 手动绑灯改版曾把它耦合成「绑定灯照度份额 × 0.5」：配了绑定的实体
+   * 主实例整个熄灭（含接触斑），接触斑改由绑定解算给。后果是玩家离绑定灯超过
+   * 灯的射程就整颗消失（雾津街头 lamp_2 射程 200 wu，出生点 1332 wu 外，份额 1e-21），
+   * 而且画面上只表现为"脚下没东西"，没有任何报错。
    */
   private driveEntryShadows(
     entry: EntityShadowEntry,
@@ -4369,8 +4381,11 @@ export class Game {
       return;
     }
 
-    // 配了绑定：手调单影熄灭，逐条 planar 剪影接管
-    entry.shadow.update(entry.src, offSlot(bindings.length), field);
+    // 配了绑定：手调单影只熄灭**投影**（darkness=0），接触斑照旧由它按 env 常驻画；
+    // 逐条 planar 剪影由 extra 槽接管。
+    const mainEnv = this.getSlotEnv(entry, bindings.length, env);
+    mainEnv.shadow.darkness = 0;
+    entry.shadow.update(entry.src, mainEnv, field);
 
     const ctx = this.shadowBindingContext(entry);
     entry.extra ??= [];
@@ -4391,8 +4406,8 @@ export class Game {
       se.shadow.darkness = Math.min(1, style.gain * sol.darkness);
       se.shadow.length = sol.length;
       se.shadow.softness = sol.softness;
-      // 接触斑只给第一条：多条都画会在脚下糊成一团
-      se.shadow.contact = i === 0 ? Math.min(1, style.gain * sol.contact) : 0;
+      // 接触斑不归绑定管：主实例已按 env.shadow.contact 画了，这里恒 0（否则脚下糊成一团）
+      se.shadow.contact = 0;
       impl.setShadowColor?.(style.color);
       // field 会覆盖 key 方向，绑定解出来的方向必须传 null 才不被冲掉
       impl.update(entry.src, se, null, { spread: sol.spread, widthScale: sol.widthScale });

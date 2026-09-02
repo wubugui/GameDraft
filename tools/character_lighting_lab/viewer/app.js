@@ -87,11 +87,29 @@ const COMMON = `
 vec3 srgb2lin(vec3 c){ return mix(c/12.92, pow((c+.055)/1.055, vec3(2.4)), step(.04045,c)); }
 vec3 lin2srgb(vec3 c){ c=max(c,0.); return mix(c*12.92, 1.055*pow(c,vec3(1./2.4))-.055, step(.0031308,c)); }
 float shY(int k, vec3 n){
+  // 实球谐 l<=4(k=0..24),与 estimators.sh_basis / 运行时 CharacterShadingFilter.shY 逐行同值同序
   if(k==0) return .282095;
   if(k==1) return .488603*n.y;  if(k==2) return .488603*n.z;  if(k==3) return .488603*n.x;
   if(k==4) return 1.092548*n.x*n.y; if(k==5) return 1.092548*n.y*n.z;
   if(k==6) return .315392*(3.*n.z*n.z-1.);
-  if(k==7) return 1.092548*n.x*n.z; return .546274*(n.x*n.x-n.y*n.y);
+  if(k==7) return 1.092548*n.x*n.z; if(k==8) return .546274*(n.x*n.x-n.y*n.y);
+  float x2=n.x*n.x, y2=n.y*n.y, z2=n.z*n.z;
+  if(k==9)  return .590044*n.y*(3.*x2-y2);
+  if(k==10) return 2.890611*n.x*n.y*n.z;
+  if(k==11) return .457046*n.y*(5.*z2-1.);
+  if(k==12) return .373176*n.z*(5.*z2-3.);
+  if(k==13) return .457046*n.x*(5.*z2-1.);
+  if(k==14) return 1.445306*n.z*(x2-y2);
+  if(k==15) return .590044*n.x*(x2-3.*y2);
+  if(k==16) return 2.503343*n.x*n.y*(x2-y2);
+  if(k==17) return 1.770131*n.y*n.z*(3.*x2-y2);
+  if(k==18) return .946175*n.x*n.y*(7.*z2-1.);
+  if(k==19) return .669047*n.y*n.z*(7.*z2-3.);
+  if(k==20) return .105786*(35.*z2*z2-30.*z2+3.);
+  if(k==21) return .669047*n.x*n.z*(7.*z2-3.);
+  if(k==22) return .473087*(x2-y2)*(7.*z2-1.);
+  if(k==23) return 1.770131*n.x*n.z*(x2-3.*y2);
+  return .625836*(x2*x2-6.*x2*y2+y2*y2);
 }
 ` + '\n' + (window.CHAR_SHADE_CORE || '\n// [warn] CHAR_SHADE_CORE 未载入(旧 index.html 被缓存?硬刷新页面)\n');
 if(!window.CHAR_SHADE_CORE) console.error('[viewer] 缺角色着色核心 CHAR_SHADE_CORE：请硬刷新(/api/char_shade_core.js 未随 index.html 载入)');
@@ -288,27 +306,50 @@ vec2 octaEnc(vec3 n){
   if(n.z<0.) p=(1.-abs(n.yx))*vec2(n.x>=0.?1.:-1., n.y>=0.?1.:-1.);
   return p*.5+.5;
 }
+uniform float uShK;
+uniform float uBinOb;
 vec3 fetchCoeff(sampler2D tex,int p,int k){ return texelFetch(tex, ivec2(k,p),0).rgb; }
 // 单颗 probe 的四分账解码(基函数由 uMode 决定)。八角插值与「只看一颗」共用同一份解码。
+// 八面体接缝环绕 —— 与 estimators.octa_wrap / 运行时 octaIdx 同一套规则。
+int octaIdx(ivec2 c, int ob){
+  if(c.x<0){ c.x=0; c.y=ob-1-c.y; } else if(c.x>ob-1){ c.x=ob-1; c.y=ob-1-c.y; }
+  if(c.y<0){ c.y=0; c.x=ob-1-c.x; } else if(c.y>ob-1){ c.y=ob-1; c.x=ob-1-c.x; }
+  return c.y*ob+c.x;
+}
 void probeFetch(int flat_, vec3 n, ivec2 ob0, vec2 of,
                 out vec3 E, out vec3 Ea, out vec3 Ee, out vec3 En, out float cov){
     E=vec3(0.); Ea=vec3(0.); Ee=vec3(0.); En=vec3(0.); cov=0.;
     if(uMode==1){
+      // L1 = Geomerics 非线性(与运行时 CharacterShadingFilter mode 1 / estimators.probe_eval_l1_geomerics 同式):
+      // 四分账先在系数域合成 c = base + (NEE?nee:emit) + amb*uAmb,再逐通道非线性求值;Ea/Ee/En 已并入 E。
+      vec3 c0,c1,c2,c3;
       for(int k=0;k<4;k++){ vec4 q4=texelFetch(uPL1, ivec2(k,flat_),0);
-        float y=shY(k,n); E+=q4.rgb*y; cov+=q4.a*y;
-        Ea+=texelFetch(uPL1, ivec2(4+k,flat_),0).rgb*y;
-        Ee+=texelFetch(uPL1, ivec2(8+k,flat_),0).rgb*y;
-        En+=texelFetch(uPL1, ivec2(12+k,flat_),0).rgb*y; }
+        vec3 ck=q4.rgb+(uNEE==1?texelFetch(uPL1, ivec2(12+k,flat_),0).rgb:texelFetch(uPL1, ivec2(8+k,flat_),0).rgb)
+                +texelFetch(uPL1, ivec2(4+k,flat_),0).rgb*uAmb;
+        cov+=q4.a*shY(k,n);
+        if(k==0) c0=ck; else if(k==1) c1=ck; else if(k==2) c2=ck; else c3=ck; }
+      for(int ch=0;ch<3;ch++){
+        float R0=max(c0[ch]*.282095, 1e-12);
+        vec3 R1=.5*.488603*vec3(c3[ch], c1[ch], c2[ch]);
+        float lenR1=length(R1)+1e-12;
+        float q=clamp(.5*(1.+dot(R1/lenR1, n)), 0., 1.);
+        float r=min(lenR1/R0, .9999);
+        float p=1.+2.*r;
+        float a=(1.-r)/(1.+r);
+        E[ch]=R0*(a+(1.-a)*(p+1.)*pow(q,p));
+      }
     } else if(uMode==2){
-      for(int k=0;k<9;k++){ vec4 q4=texelFetch(uPL2, ivec2(k,flat_),0);
+      int K=int(uShK+.5);                 // 'l2' 槽列数:9(L2)/25(L4),列块 [base|amb|emit|nee] 各 K 列
+      for(int k=0;k<25;k++){ if(k>=K) break; vec4 q4=texelFetch(uPL2, ivec2(k,flat_),0);
         float y=shY(k,n); E+=q4.rgb*y; cov+=q4.a*y;
-        Ea+=texelFetch(uPL2, ivec2(9+k,flat_),0).rgb*y;
-        Ee+=texelFetch(uPL2, ivec2(18+k,flat_),0).rgb*y;
-        En+=texelFetch(uPL2, ivec2(27+k,flat_),0).rgb*y; }
+        Ea+=texelFetch(uPL2, ivec2(K+k,flat_),0).rgb*y;
+        Ee+=texelFetch(uPL2, ivec2(2*K+k,flat_),0).rgb*y;
+        En+=texelFetch(uPL2, ivec2(3*K+k,flat_),0).rgb*y; }
     } else {
-      ivec2 b00=ivec2(ob0.y*8+ob0.x,flat_), b10=ivec2(ob0.y*8+ob0.x+1,flat_);
-      ivec2 b01=ivec2((ob0.y+1)*8+ob0.x,flat_), b11=ivec2((ob0.y+1)*8+ob0.x+1,flat_);
-      ivec2 oA=ivec2(64,0), oE=ivec2(128,0), oN=ivec2(192,0);
+      int ob=int(uBinOb+.5), B=ob*ob;
+      ivec2 b00=ivec2(octaIdx(ob0+ivec2(0,0),ob),flat_), b10=ivec2(octaIdx(ob0+ivec2(1,0),ob),flat_);
+      ivec2 b01=ivec2(octaIdx(ob0+ivec2(0,1),ob),flat_), b11=ivec2(octaIdx(ob0+ivec2(1,1),ob),flat_);
+      ivec2 oA=ivec2(B,0), oE=ivec2(2*B,0), oN=ivec2(3*B,0);
       vec4 q4=mix(mix(texelFetch(uPBin,b00,0),texelFetch(uPBin,b10,0),of.x),
                   mix(texelFetch(uPBin,b01,0),texelFetch(uPBin,b11,0),of.x),of.y);
       E=q4.rgb; cov=q4.a*3.14159265;   // bins store cov/pi
@@ -330,8 +371,8 @@ vec3 probeCompose(vec3 Ebase, vec3 Eamb, vec3 Eemit, vec3 Enee, float cov01){
 vec3 probeE(vec3 q, vec3 n){
   vec2 ouv; ivec2 ob0=ivec2(0); vec2 of=vec2(0.);
   if(uMode==3){
-    ouv=octaEnc(n)*8.-.5;
-    ob0=ivec2(clamp(floor(ouv),vec2(0.),vec2(6.)));
+    ouv=octaEnc(n)*uBinOb-.5;
+    ob0=ivec2(floor(ouv));            // 越界抽头交给 octaIdx 环绕
     of=clamp(ouv-vec2(ob0),0.,1.);
   }
   vec3 E,Ea,Ee,En; float cov;
@@ -1040,8 +1081,10 @@ async function loadScene(man){
     return tex2D(out,W,Pn,gl.RGBA16F,gl.RGBA,gl.HALF_FLOAT);
   }
   S.tex.l1=atlas4(l1,l1a,l1e,l1n,4);
-  S.tex.l2=atlas4(l2,l2a,l2e,l2n,9);
-  S.tex.bins=atlas4(bins,binsa,binse,binsn,64);
+  S.shK=(man.probes&&man.probes.sh_k)||9;
+  S.binOb=(man.probes&&man.probes.bin_ob)||8;   // 八面体边长(8/16)      // 'l2' 槽列数(L2=9 / L4=25),老工作台没记就是 9
+  S.tex.l2=atlas4(l2,l2a,l2e,l2n,S.shK);
+  S.tex.bins=atlas4(bins,binsa,binse,binsn,S.binOb*S.binOb);
   // emit volume (3D)
   const tE=gl.createTexture();
   gl.bindTexture(gl.TEXTURE_3D,tE);
@@ -1252,12 +1295,35 @@ const PB={ irrW:160, irrH:80, rayW:128, rayH:64,
 
 // —— 与 GLSL 同式的小工具(面板和着色器必须读同一份数字,不许各写一套) ——
 function shYJ(k,n){
+  const x=n[0], y=n[1], z=n[2];
   if(k===0) return .282095;
-  if(k===1) return .488603*n[1]; if(k===2) return .488603*n[2]; if(k===3) return .488603*n[0];
-  if(k===4) return 1.092548*n[0]*n[1]; if(k===5) return 1.092548*n[1]*n[2];
-  if(k===6) return .315392*(3*n[2]*n[2]-1);
-  if(k===7) return 1.092548*n[0]*n[2];
-  return .546274*(n[0]*n[0]-n[1]*n[1]);
+  if(k===1) return .488603*y; if(k===2) return .488603*z; if(k===3) return .488603*x;
+  if(k===4) return 1.092548*x*y; if(k===5) return 1.092548*y*z;
+  if(k===6) return .315392*(3*z*z-1);
+  if(k===7) return 1.092548*x*z; if(k===8) return .546274*(x*x-y*y);
+  const x2=x*x, y2=y*y, z2=z*z;
+  if(k===9)  return .590044*y*(3*x2-y2);
+  if(k===10) return 2.890611*x*y*z;
+  if(k===11) return .457046*y*(5*z2-1);
+  if(k===12) return .373176*z*(5*z2-3);
+  if(k===13) return .457046*x*(5*z2-1);
+  if(k===14) return 1.445306*z*(x2-y2);
+  if(k===15) return .590044*x*(x2-3*y2);
+  if(k===16) return 2.503343*x*y*(x2-y2);
+  if(k===17) return 1.770131*y*z*(3*x2-y2);
+  if(k===18) return .946175*x*y*(7*z2-1);
+  if(k===19) return .669047*y*z*(7*z2-3);
+  if(k===20) return .105786*(35*z2*z2-30*z2+3);
+  if(k===21) return .669047*x*z*(7*z2-3);
+  if(k===22) return .473087*(x2-y2)*(7*z2-1);
+  if(k===23) return 1.770131*x*z*(x2-3*y2);
+  return .625836*(x2*x2-6*x2*y2+y2*y2);
+}
+/** 八面体接缝环绕(与 GLSL octaIdx / python octa_wrap 同规则)。 */
+function octaIdxJ(x,y,ob){
+  if(x<0){ x=0; y=ob-1-y; } else if(x>ob-1){ x=ob-1; y=ob-1-y; }
+  if(y<0){ y=0; x=ob-1-x; } else if(y>ob-1){ y=ob-1; x=ob-1-x; }
+  return y*ob+x;
 }
 function octaEncJ(n){
   const s=Math.abs(n[0])+Math.abs(n[1])+Math.abs(n[2])||1;
@@ -1299,7 +1365,7 @@ function ambRadJ(d){
 function probeBasisArrays(i,basis){
   const key=i+'|'+basis;
   if(PB.arraysKey===key) return PB.arrays;
-  const D=S.probe, K=basis===1?4:basis===2?9:64;
+  const D=S.probe, K=basis===1?4:basis===2?(S.shK||9):(S.binOb||8)*(S.binOb||8);
   const M=basis===1?D.l1:basis===2?D.l2:D.bins;
   const Am=basis===1?D.l1a:basis===2?D.l2a:D.binsa;
   const Em=basis===1?D.l1e:basis===2?D.l2e:D.binse;
@@ -1327,12 +1393,27 @@ function probeEvalDir(A,n){
     cov+=A.m[k*4+3]*w;
   };
   if(A.basis===3){                        // BIN:八面体双线性,与着色器同一套取样
-    const uv=octaEncJ(n), ou=uv[0]*8-.5, ov=uv[1]*8-.5;
-    const x0=Math.max(0,Math.min(6,Math.floor(ou))), y0=Math.max(0,Math.min(6,Math.floor(ov)));
+    const ob=S.binOb||8;
+    const uv=octaEncJ(n), ou=uv[0]*ob-.5, ov=uv[1]*ob-.5;
+    const x0=Math.floor(ou), y0=Math.floor(ov);       // 越界交给 octaIdxJ 环绕
     const fx=Math.max(0,Math.min(1,ou-x0)), fy=Math.max(0,Math.min(1,ov-y0));
-    acc(y0*8+x0,(1-fx)*(1-fy)); acc(y0*8+x0+1,fx*(1-fy));
-    acc((y0+1)*8+x0,(1-fx)*fy); acc((y0+1)*8+x0+1,fx*fy);
+    acc(octaIdxJ(x0,y0,ob),(1-fx)*(1-fy)); acc(octaIdxJ(x0+1,y0,ob),fx*(1-fy));
+    acc(octaIdxJ(x0,y0+1,ob),(1-fx)*fy); acc(octaIdxJ(x0+1,y0+1,ob),fx*fy);
     cov*=Math.PI;                         // bins 存的是 cov/π
+  }else if(A.basis===1){                 // L1 = Geomerics 非线性(与着色器 mode 1 同式)
+    const out1=[0,0,0];
+    for(let k=0;k<4;k++) cov+=A.m[k*4+3]*shYJ(k,n);
+    for(let c=0;c<3;c++){
+      const ck=k=>A.m[k*4+c]+(S.nee?A.n[k*3+c]:A.e[k*3+c])+A.a[k*3+c]*S.amb;   // 系数域合成
+      const R0=Math.max(ck(0)*.282095,1e-12);
+      const R1=[.5*.488603*ck(3), .5*.488603*ck(1), .5*.488603*ck(2)];
+      const len=Math.hypot(R1[0],R1[1],R1[2])+1e-12;
+      const q=Math.max(0,Math.min(1,.5*(1+(R1[0]*n[0]+R1[1]*n[1]+R1[2]*n[2])/len)));
+      const r=Math.min(len/R0,.9999), p=1+2*r, a=(1-r)/(1+r);
+      out1[c]=R0*(a+(1-a)*(p+1)*Math.pow(q,p));
+    }
+    const cov01b=Math.max(0,Math.min(1,cov/Math.PI));
+    return (S.missMode===1) ? out1.map(v=>v/Math.max(cov01b,.06)) : out1;
   }else{
     for(let k=0;k<A.K;k++) acc(k,shYJ(k,n));
   }
@@ -1350,8 +1431,9 @@ function probeEvalDir(A,n){
 function recomputeProbeDC(){
   const D=S.probe; if(!D||!S.probeDC) return;
   const Y0=.282095, iPI=1/Math.PI, out=S.probeDC;
+  const KS=S.shK||9;                       // 'l2' 槽每颗 K 系数(L2=9 / L4=25)
   for(let i=0;i<D.Pn;i++){
-    const o=i*36, o3=i*27;
+    const o=i*KS*4, o3=i*KS*3;
     const cov01=Math.max(0,Math.min(1,f16(D.l2[o+3])*Y0/Math.PI));
     for(let c=0;c<3;c++){
       const b=Math.max(f16(D.l2[o+c])*Y0,0), a=Math.max(f16(D.l2a[o3+c])*Y0,0),
@@ -1607,10 +1689,10 @@ function renderProbePanel(){
   const wpos=[D.pos[i*3],D.pos[i*3+1],D.pos[i*3+2]];
   const snap=Math.hypot(wpos[0]-gpos[0],wpos[1]-gpos[1],wpos[2]-gpos[2]);
   const C=S.probeDC, dc=[C[i*4],C[i*4+1],C[i*4+2]], dcL=lumaJ(dc);
-  const o3=i*27, Y0=.282095;
+  const KS=S.shK||9, o3=i*KS*3, Y0=.282095;
   const acc=(buf,off)=>lumaJ([0,1,2].map(c=>Math.max(f16(buf[off+c])*Y0,0)))*iPI;
-  const covDC=Math.max(0,Math.min(1,f16(D.l2[i*36+3])*Y0*iPI));   // cov 的 DC = 命中立体角占比
-  const bn=['—','L1(4)','L2(9)','BIN(8×8)'][basis];
+  const covDC=Math.max(0,Math.min(1,f16(D.l2[i*KS*4+3])*Y0*iPI));   // cov 的 DC = 命中立体角占比
+  const bn=['—','L1(4)',`SH(${KS}${KS===25?',L4':',L2'})`,`BIN(${S.binOb||8}×${S.binOb||8})`][basis];
   $('pb_title').textContent=`#${i}`;
   $('pb_info').textContent=
     `格点(${gi},${gj},${gk})  ${D.valid[i]>2?'有效':'⚠无效(不参与插值)'}`+
@@ -1618,7 +1700,7 @@ function renderProbePanel(){
     `world(${wpos[0].toFixed(2)}, ${wpos[1].toFixed(2)}, ${wpos[2].toFixed(2)})   基=${bn}\n`+
     `E/π 平均 ${dcL.toExponential(2)} (${(dcL>0?Math.log2(dcL):-99).toFixed(1)} EV)`+
     `   展开图跨度 ${evMin>1e8?'—':evMin.toFixed(1)}…${evMax<-1e8?'—':evMax.toFixed(1)} EV\n`+
-    `分账DC  base ${acc(D.l2,i*36).toExponential(1)}`+
+    `分账DC  base ${acc(D.l2,i*KS*4).toExponential(1)}`+
     `  amb ${acc(D.l2a,o3).toExponential(1)}`+
     `  emit ${acc(D.l2e,o3).toExponential(1)}`+
     `  nee ${acc(D.l2n,o3).toExponential(1)}\n`+
@@ -2035,6 +2117,8 @@ function bindLightUniforms(p){
   gl.uniform3i(u('uPN'),P.nx,P.ny,P.nz);
   const amb=man.ambient.sh;
   for(let k=0;k<9;k++) gl.uniform3f(u(`uAmbSH[${k}]`),amb[k*3],amb[k*3+1],amb[k*3+2]);
+  gl.uniform1f(u('uShK'),S.shK||9);
+  gl.uniform1f(u('uBinOb'),S.binOb||8);        // 'l2' 槽列数,着色器 probeFetch 的循环上限/列块步长
   gl.uniform1i(u('uMode'),S.mode); gl.uniform1i(u('uSpp'),S.spp);
   gl.uniform1i(u('uMSteps'),S.msteps); gl.uniform1i(u('uFold'),S.fold);
   gl.uniform1i(u('uMissMode'),S.missMode); gl.uniform1i(u('uNEE'),S.nee);

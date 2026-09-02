@@ -82,10 +82,6 @@ from .tools_overlays import (
 )
 from ...shared.entity_refactor import (
     EntityRefactorError,
-    delete_entity,
-    move_entity,
-    rename_entity,
-    scan_entity_usages,
     undo_last,
 )
 from .groups import all_group_ids, assign_group, create_group, delete_group
@@ -580,11 +576,16 @@ class SceneEditorV2(QWidget):
         那次直写连带撤掉且 redo 找不回，所以收到就清栈；如果写的正是当前场景，
         还要重投影 —— 否则用户刚建好的出生点在画布和实体树上都看不见，
         会以为没建成而重复新建。
+
+        清栈与重投影由 `Document.notice_external_scene_write` 一步做完（对别的场景
+        是空操作）。这里只剩它做不了的一种情形：场景 dict **对象**被换掉了
+        （Task 编排 / 导入那一族），那要整份重建 Document / View，走 `reload_from_model`。
         """
         if self._doc is None:
             return
         self._doc.notice_external_scene_write(sid)
-        if str(sid or "") == self.current_scene_id:
+        if (str(sid or "") == self.current_scene_id
+                and self._loaded_scene_obj is not self._model.scenes.get(sid)):
             self.reload_from_model()
 
     def _on_assign_group_clicked(self) -> None:
@@ -759,6 +760,9 @@ class SceneEditorV2(QWidget):
             act_dup.triggered.connect(self.duplicate_selected)
             act_del = menu.addAction(f"删除选中（{len(sel)}）")
             act_del.triggered.connect(self.delete_selected_interactive)
+        # 摆位是在画布上做的，改名/迁移/安全删除也该在这儿够得着。此前只有实体树
+        # 右键挂了重构，画布上唯一的删除入口是上面那颗**裸删**——引用报告看都看不到。
+        self._add_refactor_actions(menu)
         menu.exec(global_pos)
 
     # ---- 跨文件重构（改名 / 迁移 / 安全删除）---------------------------------
@@ -769,12 +773,74 @@ class SceneEditorV2(QWidget):
     # 都没有，删除就是裸删。
     #
     # 实现全部在 `shared/entity_refactor`（跨文件机械改写 + 自己的撤销日志），
-    # 这里只负责"问清楚再调"。注意它**不进本页的 QUndoStack** —— 跨文件改写
-    # 撤不进字段级命令栈，撤销走 `entity_refactor.undo_last`。
+    # 弹窗复用 `shared/entity_refactor_dialog` —— **与老画布同一套**。注意它
+    # **不进本页的 QUndoStack** —— 跨文件改写撤不进字段级命令栈，撤销走
+    # `entity_refactor.undo_last`。
+    #
+    # 这里曾经手拼过一份简化版（QInputDialog + QMessageBox），四处与引擎对不上，
+    # 而且**全部静默**：
+    #   1. 读 `usages["total"]` / `["rows"]` / `["hits"]` —— 报告里计数叫
+    #      `totalRefs`，明细是按处置类别分的组（qualified / sceneLocal /
+    #      dialogues / globalRefs / ownerBindings / tagRefs / questGuidance /
+    #      bubbleLineSpeakers），那三个键**一个都不存在**。于是改名/迁移/删除
+    #      三个框恒报「全项目有 0 处引用」+ 空预览：越是引用多的实体，越是被
+    #      这句话骗着删掉。
+    #   2. `move_entity(model, sid, target, kind, id)` —— 引擎签名是
+    #      `(model, src_scene, kind, entity_id, dst_scene)`，实参整体错位一格。
+    #   3. `delete_entity` 不传 `force`（有引用时引擎硬拒），也没接返回的
+    #      `reverse_ops`。
+    #   4. 三条路径都没 `push_journal` —— 菜单上那颗「撤销上次重构」读的就是
+    #      这本日志，于是本页做的重构**永远撤不回来**（更糟：撤到的是别处更早
+    #      的那一次）。
+    # 共享对话框里这四件事全是对的，别再另起一套。
+
+    #: 重构 op → 共享对话框类名（延迟 import：这几个框拉起 IdRefSelector 等重控件）
+    _REFACTOR_DIALOGS = {
+        "move": "MoveEntityDialog",
+        "rename": "RenameEntityDialog",
+        "delete": "SafeDeleteEntityDialog",
+    }
+
+    #: 菜单项文案 → op。画布与实体树两处右键共用，顺序即菜单顺序。
+    _REFACTOR_MENU = (
+        ("重命名 id…", "rename"),
+        ("迁移到场景…", "move"),
+        ("安全删除（引用报告）…", "delete"),
+    )
+
+    def _add_refactor_actions(self, menu: QMenu) -> bool:
+        """选中恰好一个实体时，把重构三项 + 撤销挂到 `menu` 上；返回挂没挂。
+
+        **画布右键与实体树右键共用这一段。** 两处各写一遍就是两套门条件，迟早漂成
+        「树里能改名、画布上不能」这种没人说得清的差别——而实际上这两处指的是
+        同一个选择集（`SceneDocument.selection`）。
+
+        门条件与 `refactor_selected` 的过滤**必须同口径**：那边按
+        `kind in (hotspot/npc/zone/spawn)` 过滤后要求恰好一个，这里就照抄。
+        树菜单此前的写法是「非 spawn 实体恰好 1 个」，选中 [npc, spawn] 时菜单
+        照挂、点下去却被拒——菜单显示的可用性与真实可用性对不上。
+        """
+        doc = self._doc
+        if doc is None:
+            return False
+        targets = [r for r in doc.selection
+                   if r.kind in ("hotspot", "npc", "zone", "spawn")]
+        if len(targets) != 1:
+            return False
+        menu.addSeparator()
+        for label, op in self._REFACTOR_MENU:
+            act = menu.addAction(label)
+            act.triggered.connect(lambda _c, o=op: self.refactor_selected(o))
+        act = menu.addAction("撤销上次重构")
+        act.triggered.connect(lambda _c: self.undo_last_refactor())
+        return True
 
     def refactor_selected(self, op: str) -> bool:
         """`op` ∈ {"rename", "move", "delete"}。返回是否真的执行了。"""
         if self._doc is None:
+            return False
+        cls_name = self._REFACTOR_DIALOGS.get(op)
+        if cls_name is None:
             return False
         sel = [r for r in self._doc.selection
                if r.kind in ("hotspot", "npc", "zone", "spawn")]
@@ -782,52 +848,58 @@ class SceneEditorV2(QWidget):
             self._doc.notify("请先选中恰好一个实体再做重构")
             return False
         ref = sel[0]
-        sid = self.current_scene_id
-        usages = scan_entity_usages(self._model, sid, ref.kind, ref.id)
-        total = int(usages.get("total", 0) or 0)
-        rows = usages.get("rows") or usages.get("hits") or []
-        preview = "\n".join(f"• {r}" for r in list(rows)[:12])
-        suffix = f"\n…另有 {len(rows) - 12} 处" if len(rows) > 12 else ""
-        try:
-            if op == "rename":
-                new_id, ok = QInputDialog.getText(
-                    self, "重命名 id",
-                    f"「{ref.id}」在全项目有 {total} 处引用，改名会**跟随改写**。\n"
-                    f"{preview}{suffix}\n\n新 id：", text=ref.id)
-                if not ok or not str(new_id).strip():
-                    return False
-                rename_entity(self._model, sid, ref.kind, ref.id,
-                              str(new_id).strip())
-            elif op == "move":
-                targets = sorted(k for k in self._model.scenes if k != sid)
-                if not targets:
-                    self._doc.notify("没有别的场景可迁移")
-                    return False
-                target, ok = QInputDialog.getItem(
-                    self, "迁移到场景",
-                    f"「{ref.id}」在全项目有 {total} 处引用；迁移会跟随改写。\n"
-                    "polygon / 坐标需要迁移后在目标场景重画。\n\n目标场景：",
-                    targets, 0, False)
-                if not ok:
-                    return False
-                move_entity(self._model, sid, str(target), ref.kind, ref.id)
-            elif op == "delete":
-                answer = QMessageBox.question(
-                    self, "安全删除",
-                    f"删除「{ref.id}」。全项目有 {total} 处引用，删除后会**悬垂**：\n"
-                    f"{preview}{suffix}\n\n仍要删除吗？")
-                if answer != QMessageBox.StandardButton.Yes:
-                    return False
-                delete_entity(self._model, sid, ref.kind, ref.id)
-            else:
-                return False
-        except EntityRefactorError as exc:
-            QMessageBox.warning(self, "重构失败", str(exc))
+        if ref.kind == "spawn" and ref.id == "default":
+            self._doc.notify("默认出生点不参与重构")
             return False
-        # 跨文件改写绕过了本页的命令栈，所以必须整份重投影并清栈
+        sid = self.current_scene_id
+        from ...shared import entity_refactor_dialog as erd
+        try:
+            dlg = getattr(erd, cls_name)(self._model, sid, ref.kind, ref.id, self)
+        except Exception as exc:  # noqa: BLE001 - 扫描期异常给提示，不崩编辑器
+            QMessageBox.warning(self, "实体重构", f"引用扫描失败：{exc}")
+            return False
+        if not dlg.exec() or dlg.result_summary is None:
+            return False
+        summary = dlg.result_summary
+        # 跨文件改写绕过了本页的命令栈：**必须清栈**。字段级命令的快照是重构前的
+        # 那份场景，撤过这道坎就是把已经机械改写过的引用网撕成半截。
+        # （`reload_from_model` 在场景 dict 对象身份没变时只重投影、刻意保住栈，
+        # 所以清栈这一步得在这儿自己做。）
+        self._doc.undo_stack.clear()
         self.reload_from_model()
-        self._doc.notify(f"重构完成（{op}）。撤销请用「重构 → 撤销上次重构」")
+        self._post_refactor_notice(op, summary, ref)
         return True
+
+    def _post_refactor_notice(self, op: str, summary: dict, ref) -> None:
+        """重构完成后回选实体并把**引擎实际做了什么**说清楚。
+
+        与老画布同口径：迁移的悬垂裸引用数、改名跳过的歧义对话图、删除后的悬垂
+        计数，都是"数据已经变了但还没人告诉你"的东西——不当场说，就得等
+        Validate Data 才发现。
+        """
+        doc = self._doc
+        if doc is None:
+            return
+        kind = ref.kind
+        if op == "move":
+            dst = summary.get("dstScene") or ""
+            dangling = len(summary.get("danglingSceneLocal") or [])
+            msg = f"已迁移到「{dst}」；坐标保留原值，请在目标场景重新摆位。"
+            if dangling:
+                msg += f"\n源场景仍有 {dangling} 处裸引用悬垂（见 Validate Data）。"
+        elif op == "rename":
+            new_id = str(summary.get("newId") or "")
+            if new_id and kind in ("hotspot", "npc", "zone"):
+                doc.set_selection([EntityRef(kind, new_id)])
+            skipped = (summary.get("scope") or {}).get("skippedDialogues") or []
+            msg = f"已改名为「{new_id}」。"
+            if skipped:
+                msg += f"\n未自动改写（指向歧义）的对话图：{'、'.join(skipped)}"
+        else:
+            msg = (f"已删除「{ref.id}」；"
+                   f"{summary.get('danglingRefs', 0)} 处引用悬垂（跑 Validate Data 查看）。")
+        QMessageBox.information(self, "实体重构", msg)
+        doc.notify(f"重构完成（{op}）。撤销请用「重构 → 撤销上次重构」")
 
     def undo_last_refactor(self) -> bool:
         """撤销上一次跨文件重构。**与 Ctrl+Z 是两条独立的历史** ——
@@ -862,16 +934,7 @@ class SceneEditorV2(QWidget):
             act_dup.triggered.connect(self.duplicate_selected)
             act_del = menu.addAction(f"删除（{len(sel)}）")
             act_del.triggered.connect(self.delete_selected_interactive)
-        if len(entities) == 1 or (len(sel) == 1 and sel[0].kind == "spawn"):
-            menu.addSeparator()
-            for label, op in (("重命名 id…", "rename"),
-                              ("迁移到场景…", "move"),
-                              ("安全删除（引用报告）…", "delete")):
-                act = menu.addAction(label)
-                act.triggered.connect(
-                    lambda _c, o=op: self.refactor_selected(o))
-            act = menu.addAction("撤销上次重构")
-            act.triggered.connect(lambda _c: self.undo_last_refactor())
+        self._add_refactor_actions(menu)
         if menu.isEmpty():
             act = menu.addAction("新建分组")
             act.triggered.connect(lambda _c: create_group(self._doc))
@@ -1201,6 +1264,10 @@ class SceneEditorV2(QWidget):
         self._center_on_selection()
 
     def _on_doc_changed(self, event) -> None:
+        if isinstance(event, SceneReloaded):
+            # 整份重建换了一批全新图元：内容层 z 的脏检查缓存键刻意不含图元身份
+            # （理由见 `load_scene`），不作废就会早退、新图元全停在 z=0。
+            self._content_z_key = None
         # 任何数据变更都可能改前后关系；脏检查让这一趟在没变时是空操作
         self.resort_content_z()
         if isinstance(event, SelectionChanged):
@@ -1228,6 +1295,13 @@ class SceneEditorV2(QWidget):
             if self._sync_day_night_gate():
                 self._apply_view_axes()
         if isinstance(event, (EntitiesAdded, EntitiesRemoved, SceneReloaded)):
+            self.refresh_entity_tree()
+        elif (isinstance(event, EntitiesChanged)
+                and event.properties & EntityProperty.IDENTITY
+                and any(self._doc.model_entity(r) is None for r in event.refs)):
+            # 改了 id：事件里带着旧 ref（已经查不到）与新 ref。树按 id 列行，不重建
+            # 就一直显示旧 id、点它选不中任何东西。只在**真的换了 id** 时重建 ——
+            # name / label 也归 IDENTITY，但树不显示它们，逐字敲名字不该每键重建一次树。
             self.refresh_entity_tree()
         # **组的时段归属改了、成员换了组、整份场景被换掉 → 重贴显隐。**
         # 视图收到变更时是拿着旧名册判的（它的 `changed` 订阅早于本页），

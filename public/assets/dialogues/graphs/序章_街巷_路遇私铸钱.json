@@ -1,0 +1,403 @@
+{
+  "schemaVersion": 1,
+  "id": "序章_街巷_路遇私铸钱",
+  "entry": "open",
+  "meta": {
+    "title": "序章·去赌坊路上：那一文自己滚走，怪人来过又走（zone 一次性）"
+  },
+  "defaultLayout": "top",
+  "nodes": {
+    "open": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "next": "q_dodge",
+      "lines": [
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "旁白"
+          },
+          "text": "那一文钱不晓得啷个从身上滑出去的。落地，滚。"
+        },
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "旁白"
+          },
+          "text": "街面是平的。它滚了两丈，自己拐了个弯，钻进墙角那堆烂草里头去咯。"
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "龟儿。",
+          "portrait": {
+            "emotion": "calm"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "旁白"
+          },
+          "text": "关二狗蹲下去掏。一文也是钱嘛。"
+        },
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "？？？"
+          },
+          "text": "掏啥子？"
+        },
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "旁白"
+          },
+          "text": "身后头站到起一个人。啥子时候来的，他没听到。"
+        }
+      ],
+      "text": "那一文钱不晓得啷个从身上滑出去的。落地，滚。"
+    },
+    "q_dodge": {
+      "type": "choice",
+      "promptLine": {
+        "speaker": {
+          "kind": "literal",
+          "name": "旁白"
+        },
+        "text": "手还伸在烂草里头。"
+      },
+      "options": [
+        {
+          "id": "none",
+          "text": "〔关你啥子事〕",
+          "next": "b_none"
+        },
+        {
+          "id": "lie",
+          "text": "〔扯把子〕",
+          "next": "b_lie"
+        },
+        {
+          "id": "ask",
+          "text": "〔反问他是哪个〕",
+          "next": "b_ask"
+        }
+      ]
+    },
+    "b_none": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "join",
+      "lines": [
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "关你啥子事。",
+          "portrait": {
+            "emotion": "angry"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "旁白"
+          },
+          "text": "那人没得反应。"
+        }
+      ],
+      "text": "关你啥子事。"
+    },
+    "b_lie": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "join",
+      "lines": [
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "掉了个东西。",
+          "portrait": {
+            "emotion": "calm"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "旁白"
+          },
+          "text": "那人没问是啥子东西。"
+        }
+      ],
+      "text": "掉了个东西。"
+    },
+    "b_ask": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "join",
+      "lines": [
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "你龟儿哪点冒出来的？",
+          "portrait": {
+            "emotion": "calm"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "旁白"
+          },
+          "text": "那人没答。"
+        }
+      ],
+      "text": "你龟儿哪点冒出来的？"
+    },
+    "join": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "？？？"
+      },
+      "next": "mid",
+      "lines": [
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "？？？"
+          },
+          "text": "少了一个。"
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "……啥子？",
+          "portrait": {
+            "emotion": "calm"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "？？？"
+          },
+          "text": "二百五十文。你数了两遍，都是二百三十。"
+        },
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "旁白"
+          },
+          "text": "关二狗手停到起了。"
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "……你啷个晓得？",
+          "portrait": {
+            "emotion": "calm"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "？？？"
+          },
+          "text": "差的那二十，不在你身上。"
+        }
+      ],
+      "text": "少了一个。"
+    },
+    "mid": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "gone",
+      "lines": [
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "你个龟儿到底是哪个哦？",
+          "portrait": {
+            "emotion": "angry"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "？？？"
+          },
+          "text": "他等好久咯。"
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "……哪个等好久咯？",
+          "portrait": {
+            "emotion": "calm"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "旁白"
+          },
+          "text": "那人没接。他抬头往街那头看了一眼，像是听到有哪个在喊他。"
+        },
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "旁白"
+          },
+          "text": "街那头空的。"
+        },
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "？？？"
+          },
+          "text": "算了。今黑了还早。"
+        }
+      ],
+      "text": "你个龟儿到底是哪个哦？"
+    },
+    "gone": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "next": "luck",
+      "lines": [
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "旁白"
+          },
+          "text": "他转身就走，再没得看关二狗一眼。"
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "……神戳戳的。",
+          "portrait": {
+            "emotion": "calm"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "旁白"
+          },
+          "text": "关二狗回过头去掏那堆烂草。烂草里头是空的。"
+        },
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "旁白"
+          },
+          "text": "那一文钱就在他自己脚边上。边边毛起的那一枚，正面朝上。"
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "……",
+          "portrait": {
+            "emotion": "calm"
+          }
+        }
+      ],
+      "text": "他转身就走，再没得看关二狗一眼。"
+    },
+    "luck": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "fin",
+      "lines": [
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "哦豁。",
+          "portrait": {
+            "emotion": "smirk"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "literal",
+            "name": "旁白"
+          },
+          "text": "他捡起来，在手头掂了两下。"
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "钱跑了又自己滚回来。",
+          "portrait": {
+            "emotion": "laugh"
+          }
+        },
+        {
+          "speaker": {
+            "kind": "player"
+          },
+          "text": "老子今天运气凶得很。",
+          "portrait": {
+            "emotion": "laugh"
+          }
+        }
+      ],
+      "text": "哦豁。"
+    },
+    "fin": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "路遇私铸钱_完结",
+            "sourceType": "dialogue",
+            "sourceId": "序章_街巷_路遇私铸钱"
+          }
+        },
+        {
+          "type": "persistZoneEnabled",
+          "params": {
+            "sceneId": "雾津街头",
+            "zoneId": "Zone_路遇私铸钱",
+            "enabled": false
+          }
+        }
+      ],
+      "next": "done"
+    },
+    "done": {
+      "type": "end"
+    }
+  }
+}

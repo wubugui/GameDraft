@@ -68,7 +68,10 @@ def load_payload(sid: str, background: str | None = None) -> dict:
     n = P['nx'] * P['ny'] * P['nz']
     out = {'dir': d, 'bg': bg, 'lighting': man, 'geometry': geom, 'n_probes': n,
            'layout': _Layout(man)}
-    for stem, K in (('l1', 4), ('l2', 9), ('bin', 64)):
+    # 'l2' 槽的列数按阶数:老载荷没记 sh_k 就是 9(L2),新载荷 L4=25
+    # 'bin' 槽的列数按 bin_ob(8→64 / 16→256);老载荷没记就是 8
+    for stem, K in (('l1', 4), ('l2', int(P.get('sh_k', 9))),
+                    ('bin', int(P.get('bin_ob', 8)) ** 2)):
         f = d / f'atlas_{stem}.bin'
         if f.exists():
             out[f'atlas_{stem}'] = np.frombuffer(f.read_bytes(), np.float16
@@ -277,20 +280,24 @@ def verify_probe(sid: str, background: str | None = None, spp: int = 512,
     else:
         ref = gather_scene_e(surface_points_q(geo), n_q, R, dfield,
                              rad, esc, spp,
-                             nee_ctx=nee_ctx, clamp=_cl).reshape(h, w, 3)
+                             nee_ctx=nee_ctx, clamp=_cl,
+                             fold_escape=bool(bp.get('probe_fold_escape', False))
+                             ).reshape(h, w, 3)
         if ref_cache is not None:
             ref_cache.update({'key': ckey, 'ref': ref})
 
     # ⚠ probe 用的是**实验室 det=-1 的 M**(lighting.json.world.M),与
     #   depthConfig 的 det=+1 不是一个矩阵。世界位置要用它那套反推。
     M = np.asarray(pay['lighting']['world']['M'], np.float32)
-    q = surface_points_q(geo)
-    wpts = np.ascontiguousarray(q @ M.T, np.float32)
     n_probe = np.ascontiguousarray((geo['normal'].reshape(-1, 3) @ R).astype(np.float32))
     n_probe /= np.maximum(np.linalg.norm(n_probe, axis=1, keepdims=True), 1e-9)
+    # 查询点沿法线偏移(与着色器 probeE 同一常量,见 parity.query_bias_wu)
+    from .parity import query_bias_wu
+    q = surface_points_q(geo) + n_probe * query_bias_wu(pay['layout'])
+    wpts = np.ascontiguousarray(q @ M.T, np.float32)
     lay = pay['layout']
     got = probe_reconstruct(lay, pay[f'atlas_{basis}'], pay['valid'],
-                            wpts, n_probe, 'bins' if basis == 'bin' else basis
+                            wpts, n_probe, 'bins' if basis.startswith('bin') else basis
                             ).reshape(h, w, 3)
 
     b = lay.bounds

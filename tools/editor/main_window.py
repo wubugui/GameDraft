@@ -1337,10 +1337,15 @@ class MainWindow(QMainWindow):
         self._record_nav(_NavLocation("page", (idx,)))
 
     def _show_stack_page(self, index: int) -> None:
+        already_current = self._stack.currentIndex() == index
         self._stack.setCurrentIndex(index)
         if self._stack.currentIndex() != index:
             return
-        self._refresh_scene_page_on_activate(index)
+        if already_current or self._restoring_stack_after_task_flush_failure:
+            # 两种 `_on_stack_page_changed` 不会替我们重载的情形：页没换（`currentChanged`
+            # 不发）、或正在从 Task 门闸失败退回原页（它在那条路上只记水位就返回）。
+            # 这里补那一次"切到场景页先按模型重载"；正常换页由它统一做，不重复。
+            self._refresh_scene_page_on_activate(index)
         item = self._stack_index_to_item.get(index)
         if item is None:
             return
@@ -1570,6 +1575,13 @@ class MainWindow(QMainWindow):
         self._last_stack_page_index = index
         if leaving != index:
             self._commit_leaving_page(leaving)
+        # **切到场景页先按模型重载 —— 挂在所有切页路径的汇合点上。**
+        # 此前它只挂在 `_show_stack_page`（跨页跳转 / 导航历史）里；用户在左侧导航树上
+        # 手点切页走的是 `_on_nav_tree_current_changed` → `setCurrentIndex`，根本不经过
+        # 那条路。于是在老画布删掉一个热点、再点到新画布（或反过来），那边的画布照旧
+        # 画着已经不存在的实体：图元还能点中、再删提示"没有此实体"，只有重开编辑器
+        # 才消失。`currentChanged` 是手点 / 跳转 / 历史三条路径共同经过的唯一一处。
+        self._refresh_scene_page_on_activate(index)
         if 0 <= index < len(self._editor_instances):
             inst = self._editor_instances[index]
             self._activated_editor_ids.add(id(inst))

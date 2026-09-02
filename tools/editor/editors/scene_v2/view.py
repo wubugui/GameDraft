@@ -242,6 +242,12 @@ class SceneView(QGraphicsView):
                 continue
             self._sync_part(ref, part, factory, ent, properties)
         self._apply_presence(ref)
+        # 选中态也在同步的收尾统一落，与显隐同理：新建 / 重建的图元默认不带选中态，
+        # 而改 id 时新 ref 的图元是在选择集**已经换过之后**才建出来的 —— 只靠
+        # `SelectionChanged` 刷会漏掉它，选中的实体看着像没选中。
+        on = ref in self._doc.selection
+        for item in self.items_of(ref):
+            item.set_selected(on)
 
     def _sync_part(self, ref, part, factory, ent, properties) -> None:
         item = self._items.get((ref, part))

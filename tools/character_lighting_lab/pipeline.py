@@ -98,10 +98,33 @@ DEFAULTS = dict(
     probe_dims=None,                 # None = 按角色高度推密度;给元组则显式指定格数
     #: 横纵**解耦**(制作人 2026-09-01:「纵向 2 格够了,水平必须提起来」)。
     probe_cells_per_char_xz=4.0,     # 横向:每个角色高几格
-    probe_cells_per_char_y=2.0,      # 纵向:每个角色高几格
+    #: 纵向 2→4(2026-09-02 密度实验,码头白天):平坦区格级斑块经孪生分解 87% 是
+    #: 网格分辨率误差(非噪声);纵向加倍把平坦低通残差 58.1→42.2%、全图亮度中位
+    #: 17.8→14.6%。近地表 E 的竖直梯度最陡,层数才是瓶颈。横向加倍无此收益。
+    probe_cells_per_char_y=4.0,      # 纵向:每个角色高几格
     #: probe 盒总高 = 角色身高 x 这个数。**不覆盖全场景最高点** —— 上面没有角色。
     probe_height_chars=2.0,
-    probe_max=200_000,               # 格数上限(载荷体积护栏)
+    probe_max=400_000,               # 格数上限(载荷体积护栏;纵向加倍后最大场景 ~24 万)
+    #: probe 球谐阶数(2 或 4;K=(l+1)^2 列)。2026-09-02 定 4:贴壳格 99% 能量在下半球,
+    #: 朝上真值只占总能量 0.6~1.8%,同射线集实测 L2 只给到真值 0.30(0~0.80)、L4 0.79、
+    #: L6 0.92、L8 0.98;整场景低分辨率对决 L2→L4 症状 5.98→1.09%、p95 66→54,
+    #: L6 再收一半症状,L8 边际为零。八面体要 16x16(256 texel/颗)才追平 L6。
+    #: 图集 = K x RGBA16 每颗:L2 72B / L4 200B。
+    #: 2026-09-02 制作人拍板正式档为 L1+Geomerics(永不为负、无暗绿),'l2' 槽留 L2 作对照/回退,
+    #: 缺省回到 2(L4 图集 2.8x、烘焙 2x,按需 --probe_sh_lmax 4 开)。
+    probe_sh_lmax=2,
+    #: 八面体分辨率(**正式基**,制作人 2026-09-02 拍板):8=64 方向 512B/颗(缺省),
+    #: 16=256 方向 2KB/颗。修完接缝环绕后的实测(真实网格 256spp):
+    #: 深潭绝地 8x8 中位 13.1%/p95 63% → 16x16 10.9%/38%;破屋 13.7%/96% → 11.9%/90%;
+    #: 城隍庙夜 15.1%/79% → 13.4%/63%;mountain_pass 12.0%/44% → 10.8%/43%。
+    #: 只有高反差/深谷场景值得上 16(4 倍存储),其余 8 够用。
+    probe_bin_ob=8,
+    #: 写进 lighting.json shading.mode 的运行时 probe 档:1=L1 Geomerics 2=SH 线性 3=八面体(正式档)。
+    probe_runtime_mode=3,
+    #: A7 折叠**只作用于逃逸射线**(烘焙侧):逃逸的射线 qz 取绝对值掰回场景侧再追,
+    #: 命中用镜像方向辐射,仍逃逸才用逃逸辐射。缺省关(运行时 probeQueryN 已折查询法线,
+    #: 两头都折 = 双重计数;开这个就该把运行时 fold 关掉)。2026-09-02 制作人要求做对照实验。
+    probe_fold_escape=False,
     probe_spp=256,                   # 每颗 probe 的方向样本数(分层 QMC)
     #: NEE+MIS(发光体第二采样器,无偏,2026-09-01 从 lighting-rebuild 分支补课):
     #: 缺省开;画面没有阈上发光体时 build_nee 返回 None,自动退纯 BSDF 老路。
@@ -121,9 +144,11 @@ DEFAULTS = dict(
     probe_refine_rel=0.05,
     probe_refine_mult=4,
     probe_refine_frac=0.15,
-    #: 逃逸辐射:射线跑出伪世界带走多少。**缺省纯黑**(制作人 2026-09-01)。
-    #: 可选 {'mode':'color'|'skybox'|'scene_derived', ...},见 escape.py。
-    escape={'mode': 'black'},
+    #: 逃逸辐射:射线跑出伪世界带走多少。**缺省地板色**(2026-09-02,原纯黑):
+    #: 场景辐射中位 x0.3、画面平均色度;烘焙时 resolve_escape 解析成 color 记进
+    #: baked_params。取证与剂量数据见 escape.DEFAULT_ESCAPE。
+    #: 可选 {'mode':'black'|'color'|'skybox'|'scene_derived', ...},见 escape.py。
+    escape={'mode': 'floor', 'frac': 0.3},
     probe_band=None,       # 角色可达高度带(wu);None = 由角色实高推出(char_wu*1.15)。
                            # ⚠ 旧值写死 1.6,建立在"角色高 1.5 wu"的假设上,而实测
                            #   角色是 0.17~0.97 wu —— 6 层里有 5 层烘在够不着的空中。
@@ -859,7 +884,14 @@ def stage_probes(cal: dict, lay: dict, hdr: dict, wb: dict, lights: list[dict],
     这是 AAA 探针体系的标准做法(Unity Dilation / UE validity)。
     """
     from tools.character_lighting_lab.const import GATHER_SEED
-    from tools.character_lighting_lab.estimators import gather_probe, sh_basis as _shb
+    from tools.character_lighting_lab.estimators import (ak_for, gather_probe,
+                                                         sh_basis as _shb)
+    # 球谐阶数(烘焙参数):K=(l+1)^2 列;'l2' 槽名沿用,列数按这里
+    lmax_sh = int(P.get('probe_sh_lmax', 2))
+    if lmax_sh not in (2, 4):
+        raise ValueError(f'probe_sh_lmax 只支持 2 或 4,拿到 {lmax_sh}')
+    K_sh = (lmax_sh + 1) ** 2
+    ak_sh = ak_for(K_sh)
     from tools.character_lighting_lab.estimators import octa_bin_normals
     from tools.character_lighting_lab.probe_layout import build_layout, dilate_invalid
     from tools.character_lighting_lab.trace import DepthField, buried
@@ -904,9 +936,19 @@ def stage_probes(cal: dict, lay: dict, hdr: dict, wb: dict, lights: list[dict],
                             threshold=float(P.get('probe_nee_threshold', 1.0)))
     clamp = P.get('probe_clamp')
     clamp = float(clamp) if clamp is not None else None
+    # 八面体分辨率(正式基):8=64 方向/512B 每颗,16=256 方向/2KB 每颗。
+    ob = int(P.get('probe_bin_ob', 8))
+    if ob not in (8, 16):
+        raise ValueError(f'probe_bin_ob 只支持 8 或 16,拿到 {ob}')
+    nb = octa_bin_normals(ob)
+    B = len(nb)
+    nb2 = None
+
     g = gather_probe(np.ascontiguousarray(pts_q[act]), M, field,
                      {'base': hdr['base'], 'emit': hdr['emit']},
-                     escape_of, spp=spp, nee_ctx=nee_ctx, clamp=clamp)
+                     escape_of, spp=spp, nee_ctx=nee_ctx, clamp=clamp, sh_k=K_sh,
+                     fold_escape=bool(P.get('probe_fold_escape', False)),
+                     bin_normals2=nb2)
 
     # ---- 自适应细化(无偏):高方差格独立流重采,按样本数加权合并 ----
     refine_rel = float(P.get('probe_refine_rel', 0.05))
@@ -929,18 +971,20 @@ def stage_probes(cal: dict, lay: dict, hdr: dict, wb: dict, lights: list[dict],
             g2 = gather_probe(pts_sel, M, field,
                               {'base': hdr['base'], 'emit': hdr['emit']},
                               escape_of, spp=spp2, nee_ctx=nee_ctx,
-                              clamp=clamp, seed=GATHER_SEED ^ 0x9E3779B9)
+                              clamp=clamp, seed=GATHER_SEED ^ 0x9E3779B9, sh_k=K_sh,
+                              fold_escape=bool(P.get('probe_fold_escape', False)),
+                              bin_normals2=nb2)
             w1 = spp / (spp + spp2)
             w2 = spp2 / (spp + spp2)
             for k in ('base', 'emit', 'esc', 'cov'):
-                for part in ('sh', 'bins'):
+                for part in ('sh', 'bins', 'bins2'):
+                    if part not in g[k]:
+                        continue
                     g[k][part][sel] = (w1 * g[k][part][sel]
                                        + w2 * g2[k][part])
             g['dc_var'][sel] = (w1 * w1 * g['dc_var'][sel]
                                 + w2 * w2 * g2['dc_var'])
 
-    nb = octa_bin_normals()
-    B = len(nb)
 
     def _scatter(a_act: np.ndarray) -> np.ndarray:
         """活格子集的结果散回全量(被埋格留 0,随后由 dilation 填)。"""
@@ -956,6 +1000,7 @@ def stage_probes(cal: dict, lay: dict, hdr: dict, wb: dict, lights: list[dict],
     bn_emit = _scatter(g['emit']['bins'])
     bn_amb = _scatter(g['esc']['bins'])
     bn_cov = _scatter(g['cov']['bins'])
+    has_b2 = False
     dc_var = np.zeros(n, np.float64)
     dc_var[act] = g['dc_var']
 
@@ -979,7 +1024,7 @@ def stage_probes(cal: dict, lay: dict, hdr: dict, wb: dict, lights: list[dict],
     #   球谐上,而那组球谐是 **q 空间**的(着色器用 q 空间法线查)。两个空间混投
     #   一律不报错,只是方向全拧。当前 28 个场景 `shading.nee=0` 走的是 emit 分账,
     #   所以没暴露出来 —— 谁把 nee 打开就正中 CLAUDE.md 铁律 0 那一类。
-    nee_sh = np.zeros((n, 9, 3), np.float32)
+    nee_sh = np.zeros((n, K_sh, 3), np.float32)
     nee_bins = np.zeros((n, B, 3), np.float32)
     for li in lights:
         lpos = np.array(li['pos'], np.float32)
@@ -991,7 +1036,7 @@ def stage_probes(cal: dict, lay: dict, hdr: dict, wb: dict, lights: list[dict],
         vis = _nee_visible(pts_q, (lpos @ M).astype(np.float32), field).astype(np.float32)
         # 各向同性 surfel(火焰/窗口朝各个方向发光),小球截面 A/r^2
         W = (vis * li['area'] / r2)[:, None] * Le[None]
-        nee_sh += (_shb(d_q) * AK[None, :])[:, :, None] * W[:, None, :]
+        nee_sh += (_shb(d_q, lmax_sh) * ak_sh[None, :])[:, :, None] * W[:, None, :]
         nee_bins += np.maximum(d_q @ nb.T, 0.0)[:, :, None] * W[:, None, :]
 
     # ---- dilation:被埋格点用 6-邻域有效格的均值填(必做,见 probe_layout)----
@@ -1008,22 +1053,26 @@ def stage_probes(cal: dict, lay: dict, hdr: dict, wb: dict, lights: list[dict],
     #      三通道同窗;治运行时逐通道截负翻出的翡翠伪色 + 格边界块状走样。
     #      四个 SH 场各自去环(膨胀填充后做,补出来的格同样要非负)。----
     from .dering import dering_sh
+    # L1 图集取**去环之前**的系数:去环窗是给线性 L2/L4 求值防截负设计的,会削 L1 向量;
+    # L1 走 Geomerics 非线性求值(永不为负),要的是真向量。
+    l1_pre = {k: v[:, :4].copy() for k, v in (('base', sh_base), ('emit', sh_emit),
+                                             ('amb', sh_amb), ('nee', nee_sh))}
     n_ring = sum(dering_sh(f) for f in (sh_base, sh_emit, sh_amb, nee_sh))
 
     # ---- 组装成载荷的 20 项(布局与旧版逐字段一致)----
-    E_l1 = np.concatenate([sh_base[:, :4], sh_cov[:, :4, None]], -1)     # (P,4,4)
+    E_l1 = np.concatenate([l1_pre['base'], sh_cov[:, :4, None]], -1)     # (P,4,4) 未去环
     E_l2 = np.concatenate([sh_base, sh_cov[:, :, None]], -1)             # (P,9,4)
     E_bins = np.concatenate([bn_base, bn_cov[..., None]], -1)            # (P,B,4)
 
     print(f'[probes] {n} 颗 x {spp}spp  {time.time()-t0:.1f}s  '
           f'分布={layout.strategy}  {Nx}x{Ny}x{Nz}  '
           f'NEE={"开" if nee_ctx is not None else "关"}  细化 {n_ref} 格  '
-          f'去环 {n_ring} 颗次')
+          f'去环 {n_ring} 颗次  SH L{lmax_sh}  八面体 {ob}x{ob}  逃逸折叠={"开" if P.get("probe_fold_escape") else "关"}')
     print(f'[probes] {layout.note}')
     print(f'[probes] 命中率 {g["hit_rate"]*100:.1f}%  有效格 {coverage*100:.1f}% '
           f'(dilation {iters} 轮补到 {valid.mean()*100:.1f}%)  '
           f'逃逸辐射 {_escape_desc(P)}  灯 {len(lights)} 盏')
-    return dict(nx=Nx, ny=Ny, nz=Nz,
+    return dict(nx=Nx, ny=Ny, nz=Nz, sh_lmax=lmax_sh, sh_k=K_sh, bin_ob=ob,
                 gx=np.linspace(layout.bounds['x0'], layout.bounds['x1'], Nx),
                 gy=np.linspace(layout.bounds['y0'], layout.bounds['y1'], Ny),
                 gz=np.linspace(layout.bounds['z0'], layout.bounds['z1'], Nz),
@@ -1031,13 +1080,13 @@ def stage_probes(cal: dict, lay: dict, hdr: dict, wb: dict, lights: list[dict],
                 layout=layout, hit_rate=g['hit_rate'], coverage=coverage,
                 l1=E_l1.astype(np.float16), l2=E_l2.astype(np.float16),
                 bins=E_bins.astype(np.float16),
-                l1amb=sh_amb[:, :4].astype(np.float16),
+                l1amb=l1_pre['amb'].astype(np.float16),
                 l2amb=sh_amb.astype(np.float16),
                 binsamb=bn_amb.astype(np.float16),
-                l1emit=sh_emit[:, :4].astype(np.float16),
+                l1emit=l1_pre['emit'].astype(np.float16),
                 l2emit=sh_emit.astype(np.float16),
                 binsemit=bn_emit.astype(np.float16),
-                l1nee=nee_sh[:, :4].astype(np.float16),
+                l1nee=l1_pre['nee'].astype(np.float16),
                 l2nee=nee_sh.astype(np.float16),
                 binsnee=nee_bins.astype(np.float16))
 
@@ -1428,7 +1477,11 @@ def build(img_path: Path, name: str, params: dict, background: str | None = None
                       height_chars=float(P.get('probe_height_chars', 2.0)))
     lights = stage_lights(cal, lay, hdr['emit'], wb, P)
     from tools.character_lighting_lab.escape import make_escape_sampler
-    escape_of = make_escape_sampler(P.get('escape'), root=ROOT,
+    # floor 缺省要按辐射场解析成具体常色,并把解析结果写回 P —— baked_params 记的
+    # 就是这份 color,校验侧照记录复现,不重新统计(统计口径变了也追得到)。
+    from tools.character_lighting_lab.escape import resolve_escape as _resolve_escape
+    P['escape'] = _resolve_escape(P.get('escape'), hdr['base'])
+    escape_of = make_escape_sampler(P['escape'], root=ROOT,
                                     hdr=hdr['base'], depth=cal['d'])
     amb = stage_ambient(escape_of, P)
     probes = stage_probes(cal, lay, hdr, wb, lights, P, escape_of, char_wu)
@@ -1479,6 +1532,8 @@ def build(img_path: Path, name: str, params: dict, background: str | None = None
         ambient=dict(sh=amb['sh'].reshape(-1).tolist(), mean=amb['mean'].tolist(),
                      hit_fraction=amb['hit_fraction']),
         probes=dict(nx=probes['nx'], ny=probes['ny'], nz=probes['nz'],
+                    sh_lmax=int(probes['sh_lmax']), sh_k=int(probes['sh_k']),
+                    bin_ob=int(probes['bin_ob']),
                     gx=list(map(float, probes['gx'])), gy=list(map(float, probes['gy'])),
                     gz=list(map(float, probes['gz']))),
         hdr=hdr['stats'],
@@ -1498,7 +1553,7 @@ def build(img_path: Path, name: str, params: dict, background: str | None = None
 # ⚠ pgain(预览亮度)是实验室显示增益(背景+人同乘),纯预览设施,**永不导出**
 # ——游戏只消费 β 作角色曝光,背景是原画不动,乘 pgain 会破坏人:背景比例。
 SHADING_DEFAULTS = dict(
-    mode=2, spp=64, step=0.9, msteps=160,
+    mode=3, spp=64, step=0.9, msteps=160,      # 3=八面体(2026-09-02 正式档)
     fold=1, miss_mode=0, nee=0,
     beta=0.0, amb=1.0,
     bulge=0.22, flatten=0.0,
@@ -1574,7 +1629,8 @@ def export_runtime(name: str, shading: dict | None = None,
                              + shading 块(非 bake 着色参数=场景配置;游戏 F2
                              打开即此值,F2 改动只是运行时测试)
       atlas_l1|l2|bin.bin    probe 图集,列块 [base+cov|amb|emit|nee],f16 RGBA
-                             (与查看器 atlas4() 同布局,K=4/9/64)
+                             (与查看器 atlas4() 同布局,K=4/sh_k/64;'l2' 是槽名,
+                             列数按 probes.sh_k:L2=9 / L4=25)
       probes_valid.bin       u8 0/255 × Pn
       vol_rad.bin|vol_emit.bin  体素卷 Z 切片平铺 2D 图集,f16 RGBA
                              (行=y,列=x,切片按 tiles_x 横排;alpha=占据/0)
@@ -1631,7 +1687,7 @@ def export_runtime(name: str, shading: dict | None = None,
         _awrite(dest / f'atlas_{"bin" if stem == "bins" else stem}.bin', out.tobytes())
 
     _atlas4('l1', 4)
-    _atlas4('l2', 9)
+    _atlas4('l2', int(P.get('sh_k', 9)))          # 'l2' 是图集槽名,列数按阶数(L2=9 / L4=25)
     _atlas4('bins', 64)
     _awrite(dest / 'probes_valid.bin', (src_dir / 'probes_valid.bin').read_bytes())
 
@@ -1913,6 +1969,10 @@ def radiance_sha1(rad: np.ndarray) -> str:
     return hashlib.sha1(np.ascontiguousarray(rad, np.float32).tobytes()).hexdigest()[:12]
 
 
+#: 图集槽名 → 落盘文件名(bins=8x8 → atlas_bin.bin;bins16=16x16 → atlas_bin16.bin)
+_ATLAS_STEM = {'bins': 'bin', 'bins16': 'bin16'}
+
+
 def compose_atlas(base: np.ndarray, emit: np.ndarray, nee: np.ndarray,
                   amb: np.ndarray, *, nee_on: bool, amb_w: float) -> np.ndarray:
     """四分账 → 运行时图集的**唯一**合成式:`base + (nee开?nee:emit) + amb*w`。
@@ -1976,7 +2036,8 @@ def rebake_lighting(name: str, background: str | None = None,
     _STALE = {'probe_band', 'probe_nx', 'probe_ny', 'probe_nz', 'probe_dirs',
               'fold', 'probe_strategy', 'probe_dims', 'probe_spp',
               'probe_cells_per_char_xz', 'probe_cells_per_char_y',
-              'probe_height_chars', 'probe_max', 'escape'}
+              'probe_height_chars', 'probe_max', 'escape', 'probe_sh_lmax',
+              'probe_fold_escape', 'probe_bin_ob', 'probe_runtime_mode'}
     P = dict(DEFAULTS)
     P.update({k: v for k, v in (man.get('baked_params') or {}).items()
               if k in DEFAULTS and k not in _STALE})
@@ -2028,19 +2089,25 @@ def rebake_lighting(name: str, background: str | None = None,
     wb['M'] = M                                      # 用发行版那份 M,别另生成一个
     print(f'[scale] 角色 {char_wu:.3f} wu  probe 带 {float(band):.3f} wu')
 
-    escape_of = make_escape_sampler(P.get('escape'), root=ROOT,
+    # floor 缺省要按辐射场解析成具体常色,并把解析结果写回 P —— baked_params 记的
+    # 就是这份 color,校验侧照记录复现,不重新统计(统计口径变了也追得到)。
+    from tools.character_lighting_lab.escape import resolve_escape as _resolve_escape
+    P['escape'] = _resolve_escape(P.get('escape'), hdr['base'])
+    escape_of = make_escape_sampler(P['escape'], root=ROOT,
                                     hdr=hdr['base'], depth=cal['d'])
     amb = stage_ambient(escape_of, P)
     lights = man.get('lights') or []                 # 原样保留(见 docstring)
     pr = stage_probes(cal, lay, hdr, wb, lights, P, escape_of, char_wu)
 
     sh_c = _normalize_shading(man.get('shading'))
+    sh_c['mode'] = int(P.get('probe_runtime_mode', 1))   # 运行时按 shading.mode 选档
+    man['shading'] = sh_c
     nee_on = sh_c['nee'] > 0
     amb_w = float(sh_c['amb'])
-    for stem, K in (('l1', 4), ('l2', 9), ('bins', 64)):
+    for stem, K in (('l1', 4), ('l2', int(pr['sh_k'])), ('bins', int(pr['bin_ob']) ** 2)):
         out = compose_atlas(pr[stem][:, :, :3], pr[f'{stem}emit'], pr[f'{stem}nee'],
                             pr[f'{stem}amb'], nee_on=nee_on, amb_w=amb_w)
-        _awrite(dest / f'atlas_{"bin" if stem == "bins" else stem}.bin', out.tobytes())
+        _awrite(dest / f'atlas_{_ATLAS_STEM.get(stem, stem)}.bin', out.tobytes())
     _awrite(dest / 'probes_valid.bin', (pr['valid'].astype(np.uint8) * 255).tobytes())
 
     # ⚠ M **原样回写**,不许过一趟 float32 再 float() —— 那会把
@@ -2049,12 +2116,15 @@ def rebake_lighting(name: str, background: str | None = None,
     man['world'] = dict(M=man['world']['M'],
                         x0=wb['x0'], x1=wb['x1'], y0=wb['y0'], y1=wb['y1'],
                         z0=wb['z0'], z1=wb['z1'])
-    man['probes'] = {'nx': pr['nx'], 'ny': pr['ny'], 'nz': pr['nz']}
+    man['probes'] = {'nx': pr['nx'], 'ny': pr['ny'], 'nz': pr['nz'],
+                     'sh_lmax': int(pr['sh_lmax']), 'sh_k': int(pr['sh_k']),
+                     'bin_ob': int(pr['bin_ob'])}
     man['ambient_sh'] = amb['sh'].reshape(-1).tolist()
     bp = dict(man.get('baked_params') or {})
     bp.update({k: P[k] for k in ('probe_strategy', 'probe_dims', 'probe_spp',
                                  'probe_cells_per_char_xz', 'probe_cells_per_char_y',
-                                 'probe_height_chars', 'probe_max')})
+                                 'probe_height_chars', 'probe_max', 'probe_sh_lmax',
+                                 'probe_fold_escape', 'probe_bin_ob')})
     bp['probe_band'] = float(band)
     bp['escape'] = P.get('escape')
     bp['char_wu'] = float(char_wu)
@@ -2092,13 +2162,17 @@ def rebake_lighting(name: str, background: str | None = None,
 def _parse_escape(spec: str, intensity: float) -> dict:
     """`--escape` 的取值 -> `escape.make_escape_sampler` 的 spec。
 
-    缺省是 black(制作人 2026-09-01)。`scene_derived` 是**显式**选项且带警告:
+    缺省是 floor(2026-09-02,场景辐射中位 x0.3 的地板色;`floor:0.2` 改倍率),
+    `black` 显式给才是纯黑。`scene_derived` 是**显式**选项且带警告:
     历史上从画面反推逃逸辐射翻过车,见 escape.py 的模块文档。
     """
     s = spec.strip()
     low = s.lower()
     if low == 'black':
         return {'mode': 'black'}
+    if low == 'floor' or low.startswith('floor:'):
+        frac = float(low.split(':', 1)[1]) if ':' in low else 0.3
+        return {'mode': 'floor', 'frac': frac, 'intensity': intensity}
     if low == 'white':
         return {'mode': 'color', 'color': [1.0, 1.0, 1.0], 'intensity': intensity}
     if low == 'scene_derived':

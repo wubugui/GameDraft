@@ -19,13 +19,13 @@
     "人声闹市"
   ],
   "spawnPoint": {
-    "x": 2083.2,
-    "y": 2205.2
+    "x": 975.1,
+    "y": 1491.9
   },
   "spawnPoints": {
     "from_teahouse": {
-      "x": 2027.47,
-      "y": 2167.45
+      "x": 1815.9,
+      "y": 1808.6
     },
     "from_dock": {
       "x": 2294.64,
@@ -43,17 +43,13 @@
       "x": 1953.7,
       "y": 2115.5
     },
-    "from_yizhuang": {
-      "x": 3336.19,
-      "y": 1869.6
-    },
     "spawn_0": {
       "x": 3194.3,
       "y": 1367.9
     },
     "from_houxiang": {
-      "x": 2470.0,
-      "y": 1015.0
+      "x": 188.4,
+      "y": 2136.8
     }
   },
   "hotspots": [
@@ -76,8 +72,8 @@
       "id": "T_去码头",
       "type": "transition",
       "label": "去码头",
-      "x": 2085.0,
-      "y": 2193.0,
+      "x": 3895.1,
+      "y": 2170.2,
       "interactionRange": 60.0,
       "data": {
         "targetScene": "码头白天",
@@ -88,56 +84,11 @@
       ]
     },
     {
-      "id": "T_出城",
-      "type": "transition",
-      "label": "出城（河滩方向）",
-      "x": 198.9,
-      "y": 962.7,
-      "interactionRange": 64.0,
-      "conditions": [
-        {
-          "narrative": "flow_xungou_main",
-          "state": "s04_pozi",
-          "reached": true
-        }
-      ],
-      "conditionHidesEntity": true,
-      "data": {
-        "targetScene": "河边",
-        "targetSpawnPoint": "从城里"
-      },
-      "planes": [
-        "normal"
-      ]
-    },
-    {
-      "id": "T_去城隍庙",
-      "type": "transition",
-      "label": "去城隍庙（守夜的活）",
-      "x": 3096.0,
-      "y": 642.0,
-      "interactionRange": 60.0,
-      "conditions": [
-        {
-          "quest": "xg11_shouye",
-          "questStatus": "Active"
-        }
-      ],
-      "conditionHidesEntity": true,
-      "data": {
-        "targetScene": "城隍庙夜",
-        "targetSpawnPoint": "entry"
-      },
-      "planes": [
-        "normal"
-      ]
-    },
-    {
       "id": "T_去城门",
       "type": "transition",
       "label": "去城门口",
-      "x": 1348.9,
-      "y": 1090.4,
+      "x": 3808.1,
+      "y": 111.3,
       "interactionRange": 64.0,
       "conditions": [
         {
@@ -173,170 +124,6 @@
         "normal"
       ],
       "group": "线外_归档"
-    },
-    {
-      "id": "T_去崖墓",
-      "type": "transition",
-      "label": "上崖墓",
-      "x": 1692.7,
-      "y": 989.5,
-      "interactionRange": 60.0,
-      "conditions": [
-        {
-          "narrative": "scenario_背尸",
-          "state": "hired",
-          "reached": true
-        },
-        {
-          "not": {
-            "narrative": "scenario_背尸",
-            "state": "fled",
-            "reached": true
-          }
-        }
-      ],
-      "conditionHidesEntity": true,
-      "data": {
-        "targetScene": "崖墓",
-        "targetSpawnPoint": "entry"
-      },
-      "planes": [
-        "normal"
-      ]
-    },
-    {
-      "id": "T_去婆子家院",
-      "type": "transition",
-      "label": "去婆子家小院",
-      "x": 396.5,
-      "y": 1051.4,
-      "interactionRange": 60.0,
-      "conditions": [
-        {
-          "narrative": "scenario_婆子家",
-          "state": "hired",
-          "reached": true
-        },
-        {
-          "not": {
-            "narrative": "scenario_婆子家",
-            "state": "paid",
-            "reached": true
-          }
-        }
-      ],
-      "conditionHidesEntity": true,
-      "data": {
-        "targetScene": "婆子家院",
-        "targetSpawnPoint": "entry"
-      },
-      "planes": [
-        "normal"
-      ]
-    },
-    {
-      "id": "T_去土地庙",
-      "type": "transition",
-      "label": "去土地庙（枯井）",
-      "x": 3334.3,
-      "y": 473.4,
-      "interactionRange": 60.0,
-      "conditions": [
-        {
-          "narrative": "scenario_枯井",
-          "state": "hired",
-          "reached": true
-        },
-        {
-          "not": {
-            "narrative": "scenario_枯井",
-            "state": "fled",
-            "reached": true
-          }
-        }
-      ],
-      "conditionHidesEntity": true,
-      "data": {
-        "targetScene": "枯井土地庙",
-        "targetSpawnPoint": "entry"
-      },
-      "planes": [
-        "normal"
-      ]
-    },
-    {
-      "id": "T_去阎王岭",
-      "type": "transition",
-      "label": "上阎王岭（送货）",
-      "x": 3780.0,
-      "y": 180.0,
-      "interactionRange": 60.0,
-      "conditions": [
-        {
-          "narrative": "scenario_送货",
-          "state": "bundle_taken",
-          "reached": true
-        },
-        {
-          "not": {
-            "narrative": "scenario_送货",
-            "state": "returned",
-            "reached": true
-          }
-        }
-      ],
-      "conditionHidesEntity": true,
-      "data": {
-        "targetScene": "阎王岭山口",
-        "targetSpawnPoint": "entry"
-      },
-      "planes": [
-        "normal"
-      ]
-    },
-    {
-      "id": "T_去义庄",
-      "type": "transition",
-      "label": "去义庄",
-      "x": 3348.0,
-      "y": 884.0,
-      "interactionRange": 60.0,
-      "conditions": [
-        {
-          "any": [
-            {
-              "narrative": "flow_xungou_main",
-              "state": "s09_songhuo",
-              "reached": true
-            },
-            {
-              "narrative": "flow_背尸_淹尸活",
-              "state": "carrying"
-            },
-            {
-              "narrative": "flow_背尸_淹尸活",
-              "state": "placed"
-            },
-            {
-              "narrative": "flow_背尸_零工活",
-              "state": "looking"
-            },
-            {
-              "narrative": "flow_背尸_零工活",
-              "state": "carrying"
-            },
-            {
-              "narrative": "flow_背尸_零工活",
-              "state": "placed"
-            }
-          ]
-        }
-      ],
-      "conditionHidesEntity": true,
-      "data": {
-        "targetScene": "义庄",
-        "targetSpawnPoint": "entry"
-      }
     },
     {
       "id": "hs_当铺道袍",
@@ -477,7 +264,11 @@
         }
       ],
       "conditionHidesEntity": true,
-      "group": "线外_归档"
+      "group": "线外_归档",
+      "phases": [
+        "午",
+        "辰"
+      ]
     },
     {
       "id": "hs_摸橘子",
@@ -506,8 +297,8 @@
       "id": "T_去破屋",
       "type": "transition",
       "label": "城郊破屋·取尸",
-      "x": 360.0,
-      "y": 780.0,
+      "x": 1959.3,
+      "y": 363.8,
       "interactionRange": 95.0,
       "conditions": [
         {
@@ -559,21 +350,6 @@
         "text": ""
       },
       "group": "主线_吃饭点"
-    },
-    {
-      "id": "T_去后巷",
-      "type": "transition",
-      "label": "钻进后巷",
-      "x": 2520.0,
-      "y": 985.0,
-      "interactionRange": 60.0,
-      "data": {
-        "targetScene": "test_room_b",
-        "targetSpawnPoint": "from_wujin"
-      },
-      "planes": [
-        "normal"
-      ]
     },
     {
       "id": "T_去后巷子",
@@ -1832,7 +1608,11 @@
           }
         }
       ],
-      "group": "线外_归档"
+      "group": "线外_归档",
+      "phases": [
+        "辰",
+        "午"
+      ]
     },
     {
       "id": "z_找活",
@@ -1917,6 +1697,84 @@
         {
           "narrative": "wrap_癞子",
           "state": "捡钱"
+        }
+      ]
+    },
+    {
+      "id": "Zone_路遇私铸钱",
+      "polygon": [
+        {
+          "x": 1150.0,
+          "y": 2090.0
+        },
+        {
+          "x": 1340.0,
+          "y": 1880.0
+        },
+        {
+          "x": 1620.0,
+          "y": 2000.0
+        },
+        {
+          "x": 1420.0,
+          "y": 2200.0
+        }
+      ],
+      "onEnter": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "序章_街巷_路遇私铸钱",
+            "ownerType": "zone",
+            "ownerId": "Zone_路遇私铸钱"
+          }
+        }
+      ],
+      "conditions": [
+        {
+          "narrative": "flow_xungou_main",
+          "state": "state_4"
+        }
+      ],
+      "phases": [
+        "午"
+      ]
+    },
+    {
+      "id": "Zone_夜遇癞子",
+      "polygon": [
+        {
+          "x": 820.0,
+          "y": 2080.0
+        },
+        {
+          "x": 1010.0,
+          "y": 1940.0
+        },
+        {
+          "x": 1200.0,
+          "y": 2060.0
+        },
+        {
+          "x": 1010.0,
+          "y": 2230.0
+        }
+      ],
+      "onEnter": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "序章_街巷_夜遇癞子",
+            "npcId": "NPC_癞子",
+            "ownerType": "npc",
+            "ownerId": "NPC_癞子"
+          }
+        }
+      ],
+      "conditions": [
+        {
+          "narrative": "wrap_癞子",
+          "state": "夜等"
         }
       ]
     }

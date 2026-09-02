@@ -663,6 +663,8 @@ export class SceneLightingPass {
           uWScale: { value: new Float32Array([1, 1, 1]), type: 'vec3<f32>' },
           uPN: { value: new Float32Array([1, 1, 1]), type: 'vec3<f32>' },
           uProbeT: { value: 1, type: 'f32' },
+          uShK: { value: 9, type: 'f32' },
+          uBinOb: { value: 8, type: 'f32' },
           uFold: { value: 1, type: 'f32' },
           uAmbSH: { value: new Float32Array(27), type: 'vec3<f32>', size: 9 },
           uMode: { value: 2, type: 'f32' },
@@ -823,6 +825,10 @@ export class SceneLightingPass {
     wScale: [number, number, number];
     pn: [number, number, number];
     probeT: number;
+    /** 'l2' 图集每颗的球谐系数数(9=L2 / 25=L4) */
+    shK: number;
+    /** 八面体边长(8 或 16) */
+    binOb: number;
     /** skyao probe(可缺:老载荷没有,视图 11 显示全白) */
     skyao: {
       tex: import('pixi.js').TextureSource;
@@ -852,6 +858,8 @@ export class SceneLightingPass {
     (u.uWScale as Float32Array).set(res.wScale);
     (u.uPN as Float32Array).set(res.pn);
     u.uProbeT = res.probeT;
+    u.uShK = res.shK;
+    u.uBinOb = res.binOb;
     (u.uAmbSH as Float32Array).set(res.ambSH);
     // RT(0) 不是查表模式,probeE 里会落到 BIN 分支采到占位图 —— 钳到 L1..BIN
     u.uMode = Math.min(Math.max(res.mode, 1), 3);

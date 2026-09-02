@@ -457,6 +457,50 @@ def _count_entity_refs(
     return bare, qualified, soft
 
 
+def _npc_data_ref_hit(node: Any, kind: str, entity_id: str) -> bool:
+    """热点 ``data.npcId`` 是否算一处 npc 引用。**扫描侧与改写侧唯一的判定口径。**
+
+    以运行时为准:``src/utils/hotspotInteraction.ts`` 的
+    ``hotspotOffersPlayerInteraction`` 先 ``switch (def.type)``,只有落到
+    ``case 'npc'`` 才去读 ``data.npcId``;别的 type(inspect / pickup / transition /
+    encounter / act_spot)上的同名键运行时**没有任何消费者**——场景编辑器 Apply 时
+    ``npcId`` 也在 ``_managed_data_keys`` 里,换 type 之后会被直接清掉。所以
+    "非 npc 型热点带着 data.npcId" 不是引用,是残渣。
+    (同一条 type 判别式在 ``_classify_hotspot_payload`` 里也镜像了一份。)
+
+    ⚠ 两侧不许各写一份:曾经扫描不看 type、改写看 type,于是重构预览把这种残渣
+    算进"改名会跟随改写"的承诺里,而 ``rename_entity`` 实际不动它——改完静默指空,
+    要等 validate-data 才发现(2026-09-02 口径对齐)。
+    """
+    if kind != "npc" or not isinstance(node, dict):
+        return False
+    if str(node.get("type") or "") != "npc":
+        return False
+    data = node.get("data")
+    return isinstance(data, dict) and str(data.get("npcId") or "").strip() == entity_id
+
+
+def _visit_npc_data_refs(
+    node: Any, kind: str, entity_id: str, *, rename_to: str | None = None,
+) -> int:
+    """遍历整棵树数出命中的 ``data.npcId``;给了 ``rename_to`` 就顺手改写。
+
+    扫描与改写共用**同一次遍历、同一个判定**,结构上不可能再漂。
+    """
+    count = 0
+    if isinstance(node, dict):
+        if _npc_data_ref_hit(node, kind, entity_id):
+            count += 1
+            if rename_to is not None:
+                node["data"]["npcId"] = rename_to
+        for value in node.values():
+            count += _visit_npc_data_refs(value, kind, entity_id, rename_to=rename_to)
+    elif isinstance(node, list):
+        for child in node:
+            count += _visit_npc_data_refs(child, kind, entity_id, rename_to=rename_to)
+    return count
+
+
 def _rewrite_source_id_strings(node: Any, old: str, new: str, *, count_only: bool = False) -> int:
     """emitNarrativeSignal 溯源字段 sourceId 的 "场景:实体" 复合串精确匹配改写。
     trace-only（不参与信号路由），带场景前缀零歧义，可放心机械改写。"""
@@ -770,10 +814,8 @@ def scan_entity_usages(model: Any, scene_id: str, kind: str, entity_id: str) -> 
     qualified_local = 0
     for c_kind, c_id, node in _scene_containers(scene):
         bare, qualified, soft = _count_entity_refs(node, sid, kind, eid, )
-        npc_data = 0
-        if c_kind == "hotspot" and kind == "npc" and isinstance(node.get("data"), dict) \
-                and str(node["data"].get("npcId") or "").strip() == eid:
-            npc_data = 1
+        # npc 型热点的 data.npcId(判定与改写侧同源,见 _npc_data_ref_hit)
+        npc_data = _visit_npc_data_refs(node, kind, eid)
         total = bare + soft + npc_data
         qualified_local += qualified
         if not total:
@@ -1367,22 +1409,8 @@ def _rewrite_bare_in_tree(
 
 
 def _rewrite_npc_data_refs(node: Any, kind: str, old: str, new: str) -> int:
-    """npc 型热点的 data.npcId 引用。"""
-    if kind != "npc":
-        return 0
-    count = 0
-    if isinstance(node, dict):
-        data = node.get("data")
-        if str(node.get("type") or "") == "npc" and isinstance(data, dict) \
-                and str(data.get("npcId") or "").strip() == old:
-            data["npcId"] = new
-            count += 1
-        for value in node.values():
-            count += _rewrite_npc_data_refs(value, kind, old, new)
-    elif isinstance(node, list):
-        for child in node:
-            count += _rewrite_npc_data_refs(child, kind, old, new)
-    return count
+    """npc 型热点的 data.npcId 引用(判定与扫描侧同源,见 _npc_data_ref_hit)。"""
+    return _visit_npc_data_refs(node, kind, old, rename_to=new)
 
 
 def _rewrite_qualified_id_refs(model: Any, scene_id: str, kind: str, old: str, new: str) -> list[dict[str, Any]]:

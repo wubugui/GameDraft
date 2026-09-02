@@ -588,7 +588,12 @@
     ],
     "acceptActions": [],
     "rewards": [],
-    "nextQuests": [],
+    "nextQuests": [
+      {
+        "questId": "主线_去赌坊",
+        "conditions": []
+      }
+    ],
     "announce": "banner",
     "autoFocus": true
   },
@@ -617,5 +622,85 @@
     "nextQuests": [],
     "announce": "toast",
     "autoFocus": false
+  },
+  {
+    "id": "主线_去赌坊",
+    "group": "xungou",
+    "type": "main",
+    "title": "去赌坊耍两把",
+    "description": "二百三十文揣到起，还热的。街上寻个地方，把这笔钱做大。",
+    "preconditions": [
+      {
+        "narrative": "flow_xungou_main",
+        "state": "state_4",
+        "reached": true
+      }
+    ],
+    "completionConditions": [
+      {
+        "narrative": "flow_xungou_main",
+        "state": "state_6",
+        "reached": true
+      }
+    ],
+    "acceptActions": [],
+    "rewards": [],
+    "nextQuests": [
+      {
+        "questId": "主线_夜路",
+        "conditions": []
+      }
+    ],
+    "objectives": [
+      {
+        "id": "obj1",
+        "text": "切赌坊耍两把",
+        "guidance": [
+          {
+            "kind": "worldMarker",
+            "sceneId": "雾津街头",
+            "label": "目标",
+            "entityKind": "npc",
+            "entityId": "街巷_赌坊门卫",
+            "offscreenArrow": true,
+            "showDistance": true
+          }
+        ]
+      }
+    ],
+    "announce": "banner",
+    "autoFocus": true
+  },
+  {
+    "id": "主线_夜路",
+    "group": "xungou",
+    "type": "main",
+    "title": "摸黑回去",
+    "description": "输洗白咯。天黑完了，街上一个人都没得。",
+    "preconditions": [
+      {
+        "narrative": "flow_xungou_main",
+        "state": "state_6",
+        "reached": true
+      }
+    ],
+    "completionConditions": [
+      {
+        "narrative": "flow_xungou_main",
+        "state": "state_7",
+        "reached": true
+      }
+    ],
+    "acceptActions": [],
+    "rewards": [],
+    "nextQuests": [],
+    "objectives": [
+      {
+        "id": "obj1",
+        "text": "摸黑往回走"
+      }
+    ],
+    "announce": "banner",
+    "autoFocus": true
   }
 ]

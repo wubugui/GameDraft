@@ -3,7 +3,7 @@
   "id": "序章_街巷_赌坊门卫",
   "entry": "n_7",
   "meta": {
-    "title": "赌坊门卫对话"
+    "title": "赌坊门卫对话（按 街巷_赌坊 状态分流；初始状态下再按主线 state_4 分「还没开场」/「叫花子」）"
   },
   "preconditions": [],
   "nodes": {
@@ -80,6 +80,14 @@
           }
         },
         {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "赌坊_输光",
+            "sourceType": "dialogue",
+            "sourceId": "序章_街巷_赌坊门卫"
+          }
+        },
+        {
           "type": "advanceTimeTo",
           "params": {
             "phase": "夜",
@@ -98,7 +106,7 @@
         },
         {
           "state": "初始状态",
-          "next": "n_9"
+          "next": "n_10"
         },
         {
           "state": "赌场正常状态",
@@ -126,6 +134,30 @@
       },
       "next": "n_2",
       "text": "走走走！叫花子来凑什么热闹！"
+    },
+    "n_10": {
+      "type": "switch",
+      "cases": [
+        {
+          "next": "n_11",
+          "conditions": [
+            {
+              "narrative": "flow_xungou_main",
+              "state": "state_4"
+            }
+          ]
+        }
+      ],
+      "defaultNext": "n_9"
+    },
+    "n_11": {
+      "type": "line",
+      "speaker": {
+        "kind": "sceneNpc",
+        "npcId": "街巷_赌坊门卫"
+      },
+      "next": "n_2",
+      "text": "还没开场。等哈再来。"
     }
   }
 }

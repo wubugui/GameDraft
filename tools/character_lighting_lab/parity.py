@@ -85,6 +85,22 @@ def reference_e(geo: dict, hdr: np.ndarray, escape_of, spp: int) -> np.ndarray:
     return e.reshape(h, w, 3)
 
 
+def query_bias_wu(layout) -> float:
+    """查询点沿法线的偏移量(wu)= `PROBE_QUERY_NORMAL_BIAS` x 网格最小格距。
+
+    与着色器 `probeE` 同一口径(它用 `min(1/uWScale)` 现算格距)。q 与世界之间
+    M 正交(含反射),法线偏移在哪个空间做都是同一段位移,调用方在 q 空间加:
+    `q + n_q * bias` 再 `@ M.T`。
+    """
+    from .const import PROBE_QUERY_NORMAL_BIAS
+    nx, ny, nz = layout.grid
+    b = layout.bounds
+    cell = min((b['x1'] - b['x0']) / max(nx - 1, 1),
+               (b['y1'] - b['y0']) / max(ny - 1, 1),
+               (b['z1'] - b['z0']) / max(nz - 1, 1))
+    return float(PROBE_QUERY_NORMAL_BIAS * cell)
+
+
 def probe_reconstruct(layout, coeff: np.ndarray, valid: np.ndarray,
                       world_pts: np.ndarray, normals_q: np.ndarray,
                       basis: str) -> np.ndarray:

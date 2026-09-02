@@ -2,35 +2,35 @@
   "lighting": {
     "sky": {
       "color": [
-        1.0,
-        1.0,
-        1.0
+        1,
+        1,
+        1
       ],
-      "intensity": 1.0,
+      "intensity": 1,
       "hemi": 0.5
     },
     "day": {
-      "sunIntensity": 0.0,
-      "sunElevationDeg": 50.0,
-      "sunAzimuthDeg": 180.0
+      "sunIntensity": 0,
+      "sunElevationDeg": 50,
+      "sunAzimuthDeg": 180
     },
     "lights": [],
     "display": {
-      "ev": 0.0,
+      "ev": 0,
       "tonemap": "none",
-      "whiteKelvin": 6500.0,
-      "contrast": 1.0,
-      "saturation": 1.0,
-      "lift": 0.0,
-      "liftKelvin": 6500.0
+      "whiteKelvin": 6500,
+      "contrast": 1,
+      "saturation": 1,
+      "lift": 0,
+      "liftKelvin": 6500
     },
-    "aoStrength": 1.0,
-    "ratioMax": 8.0,
-    "dehaze": 0.0,
+    "aoStrength": 1,
+    "ratioMax": 8,
+    "dehaze": 0,
     "emissive": {
-      "gain": 0.0
+      "gain": 0
     },
-    "giGain": 0.0,
+    "giGain": 0,
     "placeholder": true,
     "_migration": "identity-2026-08-21"
   },
