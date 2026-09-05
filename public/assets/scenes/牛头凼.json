@@ -1,0 +1,69 @@
+{
+  "id": "牛头凼",
+  "name": "牛头凼",
+  "worldWidth": 912.36,
+  "worldHeight": 513.2,
+  "backgrounds": [
+    {
+      "image": "background.png",
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "spawnPoint": {
+    "x": 148.9,
+    "y": 291.0
+  },
+  "hotspots": [
+    {
+      "id": "T_到崖墓入口",
+      "x": 19.1,
+      "y": 333.8,
+      "type": "transition",
+      "label": "和尚坡",
+      "interactionRange": 29.6,
+      "data": {
+        "targetScene": "崖墓入口",
+        "targetSpawnPoint": "spawn_1",
+        "text": ""
+      },
+      "castShadow": false,
+      "autoTrigger": true,
+      "scale": 1.03
+    }
+  ],
+  "npcs": [
+    {
+      "id": "new_npc",
+      "x": 96.3,
+      "y": 374.5,
+      "interactionRange": 50,
+      "name": "New NPC",
+      "animFile": "/resources/runtime/animation/guanchai_anim/anim.json",
+      "initialAnimState": "idle"
+    }
+  ],
+  "zones": [],
+  "perspectiveScale": {
+    "near": {
+      "x": 109.2,
+      "y": 475.1,
+      "scale": 1.0
+    },
+    "far": {
+      "x": 260.9,
+      "y": 237.5,
+      "scale": 0.5
+    }
+  },
+  "spawnPoints": {
+    "spawn_0": {
+      "x": 78.1,
+      "y": 317.8
+    }
+  },
+  "camera": {
+    "zoom": 1.68,
+    "pixelsPerUnit": 1.0
+  }
+}

@@ -46,6 +46,46 @@ class Issue:
 _DIALOGUE_FACING_VALUES = ("keep", "left", "right", "player")
 
 
+def _display_image_issues(kind: str, eid: str, sid: str, di: object) -> list[Issue]:
+    """`displayImage` 的形状校验 —— 热点与 NPC **共用这一份**。
+
+    两边是同一个 TS 类型 `HotspotDisplayImage`（NPC 上表示"没有动画包的静态贴图"，
+    运行时合成 1×1 单帧动画集）。各写一份的下场是两套规矩慢慢漂开，
+    而且不会有人发现。只查形状：**文件在不在盘上归素材引用审计**，不在这儿查盘。
+    """
+    out: list[Issue] = []
+    if not isinstance(di, dict):
+        out.append(Issue("error", "scene", sid, f"{kind} '{eid}' displayImage 须为对象"))
+        return out
+    if not str(di.get("image", "") or "").strip():
+        out.append(Issue("error", "scene", sid, f"{kind} '{eid}' displayImage.image 不能为空"))
+    for key in ("worldWidth", "worldHeight"):
+        v = di.get(key)
+        try:
+            fv = float(v)
+            if fv <= 0 or not math.isfinite(fv):
+                out.append(Issue(
+                    "error", "scene", sid,
+                    f"{kind} '{eid}' displayImage.{key} 须为正有限数",
+                ))
+        except (TypeError, ValueError):
+            out.append(Issue(
+                "error", "scene", sid, f"{kind} '{eid}' displayImage.{key} 须为数值",
+            ))
+    fac = di.get("facing")
+    if fac is not None and fac not in ("left", "right"):
+        out.append(Issue(
+            "error", "scene", sid, f"{kind} '{eid}' displayImage.facing 须为 left 或 right",
+        ))
+    ssort = di.get("spriteSort")
+    if ssort is not None and ssort not in ("back", "front"):
+        out.append(Issue(
+            "error", "scene", sid,
+            f"{kind} '{eid}' displayImage.spriteSort 须为 back 或 front",
+        ))
+    return out
+
+
 def _entity_cutscene_bindings(ent: dict) -> list[str]:
     out: list[str] = []
     def add(raw: object) -> None:
@@ -257,6 +297,27 @@ def validate(model: ProjectModel) -> list[Issue]:
                         f"{_kind2} '{_eid2}' occlusionBlendFactor 须为 [0,1] 有限数"
                         f"（当前 {_ob!r}；运行时非有限→场景默认、越界→钳制）",
                     ))
+                # 锚点：归一化 [0,1]。运行时对非数回落缺省、对越界钳到 [0,1]，所以这里只能 warning（兜底不得严于运行时）。
+                _anc = _ent2.get("anchor")
+                if _anc is not None:
+                    if not isinstance(_anc, dict):
+                        issues.append(Issue(
+                            "warning", "scene", sid,
+                            f"{_kind2} '{_eid2}' anchor 须为 {{x, y}} 对象（当前 {_anc!r}；运行时整个回落底中）",
+                        ))
+                    else:
+                        for _ak in ("x", "y"):
+                            _av = _anc.get(_ak)
+                            if _av is None:
+                                continue
+                            if (not isinstance(_av, (int, float))
+                                    or isinstance(_av, bool)
+                                    or not _math.isfinite(float(_av))
+                                    or not (0.0 <= float(_av) <= 1.0)):
+                                issues.append(Issue(
+                                    "warning", "scene", sid,
+                                    f"{_kind2} '{_eid2}' anchor.{_ak} 须为 [0,1] 有限数（归一化；当前 {_av!r}；运行时非数→缺省、越界→钳制）",
+                                ))
                 _gv = _ent2.get("group")
                 if _gv is not None and (not isinstance(_gv, str) or not _gv.strip()):
                     issues.append(Issue(
@@ -365,44 +426,7 @@ def validate(model: ProjectModel) -> list[Issue]:
             hid = str(hs.get("id", "")) or "?"
             di = hs.get("displayImage")
             if di is not None:
-                if not isinstance(di, dict):
-                    issues.append(Issue(
-                        "error", "scene", sid,
-                        f"Hotspot '{hid}' displayImage 须为对象",
-                    ))
-                else:
-                    img = str(di.get("image", "") or "").strip()
-                    if not img:
-                        issues.append(Issue(
-                            "error", "scene", sid,
-                            f"Hotspot '{hid}' displayImage.image 不能为空",
-                        ))
-                    for key in ("worldWidth", "worldHeight"):
-                        v = di.get(key)
-                        try:
-                            fv = float(v)
-                            if fv <= 0 or not math.isfinite(fv):
-                                issues.append(Issue(
-                                    "error", "scene", sid,
-                                    f"Hotspot '{hid}' displayImage.{key} 须为正有限数",
-                                ))
-                        except (TypeError, ValueError):
-                            issues.append(Issue(
-                                "error", "scene", sid,
-                                f"Hotspot '{hid}' displayImage.{key} 须为数值",
-                            ))
-                    fac = di.get("facing")
-                    if fac is not None and fac not in ("left", "right"):
-                        issues.append(Issue(
-                            "error", "scene", sid,
-                            f"Hotspot '{hid}' displayImage.facing 须为 left 或 right",
-                        ))
-                    ssort = di.get("spriteSort")
-                    if ssort is not None and ssort not in ("back", "front"):
-                        issues.append(Issue(
-                            "error", "scene", sid,
-                            f"Hotspot '{hid}' displayImage.spriteSort 须为 back 或 front",
-                        ))
+                issues.extend(_display_image_issues("Hotspot", hid, sid, di))
             hdf = hs.get("dialogueFacing")
             if hdf is not None and hdf not in _DIALOGUE_FACING_VALUES:
                 issues.append(Issue(
@@ -585,6 +609,27 @@ def validate(model: ProjectModel) -> list[Issue]:
                     "error", "scene", sid,
                     f"NPC '{nid}' spriteSort 须为 back 或 front",
                 ))
+            ndi = npc.get("displayImage")
+            if ndi is not None:
+                # 静态贴图实体（没有动画包的道具）：运行时合成 1×1 单帧动画集，
+                # 之后与普通 NPC 走同一条管线。形状规则与热点展示图同一份。
+                issues.extend(_display_image_issues("NPC", nid, sid, ndi))
+                if str(npc.get("animFile", "") or "").strip():
+                    issues.append(Issue(
+                        "warning", "scene", sid,
+                        f"NPC '{nid}' 同时配了 animFile 与 displayImage；"
+                        "运行时以动画包为准，这张静态贴图不会被使用",
+                    ))
+                if (
+                    isinstance(ndi, dict)
+                    and ndi.get("spriteSort") is not None
+                    and npc.get("spriteSort") is None
+                ):
+                    issues.append(Issue(
+                        "warning", "scene", sid,
+                        f"NPC '{nid}' 把 spriteSort 写在了 displayImage 里；"
+                        "NPC 的叠放档位只读 NpcDef.spriteSort，这一份运行时会被忽略",
+                    ))
             anim_bundle = _anim_bundle_id_from_ref(npc.get("animFile"))
             if anim_bundle and anim_bundle not in model.animations:
                 issues.append(Issue(
@@ -1197,6 +1242,7 @@ def validate(model: ProjectModel) -> list[Issue]:
         issues.append(Issue("error", "config", "game_config",
                             f"fallbackScene '{cfg['fallbackScene']}' 不存在"))
 
+    _validate_dev_narrative_warps(model, issues, scene_ids)
     _validate_day_night(model, issues)
     _validate_player_acts(model, issues)
     _validate_character_avatars(model, issues)
@@ -1222,6 +1268,7 @@ def validate(model: ProjectModel) -> list[Issue]:
     _validate_narrative_packages(model, issues)
     _validate_planes(model, issues)
     _validate_npc_schedules(model, issues)
+    _validate_trajectories(model, issues)
     _validate_plane_action_pairing(model, issues)
     _validate_narrative_templates(model, issues)
     _validate_entity_reachability(model, issues)
@@ -4955,6 +5002,64 @@ def _append_action_param_ref_issues(
                     f"teleportEntityTo 的 {key} 须为有限数",
                 ))
 
+    if t == "playTrajectory":
+        # trajectoryId 指全局轨迹资产（assets/data/trajectories/<id>.json）。空 id 是硬错
+        # （运行时整步跳过）；悬垂只 warning——"宁可少校验不误报"：资产目录可能正被
+        # 轨迹工作台并发写入，主编辑器这份只读镜像未必是最新的。
+        tid_pt = str(p.get("trajectoryId") or "").strip()
+        if not tid_pt:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                "playTrajectory 缺少 trajectoryId（运行时按 id 找轨迹资产，空 id 整步跳过）",
+            ))
+        else:
+            known_pt = _known_trajectory_ids(model)
+            if known_pt and tid_pt not in known_pt:
+                issues.append(Issue(
+                    "warning", data_type, item_id,
+                    f"playTrajectory trajectoryId {tid_pt!r} 不在 assets/data/trajectories/ 里"
+                    f"（运行时找不到只 warn 一句就整步跳过，画面上什么都不发生）",
+                ))
+        if not str(p.get("target") or "").strip():
+            issues.append(Issue(
+                "error", data_type, item_id,
+                "playTrajectory 缺少 target（轨迹挂到谁身上：player / 本场景 NPC id）",
+            ))
+        ax_pt, ay_pt = p.get("anchorX"), p.get("anchorY")
+        for key_pt, v_pt in (("anchorX", ax_pt), ("anchorY", ay_pt)):
+            if v_pt is not None and (not _is_num(v_pt) or not math.isfinite(float(v_pt))):
+                issues.append(Issue(
+                    "warning", data_type, item_id,
+                    f"playTrajectory {key_pt} 须为有限数（当前 {v_pt!r}；运行时按未给锚点处理）",
+                ))
+        if (ax_pt is None) != (ay_pt is None):
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                "playTrajectory anchorX / anchorY 须成对给出（只给一个＝运行时按目标此刻位置为锚）",
+            ))
+        flip_pt = p.get("flipX")
+        if flip_pt is not None and flip_pt not in (True, False) and not (
+            isinstance(flip_pt, str) and str(flip_pt).strip().lower() in ("", "true", "false", "0", "1")
+        ):
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                "playTrajectory flipX 建议使用 JSON 布尔 true/false（缺省=不镜像）",
+            ))
+        wait_pt = p.get("wait")
+        if wait_pt is not None and wait_pt not in (True, False) and not (
+            isinstance(wait_pt, str) and str(wait_pt).strip().lower() in ("", "true", "false", "0", "1")
+        ):
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                "playTrajectory wait 建议使用 JSON 布尔 true/false（缺省=等轨迹播完）",
+            ))
+
+    if t == "stopTrajectory" and not str(p.get("target") or "").strip():
+        issues.append(Issue(
+            "error", data_type, item_id,
+            "stopTrajectory 缺少 target（要停谁身上的轨迹：NPC id / player）",
+        ))
+
     if t == "moveEntityTo":
         sid_mp = str(p.get("sceneId") or "").strip()
         scenes_set = set(model.all_scene_ids())
@@ -5230,6 +5335,53 @@ def _validate_cutscene_speakers(model: ProjectModel, issues: list[Issue]) -> Non
                     "——本行不显立绘、不冒「…」气泡、左右分边失效。选上说话人即可，"
                     "选后 speaker 可留空由实体给名字",
                 ))
+
+
+def _validate_dev_narrative_warps(
+    model: ProjectModel, issues: list[Issue], scene_ids: set[str],
+) -> None:
+    """dev 跳转表（dev_narrative_warps.json）的引用是否悬垂。
+
+    这张表由策划手写、只有游戏 dev 菜单消费；场景 / 图 / 状态改名之后它不会跟着改，
+    此前也没有任何校验——点进去只会在 enterNarrativeWarp 的收尾汇总里看到"没到位"。
+    引用的场景、flowGraph/flowState、set 里的每对 graph/state，全部按现有数据交叉查。
+    """
+    graphs = _narrative_graph_index(model)
+    seen: set[str] = set()
+    for i, w in enumerate(model.dev_narrative_warps):
+        wid = str(w.get("id") or "").strip()
+        item = wid or f"#{i}"
+        if not wid:
+            issues.append(Issue("error", "devNarrativeWarps", item, f"warps[{i}] 缺少非空 id"))
+        elif wid in seen:
+            issues.append(Issue("error", "devNarrativeWarps", item, f"跳转点 id 重复: {wid!r}"))
+        seen.add(wid)
+        scene = str(w.get("scene") or "").strip()
+        if not scene:
+            issues.append(Issue("error", "devNarrativeWarps", item, "缺少 scene（跳转落到哪个场景）"))
+        elif scene not in scene_ids:
+            issues.append(Issue("error", "devNarrativeWarps", item, f"scene {scene!r} 不存在"))
+        targets: list[tuple[str, str, str]] = []
+        fg = str(w.get("flowGraph") or "").strip()
+        fs = str(w.get("flowState") or "").strip()
+        if fg or fs:
+            targets.append(("flowGraph/flowState", fg, fs))
+        for j, st in enumerate(w.get("set") or []):
+            if not isinstance(st, dict):
+                issues.append(Issue("error", "devNarrativeWarps", item, f"set[{j}] 须为对象"))
+                continue
+            targets.append((f"set[{j}]", str(st.get("graph") or "").strip(),
+                            str(st.get("state") or "").strip()))
+        for where, gid, sid in targets:
+            if not gid or not sid:
+                issues.append(Issue("error", "devNarrativeWarps", item,
+                                    f"{where} 需要非空 graph 与 state"))
+            elif gid not in graphs:
+                issues.append(Issue("error", "devNarrativeWarps", item,
+                                    f"{where} 引用的图 {gid!r} 不在 narrative_graphs.json"))
+            elif sid not in graphs[gid]:
+                issues.append(Issue("error", "devNarrativeWarps", item,
+                                    f"{where} 的 state {sid!r} 不在图 {gid!r} 的 states 中"))
 
 
 def _validate_scenarios_catalog(model: ProjectModel, issues: list[Issue]) -> None:
@@ -6362,6 +6514,269 @@ def _walk_action_defs(
                     "error", data_type, item_id,
                     f"revealDocument documentId {doc_id!r} 未在 document_reveals.json 注册",
                 ))
+
+
+#: 段缓动的合法档（与 `src/utils/keyframeSampler.ts` 的 KeyframeEasing 同源；
+#: 烘出来的帧按约定不写 easing，这里只拦写了却不合法的）。
+_TRAJECTORY_EASINGS: frozenset[str] = frozenset({"linear", "easeIn", "easeOut", "easeInOut"})
+
+#: 单条轨迹的帧数软上限。密帧回放本身不贵（顺播游标 O(1)），但几千帧的 JSON 会把
+#: 资产文件撑爆——超了就提示把烘焙抽稀容差放宽一点。
+_TRAJECTORY_FRAME_WARN_LIMIT = 500
+
+#: 轨迹资产的合法空间档（TS 权威 `TrajectorySpace`）。
+_TRAJECTORY_SPACES: frozenset[str] = frozenset({"screen", "world"})
+
+
+def _known_trajectory_ids(model: ProjectModel) -> set[str]:
+    """全局轨迹资产 id 集（模型没有这个面时返回空集＝不校验，宁可少校验不误报）。"""
+    fn = getattr(model, "all_trajectory_ids", None)
+    if not callable(fn):
+        return set()
+    try:
+        return {str(i) for i, _lab in fn()}
+    except Exception:  # noqa: BLE001 — 候选面坏了不该让整轮校验崩掉
+        return set()
+
+
+def _report_unparseable_trajectory_files(
+    model: ProjectModel, loaded: dict, issues: list[Issue],
+) -> None:
+    """`assets/data/trajectories/*.json` 里**没能进模型**的文件：坏 JSON / 根不是对象。
+
+    模型装载时只记 load_anomalies（warning 档）跳过它们；但一份读不进来的轨迹资产
+    在运行时就是"引用它的 playTrajectory 整步静默跳过"，所以这里按目录重扫补成 error。
+    重扫只读字节、**不碰模型的外部改动基线**（该目录本来也不归 save_all 管）。
+    """
+    try:
+        d = model.paths.trajectories_dir
+    except Exception:  # noqa: BLE001 — 假模型 / 未装载工程：没有目录可扫
+        return
+    if not d.is_dir():
+        return
+    for path in sorted(d.glob("*.json")):
+        if path.stem in loaded:
+            continue
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            issues.append(Issue(
+                "error", "trajectory", path.stem,
+                f"trajectories/{path.name} 无法解析（{type(exc).__name__}）；"
+                f"引用它的 playTrajectory 运行时整步跳过",
+            ))
+            continue
+        if not isinstance(doc, dict):
+            issues.append(Issue(
+                "error", "trajectory", path.stem,
+                f"trajectories/{path.name} 根不是 JSON 对象",
+            ))
+
+
+def _validate_trajectories(model: ProjectModel, issues: list[Issue]) -> None:
+    """全局轨迹资产（`assets/data/trajectories/<id>.json`，TS 权威 `TrajectoryAsset`）的结构校验。
+
+    为什么非查不可：运行时对轨迹的一切内容错都是**静默跳过**——`keyframes` 空就直接
+    `'finished'` 封口，画面上"什么都没发生"与"编排如此"长得一模一样。这类错只能在构建期抓。
+
+    红线（编辑器兜底 ⊆ TS 权威）：这里只拦**运行时确实做不成的形态**，
+    不拦合法最小形态——`{id, space:'screen', keyframes:[两帧 x,y]}` 必须零告警通过。
+    `source` / `authoring` 是工作台的工作态，运行时完全忽略；`authoring` 的场景/实体
+    引用只是"重开时还原现场"的软引用，断了只 warning。
+    """
+    trajs = getattr(model, "trajectories", None) or {}
+    if not isinstance(trajs, dict):
+        return
+    _report_unparseable_trajectory_files(model, trajs, issues)
+
+    scene_ids: set[str] = set()
+    try:
+        scene_ids = set(model.all_scene_ids())
+    except Exception:  # noqa: BLE001 — 假模型可能没有这个面
+        scene_ids = set()
+
+    for stem, row in sorted(trajs.items()):
+        stem = str(stem)
+        if not isinstance(row, dict):
+            issues.append(Issue("error", "trajectory", stem, "轨迹资产根须为对象"))
+            continue
+        tid = str(row.get("id") or "").strip()
+        if not tid:
+            issues.append(Issue("error", "trajectory", stem, "轨迹资产缺少非空 id"))
+        elif tid != stem:
+            # 运行时按文件名 stem 载入、按 id 引用；两者不一致 = 引用永远命不中
+            issues.append(Issue(
+                "error", "trajectory", stem,
+                f"轨迹资产 id {tid!r} 与文件名 {stem!r} 不一致（id 必须等于文件名）",
+            ))
+        space = row.get("space")
+        space_s = str(space).strip() if isinstance(space, str) else ""
+        if space_s not in _TRAJECTORY_SPACES:
+            issues.append(Issue(
+                "error", "trajectory", stem,
+                f"轨迹资产 space 须为 screen / world（当前 {space!r}）",
+            ))
+
+        # ---- keyframes：screen 资产的唯一真相 / world 资产的回落帧 ----
+        frames = row.get("keyframes")
+        has_source = isinstance(row.get("source"), dict)
+        if frames is not None and not isinstance(frames, list):
+            issues.append(Issue(
+                "error", "trajectory", stem,
+                f"轨迹资产 keyframes 须为数组（当前 {type(frames).__name__}）",
+            ))
+            continue
+        frame_list = frames if isinstance(frames, list) else []
+        if not frame_list:
+            issues.append(Issue(
+                "error", "trajectory", stem,
+                "轨迹资产没有 keyframes"
+                + ("（有 source 但**未烘焙**：运行时只认 keyframes，source 一概不看）"
+                   if has_source else "（运行时只认 keyframes，空 = 整条不播）"),
+            ))
+            continue
+        if len(frame_list) > _TRAJECTORY_FRAME_WARN_LIMIT:
+            issues.append(Issue(
+                "warning", "trajectory", stem,
+                f"轨迹资产有 {len(frame_list)} 帧（超过 {_TRAJECTORY_FRAME_WARN_LIMIT}）；"
+                f"把烘焙的抽稀容差放宽一点通常能砍掉大半而肉眼看不出差别",
+            ))
+        at_list = _check_trajectory_frames(
+            frame_list, issues, stem, "keyframes", pos_keys=("x", "y", "sortY"))
+
+        # ---- world 资产：worldKeyframes 是运行时真相，必须与 keyframes 逐帧对齐 ----
+        if space_s == "world":
+            wframes = row.get("worldKeyframes")
+            if not isinstance(wframes, list) or not wframes:
+                issues.append(Issue(
+                    "error", "trajectory", stem,
+                    "space=world 的轨迹资产须有非空 worldKeyframes（3D 相对帧，开播时按目标场景投影）",
+                ))
+            else:
+                wat_list = _check_trajectory_frames(
+                    wframes, issues, stem, "worldKeyframes", pos_keys=("x", "y", "z"),
+                    height_key="h")
+                if len(wframes) != len(frame_list):
+                    issues.append(Issue(
+                        "error", "trajectory", stem,
+                        f"worldKeyframes 有 {len(wframes)} 帧、keyframes 有 {len(frame_list)} 帧，"
+                        f"两者须逐帧对应（同一次烘焙的两个投影）",
+                    ))
+                else:
+                    for fi, (a, b) in enumerate(zip(at_list, wat_list)):
+                        if a is None or b is None:
+                            continue
+                        if a != b:
+                            issues.append(Issue(
+                                "error", "trajectory", stem,
+                                f"worldKeyframes[{fi}].atMs={b} 与 keyframes[{fi}].atMs={a} 不一致"
+                                f"（两串帧须逐帧同时刻）",
+                            ))
+
+        # ---- authoring：工作台重开现场用的软引用，断了只 warning ----
+        authoring = row.get("authoring")
+        if isinstance(authoring, dict):
+            a_sid = str(authoring.get("sceneId") or "").strip()
+            if a_sid and scene_ids and a_sid not in scene_ids:
+                issues.append(Issue(
+                    "warning", "trajectory", stem,
+                    f"authoring.sceneId {a_sid!r} 已不存在（只影响工作台重开现场，运行时不读）",
+                ))
+            ent = authoring.get("entity")
+            if isinstance(ent, dict) and str(ent.get("kind") or "") == "npc":
+                eid = str(ent.get("id") or "").strip()
+                if eid and a_sid and a_sid in scene_ids:
+                    try:
+                        npc_ids = _npc_ids_in_scene(model, a_sid)
+                    except Exception:  # noqa: BLE001
+                        npc_ids = set()
+                    if npc_ids and eid not in npc_ids:
+                        issues.append(Issue(
+                            "warning", "trajectory", stem,
+                            f"authoring.entity npc {eid!r} 已不在场景 {a_sid!r}"
+                            f"（只影响工作台重开现场，运行时不读）",
+                        ))
+
+
+def _check_trajectory_frames(
+    frame_list: list, issues: list[Issue], stem: str, where: str,
+    *, pos_keys: tuple[str, ...], height_key: str | None = None,
+) -> list[float | None]:
+    """逐帧检查一串轨迹帧，返回各帧 atMs（坏帧记 None）供 screen/world 两串对齐用。
+
+    规则与 TS 权威同宽不更严：atMs 有限且非递减（首帧不在 0 只 warning）、
+    位置通道有限、rotation 有限、scale* ≥ 0、alpha ∈ [0,1]、easing 在枚举内、
+    高度 h ≥ 0（只有 world 帧有）。
+    """
+    out: list[float | None] = []
+    prev_ms: float | None = None
+    for fi, fr in enumerate(frame_list):
+        if not isinstance(fr, dict):
+            issues.append(Issue("error", "trajectory", stem, f"{where}[{fi}] 须为对象"))
+            out.append(None)
+            continue
+        at = fr.get("atMs")
+        if not _is_num(at) or not math.isfinite(float(at)):
+            issues.append(Issue(
+                "error", "trajectory", stem, f"{where}[{fi}] 的 atMs 须为有限数",
+            ))
+            out.append(None)
+        else:
+            at_f = float(at)
+            out.append(at_f)
+            if fi == 0 and at_f != 0:
+                # 首帧不在 0：运行时从 t=0 开播，采样器把 [0, 首帧) 一律夹到首帧姿态，
+                # 等于白等一段。不是硬错（画面仍是对的），但十有八九不是本意。
+                issues.append(Issue(
+                    "warning", "trajectory", stem,
+                    f"{where} 首帧 atMs={at_f}（不是 0）；开播后这段时间会定在首帧姿态不动",
+                ))
+            if prev_ms is not None and at_f < prev_ms:
+                issues.append(Issue(
+                    "error", "trajectory", stem,
+                    f"{where}[{fi}] 的 atMs={at_f} 小于上一帧 {prev_ms}"
+                    f"（关键帧必须按时间非递减，采样器不排序）",
+                ))
+            prev_ms = at_f
+        for key in (*pos_keys, "rotation"):
+            v = fr.get(key)
+            if v is None:
+                continue
+            if not _is_num(v) or not math.isfinite(float(v)):
+                issues.append(Issue(
+                    "error", "trajectory", stem, f"{where}[{fi}] 的 {key} 须为有限数",
+                ))
+        if height_key:
+            hv = fr.get(height_key)
+            if not _is_num(hv) or not math.isfinite(float(hv)) or float(hv) < 0:
+                issues.append(Issue(
+                    "error", "trajectory", stem,
+                    f"{where}[{fi}] 的 {height_key}（离地高度）须为 ≥0 的有限数",
+                ))
+        for key in ("scale", "scaleX", "scaleY"):
+            v = fr.get(key)
+            if v is None:
+                continue
+            if not _is_num(v) or not math.isfinite(float(v)) or float(v) < 0:
+                issues.append(Issue(
+                    "error", "trajectory", stem, f"{where}[{fi}] 的 {key} 须为 ≥0 的有限数",
+                ))
+        alpha = fr.get("alpha")
+        if alpha is not None and (
+            not _is_num(alpha) or not math.isfinite(float(alpha))
+            or not (0.0 <= float(alpha) <= 1.0)
+        ):
+            issues.append(Issue(
+                "error", "trajectory", stem, f"{where}[{fi}] 的 alpha 须在 [0,1]",
+            ))
+        eas = fr.get("easing")
+        if eas is not None and str(eas) not in _TRAJECTORY_EASINGS:
+            issues.append(Issue(
+                "error", "trajectory", stem,
+                f"{where}[{fi}] 的 easing {eas!r} 不是 "
+                f"{'/'.join(sorted(_TRAJECTORY_EASINGS))} 之一",
+            ))
+    return out
 
 
 def _validate_flags(model: ProjectModel, issues: list[Issue]) -> None:

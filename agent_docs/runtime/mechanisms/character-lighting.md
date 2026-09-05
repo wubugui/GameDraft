@@ -18,7 +18,7 @@ authority:
 triggers:
   paths: ["src/rendering/lighting/**", "src/core/UnifiedCharacterLighting.ts", "src/rendering/charShadeCore.glsl", "src/rendering/CharacterLitSprite.ts", "src/rendering/CharacterShadingFilter.ts", "src/rendering/spriteNormalAtlas.ts", "src/core/CharacterLightingSystem.ts", "tools/character_lighting_lab/**", "tools/animation_pipeline/bake_normal_atlas.py"]
   topics: [角色照明, probe, 法线图集, 伪世界照明, CHAR_FS, 体素卷, 融入场景, 加性灯, 天穹可见性, radianceScale]
-last_governed: 2026-08-31
+last_governed: 2026-09-03
 ---
 
 ## 是什么(一句话)
@@ -50,10 +50,23 @@ mesh 路径 `CharacterLitSprite.ts`、filter 路径 `CharacterShadingFilter.ts`;
 - **灯必须来自场景那次打包的结果,不许角色侧自己再打一遍**。同一份 `PackedLights`
   + 同一个 `wuPerQUnit` 才能保证两边一致;各算各的 = 第二个真相源,而且不报错。
 - **三个空间不许混**(实测都不报错,只是画面不对):
-  probe / 体素 / 太阳项是**按 q 烘的载荷**,查表用 q 法线;**实体灯一律在 M-world、单位 wu**,
-  法线也必须一起转过去。踩过:N 在 q、L 在 M-world,45° 场景里角色正面 N·L 应为 0.707、
+  probe / 体素 / 太阳项是**按 q 烘的载荷**,查表用 q 法线;**实体灯一律在 M-world、单位 wu**。
+  踩过:N 在 q、L 在 M-world,45° 场景里角色正面 N·L 应为 0.707、
   跨空间算出 **0** —— 身体收不到灯光,脚下地面却被同一盏灯正常照亮。
-  反向也踩过:给精灵法线再乘一次 R(等于把每个角色整体仰起 45°),已回退。
+- **法线的两种读法都对,但用在两个地方,别统一**(2026-08-31 翻案后的定论,**改之前先读完**):
+  **角色法线图集读作世界向量时,中性法线 = 世界水平**(角色是直立 quad,其局部轴过 R 之后
+  恰好是世界 X/Y/−Z)。所以**灯循环直接用 `n`**,再乘一次 R 就是把每个角色整体仰起一个俯角。
+  但 **probe/体素/太阳项的 SH 载荷方向基是 q 空间**(烘焙侧的方向被逐轴各向异性缩放到体素索引,
+  若是世界方向这步没有意义),**查表必须传世界法线的 q 坐标 `nQ = Rᵀ·n`**。
+  ⚠ 2026-08-31 曾按"两处都原样用 n"改过一轮,当日被审计钉为回归并回滚:实测原样传比 `Rᵀ` 传
+  **暗约两成**,与游戏内两次实测吻合;当时"看起来仍匹配"是因为两次测量的地面参照换了、不可比。
+  把 q 坐标三元组当世界方向读("朝下斜 45° 被压暗")是那次误诊的来源。**别再翻第三次。**
+  两侧口径由 `worldSpaceShading.test.ts` 机械锁死(场景侧与角色侧 probeE 必须同基),
+  空间定义见 [coordinate-spaces](coordinate-spaces.md)。
+- **重放 / 缓存路径不许吃缺省参数**——进场景的真实时序是灯先到、基后到,所以**每次进场景
+  都必然走重放**;标定过的尺度在那条路上落回缺省就是"灯亮、地亮、人不亮",而观感会把人
+  指向摆灯参数。这类陷阱的通用形状与判据见
+  [lighting-scale-reference](lighting-scale-reference.md) 的已知坑。
 - **显示变换必须与背景同一组参数**(`applyDisplay`)。少这一条,ev 一开就是
   "背景很亮、角色漆黑"。
 - **E 只出明暗,角色保留自己的颜色**:sprite 像素是美术着色后的 color、不是 albedo,
@@ -71,6 +84,12 @@ mesh 路径 `CharacterLitSprite.ts`、filter 路径 `CharacterShadingFilter.ts`;
 - 法线只离线烘、运行时只加载,缺图走平面法线降级;**禁止加载期现场烘焙**(主线程焊死数秒)。
 - **probe 载荷低于当前版本直接禁用**;哈希失配(背景重画了没重烘)自 2026-08-30 起
   **不再整份禁用**,改分级降级:几何项照用、光照项标 stale 并在 dev 大声报。
+- **重画一张背景 = 必须重烘那张背景的整套载荷**,这是硬约束不是建议。
+  重画背景是**内容侧的日常操作**(策划/美术都会做),烘焙却在另一条工具链上,而
+  **既有的门一个都抓不到**:素材审计只查存在性、打包照抽不误、真跑一遍也不产生 404。
+  唯一会说话的是数据校验里的烘焙条目与发行前的静态新鲜度门
+  (见 [build-pipeline](build-pipeline.md))——改完背景就去看那一条,别等进游戏才发现
+  (实测有过改完到发现隔了九天的例子)。
 - **probe 烘焙的降方差三件套**(2026-09-01 制作人定位「高分位不收敛」后从
   lighting-rebuild 分支补课):① NEE+full-MIS(nee.py,发光体第二方向采样器,
   阈值 `probe_nee_threshold` 按**本管线**辐射标度取 1.0,分支的 4.0 是它
@@ -90,13 +109,20 @@ mesh 路径 `CharacterLitSprite.ts`、filter 路径 `CharacterShadingFilter.ts`;
   角色侧拿乘过 V 的 E 去比就是双重衰减 —— 白天开阔处 V≈0.9 看不出,夜里墙边(V 低)
   直接把人和棺材压黑,看着像「同一处地面白、角色黑」的数据事故(2026-09-01 制作人抓到)。
   正常渲染路径不受影响,只有 GI体 audit 档走快照。
+- **lit quad 的世界坐标不许从 screen 反推,必须由 CPU 每帧喂 local→世界 的仿射**。
+  角色挂在**带滤镜的容器**下,Pixi 会先把子树渲进一张按包围盒对齐的临时 RT ——
+  那一趟里 shader 见到的 screen 是**临时 RT 的局部坐标**,凡是 `(screen − 相机位移) / 相机缩放`
+  这类世界重建全被整体平移。**`gl_Position` 不受影响 ⇒ 画面位置一直是对的,只有采样位置错**,
+  且误差随镜头/包围盒漂 ⇒ 表现为"角色强度怎么调都和场景对不齐"(实测偏 500+ wu)。
+  这条对**任何**放在滤镜容器里、又依赖屏幕→世界反推的着色都成立。
 - **lit quad 的世界坐标必须含外层实体容器**(`SpriteEntity.setLitParentTransform`):
   「container.x/y = 场景世界」这条契约只对 Player 成立;Npc 把 sprite.container 挂在自己
   container 下(local 恒 0,0)。漏了外层,**全部 NPC** 的 lit quad 拿 (0,0) 采 probe ——
   素色浮在画面上;静态 NPC 永不换帧,创建时同步一次错值后再无暴露机会(2026-09-01 门卫黑影)。
   Npc 在位置/缩放(setFacing/applyInstanceTransform)/重建四处推;挂件 lit 同一套合成。
 - **probe 查询必须过 A7 折叠**(`probeQueryN`,受 `fold` 参数门控,全场景载荷 fold=1):
-  烘焙逃逸是黑 ⇒ 朝相机的射线立刻出画拿 0,E(朝相机) 被系统性饿死(实测雾津街头同一点
+  朝相机的射线立刻出画、只拿到逃逸辐射(缺省是地板色,不再是绝对零,但仍远低于场景),
+  E(朝相机) 因此被系统性饿死(实测雾津街头同一点
   E(-z)=0.21 vs E(+z)=2.72,差 13x)。角色法线恰恰全朝相机、场景面全朝上/纵深 ——
   同一份 probe「场景亮、角色黑」不是数据坏,是方向半球被饿死(2026-09-01)。
   RT 路径的 A7 是逐射线折;probe 版折**查询法线**,同一条假设:镜头背后统计上镜像可见场景。
@@ -178,6 +204,13 @@ mesh 路径 `CharacterLitSprite.ts`、filter 路径 `CharacterShadingFilter.ts`;
 
 ## 已知坑
 
+- **实验室查看器与运行时是两份手抄,全仓没有任何机械 parity 闸**。着色核心本身是单一
+  GLSL 源,但查看器侧的 probe 查表/着色入口是**另一份复制**,已知它与运行时的法线口径
+  不一致。实验室又是调着色参数的唯一入口 ⇒ **口径漂一点,在实验室调出来的值到游戏里
+  就是错的、而且不报错**。改任一侧必须手工核对另一侧。
+- **`shading.beta` 是补偿不是修复**:它是为了补"角色比紧邻地面暗一大截"抬起来的,
+  而当时的采样位置本身是错的(上面那条临时 RT 的坑)。**别把已落盘的 beta 当成标定结论引用**。
+
 - `bulge` 旋钮只偏移采样点深度、**不改法线**(法线是离线从 alpha 烘死的固定鼓包 profile)
   ——一个控件承诺了两种未同步的语义。
 - 烘焙把落在实体内的 probe 原点吸附到最近自由体素,运行时却按规则格点插值、载荷不带真实
@@ -191,6 +224,13 @@ mesh 路径 `CharacterLitSprite.ts`、filter 路径 `CharacterShadingFilter.ts`;
 ## 怎么验证
 
 `renderer.extract.pixels` 逐通道对账(mesh 路径 extract 拿到的才是真着色像素,filter 路径不是)。
+⚠ **位置类取证必须整舞台抽取**:`extract.pixels({target: 某个 mesh})` 的隔离渲染会把目标
+平移到包围盒原点,**一切依赖 screen / 世界重建的输出在隔离抽取下全是假的**
+(踩过三轮"方向无关 / spp 无关"的错误结论,全由此来)。
+⚠ **页内手动喂帧参数是污染源**:游戏主循环喂进来的相机参数带分辨率/DPR 修正,
+在控制台里手动传"看起来对"的裸容器坐标,会把角色的世界脚点系统性写歪上百 wu,
+表现成"灯照人的位置与光晕位置对不上"。页内验光照要么**让主循环自己跑**(先恢复 rAF),
+要么照抄主循环那一处的实参。读 GPU 真值用 `gl.getUniform`,别信 JS 侧镜像变量与日志。
 健康判据 = 法线可视化下**两朝向整体色调对称、帧均值≈中性**;旧口径「两朝向 R 互补即正确」
 只在被预乘污染的场里成立,**勿再引用**。静止连拍多帧应纹丝不动。画面取证走
 [headless-visual-verification](../recipes/headless-visual-verification.md)。

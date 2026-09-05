@@ -11,32 +11,35 @@
 - [运行时开发规范](runtime/norms.md) — 运行时(src/)改动的不变量、过程义务、验收门与审批红线(v2 审批稿迁入)
 
 ### 机制卡
-- [加 Action 四件套](runtime/mechanisms/action-registration-quadruple.md) — 新 action = 运行时 register + actionParamManifest(TS 权威) + 编辑器 ACTION_TYPES/_PARAM_SCHEMAS + validator 认可;参数含实体/场景引用另登记 ENTITY_REF_PARAMS(第五件);DEV 启动一致性审计兜底
+- [加 Action 的登记面](runtime/mechanisms/action-registration-registry-surfaces.md) — 新 action 要同步的登记面不止一处(运行时注册 / TS 参数清单 / 编辑器授权面 / 校验器 / 条件性的实体引用表);漏哪一处的报错通道各不相同,有一处漏了 tsc 与 validate-data 全绿、只有编辑器测试红
 - [档案系统解锁语义](runtime/mechanisms/archive-unlock-semantics.md) — 人物档案解锁唯一入口=addArchiveEntry(幂等);lore/doc/book 走声明式条件;totalPages 只认 pages.length
 - [打包管线(只读抽取 · dev/发行双档 · 产物验收门)](runtime/mechanisms/build-pipeline.md) — 打包只从开发树只读抽取,绝不改动开发数据;裁剪一律写成"不抽取";清单=JSON引用闭包+传递闭包+id约定+显式规则;输出目录是每次传的参数、不进配置(编辑器与自动化共用 release.mjs);静态检查证明不了能玩,靠产物验收门真跑
 - [角色逐像素照明(probe 底光 + 加性实体灯)](runtime/mechanisms/character-lighting.md) — 只有一条活路径——probe 烘死的 GI 底光 + 与场景同一次打包的加性实体灯 + 与背景同一组显示变换;统一角色路径被 Game 里的常量开关整条关死(留码不删);着色核心单一 GLSL 源,法线必须与 color 同 UV 采样、格边界与运行时 stride 对齐
 - [角色注册表(characterId 合并)](runtime/mechanisms/character-registry.md) — 角色身份(name/animFile/portraitSlug)一处定义,NpcDef.characterId 引用,实例化时合并且 own 字段赢过注册表
 - [坐标空间总表(屏幕→场景 wu→像素栅格→伪世界 q→M-world)](runtime/mechanisms/coordinate-spaces.md) — 全项目六个坐标空间的单位/原点/住户/权威源与逐条可验判据;两个 M(det ±1)、两套像素栅格(比例非恒定 4)、着色在 M-world 而 march 在 q——混用一律不报错只是效果不对
 - [过场音频回收契约](runtime/mechanisms/cutscene-audio-reclamation.md) — 过场 SFX 作用域捕获 + 快照音频基线;中断路径停尾音、自然播完保留末拍——cleanup 布尔语义勿回退
-- [过场步骤语义(parallel/镜头位/运镜/字幕推进)](runtime/mechanisms/cutscene-step-semantics.md) — parallel 是 fork-join 组内无时序;匿名镜头位自动顶掉;运镜受相机夹紧约束、跳过快进到编排终姿;subtitleAutoAdvance 三态;typewriter 缺省按台词面分家
+- [过场步骤语义(parallel/镜头位/运镜/字幕推进)](runtime/mechanisms/cutscene-step-semantics.md) — 入场三态(就地开演/搬人/跨场景必落人);parallel 是 fork-join 组内无时序;匿名镜头位自动顶掉;运镜受相机夹紧约束、跳过快进到编排终姿;subtitleAutoAdvance 三态;typewriter 缺省按台词面分家
 - [日夜循环与 NPC 日程(时刻不自流逝 · 离场宽限集)](runtime/mechanisms/day-night-npc-schedule.md) — 时刻只由动作推进;phases 三级就近取用(实体→分组→种类缺省)且分组不套 NPC 的白日缺省;transition 决定 NPC 换班演不演离场;leaving/arriving 宽限集是"绝不当着玩家的面消失"的唯一实现,判定点只挂 NPC 不进 entityInPlane
-- [调试/游戏内 UI 偏好持久化范式](runtime/mechanisms/debug-ui-persistence.md) — 调试/编辑器 UI 的用户偏好必须落工程文件;传输两种:vite 中间件(游戏内)/QWebChannel bridge(内嵌编辑器);localStorage 已在 2026-08-28 从运行时彻底清退,连首帧种子都不留
+- [调试/编辑器偏好与「游戏↔编辑器活数据」的持久化范式](runtime/mechanisms/debug-ui-persistence.md) — 按内容性质分三档:调试/编辑器偏好落 editor_data;游戏↔编辑器的活数据交换也走 editor_data 但必须按"对讲机"设计(服务端版本号+writer+新鲜期);工程数据游戏侧一律不写。玩家设置不归本卡。localStorage 已彻底清退
 - [dialogue:end 负载语义](runtime/mechanisms/dialogue-end-payload.md) — dialogue:end 带 source/willContinue/nestedInGraph;状态恢复只认最外层、只认恰好一次 willContinue=false 的最终 end
+- [对话图 owner 归属(四档优先级与注入点登记面)](runtime/mechanisms/dialogue-owner-origin.md) — ownerState 认谁当 owner 由唯一判定源按四档优先级裁;每条能开对话图的路径都必须显式线程化来源上下文,漏注入无红字、只是静默走 missingWrapperNext
 - [对话头像(立绘)运行时](runtime/mechanisms/dialogue-portrait-runtime.md) — 头像跟「装扮配置」走不跟实体走;跟随说话人要求这行的说话人实体解析得出来,UI 收到的 portrait 恒带 slug
 - [台词配音通道(voice/autoAdvance · 跨拍留声)](runtime/mechanisms/dialogue-voice-channel.md) — 全部台词面共用一条单声道配音通道;默认跟本拍停、hold 留声给后面、声明跟随配音的那拍接管并收尾
-- [场景光环境 / 实体阴影 / 深度遮挡](runtime/mechanisms/entity-lighting.md) — 行走面深度场是遮挡·阴影·碰撞的唯一脚点锚(没场就整体关,不回落拟合直线);阴影一律 planar 剪影;角色阴影**手动绑灯,禁止自动 resolve**;色调与阴影解耦
+- [场景光环境 / 实体阴影 / 深度遮挡](runtime/mechanisms/entity-lighting.md) — 行走面深度场是遮挡·阴影·碰撞的唯一脚点锚(没场就整体关,不回落拟合直线);阴影一律 planar 剪影但形状量从灯位现算;角色阴影**手动绑灯,禁止自动 resolve**;接触斑与灯无关;深度自比较必须留容差;色调与阴影解耦
 - [实体位移的朝向语义(faceTowardMovement)](runtime/mechanisms/entity-move-facing.md) — 不勾选=完全不碰朝向(勿回退成"起点偷改一次");需要转身的内部调用必须显式传 true;朝向只有左右镜像,up/down 不存在
+- [实体轨迹动画(烘焙式 · 独立资产)运行时语义](runtime/mechanisms/entity-trajectory.md) — 一条轨迹一个资产文件、帧相对播放锚点;playTrajectory 按全局 id 装资产、挂任何实体、在任何位置起播;世界空间资产开播时只用 depthConfig.M.R 做一次线性投影;烘出的帧恒不写 easing;一实体一驱动,跳过=一步落终态;不驱动相机
 - [实体显隐四通道合成](runtime/mechanisms/entity-visibility-channels.md) — 四个独立通道(派生基底/条件/会话覆盖/拾取位)在实体内单点合成;任何一方只写自己的通道,禁止直接 setEnabled 冲掉运行态
 - [背包槽上限与 critical 给予](runtime/mechanisms/inventory-capacity-critical.md) — 背包有槽上限,giveItem 返回值必须消费;关键道具用 critical=true 绕上限,拾取失败走 inventory:full 不消耗热点
 - [运行时摆灯的可视化手柄(聚光靶点/锥角、面光尺寸/朝向)](runtime/mechanisms/light-authoring-gizmos.md) — 判据只有一条——三维朝向/尺寸必须能拖,标量数字框就够;聚光靶点落行走面(正向求交要粗扫+二分),面光正面判据必须用真视线不能写 n.z<0;面板兜底值要与 packLights 逐字对齐
 - [光照参数的空间与单位(世界空间 wu ↔ 伪世界 q)](runtime/mechanisms/lighting-scale-reference.md) — 灯摆在世界空间、单位 wu(与 NPC/热区/spawn 同尺,角色高 150 wu 恒定);shader 里 march 走伪世界 q,两者差一个逐场景的 wuPerQUnit,transform 只在打包处折一次
 - [小游戏会话生命周期](runtime/mechanisms/minigame-session-lifecycle.md) — 小游戏统一走 MinigameSessionManagerBase;start 的异常必须 catch→teardownSession,否则一次抛错 brick 整个子系统
-- [信号驱动 5 层编排脊椎](runtime/mechanisms/narrative-signal-spine.md) — 世界→对话(只演+打信号)→scenario子图→主线里程碑图→quest纯镜像;主线叙事图是唯一进度真相源
+- [叙事调试器桥与断点闸](runtime/mechanisms/narrative-debugger-bridge.md) — 断点闸把叙事队列停住;停住期间"冻的是什么"和"谁能放行"各有一条会静默死锁的坑
+- [信号驱动 5 层编排脊椎](runtime/mechanisms/narrative-signal-spine.md) — 世界→对话(只演+打信号)→scenario子图→主线里程碑图→quest镜像+一个玩家意图槽;主线叙事图是唯一进度真相源
 - [物件检视场景(物理单位制 + 伪形体)](runtime/mechanisms/object-examine-scene.md) — 一张静帧撑起的可看场景;长度类参数一律真实单位并由实例声明物理标尺,alpha 只给边界、形体要另烘高度场
 - [可选资源存在性探测(content-type 判据)](runtime/mechanisms/optional-asset-probe.md) — 本仓库 dev server 上文件不存在不是 404 而是 200+HTML;可选 sidecar 一律走 loadOptionalJson,判据看 content-type 不看状态码
 - [叠图动作 id=句柄、image 才是图引用](runtime/mechanisms/overlay-image-handle-semantics.md) — show/blend/hideOverlayImage 的 id 是图层实例句柄;引用 overlay_images.json 的是 image/fromImage/toImage;校验别搞反
 - [parallaxScene 运行时语义](runtime/mechanisms/parallax-scene-runtime.md) — 运行时只播 layers[].keyframes,camera/depth/sourceKeyframes 是编辑器工作态被完全忽略;烘出的帧必须 linear
-- [Pixi v8 静默陷阱](runtime/mechanisms/pixi-v8-traps.md) — 六条"写法看着对、行为静默错"的引擎事实:clear 不认 target、BindGroup 见死即自毁、解码期预乘吃掉 alpha 数据、leading 裁末行、Container 无 hitArea 恒不命中、Sprite 子节点不渲染
+- [Pixi v8 静默陷阱](runtime/mechanisms/pixi-v8-traps.md) — 一批"写法看着对、行为静默错"的引擎事实:渲染抛一次异常=整局死透(ticker 再不排帧)、实际编译在 GLSL ES 1.00、clear 不认 target、BindGroup 见死即自毁、解码期预乘吃掉 alpha 数据、leading 裁末行、Container 无 hitArea 恒不命中
 - [位面系统(PlaneReconciler)](runtime/mechanisms/plane-system.md) — 位面=全局一等资产(normal 也是位面),实体归属位面;PlaneReconciler 从叙事状态派生一切、每个边界重派生、零自持久化
 - [私有叙事信号(按 owner 定向投递)](runtime/mechanisms/private-narrative-signal.md) — signals 登记表标 scope:private 的信号只投递给发射方 owner 拥有的 wrapper 图;让 N 个同类实体共用一个信号名和一张发射端对话图
 - [运行时持久化(存档/玩家设置)落文件,不落浏览器存储](runtime/mechanisms/runtime-persistence.md) — 存档与玩家偏好一律经 PersistentStore 落本地文件;三后端 Tauri>dev server>内存;localStorage 只剩一次性迁移读取;内存降级必须让 UI 说实话
@@ -46,9 +49,11 @@
 - [场景 onEnter 揭幕时机契约](runtime/mechanisms/scene-onenter-reveal-timing.md) — loadScene 尾序=scene:ready → 揭幕(onReveal) → onEnter;初始进场同样先遮罩后揭幕;主 tick 必须先于任何场景装载挂载
 - [气味系统(双层 action/zone)](runtime/mechanisms/smell-system.md) — action 层永远压过 zone 层;zone 气味声明式挂 ZoneDef.smell,SmellSystem 听 zone:enter 驱动,ZoneSystem 不动
 - [首启手势门 + 音频解锁快路径](runtime/mechanisms/start-gate-audio-unlock.md) — 「点击开始」遮罩给页面 sticky 激活;AudioManager init 时按 hasBeenActive 直接解锁——救开场首句配音音画同步
+- [系统音效事件表(横切,挂在音频管理器上)](runtime/mechanisms/system-sfx-event-table.md) — 系统音效统一挂音频管理器的事件映射表、不在各功能自己的 manager 里;判"某功能有没有声音"必须先读那张表,靠 grep 功能模块必漏、必做出双响
+- [拆除顺序与世代作废](runtime/mechanisms/teardown-ordering.md) — 拆一局/拆一个场景是强排序不是清单;跨 await 的异步流程靠世代号自杀,不靠"记得取消"
 - [UI 组件层(窗体/按钮/滚动区)](runtime/mechanisms/ui-component-layer.md) — 面板不再各自手搭遮罩·标题栏·滚动·按钮,统一走 src/ui/components;重绘用 attach 不用 open、量高前必须摘 mask、行内点击必须消费
-- [UI 面板皮肤单一入口](runtime/mechanisms/ui-panel-skin.md) — 面板底/边只经 PanelSkin 的 createPanel(有木框)或 drawPanelBase(只有底+细边);拿木框皮肤调 drawPanelBase 会静默丢框
-- [zone 生命周期与上下文契约](runtime/mechanisms/zone-lifecycle-contracts.md) — zone:enter/exit 是声明式触发载体;zone 上下文按参数线程化(executeBatchInZoneContext),禁回退全局栈;位面重注册仅 Exploring
+- [UI 面板皮肤单一入口](runtime/mechanisms/ui-panel-skin.md) — 面板底/边只经 PanelSkin 的 createPanel(有木框)或 drawPanelBase(只有底+细边);拿木框皮肤调 drawPanelBase 会静默丢框;「暗角」实为一层均匀黑纱,暗底配色是连着它一起量的
+- [zone 生命周期与上下文契约](runtime/mechanisms/zone-lifecycle-contracts.md) — 触发载体两路(进出即触发 / 按键才触发);zone 上下文按参数线程化(executeBatchInZoneContext),禁回退全局栈;位面重注册仅 Exploring
 
 ### 配方
 - [无头画面/逻辑全自动验证](runtime/recipes/headless-visual-verification.md) — 隐藏页 rAF 完全暂停——dev模式+命令通道+rAF pump/forceFrame 出帧截图;含 MessageChannel 让步与合成钟追平配方
@@ -56,8 +61,9 @@
 
 ### 决策记录
 - [人物档案解锁只走一个动作](runtime/decisions/2026-06-30-archive-unlock-single-action.md) — 人物档案解锁唯一通道=addArchiveEntry;名字匹配、条件自动解锁、unlockConditions 字段全部删除
-- [对话立绘构图定稿](runtime/decisions/2026-07-07-dialogue-portrait-composition.md) — VN 式小半身像(240px)压面板前景、底边伸出画面外、暗幕 opt-in;大立绘/默认压暗/垫面板后/底部渐隐均被否
+- [对话立绘构图定稿](runtime/decisions/2026-07-07-dialogue-portrait-composition.md) — VN 式半身像(360px,以代码为准)压面板前景、底边伸出画面外、暗幕 opt-in;大立绘/默认压暗/垫面板后/底部渐隐均被否
 - [曝光逐场景独立调,不做全局对齐](runtime/decisions/2026-08-21-per-scene-exposure.md) — display（ev/tonemap/对比/饱和/lift）留在场景 JSON 里逐场景调;不把 albedo 标定接进背景、不提全局曝光层——精度不是这个项目要的东西
+- [光影一律物理推导,不许拟合](runtime/decisions/2026-08-23-physical-derivation-over-fitting.md) — 渲染量要能积出来/推出来;拟合与启发式一律不收,中间量也不许借用物理量的名字
 - [位面基建 v3 模型拍板](runtime/decisions/2026-07-05-plane-v3-model.md) — 位面=全局一等资产+实体归属+叙事只点名+对账器重派生;v1(绑任务图)/v2(实体变体表)/接管式小游戏均被否
 - [scenarios.json 一等公民系统退役](runtime/decisions/2026-07-15-scenario-firstclass-retirement.md) — 2026-07-13 拍板退役一等公民 scenario 系统;stage-1 数据侧已落地(scenarios.json 清空、码头两线迁 narrative),stage-2 代码删除待做(届时 6→4 条件叶为 approval①)
 - [场景光照路线定稿(三代沿革:辐射还原 → 统一光影 → 原画 + 加性灯)](runtime/decisions/2026-07-21-scene-radiance-restoration-pipeline.md) — 【2026-08-30 现行】原画就是最终的光照,运行时只加实体灯,夜靠换夜原画;前两代(离线绝对辐射还原 / 整体运行时重打光)均已被否,理由与仍然继承的几条都在本卡
@@ -71,25 +77,30 @@
 ### 机制卡
 - [_PARAM_SCHEMAS 是控件清单不是必填集](editor-tools/mechanisms/action-param-schemas-vs-required.md) — action 参数清单三处镜像语义各不同;required/optional 的唯一权威是 actionParamManifest.ts,编辑器侧的 schema 只决定建哪些控件
 - [转盘氛围脚本编辑器](editor-tools/mechanisms/atmosphere-script-editor.md) — 递归指令列表编辑器(RPGMaker-event 式,非 DSL/树);复用 ActionEditor 的范式不复用控件;to_list 输出必须与独立轻量运行时逐字段一致
+- [音频加工台与 audio_config 的写入面](editor-tools/mechanisms/audio-workbench-config-write.md) — 唯一一个非主编辑器却会写游戏音频配置的工具(那份 JSON 双进程共写);加工指纹只是缓存键、成品字节哈希才是身份,状态一律由磁盘反算
+- [画布手势期间的布局与命中区纪律](editor-tools/mechanisms/canvas-gesture-safety.md) — 鼠标事件里改布局 = 必现崩溃(队列连接不是解药,要带 context 的单发定时器);屏幕像素定尺的命中区一律留在成员包围盒之外,护栏要断净空余量而不是"没被罩住"
 - [关闭路径的 Discard 中和与 flush 门控](editor-tools/mechanisms/close-path-flush-discard.md) — 主窗口关闭 = 逐页 confirm_close → 统一 flush_to_model;Discard 必须把 UI 回滚到模型值,flush 必须门控真实变更,否则被放弃的编辑复活或零编辑伪脏
 - [图对话编辑器](editor-tools/mechanisms/dialogue-graph-editor.md) — 独立包内嵌主编辑器的图对话编辑;分层架构 + 表单形状保真回写 + 语义零变化时原样字节回写;往返探针是改 inspector 的必跑门
 - [画布/表单编辑器数据零丢失范式](editor-tools/mechanisms/editor-data-sync-paradigm.md) — 单一真相源 + 即时入脏 + commit-on-leave + 懒回写按身份;门控只认 pending 信号的路径(deselect/新增/点空白)是静默丢编辑的惯性破口
 - [信号发射源权威口径(emitted_signal_ids)](editor-tools/mechanisms/emitted-signal-catalog.md) — 哪些容器算"实发信号":对话图+内容资产动作树+叙事图 onEnter/onExitActions+broadcastOnEnter 派生;blackbox meta.emits 只是声明不算实发;悬垂监听/空声明全 warning
 - [json_lang「JSON=语言」工具链(schema 索引器 + LSP)](editor-tools/mechanisms/json-lang-schema-tooling.md) — 把数据 JSON 当语言:运行时=解释器、编辑器=IDE、JSON=源码;从权威代码现场重算 schema 供 IDE/LSP 补全与查错;方向永远代码→schema,out/ 不入库,只咨询不裁决
-- [主窗口编辑器接入钩子(鸭子协议)](editor-tools/mechanisms/mainwindow-editor-hooks.md) — 主窗门控靠 getattr 鸭子协议调 flush_to_model/confirm_close/reload_refs_from_model/commit_pending_on_leave/editor_undo——缺钩子不报错、静默漏网,接入时必须逐项对齐
+- [主窗口编辑器接入钩子(鸭子协议)](editor-tools/mechanisms/mainwindow-editor-hooks.md) — 主窗门控靠 getattr 鸭子协议调 flush_to_model/confirm_close/reload_refs_from_model/commit_pending_on_leave/editor_undo——缺钩子不报错、静默漏网,签名跑偏同样静默,接入时必须逐项对齐
 - [叙事状态机编辑器(PySide 壳 + React Flow)](editor-tools/mechanisms/narrative-state-editor.md) — 唯一非原生 PyQt 编辑器;三方校验中 Python 兜底必须是 TS 权威的子集、两步保存、dist 是独立产物(重建≠页面刷新)、落盘字节级幂等
-- [叙事状态机模板系统](editor-tools/mechanisms/narrative-template-system.md) — 填 taskId 一键派生任务;模板文件编辑器专用运行时永不加载、{{taskId}}__ 信号构造性防撞名、盖章三产物全有全无暂存
+- [叙事状态机模板系统](editor-tools/mechanisms/narrative-template-system.md) — 填 taskId 一键派生任务;模板文件编辑器专用运行时永不加载、{{taskId}}__ 信号构造性防撞名、盖章产物全有全无暂存;抽取是整树子串替换故误伤检测必须三层、批量盖章 plan/apply 必须对账现实
 - [数值往返保真(preserve_numeric_repr)](editor-tools/mechanisms/numeric-roundtrip-fidelity.md) — Qt 数值控件会把"打开即保存"变成 int→float 漂移/clamp 丢值/默认 0 盖掉运行时默认——未改动的数值键必须按原始表示回写
 - [位面编辑器槽继承 UI 语义](editor-tools/mechanisms/plane-editor-slot-inheritance.md) — dict 槽用"显式配置此槽"闸门——不勾=不写键(继承)、勾且空 {} 是合法的整槽覆盖原语;解析口径与运行时 expandExtends 靠 parity 测试锁定
-- [save_all 两阶段写与脏桶护栏](editor-tools/mechanisms/save-all-dirty-buckets.md) — 唯一写盘出口:先落 .tmp 再统一就位,stage 失败磁盘零变化、commit 失败按基线回滚、外部竞态 preservation-first;mark_dirty 只认登记键,新数据域三处同步
+- [save_all 两阶段写与脏桶护栏](editor-tools/mechanisms/save-all-dirty-buckets.md) — 唯一写盘出口:先落 .tmp 再统一就位,stage 失败磁盘零变化、commit 失败按基线回滚、外部竞态 preservation-first;mark_dirty 只认登记键,新数据域的同步点不止三处;重读磁盘会刷掉外部改动基线
 - [场景画布的图元 part 表与内容层 z](editor-tools/mechanisms/scene-canvas-item-parts-and-z.md) — 一个实体在画布上是一束图元,清单唯一真相是 PART_TABLE;新建/重建的图元默认可见必须重贴 presence;内容层 z 按运行时排序规则的 Python 镜像实时派名次,不是写死层表
 - [新场景画布(Document–View–Command)](editor-tools/mechanisms/scene-canvas-v2-document-view-command.md) — 新画布只有一条写入路——工具构造命令、Document 唯一裁决写哪份、命令自己发变更事件;没有 staging 第二层真相,所以"写错副本/撤销撤一半/点一下变脏"没有发生的余地
+- [场景轨迹的作者面(画布拉线 + 烘焙)](editor-tools/mechanisms/scene-trajectory-authoring.md)〔superseded〕 — 线在画布拉、节奏在面板调;松手即重烘,source 与 keyframes 必须同一条命令落地;空分段返回的空表绝不许拿去清盘
 - [场景编辑器的三条视图轴(过场 / 位面 / 时段)](editor-tools/mechanisms/scene-view-filter-axes.md) — 过场轴决定实体存不存在,位面与时段轴决定已加载实体显不显;后两条必须合成一个判定再落显隐,分开各贴各的会互相冲掉
-- [共享选择器控件的保值契约](editor-tools/mechanisms/shared-widget-value-fidelity.md) — IdRefSelector 等共享控件被约 40 处调用点依赖——未知/悬垂值必须保值展示而非静默顶替或清空;一处控件破坏 = 全编辑器数据面污染
+- [共享选择器控件的保值契约](editor-tools/mechanisms/shared-widget-value-fidelity.md) — IdRefSelector 等共享控件被约 40 处调用点依赖——未知/悬垂值必须保值展示而非静默顶替或清空,候选去重不得让一部分数据在 UI 上不可达;一处控件破坏 = 全编辑器数据面污染
 - [过场步骤编辑器(TimelineEditor)契约](editor-tools/mechanisms/timeline-editor-contracts.md) — UI/交互改动不得改 StepWidget.to_dict 序列化输出;已有搜索/撤销/剪贴板等能力勿重复造;含一个 PySide takeAt 布局级深坑
+- [轨迹工作台(独立桌面应用 · 画面/世界两种空间 · 烘成独立资产)](editor-tools/mechanisms/trajectory-workbench.md) — 轨迹资产唯一的作者面与唯一写入者;加载任一场景(可把 q 空间还原成 3D 伪世界)拉线/抛体,保存=烘一次再原子写盘;世界空间物理与地面高度场+深度壳碰撞、控制点是 {x,z,h};投影与运行时同一份金标;桌面壳零浏览器缓存
 
 ### 配方
-- [改编辑器后的验证门](editor-tools/recipes/editor-change-verification-gate.md) — 三件套(全量测试+素材审计+validate-data)+ 测试环境三条硬规矩 + 已知盲区对策 + "输出字节不变"强验收法;解释器 .tools/venv + offscreen
+- [改编辑器后的验证门](editor-tools/recipes/editor-change-verification-gate.md) — 三件套(全树测试+素材审计+validate-data)+ 挂死分流 + 测试环境三条硬规矩 + 已知盲区对策 + "输出字节不变"强验收;跨机绿灯必须在验收机重放
+- [对活着的编辑器进程取证](editor-tools/recipes/live-editor-forensics.md) — 编辑器"某页白/卡/打不开"而离屏复现全绿时,故障只存在于那个跑了几小时的进程里——去问它,别再复现
 
 ### 决策记录
 - [氛围脚本编辑器独立实现(不复用 ActionEditor 控件)](editor-tools/decisions/2026-07-01-atmosphere-script-standalone.md) — 转盘氛围脚本用递归指令列表独立编辑器;复用 ActionEditor 的范式不复用控件;氛围 op 不并入通用 action 系统
@@ -111,7 +122,7 @@
 - [内容表达五通道(权威清单在哪)](content/mechanisms/content-expression-channels.md) — 内容 JSON 表达游戏行为只有五条权威通道(command/cutscene/条件/图对话/[tag:]),绕过的写法运行时被静默跳过或编辑器拒存
 - [编辑器可往返硬契约](content/mechanisms/editor-roundtrip-contract.md) — agent 写的 JSON 必须让人类仍能用编辑器打开并原样存回——格式/文件范围/重建区/deprecated/引用有效五组契约,违反即丢数据或整工程存不了
 - [实体迁移/改名/删除走重构引擎(勿手搓引用网)](content/mechanisms/entity-refactor-engine.md) — 场景实体(npc/hotspot/zone/出生点)的迁移/改名/删除/复制不要手改 JSON 引用网——调 entity_refactor 引擎,引用机械改写+报告+可撤销;裸 id 运行时按当前场景解析、断了静默跳过
-- [L2 能力原语登记面(action 三件套)](content/mechanisms/l2-action-primitive-registration.md) — 一条可用 Action = 运行时注册 + 编辑器可配 + 校验认可,缺一视为未完成;含嵌套/异步/可选参数三个已知坑与审批边界
+- [L2 能力原语登记面](content/mechanisms/l2-action-primitive-registration.md) — 策划模式唯一允许的代码改动;一条可用 Action 要同步多个登记面(完整清单以 runtime 的登记面卡为准,别只做编辑器那一面),含嵌套/异步/可选参数三个已知坑与审批边界
 - [文本引用系统([tag:…])](content/mechanisms/text-ref-tag-system.md) — 玩家可见文本统一经 resolveText 解析 [tag:…];存档永远存 raw、JIT 解析;扩展须运行时+编辑器三件套一致;引用目标不存在则整工程存不了
 
 ### 配方
@@ -141,9 +152,10 @@
 ### 机制卡
 - [统一动画资源工作台(tools/anim_preview)](asset-pipeline/mechanisms/anim-preview-tool.md) — 人工审查驱动的 A→H 版本图、R 多动作实时装配、Agent 结构化接口和游戏真实渲染终验
 - [动画/静态阶段适配器与旧一键产线(tools/animation_pipeline)](asset-pipeline/mechanisms/animation-pipeline.md) — 工作台 E/F/G/R/H/H_STATIC 的无覆盖确定性适配器；旧 build_character 产线保留兼容但不定义新人工 R 语义
-- [对话立绘管线](asset-pipeline/mechanisms/dialogue-portrait-pipeline.md) — 立绘 3×3 表情图→切片抠图的契约:flood-fill 灰底结构上无镂空、dehalo 已内建、产物 gitignored 改前必备份
+- [对话立绘管线](asset-pipeline/mechanisms/dialogue-portrait-pipeline.md) — 立绘素材生产契约:多表情大图与单姿态立绘集两条合法路径、模型直出必须去角标、flood-fill 灰底结构上无镂空、dehalo 已内建、产物 gitignored 改前必备份
 - [抠图路线与判读铁律](asset-pipeline/mechanisms/matting-toolbox.md) — 仓库四条抠图路线的入口与适用域;halo 根因=无 despill;量化指标不可单独裁决(halo 误报白发、多扣须源级测)
 - [场景烘焙产物的下游契约(深度/碰撞)](asset-pipeline/mechanisms/scene-bake-downstream.md) — 导出 depthConfig 等于第一次给场景装墙——必跑 audit-walkable;出生点落墙=玩家冻结,NPC 落墙多为有意;废字段下线要扫三类静默下游
+- [场景背景重打光工作台](asset-pipeline/mechanisms/scene-relight-tool.md) — 把白天原画确定性地重打光成时段/天气变体背景图的离线工作台;它只读几何烘焙产物、不自己烘;每张时段原画都要各烘一套角色照明载荷
 - [动画产物契约(atlas.png + anim.json + normal.png)](asset-pipeline/mechanisms/sprite-atlas-anim-contract.md) — 一切动画素材的产出格式硬契约:0基帧、一角色一图集均匀网格、底中脚锚、每边≤2048、离线法线图、animFile 存完整 URL、人工字段并回
 - [单帧静态动画包(一张图 → 能当 NPC 用)](asset-pipeline/mechanisms/static-single-frame-bundle.md) — 一张透明 PNG 打成 1 格图集 + 单 idle state 的动画包；紧裁使格底=脚、worldHeight=角色本体身高；占位标记与身高标定是换正式包不跳尺寸的唯一凭据
 
@@ -171,7 +183,8 @@
 
 ### 机制卡
 - [agent 存放面地图(知识真源 vs 客户端壳)](meta/mechanisms/agent-surface-map.md) — 各 AI 客户端目录都是曝光/执行壳而非存放面;只有 agent-docs-cli 薄壳自动维护,其余镜像靠人工、已经漂了
-- [原子写在 Windows 上不原子(就位类调用必须退避重试)](meta/mechanisms/atomic-write-windows.md) — 「写 .tmp 再 os.replace 就位」在 Windows 上是概率性失败的;全仓 18 处就位点统一走 tools/atomic_io，只吃三个瞬时 errno、绝不重试 EEXIST
+- [原子写在 Windows 上不原子(就位类调用必须退避重试)](meta/mechanisms/atomic-write-windows.md) — 「写 .tmp 再 os.replace 就位」在 Windows 上是概率性失败的;全仓就位点统一走 tools/atomic_io(实现只许有一处)，只吃三个瞬时 errno、绝不重试 EEXIST
+- [挑项目 Python 的入口](meta/mechanisms/project-interpreter-entrypoint.md) — 凡"自己挑 Python 解释器"的入口都各写过一份候选表、各漏各的;shell 侧唯一实现源是 scripts/py.sh,Node 侧还没有那一份;挑错的后果是整批静默空转,不报错
 
 ### 配方
 - [异地/新机 DVC 资源还原(勿用裸 dvc pull)](meta/recipes/dvc-oss-restore.md) — 大文件还原钦定路径 = ./dev.sh pull;裸 dvc pull 在慢速直连下必挂且无配置面可救

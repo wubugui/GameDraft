@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMenu,
     QMessageBox,
+    QPushButton,
     QSplitter,
     QToolBar,
     QTreeWidget,
@@ -48,6 +49,7 @@ from ...shared.anim_atlas_preview import (
     spritesheet_public_path,
 )
 from ...shared.image_path_picker import disk_path_for_runtime_url
+from ...shared.scene_ids import SCENE_ID_HINT, new_scene_skeleton, scene_id_problem
 from ...shared.move_entity_map_picker import (
     resolve_world_size_for_scene_json,
     scene_background_disk_path,
@@ -150,6 +152,15 @@ class SceneEditorV2(QWidget):
         self._scene_list.currentItemChanged.connect(self._on_scene_row_changed)
         lv.addWidget(QLabel("场景"))
         lv.addWidget(self._scene_list, 1)
+        # 「新建场景」入口。此前新画布只有一张只读清单：工程里一个场景都没有、
+        # 或想开新场景时，这一页什么都做不了，只能切回老画布去建。
+        self._btn_new_scene = QPushButton("+ 新建场景")
+        self._btn_new_scene.setToolTip(
+            "创建一个新的空场景（最小骨架：id / name / 出生点）并装载它。"
+            "背景图与世界尺寸随后在右侧场景属性面板配置。\n"
+            f"场景 id：{SCENE_ID_HINT}。")
+        self._btn_new_scene.clicked.connect(self.new_scene_interactive)
+        lv.addWidget(self._btn_new_scene)
         self._tree = QTreeWidget()
         self._tree.setHeaderHidden(True)
         self._tree.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection)
@@ -386,18 +397,20 @@ class SceneEditorV2(QWidget):
         super().showEvent(event)
 
     def _npc_sprite_metrics(self, npc: dict):
-        """NPC 精灵的世界尺寸；动画包解不出来返回 None。
+        """NPC 精灵的世界尺寸；动画包与静态贴图都解不出来时返回 None。
 
-        返回 None 时视图不建精灵图元 —— 与老画布同口径（没有 animFile / 图集
-        读不到就没有精灵），也与运行时一致（`getWorldSize()` 为 0 时不出 sprite）。
+        返回 None 时视图不建精灵图元 —— 与老画布同口径（没有动画包也没有
+        `displayImage` / 图读不到就没有精灵），也与运行时一致
+        （`getWorldSize()` 为 0 时不出 sprite）。
 
-        尺寸与**当前帧**都由 `NpcAnimBank` 给（它解析 anim.json、持图集与帧游标），
-        第三项 URL 只是留给旧契约的占位 —— 精灵的像素走帧通路，不走 texture_provider。
+        尺寸与**当前帧**都由 `NpcAnimBank` 给（它解析 anim.json 或合成静态贴图的
+        1×1 单帧包，持图与帧游标）。第三项 URL：动画 NPC 为空串（像素走帧通路），
+        静态贴图实体给出展示图 URL，好让没接帧通路的调用方仍能取到图。
         """
         size = self._anim_bank.world_size(npc)
         if size is None:
             return None
-        return (size[0], size[1], "")
+        return (size[0], size[1], self._anim_bank.sprite_texture_url(npc))
 
     def refresh_scene_geometry(self) -> None:
         """场景级几何（光环境曲线）。用 scene ref 走与实体几何**同一套**
@@ -421,6 +434,51 @@ class SceneEditorV2(QWidget):
         # 切场景前先把本页的挂起编辑提交（本架构下是空操作，但钩子语义要保持一致）
         self.commit_pending_on_leave()
         self.load_scene(current.data(Qt.ItemDataRole.UserRole))
+
+    # ---- 新建场景 ----------------------------------------------------------
+
+    def create_scene(self, scene_id: str, name: str = "") -> str | None:
+        """把一个最小骨架场景写进模型、标脏并装载它。返回失败原因；``None`` = 成功。
+
+        判定与骨架都在 ``shared/scene_ids``，与老画布同一份 —— 两边各写一套的话，
+        "这个 id 在一个画布能建、另一个不能"迟早出现。
+
+        **不入撤销栈**，与老画布同口径：Document 是按场景建的，一个场景的诞生不属于
+        任何 Document 的历史。
+        """
+        sid = str(scene_id or "").strip()
+        problem = scene_id_problem(sid, self._model.scenes)
+        if problem:
+            return problem
+        self._model.scenes[sid] = new_scene_skeleton(sid, name)
+        # 不预建任何目录：本场景的 runtime 目录在导入背景图时按需创建。
+        self._model.mark_dirty("scene", sid)
+        self.refresh_scene_list()
+        self.load_scene(sid)
+        return None
+
+    def new_scene_interactive(self) -> None:
+        """「+ 新建场景」按钮：问 id、问显示名，然后 :meth:`create_scene`。"""
+        sid, ok = QInputDialog.getText(
+            self, "新建场景", f"场景 id（{SCENE_ID_HINT}）：")
+        if not ok:
+            return
+        sid = str(sid or "").strip()
+        if not sid:
+            return
+        # 先判再问第二个问题：id 不合法时不该让用户白填一个显示名。
+        problem = scene_id_problem(sid, self._model.scenes)
+        if problem:
+            QMessageBox.warning(self, "新建场景", problem)
+            return
+        name, ok = QInputDialog.getText(
+            self, "新建场景", "场景显示名（留空则用 id）：", text=sid)
+        if not ok:
+            return
+        # 两个弹窗之间模型可能被别处改过（Task 编排替换场景域），所以这里再判一次。
+        problem = self.create_scene(sid, name)
+        if problem:
+            QMessageBox.warning(self, "新建场景", problem)
 
     # ---- 工具 --------------------------------------------------------------
 

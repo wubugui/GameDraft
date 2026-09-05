@@ -1,0 +1,56 @@
+{
+  "id": "崖墓正式",
+  "name": "崖墓",
+  "worldWidth": 1591.47,
+  "worldHeight": 895.2,
+  "backgrounds": [
+    {
+      "image": "background.png",
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "spawnPoint": {
+    "x": 252.1,
+    "y": 591.1
+  },
+  "hotspots": [
+    {
+      "id": "T_到崖墓后段",
+      "x": 1429.0,
+      "y": 71.1,
+      "type": "transition",
+      "label": "",
+      "interactionRange": 33.2,
+      "data": {
+        "targetScene": "崖墓后段",
+        "targetSpawnPoint": "spawn_0",
+        "text": ""
+      },
+      "castShadow": false,
+      "autoTrigger": true
+    }
+  ],
+  "npcs": [
+    {
+      "id": "new_npc",
+      "x": 1295.3,
+      "y": 238.7,
+      "interactionRange": 50,
+      "name": "New NPC",
+      "animFile": "/resources/runtime/animation/guanchai_anim/anim.json",
+      "initialAnimState": "idle"
+    }
+  ],
+  "zones": [],
+  "spawnPoints": {
+    "spawn_0": {
+      "x": 1403.8,
+      "y": 124.6
+    }
+  },
+  "camera": {
+    "zoom": 1.2,
+    "pixelsPerUnit": 1.0
+  }
+}

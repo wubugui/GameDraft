@@ -24,8 +24,10 @@
  *   （above / inside）→ 排到玩家前面。
  * - 玩家 x 落在多边形水平跨度之外时 `pointPolygonVerticalSide` 返回 `null`，
  *   此时**保留静态档位、不覆盖**（既不是 front 也不是 back）。
- * - 脚底 y 取 `entitySortFootY ?? y`。前者只在实体带旋转时由实体自己维护
- *   （旋转后 quad 的接地线），缺省即回落容器锚点 y。
+ * - 脚底 y 取 `entitySortFootY ?? y`。前者由实体自己维护，在**锚点非底中**或**带旋转**时
+ *   写入（两种偏移叠加：锚点 → 接地点那一段 + 旋转把 quad 撑出去的那一截，
+ *   见 `Npc._syncSortFootY`）；两者都不成立时删键，回落容器锚点 y。
+ *   轨迹在跑时这个键由轨迹独占（`TrajectoryKeyframe.sortY`）。
  *
  * 三个档位区间宽 {@link ENTITY_SORT_BAND}，远大于任何场景的世界高度，故绝不重叠。
  */
@@ -43,9 +45,9 @@ export type EntitySortInput = {
   band?: EntitySortBand;
   /** 动态遮挡带的判据多边形（世界坐标、已含实例 transform 与透视系数）；只有热点会带 */
   occlusionPolygon?: ReadonlyArray<{ x: number; y: number }>;
-  /** 旋转态的接地线 y；缺省回落 `y` */
+  /** 接地线 y（锚点非底中 / 旋转态 / 轨迹在跑时由实体写入）；缺省回落 `y` */
   sortFootY?: number;
-  /** 容器锚点 y（= 脚底，`SpriteEntity` 内层 anchor 为底中） */
+  /** 容器锚点 y（`SpriteEntity` 内层 anchor 缺省底中，此时锚点即脚底） */
   y: number;
 };
 

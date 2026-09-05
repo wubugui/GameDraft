@@ -15,7 +15,11 @@ from ...shared.entity_sort_math import (
     npc_sort_band_of,
     sort_foot_y_of,
 )
-from ...shared.entity_transform_math import entity_scale_of
+from ...shared.entity_transform_math import (
+    entity_contact_point,
+    entity_scale_of,
+)
+from ...shared.static_display_sprite import npc_content_facing_x
 from .changes import EntityRef
 from .items import Z_CONTENT_LO
 
@@ -74,8 +78,16 @@ def content_sort_entries(document, view, *, probe=None):
         if item is None or not isinstance(ent, dict):
             continue
         size = getattr(item, "world_size", (0.0, 0.0))
-        s = entity_scale_of(ent) * _pf(view, ent, "npc")
-        foot = sort_foot_y_of(ent, size[0] * s, size[1] * s)
+        mirror = npc_content_facing_x(ent)
+        # 透视系数在**接地点**处求（与运行时 _refreshDepthScale 同口径）：
+        # 先在锚点采一次定位接地点、再在接地点采一次，一步收敛。
+        # 缺省锚点时接地点恒等于锚点，第二次采样被跳过，逐位同改造前。
+        pf = _pf(view, ent, "npc")
+        cx, cy = entity_contact_point(ent, size[0], size[1], pf, mirror)
+        if (cx, cy) != (float(ent.get("x", 0) or 0), float(ent.get("y", 0) or 0)):
+            pf = _pf(view, ent, "npc", cx, cy)
+        s = entity_scale_of(ent) * pf
+        foot = sort_foot_y_of(ent, size[0] * s, size[1] * s, mirror)
         # NPC 的 collisionPolygon **不参与**遮挡带（运行时只有 Hotspot 写
         # entityOcclusionPolygon）；一视同仁会造出运行时根本不存在的层级翻转。
         dy = offsets.get(ref, (0.0, 0.0))[1]
@@ -87,13 +99,21 @@ def content_sort_entries(document, view, *, probe=None):
     return out
 
 
-def _pf(view, ent: dict, kind: str) -> float:
-    """透视系数。视图提供唯一出口；拿不到（脱离视图单测）时按 1。"""
+def _pf(view, ent: dict, kind: str,
+        foot_x: float | None = None, foot_y: float | None = None) -> float:
+    """透视系数。视图提供唯一出口；拿不到（脱离视图单测）时按 1。
+
+    ``foot_x/foot_y`` = **接地点**（锚点非底中时与实体位置不同）。不传时
+    连参数都不传给视图 —— 单测里的桩视图只认两个位参，多喂两个会被下面的
+    ``except TypeError`` 吞成 1.0（"系数静默变成 1"是最难查的那类回归）。
+    """
     getter = getattr(view, "perspective_factor", None)
     if not callable(getter):
         return 1.0
     try:
-        return float(getter(ent, kind))
+        if foot_x is None and foot_y is None:
+            return float(getter(ent, kind))
+        return float(getter(ent, kind, foot_x, foot_y))
     except (TypeError, ValueError):
         return 1.0
 

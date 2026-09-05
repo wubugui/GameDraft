@@ -48,7 +48,11 @@ import {
   type VoiceAdvanceSpec,
 } from '../systems/VoiceChannel';
 import type { PlaneReconciler } from '../systems/PlaneReconciler';
-import type { ActionDef, ActionOriginContext, AnimationPlaybackParams, DialogueLine, DialoguePortraitRef, EmoteBubbleOffsetOpts, EmoteBubbleVariant, EntityShadowBinding, ICutsceneActor, IEmoteBubbleAnchor, TimeTransition, ZoneRuleSlot, RuleLayerKey } from '../data/types';
+import type {
+  TrajectoryEndReason,
+  TrajectoryStopOptions,
+} from '../systems/TrajectorySystem';
+import type { ActionDef, ActionOriginContext, AnimationPlaybackParams, DialogueLine, DialoguePortraitRef, EmoteBubbleOffsetOpts, EmoteBubbleVariant, EntityShadowBinding, ICutsceneActor, IEmoteBubbleAnchor, TimeTransition, TrajectoryTargetRef, ZoneRuleSlot, RuleLayerKey } from '../data/types';
 import { GameState } from '../data/types';
 import type { SceneEntityKind, RuntimeFieldValue } from '../data/EntityRuntimeFieldSchema';
 import { applyDialogueColonSpeakerFromResolvedText } from './resolveText';
@@ -103,6 +107,16 @@ function resolveCurrencyAmountParam(
  * boolean 原样；number 非零为 true；字符串 'true'/'1' → true、'false'/'0' → false；
  * 其余（含 undefined / null）返回 null，由调用方区分「缺失」与「非法」的告警文案。
  */
+/** 数值参数：number 或可解析为有限数的字符串；其余（含空串）返回 null。 */
+function parseFiniteNumberParam(raw: unknown): number | null {
+  if (typeof raw === 'number') return Number.isFinite(raw) ? raw : null;
+  if (typeof raw === 'string' && raw.trim() !== '') {
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
 function parseLooseBooleanParam(raw: unknown): boolean | null {
   if (raw === undefined || raw === null) return null;
   if (typeof raw === 'boolean') return raw;
@@ -264,6 +278,23 @@ export interface ActionRegistryDeps {
   snapCameraToActorIfFollowed: (entityId: string) => void;
   /** 停止指定 NPC 的巡逻协程（打断位移 + 失效该次巡逻 token） */
   stopNpcPatrol: (npcId: string) => void;
+  /**
+   * 播一条烘焙轨迹资产（`playTrajectory`）：按 id 装载 `assets/data/trajectories/<id>.json`，
+   * 世界空间资产按当前场景投影，挂到 `ref` 解析出的目标上从 `anchor`（缺省 = 目标此刻位置）起播。
+   * `ref` 走 `Game.resolveTrajectoryTarget`：`TrajectoryTargetRef` 或裸 id 字符串（`'player'` / NPC id）。
+   * 资产缺失 / 目标解析不出来时 warn 并以 `'cancelled'` 封口——**必然封口**，
+   * 所以 await 它不会悬挂（律 3）。注入形状按分层律 11：只传能力，不传系统实例。
+   */
+  playTrajectory: (
+    trajectoryId: string,
+    ref: TrajectoryTargetRef | string,
+    opts?: { anchor?: { x: number; y: number }; flipX?: boolean },
+  ) => Promise<TrajectoryEndReason>;
+  /** 停掉某目标身上在跑的轨迹（`stopTrajectory`）；没有在跑返回 false。 */
+  stopTrajectory: (
+    ref: TrajectoryTargetRef | string,
+    opts?: TrajectoryStopOptions,
+  ) => boolean;
   /** 在当前场景为该 NPC 重新启动巡逻（会先 stop再跑，避免重复协程） */
   startNpcPatrol: (npcId: string) => void;
   /** 屏幕叠加图（百分比布局，与 hideOverlayImage 成对） */
@@ -1571,6 +1602,9 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     }
     const rx = Math.round(x * 100) / 100;
     const ry = Math.round(y * 100) / 100;
+    // 目标若正好是当前场景里在跑轨迹的那个实体，写进去的位置会被轨迹下一帧覆写。
+    // 不在当前场景（或没在跑）时这一步是无副作用的空操作。
+    if (entityKind === 'npc') d.stopTrajectory(entityId);
     await d.setSceneEntityField(sceneId, entityKind, entityId, 'x', rx);
     await d.setSceneEntityField(sceneId, entityKind, entityId, 'y', ry);
   }, ['sceneId', 'entityKind', 'entityId', 'x', 'y']);
@@ -1587,6 +1621,8 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     d.sceneManager.mergePersistentNpcState(target, { x, y });
     const npc = d.sceneManager.getNpcById(target);
     if (npc) {
+      // 同 teleportEntityTo：直写 x/y 不触发抢占，在跑的轨迹会把它覆写回去
+      d.stopTrajectory(target);
       npc.x = x;
       npc.y = y;
     } else {
@@ -1945,6 +1981,12 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       console.warn('moveGroupBy: 需要 group、有限数值 dx/dy');
       return;
     }
+    // 组位移在 speed<=0 时对 NPC 是**直写 x/y**（不经 moveTo，故不触发轨迹抢占）：
+    // 组里若有实体正被轨迹驱动，这次位移会被下一帧静默覆写回去。带 speed 的那支走 moveTo，
+    // 抢占天然成立，这里一并停掉也无害（停的是本来就要被 moveTo 顶掉的那条）。
+    for (const npc of d.sceneManager.getCurrentNpcs()) {
+      if (String(npc.def.group ?? '').trim() === group) d.stopTrajectory(npc.def.id);
+    }
     // SceneManager 统一覆盖 NPC / Hotspot / Zone；带 speed 的 NPC Promise 在内部封口。
     const hit = await d.sceneManager.moveCurrentSceneGroupBy(group, dx, dy, speed);
     if (hit === 0) console.warn(`moveGroupBy: 当前场景没有分组 "${group}" 的实体`);
@@ -2039,6 +2081,9 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       console.warn(`teleportEntityTo: 找不到实体 "${target}"`);
       return;
     }
+    // 直写 x/y **不经过** moveTo/jumpTo 那两个抢占口，所以在跑的轨迹不会知道它被瞬移了，
+    // 下一帧就用轨迹的姿态把这次瞬移静默覆写回去（表现为“瞬移动作没生效”，且不报任何错）。
+    d.stopTrajectory(target);
     actor.x = x;
     actor.y = y;
     // 镜头此刻正锚在它身上时补一次 snap：不补的话相机会从原位平滑滑过去，
@@ -2084,6 +2129,75 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       }
     }
   }, ['target', 'direction', 'faceTarget']);
+
+  /**
+   * 播一条**烘焙好的**轨迹资产（见 [[entity-trajectory]]）。运行时只认资产里烘好的帧，
+   * 工作台工作态 `source` / `authoring` 一概不看。
+   *
+   * - `trajectoryId` 必填 = `assets/data/trajectories/<id>.json`；缺文件只 warn 跳过
+   *   （内容错按"静默跳过"处理，与其它 action 同口径，构建期由校验器拦）。
+   * - `target` 必填：`'player'` 或 NPC id。资产与实体无关，挂谁由这里定。
+   * - `anchorX` / `anchorY`（成对可选，场景坐标 wu）：显式锚点；不给 = 目标此刻位置。
+   *   只给一个视为没给（warn）。
+   * - `flipX`：左右翻转（x 与叠加旋转取反），"往右抛"的资产在朝左的实体上播。
+   * - `animState` 开播时切目标动画状态（须存在于其动画包）。
+   * - `wait` **运行时缺省 true**（等轨迹播完再走下一步）；显式 false 则 fire-and-forget，
+   *   Promise 由 `void … .catch` 封口，绝不悬挂。
+   */
+  executor.register('playTrajectory', async (p) => {
+    const trajectoryId = String(p.trajectoryId ?? '').trim();
+    if (!trajectoryId) {
+      console.warn('playTrajectory: 需要非空 trajectoryId');
+      return;
+    }
+    const target = String(p.target ?? '').trim();
+    if (!target) {
+      console.warn(`playTrajectory: 需要非空 target（轨迹 "${trajectoryId}"）`);
+      return;
+    }
+    const ax = parseFiniteNumberParam(p.anchorX);
+    const ay = parseFiniteNumberParam(p.anchorY);
+    let anchor: { x: number; y: number } | undefined;
+    if (ax !== null && ay !== null) {
+      anchor = { x: ax, y: ay };
+    } else if (ax !== null || ay !== null) {
+      console.warn(`playTrajectory: anchorX / anchorY 要成对给，已按"目标此刻位置"处理（轨迹 "${trajectoryId}"）`);
+    }
+    const flipX = parseLooseBooleanParam(p.flipX) === true;
+    const animState = String(p.animState ?? '').trim();
+    if (animState) {
+      const actor = d.resolveActor(target);
+      if (actor) actor.playAnimation(animState);
+      else console.warn(`playTrajectory: 找不到实体 "${target}"，animState 已忽略`);
+    }
+    const promise = d.playTrajectory(trajectoryId, target, { anchor, flipX });
+    if (parseLooseBooleanParam(p.wait) === false) {
+      // 不等：Promise 仍必然封口，这里只负责别让未捕获拒绝冒出来
+      void promise.catch((e) => {
+        console.warn(`playTrajectory: 轨迹 "${trajectoryId}" 播放异常`, e);
+      });
+      return;
+    }
+    await promise;
+  }, ['trajectoryId', 'target', 'anchorX', 'anchorY', 'flipX', 'wait', 'animState']);
+
+  /**
+   * 停掉某目标身上在跑的轨迹。`toEnd` = 停前先落末帧姿态（"停在终点"而不是"停在半路"）；
+   * `reset` = 交还目标时把被轨迹改过的量（叠加旋转/缩放/透明、排序锚）还原。
+   * 两者**运行时缺省都是 false**，所以编辑器用普通勾选框即可。
+   */
+  executor.register('stopTrajectory', (p) => {
+    const target = String(p.target ?? '').trim();
+    if (!target) {
+      console.warn('stopTrajectory: 需要非空 target');
+      return;
+    }
+    d.stopTrajectory(target, {
+      toEnd: parseLooseBooleanParam(p.toEnd) === true,
+      reset: parseLooseBooleanParam(p.reset) === true,
+    });
+    // 目标身上没有在跑的轨迹是**常态**（轨迹可能刚好播完），不告警
+  }, ['target', 'toEnd', 'reset']);
 
   executor.register('cutsceneSpawnActor', (p) => {
     const id = String(p.id ?? '').trim();

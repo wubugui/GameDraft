@@ -9,9 +9,10 @@ authority:
   - tools/editor/shared/narrative_catalog.py#emitted_signal_ids
   - tools/editor/validator.py
   - tools/narrative_editor_web/src/NarrativeEditorApp.tsx
+  - tools/narrative_xref/README.md
 triggers:
-  paths: ["tools/editor/shared/narrative_catalog.py", "tools/narrative_editor_web/**"]
-  topics: [悬垂监听, emitted_signal_ids, 信号目录, TaskBusPanel, meta.emits, danglingSignalNoEmit, 悬垂发射]
+  paths: ["tools/editor/shared/narrative_catalog.py", "tools/narrative_editor_web/**", "tools/narrative_xref/**"]
+  topics: [悬垂监听, emitted_signal_ids, 信号目录, TaskBusPanel, meta.emits, danglingSignalNoEmit, 悬垂发射, 信号关系, xref]
 last_governed: 2026-08-05
 ---
 
@@ -23,6 +24,11 @@ last_governed: 2026-08-05
 
 `tools/editor/shared/narrative_catalog.py` 的 `emitted_signal_ids`(扫描)与 `_derived_broadcast_signals`(派生);消费方 `tools/editor/validator.py` 与网页 `NarrativeEditorApp.tsx`。
 
+**"按信号反查两侧(谁发 / 谁听)"只有一个入口:共享扫描引擎 `tools/narrative_xref`**——
+它把两侧连同派生信号的上游因果、条件叶的读状态算成一份可跳转的索引,
+**编辑器的信号关系面板 / 叙事调试器窗 / MCP 信号查询三处共用它**,别再各写一份扫描。
+本卡的口径与它有 parity 测试对账,口径分叉即 bug。
+
 ## 硬契约
 
 - **实发四源**(深遍动作树认 `emitNarrativeSignal`,容器无关):①对话图 `graphs/*.json`(逐文件读盘);②内容资产动作树(scenes/quests/encounters/cutscenes/pressure_holds/小游戏等,登记面 `_EMIT_SOURCE_ATTRS`);③叙事图 states 的 onEnter/onExitActions(运行时真执行);④派生广播——仅 `broadcastOnEnter===true` 的 state 产 `state:<图id>:<状态id>`。
@@ -33,8 +39,10 @@ last_governed: 2026-08-05
 
 - meta.emits 会**压掉**监听侧的悬垂警告,自己却持续报空声明——黑盒声明不是修悬垂的办法。
 - 对话图逐文件读盘:未保存的编辑不进目录;目录一次性算好,非实时。
-- **flow 状态广播只被条件叶子消费时,运行时红条与静态 unused 检查都会报**——两侧口径都只认 transition 监听、不数条件叶子读。属已知噪声,非数据 bug(勿据此乱改数据)。
+- **flow 状态广播只被条件叶子消费时,运行时红条与静态 unused 检查仍会报"没人听"**——这两处口径只认 transition 监听、不数条件叶子读。属已知噪声,非数据 bug(勿据此乱改数据);**要确认是不是真没人听,去信号关系面板**,它会同时列出读状态的地方。
 
 ## 怎么验证
 
-`./dev.sh validate-data` 看悬垂监听 warning;网页 TaskBusPanel 与 CLI 结果应一致;单条信号用命令通道 emitNarrativeSignal 实发核对。
+`./dev.sh validate-data` 看悬垂监听 warning;网页 TaskBusPanel 与 CLI 结果应一致;
+`sh scripts/py.sh -m tools.narrative_xref --problems` 一眼看出两侧对不齐的信号;
+单条信号用命令通道 emitNarrativeSignal 实发核对。

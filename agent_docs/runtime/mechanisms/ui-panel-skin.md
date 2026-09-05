@@ -3,7 +3,7 @@ id: ui-panel-skin
 title: UI 面板皮肤单一入口
 domain: runtime
 type: mechanism
-summary: 面板底/边只经 PanelSkin 的 createPanel(有木框)或 drawPanelBase(只有底+细边);拿木框皮肤调 drawPanelBase 会静默丢框
+summary: 面板底/边只经 PanelSkin 的 createPanel(有木框)或 drawPanelBase(只有底+细边);拿木框皮肤调 drawPanelBase 会静默丢框;「暗角」实为一层均匀黑纱,暗底配色是连着它一起量的
 status: active
 authority:
   - src/ui/PanelSkin.ts#createPanel
@@ -14,7 +14,7 @@ authority:
 triggers:
   paths: ["src/ui/PanelSkin.ts", "src/ui/UITheme.ts", "src/ui/UITextures.ts", "src/ui/UIIcons.ts", "src/ui/components/*.ts", "src/ui/*UI.ts"]
   topics: [面板皮肤, UI 观感, PanelSkin, 木框, 纸纹, 取景台]
-last_governed: 2026-08-05
+last_governed: 2026-09-03
 ---
 
 ## 是什么(一句话)
@@ -36,6 +36,12 @@ last_governed: 2026-08-05
   塞不进 Graphics)——这套里最容易踩的一脚。
 - 皮肤只管「底 + 框 + 内金线 + 暗角」;hover 高亮 / 遮罩 / 进度条 / 滑块不属于它,
   别往里塞(各有 `UIDecor` 里的件)。
+- ⚠ **「暗角」在面板尺寸下不出渐变,它等效于一层均匀黑纱**(2026-08-17 在真跑的游戏里
+  逐点采样实测:中心与四角同值)。这不是个待修的 bug,是**必须知道的既成事实**:
+  **暗底面板的底色是连着这层黑纱一起量定的**——真去把它修成渐变,全站暗面板会一起变亮,
+  等于重调一遍配色。所以要么当它是"整体压暗系数"来用(纸页两档就是这么处理的:
+  压暗系数归零、把目标色直接烘进底色),要么把修渐变**当成一次配色改动立项**,别顺手改。
+  凡是"配色里写的值与游戏里看到的对不上"的问题,先怀疑这一层。
 - **贴图未加载必须降级**:取贴图在预载完成前和 jsdom 测试里返回 null,
   底退回纯色+细线、木框返回 null。任何调用方不许因为素材没到就抛错。
 - 贴图预载排在**任何面板首次构建之前**(图标可以晚到一帧,只是这一帧没图标)。
@@ -44,7 +50,10 @@ last_governed: 2026-08-05
 - systems / rendering / core 层**不许 import ui**(架构铁律一)。切场进度条配色因此是
   由组装层注入的,不是直接 import 主题。
 - **换木框贴图必须同步导出边条宽度常量**(`UITextures.ts` 的 `FRAME_BORDER_PX`),
-  否则九宫格切边错位;再生成入口(出图提示词 + 后处理脚本)在 `tmp/ui_assets_2026-08-03/`。
+  否则九宫格切边错位。
+  ⚠ **木框/纸纹的再生成入口(出图提示词 + 后处理脚本)已失传**:它当初放在 `tmp/` 下,
+  那个目录早已清掉。要重出这批底图得先重建一套生成材料;
+  代码注释里指向 `tmp/` 的那条路**不要照着找**。新素材的复现材料一律别再放 `tmp/`。
 - 美学方向见 [2026-07-05-ui-panel-skin-direction](../decisions/2026-07-05-ui-panel-skin-direction.md)
   (**2026-08-03 已换向为「做旧木框 + 纸纹 + 金细线」,原「纯程序化零素材」条款作废**)。
 

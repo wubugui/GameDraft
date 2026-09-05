@@ -84,6 +84,8 @@ CONTENT_ID_PARAMS: dict[tuple[str, str], str] = {
     ("completeScenario", "scenarioId"): "scenarios",
     ("addArchiveEntry", "entryId"): "archive_entries",
     ("collectClue", "clueId"): "clues",
+    # 轨迹资产是全局独立文件(assets/data/trajectories/<id>.json),id 全局唯一 → 直接烤成枚举
+    ("playTrajectory", "trajectoryId"): "trajectories",
     ("emitNarrativeSignal", "signal"): "narrative_signals",
     # 叙事活计生命周期（S1）：目标是活计图；宇宙沿用 narrative 条件叶的图 id 集合
     ("startNarrativeRun", "graphId"): "narrative_graph_ids",

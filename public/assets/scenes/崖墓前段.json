@@ -1,0 +1,93 @@
+{
+  "id": "崖墓前段",
+  "name": "崖墓前段",
+  "worldWidth": 1404.44,
+  "worldHeight": 790.0,
+  "backgrounds": [
+    {
+      "image": "background.png",
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "spawnPoint": {
+    "x": 1046.1,
+    "y": 575.0
+  },
+  "hotspots": [
+    {
+      "id": "T_到前段1",
+      "type": "act_spot",
+      "label": "",
+      "x": 111.4,
+      "y": 117.0,
+      "interactionRange": 50,
+      "data": {
+        "verbs": [
+          "jump"
+        ],
+        "promptKey": "[c:clue]跳[/c]",
+        "facing": "left",
+        "align": {
+          "x": 111.4,
+          "y": 117.0
+        },
+        "landing": {
+          "x": 98.5,
+          "y": 38.7
+        },
+        "actions": [
+          {
+            "type": "switchScene",
+            "params": {
+              "targetScene": "崖墓前段1",
+              "targetSpawnPoint": "spawn_1"
+            }
+          }
+        ],
+        "text": ""
+      }
+    },
+    {
+      "id": "T_到入口",
+      "type": "transition",
+      "label": "",
+      "x": 1348.8,
+      "y": 473.4,
+      "interactionRange": 34.8,
+      "data": {
+        "targetScene": "崖墓入口",
+        "targetSpawnPoint": "spawn_2",
+        "text": ""
+      },
+      "autoTrigger": true,
+      "castShadow": false
+    }
+  ],
+  "npcs": [
+    {
+      "id": "new_npc",
+      "x": 1017.1,
+      "y": 520.2,
+      "interactionRange": 50,
+      "name": "New NPC",
+      "animFile": "/resources/runtime/animation/npc_blind_li_anim/anim.json",
+      "initialAnimState": "idle"
+    }
+  ],
+  "zones": [],
+  "spawnPoints": {
+    "spawn_0": {
+      "x": 124.8,
+      "y": 167.9
+    },
+    "spawn_1": {
+      "x": 1264.2,
+      "y": 489.1
+    }
+  },
+  "camera": {
+    "zoom": 1.08,
+    "pixelsPerUnit": 1.0
+  }
+}

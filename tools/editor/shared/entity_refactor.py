@@ -81,6 +81,10 @@ ENTITY_REF_PARAMS: dict[str, dict[str, str]] = {
     # 改实体名时天然不命中）。原先登记成 "actor" 会让热点改名跟不上这两个参数。
     "setBubbleLineSet": {"target": "bubble_speaker"},
     "clearBubbleLineSet": {"target": "bubble_speaker"},
+    # 轨迹播放：target 必填，与 moveEntityTo 同一命中面（NPC / 临时演员 / player）。
+    # trajectoryId 指全局轨迹资产（assets/data/trajectories/*.json），不是实体引用。
+    "playTrajectory": {"target": "actor"},
+    "stopTrajectory": {"target": "actor"},
     "moveEntityTo": {"target": "actor", "sceneId": "scene_hint"},
     "jumpEntityTo": {"target": "actor", "sceneId": "scene_hint"},
     "teleportEntityTo": {"target": "actor", "sceneId": "scene_hint"},
@@ -702,6 +706,15 @@ def _rewrite_quest_guidance_targets(
     if total and not count_only:
         model.mark_dirty("quest")
     return total
+
+
+# ---- 轨迹资产（assets/data/trajectories/*.json）**刻意不进重构引擎** ---------------
+#
+# 轨迹已迁出场景 JSON，成为与场景 / 实体无关的独立资产：运行时只认 `keyframes`
+# （相对播放锚点的偏移）与 `playTrajectory` 动作里的 `target`（那一条按 ENTITY_REF_PARAMS
+# 的 actor 档跟随）。资产里的 `authoring.entity` / `authoring.sceneId` 只是轨迹工作台
+# "重开时还原现场"的软引用，运行时完全不读、断了也只在 validator 出一条 warning——
+# 而且该目录的唯一写者是工作台进程，主编辑器只读，所以这里不扫、不改、不报。
 
 
 def _count_tag_refs(node: Any, entity_id: str) -> int:
@@ -1643,6 +1656,9 @@ def duplicate_entity(
     原实体，副本挂着绑定既无人驱动、cutsceneOnly 副本还会被常隐藏；剥离项记入
     summary["strippedCutsceneIds"] 交 UI 提示。溯源复合串（emitNarrativeSignal 的
     sourceId "场景:实体"）跟随新 id 改写（trace-only 零歧义）。撤销 = 按新 id 删副本。
+
+    轨迹资产（`assets/data/trajectories/*.json`）与实体无关，副本天然不带任何轨迹——
+    要让它动，作者在 playTrajectory 里把 target 指到副本即可。
     """
     sid = str(scene_id or "").strip()
     eid = str(entity_id or "").strip()
@@ -2224,3 +2240,5 @@ def _undo_move(model: Any, entry: dict[str, Any]) -> None:
     model.mark_dirty("scene", dst)
     _rewrite_qualified_scene_refs(model, kind, eid, dst, src)
     _rewrite_quest_guidance_targets(model, kind, dst, eid, src, eid)
+    # 轨迹无需反向改写：正向 move 就没动过它（只报不改，见 move_entity 的注释），
+    # 撤销这一侧对称地什么都不做——不然会凭空往回"修"一处从未被改过的引用。

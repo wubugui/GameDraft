@@ -20,6 +20,12 @@
       ]
     },
     {
+      "glob": "dev.sh",
+      "docs": [
+        "project-interpreter-entrypoint"
+      ]
+    },
+    {
       "glob": "public/assets/animations/**",
       "docs": [
         "asset-pipeline-norms"
@@ -44,7 +50,9 @@
     {
       "glob": "public/assets/data/audio_config.json",
       "docs": [
-        "sfx-external-sourcing"
+        "audio-workbench-config-write",
+        "sfx-external-sourcing",
+        "system-sfx-event-table"
       ]
     },
     {
@@ -153,6 +161,13 @@
       ]
     },
     {
+      "glob": "public/assets/data/trajectories/**",
+      "docs": [
+        "entity-trajectory",
+        "trajectory-workbench"
+      ]
+    },
+    {
       "glob": "public/assets/dialogues/**",
       "docs": [
         "content-norms"
@@ -234,7 +249,8 @@
     {
       "glob": "public/resources/runtime/scenes/**",
       "docs": [
-        "scene-bake-downstream"
+        "scene-bake-downstream",
+        "scene-relight-tool"
       ]
     },
     {
@@ -246,7 +262,20 @@
     {
       "glob": "scripts/package.mjs",
       "docs": [
-        "build-pipeline"
+        "build-pipeline",
+        "project-interpreter-entrypoint"
+      ]
+    },
+    {
+      "glob": "scripts/py.sh",
+      "docs": [
+        "project-interpreter-entrypoint"
+      ]
+    },
+    {
+      "glob": "scripts/pytool.cjs",
+      "docs": [
+        "project-interpreter-entrypoint"
       ]
     },
     {
@@ -294,7 +323,7 @@
     {
       "glob": "src/core/ActionRegistry.ts",
       "docs": [
-        "action-registration-quadruple",
+        "action-registration-registry-surfaces",
         "entity-move-facing",
         "l2-action-primitive-registration",
         "private-narrative-signal"
@@ -317,7 +346,8 @@
       "glob": "src/core/Game.ts",
       "docs": [
         "entity-visibility-channels",
-        "scene-onenter-reveal-timing"
+        "scene-onenter-reveal-timing",
+        "teardown-ordering"
       ]
     },
     {
@@ -329,6 +359,7 @@
     {
       "glob": "src/core/NarrativeStateManager.ts",
       "docs": [
+        "narrative-debugger-bridge",
         "narrative-signal-spine",
         "private-narrative-signal",
         "save-restore-contracts"
@@ -373,10 +404,16 @@
       ]
     },
     {
+      "glob": "src/core/actionOrigin.ts",
+      "docs": [
+        "dialogue-owner-origin"
+      ]
+    },
+    {
       "glob": "src/core/actionParamManifest.ts",
       "docs": [
         "action-param-schemas-vs-required",
-        "action-registration-quadruple"
+        "action-registration-registry-surfaces"
       ]
     },
     {
@@ -411,6 +448,18 @@
       ]
     },
     {
+      "glob": "src/dev/**",
+      "docs": [
+        "debug-ui-persistence"
+      ]
+    },
+    {
+      "glob": "src/entities/**",
+      "docs": [
+        "teardown-ordering"
+      ]
+    },
+    {
       "glob": "src/entities/Hotspot.ts",
       "docs": [
         "entity-visibility-channels"
@@ -420,13 +469,15 @@
       "glob": "src/entities/Npc.ts",
       "docs": [
         "entity-move-facing",
+        "entity-trajectory",
         "entity-visibility-channels"
       ]
     },
     {
       "glob": "src/entities/Player.ts",
       "docs": [
-        "entity-move-facing"
+        "entity-move-facing",
+        "entity-trajectory"
       ]
     },
     {
@@ -547,7 +598,8 @@
       "glob": "src/systems/AudioManager.ts",
       "docs": [
         "cutscene-audio-reclamation",
-        "start-gate-audio-unlock"
+        "start-gate-audio-unlock",
+        "system-sfx-event-table"
       ]
     },
     {
@@ -580,6 +632,7 @@
       "glob": "src/systems/GraphDialogueManager.ts",
       "docs": [
         "dialogue-end-payload",
+        "dialogue-owner-origin",
         "dialogue-portrait-runtime"
       ]
     },
@@ -612,13 +665,20 @@
       "docs": [
         "day-night-npc-schedule",
         "entity-visibility-channels",
-        "scene-onenter-reveal-timing"
+        "scene-onenter-reveal-timing",
+        "teardown-ordering"
       ]
     },
     {
       "glob": "src/systems/SmellSystem.ts",
       "docs": [
         "smell-system"
+      ]
+    },
+    {
+      "glob": "src/systems/TrajectorySystem.ts",
+      "docs": [
+        "entity-trajectory"
       ]
     },
     {
@@ -675,6 +735,12 @@
       ]
     },
     {
+      "glob": "src/ui/HUD.ts",
+      "docs": [
+        "ui-component-layer"
+      ]
+    },
+    {
       "glob": "src/ui/InventoryUI.ts",
       "docs": [
         "inventory-capacity-critical"
@@ -684,6 +750,12 @@
       "glob": "src/ui/PanelSkin.ts",
       "docs": [
         "ui-panel-skin"
+      ]
+    },
+    {
+      "glob": "src/ui/TouchMobileControls.ts",
+      "docs": [
+        "ui-component-layer"
       ]
     },
     {
@@ -736,6 +808,13 @@
       ]
     },
     {
+      "glob": "src/utils/keyframeSampler*",
+      "docs": [
+        "entity-trajectory",
+        "parallax-scene-runtime"
+      ]
+    },
+    {
       "glob": "src/utils/sceneAppearance.ts",
       "docs": [
         "scene-lighting"
@@ -745,6 +824,12 @@
       "glob": "src/utils/scriptedDialogueSpeaker.ts",
       "docs": [
         "dialogue-portrait-runtime"
+      ]
+    },
+    {
+      "glob": "src/utils/trajectoryProjection*",
+      "docs": [
+        "entity-trajectory"
       ]
     },
     {
@@ -802,6 +887,12 @@
       ]
     },
     {
+      "glob": "tools/audio_editor/**",
+      "docs": [
+        "audio-workbench-config-write"
+      ]
+    },
+    {
       "glob": "tools/build/**",
       "docs": [
         "build-pipeline"
@@ -813,6 +904,18 @@
         "character-lighting",
         "scene-bake-downstream",
         "scene-radiance-restoration-pipeline"
+      ]
+    },
+    {
+      "glob": "tools/desktop_shell.py",
+      "docs": [
+        "trajectory-workbench"
+      ]
+    },
+    {
+      "glob": "tools/dev_console/**",
+      "docs": [
+        "live-editor-forensics"
       ]
     },
     {
@@ -844,7 +947,8 @@
     {
       "glob": "tools/editor/**",
       "docs": [
-        "editor-tools-norms"
+        "editor-tools-norms",
+        "live-editor-forensics"
       ]
     },
     {
@@ -894,12 +998,14 @@
     {
       "glob": "tools/editor/editors/scene_canvas_model.py",
       "docs": [
+        "canvas-gesture-safety",
         "scene-canvas-item-parts-and-z"
       ]
     },
     {
       "glob": "tools/editor/editors/scene_editor.py",
       "docs": [
+        "canvas-gesture-safety",
         "scene-canvas-item-parts-and-z",
         "scene-view-filter-axes"
       ]
@@ -908,6 +1014,7 @@
       "glob": "tools/editor/editors/scene_lights.py",
       "docs": [
         "coordinate-spaces",
+        "debug-ui-persistence",
         "light-authoring-gizmos",
         "lighting-scale-reference"
       ]
@@ -916,6 +1023,12 @@
       "glob": "tools/editor/editors/scene_v2/*",
       "docs": [
         "scene-canvas-v2-document-view-command"
+      ]
+    },
+    {
+      "glob": "tools/editor/editors/scene_v2/**",
+      "docs": [
+        "canvas-gesture-safety"
       ]
     },
     {
@@ -954,16 +1067,22 @@
       "glob": "tools/editor/shared/action_editor.py",
       "docs": [
         "action-param-schemas-vs-required",
-        "action-registration-quadruple",
+        "action-registration-registry-surfaces",
         "l2-action-primitive-registration",
         "numeric-roundtrip-fidelity",
         "shared-widget-value-fidelity"
       ]
     },
     {
+      "glob": "tools/editor/shared/audio_picker_dialog.py",
+      "docs": [
+        "shared-widget-value-fidelity"
+      ]
+    },
+    {
       "glob": "tools/editor/shared/entity_refactor.py",
       "docs": [
-        "action-registration-quadruple",
+        "action-registration-registry-surfaces",
         "entity-refactor-engine"
       ]
     },
@@ -988,13 +1107,26 @@
     {
       "glob": "tools/editor/shared/narrative_catalog.py",
       "docs": [
+        "dialogue-owner-origin",
         "emitted-signal-catalog"
+      ]
+    },
+    {
+      "glob": "tools/editor/shared/narrative_template_batch.py",
+      "docs": [
+        "narrative-template-system"
       ]
     },
     {
       "glob": "tools/editor/shared/narrative_templates.py",
       "docs": [
         "narrative-template-system"
+      ]
+    },
+    {
+      "glob": "tools/editor/shared/npm_process.py",
+      "docs": [
+        "narrative-state-editor"
       ]
     },
     {
@@ -1005,6 +1137,12 @@
     },
     {
       "glob": "tools/editor/shared/qt_combo_wheel_guard.py",
+      "docs": [
+        "shared-widget-value-fidelity"
+      ]
+    },
+    {
+      "glob": "tools/editor/shared/qt_icon_buttons.py",
       "docs": [
         "shared-widget-value-fidelity"
       ]
@@ -1034,6 +1172,13 @@
       ]
     },
     {
+      "glob": "tools/narrative_debugger/**",
+      "docs": [
+        "narrative-debugger-bridge",
+        "narrative-state-editor"
+      ]
+    },
+    {
       "glob": "tools/narrative_editor/**",
       "docs": [
         "editor-tools-norms"
@@ -1054,9 +1199,9 @@
       ]
     },
     {
-      "glob": "tools/narrative_editor_web/src/bridge.ts",
+      "glob": "tools/narrative_xref/**",
       "docs": [
-        "debug-ui-persistence"
+        "emitted-signal-catalog"
       ]
     },
     {
@@ -1073,7 +1218,14 @@
         "coordinate-spaces",
         "lighting-scale-reference",
         "scene-lighting",
-        "scene-radiance-restoration-pipeline"
+        "scene-radiance-restoration-pipeline",
+        "scene-relight-tool"
+      ]
+    },
+    {
+      "glob": "tools/trajectory_workbench/**",
+      "docs": [
+        "trajectory-workbench"
       ]
     },
     {

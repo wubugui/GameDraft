@@ -68,7 +68,12 @@ NPC 缺省 true,引擎自动钉成 false)与摆位口径(热点把整幅矩形�
 - 实体改名会使老存档 sceneMemory 键失联(scenes 无 migrations 机制,拍板暂不管)——
   上线内容改名前留意。
 - 新增含实体/场景/出生点引用参数的 action,必须登记 `ENTITY_REF_PARAMS`
-  (见 [加 Action 四件套](../../runtime/mechanisms/action-registration-quadruple.md))。
+  (见 [加 Action 的登记面](../../runtime/mechanisms/action-registration-registry-surfaces.md))。
+- **`ENTITY_REF_PARAMS` 是 actor 类引用的唯一真相源,校验器读它、不得另抄**:手抄的第二份
+  清单一旦漂开,那些 action 的 target 悬垂时**一声不吭**——运行时那步静默跳过、校验全绿
+  (真实数据里已抓到过存量一例)。要拦的是"登记了却没人真校验",所以护栏必须是**语义级**
+  的(喂一个悬垂 id 进去必须报),不是"两份清单字面相等"。软引用(命中不了就当显示名)
+  是**刻意豁免**的一档,报不报由调用点定。
 - **speaker 引用通道漏扫过**:显式带 `npcId` 的说话人 kind 是 `sceneNpc` 而非裸 `npc`,
   引擎早期只认 `npc`、整条通道漏扫漏改且报 0 处引用;改动图节点 speaker 形状时同步
   `_SPEAKER_NPCID_KINDS` 与其 parity 探针。

@@ -3,7 +3,7 @@ id: atomic-write-windows
 title: 原子写在 Windows 上不原子(就位类调用必须退避重试)
 domain: meta
 type: mechanism
-summary: 「写 .tmp 再 os.replace 就位」在 Windows 上是概率性失败的;全仓 18 处就位点统一走 tools/atomic_io，只吃三个瞬时 errno、绝不重试 EEXIST
+summary: 「写 .tmp 再 os.replace 就位」在 Windows 上是概率性失败的;全仓就位点统一走 tools/atomic_io(实现只许有一处)，只吃三个瞬时 errno、绝不重试 EEXIST
 status: active
 authority:
   - tools/atomic_io.py
@@ -14,7 +14,7 @@ triggers:
   tasks: [改保存路径, 加存盘出口, 排查保存偶发失败]
 verified_by:
   - tools/editor/tests/test_atomic_write_retry.py
-last_governed: 2026-08-17
+last_governed: 2026-09-03
 ---
 
 ## 是什么(一句话)
@@ -29,8 +29,10 @@ POSIX 的 `rename(2)` 无条件原子替换,Windows 的 `MoveFileEx(REPLACE_EXIS
 
 ## 硬契约(违反即 bug)
 
-- **一切就位类调用走 `retry_transient`**:`os.replace` / `os.rename` / `shutil.move`。
+- **就位类调用一律走 `retry_transient`**:`os.replace` / `os.rename` / `shutil.move`。
   裸调用等于把一次「等 1 毫秒就好了」变成用户可见的保存失败。
+  ⚠ **这是要求,不是现状描述**:2026-09-03 实测仍有裸调用在外(打包工作台的归档、
+  两个一次性迁移脚本)。别读成"全仓已加固"就不查了。
 - **只吃 `EACCES`/`EPERM`/`EBUSY`**。放宽这个集合会踩掉两类语义:
   - `os.link` 的 `EEXIST` 是「并发抢同名」的**原子建档护栏**,重试等于把护栏磨掉;
   - `ENOSPC`/`EROFS` 重试一万次也没用,早抛早报错。
@@ -51,6 +53,11 @@ POSIX 的 `rename(2)` 无条件原子替换,Windows 的 `MoveFileEx(REPLACE_EXIS
   凡是"偶发保存失败/偶发测试红"且栈里有 rename,先怀疑这条。
 - **`shutil.move` 也算**:即便目标不可能预先存在(UUID 目录、`_unique_dest`),
   **源**被持有同样抛 `EACCES`。
+- **同一台机器上还有一条"写坏了但看不出来"的路**:Python 的文本写入在 Windows 上默认做换行
+  翻译,把 `\n` 写成 `\r\n`。本仓是 LF 且 git 属性会在入库时归一,所以 **`git diff` 里看不见**,
+  而工作区已经是 CRLF 了。后果是按**多行原文**匹配的契约断言莫名失配,报出来的是一大段
+  无关的 diff。用脚本改仓内文本文件时显式指定换行(或写字节),改完顺手确认没有 `\r`。
+  本库自己的索引生成器就踩过这条(2026-09-03 修)。
 
 ## 怎么验证
 

@@ -535,7 +535,7 @@ export class DevModeUI {
 
       if (entries.length === 0) {
         const empty = createStyledText({
-          text: 'No scenes in list (check map_config / game_config).',
+          text: 'No scenes in list (scene index unavailable and map_config / game_config empty).',
           style: { fontSize: 14, fill: UITheme.colors.hintMid, fontFamily: UITheme.fonts.ui },
         });
         empty.x = x + pad;

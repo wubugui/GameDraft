@@ -77,6 +77,12 @@ def test_custom_branch_actions_pinned() -> None:
         "playScriptedDialogue": ("scriptedNpcId",),
         "setZoneEnabled": ("zoneId", "sceneId"),
         "persistZoneEnabled": ("zoneId", "sceneId"),
+        # playTrajectory 走专用表单（_rebuild_play_trajectory_params）；它虽然也在
+        # _PARAM_SCHEMAS 里登记着（授权面 + manifest parity 的一端），但**表单是自定义的**，
+        # 谁把 schema 那条删了、上面那条按 schema 的 parity 就一起失效了 —— 故在此钉死。
+        # trajectoryId 指全局轨迹资产（不是实体引用），刻意不在这张表里。
+        "playTrajectory": ("target",),
+        "stopTrajectory": ("target",),
     }.items():
         for param in params:
             assert param in ENTITY_REF_PARAMS.get(act, {}), f"{act}.{param} 未登记"

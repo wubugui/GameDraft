@@ -24,6 +24,7 @@ import type { StringsProvider } from '../core/StringsProvider';
 import type { FlagStore } from '../core/FlagStore';
 import type { AssetManager } from '../core/AssetManager';
 import type { DialogueLayoutStyle, SpeakerSide } from '../utils/dialogueSpeakerSide';
+import type { KeyframeEasing } from '../utils/keyframeSampler';
 
 import cutsceneActionAllowlist from './cutscene_action_allowlist.json';
 
@@ -1404,6 +1405,18 @@ export interface CharacterRegistryFile {
   characters: CharacterDef[];
 }
 
+/**
+ * 实体锚点：`(x, y)` 落在精灵**世界包围盒**里的哪一点，在包围盒内归一化。
+ * `x` 0=左边 1=右边、`y` 0=顶边 1=底边。缺省 `{x: 0.5, y: 1}` = 底中 = 脚底。
+ * 各分量夹到 [0,1]；缺失/非数值的分量回落缺省（只写一半是合法的）。
+ */
+export interface EntityAnchor {
+  /** 0=左边 1=右边；缺省 0.5 */
+  x?: number;
+  /** 0=顶边 1=底边；缺省 1（脚底） */
+  y?: number;
+}
+
 export interface NpcDef {
   id: string;
   /**
@@ -1471,6 +1484,15 @@ export interface NpcDef {
   /** 动画包清单路径，如 `/resources/runtime/animation/<包目录名>/anim.json`；图集由清单内 spritesheet 相对该目录解析 */
   animFile?: string;
   /**
+   * **无 `animFile` 时**用这张静态贴图合成一个单帧动画包，让这个 NPC 照常走完整实体管线：
+   * 渲染 / 阴影 / 透视 / 排序 / 光照与普通 NPC **逐字相同**（不是另开一条只会画图的旁路）。
+   * 给"一口箱子、一块石头"这类没有动画包、但要能被轨迹推着走、要投影要受光的实体用。
+   *
+   * 两者都写时**以 `animFile` 为准**（本字段忽略）——动画包是更完整的那一份。
+   * 语义与字段含义同热区展示图 {@link HotspotDisplayImage}（底边中点对齐 (x,y)）。
+   */
+  displayImage?: HotspotDisplayImage;
+  /**
    * 对话头像立绘集目录名（`resources/runtime/images/dialogue_portraits/<slug>/`）。
    * 图对话行 portrait 省略 slug（「跟随说话 NPC」）时按此解析；未配置则该行不显头像。
    */
@@ -1523,12 +1545,33 @@ export interface NpcDef {
    */
   spriteSort?: EntitySpriteSort;
   /**
-   * 实例级等比缩放（quad 级真变换，绕脚底锚点）：渲染/碰撞多边形/交互半径/
+   * 实例级等比缩放（quad 级真变换，绕**锚点**）：渲染/碰撞多边形/交互半径/
    * 阴影尺寸/气泡/深度接地线随动；缺省 1。可经 setEntityField 运行时改并入档。
    */
   scale?: number;
-  /** 实例级旋转（度，绕脚底锚点）；quad 级真变换同上；缺省 0。 */
+  /** 实例级旋转（度，绕**锚点**，见 {@link NpcDef.anchor}）；quad 级真变换同上；缺省 0。 */
   rotation?: number;
+  /**
+   * 实体锚点：`(x, y)` 指的是精灵身上的哪一点（{@link EntityAnchor}）。
+   * **缺省 `{x:0.5, y:1}` = 底中 = 脚底**，即写死锚点年代的那个值 ——
+   * 不写这个键的实体逐位保持原行为（全库 28 个场景的既有实体一个像素都不动）。
+   *
+   * 锚点同时是**实例 `scale` / `rotation` 的支点**（它就是容器原点）。圆形物件
+   * （铜钱、石球、灯笼）要绕圆心滚就必须写 `{x:0.5, y:0.5}`：留着脚底锚会让它绕
+   * 接地点转，半圈处整颗沉到地面以下**一个直径**，而且不报任何错。
+   *
+   * 锚点一动，**接地点就不再等于位置**，成为派生量：
+   * `contactX = x + (0.5 - anchor.x) × 有效世界宽`、
+   * `contactY = y + (1 - anchor.y) × 有效世界高`
+   * （"有效" = 已含实例 `scale` 与场景透视系数，与 `getWorldSize()` 同口径；
+   * 有实例旋转时这个偏移随之绕锚点旋转 —— 支点就是锚点）。
+   * 阴影落点、深度排序接地锚、透视采样点、深度遮挡脚点一律吃**接地点**，
+   * 不是位置；缺省锚点时两式恒等于 `(x, y)`，所以这几处也逐位不变。
+   *
+   * ⚠ 与「跳跃弧线的视觉抬升」是两回事：那个只挪画面、不动接地点；锚点改的是
+   * "精灵画在哪、绕什么转、位置指的是哪一点"。
+   */
+  anchor?: EntityAnchor;
   /**
    * 深度遮挡半透明混合系数 [0,1]：被场景深度遮挡的精灵像素 alpha 乘此系数
    * （0=硬裁切完全隐藏，1=完全不裁）。缺省时用场景默认（SceneDepthSystem 当前 0.28）。
@@ -2482,6 +2525,249 @@ export const CUTSCENE_ACTION_WHITELIST: ReadonlySet<string> = new Set(cutsceneAc
  * `hideImg` 不写 `id` 时同样指向此槽位（可手动清匿名镜头）。
  */
 export const CUTSCENE_ANON_SHOT_ID = '__anonShot';
+
+// ============================================================
+// 实体轨迹动画（烘焙式 · 独立资产）
+// ============================================================
+
+/**
+ * 实体轨迹动画：让 NPC / 玩家沿一条**预先烘成密关键帧**的轨迹走。
+ *
+ * **一条轨迹 = 一个独立资产文件** `public/assets/data/trajectories/<id>.json`
+ * （{@link TrajectoryAsset}），与任何场景、任何实体**无依赖**：帧全部是相对**播放锚点**的偏移，
+ * `playTrajectory` 动作在任何场景、任何位置把它挂到任何实体上播。
+ * 作者面是独立的轨迹工作台（`tools/trajectory_workbench`），它记录烘焙时用的场景/实体
+ * （{@link TrajectoryAuthoring}）只为**重开时还原现场**，运行时一概不看。
+ *
+ * 与 parallax 同一套哲学（见 [[parallax-scene-runtime]]）：**运行时只认烘好的帧**，
+ * 一切"怎么算出来的"（手绘路径 + 时间曲线、抛体物理、滚动角速度）都是 `source` 工作态，
+ * 运行时**完全忽略**。烘出的帧 `easing` 恒不写（= linear）：密帧线性回放，再叠段缓动就是缓动两遍。
+ *
+ * ## 两种空间（{@link TrajectorySpace}）
+ *
+ * - `screen`：在 2D **画面平面**（场景坐标 wu，原点画布左上、Y 向下）作者与烘焙；
+ *   运行时真相是 `keyframes`。
+ * - `world`：先用场景深度图与标定把伪世界 q 还原成 **3D 世界**（M-world，wu，+Y 向上、XZ 为地面），
+ *   在 3D 里做物理 / 拉线，烘成 `worldKeyframes`（3D 相对偏移）。伪世界相机是**正交**的，
+ *   所以一个相对 3D 位移投到画面上的 2D 偏移**与播放位置无关**，跨场景只差每场景一个纯旋转
+ *   `depthConfig.M.R`：运行时开播时按目标场景的 R 投影（`utils/trajectoryProjection`），
+ *   没有 `depthConfig` 的场景回落到 `keyframes`（烘焙场景投好的 2D 帧）。
+ *   运行时依旧**零物理、零求解**，只多一次线性投影。
+ */
+export type TrajectorySpace = 'screen' | 'world';
+
+export type TrajectoryEasing = KeyframeEasing;
+
+/**
+ * 画面空间的一帧。除 `atMs`/`x`/`y` 外都可缺省，缺省语义见各字段。
+ * `x`/`y`/`sortY` 都是**相对播放锚点的偏移**（wu），不是绝对坐标；播放时加上锚点。
+ */
+export interface TrajectoryKeyframe {
+  /** 距轨迹开始的毫秒，升序，首帧应为 0 */
+  atMs: number;
+  /** 相对锚点的画面空间偏移 wu（Y 向下） */
+  x: number;
+  y: number;
+  /** **叠加**在实例 transform 上的度数（`NpcDef.rotation` 之上再转这么多），缺省 0 */
+  rotation?: number;
+  /** **乘**在实例 scale 上的倍率（不是绝对缩放），缺省 1 */
+  scale?: number;
+  /** 非均匀缩放；给了就在该轴**覆盖** `scale`。两轴都不给 = 等比走 `scale` */
+  scaleX?: number;
+  scaleY?: number;
+  /** 0..1，缺省 1 */
+  alpha?: number;
+  /**
+   * 深度排序接地锚（相对锚点的偏移，写 `entitySortFootY`），缺省 = `y`。
+   * 飞在空中的物件靠它保持"落点"的前后关系；透视缩放与影子落点在轨迹期间也取它。
+   */
+  sortY?: number;
+  /**
+   * 本帧 → 下一帧的段缓动；缺省 linear。**烘焙产物恒不写本字段**
+   * （密帧 + 二次缓动 = 缓动两遍，与 parallax 同一个坑）。
+   */
+  easing?: TrajectoryEasing;
+}
+
+/**
+ * 世界空间的一帧：相对锚点的 **M-world 偏移**（wu；x 右、y 上、z 远离相机），
+ * `h` = 该时刻物件离地高度（wu，由烘焙时的真实地面算出）。
+ * 运行时按目标场景的 `depthConfig.M.R` 投影成 {@link TrajectoryKeyframe}：
+ * `x/y` 来自 `(x, y, z)`，`sortY` 来自落点 `(x, y − h, z)`；其余通道原样透传。
+ */
+export interface TrajectoryWorldKeyframe {
+  atMs: number;
+  x: number;
+  y: number;
+  z: number;
+  /** 离地高度 wu（≥ 0；落点 = 位置减去 (0, h, 0)） */
+  h: number;
+  rotation?: number;
+  scale?: number;
+  scaleX?: number;
+  scaleY?: number;
+  alpha?: number;
+}
+
+/** 轨迹驱动谁。`kind:'player'` 时 `id` 无意义；`kind:'npc'` 时 `id` = 场景内 NPC id。 */
+export interface TrajectoryTargetRef {
+  kind: 'npc' | 'player';
+  id?: string;
+}
+
+/**
+ * 工作台的**重开现场**信息：烘焙时用的场景 / 时段背景 / 预览实体 / 锚点。
+ * **运行时完全忽略**；场景或实体后来没了也只影响工作台的预览，不影响播放。
+ */
+export interface TrajectoryAuthoring {
+  /** 烘焙时装载的场景 id */
+  sceneId: string;
+  /** 时段背景图名（`timeVariants` 那一套）；缺省 = 场景顶层背景 */
+  background?: string;
+  /** 预览用实体（NPC id / 玩家）；缺省 = 只画锚点 */
+  entity?: TrajectoryTargetRef;
+  /** 烘焙时的播放锚点（画面空间绝对坐标 wu）；`keyframes` = 绝对姿态 − 它 */
+  anchor: { x: number; y: number };
+  /** 世界空间资产：锚点的 M-world 绝对坐标（wu）；`worldKeyframes` = 绝对位置 − 它 */
+  anchorWorld?: { x: number; y: number; z: number };
+  /** 锚点离地高度（世界空间 wu；圆心锚的铜钱 = 半径）。画面空间用 `contactOffsetY` */
+  anchorHeight?: number;
+  /** 锚点 → 接地线的画面空间偏移（wu，Y 向下为正）；烘焙用它把 `sortY` 落在真实接地线 */
+  contactOffsetY?: number;
+}
+
+/** 轨迹资产（`public/assets/data/trajectories/<id>.json` 的根）。 */
+export interface TrajectoryAsset {
+  /** 全局唯一（= 文件名） */
+  id: string;
+  label?: string;
+  space: TrajectorySpace;
+  /**
+   * 画面空间帧（相对锚点）。`screen` 资产的**运行时唯一真相**；
+   * `world` 资产里它是**烘焙场景投好的回落帧**（目标场景没有 `depthConfig` 时用）。
+   */
+  keyframes: TrajectoryKeyframe[];
+  /** `world` 资产的运行时真相：3D 相对帧，开播时按目标场景投影 */
+  worldKeyframes?: TrajectoryWorldKeyframe[];
+  /** 编辑器工作态（怎么烘出上面那串帧），**运行时完全忽略** */
+  source?: TrajectorySource;
+  /** 工作台重开现场用，**运行时完全忽略** */
+  authoring?: TrajectoryAuthoring;
+}
+
+/** 编辑器工作态：分段拼出一条轨迹，外加烘焙参数。**运行时完全忽略。** */
+export interface TrajectorySource {
+  segments: TrajectorySegmentSource[];
+  bake?: {
+    /** 采样频率（Hz）；不写走编辑器缺省 */
+    sampleHz?: number;
+    /** 抽稀容差：各通道各自一档，超过才留帧 */
+    tolerance?: { pos?: number; rot?: number; scale?: number; alpha?: number };
+  };
+}
+
+/**
+ * 作者面的一个点。画面空间用 `x/y`（场景坐标 wu）；
+ * 世界空间用 `x/z`（M-world 地面坐标 wu）+ `h`（离地高度 wu），`y` 由地面高度 + `h` 推出。
+ */
+export interface TrajectoryAuthorPoint {
+  x: number;
+  y?: number;
+  z?: number;
+  h?: number;
+}
+
+/** 段的公共部分：起点从哪来。`explicit` 时读 `start`，其余两档 `start` 忽略。 */
+export interface TrajectorySegmentBase {
+  id: string;
+  /** `anchor` = 播放锚点（烘焙时实体所在处）；`previous` = 上一段末点；`explicit` = 读 `start`。缺省由编辑器定 */
+  startFrom?: 'anchor' | 'previous' | 'explicit';
+  start?: TrajectoryAuthorPoint;
+}
+
+/** 手绘段里可独立打点的非位置通道（位置由 `path` + `timing` 决定，不在此列）。 */
+export type TrajectoryTrackChannel = 'rotation' | 'scale' | 'scaleX' | 'scaleY' | 'alpha' | 'sortY';
+
+export interface TrajectoryTrackKey {
+  atMs: number;
+  value: number;
+  easing?: TrajectoryEasing;
+}
+
+/** 手绘段：一条路径 + 一条时间曲线（进度 0..1）+ 若干独立通道轨。**运行时完全忽略。** */
+export interface ManualSegmentSource extends TrajectorySegmentBase {
+  kind: 'manual';
+  path: {
+    points: TrajectoryAuthorPoint[];
+    /** 是否按平滑曲线过点；缺省折线 */
+    smooth?: boolean;
+  };
+  timing: {
+    durationMs: number;
+    /** 时间 → 路径进度（0..1）的控制点；靠它做加速/减速/停顿 */
+    keys: { atMs: number; progress: number; easing?: TrajectoryEasing }[];
+  };
+  tracks?: Partial<Record<TrajectoryTrackChannel, TrajectoryTrackKey[]>>;
+  /** 纯滚动：按路程 / 半径推自转角度（direction 缺省 1）。给了就顶掉 tracks.rotation */
+  roll?: { radius: number; direction?: 1 | -1 };
+}
+
+/**
+ * 抛体段：初速 + 重力 + 碰撞（弹跳/摩擦），模拟到停。**运行时完全忽略**（烘完只剩帧）。
+ *
+ * 画面空间：2D，`v0.x/y`（Y 向下为正，往上抛是**负** vy），地面是一条水平线 `groundY`。
+ * 世界空间：3D，`v0.x/y/z`（+Y 向上，往上抛是**正** vy），地面与墙来自场景深度还原出的几何，
+ * 没有 `groundY`；`radius` 是碰撞半径（缺省取 `spin.radius`，再缺省 0）。
+ */
+export interface PhysicsSegmentSource extends TrajectorySegmentBase {
+  kind: 'physics';
+  /** 初速度（wu/s）。画面空间 Y 向下为正；世界空间 Y 向上为正 */
+  v0: { x: number; y: number; z?: number };
+  /** 重力加速度大小（wu/s²，恒为正；方向由空间决定：画面空间 +y、世界空间 −y） */
+  gravity: number;
+  /** 画面空间：地面高度（世界 y，wu）。世界空间忽略（地面来自场景几何） */
+  groundY?: number;
+  /** 法向恢复系数 0..1 */
+  restitution: number;
+  /** 每次碰撞的切向速度损失系数；缺省 0 = 不损失 */
+  tangentialDamping?: number;
+  /** 贴地滚动摩擦 */
+  rollingFriction: number;
+  /** 自转：半径（纯滚动约束用）与初角速度（度/s） */
+  spin?: { radius: number; omega0?: number };
+  /** 世界空间：碰撞半径 wu（缺省 = `spin.radius`，再缺省 0） */
+  radius?: number;
+  /** 停机判据：速度低于 `minSpeed` 或模拟超过 `maxMs` 即停 */
+  stop: { minSpeed: number; maxMs: number };
+  /** 物理积分步频（Hz）；不写走编辑器缺省 */
+  sampleHz?: number;
+}
+
+export type TrajectorySegmentSource = ManualSegmentSource | PhysicsSegmentSource;
+
+/** 轨迹在某一时刻解算出的姿态（全部已填缺省，且已加上锚点 = 绝对坐标）。 */
+export interface TrajectoryPose {
+  x: number;
+  y: number;
+  rotationDeg: number;
+  scaleX: number;
+  scaleY: number;
+  alpha: number;
+  sortY: number;
+}
+
+/** 能被轨迹驱动的目标（NPC / 玩家各一个适配）。 */
+export interface ITrajectoryTarget {
+  /** 抢占登记用的唯一键（同一目标同时只能有一条轨迹在跑） */
+  readonly trajectoryKey: string;
+  /** 目标此刻的位置（锚点）：`playTrajectory` 不显式给锚点时轨迹就从这里起步 */
+  readTrajectoryAnchor(): { x: number; y: number };
+  /** 进入轨迹态；`onPreempt` 在本轨迹被别人顶掉时回调（见 [[entity-move-facing]] 的抢占语义） */
+  beginTrajectory(onPreempt: () => void): void;
+  applyTrajectoryPose(pose: TrajectoryPose): void;
+  /** 退出轨迹态；`reset` = 是否把被轨迹改过的量恢复到进入前 */
+  endTrajectory(reset: boolean): void;
+}
 
 // ============================================================
 // 存档数据

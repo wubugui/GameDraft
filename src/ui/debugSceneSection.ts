@@ -1,25 +1,21 @@
 /**
  * F2「场景」页：跳到任意一个场景。
  *
- * 清单来源优先开发服 `/__gamedraft-api/scene-list`（枚举 public/assets/scenes 全部 JSON），
+ * 清单来源优先全量场景索引 `/assets/scene_index.json`（从 public/assets/scenes 派生：
+ * 开发服由 vite 中间件现算，打包由 package.mjs 生成，见 `src/dev/sceneIndex.ts`），
  * 拿不到时退回调用方给的兜底清单（地图节点 + game_config 入口/回退 + dev_room）——
  * 兜底只覆盖玩家可走的节点，梦境/演出/测试场景不在其中，会在页内明说。
  */
 
-const SCENE_LIST_API = '/__gamedraft-api/scene-list';
+import { fetchSceneIndex, type SceneIndexEntry } from '../dev/sceneIndex';
 
-export interface DebugSceneEntry {
-  id: string;
-  name: string;
-  /** 场景 JSON 的 spawnPoints 键；无则空数组（走场景默认 spawnPoint） */
-  spawnPoints: string[];
-}
+export type DebugSceneEntry = SceneIndexEntry;
 
 export interface DebugSceneSectionDeps {
   getCurrentSceneId: () => string | undefined;
   /** 真正换场景（走 SceneManager.switchScene 那条正路，不是 reload） */
   jump: (sceneId: string, spawnPoint?: string) => void;
-  /** 开发服接口不可用时的兜底清单 */
+  /** 场景索引不可用时的兜底清单 */
   listFallback: () => Promise<DebugSceneEntry[]>;
   /** 订阅换场景（用于跳完后刷新「当前」行与 ● 标记）；返回退订函数 */
   onSceneChanged: (callback: () => void) => () => void;
@@ -31,24 +27,6 @@ export interface DebugSceneSectionHandle {
   /** 重新取清单并重绘（打开面板时调一次，改了场景 JSON 不必刷页面） */
   refresh(): void;
   destroy(): void;
-}
-
-function normalizeEntries(data: unknown): DebugSceneEntry[] {
-  const scenes = (data as { scenes?: unknown } | null)?.scenes;
-  if (!Array.isArray(scenes)) return [];
-  const out: DebugSceneEntry[] = [];
-  for (const raw of scenes) {
-    if (!raw || typeof raw !== 'object') continue;
-    const rec = raw as { id?: unknown; name?: unknown; spawnPoints?: unknown };
-    const id = String(rec.id ?? '').trim();
-    if (!id) continue;
-    const name = String(rec.name ?? '').trim() || id;
-    const spawnPoints = Array.isArray(rec.spawnPoints)
-      ? rec.spawnPoints.map((s) => String(s)).filter(Boolean)
-      : [];
-    out.push({ id, name, spawnPoints });
-  }
-  return out;
 }
 
 /** 子串匹配 id 与显示名，忽略大小写 */
@@ -174,23 +152,14 @@ export function createDebugSceneSection(deps: DebugSceneSectionDeps): DebugScene
     const entry = entries.find((e) => e.id === id);
     curName.textContent = !id ? '（无场景）' : entry && entry.name !== id ? `${entry.name}（${id}）` : id;
     hint.textContent = fromFallback
-      ? `共 ${entries.length} 个（开发服清单接口不可用，退回地图节点清单——梦境/演出/测试场景可能不在其中）`
-      : `共 ${entries.length} 个场景（public/assets/scenes 全量）；双击列表项直接跳。`;
+      ? `共 ${entries.length} 个（场景索引 assets/scene_index.json 不可用，退回地图节点清单——梦境/演出/测试场景可能不在其中）`
+      : `共 ${entries.length} 个场景（public/assets/scenes 全量索引）；双击列表项直接跳。`;
   };
 
   const loadEntries = (): void => {
     void (async () => {
-      let next: DebugSceneEntry[] = [];
       let usedFallback = false;
-      if (import.meta.env.DEV) {
-        try {
-          const r = await fetch(SCENE_LIST_API);
-          if (!r.ok) throw new Error(`HTTP ${r.status}`);
-          next = normalizeEntries(await r.json());
-        } catch {
-          next = [];
-        }
-      }
+      let next: DebugSceneEntry[] = await fetchSceneIndex();
       if (next.length === 0) {
         usedFallback = true;
         try {

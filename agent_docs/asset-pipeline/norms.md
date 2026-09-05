@@ -14,8 +14,10 @@ last_governed: 2026-08-05
 
 # 素材管线规范
 
-适用:美术/美术衍生与音频素材的生产与再处理(抠图、动画图集、场景烘焙、视差分层、
-环境动效、立绘、配音、音效)。
+适用:美术/美术衍生与音频素材的生产与再处理(抠图、动画图集、场景烘焙、场景背景重打光、
+视差分层、环境动效、立绘、配音、音效)。
+场景背景的时段/天气变体图属素材产物,走
+[场景背景重打光工作台](mechanisms/scene-relight-tool.md)。
 
 ## 不变量
 
@@ -46,9 +48,12 @@ last_governed: 2026-08-05
 
 ## 验收门
 
-- `python -m tools.editor.shared.asset_reference_audit . --strict` 零问题;
+- `sh scripts/py.sh -m tools.editor.shared.asset_reference_audit . --strict` 零问题;
 - `./dev.sh validate-data` 零 error;
 - 所用管线自带的 QA 门产物经 agent 裁判逐项通过。
+
+⚠ **`./dev.sh` 这个入口在 Windows 上不可用**(零启动,不是慢):等价入口与判定法见
+[挑项目 Python 的入口](../meta/mechanisms/project-interpreter-entrypoint.md)。
 
 ## 红线
 

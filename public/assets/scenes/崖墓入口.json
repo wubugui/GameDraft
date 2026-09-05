@@ -1,0 +1,96 @@
+{
+  "id": "崖墓入口",
+  "name": "崖墓入口",
+  "worldWidth": 759.46,
+  "worldHeight": 427.2,
+  "backgrounds": [
+    {
+      "image": "background.png",
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "spawnPoint": {
+    "x": 352.8,
+    "y": 249.8
+  },
+  "hotspots": [
+    {
+      "id": "T_到前段",
+      "type": "transition",
+      "label": "",
+      "x": 370.8,
+      "y": 414.5,
+      "interactionRange": 15.2,
+      "data": {
+        "targetScene": "崖墓前段",
+        "targetSpawnPoint": "spawn_1",
+        "text": ""
+      },
+      "rotation": -11.5,
+      "autoTrigger": true,
+      "castShadow": false
+    },
+    {
+      "id": "T_到跑马梁",
+      "type": "transition",
+      "label": "",
+      "x": 426.0,
+      "y": 26.6,
+      "interactionRange": 50,
+      "data": {
+        "targetScene": "跑马梁",
+        "targetSpawnPoint": "spawn_0",
+        "text": ""
+      },
+      "autoTrigger": true,
+      "castShadow": false
+    },
+    {
+      "id": "T_到牛头凼",
+      "x": 738.2,
+      "y": 295.2,
+      "type": "transition",
+      "label": "",
+      "interactionRange": 40.8,
+      "data": {
+        "targetScene": "牛头凼",
+        "targetSpawnPoint": "spawn_0",
+        "text": ""
+      },
+      "autoTrigger": true,
+      "castShadow": false
+    }
+  ],
+  "npcs": [
+    {
+      "id": "new_npc",
+      "x": 109.0,
+      "y": 180.6,
+      "interactionRange": 50,
+      "name": "New NPC",
+      "animFile": "/resources/runtime/animation/npc_yizhuang_keeper_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left"
+    }
+  ],
+  "zones": [],
+  "spawnPoints": {
+    "spawn_0": {
+      "x": 347.8,
+      "y": 118.2
+    },
+    "spawn_1": {
+      "x": 647.2,
+      "y": 325.5
+    },
+    "spawn_2": {
+      "x": 391.8,
+      "y": 390.2
+    }
+  },
+  "camera": {
+    "zoom": 2.05,
+    "pixelsPerUnit": 1.0
+  }
+}

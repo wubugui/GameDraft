@@ -1,0 +1,106 @@
+{
+  "id": "崖墓前段1",
+  "name": "崖墓前段后",
+  "worldWidth": 1395.91,
+  "worldHeight": 785.2,
+  "backgrounds": [
+    {
+      "image": "background.png",
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "spawnPoint": {
+    "x": 164.9,
+    "y": 564.4
+  },
+  "hotspots": [
+    {
+      "id": "T_到崖墓后段",
+      "x": 54.4,
+      "y": 646.0,
+      "type": "act_spot",
+      "label": "[c:rule]跳[/c]",
+      "interactionRange": 50,
+      "data": {
+        "verbs": [
+          "jump"
+        ],
+        "promptKey": "[c:clue]跳[/c]",
+        "facing": "left",
+        "align": {
+          "x": 49.0,
+          "y": 643.5
+        },
+        "landing": {
+          "x": 0.0,
+          "y": 753.7
+        },
+        "actions": [
+          {
+            "type": "switchScene",
+            "params": {
+              "targetScene": "崖墓后段",
+              "targetSpawnPoint": "spawn_1"
+            }
+          }
+        ],
+        "text": ""
+      },
+      "castShadow": false
+    },
+    {
+      "id": "T_到前段",
+      "type": "transition",
+      "label": "",
+      "x": 1310.2,
+      "y": 60.6,
+      "interactionRange": 50,
+      "data": {
+        "targetScene": "崖墓前段",
+        "targetSpawnPoint": "spawn_0",
+        "text": ""
+      },
+      "autoTrigger": true,
+      "castShadow": false
+    }
+  ],
+  "npcs": [
+    {
+      "id": "new_npc",
+      "x": 1240.2,
+      "y": 108.9,
+      "interactionRange": 50,
+      "name": "New NPC",
+      "animFile": "/resources/runtime/animation/npc_li_tiangou_anim/anim.json",
+      "initialAnimState": "idle"
+    }
+  ],
+  "zones": [],
+  "perspectiveScale": {
+    "near": {
+      "x": 44.5,
+      "y": 657.9,
+      "scale": 1.0
+    },
+    "far": {
+      "x": 1264.0,
+      "y": 86.8,
+      "scale": 0.48
+    }
+  },
+  "spawnPoints": {
+    "spawn_0": {
+      "x": 113.9,
+      "y": 587.8
+    },
+    "spawn_1": {
+      "x": 1246.2,
+      "y": 105.0
+    }
+  },
+  "camera": {
+    "zoom": 1.01,
+    "pixelsPerUnit": 1.0
+  }
+}

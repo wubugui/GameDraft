@@ -387,8 +387,10 @@ def main() -> int:
             if current != content:
                 issues.append(Issue("error", label, "索引与内容不同步(去掉 --check 重生成)"))
     else:
-        index_path.write_text(new_index, encoding="utf-8")
-        triggers_path.write_text(new_triggers, encoding="utf-8")
+        # newline="\n" 不能省:Windows 上 write_text 默认把 \n 翻成 \r\n,而本仓是 LF
+        # (.gitattributes eol=lf),于是每次重生成索引 git 都报一次换行归一。
+        index_path.write_text(new_index, encoding="utf-8", newline="\n")
+        triggers_path.write_text(new_triggers, encoding="utf-8", newline="\n")
 
     errors = [i for i in issues if i.severity == "error"]
     warns = [i for i in issues if i.severity == "warn"]

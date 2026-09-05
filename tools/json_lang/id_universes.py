@@ -14,11 +14,71 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
 # 过场 steps/tracks 是 kind:present/action 混合结构,裸 action 脚手架放进去是错的
 _SNIPPET_HOST_BLOCKLIST = {"steps", "tracks"}
+
+#: 「内容文件」的疆域——refs / search / LSP / build 全部从这里取,不各写一份。
+#: 与 build.DATA_GLOBS、.vscode/settings.json 的 fileMatch 同口径。
+CONTENT_GLOBS = (
+    "public/assets/data/**/*.json",
+    "public/assets/scenes/*.json",
+    "public/assets/dialogues/graphs/*.json",
+)
+
+
+def _glob_regex(pattern: str) -> re.Pattern:
+    """把 Path.glob 风格的模式翻成正则:`**/` 匹配零层或多层目录,`*` 不跨 `/`。
+    fnmatch 不行——它的 `*` 会跨目录,而 `**/` 又被它当成"至少一层"。"""
+    out = "^"
+    i = 0
+    while i < len(pattern):
+        if pattern.startswith("**/", i):
+            out += "(?:.*/)?"
+            i += 3
+        elif pattern[i] == "*":
+            out += "[^/]*"
+            i += 1
+        else:
+            out += re.escape(pattern[i])
+            i += 1
+    return re.compile(out + "$")
+
+
+def iter_content_files(root: Path, patterns=CONTENT_GLOBS, extra_paths=()) -> list[Path]:
+    """磁盘 glob ∪ overlay-only 路径,按模式分组、组内排序(与旧的逐模式 sorted(glob) 同序)。
+
+    extra_paths 是**磁盘上还没有**的文件——编辑器里刚新建、还没 Save All 的场景/图,
+    只活在 LSP overlay 里。read_text 只决定"怎么读",不决定"读哪些";不把它们并进
+    枚举,新场景就要等落盘才进宇宙、才可搜可引——编辑器明明已经把它推给了语言服务。
+    不在 root 之下、或不命中任何模式的 extra 一律忽略。
+    """
+    extras: list[Path] = []
+    for p in extra_paths:
+        try:
+            extras.append(Path(p).resolve().relative_to(root.resolve()))
+        except (ValueError, OSError):
+            continue
+    out: list[Path] = []
+    seen: set[str] = set()
+    for pattern in patterns:
+        rx = _glob_regex(pattern)
+        # 键按 normcase 归一:同一个文件可能以 `E:\x` 与 `e:\x` 两种写法出现
+        #(overlay 的路径来自编辑器 / VS Code 的 URI,盘符大小写不一),不归一就扫两遍。
+        files = {os.path.normcase(str(f)): f for f in root.glob(pattern)}
+        for rel in extras:
+            if rx.match(rel.as_posix()):
+                files.setdefault(os.path.normcase(str(root / rel)), root / rel)
+        for f in sorted(files.values()):
+            key = os.path.normcase(str(f))
+            if key not in seen:
+                seen.add(key)
+                out.append(f)
+    return out
 
 
 @dataclass
@@ -85,7 +145,7 @@ def _deep_entries(node, out: dict[str, str]) -> None:
             _deep_entries(child, out)
 
 
-def _cutscene_spawned_actor_ids(root: Path, read=None) -> set[str]:
+def _cutscene_spawned_actor_ids(root: Path, read=None, extra_paths=()) -> set[str]:
     """cutsceneSpawnActor 是演员 id 的**定义处**——扫全部内容文件收集其 params.id,
     否则过场里 faceEntity/moveEntityTo 引用临时演员会被枚举误报。"""
     ids: set[str] = set()
@@ -102,17 +162,12 @@ def _cutscene_spawned_actor_ids(root: Path, read=None) -> set[str]:
             for child in node:
                 walk(child)
 
-    for pattern in (
-        "public/assets/data/**/*.json",
-        "public/assets/scenes/*.json",
-        "public/assets/dialogues/graphs/*.json",
-    ):
-        for f in root.glob(pattern):
-            walk(_load(f, read))
+    for f in iter_content_files(root, extra_paths=extra_paths):
+        walk(_load(f, read))
     return ids
 
 
-def _action_host_keys(root: Path, read=None) -> list[str]:
+def _action_host_keys(root: Path, read=None, extra_paths=()) -> list[str]:
     """实证扫描:值为「含 {type,params} 元素的列表」的键名(actions/onEnter/onComplete…)。
     数据长出新宿主键时自动跟上,无需手维护清单。"""
     hosts: set[str] = set()
@@ -131,18 +186,17 @@ def _action_host_keys(root: Path, read=None) -> list[str]:
             for x in node:
                 walk(x)
 
-    for pattern in (
-        "public/assets/data/**/*.json",
-        "public/assets/scenes/*.json",
-        "public/assets/dialogues/graphs/*.json",
-    ):
-        for f in root.glob(pattern):
-            walk(_load(f, read))
+    for f in iter_content_files(root, extra_paths=extra_paths):
+        walk(_load(f, read))
     return sorted(hosts - _SNIPPET_HOST_BLOCKLIST)
 
 
-def collect_id_universes(root: Path, read_text=None) -> UniverseData:
-    """read_text(path)->str 可注入(LSP server 传 overlay 感知读取口);缺省读盘。"""
+def collect_id_universes(root: Path, read_text=None, extra_paths=()) -> UniverseData:
+    """read_text(path)->str 可注入(LSP server 传 overlay 感知读取口);缺省读盘。
+
+    extra_paths:只活在 overlay 里、磁盘上还没有的文件(编辑器里刚新建、还没 Save All
+    的场景/图)。见 :func:`iter_content_files`。
+    """
     read = read_text
     data = root / "public/assets/data"
     ud = UniverseData()
@@ -162,7 +216,7 @@ def collect_id_universes(root: Path, read_text=None) -> UniverseData:
     scene_entities: dict[str, list[str]] = {}
     scene_npcs: dict[str, list[str]] = {}
 
-    for f in sorted((root / "public/assets/scenes").glob("*.json")):
+    for f in iter_content_files(root, ("public/assets/scenes/*.json",), extra_paths):
         doc = _load(f, read)
         if not isinstance(doc, dict):
             continue
@@ -188,7 +242,7 @@ def collect_id_universes(root: Path, read_text=None) -> UniverseData:
         scene_entities[sid] = sorted(set(npcs) | set(hots))
         scene_npcs[sid] = sorted(npcs)
 
-    spawned = _cutscene_spawned_actor_ids(root, read)
+    spawned = _cutscene_spawned_actor_ids(root, read, extra_paths)
     u["scenes"] = scene_ids
     labels["scenes"] = scene_labels
     u["hotspots"] = sorted(hotspot_ids)
@@ -229,6 +283,21 @@ def collect_id_universes(root: Path, read_text=None) -> UniverseData:
     scoped["scene_actors"] = {
         sid: sorted(set(npcs) | spawned | {"player"}) for sid, npcs in scene_npcs.items()
     }
+    # ---- 轨迹资产(assets/data/trajectories/<id>.json,一文件一条,id 全局唯一 = 文件名) ----
+    # playTrajectory.trajectoryId 直接按这张全局表补全;唯一写者是轨迹工作台,这里只读。
+    trajectory_ids: set[str] = set()
+    trajectory_labels: dict[str, str] = {}
+    for f in iter_content_files(root, ("public/assets/data/trajectories/*.json",), extra_paths):
+        doc = _load(f, read)
+        if not isinstance(doc, dict):
+            continue
+        tid = doc.get("id")
+        tid = tid if isinstance(tid, str) and tid.strip() else f.stem
+        trajectory_ids.add(tid)
+        if isinstance(doc.get("label"), str) and doc["label"].strip():
+            trajectory_labels[tid] = _trunc(doc["label"])
+    u["trajectories"] = sorted(trajectory_ids)
+    labels["trajectories"] = trajectory_labels
 
     # ---- 数据表(id + 中文名) ----
     # 线索注册表(K7):collectClue.clueId 与 [clue:] 标记的引用宇宙
@@ -324,7 +393,7 @@ def collect_id_universes(root: Path, read_text=None) -> UniverseData:
     # ---- 对话图 / 叙事 ----
     graph_ids: list[str] = []
     graph_labels: dict[str, str] = {}
-    for f in sorted((root / "public/assets/dialogues/graphs").glob("*.json")):
+    for f in iter_content_files(root, ("public/assets/dialogues/graphs/*.json",), extra_paths):
         doc = _load(f, read)
         gid = doc.get("id") if isinstance(doc, dict) else None
         gid = gid if isinstance(gid, str) and gid.strip() else f.stem
@@ -448,7 +517,7 @@ def collect_id_universes(root: Path, read_text=None) -> UniverseData:
         "bookEntry": sorted(book_entry_labels),
     }
 
-    ud.action_host_keys = _action_host_keys(root, read)
+    ud.action_host_keys = _action_host_keys(root, read, extra_paths)
     # 清掉空 label 表,schema 侧按"有才注"处理
     ud.labels = {k: {i: t for i, t in v.items() if t} for k, v in labels.items()}
     ud.labels = {k: v for k, v in ud.labels.items() if v}

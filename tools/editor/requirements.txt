@@ -9,6 +9,9 @@ Pillow>=10.0.0
 PyOpenGL>=3.1.7
 pyopengltk>=0.0.4
 grandalf>=0.8  # 对话图自动布局 Sugiyama 分层算法
+# 启动游戏前的端口冲突预检(tools/dev/game.py describe_port_occupants):占用进程的
+# 命令行/用户/父进程链靠它取；缺了会降级为"只有 PID+进程名"，弹窗仍可杀可取消。
+psutil>=5.9
 # tools/animation_pipeline 的 bake_normal_atlas / form_align / matte_illustration 是**硬
 # import**（不是可选降级），而编辑器测试 test_anim_normal_bake_config.py 直接 import 它。
 # 此前任何 requirements 都没声明 scipy：装了才绿、没装就是一条 collect ERROR，

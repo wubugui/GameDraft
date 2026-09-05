@@ -1,0 +1,76 @@
+{
+  "id": "跑马梁",
+  "name": "跑马梁",
+  "worldWidth": 2048.0,
+  "worldHeight": 1152.0,
+  "backgrounds": [
+    {
+      "image": "background.png",
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "spawnPoint": {
+    "x": 185.0,
+    "y": 1067.2
+  },
+  "hotspots": [
+    {
+      "id": "T_到崖墓",
+      "x": 382.2,
+      "y": 762.6,
+      "type": "transition",
+      "label": "和尚坡",
+      "interactionRange": 50,
+      "data": {
+        "targetScene": "崖墓入口",
+        "targetSpawnPoint": "spawn_0",
+        "text": ""
+      },
+      "scale": 0.92,
+      "rotation": 359.3,
+      "autoTrigger": true,
+      "castShadow": false
+    }
+  ],
+  "npcs": [
+    {
+      "id": "new_npc",
+      "x": 295.8,
+      "y": 1050.2,
+      "interactionRange": 50,
+      "name": "New NPC",
+      "animFile": "/resources/runtime/animation/官差枪_pipeline_anim/anim.json",
+      "initialAnimState": "idle"
+    }
+  ],
+  "zones": [],
+  "perspectiveScale": {
+    "near": {
+      "x": 167.4,
+      "y": 1130.6,
+      "scale": 1.69
+    },
+    "far": {
+      "x": 1813.6,
+      "y": 118.7,
+      "scale": 0.25
+    },
+    "midStops": [
+      {
+        "pos": 0.9,
+        "scale": 0.4
+      }
+    ]
+  },
+  "spawnPoints": {
+    "spawn_0": {
+      "x": 446.3,
+      "y": 771.6
+    }
+  },
+  "camera": {
+    "zoom": 0.68,
+    "pixelsPerUnit": 1.0
+  }
+}

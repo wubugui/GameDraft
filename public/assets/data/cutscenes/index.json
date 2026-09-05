@@ -5493,5 +5493,66 @@
       }
     ],
     "targetSpawnPoint": "spawn_0"
+  },
+  {
+    "id": "验证_铜钱脱落滚走",
+    "targetScene": "雾津街头",
+    "targetX": 975.1,
+    "targetY": 1491.9,
+    "restoreState": true,
+    "steps": [
+      {
+        "kind": "present",
+        "type": "showMovieBar",
+        "heightPercent": 0.08
+      },
+      {
+        "kind": "present",
+        "type": "cameraZoom",
+        "scale": 1.9,
+        "duration": 500
+      },
+      {
+        "kind": "action",
+        "type": "cameraFollowActor",
+        "params": {
+          "target": "npc_验证铜钱",
+          "smooth": true
+        }
+      },
+      {
+        "kind": "present",
+        "type": "waitTime",
+        "duration": 300
+      },
+      {
+        "kind": "action",
+        "type": "playTrajectory",
+        "params": {
+          "trajectoryId": "coin_drop_demo",
+          "target": "npc_验证铜钱",
+          "wait": true
+        }
+      },
+      {
+        "kind": "present",
+        "type": "waitTime",
+        "duration": 900
+      },
+      {
+        "kind": "action",
+        "type": "cameraStopFollow",
+        "params": {}
+      },
+      {
+        "kind": "present",
+        "type": "cameraZoom",
+        "duration": 500
+      },
+      {
+        "kind": "present",
+        "type": "hideMovieBar"
+      }
+    ]
   }
 ]

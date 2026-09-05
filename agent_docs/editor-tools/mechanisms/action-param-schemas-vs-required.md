@@ -31,7 +31,7 @@ action 参数清单在三处镜像,语义各不同:`_PARAM_SCHEMAS`(编辑器"�
 ## 硬契约
 
 1. **必填集只在 TS 权威声明**:加可选参数就在 `actionParamManifest.ts` 里写清 required/optional,Python 兜底从它解析、解析失败 fail-open,**不需要也不要再去 `_validate_action_def` 手写 required 覆盖**(2026-07-20 起;历史写法把 `_PARAM_SCHEMAS` 整表当必填,比 TS 严 25 处、拦死合法最小形态,那段修法已作废)。红线仍是 [兜底 ⊆ TS 权威](../norms.md)。
-2. 三方 parity(运行时 register ↔ 编辑器 ACTION_TYPES/_PARAM_SCHEMAS ↔ TS manifest)由 `test_action_manifest_parity.py` 锁定——加 action 走 [四件套](../../runtime/mechanisms/action-registration-quadruple.md),别只改一处。
+2. 三方 parity(运行时 register ↔ 编辑器 ACTION_TYPES/_PARAM_SCHEMAS ↔ TS manifest)由 `test_action_manifest_parity.py` 锁定——加 action 走 [登记面清单](../../runtime/mechanisms/action-registration-registry-surfaces.md),别只改一处。
 
 ## 已知坑
 

@@ -23,13 +23,14 @@ import subprocess
 from pathlib import Path
 
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
+    QCheckBox, QComboBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
     QMessageBox, QPushButton, QVBoxLayout, QWidget,
 )
 
 from tools.atomic_io import retry_transient
 from tools.build_workbench.autostart import launch_argv
 from tools.editor.project_model import ProjectModel
+from tools.editor.shared.id_ref_selector import IdRefSelector
 
 #: 相对仓库根
 BUILD_CONFIG_REL = "tools/build/build_config.json"
@@ -74,10 +75,16 @@ class BuildConfigEditor(QWidget):
             self._dev_mode.addItem(label, data)
         self._dev_mode.currentIndexChanged.connect(self._sync_dev_widgets)
 
-        self._dev_scene = QComboBox()
-        self._dev_scene.setEditable(True)
-        self._dev_warp = QLineEdit()
-        self._dev_warp.setPlaceholderText("dev_narrative_warps.json 里的锚点名")
+        # 两个都是引用字段（场景 id / 跳转锚点 id），按选择器铁律走 IdRefSelector：
+        # 候选从模型来，悬垂旧值保值展示。候选是构造期快照，本会话新建的场景 / 锚点靠
+        # reload_refs_from_model 在切页时重拉——此前这里是裸 QComboBox + 裸 QLineEdit，
+        # 只在构造时填一次，新建的场景要重启编辑器才选得到，锚点干脆只能手打。
+        self._dev_scene = IdRefSelector(allow_empty=True, click_opens_popup=True)
+        self._dev_scene.setToolTip("dev 档启动直达的场景（候选 = 工程里全部场景）")
+        self._dev_warp = IdRefSelector(allow_empty=True, click_opens_popup=True)
+        self._dev_warp.setToolTip(
+            "dev 档启动直达的叙事锚点（候选 = public/assets/data/dev_narrative_warps.json 的 warps）")
+        self._reload_ref_candidates()
 
         dev = QFormLayout()
         dev.addRow("起始位置", self._dev_mode)
@@ -148,8 +155,7 @@ class BuildConfigEditor(QWidget):
             except (OSError, json.JSONDecodeError):
                 pass
 
-        self._dev_scene.clear()
-        self._dev_scene.addItems(sorted(self._model.scenes.keys()) if self._model.scenes else [])
+        self._reload_ref_candidates()
 
         targets = self._raw.get("targets") if isinstance(self._raw.get("targets"), dict) else {}
         rel_q = _parse_query(_boot_query(targets, "release"))
@@ -165,10 +171,22 @@ class BuildConfigEditor(QWidget):
             mode = "normal"
         idx = self._dev_mode.findData(mode)
         self._dev_mode.setCurrentIndex(idx if idx >= 0 else 0)
-        self._dev_scene.setCurrentText(dev_q.get("devScene") or dev_q.get("dev_scene") or "")
-        self._dev_warp.setText(dev_q.get("narrativeWarp") or dev_q.get("narrative_warp") or "")
+        self._dev_scene.set_current(dev_q.get("devScene") or dev_q.get("dev_scene") or "")
+        self._dev_warp.set_current(dev_q.get("narrativeWarp") or dev_q.get("narrative_warp") or "")
 
         self._sync_dev_widgets()
+
+    def _reload_ref_candidates(self) -> None:
+        """重拉两个选择器的候选，保住当前值（含悬垂值）。"""
+        self._dev_scene.set_items([(s, s) for s in sorted(self._model.all_scene_ids())])
+        self._dev_warp.set_items(self._model.all_dev_narrative_warp_ids())
+
+    def reload_refs_from_model(self) -> None:
+        """主窗口切页后调用（mainwindow-editor-hooks 契约 3）：本会话新建的场景 / 锚点
+        才会出现在下拉里。**只重拉候选，不重读构建配置文件**——refresh() 会把用户还没
+        保存的表单一起冲掉（bubble_lines_editor 那条契约注释的同一个坑）。"""
+        self._reload_ref_candidates()
+        self._refresh_summary()
 
     # ------------------------------------------------------------ 写
 
@@ -177,11 +195,11 @@ class BuildConfigEditor(QWidget):
 
         mode = self._dev_mode.currentData()
         if mode == "scene":
-            scene = self._dev_scene.currentText().strip()
+            scene = self._dev_scene.current_id().strip()
             # devScene 单独给不够：真正让游戏走 dev 分支的是 mode=dev，两个都要带
             dev_q = f"mode=dev&devScene={scene}" if scene else "mode=dev"
         elif mode == "warp":
-            warp = self._dev_warp.text().strip()
+            warp = self._dev_warp.current_id().strip()
             dev_q = f"mode=dev&narrativeWarp={warp}" if warp else "mode=dev"
         else:
             dev_q = ""

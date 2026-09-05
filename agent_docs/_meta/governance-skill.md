@@ -8,7 +8,7 @@ triggers: [治理, 一键治理, 更新知识库, 建库, 蒸馏记忆, govern, 
 # agent_docs 一键治理(治理流程权威文件)
 
 > 本文件是治理流程的**唯一权威源**,客户端无关——任何 agent(Claude、Codex、Cursor…)
-> 执行治理都照本文件做。发现方式 = 治理台 CLI(`python3 agent_docs/_meta/cli.py`);
+> 执行治理都照本文件做。发现方式 = 治理台 CLI(`sh scripts/py.sh agent_docs/_meta/cli.py`);
 > 各客户端只装一个 CLI 薄壳(`agent-docs-cli`),任何壳不得复制本正文。
 >
 > **触发时机**:用户说"治理 agent 文档、一键治理、更新知识库、建库、蒸馏记忆、
@@ -37,7 +37,7 @@ triggers: [治理, 一键治理, 更新知识库, 建库, 蒸馏记忆, govern, 
 ### 0. 机械体检
 
 ```bash
-python3 agent_docs/_meta/audit.py
+sh scripts/py.sh agent_docs/_meta/audit.py
 ```
 
 error 先修(锚点失配、格式违规、索引重生成)。这层不需要判断力,先清场。
@@ -83,7 +83,7 @@ git log、(可用时)会话转录。分诊三态:
 ### 6. 收尾
 
 ```bash
-python3 agent_docs/_meta/audit.py          # 必须零 error
+sh scripts/py.sh agent_docs/_meta/audit.py          # 必须零 error
 ```
 
 追加 `_meta/governance-log.md`:改了什么、人拍板了什么、蒸馏掉哪些 inbox、下轮建议。

@@ -8,6 +8,7 @@ import {
   sceneJsonUrl,
   sceneRuntimeAssetUrl,
   sceneRuntimeDirUrl,
+  trajectoryJsonUrl,
 } from './projectPaths';
 
 describe('projectPaths text/media split', () => {
@@ -16,6 +17,9 @@ describe('projectPaths text/media split', () => {
     expect(TEXT_URLS.scenesDir).toBe('/assets/scenes');
     expect(TEXT_URLS.dialoguesDir).toBe('/assets/dialogues');
     expect(TEXT_URLS.filtersDir).toBe('/assets/data/filters');
+    expect(TEXT_URLS.trajectoriesDir).toBe('/assets/data/trajectories');
+    expect(trajectoryJsonUrl('coin_drop_demo')).toBe('/assets/data/trajectories/coin_drop_demo.json');
+    expect(() => trajectoryJsonUrl('  ')).toThrow();
     expect(TEXT_URLS.gameConfig).toBe('/assets/data/game_config.json');
     expect(TEXT_URLS.overlayImages).toBe('/assets/data/overlay_images.json');
   });

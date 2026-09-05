@@ -180,6 +180,32 @@ class TestCutsceneRoundtripFidelity(unittest.TestCase):
                 f"{ptype}.{pname} 应默认 {expect}（运行时默认值），实得 {out.get(pname)!r}",
             )
 
+    def test_absent_present_param_not_injected_on_roundtrip(self) -> None:
+        """原本缺该键的 present 步,往返后**不许**凭空多出种子值。
+
+        真实踩到的那次:`cameraZoom` 不写 `scale` 是**合法且推荐**的写法
+        (缺省/≤0 = 恢复场景基线缩放,机制卡要求内容侧别写基线字面量),
+        但新步种子会把 `scale: 0.0` 补进去 —— 语义没变、逐字节往返当场红。
+        全仓 8 个 cameraZoom 里只有一个这么写,所以这条缺陷潜伏到 2026-09-03 才被踩到。
+        """
+        for src, key in (
+            ({"kind": "present", "type": "cameraZoom", "duration": 500}, "scale"),
+            ({"kind": "present", "type": "showMovieBar"}, "heightPercent"),
+            ({"kind": "present", "type": "waitTime"}, "duration"),
+        ):
+            sw = StepWidget(dict(src))
+            out = sw.to_dict()
+            self.assertNotIn(
+                key, out,
+                f"{src['type']} 原本没有 {key},往返后不该多出来(实得 {out.get(key)!r})",
+            )
+
+    def test_explicit_default_valued_present_param_is_kept(self) -> None:
+        """反向:用户**显式**写成默认值的键必须原样留着,不许被当占位键剔掉。"""
+        sw = StepWidget({"kind": "present", "type": "cameraZoom", "scale": 0, "duration": 500})
+        out = sw.to_dict()
+        self.assertIn("scale", out, "显式写出的 scale 不该被剔除")
+
     def test_real_cutscenes_type_level_roundtrip(self) -> None:
         """真实工程过场数据全量往返保真（缺 assets 时跳过）。"""
         repo = repo_root_from_tests()

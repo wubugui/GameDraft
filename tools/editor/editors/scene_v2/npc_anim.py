@@ -26,8 +26,16 @@ from ...shared.anim_atlas_preview import (
     spritesheet_public_path,
 )
 from ...shared.anim_frame_cursor import AnimFrameCursor
+from ...shared.static_display_sprite import (
+    static_display_image_of,
+    static_display_pixmap,
+    static_display_world_pair,
+)
 
 __all__ = ["NpcAnimBank", "initial_playback_tuple"]
+
+#: 静态贴图实体合成出来的状态表：与运行时 `buildStaticDisplayAnimationSet` 同形。
+_STATIC_STATES = {"idle": {"frames": [0], "frameRate": 1, "loop": True}}
 
 
 def initial_playback_tuple(npc: dict) -> tuple[float, bool, int | None, int | None]:
@@ -95,6 +103,8 @@ class NpcAnimBank:
         self._model = model
         self._resolve_path = resolve_path
         self._bundles: dict[str, _AnimBundle | None] = {}
+        # 静态贴图实体（没有动画包的道具）的合成包；键含世界尺寸，同一张图两种尺寸不串味
+        self._static_bundles: dict[tuple[str, str, str], _AnimBundle | None] = {}
         self._cursors: dict[str, tuple[str, AnimFrameCursor]] = {}
 
     def clear(self) -> None:
@@ -139,15 +149,51 @@ class NpcAnimBank:
         self._bundles[anim_id] = bundle
         return bundle
 
+    def _static_bundle(self, npc: dict) -> _AnimBundle | None:
+        """没有动画包的道具：`displayImage` 合成一份 **1×1 单帧**包。
+
+        与运行时 `SceneManager.buildStaticDisplayAnimationSet` 同一条 —— 合成之后
+        下游（世界尺寸、帧裁切、内容层排序）一个分支都不用加，"整张图"就是"那一格"。
+        """
+        di = static_display_image_of(npc, self._anim_id(npc))
+        if di is None:
+            return None
+        key = (str(di.get("image", "") or "").strip(),
+               repr(di.get("worldWidth")), repr(di.get("worldHeight")))
+        if key in self._static_bundles:
+            return self._static_bundles[key]
+        self._static_bundles[key] = None
+        pm = static_display_pixmap(self._model, di)
+        if pm is None:
+            return None
+        pair = static_display_world_pair(self._model, di, pm)
+        if not pair:
+            return None
+        bundle = _AnimBundle(pm, 1, 1, None, None, None, _STATIC_STATES,
+                             float(pair[0]), float(pair[1]))
+        self._static_bundles[key] = bundle
+        return bundle
+
+    def _bundle_for(self, npc: dict) -> _AnimBundle | None:
+        """这个 NPC 的精灵素材：动画包优先，没有动画包时回落静态贴图合成包。"""
+        anim_id = self._anim_id(npc)
+        if anim_id:
+            return self._bundle(anim_id)
+        return self._static_bundle(npc)
+
     def _anim_id(self, npc: dict) -> str:
         return str(self._model.character_field(npc, "animFile") or "").strip()
 
     # ---- 查询 --------------------------------------------------------------
 
+    def sprite_texture_url(self, npc: dict) -> str:
+        """精灵贴图的 URL；动画 NPC 走帧通路故返回空串（贴图不由 texture_provider 取）。"""
+        di = static_display_image_of(npc, self._anim_id(npc))
+        return str(di.get("image", "") or "").strip() if di else ""
+
     def world_size(self, npc: dict) -> tuple[float, float] | None:
-        """精灵的世界尺寸；动画包解不出来返回 None（视图据此不建精灵图元）。"""
-        anim_id = self._anim_id(npc)
-        bundle = self._bundle(anim_id) if anim_id else None
+        """精灵的世界尺寸；动画包/静态贴图都解不出来返回 None（视图据此不建精灵图元）。"""
+        bundle = self._bundle_for(npc)
         if bundle is None:
             return None
         return (bundle.world_w, bundle.world_h)
@@ -170,9 +216,12 @@ class NpcAnimBank:
         return cursor
 
     def frame_pixmap(self, npc: dict) -> QPixmap | None:
-        """当前帧。**裁出图集里的一格**，不是整张图集。"""
-        anim_id = self._anim_id(npc)
-        bundle = self._bundle(anim_id) if anim_id else None
+        """当前帧。**裁出图集里的一格**，不是整张图集。
+
+        没有动画包时这一格就是整张 `displayImage`（1×1 合成包），pixmap 走
+        `_static_bundles` 缓存 —— 别每拍回磁盘读图。
+        """
+        bundle = self._bundle_for(npc)
         if bundle is None:
             return None
         npc_id = str(npc.get("id", "") or "")

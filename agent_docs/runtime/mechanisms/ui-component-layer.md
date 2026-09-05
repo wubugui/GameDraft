@@ -6,21 +6,26 @@ type: mechanism
 summary: 面板不再各自手搭遮罩·标题栏·滚动·按钮,统一走 src/ui/components;重绘用 attach 不用 open、量高前必须摘 mask、行内点击必须消费
 status: active
 authority:
-  - src/ui/components/UIWindow.ts#UIWindow
-  - src/ui/components/UIButton.ts
-  - src/ui/components/UIScrollView.ts
-  - src/ui/components/UIDecor.ts
+  - src/ui/components/**
   - src/ui/uiPointerCoords.ts#markPointerConsumed
+  - src/ui/TouchMobileControls.ts#useCoarsePointerOrTouchDevice
+  - src/ui/HUD.ts
 triggers:
-  paths: ["src/ui/components/*.ts", "src/ui/*UI.ts", "src/ui/uiPointerCoords.ts"]
-  topics: [UI 组件, UIWindow, UIScrollView, UIButton, 面板重绘, 滚动, 命中]
-last_governed: 2026-08-05
+  paths: ["src/ui/components/*.ts", "src/ui/*UI.ts", "src/ui/uiPointerCoords.ts", "src/ui/TouchMobileControls.ts", "src/ui/HUD.ts"]
+  topics: [UI 组件, UIWindow, UIScrollView, UIButton, 面板重绘, 滚动, 命中, 触屏, 手机 UI, HUD 入口条]
+last_governed: 2026-09-03
 ---
 
 ## 是什么(一句话)
 
 运行时面板的公共件层:窗体(遮罩+底框+标题栏+✕+开关动效)、三级按钮、滚动区、装饰件;
 [ui-panel-skin](ui-panel-skin.md) 的 `PanelSkin` 降为**这一层的底层依赖**,面板不再直接调它画底边。
+
+这一层**按性质持续扩员**,原则是「全站只有一件」:每类**全站唯一观感的东西**都收进来
+——确认框、toast、可交互行原语(点击激活 / 拖滚让路 / 命中消费内建)、滚动区的拖滚与惯性、
+关场淡出、顶部中央那几条互斥车道的分配、以及富文本的 run 级版式引擎(块 + 行内 + 可点 span)。
+判据不是"要不要复用代码",是**"这东西全站看起来必须一样吗"**:是 → 进这一层,
+面板不许自己再搭一个。具体件名以 `src/ui/components/` 目录为准,别照抄任何清单。
 
 ## 权威源(读代码从哪进)
 
@@ -37,6 +42,17 @@ last_governed: 2026-08-05
   下层(打字机被瞬间跳满之类)。
 - **容器当按钮必须自带 `hitArea`**(见 [pixi-v8-traps](pixi-v8-traps.md));
   底部那排关闭提示都是这个形状。
+- **触屏 UI 与桌面 HUD 是互斥的两套入口,判据必须收得住**。这个切换**全靠一个函数**决定,
+  全项目零 CSS 媒体查询,肉眼从窗口尺寸完全推不出来;判错的表现是玩家读作
+  "谁把我的 HUD 改了"(桌面条一个钮都不建,顶上来一套虚拟摇杆)。三条约束:
+  - **粗指针快车道原样保留**——真手机与开发者工具的设备模拟都从这条走。
+    收窄判据时动别处,别动它(踩过一次:收窄把真手机整块 HUD 干没了)。
+  - **不许只问"能不能摸"**。带触屏的桌面一体机 / 二合一 / 装了驱动的数位板上,
+    "有触摸事件""触点数 > 0"恒真。第二段必须拿出**"这是手机"的正面证据**。
+  - **别用窗口尺寸兜底设备屏幕尺寸**。内嵌 WebView / 预览面板在启动瞬间设备屏幕会报 0,
+    退回窗口尺寸就又判成手机;**窗口能被随手拖窄,设备不会——取不到时宁可判桌面。**
+  - **判据来源必须两侧同源**(逐帧现算的那侧与构造时取值的那侧)。一侧冻结、一侧现算,
+    判据一变(模拟开关、外接触屏拔插)就会错位成"两套入口都在 / 都不在"。
 - **`[img:…]` 富文本走的是只读缓存**:不在预载清单里的图恒走占位分支。缺图要现装 +
   回调让调用方整段重排,重排要带"面板已关 / 已翻页"的守卫。
 - **「返回主菜单」= 整页重启到标题态**,URL 带一次性引导参数;标题分支**不装载世界**

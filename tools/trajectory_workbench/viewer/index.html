@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>轨迹工作台</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #1b1d22; --panel: #23262d; --panel2: #2a2e36; --line: #3a3f4a; --fg: #e6e8ec; --dim: #9aa1ad;
+    --accent: #6cb4ff; --warn: #ffb454; --err: #ff6b6b; --ok: #7ed492; --purple: #c792ea;
+    --font: 13px/1.45 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--fg); font: var(--font); overflow: hidden; user-select: none; }
+  input, textarea { user-select: text; }
+  button, select, input { font: inherit; color: var(--fg); background: var(--panel2); border: 1px solid var(--line); border-radius: 4px; padding: 3px 7px; }
+  button { cursor: pointer; white-space: nowrap; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: #2c4f7a; border-color: #3f6ea8; }
+  button.danger { border-color: #7a3c3c; }
+  button.on { background: #2c4f7a; border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  input[type=number] { width: 74px; }
+  input[type=text] { min-width: 120px; }
+  label.chk { display: inline-flex; gap: 4px; align-items: center; white-space: nowrap; }
+  #app { display: grid; grid-template-rows: auto 1fr auto; grid-template-columns: 46px 1fr 400px; height: 100%; }
+  #top { grid-column: 1 / span 3; display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; padding: 6px 10px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  #top .grp { display: inline-flex; gap: 6px; align-items: center; }
+  #top .grp b { color: var(--dim); font-weight: 500; }
+  #tools { display: flex; flex-direction: column; gap: 4px; padding: 6px 4px; background: var(--panel); border-right: 1px solid var(--line); align-items: center; }
+  #tools button { width: 36px; height: 34px; padding: 0; font-size: 15px; }
+  #tools .sep { height: 1px; width: 28px; background: var(--line); margin: 4px 0; }
+  #center { position: relative; overflow: hidden; background: #111; }
+  #center canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; outline: none; }
+  #overlay3d { pointer-events: none; }
+  #viewtabs { position: absolute; top: 8px; left: 8px; z-index: 5; display: flex; gap: 4px; }
+  #coords { position: absolute; left: 8px; bottom: 8px; z-index: 5; color: var(--dim); background: rgba(0,0,0,.55); padding: 3px 8px; border-radius: 4px; font: 12px Consolas, "Cascadia Mono", monospace; white-space: pre; pointer-events: none; }
+  #legend { position: absolute; right: 8px; top: 8px; z-index: 5; color: var(--dim); background: rgba(0,0,0,.5); padding: 4px 8px; border-radius: 4px; font-size: 12px; pointer-events: none; }
+  #side { border-left: 1px solid var(--line); background: var(--panel); overflow-y: auto; padding: 8px 10px; display: flex; flex-direction: column; gap: 8px; }
+  #side h3 { margin: 2px 0 4px; font-size: 12px; color: var(--dim); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; display: flex; justify-content: space-between; align-items: center; }
+  .box { background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
+  .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 3px 0; }
+  .row > span.lbl { color: var(--dim); min-width: 70px; }
+  .row .dim { color: var(--dim); font-size: 12px; }
+  #seglist { display: flex; flex-direction: column; gap: 3px; }
+  #seglist .seg { display: flex; gap: 6px; align-items: center; padding: 4px 6px; border-radius: 4px; border: 1px solid transparent; cursor: pointer; }
+  #seglist .seg.on { border-color: var(--accent); background: rgba(108,180,255,.12); }
+  #seglist .seg .k { color: var(--dim); font-size: 11px; min-width: 34px; }
+  #seglist .seg .t { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #bottom { grid-column: 1 / span 3; display: flex; gap: 8px; align-items: center; padding: 6px 10px; background: var(--panel); border-top: 1px solid var(--line); }
+  #scrub { flex: 1; }
+  #status { color: var(--dim); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 38%; }
+  #status.err { color: var(--err); }
+  #status.ok { color: var(--ok); }
+  #warnings { color: var(--warn); font-size: 12px; white-space: pre-wrap; }
+  table.keys { border-collapse: collapse; width: 100%; font-size: 12px; }
+  table.keys td, table.keys th { padding: 1px 3px; border-bottom: 1px solid var(--line); }
+  table.keys input[type=number] { width: 66px; padding: 1px 4px; }
+  table.keys select { padding: 1px 2px; }
+  #timing { width: 100%; height: 120px; background: #171a1f; border: 1px solid var(--line); border-radius: 4px; display: block; }
+  details > summary { cursor: pointer; color: var(--dim); }
+  .mono { font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; }
+  .dirty::after { content: " ●"; color: var(--warn); }
+  .pill { display: inline-block; padding: 0 6px; border-radius: 10px; background: #33404f; color: #cfe3ff; font-size: 11px; }
+  .scope button { padding: 2px 8px; }
+  #modalWrap { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: none; align-items: center; justify-content: center; z-index: 70; }
+  #modalWrap.show { display: flex; }
+  #modal { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; min-width: 380px; max-width: 560px; box-shadow: 0 10px 40px rgba(0,0,0,.5); }
+  #modal h2 { margin: 0 0 10px; font-size: 15px; }
+  #modal .row > span.lbl { min-width: 90px; }
+  #modal .btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+  #modal .msg { color: var(--dim); white-space: pre-wrap; margin-bottom: 6px; }
+  #busy { position: fixed; inset: 0; z-index: 55; background: rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center; cursor: progress; }
+  #busy[hidden] { display: none; }
+  #busyBox { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 18px; display: flex; gap: 10px; align-items: center; font-size: 13px; box-shadow: 0 10px 40px rgba(0,0,0,.5); max-width: 70%; }
+  #busyRetry[hidden] { display: none; }
+  .spin { width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #ctxmenu { position: fixed; z-index: 60; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px; display: none; min-width: 140px; box-shadow: 0 6px 24px rgba(0,0,0,.5); }
+  #ctxmenu div { padding: 5px 10px; cursor: pointer; border-radius: 4px; }
+  #ctxmenu div:hover { background: #33404f; }
+  kbd { font: 11px Consolas, monospace; background: #33363e; border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; color: #cfd3da; }
+  #helpBox { color: var(--dim); font-size: 12px; line-height: 1.6; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="top">
+    <div class="grp"><b>轨迹</b>
+      <select id="assetSel" style="min-width:210px"></select>
+      <button id="btnNew" title="新建一条轨迹资产">新建…</button>
+      <button id="btnSave" class="primary" title="Ctrl+S：烘一次并写盘">保存</button>
+      <button id="btnRename">改名…</button>
+      <button id="btnDup">另存为…</button>
+      <button id="btnDelete" class="danger">删除…</button>
+    </div>
+    <div class="grp"><b>名称</b><input id="label" type="text" placeholder="策划看的名字"></div>
+    <div class="grp"><b>空间</b>
+      <select id="space"><option value="screen">画面空间 (2D)</option><option value="world">世界空间 (3D)</option></select>
+    </div>
+    <div class="grp"><b>烘焙场景</b>
+      <select id="sceneSel" style="min-width:150px"></select>
+      <select id="bgSel" style="min-width:110px"></select>
+    </div>
+    <div class="grp"><b>预览实体</b>
+      <select id="entitySel" style="min-width:150px"></select>
+    </div>
+    <div class="grp">
+      <button id="btnUndo" title="Ctrl+Z">↶ 撤销</button>
+      <button id="btnRedo" title="Ctrl+Y / Ctrl+Shift+Z">↷ 重做</button>
+    </div>
+  </div>
+
+  <div id="tools">
+    <button id="toolSelect" data-tool="select" title="选择 / 移动（V）：拖点、拖把手、点曲线选段、框选、Shift 多选">⬚</button>
+    <button id="toolPen" data-tool="pen" title="加点（P）：点击追加控制点，点线上插点">✎</button>
+    <button id="toolPhysics" data-tool="physics" title="抛体（T）：按住拖动，把落点拖到目标处（没有抛体段就新建一段）">⤴</button>
+    <button id="toolAnchor" data-tool="anchor" title="锚点（A）：点击放置播放锚点">⌖</button>
+    <button id="toolPan" data-tool="pan" title="平移（H）；任何工具下：中键 / 空格+左键 / 右键拖 也是平移">✋</button>
+    <div class="sep"></div>
+    <button id="btnFit" title="视图复位（Home）：整个场景">▣</button>
+    <button id="btnFitCurve" title="框住轨迹（F）">◎</button>
+    <div class="sep"></div>
+    <button id="btnHelp" title="快捷键与手势">?</button>
+  </div>
+
+  <div id="center">
+    <div id="viewtabs">
+      <button id="tab2d" class="on" title="1">2D 画面</button>
+      <button id="tab3d" title="2">3D 世界</button>
+    </div>
+    <div id="legend"><span style="color:#6cb4ff">■</span> 位置 <span style="color:#ffb454">■</span> 落点/深度锚 · <span style="color:#fff">○</span> 控制点 <span style="color:#9a9a9a">▢</span> 锁定起点 · <span style="color:#ffb454">●</span> 初速 <span style="color:#7ed492">◆</span> 落点 <span style="color:#c792ea">●</span> 最高点 · <span style="color:#ff6b6b">|</span> 硬帧</div>
+    <canvas id="view2d" tabindex="0"></canvas>
+    <canvas id="view3d" style="display:none" tabindex="0"></canvas>
+    <canvas id="overlay3d" style="display:none"></canvas>
+    <div id="coords">—</div>
+  </div>
+
+  <div id="side">
+    <div class="box">
+      <h3>分段 <span class="dim" id="segCount"></span></h3>
+      <div class="row">
+        <button id="btnAddManual" title="新建手绘段并进入加点模式">+ 手绘段</button>
+        <button id="btnAddPhysics" title="新建抛体段（接在上一段之后）">+ 抛体段</button>
+        <button id="btnSegUp" title="上移">↑</button>
+        <button id="btnSegDown" title="下移">↓</button>
+        <button id="btnSegDup" title="复制这一段（Ctrl+D）">⧉</button>
+        <button id="btnSegDel" class="danger" title="删除这一段（可撤销）">删段</button>
+      </div>
+      <div id="seglist"></div>
+    </div>
+    <div class="box" id="inspector"></div>
+    <div class="box" id="transformBox">
+      <h3>变换</h3>
+      <div class="row scope"><span class="lbl">范围</span>
+        <button id="scopePoints" title="只动选中的控制点">选中点</button>
+        <button id="scopeSegment" title="整段（含起点/初速）">整段</button>
+        <button id="scopeAll" title="整条轨迹（以锚点为轴）">整条</button>
+      </div>
+      <div class="row"><span class="lbl">平移</span><input id="txDx" type="number" step="1" value="0"><input id="txDy" type="number" step="1" value="0"><button id="btnTxMove">应用</button></div>
+      <div class="row"><span class="lbl">旋转 °</span><input id="txRot" type="number" step="5" value="0"><button id="btnTxRot">应用</button><span class="dim" id="txRotHint"></span></div>
+      <div class="row"><span class="lbl">缩放 ×</span><input id="txScale" type="number" step="0.1" value="1"><button id="btnTxScale">应用</button></div>
+      <div class="row"><span class="lbl">镜像</span><button id="btnMirrorX">↔ 左右</button><button id="btnMirrorY">↕ 上下/前后</button></div>
+      <div class="dim" id="txHint">画布上：选中 2 个以上点或选整段/整条时出现变换框：拖中心方块移动、拖角缩放、拖上方圆点旋转（Shift 吸附）。</div>
+    </div>
+    <div class="box">
+      <h3>锚点（播放位置）</h3>
+      <div class="row"><input id="anchorX" type="number" step="1"> <input id="anchorY" type="number" step="1">
+        <button id="btnAnchorEntity" title="把锚点放到预览实体此刻的位置">取实体位置</button>
+        <button id="btnAnchorPick" title="在画面上点一下放锚点（A）">画布放置</button></div>
+      <div class="dim">轨迹相对锚点存盘；播放时 playTrajectory 的 anchorX/anchorY 缺省 = 目标实体的位置。拖锚点 = 整条轨迹跟着走。</div>
+    </div>
+    <div class="box">
+      <h3>图层</h3>
+      <div class="row">
+        <label class="chk"><input type="checkbox" data-layer="allCurves" checked>其它段曲线</label>
+        <label class="chk"><input type="checkbox" data-layer="ghost" checked>幽灵</label>
+        <label class="chk"><input type="checkbox" data-layer="persp" checked>透视缩放</label>
+        <label class="chk"><input type="checkbox" data-layer="npcs">场景 NPC</label>
+        <label class="chk"><input type="checkbox" data-layer="obstacles">障碍（深度壳）</label>
+        <label class="chk"><input type="checkbox" data-layer="grid">网格</label>
+        <label class="chk"><input type="checkbox" data-layer="axis" checked>透视轴</label>
+      </div>
+    </div>
+    <div class="box">
+      <h3>烘焙</h3>
+      <div class="row"><span class="lbl">采样 Hz</span><input id="sampleHz" type="number" min="10" max="240" step="1"></div>
+      <div class="row"><span class="lbl">容差</span>
+        位置 <input id="tolPos" type="number" step="0.05" style="width:60px">
+        角度 <input id="tolRot" type="number" step="0.05" style="width:60px">
+        缩放 <input id="tolScale" type="number" step="0.001" style="width:60px">
+        透明 <input id="tolAlpha" type="number" step="0.001" style="width:60px">
+      </div>
+      <div class="row"><span class="lbl">产物</span><span id="bakeInfo" class="mono">—</span></div>
+      <div id="warnings"></div>
+    </div>
+    <div class="box">
+      <h3>现场</h3>
+      <div id="sceneInfo" class="mono" style="color:var(--dim)">—</div>
+    </div>
+  </div>
+
+  <div id="bottom">
+    <button id="btnPlay" title="K">▶ 播放</button>
+    <button id="btnStepBack" title="上一帧（,）">⏮</button>
+    <button id="btnStepFwd" title="下一帧（.）">⏭</button>
+    <label class="chk"><input id="loop" type="checkbox" checked>循环</label>
+    <input id="scrub" type="range" min="0" max="1000" step="1" value="0">
+    <span id="timeLabel" class="mono">0 / 0 ms</span>
+    <span id="status">就绪</span>
+  </div>
+</div>
+
+<div id="modalWrap"><div id="modal"></div></div>
+<div id="busy" hidden><div id="busyBox"><span class="spin"></span><span id="busyText">装载场景…</span><button id="busyRetry" hidden>重试装载</button></div></div>
+<div id="ctxmenu"></div>
+
+<script src="/viewer/common.js"></script>
+<script src="/viewer/history.js"></script>
+<script src="/viewer/edit.js"></script>
+<script src="/viewer/view2d.js"></script>
+<script src="/viewer/view3d.js"></script>
+<script src="/viewer/app.js"></script>
+</body>
+</html>

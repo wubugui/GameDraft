@@ -5,6 +5,16 @@ from pathlib import Path
 from tools.dev import launch
 
 
+def test_build_workbench_receives_the_project_root(monkeypatch):
+    monkeypatch.setattr(launch, "repo_root", lambda: Path("D:/GameDraft"))
+
+    assert launch._argv_for("build-workbench", []) == [
+        "-m",
+        "tools.build_workbench",
+        str(Path("D:/GameDraft")),
+    ]
+
+
 def test_run_tool_disables_pydantic_plugins_on_windows(monkeypatch):
     calls: list[dict] = []
     monkeypatch.setattr(launch.platform, "system", lambda: "Windows")

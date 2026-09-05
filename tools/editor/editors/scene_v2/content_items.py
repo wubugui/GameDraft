@@ -8,7 +8,9 @@
 
 1. **不吃鼠标、不进命中白名单**（继承 `CanvasItem`，且不是 `EntityItem`）。
    贴图往往比实体本体大得多，能点的话会把下方一切都吞掉。
-2. **底边中点对齐锚点**（脚底锚），与运行时 `SpriteEntity` 的 anchor 同口径。
+2. **按实体锚点摆图**，与运行时 `SpriteEntity` 的 anchor 同口径。锚点缺省
+   `{x:0.5, y:1}`＝底边中点（脚底），`NpcDef.anchor` 可改（圆形物件要 0.5/0.5
+   才能绕圆心转）。摆错不报错，只是"编辑器里位置对、游戏里差半个身位"。
 3. **贴图读不出来时画占位框**，并把 `texture_loaded` 置 False ——
    运行时那边此时同样**没有档位**（`displaySprite !== null` 才标 band），
    排序必须同口径，否则缺件的热点会排到错误的层。
@@ -18,6 +20,10 @@ from __future__ import annotations
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QPen, QPixmap, QTransform
 
+from ...shared.entity_transform_math import (
+    DEFAULT_ENTITY_ANCHOR_X,
+    DEFAULT_ENTITY_ANCHOR_Y,
+)
 from .changes import EntityRef
 from .items import CanvasItem
 
@@ -74,7 +80,11 @@ _MISSING_PEN = QPen(QColor(140, 70, 190, 200), 0, Qt.PenStyle.DashLine)
 
 
 class _FootAnchoredItem(CanvasItem):
-    """底中锚的世界尺寸贴图。子类只负责提供 pixmap 与世界尺寸。"""
+    """按实体锚点摆放的世界尺寸贴图。子类只负责提供 pixmap 与世界尺寸。
+
+    类名留着"Foot"是历史（锚点曾写死在脚底）；现在锚点可配，缺省仍是底中＝脚底，
+    所以缺省路径与改名前逐位相同。
+    """
 
     def __init__(self, ref: EntityRef) -> None:
         super().__init__()
@@ -86,6 +96,9 @@ class _FootAnchoredItem(CanvasItem):
         self._facing = 1
         self._scale = 1.0
         self._rotation = 0.0
+        #: 归一化锚点（x 0=左 1=右、y 0=顶 1=底）；缺省底中＝脚底
+        self._anchor_x = DEFAULT_ENTITY_ANCHOR_X
+        self._anchor_y = DEFAULT_ENTITY_ANCHOR_Y
         self.texture_loaded = False
 
     @property
@@ -98,7 +111,9 @@ class _FootAnchoredItem(CanvasItem):
 
     def set_geometry(self, anchor: QPointF, world_w: float, world_h: float,
                      *, scale: float = 1.0, rotation: float = 0.0,
-                     facing: int = 1) -> None:
+                     facing: int = 1,
+                     anchor_x: float = DEFAULT_ENTITY_ANCHOR_X,
+                     anchor_y: float = DEFAULT_ENTITY_ANCHOR_Y) -> None:
         self.prepareGeometryChange()
         self._anchor = QPointF(anchor)
         self._world_w = max(0.0, float(world_w or 0.0))
@@ -106,6 +121,8 @@ class _FootAnchoredItem(CanvasItem):
         self._scale = float(scale) if scale and scale > 0 else 1.0
         self._rotation = float(rotation or 0.0)
         self._facing = -1 if facing < 0 else 1
+        self._anchor_x = min(1.0, max(0.0, float(anchor_x)))
+        self._anchor_y = min(1.0, max(0.0, float(anchor_y)))
         self.update()
 
     def set_pixmap(self, pix: QPixmap | None) -> None:
@@ -117,10 +134,15 @@ class _FootAnchoredItem(CanvasItem):
     # ---- 几何 --------------------------------------------------------------
 
     def _quad(self) -> QRectF:
-        """底中锚的本地 quad（未旋转）。"""
+        """按锚点摆的本地 quad（未旋转）。
+
+        与运行时 `LitSpriteQuad.sync` 的顶点式一字对应：
+        x ∈ [-ax·w, (1-ax)·w]、y ∈ [-ay·h, (1-ay)·h]。
+        缺省锚点 (0.5, 1) 代回即 `QRectF(-w/2, -h, w, h)` —— 改造前那一行。
+        """
         w = self._world_w * self._scale
         h = self._world_h * self._scale
-        return QRectF(-w / 2.0, -h, w, h)
+        return QRectF(-self._anchor_x * w, -self._anchor_y * h, w, h)
 
     def boundingRect(self) -> QRectF:
         q = self._quad()

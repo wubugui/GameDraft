@@ -68,10 +68,14 @@ def _file_matches_text(path: Path, text: str) -> bool:
         return False
 
 
-def _rebuild(root: Path) -> dict:
-    """一次全量重算;内容没变不重写(避免语言服务缓存空转),写盘走原子替换。"""
+def _rebuild(root: Path, read_text=None, extra_paths=()) -> dict:
+    """一次全量重算;内容没变不重写(避免语言服务缓存空转),写盘走原子替换。
+
+    read_text / extra_paths:LSP server 传进来让**未保存的 overlay**(含还没落盘的新场景)
+    也进枚举——schema 跟着编辑器的内存态走,不用等 Save All。命令行重算不传,按磁盘算。
+    """
     spec = extract_language_spec(root)
-    ud = collect_id_universes(root)
+    ud = collect_id_universes(root, read_text=read_text, extra_paths=extra_paths)
     schema = build_schema(spec, ud)
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)

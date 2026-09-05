@@ -29,7 +29,9 @@ last_governed: 2026-08-05
 ## 过程义务
 
 1. **开工按触发面读库**:按任务读 `agent_docs/INDEX.md` 对应域条目;按将改动的文件跑
-   `python3 agent_docs/_meta/audit.py --paths <files...>` 取必读卡。
+   `sh scripts/py.sh agent_docs/_meta/audit.py --paths <files...>` 取必读卡
+   (解释器入口为什么统一走 py.sh,见
+   [挑项目 Python 的入口](mechanisms/project-interpreter-entrypoint.md))。
 2. **系统设计先访谈**:制作人留白的系统性设计走[制作人协作法](methods/producer-collab-unknowns.md),
    禁拿行业最佳实践填空。
 3. **偏差记录义务**:工作中发现现实与本库文档打架或超出,收尾向 `agent_docs/_meta/inbox/`
@@ -38,7 +40,7 @@ last_governed: 2026-08-05
 ## 验收门
 
 - 跨域改动叠加适用所涉各域 norms 的验收门;
-- 动过本库后 `python3 agent_docs/_meta/audit.py` 零 error。
+- 动过本库后 `sh scripts/py.sh agent_docs/_meta/audit.py` 零 error。
 
 ## 红线
 

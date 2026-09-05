@@ -89,12 +89,21 @@ class ProjectModel(QObject):
         self.animations: dict[str, dict] = {}
         self.scenes: dict[str, dict] = {}
         self.filter_defs: dict[str, dict] = {}
+        #: 轨迹资产 `assets/data/trajectories/<stem>.json` 的**只读镜像**（stem → 文档）。
+        #: 唯一写者是独立的轨迹工作台（tools/trajectory_workbench）；主编辑器只拿它做
+        #: 候选 / 校验——没有脏桶、不进 save_all、不进外部改动基线、不淘汰孤儿文件。
+        self.trajectories: dict[str, dict] = {}
         self.flag_registry: dict = {}
         self.overlay_images: dict[str, str] = {}
         #: 挂件预设：id → {label,image/images,anchorX,anchorY,rotation,scale,lit}
         self.prop_presets: dict[str, dict] = {}
         self.scenarios_catalog: dict = {}
         self.narrative_graphs: dict = {}
+        #: dev 叙事跳转表（public/assets/data/dev_narrative_warps.json）的 warps 列表。
+        #: **只读载入**：它由策划手写、只有游戏 dev 菜单消费，编辑器不改写；载入是为了
+        #: 让构建页能用选择器挑锚点、让 validator 能查它引用的场景 / 图 / 状态是否悬垂
+        #:（此前这张表的场景 id 只能手打，改名之后静默悬垂）。
+        self.dev_narrative_warps: list[dict] = []
         #: 章节导演清单（C2 电影摄制模型）：行={id,package?,scene?,when,autoPlay,done}
         self.narrative_packages: dict = {}
         self.document_reveals: list = []
@@ -287,6 +296,21 @@ class ProjectModel(QObject):
                 self.load_anomalies.append(
                     "parallax_scenes.json: 根不是数组，载入为空（该文件只读，不会被改写）",
                 )
+        raw_warps = self._load(dp / "dev_narrative_warps.json", {})
+        warps = raw_warps.get("warps") if isinstance(raw_warps, dict) else None
+        if isinstance(warps, list):
+            self.dev_narrative_warps = [w for w in warps if isinstance(w, dict)]
+            _dropped = len(warps) - len(self.dev_narrative_warps)
+            if _dropped:
+                self.load_anomalies.append(
+                    f"dev_narrative_warps.json: {_dropped} 条非对象条目载入时被忽略（该文件只读，不会被改写）",
+                )
+        else:
+            self.dev_narrative_warps = []
+            if (dp / "dev_narrative_warps.json").exists():
+                self.load_anomalies.append(
+                    "dev_narrative_warps.json: 根不是 {\"warps\": [...]}，载入为空（该文件只读，不会被改写）",
+                )
         self.audio_config = self._load(dp / "audio_config.json", {})
         self.strings = self._load(dp / "strings.json", {})
         self.archive_characters = self._load(dp / "archive" / "characters.json", [])
@@ -396,6 +420,8 @@ class ProjectModel(QObject):
             for p in list_json_files(filters_dir):
                 self.filter_defs[p.stem] = self._load(p, {})
 
+        self._scan_trajectories_from_disk()
+
         from .flag_registry import flag_registry_path, load_flag_registry
         self.flag_registry = load_flag_registry(flag_registry_path(self.assets_path))
 
@@ -470,6 +496,43 @@ class ProjectModel(QObject):
             for p in list_json_files(filters_dir):
                 self.filter_defs[p.stem] = self._load(p, {})
         self.data_changed.emit("filter", "")
+
+    def _scan_trajectories_from_disk(self) -> None:
+        """重扫 `assets/data/trajectories/*.json` 进只读镜像 `self.trajectories`。
+
+        **刻意不走 ``_load``**：那个入口会给文件登记外部改动基线，而这个目录的唯一写者是
+        轨迹工作台（另一个进程）——登记了基线，下一次 Save All 就会把工作台刚存的东西
+        当成"外部并发改动"拦下来。这里只 ``json.loads`` 字节、不碰基线。
+        坏文件记 ``load_anomalies`` 跳过（validator 另按目录重扫补成 error）。
+        """
+        self.trajectories = {}
+        if self.project_path is None:
+            return
+        tdir = self.paths.trajectories_dir
+        if not tdir.is_dir():
+            return
+        for path in list_json_files(tdir):
+            try:
+                doc = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                self.load_anomalies.append(
+                    f"trajectories/{path.name}: 无法解析（{type(exc).__name__}），载入时被跳过"
+                    f"（磁盘文件保持不动；该目录由轨迹工作台维护）",
+                )
+                continue
+            if not isinstance(doc, dict):
+                self.load_anomalies.append(
+                    f"trajectories/{path.name}: 根不是 JSON 对象，载入时被跳过（磁盘文件保持不动）",
+                )
+                continue
+            self.trajectories[path.stem] = doc
+
+    def reload_trajectories_from_disk(self) -> None:
+        """重读轨迹资产目录（轨迹工作台存盘后同步候选；**不标脏、不动基线**）。"""
+        if self.project_path is None:
+            return
+        self._scan_trajectories_from_disk()
+        self.data_changed.emit("trajectory", "")
 
     def audio_config_differs_on_disk(self) -> bool:
         """磁盘上的 audio_config.json 与内存这份是否已经不一样。
@@ -1619,6 +1682,41 @@ class ProjectModel(QObject):
                 continue
             n = len(s.get("layers") or []) if isinstance(s.get("layers"), list) else 0
             out.append((sid, f"{sid} · {n} 层"))
+        return out
+
+    def all_trajectory_ids(self) -> list[tuple[str, str]]:
+        """`(id, label)`：全局轨迹资产（`assets/data/trajectories/*.json`），供 playTrajectory 选择器/校验用。
+
+        资产与场景无关（帧全部是相对播放锚点的偏移），所以候选是全工程一张表，按 id 排序。
+        label 带上空间与帧数（如 `验证·铜钱脱落滚走（screen · 42 帧）`），下拉里一眼能对上。
+        id 取文档里的 `id`，缺了回落文件名 stem（validator 会把不一致报成 error）。
+        """
+        out: list[tuple[str, str]] = []
+        for stem, doc in self.trajectories.items():
+            if not isinstance(doc, dict):
+                continue
+            tid = str(doc.get("id") or "").strip() or str(stem)
+            label = str(doc.get("label") or "").strip() or tid
+            space = str(doc.get("space") or "?")
+            frames = doc.get("keyframes")
+            n = len(frames) if isinstance(frames, list) else 0
+            out.append((tid, f"{label}（{space} · {n} 帧）"))
+        out.sort(key=lambda r: r[0])
+        return out
+
+    def all_dev_narrative_warp_ids(self) -> list[tuple[str, str]]:
+        """`(id, label)`：dev_narrative_warps.json 的跳转锚点，供构建页「从叙事锚点开始」选。
+
+        label 带上落点场景（如 `1 · 听书（茶馆·说书人） → teahouse`），下拉里一眼能对上。
+        """
+        out: list[tuple[str, str]] = []
+        for w in self.dev_narrative_warps:
+            wid = str(w.get("id") or "").strip()
+            if not wid:
+                continue
+            label = str(w.get("label") or "").strip() or wid
+            scene = str(w.get("scene") or "").strip()
+            out.append((wid, f"{label} → {scene}" if scene else label))
         return out
 
     def all_shop_ids(self) -> list[tuple[str, str]]:

@@ -5,7 +5,9 @@ import type {
   AnimationSetDef,
   DialogueFacing,
   ICutsceneActor,
+  ITrajectoryTarget,
   NpcInitialAnimPlayback,
+  TrajectoryPose,
 } from '../data/types';
 import { createStyledText } from '../core/styledText';
 import { stepWithCollision } from '../utils/collisionStep';
@@ -38,18 +40,20 @@ import type { TexelsPerWorld } from '../rendering/EntityPixelDensityMatch';
 import type { ResolvedSockets } from '../data/animationSockets';
 import { SpriteEntity, type LitShaderProvider } from '../rendering/SpriteEntity';
 import {
+  entityAnchorOf,
   entityRotationRadOf,
   entityScaleOf,
   quadGroundYAroundFoot,
   quadTopLocalYAroundFoot,
   contentTopLocalYAroundFoot,
+  rotateLocalVector,
   transformLocalVector,
 } from '../utils/entityTransform';
 import type { PerspectiveScaleResolver } from '../utils/perspectiveScale';
 
 const MARKER_SIZE = 20;
 
-export class Npc implements ICutsceneActor {
+export class Npc implements ICutsceneActor, ITrajectoryTarget {
   public readonly def: NpcDef;
   public container: Container;
   private sprite: SpriteEntity | null = null;
@@ -123,6 +127,19 @@ export class Npc implements ICutsceneActor {
   /** 会话级显隐覆盖（不入档）；null=无覆盖，true 等价 null */
   private sessionEnabledOverride: boolean | null = null;
 
+  /**
+   * 轨迹驱动方的抢占回调（**一实体一驱动**）。别人来抢这个实体（`moveTo`/`jumpTo`/`destroy`）
+   * 时触发**恰一次**并注销，驱动方据此当场收手，不会继续往一个已易主/已销毁的实体上写姿态。
+   */
+  private _onTrajectoryPreempt: (() => void) | null = null;
+  /** true = `entitySortFootY` 由轨迹独占，`_syncSortFootY` 一律不碰（见那里的注释） */
+  private _trajectorySortLocked = false;
+  /**
+   * 轨迹期间的接地 y（= `pose.sortY`）。飞在空中的物件透视缩放 / 影子落点 / 遮挡脚点
+   * 都该按**落点**算，不是按空中位置算——否则铜钱越抛越小、影子跟着飞。
+   */
+  private _trajectoryContactY: number | null = null;
+
   constructor(def: NpcDef) {
     this.def = def;
     this._x = def.x;
@@ -190,9 +207,52 @@ export class Npc implements ICutsceneActor {
     const sx = this.container.scale.x < 0 ? -1 : 1;
     this.container.scale.set(sx * s, s);
     this.container.rotation = entityRotationRadOf(this.def);
+    this.applySpriteAnchor();
     this._pushLitParentTransform();
     this._syncOverlayCompensation();
     this._syncSortFootY();
+  }
+
+  /**
+   * 把 `def.anchor` 打到内层精灵上（缺省底中＝脚底，与改造前写死的值相同）。
+   * 与实例 transform 同一条重派生路径：装载精灵、`setEntityField` 改字段之后调
+   * `applyInstanceTransform()` 即生效。
+   */
+  applySpriteAnchor(): void {
+    if (!this.sprite) return;
+    const a = entityAnchorOf(this.def);
+    this.sprite.setSpriteAnchor(a.x, a.y);
+  }
+
+  /**
+   * **接地点**相对锚点的世界偏移（已含实例 scale、外层镜像与实例旋转）。
+   * 缺省锚点时恒 `(0, 0)` —— 于是位置 / 阴影脚点 / 排序锚 / 透视采样点全部逐位不变。
+   *
+   * 旋转为什么也要吃：实例旋转的支点**就是锚点**（容器原点），锚点到接地点这一段
+   * 局部向量当然跟着转。不转的话接地点与 `_syncSortFootY` 算出的接地线互相矛盾
+   * （同一个 quad 两套底边），而两边都不会报错。
+   *
+   * 镜像为什么也要吃：本实体的左右镜像住在**外层容器** `scale.x` 的符号里
+   * （内层 `SpriteEntity.facingX` 对 NPC 恒 +1，见 `setFacing`）。锚点靠左的实体
+   * 朝左时图整个翻到另一侧去，接地点自然也跟着翻。
+   */
+  private _contactOffset(): { x: number; y: number } {
+    const off = this.sprite?.getGroundContactOffset();
+    if (!off || (off.x === 0 && off.y === 0)) return { x: 0, y: 0 };
+    const s = entityScaleOf(this.def);
+    const mirror = this.container.scale.x < 0 ? -1 : 1;
+    return rotateLocalVector(off.x * s * mirror, off.y * s, entityRotationRadOf(this.def));
+  }
+
+  /** 接地点 X（阴影落点 / 透视采样 / 深度遮挡脚点）。缺省锚点时恒 = `x`。 */
+  get contactX(): number {
+    return this._x + this._contactOffset().x;
+  }
+
+  /** 接地点 Y（同上）。缺省锚点时恒 = `y`；轨迹期间 = 轨迹给的落点 `sortY`。 */
+  get contactY(): number {
+    if (this._trajectoryContactY !== null) return this._trajectoryContactY;
+    return this._y + this._contactOffset().y;
   }
 
   /** 名字标签/提示图标/占位圆：抵消实例缩放与旋转（含镜像符号，旧 setFacing 语义超集）。
@@ -212,16 +272,33 @@ export class Npc implements ICutsceneActor {
     }
   }
 
-  /** 深度排序接地线：旋转时把变换后 quad 的底边 y 写给 Renderer.sortEntityLayer。 */
+  /**
+   * 深度排序接地线：把变换后 quad 的底边 y 写给 `Renderer.sortEntityLayer`。
+   *
+   * **两种偏移都要，且要叠加**：
+   * - 锚点偏移（锚点 → 接地点，`_contactOffset()`，已含旋转/镜像/实例 scale）；
+   * - 旋转把 quad 撑出去的那一截（`quadGroundYAroundFoot`）。
+   *
+   * 数学上正好能一次合成：相对**接地点**，quad 恒是「底中锚、宽 effW、高 effH」，
+   * 于是接地线 = `quadGroundYAroundFoot(接地点 y, effW, effH, φ)`。
+   *
+   * 两种偏移都为 0（缺省锚点 + 无旋转）时**删掉这个键**，回落容器锚点 y ——
+   * 这正是改造前的唯一分支，存量实体一位不变。
+   */
   private _syncSortFootY(): void {
+    // 轨迹期间 `entitySortFootY` 由轨迹**独占**：飞在空中的物件靠 pose.sortY 保持"落点"
+    // 的前后关系，而本函数在"未旋转、缺省锚点"时会把这个键 delete 掉。**不靠调用顺序**
+    // 躲开它——位置 setter / 透视刷新 / applyInstanceTransform 三条路都会走到这里。
+    if (this._trajectorySortLocked) return;
     const c = this.container as Container & { entitySortFootY?: number };
     const rad = entityRotationRadOf(this.def);
-    if (rad === 0) {
+    const off = this._contactOffset();
+    if (rad === 0 && off.x === 0 && off.y === 0) {
       delete c.entitySortFootY;
       return;
     }
     const size = this.getWorldSize();
-    c.entitySortFootY = quadGroundYAroundFoot(this._y, size.width, size.height, rad);
+    c.entitySortFootY = quadGroundYAroundFoot(this._y + off.y, size.width, size.height, rad);
   }
 
   /** 按 def.initialFacing 设置左右镜像（无精灵时同步占位与标签）。 */
@@ -327,9 +404,19 @@ export class Npc implements ICutsceneActor {
     return this._depthScaleFactor;
   }
 
-  /** 按当前脚底点重求透视系数；变化时下推 sprite 并重派生旋转排序接地线。 */
+  /**
+   * 按当前**接地点**重求透视系数；变化时下推 sprite 并重派生排序接地线。
+   *
+   * 近大远小的依据是"脚踩在哪"，不是"锚点在哪" —— 锚点在圆心的物件若按锚点采样，
+   * 半个身高的偏差会一路带进阴影尺寸与画面缩放。
+   *
+   * ⚠ 这里有一处**有意的一步滞后**：接地点自身含透视系数（经 `getWorldSize()`），
+   * 而系数又按接地点求值。用当前系数算接地点、再采一次，逐次收敛；实体尺寸（十几到
+   * 一百多 wu）远小于透视场的变化尺度（上千 wu），单步残差不可见。缺省锚点时偏移恒 0，
+   * 这个耦合根本不存在。
+   */
   private _refreshDepthScale(): void {
-    const f = this.perspectiveResolver?.scaleAt(this._x, this._y) ?? 1;
+    const f = this.perspectiveResolver?.scaleAt(this.contactX, this.contactY) ?? 1;
     if (f === this._depthScaleFactor) return;
     this._depthScaleFactor = f;
     this.sprite?.setDepthScaleFactor(f);
@@ -473,10 +560,19 @@ export class Npc implements ICutsceneActor {
     if (this.sprite) {
       const s = entityScaleOf(this.def);
       const rotationRad = entityRotationRadOf(this.def);
+      // 图集格子/内容框的**横向中心**相对锚点的偏移（缺省锚点时恒 0）。
+      // 三个 `*AroundFoot` 函数都假设"框横向压在原点上"，锚点靠左/靠右之后不再成立；
+      // 而旋转会把这段横向偏移带进 y —— 补的就是 `cx·sinφ` 这一项。
+      // 无旋转时 sinφ=0，这一项自动消失，所以只有"偏心锚 + 旋转"才会用到它。
+      const mirror = this.container.scale.x < 0 ? -1 : 1;
+      /** 局部单位（尚未乘实例 scale），与 `authored` / `content.*` 同一档 */
+      const cxLocal = this.sprite.getGroundContactOffset().x * mirror;
+      const cxSin = rotationRad === 0 ? 0 : cxLocal * s * Math.sin(rotationRad);
       // 图集授权锚优先：它是轴上一个点（不是框），按实例 transform 直接变换即可
       const authored = this.sprite.getAuthoredBubbleAnchorLocalY();
       if (authored !== null) {
-        return transformLocalVector(0, authored, this.def).y - headGap;
+        // 授权锚在格子横向中心上，锚点偏心时它相对容器原点也偏心 —— 一并变换
+        return transformLocalVector(cxLocal, authored, this.def).y - headGap;
       }
       const content = this.sprite.getContentBoxLocal();
       if (content) {
@@ -485,7 +581,7 @@ export class Npc implements ICutsceneActor {
           Math.max(content.height * s, 1),
           content.bottomGap * s,
           rotationRad,
-        ) - headGap;
+        ) + cxSin - headGap;
       }
       const size = this.getWorldSize();
       const topLocalY = quadTopLocalYAroundFoot(
@@ -493,7 +589,7 @@ export class Npc implements ICutsceneActor {
         Math.max(size.height, 1),
         rotationRad,
       );
-      return topLocalY - headGap;
+      return topLocalY + cxSin - headGap;
     }
     return -MARKER_SIZE * 2 - headGap;
   }
@@ -581,6 +677,79 @@ export class Npc implements ICutsceneActor {
     }
   }
 
+  // ———————————————————— 轨迹驱动适配（ITrajectoryTarget）————————————————————
+
+  get trajectoryKey(): string {
+    return `npc:${this.def.id}`;
+  }
+
+  readTrajectoryAnchor(): { x: number; y: number } {
+    return { x: this._x, y: this._y };
+  }
+
+  /**
+   * 进入轨迹态：先掐断在途 `moveTo`/`jumpTo`（并 resolve 它们的 Promise，不留悬挂），
+   * 再登记抢占回调与排序锁。
+   *
+   * ⚠ 轨迹 **vs** 轨迹的仲裁不在这里：同一目标同时只能跑一条轨迹，那是播放系统按
+   * `trajectoryKey` 登记时的事。这里直接覆写 `_onTrajectoryPreempt` —— 若播放系统漏了
+   * 那道登记，旧驱动会被静默丢弃（不会崩，但会两条一起写姿态）。
+   */
+  beginTrajectory(onPreempt: () => void): void {
+    this.cancelActiveMove();
+    this._onTrajectoryPreempt = onPreempt;
+    this._trajectorySortLocked = true;
+  }
+
+  applyTrajectoryPose(pose: TrajectoryPose): void {
+    // 先落接地 y 再写位置：位置 setter 一路下推到透视刷新，刷新按 contactY 采样，
+    // 顺序反了这一帧的透视系数就按空中位置算。
+    this._trajectoryContactY = pose.sortY;
+    // setter 一路下推：容器位置 → lit 父仿射 → 透视系数（排序脚点被轨迹锁挡住，见下）
+    this.x = pose.x;
+    this.y = pose.y;
+    this.sprite?.setTrajectoryOverlay(
+      (pose.rotationDeg * Math.PI) / 180,
+      pose.scaleX,
+      pose.scaleY,
+      pose.alpha,
+      // 🔴 本实体的左右镜像在**外层容器**的 scale.x 上，也就是在内层 sprite 旋转的**外面**：
+      //    `M·R(θ) = R(−θ)·M`，不补这个符号，朝左的 NPC 会把作者画的顺时针转成逆时针。
+      //    Player 没有这一层（镜像在 sprite 自己的 scale.x 里，在 R 内），所以那边不传。
+      this.container.scale.x < 0 ? -1 : 1,
+    );
+    // 轨迹独占排序接地锚（飞在空中的物件靠它保持"落点"的前后关系）
+    (this.container as Container & { entitySortFootY?: number }).entitySortFootY = pose.sortY;
+  }
+
+  /**
+   * 退出轨迹态。`reset=false` 保留终姿（叠加量与排序锚都留着，等下一次位移自然重派生）；
+   * `reset=true` 清干净并把排序接地线交还给实例 transform 重算。
+   */
+  endTrajectory(reset: boolean): void {
+    this._onTrajectoryPreempt = null;
+    this._trajectorySortLocked = false;
+    this._trajectoryContactY = null;
+    if (!reset) {
+      // 接地 y 回到按位置派生；透视系数据此重采一次（轨迹末帧的落点与终姿位置未必相同）
+      this._refreshDepthScale();
+      return;
+    }
+    this.sprite?.clearTrajectoryOverlay();
+    delete (this.container as Container & { entitySortFootY?: number }).entitySortFootY;
+    this._refreshDepthScale();
+    this._syncSortFootY();
+  }
+
+  /** 触发并**注销**抢占回调（恰一次）：谁抢走了这个实体，轨迹驱动就该当场收手。 */
+  private _preemptTrajectory(): void {
+    const cb = this._onTrajectoryPreempt;
+    if (!cb) return;
+    // 先注销再调用：回调里通常会调 endTrajectory，避免重入自触发
+    this._onTrajectoryPreempt = null;
+    cb();
+  }
+
   /**
    * 进入对话：暂停巡逻（取消当前位移并阻塞巡逻循环）、按 `def.dialogueFacing` 摆朝向。
    * 对话中要播的站立/表情动画由图对话 `runActions` 的 playNpcAnimation 等驱动。
@@ -646,6 +815,8 @@ export class Npc implements ICutsceneActor {
     faceTowardMovement?: boolean,
     arriveAnimState?: string | null,
   ): Promise<void> {
+    // 一实体一驱动：位移把这个实体抢过来了，在跑的轨迹必须当场收手（恰一次）
+    this._preemptTrajectory();
     // 过场 skip 后被放弃的动作链可能继续对已销毁的 `_cut_*` 演员发 moveTo：
     // 此时 cutsceneUpdate 不再被调用，建出的 moveTarget 永不推进也永不 resolve，直接空履约。
     if (this.container.destroyed) return Promise.resolve();
@@ -693,6 +864,8 @@ export class Npc implements ICutsceneActor {
     landAnimState?: string | null,
     faceTowardMovement?: boolean,
   ): Promise<void> {
+    // 一实体一驱动：同 moveTo
+    this._preemptTrajectory();
     // 过场 skip 后被放弃的动作链可能继续对已销毁演员发 jumpTo：容器已毁则空履约（不悬挂）。
     if (this.container.destroyed) return Promise.resolve();
     // 与位移互斥：起跳前清空在途 moveTarget（含巡逻发起的）与旧 jumpTarget。
@@ -856,6 +1029,11 @@ export class Npc implements ICutsceneActor {
   }
 
   destroy(): void {
+    // 先通知轨迹驱动方收手（生命周期对称 / 旧时间线不写新状态）：
+    // 不通知的话播放系统会继续抱着一个已销毁的实体逐帧写姿态。
+    this._preemptTrajectory();
+    this._trajectorySortLocked = false;
+    this._trajectoryContactY = null;
     this.hidePrompt();
     if (this.moveTarget) {
       this.moveTarget.resolve();

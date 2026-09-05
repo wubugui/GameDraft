@@ -47,6 +47,43 @@ import {
   type ResolvedSceneAppearance,
 } from '../utils/sceneAppearance';
 
+/**
+ * 静态贴图实体（没有动画包的道具）：把 `NpcDef.displayImage` 合成**一份单帧动画集**，
+ * 喂给与普通 NPC 逐字相同的 `SpriteEntity` 路径。
+ *
+ * 这是本特性唯一的实现手段 —— **不新开实体族、不新开渲染分支**。合成之后，阴影 /
+ * 透视 / 深度遮挡 / 内容层排序 / 逐 entity 光照 / 位面 / 分组 / cameraFollowActor /
+ * attachToSocket 全都走 NPC 那一条，一处也不需要写"如果是静态贴图就……"。
+ *
+ * `worldWidth` / `worldHeight` 原样透传给 `normalizeAnimationSetDef`：它对 `undefined`
+ * 与非正数一视同仁（见 `resolveAnimationWorldSize`），只填一维时按单格像素长宽比推另一维，
+ * 两维都缺时回落 `DEFAULT_WORLD_WIDTH`。`resolvedSheetUrl` 由调用方传 `di.image`，
+ * 于是法线图集按 `<图名>.normal.png` 的同一套约定寻址（烘过就用、没烘就平面法线）。
+ */
+export function buildStaticDisplayAnimationSet(di: HotspotDisplayImage): AnimationSetDefInput {
+  return {
+    spritesheet: di.image,
+    cols: 1,
+    rows: 1,
+    worldWidth: di.worldWidth,
+    worldHeight: di.worldHeight,
+    states: { idle: { frames: [0], frameRate: 1, loop: true } },
+  };
+}
+
+/**
+ * 静态贴图实体是否成立：只看图路径。尺寸交给 `normalizeAnimationSetDef` 兜底推导，
+ * 这里不再复述一遍"多大才算有效"（复述就是第二处真相）。
+ */
+function staticDisplayImageOf(def: NpcDef): HotspotDisplayImage | null {
+  if (def.animFile) return null; // 两者都写时以动画包为准（types.ts NpcDef.displayImage 契约）
+  const di = def.displayImage;
+  return di && typeof di.image === 'string' && di.image.trim() ? di : null;
+}
+
+/** dev 下 spriteSort 错位提示只响一次/实体，避免每次切场景刷屏。 */
+const staticDisplaySpriteSortWarned = new Set<string>();
+
 /** applyDebugWorldSize 成功时的返回值，供深度系统与碰撞比例同步 */
 export type ApplyDebugWorldSizeResult =
   | { ok: true; worldToPixelX: number; worldToPixelY: number }
@@ -1338,6 +1375,39 @@ export class SceneManager implements IGameSystem {
       } catch (_e) {
         // 加载失败时保留占位外观
       }
+    } else {
+      const di = staticDisplayImageOf(defToUse);
+      if (di) {
+        // 叠放档位的唯一真相是 NpcDef.spriteSort（applyCharacterDefaults/override 都走它）。
+        // displayImage 里那一份是热点的字段，NPC 侧**不读**——读了就是两处真相。
+        if (
+          import.meta.env.DEV
+          && di.spriteSort
+          && !defToUse.spriteSort
+          && !staticDisplaySpriteSortWarned.has(defToUse.id)
+        ) {
+          staticDisplaySpriteSortWarned.add(defToUse.id);
+          console.warn(
+            `SceneManager: NPC "${defToUse.id}" 的 displayImage.spriteSort 被忽略；`
+            + 'NPC 的叠放档位请写在 NpcDef.spriteSort 上。',
+          );
+        }
+        try {
+          const tex = await this.assetManager.loadTexture(di.image);
+          const animDef = normalizeAnimationSetDef(
+            buildStaticDisplayAnimationSet(di), tex.width, tex.height, di.image,
+          );
+          // 与 animFile 分支同一个入口：之后阴影/透视/排序/光照一律走普通 NPC 那条
+          npc.loadSprite(tex, animDef, 'idle', null);
+          // loadSprite 末尾会按 initialFacing 摆朝向；只有 NPC 自己没表态时才让展示图的
+          // facing 说了算（与 spriteSort 同一条取舍：NpcDef 开口就以 NpcDef 为准）。
+          if (!defToUse.initialFacing && di.facing === 'left') {
+            npc.setFacing(-1, 0);
+          }
+        } catch (_e) {
+          // 加载失败时保留占位外观（与 animFile 分支同口径）
+        }
+      }
     }
     if (overrides) {
       const anim = (overrides as NpcRuntimeOverride).animState?.trim();
@@ -1373,6 +1443,9 @@ export class SceneManager implements IGameSystem {
       }
     }
     let npcs = 0;
+    // 每个入场 NPC 恰好一步，**与 animFile 有没有无关**：静态贴图实体（displayImage
+    // 合成单帧动画集）也走同一次 instantiateNpc，故已被这里算进去。别在这儿补
+    // "有没有动画包"的分支——补了就与下面那个装载循环对不上，进度条会走过头。
     for (const npcDef of sceneData.npcs ?? []) {
       const boundToActive = !!(activeCutsceneId && isEntityBoundToCutscene(npcDef, activeCutsceneId));
       if (boundToActive) {
@@ -1440,7 +1513,19 @@ export class SceneManager implements IGameSystem {
         applyCharacterDefaults(npcDef, this.characterRegistry),
         snap as Record<string, SceneEntityRuntimeValue> | undefined,
       );
-      if (!defToUse.animFile) continue;
+      if (!defToUse.animFile) {
+        // 静态贴图实体：预载展示图 + 同批预载法线图（挂滤镜时只做同步缓存读）。
+        // 照热点展示图那两行写——没烘法线是合法的，getNormalAtlasSource 取不到即平面法线。
+        const sdi = staticDisplayImageOf(defToUse);
+        if (sdi) {
+          add({ type: 'texture', path: sdi.image, label: `NPC 静态贴图: ${npcDef.id}` });
+          const staticNormalPath = normalAtlasUrlFor(sdi.image);
+          if (staticNormalPath) {
+            add({ type: 'texture', path: staticNormalPath, label: `NPC 静态贴图法线: ${npcDef.id}` });
+          }
+        }
+        continue;
+      }
       add({ type: 'json', path: defToUse.animFile, label: `NPC 动画清单: ${npcDef.id}` });
       try {
         const animRaw = await this.assetManager.loadJson<AnimationSetDefInput>(defToUse.animFile);

@@ -3,7 +3,7 @@ id: cutscene-step-semantics
 title: 过场步骤语义(parallel/镜头位/运镜/字幕推进)
 domain: runtime
 type: mechanism
-summary: parallel 是 fork-join 组内无时序;匿名镜头位自动顶掉;运镜受相机夹紧约束、跳过快进到编排终姿;subtitleAutoAdvance 三态;typewriter 缺省按台词面分家
+summary: 入场三态(就地开演/搬人/跨场景必落人);parallel 是 fork-join 组内无时序;匿名镜头位自动顶掉;运镜受相机夹紧约束、跳过快进到编排终姿;subtitleAutoAdvance 三态;typewriter 缺省按台词面分家
 status: active
 authority:
   - src/systems/CutsceneManager.ts
@@ -18,7 +18,8 @@ triggers:
 verified_by:
   - src/systems/CutsceneTypewriter.test.ts
   - tools/editor/tests/test_cutscene_typewriter_toggle.py
-last_governed: 2026-08-05
+  - tools/editor/tests/test_cutscene_spawn_optional.py
+last_governed: 2026-09-03
 ---
 
 ## 是什么(一句话)
@@ -39,6 +40,10 @@ cutscene 声画编排可用的原语边界:哪些时序纯数据做得到、哪�
   禁用步**不发 `cutscene:step`**(调试 HUD / 编辑器播放头当它不存在);顶层下标不变
   (数据仍在数组里),`fastForwardTo`「从第 N 步开播」照旧对得上编辑器行号。
   `parallel` 上写 `disabled` = 整组连子轨一起跳。
+- **过场入场三态(策划最常误解处,目标场景与出生点本来就都可选)**:
+  ①**什么都不写 = 就地开演**,玩家与镜头一动不动;②**写了出生点 = 搬人搬镜头**;
+  ③**跨场景必落人**(没写出生点就落目标场景的默认出生点)。显式坐标覆盖出生点。
+  编辑器把空值显示成"不指定:就地开演"而非"默认",就是为了不把可选读成必填。
 - **parallel 是 fork-join**:tracks 同时启动、全部完成才继续,组内**没有 sequence**,
   "先等 N 秒再做 X"纯数据做不到(L2 候选,不要硬凑)。可行替代:`parallel{flashWhite|showImg}`、
   `parallel{playSfx|showSubtitle}`。skip 用 race 放弃在途轨道、靠步代际终止,别绕过。
@@ -49,8 +54,10 @@ cutscene 声画编排可用的原语边界:哪些时序纯数据做得到、哪�
   ——必须**先 `cameraZoom` 收小视口再 move**,顺序反了照样不动。
 - **`cameraZoom` 的 scale 缺省/≤0 = 恢复场景配置基线**(`scene.camera.zoom`),
   内容侧勿写基线字面量。
-- **`restoreState:false` 的过场被跳过时,引擎快进相机到编排终姿**(steps 里最后的
-  cameraMove/cameraZoom 目标值,先 zoom 后 snap 保证夹紧正确),与自然播完一致——编排者可依赖此语义。
+- **`restoreState:false` 的过场被跳过时,引擎快进相机到编排终姿**(先 zoom 后 snap 保证夹紧正确),
+  与自然播完一致——编排者可依赖此语义。**谁能贡献这个终姿以代码为准**
+  (`applyFinalCameraPoseForSkip`):只有 cameraMove/cameraZoom。轨迹不驱动相机(2026-09-04 起
+  `playTrajectory` 只挂实体,见 [[entity-trajectory]]),所以轨迹步不参与竞争。
 - **showImg**:`kenBurns`(缓推缓移,fire-and-forget 不阻塞,hideImg/换图/跳过即停)、`zIndex`
   (parallel 并发加载 z 序不定,多层合成**必须**显式 zIndex;电影黑边恒 10000)。渲染器只支持
   静态纹理 + kenBurns,真动画 FX 走 present:animLayer。
@@ -84,6 +91,10 @@ cutscene 声画编排可用的原语边界:哪些时序纯数据做得到、哪�
 - **「说话人：正文」那种字幕走 HTMLText**,逐字是逐帧重建 HTML(Pixi 的 HTMLText 每次改文本
   都要重新栅格化一张 SVG)。短句无碍,长段落别在这类字幕上开逐字。
 - 分层视差的前景句柄要管完整生命周期:每个基帧要么 show 要么 hideImg,结尾也要 hide,否则残留到后帧。
+- **`skip()` 至今不取消在途 `moveEntityTo`**(2026-09-03 核实,未修):按 Esc 时渲染侧在途补间
+  被掐断、烘焙轨迹一步落终态,但**实体的编排位移不会**——那一步的 await 要等实体真的走到
+  目标点才归来,过场才收得了尾。长距离走位的过场按 Esc 会"卡"上好几秒,主诉通常是
+  "跳过没生效"。
 
 ## 怎么验证
 

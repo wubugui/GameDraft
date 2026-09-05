@@ -93,6 +93,7 @@ class GovernanceJob:
 TOOLS: tuple[ToolAction, ...] = (
     ToolAction("主编辑器", "editor", "内容、场景、资源索引"),
     ToolAction("生产工作台", "workbench", "每日检查、剧情单元、素材任务"),
+    ToolAction("构建管理工作台", "build-workbench", "发行版 ship 定时构建、归档与留档"),
     ToolAction("对话图", "dialogue-graph", "Graph 对话和节点关系"),
     ToolAction(
         "叙事调试器",
@@ -107,6 +108,9 @@ TOOLS: tuple[ToolAction, ...] = (
     ToolAction("LightVolume 实验室", "lightvol", "深度图烘焙辐照度体积 / quad 预览(Web)"),
     ToolAction("光照烘焙实验室", "char-lighting",
                "光照烘焙的唯一入口:深度/标定/probe/体素/行走面 + 场景法线与天穹可见性,产物统一落 lighting/<背景图名>/(独立窗口,关窗即退,不占端口)"),
+    ToolAction("轨迹工作台", "trajectory-workbench",
+               "实体轨迹动画：加载场景（可还原 3D 伪世界）拉线 / 抛体物理烘成独立资产，"
+               "playTrajectory 在任何场景挂任何实体播（独立窗口，零浏览器缓存）"),
     ToolAction("动画资源工作台", "anim-preview", "A→H 版本图 / 人工 R 装配 / 游戏真实渲染终验(Web IDE)"),
     ToolAction("Parallax 编辑器", "parallax-editor", "过场视差场景可视化编辑：图层/关键帧/轨迹，存 parallax_scenes.json(Web)"),
     ToolAction("Skill/Workflow 治理", "skill-governance", "扫描 skill、workflow 和 agent 入口，生成报告并打开 dashboard"),
@@ -165,22 +169,16 @@ def load_dev_shortcuts(root: Path | None = None) -> dict[str, list[dict[str, str
 
     add_scene("dev_room", "Dev Room")
 
-    map_config = _read_json_file(data_dir / "map_config.json")
-    map_nodes = map_config
-    if isinstance(map_config, dict):
-        map_nodes = map_config.get("nodes")
-    if isinstance(map_nodes, list):
-        for item in map_nodes:
-            if not isinstance(item, dict):
-                continue
-            scene_id = str(item.get("sceneId") or item.get("id") or "").strip()
-            name = str(item.get("name") or "").strip()
-            add_scene(scene_id, name)
-
-    game_config = _read_json_file(data_dir / "game_config.json")
-    if isinstance(game_config, dict):
-        add_scene(str(game_config.get("initialScene") or ""))
-        add_scene(str(game_config.get("fallbackScene") or ""))
+    # 全量场景直接来自 scenes/*.json（场景 id = 文件名，与运行时同口径）。此前只从
+    # map_config 节点 + game_config 入口派生：map_config 只登记玩家可走的节点，梦境 /
+    # 演出 / 测试场景都不在其中，而 dev 控制台要跳的正是这些——新建一个不进地图的场景，
+    # 这里就永远看不见它。现在新建场景不需要登记到任何地方。
+    rest: list[tuple[str, str]] = []
+    for scene_json in (project_root / "public" / "assets" / "scenes").glob("*.json"):
+        sid = scene_json.stem
+        rest.append((_scene_display_name(project_root, sid), sid))
+    for label, sid in sorted(rest):
+        add_scene(sid, label)
 
     narrative: list[DevShortcut] = []
     narrative_config = _read_json_file(data_dir / "dev_narrative_warps.json")
@@ -346,6 +344,8 @@ class ConsoleState:
                 cwd=str(self.root),
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=120,
                 check=False,
             )
@@ -899,6 +899,8 @@ class ConsoleState:
             "stdout": subprocess.PIPE,
             "stderr": subprocess.STDOUT,
             "text": True,
+            "encoding": "utf-8",
+            "errors": "replace",
             "bufsize": 1,
         }
         if self.is_windows:
@@ -954,6 +956,7 @@ class ConsoleState:
                     ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
                     capture_output=True,
                     text=True,
+                    errors="replace",
                     check=False,
                 )
             except OSError as exc:

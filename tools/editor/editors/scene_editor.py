@@ -70,11 +70,16 @@ from ..shared.entity_sort_math import (
     npc_sort_band_of,
     sort_foot_y_of,
 )
-from .scene_undo import SceneUndoController
+from .scene_undo import SceneUndoController, broadcast_external_scene_write
 from ..shared.entity_transform_math import (
     entity_perspective_factor,
+    DEFAULT_ENTITY_ANCHOR_X,
+    DEFAULT_ENTITY_ANCHOR_Y,
+    entity_anchor_of,
+    entity_contact_point,
     entity_rotation_deg_of,
     entity_scale_of,
+    is_default_entity_anchor,
     inverse_transform_world_vec,
     perspective_axis_data,
     perspective_scale_at,
@@ -85,6 +90,8 @@ from ..project_model import ProjectModel
 from .. import theme
 from ..shared import confirm
 from ..shared.list_affordances import make_list_search_box
+from ..shared.scene_ids import SCENE_ID_HINT, new_scene_skeleton, scene_id_problem
+from .scene_time_variant_form import TimeVariantForm, variant_summary
 from ..shared.rich_text_field import RichTextLineEdit
 from ..shared.condition_editor import ConditionEditor
 from ..shared.action_editor import ActionEditor, FilterableTypeCombo
@@ -116,6 +123,7 @@ from ..shared.hex_color_pick_row import HexColorPickRow
 from ..shared.portrait_catalog import load_portrait_sets
 from ..shared.project_paths import ProjectPaths
 from ..shared.fonts import MONO_FONT_FAMILY
+from ..shared.numeric_roundtrip import preserve_numeric_repr
 from . import scene_lights
 from .shadow_bindings_ui import ShadowBindingsEditor
 
@@ -282,6 +290,25 @@ def _hotspot_display_image_dict(
         d["spriteSort"] = ss
     return d
 
+def _npc_display_image_dict(path: str, ww: float, hh: float, prev: object) -> dict:
+    """NPC 静态贴图的 displayImage —— **复用热点那一份形状**，不另写一套。
+
+    面板只出 image / worldWidth / worldHeight 三个控件：
+    - `facing`：NPC 的朝向真相是 `initialFacing`，这里不另设控件；已在盘上的值
+      **原样透传**（往返契约「运行时消费但 GUI 改不到的键，序列化出口兜底透传」，
+      抹掉它就是打开一次即静默丢数据）。
+    - `spriteSort`：NPC 的档位真相是 `NpcDef.spriteSort`（运行时不读 displayImage 里
+      这一份），同样只透传不新增。
+    数值按 `preserve_numeric_repr` 惯例回写原始 int/float 表示。
+    """
+    old = prev if isinstance(prev, dict) else None
+    d = _hotspot_display_image_dict(
+        path, ww, hh,
+        str((old or {}).get("facing", "") or "right"),
+        str((old or {}).get("spriteSort", "") or "default"),
+    )
+    return preserve_numeric_repr(d, old)
+
 #: 加载期把碰撞多边形归一成局部坐标。**热点与 NPC 一起迁**（旧实现只迁热点，
 #: 于是 NPC 那边"两种坐标系"被永久摊进了每一个读点）。实现在 shared/，新画布共用
 #: 同一个出口 —— 兼容分支只该存在一处。
@@ -344,6 +371,12 @@ from ..shared.anim_atlas_preview import (          # noqa: E402
     spritesheet_public_path as _spritesheet_public_path,
     reference_world_size as _npc_reference_world_size,
 )
+from ..shared.static_display_sprite import (      # noqa: E402
+    static_display_facing_x as _static_display_facing_x,
+    static_display_image_of as _static_display_image_of,
+    static_display_pixmap as _static_display_pixmap,
+    static_display_world_pair as _static_display_world_pair,
+)
 
 def _npc_initial_playback_tuple(npc: dict) -> tuple[float, bool, int | None, int | None]:
     """从 npc dict 解析 initialAnimPlayback → (speed, reverse, holdFrame, startFrame)。
@@ -366,6 +399,22 @@ def _npc_initial_playback_tuple(npc: dict) -> tuple[float, bool, int | None, int
 
     return spd, d.get("reverse") is True, _nn(d.get("holdFrame")), _nn(d.get("startFrame"))
 
+def _npc_contact_persp(canvas, ent: dict, rt, x: float, y: float) -> float:
+    """NPC 精灵预览的透视系数：在**接地点**处求（近大远小的依据是"脚踩在哪"）。
+
+    与运行时 ``Npc._refreshDepthScale`` 同口径。接地点自身含透视系数、系数又按
+    接地点求值 —— 一次不动点迭代：先在锚点采一次定位接地点，再在接地点采一次。
+    **缺省锚点时接地点恒等于锚点**，第二次采样被跳过，与改造前逐位相同。
+    """
+    f0 = canvas.persp_factor(ent, "npc", x, y)
+    if is_default_entity_anchor(*entity_anchor_of(ent)):
+        return f0
+    cx, cy = entity_contact_point(
+        ent, float(getattr(rt, "world_w", 0) or 0), float(getattr(rt, "world_h", 0) or 0),
+        f0, getattr(rt, "facing_x", 1), x, y)
+    return canvas.persp_factor(ent, "npc", cx, cy)
+
+
 class _SceneNpcAnimRuntime:
     """场景画布上单个 NPC 的循环动画（与脚底锚点、世界尺寸一致）。"""
 
@@ -378,7 +427,7 @@ class _SceneNpcAnimRuntime:
         "cell_w", "cell_h", "atlas_frames",
         "world_w", "world_h", "cursor",
         "facing_x", "_prev_x", "_prev_y", "_have_prev",
-        "inst_scale", "inst_rot_deg", "persp",
+        "inst_scale", "inst_rot_deg", "persp", "anchor_x", "anchor_y",
         "ref_speed", "visible",
     )
 
@@ -436,6 +485,9 @@ class _SceneNpcAnimRuntime:
         # 实例 transform（quad 级真变换预览；与运行时 container 级施加同口径）
         self.inst_scale = 1.0
         self.inst_rot_deg = 0.0
+        # 归一化锚点（`NpcDef.anchor`）：缺省底中＝脚底，与运行时 SpriteEntity 同口径
+        self.anchor_x = DEFAULT_ENTITY_ANCHOR_X
+        self.anchor_y = DEFAULT_ENTITY_ANCHOR_Y
         # 场景透视缩放系数（近大远小预览；随位置每拍拉取，与运行时 sprite 级施加同口径）
         self.persp = 1.0
         # 本 runtime 所播状态的步速匹配基准（anim.json state.referenceSpeed；巡逻预览步速缩放用）
@@ -445,9 +497,15 @@ class _SceneNpcAnimRuntime:
         # 于是"把精灵藏起来"这件事最多活 8 毫秒——外面怎么改都像没生效。
         self.visible = True
 
-    def set_instance_transform(self, scale: float, rot_deg: float) -> None:
+    def set_instance_transform(
+        self, scale: float, rot_deg: float,
+        anchor_x: float = DEFAULT_ENTITY_ANCHOR_X,
+        anchor_y: float = DEFAULT_ENTITY_ANCHOR_Y,
+    ) -> None:
         self.inst_scale = float(scale) if scale and scale > 0 else 1.0
         self.inst_rot_deg = float(rot_deg) if rot_deg else 0.0
+        self.anchor_x = min(1.0, max(0.0, float(anchor_x)))
+        self.anchor_y = min(1.0, max(0.0, float(anchor_y)))
 
     def set_playback(
         self, speed: float, reverse: bool,
@@ -502,7 +560,9 @@ class _SceneNpcAnimRuntime:
         if self.inst_rot_deg:
             t.rotate(self.inst_rot_deg)
         t.scale(sx, sy)
-        t.translate(-fw * 0.5, -float(fh))
+        # 按锚点摆图（缺省 0.5/1 代回即改造前那行 `-fw*0.5, -fh`）。
+        # 平移在 scale 之后 ⇒ 单位是**帧像素**，镜像（sx<0）绕的仍是同一个锚点。
+        t.translate(-fw * self.anchor_x, -fh * self.anchor_y)
         self.item.setTransform(t)
         self.item.setPos(0.0, 0.0)
         # 过闸门，不是无条件 show()：被位面/时段/过场过滤掉的 NPC，其精灵每拍都要
@@ -4681,6 +4741,7 @@ class ScenePropertyPanel(QScrollArea):
         新包只有整个重开工程才看得见)。只加不改,不会冲掉动画面板未保存的编辑。
         """
         self._model.discover_new_animation_bundles()
+        self._tv_form.reload_refs()
         for attr, provider in (
             ("_sc_filter", self._model.all_filter_ids),
             ("_hs_pickup_item", self._model.all_item_ids),
@@ -4998,11 +5059,13 @@ class ScenePropertyPanel(QScrollArea):
         只列图片、且**排掉派生产物**（碰撞图/深度图不是背景）—— 选到它们不会报错，
         只会在跑起来时整张画变成一张深度图，作者很难反推。
         """
-        sid = str(self._scene_id or "").strip()
+        # ⚠ 此前这里读的是 `self._scene_id` —— 面板上根本没有这个属性（那是另一个类的），
+        # 「+ 时段外观…」一点就 AttributeError，弹窗永远出不来，而 Qt 槽里的异常只落 stderr。
+        # 这就是"场景编辑器没法改其他时段"的第一层原因。目录也改走工程路径，不再按仓库相对路径拼。
+        sid = str(self._editing_scene_id or "").strip()
         if not sid:
             return []
-        d = (Path(__file__).resolve().parents[3]
-             / "public" / "resources" / "runtime" / "scenes" / sid)
+        d = self._model.paths.scene_runtime_dir(sid)
         if not d.is_dir():
             return []
         skip = {"collision", "raw_depth_rg"}
@@ -5015,6 +5078,59 @@ class ScenePropertyPanel(QScrollArea):
             out.append(f.name)
         out.sort(key=lambda n: (n != "background.png", n))
         return out
+
+    def _scene_runtime_files(self) -> list[str]:
+        """本场景运行时目录里的全部文件名（深度图 / 碰撞图候选，不排派生产物）。"""
+        sid = str(self._editing_scene_id or "").strip()
+        if not sid:
+            return []
+        d = self._model.paths.scene_runtime_dir(sid)
+        if not d.is_dir():
+            return []
+        return sorted(f.name for f in d.iterdir() if f.is_file())
+
+    def _tv_base_provider(self) -> dict:
+        """时段表单预填用的「白天基底」：光照取工作副本、其余取面板上此刻的值。"""
+        # 一律 getattr：表单在面板构造中途就会建好，那时这些属性未必都在。
+        st = getattr(self, "_staging_scene", None) or {}
+        amb = self._ambient_ids_from_widgets() if hasattr(self, "_sc_ambient_list") else []
+        bgm = getattr(self, "_sc_bgm", None)
+        flt = getattr(self, "_sc_filter", None)
+        return {
+            "lighting": getattr(self, "_sc_lighting", None),
+            "depthConfig": st.get("depthConfig"),
+            "ambientSounds": amb,
+            "bgm": bgm.current_id().strip() if bgm is not None else "",
+            "filterId": flt.current_id() if flt is not None else "",
+        }
+
+    def _tv_selected_phase(self) -> str:
+        r = self._sc_tv_table.currentRow()
+        it = self._sc_tv_table.item(r, 0) if r >= 0 else None
+        return str(it.data(Qt.ItemDataRole.UserRole) or "") if it else ""
+
+    def _select_tv_row(self, pid: str) -> None:
+        t = self._sc_tv_table
+        for r in range(t.rowCount()):
+            it = t.item(r, 0)
+            if it is not None and str(it.data(Qt.ItemDataRole.UserRole) or "") == pid:
+                t.setCurrentCell(r, 0)
+                return
+        t.setCurrentCell(-1, -1)
+
+    def _on_tv_row_changed(self) -> None:
+        """选中表里某个时段 → 下方表单装载它的变体（就地编辑同一个 dict）。"""
+        pid = self._tv_selected_phase()
+        v = self._time_variants.get(pid) if pid else None
+        if pid and v is None:
+            v = self._time_variants.setdefault(pid, {})
+        self._tv_form.load(pid, v)
+
+    def _on_tv_form_changed(self) -> None:
+        pid = self._tv_selected_phase()
+        self._refresh_tv_table()
+        self._select_tv_row(pid)
+        self._emit_props_changed()
 
     def _on_tv_add(self) -> None:
         pairs = [(pid, label) for pid, label in self._model.all_time_phase_ids() if pid]
@@ -5061,83 +5177,11 @@ class ScenePropertyPanel(QScrollArea):
         v = self._time_variants.setdefault(pid, {})
         v["backgrounds"] = [{"image": img, "x": 0, "y": 0}]
         self._refresh_tv_table()
+        self._select_tv_row(pid)      # 建完就打开它的表单，环境/声音/滤镜接着配
         self._emit_props_changed()
 
-    #: 可以逐时段覆盖的环境块。**刻意不含 `lights`** —— 灯按各自的 phases 过滤，
-    #: 在这儿换整组就有两个真相源（运行时也不读变体里的 lights，校验器会报 error）。
-    _TV_ENV_BLOCKS = (
-        ('sky', '天光（色温/强度/半球权重）'),
-        ('fog', '雾（σ/高度衰减/颜色）'),
-        ('display', '显示变换（曝光/tonemap/调色）'),
-        ('dehaze', '去霾（已停用，留作回退）'),
-        ('giGain', 'GI 反弹增益'),
-        ('aoStrength', 'AO 强度'),
-        ('emissive', '灯体自发光/光晕'),
-    )
-
-    def _on_tv_env(self) -> None:
-        """把当前场景光照的某几块快照成选中时段的覆盖。
-
-        为什么是「快照」而不是另建一套表单：作者实际的工作流是在游戏里 F2 实时调、
-        经同步槽回到编辑器的场景光照上。再造一份逐时段的完整光照表单，等于让他在
-        两个地方调同一批参数 —— 而且那份表单没有实时预览，调不准。
-        """
-        r = self._sc_tv_table.currentRow()
-        if r < 0:
-            QMessageBox.information(self, "先选一个时段", "在上面的表里选中要配环境的那一行。")
-            return
-        it = self._sc_tv_table.item(r, 0)
-        pid = str(it.data(Qt.ItemDataRole.UserRole) or "") if it else ""
-        if not pid:
-            return
-        base = self._sc_lighting or {}
-        if not base:
-            QMessageBox.information(
-                self, "本场景还没有光照块",
-                "先在「场景光照」里配好白天那份，再把某几块快照给某个时段。")
-            return
-        cur = dict(((self._time_variants.get(pid) or {}).get("lighting") or {}))
-
-        dlg = QDialog(self)
-        dlg.setWindowTitle(f"时段「{pid}」的环境覆盖")
-        lay = QVBoxLayout(dlg)
-        tip = QLabel(
-            "勾上的块会**从当前场景光照取一份快照**，作为这个时段的覆盖；"
-            "没勾的沿用白天那份。\n"
-            "⚠ 灯不在这里 —— 灯按各自的「时段归属」过滤（在灯面板上配）。"
-        )
-        tip.setWordWrap(True)
-        lay.addWidget(tip)
-        boxes = {}
-        for key, label in self._TV_ENV_BLOCKS:
-            cb = QCheckBox(f"{label}　[{key}]")
-            cb.setChecked(key in cur)
-            cb.setEnabled(key in base)
-            if key not in base:
-                cb.setToolTip(f"当前场景光照里没有 {key}，没得可快照")
-            boxes[key] = cb
-            lay.addWidget(cb)
-        bbox = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        bbox.accepted.connect(dlg.accept)
-        bbox.rejected.connect(dlg.reject)
-        lay.addWidget(bbox)
-        if dlg.exec() != QDialog.DialogCode.Accepted:
-            return
-
-        out = {}
-        for key, _label in self._TV_ENV_BLOCKS:
-            if not boxes[key].isChecked() or key not in base:
-                continue
-            v = base[key]
-            out[key] = copy.deepcopy(v) if isinstance(v, (dict, list)) else v
-        v = self._time_variants.setdefault(pid, {})
-        if out:
-            v["lighting"] = out
-        else:
-            v.pop("lighting", None)
-        self._refresh_tv_table()
-        self._emit_props_changed()
+    #: 可以逐时段覆盖的环境块。定义在 scene_lights（表单与同步拆分共用），这里只留别名。
+    _TV_ENV_BLOCKS = scene_lights.TV_ENV_BLOCKS
 
     def _on_tv_del(self) -> None:
         r = self._sc_tv_table.currentRow()
@@ -5152,25 +5196,23 @@ class ScenePropertyPanel(QScrollArea):
 
     def _refresh_tv_table(self) -> None:
         t = self._sc_tv_table
-        t.setRowCount(0)
-        for pid, v in sorted((self._time_variants or {}).items()):
-            img = ""
-            bgs = (v or {}).get("backgrounds") or []
-            if bgs and isinstance(bgs[0], dict):
-                img = str(bgs[0].get("image") or "")
-            r = t.rowCount()
-            t.insertRow(r)
-            a = QTableWidgetItem(pid)
-            a.setData(Qt.ItemDataRole.UserRole, pid)
-            t.setItem(r, 0, a)
-            # 变体里除背景外还有别的键时标出来 —— 那些暂时只能手写，别让人以为没配
-            t.setItem(r, 1, QTableWidgetItem(img))
-            lit = (v or {}).get("lighting") or {}
-            other = [k for k in (v or {}) if k not in ("backgrounds", "lighting")]
-            cell = "、".join(sorted(lit)) if lit else "—"
-            if other:
-                cell += f"　(另有 {'/'.join(sorted(other))})"
-            t.setItem(r, 2, QTableWidgetItem(cell))
+        t.blockSignals(True)
+        try:
+            t.setRowCount(0)
+            for pid, v in sorted((self._time_variants or {}).items()):
+                img = ""
+                bgs = (v or {}).get("backgrounds") or []
+                if bgs and isinstance(bgs[0], dict):
+                    img = str(bgs[0].get("image") or "")
+                r = t.rowCount()
+                t.insertRow(r)
+                a = QTableWidgetItem(pid)
+                a.setData(Qt.ItemDataRole.UserRole, pid)
+                t.setItem(r, 0, a)
+                t.setItem(r, 1, QTableWidgetItem(img or "（沿用白天）"))
+                t.setItem(r, 2, QTableWidgetItem(variant_summary(v)))
+        finally:
+            t.blockSignals(False)
 
     # ---- 出口锚点（日夜块）----
     # 编辑落在工作副本 self._exit_anchors 上，随 props 的 pending/Apply 一起提交，
@@ -5501,7 +5543,7 @@ class ScenePropertyPanel(QScrollArea):
         tv_hint.setStyleSheet("color:#888;")
         dn_lay.addWidget(tv_hint)
         self._sc_tv_table = QTableWidget(0, 3)
-        self._sc_tv_table.setHorizontalHeaderLabels(["时段", "背景图", "环境覆盖"])
+        self._sc_tv_table.setHorizontalHeaderLabels(["时段", "背景图", "覆盖了什么"])
         self._sc_tv_table.horizontalHeader().setStretchLastSection(True)
         self._sc_tv_table.verticalHeader().setVisible(False)
         self._sc_tv_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -5510,23 +5552,25 @@ class ScenePropertyPanel(QScrollArea):
         dn_lay.addWidget(self._sc_tv_table)
         tv_btns = QHBoxLayout()
         tv_add = QPushButton("+ 时段外观…")
-        tv_add.setToolTip("给某个时段指定一张背景原画（候选＝本场景运行时目录里的图）")
+        tv_add.setToolTip("给某个时段指定一张背景原画（候选＝本场景运行时目录里的图），"
+                          "然后在下方表单里配它的环境 / 深度 / 声音 / 滤镜")
         tv_add.clicked.connect(self._on_tv_add)
-        tv_env = QPushButton("环境覆盖…")
-        tv_env.setToolTip(
-            "把当前场景光照的某几块快照成该时段的覆盖（雾/天光/显示变换…）。\n"
-            "没勾的块沿用白天那份 —— 只写差异，不整块复制。"
-        )
-        tv_env.clicked.connect(self._on_tv_env)
-        tv_btns_extra = tv_env
         tv_del = QPushButton("− 删除选中")
         tv_del.setToolTip("删掉该时段的外观配置（该时段回到沿用白天）")
         tv_del.clicked.connect(self._on_tv_del)
         tv_btns.addWidget(tv_add)
-        tv_btns.addWidget(tv_btns_extra)
         tv_btns.addWidget(tv_del)
         tv_btns.addStretch(1)
         dn_lay.addLayout(tv_btns)
+        # 选中表里某一行 → 下方表单编辑该时段的**每一项**（此前只有背景能在面板上改，
+        # 环境覆盖靠快照、深度 / 环境音 / BGM / 滤镜只能手写 JSON）。
+        self._tv_form = TimeVariantForm(
+            self._model, base_provider=self._tv_base_provider,
+            bg_candidates=self._scene_bg_candidates)
+        self._tv_form.set_runtime_files_provider(self._scene_runtime_files)
+        self._tv_form.changed.connect(self._on_tv_form_changed)
+        self._sc_tv_table.itemSelectionChanged.connect(self._on_tv_row_changed)
+        dn_lay.addWidget(self._tv_form)
 
         exit_hint = QLabel(
             "出口锚点＝NPC 走到这里才隐去（反过来入场从这里走进来）。\n"
@@ -6193,6 +6237,7 @@ class ScenePropertyPanel(QScrollArea):
             self._time_variants = (copy.deepcopy(raw_tv)
                                    if isinstance(raw_tv, dict) else {})
             self._refresh_tv_table()
+            self._tv_form.load("", None)       # 换场景：表单退回"没选中"，别拿着上个场景的 dict
             raw_anchors = st.get("exitAnchors")
             self._exit_anchors = [
                 copy.deepcopy(a) for a in raw_anchors if isinstance(a, dict)
@@ -7120,9 +7165,18 @@ class ScenePropertyPanel(QScrollArea):
         if getattr(self, "_sl_sync_status", None) is not None:
             self._sl_sync_status.setText(text)
 
-    def sync_lighting_snapshot(self) -> dict | None:
-        """当前这份 lighting（工作副本本体，调用方只读不改）。没配 lighting 则 None。"""
-        return self._sc_lighting
+    def sync_lighting_snapshot(self, phase: str = "") -> dict | None:
+        """要发给游戏的那份 lighting（调用方只读不改）。没配 lighting 则 None。
+
+        `phase` 非空 = 游戏正处在那个时段：发 `基底 ⊕ timeVariants[phase].lighting`
+        （与运行时 mergeSceneLighting 同式）。发裸基底等于把白天灌进正在夜里的游戏——
+        此前就是这么发的，游戏一收到编辑器的推送夜就变白天。
+        """
+        base = self._sc_lighting
+        if not base or not phase:
+            return base
+        variant = (getattr(self, "_time_variants", {}) or {}).get(phase) or {}
+        return scene_lights.merge_lighting_for_phase(base, variant.get("lighting"))
 
     def sync_selected_id(self) -> str | None:
         """本页当前选中那盏灯的 id（没选中 → None）。"""
@@ -7178,6 +7232,42 @@ class ScenePropertyPanel(QScrollArea):
         self._emit_props_changed()
         self._sl_status.setText("↔ 已同步游戏里的灯位（%d 盏）——记得 Save All 才落盘" % n)
 
+    def apply_pulled_lighting(self, lit: dict, phase: str = "") -> str:
+        """把游戏发布的 lighting 落进工作副本，**按时段归属拆**；返回状态栏文案。
+
+        `phase` 为空 = 游戏在白天基底：整块套进 `_sc_lighting`（老路）。
+        非空 = 游戏发的是「基底 ⊕ 该时段覆盖」的合并结果：环境块里与基底不同的进
+        `timeVariants[phase].lighting`（相同的从变体里去掉），灯与其余键照常写回基底。
+        以前这种情况一律拒收，作者在夜里 F2 调好的参数落不回数据。
+        """
+        if not phase:
+            self.apply_synced_lighting(lit)
+            return self._sl_status.text()
+        base = self._sc_lighting or scene_lights.default_lighting_block()
+        v = self._time_variants.setdefault(phase, {})
+        new_base, override = scene_lights.split_phase_pull(lit, base, v.get("lighting"))
+        keep = self._sl_selected
+        self._sc_lighting = new_base
+        if override:
+            v["lighting"] = override
+        else:
+            v.pop("lighting", None)
+        self._recompute_light_heights()
+        self._sc_lights_fold.set_expanded(bool(self._sc_lighting.get("lights")))
+        n = len(self._sc_lighting.get("lights") or [])
+        self._fill_sl_table(select_row=keep if 0 <= keep < n else (0 if n else -1))
+        self._player_shadow_bind.set_lights(self._sc_lighting.get("lights"))
+        sel = self._tv_selected_phase()
+        self._refresh_tv_table()
+        self._select_tv_row(sel or phase)
+        if self._tv_selected_phase() == phase:
+            self._tv_form.load(phase, self._time_variants.get(phase))
+        self._emit_props_changed()
+        text = ("↔ 已同步游戏里的灯位（%d 盏）；时段「%s」的环境覆盖 %s——记得 Save All 才落盘"
+                % (n, phase, "、".join(sorted(override)) if override else "与白天相同（已清）"))
+        self._sl_status.setText(text)
+        return text
+
     def _on_sl_pull_runtime(self) -> None:
         """立即抓一次（平时靠自动同步）。走 dev server 的同步槽，游戏在哪个浏览器里都行。"""
         expect = self.current_scene_id
@@ -7197,19 +7287,26 @@ class ScenePropertyPanel(QScrollArea):
         if lit is None:
             self._sl_status.setText(f"⚠ 拉取失败：{err}")
             return
+        phase = scene_lights.pulled_phase(payload)
         n = len(lit.get("lights") or [])
         cur = len(self._sl_lights())
+        where = (f"游戏此刻在时段「{phase}」：天光/雾/显示变换等与白天不同的块写进该时段的覆盖，"
+                 "灯位写回白天基底。" if phase
+                 else "天光/雾/显示变换等整块参数一并替换。")
         r = QMessageBox.question(
             self,
             "从运行时拉取灯位",
             f"用运行时的 lighting 块覆盖本场景（灯 {cur} 盏 → {n} 盏）？\n"
-            "天光/雾/显示变换等整块参数一并替换。\n"
+            f"{where}\n"
             "还没落盘：确认后还要按 Save All（之前可以 Ctrl+Z 撤销）。",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
         if r != QMessageBox.StandardButton.Yes:
             self._sl_status.setText("已取消拉取")
+            return
+        if phase:
+            self.apply_pulled_lighting(copy.deepcopy(lit), phase)
             return
         self._sc_lighting = copy.deepcopy(lit)
         self._sl_selected = -1
@@ -9091,6 +9188,28 @@ class ScenePropertyPanel(QScrollArea):
             self.interaction_range_changed.emit(
                 "npc", eid, float(npc.get("interactionRange", 50) or 0))
 
+    def _on_npc_anchor_live(self, _v: float) -> None:
+        """锚点实时写入 staging：缺省底中**不落键**。
+
+        与 scale/rotation 同一纪律（见 `_write_transform_fields_live`）：
+        缺省值写进 JSON 会让"打开→不改→保存"凭空多出键。
+        """
+        npc = self._pending_npc
+        if npc is None or self._stack.currentWidget() != self._npc_panel:
+            return
+        ax = round(float(self._npc_anchor_x.value()), 3)
+        ay = round(float(self._npc_anchor_y.value()), 3)
+        if is_default_entity_anchor(ax, ay):
+            npc.pop("anchor", None)
+        else:
+            npc["anchor"] = {"x": ax, "y": ay}
+        eid = str(npc.get("id", ""))
+        self._emit_props_changed()
+        if eid:
+            # 锚点一改，精灵摆位 / 接地点 / 接地线全变 ——
+            # 走与坐标改动同一条刷新链
+            self.npc_xy_live_changed.emit(eid)
+
     def sync_transform_widgets(self, kind: str, eid: str, s: float, rot: float) -> None:
         """gizmo 拖动时反向同步数值框（blockSignals，防回写环）。"""
         if kind == "hotspot":
@@ -9527,6 +9646,35 @@ class ScenePropertyPanel(QScrollArea):
             "实例旋转（度，绕脚底锚点）：quad 级真变换同上；缺省 0 不写入 JSON。")
         self._npc_rot.valueChanged.connect(self._on_npc_transform_live)
         form.addRow("rotation°", self._npc_rot)
+        # 归一化锚点:实体的 (x, y) 指的就是这个点。缺省底中(0.5 / 1)= 脚底,
+        # 与锚点可配之前逐字一致;圆形物件(铜钱这类)要 0.5 / 0.5 才能**绕圆心**转,
+        # 否则叠加旋转绕脚底、滚一圈就把物件整个压进地面(实测沉一个直径,且不报错)。
+        _npc_anchor_tip = (
+            "归一化锚点：x 0=左边 1=右边、y 0=顶边 1=底边。实体的 (x, y) 指的就是这个点，旋转也绕它转。"
+            "缺省 0.5 / 1（底边中点＝脚底），不写入 JSON。"
+            "圆形物件（铜钱、车轮）设 0.5 / 0.5 才能绕圆心转；继续用脚底锚会让滚动把它压进地面。"
+            "接地点（阴影 / 深度排序 / 透视采样）由锚点与世界尺寸推得，无需另填。"
+        )
+        self._npc_anchor_x = QDoubleSpinBox()
+        self._npc_anchor_x.setRange(0.0, 1.0); self._npc_anchor_x.setDecimals(3)
+        self._npc_anchor_x.setSingleStep(0.05)
+        self._npc_anchor_x.setValue(DEFAULT_ENTITY_ANCHOR_X)
+        self._npc_anchor_x.setToolTip(_npc_anchor_tip)
+        self._npc_anchor_x.valueChanged.connect(self._on_npc_anchor_live)
+        self._npc_anchor_y = QDoubleSpinBox()
+        self._npc_anchor_y.setRange(0.0, 1.0); self._npc_anchor_y.setDecimals(3)
+        self._npc_anchor_y.setSingleStep(0.05)
+        self._npc_anchor_y.setValue(DEFAULT_ENTITY_ANCHOR_Y)
+        self._npc_anchor_y.setToolTip(_npc_anchor_tip)
+        self._npc_anchor_y.valueChanged.connect(self._on_npc_anchor_live)
+        _npc_anchor_row = QWidget()
+        _npc_anchor_lay = QHBoxLayout(_npc_anchor_row)
+        _npc_anchor_lay.setContentsMargins(0, 0, 0, 0)
+        _npc_anchor_lay.setSpacing(4)
+        _npc_anchor_lay.addWidget(self._npc_anchor_x)
+        _npc_anchor_lay.addWidget(self._npc_anchor_y)
+        _npc_anchor_lay.addStretch(1)
+        form.addRow("锚点 x / y", _npc_anchor_row)
         # 遮挡混合系数：缺省用场景默认（当前 0.28）；勾「自定义」写显式 [0,1] 值并脱离 F2 全局滑块
         _npc_occ_tip = (
             "深度遮挡半透明混合系数 [0,1]：被场景深度遮挡的精灵像素 alpha 乘此系数"
@@ -9693,6 +9841,70 @@ class ScenePropertyPanel(QScrollArea):
         anim_f.addRow("portraitSlug", self._npc_portrait)
         anim_g.add_body(anim_inner)
         outer.addWidget(anim_g)
+
+        # 静态贴图实体：没有动画包的道具（箱子、石头、告示牌）也要能被轨迹推着走、
+        # 要投影要受光 —— 运行时把这张图合成一份 1×1 单帧动画包喂给同一条 NPC 管线，
+        # 所以这里**没有**第二种实体，只是"动画包缺席时的素材来源"。
+        sdisp = CollapsibleSection("静态贴图（无动画包时）", start_open=False)
+        sdisp.set_header_tool_tip(
+            "没有 animFile 的道具用这张图当外观：底边中点对齐 x,y，"
+            "渲染/阴影/透视/排序/受光与普通 NPC 完全一样。\n"
+            "**两者都填时以动画包为准**（这张图会被忽略）。\n"
+            "朝向沿用上面的 initialFacing。默认折叠，配置道具时展开。"
+        )
+        sdisp_inner = QWidget()
+        sdlay = QVBoxLayout(sdisp_inner)
+        self._npc_disp_row = CutsceneImagePathRow(
+            self._model, "", self,
+            external_copy_subdir="illustrations",
+        )
+        self._npc_disp_row.changed.connect(self._on_npc_display_row_changed)
+        sdlay.addWidget(self._npc_disp_row)
+        sdf = compact_form(QFormLayout())
+        nww_row = QWidget()
+        nww_h = QHBoxLayout(nww_row)
+        nww_h.setContentsMargins(0, 0, 0, 0)
+        self._npc_disp_ww = QDoubleSpinBox()
+        self._npc_disp_ww.setRange(1, 999999)
+        self._npc_disp_ww.setDecimals(1)
+        self._npc_disp_ww.setSingleStep(1.0)
+        self._npc_disp_ww.setValue(100)
+        self._npc_disp_ww.setToolTip("世界宽度（世界单位）；与动画包的 worldWidth 同语义")
+        self._npc_disp_ww.valueChanged.connect(self._on_npc_disp_ww_value_changed)
+        self._npc_disp_auto_h_btn = QPushButton("自动")
+        self._npc_disp_auto_h_btn.setToolTip(
+            "按当前图片长宽比，用已填的 worldWidth 计算 worldHeight（无有效图片时禁用）",
+        )
+        self._npc_disp_auto_h_btn.clicked.connect(self._on_npc_disp_auto_height_from_width)
+        nww_h.addWidget(self._npc_disp_ww, 1)
+        nww_h.addWidget(self._npc_disp_auto_h_btn)
+        sdf.addRow("worldWidth", nww_row)
+        nhh_row = QWidget()
+        nhh_h = QHBoxLayout(nhh_row)
+        nhh_h.setContentsMargins(0, 0, 0, 0)
+        self._npc_disp_hh = QDoubleSpinBox()
+        self._npc_disp_hh.setRange(1, 999999)
+        self._npc_disp_hh.setDecimals(1)
+        self._npc_disp_hh.setSingleStep(1.0)
+        self._npc_disp_hh.setValue(100)
+        self._npc_disp_hh.setToolTip("世界高度（世界单位）")
+        self._npc_disp_hh.valueChanged.connect(self._on_npc_disp_hh_value_changed)
+        self._npc_disp_auto_w_btn = QPushButton("自动")
+        self._npc_disp_auto_w_btn.setToolTip(
+            "按当前图片长宽比，用已填的 worldHeight 计算 worldWidth（无有效图片时禁用）",
+        )
+        self._npc_disp_auto_w_btn.clicked.connect(self._on_npc_disp_auto_width_from_height)
+        nhh_h.addWidget(self._npc_disp_hh, 1)
+        nhh_h.addWidget(self._npc_disp_auto_w_btn)
+        sdf.addRow("worldHeight", nhh_row)
+        self._npc_disp_ratio_hint = QLabel("")
+        self._npc_disp_ratio_hint.setStyleSheet("color:#888;")
+        self._npc_disp_ratio_hint.setWordWrap(True)
+        sdf.addRow("", self._npc_disp_ratio_hint)
+        sdlay.addLayout(sdf)
+        sdisp.add_body(sdisp_inner)
+        self._npc_disp_fold = sdisp
+        outer.addWidget(sdisp)
 
         play_box = CollapsibleSection("初始播放参数（可选）", start_open=False)
         play_box.set_header_tool_tip(
@@ -10219,6 +10431,146 @@ class ScenePropertyPanel(QScrollArea):
             del npc["portraitSlug"]
         self._emit_props_changed()
 
+    # ---- 静态贴图（无动画包时）------------------------------------------
+    #
+    # 图素比推导、"自动"按钮、比例提示全部**复用热点展示图那一套**
+    # （`_hotspot_display_image_pixel_size` / `_display_world_*_from_*`），
+    # 这里只多管一件事：写不写键、写到哪个实体上。
+
+    def _compute_npc_display_world_height(self, path: str, ww: float) -> float:
+        if not path or ww <= 0:
+            return 0.0
+        px = _hotspot_display_image_pixel_size(self._model, path)
+        if px is None:
+            return max(1.0, float(ww))
+        pw, ph = px
+        return _display_world_height_from_width(ww, pw, ph)
+
+    def _update_npc_disp_ratio_hint(self) -> None:
+        path = self._npc_disp_row.path().strip()
+        if not path:
+            self._npc_disp_ratio_hint.setText("（无图片路径，「自动」按钮不可用）")
+            return
+        px = _hotspot_display_image_pixel_size(self._model, path)
+        if px is None:
+            self._npc_disp_ratio_hint.setText(
+                "（无法读取图素尺寸，「自动」不可用；可手填宽高）",
+            )
+            return
+        pw, ph = px
+        self._npc_disp_ratio_hint.setText(f"当前图素: {pw}×{ph}")
+
+    def _update_npc_disp_auto_buttons(self) -> None:
+        path = self._npc_disp_row.path().strip()
+        ok = bool(
+            path and _hotspot_display_image_pixel_size(self._model, path) is not None,
+        )
+        self._npc_disp_auto_h_btn.setEnabled(ok)
+        self._npc_disp_auto_w_btn.setEnabled(ok)
+
+    def _on_npc_display_row_changed(self) -> None:
+        self._update_npc_disp_ratio_hint()
+        self._update_npc_disp_auto_buttons()
+        self._sync_npc_display_to_dict_and_refresh()
+
+    def _on_npc_disp_ww_value_changed(self, _v: float) -> None:
+        self._update_npc_disp_ratio_hint()
+        self._sync_npc_display_to_dict_and_refresh()
+
+    def _on_npc_disp_hh_value_changed(self, _v: float) -> None:
+        self._update_npc_disp_ratio_hint()
+        self._sync_npc_display_to_dict_and_refresh()
+
+    def _on_npc_disp_auto_height_from_width(self) -> None:
+        path = self._npc_disp_row.path().strip()
+        if not path:
+            return
+        px = _hotspot_display_image_pixel_size(self._model, path)
+        if px is None:
+            return
+        pw, ph = px
+        hh = _display_world_height_from_width(float(self._npc_disp_ww.value()), pw, ph)
+        if hh <= 0:
+            return
+        self._npc_disp_hh.blockSignals(True)
+        self._npc_disp_hh.setValue(hh)
+        self._npc_disp_hh.blockSignals(False)
+        self._update_npc_disp_ratio_hint()
+        self._sync_npc_display_to_dict_and_refresh()
+
+    def _on_npc_disp_auto_width_from_height(self) -> None:
+        path = self._npc_disp_row.path().strip()
+        if not path:
+            return
+        px = _hotspot_display_image_pixel_size(self._model, path)
+        if px is None:
+            return
+        pw, ph = px
+        ww = _display_world_width_from_height(float(self._npc_disp_hh.value()), pw, ph)
+        if ww <= 0:
+            return
+        self._npc_disp_ww.blockSignals(True)
+        self._npc_disp_ww.setValue(ww)
+        self._npc_disp_ww.blockSignals(False)
+        self._update_npc_disp_ratio_hint()
+        self._sync_npc_display_to_dict_and_refresh()
+
+    def _write_npc_display_image(self, npc: dict) -> None:
+        """把三个控件写进（或从）npc dict。**没填图就不落键**（往返契约）。"""
+        path = self._npc_disp_row.path().strip()
+        ww = float(self._npc_disp_ww.value())
+        hh = float(self._npc_disp_hh.value())
+        if path and ww > 0 and hh > 0:
+            npc["displayImage"] = _npc_display_image_dict(
+                path, ww, hh, npc.get("displayImage"))
+        else:
+            npc.pop("displayImage", None)
+
+    def _sync_npc_display_to_dict_and_refresh(self) -> None:
+        npc = self._pending_npc
+        if npc is None or self._stack.currentWidget() != self._npc_panel:
+            return
+        self._write_npc_display_image(npc)
+        self._emit_props_changed()
+        # 画布上这个 NPC 的精灵素材换了 —— 与改 animFile 同一条重建路
+        self._request_scene_npc_anim_refresh()
+
+    def _load_npc_display_image_ui(self, npc: dict) -> None:
+        di = npc.get("displayImage") if isinstance(npc.get("displayImage"), dict) else {}
+        pimg = str(di.get("image", "") or "")
+        self._npc_disp_row.blockSignals(True)
+        try:
+            self._npc_disp_row.set_path(pimg)
+        finally:
+            self._npc_disp_row.blockSignals(False)
+        self._npc_disp_ww.blockSignals(True)
+        self._npc_disp_hh.blockSignals(True)
+        try:
+            try:
+                ww0 = float(di.get("worldWidth", 0) or 0)
+            except (TypeError, ValueError):
+                ww0 = 0.0
+            if ww0 <= 0:
+                ww0 = 100.0
+            self._npc_disp_ww.setValue(ww0)
+            try:
+                raw_hh = di.get("worldHeight")
+                hh0 = float(raw_hh) if raw_hh is not None and raw_hh != "" else 0.0
+            except (TypeError, ValueError):
+                hh0 = 0.0
+            if hh0 <= 0 and pimg.strip():
+                hh0 = self._compute_npc_display_world_height(pimg.strip(), ww0)
+            if hh0 <= 0:
+                hh0 = max(1.0, ww0)
+            self._npc_disp_hh.setValue(hh0)
+        finally:
+            self._npc_disp_ww.blockSignals(False)
+            self._npc_disp_hh.blockSignals(False)
+        self._update_npc_disp_ratio_hint()
+        self._update_npc_disp_auto_buttons()
+        # 配了图才展开（重块默认折叠，与热点展示图同纪律）
+        self._npc_disp_fold.set_expanded(bool(pimg.strip()))
+
     def _npc_anim_json_path(self, anim_id: str) -> Path | None:
         aid = anim_id.strip()
         if not aid or self._model.project_path is None:
@@ -10433,6 +10785,13 @@ class ScenePropertyPanel(QScrollArea):
             self._npc_rot.blockSignals(True)
             self._npc_rot.setValue(entity_rotation_deg_of(st))
             self._npc_rot.blockSignals(False)
+            _npc_ax, _npc_ay = entity_anchor_of(st)
+            self._npc_anchor_x.blockSignals(True)
+            self._npc_anchor_x.setValue(_npc_ax)
+            self._npc_anchor_x.blockSignals(False)
+            self._npc_anchor_y.blockSignals(True)
+            self._npc_anchor_y.setValue(_npc_ay)
+            self._npc_anchor_y.blockSignals(False)
             self._npc_occblend_on.blockSignals(True)
             self._npc_occblend.blockSignals(True)
             _npc_ob = st.get("occlusionBlendFactor")
@@ -10521,6 +10880,7 @@ class ScenePropertyPanel(QScrollArea):
             self._apply_npc_character_inheritance()
             self._fill_npc_initial_state_combo()
             self._load_npc_anim_playback_ui(st)
+            self._load_npc_display_image_ui(st)
             self._load_npc_patrol_ui(st)
             colp = st.get("collisionPolygon")
             has_ncc = isinstance(colp, list) and len(colp) >= 3
@@ -10661,6 +11021,9 @@ class ScenePropertyPanel(QScrollArea):
             npc["initialAnimState"] = ist
         elif "initialAnimState" in npc:
             del npc["initialAnimState"]
+        # 静态贴图（无动画包时）：没填图就不落键；有动画包时这一份运行时会被忽略，
+        # 但**不代表编辑器可以替作者删掉它**（往返零丢失），照写。
+        self._write_npc_display_image(npc)
         self._sync_npc_anim_playback_to_dict(npc)
         if self._npc_patrol_enable.isChecked():
             route = self._npc_patrol_route_from_table()
@@ -12394,7 +12757,10 @@ class SceneEditor(QWidget):
                 foot_y = rt.drawn_y
                 foot_src = dict(pos)
                 foot_src["y"] = foot_y
-            foot = sort_foot_y_of(foot_src, rt.world_w * s, rt.world_h * s)
+            # 镜像符号影响的只有"横向偏心锚 + 旋转"这一格，但传错不报错，
+            # 所以与新画布一样显式喂 rt 当前朝向。
+            foot = sort_foot_y_of(
+                foot_src, rt.world_w * s, rt.world_h * s, rt.facing_x)
             # NPC 的 collisionPolygon **不参与**遮挡带（运行时只有 Hotspot 写
             # entityOcclusionPolygon）；一视同仁会造出运行时根本不存在的层级翻转。
             z = entity_sort_z(npc_sort_band_of(pos), foot_y, foot)
@@ -12642,6 +13008,7 @@ class SceneEditor(QWidget):
         # characterId 引用的 NPC 无就地 animFile，须经角色注册表解析（否则画布不出 sprite）
         anim_id = self._model.character_field(npc, "animFile").strip()
         if not anim_id:
+            self._try_add_scene_npc_static_display(npc, npc_id)
             return
         path = self._resolve_anim_public_path(anim_id)
         if not path or not path.is_file():
@@ -12717,6 +13084,71 @@ class SceneEditor(QWidget):
             ref_speed = float(st.get("referenceSpeed", 0) or 0)
         except (TypeError, ValueError):
             ref_speed = 0.0
+        self._install_scene_npc_sprite(
+            npc,
+            npc_id,
+            atlas,
+            cols,
+            rows,
+            world_w,
+            world_h,
+            frames_i,
+            rate,
+            loop,
+            cell_w=cell_w,
+            cell_h=cell_h,
+            atlas_frames=atlas_frames,
+            ref_speed=ref_speed if ref_speed > 0 else None,
+            use_patrol_anim=use_patrol_anim,
+        )
+
+    def _try_add_scene_npc_static_display(self, npc: dict, npc_id: str) -> None:
+        """没有动画包的道具：`displayImage` 合成 **1×1 单帧**，走与动画 NPC 同一个 runtime。
+
+        与运行时 `SceneManager.buildStaticDisplayAnimationSet` 同一条：合成之后
+        尺寸 / 朝向 / 实例 transform / 透视系数 / 内容层 z 全部与普通 NPC 逐字相同，
+        这里因此**没有**第二套绘制代码——只是把"图集"换成一张单格的图。
+
+        读 staging 感知的那一份（`_npc_render_pos_dict`）：面板上刚选好的图要立刻
+        看得见，读模型会等到提交后才更新（与排序键同一条 staging 纪律）。
+        """
+        src = self._npc_render_pos_dict(npc_id, npc)
+        # 动画包判据也读 staging：面板刚填上 animFile 的那一拍不该还画着静态贴图
+        di = _static_display_image_of(src, self._model.character_field(src, "animFile"))
+        if di is None:
+            return
+        pm = _static_display_pixmap(self._model, di)
+        if pm is None:
+            return
+        pair = _static_display_world_pair(self._model, di, pm)
+        if not pair:
+            return
+        self._install_scene_npc_sprite(
+            npc, npc_id, pm, 1, 1, pair[0], pair[1], [0], 1.0, True,
+            display_image=di,
+        )
+
+    def _install_scene_npc_sprite(
+        self,
+        npc: dict,
+        npc_id: str,
+        atlas: QPixmap,
+        cols: int,
+        rows: int,
+        world_w: float,
+        world_h: float,
+        frames_i: list[int],
+        rate: float,
+        loop: bool,
+        *,
+        cell_w: int | None = None,
+        cell_h: int | None = None,
+        atlas_frames: list[dict] | None = None,
+        ref_speed: float | None = None,
+        use_patrol_anim: bool = False,
+        display_image: dict | None = None,
+    ) -> None:
+        """建图元 + 建 runtime + 登记 + 重贴 presence。动画包与静态贴图共用这一段。"""
         item = QGraphicsPixmapItem()
         item.setZValue(_Z_CONTENT_LO)
         item.setOpacity(0.9)
@@ -12738,20 +13170,21 @@ class SceneEditor(QWidget):
             cell_w=cell_w,
             cell_h=cell_h,
             atlas_frames=atlas_frames,
-            ref_speed=ref_speed if ref_speed > 0 else None,
+            ref_speed=ref_speed,
         )
-        facing = str(npc.get("initialFacing", "") or "").strip().lower()
-        rt.facing_x = -1 if facing == "left" else 1
         pos0 = self._npc_render_pos_dict(npc_id, npc)
+        # initialFacing 说了算；没写才轮到静态贴图自己的 facing（运行时同一条取舍）
+        rt.facing_x = _static_display_facing_x(pos0, display_image)
         if not use_patrol_anim:
             # 初始播放参数仅作用于初始状态（巡逻预览播 moveAnimState 时素播，与运行时
             # moveTo 语义一致）；读 staging 感知的 pos0，与 tick 循环同源
             rt.set_playback(*_npc_initial_playback_tuple(pos0))
         rt.set_instance_transform(
-            entity_scale_of(pos0), entity_rotation_deg_of(pos0))
+            entity_scale_of(pos0), entity_rotation_deg_of(pos0),
+            *entity_anchor_of(pos0))
         nx = float(pos0.get("x", 0))
         ny = float(pos0.get("y", 0))
-        rt.persp = self._canvas.persp_factor(pos0, "npc", nx, ny)
+        rt.persp = _npc_contact_persp(self._canvas, pos0, rt, nx, ny)
         rt.draw_at(nx, ny)
         self._scene_npc_runtimes[npc_id] = rt
         # 新建的精灵默认可见；若这个 NPC 当前正被位面/时段过滤掉，必须立刻重贴，
@@ -12842,7 +13275,7 @@ class SceneEditor(QWidget):
                 rt.set_playback(mult, False, None, None)
                 px, py = self._patrol_preview_advance(rid, npc, dt)
                 # 透视系数随巡逻瞬时脚底点每拍拉取（与运行时移动中重求同口径）
-                rt.persp = self._canvas.persp_factor(npc, "npc", px, py)
+                rt.persp = _npc_contact_persp(self._canvas, npc, rt, px, py)
                 rt.tick(dt, px, py)
             else:
                 pos = self._npc_render_pos_dict(rid, npc)
@@ -12852,12 +13285,13 @@ class SceneEditor(QWidget):
                 # 连续覆盖，hold/start 边沿拨游标）——读模型 dict 会掉进「定时器读模型、
                 # 编辑写 staging」的 8ms 回弹坑（见 _npc_render_pos_dict 注释）。
                 rt.set_instance_transform(
-                    entity_scale_of(pos), entity_rotation_deg_of(pos))
+                    entity_scale_of(pos), entity_rotation_deg_of(pos),
+                    *entity_anchor_of(pos))
                 rt.set_playback(*_npc_initial_playback_tuple(pos))
                 x = float(pos.get("x", 0))
                 y = float(pos.get("y", 0))
                 # 透视系数与位置同源每拍拉取（staging 感知：拖动/数值框 live 改坐标即时反映）
-                rt.persp = self._canvas.persp_factor(pos, "npc", x, y)
+                rt.persp = _npc_contact_persp(self._canvas, pos, rt, x, y)
                 rt.tick(dt, x, y)
         # 位置变了前后关系就可能变：每拍重排（脏检查命中时是空操作）
         self._resort_canvas_content_z()
@@ -12899,39 +13333,25 @@ class SceneEditor(QWidget):
             self._restore_editing_selection_after_block()
             return
         sid, ok = QInputDialog.getText(
-            self, "新建场景", "场景 id（仅字母 / 数字 / 下划线 / 连字符）：")
+            self, "新建场景", f"场景 id（{SCENE_ID_HINT}）：")
         if not ok:
             return
         sid = (sid or "").strip()
         if not sid:
             return
-        if not re.match(r"^[A-Za-z0-9_\-]+$", sid):
-            QMessageBox.warning(
-                self, "新建场景",
-                f"非法场景 id：{sid!r}\n仅允许字母、数字、下划线、连字符。")
-            return
-        if sid in self._model.scenes:
-            QMessageBox.warning(self, "新建场景", f"场景 id 已存在：{sid}")
+        # 判定与骨架都在 shared/scene_ids（与新画布共用一份）。此前这里是一条
+        # `^[A-Za-z0-9_\-]+$`，把工程里占多数的中文场景 id 全拦在门外。
+        problem = scene_id_problem(sid, self._model.scenes)
+        if problem:
+            QMessageBox.warning(self, "新建场景", problem)
             return
         name, ok = QInputDialog.getText(
             self, "新建场景", "场景显示名（留空则用 id）：", text=sid)
         if not ok:
             return
-        name = (name or "").strip() or sid
 
-        # 最小合法骨架：world 尺寸留 0（导入背景后按图推导）、背景空、给个出生点占位。
-        self._model.scenes[sid] = {
-            "id": sid,
-            "name": name,
-            "worldWidth": 0,
-            "worldHeight": 0,
-            "backgrounds": [],
-            "spawnPoint": {"x": 400.0, "y": 400.0},
-            "hotspots": [],
-            "npcs": [],
-            "zones": [],
-        }
         # 不预建任何目录：本场景 runtime 目录在导入背景图时按需创建（仅落在该场景目录内）。
+        self._model.scenes[sid] = new_scene_skeleton(sid, name)
         self._model.mark_dirty("scene", sid)
 
         # 清空搜索，保证新场景在列表中可见再选中。
@@ -13584,8 +14004,11 @@ class SceneEditor(QWidget):
                 w = float(getattr(rt, "world_w", 0) or 0) * s
                 h = float(getattr(rt, "world_h", 0) or 0) * s
         if w > 0 and h > 0:
-            # 展示图/精灵是底中锚点对齐 (x, y)
-            return QRectF(x - w / 2.0, y - h, w, h)
+            # 展示图/精灵按**锚点**对齐 (x, y)（缺省底中＝脚底；热点那一族没有
+            # anchor 字段，entity_anchor_of 对它恒返回缺省）
+            ax, ay = entity_anchor_of(ent) if kind == "npc" else (
+                DEFAULT_ENTITY_ANCHOR_X, DEFAULT_ENTITY_ANCHOR_Y)
+            return QRectF(x - ax * w, y - ay * h, w, h)
         r = max(self._canvas.handle_radius, 8.0)
         return QRectF(x - r, y - r, r * 2, r * 2)
 

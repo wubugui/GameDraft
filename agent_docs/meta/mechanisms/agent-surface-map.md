@@ -47,5 +47,5 @@ norms 不变量④的四个存放面管的是**知识归谁存**;各 AI 客户�
 
 ```bash
 comm -23 <(ls .cursor/skills | sort) <(ls .claude/skills | sort)   # 漏镜像的 skill
-python3 agent_docs/_meta/cli.py install                            # CLI 管辖项幂等自检
+sh scripts/py.sh agent_docs/_meta/cli.py install                   # CLI 管辖项幂等自检
 ```

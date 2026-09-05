@@ -378,6 +378,24 @@ def step_summary_line(d: dict, names: Mapping | None = None) -> str:
         p = d.get("params") or {}
         if t == "playScriptedDialogue":
             return f"{t}  {_scripted_lines_summary(p, names)}"
+        if t == "playTrajectory":
+            # 纯显示：一屏几十步时「播哪条轨迹 / 挂到谁 / 锚在哪 / 等不等」比裸 JSON 快得多。
+            # ⚠ 一个字节都不许回写 —— StepWidget.to_dict 有逐字节往返测试守着。
+            tid = str(p.get("trajectoryId") or "").strip() or "(未选)"
+            who = str(p.get("target") or "").strip()
+            bits = [tid]
+            bits.append(f"→{who}" if who else "→(缺 target)")
+            ax, ay = p.get("anchorX"), p.get("anchorY")
+            if ax is not None or ay is not None:
+                bits.append(f"锚({ax if ax is not None else '?'},{ay if ay is not None else '?'})")
+            if p.get("flipX") in (True, "true", "True", 1):
+                bits.append("翻转")
+            if p.get("wait") in (False, "false", "False", 0):
+                bits.append("不等")
+            anim = str(p.get("animState") or "").strip()
+            if anim:
+                bits.append(f"anim:{anim}")
+            return f"playTrajectory  {' · '.join(bits)}"
         ps = json.dumps(p, ensure_ascii=False) if p else ""
         if len(ps) > 48:
             ps = ps[:45] + "…"
@@ -1962,7 +1980,34 @@ class StepWidget(QFrame):
         se, ose = d.get("subtitleEmote"), od.get("subtitleEmote")
         if isinstance(se, dict) and isinstance(ose, dict):
             preserve_numeric_repr(se, ose)
+        self._drop_seeded_placeholder_keys(d, od)
         return d
+
+    @staticmethod
+    def _drop_seeded_placeholder_keys(d: dict, od: dict) -> None:
+        """剔除「原本没有、且值仍等于种子」的数值键 —— 与动作侧
+        `_OMIT_WHEN_ABSENT_AND_DEFAULT` 同形的 present 版。
+
+        `_PRESENT_PARAM_DEFAULTS` 是**照运行时 `?? 默认` 对齐**的新步种子,所以
+        「缺键」与「显式写成种子值」对运行时**完全同义**;但不剔除的话,
+        「用编辑器打开→什么都不改→保存」会给这一步凭空多出一个键。
+
+        实际踩到的那次:全仓 8 个 `cameraZoom` 步里只有一个没显式写 `scale`
+        (缺省/≤0 = 恢复场景基线缩放,机制卡明确要求内容侧**不要**写基线字面量),
+        往返后被补出 `scale: 0.0` —— 语义没变,但逐字节往返测试当场变红。
+        只剔「原本就没有」的那些:用户显式填成默认值的键(原 dict 里有)照旧保留。
+        """
+        seeds = _PRESENT_PARAM_DEFAULTS.get(str(d.get("type") or ""))
+        if not seeds:
+            return
+        for key, seed in seeds.items():
+            if key in od:
+                continue
+            v = d.get(key)
+            if isinstance(v, bool) or not isinstance(v, (int, float)):
+                continue
+            if float(v) == float(seed):
+                d.pop(key, None)
 
     def is_disabled(self) -> bool:
         return self._disabled

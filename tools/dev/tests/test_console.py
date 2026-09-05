@@ -687,3 +687,21 @@ def test_record_game_url_from_vite_output_line():
     state._record_game_url_from_line("  ➜  Local:   http://localhost:5174/")
 
     assert state.game_url == "http://localhost:5174/"
+
+
+def test_dev_shortcuts_list_every_scene_json_not_only_map_nodes(tmp_path):
+    """新建一个不进地图的场景（梦境 / 演出 / 测试场景），dev 控制台也得列出来——
+    此前只从 map_config 节点 + game_config 入口派生，这种场景永远看不见。"""
+    scenes = tmp_path / "public" / "assets" / "scenes"
+    scenes.mkdir(parents=True)
+    (tmp_path / "public" / "assets" / "data").mkdir(parents=True)
+    (scenes / "梦_测试.json").write_text('{"id": "梦_测试", "name": "梦里的测试街"}', encoding="utf-8")
+    (scenes / "broken.json").write_text("{not json", encoding="utf-8")
+
+    shortcuts = app.load_dev_shortcuts(tmp_path)
+
+    values = [item["value"] for item in shortcuts["scenes"]]
+    assert values[0] == "dev_room", "dev_room 仍钉在第一位"
+    assert "梦_测试" in values and "broken" in values, "不靠 map_config，也不因一个坏 JSON 丢整张表"
+    label = next(item["label"] for item in shortcuts["scenes"] if item["value"] == "梦_测试")
+    assert label == "梦里的测试街"

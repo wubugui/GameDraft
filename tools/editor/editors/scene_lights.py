@@ -630,6 +630,62 @@ def runtime_lighting_base_url() -> str:
         return ''
 
 
+#: 可以逐时段覆盖的环境块（`timeVariants[时段].lighting` 的键）。**刻意不含 `lights`** ——
+#: 灯按各自的 phases 过滤，在这儿换整组就有两个真相源（运行时也不读变体里的 lights，
+#: 校验器会报 error）。也不含 `day`（白天参考光是原画的性质，不随时段变）。
+TV_ENV_BLOCKS = (
+    ('sky', '天光（色温/强度/半球权重）'),
+    ('fog', '雾（σ/高度衰减/颜色）'),
+    ('display', '显示变换（曝光/tonemap/调色）'),
+    ('dehaze', '去霾（已停用，留作回退）'),
+    ('giGain', 'GI 反弹增益'),
+    ('aoStrength', 'AO 强度'),
+    ('emissive', '灯体自发光/光晕'),
+)
+
+
+def merge_lighting_for_phase(base: dict | None, variant_lighting: dict | None) -> dict | None:
+    """`基底 ⊕ 变体` —— 与运行时 `sceneAppearance.mergeSceneLighting` 同式：
+    只盖顶层键、整块替换、`lights` 永远取基底。编辑器要把「游戏此刻该看到的那份」
+    发给正处在某时段的游戏时用它，发裸基底等于把白天灌进夜里。"""
+    if not isinstance(base, dict):
+        return None
+    if not isinstance(variant_lighting, dict) or not variant_lighting:
+        return base
+    merged = dict(base)
+    for k, v in variant_lighting.items():
+        if k == 'lights' or v is None:
+            continue
+        merged[k] = v
+    return merged
+
+
+def split_phase_pull(pulled: dict, base: dict | None,
+                     existing_variant_lighting: dict | None) -> tuple[dict, dict]:
+    """把游戏在某时段发布的**合并结果**拆回两份：(新基底, 该时段的 lighting 覆盖)。
+
+    游戏在非基底时段发布的是 `基底 ⊕ timeVariants[该时段].lighting`。此前编辑器对它一律
+    拒收（写进顶层就是把夜灌进白天）—— 于是作者真正的工作流（在游戏里 F2 实时调夜景）
+    落不回数据，只能回到白天再拉、再手工抄进变体。现在按归属拆：
+
+    - 环境块（`TV_ENV_BLOCKS`，外加这个变体里已经写着的任何键）：与基底**不同**的进变体，
+      与基底相同的从变体里去掉（作者在游戏里把它调回白天的值 = 不再覆盖）；
+    - 其余（`lights`、`day`、`shadowBias`…）：不随时段变，照常写回基底。
+    """
+    base = dict(base) if isinstance(base, dict) else {}
+    variant_keys = {k for k, _ in TV_ENV_BLOCKS} | set(existing_variant_lighting or {})
+    variant_keys.discard('lights')
+    new_base = dict(base)
+    override: dict = {}
+    for k, v in pulled.items():
+        if k in variant_keys:
+            if _canonical({k: v}) != _canonical({k: base.get(k)}):
+                override[k] = v
+        else:
+            new_base[k] = v
+    return new_base, override
+
+
 def _canonical(lighting: dict) -> str:
     """比较用的规范文本。剥掉只给编辑器看的 `_editorHeightWu`——它是从 pos 推出来的派生量，
     留着会让"表里显示的高度变了"被误判成"参数变了"，于是无谓地发一轮。"""
@@ -725,6 +781,7 @@ class LightingSyncTransport:
     applied = 0          # 套用过对面几次
     published = 0        # 发出去过几次
     last_writer = ''     # 槽里最后一次是谁写的
+    last_doc_phase = ''  # 游戏最近一次发布时所在的时段(空 = 白天基底);发布按它合并
     last_doc_age_ms: Any = None
     last_doc_scene = ''
     suppressed = ''      # 此刻本侧为什么不收（'' = 没被挡）
@@ -945,13 +1002,15 @@ def validate_pulled_lighting(payload: Any, expect_scene_id: str) -> tuple[dict |
         return None, 'lighting 块缺少必需键 %s——半个对象不能覆盖已调好的参数' % (missing,)
     if not isinstance(lit.get('lights'), list):
         return None, 'lighting.lights 不是数组'
-    # 时段闸(2026-08-30 审查抓到):游戏在非基底时段发布的 lighting 是
-    # 「顶层基底 ⊕ timeVariants[该时段].lighting」的**合并结果**。拉回来写进场景顶层
-    # 就等于把夜的天光/雾/显示变换灌进白天基底,Save All 落盘即污染,而且弹窗上
-    # 完全看不出来 —— 必须在这儿拦。
-    ph = payload.get('phase')
-    if isinstance(ph, str) and ph:
-        return None, ('游戏当前在「%s」时段，它发布的是**合并后**的光照——'
-                      '拉回来会把该时段的值写进场景的白天基底，已拒绝。'
-                      '先在游戏里把时刻推回基底时段再拉。' % (ph,))
+    # 时段(2026-08-30 审查抓到、2026-09-03 改为拆分):游戏在非基底时段发布的 lighting 是
+    # 「顶层基底 ⊕ timeVariants[该时段].lighting」的**合并结果**。这里**不再拒收**——
+    # 调用方必须用 `pulled_phase(payload)` 取出时段,经 `split_phase_pull` 把环境块拆进
+    # 该时段的变体、其余写回基底(面板 `apply_pulled_lighting`)。直接整块写进顶层
+    # 仍然是把夜灌进白天,所以任何新调用方都不许绕过那一步。
     return lit, ''
+
+
+def pulled_phase(payload: Any) -> str:
+    """游戏发布这份 lighting 时所在的时段;空串 = 顶层基底(白天)。"""
+    ph = payload.get('phase') if isinstance(payload, dict) else None
+    return ph if isinstance(ph, str) else ''

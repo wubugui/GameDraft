@@ -3,7 +3,7 @@ id: entity-lighting
 title: 场景光环境 / 实体阴影 / 深度遮挡
 domain: runtime
 type: mechanism
-summary: 行走面深度场是遮挡·阴影·碰撞的唯一脚点锚(没场就整体关,不回落拟合直线);阴影一律 planar 剪影;角色阴影**手动绑灯,禁止自动 resolve**;色调与阴影解耦
+summary: 行走面深度场是遮挡·阴影·碰撞的唯一脚点锚(没场就整体关,不回落拟合直线);阴影一律 planar 剪影但形状量从灯位现算;角色阴影**手动绑灯,禁止自动 resolve**;接触斑与灯无关;深度自比较必须留容差;色调与阴影解耦
 status: active
 authority:
   - src/rendering/EntityShadow.ts#PlanarEntityShadow
@@ -17,7 +17,7 @@ authority:
 triggers:
   paths: ["src/rendering/*Shadow*", "src/rendering/entityShadowBinding.ts", "src/rendering/lightEnv*", "src/rendering/EntityLightingFilter.ts", "src/rendering/DepthOcclusionFilter.ts", "src/core/SceneDepthSystem.ts"]
   topics: [光照, 阴影, AO, lightEnv, 色调, 遮挡, 行走面深度, ground_d, 阴影绑定, 虚拟灯]
-last_governed: 2026-08-21
+last_governed: 2026-09-03
 ---
 
 ## 是什么(一句话)
@@ -43,9 +43,20 @@ planar 阴影 / 深度遮挡)与它们并存,2026-08-30 的「原画 + 加性灯
 - **遮挡与着色是两个代理,禁止合并**:遮挡用脚深度处的代理体、着色用直立 quad;
   合成一个必回上半身 pop-through。
 - 阴影实现**一律 planar 剪影**(角色 mask 剪影 + 剪影上模糊)。`shadowMode` 的
-  `real`/`planar` 现已同义,`DeferredEntityShadow.ts` 是待清理死码;
+  `real`/`planar` 现已同义(另一条延迟阴影实现已于 2026-08-22 物理删除,别再去找它清理);
   planar 的方位角是**屏幕约定**(影朝 `az+180` 铺地),调参按这个读。
   角色是**一个片**,没有真实几何可投 —— 逐像素与重建面求交会把形状啃烂,这条是用户红线。
+  ⚠ 但 **cast 的四边形已不是"把剪影平移一下"的平行四边形**(2026-08-22 起):
+  长度吃**地面各向异性**(只取投屏角度、扔掉模长的话,横着倒的影子会恒短一截)、
+  点光头端**散开**、迎光截面按方位**压窄**(代替"另画一张侧面剪影")。
+  这三个形状量都是**从灯位与场景基现算**的,不新增作者字段、不做逐像素求交,
+  所以不撞上面那条红线;把它们当成"没实现"或"应该删掉"重报是错的。
+  剪影上的变半径抽样**必须 clamp 在当前帧框内**,越界就是"剪影被整张图集横扫成条纹"的复发路径。
+- **深度自比较必须留容差**。凡是拿两张不同来源/不同分辨率的深度做"我被挡住了吗"的判断,
+  容差为 0 就是自比较噪声逐像素穿零:两张图的采样栅格对不齐,差值是**有周期的锯齿**,
+  于是平地上接近一半的像素被判成"被前景遮住",相邻像素还来回翻转 —— 画面上是等周期条纹,
+  **零报错、零日志**。踩法很隐蔽:多数场景的容差是有值的,漏配的那批是被遗忘、不是设计,
+  所以"别的场景好好的"完全不构成反证。**新场景补齐容差,别去改判据。**
 - **角色阴影必须手动绑定光源,系统不自动 resolve**(制作人 2026-08-20 定死)。
   数据面 `EntityShadowBinding[]`:`'light:<灯id>'` 绑场景灯 / `'virtual'` 虚拟灯
   (只影响影子**不照亮**角色) / `'none'` 不投影;挂在 `NpcDef.shadowBindings`、

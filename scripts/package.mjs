@@ -35,6 +35,7 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { checkStagingDir, swapWavRef } from './lib/build_helpers.mjs';
+import { SCENE_INDEX_REL, writeSceneIndex } from './lib/scene_index.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const PUBLIC_DIR = join(ROOT, 'public');
@@ -265,6 +266,11 @@ async function stage(manifest) {
   }
   info(`素材：${manifest.files.length - missing} 个文件，${mb(assetBytes)}`);
   if (missing) throw new Error(`${missing} 个清单文件在磁盘上不存在，打包中止`);
+
+  // 3c. 场景索引：按**已落地**的 assets/scenes 派生（不进抽取清单——它不是开发树里的文件，
+  // 是产物自己的派生物；开发服由 vite 中间件按请求现算同一份）。Dev 菜单 / F2 靠它列全部场景。
+  const sceneCount = await writeSceneIndex(gameDir);
+  info(`场景索引：${sceneCount} 个场景 → ${SCENE_INDEX_REL}（打包时派生）`);
 
   const boot = bakeBootConfig(gameDir);
   return { gameDir, distBytes, assetBytes, boot };

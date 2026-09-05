@@ -15,7 +15,7 @@ authority:
 triggers:
   paths: ["src/authoring/*", "src/ui/debugLightingSection.ts", "tools/editor/editors/scene_lights.py"]
   topics: [摆灯, gizmo, 聚光, 面光, 光锥, 锥角, 朝向, orientation, 手柄, 运行时编辑]
-last_governed: 2026-08-22
+last_governed: 2026-09-03
 ---
 
 # 运行时摆灯的可视化手柄：哪些参数必须能拖，哪些数字框就够
@@ -119,10 +119,24 @@ last_governed: 2026-08-22
 `LightDef.orientation` 的注释曾写「缺省时取深度场在 `pos` 处的法线」——
 **代码里从来没有这回事**，已改正。
 
+## 已知坑：「灯离地多高」不能用投影采样反推
+
+**把灯投影到画布、在落点采一下地面深度**，是这个读数最自然也最错的算法：
+深度图里「深度恒定的一片」在斜视角下**不是**世界里的水平地面。实测把灯抬高，
+估出来的地面会**跟着往上爬**，读数只剩一半，且越拖越飘。
+
+正解是解「与灯同 x/z 的那条铅垂线打在行走面上的点」（运行时侧 `lightSpace.groundBelow`，
+有单测）。⚠ **迭代必须带阻尼**：在真正水平的地面上，那个不动点迭代的导数恰好是 1，
+裸迭代会在两个值之间震荡、偶数次正好跳回出发点，看起来像"收敛失败"其实是永不收敛。
+
+**两侧口径尚未统一**：编辑器侧（`scene_editor._recompute_light_heights`）仍是投影采样那一版。
+它只影响 UI 读数与「在画布上定位」的输入、不进数据契约，但**那个读数正是人摆灯时看的数**。
+要么把它换成同一条解法，要么直接向运行时要这个读数——别在编辑器里另发明第三种。
+
 ## 相关
 
 - `src/authoring/shapeGizmos.ts` —— 形状手柄的几何（含 `shapeGizmos.test.ts` 的往返闭合判据）
-- `src/authoring/lightSpace.ts` —— 坐标换算与 `groundHitAlong`
+- `src/authoring/lightSpace.ts` —— 坐标换算与 `groundHitAlong` / `groundBelow`
 - [character-lighting](character-lighting.md) / [entity-lighting](entity-lighting.md)
-- [coordinate-spaces](coordinate-spaces.md) —— ⚠ 那张总表把「灯的作者面」列在
-  「原点=画布左上」那一行，会误导人；以 `lightSpace.ts` 顶部为准
+- [coordinate-spaces](coordinate-spaces.md) —— 灯的作者面（原点=**画面中心**、Y 朝上、单位 wu）
+  已在那张总表里单列一行，以它为准

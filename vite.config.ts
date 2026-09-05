@@ -1,6 +1,8 @@
 import { defineConfig, type Plugin } from 'vite';
 import { resolve, dirname } from 'path';
 import { mkdir, readdir, readFile, rename, stat, unlink, writeFile } from 'fs/promises';
+// 场景索引生成器与打包脚本共用（同一份形状）；见 sceneIndexApi()
+import { SCENE_INDEX_REL, buildSceneIndex } from './scripts/lib/scene_index.mjs';
 
 /** 开发服：读写 resources/editor_projects/editor_data/debug_flag_favorites.json，供 F2 Flag 收藏持久化（不使用 localStorage）。 */
 function debugFlagFavoritesApi(): Plugin {
@@ -553,18 +555,20 @@ function runtimeCommandApi(): Plugin {
 }
 
 /**
- * 开发服：只读枚举 `public/assets/scenes/*.json`，供 F2「场景」页列出**全部**场景
+ * 开发服：把 `/assets/scene_index.json` 当成一个**按请求现算**的文件来服务——
+ * 只读枚举 `public/assets/scenes/*.json`，供 Dev 菜单 / F2「场景」页列出**全部**场景
  * （不止地图节点：map_config 只登记玩家可走的节点，梦境/演出/测试场景都不在其中，
- * 而调试跳转要的正是这些）。返回 id / name / spawnPoints，浏览器一次请求拿全，
- * 不必逐个 fetch 场景 JSON。只读，不写盘。
+ * 而调试跳转要的正是这些）。打包时 scripts/package.mjs 用同一份生成器把它写成真文件，
+ * 于是运行时只有一个 URL、一种形状（见 src/dev/sceneIndex.ts）。仓库里没有这个文件，
+ * 也不该有：一旦有人手工维护，新建场景就又得"记得去加一行"。只读，不写盘。
  */
-function sceneListApi(): Plugin {
+function sceneIndexApi(): Plugin {
   return {
-    name: 'gamedraft-scene-list-api',
+    name: 'gamedraft-scene-index',
     configureServer(server) {
       server.middlewares.use(async (req, res, next) => {
         const pathOnly = (req.url ?? '').split('?')[0] ?? '';
-        if (pathOnly !== '/__gamedraft-api/scene-list') {
+        if (pathOnly !== `/${SCENE_INDEX_REL}`) {
           next();
           return;
         }
@@ -573,34 +577,15 @@ function sceneListApi(): Plugin {
           res.end();
           return;
         }
-        const dir = resolve(server.config.root, 'public/assets/scenes');
         try {
-          const files = (await readdir(dir)).filter((f) => f.endsWith('.json'));
-          const scenes = await Promise.all(
-            files.map(async (file) => {
-              const id = file.slice(0, -'.json'.length);
-              try {
-                const raw = JSON.parse(await readFile(resolve(dir, file), 'utf-8')) as {
-                  id?: unknown; name?: unknown; spawnPoints?: unknown;
-                };
-                // 场景 id 以文件名为准：JSON 里的 id 与文件名不一致时，能加载的是文件名那个
-                const name = typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : id;
-                const sp = raw.spawnPoints;
-                const spawnPoints =
-                  sp && typeof sp === 'object' && !Array.isArray(sp) ? Object.keys(sp) : [];
-                return { id, name, spawnPoints };
-              } catch {
-                // 单个场景 JSON 坏了不该让整张清单消失——退化成只有 id 的条目
-                return { id, name: id, spawnPoints: [] as string[] };
-              }
-            }),
-          );
-          scenes.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'));
+          const index = await buildSceneIndex(resolve(server.config.root, 'public/assets/scenes'));
           res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify({ ok: true, scenes }));
+          res.setHeader('Cache-Control', 'no-store');
+          res.end(JSON.stringify({ generatedBy: 'vite dev middleware', ...index }));
         } catch (e) {
+          res.statusCode = 500;
           res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify({ ok: false, error: String(e), scenes: [] }));
+          res.end(JSON.stringify({ error: String(e), scenes: [] }));
         }
       });
     },
@@ -838,7 +823,7 @@ export default defineConfig({
     narrativeDebugBridgeApi(),
     runtimeDebugSnapshotApi(),
     runtimeCommandApi(),
-    sceneListApi(),
+    sceneIndexApi(),
   ],
   base: './',
   build: {
@@ -871,9 +856,12 @@ export default defineConfig({
     // 由 `npm run test:anim-preview` 用 `node --test` 跑。vitest 的默认 include 会把它们
     // 捡起来，然后报 "No test suite found in file" —— 用例其实全绿，但 vitest 进程退出码
     // 非零，于是"跑一次 vitest"恒红。排掉它们，两套框架各跑各的。
+    // tools/trajectory_workbench/viewer/tests/*.cjs 同理：自带 vm 加载器的裸 node 断言
+    // （pytest 的 test_viewer.py 代跑），不是 vitest 用例。
     exclude: [
       '**/node_modules/**', '**/dist/**', '**/.claude/**',
       'tools/anim_preview/*.test.mjs',
+      'tools/trajectory_workbench/viewer/tests/**',
     ],
   },
   resolve: {

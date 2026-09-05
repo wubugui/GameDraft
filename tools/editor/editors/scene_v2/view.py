@@ -19,10 +19,16 @@ from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import QGraphicsScene, QGraphicsView
 
 from ...shared.entity_transform_math import (
+    DEFAULT_ENTITY_ANCHOR_X,
+    DEFAULT_ENTITY_ANCHOR_Y,
+    entity_anchor_of,
+    entity_contact_point,
     entity_perspective_factor,
     entity_scale_of,
+    is_default_entity_anchor,
 )
 from ...shared.scene_migrations import collision_polygon_local_to_world
+from ...shared.static_display_sprite import npc_content_facing_x
 from ..scene_canvas_model import iter_part_keys
 from .changes import (
     EntitiesAboutToBeRemoved,
@@ -82,7 +88,20 @@ _CONTENT_PARTS = {("hotspot", "display"), ("npc", "sprite")}
 #: （光环境曲线；透视轴与分组框走独立的覆盖物通道）。
 #: 用 `EntityRef("scene", <scene_id>)` 做键，于是它们与实体几何共用同一套
 #: 命令 / 撤销 / 顶点编辑工具，不必另起一条平行实现。
+#: （实体轨迹已迁出场景 JSON：独立资产 `assets/data/trajectories/*.json`，
+#: 作者面是 `tools/trajectory_workbench`，画布不再画它。）
 _SCENE_PARTS = {"lightcurve": LightCurveItem}
+
+
+def _content_anchor(kind: str, ent: dict) -> tuple[float, float]:
+    """内容图元的归一化锚点（画布必须与运行时 `SpriteEntity` 的 anchor 同口径）。
+
+    **只有 NPC 有 `anchor` 字段**（热点那一族本轮未开，见 `HotspotDef`），
+    所以热点恒走缺省底中。抹平这个不对称会让画布画出运行时根本不存在的位置。
+    """
+    if kind == "npc":
+        return entity_anchor_of(ent)
+    return (DEFAULT_ENTITY_ANCHOR_X, DEFAULT_ENTITY_ANCHOR_Y)
 
 
 class SceneView(QGraphicsView):
@@ -315,8 +334,10 @@ class SceneView(QGraphicsView):
             self._gfx.addItem(item)
             self._items[(ref, part)] = item
         anchor, w, h, facing, scale, rot, url = spec
+        ax, ay = _content_anchor(ref.kind, ent)
         item.set_base_pos(anchor.x(), anchor.y())
-        item.set_geometry(QPointF(0, 0), w, h, scale=scale, rotation=rot, facing=facing)
+        item.set_geometry(QPointF(0, 0), w, h, scale=scale, rotation=rot, facing=facing,
+                          anchor_x=ax, anchor_y=ay)
         if ref.kind == "npc" and self._sprite_frame is not None:
             # 精灵走**帧**通路（图集里的一格），不是整张图
             item.refresh_frame(self._sprite_frame(ent))
@@ -342,14 +363,15 @@ class SceneView(QGraphicsView):
             w, h, url = metrics
             if w <= 0 or h <= 0:
                 return None
-            facing = -1 if str(
-                ent.get("initialFacing", "")).strip().lower() == "left" else 1
+            # initialFacing 说了算；没写且这是个静态贴图实体时才轮到 displayImage.facing
+            # （与运行时 instantiateNpc 同一条取舍，老画布共用同一个函数）
+            facing = npc_content_facing_x(ent)
             return (
                 QPointF(float(ent.get("x", 0) or 0), float(ent.get("y", 0) or 0)),
                 w, h, facing,
                 # 实例 scale **×** 透视系数：与运行时容器级复合同口径（防预览撒谎）
                 float(ent.get("scale", 1.0) or 1.0)
-                * self.perspective_factor(ent, kind),
+                * self.contact_perspective_factor(ent, kind, w, h, facing),
                 float(ent.get("rotation", 0.0) or 0.0),
                 url,
             )
@@ -480,6 +502,22 @@ class SceneView(QGraphicsView):
         sc = self._doc.scene() or {}
         cfg = sc.get("perspectiveScale") if isinstance(sc, dict) else None
         return entity_perspective_factor(cfg, ent, kind, foot_x, foot_y)
+
+    def contact_perspective_factor(self, ent: dict, kind: str,
+                                   base_w: float, base_h: float,
+                                   facing: int = 1) -> float:
+        """在实体**接地点**处求透视系数（近大远小的依据是"脚踩在哪"，不是锚点在哪）。
+
+        接地点本身含透视系数（尺寸要先缩），系数又按接地点求值 —— 一次不动点迭代：
+        先在锚点处采一次定位接地点，再在接地点处采一次。实体尺寸（十几到一百多 wu）
+        远小于透视轴长（本仓两千多 wu），一步即收敛。
+        **缺省锚点时接地点恒等于锚点**，两次采样同值，与改造前逐位相同。
+        """
+        f0 = self.perspective_factor(ent, kind)
+        if kind != "npc" or is_default_entity_anchor(*entity_anchor_of(ent)):
+            return f0
+        cx, cy = entity_contact_point(ent, base_w, base_h, f0, facing)
+        return self.perspective_factor(ent, kind, cx, cy)
 
     def _part_points(self, kind: str, part: str, ent: dict):
         if part == "lightcurve":
@@ -707,11 +745,13 @@ class SceneView(QGraphicsView):
         if content is None:
             return
         _anchor, w, h, facing, _s, _r, _url = content
+        ax, ay = _content_anchor(ref.kind, ent)
         for part in ("display", "sprite"):
             item = self._items.get((ref, part))
             if item is not None:
                 item.set_geometry(QPointF(0, 0), w, h,
-                                  scale=scale, rotation=rot, facing=facing)
+                                  scale=scale, rotation=rot, facing=facing,
+                                  anchor_x=ax, anchor_y=ay)
         # **碰撞面、幽灵、交互半径圈也要跟着转/缩。**
         # 只动贴图的话，转的时候画面自相矛盾：贴图转了、碰撞面和交互圈留在原地，
         # 用户没法边拖边把碰撞面与美术对齐，只能松手看一眼、不满意再来一次。

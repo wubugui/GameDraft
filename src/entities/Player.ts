@@ -1,6 +1,14 @@
+import type { Container } from 'pixi.js';
+
 import { SpriteEntity } from '../rendering/SpriteEntity';
 import type { InputManager } from '../core/InputManager';
-import type { AnimationPlaybackParams, ICutsceneActor, SceneData } from '../data/types';
+import type {
+  AnimationPlaybackParams,
+  ICutsceneActor,
+  ITrajectoryTarget,
+  SceneData,
+  TrajectoryPose,
+} from '../data/types';
 import type { PerspectiveScaleResolver } from '../utils/perspectiveScale';
 
 /** 默认行走速度（世界单位/秒） */
@@ -33,7 +41,7 @@ export interface PlayerPostureMovement {
   allowRun: boolean;
 }
 
-export class Player implements ICutsceneActor {
+export class Player implements ICutsceneActor, ITrajectoryTarget {
   public sprite: SpriteEntity;
   private inputManager: InputManager;
   private depthCollision: ((worldX: number, worldY: number) => boolean) | null = null;
@@ -81,6 +89,18 @@ export class Player implements ICutsceneActor {
   private animationOwnedByIdle = false;
   /** true 时忽略玩家移动输入（动作播放期间锁腿）；位面漂移不受影响，站着仍会被拽走 */
   private inputLocked = false;
+
+  /**
+   * 轨迹驱动方的抢占回调（**一实体一驱动**）。`moveTo`/`jumpTo` 抢走玩家时触发**恰一次**
+   * 并注销，驱动方据此收手。
+   *
+   * ⚠ `cancelMotion()` 刻意**不**触发它：那个口同时被"暂时收手"（姿态复位、动作硬打断）
+   * 复用，在那儿抢占会误杀正在跑的轨迹。切场景 / 读档时停轨迹是**播放系统**的责任
+   * （Player 跨场景长活，不在任何 unload 名单里）。
+   */
+  private _onTrajectoryPreempt: (() => void) | null = null;
+  /** 轨迹期间的接地 y（= `pose.sortY`）：飞在空中时透视 / 影子按落点算，见 `contactY`。 */
+  private _trajectoryContactY: number | null = null;
 
   private collisionsEnabled = true;
   private walkSpeed = DEFAULT_PLAYER_WALK_SPEED;
@@ -185,13 +205,29 @@ export class Player implements ICutsceneActor {
   }
 
   /**
-   * 按当前脚底点刷新透视系数并返回**步长系数**（affectsSpeed 关时步长恒 1、视觉照常缩放）。
+   * 按当前**接地点**刷新透视系数并返回**步长系数**（affectsSpeed 关时步长恒 1、视觉照常缩放）。
    * 传送/出生点落位后下一次 update 即自愈，无需外部显式刷新。
    */
   private refreshPerspectiveScale(): number {
-    const f = this.perspectiveScale?.scaleAt(this.sprite.x, this.sprite.y) ?? 1;
+    const f = this.perspectiveScale?.scaleAt(this.contactX, this.contactY) ?? 1;
     this.sprite.setDepthScaleFactor(f);
     return this.perspectiveScale?.affectsSpeed ? f : 1;
+  }
+
+  /**
+   * 接地点（阴影落点 / 透视采样 / 深度遮挡脚点）。
+   *
+   * **玩家没有 `NpcDef`，也就没有可配锚点**（2026-09-03 拍板：锚点能力做在
+   * `SpriteEntity` 层通用，但玩家保持缺省底中锚），所以这两个 getter 恒等于 `x`/`y`
+   * —— 写成派生量是为了口径统一：将来若给玩家开锚点，消费方一行都不用改。
+   */
+  get contactX(): number {
+    return this.sprite.x + this.sprite.getGroundContactOffset().x;
+  }
+
+  get contactY(): number {
+    if (this._trajectoryContactY !== null) return this._trajectoryContactY;
+    return this.sprite.y + this.sprite.getGroundContactOffset().y;
   }
 
   setCollisionsEnabled(enabled: boolean): void {
@@ -246,6 +282,62 @@ export class Player implements ICutsceneActor {
     this.sprite.container.visible = visible;
   }
 
+  // ———————————————————— 轨迹驱动适配（ITrajectoryTarget）————————————————————
+
+  get trajectoryKey(): string {
+    return 'player';
+  }
+
+  readTrajectoryAnchor(): { x: number; y: number } {
+    return { x: this.sprite.x, y: this.sprite.y };
+  }
+
+  /** 进入轨迹态：掐断在途位移/跳跃（并 resolve 其 Promise，不留悬挂），登记抢占回调。 */
+  beginTrajectory(onPreempt: () => void): void {
+    this.cancelMotion();
+    this._onTrajectoryPreempt = onPreempt;
+  }
+
+  /**
+   * 玩家**没有**实例 transform（`NpcDef.scale/rotation` 那一套只在 NPC 上），
+   * 所以叠加量直接就是最终量；镜像住在 sprite 自己的 `scale.x` 符号里、在旋转的**内层**，
+   * 因此不传 `outerMirrorX`（详见 `SpriteEntity` 字段区那段镜像注释）。
+   */
+  applyTrajectoryPose(pose: TrajectoryPose): void {
+    this.sprite.x = pose.x;
+    this.sprite.y = pose.y;
+    this.sprite.setTrajectoryOverlay(
+      (pose.rotationDeg * Math.PI) / 180,
+      pose.scaleX,
+      pose.scaleY,
+      pose.alpha,
+    );
+    (this.sprite.container as Container & { entitySortFootY?: number }).entitySortFootY = pose.sortY;
+    // 飞在空中时透视 / 影子按落点算（见 contactY）；当帧就刷新，不等下一次 update
+    this._trajectoryContactY = pose.sortY;
+    this.refreshPerspectiveScale();
+    // ⚠ `Player.x/y` 只是 `sprite.x/y` 字段，平时要等 `SpriteEntity.update()` 才落到容器上。
+    //   轨迹是"写完当帧就要成立"，不立刻同步整条轨迹会延迟一帧、与同帧结算的相机跟拍错位。
+    this.sprite.syncPositionNow();
+  }
+
+  endTrajectory(reset: boolean): void {
+    this._onTrajectoryPreempt = null;
+    this._trajectoryContactY = null;
+    if (!reset) return;
+    this.sprite.clearTrajectoryOverlay();
+    // 玩家平时不写这个键（无实例旋转），复位＝删掉，回落容器锚点 y
+    delete (this.sprite.container as Container & { entitySortFootY?: number }).entitySortFootY;
+  }
+
+  /** 触发并**注销**抢占回调（恰一次）。 */
+  private _preemptTrajectory(): void {
+    const cb = this._onTrajectoryPreempt;
+    if (!cb) return;
+    this._onTrajectoryPreempt = null;
+    cb();
+  }
+
   moveTo(
     targetX: number,
     targetY: number,
@@ -254,6 +346,8 @@ export class Player implements ICutsceneActor {
     faceTowardMovement?: boolean,
     arriveAnimState?: string | null,
   ): Promise<void> {
+    // 一实体一驱动：位移把玩家抢过来了，在跑的轨迹必须当场收手（恰一次）
+    this._preemptTrajectory();
     if (this.moveTarget) {
       this.moveTarget.resolve();
     }
@@ -300,6 +394,8 @@ export class Player implements ICutsceneActor {
     landAnimState?: string | null,
     faceTowardMovement?: boolean,
   ): Promise<void> {
+    // 一实体一驱动：同 moveTo
+    this._preemptTrajectory();
     if (this.moveTarget) {
       this.moveTarget.resolve();
       this.moveTarget = null;

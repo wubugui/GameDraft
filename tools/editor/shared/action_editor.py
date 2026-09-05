@@ -206,6 +206,19 @@ _ACTION_SCOPED_OMIT_WHEN_ABSENT_AND_DEFAULT: dict[tuple[str, str], object] = {
     ("setNpcScheduleOverride", "clear"): False,
     ("setNpcScheduleOverride", "x"): 0.0,
     ("setNpcScheduleOverride", "y"): 0.0,
+    # 轨迹播放的两个可选档。**运行时缺省 wait=true / flipX=false**，所以
+    # "显式选了缺省档"与"没设"在运行时同义，原本没这个键就别凭空写出来。
+    # wait 的值是三态字符串（见 _TRISTATE_BOOL_PARAMS），故这里的默认写成 "true"
+    # 而不是 True——本表的剔除跑在三态归一（第 5 步）之前，类型必须对得上。
+    # flipX 是勾选框（缺省 false 与控件中性态同值），登记成真 bool。
+    # 不能进全局表：wait / flipX 都是通用词，别的 action 将来用同名参数会被误伤。
+    ("playTrajectory", "wait"): "true",
+    ("playTrajectory", "flipX"): False,
+    # stopTrajectory 的两个勾选框：运行时缺省都是 false，不登记的话「打开→不改→保存」
+    # 会给全项目的 stopTrajectory 凭空写上 toEnd:false / reset:false。
+    # 不能进全局表：toEnd / reset 是通用词，别处同名参数会被误伤。
+    ("stopTrajectory", "toEnd"): False,
+    ("stopTrajectory", "reset"): False,
 }
 
 # 运行时默认为 true 的可选 bool：控件用三态（""/"true"/"false"）表达"未设"，
@@ -219,6 +232,9 @@ _TRISTATE_BOOL_PARAMS: dict[str, tuple[str, ...]] = {
     # JSON 里混类型会让人以为是两种语义，也直接违反「往返类型保真」。
     # 由 test_inspector_roundtrip 逐图守着（生态_* 那批新图就是这么暴露出来的）。
     "playNpcAnimation": ("loop",),
+    # playTrajectory.wait 运行时缺省 **true**（等轨迹播完再走下一步）：勾选框的中性态
+    # 是 false，用它就配不出"不等"。三档＝""（不写键=等）/ "true" / "false"。
+    "playTrajectory": ("wait",),
 }
 
 def _coerce_bool_param(val: object) -> bool:
@@ -323,6 +339,7 @@ ACTION_TYPES = [
     "waitMs",
     "enableRuleOffers", "disableRuleOffers",
     "moveEntityTo", "jumpEntityTo", "teleportEntityTo", "faceEntity", "cutsceneSpawnActor", "cutsceneRemoveActor", "showEmoteAndWait", "showSpeechBubbleAndWait",
+    "playTrajectory", "stopTrajectory",
     "setGroupEnabled", "moveGroupBy",
 ]
 
@@ -462,7 +479,42 @@ _SELECTOR_KIND_UNIVERSE: dict[str, str] = {
     "narrative_package": "narrative_package_ids",
     # 线索（K7）：候选=clues.json（装载工程后读 ProjectModel 活数据）
     "clue": "clues",
+    # 轨迹资产：候选=assets/data/trajectories/*.json（主编辑器只读镜像 ProjectModel.trajectories）
+    "trajectory": "trajectories",
 }
+
+
+def _trajectory_asset_rows(model) -> list[tuple[str, str]]:
+    """轨迹资产候选 `(id, label)`。
+
+    装载工程后读 `ProjectModel.trajectories`（主编辑器的只读镜像，唯一写者是轨迹工作台）；
+    无工程上下文时回落到编辑器所在仓库的 `public/assets/data/trajectories/*.json` 现扫
+    （照 clue 选择器的先例：读不到就空表，绝不抛）。
+    """
+    fn = getattr(model, "all_trajectory_ids", None) if model is not None else None
+    if callable(fn) and getattr(model, "project_path", None) is not None:
+        try:
+            return [(str(i), str(lab)) for i, lab in fn()]
+        except Exception:  # noqa: BLE001 — 候选是锦上添花，不许把表单打挂
+            return []
+    from pathlib import Path
+    out: list[tuple[str, str]] = []
+    try:
+        root = Path(__file__).resolve().parents[3]
+        d = root / "public" / "assets" / "data" / "trajectories"
+        for path in sorted(d.glob("*.json")) if d.is_dir() else []:
+            try:
+                doc = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if not isinstance(doc, dict):
+                continue
+            tid = str(doc.get("id") or "").strip() or path.stem
+            label = str(doc.get("label") or "").strip() or tid
+            out.append((tid, label))
+    except Exception:  # noqa: BLE001
+        return []
+    return out
 
 
 def _tag_content_universe(widget, universe: str | None) -> None:
@@ -606,9 +658,18 @@ ACTION_PERSISTENCE: dict[str, str] = {
     "cutsceneRemoveActor": "memory",
     "showEmoteAndWait": "memory",
     "showSpeechBubbleAndWait": "memory",
+    # 轨迹是**纯表演态**：TrajectorySystem.serialize 恒为空桶、读档即作废在途播放，
+    # 落地姿态也不入档（要让新位置进存档得另配 persistNpcAt / setSceneEntityPosition）。
+    "playTrajectory": "memory",
+    "stopTrajectory": "memory",
     "setGroupEnabled": "memory",
     "moveGroupBy": "memory",
 }
+
+TRAJECTORY_OPEN_TOOLTIP = (
+    "另起「轨迹工作台」进程打开这条轨迹资产（主编辑器对 trajectories/ 目录只读；"
+    "工作台存盘后回到这里用「Tools → External tools → 重读轨迹资产」或重开工程刷新候选）"
+)
 
 ACTION_SAVE_DOT_TOOLTIP = (
     "该 Action 会修改或影响已持久化数据（如 flag、任务、背包、档案、可存档实体覆盖等）。"
@@ -820,6 +881,23 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
         ("x", "float"),
         ("y", "float"),
     ],
+    # 轨迹播放走专用表单（_rebuild_play_trajectory_params）；这里仍登记完整参数面，
+    # 它同时是「编辑器授权面 ↔ TS manifest」parity 的一端（见 action-registration-registry-surfaces）。
+    # trajectoryId 指全局轨迹资产（assets/data/trajectories/<id>.json）；anchorX/anchorY 成对可选
+    # （不写＝目标此刻位置）；flipX 勾选框（缺省 false）；wait 是三态字符串（运行时缺省 true，
+    # 勾选框表达不了"没设"）。
+    "playTrajectory": [
+        ("trajectoryId", "str"),
+        ("target", "str"),
+        ("anchorX", "float"),
+        ("anchorY", "float"),
+        ("flipX", "bool"),
+        ("wait", "str"),
+        ("animState", "str"),
+    ],
+    # toEnd / reset 运行时缺省都是 false（就停在当前姿态、不还原叠加量），
+    # 勾选框的中性态恰好同值 ⇒ 可以用勾选框。
+    "stopTrajectory": [("target", "str"), ("toEnd", "bool"), ("reset", "bool")],
     "faceEntity": [("target", "str"), ("direction", "str"), ("faceTarget", "str")],
     "cutsceneSpawnActor": [("id", "str"), ("name", "str"), ("x", "float"), ("y", "float")],
     "cutsceneRemoveActor": [("id", "str")],
@@ -3054,6 +3132,27 @@ class ActionRow(QWidget):
         tgt_w.value_changed.connect(refresh_state)
         refresh_state()
 
+    def _default_map_scene_id(self, params: dict) -> str:
+        """「地图 sceneId」下拉的缺省场景：数据里写了就用它，否则按上下文推。
+
+        推导链：本行所在页的场景上下文 → 所在过场的 `targetScene` → 空串。
+        moveEntityTo / jumpEntityTo / teleportEntityTo / playTrajectory **共用这一份**——
+        曾经是四份逐字复制，任何一份漂了都是"同一个下拉在不同 action 里落到不同场景"，
+        而 sceneId 决定选点弹窗用哪张底图、也决定动画/轨迹候选从哪个场景取。
+        """
+        ms = str(params.get("sceneId") or "").strip()
+        if ms:
+            return ms
+        if self._ctx_scene_id:
+            return str(self._ctx_scene_id).strip()
+        m = self._ctx_model
+        cid = self._ctx_cutscene_id
+        if m and cid:
+            for cv in m.cutscenes or []:
+                if isinstance(cv, dict) and str(cv.get("id", "")).strip() == str(cid).strip():
+                    return str(cv.get("targetScene") or "").strip()
+        return ""
+
     def _rebuild_move_entity_to_params(self, params: dict) -> None:
         from ..shared.move_entity_map_picker import MoveEntityToMapPickerDialog, normalize_move_entity_waypoints
 
@@ -3076,20 +3175,7 @@ class ActionRow(QWidget):
 
         scene_rows = [(s, s) for s in (m.all_scene_ids() if m else [])] or [("（无场景）", "")]
 
-        def _default_map_sid() -> str:
-            ms = str(params.get("sceneId") or "").strip()
-            if ms:
-                return ms
-            if self._ctx_scene_id:
-                return str(self._ctx_scene_id).strip()
-            cid = self._ctx_cutscene_id
-            if m and cid:
-                for cv in m.cutscenes or []:
-                    if isinstance(cv, dict) and str(cv.get("id", "")).strip() == str(cid).strip():
-                        return str(cv.get("targetScene") or "").strip()
-            return ""
-
-        sid0 = _default_map_sid()
+        sid0 = self._default_map_scene_id(params)
         map_scene_combo = FilterableTypeCombo(scene_rows, self, select_only=True)
         vals = {v for _d, v in scene_rows if v}
         if sid0 and sid0 in vals:
@@ -3258,6 +3344,191 @@ class ActionRow(QWidget):
         sc_w.typeCommitted.connect(lambda _t: refresh_state())
         refresh_state()
 
+    def _rebuild_play_trajectory_params(self, params: dict) -> None:
+        """playTrajectory 专用表单（形状照 `_rebuild_move_entity_to_params`）。
+
+        与泛型 schema 不同、必须自己建的几处：
+        1. `trajectoryId` 的候选是**全局轨迹资产**（`assets/data/trajectories/*.json`，
+           与场景无关），走 `_make_selector("trajectory")`；
+        2. `anchorX` / `anchorY` **成对可选**：不勾＝两个键都不写＝运行时以目标此刻位置为锚；
+        3. `wait` 运行时缺省 **true**，勾选框的中性态是 false ⇒ 走三态字符串
+           （照 `playNpcAnimation.loop`），只在显式偏离缺省时落键；
+        4. `animState` 候选按所选 target 在当前场景上下文里的动画包收窄
+           （场景只用来收窄候选，**不写回**任何 sceneId）。
+        """
+        self._params_frame.setVisible(True)
+        while self._params_layout.rowCount() > 0:
+            self._params_layout.removeRow(0)
+        self._param_widgets.clear()
+
+        tip = QLabel(
+            "播一条**已烘焙**的轨迹资产（在「轨迹工作台」里画/烘；运行时只回放相对锚点的关键帧）。\n"
+            "target 必填：player 或本场景 NPC id。不指定锚点＝以目标此刻位置为锚。"
+        )
+        tip.setWordWrap(True)
+        self._params_layout.addRow(tip)
+
+        traj_init = str(params.get("trajectoryId", "") or "").strip()
+        traj_w = self._make_selector("trajectory", traj_init)
+        self._param_widgets["trajectoryId"] = traj_w
+        self._params_layout.addRow("trajectoryId", traj_w)
+
+        tgt_w = self._make_selector(
+            "trajectory_target", str(params.get("target", "") or ""))
+        self._param_widgets["target"] = tgt_w
+        self._params_layout.addRow("target", tgt_w)
+
+        # ---- 锚点：成对可选（勾选框 = 写不写键；两个数值框 = 场景坐标 wu）----
+        ax_raw, ay_raw = params.get("anchorX"), params.get("anchorY")
+        has_anchor = ax_raw is not None or ay_raw is not None
+        anchor_row = QWidget(self)
+        anchor_lay = QHBoxLayout(anchor_row)
+        anchor_lay.setContentsMargins(0, 0, 0, 0)
+        anchor_cb = QCheckBox("指定锚点", anchor_row)
+        anchor_cb.setChecked(bool(has_anchor))
+        anchor_cb.setToolTip(
+            "不勾＝anchorX/anchorY 都不写，运行时以**目标此刻位置**为锚（最常用）。\n"
+            "勾了＝把轨迹的相对帧叠在这个场景坐标（wu）上；两个值**必须成对**。")
+        anchor_lay.addWidget(anchor_cb)
+        spins: list[QDoubleSpinBox] = []
+        for key, raw in (("anchorX", ax_raw), ("anchorY", ay_raw)):
+            sb = QDoubleSpinBox(anchor_row)
+            sb.setRange(-9999999, 9999999)   # 世界坐标量程给足（numeric-roundtrip-fidelity 契约 2）
+            sb.setDecimals(2)
+            sb.setPrefix(f"{key[-1].lower()}=")
+            sb.setMaximumWidth(120)
+            try:
+                sb.setValue(float(raw) if raw is not None else 0.0)
+            except (TypeError, ValueError):
+                sb.setValue(0.0)
+            sb.setEnabled(bool(has_anchor))
+            sb.valueChanged.connect(self.changed)
+            self._param_widgets[key] = sb
+            anchor_lay.addWidget(sb)
+            spins.append(sb)
+        anchor_lay.addStretch(1)
+
+        def _on_anchor_toggled(on: bool) -> None:
+            for sb in spins:
+                sb.setEnabled(bool(on))
+            self.changed.emit()
+
+        anchor_cb.toggled.connect(_on_anchor_toggled)
+        self._param_widgets["_anchorEnabled"] = anchor_cb
+        self._params_layout.addRow("anchorX/Y", anchor_row)
+
+        flip_w = QCheckBox(self)
+        flip_w.setChecked(_coerce_bool_param(params.get("flipX")))
+        flip_w.setToolTip(
+            "水平镜像整条轨迹（相对锚点的 x 取反、旋转取反）。缺省不写键＝不镜像。\n"
+            "同一条「向右滚出去」的轨迹给朝左的目标用就靠它，不必再烘一条。")
+        flip_w.toggled.connect(self.changed)
+        self._param_widgets["flipX"] = flip_w
+        self._params_layout.addRow("flipX", flip_w)
+
+        wait_rows = [
+            ("（默认：等轨迹播完）", ""),
+            ("等轨迹播完再继续", "true"),
+            ("不等，立刻走下一步", "false"),
+        ]
+        wait_cur = str(params.get("wait", "")).strip().lower() if params.get("wait") is not None else ""
+        wait_w = FilterableTypeCombo(wait_rows, self, select_only=True)
+        if wait_cur in ("", "true", "false"):
+            wait_w.set_committed_type(wait_cur)
+        else:
+            wait_w.set_entries([(f"(数据) {wait_cur}", wait_cur)] + wait_rows)
+            wait_w.set_committed_type(wait_cur)
+        wait_w.setToolTip(
+            "运行时缺省是**等**（所以不写键＝等）。选「不等」才落 wait:false——\n"
+            "并行编排（人走轨迹的同时镜头做别的）就靠它。")
+        wait_w.typeCommitted.connect(lambda _t: self.changed.emit())
+        self._param_widgets["wait"] = wait_w
+        self._params_layout.addRow("wait", wait_w)
+
+        anim_init = str(params.get("animState", "") or "").strip()
+        anim_w = FilterableTypeCombo([("（不切动画）", "")], self, select_only=True)
+        if anim_init:
+            anim_w.set_committed_type(anim_init)
+        anim_w.setToolTip(
+            "开播前先切到这个动画状态（走路/滚动等）。留空＝不切。\n"
+            "候选按所选 target 在当前场景上下文里的动画包收窄。")
+        anim_w.typeCommitted.connect(lambda _t: self.changed.emit())
+        self._param_widgets["animState"] = anim_w
+        self._params_layout.addRow("animState", anim_w)
+
+        open_btn = QPushButton("在轨迹工作台中打开…", self)
+        open_btn.setToolTip(TRAJECTORY_OPEN_TOOLTIP)
+        open_btn.clicked.connect(
+            lambda: self._open_trajectory_in_workbench(traj_w.current_id().strip()))
+        self._params_layout.addRow("", open_btn)
+
+        self._sync_foldable_visibility()
+        self._connect_play_trajectory_pickers(
+            scene_id=self._default_map_scene_id(params), initial_anim_state=anim_init)
+
+    def _connect_play_trajectory_pickers(
+        self, *, scene_id: str, initial_anim_state: str,
+    ) -> None:
+        """target 变化时重灌 animState 候选（共享控件保值契约）。
+
+        候选依赖上游选择，任何一处漂了就是"下拉里没有、于是被清空"——
+        `FilterableTypeCombo` 的悬垂保值在这里必须一路贯到底：
+        当前值不在新候选里就注入一条「(数据)」行，绝不静默顶替或清空。
+        `scene_id` 只用于收窄候选（当前页的场景上下文 / 所在过场的 targetScene），
+        **不会**写回参数。
+        """
+        tgt_w = self._param_widgets.get("target")
+        anim_w = self._param_widgets.get("animState")
+        if not isinstance(anim_w, FilterableTypeCombo):
+            return
+        calls = [0]
+        sid = str(scene_id or "").strip()
+
+        def refresh(_: str = "") -> None:
+            calls[0] += 1
+            mm = self._ctx_model
+            aid = tgt_w.current_id().strip() if isinstance(tgt_w, IdRefSelector) else ""
+            states = mm.animation_state_names_for_actor(sid, aid) if (mm and sid and aid) else []
+            rows_a: list[tuple[str, str]] = [("（不切动画）", "")]
+            rows_a.extend((s, s) for s in states)
+            cur_a = anim_w.committed_type().strip()
+            if calls[0] == 1 and not cur_a and initial_anim_state:
+                cur_a = initial_anim_state
+            anim_w.set_entries(rows_a)
+            if cur_a in ({""} | set(states)):
+                anim_w.set_committed_type(cur_a)
+            elif cur_a:
+                anim_w.set_entries([(f"(数据) {cur_a}", cur_a)] + rows_a[1:])
+                anim_w.set_committed_type(cur_a)
+            else:
+                anim_w.set_committed_type("")
+
+        if isinstance(tgt_w, IdRefSelector):
+            tgt_w.value_changed.connect(refresh)
+        refresh()
+
+    def _open_trajectory_in_workbench(self, trajectory_id: str) -> None:
+        """另起「轨迹工作台」进程打开这条资产（沿 parent 链找宿主主窗，找不到就安静返回）。
+
+        与 `open_dialogue_graph_from_widget` 同一条路数：跳转是锦上添花，
+        没有宿主（独立小工具 / 离屏测试）时**绝不抛**，否则一个按钮能把编辑器打挂。
+        主编辑器对 `assets/data/trajectories/` 只读，唯一写者是工作台。
+        """
+        tid = str(trajectory_id or "").strip()
+        node = self
+        seen: set[int] = set()
+        while node is not None and id(node) not in seen:
+            seen.add(id(node))
+            opener = getattr(node, "open_trajectory_workbench", None)
+            if callable(opener):
+                try:
+                    opener(tid)
+                except Exception as exc:  # noqa: BLE001 — 启动失败不得打断编辑
+                    print(f"[trajectory-workbench] 打开轨迹工作台（{tid!r}）失败: {exc!r}", flush=True)
+                return
+            parent = getattr(node, "parentWidget", None)
+            node = parent() if callable(parent) else None
+
     def _rebuild_jump_entity_to_params(self, params: dict) -> None:
         """jumpEntityTo：复用 moveEntityTo 的地图选点 + 动画 state 选择器；改：无途经点、speed→durationMs+arcHeight、起跳/落地动画。"""
         from ..shared.move_entity_map_picker import MoveEntityToMapPickerDialog
@@ -3284,20 +3555,7 @@ class ActionRow(QWidget):
         # 地图 sceneId —— 复用 moveEntityTo 的默认场景推导
         scene_rows = [(s, s) for s in (m.all_scene_ids() if m else [])] or [("（无场景）", "")]
 
-        def _default_map_sid() -> str:
-            ms = str(params.get("sceneId") or "").strip()
-            if ms:
-                return ms
-            if self._ctx_scene_id:
-                return str(self._ctx_scene_id).strip()
-            cid = self._ctx_cutscene_id
-            if m and cid:
-                for cv in m.cutscenes or []:
-                    if isinstance(cv, dict) and str(cv.get("id", "")).strip() == str(cid).strip():
-                        return str(cv.get("targetScene") or "").strip()
-            return ""
-
-        sid0 = _default_map_sid()
+        sid0 = self._default_map_scene_id(params)
         map_scene_combo = FilterableTypeCombo(scene_rows, self, select_only=True)
         vals = {v for _d, v in scene_rows if v}
         if sid0 and sid0 in vals:
@@ -3442,20 +3700,7 @@ class ActionRow(QWidget):
         # 地图 sceneId —— 复用 moveEntityTo 的默认场景推导
         scene_rows = [(s, s) for s in (m.all_scene_ids() if m else [])] or [("（无场景）", "")]
 
-        def _default_map_sid() -> str:
-            ms = str(params.get("sceneId") or "").strip()
-            if ms:
-                return ms
-            if self._ctx_scene_id:
-                return str(self._ctx_scene_id).strip()
-            cid = self._ctx_cutscene_id
-            if m and cid:
-                for cv in m.cutscenes or []:
-                    if isinstance(cv, dict) and str(cv.get("id", "")).strip() == str(cid).strip():
-                        return str(cv.get("targetScene") or "").strip()
-            return ""
-
-        sid0 = _default_map_sid()
+        sid0 = self._default_map_scene_id(params)
         map_scene_combo = FilterableTypeCombo(scene_rows, self, select_only=True)
         vals = {v for _d, v in scene_rows if v}
         if sid0 and sid0 in vals:
@@ -3616,12 +3861,12 @@ class ActionRow(QWidget):
             "scene", "narrative_run_archetype", "narrative_package",
             "item", "quest", "quest_any", "encounter", "rule", "fragment", "cutscene", "shop",
             "spawn",
-            "actor", "emote_target", "npc_only", "scene_group",
+            "actor", "emote_target", "npc_only", "scene_group", "trajectory_target",
             "bubble_speaker", "bubble_line_set",
             "water_minigame", "sugar_wheel_minigame", "paper_craft_minigame",
             "object_examine",
             "smell", "plane", "pressure_hold", "signal_cue", "prop_preset",
-            "time_phase", "time_transition", "character", "clue",
+            "time_phase", "time_transition", "character", "clue", "trajectory",
         )
 
         pairs: list[tuple[str, str]] = []
@@ -3671,6 +3916,12 @@ class ActionRow(QWidget):
             pairs.append(("player", "player"))
         elif kind == "actor":
             pairs = m.actor_id_items_for_scene(self._ctx_scene_id) if m else []
+        elif kind == "trajectory_target":
+            # 轨迹能驱动的两档：本场景 NPC / player（与 actor 同一套候选，含过场临时演员）。
+            # 相机已不是轨迹目标（运镜走 camera* 动作），别再往候选里补 camera。
+            pairs = m.actor_id_items_for_scene(self._ctx_scene_id) if m else []
+        elif kind == "trajectory":
+            pairs = _trajectory_asset_rows(m)
         elif kind == "bubble_speaker":
             # 头顶闲聊说话人：与台词本的三档一一对应（player / character:<角色id> / 实体 id）。
             # 串的形状由 BubbleChatterSystem.bubbleSpeakerFromActionTarget 定义；与台词本自带的
@@ -3789,6 +4040,14 @@ class ActionRow(QWidget):
         w.value_changed.connect(self.changed)
         tip = {
             "actor": "仅下拉选择；无场景上下文时列表可能不全，请先设置过场 targetScene。",
+            "trajectory_target": (
+                "轨迹挂到谁身上（**必填**）：player 或本场景 NPC id（过场临时演员也算）。\n"
+                "轨迹资产与实体无关，同一条可以挂到任何目标上播；相机不是合法目标。"
+            ),
+            "trajectory": (
+                "仅下拉选择；列表来自 assets/data/trajectories/*.json（轨迹工作台产出）。\n"
+                "主编辑器对该目录只读：改轨迹去「工具 → 轨迹工作台…」。悬垂 id 原样保留并标「缺失」。"
+            ),
             "bubble_speaker": (
                 "头顶闲聊的说话人，三档：player（当前受控角色）/ character:<角色id>"
                 "（角色注册表，运行时落到当前场景里那个摆放）/ 场景实体 id。\n"
@@ -3877,6 +4136,10 @@ class ActionRow(QWidget):
 
         if act_type == "teleportEntityTo":
             self._rebuild_teleport_entity_to_params(params)
+            return
+
+        if act_type == "playTrajectory":
+            self._rebuild_play_trajectory_params(params)
             return
 
         if act_type == "setEntityField":
@@ -5489,6 +5752,16 @@ class ActionRow(QWidget):
                         "⚠ 与任务表单里的「接取提示」是两回事：那个管的是**任务被接取时**的提示档位，\n"
                         "这个只管**这一次切换**。缺省不写键。"
                     )
+                if act_type == "stopTrajectory" and pname == "toEnd":
+                    w.setToolTip(
+                        "停之前先把姿态求值到**末帧**并落上去（停在终点，而不是停在半路）。\n"
+                        "缺省不勾＝就停在当前姿态，不写键。"
+                    )
+                if act_type == "stopTrajectory" and pname == "reset":
+                    w.setToolTip(
+                        "交还目标时把被轨迹改过的量还原到进入前（叠加旋转/缩放/透明、排序锚、相机缩放）。\n"
+                        "缺省不勾＝保留轨迹留下的姿态，不写键。"
+                    )
                 w.stateChanged.connect(self.changed)
             elif ptype == "flag_val":
                 w = FlagValueEdit(self, self._ctx_model.flag_registry if self._ctx_model else {})
@@ -5891,6 +6164,13 @@ class ActionRow(QWidget):
                 w = self._make_selector("bubble_line_set", str(val) if val is not None else "")
             elif act_type == "setEntityEnabled" and pname == "target":
                 w = self._make_selector("actor", str(val) if val is not None else "")
+            elif act_type == "stopTrajectory" and pname == "target":
+                # 与 playTrajectory 同一候选面（本场景 NPC / 临时演员 / player）；target **必填**。
+                w = self._make_selector("trajectory_target", str(val) if val is not None else "")
+                w.setToolTip(
+                    "停掉这个目标身上在跑的轨迹：场景 NPC / 临时演员 / player。\n"
+                    "目标此刻没有轨迹在跑＝安静无操作（不是错误）。",
+                )
             elif act_type == "cameraFollowActor" and pname == "target":
                 w = self._make_selector("actor", str(val) if val is not None else "")
                 w.setToolTip(
@@ -6468,7 +6748,7 @@ class ActionRow(QWidget):
         out_wp = [{"x": round(float(px), 2), "y": round(float(py), 2)} for px, py in wp_tuples]
         # sceneId 仅供编辑器复现地图，运行时不读（见 ActionRegistry moveEntityTo）。无场景上下文时
         # 该下拉会自动落到工程第一个场景（任意值），写出去即凭空漂移；故仅当原数据本就带 sceneId
-        # 才回写（重开时 _default_map_sid 会据上下文重算）。key 顺序维持 target,[sceneId],x,y,speed。
+        # 才回写（重开时 _default_map_scene_id 会据上下文重算）。key 顺序维持 target,[sceneId],x,y,speed。
         prm = {"target": tgt}
         if sid and "sceneId" in self._original_params:
             prm["sceneId"] = sid
@@ -6485,6 +6765,43 @@ class ActionRow(QWidget):
         if isinstance(face_w, QCheckBox) and face_w.isChecked():
             prm["faceTowardMovement"] = True
         return {"type": "moveEntityTo", "params": prm}
+
+    def _to_dict_play_trajectory(self) -> dict:
+        """键序固定 `trajectoryId, target, anchorX, anchorY, flipX, wait, animState`。
+
+        几条与泛型出口不同的规矩：
+        - `target` 必填：空值只在原数据本就带该键时回写（保值），否则不凭空写空串；
+        - `anchorX` / `anchorY` 成对：没勾「指定锚点」两个键都不写；
+        - `flipX` 恒写真 bool，缺省档的剔除交给 `to_dict` 的
+          `_ACTION_SCOPED_OMIT_WHEN_ABSENT_AND_DEFAULT`（原缺键且仍为 false 时不注入）；
+        - `wait` 同上，且真 bool 归一再交给 `_TRISTATE_BOOL_PARAMS`（磁盘上字符串写法保真）；
+        - 未改动的锚点数值由 `preserve_numeric_repr` 恢复磁盘原表示（int 不漂成 float）。
+        """
+        tid_w = self._param_widgets.get("trajectoryId")
+        tgt_w = self._param_widgets.get("target")
+        cb_w = self._param_widgets.get("_anchorEnabled")
+        ax_w = self._param_widgets.get("anchorX")
+        ay_w = self._param_widgets.get("anchorY")
+        fx_w = self._param_widgets.get("flipX")
+        wt_w = self._param_widgets.get("wait")
+        as_w = self._param_widgets.get("animState")
+        tid = tid_w.current_id().strip() if isinstance(tid_w, IdRefSelector) else ""
+        tgt = tgt_w.current_id().strip() if isinstance(tgt_w, IdRefSelector) else ""
+        wait = wt_w.committed_type().strip() if isinstance(wt_w, FilterableTypeCombo) else ""
+        anim = as_w.committed_type().strip() if isinstance(as_w, FilterableTypeCombo) else ""
+
+        prm: dict = {"trajectoryId": tid}
+        if tgt or "target" in (self._original_params or {}):
+            prm["target"] = tgt
+        if isinstance(cb_w, QCheckBox) and cb_w.isChecked():
+            prm["anchorX"] = round(float(ax_w.value()), 2) if isinstance(ax_w, QDoubleSpinBox) else 0.0
+            prm["anchorY"] = round(float(ay_w.value()), 2) if isinstance(ay_w, QDoubleSpinBox) else 0.0
+        prm["flipX"] = bool(fx_w.isChecked()) if isinstance(fx_w, QCheckBox) else False
+        if wait:
+            prm["wait"] = wait
+        if anim:
+            prm["animState"] = anim
+        return {"type": "playTrajectory", "params": prm}
 
     def _to_dict_jump_entity_to(self) -> dict:
         tgt_w = self._param_widgets.get("target")
@@ -6650,6 +6967,8 @@ class ActionRow(QWidget):
             return self._to_dict_jump_entity_to()
         if act_type == "teleportEntityTo":
             return self._to_dict_teleport_entity_to()
+        if act_type == "playTrajectory":
+            return self._to_dict_play_trajectory()
         schema = _PARAM_SCHEMAS.get(act_type, [])
         params: dict = {}
         for pname, ptype in schema:

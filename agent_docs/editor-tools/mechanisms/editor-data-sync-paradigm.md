@@ -14,7 +14,8 @@ triggers:
 verified_by:
   - tools/editor/tests/test_canvas_roundtrip_safety.py
   - tools/editor/tests/test_form_editor_persistence.py
-last_governed: 2026-08-05
+  - tools/editor/tests/test_scene_group_canvas_move.py
+last_governed: 2026-09-03
 ---
 
 ## 是什么(一句话)
@@ -33,6 +34,12 @@ last_governed: 2026-08-05
 3. **commit-on-leave**:切条目/切场景前提交 staging;`confirm_close` 让关闭/切工程门控先提交;Apply 重建列表后用 id 重定位 + `_suppress` 防递归。
 4. **画布是模型投影**:数值框改坐标要让图元跟随;画布项原地更新而非删-重建。
 5. **懒回写按身份不按行号**:延迟写回认实体 dict 身份(owner 引用),防删除/重排串台。
+6. **批量写入三件套**(一次改 N 个实体的路径:整组位移、批量属性、按锚点变换):
+   ①**按身份解析写入目标**——面板持有某成员的 staging 时就写 staging,直写模型 dict
+   会被 commit-on-leave 用按下之前的 staging 深拷贝整份拍回旧值;②**同步对应控件**
+   (数值框/顶点表/巡逻表)——统一提交会先把控件刷回 staging,控件里的旧值否则反向覆盖
+   刚写进去的批量结果;③**护栏必须包含"先选中组内成员再做批量操作"**——单实体路径走
+   的是另一套 staging 两件套,**从来不中招**,只测它等于没测。
 
 ## 已知坑(审查证实的系统性破口)
 

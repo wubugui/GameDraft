@@ -15,10 +15,10 @@
 
 ### 动作 `ActionEditor`(`tools/editor/shared/action_editor.py`)
 - 挂载点:任务 `acceptActions`/`rewards`、遭遇 `resultActions`/`rewards`、热区 inspect `data.actions`、区域 `onEnter/onStay/onExit`、场景级 `onEnter`、图对话 `runActions`、档案 `firstViewActions`、cutscene action 步、pressure_holds `onComplete`/interrupts、signal_cues `actions`、小游戏 onPick/onPull* 等。
-- 类型总数 102(`ACTION_TYPES`,含位面 `activatePlane`/`deactivatePlane`——逃生舱,任务主路径用叙事状态 activePlane 点名);权威清单以 `ACTION_TYPES` 为准,不要照抄架构文档旧表。
+- 类型总数 130(2026-09-03 数,`ACTION_TYPES`;含位面 `activatePlane`/`deactivatePlane`——逃生舱,任务主路径用叙事状态 activePlane 点名);**这个数会漂,权威清单一律以 `ACTION_TYPES` 为准**,不要照抄本文或架构文档的旧表。
 - 唯一 DEBUG-only:`setNarrativeState`(普通内容不可新建,改用 narrative 图)。
 - **能嵌套子动作**(可无限层):`runActions`、`chooseAction`(每选项)、`randomBranch`(aboveActions/belowActions)、`addDelayedEvent`、`enableRuleOffers`(每槽 resultActions)。
-- **有专用复杂表单**的(约 20 个):`setPlayerAvatar`、`setEntityField`、`setSceneEntityPosition`、`moveEntityTo`、`setHotspotDisplayImage`、`showOverlayImage`/`blendOverlayImage`、`setScenarioPhase`、`startDialogueGraph`、`playScriptedDialogue` 等;大量 id 字段是下拉选择器(scene/item/rule/quest/encounter/cutscene/audio/actor…)。
+- **有专用复杂表单**的(约 20 个):`setPlayerAvatar`、`setEntityField`、`setSceneEntityPosition`、`moveEntityTo`、`playTrajectory`(轨迹本身在独立的轨迹工作台里做,表单只选资产 / 目标 / 锚点,并能一键打开工作台)、`setHotspotDisplayImage`、`showOverlayImage`/`blendOverlayImage`、`setScenarioPhase`、`startDialogueGraph`、`playScriptedDialogue` 等;大量 id 字段是下拉选择器(scene/item/rule/quest/encounter/cutscene/audio/actor…)。
 - 动作内**没有**内嵌条件控件——条件只在外层面板独立编辑。
 
 ### 条件 `ConditionEditor`(`condition_editor.py` + `condition_expr_tree.py`)

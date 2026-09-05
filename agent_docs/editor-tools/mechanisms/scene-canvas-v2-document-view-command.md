@@ -19,6 +19,9 @@ verified_by:
   - tools/editor/tests/test_scene_v2_architecture_guard.py
   - tools/editor/tests/test_scene_v2_panel_bridge.py
   - tools/editor/tests/test_scene_canvas_parity_v1_v2.py
+  - tools/editor/tests/test_scene_new_scene_entry.py
+  - tools/editor/tests/test_scene_page_reload_on_nav.py
+  - tools/editor/tests/test_scene_v2_external_writes.py
 last_governed: 2026-08-23
 ---
 
@@ -71,6 +74,12 @@ Document 永远写模型。面板编辑经桥变成命令。
 
 ## 已知坑
 
+- **图元账本是纯 push 的,对"不发事件的外部写入"零感知**(老画布删除/快照撤销、点选器、
+  自动化任务都可能直写模型)。后果是**幽灵图元**:画面上还在、**还能点中**,显隐同步对查不到
+  的实体一律显示,再删走安全删除还反报"场景里没有这个实体"。**重开才消失** = 这条的典型主诉。
+  所以外部写入必须由文档层触发重投影(见「并存期」两道防线),不能指望账本自己发现。
+- **改 id 是换身份,不是改一个字段**:命令持有的引用必须**跟随**改名,变更事件要**同时带旧、新
+  两个引用**。否则实体从画布上消失、撤销按旧 id 找不到人**静默无效**——与幽灵图元同根。
 - **命中尺寸一律屏幕像素**，且**封顶**：手柄/命中带永不超过所依附之物的四分之一。
   不封顶时缩到 0.04 倍会算出 225 世界单位的命中带，把整个框连同周围全吞掉；
   不换算则缩小后顶点只剩 3 像素点不中。两个方向都坏过。
@@ -104,6 +113,12 @@ Document 永远写模型。面板编辑经桥变成命令。
 - **场景级图元不在任何 `entity_refs` 里**:`rebuild_all()` 必须显式同步
   `EntityRef("scene", sid)`,否则光环境曲线只在收到一次 scene 变更事件后才凭空
   出现(= 打开场景时看不见也编辑不了)。
+- **场景级 part 的数据形状不必是点列。** 第一个场景级 part(光环境曲线)恰好是点列,
+  于是同步那一支写成了"一律喂 `set_points`";曾有过的轨迹 part 喂的是**整张轨迹表**,只能早退改喂
+  整份场景数据(轨迹 2026-09-04 已迁出场景画布,见 [[trajectory-workbench]];这条经验对下一个非点列的
+  场景级 part 仍成立)。更要紧的是:**"当前编哪条 / 哪段 / 洗刷到哪一刻"是视图状态,由工具持有,
+  `_sync_*` 只喂数据、绝不能顺手重设** —— 重设 = 别的实体一变更就把作者正在编的段踢掉。
+  下一个场景级 part 别再照点列那支抄一遍。
 - **`PolygonEditTool._target_parts` 的产出顺序即优先级**:选中实体的点列必须排在
   场景级光曲线之前。曲线控制点的命中半径是 10 屏幕像素,排前面就会把正下方
   选中实体的顶点拖拽整个抢走 —— 拖拽/双击插点/右键删点三条路径一起错。
@@ -153,8 +168,20 @@ Document 永远写模型。面板编辑经桥变成命令。
   `NAV_TARGET` 单一开关决定，**同一时刻只有一个页可被导航到**。
 - 撤销栈跨页知会：`scene_undo.broadcast_external_scene_write`。
   代价是**切页 = 另一页撤销栈清空** —— 语义诚实，好过两个栈互撤。
-- 切页时按模型重载，防止另一页拿旧 staging 快照把模型拍回去。
+- **并存靠两道防线,两道都要各自成立,少一道就是幽灵图元**:
+  ① **切页重载必须挂在导航树的"当前项变化"上**,不能只挂跳转/历史那条路——
+  手点导航树切页不经过跳转路径,只挂那儿等于"用跳转进得来的页是新的、手点进来的是旧的"。
+  ② **收到外部写入知会时,文档层要重投影(发一次"已重载"),不能只清撤销栈**。
+  老画布侧**刻意不做**"写入即重投影":它的加载路径会先把 pending flush 成命令再广播,
+  反过来清掉新画布的栈;老画布只靠切页重载。
 - 两个画布的**内容层次序必须一致**，护栏 `test_scene_canvas_parity_v1_v2.py`。
+- **新建场景**两边都有入口（左栏「+ 新建场景」），而 id 准入判定与最小骨架只有
+  `shared/scene_ids.py` 一份(`scene_id_problem` / `new_scene_skeleton`)。新画布起初
+  没有这个入口(工程没场景时整页什么都做不了)；老画布则曾用「仅字母数字下划线」
+  的正则把占多数的中文场景 id 拦在门外 —— norms 不变量 7(Python 兜底不得比运行时更严)
+  的典型违例。约束只从 id 真正会变成的东西反推：文件名 / `sceneId:groupId` 限定引用 /
+  `--scene` 命令行参数。场景的创建**不入撤销栈**(Document 按场景建，与老画布同口径)。
+  护栏 `test_scene_new_scene_entry.py`(从按钮进、两个画布互见)+ `test_scene_ids.py`。
 
 ## 怎么验证
 
@@ -162,4 +189,5 @@ Document 永远写模型。面板编辑经桥变成命令。
 `test_scene_v2_document.py`（五条架构验收）、`test_scene_v2_architecture_guard.py`
 （不退化）、`test_scene_v2_tools.py` / `test_scene_v2_overlays.py`（交互级）、
 `test_scene_v2_panel_bridge.py`（面板不是第二层真相）、
-`test_scene_canvas_parity_v1_v2.py`（新老次序一致）。
+`test_scene_canvas_parity_v1_v2.py`（新老次序一致）、
+`test_scene_new_scene_entry.py` / `test_scene_ids.py`（新建场景入口与 id 准入，新老共用）。

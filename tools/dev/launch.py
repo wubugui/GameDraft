@@ -20,12 +20,14 @@ TOOL_MODULES: dict[str, tuple[str, list[str]]] = {
     "image-resizer": ("tools.image_resizer", []),
     "dialogue-graph": ("tools.dialogue_graph_editor", []),
     "workbench": ("tools.production_workbench", []),
+    "build-workbench": ("tools.build_workbench", []),
     "chronicle-sim-v2": ("tools.chronicle_sim_v2", []),
     "chronicle-sim": ("tools.chronicle_sim_v3", []),
     "filter-tool": ("tools.filter_tool", []),
     "lightvol": ("tools.lightvolume_lab", []),
     "char-lighting": ("tools.character_lighting_lab", []),
     "scene-relight": ("tools.scene_relight", []),
+    "trajectory-workbench": ("tools.trajectory_workbench", []),
     "anim-preview": ("tools.anim_preview", []),
     "parallax-editor": ("tools.parallax_editor", []),
     "skill-governance": ("tools.skill_workflow_governance.console", []),
@@ -42,7 +44,7 @@ TOOL_MODULES: dict[str, tuple[str, list[str]]] = {
 def _argv_for(task: str, extra: list[str]) -> list[str]:
     module, default_args = TOOL_MODULES[task]
     args = ["-m", module, *default_args, *extra]
-    if task in ("editor", "dialogue-graph", "workbench") and not extra:
+    if task in ("editor", "dialogue-graph", "workbench", "build-workbench") and not extra:
         # These tools accept the project root as positional/--project argument.
         root = str(repo_root())
         if task == "dialogue-graph":

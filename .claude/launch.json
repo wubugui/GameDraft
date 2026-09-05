@@ -160,6 +160,18 @@
       ],
       "port": 5188,
       "autoPort": false
+    },
+    {
+      "name": "trajectory-workbench",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "scripts/pytool.cjs",
+        "trajectory_workbench",
+        "--serve",
+        "--port",
+        "5321"
+      ],
+      "port": 5323
     }
   ]
 }

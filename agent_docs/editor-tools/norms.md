@@ -9,7 +9,7 @@ triggers:
   paths: ["tools/editor/**", "tools/dialogue_graph_editor/**", "tools/parallax_editor/**", "tools/narrative_editor/**"]
   topics: [编辑器, PyQt, 往返保真, 布局, 选择器]
   tasks: [改编辑器, 加编辑器面板, 改策划工具]
-last_governed: 2026-08-05
+last_governed: 2026-09-03
 ---
 
 # 编辑器/策划工具开发规范
@@ -26,8 +26,13 @@ last_governed: 2026-08-05
    (pending 信号或内容 diff),禁止无条件 mark_dirty。
 3. **Discard 必须中和**:关闭路径的放弃分支必须把 UI 回滚到模型值,否则后续统一 flush
    把已放弃的改动写回。
-4. **唯一写盘出口**:落盘一律走统一保存出口(两阶段暂存);新增数据域必须三处同步
-   (脏桶登记 + 保存分支 + mark_dirty 调用点)。
+4. **唯一写盘出口**:业务数据落盘一律走统一保存出口(两阶段暂存)。新增数据域必须把
+   **全部**同步面逐处对齐——**别记数字**,清单以
+   [save-all-dirty-buckets](mechanisms/save-all-dirty-buckets.md) 为准(它比"登记 + 分支 +
+   标脏"那三处多)。已知的正当例外只有两类:编辑器专用 sidecar(见红线那条的括注),
+   以及**与游戏共写同一份配置的加工台**——那是双进程共写的有意设计,按
+   [audio-workbench-config-write](mechanisms/audio-workbench-config-write.md) 的两层身份
+   与磁盘反算办,**不要把它"修"回统一出口**。
 5. **选择器铁律**:非自由文本字段(可枚举/引用/受约束的值)禁止裸 QLineEdit,候选取自
    ProjectModel 的 id-provider;"定义自身新 id"是唯一例外。**只有很短的枚举才允许下拉**,
    大候选集/跨文件引用/视觉资产选择一律弹窗
@@ -51,6 +56,11 @@ last_governed: 2026-08-05
    顶爆小屏);**重块默认折叠且懒建**(首次展开才造控件——未展开块原样透传磁盘值,
    既保往返保真又躲开控件数的 O(N²) 成本);说明进 tooltip;
    字号/主题只动 theme.py,禁止 QSS 写死 font-size。
+   动态加行时另有两条 Qt 纪律:**加进布局的控件要显式 `show()`**(未显示项被布局整个跳过,
+   同一回合的行高按"零行"算);**按模式切换显隐的容器增删子控件后,要自内向外逐层刷新几何**
+   (中间层不 invalidate,外层行高就冻在旧 sizeHint)。两条的症状都是**整行被压成一条缝**,
+   而 model 层测试与构造冒烟全绿也照样漏——判据见
+   [验证门配方](recipes/editor-change-verification-gate.md)「布局塌陷」。
 3. **护栏从最外层用户入口进**:交互/拖拽/门控类特性的护栏必须发真实用户事件从入口触发;
    model 层全绿或「手动把系统摆到断言点」的测试,都不算断点之前那条路能走通的证据
    (判据与样板见 [验证门配方](recipes/editor-change-verification-gate.md))。
@@ -63,7 +73,10 @@ last_governed: 2026-08-05
 
 ## 验收门
 
-- 编辑器测试全量绿(`.tools/venv` 解释器;含离屏构造冒烟、小屏护栏、黄金往返);
+- 编辑器测试**不新增失败**(`.tools/venv` 解释器;含离屏构造冒烟、小屏护栏、黄金往返)。
+  **判据是平台相关的**:有的平台上全量本来就带一批环境性存量失败,"全量绿"在那儿不可达 ⇒
+  有效判据 = 靶向跑受影响文件全绿 **+** 与 HEAD 双树对照失败集合一致。口径见
+  [验证门配方](recipes/editor-change-verification-gate.md),别拿"绿不了"当放行理由;
 - 素材引用审计 `--strict` 零问题;
 - `./dev.sh validate-data` 零 error;
 - 声称"格式零影响"的改动须字节级验收(见 [验证门配方](recipes/editor-change-verification-gate.md))。
@@ -76,3 +89,8 @@ last_governed: 2026-08-05
 - Python 兜底比 TS 权威更严;
 - 绕过统一保存出口自行写盘(限业务数据;编辑器专用 sidecar——UI 偏好/画布布局等运行时
   永不加载的文件——按 debug-ui-persistence 范式直写不算违反,2026-07-13 用户批准)。
+
+> **这条今天有活的违例**(2026-09-03 盲重建实测):几个独立工具与主编辑器写同一批业务数据,
+> 却各走各的写盘口、安全等级不一,其中一处还与统一保存互删。**违例都在现役可达路径上,
+> 不是死码**——动这些工具前先读
+> [save-all-dirty-buckets](mechanisms/save-all-dirty-buckets.md) 的已知坑,别照现状抄。

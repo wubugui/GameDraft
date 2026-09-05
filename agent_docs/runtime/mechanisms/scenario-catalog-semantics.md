@@ -36,6 +36,10 @@ narrative 子图),运行时代码仍在但零数据喂养,stage-2 代码删除�
 - **scenarios.json ≠ narrative 的 `scenario_*` 子图**:名字像,实为两套、id 无交集
   (见 [narrative-signal-spine](narrative-signal-spine.md))。
 - **narrative 无内建 exposes**:要把叙事状态暴露成通用 flag 只能在 state 的 onEnterActions 里 setFlag。
+- **`status` 没有硬枚举,只有一份"建议集"**:写动作时打错的值照样写得进去(只有一句控制台告警),
+  而此后它**再也匹配不上任何条件**。加上"未写过一律按 `pending` 比较"这条,
+  "从没设过"和"真被设成 pending"在条件侧**不可分辨**——查这类"条件莫名不满足"时,
+  先确认那个 phase 到底被写过没有,别先怀疑条件表达式。
 
 ## 怎么验证
 

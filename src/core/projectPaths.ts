@@ -24,6 +24,7 @@ export const TEXT_URLS = {
   scenesDir: '/assets/scenes',
   dialoguesDir: '/assets/dialogues',
   filtersDir: '/assets/data/filters',
+  trajectoriesDir: '/assets/data/trajectories',
   archiveDir: '/assets/data/archive',
   cutscenesIndex: '/assets/data/cutscenes/index.json',
   parallaxScenes: '/assets/data/parallax_scenes.json',
@@ -117,6 +118,13 @@ export function filterJsonUrl(filterId: string): string {
   const id = (filterId ?? '').trim();
   if (!id) throw new Error('filterJsonUrl: filterId required');
   return `${TEXT_URLS.filtersDir}/${id}.json`;
+}
+
+/** 轨迹资产 JSON URL：`/assets/data/trajectories/<trajectoryId>.json`（一条轨迹一个文件，id = 文件名）。 */
+export function trajectoryJsonUrl(trajectoryId: string): string {
+  const id = (trajectoryId ?? '').trim();
+  if (!id) throw new Error('trajectoryJsonUrl: trajectoryId required');
+  return `${TEXT_URLS.trajectoriesDir}/${id}.json`;
 }
 
 /** data 子目录下的 JSON URL；entry.file 已是绝对路径时原样返回。 */

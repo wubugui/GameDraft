@@ -113,7 +113,7 @@ ground truth 位置不同,治理方式不同:
 
 ## 7. 治理工具入口
 
-- **治理台 CLI(统一入口)**:`python3 agent_docs/_meta/cli.py`——`list` 列全部治理流程、
+- **治理台 CLI(统一入口)**:`sh scripts/py.sh agent_docs/_meta/cli.py`——`list` 列全部治理流程、
   `route "业务一句话"` 现场匹配流程、`get <id>` 打印权威正文、`audit` 代理机械体检/索引/
   按改动路径查必读卡、`install` 一键安装/修复客户端薄壳(幂等,薄壳内容以 CLI 内模板为
   唯一生成源)。agent 遇到治理类业务先访问 CLI 现场发现流程,不凭记忆发挥。CLI 是无状态

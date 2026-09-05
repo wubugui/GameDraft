@@ -9,7 +9,7 @@ triggers:
   tasks: [做内容, 改JSON, 加任务, 加对话, 加遭遇, 加演出, 改文案, 策划模式]
   topics: [production mode, 策划模式, 内容生产, L1L2L3]
   paths: ["public/assets/data/**", "public/assets/scenes/*.json", "public/assets/dialogues/graphs/*.json"]
-last_governed: 2026-08-05
+last_governed: 2026-09-03
 last_used: 2026-07-04
 ---
 

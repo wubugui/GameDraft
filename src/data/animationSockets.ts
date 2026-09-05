@@ -122,6 +122,16 @@ export interface SocketHostFrame {
   facing: 1 | -1;
   /** 跳跃视觉抬升（容器局部 px，负=向上）；非跳跃时 0 */
   visualLiftY: number;
+  /**
+   * 宿主精灵的锚点（世界包围盒内归一化，x 0=左 1=右、y 0=顶 1=底）。
+   * **缺省 (0.5, 1) = 底中 = 脚底**，即锚点可配之前写死的那个值。
+   *
+   * 为什么必须知道：挂点标注是**格内**归一化（`raw.x/raw.y` 同样 0..1），而返回的是
+   * **容器局部**坐标，两者之间差的正是"格子的哪一点压在容器原点上"= 锚点。
+   * 不传就按脚底算，宿主一旦把锚点挪到圆心，刀就会整体错半个身位（而且不报错）。
+   */
+  anchorX?: number;
+  anchorY?: number;
 }
 
 /** 解算出的容器局部位姿 */
@@ -150,9 +160,12 @@ export function socketPoseToLocal(
 ): SocketLocalPose {
   const d = host.depthScale > 0 && Number.isFinite(host.depthScale) ? host.depthScale : 1;
   const sign = host.facing;
+  // 格内归一化 → 容器局部：减掉的正是宿主锚点（缺省底中，与改造前逐位相同）
+  const ax = typeof host.anchorX === 'number' && Number.isFinite(host.anchorX) ? host.anchorX : 0.5;
+  const ay = typeof host.anchorY === 'number' && Number.isFinite(host.anchorY) ? host.anchorY : 1;
   return {
-    x: (raw.x - 0.5) * host.worldWidth * d * sign,
-    y: host.visualLiftY + (raw.y - 1) * host.worldHeight * d,
+    x: (raw.x - ax) * host.worldWidth * d * sign,
+    y: host.visualLiftY + (raw.y - ay) * host.worldHeight * d,
     angleDeg: (raw.angle ?? 0) * sign,
     front: raw.front === true,
     frame: typeof raw.frame === 'number' ? raw.frame : null,

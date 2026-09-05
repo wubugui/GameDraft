@@ -31,9 +31,9 @@ from pathlib import Path
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from refs import CONTENT_GLOBS, REPO_ROOT, _context_of
+    from refs import REPO_ROOT, _context_of, iter_content_files
 else:
-    from .refs import CONTENT_GLOBS, REPO_ROOT, _context_of
+    from .refs import REPO_ROOT, _context_of, iter_content_files
 
 # --scope 简写 → 相对仓库根的路径前缀(也接受任意自定义前缀原样过滤)
 SCOPE_PREFIXES = {
@@ -91,8 +91,12 @@ def find_text(
     ignore_case: bool = True,
     limit: int = 500,
     scope: str = "",
+    extra_paths=(),
 ) -> SearchResult:
-    """全内容文件子串搜索。scope 为空搜全部;可传 data/scenes/dialogues 或任意路径前缀。"""
+    """全内容文件子串搜索。scope 为空搜全部;可传 data/scenes/dialogues 或任意路径前缀。
+
+    extra_paths:只活在 overlay 里、磁盘上还没有的文件(见 refs.find_refs)。
+    """
     hits: list[Hit] = []
     failed: list[str] = []
     scanned = 0
@@ -138,18 +142,17 @@ def find_text(
             if m:
                 add(f, ptr, "scalar", _context_of(parent, pkey), text, m, anchors)
 
-    for pattern in CONTENT_GLOBS:
-        for fp in sorted(root.glob(pattern)):
-            rel = str(fp.relative_to(root))
-            if prefix and not rel.startswith(prefix):
-                continue
-            scanned += 1
-            try:
-                doc = json.loads(read_text(fp))
-            except Exception:
-                failed.append(rel)
-                continue
-            walk(doc, "", rel, None, None, [], "")
+    for fp in iter_content_files(root, extra_paths=extra_paths):
+        rel = str(fp.relative_to(root))
+        if prefix and not rel.startswith(prefix):
+            continue
+        scanned += 1
+        try:
+            doc = json.loads(read_text(fp))
+        except Exception:
+            failed.append(rel)
+            continue
+        walk(doc, "", rel, None, None, [], "")
     return SearchResult(hits, total, scanned, failed)
 
 

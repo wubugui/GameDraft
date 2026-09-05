@@ -28,7 +28,16 @@ _REQUEST_TIMEOUT = 8.0
 
 
 def _uri(path: Path) -> str:
-    return "file://" + urllib.parse.quote(str(path))
+    """标准 file URI(``file:///E:/x/y.json``)。
+
+    此前是 ``"file://" + quote(str(path))``:Windows 上盘符与反斜杠整串进了 netloc,
+    server 端解回来是 ``.``——所有 overlay 挤在同一个键上、一条都对不上磁盘路径,
+    「未保存内容实时可见」在 Windows 上其实从没成立过。相对路径退回旧写法。
+    """
+    try:
+        return Path(path).as_uri()
+    except ValueError:
+        return "file://" + urllib.parse.quote(str(path))
 
 
 # 客户端生命周期状态(状态栏指示灯消费;单向流转,dead 仅从 running 进入):

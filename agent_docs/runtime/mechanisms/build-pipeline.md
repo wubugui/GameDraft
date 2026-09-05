@@ -16,7 +16,7 @@ triggers:
   paths: ["tools/build/**", "scripts/release.mjs", "scripts/package.mjs", "scripts/verify_build.mjs", "scripts/lib/**", "src-tauri/**", "vite.config.ts"]
   topics: [打包, 构建, 发行, build, package, release, 抽取清单, manifest, Tauri, exe, ffmpeg, ogg, 输出目录, 自动化构建]
   tasks: [出发行版, 改打包, 加素材类别, 接自动化构建]
-last_governed: 2026-08-28
+last_governed: 2026-09-03
 ---
 
 ## 是什么(一句话)
@@ -66,6 +66,12 @@ dev 档 1359 MB。省下来的两个大头:未引用/authoring-only 的素材,�
   3. 传递闭包(`anim.json`→`spritesheet`;`<img>.png`→`<img>.normal.png`;`anim.json`→同目录 `sockets.json`);
   4. `manifest_rules.json` 的显式规则——**代码写死路径或运行期拼出来的**那些,静态扫描永远抓不到。
   另有 id 约定扫描(`bundleId` → `animation/<id>/anim.json`)。
+- **产物里有一个不在清单里的派生文件:`assets/scene_index.json`**(2026-09-03)。它不是从开发树
+  抽取的,是 `package.mjs` 装配完素材之后按**已落地**的 `assets/scenes/*.json` 现算写出的
+  (`scripts/lib/scene_index.mjs`,与 vite 开发服中间件共用同一份生成器——开发服按请求现算同名 URL)。
+  游戏里一切"列出全部场景"的调试入口(Dev 菜单、F2「场景」页,`src/dev/sceneIndex.ts`)都读它,
+  拿不到才退回"地图节点 + game_config"那份派生清单。仓库里**没有也不该有**这个文件:一旦有人手工
+  维护,新建场景就又得"记得去加一行"。验收门比对清单时它天然不在清单里,别把它当漏抽或多抽。
 - **代码里新增一条拼路径的资源 = 必须同步登记规则**。已知的坑:对话立绘
   (`<slug>/<slug>_<emotion>.png`)、扎纸部件(`<part.id>.png`)、两代场景光照载荷、
   UI 图标名单、检视托底图——全是 JSON 里搜不到的。
@@ -87,10 +93,14 @@ dev 档 1359 MB。省下来的两个大头:未引用/authoring-only 的素材,�
   是可选 sidecar,109 个包里只有 2 个有,运行时对另外 107 个的探测**必然** 404
   (dev server 上表现为 200+HTML,判据看 content-type;见 optional-asset-probe 卡)。
   不做这个区分,验收门会永远红,红久了就没人看了——那比没有门更糟。
-- **文件在 ≠ 内容对**。`checkBakeFreshness` 比对 `lighting/lighting.json` 的
-  `background_sha1` 与包里 `background.png` 的实际哈希。重画了背景没重烘光照时:
-  素材审计全绿(文件都在)、零 404(路径都对),但运行时把那个场景的角色光照**整个禁用**,
+- **文件在 ≠ 内容对**。`checkBakeFreshness` 比对载荷记录的 `background_sha1` 与包里
+  `background.png` 的实际哈希,**判据与运行时的哈希门逐字同口径**——两边口径一分家,
+  这道门就变成"发行前说没事、进游戏才关灯"。重画了背景没重烘光照时:
+  素材审计全绿(文件都在)、零 404(路径都对),但运行时把那个场景的角色光照降级,
   画面明显不对却没有一条报错指向根因。这是所有既有门的共同盲区,只有这里查。
+  ⚠ 载荷路径带**背景图名那一层**(`lighting/<背景基名>/…`);这道门自己就因为正则少写
+  那一层空转过一轮,过滤后为空时它只会打印"没有载荷,跳过" ——
+  **"一个载荷都没找到"必须判失败,不能判跳过**(见 [scene-lighting](scene-lighting.md) 的降级出声一条)。
 
 ## 桌面壳(Tauri)的硬约束
 
@@ -197,6 +207,12 @@ Windows 上跑通了一整轮 `tauri build`,几条原本只能靠文档推断的
   每个非默认选项为什么这么写记在 `src-tauri/README.md`。
 - **验收门比对清单时要认转码**:清单记的是源文件名(`.wav`),而发行档落地的是 `.ogg`。
   逐字比对会把 194 个音频全部误报成"没落地",真正的漏拷反而被淹掉。
+- **新鲜度门里还有一处"静默跳过"的老形状**:它只认后缀是 `.png` 的背景,别的后缀走
+  "记一条 note 然后跳过"。现在背景恰好全是 png,所以这条是休眠的——但它与
+  "少一层目录就整批匹配不到"是同一个缺陷类(见 [scene-lighting](scene-lighting.md)
+  的「降级必须出声」),换背景格式那天会静默失效。
+- **静态清单证明不了完备**。它是"四来源并集减不抽取"的计算结果,漏了什么它自己不知道;
+  真正的验收是**起真实产物跑一遍、把所有 404 收进报告**。清单绿 ≠ 游戏能玩。
 - **刚装完 ffmpeg 找不到 ffmpeg**:winget 改了 PATH 但**已经在跑的 shell 拿不到新值**。
   `package.mjs` 的 `which()` 因此在 PATH 之外还会翻几个已知安装位置,省掉一次重启 shell。
 

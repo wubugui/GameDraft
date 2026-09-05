@@ -72,6 +72,41 @@ describe('entitySortRule 黄金用例（与 Python 镜像一字不差）', () =>
   }
 });
 
+/**
+ * 轨迹动画的 `sortY` 通道 —— **运行时独有**，刻意不进上面那张黄金表：
+ * 那张表与 `tools/editor/tests/test_entity_sort_parity.py` 一字不差，动它就要同时动
+ * 编辑器侧的镜像。这里用的是**既有**的 `sortFootY` 输入（`TrajectoryKeyframe.sortY`
+ * 由实体适配写进容器的 `entitySortFootY`），排序规则本身一行未改。
+ *
+ * 存在的理由：飞在空中的物件，画面上的脚点 y 是"当前高度"，而前后关系要按**落点**算。
+ * 没有这条通道，一口被抛起的箱子会在飞到最高点时突然跑到所有人前面。
+ */
+describe('轨迹 sortY：飞在空中的物件按"落点"排前后', () => {
+  it('sortY 顶掉当前 y —— 抛到半空（y 变小）仍按落点排', () => {
+    const landing = 420;
+    const midAir: EntitySortInput = { y: 180, sortFootY: landing };
+    const onGround: EntitySortInput = { y: landing };
+    expect(entitySortZ(midAir)).toBe(entitySortZ(onGround));
+  });
+
+  it('没有 sortY 时会随高度乱窜（这正是这条通道要防的）', () => {
+    expect(entitySortZ({ y: 180 })).not.toBe(entitySortZ({ y: 420 }));
+  });
+
+  it('sortY 与静态档位叠加：档位仍决定大区间，sortY 只管档内次序', () => {
+    expect(entitySortZ({ band: 'front', y: 180, sortFootY: 420 }))
+      .toBe(ENTITY_SORT_BAND + 420);
+    expect(entitySortZ({ band: 'back', y: 180, sortFootY: 420 }))
+      .toBe(-ENTITY_SORT_BAND + 420);
+  });
+
+  it('sortY 不参与遮挡带判定（那条看的是玩家脚点与多边形，与被排的实体无关）', () => {
+    const input: EntitySortInput = { y: 350, sortFootY: 0, occlusionPolygon: GOLDEN_POLY };
+    expect(resolveEntitySortBand(input, 150, 500)).toBe('back');
+    expect(entitySortZ(input, 150, 500)).toBe(-ENTITY_SORT_BAND + 0);
+  });
+});
+
 describe('三档区间绝不重叠', () => {
   it('back 档最高的实体仍低于无档位最低的实体', () => {
     // 世界高度上限按 100000 取（远大于任何真实场景）

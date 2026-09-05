@@ -1,9 +1,9 @@
 ---
 id: l2-action-primitive-registration
-title: L2 能力原语登记面(action 三件套)
+title: L2 能力原语登记面
 domain: content
 type: mechanism
-summary: 一条可用 Action = 运行时注册 + 编辑器可配 + 校验认可,缺一视为未完成;含嵌套/异步/可选参数三个已知坑与审批边界
+summary: 策划模式唯一允许的代码改动;一条可用 Action 要同步多个登记面(完整清单以 runtime 的登记面卡为准,别只做编辑器那一面),含嵌套/异步/可选参数三个已知坑与审批边界
 status: active
 authority:
   - src/core/ActionRegistry.ts
@@ -12,20 +12,25 @@ authority:
   - src/core/actionParamManifest.ts#ACTION_PARAM_MANIFEST
 triggers:
   paths: ["src/core/ActionRegistry.ts", "tools/editor/shared/action_editor.py"]
-  topics: [新增action, 新command, L2升级, 三件套, ActionRegistry]
+  topics: [新增action, 新command, L2升级, 登记面, ActionRegistry]
   tasks: [加动作, 加命令, L2升级]
 last_governed: 2026-08-05
 ---
 
 ## 是什么(一句话)
 
-策划模式里唯一允许的代码改动是 L2 新增能力原语;而"一条可用 Action"由三个登记面共同构成,只做其中一步视为未完成。
+策划模式里唯一允许的代码改动是 L2 新增能力原语;而"一条可用 Action"由**多个登记面**共同
+构成,只做其中一步视为未完成。**登记面的完整清单与"漏哪一处报哪种错"以
+[加 Action 的登记面](../../runtime/mechanisms/action-registration-registry-surfaces.md) 为准,
+这里不另抄一份**——那张卡上的 TS 参数清单尤其容易漏:漏了它 `tsc` 与数据校验**都不报**,
+只有编辑器测试红。
 
 ## 权威源(读代码从哪进)
 
 1. **运行时注册**:`src/core/ActionRegistry.ts`(`executor.register`)。
-2. **编辑器可配**:`action_editor.py` 的 `ACTION_TYPES`(下拉可选)+ `_PARAM_SCHEMAS`(参数形状)。
-3. **校验认可**:`validator.validate` 拿数据里的 `action.type` 与 `ACTION_TYPES` 比对,未登记报 error。
+2. **TS 参数清单**:`src/core/actionParamManifest.ts`(参数唯一权威源,与下面的 `_PARAM_SCHEMAS` 成对)。
+3. **编辑器可配**:`action_editor.py` 的 `ACTION_TYPES`(下拉可选)+ `_PARAM_SCHEMAS`(参数形状)。
+4. **校验认可**:`validator.validate` 拿数据里的 `action.type` 与 `ACTION_TYPES` 比对,未登记报 error。
 
 对等机制(新 cutscene present 类型 / 新条件叶子 / 新图节点)同样要求"运行时 + 编辑器 + 校验"三面齐;
 **新图节点的运行时那一面 = `DialogueGraphNodeDef` + `GraphDialogueManager`**(编辑器侧另在

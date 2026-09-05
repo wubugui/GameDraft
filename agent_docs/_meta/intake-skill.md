@@ -9,7 +9,7 @@ triggers: [收编, 入库, 炼化, 记到库里, intake, 方法论, 经验入库
 
 > 本文件是零散知识收编的**唯一权威源**,客户端无关,与 [governance-skill.md](governance-skill.md)
 > 同级:治理 run = 周期性深度对账;本流程 = 日常单件收编。发现方式 = 治理台 CLI
-> (`python3 agent_docs/_meta/cli.py`);各客户端只装一个 CLI 薄壳,任何壳不得复制本正文。
+> (`sh scripts/py.sh agent_docs/_meta/cli.py`);各客户端只装一个 CLI 薄壳,任何壳不得复制本正文。
 >
 > **触发时机**:用户说"把这个方法论收进库、记到 agent_docs、收编这条经验、炼化这段、
 > 这个坑入库、intake";或任何外部来源(其它 agent 的产出、外部文档、审查报告、会话结论)
@@ -71,7 +71,7 @@ triggers: [收编, 入库, 炼化, 记到库里, intake, 方法论, 经验入库
 
 ### 5. 收尾(每次收编必做)
 
-1. `python3 agent_docs/_meta/audit.py` 必须零 error(索引重生成)。
+1. `sh scripts/py.sh agent_docs/_meta/audit.py` 必须零 error(索引重生成)。
 2. 在 `governance-log.md` 末尾追加一行收编记录:
    `- YYYY-MM-DD intake:收X/改Y/降Z/拒W —— <一句话说明>`(治理 run 据此回看收编史)。
 3. 向请求方汇报处置清单:每件输入 → 收/改/降/拒 + 落点/理由,一行一件;不甩长报告。

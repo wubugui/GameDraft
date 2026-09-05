@@ -24,16 +24,11 @@ from pathlib import Path
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from id_universes import collect_id_universes
+    from id_universes import CONTENT_GLOBS, collect_id_universes, iter_content_files
 else:
-    from .id_universes import collect_id_universes
+    from .id_universes import CONTENT_GLOBS, collect_id_universes, iter_content_files
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-CONTENT_GLOBS = (
-    "public/assets/data/**/*.json",
-    "public/assets/scenes/*.json",
-    "public/assets/dialogues/graphs/*.json",
-)
 _TAG_RE = re.compile(r"\[tag:[^\]]*\]")
 
 
@@ -61,8 +56,12 @@ def _context_of(parent, key) -> str:
     return str(key)
 
 
-def find_refs(root: Path, target: str, read_text=None) -> list[Ref]:
-    """read_text(path)->str 可注入(LSP server 用它让未保存 overlay 参与扫描);缺省读盘。"""
+def find_refs(root: Path, target: str, read_text=None, extra_paths=()) -> list[Ref]:
+    """read_text(path)->str 可注入(LSP server 用它让未保存 overlay 参与扫描);缺省读盘。
+
+    extra_paths:磁盘上还不存在、只活在 overlay 里的文件(编辑器刚新建还没 Save All 的
+    场景/图)。不传的话它们根本不会被枚举到——read_text 只决定"怎么读",不决定"读哪些"。
+    """
     refs: list[Ref] = []
     read_text = read_text or (lambda p: p.read_text(encoding="utf-8"))
 
@@ -89,13 +88,12 @@ def find_refs(root: Path, target: str, read_text=None) -> list[Ref]:
                         refs.append(Ref(f, ptr, "tag", f"{pkey}: …{m.group(0)}…"))
                         break
 
-    for pattern in CONTENT_GLOBS:
-        for fp in sorted(root.glob(pattern)):
-            try:
-                doc = json.loads(read_text(fp))
-            except Exception:
-                continue
-            walk(doc, "", str(fp.relative_to(root)))
+    for fp in iter_content_files(root, extra_paths=extra_paths):
+        try:
+            doc = json.loads(read_text(fp))
+        except Exception:
+            continue
+        walk(doc, "", str(fp.relative_to(root)))
     return refs
 
 

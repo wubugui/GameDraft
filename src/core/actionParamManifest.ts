@@ -286,6 +286,16 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
     // sceneId 仅编辑器复现地图用，运行时忽略（同 moveEntityTo / jumpEntityTo）。
     optional: ['sceneId'],
   },
+  playTrajectory: {
+    // trajectoryId = 独立资产 assets/data/trajectories/<id>.json；target = 'player' / NPC id（资产与实体无关，挂谁由动作定）。
+    required: ['trajectoryId', 'target'],
+    nonEmpty: ['trajectoryId', 'target'],
+    // anchorX/anchorY 成对可选（场景坐标 wu），缺省 = 目标此刻位置；flipX 缺省 false；
+    // wait 缺省 **true**（等播完）；animState 开播时切目标动画状态。
+    optional: ['anchorX', 'anchorY', 'flipX', 'wait', 'animState'],
+  },
+  // toEnd / reset 运行时缺省均为 false（就停在当前姿态、不还原叠加量）。
+  stopTrajectory: { required: ['target'], nonEmpty: ['target'], optional: ['toEnd', 'reset'] },
   // direction / faceTarget 二选一（运行时校验至少一个），条件必填不在缺参检查建模。
   faceEntity: { required: ['target'], nonEmpty: ['target'], optional: ['direction', 'faceTarget'] },
   cutsceneSpawnActor: { required: ['id', 'x', 'y'], nonEmpty: ['id'], optional: ['name'] },

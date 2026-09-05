@@ -54,6 +54,7 @@ DIR_KIND_SCENE_JSON_DIR = "scene_json_dir"
 DIR_KIND_DATA = "data"
 DIR_KIND_DIALOGUES = "dialogues"
 DIR_KIND_FILTERS = "filters"
+DIR_KIND_TRAJECTORIES = "trajectories"
 DIR_KIND_EDITOR_PROJECTS = "editor_projects"
 DIR_KIND_EDITOR_DATA = "editor_data"
 DIR_KIND_EDITOR_ANIMATION_PROJECT = "editor_animation_project"
@@ -164,6 +165,12 @@ class ProjectPaths:
     @property
     def filters_dir(self) -> Path:
         return self.data_dir / "filters"
+
+    @property
+    def trajectories_dir(self) -> Path:
+        """轨迹资产目录（`<id>.json` 一文件一条）。唯一写者是 tools/trajectory_workbench；
+        主编辑器对它**只读**（候选 / 校验），不进脏桶、不进 save_all。"""
+        return self.data_dir / "trajectories"
 
     # ---------------------------------------------------- runtime media tree
     @property
@@ -346,6 +353,8 @@ class ProjectPaths:
             return self.dialogues_dir
         if kind == DIR_KIND_FILTERS:
             return self.filters_dir
+        if kind == DIR_KIND_TRAJECTORIES:
+            return self.trajectories_dir
         if kind == DIR_KIND_EDITOR_PROJECTS:
             return self.editor_projects_root
         if kind == DIR_KIND_EDITOR_DATA:

@@ -30,23 +30,25 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import threading
 import time
 import urllib.parse
+import urllib.request
 from pathlib import Path
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from extract import extract_language_spec
-    from id_universes import UniverseData, collect_id_universes
+    from id_universes import UniverseData, collect_id_universes, iter_content_files
     from json_locator import JsonLocator
     from refs import CONTENT_GLOBS, find_refs
     from rename import RENAMEABLE_UNIVERSES, plan_rename
     from search import find_text
 else:
     from .extract import extract_language_spec
-    from .id_universes import UniverseData, collect_id_universes
+    from .id_universes import UniverseData, collect_id_universes, iter_content_files
     from .json_locator import JsonLocator
     from .refs import CONTENT_GLOBS, find_refs
     from .rename import RENAMEABLE_UNIVERSES, plan_rename
@@ -60,13 +62,38 @@ class _UserError(Exception):
 
 
 def _uri_to_path(uri: str) -> Path | None:
+    """file URI → 本地路径。
+
+    标准形态是 ``file:///E:/x/y.json``(VS Code、`Path.as_uri()`),Windows 上要把
+    ``/E:/x`` 的首斜杠去掉——直接 ``Path(urlparse(uri).path)`` 得到的是 ``\\E:\\x``,
+    与 glob 出来的路径永远对不上,于是 overlay 一条都命中不了(此前在 Windows 上就是这样:
+    旧客户端把 ``E:\\x`` 整串 quote 进 netloc,这里解出来是 ``.``,所有 overlay 挤在同一个键上)。
+    旧形态(netloc 里塞着整条本地路径)仍然认,免得新旧客户端错配时整条链静默断掉。
+    """
     if not uri.startswith("file://"):
         return None
-    return Path(urllib.parse.unquote(urllib.parse.urlparse(uri).path))
+    parsed = urllib.parse.urlparse(uri)
+    netloc = urllib.parse.unquote(parsed.netloc)
+    path = urllib.parse.unquote(parsed.path)
+    if netloc and netloc.lower() != "localhost":
+        return Path(netloc + path)
+    if os.name == "nt":
+        return Path(urllib.request.url2pathname(path))
+    return Path(path)
 
 
 def _path_to_uri(path: Path) -> str:
-    return "file://" + urllib.parse.quote(str(path))
+    """本地路径 → 标准 file URI(``file:///E:/x``);相对路径退回旧写法。"""
+    try:
+        return Path(path).as_uri()
+    except ValueError:
+        return "file://" + urllib.parse.quote(str(path))
+
+
+def _overlay_key(path) -> str:
+    """overlay 字典的键:Windows 上大小写不敏感(盘符 ``e:`` 与 ``E:``、目录大小写都可能
+    因来源不同而不同——VS Code 发小写盘符,glob 出来是大写),按 normcase 归一。"""
+    return os.path.normcase(str(path))
 
 
 class Server:
@@ -83,10 +110,28 @@ class Server:
     # ---------- 文本视图(overlay 优先) ----------
 
     def read_text(self, path: Path) -> str:
-        return self.overlays.get(str(path)) or path.read_text(encoding="utf-8")
+        return self.overlays.get(_overlay_key(path)) or path.read_text(encoding="utf-8")
+
+    def set_overlay(self, path: Path, text: str) -> None:
+        self.overlays[_overlay_key(path)] = text
+        self._refs_cache.clear()
+
+    def drop_overlay(self, path: Path) -> None:
+        self.overlays.pop(_overlay_key(path), None)
+        self._refs_cache.clear()
+
+    def overlay_paths(self) -> list[Path]:
+        """overlay 里的全部路径——**含磁盘上还没有的新文件**。
+
+        枚举内容文件时必须把它们并进去:编辑器里刚新建、还没 Save All 的场景/图只活在
+        overlay 里,`read_text` 只决定"怎么读",谁都不会去读一个没被枚举到的文件。
+        不并的话,那个场景对整个语言大脑(宇宙/候选/查引用/全局搜索/schema)都不存在,
+        而编辑器明明已经把它推过来了。
+        """
+        return [Path(k) for k in list(self.overlays)]
 
     def locator(self, path: Path) -> JsonLocator | None:
-        key = str(path)
+        key = _overlay_key(path)
         version: object
         if key in self.overlays:
             version = hash(self.overlays[key])
@@ -115,13 +160,16 @@ class Server:
                     stamps.append((str(p), p.stat().st_mtime_ns))
                 except OSError:
                     pass
-        return (tuple(sorted(stamps)), tuple(sorted((k, hash(v)) for k, v in self.overlays.items())))
+        # 快照再遍历:schema 刷新线程也会来算指纹,主线程正往 overlays 里写时直接迭代会炸
+        overlays = dict(self.overlays)
+        return (tuple(sorted(stamps)), tuple(sorted((k, hash(v)) for k, v in overlays.items())))
 
     def ud(self) -> UniverseData:
         stamp = self._data_stamp()
         if self._ud is None or stamp != self._ud_stamp:
-            # overlay 感知:未保存的新定义(新物品/新图)也进宇宙与候选
-            self._ud = collect_id_universes(self.root, read_text=self.read_text)
+            # overlay 感知:未保存的新定义(新物品/新图/**新场景文件**)也进宇宙与候选
+            self._ud = collect_id_universes(
+                self.root, read_text=self.read_text, extra_paths=self.overlay_paths())
             self._ud_stamp = stamp
             self._refs_cache.clear()
             self._def_index = None
@@ -148,13 +196,12 @@ class Server:
             elif isinstance(node, str) and pkey == "id" and "/params" not in ptr and node.strip():
                 index.setdefault(node, []).append((f, ptr))
 
-        for pattern in CONTENT_GLOBS:
-            for fp in sorted(self.root.glob(pattern)):
-                try:
-                    doc = json.loads(self.read_text(fp))
-                except Exception:
-                    continue
-                walk(doc, "", str(fp.relative_to(self.root)))
+        for fp in iter_content_files(self.root, extra_paths=self.overlay_paths()):
+            try:
+                doc = json.loads(self.read_text(fp))
+            except Exception:
+                continue
+            walk(doc, "", str(fp.relative_to(self.root)))
         self._def_index = index
         return index
 
@@ -169,7 +216,8 @@ class Server:
     def refs_of(self, target: str) -> list:
         self.ud()  # 触发指纹检查/缓存失效
         if target not in self._refs_cache:
-            self._refs_cache[target] = find_refs(self.root, target, read_text=self.read_text)
+            self._refs_cache[target] = find_refs(
+                self.root, target, read_text=self.read_text, extra_paths=self.overlay_paths())
         return self._refs_cache[target]
 
     # ---------- 查询 ----------
@@ -377,7 +425,8 @@ class Server:
             limit = 500
         scope = str((params or {}).get("scope", "") or "")
         res = find_text(self.root, query, read_text=self.read_text,
-                        ignore_case=ignore_case, limit=limit, scope=scope)
+                        ignore_case=ignore_case, limit=limit, scope=scope,
+                        extra_paths=self.overlay_paths())
         hits = []
         for h in res.hits:
             entry = {"file": h.file, "pointer": h.pointer, "kind": h.kind,
@@ -397,9 +446,7 @@ class Server:
     def gd_status(self, _params):
         """server 自述(编辑器状态栏「LSP 详情」用):索引范围与 overlay 规模。"""
         ud = self.ud()
-        files = 0
-        for pattern in CONTENT_GLOBS:
-            files += sum(1 for _ in self.root.glob(pattern))
+        files = len(iter_content_files(self.root, extra_paths=self.overlay_paths()))
         return {"root": str(self.root), "files": files,
                 "overlays": len(self.overlays),
                 "universes": {n: len(ids) for n, ids in sorted(ud.ids.items())}}
@@ -453,9 +500,13 @@ def _write_message(stdout, payload: dict) -> None:
 
 
 def _schema_refresh_loop(server: "Server", stop: threading.Event) -> None:
-    """watch 并入 LSP:server 存活期间盯磁盘数据,变化后重产 out/ 的 schema
+    """watch 并入 LSP:server 存活期间盯磁盘数据**与 overlay**,变化后重产 out/ 的 schema
     (与 build.py --watch 同职责;extension 在跑时无需再挂独立 watch 进程)。
-    独立 import build 模块状态,不与请求处理共享可变数据,无需加锁。"""
+
+    overlay 也进指纹、也进重算:编辑器里刚新建、还没 Save All 的场景要立刻出现在
+    schema 的枚举里,不能等落盘——否则 VS Code 那边对新场景 id 一直画黄线,直到
+    有人想起去保存或手跑一次 build。一次重算实测 0.6s,只在指纹变了才做。
+    独立 import build 模块状态;overlays 取快照后再用,不与请求线程共享可变对象。"""
     try:
         import build as build_mod
     except ImportError:
@@ -463,17 +514,16 @@ def _schema_refresh_loop(server: "Server", stop: threading.Event) -> None:
     last: tuple | None = None
     while not stop.wait(2.0):
         try:
-            stamps = []
-            for pattern in CONTENT_GLOBS:
-                for p in server.root.glob(pattern):
-                    try:
-                        stamps.append((str(p), p.stat().st_mtime_ns))
-                    except OSError:
-                        pass
-            cur = tuple(sorted(stamps))
+            cur = server._data_stamp()
             if cur != last:
                 last = cur
-                build_mod._rebuild(server.root)
+                overlays = dict(server.overlays)
+
+                def read_text(path: Path, _ov=overlays) -> str:
+                    return _ov.get(str(path)) or path.read_text(encoding="utf-8")
+
+                build_mod._rebuild(server.root, read_text=read_text,
+                                   extra_paths=[Path(k) for k in overlays])
                 print(f"[lsp] {time.strftime('%H:%M:%S')} schema 已刷新", file=sys.stderr, flush=True)
         except Exception as e:  # 半写/权威源变形:保留上一版,下轮重试
             print(f"[lsp] schema 刷新失败(下轮重试): {e}", file=sys.stderr, flush=True)
@@ -531,19 +581,16 @@ def main() -> int:
                 doc = params["textDocument"]
                 p = _uri_to_path(doc["uri"])
                 if p:
-                    server.overlays[str(p)] = doc["text"]
-                    server._refs_cache.clear()
+                    server.set_overlay(p, doc["text"])
             elif method == "textDocument/didChange":
                 p = _uri_to_path(params["textDocument"]["uri"])
                 changes = params.get("contentChanges") or []
                 if p and changes:
-                    server.overlays[str(p)] = changes[-1]["text"]  # Full sync
-                    server._refs_cache.clear()
+                    server.set_overlay(p, changes[-1]["text"])  # Full sync
             elif method == "textDocument/didClose":
                 p = _uri_to_path(params["textDocument"]["uri"])
                 if p:
-                    server.overlays.pop(str(p), None)
-                    server._refs_cache.clear()
+                    server.drop_overlay(p)
             elif method == "textDocument/definition":
                 respond(msg_id, server.definition(params))
             elif method == "textDocument/references":

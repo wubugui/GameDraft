@@ -185,6 +185,42 @@ export class SpriteEntity {
    */
   private depthScaleFactor: number = 1;
 
+  // ————————————————— 轨迹叠加通道（实体轨迹动画）—————————————————
+  //
+  // 「在既有实例变换之上再加一层」：旋转 / 非均匀缩放 / 透明度。三者各自的落点是
+  // **定死**的，不能随手换地方（换了不报错，只是画面不对）：
+  //
+  // · **旋转写内层 `sprite.rotation`**。Pixi 的局部矩阵是 `T·R·S`，而 lit mesh 的世界仿射
+  //   （`LitSpriteQuad.setWorldTransform`）算的正是 `cs⊙(R(rot)·S(sx,sy)·p + (px,py))`
+  //   —— 同一个形状。若改成写 `container.rotation`，视觉抬升 (px,py) 就会落在 R 外面，
+  //   跳跃弧线一旦叠上旋转，lit 采样位置立刻错（画面还是对的，只有采样错 —— 最难查的那类）。
+  // · **缩放乘进 `applySpriteScale()`**（朝向符号 × 透视系数 × 叠加量，一处合成）。
+  //   非均匀缩放与镜像都是对角阵、彼此对易，故不需要任何符号处理。
+  // · **透明度写 `container.alpha`**。lit mesh 与 sprite 是**兄弟**（见 refreshLitQuad），
+  //   写 `sprite.alpha` 传不到 mesh 上；写在共同父容器上，sprite / lit mesh / 挂件一起淡出，
+  //   而 NPC 的名字标签、提示图标挂在**外层**实体容器上，不受影响。
+  //   实测（vitest + Pixi 8）：`container.alpha = 0.25` → 子节点 `groupAlpha = 0.25`、
+  //   `groupColorAlpha = 0x3fffffff`；后者正是 MeshPipe 喂给 `uColor` 的那个值，
+  //   而 `CharacterLitSprite` 的 VERT 里 `vColor = uColor`、FRAG 末尾 `* vColor`。
+  //   所以 lit 路径**不需要**再单独设 mesh.alpha。
+  //
+  // 🔴 **镜像 × 旋转不对易，而本类只负责自己那一层镜像**：
+  //   本类的镜像是 `facingX`，它住在 `sprite.scale.x` 的符号里，也就是**在 R 的里面**
+  //   （局部矩阵 `R·S`，R 在外）。所以朝左时视觉旋转方向**不变** —— 本类不做任何补偿。
+  //   而 `Npc` 的镜像在**外层容器**的 `scale.x`（在 R 的外面），`M·R(θ) = R(−θ)·M`，
+  //   朝左时视觉旋转会整个反向 —— 那一层的补偿靠调用方传 `outerMirrorX` 告诉本类。
+  //   两种口径实测（Pixi 自己的矩阵，见 SpriteEntityTrajectoryOverlay.test.ts）：
+  //   同样 `rotation=+0.3`，内层镜像时头顶向量偏 **+x**（顺时针，与不镜像一致），
+  //   外层镜像时偏 **−x**（逆时针，反了）。
+  //   约定取「世界方向恒定」：作者在画布上看到顺时针，游戏里朝左也必须是顺时针。
+  /** 已含 outerMirrorX 补偿的**局部**旋转（弧度）；无叠加时 0 */
+  private trajRotRad = 0;
+  private trajScaleX = 1;
+  private trajScaleY = 1;
+  private trajAlpha = 1;
+  /** 有没有叠加量在生效。为 false 时挂件路径逐位走旧代码（零行为差异） */
+  private trajOverlayActive = false;
+
   private currentState: string = '';
   private currentFrames: Texture[] = [];
   private currentFrameDef: AnimationStateDef | null = null;
@@ -214,11 +250,69 @@ export class SpriteEntity {
   /** 已挂载的东西：挂点名 → 挂件；每帧按当前帧的位姿重摆 */
   private attachments: Map<string, SocketAttachment> = new Map();
 
+  // ————————————————————————— 锚点（anchor）—————————————————————————
+  //
+  // 「container.x/y 落在精灵世界包围盒的哪一点」，包围盒内归一化（x 0=左 1=右、
+  // y 0=顶 1=底）。缺省 (0.5, 1) = 底中 = 脚底 —— 这就是 2026-09-03 之前写死的值。
+  //
+  // 它同时是**旋转与缩放的支点**（Pixi 的 `T·R·S` 里 anchor 参与 quad 顶点，不参与
+  // R/S），所以：一枚圆形物件不把锚点改到圆心，滚起来就是绕**接地点**转 ——
+  // 半圈处整颗沉到地面以下一个直径，画面明显不对而**不报任何错**。
+  //
+  // 光照不需要额外一行：`syncLitQuad` 一直是把 `sprite.anchor.x/y` 原样喂给
+  // `LitSpriteQuad.sync`（它据此摆 quad 四个顶点），改锚点自动跟随（已实证）。
+  private anchorX = 0.5;
+  private anchorY = 1;
+
   constructor() {
     this.container = new Container();
     this.sprite = new Sprite();
-    this.sprite.anchor.set(0.5, 1);
+    this.sprite.anchor.set(this.anchorX, this.anchorY);
     this.container.addChild(this.sprite);
+  }
+
+  /**
+   * 设置锚点（各分量夹到 [0,1]；非有限值按缺省处理）。幂等，同值重入不做任何事。
+   *
+   * 走 `applySpriteScale()` 收口：它是所有换帧 / 换向 / 透视路径的必经点，
+   * 会把 lit mesh 的顶点与挂件位姿一并同步 —— 少走这一步的表现是
+   * 「精灵挪了、光照 quad 与手里的刀没挪」。
+   */
+  setSpriteAnchor(ax: number, ay: number): void {
+    const x = Number.isFinite(ax) ? Math.min(1, Math.max(0, ax)) : 0.5;
+    const y = Number.isFinite(ay) ? Math.min(1, Math.max(0, ay)) : 1;
+    if (x === this.anchorX && y === this.anchorY) return;
+    this.anchorX = x;
+    this.anchorY = y;
+    this.sprite.anchor.set(x, y);
+    this.applySpriteScale();
+  }
+
+  /** 只读：当前锚点。 */
+  getSpriteAnchor(): { x: number; y: number } {
+    return { x: this.anchorX, y: this.anchorY };
+  }
+
+  /**
+   * **接地点**相对本类原点（`container.x/y`）的局部偏移。
+   *
+   * 接地点 = 精灵世界包围盒的底边中点，也就是锚点可配之前 `(x, y)` 的那个含义；
+   * 阴影落点 / 深度排序锚 / 透视采样点 / 深度遮挡脚点都该吃它，不是锚点。
+   *
+   * 已含：透视系数（经 `getWorldSize()`）与**本类自己那一层镜像**（`facingX`，住在
+   * `sprite.scale.x` 的符号里）。**不含**：实体层的实例 `scale` / `rotation` / 外层镜像
+   * —— 那三样是调用方（`Npc`）的事，与轨迹叠加旋转的 `outerMirrorX` 同一套分层口径。
+   * 也**不含**跳跃的视觉抬升（`setVisualLiftY`）：那个按设计不动接地点。
+   *
+   * 缺省锚点时恒返回 `(0, 0)`。
+   */
+  getGroundContactOffset(): { x: number; y: number } {
+    if (this.anchorX === 0.5 && this.anchorY === 1) return { x: 0, y: 0 };
+    const size = this.getWorldSize();
+    return {
+      x: (0.5 - this.anchorX) * size.width * this.facingX,
+      y: (1 - this.anchorY) * size.height,
+    };
   }
 
   /**
@@ -391,6 +485,9 @@ export class SpriteEntity {
     const m = this.litQuad.mesh;
     m.position.set(this.sprite.x, this.sprite.y);
     m.scale.set(this.sprite.scale.x, this.sprite.scale.y);
+    // 轨迹叠加旋转：mesh 才是出图的那个（sprite 只当变换载体），漏了这一行角色不转、
+    // 只有采样位置在转。无叠加时恒 0，与旧行为逐位一致。
+    m.rotation = this.sprite.rotation;
     this.syncLitQuadWorld();
   }
 
@@ -422,11 +519,17 @@ export class SpriteEntity {
     const cos = Math.cos(pr), sin = Math.sin(pr);
     const cx = this.litParentX + this.litParentSX * (cos * this.container.x - sin * this.container.y);
     const cy = this.litParentY + this.litParentSY * (sin * this.container.x + cos * this.container.y);
+    // 末位 rot = 外层实体旋转 + 内层 sprite 自己的旋转（轨迹叠加量）。
+    // 与挂件那条（syncAttachmentLit 传 `view.rotation + pr`）**同一套写法**：
+    // setWorldTransform 的形状是 cs⊙(R(rot)·S(sx,sy)·p + (px,py))，而 sprite 的真实
+    // 局部矩阵就是 T(px,py)·R(sprite.rotation)·S —— 把两级旋转并进同一个 R 即精确对上
+    // 叠加量这一项（外层 pr 与对角 cs 的先后仍是既有的那个近似，此处不动它）。
+    // 无叠加时 sprite.rotation 恒 0，传值与改动前逐位相同。
     this.litQuad.setWorldTransform(
       cx, cy,
       this.litParentSX * this.container.scale.x, this.litParentSY * this.container.scale.y,
       this.sprite.x, this.sprite.y,
-      this.sprite.scale.x, this.sprite.scale.y, pr);
+      this.sprite.scale.x, this.sprite.scale.y, pr + this.sprite.rotation);
   }
 
   /**
@@ -588,6 +691,8 @@ export class SpriteEntity {
       worldWidth: this.worldWidth,
       worldHeight: this.worldHeight,
       depthScaleFactor: this.depthScaleFactor,
+      /** 轨迹叠加通道（旋转/非均匀缩放/透明度）——无头验证靠它判"姿态到底施加上去没有" */
+      trajectoryOverlay: this.getTrajectoryOverlay(),
       frame: frame ? { x: frame.x, y: frame.y, width: frame.width, height: frame.height } : null,
       pixelDensityMatchActive: this.pixelDensityMatchActive,
     };
@@ -645,6 +750,76 @@ export class SpriteEntity {
     this.syncAttachments();   // 挂件同抬:跳跃时刀不能留在地面高度
   }
 
+  /**
+   * 施加一层轨迹叠加变换（旋转 / 非均匀缩放 / 透明度），叠在既有实例变换与朝向之上。
+   * 幂等：同一帧重复调只是覆写，不累积。落点与镜像口径见字段区那段长注释。
+   *
+   * @param rotRad      **世界方向**的叠加旋转（弧度，正 = 屏幕顺时针）
+   * @param sx          水平叠加缩放倍率（乘在朝向符号 × 透视系数之上）
+   * @param sy          垂直叠加缩放倍率
+   * @param alpha       0..1
+   * @param outerMirrorX 调用方**在本类之外**施加的水平镜像符号（±1）。
+   *                     Npc 传 `container.scale.x` 的符号；Player 没有外层镜像，不传。
+   *                     传错不报错，只是朝左时旋转反向 —— 这是本文件唯一的符号陷阱。
+   */
+  setTrajectoryOverlay(
+    rotRad: number,
+    sx: number,
+    sy: number,
+    alpha: number,
+    outerMirrorX = 1,
+  ): void {
+    const rot = Number.isFinite(rotRad) ? rotRad : 0;
+    const mirror = outerMirrorX < 0 ? -1 : 1;
+    this.trajRotRad = rot * mirror;
+    this.trajScaleX = Number.isFinite(sx) ? sx : 1;
+    this.trajScaleY = Number.isFinite(sy) ? sy : 1;
+    this.trajAlpha = Number.isFinite(alpha) ? Math.min(1, Math.max(0, alpha)) : 1;
+    this.trajOverlayActive = true;
+    this.sprite.rotation = this.trajRotRad;
+    this.container.alpha = this.trajAlpha;
+    // applySpriteScale 是换帧/换向/透视的必经点：它会把叠加缩放乘进去，
+    // 并把 lit mesh 的顶点、世界仿射与挂件位姿一并同步。
+    this.applySpriteScale();
+  }
+
+  /** 撤掉叠加层，回到无轨迹时的姿态（生命周期对称：清完与从未叠加过逐位一致）。 */
+  clearTrajectoryOverlay(): void {
+    if (!this.trajOverlayActive) return;
+    this.trajRotRad = 0;
+    this.trajScaleX = 1;
+    this.trajScaleY = 1;
+    this.trajAlpha = 1;
+    this.trajOverlayActive = false;
+    this.sprite.rotation = 0;
+    this.container.alpha = 1;
+    this.applySpriteScale();
+  }
+
+  /** 只读：当前叠加量（调试快照 / 单测断言用）。 */
+  getTrajectoryOverlay(): {
+    active: boolean; rotRad: number; scaleX: number; scaleY: number; alpha: number;
+  } {
+    return {
+      active: this.trajOverlayActive,
+      rotRad: this.trajRotRad,
+      scaleX: this.trajScaleX,
+      scaleY: this.trajScaleY,
+      alpha: this.trajAlpha,
+    };
+  }
+
+  /**
+   * 立刻把 `x`/`y` 落到容器上（并刷 lit 世界坐标）。
+   *
+   * 为什么需要：`x`/`y` 只是本类的字段，平时要等 `update()` 里的 `syncPosition()` 才进容器。
+   * 轨迹回放是「写完姿态当帧就要成立」——不立即同步，整条轨迹会整体延迟一帧，
+   * 与同帧结算的相机跟拍错位（Player 走的正是这条路：`Player.x` = `sprite.x`）。
+   */
+  syncPositionNow(): void {
+    this.syncPosition();
+  }
+
   /** 暂停 / 恢复帧推进（供预览工具）。恢复时若已到非循环终点帧则回到起点帧（反向播放的终点是首帧）。 */
   setPlaying(playing: boolean): void {
     if (playing && !this.playing && this.currentFrames.length > 0) {
@@ -691,7 +866,10 @@ export class SpriteEntity {
    * 覆盖的是最高帧；蹲/躺/跑这些矮帧上方全是透明留白（实测最矮帧只占格高 16%~25%），
    * 拿格子顶边挂气泡会飘出角色一大截。
    *
-   * @returns `bottomGap` = 内容底边高于脚点的距离（含视觉抬升）；无 `atlasFrames` 等数据缺失时 null。
+   * @returns `bottomGap` = 内容底边高于**容器原点**（= 锚点）的距离（含视觉抬升）；
+   *          无 `atlasFrames` 等数据缺失时 null。
+   *          ⚠ 锚点非底中时这个"高于"可以是负的（内容底边跑到原点下方去了）——
+   *          消费方一律按 `内容底边局部 y = -bottomGap` 用，符号自洽。
    */
   getContentBoxLocal(): { width: number; height: number; bottomGap: number } | null {
     const pad = this.contentBottomPadPx;
@@ -706,8 +884,12 @@ export class SpriteEntity {
     return {
       width: box.w * scaleX,
       height: box.h * scaleY,
-      // sprite.y 为跳跃弧线的视觉抬升（负=离地），减去它内容框才跟着精灵一起升
-      bottomGap: pad * scaleY - this.sprite.y,
+      // sprite.y 为跳跃弧线的视觉抬升（负=离地），减去它内容框才跟着精灵一起升；
+      // 末项是锚点重定基：quad 底边在容器局部 y = sprite.y + (1-anchorY)·格高，
+      // 而 bottomGap 的口径是"高于容器原点多少"。缺省锚点时该项恒 0。
+      bottomGap:
+        pad * scaleY - this.sprite.y
+        - (1 - this.anchorY) * this.worldHeight * this.depthScaleFactor,
     };
   }
 
@@ -788,6 +970,10 @@ export class SpriteEntity {
       depthScale: this.depthScaleFactor,
       facing: this.facingX,
       visualLiftY: this.sprite.y,
+      // 挂件与 sprite 是**兄弟**（同挂 container 下），锚点一变 sprite 的图挪了、
+      // 挂件不会自动跟着挪 —— 这两个值就是那道换算
+      anchorX: this.anchorX,
+      anchorY: this.anchorY,
     });
   }
 
@@ -879,8 +1065,6 @@ export class SpriteEntity {
         continue;
       }
       at.view.visible = true;
-      at.view.x = pose.x;
-      at.view.y = pose.y;
       // 支点：挂点对准贴图上的这一点（刀柄而不是图心）
       const ax = clamp01(at.anchorX ?? 0.5);
       const ay = clamp01(at.anchorY ?? 0.5);
@@ -890,10 +1074,32 @@ export class SpriteEntity {
       }
       const base = at.scale ?? 1;
       const mirror = at.mirrorWithHost === false ? 1 : pose.facing;
-      at.view.scale.set(base * pose.scale * mirror, base * pose.scale);
       // 旋转 = 挂点标注角度 + 挂件自身偏置；偏置同样跟着镜像取反，否则朝左时道具会反着歪
       const offset = (at.rotationOffsetDeg ?? 0) * pose.facing;
-      at.view.rotation = ((pose.angleDeg + offset) * Math.PI) / 180;
+      let atX = pose.x;
+      let atY = pose.y;
+      let atSx = base * pose.scale * mirror;
+      let atSy = base * pose.scale;
+      let atRot = ((pose.angleDeg + offset) * Math.PI) / 180;
+      if (this.trajOverlayActive) {
+        // 挂件与本体 sprite 是**兄弟**（都挂在 container 下，见 attachToSocket），
+        // 拿不到 sprite 身上的轨迹叠加变换。不补这一段，角色被轨迹转起来 / 缩起来时
+        // 手里的刀会留在原地不转不缩（"人转刀不转"）。
+        // 与 sprite 局部矩阵同序：先缩放后旋转（T·R·S）。
+        const lx = atX * this.trajScaleX;
+        const ly = atY * this.trajScaleY;
+        const c = Math.cos(this.trajRotRad);
+        const s = Math.sin(this.trajRotRad);
+        atX = lx * c - ly * s;
+        atY = lx * s + ly * c;
+        atSx *= this.trajScaleX;
+        atSy *= this.trajScaleY;
+        atRot += this.trajRotRad;
+      }
+      at.view.x = atX;
+      at.view.y = atY;
+      at.view.scale.set(atSx, atSy);
+      at.view.rotation = atRot;
       // 第二档：挂点驱动帧号——挂件是一张小序列图时用标注里的帧号选纹理，
       // 不引入第二个时钟（所以也没有锁相问题）。
       if (at.frameTextures && at.frameTextures.length > 0 && pose.frame !== null) {
@@ -954,15 +1160,21 @@ export class SpriteEntity {
     }
   }
   /**
-   * 当前状态**授权**的头顶锚（容器局部 y，脚点 0、向上为负；已含透视系数与视觉抬升）。
-   * 来自 anim.json `states[*].bubbleAnchor`（格高归一化比例）；没授权返回 null，调用方走内容框自动档。
+   * 当前状态**授权**的头顶锚（容器局部 y，**容器原点 = 锚点**为 0、向上为负；
+   * 已含透视系数与视觉抬升）。来自 anim.json `states[*].bubbleAnchor`
+   * （格高归一化比例，量的是"从**脚底**往上几成"）；没授权返回 null，调用方走内容框自动档。
    *
    * 存在的理由：内容框顶 ≠ 头顶——举枪、扛尸、打伞这些状态，自动锚会挂到道具尖上。
+   *
+   * ⚠ 授权值的零点是脚底，而返回值的零点是容器原点。锚点可配之后这两个零点**不再重合**，
+   * 中间那一项 `(1-anchorY)·格高` 就是换算 —— 漏了它头顶气泡会整体飘走
+   * （缺省锚点时该项恒 0，与改造前逐位相同）。
    */
   getAuthoredBubbleAnchorLocalY(): number | null {
     const raw = this.currentFrameDef?.bubbleAnchor;
     if (typeof raw !== 'number' || !Number.isFinite(raw) || raw <= 0) return null;
-    return this.sprite.y - raw * this.worldHeight * this.depthScaleFactor;
+    const cellH = this.worldHeight * this.depthScaleFactor;
+    return this.sprite.y + (1 - this.anchorY) * cellH - raw * cellH;
   }
 
   /** 当前显示帧在 `atlasFrames` 中登记的内容包围盒（格像素）；无登记/非法返回 null。 */
@@ -1095,14 +1307,16 @@ export class SpriteEntity {
     const tex = this.baseTexture;
     const def = this.animDef;
     if (!tex || !def) {
-      this.sprite.scale.set(this.facingX, 1);
+      this.sprite.scale.set(this.facingX * this.trajScaleX, this.trajScaleY);
       return;
     }
     const { frameW, frameH } = this.getCurrentFramePixelSize();
 
+    // 朝向符号 × 透视系数 × 轨迹叠加缩放：三者在这一处合成（单点闸）。
+    // 叠加缩放与镜像都是对角阵、彼此对易，故不需要符号处理——只有旋转才需要（见字段区注释）。
     this.sprite.scale.set(
-      (this.worldWidth * this.depthScaleFactor / frameW) * this.facingX,
-      (this.worldHeight * this.depthScaleFactor) / frameH,
+      (this.worldWidth * this.depthScaleFactor / frameW) * this.facingX * this.trajScaleX,
+      ((this.worldHeight * this.depthScaleFactor) / frameH) * this.trajScaleY,
     );
     this.syncLitQuad();   // 所有换帧/换向/透视缩放路径的必经点:mesh 顶点+UV 跟随
     this.syncAttachments();   // 挂点位姿同源:换帧/换向/透视一变,挂件当场跟上

@@ -1,6 +1,7 @@
 import { EventBus } from './EventBus';
 import { FlagStore, type FlagRegistryJson } from './FlagStore';
 import { applyDevRuntimeCommand } from './devRuntimeCommands';
+import { fetchSceneIndex } from '../dev/sceneIndex';
 import { InputManager } from './InputManager';
 import { AssetManager, type AssetRef } from './AssetManager';
 import { ActionExecutor } from './ActionExecutor';
@@ -46,6 +47,7 @@ import { HealthSystem } from '../systems/HealthSystem';
 import { SmellSystem } from '../systems/SmellSystem';
 import { PlaneReconciler } from '../systems/PlaneReconciler';
 import { NpcScheduleSystem } from '../systems/NpcScheduleSystem';
+import { TrajectorySystem } from '../systems/TrajectorySystem';
 import { HUD } from '../ui/HUD';
 import type { SmellProfilesRaw } from '../ui/smell/SmellIndicatorRenderer';
 import { NotificationUI } from '../ui/NotificationUI';
@@ -92,6 +94,8 @@ import type {
   ScenarioCatalogFile,
   SceneLightEnv,
   ICutsceneActor,
+  ITrajectoryTarget,
+  TrajectoryTargetRef,
   HotspotDisplayImage,
   IEmoteBubbleAnchor,
   CharacterRegistryFile,
@@ -201,7 +205,14 @@ import {
 } from '../utils/scriptedDialogueSpeaker';
 import { resolveSpeakerSide } from '../utils/dialogueSpeakerSide';
 import { Culler, Graphics, RenderTexture, Sprite, Texture, UPDATE_PRIORITY } from 'pixi.js';
-import { dialogueGraphJsonUrl, sceneJsonUrl, TEXT_URLS } from './projectPaths';
+import { dialogueGraphJsonUrl, sceneJsonUrl, TEXT_URLS, trajectoryJsonUrl } from './projectPaths';
+import type { TrajectoryAsset, TrajectoryKeyframe } from '../data/types';
+import type { TrajectoryEndReason } from '../systems/TrajectorySystem';
+import {
+  basisRowsFromDepthConfigR,
+  flipTrajectoryKeyframes,
+  projectWorldKeyframes,
+} from '../utils/trajectoryProjection';
 import { makeOwnerOrigin, resolveDialogueOwner } from './actionOrigin';
 import {
   coerceRuntimeFieldValue,
@@ -489,6 +500,13 @@ export class Game {
   private smellSystem: SmellSystem;
   private planeReconciler: PlaneReconciler;
   private npcScheduleSystem: NpcScheduleSystem;
+  /** 烘焙式实体轨迹动画的播放系统（表演态，不入档；切场景/读档由本类显式 cancelAll） */
+  private trajectorySystem: TrajectorySystem;
+  /**
+   * 轨迹资产缓存（id → 资产 / null=缺失）。资产是全局文件，与场景无关，整个会话有效；
+   * 缺失也缓存，免得每次播放都去探一次 HEAD 并刷一遍 warn。
+   */
+  private trajectoryAssets = new Map<string, TrajectoryAsset | null>();
   private smellProfilesData: SmellProfilesRaw | null = null;
   private pressureHoldUI!: PressureHoldUI;
   private depthDebugVisualizer!: DepthDebugVisualizer;
@@ -810,6 +828,11 @@ export class Game {
     // 章节导演（C2）：按清单在 scene:revealed / narrative:stateChanged 上评估开拍/收工；
     // 自身无状态（live 集在叙事档），控制口与条件工厂在下方统一接线。
     this.narrativePackageDirector = new NarrativePackageDirector(this.eventBus);
+    // 烘焙式轨迹播放：依赖只有一件——NPC 目标开播时要停巡逻，否则巡逻协程会把实体抢回去
+    // （同一个理由见 setupSceneReadyHandler 里 NPC 重建后的 stopNpcPatrol）。
+    this.trajectorySystem = new TrajectorySystem({
+      suspendPatrol: (npcId) => this.stopNpcPatrol(npcId),
+    });
 
     const ctx = { eventBus: this.eventBus, flagStore: this.flagStore, strings: this.stringsProvider, assetManager: this.assetManager };
     this.registeredSystems = [
@@ -849,6 +872,8 @@ export class Game {
       { name: 'bubbleChatterSystem', system: this.bubbleChatterSystem },
       { name: 'playerIdleBehaviorSystem', system: this.playerIdleBehaviorSystem },
       { name: 'sceneDepthSystem', system: this.sceneDepthSystem },
+      // 轨迹是表演态：serialize 恒为空桶，deserialize = 作废在途表演（旧时间线不写新状态）
+      { name: 'trajectorySystem', system: this.trajectorySystem },
     ];
     for (const entry of this.registeredSystems) {
       if (entry.system) entry.system.init(ctx);
@@ -1049,6 +1074,129 @@ export class Game {
       `parent=${h.container.parent ? 'yes' : 'no'} y=${Math.round(h.container.y)}`,
     );
     return h;
+  }
+
+  /**
+   * 轨迹目标解析：`TrajectoryTargetRef`（或裸 id 字符串）→ 能被轨迹驱动的对象。
+   *
+   * 一律走既有的唯一演员入口 `resolveActorFn`（临时演员 → 场景 NPC → player），
+   * 返回的 `Npc` / `Player` **自身就是** `ITrajectoryTarget`（直接 implements，无包装类）。
+   * 轨迹不驱动相机：运镜走 `cameraFollowActor` / `cameraMove` 那一族。
+   *
+   * 这里必须做一次运行时窄化：`resolveActorFn` 的静态类型是 `ICutsceneActor`，而热点等
+   * 别的可锚定物**不是**轨迹目标。鸭子判 `trajectoryKey` + 三个方法，缺一个就当解析失败
+   * ——宁可返回 null 让调用方报"目标解析失败"，也不要半个接口的对象进播放系统。
+   */
+  resolveTrajectoryTarget(ref: TrajectoryTargetRef | string): ITrajectoryTarget | null {
+    const kind = typeof ref === 'string'
+      ? (ref.trim() === 'player' ? 'player' : 'npc')
+      : ref?.kind;
+    const id = kind === 'player'
+      ? 'player'
+      : (typeof ref === 'string' ? ref.trim() : String(ref?.id ?? '').trim());
+    if (!id) return null;
+    const actor = this.resolveActorFn(id) as unknown;
+    if (!actor || typeof actor !== 'object') return null;
+    const cand = actor as Partial<ITrajectoryTarget>;
+    if (typeof cand.trajectoryKey !== 'string'
+      || typeof cand.beginTrajectory !== 'function'
+      || typeof cand.applyTrajectoryPose !== 'function'
+      || typeof cand.endTrajectory !== 'function') {
+      return null;
+    }
+    return cand as ITrajectoryTarget;
+  }
+
+  /**
+   * 轨迹资产装载：`assets/data/trajectories/<id>.json`，按 id 惰性、整会话缓存（缺失也缓存）。
+   * 文件不存在是**内容错**（构建期由校验器拦），运行时只 warn 一次、播放以 `'cancelled'` 封口。
+   * 走 `loadOptionalJson`：dev server 对缺失路径回 200+HTML，只看状态码会把 HTML 当 JSON 解析爆红条。
+   */
+  async loadTrajectoryAsset(trajectoryId: string): Promise<TrajectoryAsset | null> {
+    const id = String(trajectoryId ?? '').trim();
+    if (!id) return null;
+    const cached = this.trajectoryAssets.get(id);
+    if (cached !== undefined) return cached;
+    let asset: TrajectoryAsset | null = null;
+    try {
+      const raw = await this.assetManager.loadOptionalJson<TrajectoryAsset>(trajectoryJsonUrl(id));
+      if (raw && typeof raw === 'object' && Array.isArray(raw.keyframes)) asset = raw;
+    } catch {
+      asset = null;
+    }
+    if (!asset) {
+      console.warn(`[trajectory] 轨迹资产缺失或形状不对："${id}"（${trajectoryJsonUrl(id)}）`);
+    }
+    this.trajectoryAssets.set(id, asset);
+    return asset;
+  }
+
+  /**
+   * 资产 → 当前场景可播的 2D 相对帧。
+   * 世界空间资产按当前场景 `depthConfig.M.R` 投影（只要 R，不要光照载荷，见 `utils/trajectoryProjection`）；
+   * 没有 depthConfig（或 R 不是 det=+1）的场景回落到烘焙场景投好的 `keyframes`。
+   */
+  resolveTrajectoryFrames(asset: TrajectoryAsset, flipX = false): TrajectoryKeyframe[] {
+    let frames: TrajectoryKeyframe[] = Array.isArray(asset.keyframes) ? asset.keyframes : [];
+    if (asset.space === 'world' && Array.isArray(asset.worldKeyframes) && asset.worldKeyframes.length > 0) {
+      const rows = basisRowsFromDepthConfigR(this.sceneManager.currentSceneData?.depthConfig?.M?.R);
+      if (rows) frames = projectWorldKeyframes(asset.worldKeyframes, rows);
+    }
+    return flipX ? flipTrajectoryKeyframes(frames) : frames;
+  }
+
+  /**
+   * `playTrajectory` 的运行时入口：装资产 → 解析目标 → 投影/翻转 → 交给播放系统。
+   * **必然封口**（律 3）：资产缺失 / 目标解析失败 / 装载期被拆除都返回 `'cancelled'`。
+   * 目标位置（缺省锚点）在播放系统里、装载之后才读——读的是开播那一刻的位置。
+   */
+  async playTrajectoryAsset(
+    trajectoryId: string,
+    ref: TrajectoryTargetRef | string,
+    opts: { anchor?: { x: number; y: number }; flipX?: boolean } = {},
+  ): Promise<TrajectoryEndReason> {
+    const asset = await this.loadTrajectoryAsset(trajectoryId);
+    if (!asset || this.tearDownComplete) return 'cancelled';
+    const target = this.resolveTrajectoryTarget(ref);
+    if (!target) {
+      console.warn(`[trajectory] 目标解析失败："${typeof ref === 'string' ? ref : JSON.stringify(ref)}"（轨迹 "${trajectoryId}"）`);
+      return 'cancelled';
+    }
+    const frames = this.resolveTrajectoryFrames(asset, opts.flipX === true);
+    return this.trajectorySystem.play(
+      { id: asset.id || trajectoryId, keyframes: frames },
+      target,
+      { anchor: opts.anchor },
+    );
+  }
+
+  /**
+   * 过场里引用到的轨迹资产开机预载（不阻塞启动，失败只 warn）。
+   * 为什么要预载：`playTrajectory` 第一次播某资产要 fetch 一次，过场若恰在那一瞬被跳过，
+   * `finishAll` 先于开播发生，轨迹会在过场结束后才起步。预载把这个窗口关掉。
+   * 热区 / 对话里的引用仍是惰性装载（那些路径没有"跳过"语义）。
+   */
+  private preloadCutsceneTrajectoryAssets(): void {
+    const ids = new Set<string>();
+    const walk = (steps: unknown): void => {
+      if (!Array.isArray(steps)) return;
+      for (const s of steps) {
+        if (!s || typeof s !== 'object') continue;
+        const step = s as { kind?: string; type?: string; params?: Record<string, unknown>; tracks?: unknown };
+        if (step.kind === 'parallel') {
+          walk(step.tracks);
+          continue;
+        }
+        if (step.kind === 'action' && step.type === 'playTrajectory') {
+          const id = String(step.params?.trajectoryId ?? '').trim();
+          if (id) ids.add(id);
+        }
+      }
+    };
+    for (const cid of this.cutsceneManager.getCutsceneIds()) {
+      walk(this.cutsceneManager.getCutsceneDef(cid)?.steps);
+    }
+    for (const id of ids) void this.loadTrajectoryAsset(id);
   }
 
   /**
@@ -1478,6 +1626,11 @@ export class Game {
     };
     this.cutsceneManager.setEntityResolver(this.resolveActorFn);
     this.cutsceneManager.setEmoteBubbleProvider(this.emoteBubbleManager);
+    // 轨迹：只给过场两件能力，不把 TrajectorySystem 实例交出去（分层律 11）。
+    this.cutsceneManager.setTrajectoryController({
+      finishAll: () => this.trajectorySystem.finishAll(),
+      setFastForward: (on) => this.trajectorySystem.setFastForward(on),
+    });
     this.cutsceneManager.setEmoteTargetResolver((raw) => this.resolveEmoteTarget(raw));
     this.cutsceneManager.setSceneSwitcher(async (params) => {
       this.pickupNotification.forceCleanup();
@@ -1883,6 +2036,12 @@ export class Game {
       },
       startNpcPatrol: (npcId) => {
         this.startNpcPatrolForNpc(npcId);
+      },
+      // 轨迹：注入**能力**而不是系统实例（分层律 11）。装资产 / 投影 / 目标解析都在 Game 侧。
+      playTrajectory: (trajectoryId, ref, opts) => this.playTrajectoryAsset(trajectoryId, ref, opts),
+      stopTrajectory: (ref, opts) => {
+        const t = this.resolveTrajectoryTarget(ref);
+        return t ? this.trajectorySystem.stopFor(t.trajectoryKey, 'stopped', opts) : false;
       },
       showOverlayImage: (id, image, xPct, yPct, wPct) =>
         this.cutsceneManager.showOverlayImage(id, image, xPct, yPct, wPct),
@@ -2595,7 +2754,9 @@ export class Game {
       this.signalCueManager.loadDefs(),
       this.bubbleChatterSystem.loadDefs(),
       this.audioManager.loadConfig(),
-      this.cutsceneManager.loadDefs(),
+      this.cutsceneManager.loadDefs().then(() => {
+        if (!this.tearDownComplete) this.preloadCutsceneTrajectoryAssets();
+      }),
       this.archiveManager.loadDefs(),
       this.clueManager.loadDefs(),
       this.shopUI.loadDefs(),
@@ -2616,7 +2777,7 @@ export class Game {
         jump: (sceneId, spawnPoint) => {
           void this.devLoadScene(sceneId, spawnPoint);
         },
-        listFallback: () => this.getDevSceneEntries(),
+        listFallback: () => this.getDerivedDevSceneEntries(),
         onSceneChanged: (cb) => {
           this.eventBus.on('scene:enter', cb);
           return () => this.eventBus.off('scene:enter', cb);
@@ -4474,8 +4635,9 @@ export class Game {
   private makePlayerShadowSource(): ShadowSource {
     const p = this.player;
     return {
-      getFootX: () => p.x,
-      getFootY: () => p.y,
+      // 接地点（不是位置）：锚点可配之后两者只有缺省锚才相等，见 NpcDef.anchor
+      getFootX: () => p.contactX,
+      getFootY: () => p.contactY,
       getWorldWidth: () => p.sprite.getWorldSize().width,
       getWorldHeight: () => p.sprite.getWorldSize().height,
       getTexture: () => p.sprite.getDisplayTexture(),
@@ -4486,8 +4648,9 @@ export class Game {
 
   private makeNpcShadowSource(npc: Npc): ShadowSource {
     return {
-      getFootX: () => npc.x,
-      getFootY: () => npc.y,
+      // 接地点（不是位置）：锚点在圆心的物件，脚点在它下方半个身高，见 NpcDef.anchor
+      getFootX: () => npc.contactX,
+      getFootY: () => npc.contactY,
       getWorldWidth: () => npc.getWorldSize().width,
       getWorldHeight: () => npc.getWorldSize().height,
       getTexture: () => npc.getDisplayTexture(),
@@ -4820,6 +4983,12 @@ export class Game {
     this.listenEvent('scene:beforeUnload', () => {
       this.patrolGeneration++;
       this.npcPatrolEpoch.clear();
+      /**
+       * 在途轨迹整批作废（不落姿、还原叠加量）。必须在这一步做，不能指望实体自拆通知：
+       * NPC 销毁会触发抢占回调，但**玩家跨场景长活、不在任何卸载名单里**，相机同理——
+       * 漏掉就是下一场顶着上一场的叠加旋转/缩放/透明度（见 [[teardown-ordering]]）。
+       */
+      this.trajectorySystem.cancelAll();
       // 透视缩放随场景走：先清句柄防旧场景系数漂到新场景（NPC/热点随实例销毁）
       this.perspectiveScaleResolver = null;
       this.player.setPerspectiveScale(null);
@@ -5472,7 +5641,20 @@ export class Game {
     window.location.reload();
   }
 
-  /** 开发模式场景列表：地图节点 + game_config 入口/回退 + dev_room，去重排序 */
+  /**
+   * 开发模式场景清单：优先全量索引（`/assets/scene_index.json`，从 public/assets/scenes
+   * 派生——开发服现算、打包时生成），拿不到才退回下面那份"地图节点 + game_config"派生清单。
+   * 派生清单只覆盖玩家可走的节点，新建的梦境/演出/测试场景在里面永远看不见。
+   */
+  private async getDevSceneEntries(): Promise<
+    Array<{ id: string; name: string; spawnPoints: string[] }>
+  > {
+    const indexed = await fetchSceneIndex();
+    if (indexed.length > 0) return indexed;
+    return this.getDerivedDevSceneEntries();
+  }
+
+  /** 兜底清单的 id 集：地图节点 + game_config 入口/回退 + dev_room，去重排序 */
   private getDevSceneIds(): string[] {
     const ids = new Set<string>();
     for (const sid of this.mapUI.getConfiguredSceneIds()) ids.add(sid);
@@ -5483,10 +5665,10 @@ export class Game {
   }
 
   /**
-   * 开发模式列表展示名取自各场景 JSON 的 name，缺省或加载失败时用 id；
+   * 兜底清单（索引不可用时）：展示名取自各场景 JSON 的 name，缺省或加载失败时用 id；
    * 同时带出 spawnPoints 键（F2「场景」页的出生点下拉用；Dev 面板忽略该字段）。
    */
-  private async getDevSceneEntries(): Promise<
+  private async getDerivedDevSceneEntries(): Promise<
     Array<{ id: string; name: string; spawnPoints: string[] }>
   > {
     const ids = this.getDevSceneIds();
@@ -5558,6 +5740,9 @@ export class Game {
     /** 读档开始信号：HUD 等纯事件驱动的展示层先清上一局残留（任务追踪等），
      *  随后各系统 deserialize 补发的事件（quest:accepted{restored} 等）重建显示。 */
     this.eventBus.emit('save:restoring', {});
+    // 读档 = 换了一条时间线：在途轨迹当场作废。TrajectorySystem 自己的 deserialize 也会做，
+    // 但只在存档里有 `trajectorySystem` 桶时才会被调到（旧档没有），这里补一刀兜住旧档。
+    this.trajectorySystem.cancelAll();
     // 读档期间抑制 QuestManager / ArchiveManager 对 flag:changed 的反应：
     // 各系统 deserialize 会逐个 syncFlag → emit flag:changed，但此刻 scenario/narrative/档案集合
     // 可能尚未恢复，按半态重评会导致任务误判完成/激活、以及虚假“档案更新”通知。
@@ -6787,6 +6972,10 @@ export class Game {
      *  不会在系统逐个销毁期间继续 moveTo 已销毁的实体（HMR 悬挂根因）。 */
     this.patrolGeneration++;
     this.npcPatrolEpoch.clear();
+    // 同一个理由：轨迹的世代号也先推进。这里各系统尚未逐个销毁、实体都还活着，
+    // 还原叠加量是安全的；等排到 registeredSystems 里的 trajectorySystem.destroy()
+    // 时场景实体已被 sceneManager 拆完（那时也不会漏，只是还原动作打在空气上）。
+    this.trajectorySystem.cancelAll();
     this.characterLighting.destroy();
 
     // 生命周期对称：先摘挂点再关连接，HMR 重建时不留悬挂 observer/socket。
@@ -7063,6 +7252,20 @@ export class Game {
     // 否则关掉面板会发现横幅已经在背后播完了
     this.questBannerUI.update(dt);
     this.guidanceLayerUI.update(dt);
+    /**
+     * 烘焙轨迹回放。位置有两个硬约束，别挪：
+     * - **在所有状态分支之后**：过场/动作链分支里的 `applyCameraFollow` 会写相机目标点，
+     *   轨迹运镜必须压得过它（同帧后写者赢），否则 `cameraFollowActor` 一开轨迹就失效；
+     * - **在 `camera.update` / `sortEntityLayer` 之前**：`snapTo` 写的是 current+target，
+     *   随后的 `camera.update` 平滑一步即原地；姿态里的 `entitySortFootY` 也要赶在排序前落定。
+     *
+     * 切场景遮罩期与标题页不跑：那两态实体正在拆/尚未建，推进时间只会把轨迹白白播完。
+     * （不是"暂停"——tMs 不前进，回到正常态从原处接着播。）
+     */
+    if (this.stateController.currentState !== GameState.SceneTransition
+      && this.stateController.currentState !== GameState.MainMenu) {
+      this.trajectorySystem.update(dt);
+    }
     this.camera.update(dt);
     this.debugTools?.update(dt);
     this.depthDebugVisualizer?.update();
@@ -7096,24 +7299,27 @@ export class Game {
       const floorGroupConditions = (groupId: string) =>
         this.sceneManager.getCurrentSceneGroupConditions(groupId);
       if (this.playerDepthFilter) {
+        // 深度遮挡 / 逐像素着色的"脚点"一律取**接地点**（缺省锚点时 = 位置，见 NpcDef.anchor）
+        const pFootX = this.player.contactX;
+        const pFootY = this.player.contactY;
         const ex = resolveDepthFloorOffsetBoost(
           zones,
-          this.player.x,
-          this.player.y,
+          pFootX,
+          pFootY,
           this.flagStore,
           floorCondCtx,
           floorGroupConditions,
         );
         this.sceneDepthSystem.updateEntityDepthOcclusion(
           this.playerDepthFilter,
-          this.player.x,
-          this.player.y,
+          pFootX,
+          pFootY,
           ex,
         );
         const ps = this.player.sprite;
         const pSize = ps.getWorldSize();
         const pInfo = ps.getShadingFrameInfo();
-        this.driveBakedShading(this.playerDepthFilter, this.player.x, this.player.y, {
+        this.driveBakedShading(this.playerDepthFilter, pFootX, pFootY, {
           worldW: pSize.width,
           worldH: pSize.height,
           flipX: (pInfo?.flipX ?? false) !== (ps.container.scale.x < 0),
@@ -7131,21 +7337,26 @@ export class Game {
           y: number;
         };
         if (c.filters) {
+          const npc = npcByContainer.get(child);
+          // 脚点取**接地点**：锚点在圆心的物件（铜钱一族）按锚点采深度会差半个身高，
+          // 表现是"影子/遮挡对不上、而画面上物件位置是对的"。非 NPC 容器无锚点概念，
+          // 回落容器坐标（= 改造前的行为）。
+          const fx = npc ? npc.contactX : c.x;
+          const fy = npc ? npc.contactY : c.y;
           for (const f of c.filters) {
             if (f._isDepthOcclusion && f !== this.playerDepthFilter) {
               const ex = resolveDepthFloorOffsetBoost(
-                zones, c.x, c.y, this.flagStore, floorCondCtx, floorGroupConditions,
+                zones, fx, fy, this.flagStore, floorCondCtx, floorGroupConditions,
               );
               this.sceneDepthSystem.updateEntityDepthOcclusion(
                 f as unknown as IEntityShadingFilter,
-                c.x,
-                c.y,
+                fx,
+                fy,
                 ex,
               );
-              const npc = npcByContainer.get(child);
               const size = npc?.getWorldSize();
               const info = npc?.getShadingFrameInfo() ?? null;
-              this.driveBakedShading(f as unknown as IEntityShadingFilter, c.x, c.y, npc ? {
+              this.driveBakedShading(f as unknown as IEntityShadingFilter, fx, fy, npc ? {
                 worldW: size!.width,
                 worldH: size!.height,
                 flipX: info?.flipX ?? false,

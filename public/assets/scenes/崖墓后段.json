@@ -1,0 +1,75 @@
+{
+  "id": "崖墓后段",
+  "name": "崖墓后段",
+  "worldWidth": 2048.0,
+  "worldHeight": 1152.0,
+  "backgrounds": [
+    {
+      "image": "background.png",
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "spawnPoint": {
+    "x": 742.5,
+    "y": 645.2
+  },
+  "hotspots": [
+    {
+      "id": "T_到崖墓",
+      "x": 38.9,
+      "y": 1107.2,
+      "type": "transition",
+      "label": "",
+      "interactionRange": 50,
+      "data": {
+        "targetScene": "崖墓正式",
+        "targetSpawnPoint": "spawn_0",
+        "text": ""
+      },
+      "autoTrigger": true,
+      "castShadow": false
+    },
+    {
+      "id": "T_到前段1",
+      "x": 1825.3,
+      "y": 42.8,
+      "type": "transition",
+      "label": "",
+      "interactionRange": 50,
+      "data": {
+        "targetScene": "崖墓前段1",
+        "targetSpawnPoint": "spawn_0",
+        "text": ""
+      },
+      "autoTrigger": true,
+      "castShadow": false
+    }
+  ],
+  "npcs": [
+    {
+      "id": "new_npc",
+      "x": 211.5,
+      "y": 963.1,
+      "interactionRange": 50,
+      "name": "New NPC",
+      "animFile": "/resources/runtime/animation/npc_coolie_c_anim/anim.json",
+      "initialAnimState": "idle"
+    }
+  ],
+  "zones": [],
+  "spawnPoints": {
+    "spawn_0": {
+      "x": 80.7,
+      "y": 1025.4
+    },
+    "spawn_1": {
+      "x": 1781.1,
+      "y": 135.4
+    }
+  },
+  "camera": {
+    "zoom": 0.68,
+    "pixelsPerUnit": 1.0
+  }
+}

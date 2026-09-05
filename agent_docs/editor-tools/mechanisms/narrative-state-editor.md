@@ -9,10 +9,11 @@ authority:
   - tools/editor/editors/narrative_state_editor.py#WRAPPER_OWNER_CATALOG_KEYS
   - tools/narrative_editor_web/src/editor/appHelpers.ts#WRAPPER_OWNER_REGISTRY
   - src/core/narrativeGraphValidation.ts
+  - tools/editor/shared/npm_process.py
 triggers:
-  paths: ["tools/editor/editors/narrative_state_editor.py", "tools/narrative_editor_web/*", "public/assets/data/narrative_graphs.json"]
-  topics: [叙事状态机, narrative_graphs, QWebEngine, 两步保存, 校验兜底]
-  tasks: [改叙事编辑器, 改叙事校验, 加 wrapper owner 类型]
+  paths: ["tools/editor/editors/narrative_state_editor.py", "tools/narrative_editor_web/*", "public/assets/data/narrative_graphs.json", "tools/narrative_debugger/**", "tools/editor/shared/npm_process.py"]
+  topics: [叙事状态机, narrative_graphs, QWebEngine, 两步保存, 校验兜底, 叙事调试器, npm 子进程]
+  tasks: [改叙事编辑器, 改叙事校验, 加 wrapper owner 类型, 改叙事调试器]
 verified_by:
   - tools/editor/tests/test_narrative_state_editor.py
   - tools/narrative_editor_web/src/hooks/useEditorHistory.test.ts
@@ -56,6 +57,22 @@ last_governed: 2026-08-05
    "0 处引用,可安全操作"。表键必须解析到 `ProjectModel` 的真实属性——`getattr` 兜 `None`
    会静默跳过整张表,这是该类漏洞的固定形状,列进镜像 parity 门的固定检查项。
 
+10. **本页范围内有多组"手工镜像清单",一律按镜像对待**(清单内容以代码为准,别抄):
+    ①**画布框类节点**是三处镜像——边路由的四向端口集 / 布局尺寸的框类分支 / 画布节点注册;
+    ②**composition element kind** 要同时过全部登记面——运行时编译分支 + TS 权威白名单
+    与其若干处 kind 硬判 + web 清单 + Python 兜底;③④ 即上面的硬契约 6 与 9。
+    **共同形状:漏任一处都不报错,症状各不相同**——框类漏路由 = 边接到框中心或整条边不渲染,
+    漏尺寸分支 = 框按未 measured 的 0 算、边飘到左上角,漏注册 = 节点根本不画;
+    element kind 漏一处 = 那类元素的**内嵌图静默不过校验**(状态/转移/条件零校验)、
+    还可能被误报成空引用,**跑测试看不出来**。它们一并列进镜像 parity 门的固定检查项;
+    新增此类清单前先想能不能消灭镜像(读单一真相源,norms 不变量 8)。
+
+11. **PyQt 工具里凡起 npm/node 子进程,一律走 `tools/editor/shared/npm_process`**:
+    该出口负责定位 `npm.cmd` / 仓内便携 node 并配好环境。本页「重建并刷新」曾自己手搓
+    第三份 POSIX 专供调用(`$SHELL -lc`、回落 `/bin/zsh`),Windows 上 `SHELL` 为空 ⇒
+    **100% FailedToStart,而同一条命令在命令行一次过**;症状是"这个按钮永远起不来",
+    用户只会报"自动 rebuild 总是不行"。别再手搓 program/args。
+
 ## 已知坑
 
 - 同一事件连打两次 `updateData` = 第二次赢、第一次被静默丢弃(根因:绕过持有串行基线的撤销核,直接读渲染期 data 再 setData);直接 `setDataInternal` 的路径(初次加载、adopt 重构结果)必须同 tick 追平基线。
@@ -64,6 +81,16 @@ last_governed: 2026-08-05
 - 归一化逻辑三语言重复(TS/Python/web)是架构固有,别试图合并;一致性靠各自字节幂等护栏 + parity 测试。
 - **flow 主图 `ownerId` = 纯注释、零机制效力**(2026-07-13 拍板):禁止任何校验/候选机制消费它(曾据孤例误推候选致全线误报);**wrapper 图的 owner 不受影响**,仍是真引用。
 - **wrapper/scenario 子图元素的 `meta.emits/reads` 不再手编**(2026-07-13 拍板):改为从子图内容自动派生的只读展示(口径对齐 [emitted-signal-catalog](emitted-signal-catalog.md));黑盒元素保留登记语义,候选走搜索弹窗(对齐 [下拉vs弹窗拍板](../decisions/2026-07-11-dropdown-vs-popup-selector.md))。
+- **信号选择弹窗里"发射源无法可靠统计、故只显示监听数"那句注释已过期**:共享扫描引擎成立后
+  两侧都能算(见 [emitted-signal-catalog](emitted-signal-catalog.md))。弹窗**刻意不改**
+  (选择器不该为一次选择扫全工程),要看谁发谁听去**信号关系面板**;别照那句注释下结论。
+- **测平台分支别 patch `os.name`**:`pathlib` 按它做平台分派,在 Windows 上一 patch 成 posix,
+  `Path(...).resolve()` 当场炸。把平台做成函数参数注入,两条分支才能在任一平台都被测到。
+- **"一次只列一个切面"的清单,搜索必须能越过那个切面**(叙事调试器 `tools/narrative_debugger`
+  的血案):左栏一次只列一条线、搜索只筛已填进列表的行 ⇒ 在别的线里搜必然 0 条,而
+  **空结果读起来跟"这东西不存在"一模一样**——而这类工具的全部价值就是回答"我做过的那东西
+  在哪"。命中在别的切面要接进列表末尾且可点跳转;切面名的回退口径(线无 label 时退到主图名)
+  与"按场景看"要不要并上 owner 站在本场景的 wrapper 图,同属这条。
 
 ## 怎么验证
 

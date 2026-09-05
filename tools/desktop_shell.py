@@ -71,14 +71,14 @@ def _acquire_single_instance_mutex(app_id: str):
     return h
 
 
-def _try_activate_running(app_id: str) -> bool:
+def _try_activate_running(app_id: str, payload: bytes = b'raise') -> bool:
     """已经有一个实例在跑?连上去让它把窗口提到前台,返回 True(本进程该退出了)。"""
     from PySide6.QtNetwork import QLocalSocket
     sock = QLocalSocket()
     sock.connectToServer(app_id)
     if not sock.waitForConnected(300):
         return False
-    sock.write(b'raise')
+    sock.write(payload)
     sock.waitForBytesWritten(300)
     sock.disconnectFromServer()
     return True
@@ -105,7 +105,11 @@ def _listen_for_second_instance(app_id: str, on_raise) -> object | None:
     def _on_new():
         conn = server.nextPendingConnection()
         if conn is not None:
-            conn.readyRead.connect(lambda: (on_raise(), conn.disconnectFromServer()))
+            def _ready(c=conn):
+                data = bytes(c.readAll().data())
+                on_raise(data)
+                c.disconnectFromServer()
+            conn.readyRead.connect(_ready)
 
     server.newConnection.connect(_on_new)
     return server
@@ -113,8 +117,22 @@ def _listen_for_second_instance(app_id: str, on_raise) -> object | None:
 
 def run_desktop(handler_cls, title: str, app_id: str,
                 port: int | None = None, smoke: bool = False,
-                size: tuple[int, int] = (1560, 980)) -> int:
-    """开窗口跑一个本地网页工具。返回进程退出码。"""
+                size: tuple[int, int] = (1560, 980),
+                on_activate=None, activate_payload: bytes = b'raise',
+                initial_path: str = '/', selftest: str | None = None,
+                selftest_timeout_s: float = 600.0) -> int:
+    """开窗口跑一个本地网页工具。返回进程退出码。
+
+    ``activate_payload``：本进程抢不到单实例闸时送给已有实例的字节串（缺省 ``raise`` = 只叫前台）；
+    ``on_activate(data: bytes, view)``：已有实例收到管道消息时的回调（先叫前台再调它），
+    工具用它做「已开着的窗口切到某条资产」；``initial_path``：首次装载的路径（可带 query）。
+
+    ``selftest``：一份 JS 场景脚本的路径。页面 load 完后把它注入真页面里跑（脚本自己把报告串写到
+    ``window.__selftestResult``，每行 ``PASS ...`` / ``FAIL ...`` / ``EXC ...``），跑完原样打印，
+    有 FAIL/EXC 退出码 1，超时 3。这是交互层的端到端回归门：改了手势 / 异步 / 保存这一层，
+    先跑它，别拿审查员当回归测试。selftest 与 smoke 一样无头（offscreen）、不参与单实例。
+    """
+    smoke = smoke or bool(selftest)
     from PySide6.QtCore import Qt, QTimer, QUrl
     from PySide6.QtGui import QKeySequence, QShortcut
     from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
@@ -129,7 +147,7 @@ def run_desktop(handler_cls, title: str, app_id: str,
     if not smoke:
         mutex_guard = _acquire_single_instance_mutex(app_id)
         if mutex_guard is None:
-            if _try_activate_running(app_id):
+            if _try_activate_running(app_id, activate_payload):
                 print(f'[desktop-shell] {title} 已经开着,已把它提到前台', flush=True)
             else:
                 print(f'[desktop-shell] {title} 已有实例在跑(可能正在启动中),本进程退出',
@@ -174,24 +192,63 @@ def run_desktop(handler_cls, title: str, app_id: str,
     for seq in ('F5', 'Ctrl+R', 'Ctrl+Shift+R'):
         QShortcut(QKeySequence(seq), win, activated=view.reload)
 
-    def _raise_window() -> None:
+    def _raise_window(data: bytes = b'raise') -> None:
         win.setWindowState(
             (win.windowState() & ~Qt.WindowState.WindowMinimized)
             | Qt.WindowState.WindowActive)
         win.raise_()
         win.activateWindow()
+        if on_activate is not None:
+            try:
+                on_activate(data, view)
+            except Exception as e:  # noqa: BLE001 — 回调炸了不许把窗口拖下水
+                print(f'[desktop-shell] on_activate 抛错: {e}', file=sys.stderr, flush=True)
 
     guard = None if smoke else _listen_for_second_instance(app_id, _raise_window)
     if guard is not None:
         win._single_instance_guard = guard          # 保住引用,别被 GC 掉
 
-    if smoke:
+    if selftest:
+        script_src = open(selftest, 'r', encoding='utf-8').read()
+        state = {'done': False}
+
+        def _poll() -> None:
+            if state['done']:
+                return
+
+            def _got(v):
+                if state['done']:
+                    return
+                if isinstance(v, str) and v:
+                    state['done'] = True
+                    print(v, flush=True)
+                    lines = [ln for ln in v.splitlines() if ln.strip()]
+                    bad = [ln for ln in lines if ln.startswith('FAIL') or ln.startswith('EXC')]
+                    n_pass = sum(1 for ln in lines if ln.startswith('PASS'))
+                    print(f'[selftest] {n_pass} passed, {len(bad)} failed', flush=True)
+                    QTimer.singleShot(200, lambda: app.exit(1 if bad else 0))
+                else:
+                    QTimer.singleShot(500, _poll)
+            page.runJavaScript('window.__selftestResult || ""', _got)
+
+        def _loaded(ok: bool) -> None:
+            print(f'[selftest] loadFinished ok={ok} port={actual_port}', flush=True)
+            if not ok:
+                app.exit(2)
+                return
+            page.runJavaScript(script_src)
+            QTimer.singleShot(1000, _poll)
+        view.loadFinished.connect(_loaded)
+        QTimer.singleShot(int(selftest_timeout_s * 1000),
+                          lambda: (print('[selftest] timeout', flush=True), app.exit(3)))
+    elif smoke:
         def _loaded(ok: bool) -> None:
             print(f'[smoke] loadFinished ok={ok} port={actual_port}', flush=True)
             QTimer.singleShot(300, lambda: app.exit(0 if ok else 2))
         view.loadFinished.connect(_loaded)
         QTimer.singleShot(20000, lambda: (print('[smoke] timeout', flush=True), app.exit(3)))
 
-    view.load(QUrl(f'http://127.0.0.1:{actual_port}/'))
+    path = initial_path if initial_path.startswith('/') else '/' + initial_path
+    view.load(QUrl(f'http://127.0.0.1:{actual_port}{path}'))
     win.show()
     return app.exec()

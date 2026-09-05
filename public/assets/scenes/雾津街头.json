@@ -573,8 +573,8 @@
     {
       "id": "npc_零工工头",
       "name": "挑空担的汉子",
-      "x": 1168.8,
-      "y": 1580.4,
+      "x": 1173.2,
+      "y": 1569.5,
       "interactionRange": 64.0,
       "animFile": "/resources/runtime/animation/npc_coolie_c_anim/anim.json",
       "initialAnimState": "idle",
@@ -1108,6 +1108,32 @@
         }
       ],
       "conditionHidesEntity": true
+    },
+    {
+      "id": "npc_验证铜钱",
+      "name": "验证用铜钱",
+      "x": 992,
+      "y": 1411.0,
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ],
+      "cutsceneIds": [
+        "验证_铜钱脱落滚走"
+      ],
+      "interactionRange": 0,
+      "displayImage": {
+        "image": "/resources/runtime/images/props/copper_coin.png",
+        "worldWidth": 14,
+        "worldHeight": 14
+      },
+      "castShadow": false,
+      "anchor": {
+        "x": 0.5,
+        "y": 0.5
+      }
     }
   ],
   "zones": [

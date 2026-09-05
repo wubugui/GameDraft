@@ -46,8 +46,15 @@ class _CapturingRuntime:
     def draw_at(self, x: float, y: float) -> None:
         self.last_xy = (x, y)
 
-    def set_instance_transform(self, scale: float, rot_deg: float) -> None:
+    def set_instance_transform(
+        self, scale: float, rot_deg: float,
+        anchor_x: float = 0.5, anchor_y: float = 1.0,
+    ) -> None:
+        # 桩要跟真签名走:锚点可配之后(2026-09-03)这里多了两个带缺省的锚点参数。
+        # 桩少收参数时报的是 TypeError,被上游 `except (TypeError, ValueError)` 吞掉,
+        # 于是断言看到的是"预览没跟上 staging",查起来会一路查错方向。
         self.last_transform = (scale, rot_deg)
+        self.last_anchor = (anchor_x, anchor_y)
 
     def set_playback(
         self, speed: float, reverse: bool,

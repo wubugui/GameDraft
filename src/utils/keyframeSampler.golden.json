@@ -1,0 +1,235 @@
+[
+  {
+    "name": "single-frame-ignores-time-and-loop",
+    "note": "单帧短路发生在 loop 环绕之前：t 与 loop 都不参与，缺省值直接补齐。",
+    "keyframes": [{ "atMs": 0, "x": 10, "y": 20 }],
+    "channels": { "x": 0, "y": 0, "scale": 1, "alpha": 1 },
+    "defaultEasing": "easeInOut",
+    "loop": true,
+    "samples": [
+      { "tMs": -500, "expect": { "x": 10, "y": 20, "scale": 1, "alpha": 1 } },
+      { "tMs": 0, "expect": { "x": 10, "y": 20, "scale": 1, "alpha": 1 } },
+      { "tMs": 99999, "expect": { "x": 10, "y": 20, "scale": 1, "alpha": 1 } }
+    ]
+  },
+  {
+    "name": "two-frames-linear",
+    "note": "越界前后各钳到首/末帧；段内线性。",
+    "keyframes": [
+      { "atMs": 0, "x": 0, "y": 100 },
+      { "atMs": 1000, "x": 200, "y": 300 }
+    ],
+    "channels": { "x": 0, "y": 0 },
+    "defaultEasing": "linear",
+    "loop": false,
+    "samples": [
+      { "tMs": -1, "expect": { "x": 0, "y": 100 } },
+      { "tMs": 0, "expect": { "x": 0, "y": 100 } },
+      { "tMs": 250, "expect": { "x": 50, "y": 150 } },
+      { "tMs": 500, "expect": { "x": 100, "y": 200 } },
+      { "tMs": 750, "expect": { "x": 150, "y": 250 } },
+      { "tMs": 1000, "expect": { "x": 200, "y": 300 } },
+      { "tMs": 5000, "expect": { "x": 200, "y": 300 } }
+    ]
+  },
+  {
+    "name": "two-frames-easeIn",
+    "note": "u*u：0.25->0.0625, 0.5->0.25, 0.75->0.5625。",
+    "keyframes": [
+      { "atMs": 0, "x": 0, "y": 100 },
+      { "atMs": 1000, "x": 200, "y": 300 }
+    ],
+    "channels": { "x": 0, "y": 0 },
+    "defaultEasing": "easeIn",
+    "loop": false,
+    "samples": [
+      { "tMs": 0, "expect": { "x": 0, "y": 100 } },
+      { "tMs": 250, "expect": { "x": 12.5, "y": 112.5 } },
+      { "tMs": 500, "expect": { "x": 50, "y": 150 } },
+      { "tMs": 750, "expect": { "x": 112.5, "y": 212.5 } },
+      { "tMs": 1000, "expect": { "x": 200, "y": 300 } }
+    ]
+  },
+  {
+    "name": "two-frames-easeOut",
+    "note": "1-(1-u)^2：0.25->0.4375, 0.5->0.75, 0.75->0.9375。",
+    "keyframes": [
+      { "atMs": 0, "x": 0, "y": 100 },
+      { "atMs": 1000, "x": 200, "y": 300 }
+    ],
+    "channels": { "x": 0, "y": 0 },
+    "defaultEasing": "easeOut",
+    "loop": false,
+    "samples": [
+      { "tMs": 0, "expect": { "x": 0, "y": 100 } },
+      { "tMs": 250, "expect": { "x": 87.5, "y": 187.5 } },
+      { "tMs": 500, "expect": { "x": 150, "y": 250 } },
+      { "tMs": 750, "expect": { "x": 187.5, "y": 287.5 } },
+      { "tMs": 1000, "expect": { "x": 200, "y": 300 } }
+    ]
+  },
+  {
+    "name": "two-frames-easeInOut",
+    "note": "u<0.5 取 2u^2；否则 1-(-2u+2)^2/2。0.125->0.03125, 0.25->0.125, 0.5->0.5, 0.75->0.875。",
+    "keyframes": [
+      { "atMs": 0, "x": 0, "y": 100 },
+      { "atMs": 1000, "x": 200, "y": 300 }
+    ],
+    "channels": { "x": 0, "y": 0 },
+    "defaultEasing": "easeInOut",
+    "loop": false,
+    "samples": [
+      { "tMs": 0, "expect": { "x": 0, "y": 100 } },
+      { "tMs": 125, "expect": { "x": 6.25, "y": 106.25 } },
+      { "tMs": 250, "expect": { "x": 25, "y": 125 } },
+      { "tMs": 500, "expect": { "x": 100, "y": 200 } },
+      { "tMs": 750, "expect": { "x": 175, "y": 275 } },
+      { "tMs": 1000, "expect": { "x": 200, "y": 300 } }
+    ]
+  },
+  {
+    "name": "three-frames-linear-unequal-spans",
+    "note": "段边界 t=100 落在第二段的起点（选段用 kf[i+1].atMs <= t 前进）。",
+    "keyframes": [
+      { "atMs": 0, "x": 0, "y": 0 },
+      { "atMs": 100, "x": 100, "y": -50 },
+      { "atMs": 400, "x": 100, "y": 250 }
+    ],
+    "channels": { "x": 0, "y": 0 },
+    "defaultEasing": "linear",
+    "loop": false,
+    "samples": [
+      { "tMs": -1000, "expect": { "x": 0, "y": 0 } },
+      { "tMs": 0, "expect": { "x": 0, "y": 0 } },
+      { "tMs": 50, "expect": { "x": 50, "y": -25 } },
+      { "tMs": 100, "expect": { "x": 100, "y": -50 } },
+      { "tMs": 250, "expect": { "x": 100, "y": 100 } },
+      { "tMs": 400, "expect": { "x": 100, "y": 250 } },
+      { "tMs": 1000, "expect": { "x": 100, "y": 250 } }
+    ]
+  },
+  {
+    "name": "loop-wraps-both-directions",
+    "note": "t = ((t%total)+total)%total，total = 末帧 atMs = 1000。负 t 与整周期都落回 0。",
+    "keyframes": [
+      { "atMs": 0, "x": 0 },
+      { "atMs": 1000, "x": 100 }
+    ],
+    "channels": { "x": 0 },
+    "defaultEasing": "linear",
+    "loop": true,
+    "samples": [
+      { "tMs": -1000, "expect": { "x": 0 } },
+      { "tMs": -750, "expect": { "x": 25 } },
+      { "tMs": -250, "expect": { "x": 75 } },
+      { "tMs": 0, "expect": { "x": 0 } },
+      { "tMs": 250, "expect": { "x": 25 } },
+      { "tMs": 1000, "expect": { "x": 0 } },
+      { "tMs": 1250, "expect": { "x": 25 } },
+      { "tMs": 2500, "expect": { "x": 50 } },
+      { "tMs": 3000, "expect": { "x": 0 } }
+    ]
+  },
+  {
+    "name": "loop-with-zero-total-does-not-wrap",
+    "note": "末帧 atMs = 0 时 total=0，不环绕；直接吃首/末帧钳位。",
+    "keyframes": [
+      { "atMs": 0, "x": 0 },
+      { "atMs": 0, "x": 100 }
+    ],
+    "channels": { "x": 0 },
+    "defaultEasing": "linear",
+    "loop": true,
+    "samples": [
+      { "tMs": -5, "expect": { "x": 0 } },
+      { "tMs": 0, "expect": { "x": 0 } },
+      { "tMs": 50, "expect": { "x": 100 } }
+    ]
+  },
+  {
+    "name": "per-frame-easing-overrides-default",
+    "note": "段缓动取**起始帧**的 easing：第一段 easeIn（帧上写死），第二段回落 defaultEasing=easeOut。末帧的 easing:linear 永不生效。",
+    "keyframes": [
+      { "atMs": 0, "x": 0, "easing": "easeIn" },
+      { "atMs": 1000, "x": 100 },
+      { "atMs": 2000, "x": 200, "easing": "linear" }
+    ],
+    "channels": { "x": 0 },
+    "defaultEasing": "easeOut",
+    "loop": false,
+    "samples": [
+      { "tMs": 250, "expect": { "x": 6.25 } },
+      { "tMs": 500, "expect": { "x": 25 } },
+      { "tMs": 1000, "expect": { "x": 100 } },
+      { "tMs": 1250, "expect": { "x": 143.75 } },
+      { "tMs": 1500, "expect": { "x": 175 } },
+      { "tMs": 2000, "expect": { "x": 200 } }
+    ]
+  },
+  {
+    "name": "missing-channel-default-participates",
+    "note": "末帧没写 scale ⇒ 该端取 channels.scale=1 参与插值（2 -> 1 线性下降）；alpha 两端都缺，恒 1。",
+    "keyframes": [
+      { "atMs": 0, "x": 0, "scale": 2 },
+      { "atMs": 1000, "x": 100 }
+    ],
+    "channels": { "x": 0, "scale": 1, "alpha": 1 },
+    "defaultEasing": "linear",
+    "loop": false,
+    "samples": [
+      { "tMs": 0, "expect": { "x": 0, "scale": 2, "alpha": 1 } },
+      { "tMs": 250, "expect": { "x": 25, "scale": 1.75, "alpha": 1 } },
+      { "tMs": 500, "expect": { "x": 50, "scale": 1.5, "alpha": 1 } },
+      { "tMs": 1000, "expect": { "x": 100, "scale": 1, "alpha": 1 } }
+    ]
+  },
+  {
+    "name": "sub-millisecond-span-clamped-to-1ms",
+    "note": "span = max(1, b.atMs-a.atMs)。0.5ms 的段被拉到 1ms：t=0.25 得 u=0.25（不是 0.5）。既有行为，勿'修'。",
+    "keyframes": [
+      { "atMs": 0, "x": 0 },
+      { "atMs": 0.5, "x": 100 },
+      { "atMs": 10, "x": 200 }
+    ],
+    "channels": { "x": 0 },
+    "defaultEasing": "linear",
+    "loop": false,
+    "samples": [
+      { "tMs": 0, "expect": { "x": 0 } },
+      { "tMs": 0.25, "expect": { "x": 25 } },
+      { "tMs": 0.5, "expect": { "x": 100 } },
+      { "tMs": 5.25, "expect": { "x": 150 } },
+      { "tMs": 10, "expect": { "x": 200 } }
+    ]
+  },
+  {
+    "name": "multichannel-defaults-participate",
+    "note": "轨迹形状的多通道用例。⚠ 采样器是**哑**的：中间帧没写 sortY 就取 channels.sortY=0 参与插值，绝不会自动回落到 y。'sortY 缺省 = y'、'scaleX/scaleY 缺省 = scale' 这类语义缺省属于**消费侧规范化**，必须在喂进采样器之前填好。",
+    "keyframes": [
+      { "atMs": 0, "x": 100, "y": 200, "rotation": 0, "scale": 1, "alpha": 1, "sortY": 200 },
+      { "atMs": 400, "x": 300, "y": 120, "rotation": 180, "alpha": 0.5 },
+      { "atMs": 800, "x": 500, "y": 200, "rotation": 360, "scale": 2, "alpha": 1, "sortY": 260 }
+    ],
+    "channels": { "x": 0, "y": 0, "rotation": 0, "scale": 1, "alpha": 1, "sortY": 0 },
+    "defaultEasing": "linear",
+    "loop": false,
+    "samples": [
+      {
+        "tMs": 0,
+        "expect": { "x": 100, "y": 200, "rotation": 0, "scale": 1, "alpha": 1, "sortY": 200 }
+      },
+      {
+        "tMs": 200,
+        "expect": { "x": 200, "y": 160, "rotation": 90, "scale": 1, "alpha": 0.75, "sortY": 100 }
+      },
+      {
+        "tMs": 600,
+        "expect": { "x": 400, "y": 160, "rotation": 270, "scale": 1.5, "alpha": 0.75, "sortY": 130 }
+      },
+      {
+        "tMs": 800,
+        "expect": { "x": 500, "y": 200, "rotation": 360, "scale": 2, "alpha": 1, "sortY": 260 }
+      }
+    ]
+  }
+]

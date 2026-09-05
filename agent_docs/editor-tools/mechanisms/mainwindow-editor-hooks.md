@@ -3,7 +3,7 @@ id: mainwindow-editor-hooks
 title: 主窗口编辑器接入钩子(鸭子协议)
 domain: editor-tools
 type: mechanism
-summary: 主窗门控靠 getattr 鸭子协议调 flush_to_model/confirm_close/reload_refs_from_model/commit_pending_on_leave/editor_undo——缺钩子不报错、静默漏网,接入时必须逐项对齐
+summary: 主窗门控靠 getattr 鸭子协议调 flush_to_model/confirm_close/reload_refs_from_model/commit_pending_on_leave/editor_undo——缺钩子不报错、静默漏网,签名跑偏同样静默,接入时必须逐项对齐
 status: active
 authority:
   - tools/editor/main_window.py#_refresh_page_reference_candidates
@@ -17,7 +17,7 @@ triggers:
 verified_by:
   - tools/editor/tests/test_cross_page_reference_refresh.py
   - tools/editor/tests/test_flush_hook_parity.py
-last_governed: 2026-08-05
+last_governed: 2026-09-03
 ---
 
 ## 是什么(一句话)
@@ -32,6 +32,11 @@ last_governed: 2026-08-05
 
 1. 注册页面 + 在 `project_model.py` 对齐 load / save 分支 / 命名脏桶(见 [save_all 与脏桶](save-all-dirty-buckets.md))。
 2. **凡持本地脏态的编辑器必须有 `flush_to_model`(门控真实变更)与 `confirm_close`(Discard 中和)**(契约见 [关闭路径卡](close-path-flush-discard.md))。缺 flush = Save All 静默跳过整个面板(踩过:改帧率后 git 零 diff,用户以为存上了);现由 parity 护栏拦,豁免须显式登记。
+   **签名也是契约的一部分**:钩子形参必须能按主窗调用点的实参调用。只查"钩子存不存在"的
+   parity 抓不到签名跑偏——而关窗路径上一次 TypeError 就等于所有收尾(逐页 flush、"未保存
+   改动"询问、几何保存、子进程回收)全被跳过,且 PySide 对事件循环派发的 `closeEvent` 只把
+   traceback 打到 stderr 就继续,窗口照关、进程不失败,**没人会发现**。护栏必须按
+   `inspect.signature().bind` 判,并锚定调用点防空转(样板见 `test_flush_hook_parity.py`)。
 3. **有引用他域 id 的顶层选择器就必须有 `reload_refs_from_model()`**:重拉候选(缓存跳过 + 保留当前值),**不重置表单字段**。根因:选择器候选是静态快照,不切页重拉就看不见别处新增的 id。内嵌 ActionEditor 不必手写(切页有子控件兜底扫描);开时 live 拉取的选择器天然新鲜。
 4. **staging 型编辑器(有「应用」按钮)必须有 `commit_pending_on_leave()`**:切页前把未应用编辑提交进模型,否则"配好了在别处看不到";返回 False = 有闸拦住,主窗只提示不阻断切页。**别指望主窗拿 `flush_to_model` 兜底**——图对话页 flush 即写盘、叙事页会走 JS 往返弹校验窗,切页触发是灾难,所以这条是显式 opt-in。
 5. 局部撤销走鸭子钩子 `editor_undo` / `editor_redo`;`ProjectModel.undo_stack` 只是无钩子时的回落,其 `push_edit` 全库零调用者——别以为它在替你记录编辑。

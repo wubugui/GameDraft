@@ -14,6 +14,7 @@ import {
 } from '../utils/dialogueSpeakerSide';
 import { createStyledText, setStyledReveal, styledPlainLength } from '../core/styledText';
 import { plainTextLength, sliceStyledMarkup } from '../core/textStyle';
+import { sampleKeyframeTrack } from '../utils/keyframeSampler';
 
 /**
  * 过场对话框(present:showDialogue)的观感样式，由组装层(Game)注入，令其与常规对话框
@@ -131,6 +132,12 @@ function applyCameraEase(t: number, easing: CutsceneCameraEasing): number {
  * 快慢也必须同，那边改了这里要跟。独立一份而非共享，是因为渲染层不反向依赖 UI 层。
  */
 const TYPEWRITER_BASE_CPS = 30;
+
+/**
+ * parallax 图层的通道与缺省值 —— 就是旧 `sampleParallaxKeyframe` 内联 `norm()` 里的那张表，
+ * 逐字保留（x/y 在 `ParallaxKeyframe` 上是必填，缺省 0 只是通用采样器的形式参数，实际用不到）。
+ */
+const PARALLAX_KEYFRAME_CHANNELS: Record<string, number> = { x: 0, y: 0, scale: 1, rotation: 0, alpha: 1 };
 
 /** 一条在跑的打字机。owner 是台词容器（对白框 / 字幕），dismiss 时按它销号。 */
 interface TypewriterEntry {
@@ -1132,43 +1139,25 @@ export class CutsceneRenderer {
     this.trackRaf(tick);
   }
 
-  /** parallax 关键帧插值：按 nowMs 在关键帧序列内插出 {x,y,scale,rotation,alpha}。 */
+  /**
+   * parallax 关键帧插值：按 nowMs 在关键帧序列内插出 {x,y,scale,rotation,alpha}。
+   *
+   * 本体已抽到 `utils/keyframeSampler`（实体轨迹动画与之共用同一份时间轴语义），
+   * 这里只是薄包装：parallax 的缓动是**逐层**的（`ParallaxKeyframe` 上没有 `easing` 键），
+   * 所以整层的 easing 走 `defaultEasing` 传下去 —— 行为与内联版逐位相同。
+   */
   private sampleParallaxKeyframe(
     kf: ParallaxKeyframe[],
     nowMs: number,
     loop: boolean,
     easing: NonNullable<ParallaxLayerDef['easing']>,
   ): Required<Omit<ParallaxKeyframe, 'atMs'>> {
-    const norm = (k: ParallaxKeyframe) => ({
-      x: k.x, y: k.y,
-      scale: typeof k.scale === 'number' ? k.scale : 1,
-      rotation: typeof k.rotation === 'number' ? k.rotation : 0,
-      alpha: typeof k.alpha === 'number' ? k.alpha : 1,
+    const s = sampleKeyframeTrack(kf, nowMs, {
+      loop,
+      defaultEasing: easing,
+      channels: PARALLAX_KEYFRAME_CHANNELS,
     });
-    if (kf.length === 1) return norm(kf[0]);
-    const last = kf[kf.length - 1];
-    const total = last.atMs;
-    let t = nowMs;
-    if (loop && total > 0) t = ((t % total) + total) % total;
-    if (t <= kf[0].atMs) return norm(kf[0]);
-    if (t >= last.atMs) return norm(last);
-    let i = 0;
-    while (i < kf.length - 1 && kf[i + 1].atMs <= t) i++;
-    const a = kf[i], b = kf[i + 1];
-    const span = Math.max(1, b.atMs - a.atMs);
-    let u = (t - a.atMs) / span;
-    u = easing === 'easeIn' ? u * u
-      : easing === 'easeOut' ? 1 - (1 - u) * (1 - u)
-      : easing === 'easeInOut' ? (u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2)
-      : u;
-    const A = norm(a), B = norm(b);
-    return {
-      x: A.x + (B.x - A.x) * u,
-      y: A.y + (B.y - A.y) * u,
-      scale: A.scale + (B.scale - A.scale) * u,
-      rotation: A.rotation + (B.rotation - A.rotation) * u,
-      alpha: A.alpha + (B.alpha - A.alpha) * u,
-    };
+    return { x: s.x, y: s.y, scale: s.scale, rotation: s.rotation, alpha: s.alpha };
   }
 
   /**

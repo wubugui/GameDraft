@@ -29,6 +29,10 @@
 | 07-16 | **任何具事件关联的叙事必须走状态机脊椎**(纯孤立 flavor 才可孤立对话);`narrative-flow-authoring` 内化为进策划模式即载入 | |
 | 07-21 | 二维场景辐射度还原与发光增益管线定稿(纯 agent / 纯亮度 / 纯模型直出 / 屏幕空间传光均否) | |
 | 08-05 | **本轮解冻的四类审批,见 §2 08-05 行** | |
+| 09-03 | **两条候选不变量都不升**(条件求值便捷包装受律8约束 / 「降级必须出声」)——已有卡内条款或机械护栏,再抄一份即双源 | 沿用 08-05 先例 |
+| 09-03 | **对话立绘尺寸以代码为准 = 360**;首版 240 降入被否列表 | 三处口径打架,制作人裁定 |
+| 09-03 | editor-tools 不变量4 去掉写死的"三处同步"、改为逐处对齐并点明加工台例外;验收门"全量绿"改为平台化判据(靶向绿 + 双树失败集合一致) | 审批面① |
+| 09-03 | **宪法 §7 的 CLI 命令改走 `sh scripts/py.sh`**(`python3` 在本机是商店占位程序,静默空转) | 唯一一次改宪法 |
 
 **长期冻结项**:`CLAUDE.md` 全面路由器化——08-05 前一直未批;本轮处置见 §2。
 
@@ -66,7 +70,60 @@
   `scene_fields` 补 `--background` / `bake_scene`:一个场景的**全部时段原画各烘一套**
   (此前只烘得到当前生效那张,夜原画的几何场没有入口)。
 
-## §2.1 本轮(2026-08-05)明细
+- **09-03 全域深度治理(两条管线首次同轮跑满)** — inbox **85 → 0**;文档 117 → 127
+  (新卡 9 张、改名 1 张、改写数十处)。**管线 A 六片盲重建首次覆盖全部五域**(欠了四轮的
+  asset-pipeline 与 meta 补齐),管线 B 五片并行蒸馏。两路对抗核查抓回 1 条真误删 + 6 条事实错误,
+  另有 4 条核查员自己的假阳性被主脑实测驳回。审批四题全部拍板(见 §1)。详见 §2.2。
+
+## §2.2 本轮(2026-09-03)明细
+
+**范围**:五域全覆盖。管线 A 按代码分六片盲重建(叙事存档 / 渲染光影 / 场景实体命令通道 /
+编辑器 / 内容 / asset-pipeline+meta),管线 B 按域分五片蒸馏 85 条积压偏差记录。
+
+**新增卡片(9)**:`runtime/mechanisms/{dialogue-owner-origin, system-sfx-event-table,
+teardown-ordering, narrative-debugger-bridge}`、`editor-tools/mechanisms/{canvas-gesture-safety,
+audio-workbench-config-write}`、`editor-tools/recipes/live-editor-forensics`、
+`asset-pipeline/mechanisms/scene-relight-tool`、`meta/mechanisms/project-interpreter-entrypoint`、
+`runtime/decisions/2026-08-23-physical-derivation-over-fitting`。
+**改名(1)**:`action-registration-quadruple` → `action-registration-registry-surfaces`
+——登记面是五处不是四处,且卡名焊死数字本身就是缺陷源(库内引用已全部改掉)。
+
+**管线 A 的主要收获**(库内此前没有或写反的):
+- 章节包标记已降级为纯组织标签、不 gate 任何运行时——"看起来像开关、实际不生效"。
+- 命令通道对参数零兜底:不夹值会把非数写进世界坐标,整局渲染不出来且不报错、不可逆。
+- 输入屏蔽只门控游戏侧查询、不门控订阅分发——两套通道判据不对称(正好解释了 08-17 那条
+  "键被吃掉"没查到底的坑)。
+- **三处活的"绕过统一写盘出口"违例**,都在现役可达路径上,其中一处与统一保存互删。
+- content 域**两套零共享的平行校验实现**(运行时 dev 侧 / headless CLI 侧),只靠人工同步。
+- 注释承诺的一个标定一致性校验函数**全库根本不存在**;着色核心头注声称的"四方共用"实测只有两方。
+- `tools/lightbake/` 已是空壳(内容 09-01 搬进角色照明实验室)。
+
+**对抗核查(两路)**:
+- 真误删 1 条(Qt 静默丢弃类型不认识的值那条错误签名)已补回。
+- 事实错误 6 条已订正:延迟阴影实现早已物理删除却仍写"待清理"、原子写卡把要求写成了现状、
+  引导脚本自带解释器候选表与"唯一入口"措辞冲突、拆除顺序把"事件总线最后清"说错
+  (它后面还有几步,资产释放才是最后)等。
+- **驳回核查员 4 条假阳性**:过场动作确是白名单制(它只看到了并存的存档态黑名单)、
+  配置装载早已不是白名单拷贝、色板按串开关已入库(它按符号名 grep,而库内按规矩不写符号名)。
+- 写作高度核查促成的裁剪:把时效性"待办"从机制卡迁出、norms 里的实现级清单降级为指针、
+  去掉三处写死的计数、砍掉可推广的通用工程教条。
+
+**记忆升格**:10 条私有记忆按已批政策处理——8 条内容入库后改留指针,
+2 条新升格(活进程取证成配方、导出深度的 git/DVC 成对写进机制卡)。
+**1 条实测作废并删除**:关于旧独立 baker 的整条记忆,其描述的工具已空、参数体系全仓零命中。
+
+**顺带修掉的库内缺陷**:索引生成器在 Windows 上把 `INDEX.md` 写成 CRLF(与仓库 LF 契约冲突,
+每次重生成都报一次换行归一)。
+
+**两条自打脸,记下来**:①本轮有两篇卡被蒸馏 agent 写成了 CRLF——正是本轮刚写进库的那条坑,
+收尾行尾自检才抓到(所以这道自检要一直留着);②有一次判"某某是死码"用的是 grep `new X`,
+被**私有构造函数 + 静态工厂**骗过,险些把一条活路径写成死码入库。
+**判死码要连工厂函数、静态方法、间接引用一起找过再下结论。**
+
+**并发**:收尾时发现另有会话同期在改库(新填了一条偏差记录、并给打包卡加了一条派生产物条款)。
+那条记录经核对已被其自身会话完整落卡,本轮一并销账。**治理 run 不独占仓库,收尾前要重跑体检**。
+
+## §2.1 上一轮(2026-08-05)明细
 
 **范围**:五域全库写作高度裁剪 + 管线 B 全量蒸馏。**管线 A 盲重建仍未跑**(欠五轮),
 理由:60 条 inbox 本身是过去三周的代码锚定新鲜证据,已覆盖盲重建大半产出面。
@@ -104,7 +161,8 @@
 
 ## §3 悬挂待办(滚动)
 
-1. **管线 A 盲重建**:asset-pipeline / meta 域自建库起从未跑过(欠四轮)。
+1. ~~**管线 A 盲重建**:asset-pipeline / meta 域从未跑过~~ —— **2026-09-03 六片全域跑满,已销账**。
+   下一次深度对账建议不早于一个大迭代之后(盲重建是本流程最贵的一步)。
 2. `.ink` 全面废弃(06-30 拍板)缺正式 decision 卡(证据在 dialogue-graph-editor 卡内)。
 3. scenario stage-2 代码删除落地时:条件叶 6→4 属审批面①,须同步 content norms 与 CLAUDE.md §2。
 4. 编辑器侧小卡候选:光环境曲线画布坑 / archive 编辑器键序 / 立绘编辑器选择器细节 / parallax Web 编辑器。
@@ -134,6 +192,33 @@
     开雾场景里角色会"贴"在雾前面。是补进 probe 路径还是接受,要人拍板。
 14. **一批说"统一光影/重打光"的代码注释已与实现不符**(`GiBouncePass` 头注释、
     `lightingCore.glsl` 的"四方共用"、`LitBackground` 的"P3 接角色"等)。文档已改,注释未动。
+    **09-03 补**:同族还有一条——某个标定一致性校验函数,注释说"见 TS 侧那个函数",
+    而它**全库根本不存在**。改这一带代码时别把注释当索引。
+
+### 2026-09-03 新挂(本轮查出;判定不在治理疆域内,或需另立项)
+
+15. **`character-lighting.md` 已 236 行,远超"机制卡限一页"**。建议拆三份:①运行时着色契约
+    留原卡;②probe/烘焙参数与阶数选型另立;③"滤镜容器里从屏幕反推世界坐标"那族引擎陷阱
+    并进 pixi 卡。本轮只做了裁剪(迁走时效性待办、去重),没做结构拆分。
+16. **`last_used` 没有写入者**:它本该由"用了这个 method 的人"更新,实践中无人维护,
+    于是机械体检每轮重报同样两条"method 久未使用"。要么定一个写入时机,要么让体检改按别的
+    信号判、或去掉该字段。**不定则每轮都会重新发现一次**(与第 9 条同型)。
+17. **时段切换竞态(已知未修)**:推进时段后立刻切场景约 1/3 概率把切场景卡死
+    (挂起的时段换装与场景装载互等)。本轮从一条被蒸馏的记录里捞回来,值得单独立案修。
+18. **`tools/lightvolume_lab` 仍挂在启动器上**(早于 08-30 收束,不被任何现役路径引用),
+    与「光照烘焙只有一个工具」的口径不一致——菜单里仍能跑到旧工具。启动器属库外疆域。
+19. **假护栏三处**:测试配置里的严格开关写在默认参数里**不生效**;`scripts/` 不在收集范围,
+    那里既没有仓库写保护、又有一批恒红用例——裸跑看不见,读起来像全绿。
+20. **代码侧欠账(本轮只入卡、未修)**:打包工作台归档处有裸就位调用;某个调试用动作的两个
+    引用参数是裸文本框且不在选择器登记表内,打错无人拦;**三处工具绕过统一写盘出口**
+    (其中一处会与统一保存互删)。
+21. **改名的连带影响(库外)**:`.cursor/` 与 `.claude/` 的 add-game-action skill 仍指向已改名的
+    卡与"四件套"措辞。治理只写 `agent_docs/`,需人工或另派 agent 同步。
+22. **包体与工具杂项**:修复抽取规则后 dev 目标显著变大(按规则出处是有意的),release 也有增长,
+    要有人知道;另有桌面壳显式端口路径的双绑风险、窗口模式启动清 localStorage 顺带灭掉查看器
+    折叠状态、开发者控制台起的工具不随它退出(是否该随退是 UX 决策,别顺手改)、
+    若干存量 CRLF 载荷(重烘会自愈)。
+
 ## §4 intake 收编史(一行一次)
 
 - 07-11 收2/改1 —— 对抗验收抠图法、对抗验收拆帧法两张正交原语 method;character-animation-production 改挂向下指针。
@@ -145,3 +230,7 @@
 - 07-21 收1 —— runtime 决策「二维场景辐射度还原与发光增益管线定稿」。
 - 08-17 收1/改4 —— meta/mechanisms/atomic-write-windows 落地(Windows 原子写不原子,全仓 18 处就位点收敛到 tools/atomic_io);ui-component-layer 补「面板内键位撞全局快捷键静默失效」坑;save-all-dirty-buckets 与 anim-preview-tool 各挂向下指针;libtv-image-generation 死锚点(tmp/ 下已删脚本)换成仓内稳定路径。
 - 08-18 intake:收1/改2 —— editor-tools/mechanisms/scene-view-filter-axes 落地(画布三条视图轴分两层,后置显隐轴必须合一判定,否则互相冲掉);day-night-npc-schedule 补「代码不许出现时段 id 字面量」硬契约与 2026-08-18「整条街一个人都没有」事故复盘;dialogue-voice-channel 的 verified_by 去掉 schema 不支持的 `::类名` 后缀(存量 error,挡收编门)。
+- 09-03 intake:收2/改5/降1 —— 实体轨迹动画(烘焙式)收尾。收:runtime/mechanisms/entity-trajectory(运行时只播 keyframes、烘焙产物恒不写 easing、七通道语义缺省由消费侧填、一实体一驱动的抢占矩阵、镜像在旋转内外层决定叠加旋转符号、道具=无动画包的普通 NPC)与 editor-tools/mechanisms/scene-trajectory-authoring(拉线只在新画布、source 与 keyframes 必须同一条命令、空分段返回的空表不许清盘、首键钳位、sampleHz 上限 240 的由来)。改:parallax-scene-runtime(authority 补共用采样器 + easing 通用条款 + 未收编的第三份缓动副本)、entity-move-facing(存放面差异会改变叠加旋转符号 / 直写 x/y 不触发抢占)、scene-canvas-item-parts-and-z(NPC 精灵素材来源有两条)、scene-canvas-v2-document-view-command(场景级 part 不必是点列、活动态是视图状态)、cutscene-step-semantics(跳过终姿的贡献者以代码为准 + skip 不取消在途 moveEntityTo 的既有缺口)。蒸馏并删除 6 条 09-03 偏差记录;降 1 条新 inbox(add-game-action skill 指向已改名卡的死链,库外不在本轮改动面,与 §3 第 21 条同源)。库外同步:docs/玩法功能需求清单 H5.2 加轨迹动画指令、docs/游戏架构设计文档 §5.11 白名单改指 allowlist JSON + 新增 §5.16 TrajectorySystem、docs/editor-authoring-surface 专用表单加 playTrajectory。
+- 09-04 intake:收1/改6/降1 —— 轨迹动画从原型改成可落地形态(制作人定案六条:3D 相对曲线做真相 + 运行时只用 R 投影、碰撞用深度还原的几何、桌面壳网页工作台、旧路径整条删、相机不耦合、画面点选打地面得 3D 控制点)。收:editor-tools/mechanisms/trajectory-workbench(独立桌面应用、唯一写入者、保存=烘一次再写、画面/世界两种空间、地面高度场+深度壳碰撞、{x,z,h} 控制点、投影金标与运行时同数、零浏览器缓存)。改:runtime/mechanisms/entity-trajectory 整篇重写(独立资产、帧相对锚点、target 必填、flipX、世界空间开播只用 depthConfig.M.R、不驱动相机、接地 y 跟落点);cutscene-step-semantics(跳过终姿竞争不再有轨迹);parallax-scene-runtime(Python 烘焙机搬到工作台);scene-canvas-v2-document-view-command(轨迹 part 已迁出画布);runtime-norms 未动。降:editor-tools/mechanisms/scene-trajectory-authoring 标 superseded(画布工具/面板/场景级校验/scoped 宇宙全部删除,仍成立的条款并入新卡)。库外同步:docs/游戏架构设计文档 §5.16、docs/玩法功能需求清单 H5.2 轨迹动画条、docs/editor-authoring-surface 专用表单注。数据迁移:雾津街头.trajectories[coin_drop_demo] → public/assets/data/trajectories/coin_drop_demo.json(帧相对锚点,重烘逐字节一致),过场步补 target。
+- 09-04 intake(第二轮):改1 —— 制作人打回轨迹工作台原型的交互层("曲线不能整体变换、选点画线要在画布上定、不能靠手填数字"),前端整层重做:画布优先(无段时点画布即开画)、工具模式(选择/加点/抛体/锚点/平移)、选择集+gizmo(移动/旋转/缩放/镜像,整段/整条,固定轴)、抛体落点/最高点/初速直接拖(本地解析反解,真相仍是服务端积分)、世界空间拾取壳表面+离地高度把手、3D 视图可编辑(射线打高度场/壳)、全覆盖撤销重做、页内对话框、参考层(NPC/障碍/网格)、换场景按锚点相对量换算。数据口径新增两条硬契约:存储点==有效点(写点前 normalize 到 delta=0);世界空间存储 h = 离地高度 + restH。新增 /api/scene_shell 与 node 前端逻辑测试。改:editor-tools/mechanisms/trajectory-workbench(作者面怎么用 + 两条契约 + 验证段)。
+- 09-04 intake(第三轮):改1 —— 轨迹工作台交互层审查循环收口(Opus 子代理十轮,第 7/8/10 轮 PASS)。教训:3–6 轮在同一族「在飞的异步响应 vs 本地 doc」上逐症修补、两次自己的修法引入回归,根因是没有端到端手势回归。落地 `--selftest`(无头桌面壳 + ANGLE/SwiftShader-WebGL 起真页面,注入 viewer/tests/selftest.js,61 条断言 ~45 s,pytest 里 test_selftest.py 就是它)。第十轮两条 P2 批量收:起点在地面线之下时地面线/落点把手不钳(与 physicsInfo 同判)、时间键纯点一下不算编辑(不走 ensureManual);顺手:空曲线首键补两端、撤销回到落盘态重新算干净(S.cleanKey)。改:editor-tools/mechanisms/trajectory-workbench(验证段改成 --selftest 门 + 四条契约 + verified_by)。

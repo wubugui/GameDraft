@@ -3,7 +3,7 @@ id: dialogue-portrait-pipeline
 title: 对话立绘管线
 domain: asset-pipeline
 type: mechanism
-summary: 立绘 3×3 表情图→切片抠图的契约:flood-fill 灰底结构上无镂空、dehalo 已内建、产物 gitignored 改前必备份
+summary: 立绘素材生产契约:多表情大图与单姿态立绘集两条合法路径、模型直出必须去角标、flood-fill 灰底结构上无镂空、dehalo 已内建、产物 gitignored 改前必备份
 status: active
 authority:
   - tools/dialogue_portrait_pipeline.py#gray_key_to_rgba
@@ -27,8 +27,18 @@ last_governed: 2026-08-05
 `tools/dialogue_portrait_pipeline.py`:`_flood_bg`/`gray_key_to_rgba` 是抠图本体,`dehalo` 在
 `process_sheet` resize 后无条件调用。源 3×3 大图在 `tmp/dialogue_portraits_work/generated_sheets/`。
 
+## 两条合法路径
+
+- **多表情大图**(主路径):按上面的切片 + 抠灰底管线走。
+- **单姿态立绘集**(合法形态,不必强并进大图管线):立绘集元数据里的表情**可以只有一项**,
+  编辑器与运行时都支持。这类资产走"实底单图生成 → 色键抠底 → 缩放"即可,
+  抠底按 [colorkey-matting](../recipes/colorkey-matting.md) 配方(键色现测,别抄常数)。
+
 ## 硬契约(违反即 bug)
 
+- **模型直出的图自带角标**:任何经生成模型产出的立绘素材,入库前**必须有一步去角标**
+  (右下角"AI 生成"水印)。当前这一步是一次性脚本、**未并入管线**——属已知缺口,
+  走单姿态路径时尤其容易忘,忘了就是带水印上线。
 - **抠图 = 边缘 flood-fill 灰底**,结构上不会掏内部洞;失败模式是"背景灰被当主体留成灰块",
   不是镂空——排查方向别搞反。
 - **dehalo 已内建**(相对**局部前景**判定、只压"比邻域更亮且低彩"的边缘污染,不动 alpha):

@@ -26,6 +26,7 @@ z 本来只该表示"画在哪一层"。老画布拿它当"这一下该派给谁
 from __future__ import annotations
 
 from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtGui import QTransform
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsObject
 
 from .changes import EntityRef
@@ -65,6 +66,8 @@ class CanvasItem(QGraphicsObject):
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
         self._base_pos = (0.0, 0.0)
         self._preview_offset = (0.0, 0.0)
+        #: 手势/预览专用的姿态叠加 ``(rotation, scaleX, scaleY, alpha)``
+        self._preview_transform = (0.0, 1.0, 1.0, 1.0)
 
     # ---- 手势预览位移 ------------------------------------------------------
     #
@@ -93,6 +96,45 @@ class CanvasItem(QGraphicsObject):
     @property
     def preview_offset(self) -> tuple[float, float]:
         return self._preview_offset
+
+    def set_preview_transform(self, rot_deg: float = 0.0, sx: float = 1.0,
+                              sy: float = 1.0, alpha: float = 1.0) -> None:
+        """设置**手势/预览姿态叠加**（旋转、非均匀缩放、不透明度）。只影响画面。
+
+        与 :meth:`set_preview_offset` 并列，理由完全一样：轨迹洗刷（scrub）要让
+        绑定实体在画布上摆出该时刻的姿态，而**数据一个字节都不能改**。
+        `_sync_*` 只写"数据位"（`set_base_pos` + 图元自己的 `set_geometry`），
+        预览只写这一层，谁都不会把对方的结果抹掉。
+
+        为什么不是"把 rotation 直接算进 set_geometry"：那条路是数据同步路，
+        下一次任何实体变更都会用真实数据把预览冲掉；反过来若排序/写盘读回带预览的
+        几何，姿态就被**当成真实数据**烘进 JSON —— 与老画布"拖到一半点别处，
+        实体永久跑偏"同一个死法。
+
+        非均匀缩放必须走 :class:`QTransform`（不是 ``setScale``）——
+        轨迹的 `scaleX`/`scaleY` 可以不等，用单值缩放会把压扁/拉长整个丢掉。
+        """
+        spec = (float(rot_deg or 0.0), float(sx if sx is not None else 1.0),
+                float(sy if sy is not None else 1.0),
+                float(alpha if alpha is not None else 1.0))
+        if spec == self._preview_transform:
+            return
+        self._preview_transform = spec
+        self._apply_preview_transform()
+
+    @property
+    def preview_transform(self) -> tuple[float, float, float, float]:
+        return self._preview_transform
+
+    def _apply_preview_transform(self) -> None:
+        rot, sx, sy, alpha = self._preview_transform
+        t = QTransform()
+        if rot:
+            t.rotate(rot)
+        if sx != 1.0 or sy != 1.0:
+            t.scale(sx, sy)
+        self.setTransform(t)
+        self.setOpacity(0.0 if alpha < 0.0 else (1.0 if alpha > 1.0 else alpha))
 
     def _apply_pos(self) -> None:
         self.setPos(self._base_pos[0] + self._preview_offset[0],

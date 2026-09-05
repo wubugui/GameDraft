@@ -2,6 +2,8 @@
   "moveEntityTo",
   "jumpEntityTo",
   "teleportEntityTo",
+  "playTrajectory",
+  "stopTrajectory",
   "faceEntity",
   "cameraFollowActor",
   "cameraStopFollow",

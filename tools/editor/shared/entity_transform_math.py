@@ -1,12 +1,115 @@
-"""实体实例 transform（scale/rotation，quad 级真变换）的编辑器侧数学镜像。
+"""实体实例 transform（scale/rotation/anchor，quad 级真变换）的编辑器侧数学镜像。
 
-与运行时 ``src/utils/entityTransform.ts`` 同口径（绕脚底锚点，先缩放后旋转，
+与运行时 ``src/utils/entityTransform.ts`` 同口径（绕**锚点**，先缩放后旋转，
 rotation 单位为度）。画布预览 / 碰撞多边形往返必须经此模块换算，保证
 「编辑器所见 = 运行时所得」（防预览撒谎）。
+
+锚点（``NpcDef.anchor``）缺省 ``{x:0.5, y:1}`` = 底中 = 脚底，即锚点可配之前
+写死的那个值 —— 所以本模块所有名字带 ``around_foot`` 的函数照旧成立：它们要的
+"脚点"现在叫**接地点**（:func:`anchor_contact_offset` 派生），缺省锚点时接地点
+恒等于锚点，全部既有调用一位不变。
 """
 from __future__ import annotations
 
 import math
+
+#: 缺省锚点：图元横向中点 / 底边（脚底）。与 TS ``DEFAULT_ENTITY_ANCHOR_X/Y`` 一字不差。
+DEFAULT_ENTITY_ANCHOR_X = 0.5
+DEFAULT_ENTITY_ANCHOR_Y = 1.0
+
+
+def _anchor_component(raw: object, fallback: float) -> float:
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return fallback
+    v = float(raw)
+    if not math.isfinite(v):
+        return fallback
+    return min(1.0, max(0.0, v))
+
+
+def entity_anchor_of(d: dict | None) -> tuple[float, float]:
+    """镜像 TS ``entityAnchorOf``：``(x, y)`` 落在精灵包围盒的哪一点。
+
+    非数值 / 非有限 / 缺失的分量各自回落缺省（只写一半是合法的），其余夹到 [0,1]。
+    与其它 ``entity_*_of`` 同口径地拦 ``bool``（``True`` 是 int 子类，不拦会被当成 1）。
+    """
+    a = (d or {}).get("anchor")
+    if not isinstance(a, dict):
+        return (DEFAULT_ENTITY_ANCHOR_X, DEFAULT_ENTITY_ANCHOR_Y)
+    return (
+        _anchor_component(a.get("x"), DEFAULT_ENTITY_ANCHOR_X),
+        _anchor_component(a.get("y"), DEFAULT_ENTITY_ANCHOR_Y),
+    )
+
+
+def is_default_entity_anchor(ax: float, ay: float) -> bool:
+    """是不是缺省锚点（底中）。为真时全部锚点派生量恒 0，走与改造前逐位相同的分支。"""
+    return ax == DEFAULT_ENTITY_ANCHOR_X and ay == DEFAULT_ENTITY_ANCHOR_Y
+
+
+def anchor_contact_offset(
+    ax: float, ay: float, eff_w: float, eff_h: float,
+) -> tuple[float, float]:
+    """镜像 TS ``anchorContactOffset``：锚点 → **接地点**的局部偏移（未旋转、未镜像）。
+
+    接地点 = 精灵包围盒的底边中点，也就是锚点可配之前 ``(x, y)`` 的那个含义。
+    ``eff_w/eff_h`` 传**有效尺寸**（已含实例 scale 与透视系数），本函数只做归一化
+    换算、不再乘任何东西（避免双重缩放）。缺省锚点时恒 ``(0.0, 0.0)``。
+    """
+    return (
+        (DEFAULT_ENTITY_ANCHOR_X - ax) * eff_w,
+        (DEFAULT_ENTITY_ANCHOR_Y - ay) * eff_h,
+    )
+
+
+def rotate_local_vec(lx: float, ly: float, rot_deg: float) -> tuple[float, float]:
+    """镜像 TS ``rotateLocalVector``：只旋转、不缩放。
+
+    与 :func:`transform_local_vec` 的分工：那个先乘 scale（用于尚未乘过 scale 的
+    authored 量），本函数用于已经由**有效尺寸**派生出来的量（再乘一次就是双重缩放）。
+    """
+    if rot_deg == 0:
+        return lx, ly
+    rad = math.radians(rot_deg)
+    c = math.cos(rad)
+    n = math.sin(rad)
+    return lx * c - ly * n, lx * n + ly * c
+
+
+def entity_contact_offset(
+    d: dict | None, eff_w: float, eff_h: float, mirror_x: float = 1.0,
+) -> tuple[float, float]:
+    """实体接地点相对锚点的**世界**偏移（已含实例旋转与左右镜像）。
+
+    镜像 ``Npc._contactOffset``。``eff_w/eff_h`` 是有效尺寸（含实例 scale 与透视系数），
+    所以这里只补旋转与镜像符号 —— 再乘一次 scale 就是双重缩放。
+    缺省锚点时恒 ``(0.0, 0.0)``，于是排序锚 / 阴影脚点 / 透视采样点全部逐位不变。
+    """
+    ax, ay = entity_anchor_of(d)
+    if is_default_entity_anchor(ax, ay):
+        return (0.0, 0.0)
+    ox, oy = anchor_contact_offset(ax, ay, eff_w, eff_h)
+    return rotate_local_vec(ox * (-1.0 if mirror_x < 0 else 1.0), oy,
+                            entity_rotation_deg_of(d))
+
+
+def entity_contact_point(
+    d: dict | None, base_w: float, base_h: float, factor: float = 1.0,
+    mirror_x: float = 1.0, x: float | None = None, y: float | None = None,
+) -> tuple[float, float]:
+    """实体**接地点**的世界坐标（阴影落点 / 排序锚 / 透视采样点的依据）。
+
+    ``base_w/base_h`` 传**未乘实例 scale 与透视系数**的世界尺寸（动画包 / displayImage
+    里的原值），``factor`` 是透视系数 —— 两者在这里一次乘齐，避免调用方各乘各的。
+    ``x/y`` 缺省取 ``d['x']/d['y']``（拖动预览可传 staging 坐标）。
+
+    缺省锚点时恒返回 ``(x, y)``。
+    """
+    px = float((d or {}).get("x", 0) or 0) if x is None else float(x)
+    py = float((d or {}).get("y", 0) or 0) if y is None else float(y)
+    s = entity_scale_of(d) * (factor if (factor and factor > 0) else 1.0)
+    ox, oy = entity_contact_offset(d, base_w * s, base_h * s, mirror_x)
+    return (px + ox, py + oy)
 
 
 def entity_scale_of(d: dict | None) -> float:
@@ -183,8 +286,12 @@ def perspective_axis_data(cfg: dict | None):
 
 
 def perspective_scale_at(cfg: dict | None, foot_x: float, foot_y: float) -> float:
-    """脚底点 (foot_x, foot_y) 处的透视缩放系数 f；未配置/退化/非有限脚底时恒 1。
-    与 TS perspectiveScaleAt 同口径：脚底点在 near→far 轴上归一化投影 [0,1] 后分段线性插值。"""
+    """**接地点** (foot_x, foot_y) 处的透视缩放系数 f；未配置/退化/非有限时恒 1。
+    与 TS perspectiveScaleAt 同口径：接地点在 near→far 轴上归一化投影 [0,1] 后分段线性插值。
+
+    ⚠ "接地点"不等于实体位置：锚点可配之后两者差一段 :func:`entity_contact_offset`
+    （缺省锚点时为 0）。近大远小的依据是"脚踩在哪"，调用方应传
+    :func:`entity_contact_point` 的结果，不是 ``ent['x'], ent['y']``。"""
     a = perspective_axis_data(cfg)
     if a is None or not math.isfinite(foot_x) or not math.isfinite(foot_y):
         return 1.0
@@ -225,8 +332,8 @@ def entity_perspective_factor(
     cfg: dict | None, ent: dict | None, kind: str,
     foot_x: float | None = None, foot_y: float | None = None,
 ) -> float:
-    """实体在画布上的透视系数：参与判定 × f(脚底点)。foot_x/foot_y 缺省取实体 x/y
-    （巡逻预览可传瞬时坐标）。"""
+    """实体在画布上的透视系数：参与判定 × f(接地点)。foot_x/foot_y 缺省取实体 x/y
+    （巡逻预览可传瞬时坐标；锚点非底中的实体应传 :func:`entity_contact_point`）。"""
     if not entity_participates_perspective(ent, kind):
         return 1.0
     d = ent or {}

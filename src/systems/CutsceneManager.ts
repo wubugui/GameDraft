@@ -198,6 +198,20 @@ export interface SceneManagerCutsceneAPI {
   exitCutsceneInstancesForCurrent(cutsceneId: string): Promise<void>;
 }
 
+/**
+ * 轨迹播放系统的**窄控制口**（组装层注入，照 `setEmoteBubbleProvider` 的风格）。
+ *
+ * 刻意不 import `TrajectorySystem`：过场只需要"全部落终姿"和"快进态开关"两件事，
+ * 拿整个系统实例进来就是把系统层横向耦合起来（分层律 11）。
+ * 轨迹只驱动实体（NPC / 玩家），不驱动相机，所以跳过终姿的相机竞争里没有它。
+ */
+export interface CutsceneTrajectoryController {
+  /** 在途轨迹全部一步落终姿并封口（跳过 = 纯回放直接到终态）。 */
+  finishAll(): void;
+  /** 快进态开关：开启时在途的立刻落终姿，此后新播放立即落终姿。 */
+  setFastForward(on: boolean): void;
+}
+
 interface CutsceneSnapshot {
   sceneId: string;
   playerX: number;
@@ -294,6 +308,8 @@ export class CutsceneManager implements IGameSystem {
   /** 与 Game.resolveDisplayText 同源；过场字幕在此解析后再交给 CutsceneRenderer（避免绕开统一解析链）。 */
   private displayTextResolver: ((s: string) => string) | null = null;
   private sceneManagerAPI: SceneManagerCutsceneAPI | null = null;
+  /** 轨迹播放系统的窄控制口（组装层注入）；未注入时轨迹相关收尾整体退化为 no-op。 */
+  private trajectoryController: CutsceneTrajectoryController | null = null;
   /**
    * 配音通道（组装层注入，与世界对话共用同一条）：过场里起的配音由它持有，
    * 跨拍留声（`voice.hold`）也在它那记账。未注入时所有配音退化为不发声、
@@ -375,6 +391,14 @@ export class CutsceneManager implements IGameSystem {
 
   setEmoteBubbleProvider(provider: IEmoteBubbleProvider): void {
     this.emoteBubbleProvider = provider;
+  }
+
+  /**
+   * 轨迹播放的窄控制口（组装层注入）。见 {@link CutsceneTrajectoryController}：
+   * 跳过时 `finishAll()`、dev 快进进出时透传 `setFastForward`。
+   */
+  setTrajectoryController(controller: CutsceneTrajectoryController | null): void {
+    this.trajectoryController = controller;
   }
 
   setEmoteTargetResolver(resolver: ((raw: string) => IEmoteBubbleAnchor | null) | null): void {
@@ -591,7 +615,7 @@ export class CutsceneManager implements IGameSystem {
     this.playing = true;
     this.skipping = false;
     this.skipArmedAt = 0;
-    this.fastForwarding = false;
+    this.setFastForwarding(false);
     /** 本次会话的代际快照：steps 执行与 finally 收尾据此判断是否已被 skip / 读档 / 拆除作废 */
     const stepEpochAtStart = this.stepEpoch;
     const worldEpochAtStart = this.worldEpoch;
@@ -760,6 +784,10 @@ export class CutsceneManager implements IGameSystem {
     /** 跳过是中断路径：在播的配音（含 hold 留声的）立即闭嘴，别跟着跳过后的画面继续念 */
     this.voiceChannel?.stopAll();
     this.cutsceneRenderer.abortCutsceneOps();
+    /** 轨迹是**纯烘焙回放**：跳过 = 一步落终态（没有"补跑一遍"的成本，也不该停在半路）。
+     *  位置在 abortCutsceneOps 之后：先掐渲染侧在途补间，再把轨迹落到终姿，
+     *  免得刚落好的姿态又被在途 tween 的最后一帧盖回去。 */
+    this.trajectoryController?.finishAll();
     if (this.waitClickResolve) {
       const r = this.waitClickResolve;
       this.waitClickResolve = null;
@@ -918,6 +946,20 @@ export class CutsceneManager implements IGameSystem {
     return !this.skipping && !this.destroyed && this.playing;
   }
 
+  /**
+   * 快进态的**唯一写入口**：本类的标志与轨迹系统的快进态必须同进同出。
+   *
+   * 轨迹不像补间那样由本类持有时钟——它自己按 dt 跑，所以 dev「从第 N 步开播」
+   * 期间必须让它也进快进态（在途的一步落终姿、其后新播放立即落终姿），
+   * 否则建场阶段的轨迹会用真实时长慢慢爬，把"瞬时到位"的前提整条打掉。
+   * 只在真的翻转时透传，免得每步给控制器发一遍同值。
+   */
+  private setFastForwarding(on: boolean): void {
+    if (this.fastForwarding === on) return;
+    this.fastForwarding = on;
+    this.trajectoryController?.setFastForward(on);
+  }
+
   private async executeSteps(
     steps: CutsceneStep[],
     epoch: number,
@@ -926,10 +968,10 @@ export class CutsceneManager implements IGameSystem {
     for (let i = 0; i < steps.length; i++) {
       if (this.isStepStale(epoch)) return;
       /** 顶层下标决定快进边界；parallel 子轨随所属顶层步一起快进（读同一实例标志）。 */
-      this.fastForwarding = i < fastForwardTo;
+      this.setFastForwarding(i < fastForwardTo);
       await this.executeOneStep(steps[i], String(i), epoch);
     }
-    this.fastForwarding = false;
+    this.setFastForwarding(false);
   }
 
   /** 人类可读的当前 step 摘要（调试用） */
@@ -1592,7 +1634,7 @@ export class CutsceneManager implements IGameSystem {
   private cleanup(stopCutsceneSfx: boolean): void {
     /** Esc 跳过 / 读档 / 拆除会让 executeSteps 中途 return，快进标志不经其尾部复位——
      *  在此兜底，避免残留态污染下一段过场的常速播放。 */
-    this.fastForwarding = false;
+    this.setFastForwarding(false);
     if (stopCutsceneSfx) this.voiceChannel?.stopAll();
     this.audioManager?.endCutsceneSfxCapture(stopCutsceneSfx);
     this.cutsceneRenderer.cleanup();

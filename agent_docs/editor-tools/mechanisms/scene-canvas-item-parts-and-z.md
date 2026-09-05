@@ -8,6 +8,7 @@ status: active
 authority:
   - tools/editor/editors/scene_canvas_model.py
   - tools/editor/shared/entity_sort_math.py
+  - tools/editor/shared/scene_migrations.py#COLLISION_OWNER_KEYS
   - src/rendering/entitySortRule.ts
 triggers:
   paths: ["tools/editor/editors/scene_editor.py", "tools/editor/editors/scene_canvas_model.py", "tools/editor/shared/entity_sort_math.py", "src/rendering/entitySortRule.ts"]
@@ -19,7 +20,8 @@ verified_by:
   - tools/editor/tests/test_scene_canvas_z_layers.py
   - tools/editor/tests/test_scene_canvas_presence_regressions.py
   - src/rendering/entitySortRule.test.ts
-last_governed: 2026-08-23
+  - tools/editor/tests/test_scene_collision_migration.py
+last_governed: 2026-09-03
 ---
 
 ## 是什么(一句话)
@@ -77,10 +79,19 @@ size hint 都要读 `rt.world_w/world_h`。
 
 - **重排必须带脏检查**:巡逻预览开着时 NPC 的 y 每 8ms 都在变,不比对就每拍全场
   `setZValue`。
+- **"NPC 精灵 = 动画包裁出的一格"已不完整**:没有 `animFile` 但写了 `displayImage` 的 NPC,
+  运行时与两个画布都会就地合成一份单帧动画集回落出精灵——所以"没有动画包就没有精灵"
+  这条口径**不再成立**。编辑器侧的唯一真相源是 `tools/editor/shared/static_display_sprite.py`
+  (老画布与新画布共用),运行时那一半见 [[entity-trajectory]] 的"道具 = 无动画包的普通 NPC"。
 - **热点档位额外要求贴图真的加载成功**(运行时 `displaySprite !== null`;编辑器即
   "读出了 pixmap、没画成紫色缺件框"),**NPC 侧不要求**。这个不对称容易被顺手抹平。
 - **遮挡多边形只有热点有**。NPC 的 `collisionPolygon` 不参与遮挡带,一视同仁会造出
   运行时根本不存在的层级翻转。
+- **`collisionPolygon` 有两套坐标系**(旧数据是世界坐标,`collisionPolygonLocal: True` 才是
+  局部),装载时统一迁,而**哪些实体族带碰撞面**的唯一登记是
+  `tools/editor/shared/scene_migrations.py` 的 `COLLISION_OWNER_KEYS` ——
+  它与 `PART_TABLE` 同性质,是清单型真相源。踩过:迁移一度只遍历热点、NPC 那支没有任何
+  迁移路径。**任何新的批量平移/变换都要按那份登记逐类判**,别照热点抄一份。
 - **编辑器没有玩家**,故遮挡带那一支恒不生效(与运行时 `hasPlayer` 为假同分支),
   这类热点回落静态 `spriteSort`。全库仅 8 个热点受影响。
 - 内容图元刻意没有 `entity_kind` 且 `NoButton`,因此不进叠放循环点选、不与

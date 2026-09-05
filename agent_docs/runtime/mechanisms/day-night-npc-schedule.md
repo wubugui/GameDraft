@@ -19,7 +19,7 @@ verified_by:
   - src/systems/DayNightSchedule.test.ts
   - tools/editor/tests/test_day_night_parity.py
   - tools/editor/tests/test_day_night_daylight_gate.py
-last_governed: 2026-08-26
+last_governed: 2026-09-03
 ---
 
 ## 是什么(一句话)
@@ -114,6 +114,10 @@ last_governed: 2026-08-26
   等下一帧 `update` 会留一个"判定已翻转、宽限集未建立"的窗口,NPC 会闪一下。
 - 条件求值别用 `evaluateAllGraphConditions`——它自拼缩水上下文(缺 plane/posture/timePhase),
   必须走 `Game.buildConditionEvalContext()`。
+- **判时段的正规通道只有 `{timePhase:…}` 条件叶**。日夜落地之前,内容侧曾拿**一张叙事图**
+  当时段用(条件写成 narrative 叶指向它的状态);那张图后来不在数据里了,于是这批分支**恒假**
+  ——"夜里才说的话"整片哑掉,而运行时对此一声不吭(红字只在 validate-data 的悬垂引用那一侧)。
+  见到旧内容里有这种写法,迁到时段条件叶,不要去重建那张图。
 
 ## 怎么验证
 

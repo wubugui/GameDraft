@@ -39,6 +39,7 @@ import math
 from typing import Literal, Sequence
 
 from .entity_transform_math import (
+    entity_contact_offset,
     entity_rotation_deg_of,
     entity_scale_of,
     quad_ground_y_around_foot,
@@ -278,14 +279,28 @@ def npc_sort_band_of(npc: dict) -> SortBand | None:
     return _band_of(npc.get("spriteSort"))
 
 
-def sort_foot_y_of(d: dict, eff_w: float, eff_h: float) -> float | None:
-    """镜像 ``_syncSortFootY``：只有旋转态才有接地线，否则 ``None``（回落锚点 y）。
+def sort_foot_y_of(
+    d: dict, eff_w: float, eff_h: float, mirror_x: float = 1.0,
+) -> float | None:
+    """镜像 ``_syncSortFootY``：**锚点非底中**或**带旋转**时才有接地线，否则 ``None``。
+
+    两种偏移**叠加**，一次合成：相对接地点，quad 恒是「底中锚、宽 eff_w、高 eff_h」，
+    所以接地线 = ``quad_ground_y_around_foot(接地点 y, eff_w, eff_h, φ)``。
+    无旋转时该函数是恒等，结果就是接地点 y；缺省锚点且无旋转时偏移与旋转都为 0，
+    返回 ``None`` 回落锚点 y —— 这正是改造前的唯一分支。
 
     ``eff_w/eff_h`` 传**有效尺寸**（已含实例 scale 与透视系数）。``eff_h <= 0``
-    （热点无展示图 / NPC 动画包缺件，运行时 ``getWorldSize()`` 为 0）同样回落。
+    （热点无展示图 / NPC 动画包缺件，运行时 ``getWorldSize()`` 为 0）同样回落 ``None``：
+    此时锚点偏移也退化成 0，与运行时 ``quadGroundYAroundFoot(y, 0, 0, φ) == y`` 同值。
+
+    ``mirror_x`` 是实体的左右镜像符号（运行时住在外层容器 ``scale.x`` 上）；只有
+    **横向偏心锚 + 旋转**才用得到它，缺省锚点时无影响。
     """
     rot = entity_rotation_deg_of(d)
-    if rot == 0 or eff_h <= 0:
+    if eff_h <= 0:
+        return None
+    _ox, oy = entity_contact_offset(d, eff_w, eff_h, mirror_x)
+    if rot == 0 and _ox == 0 and oy == 0:
         return None
     return quad_ground_y_around_foot(
-        float(d.get("y", 0)), eff_w, eff_h, math.radians(rot))
+        float(d.get("y", 0)) + oy, eff_w, eff_h, math.radians(rot))

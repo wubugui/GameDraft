@@ -6,6 +6,7 @@ import re
 import json
 import subprocess
 import sys
+import threading
 import time
 import inspect
 import functools
@@ -13,6 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QStatusBar, QFileDialog,
@@ -43,6 +45,16 @@ _VITE_DEV_URL_RE = re.compile(
     r"https?://(?:127\.0\.0\.1|localhost):\d{2,5}(?:/[^\s]*)?",
     re.IGNORECASE,
 )
+
+# 启动预检的端口与内嵌预览同源(vite.config.ts 是 strictPort,端口不许漂,
+# 所以「被占」恒等于「起不来」,预检才有意义)。
+_GAME_DEV_PORT = urlsplit(GAME_DEV_URL).port or 5173
+
+
+def _log_mentions_port_conflict(log: str) -> bool:
+    """vite/node 因端口被占失败的输出指纹(strictPort: "Port 5173 is already in use")。"""
+    low = log.lower()
+    return "eaddrinuse" in low or "already in use" in low
 
 SOURCE_NAVIGATION_TABS = {
     "quest": "Quest",
@@ -398,6 +410,9 @@ class MainWindow(QMainWindow):
         # 两个音频工具按链路顺序摆：先从原始录音做出产物，再把产物挂到 key 上
         self._act(ext, "配音工作台", self._launch_voice_workbench_external)
         self._act(ext, "音频编辑器", self._launch_audio_editor_external)
+        # 轨迹工作台是 assets/data/trajectories/ 的唯一写者；主编辑器只读那份，存盘后手动重读
+        self._act(ext, "轨迹工作台…", self.open_trajectory_workbench)
+        self._act(ext, "重读轨迹资产", self._reload_trajectories_from_disk)
 
         view_menu = mb.addMenu("View")
         self._act(view_menu, "编辑器设置…", self._open_editor_settings, "Ctrl+,")
@@ -2212,6 +2227,7 @@ class MainWindow(QMainWindow):
             if self._lsp_client is not None:
                 self._lsp_pending_overlays.clear()
                 self._lsp_client.clear_overlays()
+            self._refresh_json_lang_schema("save_all")
             if _saved_types:
                 _shown = "、".join(_saved_types[:6]) + ("…" if len(_saved_types) > 6 else "")
                 self._status.showMessage(
@@ -2301,6 +2317,59 @@ class MainWindow(QMainWindow):
 
         self._start_game_backend(open_when_ready=True, launch_params=launch_params)
 
+    def _ensure_game_port_free(self, *, interactive: bool) -> bool:
+        """启动 dev server 前的端口预检(vite 是 strictPort,被占必起不来)。
+
+        交互路径(F5/Play)弹冲突窗:展示占用进程是谁、由谁启动,让用户选
+        「结束占用进程并启动」或「取消启动」;预热路径不打扰用户,只留状态栏提示。
+        返回 False = 本次不要启动。预检自身出错时放行——真冲突还有
+        `_on_game_proc_finished` 的冲突分支兜底,弹的是同一个窗。
+        """
+        from tools.dev.game import describe_port_occupants
+
+        try:
+            occupants = describe_port_occupants(_GAME_DEV_PORT)
+        except Exception:
+            return True
+        if not occupants:
+            return True
+        if not interactive:
+            names = ", ".join(f"{o.name or '?'}(PID {o.pid})" for o in occupants)
+            self._status.showMessage(
+                f"端口 {_GAME_DEV_PORT} 被 {names} 占用，预热跳过；"
+                "按 F5 启动时可在冲突窗口里处理。",
+                8000,
+            )
+            return False
+        return self._resolve_port_conflict_dialog(occupants)
+
+    def _resolve_port_conflict_dialog(self, occupants) -> bool:
+        """弹端口冲突窗；用户确认后结束占用进程并等端口真正释放。
+
+        返回 True = 端口已释放可以启动；False = 用户取消或释放失败。
+        「成功」以复探端口空闲为准,不以 taskkill 被调用为准(fail-safe)。
+        """
+        from tools.dev.game import stop_dev_ports, wait_ports_free
+        from .shared.port_conflict_dialog import PortConflictDialog
+
+        dlg = PortConflictDialog(_GAME_DEV_PORT, occupants, self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            self._status.showMessage("已取消启动(端口冲突未处理)。", 5000)
+            return False
+        stop_dev_ports((_GAME_DEV_PORT,))
+        if not wait_ports_free((_GAME_DEV_PORT,)):
+            pids = ", ".join(str(o.pid) for o in occupants)
+            QMessageBox.warning(
+                self,
+                "端口冲突",
+                f"结束占用进程后端口 {_GAME_DEV_PORT} 仍被占用"
+                "(可能权限不足，或占用进程被外部守护重新拉起)。\n"
+                f"请手动结束 PID {pids} 后再按 F5 启动。",
+            )
+            return False
+        self._status.showMessage("已结束占用进程，端口已释放；正在启动游戏…", 5000)
+        return True
+
     def _start_game_backend(self, *, open_when_ready: bool,
                             launch_params: str | None = None) -> None:
         if self._model.project_path is None:
@@ -2316,6 +2385,9 @@ class MainWindow(QMainWindow):
         if not pkg_json.is_file():
             if open_when_ready:
                 QMessageBox.warning(self, "Error", "package.json not found")
+            return
+
+        if not self._ensure_game_port_free(interactive=open_when_ready):
             return
 
         self._game_server_ready = False
@@ -2510,6 +2582,7 @@ class MainWindow(QMainWindow):
         self._game_ready_timer.stop()
         was_ready = self._game_server_ready
         wanted_open = self._game_open_when_ready
+        pending_params = self._pending_launch_params
         self._game_server_ready = False
         self._game_open_when_ready = False
         self._pending_launch_params = None
@@ -2533,6 +2606,18 @@ class MainWindow(QMainWindow):
 
         if not was_ready:
             if exit_code != 0:
+                if _log_mentions_port_conflict(self._game_proc_log):
+                    # 预检有探测竞态/盲区(如无权限探测),vite 真撞上端口时从这里
+                    # 兜底弹同一个冲突窗;用户选「结束占用进程」则自动重启本次启动。
+                    if wanted_open:
+                        self._handle_port_conflict_exit(pending_params)
+                    else:
+                        self._status.showMessage(
+                            f"预热失败：端口 {_GAME_DEV_PORT} 被占用；"
+                            "按 F5 启动时可在冲突窗口里处理。",
+                            8000,
+                        )
+                    return
                 msg = (
                     f"开发服务器异常结束（退出码 {exit_code}）。常见原因：未安装 Node/npm、"
                     "脚本编译失败、或端口被占用。"
@@ -2552,6 +2637,30 @@ class MainWindow(QMainWindow):
             self._game_browser.show_message(
                 "Dev server stopped. Press Run (F5) to start again.",
             )
+
+    def _handle_port_conflict_exit(self, launch_params: str | None) -> None:
+        """vite 因端口被占退出后的交互兜底。
+
+        还查得到占用者→弹冲突窗,用户选「结束占用进程」则自动重启本次启动;
+        已查不到占用者(对方恰好退出/探测盲区)→只报失败让用户 F5 重试,
+        不自动重启——避免与看不见的占用者打转(每次重启都必须有一次用户点击)。
+        """
+        from tools.dev.game import describe_port_occupants
+
+        try:
+            occupants = describe_port_occupants(_GAME_DEV_PORT)
+        except Exception:
+            occupants = []
+        if occupants:
+            if self._resolve_port_conflict_dialog(occupants):
+                self._start_game_backend(
+                    open_when_ready=True, launch_params=launch_params,
+                )
+            return
+        self._show_game_proc_failure(
+            f"开发服务器启动失败：端口 {_GAME_DEV_PORT} 当时被占用，"
+            "现在查已空闲(占用进程可能刚退出)。请按 F5 重试。"
+        )
 
     def _on_cutscene_play_requested(self, cutscene_id: str, from_step: int = 0) -> None:
         if not cutscene_id:
@@ -2698,6 +2807,11 @@ class MainWindow(QMainWindow):
             tr.last_doc_age_ms = age_ms
             tr.last_writer = str((doc or {}).get("writer") or "")
             tr.last_doc_scene = str((doc or {}).get("sceneId") or "")
+            # 游戏此刻在哪个时段:收要按它拆(环境块进变体),发要按它合(基底 ⊕ 变体),
+            # 否则夜里调的参数要么被拒收、要么把白天基底灌回给正在夜里的游戏。
+            phase = scene_lights_mod.pulled_phase(doc)
+            if str(tr.last_writer).startswith("game:"):
+                tr.last_doc_phase = phase
             tr.suppressed = ""
             if doc is None and not err:
                 tr.suppressed = "槽是空的"
@@ -2713,13 +2827,14 @@ class MainWindow(QMainWindow):
                 incoming = self._lighting_sync.plan_apply(doc, scene_id)
                 if incoming is not None and not panel.sync_busy():
                     lit, why = scene_lights_mod.validate_pulled_lighting(
-                        {"sceneId": scene_id, "lighting": incoming}, scene_id)
+                        {"sceneId": scene_id, "lighting": incoming, "phase": phase},
+                        scene_id)
                     if lit is not None:
                         sel = scene_lights_mod.doc_selected_id(doc)
                         self._lighting_sync.note_applied(
                             lit, int(doc.get("rev") or 0), sel)
                         self._lighting_transport.applied += 1
-                        panel.apply_synced_lighting(lit)
+                        panel.apply_pulled_lighting(lit, phase)
                         # 选中放在灯表之后：apply_synced_lighting 会重填表格，
                         # 先跳行会被它冲掉
                         panel.apply_synced_selection(sel)
@@ -2729,7 +2844,8 @@ class MainWindow(QMainWindow):
                         self._lighting_sync.note_applied({}, int(doc.get("rev") or 0))
             if err:
                 return                  # 这一拍连不上：别拿旧状态去发，等退避后重来
-            mine = panel.sync_lighting_snapshot()
+            # 发给游戏的是它**此刻该看到的那份**:游戏在夜里就发 基底 ⊕ 夜的覆盖。
+            mine = panel.sync_lighting_snapshot(getattr(tr, "last_doc_phase", ""))
             my_sel = panel.sync_selected_id()
             if mine and self._lighting_sync.needs_publish(mine, my_sel):
                 rev, perr = self._lighting_transport.publish(
@@ -3001,6 +3117,30 @@ class MainWindow(QMainWindow):
 
     # ---- validation -------------------------------------------------------
 
+    def _refresh_json_lang_schema(self, reason: str) -> None:
+        """json_lang schema(VS Code 那边的枚举)是派生物,得跟着数据走。
+
+        LSP 活着时不用管:它的刷新线程盯着磁盘**与 overlay**,新建的场景在 schema 里
+        两秒内就有。LSP 没起来(被禁用 / 启动失败)时这里兜底——Save All 与 Validate
+        之后在后台线程重算一次,别让 VS Code 对刚建的场景 id 一直画黄线。
+        只对带 json_lang 的仓库做(测试用的临时工程没有它,也没什么可重算)。
+        """
+        client = self._lsp_client
+        if client is not None and client.available:
+            return
+        root = self._model.project_path
+        if root is None or not (Path(root) / "tools" / "json_lang" / "build.py").is_file():
+            return
+
+        def _run() -> None:
+            try:
+                from tools.json_lang.build import _rebuild
+                _rebuild(Path(root))
+            except Exception as e:  # noqa: BLE001 — 咨询层坏了不该打断保存/校验
+                print(f"[json_lang] schema 重算失败({reason}): {e!r}", flush=True)
+
+        threading.Thread(target=_run, name="json-lang-schema", daemon=True).start()
+
     def _validate(self) -> None:
         if self._model.project_path is None:
             QMessageBox.warning(self, "校验", "未打开工程目录，无法校验数据。")
@@ -3015,6 +3155,7 @@ class MainWindow(QMainWindow):
                 f"{self._format_skipped_panels(skipped)}",
             )
         issues = validate(self._model)
+        self._refresh_json_lang_schema("validate")
         if not issues:
             QMessageBox.information(self, "Validate", "No issues found.")
             return
@@ -3162,6 +3303,41 @@ class MainWindow(QMainWindow):
                 if callable(select):
                     select((entity_id or "").strip(), (scene_id or "").strip())
                 return
+
+    def open_trajectory_workbench(self, trajectory_id: str = "") -> None:
+        """另起独立进程打开「轨迹工作台」（Action 编辑器的「在轨迹工作台中打开…」落点）。
+
+        轨迹是全局资产 `assets/data/trajectories/<id>.json`，**唯一写者**是工作台进程；
+        主编辑器对该目录只读（候选 / 校验），所以这里只负责起进程：
+        - **不等它**（detached；Windows 上另开进程组，关主编辑器不连带杀它）；
+        - 不登记进外置进程监视表——它写的目录不归 save_all 管，没有可被静默盖掉的东西；
+          要刷新候选走「工具 → 重读轨迹资产」（`_reload_trajectories_from_disk`）。
+        """
+        root = self._ensure_valid_tool_root()
+        if root is None:
+            return
+        tid = (trajectory_id or "").strip()
+        cmd = [sys.executable, "-m", "tools.trajectory_workbench", *(["--open", tid] if tid else [])]
+        kwargs: dict = {"cwd": str(root.resolve())}
+        if sys.platform == "win32":
+            kwargs["creationflags"] = (
+                subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+            )
+        try:
+            subprocess.Popen(cmd, **kwargs)
+        except OSError as e:
+            QMessageBox.critical(self, "External tools", f"Failed to start 轨迹工作台:\n{e}")
+            return
+        self._status.showMessage(
+            f"Started in new process: 轨迹工作台{f'（{tid}）' if tid else ''}", 4000)
+
+    def _reload_trajectories_from_disk(self) -> None:
+        """重读 `assets/data/trajectories/`（工作台存盘后刷新 playTrajectory 候选；不标脏）。"""
+        if self._model.project_path is None:
+            return
+        self._model.reload_trajectories_from_disk()
+        self._status.showMessage(
+            f"已重读轨迹资产：{len(self._model.trajectories)} 条", 4000)
 
     def _on_task_scene_layout_requested(
         self, scene_id: str, entity_kind: str, entity_id: str,
