@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>雾津 · 逐步攻略与场景图</title>
+  <link rel="stylesheet" href="atlas.css">
+</head>
+<body>
+<header>
+  <div><span class="eyebrow">雾津 / 当前章节试玩</span><h1>跟着走，把这一天的事做完。</h1></div>
+  <a href="http://127.0.0.1:5173/?mode=dev&ndbg=0&narrativeWarp=%E5%BC%80%E6%94%BE%E9%9B%BE%E6%B4%A5" target="_blank" rel="noopener">另开全新试玩 ↗</a>
+</header>
+<p class="intro">固定路线、明确用料、编号找人。按步骤走；图上的编号就是要找的位置。新开试玩会从头开始，不要覆盖已有存档。</p>
+<div class="toolbar">
+  <label>跟着流程走 <select id="chapter-select" aria-label="选择攻略段落"></select></label>
+  <label>直接查场景 <select id="scene-select" aria-label="选择场景地图"></select></label>
+  <button id="return-route" type="button">回到当前步骤</button>
+  <button id="all-points" type="button" aria-pressed="false">查看全部点位</button>
+</div>
+<main>
+  <section class="map-column" aria-label="位置图">
+    <div class="map-heading"><div><span class="eyebrow" id="map-kicker"></span><h2 id="map-title"></h2></div><span id="map-count"></span></div>
+    <div id="map-stage" class="map-stage"></div>
+    <div class="legend"><span><i class="npc"></i>人物工位 / 巡逻</span><span><i class="pickup"></i>可取得的物品</span><span><i class="hotspot"></i>操作 / 检视</span><span><i class="exit"></i>出口 / 入口</span><span>◎ 本步目标</span><span>黄色虚线：指定绕行</span><span>红框包子铺：本路线跳过</span></div>
+    <p id="map-note" class="map-note">编号连线的落点是场景中的真实坐标。人物会走动，请在工位或巡逻线附近找；本步时段与交互判据见右侧。</p>
+    <details id="point-detail"><summary>展开本场景点位表与人物班次</summary><div id="point-table"></div></details>
+  </section>
+  <aside class="step-column" aria-label="当前步骤">
+    <div class="step-top"><span id="step-number"></span><span id="step-clock"></span></div>
+    <h2 id="step-title"></h2>
+    <div id="step-location" class="location"></div>
+    <div id="step-body"></div>
+    <div id="step-check" class="check"></div>
+    <div id="step-ledger" class="ledger"></div>
+    <div id="step-next" class="next-place"></div>
+    <div class="step-nav"><button id="previous-step" type="button">← 上一步</button><button id="next-step" type="button">下一步 →</button></div>
+    <label class="jump-label">跳到指定步骤<select id="step-select" aria-label="跳到指定攻略步骤"></select></label>
+  </aside>
+</main>
+<section id="selected-point" class="selected-point" hidden aria-live="polite"></section>
+<section class="reference">
+  <details><summary>开始前与“完成”的判定</summary><div id="entry-notes"></div></details>
+  <details><summary>本轮要完成的任务清单</summary><div id="quest-checklist"></div></details>
+  <details><summary>地图与路线核查范围</summary><div id="verification-notes"></div></details>
+</section>
+<footer>2026-09-06 · 攻略只覆盖当前已接入的章节内容；位置取自项目场景数据。地图不会控制游戏，也不会读取或修改你的存档。</footer>
+<script src="app-data.js"></script>
+<script src="atlas-app.js"></script>
+</body>
+</html>

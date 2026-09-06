@@ -1,0 +1,18 @@
+{
+  "ok": true,
+  "checkedAt": "2026-09-06T05:34:42.403Z",
+  "maps": 9,
+  "steps": 80,
+  "pageErrors": [],
+  "httpErrors": [],
+  "externalRequests": [],
+  "mobileOverflow": false,
+  "checks": [
+    "step advance",
+    "80 steps: titles and target markers",
+    "25 item completion checklist",
+    "workbench navigation",
+    "390px mobile layout",
+    "nine local scene map renders"
+  ]
+}

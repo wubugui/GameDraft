@@ -1,0 +1,557 @@
+{
+  "雾津街头::T_去阎王岭": {
+    "code": "街01",
+    "name": "上阎王岭（送货）",
+    "scene": "雾津街头"
+  },
+  "雾津街头::T_去土地庙": {
+    "code": "街02",
+    "name": "去土地庙（枯井）",
+    "scene": "雾津街头"
+  },
+  "雾津街头::z_梦待死之礼": {
+    "code": "街03",
+    "name": "梦境剧情触发区",
+    "scene": "雾津街头"
+  },
+  "雾津街头::T_去城隍庙": {
+    "code": "街04",
+    "name": "去城隍庙（守夜的活）",
+    "scene": "雾津街头"
+  },
+  "雾津街头::T_去破屋": {
+    "code": "街05",
+    "name": "城郊破屋·取尸",
+    "scene": "雾津街头"
+  },
+  "雾津街头::主线_吃饭点A": {
+    "code": "街06",
+    "name": "包子铺",
+    "scene": "雾津街头"
+  },
+  "雾津街头::T_去义庄": {
+    "code": "街07",
+    "name": "去义庄",
+    "scene": "雾津街头"
+  },
+  "雾津街头::T_去后巷": {
+    "code": "街08",
+    "name": "钻进后巷",
+    "scene": "雾津街头"
+  },
+  "雾津街头::T_去崖墓": {
+    "code": "街09",
+    "name": "上崖墓",
+    "scene": "雾津街头"
+  },
+  "雾津街头::T_去婆子家院": {
+    "code": "街10",
+    "name": "去婆子家小院",
+    "scene": "雾津街头"
+  },
+  "雾津街头::T_去城门": {
+    "code": "街11",
+    "name": "去城门口",
+    "scene": "雾津街头"
+  },
+  "雾津街头::T_出城": {
+    "code": "街12",
+    "name": "沿西口去河滩",
+    "scene": "雾津街头"
+  },
+  "雾津街头::ow_deng": {
+    "code": "街13",
+    "name": "邓幺 · 跑腿人",
+    "scene": "雾津街头"
+  },
+  "雾津街头::ow_ring_hook_gap": {
+    "code": "街14",
+    "name": "路边石缝的小铁钩",
+    "scene": "雾津街头"
+  },
+  "雾津街头::ow_man": {
+    "code": "街15",
+    "name": "小满 · 滚环小孩",
+    "scene": "雾津街头"
+  },
+  "雾津街头::ow_sugar_stall": {
+    "code": "街16",
+    "name": "街口糖画摊",
+    "scene": "雾津街头"
+  },
+  "雾津街头::T_进茶馆": {
+    "code": "街17",
+    "name": "进茶馆",
+    "scene": "雾津街头"
+  },
+  "雾津街头::ow_ding": {
+    "code": "街18",
+    "name": "丁四 · 巡更人",
+    "scene": "雾津街头"
+  },
+  "雾津街头::ow_yang": {
+    "code": "街19",
+    "name": "杨嫂 · 热面摊",
+    "scene": "雾津街头"
+  },
+  "雾津街头::ow_watch_lamp": {
+    "code": "街20",
+    "name": "街口巡更灯",
+    "scene": "雾津街头"
+  },
+  "雾津街头::ow_watch_bench": {
+    "code": "街21",
+    "name": "巡更备用梆",
+    "scene": "雾津街头"
+  },
+  "雾津街头::ow_noodle_stove": {
+    "code": "街22",
+    "name": "杨嫂摊前冷灶",
+    "scene": "雾津街头"
+  },
+  "雾津街头::ow_stove_image_broken": {
+    "code": "街23",
+    "name": "堵灰缺脚的街灶",
+    "scene": "雾津街头"
+  },
+  "雾津街头::ow_stove_image_repaired": {
+    "code": "街24",
+    "name": "已清灰垫稳的街灶",
+    "scene": "雾津街头"
+  },
+  "雾津街头::ow_rest": {
+    "code": "街25",
+    "name": "歇脚 · 等一等",
+    "scene": "雾津街头"
+  },
+  "雾津街头::ow_zhou": {
+    "code": "街26",
+    "name": "周三 · 码头脚夫",
+    "scene": "雾津街头"
+  },
+  "雾津街头::ow_notice": {
+    "code": "街27",
+    "name": "路告示下的落纸",
+    "scene": "雾津街头"
+  },
+  "雾津街头::ow_sign": {
+    "code": "街28",
+    "name": "街口旧路牌",
+    "scene": "雾津街头"
+  },
+  "雾津街头::T_去后巷子": {
+    "code": "街29",
+    "name": "后巷",
+    "scene": "雾津街头"
+  },
+  "雾津街头::T_去码头": {
+    "code": "街30",
+    "name": "去码头",
+    "scene": "雾津街头"
+  },
+  "雾津街头::@start": {
+    "code": "起点",
+    "name": "全新试玩起点",
+    "scene": "雾津街头"
+  },
+  "test_room_b::T_回雾津街头": {
+    "code": "巷01",
+    "name": "穿过巷口回街",
+    "scene": "后巷"
+  },
+  "test_room_b::ow_deng": {
+    "code": "巷02",
+    "name": "邓幺 · 跑腿人",
+    "scene": "后巷"
+  },
+  "test_room_b::ow_huang": {
+    "code": "巷03",
+    "name": "黄婶 · 采药人",
+    "scene": "后巷"
+  },
+  "test_room_b::ow_man": {
+    "code": "巷04",
+    "name": "小满 · 滚环小孩",
+    "scene": "后巷"
+  },
+  "test_room_b::ow_rest": {
+    "code": "巷05",
+    "name": "歇脚 · 等一等",
+    "scene": "后巷"
+  },
+  "test_room_b::ow_bamboo": {
+    "code": "巷06",
+    "name": "泡篾条的案板底下",
+    "scene": "后巷"
+  },
+  "test_room_b::ow_luo": {
+    "code": "巷07",
+    "name": "罗伯 · 补篾匠",
+    "scene": "后巷"
+  },
+  "test_room_b::ow_paper_rack": {
+    "code": "巷08",
+    "name": "通风晾板",
+    "scene": "后巷"
+  },
+  "test_room_b::ow_damp_paper": {
+    "code": "巷09",
+    "name": "墙脚潮纸",
+    "scene": "后巷"
+  },
+  "test_room_b::hs_纸扎日工": {
+    "code": "巷10",
+    "name": "纸扎工台 · 歪脚纸人",
+    "scene": "后巷"
+  },
+  "test_room_b::ow_he": {
+    "code": "巷11",
+    "name": "何婆婆 · 浣衣人",
+    "scene": "后巷"
+  },
+  "test_room_b::ow_yang": {
+    "code": "巷12",
+    "name": "杨嫂 · 热面摊",
+    "scene": "后巷"
+  },
+  "test_room_b::ow_paste_stove": {
+    "code": "巷13",
+    "name": "铺前浆炉",
+    "scene": "后巷"
+  },
+  "test_room_b::exit_to_a": {
+    "code": "巷14",
+    "name": "回雾津街头",
+    "scene": "后巷"
+  },
+  "码头白天::T码头到街巷": {
+    "code": "码01",
+    "name": "回街上",
+    "scene": "码头"
+  },
+  "码头白天::T到街巷2": {
+    "code": "码02",
+    "name": "回街上",
+    "scene": "码头"
+  },
+  "码头白天::ow_deng": {
+    "code": "码03",
+    "name": "邓幺 · 跑腿人",
+    "scene": "码头"
+  },
+  "码头白天::new_hotspot_4": {
+    "code": "码04",
+    "name": "候船的洋人女子",
+    "scene": "码头"
+  },
+  "码头白天::new_npc_0": {
+    "code": "码05",
+    "name": "候船的老客",
+    "scene": "码头"
+  },
+  "码头白天::ow_port_rules": {
+    "code": "码06",
+    "name": "货栈墙上的脚帮规矩",
+    "scene": "码头"
+  },
+  "码头白天::ow_tally_stack": {
+    "code": "码07",
+    "name": "货堆下的垛脚",
+    "scene": "码头"
+  },
+  "码头白天::ow_zhou": {
+    "code": "码08",
+    "name": "周三 · 码头脚夫",
+    "scene": "码头"
+  },
+  "码头白天::ow_small_cargo": {
+    "code": "码09",
+    "name": "箱底双结小包",
+    "scene": "码头"
+  },
+  "码头白天::ow_mooring": {
+    "code": "码10",
+    "name": "船头系缆扣",
+    "scene": "码头"
+  },
+  "码头白天::ow_rope_tail": {
+    "code": "码11",
+    "name": "废缆卷底下",
+    "scene": "码头"
+  },
+  "码头白天::ow_qian": {
+    "code": "码12",
+    "name": "钱叔 · 守船人",
+    "scene": "码头"
+  },
+  "码头白天::ow_tally_pickup": {
+    "code": "码13",
+    "name": "缆绳旁的折角纸片",
+    "scene": "码头"
+  },
+  "码头白天::new_hotspot_6": {
+    "code": "码14",
+    "name": "歇肩的搬运工",
+    "scene": "码头"
+  },
+  "码头白天::ow_rest": {
+    "code": "码15",
+    "name": "歇脚 · 等一等",
+    "scene": "码头"
+  },
+  "码头白天::ow_去桥下": {
+    "code": "码16",
+    "name": "沿河埠去老桥",
+    "scene": "码头"
+  },
+  "河边::T回城": {
+    "code": "河01",
+    "name": "上石阶回雾津",
+    "scene": "河边"
+  },
+  "河边::ow_high_blocked": {
+    "code": "河02",
+    "name": "负重通路尚未处理",
+    "scene": "河边"
+  },
+  "河边::ow_steps": {
+    "code": "河03",
+    "name": "高阶上的湿苔",
+    "scene": "河边"
+  },
+  "河边::ow_laundry": {
+    "code": "河04",
+    "name": "浣衣石",
+    "scene": "河边"
+  },
+  "河边::ow_he": {
+    "code": "河05",
+    "name": "何婆婆 · 浣衣人",
+    "scene": "河边"
+  },
+  "河边::ow_water_reed": {
+    "code": "河06",
+    "name": "岸边倒伏的芦苇",
+    "scene": "河边"
+  },
+  "河边::ow_needle_gap": {
+    "code": "河07",
+    "name": "浣衣石下的细缝",
+    "scene": "河边"
+  },
+  "河边::ow_rest": {
+    "code": "河08",
+    "name": "歇脚 · 等一等",
+    "scene": "河边"
+  },
+  "河边::T到山路": {
+    "code": "河09",
+    "name": "沿河上山",
+    "scene": "河边"
+  },
+  "河边::ow_去老桥": {
+    "code": "河10",
+    "name": "顺河去老桥",
+    "scene": "河边"
+  },
+  "bridge_underpass::ow_water_upstream": {
+    "code": "桥01",
+    "name": "桥外江面",
+    "scene": "桥下"
+  },
+  "bridge_underpass::ow_bridge_rule": {
+    "code": "桥02",
+    "name": "栏杆上的刻痕",
+    "scene": "桥下"
+  },
+  "bridge_underpass::exit_to_street": {
+    "code": "桥03",
+    "name": "回到码头河埠",
+    "scene": "桥下"
+  },
+  "bridge_underpass::ow_water_downstream": {
+    "code": "桥04",
+    "name": "桥下缓水",
+    "scene": "桥下"
+  },
+  "bridge_underpass::ow_ding": {
+    "code": "桥05",
+    "name": "丁四 · 巡更人",
+    "scene": "桥下"
+  },
+  "bridge_underpass::new_npc_0": {
+    "code": "桥06",
+    "name": "桥边等人的汉子",
+    "scene": "桥下"
+  },
+  "bridge_underpass::ow_qian": {
+    "code": "桥07",
+    "name": "钱叔 · 守船人",
+    "scene": "桥下"
+  },
+  "bridge_underpass::ow_watch_cord": {
+    "code": "桥08",
+    "name": "石环上的断梆绳",
+    "scene": "桥下"
+  },
+  "bridge_underpass::ow_water_post": {
+    "code": "桥09",
+    "name": "桥头旧木桩",
+    "scene": "桥下"
+  },
+  "bridge_underpass::ow_rest": {
+    "code": "桥10",
+    "name": "歇脚 · 等一等",
+    "scene": "桥下"
+  },
+  "bridge_underpass::new_hotspot_1": {
+    "code": "桥11",
+    "name": "沿右岸去河滩",
+    "scene": "桥下"
+  },
+  "bridge_underpass::ow_low_blocked": {
+    "code": "桥12",
+    "name": "负重通路尚未处理",
+    "scene": "桥下"
+  },
+  "mountain_pass::exit_to_temple": {
+    "code": "山01",
+    "name": "沿石阶去旧庙",
+    "scene": "山路"
+  },
+  "mountain_pass::ow_fork": {
+    "code": "山02",
+    "name": "岔路脚印",
+    "scene": "山路"
+  },
+  "mountain_pass::new_npc_0": {
+    "code": "山03",
+    "name": "歇脚的挑担客",
+    "scene": "山路"
+  },
+  "mountain_pass::ow_rest": {
+    "code": "山04",
+    "name": "歇脚 · 等一等",
+    "scene": "山路"
+  },
+  "mountain_pass::ow_huang": {
+    "code": "山05",
+    "name": "黄婶 · 采药人",
+    "scene": "山路"
+  },
+  "mountain_pass::ow_water_stone": {
+    "code": "山06",
+    "name": "岔路石上的旧水线",
+    "scene": "山路"
+  },
+  "mountain_pass::exit_to_street": {
+    "code": "山07",
+    "name": "下山去河滩",
+    "scene": "山路"
+  },
+  "mountain_pass::T到河边": {
+    "code": "山08",
+    "name": "沿支路去河滩",
+    "scene": "山路"
+  },
+  "temple_exterior::ow_temple_wind": {
+    "code": "院01",
+    "name": "侧门破纸缝",
+    "scene": "庙前院"
+  },
+  "temple_exterior::ow_temple_bolt": {
+    "code": "院02",
+    "name": "侧门落闩",
+    "scene": "庙前院"
+  },
+  "temple_exterior::ow_wind_rule_offer": {
+    "code": "院03",
+    "name": "侧门风缝 · 用规矩区域",
+    "scene": "庙前院"
+  },
+  "temple_exterior::T到庙宇室内": {
+    "code": "院04",
+    "name": "进旧庙正殿",
+    "scene": "庙前院"
+  },
+  "temple_exterior::ow_monk": {
+    "code": "院05",
+    "name": "扫院僧",
+    "scene": "庙前院"
+  },
+  "temple_exterior::ow_incense": {
+    "code": "院06",
+    "name": "院中小灰盘",
+    "scene": "庙前院"
+  },
+  "temple_exterior::ow_incense_pan_outside": {
+    "code": "院07",
+    "name": "小陶灰盘",
+    "scene": "庙前院"
+  },
+  "temple_exterior::ow_rest": {
+    "code": "院08",
+    "name": "歇脚 · 等一等",
+    "scene": "庙前院"
+  },
+  "temple_exterior::exit_to_mountain_pass": {
+    "code": "院09",
+    "name": "沿来路下山",
+    "scene": "庙前院"
+  },
+  "temple::moonlit_wall": {
+    "code": "殿01",
+    "name": "墙边月影",
+    "scene": "城隍庙内"
+  },
+  "temple::new_npc_0": {
+    "code": "殿02",
+    "name": "看香的道人",
+    "scene": "城隍庙内"
+  },
+  "temple::ow_rest": {
+    "code": "殿03",
+    "name": "歇脚 · 等一等",
+    "scene": "城隍庙内"
+  },
+  "temple::ow_monk": {
+    "code": "殿04",
+    "name": "扫院僧",
+    "scene": "城隍庙内"
+  },
+  "temple::ow_temple_ledger": {
+    "code": "殿05",
+    "name": "压在石下的借物账",
+    "scene": "城隍庙内"
+  },
+  "temple::ow_incense_pan_inside": {
+    "code": "殿06",
+    "name": "小陶灰盘",
+    "scene": "城隍庙内"
+  },
+  "temple::ow_temple_stand": {
+    "code": "殿07",
+    "name": "殿边平石",
+    "scene": "城隍庙内"
+  },
+  "temple::T到室外": {
+    "code": "殿08",
+    "name": "回到庙前院子",
+    "scene": "城隍庙内"
+  },
+  "teahouse::exit_to_street": {
+    "code": "茶01",
+    "name": "出门",
+    "scene": "茶馆"
+  },
+  "teahouse::ow_zhou": {
+    "code": "茶02",
+    "name": "周三 · 码头脚夫",
+    "scene": "茶馆"
+  },
+  "teahouse::ow_luo": {
+    "code": "茶03",
+    "name": "罗伯 · 补篾匠",
+    "scene": "茶馆"
+  }
+}
